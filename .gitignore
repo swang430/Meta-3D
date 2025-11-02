@@ -1,0 +1,9 @@
+node_modules/
+dist/
+**/dist/
+**/node_modules/
+.DS_Store
+*.log
+/.vite
+/.idea
+/.vscode
