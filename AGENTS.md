@@ -753,4 +753,5 @@ $P_{rx} = P_{tx} + G_{tx} - L_{tx} - L_{fspl} - L_{misc} + G_{rx} - L_{rx}$
   * **2024-10-19 · Mantine 全页迁移完成:** “探头与暗室配置”“测试计划与编排”“实时监控”“数据归档与报告”四大页面已用 Mantine `Grid/Card/ScrollArea/Table` 重构，Mock 交互保持原有逻辑并通过 `npm run build` 验证。
   * **2024-10-19 · 导航与暗黑模式增强:** 左侧导航改为渐层卡片与快照面板，新增本地存储的亮/暗色模式切换按钮，并统一主题在 Mantine 中管理。
   * **2024-10-19 · Git 本地版本库建立:** 初始化本地 Git 仓库并加入 `.gitignore`（忽略 `node_modules/`、`dist/`、编辑器缓存等），为后续阶段性提交与回滚提供保障。
+  * **2024-10-19 · 模拟执行流程上线:** `api/mockDatabase.ts` 新增 CTIA 01.40 Demo Run 数据，涵盖步骤、时间线、指标与结果摘要；`/tests/demo-run` 接口供前端加载，`TestConfig`/`Monitoring`/`Results` 联动驱动完整测试演示。
   * **使用提示:** 若开启新会话，请先参考本章节，必要时将相关要点或章节摘录复制到新对话，确保模型理解现有系统状态。
