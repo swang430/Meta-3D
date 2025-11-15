@@ -3,9 +3,136 @@
  *
  * 定义路测场景的完整业务语义
  * 场景层是业务抽象层，独立于具体测试模式
+ *
+ * 设计原则：
+ * 1. 虚拟路测关注真实道路场景，不是标准符合性测试
+ * 2. 场景为原子单元（All-in-One），所有参数形成整体
+ * 3. 支持射线跟踪工具生成的场景导入
+ * 4. 多维度标签分类体系
  */
 
 import { ScenarioCategory } from './index'
+
+// ========== 场景分类（多维度标签体系）==========
+
+export interface ScenarioTaxonomy {
+  // 维度1: 来源类型
+  source: 'real-world' | 'synthetic' | 'standard-derived'
+
+  // 维度2: 地理特征
+  geography: {
+    region: string        // 例如: "北京CBD", "京沪高速G2"
+    type: 'urban' | 'suburban' | 'highway' | 'tunnel' | 'indoor' | 'rural'
+  }
+
+  // 维度3: 测试目的
+  purpose: 'coverage' | 'handover' | 'throughput' | 'latency' | 'mobility' | 'reliability' | 'interference'
+
+  // 维度4: 网络类型 (在NetworkConfig中也有定义，这里用于快速筛选)
+  network: 'LTE' | '5G NR FR1' | '5G NR FR2' | 'C-V2X' | 'Hybrid'
+
+  // 维度5: 复杂度
+  complexity: 'basic' | 'intermediate' | 'advanced' | 'extreme'
+
+  // 自由标签
+  tags: string[]  // 例如: ["早高峰", "密集建筑", "高速移动", "干扰"]
+}
+
+// ========== 场景来源与射线跟踪 ==========
+
+export interface ScenarioOrigin {
+  type: 'real-world' | 'synthetic' | 'customer-requested'
+
+  // 真实场景信息
+  realWorld?: {
+    location: string              // 例如: "北京市朝阳区CBD"
+    coordinates?: {
+      latitude: number
+      longitude: number
+    }
+    captureDate?: string          // 场景数据采集日期
+    dataSources?: string[]        // 例如: ["GIS", "Street View", "LiDAR"]
+  }
+
+  // 射线跟踪生成信息
+  rayTracing?: {
+    tool: 'WirelessInSite' | 'WinProp' | 'CloudRT' | 'Custom'
+    version: string
+    environmentModel: string      // 环境模型文件引用
+    configFile?: string           // 射线跟踪配置文件
+    generatedBy?: string          // 创建人员
+    generatedAt: string
+  }
+
+  // 客户定制场景
+  customerRequest?: {
+    customer: string
+    project: string
+    requirements: string
+    deliveryDate?: string
+  }
+}
+
+export interface RayTracingOutput {
+  tool: 'WirelessInSite' | 'WinProp' | 'CloudRT' | 'Custom'
+  version: string
+
+  // 结果文件路径或URL
+  resultFiles: {
+    pathLossMatrix?: string       // 路径损耗矩阵文件
+    channelCoefficients?: string  // 信道系数文件
+    dopplerProfile?: string       // 多普勒谱文件
+    powerDelayProfile?: string    // 功率时延谱文件
+    angleOfArrival?: string       // 到达角数据
+    angleOfDeparture?: string     // 离开角数据
+  }
+
+  // 统计信息（从射线跟踪结果提取）
+  statistics?: {
+    averagePathLoss: number       // 平均路径损耗 (dB)
+    shadowingStdDev: number       // 阴影衰落标准差 (dB)
+    rmsDelaySpread: number        // RMS时延扩展 (ns)
+    dominantPathDelay: number     // 主径时延 (ns)
+  }
+
+  // 执行信息
+  execution: {
+    computeTime: number           // 计算时间 (秒)
+    rayCount: number              // 跟踪的射线数量
+    reflectionOrder: number       // 反射阶数
+    diffractionOrder: number      // 绕射阶数
+  }
+}
+
+// ========== 场景完整性与验证 ==========
+
+export interface ScenarioIntegrity {
+  // 数据完整性
+  dataCompleteness: {
+    hasNetwork: boolean           // 网络配置完整
+    hasTrajectory: boolean        // 轨迹定义完整
+    hasEnvironment: boolean       // 环境条件完整
+    hasTraffic: boolean          // 流量模型完整
+    hasKPI: boolean              // KPI定义完整
+  }
+
+  // 验证状态
+  validation: {
+    isValidated: boolean          // 已通过验证
+    validatedBy?: string          // 验证人员
+    validatedAt?: string          // 验证时间
+    validationNotes?: string      // 验证备注
+  }
+
+  // 可执行性
+  executability: {
+    canExecuteOTA: boolean        // 可在OTA模式执行
+    canExecuteConducted: boolean  // 可在传导模式执行
+    canExecuteDigitalTwin: boolean // 可在数字孪生模式执行
+
+    blockers?: string[]           // 阻塞问题列表
+  }
+}
 
 // ========== 网络配置 ==========
 
@@ -312,8 +439,12 @@ export interface RoadTestScenarioDetail {
   name: string
   description: string
   category: ScenarioCategory
-  source: 'standard' | 'custom'
-  tags: string[]
+
+  // 场景分类（多维度标签）
+  taxonomy: ScenarioTaxonomy
+
+  // 场景来源
+  origin: ScenarioOrigin
 
   // 元数据
   metadata: {
@@ -322,16 +453,21 @@ export interface RoadTestScenarioDetail {
     updatedAt: string
     author?: string
     organization?: string
-    standard?: string         // 例如: '3GPP TS 38.101-1 Section 7.3.2'
   }
 
-  // 业务语义定义
+  // 业务语义定义（原子场景 - 所有参数形成整体）
   networkConfig: NetworkConfig
   trajectory: PathTrajectory
   environment: EnvironmentConditions
   traffic: TrafficModel
   triggers?: TriggerEvent[]
   kpiTargets: KPIDefinition[]
+
+  // 射线跟踪输出（如果场景由射线跟踪生成）
+  rayTracingOutput?: RayTracingOutput
+
+  // 场景完整性与验证
+  integrity: ScenarioIntegrity
 
   // 附加信息
   notes?: string
@@ -349,8 +485,17 @@ export interface RoadTestScenario {
   name: string
   description: string
   category: ScenarioCategory
-  source: 'standard' | 'custom'
-  tags: string[]
+
+  // 分类摘要（用于筛选和排序）
+  taxonomy: {
+    source: 'real-world' | 'synthetic' | 'standard-derived'
+    geographyType: 'urban' | 'suburban' | 'highway' | 'tunnel' | 'indoor' | 'rural'
+    region: string            // 例如: "北京CBD"
+    purpose: string           // 例如: "throughput"
+    network: string           // 例如: "5G NR FR1"
+    complexity: 'basic' | 'intermediate' | 'advanced' | 'extreme'
+    tags: string[]
+  }
 
   // 关键参数摘要（用于快速预览）
   summary: {
@@ -360,6 +505,15 @@ export interface RoadTestScenario {
     avgSpeed: number          // km/h
     numBaseStations: number
     kpiCount: number
+  }
+
+  // 完整性标记
+  isComplete: boolean         // 数据完整
+  isValidated: boolean        // 已验证
+  canExecute: {
+    ota: boolean
+    conducted: boolean
+    digitalTwin: boolean
   }
 
   createdAt: string
