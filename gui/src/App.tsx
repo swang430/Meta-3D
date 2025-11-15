@@ -50,6 +50,7 @@ import {
 } from '@mantine/core'
 import './App.css'
 import ProbeLayoutView from './components/ProbeLayoutView'
+import { VirtualRoadTest } from './components/VirtualRoadTest'
 import {
   appendPlanStep,
   createProbe,
@@ -116,7 +117,7 @@ const hexToRgba = (hex: string, alpha: number) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
-type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'testConfig' | 'monitoring' | 'results'
+type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'testConfig' | 'monitoring' | 'results' | 'virtualRoadTest'
 
 type ProbeFormState = Pick<ProbeType, 'ring' | 'polarization' | 'position'>
 
@@ -203,6 +204,11 @@ const sections: Array<{ key: SectionKey; label: string; description: string }> =
     key: 'results',
     label: '数据归档与报告',
     description: '浏览历史记录、对比结果，并一键生成标准化报告。',
+  },
+  {
+    key: 'virtualRoadTest',
+    label: '虚拟路测',
+    description: '支持数字孪生、传导测试与OTA辐射测试的统一平台。',
   },
 ]
 
@@ -901,6 +907,8 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
           currentExecutionMode={payload.executionMode}
         />
       )
+    case 'virtualRoadTest':
+      return <VirtualRoadTest />
     default:
       return null
   }
