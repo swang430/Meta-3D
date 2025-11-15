@@ -4,9 +4,12 @@
  * 包含10个预定义场景实例，覆盖不同的测试目的和环境类型
  */
 
-import {
+import type {
   RoadTestScenario,
   RoadTestScenarioDetail,
+} from '../types/roadTest'
+
+import {
   ScenarioCategory,
   NetworkType,
   DuplexMode,

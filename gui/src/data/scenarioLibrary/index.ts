@@ -4,9 +4,12 @@
  * 整合所有场景数据，提供统一的访问接口
  */
 
-import {
+import type {
   RoadTestScenario,
   RoadTestScenarioDetail,
+} from '../../types/roadTest'
+
+import {
   NetworkType,
   EnvironmentType,
   ScenarioCategory,

@@ -7,7 +7,7 @@
 import { useEffect, useState } from 'react'
 import { Stack, Text, Card, Badge, Table, Alert, Group } from '@mantine/core'
 import { IconCheck, IconX, IconInfoCircle } from '@tabler/icons-react'
-import { scenarioList, getScenarioById, filterScenarios, getScenarioStatistics } from '../../data/scenarioLibrary'
+import { scenarioList, getScenarioById, filterScenarios, getScenarioStatistics } from '../../data/scenarioLibrary/index'
 
 interface TestResult {
   name: string

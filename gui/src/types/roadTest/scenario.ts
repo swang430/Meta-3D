@@ -136,18 +136,22 @@ export interface ScenarioIntegrity {
 
 // ========== 网络配置 ==========
 
-export enum NetworkType {
-  LTE = 'LTE',
-  NR_FR1 = '5G NR FR1',
-  NR_FR2 = '5G NR FR2',
-  C_V2X = 'C-V2X',
-  HYBRID = 'Hybrid'
-}
+export const NetworkType = {
+  LTE: 'LTE',
+  NR_FR1: '5G NR FR1',
+  NR_FR2: '5G NR FR2',
+  C_V2X: 'C-V2X',
+  HYBRID: 'Hybrid'
+} as const
 
-export enum DuplexMode {
-  FDD = 'FDD',
-  TDD = 'TDD'
-}
+export type NetworkType = typeof NetworkType[keyof typeof NetworkType]
+
+export const DuplexMode = {
+  FDD: 'FDD',
+  TDD: 'TDD'
+} as const
+
+export type DuplexMode = typeof DuplexMode[keyof typeof DuplexMode]
 
 export interface BaseStationConfig {
   id: string
@@ -217,14 +221,16 @@ export interface Waypoint {
   }
 }
 
-export enum PathType {
-  LINEAR = 'linear',           // 直线
-  CIRCULAR = 'circular',       // 环形
-  FIGURE_8 = 'figure-8',      // 8字形
-  URBAN_GRID = 'urban-grid',  // 城市网格
-  HIGHWAY = 'highway',         // 高速公路
-  CUSTOM = 'custom'            // 自定义
-}
+export const PathType = {
+  LINEAR: 'linear',           // 直线
+  CIRCULAR: 'circular',       // 环形
+  FIGURE_8: 'figure-8',      // 8字形
+  URBAN_GRID: 'urban-grid',  // 城市网格
+  HIGHWAY: 'highway',         // 高速公路
+  CUSTOM: 'custom'            // 自定义
+} as const
+
+export type PathType = typeof PathType[keyof typeof PathType]
 
 export interface PathTrajectory {
   type: PathType
@@ -242,35 +248,39 @@ export interface PathTrajectory {
 
 // ========== 环境条件 ==========
 
-export enum EnvironmentType {
-  URBAN_MACRO = 'Urban Macro',
-  URBAN_MICRO = 'Urban Micro',
-  SUBURBAN = 'Suburban',
-  RURAL = 'Rural',
-  HIGHWAY = 'Highway',
-  INDOOR = 'Indoor',
-  TUNNEL = 'Tunnel',
-  CANYON = 'Urban Canyon'
-}
+export const EnvironmentType = {
+  URBAN_MACRO: 'Urban Macro',
+  URBAN_MICRO: 'Urban Micro',
+  SUBURBAN: 'Suburban',
+  RURAL: 'Rural',
+  HIGHWAY: 'Highway',
+  INDOOR: 'Indoor',
+  TUNNEL: 'Tunnel',
+  CANYON: 'Urban Canyon'
+} as const
 
-export enum ChannelModel {
+export type EnvironmentType = typeof EnvironmentType[keyof typeof EnvironmentType]
+
+export const ChannelModel = {
   // 3GPP标准模型
-  CDL_A = '3GPP CDL-A',  // NLOS
-  CDL_B = '3GPP CDL-B',  // NLOS
-  CDL_C = '3GPP CDL-C',  // NLOS
-  CDL_D = '3GPP CDL-D',  // LOS
-  CDL_E = '3GPP CDL-E',  // LOS
-  TDL_A = '3GPP TDL-A',
-  TDL_B = '3GPP TDL-B',
-  TDL_C = '3GPP TDL-C',
+  CDL_A: '3GPP CDL-A',  // NLOS
+  CDL_B: '3GPP CDL-B',  // NLOS
+  CDL_C: '3GPP CDL-C',  // NLOS
+  CDL_D: '3GPP CDL-D',  // LOS
+  CDL_E: '3GPP CDL-E',  // LOS
+  TDL_A: '3GPP TDL-A',
+  TDL_B: '3GPP TDL-B',
+  TDL_C: '3GPP TDL-C',
 
   // WINNER模型
-  WINNER_B1 = 'WINNER B1',
-  WINNER_C2 = 'WINNER C2',
+  WINNER_B1: 'WINNER B1',
+  WINNER_C2: 'WINNER C2',
 
   // 自定义
-  CUSTOM = 'Custom'
-}
+  CUSTOM: 'Custom'
+} as const
+
+export type ChannelModel = typeof ChannelModel[keyof typeof ChannelModel]
 
 export interface EnvironmentConditions {
   type: EnvironmentType
@@ -311,21 +321,25 @@ export interface EnvironmentConditions {
 
 // ========== 业务流量 ==========
 
-export enum TrafficType {
-  FTP = 'FTP',
-  HTTP = 'HTTP',
-  VIDEO = 'Video Streaming',
-  VOIP = 'VoIP',
-  GAMING = 'Gaming',
-  IPERF = 'iPerf',
-  CUSTOM = 'Custom'
-}
+export const TrafficType = {
+  FTP: 'FTP',
+  HTTP: 'HTTP',
+  VIDEO: 'Video Streaming',
+  VOIP: 'VoIP',
+  GAMING: 'Gaming',
+  IPERF: 'iPerf',
+  CUSTOM: 'Custom'
+} as const
 
-export enum TrafficDirection {
-  DOWNLINK = 'DL',
-  UPLINK = 'UL',
-  BIDIRECTIONAL = 'Bi-directional'
-}
+export type TrafficType = typeof TrafficType[keyof typeof TrafficType]
+
+export const TrafficDirection = {
+  DOWNLINK: 'DL',
+  UPLINK: 'UL',
+  BIDIRECTIONAL: 'Bi-directional'
+} as const
+
+export type TrafficDirection = typeof TrafficDirection[keyof typeof TrafficDirection]
 
 export interface TrafficModel {
   type: TrafficType
@@ -357,15 +371,17 @@ export interface TrafficModel {
 
 // ========== 触发事件 ==========
 
-export enum TriggerType {
-  HANDOVER = 'Handover',
-  BEAM_SWITCH = 'Beam Switch',
-  CARRIER_AGGREGATION = 'Carrier Aggregation',
-  INTERFERENCE = 'Interference',
-  POWER_CHANGE = 'Power Change',
-  LOCATION = 'Location',
-  TIME = 'Time'
-}
+export const TriggerType = {
+  HANDOVER: 'Handover',
+  BEAM_SWITCH: 'Beam Switch',
+  CARRIER_AGGREGATION: 'Carrier Aggregation',
+  INTERFERENCE: 'Interference',
+  POWER_CHANGE: 'Power Change',
+  LOCATION: 'Location',
+  TIME: 'Time'
+} as const
+
+export type TriggerType = typeof TriggerType[keyof typeof TriggerType]
 
 export interface TriggerEvent {
   id: string
@@ -391,20 +407,22 @@ export interface TriggerEvent {
 
 // ========== KPI定义 ==========
 
-export enum KPIMetric {
-  THROUGHPUT_DL = 'Throughput (DL)',
-  THROUGHPUT_UL = 'Throughput (UL)',
-  LATENCY = 'Latency',
-  BLER = 'BLER',
-  RSRP = 'RSRP',
-  RSRQ = 'RSRQ',
-  SINR = 'SINR',
-  HANDOVER_SUCCESS_RATE = 'Handover Success Rate',
-  HANDOVER_LATENCY = 'Handover Latency',
-  COVERAGE = 'Coverage',
-  PACKET_LOSS = 'Packet Loss',
-  CUSTOM = 'Custom'
-}
+export const KPIMetric = {
+  THROUGHPUT_DL: 'Throughput (DL)',
+  THROUGHPUT_UL: 'Throughput (UL)',
+  LATENCY: 'Latency',
+  BLER: 'BLER',
+  RSRP: 'RSRP',
+  RSRQ: 'RSRQ',
+  SINR: 'SINR',
+  HANDOVER_SUCCESS_RATE: 'Handover Success Rate',
+  HANDOVER_LATENCY: 'Handover Latency',
+  COVERAGE: 'Coverage',
+  PACKET_LOSS: 'Packet Loss',
+  CUSTOM: 'Custom'
+} as const
+
+export type KPIMetric = typeof KPIMetric[keyof typeof KPIMetric]
 
 export interface KPIDefinition {
   metric: KPIMetric

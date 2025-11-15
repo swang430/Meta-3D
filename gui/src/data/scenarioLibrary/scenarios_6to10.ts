@@ -2,8 +2,11 @@
  * 虚拟路测场景库 - 场景6-10
  */
 
-import {
+import type {
   RoadTestScenarioDetail,
+} from '../../types/roadTest'
+
+import {
   ScenarioCategory,
   NetworkType,
   DuplexMode,
@@ -13,7 +16,7 @@ import {
   TrafficType,
   TrafficDirection,
   KPIMetric,
-} from '../types/roadTest'
+} from '../../types/roadTest'
 
 // ========== 场景6: 室内停车场 ==========
 

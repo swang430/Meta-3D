@@ -4,7 +4,7 @@
  * 验证10个场景的数据完整性和辅助函数功能
  */
 
-import { scenarioList, getScenarioById, filterScenarios, getScenarioStatistics } from '../data/scenarioLibrary'
+import { scenarioList, getScenarioById, filterScenarios, getScenarioStatistics } from '../data/scenarioLibrary/index'
 
 console.log('========== 场景库数据测试 ==========\n')
 
@@ -87,7 +87,7 @@ console.log(`结果: ${stats.total === 10 ? '✅ 通过' : '❌ 失败'}\n`)
 // 测试8: 射线跟踪数据
 console.log('测试8: 射线跟踪数据检查')
 let rayTracingCount = 0
-scenarioList.forEach((scenario, index) => {
+scenarioList.forEach((scenario) => {
   const detail = getScenarioById(scenario.id)
   if (detail?.rayTracingOutput) {
     console.log(`  ✅ ${scenario.id}: ${scenario.name} - ${detail.rayTracingOutput.tool}`)

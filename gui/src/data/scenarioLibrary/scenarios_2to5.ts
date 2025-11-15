@@ -2,8 +2,11 @@
  * 虚拟路测场景库 - 场景2-5
  */
 
-import {
+import type {
   RoadTestScenarioDetail,
+} from '../../types/roadTest'
+
+import {
   ScenarioCategory,
   NetworkType,
   DuplexMode,
@@ -14,7 +17,7 @@ import {
   TrafficDirection,
   KPIMetric,
   TriggerType,
-} from '../types/roadTest'
+} from '../../types/roadTest'
 
 // ========== 场景2: 京沪高速G2巡航 ==========
 
