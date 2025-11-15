@@ -3,6 +3,8 @@
  * 导出所有虚拟路测相关的类型
  */
 
+// ========== 基础枚举 ==========
+
 // 测试模式
 export enum TestMode {
   DIGITAL_TWIN = 'digital_twin',
@@ -22,15 +24,12 @@ export enum ScenarioCategory {
   CUSTOM = 'custom'
 }
 
-// 路测场景定义（简化版Phase 1）
-export interface RoadTestScenario {
-  id: string
-  name: string
-  description: string
-  category: ScenarioCategory
-  source: 'standard' | 'custom'
-  tags: string[]
-}
+// ========== 场景类型（从scenario.ts导出）==========
+
+// 导出场景相关的所有类型
+export * from './scenario'
+
+// ========== 测试配置 ==========
 
 // 网络拓扑定义（传导测试用）
 export interface NetworkTopology {
@@ -42,14 +41,22 @@ export interface NetworkTopology {
 // 测试配置
 export interface TestConfig {
   mode: TestMode
-  scenario: RoadTestScenario
+  scenarioId: string  // 引用场景ID
   topology?: NetworkTopology
 }
+
+// ========== 测试执行 ==========
 
 // 测试执行句柄
 export interface ExecutionHandle {
   executionId: string
   mode: TestMode
+  scenarioId: string
   status: 'initializing' | 'running' | 'paused' | 'stopped' | 'completed' | 'failed'
   startTime: string
+  progress?: {
+    currentStep: number
+    totalSteps: number
+    elapsedTime: number  // 秒
+  }
 }
