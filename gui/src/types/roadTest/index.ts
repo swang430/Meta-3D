@@ -4,23 +4,27 @@
  */
 
 // 测试模式
-export enum TestMode {
-  DIGITAL_TWIN = 'digital_twin',
-  CONDUCTED = 'conducted',
-  OTA = 'ota'
-}
+export const TestMode = {
+  DIGITAL_TWIN: 'digital_twin',
+  CONDUCTED: 'conducted',
+  OTA: 'ota'
+} as const
+
+export type TestMode = typeof TestMode[keyof typeof TestMode]
 
 // 场景分类
-export enum ScenarioCategory {
-  STANDARD_3GPP = '3GPP',
-  STANDARD_CTIA = 'CTIA',
-  STANDARD_5GAA = '5GAA',
-  FUNCTIONAL = 'functional',
-  PERFORMANCE = 'performance',
-  ENVIRONMENT = 'environment',
-  EXTREME = 'extreme',
-  CUSTOM = 'custom'
-}
+export const ScenarioCategory = {
+  STANDARD_3GPP: '3GPP',
+  STANDARD_CTIA: 'CTIA',
+  STANDARD_5GAA: '5GAA',
+  FUNCTIONAL: 'functional',
+  PERFORMANCE: 'performance',
+  ENVIRONMENT: 'environment',
+  EXTREME: 'extreme',
+  CUSTOM: 'custom'
+} as const
+
+export type ScenarioCategory = typeof ScenarioCategory[keyof typeof ScenarioCategory]
 
 // 路测场景定义（简化版Phase 1）
 export interface RoadTestScenario {
