@@ -1,0 +1,68 @@
+.probe-layout {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.probe-layout__canvas {
+  background: rgba(15, 23, 42, 0.04);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.probe-layout__canvas h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.probe-layout__svg {
+  width: 100%;
+  height: auto;
+  background: #ffffff;
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.probe-layout__ring {
+  fill: none;
+  stroke: rgba(99, 102, 241, 0.18);
+  stroke-width: 1.5;
+}
+
+.probe-layout__ring--outer {
+  stroke-dasharray: 6 6;
+}
+
+.probe-layout__axis {
+  stroke: rgba(100, 116, 139, 0.3);
+  stroke-width: 1;
+}
+
+.probe-layout__point {
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.probe-layout__point:hover {
+  transform: scale(1.05);
+}
+
+.probe-layout__point--selected circle,
+.probe-layout__point--selected rect {
+  stroke: #0f172a;
+  stroke-width: 2;
+  filter: drop-shadow(0 4px 8px rgba(15, 23, 42, 0.25));
+}
+
+.probe-layout__label {
+  font-size: 10px;
+  font-weight: 700;
+  fill: #0f172a;
+  text-anchor: middle;
+}

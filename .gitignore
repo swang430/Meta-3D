@@ -3,7 +3,25 @@ dist/
 **/dist/
 **/node_modules/
 .DS_Store
+**/.DS_Store
 *.log
 /.vite
 /.idea
 /.vscode
+
+# Claude Code
+.claude/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Testing
+coverage/
+
+# Build artifacts
+*.tsbuildinfo
+
+# OS files
+Thumbs.db

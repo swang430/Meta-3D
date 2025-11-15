@@ -1,0 +1,208 @@
+openapi: 3.0.3
+info:
+  title: MIMO OTA Control API
+  version: 0.1.0
+servers:
+  - url: http://localhost:3000
+paths:
+  /api/v1/dashboard:
+    get:
+      summary: Get dashboard summary metrics
+      responses:
+        '200':
+          description: Dashboard data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardResponse'
+  /api/v1/monitoring/feeds:
+    get:
+      summary: Get monitoring metric feeds
+      responses:
+        '200':
+          description: Monitoring metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MonitoringFeedsResponse'
+  /api/v1/instruments/catalog:
+    get:
+      summary: List instrument categories and models
+      responses:
+        '200':
+          description: Instrument catalog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstrumentsResponse'
+  /api/v1/instruments/{categoryKey}:
+    put:
+      summary: Update instrument selection or connection
+      parameters:
+        - name: categoryKey
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateInstrumentPayload'
+      responses:
+        '200':
+          description: Updated category
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstrumentCategoryResponse'
+components:
+  schemas:
+    DashboardResponse:
+      type: object
+      properties:
+        systemStatus:
+          type: array
+          items:
+            $ref: '#/components/schemas/SystemStatusItem'
+        activeAlerts:
+          type: array
+          items:
+            $ref: '#/components/schemas/AlertItem'
+        liveMetrics:
+          type: array
+          items:
+            $ref: '#/components/schemas/MetricItem'
+      required: [systemStatus, activeAlerts, liveMetrics]
+    MonitoringFeedsResponse:
+      type: object
+      properties:
+        feeds:
+          type: array
+          items:
+            $ref: '#/components/schemas/MetricItem'
+      required: [feeds]
+    InstrumentsResponse:
+      type: object
+      properties:
+        categories:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstrumentCategory'
+      required: [categories]
+    InstrumentCategoryResponse:
+      type: object
+      properties:
+        category:
+          $ref: '#/components/schemas/InstrumentCategory'
+      required: [category]
+    UpdateInstrumentPayload:
+      type: object
+      properties:
+        modelId:
+          type: string
+          nullable: true
+        connection:
+          $ref: '#/components/schemas/InstrumentConnection'
+      additionalProperties: false
+    SystemStatusItem:
+      type: object
+      properties:
+        label:
+          type: string
+        value:
+          type: string
+        detail:
+          type: string
+      required: [label, value, detail]
+    AlertItem:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        severity:
+          type: string
+          enum: [info, warning, critical]
+        timestamp:
+          type: string
+      required: [id, title, severity, timestamp]
+    MetricItem:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        value:
+          type: string
+        trend:
+          type: string
+      required: [label, value]
+    InstrumentCategory:
+      type: object
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        description:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        selectedModelId:
+          type: string
+          nullable: true
+        connection:
+          $ref: '#/components/schemas/InstrumentConnection'
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstrumentModel'
+      required: [key, label, description, selectedModelId, connection, models]
+    InstrumentModel:
+      type: object
+      properties:
+        id:
+          type: string
+        vendor:
+          type: string
+        model:
+          type: string
+        summary:
+          type: string
+        interfaces:
+          type: array
+          items:
+            type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        bandwidth:
+          type: string
+          nullable: true
+        channels:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [available, reserved, maintenance, offline]
+      required: [id, vendor, model, summary, interfaces, capabilities, status]
+    InstrumentConnection:
+      type: object
+      properties:
+        endpoint:
+          type: string
+          nullable: true
+        controller:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+      additionalProperties: false
