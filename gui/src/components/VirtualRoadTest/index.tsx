@@ -4,47 +4,83 @@
  */
 
 import { useState } from 'react'
-import { Stack, Alert, Text } from '@mantine/core'
-import { IconInfoCircle } from '@tabler/icons-react'
+import { Stack, Alert, Text, Tabs, Button, Group } from '@mantine/core'
+import { IconInfoCircle, IconFlask, IconRefresh } from '@tabler/icons-react'
 import { ModeSelector } from './ModeSelector'
+import { ScenarioLibraryTest } from './ScenarioLibraryTest'
 import { TestMode } from '../../types/roadTest'
 
 export function VirtualRoadTest() {
   const [selectedMode, setSelectedMode] = useState<TestMode | null>(null)
+  const [activeTab, setActiveTab] = useState<string>('main')
 
   const handleModeSelected = (mode: TestMode) => {
     setSelectedMode(mode)
     console.log('选择的测试模式:', mode)
   }
 
+  const handleReset = () => {
+    setSelectedMode(null)
+    setActiveTab('main')
+  }
+
   return (
     <Stack gap="xl">
       <Alert variant="light" color="blue" icon={<IconInfoCircle />}>
-        <Text size="sm" fw={600}>
-          虚拟路测平台 (Phase 1 - 基础架构)
-        </Text>
-        <Text size="sm" mt={4}>
-          支持三种测试模式：全数字仿真（数字孪生）、传导测试（仪表-DUT直连）、OTA辐射测试（MPAC暗室）
-        </Text>
+        <Group justify="space-between">
+          <div>
+            <Text size="sm" fw={600}>
+              虚拟路测平台 (Phase 2 - 场景库开发)
+            </Text>
+            <Text size="sm" mt={4}>
+              支持三种测试模式：全数字仿真（数字孪生）、传导测试（仪表-DUT直连）、OTA辐射测试（MPAC暗室）
+            </Text>
+          </div>
+          {selectedMode && (
+            <Button
+              variant="light"
+              size="xs"
+              leftSection={<IconRefresh size={14} />}
+              onClick={handleReset}
+            >
+              重置
+            </Button>
+          )}
+        </Group>
       </Alert>
 
-      {!selectedMode ? (
-        <ModeSelector onModeSelected={handleModeSelected} />
-      ) : (
-        <Stack>
-          <Alert variant="light" color="green">
-            <Text size="sm">
-              已选择模式：
-              {selectedMode === TestMode.DIGITAL_TWIN && '全数字仿真'}
-              {selectedMode === TestMode.CONDUCTED && '传导测试'}
-              {selectedMode === TestMode.OTA && 'OTA辐射测试'}
-            </Text>
-            <Text size="sm" mt={4} c="dimmed">
-              场景库和执行流程正在开发中，敬请期待...
-            </Text>
-          </Alert>
-        </Stack>
-      )}
+      <Tabs value={activeTab} onChange={(value) => setActiveTab(value || 'main')}>
+        <Tabs.List>
+          <Tabs.Tab value="main">模式选择</Tabs.Tab>
+          <Tabs.Tab value="test" leftSection={<IconFlask size={14} />}>
+            场景库测试
+          </Tabs.Tab>
+        </Tabs.List>
+
+        <Tabs.Panel value="main" pt="lg">
+          {!selectedMode ? (
+            <ModeSelector onModeSelected={handleModeSelected} />
+          ) : (
+            <Stack>
+              <Alert variant="light" color="green">
+                <Text size="sm">
+                  已选择模式：
+                  {selectedMode === TestMode.DIGITAL_TWIN && '全数字仿真'}
+                  {selectedMode === TestMode.CONDUCTED && '传导测试'}
+                  {selectedMode === TestMode.OTA && 'OTA辐射测试'}
+                </Text>
+                <Text size="sm" mt={4} c="dimmed">
+                  场景库和执行流程正在开发中，敬请期待...
+                </Text>
+              </Alert>
+            </Stack>
+          )}
+        </Tabs.Panel>
+
+        <Tabs.Panel value="test" pt="lg">
+          <ScenarioLibraryTest />
+        </Tabs.Panel>
+      </Tabs>
     </Stack>
   )
 }

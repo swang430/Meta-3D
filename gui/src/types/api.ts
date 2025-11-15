@@ -81,6 +81,13 @@ export type TestCase = TestTemplate & {
   category?: string
   tags?: string[]
   description?: string
+
+  // 场景关联信息（可选）- 标记是否由虚拟路测场景生成
+  linkedScenario?: {
+    scenarioId: string
+    mode: 'ota' | 'conducted' | 'digital_twin'
+    generatedAt: string
+  }
 }
 
 export type TestCaseDetail = TestCase & {
