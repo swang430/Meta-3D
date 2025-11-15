@@ -12,18 +12,23 @@ import {
   ScenarioCategory,
 } from '../../types/roadTest'
 
-// 导入场景1
-import { scenario_beijing_cbd } from './scenario_001_beijing_cbd'
-// 导入场景2-10（待创建单独文件）
-import { scenario_highway_g2 } from './scenario_002_highway_g2'
-import { scenario_shanghai_tunnel } from './scenario_003_shanghai_tunnel'
-import { scenario_shenzhen_tech_park } from './scenario_004_shenzhen_techpark'
-import { scenario_suburban_lowspeed } from './scenario_005_suburban'
-import { scenario_indoor_parking } from './scenario_006_indoor_parking'
-import { scenario_extreme_highspeed } from './scenario_007_extreme_highspeed'
-import { scenario_dense_interference } from './scenario_008_dense_interference'
-import { scenario_v2x_intersection } from './scenario_009_v2x_intersection'
-import { scenario_continuous_handover } from './scenario_010_continuous_handover'
+// 导入场景1（从上级目录）
+import { scenario_beijing_cbd } from '../scenarioLibrary'
+// 导入场景2-5
+import {
+  scenario_highway_g2,
+  scenario_shanghai_tunnel,
+  scenario_shenzhen_tech_park,
+  scenario_suburban_lowspeed,
+} from './scenarios_2to5'
+// 导入场景6-10
+import {
+  scenario_indoor_parking,
+  scenario_extreme_highspeed,
+  scenario_dense_interference,
+  scenario_v2x_intersection,
+  scenario_continuous_handover,
+} from './scenarios_6to10'
 
 // ========== 场景简化视图列表 ==========
 
