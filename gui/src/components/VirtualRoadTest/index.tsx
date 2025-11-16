@@ -5,9 +5,10 @@
 
 import { useState } from 'react'
 import { Stack, Alert, Text, Tabs, Button, Group } from '@mantine/core'
-import { IconInfoCircle, IconFlask, IconRefresh } from '@tabler/icons-react'
+import { IconInfoCircle, IconFlask, IconRefresh, IconMapPin } from '@tabler/icons-react'
 import { ModeSelector } from './ModeSelector'
 import { ScenarioLibraryTest } from './ScenarioLibraryTest'
+import { OTAMapper } from '../OTAMapper'
 import { TestMode } from '../../types/roadTest'
 
 export function VirtualRoadTest() {
@@ -55,6 +56,9 @@ export function VirtualRoadTest() {
           <Tabs.Tab value="test" leftSection={<IconFlask size={14} />}>
             场景库测试
           </Tabs.Tab>
+          <Tabs.Tab value="ota-mapper" leftSection={<IconMapPin size={14} />}>
+            OTA映射器
+          </Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="main" pt="lg">
@@ -79,6 +83,10 @@ export function VirtualRoadTest() {
 
         <Tabs.Panel value="test" pt="lg">
           <ScenarioLibraryTest />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="ota-mapper" pt="lg">
+          <OTAMapper />
         </Tabs.Panel>
       </Tabs>
     </Stack>

@@ -1,0 +1,15 @@
+# FastAPI and server
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+pydantic>=2.0.0
+
+# CORS middleware
+python-multipart>=0.0.9
+
+# ChannelEngine dependencies (inherit from ChannelEgine)
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Development and testing
+pytest>=8.0.0
+httpx>=0.27.0
