@@ -28,7 +28,8 @@ export function ProbeArraySelector({ value, onChange }: ProbeArraySelectorProps)
     { value: 'V', label: 'V - 垂直极化' },
     { value: 'H', label: 'H - 水平极化' },
     { value: 'LHCP', label: 'LHCP - 左旋圆极化' },
-    { value: 'RHCP', label: 'RHCP - 右旋圆极化' }
+    { value: 'RHCP', label: 'RHCP - 右旋圆极化' },
+    { value: 'VH', label: 'VH - 双极化' }
   ]
 
   // 应用模板

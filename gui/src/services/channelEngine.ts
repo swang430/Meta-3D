@@ -117,7 +117,7 @@ export function generateRingProbeArray(
   numProbes: number,
   radius: number,
   theta: number = 90,
-  polarization: 'V' | 'H' | 'LHCP' | 'RHCP' = 'V'
+  polarization: 'V' | 'H' | 'LHCP' | 'RHCP' | 'VH' = 'V'
 ): ProbeArrayConfig {
   const positions: ProbePosition[] = []
 
@@ -146,7 +146,7 @@ export function generateRingProbeArray(
  */
 export function generateThreeRingProbeArray(
   radius: number = 2.5,
-  polarization: 'V' | 'H' | 'LHCP' | 'RHCP' = 'V'
+  polarization: 'V' | 'H' | 'LHCP' | 'RHCP' | 'VH' = 'V'
 ): ProbeArrayConfig {
   const positions: ProbePosition[] = []
   let probeId = 1

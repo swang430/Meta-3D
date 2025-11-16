@@ -9,11 +9,9 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 
 # Add ChannelEgine to Python path
-CHANNEL_ENGINE_PATH = os.path.join(
-    os.path.dirname(__file__),
-    "../../../ChannelEgine"
-)
-sys.path.insert(0, os.path.abspath(CHANNEL_ENGINE_PATH))
+# Note: ChannelEngine is located outside the project directory
+CHANNEL_ENGINE_PATH = "/Users/Simon/Library/CloudStorage/OneDrive-个人/2024/乾径/MIMO OTA/ChannelEgine"
+sys.path.insert(0, CHANNEL_ENGINE_PATH)
 
 from channel_model_38901.simulator import ChannelSimulator
 from app.models.ota_models import (
@@ -37,9 +35,7 @@ class ChannelEngineService:
         # 保存原始工作目录
         self.original_cwd = os.getcwd()
         # ChannelEgine工作目录（包含参数文件）
-        self.channel_engine_cwd = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "../../../ChannelEgine")
-        )
+        self.channel_engine_cwd = CHANNEL_ENGINE_PATH
 
     def _run_in_channel_engine_context(self, func):
         """在ChannelEngine工作目录上下文中运行函数"""
@@ -141,19 +137,27 @@ class ChannelEngineService:
         pathloss_db = results.get('pathloss_db', 0.0)
 
         # 提取LSP信息（如果可用）
-        lsp = results.get('lsp', {})
-        rms_delay_spread_ns = lsp.get('rms_delay_spread', None)
-        if rms_delay_spread_ns is not None:
-            rms_delay_spread_ns *= 1e9  # 转换为纳秒
+        lsp = results.get('lsps', {})
+        rms_delay_spread_ns = None
+        angular_spread_deg = None
 
-        angular_spread_deg = lsp.get('azimuth_spread_arrival', None)
+        if lsp:
+            # LSP对象可能有delay_spread和angular_spread属性
+            if hasattr(lsp, 'delay_spread'):
+                rms_delay_spread_ns = lsp.delay_spread * 1e9  # 转换为纳秒
+            if hasattr(lsp, 'azimuth_spread_arrival'):
+                angular_spread_deg = lsp.azimuth_spread_arrival
 
-        # 信道条件
-        condition = results.get('los_condition', 'UNKNOWN')
+        # 信道条件：从is_los布尔值转换为字符串
+        is_los = results.get('is_los', None)
+        if is_los is not None:
+            condition = 'LOS' if is_los else 'NLOS'
+        else:
+            condition = 'UNKNOWN'
 
-        # 簇数量
-        cluster_powers = results.get('cluster_powers', [])
-        num_clusters = len(cluster_powers) if cluster_powers is not None else 0
+        # 簇数量：从clusters列表中获取
+        clusters = results.get('clusters', [])
+        num_clusters = len(clusters) if clusters is not None else 0
 
         return ChannelStatistics(
             pathloss_db=float(pathloss_db),
@@ -183,13 +187,16 @@ class ChannelEngineService:
         - 功率归一化优化
         """
 
-        # 提取簇信息
-        cluster_aoa_deg = channel_results.get('cluster_aoa_deg', [])
-        cluster_powers = channel_results.get('cluster_powers', [])
+        # 提取簇信息：从clusters列表中提取aoa_phi和power
+        clusters = channel_results.get('clusters', [])
 
         # 如果没有簇信息，使用均匀权重
-        if not cluster_aoa_deg or not cluster_powers:
+        if not clusters:
             return self._uniform_weights(probe_array)
+
+        # 从EngineCluster对象中提取AoA和功率
+        cluster_aoa_deg = [c.aoa_phi for c in clusters]
+        cluster_powers = [c.power for c in clusters]
 
         probe_weights = []
 

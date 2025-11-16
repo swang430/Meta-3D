@@ -17,7 +17,7 @@ class ProbePosition(BaseModel):
     theta: float = Field(..., description="天顶角 (degrees, 0-180)")
     phi: float = Field(..., description="方位角 (degrees, 0-360)")
     r: float = Field(..., description="半径 (meters)")
-    polarization: Literal["V", "H", "LHCP", "RHCP"] = Field(..., description="极化方式")
+    polarization: Literal["V", "H", "LHCP", "RHCP", "VH"] = Field(..., description="极化方式")
 
 
 class ProbeArrayConfig(BaseModel):

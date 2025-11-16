@@ -16,7 +16,7 @@ export interface ProbePosition {
   theta: number               // 天顶角 (degrees, 0-180)
   phi: number                 // 方位角 (degrees, 0-360)
   r: number                   // 半径 (meters)
-  polarization: 'V' | 'H' | 'LHCP' | 'RHCP'  // 极化方式
+  polarization: 'V' | 'H' | 'LHCP' | 'RHCP' | 'VH'  // 极化方式
 }
 
 /**
