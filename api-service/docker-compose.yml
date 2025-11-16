@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:14
+    container_name: meta3d-postgres
+    environment:
+      POSTGRES_USER: meta3d
+      POSTGRES_PASSWORD: meta3d_password
+      POSTGRES_DB: meta3d_ota
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meta3d"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    container_name: meta3d-api
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://meta3d:meta3d_password@postgres:5432/meta3d_ota
+      DEBUG: "false"
+      USE_MOCK_INSTRUMENTS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./calibration_data:/app/calibration_data
+      - ./certificates:/app/certificates
+
+volumes:
+  postgres_data:
