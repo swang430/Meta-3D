@@ -773,7 +773,19 @@ $P_{rx} = P_{tx} + G_{tx} - L_{tx} - L_{fspl} - L_{misc} + G_{rx} - L_{rx}$
 
 为便于在新的会话窗口中迅速恢复上下文，本章节持续滚动记录关键讨论结论：
 
-  * **2025-11-06 · 执行模式与监控联动:** “测试计划与编排”页保留真实/模拟切换与计划维护；执行触发后自动切换到“实时监控”，新增执行控制卡片与时间线（引用 Demo Run 时间轴），并依据仪器在线状态自动降级为 Mock 模式。全局 `npm run build` 已通过验证。
+  * **2025-11-16 · ChannelEngine 集成完成 (Phase 1.1-1.3):** 成功实现基于 3GPP TR 38.901 的 ChannelEngine FastAPI 微服务，提供探头权重计算功能。服务架构包括：`app/main.py`（FastAPI 入口，103行）、`app/services/channel_engine.py`（核心业务逻辑，314行）、`app/models/ota_models.py`（Pydantic 数据模型，111行）。支持 UMa/UMi/RMa/InH 场景和 CDL/TDL 簇模型，实现基于 AoA 匹配的探头权重计算算法。服务运行在 `http://localhost:8000`，提供健康检查和权重生成 API 端点，已通过 CORS 配置支持多端口前端开发（5173-5175）。
+
+  * **2025-11-16 · OTA Mapper UI 实现:** 完成 TypeScript 前端集成（891行代码），包含5个核心组件：`OTAMapper/index.tsx`（主组件，281行）、`ProbeArraySelector.tsx`（探头阵列选择器，177行）、`WeightResultDisplay.tsx`（权重结果显示，205行）、`ScenarioSelector.tsx`（场景选择器，124行）、`MIMOConfigPanel.tsx`（MIMO配置面板，104行）。支持预定义探头模板（8/16/32探头）、5种极化方式（V/H/LHCP/RHCP/VH）、场景和MIMO配置，以及完整的权重计算结果可视化。UI 采用 Mantine 组件库，与 ChannelEngine 微服务通过 REST API 集成（`gui/src/services/channelEngine.ts`，287行）。
+
+  * **2025-11-16 · 探头权重计算算法实现:** 在 `channel_engine.py` 中实现完整的权重计算流程：(1) 调用 ChannelSimulator 生成信道模型；(2) 从 EngineCluster 对象提取簇的 AoA（`.aoa_phi`）和功率（`.power`）；(3) 计算每个探头与簇方向的角度匹配度（使用高斯函数，σ=30°）；(4) 基于功率加权和匹配因子计算复数权重（幅度和相位）；(5) 归一化使总功率为1。算法成功提取信道统计信息（路径损耗、RMS时延扩展、角度扩展、LOS/NLOS条件、簇数量）。
+
+  * **2025-11-16 · 双极化支持与 Bug 修复:** 添加双极化（VH）支持到完整类型系统：Python `Literal["V", "H", "LHCP", "RHCP", "VH"]`（ota_models.py:20）、TypeScript `'V' | 'H' | 'LHCP' | 'RHCP' | 'VH'`（channelEngine.ts:19）、UI 极化选择器（ProbeArraySelector.tsx:32）。修复信道统计提取 bug：(1) 从 `results['is_los']`（布尔）正确转换为 'LOS'/'NLOS' 字符串；(2) 从 `results['clusters']` 列表提取簇数量；(3) 修正 LSP 字段名称从 `'lsp'` 到 `'lsps'`。CORS 配置添加端口 5174-5175 支持。
+
+  * **2025-11-16 · 完整设计文档体系建立:** 完成30个设计文档（`docs/`目录），覆盖7大子系统：系统架构（4个）、硬件抽象层 HAL（5个）、校准系统（3个）、测试框架（7个）、数据处理（4个）、探头与信道（4个）、其他（3个）。核心文档包括：`Master-Progress-Tracker.md`（主进度跟踪）、`System-Architecture-Overview.md`（系统架构）、`Test-Execution-Engine-Design.md`（测试执行引擎）、`ChannelEgine-Integration-Plan.md`（集成计划）。所有文档已同步到 GitHub main 分支。
+
+  * **2025-11-16 · 项目里程碑与技术栈确认:** Phase 1（ChannelEngine 集成）全部完成并合并到主分支。技术栈：后端使用 FastAPI + Pydantic + NumPy/SciPy，前端使用 React 18 + TypeScript + Vite + Mantine UI + TanStack Query，ChannelEngine 库通过绝对路径引用（`/Users/Simon/.../ChannelEgine`）。项目采用 Monorepo 结构（`channel-engine-service/`、`gui/`、`docs/`、`api/`），OpenAPI 规范驱动的 API-First 架构，Mock 数据支持离线开发。前后端服务均支持热重载，已通过本地真实环境测试验证。
+
+  * **2025-11-06 · 执行模式与监控联动:** "测试计划与编排"页保留真实/模拟切换与计划维护；执行触发后自动切换到"实时监控"，新增执行控制卡片与时间线（引用 Demo Run 时间轴），并依据仪器在线状态自动降级为 Mock 模式。全局 `npm run build` 已通过验证。
   * **2025-11-06 · 计划执行队列实现:** 前端实现草稿→待执行→执行中→已完成状态切换，计划列表支持置顶/上移/下移排序与自动连续执行开关；执行完成后可自动拉起下一条计划。Mock 层新增 `/tests/plans/reorder` 接口与队列顺序持久化。
   * **2025-11-06 · 计划删除与时间线联动:** “测试计划库”支持删除非执行态计划（Mock 接口 `/tests/plans/{id}`），删除后自动重选计划；实时监控的“执行时间线”根据当前执行计划的步骤动态生成，不再固定展示 Demo 流程。
   * **2025-11-06 · 数据归档刷新:** “数据归档与报告”页可自动将最新执行结果追加到历史记录，新增模拟/真实过滤开关及行级报告模板选择；“当前测试结果”卡片统一显示关键指标概览并可与报告模板联动。
