@@ -21,6 +21,9 @@ from app.schemas.calibration import (
     RoundRobinSummary,
     QuietZoneCalibrationRequest,
     QuietZoneCalibrationResponse,
+    MultiFrequencyCalibrationRequest,
+    MultiFrequencyCalibrationResponse,
+    FrequencyCalibrationResult,
 )
 from app.services.system_calibration import (
     TRPCalibrationService,
@@ -369,3 +372,58 @@ async def execute_quiet_zone_calibration(
         raise HTTPException(status_code=400, detail=f"Unsupported validation type: {request.validation_type}")
 
     return calibration
+
+
+# ==================== Multi-Frequency Calibration Endpoints ====================
+
+@router.post("/multi-frequency", response_model=MultiFrequencyCalibrationResponse, status_code=201)
+async def execute_multi_frequency_calibration(
+    request: MultiFrequencyCalibrationRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Execute multi-frequency calibration.
+
+    Tests multiple frequency points in a single run to validate
+    system performance across the full frequency range.
+
+    **Validation Criteria**:
+    - TRP: |error| < ±0.5 dB per frequency
+    - TIS: |error| < ±1.0 dB per frequency
+    """
+    import random
+    import uuid
+    from datetime import datetime
+
+    results = []
+
+    for freq in request.frequency_list_mhz:
+        if request.calibration_type == "TRP":
+            # Mock: 模拟频率响应（中频最好，高低频稍差）
+            freq_factor = 1.0 - abs(freq - 3500) / 10000  # 3.5GHz 为中心
+            error = random.gauss(0, 0.15) * (2 - freq_factor)
+            measured = request.reference_trp_dbm + error
+            threshold = 0.5
+        else:  # TIS
+            freq_factor = 1.0 - abs(freq - 3500) / 10000
+            error = random.gauss(0, 0.25) * (2 - freq_factor)
+            measured = request.reference_tis_dbm + error
+            threshold = 1.0
+
+        results.append(FrequencyCalibrationResult(
+            frequency_mhz=freq,
+            measured_value_dbm=measured,
+            error_db=error,
+            validation_pass=abs(error) < threshold
+        ))
+
+    overall_pass = all(r.validation_pass for r in results)
+
+    return MultiFrequencyCalibrationResponse(
+        id=uuid.uuid4(),
+        calibration_type=request.calibration_type,
+        results=results,
+        overall_pass=overall_pass,
+        tested_at=datetime.utcnow(),
+        tested_by=request.tested_by
+    )

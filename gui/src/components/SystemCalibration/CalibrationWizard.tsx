@@ -20,6 +20,8 @@ import {
   Paper,
   Badge,
   Divider,
+  MultiSelect,
+  Textarea,
 } from '@mantine/core';
 import {
   IconInfoCircle,
@@ -32,10 +34,12 @@ import {
   executeTISCalibration,
   executeRepeatabilityTest,
   executeQuietZoneCalibration,
+  executeMultiFrequencyCalibration,
   type TRPCalibrationRequest,
   type TISCalibrationRequest,
   type RepeatabilityTestRequest,
   type QuietZoneCalibrationRequest,
+  type MultiFrequencyCalibrationRequest,
 } from '../../api/calibrationService';
 
 interface CalibrationWizardProps {
@@ -62,6 +66,14 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
     referenceLab: 'NIM (National Institute of Metrology)',
     refCertNumber: '',
   });
+
+  // 探头选择配置
+  const [probeSelectionMode, setProbeSelectionMode] = useState<string>('all');
+  const [selectedRings, setSelectedRings] = useState<string[]>([]);
+  const [selectedPolarizations, setSelectedPolarizations] = useState<string[]>([]);
+
+  // 多频点校准配置
+  const [frequencyList, setFrequencyList] = useState<string>('700, 1800, 2600, 3500, 5200');
 
   const nextStep = () => setActive((current) => (current < 4 ? current + 1 : current));
   const prevStep = () => setActive((current) => (current > 0 ? current - 1 : current));
@@ -102,6 +114,15 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
           ref_cert_number: formData.refCertNumber || undefined,
         };
 
+        // 添加探头选择配置
+        if (probeSelectionMode !== 'all') {
+          request.probe_selection = {
+            mode: probeSelectionMode as 'all' | 'ring' | 'custom' | 'polarization',
+            rings: probeSelectionMode === 'ring' ? selectedRings as ('upper' | 'middle' | 'lower')[] : undefined,
+            polarizations: probeSelectionMode === 'polarization' ? selectedPolarizations as ('V' | 'H')[] : undefined,
+          };
+        }
+
         // Update progress during API call
         setExecutionProgress(60);
         result = await executeTRPCalibration(request);
@@ -119,8 +140,40 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
           ref_cert_number: formData.refCertNumber || undefined,
         };
 
+        // 添加探头选择配置
+        if (probeSelectionMode !== 'all') {
+          request.probe_selection = {
+            mode: probeSelectionMode as 'all' | 'ring' | 'custom' | 'polarization',
+            rings: probeSelectionMode === 'ring' ? selectedRings as ('upper' | 'middle' | 'lower')[] : undefined,
+            polarizations: probeSelectionMode === 'polarization' ? selectedPolarizations as ('V' | 'H')[] : undefined,
+          };
+        }
+
         setExecutionProgress(60);
         result = await executeTISCalibration(request);
+
+      } else if (calibrationType === 'multi_frequency') {
+        // 解析频率列表
+        const frequencies = frequencyList
+          .split(',')
+          .map(f => parseFloat(f.trim()))
+          .filter(f => !isNaN(f) && f > 0);
+
+        if (frequencies.length === 0) {
+          throw new Error('请输入有效的频率列表');
+        }
+
+        const request: MultiFrequencyCalibrationRequest = {
+          calibration_type: 'TRP', // 默认使用 TRP
+          frequency_list_mhz: frequencies,
+          dut_model: formData.dutModel,
+          dut_serial: formData.dutSerial,
+          reference_trp_dbm: formData.referenceTRP,
+          tested_by: formData.testedBy,
+        };
+
+        setExecutionProgress(60);
+        result = await executeMultiFrequencyCalibration(request);
 
       } else if (calibrationType === 'quiet_zone') {
         const request: QuietZoneCalibrationRequest = {
@@ -207,6 +260,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                 { value: 'tis', label: 'TIS - 总全向灵敏度校准' },
                 { value: 'repeatability', label: '可重复性测试' },
                 { value: 'quiet_zone', label: '静区质量验证 - 场均匀性' },
+                { value: 'multi_frequency', label: '多频点校准（全频段扫描）' },
               ]}
             />
 
@@ -216,12 +270,14 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                 {calibrationType === 'tis' && 'TIS 校准说明'}
                 {calibrationType === 'repeatability' && '可重复性测试说明'}
                 {calibrationType === 'quiet_zone' && '静区质量验证说明'}
+                {calibrationType === 'multi_frequency' && '多频点校准说明'}
               </Text>
               <Text size="xs" color="dimmed">
                 {calibrationType === 'trp' && '验证系统测量辐射功率的准确性，标准: ±0.5 dB'}
                 {calibrationType === 'tis' && '验证系统测量接收灵敏度的准确性，标准: ±1.0 dB'}
                 {calibrationType === 'repeatability' && '验证系统测量的可重复性，标准: σ < 0.3 dB (TRP) 或 0.5 dB (TIS)'}
                 {calibrationType === 'quiet_zone' && '验证静区场均匀性，在 5x5 网格测量，标准: < 1.0 dB (3GPP TS 34.114)'}
+                {calibrationType === 'multi_frequency' && '在多个频率点执行校准测试，验证系统全频段性能'}
               </Text>
             </Paper>
           </Stack>
@@ -289,15 +345,27 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
         {/* Step 3: Test Configuration */}
         <Stepper.Step label="测试配置" description="频率和功率">
           <Stack gap="md" mt="xl">
-            <NumberInput
-              label="测试频率 (MHz)"
-              value={formData.frequency}
-              onChange={(value) => setFormData({ ...formData, frequency: typeof value === 'number' ? value : 0 })}
-              min={600}
-              max={6000}
-              step={100}
-              required
-            />
+            {calibrationType !== 'multi_frequency' ? (
+              <NumberInput
+                label="测试频率 (MHz)"
+                value={formData.frequency}
+                onChange={(value) => setFormData({ ...formData, frequency: typeof value === 'number' ? value : 0 })}
+                min={600}
+                max={6000}
+                step={100}
+                required
+              />
+            ) : (
+              <Textarea
+                label="频率列表 (MHz，逗号分隔)"
+                placeholder="700, 1800, 2600, 3500, 5200"
+                value={frequencyList}
+                onChange={(e) => setFrequencyList(e.target.value)}
+                description="输入要测试的频率点，例如：700, 1800, 2600, 3500"
+                required
+                minRows={3}
+              />
+            )}
 
             {calibrationType === 'trp' && (
               <NumberInput
@@ -309,6 +377,50 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                 step={1}
                 required
               />
+            )}
+
+            {(calibrationType === 'trp' || calibrationType === 'tis') && (
+              <>
+                <Divider label="探头选择配置" />
+
+                <Select
+                  label="探头选择模式"
+                  value={probeSelectionMode}
+                  onChange={(value) => setProbeSelectionMode(value || 'all')}
+                  data={[
+                    { value: 'all', label: '全部探头（32个，3层）' },
+                    { value: 'ring', label: '选择特定环' },
+                    { value: 'polarization', label: '选择极化' },
+                  ]}
+                />
+
+                {probeSelectionMode === 'ring' && (
+                  <MultiSelect
+                    label="选择探头环"
+                    value={selectedRings}
+                    onChange={setSelectedRings}
+                    data={[
+                      { value: 'upper', label: '上层环（8探头）' },
+                      { value: 'middle', label: '中层环（16探头）' },
+                      { value: 'lower', label: '下层环（8探头）' },
+                    ]}
+                    placeholder="选择一个或多个探头环"
+                  />
+                )}
+
+                {probeSelectionMode === 'polarization' && (
+                  <MultiSelect
+                    label="选择极化"
+                    value={selectedPolarizations}
+                    onChange={setSelectedPolarizations}
+                    data={[
+                      { value: 'V', label: '垂直极化（V）' },
+                      { value: 'H', label: '水平极化（H）' },
+                    ]}
+                    placeholder="选择一个或多个极化"
+                  />
+                )}
+              </>
             )}
 
             <TextInput
@@ -383,43 +495,62 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
             {results && (
               <Stack gap="md">
                 <Alert
-                  icon={results.validation_pass ? <IconCheck size={16} /> : <IconAlertCircle size={16} />}
-                  title={results.validation_pass ? '校准通过' : '校准未通过'}
-                  color={results.validation_pass ? 'green' : 'red'}
+                  icon={results.validation_pass || results.overall_pass ? <IconCheck size={16} /> : <IconAlertCircle size={16} />}
+                  title={(results.validation_pass || results.overall_pass) ? '校准通过' : '校准未通过'}
+                  color={(results.validation_pass || results.overall_pass) ? 'green' : 'red'}
                 >
-                  {results.validation_pass
+                  {(results.validation_pass || results.overall_pass)
                     ? '校准结果符合标准要求'
                     : '校准结果超出允许误差范围'}
                 </Alert>
 
-                <Paper p="md" withBorder>
-                  <Stack gap="xs">
-                    <Group justify="apart">
-                      <Text size="sm" color="dimmed">测量值:</Text>
-                      <Text size="sm" fw={600}>
-                        {results.measured_trp_dbm?.toFixed(2) || results.measured_tis_dbm?.toFixed(2)} dBm
-                      </Text>
-                    </Group>
-                    <Group justify="apart">
-                      <Text size="sm" color="dimmed">误差:</Text>
-                      <Badge color={Math.abs(results.error_db) < results.threshold_db ? 'green' : 'red'}>
-                        {results.error_db > 0 ? '+' : ''}{results.error_db.toFixed(2)} dB
-                      </Badge>
-                    </Group>
-                    <Group justify="apart">
-                      <Text size="sm" color="dimmed">绝对误差:</Text>
-                      <Text size="sm">{results.absolute_error_db.toFixed(2)} dB</Text>
-                    </Group>
-                    <Group justify="apart">
-                      <Text size="sm" color="dimmed">阈值:</Text>
-                      <Text size="sm">±{results.threshold_db} dB</Text>
-                    </Group>
-                    <Group justify="apart">
-                      <Text size="sm" color="dimmed">采样点数:</Text>
-                      <Text size="sm">{results.num_probes_used}</Text>
-                    </Group>
-                  </Stack>
-                </Paper>
+                {calibrationType === 'multi_frequency' && results.results ? (
+                  <Paper p="md" withBorder>
+                    <Text size="sm" fw={600} mb="xs">多频点校准结果</Text>
+                    <Stack gap="xs">
+                      {results.results.map((r: any, idx: number) => (
+                        <Group key={idx} justify="apart">
+                          <Text size="xs" color="dimmed">{r.frequency_mhz} MHz:</Text>
+                          <Group gap="xs">
+                            <Text size="xs">{r.measured_value_dbm.toFixed(2)} dBm</Text>
+                            <Badge size="xs" color={r.validation_pass ? 'green' : 'red'}>
+                              {r.error_db > 0 ? '+' : ''}{r.error_db.toFixed(2)} dB
+                            </Badge>
+                          </Group>
+                        </Group>
+                      ))}
+                    </Stack>
+                  </Paper>
+                ) : (
+                  <Paper p="md" withBorder>
+                    <Stack gap="xs">
+                      <Group justify="apart">
+                        <Text size="sm" color="dimmed">测量值:</Text>
+                        <Text size="sm" fw={600}>
+                          {results.measured_trp_dbm?.toFixed(2) || results.measured_tis_dbm?.toFixed(2)} dBm
+                        </Text>
+                      </Group>
+                      <Group justify="apart">
+                        <Text size="sm" color="dimmed">误差:</Text>
+                        <Badge color={Math.abs(results.error_db) < results.threshold_db ? 'green' : 'red'}>
+                          {results.error_db > 0 ? '+' : ''}{results.error_db.toFixed(2)} dB
+                        </Badge>
+                      </Group>
+                      <Group justify="apart">
+                        <Text size="sm" color="dimmed">绝对误差:</Text>
+                        <Text size="sm">{results.absolute_error_db.toFixed(2)} dB</Text>
+                      </Group>
+                      <Group justify="apart">
+                        <Text size="sm" color="dimmed">阈值:</Text>
+                        <Text size="sm">±{results.threshold_db} dB</Text>
+                      </Group>
+                      <Group justify="apart">
+                        <Text size="sm" color="dimmed">采样点数:</Text>
+                        <Text size="sm">{results.num_probes_used}</Text>
+                      </Group>
+                    </Stack>
+                  </Paper>
+                )}
 
                 <Code block>
                   {JSON.stringify(results, null, 2)}
