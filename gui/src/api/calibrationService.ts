@@ -47,6 +47,24 @@ export interface RepeatabilityTestRequest {
   tested_by: string
 }
 
+export interface QuietZoneCalibrationRequest {
+  validation_type: 'field_uniformity' | 'spatial_correlation' | 'probe_coupling' | 'phase_stability'
+  frequency_mhz: number
+  tested_by: string
+  grid_points?: number
+}
+
+export interface QuietZoneCalibrationResponse {
+  id: string
+  validation_type: string
+  frequency_mhz: number
+  validation_pass: boolean
+  field_uniformity_db?: number
+  field_mean_dbm?: number
+  tested_at: string
+  tested_by: string
+}
+
 export interface CalibrationResponse {
   id: string
   calibration_type: string
@@ -179,6 +197,28 @@ export async function executeRepeatabilityTest(request: RepeatabilityTestRequest
     if (ALLOW_FALLBACK) {
       console.warn('[Mock Fallback] executeRepeatabilityTest - API Service unavailable, using mock data:', error);
       return generateMockRepeatabilityResult(request);
+    }
+    throw error;
+  }
+}
+
+/**
+ * 执行静区质量验证
+ */
+export async function executeQuietZoneCalibration(request: QuietZoneCalibrationRequest): Promise<QuietZoneCalibrationResponse> {
+  if (USE_MOCK) {
+    console.log('[Mock] executeQuietZoneCalibration - using mock data');
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    return generateMockQuietZoneResult(request);
+  }
+
+  try {
+    const response = await calibrationClient.post<QuietZoneCalibrationResponse>('/calibration/quiet-zone', request);
+    return response.data;
+  } catch (error) {
+    if (ALLOW_FALLBACK) {
+      console.warn('[Mock Fallback] executeQuietZoneCalibration - using mock data:', error);
+      return generateMockQuietZoneResult(request);
     }
     throw error;
   }
@@ -522,5 +562,23 @@ function generateMockStats() {
     expired_certificates: 1,
     average_trp_error: 0.12,
     average_tis_error: 0.28,
+  };
+}
+
+/**
+ * 生成 Mock 静区质量验证结果
+ */
+function generateMockQuietZoneResult(request: QuietZoneCalibrationRequest): QuietZoneCalibrationResponse {
+  const uniformity_db = 0.5 + Math.random() * 0.6; // 0.5-1.1 dB
+
+  return {
+    id: crypto.randomUUID(),
+    validation_type: request.validation_type,
+    frequency_mhz: request.frequency_mhz,
+    validation_pass: uniformity_db < 1.0,
+    field_uniformity_db: uniformity_db,
+    field_mean_dbm: -30 + (Math.random() - 0.5) * 2,
+    tested_at: new Date().toISOString(),
+    tested_by: request.tested_by,
   };
 }

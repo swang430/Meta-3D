@@ -210,3 +210,37 @@ class HealthResponse(BaseModel):
     version: str
     database_connected: bool
     mock_instruments: bool
+
+
+# ==================== Quiet Zone Calibration Schemas ====================
+
+class QuietZoneCalibrationRequest(BaseModel):
+    """Request to execute quiet zone validation"""
+    validation_type: str = Field(..., description="field_uniformity | spatial_correlation | probe_coupling | phase_stability")
+    frequency_mhz: float
+    tested_by: str
+    grid_points: Optional[int] = 25  # 5x5 grid
+    probes_used: Optional[List[int]] = None  # Specific probe IDs
+
+
+class QuietZoneCalibrationResponse(BaseModel):
+    """Response from quiet zone calibration"""
+    id: UUID
+    validation_type: str
+    frequency_mhz: float
+    validation_pass: bool
+    threshold_value: float
+    # 场均匀性结果
+    field_uniformity_db: Optional[float] = None
+    field_mean_dbm: Optional[float] = None
+    # 空间相关性结果
+    correlation_error_rms: Optional[float] = None
+    # 探头互耦结果
+    max_coupling_db: Optional[float] = None
+    # 相位稳定性结果
+    phase_drift_deg: Optional[float] = None
+    tested_at: datetime
+    tested_by: str
+
+    class Config:
+        from_attributes = True

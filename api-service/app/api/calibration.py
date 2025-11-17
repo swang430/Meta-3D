@@ -19,12 +19,15 @@ from app.schemas.calibration import (
     ComparabilityTestRequest,
     ComparabilityTestResponse,
     RoundRobinSummary,
+    QuietZoneCalibrationRequest,
+    QuietZoneCalibrationResponse,
 )
 from app.services.system_calibration import (
     TRPCalibrationService,
     TISCalibrationService,
     RepeatabilityTestService,
     CalibrationCertificateService,
+    QuietZoneCalibrationService,
 )
 from app.services.comparability_test import ComparabilityTestService
 from app.services.pdf_certificate import PDFCertificateGenerator
@@ -342,3 +345,27 @@ def download_certificate_pdf(
         media_type='application/pdf',
         filename=f"{certificate.certificate_number}.pdf"
     )
+
+
+# ==================== Quiet Zone Calibration Endpoints ====================
+
+@router.post("/quiet-zone", response_model=QuietZoneCalibrationResponse, status_code=201)
+async def execute_quiet_zone_calibration(
+    request: QuietZoneCalibrationRequest,
+    db: Session = Depends(get_db)
+):
+    """Execute quiet zone quality validation"""
+    instruments = MockInstrumentOrchestrator()
+    service = QuietZoneCalibrationService(instruments)
+
+    if request.validation_type == 'field_uniformity':
+        calibration = await service.execute_field_uniformity(
+            db=db,
+            frequency_mhz=request.frequency_mhz,
+            grid_points=request.grid_points,
+            tested_by=request.tested_by
+        )
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported validation type: {request.validation_type}")
+
+    return calibration

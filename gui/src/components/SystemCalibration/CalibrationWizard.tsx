@@ -31,9 +31,11 @@ import {
   executeTRPCalibration,
   executeTISCalibration,
   executeRepeatabilityTest,
+  executeQuietZoneCalibration,
   type TRPCalibrationRequest,
   type TISCalibrationRequest,
   type RepeatabilityTestRequest,
+  type QuietZoneCalibrationRequest,
 } from '../../api/calibrationService';
 
 interface CalibrationWizardProps {
@@ -120,6 +122,16 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
         setExecutionProgress(60);
         result = await executeTISCalibration(request);
 
+      } else if (calibrationType === 'quiet_zone') {
+        const request: QuietZoneCalibrationRequest = {
+          validation_type: 'field_uniformity',
+          frequency_mhz: formData.frequency,
+          tested_by: formData.testedBy,
+          grid_points: 25,
+        };
+
+        setExecutionProgress(60);
+        result = await executeQuietZoneCalibration(request);
       } else {
         // Repeatability test
         const request: RepeatabilityTestRequest = {
@@ -194,6 +206,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                 { value: 'trp', label: 'TRP - 总辐射功率校准' },
                 { value: 'tis', label: 'TIS - 总全向灵敏度校准' },
                 { value: 'repeatability', label: '可重复性测试' },
+                { value: 'quiet_zone', label: '静区质量验证 - 场均匀性' },
               ]}
             />
 
@@ -202,11 +215,13 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                 {calibrationType === 'trp' && 'TRP 校准说明'}
                 {calibrationType === 'tis' && 'TIS 校准说明'}
                 {calibrationType === 'repeatability' && '可重复性测试说明'}
+                {calibrationType === 'quiet_zone' && '静区质量验证说明'}
               </Text>
               <Text size="xs" color="dimmed">
                 {calibrationType === 'trp' && '验证系统测量辐射功率的准确性，标准: ±0.5 dB'}
                 {calibrationType === 'tis' && '验证系统测量接收灵敏度的准确性，标准: ±1.0 dB'}
                 {calibrationType === 'repeatability' && '验证系统测量的可重复性，标准: σ < 0.3 dB (TRP) 或 0.5 dB (TIS)'}
+                {calibrationType === 'quiet_zone' && '验证静区场均匀性，在 5x5 网格测量，标准: < 1.0 dB (3GPP TS 34.114)'}
               </Text>
             </Paper>
           </Stack>
