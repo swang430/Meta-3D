@@ -1,5 +1,6 @@
 """System calibration API endpoints"""
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List
 from uuid import UUID
@@ -15,6 +16,9 @@ from app.schemas.calibration import (
     GenerateCertificateRequest,
     CertificateResponse,
     CertificateDetail,
+    ComparabilityTestRequest,
+    ComparabilityTestResponse,
+    RoundRobinSummary,
 )
 from app.services.system_calibration import (
     TRPCalibrationService,
@@ -22,12 +26,15 @@ from app.services.system_calibration import (
     RepeatabilityTestService,
     CalibrationCertificateService,
 )
+from app.services.comparability_test import ComparabilityTestService
+from app.services.pdf_certificate import PDFCertificateGenerator
 from app.services.mock_instruments import MockInstrumentOrchestrator
 from app.models.calibration import (
     SystemTRPCalibration,
     SystemTISCalibration,
     RepeatabilityTest,
     CalibrationCertificate,
+    ComparabilityTest,
 )
 
 router = APIRouter(prefix="/calibration", tags=["System Calibration"])
@@ -192,6 +199,51 @@ def list_repeatability_tests(
     return tests
 
 
+# ==================== Comparability Test Endpoints ====================
+
+@router.post("/comparability", response_model=ComparabilityTestResponse, status_code=201)
+def execute_comparability_test(
+    request: ComparabilityTestRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Execute comparability (round-robin) test.
+
+    Compares measurements from this laboratory against reference laboratories.
+
+    **Validation Criteria**: |bias| < ±1.0 dB
+    """
+    service = ComparabilityTestService()
+
+    test = service.execute_comparability_test(
+        db=db,
+        round_robin_id=request.round_robin_id,
+        lab_name=request.lab_name,
+        lab_id=request.lab_id,
+        lab_accreditation=request.lab_accreditation,
+        dut_model=request.dut_model,
+        dut_serial=request.dut_serial,
+        local_trp_dbm=request.local_trp_dbm,
+        local_tis_dbm=request.local_tis_dbm,
+        local_eis_dbm=request.local_eis_dbm,
+        reference_measurements=request.reference_measurements,
+        tested_by=request.tested_by
+    )
+
+    return test
+
+
+@router.get("/comparability/round-robin/{round_robin_id}", response_model=RoundRobinSummary)
+def get_round_robin_summary(
+    round_robin_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """Get summary of round-robin test"""
+    service = ComparabilityTestService()
+    summary = service.get_round_robin_summary(db, round_robin_id)
+    return summary
+
+
 # ==================== Certificate Endpoints ====================
 
 @router.post("/certificate", response_model=CertificateResponse, status_code=201)
@@ -219,6 +271,14 @@ def generate_certificate(
         reviewed_by=request.reviewed_by,
         validity_months=request.validity_months
     )
+
+    # Generate PDF
+    pdf_generator = PDFCertificateGenerator()
+    pdf_path = pdf_generator.generate_certificate(certificate)
+
+    # Update certificate with PDF path
+    certificate.pdf_path = pdf_path
+    db.commit()
 
     return certificate
 
@@ -258,3 +318,27 @@ def get_certificate_by_number(
     if not certificate:
         raise HTTPException(status_code=404, detail="Certificate not found")
     return certificate
+
+
+@router.get("/certificate/{certificate_id}/download")
+def download_certificate_pdf(
+    certificate_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """Download certificate as PDF"""
+    certificate = db.query(CalibrationCertificate).filter_by(id=certificate_id).first()
+    if not certificate:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+
+    if not certificate.pdf_path:
+        # Generate PDF if not exists
+        pdf_generator = PDFCertificateGenerator()
+        pdf_path = pdf_generator.generate_certificate(certificate)
+        certificate.pdf_path = pdf_path
+        db.commit()
+
+    return FileResponse(
+        path=certificate.pdf_path,
+        media_type='application/pdf',
+        filename=f"{certificate.certificate_number}.pdf"
+    )

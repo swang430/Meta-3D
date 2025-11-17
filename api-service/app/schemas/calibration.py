@@ -154,6 +154,48 @@ class CertificateDetail(BaseModel):
         from_attributes = True
 
 
+# ==================== Comparability Test Schemas ====================
+
+class ComparabilityTestRequest(BaseModel):
+    """Request to execute comparability test"""
+    round_robin_id: Optional[UUID] = Field(None, description="Round-robin test ID (shared across labs)")
+    lab_name: str = Field(..., description="This laboratory's name")
+    lab_id: str = Field(..., description="This laboratory's ID")
+    lab_accreditation: str = Field(default="ISO/IEC 17025:2017", description="Accreditation standard")
+    dut_model: str
+    dut_serial: str
+    local_trp_dbm: float = Field(..., description="TRP measured by this lab")
+    local_tis_dbm: float = Field(..., description="TIS measured by this lab")
+    local_eis_dbm: Optional[float] = Field(None, description="EIS measured by this lab")
+    reference_measurements: List[Dict[str, Any]] = Field(..., description="Measurements from other labs")
+    tested_by: str
+
+
+class ComparabilityTestResponse(BaseModel):
+    """Response from comparability test"""
+    id: UUID
+    round_robin_id: Optional[UUID]
+    lab_name: str
+    trp_mean_bias_db: float
+    tis_mean_bias_db: float
+    eis_mean_bias_db: Optional[float]
+    validation_pass: Optional[bool]
+    threshold_db: float
+    tested_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RoundRobinSummary(BaseModel):
+    """Summary of round-robin test"""
+    round_robin_id: str
+    num_labs: int
+    labs: List[Dict[str, Any]]
+    trp: Optional[Dict[str, Optional[float]]]
+    tis: Optional[Dict[str, Optional[float]]]
+
+
 # ==================== List/Query Schemas ====================
 
 class CalibrationListResponse(BaseModel):
