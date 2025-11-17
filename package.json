@@ -1,0 +1,37 @@
+{
+  "name": "mimo-ota-test-system",
+  "version": "1.0.0",
+  "description": "MIMO OTA Test System - Multi-service development environment",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n \"ChannelEngine,GUI\" -c \"blue,green\" \"npm run dev:channel-engine\" \"npm run dev:gui\"",
+    "dev:all": "concurrently -n \"ChannelEngine,API,GUI\" -c \"blue,yellow,green\" \"npm run dev:channel-engine\" \"npm run dev:api\" \"npm run dev:gui\"",
+    "dev:safe": "bash scripts/safe-start.sh",
+    "dev:safe:all": "bash scripts/safe-start.sh all",
+    "dev:channel-engine": "cd channel-engine-service && .venv/bin/python -m app.main",
+    "dev:api": "cd api-service && .venv/bin/python -m app.main",
+    "dev:gui": "npm run dev --prefix gui",
+    "cleanup": "bash scripts/cleanup-ports.sh",
+    "kill-ports": "npm run cleanup",
+    "install:all": "npm install && cd gui && npm install",
+    "setup:channel-engine": "cd channel-engine-service && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
+    "setup:api": "cd api-service && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
+    "setup:all": "npm run setup:channel-engine && npm run setup:api && npm run install:all"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "keywords": [
+    "mimo",
+    "ota",
+    "5g",
+    "testing",
+    "mpac"
+  ],
+  "author": "Meta-3D Team",
+  "license": "UNLICENSED"
+}
