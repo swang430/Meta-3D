@@ -8,9 +8,7 @@ import {
   Container,
   Title,
   Tabs,
-  Card,
   Grid,
-  Badge,
   Text,
   Button,
   Group,
@@ -36,9 +34,9 @@ export function SystemCalibration() {
 
   return (
     <Container size="xl" py="xl">
-      <Stack spacing="xl">
+      <Stack gap="xl">
         {/* Header */}
-        <Group position="apart">
+        <Group justify="apart">
           <div>
             <Title order={2}>系统校准</Title>
             <Text size="sm" color="dimmed" mt={4}>
@@ -46,7 +44,7 @@ export function SystemCalibration() {
             </Text>
           </div>
           <Button
-            leftIcon={<IconPlus size={16} />}
+            leftSection={<IconPlus size={16} />}
             onClick={() => setWizardOpen(true)}
           >
             新建校准
@@ -57,12 +55,12 @@ export function SystemCalibration() {
         <Grid>
           <Grid.Col span={3}>
             <Paper p="md" withBorder>
-              <Group position="apart">
+              <Group justify="apart">
                 <div>
-                  <Text size="xs" color="dimmed" transform="uppercase" weight={700}>
+                  <Text size="xs" color="dimmed" tt="uppercase" fw={700}>
                     最新证书状态
                   </Text>
-                  <Text size="xl" weight={700} mt={4}>
+                  <Text size="xl" fw={700} mt={4}>
                     有效
                   </Text>
                 </div>
@@ -78,12 +76,12 @@ export function SystemCalibration() {
 
           <Grid.Col span={3}>
             <Paper p="md" withBorder>
-              <Group position="apart">
+              <Group justify="apart">
                 <div>
-                  <Text size="xs" color="dimmed" transform="uppercase" weight={700}>
+                  <Text size="xs" color="dimmed" tt="uppercase" fw={700}>
                     TRP 精度
                   </Text>
-                  <Text size="xl" weight={700} mt={4}>
+                  <Text size="xl" fw={700} mt={4}>
                     ±0.12 dB
                   </Text>
                 </div>
@@ -99,12 +97,12 @@ export function SystemCalibration() {
 
           <Grid.Col span={3}>
             <Paper p="md" withBorder>
-              <Group position="apart">
+              <Group justify="apart">
                 <div>
-                  <Text size="xs" color="dimmed" transform="uppercase" weight={700}>
+                  <Text size="xs" color="dimmed" tt="uppercase" fw={700}>
                     TIS 精度
                   </Text>
-                  <Text size="xl" weight={700} mt={4}>
+                  <Text size="xl" fw={700} mt={4}>
                     ±0.35 dB
                   </Text>
                 </div>
@@ -120,12 +118,12 @@ export function SystemCalibration() {
 
           <Grid.Col span={3}>
             <Paper p="md" withBorder>
-              <Group position="apart">
+              <Group justify="apart">
                 <div>
-                  <Text size="xs" color="dimmed" transform="uppercase" weight={700}>
+                  <Text size="xs" color="dimmed" tt="uppercase" fw={700}>
                     可重复性
                   </Text>
-                  <Text size="xl" weight={700} mt={4}>
+                  <Text size="xl" fw={700} mt={4}>
                     σ = 0.18 dB
                   </Text>
                 </div>
@@ -141,15 +139,15 @@ export function SystemCalibration() {
         </Grid>
 
         {/* Main Content Tabs */}
-        <Tabs value={activeTab} onTabChange={setActiveTab}>
+        <Tabs value={activeTab} onChange={setActiveTab}>
           <Tabs.List>
-            <Tabs.Tab value="dashboard" icon={<IconChartLine size={16} />}>
+            <Tabs.Tab value="dashboard" leftSection={<IconChartLine size={16} />}>
               概览
             </Tabs.Tab>
-            <Tabs.Tab value="history" icon={<IconFileCheck size={16} />}>
+            <Tabs.Tab value="history" leftSection={<IconFileCheck size={16} />}>
               校准记录
             </Tabs.Tab>
-            <Tabs.Tab value="certificates" icon={<IconCertificate size={16} />}>
+            <Tabs.Tab value="certificates" leftSection={<IconCertificate size={16} />}>
               证书管理
             </Tabs.Tab>
           </Tabs.List>

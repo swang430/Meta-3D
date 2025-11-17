@@ -15,7 +15,6 @@ import {
   Table,
 } from '@mantine/core';
 import {
-  IconTrendingUp,
   IconTrendingDown,
   IconCircleCheck,
   IconAlertTriangle,
@@ -45,13 +44,13 @@ export function CalibrationDashboard() {
       {/* Overall Performance */}
       <Grid.Col span={4}>
         <Paper p="md" withBorder>
-          <Group position="apart" mb="md">
-            <Text size="sm" weight={600}>系统合格率</Text>
+          <Group justify="apart" mb="md">
+            <Text size="sm" fw={600}>系统合格率</Text>
             <ThemeIcon color="green" variant="light" size="lg">
               <IconCircleCheck size={20} />
             </ThemeIcon>
           </Group>
-          <Group position="center">
+          <Group justify="center">
             <RingProgress
               size={140}
               thickness={12}
@@ -59,13 +58,13 @@ export function CalibrationDashboard() {
                 { value: stats.passRate, color: 'green' },
               ]}
               label={
-                <Text size="xl" weight={700} align="center">
+                <Text size="xl" fw={700} ta="center">
                   {stats.passRate}%
                 </Text>
               }
             />
           </Group>
-          <Text size="xs" color="dimmed" align="center" mt="md">
+          <Text size="xs" color="dimmed" ta="center" mt="md">
             {stats.totalCalibrations} 次校准中 {Math.round(stats.totalCalibrations * stats.passRate / 100)} 次通过
           </Text>
         </Paper>
@@ -74,18 +73,18 @@ export function CalibrationDashboard() {
       {/* TRP Accuracy */}
       <Grid.Col span={4}>
         <Paper p="md" withBorder>
-          <Text size="sm" weight={600} mb="md">TRP 精度趋势</Text>
-          <Stack spacing="xs">
-            <Group position="apart">
-              <Text size="xl" weight={700}>±{stats.trpAccuracy} dB</Text>
-              <Badge color="green" leftIcon={<IconTrendingDown size={12} />}>
+          <Text size="sm" fw={600} mb="md">TRP 精度趋势</Text>
+          <Stack gap="xs">
+            <Group justify="apart">
+              <Text size="xl" fw={700}>±{stats.trpAccuracy} dB</Text>
+              <Badge color="green" leftSection={<IconTrendingDown size={12} />}>
                 改善
               </Badge>
             </Group>
             <Text size="xs" color="dimmed">
               标准要求: ±0.5 dB
             </Text>
-            <Group spacing={4} mt="sm">
+            <Group gap={4} mt="sm">
               {recentTrends.map((trend, idx) => (
                 <div
                   key={idx}
@@ -109,18 +108,18 @@ export function CalibrationDashboard() {
       {/* TIS Accuracy */}
       <Grid.Col span={4}>
         <Paper p="md" withBorder>
-          <Text size="sm" weight={600} mb="md">TIS 精度趋势</Text>
-          <Stack spacing="xs">
-            <Group position="apart">
-              <Text size="xl" weight={700}>±{stats.tisAccuracy} dB</Text>
-              <Badge color="green" leftIcon={<IconTrendingDown size={12} />}>
+          <Text size="sm" fw={600} mb="md">TIS 精度趋势</Text>
+          <Stack gap="xs">
+            <Group justify="apart">
+              <Text size="xl" fw={700}>±{stats.tisAccuracy} dB</Text>
+              <Badge color="green" leftSection={<IconTrendingDown size={12} />}>
                 改善
               </Badge>
             </Group>
             <Text size="xs" color="dimmed">
               标准要求: ±1.0 dB
             </Text>
-            <Group spacing={4} mt="sm">
+            <Group gap={4} mt="sm">
               {recentTrends.map((trend, idx) => (
                 <div
                   key={idx}
@@ -144,7 +143,7 @@ export function CalibrationDashboard() {
       {/* Repeatability Trend */}
       <Grid.Col span={12}>
         <Paper p="md" withBorder>
-          <Text size="sm" weight={600} mb="md">可重复性趋势</Text>
+          <Text size="sm" fw={600} mb="md">可重复性趋势</Text>
           <Table>
             <thead>
               <tr>
@@ -210,9 +209,9 @@ export function CalibrationDashboard() {
             <ThemeIcon color="blue" variant="light">
               <IconAlertTriangle size={16} />
             </ThemeIcon>
-            <Text size="sm" weight={600}>建议和提醒</Text>
+            <Text size="sm" fw={600}>建议和提醒</Text>
           </Group>
-          <Stack spacing="xs">
+          <Stack gap="xs">
             <Group>
               <Badge color="green">✓</Badge>
               <Text size="sm">所有校准参数均在标准范围内</Text>

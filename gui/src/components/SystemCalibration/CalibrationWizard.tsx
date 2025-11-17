@@ -27,6 +27,14 @@ import {
   IconAlertCircle,
 } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
+import {
+  executeTRPCalibration,
+  executeTISCalibration,
+  executeRepeatabilityTest,
+  type TRPCalibrationRequest,
+  type TISCalibrationRequest,
+  type RepeatabilityTestRequest,
+} from '../../api/calibrationService';
 
 interface CalibrationWizardProps {
   opened: boolean;
@@ -60,45 +68,98 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
     setIsExecuting(true);
     setExecutionProgress(0);
 
-    // Simulate calibration execution with progress updates
-    const steps = [
-      { progress: 10, message: '连接仪器...' },
-      { progress: 25, message: '加载标准 DUT...' },
-      { progress: 40, message: '执行球面采样 (0/336)...' },
-      { progress: 60, message: '执行球面采样 (168/336)...' },
-      { progress: 80, message: '执行球面采样 (336/336)...' },
-      { progress: 90, message: '计算积分...' },
-      { progress: 100, message: '生成报告...' },
-    ];
+    try {
+      // Progress updates (simulated UI feedback while backend processes)
+      const progressUpdates = [
+        { progress: 10, message: '连接仪器...', delay: 500 },
+        { progress: 25, message: '加载标准 DUT...', delay: 500 },
+        { progress: 40, message: '执行球面采样 (0/336)...', delay: 0 },
+      ];
 
-    for (const step of steps) {
-      await new Promise(resolve => setTimeout(resolve, 800));
-      setExecutionProgress(step.progress);
+      // Run initial progress updates
+      for (const step of progressUpdates) {
+        if (step.delay > 0) {
+          await new Promise(resolve => setTimeout(resolve, step.delay));
+        }
+        setExecutionProgress(step.progress);
+      }
+
+      // Call real API based on calibration type
+      let result;
+
+      if (calibrationType === 'trp') {
+        const request: TRPCalibrationRequest = {
+          dut_model: formData.dutModel,
+          dut_serial: formData.dutSerial,
+          reference_trp_dbm: formData.referenceTRP,
+          frequency_mhz: formData.frequency,
+          theta_step_deg: 15,
+          phi_step_deg: 15,
+          tested_by: formData.testedBy,
+          reference_lab: formData.referenceLab,
+          ref_cert_number: formData.refCertNumber || undefined,
+        };
+
+        // Update progress during API call
+        setExecutionProgress(60);
+        result = await executeTRPCalibration(request);
+
+      } else if (calibrationType === 'tis') {
+        const request: TISCalibrationRequest = {
+          dut_model: formData.dutModel,
+          dut_serial: formData.dutSerial,
+          reference_tis_dbm: formData.referenceTIS,
+          frequency_mhz: formData.frequency,
+          theta_step_deg: 15,
+          phi_step_deg: 15,
+          tested_by: formData.testedBy,
+          reference_lab: formData.referenceLab,
+          ref_cert_number: formData.refCertNumber || undefined,
+        };
+
+        setExecutionProgress(60);
+        result = await executeTISCalibration(request);
+
+      } else {
+        // Repeatability test
+        const request: RepeatabilityTestRequest = {
+          calibration_type: calibrationType.toUpperCase() as 'TRP' | 'TIS' | 'EIS',
+          dut_model: formData.dutModel,
+          num_runs: 10,
+          tested_by: formData.testedBy,
+        };
+
+        setExecutionProgress(60);
+        result = await executeRepeatabilityTest(request);
+      }
+
+      // Complete progress
+      setExecutionProgress(90);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      setExecutionProgress(100);
+
+      setResults(result);
+      setIsExecuting(false);
+      nextStep();
+
+      notifications.show({
+        title: '校准完成',
+        message: `${calibrationType.toUpperCase()} 校准成功完成`,
+        color: 'green',
+        icon: <IconCheck size={16} />,
+      });
+
+    } catch (error) {
+      setIsExecuting(false);
+      console.error('Calibration execution failed:', error);
+
+      notifications.show({
+        title: '校准失败',
+        message: error instanceof Error ? error.message : '无法连接到校准服务，请确保 API Service 已启动',
+        color: 'red',
+        icon: <IconAlertCircle size={16} />,
+      });
     }
-
-    // Mock API call result
-    const mockResult = {
-      id: crypto.randomUUID(),
-      measured_trp_dbm: calibrationType === 'trp' ? 10.48 : undefined,
-      measured_tis_dbm: calibrationType === 'tis' ? -90.35 : undefined,
-      error_db: calibrationType === 'trp' ? -0.02 : 0.15,
-      absolute_error_db: calibrationType === 'trp' ? 0.02 : 0.15,
-      validation_pass: true,
-      threshold_db: calibrationType === 'trp' ? 0.5 : 1.0,
-      num_probes_used: 336,
-      tested_at: new Date().toISOString(),
-    };
-
-    setResults(mockResult);
-    setIsExecuting(false);
-    nextStep();
-
-    notifications.show({
-      title: '校准完成',
-      message: `${calibrationType.toUpperCase()} 校准成功完成`,
-      color: 'green',
-      icon: <IconCheck size={16} />,
-    });
   };
 
   const handleClose = () => {
@@ -116,10 +177,10 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
       size="xl"
       closeOnClickOutside={false}
     >
-      <Stepper active={active} onStepClick={setActive} breakpoint="sm">
+      <Stepper active={active} onStepClick={setActive}>
         {/* Step 1: Select Calibration Type */}
         <Stepper.Step label="选择类型" description="校准类型">
-          <Stack spacing="md" mt="xl">
+          <Stack gap="md" mt="xl">
             <Alert icon={<IconInfoCircle size={16} />} title="校准类型选择">
               选择需要执行的系统级校准类型
             </Alert>
@@ -137,7 +198,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
             />
 
             <Paper p="md" withBorder>
-              <Text size="sm" weight={600} mb="xs">
+              <Text size="sm" fw={600} mb="xs">
                 {calibrationType === 'trp' && 'TRP 校准说明'}
                 {calibrationType === 'tis' && 'TIS 校准说明'}
                 {calibrationType === 'repeatability' && '可重复性测试说明'}
@@ -153,7 +214,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
 
         {/* Step 2: Configure DUT */}
         <Stepper.Step label="配置 DUT" description="标准被测设备">
-          <Stack spacing="md" mt="xl">
+          <Stack gap="md" mt="xl">
             <TextInput
               label="DUT 型号"
               placeholder="例如: Standard Dipole λ/2"
@@ -175,8 +236,8 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                 label="参考 TRP (dBm)"
                 description="来自参考实验室的已知 TRP 值"
                 value={formData.referenceTRP}
-                onChange={(value) => setFormData({ ...formData, referenceTRP: value || 0 })}
-                precision={2}
+                onChange={(value) => setFormData({ ...formData, referenceTRP: typeof value === 'number' ? value : 0 })}
+                decimalScale={2}
                 step={0.1}
                 required
               />
@@ -187,8 +248,8 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                 label="参考 TIS (dBm)"
                 description="来自参考实验室的已知 TIS 值"
                 value={formData.referenceTIS}
-                onChange={(value) => setFormData({ ...formData, referenceTIS: value || 0 })}
-                precision={2}
+                onChange={(value) => setFormData({ ...formData, referenceTIS: typeof value === 'number' ? value : 0 })}
+                decimalScale={2}
                 step={0.1}
                 required
               />
@@ -212,11 +273,11 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
 
         {/* Step 3: Test Configuration */}
         <Stepper.Step label="测试配置" description="频率和功率">
-          <Stack spacing="md" mt="xl">
+          <Stack gap="md" mt="xl">
             <NumberInput
               label="测试频率 (MHz)"
               value={formData.frequency}
-              onChange={(value) => setFormData({ ...formData, frequency: value || 0 })}
+              onChange={(value) => setFormData({ ...formData, frequency: typeof value === 'number' ? value : 0 })}
               min={600}
               max={6000}
               step={100}
@@ -227,7 +288,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
               <NumberInput
                 label="发射功率 (dBm)"
                 value={formData.txPower}
-                onChange={(value) => setFormData({ ...formData, txPower: value || 0 })}
+                onChange={(value) => setFormData({ ...formData, txPower: typeof value === 'number' ? value : 0 })}
                 min={0}
                 max={30}
                 step={1}
@@ -246,32 +307,32 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
             <Divider />
 
             <Paper p="md" withBorder>
-              <Text size="sm" weight={600} mb="xs">
+              <Text size="sm" fw={600} mb="xs">
                 测试参数汇总
               </Text>
-              <Stack spacing={4}>
-                <Group position="apart">
+              <Stack gap={4}>
+                <Group justify="apart">
                   <Text size="xs" color="dimmed">DUT:</Text>
                   <Text size="xs">{formData.dutModel}</Text>
                 </Group>
-                <Group position="apart">
+                <Group justify="apart">
                   <Text size="xs" color="dimmed">频率:</Text>
                   <Text size="xs">{formData.frequency} MHz</Text>
                 </Group>
                 {calibrationType === 'trp' && (
                   <>
-                    <Group position="apart">
+                    <Group justify="apart">
                       <Text size="xs" color="dimmed">参考 TRP:</Text>
                       <Text size="xs">{formData.referenceTRP} dBm</Text>
                     </Group>
-                    <Group position="apart">
+                    <Group justify="apart">
                       <Text size="xs" color="dimmed">发射功率:</Text>
                       <Text size="xs">{formData.txPower} dBm</Text>
                     </Group>
                   </>
                 )}
                 {calibrationType === 'tis' && (
-                  <Group position="apart">
+                  <Group justify="apart">
                     <Text size="xs" color="dimmed">参考 TIS:</Text>
                     <Text size="xs">{formData.referenceTIS} dBm</Text>
                   </Group>
@@ -283,7 +344,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
 
         {/* Step 4: Execute */}
         <Stepper.Step label="执行校准" description="运行测试">
-          <Stack spacing="md" mt="xl">
+          <Stack gap="md" mt="xl">
             {!isExecuting && !results && (
               <Alert icon={<IconInfoCircle size={16} />} title="准备执行">
                 点击"开始校准"按钮执行 {calibrationType.toUpperCase()} 校准测试。
@@ -293,8 +354,8 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
             )}
 
             {isExecuting && (
-              <Stack spacing="md">
-                <Text size="sm" weight={600}>
+              <Stack gap="md">
+                <Text size="sm" fw={600}>
                   正在执行校准...
                 </Text>
                 <Progress value={executionProgress} animated />
@@ -305,7 +366,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
             )}
 
             {results && (
-              <Stack spacing="md">
+              <Stack gap="md">
                 <Alert
                   icon={results.validation_pass ? <IconCheck size={16} /> : <IconAlertCircle size={16} />}
                   title={results.validation_pass ? '校准通过' : '校准未通过'}
@@ -317,28 +378,28 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                 </Alert>
 
                 <Paper p="md" withBorder>
-                  <Stack spacing="xs">
-                    <Group position="apart">
+                  <Stack gap="xs">
+                    <Group justify="apart">
                       <Text size="sm" color="dimmed">测量值:</Text>
-                      <Text size="sm" weight={600}>
+                      <Text size="sm" fw={600}>
                         {results.measured_trp_dbm?.toFixed(2) || results.measured_tis_dbm?.toFixed(2)} dBm
                       </Text>
                     </Group>
-                    <Group position="apart">
+                    <Group justify="apart">
                       <Text size="sm" color="dimmed">误差:</Text>
                       <Badge color={Math.abs(results.error_db) < results.threshold_db ? 'green' : 'red'}>
                         {results.error_db > 0 ? '+' : ''}{results.error_db.toFixed(2)} dB
                       </Badge>
                     </Group>
-                    <Group position="apart">
+                    <Group justify="apart">
                       <Text size="sm" color="dimmed">绝对误差:</Text>
                       <Text size="sm">{results.absolute_error_db.toFixed(2)} dB</Text>
                     </Group>
-                    <Group position="apart">
+                    <Group justify="apart">
                       <Text size="sm" color="dimmed">阈值:</Text>
                       <Text size="sm">±{results.threshold_db} dB</Text>
                     </Group>
-                    <Group position="apart">
+                    <Group justify="apart">
                       <Text size="sm" color="dimmed">采样点数:</Text>
                       <Text size="sm">{results.num_probes_used}</Text>
                     </Group>
@@ -355,7 +416,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
 
         {/* Completion Step */}
         <Stepper.Completed>
-          <Stack spacing="md" mt="xl">
+          <Stack gap="md" mt="xl">
             <Alert icon={<IconCheck size={16} />} title="校准完成" color="green">
               系统校准已成功完成并保存到数据库
             </Alert>
@@ -369,7 +430,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
         </Stepper.Completed>
       </Stepper>
 
-      <Group position="right" mt="xl">
+      <Group justify="right" mt="xl">
         {active > 0 && active < 4 && (
           <Button variant="default" onClick={prevStep}>
             上一步

@@ -5,7 +5,6 @@
  */
 import { useState } from 'react';
 import {
-  Card,
   Text,
   Badge,
   Button,
@@ -71,18 +70,18 @@ export function CertificateViewer() {
   };
 
   return (
-    <Stack spacing="xl">
+    <Stack gap="xl">
       {/* Latest Certificate Card */}
       <Paper p="xl" withBorder>
         <Grid>
           <Grid.Col span={8}>
-            <Stack spacing="md">
+            <Stack gap="md">
               <Group>
                 <ThemeIcon size={48} radius="md" color="green" variant="light">
                   <IconCertificate size={28} />
                 </ThemeIcon>
                 <div>
-                  <Text size="lg" weight={700}>
+                  <Text size="lg" fw={700}>
                     {mockCertificate.systemName}
                   </Text>
                   <Text size="sm" color="dimmed">
@@ -96,9 +95,9 @@ export function CertificateViewer() {
               <Grid gutter="md">
                 <Grid.Col span={6}>
                   <Paper p="sm" withBorder>
-                    <Group position="apart">
+                    <Group justify="apart">
                       <Text size="xs" color="dimmed">校准日期</Text>
-                      <Badge leftIcon={<IconCalendar size={12} />} variant="light">
+                      <Badge leftSection={<IconCalendar size={12} />} variant="light">
                         {mockCertificate.calibrationDate}
                       </Badge>
                     </Group>
@@ -106,9 +105,9 @@ export function CertificateViewer() {
                 </Grid.Col>
                 <Grid.Col span={6}>
                   <Paper p="sm" withBorder>
-                    <Group position="apart">
+                    <Group justify="apart">
                       <Text size="xs" color="dimmed">有效期至</Text>
-                      <Badge color="green" leftIcon={<IconCalendar size={12} />} variant="light">
+                      <Badge color="green" leftSection={<IconCalendar size={12} />} variant="light">
                         {mockCertificate.validUntil}
                       </Badge>
                     </Group>
@@ -185,14 +184,14 @@ export function CertificateViewer() {
           <Grid.Col span={4}>
             <Stack>
               <Button
-                leftIcon={<IconDownload size={16} />}
+                leftSection={<IconDownload size={16} />}
                 onClick={downloadPDF}
                 fullWidth
               >
                 下载 PDF 证书
               </Button>
               <Button
-                leftIcon={<IconFileText size={16} />}
+                leftSection={<IconFileText size={16} />}
                 variant="light"
                 onClick={() => setDetailsOpened(true)}
                 fullWidth
@@ -211,9 +210,9 @@ export function CertificateViewer() {
         title="证书详细信息"
         size="lg"
       >
-        <Stack spacing="md">
+        <Stack gap="md">
           <Paper p="md" withBorder>
-            <Text size="sm" weight={600} mb="xs">系统信息</Text>
+            <Text size="sm" fw={600} mb="xs">系统信息</Text>
             <List size="sm" spacing="xs">
               <List.Item>系统名称: {mockCertificate.systemName}</List.Item>
               <List.Item>序列号: MPAC-001</List.Item>
@@ -224,7 +223,7 @@ export function CertificateViewer() {
           </Paper>
 
           <Paper p="md" withBorder>
-            <Text size="sm" weight={600} mb="xs">实验室信息</Text>
+            <Text size="sm" fw={600} mb="xs">实验室信息</Text>
             <List size="sm" spacing="xs">
               <List.Item>实验室: Meta-3D Test Laboratory</List.Item>
               <List.Item>地址: 123 Test Street, City, Country</List.Item>
@@ -234,7 +233,7 @@ export function CertificateViewer() {
           </Paper>
 
           <Paper p="md" withBorder>
-            <Text size="sm" weight={600} mb="xs">适用标准</Text>
+            <Text size="sm" fw={600} mb="xs">适用标准</Text>
             <List size="sm" spacing="xs">
               <List.Item>3GPP TS 34.114</List.Item>
               <List.Item>CTIA OTA Test Plan Ver. 4.0</List.Item>

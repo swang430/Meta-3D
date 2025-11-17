@@ -95,7 +95,7 @@ export function CalibrationHistory() {
         <Text size="sm">{record.dutModel}</Text>
       </td>
       <td>
-        <Text size="sm" weight={600}>
+        <Text size="sm" fw={600}>
           {record.measuredValue.toFixed(2)} dBm
         </Text>
       </td>
@@ -116,7 +116,7 @@ export function CalibrationHistory() {
         <Text size="sm">{record.testedBy}</Text>
       </td>
       <td>
-        <Group spacing={4} position="right">
+        <Group gap={4} justify="right">
           <ActionIcon color="blue" variant="subtle">
             <IconEye size={16} />
           </ActionIcon>
@@ -129,12 +129,12 @@ export function CalibrationHistory() {
   ));
 
   return (
-    <Stack spacing="md">
+    <Stack gap="md">
       {/* Filters */}
       <Group>
         <TextInput
           placeholder="搜索 DUT 或工程师..."
-          icon={<IconSearch size={16} />}
+          leftSection={<IconSearch size={16} />}
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           style={{ flex: 1 }}
@@ -175,7 +175,7 @@ export function CalibrationHistory() {
               ) : (
                 <tr>
                   <td colSpan={8}>
-                    <Text color="dimmed" align="center" py="xl">
+                    <Text color="dimmed" ta="center" py="xl">
                       未找到匹配的记录
                     </Text>
                   </td>

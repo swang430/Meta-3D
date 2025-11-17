@@ -51,6 +51,7 @@ import {
 import './App.css'
 import ProbeLayoutView from './components/ProbeLayoutView'
 import { VirtualRoadTest } from './components/VirtualRoadTest'
+import { SystemCalibration } from './components/SystemCalibration'
 import {
   appendPlanStep,
   createProbe,
@@ -117,7 +118,7 @@ const hexToRgba = (hex: string, alpha: number) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
-type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'testConfig' | 'monitoring' | 'results' | 'virtualRoadTest'
+type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'testConfig' | 'monitoring' | 'results' | 'virtualRoadTest' | 'systemCalibration'
 
 type ProbeFormState = Pick<ProbeType, 'ring' | 'polarization' | 'position'>
 
@@ -209,6 +210,11 @@ const sections: Array<{ key: SectionKey; label: string; description: string }> =
     key: 'virtualRoadTest',
     label: '虚拟路测',
     description: '支持数字孪生、传导测试与OTA辐射测试的统一平台。',
+  },
+  {
+    key: 'systemCalibration',
+    label: '系统校准',
+    description: '执行TRP/TIS校准、重复性测试、实验室间比对，管理校准证书与溯源。',
   },
 ]
 
@@ -909,6 +915,8 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
       )
     case 'virtualRoadTest':
       return <VirtualRoadTest />
+    case 'systemCalibration':
+      return <SystemCalibration />
     default:
       return null
   }
