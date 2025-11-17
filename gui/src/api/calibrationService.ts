@@ -32,7 +32,7 @@ export interface TRPCalibrationRequest {
   phi_step_deg: number
   tested_by: string
   reference_lab?: string
-  ref_cert_number?: string
+  reference_cert_number?: string
   probe_selection?: ProbeSelectionConfig
 }
 
@@ -45,14 +45,16 @@ export interface TISCalibrationRequest {
   phi_step_deg: number
   tested_by: string
   reference_lab?: string
-  ref_cert_number?: string
+  reference_cert_number?: string
   probe_selection?: ProbeSelectionConfig
 }
 
 export interface RepeatabilityTestRequest {
-  calibration_type: 'TRP' | 'TIS' | 'EIS'
+  test_type: 'TRP' | 'TIS' | 'EIS'
   dut_model: string
+  dut_serial: string
   num_runs: number
+  frequency_mhz: number
   tested_by: string
 }
 
@@ -486,7 +488,7 @@ function generateMockTISResult(request: TISCalibrationRequest): CalibrationRespo
  */
 function generateMockRepeatabilityResult(request: RepeatabilityTestRequest): RepeatabilityTestResponse {
   // 生成多次测量值 (标准差 0.1-0.2 dB)
-  const base_value = request.calibration_type === 'TRP' ? 10.0 : -90.0;
+  const base_value = request.test_type === 'TRP' ? 10.0 : -90.0;
   const std_dev = 0.1 + Math.random() * 0.1; // 0.1 ~ 0.2 dB
 
   const measurements = Array.from({ length: request.num_runs }, () => {
@@ -495,11 +497,11 @@ function generateMockRepeatabilityResult(request: RepeatabilityTestRequest): Rep
   });
 
   const mean = measurements.reduce((a, b) => a + b, 0) / measurements.length;
-  const threshold = request.calibration_type === 'TRP' ? 0.3 : 0.5;
+  const threshold = request.test_type === 'TRP' ? 0.3 : 0.5;
 
   return {
     id: crypto.randomUUID(),
-    calibration_type: request.calibration_type,
+    calibration_type: request.test_type,
     dut_model: request.dut_model,
     num_runs: request.num_runs,
     measurements,

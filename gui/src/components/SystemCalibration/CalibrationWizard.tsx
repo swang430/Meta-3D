@@ -62,9 +62,10 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
     referenceTIS: -90.2,
     frequency: 3500,
     txPower: 23,
-    testedBy: '',
+    testedBy: '测试工程师',
     referenceLab: 'NIM (National Institute of Metrology)',
     refCertNumber: '',
+    repeatabilityTestType: 'TRP' as 'TRP' | 'TIS' | 'EIS',
   });
 
   // 探头选择配置
@@ -111,7 +112,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
           phi_step_deg: 15,
           tested_by: formData.testedBy,
           reference_lab: formData.referenceLab,
-          ref_cert_number: formData.refCertNumber || undefined,
+          reference_cert_number: formData.refCertNumber || undefined,
         };
 
         // 添加探头选择配置
@@ -137,7 +138,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
           phi_step_deg: 15,
           tested_by: formData.testedBy,
           reference_lab: formData.referenceLab,
-          ref_cert_number: formData.refCertNumber || undefined,
+          reference_cert_number: formData.refCertNumber || undefined,
         };
 
         // 添加探头选择配置
@@ -185,12 +186,14 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
 
         setExecutionProgress(60);
         result = await executeQuietZoneCalibration(request);
-      } else {
+      } else if (calibrationType === 'repeatability') {
         // Repeatability test
         const request: RepeatabilityTestRequest = {
-          calibration_type: calibrationType.toUpperCase() as 'TRP' | 'TIS' | 'EIS',
+          test_type: formData.repeatabilityTestType,
           dut_model: formData.dutModel,
+          dut_serial: formData.dutSerial,
           num_runs: 10,
+          frequency_mhz: formData.frequency,
           tested_by: formData.testedBy,
         };
 
@@ -301,6 +304,21 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
               onChange={(e) => setFormData({ ...formData, dutSerial: e.target.value })}
               required
             />
+
+            {calibrationType === 'repeatability' && (
+              <Select
+                label="测试类型"
+                description="选择要进行可重复性测试的类型"
+                value={formData.repeatabilityTestType}
+                onChange={(value) => setFormData({ ...formData, repeatabilityTestType: (value || 'TRP') as 'TRP' | 'TIS' | 'EIS' })}
+                data={[
+                  { value: 'TRP', label: 'TRP - 总辐射功率' },
+                  { value: 'TIS', label: 'TIS - 总全向灵敏度' },
+                  { value: 'EIS', label: 'EIS - 有效全向灵敏度' },
+                ]}
+                required
+              />
+            )}
 
             {calibrationType === 'trp' && (
               <NumberInput
@@ -521,6 +539,58 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                       ))}
                     </Stack>
                   </Paper>
+                ) : calibrationType === 'quiet_zone' ? (
+                  <Paper p="md" withBorder>
+                    <Stack gap="xs">
+                      <Group justify="apart">
+                        <Text size="sm" color="dimmed">验证类型:</Text>
+                        <Text size="sm" fw={600}>{results.validation_type}</Text>
+                      </Group>
+                      <Group justify="apart">
+                        <Text size="sm" color="dimmed">频率:</Text>
+                        <Text size="sm">{results.frequency_mhz} MHz</Text>
+                      </Group>
+                      {results.field_uniformity_db !== undefined && (
+                        <Group justify="apart">
+                          <Text size="sm" color="dimmed">场均匀性:</Text>
+                          <Text size="sm" fw={600}>{results.field_uniformity_db.toFixed(2)} dB</Text>
+                        </Group>
+                      )}
+                      {results.field_mean_dbm !== undefined && (
+                        <Group justify="apart">
+                          <Text size="sm" color="dimmed">平均场强:</Text>
+                          <Text size="sm">{results.field_mean_dbm.toFixed(2)} dBm</Text>
+                        </Group>
+                      )}
+                    </Stack>
+                  </Paper>
+                ) : calibrationType === 'repeatability' ? (
+                  <Paper p="md" withBorder>
+                    <Stack gap="xs">
+                      <Group justify="apart">
+                        <Text size="sm" color="dimmed">测试类型:</Text>
+                        <Text size="sm" fw={600}>{results.calibration_type || results.test_type}</Text>
+                      </Group>
+                      <Group justify="apart">
+                        <Text size="sm" color="dimmed">运行次数:</Text>
+                        <Text size="sm">{results.num_runs}</Text>
+                      </Group>
+                      <Group justify="apart">
+                        <Text size="sm" color="dimmed">平均值:</Text>
+                        <Text size="sm" fw={600}>{results.mean?.toFixed(2)} dBm</Text>
+                      </Group>
+                      <Group justify="apart">
+                        <Text size="sm" color="dimmed">标准差 (σ):</Text>
+                        <Badge color={results.std_dev < results.threshold ? 'green' : 'red'}>
+                          {results.std_dev?.toFixed(3)} dB
+                        </Badge>
+                      </Group>
+                      <Group justify="apart">
+                        <Text size="sm" color="dimmed">阈值:</Text>
+                        <Text size="sm">{'< '}{results.threshold} dB</Text>
+                      </Group>
+                    </Stack>
+                  </Paper>
                 ) : (
                   <Paper p="md" withBorder>
                     <Stack gap="xs">
@@ -530,24 +600,32 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                           {results.measured_trp_dbm?.toFixed(2) || results.measured_tis_dbm?.toFixed(2)} dBm
                         </Text>
                       </Group>
-                      <Group justify="apart">
-                        <Text size="sm" color="dimmed">误差:</Text>
-                        <Badge color={Math.abs(results.error_db) < results.threshold_db ? 'green' : 'red'}>
-                          {results.error_db > 0 ? '+' : ''}{results.error_db.toFixed(2)} dB
-                        </Badge>
-                      </Group>
-                      <Group justify="apart">
-                        <Text size="sm" color="dimmed">绝对误差:</Text>
-                        <Text size="sm">{results.absolute_error_db.toFixed(2)} dB</Text>
-                      </Group>
-                      <Group justify="apart">
-                        <Text size="sm" color="dimmed">阈值:</Text>
-                        <Text size="sm">±{results.threshold_db} dB</Text>
-                      </Group>
-                      <Group justify="apart">
-                        <Text size="sm" color="dimmed">采样点数:</Text>
-                        <Text size="sm">{results.num_probes_used}</Text>
-                      </Group>
+                      {results.error_db !== undefined && (
+                        <Group justify="apart">
+                          <Text size="sm" color="dimmed">误差:</Text>
+                          <Badge color={Math.abs(results.error_db) < results.threshold_db ? 'green' : 'red'}>
+                            {results.error_db > 0 ? '+' : ''}{results.error_db.toFixed(2)} dB
+                          </Badge>
+                        </Group>
+                      )}
+                      {results.absolute_error_db !== undefined && (
+                        <Group justify="apart">
+                          <Text size="sm" color="dimmed">绝对误差:</Text>
+                          <Text size="sm">{results.absolute_error_db.toFixed(2)} dB</Text>
+                        </Group>
+                      )}
+                      {results.threshold_db !== undefined && (
+                        <Group justify="apart">
+                          <Text size="sm" color="dimmed">阈值:</Text>
+                          <Text size="sm">±{results.threshold_db} dB</Text>
+                        </Group>
+                      )}
+                      {results.num_probes_used !== undefined && (
+                        <Group justify="apart">
+                          <Text size="sm" color="dimmed">采样点数:</Text>
+                          <Text size="sm">{results.num_probes_used}</Text>
+                        </Group>
+                      )}
                     </Stack>
                   </Paper>
                 )}
@@ -566,9 +644,16 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
             <Alert icon={<IconCheck size={16} />} title="校准完成" color="green">
               系统校准已成功完成并保存到数据库
             </Alert>
-            <Text size="sm">
-              校准 ID: <Code>{results?.id}</Code>
-            </Text>
+            {results?.id && (
+              <Text size="sm">
+                校准 ID: <Code>{String(results.id)}</Code>
+              </Text>
+            )}
+            {results?.validation_pass !== undefined && (
+              <Text size="sm">
+                验证结果: <Code>{results.validation_pass ? '通过 ✓' : '未通过 ✗'}</Code>
+              </Text>
+            )}
             <Text size="sm" color="dimmed">
               您可以在"校准记录"页面查看详细结果
             </Text>
