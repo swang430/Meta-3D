@@ -1,5 +1,6 @@
 """System calibration API endpoints"""
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List
 from uuid import UUID
@@ -15,19 +16,31 @@ from app.schemas.calibration import (
     GenerateCertificateRequest,
     CertificateResponse,
     CertificateDetail,
+    ComparabilityTestRequest,
+    ComparabilityTestResponse,
+    RoundRobinSummary,
+    QuietZoneCalibrationRequest,
+    QuietZoneCalibrationResponse,
+    MultiFrequencyCalibrationRequest,
+    MultiFrequencyCalibrationResponse,
+    FrequencyCalibrationResult,
 )
 from app.services.system_calibration import (
     TRPCalibrationService,
     TISCalibrationService,
     RepeatabilityTestService,
     CalibrationCertificateService,
+    QuietZoneCalibrationService,
 )
+from app.services.comparability_test import ComparabilityTestService
+from app.services.pdf_certificate import PDFCertificateGenerator
 from app.services.mock_instruments import MockInstrumentOrchestrator
 from app.models.calibration import (
     SystemTRPCalibration,
     SystemTISCalibration,
     RepeatabilityTest,
     CalibrationCertificate,
+    ComparabilityTest,
 )
 
 router = APIRouter(prefix="/calibration", tags=["System Calibration"])
@@ -192,6 +205,51 @@ def list_repeatability_tests(
     return tests
 
 
+# ==================== Comparability Test Endpoints ====================
+
+@router.post("/comparability", response_model=ComparabilityTestResponse, status_code=201)
+def execute_comparability_test(
+    request: ComparabilityTestRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Execute comparability (round-robin) test.
+
+    Compares measurements from this laboratory against reference laboratories.
+
+    **Validation Criteria**: |bias| < ±1.0 dB
+    """
+    service = ComparabilityTestService()
+
+    test = service.execute_comparability_test(
+        db=db,
+        round_robin_id=request.round_robin_id,
+        lab_name=request.lab_name,
+        lab_id=request.lab_id,
+        lab_accreditation=request.lab_accreditation,
+        dut_model=request.dut_model,
+        dut_serial=request.dut_serial,
+        local_trp_dbm=request.local_trp_dbm,
+        local_tis_dbm=request.local_tis_dbm,
+        local_eis_dbm=request.local_eis_dbm,
+        reference_measurements=request.reference_measurements,
+        tested_by=request.tested_by
+    )
+
+    return test
+
+
+@router.get("/comparability/round-robin/{round_robin_id}", response_model=RoundRobinSummary)
+def get_round_robin_summary(
+    round_robin_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """Get summary of round-robin test"""
+    service = ComparabilityTestService()
+    summary = service.get_round_robin_summary(db, round_robin_id)
+    return summary
+
+
 # ==================== Certificate Endpoints ====================
 
 @router.post("/certificate", response_model=CertificateResponse, status_code=201)
@@ -219,6 +277,14 @@ def generate_certificate(
         reviewed_by=request.reviewed_by,
         validity_months=request.validity_months
     )
+
+    # Generate PDF
+    pdf_generator = PDFCertificateGenerator()
+    pdf_path = pdf_generator.generate_certificate(certificate)
+
+    # Update certificate with PDF path
+    certificate.pdf_path = pdf_path
+    db.commit()
 
     return certificate
 
@@ -258,3 +324,106 @@ def get_certificate_by_number(
     if not certificate:
         raise HTTPException(status_code=404, detail="Certificate not found")
     return certificate
+
+
+@router.get("/certificate/{certificate_id}/download")
+def download_certificate_pdf(
+    certificate_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """Download certificate as PDF"""
+    certificate = db.query(CalibrationCertificate).filter_by(id=certificate_id).first()
+    if not certificate:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+
+    if not certificate.pdf_path:
+        # Generate PDF if not exists
+        pdf_generator = PDFCertificateGenerator()
+        pdf_path = pdf_generator.generate_certificate(certificate)
+        certificate.pdf_path = pdf_path
+        db.commit()
+
+    return FileResponse(
+        path=certificate.pdf_path,
+        media_type='application/pdf',
+        filename=f"{certificate.certificate_number}.pdf"
+    )
+
+
+# ==================== Quiet Zone Calibration Endpoints ====================
+
+@router.post("/quiet-zone", response_model=QuietZoneCalibrationResponse, status_code=201)
+async def execute_quiet_zone_calibration(
+    request: QuietZoneCalibrationRequest,
+    db: Session = Depends(get_db)
+):
+    """Execute quiet zone quality validation"""
+    instruments = MockInstrumentOrchestrator()
+    service = QuietZoneCalibrationService(instruments)
+
+    if request.validation_type == 'field_uniformity':
+        calibration = await service.execute_field_uniformity(
+            db=db,
+            frequency_mhz=request.frequency_mhz,
+            grid_points=request.grid_points,
+            tested_by=request.tested_by
+        )
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported validation type: {request.validation_type}")
+
+    return calibration
+
+
+# ==================== Multi-Frequency Calibration Endpoints ====================
+
+@router.post("/multi-frequency", response_model=MultiFrequencyCalibrationResponse, status_code=201)
+async def execute_multi_frequency_calibration(
+    request: MultiFrequencyCalibrationRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Execute multi-frequency calibration.
+
+    Tests multiple frequency points in a single run to validate
+    system performance across the full frequency range.
+
+    **Validation Criteria**:
+    - TRP: |error| < ±0.5 dB per frequency
+    - TIS: |error| < ±1.0 dB per frequency
+    """
+    import random
+    import uuid
+    from datetime import datetime
+
+    results = []
+
+    for freq in request.frequency_list_mhz:
+        if request.calibration_type == "TRP":
+            # Mock: 模拟频率响应（中频最好，高低频稍差）
+            freq_factor = 1.0 - abs(freq - 3500) / 10000  # 3.5GHz 为中心
+            error = random.gauss(0, 0.15) * (2 - freq_factor)
+            measured = request.reference_trp_dbm + error
+            threshold = 0.5
+        else:  # TIS
+            freq_factor = 1.0 - abs(freq - 3500) / 10000
+            error = random.gauss(0, 0.25) * (2 - freq_factor)
+            measured = request.reference_tis_dbm + error
+            threshold = 1.0
+
+        results.append(FrequencyCalibrationResult(
+            frequency_mhz=freq,
+            measured_value_dbm=measured,
+            error_db=error,
+            validation_pass=abs(error) < threshold
+        ))
+
+    overall_pass = all(r.validation_pass for r in results)
+
+    return MultiFrequencyCalibrationResponse(
+        id=uuid.uuid4(),
+        calibration_type=request.calibration_type,
+        results=results,
+        overall_pass=overall_pass,
+        tested_at=datetime.utcnow(),
+        tested_by=request.tested_by
+    )

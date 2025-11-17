@@ -396,3 +396,29 @@ class MockInstrumentOrchestrator:
         await self.signal_analyzer.disconnect()
         await self.probe_controller.disconnect()
         return True
+
+    async def measure_field_uniformity(self, frequency_mhz: float, grid_points: int) -> Dict:
+        """测量静区场均匀性"""
+        # 模拟 5x5 网格测量
+        grid_size = int(np.sqrt(grid_points))
+        field_data = []
+        for i in range(grid_size):
+            for j in range(grid_size):
+                # 模拟场强，中心最强，边缘稍弱
+                distance_from_center = np.sqrt((i - grid_size/2)**2 + (j - grid_size/2)**2)
+                field_dbm = -30 - distance_from_center * 0.3 + random.gauss(0, 0.2)
+                field_data.append({
+                    'x': i * 20 - 50,  # cm
+                    'y': j * 20 - 50,  # cm
+                    'field_dbm': field_dbm
+                })
+
+        field_values = [d['field_dbm'] for d in field_data]
+        return {
+            'grid_data': field_data,
+            'mean': np.mean(field_values),
+            'std': np.std(field_values),
+            'max': np.max(field_values),
+            'min': np.min(field_values),
+            'uniformity_db': np.max(field_values) - np.min(field_values)
+        }

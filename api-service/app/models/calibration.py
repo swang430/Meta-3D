@@ -245,3 +245,97 @@ class CalibrationCertificate(Base):
     issued_at = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class QuietZoneCalibration(Base):
+    """
+    Quiet Zone Quality Validation
+
+    验证静区（Quiet Zone）的电磁场质量，这是 MIMO OTA 系统的核心指标。
+    静区质量由软件算法和校准决定，而非暗室的物理尺寸。
+
+    支持的验证类型：
+    1. field_uniformity - 场均匀性测试
+    2. spatial_correlation - 空间相关性验证
+    3. probe_coupling - 探头互耦测量
+    4. phase_stability - 相位稳定性测试
+    """
+    __tablename__ = "quiet_zone_calibrations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # Validation type
+    validation_type = Column(
+        String(50),
+        nullable=False,
+        comment="field_uniformity | spatial_correlation | probe_coupling | phase_stability"
+    )
+
+    # Test configuration
+    frequency_mhz = Column(Float, nullable=False)
+    channel = Column(String(50))
+    bandwidth_mhz = Column(Float, default=20.0)
+
+    # Quiet Zone geometry
+    qz_center_x_cm = Column(Float, default=0.0, comment="QZ center X coordinate")
+    qz_center_y_cm = Column(Float, default=0.0, comment="QZ center Y coordinate")
+    qz_center_z_cm = Column(Float, default=150.0, comment="QZ center Z coordinate (height)")
+    qz_diameter_cm = Column(Float, default=100.0, comment="QZ diameter")
+
+    # Measurement grid
+    grid_points = Column(Integer, default=25, comment="Number of measurement points (e.g., 5x5 grid)")
+    grid_data = Column(JSON, comment="Array of {x, y, z, measured_value, ...}")
+
+    # ===== Field Uniformity Results =====
+    # 场均匀性：静区内不同位置的场强差异
+    # 标准：±1 dB (3GPP TS 34.114)
+    field_uniformity_db = Column(Float, comment="Max field variation in dB")
+    field_uniformity_pass = Column(Boolean, comment="True if < ±1 dB")
+    field_mean_dbm = Column(Float, comment="Mean field strength")
+    field_std_dev_db = Column(Float, comment="Standard deviation")
+    field_max_dbm = Column(Float, comment="Maximum field strength")
+    field_min_dbm = Column(Float, comment="Minimum field strength")
+
+    # ===== Spatial Correlation Results =====
+    # 空间相关性：MIMO 信道的空间相关性矩阵
+    # 对比目标信道模型（如 3GPP UMa, UMi）
+    spatial_correlation_matrix = Column(JSON, comment="NxN correlation matrix")
+    target_channel_model = Column(String(100), comment="e.g., 3GPP_UMa, 3GPP_UMi")
+    correlation_error_rms = Column(Float, comment="RMS error vs target model")
+    correlation_pass = Column(Boolean, comment="True if RMS error < threshold")
+
+    # ===== Probe Coupling Results =====
+    # 探头互耦：测量探头间的 S 参数矩阵
+    # 用于互耦补偿算法
+    num_probes_measured = Column(Integer, comment="Number of probes in coupling matrix")
+    coupling_matrix = Column(JSON, comment="S-parameter matrix (complex values)")
+    max_coupling_db = Column(Float, comment="Maximum coupling between any two probes")
+    coupling_pass = Column(Boolean, comment="True if max coupling < -20 dB")
+
+    # ===== Phase Stability Results =====
+    # 相位稳定性：验证系统相位漂移
+    # 对 MIMO 相位同步至关重要
+    measurement_duration_sec = Column(Float, comment="Duration of stability test")
+    phase_drift_deg = Column(Float, comment="Maximum phase drift in degrees")
+    phase_stability_pass = Column(Boolean, comment="True if drift < 10°")
+    phase_time_series = Column(JSON, comment="Array of {time_sec, phase_deg}")
+
+    # ===== Overall Validation =====
+    validation_pass = Column(Boolean, nullable=False, comment="Overall pass/fail")
+    threshold_value = Column(Float, comment="Threshold used for pass/fail")
+
+    # Probe selection
+    probes_used = Column(JSON, comment="List of probe IDs used in test")
+
+    # Environmental conditions
+    temperature_celsius = Column(Float)
+    humidity_percent = Column(Float)
+
+    # Notes
+    notes = Column(Text)
+
+    # Metadata
+    tested_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    tested_by = Column(String(100))
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

@@ -612,3 +612,46 @@ class CalibrationCertificateService:
         import hashlib
         data = f"{cert_number}:{timestamp.isoformat()}"
         return hashlib.sha256(data.encode()).hexdigest()
+
+
+class QuietZoneCalibrationService:
+    """静区质量验证服务"""
+
+    def __init__(self, instruments: MockInstrumentOrchestrator):
+        self.instruments = instruments
+
+    async def execute_field_uniformity(
+        self,
+        db: Session,
+        frequency_mhz: float,
+        grid_points: int,
+        tested_by: str
+    ):
+        """执行场均匀性测试"""
+        from app.models.calibration import QuietZoneCalibration
+
+        result = await self.instruments.measure_field_uniformity(frequency_mhz, grid_points)
+
+        threshold = 1.0  # ±1 dB (3GPP TS 34.114)
+        validation_pass = result['uniformity_db'] < threshold
+
+        calibration = QuietZoneCalibration(
+            validation_type='field_uniformity',
+            frequency_mhz=frequency_mhz,
+            grid_points=grid_points,
+            grid_data=result['grid_data'],
+            field_uniformity_db=result['uniformity_db'],
+            field_uniformity_pass=validation_pass,
+            field_mean_dbm=result['mean'],
+            field_std_dev_db=result['std'],
+            field_max_dbm=result['max'],
+            field_min_dbm=result['min'],
+            validation_pass=validation_pass,
+            threshold_value=threshold,
+            tested_by=tested_by
+        )
+
+        db.add(calibration)
+        db.commit()
+        db.refresh(calibration)
+        return calibration

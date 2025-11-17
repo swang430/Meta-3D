@@ -17,6 +17,13 @@ class TRPCalibrationRequest(BaseModel):
     tested_by: str = Field(..., description="Name of test engineer")
     reference_lab: Optional[str] = Field(None, description="Reference laboratory name")
     reference_cert_number: Optional[str] = Field(None, description="Reference certificate number")
+    # 新增：探头选择配置
+    probe_selection_mode: Optional[str] = Field("all", description="Probe selection mode: all | ring | custom | polarization")
+    selected_rings: Optional[List[str]] = Field(None, description="Selected rings: ['upper', 'middle', 'lower']")
+    selected_probes: Optional[List[int]] = Field(None, description="Selected probe IDs: [1, 5, 9, ...]")
+    selected_polarizations: Optional[List[str]] = Field(None, description="Selected polarizations: ['V', 'H']")
+    theta_step_deg: float = Field(15.0, description="Theta step in degrees")
+    phi_step_deg: float = Field(15.0, description="Phi step in degrees")
 
 
 class TRPCalibrationResponse(BaseModel):
@@ -45,6 +52,13 @@ class TISCalibrationRequest(BaseModel):
     tested_by: str
     reference_lab: Optional[str] = None
     reference_cert_number: Optional[str] = None
+    # 新增：探头选择配置
+    probe_selection_mode: Optional[str] = Field("all", description="Probe selection mode: all | ring | custom | polarization")
+    selected_rings: Optional[List[str]] = Field(None, description="Selected rings: ['upper', 'middle', 'lower']")
+    selected_probes: Optional[List[int]] = Field(None, description="Selected probe IDs: [1, 5, 9, ...]")
+    selected_polarizations: Optional[List[str]] = Field(None, description="Selected polarizations: ['V', 'H']")
+    theta_step_deg: float = Field(15.0, description="Theta step in degrees")
+    phi_step_deg: float = Field(15.0, description="Phi step in degrees")
 
 
 class TISCalibrationResponse(BaseModel):
@@ -154,6 +168,48 @@ class CertificateDetail(BaseModel):
         from_attributes = True
 
 
+# ==================== Comparability Test Schemas ====================
+
+class ComparabilityTestRequest(BaseModel):
+    """Request to execute comparability test"""
+    round_robin_id: Optional[UUID] = Field(None, description="Round-robin test ID (shared across labs)")
+    lab_name: str = Field(..., description="This laboratory's name")
+    lab_id: str = Field(..., description="This laboratory's ID")
+    lab_accreditation: str = Field(default="ISO/IEC 17025:2017", description="Accreditation standard")
+    dut_model: str
+    dut_serial: str
+    local_trp_dbm: float = Field(..., description="TRP measured by this lab")
+    local_tis_dbm: float = Field(..., description="TIS measured by this lab")
+    local_eis_dbm: Optional[float] = Field(None, description="EIS measured by this lab")
+    reference_measurements: List[Dict[str, Any]] = Field(..., description="Measurements from other labs")
+    tested_by: str
+
+
+class ComparabilityTestResponse(BaseModel):
+    """Response from comparability test"""
+    id: UUID
+    round_robin_id: Optional[UUID]
+    lab_name: str
+    trp_mean_bias_db: float
+    tis_mean_bias_db: float
+    eis_mean_bias_db: Optional[float]
+    validation_pass: Optional[bool]
+    threshold_db: float
+    tested_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RoundRobinSummary(BaseModel):
+    """Summary of round-robin test"""
+    round_robin_id: str
+    num_labs: int
+    labs: List[Dict[str, Any]]
+    trp: Optional[Dict[str, Optional[float]]]
+    tis: Optional[Dict[str, Optional[float]]]
+
+
 # ==================== List/Query Schemas ====================
 
 class CalibrationListResponse(BaseModel):
@@ -168,3 +224,71 @@ class HealthResponse(BaseModel):
     version: str
     database_connected: bool
     mock_instruments: bool
+
+
+# ==================== Quiet Zone Calibration Schemas ====================
+
+class QuietZoneCalibrationRequest(BaseModel):
+    """Request to execute quiet zone validation"""
+    validation_type: str = Field(..., description="field_uniformity | spatial_correlation | probe_coupling | phase_stability")
+    frequency_mhz: float
+    tested_by: str
+    grid_points: Optional[int] = 25  # 5x5 grid
+    probes_used: Optional[List[int]] = None  # Specific probe IDs
+
+
+class QuietZoneCalibrationResponse(BaseModel):
+    """Response from quiet zone calibration"""
+    id: UUID
+    validation_type: str
+    frequency_mhz: float
+    validation_pass: bool
+    threshold_value: float
+    # 场均匀性结果
+    field_uniformity_db: Optional[float] = None
+    field_mean_dbm: Optional[float] = None
+    # 空间相关性结果
+    correlation_error_rms: Optional[float] = None
+    # 探头互耦结果
+    max_coupling_db: Optional[float] = None
+    # 相位稳定性结果
+    phase_drift_deg: Optional[float] = None
+    tested_at: datetime
+    tested_by: str
+
+    class Config:
+        from_attributes = True
+
+
+# ==================== Multi-Frequency Calibration Schemas ====================
+
+class MultiFrequencyCalibrationRequest(BaseModel):
+    """Multi-frequency calibration request"""
+    calibration_type: str = Field(..., description="Type: TRP | TIS")
+    frequency_list_mhz: List[float] = Field(..., min_length=1, max_length=10, description="List of frequencies (MHz)")
+    dut_model: str
+    dut_serial: str
+    reference_trp_dbm: Optional[float] = Field(None, description="Reference TRP for TRP calibration")
+    reference_tis_dbm: Optional[float] = Field(None, description="Reference TIS for TIS calibration")
+    tested_by: str
+
+
+class FrequencyCalibrationResult(BaseModel):
+    """Single frequency result"""
+    frequency_mhz: float
+    measured_value_dbm: float
+    error_db: float
+    validation_pass: bool
+
+
+class MultiFrequencyCalibrationResponse(BaseModel):
+    """Multi-frequency calibration response"""
+    id: UUID
+    calibration_type: str
+    results: List[FrequencyCalibrationResult]
+    overall_pass: bool
+    tested_at: datetime
+    tested_by: str
+
+    class Config:
+        from_attributes = True
