@@ -265,6 +265,13 @@ export async function removeFromQueue(test_plan_id: string): Promise<void> {
   await testPlanClient.delete(`/test-plans/queue/${test_plan_id}`);
 }
 
+export async function reorderQueue(test_plan_id: string, new_position: number): Promise<TestQueueItem> {
+  const response = await testPlanClient.patch<TestQueueItem>(`/test-plans/queue/${test_plan_id}/reorder`, {
+    new_position,
+  });
+  return response.data;
+}
+
 // Execution Control
 export async function startTestPlan(test_plan_id: string, started_by: string): Promise<TestPlan> {
   const response = await testPlanClient.post<TestPlan>(`/test-plans/${test_plan_id}/start`, {

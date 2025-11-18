@@ -112,7 +112,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
           phi_step_deg: 15,
           tested_by: formData.testedBy,
           reference_lab: formData.referenceLab,
-          reference_cert_number: formData.refCertNumber || undefined,
+          ref_cert_number: formData.refCertNumber || undefined,
         };
 
         // 添加探头选择配置
@@ -138,7 +138,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
           phi_step_deg: 15,
           tested_by: formData.testedBy,
           reference_lab: formData.referenceLab,
-          reference_cert_number: formData.refCertNumber || undefined,
+          ref_cert_number: formData.refCertNumber || undefined,
         };
 
         // 添加探头选择配置
@@ -209,11 +209,9 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
       } else if (calibrationType === 'repeatability') {
         // Repeatability test
         const request: RepeatabilityTestRequest = {
-          test_type: formData.repeatabilityTestType,
+          calibration_type: formData.repeatabilityTestType,
           dut_model: formData.dutModel,
-          dut_serial: formData.dutSerial,
           num_runs: 10,
-          frequency_mhz: formData.frequency,
           tested_by: formData.testedBy,
         };
 

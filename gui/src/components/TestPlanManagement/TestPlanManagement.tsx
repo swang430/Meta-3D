@@ -8,21 +8,30 @@ import { Container, Tabs } from '@mantine/core';
 import { IconList, IconClock, IconChartBar } from '@tabler/icons-react';
 import { TestPlanList } from './TestPlanList';
 import { CreateTestPlanWizard } from './CreateTestPlanWizard';
+import { EditTestPlanWizard } from './EditTestPlanWizard';
 import { TestQueue } from './TestQueue';
+import { TestExecutionHistory } from './TestExecutionHistory';
 
 export function TestPlanManagement() {
   const [createWizardOpened, setCreateWizardOpened] = useState(false);
+  const [editWizardOpened, setEditWizardOpened] = useState(false);
+  const [editingTestPlanId, setEditingTestPlanId] = useState<string | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   const handleCreateNew = () => {
     setCreateWizardOpened(true);
   };
 
-  const handleEdit = (_id: string) => {
-    // TODO: Implement edit functionality
+  const handleEdit = (id: string) => {
+    setEditingTestPlanId(id);
+    setEditWizardOpened(true);
   };
 
   const handleCreated = () => {
+    setRefreshTrigger((prev) => prev + 1);
+  };
+
+  const handleUpdated = () => {
     setRefreshTrigger((prev) => prev + 1);
   };
 
@@ -54,8 +63,7 @@ export function TestPlanManagement() {
         </Tabs.Panel>
 
         <Tabs.Panel value="history" pt="md">
-          {/* TODO: Implement execution history */}
-          <div>执行历史功能即将推出...</div>
+          <TestExecutionHistory />
         </Tabs.Panel>
       </Tabs>
 
@@ -63,6 +71,16 @@ export function TestPlanManagement() {
         opened={createWizardOpened}
         onClose={() => setCreateWizardOpened(false)}
         onCreated={handleCreated}
+      />
+
+      <EditTestPlanWizard
+        opened={editWizardOpened}
+        testPlanId={editingTestPlanId}
+        onClose={() => {
+          setEditWizardOpened(false);
+          setEditingTestPlanId(null);
+        }}
+        onUpdated={handleUpdated}
       />
     </Container>
   );

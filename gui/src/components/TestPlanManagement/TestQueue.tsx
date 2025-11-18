@@ -17,11 +17,12 @@ import {
   Tooltip,
   Progress,
 } from '@mantine/core';
-import { IconRefresh, IconPlayerPlay, IconTrash } from '@tabler/icons-react';
+import { IconRefresh, IconPlayerPlay, IconTrash, IconChevronUp, IconChevronDown } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
 import {
   getTestQueue,
   removeFromQueue,
+  reorderQueue,
   startTestPlan,
   getStatusColor,
   getStatusLabel,
@@ -91,6 +92,46 @@ export function TestQueue() {
     }
   };
 
+  const handleMoveUp = async (test_plan_id: string, current_position: number) => {
+    if (current_position <= 1) return; // Already at the top
+
+    try {
+      await reorderQueue(test_plan_id, current_position - 1);
+      notifications.show({
+        title: '调整成功',
+        message: '测试计划已上移',
+        color: 'green',
+      });
+      loadQueue();
+    } catch (error) {
+      notifications.show({
+        title: '调整失败',
+        message: '无法调整队列位置',
+        color: 'red',
+      });
+    }
+  };
+
+  const handleMoveDown = async (test_plan_id: string, current_position: number, max_position: number) => {
+    if (current_position >= max_position) return; // Already at the bottom
+
+    try {
+      await reorderQueue(test_plan_id, current_position + 1);
+      notifications.show({
+        title: '调整成功',
+        message: '测试计划已下移',
+        color: 'green',
+      });
+      loadQueue();
+    } catch (error) {
+      notifications.show({
+        title: '调整失败',
+        message: '无法调整队列位置',
+        color: 'red',
+      });
+    }
+  };
+
   return (
     <Stack gap="md">
       <Group justify="space-between">
@@ -128,13 +169,17 @@ export function TestQueue() {
                 </Table.Td>
               </Table.Tr>
             ) : (
-              queueItems.map((item) => {
+              queueItems.map((item, index) => {
                 const progress =
                   item.test_plan.total_test_cases > 0
                     ? Math.round(
                         (item.test_plan.completed_test_cases / item.test_plan.total_test_cases) * 100
                       )
                     : 0;
+
+                const isFirst = index === 0;
+                const isLast = index === queueItems.length - 1;
+                const canReorder = item.test_plan.status === 'queued';
 
                 return (
                   <Table.Tr key={item.queue_item.id}>
@@ -143,7 +188,32 @@ export function TestQueue() {
                         <Badge size="lg" variant="filled" color="blue">
                           {item.queue_item.position}
                         </Badge>
-                        {/* TODO: Add reorder buttons */}
+                        {canReorder && (
+                          <Group gap={4}>
+                            <Tooltip label="上移">
+                              <ActionIcon
+                                size="sm"
+                                variant="subtle"
+                                color="blue"
+                                disabled={isFirst}
+                                onClick={() => handleMoveUp(item.test_plan.id, item.queue_item.position)}
+                              >
+                                <IconChevronUp size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                            <Tooltip label="下移">
+                              <ActionIcon
+                                size="sm"
+                                variant="subtle"
+                                color="blue"
+                                disabled={isLast}
+                                onClick={() => handleMoveDown(item.test_plan.id, item.queue_item.position, queueItems.length)}
+                              >
+                                <IconChevronDown size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                          </Group>
+                        )}
                       </Group>
                     </Table.Td>
                     <Table.Td>

@@ -463,7 +463,7 @@ function generateMockTRPResult(request: TRPCalibrationRequest): CalibrationRespo
     tested_by: request.tested_by,
     tested_at: new Date().toISOString(),
     reference_lab: request.reference_lab,
-    ref_cert_number: request.reference_cert_number,
+    ref_cert_number: request.ref_cert_number,
   };
 }
 
@@ -493,7 +493,7 @@ function generateMockTISResult(request: TISCalibrationRequest): CalibrationRespo
     tested_by: request.tested_by,
     tested_at: new Date().toISOString(),
     reference_lab: request.reference_lab,
-    ref_cert_number: request.reference_cert_number,
+    ref_cert_number: request.ref_cert_number,
   };
 }
 
