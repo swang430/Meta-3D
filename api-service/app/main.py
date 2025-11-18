@@ -10,7 +10,7 @@ import logging
 
 from app.config import settings
 from app.db.database import init_db
-from app.api import health, calibration
+from app.api import health, calibration, test_plan
 
 # Configure logging
 logging.basicConfig(
@@ -86,6 +86,7 @@ app.add_middleware(
 # Include routers
 app.include_router(health.router, prefix=settings.api_v1_prefix)
 app.include_router(calibration.router, prefix=settings.api_v1_prefix)
+app.include_router(test_plan.router, prefix=settings.api_v1_prefix)
 
 
 @app.get("/")
