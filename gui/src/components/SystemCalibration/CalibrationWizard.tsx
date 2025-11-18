@@ -209,9 +209,11 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
       } else if (calibrationType === 'repeatability') {
         // Repeatability test
         const request: RepeatabilityTestRequest = {
-          calibration_type: formData.repeatabilityTestType,
+          test_type: formData.repeatabilityTestType,
           dut_model: formData.dutModel,
+          dut_serial: formData.dutSerial,
           num_runs: 10,
+          frequency_mhz: formData.frequency,
           tested_by: formData.testedBy,
         };
 
@@ -579,7 +581,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                       </Group>
 
                       {/* Field Uniformity Results */}
-                      {results.field_uniformity_db !== undefined && (
+                      {results.field_uniformity_db != null && results.field_mean_dbm != null && (
                         <>
                           <Group justify="apart">
                             <Text size="sm" color="dimmed">场均匀性:</Text>
@@ -593,7 +595,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                       )}
 
                       {/* Spatial Correlation Results */}
-                      {results.correlation_error_rms !== undefined && (
+                      {results.correlation_error_rms != null && (
                         <>
                           <Group justify="apart">
                             <Text size="sm" color="dimmed">RMS 误差:</Text>
@@ -609,7 +611,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                       )}
 
                       {/* Probe Coupling Results */}
-                      {results.max_coupling_db !== undefined && (
+                      {results.max_coupling_db != null && (
                         <>
                           <Group justify="apart">
                             <Text size="sm" color="dimmed">最大互耦:</Text>
@@ -625,7 +627,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                       )}
 
                       {/* Phase Stability Results */}
-                      {results.phase_drift_deg !== undefined && (
+                      {results.phase_drift_deg != null && (
                         <>
                           <Group justify="apart">
                             <Text size="sm" color="dimmed">相位漂移:</Text>
@@ -677,7 +679,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                           {results.measured_trp_dbm?.toFixed(2) || results.measured_tis_dbm?.toFixed(2)} dBm
                         </Text>
                       </Group>
-                      {results.error_db !== undefined && (
+                      {results.error_db != null && (
                         <Group justify="apart">
                           <Text size="sm" color="dimmed">误差:</Text>
                           <Badge color={Math.abs(results.error_db) < results.threshold_db ? 'green' : 'red'}>
@@ -685,7 +687,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                           </Badge>
                         </Group>
                       )}
-                      {results.absolute_error_db !== undefined && (
+                      {results.absolute_error_db != null && (
                         <Group justify="apart">
                           <Text size="sm" color="dimmed">绝对误差:</Text>
                           <Text size="sm">{results.absolute_error_db.toFixed(2)} dB</Text>

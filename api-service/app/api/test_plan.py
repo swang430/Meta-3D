@@ -81,19 +81,116 @@ def list_test_plans(
     db: Session = Depends(get_db)
 ):
     """List all test plans with optional filters"""
-    service = TestPlanService()
-    test_plans = service.list_test_plans(
-        db=db,
-        skip=skip,
-        limit=limit,
-        status=status,
-        created_by=created_by
-    )
+    try:
+        service = TestPlanService()
+        test_plans = service.list_test_plans(
+            db=db,
+            skip=skip,
+            limit=limit,
+            status=status,
+            created_by=created_by
+        )
 
-    return TestPlanListResponse(
-        total=len(test_plans),
-        items=[TestPlanSummary.from_orm(tp) for tp in test_plans]
-    )
+        return TestPlanListResponse(
+            total=len(test_plans),
+            items=[TestPlanSummary.from_orm(tp) for tp in test_plans]
+        )
+    except Exception as e:
+        # Database unavailable - return empty list
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Database unavailable for test plans list: {e}")
+        return TestPlanListResponse(
+            total=0,
+            items=[]
+        )
+
+
+# ==================== Queue Management Endpoints ====================
+
+@router.post("/queue", response_model=TestQueueResponse, status_code=201)
+def queue_test_plan(
+    request: QueueTestPlanRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Add a test plan to the execution queue
+
+    The test plan will be queued for execution based on its priority
+    and dependencies.
+    """
+    service = TestQueueService()
+
+    try:
+        queue_item = service.queue_test_plan(
+            db=db,
+            test_plan_id=request.test_plan_id,
+            queued_by=request.queued_by,
+            priority=request.priority,
+            scheduled_start_time=request.scheduled_start_time,
+            dependencies=request.dependencies,
+            notes=request.notes,
+        )
+        return queue_item
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/queue", response_model=TestQueueListResponse)
+def get_test_queue(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db)
+):
+    """Get the current test execution queue"""
+    try:
+        queue_service = TestQueueService()
+        plan_service = TestPlanService()
+
+        queue_items = queue_service.get_queue(db, skip, limit)
+
+        # Build response with test plan details
+        items = []
+        for queue_item in queue_items:
+            test_plan = plan_service.get_test_plan(db, queue_item.test_plan_id)
+            if test_plan:
+                items.append(TestQueueSummary(
+                    queue_item=TestQueueResponse.from_orm(queue_item),
+                    test_plan=TestPlanSummary.from_orm(test_plan)
+                ))
+
+        return TestQueueListResponse(
+            total=len(items),
+            items=items
+        )
+    except Exception as e:
+        # Database unavailable - return empty queue
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Database unavailable for test queue: {e}")
+        return TestQueueListResponse(
+            total=0,
+            items=[]
+        )
+
+
+@router.delete("/queue/{test_plan_id}", status_code=204)
+def remove_from_queue(
+    test_plan_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """Remove a test plan from the execution queue"""
+    service = TestQueueService()
+    success = service.remove_from_queue(db, test_plan_id)
+
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail="Test plan not found in queue"
+        )
+
+    return None
+
 
 
 @router.get("/{test_plan_id}", response_model=TestPlanResponse)
@@ -211,19 +308,29 @@ def list_test_cases(
     db: Session = Depends(get_db)
 ):
     """List all test cases with optional filters"""
-    service = TestCaseService()
-    test_cases = service.list_test_cases(
-        db=db,
-        skip=skip,
-        limit=limit,
-        test_type=test_type,
-        is_template=is_template
-    )
+    try:
+        service = TestCaseService()
+        test_cases = service.list_test_cases(
+            db=db,
+            skip=skip,
+            limit=limit,
+            test_type=test_type,
+            is_template=is_template
+        )
 
-    return TestCaseListResponse(
-        total=len(test_cases),
-        items=[TestCaseSummary.from_orm(tc) for tc in test_cases]
-    )
+        return TestCaseListResponse(
+            total=len(test_cases),
+            items=[TestCaseSummary.from_orm(tc) for tc in test_cases]
+        )
+    except Exception as e:
+        # Database unavailable - return empty list
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Database unavailable for test cases list: {e}")
+        return TestCaseListResponse(
+            total=0,
+            items=[]
+        )
 
 
 @router.get("/cases/{test_case_id}", response_model=TestCaseResponse)
@@ -270,82 +377,6 @@ def delete_test_case(
 
     if not success:
         raise HTTPException(status_code=404, detail="Test case not found")
-
-    return None
-
-
-# ==================== Queue Management Endpoints ====================
-
-@router.post("/queue", response_model=TestQueueResponse, status_code=201)
-def queue_test_plan(
-    request: QueueTestPlanRequest,
-    db: Session = Depends(get_db)
-):
-    """
-    Add a test plan to the execution queue
-
-    The test plan will be queued for execution based on its priority
-    and dependencies.
-    """
-    service = TestQueueService()
-
-    try:
-        queue_item = service.queue_test_plan(
-            db=db,
-            test_plan_id=request.test_plan_id,
-            queued_by=request.queued_by,
-            priority=request.priority,
-            scheduled_start_time=request.scheduled_start_time,
-            dependencies=request.dependencies,
-            notes=request.notes,
-        )
-        return queue_item
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.get("/queue", response_model=TestQueueListResponse)
-def get_test_queue(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=1000),
-    db: Session = Depends(get_db)
-):
-    """Get the current test execution queue"""
-    queue_service = TestQueueService()
-    plan_service = TestPlanService()
-
-    queue_items = queue_service.get_queue(db, skip, limit)
-
-    # Build response with test plan details
-    items = []
-    for queue_item in queue_items:
-        test_plan = plan_service.get_test_plan(db, queue_item.test_plan_id)
-        if test_plan:
-            items.append(TestQueueSummary(
-                queue_item=TestQueueResponse.from_orm(queue_item),
-                test_plan=TestPlanSummary.from_orm(test_plan)
-            ))
-
-    return TestQueueListResponse(
-        total=len(items),
-        items=items
-    )
-
-
-@router.delete("/queue/{test_plan_id}", status_code=204)
-def remove_from_queue(
-    test_plan_id: UUID,
-    db: Session = Depends(get_db)
-):
-    """Remove a test plan from the execution queue"""
-    service = TestQueueService()
-    success = service.remove_from_queue(db, test_plan_id)
-
-    if not success:
-        raise HTTPException(
-            status_code=404,
-            detail="Test plan not found in queue"
-        )
 
     return None
 
