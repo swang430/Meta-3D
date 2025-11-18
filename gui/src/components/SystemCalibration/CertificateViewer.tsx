@@ -26,6 +26,8 @@ import {
   IconCalendar,
   IconFileText,
 } from '@tabler/icons-react';
+import { jsPDF } from 'jspdf';
+import { notifications } from '@mantine/notifications';
 
 interface Certificate {
   id: string;
@@ -65,8 +67,150 @@ export function CertificateViewer() {
   const [detailsOpened, setDetailsOpened] = useState(false);
 
   const downloadPDF = () => {
-    // TODO: Implement PDF download
-    console.log('Download PDF certificate');
+    try {
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 20;
+      let yPos = margin;
+
+      // Header
+      doc.setFontSize(20);
+      doc.setFont('helvetica', 'bold');
+      doc.text('System Calibration Certificate', pageWidth / 2, yPos, { align: 'center' });
+      yPos += 15;
+
+      // Certificate Number
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Certificate No: ${mockCertificate.certificateNumber}`, pageWidth / 2, yPos, { align: 'center' });
+      yPos += 10;
+
+      // Line separator
+      doc.setLineWidth(0.5);
+      doc.line(margin, yPos, pageWidth - margin, yPos);
+      yPos += 15;
+
+      // System Information
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text('System Information', margin, yPos);
+      yPos += 8;
+
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`System Name: ${mockCertificate.systemName}`, margin + 5, yPos);
+      yPos += 7;
+      doc.text(`Calibration Date: ${mockCertificate.calibrationDate}`, margin + 5, yPos);
+      yPos += 7;
+      doc.text(`Valid Until: ${mockCertificate.validUntil}`, margin + 5, yPos);
+      yPos += 12;
+
+      // Overall Status
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Overall Status', margin, yPos);
+      yPos += 8;
+
+      if (mockCertificate.overallPass) {
+        doc.setTextColor(0, 150, 0); // Green
+        doc.text('PASS', margin + 5, yPos);
+      } else {
+        doc.setTextColor(200, 0, 0); // Red
+        doc.text('FAIL', margin + 5, yPos);
+      }
+      doc.setTextColor(0, 0, 0); // Reset to black
+      yPos += 12;
+
+      // TRP Calibration Results
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text('TRP Calibration Results', margin, yPos);
+      yPos += 8;
+
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Absolute Error: ${mockCertificate.trpError.toFixed(2)} dB`, margin + 5, yPos);
+      yPos += 7;
+      doc.text(`Status: ${mockCertificate.trpPass ? 'PASS' : 'FAIL'}`, margin + 5, yPos);
+      yPos += 12;
+
+      // TIS Calibration Results
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text('TIS Calibration Results', margin, yPos);
+      yPos += 8;
+
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Absolute Error: ${mockCertificate.tisError.toFixed(2)} dB`, margin + 5, yPos);
+      yPos += 7;
+      doc.text(`Status: ${mockCertificate.tisPass ? 'PASS' : 'FAIL'}`, margin + 5, yPos);
+      yPos += 12;
+
+      // Repeatability Test Results
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Repeatability Test Results', margin, yPos);
+      yPos += 8;
+
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Standard Deviation: ${mockCertificate.repeatabilityStdDev.toFixed(2)} dB`, margin + 5, yPos);
+      yPos += 7;
+      doc.text(`Status: ${mockCertificate.repeatabilityPass ? 'PASS' : 'FAIL'}`, margin + 5, yPos);
+      yPos += 12;
+
+      // Check if we need a new page
+      if (yPos > pageHeight - 50) {
+        doc.addPage();
+        yPos = margin;
+      }
+
+      // Signatures
+      doc.setLineWidth(0.5);
+      doc.line(margin, yPos, pageWidth - margin, yPos);
+      yPos += 10;
+
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Signatures', margin, yPos);
+      yPos += 10;
+
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Calibrated by: ${mockCertificate.calibratedBy}`, margin + 5, yPos);
+      yPos += 10;
+      doc.text(`Reviewed by: ${mockCertificate.reviewedBy}`, margin + 5, yPos);
+      yPos += 15;
+
+      // Footer
+      doc.setFontSize(9);
+      doc.setTextColor(128, 128, 128);
+      doc.text(
+        `Generated on ${new Date().toLocaleString()}`,
+        pageWidth / 2,
+        pageHeight - 10,
+        { align: 'center' }
+      );
+
+      // Save the PDF
+      const filename = `${mockCertificate.certificateNumber}.pdf`;
+      doc.save(filename);
+
+      notifications.show({
+        title: '下载成功',
+        message: `证书已保存为 ${filename}`,
+        color: 'green',
+      });
+    } catch (error) {
+      console.error('PDF generation error:', error);
+      notifications.show({
+        title: '下载失败',
+        message: '无法生成 PDF 证书',
+        color: 'red',
+      });
+    }
   };
 
   return (

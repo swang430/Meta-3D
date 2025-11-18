@@ -52,6 +52,7 @@ import './App.css'
 import ProbeLayoutView from './components/ProbeLayoutView'
 import { VirtualRoadTest } from './components/VirtualRoadTest'
 import { SystemCalibration } from './components/SystemCalibration'
+import { TestPlanManagement } from './components/TestPlanManagement/TestPlanManagement'
 import {
   appendPlanStep,
   createProbe,
@@ -118,7 +119,7 @@ const hexToRgba = (hex: string, alpha: number) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
-type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'testConfig' | 'monitoring' | 'results' | 'virtualRoadTest' | 'systemCalibration'
+type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'testConfig' | 'monitoring' | 'results' | 'virtualRoadTest' | 'systemCalibration' | 'testPlanManagement'
 
 type ProbeFormState = Pick<ProbeType, 'ring' | 'polarization' | 'position'>
 
@@ -215,6 +216,11 @@ const sections: Array<{ key: SectionKey; label: string; description: string }> =
     key: 'systemCalibration',
     label: '系统校准',
     description: '执行TRP/TIS校准、重复性测试、实验室间比对，管理校准证书与溯源。',
+  },
+  {
+    key: 'testPlanManagement',
+    label: '测试计划管理',
+    description: '创建、编辑和执行测试计划，管理测试用例和执行队列。',
   },
 ]
 
@@ -917,6 +923,8 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
       return <VirtualRoadTest />
     case 'systemCalibration':
       return <SystemCalibration />
+    case 'testPlanManagement':
+      return <TestPlanManagement />
     default:
       return null
   }

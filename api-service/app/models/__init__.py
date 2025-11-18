@@ -5,6 +5,16 @@ from app.models.calibration import (
     RepeatabilityTest,
     ComparabilityTest,
     CalibrationCertificate,
+    QuietZoneCalibration,
+)
+from app.models.test_plan import (
+    TestPlan,
+    TestCase,
+    TestExecution,
+    TestSequence,
+    TestQueue,
+    TestPlanStatus,
+    TestCaseType,
 )
 
 __all__ = [
@@ -13,4 +23,12 @@ __all__ = [
     "RepeatabilityTest",
     "ComparabilityTest",
     "CalibrationCertificate",
+    "QuietZoneCalibration",
+    "TestPlan",
+    "TestCase",
+    "TestExecution",
+    "TestSequence",
+    "TestQueue",
+    "TestPlanStatus",
+    "TestCaseType",
 ]

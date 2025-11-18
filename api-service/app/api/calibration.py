@@ -357,7 +357,15 @@ async def execute_quiet_zone_calibration(
     request: QuietZoneCalibrationRequest,
     db: Session = Depends(get_db)
 ):
-    """Execute quiet zone quality validation"""
+    """
+    Execute quiet zone quality validation
+
+    Supports 4 validation types:
+    1. field_uniformity - 场均匀性测试 (threshold: < 1.0 dB)
+    2. spatial_correlation - 空间相关性验证 (threshold: RMS error < 0.1)
+    3. probe_coupling - 探头互耦测量 (threshold: max coupling < -20 dB)
+    4. phase_stability - 相位稳定性测试 (threshold: drift < 10°)
+    """
     instruments = MockInstrumentOrchestrator()
     service = QuietZoneCalibrationService(instruments)
 
@@ -368,8 +376,36 @@ async def execute_quiet_zone_calibration(
             grid_points=request.grid_points,
             tested_by=request.tested_by
         )
+    elif request.validation_type == 'spatial_correlation':
+        calibration = await service.execute_spatial_correlation(
+            db=db,
+            frequency_mhz=request.frequency_mhz,
+            num_antennas=request.num_antennas or 4,
+            target_channel_model=request.target_channel_model or '3GPP_UMa',
+            tested_by=request.tested_by
+        )
+    elif request.validation_type == 'probe_coupling':
+        # Default: test all 32 probes
+        probe_ids = request.probe_ids or list(range(1, 33))
+        calibration = await service.execute_probe_coupling(
+            db=db,
+            frequency_mhz=request.frequency_mhz,
+            probe_ids=probe_ids,
+            tested_by=request.tested_by
+        )
+    elif request.validation_type == 'phase_stability':
+        calibration = await service.execute_phase_stability(
+            db=db,
+            frequency_mhz=request.frequency_mhz,
+            duration_sec=request.duration_sec or 60.0,
+            tested_by=request.tested_by
+        )
     else:
-        raise HTTPException(status_code=400, detail=f"Unsupported validation type: {request.validation_type}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported validation type: {request.validation_type}. "
+                   f"Supported types: field_uniformity, spatial_correlation, probe_coupling, phase_stability"
+        )
 
     return calibration
 

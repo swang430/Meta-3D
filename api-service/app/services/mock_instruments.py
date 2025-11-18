@@ -422,3 +422,177 @@ class MockInstrumentOrchestrator:
             'min': np.min(field_values),
             'uniformity_db': np.max(field_values) - np.min(field_values)
         }
+
+    async def measure_spatial_correlation(
+        self,
+        frequency_mhz: float,
+        num_antennas: int,
+        target_model: str
+    ) -> Dict:
+        """
+        测量 MIMO 空间相关性矩阵
+
+        Args:
+            frequency_mhz: 测试频率
+            num_antennas: MIMO 天线数 (e.g., 2x2, 4x4)
+            target_model: 目标信道模型 (e.g., '3GPP_UMa', '3GPP_UMi')
+
+        Returns:
+            Dict with correlation matrix and analysis
+        """
+        # 理论目标相关性矩阵（基于 3GPP 信道模型）
+        # UMa (Urban Macro): 低相关性 ~0.3
+        # UMi (Urban Micro): 中等相关性 ~0.5
+        # InH (Indoor Hotspot): 高相关性 ~0.7
+        target_correlation = {
+            '3GPP_UMa': 0.3,
+            '3GPP_UMi': 0.5,
+            '3GPP_InH': 0.7,
+        }.get(target_model, 0.5)
+
+        # 生成测量的相关性矩阵
+        # 对角线为 1.0，非对角线为目标相关性 + 噪声
+        correlation_matrix = []
+        for i in range(num_antennas):
+            row = []
+            for j in range(num_antennas):
+                if i == j:
+                    corr = 1.0
+                else:
+                    # 添加测量噪声（±0.05）
+                    corr = target_correlation + random.gauss(0, 0.05)
+                    corr = max(0.0, min(1.0, corr))  # Clamp to [0, 1]
+                row.append(round(corr, 3))
+            correlation_matrix.append(row)
+
+        # 计算与目标模型的 RMS 误差
+        errors = []
+        for i in range(num_antennas):
+            for j in range(num_antennas):
+                if i != j:
+                    expected = target_correlation
+                    measured = correlation_matrix[i][j]
+                    errors.append((measured - expected) ** 2)
+
+        rms_error = np.sqrt(np.mean(errors))
+
+        return {
+            'correlation_matrix': correlation_matrix,
+            'target_model': target_model,
+            'target_correlation': target_correlation,
+            'rms_error': rms_error,
+            'num_antennas': num_antennas
+        }
+
+    async def measure_probe_coupling(
+        self,
+        frequency_mhz: float,
+        probe_ids: List[int]
+    ) -> Dict:
+        """
+        测量探头间互耦 S 参数矩阵
+
+        Args:
+            frequency_mhz: 测试频率
+            probe_ids: 要测量的探头 ID 列表
+
+        Returns:
+            Dict with S-parameter coupling matrix
+        """
+        num_probes = len(probe_ids)
+
+        # 生成 S 参数矩阵（dB）
+        # 对角线: S11, S22, ... (反射系数) ~ -15 dB (良好匹配)
+        # 非对角线: S12, S21, ... (互耦) ~ -25 dB (良好隔离)
+        coupling_matrix = []
+
+        for i in range(num_probes):
+            row = []
+            for j in range(num_probes):
+                if i == j:
+                    # 反射系数 (return loss)
+                    s_param_db = random.gauss(-15.0, 1.0)  # -15 dB ± 1 dB
+                else:
+                    # 互耦 (isolation)
+                    # 相邻探头: 更高耦合 ~-22 dB
+                    # 远距探头: 更低耦合 ~-30 dB
+                    distance_factor = abs(probe_ids[i] - probe_ids[j])
+                    base_coupling = -22 - distance_factor * 2
+                    s_param_db = random.gauss(base_coupling, 2.0)
+
+                row.append({
+                    'magnitude_db': round(s_param_db, 2),
+                    'phase_deg': round(random.uniform(-180, 180), 1)
+                })
+            coupling_matrix.append(row)
+
+        # 找到最大互耦（非对角线元素）
+        max_coupling_db = -100.0
+        for i in range(num_probes):
+            for j in range(num_probes):
+                if i != j:
+                    coupling_db = coupling_matrix[i][j]['magnitude_db']
+                    max_coupling_db = max(max_coupling_db, coupling_db)
+
+        return {
+            'coupling_matrix': coupling_matrix,
+            'num_probes': num_probes,
+            'probe_ids': probe_ids,
+            'max_coupling_db': max_coupling_db
+        }
+
+    async def measure_phase_stability(
+        self,
+        frequency_mhz: float,
+        duration_sec: float,
+        sample_interval_sec: float = 1.0
+    ) -> Dict:
+        """
+        测量系统相位稳定性（相位漂移）
+
+        Args:
+            frequency_mhz: 测试频率
+            duration_sec: 测试持续时间（秒）
+            sample_interval_sec: 采样间隔（秒）
+
+        Returns:
+            Dict with phase drift time series
+        """
+        num_samples = int(duration_sec / sample_interval_sec)
+
+        # 模拟相位漂移
+        # 理想系统：相位漂移 < 5°
+        # 良好系统：相位漂移 < 10°
+        # 不合格系统：相位漂移 > 10°
+
+        # 基准相位
+        base_phase = 0.0
+
+        # 长期漂移（线性趋势）+ 随机噪声
+        drift_rate_deg_per_sec = random.gauss(0.5, 0.2)  # 0.5°/s ± 0.2°/s
+
+        time_series = []
+        phase_values = []
+
+        for i in range(num_samples):
+            time_sec = i * sample_interval_sec
+
+            # 线性漂移 + 随机噪声
+            phase_deg = base_phase + drift_rate_deg_per_sec * time_sec + random.gauss(0, 1.0)
+
+            time_series.append({
+                'time_sec': round(time_sec, 2),
+                'phase_deg': round(phase_deg, 2)
+            })
+            phase_values.append(phase_deg)
+
+        # 计算最大相位漂移
+        max_phase_drift = max(phase_values) - min(phase_values)
+
+        return {
+            'time_series': time_series,
+            'duration_sec': duration_sec,
+            'num_samples': num_samples,
+            'max_phase_drift_deg': max_phase_drift,
+            'drift_rate_deg_per_sec': drift_rate_deg_per_sec
+        }
