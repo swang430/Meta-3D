@@ -62,9 +62,10 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
     referenceTIS: -90.2,
     frequency: 3500,
     txPower: 23,
-    testedBy: '',
+    testedBy: '测试工程师',
     referenceLab: 'NIM (National Institute of Metrology)',
     refCertNumber: '',
+    repeatabilityTestType: 'TRP' as 'TRP' | 'TIS' | 'EIS',
   });
 
   // 探头选择配置
@@ -111,7 +112,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
           phi_step_deg: 15,
           tested_by: formData.testedBy,
           reference_lab: formData.referenceLab,
-          ref_cert_number: formData.refCertNumber || undefined,
+          reference_cert_number: formData.refCertNumber || undefined,
         };
 
         // 添加探头选择配置
@@ -137,7 +138,7 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
           phi_step_deg: 15,
           tested_by: formData.testedBy,
           reference_lab: formData.referenceLab,
-          ref_cert_number: formData.refCertNumber || undefined,
+          reference_cert_number: formData.refCertNumber || undefined,
         };
 
         // 添加探头选择配置
@@ -175,22 +176,44 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
         setExecutionProgress(60);
         result = await executeMultiFrequencyCalibration(request);
 
-      } else if (calibrationType === 'quiet_zone') {
+      } else if (calibrationType.startsWith('quiet_zone_')) {
+        // Determine validation type from calibrationType
+        let validation_type = 'field_uniformity';
+        let extraParams: any = {};
+
+        if (calibrationType === 'quiet_zone_field') {
+          validation_type = 'field_uniformity';
+          extraParams.grid_points = 25;
+        } else if (calibrationType === 'quiet_zone_correlation') {
+          validation_type = 'spatial_correlation';
+          extraParams.num_antennas = 4;  // 4x4 MIMO
+          extraParams.target_channel_model = '3GPP_UMa';
+        } else if (calibrationType === 'quiet_zone_coupling') {
+          validation_type = 'probe_coupling';
+          // Test all 32 probes by default
+          extraParams.probe_ids = Array.from({ length: 32 }, (_, i) => i + 1);
+        } else if (calibrationType === 'quiet_zone_phase') {
+          validation_type = 'phase_stability';
+          extraParams.duration_sec = 60.0;  // 60 seconds test
+        }
+
         const request: QuietZoneCalibrationRequest = {
-          validation_type: 'field_uniformity',
+          validation_type,
           frequency_mhz: formData.frequency,
           tested_by: formData.testedBy,
-          grid_points: 25,
+          ...extraParams,
         };
 
         setExecutionProgress(60);
         result = await executeQuietZoneCalibration(request);
-      } else {
+      } else if (calibrationType === 'repeatability') {
         // Repeatability test
         const request: RepeatabilityTestRequest = {
-          calibration_type: calibrationType.toUpperCase() as 'TRP' | 'TIS' | 'EIS',
+          test_type: formData.repeatabilityTestType,
           dut_model: formData.dutModel,
+          dut_serial: formData.dutSerial,
           num_runs: 10,
+          frequency_mhz: formData.frequency,
           tested_by: formData.testedBy,
         };
 
@@ -259,7 +282,10 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                 { value: 'trp', label: 'TRP - 总辐射功率校准' },
                 { value: 'tis', label: 'TIS - 总全向灵敏度校准' },
                 { value: 'repeatability', label: '可重复性测试' },
-                { value: 'quiet_zone', label: '静区质量验证 - 场均匀性' },
+                { value: 'quiet_zone_field', label: '静区质量验证 - 场均匀性' },
+                { value: 'quiet_zone_correlation', label: '静区质量验证 - 空间相关性' },
+                { value: 'quiet_zone_coupling', label: '静区质量验证 - 探头互耦' },
+                { value: 'quiet_zone_phase', label: '静区质量验证 - 相位稳定性' },
                 { value: 'multi_frequency', label: '多频点校准（全频段扫描）' },
               ]}
             />
@@ -269,14 +295,20 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                 {calibrationType === 'trp' && 'TRP 校准说明'}
                 {calibrationType === 'tis' && 'TIS 校准说明'}
                 {calibrationType === 'repeatability' && '可重复性测试说明'}
-                {calibrationType === 'quiet_zone' && '静区质量验证说明'}
+                {calibrationType === 'quiet_zone_field' && '场均匀性验证说明'}
+                {calibrationType === 'quiet_zone_correlation' && '空间相关性验证说明'}
+                {calibrationType === 'quiet_zone_coupling' && '探头互耦测量说明'}
+                {calibrationType === 'quiet_zone_phase' && '相位稳定性测试说明'}
                 {calibrationType === 'multi_frequency' && '多频点校准说明'}
               </Text>
               <Text size="xs" color="dimmed">
                 {calibrationType === 'trp' && '验证系统测量辐射功率的准确性，标准: ±0.5 dB'}
                 {calibrationType === 'tis' && '验证系统测量接收灵敏度的准确性，标准: ±1.0 dB'}
                 {calibrationType === 'repeatability' && '验证系统测量的可重复性，标准: σ < 0.3 dB (TRP) 或 0.5 dB (TIS)'}
-                {calibrationType === 'quiet_zone' && '验证静区场均匀性，在 5x5 网格测量，标准: < 1.0 dB (3GPP TS 34.114)'}
+                {calibrationType === 'quiet_zone_field' && '验证静区场均匀性，在 5x5 网格测量，标准: < 1.0 dB (3GPP TS 34.114)'}
+                {calibrationType === 'quiet_zone_correlation' && '验证 MIMO 信道空间相关性矩阵，对比目标 3GPP 信道模型，标准: RMS 误差 < 0.1'}
+                {calibrationType === 'quiet_zone_coupling' && '测量探头间 S 参数互耦矩阵，验证探头隔离度，标准: 最大互耦 < -20 dB'}
+                {calibrationType === 'quiet_zone_phase' && '验证系统相位稳定性，测量相位漂移，标准: 漂移 < 10° (3GPP)'}
                 {calibrationType === 'multi_frequency' && '在多个频率点执行校准测试，验证系统全频段性能'}
               </Text>
             </Paper>
@@ -301,6 +333,21 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
               onChange={(e) => setFormData({ ...formData, dutSerial: e.target.value })}
               required
             />
+
+            {calibrationType === 'repeatability' && (
+              <Select
+                label="测试类型"
+                description="选择要进行可重复性测试的类型"
+                value={formData.repeatabilityTestType}
+                onChange={(value) => setFormData({ ...formData, repeatabilityTestType: (value || 'TRP') as 'TRP' | 'TIS' | 'EIS' })}
+                data={[
+                  { value: 'TRP', label: 'TRP - 总辐射功率' },
+                  { value: 'TIS', label: 'TIS - 总全向灵敏度' },
+                  { value: 'EIS', label: 'EIS - 有效全向灵敏度' },
+                ]}
+                required
+              />
+            )}
 
             {calibrationType === 'trp' && (
               <NumberInput
@@ -521,6 +568,108 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                       ))}
                     </Stack>
                   </Paper>
+                ) : calibrationType.startsWith('quiet_zone_') ? (
+                  <Paper p="md" withBorder>
+                    <Stack gap="xs">
+                      <Group justify="apart">
+                        <Text size="sm" color="dimmed">验证类型:</Text>
+                        <Text size="sm" fw={600}>{results.validation_type}</Text>
+                      </Group>
+                      <Group justify="apart">
+                        <Text size="sm" color="dimmed">频率:</Text>
+                        <Text size="sm">{results.frequency_mhz} MHz</Text>
+                      </Group>
+
+                      {/* Field Uniformity Results */}
+                      {results.field_uniformity_db !== undefined && (
+                        <>
+                          <Group justify="apart">
+                            <Text size="sm" color="dimmed">场均匀性:</Text>
+                            <Text size="sm" fw={600}>{results.field_uniformity_db.toFixed(2)} dB</Text>
+                          </Group>
+                          <Group justify="apart">
+                            <Text size="sm" color="dimmed">平均场强:</Text>
+                            <Text size="sm">{results.field_mean_dbm.toFixed(2)} dBm</Text>
+                          </Group>
+                        </>
+                      )}
+
+                      {/* Spatial Correlation Results */}
+                      {results.correlation_error_rms !== undefined && (
+                        <>
+                          <Group justify="apart">
+                            <Text size="sm" color="dimmed">RMS 误差:</Text>
+                            <Badge color={results.correlation_error_rms < 0.1 ? 'green' : 'red'}>
+                              {results.correlation_error_rms.toFixed(3)}
+                            </Badge>
+                          </Group>
+                          <Group justify="apart">
+                            <Text size="sm" color="dimmed">阈值:</Text>
+                            <Text size="sm">{'< '}0.1</Text>
+                          </Group>
+                        </>
+                      )}
+
+                      {/* Probe Coupling Results */}
+                      {results.max_coupling_db !== undefined && (
+                        <>
+                          <Group justify="apart">
+                            <Text size="sm" color="dimmed">最大互耦:</Text>
+                            <Badge color={results.max_coupling_db < -20 ? 'green' : 'red'}>
+                              {results.max_coupling_db.toFixed(2)} dB
+                            </Badge>
+                          </Group>
+                          <Group justify="apart">
+                            <Text size="sm" color="dimmed">阈值:</Text>
+                            <Text size="sm">{'< '}-20 dB</Text>
+                          </Group>
+                        </>
+                      )}
+
+                      {/* Phase Stability Results */}
+                      {results.phase_drift_deg !== undefined && (
+                        <>
+                          <Group justify="apart">
+                            <Text size="sm" color="dimmed">相位漂移:</Text>
+                            <Badge color={results.phase_drift_deg < 10 ? 'green' : 'red'}>
+                              {results.phase_drift_deg.toFixed(2)}°
+                            </Badge>
+                          </Group>
+                          <Group justify="apart">
+                            <Text size="sm" color="dimmed">阈值:</Text>
+                            <Text size="sm">{'< '}10°</Text>
+                          </Group>
+                        </>
+                      )}
+                    </Stack>
+                  </Paper>
+                ) : calibrationType === 'repeatability' ? (
+                  <Paper p="md" withBorder>
+                    <Stack gap="xs">
+                      <Group justify="apart">
+                        <Text size="sm" color="dimmed">测试类型:</Text>
+                        <Text size="sm" fw={600}>{results.calibration_type || results.test_type}</Text>
+                      </Group>
+                      <Group justify="apart">
+                        <Text size="sm" color="dimmed">运行次数:</Text>
+                        <Text size="sm">{results.num_runs}</Text>
+                      </Group>
+                      <Group justify="apart">
+                        <Text size="sm" color="dimmed">平均值:</Text>
+                        <Text size="sm" fw={600}>{results.mean?.toFixed(2)} dBm</Text>
+                      </Group>
+                      <Group justify="apart">
+                        <Text size="sm" color="dimmed">标准差 (σ):</Text>
+                        <Badge color={results.std_dev < results.threshold ? 'green' : 'red'}>
+                          {results.std_dev?.toFixed(3)} dB
+                        </Badge>
+                      </Group>
+                      <Group justify="apart">
+                        <Text size="sm" color="dimmed">阈值:</Text>
+                        <Text size="sm">{'< '}{results.threshold} dB</Text>
+                      </Group>
+                    </Stack>
+                  </Paper>
                 ) : (
                   <Paper p="md" withBorder>
                     <Stack gap="xs">
@@ -530,24 +679,32 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
                           {results.measured_trp_dbm?.toFixed(2) || results.measured_tis_dbm?.toFixed(2)} dBm
                         </Text>
                       </Group>
-                      <Group justify="apart">
-                        <Text size="sm" color="dimmed">误差:</Text>
-                        <Badge color={Math.abs(results.error_db) < results.threshold_db ? 'green' : 'red'}>
-                          {results.error_db > 0 ? '+' : ''}{results.error_db.toFixed(2)} dB
-                        </Badge>
-                      </Group>
-                      <Group justify="apart">
-                        <Text size="sm" color="dimmed">绝对误差:</Text>
-                        <Text size="sm">{results.absolute_error_db.toFixed(2)} dB</Text>
-                      </Group>
-                      <Group justify="apart">
-                        <Text size="sm" color="dimmed">阈值:</Text>
-                        <Text size="sm">±{results.threshold_db} dB</Text>
-                      </Group>
-                      <Group justify="apart">
-                        <Text size="sm" color="dimmed">采样点数:</Text>
-                        <Text size="sm">{results.num_probes_used}</Text>
-                      </Group>
+                      {results.error_db !== undefined && (
+                        <Group justify="apart">
+                          <Text size="sm" color="dimmed">误差:</Text>
+                          <Badge color={Math.abs(results.error_db) < results.threshold_db ? 'green' : 'red'}>
+                            {results.error_db > 0 ? '+' : ''}{results.error_db.toFixed(2)} dB
+                          </Badge>
+                        </Group>
+                      )}
+                      {results.absolute_error_db !== undefined && (
+                        <Group justify="apart">
+                          <Text size="sm" color="dimmed">绝对误差:</Text>
+                          <Text size="sm">{results.absolute_error_db.toFixed(2)} dB</Text>
+                        </Group>
+                      )}
+                      {results.threshold_db !== undefined && (
+                        <Group justify="apart">
+                          <Text size="sm" color="dimmed">阈值:</Text>
+                          <Text size="sm">±{results.threshold_db} dB</Text>
+                        </Group>
+                      )}
+                      {results.num_probes_used !== undefined && (
+                        <Group justify="apart">
+                          <Text size="sm" color="dimmed">采样点数:</Text>
+                          <Text size="sm">{results.num_probes_used}</Text>
+                        </Group>
+                      )}
                     </Stack>
                   </Paper>
                 )}
@@ -566,9 +723,16 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
             <Alert icon={<IconCheck size={16} />} title="校准完成" color="green">
               系统校准已成功完成并保存到数据库
             </Alert>
-            <Text size="sm">
-              校准 ID: <Code>{results?.id}</Code>
-            </Text>
+            {results?.id && (
+              <Text size="sm">
+                校准 ID: <Code>{String(results.id)}</Code>
+              </Text>
+            )}
+            {results?.validation_pass !== undefined && (
+              <Text size="sm">
+                验证结果: <Code>{results.validation_pass ? '通过 ✓' : '未通过 ✗'}</Code>
+              </Text>
+            )}
             <Text size="sm" color="dimmed">
               您可以在"校准记录"页面查看详细结果
             </Text>
