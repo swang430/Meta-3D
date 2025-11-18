@@ -62,7 +62,15 @@ export interface QuietZoneCalibrationRequest {
   validation_type: 'field_uniformity' | 'spatial_correlation' | 'probe_coupling' | 'phase_stability'
   frequency_mhz: number
   tested_by: string
+  // Field uniformity parameters
   grid_points?: number
+  // Spatial correlation parameters
+  num_antennas?: number
+  target_channel_model?: string
+  // Probe coupling parameters
+  probe_ids?: number[]
+  // Phase stability parameters
+  duration_sec?: number
 }
 
 export interface QuietZoneCalibrationResponse {
@@ -70,8 +78,16 @@ export interface QuietZoneCalibrationResponse {
   validation_type: string
   frequency_mhz: number
   validation_pass: boolean
+  threshold_value: number
+  // Field uniformity results
   field_uniformity_db?: number
   field_mean_dbm?: number
+  // Spatial correlation results
+  correlation_error_rms?: number
+  // Probe coupling results
+  max_coupling_db?: number
+  // Phase stability results
+  phase_drift_deg?: number
   tested_at: string
   tested_by: string
 }
@@ -633,17 +649,55 @@ function generateMockStats() {
  * 生成 Mock 静区质量验证结果
  */
 function generateMockQuietZoneResult(request: QuietZoneCalibrationRequest): QuietZoneCalibrationResponse {
-  const uniformity_db = 0.5 + Math.random() * 0.6; // 0.5-1.1 dB
-
-  return {
+  const baseResponse = {
     id: crypto.randomUUID(),
     validation_type: request.validation_type,
     frequency_mhz: request.frequency_mhz,
-    validation_pass: uniformity_db < 1.0,
-    field_uniformity_db: uniformity_db,
-    field_mean_dbm: -30 + (Math.random() - 0.5) * 2,
     tested_at: new Date().toISOString(),
     tested_by: request.tested_by,
+  };
+
+  // Generate results based on validation type
+  if (request.validation_type === 'field_uniformity') {
+    const uniformity_db = 0.5 + Math.random() * 0.6; // 0.5-1.1 dB
+    return {
+      ...baseResponse,
+      validation_pass: uniformity_db < 1.0,
+      threshold_value: 1.0,
+      field_uniformity_db: uniformity_db,
+      field_mean_dbm: -30 + (Math.random() - 0.5) * 2,
+    };
+  } else if (request.validation_type === 'spatial_correlation') {
+    const rms_error = 0.05 + Math.random() * 0.08; // 0.05-0.13
+    return {
+      ...baseResponse,
+      validation_pass: rms_error < 0.1,
+      threshold_value: 0.1,
+      correlation_error_rms: rms_error,
+    };
+  } else if (request.validation_type === 'probe_coupling') {
+    const max_coupling = -25 + Math.random() * 8; // -25 to -17 dB
+    return {
+      ...baseResponse,
+      validation_pass: max_coupling < -20,
+      threshold_value: -20.0,
+      max_coupling_db: max_coupling,
+    };
+  } else if (request.validation_type === 'phase_stability') {
+    const phase_drift = 6 + Math.random() * 7; // 6-13 degrees
+    return {
+      ...baseResponse,
+      validation_pass: phase_drift < 10,
+      threshold_value: 10.0,
+      phase_drift_deg: phase_drift,
+    };
+  }
+
+  // Fallback (should never reach here)
+  return {
+    ...baseResponse,
+    validation_pass: false,
+    threshold_value: 0,
   };
 }
 

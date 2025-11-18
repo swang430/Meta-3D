@@ -233,8 +233,19 @@ class QuietZoneCalibrationRequest(BaseModel):
     validation_type: str = Field(..., description="field_uniformity | spatial_correlation | probe_coupling | phase_stability")
     frequency_mhz: float
     tested_by: str
+
+    # Field uniformity parameters
     grid_points: Optional[int] = 25  # 5x5 grid
-    probes_used: Optional[List[int]] = None  # Specific probe IDs
+
+    # Spatial correlation parameters
+    num_antennas: Optional[int] = 4  # MIMO antenna count (e.g., 2x2, 4x4)
+    target_channel_model: Optional[str] = '3GPP_UMa'  # 3GPP_UMa, 3GPP_UMi, 3GPP_InH
+
+    # Probe coupling parameters
+    probe_ids: Optional[List[int]] = None  # Specific probe IDs to test (default: all 32)
+
+    # Phase stability parameters
+    duration_sec: Optional[float] = 60.0  # Test duration in seconds
 
 
 class QuietZoneCalibrationResponse(BaseModel):
