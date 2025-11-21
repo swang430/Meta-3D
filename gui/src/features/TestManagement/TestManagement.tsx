@@ -18,6 +18,8 @@ import {
 } from '@tabler/icons-react'
 import { PlansTab } from './components/PlansTab'
 import { StepsTab } from './components/StepsTab'
+import { QueueTab } from './components/QueueTab'
+import { HistoryTab } from './components/HistoryTab'
 
 /**
  * Main Test Management Container Component
@@ -72,102 +74,16 @@ export function TestManagement() {
 
           {/* Queue Tab */}
           <Tabs.Panel value="queue" pt="md">
-            <QueueTabPlaceholder />
+            <QueueTab />
           </Tabs.Panel>
 
           {/* History Tab */}
           <Tabs.Panel value="history" pt="md">
-            <HistoryTabPlaceholder />
+            <HistoryTab />
           </Tabs.Panel>
         </Tabs>
       </Stack>
     </Container>
-  )
-}
-
-/**
- * Temporary placeholder components
- * These will be replaced with actual implementations in subsequent phases
- */
-
-interface PlansTabPlaceholderProps {
-  onSelectPlan: (planId: string) => void
-}
-
-function PlansTabPlaceholder({ onSelectPlan }: PlansTabPlaceholderProps) {
-  return (
-    <Stack gap="md" align="center" py="xl">
-      <IconList size={48} stroke={1.5} color="gray" />
-      <div style={{ textAlign: 'center' }}>
-        <Title order={3}>计划管理</Title>
-        <Text c="dimmed" size="sm">
-          测试计划的创建、编辑、复制和删除功能
-        </Text>
-        <Text c="dimmed" size="sm" mt="xs">
-          Phase 2 将实现完整的 PlansTab 组件
-        </Text>
-      </div>
-    </Stack>
-  )
-}
-
-interface StepsTabPlaceholderProps {
-  selectedPlanId: string | null
-}
-
-function StepsTabPlaceholder({ selectedPlanId }: StepsTabPlaceholderProps) {
-  return (
-    <Stack gap="md" align="center" py="xl">
-      <IconFileCode size={48} stroke={1.5} color="gray" />
-      <div style={{ textAlign: 'center' }}>
-        <Title order={3}>步骤编排</Title>
-        <Text c="dimmed" size="sm">
-          从序列库添加步骤，配置参数，拖拽排序
-        </Text>
-        {selectedPlanId && (
-          <Text c="blue" size="sm" mt="xs">
-            当前选中计划: {selectedPlanId}
-          </Text>
-        )}
-        <Text c="dimmed" size="sm" mt="xs">
-          Phase 3 将从 TestConfig 提取步骤编辑器
-        </Text>
-      </div>
-    </Stack>
-  )
-}
-
-function QueueTabPlaceholder() {
-  return (
-    <Stack gap="md" align="center" py="xl">
-      <IconClock size={48} stroke={1.5} color="gray" />
-      <div style={{ textAlign: 'center' }}>
-        <Title order={3}>执行队列</Title>
-        <Text c="dimmed" size="sm">
-          查看和管理测试计划执行队列
-        </Text>
-        <Text c="dimmed" size="sm" mt="xs">
-          Phase 4 将实现队列管理功能
-        </Text>
-      </div>
-    </Stack>
-  )
-}
-
-function HistoryTabPlaceholder() {
-  return (
-    <Stack gap="md" align="center" py="xl">
-      <IconChartBar size={48} stroke={1.5} color="gray" />
-      <div style={{ textAlign: 'center' }}>
-        <Title order={3}>执行历史</Title>
-        <Text c="dimmed" size="sm">
-          查看历史执行记录和统计分析
-        </Text>
-        <Text c="dimmed" size="sm" mt="xs">
-          Phase 4 将实现历史记录功能
-        </Text>
-      </div>
-    </Stack>
   )
 }
 
