@@ -16,6 +16,8 @@ import {
   IconClock,
   IconChartBar,
 } from '@tabler/icons-react'
+import { PlansTab } from './components/PlansTab'
+import { StepsTab } from './components/StepsTab'
 
 /**
  * Main Test Management Container Component
@@ -60,12 +62,12 @@ export function TestManagement() {
 
           {/* Plans Tab */}
           <Tabs.Panel value="plans" pt="md">
-            <PlansTabPlaceholder onSelectPlan={setSelectedPlanId} />
+            <PlansTab onSelectPlan={setSelectedPlanId} />
           </Tabs.Panel>
 
           {/* Steps Tab */}
           <Tabs.Panel value="steps" pt="md">
-            <StepsTabPlaceholder selectedPlanId={selectedPlanId} />
+            <StepsTab selectedPlanId={selectedPlanId} />
           </Tabs.Panel>
 
           {/* Queue Tab */}
