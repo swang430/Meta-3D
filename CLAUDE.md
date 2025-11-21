@@ -59,10 +59,17 @@ GUI 遵循 **API优先架构**，包含以下层次：
 ### 核心领域概念
 
 **测试层级**:
-- **测试计划（Test Plans）**: 测试例的集合，带有执行队列
+- **测试计划（Test Plans）**: 测试例的集合，带有执行队列和步骤编排
+- **测试步骤（Test Steps）**: 计划中的可配置执行单元，每个步骤有独立参数 ⭐ NEW
 - **测试例（Test Cases）**: 可保存、预览和重用的单个测试配置
-- **序列库（Sequence Library）**: 测试步骤的可重用构建块
+- **序列库（Sequence Library）**: 测试步骤的可重用构建块模板
 - 测试计划可以从头创建，也可以通过保存测试例创建
+
+**测试管理统一架构** (v2.0):
+- 项目已整合原有的 TestConfig 和 TestPlanManagement 两个模块
+- 新的统一模块位于 `gui/src/features/TestManagement/`
+- 详细设计文档: `TestManagement-Unified-Architecture.md`
+- 4个主要 Tab: 计划管理、步骤编排、执行队列、执行历史
 
 **硬件组件**:
 - **探头（Probes）**: MPAC 阵列中的天线单元（32个双极化探头）
