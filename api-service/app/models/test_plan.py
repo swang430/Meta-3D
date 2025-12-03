@@ -61,6 +61,9 @@ class TestPlan(Base):
     dut_info = Column(JSON, comment="Device Under Test info: {model, serial, imei, ...}")
     test_environment = Column(JSON, comment="Environment: {temperature, humidity, chamber_id, ...}")
 
+    # Phase 4: Scenario integration
+    scenario_id = Column(String(255), comment="Linked road test scenario ID (optional)")
+
     # Test cases (ordered list of test case IDs)
     test_case_ids = Column(JSON, comment="Array of test case UUIDs in execution order")
     total_test_cases = Column(Integer, default=0, comment="Total number of test cases")

@@ -14,6 +14,7 @@ class TestPlanCreate(BaseModel):
     version: Optional[str] = Field("1.0", description="Version number")
     dut_info: Optional[Dict[str, Any]] = Field(None, description="Device Under Test info")
     test_environment: Optional[Dict[str, Any]] = Field(None, description="Test environment info")
+    scenario_id: Optional[str] = Field(None, description="Linked road test scenario ID")
     test_case_ids: List[str] = Field(default_factory=list, description="Array of test case UUIDs")
     priority: Optional[int] = Field(5, ge=1, le=10, description="Priority (1=highest, 10=lowest)")
     created_by: str = Field(..., description="User who created the plan")
@@ -28,6 +29,7 @@ class TestPlanUpdate(BaseModel):
     status: Optional[str] = Field(None, description="Test plan status (draft, ready, queued, running, etc.)")
     dut_info: Optional[Dict[str, Any]] = None
     test_environment: Optional[Dict[str, Any]] = None
+    scenario_id: Optional[str] = Field(None, description="Linked road test scenario ID")
     test_case_ids: Optional[List[str]] = None
     priority: Optional[int] = Field(None, ge=1, le=10)
     notes: Optional[str] = None
@@ -43,6 +45,7 @@ class TestPlanResponse(BaseModel):
     status: str
     dut_info: Optional[Dict[str, Any]]
     test_environment: Optional[Dict[str, Any]]
+    scenario_id: Optional[str]
     test_case_ids: Optional[List[str]]
     total_test_cases: int
     current_test_case_index: int
