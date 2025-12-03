@@ -3184,7 +3184,11 @@ function TestConfig({
                 onClick={() => {
                   if (createPlanMutation.isPending) return
                   handleCloseCasePreview()
-                  createPlanMutation.mutate({ caseId: previewCase.id })
+                  createPlanMutation.mutate({
+                    name: `${previewCase.name} - Test Plan`,
+                    test_case_ids: [previewCase.id],
+                    created_by: 'user'
+                  })
                 }}
                 loading={createPlanMutation.isPending}
               >
@@ -3639,7 +3643,11 @@ function TestConfig({
                             size="compact-sm"
                             color="brand"
                             loading={createPlanMutation.isPending}
-                            onClick={() => createPlanMutation.mutate({ caseId: testCase.id })}
+                            onClick={() => createPlanMutation.mutate({
+                              name: `${testCase.name} - Test Plan`,
+                              test_case_ids: [testCase.id],
+                              created_by: 'user'
+                            })}
                           >
                             生成计划
                           </Button>

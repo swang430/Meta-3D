@@ -874,17 +874,20 @@ export const mockDatabase = {
     return { plan: clone(plan) }
   },
   createTestPlan(payload: CreatePlanPayload): TestPlanResponse | null {
-    const targetCase = testCaseLibrary.find((item) => item.id === payload.caseId)
-    if (!targetCase) return null
+    // Support both old (case-based) and new (scenario-based) test plan creation
+    const caseId = payload.test_case_ids?.[0] || 'CASE-MOCK-001'
+    const targetCase = testCaseLibrary.find((item) => item.id === caseId)
+    const caseName = targetCase?.name || 'Unknown Case'
+
     const plan: TestPlanRecord = {
-      id: `PLAN-${payload.caseId}-${Date.now().toString(36).toUpperCase()}`,
-      name: payload.name || `${targetCase.name} - 新建计划`,
-      caseId: targetCase.id,
-      caseName: targetCase.name,
+      id: `PLAN-${Date.now().toString(36).toUpperCase()}`,
+      name: payload.name || `新建计划`,
+      caseId: caseId,
+      caseName: caseName,
       status: '草稿',
       updatedAt: '刚刚',
-      notes: '',
-      steps: cloneBaseStepsForCase(targetCase.id),
+      notes: payload.notes || '',
+      steps: targetCase ? cloneBaseStepsForCase(caseId) : [],
     }
     testPlans = [plan, ...testPlans]
     bumpPlanTimestamp(plan)
