@@ -12,10 +12,14 @@ import {
   IconRuler,
   IconPlayerPlay,
   IconInfoCircle,
+  IconTransform,
 } from '@tabler/icons-react'
+import { notifications } from '@mantine/notifications'
 import type { ScenarioSummary } from '../../types/roadTest'
 import { TestExecutionModal } from './TestExecutionModal'
 import { ScenarioDetailModal } from './ScenarioDetailModal'
+import { generateTestPlanFromScenario, canConvertToTestPlan } from '../../utils/scenarioToTestPlan'
+import { createTestPlan } from '../../api/service'
 
 interface Props {
   scenario: ScenarioSummary
@@ -43,6 +47,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 export default function ScenarioCard({ scenario, onRefresh }: Props) {
   const [executionModalOpened, setExecutionModalOpened] = useState(false)
   const [detailModalOpened, setDetailModalOpened] = useState(false)
+  const [converting, setConverting] = useState(false)
 
   const handleRun = () => {
     setExecutionModalOpened(true)
@@ -50,6 +55,51 @@ export default function ScenarioCard({ scenario, onRefresh }: Props) {
 
   const handleViewDetails = () => {
     setDetailModalOpened(true)
+  }
+
+  const handleConvertToTestPlan = async () => {
+    // Validate scenario can be converted
+    const validation = canConvertToTestPlan(scenario)
+    if (!validation.canConvert) {
+      notifications.show({
+        title: 'Cannot Convert',
+        message: validation.reason || 'Scenario cannot be converted to test plan',
+        color: 'red',
+      })
+      return
+    }
+
+    setConverting(true)
+    try {
+      // Generate test plan payload from scenario
+      const testPlanPayload = generateTestPlanFromScenario(scenario)
+
+      // Create test plan via API
+      const response = await createTestPlan(testPlanPayload)
+
+      notifications.show({
+        title: 'Test Plan Created',
+        message: `Successfully created "${response.plan.name}"`,
+        color: 'green',
+      })
+
+      // TODO: Navigate to Test Management when routing is available
+      // navigate(`/test-management/plans?id=${response.plan.id}`)
+
+      // Refresh parent component if callback provided
+      if (onRefresh) {
+        onRefresh()
+      }
+    } catch (error: any) {
+      console.error('Failed to convert scenario to test plan:', error)
+      notifications.show({
+        title: 'Conversion Failed',
+        message: error?.response?.data?.detail || 'Failed to create test plan',
+        color: 'red',
+      })
+    } finally {
+      setConverting(false)
+    }
   }
 
   return (
@@ -119,24 +169,38 @@ export default function ScenarioCard({ scenario, onRefresh }: Props) {
       </Stack>
 
       {/* Actions */}
-      <Group gap="xs">
+      <Stack gap="xs">
+        <Group gap="xs">
+          <Button
+            flex={1}
+            variant="light"
+            leftSection={<IconPlayerPlay size={16} />}
+            onClick={handleRun}
+          >
+            Run Test
+          </Button>
+          <Button
+            variant="subtle"
+            size="sm"
+            onClick={handleViewDetails}
+            leftSection={<IconInfoCircle size={14} />}
+          >
+            Details
+          </Button>
+        </Group>
+
         <Button
           fullWidth
-          variant="light"
-          leftSection={<IconPlayerPlay size={16} />}
-          onClick={handleRun}
-        >
-          Run Test
-        </Button>
-        <Button
-          variant="subtle"
+          variant="outline"
+          color="blue"
           size="sm"
-          onClick={handleViewDetails}
-          leftSection={<IconInfoCircle size={14} />}
+          leftSection={<IconTransform size={14} />}
+          onClick={handleConvertToTestPlan}
+          loading={converting}
         >
-          Details
+          Convert to Test Plan
         </Button>
-      </Group>
+      </Stack>
 
       {/* Test Execution Modal */}
       <TestExecutionModal

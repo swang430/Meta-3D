@@ -70,6 +70,7 @@ def create_test_plan(
         created_by=request.created_by,
         dut_info=request.dut_info,
         test_environment=request.test_environment,
+        scenario_id=request.scenario_id,
         test_case_ids=request.test_case_ids,
         priority=request.priority,
         notes=request.notes,

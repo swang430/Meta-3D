@@ -268,8 +268,17 @@ export type AppendSequencePayload = {
 }
 
 export type CreatePlanPayload = {
-  caseId: string
-  name?: string
+  name: string
+  description?: string
+  version?: string
+  dut_info?: Record<string, any>
+  test_environment?: Record<string, any>
+  scenario_id?: string
+  test_case_ids?: string[]
+  priority?: number
+  created_by: string
+  notes?: string
+  tags?: string[]
 }
 
 export type UpdatePlanPayload = {
