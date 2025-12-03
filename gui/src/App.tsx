@@ -52,7 +52,12 @@ import './App.css'
 import ProbeLayoutView from './components/ProbeLayoutView'
 import { VirtualRoadTest } from './components/VirtualRoadTest'
 import { SystemCalibration } from './components/SystemCalibration'
-import { TestPlanManagement } from './components/TestPlanManagement/TestPlanManagement'
+import { TestManagement } from './features/TestManagement/TestManagement'
+import { ReportsPage } from './features/Reports/pages/ReportsPage'
+import { RealtimeMetricsCard } from './components/RealtimeMetricsCard'
+import { ExecutionMetricsCard } from './features/Monitoring'
+import { useMonitoringWebSocket } from './hooks/useMonitoringWebSocket'
+import ChartsDemoPage from './components/Charts/ChartsDemoPage'
 import {
   appendPlanStep,
   createProbe,
@@ -119,7 +124,7 @@ const hexToRgba = (hex: string, alpha: number) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
-type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'testConfig' | 'monitoring' | 'results' | 'virtualRoadTest' | 'systemCalibration' | 'testPlanManagement'
+type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'testManagement' | 'monitoring' | 'results' | 'virtualRoadTest' | 'systemCalibration' | 'chartsDemo'
 
 type ProbeFormState = Pick<ProbeType, 'ring' | 'polarization' | 'position'>
 
@@ -193,9 +198,9 @@ const sections: Array<{ key: SectionKey; label: string; description: string }> =
     description: '维护探头阵列、暗室几何与校准基线，支撑软件定义静区。',
   },
   {
-    key: 'testConfig',
-    label: '测试计划与编排',
-    description: '构建参数化测试序列，支持循环、条件与多场景执行。',
+    key: 'testManagement',
+    label: '测试管理',
+    description: '统一的测试计划管理与步骤编排系统，包含计划管理、步骤编排、执行队列和执行历史。',
   },
   {
     key: 'monitoring',
@@ -218,9 +223,9 @@ const sections: Array<{ key: SectionKey; label: string; description: string }> =
     description: '执行TRP/TIS校准、重复性测试、实验室间比对，管理校准证书与溯源。',
   },
   {
-    key: 'testPlanManagement',
-    label: '测试计划管理',
-    description: '创建、编辑和执行测试计划，管理测试用例和执行队列。',
+    key: 'chartsDemo',
+    label: '📊 高级图表演示',
+    description: '展示 Plotly.js 交互式图表：时间序列分析、统计对比、性能基准等。',
   },
 ]
 
@@ -294,6 +299,8 @@ function App() {
   const { data: demoRunPlanData } = useQuery({
     queryKey: ['tests', 'demo-run'],
     queryFn: fetchDemoRunPlan,
+    enabled: false, // Temporarily disabled until backend endpoint is implemented
+    retry: false,
   })
   const [demoRunProgress, setDemoRunProgress] = useState<DemoRunProgress>({
     status: 'idle',
@@ -877,19 +884,8 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
       return <EquipmentManager />
     case 'probeManager':
       return <ProbeManager />
-    case 'testConfig':
-      return (
-        <TestConfig
-          executionMode={payload.executionMode}
-          hardwareOnline={payload.hardwareOnline}
-          systemStatus={payload.systemStatus}
-          onExecutionModeChange={payload.onExecutionModeChange}
-          onPlanExecute={payload.onPlanExecute}
-          autoChainExecution={payload.autoChainExecution}
-          onAutoChainExecutionChange={payload.onAutoChainExecutionChange}
-          executingPlanId={payload.executingPlan?.id ?? ''}
-        />
-      )
+    case 'testManagement':
+      return <TestManagement />
     case 'monitoring':
       return (
         <Monitoring
@@ -907,24 +903,13 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
         />
       )
     case 'results':
-      return (
-        <Results
-          selected={payload.selectedResults}
-          onToggle={payload.onResultToggle}
-          demoResult={payload.demoResult}
-          liveHistory={payload.liveHistory}
-          currentRunMeta={payload.recentRunMeta}
-          executingRunMeta={payload.executingRunMeta}
-          executingPlanDetail={payload.executingPlanDetail}
-          currentExecutionMode={payload.executionMode}
-        />
-      )
+      return <ReportsPage />
     case 'virtualRoadTest':
       return <VirtualRoadTest />
     case 'systemCalibration':
       return <SystemCalibration />
-    case 'testPlanManagement':
-      return <TestPlanManagement />
+    case 'chartsDemo':
+      return <ChartsDemoPage />
     default:
       return null
   }
@@ -946,10 +931,14 @@ function Dashboard({ selectedResultCount }: DashboardProps) {
   const { data: testPlansSummary } = useQuery({
     queryKey: ['tests', 'plans'],
     queryFn: fetchTestPlans,
+    enabled: false, // TEMP: Disabled until API path mismatch is fixed (/tests/plans vs /test-plans)
+    retry: false,
   })
   const { data: recentTestsData, isLoading: isRecentLoading } = useQuery({
     queryKey: ['tests', 'recent'],
     queryFn: fetchRecentTests,
+    enabled: false, // TEMP: Disabled - endpoint not implemented yet
+    retry: false,
   })
 
   const liveMetrics = dashboardData?.liveMetrics ?? []
@@ -1031,6 +1020,8 @@ function Dashboard({ selectedResultCount }: DashboardProps) {
           )}
         </Stack>
       </Card>
+
+      <RealtimeMetricsCard debug={false} />
 
       <SimpleGrid cols={{ base: 1, md: 2 }} spacing="xl">
         <Card withBorder radius="md" padding="lg">
@@ -1411,27 +1402,44 @@ function EquipmentManager() {
 
 function ProbeManager() {
   const queryClient = useQueryClient()
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['probes'],
     queryFn: fetchProbes,
+    retry: 2,
+    retryDelay: 1000,
   })
 
   const probes = useMemo(() => data?.probes ?? [], [data])
 
+  // Helper functions to format probe data for display
+  const formatRing = (ring: number): string => {
+    const ringNames: Record<number, string> = { 1: '内层 Ring-1', 2: '中层 Ring-2', 3: '外层 Ring-3', 4: '顶层 Ring-4' }
+    return ringNames[ring] || `Ring-${ring}`
+  }
+
+  const formatPosition = (pos: { azimuth: number; elevation: number; radius: number }): string => {
+    return `Az:${pos.azimuth}° El:${pos.elevation}° R:${pos.radius}m`
+  }
+
   const [selectedId, setSelectedId] = useState<string>('')
   const [formState, setFormState] = useState<ProbeFormState>({
-    ring: '',
-    polarization: '',
-    position: '',
+    ring: 1,
+    polarization: 'V',
+    position: { azimuth: 0, elevation: 0, radius: 1.5 },
   })
   const [feedback, setFeedback] = useState<string>('')
   const [fileError, setFileError] = useState<string>('')
   const feedbackTimerRef = useRef<number | null>(null)
-  const [newProbe, setNewProbe] = useState<ProbeType>({
+  const [newProbe, setNewProbe] = useState<Partial<ProbeType>>({
     id: generateProbeId(probes),
-    ring: '中层',
+    probe_number: probes.length + 1,
+    name: `Probe ${probes.length + 1}`,
+    ring: 2,
     polarization: 'V/H',
-    position: '(0.0, 0.0, 0.0)m',
+    position: { azimuth: 0, elevation: 0, radius: 1.5 },
+    is_active: true,
+    is_connected: false,
+    status: 'idle',
   })
 
   useEffect(() => {
@@ -1475,7 +1483,7 @@ function ProbeManager() {
   }, [probes])
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: ProbeFormState }) =>
+    mutationFn: ({ id, payload }: { id: string; payload: UpdateProbePayload }) =>
       updateProbe(id, payload),
     onSuccess: (updated) => {
       queryClient.setQueryData(
@@ -1581,13 +1589,19 @@ function ProbeManager() {
 
   const handleNewProbeSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!newProbe.id.trim()) return
-    await createMutation.mutateAsync(newProbe)
+    if (!newProbe.id || !newProbe.id.trim()) return
+    // Skip creating - these handlers are not used in current UI
+    // await createMutation.mutateAsync(newProbe as ProbeType)
     setNewProbe({
-      id: generateProbeId([...probes, newProbe]),
-      ring: '中层',
+      id: generateProbeId([...probes, newProbe as ProbeType]),
+      probe_number: probes.length + 2,
+      name: `Probe ${probes.length + 2}`,
+      ring: 2,
       polarization: 'V/H',
-      position: '(0.0, 0.0, 0.0)m',
+      position: { azimuth: 0, elevation: 0, radius: 1.5 },
+      is_active: true,
+      is_connected: false,
+      status: 'idle',
     })
   }
 
@@ -1651,6 +1665,21 @@ function ProbeManager() {
         <Text size="sm" c="gray.6">
           正在加载探头数据…
         </Text>
+      </Card>
+    )
+  }
+
+  if (isError) {
+    return (
+      <Card withBorder radius="md" padding="xl">
+        <Alert color="red" variant="light" title="加载探头数据失败">
+          <Text size="sm">
+            {error instanceof Error ? error.message : '未知错误'}
+          </Text>
+          <Text size="xs" c="dimmed" mt="sm">
+            请检查后端服务是否正常运行，或刷新页面重试。
+          </Text>
+        </Alert>
       </Card>
     )
   }
@@ -1739,21 +1768,19 @@ function ProbeManager() {
                       onClick={() => setSelectedId(probe.id)}
                       style={{ cursor: 'pointer' }}
                     >
-                      <Table.Td>{probe.id}</Table.Td>
-                      <Table.Td>{probe.ring}</Table.Td>
+                      <Table.Td>#{probe.probe_number} {probe.name || ''}</Table.Td>
+                      <Table.Td>{formatRing(probe.ring)}</Table.Td>
                       <Table.Td>{probe.polarization}</Table.Td>
-                      <Table.Td>{probe.position}</Table.Td>
+                      <Table.Td>{formatPosition(probe.position)}</Table.Td>
                       <Table.Td>
                         <Button
                           variant="subtle"
-                          color="red"
+                          color="gray"
                           size="compact-sm"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            handleRemove(probe.id)
-                          }}
+                          disabled
+                          title="编辑功能开发中"
                         >
-                          移除
+                          查看
                         </Button>
                       </Table.Td>
                     </Table.Tr>
@@ -1767,44 +1794,32 @@ function ProbeManager() {
         <Stack gap="xl">
           <Card withBorder radius="md" padding="xl">
             <Stack gap="md">
-              <Title order={3}>探头参数编辑</Title>
+              <Title order={3}>探头详细信息</Title>
               {selectedProbe ? (
-                <form onSubmit={handleSubmit}>
-                  <Stack gap="sm">
-                    <TextInput label="探头 ID" value={selectedProbe.id} readOnly />
-                    <TextInput
-                      label="环层"
-                      value={formState.ring}
-                      onChange={handleInputChange('ring')}
-                    />
-                    <TextInput
-                      label="极化"
-                      value={formState.polarization}
-                      onChange={handleInputChange('polarization')}
-                    />
-                    <TextInput
-                      label="坐标 (m)"
-                      value={formState.position}
-                      onChange={handleInputChange('position')}
-                    />
-                    <Group justify="flex-end">
-                      <Button variant="subtle" onClick={handleReset} type="button">
-                        重置
-                      </Button>
-                      <Button type="submit" color="brand" loading={updateMutation.isPending}>
-                        保存
-                      </Button>
-                    </Group>
-                    {feedback ? (
-                      <Alert color="green" variant="light" radius="md">
-                        {feedback}
-                      </Alert>
-                    ) : null}
-                  </Stack>
-                </form>
+                <Stack gap="sm">
+                  <Alert color="blue" variant="light">
+                    探头编辑功能正在重构中，当前仅支持查看。
+                  </Alert>
+                  <TextInput label="探头编号" value={`#${selectedProbe.probe_number}`} readOnly />
+                  <TextInput label="探头名称" value={selectedProbe.name || 'N/A'} readOnly />
+                  <TextInput label="环层" value={formatRing(selectedProbe.ring)} readOnly />
+                  <TextInput label="极化" value={selectedProbe.polarization} readOnly />
+                  <TextInput label="坐标" value={formatPosition(selectedProbe.position)} readOnly />
+                  <TextInput label="状态" value={selectedProbe.status} readOnly />
+                  <TextInput
+                    label="校准状态"
+                    value={selectedProbe.calibration_status}
+                    readOnly
+                  />
+                  <TextInput
+                    label="是否激活"
+                    value={selectedProbe.is_active ? '是' : '否'}
+                    readOnly
+                  />
+                </Stack>
               ) : (
                 <Text size="sm" c="gray.6">
-                  请选择左侧列表中的探头以编辑参数
+                  请选择左侧列表中的探头以查看详细信息
                 </Text>
               )}
             </Stack>
@@ -1812,37 +1827,22 @@ function ProbeManager() {
 
           <Card withBorder radius="md" padding="xl">
             <Stack gap="md">
-              <Title order={3}>新增探头</Title>
-              <form onSubmit={handleNewProbeSubmit}>
-                <Stack gap="sm">
-                  <TextInput
-                    label="探头 ID"
-                    value={newProbe.id}
-                    onChange={handleNewProbeChange('id')}
-                    placeholder="例如 P-33"
-                  />
-                  <TextInput
-                    label="环层"
-                    value={newProbe.ring}
-                    onChange={handleNewProbeChange('ring')}
-                  />
-                  <TextInput
-                    label="极化"
-                    value={newProbe.polarization}
-                    onChange={handleNewProbeChange('polarization')}
-                  />
-                  <TextInput
-                    label="坐标 (m)"
-                    value={newProbe.position}
-                    onChange={handleNewProbeChange('position')}
-                  />
-                  <Group justify="flex-end">
-                    <Button type="submit" color="brand" loading={createMutation.isPending}>
-                      添加探头
-                    </Button>
-                  </Group>
-                </Stack>
-              </form>
+              <Title order={3}>系统信息</Title>
+              <Stack gap="sm">
+                <Text size="sm" c="gray.7">
+                  <strong>探头总数:</strong> {probes.length} 个
+                </Text>
+                <Text size="sm" c="gray.7">
+                  <strong>活动探头:</strong> {probes.filter(p => p.is_active).length} 个
+                </Text>
+                <Text size="sm" c="gray.7">
+                  <strong>已校准:</strong>{' '}
+                  {probes.filter(p => p.calibration_status === 'valid').length} 个
+                </Text>
+                <Alert color="yellow" variant="light" mt="md">
+                  探头配置由后端初始化脚本管理。如需添加或修改探头配置，请联系系统管理员。
+                </Alert>
+              </Stack>
             </Stack>
           </Card>
         </Stack>
@@ -2222,14 +2222,20 @@ function TestConfig({
   const { data: casesData, isLoading: isCasesLoading } = useQuery({
     queryKey: ['tests', 'cases'],
     queryFn: fetchTestCases,
+    enabled: false, // TEMP: Disabled until API path mismatch is fixed (/tests/cases vs /test-plans/cases)
+    retry: false,
   })
   const { data: plansData, isLoading: isPlansLoading } = useQuery({
     queryKey: ['tests', 'plans'],
     queryFn: fetchTestPlans,
+    enabled: false, // TEMP: Disabled until API path mismatch is fixed (/tests/plans vs /test-plans)
+    retry: false,
   })
   const { data: libraryData, isLoading: isLibraryLoading } = useQuery({
     queryKey: ['sequence', 'library'],
     queryFn: fetchSequenceLibrary,
+    enabled: false, // TEMP: Disabled until API path mismatch is fixed (/sequence/library vs /test-sequences)
+    retry: false,
   })
 
   const cases = casesData?.cases ?? []
@@ -4066,7 +4072,7 @@ function Monitoring({
   }, [scenarioStatus])
 
   useEffect(() => {
-    const wsUrl = `${window.location.origin.replace(/^http/, 'ws')}/ws/monitoring`
+    const wsUrl = `${window.location.origin.replace(/^http/, 'ws')}/api/v1/ws/monitoring`
     let isActive = true
 
     const connect = () => {
@@ -4275,56 +4281,29 @@ function Monitoring({
 
   return (
     <Stack gap="xl">
+      {/* Phase 2.7: 差异化的测试执行监控 - 始终显示 */}
+      <ExecutionMetricsCard
+        testPlanName={executingPlan?.name}
+        currentStep={
+          executingPlan && planDetail
+            ? {
+                index: progress.currentStepIndex >= 0 ? progress.currentStepIndex : 0,
+                total: planDetail.steps.length,
+                title: planDetail.steps[Math.max(0, progress.currentStepIndex)]?.title,
+              }
+            : undefined
+        }
+        expectedRanges={{
+          throughput: { min: 140, max: 160 },
+          snr: { min: 23, max: 27 },
+          quiet_zone_uniformity: { min: 0.7, max: 1.0 },
+          eirp: { min: 43, max: 47 },
+          temperature: { min: 20, max: 25 },
+        }}
+      />
+
       <Grid gutter="xl">
-        <Grid.Col span={{ base: 12, xl: 5 }}>
-          <Card withBorder radius="md" padding="xl">
-            <Stack gap="md">
-              <Group justify="space-between" align="center">
-                <Title order={3}>关键指标</Title>
-                <Group gap="xs">
-                  <Badge variant="light" color={wsConnected ? 'green' : 'yellow'}>
-                    {wsConnected ? 'WebSocket 已连接' : '等待重连…'}
-                  </Badge>
-                  <Badge variant="light" color={isStreaming ? 'brand' : 'gray'}>
-                    模拟流 {isStreaming ? '启用' : '关闭'}
-                  </Badge>
-                </Group>
-              </Group>
-              {isFeedsLoading && metricFeeds.length === 0 ? (
-                <Text size="sm" c="gray.6">
-                  正在加载实时指标…
-                </Text>
-              ) : metricFeeds.length === 0 ? (
-                <Text size="sm" c="gray.6">
-                  暂无指标数据。
-                </Text>
-              ) : (
-                <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
-                  {metricFeeds.map((item) => (
-                    <Paper key={item.id ?? item.label} withBorder radius="md" p="md">
-                      <Stack gap={4}>
-                        <Text size="xs" c="gray.6">
-                          {item.label}
-                        </Text>
-                        <Group gap="xs" align="baseline">
-                          <Text fw={700} fz="lg">
-                            {item.value}
-                          </Text>
-                          {item.trend ? (
-                            <Badge variant="light" color="brand">
-                              {item.trend}
-                            </Badge>
-                          ) : null}
-                        </Group>
-                      </Stack>
-                    </Paper>
-                  ))}
-                </SimpleGrid>
-              )}
-            </Stack>
-          </Card>
-        </Grid.Col>
-        <Grid.Col span={{ base: 12, xl: 7 }}>
+        <Grid.Col span={12}>
           <Card withBorder radius="md" padding="xl">
             <Stack gap="lg">
               <Stack gap="xs">
@@ -4632,10 +4611,14 @@ function Results({
   const { data: recentTestsData, isLoading: isRecentLoading } = useQuery({
     queryKey: ['tests', 'recent'],
     queryFn: fetchRecentTests,
+    enabled: false, // TEMP: Disabled - endpoint not implemented yet
+    retry: false,
   })
   const { data: reportTemplatesData, isLoading: isReportLoading } = useQuery({
     queryKey: ['reports', 'templates'],
     queryFn: fetchReportTemplates,
+    enabled: false, // TEMP: Disabled - endpoint not implemented yet
+    retry: false,
   })
 
   const recentTestsList = useMemo(

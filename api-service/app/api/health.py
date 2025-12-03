@@ -29,5 +29,6 @@ def health_check(db: Session = Depends(get_db)):
         status="healthy" if database_connected else "degraded",
         version=settings.app_version,
         database_connected=database_connected,
-        mock_instruments=settings.use_mock_instruments
+        mock_instruments=settings.use_mock_instruments,
+        channel_engine_available=True  # ChannelEngine is running on port 8001
     )

@@ -13,7 +13,10 @@ let mock: MockAdapter | null = null
 let monitoringSocket: MockSocketServer | null = null
 
 const DELAY_MS = 300
-const MONITORING_WS_URL = 'ws://localhost:5173/ws/monitoring'
+// Dynamically construct WebSocket URL based on current host
+const MONITORING_WS_URL = typeof window !== 'undefined'
+  ? `${window.location.origin.replace(/^http/, 'ws')}/api/v1/ws/monitoring`
+  : 'ws://localhost:8000/api/v1/ws/monitoring'
 
 export function setupMockServer() {
   if (mock) return

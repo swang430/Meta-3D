@@ -238,6 +238,65 @@ class TestSequence(Base):
     tags = Column(JSON, comment="Array of tags")
 
 
+class TestStep(Base):
+    """
+    Test Step - 测试步骤
+
+    测试计划中的单个步骤，支持灵活的参数配置。
+    """
+    __tablename__ = "test_steps"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # Association
+    test_plan_id = Column(UUID(as_uuid=True), ForeignKey('test_plans.id'), nullable=False)
+    sequence_library_id = Column(UUID(as_uuid=True), ForeignKey('test_sequences.id'), nullable=True, comment="Reference to sequence library template")
+
+    # Step info (nullable when using sequence_library_id)
+    step_number = Column(Integer, nullable=True, comment="Step number in sequence")
+    name = Column(String(255), nullable=True, comment="Step name")
+    description = Column(Text, comment="Step description")
+    type = Column(String(100), nullable=True, comment="Step type: configure_instrument, run_measurement, etc.")
+
+    # Parameters (flexible JSON structure)
+    parameters = Column(JSON, nullable=False, default={}, comment="Step parameters with types and values")
+
+    # Execution config
+    timeout_seconds = Column(Integer, default=300, comment="Step timeout in seconds")
+    retry_count = Column(Integer, default=0, comment="Number of retries on failure")
+    continue_on_failure = Column(Boolean, default=False, comment="Continue execution if step fails")
+
+    # Execution status
+    status = Column(
+        String(50),
+        nullable=False,
+        default="pending",
+        comment="pending | running | completed | failed | skipped"
+    )
+    order = Column(Integer, nullable=False, comment="Execution order")
+
+    # Timing
+    expected_duration_minutes = Column(Float, comment="Expected duration")
+    actual_duration_minutes = Column(Float, comment="Actual duration")
+    started_at = Column(DateTime, comment="Step start time")
+    completed_at = Column(DateTime, comment="Step completion time")
+
+    # Results
+    result = Column(Text, comment="Step execution result description")
+
+    # Validation
+    validation_criteria = Column(JSON, comment="Validation criteria for this step")
+
+    # Error handling
+    error_message = Column(Text, comment="Error message if failed")
+
+    # Metadata
+    notes = Column(Text, comment="Additional notes")
+    tags = Column(JSON, comment="Array of tags")
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class TestQueue(Base):
     """
     Test Queue - 测试队列

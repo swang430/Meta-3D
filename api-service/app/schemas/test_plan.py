@@ -25,6 +25,7 @@ class TestPlanUpdate(BaseModel):
     """Request to update a test plan"""
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
+    status: Optional[str] = Field(None, description="Test plan status (draft, ready, queued, running, etc.)")
     dut_info: Optional[Dict[str, Any]] = None
     test_environment: Optional[Dict[str, Any]] = None
     test_case_ids: Optional[List[str]] = None
@@ -251,29 +252,109 @@ class TestQueueSummary(BaseModel):
 
 class StartTestPlanRequest(BaseModel):
     """Request to start executing a test plan"""
-    test_plan_id: UUID
     started_by: str
     override_config: Optional[Dict[str, Any]] = None
 
 
 class PauseTestPlanRequest(BaseModel):
     """Request to pause a running test plan"""
-    test_plan_id: UUID
     paused_by: str
     reason: Optional[str] = None
 
 
 class ResumeTestPlanRequest(BaseModel):
     """Request to resume a paused test plan"""
-    test_plan_id: UUID
     resumed_by: str
 
 
 class CancelTestPlanRequest(BaseModel):
     """Request to cancel a test plan"""
-    test_plan_id: UUID
     cancelled_by: str
     reason: Optional[str] = None
+
+
+# ==================== Test Step Schemas ====================
+
+class TestStepCreate(BaseModel):
+    """Request to create a test step"""
+    test_plan_id: UUID
+    step_number: int = Field(..., ge=1, description="Step number in sequence")
+    name: str = Field(..., min_length=1, max_length=255, description="Step name")
+    description: Optional[str] = None
+    type: str = Field(..., description="Step type: configure_instrument, run_measurement, etc.")
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="Step parameters")
+    order: int = Field(..., ge=0, description="Execution order")
+    expected_duration_minutes: Optional[float] = Field(None, ge=0)
+    validation_criteria: Optional[Dict[str, Any]] = None
+    notes: Optional[str] = None
+    tags: Optional[List[str]] = Field(default_factory=list)
+
+
+class TestStepCreateFromSequence(BaseModel):
+    """Request to create a test step from sequence library"""
+    sequence_library_id: UUID = Field(..., description="ID of sequence from library")
+    order: int = Field(..., ge=0, description="Execution order")
+    parameters: Optional[Dict[str, Any]] = Field(None, description="Override parameters")
+    timeout_seconds: Optional[int] = Field(300, ge=1, description="Step timeout")
+    retry_count: Optional[int] = Field(0, ge=0, description="Number of retries")
+    continue_on_failure: Optional[bool] = Field(False, description="Continue if step fails")
+
+
+class TestStepUpdate(BaseModel):
+    """Request to update a test step"""
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    type: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
+    order: Optional[int] = Field(None, ge=0)
+    expected_duration_minutes: Optional[float] = Field(None, ge=0)
+    validation_criteria: Optional[Dict[str, Any]] = None
+    notes: Optional[str] = None
+    tags: Optional[List[str]] = None
+    # Execution configuration fields
+    timeout_seconds: Optional[int] = Field(None, ge=1, description="Step timeout in seconds")
+    retry_count: Optional[int] = Field(None, ge=0, description="Number of retries on failure")
+    continue_on_failure: Optional[bool] = Field(None, description="Whether to continue execution if this step fails")
+
+
+class TestStepResponse(BaseModel):
+    """Test step response"""
+    id: UUID
+    test_plan_id: UUID
+    sequence_library_id: Optional[UUID] = None  # Reference to sequence library
+    step_number: Optional[int] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    type: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
+    status: str
+    order: int
+    timeout_seconds: Optional[int] = None
+    retry_count: Optional[int] = None
+    continue_on_failure: Optional[bool] = None
+    expected_duration_minutes: Optional[float] = None
+    actual_duration_minutes: Optional[float] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    validation_criteria: Optional[Dict[str, Any]] = None
+    result: Optional[str] = None
+    error_message: Optional[str] = None
+    notes: Optional[str] = None
+    tags: Optional[List[str]] = None
+    created_at: datetime
+    updated_at: datetime
+
+    # Frontend compatibility fields (populated from sequence library if applicable)
+    title: Optional[str] = None  # Populated from sequence.name
+    category: Optional[str] = None  # Populated from sequence.category
+
+    class Config:
+        from_attributes = True
+
+
+class ReorderStepsRequest(BaseModel):
+    """Request to reorder steps"""
+    step_ids: List[UUID] = Field(..., description="Ordered list of step IDs")
 
 
 # ==================== Sequence Schemas ====================
@@ -337,3 +418,13 @@ class TestQueueListResponse(BaseModel):
     """List of queued test plans"""
     total: int
     items: List[TestQueueSummary]
+
+
+class TestSequenceListResponse(BaseModel):
+    """List of test sequences"""
+    items: List[TestSequenceResponse]
+
+
+class TestSequenceCategoriesResponse(BaseModel):
+    """List of test sequence categories"""
+    categories: List[str]

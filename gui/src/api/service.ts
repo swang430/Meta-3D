@@ -61,39 +61,39 @@ export const replaceProbes = async (probes: CreateProbePayload[]): Promise<Probe
 }
 
 export const fetchSequenceLibrary = async (): Promise<SequenceLibraryResponse> => {
-  const response = await client.get<SequenceLibraryResponse>('/sequence/library')
+  const response = await client.get<SequenceLibraryResponse>('/test-sequences')
   return response.data
 }
 
 export const fetchTestTemplates = async (): Promise<TestTemplatesResponse> => {
-  const response = await client.get<TestTemplatesResponse>('/tests/templates')
+  const response = await client.get<TestTemplatesResponse>('/test-plans/cases?is_template=true')
   return response.data
 }
 
 export const fetchTestCases = async (): Promise<TestCasesResponse> => {
-  const response = await client.get<TestCasesResponse>('/tests/cases')
+  const response = await client.get<TestCasesResponse>('/test-plans/cases')
   return response.data
 }
 
 export const fetchTestPlans = async (): Promise<TestPlanListResponse> => {
-  const response = await client.get<TestPlanListResponse>('/tests/plans')
+  const response = await client.get<TestPlanListResponse>('/test-plans')
   return response.data
 }
 
 export const fetchTestPlan = async (planId: string): Promise<TestPlanResponse> => {
-  const response = await client.get<TestPlanResponse>(`/tests/plans/${planId}`)
+  const response = await client.get<TestPlanResponse>(`/test-plans/${planId}`)
   return response.data
 }
 
 export const createTestPlan = async (payload: CreatePlanPayload): Promise<TestPlanResponse> => {
-  const response = await client.post<TestPlanResponse>('/tests/plans', payload)
+  const response = await client.post<TestPlanResponse>('/test-plans', payload)
   return response.data
 }
 
 export const reorderTestPlans = async (
   payload: ReorderPlanQueuePayload,
 ): Promise<ReorderPlanQueueResponse> => {
-  const response = await client.post<ReorderPlanQueueResponse>('/tests/plans/reorder', payload)
+  const response = await client.post<ReorderPlanQueueResponse>('/test-plans/queue/reorder', payload)
   return response.data
 }
 
@@ -101,7 +101,7 @@ export const updateTestPlan = async (
   planId: string,
   payload: UpdatePlanPayload,
 ): Promise<TestPlanResponse> => {
-  const response = await client.put<TestPlanResponse>(`/tests/plans/${planId}`, payload)
+  const response = await client.patch<TestPlanResponse>(`/test-plans/${planId}`, payload)
   return response.data
 }
 
@@ -109,7 +109,7 @@ export const appendPlanStep = async (
   planId: string,
   payload: AppendSequencePayload,
 ): Promise<TestPlanResponse> => {
-  const response = await client.post<TestPlanResponse>(`/tests/plans/${planId}/steps/append`, payload)
+  const response = await client.post<TestPlanResponse>(`/test-plans/${planId}/steps`, payload)
   return response.data
 }
 
@@ -117,22 +117,23 @@ export const reorderPlanStep = async (
   planId: string,
   payload: ReorderSequencePayload,
 ): Promise<TestPlanResponse> => {
-  const response = await client.post<TestPlanResponse>(`/tests/plans/${planId}/steps/reorder`, payload)
+  const response = await client.post<TestPlanResponse>(`/test-plans/${planId}/steps/reorder`, payload)
   return response.data
 }
 
 export const removePlanStep = async (planId: string, stepId: string): Promise<TestPlanResponse> => {
-  const response = await client.delete<TestPlanResponse>(`/tests/plans/${planId}/steps/${stepId}`)
+  const response = await client.delete<TestPlanResponse>(`/test-plans/${planId}/steps/${stepId}`)
   return response.data
 }
 
 export const deleteTestPlan = async (planId: string): Promise<DeletePlanResponse> => {
-  const response = await client.delete<DeletePlanResponse>(`/tests/plans/${planId}`)
+  const response = await client.delete<DeletePlanResponse>(`/test-plans/${planId}`)
   return response.data
 }
 
 export const fetchRecentTests = async (): Promise<RecentTestsResponse> => {
-  const response = await client.get<RecentTestsResponse>('/tests/recent')
+  // TODO: 后端需要实现 /test-executions/recent 端点
+  const response = await client.get<RecentTestsResponse>('/test-executions/recent')
   return response.data
 }
 
@@ -170,23 +171,23 @@ export const updateInstrumentCategory = async (
 export const createTestCaseFromPlan = async (
   payload: CreateTestCaseFromPlanPayload,
 ): Promise<CreateTestCaseResponse> => {
-  const response = await client.post<CreateTestCaseResponse>('/tests/cases', payload)
+  const response = await client.post<CreateTestCaseResponse>('/test-plans/cases', payload)
   return response.data
 }
 
 export const createTestCase = async (
   payload: CreateTestCasePayload,
 ): Promise<CreateTestCaseResponse> => {
-  const response = await client.post<CreateTestCaseResponse>('/tests/cases/new', payload)
+  const response = await client.post<CreateTestCaseResponse>('/test-plans/cases', payload)
   return response.data
 }
 
 export const fetchTestCaseDetail = async (caseId: string): Promise<TestCaseResponse> => {
-  const response = await client.get<TestCaseResponse>(`/tests/cases/${caseId}`)
+  const response = await client.get<TestCaseResponse>(`/test-plans/cases/${caseId}`)
   return response.data
 }
 
 export const deleteTestCase = async (caseId: string): Promise<DeleteTestCaseResponse> => {
-  const response = await client.delete<DeleteTestCaseResponse>(`/tests/cases/${caseId}`)
+  const response = await client.delete<DeleteTestCaseResponse>(`/test-plans/cases/${caseId}`)
   return response.data
 }

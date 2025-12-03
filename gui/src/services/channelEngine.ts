@@ -23,9 +23,11 @@ interface ChannelEngineConfig {
 
 /**
  * 默认配置
+ * 使用相对路径通过 Vite 代理而不是硬写地址
+ * Vite 代理规则: /api/* → http://localhost:8000
  */
 const DEFAULT_CONFIG: ChannelEngineConfig = {
-  baseUrl: 'http://localhost:8000',
+  baseUrl: window.location.origin,
   timeout: 30000  // 30 seconds
 }
 

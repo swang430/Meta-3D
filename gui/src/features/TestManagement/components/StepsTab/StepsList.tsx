@@ -145,16 +145,23 @@ export function StepsList({
 
               {/* Actions Menu */}
               {!readOnly && (
-                <Menu position="bottom-end" onClick={(e) => e.stopPropagation()}>
+                <Menu position="bottom-end">
                   <Menu.Target>
-                    <ActionIcon size="sm" variant="subtle">
+                    <ActionIcon
+                      size="sm"
+                      variant="subtle"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <IconDots size={14} />
                     </ActionIcon>
                   </Menu.Target>
                   <Menu.Dropdown>
                     <Menu.Item
                       leftSection={<IconCopy size={14} />}
-                      onClick={() => handleDuplicate(step.id)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleDuplicate(step.id)
+                      }}
                     >
                       复制
                     </Menu.Item>
@@ -162,7 +169,10 @@ export function StepsList({
                     <Menu.Item
                       leftSection={<IconTrash size={14} />}
                       color="red"
-                      onClick={() => handleDelete(step.id)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleDelete(step.id)
+                      }}
                     >
                       删除
                     </Menu.Item>

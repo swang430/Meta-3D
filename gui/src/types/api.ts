@@ -22,11 +22,34 @@ export type MetricItem = {
   id?: string
 }
 
+export type ProbePosition = {
+  azimuth: number  // 方位角（度）0-360
+  elevation: number  // 仰角（度）-90-90
+  radius: number  // 半径（米）
+}
+
 export type Probe = {
   id: string
-  ring: string
-  polarization: string
-  position: string
+  probe_number: number
+  name: string | null
+  ring: number  // 1-4
+  polarization: string  // "V" | "H"
+  position: ProbePosition
+  is_active: boolean
+  is_connected: boolean
+  status: string  // "idle" | "active" | "error" | "calibrating"
+  hardware_id: string | null
+  channel_port: number | null
+  last_calibration_date: string | null
+  calibration_status: string  // "valid" | "expired" | "invalid" | "unknown"
+  calibration_data: Record<string, any> | null
+  frequency_range_mhz: Record<string, number> | null
+  max_power_dbm: number | null
+  gain_db: number | null
+  notes: string | null
+  created_at: string
+  updated_at: string | null
+  created_by: string | null
 }
 
 export type InstrumentStatus = 'available' | 'offline' | 'reserved' | 'maintenance'

@@ -55,40 +55,9 @@ const liveMetrics: MetricItem[] = [
   { label: '静区幅度波纹', value: '0.9 dB' },
 ]
 
-let probes: Probe[] = [
-  { id: 'P-01', ring: '上层', polarization: 'V/H', position: '(2.50, 0.00, 1.00)m' },
-  { id: 'P-02', ring: '上层', polarization: 'V/H', position: '(1.77, 1.77, 1.00)m' },
-  { id: 'P-03', ring: '上层', polarization: 'V/H', position: '(0.00, 2.50, 1.00)m' },
-  { id: 'P-04', ring: '上层', polarization: 'V/H', position: '(-1.77, 1.77, 1.00)m' },
-  { id: 'P-05', ring: '上层', polarization: 'V/H', position: '(-2.50, 0.00, 1.00)m' },
-  { id: 'P-06', ring: '上层', polarization: 'V/H', position: '(-1.77, -1.77, 1.00)m' },
-  { id: 'P-07', ring: '上层', polarization: 'V/H', position: '(0.00, -2.50, 1.00)m' },
-  { id: 'P-08', ring: '上层', polarization: 'V/H', position: '(1.77, -1.77, 1.00)m' },
-  { id: 'P-09', ring: '中层', polarization: 'V/H', position: '(2.50, 0.00, 0.00)m' },
-  { id: 'P-10', ring: '中层', polarization: 'V/H', position: '(2.31, 0.96, 0.00)m' },
-  { id: 'P-11', ring: '中层', polarization: 'V/H', position: '(1.77, 1.77, 0.00)m' },
-  { id: 'P-12', ring: '中层', polarization: 'V/H', position: '(0.96, 2.31, 0.00)m' },
-  { id: 'P-13', ring: '中层', polarization: 'V/H', position: '(0.00, 2.50, 0.00)m' },
-  { id: 'P-14', ring: '中层', polarization: 'V/H', position: '(-0.96, 2.31, 0.00)m' },
-  { id: 'P-15', ring: '中层', polarization: 'V/H', position: '(-1.77, 1.77, 0.00)m' },
-  { id: 'P-16', ring: '中层', polarization: 'V/H', position: '(-2.31, 0.96, 0.00)m' },
-  { id: 'P-17', ring: '中层', polarization: 'V/H', position: '(-2.50, 0.00, 0.00)m' },
-  { id: 'P-18', ring: '中层', polarization: 'V/H', position: '(-2.31, -0.96, 0.00)m' },
-  { id: 'P-19', ring: '中层', polarization: 'V/H', position: '(-1.77, -1.77, 0.00)m' },
-  { id: 'P-20', ring: '中层', polarization: 'V/H', position: '(-0.96, -2.31, 0.00)m' },
-  { id: 'P-21', ring: '中层', polarization: 'V/H', position: '(0.00, -2.50, 0.00)m' },
-  { id: 'P-22', ring: '中层', polarization: 'V/H', position: '(0.96, -2.31, 0.00)m' },
-  { id: 'P-23', ring: '中层', polarization: 'V/H', position: '(1.77, -1.77, 0.00)m' },
-  { id: 'P-24', ring: '中层', polarization: 'V/H', position: '(2.31, -0.96, 0.00)m' },
-  { id: 'P-25', ring: '下层', polarization: 'V/H', position: '(2.31, 0.96, -1.00)m' },
-  { id: 'P-26', ring: '下层', polarization: 'V/H', position: '(0.96, 2.31, -1.00)m' },
-  { id: 'P-27', ring: '下层', polarization: 'V/H', position: '(-0.96, 2.31, -1.00)m' },
-  { id: 'P-28', ring: '下层', polarization: 'V/H', position: '(-2.31, 0.96, -1.00)m' },
-  { id: 'P-29', ring: '下层', polarization: 'V/H', position: '(-2.31, -0.96, -1.00)m' },
-  { id: 'P-30', ring: '下层', polarization: 'V/H', position: '(-0.96, -2.31, -1.00)m' },
-  { id: 'P-31', ring: '下层', polarization: 'V/H', position: '(0.96, -2.31, -1.00)m' },
-  { id: 'P-32', ring: '下层', polarization: 'V/H', position: '(2.31, -0.96, -1.00)m' },
-]
+// Mock probe data - minimal schema for type checking
+// NOTE: Real data comes from backend API at /api/v1/probes
+let probes: Probe[] = []
 
 const sequenceLibrary: SequenceLibraryItem[] = [
   {
@@ -804,17 +773,8 @@ export const mockDatabase = {
     return { probes: clone(probes) }
   },
   setProbes(next: Probe[]): ProbesResponse {
-    const map = new Map<string, Probe>()
-    next.forEach((probe) => {
-      if (!probe?.id) return
-      map.set(probe.id, {
-        id: probe.id,
-        ring: probe.ring ?? '中层',
-        polarization: probe.polarization ?? 'V/H',
-        position: probe.position ?? '(0.0, 0.0, 0.0)m',
-      })
-    })
-    probes = Array.from(map.values())
+    // Mock method - not used with real backend
+    probes = clone(next)
     return { probes: clone(probes) }
   },
   createProbe(probe: Probe): Probe {

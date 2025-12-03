@@ -18,6 +18,11 @@ from app.schemas.test_plan import (
     TestCaseResponse,
     TestCaseSummary,
     TestCaseListResponse,
+    # Test Step
+    TestStepCreate,
+    TestStepCreateFromSequence,
+    TestStepUpdate,
+    TestStepResponse,
     # Test Execution
     TestExecutionResponse,
     TestExecutionListResponse,
@@ -35,6 +40,7 @@ from app.schemas.test_plan import (
 from app.services.test_plan_service import (
     TestPlanService,
     TestCaseService,
+    TestStepService,
     TestQueueService,
     TestExecutionService,
 )
@@ -379,6 +385,216 @@ def delete_test_case(
         raise HTTPException(status_code=404, detail="Test case not found")
 
     return None
+
+
+# ==================== Test Step Endpoints ====================
+
+def _build_step_dict(step):
+    """Build step dictionary with all model fields"""
+    return {
+        "id": step.id,
+        "test_plan_id": step.test_plan_id,
+        "sequence_library_id": step.sequence_library_id,
+        "step_number": step.step_number,
+        "order": step.order,
+        "name": step.name,
+        "description": step.description,
+        "type": step.type,
+        "parameters": step.parameters,
+        "timeout_seconds": step.timeout_seconds,
+        "retry_count": step.retry_count,
+        "continue_on_failure": step.continue_on_failure,
+        "status": step.status,
+        "expected_duration_minutes": step.expected_duration_minutes,
+        "actual_duration_minutes": step.actual_duration_minutes,
+        "started_at": step.started_at,
+        "completed_at": step.completed_at,
+        "result": step.result,
+        "validation_criteria": step.validation_criteria,
+        "error_message": step.error_message,
+        "notes": step.notes,
+        "tags": step.tags,
+        "created_at": step.created_at,
+        "updated_at": step.updated_at,
+    }
+
+
+@router.get("/{test_plan_id}/steps", response_model=List[TestStepResponse])
+def get_test_steps(
+    test_plan_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """Get all steps for a test plan"""
+    from app.models.test_plan import TestSequence
+
+    service = TestStepService()
+    steps = service.get_test_steps(db, test_plan_id)
+
+    # Enrich steps with sequence library information
+    enriched_steps = []
+    for step in steps:
+        step_dict = _build_step_dict(step)
+
+        # If step references a sequence library, populate title and category
+        if step.sequence_library_id:
+            sequence = db.query(TestSequence).filter(
+                TestSequence.id == step.sequence_library_id
+            ).first()
+            if sequence:
+                step_dict["title"] = sequence.name
+                step_dict["category"] = sequence.category
+                if not step.description and sequence.description:
+                    step_dict["description"] = sequence.description
+        else:
+            step_dict["title"] = step.name or f"Step {step.order}"
+            step_dict["category"] = step.type or "Unknown"
+
+        enriched_steps.append(step_dict)
+
+    return enriched_steps
+
+
+@router.post("/{test_plan_id}/steps", response_model=TestStepResponse, status_code=201)
+def add_test_step(
+    test_plan_id: UUID,
+    request: TestStepCreateFromSequence,
+    db: Session = Depends(get_db)
+):
+    """
+    Add a test step from sequence library to a test plan
+
+    The step will be created with default parameters from the sequence library,
+    which can be customized later.
+    """
+    from app.models.test_plan import TestSequence
+
+    service = TestStepService()
+
+    try:
+        step = service.create_test_step_from_sequence(
+            db=db,
+            test_plan_id=test_plan_id,
+            sequence_library_id=request.sequence_library_id,
+            order=request.order,
+            parameters=request.parameters,
+            timeout_seconds=request.timeout_seconds or 300,
+            retry_count=request.retry_count or 0,
+            continue_on_failure=request.continue_on_failure or False,
+        )
+
+        # Build enriched response
+        step_dict = _build_step_dict(step)
+
+        # Populate title and category from sequence
+        if step.sequence_library_id:
+            sequence = db.query(TestSequence).filter(
+                TestSequence.id == step.sequence_library_id
+            ).first()
+            if sequence:
+                step_dict["title"] = sequence.name
+                step_dict["category"] = sequence.category
+
+        return step_dict
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.patch("/{test_plan_id}/steps/{step_id}", response_model=TestStepResponse)
+def update_test_step(
+    test_plan_id: UUID,
+    step_id: UUID,
+    request: TestStepUpdate,
+    db: Session = Depends(get_db)
+):
+    """Update a test step"""
+    from app.models.test_plan import TestSequence
+
+    service = TestStepService()
+
+    update_data = request.dict(exclude_unset=True)
+    step = service.update_test_step(db, step_id, **update_data)
+
+    if not step:
+        raise HTTPException(status_code=404, detail="Test step not found")
+
+    # Build enriched response
+    step_dict = _build_step_dict(step)
+
+    # Populate title and category from sequence
+    if step.sequence_library_id:
+        sequence = db.query(TestSequence).filter(
+            TestSequence.id == step.sequence_library_id
+        ).first()
+        if sequence:
+            step_dict["title"] = sequence.name
+            step_dict["category"] = sequence.category
+
+    return step_dict
+
+
+@router.delete("/{test_plan_id}/steps/{step_id}", status_code=204)
+def delete_test_step(
+    test_plan_id: UUID,
+    step_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """Delete a test step"""
+    service = TestStepService()
+    success = service.delete_test_step(db, step_id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Test step not found")
+
+    return None
+
+
+@router.post("/{test_plan_id}/steps/reorder", status_code=204)
+def reorder_test_steps(
+    test_plan_id: UUID,
+    step_ids: List[UUID],
+    db: Session = Depends(get_db)
+):
+    """Reorder test steps in a plan"""
+    service = TestStepService()
+
+    try:
+        service.reorder_steps(db, test_plan_id, step_ids)
+        return None
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{test_plan_id}/steps/{step_id}/duplicate", response_model=TestStepResponse, status_code=201)
+def duplicate_test_step(
+    test_plan_id: UUID,
+    step_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """Duplicate a test step"""
+    from app.models.test_plan import TestSequence
+
+    service = TestStepService()
+
+    try:
+        step = service.duplicate_step(db, step_id)
+
+        # Build enriched response
+        step_dict = _build_step_dict(step)
+
+        # Populate title and category from sequence
+        if step.sequence_library_id:
+            sequence = db.query(TestSequence).filter(
+                TestSequence.id == step.sequence_library_id
+            ).first()
+            if sequence:
+                step_dict["title"] = sequence.name
+                step_dict["category"] = sequence.category
+
+        return step_dict
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 # ==================== Execution Control Endpoints ====================

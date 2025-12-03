@@ -39,15 +39,19 @@ import {
   IconClock,
   IconSearch,
   IconCopy,
+  IconCheck,
 } from '@tabler/icons-react'
 import {
   useTestPlans,
   useDeleteTestPlan,
   useDuplicateTestPlan,
+  useUpdateTestPlan,
   useQueueTestPlan,
   useStartExecution,
   usePauseExecution,
+  useResumeExecution,
   useCancelExecution,
+  useRemoveFromQueue,
 } from '../../hooks'
 import type { TestPlanStatus } from '../../types'
 
@@ -98,10 +102,13 @@ export function TestPlanList({ onCreateNew, onEdit, onSelect }: TestPlanListProp
   // Mutation hooks
   const { mutate: deletePlan } = useDeleteTestPlan()
   const { mutate: duplicatePlan } = useDuplicateTestPlan()
+  const { mutate: updatePlan } = useUpdateTestPlan()
   const { mutate: queuePlan } = useQueueTestPlan()
   const { mutate: startExecution } = useStartExecution()
   const { mutate: pauseExecution } = usePauseExecution()
+  const { mutate: resumeExecution } = useResumeExecution()
   const { mutate: cancelExecution } = useCancelExecution()
+  const { mutate: removeFromQueue } = useRemoveFromQueue()
 
   // Handlers
   const handleDelete = () => {
@@ -149,6 +156,42 @@ export function TestPlanList({ onCreateNew, onEdit, onSelect }: TestPlanListProp
     cancelExecution({
       planId,
       payload: { cancelled_by: '当前用户', reason: '用户手动取消' },
+    })
+  }
+
+  const handleMarkReady = (planId: string) => {
+    updatePlan({
+      planId,
+      payload: { status: 'ready' },
+    })
+  }
+
+  const handleResume = (planId: string) => {
+    resumeExecution({
+      planId,
+      payload: { resumed_by: '当前用户' },
+    })
+  }
+
+  const handleRemoveFromQueue = (planId: string) => {
+    // Remove from queue and set status back to ready
+    // Note: removeFromQueue expects queue item ID, but we'll pass plan ID
+    // The API should handle finding the queue item by plan ID
+    removeFromQueue(planId, {
+      onSuccess: () => {
+        // Update plan status to ready after removing from queue
+        updatePlan({
+          planId,
+          payload: { status: 'ready' },
+        })
+      },
+    })
+  }
+
+  const handleResetToDraft = (planId: string) => {
+    updatePlan({
+      planId,
+      payload: { status: 'draft' },
     })
   }
 
@@ -299,6 +342,17 @@ export function TestPlanList({ onCreateNew, onEdit, onSelect }: TestPlanListProp
                       <Table.Td onClick={(e) => e.stopPropagation()}>
                         <Group gap="xs">
                           {/* Status-based action buttons */}
+                          {plan.status === 'draft' && (
+                            <Tooltip label="标记为就绪">
+                              <ActionIcon
+                                variant="light"
+                                color="green"
+                                onClick={() => handleMarkReady(plan.id)}
+                              >
+                                <IconCheck size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
                           {plan.status === 'ready' && (
                             <Tooltip label="添加到队列">
                               <ActionIcon
@@ -332,6 +386,28 @@ export function TestPlanList({ onCreateNew, onEdit, onSelect }: TestPlanListProp
                               </ActionIcon>
                             </Tooltip>
                           )}
+                          {plan.status === 'paused' && (
+                            <Tooltip label="恢复执行">
+                              <ActionIcon
+                                variant="light"
+                                color="green"
+                                onClick={() => handleResume(plan.id)}
+                              >
+                                <IconPlayerPlay size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
+                          {plan.status === 'queued' && (
+                            <Tooltip label="移出队列">
+                              <ActionIcon
+                                variant="light"
+                                color="gray"
+                                onClick={() => handleRemoveFromQueue(plan.id)}
+                              >
+                                <IconPlayerStop size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
 
                           {/* More actions menu */}
                           <Menu position="bottom-end">
@@ -360,6 +436,15 @@ export function TestPlanList({ onCreateNew, onEdit, onSelect }: TestPlanListProp
                                   onClick={() => handleCancel(plan.id)}
                                 >
                                   取消执行
+                                </Menu.Item>
+                              )}
+                              {['cancelled', 'failed', 'completed'].includes(plan.status) && (
+                                <Menu.Item
+                                  leftSection={<IconRefresh size={14} />}
+                                  color="blue"
+                                  onClick={() => handleResetToDraft(plan.id)}
+                                >
+                                  重置为草稿
                                 </Menu.Item>
                               )}
                               <Menu.Divider />

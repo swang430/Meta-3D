@@ -218,27 +218,19 @@ export interface TestPlanSummary {
  */
 export interface SequenceLibraryItem {
   id: string
-  title: string
-  description: string
-  category: string                     // 分类 (如 'Calibration', 'Measurement')
-  tags: string[]                       // 标签数组
-
-  // 默认参数模板
-  defaultParameters: ParametersMap     // 默认参数配置
-
-  // 版本信息
-  version: string
-  author: string
-  created_at: string
-  updated_at: string
-
-  // 使用统计
+  name: string                         // 序列名称
+  description: string | null
+  category: string | null              // 分类 (如 'Calibration', 'Measurement')
+  steps: Array<Record<string, any>>    // 步骤数组
+  parameters: Record<string, any> | null  // 参数定义
+  default_values: Record<string, any> | null  // 默认值
+  validation_rules: Record<string, any> | null  // 验证规则
+  is_public: boolean                   // 是否公开
   usage_count: number                  // 使用次数
-  popularity_score: number             // 流行度评分 (0-100)
-
-  // 图标 & 缩略图 (可选)
-  icon?: string                        // 图标名称 (Tabler Icons)
-  thumbnail?: string                   // 缩略图URL
+  created_by: string                   // 创建者
+  created_at: string                   // 创建时间
+  updated_at: string                   // 更新时间
+  tags: string[] | null                // 标签数组
 }
 
 // ==================== Queue Management ====================
@@ -356,6 +348,7 @@ export interface CreateTestPlanRequest {
 export interface UpdateTestPlanRequest {
   name?: string
   description?: string
+  status?: string  // Test plan status (draft, ready, queued, running, paused, completed, failed, cancelled)
   dut_info?: Partial<DUTInfo>
   test_environment?: Partial<TestEnvironment>
   priority?: number
@@ -405,8 +398,8 @@ export interface QueueTestPlanRequest {
   priority?: number
   scheduled_start_time?: string
   dependencies?: string[]
+  queued_by: string  // Required field
   notes?: string
-  queued_by: string
 }
 
 /**

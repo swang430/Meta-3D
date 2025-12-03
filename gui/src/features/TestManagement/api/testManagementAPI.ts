@@ -39,7 +39,7 @@ import type {
  * List test plans with filters and pagination
  */
 export const listTestPlans = async (params?: PlansListParams): Promise<PlansListResponse> => {
-  const response = await client.get<PlansListResponse>('/test-management/plans', { params })
+  const response = await client.get<PlansListResponse>('/test-plans', { params })
   return response.data
 }
 
@@ -47,7 +47,7 @@ export const listTestPlans = async (params?: PlansListParams): Promise<PlansList
  * Get a single test plan by ID
  */
 export const getTestPlan = async (planId: string): Promise<UnifiedTestPlan> => {
-  const response = await client.get<UnifiedTestPlan>(`/test-management/plans/${planId}`)
+  const response = await client.get<UnifiedTestPlan>(`/test-plans/${planId}`)
   return response.data
 }
 
@@ -57,7 +57,7 @@ export const getTestPlan = async (planId: string): Promise<UnifiedTestPlan> => {
 export const createTestPlan = async (
   payload: CreateTestPlanRequest,
 ): Promise<UnifiedTestPlan> => {
-  const response = await client.post<UnifiedTestPlan>('/test-management/plans', payload)
+  const response = await client.post<UnifiedTestPlan>('/test-plans', payload)
   return response.data
 }
 
@@ -68,8 +68,8 @@ export const updateTestPlan = async (
   planId: string,
   payload: UpdateTestPlanRequest,
 ): Promise<UnifiedTestPlan> => {
-  const response = await client.put<UnifiedTestPlan>(
-    `/test-management/plans/${planId}`,
+  const response = await client.patch<UnifiedTestPlan>(
+    `/test-plans/${planId}`,
     payload,
   )
   return response.data
@@ -79,7 +79,7 @@ export const updateTestPlan = async (
  * Delete a test plan
  */
 export const deleteTestPlan = async (planId: string): Promise<void> => {
-  await client.delete(`/test-management/plans/${planId}`)
+  await client.delete(`/test-plans/${planId}`)
 }
 
 /**
@@ -87,7 +87,7 @@ export const deleteTestPlan = async (planId: string): Promise<void> => {
  */
 export const duplicateTestPlan = async (planId: string): Promise<UnifiedTestPlan> => {
   const response = await client.post<UnifiedTestPlan>(
-    `/test-management/plans/${planId}/duplicate`,
+    `/test-plans/${planId}/duplicate`,
   )
   return response.data
 }
@@ -98,10 +98,10 @@ export const duplicateTestPlan = async (planId: string): Promise<UnifiedTestPlan
  * Get all steps for a test plan
  */
 export const getTestSteps = async (planId: string): Promise<TestStep[]> => {
-  const response = await client.get<{ steps: TestStep[] }>(
-    `/test-management/plans/${planId}/steps`,
+  const response = await client.get<TestStep[]>(
+    `/test-plans/${planId}/steps`,
   )
-  return response.data.steps
+  return response.data
 }
 
 /**
@@ -112,7 +112,7 @@ export const addTestStep = async (
   payload: AddStepRequest,
 ): Promise<TestStep> => {
   const response = await client.post<TestStep>(
-    `/test-management/plans/${planId}/steps`,
+    `/test-plans/${planId}/steps`,
     payload,
   )
   return response.data
@@ -126,8 +126,8 @@ export const updateTestStep = async (
   stepId: string,
   payload: UpdateStepRequest,
 ): Promise<TestStep> => {
-  const response = await client.put<TestStep>(
-    `/test-management/plans/${planId}/steps/${stepId}`,
+  const response = await client.patch<TestStep>(
+    `/test-plans/${planId}/steps/${stepId}`,
     payload,
   )
   return response.data
@@ -137,7 +137,7 @@ export const updateTestStep = async (
  * Delete a step from a test plan
  */
 export const deleteTestStep = async (planId: string, stepId: string): Promise<void> => {
-  await client.delete(`/test-management/plans/${planId}/steps/${stepId}`)
+  await client.delete(`/test-plans/${planId}/steps/${stepId}`)
 }
 
 /**
@@ -148,7 +148,7 @@ export const reorderTestSteps = async (
   payload: ReorderStepsRequest,
 ): Promise<TestStep[]> => {
   const response = await client.post<{ steps: TestStep[] }>(
-    `/test-management/plans/${planId}/steps/reorder`,
+    `/test-plans/${planId}/steps/reorder`,
     payload,
   )
   return response.data.steps
@@ -162,7 +162,7 @@ export const duplicateTestStep = async (
   stepId: string,
 ): Promise<TestStep> => {
   const response = await client.post<TestStep>(
-    `/test-management/plans/${planId}/steps/${stepId}/duplicate`,
+    `/test-plans/${planId}/steps/${stepId}/duplicate`,
   )
   return response.data
 }
@@ -174,7 +174,7 @@ export const duplicateTestStep = async (
  */
 export const getTestQueue = async (): Promise<TestQueueSummary[]> => {
   const response = await client.get<{ items: TestQueueSummary[] }>(
-    '/test-management/queue',
+    '/test-plans/queue',
   )
   return response.data.items
 }
@@ -185,7 +185,7 @@ export const getTestQueue = async (): Promise<TestQueueSummary[]> => {
 export const queueTestPlan = async (
   payload: QueueTestPlanRequest,
 ): Promise<TestQueueItem> => {
-  const response = await client.post<TestQueueItem>('/test-management/queue', payload)
+  const response = await client.post<TestQueueItem>('/test-plans/queue', payload)
   return response.data
 }
 
@@ -193,7 +193,7 @@ export const queueTestPlan = async (
  * Remove a test plan from the execution queue
  */
 export const removeFromQueue = async (queueItemId: string): Promise<void> => {
-  await client.delete(`/test-management/queue/${queueItemId}`)
+  await client.delete(`/test-plans/queue/${queueItemId}`)
 }
 
 /**
@@ -203,7 +203,7 @@ export const reorderQueue = async (
   queueItemIds: string[],
 ): Promise<TestQueueSummary[]> => {
   const response = await client.post<{ items: TestQueueSummary[] }>(
-    '/test-management/queue/reorder',
+    '/test-plans/queue/reorder',
     { queue_item_ids: queueItemIds },
   )
   return response.data.items
@@ -217,7 +217,7 @@ export const updateQueuePriority = async (
   priority: number,
 ): Promise<TestQueueItem> => {
   const response = await client.patch<TestQueueItem>(
-    `/test-management/queue/${queueItemId}/priority`,
+    `/test-plans/queue/${queueItemId}/priority`,
     { priority },
   )
   return response.data
@@ -233,7 +233,7 @@ export const startExecution = async (
   payload: StartExecutionRequest,
 ): Promise<UnifiedTestPlan> => {
   const response = await client.post<UnifiedTestPlan>(
-    `/test-management/plans/${planId}/start`,
+    `/test-plans/${planId}/start`,
     payload,
   )
   return response.data
@@ -247,7 +247,7 @@ export const pauseExecution = async (
   payload: PauseExecutionRequest,
 ): Promise<UnifiedTestPlan> => {
   const response = await client.post<UnifiedTestPlan>(
-    `/test-management/plans/${planId}/pause`,
+    `/test-plans/${planId}/pause`,
     payload,
   )
   return response.data
@@ -261,7 +261,7 @@ export const resumeExecution = async (
   payload: ResumeExecutionRequest,
 ): Promise<UnifiedTestPlan> => {
   const response = await client.post<UnifiedTestPlan>(
-    `/test-management/plans/${planId}/resume`,
+    `/test-plans/${planId}/resume`,
     payload,
   )
   return response.data
@@ -275,7 +275,7 @@ export const cancelExecution = async (
   payload: CancelExecutionRequest,
 ): Promise<UnifiedTestPlan> => {
   const response = await client.post<UnifiedTestPlan>(
-    `/test-management/plans/${planId}/cancel`,
+    `/test-plans/${planId}/cancel`,
     payload,
   )
   return response.data
@@ -290,7 +290,7 @@ export const getExecutionHistory = async (
   filters?: HistoryFilters,
 ): Promise<TestExecutionRecord[]> => {
   const response = await client.get<{ items: TestExecutionRecord[] }>(
-    '/test-management/history',
+    '/test-executions',
     { params: filters },
   )
   return response.data.items
@@ -303,7 +303,7 @@ export const getExecutionRecord = async (
   recordId: string,
 ): Promise<TestExecutionRecord> => {
   const response = await client.get<TestExecutionRecord>(
-    `/test-management/history/${recordId}`,
+    `/test-executions/${recordId}`,
   )
   return response.data
 }
@@ -312,7 +312,7 @@ export const getExecutionRecord = async (
  * Delete an execution record
  */
 export const deleteExecutionRecord = async (recordId: string): Promise<void> => {
-  await client.delete(`/test-management/history/${recordId}`)
+  await client.delete(`/test-executions/${recordId}`)
 }
 
 // ==================== Sequence Library ====================
@@ -324,7 +324,7 @@ export const getSequenceLibrary = async (
   filters?: SequenceLibraryFilters,
 ): Promise<SequenceLibraryItem[]> => {
   const response = await client.get<{ items: SequenceLibraryItem[] }>(
-    '/test-management/sequence-library',
+    '/test-sequences',
     { params: filters },
   )
   return response.data.items
@@ -337,7 +337,7 @@ export const getSequenceLibraryItem = async (
   itemId: string,
 ): Promise<SequenceLibraryItem> => {
   const response = await client.get<SequenceLibraryItem>(
-    `/test-management/sequence-library/${itemId}`,
+    `/test-sequences/${itemId}`,
   )
   return response.data
 }
@@ -347,7 +347,7 @@ export const getSequenceLibraryItem = async (
  */
 export const getSequenceCategories = async (): Promise<string[]> => {
   const response = await client.get<{ categories: string[] }>(
-    '/test-management/sequence-library/categories',
+    '/test-sequences/categories',
   )
   return response.data.categories
 }
@@ -357,7 +357,7 @@ export const getSequenceCategories = async (): Promise<string[]> => {
  */
 export const getPopularSequences = async (limit: number = 10): Promise<SequenceLibraryItem[]> => {
   const response = await client.get<{ items: SequenceLibraryItem[] }>(
-    '/test-management/sequence-library/popular',
+    '/test-sequences/popular',
     { params: { limit } },
   )
   return response.data.items
@@ -374,7 +374,7 @@ export const getTestPlanStatistics = async () => {
     by_status: Record<string, number>
     avg_duration_minutes: number
     success_rate: number
-  }>('/test-management/statistics/plans')
+  }>('/test-plans/statistics/plans')
   return response.data
 }
 
@@ -388,7 +388,7 @@ export const getExecutionStatistics = async (startDate?: string, endDate?: strin
     avg_duration_minutes: number
     success_rate: number
     executions_by_day: Array<{ date: string; count: number }>
-  }>('/test-management/statistics/executions', {
+  }>('/test-plans/statistics/executions', {
     params: { start_date: startDate, end_date: endDate },
   })
   return response.data
@@ -400,7 +400,7 @@ export const getExecutionStatistics = async (startDate?: string, endDate?: strin
  * Batch delete test plans
  */
 export const batchDeleteTestPlans = async (planIds: string[]): Promise<void> => {
-  await client.post('/test-management/plans/batch-delete', { plan_ids: planIds })
+  await client.post('/test-plans/batch-delete', { plan_ids: planIds })
 }
 
 /**
@@ -410,7 +410,7 @@ export const batchUpdatePlanStatus = async (
   planIds: string[],
   status: string,
 ): Promise<void> => {
-  await client.post('/test-management/plans/batch-update-status', {
+  await client.post('/test-plans/batch-update-status', {
     plan_ids: planIds,
     status,
   })
@@ -421,7 +421,7 @@ export const batchUpdatePlanStatus = async (
  */
 export const exportTestPlans = async (planIds: string[]): Promise<Blob> => {
   const response = await client.post(
-    '/test-management/plans/export',
+    '/test-plans/export',
     { plan_ids: planIds },
     { responseType: 'blob' },
   )
@@ -435,7 +435,7 @@ export const importTestPlans = async (file: File): Promise<UnifiedTestPlan[]> =>
   const formData = new FormData()
   formData.append('file', file)
   const response = await client.post<{ plans: UnifiedTestPlan[] }>(
-    '/test-management/plans/import',
+    '/test-plans/import',
     formData,
     {
       headers: {

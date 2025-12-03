@@ -34,10 +34,23 @@ def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
         yield db
+        # Commit any pending changes
+        db.commit()
+    except Exception:
+        # Rollback on any exception
+        db.rollback()
+        raise
     finally:
         db.close()
 
 
 def init_db() -> None:
     """Initialize database (create all tables)"""
+    # Import all models to ensure they are registered with SQLAlchemy
+    from app.models.probe import Probe, ProbeConfiguration
+    from app.models.instrument import InstrumentCategory, InstrumentModel, InstrumentConnection, InstrumentLog
+    from app.models.test_plan import TestPlan, TestCase, TestExecution, TestQueue, TestStep, TestSequence
+    from app.models.calibration import CalibrationCertificate, QuietZoneCalibration, RepeatabilityTest, ComparabilityTest, SystemTRPCalibration, SystemTISCalibration
+    from app.models.report import TestReport, ReportTemplate, ReportComparison, ReportSchedule
+
     Base.metadata.create_all(bind=engine)

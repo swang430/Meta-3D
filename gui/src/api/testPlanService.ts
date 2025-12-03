@@ -6,8 +6,9 @@
 import axios from 'axios';
 
 // Create axios instance for test plan API
+// Use relative path to leverage Vite proxy instead of hardcoded address
 const testPlanClient = axios.create({
-  baseURL: 'http://localhost:8001/api/v1',
+  baseURL: '/api/v1',
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',

@@ -13,8 +13,19 @@ from app.models.test_plan import (
     TestExecution,
     TestSequence,
     TestQueue,
+    TestStep,
     TestPlanStatus,
     TestCaseType,
+)
+from app.models.report import (
+    TestReport,
+    ReportTemplate,
+    ReportComparison,
+    ReportSchedule,
+    ReportFormat,
+    ReportType,
+    ReportStatus,
+    TemplateType,
 )
 
 __all__ = [
@@ -29,6 +40,15 @@ __all__ = [
     "TestExecution",
     "TestSequence",
     "TestQueue",
+    "TestStep",
     "TestPlanStatus",
     "TestCaseType",
+    "TestReport",
+    "ReportTemplate",
+    "ReportComparison",
+    "ReportSchedule",
+    "ReportFormat",
+    "ReportType",
+    "ReportStatus",
+    "TemplateType",
 ]

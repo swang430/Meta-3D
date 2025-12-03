@@ -7,7 +7,7 @@ import { useState } from 'react'
 import { Stack, Alert, Text, Tabs, Button, Group } from '@mantine/core'
 import { IconInfoCircle, IconFlask, IconRefresh, IconMapPin } from '@tabler/icons-react'
 import { ModeSelector } from './ModeSelector'
-import { ScenarioLibraryTest } from './ScenarioLibraryTest'
+import ScenarioLibrary from './ScenarioLibrary'
 import { OTAMapper } from '../OTAMapper'
 import { TestMode } from '../../types/roadTest'
 
@@ -17,6 +17,7 @@ export function VirtualRoadTest() {
 
   const handleModeSelected = (mode: TestMode) => {
     setSelectedMode(mode)
+    setActiveTab('test')  // 自动切换到场景库测试标签
     console.log('选择的测试模式:', mode)
   }
 
@@ -67,14 +68,14 @@ export function VirtualRoadTest() {
           ) : (
             <Stack>
               <Alert variant="light" color="green">
-                <Text size="sm">
+                <Text size="sm" fw={600}>
                   已选择模式：
-                  {selectedMode === TestMode.DIGITAL_TWIN && '全数字仿真'}
-                  {selectedMode === TestMode.CONDUCTED && '传导测试'}
-                  {selectedMode === TestMode.OTA && 'OTA辐射测试'}
+                  {selectedMode === TestMode.DIGITAL_TWIN && '全数字仿真（数字孪生）'}
+                  {selectedMode === TestMode.CONDUCTED && '传导测试（仪表-DUT直连）'}
+                  {selectedMode === TestMode.OTA && 'OTA辐射测试（MPAC暗室）'}
                 </Text>
                 <Text size="sm" mt={4} c="dimmed">
-                  场景库和执行流程正在开发中，敬请期待...
+                  请点击"场景库测试"标签查看和管理测试场景，选择场景后可创建和执行测试。
                 </Text>
               </Alert>
             </Stack>
@@ -82,7 +83,7 @@ export function VirtualRoadTest() {
         </Tabs.Panel>
 
         <Tabs.Panel value="test" pt="lg">
-          <ScenarioLibraryTest />
+          <ScenarioLibrary />
         </Tabs.Panel>
 
         <Tabs.Panel value="ota-mapper" pt="lg">

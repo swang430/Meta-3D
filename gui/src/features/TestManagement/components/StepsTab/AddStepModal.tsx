@@ -122,9 +122,9 @@ export function AddStepModal({ opened, onClose, planId }: AddStepModalProps) {
                         <Stack gap={2}>
                           <Group gap="xs">
                             <Text size="sm" fw={500}>
-                              {item.title}
+                              {item.name}
                             </Text>
-                            {item.popularity_score > 80 && (
+                            {item.usage_count && item.usage_count > 30 && (
                               <Badge
                                 size="xs"
                                 variant="light"

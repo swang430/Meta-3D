@@ -10,7 +10,8 @@ import logging
 
 from app.config import settings
 from app.db.database import init_db
-from app.api import health, calibration, test_plan
+from app.api import health, calibration, test_plan, test_execution, test_sequence
+from app.api import dashboard, probe, instrument, monitoring, report, road_test
 
 # Configure logging
 logging.basicConfig(
@@ -40,10 +41,43 @@ async def lifespan(app: FastAPI):
         logger.error(f"Database initialization failed: {e}")
         logger.warning("Continuing with degraded functionality")
 
+    # Initialize HAL service (Phase 2.4.5)
+    from app.services.instrument_hal_service import initialize_hal_service, DriverMode
+    try:
+        await initialize_hal_service(mode=DriverMode.MOCK)
+        logger.info("Instrument HAL service initialized with mock drivers")
+    except Exception as e:
+        logger.error(f"HAL service initialization failed: {e}")
+        logger.warning("Continuing without HAL - monitoring will use fallback data")
+
+    # Start background tasks
+    import asyncio
+    from app.api.monitoring import monitoring_data_broadcaster
+
+    broadcaster_task = asyncio.create_task(monitoring_data_broadcaster())
+    logger.info("Monitoring data broadcaster started")
+
     yield
 
     # Shutdown
     logger.info("Shutting down Meta-3D OTA API Service")
+
+    # Cancel background tasks
+    broadcaster_task.cancel()
+    try:
+        await broadcaster_task
+    except asyncio.CancelledError:
+        logger.info("Monitoring broadcaster stopped")
+
+    # Shutdown HAL service
+    from app.services.instrument_hal_service import shutdown_hal_service
+    try:
+        await shutdown_hal_service()
+        logger.info("HAL service shutdown complete")
+    except Exception as e:
+        logger.error(f"Error shutting down HAL service: {e}")
+
+    logger.info("All background tasks terminated")
 
 
 # Create FastAPI application
@@ -87,6 +121,20 @@ app.add_middleware(
 app.include_router(health.router, prefix=settings.api_v1_prefix)
 app.include_router(calibration.router, prefix=settings.api_v1_prefix)
 app.include_router(test_plan.router, prefix=settings.api_v1_prefix)
+app.include_router(test_execution.router, prefix=settings.api_v1_prefix)
+app.include_router(test_sequence.router, prefix=settings.api_v1_prefix)
+
+# Phase 1: New routers for dashboard, probes, instruments, monitoring
+app.include_router(dashboard.router, prefix=settings.api_v1_prefix, tags=["Dashboard"])
+app.include_router(probe.router, prefix=settings.api_v1_prefix, tags=["Probes"])
+app.include_router(instrument.router, prefix=settings.api_v1_prefix, tags=["Instruments"])
+app.include_router(monitoring.router, prefix=settings.api_v1_prefix, tags=["Monitoring"])
+
+# Phase 3: Report generation and management
+app.include_router(report.router, prefix=settings.api_v1_prefix, tags=["Reports"])
+
+# Phase 3.7: Virtual Road Test
+app.include_router(road_test.router, prefix=settings.api_v1_prefix, tags=["Virtual Road Test"])
 
 
 @app.get("/")
@@ -106,7 +154,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
-        port=8001,  # API Service 使用 8001 端口，避免与 ChannelEngine (8000) 冲突
+        port=8000,  # API Service 使用 8000 端口
         reload=settings.debug,
         log_level="info" if settings.debug else "warning"
     )

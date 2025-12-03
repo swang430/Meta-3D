@@ -1,8 +1,8 @@
 import axios from 'axios'
 
 const client = axios.create({
-  baseURL: '/api',
-  timeout: 1500,
+  baseURL: '/api/v1',
+  timeout: 30000,
 })
 
 export default client

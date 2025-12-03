@@ -119,12 +119,38 @@ GUI 遵循 **API优先架构**，包含以下层次：
 
 ## 重要文件
 
+### 核心代码文件
 - [gui/src/App.tsx](gui/src/App.tsx) - 主应用组件（非常大，178KB）
 - [gui/src/main.tsx](gui/src/main.tsx) - 应用入口点
 - [gui/src/api/service.ts](gui/src/api/service.ts) - 所有 API 服务函数
 - [api/openapi.yaml](api/openapi.yaml) - API 契约定义
-- [AGENTS.md](AGENTS.md) - 详尽的系统架构和设计文档（35K+ tokens）
 - [gui/package.json](gui/package.json) - 依赖和脚本
+
+### 设计文档（⭐ 必读）
+
+**架构和规范** - 所有新功能开发必须遵循这些规范：
+- [ARCHITECTURE-REVIEW.md](ARCHITECTURE-REVIEW.md) - ⭐ **架构审查和重构计划**
+  - 详细分析了前后端不匹配问题及解决方案
+  - 定义了重构路线图和优先级
+  - **开发新功能前必读**，避免重复错误
+- [API-DESIGN-GUIDE.md](API-DESIGN-GUIDE.md) - ⭐ **API 设计统一规范**
+  - RESTful API 设计原则
+  - 响应格式、错误处理、状态码标准
+  - 分页、过滤、批量操作规范
+- [DATA-MODEL-GUIDE.md](DATA-MODEL-GUIDE.md) - ⭐ **数据模型设计规范**
+  - 数据库模型、DTO、API Schema 三层架构
+  - 命名规范、类型映射、关系设计
+  - DTO 模式和性能优化指南
+
+**功能设计**:
+- [AGENTS.md](AGENTS.md) - 系统架构和设计文档（35K+ tokens）
+- [TestManagement-Unified-Architecture.md](TestManagement-Unified-Architecture.md) - 测试管理统一架构
+- [VirtualRoadTest-Architecture.md](VirtualRoadTest-Architecture.md) - 虚拟路测架构
+
+**开发指南**:
+- [DEV-QUICKSTART.md](DEV-QUICKSTART.md) - 快速开发指南
+- [TESTING-GUIDE.md](TESTING-GUIDE.md) - 测试指南
+- [API-COMPATIBILITY.md](API-COMPATIBILITY.md) - API 兼容性记录
 
 ## 设计指南（来自 AGENTS.md）
 
@@ -144,7 +170,19 @@ GUI 遵循 **API优先架构**，包含以下层次：
 
 ## 注意事项
 
-- 应用目前使用 mock 数据 - 没有实际后端运行
+### 当前状态（2025-11-23 更新）
+
+**后端状态**:
+- ✅ 测试管理模块已连接真实数据库（SQLite）
+- ✅ Mock 服务器已禁用（`gui/src/main.tsx` 中已注释）
+- ✅ Vite 代理已配置（`/api` → `http://localhost:8001`）
+- ⚠️ 系统校准、虚拟路测模块可能仍使用旧的 Mock 数据
+
+**硬件集成**:
 - 所有仪器控制和硬件交互都是桩代码
-- 重点是 UI/UX 设计和测试计划管理工作流
 - 硬件文档很全面，但实现还处于早期阶段
+
+**开发重点**:
+- 前后端接口一致性（参考 ARCHITECTURE-REVIEW.md）
+- 测试计划管理工作流完善
+- Legacy 模块与新架构集成

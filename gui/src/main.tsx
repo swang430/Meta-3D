@@ -7,9 +7,10 @@ import '@mantine/core/styles.css'
 import '@mantine/notifications/styles.css'
 import './index.css'
 import App from './App.tsx'
-import { setupMockServer } from './api/mockServer.ts'
+// import { setupMockServer } from './api/mockServer.ts'
 
-setupMockServer()
+// Disable mock server to use real backend API
+// setupMockServer()
 
 const queryClient = new QueryClient()
 const theme = createTheme({

@@ -34,6 +34,9 @@ interface StepEditorProps {
 
 export function StepEditor({ planId, stepId, readOnly }: StepEditorProps) {
   const [parameters, setParameters] = useState<ParametersMap>({})
+  const [timeoutSeconds, setTimeoutSeconds] = useState<number>(300)
+  const [retryCount, setRetryCount] = useState<number>(0)
+  const [continueOnFailure, setContinueOnFailure] = useState<boolean>(false)
   const [hasChanges, setHasChanges] = useState(false)
 
   // Query hooks
@@ -42,10 +45,13 @@ export function StepEditor({ planId, stepId, readOnly }: StepEditorProps) {
 
   const step = steps?.find((s) => s.id === stepId)
 
-  // Load step parameters
+  // Load step parameters and config
   useEffect(() => {
-    if (step?.parameters) {
-      setParameters(step.parameters)
+    if (step) {
+      setParameters(step.parameters || {})
+      setTimeoutSeconds(step.timeout_seconds || 300)
+      setRetryCount(step.retry_count || 0)
+      setContinueOnFailure(step.continue_on_failure || false)
       setHasChanges(false)
     }
   }, [step])
@@ -66,7 +72,12 @@ export function StepEditor({ planId, stepId, readOnly }: StepEditorProps) {
       {
         planId,
         stepId,
-        payload: { parameters },
+        payload: {
+          parameters,
+          timeout_seconds: timeoutSeconds,
+          retry_count: retryCount,
+          continue_on_failure: continueOnFailure,
+        },
       },
       {
         onSuccess: () => {
@@ -77,8 +88,11 @@ export function StepEditor({ planId, stepId, readOnly }: StepEditorProps) {
   }
 
   const handleReset = () => {
-    if (step?.parameters) {
-      setParameters(step.parameters)
+    if (step) {
+      setParameters(step.parameters || {})
+      setTimeoutSeconds(step.timeout_seconds || 300)
+      setRetryCount(step.retry_count || 0)
+      setContinueOnFailure(step.continue_on_failure || false)
       setHasChanges(false)
     }
   }
@@ -163,13 +177,21 @@ export function StepEditor({ planId, stepId, readOnly }: StepEditorProps) {
           <Group grow>
             <NumberInput
               label="超时时间 (秒)"
-              value={step.timeout_seconds || 300}
+              value={timeoutSeconds}
+              onChange={(value) => {
+                setTimeoutSeconds(Number(value))
+                setHasChanges(true)
+              }}
               min={0}
               disabled={readOnly}
             />
             <NumberInput
               label="重试次数"
-              value={step.retry_count || 0}
+              value={retryCount}
+              onChange={(value) => {
+                setRetryCount(Number(value))
+                setHasChanges(true)
+              }}
               min={0}
               max={5}
               disabled={readOnly}
@@ -179,7 +201,11 @@ export function StepEditor({ planId, stepId, readOnly }: StepEditorProps) {
           <Switch
             label="失败后继续执行"
             description="如果此步骤失败，是否继续执行后续步骤"
-            checked={step.continue_on_failure}
+            checked={continueOnFailure}
+            onChange={(e) => {
+              setContinueOnFailure(e.currentTarget.checked)
+              setHasChanges(true)
+            }}
             disabled={readOnly}
           />
         </Stack>

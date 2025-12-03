@@ -80,8 +80,8 @@ async def startup_event():
     """服务启动时执行"""
     print("="*60)
     print("Channel Engine Service 正在启动...")
-    print("API文档: http://localhost:8000/api/docs")
-    print("健康检查: http://localhost:8000/api/v1/health")
+    print("API文档: http://localhost:8001/api/docs")
+    print("健康检查: http://localhost:8001/api/v1/health")
     print("="*60)
 
 
@@ -97,7 +97,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=8001,
         reload=True,  # 开发模式：自动重载
         log_level="info"
     )
