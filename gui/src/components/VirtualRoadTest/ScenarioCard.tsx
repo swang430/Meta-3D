@@ -77,9 +77,12 @@ export default function ScenarioCard({ scenario, onRefresh }: Props) {
       // Create test plan via API
       const response = await createTestPlan(testPlanPayload)
 
+      // Backend returns plan directly, not wrapped in {plan: ...}
+      const planName = (response as any).plan?.name || (response as any).name || 'test plan'
+
       notifications.show({
         title: 'Test Plan Created',
-        message: `Successfully created "${response.plan.name}"`,
+        message: `Successfully created "${planName}"`,
         color: 'green',
       })
 
