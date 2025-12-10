@@ -203,6 +203,59 @@ class TestExecution(Base):
     # test_case = relationship("TestCase", back_populates="executions")
 
 
+class TestPlanExecution(Base):
+    """
+    Test Plan Execution History - 测试计划执行历史
+
+    记录每次测试计划执行的摘要信息（计划级别）。
+    """
+    __tablename__ = "test_plan_executions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # Association
+    test_plan_id = Column(UUID(as_uuid=True), ForeignKey('test_plans.id'), nullable=False)
+
+    # Snapshot of plan info at execution time
+    test_plan_name = Column(String(255), nullable=False, comment="Plan name at execution time")
+    test_plan_version = Column(String(50), default="1.0", comment="Plan version at execution time")
+
+    # Status
+    status = Column(
+        String(50),
+        nullable=False,
+        default="completed",
+        comment="completed | failed | cancelled"
+    )
+
+    # Execution statistics
+    total_steps = Column(Integer, default=0, comment="Total number of steps")
+    completed_steps = Column(Integer, default=0, comment="Successfully completed steps")
+    failed_steps = Column(Integer, default=0, comment="Failed steps")
+    skipped_steps = Column(Integer, default=0, comment="Skipped steps")
+
+    # Success rate (0.0 - 1.0)
+    success_rate = Column(Float, default=0.0, comment="Success rate as decimal")
+
+    # Timing
+    started_at = Column(DateTime, nullable=False, comment="Execution start time")
+    completed_at = Column(DateTime, nullable=False, comment="Execution completion time")
+    duration_minutes = Column(Float, default=0.0, comment="Total duration in minutes")
+
+    # Error summary (if failed)
+    error_summary = Column(Text, comment="Summary of errors if failed")
+
+    # Notes
+    notes = Column(Text, comment="Execution notes")
+
+    # Metadata
+    started_by = Column(String(100), nullable=False, comment="User who started execution")
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    # Relationships
+    test_plan = relationship("TestPlan", backref="execution_history")
+
+
 class TestSequence(Base):
     """
     Test Sequence - 测试序列

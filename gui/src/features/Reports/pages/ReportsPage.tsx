@@ -10,9 +10,8 @@ import {
   IconFileReport,
   IconTemplate,
   IconPlus,
-  IconFileText,
 } from '@tabler/icons-react'
-import { ReportList, TemplateList, CreateReportForm } from '../components'
+import { ReportList, TemplateList, CreateReportWizard } from '../components'
 
 export function ReportsPage() {
   const [createReportOpened, setCreateReportOpened] = useState(false)
@@ -50,14 +49,15 @@ export function ReportsPage() {
           </Tabs.Panel>
         </Tabs>
 
-        {/* Create Report Modal */}
+        {/* Create Report Wizard Modal */}
         <Modal
           opened={createReportOpened}
           onClose={() => setCreateReportOpened(false)}
           title="创建新报告"
-          size="lg"
+          size="xl"
+          centered
         >
-          <CreateReportForm
+          <CreateReportWizard
             onSuccess={() => setCreateReportOpened(false)}
             onCancel={() => setCreateReportOpened(false)}
           />

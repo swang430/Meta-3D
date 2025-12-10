@@ -17,6 +17,7 @@ from app.models.report import (
 )
 from app.models.test_plan import TestPlan, TestExecution
 from app.services.pdf_generator import PDFGenerator
+from app.services.report_data_collector import ReportDataCollector
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ class ReportService:
         limit: int = 100,
         report_type: Optional[str] = None,
         status: Optional[str] = None,
+        format: Optional[str] = None,
         generated_by: Optional[str] = None
     ) -> List[TestReport]:
         """List reports with filters"""
@@ -77,11 +79,35 @@ class ReportService:
             query = query.filter(TestReport.report_type == report_type)
         if status:
             query = query.filter(TestReport.status == status)
+        if format:
+            query = query.filter(TestReport.format == format)
         if generated_by:
             query = query.filter(TestReport.generated_by == generated_by)
 
         query = query.order_by(TestReport.generated_at.desc())
         return query.offset(skip).limit(limit).all()
+
+    def count_reports(
+        self,
+        db: Session,
+        report_type: Optional[str] = None,
+        status: Optional[str] = None,
+        format: Optional[str] = None,
+        generated_by: Optional[str] = None
+    ) -> int:
+        """Count reports with filters"""
+        query = db.query(TestReport)
+
+        if report_type:
+            query = query.filter(TestReport.report_type == report_type)
+        if status:
+            query = query.filter(TestReport.status == status)
+        if format:
+            query = query.filter(TestReport.format == format)
+        if generated_by:
+            query = query.filter(TestReport.generated_by == generated_by)
+
+        return query.count()
 
     def update_report(
         self,
@@ -154,37 +180,48 @@ class ReportService:
                     ReportTemplate.is_active == True
                 ).first()
 
-            if not template:
-                raise ValueError("No template found for report generation")
+            # Update progress
+            report.progress_percent = 10
+            db.commit()
 
-            # Gather report data
-            report_data = self._gather_report_data(db, report)
+            # Gather report data using the data collector
+            data_collector = ReportDataCollector()
+            report_data = data_collector.collect(db, report)
+
+            # Update progress
+            report.progress_percent = 50
+            db.commit()
 
             # Generate PDF
-            if report.format == ReportFormat.PDF:
+            if report.format == ReportFormat.PDF or report.format == "pdf":
                 output_dir = os.path.join('data', 'reports', str(report.id))
                 os.makedirs(output_dir, exist_ok=True)
                 output_path = os.path.join(output_dir, f'report_{report.id}.pdf')
 
                 pdf_generator = PDFGenerator()
 
-                # Convert template model to dict
-                template_dict = {
-                    'sections': template.sections,
-                    'chart_configs': template.chart_configs or {},
-                    'table_configs': template.table_configs or {},
-                    'page_size': template.page_size or 'A4',
-                    'page_orientation': template.page_orientation or 'portrait',
-                    'margins': template.margins or {},
-                    'logo_path': template.logo_path,
-                    'color_scheme': template.color_scheme or {}
-                }
+                # Convert template model to dict (if template exists)
+                template_dict = None
+                if template:
+                    template_dict = {
+                        'sections': template.sections,
+                        'chart_configs': template.chart_configs or {},
+                        'table_configs': template.table_configs or {},
+                        'page_size': template.page_size or 'A4',
+                        'page_orientation': template.page_orientation or 'portrait',
+                        'margins': template.margins or {},
+                        'logo_path': template.logo_path,
+                        'color_scheme': template.color_scheme or {}
+                    }
 
-                pdf_generator.generate_report(report_data, template_dict, output_path)
+                # Convert ReportData to dict for PDF generator
+                pdf_generator.generate_report(report_data.to_dict(), template_dict, output_path)
 
-                # Update report with file path
+                # Update report with file path and metadata
                 report.file_path = output_path
-                report.file_size = os.path.getsize(output_path)
+                report.file_size_bytes = os.path.getsize(output_path)
+                report.chart_count = len(report_data.chart_data)
+                report.table_count = 1 if report_data.table_data else 0
 
             # Update status to completed
             report.status = ReportStatus.COMPLETED
@@ -207,57 +244,6 @@ class ReportService:
             db.commit()
 
             raise
-
-    def _gather_report_data(
-        self,
-        db: Session,
-        report: TestReport
-    ) -> Dict[str, Any]:
-        """
-        Gather all data needed for report generation
-
-        This is a simplified version. In production, this would fetch
-        actual test execution data from the database.
-        """
-        # Fetch test plan if specified
-        test_plan = None
-        if report.test_plan_id:
-            test_plan = db.query(TestPlan).filter(
-                TestPlan.id == report.test_plan_id
-            ).first()
-
-        # Build report data
-        data = {
-            'title': report.title,
-            'report_type': report.report_type,
-            'generated_by': report.generated_by,
-            'test_plan_name': test_plan.name if test_plan else 'N/A',
-            'dut_info': test_plan.device_model if test_plan else 'N/A',
-
-            # Sample data for demonstration
-            # In production, this would come from actual test executions
-            'content': 'This report presents the results of testing performed.',
-            'table_data': [
-                {'Metric': 'Throughput', 'Value': '100 Mbps', 'Unit': 'Mbps', 'Pass/Fail': 'Pass'},
-                {'Metric': 'TRP', 'Value': '-5.2', 'Unit': 'dBm', 'Pass/Fail': 'Pass'},
-                {'Metric': 'TIS', 'Value': '-98.5', 'Unit': 'dBm', 'Pass/Fail': 'Pass'},
-            ],
-
-            # Sample chart data
-            'chart_data': {
-                'throughput_chart': {
-                    'x_data': list(range(0, 100, 10)),
-                    'y_data': [50 + i*5 for i in range(10)]
-                },
-                'power_chart': {
-                    'categories': ['2400', '2450', '2500'],
-                    'values': [-5.2, -6.1, -5.8]
-                }
-            }
-        }
-
-        return data
-
 
 class ReportTemplateService:
     """Service for managing report templates"""

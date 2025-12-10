@@ -145,3 +145,35 @@ export function useCancelExecution() {
     },
   })
 }
+
+/**
+ * Hook to complete an executing test plan
+ */
+export function useCompleteExecution() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (planId: string) => api.completeExecution(planId),
+    onSuccess: (updatedPlan) => {
+      // Update plan cache
+      queryClient.setQueryData(testPlansKeys.detail(updatedPlan.id), updatedPlan)
+
+      // Invalidate related queries
+      queryClient.invalidateQueries({ queryKey: testPlansKeys.lists() })
+      queryClient.invalidateQueries({ queryKey: testQueueKeys.list() })
+
+      notifications.show({
+        title: '执行已完成',
+        message: `测试计划 "${updatedPlan.name}" 已完成`,
+        color: 'green',
+      })
+    },
+    onError: (error: Error) => {
+      notifications.show({
+        title: '完成失败',
+        message: error.message || '无法完成测试计划',
+        color: 'red',
+      })
+    },
+  })
+}

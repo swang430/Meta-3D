@@ -323,6 +323,261 @@ def create_regulatory_template(db: Session) -> ReportTemplate:
     return template
 
 
+def create_performance_analysis_template(db: Session) -> ReportTemplate:
+    """Create advanced performance analysis template with all chart types"""
+    template = ReportTemplate(
+        name="Performance Analysis Report",
+        description="Advanced template with time series analysis, anomaly detection, and statistical comparisons",
+        template_type=TemplateType.PERFORMANCE,
+        applicable_test_types=["TRP", "TIS", "Throughput", "MIMO", "Sensitivity"],
+
+        # Template sections - using new section types
+        sections=[
+            {
+                "id": "cover",
+                "title": "Cover Page",
+                "order": 1,
+                "type": "cover",
+                "required": True,
+                "page_break_after": True
+            },
+            {
+                "id": "executive_summary",
+                "title": "Executive Summary",
+                "order": 2,
+                "type": "execution_summary",
+                "required": True,
+                "page_break_after": False
+            },
+            {
+                "id": "statistical_analysis",
+                "title": "Statistical Analysis",
+                "order": 3,
+                "type": "statistics",
+                "required": True,
+                "page_break_after": True
+            },
+            {
+                "id": "time_series_analysis",
+                "title": "Time Series Analysis",
+                "order": 4,
+                "type": "time_series",
+                "required": True,
+                "page_break_after": True
+            },
+            {
+                "id": "performance_radar",
+                "title": "Performance Overview",
+                "order": 5,
+                "type": "charts",
+                "required": False,
+                "chart_types": ["radar", "comparison_bar"]
+            },
+            {
+                "id": "detailed_results",
+                "title": "Detailed Results",
+                "order": 6,
+                "type": "table",
+                "required": True,
+                "fields": ["Metric", "Mean", "Median", "Std Dev", "Min", "Max", "Count"],
+                "style": "striped"
+            },
+            {
+                "id": "conclusions",
+                "title": "Conclusions and Recommendations",
+                "order": 7,
+                "type": "text",
+                "required": False,
+                "content_template": """
+Based on the analysis of {{ statistics|length if statistics else 0 }} metrics across {{ execution_summary.total_executions if execution_summary else 0 }} test executions:
+
+Overall Pass Rate: {{ execution_summary.pass_rate if execution_summary else 'N/A' }}%
+
+Key Findings:
+- Analyzed {{ time_series|length if time_series else 0 }} time series data points
+- Detected potential anomalies for further investigation
+"""
+            }
+        ],
+
+        # Chart configurations with new chart types
+        chart_configs={
+            "time_series_anomaly": {
+                "type": "time_series_anomaly",
+                "title": "Metric Trend with Anomaly Detection",
+                "x_axis": {"label": "Time"},
+                "y_axis": {"label": "Value"},
+                "show_rolling_mean": True,
+                "anomaly_threshold": 3.0
+            },
+            "statistics_box": {
+                "type": "box_plot",
+                "title": "Metric Distribution",
+                "x_axis": {"label": "Metric"},
+                "y_axis": {"label": "Value"},
+                "show_mean": True,
+                "colors": ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
+            },
+            "performance_radar": {
+                "type": "radar",
+                "title": "Performance Benchmark",
+                "color": "#1f77b4"
+            },
+            "comparison_bar": {
+                "type": "comparison_bar",
+                "title": "Statistics Comparison",
+                "x_axis": {"label": "Metric"},
+                "y_axis": {"label": "Value"},
+                "show_values": True,
+                "color": "#2ca02c"
+            },
+            "throughput_trend": {
+                "type": "line",
+                "title": "Throughput Trend",
+                "x_axis": {"label": "Execution #"},
+                "y_axis": {"label": "Throughput (Mbps)"},
+                "color": "#1f77b4"
+            }
+        },
+
+        # Table configurations
+        table_configs={
+            "results_table": {
+                "columns": ["Metric", "Mean", "Median", "Std Dev", "Min", "Max", "Count"],
+                "style": "striped",
+                "border": True
+            },
+            "execution_table": {
+                "columns": ["Execution", "Status", "Duration", "Pass/Fail"],
+                "style": "striped",
+                "border": True
+            }
+        },
+
+        # Page settings - landscape for better chart viewing
+        page_size="A4",
+        page_orientation="portrait",
+        margins={"top": 25, "right": 20, "bottom": 25, "left": 20},
+
+        # Professional color scheme
+        color_scheme={
+            "primary": "#1f77b4",
+            "secondary": "#ff7f0e",
+            "accent": "#2ca02c",
+            "success": "#2ca02c",
+            "danger": "#d62728",
+            "warning": "#ff7f0e",
+            "text": "#333333",
+            "background": "#ffffff"
+        },
+
+        created_by="system",
+        is_active=True,
+        is_default=False,
+        version="1.0",
+        tags=["performance", "analysis", "anomaly-detection", "statistics"]
+    )
+
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+    logger.info(f"Created template: {template.name} (ID: {template.id})")
+    return template
+
+
+def create_executive_summary_template(db: Session) -> ReportTemplate:
+    """Create executive summary template for management-level reporting"""
+    template = ReportTemplate(
+        name="Executive Summary Report",
+        description="Concise report template for management with key metrics and pass/fail overview",
+        template_type=TemplateType.EXECUTIVE,
+        applicable_test_types=["TRP", "TIS", "Throughput", "MIMO", "Sensitivity"],
+
+        sections=[
+            {
+                "id": "cover",
+                "title": "Cover Page",
+                "order": 1,
+                "type": "cover",
+                "required": True,
+                "page_break_after": True
+            },
+            {
+                "id": "key_metrics",
+                "title": "Key Performance Metrics",
+                "order": 2,
+                "type": "execution_summary",
+                "required": True,
+                "page_break_after": False
+            },
+            {
+                "id": "performance_overview",
+                "title": "Performance Overview",
+                "order": 3,
+                "type": "charts",
+                "required": True,
+                "chart_types": ["radar", "comparison_bar"]
+            },
+            {
+                "id": "summary_table",
+                "title": "Results Summary",
+                "order": 4,
+                "type": "table",
+                "required": True,
+                "fields": ["Metric", "Mean", "Min", "Max", "Pass/Fail"],
+                "style": "striped"
+            }
+        ],
+
+        chart_configs={
+            "performance_radar": {
+                "type": "radar",
+                "title": "Performance Overview",
+                "color": "#1f77b4"
+            },
+            "key_metrics_bar": {
+                "type": "comparison_bar",
+                "title": "Key Metrics Comparison",
+                "x_axis": {"label": "Metric"},
+                "y_axis": {"label": "Value"},
+                "show_values": True
+            }
+        },
+
+        table_configs={
+            "summary_table": {
+                "columns": ["Metric", "Mean", "Min", "Max", "Pass/Fail"],
+                "style": "striped",
+                "border": True
+            }
+        },
+
+        page_size="A4",
+        page_orientation="portrait",
+        margins={"top": 25, "right": 20, "bottom": 25, "left": 20},
+
+        color_scheme={
+            "primary": "#0066cc",
+            "secondary": "#333333",
+            "accent": "#00cc66",
+            "text": "#333333",
+            "background": "#ffffff"
+        },
+
+        created_by="system",
+        is_active=True,
+        is_default=False,
+        version="1.0",
+        tags=["executive", "summary", "management"]
+    )
+
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+    logger.info(f"Created template: {template.name} (ID: {template.id})")
+    return template
+
+
 def main():
     """Initialize all default report templates"""
     logger.info("Initializing database...")
@@ -343,12 +598,16 @@ def main():
         standard_template = create_standard_template(db)
         comparison_template = create_comparison_template(db)
         regulatory_template = create_regulatory_template(db)
+        performance_template = create_performance_analysis_template(db)
+        executive_template = create_executive_summary_template(db)
 
         logger.info("=" * 60)
         logger.info("Successfully initialized report templates:")
         logger.info(f"  1. {standard_template.name} (default)")
         logger.info(f"  2. {comparison_template.name}")
         logger.info(f"  3. {regulatory_template.name}")
+        logger.info(f"  4. {performance_template.name}")
+        logger.info(f"  5. {executive_template.name}")
         logger.info("=" * 60)
 
     except Exception as e:

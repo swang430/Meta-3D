@@ -25,6 +25,12 @@ from app.schemas.road_test import (
     TrafficDensity,
     TrafficType,
     KPIType,
+    StepConfiguration,
+    ChamberInitConfig,
+    NetworkConfigStep,
+    RouteExecutionConfig,
+    KPIValidationConfig,
+    ReportGenerationConfig,
 )
 import math
 from datetime import datetime
@@ -579,6 +585,46 @@ def create_urban_canyon_scenario() -> RoadTestScenario:
                 threshold_min=0.0
             )
         ],
+
+        # Custom step configuration for demonstration
+        step_configuration=StepConfiguration(
+            chamber_init=ChamberInitConfig(
+                chamber_id="MPAC-2",
+                timeout_seconds=600,
+                verify_connections=True,
+                calibrate_position_table=False
+            ),
+            network_config=NetworkConfigStep(
+                frequency_mhz=3700,
+                bandwidth_mhz=100,
+                technology="5G NR",
+                timeout_seconds=300,
+                verify_signal=True
+            ),
+            route_execution=RouteExecutionConfig(
+                monitor_kpis=True,
+                log_interval_s=0.5,
+                auto_screenshot=True,
+                timeout_seconds=2400
+            ),
+            kpi_validation=KPIValidationConfig(
+                kpi_thresholds=KPIValidationConfig.KPIThresholds(
+                    min_throughput_mbps=15,
+                    max_latency_ms=30,
+                    min_rsrp_dbm=-95,
+                    max_packet_loss_percent=2.0
+                ),
+                generate_plots=True,
+                timeout_seconds=300
+            ),
+            report_generation=ReportGenerationConfig(
+                report_format="PDF",
+                include_raw_data=True,
+                include_screenshots=True,
+                include_recommendations=True,
+                timeout_seconds=120
+            )
+        ),
 
         created_at=datetime.now(),
         author="Meta-3D Team",

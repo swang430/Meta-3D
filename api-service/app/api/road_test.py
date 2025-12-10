@@ -95,7 +95,8 @@ async def list_scenarios(
             duration_s=s.route.duration_s,
             distance_m=s.route.total_distance_m,
             created_at=s.created_at,
-            author=s.author
+            author=s.author,
+            step_configuration=s.step_configuration
         )
         for s in scenarios
     ]

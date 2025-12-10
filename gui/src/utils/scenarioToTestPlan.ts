@@ -55,6 +55,8 @@ export function generateTestPlanFromScenario(
         duration_s: scenario.duration_s,
         total_distance_m: scenario.distance_m,
       }),
+      // Pass step configuration if present
+      step_configuration: scenario.step_configuration,
     },
 
     // Generate test steps (will be added separately via API)

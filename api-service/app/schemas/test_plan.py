@@ -214,6 +214,47 @@ class TestExecutionResponse(BaseModel):
         from_attributes = True
 
 
+# ==================== Test Plan Execution History Schemas ====================
+
+class TestPlanExecutionResponse(BaseModel):
+    """Test plan execution history response"""
+    id: UUID
+    test_plan_id: UUID
+    test_plan_name: str
+    test_plan_version: str
+
+    status: str  # completed | failed | cancelled
+
+    # Statistics
+    total_steps: int
+    completed_steps: int
+    failed_steps: int
+    skipped_steps: int
+    success_rate: float
+
+    # Timing
+    started_at: datetime
+    completed_at: datetime
+    duration_minutes: float
+
+    # Error summary
+    error_summary: Optional[str] = None
+    notes: Optional[str] = None
+
+    # Metadata
+    started_by: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class TestPlanExecutionListResponse(BaseModel):
+    """List response for test plan executions"""
+    total: int
+    items: List[TestPlanExecutionResponse]
+
+
 # ==================== Test Queue Schemas ====================
 
 class QueueTestPlanRequest(BaseModel):

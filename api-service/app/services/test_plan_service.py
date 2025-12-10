@@ -47,8 +47,157 @@ class TestPlanService:
         db.commit()
         db.refresh(test_plan)
 
+        # Auto-generate test steps for Virtual Road Test scenarios
+        if 'scenario_id' in kwargs and kwargs['scenario_id']:
+            logger.info(f"Auto-generating test steps for scenario-based plan: {test_plan.id}")
+            self._create_road_test_steps(db, test_plan, kwargs.get('test_environment', {}))
+
         logger.info(f"Created test plan: {test_plan.id} - {name}")
         return test_plan
+
+    def _create_road_test_steps(
+        self,
+        db: Session,
+        test_plan: TestPlan,
+        test_environment: dict
+    ) -> None:
+        """
+        Create standard test steps for Virtual Road Test scenarios
+
+        Automatically generates 7 standard test steps based on Road Test sequence library.
+        If scenario has pre-configured step_configuration, use those settings;
+        otherwise use defaults from test_environment.
+        """
+        # Get Road Test sequences in correct order
+        road_test_sequences = db.query(TestSequence).filter(
+            TestSequence.category.like("Road Test%")
+        ).order_by(TestSequence.created_at.asc()).all()
+
+        if len(road_test_sequences) != 7:
+            logger.warning(f"Expected 7 Road Test sequences, found {len(road_test_sequences)}")
+            return
+
+        # Extract step_configuration from test_environment if present
+        step_config = test_environment.get('step_configuration', {}) or {}
+
+        # Define step configurations based on test environment and step_configuration
+        # Priority: step_config (from scenario) > test_environment > defaults
+        chamber_cfg = step_config.get('chamber_init', {})
+        network_cfg = step_config.get('network_config', {})
+        bs_cfg = step_config.get('base_station_setup', {})
+        mapper_cfg = step_config.get('ota_mapper', {})
+        route_cfg = step_config.get('route_execution', {})
+        kpi_cfg = step_config.get('kpi_validation', {})
+        report_cfg = step_config.get('report_generation', {})
+
+        step_configs = [
+            {
+                "sequence_name": "Initialize OTA Chamber (MPAC)",
+                "parameters": {
+                    "chamber_id": chamber_cfg.get("chamber_id") or test_environment.get("chamber_id", "MPAC-1"),
+                    "verify_connections": chamber_cfg.get("verify_connections", True),
+                    "calibrate_position_table": chamber_cfg.get("calibrate_position_table", True)
+                },
+                "timeout_seconds": chamber_cfg.get("timeout_seconds", 300)
+            },
+            {
+                "sequence_name": "Configure Network",
+                "parameters": {
+                    "frequency_mhz": network_cfg.get("frequency_mhz") or test_environment.get("frequency_mhz", 3500),
+                    "bandwidth_mhz": network_cfg.get("bandwidth_mhz") or test_environment.get("bandwidth_mhz", 100),
+                    "technology": network_cfg.get("technology") or test_environment.get("technology", "5G NR"),
+                    "verify_signal": network_cfg.get("verify_signal", True)
+                },
+                "timeout_seconds": network_cfg.get("timeout_seconds", 240)
+            },
+            {
+                "sequence_name": "Setup Base Stations and Channel Model",
+                "parameters": {
+                    "channel_model": bs_cfg.get("channel_model") or test_environment.get("channel_model", "UMa"),
+                    "num_base_stations": bs_cfg.get("num_base_stations") or test_environment.get("num_base_stations", 3),
+                    "bs_positions": bs_cfg.get("bs_positions") or test_environment.get("bs_positions", []),
+                    "verify_coverage": bs_cfg.get("verify_coverage", True)
+                },
+                "timeout_seconds": bs_cfg.get("timeout_seconds", 300)
+            },
+            {
+                "sequence_name": "Configure OTA Mapper",
+                "parameters": {
+                    "route_file": mapper_cfg.get("route_file") or test_environment.get("route_file", ""),
+                    "route_type": mapper_cfg.get("route_type") or test_environment.get("route_type", "urban"),
+                    "update_rate_hz": mapper_cfg.get("update_rate_hz", 10),
+                    "enable_handover": mapper_cfg.get("enable_handover", True),
+                    "position_tolerance_m": mapper_cfg.get("position_tolerance_m", 1.0)
+                },
+                "timeout_seconds": mapper_cfg.get("timeout_seconds", 180)
+            },
+            {
+                "sequence_name": "Execute Route Test",
+                "parameters": {
+                    "route_duration_s": route_cfg.get("route_duration_s") or test_environment.get("duration_s", 1800),
+                    "total_distance_m": route_cfg.get("total_distance_m") or test_environment.get("total_distance_m", 5000),
+                    "environment_type": route_cfg.get("environment_type") or test_environment.get("environment_type", "urban"),
+                    "monitor_kpis": route_cfg.get("monitor_kpis", True),
+                    "log_interval_s": route_cfg.get("log_interval_s", 1),
+                    "auto_screenshot": route_cfg.get("auto_screenshot", True)
+                },
+                "timeout_seconds": route_cfg.get("timeout_seconds") or (test_environment.get("duration_s", 1800) + 300)  # Add 5min buffer
+            },
+            {
+                "sequence_name": "Validate KPIs and Performance Metrics",
+                "parameters": {
+                    "kpi_thresholds": kpi_cfg.get("kpi_thresholds", {
+                        "min_throughput_mbps": 50,
+                        "max_latency_ms": 50,
+                        "min_rsrp_dbm": -110,
+                        "max_packet_loss_percent": 5
+                    }),
+                    "generate_plots": kpi_cfg.get("generate_plots", True)
+                },
+                "timeout_seconds": kpi_cfg.get("timeout_seconds", 300)
+            },
+            {
+                "sequence_name": "Generate Test Report",
+                "parameters": {
+                    "report_format": report_cfg.get("report_format", "pdf"),
+                    "include_raw_data": report_cfg.get("include_raw_data", False),
+                    "include_screenshots": report_cfg.get("include_screenshots", True),
+                    "include_recommendations": report_cfg.get("include_recommendations", True)
+                },
+                "timeout_seconds": report_cfg.get("timeout_seconds", 180)
+            }
+        ]
+
+        # Create TestStep instances
+        for idx, config in enumerate(step_configs):
+            # Find matching sequence
+            sequence = next(
+                (seq for seq in road_test_sequences if seq.name == config["sequence_name"]),
+                None
+            )
+
+            if not sequence:
+                logger.warning(f"Sequence not found: {config['sequence_name']}")
+                continue
+
+            # Create test step
+            test_step = TestStep(
+                test_plan_id=test_plan.id,
+                sequence_library_id=sequence.id,
+                order=idx,
+                parameters=config["parameters"],
+                timeout_seconds=config["timeout_seconds"],
+                retry_count=0,
+                continue_on_failure=False,
+                status="pending"
+            )
+            db.add(test_step)
+
+            # Increment sequence usage count
+            sequence.usage_count = (sequence.usage_count or 0) + 1
+
+        db.commit()
+        logger.info(f"Created {len(step_configs)} test steps for plan {test_plan.id}")
 
     def get_test_plan(self, db: Session, test_plan_id: UUID) -> Optional[TestPlan]:
         """Get a test plan by ID"""
@@ -987,29 +1136,31 @@ class TestExecutionService:
 
         db.commit()
 
-        # Create execution record
-        if test_plan.test_case_ids:
-            total_cases = len(test_plan.test_case_ids) if isinstance(test_plan.test_case_ids, list) else 0
-            from app.models.test_plan import TestExecution
+        # Create plan-level execution history record
+        from app.models.test_plan import TestPlanExecution
+        total_steps = test_plan.total_test_cases or 0
+        completed_steps = test_plan.completed_test_cases or total_steps
+        failed_steps = test_plan.failed_test_cases or 0
+        skipped_steps = max(0, total_steps - completed_steps - failed_steps)
+        success_rate = (completed_steps / total_steps) if total_steps > 0 else 1.0
 
-            execution = TestExecution(
-                test_plan_id=test_plan_id,
-                test_case_id=test_plan.test_case_ids[0] if isinstance(test_plan.test_case_ids, list) and test_plan.test_case_ids else uuid.uuid4(),
-                execution_order=1,
-                status="completed",
-                validation_pass=True,
-                started_at=test_plan.started_at,
-                completed_at=test_plan.completed_at,
-                duration_sec=test_plan.actual_duration_minutes * 60 if test_plan.actual_duration_minutes else None,
-                executed_by=test_plan.created_by,
-                test_results={
-                    "total_steps": total_cases,
-                    "completed_steps": test_plan.completed_test_cases or total_cases,
-                    "failed_steps": test_plan.failed_test_cases or 0
-                }
-            )
-            db.add(execution)
-            db.commit()
+        plan_execution = TestPlanExecution(
+            test_plan_id=test_plan_id,
+            test_plan_name=test_plan.name,
+            test_plan_version=test_plan.version or "1.0",
+            status="completed",
+            total_steps=total_steps,
+            completed_steps=completed_steps,
+            failed_steps=failed_steps,
+            skipped_steps=skipped_steps,
+            success_rate=success_rate,
+            started_at=test_plan.started_at or datetime.utcnow(),
+            completed_at=test_plan.completed_at,
+            duration_minutes=test_plan.actual_duration_minutes or 0.0,
+            started_by=test_plan.created_by
+        )
+        db.add(plan_execution)
+        db.commit()
 
         db.refresh(test_plan)
 
@@ -1060,32 +1211,39 @@ class TestExecutionService:
         test_plan.status = TestPlanStatus.CANCELLED
         test_plan.completed_at = datetime.utcnow()
 
+        # Calculate duration if started
+        if test_plan.started_at:
+            duration = (test_plan.completed_at - test_plan.started_at).total_seconds() / 60
+            test_plan.actual_duration_minutes = duration
+
         db.commit()
 
-        # Create execution record for cancelled test
-        if test_plan.test_case_ids:
-            total_cases = len(test_plan.test_case_ids) if isinstance(test_plan.test_case_ids, list) else 0
-            from app.models.test_plan import TestExecution
+        # Create plan-level execution history record
+        from app.models.test_plan import TestPlanExecution
+        total_steps = test_plan.total_test_cases or 0
+        completed_steps = test_plan.completed_test_cases or 0
+        failed_steps = test_plan.failed_test_cases or 0
+        skipped_steps = max(0, total_steps - completed_steps - failed_steps)
+        success_rate = (completed_steps / total_steps) if total_steps > 0 else 0.0
 
-            execution = TestExecution(
-                test_plan_id=test_plan_id,
-                test_case_id=test_plan.test_case_ids[0] if isinstance(test_plan.test_case_ids, list) and test_plan.test_case_ids else uuid.uuid4(),
-                execution_order=1,
-                status="cancelled",
-                validation_pass=False,
-                started_at=test_plan.started_at,
-                completed_at=test_plan.completed_at,
-                duration_sec=test_plan.actual_duration_minutes * 60 if test_plan.actual_duration_minutes else None,
-                executed_by=test_plan.created_by,
-                error_message="Test plan was cancelled",
-                test_results={
-                    "total_steps": total_cases,
-                    "completed_steps": test_plan.completed_test_cases or 0,
-                    "failed_steps": test_plan.failed_test_cases or 0
-                }
-            )
-            db.add(execution)
-            db.commit()
+        plan_execution = TestPlanExecution(
+            test_plan_id=test_plan_id,
+            test_plan_name=test_plan.name,
+            test_plan_version=test_plan.version or "1.0",
+            status="cancelled",
+            total_steps=total_steps,
+            completed_steps=completed_steps,
+            failed_steps=failed_steps,
+            skipped_steps=skipped_steps,
+            success_rate=success_rate,
+            started_at=test_plan.started_at or datetime.utcnow(),
+            completed_at=test_plan.completed_at,
+            duration_minutes=test_plan.actual_duration_minutes or 0.0,
+            error_summary="Test plan was cancelled by user",
+            started_by=test_plan.created_by
+        )
+        db.add(plan_execution)
+        db.commit()
 
         db.refresh(test_plan)
 

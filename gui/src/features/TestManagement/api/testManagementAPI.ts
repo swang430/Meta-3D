@@ -281,6 +281,18 @@ export const cancelExecution = async (
   return response.data
 }
 
+/**
+ * Complete an executing test plan
+ */
+export const completeExecution = async (
+  planId: string,
+): Promise<UnifiedTestPlan> => {
+  const response = await client.post<UnifiedTestPlan>(
+    `/test-plans/${planId}/complete`,
+  )
+  return response.data
+}
+
 // ==================== Execution History ====================
 
 /**

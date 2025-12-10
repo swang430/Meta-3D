@@ -685,3 +685,45 @@ def complete_test_plan(
         return test_plan
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ==================== Test Execution Endpoints ====================
+
+@router.get("/{test_plan_id}/executions", response_model=TestExecutionListResponse)
+def get_test_executions(
+    test_plan_id: UUID,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all test executions for a specific test plan.
+
+    Returns execution records including status, duration, and measurement data.
+    Useful for report generation and historical analysis.
+    """
+    from app.models.test_plan import TestExecution
+
+    try:
+        # Verify test plan exists
+        plan_service = TestPlanService()
+        test_plan = plan_service.get_test_plan(db, test_plan_id)
+        if not test_plan:
+            raise HTTPException(status_code=404, detail="Test plan not found")
+
+        # Query executions for this test plan
+        executions = db.query(TestExecution).filter(
+            TestExecution.test_plan_id == test_plan_id
+        ).order_by(TestExecution.execution_order.asc()).offset(skip).limit(limit).all()
+
+        return TestExecutionListResponse(
+            total=len(executions),
+            items=[TestExecutionResponse.model_validate(e) for e in executions]
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Error fetching executions for plan {test_plan_id}: {e}")
+        return TestExecutionListResponse(total=0, items=[])

@@ -220,6 +220,90 @@ class KPIDefinition(BaseModel):
     threshold_max: Optional[float] = Field(None, description="Maximum threshold")
 
 
+# ===== Step Configuration Models =====
+
+class ChamberInitConfig(BaseModel):
+    """Chamber initialization step configuration"""
+    chamber_id: Optional[str] = Field(None, description="Chamber ID")
+    timeout_seconds: Optional[int] = Field(None, description="Timeout in seconds")
+    verify_connections: Optional[bool] = Field(None, description="Verify connections")
+    calibrate_position_table: Optional[bool] = Field(None, description="Calibrate position table")
+
+
+class NetworkConfigStep(BaseModel):
+    """Network configuration step"""
+    frequency_mhz: Optional[float] = Field(None, description="Frequency in MHz")
+    bandwidth_mhz: Optional[float] = Field(None, description="Bandwidth in MHz")
+    technology: Optional[str] = Field(None, description="Technology (5G NR, LTE, etc.)")
+    timeout_seconds: Optional[int] = Field(None, description="Timeout in seconds")
+    verify_signal: Optional[bool] = Field(None, description="Verify signal")
+
+
+class BaseStationSetupConfig(BaseModel):
+    """Base station setup step configuration"""
+    channel_model: Optional[str] = Field(None, description="Channel model")
+    num_base_stations: Optional[int] = Field(None, description="Number of base stations")
+    bs_positions: Optional[List[Dict]] = Field(None, description="Base station positions")
+    timeout_seconds: Optional[int] = Field(None, description="Timeout in seconds")
+    verify_coverage: Optional[bool] = Field(None, description="Verify coverage")
+
+
+class OTAMapperConfig(BaseModel):
+    """OTA mapper step configuration"""
+    route_file: Optional[str] = Field(None, description="Route file path")
+    route_type: Optional[str] = Field(None, description="Route type")
+    update_rate_hz: Optional[float] = Field(None, description="Update rate in Hz")
+    enable_handover: Optional[bool] = Field(None, description="Enable handover")
+    position_tolerance_m: Optional[float] = Field(None, description="Position tolerance in meters")
+    timeout_seconds: Optional[int] = Field(None, description="Timeout in seconds")
+
+
+class RouteExecutionConfig(BaseModel):
+    """Route execution step configuration"""
+    route_duration_s: Optional[float] = Field(None, description="Route duration in seconds")
+    total_distance_m: Optional[float] = Field(None, description="Total distance in meters")
+    environment_type: Optional[str] = Field(None, description="Environment type")
+    monitor_kpis: Optional[bool] = Field(None, description="Monitor KPIs")
+    log_interval_s: Optional[float] = Field(None, description="Log interval in seconds")
+    auto_screenshot: Optional[bool] = Field(None, description="Auto screenshot")
+    timeout_seconds: Optional[int] = Field(None, description="Timeout in seconds")
+
+
+class KPIValidationConfig(BaseModel):
+    """KPI validation step configuration"""
+
+    class KPIThresholds(BaseModel):
+        """KPI threshold values"""
+        min_throughput_mbps: Optional[float] = Field(None, description="Minimum throughput in Mbps")
+        max_latency_ms: Optional[float] = Field(None, description="Maximum latency in ms")
+        min_rsrp_dbm: Optional[float] = Field(None, description="Minimum RSRP in dBm")
+        max_packet_loss_percent: Optional[float] = Field(None, description="Maximum packet loss percentage")
+
+    kpi_thresholds: Optional[KPIThresholds] = Field(None, description="KPI threshold values")
+    generate_plots: Optional[bool] = Field(None, description="Generate plots")
+    timeout_seconds: Optional[int] = Field(None, description="Timeout in seconds")
+
+
+class ReportGenerationConfig(BaseModel):
+    """Report generation step configuration"""
+    report_format: Optional[str] = Field(None, description="Report format (PDF, HTML, etc.)")
+    include_raw_data: Optional[bool] = Field(None, description="Include raw data")
+    include_screenshots: Optional[bool] = Field(None, description="Include screenshots")
+    include_recommendations: Optional[bool] = Field(None, description="Include recommendations")
+    timeout_seconds: Optional[int] = Field(None, description="Timeout in seconds")
+
+
+class StepConfiguration(BaseModel):
+    """Test step configuration for scenario"""
+    chamber_init: Optional[ChamberInitConfig] = Field(None, description="Chamber initialization config")
+    network_config: Optional[NetworkConfigStep] = Field(None, description="Network configuration")
+    base_station_setup: Optional[BaseStationSetupConfig] = Field(None, description="Base station setup")
+    ota_mapper: Optional[OTAMapperConfig] = Field(None, description="OTA mapper configuration")
+    route_execution: Optional[RouteExecutionConfig] = Field(None, description="Route execution")
+    kpi_validation: Optional[KPIValidationConfig] = Field(None, description="KPI validation")
+    report_generation: Optional[ReportGenerationConfig] = Field(None, description="Report generation")
+
+
 # ===== Main Scenario Model =====
 
 class RoadTestScenario(BaseModel):
@@ -241,6 +325,9 @@ class RoadTestScenario(BaseModel):
         default_factory=list, description="Scenario events"
     )
     kpi_definitions: List[KPIDefinition] = Field(description="KPI definitions")
+
+    # Step configuration (optional pre-configured test steps)
+    step_configuration: Optional[StepConfiguration] = Field(None, description="Pre-configured test step parameters")
 
     # Metadata
     created_at: Optional[datetime] = Field(None, description="Creation timestamp")
@@ -295,3 +382,4 @@ class ScenarioSummary(BaseModel):
     distance_m: float
     created_at: Optional[datetime]
     author: Optional[str]
+    step_configuration: Optional[StepConfiguration] = None

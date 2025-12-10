@@ -288,6 +288,259 @@ class ChartGenerator:
 
         return self.generate_bar_chart(data, default_config)
 
+    def generate_time_series_with_anomalies(
+        self,
+        data: Dict[str, Any],
+        config: Dict[str, Any],
+        save_path: Optional[str] = None
+    ) -> bytes:
+        """
+        Generate a time series chart with anomaly detection markers.
+
+        Args:
+            data: Dictionary containing:
+                - timestamps: List of datetime strings
+                - values: List of values
+                - anomaly_indices: List of indices where anomalies occur
+            config: Chart configuration
+
+        Returns:
+            Bytes of PNG image
+        """
+        fig, ax = plt.subplots(figsize=(12, 6))
+
+        timestamps = data.get('timestamps', [])
+        values = data.get('values', [])
+        anomaly_indices = data.get('anomaly_indices', [])
+
+        # Convert timestamps to datetime if they're strings
+        if timestamps and isinstance(timestamps[0], str):
+            try:
+                timestamps = [datetime.fromisoformat(t.replace('Z', '+00:00')) for t in timestamps]
+            except:
+                timestamps = list(range(len(values)))
+
+        # Plot main line
+        color = config.get('color', self.default_colors[0])
+        ax.plot(timestamps, values, color=color, linewidth=2, label=config.get('metric_name', 'Value'))
+
+        # Mark anomalies
+        if anomaly_indices:
+            anomaly_x = [timestamps[i] for i in anomaly_indices if i < len(timestamps)]
+            anomaly_y = [values[i] for i in anomaly_indices if i < len(values)]
+            ax.scatter(anomaly_x, anomaly_y, color='red', s=100, marker='x',
+                      label='Anomalies', zorder=5, linewidths=2)
+
+        # Add rolling mean if provided
+        rolling_mean = data.get('rolling_mean', [])
+        if rolling_mean and len(rolling_mean) == len(timestamps):
+            ax.plot(timestamps, rolling_mean, color='green', linewidth=1.5,
+                   linestyle='--', alpha=0.7, label='Rolling Mean')
+
+        # Set labels and title
+        ax.set_xlabel(config.get('x_axis', {}).get('label', 'Time'), fontsize=12)
+        ax.set_ylabel(config.get('y_axis', {}).get('label', 'Value'), fontsize=12)
+        ax.set_title(config.get('title', 'Time Series with Anomaly Detection'),
+                    fontsize=14, fontweight='bold')
+
+        # Rotate x-axis labels for better readability
+        plt.xticks(rotation=45, ha='right')
+
+        # Add grid and legend
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc='best')
+
+        plt.tight_layout()
+
+        return self._save_figure(fig, save_path)
+
+    def generate_statistics_box_plot(
+        self,
+        data: Dict[str, Any],
+        config: Dict[str, Any],
+        save_path: Optional[str] = None
+    ) -> bytes:
+        """
+        Generate a box plot for statistics comparison.
+
+        Args:
+            data: Dictionary containing:
+                - metrics: List of metric names
+                - values: Dict of metric_name -> list of values
+            config: Chart configuration
+
+        Returns:
+            Bytes of PNG image
+        """
+        fig, ax = plt.subplots(figsize=(12, 6))
+
+        metrics = data.get('metrics', [])
+        values_dict = data.get('values', {})
+
+        # Prepare data for box plot
+        box_data = []
+        labels = []
+        for metric in metrics:
+            if metric in values_dict and values_dict[metric]:
+                box_data.append(values_dict[metric])
+                labels.append(metric)
+
+        if not box_data:
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
+                   transform=ax.transAxes, fontsize=14)
+        else:
+            bp = ax.boxplot(box_data, labels=labels, patch_artist=True)
+
+            # Color the boxes
+            colors = config.get('colors', self.default_colors)
+            for i, (box, color) in enumerate(zip(bp['boxes'], colors * (len(bp['boxes']) // len(colors) + 1))):
+                box.set_facecolor(color)
+                box.set_alpha(0.7)
+
+            # Show means
+            if config.get('show_mean', True):
+                means = [np.mean(d) for d in box_data]
+                ax.scatter(range(1, len(means) + 1), means, color='red',
+                          marker='D', s=50, zorder=5, label='Mean')
+
+        # Set labels and title
+        ax.set_xlabel(config.get('x_axis', {}).get('label', 'Metric'), fontsize=12)
+        ax.set_ylabel(config.get('y_axis', {}).get('label', 'Value'), fontsize=12)
+        ax.set_title(config.get('title', 'Statistics Comparison'),
+                    fontsize=14, fontweight='bold')
+
+        # Rotate x-axis labels
+        plt.xticks(rotation=45, ha='right')
+
+        # Add grid
+        ax.grid(True, alpha=0.3, axis='y')
+        ax.legend(loc='best')
+
+        plt.tight_layout()
+
+        return self._save_figure(fig, save_path)
+
+    def generate_performance_radar(
+        self,
+        data: Dict[str, Any],
+        config: Dict[str, Any],
+        save_path: Optional[str] = None
+    ) -> bytes:
+        """
+        Generate a radar chart for performance benchmarking.
+
+        Args:
+            data: Dictionary containing:
+                - metrics: List of metric names
+                - values: List of values (normalized to 0-100 or percentile)
+            config: Chart configuration
+
+        Returns:
+            Bytes of PNG image
+        """
+        metrics = data.get('metrics', [])
+        values = data.get('values', [])
+
+        if not metrics or not values:
+            fig, ax = plt.subplots(figsize=(8, 8))
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
+                   transform=ax.transAxes, fontsize=14)
+            return self._save_figure(fig, save_path)
+
+        # Number of metrics
+        num_metrics = len(metrics)
+
+        # Calculate angles for each metric
+        angles = np.linspace(0, 2 * np.pi, num_metrics, endpoint=False).tolist()
+        angles += angles[:1]  # Complete the loop
+
+        values = values + values[:1]  # Complete the loop
+
+        fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(polar=True))
+
+        # Plot data
+        color = config.get('color', self.default_colors[0])
+        ax.plot(angles, values, 'o-', linewidth=2, color=color)
+        ax.fill(angles, values, alpha=0.25, color=color)
+
+        # Set metric labels
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(metrics, fontsize=10)
+
+        # Set title
+        ax.set_title(config.get('title', 'Performance Radar'),
+                    fontsize=14, fontweight='bold', pad=20)
+
+        # Set y-axis limits
+        ax.set_ylim(0, 100)
+
+        plt.tight_layout()
+
+        return self._save_figure(fig, save_path)
+
+    def generate_comparison_bar(
+        self,
+        data: Dict[str, Any],
+        config: Dict[str, Any],
+        save_path: Optional[str] = None
+    ) -> bytes:
+        """
+        Generate a grouped bar chart for comparing metrics across reports.
+
+        Args:
+            data: Dictionary containing:
+                - metrics: List of metric names
+                - means: List of mean values
+                - stds: List of standard deviation values (optional)
+            config: Chart configuration
+
+        Returns:
+            Bytes of PNG image
+        """
+        fig, ax = plt.subplots(figsize=(12, 6))
+
+        metrics = data.get('metrics', [])
+        means = data.get('means', [])
+        stds = data.get('stds', [])
+
+        x = np.arange(len(metrics))
+        width = 0.6
+
+        # Create bars
+        color = config.get('color', self.default_colors[0])
+        bars = ax.bar(x, means, width, color=color, alpha=0.8)
+
+        # Add error bars if stds provided
+        if stds and len(stds) == len(means):
+            ax.errorbar(x, means, yerr=stds, fmt='none', color='black',
+                       capsize=5, capthick=1.5)
+
+        # Add value labels on bars
+        if config.get('show_values', True):
+            for bar, mean in zip(bars, means):
+                height = bar.get_height()
+                ax.annotate(f'{mean:.2f}',
+                           xy=(bar.get_x() + bar.get_width() / 2, height),
+                           xytext=(0, 3),
+                           textcoords="offset points",
+                           ha='center', va='bottom', fontsize=9)
+
+        # Set labels and title
+        ax.set_xlabel(config.get('x_axis', {}).get('label', 'Metric'), fontsize=12)
+        ax.set_ylabel(config.get('y_axis', {}).get('label', 'Value'), fontsize=12)
+        ax.set_title(config.get('title', 'Metrics Comparison'),
+                    fontsize=14, fontweight='bold')
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(metrics, rotation=45, ha='right')
+
+        # Add grid
+        ax.grid(True, alpha=0.3, axis='y')
+
+        plt.tight_layout()
+
+        return self._save_figure(fig, save_path)
+
     def _save_figure(self, fig, save_path: Optional[str] = None) -> bytes:
         """
         Save figure to bytes or file

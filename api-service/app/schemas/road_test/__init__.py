@@ -30,6 +30,16 @@ from .scenario import (
     RFImpairmentEvent,
     TrafficBurstEvent,
     KPIDefinition,
+    # Step configuration models
+    ChamberInitConfig,
+    NetworkConfigStep,
+    BaseStationSetupConfig,
+    OTAMapperConfig,
+    RouteExecutionConfig,
+    KPIValidationConfig,
+    ReportGenerationConfig,
+    StepConfiguration,
+    # Scenario models
     RoadTestScenario,
     ScenarioCreate,
     ScenarioUpdate,
@@ -100,6 +110,16 @@ __all__ = [
     "RFImpairmentEvent",
     "TrafficBurstEvent",
     "KPIDefinition",
+    # Step configuration models
+    "ChamberInitConfig",
+    "NetworkConfigStep",
+    "BaseStationSetupConfig",
+    "OTAMapperConfig",
+    "RouteExecutionConfig",
+    "KPIValidationConfig",
+    "ReportGenerationConfig",
+    "StepConfiguration",
+    # Scenario models
     "RoadTestScenario",
     "ScenarioCreate",
     "ScenarioUpdate",

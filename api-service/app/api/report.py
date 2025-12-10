@@ -89,6 +89,41 @@ def create_report(
     )
 
 
+@router.get("", response_model=ReportListResponse)
+def list_reports(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    status: Optional[str] = None,
+    report_type: Optional[str] = None,
+    format: Optional[str] = None,
+    generated_by: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """List all reports with filters and pagination"""
+    reports = report_service.list_reports(
+        db=db,
+        skip=skip,
+        limit=limit,
+        status=status,
+        report_type=report_type,
+        format=format,
+        generated_by=generated_by
+    )
+    total = report_service.count_reports(
+        db=db,
+        status=status,
+        report_type=report_type,
+        format=format,
+        generated_by=generated_by
+    )
+    return ReportListResponse(
+        reports=[ReportSummary.model_validate(r) for r in reports],
+        total=total,
+        page=1 + (skip // limit),
+        page_size=limit
+    )
+
+
 @router.post("/{report_id}/generate", response_model=ReportResponse)
 def generate_report(
     report_id: UUID,
@@ -609,6 +644,66 @@ def get_report(
         )
     return report
 
+
+@router.get("/{report_id}/download")
+def download_report(
+    report_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """Download a generated report file"""
+    from fastapi.responses import FileResponse
+    import os
+
+    report = report_service.get_report(db, report_id)
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Report {report_id} not found"
+        )
+
+    if report.status != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Report is not ready for download. Status: {report.status}"
+        )
+
+    if not report.file_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report file not found"
+        )
+
+    # file_path is stored as relative path like "data/reports/{id}/report_{id}.pdf"
+    # Check if it's absolute or relative
+    if os.path.isabs(report.file_path):
+        full_path = report.file_path
+    else:
+        full_path = report.file_path
+
+    if not os.path.exists(full_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Report file not found on disk: {full_path}"
+        )
+
+    # Determine media type based on format
+    media_types = {
+        "pdf": "application/pdf",
+        "html": "text/html",
+        "excel": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    }
+    media_type = media_types.get(report.format, "application/octet-stream")
+
+    # Generate filename
+    safe_title = "".join(c for c in report.title if c.isalnum() or c in " _-").strip()
+    extension = "xlsx" if report.format == "excel" else report.format
+    filename = f"{safe_title}_{report_id}.{extension}"
+
+    return FileResponse(
+        path=full_path,
+        media_type=media_type,
+        filename=filename
+    )
 
 
 @router.delete("/{report_id}", status_code=status.HTTP_204_NO_CONTENT)

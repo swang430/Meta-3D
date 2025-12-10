@@ -5,7 +5,7 @@
  */
 
 import { useState } from 'react'
-import { Card, Text, Badge, Group, Button, Stack } from '@mantine/core'
+import { Card, Text, Badge, Group, Button, Stack, Tooltip } from '@mantine/core'
 import {
   IconMapPin,
   IconClock,
@@ -13,6 +13,7 @@ import {
   IconPlayerPlay,
   IconInfoCircle,
   IconTransform,
+  IconSettings,
 } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 import type { ScenarioSummary } from '../../types/roadTest'
@@ -44,7 +45,23 @@ const CATEGORY_LABELS: Record<string, string> = {
   custom: '✏️ Custom',
 }
 
+// 统计配置了多少个步骤
+const countConfiguredSteps = (scenario: ScenarioSummary): number => {
+  if (!scenario.step_configuration) return 0
+  const config = scenario.step_configuration
+  let count = 0
+  if (config.chamber_init) count++
+  if (config.network_config) count++
+  if (config.base_station_setup) count++
+  if (config.ota_mapper) count++
+  if (config.route_execution) count++
+  if (config.kpi_validation) count++
+  if (config.report_generation) count++
+  return count
+}
+
 export default function ScenarioCard({ scenario, onRefresh }: Props) {
+  const configuredStepsCount = countConfiguredSteps(scenario)
   const [executionModalOpened, setExecutionModalOpened] = useState(false)
   const [detailModalOpened, setDetailModalOpened] = useState(false)
   const [converting, setConverting] = useState(false)
@@ -109,9 +126,18 @@ export default function ScenarioCard({ scenario, onRefresh }: Props) {
     <Card shadow="sm" padding="lg" radius="md" withBorder>
       {/* Header */}
       <Group justify="space-between" mb="xs">
-        <Badge color={CATEGORY_COLORS[scenario.category]} variant="light" size="sm">
-          {CATEGORY_LABELS[scenario.category]}
-        </Badge>
+        <Group gap="xs">
+          <Badge color={CATEGORY_COLORS[scenario.category]} variant="light" size="sm">
+            {CATEGORY_LABELS[scenario.category]}
+          </Badge>
+          {configuredStepsCount > 0 && (
+            <Tooltip label={`已配置 ${configuredStepsCount}/7 个测试步骤`}>
+              <Badge color="cyan" variant="dot" size="sm" leftSection={<IconSettings size={12} />}>
+                自定义步骤
+              </Badge>
+            </Tooltip>
+          )}
+        </Group>
         <Badge color="gray" variant="outline" size="xs">
           {scenario.source}
         </Badge>

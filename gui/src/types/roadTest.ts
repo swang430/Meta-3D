@@ -186,6 +186,64 @@ export interface KPIDefinition {
   threshold_max?: number
 }
 
+// Step configuration for test plan generation
+export interface StepConfiguration {
+  chamber_init?: {
+    chamber_id?: string
+    timeout_seconds?: number
+    verify_connections?: boolean
+    calibrate_position_table?: boolean
+  }
+  network_config?: {
+    frequency_mhz?: number
+    bandwidth_mhz?: number
+    technology?: string
+    timeout_seconds?: number
+    verify_signal?: boolean
+  }
+  base_station_setup?: {
+    channel_model?: string
+    num_base_stations?: number
+    bs_positions?: any[]
+    timeout_seconds?: number
+    verify_coverage?: boolean
+  }
+  ota_mapper?: {
+    route_file?: string
+    route_type?: string
+    update_rate_hz?: number
+    enable_handover?: boolean
+    position_tolerance_m?: number
+    timeout_seconds?: number
+  }
+  route_execution?: {
+    route_duration_s?: number
+    total_distance_m?: number
+    environment_type?: string
+    monitor_kpis?: boolean
+    log_interval_s?: number
+    auto_screenshot?: boolean
+    timeout_seconds?: number
+  }
+  kpi_validation?: {
+    kpi_thresholds?: {
+      min_throughput_mbps?: number
+      max_latency_ms?: number
+      min_rsrp_dbm?: number
+      max_packet_loss_percent?: number
+    }
+    generate_plots?: boolean
+    timeout_seconds?: number
+  }
+  report_generation?: {
+    report_format?: string
+    include_raw_data?: boolean
+    include_screenshots?: boolean
+    include_recommendations?: boolean
+    timeout_seconds?: number
+  }
+}
+
 export interface RoadTestScenario {
   id: string
   name: string
@@ -200,6 +258,7 @@ export interface RoadTestScenario {
   traffic?: any
   events?: any[]
   kpi_definitions?: KPIDefinition[]
+  step_configuration?: StepConfiguration  // NEW: Pre-configured test steps
   created_at?: string
   createdAt?: string
   updated_at?: string
@@ -233,6 +292,7 @@ export interface ScenarioSummary {
   description?: string
   duration_s: number
   distance_m: number
+  step_configuration?: StepConfiguration  // NEW: Pre-configured test steps
   created_at?: string
   author?: string
 }

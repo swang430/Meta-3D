@@ -26,9 +26,11 @@ import {
 import {
   IconAlertCircle,
   IconCheck,
+  IconSettings,
 } from '@tabler/icons-react'
 import { createScenario } from '../../api/roadTestService'
-import type { RoadTestScenario } from '../../types/roadTest'
+import type { RoadTestScenario, StepConfiguration } from '../../types/roadTest'
+import { StepConfigurationEditor } from './StepConfigurationEditor'
 
 interface Props {
   opened: boolean
@@ -73,6 +75,7 @@ export function CreateScenarioDialog({ opened, onClose }: Props) {
     channelModel: 'UMa',
     speed: 50,
     duration: 60,
+    stepConfiguration: undefined as StepConfiguration | undefined,
   })
 
   const createMutation = useMutation({
@@ -135,6 +138,10 @@ export function CreateScenarioDialog({ opened, onClose }: Props) {
             threshold_max: 50,
           },
         ],
+        // Include step configuration if configured
+        ...(formData.stepConfiguration && {
+          step_configuration: formData.stepConfiguration,
+        }),
       }
       return createScenario(scenario)
     },
@@ -156,6 +163,7 @@ export function CreateScenarioDialog({ opened, onClose }: Props) {
       channelModel: 'UMa',
       speed: 50,
       duration: 60,
+      stepConfiguration: undefined,
     })
     setActiveTab('basic')
     onClose()
@@ -206,6 +214,9 @@ export function CreateScenarioDialog({ opened, onClose }: Props) {
             <Tabs.Tab value="basic">基本信息</Tabs.Tab>
             <Tabs.Tab value="network">网络配置</Tabs.Tab>
             <Tabs.Tab value="environment">环境设置</Tabs.Tab>
+            <Tabs.Tab value="steps" leftSection={<IconSettings size={14} />}>
+              测试步骤配置
+            </Tabs.Tab>
             <Tabs.Tab value="preview">预览</Tabs.Tab>
           </Tabs.List>
 
@@ -350,6 +361,31 @@ export function CreateScenarioDialog({ opened, onClose }: Props) {
             </Stack>
           </Tabs.Panel>
 
+          {/* Test Steps Configuration Tab */}
+          <Tabs.Panel value="steps" pt="md">
+            <Stack gap="md">
+              <Alert color="blue">
+                <Stack gap="xs">
+                  <Text size="sm" fw={500}>
+                    📋 测试步骤预配置（可选）
+                  </Text>
+                  <Text size="sm">
+                    虚拟路测包含固定的7个标准步骤。您可以在此预配置某些步骤的参数（如暗室ID、频率、KPI阈值等），未配置的步骤将使用系统默认值。
+                  </Text>
+                  <Text size="sm" c="dimmed">
+                    注意：转换为测试计划后，所有7个步骤都会出现，但会应用您配置的参数。
+                  </Text>
+                </Stack>
+              </Alert>
+              <StepConfigurationEditor
+                value={formData.stepConfiguration}
+                onChange={(config) =>
+                  setFormData({ ...formData, stepConfiguration: config })
+                }
+              />
+            </Stack>
+          </Tabs.Panel>
+
           {/* Preview Tab */}
           <Tabs.Panel value="preview" pt="md">
             <Stack gap="md">
@@ -406,9 +442,16 @@ export function CreateScenarioDialog({ opened, onClose }: Props) {
               </Card>
 
               <Alert color="blue">
-                <Text size="sm">
-                  ✓ 该场景将包含基本的网络配置、基站信息、路由和 KPI 定义。
-                </Text>
+                <Stack gap="xs">
+                  <Text size="sm">
+                    ✓ 该场景将包含基本的网络配置、基站信息、路由和 KPI 定义。
+                  </Text>
+                  {formData.stepConfiguration && Object.keys(formData.stepConfiguration).length > 0 && (
+                    <Text size="sm" fw={500}>
+                      ✓ 已配置 {Object.keys(formData.stepConfiguration).length} 个测试步骤的预设参数
+                    </Text>
+                  )}
+                </Stack>
               </Alert>
             </Stack>
           </Tabs.Panel>

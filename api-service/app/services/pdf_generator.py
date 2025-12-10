@@ -2,6 +2,8 @@
 
 This module generates PDF reports using ReportLab.
 Integrates with ChartGenerator and TemplateRenderer for complete report generation.
+Supports advanced chart types including time series with anomalies, box plots,
+radar charts, and comparison bar charts.
 """
 import os
 import logging
@@ -15,7 +17,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-    PageBreak, Image, KeepTogether
+    PageBreak, Image, KeepTogether, ListFlowable, ListItem
 )
 from reportlab.pdfgen import canvas
 
@@ -52,10 +54,43 @@ class PDFGenerator:
             spaceBefore=12
         ))
 
+        self.styles.add(ParagraphStyle(
+            name='SubsectionTitle',
+            parent=self.styles['Heading3'],
+            fontSize=13,
+            textColor=colors.HexColor('#555555'),
+            spaceAfter=8,
+            spaceBefore=8
+        ))
+
+        self.styles.add(ParagraphStyle(
+            name='MetricValue',
+            parent=self.styles['BodyText'],
+            fontSize=11,
+            textColor=colors.HexColor('#1f77b4'),
+            fontName='Helvetica-Bold'
+        ))
+
+        self.styles.add(ParagraphStyle(
+            name='PassStatus',
+            parent=self.styles['BodyText'],
+            fontSize=11,
+            textColor=colors.HexColor('#2ca02c'),  # Green
+            fontName='Helvetica-Bold'
+        ))
+
+        self.styles.add(ParagraphStyle(
+            name='FailStatus',
+            parent=self.styles['BodyText'],
+            fontSize=11,
+            textColor=colors.HexColor('#d62728'),  # Red
+            fontName='Helvetica-Bold'
+        ))
+
     def generate_report(
         self,
         report_data: Dict[str, Any],
-        template: Dict[str, Any],
+        template: Optional[Dict[str, Any]],
         output_path: str
     ) -> str:
         """
@@ -63,7 +98,7 @@ class PDFGenerator:
 
         Args:
             report_data: Report content and test data
-            template: Report template configuration
+            template: Report template configuration (optional - will use defaults if None)
             output_path: Path to save PDF file
 
         Returns:
@@ -71,6 +106,10 @@ class PDFGenerator:
         """
         try:
             logger.info(f"Generating PDF report: {output_path}")
+
+            # Use empty dict if template is None
+            if template is None:
+                template = {}
 
             # Create output directory if needed
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -106,6 +145,10 @@ class PDFGenerator:
             # Build story (document elements)
             story = []
             sections = template.get('sections', [])
+
+            # If no sections defined, auto-generate based on report data
+            if not sections:
+                sections = self._auto_generate_sections(report_data)
 
             # Sort sections by order
             sections = sorted(sections, key=lambda x: x.get('order', 999))
@@ -155,10 +198,96 @@ class PDFGenerator:
             elements.extend(self._generate_mixed_section(section_config, data, template))
         elif section_type == 'charts':
             elements.extend(self._generate_charts_section(section_config, data, template))
+        elif section_type == 'execution_summary':
+            elements.extend(self._generate_execution_summary_section(data))
+        elif section_type == 'statistics':
+            elements.extend(self._generate_statistics_section(data, template))
+        elif section_type == 'time_series':
+            elements.extend(self._generate_time_series_section(data, template))
 
         elements.append(Spacer(1, 20))
 
         return elements
+
+    def _auto_generate_sections(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Auto-generate sections based on available report data"""
+        sections = []
+        order = 0
+
+        # Always add cover page
+        sections.append({
+            'type': 'cover',
+            'order': order,
+            'title': ''
+        })
+        order += 1
+
+        # Add test plan info if available
+        if data.get('test_plan'):
+            sections.append({
+                'type': 'text',
+                'order': order,
+                'title': 'Test Plan Information',
+                'content_template': self._get_test_plan_template()
+            })
+            order += 1
+
+        # Add execution summary if available
+        if data.get('execution_summary'):
+            sections.append({
+                'type': 'execution_summary',
+                'order': order,
+                'title': 'Execution Summary',
+                'page_break_after': False
+            })
+            order += 1
+
+        # Add statistics section if available
+        if data.get('statistics'):
+            sections.append({
+                'type': 'statistics',
+                'order': order,
+                'title': 'Statistical Analysis',
+                'page_break_after': True
+            })
+            order += 1
+
+        # Add time series charts if available
+        if data.get('time_series') and data.get('chart_data'):
+            sections.append({
+                'type': 'time_series',
+                'order': order,
+                'title': 'Time Series Analysis',
+                'page_break_after': True
+            })
+            order += 1
+
+        # Add results table if available
+        if data.get('table_data'):
+            sections.append({
+                'type': 'table',
+                'order': order,
+                'title': 'Test Results',
+                'fields': ['Metric', 'Mean', 'Median', 'Std Dev', 'Min', 'Max', 'Count'],
+                'style': 'striped'
+            })
+            order += 1
+
+        return sections
+
+    def _get_test_plan_template(self) -> str:
+        """Get template for test plan information"""
+        return """
+<b>Test Plan:</b> {{ test_plan.name }}
+
+<b>Description:</b> {{ test_plan.description or 'N/A' }}
+
+<b>Status:</b> {{ test_plan.status }}
+
+<b>Created By:</b> {{ test_plan.created_by }}
+
+<b>Created At:</b> {{ test_plan.created_at }}
+"""
 
     def _generate_cover_page(
         self,
@@ -181,25 +310,46 @@ class PDFGenerator:
         elements.append(Paragraph(title, self.styles['ReportTitle']))
         elements.append(Spacer(1, 50))
 
+        # Extract test plan name from nested data if available
+        test_plan_name = 'N/A'
+        dut_info = 'N/A'
+        if data.get('test_plan'):
+            test_plan = data['test_plan']
+            test_plan_name = test_plan.get('name', 'N/A')
+            if test_plan.get('dut_info'):
+                dut_info_dict = test_plan['dut_info']
+                if isinstance(dut_info_dict, dict):
+                    dut_info = dut_info_dict.get('model', dut_info_dict.get('name', str(dut_info_dict)))
+                else:
+                    dut_info = str(dut_info_dict)
+
         # Metadata table
         metadata = [
-            ['Date:', datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
-            ['Test Plan:', data.get('test_plan_name', 'N/A')],
+            ['Report Date:', data.get('generated_at', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))],
+            ['Test Plan:', test_plan_name],
             ['Report Type:', data.get('report_type', 'Standard')],
             ['Generated By:', data.get('generated_by', 'System')],
         ]
 
-        if 'dut_info' in data:
-            metadata.append(['Device Under Test:', data['dut_info']])
+        if dut_info != 'N/A':
+            metadata.append(['Device Under Test:', dut_info])
 
-        table = Table(metadata, colWidths=[120, 300])
+        # Add execution summary if available
+        if data.get('execution_summary'):
+            exec_summary = data['execution_summary']
+            metadata.append(['Total Executions:', str(exec_summary.get('total_executions', 0))])
+            pass_rate = exec_summary.get('pass_rate', 0)
+            metadata.append(['Pass Rate:', f"{pass_rate:.1f}%"])
+
+        table = Table(metadata, colWidths=[140, 300])
         table.setStyle(TableStyle([
             ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
             ('FONTSIZE', (0, 0), (-1, -1), 12),
             ('TEXTCOLOR', (0, 0), (0, -1), colors.HexColor('#666666')),
             ('ALIGN', (0, 0), (0, -1), 'RIGHT'),
             ('ALIGN', (1, 0), (1, -1), 'LEFT'),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+            ('TOPPADDING', (0, 0), (-1, -1), 10),
         ]))
 
         elements.append(table)
@@ -362,6 +512,7 @@ class PDFGenerator:
         try:
             # Generate chart based on type
             chart_type = chart_config.get('type', 'line')
+            chart_bytes = None
 
             if chart_type == 'line':
                 chart_bytes = self.chart_generator.generate_line_chart(chart_data, chart_config)
@@ -371,16 +522,30 @@ class PDFGenerator:
                 chart_bytes = self.chart_generator.generate_scatter_plot(chart_data, chart_config)
             elif chart_type == 'heatmap':
                 chart_bytes = self.chart_generator.generate_heatmap(chart_data, chart_config)
+            elif chart_type == 'time_series_anomaly':
+                chart_bytes = self.chart_generator.generate_time_series_with_anomalies(chart_data, chart_config)
+            elif chart_type == 'box_plot':
+                chart_bytes = self.chart_generator.generate_statistics_box_plot(chart_data, chart_config)
+            elif chart_type == 'radar':
+                chart_bytes = self.chart_generator.generate_performance_radar(chart_data, chart_config)
+            elif chart_type == 'comparison_bar':
+                chart_bytes = self.chart_generator.generate_comparison_bar(chart_data, chart_config)
             else:
                 logger.warning(f"Unknown chart type: {chart_type}")
                 return elements
 
-            # Convert bytes to Image
-            img_buffer = BytesIO(chart_bytes)
-            img = Image(img_buffer, width=400, height=250)
-            img.hAlign = 'CENTER'
-
-            elements.append(img)
+            if chart_bytes:
+                # Convert bytes to Image
+                img_buffer = BytesIO(chart_bytes)
+                # Adjust size based on chart type
+                if chart_type == 'radar':
+                    img = Image(img_buffer, width=350, height=350)
+                elif chart_type in ('time_series_anomaly', 'box_plot', 'comparison_bar'):
+                    img = Image(img_buffer, width=450, height=280)
+                else:
+                    img = Image(img_buffer, width=400, height=250)
+                img.hAlign = 'CENTER'
+                elements.append(img)
 
         except Exception as e:
             logger.error(f"Error generating chart {chart_id}: {e}")
@@ -395,3 +560,247 @@ class PDFGenerator:
             'LETTER': LETTER,
         }
         return sizes.get(size_name.upper(), A4)
+
+    def _generate_execution_summary_section(self, data: Dict[str, Any]) -> List:
+        """Generate execution summary section with pass/fail statistics"""
+        elements = []
+
+        exec_summary = data.get('execution_summary', {})
+        if not exec_summary:
+            elements.append(Paragraph("No execution data available", self.styles['BodyText']))
+            return elements
+
+        # Create summary statistics table
+        total = exec_summary.get('total_executions', 0)
+        passed = exec_summary.get('passed', 0)
+        failed = exec_summary.get('failed', 0)
+        pending = exec_summary.get('pending', 0)
+        pass_rate = exec_summary.get('pass_rate', 0)
+        duration = exec_summary.get('total_duration_sec', 0)
+
+        # Format duration
+        if duration >= 3600:
+            duration_str = f"{duration/3600:.1f} hours"
+        elif duration >= 60:
+            duration_str = f"{duration/60:.1f} minutes"
+        else:
+            duration_str = f"{duration:.1f} seconds"
+
+        summary_data = [
+            ['Metric', 'Value'],
+            ['Total Executions', str(total)],
+            ['Passed', Paragraph(f'<font color="green">{passed}</font>', self.styles['BodyText'])],
+            ['Failed', Paragraph(f'<font color="red">{failed}</font>', self.styles['BodyText'])],
+            ['Pending', str(pending)],
+            ['Pass Rate', f"{pass_rate:.1f}%"],
+            ['Total Duration', duration_str],
+        ]
+
+        # Add time range if available
+        first_exec = exec_summary.get('first_execution')
+        last_exec = exec_summary.get('last_execution')
+        if first_exec:
+            summary_data.append(['First Execution', str(first_exec)[:19]])
+        if last_exec:
+            summary_data.append(['Last Execution', str(last_exec)[:19]])
+
+        table = Table(summary_data, colWidths=[150, 200])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 11),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f5f5f5')]),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ]))
+
+        elements.append(table)
+
+        # Add pass/fail visualization bar if we have data
+        if total > 0:
+            elements.append(Spacer(1, 20))
+            elements.append(Paragraph("<b>Pass/Fail Distribution</b>", self.styles['SubsectionTitle']))
+
+            # Create a simple visual bar using table
+            pass_width = int((passed / total) * 300)
+            fail_width = int((failed / total) * 300)
+            pending_width = 300 - pass_width - fail_width
+
+            bar_data = [['', '', '']]
+            bar_table = Table(
+                bar_data,
+                colWidths=[max(pass_width, 1), max(fail_width, 1), max(pending_width, 1)]
+            )
+            bar_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (0, 0), colors.HexColor('#2ca02c')),  # Green for pass
+                ('BACKGROUND', (1, 0), (1, 0), colors.HexColor('#d62728')),  # Red for fail
+                ('BACKGROUND', (2, 0), (2, 0), colors.HexColor('#cccccc')),  # Gray for pending
+                ('MINROWHEIGHT', (0, 0), (-1, -1), 25),
+            ]))
+            elements.append(bar_table)
+
+            # Legend
+            legend_text = f"<font color='#2ca02c'>■</font> Passed ({passed}) &nbsp;&nbsp; "
+            legend_text += f"<font color='#d62728'>■</font> Failed ({failed}) &nbsp;&nbsp; "
+            legend_text += f"<font color='#cccccc'>■</font> Pending ({pending})"
+            elements.append(Spacer(1, 5))
+            elements.append(Paragraph(legend_text, self.styles['BodyText']))
+
+        return elements
+
+    def _generate_statistics_section(
+        self,
+        data: Dict[str, Any],
+        template: Dict[str, Any]
+    ) -> List:
+        """Generate statistics section with charts and tables"""
+        elements = []
+
+        statistics = data.get('statistics', {})
+        if not statistics:
+            elements.append(Paragraph("No statistical data available", self.styles['BodyText']))
+            return elements
+
+        # Add statistics comparison chart (bar chart with means and std)
+        chart_data = data.get('chart_data', {})
+        if 'statistics_comparison' in chart_data:
+            elements.append(Paragraph("<b>Metrics Overview</b>", self.styles['SubsectionTitle']))
+            elements.append(Spacer(1, 10))
+
+            chart_config = {
+                'type': 'comparison_bar',
+                'title': 'Statistics Comparison',
+                'x_axis': {'label': 'Metric'},
+                'y_axis': {'label': 'Value'},
+                'show_values': True
+            }
+            chart_elements = self._generate_chart(
+                'statistics_comparison',
+                chart_data['statistics_comparison'],
+                chart_config
+            )
+            elements.extend(chart_elements)
+            elements.append(Spacer(1, 20))
+
+        # Add detailed statistics table
+        elements.append(Paragraph("<b>Detailed Statistics</b>", self.styles['SubsectionTitle']))
+        elements.append(Spacer(1, 10))
+
+        # Build statistics table
+        table_rows = [[
+            Paragraph('<b>Metric</b>', self.styles['BodyText']),
+            Paragraph('<b>Mean</b>', self.styles['BodyText']),
+            Paragraph('<b>Median</b>', self.styles['BodyText']),
+            Paragraph('<b>Std Dev</b>', self.styles['BodyText']),
+            Paragraph('<b>Min</b>', self.styles['BodyText']),
+            Paragraph('<b>Max</b>', self.styles['BodyText']),
+            Paragraph('<b>Count</b>', self.styles['BodyText']),
+        ]]
+
+        for metric_name, stats in statistics.items():
+            if isinstance(stats, dict):
+                table_rows.append([
+                    Paragraph(metric_name, self.styles['BodyText']),
+                    f"{stats.get('mean', 0):.3f}",
+                    f"{stats.get('median', 0):.3f}",
+                    f"{stats.get('std', 0):.3f}",
+                    f"{stats.get('min', 0):.3f}",
+                    f"{stats.get('max', 0):.3f}",
+                    str(stats.get('count', 0)),
+                ])
+
+        if len(table_rows) > 1:
+            table = Table(table_rows, repeatRows=1)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+                ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f5f5f5')]),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            elements.append(table)
+
+        # Add box plot for distribution visualization if we have measurements
+        measurements = data.get('measurements', {})
+        if measurements:
+            elements.append(Spacer(1, 20))
+            elements.append(Paragraph("<b>Value Distribution</b>", self.styles['SubsectionTitle']))
+            elements.append(Spacer(1, 10))
+
+            box_data = {
+                'metrics': list(measurements.keys())[:8],  # Limit to 8 metrics for readability
+                'values': {k: v for k, v in list(measurements.items())[:8]}
+            }
+            box_config = {
+                'type': 'box_plot',
+                'title': 'Metric Value Distribution',
+                'show_mean': True
+            }
+            chart_elements = self._generate_chart('box_plot', box_data, box_config)
+            elements.extend(chart_elements)
+
+        return elements
+
+    def _generate_time_series_section(
+        self,
+        data: Dict[str, Any],
+        template: Dict[str, Any]
+    ) -> List:
+        """Generate time series section with anomaly detection charts"""
+        elements = []
+
+        time_series = data.get('time_series', [])
+        chart_data = data.get('chart_data', {})
+
+        if not time_series and not chart_data:
+            elements.append(Paragraph("No time series data available", self.styles['BodyText']))
+            return elements
+
+        # Find time series chart data
+        time_series_charts = {k: v for k, v in chart_data.items() if k.startswith('time_series_')}
+
+        if not time_series_charts:
+            elements.append(Paragraph("No time series charts available", self.styles['BodyText']))
+            return elements
+
+        # Generate charts for each metric
+        for chart_id, ts_data in time_series_charts.items():
+            metric_name = chart_id.replace('time_series_', '')
+
+            elements.append(Paragraph(f"<b>{metric_name}</b>", self.styles['SubsectionTitle']))
+            elements.append(Spacer(1, 10))
+
+            chart_config = {
+                'type': 'time_series_anomaly',
+                'title': f'{metric_name} Over Time',
+                'metric_name': metric_name,
+                'x_axis': {'label': 'Time'},
+                'y_axis': {'label': metric_name}
+            }
+
+            chart_elements = self._generate_chart(chart_id, ts_data, chart_config)
+            elements.extend(chart_elements)
+            elements.append(Spacer(1, 15))
+
+            # Add anomaly summary if there are anomalies
+            anomaly_indices = ts_data.get('anomaly_indices', [])
+            if anomaly_indices:
+                anomaly_count = len(anomaly_indices)
+                total_points = len(ts_data.get('values', []))
+                anomaly_rate = (anomaly_count / total_points * 100) if total_points > 0 else 0
+
+                anomaly_text = f"<font color='#d62728'>⚠ {anomaly_count} anomalies detected</font> "
+                anomaly_text += f"({anomaly_rate:.1f}% of measurements)"
+                elements.append(Paragraph(anomaly_text, self.styles['BodyText']))
+                elements.append(Spacer(1, 20))
+
+        return elements

@@ -27,9 +27,11 @@ import {
   IconRoute2,
   IconAlertCircle,
   IconRefresh,
+  IconSettings,
 } from '@tabler/icons-react'
 import { fetchScenarioDetail } from '../../api/roadTestService'
 import type { ScenarioSummary } from '../../types/roadTest'
+import { StepConfigurationDisplay } from './StepConfigurationDisplay'
 
 interface Props {
   opened: boolean
@@ -157,6 +159,9 @@ export function ScenarioDetailModal({ opened, onClose, scenario }: Props) {
               </Tabs.Tab>
               <Tabs.Tab value="route" leftSection={<IconRoute2 size={14} />}>
                 路由
+              </Tabs.Tab>
+              <Tabs.Tab value="steps" leftSection={<IconSettings size={14} />}>
+                测试步骤配置
               </Tabs.Tab>
               <Tabs.Tab value="kpi">KPI</Tabs.Tab>
             </Tabs.List>
@@ -370,6 +375,11 @@ export function ScenarioDetailModal({ opened, onClose, scenario }: Props) {
                   </Card>
                 )}
               </Stack>
+            </Tabs.Panel>
+
+            {/* Test Steps Configuration Tab */}
+            <Tabs.Panel value="steps" pt="md">
+              <StepConfigurationDisplay stepConfiguration={scenarioDetail.step_configuration} />
             </Tabs.Panel>
 
             {/* KPI Tab */}

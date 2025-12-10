@@ -50,6 +50,7 @@ export {
   usePauseExecution,
   useResumeExecution,
   useCancelExecution,
+  useCompleteExecution,
 } from './useTestExecution'
 
 // Test History

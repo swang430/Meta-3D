@@ -31,14 +31,16 @@ import {
   IconRefresh,
   IconPlayerPlay,
   IconTrash,
-  IconChevronUp,
-  IconChevronDown,
+  IconCheck,
+  IconX,
   IconClock,
 } from '@tabler/icons-react'
 import {
   useTestQueue,
   useRemoveFromQueue,
   useStartExecution,
+  useCompleteExecution,
+  useCancelExecution,
 } from '../../hooks'
 
 // Helper functions for status display
@@ -81,6 +83,8 @@ export function QueueTab() {
   // Mutation hooks
   const { mutate: removeFromQueue } = useRemoveFromQueue()
   const { mutate: startExecution } = useStartExecution()
+  const { mutate: completeExecution } = useCompleteExecution()
+  const { mutate: cancelExecution } = useCancelExecution()
 
   const handleStart = (queueItemId: string, planId: string) => {
     startExecution({
@@ -89,9 +93,22 @@ export function QueueTab() {
     })
   }
 
-  const handleRemove = (queueItemId: string) => {
+  const handleRemove = (testPlanId: string) => {
     if (confirm('确定要从队列中移除此测试计划吗？')) {
-      removeFromQueue(queueItemId)
+      // Note: Backend expects test_plan_id, not queue_item_id
+      removeFromQueue(testPlanId)
+    }
+  }
+
+  const handleComplete = (planId: string) => {
+    if (confirm('确定要完成此测试计划吗？')) {
+      completeExecution(planId)
+    }
+  }
+
+  const handleCancel = (planId: string) => {
+    if (confirm('确定要取消此测试计划的执行吗？')) {
+      cancelExecution({ planId, payload: { cancelled_by: '当前用户' } })
     }
   }
 
@@ -272,6 +289,32 @@ export function QueueTab() {
                             </Tooltip>
                           )}
 
+                          {/* Complete button (only for running status) */}
+                          {plan.status === 'running' && (
+                            <Tooltip label="完成执行">
+                              <ActionIcon
+                                variant="light"
+                                color="teal"
+                                onClick={() => handleComplete(plan.id)}
+                              >
+                                <IconCheck size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
+
+                          {/* Cancel button (only for running status) */}
+                          {plan.status === 'running' && (
+                            <Tooltip label="取消执行">
+                              <ActionIcon
+                                variant="light"
+                                color="orange"
+                                onClick={() => handleCancel(plan.id)}
+                              >
+                                <IconX size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
+
                           {/* Move up/down buttons */}
                           {/* TODO: Implement after adding reorderQueue hook
                           {index > 0 && plan.status === 'queued' && (
@@ -302,7 +345,7 @@ export function QueueTab() {
                               <ActionIcon
                                 variant="light"
                                 color="red"
-                                onClick={() => handleRemove(queueItem.id)}
+                                onClick={() => handleRemove(plan.id)}
                               >
                                 <IconTrash size={16} />
                               </ActionIcon>
