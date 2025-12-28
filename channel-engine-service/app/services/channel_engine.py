@@ -1,6 +1,10 @@
 """
 ChannelEngine Service Wrapper
 Provides high-level interface to ChannelEngine for OTA testing
+
+Environment Variables:
+    CHANNEL_ENGINE_PATH: Path to ChannelEngine repository (github.com/swang430/ChannelEgine)
+                         Required for channel model simulation.
 """
 
 import sys
@@ -9,8 +13,20 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 
 # Add ChannelEgine to Python path
-# Note: ChannelEngine is located outside the project directory
-CHANNEL_ENGINE_PATH = "/Users/Simon/Library/CloudStorage/OneDrive-个人/2024/乾径/MIMO OTA/ChannelEgine"
+# Configure via environment variable or use default development path
+CHANNEL_ENGINE_PATH = os.environ.get(
+    'CHANNEL_ENGINE_PATH',
+    # Default fallback for development (will be removed in production)
+    os.path.expanduser('~/ChannelEgine')
+)
+
+if not os.path.exists(CHANNEL_ENGINE_PATH):
+    raise RuntimeError(
+        f"ChannelEngine not found at: {CHANNEL_ENGINE_PATH}\n"
+        f"Please set CHANNEL_ENGINE_PATH environment variable to point to "
+        f"your local clone of github.com/swang430/ChannelEgine"
+    )
+
 sys.path.insert(0, CHANNEL_ENGINE_PATH)
 
 from channel_model_38901.simulator import ChannelSimulator

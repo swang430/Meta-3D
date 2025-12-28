@@ -11,10 +11,14 @@
 
 ## 安装
 
-### 1. 确保 ChannelEgine 已安装
+### 1. 克隆并安装 ChannelEngine
 
 ```bash
-cd ../ChannelEgine
+# 克隆 ChannelEngine 仓库
+git clone https://github.com/swang430/ChannelEgine.git
+cd ChannelEgine
+
+# 创建虚拟环境并安装依赖
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -22,7 +26,18 @@ pip install -e .
 pip install -e ./mimo_ota_simulator
 ```
 
-### 2. 安装服务依赖
+### 2. 配置环境变量
+
+```bash
+# 设置 ChannelEngine 路径（必需）
+export CHANNEL_ENGINE_PATH=/path/to/your/ChannelEgine
+
+# 或者创建 .env 文件
+cp .env.example .env
+# 编辑 .env 文件设置 CHANNEL_ENGINE_PATH
+```
+
+### 3. 安装服务依赖
 
 ```bash
 cd ../channel-engine-service
@@ -31,11 +46,22 @@ source ../ChannelEgine/.venv/bin/activate
 pip install -r requirements.txt
 ```
 
+## 配置
+
+| 环境变量 | 必需 | 说明 | 示例 |
+|---------|-----|------|------|
+| `CHANNEL_ENGINE_PATH` | 是 | ChannelEngine 仓库路径 | `/home/user/ChannelEgine` |
+| `HOST` | 否 | 服务监听地址 | `0.0.0.0` |
+| `PORT` | 否 | 服务监听端口 | `8001` |
+
 ## 运行
 
 ### 开发模式（自动重载）
 
 ```bash
+# 确保设置了环境变量
+export CHANNEL_ENGINE_PATH=/path/to/your/ChannelEgine
+
 source ../ChannelEgine/.venv/bin/activate
 python -m app.main
 ```
@@ -43,13 +69,13 @@ python -m app.main
 或使用 uvicorn:
 
 ```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+CHANNEL_ENGINE_PATH=/path/to/ChannelEgine uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### 生产模式
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+CHANNEL_ENGINE_PATH=/path/to/ChannelEgine uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
 ## API 文档
