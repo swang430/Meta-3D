@@ -49,6 +49,15 @@ import {
   useComputedColorScheme,
 } from '@mantine/core'
 import './App.css'
+import { appEventBus, type ExecutionStartEvent } from './lib/eventBus'
+import {
+  getTestQueue,
+  startExecution as apiStartExecution,
+  pauseExecution as apiPauseExecution,
+  resumeExecution as apiResumeExecution,
+  cancelExecution as apiCancelExecution,
+  completeExecution as apiCompleteExecution,
+} from './features/TestManagement/api/testManagementAPI'
 import ProbeLayoutView from './components/ProbeLayoutView'
 import { VirtualRoadTest } from './components/VirtualRoadTest'
 import { SystemCalibration } from './components/SystemCalibration'
@@ -104,6 +113,7 @@ import type {
   RecentTest,
   TestCasesResponse,
   UpdatePlanPayload,
+  UpdateProbePayload,
   UpdateInstrumentPayload,
   ReorderSequencePayload,
   ReorderPlanQueuePayload,
@@ -127,6 +137,55 @@ const hexToRgba = (hex: string, alpha: number) => {
 type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'testManagement' | 'monitoring' | 'results' | 'virtualRoadTest' | 'systemCalibration' | 'chartsDemo'
 
 type ProbeFormState = Pick<ProbeType, 'ring' | 'polarization' | 'position'>
+
+// ==================== 探头坐标系工具函数 ====================
+
+/** 环层配置：基于仰角划分 */
+const RING_CONFIG = [
+  { ring: 1, label: '顶层 Ring-1', minElevation: 60, maxElevation: 90, centerElevation: 75 },
+  { ring: 2, label: '上层 Ring-2', minElevation: 30, maxElevation: 60, centerElevation: 45 },
+  { ring: 3, label: '中层 Ring-3', minElevation: -30, maxElevation: 30, centerElevation: 0 },
+  { ring: 4, label: '下层 Ring-4', minElevation: -60, maxElevation: -30, centerElevation: -45 },
+  { ring: 5, label: '底层 Ring-5', minElevation: -90, maxElevation: -60, centerElevation: -75 },
+] as const
+
+/** 根据仰角自动计算环层 */
+function getRingFromElevation(elevation: number): number {
+  for (const config of RING_CONFIG) {
+    if (elevation > config.minElevation && elevation <= config.maxElevation) {
+      return config.ring
+    }
+  }
+  // 边界情况
+  if (elevation >= 60) return 1
+  if (elevation <= -60) return 5
+  return 3
+}
+
+/** 获取环层的中心仰角（用于快速编辑） */
+function getCenterElevationForRing(ring: number): number {
+  const config = RING_CONFIG.find(c => c.ring === ring)
+  return config?.centerElevation ?? 0
+}
+
+/** 计算派生值：高度和水平半径 */
+function calculateDerivedValues(position: { azimuth: number; elevation: number; radius: number }) {
+  const elevationRad = (position.elevation * Math.PI) / 180
+  const height = position.radius * Math.sin(elevationRad) // z = r * sin(φ)
+  const horizontalRadius = position.radius * Math.cos(elevationRad) // ρ = r * cos(φ)
+  return {
+    height: Number(height.toFixed(3)),
+    horizontalRadius: Number(horizontalRadius.toFixed(3)),
+  }
+}
+
+/** 获取环层显示标签 */
+function getRingLabel(ring: number): string {
+  const config = RING_CONFIG.find(c => c.ring === ring)
+  return config?.label ?? `Ring-${ring}`
+}
+
+// ==================== 日志和其他类型 ====================
 
 type LogEntry = {
   id: string
@@ -459,33 +518,207 @@ const [lastRunMeta, setLastRunMeta] = useState<RunMetadata | null>(null)
     scheduleNextEvent()
   }, [demoRunPlanData, scheduleNextEvent])
 
+  // fromEvent: if true, skip backend call and event emission (already done by caller)
+  const handleDemoPause = useCallback((fromEvent = false) => {
+    // Stop the timer
+    if (timelineTimerRef.current !== null) {
+      window.clearTimeout(timelineTimerRef.current)
+      timelineTimerRef.current = null
+    }
+    demoRunStatusRef.current = 'paused'
+    setDemoRunProgress((prev) => ({ ...prev, status: 'paused' }))
+
+    // Update backend if there's an executing plan (skip if called from event handler)
+    if (executingPlanInfo && !fromEvent) {
+      // Use proper pause API
+      apiPauseExecution(executingPlanInfo.id, { paused_by: '当前用户' })
+        .then(() => {
+          // Invalidate queries to sync UI
+          queryClient.invalidateQueries({ queryKey: ['test-management', 'queue'] })
+          queryClient.invalidateQueries({ queryKey: ['test-management', 'plans'] })
+        })
+        .catch(() => {
+          // Revert on error
+          demoRunStatusRef.current = 'running'
+          setDemoRunProgress((prev) => ({ ...prev, status: 'running' }))
+        })
+      appEventBus.emit({ type: 'execution:pause', payload: { planId: executingPlanInfo.id } })
+    }
+  }, [executingPlanInfo, queryClient])
+
+  // fromEvent: if true, skip backend call and event emission (already done by caller)
+  const handleDemoStop = useCallback((fromEvent = false) => {
+    // Stop the timer
+    if (timelineTimerRef.current !== null) {
+      window.clearTimeout(timelineTimerRef.current)
+      timelineTimerRef.current = null
+    }
+    demoRunStatusRef.current = 'idle'
+    setDemoRunProgress({
+      status: 'idle',
+      currentStepIndex: -1,
+      eventIndex: -1,
+      startedAt: null,
+      finishedAt: Date.now(),
+    })
+
+    // Update backend if there's an executing plan (skip if called from event handler)
+    if (executingPlanInfo && !fromEvent) {
+      // Use proper cancel API
+      apiCancelExecution(executingPlanInfo.id, { cancelled_by: '当前用户' })
+        .then(() => {
+          // Invalidate queries to sync UI
+          queryClient.invalidateQueries({ queryKey: ['test-management', 'queue'] })
+          queryClient.invalidateQueries({ queryKey: ['test-management', 'plans'] })
+        })
+        .catch(() => {
+          // Error handling - plan was already stopped, UI is correct
+        })
+      appEventBus.emit({ type: 'execution:stop', payload: { planId: executingPlanInfo.id } })
+    }
+    // Always clear local state
+    if (fromEvent || executingPlanInfo) {
+      setExecutingPlanInfo(null)
+      setExecutingPlanDetail(null)
+      setExecutingRunMeta(null)
+    }
+  }, [executingPlanInfo, queryClient])
+
+  // Resume a paused execution
+  const handleDemoResume = useCallback((fromEvent = false) => {
+    demoRunStatusRef.current = 'running'
+    setDemoRunProgress((prev) => ({ ...prev, status: 'running' }))
+
+    // Update backend if there's an executing plan (skip if called from event handler)
+    if (executingPlanInfo && !fromEvent) {
+      apiResumeExecution(executingPlanInfo.id, { resumed_by: '当前用户' })
+        .then(() => {
+          queryClient.invalidateQueries({ queryKey: ['test-management', 'queue'] })
+          queryClient.invalidateQueries({ queryKey: ['test-management', 'plans'] })
+        })
+        .catch(() => {
+          // Revert on error
+          demoRunStatusRef.current = 'paused'
+          setDemoRunProgress((prev) => ({ ...prev, status: 'paused' }))
+        })
+      appEventBus.emit({ type: 'execution:start', payload: { planId: executingPlanInfo.id, planName: executingPlanInfo.name } })
+    }
+  }, [executingPlanInfo, queryClient])
+
   const handleExecutionPreferenceChange = useCallback((preferMock: boolean) => {
     setPreferMockExecution(preferMock)
   }, [])
 
+  // fromEvent: if true, skip backend call (already done by QueueTab)
   const startPlanExecution = useCallback(
-    (plan: TestPlanDetail, metadata: RunMetadata) => {
+    (plan: TestPlanDetail, metadata: RunMetadata, fromEvent = false) => {
       executingModeRef.current = executionMode
-      const snapshot: TestPlanDetail = { ...plan, status: '执行中' }
-      mutatePlanStatus({ planId: plan.id, status: '执行中' })
+      const snapshot: TestPlanDetail = { ...plan, status: 'running' }
+
+      // Only call API if not triggered from event (to avoid duplicate calls)
+      if (!fromEvent) {
+        apiStartExecution(plan.id, { started_by: '当前用户' })
+          .then(() => {
+            // Invalidate queries to sync UI
+            queryClient.invalidateQueries({ queryKey: ['test-management', 'queue'] })
+            queryClient.invalidateQueries({ queryKey: ['test-management', 'plans'] })
+          })
+          .catch(() => {
+            // Error handling
+          })
+      }
+
       syncPlanSummary(snapshot)
       setExecutingPlanInfo({ id: snapshot.id, name: metadata.runName || snapshot.name })
       setExecutingPlanDetail(snapshot)
       setExecutingRunMeta(metadata)
       setActiveSection('monitoring')
+
+      // Set running status directly (handleDemoRunStart may return early if no demo plan)
+      demoRunStatusRef.current = 'running'
+      setDemoRunProgress({
+        status: 'running',
+        currentStepIndex: 0,
+        eventIndex: -1,
+        startedAt: Date.now(),
+        finishedAt: null,
+      })
+
+      // Try to start demo run if data is available
       handleDemoRunStart()
     },
-    [mutatePlanStatus, handleDemoRunStart, syncPlanSummary, executionMode],
+    [handleDemoRunStart, syncPlanSummary, executionMode, queryClient],
   )
+
+  // Listen for execution:start events from TestManagement module
+  useEffect(() => {
+    const handleExecutionStart = (event: ExecutionStartEvent) => {
+      const { planId, planName } = event.payload
+
+      // Fetch plan detail and start execution
+      queryClient
+        .fetchQuery({
+          queryKey: ['tests', 'plans', planId],
+          queryFn: () => fetchTestPlan(planId),
+        })
+        .then((result) => {
+          // Handle both { plan: ... } wrapper and direct plan object
+          const plan = result?.plan ?? result
+          if (plan && plan.id) {
+            const metadata = {
+              runName: `${planName}-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}`,
+              artifactPrefix: planName.replace(/[^A-Za-z0-9-_]+/g, '-'),
+              caseName: (plan as TestPlanDetail).caseName ?? plan.name,
+            }
+            // fromEvent=true: QueueTab already called the backend API
+            startPlanExecution(plan as TestPlanDetail, metadata, true)
+          }
+        })
+        .catch(() => {
+          // Silently fail - user will see the plan didn't start
+        })
+    }
+
+    const unsubscribe = appEventBus.on('execution:start', handleExecutionStart)
+    return unsubscribe
+  }, [queryClient, startPlanExecution])
+
+  // Listen for pause/stop events from TestManagement module
+  useEffect(() => {
+    const handlePauseEvent = () => {
+      // fromEvent=true: backend already updated by QueueTab, just update local state
+      handleDemoPause(true)
+    }
+    const handleStopEvent = () => {
+      // fromEvent=true: backend already updated by QueueTab, just update local state
+      handleDemoStop(true)
+    }
+
+    const unsubPause = appEventBus.on('execution:pause', handlePauseEvent)
+    const unsubStop = appEventBus.on('execution:stop', handleStopEvent)
+
+    return () => {
+      unsubPause()
+      unsubStop()
+    }
+  }, [handleDemoPause, handleDemoStop])
 
   useEffect(() => {
     if (lastProgressStatusRef.current === demoRunProgress.status) return
     lastProgressStatusRef.current = demoRunProgress.status
     if (demoRunProgress.status === 'completed' && executingPlanInfo) {
       const finishedPlanId = executingPlanInfo.id
-      mutatePlanStatus({ planId: finishedPlanId, status: '已完成' })
+      // Use proper complete API
+      apiCompleteExecution(finishedPlanId)
+        .then(() => {
+          queryClient.invalidateQueries({ queryKey: ['test-management', 'queue'] })
+          queryClient.invalidateQueries({ queryKey: ['test-management', 'plans'] })
+        })
+        .catch(() => {
+          // Error handling
+        })
       if (executingPlanDetail && executingPlanDetail.id === finishedPlanId) {
-        syncPlanSummary({ ...executingPlanDetail, status: '已完成' })
+        syncPlanSummary({ ...executingPlanDetail, status: 'completed' })
       }
       setExecutingPlanDetail(null)
       if (
@@ -552,7 +785,6 @@ const [lastRunMeta, setLastRunMeta] = useState<RunMetadata | null>(null)
     demoRunProgress.status,
     executingPlanInfo,
     autoChainExecution,
-    mutatePlanStatus,
     queryClient,
     startPlanExecution,
     fetchTestPlan,
@@ -570,6 +802,32 @@ const [lastRunMeta, setLastRunMeta] = useState<RunMetadata | null>(null)
         window.clearTimeout(timelineTimerRef.current)
       }
     }
+  }, [])
+
+  // Restore execution state from backend on app load
+  useEffect(() => {
+    const restoreExecutionState = async () => {
+      try {
+        const queueItems = await getTestQueue()
+        // Find running or paused plan
+        const activePlan = queueItems.find(
+          (item) => item.test_plan.status === 'running' || item.test_plan.status === 'paused'
+        )
+        if (activePlan) {
+          setExecutingPlanInfo({
+            id: activePlan.test_plan.id,
+            name: activePlan.test_plan.name,
+          })
+          // Set the demo run status based on plan status
+          const status = activePlan.test_plan.status === 'running' ? 'running' : 'paused'
+          demoRunStatusRef.current = status
+          setDemoRunProgress((prev) => ({ ...prev, status }))
+        }
+      } catch {
+        // Silently fail - not critical if we can't restore state
+      }
+    }
+    restoreExecutionState()
   }, [])
 
   const sidebarBackground = isDark
@@ -593,9 +851,13 @@ const [lastRunMeta, setLastRunMeta] = useState<RunMetadata | null>(null)
         selectedResults: selectedResultIds,
         selectedResultCount: selectedResultIds.length,
         onResultToggle: handleResultToggle,
+        setActiveSection,
         demoPlan: demoRunPlanData?.plan,
         demoProgress: demoRunProgress,
         onDemoStart: handleDemoRunStart,
+        onDemoPause: handleDemoPause,
+        onDemoResume: handleDemoResume,
+        onDemoStop: handleDemoStop,
         demoMetrics,
         demoResult: demoResultCard,
         executionMode,
@@ -616,9 +878,13 @@ const [lastRunMeta, setLastRunMeta] = useState<RunMetadata | null>(null)
       logEntries,
       selectedResultIds,
       handleResultToggle,
+      setActiveSection,
       demoRunPlanData,
       demoRunProgress,
       handleDemoRunStart,
+      handleDemoPause,
+      handleDemoResume,
+      handleDemoStop,
       demoMetrics,
       demoResultCard,
       executionMode,
@@ -857,9 +1123,12 @@ type RenderPayload = {
   selectedResults: string[]
   selectedResultCount: number
   onResultToggle: (id: string) => void
+  setActiveSection: Dispatch<SetStateAction<SectionKey>>
   demoPlan?: DemoRunPlan
   demoProgress: DemoRunProgress
   onDemoStart: () => void
+  onDemoPause: () => void
+  onDemoStop: () => void
   demoMetrics: MetricItem[] | null
   demoResult: DemoRunResult | null
   executionMode: 'real' | 'mock'
@@ -879,11 +1148,11 @@ type RenderPayload = {
 function renderSection(section: SectionKey, payload: RenderPayload) {
   switch (section) {
     case 'dashboard':
-      return <Dashboard selectedResultCount={payload.selectedResultCount} />
+      return <Dashboard selectedResultCount={payload.selectedResultCount} onNavigate={payload.setActiveSection} />
     case 'equipment':
       return <EquipmentManager />
     case 'probeManager':
-      return <ProbeManager />
+      return <ProbeManager onNavigate={payload.setActiveSection} />
     case 'testManagement':
       return <TestManagement />
     case 'monitoring':
@@ -899,6 +1168,10 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
           planDetail={payload.executingPlanDetail}
           demoPlan={payload.demoPlan}
           onRestart={payload.onDemoStart}
+          onPause={payload.onDemoPause}
+          onResume={payload.onDemoResume}
+          onStop={payload.onDemoStop}
+          onPlanExecute={payload.onPlanExecute}
           autoChainExecution={payload.autoChainExecution}
         />
       )
@@ -917,9 +1190,10 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
 
 type DashboardProps = {
   selectedResultCount: number
+  onNavigate: (section: SectionKey) => void
 }
 
-function Dashboard({ selectedResultCount }: DashboardProps) {
+function Dashboard({ selectedResultCount, onNavigate }: DashboardProps) {
   const { data: dashboardData, isLoading: isDashboardLoading } = useQuery({
     queryKey: ['dashboard'],
     queryFn: fetchDashboard,
@@ -937,8 +1211,6 @@ function Dashboard({ selectedResultCount }: DashboardProps) {
   const { data: recentTestsData, isLoading: isRecentLoading } = useQuery({
     queryKey: ['tests', 'recent'],
     queryFn: fetchRecentTests,
-    enabled: false, // TEMP: Disabled - endpoint not implemented yet
-    retry: false,
   })
 
   const liveMetrics = dashboardData?.liveMetrics ?? []
@@ -957,10 +1229,10 @@ function Dashboard({ selectedResultCount }: DashboardProps) {
     { label: '已选对比', value: selectedResultCount.toString() },
   ]
 
-  const quickActions = [
-    { label: '新建测试计划', note: '基于模板快速创建完整序列' },
-    { label: '执行静区校准', note: '触发自动路径/相位校准流程' },
-    { label: '导出最新报告', note: '选择历史结果并生成PDF/HTML' },
+  const quickActions: Array<{ label: string; note: string; target: SectionKey }> = [
+    { label: '新建测试计划', note: '基于模板快速创建完整序列', target: 'testManagement' },
+    { label: '执行静区校准', note: '触发自动路径/相位校准流程', target: 'systemCalibration' },
+    { label: '导出最新报告', note: '选择历史结果并生成PDF/HTML', target: 'results' },
   ]
 
   return (
@@ -1021,7 +1293,7 @@ function Dashboard({ selectedResultCount }: DashboardProps) {
         </Stack>
       </Card>
 
-      <RealtimeMetricsCard debug={false} />
+      <RealtimeMetricsCard />
 
       <SimpleGrid cols={{ base: 1, md: 2 }} spacing="xl">
         <Card withBorder radius="md" padding="lg">
@@ -1065,7 +1337,13 @@ function Dashboard({ selectedResultCount }: DashboardProps) {
             <Title order={3}>快速操作</Title>
             <Stack gap="sm">
               {quickActions.map((action) => (
-                <Button key={action.label} variant="light" color="brand" justify="space-between">
+                <Button
+                  key={action.label}
+                  variant="light"
+                  color="brand"
+                  justify="space-between"
+                  onClick={() => onNavigate(action.target)}
+                >
                   <Text fw={600}>{action.label}</Text>
                   <Text size="xs" c="gray.6">
                     {action.note}
@@ -1400,7 +1678,11 @@ function EquipmentManager() {
   )
 }
 
-function ProbeManager() {
+type ProbeManagerProps = {
+  onNavigate: (section: SectionKey) => void
+}
+
+function ProbeManager({ onNavigate }: ProbeManagerProps) {
   const queryClient = useQueryClient()
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['probes'],
@@ -1569,7 +1851,12 @@ function ProbeManager() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!selectedProbe) return
-    await updateMutation.mutateAsync({ id: selectedProbe.id, payload: formState })
+    // 保存时自动根据仰角更新ring
+    const calculatedRing = getRingFromElevation(formState.position.elevation)
+    await updateMutation.mutateAsync({
+      id: selectedProbe.id,
+      payload: { ...formState, ring: calculatedRing },
+    })
   }
 
   const handleReset = () => {
@@ -1614,10 +1901,18 @@ function ProbeManager() {
       version: '1.0',
       generatedAt: new Date().toISOString(),
       probes: probes.map((probe) => ({
-        id: probe.id,
+        probe_number: probe.probe_number,
+        name: probe.name,
         ring: probe.ring,
         polarization: probe.polarization,
         position: probe.position,
+        is_active: probe.is_active,
+        hardware_id: probe.hardware_id,
+        channel_port: probe.channel_port,
+        frequency_range_mhz: probe.frequency_range_mhz,
+        max_power_dbm: probe.max_power_dbm,
+        gain_db: probe.gain_db,
+        notes: probe.notes,
       })),
     }
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
@@ -1684,30 +1979,40 @@ function ProbeManager() {
     )
   }
 
-  const calibrationTasks = [
+  const calibrationTasks: Array<{
+    title: string
+    status: string
+    description: string
+    action: string
+    target: SectionKey
+  }> = [
     {
       title: '路径损耗校准',
       status: '待执行 · 预计耗时 35 分钟',
       description: '使用VNA逐通道测量S21，生成幅度/相位补偿矩阵。',
       action: '开始',
+      target: 'systemCalibration',
     },
     {
       title: '静区均匀性验证',
       status: '计划中 · 截止 2024-10-21',
       description: '扫描网格 41×41 点，目标幅度波纹 ≤ 1 dB、相位 ≤ 10°。',
       action: '排程',
+      target: 'systemCalibration',
     },
     {
       title: '功率放大器线性化',
       status: '进行中 · 62%',
       description: '校准功放增益与相位响应，生成数字预失真系数。',
       action: '查看',
+      target: 'systemCalibration',
     },
     {
       title: '探头互耦补偿',
       status: '已完成 · 2024-10-15',
       description: '已更新互耦矩阵版本 v1.3，用于虚拟路测权重修正。',
       action: '报告',
+      target: 'results',
     },
   ]
 
@@ -1746,11 +2051,11 @@ function ProbeManager() {
       </Card>
 
       <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="xl">
-        <Card withBorder radius="md" padding="xl">
-          <Stack gap="md">
+        <Card withBorder radius="md" padding="xl" style={{ display: 'flex', flexDirection: 'column' }}>
+          <Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
             <Title order={3}>探头阵列总览</Title>
-            <ScrollArea h={360} type="auto">
-              <Table highlightOnHover withTableBorder>
+            <Box style={{ flex: 1, overflow: 'auto', minHeight: 200 }}>
+              <Table highlightOnHover withTableBorder stickyHeader>
                 <Table.Thead>
                   <Table.Tr>
                     <Table.Th>ID</Table.Th>
@@ -1775,10 +2080,12 @@ function ProbeManager() {
                       <Table.Td>
                         <Button
                           variant="subtle"
-                          color="gray"
+                          color="brand"
                           size="compact-sm"
-                          disabled
-                          title="编辑功能开发中"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setSelectedId(probe.id)
+                          }}
                         >
                           查看
                         </Button>
@@ -1787,35 +2094,156 @@ function ProbeManager() {
                   ))}
                 </Table.Tbody>
               </Table>
-            </ScrollArea>
+            </Box>
           </Stack>
         </Card>
 
-        <Stack gap="xl">
-          <Card withBorder radius="md" padding="xl">
+        <Stack gap="xl" style={{ alignSelf: 'stretch' }}>
+          <Card withBorder radius="md" padding="xl" style={{ flex: 1 }}>
             <Stack gap="md">
               <Title order={3}>探头详细信息</Title>
               {selectedProbe ? (
                 <Stack gap="sm">
-                  <Alert color="blue" variant="light">
-                    探头编辑功能正在重构中，当前仅支持查看。
-                  </Alert>
                   <TextInput label="探头编号" value={`#${selectedProbe.probe_number}`} readOnly />
-                  <TextInput label="探头名称" value={selectedProbe.name || 'N/A'} readOnly />
-                  <TextInput label="环层" value={formatRing(selectedProbe.ring)} readOnly />
-                  <TextInput label="极化" value={selectedProbe.polarization} readOnly />
-                  <TextInput label="坐标" value={formatPosition(selectedProbe.position)} readOnly />
+                  <TextInput
+                    label="探头名称"
+                    value={formState.ring ? selectedProbe.name || '' : ''}
+                    onChange={(e) => {
+                      // Name is not in formState, handled separately
+                    }}
+                    readOnly
+                  />
+                  <Select
+                    label="环层（快速编辑：选择后自动设置仰角）"
+                    description={`当前仰角 ${formState.position.elevation}° → 自动归属 ${getRingLabel(getRingFromElevation(formState.position.elevation))}`}
+                    value={String(getRingFromElevation(formState.position.elevation))}
+                    onChange={(val) => {
+                      const ring = Number(val) || 3
+                      const centerElevation = getCenterElevationForRing(ring)
+                      setFormState((prev) => ({
+                        ...prev,
+                        ring,
+                        position: { ...prev.position, elevation: centerElevation },
+                      }))
+                    }}
+                    data={RING_CONFIG.map(c => ({
+                      value: String(c.ring),
+                      label: `${c.label} (${c.minElevation}° ~ ${c.maxElevation}°)`,
+                    }))}
+                  />
+                  <Select
+                    label="极化"
+                    value={formState.polarization}
+                    onChange={(val) => setFormState((prev) => ({ ...prev, polarization: val || 'V' }))}
+                    data={[
+                      { value: 'V', label: '垂直极化 (V)' },
+                      { value: 'H', label: '水平极化 (H)' },
+                      { value: 'V/H', label: '双极化 (V/H)' },
+                      { value: 'RHCP', label: '右旋圆极化 (RHCP)' },
+                      { value: 'LHCP', label: '左旋圆极化 (LHCP)' },
+                    ]}
+                  />
+                  <SimpleGrid cols={3}>
+                    <NumberInput
+                      label="方位角 (°)"
+                      value={formState.position.azimuth}
+                      onChange={(val) =>
+                        setFormState((prev) => ({
+                          ...prev,
+                          position: { ...prev.position, azimuth: Number(val) || 0 },
+                        }))
+                      }
+                      min={0}
+                      max={360}
+                    />
+                    <NumberInput
+                      label="仰角 (°)"
+                      value={formState.position.elevation}
+                      onChange={(val) =>
+                        setFormState((prev) => ({
+                          ...prev,
+                          position: { ...prev.position, elevation: Number(val) || 0 },
+                        }))
+                      }
+                      min={-90}
+                      max={90}
+                    />
+                    <NumberInput
+                      label="半径 (m)"
+                      value={formState.position.radius}
+                      onChange={(val) =>
+                        setFormState((prev) => ({
+                          ...prev,
+                          position: { ...prev.position, radius: Number(val) || 1.5 },
+                        }))
+                      }
+                      min={0.5}
+                      max={5}
+                      step={0.1}
+                      decimalScale={2}
+                    />
+                  </SimpleGrid>
+                  {/* 派生值显示 */}
+                  <Paper withBorder p="sm" radius="sm" bg="gray.0">
+                    <Text size="xs" c="dimmed" mb="xs">自动计算的派生值</Text>
+                    <SimpleGrid cols={2}>
+                      <TextInput
+                        label="高度 z (m)"
+                        description="r × sin(仰角)"
+                        value={calculateDerivedValues(formState.position).height.toFixed(3)}
+                        readOnly
+                        size="sm"
+                      />
+                      <TextInput
+                        label="水平半径 ρ (m)"
+                        description="r × cos(仰角)"
+                        value={calculateDerivedValues(formState.position).horizontalRadius.toFixed(3)}
+                        readOnly
+                        size="sm"
+                      />
+                    </SimpleGrid>
+                  </Paper>
                   <TextInput label="状态" value={selectedProbe.status} readOnly />
-                  <TextInput
-                    label="校准状态"
-                    value={selectedProbe.calibration_status}
-                    readOnly
-                  />
-                  <TextInput
+                  <TextInput label="校准状态" value={selectedProbe.calibration_status} readOnly />
+                  <Switch
                     label="是否激活"
-                    value={selectedProbe.is_active ? '是' : '否'}
+                    checked={selectedProbe.is_active}
+                    onChange={() => {}}
                     readOnly
                   />
+                  <Group justify="flex-end" mt="md">
+                    <Button
+                      variant="subtle"
+                      onClick={() => {
+                        setFormState({
+                          ring: selectedProbe.ring,
+                          polarization: selectedProbe.polarization,
+                          position: selectedProbe.position,
+                        })
+                      }}
+                    >
+                      重置
+                    </Button>
+                    <Button
+                      color="brand"
+                      onClick={() => {
+                        // 保存时自动根据仰角更新ring
+                        const calculatedRing = getRingFromElevation(formState.position.elevation)
+                        updateMutation.mutate({
+                          id: selectedProbe.id,
+                          payload: { ...formState, ring: calculatedRing },
+                        })
+                      }}
+                      loading={updateMutation.isPending}
+                    >
+                      保存修改
+                    </Button>
+                  </Group>
+                  {feedback && (
+                    <Alert color="green" variant="light">
+                      {feedback}
+                    </Alert>
+                  )}
                 </Stack>
               ) : (
                 <Text size="sm" c="gray.6">
@@ -1874,7 +2302,11 @@ function ProbeManager() {
                           {task.description}
                         </Text>
                       </Stack>
-                      <Button variant="subtle" size="compact-sm">
+                      <Button
+                        variant="subtle"
+                        size="compact-sm"
+                        onClick={() => onNavigate(task.target)}
+                      >
                         {task.action}
                       </Button>
                     </Group>
@@ -2158,6 +2590,224 @@ const stepTemplateDefinitions: Record<string, StepTemplateDefinition> = {
       },
       { key: 'fileNamePrefix', label: '文件名前缀', type: 'text', placeholder: '例如：CTIA_RUN_2025' },
       { key: 'recipients', label: '通知名单', type: 'textarea', minRows: 2, placeholder: '多个邮件用逗号分隔' },
+    ],
+  },
+  // ==================== Road Test 虚拟路测步骤 ====================
+  'lib-init-chamber': {
+    displayName: '初始化暗室 (MPAC)',
+    summary: '初始化并验证OTA暗室连接、位置台和基础系统。',
+    defaults: {
+      chamberId: 'MPAC-1',
+      verifyConnections: '是',
+      calibratePositionTable: '是',
+      warmupMinutes: '5',
+    },
+    fields: [
+      { key: 'chamberId', label: '暗室标识', type: 'text', placeholder: 'MPAC-1', description: '目标暗室的唯一标识符。' },
+      {
+        key: 'verifyConnections',
+        label: '验证连接',
+        type: 'select',
+        options: [
+          { value: '是', label: '是' },
+          { value: '否', label: '否' },
+        ],
+        description: '启动时验证所有硬件连接。',
+      },
+      {
+        key: 'calibratePositionTable',
+        label: '校准位置台',
+        type: 'select',
+        options: [
+          { value: '是', label: '是' },
+          { value: '否', label: '否' },
+        ],
+        description: '执行位置台归零校准。',
+      },
+      { key: 'warmupMinutes', label: '预热时间 (分钟)', type: 'number', min: 0, max: 30, description: '设备预热等待时间。' },
+    ],
+  },
+  'lib-config-network': {
+    displayName: '配置网络参数',
+    summary: '配置基站参数、频率、带宽和网络设置。',
+    defaults: {
+      frequencyMHz: '3500',
+      bandwidthMHz: '100',
+      technology: '5G NR',
+      duplexMode: 'TDD',
+      verifySignal: '是',
+    },
+    fields: [
+      { key: 'frequencyMHz', label: '中心频率 (MHz)', type: 'number', min: 700, max: 6000, description: '载波中心频率。' },
+      { key: 'bandwidthMHz', label: '带宽 (MHz)', type: 'number', min: 5, max: 400, description: '信道带宽。' },
+      {
+        key: 'technology',
+        label: '通信技术',
+        type: 'select',
+        options: [
+          { value: '5G NR', label: '5G NR' },
+          { value: 'LTE', label: 'LTE' },
+          { value: 'C-V2X', label: 'C-V2X' },
+        ],
+      },
+      {
+        key: 'duplexMode',
+        label: '双工模式',
+        type: 'select',
+        options: [
+          { value: 'TDD', label: 'TDD' },
+          { value: 'FDD', label: 'FDD' },
+        ],
+      },
+      {
+        key: 'verifySignal',
+        label: '验证信号',
+        type: 'select',
+        options: [
+          { value: '是', label: '是' },
+          { value: '否', label: '否' },
+        ],
+        description: '配置后验证信号质量。',
+      },
+    ],
+  },
+  'lib-setup-bs-channel': {
+    displayName: '配置基站与信道模型',
+    summary: '配置基站位置并应用适当的信道模型（UMa、UMi等）。',
+    defaults: {
+      channelModel: 'UMa',
+      numBaseStations: '3',
+      bsHeight: '25',
+      interSiteDistance: '500',
+      verifyCoverage: '是',
+    },
+    fields: [
+      {
+        key: 'channelModel',
+        label: '信道模型',
+        type: 'select',
+        options: [
+          { value: 'UMa', label: '城市宏站 (UMa)' },
+          { value: 'UMi', label: '城市微站 (UMi)' },
+          { value: 'RMa', label: '农村宏站 (RMa)' },
+          { value: 'InH', label: '室内热点 (InH)' },
+          { value: 'CDL-C', label: 'CDL-C' },
+          { value: 'TDL-A', label: 'TDL-A' },
+        ],
+        description: '3GPP标准信道模型。',
+      },
+      { key: 'numBaseStations', label: '基站数量', type: 'number', min: 1, max: 7, description: '模拟的基站数量。' },
+      { key: 'bsHeight', label: '基站高度 (m)', type: 'number', min: 5, max: 50, description: '基站天线高度。' },
+      { key: 'interSiteDistance', label: '站间距 (m)', type: 'number', min: 100, max: 2000, description: '相邻基站间的距离。' },
+      {
+        key: 'verifyCoverage',
+        label: '验证覆盖',
+        type: 'select',
+        options: [
+          { value: '是', label: '是' },
+          { value: '否', label: '否' },
+        ],
+        description: '验证信道模型覆盖情况。',
+      },
+    ],
+  },
+  'lib-config-mapper': {
+    displayName: '配置OTA映射器',
+    summary: '配置OTA映射器用于路线仿真、位置更新和切换模拟。',
+    defaults: {
+      routeFile: '',
+      updateRateHz: '10',
+      enableHandover: '是',
+      positionToleranceM: '1.0',
+      speedKmh: '60',
+    },
+    fields: [
+      { key: 'routeFile', label: '路线文件', type: 'text', placeholder: 'routes/urban_route_01.csv', description: '路线定义文件路径。' },
+      { key: 'updateRateHz', label: '位置更新率 (Hz)', type: 'number', min: 1, max: 100, description: '每秒位置更新次数。' },
+      {
+        key: 'enableHandover',
+        label: '启用切换',
+        type: 'select',
+        options: [
+          { value: '是', label: '是' },
+          { value: '否', label: '否' },
+        ],
+        description: '模拟小区切换过程。',
+      },
+      { key: 'positionToleranceM', label: '位置容差 (m)', type: 'number', min: 0.1, max: 10, step: 0.1, description: '位置同步精度要求。' },
+      { key: 'speedKmh', label: '行驶速度 (km/h)', type: 'number', min: 0, max: 200, description: '模拟车辆速度。' },
+    ],
+  },
+  'lib-exec-route': {
+    displayName: '执行路测',
+    summary: '执行完整的路测场景并实时监控。',
+    defaults: {
+      routeDurationS: '1800',
+      monitorKpis: '是',
+      logIntervalS: '1',
+      autoScreenshot: '是',
+      stopOnFailure: '否',
+    },
+    fields: [
+      { key: 'routeDurationS', label: '测试时长 (秒)', type: 'number', min: 60, max: 7200, description: '路测执行总时长。' },
+      {
+        key: 'monitorKpis',
+        label: '监控KPI',
+        type: 'select',
+        options: [
+          { value: '是', label: '是' },
+          { value: '否', label: '否' },
+        ],
+        description: '实时监控性能指标。',
+      },
+      { key: 'logIntervalS', label: '日志间隔 (秒)', type: 'number', min: 0.1, max: 10, step: 0.1, description: '数据记录间隔。' },
+      {
+        key: 'autoScreenshot',
+        label: '自动截图',
+        type: 'select',
+        options: [
+          { value: '是', label: '是' },
+          { value: '否', label: '否' },
+        ],
+        description: '自动保存关键时刻截图。',
+      },
+      {
+        key: 'stopOnFailure',
+        label: '失败停止',
+        type: 'select',
+        options: [
+          { value: '是', label: '是' },
+          { value: '否', label: '否' },
+        ],
+        description: 'KPI不达标时停止测试。',
+      },
+    ],
+  },
+  'lib-validate-kpis': {
+    displayName: '验证KPI指标',
+    summary: '分析采集的数据并验证是否达到KPI阈值。',
+    defaults: {
+      minThroughputMbps: '50',
+      maxLatencyMs: '50',
+      minRsrpDbm: '-110',
+      maxPacketLossPercent: '5',
+      generatePlots: '是',
+    },
+    fields: [
+      { key: 'minThroughputMbps', label: '最低吞吐量 (Mbps)', type: 'number', min: 0, description: '吞吐量下限阈值。' },
+      { key: 'maxLatencyMs', label: '最大时延 (ms)', type: 'number', min: 0, description: '时延上限阈值。' },
+      { key: 'minRsrpDbm', label: '最低RSRP (dBm)', type: 'number', min: -140, max: -40, description: 'RSRP下限阈值。' },
+      { key: 'maxPacketLossPercent', label: '最大丢包率 (%)', type: 'number', min: 0, max: 100, description: '丢包率上限。' },
+      {
+        key: 'generatePlots',
+        label: '生成图表',
+        type: 'select',
+        options: [
+          { value: '是', label: '是' },
+          { value: '否', label: '否' },
+        ],
+        description: '生成性能趋势图表。',
+      },
     ],
   },
 }
@@ -3960,6 +4610,10 @@ type MonitoringProps = {
   planDetail: TestPlanDetail | null
   demoPlan?: DemoRunPlan
   onRestart: () => void
+  onPause: () => void
+  onResume: () => void
+  onStop: () => void
+  onPlanExecute: (plan: TestPlanDetail, metadata: RunMetadata) => void
   autoChainExecution: boolean
 }
 
@@ -3974,6 +4628,10 @@ function Monitoring({
   planDetail,
   demoPlan,
   onRestart,
+  onPause,
+  onResume,
+  onStop,
+  onPlanExecute,
   autoChainExecution,
 }: MonitoringProps) {
   const theme = useMantineTheme()
@@ -4010,7 +4668,7 @@ function Monitoring({
     checkpoint?: { summary?: string }
   }
   const timelineItems = useMemo<TimelineRenderItem[]>(() => {
-    if (planDetail) {
+    if (planDetail && planDetail.steps && planDetail.steps.length > 0) {
       return planDetail.steps.map((step, index) => ({
         id: step.id ?? `plan-step-${index}`,
         title: `${index + 1}. ${step.title}`,
@@ -4070,6 +4728,9 @@ function Monitoring({
     if (scenarioStatus === 'running') {
       setExecStatus('running')
       setIsStreaming(true)
+    } else if (scenarioStatus === 'paused') {
+      setExecStatus('paused')
+      setIsStreaming(false)
     } else if (scenarioStatus === 'completed') {
       setExecStatus('idle')
       setIsStreaming(false)
@@ -4263,7 +4924,30 @@ function Monitoring({
   }, [waveform])
 
   const handleTaskStart = () => {
-    if (controlsDisabled || !hasPlanLoaded) return
+    if (!hasPlanLoaded) return
+    if (execStatus === 'running') return
+
+    // If currently paused, resume execution
+    if (execStatus === 'paused') {
+      setExecStatus('running')
+      setIsStreaming(true)
+      onResume()
+      return
+    }
+
+    // If there's a real plan loaded and not yet started, use onPlanExecute
+    if (planDetail) {
+      const runName = `${planDetail.name}-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}`
+      const metadata: RunMetadata = {
+        runName,
+        artifactPrefix: planDetail.name.replace(/[^A-Za-z0-9-_]+/g, '-'),
+        caseName: planDetail.caseName ?? planDetail.name,
+      }
+      onPlanExecute(planDetail, metadata)
+      return
+    }
+
+    // Otherwise use demo run
     setExecStatus('running')
     setIsStreaming(true)
     onRestart()
@@ -4273,12 +4957,14 @@ function Monitoring({
     if (!hasPlanLoaded) return
     setExecStatus('paused')
     setIsStreaming(false)
+    onPause()
   }
 
   const handleStop = () => {
     if (!hasPlanLoaded) return
     setExecStatus('idle')
     setIsStreaming(false)
+    onStop()
   }
 
   const handleResumeLogs = () => {
@@ -4293,7 +4979,7 @@ function Monitoring({
       <ExecutionMetricsCard
         testPlanName={executingPlan?.name}
         currentStep={
-          executingPlan && planDetail
+          executingPlan && planDetail && planDetail.steps && planDetail.steps.length > 0
             ? {
                 index: progress.currentStepIndex >= 0 ? progress.currentStepIndex : 0,
                 total: planDetail.steps.length,
@@ -4358,7 +5044,7 @@ function Monitoring({
                   <Button
                     color="brand"
                     onClick={handleTaskStart}
-                    disabled={controlsDisabled || execStatus === 'running' || !hasPlanLoaded}
+                    disabled={execStatus === 'running' || !hasPlanLoaded}
                   >
                     开始
                   </Button>
@@ -4366,7 +5052,7 @@ function Monitoring({
                     variant="outline"
                     color="gray"
                     onClick={handlePause}
-                    disabled={controlsDisabled || execStatus !== 'running' || !hasPlanLoaded}
+                    disabled={execStatus !== 'running' || !hasPlanLoaded}
                   >
                     暂停
                   </Button>
@@ -4374,7 +5060,7 @@ function Monitoring({
                     variant="outline"
                     color="red"
                     onClick={handleStop}
-                    disabled={controlsDisabled || execStatus === 'idle' || !hasPlanLoaded}
+                    disabled={execStatus === 'idle' || !hasPlanLoaded}
                   >
                     停止
                   </Button>
@@ -4619,8 +5305,6 @@ function Results({
   const { data: recentTestsData, isLoading: isRecentLoading } = useQuery({
     queryKey: ['tests', 'recent'],
     queryFn: fetchRecentTests,
-    enabled: false, // TEMP: Disabled - endpoint not implemented yet
-    retry: false,
   })
   const { data: reportTemplatesData, isLoading: isReportLoading } = useQuery({
     queryKey: ['reports', 'templates'],

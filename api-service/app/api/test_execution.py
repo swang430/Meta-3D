@@ -15,6 +15,56 @@ from app.models.test_plan import TestPlanExecution
 router = APIRouter(prefix="/test-executions", tags=["Test Execution History"])
 
 
+# Schema for recent tests (matches frontend RecentTest type)
+from pydantic import BaseModel
+from typing import List
+
+
+class RecentTestItem(BaseModel):
+    id: str
+    name: str
+    dut: str
+    result: str
+    date: str
+
+
+class RecentTestsResponse(BaseModel):
+    recentTests: List[RecentTestItem]
+
+
+@router.get("/recent", response_model=RecentTestsResponse)
+def get_recent_tests(
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db)
+):
+    """
+    Get recent test executions for dashboard display
+
+    Returns a simplified list of recent test executions.
+    """
+    try:
+        executions = db.query(TestPlanExecution).order_by(
+            TestPlanExecution.completed_at.desc()
+        ).limit(limit).all()
+
+        recent_tests = []
+        for exe in executions:
+            recent_tests.append(RecentTestItem(
+                id=str(exe.id),
+                name=exe.test_plan_name or "Unknown Plan",
+                dut="DUT-001",  # Placeholder - could be extended to include actual DUT info
+                result=exe.status or "unknown",
+                date=exe.completed_at.strftime("%Y-%m-%d %H:%M") if exe.completed_at else "N/A"
+            ))
+
+        return RecentTestsResponse(recentTests=recent_tests)
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Error fetching recent tests: {e}")
+        return RecentTestsResponse(recentTests=[])
+
+
 @router.get("", response_model=TestPlanExecutionListResponse)
 def get_execution_history(
     skip: int = Query(0, ge=0),

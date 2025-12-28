@@ -3,21 +3,28 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, timedelta
+from uuid import uuid4, UUID
+from typing import Dict, List
 import logging
 
 from app.db.database import get_db
 from app.models.probe import Probe
-from app.models.test_plan import TestPlan, TestPlanStatus, TestExecution
+from app.models.test_plan import TestPlan, TestPlanStatus, TestExecution, TestPlanExecution
 from app.schemas.dashboard import (
     DashboardResponse,
     DashboardSummary,
     LiveMetric,
     ActiveAlert,
-    RecentTest
+    RecentTest,
+    ComparisonSelectionRequest,
+    ComparisonSelectionResponse,
 )
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# In-memory storage for comparison selections (per-session tracking)
+_comparison_selections: Dict[UUID, dict] = {}
 
 
 @router.get("/dashboard", response_model=DashboardResponse)
@@ -37,12 +44,14 @@ def get_dashboard(db: Session = Depends(get_db)):
         active_test_plans = db.query(TestPlan).filter(
             TestPlan.status.in_([TestPlanStatus.RUNNING, TestPlanStatus.QUEUED])
         ).count()
+        total_executions = db.query(TestPlanExecution).count()
 
         summary = DashboardSummary(
             probe_count=probe_count,
             active_test_plans=active_test_plans,
             active_alerts=0,  # TODO: Implement alert system
-            comparisons_selected=0  # TODO: Track from user selection
+            comparisons_selected=len(_comparison_selections),
+            total_executions=total_executions
         )
 
         # Live metrics (mock data for now)
@@ -55,25 +64,21 @@ def get_dashboard(db: Session = Depends(get_db)):
         # Active alerts (empty for now, TODO: implement alert system)
         active_alerts = []
 
-        # Recent tests (last 10 executions)
-        recent_executions = db.query(TestExecution).order_by(
-            TestExecution.executed_at.desc()
+        # Recent tests (last 10 plan executions)
+        recent_executions = db.query(TestPlanExecution).order_by(
+            TestPlanExecution.completed_at.desc()
         ).limit(10).all()
 
-        recent_tests = []
-        for execution in recent_executions:
-            test_plan = db.query(TestPlan).filter(
-                TestPlan.id == execution.test_plan_id
-            ).first()
-
-            if test_plan:
-                recent_tests.append(RecentTest(
-                    id=str(execution.id),
-                    plan_name=test_plan.name,
-                    status=execution.status,
-                    executed_at=execution.executed_at,
-                    duration_minutes=execution.duration_sec / 60 if execution.duration_sec else None
-                ))
+        recent_tests = [
+            RecentTest(
+                id=str(execution.id),
+                plan_name=execution.test_plan_name,
+                status=execution.status,
+                executed_at=execution.completed_at,
+                duration_minutes=execution.duration_minutes
+            )
+            for execution in recent_executions
+        ]
 
         return DashboardResponse(
             summary=summary,
@@ -90,9 +95,98 @@ def get_dashboard(db: Session = Depends(get_db)):
                 probe_count=0,
                 active_test_plans=0,
                 active_alerts=0,
-                comparisons_selected=0
+                comparisons_selected=0,
+                total_executions=0
             ),
             live_metrics=[],
             active_alerts=[],
             recent_tests=[]
         )
+
+
+# ==================== Comparison Tracking Endpoints ====================
+
+@router.post("/dashboard/comparisons", response_model=ComparisonSelectionResponse, status_code=201)
+def track_comparison_selection(request: ComparisonSelectionRequest):
+    """
+    Track user's comparison selections
+
+    Stores the selected items for later comparison operations.
+    Used by the UI to track what items the user wants to compare.
+    """
+    comparison_id = uuid4()
+    now = datetime.utcnow()
+
+    _comparison_selections[comparison_id] = {
+        "id": comparison_id,
+        "selected_items": request.selected_items,
+        "comparison_type": request.comparison_type,
+        "created_at": now,
+    }
+
+    logger.info(f"Tracked comparison selection: {comparison_id}, items={len(request.selected_items)}, type={request.comparison_type}")
+
+    return ComparisonSelectionResponse(
+        id=comparison_id,
+        selected_items=request.selected_items,
+        comparison_type=request.comparison_type,
+        created_at=now,
+    )
+
+
+@router.get("/dashboard/summary", response_model=DashboardSummary)
+def get_dashboard_summary(db: Session = Depends(get_db)):
+    """
+    Get dashboard summary statistics only
+
+    Lighter-weight endpoint that returns just the summary stats.
+    """
+    try:
+        probe_count = db.query(Probe).filter(Probe.is_active == True).count()
+        active_test_plans = db.query(TestPlan).filter(
+            TestPlan.status.in_([TestPlanStatus.RUNNING, TestPlanStatus.QUEUED])
+        ).count()
+        total_executions = db.query(TestPlanExecution).count()
+
+        return DashboardSummary(
+            probe_count=probe_count,
+            active_test_plans=active_test_plans,
+            active_alerts=0,
+            comparisons_selected=len(_comparison_selections),
+            total_executions=total_executions,
+        )
+    except Exception as e:
+        logger.error(f"Error fetching dashboard summary: {e}")
+        return DashboardSummary(
+            probe_count=0,
+            active_test_plans=0,
+            active_alerts=0,
+            comparisons_selected=0,
+            total_executions=0,
+        )
+
+
+@router.delete("/dashboard/comparisons/{comparison_id}", status_code=204)
+def remove_comparison_selection(comparison_id: UUID):
+    """
+    Remove a comparison selection
+
+    Clears a previously tracked comparison selection.
+    """
+    if comparison_id in _comparison_selections:
+        del _comparison_selections[comparison_id]
+        logger.info(f"Removed comparison selection: {comparison_id}")
+    return None
+
+
+@router.delete("/dashboard/comparisons", status_code=204)
+def clear_all_comparisons():
+    """
+    Clear all comparison selections
+
+    Removes all tracked comparison selections.
+    """
+    global _comparison_selections
+    count = len(_comparison_selections)
+    _comparison_selections = {}
+    logger.info(f"Cleared {count} comparison selections")

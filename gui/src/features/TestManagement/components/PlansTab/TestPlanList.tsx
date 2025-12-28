@@ -30,8 +30,6 @@ import {
 import {
   IconPlus,
   IconRefresh,
-  IconPlayerPlay,
-  IconPlayerPause,
   IconPlayerStop,
   IconEdit,
   IconTrash,
@@ -47,10 +45,6 @@ import {
   useDuplicateTestPlan,
   useUpdateTestPlan,
   useQueueTestPlan,
-  useStartExecution,
-  usePauseExecution,
-  useResumeExecution,
-  useCancelExecution,
   useRemoveFromQueue,
 } from '../../hooks'
 import type { TestPlanStatus } from '../../types'
@@ -104,10 +98,6 @@ export function TestPlanList({ onCreateNew, onEdit, onSelect }: TestPlanListProp
   const { mutate: duplicatePlan } = useDuplicateTestPlan()
   const { mutate: updatePlan } = useUpdateTestPlan()
   const { mutate: queuePlan } = useQueueTestPlan()
-  const { mutate: startExecution } = useStartExecution()
-  const { mutate: pauseExecution } = usePauseExecution()
-  const { mutate: resumeExecution } = useResumeExecution()
-  const { mutate: cancelExecution } = useCancelExecution()
   const { mutate: removeFromQueue } = useRemoveFromQueue()
 
   // Handlers
@@ -138,38 +128,10 @@ export function TestPlanList({ onCreateNew, onEdit, onSelect }: TestPlanListProp
     })
   }
 
-  const handleStart = (planId: string) => {
-    startExecution({
-      planId,
-      payload: { started_by: '当前用户' },
-    })
-  }
-
-  const handlePause = (planId: string) => {
-    pauseExecution({
-      planId,
-      payload: { paused_by: '当前用户' },
-    })
-  }
-
-  const handleCancel = (planId: string) => {
-    cancelExecution({
-      planId,
-      payload: { cancelled_by: '当前用户', reason: '用户手动取消' },
-    })
-  }
-
   const handleMarkReady = (planId: string) => {
     updatePlan({
       planId,
       payload: { status: 'ready' },
-    })
-  }
-
-  const handleResume = (planId: string) => {
-    resumeExecution({
-      planId,
-      payload: { resumed_by: '当前用户' },
     })
   }
 
@@ -365,39 +327,6 @@ export function TestPlanList({ onCreateNew, onEdit, onSelect }: TestPlanListProp
                             </Tooltip>
                           )}
                           {plan.status === 'queued' && (
-                            <Tooltip label="开始执行">
-                              <ActionIcon
-                                variant="light"
-                                color="green"
-                                onClick={() => handleStart(plan.id)}
-                              >
-                                <IconPlayerPlay size={16} />
-                              </ActionIcon>
-                            </Tooltip>
-                          )}
-                          {plan.status === 'running' && (
-                            <Tooltip label="暂停">
-                              <ActionIcon
-                                variant="light"
-                                color="orange"
-                                onClick={() => handlePause(plan.id)}
-                              >
-                                <IconPlayerPause size={16} />
-                              </ActionIcon>
-                            </Tooltip>
-                          )}
-                          {plan.status === 'paused' && (
-                            <Tooltip label="恢复执行">
-                              <ActionIcon
-                                variant="light"
-                                color="green"
-                                onClick={() => handleResume(plan.id)}
-                              >
-                                <IconPlayerPlay size={16} />
-                              </ActionIcon>
-                            </Tooltip>
-                          )}
-                          {plan.status === 'queued' && (
                             <Tooltip label="移出队列">
                               <ActionIcon
                                 variant="light"
@@ -429,15 +358,6 @@ export function TestPlanList({ onCreateNew, onEdit, onSelect }: TestPlanListProp
                               >
                                 复制
                               </Menu.Item>
-                              {['running', 'paused', 'queued'].includes(plan.status) && (
-                                <Menu.Item
-                                  leftSection={<IconPlayerStop size={14} />}
-                                  color="orange"
-                                  onClick={() => handleCancel(plan.id)}
-                                >
-                                  取消执行
-                                </Menu.Item>
-                              )}
                               {['cancelled', 'failed', 'completed'].includes(plan.status) && (
                                 <Menu.Item
                                   leftSection={<IconRefresh size={14} />}

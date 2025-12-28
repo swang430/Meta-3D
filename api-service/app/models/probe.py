@@ -30,7 +30,7 @@ class Probe(Base):
     name = Column(String(100), comment="探头名称，如 'Probe 1-V'")
 
     # 位置信息
-    ring = Column(Integer, nullable=False, comment="环编号 (1-4，从内到外)")
+    ring = Column(Integer, nullable=False, comment="环编号 (1-5，基于仰角: 1=顶层>60°, 2=上层30-60°, 3=中层±30°, 4=下层-60~-30°, 5=底层<-60°)")
     polarization = Column(
         String(10),
         nullable=False,

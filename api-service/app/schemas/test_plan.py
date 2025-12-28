@@ -17,7 +17,7 @@ class TestPlanCreate(BaseModel):
     scenario_id: Optional[str] = Field(None, description="Linked road test scenario ID")
     test_case_ids: List[str] = Field(default_factory=list, description="Array of test case UUIDs")
     priority: Optional[int] = Field(5, ge=1, le=10, description="Priority (1=highest, 10=lowest)")
-    created_by: str = Field(..., description="User who created the plan")
+    created_by: Optional[str] = Field(None, description="User who created the plan (derived from auth if not provided)")
     notes: Optional[str] = None
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorization")
 
@@ -265,6 +265,12 @@ class QueueTestPlanRequest(BaseModel):
     dependencies: Optional[List[UUID]] = Field(default_factory=list)
     queued_by: str
     notes: Optional[str] = None
+
+
+class QueueItemUpdateRequest(BaseModel):
+    """Request to update a queue item (priority, position, etc.)"""
+    priority: Optional[int] = Field(None, ge=1, le=10, description="New priority (1=highest)")
+    position: Optional[int] = Field(None, ge=1, description="New position in queue")
 
 
 class TestQueueResponse(BaseModel):

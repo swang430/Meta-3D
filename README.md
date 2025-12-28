@@ -46,65 +46,78 @@ Meta-3D 是一个专为汽车无线通信系统设计的 MIMO OTA（Over-The-Air
 
 - Node.js >= 18
 - npm >= 9
+- Python >= 3.11
 
 ### 安装依赖
 
 ```bash
-# 进入前端目录
-cd gui
+# 前端
+cd gui && npm install
 
-# 安装依赖
-npm install
+# 后端 API 服务
+cd api-service
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
 ### 开发模式
 
 ```bash
-cd gui
-npm run dev
+# 方式1: 同时启动前后端（推荐）
+npm run dev:all
+
+# 方式2: 分别启动
+# 终端1 - 后端 API (端口 8001)
+cd api-service && source .venv/bin/activate && uvicorn app.main:app --reload --port 8001
+
+# 终端2 - 前端 (端口 5173)
+cd gui && npm run dev
 ```
 
-访问 http://localhost:5173 查看应用（默认端口）
+- 前端: http://localhost:5173
+- 后端 API: http://localhost:8001
+- API 文档: http://localhost:8001/api/docs
 
 ### 生产构建
 
 ```bash
-cd gui
-npm run build
+cd gui && npm run build
 ```
 
 构建产物位于 `gui/dist/` 目录
 
-### 预览生产构建
-
-```bash
-cd gui
-npm run preview
-```
-
 ## 📁 项目结构
 
 ```
-Meta-3D/
-├── gui/                    # 前端应用
+MIMO-First/
+├── gui/                        # 前端应用 (React + TypeScript + Vite)
 │   ├── src/
-│   │   ├── api/           # API 层（client, service, mock）
-│   │   ├── components/    # React 组件
-│   │   ├── services/      # 业务逻辑层
-│   │   ├── types/         # TypeScript 类型定义
-│   │   ├── App.tsx        # 主应用组件
-│   │   └── main.tsx       # 入口文件
-│   ├── package.json
-│   └── vite.config.ts
+│   │   ├── api/               # API 客户端
+│   │   ├── features/          # 功能模块 (TestManagement, Reports, etc.)
+│   │   ├── components/        # 共享组件
+│   │   └── types/             # TypeScript 类型
+│   └── package.json
 │
-├── api/                    # API 规范
-│   └── openapi.yaml       # OpenAPI 3.0 定义
+├── api-service/               # 后端 API 服务 (FastAPI + SQLAlchemy)
+│   ├── app/
+│   │   ├── api/              # REST API 端点
+│   │   ├── models/           # 数据库模型
+│   │   ├── schemas/          # Pydantic schemas
+│   │   └── services/         # 业务逻辑
+│   └── requirements.txt
 │
-├── AGENTS.md              # 详细的系统架构文档
-├── CLAUDE.md              # Claude Code 工作指南
-├── Hardware.md            # 硬件规格说明
-├── MPAC.md                # MPAC 技术文档
-└── README.md              # 本文件
+├── channel-engine-service/    # 信道引擎服务 (Python)
+│
+├── docs/                      # 文档
+│   ├── design/               # 架构设计文档
+│   ├── guides/               # 开发指南
+│   └── archive/              # 归档文档
+│
+├── AGENTS.md                  # 系统架构参考文档
+├── CLAUDE.md                  # Claude Code 工作指南
+├── Hardware.md                # 硬件规格说明
+└── README.md                  # 本文件
 ```
 
 ## 📖 开发指南
@@ -179,22 +192,45 @@ npm run lint        # 运行 ESLint 检查
 
 ## 📚 文档
 
-- [CLAUDE.md](CLAUDE.md) - Claude Code 使用指南
-- [AGENTS.md](AGENTS.md) - 完整的系统架构和设计文档（35K+ tokens）
-- [Hardware.md](Hardware.md) - 硬件规格说明
+**根目录**:
+- [CLAUDE.md](CLAUDE.md) - Claude Code 工作指南
+- [AGENTS.md](AGENTS.md) - 系统架构参考文档
+
+**docs/design/** - 架构设计:
+- [SYSTEM-INTEGRATION-DESIGN.md](docs/design/SYSTEM-INTEGRATION-DESIGN.md) - 系统集成设计
+- [TestManagement-Unified-Architecture.md](docs/design/TestManagement-Unified-Architecture.md) - 测试管理架构
+- [VirtualRoadTest-Architecture.md](docs/design/VirtualRoadTest-Architecture.md) - 虚拟路测架构
+- [HARDWARE-SYNC-ARCHITECTURE.md](docs/design/HARDWARE-SYNC-ARCHITECTURE.md) - 硬件同步架构 (L0-L3)
+
+**docs/guides/** - 开发指南:
+- [DEV-QUICKSTART.md](docs/guides/DEV-QUICKSTART.md) - 开发快速入门
+- [API-DESIGN-GUIDE.md](docs/guides/API-DESIGN-GUIDE.md) - API 设计规范
+- [DATA-MODEL-GUIDE.md](docs/guides/DATA-MODEL-GUIDE.md) - 数据模型指南
+
+**硬件规格**:
+- [Hardware.md](Hardware.md) - 硬件总览
 - [MPAC.md](MPAC.md) - MPAC 暗室技术细节
 
 ## 🚧 当前状态
 
-项目处于**早期开发阶段**：
+项目处于**活跃开发阶段** (2025-12)：
 
-- ✅ 前端架构已建立
-- ✅ API 规范已定义
-- ✅ Mock 数据开发环境就绪
-- ✅ 测试计划和测试例管理功能基本完成
-- 🚧 正在从自定义 CSS 迁移到 Mantine UI（Phase 1）
-- ⏳ 硬件控制层为桩代码，待后端开发
-- ⏳ 探头 3D 可视化待增强（计划集成 D3.js/Three.js）
+**已完成功能**:
+- ✅ 前后端架构完整 (React + FastAPI + SQLite)
+- ✅ 测试计划管理：创建、编辑、执行队列、状态机
+- ✅ 测试步骤编排：序列库、参数配置
+- ✅ 虚拟路测：场景库、ChannelEngine 集成
+- ✅ 报告系统：PDF 生成、模板管理
+- ✅ 执行历史记录和统计
+
+**进行中**:
+- 🔄 GUI 功能完善 (Phase 4 - 70%)
+- 🔄 硬件抽象层设计完成，驱动待实现
+
+**待实现**:
+- ⏳ 硬件驱动集成 (信道仿真器、基站仿真器)
+- ⏳ 用户认证系统
+- ⏳ Docker 部署
 
 ## 🤝 贡献
 

@@ -10,13 +10,13 @@ type Props = {
   onSelect: (id: string) => void
 }
 
-const RINGS = [1, 2, 3] as const
+const RINGS = [1, 2, 3, 4, 5] as const
 
 function normalizeRing(ring: number): number {
   if (RINGS.includes(ring as (typeof RINGS)[number])) {
     return ring
   }
-  return 2
+  return 3 // Default to middle ring
 }
 
 function parsePosition(position: { azimuth: number; elevation: number; radius: number }): [number, number, number] {
@@ -34,13 +34,18 @@ function parsePosition(position: { azimuth: number; elevation: number; radius: n
 
 function getRingColor(ring: number): string {
   switch (normalizeRing(ring)) {
-    case 1: // Upper ring
-      return '#22d3ee'
-    case 3: // Lower ring
-      return '#f97316'
-    case 2: // Middle ring
+    case 1: // 顶层 Ring-1 (φ > 60°)
+      return '#ef4444' // Red
+    case 2: // 上层 Ring-2 (30° ~ 60°)
+      return '#f97316' // Orange
+    case 3: // 中层 Ring-3 (-30° ~ 30°)
+      return '#22c55e' // Green
+    case 4: // 下层 Ring-4 (-60° ~ -30°)
+      return '#3b82f6' // Blue
+    case 5: // 底层 Ring-5 (φ < -60°)
+      return '#8b5cf6' // Purple
     default:
-      return '#8b5cf6'
+      return '#6b7280' // Gray
   }
 }
 

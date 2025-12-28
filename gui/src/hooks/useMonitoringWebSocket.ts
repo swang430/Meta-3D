@@ -196,7 +196,7 @@ export function useMonitoringWebSocket(
 
             case 'metrics':
               if (message.data) {
-                updateMetrics(message.data) // Use throttled update
+                updateMetrics(message.data)
               }
               break
 

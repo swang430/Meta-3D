@@ -210,6 +210,16 @@ export const reorderQueue = async (
 }
 
 /**
+ * Move a single queue item up/down/top/bottom
+ */
+export const moveQueueItem = async (
+  planId: string,
+  direction: 'up' | 'down' | 'top' | 'bottom',
+): Promise<void> => {
+  await client.post('/test-plans/queue/reorder', { planId, direction })
+}
+
+/**
  * Update queue item priority
  */
 export const updateQueuePriority = async (

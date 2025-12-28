@@ -27,6 +27,15 @@ from app.models.report import (
     ReportStatus,
     TemplateType,
 )
+from app.models.alert import (
+    Alert,
+    AlertSeverity,
+    AlertStatus,
+)
+from app.models.topology import (
+    Topology,
+    TopologyType,
+)
 
 __all__ = [
     "SystemTRPCalibration",
@@ -51,4 +60,9 @@ __all__ = [
     "ReportType",
     "ReportStatus",
     "TemplateType",
+    "Alert",
+    "AlertSeverity",
+    "AlertStatus",
+    "Topology",
+    "TopologyType",
 ]

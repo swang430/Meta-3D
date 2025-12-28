@@ -12,6 +12,10 @@ alembic>=1.13.0
 # CORS middleware
 python-multipart>=0.0.9
 
+# Authentication
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
 # PDF generation (for certificates)
 reportlab>=4.0.0
 pypdf>=3.17.0

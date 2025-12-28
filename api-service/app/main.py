@@ -11,7 +11,7 @@ import logging
 from app.config import settings
 from app.db.database import init_db
 from app.api import health, calibration, test_plan, test_execution, test_sequence
-from app.api import dashboard, probe, instrument, monitoring, report, road_test
+from app.api import dashboard, probe, instrument, monitoring, report, road_test, alert, sync, topology, scenario
 
 # Configure logging
 logging.basicConfig(
@@ -135,6 +135,18 @@ app.include_router(report.router, prefix=settings.api_v1_prefix, tags=["Reports"
 
 # Phase 3.7: Virtual Road Test
 app.include_router(road_test.router, prefix=settings.api_v1_prefix, tags=["Virtual Road Test"])
+
+# Alert system
+app.include_router(alert.router, prefix=settings.api_v1_prefix, tags=["Dashboard Alerts"])
+
+# Hardware synchronization
+app.include_router(sync.router, prefix=settings.api_v1_prefix, tags=["Hardware Synchronization"])
+
+# Topology configuration
+app.include_router(topology.router, prefix=settings.api_v1_prefix, tags=["Topologies"])
+
+# Scenario navigation
+app.include_router(scenario.router, prefix=settings.api_v1_prefix, tags=["Scenario Navigation"])
 
 
 @app.get("/")

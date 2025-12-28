@@ -20,7 +20,7 @@ class ProbeCreateRequest(BaseModel):
     """Request to create a new probe"""
     probe_number: int = Field(..., ge=1, le=32, description="探头编号 1-32")
     name: Optional[str] = Field(None, max_length=100)
-    ring: int = Field(..., ge=1, le=4, description="环编号 1-4")
+    ring: int = Field(..., ge=1, le=5, description="环编号 1-5 (基于仰角: 1=顶层>60°, 2=上层30-60°, 3=中层±30°, 4=下层-60~-30°, 5=底层<-60°)")
     polarization: str = Field(..., pattern="^[VH]$", description="极化: V | H")
     position: ProbePosition
     is_active: bool = Field(True, description="是否启用")
@@ -39,7 +39,7 @@ class ProbeCreateRequest(BaseModel):
 class ProbeUpdateRequest(BaseModel):
     """Request to update a probe"""
     name: Optional[str] = Field(None, max_length=100)
-    ring: Optional[int] = Field(None, ge=1, le=4)
+    ring: Optional[int] = Field(None, ge=1, le=5, description="环编号 1-5 (基于仰角自动计算)")
     polarization: Optional[str] = Field(None, pattern="^[VH]$")
     position: Optional[ProbePosition] = None
     is_active: Optional[bool] = None

@@ -128,29 +128,26 @@ GUI 遵循 **API优先架构**，包含以下层次：
 
 ### 设计文档（⭐ 必读）
 
-**架构和规范** - 所有新功能开发必须遵循这些规范：
-- [ARCHITECTURE-REVIEW.md](ARCHITECTURE-REVIEW.md) - ⭐ **架构审查和重构计划**
-  - 详细分析了前后端不匹配问题及解决方案
-  - 定义了重构路线图和优先级
-  - **开发新功能前必读**，避免重复错误
-- [API-DESIGN-GUIDE.md](API-DESIGN-GUIDE.md) - ⭐ **API 设计统一规范**
+**架构和规范** - 位于 `docs/guides/`:
+- [API-DESIGN-GUIDE.md](docs/guides/API-DESIGN-GUIDE.md) - ⭐ **API 设计统一规范**
   - RESTful API 设计原则
   - 响应格式、错误处理、状态码标准
-  - 分页、过滤、批量操作规范
-- [DATA-MODEL-GUIDE.md](DATA-MODEL-GUIDE.md) - ⭐ **数据模型设计规范**
+- [DATA-MODEL-GUIDE.md](docs/guides/DATA-MODEL-GUIDE.md) - ⭐ **数据模型设计规范**
   - 数据库模型、DTO、API Schema 三层架构
   - 命名规范、类型映射、关系设计
-  - DTO 模式和性能优化指南
+- [STATE-MACHINE.md](docs/guides/STATE-MACHINE.md) - 状态机文档
+- [IMPLEMENTATION-CHECKLIST.md](docs/guides/IMPLEMENTATION-CHECKLIST.md) - 实现检查清单
 
-**功能设计**:
+**功能设计** - 位于 `docs/design/`:
 - [AGENTS.md](AGENTS.md) - 系统架构和设计文档（35K+ tokens）
-- [TestManagement-Unified-Architecture.md](TestManagement-Unified-Architecture.md) - 测试管理统一架构
-- [VirtualRoadTest-Architecture.md](VirtualRoadTest-Architecture.md) - 虚拟路测架构
+- [TestManagement-Unified-Architecture.md](docs/design/TestManagement-Unified-Architecture.md) - 测试管理统一架构
+- [VirtualRoadTest-Architecture.md](docs/design/VirtualRoadTest-Architecture.md) - 虚拟路测架构
+- [SYSTEM-INTEGRATION-DESIGN.md](docs/design/SYSTEM-INTEGRATION-DESIGN.md) - 系统集成设计
+- [HARDWARE-SYNC-ARCHITECTURE.md](docs/design/HARDWARE-SYNC-ARCHITECTURE.md) - ⭐ **硬件同步架构** (L0-L3 分层同步)
 
-**开发指南**:
-- [DEV-QUICKSTART.md](DEV-QUICKSTART.md) - 快速开发指南
-- [TESTING-GUIDE.md](TESTING-GUIDE.md) - 测试指南
-- [API-COMPATIBILITY.md](API-COMPATIBILITY.md) - API 兼容性记录
+**开发指南** - 位于 `docs/guides/`:
+- [DEV-QUICKSTART.md](docs/guides/DEV-QUICKSTART.md) - 快速开发指南
+- [SWAGGER-UI-GUIDE.md](docs/guides/SWAGGER-UI-GUIDE.md) - API 文档指南
 
 ## 设计指南（来自 AGENTS.md）
 
@@ -170,19 +167,23 @@ GUI 遵循 **API优先架构**，包含以下层次：
 
 ## 注意事项
 
-### 当前状态（2025-11-23 更新）
+### 当前状态（2025-12-11 更新）
 
-**后端状态**:
-- ✅ 测试管理模块已连接真实数据库（SQLite）
-- ✅ Mock 服务器已禁用（`gui/src/main.tsx` 中已注释）
-- ✅ Vite 代理已配置（`/api` → `http://localhost:8001`）
-- ⚠️ 系统校准、虚拟路测模块可能仍使用旧的 Mock 数据
+**已完成功能**:
+- ✅ 前后端完整架构 (React + FastAPI + SQLite)
+- ✅ 测试计划管理：创建、编辑、执行队列、状态机
+- ✅ 测试步骤编排：序列库、参数配置
+- ✅ 虚拟路测：场景库、ChannelEngine 集成
+- ✅ 报告系统：PDF 生成、模板管理、执行历史
+- ✅ Mock 服务器已禁用，Vite 代理配置完成
 
-**硬件集成**:
-- 所有仪器控制和硬件交互都是桩代码
-- 硬件文档很全面，但实现还处于早期阶段
+**进行中**:
+- 🔄 GUI 功能完善 (Phase 4 - 约 70%)
+- 🔄 硬件抽象层设计完成，驱动待实现
 
-**开发重点**:
-- 前后端接口一致性（参考 ARCHITECTURE-REVIEW.md）
-- 测试计划管理工作流完善
-- Legacy 模块与新架构集成
+**待实现功能** (详见 `docs/Master-Progress-Tracker.md`):
+- ⏳ Queue 重排序功能
+- ⏳ 认证上下文（Auth Context）
+- ⏳ 仪表盘告警系统
+- ⏳ 报告对比功能
+- ⏳ 硬件驱动集成

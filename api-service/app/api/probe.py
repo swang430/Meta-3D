@@ -51,6 +51,38 @@ def create_probe(request: ProbeCreateRequest, db: Session = Depends(get_db)):
     return probe
 
 
+@router.put("/probes/bulk", response_model=BulkProbeResponse)
+def replace_probes(request: BulkProbeRequest, db: Session = Depends(get_db)):
+    """Replace all probes in bulk"""
+    # Count existing probes
+    deleted_count = db.query(Probe).count()
+
+    # Delete all existing probes
+    db.query(Probe).delete()
+
+    # Create new probes
+    created_probes = []
+    for probe_data in request.probes:
+        probe = Probe(
+            **probe_data.dict(exclude={'position'}),
+            position=probe_data.position.dict()
+        )
+        db.add(probe)
+        created_probes.append(probe)
+
+    db.commit()
+    for probe in created_probes:
+        db.refresh(probe)
+
+    return BulkProbeResponse(
+        total=len(created_probes),
+        created=len(created_probes),
+        updated=0,
+        deleted=deleted_count,
+        probes=created_probes
+    )
+
+
 @router.put("/probes/{probe_id}", response_model=ProbeResponse)
 def update_probe(
     probe_id: UUID,
@@ -82,35 +114,3 @@ def delete_probe(probe_id: UUID, db: Session = Depends(get_db)):
 
     db.delete(probe)
     db.commit()
-
-
-@router.put("/probes/bulk", response_model=BulkProbeResponse)
-def replace_probes(request: BulkProbeRequest, db: Session = Depends(get_db)):
-    """Replace all probes in bulk"""
-    # Count existing probes
-    deleted_count = db.query(Probe).count()
-
-    # Delete all existing probes
-    db.query(Probe).delete()
-
-    # Create new probes
-    created_probes = []
-    for probe_data in request.probes:
-        probe = Probe(
-            **probe_data.dict(exclude={'position'}),
-            position=probe_data.position.dict()
-        )
-        db.add(probe)
-        created_probes.append(probe)
-
-    db.commit()
-    for probe in created_probes:
-        db.refresh(probe)
-
-    return BulkProbeResponse(
-        total=len(created_probes),
-        created=len(created_probes),
-        updated=0,
-        deleted=deleted_count,
-        probes=created_probes
-    )

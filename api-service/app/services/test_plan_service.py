@@ -13,7 +13,9 @@ from app.models.test_plan import (
     TestQueue,
     TestSequence,
     TestPlanStatus,
+    TestPlanExecution,
 )
+from app.models.report import TestReport
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +250,7 @@ class TestPlanService:
         return test_plan
 
     def delete_test_plan(self, db: Session, test_plan_id: UUID) -> bool:
-        """Delete a test plan"""
+        """Delete a test plan and all associated records"""
         test_plan = self.get_test_plan(db, test_plan_id)
         if not test_plan:
             return False
@@ -258,11 +260,35 @@ class TestPlanService:
             logger.warning(f"Cannot delete running/queued test plan: {test_plan_id}")
             return False
 
-        db.delete(test_plan)
-        db.commit()
+        try:
+            # Delete associated records first (cascade manually)
+            # 1. Delete test steps
+            db.query(TestStep).filter(TestStep.test_plan_id == test_plan_id).delete()
 
-        logger.info(f"Deleted test plan: {test_plan_id}")
-        return True
+            # 2. Delete from test queue
+            db.query(TestQueue).filter(TestQueue.test_plan_id == test_plan_id).delete()
+
+            # 3. Delete test plan execution history
+            db.query(TestPlanExecution).filter(TestPlanExecution.test_plan_id == test_plan_id).delete()
+
+            # 4. Delete test executions
+            db.query(TestExecution).filter(TestExecution.test_plan_id == test_plan_id).delete()
+
+            # 5. Unlink test reports (set test_plan_id to NULL, don't delete reports)
+            db.query(TestReport).filter(TestReport.test_plan_id == test_plan_id).update(
+                {TestReport.test_plan_id: None}
+            )
+
+            # Now delete the test plan itself
+            db.delete(test_plan)
+            db.commit()
+
+            logger.info(f"Deleted test plan and associated records: {test_plan_id}")
+            return True
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error deleting test plan {test_plan_id}: {e}")
+            raise
 
     def mark_ready(self, db: Session, test_plan_id: UUID) -> Optional[TestPlan]:
         """Mark test plan as ready for execution"""
@@ -696,6 +722,12 @@ class TestCaseService:
 class TestStepService:
     """Service for managing test steps"""
 
+    def get_steps(self, db: Session, test_plan_id: UUID) -> List[TestStep]:
+        """Get all steps for a test plan, ordered by order field"""
+        return db.query(TestStep).filter(
+            TestStep.test_plan_id == test_plan_id
+        ).order_by(TestStep.order.asc()).all()
+
     def create_test_step(
         self,
         db: Session,
@@ -943,6 +975,7 @@ class TestQueueService:
         test_plan.queue_position = position
 
         db.add(queue_item)
+        db.add(test_plan)  # Explicitly add to ensure status change is tracked
         db.commit()
         db.refresh(queue_item)
 
@@ -1085,6 +1118,206 @@ class TestQueueService:
 
         logger.info(f"Updated priority for queue item {queue_item_id} to {new_priority}")
         return queue_item
+
+    def move_queue_item_up(self, db: Session, test_plan_id: UUID) -> TestQueue:
+        """
+        Move a queue item up (earlier in queue)
+
+        Parameters:
+        - test_plan_id: UUID of the test plan in the queue
+
+        Returns:
+        - Updated queue item
+        """
+        # Find the queue item for this test plan
+        queue_item = db.query(TestQueue).filter(
+            TestQueue.test_plan_id == test_plan_id,
+            TestQueue.status == "queued"
+        ).first()
+
+        if not queue_item:
+            raise ValueError(f"Test plan {test_plan_id} not found in queue")
+
+        current_position = queue_item.position
+
+        if current_position <= 1:
+            raise ValueError("Item is already at the top of the queue")
+
+        # Find the item above
+        item_above = db.query(TestQueue).filter(
+            TestQueue.position == current_position - 1,
+            TestQueue.status == "queued"
+        ).first()
+
+        if not item_above:
+            raise ValueError("No item found above in queue")
+
+        # Swap positions
+        queue_item.position = current_position - 1
+        item_above.position = current_position
+
+        # Update test plan queue positions
+        test_plan = db.query(TestPlan).filter(TestPlan.id == test_plan_id).first()
+        if test_plan:
+            test_plan.queue_position = current_position - 1
+
+        test_plan_above = db.query(TestPlan).filter(
+            TestPlan.id == item_above.test_plan_id
+        ).first()
+        if test_plan_above:
+            test_plan_above.queue_position = current_position
+
+        db.commit()
+        db.refresh(queue_item)
+
+        logger.info(f"Moved queue item for test plan {test_plan_id} up to position {queue_item.position}")
+        return queue_item
+
+    def move_queue_item_down(self, db: Session, test_plan_id: UUID) -> TestQueue:
+        """
+        Move a queue item down (later in queue)
+
+        Parameters:
+        - test_plan_id: UUID of the test plan in the queue
+
+        Returns:
+        - Updated queue item
+        """
+        # Find the queue item for this test plan
+        queue_item = db.query(TestQueue).filter(
+            TestQueue.test_plan_id == test_plan_id,
+            TestQueue.status == "queued"
+        ).first()
+
+        if not queue_item:
+            raise ValueError(f"Test plan {test_plan_id} not found in queue")
+
+        current_position = queue_item.position
+
+        # Get max position
+        max_position = db.query(TestQueue).filter(
+            TestQueue.status == "queued"
+        ).count()
+
+        if current_position >= max_position:
+            raise ValueError("Item is already at the bottom of the queue")
+
+        # Find the item below
+        item_below = db.query(TestQueue).filter(
+            TestQueue.position == current_position + 1,
+            TestQueue.status == "queued"
+        ).first()
+
+        if not item_below:
+            raise ValueError("No item found below in queue")
+
+        # Swap positions
+        queue_item.position = current_position + 1
+        item_below.position = current_position
+
+        # Update test plan queue positions
+        test_plan = db.query(TestPlan).filter(TestPlan.id == test_plan_id).first()
+        if test_plan:
+            test_plan.queue_position = current_position + 1
+
+        test_plan_below = db.query(TestPlan).filter(
+            TestPlan.id == item_below.test_plan_id
+        ).first()
+        if test_plan_below:
+            test_plan_below.queue_position = current_position
+
+        db.commit()
+        db.refresh(queue_item)
+
+        logger.info(f"Moved queue item for test plan {test_plan_id} down to position {queue_item.position}")
+        return queue_item
+
+    def move_to_top(self, db: Session, test_plan_id: UUID) -> TestQueue:
+        """Move a queue item to the top (first in queue)"""
+        queue_item = db.query(TestQueue).filter(
+            TestQueue.test_plan_id == test_plan_id,
+            TestQueue.status == "queued"
+        ).first()
+
+        if not queue_item:
+            raise ValueError(f"Test plan {test_plan_id} not found in queue")
+
+        if queue_item.position == 1:
+            return queue_item  # Already at top
+
+        # Shift all items down
+        items_above = db.query(TestQueue).filter(
+            TestQueue.position < queue_item.position,
+            TestQueue.status == "queued"
+        ).all()
+
+        for item in items_above:
+            item.position += 1
+            # Update associated test plan
+            tp = db.query(TestPlan).filter(TestPlan.id == item.test_plan_id).first()
+            if tp:
+                tp.queue_position = item.position
+
+        # Move this item to top
+        queue_item.position = 1
+        test_plan = db.query(TestPlan).filter(TestPlan.id == test_plan_id).first()
+        if test_plan:
+            test_plan.queue_position = 1
+
+        db.commit()
+        db.refresh(queue_item)
+
+        logger.info(f"Moved queue item for test plan {test_plan_id} to top")
+        return queue_item
+
+    def move_to_bottom(self, db: Session, test_plan_id: UUID) -> TestQueue:
+        """Move a queue item to the bottom (last in queue)"""
+        queue_item = db.query(TestQueue).filter(
+            TestQueue.test_plan_id == test_plan_id,
+            TestQueue.status == "queued"
+        ).first()
+
+        if not queue_item:
+            raise ValueError(f"Test plan {test_plan_id} not found in queue")
+
+        max_position = db.query(TestQueue).filter(
+            TestQueue.status == "queued"
+        ).count()
+
+        if queue_item.position == max_position:
+            return queue_item  # Already at bottom
+
+        # Shift all items below up
+        items_below = db.query(TestQueue).filter(
+            TestQueue.position > queue_item.position,
+            TestQueue.status == "queued"
+        ).all()
+
+        for item in items_below:
+            item.position -= 1
+            # Update associated test plan
+            tp = db.query(TestPlan).filter(TestPlan.id == item.test_plan_id).first()
+            if tp:
+                tp.queue_position = item.position
+
+        # Move this item to bottom
+        queue_item.position = max_position
+        test_plan = db.query(TestPlan).filter(TestPlan.id == test_plan_id).first()
+        if test_plan:
+            test_plan.queue_position = max_position
+
+        db.commit()
+        db.refresh(queue_item)
+
+        logger.info(f"Moved queue item for test plan {test_plan_id} to bottom")
+        return queue_item
+
+    def get_queue_item_by_test_plan(self, db: Session, test_plan_id: UUID) -> Optional[TestQueue]:
+        """Get queue item by test plan ID"""
+        return db.query(TestQueue).filter(
+            TestQueue.test_plan_id == test_plan_id,
+            TestQueue.status == "queued"
+        ).first()
 
 
 class TestExecutionService:

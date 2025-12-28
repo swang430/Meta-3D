@@ -64,6 +64,7 @@ export function usePauseExecution() {
 
       // Invalidate related queries
       queryClient.invalidateQueries({ queryKey: testPlansKeys.lists() })
+      queryClient.invalidateQueries({ queryKey: testQueueKeys.list() })
 
       notifications.show({
         title: '执行已暂停',
@@ -96,6 +97,7 @@ export function useResumeExecution() {
 
       // Invalidate related queries
       queryClient.invalidateQueries({ queryKey: testPlansKeys.lists() })
+      queryClient.invalidateQueries({ queryKey: testQueueKeys.list() })
 
       notifications.show({
         title: '执行已恢复',

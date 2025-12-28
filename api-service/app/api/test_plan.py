@@ -1,10 +1,12 @@
 """Test Plan Management API endpoints"""
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
 
 from app.db.database import get_db
+from app.auth import require_auth, User
 from app.schemas.test_plan import (
     # Test Plan
     TestPlanCreate,
@@ -28,6 +30,7 @@ from app.schemas.test_plan import (
     TestExecutionListResponse,
     # Queue
     QueueTestPlanRequest,
+    QueueItemUpdateRequest,
     TestQueueResponse,
     TestQueueSummary,
     TestQueueListResponse,
@@ -54,20 +57,37 @@ router = APIRouter(prefix="/test-plans", tags=["Test Plan Management"])
 @router.post("", response_model=TestPlanResponse, status_code=201)
 def create_test_plan(
     request: TestPlanCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(require_auth())
 ):
     """
     Create a new test plan
 
     A test plan is a collection of test cases that will be executed in order.
+
+    Authentication:
+    - If AUTH_MODE=required: Valid JWT token required
+    - If AUTH_MODE=optional: Token validated if present, `created_by` field required if no token
+    - If AUTH_MODE=disabled: No authentication required
     """
+    # Determine created_by: prefer request.created_by, fall back to authenticated user
+    created_by = request.created_by
+    if created_by is None:
+        if current_user is not None:
+            created_by = current_user.email
+        else:
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication required when created_by is not provided"
+            )
+
     service = TestPlanService()
     test_plan = service.create_test_plan(
         db=db,
         name=request.name,
         description=request.description,
         version=request.version,
-        created_by=request.created_by,
+        created_by=created_by,
         dut_info=request.dut_info,
         test_environment=request.test_environment,
         scenario_id=request.scenario_id,
@@ -181,6 +201,50 @@ def get_test_queue(
         )
 
 
+# IMPORTANT: Static routes must be defined BEFORE parameterized routes
+class ReorderQueueRequest(BaseModel):
+    """Request to reorder queue item"""
+    planId: str
+    direction: str  # 'up' | 'down' | 'top' | 'bottom'
+
+
+@router.post("/queue/reorder")
+def reorder_queue_item(
+    request: ReorderQueueRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Reorder a test plan in the execution queue
+
+    - direction: 'up', 'down', 'top', or 'bottom'
+    """
+    queue_service = TestQueueService()
+
+    try:
+        plan_id = UUID(request.planId)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid plan ID format")
+
+    try:
+        if request.direction == 'up':
+            queue_item = queue_service.move_queue_item_up(db, plan_id)
+        elif request.direction == 'down':
+            queue_item = queue_service.move_queue_item_down(db, plan_id)
+        elif request.direction == 'top':
+            queue_item = queue_service.move_to_top(db, plan_id)
+        elif request.direction == 'bottom':
+            queue_item = queue_service.move_to_bottom(db, plan_id)
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid direction: {request.direction}")
+
+        return {"success": True, "new_position": queue_item.position}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.delete("/queue/{test_plan_id}", status_code=204)
 def remove_from_queue(
     test_plan_id: UUID,
@@ -198,6 +262,73 @@ def remove_from_queue(
 
     return None
 
+
+@router.post("/queue/{test_plan_id}/move-up", response_model=TestQueueResponse)
+def move_queue_item_up(
+    test_plan_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """
+    Move a test plan up in the execution queue (earlier execution)
+
+    Swaps position with the item above it.
+    """
+    service = TestQueueService()
+    try:
+        queue_item = service.move_queue_item_up(db, test_plan_id)
+        return queue_item
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/queue/{test_plan_id}/move-down", response_model=TestQueueResponse)
+def move_queue_item_down(
+    test_plan_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """
+    Move a test plan down in the execution queue (later execution)
+
+    Swaps position with the item below it.
+    """
+    service = TestQueueService()
+    try:
+        queue_item = service.move_queue_item_down(db, test_plan_id)
+        return queue_item
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.patch("/queue/{test_plan_id}", response_model=TestQueueResponse)
+def update_queue_item(
+    test_plan_id: UUID,
+    request: QueueItemUpdateRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Update a queue item's priority or position
+
+    - priority: Set new priority (1=highest, 10=lowest)
+    - position: Move to specific position in queue
+    """
+    service = TestQueueService()
+
+    # Get the queue item
+    queue_item = service.get_queue_item_by_test_plan(db, test_plan_id)
+    if not queue_item:
+        raise HTTPException(
+            status_code=404,
+            detail="Test plan not found in queue"
+        )
+
+    try:
+        # Update priority if provided
+        if request.priority is not None:
+            queue_item = service.update_queue_priority(db, queue_item.id, request.priority)
+
+        return queue_item
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/{test_plan_id}", response_model=TestPlanResponse)
@@ -249,6 +380,23 @@ def delete_test_plan(
         )
 
     return None
+
+
+@router.post("/{test_plan_id}/duplicate", response_model=TestPlanResponse, status_code=201)
+def duplicate_test_plan(
+    test_plan_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """Duplicate a test plan with all its steps"""
+    service = TestPlanService()
+
+    try:
+        new_plan = service.duplicate_test_plan(db, test_plan_id)
+        return new_plan
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/{test_plan_id}/mark-ready", response_model=TestPlanResponse)

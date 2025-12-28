@@ -30,18 +30,25 @@ import {
 import {
   IconRefresh,
   IconPlayerPlay,
+  IconPlayerPause,
   IconTrash,
   IconCheck,
   IconX,
   IconClock,
+  IconChevronUp,
+  IconChevronDown,
 } from '@tabler/icons-react'
 import {
   useTestQueue,
   useRemoveFromQueue,
   useStartExecution,
+  usePauseExecution,
   useCompleteExecution,
   useCancelExecution,
+  useResumeExecution,
+  useMoveQueueItem,
 } from '../../hooks'
+import { appEventBus } from '../../../../lib/eventBus'
 
 // Helper functions for status display
 function getStatusColor(status: string): string {
@@ -83,14 +90,28 @@ export function QueueTab() {
   // Mutation hooks
   const { mutate: removeFromQueue } = useRemoveFromQueue()
   const { mutate: startExecution } = useStartExecution()
+  const { mutate: pauseExecution } = usePauseExecution()
   const { mutate: completeExecution } = useCompleteExecution()
   const { mutate: cancelExecution } = useCancelExecution()
+  const { mutate: resumeExecution } = useResumeExecution()
+  const { mutate: moveQueueItem, isPending: isMoving } = useMoveQueueItem()
 
-  const handleStart = (queueItemId: string, planId: string) => {
-    startExecution({
-      planId,
-      payload: { started_by: '当前用户' },
-    })
+  const handleStart = (_queueItemId: string, planId: string, planName: string) => {
+    startExecution(
+      {
+        planId,
+        payload: { started_by: '当前用户' },
+      },
+      {
+        onSuccess: () => {
+          // Emit event to App.tsx to switch to monitoring and start execution
+          appEventBus.emit({
+            type: 'execution:start',
+            payload: { planId, planName },
+          })
+        },
+      },
+    )
   }
 
   const handleRemove = (testPlanId: string) => {
@@ -103,18 +124,56 @@ export function QueueTab() {
   const handleComplete = (planId: string) => {
     if (confirm('确定要完成此测试计划吗？')) {
       completeExecution(planId)
+      // Emit event to sync with Monitoring
+      appEventBus.emit({ type: 'execution:complete', payload: { planId } })
     }
+  }
+
+  const handlePause = (planId: string) => {
+    pauseExecution(
+      { planId, payload: { paused_by: '当前用户' } },
+      {
+        onSuccess: () => {
+          // Emit event to pause execution in Monitoring
+          appEventBus.emit({ type: 'execution:pause', payload: { planId } })
+        },
+      },
+    )
+  }
+
+  const handleResume = (planId: string, planName: string) => {
+    resumeExecution(
+      { planId, payload: { resumed_by: '当前用户' } },
+      {
+        onSuccess: () => {
+          // Emit event to resume execution in Monitoring
+          appEventBus.emit({ type: 'execution:start', payload: { planId, planName } })
+        },
+      },
+    )
   }
 
   const handleCancel = (planId: string) => {
     if (confirm('确定要取消此测试计划的执行吗？')) {
-      cancelExecution({ planId, payload: { cancelled_by: '当前用户' } })
+      cancelExecution(
+        { planId, payload: { cancelled_by: '当前用户' } },
+        {
+          onSuccess: () => {
+            // Emit event to stop execution in Monitoring
+            appEventBus.emit({ type: 'execution:stop', payload: { planId } })
+          },
+        },
+      )
     }
   }
 
-  // TODO: Implement move up/down with reorderQueue hook
-  // const handleMoveUp = (queueItemId: string) => { }
-  // const handleMoveDown = (queueItemId: string) => { }
+  // Move up/down handlers
+  const handleMoveUp = (planId: string) => {
+    moveQueueItem({ planId, direction: 'up' })
+  }
+  const handleMoveDown = (planId: string) => {
+    moveQueueItem({ planId, direction: 'down' })
+  }
 
   return (
     <Stack gap="md">
@@ -281,7 +340,7 @@ export function QueueTab() {
                                 variant="light"
                                 color="green"
                                 onClick={() =>
-                                  handleStart(queueItem.id, plan.id)
+                                  handleStart(queueItem.id, plan.id, plan.name)
                                 }
                               >
                                 <IconPlayerPlay size={16} />
@@ -289,8 +348,34 @@ export function QueueTab() {
                             </Tooltip>
                           )}
 
-                          {/* Complete button (only for running status) */}
+                          {/* Pause button (for running status) */}
                           {plan.status === 'running' && (
+                            <Tooltip label="暂停执行">
+                              <ActionIcon
+                                variant="light"
+                                color="yellow"
+                                onClick={() => handlePause(plan.id)}
+                              >
+                                <IconPlayerPause size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
+
+                          {/* Resume button (for paused status) */}
+                          {plan.status === 'paused' && (
+                            <Tooltip label="恢复执行">
+                              <ActionIcon
+                                variant="light"
+                                color="green"
+                                onClick={() => handleResume(plan.id, plan.name)}
+                              >
+                                <IconPlayerPlay size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
+
+                          {/* Complete button (for running or paused status) */}
+                          {(plan.status === 'running' || plan.status === 'paused') && (
                             <Tooltip label="完成执行">
                               <ActionIcon
                                 variant="light"
@@ -302,8 +387,8 @@ export function QueueTab() {
                             </Tooltip>
                           )}
 
-                          {/* Cancel button (only for running status) */}
-                          {plan.status === 'running' && (
+                          {/* Cancel button (for running or paused status) */}
+                          {(plan.status === 'running' || plan.status === 'paused') && (
                             <Tooltip label="取消执行">
                               <ActionIcon
                                 variant="light"
@@ -316,32 +401,32 @@ export function QueueTab() {
                           )}
 
                           {/* Move up/down buttons */}
-                          {/* TODO: Implement after adding reorderQueue hook
                           {index > 0 && plan.status === 'queued' && (
                             <Tooltip label="上移">
                               <ActionIcon
                                 variant="subtle"
-                                onClick={() => handleMoveUp(queueItem.id)}
+                                onClick={() => handleMoveUp(plan.id)}
+                                loading={isMoving}
                               >
                                 <IconChevronUp size={16} />
                               </ActionIcon>
                             </Tooltip>
                           )}
-                          {index < queueItems.length - 1 && plan.status === 'queued' && (
+                          {queueItems && index < queueItems.length - 1 && plan.status === 'queued' && (
                             <Tooltip label="下移">
                               <ActionIcon
                                 variant="subtle"
-                                onClick={() => handleMoveDown(queueItem.id)}
+                                onClick={() => handleMoveDown(plan.id)}
+                                loading={isMoving}
                               >
                                 <IconChevronDown size={16} />
                               </ActionIcon>
                             </Tooltip>
                           )}
-                          */}
 
-                          {/* Remove button (only for queued status) */}
-                          {plan.status === 'queued' && (
-                            <Tooltip label="从队列中移除">
+                          {/* Remove button (for queued, cancelled, completed, failed status) */}
+                          {['queued', 'cancelled', 'completed', 'failed'].includes(plan.status) && (
+                            <Tooltip label={plan.status === 'queued' ? '从队列中移除' : '删除'}>
                               <ActionIcon
                                 variant="light"
                                 color="red"

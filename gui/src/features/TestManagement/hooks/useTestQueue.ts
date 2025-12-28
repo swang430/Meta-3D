@@ -173,6 +173,35 @@ export function useReorderQueue() {
 }
 
 /**
+ * Hook to move a single queue item (up/down/top/bottom)
+ */
+export function useMoveQueueItem() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ planId, direction }: { planId: string; direction: 'up' | 'down' | 'top' | 'bottom' }) =>
+      api.moveQueueItem(planId, direction),
+    onSuccess: () => {
+      // Invalidate queue list to refresh
+      queryClient.invalidateQueries({ queryKey: testQueueKeys.list() })
+
+      notifications.show({
+        title: '队列已重排',
+        message: '执行队列顺序已更新',
+        color: 'green',
+      })
+    },
+    onError: (error: Error) => {
+      notifications.show({
+        title: '移动失败',
+        message: error.message || '无法移动队列项',
+        color: 'red',
+      })
+    },
+  })
+}
+
+/**
  * Hook to update queue item priority
  */
 export function useUpdateQueuePriority() {

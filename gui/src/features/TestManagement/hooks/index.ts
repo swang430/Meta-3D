@@ -40,6 +40,7 @@ export {
   useQueueTestPlan,
   useRemoveFromQueue,
   useReorderQueue,
+  useMoveQueueItem,
   useUpdateQueuePriority,
   testQueueKeys,
 } from './useTestQueue'

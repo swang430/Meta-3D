@@ -647,3 +647,34 @@ class TimeSeriesResponse(BaseModel):
     rolling_mean: List[float]
     rolling_std: List[float]
     generated_at: datetime
+
+
+# ==================== Simple Compare Schemas ====================
+
+class SimpleCompareRequest(BaseModel):
+    """Simple report comparison request"""
+    report_ids: List[UUID] = Field(..., min_length=2, description="Report IDs to compare")
+    comparison_type: str = Field(
+        "kpi_diff",
+        description="Comparison type: kpi_diff | trend_analysis | full"
+    )
+    metrics: Optional[List[str]] = Field(None, description="Specific metrics to compare")
+
+
+class KPIDifference(BaseModel):
+    """KPI difference between reports"""
+    metric_name: str
+    values: Dict[str, float]  # report_id -> value
+    baseline_value: float
+    differences: Dict[str, float]  # report_id -> difference from baseline
+    percent_changes: Dict[str, float]  # report_id -> percent change
+
+
+class SimpleCompareResponse(BaseModel):
+    """Simple report comparison response"""
+    report_ids: List[UUID]
+    comparison_type: str
+    comparison_result: Dict[str, Any]
+    kpi_differences: Optional[List[KPIDifference]] = None
+    summary: Dict[str, Any] = Field(default_factory=dict)
+    generated_at: datetime

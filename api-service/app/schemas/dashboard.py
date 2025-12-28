@@ -1,7 +1,8 @@
 """Dashboard Pydantic schemas"""
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
+from uuid import UUID
 
 
 class DashboardSummary(BaseModel):
@@ -10,6 +11,7 @@ class DashboardSummary(BaseModel):
     active_test_plans: int
     active_alerts: int
     comparisons_selected: int
+    total_executions: int
 
 
 class LiveMetric(BaseModel):
@@ -42,3 +44,17 @@ class DashboardResponse(BaseModel):
     live_metrics: List[LiveMetric]
     active_alerts: List[ActiveAlert]
     recent_tests: List[RecentTest]
+
+
+class ComparisonSelectionRequest(BaseModel):
+    """Request to track comparison selections"""
+    selected_items: List[UUID] = Field(..., min_length=1, description="List of selected item UUIDs")
+    comparison_type: str = Field(..., description="Type of comparison (execution_results, reports, etc.)")
+
+
+class ComparisonSelectionResponse(BaseModel):
+    """Response for comparison selection tracking"""
+    id: UUID
+    selected_items: List[UUID]
+    comparison_type: str
+    created_at: datetime
