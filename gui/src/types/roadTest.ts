@@ -186,6 +186,400 @@ export interface KPIDefinition {
   threshold_max?: number
 }
 
+// ===== Interference and Scatterer Types =====
+
+export interface InterferenceSource {
+  id: string
+  type: 'co-channel' | 'adjacent-channel' | 'out-of-band' | 'wideband'
+  position: { lat: number; lon: number; alt: number }
+  characteristics: {
+    power_dbm: number
+    frequency_mhz: number
+    bandwidth_mhz: number
+    modulation?: string
+    duty_cycle?: number  // 0-1, for intermittent interference
+  }
+  temporal?: {
+    start_time_s: number
+    duration_s: number
+    pattern: 'continuous' | 'pulsed' | 'random'
+  }
+}
+
+export interface MovingScatterer {
+  id: string
+  type: 'vehicle' | 'pedestrian' | 'train' | 'aircraft'
+  trajectory: Waypoint[]
+  rcs_dbsm: number  // Radar Cross Section in dB-m²
+  blockage: {
+    attenuation_db: number
+    shadow_region_m: number
+  }
+}
+
+// ===== Application Test Types =====
+
+export const ApplicationType = {
+  FTP_DL: 'ftp_dl' as const,
+  FTP_UL: 'ftp_ul' as const,
+  UDP_DL: 'udp_dl' as const,
+  UDP_UL: 'udp_ul' as const,
+  IPERF: 'iperf' as const,
+  HTTP: 'http' as const,
+  VIDEO_STREAMING: 'video_streaming' as const,
+  VIDEO_CALL: 'video_call' as const,
+  XR_VR: 'xr_vr' as const,
+  XR_AR: 'xr_ar' as const,
+  XR_CLOUD: 'xr_cloud' as const,
+  VOIP: 'voip' as const,
+  EMAIL: 'email' as const,
+  WEB_BROWSING: 'web_browsing' as const,
+  PING: 'ping' as const,
+}
+export type ApplicationType = typeof ApplicationType[keyof typeof ApplicationType]
+
+// Application test configuration
+export interface ApplicationTestConfig {
+  type: ApplicationType
+  enabled: boolean
+  // FTP configuration
+  ftp?: {
+    server_ip: string
+    port: number
+    file_size_mb: number
+    concurrent_connections: number
+    username?: string
+    password?: string
+  }
+  // UDP/iPerf configuration
+  udp?: {
+    target_rate_mbps: number
+    packet_size_bytes: number
+    duration_s: number
+    server_ip: string
+    port: number
+    bidirectional?: boolean
+  }
+  // Video streaming configuration
+  video?: {
+    resolution: '720p' | '1080p' | '4K' | '8K'
+    codec: 'H.264' | 'H.265' | 'VP9' | 'AV1'
+    bitrate_mbps: number
+    frame_rate: 30 | 60 | 120
+    server_url?: string
+    protocol: 'HLS' | 'DASH' | 'RTSP' | 'WebRTC'
+  }
+  // XR configuration
+  xr?: {
+    application: 'gaming' | 'collaboration' | 'streaming' | 'industrial'
+    target_latency_ms: number
+    target_frame_rate: 72 | 90 | 120
+    resolution_per_eye: '1080p' | '2K' | '4K'
+    pose_update_rate_hz: number
+    motion_to_photon_ms: number
+  }
+  // VoIP configuration
+  voip?: {
+    codec: 'G.711' | 'G.729' | 'AMR' | 'EVS'
+    calls_count: number
+    call_duration_s: number
+  }
+  // Email configuration
+  email?: {
+    attachment_size_mb: number
+    emails_per_minute: number
+  }
+  // HTTP/Web browsing
+  http?: {
+    urls: string[]
+    think_time_s: number
+    page_load_timeout_s: number
+  }
+}
+
+// ===== Enhanced Step Configuration =====
+
+// Step 2: Network Configuration (Core Network Layer)
+export interface NetworkStepConfig {
+  // Authentication Configuration
+  authentication: {
+    method: 'open' | '5g-aka' | 'eap-tls' | 'sim'
+    sim_profile?: {
+      imsi: string
+      ki?: string
+      opc?: string
+    }
+    certificate?: {
+      enabled: boolean
+      cert_file?: string
+    }
+  }
+
+  // IP Allocation Configuration
+  ip_config: {
+    mode: 'dhcp' | 'static' | 'pdn'
+    ipv4?: {
+      address?: string
+      subnet?: string
+      gateway?: string
+      dns?: string[]
+    }
+    ipv6?: {
+      enabled: boolean
+      prefix?: string
+    }
+    apn?: string  // Access Point Name
+  }
+
+  // PDU Session / Bearer Configuration
+  pdu_session: {
+    type: 'ipv4' | 'ipv6' | 'ipv4v6' | 'ethernet'
+    sst: number  // Slice/Service Type (1=eMBB, 2=URLLC, 3=MIoT)
+    sd?: string  // Slice Differentiator
+    dnn: string  // Data Network Name
+  }
+
+  // QoS Configuration
+  qos: {
+    fiveqi: number  // 5G QoS Identifier (1-255)
+    priority_level?: number
+    packet_delay_budget_ms?: number
+    packet_error_rate?: number
+    gbr?: {
+      enabled: boolean
+      dl_gbr_kbps?: number
+      ul_gbr_kbps?: number
+    }
+  }
+
+  // Application layer tests
+  applications: {
+    enabled: boolean
+    tests: ApplicationTestConfig[]
+    sequential: boolean  // Run tests sequentially or in parallel
+  }
+
+  // Verification
+  verify_registration: boolean
+  verify_pdu_session: boolean
+  timeout_seconds: number
+}
+
+// Step 3: Base Station Configuration (RAN Layer)
+export interface BaseStationStepConfig {
+  // RF Parameters (moved from NetworkStepConfig)
+  rf: {
+    frequency_mhz: number
+    bandwidth_mhz: number
+    scs_khz: 15 | 30 | 60 | 120  // Subcarrier spacing
+    duplex_mode: 'TDD' | 'FDD'
+    tdd_config?: {
+      pattern: string  // e.g., "DDDSU" or "DDDSUUDDDD"
+      special_slot_config?: number
+    }
+    mimo_layers: 1 | 2 | 4 | 8
+    carrier_aggregation?: {
+      enabled: boolean
+      num_carriers: number
+      carrier_configs?: Array<{
+        frequency_mhz: number
+        bandwidth_mhz: number
+      }>
+    }
+  }
+
+  // Cell Parameters (moved from NetworkStepConfig)
+  cell: {
+    pci: number  // Physical Cell ID (0-1007)
+    tac: number  // Tracking Area Code
+    cell_id: number  // Cell Identity
+    plmn: {
+      mcc: string  // Mobile Country Code
+      mnc: string  // Mobile Network Code
+    }
+    band: string  // e.g., "n78", "n41", "B1"
+    earfcn_nrarfcn?: number  // E-UTRA/NR ARFCN
+  }
+
+  // Power Parameters (moved from NetworkStepConfig)
+  power: {
+    total_power_dbm: number  // Total BS transmit power
+    ssb_power_dbm?: number  // SSB power
+    pdsch_power_offset_db?: number
+    pusch_power_control?: {
+      p0_nominal_dbm: number
+      alpha: number  // 0, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1
+    }
+  }
+
+  // Deployment Configuration
+  deployment: {
+    num_base_stations: number
+    topology: 'single' | 'linear' | 'hexagonal' | 'custom'
+    inter_site_distance_m?: number
+    positions?: Array<{
+      bs_id: string
+      lat: number
+      lon: number
+      alt: number
+    }>
+  }
+
+  // Antenna Configuration
+  antenna: {
+    type: 'omni' | 'sector' | 'massive_mimo' | 'aat'  // AAT = Active Antenna Technology
+    mimo_config: '2x2' | '4x4' | '8x8' | '16x16' | '32x32' | '64x64'
+    antenna_height_m: number
+    antenna_elements?: {
+      horizontal: number
+      vertical: number
+    }
+    polarization: 'single' | 'dual' | 'cross'
+    gain_dbi: number
+    azimuth_deg: number  // 0-360
+    mechanical_tilt_deg: number  // 0-15
+    electrical_tilt_deg?: number  // 0-15
+  }
+
+  // Beam Configuration (for 5G NR)
+  beamforming?: {
+    enabled: boolean
+    mode: 'static' | 'dynamic' | 'codebook' | 'eigenvalue'
+    num_ssb_beams: number  // 4, 8, 16, 32, 64
+    beam_sweep_period_ms?: number
+    beam_tracking?: {
+      enabled: boolean
+      update_period_ms: number
+    }
+  }
+
+  // Handover Configuration
+  handover?: {
+    enabled: boolean
+    a3_offset_db: number  // Event A3 offset
+    hysteresis_db: number
+    time_to_trigger_ms: number
+    measurement_gap_config?: string
+  }
+
+  // Verification
+  verify_coverage: boolean
+  verify_neighbor_relations: boolean
+  verify_signal: boolean
+  timeout_seconds: number
+}
+
+// Step 8: Digital Twin Environment (Deterministic Channel)
+export interface DigitalTwinStepConfig {
+  // Channel Model Selection
+  channel_model: {
+    type: 'statistical' | 'ray-tracing' | 'measured' | 'hybrid'
+    // Use scenario-level statistical model as fallback
+    use_scenario_default: boolean
+  }
+  // Ray Tracing Configuration (deterministic)
+  ray_tracing?: {
+    enabled: boolean
+    // 3D Environment
+    environment: {
+      model_file?: string  // e.g., ".obj", ".gltf", ".osm"
+      model_type: 'simplified' | 'detailed' | 'point_cloud'
+      buildings?: {
+        source: 'osm' | 'custom' | 'lidar'
+        material_db?: string
+      }
+      terrain?: {
+        enabled: boolean
+        dem_file?: string  // Digital Elevation Model
+        resolution_m: number
+      }
+    }
+    // Ray Tracing Parameters
+    parameters: {
+      max_reflections: number  // 0-10
+      max_diffractions: number  // 0-3
+      max_scattering: number  // 0-5
+      ray_spacing_deg?: number
+      frequency_dependent_materials: boolean
+    }
+    // Material Properties
+    materials?: Array<{
+      name: string
+      permittivity: number
+      conductivity: number
+      roughness_m?: number
+    }>
+    // Acceleration
+    acceleration: {
+      method: 'sbr' | 'image' | 'hybrid'  // SBR = Shooting and Bouncing Rays
+      gpu_enabled: boolean
+      precompute: boolean
+    }
+  }
+  // Measured Channel (CIR playback)
+  measured_channel?: {
+    enabled: boolean
+    cir_file: string  // Channel Impulse Response file
+    format: 'matlab' | 'csv' | 'hdf5' | 'sigmf'
+    time_alignment: 'gps' | 'route_distance' | 'manual'
+    interpolation: 'linear' | 'spline' | 'nearest'
+    loop: boolean  // Loop when reaching end
+  }
+  // Hybrid Model (ray-tracing + statistical)
+  hybrid?: {
+    enabled: boolean
+    ray_tracing_for_los: boolean
+    statistical_for_nlos: boolean
+    cluster_generation: 'rt_based' | '3gpp' | 'hybrid'
+  }
+  // Dynamic Environment
+  interference?: {
+    enabled: boolean
+    sources: Array<{
+      id: string
+      type: 'co-channel' | 'adjacent-channel' | 'wideband' | 'pulsed'
+      position: { lat: number; lon: number; alt: number }
+      power_dbm: number
+      frequency_mhz: number
+      bandwidth_mhz: number
+      temporal?: {
+        start_time_s: number
+        duration_s: number
+        duty_cycle?: number
+      }
+    }>
+  }
+  scatterers?: {
+    enabled: boolean
+    sources: Array<{
+      id: string
+      type: 'vehicle' | 'pedestrian' | 'train' | 'uav'
+      trajectory_file?: string
+      rcs_dbsm: number  // Radar Cross Section
+      velocity_kmh: number
+      blockage_attenuation_db: number
+    }>
+  }
+  // Weather Effects
+  weather?: {
+    enabled: boolean
+    condition: 'clear' | 'rain' | 'snow' | 'fog'
+    rain_rate_mmh?: number  // For rain attenuation
+    visibility_m?: number  // For fog
+  }
+  // Doppler & Time Variance
+  doppler?: {
+    enabled: boolean
+    max_doppler_hz?: number
+    time_variance_model: 'jakes' | 'cluster_based' | 'measured'
+  }
+  // Validation & Output
+  validate_environment: boolean
+  export_channel_data: boolean
+  export_format?: 'matlab' | 'hdf5' | 'csv'
+  timeout_seconds: number
+}
+
 // Step configuration for test plan generation
 export interface StepConfiguration {
   chamber_init?: {
@@ -194,20 +588,10 @@ export interface StepConfiguration {
     verify_connections?: boolean
     calibrate_position_table?: boolean
   }
-  network_config?: {
-    frequency_mhz?: number
-    bandwidth_mhz?: number
-    technology?: string
-    timeout_seconds?: number
-    verify_signal?: boolean
-  }
-  base_station_setup?: {
-    channel_model?: string
-    num_base_stations?: number
-    bs_positions?: any[]
-    timeout_seconds?: number
-    verify_coverage?: boolean
-  }
+  // Step 2: Enhanced network configuration
+  network_config?: NetworkStepConfig
+  // Step 3: Enhanced base station configuration
+  base_station_setup?: BaseStationStepConfig
   ota_mapper?: {
     route_file?: string
     route_type?: string
@@ -242,6 +626,8 @@ export interface StepConfiguration {
     include_recommendations?: boolean
     timeout_seconds?: number
   }
+  // Step 8: Digital Twin Environment (Deterministic Channel)
+  environment_setup?: DigitalTwinStepConfig
 }
 
 export interface RoadTestScenario {
@@ -292,9 +678,15 @@ export interface ScenarioSummary {
   description?: string
   duration_s: number
   distance_m: number
-  step_configuration?: StepConfiguration  // NEW: Pre-configured test steps
+  step_configuration?: StepConfiguration  // Pre-configured test steps
   created_at?: string
   author?: string
+  // Extended fields for editing
+  network_type?: string
+  band?: string
+  bandwidth_mhz?: number
+  channel_model?: string
+  avg_speed_kmh?: number
 }
 
 // ===== Execution Types =====

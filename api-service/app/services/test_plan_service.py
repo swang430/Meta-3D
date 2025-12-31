@@ -66,7 +66,7 @@ class TestPlanService:
         """
         Create standard test steps for Virtual Road Test scenarios
 
-        Automatically generates 7 standard test steps based on Road Test sequence library.
+        Automatically generates 8 standard test steps based on Road Test sequence library.
         If scenario has pre-configured step_configuration, use those settings;
         otherwise use defaults from test_environment.
         """
@@ -75,8 +75,8 @@ class TestPlanService:
             TestSequence.category.like("Road Test%")
         ).order_by(TestSequence.created_at.asc()).all()
 
-        if len(road_test_sequences) != 7:
-            logger.warning(f"Expected 7 Road Test sequences, found {len(road_test_sequences)}")
+        if len(road_test_sequences) != 8:
+            logger.warning(f"Expected 8 Road Test sequences, found {len(road_test_sequences)}")
             return
 
         # Extract step_configuration from test_environment if present
@@ -84,6 +84,7 @@ class TestPlanService:
 
         # Define step configurations based on test environment and step_configuration
         # Priority: step_config (from scenario) > test_environment > defaults
+        env_cfg = step_config.get('environment_setup', {})
         chamber_cfg = step_config.get('chamber_init', {})
         network_cfg = step_config.get('network_config', {})
         bs_cfg = step_config.get('base_station_setup', {})
@@ -93,6 +94,20 @@ class TestPlanService:
         report_cfg = step_config.get('report_generation', {})
 
         step_configs = [
+            {
+                "sequence_name": "Configure Digital Twin Environment",
+                "parameters": {
+                    "channel_model_type": env_cfg.get("channel_model", {}).get("type") or "3gpp-statistical",
+                    "scenario": env_cfg.get("channel_model", {}).get("scenario") or "UMa",
+                    "los_condition": env_cfg.get("channel_model", {}).get("los_condition") or "auto",
+                    "interference_enabled": env_cfg.get("interference", {}).get("enabled", False),
+                    "scatterers_enabled": env_cfg.get("scatterers", {}).get("enabled", False),
+                    "precompute_channel": env_cfg.get("precompute_channel", {}).get("enabled", False),
+                    "validate_environment": env_cfg.get("validate_environment", True),
+                    "environment_file": env_cfg.get("environment_file")
+                },
+                "timeout_seconds": env_cfg.get("timeout_seconds", 120)
+            },
             {
                 "sequence_name": "Initialize OTA Chamber (MPAC)",
                 "parameters": {

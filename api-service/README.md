@@ -2,6 +2,8 @@
 
 Python FastAPI-based backend service for the Meta-3D MPAC (Multi-Probe Anechoic Chamber) OTA test system.
 
+> **数据架构说明**: 本后端服务是系统的主要数据源。前端可选择使用 Mock Server (开发模式) 或本服务 (生产模式)。详见 [数据架构指南](../docs/Data-Architecture-Guide.md)。
+
 ## Features
 
 - **System-Level Calibration**
@@ -391,9 +393,24 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+## 数据初始化
+
+首次运行或重置数据库后，需要初始化测试序列数据：
+
+```bash
+source .venv/bin/activate
+python scripts/init_sequences.py
+```
+
+这将创建：
+- 6 个通用测试序列 (Instrument Setup, Measurement, etc.)
+- 8 个虚拟路测序列 (Road Test - Step 0 到 Step 7)
+
 ## Support
 
-For issues and questions, refer to the design documentation in `docs/System-Calibration-Design.md`.
+For issues and questions, refer to:
+- [数据架构指南](../docs/Data-Architecture-Guide.md) - Mock vs 后端 API 架构说明
+- [系统校准设计](../docs/System-Calibration-Design.md) - 校准功能设计文档
 
 ## License
 

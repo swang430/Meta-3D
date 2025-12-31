@@ -167,6 +167,7 @@ const newPlan = await testManagementAPI.createTestPlan({
 ## 相关文档
 
 - [架构设计文档](../../../../TestManagement-Unified-Architecture.md) - 完整的设计规范
+- [数据架构指南](../../../../docs/Data-Architecture-Guide.md) - Mock Server vs 后端 API 说明
 - [CLAUDE.md](../../../../CLAUDE.md) - 项目整体文档
 
 ## 开发指南
@@ -188,5 +189,5 @@ const newPlan = await testManagementAPI.createTestPlan({
 ## 注意事项
 
 - ⚠️ API 端点基于设计文档，实际后端实现可能需要调整
-- ⚠️ 目前使用 mock 数据，需要配置 mockServer
+- ⚠️ **当前使用后端 API**，Mock Server 已禁用。详见 [数据架构指南](../../../../docs/Data-Architecture-Guide.md)
 - ⚠️ 组件尚未完全实现，当前为 Phase 1 基础架构

@@ -931,14 +931,9 @@ const [lastRunMeta, setLastRunMeta] = useState<RunMetadata | null>(null)
               }}
             >
               <Stack gap={6}>
-                <Group gap="xs" align="center">
-                  <Title order={4} c={isDark ? theme.white : theme.colors.brand[8]}>
-                    MIMO-OTA
-                  </Title>
-                  <Badge color="brand" radius="xl" variant="filled">
-                    Meta-3D
-                  </Badge>
-                </Group>
+                <Title order={4} c={isDark ? theme.white : theme.colors.brand[8]}>
+                  Meta-3D
+                </Title>
                 <Text size="sm" c={isDark ? theme.colors.gray[4] : theme.colors.gray[7]}>
                   软件定义静区 · 车规级实验室
                 </Text>

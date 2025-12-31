@@ -15,6 +15,7 @@ from app.schemas.road_test import (
     ScenarioUpdate,
     ScenarioSummary,
     ScenarioCategory,
+    ScenarioSource,
     NetworkTopology,
     TopologyCreate,
     TopologyUpdate,
@@ -76,16 +77,22 @@ async def list_scenarios(
         scenarios = [s for s in scenarios if s.source.value == source]
 
     # Filter by tags
-    if tags:
+    if tags and isinstance(tags, str):
         tag_list = [t.strip() for t in tags.split(",")]
         scenarios = [
             s for s in scenarios
             if any(tag in s.tags for tag in tag_list)
         ]
 
-    # Convert to summaries
-    summaries = [
-        ScenarioSummary(
+    # Convert to summaries with extended fields for editing
+    summaries = []
+    for s in scenarios:
+        # Calculate average speed from route
+        avg_speed = None
+        if s.route.duration_s > 0:
+            avg_speed = (s.route.total_distance_m / 1000) / (s.route.duration_s / 3600)  # km/h
+
+        summaries.append(ScenarioSummary(
             id=s.id,
             name=s.name,
             category=s.category,
@@ -96,10 +103,14 @@ async def list_scenarios(
             distance_m=s.route.total_distance_m,
             created_at=s.created_at,
             author=s.author,
-            step_configuration=s.step_configuration
-        )
-        for s in scenarios
-    ]
+            step_configuration=s.step_configuration,
+            # Extended fields
+            network_type=s.network.type.value if s.network else None,
+            band=s.network.band if s.network else None,
+            bandwidth_mhz=s.network.bandwidth_mhz if s.network else None,
+            channel_model=s.environment.channel_model.value if s.environment else None,
+            avg_speed_kmh=avg_speed,
+        ))
 
     return summaries
 
@@ -148,28 +159,54 @@ async def create_scenario(scenario_create: ScenarioCreate):
 @router.put("/scenarios/{scenario_id}", response_model=RoadTestScenario)
 async def update_scenario(scenario_id: str, scenario_update: ScenarioUpdate):
     """
-    Update a custom scenario (standard scenarios cannot be modified)
+    Update a scenario. For standard scenarios, creates a custom copy.
     """
-    # Only allow updating custom scenarios
-    if scenario_id not in _custom_scenarios:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Custom scenario '{scenario_id}' not found or is a standard scenario"
-        )
-
-    scenario = _custom_scenarios[scenario_id]
-
-    # Update fields
-    update_data = scenario_update.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        if value is not None:
-            setattr(scenario, field, value)
-
     from datetime import datetime
-    scenario.updated_at = datetime.now()
 
-    logger.info(f"Updated scenario: {scenario_id}")
-    return scenario
+    # Check if it's a custom scenario
+    if scenario_id in _custom_scenarios:
+        scenario = _custom_scenarios[scenario_id]
+
+        # Update fields
+        update_data = scenario_update.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            if value is not None:
+                setattr(scenario, field, value)
+
+        scenario.updated_at = datetime.now()
+        logger.info(f"Updated custom scenario: {scenario_id}")
+        return scenario
+
+    # Check if it's a standard scenario - create a custom copy
+    standard_scenario = get_scenario_by_id(scenario_id)
+    if standard_scenario:
+        # Create a new custom scenario based on the standard one
+        new_id = f"custom-{len(_custom_scenarios) + 1:04d}"
+
+        # Copy standard scenario data
+        scenario_data = standard_scenario.model_dump()
+        scenario_data['id'] = new_id
+        scenario_data['source'] = ScenarioSource.CUSTOM
+        scenario_data['created_at'] = datetime.now()
+        scenario_data['updated_at'] = datetime.now()
+
+        # Apply updates
+        update_data = scenario_update.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            if value is not None:
+                scenario_data[field] = value
+
+        # Create new scenario
+        new_scenario = RoadTestScenario(**scenario_data)
+        _custom_scenarios[new_id] = new_scenario
+
+        logger.info(f"Created custom scenario {new_id} from standard scenario {scenario_id}")
+        return new_scenario
+
+    raise HTTPException(
+        status_code=404,
+        detail=f"Scenario '{scenario_id}' not found"
+    )
 
 
 @router.delete("/scenarios/{scenario_id}", status_code=204)

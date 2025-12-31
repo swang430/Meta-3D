@@ -72,6 +72,97 @@ export function setupMockServer() {
 
   mock.onGet('/sequence/library').reply(200, mockDatabase.getSequenceLibrary())
 
+  // ===== Test Management API - Sequence Library =====
+  // Note: API client uses baseURL '/api/v1', so we need to match the full path
+  mock.onGet('/api/v1/test-sequences').reply((config) => {
+    const library = mockDatabase.getSequenceLibrary().library
+    // Transform to match SequenceLibraryItem type
+    // Categorize by ID prefix: vrt-* = 虚拟路测, lib-* = 通用测试
+    let items = library.map((item, index) => ({
+      id: item.id,
+      name: item.title,
+      description: item.description || null,
+      category: item.id.startsWith('vrt-') ? '虚拟路测' : '通用测试',
+      steps: [],
+      parameters: null,
+      default_values: null,
+      validation_rules: null,
+      is_public: true,
+      usage_count: 10 + index * 5,
+      created_by: 'system',
+      created_at: '2024-01-01T00:00:00Z',
+      updated_at: '2024-01-01T00:00:00Z',
+      tags: item.meta?.split('·').map(t => t.trim()) || [],
+    }))
+
+    // Apply filters from query params
+    const params = config.params || {}
+    if (params.category) {
+      items = items.filter(item => item.category === params.category)
+    }
+    if (params.search) {
+      const search = params.search.toLowerCase()
+      items = items.filter(item =>
+        item.name.toLowerCase().includes(search) ||
+        (item.description && item.description.toLowerCase().includes(search))
+      )
+    }
+
+    console.log('[MockServer] /test-sequences returning', items.length, 'items (total in db:', library.length, ')')
+    return [200, { items }]
+  })
+
+  mock.onGet('/api/v1/test-sequences/categories').reply(() => {
+    const library = mockDatabase.getSequenceLibrary().library
+    // Extract categories from vrt-* steps and lib-* steps
+    const categories = ['通用测试', '虚拟路测']
+    return [200, { categories }]
+  })
+
+  mock.onGet('/api/v1/test-sequences/popular').reply(() => {
+    const library = mockDatabase.getSequenceLibrary().library
+    const items = library.slice(0, 10).map((item, index) => ({
+      id: item.id,
+      name: item.title,
+      description: item.description || null,
+      category: item.id.startsWith('vrt-') ? '虚拟路测' : '通用测试',
+      steps: [],
+      parameters: null,
+      default_values: null,
+      validation_rules: null,
+      is_public: true,
+      usage_count: 50 - index * 3,
+      created_by: 'system',
+      created_at: '2024-01-01T00:00:00Z',
+      updated_at: '2024-01-01T00:00:00Z',
+      tags: item.meta?.split('·').map(t => t.trim()) || [],
+    }))
+    return [200, { items }]
+  })
+
+  mock.onGet(/\/api\/v1\/test-sequences\/[^/]+$/).reply((config) => {
+    const itemId = config.url?.split('/').pop() ?? ''
+    const library = mockDatabase.getSequenceLibrary().library
+    const item = library.find(s => s.id === itemId)
+    if (!item) return [404, { message: '未找到序列' }]
+    return [200, {
+      id: item.id,
+      name: item.title,
+      description: item.description || null,
+      category: item.id.startsWith('vrt-') ? '虚拟路测' : '通用测试',
+      steps: [],
+      parameters: null,
+      default_values: null,
+      validation_rules: null,
+      is_public: true,
+      usage_count: 20,
+      created_by: 'system',
+      created_at: '2024-01-01T00:00:00Z',
+      updated_at: '2024-01-01T00:00:00Z',
+      tags: item.meta?.split('·').map(t => t.trim()) || [],
+    }]
+  })
+
   mock.onGet('/tests/templates').reply(200, mockDatabase.getTestTemplates())
 
   mock.onGet('/tests/cases').reply(200, mockDatabase.getTestCases())

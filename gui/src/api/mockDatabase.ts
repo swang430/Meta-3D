@@ -60,6 +60,7 @@ const liveMetrics: MetricItem[] = [
 let probes: Probe[] = []
 
 const sequenceLibrary: SequenceLibraryItem[] = [
+  // ===== 通用测试步骤 (8个) =====
   {
     id: 'lib-setup-frequency',
     title: '设置频率',
@@ -107,6 +108,55 @@ const sequenceLibrary: SequenceLibraryItem[] = [
     title: '生成报告',
     meta: 'PDF / HTML / JSON',
     description: '按模板导出日志、静区指标、测试曲线等结果文件。',
+  },
+  // ===== 虚拟路测专用步骤 (8步) =====
+  {
+    id: 'vrt-chamber-init',
+    title: '步骤1: 初始化OTA暗室',
+    meta: '暗室连接 · 探头校准 · 转台归位',
+    description: '初始化OTA暗室设备，验证探头阵列连接，校准转台位置。',
+  },
+  {
+    id: 'vrt-network-config',
+    title: '步骤2: 配置网络',
+    meta: '核心网 · 传输网 · IP/QoS',
+    description: '配置核心网和传输网参数，不涉及无线接入层。',
+  },
+  {
+    id: 'vrt-base-station-setup',
+    title: '步骤3: 设置基站和信道模型',
+    meta: '基站参数 · 天线配置 · MIMO模式',
+    description: '配置基站发射参数、天线阵列和MIMO模式。',
+  },
+  {
+    id: 'vrt-ota-mapper',
+    title: '步骤4: 配置OTA映射器',
+    meta: '信道→探头 · 权重计算 · 实时映射',
+    description: '将数字孪生信道映射为探头权重，实现信道仿真。',
+  },
+  {
+    id: 'vrt-route-execution',
+    title: '步骤5: 执行路径测试',
+    meta: '路径回放 · KPI采集 · 实时监控',
+    description: '按预定义路径执行测试，实时采集性能数据。',
+  },
+  {
+    id: 'vrt-kpi-validation',
+    title: '步骤6: 验证KPI和性能指标',
+    meta: '阈值检查 · 统计分析 · 趋势图',
+    description: '验证测试结果是否满足KPI阈值要求。',
+  },
+  {
+    id: 'vrt-report-generation',
+    title: '步骤7: 生成测试报告',
+    meta: 'PDF/HTML · 数据附件 · 建议',
+    description: '生成测试报告，包含结果摘要、图表和建议。',
+  },
+  {
+    id: 'vrt-environment-setup',
+    title: '步骤8: 配置数字孪生环境',
+    meta: '信道模型 · 干扰源 · 移动散射体',
+    description: '加载数字孪生环境配置，包括射线跟踪信道、干扰源和移动散射体。',
   },
 ]
 
@@ -226,6 +276,7 @@ const formatDate = () => {
 }
 
 const stepTemplateDefaults: Record<string, Record<string, string>> = {
+  // ===== 通用测试步骤默认参数 =====
   'lib-setup-frequency': {
     frequencyMHz: '3500',
     bandwidthMHz: '100',
@@ -277,6 +328,64 @@ const stepTemplateDefaults: Record<string, Record<string, string>> = {
     fileNamePrefix: 'OTA-Report',
     recipients: 'qa@lab.example',
   },
+  // ===== 虚拟路测步骤默认参数 =====
+  'vrt-chamber-init': {
+    chamberId: 'MPAC-1',
+    timeoutSeconds: '300',
+    verifyConnections: '是',
+    calibratePositionTable: '是',
+  },
+  'vrt-network-config': {
+    frequencyMHz: '3500',
+    bandwidthMHz: '100',
+    technology: '5G NR',
+    timeoutSeconds: '240',
+    verifySignal: '是',
+  },
+  'vrt-base-station-setup': {
+    channelModel: 'UMa',
+    numBaseStations: '3',
+    timeoutSeconds: '300',
+    verifyCoverage: '是',
+  },
+  'vrt-ota-mapper': {
+    routeType: 'urban',
+    updateRateHz: '10',
+    enableHandover: '是',
+    positionToleranceM: '1.0',
+    timeoutSeconds: '180',
+  },
+  'vrt-route-execution': {
+    monitorKpis: '是',
+    logIntervalS: '1',
+    autoScreenshot: '是',
+    timeoutSeconds: '2100',
+  },
+  'vrt-kpi-validation': {
+    minThroughputMbps: '50',
+    maxLatencyMs: '50',
+    minRsrpDbm: '-110',
+    maxPacketLossPercent: '5',
+    generatePlots: '是',
+    timeoutSeconds: '300',
+  },
+  'vrt-report-generation': {
+    reportFormat: 'PDF',
+    includeRawData: '否',
+    includeScreenshots: '是',
+    includeRecommendations: '是',
+    timeoutSeconds: '180',
+  },
+  'vrt-environment-setup': {
+    channelModelType: '3gpp-statistical',
+    scenario: 'UMa',
+    losCondition: 'auto',
+    interferenceEnabled: '否',
+    scatterersEnabled: '否',
+    precomputeChannel: '否',
+    validateEnvironment: '是',
+    timeoutSeconds: '120',
+  },
 }
 
 const caseBlueprints: Record<string, string[]> = {
@@ -288,11 +397,53 @@ const caseBlueprints: Record<string, string[]> = {
     'lib-measure-kpi',
     'lib-export',
   ],
-  'VDS-001': ['lib-comm-standard', 'lib-load-channel', 'lib-rotate', 'lib-measure-kpi'],
-  'VDS-002': ['lib-comm-standard', 'lib-load-channel', 'lib-antenna-pattern', 'lib-measure-kpi', 'lib-export'],
-  'VDS-003': ['lib-load-channel', 'lib-rotate', 'lib-measure-kpi'],
-  'VDS-004': ['lib-load-channel', 'lib-rotate', 'lib-power-scan', 'lib-measure-kpi'],
-  'VDS-005': ['lib-load-channel', 'lib-rotate', 'lib-measure-kpi', 'lib-export'],
+  // 虚拟路测用例使用8步流程
+  'VDS-001': [
+    'vrt-environment-setup',
+    'vrt-chamber-init',
+    'vrt-network-config',
+    'vrt-base-station-setup',
+    'vrt-ota-mapper',
+    'vrt-route-execution',
+    'vrt-kpi-validation',
+    'vrt-report-generation',
+  ],
+  'VDS-002': [
+    'vrt-environment-setup',
+    'vrt-chamber-init',
+    'vrt-network-config',
+    'vrt-base-station-setup',
+    'vrt-ota-mapper',
+    'vrt-route-execution',
+    'vrt-kpi-validation',
+    'vrt-report-generation',
+  ],
+  'VDS-003': [
+    'vrt-environment-setup',
+    'vrt-network-config',
+    'vrt-base-station-setup',
+    'vrt-route-execution',
+    'vrt-kpi-validation',
+    'vrt-report-generation',
+  ],
+  'VDS-004': [
+    'vrt-environment-setup',
+    'vrt-network-config',
+    'vrt-base-station-setup',
+    'vrt-route-execution',
+    'vrt-kpi-validation',
+    'vrt-report-generation',
+  ],
+  'VDS-005': [
+    'vrt-environment-setup',
+    'vrt-chamber-init',
+    'vrt-network-config',
+    'vrt-base-station-setup',
+    'vrt-ota-mapper',
+    'vrt-route-execution',
+    'vrt-kpi-validation',
+    'vrt-report-generation',
+  ],
   'TP-201': ['lib-setup-frequency', 'lib-power-scan', 'lib-measure-kpi', 'lib-export'],
   'TP-317': ['lib-comm-standard', 'lib-load-channel', 'lib-measure-kpi', 'lib-export'],
   'TP-404': ['lib-antenna-pattern', 'lib-load-channel', 'lib-measure-kpi'],
@@ -793,6 +944,9 @@ export const mockDatabase = {
     return probes.length < lengthBefore
   },
   getSequenceLibrary(): SequenceLibraryResponse {
+    const libCount = sequenceLibrary.filter(s => s.id.startsWith('lib-')).length
+    const vrtCount = sequenceLibrary.filter(s => s.id.startsWith('vrt-')).length
+    console.log('[MockDatabase] getSequenceLibrary: lib-*:', libCount, 'vrt-*:', vrtCount, 'total:', sequenceLibrary.length)
     return { library: clone(sequenceLibrary) }
   },
   getTestTemplates(): TestTemplatesResponse {

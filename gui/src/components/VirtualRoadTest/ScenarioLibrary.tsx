@@ -1,7 +1,6 @@
 /**
- * Scenario Library Component
- *
- * Browse and manage road test scenarios
+ * 场景库组件
+ * 浏览和管理路测场景
  */
 
 import { useState } from 'react'
@@ -15,30 +14,36 @@ import {
   Text,
   Loader,
   Alert,
-  Tabs,
+  Stack,
+  Center,
 } from '@mantine/core'
-import { IconSearch, IconPlus, IconAlertCircle } from '@tabler/icons-react'
+import { IconSearch, IconPlus, IconAlertCircle, IconBooks } from '@tabler/icons-react'
 import { fetchScenarios } from '../../api/roadTestService'
-import type { ScenarioCategory } from '../../types/roadTest'
+import type { ScenarioCategory, TestMode } from '../../types/roadTest'
 import ScenarioCard from './ScenarioCard'
 import { CreateScenarioDialog } from './CreateScenarioDialog'
 
+// 场景分类
 const CATEGORIES: { value: ScenarioCategory; label: string }[] = [
-  { value: 'standard', label: '⭐ Standard (3GPP/CTIA)' },
-  { value: 'functional', label: '🔧 Functional' },
-  { value: 'performance', label: '🚀 Performance' },
-  { value: 'environment', label: '🌍 Environment' },
-  { value: 'extreme', label: '⚠️ Extreme' },
-  { value: 'custom', label: '✏️ Custom' },
+  { value: 'standard', label: '标准认证 (3GPP/CTIA)' },
+  { value: 'functional', label: '功能测试' },
+  { value: 'performance', label: '性能测试' },
+  { value: 'environment', label: '环境测试' },
+  { value: 'extreme', label: '极端场景' },
+  { value: 'custom', label: '自定义' },
 ]
 
-export default function ScenarioLibrary() {
+interface ScenarioLibraryProps {
+  testMode?: TestMode
+}
+
+export default function ScenarioLibrary({ testMode }: ScenarioLibraryProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<ScenarioCategory | null>(null)
   const [selectedSource, setSelectedSource] = useState<'standard' | 'custom' | null>(null)
   const [createDialogOpened, setCreateDialogOpened] = useState(false)
 
-  // Fetch scenarios
+  // 获取场景列表
   const {
     data: scenarios,
     isLoading,
@@ -53,7 +58,7 @@ export default function ScenarioLibrary() {
       }),
   })
 
-  // Filter scenarios by search query
+  // 按搜索词过滤场景
   const filteredScenarios = scenarios?.filter((s) => {
     const query = searchQuery.toLowerCase()
     return (
@@ -64,11 +69,11 @@ export default function ScenarioLibrary() {
   })
 
   return (
-    <div>
-      {/* Filters */}
-      <Group mb="md">
+    <Stack gap="md">
+      {/* 筛选栏 */}
+      <Group>
         <TextInput
-          placeholder="Search scenarios by name, description, or tags..."
+          placeholder="搜索场景名称、描述或标签..."
           leftSection={<IconSearch size={16} />}
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.currentTarget.value)}
@@ -76,25 +81,25 @@ export default function ScenarioLibrary() {
         />
 
         <Select
-          placeholder="Category"
+          placeholder="场景分类"
           value={selectedCategory}
           onChange={(value) => setSelectedCategory(value as ScenarioCategory | null)}
-          data={[{ value: '', label: 'All Categories' }, ...CATEGORIES]}
+          data={[{ value: '', label: '全部分类' }, ...CATEGORIES]}
           clearable
-          style={{ width: 200 }}
+          style={{ width: 180 }}
         />
 
         <Select
-          placeholder="Source"
+          placeholder="来源"
           value={selectedSource}
           onChange={(value) => setSelectedSource(value as 'standard' | 'custom' | null)}
           data={[
-            { value: '', label: 'All Sources' },
-            { value: 'standard', label: 'Standard' },
-            { value: 'custom', label: 'Custom' },
+            { value: '', label: '全部来源' },
+            { value: 'standard', label: '标准场景' },
+            { value: 'custom', label: '自定义场景' },
           ]}
           clearable
-          style={{ width: 150 }}
+          style={{ width: 140 }}
         />
 
         <Button
@@ -102,49 +107,63 @@ export default function ScenarioLibrary() {
           variant="light"
           onClick={() => setCreateDialogOpened(true)}
         >
-          Create Scenario
+          创建场景
         </Button>
       </Group>
 
-      {/* Scenario Grid */}
+      {/* 加载状态 */}
       {isLoading && (
-        <Group justify="center" py="xl">
+        <Center py="xl">
           <Loader size="md" />
-          <Text c="dimmed">Loading scenarios...</Text>
-        </Group>
+          <Text c="dimmed" ml="md">
+            加载场景中...
+          </Text>
+        </Center>
       )}
 
+      {/* 错误状态 */}
       {error && (
-        <Alert icon={<IconAlertCircle size={16} />} title="Error" color="red" mb="md">
-          Failed to load scenarios: {(error as Error).message}
+        <Alert icon={<IconAlertCircle size={16} />} title="加载失败" color="red">
+          无法加载场景列表: {(error as Error).message}
         </Alert>
       )}
 
+      {/* 空状态 */}
       {filteredScenarios && filteredScenarios.length === 0 && (
-        <Text c="dimmed" ta="center" py="xl">
-          No scenarios found. Try adjusting your filters or create a new scenario.
-        </Text>
+        <Center py="xl">
+          <Stack align="center" gap="sm">
+            <IconBooks size={48} stroke={1.5} color="gray" />
+            <Text c="dimmed" ta="center">
+              未找到匹配的场景
+            </Text>
+            <Text size="sm" c="dimmed" ta="center">
+              尝试调整筛选条件或创建新场景
+            </Text>
+          </Stack>
+        </Center>
       )}
 
+      {/* 场景列表 */}
       {filteredScenarios && filteredScenarios.length > 0 && (
         <>
-          <Text size="sm" c="dimmed" mb="md">
-            Found {filteredScenarios.length} scenario{filteredScenarios.length !== 1 ? 's' : ''}
+          <Text size="sm" c="dimmed">
+            共找到 {filteredScenarios.length} 个场景
           </Text>
 
-          <SimpleGrid
-            cols={{ base: 1, sm: 2, lg: 3 }}
-            spacing="md"
-            verticalSpacing="md"
-          >
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md" verticalSpacing="md">
             {filteredScenarios.map((scenario) => (
-              <ScenarioCard key={scenario.id} scenario={scenario} onRefresh={refetch} />
+              <ScenarioCard
+                key={scenario.id}
+                scenario={scenario}
+                testMode={testMode}
+                onRefresh={refetch}
+              />
             ))}
           </SimpleGrid>
         </>
       )}
 
-      {/* Create Scenario Dialog */}
+      {/* 创建场景对话框 */}
       <CreateScenarioDialog
         opened={createDialogOpened}
         onClose={() => {
@@ -152,6 +171,6 @@ export default function ScenarioLibrary() {
           refetch()
         }}
       />
-    </div>
+    </Stack>
   )
 }

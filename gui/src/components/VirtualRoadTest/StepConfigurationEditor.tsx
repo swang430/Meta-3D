@@ -1,7 +1,8 @@
 /**
  * Step Configuration Editor
  *
- * Editable form for configuring 7 test steps in scenarios
+ * Main editor for configuring 8 test steps in scenarios.
+ * Uses specialized sub-editors for Steps 2, 3, and 8.
  */
 
 import { useState } from 'react'
@@ -18,14 +19,22 @@ import {
   Paper,
 } from '@mantine/core'
 import { IconSettings, IconInfoCircle } from '@tabler/icons-react'
-import type { StepConfiguration } from '../../types/roadTest'
+import type { StepConfiguration, NetworkStepConfig, BaseStationStepConfig, DigitalTwinStepConfig } from '../../types/roadTest'
+import { NetworkStepEditor } from './NetworkStepEditor'
+import { BaseStationStepEditor } from './BaseStationStepEditor'
+import { DigitalTwinStepEditor } from './DigitalTwinStepEditor'
 
 interface Props {
   value?: StepConfiguration
   onChange: (config: StepConfiguration) => void
+  scenarioDefaults?: {
+    band?: string
+    bandwidth_mhz?: number
+    channel_model?: string
+  }
 }
 
-export function StepConfigurationEditor({ value, onChange }: Props) {
+export function StepConfigurationEditor({ value, onChange, scenarioDefaults }: Props) {
   // 跟踪每个步骤是否启用
   const [enabledSteps, setEnabledSteps] = useState({
     chamber_init: !!value?.chamber_init,
@@ -35,6 +44,7 @@ export function StepConfigurationEditor({ value, onChange }: Props) {
     route_execution: !!value?.route_execution,
     kpi_validation: !!value?.kpi_validation,
     report_generation: !!value?.report_generation,
+    environment_setup: !!value?.environment_setup,
   })
 
   // 步骤配置状态
@@ -64,15 +74,69 @@ export function StepConfigurationEditor({ value, onChange }: Props) {
   const getStepDefaults = (stepKey: keyof StepConfiguration) => {
     switch (stepKey) {
       case 'chamber_init':
-        return { chamber_id: 'MPAC-1', timeout_seconds: 300, verify_connections: true, calibrate_position_table: true }
+        return {
+          chamber_id: 'MPAC-1',
+          timeout_seconds: 300,
+          verify_connections: true,
+          calibrate_position_table: true,
+        }
       case 'network_config':
-        return { frequency_mhz: 3500, bandwidth_mhz: 100, technology: '5G NR', timeout_seconds: 240, verify_signal: true }
+        return {
+          authentication: { method: 'open' },
+          ip_config: { mode: 'dhcp' },
+          pdu_session: { type: 'ipv4', sst: 1, dnn: 'internet' },
+          qos: { fiveqi: 9 },
+          applications: { enabled: false, tests: [], sequential: true },
+          verify_registration: true,
+          verify_pdu_session: true,
+          timeout_seconds: 300,
+        } as NetworkStepConfig
       case 'base_station_setup':
-        return { channel_model: 'UMa', num_base_stations: 3, timeout_seconds: 300, verify_coverage: true }
+        return {
+          rf: {
+            frequency_mhz: 3500,
+            bandwidth_mhz: scenarioDefaults?.bandwidth_mhz || 100,
+            scs_khz: 30,
+            duplex_mode: 'TDD',
+            mimo_layers: 4,
+          },
+          cell: {
+            pci: 1,
+            tac: 1,
+            cell_id: 1,
+            plmn: { mcc: '460', mnc: '00' },
+            band: scenarioDefaults?.band || 'n78',
+          },
+          power: { total_power_dbm: 43 },
+          deployment: { num_base_stations: 1, topology: 'single' },
+          antenna: {
+            type: 'sector',
+            mimo_config: '4x4',
+            antenna_height_m: 25,
+            polarization: 'dual',
+            gain_dbi: 18,
+            azimuth_deg: 0,
+            mechanical_tilt_deg: 6,
+          },
+          verify_coverage: true,
+          verify_neighbor_relations: false,
+          verify_signal: true,
+          timeout_seconds: 300,
+        } as BaseStationStepConfig
       case 'ota_mapper':
-        return { route_type: 'urban', update_rate_hz: 10, enable_handover: true, timeout_seconds: 180 }
+        return {
+          route_type: 'urban',
+          update_rate_hz: 10,
+          enable_handover: true,
+          timeout_seconds: 180,
+        }
       case 'route_execution':
-        return { monitor_kpis: true, log_interval_s: 1, auto_screenshot: true, timeout_seconds: 2100 }
+        return {
+          monitor_kpis: true,
+          log_interval_s: 1,
+          auto_screenshot: true,
+          timeout_seconds: 2100,
+        }
       case 'kpi_validation':
         return {
           kpi_thresholds: {
@@ -85,7 +149,23 @@ export function StepConfigurationEditor({ value, onChange }: Props) {
           timeout_seconds: 300,
         }
       case 'report_generation':
-        return { report_format: 'PDF', include_raw_data: false, include_screenshots: true, include_recommendations: true, timeout_seconds: 180 }
+        return {
+          report_format: 'PDF',
+          include_raw_data: false,
+          include_screenshots: true,
+          include_recommendations: true,
+          timeout_seconds: 180,
+        }
+      case 'environment_setup':
+        return {
+          channel_model: {
+            type: 'statistical',
+            use_scenario_default: true,
+          },
+          validate_environment: true,
+          export_channel_data: false,
+          timeout_seconds: 600,
+        } as DigitalTwinStepConfig
       default:
         return {}
     }
@@ -93,13 +173,13 @@ export function StepConfigurationEditor({ value, onChange }: Props) {
 
   return (
     <Stack gap="md">
-      <Alert icon={<IconInfoCircle size={16} />} title="预配置步骤参数" color="blue">
+      <Alert icon={<IconInfoCircle size={16} />} title="测试步骤配置" color="blue">
         <Stack gap="xs">
           <Text size="sm">
-            开启某个步骤的开关后，可以自定义该步骤的参数（如暗室ID、频率、KPI阈值等）。
+            开启某个步骤的开关后，可以自定义该步骤的参数。
           </Text>
           <Text size="sm" c="dimmed">
-            未开启的步骤将使用系统默认值。所有7个步骤都会出现在测试计划中。
+            未开启的步骤将使用系统默认值。场景定义中的参数会作为步骤配置的默认值。
           </Text>
         </Stack>
       </Alert>
@@ -155,11 +235,11 @@ export function StepConfigurationEditor({ value, onChange }: Props) {
           </Accordion.Panel>
         </Accordion.Item>
 
-        {/* 步骤2: 配置网络 */}
+        {/* 步骤2: 配置网络 (Core Network) */}
         <Accordion.Item value="network_config">
           <Accordion.Control icon={<IconSettings size={20} />}>
             <Group justify="space-between" style={{ width: '100%', paddingRight: '1rem' }}>
-              <Text fw={600}>步骤2: 配置网络</Text>
+              <Text fw={600}>步骤2: 配置网络 (核心网)</Text>
               <Switch
                 checked={enabledSteps.network_config}
                 onChange={(e) => {
@@ -174,51 +254,19 @@ export function StepConfigurationEditor({ value, onChange }: Props) {
           </Accordion.Control>
           <Accordion.Panel>
             {enabledSteps.network_config && (
-              <Paper p="md" withBorder>
-                <Stack gap="sm">
-                  <NumberInput
-                    label="频率 (MHz)"
-                    value={config.network_config?.frequency_mhz || 3500}
-                    onChange={(val) => updateConfig('network_config', { ...config.network_config, frequency_mhz: val })}
-                    min={600}
-                    max={6000}
-                  />
-                  <NumberInput
-                    label="带宽 (MHz)"
-                    value={config.network_config?.bandwidth_mhz || 100}
-                    onChange={(val) => updateConfig('network_config', { ...config.network_config, bandwidth_mhz: val })}
-                    min={5}
-                    max={400}
-                  />
-                  <Select
-                    label="技术"
-                    data={['5G NR', 'LTE', 'C-V2X']}
-                    value={config.network_config?.technology || '5G NR'}
-                    onChange={(val) => updateConfig('network_config', { ...config.network_config, technology: val })}
-                  />
-                  <NumberInput
-                    label="超时时间（秒）"
-                    value={config.network_config?.timeout_seconds || 240}
-                    onChange={(val) => updateConfig('network_config', { ...config.network_config, timeout_seconds: val })}
-                    min={60}
-                    max={600}
-                  />
-                  <Switch
-                    label="验证信号"
-                    checked={config.network_config?.verify_signal ?? true}
-                    onChange={(e) => updateConfig('network_config', { ...config.network_config, verify_signal: e.currentTarget.checked })}
-                  />
-                </Stack>
-              </Paper>
+              <NetworkStepEditor
+                value={config.network_config as NetworkStepConfig}
+                onChange={(val) => updateConfig('network_config', val)}
+              />
             )}
           </Accordion.Panel>
         </Accordion.Item>
 
-        {/* 步骤3: 设置基站和信道模型 */}
+        {/* 步骤3: 设置基站 (RAN) */}
         <Accordion.Item value="base_station_setup">
           <Accordion.Control icon={<IconSettings size={20} />}>
             <Group justify="space-between" style={{ width: '100%', paddingRight: '1rem' }}>
-              <Text fw={600}>步骤3: 设置基站和信道模型</Text>
+              <Text fw={600}>步骤3: 配置基站 (无线接入网)</Text>
               <Switch
                 checked={enabledSteps.base_station_setup}
                 onChange={(e) => {
@@ -233,35 +281,11 @@ export function StepConfigurationEditor({ value, onChange }: Props) {
           </Accordion.Control>
           <Accordion.Panel>
             {enabledSteps.base_station_setup && (
-              <Paper p="md" withBorder>
-                <Stack gap="sm">
-                  <Select
-                    label="信道模型"
-                    data={['UMa', 'UMi', 'RMa', 'InH', 'CDL-A', 'CDL-B', 'CDL-C', 'TDL-A', 'TDL-B', 'TDL-C']}
-                    value={config.base_station_setup?.channel_model || 'UMa'}
-                    onChange={(val) => updateConfig('base_station_setup', { ...config.base_station_setup, channel_model: val })}
-                  />
-                  <NumberInput
-                    label="基站数量"
-                    value={config.base_station_setup?.num_base_stations || 3}
-                    onChange={(val) => updateConfig('base_station_setup', { ...config.base_station_setup, num_base_stations: val })}
-                    min={1}
-                    max={10}
-                  />
-                  <NumberInput
-                    label="超时时间（秒）"
-                    value={config.base_station_setup?.timeout_seconds || 300}
-                    onChange={(val) => updateConfig('base_station_setup', { ...config.base_station_setup, timeout_seconds: val })}
-                    min={60}
-                    max={600}
-                  />
-                  <Switch
-                    label="验证覆盖"
-                    checked={config.base_station_setup?.verify_coverage ?? true}
-                    onChange={(e) => updateConfig('base_station_setup', { ...config.base_station_setup, verify_coverage: e.currentTarget.checked })}
-                  />
-                </Stack>
-              </Paper>
+              <BaseStationStepEditor
+                value={config.base_station_setup as BaseStationStepConfig}
+                onChange={(val) => updateConfig('base_station_setup', val)}
+                scenarioDefaults={scenarioDefaults}
+              />
             )}
           </Accordion.Panel>
         </Accordion.Item>
@@ -518,6 +542,34 @@ export function StepConfigurationEditor({ value, onChange }: Props) {
                   />
                 </Stack>
               </Paper>
+            )}
+          </Accordion.Panel>
+        </Accordion.Item>
+
+        {/* 步骤8: 配置数字孪生环境 */}
+        <Accordion.Item value="environment_setup">
+          <Accordion.Control icon={<IconSettings size={20} />}>
+            <Group justify="space-between" style={{ width: '100%', paddingRight: '1rem' }}>
+              <Text fw={600}>步骤8: 配置数字孪生环境</Text>
+              <Switch
+                checked={enabledSteps.environment_setup}
+                onChange={(e) => {
+                  e.stopPropagation()
+                  toggleStep('environment_setup', e.currentTarget.checked)
+                }}
+                onClick={(e) => e.stopPropagation()}
+                label={enabledSteps.environment_setup ? '自定义' : '默认'}
+                size="sm"
+              />
+            </Group>
+          </Accordion.Control>
+          <Accordion.Panel>
+            {enabledSteps.environment_setup && (
+              <DigitalTwinStepEditor
+                value={config.environment_setup as DigitalTwinStepConfig}
+                onChange={(val) => updateConfig('environment_setup', val)}
+                scenarioChannelModel={scenarioDefaults?.channel_model}
+              />
             )}
           </Accordion.Panel>
         </Accordion.Item>

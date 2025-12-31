@@ -1,8 +1,8 @@
 # 测试管理统一架构设计
 
-> **版本**: 2.0
-> **日期**: 2025-11-18
-> **状态**: 设计阶段
+> **版本**: 3.0
+> **日期**: 2025-12-31
+> **状态**: 已实现
 > **目标**: 整合 TestConfig 和 TestPlanManagement，构建企业级测试管理平台
 
 ---
@@ -10,15 +10,16 @@
 ## 📋 目录
 
 1. [背景与动机](#背景与动机)
-2. [架构概览](#架构概览)
-3. [核心设计](#核心设计)
-4. [数据模型](#数据模型)
-5. [API 设计](#api-设计)
-6. [组件结构](#组件结构)
-7. [状态管理](#状态管理)
-8. [用户工作流](#用户工作流)
-9. [实施路线图](#实施路线图)
-10. [迁移策略](#迁移策略)
+2. [测试步骤来源](#测试步骤来源)
+3. [架构概览](#架构概览)
+4. [核心设计](#核心设计)
+5. [数据模型](#数据模型)
+6. [API 设计](#api-设计)
+7. [组件结构](#组件结构)
+8. [状态管理](#状态管理)
+9. [用户工作流](#用户工作流)
+10. [实施路线图](#实施路线图)
+11. [迁移策略](#迁移策略)
 
 ---
 
@@ -77,6 +78,94 @@ TestConfig 精华        +        TestPlanManagement 精华
             统一测试管理平台
        (Unified Test Management)
 ```
+
+---
+
+## 测试步骤来源
+
+测试管理系统中的测试步骤来自两个不同的来源，每种来源有不同的用途和特点：
+
+### 步骤来源概览
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Test Plan Steps                          │
+├─────────────────────────┬───────────────────────────────────┤
+│  Virtual Road Test      │  Generic Test Steps               │
+│  (虚拟路测步骤)          │  (通用测试步骤)                    │
+├─────────────────────────┼───────────────────────────────────┤
+│  8 predefined steps:    │  Flexible custom steps:           │
+│  • environment_setup    │  • configure_instrument           │
+│  • chamber_init         │  • run_measurement                │
+│  • network_config       │  • validate_result                │
+│  • base_station_setup   │  • generate_report                │
+│  • ota_mapper           │  • wait                           │
+│  • route_execution      │  • custom                         │
+│  • kpi_validation       │                                   │
+│  • report_generation    │  Parameters: JSON (flexible)      │
+├─────────────────────────┴───────────────────────────────────┤
+│  Auto-generated from     │  Manual creation via              │
+│  scenario.step_config    │  sequence library                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 1. Virtual Road Test Steps (虚拟路测步骤)
+
+**来源**: `scenario.step_configuration`
+
+当创建基于虚拟路测场景的测试计划时，系统自动生成8个预定义步骤：
+
+| 步骤 | 名称 | 功能 |
+|------|------|------|
+| 1 | Configure Digital Twin Environment | 配置数字孪生环境 |
+| 2 | Initialize OTA Chamber (MPAC) | 初始化暗室和转台 |
+| 3 | Configure Network | 配置网络参数 |
+| 4 | Setup Base Stations and Channel Model | 配置基站和信道模型 |
+| 5 | Configure OTA Mapper | 配置OTA映射器 |
+| 6 | Execute Route Test | 执行路径测试 |
+| 7 | Validate KPIs and Performance Metrics | 验证KPI指标 |
+| 8 | Generate Test Report | 生成测试报告 |
+
+**参数优先级**:
+```
+scenario.step_configuration > test_environment > 默认值
+```
+
+**实现位置**: `api-service/app/services/test_plan_service.py:60-217`
+
+### 2. Generic Test Steps (通用测试步骤)
+
+**来源**: 序列库 (Sequence Library) + 手动创建
+
+通用测试步骤支持灵活的自定义配置，适用于非虚拟路测场景：
+
+| 步骤类型 | 用途 |
+|----------|------|
+| `configure_instrument` | 配置测试仪器 |
+| `run_measurement` | 执行测量 |
+| `validate_result` | 验证测试结果 |
+| `generate_report` | 生成报告 |
+| `wait` | 等待/延时 |
+| `custom` | 自定义操作 |
+
+**参数结构**: 灵活的 JSON 格式
+```json
+{
+  "instrument_id": "channel_emulator_1",
+  "measurement_type": "throughput",
+  "frequency_mhz": 3700,
+  "power_dbm": -10,
+  "custom_key": "custom_value"
+}
+```
+
+**Schema 定义**: `api-service/app/schemas/test_plan.py:326-408`
+
+### 参数速查
+
+完整的参数列表请参考:
+- [参数速查表 (手动维护)](../virtual-road-test/parameter-reference.md)
+- [参数速查表 (自动生成)](../virtual-road-test/parameter-reference-generated.md)
 
 ---
 
@@ -302,31 +391,88 @@ interface UnifiedTestPlan {
 
 #### 2. TestStep（测试步骤）
 
+**当前实现** (基于 `api-service/app/schemas/test_plan.py:370-402`)
+
 ```typescript
 interface TestStep {
-  id: string
+  // ===== 标识信息 =====
+  id: UUID
+  test_plan_id: UUID
+  sequence_library_id?: UUID           // 关联序列库模板 (可选)
+
+  // ===== 步骤元数据 =====
+  step_number?: number                 // 步骤序号
+  name?: string                        // 步骤名称
+  description?: string                 // 步骤描述
+  type?: string                        // 步骤类型 (configure_instrument, run_measurement, etc.)
+  category?: string                    // 步骤分类 (从序列库继承)
+
+  // ===== 参数配置 =====
+  parameters?: Record<string, any>     // 灵活的 JSON 参数
+
+  // ===== 执行配置 =====
   order: number                        // 执行顺序
+  timeout_seconds?: number             // 超时时间 (默认: 300s)
+  retry_count?: number                 // 重试次数 (默认: 0)
+  continue_on_failure?: boolean        // 失败是否继续 (默认: false)
+  expected_duration_minutes?: number   // 预期时长
 
-  // 序列库关联 (from TestConfig)
-  sequence_library_id: string          // 关联序列库模板
-
-  // 步骤元数据
-  title: string
-  description: string
-  category: string                     // 步骤分类
-
-  // 参数配置 (from TestConfig)
-  parameters: Record<string, StepParameter>
-
-  // 执行配置
-  timeout_seconds?: number             // 超时时间
-  retry_count?: number                 // 重试次数
-  continue_on_failure: boolean         // 失败是否继续
-
-  // 状态
-  status?: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
+  // ===== 执行状态 =====
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
   result?: string                      // 执行结果
   error_message?: string               // 错误信息
+  actual_duration_minutes?: number     // 实际时长
+  started_at?: datetime                // 开始时间
+  completed_at?: datetime              // 完成时间
+
+  // ===== 验证配置 =====
+  validation_criteria?: {
+    min_value?: number
+    max_value?: number
+    unit?: string
+    pass_condition?: string            // ">=", "<=", "==", etc.
+    tolerance_percent?: number
+  }
+
+  // ===== 元数据 =====
+  notes?: string
+  tags?: string[]
+  created_at: datetime
+  updated_at: datetime
+
+  // ===== 前端兼容字段 =====
+  title?: string                       // 从 sequence.name 填充
+}
+```
+
+**创建步骤的两种方式**:
+
+1. **从序列库创建** (`TestStepCreateFromSequence`):
+```typescript
+{
+  sequence_library_id: UUID,           // 必填: 序列库ID
+  order: number,                       // 必填: 执行顺序
+  parameters?: Record<string, any>,    // 可选: 覆盖参数
+  timeout_seconds?: number,            // 可选: 超时 (默认: 300)
+  retry_count?: number,                // 可选: 重试次数 (默认: 0)
+  continue_on_failure?: boolean        // 可选: 失败继续 (默认: false)
+}
+```
+
+2. **手动创建** (`TestStepCreate`):
+```typescript
+{
+  test_plan_id: UUID,                  // 必填: 测试计划ID
+  step_number: number,                 // 必填: 步骤序号
+  name: string,                        // 必填: 步骤名称
+  type: string,                        // 必填: 步骤类型
+  order: number,                       // 必填: 执行顺序
+  parameters?: Record<string, any>,    // 可选: 步骤参数
+  description?: string,
+  expected_duration_minutes?: number,
+  validation_criteria?: object,
+  notes?: string,
+  tags?: string[]
 }
 ```
 
@@ -1125,133 +1271,80 @@ export function useReorderSteps() {
 
 ## 实施路线图
 
-### Phase 1: 基础架构（Week 1）
+> **状态**: 所有阶段已完成 ✅
+
+### Phase 1: 基础架构 ✅ 已完成
 
 **目标**: 搭建新的目录结构和基础设施
 
-**任务**:
-- [x] 创建 `gui/src/features/TestManagement/` 目录
-- [x] 设置 TypeScript 类型定义文件
-- [x] 创建统一 API 客户端 (testManagementAPI.ts)
+**完成内容**:
+- [x] 创建 `gui/src/components/TestPlanManagement/` 目录
+- [x] 设置 TypeScript 类型定义文件 (`gui/src/types/testPlan.ts`)
+- [x] 创建统一 API 客户端
 - [x] 设置 TanStack Query hooks 基础结构
-- [x] 创建主容器组件 (TestManagement.tsx)
-
-**交付物**:
-- 完整的目录结构
-- 基础类型定义
-- API 客户端框架
-- 空的 Tab 容器
+- [x] 创建主容器组件 (`TestPlanManagement.tsx`)
 
 ---
 
-### Phase 2: Plans Tab 迁移（Week 2）
+### Phase 2: Plans Tab 实现 ✅ 已完成
 
-**目标**: 迁移并增强计划管理功能
+**目标**: 计划管理功能
 
-**任务**:
-- [x] 从 TestPlanManagement 迁移计划列表组件
-- [x] 实现过滤和搜索功能
-- [x] 创建/编辑向导整合
-- [x] 快捷操作菜单
+**完成内容**:
+- [x] 计划列表组件 (`TestPlanList.tsx`)
+- [x] 过滤和搜索功能
+- [x] 创建向导 (`CreateTestPlanWizard.tsx`)
+- [x] 编辑向导 (`EditTestPlanWizard.tsx`)
 - [x] 状态徽章和进度条
 
-**交付物**:
-- 功能完整的 Plans Tab
-- 计划 CRUD 操作
-- 向导式创建流程
+---
+
+### Phase 3: Steps 实现 ✅ 已完成
+
+**目标**: 步骤管理核心功能
+
+**完成内容**:
+- [x] 后端 API: `/plans/{id}/steps` 端点
+- [x] TestStep Schema 定义 (`test_plan.py:326-408`)
+- [x] 虚拟路测自动步骤生成 (`test_plan_service.py:60-217`)
+- [x] 序列库集成 (8个 Road Test 序列)
+- [x] 步骤参数优先级系统
 
 ---
 
-### Phase 3: Steps Tab 实现（Week 3-4）⭐ **核心工作**
+### Phase 4: Queue & History 实现 ✅ 已完成
 
-**目标**: 实现步骤编排核心功能
+**目标**: 队列和历史功能
 
-**任务**:
-- [x] 从 TestConfig 提取步骤列表组件
-- [x] 实现拖拽排序 (dnd-kit)
-- [x] 创建参数编辑器（动态表单）
-- [x] 序列库选择器模态框
-- [x] 后端 API: `/plans/{id}/steps` 端点实现
-- [x] 步骤 CRUD 操作 hooks
-- [x] 乐观更新实现
-
-**交付物**:
-- 功能完整的 Steps Tab
-- 拖拽排序
-- 动态参数表单
-- 序列库集成
-
----
-
-### Phase 4: Queue & History Tab 迁移（Week 5）
-
-**目标**: 迁移队列和历史功能
-
-**任务**:
-- [x] 从 TestPlanManagement 迁移队列组件
+**完成内容**:
+- [x] 执行队列组件 (`TestQueue.tsx`)
 - [x] 队列重排序功能
-- [x] 执行控制按钮
-- [x] 自动刷新机制 (10s)
-- [x] 历史记录表格
+- [x] 执行控制按钮 (开始/暂停/取消)
+- [x] 执行历史组件 (`TestExecutionHistory.tsx`)
 - [x] 统计卡片组件
 
-**交付物**:
-- 功能完整的 Queue Tab
-- 功能完整的 History Tab
-
 ---
 
-### Phase 5: 数据流整合（Week 6）
+### Phase 5: 数据流整合 ✅ 已完成
 
-**目标**: 实现跨 Tab 数据同步
+**目标**: 跨组件数据同步
 
-**任务**:
-- [x] 统一 Query Keys 命名
-- [x] 实现 Query 无效化策略
-- [x] 跨 Tab 导航状态保持
-- [x] 乐观更新优化
+**完成内容**:
+- [x] TanStack Query 状态管理
+- [x] WebSocket 实时监控
 - [x] 错误处理和重试逻辑
 
-**交付物**:
-- 流畅的跨 Tab 体验
-- 一致的数据状态
-
 ---
 
-### Phase 6: UI/UX 优化（Week 7）
+### Phase 6: Virtual Road Test 集成 ✅ 已完成
 
-**目标**: 提升用户体验
+**目标**: 虚拟路测与测试管理整合
 
-**任务**:
-- [x] 统一 Mantine 主题
-- [x] 加载骨架屏
-- [x] 空状态插图
-- [x] 响应式布局 (平板/手机)
-- [x] 快捷键支持 (Cmd+K 搜索)
-- [x] Toast 通知优化
-
-**交付物**:
-- 精致的 UI
-- 流畅的动画
-- 响应式设计
-
----
-
-### Phase 7: 测试与部署（Week 8）
-
-**目标**: 确保质量和稳定性
-
-**任务**:
-- [x] 单元测试 (Vitest + Testing Library)
-- [x] 集成测试
-- [x] E2E 测试 (Playwright)
-- [x] 性能优化 (React.memo, useMemo)
-- [x] 文档更新
-
-**交付物**:
-- 测试覆盖率 > 80%
-- 性能基准报告
-- 完整文档
+**完成内容**:
+- [x] Scenario → TestPlan 转换
+- [x] step_configuration 自动继承
+- [x] 8个预定义步骤自动生成
+- [x] 参数优先级系统
 
 ---
 
@@ -1373,6 +1466,13 @@ const USE_NEW_TEST_MANAGEMENT =
 
 ## 变更日志
 
+### v3.0.0 (2025-12-31)
+- ✅ 更新文档状态为"已实现"
+- 📝 新增"测试步骤来源"章节，详细说明两种步骤类型
+- 🔄 更新 TestStep 数据模型，反映当前实现
+- 📊 更新实施路线图，标记所有阶段已完成
+- 🔗 添加参数速查表引用链接
+
 ### v2.0.0 (2025-11-18)
 - 🎉 Initial unified architecture design
 - 📝 Complete data model specification
@@ -1381,6 +1481,14 @@ const USE_NEW_TEST_MANAGEMENT =
 
 ---
 
+## 相关文档
+
+- [参数速查表 (手动维护)](../virtual-road-test/parameter-reference.md) - 所有参数一览
+- [参数速查表 (自动生成)](../virtual-road-test/parameter-reference-generated.md) - 从 Schema 自动生成
+- [步骤配置指南](../virtual-road-test/step-configuration.md) - 虚拟路测步骤配置详解
+
+---
+
 **文档维护者**: Claude Code
-**最后更新**: 2025-11-18
-**审核状态**: ✅ Approved for Implementation
+**最后更新**: 2025-12-31
+**审核状态**: ✅ 已实现并验证

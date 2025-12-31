@@ -4,6 +4,12 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      // react-plotly.js expects plotly.js/dist/plotly, but we use the minified dist
+      'plotly.js/dist/plotly': 'plotly.js-dist-min',
+    },
+  },
   server: {
     proxy: {
       // WebSocket proxy - must be before /api to match first

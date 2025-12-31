@@ -20,6 +20,7 @@ const STEP_NAMES = {
   route_execution: '步骤5: 执行路径测试',
   kpi_validation: '步骤6: 验证KPI和性能指标',
   report_generation: '步骤7: 生成测试报告',
+  environment_setup: '步骤8: 配置数字孪生环境',
 }
 
 export function StepConfigurationDisplay({ stepConfiguration }: Props) {
@@ -506,6 +507,131 @@ export function StepConfigurationDisplay({ stepConfiguration }: Props) {
                 </Text>
                 <Text size="sm" fw={500}>
                   {stepConfiguration.report_generation.timeout_seconds} 秒
+                </Text>
+              </Group>
+            )}
+          </Stack>
+        </Paper>
+      )}
+
+      {/* Environment Setup - Step 8 */}
+      {stepConfiguration.environment_setup && (
+        <Paper p="md" withBorder>
+          <Group mb="sm">
+            <Badge color="teal" variant="light">
+              步骤 8
+            </Badge>
+            <Text fw={600}>{STEP_NAMES.environment_setup}</Text>
+          </Group>
+          <Stack gap="xs">
+            {stepConfiguration.environment_setup.environment_file && (
+              <Group gap="xs">
+                <Text size="sm" c="dimmed" w={180}>
+                  环境文件:
+                </Text>
+                <Text size="sm" fw={500}>
+                  {stepConfiguration.environment_setup.environment_file}
+                </Text>
+              </Group>
+            )}
+            {stepConfiguration.environment_setup.channel_model && (
+              <>
+                <Text size="sm" c="dimmed" mb={4}>
+                  信道模型:
+                </Text>
+                <Stack gap={4} pl="md">
+                  {stepConfiguration.environment_setup.channel_model.type && (
+                    <Group gap="xs">
+                      <Text size="sm" c="dimmed" w={160}>
+                        类型:
+                      </Text>
+                      <Badge size="sm" color="cyan">
+                        {stepConfiguration.environment_setup.channel_model.type}
+                      </Badge>
+                    </Group>
+                  )}
+                  {stepConfiguration.environment_setup.channel_model.scenario && (
+                    <Group gap="xs">
+                      <Text size="sm" c="dimmed" w={160}>
+                        场景:
+                      </Text>
+                      <Text size="sm" fw={500}>
+                        {stepConfiguration.environment_setup.channel_model.scenario}
+                      </Text>
+                    </Group>
+                  )}
+                  {stepConfiguration.environment_setup.channel_model.los_condition && (
+                    <Group gap="xs">
+                      <Text size="sm" c="dimmed" w={160}>
+                        LOS条件:
+                      </Text>
+                      <Text size="sm" fw={500}>
+                        {stepConfiguration.environment_setup.channel_model.los_condition}
+                      </Text>
+                    </Group>
+                  )}
+                </Stack>
+              </>
+            )}
+            {stepConfiguration.environment_setup.interference !== undefined && (
+              <Group gap="xs">
+                <Text size="sm" c="dimmed" w={180}>
+                  干扰仿真:
+                </Text>
+                <Badge size="sm" color={stepConfiguration.environment_setup.interference.enabled ? 'orange' : 'gray'}>
+                  {stepConfiguration.environment_setup.interference.enabled ? '启用' : '禁用'}
+                </Badge>
+                {stepConfiguration.environment_setup.interference.enabled &&
+                  stepConfiguration.environment_setup.interference.sources && (
+                    <Text size="xs" c="dimmed">
+                      ({stepConfiguration.environment_setup.interference.sources.length} 个干扰源)
+                    </Text>
+                  )}
+              </Group>
+            )}
+            {stepConfiguration.environment_setup.scatterers !== undefined && (
+              <Group gap="xs">
+                <Text size="sm" c="dimmed" w={180}>
+                  移动散射体:
+                </Text>
+                <Badge size="sm" color={stepConfiguration.environment_setup.scatterers.enabled ? 'violet' : 'gray'}>
+                  {stepConfiguration.environment_setup.scatterers.enabled ? '启用' : '禁用'}
+                </Badge>
+                {stepConfiguration.environment_setup.scatterers.enabled &&
+                  stepConfiguration.environment_setup.scatterers.sources && (
+                    <Text size="xs" c="dimmed">
+                      ({stepConfiguration.environment_setup.scatterers.sources.length} 个散射体)
+                    </Text>
+                  )}
+              </Group>
+            )}
+            {stepConfiguration.environment_setup.precompute_channel !== undefined && (
+              <Group gap="xs">
+                <Text size="sm" c="dimmed" w={180}>
+                  预计算信道:
+                </Text>
+                <Badge size="sm" color={stepConfiguration.environment_setup.precompute_channel.enabled ? 'green' : 'gray'}>
+                  {stepConfiguration.environment_setup.precompute_channel.enabled ? '是' : '否'}
+                </Badge>
+              </Group>
+            )}
+            {stepConfiguration.environment_setup.validate_environment !== undefined && (
+              <Group gap="xs">
+                <Text size="sm" c="dimmed" w={180}>
+                  验证环境:
+                </Text>
+                <Badge size="sm" color={stepConfiguration.environment_setup.validate_environment ? 'green' : 'gray'}>
+                  {stepConfiguration.environment_setup.validate_environment ? '是' : '否'}
+                </Badge>
+              </Group>
+            )}
+            {stepConfiguration.environment_setup.timeout_seconds !== undefined && (
+              <Group gap="xs">
+                <Text size="sm" c="dimmed" w={180}>
+                  超时时间:
+                </Text>
+                <Text size="sm" fw={500}>
+                  {stepConfiguration.environment_setup.timeout_seconds} 秒
                 </Text>
               </Group>
             )}

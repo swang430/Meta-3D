@@ -383,3 +383,9 @@ class ScenarioSummary(BaseModel):
     created_at: Optional[datetime]
     author: Optional[str]
     step_configuration: Optional[StepConfiguration] = None
+    # Extended fields for editing
+    network_type: Optional[str] = None
+    band: Optional[str] = None
+    bandwidth_mhz: Optional[float] = None
+    channel_model: Optional[str] = None
+    avg_speed_kmh: Optional[float] = None

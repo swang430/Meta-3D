@@ -592,6 +592,12 @@ interface TestDataRecord {
 
 **总计**: 21份设计文档，预计450-550页
 
+### 已完成文档
+
+| # | 文档名称 | 所属子系统 | 状态 |
+|---|---------|-----------|------|
+| 1 | [Data-Architecture-Guide.md](Data-Architecture-Guide.md) | 数据管理 | ✅ 已完成 |
+
 ---
 
 ## 🎯 关键决策点
