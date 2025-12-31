@@ -5,7 +5,7 @@
  * Uses specialized sub-editors for Steps 2, 3, and 8.
  */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Accordion,
   Stack,
@@ -49,6 +49,21 @@ export function StepConfigurationEditor({ value, onChange, scenarioDefaults }: P
 
   // 步骤配置状态
   const [config, setConfig] = useState<StepConfiguration>(value || {})
+
+  // 同步外部 value 变化到内部状态
+  useEffect(() => {
+    setConfig(value || {})
+    setEnabledSteps({
+      chamber_init: !!value?.chamber_init,
+      network_config: !!value?.network_config,
+      base_station_setup: !!value?.base_station_setup,
+      ota_mapper: !!value?.ota_mapper,
+      route_execution: !!value?.route_execution,
+      kpi_validation: !!value?.kpi_validation,
+      report_generation: !!value?.report_generation,
+      environment_setup: !!value?.environment_setup,
+    })
+  }, [value])
 
   const updateConfig = (stepKey: keyof StepConfiguration, stepData: any) => {
     const newConfig = { ...config, [stepKey]: stepData }
