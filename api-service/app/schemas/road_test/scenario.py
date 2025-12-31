@@ -352,6 +352,7 @@ class ScenarioCreate(BaseModel):
         default_factory=list
     )
     kpi_definitions: List[KPIDefinition]
+    step_configuration: Optional[StepConfiguration] = None
 
 
 class ScenarioUpdate(BaseModel):
@@ -368,6 +369,7 @@ class ScenarioUpdate(BaseModel):
     traffic: Optional[TrafficConfig] = None
     events: Optional[List[Union[HandoverEvent, BeamSwitchEvent, RFImpairmentEvent, TrafficBurstEvent]]] = None
     kpi_definitions: Optional[List[KPIDefinition]] = None
+    step_configuration: Optional[StepConfiguration] = None
 
 
 class ScenarioSummary(BaseModel):
