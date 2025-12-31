@@ -155,8 +155,45 @@ const BEAM_MODES = [
   { value: 'eigenvalue', label: '特征值波束' },
 ]
 
+// Deep merge helper to ensure all nested properties have defaults
+function mergeWithDefaults(value?: Partial<BaseStationStepConfig>): BaseStationStepConfig {
+  if (!value) return DEFAULT_CONFIG
+  return {
+    rf: {
+      ...DEFAULT_CONFIG.rf,
+      ...value.rf,
+    },
+    cell: {
+      ...DEFAULT_CONFIG.cell,
+      ...value.cell,
+      plmn: {
+        ...DEFAULT_CONFIG.cell.plmn,
+        ...value.cell?.plmn,
+      },
+    },
+    power: {
+      ...DEFAULT_CONFIG.power,
+      ...value.power,
+    },
+    deployment: {
+      ...DEFAULT_CONFIG.deployment,
+      ...value.deployment,
+    },
+    antenna: {
+      ...DEFAULT_CONFIG.antenna,
+      ...value.antenna,
+    },
+    beamforming: value.beamforming,
+    handover: value.handover,
+    verify_coverage: value.verify_coverage ?? DEFAULT_CONFIG.verify_coverage,
+    verify_neighbor_relations: value.verify_neighbor_relations ?? DEFAULT_CONFIG.verify_neighbor_relations,
+    verify_signal: value.verify_signal ?? DEFAULT_CONFIG.verify_signal,
+    timeout_seconds: value.timeout_seconds ?? DEFAULT_CONFIG.timeout_seconds,
+  }
+}
+
 export function BaseStationStepEditor({ value, onChange, scenarioDefaults }: Props) {
-  const config = value || DEFAULT_CONFIG
+  const config = mergeWithDefaults(value)
 
   const updateConfig = <K extends keyof BaseStationStepConfig>(
     key: K,

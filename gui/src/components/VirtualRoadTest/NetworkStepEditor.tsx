@@ -115,8 +115,39 @@ const APP_TYPES: { value: ApplicationType; label: string; icon: string }[] = [
   { value: 'ping', label: 'Ping测试', icon: '📡' },
 ]
 
+// Deep merge helper to ensure all nested properties have defaults
+function mergeWithDefaults(value?: Partial<NetworkStepConfig>): NetworkStepConfig {
+  if (!value) return DEFAULT_CONFIG
+  return {
+    authentication: {
+      ...DEFAULT_CONFIG.authentication,
+      ...value.authentication,
+    },
+    ip_config: {
+      ...DEFAULT_CONFIG.ip_config,
+      ...value.ip_config,
+    },
+    pdu_session: {
+      ...DEFAULT_CONFIG.pdu_session,
+      ...value.pdu_session,
+    },
+    qos: {
+      ...DEFAULT_CONFIG.qos,
+      ...value.qos,
+    },
+    applications: {
+      ...DEFAULT_CONFIG.applications,
+      ...value.applications,
+      tests: value.applications?.tests || DEFAULT_CONFIG.applications.tests,
+    },
+    verify_registration: value.verify_registration ?? DEFAULT_CONFIG.verify_registration,
+    verify_pdu_session: value.verify_pdu_session ?? DEFAULT_CONFIG.verify_pdu_session,
+    timeout_seconds: value.timeout_seconds ?? DEFAULT_CONFIG.timeout_seconds,
+  }
+}
+
 export function NetworkStepEditor({ value, onChange }: Props) {
-  const config = value || DEFAULT_CONFIG
+  const config = mergeWithDefaults(value)
 
   const updateConfig = <K extends keyof NetworkStepConfig>(
     key: K,

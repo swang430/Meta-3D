@@ -115,8 +115,30 @@ const EXPORT_FORMATS = [
   { value: 'csv', label: 'CSV' },
 ]
 
+// Deep merge helper to ensure all nested properties have defaults
+function mergeWithDefaults(value?: Partial<DigitalTwinStepConfig>): DigitalTwinStepConfig {
+  if (!value) return DEFAULT_CONFIG
+  return {
+    channel_model: {
+      ...DEFAULT_CONFIG.channel_model,
+      ...value.channel_model,
+    },
+    ray_tracing: value.ray_tracing,
+    measured_channel: value.measured_channel,
+    hybrid: value.hybrid,
+    interference: value.interference,
+    scatterers: value.scatterers,
+    weather: value.weather,
+    doppler: value.doppler,
+    validate_environment: value.validate_environment ?? DEFAULT_CONFIG.validate_environment,
+    export_channel_data: value.export_channel_data ?? DEFAULT_CONFIG.export_channel_data,
+    export_format: value.export_format,
+    timeout_seconds: value.timeout_seconds ?? DEFAULT_CONFIG.timeout_seconds,
+  }
+}
+
 export function DigitalTwinStepEditor({ value, onChange, scenarioChannelModel }: Props) {
-  const config = value || DEFAULT_CONFIG
+  const config = mergeWithDefaults(value)
 
   const updateConfig = <K extends keyof DigitalTwinStepConfig>(
     key: K,
