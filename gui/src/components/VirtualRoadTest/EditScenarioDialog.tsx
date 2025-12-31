@@ -125,14 +125,18 @@ export function EditScenarioDialog({ opened, onClose, scenario }: Props) {
           weather: 'clear',
           traffic_density: 'medium',
         },
-        ...(formData.stepConfiguration && {
-          step_configuration: formData.stepConfiguration,
-        }),
+        // Always send step_configuration (even if empty or null)
+        step_configuration: formData.stepConfiguration || {},
       }
       return updateScenario(scenario.id, updates)
     },
-    onSuccess: () => {
+    onSuccess: (savedScenario) => {
       queryClient.invalidateQueries({ queryKey: ['scenarios'] })
+      // If editing a standard scenario created a new custom scenario,
+      // the savedScenario will have a different ID
+      if (savedScenario && savedScenario.id !== scenario?.id) {
+        console.log(`Created new custom scenario: ${savedScenario.id}`)
+      }
       handleClose()
     },
   })
