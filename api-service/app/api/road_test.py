@@ -87,30 +87,53 @@ async def list_scenarios(
     # Convert to summaries with extended fields for editing
     summaries = []
     for s in scenarios:
-        # Calculate average speed from route
-        avg_speed = None
-        if s.route.duration_s > 0:
-            avg_speed = (s.route.total_distance_m / 1000) / (s.route.duration_s / 3600)  # km/h
+        try:
+            # Calculate average speed from route
+            avg_speed = None
+            if s.route and s.route.duration_s > 0:
+                avg_speed = (s.route.total_distance_m / 1000) / (s.route.duration_s / 3600)  # km/h
 
-        summaries.append(ScenarioSummary(
-            id=s.id,
-            name=s.name,
-            category=s.category,
-            source=s.source,
-            tags=s.tags,
-            description=s.description,
-            duration_s=s.route.duration_s,
-            distance_m=s.route.total_distance_m,
-            created_at=s.created_at,
-            author=s.author,
-            step_configuration=s.step_configuration,
-            # Extended fields
-            network_type=s.network.type.value if s.network else None,
-            band=s.network.band if s.network else None,
-            bandwidth_mhz=s.network.bandwidth_mhz if s.network else None,
-            channel_model=s.environment.channel_model.value if s.environment else None,
-            avg_speed_kmh=avg_speed,
-        ))
+            # Handle step_configuration - ensure it's serializable
+            step_config = s.step_configuration
+            if step_config is not None and not isinstance(step_config, dict):
+                # If it's a Pydantic model, convert to dict
+                if hasattr(step_config, 'model_dump'):
+                    step_config = step_config.model_dump()
+
+            summaries.append(ScenarioSummary(
+                id=s.id,
+                name=s.name,
+                category=s.category,
+                source=s.source,
+                tags=s.tags,
+                description=s.description,
+                duration_s=s.route.duration_s if s.route else 0,
+                distance_m=s.route.total_distance_m if s.route else 0,
+                created_at=s.created_at,
+                author=s.author,
+                step_configuration=step_config,
+                # Extended fields
+                network_type=s.network.type.value if s.network else None,
+                band=s.network.band if s.network else None,
+                bandwidth_mhz=s.network.bandwidth_mhz if s.network else None,
+                channel_model=s.environment.channel_model.value if s.environment else None,
+                avg_speed_kmh=avg_speed,
+            ))
+        except Exception as e:
+            logger.error(f"Error creating summary for scenario {s.id}: {e}")
+            # Create a minimal summary to avoid breaking the list
+            summaries.append(ScenarioSummary(
+                id=s.id,
+                name=s.name,
+                category=s.category,
+                source=s.source,
+                tags=s.tags or [],
+                description=s.description,
+                duration_s=0,
+                distance_m=0,
+                created_at=s.created_at,
+                author=s.author,
+            ))
 
     return summaries
 
