@@ -202,18 +202,32 @@ export function TestExecutionModal({ opened, onClose, scenario, testMode }: Prop
 
     // If no execution created yet, create one first
     if (!executionId) {
-      await createMutation.mutateAsync()
-      // After creation, start the execution
-      setTimeout(() => {
-        if (executionId) {
-          controlMutation.mutate('start')
+      try {
+        const result = await createMutation.mutateAsync()
+        // Use the returned execution_id directly (not from state, which has closure issues)
+        if (result?.execution_id) {
+          // Start the execution via API
+          try {
+            await controlExecution(result.execution_id, 'start')
+            setStatus('running')
+            setProgress(0)
+            setCurrentPhase(0)
+          } catch {
+            // If control fails, still run simulation for demo
+            setStatus('running')
+            setProgress(0)
+            setCurrentPhase(0)
+          }
         } else {
-          // Directly set status to running for demo
+          // Fallback: directly start simulation for demo
           setStatus('running')
           setProgress(0)
           setCurrentPhase(0)
         }
-      }, 500)
+      } catch {
+        // Creation failed, error already handled in mutation onError
+        // Don't start simulation
+      }
     } else {
       controlMutation.mutate('start')
     }
