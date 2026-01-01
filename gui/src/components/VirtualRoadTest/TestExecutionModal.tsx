@@ -55,6 +55,9 @@ const MODE_LABELS: Record<TestMode, string> = {
   ota: 'OTA测试',
 }
 
+// Modes that require additional hardware setup
+const MODES_REQUIRING_HARDWARE: TestMode[] = ['conducted', 'ota']
+
 export function TestExecutionModal({ opened, onClose, scenario, testMode }: Props) {
   const queryClient = useQueryClient()
   const [executionId, setExecutionId] = useState<string>('')
@@ -62,15 +65,23 @@ export function TestExecutionModal({ opened, onClose, scenario, testMode }: Prop
   const [progress, setProgress] = useState(0)
   const [currentPhase, setCurrentPhase] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [useLocalSimulation, setUseLocalSimulation] = useState(false)
+
+  // Check if current mode requires hardware
+  const requiresHardware = testMode && MODES_REQUIRING_HARDWARE.includes(testMode)
 
   // Create execution mutation
   const createMutation = useMutation({
     mutationFn: async () => {
+      // For modes requiring hardware, use digital_twin mode for simulation
+      // In production, this would require topology_id for conducted mode
+      const effectiveMode = requiresHardware ? 'digital_twin' : (testMode || 'digital_twin')
+
       return createExecution({
-        mode: testMode || 'digital_twin',
+        mode: effectiveMode,
         scenario_id: scenario.id,
         config: scenario.step_configuration || {},
-        notes: `Virtual road test: ${scenario.name}`,
+        notes: `Virtual road test: ${scenario.name} (requested mode: ${testMode || 'digital_twin'})`,
       })
     },
     onSuccess: (data) => {
@@ -253,6 +264,16 @@ export function TestExecutionModal({ opened, onClose, scenario, testMode }: Prop
       centered
     >
       <Stack gap="md">
+        {/* Hardware Mode Warning */}
+        {requiresHardware && (
+          <Alert icon={<IconAlertCircle size={16} />} title="硬件模式提示" color="yellow">
+            <Text size="sm">
+              {testMode === 'conducted' ? '传导测试' : 'OTA测试'}模式需要配置硬件拓扑。
+              当前将使用<strong>数字孪生</strong>模式进行模拟演示。
+            </Text>
+          </Alert>
+        )}
+
         {/* Error Alert */}
         {error && (
           <Alert icon={<IconAlertCircle size={16} />} title="错误" color="red">
@@ -273,7 +294,10 @@ export function TestExecutionModal({ opened, onClose, scenario, testMode }: Prop
               <Text size="xs" c="dimmed" fw={500}>
                 测试模式
               </Text>
-              <Text size="sm">{testMode ? MODE_LABELS[testMode] : '未指定'}</Text>
+              <Text size="sm">
+                {testMode ? MODE_LABELS[testMode] : '未指定'}
+                {requiresHardware && <Text span size="xs" c="dimmed"> (模拟)</Text>}
+              </Text>
             </div>
             <div>
               <Text size="xs" c="dimmed" fw={500}>
