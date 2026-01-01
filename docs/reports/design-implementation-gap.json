@@ -1,0 +1,594 @@
+{
+  "generated_at": "2026-01-01 14:21:35",
+  "total_designed": 65,
+  "total_implemented": 27,
+  "total_partial": 4,
+  "total_not_implemented": 34,
+  "items": [
+    {
+      "name": "RoadTestScenario",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 226,
+      "status": "implemented",
+      "implementation_path": "gui/src/types",
+      "notes": ""
+    },
+    {
+      "name": "NetworkConfig",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 257,
+      "status": "implemented",
+      "implementation_path": "gui/src/types",
+      "notes": ""
+    },
+    {
+      "name": "BaseStationConfig",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 264,
+      "status": "implemented",
+      "implementation_path": "gui/src/types",
+      "notes": ""
+    },
+    {
+      "name": "Route",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 279,
+      "status": "implemented",
+      "implementation_path": "gui/src/types",
+      "notes": ""
+    },
+    {
+      "name": "Waypoint",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 287,
+      "status": "implemented",
+      "implementation_path": "gui/src/types",
+      "notes": ""
+    },
+    {
+      "name": "Environment",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 309,
+      "status": "implemented",
+      "implementation_path": "gui/src/types",
+      "notes": ""
+    },
+    {
+      "name": "Obstruction",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 316,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "TrafficConfig",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 332,
+      "status": "implemented",
+      "implementation_path": "api-service/app/schemas",
+      "notes": ""
+    },
+    {
+      "name": "ScenarioEvent",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 343,
+      "status": "implemented",
+      "implementation_path": "api-service/app/schemas",
+      "notes": ""
+    },
+    {
+      "name": "KPIDefinition",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 352,
+      "status": "implemented",
+      "implementation_path": "gui/src/types",
+      "notes": ""
+    },
+    {
+      "name": "ScenarioCategory",
+      "item_type": "enum",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 209,
+      "status": "implemented",
+      "implementation_path": "gui/src/types",
+      "notes": ""
+    },
+    {
+      "name": "SpeedProfile",
+      "item_type": "type",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 301,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "NetworkTopology",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 368,
+      "status": "implemented",
+      "implementation_path": "gui/src/types",
+      "notes": ""
+    },
+    {
+      "name": "BaseStationDevice",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 386,
+      "status": "implemented",
+      "implementation_path": "api-service/app/schemas",
+      "notes": ""
+    },
+    {
+      "name": "ChannelEmulatorDevice",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 394,
+      "status": "implemented",
+      "implementation_path": "api-service/app/schemas",
+      "notes": ""
+    },
+    {
+      "name": "PortMapping",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 402,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "DUTDevice",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 407,
+      "status": "implemented",
+      "implementation_path": "api-service/app/schemas",
+      "notes": ""
+    },
+    {
+      "name": "DUTInterface",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 413,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "RFConnection",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 425,
+      "status": "implemented",
+      "implementation_path": "api-service/app/schemas",
+      "notes": ""
+    },
+    {
+      "name": "CableSpec",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 437,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "TestConfig",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 464,
+      "status": "implemented",
+      "implementation_path": "gui/src/types",
+      "notes": ""
+    },
+    {
+      "name": "DUTConfig",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 481,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "DigitalTwinConfig",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 490,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "ConductedConfig",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 511,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "OTAConfig",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 530,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "TestResult",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 544,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "ExecutionHandle",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 554,
+      "status": "implemented",
+      "implementation_path": "gui/src/types",
+      "notes": ""
+    },
+    {
+      "name": "TestMode",
+      "item_type": "enum",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 455,
+      "status": "implemented",
+      "implementation_path": "gui/src/types",
+      "notes": ""
+    },
+    {
+      "name": "TestStatus",
+      "item_type": "enum",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 564,
+      "status": "implemented",
+      "implementation_path": "gui/src/types",
+      "notes": ""
+    },
+    {
+      "name": "TestMetrics",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 582,
+      "status": "implemented",
+      "implementation_path": "api-service/app/schemas",
+      "notes": ""
+    },
+    {
+      "name": "ThroughputMetrics",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 590,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "LatencyMetrics",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 595,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "SignalQualityMetrics",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 602,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "LinkQualityMetrics",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 608,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "ValidationResult",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 637,
+      "status": "partial",
+      "implementation_path": "api-service/app/schemas (similar: TopologyValidationResult)",
+      "notes": "api-service/app/schemas (similar: TopologyValidationResult)"
+    },
+    {
+      "name": "TestCapabilities",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 646,
+      "status": "implemented",
+      "implementation_path": "api-service/app/schemas",
+      "notes": ""
+    },
+    {
+      "name": "TestEvent",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 658,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "Subscription",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 667,
+      "status": "partial",
+      "implementation_path": "api-service/app/schemas (similar: StreamSubscription)",
+      "notes": "api-service/app/schemas (similar: StreamSubscription)"
+    },
+    {
+      "name": "ITestExecutor",
+      "item_type": "interface",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 674,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "EventCallback",
+      "item_type": "type",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 656,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "fetchScenarios",
+      "item_type": "api_function",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 1073,
+      "status": "implemented",
+      "implementation_path": "gui/src/api",
+      "notes": ""
+    },
+    {
+      "name": "fetchScenarioDetail",
+      "item_type": "api_function",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 1082,
+      "status": "implemented",
+      "implementation_path": "gui/src/api",
+      "notes": ""
+    },
+    {
+      "name": "createScenario",
+      "item_type": "api_function",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 1087,
+      "status": "partial",
+      "implementation_path": "gui/src/components (similar: CreateScenarioDialog)",
+      "notes": "gui/src/components (similar: CreateScenarioDialog)"
+    },
+    {
+      "name": "updateScenario",
+      "item_type": "api_function",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 1094,
+      "status": "implemented",
+      "implementation_path": "gui/src/api",
+      "notes": ""
+    },
+    {
+      "name": "deleteScenario",
+      "item_type": "api_function",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 1102,
+      "status": "implemented",
+      "implementation_path": "gui/src/api",
+      "notes": ""
+    },
+    {
+      "name": "fetchTopologies",
+      "item_type": "api_function",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 1108,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "fetchTopologyDetail",
+      "item_type": "api_function",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 1113,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "createTopology",
+      "item_type": "api_function",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 1118,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "validateTopology",
+      "item_type": "api_function",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 1125,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "createExecution",
+      "item_type": "api_function",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 1139,
+      "status": "implemented",
+      "implementation_path": "gui/src/api",
+      "notes": ""
+    },
+    {
+      "name": "fetchExecutionStatus",
+      "item_type": "api_function",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 1144,
+      "status": "partial",
+      "implementation_path": "gui/src/types (similar: ExecutionStatus)",
+      "notes": "gui/src/types (similar: ExecutionStatus)"
+    },
+    {
+      "name": "controlExecution",
+      "item_type": "api_function",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 1154,
+      "status": "implemented",
+      "implementation_path": "gui/src/api",
+      "notes": ""
+    },
+    {
+      "name": "fetchExecutionMetrics",
+      "item_type": "api_function",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 1161,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "stopExecution",
+      "item_type": "api_function",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 1166,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "已有",
+      "item_type": "component",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 87,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "🆕 新增",
+      "item_type": "component",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 93,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "场景编辑器",
+      "item_type": "component",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 120,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "ScenarioEditor",
+      "item_type": "component",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 120,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "MapEditor",
+      "item_type": "component",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 122,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "NetworkEditor",
+      "item_type": "component",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 123,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "拓扑配置器",
+      "item_type": "component",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 125,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "TopologyConfigurator",
+      "item_type": "component",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 125,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "执行监控",
+      "item_type": "component",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/implementation.md",
+      "source_line": 130,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "BSEditor",
+      "item_type": "component",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/architecture.md",
+      "source_line": 979,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    },
+    {
+      "name": "ObstEditor",
+      "item_type": "component",
+      "source_file": "/Users/Simon/Tools/MIMO-First/docs/features/virtual-road-test/architecture.md",
+      "source_line": 987,
+      "status": "not_implemented",
+      "implementation_path": null,
+      "notes": ""
+    }
+  ]
+}
