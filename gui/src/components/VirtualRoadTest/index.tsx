@@ -39,8 +39,11 @@ import {
 } from '@tabler/icons-react'
 import ScenarioLibrary from './ScenarioLibrary'
 import { OTAMapper } from '../OTAMapper'
-import { TestMode, ExecutionStatus } from '../../types/roadTest'
+import { TestMode } from '../../types/roadTest'
 import { fetchExecutions } from '../../api/roadTestService'
+
+// Local type definition to avoid Vite ESM issues with type-only exports
+type ExecutionStatus = 'idle' | 'initializing' | 'configured' | 'running' | 'paused' | 'completed' | 'failed' | 'stopped'
 
 // 测试模式配置
 const TEST_MODES = [
