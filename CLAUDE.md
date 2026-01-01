@@ -165,6 +165,39 @@ GUI 遵循 **API优先架构**，包含以下层次：
 - 用于探头参数编辑的 FormSection 组件
 - 一致的间距系统（8px 基准网格）
 
+## 质量保障
+
+### 设计-实现差距检查
+
+项目提供自动化脚本，用于检测设计文档与代码实现之间的差距：
+
+```bash
+python3 scripts/check-design-implementation.py
+```
+
+**功能**:
+- 解析 `docs/features/virtual-road-test/` 中的设计文档
+- 提取 TypeScript interface/enum/type/class 定义
+- 扫描 `gui/src/types/`, `gui/src/components/`, `gui/src/api/` 中的实现
+- 生成差距报告
+
+**输出文件**:
+- `docs/reports/design-implementation-gap.md` - 人类可读报告
+- `docs/reports/design-implementation-gap.json` - 机器可读数据
+
+**使用时机**:
+- ⭐ **每次开始新的开发任务前** - 检查是否有遗漏的设计组件
+- ⭐ **完成功能实现后** - 验证实现覆盖率
+- ⭐ **代码审查时** - 确保设计文档与代码同步
+
+**最近检查结果** (2026-01-01):
+- 设计组件总数: 65
+- 已实现: 27 (41.5%)
+- 未实现: 34 (52.3%)
+- 关键缺失: `TopologyConfigurator`, `fetchTopologies`, `ScenarioEditor`
+
+---
+
 ## 注意事项
 
 ### 当前状态（2025-12-11 更新）
