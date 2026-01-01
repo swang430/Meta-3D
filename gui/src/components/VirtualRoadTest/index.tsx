@@ -4,7 +4,23 @@
  */
 
 import { useState } from 'react'
-import { Stack, Alert, Text, Tabs, SegmentedControl, Group, Badge, Paper } from '@mantine/core'
+import { useQuery } from '@tanstack/react-query'
+import {
+  Stack,
+  Alert,
+  Text,
+  Tabs,
+  SegmentedControl,
+  Group,
+  Badge,
+  Paper,
+  Table,
+  Loader,
+  Center,
+  ActionIcon,
+  Tooltip,
+  Button,
+} from '@mantine/core'
 import {
   IconInfoCircle,
   IconBooks,
@@ -13,10 +29,18 @@ import {
   IconCpu,
   IconPlugConnected,
   IconRadar2,
+  IconRefresh,
+  IconPlayerPlay,
+  IconPlayerPause,
+  IconCheck,
+  IconX,
+  IconClock,
+  IconAlertCircle,
 } from '@tabler/icons-react'
 import ScenarioLibrary from './ScenarioLibrary'
 import { OTAMapper } from '../OTAMapper'
-import { TestMode } from '../../types/roadTest'
+import { TestMode, ExecutionStatus } from '../../types/roadTest'
+import { fetchExecutions } from '../../api/roadTestService'
 
 // 测试模式配置
 const TEST_MODES = [
@@ -117,28 +141,143 @@ export function VirtualRoadTest() {
   )
 }
 
+// 状态图标和颜色映射
+const STATUS_CONFIG: Record<ExecutionStatus, { icon: typeof IconCheck; color: string; label: string }> = {
+  idle: { icon: IconClock, color: 'gray', label: '空闲' },
+  initializing: { icon: IconClock, color: 'blue', label: '初始化中' },
+  configured: { icon: IconCheck, color: 'cyan', label: '已配置' },
+  running: { icon: IconPlayerPlay, color: 'blue', label: '运行中' },
+  paused: { icon: IconPlayerPause, color: 'yellow', label: '已暂停' },
+  completed: { icon: IconCheck, color: 'green', label: '已完成' },
+  failed: { icon: IconX, color: 'red', label: '失败' },
+  stopped: { icon: IconX, color: 'orange', label: '已停止' },
+}
+
+// 测试模式标签
+const MODE_LABELS: Record<TestMode, string> = {
+  [TestMode.DIGITAL_TWIN]: '数字孪生',
+  [TestMode.CONDUCTED]: '传导测试',
+  [TestMode.OTA]: 'OTA测试',
+}
+
 /**
  * 执行历史组件 - 显示虚拟路测的执行记录
  */
 function ExecutionHistory() {
-  // TODO: 复用 TestManagement 的 HistoryTab 或创建专用组件
+  const { data: executions, isLoading, error, refetch } = useQuery({
+    queryKey: ['road-test-executions'],
+    queryFn: () => fetchExecutions(),
+    refetchInterval: 5000, // 每5秒刷新一次
+  })
+
+  if (isLoading) {
+    return (
+      <Center py="xl">
+        <Loader size="md" />
+        <Text c="dimmed" ml="md">加载执行历史...</Text>
+      </Center>
+    )
+  }
+
+  if (error) {
+    return (
+      <Alert icon={<IconAlertCircle size={16} />} title="加载失败" color="red">
+        无法加载执行历史: {(error as Error).message}
+      </Alert>
+    )
+  }
+
+  if (!executions || executions.length === 0) {
+    return (
+      <Paper p="xl" withBorder>
+        <Stack align="center" gap="md">
+          <IconHistory size={48} stroke={1.5} color="gray" />
+          <Text c="dimmed" ta="center">
+            暂无执行记录
+          </Text>
+          <Text size="sm" c="dimmed" ta="center">
+            在场景库中选择场景并执行测试后，执行记录将显示在此处
+          </Text>
+          <Button variant="light" leftSection={<IconRefresh size={16} />} onClick={() => refetch()}>
+            刷新
+          </Button>
+        </Stack>
+      </Paper>
+    )
+  }
+
   return (
-    <Paper p="xl" withBorder>
-      <Stack align="center" gap="md">
-        <IconHistory size={48} stroke={1.5} color="gray" />
-        <Text c="dimmed" ta="center">
-          执行历史功能开发中
-        </Text>
-        <Text size="sm" c="dimmed" ta="center">
-          此处将显示虚拟路测的执行记录，包括：
-          <br />
-          - 测试场景名称和模式
-          <br />
-          - 执行时间和持续时长
-          <br />
-          - 测试结果和KPI达成情况
-        </Text>
-      </Stack>
-    </Paper>
+    <Stack gap="md">
+      <Group justify="space-between">
+        <Text fw={500}>执行历史 ({executions.length} 条记录)</Text>
+        <Tooltip label="刷新">
+          <ActionIcon variant="subtle" onClick={() => refetch()}>
+            <IconRefresh size={16} />
+          </ActionIcon>
+        </Tooltip>
+      </Group>
+
+      <Paper withBorder>
+        <Table striped highlightOnHover>
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>执行 ID</Table.Th>
+              <Table.Th>场景</Table.Th>
+              <Table.Th>模式</Table.Th>
+              <Table.Th>状态</Table.Th>
+              <Table.Th>进度</Table.Th>
+              <Table.Th>开始时间</Table.Th>
+              <Table.Th>持续时间</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {executions.map((exec) => {
+              const statusConfig = STATUS_CONFIG[exec.status] || STATUS_CONFIG.idle
+              const StatusIcon = statusConfig.icon
+
+              return (
+                <Table.Tr key={exec.execution_id}>
+                  <Table.Td>
+                    <Text size="sm" ff="monospace">{exec.execution_id.slice(0, 12)}...</Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm">{exec.scenario_name}</Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Badge size="sm" variant="light">
+                      {MODE_LABELS[exec.mode] || exec.mode}
+                    </Badge>
+                  </Table.Td>
+                  <Table.Td>
+                    <Badge
+                      size="sm"
+                      color={statusConfig.color}
+                      leftSection={<StatusIcon size={12} />}
+                    >
+                      {statusConfig.label}
+                    </Badge>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm">{exec.progress_percent}%</Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm">
+                      {exec.start_time
+                        ? new Date(exec.start_time).toLocaleString('zh-CN')
+                        : '-'}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm">
+                      {exec.duration_s ? `${Math.round(exec.duration_s)}s` : '-'}
+                    </Text>
+                  </Table.Td>
+                </Table.Tr>
+              )
+            })}
+          </Table.Tbody>
+        </Table>
+      </Paper>
+    </Stack>
   )
 }

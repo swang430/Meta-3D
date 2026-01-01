@@ -310,6 +310,7 @@ export default function ScenarioCard({ scenario, testMode, onRefresh }: Props) {
         opened={executionModalOpened}
         onClose={() => setExecutionModalOpened(false)}
         scenario={scenario}
+        testMode={testMode}
       />
 
       {/* Scenario Detail Modal */}
