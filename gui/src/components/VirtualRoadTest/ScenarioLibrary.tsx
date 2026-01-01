@@ -170,6 +170,7 @@ export default function ScenarioLibrary({ testMode }: ScenarioLibraryProps) {
           setCreateDialogOpened(false)
           refetch()
         }}
+        testMode={testMode}
       />
     </Stack>
   )

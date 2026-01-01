@@ -329,6 +329,7 @@ export default function ScenarioCard({ scenario, testMode, onRefresh }: Props) {
           }
         }}
         scenario={scenario}
+        testMode={testMode}
       />
     </Card>
   )

@@ -29,13 +29,14 @@ import {
   IconSettings,
 } from '@tabler/icons-react'
 import { updateScenario } from '../../api/roadTestService'
-import type { ScenarioSummary, RoadTestScenario, StepConfiguration } from '../../types/roadTest'
+import type { ScenarioSummary, RoadTestScenario, StepConfiguration, TestMode } from '../../types/roadTest'
 import { StepConfigurationEditor } from './StepConfigurationEditor'
 
 interface Props {
   opened: boolean
   onClose: () => void
   scenario: ScenarioSummary | null
+  testMode?: TestMode
 }
 
 const CATEGORIES = [
@@ -61,7 +62,7 @@ const CHANNEL_MODELS = [
   { value: 'CDL-B', label: 'CDL-B' },
 ]
 
-export function EditScenarioDialog({ opened, onClose, scenario }: Props) {
+export function EditScenarioDialog({ opened, onClose, scenario, testMode }: Props) {
   const queryClient = useQueryClient()
   const [activeTab, setActiveTab] = useState<string | null>('basic')
 
@@ -365,6 +366,12 @@ export function EditScenarioDialog({ opened, onClose, scenario }: Props) {
                 onChange={(config) =>
                   setFormData({ ...formData, stepConfiguration: config })
                 }
+                testMode={testMode}
+                scenarioDefaults={{
+                  band: formData.band,
+                  bandwidth_mhz: formData.bandwidth,
+                  channel_model: formData.channelModel,
+                }}
               />
             </Stack>
           </Tabs.Panel>

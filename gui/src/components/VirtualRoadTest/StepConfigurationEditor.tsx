@@ -3,9 +3,10 @@
  *
  * Main editor for configuring 8 test steps in scenarios.
  * Uses specialized sub-editors for Steps 2, 3, and 8.
+ * Respects test mode constraints (Digital Twin, Conducted, OTA).
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   Accordion,
   Stack,
@@ -17,9 +18,12 @@ import {
   Text,
   Alert,
   Paper,
+  Badge,
+  Tooltip,
 } from '@mantine/core'
-import { IconSettings, IconInfoCircle } from '@tabler/icons-react'
-import type { StepConfiguration, NetworkStepConfig, BaseStationStepConfig, DigitalTwinStepConfig } from '../../types/roadTest'
+import { IconSettings, IconInfoCircle, IconLock, IconCheck } from '@tabler/icons-react'
+import type { StepConfiguration, NetworkStepConfig, BaseStationStepConfig, DigitalTwinStepConfig, TestMode, StepKey } from '../../types/roadTest'
+import { STEP_CONSTRAINTS, TestMode as TestModeEnum } from '../../types/roadTest'
 import { NetworkStepEditor } from './NetworkStepEditor'
 import { BaseStationStepEditor } from './BaseStationStepEditor'
 import { DigitalTwinStepEditor } from './DigitalTwinStepEditor'
@@ -27,6 +31,7 @@ import { DigitalTwinStepEditor } from './DigitalTwinStepEditor'
 interface Props {
   value?: StepConfiguration
   onChange: (config: StepConfiguration) => void
+  testMode?: TestMode
   scenarioDefaults?: {
     band?: string
     bandwidth_mhz?: number
@@ -34,7 +39,24 @@ interface Props {
   }
 }
 
-export function StepConfigurationEditor({ value, onChange, scenarioDefaults }: Props) {
+// Test mode labels for display
+const TEST_MODE_LABELS: Record<TestMode, string> = {
+  [TestModeEnum.DIGITAL_TWIN]: '数字孪生',
+  [TestModeEnum.CONDUCTED]: '传导测试',
+  [TestModeEnum.OTA]: 'OTA测试',
+}
+
+export function StepConfigurationEditor({ value, onChange, testMode, scenarioDefaults }: Props) {
+  // Get constraints for current test mode (default to OTA which has no restrictions)
+  const constraints = useMemo(() => {
+    return testMode ? STEP_CONSTRAINTS[testMode] : STEP_CONSTRAINTS[TestModeEnum.OTA]
+  }, [testMode])
+
+  // Helper functions for step state
+  const isStepRequired = (stepKey: StepKey) => constraints.required.includes(stepKey)
+  const isStepDisabled = (stepKey: StepKey) => constraints.disabled.includes(stepKey)
+  const isStepOptional = (stepKey: StepKey) => constraints.optional.includes(stepKey)
+
   // 跟踪每个步骤是否启用
   const [enabledSteps, setEnabledSteps] = useState({
     chamber_init: !!value?.chamber_init,
@@ -64,6 +86,41 @@ export function StepConfigurationEditor({ value, onChange, scenarioDefaults }: P
       environment_setup: !!value?.environment_setup,
     })
   }, [value])
+
+  // Auto-enable required steps and disable restricted steps when testMode changes
+  useEffect(() => {
+    if (!testMode) return
+
+    const newEnabledSteps = { ...enabledSteps }
+    const newConfig = { ...config }
+    let hasChanges = false
+
+    // Enable required steps
+    for (const stepKey of constraints.required) {
+      if (!newEnabledSteps[stepKey]) {
+        newEnabledSteps[stepKey] = true
+        if (!newConfig[stepKey]) {
+          newConfig[stepKey] = getStepDefaults(stepKey as keyof StepConfiguration)
+        }
+        hasChanges = true
+      }
+    }
+
+    // Disable restricted steps
+    for (const stepKey of constraints.disabled) {
+      if (newEnabledSteps[stepKey]) {
+        newEnabledSteps[stepKey] = false
+        delete newConfig[stepKey]
+        hasChanges = true
+      }
+    }
+
+    if (hasChanges) {
+      setEnabledSteps(newEnabledSteps)
+      setConfig(newConfig)
+      onChange(newConfig)
+    }
+  }, [testMode, constraints])
 
   const updateConfig = (stepKey: keyof StepConfiguration, stepData: any) => {
     const newConfig = { ...config, [stepKey]: stepData }
@@ -186,8 +243,62 @@ export function StepConfigurationEditor({ value, onChange, scenarioDefaults }: P
     }
   }
 
+  // Helper to render step switch with constraints
+  const renderStepSwitch = (stepKey: StepKey, checked: boolean, onChange: (checked: boolean) => void) => {
+    const required = isStepRequired(stepKey)
+    const disabled = isStepDisabled(stepKey)
+
+    if (disabled) {
+      return (
+        <Tooltip label={`${TEST_MODE_LABELS[testMode!]}模式下不适用`} position="left">
+          <Badge leftSection={<IconLock size={12} />} color="gray" variant="light">
+            不适用
+          </Badge>
+        </Tooltip>
+      )
+    }
+
+    if (required) {
+      return (
+        <Tooltip label="此步骤为必需步骤" position="left">
+          <Badge leftSection={<IconCheck size={12} />} color="green" variant="light">
+            必需
+          </Badge>
+        </Tooltip>
+      )
+    }
+
+    return (
+      <Switch
+        checked={checked}
+        onChange={(e) => {
+          e.stopPropagation()
+          onChange(e.currentTarget.checked)
+        }}
+        onClick={(e) => e.stopPropagation()}
+        label={checked ? '自定义' : '默认'}
+        size="sm"
+      />
+    )
+  }
+
   return (
     <Stack gap="md">
+      {/* Test Mode Info */}
+      {testMode && (
+        <Alert icon={<IconInfoCircle size={16} />} color="cyan" variant="light">
+          <Group gap="xs">
+            <Text size="sm" fw={500}>当前模式:</Text>
+            <Badge color="cyan">{TEST_MODE_LABELS[testMode]}</Badge>
+            <Text size="sm" c="dimmed">
+              {testMode === TestModeEnum.DIGITAL_TWIN && '纯软件仿真，暗室和OTA映射器不可用'}
+              {testMode === TestModeEnum.CONDUCTED && '仪表直连，暗室和OTA映射器不可用'}
+              {testMode === TestModeEnum.OTA && '完整OTA测试，所有步骤可用'}
+            </Text>
+          </Group>
+        </Alert>
+      )}
+
       <Alert icon={<IconInfoCircle size={16} />} title="测试步骤配置" color="blue">
         <Stack gap="xs">
           <Text size="sm">
@@ -201,24 +312,15 @@ export function StepConfigurationEditor({ value, onChange, scenarioDefaults }: P
 
       <Accordion variant="separated" multiple>
         {/* 步骤1: 初始化OTA暗室 */}
-        <Accordion.Item value="chamber_init">
-          <Accordion.Control icon={<IconSettings size={20} />}>
+        <Accordion.Item value="chamber_init" style={isStepDisabled('chamber_init') ? { opacity: 0.5 } : undefined}>
+          <Accordion.Control icon={<IconSettings size={20} />} disabled={isStepDisabled('chamber_init')}>
             <Group justify="space-between" style={{ width: '100%', paddingRight: '1rem' }}>
               <Text fw={600}>步骤1: 初始化OTA暗室</Text>
-              <Switch
-                checked={enabledSteps.chamber_init}
-                onChange={(e) => {
-                  e.stopPropagation()
-                  toggleStep('chamber_init', e.currentTarget.checked)
-                }}
-                onClick={(e) => e.stopPropagation()}
-                label={enabledSteps.chamber_init ? '自定义' : '默认'}
-                size="sm"
-              />
+              {renderStepSwitch('chamber_init', enabledSteps.chamber_init, (checked) => toggleStep('chamber_init', checked))}
             </Group>
           </Accordion.Control>
           <Accordion.Panel>
-            {enabledSteps.chamber_init && (
+            {enabledSteps.chamber_init && !isStepDisabled('chamber_init') && (
               <Paper p="md" withBorder>
                 <Stack gap="sm">
                   <Select
@@ -251,24 +353,15 @@ export function StepConfigurationEditor({ value, onChange, scenarioDefaults }: P
         </Accordion.Item>
 
         {/* 步骤2: 配置网络 (Core Network) */}
-        <Accordion.Item value="network_config">
-          <Accordion.Control icon={<IconSettings size={20} />}>
+        <Accordion.Item value="network_config" style={isStepDisabled('network_config') ? { opacity: 0.5 } : undefined}>
+          <Accordion.Control icon={<IconSettings size={20} />} disabled={isStepDisabled('network_config')}>
             <Group justify="space-between" style={{ width: '100%', paddingRight: '1rem' }}>
               <Text fw={600}>步骤2: 配置网络 (核心网)</Text>
-              <Switch
-                checked={enabledSteps.network_config}
-                onChange={(e) => {
-                  e.stopPropagation()
-                  toggleStep('network_config', e.currentTarget.checked)
-                }}
-                onClick={(e) => e.stopPropagation()}
-                label={enabledSteps.network_config ? '自定义' : '默认'}
-                size="sm"
-              />
+              {renderStepSwitch('network_config', enabledSteps.network_config, (checked) => toggleStep('network_config', checked))}
             </Group>
           </Accordion.Control>
           <Accordion.Panel>
-            {enabledSteps.network_config && (
+            {enabledSteps.network_config && !isStepDisabled('network_config') && (
               <NetworkStepEditor
                 value={config.network_config as NetworkStepConfig}
                 onChange={(val) => updateConfig('network_config', val)}
@@ -278,24 +371,15 @@ export function StepConfigurationEditor({ value, onChange, scenarioDefaults }: P
         </Accordion.Item>
 
         {/* 步骤3: 设置基站 (RAN) */}
-        <Accordion.Item value="base_station_setup">
-          <Accordion.Control icon={<IconSettings size={20} />}>
+        <Accordion.Item value="base_station_setup" style={isStepDisabled('base_station_setup') ? { opacity: 0.5 } : undefined}>
+          <Accordion.Control icon={<IconSettings size={20} />} disabled={isStepDisabled('base_station_setup')}>
             <Group justify="space-between" style={{ width: '100%', paddingRight: '1rem' }}>
               <Text fw={600}>步骤3: 配置基站 (无线接入网)</Text>
-              <Switch
-                checked={enabledSteps.base_station_setup}
-                onChange={(e) => {
-                  e.stopPropagation()
-                  toggleStep('base_station_setup', e.currentTarget.checked)
-                }}
-                onClick={(e) => e.stopPropagation()}
-                label={enabledSteps.base_station_setup ? '自定义' : '默认'}
-                size="sm"
-              />
+              {renderStepSwitch('base_station_setup', enabledSteps.base_station_setup, (checked) => toggleStep('base_station_setup', checked))}
             </Group>
           </Accordion.Control>
           <Accordion.Panel>
-            {enabledSteps.base_station_setup && (
+            {enabledSteps.base_station_setup && !isStepDisabled('base_station_setup') && (
               <BaseStationStepEditor
                 value={config.base_station_setup as BaseStationStepConfig}
                 onChange={(val) => updateConfig('base_station_setup', val)}
@@ -306,24 +390,15 @@ export function StepConfigurationEditor({ value, onChange, scenarioDefaults }: P
         </Accordion.Item>
 
         {/* 步骤4: 配置OTA映射器 */}
-        <Accordion.Item value="ota_mapper">
-          <Accordion.Control icon={<IconSettings size={20} />}>
+        <Accordion.Item value="ota_mapper" style={isStepDisabled('ota_mapper') ? { opacity: 0.5 } : undefined}>
+          <Accordion.Control icon={<IconSettings size={20} />} disabled={isStepDisabled('ota_mapper')}>
             <Group justify="space-between" style={{ width: '100%', paddingRight: '1rem' }}>
               <Text fw={600}>步骤4: 配置OTA映射器</Text>
-              <Switch
-                checked={enabledSteps.ota_mapper}
-                onChange={(e) => {
-                  e.stopPropagation()
-                  toggleStep('ota_mapper', e.currentTarget.checked)
-                }}
-                onClick={(e) => e.stopPropagation()}
-                label={enabledSteps.ota_mapper ? '自定义' : '默认'}
-                size="sm"
-              />
+              {renderStepSwitch('ota_mapper', enabledSteps.ota_mapper, (checked) => toggleStep('ota_mapper', checked))}
             </Group>
           </Accordion.Control>
           <Accordion.Panel>
-            {enabledSteps.ota_mapper && (
+            {enabledSteps.ota_mapper && !isStepDisabled('ota_mapper') && (
               <Paper p="md" withBorder>
                 <Stack gap="sm">
                   <TextInput
@@ -373,24 +448,15 @@ export function StepConfigurationEditor({ value, onChange, scenarioDefaults }: P
         </Accordion.Item>
 
         {/* 步骤5: 执行路径测试 */}
-        <Accordion.Item value="route_execution">
-          <Accordion.Control icon={<IconSettings size={20} />}>
+        <Accordion.Item value="route_execution" style={isStepDisabled('route_execution') ? { opacity: 0.5 } : undefined}>
+          <Accordion.Control icon={<IconSettings size={20} />} disabled={isStepDisabled('route_execution')}>
             <Group justify="space-between" style={{ width: '100%', paddingRight: '1rem' }}>
               <Text fw={600}>步骤5: 执行路径测试</Text>
-              <Switch
-                checked={enabledSteps.route_execution}
-                onChange={(e) => {
-                  e.stopPropagation()
-                  toggleStep('route_execution', e.currentTarget.checked)
-                }}
-                onClick={(e) => e.stopPropagation()}
-                label={enabledSteps.route_execution ? '自定义' : '默认'}
-                size="sm"
-              />
+              {renderStepSwitch('route_execution', enabledSteps.route_execution, (checked) => toggleStep('route_execution', checked))}
             </Group>
           </Accordion.Control>
           <Accordion.Panel>
-            {enabledSteps.route_execution && (
+            {enabledSteps.route_execution && !isStepDisabled('route_execution') && (
               <Paper p="md" withBorder>
                 <Stack gap="sm">
                   <NumberInput
@@ -426,24 +492,15 @@ export function StepConfigurationEditor({ value, onChange, scenarioDefaults }: P
         </Accordion.Item>
 
         {/* 步骤6: 验证KPI */}
-        <Accordion.Item value="kpi_validation">
-          <Accordion.Control icon={<IconSettings size={20} />}>
+        <Accordion.Item value="kpi_validation" style={isStepDisabled('kpi_validation') ? { opacity: 0.5 } : undefined}>
+          <Accordion.Control icon={<IconSettings size={20} />} disabled={isStepDisabled('kpi_validation')}>
             <Group justify="space-between" style={{ width: '100%', paddingRight: '1rem' }}>
               <Text fw={600}>步骤6: 验证KPI和性能指标</Text>
-              <Switch
-                checked={enabledSteps.kpi_validation}
-                onChange={(e) => {
-                  e.stopPropagation()
-                  toggleStep('kpi_validation', e.currentTarget.checked)
-                }}
-                onClick={(e) => e.stopPropagation()}
-                label={enabledSteps.kpi_validation ? '自定义' : '默认'}
-                size="sm"
-              />
+              {renderStepSwitch('kpi_validation', enabledSteps.kpi_validation, (checked) => toggleStep('kpi_validation', checked))}
             </Group>
           </Accordion.Control>
           <Accordion.Panel>
-            {enabledSteps.kpi_validation && (
+            {enabledSteps.kpi_validation && !isStepDisabled('kpi_validation') && (
               <Paper p="md" withBorder>
                 <Stack gap="sm">
                   <Text fw={600} size="sm">KPI阈值</Text>
@@ -507,24 +564,15 @@ export function StepConfigurationEditor({ value, onChange, scenarioDefaults }: P
         </Accordion.Item>
 
         {/* 步骤7: 生成测试报告 */}
-        <Accordion.Item value="report_generation">
-          <Accordion.Control icon={<IconSettings size={20} />}>
+        <Accordion.Item value="report_generation" style={isStepDisabled('report_generation') ? { opacity: 0.5 } : undefined}>
+          <Accordion.Control icon={<IconSettings size={20} />} disabled={isStepDisabled('report_generation')}>
             <Group justify="space-between" style={{ width: '100%', paddingRight: '1rem' }}>
               <Text fw={600}>步骤7: 生成测试报告</Text>
-              <Switch
-                checked={enabledSteps.report_generation}
-                onChange={(e) => {
-                  e.stopPropagation()
-                  toggleStep('report_generation', e.currentTarget.checked)
-                }}
-                onClick={(e) => e.stopPropagation()}
-                label={enabledSteps.report_generation ? '自定义' : '默认'}
-                size="sm"
-              />
+              {renderStepSwitch('report_generation', enabledSteps.report_generation, (checked) => toggleStep('report_generation', checked))}
             </Group>
           </Accordion.Control>
           <Accordion.Panel>
-            {enabledSteps.report_generation && (
+            {enabledSteps.report_generation && !isStepDisabled('report_generation') && (
               <Paper p="md" withBorder>
                 <Stack gap="sm">
                   <Select
@@ -562,24 +610,15 @@ export function StepConfigurationEditor({ value, onChange, scenarioDefaults }: P
         </Accordion.Item>
 
         {/* 步骤8: 配置数字孪生环境 */}
-        <Accordion.Item value="environment_setup">
-          <Accordion.Control icon={<IconSettings size={20} />}>
+        <Accordion.Item value="environment_setup" style={isStepDisabled('environment_setup') ? { opacity: 0.5 } : undefined}>
+          <Accordion.Control icon={<IconSettings size={20} />} disabled={isStepDisabled('environment_setup')}>
             <Group justify="space-between" style={{ width: '100%', paddingRight: '1rem' }}>
               <Text fw={600}>步骤8: 配置数字孪生环境</Text>
-              <Switch
-                checked={enabledSteps.environment_setup}
-                onChange={(e) => {
-                  e.stopPropagation()
-                  toggleStep('environment_setup', e.currentTarget.checked)
-                }}
-                onClick={(e) => e.stopPropagation()}
-                label={enabledSteps.environment_setup ? '自定义' : '默认'}
-                size="sm"
-              />
+              {renderStepSwitch('environment_setup', enabledSteps.environment_setup, (checked) => toggleStep('environment_setup', checked))}
             </Group>
           </Accordion.Control>
           <Accordion.Panel>
-            {enabledSteps.environment_setup && (
+            {enabledSteps.environment_setup && !isStepDisabled('environment_setup') && (
               <DigitalTwinStepEditor
                 value={config.environment_setup as DigitalTwinStepConfig}
                 onChange={(val) => updateConfig('environment_setup', val)}

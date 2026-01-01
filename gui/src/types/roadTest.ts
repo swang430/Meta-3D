@@ -69,6 +69,79 @@ export const TestMode = {
 }
 export type TestMode = typeof TestMode[keyof typeof TestMode]
 
+// Step keys for constraint mapping
+export type StepKey =
+  | 'environment_setup'
+  | 'chamber_init'
+  | 'network_config'
+  | 'base_station_setup'
+  | 'ota_mapper'
+  | 'route_execution'
+  | 'kpi_validation'
+  | 'report_generation'
+
+// Step constraint definition
+export interface StepConstraint {
+  required: StepKey[]    // Steps that must be enabled
+  disabled: StepKey[]    // Steps that cannot be enabled
+  optional: StepKey[]    // Steps that user can toggle
+}
+
+// Test mode step constraints
+export const STEP_CONSTRAINTS: Record<TestMode, StepConstraint> = {
+  [TestMode.DIGITAL_TWIN]: {
+    required: ['environment_setup'],
+    disabled: ['chamber_init', 'ota_mapper'],
+    optional: ['network_config', 'base_station_setup', 'route_execution', 'kpi_validation', 'report_generation'],
+  },
+  [TestMode.CONDUCTED]: {
+    required: ['network_config', 'base_station_setup'],
+    disabled: ['chamber_init', 'ota_mapper'],
+    optional: ['environment_setup', 'route_execution', 'kpi_validation', 'report_generation'],
+  },
+  [TestMode.OTA]: {
+    required: ['chamber_init', 'ota_mapper', 'network_config', 'base_station_setup'],
+    disabled: [],
+    optional: ['environment_setup', 'route_execution', 'kpi_validation', 'report_generation'],
+  },
+}
+
+// Step metadata for UI display
+export const STEP_METADATA: Record<StepKey, { label: string; description: string }> = {
+  environment_setup: {
+    label: '数字孪生环境配置',
+    description: '配置信道模型和仿真环境',
+  },
+  chamber_init: {
+    label: '暗室初始化 (MPAC)',
+    description: '初始化OTA暗室和转台',
+  },
+  network_config: {
+    label: '网络配置',
+    description: '配置5G/LTE网络参数',
+  },
+  base_station_setup: {
+    label: '基站/信道配置',
+    description: '配置基站参数和信道模型',
+  },
+  ota_mapper: {
+    label: 'OTA映射器',
+    description: '配置路径和OTA映射',
+  },
+  route_execution: {
+    label: '路径执行',
+    description: '执行虚拟路测',
+  },
+  kpi_validation: {
+    label: 'KPI验证',
+    description: '验证性能指标',
+  },
+  report_generation: {
+    label: '报告生成',
+    description: '生成测试报告',
+  },
+}
+
 export type ExecutionStatus = 'idle' | 'initializing' | 'configured' | 'running' | 'paused' | 'completed' | 'failed' | 'stopped'
 
 export const DuplexMode = {
