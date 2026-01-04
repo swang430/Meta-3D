@@ -38,6 +38,11 @@ export default defineConfig({
           })
         },
       },
+      // Channel Engine Service proxy
+      '/api/v1/ota': {
+        target: 'http://localhost:8001',
+        changeOrigin: true,
+      },
       // REST API proxy
       '/api': {
         target: 'http://localhost:8000',
