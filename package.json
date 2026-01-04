@@ -8,7 +8,7 @@
     "dev:all": "concurrently -n \"ChannelEngine,API,GUI\" -c \"blue,yellow,green\" \"npm run dev:channel-engine\" \"npm run dev:api\" \"npm run dev:gui\"",
     "dev:safe": "bash scripts/safe-start.sh",
     "dev:safe:all": "bash scripts/safe-start.sh all",
-    "dev:channel-engine": "cd channel-engine-service && .venv/bin/python -m app.main",
+    "dev:channel-engine": "export CHANNEL_ENGINE_PATH=\"/Users/Simon/Tools/ChannelEgine\" && cd channel-engine-service && .venv/bin/python -m app.main",
     "dev:api": "cd api-service && .venv/bin/python -m app.main",
     "dev:gui": "npm run dev --prefix gui",
     "cleanup": "bash scripts/cleanup-ports.sh",
@@ -17,7 +17,7 @@
     "setup:channel-engine": "cd channel-engine-service && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
     "setup:api": "cd api-service && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
     "setup:all": "npm run setup:channel-engine && npm run setup:api && npm run install:all",
-    "generate:schema": "cd channel-engine-service && .venv/bin/python ../scripts/export_channel_engine_schema.py"
+    "generate:schema": "export CHANNEL_ENGINE_PATH=\"/Users/Simon/Tools/ChannelEgine\" && cd channel-engine-service && .venv/bin/python ../scripts/export_channel_engine_schema.py"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"
