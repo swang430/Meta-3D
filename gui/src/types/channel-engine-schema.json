@@ -1,0 +1,515 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Channel Engine Service",
+    "description": "\u57fa\u4e8e3GPP TR 38.901\u7684OTA\u63a2\u5934\u6743\u91cd\u8ba1\u7b97\u670d\u52a1",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "tags": [
+          "\u5065\u5eb7\u68c0\u67e5"
+        ],
+        "summary": "\u5065\u5eb7\u68c0\u67e5",
+        "description": "\u68c0\u67e5\u670d\u52a1\u662f\u5426\u6b63\u5e38\u8fd0\u884c\u4ee5\u53caChannelEngine\u662f\u5426\u53ef\u7528",
+        "operationId": "health_check_api_v1_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthCheckResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/ota/generate-probe-weights": {
+      "post": {
+        "tags": [
+          "OTA\u63a2\u5934\u6743\u91cd"
+        ],
+        "summary": "\u751f\u6210\u63a2\u5934\u6743\u91cd",
+        "description": "\u57fa\u4e8e3GPP\u4fe1\u9053\u6a21\u578b\u548c\u63a2\u5934\u9635\u5217\u914d\u7f6e\uff0c\u8ba1\u7b97OTA\u6d4b\u8bd5\u6240\u9700\u7684\u63a2\u5934\u6743\u91cd",
+        "operationId": "generate_probe_weights_api_v1_ota_generate_probe_weights_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProbeWeightRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeWeightResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "tags": [
+          "\u6839"
+        ],
+        "summary": "Root",
+        "description": "\u6839\u7aef\u70b9 - \u670d\u52a1\u4fe1\u606f",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ChannelStatistics": {
+        "properties": {
+          "pathloss_db": {
+            "type": "number",
+            "title": "Pathloss Db",
+            "description": "\u8def\u5f84\u635f\u8017 (dB)"
+          },
+          "rms_delay_spread_ns": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rms Delay Spread Ns",
+            "description": "RMS\u65f6\u5ef6\u6269\u5c55 (ns)"
+          },
+          "angular_spread_deg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Angular Spread Deg",
+            "description": "\u89d2\u5ea6\u6269\u5c55 (degrees)"
+          },
+          "condition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Condition",
+            "description": "\u4fe1\u9053\u6761\u4ef6 (LOS/NLOS)"
+          },
+          "num_clusters": {
+            "type": "integer",
+            "title": "Num Clusters",
+            "description": "\u7c07\u6570\u91cf"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pathloss_db",
+          "num_clusters"
+        ],
+        "title": "ChannelStatistics",
+        "description": "\u4fe1\u9053\u7edf\u8ba1\u4fe1\u606f"
+      },
+      "ComplexWeight": {
+        "properties": {
+          "magnitude": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Magnitude",
+            "description": "\u5e45\u5ea6 (0-1)"
+          },
+          "phase_deg": {
+            "type": "number",
+            "title": "Phase Deg",
+            "description": "\u76f8\u4f4d (degrees, 0-360)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "magnitude",
+          "phase_deg"
+        ],
+        "title": "ComplexWeight",
+        "description": "\u590d\u6570\u6743\u91cd\uff08\u5e45\u5ea6 + \u76f8\u4f4d\uff09"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthCheckResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "\u670d\u52a1\u72b6\u6001"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "description": "\u670d\u52a1\u7248\u672c"
+          },
+          "channel_engine_available": {
+            "type": "boolean",
+            "title": "Channel Engine Available",
+            "description": "ChannelEngine\u662f\u5426\u53ef\u7528"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "version",
+          "channel_engine_available"
+        ],
+        "title": "HealthCheckResponse",
+        "description": "\u5065\u5eb7\u68c0\u67e5\u54cd\u5e94"
+      },
+      "MIMOConfig": {
+        "properties": {
+          "num_tx_antennas": {
+            "type": "integer",
+            "maximum": 8.0,
+            "minimum": 1.0,
+            "title": "Num Tx Antennas",
+            "description": "\u53d1\u5c04\u5929\u7ebf\u6570"
+          },
+          "num_rx_antennas": {
+            "type": "integer",
+            "maximum": 8.0,
+            "minimum": 1.0,
+            "title": "Num Rx Antennas",
+            "description": "\u63a5\u6536\u5929\u7ebf\u6570"
+          },
+          "tx_antenna_spacing": {
+            "type": "number",
+            "title": "Tx Antenna Spacing",
+            "description": "\u53d1\u5c04\u5929\u7ebf\u95f4\u8ddd\uff08\u6ce2\u957f\uff09",
+            "default": 0.5
+          },
+          "rx_antenna_spacing": {
+            "type": "number",
+            "title": "Rx Antenna Spacing",
+            "description": "\u63a5\u6536\u5929\u7ebf\u95f4\u8ddd\uff08\u6ce2\u957f\uff09",
+            "default": 0.5
+          }
+        },
+        "type": "object",
+        "required": [
+          "num_tx_antennas",
+          "num_rx_antennas"
+        ],
+        "title": "MIMOConfig",
+        "description": "MIMO\u914d\u7f6e"
+      },
+      "ProbeArrayConfig": {
+        "properties": {
+          "num_probes": {
+            "type": "integer",
+            "maximum": 64.0,
+            "minimum": 8.0,
+            "title": "Num Probes",
+            "description": "\u63a2\u5934\u6570\u91cf"
+          },
+          "radius": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Radius",
+            "description": "\u6697\u5ba4\u534a\u5f84 (meters)"
+          },
+          "probe_positions": {
+            "items": {
+              "$ref": "#/components/schemas/ProbePosition"
+            },
+            "type": "array",
+            "title": "Probe Positions",
+            "description": "\u6240\u6709\u63a2\u5934\u7684\u4f4d\u7f6e\u5217\u8868"
+          }
+        },
+        "type": "object",
+        "required": [
+          "num_probes",
+          "radius",
+          "probe_positions"
+        ],
+        "title": "ProbeArrayConfig",
+        "description": "\u63a2\u5934\u9635\u5217\u914d\u7f6e"
+      },
+      "ProbePosition": {
+        "properties": {
+          "probe_id": {
+            "type": "integer",
+            "title": "Probe Id",
+            "description": "\u63a2\u5934ID (1-based)"
+          },
+          "theta": {
+            "type": "number",
+            "title": "Theta",
+            "description": "\u5929\u9876\u89d2 (degrees, 0-180)"
+          },
+          "phi": {
+            "type": "number",
+            "title": "Phi",
+            "description": "\u65b9\u4f4d\u89d2 (degrees, 0-360)"
+          },
+          "r": {
+            "type": "number",
+            "title": "R",
+            "description": "\u534a\u5f84 (meters)"
+          },
+          "polarization": {
+            "type": "string",
+            "enum": [
+              "V",
+              "H",
+              "LHCP",
+              "RHCP",
+              "VH"
+            ],
+            "title": "Polarization",
+            "description": "\u6781\u5316\u65b9\u5f0f"
+          }
+        },
+        "type": "object",
+        "required": [
+          "probe_id",
+          "theta",
+          "phi",
+          "r",
+          "polarization"
+        ],
+        "title": "ProbePosition",
+        "description": "\u5355\u4e2a\u63a2\u5934\u7684\u7269\u7406\u4f4d\u7f6e\uff08\u7403\u5750\u6807\u7cfb\uff09"
+      },
+      "ProbeWeight": {
+        "properties": {
+          "probe_id": {
+            "type": "integer",
+            "title": "Probe Id",
+            "description": "\u63a2\u5934ID"
+          },
+          "polarization": {
+            "type": "string",
+            "title": "Polarization",
+            "description": "\u6781\u5316\u65b9\u5f0f"
+          },
+          "weight": {
+            "$ref": "#/components/schemas/ComplexWeight"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "description": "\u662f\u5426\u542f\u7528\u6b64\u63a2\u5934",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "probe_id",
+          "polarization",
+          "weight"
+        ],
+        "title": "ProbeWeight",
+        "description": "\u5355\u4e2a\u63a2\u5934\u7684\u6743\u91cd"
+      },
+      "ProbeWeightRequest": {
+        "properties": {
+          "scenario": {
+            "$ref": "#/components/schemas/ScenarioConfig"
+          },
+          "probe_array": {
+            "$ref": "#/components/schemas/ProbeArrayConfig"
+          },
+          "mimo_config": {
+            "$ref": "#/components/schemas/MIMOConfig"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scenario",
+          "probe_array",
+          "mimo_config"
+        ],
+        "title": "ProbeWeightRequest",
+        "description": "\u63a2\u5934\u6743\u91cd\u8ba1\u7b97\u8bf7\u6c42"
+      },
+      "ProbeWeightResponse": {
+        "properties": {
+          "probe_weights": {
+            "items": {
+              "$ref": "#/components/schemas/ProbeWeight"
+            },
+            "type": "array",
+            "title": "Probe Weights",
+            "description": "\u6240\u6709\u63a2\u5934\u7684\u6743\u91cd"
+          },
+          "channel_statistics": {
+            "$ref": "#/components/schemas/ChannelStatistics"
+          },
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "description": "\u8ba1\u7b97\u662f\u5426\u6210\u529f",
+            "default": true
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message",
+            "description": "\u989d\u5916\u4fe1\u606f\u6216\u9519\u8bef\u6d88\u606f"
+          }
+        },
+        "type": "object",
+        "required": [
+          "probe_weights",
+          "channel_statistics"
+        ],
+        "title": "ProbeWeightResponse",
+        "description": "\u63a2\u5934\u6743\u91cd\u8ba1\u7b97\u54cd\u5e94"
+      },
+      "ScenarioConfig": {
+        "properties": {
+          "scenario_type": {
+            "type": "string",
+            "enum": [
+              "UMa",
+              "UMi",
+              "RMa",
+              "InH"
+            ],
+            "title": "Scenario Type",
+            "description": "3GPP \u73af\u5883\u7c7b\u578b"
+          },
+          "cluster_model": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "CDL-A",
+                  "CDL-B",
+                  "CDL-C",
+                  "CDL-D",
+                  "CDL-E",
+                  "TDL-A",
+                  "TDL-B",
+                  "TDL-C"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Model",
+            "description": "\u7c07\u6a21\u578b\u7c7b\u578b\uff08\u53ef\u9009\uff0c\u7528\u4e8e\u6df7\u5408\u6a21\u578b\uff09"
+          },
+          "frequency_mhz": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Frequency Mhz",
+            "description": "\u4e2d\u5fc3\u9891\u7387 (MHz)"
+          },
+          "use_median_lsps": {
+            "type": "boolean",
+            "title": "Use Median Lsps",
+            "description": "\u662f\u5426\u4f7f\u7528\u4e2d\u503cLSP\uff08\u786e\u5b9a\u6027\u6d4b\u8bd5\uff09",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "scenario_type",
+          "frequency_mhz"
+        ],
+        "title": "ScenarioConfig",
+        "description": "\u6d4b\u8bd5\u573a\u666f\u914d\u7f6e"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

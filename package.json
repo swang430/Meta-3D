@@ -16,7 +16,8 @@
     "install:all": "npm install && cd gui && npm install",
     "setup:channel-engine": "cd channel-engine-service && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
     "setup:api": "cd api-service && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
-    "setup:all": "npm run setup:channel-engine && npm run setup:api && npm run install:all"
+    "setup:all": "npm run setup:channel-engine && npm run setup:api && npm run install:all",
+    "generate:schema": "cd channel-engine-service && .venv/bin/python ../scripts/export_channel_engine_schema.py"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"
