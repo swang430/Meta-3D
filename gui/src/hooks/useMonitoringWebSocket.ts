@@ -83,10 +83,13 @@ export function useMonitoringWebSocket(
   options: UseMonitoringWebSocketOptions = {}
 ): UseMonitoringWebSocketReturn {
   // Calculate default URL dynamically based on current window location
-  // This ensures it works through the Vite proxy (e.g., ws://localhost:5173/api/...)
-  // instead of bypassing it and hitting 8001 directly.
   const defaultUrl = useMemo(() => {
     if (typeof window !== 'undefined') {
+      // Direct connection for localhost development to bypass Vite proxy issues
+      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        return 'ws://localhost:8000/api/v1/ws/monitoring'
+      }
+      
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       return `${protocol}//${window.location.host}/api/v1/ws/monitoring`
     }

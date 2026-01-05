@@ -76,6 +76,7 @@ export function CreateScenarioDialog({ opened, onClose, testMode }: Props) {
     channelModel: 'UMa',
     speed: 50,
     duration: 60,
+    numBaseStations: 2,
     stepConfiguration: undefined as StepConfiguration | undefined,
   })
 
@@ -94,23 +95,25 @@ export function CreateScenarioDialog({ opened, onClose, testMode }: Props) {
           duplex_mode: 'TDD',
           scs_khz: 30,
         },
-        base_stations: [
-          {
-            bs_id: 'BS1',
-            name: 'Custom Base Station 1',
-            position: { lat: 31.23, lon: 121.47, alt: 30 },
-            tx_power_dbm: 46,
-            antenna_height_m: 25,
-            antenna_config: '4T4R',
-            azimuth_deg: 0,
-            tilt_deg: 10,
+        base_stations: Array.from({ length: formData.numBaseStations }).map((_, i) => ({
+          bs_id: `BS${i + 1}`,
+          name: `Custom Base Station ${i + 1}`,
+          position: {
+            lat: 31.23 + i * 0.005,
+            lon: 121.47 + i * 0.005,
+            alt: 30,
           },
-        ],
+          tx_power_dbm: 46,
+          antenna_height_m: 25,
+          antenna_config: '4T4R',
+          azimuth_deg: i * (360 / formData.numBaseStations),
+          tilt_deg: 10,
+        })),
         route: {
           type: 'generated',
           waypoints: [],
           duration_s: formData.duration,
-          total_distance_m: formData.speed * formData.duration,
+          total_distance_m: (formData.speed / 3.6) * formData.duration,
         },
         environment: {
           type: 'urban_street',
@@ -164,6 +167,7 @@ export function CreateScenarioDialog({ opened, onClose, testMode }: Props) {
       channelModel: 'UMa',
       speed: 50,
       duration: 60,
+      numBaseStations: 2,
       stepConfiguration: undefined,
     })
     setActiveTab('basic')
@@ -304,6 +308,20 @@ export function CreateScenarioDialog({ opened, onClose, testMode }: Props) {
                     })
                   }
                   data={CHANNEL_MODELS}
+                />
+
+                <NumberInput
+                  label="基站数量"
+                  placeholder="例如: 2"
+                  value={formData.numBaseStations}
+                  onChange={(value) =>
+                    setFormData({
+                      ...formData,
+                      numBaseStations: value || 2,
+                    })
+                  }
+                  min={1}
+                  max={8}
                 />
               </SimpleGrid>
             </Stack>

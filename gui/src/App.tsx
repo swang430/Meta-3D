@@ -4735,98 +4735,35 @@ function Monitoring({
     }
   }, [scenarioStatus])
 
-  useEffect(() => {
-    const wsUrl = `${window.location.origin.replace(/^http/, 'ws')}/api/v1/ws/monitoring`
-    let isActive = true
-
-    const connect = () => {
-      if (!isActive) return
-      const socket = new WebSocket(wsUrl)
-      socketRef.current = socket
-
-      socket.addEventListener('open', () => {
-        if (!isActive) return
-        setWsConnected(true)
-      })
-
-      socket.addEventListener('message', (event) => {
-        if (!isActive) return
-        try {
-          const payload = JSON.parse(event.data) as {
-            type: 'metrics' | 'waveform' | 'log' | 'status'
-            data: unknown
-          }
-          switch (payload.type) {
-            case 'metrics':
-              if (scenarioMetricsRef.current) break
-              if (Array.isArray(payload.data)) {
-                setMetricFeeds(payload.data as typeof metricFeeds)
-              }
-              break
-            case 'waveform':
-              if (Array.isArray(payload.data)) {
-                const samples = payload.data as number[]
-                setWaveform((prev) => {
-                  const merged = [...prev.slice(samples.length), ...samples]
-                  return merged.length === 0 ? samples : merged
-                })
-              }
-              break
-            case 'log':
-              setLogs((prev) => {
-                const next = [...prev, payload.data as LogEntry]
-                return next.slice(-40)
-              })
-              break
-            case 'status':
-              {
-                if (scenarioMetricsRef.current) break
-                const status = payload.data as {
-                  execStatus?: 'running' | 'paused' | 'idle'
-                  powerLevel?: number
-                  interferenceMode?: 'off' | 'awgn' | 'co-channel'
-                }
-                if (status.execStatus) setExecStatus(status.execStatus)
-                if (typeof status.powerLevel === 'number') setPowerLevel(status.powerLevel)
-                if (status.interferenceMode) setInterferenceMode(status.interferenceMode)
-              }
-              break
-            default:
-              break
-          }
-        } catch {
-          // ignore malformed messages
-        }
-      })
-
-      const scheduleReconnect = () => {
-        if (!isActive) return
-        setWsConnected(false)
-        if (reconnectTimerRef.current !== null) {
-          window.clearTimeout(reconnectTimerRef.current)
-        }
-        reconnectTimerRef.current = window.setTimeout(connect, 2500)
+    useEffect(() => {
+      /* 
+      // WebSocket logic moved to useMonitoringWebSocket hook.
+      // Temporarily disabled in App.tsx to prevent duplicate connections and conflicts.
+      
+      let wsUrl = `${window.location.origin.replace(/^http/, 'ws')}/api/v1/ws/monitoring`
+      
+      // Direct connection for localhost development to bypass Vite proxy issues
+      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        wsUrl = 'ws://192.168.77.10:8000/api/v1/ws/monitoring'
       }
-
-      socket.addEventListener('close', scheduleReconnect)
-      socket.addEventListener('error', () => {
-        socket.close()
-      })
-    }
-
-    connect()
-
-    return () => {
-      isActive = false
-      if (reconnectTimerRef.current !== null) {
-        window.clearTimeout(reconnectTimerRef.current)
+  
+      let isActive = true
+  
+      const connect = () => {
+        if (!isActive) return
+        const socket = new WebSocket(wsUrl)
+        socketRef.current = socket
+        // ... (rest of the logic commented out)
       }
-      if (socketRef.current) {
-        socketRef.current.close()
+      // connect() 
+      */
+      
+      // Minimal cleanup to satisfy hooks rules if needed, or just empty effect
+      return () => {
+        // isActive = false
+        // if (socketRef.current) socketRef.current.close()
       }
-    }
-  }, [setLogs])
-
+    }, [scenarioStatus])
   useEffect(() => {
     if (wsConnected && socketRef.current) {
       const payload = execStatus === 'running' ? { action: 'resume' } : { action: 'pause' }
