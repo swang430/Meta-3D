@@ -1,39 +1,391 @@
 {
-  "version": "1.0",
-  "description": "32探头五环布局，球坐标系定义",
-  "generatedAt": "2024-12-16T00:00:00.000Z",
+  "version": "1.1",
+  "description": "32-Probe (16 Positions x Dual-Polarization) Layout",
+  "generatedAt": "2026-04-12T00:00:00.000Z",
   "probes": [
-    { "probe_number": 1, "name": "Probe-01", "ring": 2, "polarization": "V", "position": { "azimuth": 0, "elevation": 45, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 2, "name": "Probe-02", "ring": 2, "polarization": "V", "position": { "azimuth": 45, "elevation": 45, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 3, "name": "Probe-03", "ring": 2, "polarization": "V", "position": { "azimuth": 90, "elevation": 45, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 4, "name": "Probe-04", "ring": 2, "polarization": "V", "position": { "azimuth": 135, "elevation": 45, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 5, "name": "Probe-05", "ring": 2, "polarization": "V", "position": { "azimuth": 180, "elevation": 45, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 6, "name": "Probe-06", "ring": 2, "polarization": "V", "position": { "azimuth": 225, "elevation": 45, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 7, "name": "Probe-07", "ring": 2, "polarization": "V", "position": { "azimuth": 270, "elevation": 45, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 8, "name": "Probe-08", "ring": 2, "polarization": "V", "position": { "azimuth": 315, "elevation": 45, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 9, "name": "Probe-09", "ring": 3, "polarization": "V", "position": { "azimuth": 0, "elevation": 0, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 10, "name": "Probe-10", "ring": 3, "polarization": "V", "position": { "azimuth": 22.5, "elevation": 0, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 11, "name": "Probe-11", "ring": 3, "polarization": "V", "position": { "azimuth": 45, "elevation": 0, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 12, "name": "Probe-12", "ring": 3, "polarization": "V", "position": { "azimuth": 67.5, "elevation": 0, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 13, "name": "Probe-13", "ring": 3, "polarization": "V", "position": { "azimuth": 90, "elevation": 0, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 14, "name": "Probe-14", "ring": 3, "polarization": "V", "position": { "azimuth": 112.5, "elevation": 0, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 15, "name": "Probe-15", "ring": 3, "polarization": "V", "position": { "azimuth": 135, "elevation": 0, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 16, "name": "Probe-16", "ring": 3, "polarization": "V", "position": { "azimuth": 157.5, "elevation": 0, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 17, "name": "Probe-17", "ring": 3, "polarization": "V", "position": { "azimuth": 180, "elevation": 0, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 18, "name": "Probe-18", "ring": 3, "polarization": "V", "position": { "azimuth": 202.5, "elevation": 0, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 19, "name": "Probe-19", "ring": 3, "polarization": "V", "position": { "azimuth": 225, "elevation": 0, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 20, "name": "Probe-20", "ring": 3, "polarization": "V", "position": { "azimuth": 247.5, "elevation": 0, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 21, "name": "Probe-21", "ring": 3, "polarization": "V", "position": { "azimuth": 270, "elevation": 0, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 22, "name": "Probe-22", "ring": 3, "polarization": "V", "position": { "azimuth": 292.5, "elevation": 0, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 23, "name": "Probe-23", "ring": 3, "polarization": "V", "position": { "azimuth": 315, "elevation": 0, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 24, "name": "Probe-24", "ring": 3, "polarization": "V", "position": { "azimuth": 337.5, "elevation": 0, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 25, "name": "Probe-25", "ring": 4, "polarization": "V", "position": { "azimuth": 22.5, "elevation": -45, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 26, "name": "Probe-26", "ring": 4, "polarization": "V", "position": { "azimuth": 67.5, "elevation": -45, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 27, "name": "Probe-27", "ring": 4, "polarization": "V", "position": { "azimuth": 112.5, "elevation": -45, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 28, "name": "Probe-28", "ring": 4, "polarization": "V", "position": { "azimuth": 157.5, "elevation": -45, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 29, "name": "Probe-29", "ring": 4, "polarization": "V", "position": { "azimuth": 202.5, "elevation": -45, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 30, "name": "Probe-30", "ring": 4, "polarization": "V", "position": { "azimuth": 247.5, "elevation": -45, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 31, "name": "Probe-31", "ring": 4, "polarization": "V", "position": { "azimuth": 292.5, "elevation": -45, "radius": 2.5 }, "is_active": true },
-    { "probe_number": 32, "name": "Probe-32", "ring": 4, "polarization": "V", "position": { "azimuth": 337.5, "elevation": -45, "radius": 2.5 }, "is_active": true }
+    {
+      "probe_number": 1,
+      "name": "Probe 1-V",
+      "ring": 1,
+      "polarization": "V",
+      "position": {
+        "azimuth": 0.0,
+        "elevation": 45,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 2,
+      "name": "Probe 2-H",
+      "ring": 1,
+      "polarization": "H",
+      "position": {
+        "azimuth": 0.0,
+        "elevation": 45,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 3,
+      "name": "Probe 3-V",
+      "ring": 1,
+      "polarization": "V",
+      "position": {
+        "azimuth": 90.0,
+        "elevation": 45,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 4,
+      "name": "Probe 4-H",
+      "ring": 1,
+      "polarization": "H",
+      "position": {
+        "azimuth": 90.0,
+        "elevation": 45,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 5,
+      "name": "Probe 5-V",
+      "ring": 1,
+      "polarization": "V",
+      "position": {
+        "azimuth": 180.0,
+        "elevation": 45,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 6,
+      "name": "Probe 6-H",
+      "ring": 1,
+      "polarization": "H",
+      "position": {
+        "azimuth": 180.0,
+        "elevation": 45,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 7,
+      "name": "Probe 7-V",
+      "ring": 1,
+      "polarization": "V",
+      "position": {
+        "azimuth": 270.0,
+        "elevation": 45,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 8,
+      "name": "Probe 8-H",
+      "ring": 1,
+      "polarization": "H",
+      "position": {
+        "azimuth": 270.0,
+        "elevation": 45,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 9,
+      "name": "Probe 9-V",
+      "ring": 2,
+      "polarization": "V",
+      "position": {
+        "azimuth": 0.0,
+        "elevation": 0,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 10,
+      "name": "Probe 10-H",
+      "ring": 2,
+      "polarization": "H",
+      "position": {
+        "azimuth": 0.0,
+        "elevation": 0,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 11,
+      "name": "Probe 11-V",
+      "ring": 2,
+      "polarization": "V",
+      "position": {
+        "azimuth": 45.0,
+        "elevation": 0,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 12,
+      "name": "Probe 12-H",
+      "ring": 2,
+      "polarization": "H",
+      "position": {
+        "azimuth": 45.0,
+        "elevation": 0,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 13,
+      "name": "Probe 13-V",
+      "ring": 2,
+      "polarization": "V",
+      "position": {
+        "azimuth": 90.0,
+        "elevation": 0,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 14,
+      "name": "Probe 14-H",
+      "ring": 2,
+      "polarization": "H",
+      "position": {
+        "azimuth": 90.0,
+        "elevation": 0,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 15,
+      "name": "Probe 15-V",
+      "ring": 2,
+      "polarization": "V",
+      "position": {
+        "azimuth": 135.0,
+        "elevation": 0,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 16,
+      "name": "Probe 16-H",
+      "ring": 2,
+      "polarization": "H",
+      "position": {
+        "azimuth": 135.0,
+        "elevation": 0,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 17,
+      "name": "Probe 17-V",
+      "ring": 2,
+      "polarization": "V",
+      "position": {
+        "azimuth": 180.0,
+        "elevation": 0,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 18,
+      "name": "Probe 18-H",
+      "ring": 2,
+      "polarization": "H",
+      "position": {
+        "azimuth": 180.0,
+        "elevation": 0,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 19,
+      "name": "Probe 19-V",
+      "ring": 2,
+      "polarization": "V",
+      "position": {
+        "azimuth": 225.0,
+        "elevation": 0,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 20,
+      "name": "Probe 20-H",
+      "ring": 2,
+      "polarization": "H",
+      "position": {
+        "azimuth": 225.0,
+        "elevation": 0,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 21,
+      "name": "Probe 21-V",
+      "ring": 2,
+      "polarization": "V",
+      "position": {
+        "azimuth": 270.0,
+        "elevation": 0,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 22,
+      "name": "Probe 22-H",
+      "ring": 2,
+      "polarization": "H",
+      "position": {
+        "azimuth": 270.0,
+        "elevation": 0,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 23,
+      "name": "Probe 23-V",
+      "ring": 2,
+      "polarization": "V",
+      "position": {
+        "azimuth": 315.0,
+        "elevation": 0,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 24,
+      "name": "Probe 24-H",
+      "ring": 2,
+      "polarization": "H",
+      "position": {
+        "azimuth": 315.0,
+        "elevation": 0,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 25,
+      "name": "Probe 25-V",
+      "ring": 3,
+      "polarization": "V",
+      "position": {
+        "azimuth": 0.0,
+        "elevation": -45,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 26,
+      "name": "Probe 26-H",
+      "ring": 3,
+      "polarization": "H",
+      "position": {
+        "azimuth": 0.0,
+        "elevation": -45,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 27,
+      "name": "Probe 27-V",
+      "ring": 3,
+      "polarization": "V",
+      "position": {
+        "azimuth": 90.0,
+        "elevation": -45,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 28,
+      "name": "Probe 28-H",
+      "ring": 3,
+      "polarization": "H",
+      "position": {
+        "azimuth": 90.0,
+        "elevation": -45,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 29,
+      "name": "Probe 29-V",
+      "ring": 3,
+      "polarization": "V",
+      "position": {
+        "azimuth": 180.0,
+        "elevation": -45,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 30,
+      "name": "Probe 30-H",
+      "ring": 3,
+      "polarization": "H",
+      "position": {
+        "azimuth": 180.0,
+        "elevation": -45,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 31,
+      "name": "Probe 31-V",
+      "ring": 3,
+      "polarization": "V",
+      "position": {
+        "azimuth": 270.0,
+        "elevation": -45,
+        "radius": 4.0
+      },
+      "is_active": true
+    },
+    {
+      "probe_number": 32,
+      "name": "Probe 32-H",
+      "ring": 3,
+      "polarization": "H",
+      "position": {
+        "azimuth": 270.0,
+        "elevation": -45,
+        "radius": 4.0
+      },
+      "is_active": true
+    }
   ]
 }

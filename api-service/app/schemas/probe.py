@@ -18,12 +18,13 @@ class ProbePosition(BaseModel):
 
 class ProbeCreateRequest(BaseModel):
     """Request to create a new probe"""
-    probe_number: int = Field(..., ge=1, le=32, description="探头编号 1-32")
+    probe_number: int = Field(..., ge=1, le=128, description="探头编号")
     name: Optional[str] = Field(None, max_length=100)
     ring: int = Field(..., ge=1, le=5, description="环编号 1-5 (基于仰角: 1=顶层>60°, 2=上层30-60°, 3=中层±30°, 4=下层-60~-30°, 5=底层<-60°)")
-    polarization: str = Field(..., pattern="^[VH]$", description="极化: V | H")
+    polarization: str = Field(..., pattern="^(V|H|V/H|RHCP|LHCP)$", description="极化: V | H | V/H | RHCP | LHCP")
     position: ProbePosition
     is_active: bool = Field(True, description="是否启用")
+    chamber_config_id: Optional[UUID] = Field(None, description="所属暗室配置 ID")
     hardware_id: Optional[str] = Field(None, max_length=100)
     channel_port: Optional[int] = None
     frequency_range_mhz: Optional[Dict[str, float]] = Field(
@@ -40,7 +41,7 @@ class ProbeUpdateRequest(BaseModel):
     """Request to update a probe"""
     name: Optional[str] = Field(None, max_length=100)
     ring: Optional[int] = Field(None, ge=1, le=5, description="环编号 1-5 (基于仰角自动计算)")
-    polarization: Optional[str] = Field(None, pattern="^[VH]$")
+    polarization: Optional[str] = Field(None, pattern="^(V|H|V/H|RHCP|LHCP)$")
     position: Optional[ProbePosition] = None
     is_active: Optional[bool] = None
     is_connected: Optional[bool] = None
@@ -50,6 +51,7 @@ class ProbeUpdateRequest(BaseModel):
     )
     hardware_id: Optional[str] = Field(None, max_length=100)
     channel_port: Optional[int] = None
+    chamber_config_id: Optional[UUID] = Field(None, description="所属暗室配置 ID")
     last_calibration_date: Optional[datetime] = None
     calibration_status: Optional[str] = Field(
         None,
@@ -64,7 +66,8 @@ class ProbeUpdateRequest(BaseModel):
 
 class BulkProbeRequest(BaseModel):
     """Request to replace all probes in bulk"""
-    probes: List[ProbeCreateRequest] = Field(..., max_length=32)
+    probes: List[ProbeCreateRequest] = Field(..., max_length=128)
+    chamber_config_id: Optional[UUID] = Field(None, description="所有探头的所属暗室配置 ID")
 
 
 # ==================== Response Schemas ====================
@@ -80,6 +83,7 @@ class ProbeResponse(BaseModel):
     is_active: bool
     is_connected: bool
     status: str
+    chamber_config_id: Optional[UUID] = None
     hardware_id: Optional[str]
     channel_port: Optional[int]
     last_calibration_date: Optional[datetime]

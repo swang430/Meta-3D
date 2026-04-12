@@ -103,7 +103,8 @@ export default function ProbeLayoutView({ probes, selectedId, onSelect }: Props)
                 const { x, y } = probe.pos
                 const cx = scalePoint(x, maxHorizontal, 320)
                 const cy = scalePoint(y, maxHorizontal, 320)
-                const color = getRingColor(probe.ringNormalized)
+                const color = probe.is_active ? getRingColor(probe.ringNormalized) : '#4b5563'
+                const opacity = probe.is_active ? 1 : 0.3
                 const isSelected = probe.id === selectedId
                 const label = probe.probe_number.toString()
                 return (
@@ -112,6 +113,7 @@ export default function ProbeLayoutView({ probes, selectedId, onSelect }: Props)
                     className={isSelected ? 'probe-layout__point probe-layout__point--selected' : 'probe-layout__point'}
                     transform={`translate(${cx}, ${cy})`}
                     onClick={() => onSelect(probe.id)}
+                    style={{ opacity }}
                   >
                     <circle r={10} fill={color} />
                     <text
@@ -140,7 +142,8 @@ export default function ProbeLayoutView({ probes, selectedId, onSelect }: Props)
               {parsed.map((probe) => {
                 const cx = scalePoint(probe.pos.x, maxHorizontal, 320)
                 const cy = scalePoint(-probe.pos.z, maxHeight, 220)
-                const color = getRingColor(probe.ringNormalized)
+                const color = probe.is_active ? getRingColor(probe.ringNormalized) : '#4b5563'
+                const opacity = probe.is_active ? 1 : 0.3
                 const isSelected = probe.id === selectedId
                 const label = probe.probe_number.toString()
                 return (
@@ -149,6 +152,7 @@ export default function ProbeLayoutView({ probes, selectedId, onSelect }: Props)
                     className={isSelected ? 'probe-layout__point probe-layout__point--selected' : 'probe-layout__point'}
                     transform={`translate(${cx}, ${cy})`}
                     onClick={() => onSelect(probe.id)}
+                    style={{ opacity }}
                   >
                     <rect width={20} height={20} x={-10} y={-10} rx={4} fill={color} />
                     <text

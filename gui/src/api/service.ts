@@ -28,6 +28,14 @@ import type {
   UpdateInstrumentPayload,
   InstrumentsResponse,
   DeletePlanResponse,
+  ChamberConfiguration,
+  ChamberListResponse,
+  ChamberPresetsResponse,
+  ChamberFromPresetPayload,
+  CreateChamberPayload,
+  UpdateChamberPayload,
+  RequiredCalibrationsResponse,
+  LinkBudgetResponse,
 } from '../types/api'
 
 export const fetchDashboard = async (): Promise<DashboardResponse> => {
@@ -41,13 +49,13 @@ export const fetchProbes = async (): Promise<ProbesResponse> => {
 }
 
 export const createProbe = async (payload: CreateProbePayload) => {
-  const response = await client.post<{ probe: CreateProbePayload }>('/probes', payload)
-  return response.data.probe
+  const response = await client.post<any>('/probes', payload)
+  return response.data
 }
 
 export const updateProbe = async (id: string, payload: UpdateProbePayload) => {
-  const response = await client.put<{ probe: CreateProbePayload }>(`/probes/${id}`, payload)
-  return response.data.probe
+  const response = await client.put<any>(`/probes/${id}`, payload)
+  return response.data
 }
 
 export const deleteProbe = async (id: string) => {
@@ -189,5 +197,123 @@ export const fetchTestCaseDetail = async (caseId: string): Promise<TestCaseRespo
 
 export const deleteTestCase = async (caseId: string): Promise<DeleteTestCaseResponse> => {
   const response = await client.delete<DeleteTestCaseResponse>(`/test-plans/cases/${caseId}`)
+  return response.data
+}
+
+// ============================================================
+// Chamber Configuration API (暗室配置 API)
+// ============================================================
+
+/**
+ * 获取所有暗室预设模板
+ */
+export const fetchChamberPresets = async (): Promise<ChamberPresetsResponse> => {
+  const response = await client.get<ChamberPresetsResponse>('/chambers/presets')
+  return response.data
+}
+
+/**
+ * 获取暗室配置列表
+ */
+export const fetchChamberConfigurations = async (params?: {
+  skip?: number
+  limit?: number
+  activeOnly?: boolean
+}): Promise<ChamberListResponse> => {
+  const response = await client.get<ChamberListResponse>('/chambers', { params })
+  return response.data
+}
+
+/**
+ * 获取当前激活的暗室配置
+ */
+export const fetchActiveChamber = async (): Promise<ChamberConfiguration> => {
+  const response = await client.get<ChamberConfiguration>('/chambers/active')
+  return response.data
+}
+
+/**
+ * 获取指定暗室配置
+ */
+export const fetchChamber = async (chamberId: string): Promise<ChamberConfiguration> => {
+  const response = await client.get<ChamberConfiguration>(`/chambers/${chamberId}`)
+  return response.data
+}
+
+/**
+ * 从预设模板创建暗室配置
+ */
+export const createChamberFromTemplate = async (
+  payload: ChamberFromPresetPayload
+): Promise<ChamberConfiguration> => {
+  const response = await client.post<ChamberConfiguration>('/chambers/from-preset', payload)
+  return response.data
+}
+
+/**
+ * 创建自定义暗室配置
+ */
+export const createCustomChamber = async (
+  payload: CreateChamberPayload
+): Promise<ChamberConfiguration> => {
+  const response = await client.post<ChamberConfiguration>('/chambers', payload)
+  return response.data
+}
+
+/**
+ * 更新暗室配置
+ */
+export const updateChamber = async (
+  chamberId: string,
+  payload: UpdateChamberPayload
+): Promise<ChamberConfiguration> => {
+  const response = await client.put<ChamberConfiguration>(`/chambers/${chamberId}`, payload)
+  return response.data
+}
+
+/**
+ * 激活指定暗室配置
+ */
+export const activateChamber = async (chamberId: string): Promise<ChamberConfiguration> => {
+  const response = await client.post<ChamberConfiguration>(`/chambers/${chamberId}/activate`)
+  return response.data
+}
+
+/**
+ * 删除暗室配置
+ */
+export const deleteChamber = async (chamberId: string): Promise<{ message: string }> => {
+  const response = await client.delete<{ message: string }>(`/chambers/${chamberId}`)
+  return response.data
+}
+
+/**
+ * 获取暗室配置所需的校准项目
+ */
+export const fetchChamberCalibration = async (
+  chamberId: string
+): Promise<RequiredCalibrationsResponse> => {
+  const response = await client.get<RequiredCalibrationsResponse>(
+    `/chambers/${chamberId}/required-calibrations`
+  )
+  return response.data
+}
+
+/**
+ * 计算链路预算
+ */
+export const calculateLinkBudget = async (
+  chamberId: string,
+  params?: {
+    frequency_mhz?: number
+    dut_tx_power_dbm?: number
+    dut_sensitivity_dbm?: number
+    ce_output_dbm?: number
+  }
+): Promise<LinkBudgetResponse> => {
+  const response = await client.get<LinkBudgetResponse>(
+    `/chambers/${chamberId}/link-budget`,
+    { params }
+  )
   return response.data
 }

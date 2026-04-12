@@ -57,7 +57,9 @@ type ProbeMarkerProps = {
 
 function ProbeMarker({ probe, isSelected, onClick }: ProbeMarkerProps) {
   const meshRef = useRef<THREE.Mesh>(null)
-  const color = getRingColor(probe.ring)
+  const baseColor = getRingColor(probe.ring)
+  const color = probe.is_active ? baseColor : '#333333'
+  const opacity = probe.is_active ? 1.0 : 0.2
 
   // Animate selected probe
   useFrame((state) => {
@@ -75,7 +77,9 @@ function ProbeMarker({ probe, isSelected, onClick }: ProbeMarkerProps) {
         <meshStandardMaterial
           color={color}
           emissive={color}
-          emissiveIntensity={isSelected ? 0.5 : 0.2}
+          emissiveIntensity={isSelected ? 0.8 : (probe.is_active ? 0.3 : 0.05)}
+          transparent={!probe.is_active}
+          opacity={opacity}
           metalness={0.5}
           roughness={0.3}
         />
@@ -85,7 +89,8 @@ function ProbeMarker({ probe, isSelected, onClick }: ProbeMarkerProps) {
       <Text
         position={[0, 0.3, 0]}
         fontSize={0.2}
-        color={color}
+        color={baseColor}
+        fillOpacity={probe.is_active ? (isSelected ? 1 : 0.9) : 0.3}
         anchorX="center"
         anchorY="middle"
         outlineWidth={0.02}
@@ -104,7 +109,7 @@ function ProbeMarker({ probe, isSelected, onClick }: ProbeMarkerProps) {
             itemSize={3}
           />
         </bufferGeometry>
-        <lineBasicMaterial color={color} opacity={0.2} transparent linewidth={1} />
+        <lineBasicMaterial color={baseColor} opacity={probe.is_active ? 0.3 : 0.05} transparent linewidth={1} />
       </line>
     </group>
   )

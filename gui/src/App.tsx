@@ -67,6 +67,7 @@ import { RealtimeMetricsCard } from './components/RealtimeMetricsCard'
 import { ExecutionMetricsCard } from './features/Monitoring'
 import { useMonitoringWebSocket } from './hooks/useMonitoringWebSocket'
 import ChartsDemoPage from './components/Charts/ChartsDemoPage'
+import { ChamberConfigCard } from './components/ChamberConfigCard'
 import {
   appendPlanStep,
   createProbe,
@@ -136,7 +137,7 @@ const hexToRgba = (hex: string, alpha: number) => {
 
 type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'testManagement' | 'monitoring' | 'results' | 'virtualRoadTest' | 'systemCalibration' | 'chartsDemo'
 
-type ProbeFormState = Pick<ProbeType, 'ring' | 'polarization' | 'position'>
+type ProbeFormState = Pick<ProbeType, 'ring' | 'polarization' | 'position' | 'is_active'>
 
 // ==================== 探头坐标系工具函数 ====================
 
@@ -374,11 +375,11 @@ function App() {
   const [executingPlanInfo, setExecutingPlanInfo] = useState<{ id: string; name: string } | null>(null)
   const [autoChainExecution, setAutoChainExecution] = useState<boolean>(false)
   const [executingPlanDetail, setExecutingPlanDetail] = useState<TestPlanDetail | null>(null)
-const [liveHistory, setLiveHistory] = useState<LiveHistoryEntry[]>([])
-const lastRecordedRunRef = useRef<number | null>(null)
-const executingModeRef = useRef<'mock' | 'real'>('mock')
-const [executingRunMeta, setExecutingRunMeta] = useState<RunMetadata | null>(null)
-const [lastRunMeta, setLastRunMeta] = useState<RunMetadata | null>(null)
+  const [liveHistory, setLiveHistory] = useState<LiveHistoryEntry[]>([])
+  const lastRecordedRunRef = useRef<number | null>(null)
+  const executingModeRef = useRef<'mock' | 'real'>('mock')
+  const [executingRunMeta, setExecutingRunMeta] = useState<RunMetadata | null>(null)
+  const [lastRunMeta, setLastRunMeta] = useState<RunMetadata | null>(null)
   const syncPlanSummary = useCallback(
     (plan: TestPlanDetail) => {
       queryClient.setQueryData(['tests', 'plans', plan.id], { plan })
@@ -1669,7 +1670,7 @@ function EquipmentManager() {
           </Card>
         )
       })}
-      </Stack>
+    </Stack>
   )
 }
 
@@ -1703,6 +1704,7 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
     ring: 1,
     polarization: 'V',
     position: { azimuth: 0, elevation: 0, radius: 1.5 },
+    is_active: true,
   })
   const [feedback, setFeedback] = useState<string>('')
   const [fileError, setFileError] = useState<string>('')
@@ -1737,6 +1739,7 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
         ring: selectedProbe.ring,
         polarization: selectedProbe.polarization,
         position: selectedProbe.position,
+        is_active: selectedProbe.is_active,
       })
     }
   }, [selectedProbe])
@@ -1860,6 +1863,7 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
       ring: selectedProbe.ring,
       polarization: selectedProbe.polarization,
       position: selectedProbe.position,
+      is_active: selectedProbe.is_active,
     })
   }
 
@@ -1981,38 +1985,41 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
     action: string
     target: SectionKey
   }> = [
-    {
-      title: '路径损耗校准',
-      status: '待执行 · 预计耗时 35 分钟',
-      description: '使用VNA逐通道测量S21，生成幅度/相位补偿矩阵。',
-      action: '开始',
-      target: 'systemCalibration',
-    },
-    {
-      title: '静区均匀性验证',
-      status: '计划中 · 截止 2024-10-21',
-      description: '扫描网格 41×41 点，目标幅度波纹 ≤ 1 dB、相位 ≤ 10°。',
-      action: '排程',
-      target: 'systemCalibration',
-    },
-    {
-      title: '功率放大器线性化',
-      status: '进行中 · 62%',
-      description: '校准功放增益与相位响应，生成数字预失真系数。',
-      action: '查看',
-      target: 'systemCalibration',
-    },
-    {
-      title: '探头互耦补偿',
-      status: '已完成 · 2024-10-15',
-      description: '已更新互耦矩阵版本 v1.3，用于虚拟路测权重修正。',
-      action: '报告',
-      target: 'results',
-    },
-  ]
+      {
+        title: '路径损耗校准',
+        status: '待执行 · 预计耗时 35 分钟',
+        description: '使用VNA逐通道测量S21，生成幅度/相位补偿矩阵。',
+        action: '开始',
+        target: 'systemCalibration',
+      },
+      {
+        title: '静区均匀性验证',
+        status: '计划中 · 截止 2024-10-21',
+        description: '扫描网格 41×41 点，目标幅度波纹 ≤ 1 dB、相位 ≤ 10°。',
+        action: '排程',
+        target: 'systemCalibration',
+      },
+      {
+        title: '功率放大器线性化',
+        status: '进行中 · 62%',
+        description: '校准功放增益与相位响应，生成数字预失真系数。',
+        action: '查看',
+        target: 'systemCalibration',
+      },
+      {
+        title: '探头互耦补偿',
+        status: '已完成 · 2024-10-15',
+        description: '已更新互耦矩阵版本 v1.3，用于虚拟路测权重修正。',
+        action: '报告',
+        target: 'results',
+      },
+    ]
 
   return (
     <Stack gap="xl">
+      {/* 暗室配置卡片 - CAL-00.1 新增 */}
+      <ChamberConfigCard onNavigate={onNavigate} />
+
       <Card withBorder radius="md" padding="xl">
         <Stack gap="md">
           <Group justify="space-between">
@@ -2202,9 +2209,18 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
                   <TextInput label="校准状态" value={selectedProbe.calibration_status} readOnly />
                   <Switch
                     label="是否激活"
-                    checked={selectedProbe.is_active}
-                    onChange={() => {}}
-                    readOnly
+                    checked={formState.is_active}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked
+                      setFormState((prev) => ({ ...prev, is_active: checked }))
+                      
+                      // 自动保存开关状态（不用单独点击底部的保存）
+                      const calculatedRing = getRingFromElevation(formState.position.elevation)
+                      updateMutation.mutate({
+                        id: selectedProbe.id,
+                        payload: { ...formState, ring: calculatedRing, is_active: checked },
+                      })
+                    }}
                   />
                   <Group justify="flex-end" mt="md">
                     <Button
@@ -2214,6 +2230,7 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
                           ring: selectedProbe.ring,
                           polarization: selectedProbe.polarization,
                           position: selectedProbe.position,
+                          is_active: selectedProbe.is_active,
                         })
                       }}
                     >
@@ -3101,21 +3118,21 @@ function TestConfig({
         const exists = previous.plans.some((summary) => summary.id === planId)
         const nextPlans = exists
           ? previous.plans.map((summary) =>
-              summary.id === planId
-                ? { ...summary, name: plan.name, status: plan.status, updatedAt: plan.updatedAt }
-                : summary,
-            )
+            summary.id === planId
+              ? { ...summary, name: plan.name, status: plan.status, updatedAt: plan.updatedAt }
+              : summary,
+          )
           : [
-              {
-                id: plan.id,
-                name: plan.name,
-                caseId: plan.caseId,
-                caseName: plan.caseName,
-                status: plan.status,
-                updatedAt: plan.updatedAt,
-              },
-              ...previous.plans,
-            ]
+            {
+              id: plan.id,
+              name: plan.name,
+              caseId: plan.caseId,
+              caseName: plan.caseName,
+              status: plan.status,
+              updatedAt: plan.updatedAt,
+            },
+            ...previous.plans,
+          ]
         return { plans: nextPlans }
       })
     },
@@ -3355,17 +3372,17 @@ function TestConfig({
 
   const handleCaseFormChange =
     (field: keyof CaseFormState) =>
-    (event: ChangeEvent<HTMLInputElement> | ChangeEvent<HTMLTextAreaElement>) => {
-      const value = event.currentTarget.value
-      setCaseForm((prev) => ({ ...prev, [field]: value }))
-    }
+      (event: ChangeEvent<HTMLInputElement> | ChangeEvent<HTMLTextAreaElement>) => {
+        const value = event.currentTarget.value
+        setCaseForm((prev) => ({ ...prev, [field]: value }))
+      }
 
   const handleCreateCaseFieldChange =
     (field: Exclude<keyof NewCaseFormState, 'blueprint'>) =>
-    (event: ChangeEvent<HTMLInputElement> | ChangeEvent<HTMLTextAreaElement>) => {
-      const value = event.currentTarget.value
-      setCreateCaseForm((prev) => ({ ...prev, [field]: value }))
-    }
+      (event: ChangeEvent<HTMLInputElement> | ChangeEvent<HTMLTextAreaElement>) => {
+        const value = event.currentTarget.value
+        setCreateCaseForm((prev) => ({ ...prev, [field]: value }))
+      }
 
   const handleCreateCaseBlueprintChange = (value: string[]) => {
     setCreateCaseForm((prev) => ({ ...prev, blueprint: value }))
@@ -3536,11 +3553,11 @@ function TestConfig({
 
   const handleRunFieldChange =
     (field: keyof RunMetadata) =>
-    (event: ChangeEvent<HTMLInputElement>) => {
-      const value = event.currentTarget.value
-      setRunModalError('')
-      setRunDraft((prev) => ({ ...prev, [field]: value }))
-    }
+      (event: ChangeEvent<HTMLInputElement>) => {
+        const value = event.currentTarget.value
+        setRunModalError('')
+        setRunDraft((prev) => ({ ...prev, [field]: value }))
+      }
 
   const handleRunConfirm = () => {
     if (!activePlan || runModalError) return
@@ -3979,617 +3996,617 @@ function TestConfig({
       {deletePlanModal}
       {runModal}
       <Stack gap="xl">
-      <Card withBorder radius="md" padding="xl">
-        <Stack gap="md">
-          <Group justify="space-between" align="flex-start">
-            <Stack gap={4} style={{ flex: 1 }}>
-              <Title order={3}>执行模式</Title>
-              <Text size="sm" c="gray.6">
-                当检测到关键仪器离线时系统会自动切换至模拟执行，可在硬件在线时手动切换为真实执行。
-              </Text>
-            </Stack>
-            <Stack gap={6} align="flex-end">
-              <Badge color={executionMode === 'real' ? 'green' : 'gray'} variant="light">
-                {executionMode === 'real' ? '真实执行' : '模拟执行'}
-              </Badge>
-              <Switch
-                checked={executionMode === 'real'}
-                onChange={(event) => {
-                  const useReal = event.currentTarget.checked
-                  if (useReal) {
-                    if (!hardwareOnline) {
-                      setExecutionNotice('检测到关键硬件离线，已保持模拟执行。')
-                      onExecutionModeChange(true)
-                      return
-                    }
-                    setExecutionNotice('')
-                    onExecutionModeChange(false)
-                  } else {
-                    setExecutionNotice('')
-                    onExecutionModeChange(true)
-                  }
-                }}
-                disabled={!hardwareOnline && executionMode !== 'real'}
-                onLabel="真实"
-                offLabel="模拟"
-                size="md"
-              />
-                  <Button
-                    size="compact-md"
-                    color="brand"
-                    disabled={
-                      !canExecute || !activePlan || activePlan.status !== '待执行' || isExecutingPlan
-                    }
-                    onClick={handleExecutePlan}
-                  >
-                    开始执行
-                  </Button>
-            </Stack>
-          </Group>
-          <Group gap="sm">
-            <Badge color={hardwareOnline ? 'green' : 'red'} variant="light">
-              {hardwareOnline ? '硬件在线' : '硬件离线 (模拟执行)'}
-            </Badge>
-          </Group>
-          <Group gap="sm">
-            <Switch
-              checked={autoChainExecution}
-              onChange={(event) => onAutoChainExecutionChange(event.currentTarget.checked)}
-              label="自动连续执行队列"
-            />
-          </Group>
-          {!hardwareOnline ? (
-            <Alert color="orange" variant="light" radius="md">
-              检测到部分设备离线，系统已强制切换至模拟 (Mock) 执行模式。
-            </Alert>
-          ) : null}
-          {executionNotice ? (
-            <Alert color="gray" variant="light" radius="md">
-              {executionNotice}
-            </Alert>
-          ) : null}
-          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
-            {systemStatus.map((item) => {
-              const offline = /离线|错误|断开/i.test(item.value)
-              return (
-                <Paper key={item.label} withBorder radius="md" p="sm">
-                  <Stack gap={4}>
-                    <Group justify="space-between" align="center">
-                      <Text size="xs" c="gray.6">
-                        {item.label}
-                      </Text>
-                      <Badge color={offline ? 'red' : 'green'} variant="light">
-                        {item.value}
-                      </Badge>
-                    </Group>
-                    <Text size="xs" c="gray.5">
-                      {item.detail}
-                    </Text>
-                  </Stack>
-                </Paper>
-              )
-            })}
-          </SimpleGrid>
-        </Stack>
-      </Card>
-
-      <SimpleGrid cols={{ base: 1, md: 2 }} spacing="xl">
         <Card withBorder radius="md" padding="xl">
           <Stack gap="md">
-            <Title order={3}>测试计划库</Title>
-            {plans.length === 0 ? (
-              <Text size="sm" c="gray.6">
-                暂无计划，请先从测试例库生成。
-              </Text>
-            ) : (
-              <Stack gap="sm">
-                {plans.map((plan, index) => {
-                  const active = plan.id === selectedPlanId
-                  const executing = plan.id === executingPlanId
-                  const isFirst = index === 0
-                  const isLast = index === plans.length - 1
-                  return (
-                    <Paper
-                      key={plan.id}
-                      withBorder
-                      radius="md"
-                      p="md"
-                      style={{
-                        borderColor: active ? theme.colors.brand[4] : executing ? theme.colors.yellow[5] : undefined,
-                        background: active
-                          ? hexToRgba(theme.colors.brand[0], 0.8)
-                          : executing
-                            ? hexToRgba(theme.colors.yellow[0], 0.6)
-                            : undefined,
-                        cursor: 'pointer',
-                      }}
-                      onClick={() => setSelectedPlanId(plan.id)}
-                    >
-                      <Stack gap="sm">
-                        <Group justify="space-between" align="center">
-                          <Stack gap={2} style={{ flex: 1 }}>
-                            <Group gap="xs" align="center">
-                              <Badge size="sm" variant="light" color="gray">
-                                #{index + 1}
-                              </Badge>
-                              <Text fw={600}>{plan.name}</Text>
-                            </Group>
-                            <Text size="xs" c="gray.6">
-                              基于：{plan.caseName}
-                            </Text>
-                          </Stack>
-                          <Stack gap={4} align="flex-end">
-                            <Badge
-                              color={
-                                plan.status === '已完成'
-                                  ? 'green'
-                                  : plan.status === '待执行'
-                                    ? 'brand'
-                                    : plan.status === '执行中'
-                                      ? 'yellow'
-                                      : 'gray'
-                              }
-                              variant="light"
-                            >
-                              {plan.status}
-                            </Badge>
-                            <Text size="xs" c="gray.6">
-                              更新于 {plan.updatedAt}
-                            </Text>
-                          </Stack>
-                        </Group>
-                        <Group justify="space-between" align="center">
-                          <Group gap="xs">
-                            <Button
-                              variant="subtle"
-                              size="compact-xs"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                handlePlanMove(plan.id, 'top')
-                              }}
-                              loading={reorderPlanQueueMutation.isPending}
-                              disabled={isFirst || executing}
-                            >
-                              置顶
-                            </Button>
-                            <Button
-                              variant="subtle"
-                              size="compact-xs"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                handlePlanMove(plan.id, 'up')
-                              }}
-                              loading={reorderPlanQueueMutation.isPending}
-                              disabled={isFirst || executing}
-                            >
-                              上移
-                            </Button>
-                            <Button
-                              variant="subtle"
-                              size="compact-xs"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                handlePlanMove(plan.id, 'down')
-                              }}
-                              loading={reorderPlanQueueMutation.isPending}
-                              disabled={isLast || executing}
-                            >
-                              下移
-                            </Button>
-                          </Group>
-                          <Group gap="xs">
-                            {plan.status === '草稿' ? (
-                              <Button
+            <Group justify="space-between" align="flex-start">
+              <Stack gap={4} style={{ flex: 1 }}>
+                <Title order={3}>执行模式</Title>
+                <Text size="sm" c="gray.6">
+                  当检测到关键仪器离线时系统会自动切换至模拟执行，可在硬件在线时手动切换为真实执行。
+                </Text>
+              </Stack>
+              <Stack gap={6} align="flex-end">
+                <Badge color={executionMode === 'real' ? 'green' : 'gray'} variant="light">
+                  {executionMode === 'real' ? '真实执行' : '模拟执行'}
+                </Badge>
+                <Switch
+                  checked={executionMode === 'real'}
+                  onChange={(event) => {
+                    const useReal = event.currentTarget.checked
+                    if (useReal) {
+                      if (!hardwareOnline) {
+                        setExecutionNotice('检测到关键硬件离线，已保持模拟执行。')
+                        onExecutionModeChange(true)
+                        return
+                      }
+                      setExecutionNotice('')
+                      onExecutionModeChange(false)
+                    } else {
+                      setExecutionNotice('')
+                      onExecutionModeChange(true)
+                    }
+                  }}
+                  disabled={!hardwareOnline && executionMode !== 'real'}
+                  onLabel="真实"
+                  offLabel="模拟"
+                  size="md"
+                />
+                <Button
+                  size="compact-md"
+                  color="brand"
+                  disabled={
+                    !canExecute || !activePlan || activePlan.status !== '待执行' || isExecutingPlan
+                  }
+                  onClick={handleExecutePlan}
+                >
+                  开始执行
+                </Button>
+              </Stack>
+            </Group>
+            <Group gap="sm">
+              <Badge color={hardwareOnline ? 'green' : 'red'} variant="light">
+                {hardwareOnline ? '硬件在线' : '硬件离线 (模拟执行)'}
+              </Badge>
+            </Group>
+            <Group gap="sm">
+              <Switch
+                checked={autoChainExecution}
+                onChange={(event) => onAutoChainExecutionChange(event.currentTarget.checked)}
+                label="自动连续执行队列"
+              />
+            </Group>
+            {!hardwareOnline ? (
+              <Alert color="orange" variant="light" radius="md">
+                检测到部分设备离线，系统已强制切换至模拟 (Mock) 执行模式。
+              </Alert>
+            ) : null}
+            {executionNotice ? (
+              <Alert color="gray" variant="light" radius="md">
+                {executionNotice}
+              </Alert>
+            ) : null}
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+              {systemStatus.map((item) => {
+                const offline = /离线|错误|断开/i.test(item.value)
+                return (
+                  <Paper key={item.label} withBorder radius="md" p="sm">
+                    <Stack gap={4}>
+                      <Group justify="space-between" align="center">
+                        <Text size="xs" c="gray.6">
+                          {item.label}
+                        </Text>
+                        <Badge color={offline ? 'red' : 'green'} variant="light">
+                          {item.value}
+                        </Badge>
+                      </Group>
+                      <Text size="xs" c="gray.5">
+                        {item.detail}
+                      </Text>
+                    </Stack>
+                  </Paper>
+                )
+              })}
+            </SimpleGrid>
+          </Stack>
+        </Card>
+
+        <SimpleGrid cols={{ base: 1, md: 2 }} spacing="xl">
+          <Card withBorder radius="md" padding="xl">
+            <Stack gap="md">
+              <Title order={3}>测试计划库</Title>
+              {plans.length === 0 ? (
+                <Text size="sm" c="gray.6">
+                  暂无计划，请先从测试例库生成。
+                </Text>
+              ) : (
+                <Stack gap="sm">
+                  {plans.map((plan, index) => {
+                    const active = plan.id === selectedPlanId
+                    const executing = plan.id === executingPlanId
+                    const isFirst = index === 0
+                    const isLast = index === plans.length - 1
+                    return (
+                      <Paper
+                        key={plan.id}
+                        withBorder
+                        radius="md"
+                        p="md"
+                        style={{
+                          borderColor: active ? theme.colors.brand[4] : executing ? theme.colors.yellow[5] : undefined,
+                          background: active
+                            ? hexToRgba(theme.colors.brand[0], 0.8)
+                            : executing
+                              ? hexToRgba(theme.colors.yellow[0], 0.6)
+                              : undefined,
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => setSelectedPlanId(plan.id)}
+                      >
+                        <Stack gap="sm">
+                          <Group justify="space-between" align="center">
+                            <Stack gap={2} style={{ flex: 1 }}>
+                              <Group gap="xs" align="center">
+                                <Badge size="sm" variant="light" color="gray">
+                                  #{index + 1}
+                                </Badge>
+                                <Text fw={600}>{plan.name}</Text>
+                              </Group>
+                              <Text size="xs" c="gray.6">
+                                基于：{plan.caseName}
+                              </Text>
+                            </Stack>
+                            <Stack gap={4} align="flex-end">
+                              <Badge
+                                color={
+                                  plan.status === '已完成'
+                                    ? 'green'
+                                    : plan.status === '待执行'
+                                      ? 'brand'
+                                      : plan.status === '执行中'
+                                        ? 'yellow'
+                                        : 'gray'
+                                }
                                 variant="light"
+                              >
+                                {plan.status}
+                              </Badge>
+                              <Text size="xs" c="gray.6">
+                                更新于 {plan.updatedAt}
+                              </Text>
+                            </Stack>
+                          </Group>
+                          <Group justify="space-between" align="center">
+                            <Group gap="xs">
+                              <Button
+                                variant="subtle"
                                 size="compact-xs"
                                 onClick={(event) => {
                                   event.stopPropagation()
-                                  handlePlanStatusChange(plan.id, '待执行')
+                                  handlePlanMove(plan.id, 'top')
                                 }}
-                                loading={setPlanStatusMutation.isPending}
-                                disabled={executing}
+                                loading={reorderPlanQueueMutation.isPending}
+                                disabled={isFirst || executing}
                               >
-                                标记待执行
+                                置顶
                               </Button>
-                            ) : null}
-                            <Button
-                              variant="outline"
-                              size="compact-xs"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                setSelectedPlanId(plan.id)
-                              }}
-                            >
-                              查看
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="compact-xs"
-                              color="red"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                setDeletePlanTarget(plan)
-                              }}
-                              disabled={executing || deletePlanMutation.isPending}
-                            >
-                              删除
-                            </Button>
-                            {executing && (
-                              <Badge color="yellow" variant="light">
-                                执行中
-                              </Badge>
-                            )}
+                              <Button
+                                variant="subtle"
+                                size="compact-xs"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  handlePlanMove(plan.id, 'up')
+                                }}
+                                loading={reorderPlanQueueMutation.isPending}
+                                disabled={isFirst || executing}
+                              >
+                                上移
+                              </Button>
+                              <Button
+                                variant="subtle"
+                                size="compact-xs"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  handlePlanMove(plan.id, 'down')
+                                }}
+                                loading={reorderPlanQueueMutation.isPending}
+                                disabled={isLast || executing}
+                              >
+                                下移
+                              </Button>
+                            </Group>
+                            <Group gap="xs">
+                              {plan.status === '草稿' ? (
+                                <Button
+                                  variant="light"
+                                  size="compact-xs"
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    handlePlanStatusChange(plan.id, '待执行')
+                                  }}
+                                  loading={setPlanStatusMutation.isPending}
+                                  disabled={executing}
+                                >
+                                  标记待执行
+                                </Button>
+                              ) : null}
+                              <Button
+                                variant="outline"
+                                size="compact-xs"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  setSelectedPlanId(plan.id)
+                                }}
+                              >
+                                查看
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="compact-xs"
+                                color="red"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  setDeletePlanTarget(plan)
+                                }}
+                                disabled={executing || deletePlanMutation.isPending}
+                              >
+                                删除
+                              </Button>
+                              {executing && (
+                                <Badge color="yellow" variant="light">
+                                  执行中
+                                </Badge>
+                              )}
+                            </Group>
                           </Group>
+                        </Stack>
+                      </Paper>
+                    )
+                  })}
+                </Stack>
+              )}
+            </Stack>
+          </Card>
+
+          <Card withBorder radius="md" padding="xl">
+            <Stack gap="md">
+              <Group justify="space-between" align="center">
+                <Title order={3}>测试例库</Title>
+                <Button variant="light" size="compact-sm" onClick={handleOpenCreateCase}>
+                  新建测试例
+                </Button>
+              </Group>
+              {cases.length === 0 ? (
+                <Text size="sm" c="gray.6">
+                  暂无测试例，可点击右上角创建或通过计划另存。
+                </Text>
+              ) : (
+                <Stack gap="sm">
+                  {cases.map((testCase) => (
+                    <Paper key={testCase.id} withBorder radius="md" p="md">
+                      <Group justify="space-between" align="flex-start" wrap="nowrap" gap="md">
+                        <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
+                          <Group justify="space-between" align="center">
+                            <Text fw={600}>{testCase.name}</Text>
+                            <Badge color="brand" variant="light">
+                              {testCase.category ?? '未分类'}
+                            </Badge>
+                          </Group>
+                          <Text size="xs" c="gray.6">
+                            #{testCase.id} · {testCase.dut}
+                          </Text>
+                          <Text size="xs" c="gray.6">
+                            创建时间：{testCase.createdAt}
+                          </Text>
+                          {testCase.description ? (
+                            <Text size="xs" c="gray.6">
+                              {testCase.description}
+                            </Text>
+                          ) : null}
+                          {testCase.tags && testCase.tags.length > 0 ? (
+                            <Group gap="xs">
+                              {testCase.tags.map((tag) => (
+                                <Badge key={tag} size="xs" color="brand" variant="light">
+                                  {tag}
+                                </Badge>
+                              ))}
+                            </Group>
+                          ) : null}
+                        </Stack>
+                        <Stack gap="xs" align="flex-end">
+                          <Group gap="xs">
+                            <Button
+                              variant="light"
+                              size="compact-sm"
+                              onClick={() => handleOpenCasePreview(testCase.id)}
+                            >
+                              打开
+                            </Button>
+                            <Button
+                              size="compact-sm"
+                              color="brand"
+                              loading={createPlanMutation.isPending}
+                              onClick={() => createPlanMutation.mutate({
+                                name: `${testCase.name} - Test Plan`,
+                                test_case_ids: [testCase.id],
+                                created_by: 'user'
+                              })}
+                            >
+                              生成计划
+                            </Button>
+                          </Group>
+                          <Button
+                            variant="outline"
+                            size="compact-sm"
+                            color="red"
+                            loading={
+                              deleteCaseMutation.isPending && deleteCaseTarget?.id === testCase.id
+                            }
+                            onClick={() => handleDeleteCaseClick(testCase)}
+                          >
+                            删除
+                          </Button>
+                        </Stack>
+                      </Group>
+                    </Paper>
+                  ))}
+                </Stack>
+              )}
+            </Stack>
+          </Card>
+        </SimpleGrid>
+
+        <Card withBorder radius="md" padding="xl">
+          <Stack gap="md">
+            <Group justify="space-between" align="center">
+              <Stack gap={2}>
+                <Title order={3}>序列编排</Title>
+                <Text size="xs" c="gray.6">
+                  {activePlan ? `关联测试例：${activePlan.caseName}` : '请选择左侧测试计划以进行编辑'}
+                </Text>
+              </Stack>
+              {activePlan ? (
+                <Group gap="sm" align="center">
+                  <TextInput
+                    size="sm"
+                    value={planNameDraft}
+                    onChange={(event) => setPlanNameDraft(event.currentTarget.value)}
+                    onBlur={handlePlanNameSave}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault()
+                        handlePlanNameSave()
+                      }
+                      if (event.key === 'Escape') {
+                        setPlanNameDraft(activePlan.name)
+                        event.currentTarget.blur()
+                      }
+                    }}
+                    placeholder="输入计划名称"
+                  />
+                  <Badge
+                    color={
+                      activePlan.status === '已完成'
+                        ? 'green'
+                        : activePlan.status === '待执行'
+                          ? 'brand'
+                          : activePlan.status === '执行中'
+                            ? 'yellow'
+                            : 'gray'
+                    }
+                    variant="light"
+                  >
+                    {activePlan.status}
+                  </Badge>
+                  <Group gap="xs">
+                    {activePlan.status === '草稿' ? (
+                      <Button
+                        variant="light"
+                        size="compact-sm"
+                        loading={setPlanStatusMutation.isPending}
+                        onClick={() => handlePlanStatusChange(activePlan.id, '待执行')}
+                      >
+                        标记待执行
+                      </Button>
+                    ) : null}
+                    {activePlan.status === '待执行' ? (
+                      <Button
+                        variant="light"
+                        size="compact-sm"
+                        loading={setPlanStatusMutation.isPending}
+                        onClick={() => handlePlanStatusChange(activePlan.id, '草稿')}
+                      >
+                        退回草稿
+                      </Button>
+                    ) : null}
+                    {activePlan.status === '已完成' ? (
+                      <Button
+                        variant="light"
+                        size="compact-sm"
+                        loading={setPlanStatusMutation.isPending}
+                        onClick={() => handlePlanStatusChange(activePlan.id, '待执行')}
+                      >
+                        重新排队
+                      </Button>
+                    ) : null}
+                    {isExecutingPlan ? (
+                      <Badge color="yellow" variant="light">
+                        执行中
+                      </Badge>
+                    ) : null}
+                  </Group>
+                </Group>
+              ) : null}
+            </Group>
+            <ScrollArea h={340} type="auto">
+              <Flex gap="md" wrap="wrap">
+                {steps.map((step) => {
+                  const isActive = step.id === activeStepId
+                  const isDragging = step.id === draggingId
+                  return (
+                    <Paper
+                      key={step.id}
+                      withBorder
+                      shadow={isActive ? 'md' : 'xs'}
+                      radius="md"
+                      p="md"
+                      draggable={Boolean(activePlan)}
+                      onClick={() => setActiveStepId(step.id)}
+                      onDragStart={(event) => activePlan && handleDragStart(event, step.id)}
+                      onDragOver={(event) => handleDragOver(event, step.id)}
+                      onDrop={(event) => handleDrop(event, step.id)}
+                      onDragEnd={handleDragEnd}
+                      style={{
+                        flex: '1 1 260px',
+                        minWidth: '260px',
+                        maxWidth: '320px',
+                        cursor: activePlan ? 'grab' : 'not-allowed',
+                        backgroundColor: isActive ? theme.colors.brand[0] : undefined,
+                        borderColor: isActive ? theme.colors.brand[5] : undefined,
+                        opacity: isDragging ? 0.6 : 1,
+                      }}
+                    >
+                      <Stack gap={6}>
+                        <Text fw={600} size="sm">
+                          {step.title}
+                        </Text>
+                        <Text size="xs" c="gray.6">
+                          {step.meta}
+                        </Text>
+                        {step.description ? (
+                          <Text size="xs" c="gray.6">
+                            {step.description}
+                          </Text>
+                        ) : null}
+                        <Group justify="flex-end">
+                          <Button
+                            variant="subtle"
+                            size="compact-sm"
+                            color="red"
+                            disabled={!activePlan}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              handleRemoveStep(step.id)
+                            }}
+                          >
+                            移除
+                          </Button>
                         </Group>
                       </Stack>
                     </Paper>
                   )
                 })}
-              </Stack>
-            )}
-          </Stack>
-        </Card>
-
-        <Card withBorder radius="md" padding="xl">
-          <Stack gap="md">
-            <Group justify="space-between" align="center">
-              <Title order={3}>测试例库</Title>
-              <Button variant="light" size="compact-sm" onClick={handleOpenCreateCase}>
-                新建测试例
-              </Button>
-            </Group>
-            {cases.length === 0 ? (
-              <Text size="sm" c="gray.6">
-                暂无测试例，可点击右上角创建或通过计划另存。
-              </Text>
-            ) : (
-              <Stack gap="sm">
-                {cases.map((testCase) => (
-                  <Paper key={testCase.id} withBorder radius="md" p="md">
-                    <Group justify="space-between" align="flex-start" wrap="nowrap" gap="md">
-                      <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
-                        <Group justify="space-between" align="center">
-                          <Text fw={600}>{testCase.name}</Text>
-                          <Badge color="brand" variant="light">
-                            {testCase.category ?? '未分类'}
-                          </Badge>
-                        </Group>
-                        <Text size="xs" c="gray.6">
-                          #{testCase.id} · {testCase.dut}
-                        </Text>
-                        <Text size="xs" c="gray.6">
-                          创建时间：{testCase.createdAt}
-                        </Text>
-                        {testCase.description ? (
-                          <Text size="xs" c="gray.6">
-                            {testCase.description}
-                          </Text>
-                        ) : null}
-                        {testCase.tags && testCase.tags.length > 0 ? (
-                          <Group gap="xs">
-                            {testCase.tags.map((tag) => (
-                              <Badge key={tag} size="xs" color="brand" variant="light">
-                                {tag}
-                              </Badge>
-                            ))}
-                          </Group>
-                        ) : null}
-                      </Stack>
-                      <Stack gap="xs" align="flex-end">
-                        <Group gap="xs">
-                          <Button
-                            variant="light"
-                            size="compact-sm"
-                            onClick={() => handleOpenCasePreview(testCase.id)}
-                          >
-                            打开
-                          </Button>
-                          <Button
-                            size="compact-sm"
-                            color="brand"
-                            loading={createPlanMutation.isPending}
-                            onClick={() => createPlanMutation.mutate({
-                              name: `${testCase.name} - Test Plan`,
-                              test_case_ids: [testCase.id],
-                              created_by: 'user'
-                            })}
-                          >
-                            生成计划
-                          </Button>
-                        </Group>
-                        <Button
-                          variant="outline"
-                          size="compact-sm"
-                          color="red"
-                          loading={
-                            deleteCaseMutation.isPending && deleteCaseTarget?.id === testCase.id
-                          }
-                          onClick={() => handleDeleteCaseClick(testCase)}
-                        >
-                          删除
-                        </Button>
-                      </Stack>
-                    </Group>
-                  </Paper>
-                ))}
-              </Stack>
-            )}
-          </Stack>
-        </Card>
-      </SimpleGrid>
-
-      <Card withBorder radius="md" padding="xl">
-        <Stack gap="md">
-          <Group justify="space-between" align="center">
-            <Stack gap={2}>
-              <Title order={3}>序列编排</Title>
-              <Text size="xs" c="gray.6">
-                {activePlan ? `关联测试例：${activePlan.caseName}` : '请选择左侧测试计划以进行编辑'}
-              </Text>
-            </Stack>
-            {activePlan ? (
-              <Group gap="sm" align="center">
-                <TextInput
-                  size="sm"
-                  value={planNameDraft}
-                  onChange={(event) => setPlanNameDraft(event.currentTarget.value)}
-                  onBlur={handlePlanNameSave}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault()
-                      handlePlanNameSave()
-                    }
-                    if (event.key === 'Escape') {
-                      setPlanNameDraft(activePlan.name)
-                      event.currentTarget.blur()
-                    }
+                <Paper
+                  withBorder
+                  radius="md"
+                  p="md"
+                  style={{
+                    flex: '1 1 260px',
+                    minWidth: '260px',
+                    maxWidth: '320px',
+                    borderStyle: 'dashed',
+                    borderColor: theme.colors.gray[5],
+                    backgroundColor: theme.colors.dark[6],
+                    opacity: 0.85,
                   }}
-                  placeholder="输入计划名称"
-                />
-                <Badge
-                  color={
-                    activePlan.status === '已完成'
-                      ? 'green'
-                      : activePlan.status === '待执行'
-                        ? 'brand'
-                        : activePlan.status === '执行中'
-                          ? 'yellow'
-                          : 'gray'
-                  }
-                  variant="light"
+                  onDragOver={(event) => handleDragOver(event, steps[steps.length - 1]?.id ?? '')}
+                  onDrop={(event) => {
+                    event.preventDefault()
+                    if (!selectedPlanId) return
+                    const sourceId = draggingId ?? event.dataTransfer.getData('text/plain')
+                    if (!sourceId) return
+                    reorderStepMutation.mutate({
+                      planId: selectedPlanId,
+                      payload: { fromId: sourceId, toId: '__end__' },
+                    })
+                    setDraggingId(null)
+                  }}
                 >
-                  {activePlan.status}
-                </Badge>
-                <Group gap="xs">
-                  {activePlan.status === '草稿' ? (
+                  <Stack gap={6}>
+                    <Text fw={600} size="sm">
+                      + 添加步骤
+                    </Text>
+                    <Text size="xs" c="gray.6">
+                      拖拽或从库中选择
+                    </Text>
                     <Button
-                      variant="light"
                       size="compact-sm"
-                      loading={setPlanStatusMutation.isPending}
-                      onClick={() => handlePlanStatusChange(activePlan.id, '待执行')}
+                      color="brand"
+                      onClick={handleQuickAppend}
+                      disabled={library.length === 0 || !selectedPlanId}
                     >
-                      标记待执行
+                      快速追加
                     </Button>
-                  ) : null}
-                  {activePlan.status === '待执行' ? (
-                    <Button
-                      variant="light"
-                      size="compact-sm"
-                      loading={setPlanStatusMutation.isPending}
-                      onClick={() => handlePlanStatusChange(activePlan.id, '草稿')}
-                    >
-                      退回草稿
-                    </Button>
-                  ) : null}
-                  {activePlan.status === '已完成' ? (
-                    <Button
-                      variant="light"
-                      size="compact-sm"
-                      loading={setPlanStatusMutation.isPending}
-                      onClick={() => handlePlanStatusChange(activePlan.id, '待执行')}
-                    >
-                      重新排队
-                    </Button>
-                  ) : null}
-                  {isExecutingPlan ? (
-                    <Badge color="yellow" variant="light">
-                      执行中
-                    </Badge>
-                  ) : null}
-                </Group>
-              </Group>
-            ) : null}
-          </Group>
-          <ScrollArea h={340} type="auto">
-            <Flex gap="md" wrap="wrap">
-              {steps.map((step) => {
-                const isActive = step.id === activeStepId
-                const isDragging = step.id === draggingId
-                return (
-                  <Paper
-                    key={step.id}
-                    withBorder
-                    shadow={isActive ? 'md' : 'xs'}
-                    radius="md"
-                    p="md"
-                    draggable={Boolean(activePlan)}
-                    onClick={() => setActiveStepId(step.id)}
-                    onDragStart={(event) => activePlan && handleDragStart(event, step.id)}
-                    onDragOver={(event) => handleDragOver(event, step.id)}
-                    onDrop={(event) => handleDrop(event, step.id)}
-                    onDragEnd={handleDragEnd}
-                    style={{
-                      flex: '1 1 260px',
-                      minWidth: '260px',
-                      maxWidth: '320px',
-                      cursor: activePlan ? 'grab' : 'not-allowed',
-                      backgroundColor: isActive ? theme.colors.brand[0] : undefined,
-                      borderColor: isActive ? theme.colors.brand[5] : undefined,
-                      opacity: isDragging ? 0.6 : 1,
-                    }}
-                  >
-                    <Stack gap={6}>
-                      <Text fw={600} size="sm">
-                        {step.title}
-                      </Text>
-                      <Text size="xs" c="gray.6">
-                        {step.meta}
-                      </Text>
-                      {step.description ? (
-                        <Text size="xs" c="gray.6">
-                          {step.description}
-                        </Text>
-                      ) : null}
-                      <Group justify="flex-end">
-                        <Button
-                          variant="subtle"
-                          size="compact-sm"
-                          color="red"
-                          disabled={!activePlan}
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            handleRemoveStep(step.id)
-                          }}
-                        >
-                          移除
-                        </Button>
-                      </Group>
-                    </Stack>
-                  </Paper>
-                )
-              })}
-              <Paper
-                withBorder
-                radius="md"
-                p="md"
-                style={{
-                  flex: '1 1 260px',
-                  minWidth: '260px',
-                  maxWidth: '320px',
-                  borderStyle: 'dashed',
-                  borderColor: theme.colors.gray[5],
-                  backgroundColor: theme.colors.dark[6],
-                  opacity: 0.85,
-                }}
-                onDragOver={(event) => handleDragOver(event, steps[steps.length - 1]?.id ?? '')}
-                onDrop={(event) => {
-                  event.preventDefault()
-                  if (!selectedPlanId) return
-                  const sourceId = draggingId ?? event.dataTransfer.getData('text/plain')
-                  if (!sourceId) return
-                  reorderStepMutation.mutate({
-                    planId: selectedPlanId,
-                    payload: { fromId: sourceId, toId: '__end__' },
-                  })
-                  setDraggingId(null)
-                }}
-              >
-                <Stack gap={6}>
-                  <Text fw={600} size="sm">
-                    + 添加步骤
-                  </Text>
-                  <Text size="xs" c="gray.6">
-                    拖拽或从库中选择
-                  </Text>
-                  <Button
-                    size="compact-sm"
-                    color="brand"
-                    onClick={handleQuickAppend}
-                    disabled={library.length === 0 || !selectedPlanId}
-                  >
-                    快速追加
-                  </Button>
-                </Stack>
-              </Paper>
-            </Flex>
-          </ScrollArea>
-        </Stack>
-      </Card>
-
-      <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="xl">
-        <Card withBorder radius="md" padding="xl">
-          <Stack gap="md">
-            <Title order={3}>参数面板</Title>
-            {!activePlan ? (
-              <Text size="sm" c="gray.6">
-                请选择左侧测试计划后，在此编辑步骤参数。
-              </Text>
-            ) : !templateDefinition || !currentParams ? (
-              <Text size="sm" c="gray.6">
-                当前步骤未绑定参数模板，请确认步骤来自步骤库或重新加载计划。
-              </Text>
-            ) : (
-              <Stack gap="lg">
-                {templateDefinition.summary ? (
-                  <Alert color="gray" variant="light" radius="md">
-                    {templateDefinition.summary}
-                  </Alert>
-                ) : null}
-                <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
-                  {templateDefinition.fields.map((field) => (
-                    <Box key={field.key}>{renderField(field)}</Box>
-                  ))}
-                </SimpleGrid>
-                <Group justify="space-between" align="center">
-                  <Button
-                    variant="light"
-                    onClick={handleOpenSaveCase}
-                    disabled={!activePlan}
-                    loading={saveCaseMutation.isPending}
-                  >
-                    另存为测试例
-                  </Button>
-                  <Button
-                    color="brand"
-                    onClick={handleParameterSave}
-                    loading={persistStepsMutation.isPending}
-                  >
-                    保存计划
-                  </Button>
-                </Group>
-                {paramFeedback ? (
-                  <Alert color={paramFeedbackColor} variant="light" radius="md">
-                    {paramFeedback}
-                  </Alert>
-                ) : null}
-              </Stack>
-            )}
-          </Stack>
-        </Card>
-
-        <Card withBorder radius="md" padding="xl">
-          <Stack gap="md">
-            <Title order={3}>步骤库</Title>
-            <ScrollArea h={360} type="auto">
-              <Stack gap="sm">
-                {library.map((item) => (
-                  <Paper key={item.id} withBorder radius="md" p="md">
-                    <Group justify="space-between" align="flex-start">
-                      <Stack gap={4} style={{ flex: 1 }}>
-                        <Text fw={600}>{item.title}</Text>
-                        <Text size="xs" c="gray.6">
-                          {item.meta}
-                        </Text>
-                        <Text size="sm" c="gray.6">
-                          {item.description}
-                        </Text>
-                      </Stack>
-                      <Button
-                        variant="subtle"
-                        size="compact-sm"
-                        onClick={() => handleAppend(item.id)}
-                        disabled={!selectedPlanId}
-                      >
-                        追加
-                      </Button>
-                    </Group>
-                  </Paper>
-                ))}
-              </Stack>
+                  </Stack>
+                </Paper>
+              </Flex>
             </ScrollArea>
           </Stack>
         </Card>
-      </SimpleGrid>
+
+        <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="xl">
+          <Card withBorder radius="md" padding="xl">
+            <Stack gap="md">
+              <Title order={3}>参数面板</Title>
+              {!activePlan ? (
+                <Text size="sm" c="gray.6">
+                  请选择左侧测试计划后，在此编辑步骤参数。
+                </Text>
+              ) : !templateDefinition || !currentParams ? (
+                <Text size="sm" c="gray.6">
+                  当前步骤未绑定参数模板，请确认步骤来自步骤库或重新加载计划。
+                </Text>
+              ) : (
+                <Stack gap="lg">
+                  {templateDefinition.summary ? (
+                    <Alert color="gray" variant="light" radius="md">
+                      {templateDefinition.summary}
+                    </Alert>
+                  ) : null}
+                  <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+                    {templateDefinition.fields.map((field) => (
+                      <Box key={field.key}>{renderField(field)}</Box>
+                    ))}
+                  </SimpleGrid>
+                  <Group justify="space-between" align="center">
+                    <Button
+                      variant="light"
+                      onClick={handleOpenSaveCase}
+                      disabled={!activePlan}
+                      loading={saveCaseMutation.isPending}
+                    >
+                      另存为测试例
+                    </Button>
+                    <Button
+                      color="brand"
+                      onClick={handleParameterSave}
+                      loading={persistStepsMutation.isPending}
+                    >
+                      保存计划
+                    </Button>
+                  </Group>
+                  {paramFeedback ? (
+                    <Alert color={paramFeedbackColor} variant="light" radius="md">
+                      {paramFeedback}
+                    </Alert>
+                  ) : null}
+                </Stack>
+              )}
+            </Stack>
+          </Card>
+
+          <Card withBorder radius="md" padding="xl">
+            <Stack gap="md">
+              <Title order={3}>步骤库</Title>
+              <ScrollArea h={360} type="auto">
+                <Stack gap="sm">
+                  {library.map((item) => (
+                    <Paper key={item.id} withBorder radius="md" p="md">
+                      <Group justify="space-between" align="flex-start">
+                        <Stack gap={4} style={{ flex: 1 }}>
+                          <Text fw={600}>{item.title}</Text>
+                          <Text size="xs" c="gray.6">
+                            {item.meta}
+                          </Text>
+                          <Text size="sm" c="gray.6">
+                            {item.description}
+                          </Text>
+                        </Stack>
+                        <Button
+                          variant="subtle"
+                          size="compact-sm"
+                          onClick={() => handleAppend(item.id)}
+                          disabled={!selectedPlanId}
+                        >
+                          追加
+                        </Button>
+                      </Group>
+                    </Paper>
+                  ))}
+                </Stack>
+              </ScrollArea>
+            </Stack>
+          </Card>
+        </SimpleGrid>
       </Stack>
     </>
   )
@@ -4735,35 +4752,35 @@ function Monitoring({
     }
   }, [scenarioStatus])
 
-    useEffect(() => {
-      /* 
-      // WebSocket logic moved to useMonitoringWebSocket hook.
-      // Temporarily disabled in App.tsx to prevent duplicate connections and conflicts.
-      
-      let wsUrl = `${window.location.origin.replace(/^http/, 'ws')}/api/v1/ws/monitoring`
-      
-      // Direct connection for localhost development to bypass Vite proxy issues
-      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-        wsUrl = 'ws://192.168.77.10:8000/api/v1/ws/monitoring'
-      }
-  
-      let isActive = true
-  
-      const connect = () => {
-        if (!isActive) return
-        const socket = new WebSocket(wsUrl)
-        socketRef.current = socket
-        // ... (rest of the logic commented out)
-      }
-      // connect() 
-      */
-      
-      // Minimal cleanup to satisfy hooks rules if needed, or just empty effect
-      return () => {
-        // isActive = false
-        // if (socketRef.current) socketRef.current.close()
-      }
-    }, [scenarioStatus])
+  useEffect(() => {
+    /* 
+    // WebSocket logic moved to useMonitoringWebSocket hook.
+    // Temporarily disabled in App.tsx to prevent duplicate connections and conflicts.
+    
+    let wsUrl = `${window.location.origin.replace(/^http/, 'ws')}/api/v1/ws/monitoring`
+    
+    // Direct connection for localhost development to bypass Vite proxy issues
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      wsUrl = 'ws://192.168.77.10:8000/api/v1/ws/monitoring'
+    }
+ 
+    let isActive = true
+ 
+    const connect = () => {
+      if (!isActive) return
+      const socket = new WebSocket(wsUrl)
+      socketRef.current = socket
+      // ... (rest of the logic commented out)
+    }
+    // connect() 
+    */
+
+    // Minimal cleanup to satisfy hooks rules if needed, or just empty effect
+    return () => {
+      // isActive = false
+      // if (socketRef.current) socketRef.current.close()
+    }
+  }, [scenarioStatus])
   useEffect(() => {
     if (wsConnected && socketRef.current) {
       const payload = execStatus === 'running' ? { action: 'resume' } : { action: 'pause' }
@@ -4913,10 +4930,10 @@ function Monitoring({
         currentStep={
           executingPlan && planDetail && planDetail.steps && planDetail.steps.length > 0
             ? {
-                index: progress.currentStepIndex >= 0 ? progress.currentStepIndex : 0,
-                total: planDetail.steps.length,
-                title: planDetail.steps[Math.max(0, progress.currentStepIndex)]?.title,
-              }
+              index: progress.currentStepIndex >= 0 ? progress.currentStepIndex : 0,
+              total: planDetail.steps.length,
+              title: planDetail.steps[Math.max(0, progress.currentStepIndex)]?.title,
+            }
             : undefined
         }
         expectedRanges={{
@@ -5271,11 +5288,11 @@ function Results({
     }))
     const seen = new Set<string>()
     const result: LiveHistoryEntry[] = []
-    ;[...liveHistory, ...apiEntries].forEach((entry) => {
-      if (seen.has(entry.id)) return
-      seen.add(entry.id)
-      result.push(entry)
-    })
+      ;[...liveHistory, ...apiEntries].forEach((entry) => {
+        if (seen.has(entry.id)) return
+        seen.add(entry.id)
+        result.push(entry)
+      })
     return result
   }, [recentTestsList, liveHistory])
 
@@ -5391,8 +5408,8 @@ function Results({
                             metric.status === 'ok'
                               ? 'green'
                               : metric.status === 'warn'
-                              ? 'yellow'
-                              : 'red'
+                                ? 'yellow'
+                                : 'red'
                           }
                           variant="light"
                         >
@@ -5522,71 +5539,71 @@ function Results({
               <Table.Tbody>
                 {isRecentLoading
                   ? Array.from({ length: 3 }).map((_, index) => (
-                      <Table.Tr key={index}>
-                        <Table.Td colSpan={9}>
-                          <Text size="sm" c="gray.6">
-                            加载历史记录…
-                          </Text>
-                        </Table.Td>
-                      </Table.Tr>
-                    ))
+                    <Table.Tr key={index}>
+                      <Table.Td colSpan={9}>
+                        <Text size="sm" c="gray.6">
+                          加载历史记录…
+                        </Text>
+                      </Table.Td>
+                    </Table.Tr>
+                  ))
                   : filteredHistory.map((item) => (
-                      <Table.Tr key={item.id}>
-                        <Table.Td>
-                          <Checkbox
-                            aria-label={`选择 ${item.name}`}
-                            checked={selected.includes(item.id)}
-                            onChange={() => onToggle(item.id)}
-                          />
-                        </Table.Td>
-                        <Table.Td>{item.runName ?? item.name}</Table.Td>
-                        <Table.Td>{item.caseName ?? item.name}</Table.Td>
-                        <Table.Td>{item.dut}</Table.Td>
-                        <Table.Td>{item.result}</Table.Td>
-                        <Table.Td>{item.date}</Table.Td>
-                        <Table.Td>
-                          <Badge color={item.mode === 'real' ? 'green' : 'gray'} variant="light">
-                            {item.mode === 'real' ? '真实' : '模拟'}
-                          </Badge>
-                        </Table.Td>
-                        <Table.Td>
-                          <Badge variant="outline" color="gray">
-                            {item.artifactPrefix ?? item.name}
-                          </Badge>
-                        </Table.Td>
-                        <Table.Td>
-                          {templateOptions.length === 0 ? (
-                            <Text size="xs" c="gray.5">
-                              暂无模板
-                            </Text>
-                          ) : (
-                            <Group gap="xs">
-                              <Select
-                                data={templateOptions}
-                                placeholder="选择模板"
-                                size="xs"
-                                w={160}
-                                value={reportSelection[item.id] ?? null}
-                                onChange={(value) =>
-                                  setReportSelection((prev) => ({
-                                    ...prev,
-                                    [item.id]: value ?? '',
-                                  }))
-                                }
-                              />
-                              <Button
-                                size="compact-xs"
-                                variant="light"
-                                disabled={!reportSelection[item.id]}
-                                onClick={() => handleReportGenerate(item.id)}
-                              >
-                                生成
-                              </Button>
-                            </Group>
-                          )}
-                        </Table.Td>
-                      </Table.Tr>
-                    ))}
+                    <Table.Tr key={item.id}>
+                      <Table.Td>
+                        <Checkbox
+                          aria-label={`选择 ${item.name}`}
+                          checked={selected.includes(item.id)}
+                          onChange={() => onToggle(item.id)}
+                        />
+                      </Table.Td>
+                      <Table.Td>{item.runName ?? item.name}</Table.Td>
+                      <Table.Td>{item.caseName ?? item.name}</Table.Td>
+                      <Table.Td>{item.dut}</Table.Td>
+                      <Table.Td>{item.result}</Table.Td>
+                      <Table.Td>{item.date}</Table.Td>
+                      <Table.Td>
+                        <Badge color={item.mode === 'real' ? 'green' : 'gray'} variant="light">
+                          {item.mode === 'real' ? '真实' : '模拟'}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td>
+                        <Badge variant="outline" color="gray">
+                          {item.artifactPrefix ?? item.name}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td>
+                        {templateOptions.length === 0 ? (
+                          <Text size="xs" c="gray.5">
+                            暂无模板
+                          </Text>
+                        ) : (
+                          <Group gap="xs">
+                            <Select
+                              data={templateOptions}
+                              placeholder="选择模板"
+                              size="xs"
+                              w={160}
+                              value={reportSelection[item.id] ?? null}
+                              onChange={(value) =>
+                                setReportSelection((prev) => ({
+                                  ...prev,
+                                  [item.id]: value ?? '',
+                                }))
+                              }
+                            />
+                            <Button
+                              size="compact-xs"
+                              variant="light"
+                              disabled={!reportSelection[item.id]}
+                              onClick={() => handleReportGenerate(item.id)}
+                            >
+                              生成
+                            </Button>
+                          </Group>
+                        )}
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
               </Table.Tbody>
             </Table>
           </ScrollArea>

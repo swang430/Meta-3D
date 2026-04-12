@@ -1,7 +1,7 @@
 """Probe API endpoints"""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 import logging
 
@@ -21,10 +21,18 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("/probes", response_model=ProbesListResponse)
-def get_probes(db: Session = Depends(get_db)):
-    """Get all probes"""
+def get_probes(
+    db: Session = Depends(get_db),
+    chamber_id: Optional[UUID] = Query(None, description="按暗室配置 ID 过滤")
+):
+    """Get all probes, optionally filtered by chamber configuration"""
     try:
-        probes = db.query(Probe).order_by(Probe.probe_number).all()
+        query = db.query(Probe).order_by(Probe.probe_number)
+        if chamber_id:
+            logger.info(f"Filtering probes with chamber_id: {chamber_id} (type: {type(chamber_id)})")
+            query = query.filter(Probe.chamber_config_id == chamber_id)
+        probes = query.all()
+        logger.info(f"Found {len(probes)} probes. Sample chamber_id from DB: {probes[0].chamber_config_id if probes else 'N/A'}")
         return ProbesListResponse(total=len(probes), probes=probes)
     except Exception as e:
         logger.error(f"Error fetching probes: {e}")
@@ -63,9 +71,13 @@ def replace_probes(request: BulkProbeRequest, db: Session = Depends(get_db)):
     # Create new probes
     created_probes = []
     for probe_data in request.probes:
+        probe_dict = probe_data.model_dump(exclude={'position'})
+        # 如果单个探头未指定 chamber_config_id，使用请求级别的
+        if probe_dict.get('chamber_config_id') is None and request.chamber_config_id:
+            probe_dict['chamber_config_id'] = request.chamber_config_id
         probe = Probe(
-            **probe_data.dict(exclude={'position'}),
-            position=probe_data.position.dict()
+            **probe_dict,
+            position=probe_data.position.model_dump()
         )
         db.add(probe)
         created_probes.append(probe)
@@ -94,10 +106,8 @@ def update_probe(
     if not probe:
         raise HTTPException(404, "Probe not found")
 
-    for key, value in request.dict(exclude_unset=True).items():
-        if key == 'position' and value:
-            setattr(probe, key, value.dict())
-        elif value is not None:
+    for key, value in request.model_dump(exclude_unset=True).items():
+        if value is not None:
             setattr(probe, key, value)
 
     db.commit()
