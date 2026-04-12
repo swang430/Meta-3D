@@ -27,7 +27,7 @@ if not os.path.exists(CHANNEL_ENGINE_PATH):
         f"your local clone of github.com/swang430/ChannelEgine"
     )
 
-sys.path.insert(0, CHANNEL_ENGINE_PATH)
+sys.path.append(CHANNEL_ENGINE_PATH)
 
 from channel_model_38901.simulator import ChannelSimulator
 from app.models.ota_models import (

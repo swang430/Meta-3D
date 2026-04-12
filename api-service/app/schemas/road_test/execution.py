@@ -35,6 +35,7 @@ class ControlAction(str, Enum):
     PAUSE = "pause"
     RESUME = "resume"
     STOP = "stop"
+    COMPLETE = "complete"
 
 
 # ===== Test Capabilities =====
@@ -166,6 +167,8 @@ class TestExecution(BaseModel):
     # Metadata
     created_by: Optional[str] = Field(None, description="Created by user")
     notes: Optional[str] = Field(None, description="Execution notes")
+    # NEW: Execution logs
+    logs: List[Dict[str, Any]] = Field(default_factory=list, description="Execution logs")
 
 
 class ExecutionCreate(BaseModel):
@@ -202,6 +205,210 @@ class ExecutionSummary(BaseModel):
     duration_s: Optional[float]
     progress_percent: float
     created_by: Optional[str]
+
+
+# ===== Execution Report =====
+
+class PhaseResult(BaseModel):
+    """Result for a single test phase"""
+    name: str = Field(description="Phase name")
+    status: str = Field(description="completed | failed | skipped")
+    duration_s: float = Field(description="Phase duration in seconds")
+    start_time: datetime = Field(description="Phase start time")
+    end_time: datetime = Field(description="Phase end time")
+    notes: Optional[str] = Field(None, description="Phase notes")
+
+
+class KPISummary(BaseModel):
+    """Summary statistics for a KPI"""
+    name: str = Field(description="KPI name")
+    unit: str = Field(description="Unit of measurement")
+    mean: float = Field(description="Mean value")
+    min: float = Field(description="Minimum value")
+    max: float = Field(description="Maximum value")
+    std: Optional[float] = Field(None, description="Standard deviation")
+    target: Optional[float] = Field(None, description="Target value")
+    passed: Optional[bool] = Field(None, description="Whether target was met")
+
+
+class ScenarioInfo(BaseModel):
+    """Scenario information for report"""
+    id: str = Field(description="Scenario ID")
+    name: str = Field(description="Scenario name")
+    category: str = Field(description="Scenario category")
+    description: Optional[str] = Field(None, description="Scenario description")
+    tags: List[str] = Field(default_factory=list, description="Scenario tags")
+
+
+class NetworkInfo(BaseModel):
+    """Network configuration info for report"""
+    type: str = Field(description="Network type (5G NR, LTE, etc.)")
+    band: str = Field(description="Frequency band")
+    bandwidth_mhz: float = Field(description="Bandwidth in MHz")
+    duplex_mode: str = Field(description="TDD or FDD")
+    scs_khz: Optional[int] = Field(None, description="Subcarrier spacing")
+
+
+class EnvironmentInfo(BaseModel):
+    """Environment info for report"""
+    type: str = Field(description="Environment type")
+    channel_model: str = Field(description="Channel model")
+    weather: str = Field(description="Weather condition")
+    traffic_density: str = Field(description="Traffic density")
+
+
+class RouteInfo(BaseModel):
+    """Route info for report"""
+    duration_s: float = Field(description="Route duration in seconds")
+    distance_m: float = Field(description="Total distance in meters")
+    waypoint_count: int = Field(description="Number of waypoints")
+    avg_speed_kmh: Optional[float] = Field(None, description="Average speed")
+
+
+class BaseStationInfo(BaseModel):
+    """Base station info for report"""
+    bs_id: str = Field(description="Base station ID")
+    name: str = Field(description="Base station name")
+    tx_power_dbm: float = Field(description="TX power in dBm")
+    antenna_config: str = Field(description="Antenna configuration")
+    antenna_height_m: float = Field(description="Antenna height")
+
+
+class StepConfigInfo(BaseModel):
+    """Step configuration info for report"""
+    step_name: str = Field(description="Step name")
+    enabled: bool = Field(True, description="Whether step is enabled")
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="Step parameters")
+
+
+# ===== Metrics Submission =====
+
+class TimeSeriesPoint(BaseModel):
+    """Single data point in time series (for frontend submission)"""
+    time_s: float = Field(description="Time in seconds")
+    position: Optional[Dict[str, float]] = Field(None, description="Position {lat, lon, alt}")
+
+    # RF metrics
+    rsrp_dbm: Optional[float] = Field(None, description="RSRP in dBm")
+    rsrq_db: Optional[float] = Field(None, description="RSRQ in dB")
+    sinr_db: Optional[float] = Field(None, description="SINR in dB")
+
+    # Performance metrics
+    dl_throughput_mbps: Optional[float] = Field(None, description="DL throughput in Mbps")
+    ul_throughput_mbps: Optional[float] = Field(None, description="UL throughput in Mbps")
+    latency_ms: Optional[float] = Field(None, description="Latency in ms")
+
+    # Event marker
+    event: Optional[str] = Field(None, description="Event type if occurred")
+
+
+class ExecutionMetricsSubmit(BaseModel):
+    """Request to submit execution metrics"""
+    execution_id: str = Field(description="Execution ID")
+    time_series: List[TimeSeriesPoint] = Field(description="Time series data points")
+    phases: List[PhaseResult] = Field(description="Phase execution results")
+    events: List[Dict[str, Any]] = Field(default_factory=list, description="Event log")
+    kpi_summary: List[KPISummary] = Field(description="KPI summary statistics")
+
+
+# ===== Detailed Configuration for Report =====
+
+class NetworkConfigDetail(BaseModel):
+    """Detailed network configuration for report"""
+    authentication: Optional[Dict[str, Any]] = Field(None, description="Auth config")
+    qos: Optional[Dict[str, Any]] = Field(None, description="QoS config")
+    pdu_session: Optional[Dict[str, Any]] = Field(None, description="PDU session config")
+    applications: Optional[List[str]] = Field(None, description="Application test types")
+
+
+class BaseStationConfigDetail(BaseModel):
+    """Detailed base station configuration for report"""
+    rf: Optional[Dict[str, Any]] = Field(None, description="RF parameters")
+    antenna: Optional[Dict[str, Any]] = Field(None, description="Antenna config")
+    beamforming: Optional[Dict[str, Any]] = Field(None, description="Beamforming config")
+    handover: Optional[Dict[str, Any]] = Field(None, description="Handover config")
+
+
+class DigitalTwinConfig(BaseModel):
+    """Digital twin environment configuration for report"""
+    channel_model: Optional[Dict[str, Any]] = Field(None, description="Channel model config")
+    ray_tracing: Optional[Dict[str, Any]] = Field(None, description="Ray tracing config")
+    weather: Optional[Dict[str, Any]] = Field(None, description="Weather effects")
+    interference: Optional[Dict[str, Any]] = Field(None, description="Interference config")
+
+
+class CustomConfigHighlight(BaseModel):
+    """Highlight for custom/special configuration"""
+    category: str = Field(description="Config category")
+    label: str = Field(description="Display label")
+    value: Any = Field(description="Config value")
+    description: Optional[str] = Field(None, description="Description")
+
+
+class TrajectoryPoint(BaseModel):
+    """Single point in trajectory"""
+    lat: float = Field(description="Latitude")
+    lon: float = Field(description="Longitude")
+    alt: Optional[float] = Field(None, description="Altitude")
+    time_s: Optional[float] = Field(None, description="Time in seconds")
+
+
+class ExecutionReport(BaseModel):
+    """Complete execution report"""
+    execution_id: str = Field(description="Execution ID")
+    scenario_name: str = Field(description="Scenario name")
+    mode: TestMode = Field(description="Test mode")
+    status: ExecutionStatus = Field(description="Final status")
+
+    # Scenario details
+    scenario: Optional[ScenarioInfo] = Field(None, description="Scenario information")
+    network: Optional[NetworkInfo] = Field(None, description="Network configuration")
+    environment: Optional[EnvironmentInfo] = Field(None, description="Environment info")
+    route: Optional[RouteInfo] = Field(None, description="Route info")
+    base_stations: List[BaseStationInfo] = Field(default_factory=list, description="Base stations")
+
+    # Step configuration
+    step_configs: List[StepConfigInfo] = Field(default_factory=list, description="Step configurations")
+
+    # Timing
+    start_time: Optional[datetime] = Field(None, description="Start time")
+    end_time: Optional[datetime] = Field(None, description="End time")
+    duration_s: Optional[float] = Field(None, description="Total duration")
+
+    # Phase results
+    phases: List[PhaseResult] = Field(default_factory=list, description="Phase results")
+
+    # KPI summary
+    kpi_summary: List[KPISummary] = Field(default_factory=list, description="KPI summary")
+
+    # Overall result
+    overall_result: str = Field(description="passed | failed | incomplete")
+    pass_rate: float = Field(description="Percentage of passed KPIs")
+
+    # Events
+    events: List[Dict[str, Any]] = Field(default_factory=list, description="Notable events")
+
+    # NEW: Time series data for charts
+    time_series: List[TimeSeriesPoint] = Field(default_factory=list, description="Time series data")
+
+    # NEW: Trajectory for map
+    trajectory: List[TrajectoryPoint] = Field(default_factory=list, description="Vehicle trajectory")
+
+    # NEW: Detailed configurations
+    network_config_detail: Optional[NetworkConfigDetail] = Field(None, description="Detailed network config")
+    base_station_config_detail: Optional[BaseStationConfigDetail] = Field(None, description="Detailed BS config")
+    digital_twin_config: Optional[DigitalTwinConfig] = Field(None, description="Digital twin config")
+
+    # NEW: Custom config highlights
+    custom_config_highlights: List[CustomConfigHighlight] = Field(
+        default_factory=list, description="Custom/special configuration highlights"
+    )
+
+    # Metadata
+    generated_at: datetime = Field(description="Report generation time")
+    notes: Optional[str] = Field(None, description="Execution notes")
+    # NEW: Logs
+    logs: List[Dict[str, Any]] = Field(default_factory=list, description="Execution process logs")
 
 
 # ===== Real-time Streaming =====

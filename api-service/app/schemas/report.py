@@ -50,6 +50,18 @@ class ReportCreate(BaseModel):
     category: Optional[str] = None
     notes: Optional[str] = None
 
+    # Report content data (unified structure for all report types)
+    content_data: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Report content data (KPIs, phases, events, scenario config, etc.)"
+    )
+
+    # Road test execution association
+    road_test_execution_id: Optional[str] = Field(
+        None,
+        description="Road test execution ID (for virtual road test reports)"
+    )
+
 
 class ReportUpdate(BaseModel):
     """Request to update report metadata (not regenerate)"""
@@ -128,6 +140,10 @@ class ReportResponse(BaseModel):
     category: Optional[str]
     notes: Optional[str]
 
+    # Report content data
+    content_data: Optional[Dict[str, Any]]
+    road_test_execution_id: Optional[str]
+
     class Config:
         from_attributes = True
 
@@ -143,6 +159,10 @@ class ReportSummary(BaseModel):
     file_size_bytes: Optional[int]
     generated_by: str
     generated_at: datetime
+
+    # ID fields for frontend filtering
+    test_execution_ids: Optional[List[UUID]] = None
+    road_test_execution_id: Optional[str] = None
 
     class Config:
         from_attributes = True

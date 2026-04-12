@@ -28,6 +28,7 @@ import {
   IconFileTypePdf,
   IconFileTypeHtml,
   IconTable,
+  IconPlayerPlay,
 } from '@tabler/icons-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { notifications } from '@mantine/notifications'
@@ -77,6 +78,26 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
       notifications.show({
         title: '错误',
         message: `删除失败: ${error.message}`,
+        color: 'red',
+      })
+    },
+  })
+
+  // Generate mutation (for pending/failed reports)
+  const generateMutation = useMutation({
+    mutationFn: ReportsAPI.generateReport,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reports'] })
+      notifications.show({
+        title: '开始生成',
+        message: '报告正在生成中...',
+        color: 'blue',
+      })
+    },
+    onError: (error: Error) => {
+      notifications.show({
+        title: '生成失败',
+        message: `无法生成报告: ${error.message}`,
         color: 'red',
       })
     },
@@ -282,6 +303,19 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
                             onClick={() => onView(report.id)}
                           >
                             <IconEye size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                      )}
+
+                      {(report.status === 'pending' || report.status === 'failed') && (
+                        <Tooltip label={report.status === 'failed' ? '重新生成' : '生成报告'}>
+                          <ActionIcon
+                            variant="subtle"
+                            color="blue"
+                            onClick={() => generateMutation.mutate(report.id)}
+                            loading={generateMutation.isPending}
+                          >
+                            <IconPlayerPlay size={16} />
                           </ActionIcon>
                         </Tooltip>
                       )}

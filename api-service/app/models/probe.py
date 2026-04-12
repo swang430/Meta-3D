@@ -1,5 +1,6 @@
 """Probe database models"""
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, JSON, Float, Text
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, JSON, Float, Text, ForeignKey
+from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 import uuid
@@ -24,6 +25,15 @@ class Probe(Base):
     __tablename__ = "probes"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # 暗室配置关联
+    chamber_config_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("chamber_configurations.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="所属暗室配置 ID"
+    )
+    chamber_config = relationship("ChamberConfiguration", back_populates="probes")
 
     # 基本标识
     probe_number = Column(Integer, nullable=False, unique=True, comment="探头编号 (1-32)")
@@ -89,6 +99,14 @@ class ProbeConfiguration(Base):
     __tablename__ = "probe_configurations"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # 暗室配置关联
+    chamber_config_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("chamber_configurations.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="关联的暗室配置 ID"
+    )
 
     # 基本信息
     name = Column(String(255), nullable=False, comment="配置名称")

@@ -94,6 +94,7 @@ export interface CreateReportRequest {
   test_plan_id?: string
   test_execution_ids?: string[]
   comparison_plan_ids?: string[]
+  road_test_execution_id?: string  // VRT execution ID
   template_id?: string
   include_raw_data?: boolean
   include_charts?: boolean
@@ -104,6 +105,8 @@ export interface CreateReportRequest {
   tags?: string[]
   category?: string
   notes?: string
+  // VRT report content data (passed directly to backend for immediate generation)
+  content_data?: Record<string, any>
 }
 
 export interface UpdateReportRequest {
@@ -124,18 +127,37 @@ export interface ReportListFilters {
 
 // ==================== Template Types ====================
 
-export type TemplateType = 'standard' | 'regulatory' | 'custom'
+export type TemplateType = 'standard' | 'regulatory' | 'performance' | 'comparison' | 'executive' | 'custom'
 
 export interface SectionConfig {
   id: string
   title: string
   order: number
-  type: 'cover' | 'text' | 'table' | 'mixed' | 'charts'
+  type:
+    | 'cover'
+    | 'text'
+    | 'table'
+    | 'mixed'
+    | 'charts'
+    | 'execution_summary'
+    | 'statistics'
+    | 'time_series'
+    | 'logs'
+    | 'step_details'
+    // VRT specific section types
+    | 'vrt_scenario'
+    | 'vrt_kpi_summary'
+    | 'vrt_phases'
+    | 'vrt_trajectory'
+    | 'vrt_network_config'
+    | 'vrt_events'
   required: boolean
   fields?: string[]
   content_template?: string
   include_charts?: boolean
   include_tables?: boolean
+  page_break_after?: boolean
+  max_entries?: number
 }
 
 export interface ChartConfig {

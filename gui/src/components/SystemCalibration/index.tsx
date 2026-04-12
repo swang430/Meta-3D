@@ -27,6 +27,10 @@ import { CalibrationWizard } from './CalibrationWizard';
 import { CalibrationHistory } from './CalibrationHistory';
 import { CertificateViewer } from './CertificateViewer';
 import { CalibrationDashboard } from './CalibrationDashboard';
+import { PathLossCalibrationCard } from './PathLossCalibrationCard';
+
+// Re-export components for external use
+export { PathLossCalibrationCard };
 
 export function SystemCalibration() {
   const [activeTab, setActiveTab] = useState<string | null>('dashboard');

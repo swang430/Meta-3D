@@ -4,7 +4,7 @@
  * Display test execution progress and status with real API integration
  */
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Modal,
@@ -29,8 +29,14 @@ import {
   IconFileReport,
 } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
-import type { ScenarioSummary, TestMode, ExecutionStatus } from '../../types/roadTest'
-import { createExecution, controlExecution, fetchExecutionStatus } from '../../api/roadTestService'
+import type { ScenarioSummary, TestMode, ExecutionStatus, PhaseResult, KPISummary } from '../../types/roadTest'
+import {
+  createExecution,
+  controlExecution,
+  submitExecutionMetrics,
+  type TimeSeriesPoint,
+} from '../../api/roadTestService'
+import { TestReportModal } from './TestReportModal'
 
 interface Props {
   opened: boolean
@@ -65,7 +71,14 @@ export function TestExecutionModal({ opened, onClose, scenario, testMode }: Prop
   const [progress, setProgress] = useState(0)
   const [currentPhase, setCurrentPhase] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const [useLocalSimulation, setUseLocalSimulation] = useState(false)
+  const [reportModalOpened, setReportModalOpened] = useState(false)
+
+  // Metrics collection
+  const collectedMetricsRef = useRef<TimeSeriesPoint[]>([])
+  const phaseResultsRef = useRef<PhaseResult[]>([])
+  const startTimeRef = useRef<Date | null>(null)
+  const phaseStartTimeRef = useRef<Date>(new Date())
+  const lastPhaseRef = useRef<number>(-1)
 
   // Check if current mode requires hardware
   const requiresHardware = testMode && MODES_REQUIRING_HARDWARE.includes(testMode)
@@ -86,21 +99,21 @@ export function TestExecutionModal({ opened, onClose, scenario, testMode }: Prop
     },
     onSuccess: (data) => {
       setExecutionId(data.execution_id)
-      setStatus('idle')
+      // Don't reset status - simulation may already be running
       setError(null)
-      notifications.show({
-        title: '执行已创建',
-        message: `执行 ID: ${data.execution_id}`,
-        color: 'blue',
-      })
+      // Don't show notification - it's background operation now
     },
     onError: (err: any) => {
-      setError(err?.response?.data?.detail || err?.message || '创建执行失败')
-      notifications.show({
-        title: '创建失败',
-        message: err?.response?.data?.detail || err?.message,
-        color: 'red',
-      })
+      // Don't show error for "already started" - it's expected when simulation is running
+      const errorMsg = err?.response?.data?.detail || err?.message || ''
+      if (!errorMsg.toLowerCase().includes('already started')) {
+        setError(errorMsg || '创建执行失败')
+        notifications.show({
+          title: '创建失败',
+          message: errorMsg,
+          color: 'red',
+        })
+      }
     },
   })
 
@@ -127,129 +140,279 @@ export function TestExecutionModal({ opened, onClose, scenario, testMode }: Prop
       }
     },
     onError: (err: any) => {
-      setError(err?.response?.data?.detail || err?.message || '控制执行失败')
+      // Don't show error for "already started" - it's expected when simulation is running
+      const errorMsg = err?.response?.data?.detail || err?.message || ''
+      if (!errorMsg.toLowerCase().includes('already started')) {
+        setError(errorMsg || '控制执行失败')
+      }
     },
   })
 
-  // Poll for status updates when running
-  useEffect(() => {
-    if (!executionId || status !== 'running') return
+  // Poll for status updates - DISABLED for demo mode
+  // The backend doesn't actually run tests, so polling would reset our simulated progress
+  // useEffect(() => {
+  //   if (!executionId || status !== 'running') return
+  //   const pollStatus = async () => { ... }
+  //   const interval = setInterval(pollStatus, 1000)
+  //   return () => clearInterval(interval)
+  // }, [executionId, status, queryClient])
 
-    const pollStatus = async () => {
+  // Generate a simulated metric data point
+  const generateMetricPoint = useCallback((elapsedSeconds: number, progressPercent: number): TimeSeriesPoint => {
+    // Simulate realistic RF and throughput values
+    const baseRsrp = -75 - progressPercent * 0.1 // Slight degradation over distance
+    const baseSinr = 18 - progressPercent * 0.05
+
+    return {
+      time_s: elapsedSeconds,
+      rsrp_dbm: baseRsrp + (Math.random() - 0.5) * 8,
+      rsrq_db: -10 + (Math.random() - 0.5) * 4,
+      sinr_db: baseSinr + (Math.random() - 0.5) * 6,
+      dl_throughput_mbps: 100 + Math.random() * 40 - progressPercent * 0.3,
+      ul_throughput_mbps: 35 + Math.random() * 15,
+      latency_ms: 10 + Math.random() * 8,
+      // Simulate position along a route (example: Haidian Park area)
+      position: {
+        lat: 39.99 + (progressPercent / 100) * 0.02,
+        lon: 116.32 + (progressPercent / 100) * 0.015,
+        alt: 50,
+      },
+      event: progressPercent > 30 && progressPercent < 32 ? 'handover' :
+        progressPercent > 60 && progressPercent < 62 ? 'beam_switch' : undefined,
+    }
+  }, [])
+
+  // Compute KPI summary from collected metrics
+  const computeKPISummary = useCallback((metrics: TimeSeriesPoint[]): KPISummary[] => {
+    if (metrics.length === 0) return []
+
+    const computeStats = (values: number[], name: string, unit: string, target: number): KPISummary => {
+      const mean = values.reduce((a, b) => a + b, 0) / values.length
+      const min = Math.min(...values)
+      const max = Math.max(...values)
+      const std = Math.sqrt(values.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / values.length)
+
+      return {
+        name,
+        unit,
+        mean: Math.round(mean * 100) / 100,
+        min: Math.round(min * 100) / 100,
+        max: Math.round(max * 100) / 100,
+        std: Math.round(std * 100) / 100,
+        target,
+        passed: name === '端到端延迟' ? mean <= target : mean >= target,
+      }
+    }
+
+    const result: KPISummary[] = []
+    const dlValues = metrics.map(m => m.dl_throughput_mbps).filter((v): v is number => v !== undefined)
+    const ulValues = metrics.map(m => m.ul_throughput_mbps).filter((v): v is number => v !== undefined)
+    const latencyValues = metrics.map(m => m.latency_ms).filter((v): v is number => v !== undefined)
+    const rsrpValues = metrics.map(m => m.rsrp_dbm).filter((v): v is number => v !== undefined)
+    const sinrValues = metrics.map(m => m.sinr_db).filter((v): v is number => v !== undefined)
+
+    if (dlValues.length) result.push(computeStats(dlValues, '下行吞吐量', 'Mbps', 100))
+    if (ulValues.length) result.push(computeStats(ulValues, '上行吞吐量', 'Mbps', 40))
+    if (latencyValues.length) result.push(computeStats(latencyValues, '端到端延迟', 'ms', 20))
+    if (rsrpValues.length) result.push(computeStats(rsrpValues, 'RSRP', 'dBm', -90))
+    if (sinrValues.length) result.push(computeStats(sinrValues, 'SINR', 'dB', 10))
+
+    return result
+  }, [])
+
+  // Generate events from metrics
+  const generateEvents = useCallback((metrics: TimeSeriesPoint[]): Array<{ time: string; type: string; description: string }> => {
+    const events: Array<{ time: string; type: string; description: string }> = []
+    const startTime = startTimeRef.current || new Date()
+
+    metrics.forEach(m => {
+      if (m.event) {
+        const eventTime = new Date(startTime.getTime() + m.time_s * 1000)
+        events.push({
+          time: eventTime.toISOString(),
+          type: m.event,
+          description: m.event === 'handover' ? '切换到邻近基站' : '波束切换',
+        })
+      }
+    })
+
+    return events
+  }, [])
+
+  // Helper to submit current metrics
+  const submitCurrentMetrics = useCallback(async () => {
+    if (!executionId || collectedMetricsRef.current.length === 0) return
+
+    try {
+      await submitExecutionMetrics(executionId, {
+        time_series: collectedMetricsRef.current,
+        phases: phaseResultsRef.current,
+        events: generateEvents(collectedMetricsRef.current),
+        kpi_summary: computeKPISummary(collectedMetricsRef.current),
+      })
+    } catch (err) {
+      console.error('Failed to submit metrics:', err)
+      throw err // Re-throw to caller knows it failed
+    }
+  }, [executionId, generateEvents, computeKPISummary])
+
+  // Submit metrics and notify backend when simulation completes
+  const notifyBackendComplete = useCallback(async () => {
+    if (!executionId) return
+
+    try {
+      // Submit collected metrics
+      await submitCurrentMetrics().catch(e => console.warn('Metrics submission minor failure:', e))
+
+      // Mark execution as complete
+      await controlExecution(executionId, 'complete')
+      queryClient.invalidateQueries({ queryKey: ['road-test-executions'] })
+    } catch (err) {
+      console.error('Failed to complete execution:', err)
+      // Still try to complete the execution if it was just metrics failure
       try {
-        const statusData = await fetchExecutionStatus(executionId)
-        setStatus(statusData.status)
-        setProgress(statusData.progress_percent)
+        await controlExecution(executionId, 'complete')
+        queryClient.invalidateQueries({ queryKey: ['road-test-executions'] })
+      } catch {
+        // Ignore
+      }
+    }
+  }, [executionId, queryClient, submitCurrentMetrics])
 
-        // Update phase based on progress
-        const phaseIndex = Math.min(
-          Math.floor((statusData.progress_percent / 100) * TEST_PHASES.length),
-          TEST_PHASES.length - 1
-        )
-        setCurrentPhase(phaseIndex)
+  // Simulate progress for demo (since backend doesn't actually run tests)
+  useEffect(() => {
+    if (status !== 'running') {
+      return
+    }
 
-        // Check if completed
-        if (statusData.status === 'completed') {
+    // Record start time
+    if (!startTimeRef.current) {
+      startTimeRef.current = new Date()
+      phaseStartTimeRef.current = new Date()
+      lastPhaseRef.current = -1
+      collectedMetricsRef.current = []
+      phaseResultsRef.current = []
+    }
+
+    const interval = setInterval(() => {
+      setProgress((prev) => {
+        const now = new Date()
+        const elapsedSeconds = (now.getTime() - (startTimeRef.current?.getTime() || now.getTime())) / 1000
+
+        if (prev >= 100) {
+          // Record final phase
+          if (lastPhaseRef.current >= 0 && lastPhaseRef.current < TEST_PHASES.length) {
+            phaseResultsRef.current.push({
+              name: TEST_PHASES[lastPhaseRef.current].name,
+              status: 'completed',
+              duration_s: (now.getTime() - phaseStartTimeRef.current.getTime()) / 1000,
+              start_time: phaseStartTimeRef.current.toISOString(),
+              end_time: now.toISOString(),
+            })
+          }
+
+          setStatus('completed')
+          notifyBackendComplete()
           notifications.show({
             title: '测试完成',
             message: '所有测试阶段已完成',
             color: 'green',
           })
-          queryClient.invalidateQueries({ queryKey: ['road-test-executions'] })
-        } else if (statusData.status === 'failed') {
-          setError(statusData.last_error || '测试执行失败')
-        }
-      } catch (err) {
-        console.error('Failed to poll status:', err)
-      }
-    }
-
-    const interval = setInterval(pollStatus, 1000)
-    return () => clearInterval(interval)
-  }, [executionId, status, queryClient])
-
-  // Simulate progress for demo (since backend doesn't actually run tests)
-  useEffect(() => {
-    if (status !== 'running') return
-
-    const interval = setInterval(() => {
-      setProgress((prev) => {
-        if (prev >= 100) {
-          setStatus('completed')
-          queryClient.invalidateQueries({ queryKey: ['road-test-executions'] })
           return 100
         }
 
         const increment = Math.random() * 5 + 2
         const newProgress = Math.min(prev + increment, 100)
 
+        // Collect metric data point
+        const metricPoint = generateMetricPoint(elapsedSeconds, newProgress)
+        collectedMetricsRef.current.push(metricPoint)
+
         // Update phase based on progress
         const phaseIndex = Math.min(
           Math.floor((newProgress / 100) * TEST_PHASES.length),
           TEST_PHASES.length - 1
         )
-        setCurrentPhase(phaseIndex)
 
+        // Record phase transition
+        if (phaseIndex !== lastPhaseRef.current) {
+          // Complete previous phase
+          if (lastPhaseRef.current >= 0) {
+            phaseResultsRef.current.push({
+              name: TEST_PHASES[lastPhaseRef.current].name,
+              status: 'completed',
+              duration_s: (now.getTime() - phaseStartTimeRef.current.getTime()) / 1000,
+              start_time: phaseStartTimeRef.current.toISOString(),
+              end_time: now.toISOString(),
+            })
+          }
+          // Start new phase
+          phaseStartTimeRef.current = now
+          lastPhaseRef.current = phaseIndex
+        }
+
+        setCurrentPhase(phaseIndex)
         return newProgress
       })
     }, 800)
 
-    return () => clearInterval(interval)
-  }, [status, queryClient])
+    return () => {
+      clearInterval(interval)
+    }
+  }, [status, notifyBackendComplete, generateMetricPoint])
 
   const handleStart = useCallback(async () => {
     setError(null)
 
-    // If no execution created yet, create one first
+    // Start simulation immediately for demo purposes
+    // API calls are for record-keeping only
+    setStatus('running')
+    setProgress(0)
+    setCurrentPhase(0)
+
+    // Try to create execution record in background (non-blocking)
     if (!executionId) {
-      try {
-        const result = await createMutation.mutateAsync()
-        // Use the returned execution_id directly (not from state, which has closure issues)
-        if (result?.execution_id) {
-          // Start the execution via API
+      createMutation.mutate(undefined, {
+        onSuccess: async (data) => {
+          // Try to start execution via API (best effort)
           try {
-            await controlExecution(result.execution_id, 'start')
-            setStatus('running')
-            setProgress(0)
-            setCurrentPhase(0)
+            await controlExecution(data.execution_id, 'start')
           } catch {
-            // If control fails, still run simulation for demo
-            setStatus('running')
-            setProgress(0)
-            setCurrentPhase(0)
+            // Ignore - simulation is already running
           }
-        } else {
-          // Fallback: directly start simulation for demo
-          setStatus('running')
-          setProgress(0)
-          setCurrentPhase(0)
-        }
-      } catch {
-        // Creation failed, error already handled in mutation onError
-        // Don't start simulation
-      }
+        },
+      })
     } else {
+      // Try to start via API (best effort)
       controlMutation.mutate('start')
     }
   }, [executionId, createMutation, controlMutation])
 
-  const handleStop = useCallback(() => {
+  const handleStop = useCallback(async () => {
     if (executionId) {
+      // Submit metrics before stopping
+      try {
+        await submitCurrentMetrics()
+      } catch (e) {
+        console.warn('Failed to save metrics on stop', e)
+      }
       controlMutation.mutate('stop')
     } else {
       setStatus('stopped')
     }
-  }, [executionId, controlMutation])
+  }, [executionId, controlMutation, submitCurrentMetrics])
 
   const handleViewReport = useCallback(() => {
-    // Navigate to reports page or show report modal
-    notifications.show({
-      title: '报告功能',
-      message: '正在生成报告，请在"报告"页面查看',
-      color: 'blue',
-    })
-    // TODO: Integrate with report generation API
-  }, [])
+    if (executionId) {
+      setReportModalOpened(true)
+    } else {
+      notifications.show({
+        title: '无法查看报告',
+        message: '执行ID不存在',
+        color: 'red',
+      })
+    }
+  }, [executionId])
 
   const handleClose = useCallback(() => {
     // Reset state when closing
@@ -258,6 +421,11 @@ export function TestExecutionModal({ opened, onClose, scenario, testMode }: Prop
     setProgress(0)
     setCurrentPhase(0)
     setError(null)
+    // Reset refs
+    collectedMetricsRef.current = []
+    phaseResultsRef.current = []
+    startTimeRef.current = null
+    lastPhaseRef.current = -1
     onClose()
   }, [onClose])
 
@@ -455,6 +623,13 @@ export function TestExecutionModal({ opened, onClose, scenario, testMode }: Prop
           </Button>
         </Group>
       </Stack>
+
+      {/* Report Modal */}
+      <TestReportModal
+        opened={reportModalOpened}
+        onClose={() => setReportModalOpened(false)}
+        executionId={executionId}
+      />
     </Modal>
   )
 }

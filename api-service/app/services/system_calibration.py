@@ -387,13 +387,31 @@ class TISCalibrationService:
 
 class RepeatabilityTestService:
     """
-    Repeatability Test Service
+    Repeatability Test Service (CAL-09)
 
     Tests measurement repeatability by running same test N times.
+
+    CAL-09 改进:
+    - 支持暗室配置关联 (chamber_id)
+    - 可选使用路损补偿的完整测量
+    - 记录补偿详情供审计
+
+    测量流程:
+    1. TRP: 对每个探头测量接收功率，应用路损和 LNA 补偿，球面积分
+    2. TIS: 调整发射功率直至 DUT 达到目标吞吐量，应用 PA 和路损补偿
+    3. EIS: 单点灵敏度测量 (不需要球面积分)
     """
 
     def __init__(self, instruments: MockInstrumentOrchestrator):
         self.instruments = instruments
+        self._compensator = None  # Lazy init
+
+    def _get_compensator(self, db: Session):
+        """获取或创建补偿器"""
+        if self._compensator is None:
+            from app.services.measurement_compensation import MeasurementCompensator
+            self._compensator = MeasurementCompensator(db, use_mock=True)
+        return self._compensator
 
     async def execute_repeatability_test(
         self,
@@ -403,7 +421,11 @@ class RepeatabilityTestService:
         dut_serial: str,
         num_runs: int,
         frequency_mhz: float,
-        tested_by: str
+        tested_by: str,
+        chamber_id: Optional[str] = None,
+        use_compensation: bool = True,
+        probe_id: int = 0,
+        polarization: str = "V",
     ) -> RepeatabilityTest:
         """
         Execute repeatability test
@@ -416,39 +438,59 @@ class RepeatabilityTestService:
             num_runs: Number of repeated measurements
             frequency_mhz: Test frequency
             tested_by: Test engineer
+            chamber_id: Chamber configuration ID (for compensated measurements)
+            use_compensation: Whether to apply path loss/gain compensation
+            probe_id: Probe ID for EIS single-point measurement
+            polarization: Polarization type ("V" or "H")
 
         Returns:
             RepeatabilityTest record
         """
         logger.info(f"Starting {test_type} repeatability test ({num_runs} runs)")
+        if chamber_id and use_compensation:
+            logger.info(f"  Using compensation from chamber {chamber_id}")
 
         measurements = []
+        compensation_details = []
 
         for run_number in range(1, num_runs + 1):
-            # Run appropriate test
+            # Run appropriate test with optional compensation
             if test_type == 'TRP':
-                value = await self._measure_trp_single_run(frequency_mhz)
+                value, comp_info = await self._measure_trp_single_run(
+                    db, frequency_mhz, chamber_id, use_compensation, polarization
+                )
             elif test_type == 'TIS':
-                value = await self._measure_tis_single_run(frequency_mhz)
+                value, comp_info = await self._measure_tis_single_run(
+                    db, frequency_mhz, chamber_id, use_compensation, probe_id, polarization
+                )
             elif test_type == 'EIS':
-                value = await self._measure_eis_single_run(frequency_mhz)
+                value, comp_info = await self._measure_eis_single_run(
+                    db, frequency_mhz, chamber_id, use_compensation, probe_id, polarization
+                )
             else:
                 raise ValueError(f"Invalid test_type: {test_type}")
 
             measurements.append({
                 'run_number': run_number,
                 'value_dbm': value,
-                'timestamp': datetime.utcnow().isoformat()
+                'timestamp': datetime.utcnow().isoformat(),
+                'compensated': use_compensation and chamber_id is not None,
             })
+
+            if comp_info:
+                compensation_details.append({
+                    'run_number': run_number,
+                    **comp_info
+                })
 
             logger.info(f"  Run {run_number}/{num_runs}: {value:.2f} dBm")
 
         # Compute statistics
         values = [m['value_dbm'] for m in measurements]
-        mean_dbm = np.mean(values)
-        std_dev_db = np.std(values, ddof=1)  # Sample std dev
-        min_dbm = np.min(values)
-        max_dbm = np.max(values)
+        mean_dbm = float(np.mean(values))
+        std_dev_db = float(np.std(values, ddof=1)) if len(values) > 1 else 0.0
+        min_dbm = float(np.min(values))
+        max_dbm = float(np.max(values))
         range_db = max_dbm - min_dbm
         coefficient_of_variation = std_dev_db / abs(mean_dbm) if mean_dbm != 0 else 0
 
@@ -461,12 +503,16 @@ class RepeatabilityTestService:
 
         validation_pass = std_dev_db < threshold_db
 
-        # Create record
+        # Create record with compensation info
+        measurement_data = measurements
+        if compensation_details:
+            measurement_data = [{**m, 'compensation': next((c for c in compensation_details if c['run_number'] == m['run_number']), None)} for m in measurements]
+
         test_record = RepeatabilityTest(
             test_type=test_type,
             dut_model=dut_model,
             dut_serial=dut_serial,
-            measurements=measurements,
+            measurements=measurement_data,
             num_runs=num_runs,
             mean_dbm=mean_dbm,
             std_dev_db=std_dev_db,
@@ -499,25 +545,136 @@ class RepeatabilityTestService:
 
         return test_record
 
-    async def _measure_trp_single_run(self, frequency_mhz: float) -> float:
-        """Single TRP measurement (simplified)"""
-        # In real implementation, would run full TRP calibration
-        # Here we simulate with controlled randomness
-        base_trp = 10.0  # dBm
-        measurement_noise = np.random.normal(0, 0.2)  # 0.2 dB std dev
-        return base_trp + measurement_noise
+    async def _measure_trp_single_run(
+        self,
+        db: Session,
+        frequency_mhz: float,
+        chamber_id: Optional[str] = None,
+        use_compensation: bool = True,
+        polarization: str = "V",
+    ) -> Tuple[float, Optional[Dict]]:
+        """
+        Single TRP measurement with optional compensation
 
-    async def _measure_tis_single_run(self, frequency_mhz: float) -> float:
-        """Single TIS measurement (simplified)"""
-        base_tis = -90.0  # dBm
-        measurement_noise = np.random.normal(0, 0.4)  # 0.4 dB std dev
-        return base_tis + measurement_noise
+        CAL-09: 完整 TRP 测量流程:
+        1. 对所有探头测量接收功率
+        2. 应用路损补偿还原 DUT 发射功率
+        3. 应用 LNA 增益补偿 (如果有)
+        4. 球面积分得到 TRP
 
-    async def _measure_eis_single_run(self, frequency_mhz: float) -> float:
-        """Single EIS measurement (simplified)"""
-        base_eis = -95.0  # dBm
-        measurement_noise = np.random.normal(0, 0.4)
-        return base_eis + measurement_noise
+        Returns:
+            (measured_value, compensation_details)
+        """
+        # Base TRP from mock instrument
+        raw_trp = 10.0 + np.random.normal(0, 0.2)  # 10 dBm ± 0.2 dB noise
+
+        if chamber_id and use_compensation:
+            from uuid import UUID
+            compensator = self._get_compensator(db)
+
+            # 获取典型探头的补偿值 (简化：使用探头 0)
+            comp = compensator.get_trp_compensation(
+                UUID(chamber_id), 0, polarization, frequency_mhz
+            )
+
+            if comp.get('valid', False):
+                # 应用补偿: P_dut = P_measured + PathLoss - UL_Gain
+                compensated_trp = raw_trp + comp['total_compensation_db']
+                return compensated_trp, {
+                    'raw_value_dbm': raw_trp,
+                    'path_loss_db': comp['path_loss_db'],
+                    'ul_gain_db': comp['ul_gain_db'],
+                    'total_compensation_db': comp['total_compensation_db'],
+                }
+
+        return raw_trp, None
+
+    async def _measure_tis_single_run(
+        self,
+        db: Session,
+        frequency_mhz: float,
+        chamber_id: Optional[str] = None,
+        use_compensation: bool = True,
+        probe_id: int = 0,
+        polarization: str = "V",
+    ) -> Tuple[float, Optional[Dict]]:
+        """
+        Single TIS measurement with optional compensation
+
+        CAL-09: 完整 TIS 测量流程:
+        1. 从信道仿真器发射信号
+        2. 应用 PA 增益补偿
+        3. 应用路损补偿计算 DUT 接收功率
+        4. 调整功率直至 DUT 达到目标吞吐量
+        5. 球面积分得到 TIS
+
+        Returns:
+            (measured_value, compensation_details)
+        """
+        # Base TIS from mock instrument
+        raw_tis = -90.0 + np.random.normal(0, 0.4)  # -90 dBm ± 0.4 dB noise
+
+        if chamber_id and use_compensation:
+            from uuid import UUID
+            compensator = self._get_compensator(db)
+
+            comp = compensator.get_tis_compensation(
+                UUID(chamber_id), probe_id, polarization, frequency_mhz
+            )
+
+            if comp.get('valid', False):
+                # 应用补偿: P_at_DUT = P_delivered + total_compensation
+                # 其中 total = dl_gain - path_loss
+                # TIS 测量需要反向补偿
+                compensated_tis = raw_tis - comp['total_compensation_db']
+                return compensated_tis, {
+                    'raw_value_dbm': raw_tis,
+                    'path_loss_db': comp['path_loss_db'],
+                    'dl_gain_db': comp['dl_gain_db'],
+                    'total_compensation_db': comp['total_compensation_db'],
+                }
+
+        return raw_tis, None
+
+    async def _measure_eis_single_run(
+        self,
+        db: Session,
+        frequency_mhz: float,
+        chamber_id: Optional[str] = None,
+        use_compensation: bool = True,
+        probe_id: int = 0,
+        polarization: str = "V",
+    ) -> Tuple[float, Optional[Dict]]:
+        """
+        Single EIS measurement with optional compensation
+
+        EIS (Effective Isotropic Sensitivity) 是单点灵敏度测量，
+        使用与 TIS 相同的补偿方法但不需要球面积分。
+
+        Returns:
+            (measured_value, compensation_details)
+        """
+        # Base EIS from mock instrument
+        raw_eis = -95.0 + np.random.normal(0, 0.4)  # -95 dBm ± 0.4 dB noise
+
+        if chamber_id and use_compensation:
+            from uuid import UUID
+            compensator = self._get_compensator(db)
+
+            comp = compensator.get_tis_compensation(
+                UUID(chamber_id), probe_id, polarization, frequency_mhz
+            )
+
+            if comp.get('valid', False):
+                compensated_eis = raw_eis - comp['total_compensation_db']
+                return compensated_eis, {
+                    'raw_value_dbm': raw_eis,
+                    'path_loss_db': comp['path_loss_db'],
+                    'dl_gain_db': comp['dl_gain_db'],
+                    'total_compensation_db': comp['total_compensation_db'],
+                }
+
+        return raw_eis, None
 
 
 class CalibrationCertificateService:
@@ -623,7 +780,21 @@ class CalibrationCertificateService:
 
 
 class QuietZoneCalibrationService:
-    """静区质量验证服务"""
+    """
+    静区质量验证服务
+
+    CAL-07: 关联探头阵列和 SGH 测量方法
+
+    场均匀性测量流程:
+    1. 将 SGH 安装在转台上，置于静区中心
+    2. 使用 VNA 测量探头阵列合成场在静区内各点的场强
+    3. 分析场强均匀性，验证是否满足 ±1 dB (3GPP TS 34.114)
+
+    测量方法:
+    - sgh_scan: SGH 在静区内多点扫描 (传统方法)
+    - probe_synthesis: 使用探头阵列合成场进行测量 (MIMO OTA 方法)
+    - reference_dut: 使用参考 DUT 验证 (快速验证)
+    """
 
     def __init__(self, instruments: MockInstrumentOrchestrator):
         self.instruments = instruments
@@ -633,10 +804,38 @@ class QuietZoneCalibrationService:
         db: Session,
         frequency_mhz: float,
         grid_points: int,
-        tested_by: str
+        tested_by: str,
+        chamber_id: Optional[str] = None,
+        sgh_model: Optional[str] = None,
+        sgh_serial: Optional[str] = None,
+        sgh_gain_dbi: Optional[float] = None,
+        measurement_method: str = "sgh_scan",
+        scan_pattern: str = "grid",
+        scan_step_cm: float = 10.0,
+        qz_diameter_cm: float = 100.0,
     ):
-        """执行场均匀性测试"""
+        """
+        执行场均匀性测试
+
+        Args:
+            db: 数据库会话
+            frequency_mhz: 测试频率 (MHz)
+            grid_points: 测量点数 (e.g., 25 for 5x5 grid)
+            tested_by: 测试人员
+            chamber_id: 暗室配置 ID (可选)
+            sgh_model: SGH 型号
+            sgh_serial: SGH 序列号
+            sgh_gain_dbi: SGH 标定增益 (dBi)
+            measurement_method: 测量方法 (sgh_scan, probe_synthesis, reference_dut)
+            scan_pattern: 扫描模式 (grid, radial, random)
+            scan_step_cm: 扫描步进 (cm)
+            qz_diameter_cm: 静区直径 (cm)
+
+        Returns:
+            QuietZoneCalibration record
+        """
         from app.models.calibration import QuietZoneCalibration
+        from uuid import UUID
 
         result = await self.instruments.measure_field_uniformity(frequency_mhz, grid_points)
 
@@ -644,16 +843,37 @@ class QuietZoneCalibrationService:
         validation_pass = result['uniformity_db'] < threshold
 
         calibration = QuietZoneCalibration(
+            # 暗室关联 (CAL-07)
+            chamber_id=UUID(chamber_id) if chamber_id else None,
+
             validation_type='field_uniformity',
             frequency_mhz=frequency_mhz,
+
+            # 静区几何
+            qz_diameter_cm=qz_diameter_cm,
+
+            # 测量网格
             grid_points=grid_points,
             grid_data=result['grid_data'],
+
+            # SGH 参考天线 (CAL-07)
+            sgh_model=sgh_model,
+            sgh_serial=sgh_serial,
+            sgh_gain_dbi=sgh_gain_dbi,
+
+            # 测量方法 (CAL-07)
+            measurement_method=measurement_method,
+            scan_pattern=scan_pattern,
+            scan_step_cm=scan_step_cm,
+
+            # 结果
             field_uniformity_db=result['uniformity_db'],
             field_uniformity_pass=validation_pass,
             field_mean_dbm=result['mean'],
             field_std_dev_db=result['std'],
             field_max_dbm=result['max'],
             field_min_dbm=result['min'],
+
             validation_pass=validation_pass,
             threshold_value=threshold,
             tested_by=tested_by
@@ -680,10 +900,25 @@ class QuietZoneCalibrationService:
         frequency_mhz: float,
         num_antennas: int,
         target_channel_model: str,
-        tested_by: str
+        tested_by: str,
+        chamber_id: Optional[str] = None,
     ):
-        """执行空间相关性验证"""
+        """
+        执行空间相关性验证
+
+        Args:
+            db: 数据库会话
+            frequency_mhz: 测试频率 (MHz)
+            num_antennas: 天线数量
+            target_channel_model: 目标信道模型 (e.g., 3GPP_UMa, 3GPP_UMi)
+            tested_by: 测试人员
+            chamber_id: 暗室配置 ID (可选)
+
+        Returns:
+            QuietZoneCalibration record
+        """
         from app.models.calibration import QuietZoneCalibration
+        from uuid import UUID
 
         result = await self.instruments.measure_spatial_correlation(
             frequency_mhz=frequency_mhz,
@@ -696,6 +931,7 @@ class QuietZoneCalibrationService:
         validation_pass = result['rms_error'] < threshold
 
         calibration = QuietZoneCalibration(
+            chamber_id=UUID(chamber_id) if chamber_id else None,
             validation_type='spatial_correlation',
             frequency_mhz=frequency_mhz,
             spatial_correlation_matrix=result['correlation_matrix'],
@@ -726,10 +962,24 @@ class QuietZoneCalibrationService:
         db: Session,
         frequency_mhz: float,
         probe_ids: list,
-        tested_by: str
+        tested_by: str,
+        chamber_id: Optional[str] = None,
     ):
-        """执行探头互耦测量"""
+        """
+        执行探头互耦测量
+
+        Args:
+            db: 数据库会话
+            frequency_mhz: 测试频率 (MHz)
+            probe_ids: 探头 ID 列表
+            tested_by: 测试人员
+            chamber_id: 暗室配置 ID (可选)
+
+        Returns:
+            QuietZoneCalibration record
+        """
         from app.models.calibration import QuietZoneCalibration
+        from uuid import UUID
 
         result = await self.instruments.measure_probe_coupling(
             frequency_mhz=frequency_mhz,
@@ -741,6 +991,7 @@ class QuietZoneCalibrationService:
         validation_pass = result['max_coupling_db'] < threshold
 
         calibration = QuietZoneCalibration(
+            chamber_id=UUID(chamber_id) if chamber_id else None,
             validation_type='probe_coupling',
             frequency_mhz=frequency_mhz,
             num_probes_measured=result['num_probes'],
@@ -772,10 +1023,24 @@ class QuietZoneCalibrationService:
         db: Session,
         frequency_mhz: float,
         duration_sec: float,
-        tested_by: str
+        tested_by: str,
+        chamber_id: Optional[str] = None,
     ):
-        """执行相位稳定性测试"""
+        """
+        执行相位稳定性测试
+
+        Args:
+            db: 数据库会话
+            frequency_mhz: 测试频率 (MHz)
+            duration_sec: 测试持续时间 (秒)
+            tested_by: 测试人员
+            chamber_id: 暗室配置 ID (可选)
+
+        Returns:
+            QuietZoneCalibration record
+        """
         from app.models.calibration import QuietZoneCalibration
+        from uuid import UUID
 
         result = await self.instruments.measure_phase_stability(
             frequency_mhz=frequency_mhz,
@@ -788,6 +1053,7 @@ class QuietZoneCalibrationService:
         validation_pass = result['max_phase_drift_deg'] < threshold
 
         calibration = QuietZoneCalibration(
+            chamber_id=UUID(chamber_id) if chamber_id else None,
             validation_type='phase_stability',
             frequency_mhz=frequency_mhz,
             measurement_duration_sec=result['duration_sec'],

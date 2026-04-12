@@ -13,3 +13,7 @@ scipy>=1.10.0
 # Development and testing
 pytest>=8.0.0
 httpx>=0.27.0
+
+# Channel Engine UI & Plotting
+streamlit>=1.52.0
+matplotlib>=3.8.0

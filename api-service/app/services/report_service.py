@@ -2,7 +2,7 @@
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 import logging
 
@@ -38,13 +38,19 @@ class ReportService:
         **kwargs
     ) -> TestReport:
         """Create a new report"""
+        # Convert UUID to string for JSON serialization
+        execution_ids_str = [str(eid) for eid in (test_execution_ids or [])]
+        comparison_ids = kwargs.pop('comparison_plan_ids', None)
+        comparison_ids_str = [str(cid) for cid in (comparison_ids or [])] if comparison_ids else []
+
         report = TestReport(
             title=title,
             report_type=report_type,
             format=format,
             generated_by=generated_by,
             test_plan_id=test_plan_id,
-            test_execution_ids=test_execution_ids or [],
+            test_execution_ids=execution_ids_str,
+            comparison_plan_ids=comparison_ids_str,
             template_id=template_id,
             status=ReportStatus.PENDING,
             progress_percent=0,
@@ -145,13 +151,16 @@ class ReportService:
     def generate_report(
         self,
         db: Session,
-        report_id: UUID
+        report_id: UUID,
+        content_data_override: Optional[Dict[str, Any]] = None
     ) -> Optional[TestReport]:
         """
         Trigger report generation
-
-        NOTE: In production, this should be moved to a background task
-        (Celery/FastAPI BackgroundTasks) for better performance
+        
+        Args:
+            db: Database session
+            report_id: Report ID
+            content_data_override: Optional direct data to use, bypassing DB fetch
         """
         report = self.get_report(db, report_id)
         if not report:
@@ -159,7 +168,7 @@ class ReportService:
 
         # Update status to generating
         report.status = ReportStatus.GENERATING
-        report.generation_started_at = datetime.utcnow()
+        report.generation_started_at = datetime.now(timezone.utc)
         report.progress_percent = 0
         db.commit()
 
@@ -169,24 +178,132 @@ class ReportService:
             # Get template
             template = None
             if report.template_id:
+                # User explicitly specified a template
                 template = db.query(ReportTemplate).filter(
                     ReportTemplate.id == report.template_id
                 ).first()
+                logger.info(f"Using user-specified template: {template.name if template else 'NOT FOUND'}")
 
             if not template:
-                # Get default template for report type
-                template = db.query(ReportTemplate).filter(
-                    ReportTemplate.is_default == True,
-                    ReportTemplate.is_active == True
-                ).first()
+                # Try to find appropriate template based on report type
+                if report.report_type == ReportType.SINGLE_EXECUTION and report.road_test_execution_id:
+                    # VRT report - try to find VRT-specific template by name pattern
+                    template = db.query(ReportTemplate).filter(
+                        ReportTemplate.is_active == True,
+                        ReportTemplate.name.ilike("%Virtual Road Test%")
+                    ).first()
+                    if template:
+                        logger.info(f"Using VRT template: {template.name}")
+
+                if not template and report.report_type != ReportType.SINGLE_EXECUTION:
+                    # Get default template for other report types
+                    template = db.query(ReportTemplate).filter(
+                        ReportTemplate.is_default == True,
+                        ReportTemplate.is_active == True
+                    ).first()
+                    if template:
+                        logger.info(f"Using default template: {template.name}")
+
+            # Log template status
+            if template:
+                logger.info(f"Report {report_id} will use template '{template.name}' (sections: {len(template.sections or [])})")
+            else:
+                logger.info(f"Report {report_id} will use auto-generated layout (no template)")
 
             # Update progress
             report.progress_percent = 10
             db.commit()
 
-            # Gather report data using the data collector
-            data_collector = ReportDataCollector()
-            report_data = data_collector.collect(db, report)
+            # Gather report data
+            report_data_dict = {}
+            
+            # Use overrides if available (critical for VRT immediate generation)
+            source_data = content_data_override or report.content_data
+            
+            if report.report_type == ReportType.SINGLE_EXECUTION and source_data:
+                # For VRT/Single Execution, use the data directly
+                report_data_dict = source_data.copy() if hasattr(source_data, 'copy') else dict(source_data)
+                
+                # Ensure it has basic metadata if missing
+                if 'title' not in report_data_dict:
+                    report_data_dict['title'] = report.title
+                if 'generated_by' not in report_data_dict:
+                    report_data_dict['generated_by'] = report.generated_by
+                if 'generated_at' not in report_data_dict:
+                    report_data_dict['generated_at'] = datetime.now(timezone.utc).isoformat()
+
+                # Transform VRT data structure to PDF Generator expected structure
+                # Debug logging
+                logger.info(f"Preparing VRT report data. Keys available: {list(report_data_dict.keys())}")
+                if 'logs' in report_data_dict:
+                     logger.info(f"Logs count: {len(report_data_dict['logs'])}")
+                else:
+                     logger.warning("No 'logs' key in report_data_dict")
+                
+                # 1. Execution Summary
+                
+                # 1. Execution Summary
+                if 'execution_summary' not in report_data_dict:
+                    report_data_dict['execution_summary'] = {
+                        'total_executions': 1,
+                        'passed': 1 if report_data_dict.get('overall_result') == 'passed' else 0,
+                        'failed': 1 if report_data_dict.get('overall_result') == 'failed' else 0,
+                        'pending': 0,
+                        'pass_rate': report_data_dict.get('pass_rate', 0),
+                        'total_duration_sec': report_data_dict.get('duration_s', 0),
+                        'first_execution': report_data_dict.get('start_time'),
+                        'last_execution': report_data_dict.get('end_time')
+                    }
+
+                # 2. Statistics (Map kpi_summary -> statistics)
+                if 'statistics' not in report_data_dict and 'kpi_summary' in report_data_dict:
+                    stats = {}
+                    for kpi in report_data_dict.get('kpi_summary', []):
+                        name = kpi.get('name')
+                        if name:
+                            stats[name] = {
+                                'metric_name': name,
+                                'mean': kpi.get('mean', 0),
+                                'median': kpi.get('median', kpi.get('mean', 0)),  # Use median if available, fallback to mean
+                                'std': kpi.get('std', 0),
+                                'min': kpi.get('min', 0),
+                                'max': kpi.get('max', 0),
+                                'count': kpi.get('count', 0)
+                            }
+                    report_data_dict['statistics'] = stats
+
+                # 3. Chart Data (Map time_series -> chart_data)
+                if 'chart_data' not in report_data_dict and 'time_series' in report_data_dict:
+                    ts_data = report_data_dict.get('time_series', [])
+                    if ts_data:
+                        timestamps = []
+                        metrics_series = {}
+                        
+                        for point in ts_data:
+                            t_val = point.get('time_s', 0)
+                            timestamps.append(t_val)
+                            
+                            for k, v in point.items():
+                                if k not in ['time_s', 'position', 'event'] and isinstance(v, (int, float)):
+                                    if k not in metrics_series:
+                                        metrics_series[k] = []
+                                    metrics_series[k].append(v)
+                        
+                        chart_data = {}
+                        for metric, values in metrics_series.items():
+                             chart_data[f"time_series_{metric}"] = {
+                                 "timestamps": timestamps,
+                                 "values": values,
+                                 "anomaly_indices": []
+                             }
+                        report_data_dict['chart_data'] = chart_data
+            else:
+                # For standard reports, collect data from DB
+                data_collector = ReportDataCollector()
+                report_data = data_collector.collect(db, report)
+                if report_data is None:
+                    raise ValueError(f"Failed to collect report data for report {report_id}")
+                report_data_dict = report_data.to_dict()
 
             # Update progress
             report.progress_percent = 50
@@ -214,18 +331,40 @@ class ReportService:
                         'color_scheme': template.color_scheme or {}
                     }
 
-                # Convert ReportData to dict for PDF generator
-                pdf_generator.generate_report(report_data.to_dict(), template_dict, output_path)
+                # Generate PDF using the dict data
+                pdf_generator.generate_report(report_data_dict, template_dict, output_path)
 
                 # Update report with file path and metadata
                 report.file_path = output_path
                 report.file_size_bytes = os.path.getsize(output_path)
-                report.chart_count = len(report_data.chart_data)
-                report.table_count = 1 if report_data.table_data else 0
+                
+                # Check if specific result directory exists (User preference)
+                import shutil
+                # Assumption: running from api-service/ or root
+                legacy_result_dir = os.path.abspath(os.path.join(os.getcwd(), '..', 'Result_Report'))
+                if not os.path.exists(legacy_result_dir):
+                    # Try current directory
+                    legacy_result_dir = os.path.abspath(os.path.join(os.getcwd(), 'Result_Report'))
+                
+                if os.path.exists(legacy_result_dir):
+                    try:
+                        target_path = os.path.join(legacy_result_dir, f'report_{report.id}.pdf')
+                        shutil.copy2(output_path, target_path)
+                        logger.info(f"Copied report to legacy path: {target_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to copy report to Result_Report: {e}")
+
+                # Extract stats for metadata
+                
+                # Extract stats for metadata
+                if 'chart_data' in report_data_dict:
+                    report.chart_count = len(report_data_dict['chart_data'])
+                if 'table_data' in report_data_dict:
+                    report.table_count = len(report_data_dict['table_data'])
 
             # Update status to completed
             report.status = ReportStatus.COMPLETED
-            report.generation_completed_at = datetime.utcnow()
+            report.generation_completed_at = datetime.now(timezone.utc)
             report.progress_percent = 100
 
             db.commit()
@@ -235,11 +374,14 @@ class ReportService:
             return report
 
         except Exception as e:
-            logger.error(f"Error generating report {report_id}: {e}")
+            import traceback
+            error_details = traceback.format_exc()
+            logger.error(f"Error generating report {report_id}: {e}\n{error_details}")
 
-            # Update status to failed
+            # Update status to failed with detailed error info
             report.status = ReportStatus.FAILED
             report.error_message = str(e)
+            report.error_details = error_details  # Save full traceback for debugging
             report.progress_percent = 0
             db.commit()
 

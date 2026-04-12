@@ -46,6 +46,12 @@ source ../ChannelEgine/.venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### 4. 扩展支持第三方射线跟踪 (Ray Tracing) 自定义 CDL
+如果你希望引擎能够接受来自外部射线跟踪工具输出的任意 CDL 路况模型（非 3GPP 标准局限的簇参数），请遵循以下扩展步骤：
+
+1. **引擎算法层扩展**：修改你本地克隆的 `ChannelEgine` 仓库中的模拟器代码（如追加 `CustomChannelSimulator`），直接对接接收形如 `[Delay, Power, AoA, ZoA, AoD, ZoD, XPR]` 阵列字典的底层实例化。修改完毕后，在 `ChannelEgine` 目录下运行 `pip install -e .` 让软链接动态生效。
+2. **API 接口扩展**：在本仓库的 `app/models/ota_models.py` 中，为 `ScenarioConfig` 补充字典/列表类型，用以直接接收 JSON 格式的自定义射线矩阵数据；并在 `app/services/channel_engine.py` 内实现分支判断处理，如果是 `dict` 结构，则透传给原厂改写后的自定义算法计算器，完成自定义环境到探头的映射 (Spatial Mapping)。
+
 ## 配置
 
 | 环境变量 | 必需 | 说明 | 示例 |

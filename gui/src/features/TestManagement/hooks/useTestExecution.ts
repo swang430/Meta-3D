@@ -13,6 +13,7 @@ import type {
 import * as api from '../api/testManagementAPI'
 import { testPlansKeys } from './useTestPlans'
 import { testQueueKeys } from './useTestQueue'
+import * as ReportsAPI from '../../Reports/api/reportsAPI'
 
 // ==================== Mutations ====================
 
@@ -150,13 +151,14 @@ export function useCancelExecution() {
 
 /**
  * Hook to complete an executing test plan
+ * Automatically creates a report record after completion
  */
 export function useCompleteExecution() {
   const queryClient = useQueryClient()
 
   return useMutation({
     mutationFn: (planId: string) => api.completeExecution(planId),
-    onSuccess: (updatedPlan) => {
+    onSuccess: async (updatedPlan) => {
       // Update plan cache
       queryClient.setQueryData(testPlansKeys.detail(updatedPlan.id), updatedPlan)
 
@@ -169,6 +171,38 @@ export function useCompleteExecution() {
         message: `测试计划 "${updatedPlan.name}" 已完成`,
         color: 'green',
       })
+
+      // Auto-create report record for the completed execution
+      try {
+        const report = await ReportsAPI.createReport({
+          title: `${updatedPlan.name} - 执行报告`,
+          report_type: 'single_execution',
+          format: 'pdf',
+          generated_by: 'system',
+          description: `测试计划 "${updatedPlan.name}" (版本 ${updatedPlan.version}) 自动生成的执行报告`,
+          test_plan_id: updatedPlan.id,
+          test_execution_ids: updatedPlan.current_execution_id ? [updatedPlan.current_execution_id] : [],
+          include_raw_data: false,
+          include_charts: true,
+          include_statistics: true,
+          include_recommendations: true,
+        })
+
+        // Trigger report generation
+        await ReportsAPI.generateReport(report.id)
+
+        // Invalidate reports query
+        queryClient.invalidateQueries({ queryKey: ['reports'] })
+
+        notifications.show({
+          title: '报告已创建',
+          message: '执行报告正在自动生成，可在报告管理页面查看',
+          color: 'blue',
+        })
+      } catch (error) {
+        // Report creation failure should not block the completion flow
+        console.error('Auto-report creation failed:', error)
+      }
     },
     onError: (error: Error) => {
       notifications.show({

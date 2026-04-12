@@ -1,4 +1,4 @@
-# System Calibration Design
+# System Validation Design (系统验证设计)
 
 ## 文档信息
 
@@ -55,9 +55,23 @@
 - **CISPR 16**: Specification for radio disturbance and immunity measuring apparatus
 - **ISO/IEC 17025**: General requirements for the competence of testing and calibration laboratories
 
-## 2. 系统校准类型
+### 1.4 术语说明
 
-### 2.1 TRP校准 (Total Radiated Power)
+> [!IMPORTANT]
+> 本文档讨论的是**系统验证测试 (System Validation)**，而非**路径校准 (Path Calibration)**。两者是不同的概念：
+
+| 术语 | 目的 | 方法 | 输出 |
+|-----|------|------|------|
+| **路径校准 (Path Calibration)** | 测量 RF 链路的路损/增益 | VNA 测量 S21 参数 | 路损矩阵，用于测量补偿 |
+| **系统验证 (System Validation)** | 验证系统测量准确性 | 用标准 DUT 对比参考值 | 测量误差，用于系统认证 |
+
+**路径校准**的详细设计请参阅：
+- [probe-calibration.md](./probe-calibration.md) - 探头路损校准
+- `path_loss_calibration_service.py` - DL/UL 链路校准 API
+
+## 2. 系统验证测试类型
+
+### 2.1 TRP 验证测试 (Total Radiated Power Validation)
 
 **定义**: 总辐射功率，DUT在所有方向上辐射的总功率。
 
@@ -72,13 +86,16 @@ ERP(θ, φ) = 有效辐射功率（方向性增益）
 
 **物理意义**: 验证MPAC系统能否准确测量DUT的发射功率。
 
-**校准方法**:
+**验证方法**:
 1. 使用已知TRP的标准DUT（如标准偶极子，TRP已由参考实验室测量）
 2. 在MPAC系统中测量TRP
 3. 对比测量值与参考值
 4. 误差应在 ±0.5 dB 以内
 
-### 2.2 TIS校准 (Total Isotropic Sensitivity)
+> [!NOTE]
+> 此测试**不产生路损数据**，仅验证系统端到端测量准确性。
+
+### 2.2 TIS 验证测试 (Total Isotropic Sensitivity Validation)
 
 **定义**: 总全向灵敏度，DUT在所有方向上的平均接收灵敏度。
 
@@ -92,13 +109,16 @@ EIS(θ, φ) = 等效全向灵敏度（方向性）
 
 **物理意义**: 验证MPAC系统能否准确测量DUT的接收性能。
 
-**校准方法**:
+**验证方法**:
 1. 使用已知TIS的标准DUT
 2. 在MPAC系统中测量TIS
 3. 对比测量值与参考值
 4. 误差应在 ±1 dB 以内
 
-### 2.3 EIS校准 (Equivalent Isotropic Sensitivity)
+> [!NOTE]
+> 此测试**不产生路损数据**，仅验证系统端到端测量准确性。
+
+### 2.3 EIS 验证测试 (Equivalent Isotropic Sensitivity Validation)
 
 **定义**: 在MIMO OTA测试中，EIS是最重要的性能指标。
 

@@ -255,14 +255,25 @@ class QuietZoneCalibration(Base):
     静区质量由软件算法和校准决定，而非暗室的物理尺寸。
 
     支持的验证类型：
-    1. field_uniformity - 场均匀性测试
+    1. field_uniformity - 场均匀性测试 (使用 SGH 在静区内扫描)
     2. spatial_correlation - 空间相关性验证
     3. probe_coupling - 探头互耦测量
     4. phase_stability - 相位稳定性测试
+
+    CAL-07: 关联暗室配置和 SGH 测量方法
+    - field_uniformity 测量使用 SGH 在静区内多点扫描
+    - 需要记录 SGH 参考天线信息和测量方法
     """
     __tablename__ = "quiet_zone_calibrations"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # 暗室配置关联 (CAL-07)
+    chamber_id = Column(
+        UUID(as_uuid=True),
+        index=True,
+        comment="关联的暗室配置 ID，用于获取探头阵列和几何参数"
+    )
 
     # Validation type
     validation_type = Column(
@@ -285,6 +296,28 @@ class QuietZoneCalibration(Base):
     # Measurement grid
     grid_points = Column(Integer, default=25, comment="Number of measurement points (e.g., 5x5 grid)")
     grid_data = Column(JSON, comment="Array of {x, y, z, measured_value, ...}")
+
+    # ===== SGH Reference Antenna (CAL-07) =====
+    # 用于场均匀性测量的标准增益天线
+    sgh_model = Column(String(255), comment="SGH 型号，如 'ETS-Lindgren 3164-06'")
+    sgh_serial = Column(String(255), comment="SGH 序列号")
+    sgh_gain_dbi = Column(Float, comment="SGH 标定增益 (dBi)")
+    sgh_certificate_date = Column(DateTime, comment="SGH 校准证书日期")
+
+    # Measurement method (CAL-07)
+    measurement_method = Column(
+        String(100),
+        comment="测量方法: sgh_scan (SGH扫描), probe_synthesis (探头合成), reference_dut (参考DUT)"
+    )
+    scan_pattern = Column(
+        String(50),
+        comment="扫描模式: grid (网格), radial (径向), random (随机)"
+    )
+    scan_step_cm = Column(Float, comment="扫描步进 (cm)")
+
+    # VNA measurement settings
+    vna_model = Column(String(255), comment="VNA 型号")
+    vna_if_bandwidth_hz = Column(Float, comment="VNA IF 带宽 (Hz)")
 
     # ===== Field Uniformity Results =====
     # 场均匀性：静区内不同位置的场强差异

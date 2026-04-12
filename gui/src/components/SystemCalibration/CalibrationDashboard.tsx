@@ -2,6 +2,10 @@
  * Calibration Dashboard Component
  *
  * Overview dashboard with charts and statistics
+ * 
+ * 包含两类校准状态展示：
+ * 1. 系统验证测试 (TRP/TIS Validation) - 使用标准DUT验证测量准确性
+ * 2. 路径校准 (Path Calibration) - DL/UL链路路损/增益校准
  */
 import {
   Grid,
@@ -13,12 +17,17 @@ import {
   ThemeIcon,
   Badge,
   Table,
+  Divider,
 } from '@mantine/core';
 import {
   IconTrendingDown,
   IconCircleCheck,
   IconAlertTriangle,
 } from '@tabler/icons-react';
+import { PathLossCalibrationCard } from './PathLossCalibrationCard';
+import { CalibrationTimeline } from './CalibrationTimeline';
+import { CalibrationDependencyGraph } from './CalibrationDependencyGraph';
+import { BaselineCalibrationCard } from './BaselineCalibrationCard';
 
 export function CalibrationDashboard() {
   // Mock data for dashboard
@@ -202,6 +211,34 @@ export function CalibrationDashboard() {
         </Paper>
       </Grid.Col>
 
+      {/* 分隔线 - 路径校准区域 */}
+      <Grid.Col span={12}>
+        <Divider
+          my="sm"
+          label="路径校准 (Path Calibration)"
+          labelPosition="center"
+          styles={{ label: { fontWeight: 600, color: 'var(--mantine-color-violet-6)' } }}
+        />
+      </Grid.Col>
+
+      {/* 路径校准状态卡片 */}
+      <Grid.Col span={12}>
+        <PathLossCalibrationCard />
+      </Grid.Col>
+
+      {/* CAL-08: 校准时间线和依赖图 */}
+      <Grid.Col span={6}>
+        <CalibrationTimeline />
+      </Grid.Col>
+      <Grid.Col span={6}>
+        <CalibrationDependencyGraph />
+      </Grid.Col>
+
+      {/* 相对校准 (Quick Mode) */}
+      <Grid.Col span={12}>
+        <BaselineCalibrationCard />
+      </Grid.Col>
+
       {/* Alerts and Recommendations */}
       <Grid.Col span={12}>
         <Paper p="md" withBorder>
@@ -230,3 +267,4 @@ export function CalibrationDashboard() {
     </Grid>
   );
 }
+

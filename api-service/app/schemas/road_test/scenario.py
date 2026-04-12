@@ -149,10 +149,19 @@ class Route(BaseModel):
     description: Optional[str] = Field(None, description="Route description")
 
 
+class ChannelSnapshot(BaseModel):
+    """Channel environment snapshot at specific time for Digital Twins"""
+    timestamp_s: float = Field(description="Snapshot trigger time relative to start (s)")
+    duration_s: float = Field(description="Duration this channel state is maintained (s)")
+    channel_type: Literal["3GPP", "Custom"] = Field(description="Channel data type source")
+    standard_model: Optional[ChannelModel] = Field(None, description="Standard 3GPP channel model (e.g., CDL-C)")
+    custom_matrix_config: Optional[Dict] = Field(None, description="Custom multi-path rays matrix or definitions")
+
+
 class Environment(BaseModel):
     """Environment configuration"""
     type: EnvironmentType = Field(description="Environment type")
-    channel_model: ChannelModel = Field(description="3GPP channel model")
+    channel_snapshots: List[ChannelSnapshot] = Field(default_factory=list, description="Sequence of channel snapshots over time")
     weather: WeatherCondition = Field(default=WeatherCondition.CLEAR)
     traffic_density: TrafficDensity = Field(default=TrafficDensity.MEDIUM)
     obstructions: Optional[List[Dict]] = Field(None, description="Buildings, trees, etc.")

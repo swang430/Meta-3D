@@ -36,9 +36,13 @@ import {
   IconX,
   IconClock,
   IconAlertCircle,
+  IconFileReport,
+  IconEye,
 } from '@tabler/icons-react'
+import { notifications } from '@mantine/notifications'
 import ScenarioLibrary from './ScenarioLibrary'
 import { OTAMapper } from '../OTAMapper'
+import { TestReportModal } from './TestReportModal'
 import { TestMode } from '../../types/roadTest'
 import { fetchExecutions } from '../../api/roadTestService'
 
@@ -72,7 +76,7 @@ const TEST_MODES = [
 
 export function VirtualRoadTest() {
   const [activeTab, setActiveTab] = useState<string>('library')
-  const [selectedMode, setSelectedMode] = useState<TestMode>(TestMode.OTA)
+  const [selectedMode, setSelectedMode] = useState<TestMode>(TestMode.CONDUCTED)
 
   const currentMode = TEST_MODES.find((m) => m.value === selectedMode)
 
@@ -167,11 +171,24 @@ const MODE_LABELS: Record<TestMode, string> = {
  * 执行历史组件 - 显示虚拟路测的执行记录
  */
 function ExecutionHistory() {
+  const [reportModalOpen, setReportModalOpen] = useState(false)
+  const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null)
+
   const { data: executions, isLoading, error, refetch } = useQuery({
     queryKey: ['road-test-executions'],
     queryFn: () => fetchExecutions(),
     refetchInterval: 5000, // 每5秒刷新一次
   })
+
+  const handleViewReport = (executionId: string) => {
+    setSelectedExecutionId(executionId)
+    setReportModalOpen(true)
+  }
+
+  const handleCloseReport = () => {
+    setReportModalOpen(false)
+    setSelectedExecutionId(null)
+  }
 
   if (isLoading) {
     return (
@@ -231,12 +248,14 @@ function ExecutionHistory() {
               <Table.Th>进度</Table.Th>
               <Table.Th>开始时间</Table.Th>
               <Table.Th>持续时间</Table.Th>
+              <Table.Th>操作</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
             {executions.map((exec) => {
               const statusConfig = STATUS_CONFIG[exec.status] || STATUS_CONFIG.idle
               const StatusIcon = statusConfig.icon
+              const isCompleted = exec.status === 'completed'
 
               return (
                 <Table.Tr key={exec.execution_id}>
@@ -275,12 +294,36 @@ function ExecutionHistory() {
                       {exec.duration_s ? `${Math.round(exec.duration_s)}s` : '-'}
                     </Text>
                   </Table.Td>
+                  <Table.Td>
+                    <Group gap="xs">
+                      {isCompleted && (
+                        <Tooltip label="查看报告">
+                          <ActionIcon
+                            variant="light"
+                            color="blue"
+                            onClick={() => handleViewReport(exec.execution_id)}
+                          >
+                            <IconEye size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                      )}
+                    </Group>
+                  </Table.Td>
                 </Table.Tr>
               )
             })}
           </Table.Tbody>
         </Table>
       </Paper>
+
+      {/* Report Modal */}
+      {selectedExecutionId && (
+        <TestReportModal
+          opened={reportModalOpen}
+          onClose={handleCloseReport}
+          executionId={selectedExecutionId}
+        />
+      )}
     </Stack>
   )
 }

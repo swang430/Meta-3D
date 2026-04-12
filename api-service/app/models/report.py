@@ -141,6 +141,12 @@ class TestReport(Base):
     # Notes
     notes = Column(Text, comment="Additional notes")
 
+    # Report content data (unified structure for all report types)
+    content_data = Column(JSON, comment="Report content data (structured JSON with KPIs, phases, events, etc.)")
+
+    # Road test execution association (optional, for virtual road test reports)
+    road_test_execution_id = Column(String(100), comment="Road test execution ID (if source is road_test)")
+
 
 class ReportTemplate(Base):
     """

@@ -10,8 +10,9 @@ import {
   IconFileReport,
   IconTemplate,
   IconPlus,
+  IconClockHour4,
 } from '@tabler/icons-react'
-import { ReportList, TemplateList, CreateReportWizard } from '../components'
+import { ReportList, TemplateList, CreateReportWizard, PendingExecutionsList } from '../components'
 
 export function ReportsPage() {
   const [createReportOpened, setCreateReportOpened] = useState(false)
@@ -21,8 +22,11 @@ export function ReportsPage() {
       <Stack gap="lg">
         <Title order={1}>报告管理</Title>
 
-        <Tabs defaultValue="reports">
+        <Tabs defaultValue="pending">
           <Tabs.List>
+            <Tabs.Tab value="pending" leftSection={<IconClockHour4 size={16} />}>
+              待归档执行
+            </Tabs.Tab>
             <Tabs.Tab value="reports" leftSection={<IconFileReport size={16} />}>
               我的报告
             </Tabs.Tab>
@@ -30,6 +34,10 @@ export function ReportsPage() {
               报告模板
             </Tabs.Tab>
           </Tabs.List>
+
+          <Tabs.Panel value="pending" pt="lg">
+            <PendingExecutionsList />
+          </Tabs.Panel>
 
           <Tabs.Panel value="reports" pt="lg">
             <Stack gap="md">

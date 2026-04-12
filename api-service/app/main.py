@@ -12,6 +12,8 @@ from app.config import settings
 from app.db.database import init_db
 from app.api import health, calibration, test_plan, test_execution, test_sequence
 from app.api import dashboard, probe, instrument, monitoring, report, road_test, alert, sync, topology, scenario
+from app.api import probe_calibration, channel_calibration, workflow, calibration_report, chamber
+from app.api.path_loss_calibration import router as path_loss_router, orchestrator_router, compensation_router, switch_router, e2e_router, phase_router, ce_router, baseline_router
 
 # Configure logging
 logging.basicConfig(
@@ -120,6 +122,8 @@ app.add_middleware(
 # Include routers
 app.include_router(health.router, prefix=settings.api_v1_prefix)
 app.include_router(calibration.router, prefix=settings.api_v1_prefix)
+app.include_router(probe_calibration.router, prefix=settings.api_v1_prefix)
+app.include_router(channel_calibration.router, prefix=settings.api_v1_prefix)
 app.include_router(test_plan.router, prefix=settings.api_v1_prefix)
 app.include_router(test_execution.router, prefix=settings.api_v1_prefix)
 app.include_router(test_sequence.router, prefix=settings.api_v1_prefix)
@@ -147,6 +151,35 @@ app.include_router(topology.router, prefix=settings.api_v1_prefix, tags=["Topolo
 
 # Scenario navigation
 app.include_router(scenario.router, prefix=settings.api_v1_prefix, tags=["Scenario Navigation"])
+
+# Calibration workflow engine
+app.include_router(workflow.router, prefix=settings.api_v1_prefix, tags=["Calibration Workflows"])
+
+# Calibration reports
+app.include_router(calibration_report.router, prefix=settings.api_v1_prefix, tags=["Calibration Reports"])
+
+# Chamber configuration
+app.include_router(chamber.router, prefix=settings.api_v1_prefix, tags=["Chamber Configuration"])
+
+# Path loss calibration
+app.include_router(path_loss_router, prefix=settings.api_v1_prefix)
+app.include_router(orchestrator_router, prefix=settings.api_v1_prefix)
+app.include_router(compensation_router, prefix=settings.api_v1_prefix)
+
+# RF Switch calibration (CAL-02)
+app.include_router(switch_router, prefix=settings.api_v1_prefix)
+
+# E2E Calibration (CAL-03)
+app.include_router(e2e_router, prefix=settings.api_v1_prefix)
+
+# Phase Calibration (CAL-04)
+app.include_router(phase_router, prefix=settings.api_v1_prefix)
+
+# CE Internal Calibration (CAL-06)
+app.include_router(ce_router, prefix=settings.api_v1_prefix)
+
+# Relative Calibration (Baseline)
+app.include_router(baseline_router, prefix=settings.api_v1_prefix)
 
 
 @app.get("/")

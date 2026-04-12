@@ -47,3 +47,10 @@ ChannelEgine/
 
 # Service logs
 *.log
+api-service/data/
+api-service/*.db
+api-service/*.db.bak
+api-service/nohup.out
+api-service/debug_*
+Result_Report/
+.agent/

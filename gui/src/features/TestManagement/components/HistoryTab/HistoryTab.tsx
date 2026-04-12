@@ -36,8 +36,10 @@ import {
   IconRefresh,
   IconTrash,
   IconChartBar,
+  IconFileReport,
 } from '@tabler/icons-react'
 import { useTestHistory, useDeleteExecutionRecord } from '../../hooks'
+import { useReportGeneration } from '../../../Reports/hooks'
 
 // Helper functions for status display
 function getStatusColor(status: string): string {
@@ -74,6 +76,9 @@ export function HistoryTab() {
   // Mutation hooks
   const { mutate: deleteRecord } = useDeleteExecutionRecord()
 
+  // Report generation hook (unified with PendingExecutionsList)
+  const { generateTestPlanReport, isGenerating } = useReportGeneration()
+
   // Filter and paginate records
   const filteredRecords = useMemo(() => {
     if (!historyRecords) return []
@@ -109,6 +114,25 @@ export function HistoryTab() {
     if (confirm('确定要删除此执行记录吗？此操作无法撤销。')) {
       deleteRecord(recordId)
     }
+  }
+
+  const handleGenerateReport = (record: any) => {
+    // Use unified report generation hook
+    // This ensures consistent behavior and cache invalidation with PendingExecutionsList
+    generateTestPlanReport({
+      id: record.id,
+      test_plan_id: record.test_plan_id,
+      test_plan_name: record.test_plan_name,
+      test_plan_version: record.test_plan_version,
+      status: record.status,
+      success_rate: record.success_rate,
+      total_steps: record.total_steps,
+      completed_steps: record.completed_steps,
+      failed_steps: record.failed_steps,
+      duration_minutes: record.duration_minutes,
+      started_by: record.started_by,
+      completed_at: record.completed_at,
+    })
   }
 
   const formatDuration = (minutes: number): string => {
@@ -346,6 +370,16 @@ export function HistoryTab() {
                               onClick={() => handleViewDetails(record)}
                             >
                               <IconFileText size={16} />
+                            </ActionIcon>
+                          </Tooltip>
+                          <Tooltip label="生成报告">
+                            <ActionIcon
+                              variant="light"
+                              color="green"
+                              onClick={() => handleGenerateReport(record)}
+                              loading={isGenerating(record.id)}
+                            >
+                              <IconFileReport size={16} />
                             </ActionIcon>
                           </Tooltip>
                           <Tooltip label="删除记录">

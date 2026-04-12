@@ -83,7 +83,7 @@ export async function createExecution(data: {
 
 export async function controlExecution(
   executionId: string,
-  action: 'start' | 'pause' | 'resume' | 'stop',
+  action: 'start' | 'pause' | 'resume' | 'stop' | 'complete',
   parameters?: Record<string, any>
 ): Promise<{ status: string }> {
   const response = await apiClient.post(`${BASE_URL}/executions/${executionId}/control`, {
@@ -95,6 +95,48 @@ export async function controlExecution(
 
 export async function fetchExecutionStatus(executionId: string): Promise<TestStatus> {
   const response = await apiClient.get<TestStatus>(`${BASE_URL}/executions/${executionId}/status`)
+  return response.data
+}
+
+// ===== Report APIs =====
+
+import type { ExecutionReport, PhaseResult, KPISummary } from '../types/roadTest'
+
+export async function fetchExecutionReport(executionId: string): Promise<ExecutionReport> {
+  const response = await apiClient.get<ExecutionReport>(`${BASE_URL}/executions/${executionId}/report`)
+  return response.data
+}
+
+// ===== Metrics APIs =====
+
+export interface TimeSeriesPoint {
+  time_s: number
+  position?: { lat: number; lon: number; alt?: number }
+  rsrp_dbm?: number
+  rsrq_db?: number
+  sinr_db?: number
+  dl_throughput_mbps?: number
+  ul_throughput_mbps?: number
+  latency_ms?: number
+  event?: string
+}
+
+export interface ExecutionMetricsSubmit {
+  execution_id: string
+  time_series: TimeSeriesPoint[]
+  phases: PhaseResult[]
+  events: Array<{ time: string; type: string; description: string }>
+  kpi_summary: KPISummary[]
+}
+
+export async function submitExecutionMetrics(
+  executionId: string,
+  metrics: Omit<ExecutionMetricsSubmit, 'execution_id'>
+): Promise<{ status: string; points_received: number; phases_received: number }> {
+  const response = await apiClient.post(`${BASE_URL}/executions/${executionId}/metrics`, {
+    execution_id: executionId,
+    ...metrics,
+  })
   return response.data
 }
 

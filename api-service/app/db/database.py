@@ -51,6 +51,13 @@ def init_db() -> None:
     from app.models.instrument import InstrumentCategory, InstrumentModel, InstrumentConnection, InstrumentLog
     from app.models.test_plan import TestPlan, TestCase, TestExecution, TestQueue, TestStep, TestSequence
     from app.models.calibration import CalibrationCertificate, QuietZoneCalibration, RepeatabilityTest, ComparabilityTest, SystemTRPCalibration, SystemTISCalibration
+    from app.models.probe_calibration import (
+        ProbeAmplitudeCalibration, ProbePhaseCalibration, ProbePolarizationCalibration,
+        ProbePattern, LinkCalibration, ProbeCalibrationValidity,
+        ProbePathLossCalibration, RFChainCalibration, MultiFrequencyPathLoss,
+        RFSwitchCalibration, E2ECompensationMatrix
+    )
     from app.models.report import TestReport, ReportTemplate, ReportComparison, ReportSchedule
+    from app.models.chamber import ChamberConfiguration
 
     Base.metadata.create_all(bind=engine)

@@ -64,7 +64,7 @@ def get_dashboard(db: Session = Depends(get_db)):
         # Active alerts (empty for now, TODO: implement alert system)
         active_alerts = []
 
-        # Recent tests (last 10 plan executions)
+        # Recent tests (last 10 plan executions from DB)
         recent_executions = db.query(TestPlanExecution).order_by(
             TestPlanExecution.completed_at.desc()
         ).limit(10).all()
@@ -79,6 +79,36 @@ def get_dashboard(db: Session = Depends(get_db)):
             )
             for execution in recent_executions
         ]
+
+        # Integrate Virtual Road Test executions (from memory/json)
+        try:
+            from app.api.road_test import _executions, _custom_scenarios, get_scenario_by_id
+            
+            for execution in _executions.values():
+                # Resolve scenario name
+                scenario_name = execution.scenario_id
+                scenario = get_scenario_by_id(execution.scenario_id)
+                if not scenario and execution.scenario_id in _custom_scenarios:
+                    scenario = _custom_scenarios[execution.scenario_id]
+                if scenario:
+                    scenario_name = getattr(scenario, 'name', execution.scenario_id)
+
+                recent_tests.append(RecentTest(
+                    id=execution.execution_id,
+                    plan_name=f"VRT: {scenario_name}",
+                    status=execution.status,
+                    executed_at=execution.end_time or execution.start_time or datetime.now(),
+                    duration_minutes=round((execution.duration_s or 0) / 60, 1)
+                ))
+            
+            # Sort combined list by date desc
+            recent_tests.sort(key=lambda x: x.executed_at or datetime.min, reverse=True)
+            recent_tests = recent_tests[:10]
+            
+        except ImportError:
+            logger.warning("Could not import road_test module for dashboard integration")
+        except Exception as e:
+            logger.error(f"Error integrating road test data: {e}")
 
         return DashboardResponse(
             summary=summary,
@@ -147,6 +177,13 @@ def get_dashboard_summary(db: Session = Depends(get_db)):
             TestPlan.status.in_([TestPlanStatus.RUNNING, TestPlanStatus.QUEUED])
         ).count()
         total_executions = db.query(TestPlanExecution).count()
+        
+        # Add VRT count
+        try:
+            from app.api.road_test import _executions
+            total_executions += len(_executions)
+        except:
+            pass
 
         return DashboardSummary(
             probe_count=probe_count,

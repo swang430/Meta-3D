@@ -4,11 +4,16 @@ Virtual Road Test API
 REST API endpoints for virtual road test scenarios, topologies, and executions
 """
 
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import JSONResponse
-from typing import List, Optional, Any
+from sqlalchemy.orm import Session
+from typing import List, Optional, Any, Dict
 import logging
 import traceback
+from datetime import datetime
+
+from app.db.database import get_db
+from app.models.report import TestReport, ReportType, ReportStatus, ReportFormat
 
 from app.schemas.road_test import (
     RoadTestScenario,
@@ -99,7 +104,25 @@ _topologies: dict[str, NetworkTopology] = {}
 _executions: dict[str, TestExecution] = {}
 _execution_status: dict[str, TestStatus] = {}
 _execution_metrics: dict[str, TestMetrics] = {}
+_execution_status: dict[str, TestStatus] = {}
+_execution_metrics: dict[str, TestMetrics] = {}
 _execution_phases: dict[str, List[PhaseResult]] = {}  # Store submitted phase results
+_execution_logs: dict[str, List[Dict[str, Any]]] = {}  # Store execution logs
+
+def _log_event(execution_id: str, message: str, level: str = "INFO", source: str = "System"):
+    """Internal helper to log execution events"""
+    from datetime import datetime
+    if execution_id not in _execution_logs:
+        _execution_logs[execution_id] = []
+    
+    log_entry = {
+        "timestamp": datetime.now(),
+        "level": level,
+        "message": message,
+        "source": source
+    }
+    _execution_logs[execution_id].append(log_entry)
+    logger.info(f"[{execution_id}] {message}")
 
 
 def _compute_kpi_summary_from_samples(kpi_samples: List[KPIMetrics]) -> List[KPISummary]:
@@ -553,6 +576,11 @@ async def create_execution(execution_create: ExecutionCreate):
     )
 
     logger.info(f"Created execution: {execution_id} (mode={execution_create.mode})")
+    
+    # Initialize logs
+    _execution_logs[execution_id] = []
+    _log_event(execution_id, f"Execution created in mode: {execution_create.mode}", "INFO")
+    
     return execution
 
 
@@ -568,7 +596,11 @@ async def get_execution(execution_id: str):
 
 
 @router.post("/executions/{execution_id}/control")
-async def control_execution(execution_id: str, control: ExecutionControl):
+async def control_execution(
+    execution_id: str, 
+    control: ExecutionControl,
+    db: Session = Depends(get_db)
+):
     """
     Control execution (start/pause/resume/stop)
     """
@@ -579,6 +611,9 @@ async def control_execution(execution_id: str, control: ExecutionControl):
     status = _execution_status[execution_id]
 
     # Handle control actions
+    logger.info(f"[Control] Received action: {control.action} (Type: {type(control.action)})")
+    print(f"DEBUG_PRINT: Received action: {control.action}")
+    
     if control.action == "start":
         if execution.status != ExecutionStatus.IDLE:
             raise HTTPException(status_code=400, detail="Execution already started")
@@ -589,6 +624,8 @@ async def control_execution(execution_id: str, control: ExecutionControl):
         from datetime import datetime
         execution.start_time = datetime.now()
 
+        execution.start_time = datetime.now()
+        _log_event(execution_id, "Test execution started", "INFO")
         logger.info(f"Started execution: {execution_id}")
 
     elif control.action == "pause":
@@ -599,6 +636,7 @@ async def control_execution(execution_id: str, control: ExecutionControl):
         status.status = ExecutionStatus.PAUSED
 
         logger.info(f"Paused execution: {execution_id}")
+        _log_event(execution_id, "Test execution paused", "INFO")
 
     elif control.action == "resume":
         if execution.status != ExecutionStatus.PAUSED:
@@ -608,6 +646,7 @@ async def control_execution(execution_id: str, control: ExecutionControl):
         status.status = ExecutionStatus.RUNNING
 
         logger.info(f"Resumed execution: {execution_id}")
+        _log_event(execution_id, "Test execution resumed", "INFO")
 
     elif control.action == "stop":
         if execution.status in [ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.STOPPED]:
@@ -621,7 +660,15 @@ async def control_execution(execution_id: str, control: ExecutionControl):
         if execution.start_time:
             execution.duration_s = (execution.end_time - execution.start_time).total_seconds()
 
+            execution.duration_s = (execution.end_time - execution.start_time).total_seconds()
+
+        print(f"DEBUG_PRINT: Stopping execution {execution_id}. Status: {execution.status}")
         logger.info(f"Stopped execution: {execution_id}")
+        _log_event(execution_id, "Test execution stopped by user", "WARNING")
+
+        # Auto-archive report
+        print(f"DEBUG_PRINT: Calling _archive_execution_report for {execution_id}")
+        await _archive_execution_report(execution_id, db)
 
     elif control.action == "complete":
         if execution.status in [ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.STOPPED]:
@@ -636,7 +683,13 @@ async def control_execution(execution_id: str, control: ExecutionControl):
         if execution.start_time:
             execution.duration_s = (execution.end_time - execution.start_time).total_seconds()
 
+            execution.duration_s = (execution.end_time - execution.start_time).total_seconds()
+
         logger.info(f"Completed execution: {execution_id}")
+        _log_event(execution_id, "Test execution completed successfully", "INFO")
+
+        # Auto-archive report
+        await _archive_execution_report(execution_id, db)
 
     return {"status": "success", "execution_id": execution_id, "action": control.action}
 
@@ -712,14 +765,21 @@ async def submit_execution_metrics(execution_id: str, metrics: ExecutionMetricsS
             "passed": kpi.passed
         }
 
-    # Store metrics
-    _execution_metrics[execution_id] = TestMetrics(
-        execution_id=execution_id,
-        kpi_samples=kpi_samples,
-        summary=summary,
-        events=metrics.events,
-        kpi_results={}
-    )
+    # Store metrics - Frontend sends full history, so we overwrite/update exactly
+    try:
+        logger.info(f"Storing metrics for {execution_id}: {len(kpi_samples)} samples")
+        _execution_metrics[execution_id] = TestMetrics(
+            execution_id=execution_id,
+            kpi_samples=kpi_samples,
+            summary=summary,
+            events=metrics.events,
+            kpi_results={} # populated from phases/analysis later if needed
+        )
+    except Exception as e:
+        logger.error(f"Error storing metrics: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error storing metrics: {str(e)}")
 
     # Store phase results
     _execution_phases[execution_id] = metrics.phases
@@ -750,6 +810,114 @@ async def get_execution_report(execution_id: str):
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
+
+async def _archive_execution_report(execution_id: str, db: Session):
+    """
+    Helper to generate and save execution report to database (Option B+)
+    """
+    try:
+        # DEBUG ENTRY
+        logger.info(f"Archiving execution report for {execution_id}")
+
+        # 1. Generate full report (Pydantic model)
+        # Note: We temporarily allow report generation even if status is just changed
+        report_data: ExecutionReport = await _generate_execution_report(execution_id)
+        
+        # 2. Convert to JSON dict
+        content_data = report_data.model_dump(mode="json")
+        
+        # DEBUG LOGGING FOR REPORT DATA
+        logger.info(f"Generated report data for {execution_id}. Keys: {list(content_data.keys())}")
+        if 'logs' in content_data:
+             logger.info(f"Report has {len(content_data['logs'])} log entries")
+        else:
+             logger.warning("Report has NO logs key!")
+        
+        if 'time_series' in content_data:
+             logger.info(f"Report has {len(content_data['time_series'])} time_series points")
+        else:
+             logger.warning("Report has NO time_series key!")
+
+        # TEMP DEBUG TO FILE
+        try:
+            with open("debug_report_dump.txt", "a") as f:
+                f.write(f"\n--- Report Archive {datetime.now()} ---\n")
+                f.write(f"Execution ID: {execution_id}\n")
+                f.write(f"Keys: {list(content_data.keys())}\n")
+                f.write(f"Logs count: {len(content_data.get('logs', []))}\n")
+                f.write(f"Steps count: {len(content_data.get('step_configs', []))}\n")
+                f.write(f"KPI Summary: {len(content_data.get('kpi_summary', []))}\n")
+        except Exception as file_err:
+            logger.error(f"Failed to write debug dump: {file_err}")
+
+
+        
+        # 3. Create TestReport entry
+        from datetime import datetime, timezone
+        import uuid
+        
+        # Check if report already exists for this execution to avoid duplicates
+        existing_report = db.query(TestReport).filter(
+            TestReport.road_test_execution_id == execution_id
+        ).first()
+        
+        if existing_report:
+            logger.info(f"Updating existing archived report for execution {execution_id}")
+            existing_report.content_data = content_data
+            existing_report.status = ReportStatus.COMPLETED
+            existing_report.generation_completed_at = datetime.now(timezone.utc)
+            existing_report.title = f"虚拟路测报告: {report_data.scenario_name}"
+        else:
+            logger.info(f"Creating new archived report for execution {execution_id}")
+            new_report = TestReport(
+                id=uuid.uuid4(),
+                title=f"虚拟路测报告: {report_data.scenario_name}",
+                description=f"Mode: {report_data.mode}, Result: {report_data.overall_result}",
+                report_type=ReportType.SINGLE_EXECUTION,  # Or add a specialized type if needed
+                format=ReportFormat.PDF,
+                status=ReportStatus.COMPLETED,
+                generated_by="System (Auto-Archive)",
+                generated_at=datetime.now(timezone.utc),
+                generation_started_at=datetime.now(timezone.utc),
+                generation_completed_at=datetime.now(timezone.utc),
+                content_data=content_data,
+                road_test_execution_id=execution_id,
+                # Metadata
+                notes=report_data.notes,
+                tags=["VRT", report_data.mode.value, report_data.overall_result]
+            )
+            db.add(new_report)
+        
+        db.commit()
+        logger.info(f"Successfully archived VRT report for {execution_id}")
+
+        # Trigger PDF generation immediately (for user convenience)
+        try:
+            target_report = new_report if new_report else existing_report
+            target_report_id = target_report.id if target_report else None
+            logger.info(f"Triggering auto-generation of PDF for report {target_report_id}")
+            # Import here to avoid circular dependency
+            from app.services.report_service import ReportService
+            service = ReportService()
+            if target_report_id:
+                # Pass content_data directly to bypass DB read lag/issues
+                service.generate_report(db, target_report_id, content_data_override=content_data)
+        except Exception as pdf_err:
+            logger.error(f"Failed to auto-generate PDF: {pdf_err}")
+            # Update report status to indicate PDF generation failed but data is preserved
+            target_report = new_report if new_report else existing_report
+            if target_report:
+                target_report.status = ReportStatus.PENDING  # Mark as pending so user can retry
+                target_report.error_message = f"PDF generation failed: {str(pdf_err)}"
+                db.commit()
+                logger.info(f"Report {target_report.id} marked as PENDING due to PDF generation failure")
+        
+        
+    except Exception as e:
+        logger.error(f"Failed to archive VRT report for {execution_id}: {e}")
+        logger.error(traceback.format_exc())
+        # Don't raise exception to client, just log error (background task style)
+
 def get_attr_or_item(obj: Any, key: str, default: Any = None) -> Any:
     """Helper to get value from object or dict safely"""
     if obj is None:
@@ -766,7 +934,6 @@ async def _generate_execution_report(execution_id: str) -> ExecutionReport:
 
         execution = _executions[execution_id]
 
-        # Check if execution is complete
         if execution.status not in [ExecutionStatus.COMPLETED, ExecutionStatus.STOPPED, ExecutionStatus.FAILED]:
             raise HTTPException(
                 status_code=400,
@@ -1184,6 +1351,8 @@ async def _generate_execution_report(execution_id: str) -> ExecutionReport:
             base_station_config_detail=base_station_config_detail,
             digital_twin_config=digital_twin_config,
             custom_config_highlights=custom_config_highlights,
+            # NEW: Logs
+            logs=_execution_logs.get(execution_id, []),
             # Metadata
             generated_at=datetime.now(),
             notes=execution.notes
@@ -1216,6 +1385,7 @@ async def stream_execution_metrics(websocket: WebSocket, execution_id: str):
     await websocket.accept()
 
     logger.info(f"WebSocket connected for execution: {execution_id}")
+    _log_event(execution_id, "Frontend monitor connected", "INFO")
 
     try:
         # Receive subscription request

@@ -260,11 +260,17 @@ class ReportDataCollector:
 
     def _get_executions(self, db: Session, report: TestReport) -> List[TestExecution]:
         """Fetch test executions based on report configuration"""
+        from uuid import UUID as PyUUID
         query = db.query(TestExecution)
 
         if report.test_execution_ids:
             # Use specific execution IDs if provided
-            query = query.filter(TestExecution.id.in_(report.test_execution_ids))
+            # Convert string IDs to UUID if needed
+            execution_ids = [
+                PyUUID(eid) if isinstance(eid, str) else eid
+                for eid in report.test_execution_ids
+            ]
+            query = query.filter(TestExecution.id.in_(execution_ids))
         elif report.test_plan_id:
             # Otherwise, get all executions for the test plan
             query = query.filter(TestExecution.test_plan_id == report.test_plan_id)
@@ -332,6 +338,14 @@ class ReportDataCollector:
                 sorted_values = sorted(values)
                 n = len(sorted_values)
 
+                # Helper function to safely get percentile index
+                def get_percentile_index(n: int, percentile: float) -> int:
+                    """Calculate percentile index with proper boundary handling"""
+                    if n == 0:
+                        return 0
+                    idx = int(n * percentile)
+                    return min(idx, n - 1)  # Ensure index doesn't exceed array bounds
+
                 stats[metric] = MetricStats(
                     metric_name=metric,
                     mean=statistics.mean(values),
@@ -340,9 +354,9 @@ class ReportDataCollector:
                     min_value=min(values),
                     max_value=max(values),
                     count=n,
-                    percentile_25=sorted_values[int(n * 0.25)] if n > 0 else 0,
-                    percentile_75=sorted_values[int(n * 0.75)] if n > 0 else 0,
-                    percentile_95=sorted_values[int(n * 0.95)] if n > 0 else 0,
+                    percentile_25=sorted_values[get_percentile_index(n, 0.25)] if n > 0 else 0,
+                    percentile_75=sorted_values[get_percentile_index(n, 0.75)] if n > 0 else 0,
+                    percentile_95=sorted_values[get_percentile_index(n, 0.95)] if n > 0 else 0,
                 )
             except Exception as e:
                 logger.warning(f"Error calculating statistics for {metric}: {e}")
@@ -410,6 +424,11 @@ class ReportDataCollector:
                 "result": step.result,
                 "duration_minutes": step.actual_duration_minutes,
                 "error_message": step.error_message,
+                # Enhanced: Include detailed parameters and validation criteria
+                "parameters": step.parameters or {},
+                "validation_criteria": step.validation_criteria or {},
+                "started_at": step.started_at.isoformat() if step.started_at else None,
+                "completed_at": step.completed_at.isoformat() if step.completed_at else None,
             })
 
         return results

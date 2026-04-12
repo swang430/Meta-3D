@@ -219,6 +219,77 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
 
         setExecutionProgress(60);
         result = await executeRepeatabilityTest(request);
+
+      } else if (calibrationType === 'path_loss' || calibrationType === 'uplink_chain' || calibrationType === 'downlink_chain') {
+        // 路径校准 - 调用路径校准 API
+        const chamberId = 'b7cd8de0-da25-473a-9618-4f0795046326'; // TODO: 从 context 获取
+
+        let calibrationEndpoint: string;
+        let requestBody: Record<string, any>;
+
+        if (calibrationType === 'path_loss') {
+          calibrationEndpoint = '/api/v1/calibration/path-loss/start';
+          requestBody = {
+            chamber_id: chamberId,
+            frequency_mhz: formData.frequency,
+            calibrated_by: formData.testedBy,
+            sgh_model: 'Standard Gain Horn',
+            sgh_gain_dbi: 10.0,
+          };
+        } else if (calibrationType === 'uplink_chain') {
+          calibrationEndpoint = '/api/v1/calibration/path-loss/rf-chain/uplink';
+          requestBody = {
+            chamber_id: chamberId,
+            chain_type: 'uplink',
+            frequency_mhz: formData.frequency,
+            calibrated_by: formData.testedBy,
+          };
+        } else {
+          calibrationEndpoint = '/api/v1/calibration/path-loss/rf-chain/downlink';
+          requestBody = {
+            chamber_id: chamberId,
+            chain_type: 'downlink',
+            frequency_mhz: formData.frequency,
+            calibrated_by: formData.testedBy,
+          };
+        }
+
+        setExecutionProgress(60);
+
+        const response = await fetch(calibrationEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
+        });
+
+        if (!response.ok) {
+          const errorDetail = await response.text();
+          throw new Error(`路径校准失败: ${response.statusText} - ${errorDetail}`);
+        }
+
+        result = await response.json();
+        result.validation_pass = true; // 路径校准没有验证阈值
+
+      } else if (calibrationType.startsWith('baseline_')) {
+        // 相对校准基线 - 调用基线创建 API
+        const baselineType = calibrationType.replace('baseline_', '');
+        const chamberId = 'b7cd8de0-da25-473a-9618-4f0795046326'; // TODO: 从 context 获取
+
+        setExecutionProgress(40);
+
+        const response = await fetch(
+          `/api/v1/calibration/baseline/create?chamber_id=${chamberId}&calibration_type=${baselineType}&frequency_mhz=${formData.frequency}&reference_channel_id=0&calibrated_by=${encodeURIComponent(formData.testedBy)}`,
+          { method: 'POST' }
+        );
+
+        setExecutionProgress(80);
+
+        if (!response.ok) {
+          throw new Error(`基线创建失败: ${response.statusText}`);
+        }
+
+        result = await response.json();
+        result.validation_pass = result.success;
       }
 
       // Complete progress
@@ -279,37 +350,63 @@ export function CalibrationWizard({ opened, onClose }: CalibrationWizardProps) {
               value={calibrationType}
               onChange={(value) => setCalibrationType(value || 'trp')}
               data={[
-                { value: 'trp', label: 'TRP - 总辐射功率校准' },
-                { value: 'tis', label: 'TIS - 总全向灵敏度校准' },
-                { value: 'repeatability', label: '可重复性测试' },
-                { value: 'quiet_zone_field', label: '静区质量验证 - 场均匀性' },
-                { value: 'quiet_zone_correlation', label: '静区质量验证 - 空间相关性' },
-                { value: 'quiet_zone_coupling', label: '静区质量验证 - 探头互耦' },
-                { value: 'quiet_zone_phase', label: '静区质量验证 - 相位稳定性' },
-                { value: 'multi_frequency', label: '多频点校准（全频段扫描）' },
+                {
+                  group: '系统验证测试 (System Validation)', items: [
+                    { value: 'trp', label: 'TRP 验证测试 - 总辐射功率验证' },
+                    { value: 'tis', label: 'TIS 验证测试 - 总全向灵敏度验证' },
+                    { value: 'repeatability', label: '可重复性测试' },
+                  ]
+                },
+                {
+                  group: '路径校准 (Path Calibration)', items: [
+                    { value: 'path_loss', label: '探头路损校准 (Probe Path Loss)' },
+                    { value: 'uplink_chain', label: '上行链路校准 (UL/LNA)' },
+                    { value: 'downlink_chain', label: '下行链路校准 (DL/PA)' },
+                    { value: 'multi_frequency', label: '多频点路损校准（全频段扫描）' },
+                    { value: 'baseline_amplitude', label: '⭐ 幅度校准基线 (Quick Mode)' },
+                    { value: 'baseline_phase', label: '⭐ 相位校准基线 (Quick Mode)' },
+                    { value: 'baseline_path_loss', label: '⭐ 路损校准基线 (Quick Mode)' },
+                  ]
+                },
+                {
+                  group: '静区质量验证 (Quiet Zone)', items: [
+                    { value: 'quiet_zone_field', label: '场均匀性验证' },
+                    { value: 'quiet_zone_correlation', label: '空间相关性验证' },
+                    { value: 'quiet_zone_coupling', label: '探头互耦测量' },
+                    { value: 'quiet_zone_phase', label: '相位稳定性测试' },
+                  ]
+                },
               ]}
             />
 
             <Paper p="md" withBorder>
               <Text size="sm" fw={600} mb="xs">
-                {calibrationType === 'trp' && 'TRP 校准说明'}
-                {calibrationType === 'tis' && 'TIS 校准说明'}
+                {calibrationType === 'trp' && 'TRP 验证测试说明'}
+                {calibrationType === 'tis' && 'TIS 验证测试说明'}
                 {calibrationType === 'repeatability' && '可重复性测试说明'}
+                {calibrationType === 'path_loss' && '探头路损校准说明'}
+                {calibrationType === 'uplink_chain' && '上行链路校准说明'}
+                {calibrationType === 'downlink_chain' && '下行链路校准说明'}
                 {calibrationType === 'quiet_zone_field' && '场均匀性验证说明'}
                 {calibrationType === 'quiet_zone_correlation' && '空间相关性验证说明'}
                 {calibrationType === 'quiet_zone_coupling' && '探头互耦测量说明'}
                 {calibrationType === 'quiet_zone_phase' && '相位稳定性测试说明'}
-                {calibrationType === 'multi_frequency' && '多频点校准说明'}
+                {calibrationType === 'multi_frequency' && '多频点路损校准说明'}
+                {calibrationType.startsWith('baseline_') && '相对校准基线说明'}
               </Text>
               <Text size="xs" color="dimmed">
-                {calibrationType === 'trp' && '验证系统测量辐射功率的准确性，标准: ±0.5 dB'}
-                {calibrationType === 'tis' && '验证系统测量接收灵敏度的准确性，标准: ±1.0 dB'}
+                {calibrationType === 'trp' && '使用标准 DUT 验证系统测量辐射功率的准确性，标准: ±0.5 dB'}
+                {calibrationType === 'tis' && '使用标准 DUT 验证系统测量接收灵敏度的准确性，标准: ±1.0 dB'}
                 {calibrationType === 'repeatability' && '验证系统测量的可重复性，标准: σ < 0.3 dB (TRP) 或 0.5 dB (TIS)'}
+                {calibrationType === 'path_loss' && '使用 SGH 测量每个探头到静区中心的空间路损，用于测量补偿'}
+                {calibrationType === 'uplink_chain' && '测量上行 RF 链路增益 (探头→LNA→信道仿真器)，用于 TRP 测量补偿'}
+                {calibrationType === 'downlink_chain' && '测量下行 RF 链路增益 (信道仿真器→PA→探头)，用于 TIS 测量补偿'}
                 {calibrationType === 'quiet_zone_field' && '验证静区场均匀性，在 5x5 网格测量，标准: < 1.0 dB (3GPP TS 34.114)'}
                 {calibrationType === 'quiet_zone_correlation' && '验证 MIMO 信道空间相关性矩阵，对比目标 3GPP 信道模型，标准: RMS 误差 < 0.1'}
                 {calibrationType === 'quiet_zone_coupling' && '测量探头间 S 参数互耦矩阵，验证探头隔离度，标准: 最大互耦 < -20 dB'}
                 {calibrationType === 'quiet_zone_phase' && '验证系统相位稳定性，测量相位漂移，标准: 漂移 < 10° (3GPP)'}
-                {calibrationType === 'multi_frequency' && '在多个频率点执行校准测试，验证系统全频段性能'}
+                {calibrationType === 'multi_frequency' && '在多个频率点测量路损，生成频率-路损曲线，支持后续频率插值'}
+                {calibrationType.startsWith('baseline_') && '建立通道间 Delta 基线，后续仅需测量参考通道即可推导其他通道值，大幅缩短日常校准时间'}
               </Text>
             </Paper>
           </Stack>

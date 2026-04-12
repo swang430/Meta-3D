@@ -578,6 +578,211 @@ def create_executive_summary_template(db: Session) -> ReportTemplate:
     return template
 
 
+def create_virtual_road_test_template(db: Session) -> ReportTemplate:
+    """Create Virtual Road Test (VRT) specific template"""
+    template = ReportTemplate(
+        name="Virtual Road Test Report",
+        description="Specialized template for Virtual Road Test execution reports with scenario details, trajectory visualization, and KPI analysis",
+        template_type=TemplateType.PERFORMANCE,
+        applicable_test_types=["VRT", "RoadTest", "ChannelEmulation", "OTA", "Conducted"],
+
+        # Template sections - VRT specific structure
+        sections=[
+            {
+                "id": "cover",
+                "title": "Cover Page",
+                "order": 1,
+                "type": "cover",
+                "required": True,
+                "page_break_after": True,
+                "fields": ["title", "date", "scenario_name", "test_mode", "overall_result"]
+            },
+            {
+                "id": "scenario_info",
+                "title": "Scenario Information",
+                "order": 2,
+                "type": "vrt_scenario",
+                "required": True,
+                "page_break_after": False,
+                "include_fields": ["name", "category", "description", "duration", "speed", "route"]
+            },
+            {
+                "id": "execution_summary",
+                "title": "Execution Summary",
+                "order": 3,
+                "type": "execution_summary",
+                "required": True,
+                "page_break_after": False
+            },
+            {
+                "id": "kpi_analysis",
+                "title": "KPI Analysis",
+                "order": 4,
+                "type": "vrt_kpi_summary",
+                "required": True,
+                "page_break_after": True,
+                "metrics": ["dl_throughput", "ul_throughput", "latency", "rsrp", "sinr"]
+            },
+            {
+                "id": "phase_results",
+                "title": "Phase Results",
+                "order": 5,
+                "type": "vrt_phases",
+                "required": True,
+                "page_break_after": True
+            },
+            {
+                "id": "time_series_analysis",
+                "title": "Time Series Analysis",
+                "order": 6,
+                "type": "time_series",
+                "required": True,
+                "page_break_after": True
+            },
+            {
+                "id": "trajectory_map",
+                "title": "Trajectory Visualization",
+                "order": 7,
+                "type": "vrt_trajectory",
+                "required": False,
+                "page_break_after": True
+            },
+            {
+                "id": "network_config",
+                "title": "Network Configuration",
+                "order": 8,
+                "type": "vrt_network_config",
+                "required": False,
+                "page_break_after": False
+            },
+            {
+                "id": "events_log",
+                "title": "Events & Handovers",
+                "order": 9,
+                "type": "vrt_events",
+                "required": False,
+                "page_break_after": True
+            },
+            {
+                "id": "execution_logs",
+                "title": "Execution Logs",
+                "order": 10,
+                "type": "logs",
+                "required": False,
+                "page_break_after": False,
+                "max_entries": 100
+            }
+        ],
+
+        # Chart configurations for VRT
+        chart_configs={
+            "throughput_time_series": {
+                "type": "time_series_anomaly",
+                "title": "Throughput over Time",
+                "x_axis": {"label": "Time (s)"},
+                "y_axis": {"label": "Throughput (Mbps)"},
+                "metrics": ["dl_throughput", "ul_throughput"],
+                "show_rolling_mean": True,
+                "colors": ["#1f77b4", "#ff7f0e"]
+            },
+            "signal_quality": {
+                "type": "time_series_anomaly",
+                "title": "Signal Quality Metrics",
+                "x_axis": {"label": "Time (s)"},
+                "y_axis": {"label": "Value"},
+                "metrics": ["rsrp", "sinr"],
+                "colors": ["#2ca02c", "#d62728"]
+            },
+            "latency_chart": {
+                "type": "line",
+                "title": "End-to-End Latency",
+                "x_axis": {"label": "Time (s)"},
+                "y_axis": {"label": "Latency (ms)"},
+                "color": "#9467bd"
+            },
+            "kpi_radar": {
+                "type": "radar",
+                "title": "KPI Performance Overview",
+                "metrics": ["dl_throughput", "ul_throughput", "latency", "rsrp", "sinr"],
+                "normalize": True,
+                "color": "#1f77b4"
+            },
+            "kpi_comparison_bar": {
+                "type": "comparison_bar",
+                "title": "KPI vs Target",
+                "x_axis": {"label": "KPI Metric"},
+                "y_axis": {"label": "Achievement (%)"},
+                "show_target_line": True,
+                "colors": ["#2ca02c", "#d62728"]
+            },
+            "phase_pass_rate": {
+                "type": "bar",
+                "title": "Phase Pass Rate",
+                "x_axis": {"label": "Phase"},
+                "y_axis": {"label": "Pass Rate (%)"},
+                "color": "#17becf"
+            }
+        },
+
+        # Table configurations
+        table_configs={
+            "kpi_summary_table": {
+                "columns": ["KPI", "Mean", "Min", "Max", "Std", "Target", "Result"],
+                "style": "striped",
+                "border": True,
+                "highlight_failures": True
+            },
+            "phase_results_table": {
+                "columns": ["Phase", "Duration", "Status", "Pass Rate", "Notes"],
+                "style": "striped",
+                "border": True
+            },
+            "events_table": {
+                "columns": ["Time", "Event Type", "Details", "Impact"],
+                "style": "bordered",
+                "border": True
+            },
+            "network_config_table": {
+                "columns": ["Parameter", "Value"],
+                "style": "plain",
+                "border": True
+            }
+        },
+
+        # Page settings
+        page_size="A4",
+        page_orientation="portrait",
+        margins={"top": 25, "right": 20, "bottom": 25, "left": 20},
+
+        # VRT color scheme
+        color_scheme={
+            "primary": "#1565c0",      # Blue - main brand color
+            "secondary": "#43a047",    # Green - success/pass
+            "accent": "#ff9800",       # Orange - warnings
+            "success": "#43a047",
+            "danger": "#e53935",       # Red - failure
+            "warning": "#ff9800",
+            "info": "#039be5",         # Light blue - info
+            "text": "#212121",
+            "text_secondary": "#757575",
+            "background": "#ffffff",
+            "border": "#e0e0e0"
+        },
+
+        created_by="system",
+        is_active=True,
+        is_default=False,
+        version="1.0",
+        tags=["VRT", "virtual-road-test", "channel-emulation", "automotive", "5G"]
+    )
+
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+    logger.info(f"Created template: {template.name} (ID: {template.id})")
+    return template
+
+
 def main():
     """Initialize all default report templates"""
     logger.info("Initializing database...")
@@ -600,6 +805,7 @@ def main():
         regulatory_template = create_regulatory_template(db)
         performance_template = create_performance_analysis_template(db)
         executive_template = create_executive_summary_template(db)
+        vrt_template = create_virtual_road_test_template(db)
 
         logger.info("=" * 60)
         logger.info("Successfully initialized report templates:")
@@ -608,6 +814,7 @@ def main():
         logger.info(f"  3. {regulatory_template.name}")
         logger.info(f"  4. {performance_template.name}")
         logger.info(f"  5. {executive_template.name}")
+        logger.info(f"  6. {vrt_template.name} (VRT)")
         logger.info("=" * 60)
 
     except Exception as e:

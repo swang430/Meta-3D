@@ -89,6 +89,9 @@ def create_report(
         tags=report.tags,
         category=report.category,
         notes=report.notes,
+        # Unified report content
+        content_data=report.content_data,
+        road_test_execution_id=report.road_test_execution_id,
     )
 
 
@@ -677,11 +680,12 @@ def download_report(
         )
 
     # file_path is stored as relative path like "data/reports/{id}/report_{id}.pdf"
-    # Check if it's absolute or relative
+    # Check if it's absolute or relative and resolve accordingly
     if os.path.isabs(report.file_path):
         full_path = report.file_path
     else:
-        full_path = report.file_path
+        # Convert relative path to absolute path based on current working directory
+        full_path = os.path.abspath(report.file_path)
 
     if not os.path.exists(full_path):
         raise HTTPException(

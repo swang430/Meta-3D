@@ -39,6 +39,7 @@ import {
   IconListDetails,
   IconChartLine,
   IconMap,
+  IconTerminal2,
 } from '@tabler/icons-react'
 import { fetchReport } from '../../api/reportService'
 import type { Report, ReportContentData } from '../../types/report'
@@ -136,7 +137,7 @@ function ReportContent({ content, title }: ReportContentProps) {
           <div>
             <Text size="lg" fw={600}>{displayTitle}</Text>
             <Group gap="xs" mt={4}>
-              {content.execution.mode && (
+              {content.execution?.mode && (
                 <Badge size="sm">{MODE_LABELS[content.execution.mode] || content.execution.mode}</Badge>
               )}
               <Badge size="sm" color={resultConfig.color} leftSection={<ResultIcon size={12} />}>
@@ -189,6 +190,11 @@ function ReportContent({ content, title }: ReportContentProps) {
               路径地图
             </Tabs.Tab>
           )}
+          {content.logs && content.logs.length > 0 && (
+            <Tabs.Tab value="logs" leftSection={<IconTerminal2 size={14} />}>
+              运行日志
+            </Tabs.Tab>
+          )}
         </Tabs.List>
 
         {/* Overview Tab */}
@@ -229,6 +235,13 @@ function ReportContent({ content, title }: ReportContentProps) {
             />
           </Tabs.Panel>
         )}
+
+        {/* Logs Tab */}
+        {content.logs && content.logs.length > 0 && (
+          <Tabs.Panel value="logs" pt="md">
+            <LogsTab logs={content.logs} />
+          </Tabs.Panel>
+        )}
       </Tabs>
     </Stack>
   )
@@ -242,7 +255,7 @@ function OverviewTab({ content }: { content: ReportContentData }) {
         <Card withBorder p="sm">
           <Text size="xs" c="dimmed" fw={500}>开始时间</Text>
           <Text size="sm">
-            {content.execution.start_time
+            {content.execution?.start_time
               ? new Date(content.execution.start_time).toLocaleString('zh-CN')
               : '-'}
           </Text>
@@ -250,7 +263,7 @@ function OverviewTab({ content }: { content: ReportContentData }) {
         <Card withBorder p="sm">
           <Text size="xs" c="dimmed" fw={500}>结束时间</Text>
           <Text size="sm">
-            {content.execution.end_time
+            {content.execution?.end_time
               ? new Date(content.execution.end_time).toLocaleString('zh-CN')
               : '-'}
           </Text>
@@ -258,7 +271,7 @@ function OverviewTab({ content }: { content: ReportContentData }) {
         <Card withBorder p="sm">
           <Text size="xs" c="dimmed" fw={500}>持续时间</Text>
           <Text size="sm">
-            {content.execution.duration_s ? `${Math.round(content.execution.duration_s)}s` : '-'}
+            {content.execution?.duration_s ? `${Math.round(content.execution.duration_s)}s` : '-'}
           </Text>
         </Card>
         <Card withBorder p="sm">
@@ -288,7 +301,7 @@ function OverviewTab({ content }: { content: ReportContentData }) {
 
 function ConfigurationTab({ content }: { content: ReportContentData }) {
   const hasConfig = content.network || content.environment || content.route ||
-                    (content.base_stations && content.base_stations.length > 0)
+    (content.base_stations && content.base_stations.length > 0)
 
   if (!hasConfig) {
     return (
@@ -459,12 +472,18 @@ function StepsTab({ stepConfigs }: { stepConfigs: ReportContentData['step_config
           <Accordion.Panel>
             <Stack gap="xs">
               {Object.entries(step.parameters).map(([key, value]) => (
-                <Group key={key} justify="space-between" style={{ borderBottom: '1px solid #eee', paddingBottom: 4 }}>
-                  <Text size="xs" c="dimmed">{key}</Text>
-                  <Text size="xs" style={{ maxWidth: '60%', textAlign: 'right' }}>
-                    {typeof value === 'object' ? JSON.stringify(value) : String(value)}
-                  </Text>
-                </Group>
+                <Stack key={key} gap={4} style={{ borderBottom: '1px solid #eee', paddingBottom: 8 }}>
+                  <Text size="xs" c="dimmed" fw={500}>{key}</Text>
+                  {typeof value === 'object' ? (
+                    <Code block style={{ fontSize: 11 }}>
+                      {JSON.stringify(value, null, 2)}
+                    </Code>
+                  ) : (
+                    <Text size="sm" ff="monospace">
+                      {String(value)}
+                    </Text>
+                  )}
+                </Stack>
               ))}
               {Object.keys(step.parameters).length === 0 && (
                 <Text size="xs" c="dimmed" fs="italic">无参数配置</Text>
@@ -596,6 +615,53 @@ function EventsList({ events }: { events: ReportContentData['events'] }) {
         })}
       </Stack>
     </Card>
+  )
+}
+
+function LogsTab({ logs }: { logs: NonNullable<ReportContentData['logs']> }) {
+  return (
+    <Stack gap="md">
+      <Card withBorder p={0}>
+        <Table stickyHeader striped highlightOnHover horizontalSpacing="md" verticalSpacing="xs">
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th w={180}>时间戳</Table.Th>
+              <Table.Th w={100}>级别</Table.Th>
+              <Table.Th w={120}>来源</Table.Th>
+              <Table.Th>消息内容</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {logs.map((log, idx) => (
+              <Table.Tr key={idx}>
+                <Table.Td>
+                  <Text size="xs" c="dimmed" ff="monospace">
+                    {new Date(log.timestamp).toLocaleString('zh-CN')}
+                  </Text>
+                </Table.Td>
+                <Table.Td>
+                  <Badge
+                    size="sm"
+                    color={log.level === 'ERROR' ? 'red' : log.level === 'WARNING' ? 'orange' : 'gray'}
+                    variant="light"
+                  >
+                    {log.level}
+                  </Badge>
+                </Table.Td>
+                <Table.Td>
+                  <Text size="xs">{log.source}</Text>
+                </Table.Td>
+                <Table.Td>
+                  <Text size="sm" style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>
+                    {log.message}
+                  </Text>
+                </Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
+      </Card>
+    </Stack>
   )
 }
 

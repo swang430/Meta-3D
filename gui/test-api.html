@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API Test</title>
+</head>
+<body>
+    <h1>暗室配置 API 测试</h1>
+    <button onclick="testPresets()">测试预设模板 API</button>
+    <button onclick="testChambers()">测试暗室配置 API</button>
+    <pre id="output"></pre>
+
+    <script>
+        async function testPresets() {
+            const output = document.getElementById('output');
+            output.textContent = '正在加载预设模板...\n';
+            
+            try {
+                const response = await fetch('http://localhost:8000/api/v1/chambers/presets');
+                const data = await response.json();
+                output.textContent += `状态码: ${response.status}\n`;
+                output.textContent += `数据: ${JSON.stringify(data, null, 2)}\n`;
+                output.textContent += `预设数量: ${data.presets?.length || 0}\n`;
+            } catch (error) {
+                output.textContent += `错误: ${error.message}\n`;
+            }
+        }
+
+        async function testChambers() {
+            const output = document.getElementById('output');
+            output.textContent = '正在加载暗室配置...\n';
+            
+            try {
+                const response = await fetch('http://localhost:8000/api/v1/chambers');
+                const data = await response.json();
+                output.textContent += `状态码: ${response.status}\n`;
+                output.textContent += `数据: ${JSON.stringify(data, null, 2)}\n`;
+                output.textContent += `配置数量: ${data.items?.length || 0}\n`;
+            } catch (error) {
+                output.textContent += `错误: ${error.message}\n`;
+            }
+        }
+    </script>
+</body>
+</html>

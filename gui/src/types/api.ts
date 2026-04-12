@@ -38,6 +38,7 @@ export type Probe = {
   is_active: boolean
   is_connected: boolean
   status: string  // "idle" | "active" | "error" | "calibrating"
+  chamber_config_id: string | null
   hardware_id: string | null
   channel_port: number | null
   last_calibration_date: string | null
@@ -342,4 +343,146 @@ export type UpdateInstrumentPayload = {
 
 export type InstrumentCategoryResponse = {
   category: InstrumentCategory
+}
+
+// ============================================================
+// Chamber Configuration Types (暗室配置类型)
+// ============================================================
+
+export type ChamberType = 'type_a' | 'type_b' | 'type_c' | 'type_d' | 'custom'
+
+export type ChamberPresetInfo = {
+  type: string
+  name: string
+  description: string
+  chamber_radius_m: number
+  num_probes: number
+  has_lna: boolean
+  has_pa: boolean
+  has_duplexer: boolean
+  supports_trp: boolean
+  supports_tis: boolean
+  supports_mimo_ota: boolean
+}
+
+export type ChamberConfiguration = {
+  id: string
+  name: string
+  description: string | null
+  chamber_type: string
+  is_active: boolean
+
+  // 物理参数
+  chamber_radius_m: number
+  quiet_zone_diameter_m: number | null
+  num_probes: number
+  num_polarizations: number
+  num_rings: number
+
+  // LNA 配置
+  has_lna: boolean
+  lna_gain_db: number | null
+  lna_noise_figure_db: number | null
+
+  // PA 配置
+  has_pa: boolean
+  pa_gain_db: number | null
+  pa_p1db_dbm: number | null
+
+  // 双工器配置
+  has_duplexer: boolean
+  duplexer_isolation_db: number | null
+  duplexer_insertion_loss_db: number | null
+
+  // 转台配置
+  has_turntable: boolean
+  turntable_max_load_kg: number | null
+
+  // 信道仿真器配置
+  has_channel_emulator: boolean
+  ce_bidirectional: boolean
+  ce_num_ota_ports: number | null
+  ce_min_input_dbm: number
+
+  // 频率范围
+  freq_min_mhz: number
+  freq_max_mhz: number
+
+  // 支持的测试类型
+  supports_trp: boolean
+  supports_tis: boolean
+  supports_mimo_ota: boolean
+
+  // 链路预算参数
+  typical_cable_loss_db: number
+  probe_gain_dbi: number
+
+  // 元数据
+  created_at: string
+  updated_at: string | null
+  created_by: string | null
+
+  // 计算属性
+  supported_tests: string[]
+  max_ul_radius_m: number | null
+}
+
+export type CreateChamberPayload = Omit<
+  ChamberConfiguration,
+  'id' | 'is_active' | 'created_at' | 'updated_at' | 'created_by' | 'supported_tests' | 'max_ul_radius_m'
+>
+
+export type UpdateChamberPayload = Partial<CreateChamberPayload> & {
+  is_active?: boolean
+}
+
+export type ChamberFromPresetPayload = {
+  preset_type: ChamberType
+  name?: string
+  chamber_radius_m?: number
+  quiet_zone_diameter_m?: number
+  num_probes?: number
+  lna_gain_db?: number
+  lna_noise_figure_db?: number
+  pa_gain_db?: number
+  pa_p1db_dbm?: number
+}
+
+export type ChamberPresetsResponse = {
+  presets: ChamberPresetInfo[]
+}
+
+export type ChamberListResponse = {
+  items: ChamberConfiguration[]
+  total: number
+}
+
+export type RequiredCalibrationsResponse = {
+  chamber_id: string
+  chamber_name: string
+  required_calibrations: string[]
+  optional_calibrations: string[]
+}
+
+export type LinkBudgetResponse = {
+  chamber_id: string
+
+  // 上行链路
+  ul_dut_tx_power_dbm: number
+  ul_system_gain_db: number
+  ul_max_fspl_db: number
+  ul_max_radius_m: number
+  ul_margin_db: number
+
+  // 下行链路
+  dl_ce_output_dbm: number
+  dl_system_gain_db: number
+  dl_eirp_dbm: number
+  dl_dut_sensitivity_dbm: number
+  dl_margin_db: number
+
+  // 评估
+  ul_feasible: boolean
+  dl_feasible: boolean
+  recommendations: string[]
 }

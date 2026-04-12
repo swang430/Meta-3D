@@ -242,9 +242,17 @@ export interface Route {
   description?: string
 }
 
+export interface ChannelSnapshot {
+  timestamp_s: number
+  duration_s: number
+  channel_type: '3GPP' | 'Custom'
+  standard_model?: ChannelModel
+  custom_matrix_config?: Record<string, any>
+}
+
 export interface Environment {
   type: EnvironmentType
-  channel_model: ChannelModel
+  channel_snapshots: ChannelSnapshot[]
   weather: 'clear' | 'rain' | 'fog' | 'snow'
   traffic_density: 'low' | 'medium' | 'high'
   obstructions?: any[]
@@ -858,4 +866,160 @@ export interface ScenariosListResponse {
 export interface ExecutionsListResponse {
   executions: ExecutionSummary[]
   total: number
+}
+
+// ===== Report Types =====
+
+export interface PhaseResult {
+  name: string
+  status: 'completed' | 'failed' | 'skipped'
+  duration_s: number
+  start_time: string
+  end_time: string
+  notes?: string
+}
+
+export interface KPISummary {
+  name: string
+  unit: string
+  mean: number
+  min: number
+  max: number
+  std?: number
+  target?: number
+  passed?: boolean
+}
+
+export interface ScenarioInfo {
+  id: string
+  name: string
+  category: string
+  description?: string
+  tags: string[]
+}
+
+export interface NetworkInfo {
+  type: string
+  band: string
+  bandwidth_mhz: number
+  duplex_mode: string
+  scs_khz?: number
+}
+
+export interface EnvironmentInfo {
+  type: string
+  channel_model: string
+  weather: string
+  traffic_density: string
+}
+
+export interface RouteInfo {
+  duration_s: number
+  distance_m: number
+  waypoint_count: number
+  avg_speed_kmh?: number
+}
+
+export interface BaseStationInfo {
+  bs_id: string
+  name: string
+  tx_power_dbm: number
+  antenna_config: string
+  antenna_height_m: number
+}
+
+export interface StepConfigInfo {
+  step_name: string
+  enabled: boolean
+  parameters: Record<string, any>
+}
+
+// Time series point for charts
+export interface TimeSeriesPoint {
+  time_s: number
+  position?: { lat: number; lon: number; alt?: number }
+  rsrp_dbm?: number
+  rsrq_db?: number
+  sinr_db?: number
+  dl_throughput_mbps?: number
+  ul_throughput_mbps?: number
+  latency_ms?: number
+  event?: string
+}
+
+// Trajectory point for map
+export interface TrajectoryPoint {
+  lat: number
+  lon: number
+  alt?: number
+  time_s?: number
+}
+
+// Detailed configuration types
+export interface NetworkConfigDetail {
+  authentication?: Record<string, unknown>
+  qos?: Record<string, unknown>
+  pdu_session?: Record<string, unknown>
+  applications?: string[]
+}
+
+export interface BaseStationConfigDetail {
+  rf?: Record<string, unknown>
+  antenna?: Record<string, unknown>
+  beamforming?: Record<string, unknown>
+  handover?: Record<string, unknown>
+}
+
+export interface DigitalTwinConfig {
+  channel_model?: Record<string, unknown>
+  ray_tracing?: Record<string, unknown>
+  weather?: Record<string, unknown>
+  interference?: Record<string, unknown>
+}
+
+export interface CustomConfigHighlight {
+  category: string
+  label: string
+  value: unknown
+  description?: string
+}
+
+export interface ExecutionReport {
+  execution_id: string
+  scenario_name: string
+  mode: TestMode
+  status: ExecutionStatus
+  // Scenario details
+  scenario?: ScenarioInfo
+  network?: NetworkInfo
+  environment?: EnvironmentInfo
+  route?: RouteInfo
+  base_stations: BaseStationInfo[]
+  step_configs: StepConfigInfo[]
+  // Timing
+  start_time?: string
+  end_time?: string
+  duration_s?: number
+  // Results
+  phases: PhaseResult[]
+  kpi_summary: KPISummary[]
+  overall_result: 'passed' | 'failed' | 'incomplete'
+  pass_rate: number
+  events: Array<{
+    time: string
+    type: string
+    description: string
+  }>
+  // Time series data for charts
+  time_series?: TimeSeriesPoint[]
+  // Trajectory for map
+  trajectory?: TrajectoryPoint[]
+  // Detailed configurations
+  network_config_detail?: NetworkConfigDetail
+  base_station_config_detail?: BaseStationConfigDetail
+  digital_twin_config?: DigitalTwinConfig
+  // Custom config highlights
+  custom_config_highlights?: CustomConfigHighlight[]
+  generated_at: string
+  notes?: string
 }
