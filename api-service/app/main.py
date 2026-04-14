@@ -14,6 +14,7 @@ from app.api import health, calibration, test_plan, test_execution, test_sequenc
 from app.api import dashboard, probe, instrument, monitoring, report, road_test, alert, sync, topology, scenario
 from app.api import probe_calibration, channel_calibration, workflow, calibration_report, chamber
 from app.api.path_loss_calibration import router as path_loss_router, orchestrator_router, compensation_router, switch_router, e2e_router, phase_router, ce_router, baseline_router
+from app.api.commissioning import router as commissioning_router
 
 # Configure logging
 logging.basicConfig(
@@ -180,6 +181,9 @@ app.include_router(ce_router, prefix=settings.api_v1_prefix)
 
 # Relative Calibration (Baseline)
 app.include_router(baseline_router, prefix=settings.api_v1_prefix)
+
+# 3GPP Static MIMO OTA Commissioning Sandbox
+app.include_router(commissioning_router, prefix=settings.api_v1_prefix, tags=["暗室首测"])
 
 
 @app.get("/")

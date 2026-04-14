@@ -63,6 +63,7 @@ import { VirtualRoadTest } from './components/VirtualRoadTest'
 import { SystemCalibration } from './components/SystemCalibration'
 import { TestManagement } from './features/TestManagement/TestManagement'
 import { ReportsPage } from './features/Reports/pages/ReportsPage'
+import { CommissioningSandbox } from './components/Commissioning'
 import { RealtimeMetricsCard } from './components/RealtimeMetricsCard'
 import { ExecutionMetricsCard } from './features/Monitoring'
 import { useMonitoringWebSocket } from './hooks/useMonitoringWebSocket'
@@ -135,7 +136,7 @@ const hexToRgba = (hex: string, alpha: number) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
-type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'testManagement' | 'monitoring' | 'results' | 'virtualRoadTest' | 'systemCalibration' | 'chartsDemo'
+type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'testManagement' | 'monitoring' | 'results' | 'virtualRoadTest' | 'systemCalibration' | 'commissioning' | 'chartsDemo'
 
 type ProbeFormState = Pick<ProbeType, 'ring' | 'polarization' | 'position' | 'is_active'>
 
@@ -281,6 +282,11 @@ const sections: Array<{ key: SectionKey; label: string; description: string }> =
     key: 'systemCalibration',
     label: '系统校准',
     description: '执行TRP/TIS校准、重复性测试、实验室间比对，管理校准证书与溯源。',
+  },
+  {
+    key: 'commissioning',
+    label: '暗室首测',
+    description: '3GPP Static MIMO OTA 调试专区 - 基于 UMa CDL-C 模型与 CTIA 门限。',
   },
   {
     key: 'chartsDemo',
@@ -1177,6 +1183,8 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
       return <VirtualRoadTest />
     case 'systemCalibration':
       return <SystemCalibration />
+    case 'commissioning':
+      return <CommissioningSandbox />
     case 'chartsDemo':
       return <ChartsDemoPage />
     default:

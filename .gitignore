@@ -54,3 +54,4 @@ api-service/nohup.out
 api-service/debug_*
 Result_Report/
 .agent/
+api-service/app/data/hardware_artifacts/
