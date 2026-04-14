@@ -16,20 +16,34 @@ import numpy as np
 # Configure via environment variable or use default development path
 CHANNEL_ENGINE_PATH = os.environ.get(
     'CHANNEL_ENGINE_PATH',
-    # Default fallback for development (will be removed in production)
-    os.path.expanduser('~/ChannelEgine')
+    # Default fallback for development
+    os.path.expanduser('~/Tools/ChannelEgine')
 )
 
 if not os.path.exists(CHANNEL_ENGINE_PATH):
-    raise RuntimeError(
-        f"ChannelEngine not found at: {CHANNEL_ENGINE_PATH}\n"
+    print(
+        f"WARNING: ChannelEngine not found at: {CHANNEL_ENGINE_PATH}\n"
         f"Please set CHANNEL_ENGINE_PATH environment variable to point to "
-        f"your local clone of github.com/swang430/ChannelEgine"
+        f"your local clone of github.com/swang430/ChannelEgine\n"
+        f"Some features will be unavailable."
     )
 
-sys.path.append(CHANNEL_ENGINE_PATH)
+if os.path.exists(CHANNEL_ENGINE_PATH):
+    sys.path.append(CHANNEL_ENGINE_PATH)
 
-from channel_model_38901.simulator import ChannelSimulator
+# Lazy import - ChannelSimulator is loaded on demand
+ChannelSimulator = None
+
+def _load_channel_simulator():
+    global ChannelSimulator
+    if ChannelSimulator is None:
+        try:
+            from channel_model_38901.simulator import ChannelSimulator as _CS
+            ChannelSimulator = _CS
+        except ImportError:
+            pass
+    return ChannelSimulator
+
 from app.models.ota_models import (
     ProbeWeightRequest,
     ProbeWeightResponse,
@@ -66,8 +80,11 @@ class ChannelEngineService:
         """检查ChannelEngine是否可用"""
         def _check():
             try:
-                # 尝试创建一个简单的模拟器实例
-                simulator = ChannelSimulator(
+                CS = _load_channel_simulator()
+                if CS is None:
+                    print("ChannelEngine不可用: simulator module not loaded")
+                    return False
+                simulator = CS(
                     scenario_name='UMa',
                     center_frequency_hz=3.5e9
                 )
@@ -102,7 +119,19 @@ class ChannelEngineService:
                 # 1. 创建ChannelEngine模拟器
                 frequency_hz = request.scenario.frequency_mhz * 1e6
 
-                simulator = ChannelSimulator(
+                CS = _load_channel_simulator()
+                if CS is None:
+                    return ProbeWeightResponse(
+                        probe_weights=[],
+                        channel_statistics=ChannelStatistics(
+                            pathloss_db=0.0,
+                            num_clusters=0
+                        ),
+                        success=False,
+                        message="ChannelEngine simulator not available"
+                    )
+
+                simulator = CS(
                     scenario_name=request.scenario.scenario_type,
                     cluster_model_name=request.scenario.cluster_model,
                     center_frequency_hz=frequency_hz,

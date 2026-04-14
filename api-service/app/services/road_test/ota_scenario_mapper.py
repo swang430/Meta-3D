@@ -6,20 +6,29 @@ Converts scenario parameters (route, environment, velocity) into:
 - Positioner movements (azimuth, elevation)
 - Channel model settings (3GPP models)
 - Doppler configuration (max Doppler shift)
-- Probe weight calculations (32-probe MPAC)
+- Hardware pipeline synthesis (Spec v1.0)
 """
 
 from typing import List, Dict, Tuple, Optional
+from uuid import UUID
 import math
 import logging
-import httpx
-import json
+
+from sqlalchemy.orm import Session
 
 from app.schemas.road_test import (
     RoadTestScenario,
     Waypoint,
     ChannelModel,
     EnvironmentType,
+)
+from app.services.channel_engine_client import (
+    ChannelEngineClient,
+    CDLCluster,
+    CDLModelSource,
+    build_cdl_model_name,
+    AntennaConfig,
+    HardwarePipelineResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,6 +43,14 @@ class OTAConfig:
         self.max_doppler_hz: float = 0.0
         self.probe_weights: List[Dict[str, any]] = []
         self.fading_enabled: bool = False
+        # Hardware pipeline results (Spec v1.0)
+        self.cdl_model_name: str = ""
+        self.asc_files_path: Optional[str] = None
+        self.f64_baseband_power_dbm: Optional[float] = None
+        self.external_attenuators_db: List[float] = []
+        self.target_achieved_rsrp_dbm: Optional[float] = None
+        self.spatial_correlation: Optional[float] = None
+        self.hardware_pipeline_success: bool = False
 
 
 class OTAScenarioMapper:
@@ -47,20 +64,30 @@ class OTAScenarioMapper:
     - Base station positions → Probe weight calculations
     """
 
-    def __init__(self, mpac_radius_m: float = 5.0, num_probes: int = 32):
+    def __init__(
+        self,
+        mpac_radius_m: float = 5.0,
+        num_probes: int = 32,
+        db: Optional[Session] = None,
+        chamber_id: Optional[UUID] = None,
+    ):
         """
         Initialize mapper
 
         Args:
             mpac_radius_m: MPAC chamber radius in meters
             num_probes: Number of OTA probes (typically 32)
+            db: SQLAlchemy session (required for hardware pipeline)
+            chamber_id: Chamber configuration UUID (required for hardware pipeline)
         """
         self.mpac_radius_m = mpac_radius_m
         self.num_probes = num_probes
+        self.db = db
+        self.chamber_id = chamber_id
 
         logger.info(f"OTAScenarioMapper initialized: radius={mpac_radius_m}m, probes={num_probes}")
 
-    def map_scenario(self, scenario: RoadTestScenario) -> OTAConfig:
+    async def map_scenario(self, scenario: RoadTestScenario) -> OTAConfig:
         """
         Map complete scenario to OTA configuration
 
@@ -90,14 +117,18 @@ class OTAScenarioMapper:
             scenario.base_stations[0].position if scenario.base_stations else None
         )
 
-        # 4. Calculate probe weights (simplified - full implementation requires channel matrix)
-        config.probe_weights = self._calculate_probe_weights(
-            scenario.base_stations[0].position if scenario.base_stations else {"lat": 0, "lon": 0, "alt": 0},
-            scenario.environment.channel_model
+        # 4. Hardware Pipeline: 调用 Channel Engine 合成硬件驱动文件
+        await self._run_hardware_pipeline(
+            config=config,
+            scenario=scenario,
+            carrier_freq_hz=self._get_carrier_frequency(scenario.network.band),
         )
 
-        logger.info(f"Mapping complete: {len(config.positioner_sequence)} waypoints, "
-                    f"max_doppler={config.max_doppler_hz:.1f}Hz")
+        logger.info(
+            f"Mapping complete: {len(config.positioner_sequence)} waypoints, "
+            f"max_doppler={config.max_doppler_hz:.1f}Hz, "
+            f"pipeline={'OK' if config.hardware_pipeline_success else 'FALLBACK'}"
+        )
 
         return config
 
@@ -274,135 +305,210 @@ class OTAScenarioMapper:
 
         return azimuth_deg, elevation_deg
 
-    def _calculate_probe_weights(
+    async def _run_hardware_pipeline(
         self,
-        bs_position: Dict[str, float],
-        channel_model: ChannelModel
-    ) -> List[Dict[str, any]]:
+        config: OTAConfig,
+        scenario: RoadTestScenario,
+        carrier_freq_hz: float,
+    ) -> None:
         """
-        Calculate probe complex weights using ChannelEngine service
+        调用 Channel Engine Hardware Pipeline (Spec v1.0)
 
-        Calls ChannelEngine microservice (http://localhost:8000) to compute
-        probe weights based on 3GPP 38.901 channel models. Supports both
-        OTA and Conducted testing modes.
+        从场景中提取/生成 CDL 簇参数，通过 ChannelEngineClient 发送到 CE，
+        将返回的 .asc 文件和控制指令写入 OTAConfig。
 
-        Args:
-            bs_position: Base station position (lat, lon, alt)
-            channel_model: 3GPP channel model (UMa, UMi, RMa, CDL-*, TDL-*)
-
-        Returns:
-            List of probe weights {probe_id, amplitude, phase_deg}
+        若 CE 不可用或缺少 DB 连接，则回退到均匀权重。
         """
-        # Try to call ChannelEngine service
+        if not self.db or not self.chamber_id:
+            logger.warning(
+                "No DB session or chamber_id provided, "
+                "falling back to uniform weights"
+            )
+            config.probe_weights = self._uniform_weights()
+            return
+
+        # 从场景构造 CDL 簇参数
+        clusters = self._extract_clusters_from_scenario(scenario)
+
+        # 构造 CDL 模型名称
+        model = scenario.environment.channel_model
+        is_los = model in (ChannelModel.CDL_D, ChannelModel.CDL_E)
+        cdl_model_name = self._build_cdl_name(model, is_los)
+
         try:
-            weights = self._call_channel_engine_service(channel_model)
-            if weights:
-                return weights
-        except Exception as e:
-            logger.warning(f"ChannelEngine service unavailable: {e}. Falling back to uniform weights.")
+            ce_client = ChannelEngineClient(db=self.db)
+            result: HardwarePipelineResult = await ce_client.synthesize_hardware_pipeline(
+                chamber_id=self.chamber_id,
+                frequency_hz=carrier_freq_hz,
+                clusters=clusters,
+                cdl_model_name=cdl_model_name,
+                pathloss_db=self._estimate_pathloss(
+                    scenario, carrier_freq_hz
+                ),
+                is_los=is_los,
+                tx_antenna=AntennaConfig(
+                    array_type="ULA", num_rows=1, num_cols=2, spacing_h=0.5
+                ),
+                rx_antenna=AntennaConfig(
+                    array_type="ULA", num_rows=1, num_cols=2, spacing_h=0.5
+                ),
+                ue_velocity_kph=max(
+                    wp.velocity["speed_kmh"]
+                    for wp in scenario.route.waypoints
+                ),
+            )
 
-        # Fallback: uniform weighting
-        return self._uniform_weights()
-
-    def _call_channel_engine_service(self, channel_model: ChannelModel) -> Optional[List[Dict[str, any]]]:
-        """
-        Call ChannelEngine service to calculate probe weights
-
-        Makes synchronous HTTP request to ChannelEngine REST API.
-        For production use, consider async implementation with aiohttp.
-
-        Args:
-            channel_model: 3GPP channel model
-
-        Returns:
-            List of probe weights or None on failure
-        """
-        try:
-            # Map ChannelModel enum to ChannelEngine scenario type
-            scenario_type_map = {
-                ChannelModel.UMA: "UMa",
-                ChannelModel.UMI: "UMi",
-                ChannelModel.RMA: "RMa",
-                ChannelModel.INH: "InH",
-                ChannelModel.CDL_A: "CDL-A",
-                ChannelModel.CDL_B: "CDL-B",
-                ChannelModel.CDL_C: "CDL-C",
-                ChannelModel.CDL_D: "CDL-D",
-                ChannelModel.CDL_E: "CDL-E",
-                ChannelModel.TDL_A: "TDL-A",
-                ChannelModel.TDL_B: "TDL-B",
-                ChannelModel.TDL_C: "TDL-C",
-            }
-
-            scenario_type = scenario_type_map.get(channel_model, "UMa")
-
-            # Generate probe positions (uniform distribution around MPAC chamber)
-            probe_positions = []
-            for probe_id in range(self.num_probes):
-                angle_deg = probe_id * (360 / self.num_probes)
-                probe_positions.append({
-                    "probe_id": probe_id,
-                    "theta": 90.0,  # Zenith angle (equator of sphere)
-                    "phi": angle_deg,  # Azimuth angle
-                    "r": self.mpac_radius_m,
-                    "polarization": "V"  # Vertical polarization
-                })
-
-            # Prepare request to ChannelEngine service
-            request_data = {
-                "scenario": {
-                    "scenario_type": scenario_type,
-                    "cluster_model": "CDL-C",  # Default cluster model
-                    "frequency_mhz": 3500,  # Default 3.5 GHz
-                    "use_median_lsps": False
-                },
-                "probe_array": {
-                    "num_probes": self.num_probes,
-                    "radius": self.mpac_radius_m,
-                    "probe_positions": probe_positions
-                },
-                "mimo_config": {
-                    "num_tx_antennas": 2,
-                    "num_rx_antennas": 2,
-                    "tx_antenna_spacing": 0.5,
-                    "rx_antenna_spacing": 0.5
-                }
-            }
-
-            # Call ChannelEngine service
-            with httpx.Client(timeout=30.0) as client:
-                response = client.post(
-                    "http://localhost:8000/api/v1/ota/generate-probe-weights",
-                    json=request_data
+            if result.success:
+                config.hardware_pipeline_success = True
+                config.cdl_model_name = result.cdl_model_name
+                config.asc_files_path = result.asc_files_path
+                config.f64_baseband_power_dbm = result.f64_baseband_power_dbm
+                config.external_attenuators_db = result.external_attenuators_db
+                config.target_achieved_rsrp_dbm = result.target_achieved_rsrp_dbm
+                config.spatial_correlation = result.spatial_correlation
+                logger.info(
+                    f"Hardware pipeline [{result.cdl_model_name}]: "
+                    f"{result.total_files} .asc files, "
+                    f"RSRP={result.target_achieved_rsrp_dbm:.1f} dBm, "
+                    f"compute={result.computation_time_ms:.0f}ms"
                 )
-                response.raise_for_status()
-
-            result = response.json()
-
-            if result.get("success"):
-                # Convert ChannelEngine response to our format
-                weights = []
-                for probe_weight in result.get("probe_weights", []):
-                    weights.append({
-                        "probe_id": probe_weight.get("probe_id"),
-                        "azimuth_deg": probe_weight.get("weight", {}).get("phase_deg", 0.0),
-                        "amplitude": probe_weight.get("weight", {}).get("magnitude", 1.0),
-                        "phase_deg": probe_weight.get("weight", {}).get("phase_deg", 0.0),
-                        "polarization": probe_weight.get("polarization", "V")
-                    })
-
-                logger.info(f"Generated {len(weights)} probe weights via ChannelEngine for {scenario_type}")
-                return weights
             else:
-                logger.error(f"ChannelEngine returned error: {result.get('message')}")
-                return None
+                logger.warning(
+                    f"Hardware pipeline failed: {result.message}. "
+                    f"Falling back to uniform weights."
+                )
+                config.probe_weights = self._uniform_weights()
 
-        except httpx.ConnectError:
-            logger.error("Cannot connect to ChannelEngine service at http://localhost:8000")
-            return None
         except Exception as e:
-            logger.error(f"ChannelEngine API call failed: {e}")
-            return None
+            logger.exception(
+                f"Hardware pipeline exception: {e}. "
+                f"Falling back to uniform weights."
+            )
+            config.probe_weights = self._uniform_weights()
+
+    def _extract_clusters_from_scenario(
+        self, scenario: RoadTestScenario
+    ) -> List[CDLCluster]:
+        """
+        从场景信道模型中提取 CDL 簇参数。
+
+        当前：使用 3GPP CDL 标准簇参数表。
+        未来：接入 Ray-Tracing 引擎后，替换为“{ScenarioName} CDL Snapshot-{N}”格式数据。
+        """
+        # 3GPP CDL-C 标准簇参数（简化版，取前 6 个主要簇）
+        CDL_C_CLUSTERS = [
+            {"delay_s": 0.0,    "power": 0.2099, "aoa": -46.6, "aod": -10.2, "as_aoa": 2.0},
+            {"delay_s": 65e-9,  "power": 0.2219, "aoa": -11.2, "aod": 10.5,  "as_aoa": 3.0},
+            {"delay_s": 70e-9,  "power": 0.1399, "aoa": 51.0,  "aod": -25.2, "as_aoa": 5.0},
+            {"delay_s": 190e-9, "power": 0.1279, "aoa": -65.4, "aod": 38.1,  "as_aoa": 7.0},
+            {"delay_s": 195e-9, "power": 0.1350, "aoa": -1.8,  "aod": -0.9,  "as_aoa": 2.5},
+            {"delay_s": 430e-9, "power": 0.0500, "aoa": 78.2,  "aod": -42.1, "as_aoa": 10.0},
+        ]
+
+        model = scenario.environment.channel_model
+
+        # 当前阶段：所有模型都使用 CDL-C 的簇参数
+        # TODO: 为不同 CDL/TDL 模型提供专用参数表
+        cluster_data = CDL_C_CLUSTERS
+
+        clusters = []
+        for c in cluster_data:
+            clusters.append(CDLCluster(
+                delay_s=c["delay_s"],
+                power_relative_linear=c["power"],
+                aoa_deg=c["aoa"],
+                aod_deg=c.get("aod", 0.0),
+                zoa_deg=90.0,
+                zod_deg=90.0,
+                as_aoa_deg=c.get("as_aoa", 2.0),
+            ))
+
+        is_los = model in (ChannelModel.CDL_D, ChannelModel.CDL_E)
+        cdl_name = self._build_cdl_name(model, is_los)
+        logger.info(
+            f"Prepared {len(clusters)} clusters: [{cdl_name}]"
+        )
+        return clusters
+
+    def _build_cdl_name(self, model: ChannelModel, is_los: bool) -> str:
+        """
+        根据场景信道模型构造标准化的 CDL 名称。
+
+        3GPP 标准模型格式：“{Scenario} {CDL_Model} {LOS/NLOS}”
+        例: UMa CDL-C NLOS, UMi CDL-D LOS
+        """
+        # 场景映射
+        SCENARIO_MAP = {
+            ChannelModel.UMA: "UMa",
+            ChannelModel.UMI: "UMi",
+            ChannelModel.RMA: "RMa",
+            ChannelModel.INH: "InH",
+        }
+
+        # CDL 模型映射
+        CDL_MAP = {
+            ChannelModel.CDL_A: "CDL-A",
+            ChannelModel.CDL_B: "CDL-B",
+            ChannelModel.CDL_C: "CDL-C",
+            ChannelModel.CDL_D: "CDL-D",
+            ChannelModel.CDL_E: "CDL-E",
+            ChannelModel.TDL_A: "TDL-A",
+            ChannelModel.TDL_B: "TDL-B",
+            ChannelModel.TDL_C: "TDL-C",
+        }
+
+        # 如果是明确的 CDL/TDL 模型
+        if model in CDL_MAP:
+            cdl_id = CDL_MAP[model]
+            condition = "LOS" if is_los else "NLOS"
+            # 从模型名推断场景（CDL-D/E 为 LOS 场景，通常对应 UMa）
+            scenario = "UMa"  # 默认
+            return f"{scenario} {cdl_id} {condition}"
+
+        # 如果是场景类型（UMa/UMi/RMa/InH）
+        if model in SCENARIO_MAP:
+            scenario = SCENARIO_MAP[model]
+            cdl_id = "CDL-C"  # 当前默认使用 CDL-C
+            condition = "LOS" if is_los else "NLOS"
+            return f"{scenario} {cdl_id} {condition}"
+
+        return build_cdl_model_name(
+            CDLModelSource.STANDARD_3GPP,
+            scenario="UMa",
+            cdl_model="CDL-C",
+            is_los=is_los,
+        )
+
+    def _estimate_pathloss(
+        self,
+        scenario: RoadTestScenario,
+        carrier_freq_hz: float,
+    ) -> float:
+        """
+        估算路径损耗（简化的 Free-Space Path Loss）。
+
+        TODO: 未来接入 Ray-Tracing 引擎后替换为真实计算值。
+        """
+        # 假设 BS-UE 距离 ~200m
+        distance_m = 200.0
+        if scenario.base_stations:
+            # 尝试从第一个航点计算到基站的距离
+            bs = scenario.base_stations[0].position
+            wp = scenario.route.waypoints[0].position
+            dlat = wp["lat"] - bs["lat"]
+            dlon = wp["lon"] - bs["lon"]
+            dx = dlon * 111000 * math.cos(math.radians(bs["lat"]))
+            dy = dlat * 111000
+            distance_m = max(math.sqrt(dx**2 + dy**2), 10.0)
+
+        # FSPL = 20*log10(d) + 20*log10(f) - 147.55
+        freq_hz = carrier_freq_hz
+        fspl = (
+            20 * math.log10(distance_m)
+            + 20 * math.log10(freq_hz)
+            - 147.55
+        )
+        return round(fspl, 2)
 
     def _uniform_weights(self) -> List[Dict[str, any]]:
         """

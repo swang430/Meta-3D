@@ -5,7 +5,7 @@ OTA探头权重计算服务
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.endpoints import health, ota
+from app.api.endpoints import health, ota, hardware_pipeline
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -53,6 +53,13 @@ app.include_router(
     ota.router,
     prefix="/api/v1/ota",
     tags=["OTA探头权重"]
+)
+
+# Hardware Pipeline (Spec v1.0)
+app.include_router(
+    hardware_pipeline.router,
+    prefix="/api/v1",
+    tags=["硬件流水线"]
 )
 
 # ============================================================================
