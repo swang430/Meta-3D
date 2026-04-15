@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 from enum import Enum
 
+from app.services.channel_generation.base_generator import EngineMode
+
 
 class CommissioningPhase(str, Enum):
     """首测阶段"""
@@ -82,7 +84,7 @@ class StaticMIMOConfig:
     reference_antenna_model: str = "SGA-3500"  # 型号标识
 
     # --- 并行控制机制 ---
-    engine_mode: str = "mimo_first_asc"      # 默认走本系统自研引擎，可选 "keysight_gcm"
+    engine_mode: EngineMode = EngineMode.ASC_SYNTHESIS  # 默认走本系统自研引擎，可选 EngineMode.GCM_NATIVE
 
     @property
     def total_measurement_time_s(self) -> float:
