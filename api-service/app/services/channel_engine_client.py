@@ -350,6 +350,15 @@ class ChannelEngineClient:
 
         num_ports = chamber.num_probes * (2 if chamber.num_polarizations >= 2 else 1)
 
+        # 计算缺省状态下的等效系统损耗 (用于无校准数据时的回退计算)
+        # 等效损耗 = 物理线缆损耗 (Cable Loss) + 双工器插损 (Duplexer) - 功放增益 (PA Gain)
+        fallback_loss = chamber.typical_cable_loss_db
+        if chamber.has_pa and chamber.pa_gain_db:
+            fallback_loss -= chamber.pa_gain_db
+        if chamber.has_duplexer and chamber.duplexer_insertion_loss_db:
+            fallback_loss += chamber.duplexer_insertion_loss_db
+
+
         if latest_cal and latest_cal.probe_path_losses:
             logger.info(
                 f"Using calibration data from {latest_cal.calibrated_at} "
@@ -357,7 +366,7 @@ class ChannelEngineClient:
             )
             for probe_id_str, probe_data in latest_cal.probe_path_losses.items():
                 probe_id = int(probe_id_str)
-                path_loss = probe_data.get("path_loss_db", chamber.typical_cable_loss_db)
+                path_loss = probe_data.get("path_loss_db", fallback_loss)
 
                 # V 极化端口
                 entries.append({
@@ -381,13 +390,13 @@ class ChannelEngineClient:
             logger.warning(
                 f"No calibration data found for chamber {chamber_id}, "
                 f"using chamber defaults: "
-                f"cable_loss={chamber.typical_cable_loss_db} dB, "
+                f"effective_loss={fallback_loss} dB, "
                 f"probe_gain={chamber.probe_gain_dbi} dBi"
             )
             for port_id in range(1, num_ports + 1):
                 entries.append({
                     "port_id": port_id,
-                    "cable_loss_db": float(chamber.typical_cable_loss_db),
+                    "cable_loss_db": float(fallback_loss),
                     "cable_phase_deg": 0.0,
                     "probe_gain_dbi": float(chamber.probe_gain_dbi),
                 })

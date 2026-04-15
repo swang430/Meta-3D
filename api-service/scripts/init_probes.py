@@ -54,12 +54,18 @@ def init_probes():
     probes = []
     probe_number = 1
 
-    # Configuration: 3-ring layout for 32 probes (16 positions)
-    rings_config = [
-        {"ring_id": 1, "elevation": 45,  "count": 4, "radius": default_chamber.chamber_radius_m},
-        {"ring_id": 2, "elevation": 0,   "count": 8, "radius": default_chamber.chamber_radius_m},
-        {"ring_id": 3, "elevation": -45, "count": 4, "radius": default_chamber.chamber_radius_m}
-    ]
+    if default_chamber.num_probes == 16:
+        # User specifically asked for 16 probes on Ring-3
+        rings_config = [
+            {"ring_id": 3, "elevation": 0, "count": 16, "radius": default_chamber.chamber_radius_m}
+        ]
+    else:
+        # Default 32 probe 3-ring layout
+        rings_config = [
+            {"ring_id": 1, "elevation": 45,  "count": 4, "radius": default_chamber.chamber_radius_m},
+            {"ring_id": 2, "elevation": 0,   "count": 8, "radius": default_chamber.chamber_radius_m},
+            {"ring_id": 3, "elevation": -45, "count": 4, "radius": default_chamber.chamber_radius_m}
+        ]
 
     for ring in rings_config:
         print(f"Creating Ring {ring['ring_id']} ({ring['count']} positions)...")

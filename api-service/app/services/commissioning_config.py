@@ -81,6 +81,9 @@ class StaticMIMOConfig:
     reference_antenna_gain_dbi: float = 6.1   # 标准增益喇叭 (typical)
     reference_antenna_model: str = "SGA-3500"  # 型号标识
 
+    # --- 并行控制机制 ---
+    engine_mode: str = "mimo_first_asc"      # 默认走本系统自研引擎，可选 "keysight_gcm"
+
     @property
     def total_measurement_time_s(self) -> float:
         """预估总测量时间 (秒)"""

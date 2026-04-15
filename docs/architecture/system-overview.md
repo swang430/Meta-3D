@@ -185,6 +185,15 @@ interface IChannelEmulator {
 }
 ```
 
+#### 3.1.5 多元化波形适配网关 (Waveform Formatter Middleware)
+为保持底层 C++ Channel Engine 的通用性（仅输出“干脱水”的纯 I/Q 采样矩阵），在架构中设计**适配器模式 (Adapter)**，承接 MFSW（MIMO-First Standard Waveform）裸数据进行多厂商仪表的波形落盘：
+- **MFSW**: C++ 核心算力始终生成的无状态、无厂商协议通用裸数据阵列 (如 JSON Array 或压缩的进制矩阵)。
+- **MFSW_Keysight_Adapter**: 在 MFSW 首部拼接 9 行 F64 必检的属性报头，以制表符格式化 I+Q 输出纯粹的 `.asc` 文件供 F64 `Runtime Emulation`。
+- **MFSW_RohdeSchwarz_Adapter**: 将 MFSW 转换为带有 XML 头标签的纯二进制流文件 `.wv` 以供 R&S CMX/SMW200 推送。
+- **MFSW_Spirent_Adapter**: 针对 Vertex 转化组装为特定的时域动态环境文件格式。
+
+这种架构下，数学模型的复杂信道生成逻辑完全归拢在 C++ Core中，仪表差异则交给外挂式的 MFSW Adapter 抹平。
+
 #### 3.2 基站仿真器HAL
 - [ ] **设计文档**: `Base-Station-HAL-Design.md`
 - [ ] Keysight UXM

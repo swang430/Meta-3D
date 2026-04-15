@@ -306,30 +306,49 @@ class CommissioningService:
         )
 
         try:
-            # --- Step 1: Real Channel Engine Pipeline ---
-            logger.info(f"[{session_id}] Requesting CE pipeline for CDL model: {config.cdl_model_name}")
+            # --- Step 1: Real Channel Generation Pipeline (Parallel Mechanism) ---
+            logger.info(f"[{session_id}] Requesting Channel Generation pipeline [Mode: {config.engine_mode}] for CDL model: {config.cdl_model_name}")
+            
+            from app.hal.propsim_f64 import PropsimF64Controller
+            from app.services.channel_generation.gcm_strategy import PropsimNativeGCMStrategy
+            from app.services.channel_generation.asc_strategy import MimoEngineASCStrategy
+            from app.services.channel_generation.base_generator import EngineMode
             
             ce_client = ChannelEngineClient(self.db)
-            pipeline_result = await ce_client.synthesize_hardware_pipeline(
-                chamber_id=chamber.id,
-                frequency_hz=config.frequency_hz,
-                clusters=[CDLCluster(delay_s=0.0, power_relative_linear=1.0)],  # Bypass CE min_length=1 validation
-                cdl_model_name=config.cdl_model_name,
-                target_tx_power_dbm=config.target_tx_power_dbm,
-                target_rsrp_dbm=config.target_rsrp_dbm,
-                target_snr_db=config.target_snr_db,
-                session_id=session_id
-            )
+            f64_controller = PropsimF64Controller()
             
-            if not pipeline_result.success:
-                logger.error(f"Channel Engine Failed: {pipeline_result.message}")
-                raise RuntimeError(pipeline_result.message)
+            # Retrieve calibration entries prior to passing to generators
+            calibration_entries = ce_client._query_calibration_entries(chamber.id, config.frequency_hz, chamber)
+            
+            generator = None
+            if config.engine_mode == EngineMode.GCM_NATIVE:
+                generator = PropsimNativeGCMStrategy(f64_controller, chamber, calibration_entries)
+            else:
+                generator = MimoEngineASCStrategy(f64_controller, ce_client, chamber, calibration_entries)
+            
+            # Execute physical generation and load
+            sim_rules_dict = {
+                "frequency_hz": config.frequency_hz,
+                "target_tx_power_dbm": config.target_tx_power_dbm,
+                "target_rsrp_dbm": config.target_rsrp_dbm,
+                "target_snr_db": config.target_snr_db,
+            }
+            cdl_model_data_dict = {
+                "model_name": config.cdl_model_name,
+                "session_id": session_id
+            }
+            generation_success = await generator.generate_and_load(sim_rules_dict, cdl_model_data_dict)
+            
+            if not generation_success:
+                error_msg = f"Channel Generation Failed for Mode: {config.engine_mode}"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
                 
-            logger.info(f"[{session_id}] CE Success! Generated {pipeline_result.total_files} .asc files at {pipeline_result.asc_files_path}")
+            logger.info(f"[{session_id}] CE Success! Hardware loaded in {config.engine_mode} mode.")
             result.asc_files_loaded = True
             
-            # 使用真实 CE 下发的参数来锚定后续数学模拟的基准线
-            ce_base_rsrp = pipeline_result.target_achieved_rsrp_dbm if pipeline_result.target_achieved_rsrp_dbm else config.target_rsrp_dbm
+            # 使用目标 RSRP 作为后续数学模拟的基准线
+            ce_base_rsrp = config.target_rsrp_dbm
 
             # --- Step 2: 逐方位测量 ---
             start_time = asyncio.get_event_loop().time()
