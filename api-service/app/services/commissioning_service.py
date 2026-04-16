@@ -137,8 +137,10 @@ class CommissioningService:
 
             # --- 校准有效性检查 (实查 DB) ---
             from sqlalchemy import desc
+            # SQLite 存储 UUID 为不带连字符的 hex 字符串，需要统一格式
+            chamber_id_hex = chamber.id.hex if hasattr(chamber.id, 'hex') else str(chamber.id).replace('-', '')
             latest_cal = self.db.query(ProbePathLossCalibration).filter(
-                ProbePathLossCalibration.chamber_id == chamber.id,
+                ProbePathLossCalibration.chamber_id == chamber_id_hex,
                 ProbePathLossCalibration.status == CalibrationStatus.VALID.value
             ).order_by(desc(ProbePathLossCalibration.calibrated_at)).first()
             

@@ -20,6 +20,7 @@ from app.services.commissioning_config import (
     StaticMIMOConfig,
     CTIACriteria,
 )
+from app.services.channel_generation.base_generator import EngineMode
 
 router = APIRouter(prefix="/commissioning", tags=["暗室首测"])
 
@@ -40,6 +41,8 @@ class CreateSessionRequest(BaseModel):
     mimo_layers: int = 2
     azimuths_deg: List[float] = [0, 90, 180, 270]
     measurement_duration_s: float = 10.0
+    # 信道生成引擎模式
+    engine_mode: str = "mimo_first_asc"  # "mimo_first_asc" | "keysight_gcm"
     # CTIA 门限 (可调)
     min_throughput_ratio: float = 0.70
     max_rsrp_variance_db: float = 3.0
@@ -86,6 +89,7 @@ def _state_to_response(state) -> SessionResponse:
             "azimuths_deg": state.config.azimuths_deg,
             "measurement_duration_s": state.config.measurement_duration_s,
             "total_estimated_time_s": state.config.total_measurement_time_s,
+            "engine_mode": state.config.engine_mode.value,
         },
         started_at=state.started_at,
         completed_at=state.completed_at,
@@ -135,6 +139,7 @@ async def create_session(
         mimo_layers=request.mimo_layers,
         azimuths_deg=request.azimuths_deg,
         measurement_duration_s=request.measurement_duration_s,
+        engine_mode=EngineMode(request.engine_mode),
     )
     criteria = CTIACriteria(
         min_throughput_ratio=request.min_throughput_ratio,

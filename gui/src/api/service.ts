@@ -169,11 +169,11 @@ export const updateInstrumentCategory = async (
   categoryKey: string,
   payload: UpdateInstrumentPayload,
 ): Promise<InstrumentCategory> => {
-  const response = await client.put<{ category: InstrumentCategory }>(
+  const response = await client.put<InstrumentCategory>(
     `/instruments/${categoryKey}`,
     payload,
   )
-  return response.data.category
+  return response.data
 }
 
 export const createTestCaseFromPlan = async (

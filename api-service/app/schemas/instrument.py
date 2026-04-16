@@ -159,18 +159,39 @@ class InstrumentCatalogResponse(BaseModel):
     catalog: List[InstrumentCatalogItem]
 
 
-# ==================== Update Requests ====================
+# ==================== Frontend-Compatible Update Schema ====================
+
+class FEConnectionUpdate(BaseModel):
+    """前端发送的连接配置更新（字段名对齐前端 InstrumentConnection 类型）"""
+    endpoint: Optional[str] = None
+    controller: Optional[str] = None  # 前端叫 controller，对应 DB 的 protocol
+    notes: Optional[str] = None
+
 
 class UpdateInstrumentCategoryRequest(BaseModel):
-    """Request to update an instrument category's selection and connection"""
+    """Request to update an instrument category's selection and connection
+    
+    前端发送 { modelId, connection: { endpoint, controller, notes } }
+    """
+    # 前端发 modelId，后端存 selected_model_id
+    modelId: Optional[str] = Field(
+        None, alias="modelId",
+        description="选择的仪器型号ID (前端字段名)"
+    )
     selected_model_id: Optional[UUID] = Field(
         None,
-        description="选择的仪器型号ID"
+        description="选择的仪器型号ID (后端字段名，兼容)"
     )
-    connection: Optional[InstrumentConnectionUpdate] = Field(
+    connection: Optional[FEConnectionUpdate] = Field(
         None,
         description="连接配置"
     )
+
+    def get_model_id(self) -> Optional[UUID]:
+        """优先取 modelId，其次 selected_model_id"""
+        if self.modelId:
+            return UUID(self.modelId)
+        return self.selected_model_id
 
 
 # ==================== Log Schemas ====================

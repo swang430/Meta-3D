@@ -98,6 +98,7 @@ import {
   deleteTestPlan,
   updateProbe,
 } from './api/service'
+import client from './api/client'
 import type {
   AlertItem,
   DemoRunPlan,
@@ -1541,8 +1542,80 @@ function EquipmentManager() {
     return map
   }, [categories])
 
+  // HAL 模式管理
+  const { data: halStatus, refetch: refetchHAL } = useQuery({
+    queryKey: ['instruments', 'hal', 'status'],
+    queryFn: async () => {
+      const resp = await client.get('/instruments/hal/status')
+      return resp.data as { mode: string; driver_count: number; active_drivers: string[] }
+    },
+  })
+  const [halSwitching, setHalSwitching] = useState(false)
+
+  const handleHALSwitch = useCallback(async (newMode: string) => {
+    setHalSwitching(true)
+    try {
+      const resp = await client.post('/instruments/hal/switch', { mode: newMode })
+      const result = resp.data as { success: boolean; message: string }
+      if (result.success) {
+        showFeedback('__hal__', 'success', `✅ ${result.message}`)
+      } else {
+        showFeedback('__hal__', 'error', `❌ ${result.message}`)
+      }
+      refetchHAL()
+    } catch (err: any) {
+      showFeedback('__hal__', 'error', `切换失败: ${err.message}`)
+    } finally {
+      setHalSwitching(false)
+    }
+  }, [refetchHAL, showFeedback])
+
   return (
     <Stack gap="xl">
+      {/* HAL 模式切换器 */}
+      <Card withBorder radius="md" padding="lg">
+        <Group justify="space-between" align="center">
+          <Stack gap={4}>
+            <Group gap="sm" align="center">
+              <Title order={4}>驱动模式</Title>
+              <Badge
+                color={halStatus?.mode === 'real' ? 'teal' : 'blue'}
+                variant="light"
+                size="lg"
+              >
+                {halStatus?.mode === 'real' ? '🔌 硬件连接' : '🧪 仿真模拟'}
+              </Badge>
+            </Group>
+            <Text size="xs" c="dimmed">
+              Mock 模式使用软件仿真驱动（开发调试）；Real 模式从数据库读取配置连接真实硬件。
+              已激活 {halStatus?.driver_count ?? 0} 个驱动
+              {halStatus?.active_drivers?.length ? `（${halStatus.active_drivers.join(', ')}）` : ''}
+            </Text>
+          </Stack>
+          <Group gap="md" align="center">
+            <SegmentedControl
+              value={halStatus?.mode ?? 'mock'}
+              onChange={handleHALSwitch}
+              disabled={halSwitching}
+              data={[
+                { label: 'Mock 仿真', value: 'mock' },
+                { label: 'Real 硬件', value: 'real' },
+              ]}
+            />
+          </Group>
+        </Group>
+        {feedback['__hal__'] ? (
+          <Alert
+            color={feedback['__hal__'].type === 'error' ? 'red' : 'green'}
+            variant="light"
+            radius="md"
+            mt="sm"
+          >
+            {feedback['__hal__'].message}
+          </Alert>
+        ) : null}
+      </Card>
+
       {isLoading && categories.length === 0 ? (
         <Card withBorder radius="md" padding="xl">
           <Text size="sm" c="gray.6">
@@ -1655,6 +1728,28 @@ function EquipmentManager() {
                     onChange={handleFieldChange(category.key, 'notes')}
                   />
                   <Group justify="flex-end">
+                    <Button
+                      variant="outline"
+                      color="teal"
+                      onClick={async () => {
+                        showFeedback(category.key, 'success', '正在测试连接...')
+                        try {
+                          const resp = await client.post(`/instruments/${category.key}/test-connection`)
+                          const result = resp.data as { success: boolean; message: string; idn?: string; latency_ms?: number }
+                          if (result.success) {
+                            const extra = result.idn ? ` | IDN: ${result.idn}` : ''
+                            const latency = result.latency_ms ? ` (${result.latency_ms}ms)` : ''
+                            showFeedback(category.key, 'success', `✅ ${result.message}${latency}${extra}`)
+                          } else {
+                            showFeedback(category.key, 'error', `❌ ${result.message}`)
+                          }
+                        } catch (err: any) {
+                          showFeedback(category.key, 'error', `测试失败: ${err.message}`)
+                        }
+                      }}
+                    >
+                      测试连接
+                    </Button>
                     <Button
                       color="brand"
                       onClick={() => handleSaveConnection(category.key)}

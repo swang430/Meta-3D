@@ -47,8 +47,9 @@ async def lifespan(app: FastAPI):
     # Initialize HAL service (Phase 2.4.5)
     from app.services.instrument_hal_service import initialize_hal_service, DriverMode
     try:
-        await initialize_hal_service(mode=DriverMode.MOCK)
-        logger.info("Instrument HAL service initialized with mock drivers")
+        hal_mode = DriverMode.MOCK if settings.use_mock_instruments else DriverMode.REAL
+        await initialize_hal_service(mode=hal_mode)
+        logger.info(f"Instrument HAL service initialized in {hal_mode.value} mode")
     except Exception as e:
         logger.error(f"HAL service initialization failed: {e}")
         logger.warning("Continuing without HAL - monitoring will use fallback data")

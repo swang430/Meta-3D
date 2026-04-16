@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Container, Title, Text, Stepper, Group, Button, Paper, Stack, Divider, Loader } from '@mantine/core'
-import { IconTestPipe, IconPlayerPlay, IconPlayerTrackNext } from '@tabler/icons-react'
+import { Container, Title, Text, Stepper, Group, Button, Paper, Stack, Divider, Loader, Select, Badge } from '@mantine/core'
+import { IconTestPipe, IconPlayerPlay, IconPlayerTrackNext, IconEngine } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 import { PrecheckPhase, ReferencePhase, MIMOTestPhase, AnalysisPhase, ReportPhase } from './Phases'
 import * as api from './api'
@@ -18,12 +18,13 @@ export function CommissioningSandbox() {
   const [session, setSession] = useState<SessionResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [activeStep, setActiveStep] = useState(0)
+  const [engineMode, setEngineMode] = useState<string>('mimo_first_asc')
 
   // Initialization
   const initSession = async () => {
     try {
       setLoading(true)
-      const res = await api.createSession()
+      const res = await api.createSession(engineMode)
       setSession(res.data)
       setActiveStep(0)
       notifications.show({ title: '首测会话已创建', message: `ID: ${res.data.session_id}`, color: 'blue' })
@@ -37,7 +38,7 @@ export function CommissioningSandbox() {
 
   useEffect(() => {
     initSession()
-  }, [])
+  }, [engineMode])
 
   const handleRunPhase = async (phaseId: string) => {
     if (!session) return
@@ -98,6 +99,37 @@ export function CommissioningSandbox() {
             3GPP Static MIMO OTA 调试专区 - 基于 UMa CDL-C 模型与 CTIA 门限
           </Text>
         </div>
+
+        {/* 引擎模式选择 */}
+        <Paper withBorder p="md" radius="md">
+          <Group justify="space-between" align="flex-end">
+            <Select
+              label="信道生成引擎"
+              description="选择波形合成的计算引擎"
+              data={[
+                { value: 'mimo_first_asc', label: '🧠 MIMO-First 自研引擎 (ASC Synthesis)' },
+                { value: 'keysight_gcm', label: '🔧 Keysight F64 原生 GCM (Native)' },
+              ]}
+              value={engineMode}
+              onChange={(val) => val && setEngineMode(val)}
+              w={400}
+            />
+            <Group gap="xs">
+              <Badge
+                color={engineMode === 'mimo_first_asc' ? 'blue' : 'orange'}
+                variant="light"
+                size="lg"
+              >
+                {engineMode === 'mimo_first_asc' ? '自研算力' : 'F64 原生'}
+              </Badge>
+              {session?.config?.engine_mode && (
+                <Badge color="gray" variant="outline" size="lg">
+                  会话锁定: {session.config.engine_mode === 'mimo_first_asc' ? 'MIMO-First' : 'GCM'}
+                </Badge>
+              )}
+            </Group>
+          </Group>
+        </Paper>
 
         {/* Stepper */}
         <Paper withBorder p="xl" radius="md">

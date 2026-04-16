@@ -190,12 +190,145 @@ class InstrumentHALService:
 
     async def _initialize_real_drivers(self):
         """
-        Initialize real hardware drivers
+        Initialize drivers from database instrument configuration.
 
-        Phase 3+: Implement real driver initialization based on configuration
+        Flow:
+        1. Read active categories + selected models + connections from DB
+        2. Look up driver class in DRIVER_REGISTRY by (category_key, model)
+        3. Instantiate driver with connection config
+        4. Connect and configure
+
+        If a real driver is not yet implemented for a model, falls back to
+        mock driver with a warning log.
         """
-        # TODO: Phase 3 - Implement real driver factory and initialization
-        raise NotImplementedError("Real drivers not yet implemented")
+        from app.db.database import SessionLocal
+        from app.models.instrument import (
+            InstrumentCategory as InstrumentCategoryModel,
+            InstrumentModel as InstrumentModelDB,
+            InstrumentConnection as InstrumentConnectionDB,
+        )
+
+        from app.hal.propsim_f64 import RealPropsimF64Driver
+
+        # Driver registry: maps (category_key, model_name) → DriverClass
+        # When real VISA/SCPI drivers are implemented, register them here.
+        # Format: "category_key": { "Model Name": RealDriverClass }
+        REAL_DRIVER_REGISTRY: Dict[str, Dict[str, type]] = {
+            "channelEmulator": {
+                "PROPSIM F64": RealPropsimF64Driver,
+            },
+        }
+
+        # Mock fallback registry (same category → mock driver class mapping)
+        MOCK_FALLBACK: Dict[str, type] = {
+            "channelEmulator": MockChannelEmulator,
+            "baseStation": MockBaseStation,
+            "signalAnalyzer": MockSignalAnalyzer,
+            # positioner, vna, rfSwitch don't have mock drivers in HAL yet
+        }
+
+        db = SessionLocal()
+        try:
+            categories = db.query(InstrumentCategoryModel).filter(
+                InstrumentCategoryModel.is_active == True
+            ).order_by(InstrumentCategoryModel.display_order).all()
+
+            for cat in categories:
+                if not cat.selected_model_id:
+                    logger.info(f"[HAL-REAL] {cat.category_key}: no model selected, skipping")
+                    continue
+
+                model = db.query(InstrumentModelDB).filter(
+                    InstrumentModelDB.id == cat.selected_model_id
+                ).first()
+                if not model:
+                    logger.warning(f"[HAL-REAL] {cat.category_key}: selected model not found")
+                    continue
+
+                conn = db.query(InstrumentConnectionDB).filter(
+                    InstrumentConnectionDB.category_id == cat.id
+                ).first()
+
+                # Build driver config from DB
+                driver_config = {
+                    "model": model.model,
+                    "vendor": model.vendor,
+                    "full_name": model.full_name,
+                    **(model.capabilities or {}),
+                }
+                if conn:
+                    driver_config.update({
+                        "endpoint": conn.endpoint,
+                        "ip": conn.controller_ip,
+                        "port": conn.port,
+                        "protocol": conn.protocol,
+                    })
+
+                # Look up real driver first, then fall back to mock
+                category_drivers = REAL_DRIVER_REGISTRY.get(cat.category_key, {})
+                DriverClass = category_drivers.get(model.model)
+
+                if DriverClass:
+                    logger.info(
+                        f"[HAL-REAL] {cat.category_key}: using REAL driver "
+                        f"{DriverClass.__name__} for {model.vendor} {model.model}"
+                    )
+                else:
+                    DriverClass = MOCK_FALLBACK.get(cat.category_key)
+                    if DriverClass:
+                        logger.warning(
+                            f"[HAL-REAL] {cat.category_key}: no real driver for "
+                            f"{model.vendor} {model.model}, falling back to {DriverClass.__name__}"
+                        )
+                    else:
+                        logger.info(
+                            f"[HAL-REAL] {cat.category_key}: no driver available, skipping"
+                        )
+                        continue
+
+                # Instantiate and connect
+                driver = DriverClass(
+                    instrument_id=f"{cat.category_key}_{str(cat.id)[:8]}",
+                    config=driver_config,
+                )
+                try:
+                    success = await driver.connect()
+                    if success:
+                        self.drivers[cat.category_key] = driver
+                        logger.info(
+                            f"[HAL-REAL] {cat.category_key}: connected → "
+                            f"{model.vendor} {model.model}"
+                        )
+                        # Update connection status in DB
+                        if conn:
+                            conn.status = "connected"
+                            from datetime import datetime
+                            conn.last_connected_at = datetime.utcnow()
+                            db.commit()
+                    else:
+                        logger.error(
+                            f"[HAL-REAL] {cat.category_key}: connection failed"
+                        )
+                        if conn:
+                            conn.status = "error"
+                            conn.last_error = "Connection failed during HAL init"
+                            db.commit()
+                except Exception as e:
+                    logger.error(
+                        f"[HAL-REAL] {cat.category_key}: exception during connect: {e}"
+                    )
+                    if conn:
+                        conn.status = "error"
+                        conn.last_error = str(e)
+                        db.commit()
+
+            logger.info(
+                f"[HAL-REAL] Driver factory complete: "
+                f"{len(self.drivers)} drivers initialized"
+            )
+
+        finally:
+            db.close()
 
     async def shutdown(self):
         """Shutdown all drivers and cleanup"""
@@ -449,3 +582,38 @@ async def shutdown_hal_service():
         await _hal_service.shutdown()
         _hal_service = None
         logger.info("Global HAL service shutdown complete")
+
+
+async def switch_hal_mode(new_mode: DriverMode) -> Dict[str, Any]:
+    """
+    运行时切换 HAL 驱动模式（Mock ↔ Real）
+
+    流程: shutdown 旧驱动 → 用新模式重新初始化
+    返回切换结果和当前激活的驱动列表。
+    """
+    global _hal_service
+
+    old_mode = _hal_service.mode if _hal_service else "none"
+    logger.info(f"[HAL] Switching mode: {old_mode} → {new_mode.value}")
+
+    # 1. 关闭旧驱动
+    if _hal_service:
+        await _hal_service.shutdown()
+
+    # 2. 用新模式重新初始化
+    _hal_service = InstrumentHALService(mode=new_mode)
+    await _hal_service.initialize()
+
+    # 3. 收集结果
+    active_drivers = list(_hal_service.drivers.keys())
+    logger.info(
+        f"[HAL] Mode switched to {new_mode.value}, "
+        f"{len(active_drivers)} drivers active: {active_drivers}"
+    )
+
+    return {
+        "previous_mode": str(old_mode),
+        "current_mode": new_mode.value,
+        "active_drivers": active_drivers,
+        "driver_count": len(active_drivers),
+    }
