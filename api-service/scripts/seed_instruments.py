@@ -31,6 +31,7 @@ CATEGORIES = [
         "name_en": "Channel Emulator",
         "icon": "IconWaveSine",
         "order": 1,
+        "usage_phase": ["test"],  # 仅在测试阶段需要
         "description": "MIMO OTA 信道仿真器，用于多径衰落、多普勒频移等射频信道效应的实时仿真。",
         "models": [
             {
@@ -79,16 +80,18 @@ CATEGORIES = [
                 },
             },
             {
-                "vendor": "R&S",
-                "model": "CMW-AE FE200",
-                "full_name": "Rohde & Schwarz CMW-AE FE200 Fading Extension",
+                "vendor": "KSW",
+                "model": "KCE-8064A",
+                "full_name": "坤恒顺维 KCE-8064A 多通道信道仿真器",
                 "capabilities": {
-                    "channels": 16,
-                    "bandwidth_mhz": 200,
-                    "frequency_range_ghz": [0.35, 6.0],
+                    "channels": 64,
+                    "bandwidth_mhz": 160,
+                    "frequency_range_ghz": [0.4, 6.0],
                     "interfaces": ["LAN"],
-                    "fading_profiles": ["3GPP CDL", "WINNER II"],
-                    "mimo_config": "up to 4x4",
+                    "max_paths_per_channel": 24,
+                    "fading_profiles": ["3GPP CDL", "3GPP TDL", "WINNER II"],
+                    "mimo_config": "up to 8x8 full",
+                    "dynamic_range_db": 45,
                 },
             },
         ],
@@ -105,6 +108,7 @@ CATEGORIES = [
         "name_en": "Base Station Emulator",
         "icon": "IconAntenna",
         "order": 2,
+        "usage_phase": ["test"],  # 仅在测试阶段需要
         "description": "5G NR / LTE 基站仿真器，产生标准 3GPP 下行信号，支持多小区配置。",
         "models": [
             {
@@ -161,6 +165,7 @@ CATEGORIES = [
         "name_en": "Signal Analyzer",
         "icon": "IconChartLine",
         "order": 3,
+        "usage_phase": ["calibration", "test"],  # 校准和测试都需要
         "description": "频谱/信号分析仪，用于 RSRP/SINR/EVM 等射频指标测量和频谱监控。",
         "models": [
             {
@@ -179,13 +184,13 @@ CATEGORIES = [
             },
             {
                 "vendor": "Keysight",
-                "model": "N9040B UXA",
-                "full_name": "Keysight N9040B UXA Signal Analyzer",
+                "model": "N9020B MXA",
+                "full_name": "Keysight N9020B MXA Signal Analyzer (X-Series)",
                 "capabilities": {
-                    "frequency_range_ghz": [0.003, 50],
-                    "analysis_bandwidth_mhz": 510,
-                    "danl_dbm_hz": -171,
-                    "interfaces": ["LAN", "GPIB", "USB"],
+                    "frequency_range_ghz": [0.01, 26.5],
+                    "analysis_bandwidth_mhz": 160,
+                    "danl_dbm_hz": -166,
+                    "interfaces": ["LAN", "GPIB"],
                     "measurements": ["Spectrum", "5G NR", "EVM"],
                 },
             },
@@ -203,8 +208,21 @@ CATEGORIES = [
         "name_en": "DUT Positioner / Turntable",
         "icon": "IconRotate360",
         "order": 4,
+        "usage_phase": ["calibration", "test"],  # 校准和测试都需要
         "description": "DUT 定位转台系统，用于控制被测设备的方位角和俯仰角旋转。",
         "models": [
+            {
+                "vendor": "ETS-Lindgren",
+                "model": "EMCenter",
+                "full_name": "ETS-Lindgren EMCenter Modular RF Platform",
+                "capabilities": {
+                    "axes": 2,
+                    "azimuth_range_deg": [0, 360],
+                    "elevation_range_deg": [-90, 90],
+                    "interfaces": ["LAN"],
+                },
+                "is_default": True,
+            },
             {
                 "vendor": "Orbit/FR",
                 "model": "FR 5060",
@@ -218,7 +236,6 @@ CATEGORIES = [
                     "max_payload_kg": 500,
                     "interfaces": ["RS-232", "LAN"],
                 },
-                "is_default": True,
             },
             {
                 "vendor": "Diamond Engineering",
@@ -247,8 +264,21 @@ CATEGORIES = [
         "name_en": "Vector Network Analyzer",
         "icon": "IconTopologyComplex",
         "order": 5,
+        "usage_phase": ["calibration"],  # 仅校准阶段需要
         "description": "矢量网络分析仪(VNA)，用于校准路径的 S 参数测量、相位一致性校准。",
         "models": [
+            {
+                "vendor": "Keysight",
+                "model": "E5071C ENA",
+                "full_name": "Keysight E5071C ENA Vector Network Analyzer",
+                "capabilities": {
+                    "frequency_range_ghz": [0.009, 20],
+                    "ports": 4,
+                    "dynamic_range_db": 123,
+                    "interfaces": ["LAN", "GPIB"],
+                },
+                "is_default": True,
+            },
             {
                 "vendor": "Keysight",
                 "model": "N5227B PNA",
@@ -261,7 +291,6 @@ CATEGORIES = [
                     "if_bandwidth_hz": [1, 15e6],
                     "interfaces": ["LAN", "GPIB", "USB"],
                 },
-                "is_default": True,
             },
             {
                 "vendor": "R&S",
@@ -288,8 +317,20 @@ CATEGORIES = [
         "name_en": "RF Switch Matrix",
         "icon": "IconSwitchHorizontal",
         "order": 6,
+        "usage_phase": ["calibration", "test"],  # 校准和测试都需要
         "description": "射频开关矩阵，用于信道仿真器输出到各探头天线的信号路由。",
         "models": [
+            {
+                "vendor": "ETS-Lindgren",
+                "model": "EMCenter Switch",
+                "full_name": "ETS-Lindgren EMCenter RF Switch / Relay",
+                "capabilities": {
+                    "slots": 7,
+                    "relay_types": ["SPDT", "SP6T"],
+                    "interfaces": ["LAN", "Serial"]
+                },
+                "is_default": True,
+            },
             {
                 "vendor": "Keysight",
                 "model": "U3022AE06",
@@ -303,7 +344,7 @@ CATEGORIES = [
                     "switching_speed_ms": 15,
                     "interfaces": ["LAN", "GPIB"],
                 },
-                "is_default": True,
+                "is_default": False,
             },
             {
                 "vendor": "Mini-Circuits",
@@ -322,6 +363,62 @@ CATEGORIES = [
         "connection": {
             "endpoint": "TCPIP0::192.168.100.26::inst0::INSTR",
             "controller_ip": "192.168.100.26",
+            "port": 5025,
+            "protocol": "VISA/SCPI",
+        },
+    },
+    {
+        "key": "vectorSignalGenerator",
+        "name": "矢量信号发生器",
+        "name_en": "Vector Signal Generator",
+        "icon": "IconWaveSquare",
+        "order": 7,
+        "usage_phase": ["calibration", "test"],  # 校准和测试都需要
+        "description": "矢量信号发生器(VSG)，产生调制射频信号，用于校准参考信号注入和信道仿真器旁路测试。",
+        "models": [
+            {
+                "vendor": "R&S",
+                "model": "SMW200A",
+                "full_name": "Rohde & Schwarz SMW200A Vector Signal Generator",
+                "capabilities": {
+                    "frequency_range_ghz": [0.1, 44],
+                    "max_output_power_dbm": 18,
+                    "modulation_bandwidth_mhz": 2000,
+                    "phase_noise_dbc_hz": -139,
+                    "interfaces": ["LAN", "GPIB", "USB"],
+                    "standards": ["5G NR", "LTE", "WLAN", "Custom IQ"],
+                    "baseband_generators": 2,
+                },
+                "is_default": True,
+            },
+            {
+                "vendor": "Keysight",
+                "model": "N5182B MXG",
+                "full_name": "Keysight N5182B MXG X-Series Signal Generator",
+                "capabilities": {
+                    "frequency_range_ghz": [0.009, 6],
+                    "max_output_power_dbm": 20,
+                    "modulation_bandwidth_mhz": 160,
+                    "interfaces": ["LAN", "GPIB", "USB"],
+                    "standards": ["5G NR", "LTE", "WLAN"],
+                },
+            },
+            {
+                "vendor": "Keysight",
+                "model": "E8267D PSG",
+                "full_name": "Keysight E8267D PSG Vector Signal Generator",
+                "capabilities": {
+                    "frequency_range_ghz": [0.25, 44],
+                    "max_output_power_dbm": 17,
+                    "modulation_bandwidth_mhz": 2000,
+                    "interfaces": ["LAN", "GPIB"],
+                    "standards": ["5G NR", "LTE", "Radar", "Custom IQ"],
+                },
+            },
+        ],
+        "connection": {
+            "endpoint": "TCPIP0::192.168.100.27::inst0::INSTR",
+            "controller_ip": "192.168.100.27",
             "port": 5025,
             "protocol": "VISA/SCPI",
         },
@@ -345,9 +442,10 @@ def main():
         existing = conn.execute(text("SELECT COUNT(*) FROM instrument_categories")).fetchone()[0]
         if existing > 0:
             print(f"\n⚠️  已存在 {existing} 个仪器类别。先清除旧数据...")
+            # 先解除外键引用，再按依赖顺序删除
+            conn.execute(text("UPDATE instrument_categories SET selected_model_id = NULL"))
             conn.execute(text("DELETE FROM instrument_connections"))
             conn.execute(text("DELETE FROM instrument_models"))
-            conn.execute(text("UPDATE instrument_categories SET selected_model_id = NULL"))
             conn.execute(text("DELETE FROM instrument_categories"))
             print("   → 旧数据已清除")
 
@@ -358,8 +456,8 @@ def main():
             conn.execute(text("""
                 INSERT INTO instrument_categories 
                     (id, category_key, category_name, category_name_en, 
-                     description, icon, display_order, is_active)
-                VALUES (:id, :key, :name, :name_en, :desc, :icon, :order, true)
+                     description, icon, display_order, usage_phase, is_active)
+                VALUES (:id, :key, :name, :name_en, :desc, :icon, :order, :usage_phase, true)
             """), {
                 "id": cat_id,
                 "key": cat_def["key"],
@@ -368,6 +466,7 @@ def main():
                 "desc": cat_def["description"],
                 "icon": cat_def["icon"],
                 "order": cat_def["order"],
+                "usage_phase": json.dumps(cat_def.get("usage_phase", ["calibration", "test"])),
             })
 
             # 2. 创建型号

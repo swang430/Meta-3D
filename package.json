@@ -34,5 +34,8 @@
     "mpac"
   ],
   "author": "Meta-3D Team",
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "dependencies": {
+    "docx": "^9.6.1"
+  }
 }

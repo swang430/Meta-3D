@@ -47,6 +47,7 @@ class FEInstrumentConnection(BaseModel):
     endpoint: Optional[str] = None
     controller: Optional[str] = None
     notes: Optional[str] = None
+    connection_params: Optional[Dict[str, Any]] = None
 
 
 class FEInstrumentCategory(BaseModel):
@@ -58,6 +59,8 @@ class FEInstrumentCategory(BaseModel):
     selectedModelId: Optional[str] = None
     connection: FEInstrumentConnection
     models: List[FEInstrumentModel]
+    isActive: bool = True
+    usagePhase: List[str] = []  # ["calibration", "test"]
 
 
 class FEInstrumentsResponse(BaseModel):
@@ -124,9 +127,14 @@ def _make_summary(model_db: InstrumentModelDB) -> str:
     return " | ".join(parts) if parts else f"{model_db.vendor} {model_db.model}"
 
 
-def _convert_model(model_db: InstrumentModelDB) -> FEInstrumentModel:
+def _convert_model(model_db: InstrumentModelDB, category_key: str) -> FEInstrumentModel:
     """DB InstrumentModel → 前端 FEInstrumentModel"""
+    from app.services.instrument_hal_service import has_real_driver
     caps = model_db.capabilities or {}
+    
+    is_supported = has_real_driver(category_key, model_db.model)
+    status = "available" if is_supported else "pending_dev"
+    
     return FEInstrumentModel(
         id=str(model_db.id),
         vendor=model_db.vendor,
@@ -142,7 +150,7 @@ def _convert_model(model_db: InstrumentModelDB) -> FEInstrumentModel:
         channels=str(caps["channels"]) if caps.get("channels") else (
             f"{caps['ports']}-Port" if caps.get("ports") else None
         ),
-        status="available" if model_db.is_available else "offline",
+        status=status,
     )
 
 
@@ -154,6 +162,7 @@ def _convert_connection(conn_db: Optional[InstrumentConnectionDB]) -> FEInstrume
         endpoint=conn_db.endpoint or "",
         controller=conn_db.protocol or "",
         notes=conn_db.notes or "",
+        connection_params=conn_db.connection_params,
     )
 
 
@@ -178,7 +187,9 @@ def _convert_category(
         tags=_category_tags(cat),
         selectedModelId=str(cat.selected_model_id) if cat.selected_model_id else None,
         connection=_convert_connection(conn),
-        models=[_convert_model(m) for m in models],
+        models=[_convert_model(m, cat.category_key) for m in models],
+        isActive=cat.is_active if cat.is_active is not None else True,
+        usagePhase=cat.usage_phase if cat.usage_phase else [],
     )
 
 
@@ -195,9 +206,7 @@ def get_instrument_catalog(db: Session = Depends(get_db)):
     { categories: InstrumentCategory[] }
     """
     try:
-        categories_db = db.query(InstrumentCategoryModel).filter(
-            InstrumentCategoryModel.is_active == True
-        ).order_by(
+        categories_db = db.query(InstrumentCategoryModel).order_by(
             InstrumentCategoryModel.display_order
         ).all()
 
@@ -467,3 +476,49 @@ async def switch_hal_mode_endpoint(request: HALModeSwitchRequest):
             driver_count=0,
             message=f"切换失败: {e}",
         )
+
+
+# ============================================================
+# 仪器品类启停
+# ============================================================
+
+class ToggleActiveRequest(BaseModel):
+    """启停请求"""
+    isActive: bool
+
+
+class ToggleActiveResult(BaseModel):
+    """启停结果"""
+    key: str
+    isActive: bool
+    message: str
+
+
+@router.patch("/instruments/{category_key}/active", response_model=ToggleActiveResult)
+def toggle_category_active(
+    category_key: str,
+    request: ToggleActiveRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    切换仪器品类的启用/停用状态
+
+    用途：校准完成后停用 VNA，测试阶段只保留必需仪器在线。
+    """
+    category = db.query(InstrumentCategoryModel).filter(
+        InstrumentCategoryModel.category_key == category_key
+    ).first()
+    if not category:
+        raise HTTPException(404, f"Category '{category_key}' not found")
+
+    category.is_active = request.isActive
+    db.commit()
+
+    action = "启用" if request.isActive else "停用"
+    logger.info(f"[Instrument] {category_key} {action}")
+
+    return ToggleActiveResult(
+        key=category_key,
+        isActive=request.isActive,
+        message=f"已{action} {category.category_name}",
+    )

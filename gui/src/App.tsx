@@ -28,6 +28,7 @@ import {
   Flex,
   Timeline,
   Modal,
+  Drawer,
   MultiSelect,
   Select,
   ScrollArea,
@@ -42,6 +43,7 @@ import {
   Tooltip,
   TextInput,
   Textarea,
+  JsonInput,
   Title,
   useMantineTheme,
   UnstyledButton,
@@ -221,6 +223,7 @@ type EquipmentDraft = {
   endpoint: string
   controller: string
   notes: string
+  connection_params?: string
 }
 
 type EquipmentFeedback = {
@@ -1406,7 +1409,8 @@ function EquipmentManager() {
 
   const categories = useMemo(() => data?.categories ?? [], [data])
 
-  const [drafts, setDrafts] = useState<Record<string, EquipmentDraft>>({})
+    const [drafts, setDrafts] = useState<Record<string, EquipmentDraft>>({})
+  const [editingCategoryKey, setEditingCategoryKey] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<Record<string, EquipmentFeedback>>({})
   const feedbackTimers = useRef<Record<string, number>>({})
 
@@ -1424,6 +1428,7 @@ function EquipmentManager() {
           endpoint: previous?.endpoint ?? (category.connection.endpoint ?? ''),
           controller: previous?.controller ?? (category.connection.controller ?? ''),
           notes: previous?.notes ?? (category.connection.notes ?? ''),
+          connection_params: previous?.connection_params ?? (category.connection.connection_params ? JSON.stringify(category.connection.connection_params, null, 2) : ''),
         }
       })
       return next
@@ -1517,6 +1522,17 @@ function EquipmentManager() {
     (categoryKey: string) => {
       const draft = drafts[categoryKey]
       if (!draft) return
+      
+      let parsedParams = undefined
+      if (draft.connection_params) {
+        try {
+          parsedParams = JSON.parse(draft.connection_params)
+        } catch (e) {
+          showFeedback(categoryKey, 'error', 'JSON 配置格式无效')
+          return
+        }
+      }
+
       instrumentMutation.mutate({
         categoryKey,
         payload: {
@@ -1524,11 +1540,12 @@ function EquipmentManager() {
             endpoint: draft.endpoint || undefined,
             controller: draft.controller || undefined,
             notes: draft.notes || undefined,
+            ...(parsedParams !== undefined ? { connection_params: parsedParams } : {})
           },
         },
       })
     },
-    [drafts, instrumentMutation],
+    [drafts, instrumentMutation, showFeedback],
   )
 
   const modelSelectData = useMemo(() => {
@@ -1572,6 +1589,160 @@ function EquipmentManager() {
 
   return (
     <Stack gap="xl">
+      <Drawer
+        opened={!!editingCategoryKey}
+        onClose={() => setEditingCategoryKey(null)}
+        title={<Title order={4}>参数配置</Title>}
+        position="right"
+        size="lg"
+        padding="xl"
+      >
+        {(() => {
+          const category = categories.find((c) => c.key === editingCategoryKey)
+          if (!category) return null
+          const draft = drafts[category.key]
+          if (!draft) return null
+          const drawerSelectedModel = category.models.find((model) => model.id === draft.modelId) ?? null
+
+          return (
+            <Stack gap="xl">
+              <Group gap="sm" align="center">
+                <Title order={3}>{category.label}</Title>
+              </Group>
+
+              <Stack gap="md">
+                <Select
+                  label="选择型号"
+                  placeholder="请选择仪器型号"
+                  data={modelSelectData[category.key] ?? []}
+                  value={draft.modelId}
+                  onChange={(value) => handleModelChange(category.key, value ?? '')}
+                  disabled={instrumentMutation.isPending}
+                />
+                <Card withBorder padding="md" radius="md" shadow="xs" bg="gray.0">
+                  {drawerSelectedModel ? (
+                    <Stack gap="sm">
+                      <Group justify="space-between" align="flex-start">
+                        <Stack gap={2}>
+                          <Text fw={600}>
+                            {drawerSelectedModel.vendor} {drawerSelectedModel.model}
+                          </Text>
+                          <Text size="sm" c="gray.6">
+                            {drawerSelectedModel.summary}
+                          </Text>
+                        </Stack>
+                        <Badge color={instrumentStatusColor[drawerSelectedModel.status]} variant="light">
+                          {drawerSelectedModel.status.toUpperCase()}
+                        </Badge>
+                      </Group>
+                      <Group gap="sm" c="gray.6" wrap="wrap">
+                        {drawerSelectedModel.channels ? <Text size="xs">通道: {drawerSelectedModel.channels}</Text> : null}
+                        {drawerSelectedModel.bandwidth ? <Text size="xs">带宽: {drawerSelectedModel.bandwidth}</Text> : null}
+                        <Text size="xs">接口: {drawerSelectedModel.interfaces.join(' / ')}</Text>
+                      </Group>
+                      <Group gap="xs" wrap="wrap">
+                        {drawerSelectedModel.capabilities.map((capability) => (
+                          <Badge key={capability} variant="outline" color="brand">
+                            {capability}
+                          </Badge>
+                        ))}
+                      </Group>
+                    </Stack>
+                  ) : (
+                    <Stack align="center" py="xl" c="gray.6">
+                      <Text size="sm">请选择型号以查看能力说明</Text>
+                    </Stack>
+                  )}
+                </Card>
+              </Stack>
+
+              <Stack gap="md">
+                <TextInput
+                  label="控制端点"
+                  placeholder="例: 192.168.100.21:5025"
+                  value={draft.endpoint}
+                  onChange={handleFieldChange(category.key, 'endpoint')}
+                />
+                <TextInput
+                  label="控制方式"
+                  placeholder="LAN/SCPI"
+                  value={draft.controller}
+                  onChange={handleFieldChange(category.key, 'controller')}
+                />
+                <Textarea
+                  label="备注"
+                  placeholder="记录登录凭证、联机说明或版本信息"
+                  minRows={3}
+                  value={draft.notes}
+                  onChange={handleFieldChange(category.key, 'notes')}
+                />
+                
+                {category.key === 'rfSwitch' && (
+                  <JsonInput
+                    label="端口映射配置 (Option B)"
+                    description="设置业务逻辑侧 Probe/天线 到物理继电器的路由。"
+                    placeholder={'{\n  "port_maps": {\n    "Probe_V_1": {"switch_id": "1:EXT_RELAY_A", "position": 1}\n  }\n}'}
+                    validationError="无效的 JSON 格式"
+                    formatOnBlur
+                    autosize
+                    minRows={4}
+                    value={draft.connection_params || ''}
+                    onChange={(val) => setDrafts(prev => ({ 
+                      ...prev, 
+                      [category.key]: { ...prev[category.key], connection_params: val } 
+                    }))}
+                  />
+                )}
+
+                <Group justify="flex-end" mt="md">
+                  <Button
+                    variant="outline"
+                    color="teal"
+                    onClick={async () => {
+                      showFeedback(category.key, 'success', '正在测试连接...')
+                      try {
+                        const resp = await client.post(`/instruments/${category.key}/test-connection`)
+                        const result = resp.data as { success: boolean; message: string; idn?: string; latency_ms?: number }
+                        if (result.success) {
+                          const extra = result.idn ? ` | IDN: ${result.idn}` : ''
+                          const latency = result.latency_ms ? ` (${result.latency_ms}ms)` : ''
+                          showFeedback(category.key, 'success', `✅ ${result.message}${latency}${extra}`)
+                        } else {
+                          showFeedback(category.key, 'error', `❌ ${result.message}`)
+                        }
+                      } catch (err: any) {
+                        showFeedback(category.key, 'error', `测试失败: ${err.message}`)
+                      }
+                    }}
+                  >
+                    测试连接
+                  </Button>
+                  <Button
+                    color="brand"
+                    onClick={() => {
+                       handleSaveConnection(category.key);
+                       setEditingCategoryKey(null);
+                    }}
+                    loading={instrumentMutation.isPending}
+                  >
+                    保存配置
+                  </Button>
+                </Group>
+                {feedback[category.key] ? (
+                  <Alert
+                    color={feedback[category.key].type === 'error' ? 'red' : 'green'}
+                    variant="light"
+                    radius="md"
+                  >
+                    {feedback[category.key].message}
+                  </Alert>
+                ) : null}
+              </Stack>
+            </Stack>
+          )
+        })()}
+      </Drawer>
+
       {/* HAL 模式切换器 */}
       <Card withBorder radius="md" padding="lg">
         <Group justify="space-between" align="center">
@@ -1631,144 +1802,84 @@ function EquipmentManager() {
         </Card>
       ) : null}
       {categories.map((category) => {
-        const draft = drafts[category.key] ?? {
-          modelId: category.selectedModelId ?? '',
-          endpoint: category.connection.endpoint ?? '',
-          controller: category.connection.controller ?? '',
-          notes: category.connection.notes ?? '',
-        }
-        const selectedModel = category.models.find((model) => model.id === draft.modelId) ?? null
+        const selectedModelInfo = category.models.find((model) => model.id === category.selectedModelId) ?? null
 
         return (
-          <Card key={category.key} withBorder radius="md" padding="xl">
-            <Stack gap="xl">
-              <Group justify="space-between" align="flex-start">
-                <Stack gap={6} style={{ flex: 1 }}>
-                  <Title order={3}>{category.label}</Title>
-                  <Text size="sm" c="gray.6">
-                    {category.description}
-                  </Text>
-                </Stack>
-                {category.tags && category.tags.length > 0 ? (
-                  <Group gap="xs">
-                    {category.tags.map((tag) => (
-                      <Badge key={tag} color="brand" variant="light">
-                        {tag}
-                      </Badge>
-                    ))}
-                  </Group>
-                ) : null}
+          <Card key={category.key} withBorder radius="md" padding="lg" style={{
+            opacity: category.isActive === false ? 0.5 : 1,
+            transition: 'opacity 0.3s ease',
+            borderLeft: `4px solid ${category.isActive === false ? '#dee2e6' : '#2c77f5'}`
+          }}>
+            <Stack gap="md">
+              <Group justify="space-between" align="center">
+                <Group gap="sm" align="center">
+                  <Title order={4}>{category.label}</Title>
+                  {(category as any).usagePhase?.map((phase: string) => (
+                    <Badge
+                      key={phase}
+                      size="sm"
+                      variant="dot"
+                      color={phase === 'calibration' ? 'orange' : 'teal'}
+                    >
+                      {phase === 'calibration' ? '校准' : '测试'}
+                    </Badge>
+                  ))}
+                  <Badge variant="light" color={selectedModelInfo ? "indigo" : "gray"}>
+                    {selectedModelInfo ? "已分配型号" : "槽位闲置"}
+                  </Badge>
+                </Group>
+                
+                <Group gap="md">
+                  <Switch
+                    checked={category.isActive !== false}
+                    color="teal"
+                    onChange={async (e) => {
+                      const newActive = e.currentTarget.checked
+                      try {
+                        await client.patch(`/instruments/${category.key}/active`, { isActive: newActive })
+                        queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
+                        showFeedback(category.key, 'success', `✅ 已${newActive ? '启用' : '停用'} ${category.label}`)
+                      } catch (err: any) {
+                        showFeedback(category.key, 'error', `操作失败: ${err.message}`)
+                      }
+                    }}
+                  />
+                  <Button variant="light" size="sm" onClick={() => setEditingCategoryKey(category.key)}>
+                    替换 / 配置实装
+                  </Button>
+                </Group>
               </Group>
 
-              <SimpleGrid cols={{ base: 1, md: 2 }} spacing="xl">
-                <Stack gap="md">
-                  <Select
-                    label="选择型号"
-                    placeholder="请选择仪器型号"
-                    data={modelSelectData[category.key] ?? []}
-                    value={draft.modelId}
-                    onChange={(value) => handleModelChange(category.key, value ?? '')}
-                    disabled={instrumentMutation.isPending}
-                  />
-                  <Card withBorder padding="md" radius="md" shadow="xs">
-                    {selectedModel ? (
-                      <Stack gap="sm">
-                        <Group justify="space-between" align="flex-start">
-                          <Stack gap={2}>
-                            <Text fw={600}>
-                              {selectedModel.vendor} {selectedModel.model}
-                            </Text>
-                            <Text size="sm" c="gray.6">
-                              {selectedModel.summary}
-                            </Text>
-                          </Stack>
-                          <Badge color={instrumentStatusColor[selectedModel.status]} variant="light">
-                            {selectedModel.status.toUpperCase()}
-                          </Badge>
-                        </Group>
-                        <Group gap="sm" c="gray.6" wrap="wrap">
-                          {selectedModel.channels ? <Text size="xs">通道: {selectedModel.channels}</Text> : null}
-                          {selectedModel.bandwidth ? <Text size="xs">带宽: {selectedModel.bandwidth}</Text> : null}
-                          <Text size="xs">接口: {selectedModel.interfaces.join(' / ')}</Text>
-                        </Group>
-                        <Group gap="xs" wrap="wrap">
-                          {selectedModel.capabilities.map((capability) => (
-                            <Badge key={capability} variant="outline" color="brand">
-                              {capability}
-                            </Badge>
-                          ))}
-                        </Group>
-                      </Stack>
-                    ) : (
-                      <Stack align="center" py="xl" c="gray.6">
-                        <Text size="sm">请选择型号以查看能力说明</Text>
-                      </Stack>
-                    )}
-                  </Card>
-                </Stack>
-
-                <Stack gap="md">
-                  <TextInput
-                    label="控制端点"
-                    placeholder="例: 192.168.100.21:5025"
-                    value={draft.endpoint}
-                    onChange={handleFieldChange(category.key, 'endpoint')}
-                  />
-                  <TextInput
-                    label="控制方式"
-                    placeholder="LAN/SCPI"
-                    value={draft.controller}
-                    onChange={handleFieldChange(category.key, 'controller')}
-                  />
-                  <Textarea
-                    label="备注"
-                    placeholder="记录登录凭证、联机说明或版本信息"
-                    minRows={3}
-                    value={draft.notes}
-                    onChange={handleFieldChange(category.key, 'notes')}
-                  />
-                  <Group justify="flex-end">
-                    <Button
-                      variant="outline"
-                      color="teal"
-                      onClick={async () => {
-                        showFeedback(category.key, 'success', '正在测试连接...')
-                        try {
-                          const resp = await client.post(`/instruments/${category.key}/test-connection`)
-                          const result = resp.data as { success: boolean; message: string; idn?: string; latency_ms?: number }
-                          if (result.success) {
-                            const extra = result.idn ? ` | IDN: ${result.idn}` : ''
-                            const latency = result.latency_ms ? ` (${result.latency_ms}ms)` : ''
-                            showFeedback(category.key, 'success', `✅ ${result.message}${latency}${extra}`)
-                          } else {
-                            showFeedback(category.key, 'error', `❌ ${result.message}`)
-                          }
-                        } catch (err: any) {
-                          showFeedback(category.key, 'error', `测试失败: ${err.message}`)
-                        }
-                      }}
-                    >
-                      测试连接
-                    </Button>
-                    <Button
-                      color="brand"
-                      onClick={() => handleSaveConnection(category.key)}
-                      loading={instrumentMutation.isPending}
-                    >
-                      保存配置
-                    </Button>
+              {/* View Display Area */}
+              <Card withBorder radius="sm" padding="sm" bg="gray.0">
+                {selectedModelInfo ? (
+                  <SimpleGrid cols={{ base: 1, md: 2 }} spacing="sm">
+                    <Stack gap={4}>
+                      <Group justify="space-between">
+                         <Text size="sm" c="dimmed">型号</Text>
+                         <Badge color={instrumentStatusColor[selectedModelInfo.status]} variant="dot" size="xs">
+                            {selectedModelInfo.status.toUpperCase()}
+                         </Badge>
+                      </Group>
+                      <Text fw={600}>{selectedModelInfo.vendor} {selectedModelInfo.model}</Text>
+                      <Text size="xs" c="gray.6">{selectedModelInfo.summary}</Text>
+                    </Stack>
+                    
+                    <Stack gap={4}>
+                      <Text size="sm" c="dimmed">互联</Text>
+                      <Group gap="xs">
+                        <Badge size="xs" variant="outline">{category.connection?.controller || 'Unknown'}</Badge>
+                        <Text fw={500} size="sm">{category.connection?.endpoint || '未配置IP'}</Text>
+                      </Group>
+                      <Text size="xs" c="gray.6" truncate>{category.connection?.notes || '无备注'}</Text>
+                    </Stack>
+                  </SimpleGrid>
+                ) : (
+                  <Group justify="center" py="md">
+                    <Text size="sm" c="dimmed">该槽位当前为空。请点击“配置实装”进行连接。</Text>
                   </Group>
-                  {feedback[category.key] ? (
-                    <Alert
-                      color={feedback[category.key].type === 'error' ? 'red' : 'green'}
-                      variant="light"
-                      radius="md"
-                    >
-                      {feedback[category.key].message}
-                    </Alert>
-                  ) : null}
-                </Stack>
-              </SimpleGrid>
+                )}
+              </Card>
             </Stack>
           </Card>
         )

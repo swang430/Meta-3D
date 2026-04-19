@@ -52,8 +52,15 @@ class InstrumentCategory(Base):
     # 排序
     display_order = Column(Integer, default=0, comment="显示顺序")
 
+    # 使用阶段标注（用户可在 UI 上随时覆盖）
+    usage_phase = Column(
+        JSON,
+        default=list,
+        comment='适用阶段列表: ["calibration","test"] 或 ["test"] 等'
+    )
+
     # 元数据
-    is_active = Column(Boolean, default=True, nullable=False, comment="是否启用")
+    is_active = Column(Boolean, default=True, nullable=False, comment="是否启用（当前会话中是否参与）")
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 

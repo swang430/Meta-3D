@@ -71,6 +71,7 @@ export type InstrumentConnection = {
   endpoint?: string
   controller?: string
   notes?: string
+  connection_params?: Record<string, any>
 }
 
 export type InstrumentCategory = {

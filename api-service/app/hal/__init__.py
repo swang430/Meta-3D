@@ -9,6 +9,9 @@ from app.hal.base import InstrumentDriver, InstrumentStatus, InstrumentCapabilit
 from app.hal.channel_emulator import ChannelEmulatorDriver, MockChannelEmulator
 from app.hal.base_station import BaseStationDriver, MockBaseStation
 from app.hal.signal_analyzer import SignalAnalyzerDriver, MockSignalAnalyzer
+from app.hal.vna import VNADriver, MockVNA
+from app.hal.positioner import PositionerDriver, MockPositioner
+from app.hal.signal_generator import SignalGeneratorDriver, MockSignalGenerator
 
 __all__ = [
     # Base classes
@@ -27,4 +30,16 @@ __all__ = [
     # Signal Analyzer
     'SignalAnalyzerDriver',
     'MockSignalAnalyzer',
+
+    # VNA
+    'VNADriver',
+    'MockVNA',
+
+    # Positioner
+    'PositionerDriver',
+    'MockPositioner',
+
+    # Signal Generator
+    'SignalGeneratorDriver',
+    'MockSignalGenerator',
 ]

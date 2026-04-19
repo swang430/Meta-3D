@@ -166,6 +166,7 @@ class FEConnectionUpdate(BaseModel):
     endpoint: Optional[str] = None
     controller: Optional[str] = None  # 前端叫 controller，对应 DB 的 protocol
     notes: Optional[str] = None
+    connection_params: Optional[Dict[str, Any]] = None  # Option B port_maps 等额外配置
 
 
 class UpdateInstrumentCategoryRequest(BaseModel):

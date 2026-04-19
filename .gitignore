@@ -55,3 +55,4 @@ api-service/debug_*
 Result_Report/
 .agent/
 api-service/app/data/hardware_artifacts/
+Instrument_API_Doc/Keysight UXM NR SCPI/5G_NR_Test_Application_SCPI_Reference.html

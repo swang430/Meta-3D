@@ -18,7 +18,24 @@ from app.hal.base import InstrumentDriver, InstrumentStatus
 from app.hal.channel_emulator import MockChannelEmulator
 from app.hal.base_station import MockBaseStation
 from app.hal.signal_analyzer import MockSignalAnalyzer
+from app.hal.vna import MockVNA
+from app.hal.positioner import MockPositioner
+from app.hal.signal_generator import MockSignalGenerator
+from app.hal.rf_switch import MockRfSwitch, EtslSwitchDriver
 
+SUPPORTED_REAL_DRIVERS = {
+    "channelEmulator": ["PROPSIM F64"],
+    "baseStation": ["UXM 5G E7515B", "CMW500"],
+    "signalAnalyzer": ["N9020B MXA", "FSW43"],
+    "vectorSignalGenerator": ["N5182B MXG", "SMW200A", "SMU200A"],
+    "vna": ["E5071C ENA"],
+    "positioner": ["EMCenter"],
+    "rfSwitch": ["EMCenter Switch"],
+}
+
+def has_real_driver(category_key: str, model_name: str) -> bool:
+    """Helper to check if a real driver is backed by HAL implementation."""
+    return model_name in SUPPORTED_REAL_DRIVERS.get(category_key, [])
 
 logger = logging.getLogger(__name__)
 
@@ -121,11 +138,7 @@ class InstrumentHALService:
         logger.info(f"Initializing InstrumentHALService in {self.mode} mode")
 
         try:
-            if self.mode == DriverMode.MOCK:
-                await self._initialize_mock_drivers()
-            else:
-                await self._initialize_real_drivers()
-
+            await self._initialize_from_db()
             self._initialized = True
             logger.info(f"Initialized {len(self.drivers)} instrument drivers")
 
@@ -133,62 +146,7 @@ class InstrumentHALService:
             logger.error(f"Failed to initialize HAL service: {e}")
             raise
 
-    async def _initialize_mock_drivers(self):
-        """Initialize mock drivers for development"""
-
-        # Channel Emulator
-        channel_emulator = MockChannelEmulator(
-            instrument_id="channel_emulator_1",
-            config={
-                "model": "Keysight PROPSIM F64",
-                "tx_ports": 4,
-                "rx_ports": 4
-            }
-        )
-        await channel_emulator.connect()
-        await channel_emulator.configure({
-            "channel_model": "3GPP_38.901",
-            "scenario": "UMi",
-            "tx_antennas": 4,
-            "rx_antennas": 4
-        })
-        self.drivers["channel_emulator"] = channel_emulator
-
-        # Base Station Emulator
-        base_station = MockBaseStation(
-            instrument_id="base_station_1",
-            config={
-                "model": "Keysight 5G Network Emulator",
-                "frequency_range_mhz": [450, 6000]
-            }
-        )
-        await base_station.connect()
-        await base_station.configure({
-            "frequency_mhz": 3500.0,
-            "bandwidth_mhz": 100.0
-        })
-        await base_station.start_cell()
-        self.drivers["base_station"] = base_station
-
-        # Signal Analyzer
-        signal_analyzer = MockSignalAnalyzer(
-            instrument_id="signal_analyzer_1",
-            config={
-                "model": "Rohde & Schwarz FSW",
-                "frequency_range_mhz": [9, 6000]
-            }
-        )
-        await signal_analyzer.connect()
-        await signal_analyzer.configure({
-            "center_freq_mhz": 3500.0,
-            "span_mhz": 200.0
-        })
-        await signal_analyzer.start_measurement()
-        self.drivers["signal_analyzer"] = signal_analyzer
-
-        logger.info("Mock drivers initialized successfully")
-
-    async def _initialize_real_drivers(self):
+    async def _initialize_from_db(self):
         """
         Initialize drivers from database instrument configuration.
 
@@ -209,6 +167,14 @@ class InstrumentHALService:
         )
 
         from app.hal.propsim_f64 import RealPropsimF64Driver
+        from app.hal.uxm_base_station import RealUxmDriver
+        from app.hal.cmw500_base_station import RealCmw500Driver
+        from app.hal.ets_positioner import RealEtsEmcenterDriver
+        from app.hal.keysight_ena import RealKeysightEnaDriver
+        from app.hal.keysight_mxg import RealKeysightMxgDriver
+        from app.hal.rs_smw200a import RealRsSmw200aDriver
+        from app.hal.keysight_x_series_sa import RealKeysightXSeriesSaDriver
+        from app.hal.rs_fsw import RealRsFswDriver
 
         # Driver registry: maps (category_key, model_name) → DriverClass
         # When real VISA/SCPI drivers are implemented, register them here.
@@ -217,6 +183,28 @@ class InstrumentHALService:
             "channelEmulator": {
                 "PROPSIM F64": RealPropsimF64Driver,
             },
+            "baseStation": {
+                "UXM 5G E7515B": RealUxmDriver,
+                "CMW500": RealCmw500Driver,
+            },
+            "signalAnalyzer": {
+                "N9020B MXA": RealKeysightXSeriesSaDriver,
+                "FSW43": RealRsFswDriver,
+            },
+            "vectorSignalGenerator": {
+                "N5182B MXG": RealKeysightMxgDriver,
+                "SMW200A": RealRsSmw200aDriver,
+                "SMU200A": RealRsSmw200aDriver,
+            },
+            "vna": {
+                "E5071C ENA": RealKeysightEnaDriver,
+            },
+            "positioner": {
+                "EMCenter": RealEtsEmcenterDriver,
+            },
+            "rfSwitch": {
+                "EMCenter Switch": EtslSwitchDriver,
+            },
         }
 
         # Mock fallback registry (same category → mock driver class mapping)
@@ -224,7 +212,10 @@ class InstrumentHALService:
             "channelEmulator": MockChannelEmulator,
             "baseStation": MockBaseStation,
             "signalAnalyzer": MockSignalAnalyzer,
-            # positioner, vna, rfSwitch don't have mock drivers in HAL yet
+            "vectorSignalGenerator": MockSignalGenerator,
+            "vna": MockVNA,
+            "positioner": MockPositioner,
+            "rfSwitch": MockRfSwitch,
         }
 
         db = SessionLocal()
@@ -263,14 +254,20 @@ class InstrumentHALService:
                         "port": conn.port,
                         "protocol": conn.protocol,
                     })
+                    # Merge connection_params (e.g. port_maps for RF Switch Option B)
+                    if conn.connection_params and isinstance(conn.connection_params, dict):
+                        driver_config.update(conn.connection_params)
 
-                # Look up real driver first, then fall back to mock
-                category_drivers = REAL_DRIVER_REGISTRY.get(cat.category_key, {})
-                DriverClass = category_drivers.get(model.model)
+                # Determine driver class based on mode and supported models
+                DriverClass = None
+
+                if self.mode == DriverMode.REAL:
+                    category_drivers = REAL_DRIVER_REGISTRY.get(cat.category_key, {})
+                    DriverClass = category_drivers.get(model.model)
 
                 if DriverClass:
                     logger.info(
-                        f"[HAL-REAL] {cat.category_key}: using REAL driver "
+                        f"[HAL-{self.mode.value.upper()}] {cat.category_key}: using REAL driver "
                         f"{DriverClass.__name__} for {model.vendor} {model.model}"
                     )
                 else:
@@ -296,7 +293,7 @@ class InstrumentHALService:
                     if success:
                         self.drivers[cat.category_key] = driver
                         logger.info(
-                            f"[HAL-REAL] {cat.category_key}: connected → "
+                            f"[HAL-{self.mode.value.upper()}] {cat.category_key}: connected → "
                             f"{model.vendor} {model.model}"
                         )
                         # Update connection status in DB
