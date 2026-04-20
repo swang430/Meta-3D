@@ -797,6 +797,25 @@ let instrumentCatalog: InstrumentCategory[] = [
     ],
   },
   {
+    key: "rf-switch-matrix",
+    label: "RF开关矩阵",
+    description: "用于在基站仿真器、信道仿真器与MIMO探头之间灵活路由射频信号。",
+    tags: ["开关", "矩阵"],
+    selectedModelId: "caict-custom-matrix",
+    connection: { endpoint: "192.168.100.50", controller: "LAN", notes: "机柜顶部" },
+    models: [
+      {
+        id: "caict-custom-matrix",
+        vendor: "CAICT",
+        model: "MIMO-Matrix-Custom",
+        summary: "中国信通院定制的多层射频开关矩阵，支持校准与SISO/MIMO切换。",
+        interfaces: ["LAN/SCPI", "GPIO"],
+        capabilities: ["8进32出", "插损补偿", "相位校正"],
+        status: "available",
+      }
+    ],
+  },
+  {
     key: 'base-station-emulator',
     label: '基站仿真器',
     description: '生成5G NR/LTE/C-V2X协议栈信号，提供核心网交互。',

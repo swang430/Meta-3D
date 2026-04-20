@@ -11,7 +11,7 @@ import logging
 from app.config import settings
 from app.db.database import init_db
 from app.api import health, calibration, test_plan, test_execution, test_sequence
-from app.api import dashboard, probe, instrument, monitoring, report, road_test, alert, sync, topology, scenario
+from app.api import dashboard, probe, instrument, monitoring, report, road_test, alert, sync, topology, scenario, switch_topology
 from app.api import probe_calibration, channel_calibration, workflow, calibration_report, chamber
 from app.api.path_loss_calibration import router as path_loss_router, orchestrator_router, compensation_router, switch_router, e2e_router, phase_router, ce_router, baseline_router
 from app.api.commissioning import router as commissioning_router
@@ -153,6 +153,7 @@ app.include_router(sync.router, prefix=settings.api_v1_prefix, tags=["Hardware S
 
 # Topology configuration
 app.include_router(topology.router, prefix=settings.api_v1_prefix, tags=["Topologies"])
+app.include_router(switch_topology.router, prefix=settings.api_v1_prefix, tags=["Switch Topologies"])
 
 # Scenario navigation
 app.include_router(scenario.router, prefix=settings.api_v1_prefix, tags=["Scenario Navigation"])

@@ -52,6 +52,7 @@ class FEInstrumentConnection(BaseModel):
 
 class FEInstrumentCategory(BaseModel):
     """对应前端 InstrumentCategory 类型"""
+    categoryId: Optional[str] = None  # DB UUID, 供拓扑编辑器等关联查询
     key: str
     label: str
     description: str
@@ -181,6 +182,7 @@ def _convert_category(
 ) -> FEInstrumentCategory:
     """DB InstrumentCategory → 前端 FEInstrumentCategory"""
     return FEInstrumentCategory(
+        categoryId=str(cat.id),
         key=cat.category_key,
         label=cat.category_name,
         description=cat.description or "",

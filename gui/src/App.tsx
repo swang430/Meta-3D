@@ -66,6 +66,7 @@ import { SystemCalibration } from './components/SystemCalibration'
 import { TestManagement } from './features/TestManagement/TestManagement'
 import { ReportsPage } from './features/Reports/pages/ReportsPage'
 import { CommissioningSandbox } from './components/Commissioning'
+import { TopologyEditor } from './features/TopologyEditor/TopologyEditor'
 import { RealtimeMetricsCard } from './components/RealtimeMetricsCard'
 import { ExecutionMetricsCard } from './features/Monitoring'
 import { useMonitoringWebSocket } from './hooks/useMonitoringWebSocket'
@@ -139,7 +140,7 @@ const hexToRgba = (hex: string, alpha: number) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
-type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'testManagement' | 'monitoring' | 'results' | 'virtualRoadTest' | 'systemCalibration' | 'commissioning' | 'chartsDemo'
+type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'topologyEditor' | 'testManagement' | 'monitoring' | 'results' | 'virtualRoadTest' | 'systemCalibration' | 'commissioning' | 'chartsDemo'
 
 type ProbeFormState = Pick<ProbeType, 'ring' | 'polarization' | 'position' | 'is_active'>
 
@@ -261,6 +262,11 @@ const sections: Array<{ key: SectionKey; label: string; description: string }> =
     key: 'probeManager',
     label: '探头与暗室配置',
     description: '维护探头阵列、暗室几何与校准基线，支撑软件定义静区。',
+  },
+  {
+    key: 'topologyEditor',
+    label: '射频拓扑编辑器',
+    description: '通过拖拽设计和查看基于 RF Switch 的端到端信号物理链路与校准路径。',
   },
   {
     key: 'testManagement',
@@ -1159,6 +1165,8 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
       return <EquipmentManager />
     case 'probeManager':
       return <ProbeManager onNavigate={payload.setActiveSection} />
+    case 'topologyEditor':
+      return <TopologyEditor />
     case 'testManagement':
       return <TestManagement />
     case 'monitoring':

@@ -81,6 +81,7 @@ from app.models.channel_calibration import (
     EISValidation,
     ChannelCalibrationValidity,
 )
+from app.models.switch_topology import SwitchTopology
 
 __all__ = [
     # System Calibration
@@ -135,6 +136,7 @@ __all__ = [
     # Topology
     "Topology",
     "TopologyType",
+    "SwitchTopology",
     # Channel Calibration Enums
     "ScenarioType",
     "ScenarioCondition",

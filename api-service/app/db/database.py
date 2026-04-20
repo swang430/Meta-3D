@@ -59,5 +59,6 @@ def init_db() -> None:
     )
     from app.models.report import TestReport, ReportTemplate, ReportComparison, ReportSchedule
     from app.models.chamber import ChamberConfiguration
+    from app.models.switch_topology import SwitchTopology
 
     Base.metadata.create_all(bind=engine)
