@@ -406,11 +406,77 @@ class RFSwitchCalibrationService:
         vna_id: str
     ) -> SwitchPortMeasurement:
         """
-        执行真实的开关端口测量
+        执行真实的开关端口测量 (VNA + EMCenter Switch 联动)
 
-        TODO: 集成实际 VNA 和 Switch Matrix 驱动
+        流程:
+        1. 通过 HAL 获取 VNA 和 Switch 驱动实例
+        2. 路由 Switch 到目标路径 (input_port → output_port)
+        3. 配置 VNA 测量频率范围
+        4. 发起 S21 单次扫频
+        5. 读取复数 S21 数据 → 计算插入损耗和相位
+
+        Args:
+            input_port: Switch 输入端口 (对应 CE 输出通道)
+            output_port: Switch 输出端口 (对应探头编号)
+            frequency_mhz: 中心频率 (MHz)
+            vna_id: VNA 仪器 ID (如 "vna")
         """
-        raise NotImplementedError("Real switch measurement not implemented yet")
+        from app.services.instrument_hal_service import get_hal_service
+        import numpy as np
+        import math
+
+        hal = get_hal_service()
+        vna = hal.drivers.get(vna_id or "vna")
+        switch = hal.drivers.get("rfSwitch")
+
+        if not vna:
+            raise RuntimeError(f"VNA driver '{vna_id}' not available in HAL")
+        if not switch:
+            raise RuntimeError("RF Switch driver not available in HAL")
+
+        # Step 1: 路由 Switch 到目标通道
+        slot_id = str(output_port // 2 + 1)  # 简化映射, 实际应查 port_maps
+        await switch.switch_path(slot_id, input_port, output_port)
+        logger.info(f"[RFSwitchCal] Routed switch: input={input_port} → output={output_port}")
+
+        # Step 2: 配置 VNA 扫频 (中心频率 ± 200 MHz)
+        center_hz = frequency_mhz * 1e6
+        span_hz = 400e6  # 400 MHz span
+        start_hz = center_hz - span_hz / 2
+        stop_hz = center_hz + span_hz / 2
+        await vna.setup_sweep(start_hz, stop_hz, points=201)
+
+        # Step 3: 触发 S21 测量
+        await vna.measure_s_param("S21")
+
+        # Step 4: 读取复数 trace 数据
+        complex_data = await vna.get_trace_data()
+        if not complex_data:
+            raise RuntimeError(f"VNA returned empty trace for port {input_port}→{output_port}")
+
+        # Step 5: 计算中心频点附近的平均插入损耗
+        center_idx = len(complex_data) // 2
+        window = max(1, len(complex_data) // 10)  # 取中间 10% 数据
+        center_slice = complex_data[center_idx - window:center_idx + window]
+
+        magnitudes_db = [20 * math.log10(max(abs(s), 1e-15)) for s in center_slice]
+        phases_deg = [math.degrees(math.atan2(s.imag, s.real)) for s in center_slice]
+
+        avg_loss_db = -np.mean(magnitudes_db)  # 插入损耗取正值
+        avg_phase_deg = float(np.mean(phases_deg))
+
+        logger.info(
+            f"[RFSwitchCal] Port {input_port}→{output_port}: "
+            f"IL={avg_loss_db:.3f} dB, Phase={avg_phase_deg:.1f}°"
+        )
+
+        return SwitchPortMeasurement(
+            input_port=input_port,
+            output_port=output_port,
+            insertion_loss_db=float(avg_loss_db),
+            phase_deg=avg_phase_deg,
+            uncertainty_db=float(np.std(magnitudes_db))  # 频带内波动作为不确定度
+        )
 
     async def _real_isolation_measurement(
         self,
@@ -422,9 +488,46 @@ class RFSwitchCalibrationService:
         """
         执行真实的隔离度测量
 
-        TODO: 集成实际 VNA 驱动
+        流程:
+        1. 路由 Switch 激活 port_a 通道
+        2. VNA Port 1 接 port_a 输入, Port 2 接 port_b 输出 (未激活)
+        3. 测量 S21 = port_a → port_b 的泄漏
         """
-        raise NotImplementedError("Real isolation measurement not implemented yet")
+        from app.services.instrument_hal_service import get_hal_service
+        import numpy as np
+        import math
+
+        hal = get_hal_service()
+        vna = hal.drivers.get(vna_id or "vna")
+        switch = hal.drivers.get("rfSwitch")
+
+        if not vna or not switch:
+            raise RuntimeError("VNA or Switch driver not available")
+
+        # 激活 port_a 对应的开关路径, port_b 保持断开
+        slot_a = str(port_a // 2 + 1)
+        await switch.switch_path(slot_a, 0, port_a)
+
+        # 配置 VNA
+        center_hz = frequency_mhz * 1e6
+        await vna.setup_sweep(center_hz - 200e6, center_hz + 200e6, points=201)
+        await vna.measure_s_param("S21")
+
+        complex_data = await vna.get_trace_data()
+        if not complex_data:
+            raise RuntimeError(f"VNA returned empty trace for isolation {port_a}↔{port_b}")
+
+        # 隔离度 = 整个频带的平均 S21 (预期 < -60 dB)
+        magnitudes_db = [20 * math.log10(max(abs(s), 1e-15)) for s in complex_data]
+        isolation_db = float(np.mean(magnitudes_db))
+
+        logger.info(f"[RFSwitchCal] Isolation {port_a}↔{port_b}: {isolation_db:.1f} dB")
+
+        return IsolationMeasurement(
+            port_a=port_a,
+            port_b=port_b,
+            isolation_db=isolation_db
+        )
 
     def get_insertion_loss(
         self,
