@@ -304,6 +304,10 @@ class MockChannelEmulator(ChannelEmulatorDriver):
         self._set_status(InstrumentStatus.READY)
         return True
 
+    def get_supported_load_modes(self) -> List[ChannelLoadMode]:
+        """Mock 支持所有加载模式，以便在无硬件时完整测试两条流水线"""
+        return [ChannelLoadMode.EXTERNAL_WAVEFORM, ChannelLoadMode.NATIVE_MODEL]
+
     async def get_capabilities(self) -> list[InstrumentCapability]:
         """Return supported capabilities"""
         return [
