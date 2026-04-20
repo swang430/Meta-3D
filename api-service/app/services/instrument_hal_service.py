@@ -26,9 +26,9 @@ from app.hal.rf_switch import MockRfSwitch, EtslSwitchDriver
 SUPPORTED_REAL_DRIVERS = {
     "channelEmulator": ["PROPSIM F64"],
     "baseStation": ["UXM 5G E7515B", "CMW500"],
-    "signalAnalyzer": ["N9020B MXA", "FSW43"],
+    "signalAnalyzer": ["N9020B MXA", "FSW43", "FSVA3000"],
     "vectorSignalGenerator": ["N5182B MXG", "SMW200A", "SMU200A"],
-    "vna": ["E5071C ENA"],
+    "vna": ["E5071C ENA", "ZNA67"],
     "positioner": ["EMCenter"],
     "rfSwitch": ["EMCenter Switch"],
 }
