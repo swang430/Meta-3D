@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     calibration_data_path: str = "./calibration_data"
     certificate_output_path: str = "./certificates"
 
+    # Logging
+    log_dir: str = "./logs"              # 日志文件输出目录
+    log_retention_days: int = 30         # 日志文件保留天数
+    log_scpi_enabled: bool = True        # 是否启用 SCPI 仪器通信专用日志
+
     class Config:
         env_file = ".env"
         case_sensitive = False

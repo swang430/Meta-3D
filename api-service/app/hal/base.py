@@ -6,6 +6,7 @@ Defines abstract interfaces that all instrument drivers must implement.
 
 from abc import ABC, abstractmethod
 from enum import Enum
+import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
 from pydantic import BaseModel
@@ -60,6 +61,28 @@ class InstrumentDriver(ABC):
         self.config = config
         self._status = InstrumentStatus.DISCONNECTED
         self._last_error: Optional[str] = None
+
+        # SCPI 通信专用 logger — 命名空间 app.hal.scpi.{id}
+        # 被 logging_config 中的 SCPI handler 独立捕获到 scpi.log
+        self._scpi_logger = logging.getLogger(f"app.hal.scpi.{instrument_id}")
+
+    def _log_scpi_write(self, cmd: str) -> None:
+        """记录 SCPI 写命令。所有子类的 _write() 应调用此方法。"""
+        self._scpi_logger.debug(
+            f"TX: {cmd}",
+            extra={"instrument_id": self.instrument_id, "direction": "TX"},
+        )
+
+    def _log_scpi_response(self, cmd: str, response: str) -> None:
+        """记录 SCPI 查询及其响应。所有子类的 _query() 应调用此方法。"""
+        self._scpi_logger.debug(
+            f"RX: {response.strip()[:200]}",
+            extra={
+                "instrument_id": self.instrument_id,
+                "direction": "RX",
+                "query": cmd,
+            },
+        )
 
     @property
     def status(self) -> InstrumentStatus:

@@ -20,6 +20,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
+from app.core.logging_config import current_session_id
+
 from app.models.chamber import ChamberConfiguration
 from app.models.probe_calibration import ProbePathLossCalibration, CalibrationStatus
 from sqlalchemy.orm import Session
@@ -95,6 +97,7 @@ class CommissioningService:
         - 校准有效性 (path loss, phase calibration)
         - 静区质量 (QZ ripple)
         """
+        current_session_id.set(session_id)
         state = self._get_state(session_id)
         state.phase = CommissioningPhase.PRECHECK
         state.phase_statuses[CommissioningPhase.PRECHECK] = PhaseStatus.RUNNING
@@ -234,6 +237,7 @@ class CommissioningService:
         """
         阶段 2 (第二步): 工程师确认后，进行参考天线基线测量
         """
+        current_session_id.set(session_id)
         state = self._get_state(session_id)
         state.phase = CommissioningPhase.REFERENCE
         state.phase_statuses[CommissioningPhase.REFERENCE] = PhaseStatus.RUNNING
@@ -301,6 +305,7 @@ class CommissioningService:
         3. 配置基站仿真器
         4. 逐方位测量 KPI (调用 IPositioner 控制转台)
         """
+        current_session_id.set(session_id)
         state = self._get_state(session_id)
         config = state.config
         state.phase = CommissioningPhase.MIMO_TEST
@@ -514,6 +519,7 @@ class CommissioningService:
 
         对比 Phase 3 测量数据与 CTIA 门限。
         """
+        current_session_id.set(session_id)
         state = self._get_state(session_id)
         criteria = state.criteria
         state.phase = CommissioningPhase.ANALYSIS
@@ -625,6 +631,7 @@ class CommissioningService:
 
         返回 report_id
         """
+        current_session_id.set(session_id)
         state = self._get_state(session_id)
         state.phase = CommissioningPhase.REPORT
         state.phase_statuses[CommissioningPhase.REPORT] = PhaseStatus.RUNNING

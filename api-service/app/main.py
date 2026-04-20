@@ -16,10 +16,13 @@ from app.api import probe_calibration, channel_calibration, workflow, calibratio
 from app.api.path_loss_calibration import router as path_loss_router, orchestrator_router, compensation_router, switch_router, e2e_router, phase_router, ce_router, baseline_router
 from app.api.commissioning import router as commissioning_router
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO if settings.debug else logging.WARNING,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# Configure logging — 集中式三路日志配置
+from app.core.logging_config import setup_logging
+setup_logging(
+    debug=settings.debug,
+    log_dir=settings.log_dir,
+    log_retention_days=settings.log_retention_days,
+    scpi_enabled=settings.log_scpi_enabled,
 )
 
 logger = logging.getLogger(__name__)
