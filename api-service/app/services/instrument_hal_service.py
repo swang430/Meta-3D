@@ -175,6 +175,8 @@ class InstrumentHALService:
         from app.hal.rs_smw200a import RealRsSmw200aDriver
         from app.hal.keysight_x_series_sa import RealKeysightXSeriesSaDriver
         from app.hal.rs_fsw import RealRsFswDriver
+        from app.hal.rs_zna import RealRsZnaDriver
+        from app.hal.rs_fsva import RealRsFsvaDriver
 
         # Driver registry: maps (category_key, model_name) → DriverClass
         # When real VISA/SCPI drivers are implemented, register them here.
@@ -190,6 +192,7 @@ class InstrumentHALService:
             "signalAnalyzer": {
                 "N9020B MXA": RealKeysightXSeriesSaDriver,
                 "FSW43": RealRsFswDriver,
+                "FSVA3000": RealRsFsvaDriver,
             },
             "vectorSignalGenerator": {
                 "N5182B MXG": RealKeysightMxgDriver,
@@ -198,6 +201,7 @@ class InstrumentHALService:
             },
             "vna": {
                 "E5071C ENA": RealKeysightEnaDriver,
+                "ZNA67": RealRsZnaDriver,
             },
             "positioner": {
                 "EMCenter": RealEtsEmcenterDriver,
