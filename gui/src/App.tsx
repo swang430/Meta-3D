@@ -69,7 +69,6 @@ import { CommissioningSandbox } from './components/Commissioning'
 import { TopologyEditor } from './features/TopologyEditor/TopologyEditor'
 import { RealtimeMetricsCard } from './components/RealtimeMetricsCard'
 import { ExecutionMetricsCard } from './features/Monitoring'
-import { useMonitoringWebSocket } from './hooks/useMonitoringWebSocket'
 import ChartsDemoPage from './components/Charts/ChartsDemoPage'
 import { ChamberConfigCard } from './components/ChamberConfigCard'
 import {
@@ -237,7 +236,7 @@ type EquipmentMutationVariables = {
   payload: UpdateInstrumentPayload
 }
 
-type DemoRunStatus = 'idle' | 'running' | 'completed'
+type DemoRunStatus = 'idle' | 'running' | 'completed' | 'paused'
 
 type DemoRunProgress = {
   status: DemoRunStatus
@@ -422,7 +421,7 @@ function App() {
     [queryClient],
   )
 
-  const { mutate: mutatePlanStatus } = useMutation({
+  const { mutate: _mutatePlanStatus } = useMutation({
     mutationFn: ({ planId, status }: { planId: string; status: string }) =>
       updateTestPlan(planId, { status }),
     onSuccess: (result) => {
@@ -1141,6 +1140,7 @@ type RenderPayload = {
   onDemoStart: () => void
   onDemoPause: () => void
   onDemoStop: () => void
+  onDemoResume: () => void
   demoMetrics: MetricItem[] | null
   demoResult: DemoRunResult | null
   executionMode: 'real' | 'mock'
@@ -1985,8 +1985,8 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
   }, [probes])
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: UpdateProbePayload }) =>
-      updateProbe(id, payload),
+    mutationFn: ({ id, payload }: { id: string; payload: Partial<UpdateProbePayload> }) =>
+      updateProbe(id, payload as UpdateProbePayload),
     onSuccess: (updated) => {
       queryClient.setQueryData(
         ['probes'],
@@ -2240,7 +2240,7 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
   return (
     <Stack gap="xl">
       {/* 暗室配置卡片 - CAL-00.1 新增 */}
-      <ChamberConfigCard onNavigate={onNavigate} />
+      <ChamberConfigCard onNavigate={(s) => onNavigate(s as SectionKey)} />
 
       <Card withBorder radius="md" padding="xl">
         <Stack gap="md">
@@ -3090,7 +3090,7 @@ function buildInitialParameters(step: SequenceStepType): StepParameter {
   }
 }
 
-function TestConfig({
+function _TestConfig({
   executionMode,
   hardwareOnline,
   systemStatus,
@@ -4869,7 +4869,7 @@ function Monitoring({
   autoChainExecution,
 }: MonitoringProps) {
   const theme = useMantineTheme()
-  const { data: feedsData, isLoading: isFeedsLoading } = useQuery({
+  const { data: feedsData } = useQuery({
     queryKey: ['monitoring', 'feeds'],
     queryFn: fetchMonitoringFeeds,
   })
@@ -5463,7 +5463,7 @@ type ResultsProps = {
   currentExecutionMode: 'real' | 'mock'
 }
 
-function Results({
+function _Results({
   selected,
   onToggle,
   demoResult,

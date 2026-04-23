@@ -112,7 +112,6 @@ export function CreateChamberForm({ presets, onSubmit, onCancel, isLoading }: Cr
                     decimalScale={2}
                     value={chamberRadius}
                     onChange={(val) => setChamberRadius(val as number | undefined)}
-                    clearable
                 />
                 <NumberInput
                     label="静区直径 (m)"
@@ -123,7 +122,6 @@ export function CreateChamberForm({ presets, onSubmit, onCancel, isLoading }: Cr
                     decimalScale={2}
                     value={quietZoneDiameter}
                     onChange={(val) => setQuietZoneDiameter(val as number | undefined)}
-                    clearable
                 />
                 <NumberInput
                     label="探头数量"
@@ -133,7 +131,6 @@ export function CreateChamberForm({ presets, onSubmit, onCancel, isLoading }: Cr
                     step={1}
                     value={numProbes}
                     onChange={(val) => setNumProbes(val as number | undefined)}
-                    clearable
                 />
             </SimpleGrid>
 
@@ -153,7 +150,6 @@ export function CreateChamberForm({ presets, onSubmit, onCancel, isLoading }: Cr
                             decimalScale={1}
                             value={lnaGain}
                             onChange={(val) => setLnaGain(val as number | undefined)}
-                            clearable
                         />
                         <NumberInput
                             label="噪声系数 (dB)"
@@ -164,7 +160,6 @@ export function CreateChamberForm({ presets, onSubmit, onCancel, isLoading }: Cr
                             decimalScale={1}
                             value={lnaNoiseFigure}
                             onChange={(val) => setLnaNoiseFigure(val as number | undefined)}
-                            clearable
                         />
                     </SimpleGrid>
                 </>
@@ -186,7 +181,6 @@ export function CreateChamberForm({ presets, onSubmit, onCancel, isLoading }: Cr
                             decimalScale={1}
                             value={paGain}
                             onChange={(val) => setPaGain(val as number | undefined)}
-                            clearable
                         />
                         <NumberInput
                             label="1dB 压缩点 (dBm)"
@@ -197,7 +191,6 @@ export function CreateChamberForm({ presets, onSubmit, onCancel, isLoading }: Cr
                             decimalScale={1}
                             value={paP1dB}
                             onChange={(val) => setPaP1dB(val as number | undefined)}
-                            clearable
                         />
                     </SimpleGrid>
                 </>

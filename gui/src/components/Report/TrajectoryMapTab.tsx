@@ -7,7 +7,7 @@
 
 import { useMemo } from 'react'
 import { Stack, Card, Text, Alert, Table, Group, Badge, ThemeIcon } from '@mantine/core'
-import { IconMap, IconMapPin, IconAntenna } from '@tabler/icons-react'
+import { IconMap, IconAntenna } from '@tabler/icons-react'
 
 interface TrajectoryPoint {
   lat: number
@@ -29,17 +29,21 @@ interface Props {
   baseStations?: BaseStationInfo[]
 }
 
-export function TrajectoryMapTab({ trajectory, baseStations }: Props) {
-  if (!trajectory || trajectory.length === 0) {
-    return (
-      <Alert icon={<IconMap size={16} />} color="gray" title="无轨迹数据">
-        该报告没有可用的路径轨迹数据
-      </Alert>
-    )
-  }
-
+export function TrajectoryMapTab({ trajectory = [], baseStations }: Props) {
   // Calculate bounds and normalize coordinates for SVG
   const { normalizedPoints, bounds, stats } = useMemo(() => {
+    if (trajectory.length === 0) {
+      return {
+        normalizedPoints: [],
+        bounds: { minLat: 0, maxLat: 0, minLon: 0, maxLon: 0 },
+        stats: {
+          totalPoints: 0,
+          totalDistance: '0.00',
+          duration: '-',
+        },
+      }
+    }
+
     const lats = trajectory.map((p) => p.lat)
     const lons = trajectory.map((p) => p.lon)
 
@@ -78,13 +82,20 @@ export function TrajectoryMapTab({ trajectory, baseStations }: Props) {
     }
   }, [trajectory])
 
-  // Generate SVG path
   const pathD = useMemo(() => {
     if (normalizedPoints.length === 0) return ''
     return normalizedPoints.reduce((path, point, i) => {
       return path + (i === 0 ? `M ${point.x} ${point.y}` : ` L ${point.x} ${point.y}`)
     }, '')
   }, [normalizedPoints])
+
+  if (trajectory.length === 0) {
+    return (
+      <Alert icon={<IconMap size={16} />} color="gray" title="无轨迹数据">
+        该报告没有可用的路径轨迹数据
+      </Alert>
+    )
+  }
 
   return (
     <Stack gap="md">

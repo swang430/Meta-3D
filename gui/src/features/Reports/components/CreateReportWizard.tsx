@@ -44,7 +44,7 @@ import {
 import { ReportsAPI } from '../index'
 import { TestPlanSelector } from './TestPlanSelector'
 import { ExecutionSelector } from './ExecutionSelector'
-import type { CreateReportRequest, ReportType, ReportFormat } from '../types'
+import type { CreateReportRequest } from '../types'
 
 interface CreateReportWizardProps {
   onSuccess?: (reportId: string) => void

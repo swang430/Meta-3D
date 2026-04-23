@@ -19,10 +19,8 @@ import {
   ScrollArea,
   ActionIcon,
   Tooltip,
-  Collapse,
   Code,
   SegmentedControl,
-  Switch,
   Loader,
   Alert,
   Menu,
@@ -35,7 +33,6 @@ import {
   IconChevronRight,
   IconTerminal2,
   IconAlertCircle,
-  IconFilter,
   IconPlayerPlay,
   IconPlayerPause,
 } from '@tabler/icons-react'
@@ -98,11 +95,11 @@ export function SystemLogViewer() {
   // Filters
   const [levelFilter, setLevelFilter] = useState<string>('ALL')
   const [keyword, setKeyword] = useState('')
-  const [maxLines, setMaxLines] = useState(200)
+  const [maxLines] = useState(200)
 
   // Auto-refresh
   const [refreshInterval, setRefreshInterval] = useState('0')
-  const intervalRef = useRef<NodeJS.Timeout | null>(null)
+  const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Expanded rows
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set())

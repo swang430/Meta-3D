@@ -79,6 +79,7 @@ export type InstrumentCategory = {
   label: string
   description: string
   tags?: string[]
+  isActive?: boolean
   selectedModelId: string | null
   connection: InstrumentConnection
   models: InstrumentModel[]

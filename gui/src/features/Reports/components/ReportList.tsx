@@ -17,7 +17,6 @@ import {
   TextInput,
   ActionIcon,
   Tooltip,
-  Progress,
 } from '@mantine/core'
 import {
   IconDownload,
@@ -33,7 +32,7 @@ import {
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { notifications } from '@mantine/notifications'
 import { ReportsAPI } from '../index'
-import type { ReportSummary, ReportStatus, ReportFormat } from '../types'
+import type { ReportStatus, ReportFormat } from '../types'
 
 interface ReportListProps {
   onView?: (reportId: string) => void
@@ -160,7 +159,7 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
   }
 
   const getFormatIcon = (format: ReportFormat) => {
-    const icons: Record<ReportFormat, JSX.Element> = {
+    const icons: Record<ReportFormat, React.ReactNode> = {
       pdf: <IconFileTypePdf size={18} />,
       html: <IconFileTypeHtml size={18} />,
       excel: <IconTable size={18} />,

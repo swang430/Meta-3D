@@ -4,7 +4,6 @@
  * Display complete scenario configuration and parameters
  */
 
-import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   Modal,
@@ -17,8 +16,6 @@ import {
   SimpleGrid,
   Loader,
   Alert,
-  Divider,
-  ThemeIcon,
   Button,
 } from '@mantine/core'
 import {
@@ -226,7 +223,9 @@ export function ScenarioDetailModal({ opened, onClose, scenario }: Props) {
                       <Text size="xs" c="dimmed" fw={500}>
                         信道模型
                       </Text>
-                      <Text size="sm">{scenarioDetail.environment?.channel_model || '-'}</Text>
+                      <Text size="sm">
+                        {scenarioDetail.environment?.channel_snapshots?.[0]?.standard_model || '-'}
+                      </Text>
                     </div>
                     <div>
                       <Text size="xs" c="dimmed" fw={500}>

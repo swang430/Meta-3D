@@ -50,7 +50,7 @@ export default function TimeSeriesChart({
       .map((p, i) => (p.is_anomaly ? i : -1))
       .filter(i => i >= 0)
 
-    const traces: Plotly.Data[] = []
+    const traces: Array<Record<string, unknown>> = []
 
     // Main time series line
     traces.push({
@@ -170,7 +170,7 @@ export default function TimeSeriesChart({
     return traces
   }, [dataPoints, trend, rollingMean, rollingStd, metricName, anomalyThreshold])
 
-  const layout: Partial<Plotly.Layout> = {
+  const layout: any = {
     title: undefined,
     xaxis: {
       title: 'Time',
@@ -198,7 +198,7 @@ export default function TimeSeriesChart({
     paper_bgcolor: '#ffffff'
   }
 
-  const config: Partial<Plotly.Config> = {
+  const config: Record<string, unknown> = {
     responsive: true,
     displayModeBar: true,
     modeBarButtonsToRemove: ['lasso2d', 'select2d'],

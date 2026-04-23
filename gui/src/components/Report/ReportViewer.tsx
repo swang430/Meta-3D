@@ -42,7 +42,7 @@ import {
   IconTerminal2,
 } from '@tabler/icons-react'
 import { fetchReport } from '../../api/reportService'
-import type { Report, ReportContentData } from '../../types/report'
+import type { ReportContentData } from '../../types/report'
 import { ChartsTab } from './ChartsTab'
 import { TrajectoryMapTab } from './TrajectoryMapTab'
 

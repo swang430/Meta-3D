@@ -9,7 +9,6 @@ import {
   Card,
   Table,
   Badge,
-  Button,
   Group,
   Text,
   Stack,
@@ -77,6 +76,9 @@ export function TemplateList({
       standard: 'blue',
       regulatory: 'orange',
       custom: 'green',
+      performance: 'cyan',
+      comparison: 'violet',
+      executive: 'grape',
     }
     return <Badge color={colors[type]}>{type}</Badge>
   }

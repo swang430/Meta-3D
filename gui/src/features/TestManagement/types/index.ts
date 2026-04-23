@@ -348,7 +348,7 @@ export interface CreateTestPlanRequest {
 export interface UpdateTestPlanRequest {
   name?: string
   description?: string
-  status?: string  // Test plan status (draft, ready, queued, running, paused, completed, failed, cancelled)
+  status?: TestPlanStatus
   dut_info?: Partial<DUTInfo>
   test_environment?: Partial<TestEnvironment>
   priority?: number

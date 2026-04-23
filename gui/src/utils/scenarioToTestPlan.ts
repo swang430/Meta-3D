@@ -16,10 +16,26 @@ import type { CreatePlanPayload } from '../types/api'
 export function generateTestPlanFromScenario(
   scenario: ScenarioSummary | RoadTestScenario
 ): CreatePlanPayload {
-  // Extract max velocity from scenario if available
-  const maxVelocity = 'route' in scenario && scenario.route?.waypoints
-    ? Math.max(...scenario.route.waypoints.map((wp: any) => wp.velocity?.speed_kmh || 0))
-    : 50 // Default 50 km/h
+  const summaryScenario = scenario as ScenarioSummary
+  const detailedScenario = scenario as RoadTestScenario
+  const hasRoute = !!detailedScenario.route
+  const hasEnvironment = !!detailedScenario.environment
+
+  const durationSeconds = hasRoute
+    ? detailedScenario.route?.duration_s ?? 0
+    : summaryScenario.duration_s ?? detailedScenario.summary?.duration ?? 0
+
+  const totalDistanceMeters = hasRoute
+    ? detailedScenario.route?.total_distance_m ?? 0
+    : summaryScenario.distance_m ?? 0
+
+  const environmentType = hasEnvironment
+    ? detailedScenario.environment?.type
+    : undefined
+
+  const channelModel = hasEnvironment
+    ? detailedScenario.environment?.channel_snapshots?.[0]?.standard_model
+    : summaryScenario.channel_model
 
   return {
     name: `${scenario.name} - Test Plan`,
@@ -43,18 +59,15 @@ export function generateTestPlanFromScenario(
       temperature_c: 25,
       humidity_percent: 50,
       // Add scenario-specific environment
-      ...(('environment' in scenario && scenario.environment) ? {
-        channel_model: scenario.environment.channel_model,
-        environment_type: scenario.environment.type,
+      ...(channelModel || environmentType ? {
+        channel_model: channelModel,
+        environment_type: environmentType,
       } : {}),
       ...(('route' in scenario && scenario.route) ? {
         route_type: scenario.route.type,
-        duration_s: scenario.route.duration_s,
-        total_distance_m: scenario.route.total_distance_m,
-      } : {
-        duration_s: scenario.duration_s,
-        total_distance_m: scenario.distance_m,
-      }),
+      } : {}),
+      duration_s: durationSeconds,
+      total_distance_m: totalDistanceMeters,
       // Pass step configuration if present
       step_configuration: scenario.step_configuration,
     },

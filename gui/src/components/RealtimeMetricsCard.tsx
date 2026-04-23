@@ -14,7 +14,7 @@
 import { Card, Title, Stack, Group, Text, Badge, Alert, SimpleGrid, ActionIcon, Tooltip, Skeleton } from '@mantine/core'
 import { IconPlugConnected, IconPlugConnectedX, IconRefresh, IconActivity } from '@tabler/icons-react'
 import { useMonitoringWebSocket, type MonitoringMetricData } from '../hooks/useMonitoringWebSocket'
-import { memo, useMemo, useCallback } from 'react'
+import { memo } from 'react'
 
 interface RealtimeMetricsCardProps {
   /** Show debug info (default: false) */

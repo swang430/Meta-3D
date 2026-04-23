@@ -3,7 +3,7 @@
  */
 
 import { useQuery } from '@tanstack/react-query'
-import type { SequenceLibraryItem, SequenceLibraryFilters } from '../types'
+import type { SequenceLibraryFilters } from '../types'
 import * as api from '../api/testManagementAPI'
 
 // Query Keys

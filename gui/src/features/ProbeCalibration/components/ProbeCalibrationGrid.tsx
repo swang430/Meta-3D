@@ -29,7 +29,7 @@ import {
 } from '@tabler/icons-react'
 import { useValidityReport, useProbeValidity } from '../../../hooks/useProbeCalibration'
 import { CalibrationStatusBadge, ProbeCalibrationStatusSummary } from './CalibrationStatusBadge'
-import type { ValidityStatus, CalibrationType } from '../../../types/probeCalibration'
+import type { ValidityStatus } from '../../../types/probeCalibration'
 
 interface ProbeCalibrationGridProps {
   onProbeSelect?: (probeId: number) => void

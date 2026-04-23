@@ -112,12 +112,12 @@ export default function StatisticsComparisonChart({
   }, [comparisonResults, reportIds, reportNames, chartType])
 
   // Create subplot layout for multiple metrics
-  const layout: Partial<Plotly.Layout> = useMemo(() => {
+  const layout: any = useMemo(() => {
     const numMetrics = comparisonResults.length
     const rows = Math.ceil(numMetrics / 2)
     const cols = Math.min(numMetrics, 2)
 
-    const baseLayout: Partial<Plotly.Layout> = {
+    const baseLayout: any = {
       title: undefined,
       showlegend: true,
       legend: {

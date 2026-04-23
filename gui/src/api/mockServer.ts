@@ -113,7 +113,6 @@ export function setupMockServer() {
   })
 
   mock.onGet('/api/v1/test-sequences/categories').reply(() => {
-    const library = mockDatabase.getSequenceLibrary().library
     // Extract categories from vrt-* steps and lib-* steps
     const categories = ['通用测试', '虚拟路测']
     return [200, { categories }]

@@ -23,7 +23,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { notifications } from '@mantine/notifications'
 import { IconAlertCircle, IconFileTypePdf, IconCheck } from '@tabler/icons-react'
 import { ReportsAPI } from '../index'
-import type { CreateReportRequest, ReportType, ReportFormat } from '../types'
+import type { CreateReportRequest } from '../types'
 
 interface CreateReportFormProps {
   onSuccess?: (reportId: string) => void

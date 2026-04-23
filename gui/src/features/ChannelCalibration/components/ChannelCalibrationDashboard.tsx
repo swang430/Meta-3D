@@ -3,7 +3,6 @@
  *
  * Main dashboard showing channel calibration overview and status
  */
-import { useState } from 'react'
 import {
   Grid,
   Paper,

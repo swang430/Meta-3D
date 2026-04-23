@@ -52,10 +52,10 @@ export default function PerformanceBenchmarkChart({
 }: Props) {
   const plotData = useMemo(() => {
     if (!benchmarkMetrics || benchmarkMetrics.length === 0) {
-      return []
+      return { traces: [], shapes: [] }
     }
 
-    const traces: Plotly.Data[] = []
+    const traces: any[] = []
 
     // Percentile rank bar chart
     const metricNames = benchmarkMetrics.map(m => m.metric_name)
@@ -79,7 +79,7 @@ export default function PerformanceBenchmarkChart({
     })
 
     // Reference lines for performance thresholds
-    const referenceShapes: Partial<Plotly.Shape>[] = [
+    const referenceShapes: any[] = [
       // Excellent threshold (90%)
       {
         type: 'line',
@@ -106,7 +106,7 @@ export default function PerformanceBenchmarkChart({
     return { traces, shapes: referenceShapes }
   }, [benchmarkMetrics])
 
-  const layout: Partial<Plotly.Layout> = {
+  const layout: any = {
     title: undefined,
     xaxis: {
       title: 'Percentile Rank (%)',

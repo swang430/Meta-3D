@@ -23,15 +23,7 @@ interface Props {
   timeSeries?: TimeSeriesPoint[]
 }
 
-export function ChartsTab({ timeSeries }: Props) {
-  if (!timeSeries || timeSeries.length === 0) {
-    return (
-      <Alert icon={<IconChartLine size={16} />} color="gray" title="无时间序列数据">
-        该报告没有可用的时间序列数据用于图表展示
-      </Alert>
-    )
-  }
-
+export function ChartsTab({ timeSeries = [] }: Props) {
   // Prepare chart data
   const chartData = useMemo(() => {
     const times = timeSeries.map((p) => p.time_s)
@@ -43,6 +35,14 @@ export function ChartsTab({ timeSeries }: Props) {
 
     return { times, dl, ul, rsrp, sinr, latency }
   }, [timeSeries])
+
+  if (timeSeries.length === 0) {
+    return (
+      <Alert icon={<IconChartLine size={16} />} color="gray" title="无时间序列数据">
+        该报告没有可用的时间序列数据用于图表展示
+      </Alert>
+    )
+  }
 
   const commonLayout = {
     margin: { l: 50, r: 20, t: 30, b: 40 },

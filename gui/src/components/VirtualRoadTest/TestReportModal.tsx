@@ -140,9 +140,130 @@ function convertToReportContentData(report: ExecutionReport): ReportContentData 
     })),
 
     // Detailed configurations
-    network_config_detail: report.network_config_detail,
-    base_station_config_detail: report.base_station_config_detail,
-    digital_twin_config: report.digital_twin_config,
+    network_config_detail: report.network_config_detail
+      ? {
+          authentication: report.network_config_detail.authentication
+            ? {
+                method: String(report.network_config_detail.authentication.method ?? ''),
+                sim_profile: report.network_config_detail.authentication.sim_profile
+                  && typeof report.network_config_detail.authentication.sim_profile === 'object'
+                  && !Array.isArray(report.network_config_detail.authentication.sim_profile)
+                    ? report.network_config_detail.authentication.sim_profile as Record<string, unknown>
+                    : undefined,
+              }
+            : undefined,
+          qos: report.network_config_detail.qos
+            ? {
+                fiveqi: Number(report.network_config_detail.qos.fiveqi ?? 0),
+                gbr_enabled: Boolean(report.network_config_detail.qos.gbr_enabled),
+                max_dl_bitrate: report.network_config_detail.qos.max_dl_bitrate !== undefined
+                  ? String(report.network_config_detail.qos.max_dl_bitrate)
+                  : undefined,
+                max_ul_bitrate: report.network_config_detail.qos.max_ul_bitrate !== undefined
+                  ? String(report.network_config_detail.qos.max_ul_bitrate)
+                  : undefined,
+              }
+            : undefined,
+          pdu_session: report.network_config_detail.pdu_session
+            ? {
+                type: String(report.network_config_detail.pdu_session.type ?? ''),
+                sst: Number(report.network_config_detail.pdu_session.sst ?? 0),
+                dnn: String(report.network_config_detail.pdu_session.dnn ?? ''),
+              }
+            : undefined,
+          applications: Array.isArray(report.network_config_detail.applications)
+            ? report.network_config_detail.applications.map((app) => String(app))
+            : undefined,
+        }
+      : undefined,
+    base_station_config_detail: report.base_station_config_detail
+      ? {
+          rf: report.base_station_config_detail.rf
+            ? {
+                frequency_mhz: Number(report.base_station_config_detail.rf.frequency_mhz ?? 0),
+                mimo_layers: Number(report.base_station_config_detail.rf.mimo_layers ?? 0),
+                carrier_aggregation: typeof report.base_station_config_detail.rf.carrier_aggregation === 'boolean'
+                  ? report.base_station_config_detail.rf.carrier_aggregation
+                  : undefined,
+              }
+            : undefined,
+          antenna: report.base_station_config_detail.antenna
+            ? {
+                type: String(report.base_station_config_detail.antenna.type ?? ''),
+                mimo_config: String(report.base_station_config_detail.antenna.mimo_config ?? ''),
+                gain_dbi: Number(report.base_station_config_detail.antenna.gain_dbi ?? 0),
+                tilt_deg: report.base_station_config_detail.antenna.tilt_deg !== undefined
+                  ? Number(report.base_station_config_detail.antenna.tilt_deg)
+                  : undefined,
+              }
+            : undefined,
+          beamforming: report.base_station_config_detail.beamforming
+            ? {
+                enabled: Boolean(report.base_station_config_detail.beamforming.enabled),
+                mode: String(report.base_station_config_detail.beamforming.mode ?? ''),
+                num_ssb_beams: Number(report.base_station_config_detail.beamforming.num_ssb_beams ?? 0),
+                tracking_mode: report.base_station_config_detail.beamforming.tracking_mode !== undefined
+                  ? String(report.base_station_config_detail.beamforming.tracking_mode)
+                  : undefined,
+              }
+            : undefined,
+          handover: report.base_station_config_detail.handover
+            ? {
+                a3_offset_db: report.base_station_config_detail.handover.a3_offset_db !== undefined
+                  ? Number(report.base_station_config_detail.handover.a3_offset_db)
+                  : undefined,
+                hysteresis_db: report.base_station_config_detail.handover.hysteresis_db !== undefined
+                  ? Number(report.base_station_config_detail.handover.hysteresis_db)
+                  : undefined,
+                time_to_trigger_ms: report.base_station_config_detail.handover.time_to_trigger_ms !== undefined
+                  ? Number(report.base_station_config_detail.handover.time_to_trigger_ms)
+                  : undefined,
+              }
+            : undefined,
+        }
+      : undefined,
+    digital_twin_config: report.digital_twin_config
+      ? {
+          channel_model: report.digital_twin_config.channel_model
+            ? {
+                type: String(report.digital_twin_config.channel_model.type ?? ''),
+                scenario: report.digital_twin_config.channel_model.scenario !== undefined
+                  ? String(report.digital_twin_config.channel_model.scenario)
+                  : undefined,
+              }
+            : undefined,
+          ray_tracing: report.digital_twin_config.ray_tracing
+            ? {
+                enabled: Boolean(report.digital_twin_config.ray_tracing.enabled),
+                max_reflections: report.digital_twin_config.ray_tracing.max_reflections !== undefined
+                  ? Number(report.digital_twin_config.ray_tracing.max_reflections)
+                  : undefined,
+                diffraction: report.digital_twin_config.ray_tracing.diffraction !== undefined
+                  ? Boolean(report.digital_twin_config.ray_tracing.diffraction)
+                  : undefined,
+              }
+            : undefined,
+          weather: report.digital_twin_config.weather
+            ? {
+                condition: String(report.digital_twin_config.weather.condition ?? ''),
+                rain_rate_mm_h: report.digital_twin_config.weather.rain_rate_mm_h !== undefined
+                  ? Number(report.digital_twin_config.weather.rain_rate_mm_h)
+                  : undefined,
+                temperature_c: report.digital_twin_config.weather.temperature_c !== undefined
+                  ? Number(report.digital_twin_config.weather.temperature_c)
+                  : undefined,
+              }
+            : undefined,
+          interference: report.digital_twin_config.interference
+            ? {
+                enabled: Boolean(report.digital_twin_config.interference.enabled),
+                model: report.digital_twin_config.interference.model !== undefined
+                  ? String(report.digital_twin_config.interference.model)
+                  : undefined,
+              }
+            : undefined,
+        }
+      : undefined,
 
     // Custom config highlights
     custom_config_highlights: report.custom_config_highlights?.map((h) => ({

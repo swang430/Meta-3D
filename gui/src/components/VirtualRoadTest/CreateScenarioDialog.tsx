@@ -117,7 +117,7 @@ export function CreateScenarioDialog({ opened, onClose, testMode }: Props) {
         },
         environment: {
           type: 'urban_street',
-          channel_model: formData.channelModel as any,
+          channel_snapshots: [],
           weather: 'clear',
           traffic_density: 'medium',
         },
@@ -290,7 +290,7 @@ export function CreateScenarioDialog({ opened, onClose, testMode }: Props) {
                   onChange={(value) =>
                     setFormData({
                       ...formData,
-                      bandwidth: value || 100,
+                      bandwidth: Number(value) || 100,
                     })
                   }
                   min={5}
@@ -317,7 +317,7 @@ export function CreateScenarioDialog({ opened, onClose, testMode }: Props) {
                   onChange={(value) =>
                     setFormData({
                       ...formData,
-                      numBaseStations: value || 2,
+                      numBaseStations: Number(value) || 2,
                     })
                   }
                   min={1}
@@ -336,7 +336,7 @@ export function CreateScenarioDialog({ opened, onClose, testMode }: Props) {
                   placeholder="例如: 50"
                   value={formData.speed}
                   onChange={(value) =>
-                    setFormData({ ...formData, speed: value || 50 })
+                    setFormData({ ...formData, speed: Number(value) || 50 })
                   }
                   min={0}
                   max={500}
@@ -347,7 +347,7 @@ export function CreateScenarioDialog({ opened, onClose, testMode }: Props) {
                   placeholder="例如: 60"
                   value={formData.duration}
                   onChange={(value) =>
-                    setFormData({ ...formData, duration: value || 60 })
+                    setFormData({ ...formData, duration: Number(value) || 60 })
                   }
                   min={10}
                   max={3600}

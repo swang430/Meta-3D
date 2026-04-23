@@ -5,7 +5,6 @@
  * Shows execution details including pass/fail status and duration.
  */
 
-import { useState } from 'react'
 import {
   Stack,
   Paper,
@@ -21,8 +20,6 @@ import {
 } from '@mantine/core'
 import {
   IconAlertCircle,
-  IconCheck,
-  IconX,
   IconClock,
   IconSelectAll,
 } from '@tabler/icons-react'
@@ -107,12 +104,6 @@ export function ExecutionSelector({
     if (seconds < 60) return `${seconds}秒`
     if (seconds < 3600) return `${Math.round(seconds / 60)}分钟`
     return `${(seconds / 3600).toFixed(1)}小时`
-  }
-
-  const getStatusIcon = (pass: boolean | null) => {
-    if (pass === true) return <IconCheck size={14} color="green" />
-    if (pass === false) return <IconX size={14} color="red" />
-    return null
   }
 
   const getStatusBadge = (status: string, pass: boolean | null) => {
