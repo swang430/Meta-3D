@@ -29,7 +29,6 @@ import {
   TextInput,
   NumberInput,
   Divider,
-  List,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { 

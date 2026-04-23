@@ -28,7 +28,7 @@ export function StepsTab({ selectedPlanId }: StepsTabProps) {
   const [addStepModalOpened, setAddStepModalOpened] = useState(false)
 
   // Query hooks
-  const { data: testPlan, isLoading: isPlanLoading } = useTestPlan(
+  const { data: testPlan } = useTestPlan(
     selectedPlanId || undefined,
   )
   const { data: steps, isLoading: isStepsLoading } = useTestSteps(
@@ -111,7 +111,7 @@ export function StepsTab({ selectedPlanId }: StepsTabProps) {
             selectedStepId={selectedStepId}
             onSelectStep={setSelectedStepId}
             isLoading={isStepsLoading}
-            readOnly={isReadOnly}
+            readOnly={!!isReadOnly}
           />
         </Stack>
 
@@ -121,7 +121,7 @@ export function StepsTab({ selectedPlanId }: StepsTabProps) {
             <StepEditor
               planId={selectedPlanId}
               stepId={selectedStepId}
-              readOnly={isReadOnly}
+              readOnly={!!isReadOnly}
             />
           ) : (
             <Alert title="未选择步骤" color="gray">

@@ -3,7 +3,6 @@
  *
  * Main dashboard showing calibration overview and status
  */
-import { useState } from 'react'
 import {
   Grid,
   Paper,
@@ -18,7 +17,6 @@ import {
   List,
   Skeleton,
   Alert,
-  Divider,
   ActionIcon,
   Tooltip,
 } from '@mantine/core'
@@ -41,7 +39,7 @@ import {
   useExpiringCalibrations,
   useLinkValidity,
 } from '../../../hooks/useProbeCalibration'
-import { CalibrationStatusBadge, OverallStatusIndicator } from './CalibrationStatusBadge'
+import { OverallStatusIndicator } from './CalibrationStatusBadge'
 import type { ValidityStatus, CalibrationType } from '../../../types/probeCalibration'
 
 interface ProbeCalibrationDashboardProps {
@@ -66,9 +64,9 @@ const CALIBRATION_TYPES: {
 
 export function ProbeCalibrationDashboard({
   onStartCalibration,
-  onViewProbe,
+  onViewProbe: _onViewProbe,
   onViewExpiring,
-  onViewExpired,
+  onViewExpired: _onViewExpired,
 }: ProbeCalibrationDashboardProps) {
   const {
     data: validityReport,

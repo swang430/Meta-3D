@@ -5,7 +5,7 @@
  * Shows test plan details including execution count and status.
  */
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import {
   Stack,
   Paper,

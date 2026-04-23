@@ -11,14 +11,10 @@ import {
   Modal,
   Title,
   Group,
-  ActionIcon,
-  Tooltip,
 } from '@mantine/core'
 import {
   IconDashboard,
   IconGridDots,
-  IconSettings,
-  IconX,
 } from '@tabler/icons-react'
 import {
   ProbeCalibrationDashboard,

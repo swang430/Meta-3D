@@ -17,7 +17,6 @@ import {
   Group,
   Button,
   Badge,
-  Divider,
   Code,
   Loader,
   Center,
@@ -131,7 +130,7 @@ export function StepEditor({ planId, stepId, readOnly }: StepEditorProps) {
             <Badge size="sm" variant="dot">
               {step.category}
             </Badge>
-            <Code size="xs">ID: {step.sequence_library_id}</Code>
+            <Code>ID: {step.sequence_library_id}</Code>
           </Group>
         </Stack>
       </Paper>

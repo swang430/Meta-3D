@@ -17,17 +17,14 @@ import {
     Loader,
     Center,
     Alert,
-    Progress,
     Divider,
     ThemeIcon,
 } from '@mantine/core';
 import {
     IconRocket,
     IconRefresh,
-    IconPlus,
     IconCheck,
     IconAlertTriangle,
-    IconClock,
     IconTarget,
 } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
@@ -86,35 +83,6 @@ export function BaselineCalibrationCard() {
     useEffect(() => {
         fetchBaselines();
     }, []);
-
-    const handleCreateBaseline = async () => {
-        setLoading(true);
-        try {
-            const res = await fetch(
-                `${API_BASE}/calibration/baseline/create?chamber_id=${chamberId}&calibration_type=${selectedType}&frequency_mhz=${frequency}&reference_channel_id=0`,
-                { method: 'POST' }
-            );
-            if (res.ok) {
-                const data = await res.json();
-                notifications.show({
-                    title: '基线创建成功',
-                    message: `已建立 ${selectedType} 校准基线，共 ${data.delta_channels} 个通道`,
-                    color: 'green',
-                });
-                fetchBaselines();
-            } else {
-                throw new Error('Failed to create baseline');
-            }
-        } catch (error) {
-            notifications.show({
-                title: '基线创建失败',
-                message: String(error),
-                color: 'red',
-            });
-        } finally {
-            setLoading(false);
-        }
-    };
 
     const handleQuickCalibration = async () => {
         setLoading(true);
@@ -279,7 +247,7 @@ export function BaselineCalibrationCard() {
                     暂无基线数据，请在"新建校准"中选择"校准基线 (Quick Mode)"建立基线
                 </Alert>
             ) : (
-                <Table fontSize="xs" striped>
+                <Table striped>
                     <Table.Thead>
                         <Table.Tr>
                             <Table.Th>类型</Table.Th>

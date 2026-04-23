@@ -4,7 +4,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { notifications } from '@mantine/notifications'
-import type { TestExecutionRecord, HistoryFilters } from '../types'
+import type { HistoryFilters } from '../types'
 import * as api from '../api/testManagementAPI'
 
 // Query Keys

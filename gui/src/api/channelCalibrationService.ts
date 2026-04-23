@@ -16,7 +16,6 @@ import apiClient from './client'
 import type {
   // Common
   CalibrationJobResponse,
-  CalibrationProgress,
   ChannelCalibrationType,
   // Session
   StartCalibrationSessionRequest,

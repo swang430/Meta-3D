@@ -7,7 +7,7 @@
  * @version 2.0.0
  */
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import {
   Modal,
   Stepper,

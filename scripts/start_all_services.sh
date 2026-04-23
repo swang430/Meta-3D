@@ -65,7 +65,7 @@ check_port() {
 echo "检查依赖端口..."
 PORTS_OK=true
 
-for port in 8000 8001 5174; do
+for port in 8000 8001 5173; do
     if check_port $port; then
         echo -e "${YELLOW}⚠️  端口 ${port} 已被占用${NC}"
         PORTS_OK=false
@@ -129,7 +129,7 @@ if [ -d "${PROJECT_ROOT}/gui" ]; then
     start_service "GUI" \
         "${PROJECT_ROOT}/gui" \
         "npm run dev" \
-        5174
+        5173
     echo ""
 fi
 
@@ -139,7 +139,7 @@ echo "================================================"
 echo ""
 echo "📋 服务状态："
 echo "  • API:           http://localhost:8000"
-echo "  • GUI:           http://localhost:5174"
+echo "  • GUI:           http://localhost:5173"
 echo "  • ChannelEngine: http://localhost:8001"
 echo ""
 echo "📊 日志文件位置："

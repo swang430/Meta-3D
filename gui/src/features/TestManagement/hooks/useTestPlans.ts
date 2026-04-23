@@ -112,11 +112,31 @@ export function useUpdateTestPlan() {
 
       // Optimistically update
       if (previousPlan) {
-        queryClient.setQueryData<UnifiedTestPlan>(testPlansKeys.detail(planId), {
+        const optimisticPlan = {
           ...previousPlan,
-          ...payload,
           updated_at: new Date().toISOString(),
-        })
+        }
+
+        if (payload.name !== undefined) optimisticPlan.name = payload.name
+        if (payload.description !== undefined) optimisticPlan.description = payload.description
+        if (payload.status !== undefined) optimisticPlan.status = payload.status
+        if (payload.dut_info !== undefined) {
+          optimisticPlan.dut_info = { ...previousPlan.dut_info, ...payload.dut_info }
+        }
+        if (payload.test_environment !== undefined) {
+          optimisticPlan.test_environment = {
+            ...previousPlan.test_environment,
+            ...payload.test_environment,
+          }
+        }
+        if (payload.priority !== undefined) optimisticPlan.priority = payload.priority
+        if (payload.notes !== undefined) optimisticPlan.notes = payload.notes
+        if (payload.tags !== undefined) optimisticPlan.tags = payload.tags
+
+        queryClient.setQueryData<UnifiedTestPlan>(
+          testPlansKeys.detail(planId),
+          optimisticPlan as UnifiedTestPlan,
+        )
       }
 
       return { previousPlan }

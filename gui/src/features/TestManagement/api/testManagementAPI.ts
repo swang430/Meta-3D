@@ -11,7 +11,6 @@
 import client from '../../../api/client'
 import type {
   UnifiedTestPlan,
-  TestPlanSummary,
   TestStep,
   TestQueueItem,
   TestQueueSummary,

@@ -36,10 +36,8 @@ import {
   IconX,
   IconClock,
   IconAlertCircle,
-  IconFileReport,
   IconEye,
 } from '@tabler/icons-react'
-import { notifications } from '@mantine/notifications'
 import ScenarioLibrary from './ScenarioLibrary'
 import { OTAMapper } from '../OTAMapper'
 import { TestReportModal } from './TestReportModal'

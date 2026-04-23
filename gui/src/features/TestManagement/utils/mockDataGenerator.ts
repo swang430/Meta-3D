@@ -103,7 +103,7 @@ export function generateMockTestPlans(count: number = 10): UnifiedTestPlan[] {
 /**
  * Generate mock test steps
  */
-export function generateMockTestSteps(planId: string, count: number = 5): TestStep[] {
+export function generateMockTestSteps(_planId: string, count: number = 5): TestStep[] {
   const steps: TestStep[] = []
   const categories = ['校准', '测量', '验证', '分析']
 
@@ -270,11 +270,11 @@ export function generateMockSequenceLibrary(count: number = 30): SequenceLibrary
   for (let i = 0; i < count; i++) {
     items.push({
       id: `seq-${i + 1}`,
-      title: `测试序列 ${i + 1}`,
+      name: `测试序列 ${i + 1}`,
       description: `这是第 ${i + 1} 个测试序列的描述信息`,
       category: categories[i % categories.length],
-      tags: ['MIMO', 'OTA', '5G'],
-      defaultParameters: {
+      steps: [],
+      parameters: {
         frequency: {
           type: 'number',
           label: '频率',
@@ -284,12 +284,14 @@ export function generateMockSequenceLibrary(count: number = 30): SequenceLibrary
           unit: 'MHz',
         },
       },
-      version: '1.0.0',
-      author: 'TestAuthor',
+      default_values: null,
+      validation_rules: null,
+      is_public: true,
+      usage_count: Math.floor(Math.random() * 100),
+      created_by: 'TestAuthor',
       created_at: randomPastDate(180),
       updated_at: randomPastDate(30),
-      usage_count: Math.floor(Math.random() * 100),
-      popularity_score: Math.floor(Math.random() * 100),
+      tags: ['MIMO', 'OTA', '5G'],
     })
   }
 

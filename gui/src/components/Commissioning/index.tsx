@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Container, Title, Text, Stepper, Group, Button, Paper, Stack, Divider, Loader, Select, Badge } from '@mantine/core'
-import { IconTestPipe, IconPlayerPlay, IconPlayerTrackNext, IconEngine } from '@tabler/icons-react'
+import { IconTestPipe, IconPlayerPlay, IconPlayerTrackNext } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 import { PrecheckPhase, ReferencePhase, MIMOTestPhase, AnalysisPhase, ReportPhase } from './Phases'
 import * as api from './api'

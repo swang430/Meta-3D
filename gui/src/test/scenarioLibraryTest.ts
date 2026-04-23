@@ -118,9 +118,9 @@ let otaCount = 0
 let conductedCount = 0
 let digitalTwinCount = 0
 scenarioList.forEach(scenario => {
-  if (scenario.canExecute.ota) otaCount++
-  if (scenario.canExecute.conducted) conductedCount++
-  if (scenario.canExecute.digitalTwin) digitalTwinCount++
+  if (scenario.canExecute?.ota) otaCount++
+  if (scenario.canExecute?.conducted) conductedCount++
+  if (scenario.canExecute?.digitalTwin) digitalTwinCount++
 })
 console.log(`OTA可执行: ${otaCount}/10`)
 console.log(`传导可执行: ${conductedCount}/10`)

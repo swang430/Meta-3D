@@ -38,7 +38,7 @@ export function useQueueTestPlan() {
 
   return useMutation({
     mutationFn: (payload: QueueTestPlanRequest) => api.queueTestPlan(payload),
-    onSuccess: (queueItem, payload) => {
+    onSuccess: (_queueItem, payload) => {
       // Invalidate queue list
       queryClient.invalidateQueries({ queryKey: testQueueKeys.list() })
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import {
     Card,
     Stack,
@@ -12,9 +12,6 @@ import {
     Table,
     SimpleGrid,
     Modal,
-    TextInput,
-    NumberInput,
-    Switch,
 } from '@mantine/core'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -34,7 +31,7 @@ type ChamberConfigCardProps = {
 export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
     const queryClient = useQueryClient()
     const [createModalOpen, setCreateModalOpen] = useState(false)
-    const [selectedPreset, setSelectedPreset] = useState<ChamberType>('type_a')
+    const [selectedPreset, _setSelectedPreset] = useState<string>('type_a')
 
     // 自定义参数状态
     const [customName, setCustomName] = useState<string>('')
@@ -119,7 +116,7 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
         }
     }
 
-    const handleCreateFromTemplate = () => {
+    const _handleCreateFromTemplate = () => {
         const payload: any = { preset_type: selectedPreset }
 
         if (customName.trim()) {
@@ -151,7 +148,7 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
     }
 
     // 关闭模态框时重置表单
-    const handleCloseModal = () => {
+    const _handleCloseModal = () => {
         setCreateModalOpen(false)
         resetForm()
     }

@@ -55,7 +55,6 @@ export function StepConfigurationEditor({ value, onChange, testMode, scenarioDef
   // Helper functions for step state
   const isStepRequired = (stepKey: StepKey) => constraints.required.includes(stepKey)
   const isStepDisabled = (stepKey: StepKey) => constraints.disabled.includes(stepKey)
-  const isStepOptional = (stepKey: StepKey) => constraints.optional.includes(stepKey)
 
   // 跟踪每个步骤是否启用
   const [enabledSteps, setEnabledSteps] = useState({
@@ -67,6 +66,16 @@ export function StepConfigurationEditor({ value, onChange, testMode, scenarioDef
     kpi_validation: !!value?.kpi_validation,
     report_generation: !!value?.report_generation,
     environment_setup: !!value?.environment_setup,
+  })
+
+  const getEnvironmentSetupDefaults = (): DigitalTwinStepConfig => ({
+    channel_model: {
+      type: 'statistical',
+      use_scenario_default: true,
+    },
+    validate_environment: true,
+    export_channel_data: false,
+    timeout_seconds: 300,
   })
 
   // 步骤配置状态
@@ -100,7 +109,32 @@ export function StepConfigurationEditor({ value, onChange, testMode, scenarioDef
       if (!newEnabledSteps[stepKey]) {
         newEnabledSteps[stepKey] = true
         if (!newConfig[stepKey]) {
-          newConfig[stepKey] = getStepDefaults(stepKey as keyof StepConfiguration)
+          switch (stepKey) {
+            case 'chamber_init':
+              newConfig.chamber_init = getStepDefaults('chamber_init')
+              break
+            case 'network_config':
+              newConfig.network_config = getStepDefaults('network_config') as NetworkStepConfig
+              break
+            case 'base_station_setup':
+              newConfig.base_station_setup = getStepDefaults('base_station_setup') as BaseStationStepConfig
+              break
+            case 'ota_mapper':
+              newConfig.ota_mapper = getStepDefaults('ota_mapper')
+              break
+            case 'route_execution':
+              newConfig.route_execution = getStepDefaults('route_execution')
+              break
+            case 'kpi_validation':
+              newConfig.kpi_validation = getStepDefaults('kpi_validation')
+              break
+            case 'report_generation':
+              newConfig.report_generation = getStepDefaults('report_generation')
+              break
+            case 'environment_setup':
+              newConfig.environment_setup = getEnvironmentSetupDefaults()
+              break
+          }
         }
         hasChanges = true
       }
@@ -230,12 +264,7 @@ export function StepConfigurationEditor({ value, onChange, testMode, scenarioDef
         }
       case 'environment_setup':
         return {
-          channel_model: {
-            type: 'statistical',
-            use_scenario_default: true,
-          },
-          validate_environment: true,
-          export_channel_data: false,
+          ...getEnvironmentSetupDefaults(),
           timeout_seconds: 600,
         } as DigitalTwinStepConfig
       default:
@@ -620,7 +649,7 @@ export function StepConfigurationEditor({ value, onChange, testMode, scenarioDef
           <Accordion.Panel>
             {enabledSteps.environment_setup && !isStepDisabled('environment_setup') && (
               <DigitalTwinStepEditor
-                value={config.environment_setup as DigitalTwinStepConfig}
+                value={config.environment_setup ?? (getStepDefaults('environment_setup') as DigitalTwinStepConfig)}
                 onChange={(val) => updateConfig('environment_setup', val)}
                 scenarioChannelModel={scenarioDefaults?.channel_model}
               />

@@ -1,6 +1,5 @@
 import { Stack, Text, Alert, List, ThemeIcon, Table, Group, Button, Card, Badge, Loader } from '@mantine/core'
-import { IconCheck, IconX, IconAlertCircle, IconInfoCircle, IconAntenna, IconRotate3d } from '@tabler/icons-react'
-import type { SessionResponse } from './api'
+import { IconCheck, IconX, IconInfoCircle, IconAntenna, IconRotate3d } from '@tabler/icons-react'
 
 export function PrecheckPhase({ data }: { data: any }) {
   if (!data) return <Text c="dimmed">No data</Text>
@@ -85,7 +84,7 @@ export function ReferencePhase({
   )
 }
 
-export function MIMOTestPhase({ data, config }: { data: any, config: any }) {
+export function MIMOTestPhase({ data, config: _config }: { data: any, config: any }) {
   if (!data) return <Text c="dimmed">等待测试...</Text>
   
   return (

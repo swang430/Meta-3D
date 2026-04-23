@@ -1,3 +1,12 @@
+import client from '../../../api/client'
+import type {
+  TestStep,
+  TestExecutionRecord,
+  SequenceLibraryItem,
+  HistoryFilters,
+  SequenceLibraryFilters,
+} from '../types'
+
 // 临时fallback处理 - 对未实现的端点返回空数据而不是404错误
 
 /**

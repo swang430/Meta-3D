@@ -18,8 +18,6 @@ import {
     Center,
 } from '@mantine/core';
 import {
-    IconCircleCheck,
-    IconAlertTriangle,
     IconClock,
     IconRefresh,
     IconAntenna,
@@ -155,7 +153,6 @@ export function CalibrationTimeline() {
                     <Select
                         size="xs"
                         placeholder="筛选类型"
-                        clearable
                         data={[
                             { value: 'path_loss', label: '路损校准' },
                             { value: 'phase', label: '相位校准' },

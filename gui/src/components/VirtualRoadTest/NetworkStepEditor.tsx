@@ -26,7 +26,7 @@ import {
   ActionIcon,
   Card,
 } from '@mantine/core'
-import { IconPlus, IconTrash, IconNetwork, IconKey, IconRouter, IconGauge, IconApps } from '@tabler/icons-react'
+import { IconTrash, IconNetwork, IconKey, IconRouter, IconGauge, IconApps } from '@tabler/icons-react'
 import type { NetworkStepConfig, ApplicationTestConfig, ApplicationType } from '../../types/roadTest'
 
 interface Props {

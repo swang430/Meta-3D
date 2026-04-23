@@ -41,43 +41,42 @@ export function ChannelCalibrationPage() {
 
     setIsStarting(true)
     try {
-      let result
       switch (selectedType) {
         case 'temporal':
-          result = await startTemporalCalibration({
+          await startTemporalCalibration({
             scenario: { type: 'UMa', condition: 'LOS', fc_ghz: 3.5 },
             calibrated_by: 'system',
           })
           break
         case 'doppler':
-          result = await startDopplerCalibration({
+          await startDopplerCalibration({
             velocity_kmh: 120,
             fc_ghz: 3.5,
             calibrated_by: 'system',
           })
           break
         case 'spatial_correlation':
-          result = await startSpatialCorrelationCalibration({
+          await startSpatialCorrelationCalibration({
             scenario: { type: 'UMa', condition: 'NLOS', fc_ghz: 3.5 },
             test_dut: { antenna_spacing_wavelengths: 0.5 },
             calibrated_by: 'system',
           })
           break
         case 'angular_spread':
-          result = await startAngularSpreadCalibration({
+          await startAngularSpreadCalibration({
             scenario: { type: 'UMa', condition: 'NLOS', fc_ghz: 3.5 },
             calibrated_by: 'system',
           })
           break
         case 'quiet_zone':
-          result = await startQuietZoneCalibration({
+          await startQuietZoneCalibration({
             quiet_zone: { shape: 'sphere', diameter_m: 1.0 },
             fc_ghz: 3.5,
             calibrated_by: 'system',
           })
           break
         case 'eis':
-          result = await startEISValidation({
+          await startEISValidation({
             test_config: { fc_ghz: 3.5 },
             dut: { model: 'Reference DUT' },
             measured_by: 'system',

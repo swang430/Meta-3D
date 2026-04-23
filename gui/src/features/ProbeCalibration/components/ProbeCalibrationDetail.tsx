@@ -283,7 +283,7 @@ function AmplitudeCalibrationPanel({
         <Text size="sm" fw={600} mb="sm">
           Gain Data
         </Text>
-        <Table size="sm" striped>
+        <Table striped>
           <Table.Thead>
             <Table.Tr>
               <Table.Th>Frequency (MHz)</Table.Th>
@@ -349,7 +349,7 @@ function PhaseCalibrationPanel({
         <Text size="sm" fw={600} mb="sm">
           Phase Data
         </Text>
-        <Table size="sm" striped>
+        <Table striped>
           <Table.Thead>
             <Table.Tr>
               <Table.Th>Frequency (MHz)</Table.Th>

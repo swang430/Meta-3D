@@ -181,7 +181,7 @@ export function useCompleteExecution() {
           generated_by: 'system',
           description: `测试计划 "${updatedPlan.name}" (版本 ${updatedPlan.version}) 自动生成的执行报告`,
           test_plan_id: updatedPlan.id,
-          test_execution_ids: updatedPlan.current_execution_id ? [updatedPlan.current_execution_id] : [],
+          test_execution_ids: [],
           include_raw_data: false,
           include_charts: true,
           include_statistics: true,

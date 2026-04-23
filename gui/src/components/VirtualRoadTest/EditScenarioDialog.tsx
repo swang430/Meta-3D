@@ -122,7 +122,7 @@ export function EditScenarioDialog({ opened, onClose, scenario, testMode }: Prop
         },
         environment: {
           type: 'urban_street',
-          channel_model: formData.channelModel as any,
+          channel_snapshots: [],
           weather: 'clear',
           traffic_density: 'medium',
         },

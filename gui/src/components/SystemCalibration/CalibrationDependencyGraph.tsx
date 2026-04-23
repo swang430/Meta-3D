@@ -12,7 +12,6 @@ import {
     Stack,
     Box,
     Tooltip,
-    ActionIcon,
     ThemeIcon,
 } from '@mantine/core';
 import {
@@ -20,7 +19,6 @@ import {
     IconAlertTriangle,
     IconClock,
     IconArrowRight,
-    IconRefresh,
 } from '@tabler/icons-react';
 
 interface CalibrationNode {

@@ -104,14 +104,14 @@ export function useMonitoringWebSocket(
 
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectAttemptsRef = useRef(0)
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const shouldConnectRef = useRef(true)
   const lastUpdateTimeRef = useRef<number>(0)
   const pendingMetricsRef = useRef<MonitoringMetrics | null>(null)
-  const throttleTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const throttleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const log = useCallback(
-    (...args: any[]) => {
+    (...args: unknown[]) => {
       if (opts.debug) {
         console.log('[useMonitoringWebSocket]', ...args)
       }
