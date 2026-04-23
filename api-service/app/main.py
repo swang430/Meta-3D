@@ -15,6 +15,7 @@ from app.api import dashboard, probe, instrument, monitoring, report, road_test,
 from app.api import probe_calibration, channel_calibration, workflow, calibration_report, chamber
 from app.api.path_loss_calibration import router as path_loss_router, orchestrator_router, compensation_router, switch_router, e2e_router, phase_router, ce_router, baseline_router
 from app.api.commissioning import router as commissioning_router
+from app.api.system_logs import router as system_logs_router
 
 # Configure logging — 集中式三路日志配置
 from app.core.logging_config import setup_logging
@@ -124,6 +125,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# API 请求审计日志
+from app.core.audit_middleware import AuditMiddleware
+app.add_middleware(AuditMiddleware)
+
 # Include routers
 app.include_router(health.router, prefix=settings.api_v1_prefix)
 app.include_router(calibration.router, prefix=settings.api_v1_prefix)
@@ -189,6 +194,9 @@ app.include_router(baseline_router, prefix=settings.api_v1_prefix)
 
 # 3GPP Static MIMO OTA Commissioning Sandbox
 app.include_router(commissioning_router, prefix=settings.api_v1_prefix, tags=["暗室首测"])
+
+# System Logs Management
+app.include_router(system_logs_router, prefix=settings.api_v1_prefix)
 
 
 @app.get("/")

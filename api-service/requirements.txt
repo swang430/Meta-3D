@@ -31,6 +31,10 @@ numpy>=1.24.0
 scipy>=1.11.0
 pyyaml>=6.0
 
+# VISA Instrument Communication
+pyvisa>=1.14.0           # Python bindings for NI-VISA
+pyvisa-py>=0.7.0         # Pure-Python VISA backend (fallback when NI-VISA not installed)
+
 # Development and testing
 pytest>=8.0.0
 httpx>=0.27.0

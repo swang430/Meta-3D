@@ -602,24 +602,20 @@ class RealUxmDriver(BaseStationDriver):
         return [RadioTechnology.NR5G]
 
     # ===================================================================
-    # 内部 VISA 工具方法
+    # 内部 VISA 工具方法 (SCPI 日志由基类 _write/_query 自动处理)
     # ===================================================================
 
-    def _write(self, cmd: str) -> None:
-        """发送 SCPI 写命令"""
+    def _do_write(self, cmd: str) -> None:
+        """发送 SCPI 写命令（由基类 _write() 自动调用）"""
         if not self._visa_session:
             raise ConnectionError("[UXM] Not connected")
-        logger.debug(f"[UXM] WRITE: {cmd}")
         self._visa_session.write(cmd)
 
-    def _query(self, cmd: str) -> str:
-        """发送 SCPI 查询并返回响应"""
+    def _do_query(self, cmd: str) -> str:
+        """发送 SCPI 查询并返回响应（由基类 _query() 自动调用）"""
         if not self._visa_session:
             raise ConnectionError("[UXM] Not connected")
-        logger.debug(f"[UXM] QUERY: {cmd}")
-        response = self._visa_session.query(cmd)
-        logger.debug(f"[UXM] RESP: {response}")
-        return response
+        return self._visa_session.query(cmd)
 
     def _check_errors(self) -> None:
         """检查并清除错误队列"""
@@ -628,3 +624,4 @@ class RealUxmDriver(BaseStationDriver):
             if err.startswith("0,") or err.startswith("+0,"):
                 break
             logger.warning(f"[UXM] Instrument error: {err}")
+

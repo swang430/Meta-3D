@@ -345,6 +345,12 @@ class WorkflowExecutor:
         """Run a workflow execution synchronously"""
         execution.status = WorkflowStatus.RUNNING
         execution.started_at = datetime.utcnow()
+        total_steps = len(execution.workflow.steps)
+
+        logger.info(
+            f"Workflow '{execution.workflow.name}' started "
+            f"(id={execution.id}, steps={total_steps})"
+        )
 
         try:
             # Create calibration session
@@ -358,6 +364,7 @@ class WorkflowExecutor:
                 configuration=execution.workflow.parameters,
             )
             execution.session_id = str(session.id)
+            logger.info(f"Workflow session created: {session.id}")
 
             # Execute steps
             for i, step in enumerate(execution.workflow.steps):
@@ -365,6 +372,10 @@ class WorkflowExecutor:
 
                 # Check dependencies
                 if not self._check_dependencies(execution, step):
+                    logger.warning(
+                        f"Step '{step.id}' [{i+1}/{total_steps}] skipped — "
+                        f"dependencies not met: {step.depends_on}"
+                    )
                     result = StepResult(
                         step_id=step.id,
                         status=StepStatus.SKIPPED,
@@ -382,6 +393,9 @@ class WorkflowExecutor:
                     if step.on_failure == OnFailureAction.STOP or execution.workflow.stop_on_failure:
                         execution.status = WorkflowStatus.FAILED
                         execution.error_message = f"Step '{step.id}' failed: {result.error_message}"
+                        logger.error(
+                            f"Workflow '{execution.workflow.name}' aborted at step '{step.id}'"
+                        )
                         break
 
             # Mark as completed if not failed
@@ -403,6 +417,12 @@ class WorkflowExecutor:
             execution.error_message = str(e)
 
         execution.completed_at = datetime.utcnow()
+        duration = (execution.completed_at - execution.started_at).total_seconds()
+        logger.info(
+            f"Workflow '{execution.workflow.name}' {execution.status.value} "
+            f"in {duration:.1f}s — {execution.passed_steps}/{total_steps} passed, "
+            f"{execution.failed_steps} failed"
+        )
         return execution
 
     def _check_dependencies(self, execution: WorkflowExecution, step: WorkflowStep) -> bool:
@@ -410,16 +430,24 @@ class WorkflowExecutor:
         for dep_id in step.depends_on:
             dep_result = execution.step_results.get(dep_id)
             if not dep_result:
+                logger.debug(f"Step '{step.id}' blocked — dependency '{dep_id}' not yet executed")
                 return False
             if dep_result.status != StepStatus.COMPLETED:
+                logger.debug(f"Step '{step.id}' blocked — dependency '{dep_id}' status={dep_result.status.value}")
                 return False
-            # Optionally check if dependency passed
-            # if not dep_result.validation_pass:
-            #     return False
         return True
 
     def _execute_step(self, execution: WorkflowExecution, step: WorkflowStep) -> StepResult:
         """Execute a single workflow step"""
+        step_index = execution.current_step_index + 1
+        total_steps = len(execution.workflow.steps)
+        step_desc = step.description or step.calibration_type or step.type.value
+
+        logger.info(
+            f"Step '{step.id}' [{step_index}/{total_steps}] starting — "
+            f"type={step.type.value}, desc='{step_desc}'"
+        )
+
         result = StepResult(
             step_id=step.id,
             status=StepStatus.RUNNING,
@@ -459,6 +487,19 @@ class WorkflowExecutor:
                     logger.error(f"Step '{step.id}' failed after {max_retries} retries: {e}")
 
         result.completed_at = datetime.utcnow()
+        duration = (result.completed_at - result.started_at).total_seconds()
+
+        if result.status == StepStatus.COMPLETED:
+            logger.info(
+                f"Step '{step.id}' [{step_index}/{total_steps}] completed in {duration:.1f}s "
+                f"(pass={result.validation_pass})"
+            )
+        else:
+            logger.error(
+                f"Step '{step.id}' [{step_index}/{total_steps}] {result.status.value} "
+                f"after {duration:.1f}s — {result.error_message}"
+            )
+
         return result
 
     def _execute_probe_calibration(

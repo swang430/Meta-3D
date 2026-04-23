@@ -122,11 +122,13 @@ class RealRsFswDriver(SignalAnalyzerDriver):
         except Exception:
             return False
 
-    def _write(self, cmd: str) -> None:
+    def _do_write(self, cmd: str) -> None:
+        """发送 SCPI 写命令（由基类 _write() 自动调用）"""
         if self._visa_session:
             self._visa_session.write(cmd)
 
-    def _query(self, cmd: str) -> str:
+    def _do_query(self, cmd: str) -> str:
+        """发送 SCPI 查询并返回响应（由基类 _query() 自动调用）"""
         if self._visa_session:
             return self._visa_session.query(cmd)
         return ""

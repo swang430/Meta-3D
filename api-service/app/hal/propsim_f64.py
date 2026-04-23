@@ -1105,31 +1105,29 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     # 7. 内部工具方法
     # ===================================================================
 
-    async def _write(self, cmd: str, timeout: Optional[int] = None) -> None:
-        """发送 SCPI 写命令"""
+    async def _do_write(self, cmd: str, timeout: Optional[int] = None) -> None:
+        """发送 SCPI 写命令（由基类 _write() 自动调用，SCPI 日志已由基类记录）"""
         if timeout:
             original_timeout = self._visa_resource.timeout
             self._visa_resource.timeout = timeout
         try:
-            logger.debug(f"[F64] SCPI TX: {cmd}")
             await asyncio.to_thread(self._visa_resource.write, cmd)
         finally:
             if timeout:
                 self._visa_resource.timeout = original_timeout
 
-    async def _query(self, cmd: str, timeout: Optional[int] = None) -> str:
-        """发送 SCPI 查询命令并返回响应"""
+    async def _do_query(self, cmd: str, timeout: Optional[int] = None) -> str:
+        """发送 SCPI 查询命令并返回响应（由基类 _query() 自动调用，SCPI 日志已由基类记录）"""
         if timeout:
             original_timeout = self._visa_resource.timeout
             self._visa_resource.timeout = timeout
         try:
-            logger.debug(f"[F64] SCPI TX: {cmd}")
             response = await asyncio.to_thread(self._visa_resource.query, cmd)
-            logger.debug(f"[F64] SCPI RX: {response.strip()}")
             return response
         finally:
             if timeout:
                 self._visa_resource.timeout = original_timeout
+
 
     async def _check_errors(self) -> None:
         """

@@ -1,7 +1,7 @@
 /**
  * Reports Management Page
  *
- * Main page for report generation and template management
+ * Main page for report generation, template management, and system log viewing
  */
 
 import { useState } from 'react'
@@ -11,8 +11,9 @@ import {
   IconTemplate,
   IconPlus,
   IconClockHour4,
+  IconTerminal2,
 } from '@tabler/icons-react'
-import { ReportList, TemplateList, CreateReportWizard, PendingExecutionsList } from '../components'
+import { ReportList, TemplateList, CreateReportWizard, PendingExecutionsList, SystemLogViewer } from '../components'
 
 export function ReportsPage() {
   const [createReportOpened, setCreateReportOpened] = useState(false)
@@ -20,7 +21,7 @@ export function ReportsPage() {
   return (
     <Container size="xl" py="xl">
       <Stack gap="lg">
-        <Title order={1}>报告管理</Title>
+        <Title order={1}>数据归档与报告</Title>
 
         <Tabs defaultValue="pending">
           <Tabs.List>
@@ -32,6 +33,9 @@ export function ReportsPage() {
             </Tabs.Tab>
             <Tabs.Tab value="templates" leftSection={<IconTemplate size={16} />}>
               报告模板
+            </Tabs.Tab>
+            <Tabs.Tab value="systemLogs" leftSection={<IconTerminal2 size={16} />}>
+              系统日志
             </Tabs.Tab>
           </Tabs.List>
 
@@ -54,6 +58,10 @@ export function ReportsPage() {
 
           <Tabs.Panel value="templates" pt="lg">
             <TemplateList />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="systemLogs" pt="lg">
+            <SystemLogViewer />
           </Tabs.Panel>
         </Tabs>
 
