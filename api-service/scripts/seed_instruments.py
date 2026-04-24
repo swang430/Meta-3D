@@ -483,8 +483,8 @@ def main():
             conn.execute(text("""
                 INSERT INTO instrument_categories 
                     (id, category_key, category_name, category_name_en, 
-                     description, icon, display_order, usage_phase, is_active)
-                VALUES (:id, :key, :name, :name_en, :desc, :icon, :order, :usage_phase, true)
+                     description, icon, display_order, usage_phase, driver_mode, is_active)
+                VALUES (:id, :key, :name, :name_en, :desc, :icon, :order, :usage_phase, :driver_mode, true)
             """), {
                 "id": cat_id,
                 "key": cat_def["key"],
@@ -494,6 +494,7 @@ def main():
                 "icon": cat_def["icon"],
                 "order": cat_def["order"],
                 "usage_phase": json.dumps(cat_def.get("usage_phase", ["calibration", "test"])),
+                "driver_mode": cat_def.get("driver_mode", "auto"),
             })
 
             # 2. 创建型号

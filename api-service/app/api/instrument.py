@@ -62,6 +62,7 @@ class FEInstrumentCategory(BaseModel):
     models: List[FEInstrumentModel]
     isActive: bool = True
     usagePhase: List[str] = []  # ["calibration", "test"]
+    driverMode: str = "auto"  # "auto" | "mock" | "real"
 
 
 class FEInstrumentsResponse(BaseModel):
@@ -192,6 +193,7 @@ def _convert_category(
         models=[_convert_model(m, cat.category_key) for m in models],
         isActive=cat.is_active if cat.is_active is not None else True,
         usagePhase=cat.usage_phase if cat.usage_phase else [],
+        driverMode=cat.driver_mode if cat.driver_mode else "auto",
     )
 
 
@@ -900,4 +902,58 @@ def toggle_category_active(
         key=category_key,
         isActive=request.isActive,
         message=f"已{action} {category.category_name}",
+    )
+
+# ============================================================
+# 仪器级驱动模式
+# ============================================================
+
+class DriverModeRequest(BaseModel):
+    """仪器级驱动模式切换请求"""
+    mode: str  # "auto" | "mock" | "real"
+
+
+class DriverModeResult(BaseModel):
+    """仪器级驱动模式切换结果"""
+    key: str
+    driverMode: str
+    message: str
+
+
+@router.patch("/instruments/{category_key}/driver-mode", response_model=DriverModeResult)
+def set_instrument_driver_mode(
+    category_key: str,
+    request: DriverModeRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    设置单台仪器的驱动模式（auto / mock / real）
+
+    - auto: 跟随全局 HAL 开关
+    - mock: 强制使用仿真驱动（不论全局设定）
+    - real: 强制使用真实驱动（不论全局设定）
+
+    修改后需要重新切换全局 HAL 模式（或重启服务）以应用。
+    """
+    valid_modes = ("auto", "mock", "real")
+    if request.mode not in valid_modes:
+        raise HTTPException(400, f"无效的驱动模式: '{request.mode}'。可选: {valid_modes}")
+
+    category = db.query(InstrumentCategoryModel).filter(
+        InstrumentCategoryModel.category_key == category_key
+    ).first()
+    if not category:
+        raise HTTPException(404, f"Category '{category_key}' not found")
+
+    category.driver_mode = request.mode
+    db.commit()
+
+    mode_labels = {"auto": "自动", "mock": "强制仿真", "real": "强制真实"}
+    label = mode_labels.get(request.mode, request.mode)
+    logger.info(f"[Instrument] {category_key} driver_mode → {request.mode}")
+
+    return DriverModeResult(
+        key=category_key,
+        driverMode=request.mode,
+        message=f"已将 {category.category_name} 设为 {label} 模式",
     )

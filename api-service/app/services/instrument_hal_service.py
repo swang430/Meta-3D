@@ -262,28 +262,62 @@ class InstrumentHALService:
                     if conn.connection_params and isinstance(conn.connection_params, dict):
                         driver_config.update(conn.connection_params)
 
-                # Determine driver class based on mode and supported models
+                # Determine driver class based on per-instrument mode + global fallback
                 DriverClass = None
+                cat_mode = getattr(cat, 'driver_mode', None) or "auto"
 
-                if self.mode == DriverMode.REAL:
+                # 决定该仪器是否应使用真实驱动
+                if cat_mode == "mock":
+                    use_real = False
+                    mode_source = "per-instrument (forced mock)"
+                elif cat_mode == "real":
+                    use_real = True
+                    mode_source = "per-instrument (forced real)"
+                else:  # "auto" — 跟随全局
+                    use_real = (self.mode == DriverMode.REAL)
+                    mode_source = f"auto (global={self.mode.value})"
+
+                logger.info(
+                    f"[HAL] {cat.category_key}: mode={cat_mode}, "
+                    f"use_real={use_real} ({mode_source})"
+                )
+
+                if use_real:
                     category_drivers = REAL_DRIVER_REGISTRY.get(cat.category_key, {})
                     DriverClass = category_drivers.get(model.model)
 
                 if DriverClass:
                     logger.info(
-                        f"[HAL-{self.mode.value.upper()}] {cat.category_key}: using REAL driver "
+                        f"[HAL] {cat.category_key}: using REAL driver "
                         f"{DriverClass.__name__} for {model.vendor} {model.model}"
                     )
+                elif use_real and cat_mode == "real":
+                    # 强制 real 模式但没有对应的真实驱动实现 → 不降级，跳过并报错
+                    logger.error(
+                        f"[HAL] {cat.category_key}: forced real mode, but no real driver "
+                        f"for {model.vendor} {model.model} — skipping (will NOT fallback to mock)"
+                    )
+                    if conn:
+                        conn.status = "error"
+                        conn.last_error = f"Forced real mode but no driver for {model.model}"
+                        db.commit()
+                    continue
                 else:
                     DriverClass = MOCK_FALLBACK.get(cat.category_key)
                     if DriverClass:
-                        logger.warning(
-                            f"[HAL-REAL] {cat.category_key}: no real driver for "
-                            f"{model.vendor} {model.model}, falling back to {DriverClass.__name__}"
-                        )
+                        if use_real:
+                            logger.warning(
+                                f"[HAL] {cat.category_key}: auto → fallback to Mock "
+                                f"(real driver not available for {model.model})"
+                            )
+                        else:
+                            logger.info(
+                                f"[HAL] {cat.category_key}: using Mock driver "
+                                f"{DriverClass.__name__}"
+                            )
                     else:
                         logger.info(
-                            f"[HAL-REAL] {cat.category_key}: no driver available, skipping"
+                            f"[HAL] {cat.category_key}: no driver available, skipping"
                         )
                         continue
 

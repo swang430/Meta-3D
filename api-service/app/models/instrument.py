@@ -59,6 +59,14 @@ class InstrumentCategory(Base):
         comment='适用阶段列表: ["calibration","test"] 或 ["test"] 等'
     )
 
+    # 驱动模式（仪器级别覆盖全局 HAL 模式）
+    driver_mode = Column(
+        String(10),
+        default="auto",
+        nullable=False,
+        comment='驱动模式: "auto"(跟随全局) | "mock"(强制仿真) | "real"(强制真实)'
+    )
+
     # 元数据
     is_active = Column(Boolean, default=True, nullable=False, comment="是否启用（当前会话中是否参与）")
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
