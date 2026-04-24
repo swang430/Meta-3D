@@ -1408,6 +1408,46 @@ function Dashboard({ selectedResultCount, onNavigate }: DashboardProps) {
   )
 }
 
+/**
+ * 解析仪器端点字符串为 IP 和 Port
+ * 支持格式:
+ * - VISA: "TCPIP0::192.168.0.132::inst0::INSTR"
+ * - VISA with port: "TCPIP0::192.168.0.132::5025::INSTR"
+ * - IP:Port: "192.168.0.132:5025"
+ * - Plain IP: "192.168.0.132"
+ */
+function parseEndpointToIpPort(endpoint: string): { ip?: string; port?: number } {
+  const ep = endpoint.trim()
+  if (!ep) return {}
+
+  // VISA 资源字符串: TCPIP[n]::host[::port]::...::INSTR
+  if (ep.toUpperCase().startsWith('TCPIP')) {
+    const parts = ep.split('::')
+    if (parts.length >= 2) {
+      const ip = parts[1].trim()
+      let port: number | undefined
+      if (parts.length >= 3) {
+        const p = parseInt(parts[2].trim(), 10)
+        if (!isNaN(p) && p > 0 && p < 65536) port = p
+      }
+      return { ip, port }
+    }
+    return {}
+  }
+
+  // IP:Port 格式
+  if (ep.includes(':')) {
+    const lastColon = ep.lastIndexOf(':')
+    const host = ep.slice(0, lastColon).trim()
+    const p = parseInt(ep.slice(lastColon + 1).trim(), 10)
+    if (!isNaN(p) && p > 0 && p < 65536) return { ip: host, port: p }
+    return { ip: ep }
+  }
+
+  // 纯 IP
+  return { ip: ep }
+}
+
 function EquipmentManager() {
   const queryClient = useQueryClient()
   const { data, isLoading } = useQuery({
@@ -1716,19 +1756,8 @@ function EquipmentManager() {
                     onClick={async () => {
                       showFeedback(category.key, 'success', '正在测试连接...')
                       try {
-                        // 从当前 draft 的 endpoint 解析 IP 和 Port
-                        const draftEndpoint = draft.endpoint?.trim() || ''
+                        const { ip: testIp, port: testPort } = parseEndpointToIpPort(draft.endpoint || '')
                         const draftProtocol = draft.controller?.trim() || ''
-                        let testIp: string | undefined
-                        let testPort: number | undefined
-                        if (draftEndpoint.includes(':')) {
-                          const parts = draftEndpoint.split(':')
-                          testIp = parts[0]
-                          const p = parseInt(parts[parts.length - 1], 10)
-                          if (!isNaN(p)) testPort = p
-                        } else if (draftEndpoint) {
-                          testIp = draftEndpoint
-                        }
                         const resp = await client.post(`/instruments/${category.key}/test-connection`, {
                           ip: testIp,
                           port: testPort,
@@ -1786,17 +1815,7 @@ function EquipmentManager() {
                           const key = category.key
                           setScpiLoading(p => ({ ...p, [key]: true }))
                           try {
-                            const ep = draft.endpoint?.trim() || ''
-                            let testIp: string | undefined
-                            let testPort: number | undefined
-                            if (ep.includes(':')) {
-                              const parts = ep.split(':')
-                              testIp = parts[0]
-                              const p = parseInt(parts[parts.length - 1], 10)
-                              if (!isNaN(p)) testPort = p
-                            } else if (ep) {
-                              testIp = ep
-                            }
+                            const { ip: testIp, port: testPort } = parseEndpointToIpPort(draft.endpoint || '')
                             const resp = await client.post(`/instruments/${key}/scpi-probe`, {
                               ip: testIp, port: testPort,
                             })
@@ -1857,17 +1876,7 @@ function EquipmentManager() {
                             const cmd = scpiManualCmd[category.key]?.trim()
                             if (!cmd) return
                             const key = category.key
-                            const ep = draft.endpoint?.trim() || ''
-                            let testIp: string | undefined
-                            let testPort: number | undefined
-                            if (ep.includes(':')) {
-                              const parts = ep.split(':')
-                              testIp = parts[0]
-                              const p = parseInt(parts[parts.length - 1], 10)
-                              if (!isNaN(p)) testPort = p
-                            } else if (ep) {
-                              testIp = ep
-                            }
+                            const { ip: testIp, port: testPort } = parseEndpointToIpPort(draft.endpoint || '')
                             setScpiLoading(p => ({ ...p, [key]: true }))
                             try {
                               const resp = await client.post(`/instruments/${key}/scpi-command`, {
@@ -1899,17 +1908,7 @@ function EquipmentManager() {
                           const cmd = scpiManualCmd[category.key]?.trim()
                           if (!cmd) return
                           const key = category.key
-                          const ep = draft.endpoint?.trim() || ''
-                          let testIp: string | undefined
-                          let testPort: number | undefined
-                          if (ep.includes(':')) {
-                            const parts = ep.split(':')
-                            testIp = parts[0]
-                            const p = parseInt(parts[parts.length - 1], 10)
-                            if (!isNaN(p)) testPort = p
-                          } else if (ep) {
-                            testIp = ep
-                          }
+                          const { ip: testIp, port: testPort } = parseEndpointToIpPort(draft.endpoint || '')
                           setScpiLoading(p => ({ ...p, [key]: true }))
                           try {
                             const resp = await client.post(`/instruments/${key}/scpi-command`, {

@@ -281,18 +281,13 @@ def update_instrument_category(
             conn_data["protocol"] = conn_data.pop("controller")
 
         # 从 endpoint 自动解析 controller_ip 和 port
-        # 格式: "192.168.100.21:5025" 或 "192.168.100.21"
+        # 支持: "IP:Port", "TCPIP0::IP::inst0::INSTR", 纯 IP
         if "endpoint" in conn_data and conn_data["endpoint"]:
-            ep = conn_data["endpoint"].strip()
-            if ":" in ep:
-                parts = ep.rsplit(":", 1)
-                conn_data["controller_ip"] = parts[0]
-                try:
-                    conn_data["port"] = int(parts[1])
-                except ValueError:
-                    conn_data["controller_ip"] = ep  # 无法解析端口，整个作为 IP
-            else:
-                conn_data["controller_ip"] = ep
+            parsed_ip, parsed_port = _parse_endpoint_to_ip_port(conn_data["endpoint"])
+            if parsed_ip:
+                conn_data["controller_ip"] = parsed_ip
+            if parsed_port:
+                conn_data["port"] = parsed_port
 
         for key, value in conn_data.items():
             if value is not None and hasattr(connection, key):
@@ -373,6 +368,14 @@ async def test_instrument_connection(
             success=False,
             status="error",
             message="未配置连接信息（IP 地址为空）",
+        )
+
+    # 验证 IP 地址格式
+    if not _validate_ip_address(ip):
+        return TestConnectionResult(
+            success=False,
+            status="error",
+            message=f"IP 地址格式无效: '{ip}'。请输入有效的 IPv4 地址（如 192.168.0.132）或 VISA 资源字符串（如 TCPIP0::192.168.0.132::inst0::INSTR）",
         )
 
     scpi_logger.info(
@@ -526,11 +529,22 @@ def _send_scpi_command(
         response = None
         if is_query:
             raw = sock.recv(4096).decode("utf-8", errors="replace").strip()
-            response = raw
+            response = raw if raw else None
             scpi_logger.debug(
-                f"[SCPI-TERM] {category_key} ← RESP: {raw[:200]}",
-                extra={"instrument_id": category_key, "direction": "READ", "response": raw[:500]},
+                f"[SCPI-TERM] {category_key} ← RESP: {raw[:200] if raw else '(empty)'}",
+                extra={"instrument_id": category_key, "direction": "READ", "response": raw[:500] if raw else ""},
             )
+
+            # 查询命令返回空响应 → 仪器未真正响应
+            if not raw:
+                latency = (time.monotonic() - start) * 1000
+                return ScpiCommandResult(
+                    command=command.strip(),
+                    response=None,
+                    success=False,
+                    error="仪器未返回数据（空响应），请检查连接和 IP 地址",
+                    latency_ms=round(latency, 1),
+                )
 
         latency = (time.monotonic() - start) * 1000
         return ScpiCommandResult(
@@ -574,6 +588,63 @@ def _resolve_ip_port(
     return ip, port
 
 
+def _parse_endpoint_to_ip_port(endpoint: str) -> tuple:
+    """
+    从多种格式的端点字符串中解析出 IP 和 Port。
+
+    支持的格式:
+    - VISA: "TCPIP0::192.168.0.132::inst0::INSTR" → ("192.168.0.132", None)
+    - VISA with port: "TCPIP0::192.168.0.132::5025::INSTR" → ("192.168.0.132", 5025)
+    - IP:Port: "192.168.0.132:5025" → ("192.168.0.132", 5025)
+    - Plain IP: "192.168.0.132" → ("192.168.0.132", None)
+    """
+    import re
+
+    ep = endpoint.strip()
+    if not ep:
+        return None, None
+
+    # VISA 资源字符串: TCPIP[n]::host[::port]::...::INSTR
+    if ep.upper().startswith("TCPIP"):
+        parts = ep.split("::")
+        # parts[0] = "TCPIP0", parts[1] = IP/hostname, parts[2+] = inst/port/INSTR
+        if len(parts) >= 2:
+            ip_candidate = parts[1].strip()
+            port_candidate = None
+            # Check if parts[2] is a port number
+            if len(parts) >= 3:
+                try:
+                    port_candidate = int(parts[2].strip())
+                except ValueError:
+                    pass
+            return ip_candidate, port_candidate
+        return None, None
+
+    # IP:Port 格式
+    if ":" in ep:
+        host_part, port_part = ep.rsplit(":", 1)
+        try:
+            return host_part.strip(), int(port_part.strip())
+        except ValueError:
+            return ep, None
+
+    # 纯 IP
+    return ep, None
+
+
+def _validate_ip_address(ip: str) -> bool:
+    """验证 IPv4 地址格式"""
+    import re
+    if not ip:
+        return False
+    # IPv4 pattern
+    pattern = r'^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$'
+    match = re.match(pattern, ip)
+    if not match:
+        return False
+    return all(0 <= int(g) <= 255 for g in match.groups())
+
+
 @router.post("/instruments/{category_key}/scpi-command", response_model=ScpiCommandResult)
 async def send_scpi_command(
     category_key: str,
@@ -606,6 +677,13 @@ async def send_scpi_command(
             command=request.command,
             success=False,
             error="未配置 IP 地址",
+            latency_ms=0,
+        )
+    if not _validate_ip_address(ip):
+        return ScpiCommandResult(
+            command=request.command,
+            success=False,
+            error=f"IP 地址格式无效: '{ip}'",
             latency_ms=0,
         )
 
@@ -665,6 +743,8 @@ async def probe_scpi_commands(
 
     if not ip:
         raise HTTPException(400, "未配置 IP 地址")
+    if not _validate_ip_address(ip):
+        raise HTTPException(400, f"IP 地址格式无效: '{ip}'。请检查端点配置。")
 
     results: List[ScpiCommandResult] = []
 
