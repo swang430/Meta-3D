@@ -17,13 +17,14 @@ from app.api.path_loss_calibration import router as path_loss_router, orchestrat
 from app.api.commissioning import router as commissioning_router
 from app.api.system_logs import router as system_logs_router
 
-# Configure logging — 集中式三路日志配置
+# Configure logging — 集中式四路日志配置
 from app.core.logging_config import setup_logging
 setup_logging(
     debug=settings.debug,
     log_dir=settings.log_dir,
     log_retention_days=settings.log_retention_days,
     scpi_enabled=settings.log_scpi_enabled,
+    db_log_enabled=settings.log_db_enabled,
 )
 
 logger = logging.getLogger(__name__)

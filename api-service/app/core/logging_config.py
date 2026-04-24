@@ -1,10 +1,11 @@
 """
 MIMO-First 集中式日志配置模块
 
-三路输出架构:
+四路输出架构:
   1. Console  — 彩色人类可读格式 (开发/运维)
   2. app.log  — JSON 结构化按天轮转 (AI debug / 审计)
   3. scpi.log — SCPI 仪器通信专用日志 (测试可追溯性)
+  4. db.log   — 数据库 SQL 查询日志 (联调/性能调优)
 
 通过 contextvars 实现 session_id / instrument_id 的自动注入,
 无需修改现有 486 个 log 调用点。
@@ -107,6 +108,7 @@ def setup_logging(
     log_dir: Optional[str] = None,
     log_retention_days: int = 30,
     scpi_enabled: bool = True,
+    db_log_enabled: bool = True,
 ) -> None:
     """
     初始化整个应用的日志系统。
@@ -116,6 +118,7 @@ def setup_logging(
         log_dir: 日志文件目录 (默认 api-service/logs/)
         log_retention_days: 日志文件保留天数
         scpi_enabled: 是否启用 SCPI 专用日志文件
+        db_log_enabled: 是否启用数据库 SQL 查询日志文件
     """
 
     # 确定日志目录
@@ -127,6 +130,7 @@ def setup_logging(
 
     app_log_path = os.path.join(log_dir, "app.log")
     scpi_log_path = os.path.join(log_dir, "scpi.log")
+    db_log_path = os.path.join(log_dir, "db.log")
 
     console_level = "DEBUG" if debug else "INFO"
 
@@ -185,6 +189,8 @@ def setup_logging(
             "httpx": {"level": "WARNING", "propagate": True},
             "httpcore": {"level": "WARNING", "propagate": True},
             "sqlalchemy.engine": {"level": "WARNING", "propagate": True},
+            # 数据库会话生命周期日志
+            "app.db": {"level": "DEBUG", "propagate": True},
         },
     }
 
@@ -208,6 +214,32 @@ def setup_logging(
             "propagate": True,  # 同时传播到 root (app.log + console)
         }
 
+    # Handler 4 (可选): 数据库 SQL 查询日志
+    if db_log_enabled:
+        config["handlers"]["file_db"] = {
+            "class": "logging.handlers.TimedRotatingFileHandler",
+            "level": "DEBUG",
+            "formatter": "json",
+            "filters": ["context_filter"],
+            "filename": db_log_path,
+            "when": "midnight",
+            "interval": 1,
+            "backupCount": log_retention_days,
+            "encoding": "utf-8",
+        }
+        # SQLAlchemy SQL 语句 → db.log
+        config["loggers"]["sqlalchemy.engine"] = {
+            "level": "INFO",  # INFO = SQL 语句, DEBUG = SQL + 结果集
+            "handlers": ["file_db"],
+            "propagate": False,  # 不传播到 console/app.log 避免刷屏
+        }
+        # 数据库连接池事件 → db.log
+        config["loggers"]["sqlalchemy.pool"] = {
+            "level": "DEBUG",
+            "handlers": ["file_db"],
+            "propagate": False,
+        }
+
     logging.config.dictConfig(config)
 
     # 启动确认
@@ -216,5 +248,6 @@ def setup_logging(
         f"Logging initialized: console={console_level}, "
         f"file={app_log_path}, "
         f"scpi={'enabled → ' + scpi_log_path if scpi_enabled else 'disabled'}, "
+        f"db={'enabled → ' + db_log_path if db_log_enabled else 'disabled'}, "
         f"retention={log_retention_days}d"
     )
