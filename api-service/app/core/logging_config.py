@@ -69,11 +69,13 @@ class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         import json
 
+        local_dt = datetime.fromtimestamp(record.created).astimezone()
+        # ISO 8601 本地时间 + 时区偏移 (e.g. 2026-04-24T17:51:21.123+08:00)
+        tz_offset = local_dt.strftime("%z")  # e.g. "+0800"
+        ts = local_dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + tz_offset[:3] + ":" + tz_offset[3:]
+
         log_entry = {
-            "ts": datetime.utcfromtimestamp(record.created).strftime(
-                "%Y-%m-%dT%H:%M:%S.%f"
-            )[:-3]
-            + "Z",
+            "ts": ts,
             "level": record.levelname,
             "logger": record.name,
             "session_id": getattr(record, "session_id", "-"),
