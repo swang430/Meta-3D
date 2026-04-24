@@ -36,13 +36,13 @@ def _after_cursor_execute(conn, cursor, statement, parameters, context, executem
     if total_ms > 500:
         # 慢查询告警
         logger.warning(
-            f"SLOW QUERY ({total_ms:.0f}ms): {statement[:200]}",
-            extra={"duration_ms": round(total_ms, 1), "query": statement[:500]},
+            f"SLOW QUERY ({total_ms:.0f}ms): {statement}",
+            extra={"duration_ms": round(total_ms, 1), "query": statement},
         )
     elif total_ms > 100:
         # 中等耗时提醒
         logger.info(
-            f"DB query ({total_ms:.0f}ms): {statement[:100]}...",
+            f"DB query ({total_ms:.0f}ms): {statement}",
             extra={"duration_ms": round(total_ms, 1)},
         )
 

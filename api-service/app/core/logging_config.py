@@ -41,13 +41,19 @@ current_instrument_id: contextvars.ContextVar[str] = contextvars.ContextVar(
 
 class ContextFilter(logging.Filter):
     """
-    将 contextvars 中的 session_id / instrument_id
+    将 contextvars 中的 session_id / instrument_id / hal_mode
     注入到每条 LogRecord，供 Formatter 使用。
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.session_id = current_session_id.get("-")  # type: ignore[attr-defined]
         record.instrument_id = current_instrument_id.get("-")  # type: ignore[attr-defined]
+        # 注入当前 HAL 全局模式 (mock/real)
+        try:
+            from app.services.instrument_hal_service import get_hal_service
+            record.hal_mode = get_hal_service().mode.value  # type: ignore[attr-defined]
+        except Exception:
+            record.hal_mode = "-"  # type: ignore[attr-defined]
         return True
 
 
@@ -78,6 +84,7 @@ class JsonFormatter(logging.Formatter):
             "ts": ts,
             "level": record.levelname,
             "logger": record.name,
+            "hal_mode": getattr(record, "hal_mode", "-"),
             "session_id": getattr(record, "session_id", "-"),
             "instrument_id": getattr(record, "instrument_id", "-"),
             "msg": record.getMessage(),
@@ -89,7 +96,7 @@ class JsonFormatter(logging.Formatter):
             "exc_info", "exc_text", "stack_info", "lineno", "funcName",
             "pathname", "filename", "module", "levelno", "levelname",
             "message", "msecs", "processName", "process", "threadName",
-            "thread", "taskName", "session_id", "instrument_id",
+            "thread", "taskName", "session_id", "instrument_id", "hal_mode",
         }
         for key, value in record.__dict__.items():
             if key not in standard_keys and not key.startswith("_"):

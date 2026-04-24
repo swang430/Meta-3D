@@ -53,6 +53,7 @@ interface LogEntry {
   ts: string
   level: string
   logger: string
+  hal_mode: string
   session_id: string
   instrument_id: string
   msg: string
@@ -276,7 +277,19 @@ export function SystemLogViewer() {
               </ActionIcon>
             </Tooltip>
 
-            <Tooltip label="下载原始日志">
+            <Tooltip label="导出过滤结果">
+              <ActionIcon variant="light" color="teal" onClick={() => {
+                const params = new URLSearchParams()
+                if (levelFilter !== 'ALL') params.set('level', levelFilter)
+                if (keyword.trim()) params.set('keyword', keyword.trim())
+                const url = `${apiClient.defaults.baseURL}/system-logs/export/${selectedFile}?${params.toString()}`
+                window.open(url, '_blank')
+              }}>
+                <IconDownload size={16} />
+              </ActionIcon>
+            </Tooltip>
+
+            <Tooltip label="下载原始日志（全量）">
               <ActionIcon variant="light" color="blue" onClick={handleDownload}>
                 <IconDownload size={16} />
               </ActionIcon>
@@ -317,6 +330,7 @@ export function SystemLogViewer() {
                 <Table.Th w={30}></Table.Th>
                 <Table.Th w={100}>时间</Table.Th>
                 <Table.Th w={70}>级别</Table.Th>
+                <Table.Th w={60}>模式</Table.Th>
                 <Table.Th w={250}>Logger</Table.Th>
                 <Table.Th>消息</Table.Th>
               </Table.Tr>
@@ -356,12 +370,21 @@ export function SystemLogViewer() {
                     </Badge>
                   </Table.Td>
                   <Table.Td>
-                    <Text size="xs" c="dimmed" truncate="end" maw={240}>
+                    <Badge
+                      size="xs"
+                      color={entry.hal_mode === 'real' ? 'teal' : entry.hal_mode === 'mock' ? 'blue' : 'gray'}
+                      variant="dot"
+                    >
+                      {entry.hal_mode === '-' ? '-' : entry.hal_mode.toUpperCase()}
+                    </Badge>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs" c="dimmed">
                       {entry.logger}
                     </Text>
                   </Table.Td>
                   <Table.Td>
-                    <Text size="xs" truncate="end" maw={500}>
+                    <Text size="xs" style={{ wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}>
                       {entry.msg}
                     </Text>
                   </Table.Td>

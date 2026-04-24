@@ -42,6 +42,7 @@ class LogEntry(BaseModel):
     ts: str
     level: str
     logger: str
+    hal_mode: str = "-"
     session_id: str = "-"
     instrument_id: str = "-"
     msg: str
@@ -153,6 +154,7 @@ def _parse_log_line(line: str) -> Optional[LogEntry]:
             ts=obj.get("ts", ""),
             level=obj.get("level", "UNKNOWN"),
             logger=obj.get("logger", ""),
+            hal_mode=obj.get("hal_mode", "-"),
             session_id=obj.get("session_id", "-"),
             instrument_id=obj.get("instrument_id", "-"),
             msg=obj.get("msg", line),
@@ -256,7 +258,7 @@ def tail_log_file(
 @router.get("/download/{filename}")
 def download_log_file(filename: str):
     """
-    下载原始日志文件。
+    下载原始日志文件（全量）。
 
     返回文件流，适合附加到报告中或离线分析。
     """
@@ -266,4 +268,65 @@ def download_log_file(filename: str):
         path=str(filepath),
         filename=filename,
         media_type="application/octet-stream",
+    )
+
+
+@router.get("/export/{filename}")
+def export_filtered_logs(
+    filename: str,
+    level: Optional[str] = Query(default=None, description="按日志级别过滤"),
+    keyword: Optional[str] = Query(default=None, description="按关键词过滤"),
+    session_id: Optional[str] = Query(default=None, description="按 session_id 过滤"),
+    hal_mode: Optional[str] = Query(default=None, description="按 HAL 模式过滤 (mock/real)"),
+):
+    """
+    按过滤条件导出日志。
+
+    与 /download 不同，此端点会根据筛选条件只导出匹配的行。
+    返回 JSONL 格式的文件流。
+    """
+    filepath = _safe_filename(filename)
+
+    def filtered_stream():
+        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+
+                entry = _parse_log_line(stripped)
+                if entry is None:
+                    continue
+
+                # 级别过滤
+                if level and entry.level.upper() != level.upper():
+                    continue
+                # 关键词过滤
+                if keyword:
+                    kw_lower = keyword.lower()
+                    if kw_lower not in entry.msg.lower() and kw_lower not in entry.logger.lower():
+                        continue
+                # session_id 过滤
+                if session_id and entry.session_id != session_id:
+                    continue
+                # HAL 模式过滤
+                if hal_mode and entry.hal_mode.lower() != hal_mode.lower():
+                    continue
+
+                yield stripped + "\n"
+
+    # 导出文件名带过滤标记
+    parts = [filename.replace('.log', '')]
+    if level:
+        parts.append(level.lower())
+    if hal_mode:
+        parts.append(hal_mode.lower())
+    if keyword:
+        parts.append(keyword[:20])
+    export_name = "_".join(parts) + "_export.jsonl"
+
+    return StreamingResponse(
+        filtered_stream(),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": f'attachment; filename="{export_name}"'},
     )
