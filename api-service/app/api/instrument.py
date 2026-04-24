@@ -279,6 +279,21 @@ def update_instrument_category(
         # 将前端的 controller 字段映射回 DB 的 protocol
         if "controller" in conn_data:
             conn_data["protocol"] = conn_data.pop("controller")
+
+        # 从 endpoint 自动解析 controller_ip 和 port
+        # 格式: "192.168.100.21:5025" 或 "192.168.100.21"
+        if "endpoint" in conn_data and conn_data["endpoint"]:
+            ep = conn_data["endpoint"].strip()
+            if ":" in ep:
+                parts = ep.rsplit(":", 1)
+                conn_data["controller_ip"] = parts[0]
+                try:
+                    conn_data["port"] = int(parts[1])
+                except ValueError:
+                    conn_data["controller_ip"] = ep  # 无法解析端口，整个作为 IP
+            else:
+                conn_data["controller_ip"] = ep
+
         for key, value in conn_data.items():
             if value is not None and hasattr(connection, key):
                 setattr(connection, key, value)
@@ -311,9 +326,17 @@ class TestConnectionResult(BaseModel):
     latency_ms: Optional[float] = None
 
 
+class TestConnectionRequest(BaseModel):
+    """测试连接请求（可选覆盖参数）"""
+    ip: Optional[str] = None      # 覆盖数据库中的 IP（用于测试未保存的编辑）
+    port: Optional[int] = None    # 覆盖数据库中的端口
+    protocol: Optional[str] = None
+
+
 @router.post("/instruments/{category_key}/test-connection", response_model=TestConnectionResult)
 async def test_instrument_connection(
     category_key: str,
+    body: Optional[TestConnectionRequest] = None,
     db: Session = Depends(get_db),
 ):
     """
@@ -321,9 +344,14 @@ async def test_instrument_connection(
 
     尝试通过 TCP socket 连接到仪器的 IP:Port，
     如果是 SCPI 协议，发送 *IDN? 查询。
+
+    支持通过请求体覆盖 IP/Port，以便在保存配置前先测试连接。
     """
     import socket
     import time
+
+    # 使用 SCPI 命名空间的 logger，确保记录到 scpi.log
+    scpi_logger = logging.getLogger("app.hal.scpi")
 
     category = db.query(InstrumentCategoryModel).filter(
         InstrumentCategoryModel.category_key == category_key
@@ -334,15 +362,23 @@ async def test_instrument_connection(
     conn = db.query(InstrumentConnectionDB).filter(
         InstrumentConnectionDB.category_id == category.id
     ).first()
-    if not conn or not conn.controller_ip:
+
+    # 优先使用请求体中的覆盖值，其次使用数据库中保存的值
+    ip = (body.ip if body and body.ip else None) or (conn.controller_ip if conn else None)
+    port = (body.port if body and body.port else None) or (conn.port if conn else None) or 5025
+    protocol = (body.protocol if body and body.protocol else None) or (conn.protocol if conn else None) or ""
+
+    if not ip:
         return TestConnectionResult(
             success=False,
             status="error",
             message="未配置连接信息（IP 地址为空）",
         )
 
-    ip = conn.controller_ip
-    port = conn.port or 5025  # SCPI default port
+    scpi_logger.info(
+        f"[TEST-CONN] {category_key} → TCP connecting {ip}:{port} (protocol={protocol})",
+        extra={"instrument_id": category_key, "direction": "CONNECT"},
+    )
 
     start = time.monotonic()
     try:
@@ -351,23 +387,41 @@ async def test_instrument_connection(
         sock.connect((ip, port))
         latency = (time.monotonic() - start) * 1000
 
+        scpi_logger.info(
+            f"[TEST-CONN] {category_key} → TCP connected to {ip}:{port} ({latency:.0f}ms)",
+            extra={"instrument_id": category_key, "direction": "CONNECT", "latency_ms": round(latency, 1)},
+        )
+
         idn_response = None
         # Try SCPI *IDN? query if protocol suggests it
-        if conn.protocol and "SCPI" in conn.protocol.upper():
+        if "SCPI" in protocol.upper():
             try:
+                scpi_logger.debug(
+                    f"[TEST-CONN] {category_key} → WRITE: *IDN?",
+                    extra={"instrument_id": category_key, "direction": "WRITE", "command": "*IDN?"},
+                )
                 sock.sendall(b"*IDN?\n")
                 idn_response = sock.recv(1024).decode("utf-8", errors="replace").strip()
-            except Exception:
+                scpi_logger.info(
+                    f"[TEST-CONN] {category_key} ← RESP: {idn_response}",
+                    extra={"instrument_id": category_key, "direction": "READ", "response": idn_response},
+                )
+            except Exception as e:
                 idn_response = "(SCPI query failed, but TCP connected)"
+                scpi_logger.warning(
+                    f"[TEST-CONN] {category_key} ← SCPI *IDN? failed: {e}",
+                    extra={"instrument_id": category_key, "direction": "ERROR"},
+                )
 
         sock.close()
 
-        # Update status in DB
-        from datetime import datetime
-        conn.status = "connected"
-        conn.last_connected_at = datetime.utcnow()
-        conn.last_error = None
-        db.commit()
+        # Update status in DB (only if conn record exists)
+        if conn:
+            from datetime import datetime
+            conn.status = "connected"
+            conn.last_connected_at = datetime.utcnow()
+            conn.last_error = None
+            db.commit()
 
         return TestConnectionResult(
             success=True,
@@ -378,32 +432,275 @@ async def test_instrument_connection(
         )
 
     except socket.timeout:
-        conn.status = "error"
-        conn.last_error = f"Connection timeout to {ip}:{port}"
-        db.commit()
+        elapsed = (time.monotonic() - start) * 1000
+        scpi_logger.warning(
+            f"[TEST-CONN] {category_key} → TIMEOUT {ip}:{port} ({elapsed:.0f}ms)",
+            extra={"instrument_id": category_key, "direction": "ERROR", "error": "timeout"},
+        )
+        if conn:
+            conn.status = "error"
+            conn.last_error = f"Connection timeout to {ip}:{port}"
+            db.commit()
         return TestConnectionResult(
             success=False,
             status="timeout",
             message=f"连接超时: {ip}:{port} (3秒)",
         )
     except ConnectionRefusedError:
-        conn.status = "error"
-        conn.last_error = f"Connection refused by {ip}:{port}"
-        db.commit()
+        scpi_logger.warning(
+            f"[TEST-CONN] {category_key} → REFUSED {ip}:{port}",
+            extra={"instrument_id": category_key, "direction": "ERROR", "error": "refused"},
+        )
+        if conn:
+            conn.status = "error"
+            conn.last_error = f"Connection refused by {ip}:{port}"
+            db.commit()
         return TestConnectionResult(
             success=False,
             status="refused",
             message=f"连接被拒绝: {ip}:{port}（端口未开放或服务未启动）",
         )
     except OSError as e:
-        conn.status = "error"
-        conn.last_error = str(e)
-        db.commit()
+        scpi_logger.error(
+            f"[TEST-CONN] {category_key} → OS ERROR {ip}:{port}: {e}",
+            extra={"instrument_id": category_key, "direction": "ERROR", "error": str(e)},
+        )
+        if conn:
+            conn.status = "error"
+            conn.last_error = str(e)
+            db.commit()
         return TestConnectionResult(
             success=False,
             status="error",
             message=f"网络错误: {e}",
         )
+
+
+# ============================================================
+# SCPI 命令终端
+# ============================================================
+
+class ScpiCommandRequest(BaseModel):
+    """SCPI 命令请求"""
+    command: str
+    ip: Optional[str] = None
+    port: Optional[int] = None
+    timeout_ms: int = 3000  # 默认 3 秒超时
+
+
+class ScpiCommandResult(BaseModel):
+    """单条 SCPI 命令结果"""
+    command: str
+    response: Optional[str] = None
+    success: bool
+    error: Optional[str] = None
+    latency_ms: float
+
+
+class ScpiProbeResult(BaseModel):
+    """批量 SCPI 探测结果"""
+    ip: str
+    port: int
+    results: List[ScpiCommandResult]
+
+
+def _send_scpi_command(
+    sock: "socket.socket",
+    command: str,
+    scpi_logger: logging.Logger,
+    category_key: str,
+) -> ScpiCommandResult:
+    """通过已连接的 socket 发送单条 SCPI 命令并返回结果"""
+    import time
+
+    is_query = command.strip().endswith("?")
+    start = time.monotonic()
+
+    try:
+        scpi_logger.debug(
+            f"[SCPI-TERM] {category_key} → WRITE: {command}",
+            extra={"instrument_id": category_key, "direction": "WRITE", "command": command},
+        )
+        sock.sendall((command.strip() + "\n").encode())
+
+        response = None
+        if is_query:
+            raw = sock.recv(4096).decode("utf-8", errors="replace").strip()
+            response = raw
+            scpi_logger.debug(
+                f"[SCPI-TERM] {category_key} ← RESP: {raw[:200]}",
+                extra={"instrument_id": category_key, "direction": "READ", "response": raw[:500]},
+            )
+
+        latency = (time.monotonic() - start) * 1000
+        return ScpiCommandResult(
+            command=command.strip(),
+            response=response,
+            success=True,
+            latency_ms=round(latency, 1),
+        )
+    except Exception as e:
+        latency = (time.monotonic() - start) * 1000
+        scpi_logger.warning(
+            f"[SCPI-TERM] {category_key} ← ERROR on '{command}': {e}",
+            extra={"instrument_id": category_key, "direction": "ERROR"},
+        )
+        return ScpiCommandResult(
+            command=command.strip(),
+            success=False,
+            error=str(e),
+            latency_ms=round(latency, 1),
+        )
+
+
+# 常用 SCPI 诊断命令集
+COMMON_SCPI_COMMANDS = [
+    ("*IDN?", "设备标识"),
+    ("*OPC?", "操作完成查询"),
+    ("*STB?", "状态字节"),
+    ("SYST:ERR?", "错误队列"),
+    ("SYST:VERS?", "SCPI 版本"),
+]
+
+
+def _resolve_ip_port(
+    body_ip: Optional[str],
+    body_port: Optional[int],
+    conn: Optional[Any],
+) -> tuple:
+    """从请求体或数据库解析 IP 和 Port"""
+    ip = body_ip or (conn.controller_ip if conn else None)
+    port = body_port or (conn.port if conn else None) or 5025
+    return ip, port
+
+
+@router.post("/instruments/{category_key}/scpi-command", response_model=ScpiCommandResult)
+async def send_scpi_command(
+    category_key: str,
+    request: ScpiCommandRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    向仪器发送单条 SCPI 命令并返回响应。
+
+    查询命令（以 ? 结尾）会等待并返回仪器响应；
+    写入命令只发送不读取。
+    """
+    import socket
+
+    scpi_logger = logging.getLogger("app.hal.scpi")
+
+    category = db.query(InstrumentCategoryModel).filter(
+        InstrumentCategoryModel.category_key == category_key
+    ).first()
+    if not category:
+        raise HTTPException(404, f"Category '{category_key}' not found")
+
+    conn = db.query(InstrumentConnectionDB).filter(
+        InstrumentConnectionDB.category_id == category.id
+    ).first()
+
+    ip, port = _resolve_ip_port(request.ip, request.port, conn)
+    if not ip:
+        return ScpiCommandResult(
+            command=request.command,
+            success=False,
+            error="未配置 IP 地址",
+            latency_ms=0,
+        )
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(request.timeout_ms / 1000.0)
+        sock.connect((ip, port))
+
+        result = _send_scpi_command(sock, request.command, scpi_logger, category_key)
+
+        sock.close()
+        return result
+
+    except socket.timeout:
+        return ScpiCommandResult(
+            command=request.command,
+            success=False,
+            error=f"连接超时: {ip}:{port}",
+            latency_ms=request.timeout_ms,
+        )
+    except Exception as e:
+        return ScpiCommandResult(
+            command=request.command,
+            success=False,
+            error=str(e),
+            latency_ms=0,
+        )
+
+
+@router.post("/instruments/{category_key}/scpi-probe", response_model=ScpiProbeResult)
+async def probe_scpi_commands(
+    category_key: str,
+    body: Optional[TestConnectionRequest] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    对仪器执行一组常用 SCPI 诊断命令 (*IDN?, *OPC?, *STB?, SYST:ERR?, SYST:VERS?)。
+
+    用于连接成功后快速检查仪器状态。
+    """
+    import socket
+
+    scpi_logger = logging.getLogger("app.hal.scpi")
+
+    category = db.query(InstrumentCategoryModel).filter(
+        InstrumentCategoryModel.category_key == category_key
+    ).first()
+    if not category:
+        raise HTTPException(404, f"Category '{category_key}' not found")
+
+    conn = db.query(InstrumentConnectionDB).filter(
+        InstrumentConnectionDB.category_id == category.id
+    ).first()
+
+    ip = (body.ip if body and body.ip else None) or (conn.controller_ip if conn else None)
+    port = (body.port if body and body.port else None) or (conn.port if conn else None) or 5025
+
+    if not ip:
+        raise HTTPException(400, "未配置 IP 地址")
+
+    results: List[ScpiCommandResult] = []
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(3.0)
+        sock.connect((ip, port))
+
+        scpi_logger.info(
+            f"[SCPI-PROBE] {category_key} → Running {len(COMMON_SCPI_COMMANDS)} diagnostic commands on {ip}:{port}",
+            extra={"instrument_id": category_key, "direction": "PROBE"},
+        )
+
+        for cmd, _desc in COMMON_SCPI_COMMANDS:
+            result = _send_scpi_command(sock, cmd, scpi_logger, category_key)
+            results.append(result)
+
+        sock.close()
+
+    except Exception as e:
+        scpi_logger.error(
+            f"[SCPI-PROBE] {category_key} → Connection failed: {e}",
+            extra={"instrument_id": category_key, "direction": "ERROR"},
+        )
+        # 将连接错误作为所有未执行命令的结果
+        executed = {r.command for r in results}
+        for cmd, _desc in COMMON_SCPI_COMMANDS:
+            if cmd not in executed:
+                results.append(ScpiCommandResult(
+                    command=cmd,
+                    success=False,
+                    error=str(e),
+                    latency_ms=0,
+                ))
+
+    return ScpiProbeResult(ip=ip, port=port, results=results)
 
 
 # ============================================================

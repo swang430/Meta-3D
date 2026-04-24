@@ -1422,6 +1422,13 @@ function EquipmentManager() {
   const [feedback, setFeedback] = useState<Record<string, EquipmentFeedback>>({})
   const feedbackTimers = useRef<Record<string, number>>({})
 
+  // SCPI 终端状态
+  type ScpiResult = { command: string; response?: string | null; success: boolean; error?: string | null; latency_ms: number }
+  const [scpiProbeResults, setScpiProbeResults] = useState<Record<string, ScpiResult[]>>({})
+  const [scpiManualCmd, setScpiManualCmd] = useState<Record<string, string>>({})
+  const [scpiManualResults, setScpiManualResults] = useState<Record<string, ScpiResult[]>>({})
+  const [scpiLoading, setScpiLoading] = useState<Record<string, boolean>>({})
+
   useEffect(() => {
     if (categories.length === 0) {
       setDrafts({})
@@ -1709,7 +1716,24 @@ function EquipmentManager() {
                     onClick={async () => {
                       showFeedback(category.key, 'success', '正在测试连接...')
                       try {
-                        const resp = await client.post(`/instruments/${category.key}/test-connection`)
+                        // 从当前 draft 的 endpoint 解析 IP 和 Port
+                        const draftEndpoint = draft.endpoint?.trim() || ''
+                        const draftProtocol = draft.controller?.trim() || ''
+                        let testIp: string | undefined
+                        let testPort: number | undefined
+                        if (draftEndpoint.includes(':')) {
+                          const parts = draftEndpoint.split(':')
+                          testIp = parts[0]
+                          const p = parseInt(parts[parts.length - 1], 10)
+                          if (!isNaN(p)) testPort = p
+                        } else if (draftEndpoint) {
+                          testIp = draftEndpoint
+                        }
+                        const resp = await client.post(`/instruments/${category.key}/test-connection`, {
+                          ip: testIp,
+                          port: testPort,
+                          protocol: draftProtocol || undefined,
+                        })
                         const result = resp.data as { success: boolean; message: string; idn?: string; latency_ms?: number }
                         if (result.success) {
                           const extra = result.idn ? ` | IDN: ${result.idn}` : ''
@@ -1745,6 +1769,200 @@ function EquipmentManager() {
                     {feedback[category.key].message}
                   </Alert>
                 ) : null}
+
+                {/* ─── SCPI 命令终端 ─── */}
+                <Card withBorder radius="md" padding="md" mt="sm" bg="dark.8" style={{ border: '1px solid var(--mantine-color-dark-4)' }}>
+                  <Stack gap="sm">
+                    <Group justify="space-between" align="center">
+                      <Text size="sm" fw={600} c="dimmed" style={{ fontFamily: 'monospace' }}>
+                        ⌨ SCPI 命令终端
+                      </Text>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        color="cyan"
+                        loading={scpiLoading[category.key]}
+                        onClick={async () => {
+                          const key = category.key
+                          setScpiLoading(p => ({ ...p, [key]: true }))
+                          try {
+                            const ep = draft.endpoint?.trim() || ''
+                            let testIp: string | undefined
+                            let testPort: number | undefined
+                            if (ep.includes(':')) {
+                              const parts = ep.split(':')
+                              testIp = parts[0]
+                              const p = parseInt(parts[parts.length - 1], 10)
+                              if (!isNaN(p)) testPort = p
+                            } else if (ep) {
+                              testIp = ep
+                            }
+                            const resp = await client.post(`/instruments/${key}/scpi-probe`, {
+                              ip: testIp, port: testPort,
+                            })
+                            setScpiProbeResults(p => ({ ...p, [key]: resp.data.results }))
+                          } catch (err: any) {
+                            showFeedback(key, 'error', `SCPI 探测失败: ${err.message}`)
+                          } finally {
+                            setScpiLoading(p => ({ ...p, [key]: false }))
+                          }
+                        }}
+                      >
+                        🔍 运行诊断命令
+                      </Button>
+                    </Group>
+
+                    {/* 诊断结果表格 */}
+                    {scpiProbeResults[category.key]?.length ? (
+                      <Table
+                        striped
+                        highlightOnHover
+                        withTableBorder
+                        fz="xs"
+                        style={{ fontFamily: 'monospace' }}
+                      >
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th w={140}>命令</Table.Th>
+                            <Table.Th>响应</Table.Th>
+                            <Table.Th w={70} ta="right">耗时</Table.Th>
+                            <Table.Th w={50} ta="center">状态</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {scpiProbeResults[category.key].map((r, i) => (
+                            <Table.Tr key={i}>
+                              <Table.Td fw={600} c="cyan">{r.command}</Table.Td>
+                              <Table.Td c={r.success ? undefined : 'red'} style={{ wordBreak: 'break-all' }}>
+                                {r.success ? r.response : r.error}
+                              </Table.Td>
+                              <Table.Td ta="right" c="dimmed">{r.latency_ms}ms</Table.Td>
+                              <Table.Td ta="center">{r.success ? '✅' : '❌'}</Table.Td>
+                            </Table.Tr>
+                          ))}
+                        </Table.Tbody>
+                      </Table>
+                    ) : null}
+
+                    {/* 手动命令输入 */}
+                    <Group gap="xs" align="flex-end">
+                      <TextInput
+                        placeholder="输入 SCPI 命令, 如: *IDN? 或 SYST:ERR?"
+                        style={{ flex: 1, fontFamily: 'monospace' }}
+                        size="xs"
+                        value={scpiManualCmd[category.key] || ''}
+                        onChange={(e) => setScpiManualCmd(p => ({ ...p, [category.key]: e.target.value }))}
+                        onKeyDown={async (e) => {
+                          if (e.key === 'Enter') {
+                            const cmd = scpiManualCmd[category.key]?.trim()
+                            if (!cmd) return
+                            const key = category.key
+                            const ep = draft.endpoint?.trim() || ''
+                            let testIp: string | undefined
+                            let testPort: number | undefined
+                            if (ep.includes(':')) {
+                              const parts = ep.split(':')
+                              testIp = parts[0]
+                              const p = parseInt(parts[parts.length - 1], 10)
+                              if (!isNaN(p)) testPort = p
+                            } else if (ep) {
+                              testIp = ep
+                            }
+                            setScpiLoading(p => ({ ...p, [key]: true }))
+                            try {
+                              const resp = await client.post(`/instruments/${key}/scpi-command`, {
+                                command: cmd, ip: testIp, port: testPort,
+                              })
+                              const result = resp.data as ScpiResult
+                              setScpiManualResults(p => ({
+                                ...p, [key]: [...(p[key] || []), result],
+                              }))
+                              setScpiManualCmd(p => ({ ...p, [key]: '' }))
+                            } catch (err: any) {
+                              setScpiManualResults(p => ({
+                                ...p, [key]: [...(p[key] || []), {
+                                  command: cmd, success: false, error: err.message, latency_ms: 0,
+                                }],
+                              }))
+                            } finally {
+                              setScpiLoading(p => ({ ...p, [key]: false }))
+                            }
+                          }
+                        }}
+                      />
+                      <Button
+                        size="xs"
+                        variant="filled"
+                        color="cyan"
+                        loading={scpiLoading[category.key]}
+                        onClick={async () => {
+                          const cmd = scpiManualCmd[category.key]?.trim()
+                          if (!cmd) return
+                          const key = category.key
+                          const ep = draft.endpoint?.trim() || ''
+                          let testIp: string | undefined
+                          let testPort: number | undefined
+                          if (ep.includes(':')) {
+                            const parts = ep.split(':')
+                            testIp = parts[0]
+                            const p = parseInt(parts[parts.length - 1], 10)
+                            if (!isNaN(p)) testPort = p
+                          } else if (ep) {
+                            testIp = ep
+                          }
+                          setScpiLoading(p => ({ ...p, [key]: true }))
+                          try {
+                            const resp = await client.post(`/instruments/${key}/scpi-command`, {
+                              command: cmd, ip: testIp, port: testPort,
+                            })
+                            const result = resp.data as ScpiResult
+                            setScpiManualResults(p => ({
+                              ...p, [key]: [...(p[key] || []), result],
+                            }))
+                            setScpiManualCmd(p => ({ ...p, [key]: '' }))
+                          } catch (err: any) {
+                            setScpiManualResults(p => ({
+                              ...p, [key]: [...(p[key] || []), {
+                                command: cmd, success: false, error: err.message, latency_ms: 0,
+                              }],
+                            }))
+                          } finally {
+                            setScpiLoading(p => ({ ...p, [key]: false }))
+                          }
+                        }}
+                      >
+                        发送
+                      </Button>
+                      {(scpiManualResults[category.key]?.length ?? 0) > 0 && (
+                        <Button
+                          size="xs"
+                          variant="subtle"
+                          color="gray"
+                          onClick={() => setScpiManualResults(p => ({ ...p, [category.key]: [] }))}
+                        >
+                          清空
+                        </Button>
+                      )}
+                    </Group>
+
+                    {/* 手动命令历史 */}
+                    {(scpiManualResults[category.key]?.length ?? 0) > 0 && (
+                      <Card withBorder padding="xs" radius="sm" bg="dark.9" style={{ maxHeight: 200, overflowY: 'auto' }}>
+                        <Stack gap={4}>
+                          {scpiManualResults[category.key].map((r, i) => (
+                            <Group key={i} gap="xs" wrap="nowrap" style={{ fontFamily: 'monospace', fontSize: '12px' }}>
+                              <Text span c="cyan" fw={600} style={{ whiteSpace: 'nowrap' }}>{'>'} {r.command}</Text>
+                              <Text span c={r.success ? 'green.4' : 'red.4'} style={{ wordBreak: 'break-all' }}>
+                                → {r.success ? (r.response ?? '(OK, no response)') : `ERROR: ${r.error}`}
+                              </Text>
+                              <Text span c="dimmed" style={{ whiteSpace: 'nowrap' }}>{r.latency_ms}ms</Text>
+                            </Group>
+                          ))}
+                        </Stack>
+                      </Card>
+                    )}
+                  </Stack>
+                </Card>
               </Stack>
             </Stack>
           )
