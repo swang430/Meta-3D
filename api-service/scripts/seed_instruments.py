@@ -10,11 +10,11 @@ Instrument Registry Seeder (PostgreSQL)
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import create_engine, text
 
 PG_URL = "postgresql://meta3d:meta3d_password@localhost:5432/meta3d_ota"
-NOW = datetime.utcnow()
+NOW = datetime.now(timezone.utc)
 
 
 def uid():
@@ -486,6 +486,7 @@ def main():
             print(f"\n⚠️  已存在 {existing} 个仪器类别。先清除旧数据...")
             # 先解除外键引用，再按依赖顺序删除
             conn.execute(text("UPDATE instrument_categories SET selected_model_id = NULL"))
+            conn.execute(text("DELETE FROM switch_topologies"))
             conn.execute(text("DELETE FROM instrument_connections"))
             conn.execute(text("DELETE FROM instrument_models"))
             conn.execute(text("DELETE FROM instrument_categories"))
