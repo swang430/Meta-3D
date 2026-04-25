@@ -29,7 +29,7 @@ SUPPORTED_REAL_DRIVERS = {
     "signalAnalyzer": ["N9020B MXA", "FSW43", "FSVA3000"],
     "vectorSignalGenerator": ["N5182B MXG", "SMW200A", "SMU200A"],
     "vna": ["E5071C ENA", "ZNA67"],
-    "positioner": ["EMCenter"],
+    "positioner": ["EMCenter", "A3200"],
     "rfSwitch": ["EMCenter Switch"],
 }
 
@@ -170,6 +170,7 @@ class InstrumentHALService:
         from app.hal.uxm_base_station import RealUxmDriver
         from app.hal.cmw500_base_station import RealCmw500Driver
         from app.hal.ets_positioner import RealEtsEmcenterDriver
+        from app.hal.aerotech_positioner import RealAerotechDriver
         from app.hal.keysight_ena import RealKeysightEnaDriver
         from app.hal.keysight_mxg import RealKeysightMxgDriver
         from app.hal.rs_smw200a import RealRsSmw200aDriver
@@ -205,6 +206,7 @@ class InstrumentHALService:
             },
             "positioner": {
                 "EMCenter": RealEtsEmcenterDriver,
+                "A3200": RealAerotechDriver,
             },
             "rfSwitch": {
                 "EMCenter Switch": EtslSwitchDriver,

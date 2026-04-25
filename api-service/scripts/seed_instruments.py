@@ -263,6 +263,21 @@ CATEGORIES = [
                     "interfaces": ["RS-232"],
                 },
             },
+            {
+                "vendor": "Aerotech",
+                "model": "A3200",
+                "full_name": "Aerotech A3200 Multi-Axis Motion Controller",
+                "capabilities": {
+                    "axes": 2,
+                    "azimuth_range_deg": [0, 360],
+                    "elevation_range_deg": [-90, 90],
+                    "max_speed_deg_s": 20,
+                    "positioning_accuracy_deg": 0.01,
+                    "max_payload_kg": 2000,
+                    "protocol": "AeroBasic/TCP",
+                    "interfaces": ["LAN", "RS-232"],
+                },
+            },
         ],
         "connection": {
             "endpoint": "192.168.100.24:4001",
