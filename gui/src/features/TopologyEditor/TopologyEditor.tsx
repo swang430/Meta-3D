@@ -39,6 +39,7 @@ import {
   IconAlertTriangle,
   IconX,
   IconCircleDot,
+  IconRefresh,
 } from '@tabler/icons-react';
 
 import { customNodeTypes } from './CustomNodes';
@@ -422,6 +423,46 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
   const [topology, setTopology] = useState<SwitchTopology | null>(null);
   const [topoLoading, setTopoLoading] = useState(false);
   const [topoError, setTopoError] = useState<string | null>(null);
+  const [reimporting, setReimporting] = useState(false);
+
+  // Reimport: delete old topology and import fresh V4.0
+  const handleReimport = useCallback(async () => {
+    if (!selectedSwitchId) return;
+    setReimporting(true);
+    try {
+      // Delete existing topologies for this category
+      const resp = await switchTopologyService.getTopologies(selectedSwitchId);
+      const items = resp.items || (Array.isArray(resp) ? resp : []);
+      for (const item of items) {
+        if (item.id) {
+          try {
+            await apiClient.delete(`/switch-topologies/${item.id}`);
+          } catch { /* ignore deletion errors */ }
+        }
+      }
+
+      // Import fresh default
+      const imported = await switchTopologyService.importCaictDefault(selectedSwitchId);
+      setTopology(imported);
+      notifications.show({
+        title: '拓扑已更新',
+        message: `已导入 V4.0 拓扑: ${imported.name}`,
+        color: 'green',
+        icon: <IconCheck size={16} />,
+        autoClose: 3000,
+      });
+    } catch (err: any) {
+      notifications.show({
+        title: '重导入失败',
+        message: err.response?.data?.detail || err.message,
+        color: 'red',
+        icon: <IconX size={16} />,
+        autoClose: 5000,
+      });
+    } finally {
+      setReimporting(false);
+    }
+  }, [selectedSwitchId]);
 
   // Fetch instrument catalog
   useEffect(() => {
@@ -510,8 +551,27 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
                 未检测到射频开关设备
               </Badge>
             )}
+            {topology && (
+              <Button
+                variant="light"
+                color="orange"
+                size="xs"
+                leftSection={<IconRefresh size={14} />}
+                loading={reimporting}
+                onClick={handleReimport}
+              >
+                重导入默认拓扑
+              </Button>
+            )}
           </Group>
         </Group>
+
+        {/* Version mismatch warning */}
+        {topology && topology.version && !topology.version.includes('4.0') && (
+          <Alert color="yellow" variant="light" icon={<IconAlertTriangle size={16} />} mt="sm">
+            当前拓扑版本为 {topology.version}，建议重导入以获取最新 V4.0 拓扑（修正 F64 直连 + 垂直环探头）。
+          </Alert>
+        )}
 
         {catalogError && (
           <Alert color="red" variant="light" icon={<IconAlertCircle size={16} />} mt="sm">
