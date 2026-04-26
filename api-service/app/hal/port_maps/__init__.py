@@ -44,11 +44,12 @@ class ProbeChannel:
 
 
 # ============================================================
-# 完整的 32 通道端口映射 (从拓扑图 Page 2 精确解析)
+# 完整的 32 通道端口映射
+# F64 单台 32 端口 (RF 1-32) → 集成PA → 水平环 16 探头 (H+V)
 # ============================================================
 
 CAICT_CHANNEL_MAP: List[ProbeChannel] = [
-    # ==================== Vertex1 / CE Unit 1 ====================
+    # ==================== F64 Port 1-16 ====================
     # Probe 1 (Slot 8)
     ProbeChannel(ce_unit=1, ce_port="B1",  emquest_net_port=30, switch_slot=8, switch_pin="P2", probe_id=1,  polarization=Polarization.V),
     ProbeChannel(ce_unit=1, ce_port="B2",  emquest_net_port=32, switch_slot=8, switch_pin="P4", probe_id=1,  polarization=Polarization.H),
@@ -74,31 +75,31 @@ CAICT_CHANNEL_MAP: List[ProbeChannel] = [
     ProbeChannel(ce_unit=1, ce_port="B15", emquest_net_port=2,  switch_slot=1, switch_pin="P2", probe_id=12, polarization=Polarization.V),
     ProbeChannel(ce_unit=1, ce_port="B16", emquest_net_port=4,  switch_slot=1, switch_pin="P4", probe_id=12, polarization=Polarization.H),
 
-    # ==================== Vertex2 / CE Unit 2 ====================
+    # ==================== F64 Port 17-32 ====================
     # Probe 5 (Slot 8)
-    ProbeChannel(ce_unit=2, ce_port="B17", emquest_net_port=66, switch_slot=8, switch_pin="P2", probe_id=5,  polarization=Polarization.V),
-    ProbeChannel(ce_unit=2, ce_port="B18", emquest_net_port=68, switch_slot=8, switch_pin="P4", probe_id=5,  polarization=Polarization.H),
+    ProbeChannel(ce_unit=1, ce_port="B17", emquest_net_port=66, switch_slot=8, switch_pin="P2", probe_id=5,  polarization=Polarization.V),
+    ProbeChannel(ce_unit=1, ce_port="B18", emquest_net_port=68, switch_slot=8, switch_pin="P4", probe_id=5,  polarization=Polarization.H),
     # Probe 13 (Slot 7)
-    ProbeChannel(ce_unit=2, ce_port="B19", emquest_net_port=62, switch_slot=7, switch_pin="P2", probe_id=13, polarization=Polarization.V),
-    ProbeChannel(ce_unit=2, ce_port="B20", emquest_net_port=64, switch_slot=7, switch_pin="P4", probe_id=13, polarization=Polarization.H),
+    ProbeChannel(ce_unit=1, ce_port="B19", emquest_net_port=62, switch_slot=7, switch_pin="P2", probe_id=13, polarization=Polarization.V),
+    ProbeChannel(ce_unit=1, ce_port="B20", emquest_net_port=64, switch_slot=7, switch_pin="P4", probe_id=13, polarization=Polarization.H),
     # Probe 6 (Slot 6)
-    ProbeChannel(ce_unit=2, ce_port="B21", emquest_net_port=58, switch_slot=6, switch_pin="P2", probe_id=6,  polarization=Polarization.V),
-    ProbeChannel(ce_unit=2, ce_port="B22", emquest_net_port=60, switch_slot=6, switch_pin="P4", probe_id=6,  polarization=Polarization.H),
+    ProbeChannel(ce_unit=1, ce_port="B21", emquest_net_port=58, switch_slot=6, switch_pin="P2", probe_id=6,  polarization=Polarization.V),
+    ProbeChannel(ce_unit=1, ce_port="B22", emquest_net_port=60, switch_slot=6, switch_pin="P4", probe_id=6,  polarization=Polarization.H),
     # Probe 14 (Slot 5)
-    ProbeChannel(ce_unit=2, ce_port="B23", emquest_net_port=54, switch_slot=5, switch_pin="P2", probe_id=14, polarization=Polarization.V),
-    ProbeChannel(ce_unit=2, ce_port="B24", emquest_net_port=56, switch_slot=5, switch_pin="P4", probe_id=14, polarization=Polarization.H),
+    ProbeChannel(ce_unit=1, ce_port="B23", emquest_net_port=54, switch_slot=5, switch_pin="P2", probe_id=14, polarization=Polarization.V),
+    ProbeChannel(ce_unit=1, ce_port="B24", emquest_net_port=56, switch_slot=5, switch_pin="P4", probe_id=14, polarization=Polarization.H),
     # Probe 7 (Slot 4)
-    ProbeChannel(ce_unit=2, ce_port="B25", emquest_net_port=50, switch_slot=4, switch_pin="P2", probe_id=7,  polarization=Polarization.V),
-    ProbeChannel(ce_unit=2, ce_port="B26", emquest_net_port=52, switch_slot=4, switch_pin="P4", probe_id=7,  polarization=Polarization.H),
+    ProbeChannel(ce_unit=1, ce_port="B25", emquest_net_port=50, switch_slot=4, switch_pin="P2", probe_id=7,  polarization=Polarization.V),
+    ProbeChannel(ce_unit=1, ce_port="B26", emquest_net_port=52, switch_slot=4, switch_pin="P4", probe_id=7,  polarization=Polarization.H),
     # Probe 15 (Slot 3)
-    ProbeChannel(ce_unit=2, ce_port="B27", emquest_net_port=46, switch_slot=3, switch_pin="P2", probe_id=15, polarization=Polarization.V),
-    ProbeChannel(ce_unit=2, ce_port="B28", emquest_net_port=48, switch_slot=3, switch_pin="P4", probe_id=15, polarization=Polarization.H),
+    ProbeChannel(ce_unit=1, ce_port="B27", emquest_net_port=46, switch_slot=3, switch_pin="P2", probe_id=15, polarization=Polarization.V),
+    ProbeChannel(ce_unit=1, ce_port="B28", emquest_net_port=48, switch_slot=3, switch_pin="P4", probe_id=15, polarization=Polarization.H),
     # Probe 8 (Slot 2)
-    ProbeChannel(ce_unit=2, ce_port="B29", emquest_net_port=42, switch_slot=2, switch_pin="P2", probe_id=8,  polarization=Polarization.V),
-    ProbeChannel(ce_unit=2, ce_port="B30", emquest_net_port=44, switch_slot=2, switch_pin="P4", probe_id=8,  polarization=Polarization.H),
+    ProbeChannel(ce_unit=1, ce_port="B29", emquest_net_port=42, switch_slot=2, switch_pin="P2", probe_id=8,  polarization=Polarization.V),
+    ProbeChannel(ce_unit=1, ce_port="B30", emquest_net_port=44, switch_slot=2, switch_pin="P4", probe_id=8,  polarization=Polarization.H),
     # Probe 16 (Slot 1)
-    ProbeChannel(ce_unit=2, ce_port="B31", emquest_net_port=38, switch_slot=1, switch_pin="P2", probe_id=16, polarization=Polarization.V),
-    ProbeChannel(ce_unit=2, ce_port="B32", emquest_net_port=40, switch_slot=1, switch_pin="P4", probe_id=16, polarization=Polarization.H),
+    ProbeChannel(ce_unit=1, ce_port="B31", emquest_net_port=38, switch_slot=1, switch_pin="P2", probe_id=16, polarization=Polarization.V),
+    ProbeChannel(ce_unit=1, ce_port="B32", emquest_net_port=40, switch_slot=1, switch_pin="P4", probe_id=16, polarization=Polarization.H),
 ]
 
 

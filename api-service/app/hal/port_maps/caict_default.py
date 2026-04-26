@@ -77,18 +77,20 @@ def _generate_nodes() -> List[Dict[str, Any]]:
         },
     })
 
-    # ── 3. EMCenter (双模: PA + Switch) ──
+    # ── 3. EMCenter (仅 TRP/TIS/Passive 模式: RF Switch) ──
+    # MIMO OTA 模式下 PA 是透明的, 不作为节点出现
     nodes.append({
         "id": "emcenter",
         "type": "emcenter",
-        "label": "EMCenter",
-        "position": {"x": _COL_EMCENTER, "y": 300},
+        "label": "EMCenter (Switch)",
+        "position": {"x": _COL_EMCENTER, "y": _VPROBE_Y_OFFSET + 200},
         "params": {
             "model": "EMCenter (EMQuest NET)",
             "vendor": "ETS-Lindgren",
             "slots": 8,
-            "modes": CAICT_EMCENTER["modes"],
-            "description": "MIMO OTA: 32路集成PA | TRP/TIS: RF Switch 1:N",
+            "function": "rf_switch",
+            "description": "TRP/TIS/Passive: RF Switch 1:N → 垂直环探头切换",
+            "visible_modes": ["siso_trp", "siso_tis", "passive"],
         },
     })
 
@@ -214,38 +216,22 @@ def _generate_connections() -> Dict[str, List[Dict[str, Any]]]:
             "modes": ["mimo_ota"],
         })
 
-    # ── MIMO OTA: CE → EMCenter PA → 水平环探头 (32 路固定连接, 无 Switch) ──
+    # ── MIMO OTA: CE → [集成PA] → 水平环探头 (32 路固定一对一直连, 无 Switch) ──
+    # PA 是透明的, 作为连线属性嵌入, 不作为独立节点
     for ch in CAICT_CHANNEL_MAP:
         probe_node = f"hprobe_{ch.probe_id}{ch.polarization.value.lower()}"
 
-        # CE output → EMCenter PA input
-        conn_ce_pa = f"conn_ce_{ch.ce_port.lower()}_to_pa"
         conns["mimo_ota"].append({
-            "id": conn_ce_pa,
+            "id": f"conn_ce_{ch.ce_port.lower()}_to_{probe_node}",
             "source": "ce_f64",
             "source_pin": ch.ce_port,
-            "target": "emcenter",
-            "target_pin": f"pa_in_{ch.ce_port.lower()}",
-            "cable_type": "Phase-matched N-N",
-            "cable_loss_db": 0.5,
-            "cable_length_m": 3.0,
-            "calibrated_loss_db": None,
-            "calibrated_phase_deg": None,
-            "modes": ["mimo_ota", "calibration"],
-        })
-
-        # EMCenter PA output → Probe
-        conn_pa_probe = f"conn_pa_to_{probe_node}"
-        conns["mimo_ota"].append({
-            "id": conn_pa_probe,
-            "source": "emcenter",
-            "source_pin": f"pa_out_{ch.ce_port.lower()}",
             "target": probe_node,
             "target_pin": "in",
-            "cable_type": "Semi-rigid N-SMA",
-            "cable_loss_db": 0.3,
-            "cable_length_m": 2.0,
-            "calibrated_loss_db": None,
+            "cable_type": "Phase-matched N-N + 集成PA + Semi-rigid",
+            "cable_loss_db": 0.8,       # 电缆总损耗 (CE→PA入 + PA出→探头)
+            "pa_gain_db": 20.0,         # 集成 PA 增益 (典型值)
+            "cable_length_m": 5.0,      # CE出口到探头总长度
+            "calibrated_loss_db": None,  # 待 E2E 校准填充 (含 PA 后的净增益)
             "calibrated_phase_deg": None,
             "modes": ["mimo_ota", "calibration"],
         })
