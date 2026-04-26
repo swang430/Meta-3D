@@ -25,6 +25,12 @@ class Polarization(str, Enum):
     H = "H"
 
 
+class ProbeRing(str, Enum):
+    """探头所在环"""
+    HORIZONTAL = "horizontal"  # 水平环 — 16 探头, 3GPP MIMO OTA
+    VERTICAL = "vertical"      # 垂直环 — 24 探头, TRP / TIS / 无源
+
+
 @dataclass(frozen=True)
 class ProbeChannel:
     """一条从 CE 端口到暗室探头的完整信号通道"""
@@ -238,6 +244,105 @@ def get_emcenter_calibration_sequence(
 
 
 # ============================================================
+# 垂直环探头定义 (24 个双极化探头, TRP / TIS)
+# ============================================================
+
+@dataclass(frozen=True)
+class VerticalProbe:
+    """垂直环探头定义"""
+    probe_id: int              # V1 - V24
+    elevation_deg: float       # 仰角 (度)
+    ring: str = "vertical"     # 固定为垂直环
+
+
+# 垂直环 24 个探头, 均匀分布在 -90° 到 +90° 弧面上
+# 每个探头有 V + H 双极化 (共 48 个天线端口)
+CAICT_VERTICAL_PROBES: List[VerticalProbe] = [
+    VerticalProbe(probe_id=i + 1, elevation_deg=-82.5 + i * (165.0 / 23))
+    for i in range(24)
+]
+
+
+def get_vertical_probe(probe_id: int) -> Optional[VerticalProbe]:
+    """获取指定编号的垂直环探头"""
+    for vp in CAICT_VERTICAL_PROBES:
+        if vp.probe_id == probe_id:
+            return vp
+    return None
+
+
+# ============================================================
+# 信号源定义
+# ============================================================
+
+CAICT_SIGNAL_SOURCES = {
+    "uxm": {
+        "name": "Keysight UXM 5G Test Platform",
+        "model": "E7515B",
+        "ports": {
+            "RF1": {"role": "bs_emulator", "target": "ce_input_1",
+                    "description": "BS 仿真 → CE Input 1"},
+            "RF2": {"role": "bs_emulator", "target": "ce_input_2",
+                    "description": "BS 仿真 → CE Input 2"},
+            "RF3": {"role": "bs_emulator", "target": "ce_input_3",
+                    "description": "BS 仿真 → CE Input 3"},
+            "RF4": {"role": "bs_emulator", "target": "ce_input_4",
+                    "description": "BS 仿真 → CE Input 4"},
+            "RF5": {"role": "trp_tis", "target": "emcenter_switch",
+                    "description": "TRP/TIS → EMCenter Switch → V/H split → 垂直环"},
+        },
+    },
+    "ce": {
+        "name": "Keysight PROPSIM F64",
+        "model": "F8800A",
+        "inputs": 4,     # 来自 UXM RF1-RF4
+        "outputs": 32,   # → EMCenter 32 路集成 PA → 水平环
+    },
+    "vna": {
+        "name": "Vector Network Analyzer",
+        "ports": {
+            "Port1": {"role": "source", "description": "无源测试信号源 / 校准"},
+            "Port2": {"role": "receiver", "description": "接收端 (SGH)"},
+        },
+    },
+    "fsva3000": {
+        "name": "R&S FSVA3000 Signal Analyzer",
+        "role": "receiver",
+        "description": "校准接收端, 连接 SGH",
+    },
+}
+
+
+# ============================================================
+# EMCenter 双模功能定义
+# ============================================================
+
+CAICT_EMCENTER = {
+    "model": "ETS-Lindgren EMCenter (EMQuest NET)",
+    "modes": {
+        "mimo_ota": {
+            "function": "integrated_pa",
+            "description": "32 路集成 PA, CE→PA→水平环固定连接, 不做切换",
+            "channels": 32,
+            "target_ring": "horizontal",
+        },
+        "trp_tis": {
+            "function": "rf_switch",
+            "description": "1:N 射频开关, UXM RF5 → V/H split → 垂直环探头逐个切换",
+            "input_ports": 1,  # UXM RF5 (split to V+H internally)
+            "output_ports": 48,  # 24 probes × 2 polarizations
+            "target_ring": "vertical",
+        },
+        "passive": {
+            "function": "rf_switch",
+            "description": "VNA S21 → 垂直环探头切换",
+            "target_ring": "vertical",
+        },
+    },
+}
+
+
+# ============================================================
 # 拓扑元数据
 # ============================================================
 
@@ -246,12 +351,23 @@ CAICT_TOPOLOGY = {
     "system": "ETS-Lindgren AMS8947",
     "project": "PJXXXX",
     "location": "Shaoyangcheng",
-    "version": "V3.0",
-    "total_probes": 16,
-    "total_channels": 32,  # 16 probes × 2 polarizations
-    "ce_units": 2,         # Vertex1 + Vertex2
-    "switch_slots": 8,
-    "calibration_paths": 16,   # 8 slots × 2 paths (P1→P2, P3→P4)
-    "antenna_model": "AMS8900",
+    "version": "V4.0",
+    # 探头总数
+    "horizontal_probes": 16,     # 水平环, MIMO OTA
+    "vertical_probes": 24,       # 垂直环, TRP/TIS/无源
+    "total_probes": 40,          # 16 + 24
+    "total_channels": 32,        # MIMO OTA: 16 probes × 2 pol
+    "total_vertical_channels": 48,  # TRP/TIS: 24 probes × 2 pol
+    # CE
+    "ce_model": "Keysight PROPSIM F64",
+    "ce_inputs": 4,              # 来自 UXM RF1-RF4
+    "ce_outputs": 32,            # → 水平环
+    # EMCenter
     "switch_model": "EMCenter (EMQuest NET)",
+    "switch_slots": 8,
+    "emcenter_pa_channels": 32,  # 集成 PA 通道数
+    # 仪表
+    "bs_emulator": "Keysight UXM E7515B",
+    "signal_analyzer": "R&S FSVA3000",
+    "antenna_model": "AMS8900",
 }
