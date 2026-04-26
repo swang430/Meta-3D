@@ -1994,8 +1994,8 @@ function EquipmentManager() {
               onChange={handleHALSwitch}
               disabled={halSwitching}
               data={[
-                { label: 'Mock 仿真', value: 'mock' },
-                { label: 'Real 硬件', value: 'real' },
+                { label: '🧪 Mock', value: 'mock' },
+                { label: '🔌 Real', value: 'real' },
               ]}
             />
           </Group>
@@ -2055,26 +2055,33 @@ function EquipmentManager() {
                 </Group>
                 
                 <Group gap="md">
-                  <SegmentedControl
-                    size="xs"
-                    value={(category as any).driverMode || 'auto'}
-                    onChange={async (val) => {
-                      try {
-                        await client.patch(`/instruments/${category.key}/driver-mode`, { mode: val })
-                        queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
-                        const modeLabels: Record<string, string> = { auto: '自动', mock: '仿真', real: '真实' }
-                        showFeedback(category.key, 'success', `✅ 驱动模式 → ${modeLabels[val] || val}`)
-                      } catch (err: any) {
-                        showFeedback(category.key, 'error', `切换失败: ${err.message}`)
+                  <Tooltip label={`Auto = 跟随全局 (当前: ${halStatus?.mode?.toUpperCase() || 'MOCK'})`} position="bottom">
+                    <SegmentedControl
+                      size="xs"
+                      value={(category as any).driverMode || 'auto'}
+                      onChange={async (val) => {
+                        try {
+                          await client.patch(`/instruments/${category.key}/driver-mode`, { mode: val })
+                          queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
+                          const modeLabels: Record<string, string> = { auto: 'Auto', mock: 'Mock', real: 'Real' }
+                          showFeedback(category.key, 'success', `✅ 驱动模式 → ${modeLabels[val] || val}`)
+                        } catch (err: any) {
+                          showFeedback(category.key, 'error', `切换失败: ${err.message}`)
+                        }
+                      }}
+                      data={[
+                        { label: '⚙️ Auto', value: 'auto' },
+                        { label: '🧪 Mock', value: 'mock' },
+                        { label: '🔌 Real', value: 'real' },
+                      ]}
+                      color={
+                        (category as any).driverMode === 'real' ? 'teal'
+                          : (category as any).driverMode === 'mock' ? 'orange'
+                          : 'blue'
                       }
-                    }}
-                    data={[
-                      { label: '🤖 自动', value: 'auto' },
-                      { label: '🧪 仿真', value: 'mock' },
-                      { label: '🔌 真实', value: 'real' },
-                    ]}
-                    disabled={category.isActive === false}
-                  />
+                      disabled={category.isActive === false}
+                    />
+                  </Tooltip>
                   <Switch
                     checked={category.isActive !== false}
                     color="teal"
