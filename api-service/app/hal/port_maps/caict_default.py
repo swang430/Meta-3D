@@ -54,10 +54,11 @@ def _generate_nodes() -> List[Dict[str, Any]]:
         "params": {
             "model": "E7515B",
             "vendor": "Keysight",
-            "ports": ["RF1", "RF2", "RF3", "RF4", "RF5"],
+            "ports": ["RF1", "RF2", "RF3", "RF4", "RF5", "RF6"],
             "roles": {
                 "RF1-RF4": "BS Emulator → CE 4 路输入",
                 "RF5": "TRP/TIS → EMCenter Switch → 垂直环",
+                "RF6": "Uplink RX ← 通信天线",
             },
         },
     })
