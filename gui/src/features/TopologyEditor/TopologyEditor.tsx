@@ -88,20 +88,43 @@ const TopologyFlow = ({ topology, onTopologyUpdated }: TopologyFlowProps) => {
   }, [topology.id]);
 
   const initialNodes: Node[] = React.useMemo(() => {
-    return topology.nodes.map((n) => ({
-      id: n.id,
-      type: n.type,
-      position: n.position || { x: 0, y: 0 },
-      data: { label: n.label, params: n.params },
-    }));
-  }, [topology.nodes]);
+    const currentMode = topology.operating_modes.find(m => m.id === activeMode);
+    const activeConnectionIds = new Set(currentMode?.active_connections || []);
+
+    // Collect node IDs that have at least one active connection
+    const activeNodeIds = new Set<string>();
+    for (const c of connectionsRef.current) {
+      if (activeConnectionIds.has(c.id)) {
+        activeNodeIds.add(c.source);
+        activeNodeIds.add(c.target);
+      }
+    }
+
+    return topology.nodes
+      .filter((n) => {
+        // If node has visible_modes restriction, check if current mode is in the list
+        const visibleModes = n.params?.visible_modes;
+        if (visibleModes && Array.isArray(visibleModes)) {
+          return visibleModes.includes(activeMode);
+        }
+        // Otherwise, show node if it participates in any active connection
+        return activeNodeIds.has(n.id);
+      })
+      .map((n) => ({
+        id: n.id,
+        type: n.type,
+        position: n.position || { x: 0, y: 0 },
+        data: { label: n.label, params: n.params },
+      }));
+  }, [topology.nodes, topology.operating_modes, activeMode]);
 
   const initialEdges: Edge[] = React.useMemo(() => {
     const currentMode = topology.operating_modes.find(m => m.id === activeMode);
     const activeConnectionIds = new Set(currentMode?.active_connections || []);
 
-    return connectionsRef.current.map((c) => {
-      const isActive = activeConnectionIds.has(c.id);
+    return connectionsRef.current
+      .filter((c) => activeConnectionIds.has(c.id))
+      .map((c) => {
       return {
         id: c.id,
         source: c.source,
@@ -112,10 +135,10 @@ const TopologyFlow = ({ topology, onTopologyUpdated }: TopologyFlowProps) => {
         data: { 
           cable_loss_db: c.cable_loss_db,
           calibrated_loss_db: c.calibrated_loss_db,
-          inactive: !isActive 
+          pa_gain_db: (c as any).pa_gain_db,
         },
-        animated: isActive,
-        markerEnd: isActive ? { type: MarkerType.ArrowClosed, color: c.calibrated_loss_db ? '#10B981' : '#3B82F6' } : undefined,
+        animated: true,
+        markerEnd: { type: MarkerType.ArrowClosed, color: c.calibrated_loss_db ? '#10B981' : '#3B82F6' },
       };
     });
   }, [topology.connections, topology.operating_modes, activeMode]);
