@@ -24,6 +24,9 @@ class TopologyConnection(BaseModel):
     target_pin: str = "in"
     cable_type: str = ""
     cable_loss_db: float = 0.0
+    pa_gain_db: Optional[float] = None
+    ce_port: Optional[str] = None
+    switch_port: Optional[str] = None
     cable_length_m: float = 0.0
     calibrated_loss_db: Optional[float] = None
     calibrated_phase_deg: Optional[float] = None

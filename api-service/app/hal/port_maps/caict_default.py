@@ -224,14 +224,15 @@ def _generate_connections() -> Dict[str, List[Dict[str, Any]]]:
         conns["mimo_ota"].append({
             "id": f"conn_ce_{ch.ce_port.lower()}_to_{probe_node}",
             "source": "ce_f64",
-            "source_pin": ch.ce_port,
+            "source_pin": "out",             # 匹配 CE 节点 Handle ID
             "target": probe_node,
             "target_pin": "in",
             "cable_type": "Phase-matched N-N + 集成PA + Semi-rigid",
-            "cable_loss_db": 0.8,       # 电缆总损耗 (CE→PA入 + PA出→探头)
-            "pa_gain_db": 20.0,         # 集成 PA 增益 (典型值)
-            "cable_length_m": 5.0,      # CE出口到探头总长度
-            "calibrated_loss_db": None,  # 待 E2E 校准填充 (含 PA 后的净增益)
+            "cable_loss_db": 0.8,             # 电缆总损耗 (CE→PA入 + PA出→探头)
+            "pa_gain_db": 20.0,               # 集成 PA 增益 (典型值)
+            "ce_port": ch.ce_port,            # CE 端口标识 (B1-B32)
+            "cable_length_m": 5.0,            # CE出口到探头总长度
+            "calibrated_loss_db": None,       # 待 E2E 校准填充 (含 PA 后的净增益)
             "calibrated_phase_deg": None,
             "modes": ["mimo_ota", "calibration"],
         })
@@ -259,9 +260,10 @@ def _generate_connections() -> Dict[str, List[Dict[str, Any]]]:
             conns["trp_tis"].append({
                 "id": f"conn_switch_to_{probe_node}",
                 "source": "emcenter",
-                "source_pin": f"sw_out_v{vp.probe_id}{pol.lower()}",
+                "source_pin": "sw_out",       # 匹配 EMCenter 节点 Handle ID
                 "target": probe_node,
                 "target_pin": "in",
+                "switch_port": f"v{vp.probe_id}{pol.lower()}",  # 开关端口标识
                 "cable_type": "Semi-rigid N-SMA",
                 "cable_loss_db": 0.3,
                 "cable_length_m": 2.0,

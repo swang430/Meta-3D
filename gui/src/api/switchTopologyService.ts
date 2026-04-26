@@ -16,6 +16,9 @@ export interface TopologyConnection {
   target_pin?: string;
   cable_type?: string;
   cable_loss_db?: number;
+  pa_gain_db?: number;
+  ce_port?: string;
+  switch_port?: string;
   cable_length_m?: number;
   calibrated_loss_db?: number | null;
   calibrated_phase_deg?: number | null;
