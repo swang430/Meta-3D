@@ -22,6 +22,7 @@ export interface TopologyConnection {
   cable_length_m?: number;
   calibrated_loss_db?: number | null;
   calibrated_phase_deg?: number | null;
+  direction?: 'DL' | 'UL' | 'Bi-Di';
   modes?: string[];
 }
 

@@ -136,9 +136,13 @@ const TopologyFlow = ({ topology, onTopologyUpdated }: TopologyFlowProps) => {
           cable_loss_db: c.cable_loss_db,
           calibrated_loss_db: c.calibrated_loss_db,
           pa_gain_db: (c as any).pa_gain_db,
+          direction: c.direction,
         },
         animated: true,
-        markerEnd: { type: MarkerType.ArrowClosed, color: c.calibrated_loss_db ? '#10B981' : '#3B82F6' },
+        markerEnd: { 
+          type: MarkerType.ArrowClosed, 
+          color: c.direction === 'UL' ? '#D946EF' : (c.calibrated_loss_db ? '#10B981' : ((c as any).pa_gain_db ? '#F59E0B' : '#3B82F6')) 
+        },
       };
     });
   }, [topology.connections, topology.operating_modes, activeMode]);

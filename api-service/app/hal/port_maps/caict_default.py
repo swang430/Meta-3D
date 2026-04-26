@@ -139,16 +139,26 @@ def _generate_nodes() -> List[Dict[str, Any]]:
                 },
             })
 
-    # ── 6. SGH (标准增益喇叭, 静区中心) ──
+    # ── 6. 辅助天线 / 校准天线 ──
     nodes.append({
         "id": "sgh",
         "type": "reference_antenna",
-        "label": "SGH",
-        "position": {"x": _COL_QZ, "y": 400},
+        "label": "标准增益喇叭 (SGH)",
+        "position": {"x": 1000, "y": -400},
         "params": {
-            "description": "标准增益喇叭, 固定在静区中心",
-            "usage": "校准参考天线",
-        },
+            "gain_dbi": 15.0,
+            "visible_modes": ["passive", "calibration_e2e"]
+        }
+    })
+    nodes.append({
+        "id": "link_antenna",
+        "type": "reference_antenna",
+        "label": "通信天线 (Uplink)",
+        "position": {"x": 1000, "y": 600},
+        "params": {
+            "gain_dbi": 3.0,
+            "visible_modes": ["mimo_ota", "siso_trp", "siso_tis"]
+        }
     })
 
     # ── 7. FSVA3000 (频谱仪, 校准接收端) ──
@@ -234,8 +244,25 @@ def _generate_connections() -> Dict[str, List[Dict[str, Any]]]:
             "cable_length_m": 5.0,            # CE出口到探头总长度
             "calibrated_loss_db": None,       # 待 E2E 校准填充 (含 PA 后的净增益)
             "calibrated_phase_deg": None,
+            "direction": "DL",
             "modes": ["mimo_ota", "calibration"],
         })
+
+    # MIMO OTA Uplink
+    conns["mimo_ota"].append({
+        "id": "conn_link_antenna_to_uxm_mimo",
+        "source": "link_antenna",
+        "source_pin": "rf",
+        "target": "uxm",
+        "target_pin": "RF6",
+        "cable_type": "Low-loss N-SMA",
+        "cable_loss_db": 1.2,
+        "cable_length_m": 6.0,
+        "calibrated_loss_db": None,
+        "calibrated_phase_deg": None,
+        "direction": "UL",
+        "modes": ["mimo_ota"],
+    })
 
     # ── TRP/TIS: UXM RF5 → EMCenter Switch → 垂直环探头 ──
     # UXM RF5 → EMCenter
@@ -250,7 +277,24 @@ def _generate_connections() -> Dict[str, List[Dict[str, Any]]]:
         "cable_length_m": 2.5,
         "calibrated_loss_db": None,
         "calibrated_phase_deg": None,
+        "direction": "DL",
         "modes": ["trp_tis"],
+    })
+
+    # TRP Uplink
+    conns["trp_tis"].append({
+        "id": "conn_link_antenna_to_uxm_trp",
+        "source": "link_antenna",
+        "source_pin": "rf",
+        "target": "uxm",
+        "target_pin": "RF6",
+        "cable_type": "Low-loss N-SMA",
+        "cable_loss_db": 1.2,
+        "cable_length_m": 6.0,
+        "calibrated_loss_db": None,
+        "calibrated_phase_deg": None,
+        "direction": "UL",
+        "modes": ["siso_trp", "siso_tis"],
     })
 
     # EMCenter Switch → 垂直环探头 (24 × 2pol)

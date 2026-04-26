@@ -26,16 +26,19 @@ export const SignalEdge = ({
   const calibratedLoss = data?.calibrated_loss_db as number | undefined | null;
   const cableLoss = data?.cable_loss_db as number | undefined;
   const paGain = data?.pa_gain_db as number | undefined;
+  const direction = data?.direction as string | undefined;
   
   const isCalibrated = calibratedLoss !== undefined && calibratedLoss !== null;
   const hasPA = paGain !== undefined && paGain !== null && paGain > 0;
+  const isUplink = direction === 'UL';
   
   // Custom styles for edge
-  const edgeColor = isCalibrated ? '#10B981' : (hasPA ? '#F59E0B' : '#3B82F6');
+  const edgeColor = isUplink ? '#D946EF' : (isCalibrated ? '#10B981' : (hasPA ? '#F59E0B' : '#3B82F6'));
   const edgeStyle = {
     ...style,
     strokeWidth: 2,
     stroke: edgeColor,
+    strokeDasharray: isUplink ? '5, 5' : 'none',
   };
 
   // Build label text

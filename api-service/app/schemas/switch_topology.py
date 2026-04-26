@@ -30,6 +30,7 @@ class TopologyConnection(BaseModel):
     cable_length_m: float = 0.0
     calibrated_loss_db: Optional[float] = None
     calibrated_phase_deg: Optional[float] = None
+    direction: str = Field(default="DL", description="DL, UL, or Bi-Di")
     modes: List[str] = Field(default_factory=list)
 
 
