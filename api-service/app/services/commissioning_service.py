@@ -63,8 +63,15 @@ class CommissioningService:
         self,
         config: Optional[StaticMIMOConfig] = None,
         criteria: Optional[CTIACriteria] = None,
+        chamber_id: Optional[str] = None,
     ) -> CommissioningState:
-        """创建新的首测会话"""
+        """创建新的首测会话
+        
+        Args:
+            config: 测试配置
+            criteria: CTIA 门限
+            chamber_id: 指定暗室 UUID (可选, 不传则使用 is_active 暗室)
+        """
         session_id = str(uuid.uuid4())[:8]
         state = CommissioningState(
             session_id=session_id,
@@ -72,8 +79,12 @@ class CommissioningService:
             criteria=criteria or CTIACriteria(),
             started_at=datetime.now(timezone.utc).isoformat(),
         )
+        # 存储用户指定的暗室 ID，供后续阶段使用
+        if chamber_id:
+            state._explicit_chamber_id = chamber_id
         _sessions[session_id] = state
-        logger.info(f"Commissioning session created: {session_id}")
+        logger.info(f"Commissioning session created: {session_id}" + 
+                    (f" (chamber={chamber_id})" if chamber_id else ""))
         return state
 
     def get_session(self, session_id: str) -> Optional[CommissioningState]:
@@ -109,10 +120,25 @@ class CommissioningService:
             # --- 查询数据库中的暗室系统配置 ---
             if not self.db:
                 raise ValueError("Database session is required to query chamber config")
-                
-            chamber = self.db.query(ChamberConfiguration).filter(
-                ChamberConfiguration.is_active == True
-            ).first()
+            
+            # 优先使用会话中指定的 chamber_id，否则 fallback 到 is_active 查询
+            explicit_id = getattr(state, '_explicit_chamber_id', None)
+            if explicit_id:
+                from uuid import UUID as UUID_type
+                chamber = self.db.query(ChamberConfiguration).filter(
+                    ChamberConfiguration.id == (UUID_type(explicit_id) if isinstance(explicit_id, str) else explicit_id)
+                ).first()
+                if not chamber:
+                    result.overall_pass = False
+                    result.messages.append(f"错误: 指定的暗室 {explicit_id} 不存在！")
+                    state.precheck = result
+                    state.phase_statuses[CommissioningPhase.PRECHECK] = PhaseStatus.FAILED
+                    return result
+                logger.info(f"[{session_id}] Using explicit chamber: {chamber.name} (id={explicit_id})")
+            else:
+                chamber = self.db.query(ChamberConfiguration).filter(
+                    ChamberConfiguration.is_active == True
+                ).first()
             
             if not chamber:
                 result.overall_pass = False
@@ -120,6 +146,9 @@ class CommissioningService:
                 state.precheck = result
                 state.phase_statuses[CommissioningPhase.PRECHECK] = PhaseStatus.FAILED
                 return result
+            
+            # 将解析到的 chamber_id 回写到 state，供 Phase 3 使用
+            state._resolved_chamber_id = str(chamber.id)
                 
             result.chamber_id = chamber.name
             messages.append(f"暗室配置就绪: {chamber.name} ({chamber.num_probes} probes)")
@@ -337,14 +366,22 @@ class CommissioningService:
         if not self.db:
             state.phase_statuses[CommissioningPhase.MIMO_TEST] = PhaseStatus.FAILED
             raise ValueError("Database session is required to run Channel Engine")
-            
-        chamber = self.db.query(ChamberConfiguration).filter(
-            ChamberConfiguration.is_active == True
-        ).first()
+        
+        # 使用 Phase 1 已解析的 chamber_id，保证跨阶段一致性
+        resolved_id = getattr(state, '_resolved_chamber_id', None)
+        if resolved_id:
+            from uuid import UUID as UUID_type
+            chamber = self.db.query(ChamberConfiguration).filter(
+                ChamberConfiguration.id == UUID_type(resolved_id)
+            ).first()
+        else:
+            chamber = self.db.query(ChamberConfiguration).filter(
+                ChamberConfiguration.is_active == True
+            ).first()
         
         if not chamber:
             state.phase_statuses[CommissioningPhase.MIMO_TEST] = PhaseStatus.FAILED
-            raise ValueError("No active chamber configuration found in DB")
+            raise ValueError("No chamber configuration found in DB")
 
         result = MIMOTestResult(
             cdl_model_name=config.cdl_model_name,

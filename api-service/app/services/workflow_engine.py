@@ -514,17 +514,30 @@ class WorkflowExecutor:
         service = ProbeCalibrationService(self.db)
         params = {**execution.workflow.parameters, **step.parameters}
 
+        # 支持 probe_ids: "auto" — 自动从暗室配置读取探头数量
+        raw_probe_ids = params.get("probe_ids", [0])
+        if raw_probe_ids == "auto":
+            from app.models.chamber import ChamberConfiguration
+            chamber = self.db.query(ChamberConfiguration).filter(
+                ChamberConfiguration.is_active == True
+            ).first()
+            num_probes = chamber.num_probes if chamber else 32
+            probe_ids = list(range(num_probes))
+            logger.info(f"[Workflow] probe_ids='auto' → resolved to {num_probes} probes")
+        else:
+            probe_ids = raw_probe_ids
+
         cal_type = step.calibration_type
         if cal_type == "amplitude":
             calibration = service.run_amplitude_calibration(
-                probe_ids=params.get("probe_ids", [0]),
+                probe_ids=probe_ids,
                 polarization=params.get("polarization", "V"),
                 frequency_range=params.get("frequency_range", {}),
                 calibrated_by=params.get("calibrated_by", "workflow"),
             )
         elif cal_type == "phase":
             calibration = service.run_phase_calibration(
-                probe_ids=params.get("probe_ids", [0]),
+                probe_ids=probe_ids,
                 reference_probe_id=params.get("reference_probe_id", 0),
                 polarization=params.get("polarization", "V"),
                 frequency_range=params.get("frequency_range", {}),
@@ -535,7 +548,7 @@ class WorkflowExecutor:
 
         result.calibration_id = str(calibration.id)
         result.validation_pass = calibration.validation_pass if hasattr(calibration, 'validation_pass') else True
-        result.output = {"calibration_type": cal_type, "probe_ids": params.get("probe_ids")}
+        result.output = {"calibration_type": cal_type, "probe_ids": probe_ids}
 
     def _execute_channel_calibration(
         self,
@@ -762,18 +775,14 @@ steps:
     calibration_type: amplitude
     description: "探头路损校准 - 测量 SGH 到各探头的路损"
     parameters:
-      probe_ids: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
-      frequency_range:
-        start_mhz: 3400
-        stop_mhz: 3600
-        step_mhz: 50
+      probe_ids: auto
 
   - id: phase_calibration
     type: probe_calibration
     calibration_type: phase
     description: "相位校准 - 确保通道间相位一致性"
     parameters:
-      probe_ids: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+      probe_ids: auto
       reference_probe_id: 0
     depends_on: [probe_path_loss]
 
@@ -832,18 +841,14 @@ steps:
     calibration_type: amplitude
     description: "新频点路损验证"
     parameters:
-      probe_ids: [0, 1, 2, 3]
-      frequency_range:
-        start_mhz: 3400
-        stop_mhz: 3600
-        step_mhz: 100
+      probe_ids: auto
 
   - id: phase_recheck
     type: probe_calibration
     calibration_type: phase
     description: "新频点相位验证"
     parameters:
-      probe_ids: [0, 1, 2, 3]
+      probe_ids: auto
       reference_probe_id: 0
     depends_on: [path_loss_recheck]
 
@@ -877,11 +882,7 @@ steps:
     calibration_type: amplitude
     description: "探头路损测量"
     parameters:
-      probe_ids: [0, 1, 2, 3, 4, 5, 6, 7]
-      frequency_range:
-        start_mhz: 3400
-        stop_mhz: 3600
-        step_mhz: 50
+      probe_ids: auto
 """
 
 

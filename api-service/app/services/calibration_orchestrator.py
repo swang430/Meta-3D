@@ -950,3 +950,267 @@ class CalibrationOrchestrator:
         factors["tis_compensation_db"] = -factors["path_loss_db"] + factors["dl_gain_db"]
 
         return factors
+
+    # ==================== 校准数据导入/导出 ====================
+
+    def export_calibration_data(
+        self,
+        chamber_id: UUID,
+        frequency_mhz: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """
+        导出暗室的校准数据包
+
+        将指定暗室的所有有效校准记录序列化为 JSON 格式，
+        可用于：
+        - 数据备份与归档
+        - 跨暗室迁移（当两个暗室共享相同 RF 硬件时）
+        - 审计追溯
+
+        Args:
+            chamber_id: 源暗室 ID
+            frequency_mhz: 可选，只导出特定频率的校准数据
+
+        Returns:
+            校准数据包字典
+        """
+        chamber = self.db.query(ChamberConfiguration).filter(
+            ChamberConfiguration.id == chamber_id
+        ).first()
+
+        if not chamber:
+            return {"error": f"Chamber {chamber_id} not found"}
+
+        package = {
+            "format_version": "1.0",
+            "exported_at": datetime.utcnow().isoformat(),
+            "source_chamber": {
+                "id": str(chamber.id),
+                "name": chamber.name,
+                "type": chamber.chamber_type,
+                "radius_m": chamber.chamber_radius_m,
+                "num_probes": chamber.num_probes,
+            },
+            "calibrations": {}
+        }
+
+        # --- 探头路损 ---
+        query = self.db.query(ProbePathLossCalibration).filter(
+            ProbePathLossCalibration.chamber_id == chamber_id,
+            ProbePathLossCalibration.status == "valid"
+        )
+        if frequency_mhz:
+            query = query.filter(ProbePathLossCalibration.frequency_mhz == frequency_mhz)
+
+        path_loss_records = query.all()
+        package["calibrations"]["path_loss"] = [
+            {
+                "probe_id": r.probe_id,
+                "polarization": r.polarization,
+                "frequency_mhz": r.frequency_mhz,
+                "path_loss_db": r.path_loss_db,
+                "uncertainty_db": getattr(r, 'uncertainty_db', None),
+                "calibrated_at": r.calibrated_at.isoformat() if r.calibrated_at else None,
+                "valid_until": r.valid_until.isoformat() if r.valid_until else None,
+                "sgh_model": getattr(r, 'sgh_model', None),
+                "sgh_gain_dbi": getattr(r, 'sgh_gain_dbi', None),
+            }
+            for r in path_loss_records
+        ]
+
+        # --- RF 链路 ---
+        rf_records = self.db.query(RFChainCalibration).filter(
+            RFChainCalibration.chamber_id == chamber_id,
+            RFChainCalibration.status == "valid"
+        ).all()
+        package["calibrations"]["rf_chain"] = [
+            {
+                "chain_type": r.chain_type,
+                "frequency_mhz": r.frequency_mhz,
+                "total_gain_db": r.total_gain_db,
+                "noise_figure_db": getattr(r, 'noise_figure_db', None),
+                "has_duplexer": getattr(r, 'has_duplexer', False),
+                "calibrated_at": r.calibrated_at.isoformat() if r.calibrated_at else None,
+                "valid_until": r.valid_until.isoformat() if r.valid_until else None,
+            }
+            for r in rf_records
+        ]
+
+        # --- 多频点路损 ---
+        mf_records = self.db.query(MultiFrequencyPathLoss).filter(
+            MultiFrequencyPathLoss.chamber_id == chamber_id,
+            MultiFrequencyPathLoss.status == "valid"
+        ).all()
+        package["calibrations"]["multi_frequency"] = [
+            {
+                "probe_id": r.probe_id,
+                "polarization": r.polarization,
+                "freq_start_mhz": r.freq_start_mhz,
+                "freq_stop_mhz": r.freq_stop_mhz,
+                "freq_points": getattr(r, 'freq_points', None),
+                "path_loss_values": getattr(r, 'path_loss_values', None),
+                "calibrated_at": r.calibrated_at.isoformat() if r.calibrated_at else None,
+            }
+            for r in mf_records
+        ]
+
+        # --- 相位校准 ---
+        phase_records = self.db.query(ChannelPhaseCalibration).filter(
+            ChannelPhaseCalibration.chamber_id == chamber_id,
+            ChannelPhaseCalibration.status == "valid"
+        ).all()
+        package["calibrations"]["phase"] = [
+            {
+                "channel_pair": getattr(r, 'channel_pair', None),
+                "frequency_mhz": getattr(r, 'frequency_mhz', None),
+                "phase_offset_deg": getattr(r, 'phase_offset_deg', None),
+                "calibrated_at": r.calibrated_at.isoformat() if r.calibrated_at else None,
+            }
+            for r in phase_records
+        ]
+
+        # --- 统计 ---
+        total = sum(len(v) for v in package["calibrations"].values())
+        package["summary"] = {
+            "total_records": total,
+            "path_loss_count": len(package["calibrations"]["path_loss"]),
+            "rf_chain_count": len(package["calibrations"]["rf_chain"]),
+            "multi_frequency_count": len(package["calibrations"]["multi_frequency"]),
+            "phase_count": len(package["calibrations"]["phase"]),
+        }
+
+        logger.info(
+            f"Exported {total} calibration records from chamber "
+            f"'{chamber.name}' ({chamber_id})"
+        )
+        return package
+
+    def import_calibration_data(
+        self,
+        target_chamber_id: UUID,
+        package: Dict[str, Any],
+        imported_by: str = "system",
+        overwrite: bool = False
+    ) -> Dict[str, Any]:
+        """
+        将校准数据包导入到目标暗室
+
+        注意: 导入的数据会标记来源暗室，便于追溯。
+        不会覆盖目标暗室已有的有效校准数据（除非 overwrite=True）。
+
+        Args:
+            target_chamber_id: 目标暗室 ID
+            package: 由 export_calibration_data 生成的校准数据包
+            imported_by: 导入操作者
+            overwrite: 是否覆盖已有的有效校准
+
+        Returns:
+            导入结果统计
+        """
+        target = self.db.query(ChamberConfiguration).filter(
+            ChamberConfiguration.id == target_chamber_id
+        ).first()
+
+        if not target:
+            return {"error": f"Target chamber {target_chamber_id} not found"}
+
+        source_info = package.get("source_chamber", {})
+        format_version = package.get("format_version", "unknown")
+
+        if format_version != "1.0":
+            return {"error": f"Unsupported format version: {format_version}"}
+
+        # 兼容性警告
+        warnings = []
+        if source_info.get("num_probes") != target.num_probes:
+            warnings.append(
+                f"探头数量不匹配: 源={source_info.get('num_probes')}, "
+                f"目标={target.num_probes}。路损数据可能不完整。"
+            )
+        if source_info.get("radius_m") != target.chamber_radius_m:
+            warnings.append(
+                f"暗室半径不匹配: 源={source_info.get('radius_m')}m, "
+                f"目标={target.chamber_radius_m}m。路损值可能不适用！"
+            )
+
+        imported_counts = {"path_loss": 0, "rf_chain": 0, "skipped": 0}
+        calibrations = package.get("calibrations", {})
+
+        # --- 导入路损 ---
+        for record in calibrations.get("path_loss", []):
+            # 检查是否超出目标暗室探头范围
+            if record.get("probe_id", 0) >= target.num_probes:
+                imported_counts["skipped"] += 1
+                continue
+
+            if not overwrite:
+                existing = self.db.query(ProbePathLossCalibration).filter(
+                    ProbePathLossCalibration.chamber_id == target_chamber_id,
+                    ProbePathLossCalibration.probe_id == record["probe_id"],
+                    ProbePathLossCalibration.polarization == record["polarization"],
+                    ProbePathLossCalibration.frequency_mhz == record["frequency_mhz"],
+                    ProbePathLossCalibration.status == "valid"
+                ).first()
+                if existing:
+                    imported_counts["skipped"] += 1
+                    continue
+
+            cal = ProbePathLossCalibration(
+                chamber_id=target_chamber_id,
+                probe_id=record["probe_id"],
+                polarization=record["polarization"],
+                frequency_mhz=record["frequency_mhz"],
+                path_loss_db=record["path_loss_db"],
+                status="valid",
+                calibrated_at=datetime.utcnow(),
+                valid_until=datetime.utcnow() + timedelta(days=180),
+                calibrated_by=imported_by,
+                notes=f"Imported from chamber '{source_info.get('name', 'unknown')}'"
+            )
+            self.db.add(cal)
+            imported_counts["path_loss"] += 1
+
+        # --- 导入 RF 链路 ---
+        for record in calibrations.get("rf_chain", []):
+            if not overwrite:
+                existing = self.db.query(RFChainCalibration).filter(
+                    RFChainCalibration.chamber_id == target_chamber_id,
+                    RFChainCalibration.chain_type == record["chain_type"],
+                    RFChainCalibration.frequency_mhz == record["frequency_mhz"],
+                    RFChainCalibration.status == "valid"
+                ).first()
+                if existing:
+                    imported_counts["skipped"] += 1
+                    continue
+
+            cal = RFChainCalibration(
+                chamber_id=target_chamber_id,
+                chain_type=record["chain_type"],
+                frequency_mhz=record["frequency_mhz"],
+                total_gain_db=record["total_gain_db"],
+                status="valid",
+                calibrated_at=datetime.utcnow(),
+                valid_until=datetime.utcnow() + timedelta(days=90),
+                calibrated_by=imported_by,
+                notes=f"Imported from chamber '{source_info.get('name', 'unknown')}'"
+            )
+            self.db.add(cal)
+            imported_counts["rf_chain"] += 1
+
+        self.db.commit()
+
+        total_imported = imported_counts["path_loss"] + imported_counts["rf_chain"]
+        logger.info(
+            f"Imported {total_imported} calibration records into chamber "
+            f"'{target.name}' ({target_chamber_id}), "
+            f"skipped {imported_counts['skipped']}"
+        )
+
+        return {
+            "target_chamber_id": str(target_chamber_id),
+            "target_chamber_name": target.name,
+            "source_chamber_name": source_info.get("name", "unknown"),
+            "imported": imported_counts,
+            "total_imported": total_imported,
+            "warnings": warnings,
+        }
