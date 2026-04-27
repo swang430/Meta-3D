@@ -1,0 +1,21 @@
+{
+  "profile_id": "caict_n78_2x2",
+  "name": "CAICT 暗室 2x2 MIMO (N78 100MHz)",
+  "description": "2x2 MIMO 标准 OTA 吞吐量测试 (3GPP TR 37.977)",
+  "category": "mimo",
+  "band": "N78",
+  "frequency_mhz": 3500.0,
+  "bandwidth_mhz": 100.0,
+  "scs_khz": 30,
+  "duplex": "TDD",
+  "arfcn": null,
+  "mimo_layers": 2,
+  "mimo_port_preset": "2x2",
+  "dl_power_dbm": -50.0,
+  "ssb_power_dbm": -50.0,
+  "modulation": "256QAM",
+  "target_mcs": 24,
+  "cell_id": "CELL0",
+  "state_file": null,
+  "notes": "RF1 OUT→F64 CH1→探头天线 1~16 (V极化)\nRF2 OUT→F64 CH2→探头天线 1~16 (H极化)\nRF1 IN←DUT Ant1; RF2 IN←DUT Ant2"
+}

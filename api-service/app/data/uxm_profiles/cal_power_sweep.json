@@ -1,0 +1,21 @@
+{
+  "profile_id": "cal_power_sweep",
+  "name": "功率扫描校准 (N78)",
+  "description": "综测仪输出功率校准 - 用于 path loss 测量",
+  "category": "calibration",
+  "band": "N78",
+  "frequency_mhz": 3500.0,
+  "bandwidth_mhz": 100.0,
+  "scs_khz": 30,
+  "duplex": "TDD",
+  "arfcn": null,
+  "mimo_layers": 1,
+  "mimo_port_preset": "siso",
+  "dl_power_dbm": -30.0,
+  "ssb_power_dbm": -30.0,
+  "modulation": "QPSK",
+  "target_mcs": 0,
+  "cell_id": "CELL0",
+  "state_file": null,
+  "notes": "高功率输出用于 VNA/频谱仪 path loss 校准"
+}

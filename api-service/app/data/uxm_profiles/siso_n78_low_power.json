@@ -1,0 +1,21 @@
+{
+  "profile_id": "siso_n78_low_power",
+  "name": "SISO 低功率基线 (N78 100MHz)",
+  "description": "低功率 SISO 测试，用于灵敏度校准和底噪测量",
+  "category": "siso",
+  "band": "N78",
+  "frequency_mhz": 3500.0,
+  "bandwidth_mhz": 100.0,
+  "scs_khz": 30,
+  "duplex": "TDD",
+  "arfcn": null,
+  "mimo_layers": 1,
+  "mimo_port_preset": "siso",
+  "dl_power_dbm": -80.0,
+  "ssb_power_dbm": -80.0,
+  "modulation": "QPSK",
+  "target_mcs": 0,
+  "cell_id": "CELL0",
+  "state_file": null,
+  "notes": "用于 RSRP/SINR 灵敏度标定"
+}

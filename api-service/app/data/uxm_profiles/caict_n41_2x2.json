@@ -1,0 +1,21 @@
+{
+  "profile_id": "caict_n41_2x2",
+  "name": "CAICT 暗室 2x2 MIMO (N41 100MHz)",
+  "description": "2x2 MIMO OTA 测试 - N41 频段 (2.6 GHz)",
+  "category": "mimo",
+  "band": "N41",
+  "frequency_mhz": 2600.0,
+  "bandwidth_mhz": 100.0,
+  "scs_khz": 30,
+  "duplex": "TDD",
+  "arfcn": null,
+  "mimo_layers": 2,
+  "mimo_port_preset": "2x2",
+  "dl_power_dbm": -50.0,
+  "ssb_power_dbm": -50.0,
+  "modulation": "256QAM",
+  "target_mcs": 24,
+  "cell_id": "CELL0",
+  "state_file": null,
+  "notes": "适用于 N41 频段车载天线测试"
+}

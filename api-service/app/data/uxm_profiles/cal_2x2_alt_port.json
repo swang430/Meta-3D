@@ -1,0 +1,21 @@
+{
+  "profile_id": "cal_2x2_alt_port",
+  "name": "2x2 MIMO 备用端口校准 (RF3+RF4)",
+  "description": "使用 RF3+RF4 端口进行 2x2 交叉校准验证",
+  "category": "calibration",
+  "band": "N78",
+  "frequency_mhz": 3500.0,
+  "bandwidth_mhz": 100.0,
+  "scs_khz": 30,
+  "duplex": "TDD",
+  "arfcn": null,
+  "mimo_layers": 2,
+  "mimo_port_preset": "2x2_alt",
+  "dl_power_dbm": -50.0,
+  "ssb_power_dbm": -50.0,
+  "modulation": "256QAM",
+  "target_mcs": 24,
+  "cell_id": "CELL0",
+  "state_file": null,
+  "notes": "验证 RF3+RF4 通路与 RF1+RF2 的一致性"
+}

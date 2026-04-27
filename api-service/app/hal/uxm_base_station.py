@@ -85,9 +85,24 @@ class UxmScpiCommands:
     PUSCH_MCS = "CONFig:NR5G:{cell}:{bwp}:PUSCH:MCS"
     PUSCH_RB_ALLOC = "CONFig:NR5G:{cell}:{bwp}:PUSCH:RB:ALLocation"
 
-    # --- MIMO ---
+    # --- MIMO 逻辑层配置 ---
     MIMO_DL_LAYERS = "CONFig:NR5G:{cell}:PHY:DL:MIMO:LAYers"
     MIMO_DL_CODEBOOK = "CONFig:NR5G:{cell}:PHY:DL:MIMO:CODEbook"
+
+    # --- MIMO 天线到物理端口路由 (Layer 1) ---
+    # 将 NR 逻辑天线映射到 UXM 前面板的物理 RF 端口
+    # 语法: ROUTe:NR5G:CELL0:HARDware:TX:ANTenna{n}:PORT RF{m}OUT
+    #       ROUTe:NR5G:CELL0:HARDware:RX:ANTenna{n}:PORT RF{m}IN
+    #
+    # 物理端口命名约定 (UXM E7515B 前面板):
+    #   RF1OUT / RF1IN  — 第 1 组射频端口
+    #   RF2OUT / RF2IN  — 第 2 组射频端口
+    #   RF3OUT / RF3IN  — 第 3 组射频端口 (4x4 MIMO 需要)
+    #   RF4OUT / RF4IN  — 第 4 组射频端口 (4x4 MIMO 需要)
+    MIMO_TX_ANT_PORT = "ROUTe:NR5G:{cell}:HARDware:TX:ANTenna{ant}:PORT"
+    MIMO_RX_ANT_PORT = "ROUTe:NR5G:{cell}:HARDware:RX:ANTenna{ant}:PORT"
+    MIMO_TX_ANT_PORT_QUERY = "ROUTe:NR5G:{cell}:HARDware:TX:ANTenna{ant}:PORT?"
+    MIMO_RX_ANT_PORT_QUERY = "ROUTe:NR5G:{cell}:HARDware:RX:ANTenna{ant}:PORT?"
 
     # --- 信令 / 连接管理 ---
     CELL_STATE_ON = "CONFig:NR5G:{cell}:ACTive:STATe ON"
@@ -405,7 +420,22 @@ class RealUxmDriver(BaseStationDriver):
                     + f" {layers}"
                 )
 
-            # ---- 7. 下行功率 ----
+            # ---- 7. MIMO 天线→物理端口路由 (Layer 1) ----
+            # 支持两种方式:
+            #   a) mimo_port_preset: "siso" / "2x2" / "4x4" (使用预置映射)
+            #   b) mimo_port_map: 自定义映射 dict
+            if "mimo_port_preset" in config:
+                await self.set_mimo_port_mapping(
+                    preset=config["mimo_port_preset"],
+                    cell=cell,
+                )
+            elif "mimo_port_map" in config:
+                await self.set_mimo_port_mapping(
+                    custom_map=config["mimo_port_map"],
+                    cell=cell,
+                )
+
+            # ---- 8. 下行功率 ----
             if "dl_power_dbm" in config:
                 self._dl_power_dbm = config["dl_power_dbm"]
                 self._write(
@@ -413,14 +443,14 @@ class RealUxmDriver(BaseStationDriver):
                     + f" {self._dl_power_dbm:.1f}"
                 )
 
-            # ---- 8. SSB 功率 ----
+            # ---- 9. SSB 功率 ----
             if "ssb_power_dbm" in config:
                 self._write(
                     UxmScpiCommands.SSB_POWER.format(cell=cell)
                     + f" {config['ssb_power_dbm']:.1f}"
                 )
 
-            # ---- 9. PDSCH RB 分配 (Full allocation 默认) ----
+            # ---- 10. PDSCH RB 分配 (Full allocation 默认) ----
             if "pdsch_rb_alloc" in config:
                 bwp = config.get("bwp_id", self._bwp_id)
                 self._write(
@@ -428,7 +458,7 @@ class RealUxmDriver(BaseStationDriver):
                     + f" {config['pdsch_rb_alloc']}"
                 )
 
-            # ---- 10. RF 端口路由 ----
+            # ---- 11. RF 通道级端口路由 (Layer 2, 备选) ----
             if "rf_port_dl" in config:
                 self._write(
                     UxmScpiCommands.RF_PORT_DL.format(cell=cell)
@@ -456,6 +486,169 @@ class RealUxmDriver(BaseStationDriver):
             logger.error(f"[UXM] set_cell_config failed: {e}")
             self._set_status(InstrumentStatus.ERROR, str(e))
             return False
+
+    # ===================================================================
+    # 2.5 MIMO 天线端口路由
+    # ===================================================================
+
+    # 预置端口映射表
+    # 键: (逻辑天线编号, 方向)  值: 物理端口名
+    MIMO_PORT_PRESETS = {
+        "siso": {
+            "tx": {1: "RF1OUT"},
+            "rx": {1: "RF1IN"},
+            "description": "SISO 1x1: RF1 单端口",
+        },
+        "2x2": {
+            "tx": {1: "RF1OUT", 2: "RF2OUT"},
+            "rx": {1: "RF1IN",  2: "RF2IN"},
+            "description": "2x2 MIMO: RF1 + RF2",
+        },
+        "4x4": {
+            "tx": {1: "RF1OUT", 2: "RF2OUT", 3: "RF3OUT", 4: "RF4OUT"},
+            "rx": {1: "RF1IN",  2: "RF2IN",  3: "RF3IN",  4: "RF4IN"},
+            "description": "4x4 MIMO: RF1 + RF2 + RF3 + RF4",
+        },
+        # 交叉验证配置: 仅使用 RF3+RF4 (用于隔离测试)
+        "2x2_alt": {
+            "tx": {1: "RF3OUT", 2: "RF4OUT"},
+            "rx": {1: "RF3IN",  2: "RF4IN"},
+            "description": "2x2 MIMO (备用端口): RF3 + RF4",
+        },
+    }
+
+    async def set_mimo_port_mapping(
+        self,
+        preset: Optional[str] = None,
+        custom_map: Optional[Dict[str, Any]] = None,
+        cell: Optional[str] = None,
+    ) -> bool:
+        """
+        配置 MIMO 逻辑天线到 UXM 物理 RF 端口的映射。
+
+        这是 RF 路由的 Layer 1 (天线级)，决定了每个 NR 逻辑天线
+        从哪个物理端口发射/接收信号。
+
+        UXM 前面板端口布局:
+            ┌─────────────────────────────┐
+            │  RF1 OUT ●  ● RF1 IN        │
+            │  RF2 OUT ●  ● RF2 IN        │
+            │  RF3 OUT ●  ● RF3 IN        │
+            │  RF4 OUT ●  ● RF4 IN        │
+            └─────────────────────────────┘
+
+        SCPI 序列 (以 2x2 MIMO 为例):
+            ROUTe:NR5G:CELL0:HARDware:TX:ANTenna1:PORT RF1OUT
+            ROUTe:NR5G:CELL0:HARDware:TX:ANTenna2:PORT RF2OUT
+            ROUTe:NR5G:CELL0:HARDware:RX:ANTenna1:PORT RF1IN
+            ROUTe:NR5G:CELL0:HARDware:RX:ANTenna2:PORT RF2IN
+
+        Args:
+            preset: 预置映射名称 ("siso" / "2x2" / "4x4" / "2x2_alt")
+            custom_map: 自定义映射字典, 格式:
+                {
+                    "tx": {1: "RF1OUT", 2: "RF3OUT"},
+                    "rx": {1: "RF1IN",  2: "RF3IN"},
+                }
+            cell: 小区标识 (默认 CELL0)
+
+        Returns:
+            True if port mapping configured successfully
+        """
+        cell = cell or self._cell_id
+
+        # 解析映射表
+        if preset:
+            preset_key = preset.lower()
+            if preset_key not in self.MIMO_PORT_PRESETS:
+                logger.error(
+                    f"[UXM] Unknown MIMO port preset: '{preset}'. "
+                    f"Available: {list(self.MIMO_PORT_PRESETS.keys())}"
+                )
+                return False
+            mapping = self.MIMO_PORT_PRESETS[preset_key]
+            tx_map = mapping["tx"]
+            rx_map = mapping["rx"]
+            desc = mapping["description"]
+            logger.info(f"[UXM] Applying MIMO port preset: {desc}")
+        elif custom_map:
+            tx_map = custom_map.get("tx", {})
+            rx_map = custom_map.get("rx", {})
+            desc = "custom"
+            logger.info(f"[UXM] Applying custom MIMO port map: TX={tx_map}, RX={rx_map}")
+        else:
+            logger.warning("[UXM] set_mimo_port_mapping: no preset or custom_map")
+            return False
+
+        try:
+            # 配置 TX 天线端口
+            for ant_num, port_name in tx_map.items():
+                self._write(
+                    UxmScpiCommands.MIMO_TX_ANT_PORT.format(
+                        cell=cell, ant=ant_num
+                    ) + f" {port_name}"
+                )
+
+            # 配置 RX 天线端口
+            for ant_num, port_name in rx_map.items():
+                self._write(
+                    UxmScpiCommands.MIMO_RX_ANT_PORT.format(
+                        cell=cell, ant=ant_num
+                    ) + f" {port_name}"
+                )
+
+            self._query("*OPC?")
+
+            logger.info(
+                f"[UXM] MIMO port mapping applied ({desc}): "
+                f"TX={dict(tx_map)}, RX={dict(rx_map)}"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"[UXM] set_mimo_port_mapping failed: {e}")
+            return False
+
+    async def query_mimo_port_mapping(
+        self, cell: Optional[str] = None
+    ) -> Dict[str, Dict[int, str]]:
+        """
+        查询当前的 MIMO 天线端口映射。
+
+        从 UXM 硬件回读实际配置，用于验证端口映射是否正确。
+
+        Returns:
+            {"tx": {1: "RF1OUT", 2: "RF2OUT"}, "rx": {1: "RF1IN", 2: "RF2IN"}}
+        """
+        cell = cell or self._cell_id
+        result: Dict[str, Dict[int, str]] = {"tx": {}, "rx": {}}
+
+        try:
+            for ant_num in range(1, 5):
+                # TX
+                tx_port = self._query(
+                    UxmScpiCommands.MIMO_TX_ANT_PORT_QUERY.format(
+                        cell=cell, ant=ant_num
+                    )
+                ).strip()
+                if tx_port and "NONE" not in tx_port.upper():
+                    result["tx"][ant_num] = tx_port
+
+                # RX
+                rx_port = self._query(
+                    UxmScpiCommands.MIMO_RX_ANT_PORT_QUERY.format(
+                        cell=cell, ant=ant_num
+                    )
+                ).strip()
+                if rx_port and "NONE" not in rx_port.upper():
+                    result["rx"][ant_num] = rx_port
+
+            logger.info(f"[UXM] Current port mapping: {result}")
+
+        except Exception as e:
+            logger.warning(f"[UXM] query_mimo_port_mapping: {e}")
+
+        return result
 
     async def set_frc_config(
         self,

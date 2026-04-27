@@ -1,0 +1,21 @@
+{
+  "profile_id": "siso_n78_100m",
+  "name": "SISO 基线测试 (N78 100MHz)",
+  "description": "单天线基线测试，用于暗室调试和参考天线校准",
+  "category": "siso",
+  "band": "N78",
+  "frequency_mhz": 3500.0,
+  "bandwidth_mhz": 100.0,
+  "scs_khz": 30,
+  "duplex": "TDD",
+  "arfcn": null,
+  "mimo_layers": 1,
+  "mimo_port_preset": "siso",
+  "dl_power_dbm": -50.0,
+  "ssb_power_dbm": -50.0,
+  "modulation": "64QAM",
+  "target_mcs": 19,
+  "cell_id": "CELL0",
+  "state_file": null,
+  "notes": "RF1 OUT→F64 CH1→探头; RF1 IN←DUT UL"
+}
