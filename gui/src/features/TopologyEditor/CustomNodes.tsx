@@ -79,12 +79,12 @@ export const CommunicationTesterNode = ({ data }: any) => {
       {(data.params?.ports || ['RF1','RF2','RF3','RF4','RF5']).map((port: string, i: number) => (
         <Handle
           key={port}
-          type="source"
+          type={port === 'RF6' ? 'target' : 'source'}
           position={Position.Right}
           id={port}
           style={{
-            top: `${15 + i * 18}%`,
-            background: port === 'RF5' ? 'var(--mantine-color-orange-6)' : 'var(--mantine-color-indigo-6)',
+            top: `${15 + i * 14}%`,
+            background: port === 'RF6' ? 'var(--mantine-color-pink-6)' : (port === 'RF5' ? 'var(--mantine-color-orange-6)' : 'var(--mantine-color-indigo-6)'),
           }}
         />
       ))}

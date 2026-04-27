@@ -39,7 +39,12 @@ from sqlalchemy import desc
 from app.models.chamber import ChamberConfiguration
 from app.models.probe_calibration import (
     ProbePathLossCalibration,
+    ChannelPhaseCalibration,
     CalibrationStatus,
+)
+from app.services.channel_generation.pas_rotation import (
+    align_pas_to_nearest_probe,
+    PASRotationResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -148,6 +153,8 @@ class HardwarePipelineResult:
     spatial_correlation: Optional[float] = None
     matrix_energy_scaling_factor: Optional[float] = None
     computation_time_ms: float = 0.0
+    # PAS 旋转 (GCM 合规性)
+    pas_rotation: Optional[PASRotationResult] = None
 
 
 # ==================== 客户端 ====================
@@ -222,9 +229,14 @@ class ChannelEngineClient:
                 message=f"Chamber configuration {chamber_id} not found"
             )
 
-        # ----- Step 2: 从 DB 查询校准数据 -----
+        # ----- Step 2: 从 DB 查询校准数据 (含相位补偿) -----
         calibration_entries = self._query_calibration_entries(
             chamber_id, frequency_hz, chamber
+        )
+
+        # ----- Step 2.5: Automatic PAS Rotation (GCM 合规性) -----
+        pas_result = self._apply_pas_rotation(
+            clusters=clusters, chamber=chamber
         )
 
         # ----- Step 3: 组装 Payload -----
@@ -242,6 +254,7 @@ class ChannelEngineClient:
             target_rsrp_dbm=target_rsrp_dbm,
             target_snr_db=target_snr_db,
             ue_velocity_kph=ue_velocity_kph,
+            pas_rotation=pas_result,
         )
 
         logger.info(
@@ -315,6 +328,7 @@ class ChannelEngineClient:
             spatial_correlation=diag.get("spatial_correlation"),
             matrix_energy_scaling_factor=diag.get("matrix_energy_scaling_factor"),
             computation_time_ms=result_data.get("computation_time_ms", 0),
+            pas_rotation=pas_result,
         )
 
     # ==================== 内部方法 ====================
@@ -372,7 +386,7 @@ class ChannelEngineClient:
                 entries.append({
                     "port_id": probe_id * 2 + 1,
                     "cable_loss_db": float(path_loss),
-                    "cable_phase_deg": 0.0,  # TODO: 从相位校准表补充
+                    "cable_phase_deg": 0.0,  # 下面由 phase_compensation_map 覆盖
                     "probe_gain_dbi": float(chamber.probe_gain_dbi),
                 })
 
@@ -401,6 +415,21 @@ class ChannelEngineClient:
                     "probe_gain_dbi": float(chamber.probe_gain_dbi),
                 })
 
+        # ----- 注入相位校准数据 (P1: 打通相位补偿链路) -----
+        phase_compensation_map = self._query_phase_compensation(
+            chamber_id, frequency_hz
+        )
+        if phase_compensation_map:
+            injected_count = 0
+            for entry in entries:
+                ch_id = entry["port_id"]
+                if ch_id in phase_compensation_map:
+                    entry["cable_phase_deg"] = phase_compensation_map[ch_id]
+                    injected_count += 1
+            logger.info(
+                f"Phase calibration injected for {injected_count}/{len(entries)} ports"
+            )
+
         return entries
 
     def _build_payload(
@@ -418,9 +447,10 @@ class ChannelEngineClient:
         target_rsrp_dbm: float,
         target_snr_db: float,
         ue_velocity_kph: float,
+        pas_rotation: Optional[PASRotationResult] = None,
     ) -> Dict[str, Any]:
         """组装 Spec v1.0 请求 Payload"""
-        return {
+        payload = {
             "chamber_config": {
                 "num_probes": chamber.num_probes,
                 "radius_m": float(chamber.chamber_radius_m),
@@ -469,6 +499,117 @@ class ChannelEngineClient:
                 ],
             },
         }
+
+        # 附加 PAS 旋转元数据供 CE 和上层使用
+        if pas_rotation and pas_rotation.applied:
+            payload["pas_rotation"] = pas_rotation.to_dict()
+
+        return payload
+
+    def _apply_pas_rotation(
+        self,
+        clusters: List[CDLCluster],
+        chamber: ChamberConfiguration,
+    ) -> Optional[PASRotationResult]:
+        """
+        执行 Automatic PAS Rotation。
+
+        从 DB 查询暗室的探头方位角，找到最强簇，旋转所有簇的 AoA 使最强簇
+        精确对准最近的物理探头。对应 GCM 中的 "Automatic PAS Rotation" 功能。
+
+        ★ 此方法会就地修改 clusters 列表中各 CDLCluster 的 aoa_deg 字段。
+        """
+        if not clusters:
+            return None
+
+        # 从 DB 查询水平环探头的方位角
+        from app.models.probe import Probe
+        probes = self.db.query(Probe).filter(
+            Probe.is_active == True  # noqa: E712
+        ).all()
+
+        if not probes:
+            logger.warning(
+                "[PAS Rotation] 数据库中无探头数据, 跳过 PAS Rotation"
+            )
+            return None
+
+        # 提取方位角 (仅水平环探头, ring=3 对应 ±30° 仰角内)
+        probe_azimuths = []
+        probe_ids = []
+        for p in probes:
+            if hasattr(p, 'position') and p.position:
+                pos = p.position
+                az = pos.get('azimuth', None) if isinstance(pos, dict) else getattr(pos, 'azimuth', None)
+                if az is not None:
+                    probe_azimuths.append(float(az))
+                    probe_ids.append(p.probe_number)
+
+        if not probe_azimuths:
+            logger.warning(
+                "[PAS Rotation] 无法从探头数据中提取方位角, 跳过"
+            )
+            return None
+
+        # 提取簇参数
+        aoa_list = [c.aoa_deg for c in clusters]
+        power_list = [c.power_relative_linear for c in clusters]
+
+        # 执行旋转
+        rotated_aoas, result = align_pas_to_nearest_probe(
+            cluster_aoa_degs=aoa_list,
+            cluster_powers_linear=power_list,
+            probe_azimuths_deg=probe_azimuths,
+            probe_ids=probe_ids,
+        )
+
+        # 就地更新 clusters 的 AoA
+        if result.applied:
+            for i, cluster in enumerate(clusters):
+                cluster.aoa_deg = rotated_aoas[i]
+
+        return result
+
+    def _query_phase_compensation(
+        self,
+        chamber_id: UUID,
+        frequency_hz: float,
+    ) -> Dict[int, float]:
+        """
+        从 DB 查询最新的相位校准补偿值。
+
+        P1: 打通 phase_calibration_service → channel_engine_client 的数据链路。
+
+        Returns:
+            {channel_id: compensation_phase_deg} 字典，空字典表示无校准数据。
+        """
+        try:
+            latest_phase_cal = self.db.query(ChannelPhaseCalibration).filter(
+                ChannelPhaseCalibration.chamber_id == chamber_id,
+                ChannelPhaseCalibration.status == "valid",
+            ).order_by(
+                desc(ChannelPhaseCalibration.calibrated_at)
+            ).first()
+
+            if not latest_phase_cal or not latest_phase_cal.phase_compensation:
+                return {}
+
+            phase_map: Dict[int, float] = {}
+            for comp in latest_phase_cal.phase_compensation:
+                ch_id = comp.get("channel_id")
+                comp_deg = comp.get("compensation_deg", 0.0)
+                if ch_id is not None:
+                    phase_map[int(ch_id)] = float(comp_deg)
+
+            logger.info(
+                f"Phase compensation loaded: {len(phase_map)} channels "
+                f"from calibration {latest_phase_cal.id}"
+            )
+            return phase_map
+
+        except Exception as e:
+            logger.warning(f"Failed to query phase compensation: {e}")
+            return {}
 
     def _extract_asc_zip(
         self, zip_b64: str, session_id: str
