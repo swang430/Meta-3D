@@ -230,6 +230,39 @@ class BaseStationDriver(InstrumentDriver):
         """
         return [RadioTechnology.LTE]  # 默认支持 LTE
 
+    # ===================================================================
+    # 配置文件管理 (一键配置)
+    # ===================================================================
+
+    async def load_state_file(self, filepath: str) -> bool:
+        """
+        从仪器本机加载已保存的配置文件，一次性恢复全部仪器状态。
+
+        相比逐条 SCPI 配置的优势:
+          - 消除参数顺序依赖 (如 Band 必须在 Duplex 之前)
+          - 保证所有参数的完整性 (不会遗漏 TDD 配置、RF 路由等)
+          - 可由工程师在仪器前面板手动调优后保存为模板
+
+        Args:
+            filepath: 仪器本机的文件路径
+
+        Returns:
+            True if state loaded successfully
+        """
+        raise NotImplementedError
+
+    async def save_state_file(self, filepath: str) -> bool:
+        """
+        将仪器当前完整配置保存为文件。
+
+        Args:
+            filepath: 仪器本机的保存路径
+
+        Returns:
+            True if state saved successfully
+        """
+        raise NotImplementedError
+
 
 # ===========================================================================
 # Mock 实现 (开发/测试用)
@@ -378,3 +411,14 @@ class MockBaseStation(BaseStationDriver):
 
     def get_supported_technologies(self) -> List[RadioTechnology]:
         return [RadioTechnology.NR5G, RadioTechnology.LTE]
+
+    async def load_state_file(self, filepath: str) -> bool:
+        """Mock: 模拟加载配置文件"""
+        logger.info(f"[MockBS] load_state_file: {filepath}")
+        self._set_status(InstrumentStatus.READY)
+        return True
+
+    async def save_state_file(self, filepath: str) -> bool:
+        """Mock: 模拟保存配置文件"""
+        logger.info(f"[MockBS] save_state_file: {filepath}")
+        return True

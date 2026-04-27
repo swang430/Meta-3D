@@ -355,11 +355,15 @@ class CommissioningService:
         await base_station.connect()
         
         # Configure BaseStation to start transmitting
-        logger.info(f"[{session_id}] Authentically configuring Base Station via HAL")
+        logger.info(f"[{session_id}] Configuring Base Station via HAL (complete cell config)")
         await base_station.set_cell_config({
             "frequency_mhz": config.frequency_hz / 1e6,
             "bandwidth_mhz": config.bandwidth_mhz,
-            "mimo_layers": config.mimo_layers
+            "scs_khz": config.subcarrier_spacing_khz,
+            "mimo_layers": config.mimo_layers,
+            "dl_power_dbm": config.target_tx_power_dbm,
+            # band 和 duplex 由 UXM 驱动从 frequency_mhz 自动推断
+            # (3500 MHz → N78 TDD)，无需显式指定
         })
         await base_station.start_signaling()
 

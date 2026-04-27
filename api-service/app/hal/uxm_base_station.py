@@ -109,6 +109,23 @@ class UxmScpiCommands:
     # --- EVM (错误向量幅度) ---
     MEAS_EVM_START = "MEASure:NR5G:{cell}:PHY:EVM:STARt"
 
+    # --- 配置文件保存/恢复 (一键配置) ---
+    # UXM 支持将完整仪器状态（小区参数、功率、MIMO、RF 路由等）
+    # 保存为 .state 文件，之后通过单条 SCPI 命令一次恢复全部配置。
+    # 文件存储在 UXM 本机的 D:\User Files\ 目录下。
+    STATE_SAVE = 'SYSTem:CONFiguration:SAVE "{filepath}"'
+    STATE_LOAD = 'SYSTem:CONFiguration:LOAD "{filepath}"'
+    STATE_LIST = 'MMEMory:CATalog? "D:\\User Files"'
+
+    # --- RF 路由 (射频通路配置) ---
+    RF_CONNECTOR = "CONFig:NR5G:{cell}:RFSettings:CHANnel"
+    RF_PORT_DL = "CONFig:NR5G:{cell}:RFSettings:DL:PORT"
+    RF_PORT_UL = "CONFig:NR5G:{cell}:RFSettings:UL:PORT"
+
+    # --- TDD 配置 ---
+    TDD_PATTERN = "CONFig:NR5G:{cell}:TDD:PATTern"
+    TDD_PERIOD = "CONFig:NR5G:{cell}:TDD:PERiod"
+
     # --- 状态查询 ---
     STATUS_FAULTY = "STATus:FAULty:RECovery"
 
@@ -117,6 +134,7 @@ class UxmScpiCommands:
 VISA_TIMEOUT_DEFAULT = 5000  # ms
 VISA_TIMEOUT_CELL = 30000
 VISA_TIMEOUT_ATTACH = 90000
+VISA_TIMEOUT_STATE_LOAD = 60000  # 配置文件加载可能需要较长时间
 
 # 默认 ARFCN 映射 (NR 频段 → ARFCN)
 NR_BAND_ARFCN_MAP = {
@@ -125,6 +143,27 @@ NR_BAND_ARFCN_MAP = {
     "N77": 620000,  # C-Band
     "N79": 693334,  # 4.7 GHz
 }
+
+# 频率 → 频段自动推断 (MHz → Band)
+# 用于 set_cell_config 中当用户只给了 frequency_mhz 但没给 band 时自动映射
+FREQ_TO_BAND_MAP = [
+    # (min_mhz, max_mhz, band, duplex)
+    (3300, 3800, "N78", "TDD"),
+    (2496, 2690, "N41", "TDD"),
+    (3300, 4200, "N77", "TDD"),
+    (4400, 5000, "N79", "TDD"),
+    (1920, 1980, "N1",  "FDD"),
+    (1710, 1785, "N3",  "FDD"),
+    (2110, 2170, "N1",  "FDD"),
+]
+
+
+def _infer_band_from_freq(freq_mhz: float) -> tuple:
+    """从频率推断 NR 频段和双工模式"""
+    for min_f, max_f, band, duplex in FREQ_TO_BAND_MAP:
+        if min_f <= freq_mhz <= max_f:
+            return band, duplex
+    return "N78", "TDD"  # 默认 fallback
 
 
 class RealUxmDriver(BaseStationDriver):
@@ -237,7 +276,14 @@ class RealUxmDriver(BaseStationDriver):
             return False
 
     async def configure(self, config: Dict[str, Any]) -> bool:
-        """应用配置 (委托给 set_cell_config)"""
+        """
+        应用配置。
+
+        优先使用配置文件 (state_file)，否则逐参数配置。
+        """
+        state_file = config.get("state_file")
+        if state_file:
+            return await self.load_state_file(state_file)
         return await self.set_cell_config(config)
 
     # ===================================================================
@@ -248,16 +294,62 @@ class RealUxmDriver(BaseStationDriver):
         """
         配置 UXM NR5G 物理小区参数。
 
-        SCPI 序列:
+        完整 SCPI 序列:
           CONFig:NR5G:CELL0:BAND N78
+          CONFig:NR5G:CELL0:DUPLex TDD         ← 必须在 BAND 之后设置
           CONFig:NR5G:CELL0:DL:BW 100
+          CONFig:NR5G:CELL0:UL:BW 100
           CONFig:NR5G:CELL0:SCS 30
-          CONFig:NR5G:CELL0:DUPLex TDD
           CONFig:NR5G:CELL0:DL:ARFCN 632628
+          CONFig:NR5G:CELL0:PHY:DL:MIMO:LAYers 2
+          CONFig:NR5G:CELL0:PHY:DL:POWer -50
+          CONFig:NR5G:CELL0:SSB:POWer -50
+          *OPC?
+
+        频段/双工自动推断:
+          若 config 中只有 frequency_mhz 而没有 band/duplex，
+          系统会从 FREQ_TO_BAND_MAP 自动推断对应的 NR Band 和双工模式。
+          例如 3500 MHz → N78 TDD
+
+        Args:
+            config: 支持的字段:
+                - band: str             NR 频段 (e.g., "N78")
+                - frequency_mhz: float  中心频率 (用于自动推断 band)
+                - bandwidth_mhz: float  信道带宽
+                - scs_khz: int          子载波间隔 (15/30/60/120)
+                - duplex: str           "TDD" / "FDD" (自动推断时可省)
+                - arfcn: int            DL ARFCN (自动查表时可省)
+                - mimo_layers: int      MIMO 层数 (1/2/4)
+                - dl_power_dbm: float   下行发射功率
+                - ssb_power_dbm: float  SSB 功率
+                - cell_id: str          小区标识 (CELL0~CELL3)
+                - state_file: str       配置文件路径 (一键配置)
         """
+        # 一键配置文件: 如果指定了 state_file，直接 recall 并跳过后续逐参数配置
+        state_file = config.get("state_file")
+        if state_file:
+            return await self.load_state_file(state_file)
+
         cell = config.get("cell_id", self._cell_id)
         try:
-            # 频段
+            # ---- 0. 频率 → 频段/双工 自动推断 ----
+            if "frequency_mhz" in config:
+                self._frequency_mhz = config["frequency_mhz"]
+                # 如果用户没有显式给 band 和 duplex，从频率自动推断
+                if "band" not in config or "duplex" not in config:
+                    inferred_band, inferred_duplex = _infer_band_from_freq(
+                        self._frequency_mhz
+                    )
+                    if "band" not in config:
+                        config["band"] = inferred_band
+                    if "duplex" not in config:
+                        config["duplex"] = inferred_duplex
+                    logger.info(
+                        f"[UXM] Auto-inferred: {self._frequency_mhz} MHz "
+                        f"→ {config.get('band')}/{config.get('duplex')}"
+                    )
+
+            # ---- 1. 频段 (Band) ----
             if "band" in config:
                 band = config["band"].upper()
                 self._band = band
@@ -265,7 +357,16 @@ class RealUxmDriver(BaseStationDriver):
                     UxmScpiCommands.CELL_BAND.format(cell=cell) + f" {band}"
                 )
 
-            # 带宽
+            # ---- 2. 双工模式 (必须紧跟 Band 之后) ----
+            if "duplex" in config:
+                duplex_mode = config["duplex"].upper()
+                self._write(
+                    UxmScpiCommands.CELL_DUPLEX.format(cell=cell)
+                    + f" {duplex_mode}"
+                )
+                logger.info(f"[UXM] Duplex: {duplex_mode}")
+
+            # ---- 3. 带宽 (DL + UL 同步设置) ----
             if "bandwidth_mhz" in config:
                 bw = config["bandwidth_mhz"]
                 self._bandwidth_mhz = bw
@@ -278,7 +379,7 @@ class RealUxmDriver(BaseStationDriver):
                     + f" {int(bw)}"
                 )
 
-            # 子载波间隔
+            # ---- 4. 子载波间隔 ----
             if "scs_khz" in config:
                 scs = config["scs_khz"]
                 self._scs_khz = scs
@@ -286,14 +387,7 @@ class RealUxmDriver(BaseStationDriver):
                     UxmScpiCommands.CELL_SCS.format(cell=cell) + f" {scs}"
                 )
 
-            # 双工模式
-            if "duplex" in config:
-                self._write(
-                    UxmScpiCommands.CELL_DUPLEX.format(cell=cell)
-                    + f" {config['duplex'].upper()}"
-                )
-
-            # ARFCN (自动查表或手动指定)
+            # ---- 5. ARFCN (自动查表或手动指定) ----
             if "arfcn" in config:
                 arfcn = config["arfcn"]
             else:
@@ -303,11 +397,7 @@ class RealUxmDriver(BaseStationDriver):
                 + f" {arfcn}"
             )
 
-            # 频率 (如果直接指定)
-            if "frequency_mhz" in config:
-                self._frequency_mhz = config["frequency_mhz"]
-
-            # MIMO 层数
+            # ---- 6. MIMO 层数 ----
             if "mimo_layers" in config:
                 layers = config["mimo_layers"]
                 self._write(
@@ -315,12 +405,50 @@ class RealUxmDriver(BaseStationDriver):
                     + f" {layers}"
                 )
 
+            # ---- 7. 下行功率 ----
+            if "dl_power_dbm" in config:
+                self._dl_power_dbm = config["dl_power_dbm"]
+                self._write(
+                    UxmScpiCommands.DL_POWER.format(cell=cell)
+                    + f" {self._dl_power_dbm:.1f}"
+                )
+
+            # ---- 8. SSB 功率 ----
+            if "ssb_power_dbm" in config:
+                self._write(
+                    UxmScpiCommands.SSB_POWER.format(cell=cell)
+                    + f" {config['ssb_power_dbm']:.1f}"
+                )
+
+            # ---- 9. PDSCH RB 分配 (Full allocation 默认) ----
+            if "pdsch_rb_alloc" in config:
+                bwp = config.get("bwp_id", self._bwp_id)
+                self._write(
+                    UxmScpiCommands.PDSCH_RB_ALLOC.format(cell=cell, bwp=bwp)
+                    + f" {config['pdsch_rb_alloc']}"
+                )
+
+            # ---- 10. RF 端口路由 ----
+            if "rf_port_dl" in config:
+                self._write(
+                    UxmScpiCommands.RF_PORT_DL.format(cell=cell)
+                    + f" {config['rf_port_dl']}"
+                )
+            if "rf_port_ul" in config:
+                self._write(
+                    UxmScpiCommands.RF_PORT_UL.format(cell=cell)
+                    + f" {config['rf_port_ul']}"
+                )
+
             # 同步等待
             self._query("*OPC?")
             self._set_status(InstrumentStatus.READY)
+
             logger.info(
-                f"[UXM] Cell config: band={self._band}, "
-                f"BW={self._bandwidth_mhz}MHz, SCS={self._scs_khz}kHz"
+                f"[UXM] Cell config applied: band={self._band}, "
+                f"BW={self._bandwidth_mhz}MHz, SCS={self._scs_khz}kHz, "
+                f"duplex={config.get('duplex', 'auto')}, "
+                f"DL_pwr={self._dl_power_dbm}dBm"
             )
             return True
 
@@ -476,6 +604,162 @@ class RealUxmDriver(BaseStationDriver):
             return CellState.ERROR
         except Exception:
             return CellState.ERROR
+
+    # ===================================================================
+    # 3.5 配置文件保存/恢复 (一键配置)
+    # ===================================================================
+
+    async def load_state_file(self, filepath: str) -> bool:
+        """
+        从 UXM 本机加载保存的配置文件，一次性恢复全部仪器状态。
+
+        使用场景:
+          - 工程师在 UXM 前面板手动调好所有参数后，执行 save_state_file()
+            保存为 .state 文件
+          - 后续自动化测试时只需 load_state_file() 即可一键恢复
+          - 消除逐条 SCPI 配置的潜在顺序依赖和参数遗漏风险
+
+        UXM 配置文件包含:
+          - NR5G 小区所有参数 (Band/BW/SCS/ARFCN/MIMO/Power)
+          - RF 路由设置 (DL/UL 端口映射)
+          - TDD 时隙配置
+          - PDSCH/PUSCH 参数
+          - 测量配置
+
+        Args:
+            filepath: UXM 本机的文件路径
+                例: "D:\\User Files\\CAICT_N78_100M_2x2.state"
+
+        Returns:
+            True if state loaded successfully
+        """
+        try:
+            logger.info(f"[UXM] Loading state file: {filepath}")
+            self._set_status(InstrumentStatus.BUSY)
+
+            # 加载前先安全关闭小区
+            if self._cell_state != CellState.OFF:
+                await self.stop_signaling()
+
+            # 设置长超时（配置文件包含大量参数，加载需要时间）
+            old_timeout = self._visa_session.timeout
+            self._visa_session.timeout = VISA_TIMEOUT_STATE_LOAD
+
+            self._write(
+                UxmScpiCommands.STATE_LOAD.format(filepath=filepath)
+            )
+            self._query("*OPC?")
+
+            self._visa_session.timeout = old_timeout
+
+            # 加载后刷新内部状态缓存
+            await self._refresh_config_from_instrument()
+
+            self._set_status(InstrumentStatus.READY)
+            logger.info(
+                f"[UXM] State loaded: {filepath} → "
+                f"band={self._band}, BW={self._bandwidth_mhz}MHz"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"[UXM] load_state_file failed: {e}")
+            self._set_status(InstrumentStatus.ERROR, str(e))
+            return False
+
+    async def save_state_file(self, filepath: str) -> bool:
+        """
+        将 UXM 当前完整配置保存为 .state 文件。
+
+        用途:
+          - 工程师手动调优完成后保存为模板
+          - 团队间共享标准化测试配置
+          - 回归测试的可重复性保证
+
+        Args:
+            filepath: UXM 本机的保存路径
+                例: "D:\\User Files\\CAICT_N78_100M_2x2.state"
+
+        Returns:
+            True if state saved successfully
+        """
+        try:
+            logger.info(f"[UXM] Saving state: {filepath}")
+            self._write(
+                UxmScpiCommands.STATE_SAVE.format(filepath=filepath)
+            )
+            self._query("*OPC?")
+            logger.info(f"[UXM] State saved: {filepath}")
+            return True
+
+        except Exception as e:
+            logger.error(f"[UXM] save_state_file failed: {e}")
+            return False
+
+    async def list_state_files(self) -> List[str]:
+        """
+        列出 UXM 本机上已保存的配置文件。
+
+        Returns:
+            文件名列表
+        """
+        try:
+            result = self._query(UxmScpiCommands.STATE_LIST)
+            # 解析 MMEMory:CATalog? 返回格式
+            # 典型: '"file1.state","file2.state",...'
+            files = []
+            if result:
+                parts = result.replace('"', '').split(',')
+                files = [
+                    p.strip() for p in parts
+                    if p.strip().endswith('.state')
+                ]
+            return files
+        except Exception as e:
+            logger.warning(f"[UXM] list_state_files failed: {e}")
+            return []
+
+    async def _refresh_config_from_instrument(self) -> None:
+        """
+        从 UXM 硬件回读当前配置，刷新驱动内部缓存。
+
+        在 load_state_file() 后调用，确保驱动状态与硬件一致。
+        """
+        cell = self._cell_id
+        try:
+            # 回读频段
+            band = self._query(
+                UxmScpiCommands.CELL_BAND.format(cell=cell) + "?"
+            ).strip()
+            if band:
+                self._band = band.upper()
+
+            # 回读带宽
+            bw = self._query(
+                UxmScpiCommands.CELL_DL_BW.format(cell=cell) + "?"
+            ).strip()
+            if bw:
+                self._bandwidth_mhz = float(bw)
+
+            # 回读 SCS
+            scs = self._query(
+                UxmScpiCommands.CELL_SCS.format(cell=cell) + "?"
+            ).strip()
+            if scs:
+                self._scs_khz = int(float(scs))
+
+            # 回读功率
+            pwr = self._query(
+                UxmScpiCommands.DL_POWER.format(cell=cell) + "?"
+            ).strip()
+            if pwr:
+                self._dl_power_dbm = float(pwr)
+
+            # 回读小区状态
+            self._cell_state = await self.get_cell_state()
+
+        except Exception as e:
+            logger.warning(f"[UXM] _refresh_config_from_instrument: {e}")
 
     # ===================================================================
     # 4. 吞吐量与 CSI 测量
