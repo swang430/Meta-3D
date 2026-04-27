@@ -61,8 +61,19 @@
 - [x] **CAL-08 数据可视化:** 创建 `CalibrationTimeline.tsx` 和 `CalibrationDependencyGraph.tsx` 并集成到 Dashboard。
 - [x] **CAL-09 校准报告:** 扩展 `calibration_report_generator.py`，添加 ISO 证书、审计报告和数据导出功能。
 
-### Phase 2: 硬件驱动与深度集成
-- [ ] **HAL 实现:** 目前 `api-service/app/hal` 仅有 Mock 实现。需要编写真实的 VISA/SCPI 驱动程序以连接 R&S/Keysight 仪表。
+### Phase 2: 硬件驱动与深度集成 (2026-04-27 完成)
+- [x] **HAL 真实驱动:** 所有设备类别已实现真实 SCPI/VISA 驱动:
+    - F64 信道仿真器 (`propsim_f64.py`, 1245行)
+    - UXM 5G 综测仪 (`uxm_base_station.py`, 628行)
+    - CMW500 LTE 综测仪 (`cmw500_base_station.py`, 724行)
+    - Aerotech / ETS 转台 (`aerotech_positioner.py`, `ets_positioner.py`)
+    - Keysight ENA / R&S ZNA VNA
+    - Keysight MXG / R&S SMW200A 信号发生器
+    - R&S FSW/FSVA / Keysight X-Series 频谱仪
+    - ETS-Lindgren EMCenter RF 开关
+- [x] **HAL 驱动注册工厂 (`driver_registry.py`):** 支持 `HAL_MODE` 环境变量 (mock/real/auto), 20 个驱动类注册映射, 批量连接/断开/健康检查。
+- [x] **GCM 合规性:** 实现 Automatic PAS Rotation (`pas_rotation.py`), 等价于 GCM Tool 内置功能。
+- [x] **相位补偿闭环:** 创建 `PhaseCompensationExecutor`, 通过 F64 SCPI (`OUTP:PHA:DEG:CH`) 将校准补偿值下发到硬件。打通 `phase_calibration_service → channel_engine_client → F64` 完整数据链路。
 - [ ] **Auth 强化:** 完善 JWT 验证逻辑，增加数据库用户状态检查。
 
 ### Phase 3: 数据库迁移与架构收敛
