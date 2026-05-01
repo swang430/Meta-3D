@@ -318,18 +318,90 @@ def setup_logging(
         "propagate": True,
     }
 
+    # ================================================================
+    # Handler 8: 审计日志 (操作可追溯性)
+    # ================================================================
+    # 记录用户身份 + 配置变更 + 关键操作的 Before/After
+    # ISO/IEC 17025 要求所有操作可追溯到具体操作人
+    audit_log_path = os.path.join(log_dir, "audit.log")
+    config["handlers"]["file_audit"] = {
+        "class": "logging.handlers.TimedRotatingFileHandler",
+        "level": "INFO",  # 审计日志只记录 INFO+，不记录 DEBUG 噪音
+        "formatter": "json",
+        "filters": ["context_filter"],
+        "filename": audit_log_path,
+        "when": "midnight",
+        "interval": 1,
+        "backupCount": log_retention_days * 2,  # 审计日志保留 2 倍时间
+        "encoding": "utf-8",
+    }
+    config["loggers"]["app.audit"] = {
+        "level": "INFO",
+        "handlers": ["file_audit"],
+        "propagate": True,
+    }
+
+    # ================================================================
+    # Handler 9: 告警/异常事件日志
+    # ================================================================
+    # 仪器离线/校准过期/BLER 超阈值/环境异常等事件
+    # 独立通道便于运维监控系统 (Grafana/ELK) 接入
+    alert_log_path = os.path.join(log_dir, "alert.log")
+    config["handlers"]["file_alert"] = {
+        "class": "logging.handlers.TimedRotatingFileHandler",
+        "level": "WARNING",  # 告警日志只记录 WARNING+
+        "formatter": "json",
+        "filters": ["context_filter"],
+        "filename": alert_log_path,
+        "when": "midnight",
+        "interval": 1,
+        "backupCount": log_retention_days,
+        "encoding": "utf-8",
+    }
+    config["loggers"]["app.alert"] = {
+        "level": "WARNING",
+        "handlers": ["file_alert"],
+        "propagate": True,
+    }
+
+    # ================================================================
+    # Handler 10: 前端行为日志
+    # ================================================================
+    # 浏览器端通过 POST /api/v1/logs/frontend 上报
+    # 记录用户操作序列、API 请求摘要、WebSocket 状态、前端异常
+    frontend_log_path = os.path.join(log_dir, "frontend.log")
+    config["handlers"]["file_frontend"] = {
+        "class": "logging.handlers.TimedRotatingFileHandler",
+        "level": "DEBUG",
+        "formatter": "json",
+        "filters": ["context_filter"],
+        "filename": frontend_log_path,
+        "when": "midnight",
+        "interval": 1,
+        "backupCount": log_retention_days,
+        "encoding": "utf-8",
+    }
+    config["loggers"]["app.frontend"] = {
+        "level": "DEBUG",
+        "handlers": ["file_frontend"],
+        "propagate": False,  # 前端日志不传播到 console/app.log，避免刷屏
+    }
+
     logging.config.dictConfig(config)
 
     # 启动确认
     startup_logger = logging.getLogger("app.core.logging_config")
     startup_logger.info(
         f"Logging initialized: console={console_level}, "
-        f"file={app_log_path}, "
-        f"scpi={'enabled → ' + scpi_log_path if scpi_enabled else 'disabled'}, "
-        f"db={'enabled → ' + db_log_path if db_log_enabled else 'disabled'}, "
+        f"app={app_log_path}, "
+        f"scpi={'ON' if scpi_enabled else 'OFF'}, "
+        f"db={'ON' if db_log_enabled else 'OFF'}, "
         f"calibration={cal_log_path}, "
         f"measurement={meas_log_path}, "
         f"channel_engine={ce_log_path}, "
+        f"audit={audit_log_path}, "
+        f"alert={alert_log_path}, "
+        f"frontend={frontend_log_path}, "
         f"retention={log_retention_days}d"
     )
 

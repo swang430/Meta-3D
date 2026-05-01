@@ -330,3 +330,96 @@ def export_filtered_logs(
         media_type="application/x-ndjson",
         headers={"Content-Disposition": f'attachment; filename="{export_name}"'},
     )
+
+
+# ── 前端日志接收 ────────────────────────────────────────────────
+
+import logging
+
+# 前端日志通道使用的 logger
+_frontend_logger = logging.getLogger("app.frontend")
+
+# 已知的活跃日志文件名集合（用于 is_current 判定）
+_ACTIVE_LOG_NAMES = {
+    "app.log", "scpi.log", "db.log",
+    "calibration.log", "measurement.log", "channel_engine.log",
+    "audit.log", "alert.log", "frontend.log",
+}
+
+
+class FrontendLogEntry(BaseModel):
+    """浏览器端单条日志"""
+    ts: Optional[float] = None        # Unix ms 时间戳
+    level: str = "INFO"               # DEBUG / INFO / WARN / ERROR
+    action: str = ""                  # 操作标识 (e.g. "page_nav", "btn_click")
+    page: Optional[str] = None        # 当前页面路由
+    component: Optional[str] = None   # 组件名
+    message: Optional[str] = None     # 日志消息
+    # 可选扩展字段
+    url: Optional[str] = None         # API URL
+    status_code: Optional[int] = None # HTTP 状态码
+    elapsed_ms: Optional[float] = None  # 请求耗时
+    error: Optional[str] = None       # 错误信息
+    user_agent: Optional[str] = None  # 浏览器 UA
+
+
+class FrontendLogBatch(BaseModel):
+    """前端日志批量上报"""
+    entries: List[FrontendLogEntry]
+    session_id: Optional[str] = None  # 前端会话标识
+
+
+class FrontendLogResponse(BaseModel):
+    """上报响应"""
+    accepted: int
+    message: str = "ok"
+
+
+@router.post("/frontend", response_model=FrontendLogResponse)
+def ingest_frontend_logs(batch: FrontendLogBatch):
+    """
+    接收前端浏览器上报的行为日志。
+
+    前端通过 POST 批量提交用户操作、API 请求摘要、
+    WebSocket 状态变化和前端异常等事件。
+
+    所有日志写入 frontend.log，不传播到 console/app.log。
+    """
+    count = 0
+    for entry in batch.entries:
+        level_map = {
+            "DEBUG": logging.DEBUG,
+            "INFO": logging.INFO,
+            "WARN": logging.WARNING,
+            "WARNING": logging.WARNING,
+            "ERROR": logging.ERROR,
+        }
+        level = level_map.get(entry.level.upper(), logging.INFO)
+
+        msg = entry.message or entry.action or "frontend_event"
+
+        extra = {
+            "action": entry.action,
+            "page": entry.page or "-",
+            "component": entry.component or "-",
+        }
+        if batch.session_id:
+            extra["frontend_session"] = batch.session_id
+        if entry.url:
+            extra["url"] = entry.url
+        if entry.status_code is not None:
+            extra["status_code"] = entry.status_code
+        if entry.elapsed_ms is not None:
+            extra["elapsed_ms"] = entry.elapsed_ms
+        if entry.error:
+            extra["error"] = entry.error
+        if entry.user_agent:
+            extra["user_agent"] = entry.user_agent
+        if entry.ts:
+            extra["client_ts"] = entry.ts
+
+        _frontend_logger.log(level, msg, extra=extra)
+        count += 1
+
+    return FrontendLogResponse(accepted=count)
+

@@ -86,3 +86,140 @@
 - [ ] **高级场景配置:** 在前端提供更丰富的基站配置 UI（不仅仅是数量，还可以配置位置、功率等）。
 - [ ] **实时波形图:** 优化 WebSocket 数据流，支持更高频率的波形数据推送与前端 Canvas/WebGL 渲染。
 
+## 4. 日志编码规范 (Logging Standard)
+
+> **核心原则:** 所有执行必须留痕。日志是过程记录（谁/何时/做了什么/结果如何），数据库是结果存储（补偿矩阵/校准值/测试报告）。两者互补，不可替代。
+
+### 4.1 日志 vs 数据库的边界
+
+| 维度 | 日志 (Log) | 数据库 (DB) |
+|:---|:---|:---|
+| **用途** | 过程审计、排错、回溯 | 结果存储、计算输入、报告生成 |
+| **生命周期** | 按天轮转，保留 30~60 天 | 永久保留 |
+| **写入时机** | 每一步操作 (包括失败) | 操作成功后 |
+| **查询方式** | 文本搜索、时间范围过滤 | SQL 结构化查询 |
+| **示例(校准)** | "用户 Simon 于 20:30 发起 Path Loss 校准，执行了 120 个频点，耗时 45s" | `path_loss_matrix[freq][port] = -2.3 dB` |
+| **示例(测量)** | "角度 30° 时 DL=456.7Mbps BLER=0.0012 CQI=14 RI=2" | `test_reports.throughput_data = {...}` |
+
+### 4.2 十路日志通道定义
+
+所有日志统一由 `app/core/logging_config.py` 管理，使用 `TimedRotatingFileHandler` 按天轮转。
+
+| # | 文件 | 命名空间 | 级别 | propagate | 内容 |
+|:--|:-----|:---------|:-----|:----------|:-----|
+| 1 | Console | root | INFO+ | — | 彩色人类可读摘要 |
+| 2 | `app.log` | root | DEBUG+ | — | 全量 JSON 结构化日志 |
+| 3 | `scpi.log` | `app.hal.scpi.*` | DEBUG | ✅ | 每条 SCPI TX/RX 原文 |
+| 4 | `db.log` | `sqlalchemy.*` | INFO+ | ❌ | SQL 语句+连接池 |
+| 5 | `calibration.log` | `app.calibration.*` | DEBUG | ✅ | 校准事件+中间数据 |
+| 6 | `measurement.log` | `app.measurement.*` | DEBUG | ✅ | KPI 数据点快照 |
+| 7 | `channel_engine.log` | `app.channel_engine` | DEBUG | ✅ | CE 仿真请求/响应 |
+| 8 | `audit.log` | `app.audit` | INFO+ | ✅ | 用户操作审计 (保留 60 天) |
+| 9 | `alert.log` | `app.alert` | WARNING+ | ✅ | 告警/异常事件 |
+| 10 | `frontend.log` | `app.frontend` | DEBUG | ❌ | 浏览器行为日志 (POST 上报) |
+
+### 4.3 Logger 命名规则
+
+```python
+# ✅ 正确: 使用专用命名空间
+logger = logging.getLogger("app.calibration.path_loss")
+logger = logging.getLogger("app.measurement.throughput")
+logger = logging.getLogger("app.channel_engine")
+logger = logging.getLogger("app.audit")
+logger = logging.getLogger("app.alert")
+
+# ✅ 正确: 非专用通道的一般业务代码
+logger = logging.getLogger(__name__)  # → app.log + Console
+
+# ❌ 错误: 校准服务使用 __name__
+# 会导致日志不进入 calibration.log
+logger = logging.getLogger(__name__)  # 在 calibration 服务中不要这样写
+```
+
+### 4.4 对应关系 (服务 → 命名空间)
+
+| 服务文件 | Logger 命名空间 |
+|:---|:---|
+| `path_loss_calibration_service.py` | `app.calibration.path_loss` |
+| `phase_calibration_service.py` | `app.calibration.phase` |
+| `rf_switch_calibration_service.py` | `app.calibration.rf_switch` |
+| `e2e_calibration_service.py` | `app.calibration.e2e` |
+| `calibration_orchestrator.py` | `app.calibration.orchestrator` |
+| `ce_internal_calibration_service.py` | `app.calibration.ce_internal` |
+| `channel_calibration_service.py` | `app.calibration.channel` |
+| `probe_calibration_service.py` | `app.calibration.probe` |
+| `channel_engine_client.py` | `app.channel_engine` |
+| UXM 驱动内 KPI 记录 | `app.measurement.throughput` |
+
+### 4.5 结构化 extra 字段规范
+
+所有日志通过 `extra={}` 传递结构化数据，由 `JsonFormatter` 自动序列化：
+
+```python
+# 校准日志必须包含
+logger.info("校准完成", extra={
+    "cal_type": "path_loss",          # 必须
+    "freq_mhz": 3500,                 # 必须
+    "port": "RF1",                    # 必须
+    "before_db": -2.5,                # 推荐
+    "after_db": -0.1,                 # 推荐
+    "pass": True,                     # 必须
+})
+
+# 测量日志必须包含
+meas_logger.info("[KPI]", extra={
+    "dl_throughput_mbps": 456.7,      # 必须
+    "dl_bler": 0.0012,                # 必须
+    "cqi": 14,                        # 必须
+    "rank_indicator": 2,              # 必须
+    "band": "N78",                    # 推荐
+    "bandwidth_mhz": 100,             # 推荐
+})
+
+# 审计日志必须包含
+audit_logger.info("配置变更", extra={
+    "user_id": "simon",               # 必须
+    "action": "update_profile",       # 必须
+    "target": "caict_n78_2x2",        # 必须
+    "before": {...},                  # 推荐
+    "after": {...},                   # 推荐
+})
+
+# 告警日志
+alert_logger.warning("仪器离线", extra={
+    "instrument_id": "uxm_e7515b",    # 必须
+    "alert_type": "instrument_offline", # 必须
+    "severity": "warning",            # 必须
+})
+```
+
+### 4.6 前端日志 SDK 规范
+
+前端通过 `POST /api/v1/system-logs/frontend` 批量上报：
+
+```typescript
+// gui/src/utils/logger.ts
+const logger = new FrontendLogger();
+
+// 页面导航
+logger.info("page_nav", { page: "/calibration" });
+
+// API 请求
+logger.info("api_request", {
+    url: "/api/v1/instruments",
+    status_code: 200,
+    elapsed_ms: 45,
+});
+
+// 用户操作
+logger.info("btn_click", {
+    component: "CalibrationWizard",
+    message: "用户点击了开始校准",
+});
+
+// 错误
+logger.error("unhandled_error", {
+    error: "TypeError: Cannot read property 'id'",
+    component: "ProbeLayoutView",
+});
+```
