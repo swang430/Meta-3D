@@ -35,7 +35,7 @@ from app.models.channel_calibration import (
     ChannelCalibrationStatus,
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("app.calibration.channel")
 
 
 # ==================== 3GPP 参考参数 (TR 38.901) ====================

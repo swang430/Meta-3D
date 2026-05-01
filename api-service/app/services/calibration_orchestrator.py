@@ -40,7 +40,7 @@ from app.services.path_loss_calibration_service import (
     MultiFrequencyPathLossService,
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("app.calibration.orchestrator")
 
 
 class CalibrationItem(str, Enum):

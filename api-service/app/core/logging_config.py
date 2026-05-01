@@ -249,6 +249,75 @@ def setup_logging(
             "propagate": False,
         }
 
+    # ================================================================
+    # Handler 5: 校准事件日志 (ISO/IEC 17025 合规)
+    # ================================================================
+    # 校准数据必须独立留存，供审计和 CTIA 认证检查
+    cal_log_path = os.path.join(log_dir, "calibration.log")
+    config["handlers"]["file_calibration"] = {
+        "class": "logging.handlers.TimedRotatingFileHandler",
+        "level": "DEBUG",
+        "formatter": "json",
+        "filters": ["context_filter"],
+        "filename": cal_log_path,
+        "when": "midnight",
+        "interval": 1,
+        "backupCount": log_retention_days,
+        "encoding": "utf-8",
+    }
+    # app.calibration.* → calibration.log (同时传播到 app.log)
+    config["loggers"]["app.calibration"] = {
+        "level": "DEBUG",
+        "handlers": ["file_calibration"],
+        "propagate": True,
+    }
+
+    # ================================================================
+    # Handler 6: 测量数据日志 (3GPP TR 37.977 数据点归档)
+    # ================================================================
+    # 每次吞吐量/BLER/CQI/RI 测量的 KPI 快照独立落盘
+    meas_log_path = os.path.join(log_dir, "measurement.log")
+    config["handlers"]["file_measurement"] = {
+        "class": "logging.handlers.TimedRotatingFileHandler",
+        "level": "DEBUG",
+        "formatter": "json",
+        "filters": ["context_filter"],
+        "filename": meas_log_path,
+        "when": "midnight",
+        "interval": 1,
+        "backupCount": log_retention_days,
+        "encoding": "utf-8",
+    }
+    # app.measurement.* → measurement.log (同时传播到 app.log)
+    config["loggers"]["app.measurement"] = {
+        "level": "DEBUG",
+        "handlers": ["file_measurement"],
+        "propagate": True,
+    }
+
+    # ================================================================
+    # Handler 7: Channel Engine 仿真日志
+    # ================================================================
+    # Channel Engine 微服务 (端口 8001) 的请求/响应桥接日志
+    ce_log_path = os.path.join(log_dir, "channel_engine.log")
+    config["handlers"]["file_channel_engine"] = {
+        "class": "logging.handlers.TimedRotatingFileHandler",
+        "level": "DEBUG",
+        "formatter": "json",
+        "filters": ["context_filter"],
+        "filename": ce_log_path,
+        "when": "midnight",
+        "interval": 1,
+        "backupCount": log_retention_days,
+        "encoding": "utf-8",
+    }
+    # app.channel_engine.* → channel_engine.log (同时传播到 app.log)
+    config["loggers"]["app.channel_engine"] = {
+        "level": "DEBUG",
+        "handlers": ["file_channel_engine"],
+        "propagate": True,
+    }
+
     logging.config.dictConfig(config)
 
     # 启动确认
@@ -258,5 +327,9 @@ def setup_logging(
         f"file={app_log_path}, "
         f"scpi={'enabled → ' + scpi_log_path if scpi_enabled else 'disabled'}, "
         f"db={'enabled → ' + db_log_path if db_log_enabled else 'disabled'}, "
+        f"calibration={cal_log_path}, "
+        f"measurement={meas_log_path}, "
+        f"channel_engine={ce_log_path}, "
         f"retention={log_retention_days}d"
     )
+

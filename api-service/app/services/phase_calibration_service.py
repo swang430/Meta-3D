@@ -29,7 +29,7 @@ from sqlalchemy import desc
 
 from app.models.probe_calibration import ChannelPhaseCalibration
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("app.calibration.phase")
 
 
 # ==================== 常量定义 ====================

@@ -1310,6 +1310,28 @@ class RealUxmDriver(BaseStationDriver):
         except Exception as e:
             logger.warning(f"[UXM] get_throughput_metrics partial fail: {e}")
 
+        # ── 测量数据归档 → measurement.log ──
+        # 每次 KPI 快照独立记录，供报告生成和数据分析使用
+        meas_logger = logging.getLogger("app.measurement.throughput")
+        meas_logger.info(
+            f"[KPI] DL={metrics.dl_throughput_mbps:.1f}Mbps "
+            f"BLER={metrics.dl_bler:.4f} CQI={metrics.cqi} RI={metrics.rank_indicator}",
+            extra={
+                "instrument_id": self.instrument_id,
+                "dl_throughput_mbps": metrics.dl_throughput_mbps,
+                "dl_bler": metrics.dl_bler,
+                "ul_throughput_mbps": getattr(metrics, "ul_throughput_mbps", 0.0),
+                "ul_bler": getattr(metrics, "ul_bler", 0.0),
+                "cqi": metrics.cqi,
+                "rank_indicator": metrics.rank_indicator,
+                "mcs_dl": getattr(metrics, "mcs_dl", None),
+                "mcs_ul": getattr(metrics, "mcs_ul", None),
+                "band": self._band,
+                "bandwidth_mhz": self._bandwidth_mhz,
+                "dl_power_dbm": self._dl_power_dbm,
+            },
+        )
+
         return metrics
 
     async def get_ue_info(self) -> Dict[str, Any]:

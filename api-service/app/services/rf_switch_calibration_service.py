@@ -20,7 +20,7 @@ import logging
 
 from app.models.probe_calibration import RFSwitchCalibration
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("app.calibration.rf_switch")
 
 
 # ==================== 校准常数 ====================

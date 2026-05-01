@@ -31,7 +31,7 @@ from app.schemas.probe_calibration import (
     ChainTypeEnum,
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("app.calibration.path_loss")
 
 
 # ==================== 校准常数 ====================

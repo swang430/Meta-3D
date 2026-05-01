@@ -47,7 +47,7 @@ from app.services.channel_generation.pas_rotation import (
     PASRotationResult,
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("app.channel_engine")
 
 # Channel Engine 服务地址
 CE_BASE_URL = os.environ.get("CHANNEL_ENGINE_URL", "http://localhost:8001")

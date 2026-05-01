@@ -30,7 +30,7 @@ from sqlalchemy import desc
 
 from app.models.probe_calibration import CEInternalCalibration as CEInternalCalibrationModel
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("app.calibration.ce_internal")
 
 
 # ==================== 常量定义 ====================

@@ -23,7 +23,7 @@ import logging
 
 from app.models.probe_calibration import E2ECompensationMatrix
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("app.calibration.e2e")
 
 
 # ==================== 校准常数 ====================

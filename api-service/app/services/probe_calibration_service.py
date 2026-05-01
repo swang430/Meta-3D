@@ -34,7 +34,7 @@ from app.schemas.probe_calibration import (
     CalibrationJobStatus,
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("app.calibration.probe")
 
 
 # ==================== 校准常数 ====================
