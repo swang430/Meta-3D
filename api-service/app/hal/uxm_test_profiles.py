@@ -60,66 +60,123 @@ class UxmTestProfile:
     可序列化为 JSON，也可直接转换为 set_cell_config() 所需的 dict。
     """
     # --- 标识 ---
-    profile_id: str = ""              # 唯一标识 (e.g., "caict_n78_2x2")
-    name: str = ""                    # 友好名称 (e.g., "CAICT 暗室 N78 2x2 MIMO")
+    profile_id: str = ""              # 唯一标识
+    name: str = ""                    # 友好名称
     description: str = ""             # 描述
-    category: str = "general"         # 分类: "siso" / "mimo" / "calibration"
+    category: str = "general"         # "siso" / "mimo" / "calibration"
 
     # --- NR 小区参数 ---
-    band: str = "N78"                 # NR 频段
-    frequency_mhz: float = 3500.0     # 中心频率 (MHz)
-    bandwidth_mhz: float = 100.0      # 信道带宽 (MHz)
-    scs_khz: int = 30                 # 子载波间隔 (kHz)
-    duplex: str = "TDD"               # 双工模式
-    arfcn: Optional[int] = None       # DL ARFCN (None=自动查表)
+    band: str = "N78"
+    frequency_mhz: float = 3500.0
+    bandwidth_mhz: float = 100.0
+    scs_khz: int = 30
+    duplex: str = "TDD"
+    arfcn: Optional[int] = None
 
     # --- MIMO 配置 ---
-    mimo_layers: int = 2              # MIMO 层数 (1/2/4)
-    mimo_port_preset: str = "2x2"     # 端口映射预置名 ("siso"/"2x2"/"4x4"/"2x2_alt")
+    mimo_layers: int = 2
+    mimo_port_preset: str = "2x2"
 
     # --- 功率设置 ---
-    dl_power_dbm: float = -50.0       # 总下行功率 (dBm)
-    ssb_power_dbm: float = -50.0      # SSB 功率 (dBm)
+    dl_power_dbm: float = -50.0
+    ssb_power_dbm: float = -50.0
 
-    # --- FRC 参数 ---
-    modulation: str = "256QAM"        # 调制方式
-    target_mcs: int = 24              # 目标 MCS
+    # --- FRC / 调制参数 ---
+    modulation: str = "256QAM"
+    target_mcs: int = 28              # 3GPP OTA 最高 MCS=28 (256QAM CR≈0.93)
+
+    # ---------------------------------------------------------------
+    # 3GPP MIMO OTA MAC 吞吐量测试专用参数
+    # 参考: 3GPP TR 37.977 / CTIA OTA Test Plan
+    # ---------------------------------------------------------------
+
+    # PDSCH 调度算法: "FULLBUFFER" = 持续占满所有时隙（强制要求）
+    sched_algo: str = "FULLBUFFER"
+
+    # AMC 开关: False = 固定 MCS，结果可重复（3GPP 要求关闭）
+    enable_amc: bool = False
+
+    # TDD 时隙格式: DDDSU 在 5ms 周期内最大化下行占比
+    tdd_pattern: str = "DDDSU"
+    tdd_period: str = "5MS"
+
+    # HARQ 参数: 3GPP 建议最大重传 4 次，16 个并行进程
+    harq_max_trans: int = 4
+    harq_processes: int = 16
+
+    # CSI-RS 端口数: 须与 MIMO 层数对齐 (2L→4ports, 4L→8ports)
+    # None = 由驱动自动推断
+    csi_rs_ports: Optional[int] = None
+
+    # 统计窗口: 3GPP 建议 ≥ 5000 子帧 (= 5 秒)
+    stat_count: int = 5000
 
     # --- 小区标识 ---
-    cell_id: str = "CELL0"            # UXM 小区 ID
+    cell_id: str = "CELL0"
 
     # --- 仪器端配置文件 (可选, 优先级最高) ---
-    state_file: Optional[str] = None  # UXM 本机 .state 文件路径
+    state_file: Optional[str] = None
 
     # --- 备注 ---
     notes: str = ""
 
     def to_config_dict(self) -> Dict[str, Any]:
         """
-        转换为 set_cell_config() 接受的参数字典。
+        转换为 set_cell_config() 接受的完整参数字典。
 
         如果指定了 state_file，只返回 state_file (一键恢复)。
-        否则返回所有逐参数配置项。
         """
         if self.state_file:
             return {"state_file": self.state_file}
 
         config: Dict[str, Any] = {
-            "band": self.band,
-            "frequency_mhz": self.frequency_mhz,
-            "bandwidth_mhz": self.bandwidth_mhz,
-            "scs_khz": self.scs_khz,
-            "duplex": self.duplex,
-            "mimo_layers": self.mimo_layers,
+            # 基础小区参数
+            "band":            self.band,
+            "frequency_mhz":   self.frequency_mhz,
+            "bandwidth_mhz":   self.bandwidth_mhz,
+            "scs_khz":         self.scs_khz,
+            "duplex":          self.duplex,
+            "cell_id":         self.cell_id,
+            # MIMO
+            "mimo_layers":     self.mimo_layers,
             "mimo_port_preset": self.mimo_port_preset,
-            "dl_power_dbm": self.dl_power_dbm,
-            "ssb_power_dbm": self.ssb_power_dbm,
-            "cell_id": self.cell_id,
+            # 功率
+            "dl_power_dbm":    self.dl_power_dbm,
+            "ssb_power_dbm":   self.ssb_power_dbm,
+            # MCS
+            "pdsch_mcs":       self.target_mcs,
+            # 3GPP MAC 吞吐量测试参数
+            "sched_algo":      self.sched_algo,
+            "enable_amc":      self.enable_amc,
+            "tdd_pattern":     self.tdd_pattern,
+            "tdd_period":      self.tdd_period,
+            "harq_max_trans":  self.harq_max_trans,
+            "harq_processes":  self.harq_processes,
+            "stat_count":      self.stat_count,
         }
         if self.arfcn is not None:
             config["arfcn"] = self.arfcn
+        if self.csi_rs_ports is not None:
+            config["csi_rs_ports"] = self.csi_rs_ports
 
         return config
+
+    def to_mac_throughput_kwargs(self) -> Dict[str, Any]:
+        """
+        转换为 configure_mac_throughput_test() 所需的参数字典。
+
+        在 set_cell_config() 之后调用，单独配置 MAC 测试专用参数。
+        """
+        return {
+            "mimo_layers":    self.mimo_layers,
+            "mcs":            self.target_mcs,
+            "enable_amc":     self.enable_amc,
+            "tdd_pattern":    self.tdd_pattern,
+            "tdd_period":     self.tdd_period,
+            "harq_max_trans": self.harq_max_trans,
+            "harq_processes": self.harq_processes,
+            "stat_count":     self.stat_count,
+        }
 
     def to_json(self) -> str:
         """序列化为 JSON 字符串"""
@@ -212,11 +269,19 @@ PROFILE_2X2_N78 = UxmTestProfile(
     dl_power_dbm=-50.0,
     ssb_power_dbm=-50.0,
     modulation="256QAM",
-    target_mcs=24,
+    target_mcs=28,          # 3GPP 要求最高 MCS
+    sched_algo="FULLBUFFER",
+    enable_amc=False,        # 固定 MCS，结果可重复
+    tdd_pattern="DDDSU",
+    tdd_period="5MS",
+    harq_max_trans=4,
+    harq_processes=16,
+    csi_rs_ports=4,          # 2x2 MIMO → 4 CSI-RS ports
+    stat_count=5000,         # ≥5s 统计窗口
     notes=(
         "RF1 OUT→F64 CH1→探头天线 1~16 (V极化)\n"
         "RF2 OUT→F64 CH2→探头天线 1~16 (H极化)\n"
-        "RF1 IN←DUT Ant1; RF2 IN←DUT Ant2"
+        "RF6 IN←暗室独立通信天线 (UL)"
     ),
 )
 
@@ -235,7 +300,15 @@ PROFILE_2X2_N41 = UxmTestProfile(
     dl_power_dbm=-50.0,
     ssb_power_dbm=-50.0,
     modulation="256QAM",
-    target_mcs=24,
+    target_mcs=28,
+    sched_algo="FULLBUFFER",
+    enable_amc=False,
+    tdd_pattern="DDDSU",
+    tdd_period="5MS",
+    harq_max_trans=4,
+    harq_processes=16,
+    csi_rs_ports=4,
+    stat_count=5000,
     notes="适用于 N41 频段车载天线测试",
 )
 
@@ -243,7 +316,7 @@ PROFILE_2X2_N41 = UxmTestProfile(
 PROFILE_4X4_N78 = UxmTestProfile(
     profile_id="caict_n78_4x4",
     name="CAICT 暗室 4x4 MIMO (N78 100MHz)",
-    description="4x4 MIMO OTA 高阶测试，需要 UXM 4 端口全部连接",
+    description="4x4 MIMO OTA 高阶测试，需要 UXM 8 端口 (满配)",
     category="mimo",
     band="N78",
     frequency_mhz=3500.0,
@@ -255,11 +328,19 @@ PROFILE_4X4_N78 = UxmTestProfile(
     dl_power_dbm=-50.0,
     ssb_power_dbm=-50.0,
     modulation="256QAM",
-    target_mcs=24,
+    target_mcs=28,
+    sched_algo="FULLBUFFER",
+    enable_amc=False,
+    tdd_pattern="DDDSU",
+    tdd_period="5MS",
+    harq_max_trans=4,
+    harq_processes=16,
+    csi_rs_ports=8,          # 4x4 MIMO → 8 CSI-RS ports
+    stat_count=5000,
     notes=(
-        "需要 F64 至少 4 个独立通道\n"
+        "需要满配 UXM (8 端口)\n"
         "RF1~RF4 OUT→F64 CH1~CH4→探头\n"
-        "RF1~RF4 IN←DUT Ant1~Ant4"
+        "RF6 IN←暗室独立通信天线 (UL)"
     ),
 )
 

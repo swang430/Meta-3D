@@ -139,7 +139,32 @@ class UxmScpiCommands:
 
     # --- TDD 配置 ---
     TDD_PATTERN = "CONFig:NR5G:{cell}:TDD:PATTern"
-    TDD_PERIOD = "CONFig:NR5G:{cell}:TDD:PERiod"
+    TDD_PERIOD  = "CONFig:NR5G:{cell}:TDD:PERiod"
+
+    # --- PDSCH 调度算法 (Full Buffer 模式) ---
+    # Full Buffer = UXM 持续调度 PDSCH，不留空 TTI
+    # 这是 3GPP TR 37.977 MAC 吞吐量测试的强制要求
+    PDSCH_SCHED_ALGO = "CONFig:NR5G:{cell}:{bwp}:PDSCH:SchedAlgoritm"
+
+    # --- AMC (自适应调制编码) 开关 ---
+    # AMC OFF = 固定 MCS，不随 CQI 变化
+    # 3GPP 规范要求关闭 AMC，确保吞吐量测试结果可重复
+    PDSCH_AMC_ENABLE  = "CONFig:NR5G:{cell}:{bwp}:PDSCH:AMC:ENABle"
+    PUSCH_AMC_ENABLE  = "CONFig:NR5G:{cell}:{bwp}:PUSCH:AMC:ENABle"
+
+    # --- HARQ 配置 ---
+    HARQ_MAX_TRANS   = "CONFig:NR5G:{cell}:HARQ:MaxTrans"
+    HARQ_PROCESSES   = "CONFig:NR5G:{cell}:HARQ:PROCesses"
+
+    # --- CSI-RS 端口数 (须与 MIMO 层数匹配) ---
+    # 2x2 MIMO → 4 CSI-RS 端口; 4x4 MIMO → 8 CSI-RS 端口
+    CSIRS_PORTS = "CONFig:NR5G:{cell}:CSIRS:PORTs"
+
+    # --- 吞吐量统计窗口 ---
+    # 3GPP TR 37.977 建议统计窗口 ≥ 5000 个子帧 (≥ 5 秒)
+    MEAS_TPUT_STAT_COUNT  = "MEASure:NR5G:{cell}:BTHRoughput:DL:TSTatistics:COUNt"
+    MEAS_TPUT_UL_JSON     = "MEASure:NR5G:{cell}:BTHRoughput:UL:TSTatistics:JSON?"
+    MEAS_TPUT_UL_BLER     = "MEASure:NR5G:{cell}:BTHRoughput:UL:BLER:STATistical:ALL?"
 
     # --- 状态查询 ---
     STATUS_FAULTY = "STATus:FAULty:RECovery"
@@ -470,6 +495,73 @@ class RealUxmDriver(BaseStationDriver):
                     + f" {config['rf_port_ul']}"
                 )
 
+            # ---- 12. TDD 时隙格式 ----
+            if "tdd_pattern" in config:
+                self._write(
+                    UxmScpiCommands.TDD_PATTERN.format(cell=cell)
+                    + f" {config['tdd_pattern'].upper()}"
+                )
+            if "tdd_period" in config:
+                self._write(
+                    UxmScpiCommands.TDD_PERIOD.format(cell=cell)
+                    + f" {config['tdd_period']}"
+                )
+
+            # ---- 13. PDSCH 调度算法 (Full Buffer) ----
+            if "sched_algo" in config:
+                bwp = config.get("bwp_id", self._bwp_id)
+                self._write(
+                    UxmScpiCommands.PDSCH_SCHED_ALGO.format(cell=cell, bwp=bwp)
+                    + f" {config['sched_algo'].upper()}"
+                )
+
+            # ---- 14. AMC 开关 (关闭以固定 MCS) ----
+            if "enable_amc" in config:
+                bwp = config.get("bwp_id", self._bwp_id)
+                amc_val = "ON" if config["enable_amc"] else "OFF"
+                self._write(
+                    UxmScpiCommands.PDSCH_AMC_ENABLE.format(cell=cell, bwp=bwp)
+                    + f" {amc_val}"
+                )
+                self._write(
+                    UxmScpiCommands.PUSCH_AMC_ENABLE.format(cell=cell, bwp=bwp)
+                    + f" {amc_val}"
+                )
+                logger.info(f"[UXM] AMC: {amc_val}")
+
+            # ---- 15. HARQ 配置 ----
+            if "harq_max_trans" in config:
+                self._write(
+                    UxmScpiCommands.HARQ_MAX_TRANS.format(cell=cell)
+                    + f" {config['harq_max_trans']}"
+                )
+            if "harq_processes" in config:
+                self._write(
+                    UxmScpiCommands.HARQ_PROCESSES.format(cell=cell)
+                    + f" {config['harq_processes']}"
+                )
+
+            # ---- 16. CSI-RS 端口数 (与 MIMO 层数对齐) ----
+            if "csi_rs_ports" in config:
+                self._write(
+                    UxmScpiCommands.CSIRS_PORTS.format(cell=cell)
+                    + f" {config['csi_rs_ports']}"
+                )
+            elif "mimo_layers" in config:
+                # 自动推断: 1L→2ports, 2L→4ports, 4L→8ports
+                auto_ports = max(2, config["mimo_layers"] * 2)
+                self._write(
+                    UxmScpiCommands.CSIRS_PORTS.format(cell=cell)
+                    + f" {auto_ports}"
+                )
+
+            # ---- 17. 统计窗口 (子帧数) ----
+            if "stat_count" in config:
+                self._write(
+                    UxmScpiCommands.MEAS_TPUT_STAT_COUNT.format(cell=cell)
+                    + f" {config['stat_count']}"
+                )
+
             # 同步等待
             self._query("*OPC?")
             self._set_status(InstrumentStatus.READY)
@@ -660,6 +752,8 @@ class RealUxmDriver(BaseStationDriver):
         配置 FRC (固定参考信道)。
 
         UXM 通过 PDSCH MCS 和 RB 分配间接配置 FRC。
+        注意：此方法仅设置 MCS，不关闭 AMC。
+        如需 3GPP 合规的固定 MCS 配置，请使用 configure_mac_throughput_test()。
         """
         cell = self._cell_id
         bwp = self._bwp_id
@@ -681,6 +775,144 @@ class RealUxmDriver(BaseStationDriver):
 
         except Exception as e:
             logger.error(f"[UXM] set_frc_config failed: {e}")
+            return False
+
+    async def configure_mac_throughput_test(
+        self,
+        mimo_layers: int = 2,
+        mcs: int = 28,
+        rb_alloc: str = "ALL",
+        enable_amc: bool = False,
+        tdd_pattern: str = "DDDSU",
+        tdd_period: str = "5MS",
+        harq_max_trans: int = 4,
+        harq_processes: int = 16,
+        stat_count: int = 5000,
+        cell: Optional[str] = None,
+    ) -> bool:
+        """
+        配置 3GPP MIMO OTA MAC 层吞吐量测试所需的完整参数集。
+
+        按照 3GPP TR 37.977 / CTIA OTA Test Plan 的要求，此方法:
+          1. 开启 Full Buffer 调度 (PDSCH 持续占满所有时隙)
+          2. 关闭 AMC (固定 MCS，结果可重复)
+          3. 设置 PDSCH 全 RB 分配
+          4. 配置 TDD 时隙格式 (DDDSU，最大化 DL 占比)
+          5. 配置 HARQ 重传参数
+          6. 设置 CSI-RS 端口数与 MIMO 层数匹配
+          7. 设置统计窗口 ≥ 5000 子帧 (≥ 5s)
+
+        为什么要关闭 AMC:
+          AMC 开启时，UXM 会根据 DUT 上报的 CQI 动态降低 MCS。
+          当信道衰落较重时，CQI 降低，MCS 也跟着降低，
+          观测到的吞吐量下降并不代表 DUT 的 MIMO 处理能力不足，
+          而只是 UXM 的保守调度策略。
+          固定 MCS 后，任何吞吐量损失都来自 HARQ 重传，
+          能真实反映 MIMO 空间复用的增益。
+
+        Args:
+            mimo_layers:    MIMO 层数 (1/2/4)
+            mcs:            PDSCH MCS 索引 (28 = 256QAM CR≈0.93, 3GPP 最高)
+            rb_alloc:       RB 分配方式 ("ALL" = 全带宽)
+            enable_amc:     是否开启 AMC (3GPP 规范要求 False)
+            tdd_pattern:    TDD 时隙格式 ("DDDSU" = DL heavy)
+            tdd_period:     TDD 周期 ("5MS" / "2.5MS")
+            harq_max_trans: HARQ 最大重传次数 (3GPP 建议 4)
+            harq_processes: HARQ 并行进程数 (建议 16)
+            stat_count:     统计子帧数 (3GPP 建议 ≥ 5000)
+            cell:           小区 ID (默认 CELL0)
+
+        Returns:
+            True if all parameters configured successfully
+        """
+        cell = cell or self._cell_id
+        bwp = self._bwp_id
+        success = True
+
+        try:
+            logger.info(
+                f"[UXM] Configuring MAC throughput test: "
+                f"MIMO={mimo_layers}L, MCS={mcs}, AMC={'ON' if enable_amc else 'OFF'}, "
+                f"TDD={tdd_pattern}, stat_count={stat_count}"
+            )
+
+            # 1. Full Buffer 调度
+            self._write(
+                UxmScpiCommands.PDSCH_SCHED_ALGO.format(cell=cell, bwp=bwp)
+                + " FULLBUFFER"
+            )
+
+            # 2. AMC 开关
+            amc_val = "ON" if enable_amc else "OFF"
+            self._write(
+                UxmScpiCommands.PDSCH_AMC_ENABLE.format(cell=cell, bwp=bwp)
+                + f" {amc_val}"
+            )
+            self._write(
+                UxmScpiCommands.PUSCH_AMC_ENABLE.format(cell=cell, bwp=bwp)
+                + f" {amc_val}"
+            )
+
+            # 3. 固定 MCS (当 AMC=OFF 时生效)
+            self._write(
+                UxmScpiCommands.PDSCH_MCS.format(cell=cell, bwp=bwp)
+                + f" {mcs}"
+            )
+
+            # 4. 全 RB 分配
+            self._write(
+                UxmScpiCommands.PDSCH_RB_ALLOC.format(cell=cell, bwp=bwp)
+                + f" {rb_alloc}"
+            )
+
+            # 5. TDD 时隙格式
+            self._write(
+                UxmScpiCommands.TDD_PATTERN.format(cell=cell)
+                + f" {tdd_pattern}"
+            )
+            self._write(
+                UxmScpiCommands.TDD_PERIOD.format(cell=cell)
+                + f" {tdd_period}"
+            )
+
+            # 6. HARQ
+            self._write(
+                UxmScpiCommands.HARQ_MAX_TRANS.format(cell=cell)
+                + f" {harq_max_trans}"
+            )
+            self._write(
+                UxmScpiCommands.HARQ_PROCESSES.format(cell=cell)
+                + f" {harq_processes}"
+            )
+
+            # 7. CSI-RS 端口数 (1L→2ports, 2L→4ports, 4L→8ports)
+            csi_rs_ports = max(2, mimo_layers * 2)
+            self._write(
+                UxmScpiCommands.CSIRS_PORTS.format(cell=cell)
+                + f" {csi_rs_ports}"
+            )
+
+            # 8. 统计窗口
+            self._write(
+                UxmScpiCommands.MEAS_TPUT_STAT_COUNT.format(cell=cell)
+                + f" {stat_count}"
+            )
+
+            # 同步等待所有配置生效
+            self._query("*OPC?")
+
+            logger.info(
+                f"[UXM] MAC throughput test configured: "
+                f"Full Buffer ON, AMC {amc_val}, MCS={mcs}, RB={rb_alloc}, "
+                f"TDD={tdd_pattern}/{tdd_period}, "
+                f"HARQ={harq_max_trans}x/{harq_processes}proc, "
+                f"CSI-RS={csi_rs_ports}ports, stat={stat_count}subframes"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"[UXM] configure_mac_throughput_test failed: {e}")
+            self._set_status(InstrumentStatus.ERROR, str(e))
             return False
 
     async def set_downlink_power(self, power_dbm: float) -> bool:
@@ -960,34 +1192,47 @@ class RealUxmDriver(BaseStationDriver):
 
     async def get_throughput_metrics(self) -> ThroughputMetrics:
         """
-        轮询读取 MAC 吞吐量指标。
+        轮询读取 MAC 层 DL+UL 吞吐量指标。
 
-        SCPI:
-          MEASure:NR5G:CELL0:BTHRoughput:DL:TSTatistics:JSON?
-          MEASure:NR5G:CELL0:BTHRoughput:DL:BLER:STATistical:ALL?
-          MEASure:NR5G:CELL0:CSI:CQI:STATistics?
-          MEASure:NR5G:CELL0:CSI:RI:HISTogram?
+        包含:
+          - DL 吞吐量 / BLER      (PDSCH MAC 层统计)
+          - UL 吞吐量 / BLER      (PUSCH MAC 层统计)
+          - CQI / RI             (CSI 反馈统计)
+
+        调用时机:
+          UE 连接后，在 configure_mac_throughput_test() 设定的统计窗口
+          (stat_count 子帧) 完成后读取，确保统计稳定。
         """
+        import json as _json
         cell = self._cell_id
         metrics = ThroughputMetrics()
 
         try:
-            # DL 吞吐量 (JSON 格式)
+            # ── DL 吞吐量 (JSON 格式，包含 Mbps / 子帧数 / 传输块统计) ──
             tput_json = self._query(
                 UxmScpiCommands.MEAS_BTHROUGHPUT_DL_JSON.format(cell=cell)
             )
             if tput_json and tput_json.strip():
-                import json
                 try:
-                    tput_data = json.loads(tput_json)
-                    metrics.dl_throughput_mbps = tput_data.get(
-                        "DL_Throughput_Mbps", 0.0
+                    tput_data = _json.loads(tput_json)
+                    # UXM JSON 键名可能为 "DL_Throughput_Mbps" 或 "throughput"
+                    metrics.dl_throughput_mbps = (
+                        tput_data.get("DL_Throughput_Mbps")
+                        or tput_data.get("throughput", 0.0)
                     )
-                except json.JSONDecodeError:
-                    # 尝试简单数值解析
-                    pass
+                    # 顺带取 MCS (如果 JSON 有)
+                    if "DL_MCS" in tput_data:
+                        metrics.mcs_dl = int(tput_data["DL_MCS"])
+                except _json.JSONDecodeError:
+                    # fallback: 直接数值解析
+                    try:
+                        metrics.dl_throughput_mbps = float(
+                            tput_json.strip().split()[0]
+                        )
+                    except (ValueError, IndexError):
+                        pass
 
-            # DL BLER
+            # ── DL BLER (格式: "mean,min,max" 或单值) ──
             bler_str = self._query(
                 UxmScpiCommands.MEAS_BTHROUGHPUT_DL_BLER.format(cell=cell)
             )
@@ -997,7 +1242,38 @@ class RealUxmDriver(BaseStationDriver):
                 except (ValueError, IndexError):
                     pass
 
-            # CQI
+            # ── UL 吞吐量 ──
+            ul_json = self._query(
+                UxmScpiCommands.MEAS_TPUT_UL_JSON.format(cell=cell)
+            )
+            if ul_json and ul_json.strip():
+                try:
+                    ul_data = _json.loads(ul_json)
+                    metrics.ul_throughput_mbps = (
+                        ul_data.get("UL_Throughput_Mbps")
+                        or ul_data.get("throughput", 0.0)
+                    )
+                    if "UL_MCS" in ul_data:
+                        metrics.mcs_ul = int(ul_data["UL_MCS"])
+                except _json.JSONDecodeError:
+                    try:
+                        metrics.ul_throughput_mbps = float(
+                            ul_json.strip().split()[0]
+                        )
+                    except (ValueError, IndexError):
+                        pass
+
+            # ── UL BLER ──
+            ul_bler_str = self._query(
+                UxmScpiCommands.MEAS_TPUT_UL_BLER.format(cell=cell)
+            )
+            if ul_bler_str and ul_bler_str.strip():
+                try:
+                    metrics.ul_bler = float(ul_bler_str.split(",")[0])
+                except (ValueError, IndexError):
+                    pass
+
+            # ── CQI (均值, 格式: "mean,std,min,max,...") ──
             cqi_str = self._query(
                 UxmScpiCommands.MEAS_CSI_CQI.format(cell=cell)
             )
@@ -1007,13 +1283,27 @@ class RealUxmDriver(BaseStationDriver):
                 except (ValueError, IndexError):
                     pass
 
-            # RI
+            # ── RI (均值, 直方图第一个值) ──
             ri_str = self._query(
                 UxmScpiCommands.MEAS_CSI_RI.format(cell=cell)
             )
             if ri_str and ri_str.strip():
                 try:
-                    metrics.rank_indicator = int(float(ri_str.split(",")[0]))
+                    # RI 直方图: "count_ri1, count_ri2, count_ri3, count_ri4"
+                    # 计算加权均值
+                    ri_counts = [
+                        float(x) for x in ri_str.split(",") if x.strip()
+                    ]
+                    total = sum(ri_counts)
+                    if total > 0:
+                        metrics.rank_indicator = int(
+                            sum((i + 1) * c for i, c in enumerate(ri_counts))
+                            / total
+                        )
+                    else:
+                        metrics.rank_indicator = int(
+                            float(ri_str.split(",")[0])
+                        )
                 except (ValueError, IndexError):
                     pass
 

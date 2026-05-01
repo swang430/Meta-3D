@@ -365,6 +365,23 @@ class CommissioningService:
             # band 和 duplex 由 UXM 驱动从 frequency_mhz 自动推断
             # (3500 MHz → N78 TDD)，无需显式指定
         })
+
+        # 配置 3GPP MIMO OTA MAC 吞吐量测试参数
+        # 包含: Full Buffer 调度、关闭 AMC(固定 MCS)、TDD 时隙、HARQ、CSI-RS 端口、统计窗口
+        # 参考: 3GPP TR 37.977 / CTIA OTA Test Plan
+        logger.info(f"[{session_id}] Configuring 3GPP MAC throughput test parameters")
+        if hasattr(base_station, "configure_mac_throughput_test"):
+            await base_station.configure_mac_throughput_test(
+                mimo_layers=config.mimo_layers,
+                mcs=28,                              # 256QAM MCS28，3GPP 最高阶
+                enable_amc=False,                    # 关闭 AMC，固定 MCS，结果可重复
+                tdd_pattern="DDDSU",                 # DL-heavy TDD
+                tdd_period="5MS",
+                harq_max_trans=4,
+                harq_processes=16,
+                stat_count=5000,                     # ≥5s 统计窗口
+            )
+
         await base_station.start_signaling()
 
         if not self.db:

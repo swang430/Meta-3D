@@ -14,8 +14,16 @@
   "dl_power_dbm": -50.0,
   "ssb_power_dbm": -50.0,
   "modulation": "256QAM",
-  "target_mcs": 24,
+  "target_mcs": 28,
+  "sched_algo": "FULLBUFFER",
+  "enable_amc": false,
+  "tdd_pattern": "DDDSU",
+  "tdd_period": "5MS",
+  "harq_max_trans": 4,
+  "harq_processes": 16,
+  "csi_rs_ports": 4,
+  "stat_count": 5000,
   "cell_id": "CELL0",
   "state_file": null,
-  "notes": "RF1 OUT→F64 CH1→探头天线 1~16 (V极化)\nRF2 OUT→F64 CH2→探头天线 1~16 (H极化)\nRF1 IN←DUT Ant1; RF2 IN←DUT Ant2"
+  "notes": "RF1 OUT→F64 CH1→探头天线 1~16 (V极化)\nRF2 OUT→F64 CH2→探头天线 1~16 (H极化)\nRF6 IN←暗室独立通信天线 (UL)"
 }

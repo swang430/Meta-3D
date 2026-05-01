@@ -1,7 +1,7 @@
 {
   "profile_id": "caict_n78_4x4",
   "name": "CAICT 暗室 4x4 MIMO (N78 100MHz)",
-  "description": "4x4 MIMO OTA 高阶测试，需要 UXM 4 端口全部连接",
+  "description": "4x4 MIMO OTA 高阶测试，需要 UXM 8 端口 (满配)",
   "category": "mimo",
   "band": "N78",
   "frequency_mhz": 3500.0,
@@ -14,8 +14,16 @@
   "dl_power_dbm": -50.0,
   "ssb_power_dbm": -50.0,
   "modulation": "256QAM",
-  "target_mcs": 24,
+  "target_mcs": 28,
+  "sched_algo": "FULLBUFFER",
+  "enable_amc": false,
+  "tdd_pattern": "DDDSU",
+  "tdd_period": "5MS",
+  "harq_max_trans": 4,
+  "harq_processes": 16,
+  "csi_rs_ports": 8,
+  "stat_count": 5000,
   "cell_id": "CELL0",
   "state_file": null,
-  "notes": "需要 F64 至少 4 个独立通道\nRF1~RF4 OUT→F64 CH1~CH4→探头\nRF1~RF4 IN←DUT Ant1~Ant4"
+  "notes": "需要满配 UXM (8 端口)\nRF1~RF4 OUT→F64 CH1~CH4→探头\nRF6 IN←暗室独立通信天线 (UL)"
 }
