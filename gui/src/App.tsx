@@ -139,7 +139,7 @@ const hexToRgba = (hex: string, alpha: number) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
-type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'topologyEditor' | 'testManagement' | 'monitoring' | 'results' | 'virtualRoadTest' | 'systemCalibration' | 'commissioning' | 'chartsDemo'
+type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'topologyEditor' | 'testManagement' | 'results' | 'virtualRoadTest' | 'systemCalibration' | 'commissioning' | 'chartsDemo'
 
 type ProbeFormState = Pick<ProbeType, 'ring' | 'polarization' | 'position' | 'is_active'>
 
@@ -249,8 +249,8 @@ type DemoRunProgress = {
 const sections: Array<{ key: SectionKey; label: string; description: string }> = [
   {
     key: 'dashboard',
-    label: '主仪表板',
-    description: '查看集成系统状态、运行中任务与关键告警概览。',
+    label: '主控台',
+    description: '系统总览、实时监控、执行控制与日志——一站式操作中心。',
   },
   {
     key: 'equipment',
@@ -271,11 +271,6 @@ const sections: Array<{ key: SectionKey; label: string; description: string }> =
     key: 'testManagement',
     label: '测试管理',
     description: '统一的测试计划管理与步骤编排系统，包含计划管理、步骤编排、执行队列和执行历史。',
-  },
-  {
-    key: 'monitoring',
-    label: '实时监控',
-    description: '在执行期间监控吞吐量、SNR、静区指标与执行日志。',
   },
   {
     key: 'results',
@@ -648,7 +643,7 @@ function App() {
       setExecutingPlanInfo({ id: snapshot.id, name: metadata.runName || snapshot.name })
       setExecutingPlanDetail(snapshot)
       setExecutingRunMeta(metadata)
-      setActiveSection('monitoring')
+      setActiveSection('dashboard')
 
       // Set running status directly (handleDemoRunStart may return early if no demo plan)
       demoRunStatusRef.current = 'running'
@@ -1160,7 +1155,28 @@ type RenderPayload = {
 function renderSection(section: SectionKey, payload: RenderPayload) {
   switch (section) {
     case 'dashboard':
-      return <Dashboard selectedResultCount={payload.selectedResultCount} onNavigate={payload.setActiveSection} />
+      return (
+        <Stack gap="xl">
+          <Dashboard selectedResultCount={payload.selectedResultCount} onNavigate={payload.setActiveSection} />
+          <Monitoring
+            logs={payload.logs}
+            setLogs={payload.setLogs}
+            scenarioMetrics={payload.demoMetrics}
+            scenarioStatus={payload.demoProgress.status}
+            progress={payload.demoProgress}
+            executionMode={payload.executionMode}
+            executingPlan={payload.executingPlan}
+            planDetail={payload.executingPlanDetail}
+            demoPlan={payload.demoPlan}
+            onRestart={payload.onDemoStart}
+            onPause={payload.onDemoPause}
+            onResume={payload.onDemoResume}
+            onStop={payload.onDemoStop}
+            onPlanExecute={payload.onPlanExecute}
+            autoChainExecution={payload.autoChainExecution}
+          />
+        </Stack>
+      )
     case 'equipment':
       return <EquipmentManager />
     case 'probeManager':
@@ -1169,26 +1185,6 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
       return <TopologyEditor />
     case 'testManagement':
       return <TestManagement />
-    case 'monitoring':
-      return (
-        <Monitoring
-          logs={payload.logs}
-          setLogs={payload.setLogs}
-          scenarioMetrics={payload.demoMetrics}
-          scenarioStatus={payload.demoProgress.status}
-          progress={payload.demoProgress}
-          executionMode={payload.executionMode}
-          executingPlan={payload.executingPlan}
-          planDetail={payload.executingPlanDetail}
-          demoPlan={payload.demoPlan}
-          onRestart={payload.onDemoStart}
-          onPause={payload.onDemoPause}
-          onResume={payload.onDemoResume}
-          onStop={payload.onDemoStop}
-          onPlanExecute={payload.onPlanExecute}
-          autoChainExecution={payload.autoChainExecution}
-        />
-      )
     case 'results':
       return <ReportsPage />
     case 'virtualRoadTest':
@@ -1275,41 +1271,6 @@ function Dashboard({ selectedResultCount, onNavigate }: DashboardProps) {
           </SimpleGrid>
         </Stack>
       </Card>
-
-      <Card withBorder radius="md" padding="lg">
-        <Stack gap="md">
-          <Title order={3}>运行中任务</Title>
-          {isDashboardLoading ? (
-            <Text size="sm" c="gray.6">
-              数据加载中……
-            </Text>
-          ) : (
-            <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
-              {liveMetrics.map((metric) => (
-                <Paper key={metric.label} p="md" radius="md" withBorder>
-                  <Stack gap={4}>
-                    <Text size="xs" c="gray.6">
-                      {metric.label}
-                    </Text>
-                    <Group gap="xs">
-                      <Text fw={700} fz="lg">
-                        {metric.value}
-                      </Text>
-                      {metric.trend ? (
-                        <Badge color="brand" variant="light" radius="sm">
-                          {metric.trend}
-                        </Badge>
-                      ) : null}
-                    </Group>
-                  </Stack>
-                </Paper>
-              ))}
-            </SimpleGrid>
-          )}
-        </Stack>
-      </Card>
-
-      <RealtimeMetricsCard />
 
       <SimpleGrid cols={{ base: 1, md: 2 }} spacing="xl">
         <Card withBorder radius="md" padding="lg">
