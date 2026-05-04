@@ -21,9 +21,10 @@ import {
   Loader,
   Center,
 } from '@mantine/core'
-import { IconDeviceFloppy, IconX } from '@tabler/icons-react'
+import { IconDeviceFloppy, IconX, IconCopy } from '@tabler/icons-react'
 import { useTestSteps, useUpdateTestStep } from '../../hooks'
 import type { StepParameter, ParametersMap } from '../../types'
+import { SaveAsTestCaseModal } from './SaveAsTestCaseModal'
 
 interface StepEditorProps {
   planId: string
@@ -37,6 +38,7 @@ export function StepEditor({ planId, stepId, readOnly }: StepEditorProps) {
   const [retryCount, setRetryCount] = useState<number>(0)
   const [continueOnFailure, setContinueOnFailure] = useState<boolean>(false)
   const [hasChanges, setHasChanges] = useState(false)
+  const [saveAsModalOpen, setSaveAsModalOpen] = useState(false)
 
   // Query hooks
   const { data: steps } = useTestSteps(planId)
@@ -211,25 +213,42 @@ export function StepEditor({ planId, stepId, readOnly }: StepEditorProps) {
       </Paper>
 
       {/* Action Buttons */}
-      {!readOnly && hasChanges && (
-        <Group justify="flex-end">
-          <Button
-            variant="default"
-            leftSection={<IconX size={16} />}
-            onClick={handleReset}
-            disabled={isPending}
-          >
-            重置
-          </Button>
-          <Button
-            leftSection={<IconDeviceFloppy size={16} />}
-            onClick={handleSave}
-            loading={isPending}
-          >
-            保存更改
-          </Button>
-        </Group>
-      )}
+      <Group justify="space-between">
+        <Button
+          variant="light"
+          color="grape"
+          leftSection={<IconCopy size={16} />}
+          onClick={() => setSaveAsModalOpen(true)}
+        >
+          另存为模板
+        </Button>
+
+        {!readOnly && hasChanges && (
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              leftSection={<IconX size={16} />}
+              onClick={handleReset}
+              disabled={isPending}
+            >
+              重置
+            </Button>
+            <Button
+              leftSection={<IconDeviceFloppy size={16} />}
+              onClick={handleSave}
+              loading={isPending}
+            >
+              保存更改
+            </Button>
+          </Group>
+        )}
+      </Group>
+
+      <SaveAsTestCaseModal
+        opened={saveAsModalOpen}
+        onClose={() => setSaveAsModalOpen(false)}
+        step={step}
+      />
     </Stack>
   )
 }
