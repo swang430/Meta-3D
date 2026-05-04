@@ -33,6 +33,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { notifications } from '@mantine/notifications'
 import { ReportsAPI } from '../index'
 import type { ReportStatus, ReportFormat } from '../types'
+import { formatServerDateTime } from '../../../utils/datetime'
 
 interface ReportListProps {
   onView?: (reportId: string) => void
@@ -289,7 +290,7 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
                   </Table.Td>
                   <Table.Td>
                     <Text size="sm">
-                      {new Date(report.generated_at).toLocaleString('zh-CN')}
+                      {formatServerDateTime(report.generated_at)}
                     </Text>
                   </Table.Td>
                   <Table.Td>

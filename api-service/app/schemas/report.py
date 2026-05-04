@@ -4,6 +4,8 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from uuid import UUID
 
+from ._datetime import UTCDateTime
+
 
 # ==================== Report Schemas ====================
 
@@ -117,8 +119,8 @@ class ReportResponse(BaseModel):
     custom_sections: Optional[List[Dict[str, Any]]]
 
     # Timing
-    generation_started_at: Optional[datetime]
-    generation_completed_at: Optional[datetime]
+    generation_started_at: Optional[UTCDateTime]
+    generation_completed_at: Optional[UTCDateTime]
     generation_duration_sec: Optional[float]
 
     # Error
@@ -127,7 +129,7 @@ class ReportResponse(BaseModel):
 
     # Metadata
     generated_by: str
-    generated_at: datetime
+    generated_at: UTCDateTime
     version: str
     parent_report_id: Optional[UUID]
 
@@ -158,7 +160,7 @@ class ReportSummary(BaseModel):
     progress_percent: int
     file_size_bytes: Optional[int]
     generated_by: str
-    generated_at: datetime
+    generated_at: UTCDateTime
 
     # ID fields for frontend filtering
     test_execution_ids: Optional[List[UUID]] = None
@@ -176,7 +178,7 @@ class ReportDownloadResponse(BaseModel):
     file_size_bytes: int
     file_hash: str
     download_url: str
-    expires_at: datetime
+    expires_at: UTCDateTime
 
 
 # ==================== Template Schemas ====================
@@ -314,7 +316,7 @@ class ReportTemplateResponse(BaseModel):
 
     # Usage
     usage_count: int
-    last_used_at: Optional[datetime]
+    last_used_at: Optional[UTCDateTime]
 
     # Status
     is_active: bool
@@ -323,8 +325,8 @@ class ReportTemplateResponse(BaseModel):
 
     # Metadata
     created_by: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDateTime
+    updated_at: UTCDateTime
     tags: Optional[List[str]]
     category: Optional[str]
 
@@ -342,7 +344,7 @@ class ReportTemplateSummary(BaseModel):
     is_active: bool
     is_default: bool
     created_by: str
-    created_at: datetime
+    created_at: UTCDateTime
 
     class Config:
         from_attributes = True
@@ -405,8 +407,8 @@ class ReportComparisonResponse(BaseModel):
 
     # Metadata
     created_by: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDateTime
+    updated_at: UTCDateTime
     tags: Optional[List[str]]
 
     class Config:
@@ -476,8 +478,8 @@ class ReportScheduleResponse(BaseModel):
     schedule_type: str
     cron_expression: Optional[str]
     timezone: str
-    next_execution_time: Optional[datetime]
-    last_execution_time: Optional[datetime]
+    next_execution_time: Optional[UTCDateTime]
+    last_execution_time: Optional[UTCDateTime]
     recipients: Optional[List[str]]
     email_subject: Optional[str]
     email_body: Optional[str]
@@ -490,8 +492,8 @@ class ReportScheduleResponse(BaseModel):
     successful_executions: int
     failed_executions: int
     created_by: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDateTime
+    updated_at: UTCDateTime
 
     class Config:
         from_attributes = True
@@ -582,7 +584,7 @@ class StatisticsCompareResponse(BaseModel):
     metrics_compared: List[str]
     comparison_results: List[ComparisonResult]
     summary: Dict[str, Any]
-    generated_at: datetime
+    generated_at: UTCDateTime
 
 
 class BenchmarkRequest(BaseModel):
@@ -617,7 +619,7 @@ class BenchmarkResponse(BaseModel):
     overall_percentile: float
     overall_rating: str
     summary: str
-    generated_at: datetime
+    generated_at: UTCDateTime
 
 
 class TimeSeriesRequest(BaseModel):
@@ -641,7 +643,7 @@ class TimeSeriesRequest(BaseModel):
 
 class TimeSeriesPoint(BaseModel):
     """Single point in time series"""
-    timestamp: datetime
+    timestamp: UTCDateTime
     value: float
     execution_id: UUID
     is_anomaly: bool = False
@@ -666,7 +668,7 @@ class TimeSeriesResponse(BaseModel):
     statistics: MetricStatistics
     rolling_mean: List[float]
     rolling_std: List[float]
-    generated_at: datetime
+    generated_at: UTCDateTime
 
 
 # ==================== Simple Compare Schemas ====================
@@ -697,4 +699,4 @@ class SimpleCompareResponse(BaseModel):
     comparison_result: Dict[str, Any]
     kpi_differences: Optional[List[KPIDifference]] = None
     summary: Dict[str, Any] = Field(default_factory=dict)
-    generated_at: datetime
+    generated_at: UTCDateTime

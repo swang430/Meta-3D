@@ -4,6 +4,7 @@
  * Displays and manages the test execution queue
  */
 import { useState, useEffect } from 'react';
+import { parseServerDateTime } from '../../utils/datetime';
 import {
   Stack,
   Paper,
@@ -246,9 +247,9 @@ export function TestQueue() {
                       </Badge>
                     </Table.Td>
                     <Table.Td>
-                      <Tooltip label={new Date(item.queue_item.queued_at).toLocaleString()}>
+                      <Tooltip label={parseServerDateTime(item.queue_item.queued_at).toLocaleString()}>
                         <Text size="sm" c="dimmed">
-                          {new Date(item.queue_item.queued_at).toLocaleDateString()}
+                          {parseServerDateTime(item.queue_item.queued_at).toLocaleDateString()}
                         </Text>
                       </Tooltip>
                     </Table.Td>

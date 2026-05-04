@@ -1,7 +1,7 @@
 """Probe Pydantic schemas"""
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from ._datetime import UTCDateTime
 from uuid import UUID
 
 
@@ -52,7 +52,7 @@ class ProbeUpdateRequest(BaseModel):
     hardware_id: Optional[str] = Field(None, max_length=100)
     channel_port: Optional[int] = None
     chamber_config_id: Optional[UUID] = Field(None, description="所属暗室配置 ID")
-    last_calibration_date: Optional[datetime] = None
+    last_calibration_date: Optional[UTCDateTime] = None
     calibration_status: Optional[str] = Field(
         None,
         pattern="^(valid|expired|invalid|unknown)$"
@@ -86,15 +86,15 @@ class ProbeResponse(BaseModel):
     chamber_config_id: Optional[UUID] = None
     hardware_id: Optional[str]
     channel_port: Optional[int]
-    last_calibration_date: Optional[datetime]
+    last_calibration_date: Optional[UTCDateTime]
     calibration_status: str
     calibration_data: Optional[Dict[str, Any]]
     frequency_range_mhz: Optional[Dict[str, float]]
     max_power_dbm: Optional[float]
     gain_db: Optional[float]
     notes: Optional[str]
-    created_at: datetime
-    updated_at: Optional[datetime]
+    created_at: UTCDateTime
+    updated_at: Optional[UTCDateTime]
     created_by: Optional[str]
 
     class Config:
@@ -145,11 +145,11 @@ class ProbeConfigurationResponse(BaseModel):
     version: str
     probe_data: List[ProbeResponse]
     is_active: bool
-    created_at: datetime
-    updated_at: Optional[datetime]
+    created_at: UTCDateTime
+    updated_at: Optional[UTCDateTime]
     created_by: str
     imported_from: Optional[str]
-    exported_at: Optional[datetime]
+    exported_at: Optional[UTCDateTime]
 
     class Config:
         from_attributes = True

@@ -8,6 +8,7 @@ Probe Calibration Pydantic Schemas
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
+from ._datetime import UTCDateTime
 from uuid import UUID
 from enum import Enum
 
@@ -151,9 +152,9 @@ class AmplitudeCalibrationResponse(BaseModel):
     reference_power_meter: Optional[str] = None
     temperature_celsius: Optional[float] = None
     humidity_percent: Optional[float] = None
-    calibrated_at: datetime
+    calibrated_at: UTCDateTime
     calibrated_by: Optional[str] = None
-    valid_until: datetime
+    valid_until: UTCDateTime
     status: str
 
     class Config:
@@ -205,9 +206,9 @@ class PhaseCalibrationResponse(BaseModel):
     phase_uncertainty_deg: List[float]
     vna_model: Optional[str] = None
     vna_serial: Optional[str] = None
-    calibrated_at: datetime
+    calibrated_at: UTCDateTime
     calibrated_by: Optional[str] = None
-    valid_until: datetime
+    valid_until: UTCDateTime
     status: str
 
     class Config:
@@ -261,9 +262,9 @@ class PolarizationCalibrationResponse(BaseModel):
     reference_antenna: Optional[str] = None
     positioner: Optional[str] = None
     # 元数据
-    calibrated_at: datetime
+    calibrated_at: UTCDateTime
     calibrated_by: Optional[str] = None
-    valid_until: datetime
+    valid_until: UTCDateTime
     status: str
 
     class Config:
@@ -315,9 +316,9 @@ class PatternCalibrationResponse(BaseModel):
     turntable: Optional[str] = None
     measurement_distance_m: Optional[float] = None
     # 元数据
-    measured_at: datetime
+    measured_at: UTCDateTime
     measured_by: Optional[str] = None
-    valid_until: datetime
+    valid_until: UTCDateTime
     status: str
 
     class Config:
@@ -373,7 +374,7 @@ class LinkCalibrationResponse(BaseModel):
     validation_pass: Optional[bool] = None
     threshold_db: float
     # 元数据
-    calibrated_at: datetime
+    calibrated_at: UTCDateTime
     calibrated_by: Optional[str] = None
 
     class Config:
@@ -424,7 +425,7 @@ class ExpiringCalibration(BaseModel):
     """即将过期的校准"""
     probe_id: int
     calibration_type: str
-    valid_until: datetime
+    valid_until: UTCDateTime
     days_remaining: int
 
 
@@ -442,8 +443,8 @@ class CalibrationHistoryQuery(BaseModel):
         None,
         description="amplitude | phase | polarization | pattern | link"
     )
-    start_date: Optional[datetime] = None
-    end_date: Optional[datetime] = None
+    start_date: Optional[UTCDateTime] = None
+    end_date: Optional[UTCDateTime] = None
     limit: int = Field(default=20, ge=1, le=100)
 
 
@@ -451,7 +452,7 @@ class CalibrationHistoryItem(BaseModel):
     """校准历史记录"""
     calibration_id: UUID
     calibration_type: str
-    calibrated_at: datetime
+    calibrated_at: UTCDateTime
     calibrated_by: Optional[str] = None
     status: str
     summary: Dict[str, Any] = Field(
@@ -544,7 +545,7 @@ class ProbePathLossCalibrationResponse(BaseModel):
     sgh_model: str
     sgh_serial: Optional[str] = None
     sgh_gain_dbi: float
-    sgh_certificate_date: Optional[datetime] = None
+    sgh_certificate_date: Optional[UTCDateTime] = None
 
     # 测量设置
     vna_model: Optional[str] = None
@@ -562,9 +563,9 @@ class ProbePathLossCalibrationResponse(BaseModel):
     std_dev_db: Optional[float] = None
 
     # 元数据
-    calibrated_at: datetime
+    calibrated_at: UTCDateTime
     calibrated_by: Optional[str] = None
-    valid_until: datetime
+    valid_until: UTCDateTime
     status: str
 
     class Config:
@@ -640,9 +641,9 @@ class RFChainCalibrationResponse(BaseModel):
     temperature_celsius: Optional[float] = None
 
     # 元数据
-    calibrated_at: datetime
+    calibrated_at: UTCDateTime
     calibrated_by: Optional[str] = None
-    valid_until: datetime
+    valid_until: UTCDateTime
     status: str
 
     class Config:
@@ -701,9 +702,9 @@ class MultiFrequencyPathLossResponse(BaseModel):
     interpolation_coefficients: Optional[Dict[str, Any]] = None
 
     # 元数据
-    calibrated_at: datetime
+    calibrated_at: UTCDateTime
     calibrated_by: Optional[str] = None
-    valid_until: datetime
+    valid_until: UTCDateTime
     status: str
 
     class Config:
@@ -744,7 +745,7 @@ class ChamberCalibrationSummary(BaseModel):
         ...,
         description="valid | partial | expired | not_calibrated"
     )
-    next_calibration_due: Optional[datetime] = None
+    next_calibration_due: Optional[UTCDateTime] = None
 
     # 建议
     recommendations: List[str] = []

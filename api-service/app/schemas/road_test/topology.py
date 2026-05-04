@@ -6,7 +6,7 @@ Data models for conducted test mode topology configuration
 
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Literal, Any
-from datetime import datetime
+from .._datetime import UTCDateTime
 from enum import Enum
 
 
@@ -147,8 +147,8 @@ class NetworkTopology(BaseModel):
     validation_errors: List[str] = Field(default_factory=list, description="Validation errors")
 
     # Metadata
-    created_at: Optional[datetime] = Field(None, description="Creation timestamp")
-    updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
+    created_at: Optional[UTCDateTime] = Field(None, description="Creation timestamp")
+    updated_at: Optional[UTCDateTime] = Field(None, description="Last update timestamp")
     author: Optional[str] = Field(None, description="Author")
 
 
@@ -185,7 +185,7 @@ class TopologySummary(BaseModel):
     is_validated: bool
     devices_count: int
     connections_count: int
-    created_at: Optional[datetime]
+    created_at: Optional[UTCDateTime]
     author: Optional[str]
 
 

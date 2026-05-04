@@ -1,7 +1,7 @@
 """Pydantic schemas for system calibration"""
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from ._datetime import UTCDateTime
 from uuid import UUID
 
 
@@ -35,7 +35,7 @@ class TRPCalibrationResponse(BaseModel):
     validation_pass: bool
     threshold_db: float
     num_probes_used: int
-    tested_at: datetime
+    tested_at: UTCDateTime
 
     class Config:
         from_attributes = True
@@ -70,7 +70,7 @@ class TISCalibrationResponse(BaseModel):
     validation_pass: bool
     threshold_db: float
     num_probes_used: int
-    tested_at: datetime
+    tested_at: UTCDateTime
 
     class Config:
         from_attributes = True
@@ -102,7 +102,7 @@ class RepeatabilityTestResponse(BaseModel):
     validation_pass: bool
     threshold_db: float
     measurements: List[Dict[str, Any]]
-    tested_at: datetime
+    tested_at: UTCDateTime
 
     class Config:
         from_attributes = True
@@ -131,9 +131,9 @@ class CertificateResponse(BaseModel):
     trp_pass: bool
     tis_pass: bool
     repeatability_pass: bool
-    calibration_date: datetime
-    valid_until: datetime
-    issued_at: datetime
+    calibration_date: UTCDateTime
+    valid_until: UTCDateTime
+    issued_at: UTCDateTime
 
     class Config:
         from_attributes = True
@@ -149,8 +149,8 @@ class CertificateDetail(BaseModel):
     lab_name: Optional[str]
     lab_address: Optional[str]
     lab_accreditation: Optional[str]
-    calibration_date: datetime
-    valid_until: datetime
+    calibration_date: UTCDateTime
+    valid_until: UTCDateTime
     standards: Optional[List[str]]
     trp_error_db: Optional[float]
     trp_pass: Optional[bool]
@@ -162,7 +162,7 @@ class CertificateDetail(BaseModel):
     calibrated_by: Optional[str]
     reviewed_by: Optional[str]
     digital_signature: Optional[str]
-    issued_at: datetime
+    issued_at: UTCDateTime
 
     class Config:
         from_attributes = True
@@ -195,7 +195,7 @@ class ComparabilityTestResponse(BaseModel):
     eis_mean_bias_db: Optional[float]
     validation_pass: Optional[bool]
     threshold_db: float
-    tested_at: datetime
+    tested_at: UTCDateTime
 
     class Config:
         from_attributes = True
@@ -265,7 +265,7 @@ class QuietZoneCalibrationResponse(BaseModel):
     max_coupling_db: Optional[float] = None
     # 相位稳定性结果
     phase_drift_deg: Optional[float] = None
-    tested_at: datetime
+    tested_at: UTCDateTime
     tested_by: str
 
     class Config:
@@ -299,7 +299,7 @@ class MultiFrequencyCalibrationResponse(BaseModel):
     calibration_type: str
     results: List[FrequencyCalibrationResult]
     overall_pass: bool
-    tested_at: datetime
+    tested_at: UTCDateTime
     tested_by: str
 
     class Config:

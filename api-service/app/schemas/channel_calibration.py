@@ -7,7 +7,7 @@ Channel Calibration Pydantic Schemas
 """
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any, Literal
-from datetime import datetime
+from ._datetime import UTCDateTime
 from uuid import UUID
 from enum import Enum
 
@@ -211,9 +211,9 @@ class TemporalCalibrationResponse(BaseModel):
     # 仪器
     channel_emulator: Optional[str] = None
     # 元数据
-    calibrated_at: datetime
+    calibrated_at: UTCDateTime
     calibrated_by: Optional[str] = None
-    valid_until: Optional[datetime] = None
+    valid_until: Optional[UTCDateTime] = None
     status: str
 
     class Config:
@@ -250,9 +250,9 @@ class DopplerCalibrationResponse(BaseModel):
     # 仪器
     channel_emulator: Optional[str] = None
     # 元数据
-    calibrated_at: datetime
+    calibrated_at: UTCDateTime
     calibrated_by: Optional[str] = None
-    valid_until: Optional[datetime] = None
+    valid_until: Optional[UTCDateTime] = None
     status: str
 
     class Config:
@@ -319,9 +319,9 @@ class SpatialCorrelationCalibrationResponse(BaseModel):
     threshold_magnitude: float = 0.1
     threshold_phase_deg: float = 10.0
     # 元数据
-    calibrated_at: datetime
+    calibrated_at: UTCDateTime
     calibrated_by: Optional[str] = None
-    valid_until: Optional[datetime] = None
+    valid_until: Optional[UTCDateTime] = None
     status: str
 
     class Config:
@@ -375,9 +375,9 @@ class AngularSpreadCalibrationResponse(BaseModel):
     # 设备
     positioner: Optional[str] = None
     # 元数据
-    calibrated_at: datetime
+    calibrated_at: UTCDateTime
     calibrated_by: Optional[str] = None
-    valid_until: Optional[datetime] = None
+    valid_until: Optional[UTCDateTime] = None
     status: str
 
     class Config:
@@ -453,9 +453,9 @@ class QuietZoneCalibrationResponse(BaseModel):
     # 测试频率
     fc_ghz: Optional[float] = None
     # 元数据
-    calibrated_at: datetime
+    calibrated_at: UTCDateTime
     calibrated_by: Optional[str] = None
-    valid_until: Optional[datetime] = None
+    valid_until: Optional[UTCDateTime] = None
     status: str
 
     class Config:
@@ -523,9 +523,9 @@ class EISValidationResponse(BaseModel):
     min_eis_dbm: Optional[float] = None
     validation_pass: Optional[bool] = None
     # 元数据
-    measured_at: datetime
+    measured_at: UTCDateTime
     measured_by: Optional[str] = None
-    valid_until: Optional[datetime] = None
+    valid_until: Optional[UTCDateTime] = None
     status: str
 
     class Config:
@@ -551,8 +551,8 @@ class CalibrationSessionResponse(BaseModel):
     workflow_id: Optional[str] = None
     configuration: Optional[Dict[str, Any]] = None
     # 时间
-    started_at: datetime
-    completed_at: Optional[datetime] = None
+    started_at: UTCDateTime
+    completed_at: Optional[UTCDateTime] = None
     duration_minutes: Optional[float] = None
     # 状态
     status: str
@@ -566,8 +566,8 @@ class CalibrationSessionResponse(BaseModel):
     # 操作人员
     created_by: Optional[str] = None
     # 系统字段
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDateTime
+    updated_at: UTCDateTime
 
     class Config:
         from_attributes = True
@@ -593,7 +593,7 @@ class CompleteSessionRequest(BaseModel):
 class ChannelCalibrationTypeStatus(BaseModel):
     """单种校准类型状态"""
     valid: bool = Field(..., description="是否有效")
-    valid_until: Optional[datetime] = Field(None, description="有效期至")
+    valid_until: Optional[UTCDateTime] = Field(None, description="有效期至")
     calibration_id: Optional[UUID] = Field(None, description="最新校准记录ID")
     days_remaining: Optional[int] = Field(None, description="剩余天数")
 
@@ -610,7 +610,7 @@ class ChannelCalibrationValidityResponse(BaseModel):
     eis: ChannelCalibrationTypeStatus
     # 总体状态
     overall_status: str = Field(..., description="总体状态: valid, expiring_soon, expired, unknown")
-    updated_at: datetime
+    updated_at: UTCDateTime
 
     class Config:
         from_attributes = True
@@ -650,7 +650,7 @@ class InvalidateCalibrationResponse(BaseModel):
     """作废校准响应"""
     calibration_id: UUID
     calibration_type: str
-    invalidated_at: datetime
+    invalidated_at: UTCDateTime
     reason: str
     previous_status: str
 
@@ -663,8 +663,8 @@ class ChannelCalibrationHistoryQuery(BaseModel):
         None,
         description="temporal | doppler | spatial_correlation | angular_spread | quiet_zone | eis"
     )
-    start_date: Optional[datetime] = None
-    end_date: Optional[datetime] = None
+    start_date: Optional[UTCDateTime] = None
+    end_date: Optional[UTCDateTime] = None
     validation_pass: Optional[bool] = None
     limit: int = Field(default=20, ge=1, le=100)
     offset: int = Field(default=0, ge=0)
@@ -674,7 +674,7 @@ class ChannelCalibrationHistoryItem(BaseModel):
     """信道校准历史记录"""
     calibration_id: UUID
     calibration_type: str
-    calibrated_at: datetime
+    calibrated_at: UTCDateTime
     calibrated_by: Optional[str] = None
     status: str
     validation_pass: Optional[bool] = None
@@ -695,28 +695,28 @@ class ChannelCalibrationHistoryResponse(BaseModel):
 class ChannelCalibrationStatusSummary(BaseModel):
     """信道校准状态摘要"""
     temporal_status: str
-    temporal_last_calibrated: Optional[datetime] = None
-    temporal_next_due: Optional[datetime] = None
+    temporal_last_calibrated: Optional[UTCDateTime] = None
+    temporal_next_due: Optional[UTCDateTime] = None
 
     doppler_status: str
-    doppler_last_calibrated: Optional[datetime] = None
-    doppler_next_due: Optional[datetime] = None
+    doppler_last_calibrated: Optional[UTCDateTime] = None
+    doppler_next_due: Optional[UTCDateTime] = None
 
     spatial_correlation_status: str
-    spatial_correlation_last_calibrated: Optional[datetime] = None
-    spatial_correlation_next_due: Optional[datetime] = None
+    spatial_correlation_last_calibrated: Optional[UTCDateTime] = None
+    spatial_correlation_next_due: Optional[UTCDateTime] = None
 
     angular_spread_status: str
-    angular_spread_last_calibrated: Optional[datetime] = None
-    angular_spread_next_due: Optional[datetime] = None
+    angular_spread_last_calibrated: Optional[UTCDateTime] = None
+    angular_spread_next_due: Optional[UTCDateTime] = None
 
     quiet_zone_status: str
-    quiet_zone_last_calibrated: Optional[datetime] = None
-    quiet_zone_next_due: Optional[datetime] = None
+    quiet_zone_last_calibrated: Optional[UTCDateTime] = None
+    quiet_zone_next_due: Optional[UTCDateTime] = None
 
     eis_status: str
-    eis_last_calibrated: Optional[datetime] = None
-    eis_next_due: Optional[datetime] = None
+    eis_last_calibrated: Optional[UTCDateTime] = None
+    eis_next_due: Optional[UTCDateTime] = None
 
     overall_status: str
     recent_calibrations: List[ChannelCalibrationHistoryItem] = []

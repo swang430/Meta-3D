@@ -18,6 +18,7 @@ import {
   ScrollArea,
   Button,
 } from '@mantine/core'
+import { parseServerDateTime } from '../../../utils/datetime'
 import {
   IconAlertCircle,
   IconClock,
@@ -235,7 +236,7 @@ export function ExecutionSelector({
                     <Group gap="xs">
                       {exec.started_at && (
                         <Text size="xs" c="dimmed">
-                          {new Date(exec.started_at).toLocaleString('zh-CN')}
+                          {parseServerDateTime(exec.started_at).toLocaleString('zh-CN')}
                         </Text>
                       )}
                     </Group>

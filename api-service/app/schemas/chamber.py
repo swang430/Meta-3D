@@ -4,7 +4,7 @@ Chamber Configuration Schemas
 暗室配置的 Pydantic 模型
 """
 from typing import Optional, List
-from datetime import datetime
+from ._datetime import UTCDateTime
 from uuid import UUID
 from pydantic import BaseModel, Field
 from enum import Enum
@@ -130,8 +130,8 @@ class ChamberConfigurationResponse(ChamberConfigurationBase):
     """暗室配置响应"""
     id: UUID
     is_active: bool
-    created_at: datetime
-    updated_at: Optional[datetime]
+    created_at: UTCDateTime
+    updated_at: Optional[UTCDateTime]
     created_by: Optional[str]
 
     # 计算属性

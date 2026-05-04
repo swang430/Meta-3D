@@ -20,6 +20,7 @@ import {
   IconEdit,
   IconTrash,
 } from '@tabler/icons-react'
+import { parseServerDateTime } from '../../utils/datetime'
 import { notifications } from '@mantine/notifications'
 import type { ScenarioSummary } from '../../types/roadTest'
 import { TestExecutionModal } from './TestExecutionModal'
@@ -265,7 +266,7 @@ export default function ScenarioCard({ scenario, testMode, onRefresh }: Props) {
           <Group gap="xs">
             <IconMapPin size={14} />
             <Text size="xs" c="dimmed">
-              创建: {new Date(scenario.created_at).toLocaleDateString('zh-CN')}
+              创建: {parseServerDateTime(scenario.created_at).toLocaleDateString('zh-CN')}
             </Text>
           </Group>
         )}

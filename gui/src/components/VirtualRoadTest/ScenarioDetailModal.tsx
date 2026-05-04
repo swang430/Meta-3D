@@ -18,6 +18,7 @@ import {
   Alert,
   Button,
 } from '@mantine/core'
+import { parseServerDateTime } from '../../utils/datetime'
 import {
   IconNetwork,
   IconBroadcast,
@@ -98,7 +99,7 @@ export function ScenarioDetailModal({ opened, onClose, scenario }: Props) {
               </Text>
               <Text size="sm">
                 {scenario.created_at
-                  ? new Date(scenario.created_at).toLocaleDateString()
+                  ? parseServerDateTime(scenario.created_at).toLocaleDateString()
                   : '-'}
               </Text>
             </div>

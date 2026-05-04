@@ -1,7 +1,7 @@
 """Topology Pydantic schemas"""
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from ._datetime import UTCDateTime
 from uuid import UUID
 from enum import Enum
 
@@ -51,8 +51,8 @@ class TopologyResponse(BaseModel):
     devices: List[DeviceConfig]
     is_active: bool
     is_default: bool
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDateTime
+    updated_at: UTCDateTime
     created_by: Optional[str]
 
     class Config:

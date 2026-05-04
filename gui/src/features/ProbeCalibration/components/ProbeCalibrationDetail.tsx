@@ -20,6 +20,7 @@ import {
   ActionIcon,
   Tooltip,
 } from '@mantine/core'
+import { parseServerDateTime } from '../../../utils/datetime'
 import {
   IconAlertCircle,
   IconWaveSine,
@@ -464,7 +465,7 @@ function PatternCalibrationPanel({
       <Group justify="space-between">
         <Group gap="xs">
           <Text size="sm" c="dimmed">
-            Calibrated: {new Date(latestPattern.measured_at).toLocaleDateString()}
+            Calibrated: {parseServerDateTime(latestPattern.measured_at).toLocaleDateString()}
           </Text>
           {latestPattern.measured_by && (
             <Text size="sm" c="dimmed">
@@ -550,7 +551,7 @@ function LinkCalibrationPanel({
       <Group justify="space-between">
         <Group gap="xs">
           <Text size="sm" c="dimmed">
-            Calibrated: {new Date(data.calibrated_at).toLocaleDateString()}
+            Calibrated: {parseServerDateTime(data.calibrated_at).toLocaleDateString()}
           </Text>
           {data.calibrated_by && (
             <Text size="sm" c="dimmed">
@@ -664,7 +665,7 @@ function CalibrationMetadata({
     <Group justify="space-between">
       <Group gap="xs">
         <Text size="sm" c="dimmed">
-          Calibrated: {new Date(calibratedAt).toLocaleDateString()}
+          Calibrated: {parseServerDateTime(calibratedAt).toLocaleDateString()}
         </Text>
         {calibratedBy && (
           <Text size="sm" c="dimmed">
@@ -673,7 +674,7 @@ function CalibrationMetadata({
         )}
         <Divider orientation="vertical" />
         <Text size="sm" c="dimmed">
-          Valid until: {new Date(validUntil).toLocaleDateString()}
+          Valid until: {parseServerDateTime(validUntil).toLocaleDateString()}
         </Text>
         <CalibrationStatusBadge status={status as ValidityStatus} size="xs" />
       </Group>

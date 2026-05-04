@@ -4,6 +4,7 @@
  * Displays a list of test plans with filtering and actions
  */
 import { useState, useEffect } from 'react';
+import { parseServerDateTime } from '../../utils/datetime';
 import {
   Stack,
   Paper,
@@ -315,9 +316,9 @@ export function TestPlanList({ onCreateNew, onEdit }: TestPlanListProps) {
                       <Text size="sm">{plan.created_by}</Text>
                     </Table.Td>
                     <Table.Td>
-                      <Tooltip label={new Date(plan.created_at).toLocaleString()}>
+                      <Tooltip label={parseServerDateTime(plan.created_at).toLocaleString()}>
                         <Text size="sm" c="dimmed">
-                          {new Date(plan.created_at).toLocaleDateString()}
+                          {parseServerDateTime(plan.created_at).toLocaleDateString()}
                         </Text>
                       </Tooltip>
                     </Table.Td>

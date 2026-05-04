@@ -1,7 +1,7 @@
 """Dashboard Pydantic schemas"""
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from datetime import datetime
+from ._datetime import UTCDateTime
 from uuid import UUID
 
 
@@ -34,7 +34,7 @@ class RecentTest(BaseModel):
     id: str
     plan_name: str
     status: str
-    executed_at: datetime
+    executed_at: UTCDateTime
     duration_minutes: Optional[float]
 
 
@@ -57,4 +57,4 @@ class ComparisonSelectionResponse(BaseModel):
     id: UUID
     selected_items: List[UUID]
     comparison_type: str
-    created_at: datetime
+    created_at: UTCDateTime

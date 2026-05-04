@@ -1,7 +1,7 @@
 """Instrument Pydantic schemas"""
 from pydantic import BaseModel, Field, HttpUrl
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from ._datetime import UTCDateTime
 from uuid import UUID
 
 
@@ -42,8 +42,8 @@ class InstrumentModelResponse(InstrumentModelBase):
     """Instrument model response"""
     id: UUID
     category_id: UUID
-    created_at: datetime
-    updated_at: Optional[datetime]
+    created_at: UTCDateTime
+    updated_at: Optional[UTCDateTime]
 
     class Config:
         from_attributes = True
@@ -83,10 +83,10 @@ class InstrumentConnectionResponse(InstrumentConnectionBase):
     id: UUID
     category_id: UUID
     status: str
-    last_connected_at: Optional[datetime]
+    last_connected_at: Optional[UTCDateTime]
     last_error: Optional[str]
-    created_at: datetime
-    updated_at: Optional[datetime]
+    created_at: UTCDateTime
+    updated_at: Optional[UTCDateTime]
     created_by: str
 
     class Config:
@@ -126,8 +126,8 @@ class InstrumentCategoryResponse(InstrumentCategoryBase):
     """Instrument category response"""
     id: UUID
     selected_model_id: Optional[UUID]
-    created_at: datetime
-    updated_at: Optional[datetime]
+    created_at: UTCDateTime
+    updated_at: Optional[UTCDateTime]
 
     # 关联数据
     models: List[InstrumentModelResponse] = []
@@ -215,7 +215,7 @@ class InstrumentLogResponse(BaseModel):
     message: str
     level: str
     details: Optional[Dict[str, Any]]
-    timestamp: datetime
+    timestamp: UTCDateTime
     performed_by: Optional[str]
 
     class Config:

@@ -19,6 +19,7 @@ import {
   Alert,
   ScrollArea,
 } from '@mantine/core'
+import { parseServerDateTime } from '../../../utils/datetime'
 import { IconSearch, IconAlertCircle, IconFileAnalytics } from '@tabler/icons-react'
 import { useQuery } from '@tanstack/react-query'
 import client from '../../../api/client'
@@ -222,7 +223,7 @@ export function TestPlanSelector({
                     </Badge>
                     {plan.last_execution && (
                       <Text size="xs" c="dimmed">
-                        {new Date(plan.last_execution).toLocaleDateString('zh-CN')}
+                        {parseServerDateTime(plan.last_execution).toLocaleDateString('zh-CN')}
                       </Text>
                     )}
                   </Stack>

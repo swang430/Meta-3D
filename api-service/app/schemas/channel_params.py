@@ -5,7 +5,7 @@ exchanged between ray tracing engine and channel emulator.
 """
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from ._datetime import UTCDateTime
 from uuid import UUID
 from enum import Enum
 import numpy as np
@@ -97,7 +97,7 @@ class ParameterSyncStatus(BaseModel):
     """Status of parameter synchronization subsystem"""
     is_running: bool = Field(False)
     is_connected: bool = Field(False)
-    last_update_time: Optional[datetime] = None
+    last_update_time: Optional[UTCDateTime] = None
     update_count: int = Field(0)
     error_count: int = Field(0)
     dropped_count: int = Field(0)

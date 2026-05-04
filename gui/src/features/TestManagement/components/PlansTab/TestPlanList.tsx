@@ -27,6 +27,7 @@ import {
   Loader,
   Center,
 } from '@mantine/core'
+import { parseServerDateTime } from '../../../../utils/datetime'
 import {
   IconPlus,
   IconRefresh,
@@ -295,9 +296,9 @@ export function TestPlanList({ onCreateNew, onEdit, onSelect }: TestPlanListProp
                         <Text size="sm">{plan.created_by}</Text>
                       </Table.Td>
                       <Table.Td>
-                        <Tooltip label={new Date(plan.created_at).toLocaleString()}>
+                        <Tooltip label={parseServerDateTime(plan.created_at).toLocaleString()}>
                           <Text size="sm" c="dimmed">
-                            {new Date(plan.created_at).toLocaleDateString()}
+                            {parseServerDateTime(plan.created_at).toLocaleDateString()}
                           </Text>
                         </Tooltip>
                       </Table.Td>

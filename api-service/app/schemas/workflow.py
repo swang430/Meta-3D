@@ -4,7 +4,7 @@ Workflow API Schemas
 Pydantic models for workflow execution API.
 """
 
-from datetime import datetime
+from ._datetime import UTCDateTime
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 from pydantic import BaseModel, Field
@@ -66,8 +66,8 @@ class StepResultSchema(BaseModel):
     """Result of a step execution"""
     step_id: str
     status: StepStatusEnum
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    started_at: Optional[UTCDateTime] = None
+    completed_at: Optional[UTCDateTime] = None
     calibration_id: Optional[str] = None
     validation_pass: Optional[bool] = None
     error_message: Optional[str] = None
@@ -101,8 +101,8 @@ class WorkflowExecutionResponse(BaseModel):
     workflow_name: str = Field(..., description="Workflow name")
     status: WorkflowStatusEnum = Field(..., description="Execution status")
     progress_percent: float = Field(..., description="Progress percentage")
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    started_at: Optional[UTCDateTime] = None
+    completed_at: Optional[UTCDateTime] = None
     current_step_index: int = 0
     total_steps: int = 0
     passed_steps: int = 0
@@ -177,8 +177,8 @@ class WorkflowExecutionListItem(BaseModel):
     workflow_name: str
     status: WorkflowStatusEnum
     progress_percent: float
-    started_at: Optional[datetime]
-    completed_at: Optional[datetime]
+    started_at: Optional[UTCDateTime]
+    completed_at: Optional[UTCDateTime]
     passed_steps: int
     failed_steps: int
     total_steps: int

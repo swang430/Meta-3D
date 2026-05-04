@@ -30,6 +30,7 @@ import {
   Center,
   Modal,
 } from '@mantine/core'
+import { parseServerDateTime } from '../../../../utils/datetime'
 import {
   IconSearch,
   IconFileText,
@@ -352,10 +353,10 @@ export function HistoryTab() {
                       {/* Completed At */}
                       <Table.Td>
                         <Tooltip
-                          label={new Date(record.completed_at).toLocaleString()}
+                          label={parseServerDateTime(record.completed_at).toLocaleString()}
                         >
                           <Text size="sm" c="dimmed">
-                            {new Date(record.completed_at).toLocaleDateString()}
+                            {parseServerDateTime(record.completed_at).toLocaleDateString()}
                           </Text>
                         </Tooltip>
                       </Table.Td>

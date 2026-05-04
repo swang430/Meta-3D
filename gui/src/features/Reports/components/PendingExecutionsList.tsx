@@ -21,6 +21,7 @@ import {
   Alert,
   Tabs,
 } from '@mantine/core'
+import { parseServerDateTime } from '../../../utils/datetime'
 import {
   IconFileReport,
   IconRefresh,
@@ -237,7 +238,7 @@ export function PendingExecutionsList() {
                       </Table.Td>
                       <Table.Td>
                         <Text size="sm" c="dimmed">
-                          {new Date(record.completed_at).toLocaleDateString()}
+                          {parseServerDateTime(record.completed_at).toLocaleDateString()}
                         </Text>
                       </Table.Td>
                       <Table.Td>
@@ -306,7 +307,7 @@ export function PendingExecutionsList() {
                       <Table.Td>
                         <Text size="sm" c="dimmed">
                           {record.end_time
-                            ? new Date(record.end_time).toLocaleDateString()
+                            ? parseServerDateTime(record.end_time).toLocaleDateString()
                             : '-'}
                         </Text>
                       </Table.Td>

@@ -21,6 +21,7 @@ import {
   Tooltip,
   Button,
 } from '@mantine/core'
+import { parseServerDateTime } from '../../utils/datetime'
 import {
   IconInfoCircle,
   IconBooks,
@@ -283,7 +284,7 @@ function ExecutionHistory() {
                   <Table.Td>
                     <Text size="sm">
                       {exec.start_time
-                        ? new Date(exec.start_time).toLocaleString('zh-CN')
+                        ? parseServerDateTime(exec.start_time).toLocaleString('zh-CN')
                         : '-'}
                     </Text>
                   </Table.Td>

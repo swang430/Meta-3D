@@ -17,6 +17,7 @@ import {
   ActionIcon,
   Tooltip,
 } from '@mantine/core'
+import { parseServerDateTime } from '../../../utils/datetime'
 import {
   IconEye,
   IconEdit,
@@ -180,7 +181,7 @@ export function TemplateList({
                   </Table.Td>
                   <Table.Td>
                     <Text size="sm">
-                      {new Date(template.created_at).toLocaleDateString('zh-CN')}
+                      {parseServerDateTime(template.created_at).toLocaleDateString('zh-CN')}
                     </Text>
                   </Table.Td>
                   <Table.Td>

@@ -6,7 +6,7 @@ Data models for virtual road test execution
 
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Literal, Any
-from datetime import datetime
+from .._datetime import UTCDateTime
 from enum import Enum
 
 
@@ -160,8 +160,8 @@ class TestExecution(BaseModel):
     )
 
     # Results
-    start_time: Optional[datetime] = Field(None, description="Start time")
-    end_time: Optional[datetime] = Field(None, description="End time")
+    start_time: Optional[UTCDateTime] = Field(None, description="Start time")
+    end_time: Optional[UTCDateTime] = Field(None, description="End time")
     duration_s: Optional[float] = Field(None, description="Duration in seconds")
 
     # Metadata
@@ -201,7 +201,7 @@ class ExecutionSummary(BaseModel):
     mode: TestMode
     status: ExecutionStatus
     scenario_name: str
-    start_time: Optional[datetime]
+    start_time: Optional[UTCDateTime]
     duration_s: Optional[float]
     progress_percent: float
     created_by: Optional[str]
@@ -214,8 +214,8 @@ class PhaseResult(BaseModel):
     name: str = Field(description="Phase name")
     status: str = Field(description="completed | failed | skipped")
     duration_s: float = Field(description="Phase duration in seconds")
-    start_time: datetime = Field(description="Phase start time")
-    end_time: datetime = Field(description="Phase end time")
+    start_time: UTCDateTime = Field(description="Phase start time")
+    end_time: UTCDateTime = Field(description="Phase end time")
     notes: Optional[str] = Field(None, description="Phase notes")
 
 
@@ -371,8 +371,8 @@ class ExecutionReport(BaseModel):
     step_configs: List[StepConfigInfo] = Field(default_factory=list, description="Step configurations")
 
     # Timing
-    start_time: Optional[datetime] = Field(None, description="Start time")
-    end_time: Optional[datetime] = Field(None, description="End time")
+    start_time: Optional[UTCDateTime] = Field(None, description="Start time")
+    end_time: Optional[UTCDateTime] = Field(None, description="End time")
     duration_s: Optional[float] = Field(None, description="Total duration")
 
     # Phase results
@@ -405,7 +405,7 @@ class ExecutionReport(BaseModel):
     )
 
     # Metadata
-    generated_at: datetime = Field(description="Report generation time")
+    generated_at: UTCDateTime = Field(description="Report generation time")
     notes: Optional[str] = Field(None, description="Execution notes")
     # NEW: Logs
     logs: List[Dict[str, Any]] = Field(default_factory=list, description="Execution process logs")
@@ -416,7 +416,7 @@ class ExecutionReport(BaseModel):
 class MetricsStreamMessage(BaseModel):
     """Real-time metrics stream message (WebSocket)"""
     execution_id: str = Field(description="Execution ID")
-    timestamp: datetime = Field(description="Message timestamp")
+    timestamp: UTCDateTime = Field(description="Message timestamp")
     message_type: Literal["metrics", "event", "status", "alert"] = Field(
         description="Message type"
     )

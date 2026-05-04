@@ -27,6 +27,7 @@ import {
   Loader,
   Center,
 } from '@mantine/core'
+import { parseServerDateTime } from '../../../../utils/datetime'
 import {
   IconRefresh,
   IconPlayerPlay,
@@ -322,10 +323,10 @@ export function QueueTab() {
                       {/* Queued Time */}
                       <Table.Td>
                         <Tooltip
-                          label={new Date(queueItem.queued_at).toLocaleString()}
+                          label={parseServerDateTime(queueItem.queued_at).toLocaleString()}
                         >
                           <Text size="sm" c="dimmed">
-                            {new Date(queueItem.queued_at).toLocaleDateString()}
+                            {parseServerDateTime(queueItem.queued_at).toLocaleDateString()}
                           </Text>
                         </Tooltip>
                       </Table.Td>

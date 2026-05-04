@@ -1,7 +1,7 @@
 """Test Plan and Test Case Pydantic schemas"""
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from ._datetime import UTCDateTime
 from uuid import UUID
 
 
@@ -53,13 +53,13 @@ class TestPlanResponse(BaseModel):
     failed_test_cases: int
     estimated_duration_minutes: Optional[float]
     actual_duration_minutes: Optional[float]
-    started_at: Optional[datetime]
-    completed_at: Optional[datetime]
+    started_at: Optional[UTCDateTime]
+    completed_at: Optional[UTCDateTime]
     queue_position: Optional[int]
     priority: int
     created_by: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDateTime
+    updated_at: UTCDateTime
     notes: Optional[str]
     tags: Optional[List[str]]
 
@@ -77,7 +77,7 @@ class TestPlanSummary(BaseModel):
     failed_test_cases: int
     priority: int
     created_by: str
-    created_at: datetime
+    created_at: UTCDateTime
 
     class Config:
         from_attributes = True
@@ -89,7 +89,7 @@ class TestCaseCreate(BaseModel):
     """Request to create a test case"""
     name: str = Field(..., min_length=1, max_length=255, description="Test case name")
     description: Optional[str] = None
-    test_type: str = Field(..., description="TRP | TIS | Throughput | Handover | MIMO | ChannelModel | Custom")
+    test_type: str = Field(..., description="TRP | TIS | Throughput | Handover | MIMO | ChannelModel | VirtualRoadTest | Custom")
     configuration: Dict[str, Any] = Field(..., description="Test-specific configuration")
     pass_criteria: Optional[Dict[str, Any]] = None
     expected_results: Optional[Dict[str, Any]] = None
@@ -145,8 +145,8 @@ class TestCaseResponse(BaseModel):
     is_template: bool
     template_category: Optional[str]
     created_by: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDateTime
+    updated_at: UTCDateTime
     version: str
     parent_id: Optional[UUID]
     tags: Optional[List[str]]
@@ -170,7 +170,7 @@ class TestCaseSummary(BaseModel):
     pass_criteria: Optional[Dict[str, Any]] = None
     tags: Optional[List[str]] = None
     created_by: str
-    created_at: datetime
+    created_at: UTCDateTime
 
     class Config:
         from_attributes = True
@@ -208,13 +208,13 @@ class TestExecutionResponse(BaseModel):
     measurements: Optional[Dict[str, Any]]
     validation_pass: Optional[bool]
     validation_details: Optional[Dict[str, Any]]
-    started_at: Optional[datetime]
-    completed_at: Optional[datetime]
+    started_at: Optional[UTCDateTime]
+    completed_at: Optional[UTCDateTime]
     duration_sec: Optional[float]
     error_message: Optional[str]
     error_details: Optional[Dict[str, Any]]
     executed_by: str
-    executed_at: datetime
+    executed_at: UTCDateTime
 
     class Config:
         from_attributes = True
@@ -239,8 +239,8 @@ class TestPlanExecutionResponse(BaseModel):
     success_rate: float
 
     # Timing
-    started_at: datetime
-    completed_at: datetime
+    started_at: UTCDateTime
+    completed_at: UTCDateTime
     duration_minutes: float
 
     # Error summary
@@ -249,7 +249,7 @@ class TestPlanExecutionResponse(BaseModel):
 
     # Metadata
     started_by: str
-    created_at: datetime
+    created_at: UTCDateTime
 
     class Config:
         from_attributes = True
@@ -267,7 +267,7 @@ class QueueTestPlanRequest(BaseModel):
     """Request to queue a test plan"""
     test_plan_id: UUID
     priority: Optional[int] = Field(5, ge=1, le=10)
-    scheduled_start_time: Optional[datetime] = None
+    scheduled_start_time: Optional[UTCDateTime] = None
     dependencies: Optional[List[UUID]] = Field(default_factory=list)
     queued_by: str
     notes: Optional[str] = None
@@ -286,12 +286,12 @@ class TestQueueResponse(BaseModel):
     position: int
     priority: int
     status: str
-    scheduled_start_time: Optional[datetime]
-    estimated_start_time: Optional[datetime]
+    scheduled_start_time: Optional[UTCDateTime]
+    estimated_start_time: Optional[UTCDateTime]
     dependencies: Optional[List[str]]
     blocked_by: Optional[List[str]]
     queued_by: str
-    queued_at: datetime
+    queued_at: UTCDateTime
     notes: Optional[str]
 
     class Config:
@@ -392,15 +392,15 @@ class TestStepResponse(BaseModel):
     continue_on_failure: Optional[bool] = None
     expected_duration_minutes: Optional[float] = None
     actual_duration_minutes: Optional[float] = None
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    started_at: Optional[UTCDateTime] = None
+    completed_at: Optional[UTCDateTime] = None
     validation_criteria: Optional[Dict[str, Any]] = None
     result: Optional[str] = None
     error_message: Optional[str] = None
     notes: Optional[str] = None
     tags: Optional[List[str]] = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDateTime
+    updated_at: UTCDateTime
 
     # Frontend compatibility fields (populated from sequence library if applicable)
     title: Optional[str] = None  # Populated from sequence.name
@@ -444,8 +444,8 @@ class TestSequenceResponse(BaseModel):
     is_public: bool
     usage_count: int
     created_by: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDateTime
+    updated_at: UTCDateTime
     tags: Optional[List[str]]
 
     class Config:

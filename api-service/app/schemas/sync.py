@@ -1,7 +1,7 @@
 """Hardware Synchronization Schemas"""
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from ._datetime import UTCDateTime
 from enum import Enum
 
 
@@ -81,7 +81,7 @@ class InstrumentClockStatus(BaseModel):
     instrument_id: str
     instrument_name: str
     status: ClockStatusResponse
-    last_updated: datetime
+    last_updated: UTCDateTime
 
 
 # ==================== Trigger Schemas ====================
@@ -121,7 +121,7 @@ class TriggerSequenceResponse(BaseModel):
     steps: List[TriggerSequenceStep]
     repeat_count: int
     status: str = Field("idle", description="Sequence status: idle | armed | running | completed")
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 # ==================== System Sync Schemas ====================
@@ -145,7 +145,7 @@ class InstrumentSyncState(BaseModel):
     instrument_name: str
     clock_locked: bool
     trigger_armed: bool
-    last_trigger_time: Optional[datetime]
+    last_trigger_time: Optional[UTCDateTime]
     status: str
 
 
@@ -171,7 +171,7 @@ class SystemSyncStatus(BaseModel):
     instruments: List[InstrumentSyncState] = Field(default_factory=list)
 
     # Timestamps
-    last_sync_check: Optional[datetime] = None
+    last_sync_check: Optional[UTCDateTime] = None
     uptime_seconds: float = Field(0.0)
 
 

@@ -20,6 +20,7 @@ import {
   ActionIcon,
   Tooltip,
 } from '@mantine/core'
+import { parseServerDateTime } from '../../../utils/datetime'
 import {
   IconCircleCheck,
   IconAlertTriangle,
@@ -297,7 +298,7 @@ export function ProbeCalibrationDashboard({
                   <Group gap="xs">
                     <IconCalendar size={14} />
                     <Text size="xs" c="dimmed">
-                      Last calibration: {new Date(linkValidity.calibrated_at).toLocaleDateString()}
+                      Last calibration: {parseServerDateTime(linkValidity.calibrated_at).toLocaleDateString()}
                     </Text>
                   </Group>
                 )}

@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, ConfigDict, Field
 from uuid import UUID
-from datetime import datetime
+from ._datetime import UTCDateTime
 
 
 # ==========================================
@@ -53,7 +53,7 @@ class SwitchTopologyBase(BaseModel):
     version: str = "1.0"
     site_name: Optional[str] = None
     system_model: Optional[str] = None
-    installed_date: Optional[datetime] = None
+    installed_date: Optional[UTCDateTime] = None
     installed_by: Optional[str] = None
     is_active: bool = True
     is_default: bool = False
@@ -73,7 +73,7 @@ class SwitchTopologyUpdate(BaseModel):
     version: Optional[str] = None
     site_name: Optional[str] = None
     system_model: Optional[str] = None
-    installed_date: Optional[datetime] = None
+    installed_date: Optional[UTCDateTime] = None
     installed_by: Optional[str] = None
     is_active: Optional[bool] = None
     is_default: Optional[bool] = None
@@ -91,8 +91,8 @@ class SwitchTopologyResponse(SwitchTopologyBase):
     total_connections: int
     total_probes: int
     total_channels: int
-    created_at: datetime
-    updated_at: Optional[datetime] = None
+    created_at: UTCDateTime
+    updated_at: Optional[UTCDateTime] = None
     created_by: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)

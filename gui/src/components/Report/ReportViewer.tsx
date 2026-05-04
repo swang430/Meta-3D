@@ -24,6 +24,7 @@ import {
   Code,
   Tabs,
 } from '@mantine/core'
+import { parseServerDateTime } from '../../utils/datetime'
 import {
   IconCheck,
   IconX,
@@ -256,7 +257,7 @@ function OverviewTab({ content }: { content: ReportContentData }) {
           <Text size="xs" c="dimmed" fw={500}>开始时间</Text>
           <Text size="sm">
             {content.execution?.start_time
-              ? new Date(content.execution.start_time).toLocaleString('zh-CN')
+              ? parseServerDateTime(content.execution.start_time).toLocaleString('zh-CN')
               : '-'}
           </Text>
         </Card>
@@ -264,7 +265,7 @@ function OverviewTab({ content }: { content: ReportContentData }) {
           <Text size="xs" c="dimmed" fw={500}>结束时间</Text>
           <Text size="sm">
             {content.execution?.end_time
-              ? new Date(content.execution.end_time).toLocaleString('zh-CN')
+              ? parseServerDateTime(content.execution.end_time).toLocaleString('zh-CN')
               : '-'}
           </Text>
         </Card>
@@ -529,8 +530,8 @@ function ResultsTab({ content }: { content: ReportContentData }) {
                 }
               >
                 <Text size="xs" c="dimmed">
-                  {new Date(phase.start_time).toLocaleTimeString('zh-CN')} -{' '}
-                  {new Date(phase.end_time).toLocaleTimeString('zh-CN')}
+                  {parseServerDateTime(phase.start_time).toLocaleTimeString('zh-CN')} -{' '}
+                  {parseServerDateTime(phase.end_time).toLocaleTimeString('zh-CN')}
                 </Text>
               </Timeline.Item>
             )
@@ -607,7 +608,7 @@ function EventsList({ events }: { events: ReportContentData['events'] }) {
                 <EventIcon size={12} />
               </ThemeIcon>
               <Text size="sm" c="dimmed" style={{ minWidth: 80 }}>
-                {new Date(event.time).toLocaleTimeString('zh-CN')}
+                {parseServerDateTime(event.time).toLocaleTimeString('zh-CN')}
               </Text>
               <Text size="sm">{event.description}</Text>
             </Group>
@@ -636,7 +637,7 @@ function LogsTab({ logs }: { logs: NonNullable<ReportContentData['logs']> }) {
               <Table.Tr key={idx}>
                 <Table.Td>
                   <Text size="xs" c="dimmed" ff="monospace">
-                    {new Date(log.timestamp).toLocaleString('zh-CN')}
+                    {parseServerDateTime(log.timestamp).toLocaleString('zh-CN')}
                   </Text>
                 </Table.Td>
                 <Table.Td>

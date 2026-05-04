@@ -1,7 +1,7 @@
 """Alert Pydantic schemas"""
 from pydantic import BaseModel, Field
 from typing import Optional, List
-from datetime import datetime
+from ._datetime import UTCDateTime
 from uuid import UUID
 from enum import Enum
 
@@ -50,10 +50,10 @@ class AlertResponse(BaseModel):
     is_read: bool
     related_entity_type: Optional[str]
     related_entity_id: Optional[UUID]
-    created_at: datetime
-    updated_at: datetime
-    acknowledged_at: Optional[datetime]
-    resolved_at: Optional[datetime]
+    created_at: UTCDateTime
+    updated_at: UTCDateTime
+    acknowledged_at: Optional[UTCDateTime]
+    resolved_at: Optional[UTCDateTime]
     created_by: Optional[str]
     acknowledged_by: Optional[str]
 
