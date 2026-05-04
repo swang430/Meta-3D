@@ -61,7 +61,6 @@ import {
   completeExecution as apiCompleteExecution,
 } from './features/TestManagement/api/testManagementAPI'
 import ProbeLayoutView from './components/ProbeLayoutView'
-import { VirtualRoadTest } from './components/VirtualRoadTest'
 import { SystemCalibration } from './components/SystemCalibration'
 import { TestManagement } from './features/TestManagement/TestManagement'
 import { ReportsPage } from './features/Reports/pages/ReportsPage'
@@ -139,7 +138,7 @@ const hexToRgba = (hex: string, alpha: number) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
-type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'topologyEditor' | 'testManagement' | 'results' | 'virtualRoadTest' | 'systemCalibration' | 'commissioning' | 'chartsDemo'
+type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'topologyEditor' | 'testManagement' | 'results' | 'systemCalibration' | 'commissioning' | 'chartsDemo'
 
 type ProbeFormState = Pick<ProbeType, 'ring' | 'polarization' | 'position' | 'is_active'>
 
@@ -276,11 +275,6 @@ const sections: Array<{ key: SectionKey; label: string; description: string }> =
     key: 'results',
     label: '数据归档与报告',
     description: '浏览历史记录、对比结果，并一键生成标准化报告。',
-  },
-  {
-    key: 'virtualRoadTest',
-    label: '虚拟路测',
-    description: '支持数字孪生、传导测试与OTA辐射测试的统一平台。',
   },
   {
     key: 'systemCalibration',
@@ -1187,8 +1181,6 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
       return <TestManagement />
     case 'results':
       return <ReportsPage />
-    case 'virtualRoadTest':
-      return <VirtualRoadTest />
     case 'systemCalibration':
       return <SystemCalibration />
     case 'commissioning':

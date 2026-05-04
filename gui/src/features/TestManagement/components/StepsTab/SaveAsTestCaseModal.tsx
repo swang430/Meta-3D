@@ -24,7 +24,7 @@ export function SaveAsTestCaseModal({ opened, onClose, step }: SaveAsTestCaseMod
   const [name, setName] = useState(`${step.title} (自定义)`);
   const [description, setDescription] = useState(step.description || '');
   const [category, setCategory] = useState<string>('自定义');
-  const [tags, setTags] = useState<string[]>(step.tags || []);
+  const [tags, setTags] = useState<string[]>([]);
 
   const handleSave = async () => {
     if (!name.trim()) {

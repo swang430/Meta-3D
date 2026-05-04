@@ -97,6 +97,7 @@ export interface TestCaseSummary {
   is_template: boolean;
   pass_criteria?: Record<string, any>;
   tags?: string[];
+  usage_count?: number;
   created_by: string;
   created_at: string;
 }

@@ -17,6 +17,7 @@ import {
   IconClock,
   IconChartBar,
   IconPlus,
+  IconRoute,
 } from '@tabler/icons-react'
 import { TestCaseLibrary } from '../../components/TestPlanManagement/TestCaseLibrary'
 import { CreateTestPlanWizard } from '../../components/TestPlanManagement/CreateTestPlanWizard'
@@ -24,6 +25,7 @@ import { PlansTab } from './components/PlansTab'
 import { StepsTab } from './components/StepsTab'
 import { QueueTab } from './components/QueueTab'
 import { HistoryTab } from './components/HistoryTab'
+import { VirtualRoadTest } from '../../components/VirtualRoadTest'
 
 /**
  * Main Test Management Container Component
@@ -83,6 +85,9 @@ export function TestManagement() {
             <Tabs.Tab value="history" leftSection={<IconChartBar size={16} />}>
               执行历史
             </Tabs.Tab>
+            <Tabs.Tab value="virtualRoadTest" leftSection={<IconRoute size={16} />}>
+              虚拟路测
+            </Tabs.Tab>
           </Tabs.List>
 
           {/* Test Case Library Tab — Foundation */}
@@ -112,6 +117,11 @@ export function TestManagement() {
           {/* History Tab */}
           <Tabs.Panel value="history" pt="md">
             <HistoryTab />
+          </Tabs.Panel>
+
+          {/* Virtual Road Test Tab — VRT consolidated as TestCase derivative (test_type='VirtualRoadTest') */}
+          <Tabs.Panel value="virtualRoadTest" pt="md">
+            <VirtualRoadTest />
           </Tabs.Panel>
         </Tabs>
 

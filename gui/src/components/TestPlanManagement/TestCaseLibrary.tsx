@@ -213,6 +213,7 @@ export function TestCaseLibrary({
             { value: 'Throughput', label: '吞吐量' },
             { value: 'ChannelModel', label: '信道模型' },
             { value: 'Handover', label: '切换测试' },
+            { value: 'VirtualRoadTest', label: 'VRT - 虚拟路测' },
             { value: 'Custom', label: '自定义' },
           ]}
           w={180}

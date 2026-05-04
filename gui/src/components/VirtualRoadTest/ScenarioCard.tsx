@@ -14,7 +14,6 @@ import {
   IconRuler,
   IconPlayerPlay,
   IconInfoCircle,
-  IconTransform,
   IconSettings,
   IconDotsVertical,
   IconEdit,
@@ -26,8 +25,6 @@ import type { ScenarioSummary } from '../../types/roadTest'
 import { TestExecutionModal } from './TestExecutionModal'
 import { ScenarioDetailModal } from './ScenarioDetailModal'
 import { EditScenarioDialog } from './EditScenarioDialog'
-import { generateTestPlanFromScenario, canConvertToTestPlan } from '../../utils/scenarioToTestPlan'
-import { createTestPlan } from '../../api/service'
 import { deleteScenario } from '../../api/roadTestService'
 
 interface Props {
@@ -76,7 +73,6 @@ export default function ScenarioCard({ scenario, testMode, onRefresh }: Props) {
   const [executionModalOpened, setExecutionModalOpened] = useState(false)
   const [detailModalOpened, setDetailModalOpened] = useState(false)
   const [editModalOpened, setEditModalOpened] = useState(false)
-  const [converting, setConverting] = useState(false)
 
   // Delete mutation
   const deleteMutation = useMutation({
@@ -126,51 +122,6 @@ export default function ScenarioCard({ scenario, testMode, onRefresh }: Props) {
       confirmProps: { color: 'red' },
       onConfirm: () => deleteMutation.mutate(),
     })
-  }
-
-  const handleConvertToTestPlan = async () => {
-    // 验证场景是否可转换
-    const validation = canConvertToTestPlan(scenario)
-    if (!validation.canConvert) {
-      notifications.show({
-        title: '无法转换',
-        message: validation.reason || '该场景无法转换为测试计划',
-        color: 'red',
-      })
-      return
-    }
-
-    setConverting(true)
-    try {
-      // 从场景生成测试计划
-      const testPlanPayload = generateTestPlanFromScenario(scenario)
-
-      // 调用API创建测试计划
-      const response = await createTestPlan(testPlanPayload)
-
-      // 后端直接返回plan对象
-      const planName = (response as any).plan?.name || (response as any).name || '测试计划'
-
-      notifications.show({
-        title: '创建成功',
-        message: `测试计划 "${planName}" 已创建`,
-        color: 'green',
-      })
-
-      // 刷新父组件
-      if (onRefresh) {
-        onRefresh()
-      }
-    } catch (error: any) {
-      console.error('转换场景失败:', error)
-      notifications.show({
-        title: '转换失败',
-        message: error?.response?.data?.detail || '创建测试计划失败',
-        color: 'red',
-      })
-    } finally {
-      setConverting(false)
-    }
   }
 
   return (
@@ -292,18 +243,6 @@ export default function ScenarioCard({ scenario, testMode, onRefresh }: Props) {
             详情
           </Button>
         </Group>
-
-        <Button
-          fullWidth
-          variant="outline"
-          color="blue"
-          size="sm"
-          leftSection={<IconTransform size={14} />}
-          onClick={handleConvertToTestPlan}
-          loading={converting}
-        >
-          转为测试计划
-        </Button>
       </Stack>
 
       {/* Test Execution Modal */}
