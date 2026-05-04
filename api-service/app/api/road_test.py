@@ -65,6 +65,7 @@ from app.data.scenario_library import (
 )
 from app.services.road_test.vrt_service import vrt_service
 from app.services.road_test.network_topology_service import network_topology_service
+from app.services.road_test.vrt_execution_service import vrt_execution_service
 
 from pydantic import ValidationError
 
@@ -110,19 +111,15 @@ _execution_metrics: dict[str, TestMetrics] = {}
 _execution_phases: dict[str, List[PhaseResult]] = {}  # Store submitted phase results
 _execution_logs: dict[str, List[Dict[str, Any]]] = {}  # Store execution logs
 
-def _log_event(execution_id: str, message: str, level: str = "INFO", source: str = "System"):
-    """Internal helper to log execution events"""
-    from datetime import datetime
-    if execution_id not in _execution_logs:
-        _execution_logs[execution_id] = []
-    
-    log_entry = {
-        "timestamp": datetime.now(),
-        "level": level,
-        "message": message,
-        "source": source
-    }
-    _execution_logs[execution_id].append(log_entry)
+def _log_event(
+    db: Session,
+    execution_id: str,
+    message: str,
+    level: str = "INFO",
+    source: str = "System",
+):
+    """Internal helper to log execution events (DB-backed via vrt_execution_service)."""
+    vrt_execution_service.append_log(db, execution_id, level=level, message=message, source=source)
     logger.info(f"[{execution_id}] {message}")
 
 
@@ -514,40 +511,23 @@ async def validate_topology(topology_id: str, db: Session = Depends(get_db)):
 @router.get("/executions", response_model=List[ExecutionSummary])
 async def list_executions(
     mode: Optional[TestMode] = None,
-    status: Optional[ExecutionStatus] = None
+    status: Optional[ExecutionStatus] = None,
+    db: Session = Depends(get_db),
 ):
     """
-    List all test executions
+    List all test executions (DB-backed via test_executions table).
     """
-    executions = list(_executions.values())
-
-    # Filter by mode
-    if mode:
-        executions = [e for e in executions if e.mode == mode]
-
-    # Filter by status
-    if status:
-        executions = [e for e in executions if e.status == status]
-
-    summaries = [
-        ExecutionSummary(
-            execution_id=e.execution_id,
-            mode=e.mode,
-            status=e.status,
-            scenario_name=get_scenario_by_id(e.scenario_id).name if get_scenario_by_id(e.scenario_id) else e.scenario_id,
-            start_time=e.start_time,
-            duration_s=e.duration_s,
-            progress_percent=_execution_status.get(e.execution_id, TestStatus(
-                execution_id=e.execution_id,
-                status=e.status,
-                progress_percent=0,
-                elapsed_time_s=0
-            )).progress_percent,
-            created_by=e.created_by
-        )
-        for e in executions
-    ]
-
+    rows = vrt_execution_service.list(db, mode=mode, status=status)
+    summaries = []
+    for row in rows:
+        # Resolve scenario name from standard library or DB-backed custom scenarios
+        std = get_scenario_by_id(row.scenario_id) if row.scenario_id else None
+        if std is not None:
+            scenario_name = std.name
+        else:
+            custom = _get_custom_scenario(db, row.scenario_id) if row.scenario_id else None
+            scenario_name = custom.name if custom else (row.scenario_id or "")
+        summaries.append(vrt_execution_service.to_summary(row, scenario_name))
     return summaries
 
 
@@ -578,195 +558,120 @@ async def create_execution(
         if not network_topology_service.exists(db, execution_create.topology_id):
             raise HTTPException(status_code=404, detail=f"Topology '{execution_create.topology_id}' not found")
 
-    # Generate execution ID
-    import uuid
-    execution_id = f"exec-{uuid.uuid4().hex[:12]}"
-
-    # Create execution
-    from datetime import datetime
-    execution = TestExecution(
-        execution_id=execution_id,
+    # Persist via service (initial state IDLE, log entry written automatically)
+    row = vrt_execution_service.create(
+        db,
         mode=execution_create.mode,
-        status=ExecutionStatus.IDLE,
         scenario_id=execution_create.scenario_id,
         topology_id=execution_create.topology_id,
         config=execution_create.config,
-        notes=execution_create.notes
+        notes=execution_create.notes,
+        created_by="api",
     )
-
-    _executions[execution_id] = execution
-
-    # Initialize status
-    _execution_status[execution_id] = TestStatus(
-        execution_id=execution_id,
-        status=ExecutionStatus.IDLE,
-        progress_percent=0,
-        elapsed_time_s=0
-    )
-
-    logger.info(f"Created execution: {execution_id} (mode={execution_create.mode})")
-    
-    # Initialize logs
-    _execution_logs[execution_id] = []
-    _log_event(execution_id, f"Execution created in mode: {execution_create.mode}", "INFO")
-    
-    return execution
+    return vrt_execution_service.to_test_execution(row)
 
 
 @router.get("/executions/{execution_id}", response_model=TestExecution)
-async def get_execution(execution_id: str):
+async def get_execution(execution_id: str, db: Session = Depends(get_db)):
     """
     Get execution details
     """
-    if execution_id not in _executions:
+    row = vrt_execution_service.get(db, execution_id)
+    if row is None:
         raise HTTPException(status_code=404, detail=f"Execution '{execution_id}' not found")
-
-    return _executions[execution_id]
+    return vrt_execution_service.to_test_execution(row)
 
 
 @router.post("/executions/{execution_id}/control")
 async def control_execution(
-    execution_id: str, 
+    execution_id: str,
     control: ExecutionControl,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
-    Control execution (start/pause/resume/stop)
+    Control execution (start/pause/resume/stop/complete) — DB-backed state machine.
     """
-    if execution_id not in _executions:
+    row = vrt_execution_service.get(db, execution_id)
+    if row is None:
         raise HTTPException(status_code=404, detail=f"Execution '{execution_id}' not found")
 
-    execution = _executions[execution_id]
-    status = _execution_status[execution_id]
+    current = ExecutionStatus(row.status)
+    action = control.action.value if hasattr(control.action, "value") else control.action
+    logger.info("[Control] %s requested for %s (current=%s)", action, execution_id, current.value)
 
-    # Handle control actions
-    logger.info(f"[Control] Received action: {control.action} (Type: {type(control.action)})")
-    print(f"DEBUG_PRINT: Received action: {control.action}")
-    
-    if control.action == "start":
-        if execution.status != ExecutionStatus.IDLE:
+    if action == "start":
+        if current != ExecutionStatus.IDLE:
             raise HTTPException(status_code=400, detail="Execution already started")
+        vrt_execution_service.start(db, execution_id)
 
-        execution.status = ExecutionStatus.RUNNING
-        status.status = ExecutionStatus.RUNNING
-
-        from datetime import datetime
-        execution.start_time = datetime.now()
-
-        execution.start_time = datetime.now()
-        _log_event(execution_id, "Test execution started", "INFO")
-        logger.info(f"Started execution: {execution_id}")
-
-    elif control.action == "pause":
-        if execution.status != ExecutionStatus.RUNNING:
+    elif action == "pause":
+        if current != ExecutionStatus.RUNNING:
             raise HTTPException(status_code=400, detail="Execution not running")
+        vrt_execution_service.pause(db, execution_id)
 
-        execution.status = ExecutionStatus.PAUSED
-        status.status = ExecutionStatus.PAUSED
-
-        logger.info(f"Paused execution: {execution_id}")
-        _log_event(execution_id, "Test execution paused", "INFO")
-
-    elif control.action == "resume":
-        if execution.status != ExecutionStatus.PAUSED:
+    elif action == "resume":
+        if current != ExecutionStatus.PAUSED:
             raise HTTPException(status_code=400, detail="Execution not paused")
+        vrt_execution_service.resume(db, execution_id)
 
-        execution.status = ExecutionStatus.RUNNING
-        status.status = ExecutionStatus.RUNNING
-
-        logger.info(f"Resumed execution: {execution_id}")
-        _log_event(execution_id, "Test execution resumed", "INFO")
-
-    elif control.action == "stop":
-        if execution.status in [ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.STOPPED]:
+    elif action == "stop":
+        if current in (ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.STOPPED):
             raise HTTPException(status_code=400, detail="Execution already finished")
-
-        execution.status = ExecutionStatus.STOPPED
-        status.status = ExecutionStatus.STOPPED
-
-        from datetime import datetime
-        execution.end_time = datetime.now()
-        if execution.start_time:
-            execution.duration_s = (execution.end_time - execution.start_time).total_seconds()
-
-            execution.duration_s = (execution.end_time - execution.start_time).total_seconds()
-
-        print(f"DEBUG_PRINT: Stopping execution {execution_id}. Status: {execution.status}")
-        logger.info(f"Stopped execution: {execution_id}")
-        _log_event(execution_id, "Test execution stopped by user", "WARNING")
-
-        # Auto-archive report
-        print(f"DEBUG_PRINT: Calling _archive_execution_report for {execution_id}")
+        vrt_execution_service.stop(db, execution_id)
         await _archive_execution_report(execution_id, db)
 
-    elif control.action == "complete":
-        if execution.status in [ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.STOPPED]:
+    elif action == "complete":
+        if current in (ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.STOPPED):
             raise HTTPException(status_code=400, detail="Execution already finished")
-
-        execution.status = ExecutionStatus.COMPLETED
-        status.status = ExecutionStatus.COMPLETED
-        status.progress_percent = 100
-
-        from datetime import datetime
-        execution.end_time = datetime.now()
-        if execution.start_time:
-            execution.duration_s = (execution.end_time - execution.start_time).total_seconds()
-
-            execution.duration_s = (execution.end_time - execution.start_time).total_seconds()
-
-        logger.info(f"Completed execution: {execution_id}")
-        _log_event(execution_id, "Test execution completed successfully", "INFO")
-
-        # Auto-archive report
+        vrt_execution_service.complete(db, execution_id)
         await _archive_execution_report(execution_id, db)
 
-    return {"status": "success", "execution_id": execution_id, "action": control.action}
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
+
+    return {"status": "success", "execution_id": execution_id, "action": action}
 
 
 @router.get("/executions/{execution_id}/status", response_model=TestStatus)
-async def get_execution_status(execution_id: str):
+async def get_execution_status(execution_id: str, db: Session = Depends(get_db)):
     """
-    Get real-time execution status
+    Get real-time execution status (derived from test_executions row).
     """
-    if execution_id not in _execution_status:
+    row = vrt_execution_service.get(db, execution_id)
+    if row is None:
         raise HTTPException(status_code=404, detail=f"Execution '{execution_id}' not found")
-
-    return _execution_status[execution_id]
+    return vrt_execution_service.to_test_status(row)
 
 
 @router.get("/executions/{execution_id}/metrics", response_model=TestMetrics)
-async def get_execution_metrics(execution_id: str):
+async def get_execution_metrics(execution_id: str, db: Session = Depends(get_db)):
     """
-    Get execution metrics (KPI time series)
+    Get execution metrics (KPI time series) from vrt_kpi_samples + JSONB summary.
     """
-    if execution_id not in _executions:
+    row = vrt_execution_service.get(db, execution_id)
+    if row is None:
         raise HTTPException(status_code=404, detail=f"Execution '{execution_id}' not found")
-
-    # Return metrics if available, otherwise empty
-    if execution_id in _execution_metrics:
-        return _execution_metrics[execution_id]
-    else:
-        return TestMetrics(
-            execution_id=execution_id,
-            kpi_samples=[],
-            summary={},
-            events=[],
-            kpi_results={}
-        )
+    samples = vrt_execution_service.query_kpi_samples(db, execution_id)
+    return vrt_execution_service.to_test_metrics(row, samples)
 
 
 @router.post("/executions/{execution_id}/metrics")
-async def submit_execution_metrics(execution_id: str, metrics: ExecutionMetricsSubmit):
+async def submit_execution_metrics(
+    execution_id: str,
+    metrics: ExecutionMetricsSubmit,
+    db: Session = Depends(get_db),
+):
     """
     Submit execution metrics collected during test run.
 
-    This endpoint receives metrics collected by the frontend during test execution,
-    including time series data, phase results, events, and KPI summary.
+    Receives time series + phase results + events + KPI summary, persists to
+    vrt_kpi_samples table and JSONB columns on test_executions.
     """
-    if execution_id not in _executions:
+    row = vrt_execution_service.get(db, execution_id)
+    if row is None:
         raise HTTPException(status_code=404, detail=f"Execution '{execution_id}' not found")
 
-    # Convert TimeSeriesPoint to KPIMetrics for storage
+    # 1. Convert TimeSeriesPoint → KPIMetrics for the KPI samples table
     kpi_samples = [
         KPIMetrics(
             time_s=p.time_s,
@@ -777,32 +682,30 @@ async def submit_execution_metrics(execution_id: str, metrics: ExecutionMetricsS
             ul_throughput_mbps=p.ul_throughput_mbps,
             latency_ms=p.latency_ms,
             position=p.position,
-            event_occurred=p.event
+            event_occurred=p.event,
         )
         for p in metrics.time_series
     ]
 
-    # Compute summary statistics from KPI summary
-    summary = {}
-    for kpi in metrics.kpi_summary:
-        summary[kpi.name] = {
-            "mean": kpi.mean,
-            "min": kpi.min,
-            "max": kpi.max,
-            "std": kpi.std,
-            "target": kpi.target,
-            "passed": kpi.passed
+    # 2. Build summary from kpi_summary
+    summary = {
+        kpi.name: {
+            "mean": kpi.mean, "min": kpi.min, "max": kpi.max,
+            "std": kpi.std, "target": kpi.target, "passed": kpi.passed,
         }
+        for kpi in metrics.kpi_summary
+    }
 
-    # Store metrics - Frontend sends full history, so we overwrite/update exactly
+    # 3. Persist (frontend sends full history each call → simplest is replace; for now we append).
     try:
-        logger.info(f"Storing metrics for {execution_id}: {len(kpi_samples)} samples")
-        _execution_metrics[execution_id] = TestMetrics(
-            execution_id=execution_id,
-            kpi_samples=kpi_samples,
-            summary=summary,
-            events=metrics.events,
-            kpi_results={} # populated from phases/analysis later if needed
+        n = vrt_execution_service.insert_kpi_samples(db, execution_id, kpi_samples)
+        vrt_execution_service.set_summary(db, execution_id, summary)
+        vrt_execution_service.append_events(db, execution_id, metrics.events)
+        vrt_execution_service.set_phase_results(
+            db, execution_id, [p.model_dump(mode="json") for p in metrics.phases]
+        )
+        logger.info(
+            "Stored metrics for %s: %d samples, %d phases", execution_id, n, len(metrics.phases)
         )
     except Exception as e:
         logger.error(f"Error storing metrics: {e}")
@@ -810,15 +713,10 @@ async def submit_execution_metrics(execution_id: str, metrics: ExecutionMetricsS
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error storing metrics: {str(e)}")
 
-    # Store phase results
-    _execution_phases[execution_id] = metrics.phases
-
-    logger.info(f"Received metrics for execution {execution_id}: {len(metrics.time_series)} points, {len(metrics.phases)} phases")
-
     return {
         "status": "success",
         "points_received": len(metrics.time_series),
-        "phases_received": len(metrics.phases)
+        "phases_received": len(metrics.phases),
     }
 
 
@@ -958,10 +856,11 @@ def get_attr_or_item(obj: Any, key: str, default: Any = None) -> Any:
 async def _generate_execution_report(execution_id: str, db: Session) -> ExecutionReport:
     """Internal function to generate report"""
     try:
-        if execution_id not in _executions:
+        row = vrt_execution_service.get(db, execution_id)
+        if row is None:
             raise HTTPException(status_code=404, detail=f"Execution '{execution_id}' not found")
 
-        execution = _executions[execution_id]
+        execution = vrt_execution_service.to_test_execution(row)
 
         if execution.status not in [ExecutionStatus.COMPLETED, ExecutionStatus.STOPPED, ExecutionStatus.FAILED]:
             raise HTTPException(
@@ -1096,11 +995,11 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
 
     base_time = execution.start_time or datetime.now()
 
-    # Check if we have real metrics data
-    has_real_metrics = (
-        execution_id in _execution_metrics and
-        len(_execution_metrics[execution_id].kpi_samples) > 0
-    )
+    # Pull real metrics + phases from DB (Phase 2.4c)
+    kpi_samples_orm = vrt_execution_service.query_kpi_samples(db, execution_id)
+    metrics_obj = vrt_execution_service.to_test_metrics(row, kpi_samples_orm)
+    has_real_metrics = len(metrics_obj.kpi_samples) > 0
+    persisted_phases = vrt_execution_service.to_phase_results(row)
 
     # Initialize new fields
     time_series_data = []
@@ -1113,11 +1012,11 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
     try:
         if has_real_metrics:
             # ===== Use real collected data =====
-            metrics = _execution_metrics[execution_id]
+            metrics = metrics_obj
 
             # Use submitted phases if available
-            if execution_id in _execution_phases:
-                phases = _execution_phases[execution_id]
+            if persisted_phases:
+                phases = persisted_phases
             else:
                 # Fallback to generating phases from metrics
                 phases = [
@@ -1380,8 +1279,8 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
             base_station_config_detail=base_station_config_detail,
             digital_twin_config=digital_twin_config,
             custom_config_highlights=custom_config_highlights,
-            # NEW: Logs
-            logs=_execution_logs.get(execution_id, []),
+            # NEW: Logs (from execution_logs JSONB column)
+            logs=row.execution_logs or [],
             # Metadata
             generated_at=datetime.now(),
             notes=execution.notes
@@ -1405,16 +1304,22 @@ async def stream_execution_metrics(websocket: WebSocket, execution_id: str):
     Client sends: {"subscribe": ["metrics", "events", "logs"]}
     Server sends: {"type": "metrics", "data": {...}}
     """
-    # Validate execution_id exists before accepting connection
-    if execution_id not in _executions:
-        await websocket.close(code=4004, reason=f"Execution {execution_id} not found")
-        logger.warning(f"WebSocket connection rejected: Execution {execution_id} not found")
-        return
+    # Validate execution_id exists before accepting connection.
+    # FastAPI's Depends(get_db) doesn't apply to WebSockets, so we create a
+    # short-lived session manually for the validation + initial log write.
+    from app.db.database import SessionLocal
+    db = SessionLocal()
+    try:
+        if vrt_execution_service.get(db, execution_id) is None:
+            await websocket.close(code=4004, reason=f"Execution {execution_id} not found")
+            logger.warning(f"WebSocket connection rejected: Execution {execution_id} not found")
+            return
+        _log_event(db, execution_id, "Frontend monitor connected", "INFO")
+    finally:
+        db.close()
 
     await websocket.accept()
-
     logger.info(f"WebSocket connected for execution: {execution_id}")
-    _log_event(execution_id, "Frontend monitor connected", "INFO")
 
     try:
         # Receive subscription request
