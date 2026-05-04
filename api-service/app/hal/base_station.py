@@ -56,6 +56,8 @@ class ThroughputMetrics:
         rank_indicator: int = 1,
         mcs_dl: int = 0,
         mcs_ul: int = 0,
+        rsrp_dbm: float = -999.0,
+        sinr_db: float = -999.0,
     ):
         self.dl_throughput_mbps = dl_throughput_mbps
         self.ul_throughput_mbps = ul_throughput_mbps
@@ -65,6 +67,8 @@ class ThroughputMetrics:
         self.rank_indicator = rank_indicator
         self.mcs_dl = mcs_dl
         self.mcs_ul = mcs_ul
+        self.rsrp_dbm = rsrp_dbm
+        self.sinr_db = sinr_db
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -76,6 +80,8 @@ class ThroughputMetrics:
             "rank_indicator": self.rank_indicator,
             "mcs_dl": self.mcs_dl,
             "mcs_ul": self.mcs_ul,
+            "rsrp_dbm": self.rsrp_dbm,
+            "sinr_db": self.sinr_db,
         }
 
 

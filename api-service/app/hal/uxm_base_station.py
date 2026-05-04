@@ -121,6 +121,12 @@ class UxmScpiCommands:
     MEAS_CSI_CQI = "MEASure:NR5G:{cell}:CSI:CQI:STATistics?"
     MEAS_CSI_RI = "MEASure:NR5G:{cell}:CSI:RI:HISTogram?"
 
+    # --- UE 测量上报 (RSRP / SINR) ---
+    # UXM 通过 UE Measurement Report 子系统获取 L3 滤波后的 RSRP 和 SINR
+    # 返回格式: "mean,min,max" (dBm / dB)
+    MEAS_UE_RSRP = "MEASure:NR5G:{cell}:UEReport:RSRP:STATistics?"
+    MEAS_UE_SINR = "MEASure:NR5G:{cell}:UEReport:SINR:STATistics?"
+
     # --- EVM (错误向量幅度) ---
     MEAS_EVM_START = "MEASure:NR5G:{cell}:PHY:EVM:STARt"
 
@@ -1307,6 +1313,26 @@ class RealUxmDriver(BaseStationDriver):
                 except (ValueError, IndexError):
                     pass
 
+            # ── RSRP (UE 测量上报, 格式: "mean,min,max") ──
+            rsrp_str = self._query(
+                UxmScpiCommands.MEAS_UE_RSRP.format(cell=cell)
+            )
+            if rsrp_str and rsrp_str.strip():
+                try:
+                    metrics.rsrp_dbm = float(rsrp_str.split(",")[0])
+                except (ValueError, IndexError):
+                    pass
+
+            # ── SINR (UE 测量上报, 格式: "mean,min,max") ──
+            sinr_str = self._query(
+                UxmScpiCommands.MEAS_UE_SINR.format(cell=cell)
+            )
+            if sinr_str and sinr_str.strip():
+                try:
+                    metrics.sinr_db = float(sinr_str.split(",")[0])
+                except (ValueError, IndexError):
+                    pass
+
         except Exception as e:
             logger.warning(f"[UXM] get_throughput_metrics partial fail: {e}")
 
@@ -1315,7 +1341,8 @@ class RealUxmDriver(BaseStationDriver):
         meas_logger = logging.getLogger("app.measurement.throughput")
         meas_logger.info(
             f"[KPI] DL={metrics.dl_throughput_mbps:.1f}Mbps "
-            f"BLER={metrics.dl_bler:.4f} CQI={metrics.cqi} RI={metrics.rank_indicator}",
+            f"BLER={metrics.dl_bler:.4f} CQI={metrics.cqi} RI={metrics.rank_indicator} "
+            f"RSRP={metrics.rsrp_dbm:.1f}dBm SINR={metrics.sinr_db:.1f}dB",
             extra={
                 "instrument_id": self.instrument_id,
                 "dl_throughput_mbps": metrics.dl_throughput_mbps,
@@ -1326,6 +1353,8 @@ class RealUxmDriver(BaseStationDriver):
                 "rank_indicator": metrics.rank_indicator,
                 "mcs_dl": getattr(metrics, "mcs_dl", None),
                 "mcs_ul": getattr(metrics, "mcs_ul", None),
+                "rsrp_dbm": metrics.rsrp_dbm,
+                "sinr_db": metrics.sinr_db,
                 "band": self._band,
                 "bandwidth_mhz": self._bandwidth_mhz,
                 "dl_power_dbm": self._dl_power_dbm,

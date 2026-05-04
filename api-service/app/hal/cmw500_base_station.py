@@ -122,6 +122,12 @@ class CmwScpiCommands:
     EBLER_PCC = "FETCh:LTE:SIGN{i}:EBLer:PCC:ABSolute?"
     EBLER_CQI = "FETCh:LTE:SIGN{i}:EBLer:PCC:CQIReporting:STReam1?"
 
+    # --- UE 测量上报 (RSRP / SINR) ---
+    # CMW500 通过 FETCh 子系统获取 UE 上报的 L3 RSRP 和 SINR
+    # 返回格式: "<value>" (dBm / dB)
+    UE_RSRP = "SENSe:LTE:SIGN{i}:UEReport:RSRP?"
+    UE_SINR = "SENSe:LTE:SIGN{i}:UEReport:SINR?"
+
     # --- 信令 BLER (Extended BLER) ---
     INIT_EBLER = "INITiate:LTE:SIGN{i}:EBLer"
     EBLER_REPS = "CONFigure:LTE:SIGN{i}:EBLer:REPetition"
@@ -628,6 +634,43 @@ class RealCmw500Driver(BaseStationDriver):
             logger.warning(
                 f"[CMW500] get_throughput_metrics partial fail: {e}"
             )
+
+        # ── RSRP (UE 测量上报) ──
+        try:
+            rsrp_str = self._query(self._fmt(CmwScpiCommands.UE_RSRP))
+            if rsrp_str and rsrp_str.strip():
+                metrics.rsrp_dbm = float(rsrp_str.strip().split(",")[0])
+        except Exception:
+            pass
+
+        # ── SINR (UE 测量上报) ──
+        try:
+            sinr_str = self._query(self._fmt(CmwScpiCommands.UE_SINR))
+            if sinr_str and sinr_str.strip():
+                metrics.sinr_db = float(sinr_str.strip().split(",")[0])
+        except Exception:
+            pass
+
+        # ── 测量数据归档 → measurement.log ──
+        meas_logger = logging.getLogger("app.measurement.throughput")
+        meas_logger.info(
+            f"[KPI] DL={metrics.dl_throughput_mbps:.1f}Mbps "
+            f"BLER={metrics.dl_bler:.4f} CQI={metrics.cqi} "
+            f"RSRP={metrics.rsrp_dbm:.1f}dBm SINR={metrics.sinr_db:.1f}dB",
+            extra={
+                "instrument_id": self.instrument_id,
+                "dl_throughput_mbps": metrics.dl_throughput_mbps,
+                "dl_bler": metrics.dl_bler,
+                "ul_throughput_mbps": metrics.ul_throughput_mbps,
+                "ul_bler": metrics.ul_bler,
+                "cqi": metrics.cqi,
+                "rsrp_dbm": metrics.rsrp_dbm,
+                "sinr_db": metrics.sinr_db,
+                "band": self._band,
+                "bandwidth_mhz": self._bandwidth_mhz,
+                "dl_power_dbm": self._dl_power_dbm,
+            },
+        )
 
         return metrics
 

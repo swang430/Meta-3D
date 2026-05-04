@@ -364,26 +364,59 @@ class ReportDataCollector:
         return stats
 
     def _build_time_series(self, executions: List[TestExecution]) -> List[TimeSeriesPoint]:
-        """Build time series data from executions"""
+        """
+        Build time series data from executions.
+
+        优先从 _raw_time_series 中展开每个 KPI 采样点，
+        以保留细粒度时域分辨率（RSRP/SINR/吞吐量趋势图）。
+        如果没有 _raw_time_series，回退到聚合标量值。
+        """
         time_series = []
 
         for execution in executions:
             if not execution.executed_at:
                 continue
 
-            # Extract all numeric values from measurements
-            values = {}
-            if execution.measurements:
-                for metric, value in execution.measurements.items():
-                    if isinstance(value, (int, float)):
-                        values[metric] = float(value)
+            exec_id_str = str(execution.id)
+            raw_series = (execution.measurements or {}).get("_raw_time_series")
 
-            if values:
-                time_series.append(TimeSeriesPoint(
-                    timestamp=execution.executed_at,
-                    execution_id=str(execution.id),
-                    values=values,
-                ))
+            if raw_series and isinstance(raw_series, list) and len(raw_series) > 0:
+                # BUG-4 FIX: Unpack raw KPI samples into individual TimeSeriesPoints
+                for sample in raw_series:
+                    # Parse timestamp from the sample, fall back to execution time
+                    sample_ts = execution.executed_at
+                    if "timestamp" in sample:
+                        try:
+                            from dateutil.parser import parse as dt_parse
+                            sample_ts = dt_parse(sample["timestamp"]).replace(tzinfo=None)
+                        except Exception:
+                            pass
+
+                    values = {}
+                    for k, v in sample.items():
+                        if k != "timestamp" and isinstance(v, (int, float)):
+                            values[k] = float(v)
+
+                    if values:
+                        time_series.append(TimeSeriesPoint(
+                            timestamp=sample_ts,
+                            execution_id=exec_id_str,
+                            values=values,
+                        ))
+            else:
+                # Fallback: use aggregated scalar values from measurements
+                values = {}
+                if execution.measurements:
+                    for metric, value in execution.measurements.items():
+                        if isinstance(value, (int, float)):
+                            values[metric] = float(value)
+
+                if values:
+                    time_series.append(TimeSeriesPoint(
+                        timestamp=execution.executed_at,
+                        execution_id=exec_id_str,
+                        values=values,
+                    ))
 
         return time_series
 

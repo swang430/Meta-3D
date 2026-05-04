@@ -1359,8 +1359,27 @@ class TestExecutionService:
         test_plan.completed_test_cases = 0
         test_plan.failed_test_cases = 0
 
+        # BUG-1 FIX: Bind session context so measurement.log entries carry the plan ID
+        try:
+            from app.core.logging_config import current_session_id
+            current_session_id.set(str(test_plan_id))
+        except Exception:
+            pass  # Non-critical: time-window matching is the primary strategy
+
         db.commit()
         db.refresh(test_plan)
+
+        # BUG-5 FIX: Audit logging
+        audit_logger = logging.getLogger("app.audit")
+        audit_logger.info(
+            "测试计划启动",
+            extra={
+                "user_id": started_by,
+                "action": "start_test_plan",
+                "target": str(test_plan_id),
+                "test_plan_name": test_plan.name,
+            },
+        )
 
         logger.info(f"Started test plan {test_plan_id} by {started_by}")
         return test_plan
@@ -1410,10 +1429,205 @@ class TestExecutionService:
         db.add(plan_execution)
         db.commit()
 
+        # Archive KPI data from measurement.log to TestExecution records
+        try:
+            self._archive_measurements_to_executions(db, test_plan, test_plan_id)
+        except Exception as e:
+            import traceback
+            logger.error(f"Failed to archive measurements for test plan {test_plan_id}: {e}\n{traceback.format_exc()}")
+
+        # Auto-generate TestReport so it shows up in Data Archiving
+        try:
+            from app.services.report_service import ReportService
+            from app.models.report import ReportType, ReportFormat
+            
+            executions = db.query(TestExecution).filter(TestExecution.test_plan_id == test_plan_id).all()
+            execution_ids = [e.id for e in executions]
+            
+            report_service = ReportService()
+            report = report_service.create_report(
+                db=db,
+                title=f"MIMO OTA 测试报告: {test_plan.name}",
+                report_type=ReportType.SINGLE_EXECUTION,
+                format=ReportFormat.PDF,
+                generated_by=test_plan.created_by or "system",
+                test_plan_id=test_plan_id,
+                test_execution_ids=execution_ids,
+                description=test_plan.description or f"Auto-generated report for test plan {test_plan.name}",
+                notes="Generated from TestExecutionService.complete_test_plan",
+                tags=["MIMO OTA", "Auto-Archive"]
+            )
+            
+            # Synchronous generation — complete_test_plan runs at end of long test
+            report_service.generate_report(db, report.id)
+            logger.info(f"Auto-generated test report {report.id} for plan {test_plan_id}")
+        except Exception as e:
+            import traceback
+            logger.error(f"Failed to generate auto-report for test plan {test_plan_id}: {e}\n{traceback.format_exc()}")
+
+        # BUG-5 FIX: Audit logging for test completion
+        audit_logger = logging.getLogger("app.audit")
+        audit_logger.info(
+            "测试计划完成",
+            extra={
+                "user_id": test_plan.created_by or "system",
+                "action": "complete_test_plan",
+                "target": str(test_plan_id),
+                "test_plan_name": test_plan.name,
+                "duration_minutes": test_plan.actual_duration_minutes or 0.0,
+                "completed_cases": test_plan.completed_test_cases or 0,
+                "failed_cases": test_plan.failed_test_cases or 0,
+            },
+        )
+
         db.refresh(test_plan)
 
         logger.info(f"Completed test plan {test_plan_id}")
         return test_plan
+
+    def _archive_measurements_to_executions(
+        self, db: Session, test_plan: TestPlan, test_plan_id: UUID
+    ) -> None:
+        """
+        Parse measurement.log to extract KPI data and serialize to TestExecution records.
+
+        匹配策略 (三级降级):
+          1. session_id == execution_id  (精确匹配)
+          2. session_id == test_plan_id  (计划级匹配)
+          3. 时间窗口: test_plan.started_at <= log_ts <= completed_at  (兜底)
+        """
+        import os
+        import json
+        import glob
+        from collections import defaultdict
+        from datetime import timezone
+
+        # 1. Fetch all executions for this test plan
+        executions = db.query(TestExecution).filter(
+            TestExecution.test_plan_id == test_plan_id
+        ).all()
+        if not executions:
+            logger.info(f"No executions found for plan {test_plan_id}, skipping measurement archival")
+            return
+
+        execution_ids = {str(e.id) for e in executions}
+        plan_id_str = str(test_plan_id)
+
+        # 2. Compute time window from test_plan for fallback matching
+        plan_start = test_plan.started_at
+        plan_end = test_plan.completed_at or datetime.utcnow()
+
+        # 3. Scan measurement log files
+        log_dir = os.path.join(os.getcwd(), 'logs')
+        log_files = sorted(
+            glob.glob(os.path.join(log_dir, 'measurement.log*')),
+            key=lambda f: os.path.getmtime(f) if os.path.exists(f) else 0,
+        )
+
+        # Metadata fields to exclude from KPI payload
+        _META_KEYS = {"ts", "level", "logger", "msg", "hal_mode", "session_id", "instrument_id"}
+
+        # Collect all matched KPI entries
+        all_matched_kpis: list = []
+
+        for log_file in log_files:
+            if not os.path.exists(log_file):
+                continue
+            with open(log_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        continue
+
+                    if "app.measurement" not in entry.get("logger", ""):
+                        continue
+
+                    sid = entry.get("session_id", "-")
+                    matched = False
+
+                    # Strategy 1: exact execution_id match
+                    if sid in execution_ids:
+                        matched = True
+                    # Strategy 2: plan_id match
+                    elif sid == plan_id_str:
+                        matched = True
+                    # Strategy 3: time-window match (fallback)
+                    elif plan_start and "ts" in entry:
+                        try:
+                            from dateutil.parser import parse as dt_parse
+                            log_ts = dt_parse(entry["ts"]).replace(tzinfo=None)
+                            if plan_start <= log_ts <= plan_end:
+                                matched = True
+                        except Exception:
+                            pass
+
+                    if matched:
+                        kpi_data = {
+                            k: v for k, v in entry.items() if k not in _META_KEYS
+                        }
+                        if "ts" in entry:
+                            kpi_data["timestamp"] = entry["ts"]
+                        all_matched_kpis.append(kpi_data)
+
+        if not all_matched_kpis:
+            logger.warning(
+                f"No measurement.log entries matched for plan {test_plan_id} "
+                f"(window: {plan_start} ~ {plan_end})"
+            )
+            return
+
+        logger.info(
+            f"Matched {len(all_matched_kpis)} measurement entries for plan {test_plan_id}"
+        )
+
+        # 4. Distribute KPIs across executions
+        #    If only 1 execution, all KPIs go to it.
+        #    If multiple, distribute evenly by index.
+        executions_sorted = sorted(executions, key=lambda e: e.executed_at or datetime.min)
+        n_exec = len(executions_sorted)
+        chunk_size = max(1, len(all_matched_kpis) // n_exec)
+
+        for idx, execution in enumerate(executions_sorted):
+            start_i = idx * chunk_size
+            end_i = len(all_matched_kpis) if idx == n_exec - 1 else (idx + 1) * chunk_size
+            kpis = all_matched_kpis[start_i:end_i]
+
+            if not kpis:
+                continue
+
+            if not execution.measurements:
+                execution.measurements = {}
+            if not execution.test_results:
+                execution.test_results = {}
+
+            # Store raw time series (prefixed with _ so ReportDataCollector skips it)
+            execution.measurements["_raw_time_series"] = kpis
+
+            # Aggregate scalar averages into measurements (for statistics/charts)
+            numeric_keys = [
+                k for k in kpis[0].keys()
+                if k != "timestamp" and isinstance(kpis[0].get(k), (int, float))
+            ]
+            for key in numeric_keys:
+                values = [kpi[key] for kpi in kpis if isinstance(kpi.get(key), (int, float))]
+                if values:
+                    execution.measurements[key] = sum(values) / len(values)
+
+            # BUG-2 FIX: test_results stores ONLY summary metadata, not duplicated KPIs
+            execution.test_results["_kpi_sample_count"] = len(kpis)
+            execution.test_results["_archived_at"] = datetime.utcnow().isoformat()
+
+            db.add(execution)
+
+        db.commit()
+        logger.info(
+            f"Archived {len(all_matched_kpis)} measurements across "
+            f"{n_exec} executions for plan {test_plan_id}"
+        )
 
     def pause_test_plan(self, db: Session, test_plan_id: UUID) -> TestPlan:
         """Pause a running test plan"""
@@ -1492,6 +1706,26 @@ class TestExecutionService:
         )
         db.add(plan_execution)
         db.commit()
+
+        # BUG-3 FIX: Archive partial measurements even on cancellation
+        try:
+            self._archive_measurements_to_executions(db, test_plan, test_plan_id)
+        except Exception as e:
+            logger.error(f"Failed to archive measurements on cancel for {test_plan_id}: {e}")
+
+        # BUG-5 FIX: Audit logging for cancellation
+        audit_logger = logging.getLogger("app.audit")
+        audit_logger.info(
+            "测试计划取消",
+            extra={
+                "user_id": test_plan.created_by or "system",
+                "action": "cancel_test_plan",
+                "target": str(test_plan_id),
+                "test_plan_name": test_plan.name,
+                "completed_cases": completed_steps,
+                "failed_cases": failed_steps,
+            },
+        )
 
         db.refresh(test_plan)
 
