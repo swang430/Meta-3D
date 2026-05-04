@@ -157,15 +157,17 @@ class TestExecution(Base):
     """
     Test Execution - 测试执行记录
 
-    记录测试计划或测试用例的每次执行结果。
+    记录测试计划或测试用例的每次执行结果。VRT (Virtual Road Test) 执行
+    也使用此表;test_plan_id/test_case_id 在 VRT 直接通过 /road-test/executions
+    创建的"孤立"执行场景下可为 NULL,Phase 4 前端收口后会逐步消除该路径。
     """
     __tablename__ = "test_executions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    # Association
-    test_plan_id = Column(UUID(as_uuid=True), ForeignKey('test_plans.id'), nullable=False)
-    test_case_id = Column(UUID(as_uuid=True), ForeignKey('test_cases.id'), nullable=False)
+    # Association — nullable for VRT-direct executions (Phase 2.4)
+    test_plan_id = Column(UUID(as_uuid=True), ForeignKey('test_plans.id'), nullable=True)
+    test_case_id = Column(UUID(as_uuid=True), ForeignKey('test_cases.id'), nullable=True)
 
     # Execution order
     execution_order = Column(Integer, comment="Order in test plan")
@@ -175,12 +177,13 @@ class TestExecution(Base):
         String(50),
         nullable=False,
         default="pending",
-        comment="pending | running | completed | failed | skipped"
+        comment="pending | running | completed | failed | skipped | "
+                "idle | initializing | configured | paused | stopped (VRT-specific)"
     )
 
     # Results
-    test_results = Column(JSON, comment="Detailed test results")
-    measurements = Column(JSON, comment="Raw measurement data")
+    test_results = Column(JSON, comment="Detailed test results / KPI summary")
+    measurements = Column(JSON, comment="Raw measurement data / aggregated stats")
 
     # Pass/fail
     validation_pass = Column(Boolean, comment="Overall pass/fail")
@@ -194,6 +197,21 @@ class TestExecution(Base):
     # Error handling
     error_message = Column(Text, comment="Error message if failed")
     error_details = Column(JSON, comment="Detailed error information")
+
+    # ── VRT-specific columns (Phase 2.4) ──
+    # Filterable / index-friendly fields stay as columns; volatile runtime
+    # data lives in JSONB blobs to keep the schema stable.
+    scenario_id = Column(String(255), comment="VRT: linked scenario id (TestCase UUID or std-library id)")
+    topology_id = Column(String(255), comment="VRT: linked Topology id (UUID string), only for conducted mode")
+    mode = Column(String(50), comment="VRT: digital_twin | conducted | ota")
+    notes = Column(Text, comment="Operator notes")
+    config = Column(JSON, comment="Executor config snapshot (immutable once execution starts)")
+    vrt_runtime_status = Column(JSON, comment="Live progress: {progress_percent, current_waypoint_index, current_position, elapsed/remaining}")
+    execution_logs = Column(JSON, comment="Array of {timestamp, level, message, source}")
+    execution_events = Column(JSON, comment="Scenario events array {time_s, type, payload}")
+    execution_warnings = Column(JSON, comment="Array of warning messages")
+    phase_results = Column(JSON, comment="Array of {name, status, duration_s, start/end_time, notes}")
+    hardware_status = Column(JSON, comment="{instruments_connected, instrument_status: {id: status}}")
 
     # Metadata
     executed_by = Column(String(100), comment="User who executed the test")

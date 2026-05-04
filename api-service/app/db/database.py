@@ -112,6 +112,7 @@ def init_db() -> None:
     from app.models.report import TestReport, ReportTemplate, ReportComparison, ReportSchedule
     from app.models.chamber import ChamberConfiguration
     from app.models.switch_topology import SwitchTopology
+    from app.models.road_test import VrtKpiSample
 
     logger.info("Initializing database schema (create_all)...")
     Base.metadata.create_all(bind=engine)
