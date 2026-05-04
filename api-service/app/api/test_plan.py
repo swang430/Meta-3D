@@ -332,92 +332,9 @@ def update_queue_item(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/{test_plan_id}", response_model=TestPlanResponse)
-def get_test_plan(
-    test_plan_id: UUID,
-    db: Session = Depends(get_db)
-):
-    """Get a specific test plan by ID"""
-    service = TestPlanService()
-    test_plan = service.get_test_plan(db, test_plan_id)
-
-    if not test_plan:
-        raise HTTPException(status_code=404, detail="Test plan not found")
-
-    return test_plan
-
-
-@router.patch("/{test_plan_id}", response_model=TestPlanResponse)
-def update_test_plan(
-    test_plan_id: UUID,
-    request: TestPlanUpdate,
-    db: Session = Depends(get_db)
-):
-    """Update a test plan"""
-    service = TestPlanService()
-
-    update_data = request.dict(exclude_unset=True)
-    test_plan = service.update_test_plan(db, test_plan_id, **update_data)
-
-    if not test_plan:
-        raise HTTPException(status_code=404, detail="Test plan not found")
-
-    return test_plan
-
-
-@router.delete("/{test_plan_id}", status_code=204)
-def delete_test_plan(
-    test_plan_id: UUID,
-    db: Session = Depends(get_db)
-):
-    """Delete a test plan"""
-    service = TestPlanService()
-    success = service.delete_test_plan(db, test_plan_id)
-
-    if not success:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot delete test plan (not found or in invalid status)"
-        )
-
-    return None
-
-
-@router.post("/{test_plan_id}/duplicate", response_model=TestPlanResponse, status_code=201)
-def duplicate_test_plan(
-    test_plan_id: UUID,
-    db: Session = Depends(get_db)
-):
-    """Duplicate a test plan with all its steps"""
-    service = TestPlanService()
-
-    try:
-        new_plan = service.duplicate_test_plan(db, test_plan_id)
-        return new_plan
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.post("/{test_plan_id}/mark-ready", response_model=TestPlanResponse)
-def mark_test_plan_ready(
-    test_plan_id: UUID,
-    db: Session = Depends(get_db)
-):
-    """Mark a test plan as ready for execution"""
-    service = TestPlanService()
-
-    try:
-        test_plan = service.mark_ready(db, test_plan_id)
-        if not test_plan:
-            raise HTTPException(status_code=404, detail="Test plan not found")
-        return test_plan
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
 # ==================== Test Case Endpoints ====================
+# NOTE: /cases routes MUST be registered BEFORE /{test_plan_id}
+# to prevent FastAPI from matching "cases" as a UUID path parameter.
 
 @router.post("/cases", response_model=TestCaseResponse, status_code=201)
 def create_test_case(
@@ -569,6 +486,93 @@ def delete_test_case(
         raise HTTPException(status_code=404, detail="Test case not found")
 
     return None
+
+
+# ==================== Test Plan Instance Endpoints ====================
+
+@router.get("/{test_plan_id}", response_model=TestPlanResponse)
+def get_test_plan(
+    test_plan_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """Get a specific test plan by ID"""
+    service = TestPlanService()
+    test_plan = service.get_test_plan(db, test_plan_id)
+
+    if not test_plan:
+        raise HTTPException(status_code=404, detail="Test plan not found")
+
+    return test_plan
+
+
+@router.patch("/{test_plan_id}", response_model=TestPlanResponse)
+def update_test_plan(
+    test_plan_id: UUID,
+    request: TestPlanUpdate,
+    db: Session = Depends(get_db)
+):
+    """Update a test plan"""
+    service = TestPlanService()
+
+    update_data = request.dict(exclude_unset=True)
+    test_plan = service.update_test_plan(db, test_plan_id, **update_data)
+
+    if not test_plan:
+        raise HTTPException(status_code=404, detail="Test plan not found")
+
+    return test_plan
+
+
+@router.delete("/{test_plan_id}", status_code=204)
+def delete_test_plan(
+    test_plan_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """Delete a test plan"""
+    service = TestPlanService()
+    success = service.delete_test_plan(db, test_plan_id)
+
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete test plan (not found or in invalid status)"
+        )
+
+    return None
+
+
+@router.post("/{test_plan_id}/duplicate", response_model=TestPlanResponse, status_code=201)
+def duplicate_test_plan(
+    test_plan_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """Duplicate a test plan with all its steps"""
+    service = TestPlanService()
+
+    try:
+        new_plan = service.duplicate_test_plan(db, test_plan_id)
+        return new_plan
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{test_plan_id}/mark-ready", response_model=TestPlanResponse)
+def mark_test_plan_ready(
+    test_plan_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """Mark a test plan as ready for execution"""
+    service = TestPlanService()
+
+    try:
+        test_plan = service.mark_ready(db, test_plan_id)
+        if not test_plan:
+            raise HTTPException(status_code=404, detail="Test plan not found")
+        return test_plan
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ==================== Test Step Endpoints ====================
