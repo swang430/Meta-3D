@@ -1,78 +1,62 @@
+"""Smoke test for VRT report archival.
 
-import sys
-import os
+Creates a stopped VRT execution in the DB via vrt_execution_service, then
+calls _archive_execution_report directly to verify report dump file is
+written. Useful for debugging report content without going through the
+full lifecycle.
+
+Usage:
+    cd api-service
+    .venv/bin/python scripts/test_archive_func.py
+"""
 import asyncio
 import logging
-from datetime import datetime
+import os
+import sys
 
-# Setup path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from app.api.road_test import _archive_execution_report, _executions, _execution_status
-from app.schemas.road_test.execution import ExecutionStatus, TestExecution, TestStatus, TestMetrics, ExecutionMetricsSubmit
+from app.api.road_test import _archive_execution_report
 from app.db.database import SessionLocal
-from app.api import road_test
+from app.schemas.road_test import TestMode
+from app.services.road_test.vrt_execution_service import vrt_execution_service
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("TestArchive")
 
+
 async def test_archive():
     print("--- STARTING TEST ARCHIVE ---")
-    
-    # 1. Setup Mock Execution in Memory
-    exec_id = "test-exec-unit-001"
-    
-    # Mock global dicts in road_test module
-    road_test._executions[exec_id] = TestExecution(
-        execution_id=exec_id,
-        scenario_id="sc_uma_001",
-        mode="ota",
-        status=ExecutionStatus.STOPPED,
-        start_time=datetime.now(),
-        notes="Unit Test Execution",
-        # Fix missing fields if any
-        topology_id=None,
-        config={},
-        end_time=None,
-        duration_s=None,
-        created_by="Unit Test",
-        logs=[]
-    )
-    
-    road_test._execution_status[exec_id] = TestStatus(
-        execution_id=exec_id,
-        status=ExecutionStatus.RUNNING,
-        progress_percent=50.0,
-        message="Running",
-        error=None,
-        step_index=0,
-        total_steps=10,
-        elapsed_time_s=60.0
-    )
-    
-    road_test._execution_metrics[exec_id] = TestMetrics(
-        execution_id=exec_id,
-        kpi_samples=[], # Empty for now, or add some dummy data
-        summary={},
-        events=[],
-        kpi_results={}
-    )
-    
-    logger.info(f"Mocked execution {exec_id} prepared.")
 
-    # 2. Call Archive Function
     db = SessionLocal()
     try:
+        # 1. Create a VRT execution and drive it to STOPPED state
+        row = vrt_execution_service.create(
+            db,
+            mode=TestMode.OTA,
+            scenario_id="sc_uma_001",
+            topology_id=None,
+            config={},
+            notes="Smoke test execution",
+            created_by="archive-smoke-test",
+        )
+        exec_id = str(row.id)
+        vrt_execution_service.start(db, exec_id)
+        vrt_execution_service.stop(db, exec_id)
+        logger.info(f"Created and stopped VRT execution {exec_id}")
+
+        # 2. Trigger archival
         print("Calling _archive_execution_report directly...")
         await _archive_execution_report(exec_id, db)
         print("Call returned successfully.")
-        
-        # 3. Check File
+
+        # 3. Inspect the debug dump file
         if os.path.exists("debug_report_dump.txt"):
             print("SUCCESS: debug_report_dump.txt exists!")
             with open("debug_report_dump.txt", "r") as f:
-                print(f"File content:\n{f.read()}")
+                content = f.read()
+            tail = "\n".join(content.splitlines()[-15:])
+            print(f"--- last 15 lines ---\n{tail}")
         else:
             print("FAILURE: debug_report_dump.txt NOT found!")
 
@@ -82,6 +66,7 @@ async def test_archive():
         traceback.print_exc()
     finally:
         db.close()
+
 
 if __name__ == "__main__":
     asyncio.run(test_archive())

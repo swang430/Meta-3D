@@ -80,33 +80,34 @@ def get_dashboard(db: Session = Depends(get_db)):
             for execution in recent_executions
         ]
 
-        # Integrate Virtual Road Test executions (from memory/json)
+        # Integrate Virtual Road Test executions (DB-backed via test_executions)
         try:
-            from app.api.road_test import _executions, _custom_scenarios, get_scenario_by_id
-            
-            for execution in _executions.values():
+            from app.api.road_test import _get_custom_scenario, get_scenario_by_id
+            from app.services.road_test.vrt_execution_service import vrt_execution_service
+
+            for row in vrt_execution_service.list(db, limit=50):
                 # Resolve scenario name
-                scenario_name = execution.scenario_id
-                scenario = get_scenario_by_id(execution.scenario_id)
-                if not scenario and execution.scenario_id in _custom_scenarios:
-                    scenario = _custom_scenarios[execution.scenario_id]
-                if scenario:
-                    scenario_name = getattr(scenario, 'name', execution.scenario_id)
+                scenario_name = row.scenario_id or ""
+                std = get_scenario_by_id(row.scenario_id) if row.scenario_id else None
+                if std is not None:
+                    scenario_name = getattr(std, "name", scenario_name)
+                else:
+                    custom = _get_custom_scenario(db, row.scenario_id) if row.scenario_id else None
+                    if custom is not None:
+                        scenario_name = getattr(custom, "name", scenario_name)
 
                 recent_tests.append(RecentTest(
-                    id=execution.execution_id,
+                    id=str(row.id),
                     plan_name=f"VRT: {scenario_name}",
-                    status=execution.status,
-                    executed_at=execution.end_time or execution.start_time or datetime.now(),
-                    duration_minutes=round((execution.duration_s or 0) / 60, 1)
+                    status=row.status,
+                    executed_at=row.completed_at or row.started_at or row.executed_at,
+                    duration_minutes=round((row.duration_sec or 0) / 60, 1),
                 ))
-            
+
             # Sort combined list by date desc
             recent_tests.sort(key=lambda x: x.executed_at or datetime.min, reverse=True)
             recent_tests = recent_tests[:10]
-            
-        except ImportError:
-            logger.warning("Could not import road_test module for dashboard integration")
+
         except Exception as e:
             logger.error(f"Error integrating road test data: {e}")
 
@@ -178,12 +179,12 @@ def get_dashboard_summary(db: Session = Depends(get_db)):
         ).count()
         total_executions = db.query(TestPlanExecution).count()
         
-        # Add VRT count
+        # Add VRT count (DB-backed via test_executions filtered by mode IS NOT NULL)
         try:
-            from app.api.road_test import _executions
-            total_executions += len(_executions)
-        except:
-            pass
+            from app.services.road_test.vrt_execution_service import vrt_execution_service
+            total_executions += len(vrt_execution_service.list(db, limit=10_000))
+        except Exception as e:
+            logger.warning(f"Failed to count VRT executions: {e}")
 
         return DashboardSummary(
             probe_count=probe_count,
