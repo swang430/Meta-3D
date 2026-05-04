@@ -64,6 +64,7 @@ from app.data.scenario_library import (
     get_scenarios_by_category,
 )
 from app.services.road_test.vrt_service import vrt_service
+from app.services.road_test.network_topology_service import network_topology_service
 
 from pydantic import ValidationError
 
@@ -99,9 +100,8 @@ def _get_custom_scenario(db: Session, scenario_id: str) -> Optional[RoadTestScen
     return vrt_service.vrt_test_case_to_scenario(tc)
 
 
-# In-memory storage for VRT runtime state (executions, topologies).
-# Phase 2.3/2.4 will move these to the database.
-_topologies: dict[str, NetworkTopology] = {}
+# In-memory storage for VRT runtime state (executions).
+# Phase 2.4 will move these to the database.
 _executions: dict[str, TestExecution] = {}
 _execution_status: dict[str, TestStatus] = {}
 _execution_metrics: dict[str, TestMetrics] = {}
@@ -413,11 +413,12 @@ async def delete_scenario(scenario_id: str, db: Session = Depends(get_db)):
 # ===== Topology Management =====
 
 @router.get("/topologies", response_model=List[TopologySummary])
-async def list_topologies():
+async def list_topologies(db: Session = Depends(get_db)):
     """
-    List all network topologies
+    List all network topologies (DB-backed via the `topologies` table).
     """
-    summaries = [
+    topologies = network_topology_service.list(db)
+    return [
         TopologySummary(
             id=t.id,
             name=t.name,
@@ -427,49 +428,38 @@ async def list_topologies():
             devices_count=3,  # BS + CE + DUT
             connections_count=len(t.connections),
             created_at=t.created_at,
-            author=t.author
+            author=t.author,
         )
-        for t in _topologies.values()
+        for t in topologies
     ]
-    return summaries
 
 
 @router.get("/topologies/{topology_id}", response_model=NetworkTopology)
-async def get_topology(topology_id: str):
+async def get_topology(topology_id: str, db: Session = Depends(get_db)):
     """
     Get detailed topology configuration
     """
-    if topology_id not in _topologies:
+    topology = network_topology_service.get(db, topology_id)
+    if topology is None:
         raise HTTPException(status_code=404, detail=f"Topology '{topology_id}' not found")
-
-    return _topologies[topology_id]
+    return topology
 
 
 @router.post("/topologies", response_model=NetworkTopology, status_code=201)
-async def create_topology(topology_create: TopologyCreate):
+async def create_topology(
+    topology_create: TopologyCreate,
+    db: Session = Depends(get_db),
+):
     """
-    Create a new network topology
+    Create a new network topology (persisted in the `topologies` table).
     """
-    # Generate topology ID
-    topology_id = f"topology-{len(_topologies) + 1:04d}"
-
-    # Create topology
-    from datetime import datetime
-    topology = NetworkTopology(
-        id=topology_id,
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        **topology_create.model_dump()
-    )
-
-    _topologies[topology_id] = topology
-
-    logger.info(f"Created topology: {topology_id}")
+    topology = network_topology_service.create(db, topology_create, author="api")
+    logger.info("Created topology %s", topology.id)
     return topology
 
 
 @router.post("/topologies/{topology_id}/validate", response_model=TopologyValidationResult)
-async def validate_topology(topology_id: str):
+async def validate_topology(topology_id: str, db: Session = Depends(get_db)):
     """
     Validate topology configuration
 
@@ -479,10 +469,9 @@ async def validate_topology(topology_id: str):
     - Device compatibility
     - RF link budget
     """
-    if topology_id not in _topologies:
+    topology = network_topology_service.get(db, topology_id)
+    if topology is None:
         raise HTTPException(status_code=404, detail=f"Topology '{topology_id}' not found")
-
-    topology = _topologies[topology_id]
 
     # Validation logic (simplified)
     errors = []
@@ -501,9 +490,10 @@ async def validate_topology(topology_id: str):
         if conn.cable_length_m > 10:
             warnings.append(f"Long cable ({conn.cable_length_m}m) may introduce significant loss")
 
-    # Update topology validation status
-    topology.is_validated = len(errors) == 0
-    topology.validation_errors = errors
+    # Persist validation outcome back to the topology row
+    network_topology_service.set_validation_result(
+        db, topology_id, is_validated=len(errors) == 0, errors=errors
+    )
 
     result = TopologyValidationResult(
         is_valid=len(errors) == 0,
@@ -511,11 +501,11 @@ async def validate_topology(topology_id: str):
         warnings=warnings,
         details={
             "total_connections": len(topology.connections),
-            "total_loss_db": sum(conn.loss_db for conn in topology.connections)
-        }
+            "total_loss_db": sum(conn.loss_db for conn in topology.connections),
+        },
     )
 
-    logger.info(f"Validated topology {topology_id}: {'PASS' if result.is_valid else 'FAIL'}")
+    logger.info("Validated topology %s: %s", topology_id, "PASS" if result.is_valid else "FAIL")
     return result
 
 
@@ -585,7 +575,7 @@ async def create_execution(
     if execution_create.mode == TestMode.CONDUCTED:
         if not execution_create.topology_id:
             raise HTTPException(status_code=400, detail="Topology ID required for conducted mode")
-        if execution_create.topology_id not in _topologies:
+        if not network_topology_service.exists(db, execution_create.topology_id):
             raise HTTPException(status_code=404, detail=f"Topology '{execution_create.topology_id}' not found")
 
     # Generate execution ID
