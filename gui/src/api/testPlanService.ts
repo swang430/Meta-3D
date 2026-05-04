@@ -87,10 +87,16 @@ export interface TestCase {
 export interface TestCaseSummary {
   id: string;
   name: string;
+  description?: string;
   test_type: TestCaseType;
+  template_category?: string;
+  channel_model?: string;
   frequency_mhz?: number;
+  bandwidth_mhz?: number;
   test_duration_sec?: number;
   is_template: boolean;
+  pass_criteria?: Record<string, any>;
+  tags?: string[];
   created_by: string;
   created_at: string;
 }

@@ -720,7 +720,8 @@ class TestCaseService:
         skip: int = 0,
         limit: int = 100,
         test_type: Optional[str] = None,
-        is_template: Optional[bool] = None
+        is_template: Optional[bool] = None,
+        template_category: Optional[str] = None
     ) -> List[TestCase]:
         """List test cases with filters"""
         query = db.query(TestCase)
@@ -729,6 +730,8 @@ class TestCaseService:
             query = query.filter(TestCase.test_type == test_type)
         if is_template is not None:
             query = query.filter(TestCase.is_template == is_template)
+        if template_category:
+            query = query.filter(TestCase.template_category == template_category)
 
         query = query.order_by(TestCase.created_at.desc())
         return query.offset(skip).limit(limit).all()

@@ -159,10 +159,16 @@ class TestCaseSummary(BaseModel):
     """Simplified test case summary for lists"""
     id: UUID
     name: str
+    description: Optional[str] = None
     test_type: str
-    frequency_mhz: Optional[float]
-    test_duration_sec: Optional[float]
+    template_category: Optional[str] = None
+    channel_model: Optional[str] = None
+    frequency_mhz: Optional[float] = None
+    bandwidth_mhz: Optional[float] = None
+    test_duration_sec: Optional[float] = None
     is_template: bool
+    pass_criteria: Optional[Dict[str, Any]] = None
+    tags: Optional[List[str]] = None
     created_by: str
     created_at: datetime
 
@@ -456,6 +462,12 @@ class TestCaseListResponse(BaseModel):
     """List of test cases with pagination"""
     total: int
     items: List[TestCaseSummary]
+
+
+class TestCaseGroupedResponse(BaseModel):
+    """Test cases grouped by template_category"""
+    categories: List[str]
+    groups: Dict[str, List[TestCaseSummary]]
 
 
 class TestExecutionListResponse(BaseModel):

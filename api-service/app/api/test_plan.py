@@ -20,6 +20,7 @@ from app.schemas.test_plan import (
     TestCaseResponse,
     TestCaseSummary,
     TestCaseListResponse,
+    TestCaseGroupedResponse,
     # Test Step
     TestStepCreate,
     TestStepCreateFromSequence,
@@ -460,6 +461,7 @@ def list_test_cases(
     limit: int = Query(100, ge=1, le=1000),
     test_type: Optional[str] = None,
     is_template: Optional[bool] = None,
+    category: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """List all test cases with optional filters"""
@@ -470,7 +472,8 @@ def list_test_cases(
             skip=skip,
             limit=limit,
             test_type=test_type,
-            is_template=is_template
+            is_template=is_template,
+            template_category=category
         )
 
         return TestCaseListResponse(
@@ -478,7 +481,6 @@ def list_test_cases(
             items=[TestCaseSummary.from_orm(tc) for tc in test_cases]
         )
     except Exception as e:
-        # Database unavailable - return empty list
         import logging
         logger = logging.getLogger(__name__)
         logger.warning(f"Database unavailable for test cases list: {e}")
@@ -486,6 +488,39 @@ def list_test_cases(
             total=0,
             items=[]
         )
+
+
+@router.get("/cases/grouped", response_model=TestCaseGroupedResponse)
+def list_test_cases_grouped(
+    is_template: Optional[bool] = True,
+    db: Session = Depends(get_db)
+):
+    """
+    Get test cases grouped by template_category.
+    Designed for the TestCaseLibrary UI component.
+    """
+    try:
+        service = TestCaseService()
+        test_cases = service.list_test_cases(
+            db=db, skip=0, limit=500,
+            is_template=is_template
+        )
+
+        groups: dict = {}
+        for tc in test_cases:
+            cat = tc.template_category or "未分类"
+            if cat not in groups:
+                groups[cat] = []
+            groups[cat].append(TestCaseSummary.from_orm(tc))
+
+        return TestCaseGroupedResponse(
+            categories=list(groups.keys()),
+            groups=groups
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Database unavailable: {e}")
+        return TestCaseGroupedResponse(categories=[], groups={})
 
 
 @router.get("/cases/{test_case_id}", response_model=TestCaseResponse)
