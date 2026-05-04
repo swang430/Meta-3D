@@ -66,6 +66,12 @@ from .topology import (
     TopologyValidationResult,
 )
 
+from .test_case_config import (
+    VirtualRoadTestConfig,
+    VRT_TEST_TYPE,
+    validate_test_case_configuration,
+)
+
 from .execution import (
     # Enums
     TestMode,
@@ -196,4 +202,8 @@ __all__ = [
     # Streaming models
     "MetricsStreamMessage",
     "StreamSubscription",
+    # TestCase.configuration schema for VRT
+    "VirtualRoadTestConfig",
+    "VRT_TEST_TYPE",
+    "validate_test_case_configuration",
 ]

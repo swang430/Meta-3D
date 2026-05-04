@@ -31,6 +31,7 @@ class TestCaseType(str, enum.Enum):
     HANDOVER = "Handover"  # 切换测试
     MIMO = "MIMO"  # MIMO 性能测试
     CHANNEL_MODEL = "ChannelModel"  # 信道模型测试
+    VIRTUAL_ROAD_TEST = "VirtualRoadTest"  # 虚拟路测 — 复杂领域衍生 (TestCase 的特化)
     CUSTOM = "Custom"  # 自定义测试
 
 
@@ -109,7 +110,7 @@ class TestCase(Base):
     test_type = Column(
         String(50),
         nullable=False,
-        comment="TRP | TIS | Throughput | Handover | MIMO | ChannelModel | Custom"
+        comment="TRP | TIS | Throughput | Handover | MIMO | ChannelModel | VirtualRoadTest | Custom"
     )
 
     # Test configuration (JSON structure varies by test_type)
