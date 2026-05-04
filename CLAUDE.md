@@ -84,12 +84,27 @@ GUI 遵循 **API优先架构**，包含以下层次：
 
 ## 技术栈
 
+### 前端
 - **React 18** + TypeScript
 - **Vite** 构建工具（非 Create React App）
 - **Mantine UI** (@mantine/core, @mantine/hooks, @mantine/notifications) - 主要组件库
 - **TanStack Query** (@tanstack/react-query) 用于服务端状态管理
 - **Axios** 配合 mock 适配器进行 API 调用
 - **ESLint** + TypeScript 规则
+
+### 后端
+- **FastAPI** + Pydantic v2
+- **SQLAlchemy** ORM
+
+### 数据库（⭐ 重要）
+- **生产环境一律使用 PostgreSQL**，绝不依赖 SQLite
+  - 真实配置：`.env` 的 `DATABASE_URL=postgresql://...`
+  - `app/config.py` 中的 SQLite URL 是**注释掉的备份**，不应在生产路径中启用
+  - 新增 SQLAlchemy 模型应使用 PG 兼容类型（`postgresql.UUID`、`JSONB` 等）
+- **测试可以使用 SQLite**（隔离与速度优先）
+  - `sqlite:///:memory:` 用于纯内存隔离测试
+  - `sqlite:///./test_*.db` 用于文件隔离测试，产物已在 `.gitignore` 中忽略
+  - `api-service/*.db` 与 `*.db.bak` 是本地 stale 开发产物，可安全清理
 
 ## 开发工作流
 
