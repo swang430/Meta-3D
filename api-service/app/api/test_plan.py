@@ -23,7 +23,7 @@ from app.schemas.test_plan import (
     TestCaseGroupedResponse,
     # Test Step
     TestStepCreate,
-    TestStepCreateFromSequence,
+    TestStepCreateFromTestCase,
     TestStepUpdate,
     TestStepResponse,
     # Test Execution
