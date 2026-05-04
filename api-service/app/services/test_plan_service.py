@@ -185,6 +185,36 @@ class TestPlanService:
             }
         ]
 
+        # ── Auto-create a companion TestCase for VRT plans ──
+        # This ensures TestExecution.test_case_id (NOT NULL FK) has a valid target.
+        vrt_test_case = TestCase(
+            name=f"VRT: {test_plan.name}",
+            description=f"自动生成的虚拟路测用例 — 关联场景 {test_plan.scenario_id}",
+            test_type="Throughput",
+            configuration={
+                "auto_generated": True,
+                "scenario_id": test_plan.scenario_id,
+                "steps_count": len(step_configs),
+            },
+            pass_criteria={
+                "min_throughput_mbps": 50,
+                "max_latency_ms": 50,
+                "min_rsrp_dbm": -110,
+            },
+            frequency_mhz=test_environment.get("frequency_mhz", 3500),
+            bandwidth_mhz=test_environment.get("bandwidth_mhz", 100),
+            test_duration_sec=sum(c["timeout_seconds"] for c in step_configs),
+            is_template=False,
+            tags=["VRT", "自动生成"],
+            created_by=test_plan.created_by or "system",
+        )
+        db.add(vrt_test_case)
+        db.flush()  # Get vrt_test_case.id
+
+        # Link to the test plan
+        test_plan.test_case_ids = [str(vrt_test_case.id)]
+        test_plan.total_test_cases = 1
+
         # Create TestStep instances
         for idx, config in enumerate(step_configs):
             # Find matching sequence
@@ -214,7 +244,10 @@ class TestPlanService:
             sequence.usage_count = (sequence.usage_count or 0) + 1
 
         db.commit()
-        logger.info(f"Created {len(step_configs)} test steps for plan {test_plan.id}")
+        logger.info(
+            f"Created {len(step_configs)} test steps + TestCase {vrt_test_case.id} "
+            f"for plan {test_plan.id}"
+        )
 
     def get_test_plan(self, db: Session, test_plan_id: UUID) -> Optional[TestPlan]:
         """Get a test plan by ID"""
