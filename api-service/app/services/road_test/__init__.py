@@ -7,6 +7,7 @@ Business logic for road test scenario mapping and execution
 from .ota_scenario_mapper import OTAScenarioMapper, OTAConfig
 from .vrt_service import VRTService, vrt_service
 from .network_topology_service import NetworkTopologyService, network_topology_service
+from .vrt_execution_service import VrtExecutionService, vrt_execution_service
 
 __all__ = [
     "OTAScenarioMapper",
@@ -15,4 +16,6 @@ __all__ = [
     "vrt_service",
     "NetworkTopologyService",
     "network_topology_service",
+    "VrtExecutionService",
+    "vrt_execution_service",
 ]
