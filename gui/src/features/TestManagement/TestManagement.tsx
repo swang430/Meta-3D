@@ -9,15 +9,17 @@
  */
 
 import { useState } from 'react'
-import { Container, Tabs, Title, Stack, Text } from '@mantine/core'
+import { Container, Tabs, Title, Stack, Text, Button, Group } from '@mantine/core'
 import {
   IconChecklist,
   IconList,
   IconFileCode,
   IconClock,
   IconChartBar,
+  IconPlus,
 } from '@tabler/icons-react'
 import { TestCaseLibrary } from '../../components/TestPlanManagement/TestCaseLibrary'
+import { CreateTestPlanWizard } from '../../components/TestPlanManagement/CreateTestPlanWizard'
 import { PlansTab } from './components/PlansTab'
 import { StepsTab } from './components/StepsTab'
 import { QueueTab } from './components/QueueTab'
@@ -36,17 +38,32 @@ import { HistoryTab } from './components/HistoryTab'
 export function TestManagement() {
   const [activeTab, setActiveTab] = useState<string | null>('caseLibrary')
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
+  
+  // Test Case Selection State
+  const [selectedTestCaseIds, setSelectedTestCaseIds] = useState<string[]>([])
+  const [wizardOpened, setWizardOpened] = useState(false)
 
   return (
     <Container size="xl" py="md">
       <Stack gap="md">
         {/* Header */}
-        <div>
-          <Title order={2}>测试管理</Title>
-          <Text size="sm" c="dimmed">
-            以测试用例为基础的统一测试管理与编排系统
-          </Text>
-        </div>
+        <Group justify="space-between" align="flex-end">
+          <div>
+            <Title order={2}>测试管理</Title>
+            <Text size="sm" c="dimmed">
+              以测试用例为基础的统一测试管理与编排系统
+            </Text>
+          </div>
+          
+          {activeTab === 'caseLibrary' && selectedTestCaseIds.length > 0 && (
+            <Button
+              leftSection={<IconPlus size={16} />}
+              onClick={() => setWizardOpened(true)}
+            >
+              新建测试计划 ({selectedTestCaseIds.length})
+            </Button>
+          )}
+        </Group>
 
         {/* Main Tabs */}
         <Tabs value={activeTab} onChange={setActiveTab}>
@@ -70,7 +87,11 @@ export function TestManagement() {
 
           {/* Test Case Library Tab — Foundation */}
           <Tabs.Panel value="caseLibrary" pt="md">
-            <TestCaseLibrary />
+            <TestCaseLibrary 
+              selectionMode={true}
+              selectedIds={selectedTestCaseIds}
+              onSelectionChange={setSelectedTestCaseIds}
+            />
           </Tabs.Panel>
 
           {/* Plans Tab */}
@@ -93,6 +114,18 @@ export function TestManagement() {
             <HistoryTab />
           </Tabs.Panel>
         </Tabs>
+
+        {/* Create Test Plan from Selected Cases */}
+        <CreateTestPlanWizard
+          opened={wizardOpened}
+          onClose={() => setWizardOpened(false)}
+          preSelectedCaseIds={selectedTestCaseIds}
+          onCreated={() => {
+            setWizardOpened(false)
+            setSelectedTestCaseIds([])
+            setActiveTab('plans') // Switch to plans tab to see the newly created plan
+          }}
+        />
       </Stack>
     </Container>
   )

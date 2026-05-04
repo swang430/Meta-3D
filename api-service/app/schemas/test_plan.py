@@ -380,8 +380,10 @@ class TestStepResponse(BaseModel):
     sequence_library_id: Optional[UUID] = None  # Reference to sequence library
     step_number: Optional[int] = None
     name: Optional[str] = None
+    title: Optional[str] = None
     description: Optional[str] = None
     type: Optional[str] = None
+    category: Optional[str] = None
     parameters: Optional[Dict[str, Any]] = None
     status: str
     order: int

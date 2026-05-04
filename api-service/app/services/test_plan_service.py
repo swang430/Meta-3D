@@ -49,7 +49,27 @@ class TestPlanService:
         db.commit()
         db.refresh(test_plan)
 
-        # Auto-generate test steps for Virtual Road Test scenarios
+        # Generate test steps from provided test_case_ids
+        if test_case_ids:
+            from app.models.test_plan import TestCase, TestStep
+            for i, tc_id in enumerate(test_case_ids):
+                test_case = db.query(TestCase).filter(TestCase.id == tc_id).first()
+                if test_case:
+                    step = TestStep(
+                        test_plan_id=test_plan.id,
+                        order=i,
+                        name=test_case.name,
+                        description=test_case.description,
+                        type=test_case.test_type,
+                        parameters=test_case.configuration or {},
+                        timeout_seconds=int(test_case.test_duration_sec) if test_case.test_duration_sec else 300,
+                        expected_duration_minutes=(test_case.test_duration_sec / 60.0) if test_case.test_duration_sec else None,
+                        status="pending"
+                    )
+                    db.add(step)
+            db.commit()
+
+        # Auto-generate test steps for Virtual Road Test scenarios (legacy support)
         if 'scenario_id' in kwargs and kwargs['scenario_id']:
             logger.info(f"Auto-generating test steps for scenario-based plan: {test_plan.id}")
             self._create_road_test_steps(db, test_plan, kwargs.get('test_environment', {}))
