@@ -1,21 +1,23 @@
 /**
  * Unified Test Management Main Component
  *
- * This is the main container for the unified test management system,
- * integrating both TestConfig and TestPlanManagement functionalities.
+ * Refactored: TestCase Library is now the first tab (foundation).
+ * TestPlan organizes TestCases, not the other way around.
  *
- * @version 2.0.0
- * @date 2025-11-18
+ * @version 3.0.0
+ * @date 2026-05-04
  */
 
 import { useState } from 'react'
 import { Container, Tabs, Title, Stack, Text } from '@mantine/core'
 import {
+  IconChecklist,
   IconList,
   IconFileCode,
   IconClock,
   IconChartBar,
 } from '@tabler/icons-react'
+import { TestCaseLibrary } from '../../components/TestPlanManagement/TestCaseLibrary'
 import { PlansTab } from './components/PlansTab'
 import { StepsTab } from './components/StepsTab'
 import { QueueTab } from './components/QueueTab'
@@ -24,14 +26,15 @@ import { HistoryTab } from './components/HistoryTab'
 /**
  * Main Test Management Container Component
  *
- * Features 4 tabs:
+ * Features 5 tabs:
+ * - CaseLibrary: Standard test case templates (foundation) ★ NEW
  * - Plans: Test plan lifecycle management (create, edit, list, delete)
  * - Steps: Step-level orchestration and parameter configuration
  * - Queue: Test execution queue and scheduling
  * - History: Execution history and analytics
  */
 export function TestManagement() {
-  const [activeTab, setActiveTab] = useState<string | null>('plans')
+  const [activeTab, setActiveTab] = useState<string | null>('caseLibrary')
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
 
   return (
@@ -41,13 +44,16 @@ export function TestManagement() {
         <div>
           <Title order={2}>测试管理</Title>
           <Text size="sm" c="dimmed">
-            统一的测试计划管理与步骤编排系统
+            以测试用例为基础的统一测试管理与编排系统
           </Text>
         </div>
 
         {/* Main Tabs */}
         <Tabs value={activeTab} onChange={setActiveTab}>
           <Tabs.List>
+            <Tabs.Tab value="caseLibrary" leftSection={<IconChecklist size={16} />}>
+              测试用例库
+            </Tabs.Tab>
             <Tabs.Tab value="plans" leftSection={<IconList size={16} />}>
               计划管理
             </Tabs.Tab>
@@ -61,6 +67,11 @@ export function TestManagement() {
               执行历史
             </Tabs.Tab>
           </Tabs.List>
+
+          {/* Test Case Library Tab — Foundation */}
+          <Tabs.Panel value="caseLibrary" pt="md">
+            <TestCaseLibrary />
+          </Tabs.Panel>
 
           {/* Plans Tab */}
           <Tabs.Panel value="plans" pt="md">
