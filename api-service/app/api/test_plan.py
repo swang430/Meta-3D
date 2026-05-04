@@ -645,42 +645,51 @@ def get_test_steps(
 @router.post("/{test_plan_id}/steps", response_model=TestStepResponse, status_code=201)
 def add_test_step(
     test_plan_id: UUID,
-    request: TestStepCreateFromSequence,
+    request: TestStepCreateFromTestCase,
     db: Session = Depends(get_db)
 ):
     """
-    Add a test step from sequence library to a test plan
+    Add a test step from TestCase to a test plan
 
-    The step will be created with default parameters from the sequence library,
+    The step will be created with default parameters from the TestCase template,
     which can be customized later.
     """
-    from app.models.test_plan import TestSequence
-
-    service = TestStepService()
+    from app.models.test_plan import TestCase, TestStep, TestPlan
 
     try:
-        step = service.create_test_step_from_sequence(
-            db=db,
+        # Verify test plan exists
+        test_plan = db.query(TestPlan).filter(TestPlan.id == test_plan_id).first()
+        if not test_plan:
+            raise HTTPException(status_code=404, detail="Test plan not found")
+
+        # Get TestCase
+        test_case = db.query(TestCase).filter(TestCase.id == request.test_case_id).first()
+        if not test_case:
+            raise HTTPException(status_code=404, detail="Test case not found")
+
+        # Create step
+        step = TestStep(
             test_plan_id=test_plan_id,
-            sequence_library_id=request.sequence_library_id,
             order=request.order,
-            parameters=request.parameters,
-            timeout_seconds=request.timeout_seconds or 300,
+            name=test_case.name,
+            description=test_case.description,
+            type=test_case.test_type,
+            parameters=request.parameters or test_case.configuration or {},
+            timeout_seconds=request.timeout_seconds or int(test_case.test_duration_sec) if test_case.test_duration_sec else 300,
+            expected_duration_minutes=(test_case.test_duration_sec / 60.0) if test_case.test_duration_sec else None,
             retry_count=request.retry_count or 0,
             continue_on_failure=request.continue_on_failure or False,
+            status="pending"
         )
+        
+        db.add(step)
+        db.commit()
+        db.refresh(step)
 
-        # Build enriched response
+        # Build response
         step_dict = _build_step_dict(step)
-
-        # Populate title and category from sequence
-        if step.sequence_library_id:
-            sequence = db.query(TestSequence).filter(
-                TestSequence.id == step.sequence_library_id
-            ).first()
-            if sequence:
-                step_dict["title"] = sequence.name
-                step_dict["category"] = sequence.category
+        step_dict["title"] = step.name
+        step_dict["category"] = step.type
 
         return step_dict
 

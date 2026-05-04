@@ -346,9 +346,9 @@ class TestStepCreate(BaseModel):
     tags: Optional[List[str]] = Field(default_factory=list)
 
 
-class TestStepCreateFromSequence(BaseModel):
-    """Request to create a test step from sequence library"""
-    sequence_library_id: UUID = Field(..., description="ID of sequence from library")
+class TestStepCreateFromTestCase(BaseModel):
+    """Request to create a test step from a test case"""
+    test_case_id: UUID = Field(..., description="ID of test case from library")
     order: int = Field(..., ge=0, description="Execution order")
     parameters: Optional[Dict[str, Any]] = Field(None, description="Override parameters")
     timeout_seconds: Optional[int] = Field(300, ge=1, description="Step timeout")

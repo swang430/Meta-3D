@@ -360,7 +360,7 @@ export interface UpdateTestPlanRequest {
  * Add Step Request
  */
 export interface AddStepRequest {
-  sequence_library_id: string
+  test_case_id: string
   order: number
   parameters?: ParametersMap
   timeout_seconds?: number

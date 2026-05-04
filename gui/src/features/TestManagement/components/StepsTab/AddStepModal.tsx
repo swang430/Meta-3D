@@ -21,7 +21,9 @@ import {
   Center,
 } from '@mantine/core'
 import { IconSearch, IconPlus, IconStar } from '@tabler/icons-react'
-import { useSequenceLibrary, useSequenceCategories, useAddTestStep } from '../../hooks'
+import { useQuery } from '@tanstack/react-query'
+import { listTestCases, type TestCaseSummary } from '../../../../api/testPlanService'
+import { useAddTestStep } from '../../hooks'
 
 interface AddStepModalProps {
   opened: boolean
@@ -34,19 +36,32 @@ export function AddStepModal({ opened, onClose, planId }: AddStepModalProps) {
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
 
   // Query hooks
-  const { data: sequenceItems, isLoading } = useSequenceLibrary({
-    category: categoryFilter || undefined,
-    search: searchQuery || undefined,
+  const { data: testCasesResponse, isLoading } = useQuery({
+    queryKey: ['test-cases', 'list', { is_template: true }],
+    queryFn: () => listTestCases(0, 500, undefined, true),
+    staleTime: 60000,
   })
-  const { data: categories } = useSequenceCategories()
+  
+  const sequenceItems = testCasesResponse?.items?.filter(item => {
+    if (categoryFilter && item.template_category !== categoryFilter) return false
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase()
+      return item.name.toLowerCase().includes(q) || item.test_type.toLowerCase().includes(q)
+    }
+    return true
+  }) || []
+
+  // Extract unique categories for filter
+  const categories = Array.from(new Set(testCasesResponse?.items?.map(tc => tc.template_category || '未分类')))
+
   const { mutate: addStep, isPending } = useAddTestStep()
 
-  const handleAddStep = (sequenceLibraryId: string) => {
+  const handleAddStep = (testCaseId: string) => {
     addStep(
       {
         planId,
         payload: {
-          sequence_library_id: sequenceLibraryId,
+          test_case_id: testCaseId,
           order: 999, // Will be appended to end
         },
       },
@@ -142,12 +157,12 @@ export function AddStepModal({ opened, onClose, planId }: AddStepModalProps) {
                       </Table.Td>
                       <Table.Td>
                         <Badge size="sm" variant="dot">
-                          {item.category}
+                          {item.template_category || item.test_type}
                         </Badge>
                       </Table.Td>
                       <Table.Td>
                         <Text size="sm" c="dimmed">
-                          {item.usage_count}
+                          -
                         </Text>
                       </Table.Td>
                       <Table.Td>
