@@ -7,7 +7,7 @@ REST API endpoints for virtual road test scenarios, topologies, and executions
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any
 import logging
 import traceback
 from datetime import datetime
@@ -101,15 +101,8 @@ def _get_custom_scenario(db: Session, scenario_id: str) -> Optional[RoadTestScen
     return vrt_service.vrt_test_case_to_scenario(tc)
 
 
-# In-memory storage for VRT runtime state (executions).
-# Phase 2.4 will move these to the database.
-_executions: dict[str, TestExecution] = {}
-_execution_status: dict[str, TestStatus] = {}
-_execution_metrics: dict[str, TestMetrics] = {}
-_execution_status: dict[str, TestStatus] = {}
-_execution_metrics: dict[str, TestMetrics] = {}
-_execution_phases: dict[str, List[PhaseResult]] = {}  # Store submitted phase results
-_execution_logs: dict[str, List[Dict[str, Any]]] = {}  # Store execution logs
+# Phase 2.4 complete: VRT runtime state lives in the database
+# (test_executions + vrt_kpi_samples), accessed via vrt_execution_service.
 
 def _log_event(
     db: Session,

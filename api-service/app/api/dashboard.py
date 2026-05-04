@@ -46,6 +46,13 @@ def get_dashboard(db: Session = Depends(get_db)):
         ).count()
         total_executions = db.query(TestPlanExecution).count()
 
+        # Add VRT count (DB-backed via test_executions filtered by mode IS NOT NULL)
+        try:
+            from app.services.road_test.vrt_execution_service import vrt_execution_service
+            total_executions += len(vrt_execution_service.list(db, limit=10_000))
+        except Exception as e:
+            logger.warning(f"Failed to count VRT executions: {e}")
+
         summary = DashboardSummary(
             probe_count=probe_count,
             active_test_plans=active_test_plans,
