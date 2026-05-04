@@ -10,11 +10,15 @@
 
 import logging
 import os
-from typing import Dict, Any, List
+from typing import Dict, Any, List, TYPE_CHECKING
 
 from app.services.channel_generation.base_generator import BaseChannelGenerator
-from app.services.channel_engine_client import ChannelEngineClient
 from app.hal.channel_emulator import ChannelEmulatorDriver, ChannelLoadMode
+
+if TYPE_CHECKING:
+    # Lazy: avoid circular import at module load time
+    # (channel_engine_client → channel_generation/__init__.py → asc_strategy)
+    from app.services.channel_engine_client import ChannelEngineClient
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +38,7 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
     def __init__(
         self,
         emulator: ChannelEmulatorDriver,
-        ce_client: ChannelEngineClient,
+        ce_client: "ChannelEngineClient",
         chamber_config: Any,
         calibration_entries: List[Dict],
     ):

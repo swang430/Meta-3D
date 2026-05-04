@@ -63,6 +63,7 @@ from app.data.scenario_library import (
     get_scenario_by_id,
     get_scenarios_by_category,
 )
+from app.services.road_test.vrt_service import vrt_service
 
 from pydantic import ValidationError
 
@@ -70,36 +71,36 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/road-test", tags=["Virtual Road Test"])
 
-# In-memory storage (replace with database in production)
-# Persistence: Save to JSON file
-import json
-import os
-DATA_DIR = "data"
-SCENARIOS_FILE = os.path.join(DATA_DIR, "custom_scenarios.json")
 
-def load_scenarios():
-    if not os.path.exists(DATA_DIR):
-        os.makedirs(DATA_DIR)
-    if os.path.exists(SCENARIOS_FILE):
-        try:
-            with open(SCENARIOS_FILE, "r") as f:
-                data = json.load(f)
-                return {k: RoadTestScenario(**v) for k, v in data.items()}
-        except Exception as e:
-            logger.error(f"Failed to load scenarios: {e}")
-    return {}
+# ──────────────────────────────────────────────────────────────────────────
+# Custom scenarios are persisted as TestCase rows with test_type='VirtualRoadTest'.
+# These helpers convert TestCase rows to/from the legacy RoadTestScenario shape
+# so the existing endpoint contracts remain unchanged for clients during the
+# VRT-into-TestCase consolidation (Phase 2).
+# ──────────────────────────────────────────────────────────────────────────
 
-def save_scenarios():
+def _list_custom_scenarios(db: Session) -> List[RoadTestScenario]:
+    """Read all VRT TestCases from the DB and project them as RoadTestScenarios."""
+    return [
+        vrt_service.vrt_test_case_to_scenario(tc)
+        for tc in vrt_service.list_vrt_test_cases(db, limit=10_000)
+    ]
+
+
+def _get_custom_scenario(db: Session, scenario_id: str) -> Optional[RoadTestScenario]:
+    """Fetch a single VRT TestCase by id (UUID string) and convert."""
     try:
-        if not os.path.exists(DATA_DIR):
-            os.makedirs(DATA_DIR)
-        data = {k: v.model_dump(mode="json") for k, v in _custom_scenarios.items()}
-        with open(SCENARIOS_FILE, "w") as f:
-            json.dump(data, f, indent=2, default=str)
-    except Exception as e:
-        logger.error(f"Failed to save scenarios: {e}")
+        from uuid import UUID
+        tc = vrt_service.get_vrt_test_case(db, UUID(scenario_id))
+    except (ValueError, AttributeError):
+        return None
+    if tc is None:
+        return None
+    return vrt_service.vrt_test_case_to_scenario(tc)
 
-_custom_scenarios: dict[str, RoadTestScenario] = load_scenarios()
+
+# In-memory storage for VRT runtime state (executions, topologies).
+# Phase 2.3/2.4 will move these to the database.
 _topologies: dict[str, NetworkTopology] = {}
 _executions: dict[str, TestExecution] = {}
 _execution_status: dict[str, TestStatus] = {}
@@ -180,7 +181,8 @@ def _compute_kpi_summary_from_samples(kpi_samples: List[KPIMetrics]) -> List[KPI
 async def list_scenarios(
     category: Optional[ScenarioCategory] = None,
     tags: Optional[str] = Query(None, description="Comma-separated tags"),
-    source: Optional[str] = Query(None, description="standard or custom")
+    source: Optional[str] = Query(None, description="standard or custom"),
+    db: Session = Depends(get_db),
 ):
     """
     List all available road test scenarios
@@ -193,8 +195,8 @@ async def list_scenarios(
     else:
         scenarios = get_all_scenarios()
 
-    # Add custom scenarios
-    scenarios.extend(_custom_scenarios.values())
+    # Add custom scenarios (DB-backed via vrt_service)
+    scenarios.extend(_list_custom_scenarios(db))
 
     # Filter by source
     if source:
@@ -263,7 +265,7 @@ async def list_scenarios(
 
 
 @router.get("/scenarios/{scenario_id}", response_model=RoadTestScenario)
-async def get_scenario(scenario_id: str):
+async def get_scenario(scenario_id: str, db: Session = Depends(get_db)):
     """
     Get detailed scenario configuration
     """
@@ -272,107 +274,139 @@ async def get_scenario(scenario_id: str):
     if scenario:
         return scenario
 
-    # Check custom scenarios
-    if scenario_id in _custom_scenarios:
-        return _custom_scenarios[scenario_id]
+    # Check custom scenarios (DB-backed)
+    custom = _get_custom_scenario(db, scenario_id)
+    if custom is not None:
+        return custom
 
     raise HTTPException(status_code=404, detail=f"Scenario '{scenario_id}' not found")
 
 
 @router.post("/scenarios", response_model=RoadTestScenario, status_code=201)
-async def create_scenario(scenario_create: ScenarioCreate):
+async def create_scenario(
+    scenario_create: ScenarioCreate,
+    db: Session = Depends(get_db),
+):
     """
-    Create a new custom scenario
+    Create a new custom scenario (persisted as a VRT TestCase row).
     """
-    # Generate scenario ID
-    scenario_id = f"custom-{len(_custom_scenarios) + 1:04d}"
-
-    # Create scenario
-    from datetime import datetime
-    scenario = RoadTestScenario(
-        id=scenario_id,
-        source=ScenarioCategory.CUSTOM,
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        **scenario_create.model_dump()
+    # Build a transient RoadTestScenario from the create payload — only used
+    # to feed the conversion helper. The real ID is the TestCase UUID.
+    transient = RoadTestScenario(
+        id="pending",
+        source=ScenarioSource.CUSTOM,
+        **scenario_create.model_dump(),
     )
-
-    _custom_scenarios[scenario_id] = scenario
-    save_scenarios()
-
-    logger.info(f"Created custom scenario: {scenario_id}")
-    return scenario
+    config = vrt_service.scenario_to_vrt_config(transient, mode=TestMode.DIGITAL_TWIN)
+    test_case = vrt_service.create_vrt_test_case(
+        db,
+        name=scenario_create.name,
+        configuration=config,
+        created_by="api",  # TODO Phase 4: derive from auth context
+        description=scenario_create.description,
+        tags=scenario_create.tags,
+    )
+    logger.info("Created custom scenario %s as TestCase %s", scenario_create.name, test_case.id)
+    return vrt_service.vrt_test_case_to_scenario(test_case)
 
 
 @router.put("/scenarios/{scenario_id}", response_model=RoadTestScenario)
-async def update_scenario(scenario_id: str, scenario_update: ScenarioUpdate):
+async def update_scenario(
+    scenario_id: str,
+    scenario_update: ScenarioUpdate,
+    db: Session = Depends(get_db),
+):
     """
     Update a scenario. For standard scenarios, creates a custom copy.
     """
-    from datetime import datetime
+    # Try custom scenario first (DB-backed)
+    from uuid import UUID
+    try:
+        case_uuid = UUID(scenario_id)
+        existing_tc = vrt_service.get_vrt_test_case(db, case_uuid)
+    except ValueError:
+        existing_tc = None
 
-    # Check if it's a custom scenario
-    if scenario_id in _custom_scenarios:
-        scenario = _custom_scenarios[scenario_id]
-
-        # Update fields
+    if existing_tc is not None:
+        existing_scenario = vrt_service.vrt_test_case_to_scenario(existing_tc)
+        # Apply partial update onto the existing scenario shape
         update_data = scenario_update.model_dump(exclude_unset=True)
+        merged = existing_scenario.model_dump()
         for field, value in update_data.items():
             if value is not None:
-                setattr(scenario, field, value)
+                merged[field] = value
+        merged_scenario = RoadTestScenario.model_validate(merged)
+        new_config = vrt_service.scenario_to_vrt_config(
+            merged_scenario, mode=TestMode.DIGITAL_TWIN
+        )
+        updated = vrt_service.update_vrt_test_case(
+            db,
+            case_uuid,
+            name=merged_scenario.name,
+            description=merged_scenario.description,
+            configuration=new_config,
+            tags=merged_scenario.tags,
+        )
+        logger.info("Updated custom scenario %s", scenario_id)
+        return vrt_service.vrt_test_case_to_scenario(updated)
 
-        scenario.updated_at = datetime.now()
-        save_scenarios()
-        logger.info(f"Updated custom scenario: {scenario_id}")
-        return scenario
-
-    # Check if it's a standard scenario - create a custom copy
+    # Standard scenario: create a custom copy with the updates applied.
     standard_scenario = get_scenario_by_id(scenario_id)
     if standard_scenario:
-        # Create a new custom scenario based on the standard one
-        new_id = f"custom-{len(_custom_scenarios) + 1:04d}"
-
-        # Copy standard scenario data
         scenario_data = standard_scenario.model_dump()
-        scenario_data['id'] = new_id
-        scenario_data['source'] = ScenarioSource.CUSTOM
-        scenario_data['created_at'] = datetime.now()
-        scenario_data['updated_at'] = datetime.now()
-
-        # Apply updates
+        scenario_data["source"] = ScenarioSource.CUSTOM
         update_data = scenario_update.model_dump(exclude_unset=True)
         for field, value in update_data.items():
             if value is not None:
                 scenario_data[field] = value
-
-        # Create new scenario
-        new_scenario = RoadTestScenario(**scenario_data)
-        _custom_scenarios[new_id] = new_scenario
-        save_scenarios()
-
-        logger.info(f"Created custom scenario {new_id} from standard scenario {scenario_id}")
-        return new_scenario
+        # Drop fields owned by the new TestCase row
+        scenario_data.pop("id", None)
+        scenario_data.pop("created_at", None)
+        scenario_data.pop("updated_at", None)
+        new_scenario = RoadTestScenario(id="pending", **scenario_data)
+        config = vrt_service.scenario_to_vrt_config(new_scenario, mode=TestMode.DIGITAL_TWIN)
+        test_case = vrt_service.create_vrt_test_case(
+            db,
+            name=new_scenario.name,
+            configuration=config,
+            created_by="api",
+            description=new_scenario.description,
+            tags=new_scenario.tags,
+        )
+        logger.info(
+            "Created custom scenario %s from standard scenario %s",
+            test_case.id,
+            scenario_id,
+        )
+        return vrt_service.vrt_test_case_to_scenario(test_case)
 
     raise HTTPException(
         status_code=404,
-        detail=f"Scenario '{scenario_id}' not found"
+        detail=f"Scenario '{scenario_id}' not found",
     )
 
 
 @router.delete("/scenarios/{scenario_id}", status_code=204)
-async def delete_scenario(scenario_id: str):
+async def delete_scenario(scenario_id: str, db: Session = Depends(get_db)):
     """
     Delete a custom scenario (standard scenarios cannot be deleted)
     """
-    if scenario_id not in _custom_scenarios:
+    from uuid import UUID
+    try:
+        case_uuid = UUID(scenario_id)
+    except ValueError:
         raise HTTPException(
             status_code=404,
-            detail=f"Custom scenario '{scenario_id}' not found or is a standard scenario"
+            detail=f"Custom scenario '{scenario_id}' not found or is a standard scenario",
         )
 
-    del _custom_scenarios[scenario_id]
-    save_scenarios()
-    logger.info(f"Deleted scenario: {scenario_id}")
+    if not vrt_service.delete_vrt_test_case(db, case_uuid):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Custom scenario '{scenario_id}' not found or is a standard scenario",
+        )
+
+    logger.info("Deleted custom scenario %s", scenario_id)
     return JSONResponse(status_code=204, content=None)
 
 
@@ -528,7 +562,10 @@ async def list_executions(
 
 
 @router.post("/executions", response_model=TestExecution, status_code=201)
-async def create_execution(execution_create: ExecutionCreate):
+async def create_execution(
+    execution_create: ExecutionCreate,
+    db: Session = Depends(get_db),
+):
     """
     Create a new test execution
 
@@ -537,9 +574,11 @@ async def create_execution(execution_create: ExecutionCreate):
     - conducted: Requires topology_id
     - ota: Uses MPAC chamber
     """
-    # Validate scenario exists
+    # Validate scenario exists (standard library or custom DB-backed)
     scenario = get_scenario_by_id(execution_create.scenario_id)
-    if not scenario and execution_create.scenario_id not in _custom_scenarios:
+    if not scenario:
+        scenario = _get_custom_scenario(db, execution_create.scenario_id)
+    if not scenario:
         raise HTTPException(status_code=404, detail=f"Scenario '{execution_create.scenario_id}' not found")
 
     # Validate topology for conducted mode
@@ -794,7 +833,7 @@ async def submit_execution_metrics(execution_id: str, metrics: ExecutionMetricsS
 
 
 @router.get("/executions/{execution_id}/report", response_model=ExecutionReport)
-async def get_execution_report(execution_id: str):
+async def get_execution_report(execution_id: str, db: Session = Depends(get_db)):
     """
     Generate execution report for completed test
 
@@ -802,7 +841,7 @@ async def get_execution_report(execution_id: str):
     """
     import traceback
     try:
-        return await _generate_execution_report(execution_id)
+        return await _generate_execution_report(execution_id, db)
     except HTTPException:
         raise
     except Exception as e:
@@ -821,7 +860,7 @@ async def _archive_execution_report(execution_id: str, db: Session):
 
         # 1. Generate full report (Pydantic model)
         # Note: We temporarily allow report generation even if status is just changed
-        report_data: ExecutionReport = await _generate_execution_report(execution_id)
+        report_data: ExecutionReport = await _generate_execution_report(execution_id, db)
         
         # 2. Convert to JSON dict
         content_data = report_data.model_dump(mode="json")
@@ -926,7 +965,7 @@ def get_attr_or_item(obj: Any, key: str, default: Any = None) -> Any:
         return obj.get(key, default)
     return getattr(obj, key, default)
 
-async def _generate_execution_report(execution_id: str) -> ExecutionReport:
+async def _generate_execution_report(execution_id: str, db: Session) -> ExecutionReport:
     """Internal function to generate report"""
     try:
         if execution_id not in _executions:
@@ -948,8 +987,8 @@ async def _generate_execution_report(execution_id: str) -> ExecutionReport:
     try:
         # Get scenario details (check both standard and custom scenarios)
         scenario = get_scenario_by_id(execution.scenario_id)
-        if not scenario and execution.scenario_id in _custom_scenarios:
-            scenario = _custom_scenarios[execution.scenario_id]
+        if not scenario:
+            scenario = _get_custom_scenario(db, execution.scenario_id)
         scenario_name = get_attr_or_item(scenario, 'name', execution.scenario_id)
     except Exception as e:
         logger.error(f"Error retrieving scenario: {e}")

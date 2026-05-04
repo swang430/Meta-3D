@@ -8,6 +8,7 @@ import logging
 from app.models.test_plan import (
     TestPlan,
     TestCase,
+    TestCaseType,
     TestStep,
     TestExecution,
     TestQueue,
@@ -210,7 +211,7 @@ class TestPlanService:
         vrt_test_case = TestCase(
             name=f"VRT: {test_plan.name}",
             description=f"自动生成的虚拟路测用例 — 关联场景 {test_plan.scenario_id}",
-            test_type="Throughput",
+            test_type=TestCaseType.VIRTUAL_ROAD_TEST.value,
             configuration={
                 "auto_generated": True,
                 "scenario_id": test_plan.scenario_id,
