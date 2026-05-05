@@ -8,10 +8,14 @@ import '@mantine/core/styles.css'
 import '@mantine/notifications/styles.css'
 import './index.css'
 import App from './App.tsx'
+import { AppErrorBoundary, installGlobalErrorHandlers } from './observability'
 // import { setupMockServer } from './api/mockServer.ts'
 
 // Disable mock server to use real backend API
 // setupMockServer()
+
+// Wire window.onerror + unhandledrejection to the server-side frontend.log
+installGlobalErrorHandlers()
 
 const queryClient = new QueryClient()
 const theme = createTheme({
@@ -33,7 +37,9 @@ createRoot(document.getElementById('root')!).render(
       <MantineProvider theme={theme} defaultColorScheme="light" colorSchemeManager={colorSchemeManager}>
         <ModalsProvider>
           <Notifications position="top-right" limit={3} />
-          <App />
+          <AppErrorBoundary>
+            <App />
+          </AppErrorBoundary>
         </ModalsProvider>
       </MantineProvider>
     </QueryClientProvider>
