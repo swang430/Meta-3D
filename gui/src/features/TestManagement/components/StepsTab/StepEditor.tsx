@@ -26,6 +26,12 @@ import { useTestSteps, useUpdateTestStep } from '../../hooks'
 import type { StepParameter, ParametersMap } from '../../types'
 import { normalizeStepParameters } from '../../utils'
 import { SaveAsTestCaseModal } from './SaveAsTestCaseModal'
+import {
+  MIMOOTAConfigForm,
+  type MIMOOTAConfiguration,
+} from './MIMOOTAConfigForm'
+
+const MIMO_OTA_STEP_TYPE = 'MIMO_OTA'
 
 interface StepEditorProps {
   planId: string
@@ -34,6 +40,9 @@ interface StepEditorProps {
 }
 
 export function StepEditor({ planId, stepId, readOnly }: StepEditorProps) {
+  // For MIMO_OTA we keep raw JSON shape; for everything else we normalize into
+  // the legacy StepParameter wrapper so the generic key/value renderer works.
+  const [rawParameters, setRawParameters] = useState<MIMOOTAConfiguration>({})
   const [parameters, setParameters] = useState<ParametersMap>({})
   const [timeoutSeconds, setTimeoutSeconds] = useState<number>(300)
   const [retryCount, setRetryCount] = useState<number>(0)
@@ -46,12 +55,20 @@ export function StepEditor({ planId, stepId, readOnly }: StepEditorProps) {
   const { mutate: updateStep, isPending } = useUpdateTestStep()
 
   const step = steps?.find((s) => s.id === stepId)
+  // Backend writes TestStep.type into step_dict["category"], so the frontend's
+  // TestStep interface only has `.category` (legacy naming).
+  const isMimoOta = step?.category === MIMO_OTA_STEP_TYPE
 
-  // Load step parameters and config — normalize raw JSON (e.g. MIMO_OTA's flat
-  // 27-field configuration) into the StepParameter shape the editor expects.
+  // Load step parameters into the right state slot for this step's type.
   useEffect(() => {
     if (step) {
-      setParameters(normalizeStepParameters(step.parameters))
+      if (step.category === MIMO_OTA_STEP_TYPE) {
+        setRawParameters((step.parameters as MIMOOTAConfiguration) || {})
+        setParameters({})
+      } else {
+        setRawParameters({})
+        setParameters(normalizeStepParameters(step.parameters))
+      }
       setTimeoutSeconds(step.timeout_seconds || 300)
       setRetryCount(step.retry_count || 0)
       setContinueOnFailure(step.continue_on_failure || false)
@@ -70,13 +87,24 @@ export function StepEditor({ planId, stepId, readOnly }: StepEditorProps) {
     setHasChanges(true)
   }
 
+  const handleMimoOtaChange = (next: MIMOOTAConfiguration) => {
+    setRawParameters(next)
+    setHasChanges(true)
+  }
+
   const handleSave = () => {
     updateStep(
       {
         planId,
         stepId,
         payload: {
-          parameters,
+          // For MIMO_OTA we send the raw flat configuration JSON; the legacy
+          // ParametersMap shape (Record<string, StepParameter>) does not fit.
+          // Cast through `unknown` because the backend treats this column as
+          // an opaque dict for any test_type.
+          parameters: (isMimoOta
+            ? rawParameters
+            : parameters) as unknown as ParametersMap,
           timeout_seconds: timeoutSeconds,
           retry_count: retryCount,
           continue_on_failure: continueOnFailure,
@@ -92,7 +120,13 @@ export function StepEditor({ planId, stepId, readOnly }: StepEditorProps) {
 
   const handleReset = () => {
     if (step) {
-      setParameters(normalizeStepParameters(step.parameters))
+      if (step.category === MIMO_OTA_STEP_TYPE) {
+        setRawParameters((step.parameters as MIMOOTAConfiguration) || {})
+        setParameters({})
+      } else {
+        setRawParameters({})
+        setParameters(normalizeStepParameters(step.parameters))
+      }
       setTimeoutSeconds(step.timeout_seconds || 300)
       setRetryCount(step.retry_count || 0)
       setContinueOnFailure(step.continue_on_failure || false)
@@ -139,36 +173,44 @@ export function StepEditor({ planId, stepId, readOnly }: StepEditorProps) {
         </Stack>
       </Paper>
 
-      {/* Parameters */}
-      <Paper p="md" withBorder>
-        <Stack gap="md">
-          <Text size="sm" fw={600}>
-            参数配置
-          </Text>
-
-          {parameterKeys.length === 0 ? (
-            <Text size="sm" c="dimmed" ta="center" py="md">
-              此步骤无可配置参数
+      {/* Parameters — typed form for MIMO_OTA, generic key/value for the rest */}
+      {isMimoOta ? (
+        <MIMOOTAConfigForm
+          value={rawParameters}
+          onChange={handleMimoOtaChange}
+          readOnly={readOnly}
+        />
+      ) : (
+        <Paper p="md" withBorder>
+          <Stack gap="md">
+            <Text size="sm" fw={600}>
+              参数配置
             </Text>
-          ) : (
-            <Stack gap="md">
-              {parameterKeys.map((key) => {
-                const param = parameters[key]
-                return (
-                  <div key={key}>
-                    {renderParameterInput(
-                      key,
-                      param,
-                      handleParameterChange,
-                      readOnly,
-                    )}
-                  </div>
-                )
-              })}
-            </Stack>
-          )}
-        </Stack>
-      </Paper>
+
+            {parameterKeys.length === 0 ? (
+              <Text size="sm" c="dimmed" ta="center" py="md">
+                此步骤无可配置参数
+              </Text>
+            ) : (
+              <Stack gap="md">
+                {parameterKeys.map((key) => {
+                  const param = parameters[key]
+                  return (
+                    <div key={key}>
+                      {renderParameterInput(
+                        key,
+                        param,
+                        handleParameterChange,
+                        readOnly,
+                      )}
+                    </div>
+                  )
+                })}
+              </Stack>
+            )}
+          </Stack>
+        </Paper>
+      )}
 
       {/* Execution Config */}
       <Paper p="md" withBorder>
