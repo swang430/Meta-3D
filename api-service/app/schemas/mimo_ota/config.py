@@ -59,6 +59,23 @@ Pass criteria (every test_type):
 
 If any of the above genuinely doesn't fit a new test_type's needs, document
 the deviation here AND open a refactor ticket — do not silently diverge.
+
+═══════════════════════════════════════════════════════════════════════════
+REGISTERED DEVIATIONS (登记过的偏差)
+═══════════════════════════════════════════════════════════════════════════
+
+[2026-05-05, Phase 3a] TRP test_type schema:
+  Field `tx_power_dbm` (canonical = downlink BS transmit power) does NOT
+  apply to TRP. TRP measures DUT-side transmit power across a sphere; the
+  BS is muted during the measurement. To avoid silent reuse, TRP schema
+  defines a separate field `dut_tx_power_target_dbm` (the power level the
+  DUT is commanded to transmit at via UL grant). Conversely, MIMO_OTA's
+  `target_tx_power_dbm` is BS-side and stays as canonical.
+
+  Refactor candidate (rule of three): if TIS / Throughput later also need
+  separate "actor-side" power fields, abstract a Pydantic mixin class
+  RFTransmitterConfig{role: "bs" | "dut", power_dbm: float}.
+
 ═══════════════════════════════════════════════════════════════════════════
 """
 from enum import Enum

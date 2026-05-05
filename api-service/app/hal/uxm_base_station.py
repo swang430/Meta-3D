@@ -234,9 +234,18 @@ FREQ_TO_BAND_MAP = [
 ]
 
 
-def _infer_band_from_freq(freq_mhz: float) -> tuple:
-    """从频率推断 NR 频段和双工模式"""
-    for min_f, max_f, band, duplex in FREQ_TO_BAND_MAP:
+def _infer_band_from_freq(
+    freq_mhz: float,
+    band_map: Optional[List[tuple]] = None,
+) -> tuple:
+    """从频率推断 NR 频段和双工模式。
+
+    Phase 2h: band_map 由调用方(driver 实例)传入, 让跨实验室部署可以覆盖
+    默认映射(在 InstrumentCategory.config["freq_to_band_map"] 配置)。
+    """
+    table = band_map if band_map is not None else FREQ_TO_BAND_MAP
+    for row in table:
+        min_f, max_f, band, duplex = row[0], row[1], row[2], row[3]
         if min_f <= freq_mhz <= max_f:
             return band, duplex
     return "N78", "TDD"  # 默认 fallback
@@ -279,6 +288,17 @@ class RealUxmDriver(BaseStationDriver):
         self._scs_khz: int = 30
         self._dl_power_dbm: float = -50.0
         self._cell_state: CellState = CellState.OFF
+        # Phase 2h: 跨实验室部署允许覆盖 freq→band 推断表 + ARFCN 映射
+        # config["freq_to_band_map"] 形如 [[3300, 3800, "N78", "TDD"], ...]
+        # 本地频段不在默认表里(e.g. 印度 n28, 日本 n79 局部频段)的实验室在
+        # InstrumentCategory.config 里覆盖; 不传则走 module 默认。
+        custom_band_map = config.get("freq_to_band_map")
+        self._freq_to_band_map = (
+            [tuple(row) for row in custom_band_map]
+            if custom_band_map else FREQ_TO_BAND_MAP
+        )
+        custom_arfcn = config.get("nr_band_arfcn_map")
+        self._nr_band_arfcn_map = dict(custom_arfcn) if custom_arfcn else NR_BAND_ARFCN_MAP
 
     # ===================================================================
     # 1. 连接生命周期
@@ -414,7 +434,7 @@ class RealUxmDriver(BaseStationDriver):
                 # 如果用户没有显式给 band 和 duplex，从频率自动推断
                 if "band" not in config or "duplex" not in config:
                     inferred_band, inferred_duplex = _infer_band_from_freq(
-                        self._frequency_mhz
+                        self._frequency_mhz, self._freq_to_band_map
                     )
                     if "band" not in config:
                         config["band"] = inferred_band

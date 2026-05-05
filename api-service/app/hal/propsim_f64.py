@@ -67,7 +67,10 @@ class F64BypassMode(int, Enum):
     CALIBRATION = 3        # 校准旁路 (所有通道等增益/等延迟/零相位)
 
 
-# F64 远程文件存储路径约定
+# F64 远程文件存储路径默认 (Windows F64 ATE 出厂约定)。
+# 跨实验室部署时, 在 InstrumentCategory.config 里覆盖 emulation_dir /
+# waveform_dir 以匹配本地 F64 服务器文件结构 (e.g. Linux F64 用 /opt/...
+# 或 Windows F64 安装在非 D:\ 盘)。
 F64_EMULATION_DIR = r"D:\User Emulations"
 F64_WAVEFORM_DIR = r"D:\User Emulations\ASC"
 
@@ -103,6 +106,9 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self.port: int = config.get("port", 5025)
         self.ftp_user: str = config.get("ftp_user", F64_FTP_USER)
         self.ftp_pass: str = config.get("ftp_pass", F64_FTP_PASS)
+        # Phase 2h: 跨实验室部署时由 InstrumentCategory.config 覆盖
+        self.emulation_dir: str = config.get("emulation_dir", F64_EMULATION_DIR)
+        self.waveform_dir: str = config.get("waveform_dir", F64_WAVEFORM_DIR)
 
         # PyVISA 资源句柄
         self._visa_resource = None
@@ -325,7 +331,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             if not emulation_file:
                 # 标准命名: D:\User Emulations\CDL-A_UMi_2x2.smu
                 emulation_file = (
-                    f"{F64_EMULATION_DIR}\\{model_type}_{scenario}"
+                    f"{self.emulation_dir}\\{model_type}_{scenario}"
                     f"_{self._tx_antennas}x{self._rx_antennas}.smu"
                 )
 
@@ -398,7 +404,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
             # Step 1: FTP 文件传输
             # F64 内置 Windows FTP 服务 (出厂默认: user=PROPSIM, pass=propsim)
-            remote_dir = f"{F64_WAVEFORM_DIR}\\{cdl_model_name or 'custom'}"
+            remote_dir = f"{self.waveform_dir}\\{cdl_model_name or 'custom'}"
             transferred_files = await self._ftp_upload_directory(asc_files_dir, remote_dir)
             if not transferred_files:
                 logger.error("[F64/ASC] FTP transfer failed - no files uploaded")
