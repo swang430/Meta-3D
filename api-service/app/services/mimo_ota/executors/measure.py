@@ -46,6 +46,11 @@ _DEV_SAMPLE_WINDOWS = 3
 # time (helps surface ordering bugs) but don't actually wait 5s in unit tests.
 _MOCK_WINDOW_FLOOR_S = 0.05
 
+# Phase 2m: DUT 掉线检测周期 (每 N 个 azimuth 检查一次而非每窗口, 节省 SCPI 流量)
+# 单 azimuth 内不检查 (统计窗口本身已 >= 50ms, 中途掉线被 measure_throughput_window
+# 内部 retry 兜底). azimuth 间隔检查能在转台移动期间发现, 是最佳折衷.
+_DUT_HEALTH_CHECK_EVERY_N_AZIMUTHS = 1
+
 
 @register_executor(MIMOOTAStepType.MEASURE.value)
 class MeasureExecutor(IStepExecutor):
@@ -341,7 +346,29 @@ class MeasureExecutor(IStepExecutor):
                     context.test_execution.id, patterns_used, len(config.azimuths_deg),
                 )
 
-            for azimuth in config.azimuths_deg:
+            dut_disconnect_warnings: List[str] = []
+            for az_idx, azimuth in enumerate(config.azimuths_deg):
+                # --- Phase 2m: DUT health check before each azimuth ---
+                if az_idx % _DUT_HEALTH_CHECK_EVERY_N_AZIMUTHS == 0 and hasattr(
+                    base_station, "get_ue_info"
+                ):
+                    try:
+                        ue_info = await base_station.get_ue_info()
+                        if not ue_info.get("connected", True):
+                            msg = (
+                                f"DUT disconnected before azimuth {azimuth:.0f}° "
+                                f"(az_idx={az_idx}/{len(config.azimuths_deg)}); "
+                                "aborting measurement loop"
+                            )
+                            logger.error("[%s] %s", context.test_execution.id, msg)
+                            dut_disconnect_warnings.append(msg)
+                            break  # stop loop; finally cleans up
+                    except Exception as e:  # noqa: BLE001
+                        logger.debug(
+                            "[%s] DUT health check skipped: %s",
+                            context.test_execution.id, e,
+                        )
+
                 logger.info(
                     "[%s] Phase 3: positioner -> azimuth %.1f° (%d windows × %.2fs)",
                     context.test_execution.id,
@@ -434,6 +461,9 @@ class MeasureExecutor(IStepExecutor):
                     },
                     "scells": scells_added,
                 },
+                "dut_disconnect_warnings": dut_disconnect_warnings,
+                "azimuths_completed": len(azimuth_results),
+                "azimuths_requested": len(config.azimuths_deg),
             }
         finally:
             cleanup_warnings = await cleanup_chamber_instruments(

@@ -739,8 +739,75 @@ class RFChainCalibrationService:
         vna_id: str,
         power_meter_id: str
     ) -> ChainGainMeasurement:
-        """执行真实的上行链路测量"""
-        raise NotImplementedError("Real uplink measurement not implemented yet")
+        """Phase 2k: 执行上行链路 (LNA) 真实测量。
+
+        测量链路: 探头 → 双工器 → LNA → 电缆 → 信道仿真器(假定 CE 已替换为
+        VNA Port2 作为接收基准)。VNA Port1 注入测试信号, Port2 接 LNA 输出,
+        S21 = LNA_gain - duplexer_loss - cable_loss。
+
+        工艺前提: 调用方需保证 RF switch 已切到 LNA path (uplink mode);
+        Power Meter 用于交叉校验 (S21 单值 ↔ 绝对功率).
+
+        Returns ChainGainMeasurement 含 lna_gain_db / duplexer_loss_db /
+        cable_loss_db, 由公式拆解 (依赖 chamber.has_duplexer / typical_cable_loss_db).
+        """
+        from app.services.instrument_hal_service import get_hal_service
+
+        hal = get_hal_service()
+        vna = hal.drivers.get("vna")
+        pm = hal.drivers.get("powerMeter")
+        if vna is None:
+            raise RuntimeError(
+                "No VNA driver in HAL — cannot run real uplink measurement. "
+                "Set HAL category 'vna' to a connected R&S ZNA / Keysight ENA driver."
+            )
+
+        center_hz = frequency_mhz * 1e6
+        span_hz = 1e6
+        points = 11
+
+        if not await vna.setup_sweep(center_hz - span_hz / 2, center_hz + span_hz / 2, points):
+            raise RuntimeError(f"VNA setup_sweep failed @ {frequency_mhz} MHz")
+        if not await vna.measure_s_param("S21"):
+            raise RuntimeError(f"VNA S21 measurement failed @ {frequency_mhz} MHz")
+        trace = await vna.get_trace_data()
+        if not trace:
+            raise RuntimeError("VNA returned empty trace")
+
+        magnitudes_db = [20.0 * math.log10(abs(c)) for c in trace if abs(c) > 0]
+        if not magnitudes_db:
+            raise RuntimeError("VNA trace had no non-zero magnitudes")
+
+        s21_total_db = statistics.mean(magnitudes_db)
+        # S21 = LNA_gain - duplexer_loss - cable_loss
+        # → LNA_gain = S21 + duplexer_loss + cable_loss
+        duplexer_loss = chamber.duplexer_insertion_loss_db or 0.0
+        cable_loss = chamber.typical_cable_loss_db or 0.0
+        lna_gain_db = s21_total_db + duplexer_loss + cable_loss
+
+        # Cross-check with Power Meter if available (informational only — VNA is authoritative)
+        if pm is not None and hasattr(pm, "measure_average_power"):
+            try:
+                pm_pwr = await pm.measure_average_power()
+                logger.info(
+                    "[RFChain UL] vna=%s pm=%s freq=%.0f MHz S21=%.2f dB → LNA=%.2f dB (PM xref=%.1f dBm)",
+                    vna_id or "default", power_meter_id or "default",
+                    frequency_mhz, s21_total_db, lna_gain_db, pm_pwr,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.debug("[RFChain UL] PM xref skipped: %s", e)
+        else:
+            logger.info(
+                "[RFChain UL] vna=%s freq=%.0f MHz S21=%.2f dB → LNA=%.2f dB",
+                vna_id or "default", frequency_mhz, s21_total_db, lna_gain_db,
+            )
+
+        return ChainGainMeasurement(
+            total_gain_db=s21_total_db,
+            lna_gain_db=lna_gain_db,
+            duplexer_loss_db=duplexer_loss,
+            cable_loss_db=cable_loss,
+        )
 
     async def _real_downlink_measurement(
         self,
@@ -750,8 +817,73 @@ class RFChainCalibrationService:
         power_meter_id: str,
         signal_generator_id: str
     ) -> ChainGainMeasurement:
-        """执行真实的下行链路测量"""
-        raise NotImplementedError("Real downlink measurement not implemented yet")
+        """Phase 2k: 执行下行链路 (PA) 真实测量。
+
+        测量链路: 信道仿真器 → 电缆 → PA → 双工器 → 探头。SG 注入信号代替
+        CE (避免 CE 进入瞬态), VNA Port2 测量探头端功率(或 PM 直接测).
+
+        S21 = PA_gain - duplexer_loss - cable_loss (相对 SG 输出参考)
+        """
+        from app.services.instrument_hal_service import get_hal_service
+
+        hal = get_hal_service()
+        vna = hal.drivers.get("vna")
+        sg = hal.drivers.get("signalGenerator")
+        if vna is None:
+            raise RuntimeError(
+                "No VNA driver in HAL — cannot run real downlink measurement"
+            )
+
+        # SG 配置 (仅在 driver 提供该方法时调用; 否则假定 SG 已被运维预置)
+        if sg is not None:
+            for method, kwargs in (
+                ("set_frequency", {"frequency_hz": frequency_mhz * 1e6}),
+                ("set_power", {"power_dbm": -30.0}),  # 安全低功率激励
+                ("rf_on", {}),
+            ):
+                if hasattr(sg, method):
+                    try:
+                        await getattr(sg, method)(**kwargs)
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("[RFChain DL] sg.%s skipped: %s", method, e)
+
+        try:
+            center_hz = frequency_mhz * 1e6
+            if not await vna.setup_sweep(center_hz - 0.5e6, center_hz + 0.5e6, 11):
+                raise RuntimeError("VNA setup_sweep failed")
+            if not await vna.measure_s_param("S21"):
+                raise RuntimeError("VNA S21 measurement failed")
+            trace = await vna.get_trace_data()
+            if not trace:
+                raise RuntimeError("VNA returned empty trace")
+            magnitudes_db = [20.0 * math.log10(abs(c)) for c in trace if abs(c) > 0]
+            if not magnitudes_db:
+                raise RuntimeError("VNA trace had no non-zero magnitudes")
+            s21_total_db = statistics.mean(magnitudes_db)
+
+            duplexer_loss = chamber.duplexer_insertion_loss_db or 0.0
+            cable_loss = chamber.typical_cable_loss_db or 0.0
+            pa_gain_db = s21_total_db + duplexer_loss + cable_loss
+
+            logger.info(
+                "[RFChain DL] vna=%s sg=%s freq=%.0f MHz S21=%.2f dB → PA=%.2f dB",
+                vna_id or "default", signal_generator_id or "default",
+                frequency_mhz, s21_total_db, pa_gain_db,
+            )
+
+            return ChainGainMeasurement(
+                total_gain_db=s21_total_db,
+                pa_gain_db=pa_gain_db,
+                duplexer_loss_db=duplexer_loss,
+                cable_loss_db=cable_loss,
+            )
+        finally:
+            # 关 SG 输出避免长时间打信号
+            if sg is not None and hasattr(sg, "rf_off"):
+                try:
+                    await sg.rf_off()
+                except Exception as e:  # noqa: BLE001
+                    logger.debug("[RFChain DL] sg.rf_off skipped: %s", e)
 
     def get_latest_uplink_calibration(
         self,

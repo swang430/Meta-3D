@@ -76,6 +76,22 @@ class PrecheckExecutor(IStepExecutor):
         online_n = sum(1 for v in instruments_online.values() if v)
         messages.append(f"Instruments (HAL): {online_n}/{len(instruments_online)} online")
 
+        # --- 2.4 DUT attach record check (Phase 2l: 防对错 IMSI 测试) ---
+        dut_attach = (context.test_execution.measurements or {}).get("dut_attach")
+        if dut_attach:
+            result_payload["dut_attach"] = dut_attach
+            messages.append(
+                f"DUT: imsi={dut_attach.get('imsi', '?')[:8]}... "
+                f"model={dut_attach.get('dut_model') or 'unspecified'} "
+                f"rrc_connected={dut_attach.get('rrc_connected')}"
+            )
+        else:
+            warnings.append(
+                "No DUT attach record on this execution; "
+                "POST /api/v1/test-executions/{id}/attach-dut before running. "
+                "Test will proceed assuming DUT is already in chamber."
+            )
+
         # --- 2.5 UE Capability check (Phase 2e: 4x4 阻塞前防御) ---
         bs = hal.drivers.get("baseStation")
         ue_cap_pass = True  # default pass when bs unavailable (no DUT to check)
