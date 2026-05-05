@@ -9,6 +9,7 @@ CAL-04: 下行链路校准 (含 PA)
 
 参考: docs/design/MPAC-OTA-Chamber-Topology.md
 """
+import math
 import numpy as np
 from typing import List, Dict, Optional, Any, Tuple
 from datetime import datetime, timedelta
@@ -382,13 +383,67 @@ class ProbePathLossCalibrationService:
         cable_loss_db: float
     ) -> PathLossMeasurement:
         """
-        执行真实的路损测量
+        通过 HAL 中的 VNA 驱动 (RealRsZnaDriver / RealKeysightEnaDriver / MockVNA)
+        测量 SGH→探头的 S21, 反算路损。
 
-        TODO: 集成实际 VNA 驱动
+        工艺前提: 调用方需保证 RF switch matrix 已切换到 probe_id+polarization
+        对应的物理通道。当前 P2 范围内 switch matrix 控制不做编排,
+        生产部署时由 RFSwitchCalibrationService 配套驱动负责。
+
+        测量方案:
+          - 围绕 frequency_mhz 设 1 MHz span, 11 个采样点 (近 CW 测量,
+            可平均掉数据噪声但避开 zero-span 的 IF 残留)
+          - S21 复数 → magnitude_db = 20*log10(|S21|)
+          - PathLoss = -mean(S21_dB) + G_sgh + G_probe - CableLoss
         """
-        # 这里应该调用 VNA HAL 驱动
-        # 目前返回 mock 数据
-        raise NotImplementedError("Real VNA measurement not implemented yet")
+        from app.services.instrument_hal_service import get_hal_service
+
+        hal = get_hal_service()
+        vna = hal.drivers.get("vna")
+        if vna is None:
+            raise RuntimeError(
+                "No VNA driver available in HAL — cannot run real path-loss "
+                "measurement. Ensure an active VNA instrument is configured "
+                "(R&S ZNA / Keysight ENA) before calling with use_mock=False."
+            )
+
+        center_hz = frequency_mhz * 1e6
+        span_hz = 1e6
+        points = 11
+
+        if not await vna.setup_sweep(center_hz - span_hz / 2, center_hz + span_hz / 2, points):
+            raise RuntimeError(f"VNA setup_sweep failed for probe {probe_id}")
+        if not await vna.measure_s_param("S21"):
+            raise RuntimeError(f"VNA S21 measurement failed for probe {probe_id}")
+
+        trace = await vna.get_trace_data()
+        if not trace:
+            raise RuntimeError(f"VNA returned empty trace for probe {probe_id}")
+
+        magnitudes_db = [20.0 * math.log10(abs(c)) for c in trace if abs(c) > 0]
+        if not magnitudes_db:
+            raise RuntimeError(f"VNA trace had no non-zero magnitudes for probe {probe_id}")
+
+        s21_mean_db = statistics.mean(magnitudes_db)
+        s21_std_db = statistics.stdev(magnitudes_db) if len(magnitudes_db) > 1 else 0.0
+
+        # PathLoss = -S21 + G_sgh + G_probe - CableLoss  (ref calculate_measured_path_loss)
+        path_loss_db = -s21_mean_db + sgh_gain_dbi + probe_gain_dbi - cable_loss_db
+        # 总不确定度 = 测量噪声(std) + 标定参考天线增益不确定度 (典型 0.3 dB)
+        uncertainty_db = s21_std_db + 0.3
+
+        logger.info(
+            "[PathLoss] vna=%s probe=%d pol=%s freq=%.1f MHz S21=%.2f±%.2f dB → PL=%.2f dB",
+            vna_id or "default", probe_id, polarization.value, frequency_mhz,
+            s21_mean_db, s21_std_db, path_loss_db,
+        )
+
+        return PathLossMeasurement(
+            probe_id=probe_id,
+            polarization=polarization.value,
+            path_loss_db=float(abs(path_loss_db)),
+            uncertainty_db=float(uncertainty_db),
+        )
 
     def get_latest_calibration(
         self,

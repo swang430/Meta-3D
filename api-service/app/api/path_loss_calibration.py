@@ -97,7 +97,7 @@ async def start_path_loss_calibration(
         raise HTTPException(status_code=404, detail="Chamber configuration not found")
 
     # 启动校准
-    service = ProbePathLossCalibrationService(db, use_mock=True)
+    service = ProbePathLossCalibrationService(db, use_mock=request.use_mock)
 
     result = await service.start_calibration(
         chamber_id=request.chamber_id,

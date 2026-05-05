@@ -528,6 +528,15 @@ class StartProbePathLossCalibrationRequest(BaseModel):
 
     calibrated_by: str = Field(..., description="校准人员")
 
+    use_mock: bool = Field(
+        default=True,
+        description=(
+            "True = 生成模拟数据 (默认, 开发/无硬件场景); "
+            "False = 通过 HAL 中的 VNA 驱动做真实 S21 测量。"
+            "前置条件: HAL 已连接 VNA, RF switch matrix 已切到对应探头通道。"
+        ),
+    )
+
 
 class ProbePathLossCalibrationResponse(BaseModel):
     """探头路损校准响应"""

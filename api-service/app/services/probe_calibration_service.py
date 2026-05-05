@@ -48,9 +48,11 @@ MAX_GAIN_UNCERTAINTY_DB = 0.3
 # 校准有效期 (天)
 DEFAULT_VALIDITY_DAYS = 90
 
-# 探头 ID 范围
+# 探头 ID sanity check 范围。真正的上限由具体暗室的
+# ChamberConfiguration.num_probes 决定（大暗室可能 > 64 探头），这里只是
+# 防御性界限，避免负数 / 离谱值进入 DB。
 PROBE_ID_MIN = 0
-PROBE_ID_MAX = 63
+PROBE_ID_MAX = 1023
 
 
 # ==================== 数据类 ====================

@@ -125,6 +125,36 @@ class MeasureExecutor(IStepExecutor):
             chamber.id, config.frequency_hz, chamber
         )
 
+        # --- Phase 2a: apply chamber-level path-loss to the RSRP baseline ---
+        # Per-probe (azimuth → probe_id) compensation lives in ANALYSIS together
+        # with quiet-zone ripple; here we only correct the bulk RSRP target so
+        # the synthesized samples land near what the DUT actually sees.
+        from app.services.path_loss_calibration_service import (
+            ProbePathLossCalibrationService,
+        )
+
+        pl_service = ProbePathLossCalibrationService(context.db, use_mock=False)
+        path_loss_cert = pl_service.get_latest_calibration(
+            chamber.id, config.frequency_hz / 1e6
+        )
+        if path_loss_cert is not None:
+            avg_path_loss_db = float(path_loss_cert.avg_path_loss_db or 0.0)
+            logger.info(
+                "[%s] Phase 2a: applying chamber path-loss avg=%.2f dB (cert=%s)",
+                context.test_execution.id,
+                avg_path_loss_db,
+                path_loss_cert.id,
+            )
+        else:
+            avg_path_loss_db = 0.0
+            logger.warning(
+                "[%s] Phase 2a: no path-loss calibration for chamber %s @ %.0f MHz; "
+                "RSRP baseline uncompensated",
+                context.test_execution.id,
+                chamber.id,
+                config.frequency_hz / 1e6,
+            )
+
         engine_mode = EngineMode(config.engine_mode)
         if engine_mode == EngineMode.GCM_NATIVE:
             supported = emulator.get_supported_load_modes()
@@ -162,7 +192,8 @@ class MeasureExecutor(IStepExecutor):
 
         # --- Per-azimuth measurement loop ---
         azimuth_results: List[Dict[str, Any]] = []
-        ce_base_rsrp = config.target_rsrp_dbm
+        # Path-loss attenuates DL signal at the DUT, so subtract from target.
+        ce_base_rsrp = config.target_rsrp_dbm - avg_path_loss_db
         sample_cap = min(config.num_samples_per_azimuth, _DEV_SAMPLE_LIMIT)
 
         loop = asyncio.get_event_loop()
@@ -235,6 +266,10 @@ class MeasureExecutor(IStepExecutor):
             "total_duration_s": total_duration,
             "engine_mode": config.engine_mode,
             "calibration_entries_used": len(calibration_entries) if calibration_entries else 0,
+            "path_loss_compensation_db": avg_path_loss_db,
+            "path_loss_certificate_id": (
+                str(path_loss_cert.id) if path_loss_cert is not None else None
+            ),
         }
         write_phase_result(context.test_execution, "measure", result_payload)
         context.db.commit()
