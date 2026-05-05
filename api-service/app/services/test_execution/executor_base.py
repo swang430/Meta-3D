@@ -40,10 +40,14 @@ class IStepExecutor(ABC):
     register themselves with the registry via the `@register_executor("type")`
     decorator. Keep executors stateless; per-run state goes in the context and
     return value.
+
+    `execute` is async because nearly every real test step talks to async
+    boundaries — HAL drivers, ChannelEngineClient, asyncio sleeps for hardware
+    settling. Pure-sync executors can simply not await anything inside.
     """
 
     @abstractmethod
-    def execute(self, context: StepExecutionContext) -> StepExecutionResult:
+    async def execute(self, context: StepExecutionContext) -> StepExecutionResult:
         """Run one step. Must not raise on user-visible failures — return
         StepExecutionStatus.FAILED with a populated `error_message` instead.
         Framework-level bugs may still raise.

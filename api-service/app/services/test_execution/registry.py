@@ -59,7 +59,7 @@ def get_registered_step_types() -> List[str]:
     return sorted(EXECUTOR_REGISTRY.keys())
 
 
-def dispatch_step(context: StepExecutionContext) -> StepExecutionResult:
+async def dispatch_step(context: StepExecutionContext) -> StepExecutionResult:
     """Run the registered executor for `context.step.type`.
 
     Wraps the call with:
@@ -79,7 +79,7 @@ def dispatch_step(context: StepExecutionContext) -> StepExecutionResult:
     executor = executor_cls()
     started = time.monotonic()
     try:
-        result = executor.execute(context)
+        result = await executor.execute(context)
     except Exception as exc:  # pragma: no cover — defensive boundary
         elapsed = time.monotonic() - started
         logger.exception(
