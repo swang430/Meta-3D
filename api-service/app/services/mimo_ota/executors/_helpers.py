@@ -26,10 +26,13 @@ def write_phase_result(
     execution: TestExecution, phase_key: str, payload: Dict[str, Any]
 ) -> None:
     """Persist one phase's output. Caller is responsible for db.commit()."""
+    from sqlalchemy.orm.attributes import flag_modified
+
     phases = get_phase_results(execution)
     phases[phase_key] = payload
-    # Ensure JSON column dirty-state is recognized by SQLAlchemy
-    execution.measurements = dict(execution.measurements)
+    # In-place mutation of JSON column — SQLAlchemy's default change tracking
+    # does NOT detect dict-internal edits, so explicitly flag the column dirty.
+    flag_modified(execution, "measurements")
 
 
 def read_phase_result(execution: TestExecution, phase_key: str) -> Dict[str, Any]:

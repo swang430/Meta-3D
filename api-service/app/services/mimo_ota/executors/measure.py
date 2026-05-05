@@ -20,7 +20,6 @@ import logging
 import math
 import random
 from typing import Any, Dict, List
-from uuid import UUID as UUIDType
 
 from app.models.chamber import ChamberConfiguration
 from app.services.mimo_ota.executors._helpers import (
@@ -144,18 +143,17 @@ class MeasureExecutor(IStepExecutor):
                 emulator, ce_client, chamber, calibration_entries
             )
 
-        gen_ok = await generator.generate_and_load(
-            sim_rules={
-                "frequency_hz": config.frequency_hz,
-                "target_tx_power_dbm": config.target_tx_power_dbm,
-                "target_rsrp_dbm": config.target_rsrp_dbm,
-                "target_snr_db": config.target_snr_db,
-            },
-            cdl_model_data={
-                "model_name": config.cdl_model_name,
-                "session_id": str(context.test_execution.id),
-            },
-        )
+        sim_rules = {
+            "frequency_hz": config.frequency_hz,
+            "target_tx_power_dbm": config.target_tx_power_dbm,
+            "target_rsrp_dbm": config.target_rsrp_dbm,
+            "target_snr_db": config.target_snr_db,
+        }
+        cdl_model_data = {
+            "model_name": config.cdl_model_name,
+            "session_id": str(context.test_execution.id),
+        }
+        gen_ok = await generator.generate_and_load(sim_rules, cdl_model_data)
         if not gen_ok:
             return StepExecutionResult(
                 status=StepExecutionStatus.FAILED,
