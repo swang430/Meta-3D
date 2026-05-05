@@ -13,7 +13,35 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy.orm import Session
 from app.db.database import SessionLocal
+from app.models.lab_profile import LabProfile
 from app.models.test_plan import TestCase
+from app.schemas.mimo_ota.config import MIMO_OTA_TEST_TYPE
+from app.services.mimo_ota.legacy_migration import legacy_to_mimo_ota_config
+
+MIMO_OTA_CATEGORY = "MIMO OTA 吞吐量"
+
+
+def _resolve_default_lab_profile_id(db: Session):
+    """Find the unique active LabProfile to attach to MIMO_OTA seed cases.
+
+    Returns None if no active profile exists yet (the seed will still run,
+    rows will get lab_profile_id=NULL and can be backfilled later).
+    """
+    profile = db.query(LabProfile).filter(LabProfile.is_active.is_(True)).first()
+    return profile.id if profile else None
+
+
+def _upgrade_to_mimo_ota(case_data: dict, lab_profile_id) -> dict:
+    """Transform a legacy MIMO seed dict into a MIMO_OTA TestCase row spec."""
+    upgraded = dict(case_data)
+    upgraded["test_type"] = MIMO_OTA_TEST_TYPE
+    upgraded["configuration"] = legacy_to_mimo_ota_config(case_data)
+    if lab_profile_id is not None:
+        upgraded["lab_profile_id"] = lab_profile_id
+    # pass_criteria moves into configuration.pass_criteria; keep the column
+    # mirror for backward-compat (e.g. TestCaseSummary.pass_criteria readers)
+    upgraded["pass_criteria"] = upgraded["configuration"]["pass_criteria"]
+    return upgraded
 
 
 def get_test_cases():
@@ -497,12 +525,21 @@ def seed_test_cases():
             return
 
         cases = get_test_cases()
+        lab_profile_id = _resolve_default_lab_profile_id(db)
+        if lab_profile_id is None:
+            print("⚠️  无活跃 LabProfile,MIMO_OTA 用例的 lab_profile_id 将为 NULL")
+            print("   建议先跑 scripts/seed_caict_lab_profile.py 再回头跑此脚本")
+
+        upgraded_count = 0
         for case_data in cases:
+            if case_data.get("template_category") == MIMO_OTA_CATEGORY:
+                case_data = _upgrade_to_mimo_ota(case_data, lab_profile_id)
+                upgraded_count += 1
             tc = TestCase(**case_data)
             db.add(tc)
 
         db.commit()
-        print(f"✅ 成功创建 {len(cases)} 个标准测试用例模板\n")
+        print(f"✅ 成功创建 {len(cases)} 个标准测试用例模板 (其中 {upgraded_count} 个升级到 MIMO_OTA schema)\n")
 
         # Print summary by category
         from collections import Counter
