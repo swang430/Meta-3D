@@ -24,6 +24,7 @@ import {
 import { IconDeviceFloppy, IconX, IconCopy } from '@tabler/icons-react'
 import { useTestSteps, useUpdateTestStep } from '../../hooks'
 import type { StepParameter, ParametersMap } from '../../types'
+import { normalizeStepParameters } from '../../utils'
 import { SaveAsTestCaseModal } from './SaveAsTestCaseModal'
 
 interface StepEditorProps {
@@ -46,10 +47,11 @@ export function StepEditor({ planId, stepId, readOnly }: StepEditorProps) {
 
   const step = steps?.find((s) => s.id === stepId)
 
-  // Load step parameters and config
+  // Load step parameters and config — normalize raw JSON (e.g. MIMO_OTA's flat
+  // 27-field configuration) into the StepParameter shape the editor expects.
   useEffect(() => {
     if (step) {
-      setParameters(step.parameters || {})
+      setParameters(normalizeStepParameters(step.parameters))
       setTimeoutSeconds(step.timeout_seconds || 300)
       setRetryCount(step.retry_count || 0)
       setContinueOnFailure(step.continue_on_failure || false)
@@ -90,7 +92,7 @@ export function StepEditor({ planId, stepId, readOnly }: StepEditorProps) {
 
   const handleReset = () => {
     if (step) {
-      setParameters(step.parameters || {})
+      setParameters(normalizeStepParameters(step.parameters))
       setTimeoutSeconds(step.timeout_seconds || 300)
       setRetryCount(step.retry_count || 0)
       setContinueOnFailure(step.continue_on_failure || false)
