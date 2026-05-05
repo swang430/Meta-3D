@@ -82,6 +82,7 @@ from app.models.channel_calibration import (
     ChannelCalibrationValidity,
 )
 from app.models.switch_topology import SwitchTopology
+from app.models.lab_profile import LabProfile
 
 __all__ = [
     # System Calibration
@@ -137,6 +138,8 @@ __all__ = [
     "Topology",
     "TopologyType",
     "SwitchTopology",
+    # Lab Profile (Phase 0)
+    "LabProfile",
     # Channel Calibration Enums
     "ScenarioType",
     "ScenarioCondition",
