@@ -80,8 +80,12 @@ export const switchTopologyService = {
     return response.data;
   },
 
-  async importCaictDefault(switchCategoryId: string) {
-    const response = await apiClient.post(`/switch-topologies/import/caict-default?switch_category_id=${switchCategoryId}`);
+  async importCaictDefault(switchCategoryId: string, chamberId: string) {
+    // P1: chamber_id is required by the backend so the imported topology binds
+    // to an existing chamber row instead of leaving a referentially-broken stub.
+    const response = await apiClient.post(
+      `/switch-topologies/import/caict-default?switch_category_id=${switchCategoryId}&chamber_id=${chamberId}`
+    );
     return response.data;
   },
   

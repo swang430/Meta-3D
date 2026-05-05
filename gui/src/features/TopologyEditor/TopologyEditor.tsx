@@ -44,9 +44,12 @@ import {
 
 import { customNodeTypes } from './CustomNodes';
 import { customEdgeTypes } from './CustomEdges';
+import { nodePortsToSelectOptions } from './nodePortHelpers';
 import { switchTopologyService } from '../../api/switchTopologyService';
 import type { SwitchTopology, TopologyConnection } from '../../api/switchTopologyService';
+import { fetchChamberConfigurations } from '../../api/service';
 import apiClient from '../../api/client';
+import { logFrontendEvent } from '../../observability/frontendLogger';
 
 
 // ── Types ──────────────────────────────────────────────────────
@@ -54,6 +57,11 @@ interface SwitchOption {
   value: string;
   label: string;
   key: string;
+}
+
+interface ChamberOption {
+  value: string;
+  label: string;
 }
 
 interface TopologyEditorProps {
@@ -64,10 +72,11 @@ interface TopologyEditorProps {
 
 interface TopologyFlowProps {
   topology: SwitchTopology;
+  selectedChamberId: string;
   onTopologyUpdated: (t: SwitchTopology) => void;
 }
 
-const TopologyFlow = ({ topology, onTopologyUpdated }: TopologyFlowProps) => {
+const TopologyFlow = ({ topology, selectedChamberId, onTopologyUpdated }: TopologyFlowProps) => {
   const [activeMode, setActiveMode] = useState<string>(
     topology.operating_modes.length > 0 ? topology.operating_modes[0].id : ''
   );
@@ -222,6 +231,19 @@ const TopologyFlow = ({ topology, onTopologyUpdated }: TopologyFlowProps) => {
   // ── Save: validate then PATCH ──
   const handleSave = useCallback(async () => {
     if (!topology.id) return;
+    // P1: block save when chamber binding is missing — backend returns 422
+    // for active topologies anyway, but failing in the UI gives a clearer
+    // message and avoids a doomed network round-trip.
+    if (!selectedChamberId) {
+      notifications.show({
+        title: '需要先选择目标暗室',
+        message: '保存前必须为该拓扑绑定一个暗室。请使用顶部的暗室下拉。',
+        color: 'orange',
+        icon: <IconAlertTriangle size={16} />,
+        autoClose: 5000,
+      });
+      return;
+    }
     setSaving(true);
 
     try {
@@ -252,9 +274,10 @@ const TopologyFlow = ({ topology, onTopologyUpdated }: TopologyFlowProps) => {
         });
       }
 
-      // 2. Build update payload with current positions + edited connections
+      // 2. Build update payload with current positions + edited connections.
+      // P1: chamber_id is always included so a re-save fixes any legacy row
+      // that was orphaned before this constraint existed.
       const updatedNodes = nodesDataRef.current.map(n => {
-        // merge ReactFlow's current position
         const rfNode = nodes.find(rn => rn.id === n.id);
         return {
           ...n,
@@ -263,13 +286,14 @@ const TopologyFlow = ({ topology, onTopologyUpdated }: TopologyFlowProps) => {
       });
 
       const payload = {
+        chamber_id: selectedChamberId,
         nodes: updatedNodes,
         connections: connectionsRef.current,
       };
 
       // 3. PATCH to backend
       const updated = await switchTopologyService.updateTopology(topology.id, payload);
-      
+
       setDirty(false);
       onTopologyUpdated(updated);
 
@@ -280,18 +304,30 @@ const TopologyFlow = ({ topology, onTopologyUpdated }: TopologyFlowProps) => {
         icon: <IconCheck size={16} />,
         autoClose: 3000,
       });
+      logFrontendEvent({
+        action: 'switch_topology.saved',
+        component: 'TopologyEditor',
+        message: `topology=${topology.id} chamber=${selectedChamberId} nodes=${updatedNodes.length} conns=${connectionsRef.current.length}`,
+      });
     } catch (err: any) {
+      const detail = err.response?.data?.detail || err.message;
       notifications.show({
         title: '保存失败',
-        message: err.response?.data?.detail || err.message,
+        message: detail,
         color: 'red',
         icon: <IconX size={16} />,
         autoClose: 5000,
       });
+      logFrontendEvent({
+        level: 'ERROR',
+        action: 'switch_topology.save_failed',
+        component: 'TopologyEditor',
+        error: typeof detail === 'string' ? detail : JSON.stringify(detail),
+      });
     } finally {
       setSaving(false);
     }
-  }, [topology, nodes, onTopologyUpdated]);
+  }, [topology, nodes, onTopologyUpdated, selectedChamberId]);
 
   const activeModeObj = topology.operating_modes.find(m => m.id === activeMode);
 
@@ -372,7 +408,12 @@ const TopologyFlow = ({ topology, onTopologyUpdated }: TopologyFlowProps) => {
         size="sm"
         padding="lg"
       >
-        {selectedEdge && (
+        {selectedEdge && (() => {
+          const sourceNode = topology.nodes.find((n) => n.id === selectedEdge.source);
+          const targetNode = topology.nodes.find((n) => n.id === selectedEdge.target);
+          const sourcePinOpts = nodePortsToSelectOptions(sourceNode);
+          const targetPinOpts = nodePortsToSelectOptions(targetNode);
+          return (
           <Stack gap="md">
             <Paper withBorder p="sm" radius="md" bg="gray.0">
               <Group gap="xs" mb="xs">
@@ -381,10 +422,35 @@ const TopologyFlow = ({ topology, onTopologyUpdated }: TopologyFlowProps) => {
               </Group>
               <Text size="xs" c="dimmed" style={{ wordBreak: 'break-all' }}>{selectedEdge.id}</Text>
               <Group gap="lg" mt="xs">
-                <Text size="xs"><b>源:</b> {selectedEdge.source}</Text>
-                <Text size="xs"><b>目标:</b> {selectedEdge.target}</Text>
+                <Text size="xs"><b>源:</b> {sourceNode?.label || selectedEdge.source}</Text>
+                <Text size="xs"><b>目标:</b> {targetNode?.label || selectedEdge.target}</Text>
               </Group>
             </Paper>
+
+            <Divider label="端口绑定 (可编辑)" labelPosition="center" />
+
+            {/* P1: pin Selects driven by node-port helper. Operators picked
+                arbitrary strings before, which silently broke downstream SCPI
+                routing. Restricting to the node's known port set catches
+                typos at edit time. */}
+            <Select
+              label="源端口"
+              description={sourceNode ? `节点 ${sourceNode.type}` : '未知节点'}
+              data={sourcePinOpts}
+              value={selectedEdge.source_pin || null}
+              onChange={(v) => updateConnectionParam('source_pin', v || '')}
+              searchable
+              allowDeselect={false}
+            />
+            <Select
+              label="目标端口"
+              description={targetNode ? `节点 ${targetNode.type}` : '未知节点'}
+              data={targetPinOpts}
+              value={selectedEdge.target_pin || null}
+              onChange={(v) => updateConnectionParam('target_pin', v || '')}
+              searchable
+              allowDeselect={false}
+            />
 
             <Divider label="电缆参数 (可编辑)" labelPosition="center" />
 
@@ -432,7 +498,8 @@ const TopologyFlow = ({ topology, onTopologyUpdated }: TopologyFlowProps) => {
               <Button onClick={applyConnectionEdit}>应用修改</Button>
             </Group>
           </Stack>
-        )}
+          );
+        })()}
       </Drawer>
     </div>
   );
@@ -447,6 +514,14 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogError, setCatalogError] = useState<string | null>(null);
 
+  // P1: chamber binding is mandatory — the topology models cabling inside a
+  // specific chamber, so importing without one leaves calibration / measure
+  // unable to resolve a chamber. Selector lives next to the switch selector.
+  const [availableChambers, setAvailableChambers] = useState<ChamberOption[]>([]);
+  const [selectedChamberId, setSelectedChamberId] = useState<string>('');
+  const [chambersLoading, setChambersLoading] = useState(true);
+  const [chambersError, setChambersError] = useState<string | null>(null);
+
   const [topology, setTopology] = useState<SwitchTopology | null>(null);
   const [topoLoading, setTopoLoading] = useState(false);
   const [topoError, setTopoError] = useState<string | null>(null);
@@ -455,6 +530,15 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
   // Reimport: delete old topology and import fresh V4.0
   const handleReimport = useCallback(async () => {
     if (!selectedSwitchId) return;
+    if (!selectedChamberId) {
+      notifications.show({
+        title: '需要先选择目标暗室',
+        message: '导入拓扑前必须绑定一个暗室,以便后续校准/测量能够解析。',
+        color: 'orange',
+        icon: <IconAlertTriangle size={16} />,
+      });
+      return;
+    }
     setReimporting(true);
     try {
       // Delete existing topologies for this category
@@ -469,7 +553,10 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
       }
 
       // Import fresh default
-      const imported = await switchTopologyService.importCaictDefault(selectedSwitchId);
+      const imported = await switchTopologyService.importCaictDefault(
+        selectedSwitchId,
+        selectedChamberId,
+      );
       setTopology(imported);
       notifications.show({
         title: '拓扑已更新',
@@ -477,6 +564,11 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
         color: 'green',
         icon: <IconCheck size={16} />,
         autoClose: 3000,
+      });
+      logFrontendEvent({
+        action: 'switch_topology.reimported',
+        component: 'TopologyEditor',
+        message: `switch=${selectedSwitchId} chamber=${selectedChamberId} topology=${imported.id}`,
       });
     } catch (err: any) {
       notifications.show({
@@ -489,7 +581,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
     } finally {
       setReimporting(false);
     }
-  }, [selectedSwitchId]);
+  }, [selectedSwitchId, selectedChamberId]);
 
   // Fetch instrument catalog
   useEffect(() => {
@@ -523,7 +615,29 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
       .finally(() => setCatalogLoading(false));
   }, []);
 
-  // Fetch topology when switch is selected
+  // Fetch chamber list (P1 — required for binding any topology).
+  useEffect(() => {
+    setChambersLoading(true);
+    setChambersError(null);
+    fetchChamberConfigurations()
+      .then((res) => {
+        const items = res?.items || [];
+        const opts: ChamberOption[] = items.map((c) => ({
+          value: c.id,
+          label: c.name || `Chamber ${c.id?.slice(0, 8)}`,
+        }));
+        setAvailableChambers(opts);
+      })
+      .catch((err) => {
+        console.error('Failed to fetch chambers:', err);
+        setChambersError(`无法加载暗室列表: ${err.message}`);
+      })
+      .finally(() => setChambersLoading(false));
+  }, []);
+
+  // Fetch topology when switch is selected. Auto-import only when a chamber
+  // is also selected (otherwise we'd end up creating a referentially-broken
+  // topology). Without chamber, we just show "please select chamber".
   useEffect(() => {
     if (!selectedSwitchId) return;
 
@@ -535,18 +649,30 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
       .then(resp => {
         const items = resp.items || (Array.isArray(resp) ? resp : []);
         if (items.length > 0) {
-          setTopology(items[0]);
-        } else {
-          return switchTopologyService.importCaictDefault(selectedSwitchId)
-            .then(imported => setTopology(imported));
+          const t = items[0];
+          setTopology(t);
+          // Sync chamber dropdown with whatever the existing topology declares,
+          // so the operator immediately sees which chamber this is bound to.
+          if (t.chamber_id) {
+            setSelectedChamberId(t.chamber_id);
+          }
+          return;
         }
+        if (!selectedChamberId) {
+          // No topology yet AND no chamber chosen — defer auto-import.
+          return;
+        }
+        return switchTopologyService.importCaictDefault(
+          selectedSwitchId,
+          selectedChamberId,
+        ).then(imported => setTopology(imported));
       })
       .catch(err => {
         console.error('Topology fetch failed:', err);
         setTopoError(`加载拓扑失败: ${err.response?.data?.detail || err.message}`);
       })
       .finally(() => setTopoLoading(false));
-  }, [selectedSwitchId]);
+  }, [selectedSwitchId, selectedChamberId]);
 
   return (
     <Stack gap="lg" h="100%">
@@ -559,6 +685,32 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
           </Group>
 
           <Group gap="md" align="center">
+            {/* P1: chamber binding (required). Without it, save / import are
+                blocked because the topology has no chamber to attach cabling
+                to — calibration / measure can't resolve a topology that
+                isn't bound to a specific chamber row. */}
+            {chambersLoading ? (
+              <Group gap="xs">
+                <Loader size="xs" />
+                <Text size="sm" c="dimmed">加载暗室…</Text>
+              </Group>
+            ) : availableChambers.length > 0 ? (
+              <Select
+                label="目标暗室"
+                value={selectedChamberId || null}
+                onChange={(val) => val && setSelectedChamberId(val)}
+                data={availableChambers}
+                placeholder="选择目标暗室..."
+                w={220}
+                required
+                allowDeselect={false}
+                error={!selectedChamberId ? '保存前必填' : undefined}
+              />
+            ) : (
+              <Badge color="orange" variant="light" size="lg">
+                未配置任何暗室
+              </Badge>
+            )}
             {catalogLoading ? (
               <Group gap="xs">
                 <Loader size="xs" />
@@ -566,11 +718,13 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
               </Group>
             ) : availableSwitches.length > 0 ? (
               <Select
+                label="射频开关设备"
                 value={selectedSwitchId}
                 onChange={(val) => val && setSelectedSwitchId(val)}
                 data={availableSwitches}
                 placeholder="选择射频开关设备…"
                 w={260}
+                required
                 allowDeselect={false}
               />
             ) : (
@@ -586,6 +740,8 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
                 leftSection={<IconRefresh size={14} />}
                 loading={reimporting}
                 onClick={handleReimport}
+                disabled={!selectedChamberId}
+                title={!selectedChamberId ? '请先选择目标暗室' : undefined}
               >
                 重导入默认拓扑
               </Button>
@@ -600,16 +756,40 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
           </Alert>
         )}
 
+        {/* P1: chamber-binding status hint when topology already exists but
+            had no chamber attached (legacy row from before this constraint). */}
+        {topology && !topology.chamber_id && selectedChamberId && (
+          <Alert color="orange" variant="light" icon={<IconAlertTriangle size={16} />} mt="sm">
+            当前拓扑未绑定暗室。点击"保存拓扑"会将其绑定到所选暗室。
+          </Alert>
+        )}
+
         {catalogError && (
           <Alert color="red" variant="light" icon={<IconAlertCircle size={16} />} mt="sm">
             {catalogError}
+          </Alert>
+        )}
+
+        {chambersError && (
+          <Alert color="red" variant="light" icon={<IconAlertCircle size={16} />} mt="sm">
+            {chambersError}
           </Alert>
         )}
       </Card>
 
       {/* Topology Canvas Area */}
       <div style={{ height: 'calc(100vh - 250px)', minHeight: 500 }}>
-        {!selectedSwitchId ? (
+        {!selectedChamberId ? (
+          <Center h="100%">
+            <Stack align="center" gap="sm">
+              <IconTopologyRing size={48} color="var(--mantine-color-gray-4)" />
+              <Text c="dimmed" ta="center">
+                请先在上方选择目标暗室。<br />
+                拓扑必须绑定到一个具体暗室,以便后续校准/测量解析。
+              </Text>
+            </Stack>
+          </Center>
+        ) : !selectedSwitchId ? (
           <Center h="100%">
             <Stack align="center" gap="sm">
               <IconTopologyRing size={48} color="var(--mantine-color-gray-4)" />
@@ -640,8 +820,9 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
           </Center>
         ) : topology ? (
           <ReactFlowProvider>
-            <TopologyFlow 
-              topology={topology} 
+            <TopologyFlow
+              topology={topology}
+              selectedChamberId={selectedChamberId}
               onTopologyUpdated={(updated) => setTopology(updated)}
             />
           </ReactFlowProvider>

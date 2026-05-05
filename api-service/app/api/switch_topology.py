@@ -125,7 +125,7 @@ def update_switch_topology(
         ).update({"is_default": False})
 
     update_data = request.model_dump(exclude_unset=True)
-    
+
     # Process Pydantic models if they are in the update
     if "nodes" in update_data:
         update_data["nodes"] = [d.model_dump() if hasattr(d, 'model_dump') else d for d in update_data["nodes"]]
@@ -133,6 +133,31 @@ def update_switch_topology(
         update_data["connections"] = [d.model_dump() if hasattr(d, 'model_dump') else d for d in update_data["connections"]]
     if "operating_modes" in update_data:
         update_data["operating_modes"] = [d.model_dump() if hasattr(d, 'model_dump') else d for d in update_data["operating_modes"]]
+
+    # P1: enforce chamber_id on active topologies so calibration/measure/analysis
+    # downstream consumers can always resolve a chamber. If the request is
+    # explicitly setting chamber_id we validate it exists; if it leaves the
+    # current value alone, only fail when both stored and requested are NULL
+    # AND the topology will end up active.
+    final_chamber_id = update_data.get("chamber_id", topology.chamber_id)
+    final_is_active = update_data.get("is_active", topology.is_active)
+    if final_is_active and final_chamber_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Active SwitchTopology requires chamber_id. Bind the topology "
+                "to a chamber before saving, or mark it inactive."
+            ),
+        )
+    if "chamber_id" in update_data and update_data["chamber_id"] is not None:
+        from app.models.chamber import ChamberConfiguration
+        if not db.query(ChamberConfiguration).filter(
+            ChamberConfiguration.id == update_data["chamber_id"]
+        ).first():
+            raise HTTPException(
+                status_code=422,
+                detail=f"Chamber {update_data['chamber_id']} not found",
+            )
 
     for key, value in update_data.items():
         setattr(topology, key, value)
@@ -164,11 +189,31 @@ def delete_switch_topology(
 @router.post("/import/caict-default", response_model=SwitchTopologyResponse)
 def import_caict_default_topology(
     switch_category_id: UUID,
+    chamber_id: UUID,
     db: Session = Depends(get_db)
 ):
-    """Import the default CAICT AMS8947 topology structure"""
+    """Import the default CAICT AMS8947 topology structure.
+
+    P1: chamber_id is now required. A topology models physical cabling
+    inside a specific chamber, so importing one without binding it to a
+    chamber leaves a row that no consumer (calibration, measure, analysis)
+    can resolve. Legacy rows seeded with chamber_id=NULL stay queryable but
+    new imports must specify it.
+    """
+    # Validate that the chamber exists before seeding (FK violation here would
+    # surface as a 500; a 422 with the offending id is friendlier).
+    from app.models.chamber import ChamberConfiguration
+    chamber = db.query(ChamberConfiguration).filter(
+        ChamberConfiguration.id == chamber_id
+    ).first()
+    if chamber is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Chamber {chamber_id} not found — pick an existing chamber before importing topology",
+        )
+
     topo_data = generate_caict_topology_record()
-    
+
     # Reset existing defaults for this category
     db.query(SwitchTopology).filter(
         SwitchTopology.switch_category_id == switch_category_id,
@@ -177,6 +222,7 @@ def import_caict_default_topology(
 
     topology = SwitchTopology(
         switch_category_id=switch_category_id,
+        chamber_id=chamber_id,
         **topo_data
     )
     topology.update_statistics()
@@ -184,7 +230,10 @@ def import_caict_default_topology(
     db.add(topology)
     db.commit()
     db.refresh(topology)
-    logger.info(f"Imported default CAICT topology for switch category: {switch_category_id}")
+    logger.info(
+        "Imported default CAICT topology for switch category %s into chamber %s",
+        switch_category_id, chamber_id,
+    )
     return topology
 
 
