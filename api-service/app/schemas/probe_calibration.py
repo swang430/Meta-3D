@@ -320,9 +320,35 @@ class PatternCalibrationResponse(BaseModel):
     measured_by: Optional[str] = None
     valid_until: UTCDateTime
     status: str
+    # Phase 2a-import: 数据来源溯源
+    source: Optional[str] = None
+    probe_model: Optional[str] = None
+    probe_vendor: Optional[str] = None
+    probe_serial: Optional[str] = None
+    imported_file_format: Optional[str] = None
+    coordinate_system: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+
+class ImportProbePatternResponse(BaseModel):
+    """ProbePattern 文件导入响应 (Phase 2a-import)"""
+    success: bool
+    pattern_id: Optional[UUID] = None
+    invalidated_id: Optional[UUID] = Field(
+        None, description="若替换了旧的有效 pattern, 这是被 invalidate 的旧记录 id"
+    )
+    peak_gain_dbi: Optional[float] = None
+    peak_azimuth_deg: Optional[float] = None
+    peak_elevation_deg: Optional[float] = None
+    hpbw_azimuth_deg: Optional[float] = None
+    hpbw_elevation_deg: Optional[float] = None
+    front_to_back_ratio_db: Optional[float] = None
+    num_az_points: int = 0
+    num_el_points: int = 0
+    warnings: List[str] = Field(default_factory=list)
+    error: Optional[str] = None
 
 
 # ==================== Link Calibration Schemas ====================

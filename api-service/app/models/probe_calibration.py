@@ -233,8 +233,13 @@ class ProbePattern(Base):
     """
     探头方向图数据
 
-    存储探头的 3D 辐射方向图，用于场重构算法。
-    测量方法：远场测量法，转台扫描方位角和俯仰角。
+    存储探头的 3D 辐射方向图，用于场重构算法和 quiet-zone ripple 计算。
+
+    数据来源 (Phase 2a-import 起):
+      - source="vendor_datasheet": 业界常态, 厂商出厂 .cut/.swe/CSV 数据导入
+        典型 12-24 个月有效期, 过期重新向厂家索取
+      - source="in_chamber_measured": 偶发, 实验室转台扫场实测
+        损坏后重验证 / 顶级认证场景独立验证 / 研究用
 
     有效期：12 个月
     数据量：典型 72×36 = 2592 个测量点
@@ -245,6 +250,31 @@ class ProbePattern(Base):
     probe_id = Column(Integer, nullable=False, index=True)
     polarization = Column(String(10), nullable=False)
     frequency_mhz = Column(Float, nullable=False, index=True, comment="测量频率 (MHz)")
+
+    # === Phase 2a-import: 数据来源溯源 ===
+    source = Column(
+        String(30),
+        nullable=False,
+        default="in_chamber_measured",
+        index=True,
+        comment="数据来源: 'vendor_datasheet' | 'in_chamber_measured'",
+    )
+    probe_model = Column(String(100), comment="探头型号 e.g. 'SGA-3500'")
+    probe_vendor = Column(String(100), comment="探头厂商 e.g. 'MVG' / 'Satimo' / 'Keysight'")
+    probe_serial = Column(String(100), comment="探头序列号 (同型号不同实例)")
+    imported_file_format = Column(
+        String(20),
+        comment="导入文件格式: 'ticra_cut' | 'csv' | 'json'; 实测路径为 None",
+    )
+    coordinate_system = Column(
+        String(20),
+        default="az_el",
+        comment=(
+            "角度坐标系: 'az_el' (我们的标准, az 0-360 / el 0-180) | "
+            "'theta_phi' (TICRA 标准, theta 0-180 / phi 0-360); "
+            "导入时若是 theta_phi 应转换为 az_el 后存储, 此字段记原始格式"
+        ),
+    )
 
     # 角度网格
     azimuth_deg = Column(

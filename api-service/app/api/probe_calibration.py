@@ -6,7 +6,7 @@ Probe Calibration API Endpoints
 TASK-P03: 幅度校准 API (3 端点 + 4 API 测试)
 参考: docs/features/calibration/IMPLEMENTATION-PLAN.md
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from typing import List, Optional
@@ -33,6 +33,7 @@ from app.schemas.probe_calibration import (
     # Pattern
     StartPatternCalibrationRequest,
     PatternCalibrationResponse,
+    ImportProbePatternResponse,
     # Link
     StartLinkCalibrationRequest,
     LinkCalibrationResponse,
@@ -634,6 +635,84 @@ def get_polarization_calibration_history(
 
 
 # ==================== Pattern Calibration Endpoints (TASK-P07) ====================
+
+
+@router.post(
+    "/pattern/import",
+    response_model=ImportProbePatternResponse,
+    status_code=201,
+)
+async def import_probe_pattern_endpoint(
+    file: UploadFile = File(..., description="Pattern data file (.cut / .csv / .json)"),
+    probe_id: int = Form(..., description="探头编号 (0..N-1)"),
+    polarization: str = Form(..., description="极化: V / H / LHCP / RHCP"),
+    frequency_mhz: float = Form(..., description="测量频率 (MHz)"),
+    file_format: Optional[str] = Form(
+        None,
+        description="格式: ticra_cut / csv / json (None = 按文件名后缀自动探测)",
+    ),
+    probe_model: Optional[str] = Form(None, description="探头型号 e.g. SGA-3500"),
+    probe_vendor: Optional[str] = Form(None, description="厂商 e.g. MVG / Satimo / Keysight"),
+    probe_serial: Optional[str] = Form(None, description="序列号 (同型号不同实例)"),
+    measured_by: str = Form("vendor_datasheet_import", description="操作人员名"),
+    replace_existing: bool = Form(
+        True,
+        description="True = 替换同 (probe_id, pol, freq) 的旧有效 pattern; False = 追加",
+    ),
+    db: Session = Depends(get_db),
+) -> ImportProbePatternResponse:
+    """Phase 2a-import: 上传探头厂商 datasheet pattern 文件并入库。
+
+    业界常态: 探头从 MVG / Satimo / Keysight 等出厂时会带 pattern 数据
+    (.cut TICRA / .csv / .json), 实验室一次性导入, 12-24 月有效期。
+    替代逐个探头扫场实测 (后者只在损坏验证 / 顶级认证场景下使用)。
+
+    完成后, 该频点 + 极化的有效 pattern 即可被 measure / analysis 阶段
+    消费 (Phase 2f 待实现) 用于 quiet-zone ripple 计算和 RSRP/SINR
+    per-probe 几何映射。
+
+    Returns:
+        ImportProbePatternResponse — 含新 ProbePattern.id 与导出统计
+    """
+    from app.services.probe_pattern.import_service import import_probe_pattern
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    result = import_probe_pattern(
+        db,
+        file_content=raw,
+        filename=file.filename or "unknown",
+        probe_id=probe_id,
+        polarization=polarization,
+        frequency_mhz=frequency_mhz,
+        file_format=file_format,
+        probe_model=probe_model,
+        probe_vendor=probe_vendor,
+        probe_serial=probe_serial,
+        measured_by=measured_by,
+        replace_existing=replace_existing,
+    )
+
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.error or "Import failed")
+
+    return ImportProbePatternResponse(
+        success=True,
+        pattern_id=UUID(result.pattern_id) if result.pattern_id else None,
+        invalidated_id=UUID(result.invalidated_id) if result.invalidated_id else None,
+        peak_gain_dbi=result.peak_gain_dbi,
+        peak_azimuth_deg=result.peak_azimuth_deg,
+        peak_elevation_deg=result.peak_elevation_deg,
+        hpbw_azimuth_deg=result.hpbw_azimuth_deg,
+        hpbw_elevation_deg=result.hpbw_elevation_deg,
+        front_to_back_ratio_db=result.front_to_back_ratio_db,
+        num_az_points=result.num_az_points,
+        num_el_points=result.num_el_points,
+        warnings=result.warnings,
+    )
+
 
 @router.post("/pattern/start", response_model=CalibrationJobResponse, status_code=202)
 async def start_pattern_calibration(
