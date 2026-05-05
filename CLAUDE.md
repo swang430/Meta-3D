@@ -143,26 +143,22 @@ GUI 遵循 **API优先架构**，包含以下层次：
 
 ### 设计文档（⭐ 必读）
 
-**架构和规范** - 位于 `docs/guides/`:
-- [API-DESIGN-GUIDE.md](docs/guides/API-DESIGN-GUIDE.md) - ⭐ **API 设计统一规范**
-  - RESTful API 设计原则
-  - 响应格式、错误处理、状态码标准
-- [DATA-MODEL-GUIDE.md](docs/guides/DATA-MODEL-GUIDE.md) - ⭐ **数据模型设计规范**
-  - 数据库模型、DTO、API Schema 三层架构
-  - 命名规范、类型映射、关系设计
-- [STATE-MACHINE.md](docs/guides/STATE-MACHINE.md) - 状态机文档
-- [IMPLEMENTATION-CHECKLIST.md](docs/guides/IMPLEMENTATION-CHECKLIST.md) - 实现检查清单
+**API 与数据规范**:
+- [API 设计指南](docs/api/design-guide.md) - ⭐ RESTful 设计原则、响应格式、错误处理
+- [数据模型指南](docs/api/data-model.md) - ⭐ 数据库模型 / DTO / API Schema 三层架构
+- [Swagger 使用指南](docs/api/swagger-guide.md) - 在线 API 文档
 
-**功能设计** - 位于 `docs/design/`:
+**架构设计**:
 - [AGENTS.md](AGENTS.md) - 系统架构和设计文档（35K+ tokens）
-- [TestManagement-Unified-Architecture.md](docs/design/TestManagement-Unified-Architecture.md) - 测试管理统一架构
-- [VirtualRoadTest-Architecture.md](docs/design/VirtualRoadTest-Architecture.md) - 虚拟路测架构
-- [SYSTEM-INTEGRATION-DESIGN.md](docs/design/SYSTEM-INTEGRATION-DESIGN.md) - 系统集成设计
-- [HARDWARE-SYNC-ARCHITECTURE.md](docs/design/HARDWARE-SYNC-ARCHITECTURE.md) - ⭐ **硬件同步架构** (L0-L3 分层同步)
+- [系统集成](docs/architecture/system-integration.md) - 系统集成设计
+- [硬件同步](docs/architecture/hardware-sync.md) - ⭐ L0-L3 分层同步
+- [测试管理统一架构](docs/features/test-management/unified-architecture.md)
+- [虚拟路测概览](docs/features/virtual-road-test/overview.md)
 
-**开发指南** - 位于 `docs/guides/`:
-- [DEV-QUICKSTART.md](docs/guides/DEV-QUICKSTART.md) - 快速开发指南
-- [SWAGGER-UI-GUIDE.md](docs/guides/SWAGGER-UI-GUIDE.md) - API 文档指南
+**开发指南**:
+- [快速上手](docs/guides/quickstart.md)
+- [状态机](docs/guides/state-machine.md)
+- [实现检查清单](docs/guides/implementation-checklist.md)
 
 ## 设计指南（来自 AGENTS.md）
 
@@ -179,39 +175,6 @@ GUI 遵循 **API优先架构**，包含以下层次：
 - 增强 ProbeLayoutView（集成 D3.js 或 Three.js 实现交互式 3D 可视化）
 - 用于探头参数编辑的 FormSection 组件
 - 一致的间距系统（8px 基准网格）
-
-## 质量保障
-
-### 设计-实现差距检查
-
-项目提供自动化脚本，用于检测设计文档与代码实现之间的差距：
-
-```bash
-python3 scripts/check-design-implementation.py
-```
-
-**功能**:
-- 解析 `docs/features/virtual-road-test/` 中的设计文档
-- 提取 TypeScript interface/enum/type/class 定义
-- 扫描 `gui/src/types/`, `gui/src/components/`, `gui/src/api/` 中的实现
-- 生成差距报告
-
-**输出文件**:
-- `docs/reports/design-implementation-gap.md` - 人类可读报告
-- `docs/reports/design-implementation-gap.json` - 机器可读数据
-
-**使用时机**:
-- ⭐ **每次开始新的开发任务前** - 检查是否有遗漏的设计组件
-- ⭐ **完成功能实现后** - 验证实现覆盖率
-- ⭐ **代码审查时** - 确保设计文档与代码同步
-
-**最近检查结果** (2026-01-01):
-- 设计组件总数: 65
-- 已实现: 27 (41.5%)
-- 未实现: 34 (52.3%)
-- 关键缺失: `TopologyConfigurator`, `fetchTopologies`, `ScenarioEditor`
-
----
 
 ## 注意事项
 

@@ -457,11 +457,10 @@ gui/src/
 
 ## 🔍 参考资料
 
-- [ARCHITECTURE-REVIEW.md](ARCHITECTURE-REVIEW.md) - 架构审查和重构计划
-- [API-DESIGN-GUIDE.md](API-DESIGN-GUIDE.md) - API设计统一规范
-- [DATA-MODEL-GUIDE.md](DATA-MODEL-GUIDE.md) - 数据模型设计规范
-- [TestManagement-Unified-Architecture.md](TestManagement-Unified-Architecture.md) - 测试管理统一架构
-- [AGENTS.md](AGENTS.md) - 系统架构和设计文档
+- [API 设计指南](../../api/design-guide.md)
+- [数据模型指南](../../api/data-model.md)
+- [测试管理统一架构](../../features/test-management/unified-architecture.md)
+- [AGENTS.md](../../../AGENTS.md) - 系统架构和设计文档
 
 ---
 

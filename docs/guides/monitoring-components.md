@@ -250,6 +250,5 @@ function MonitoringTab() {
 ## 联系与反馈
 
 如有问题或建议，请提交Issue或参考：
-- [ARCHITECTURE-REVIEW.md](./ARCHITECTURE-REVIEW.md) - 架构审查
-- [AGENTS.md](./AGENTS.md) - 系统设计文档
-- [CLAUDE.md](./CLAUDE.md) - 开发指南
+- [AGENTS.md](../../AGENTS.md) - 系统设计文档
+- [CLAUDE.md](../../CLAUDE.md) - 开发指南

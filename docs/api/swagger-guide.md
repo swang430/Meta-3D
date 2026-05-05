@@ -354,6 +354,3 @@ echo "DATABASE_URL=sqlite:///./meta3d_ota.db" > .env
 4. 🔲 （未来）创建前端 GUI 集成这些 API
 5. 🔲 （未来）连接真实硬件替换 Mock 仪器
 
----
-
-**提示**: 如果您想查看更详细的 API 使用示例，请参考 [API-CALIBRATION-DEMO.md](./API-CALIBRATION-DEMO.md)

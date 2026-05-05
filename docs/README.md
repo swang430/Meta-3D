@@ -37,12 +37,9 @@
 | [**parameter-reference**](features/virtual-road-test/parameter-reference.md) | **All parameters at a glance (manual)** |
 | [parameter-reference-generated](features/virtual-road-test/parameter-reference-generated.md) | Auto-generated from schemas |
 | [overview](features/virtual-road-test/overview.md) | Virtual road test overview |
-| [architecture](features/virtual-road-test/architecture.md) | Architecture design |
-| [implementation](features/virtual-road-test/implementation.md) | Implementation details |
 | [scenario-design](features/virtual-road-test/scenario-design.md) | Scenario design guide |
 | [step-configuration](features/virtual-road-test/step-configuration.md) | Test step configuration |
 | [scenario-library](features/virtual-road-test/scenario-library.md) | Standard scenario library |
-| [custom-scenario](features/virtual-road-test/custom-scenario.md) | Custom scenario creation |
 
 ### Calibration
 
