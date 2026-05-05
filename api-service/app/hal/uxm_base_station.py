@@ -1363,6 +1363,33 @@ class RealUxmDriver(BaseStationDriver):
 
         return metrics
 
+    async def measure_throughput_window(self, window_s: float) -> ThroughputMetrics:
+        """Phase 2d: drive START → wait → query → STOP for an i.i.d. sample.
+
+        UXM exposes BTHRoughput:DL:TSTatistics:STARt/STOP which gates a
+        statistics window cleanly — without this, multiple back-to-back
+        get_throughput_metrics() calls inside one stat_count window read the
+        same accumulated value, making per-sample std/mean meaningless.
+
+        STOP failures are swallowed; the next START will overwrite anyway.
+        """
+        cell = self._cell_id
+        try:
+            self._write(UxmScpiCommands.MEAS_BTHROUGHPUT_DL_START.format(cell=cell))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[UXM] BTHR:DL:START failed (%s) — falling back to plain query", e)
+            return await self.get_throughput_metrics()
+
+        try:
+            await asyncio.sleep(max(window_s, 0.0))
+            metrics = await self.get_throughput_metrics()
+        finally:
+            try:
+                self._write(UxmScpiCommands.MEAS_BTHROUGHPUT_DL_STOP.format(cell=cell))
+            except Exception as e:  # noqa: BLE001
+                logger.debug("[UXM] BTHR:DL:STOP failed (%s); ignored", e)
+        return metrics
+
     async def get_ue_info(self) -> Dict[str, Any]:
         """获取 UE 信息 (TODO: 从 UXM 查询)"""
         return {

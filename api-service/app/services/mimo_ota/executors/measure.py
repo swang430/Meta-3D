@@ -38,9 +38,13 @@ from app.schemas.mimo_ota.config import MIMOOTAStepType
 
 logger = logging.getLogger(__name__)
 
-# Cap the per-azimuth sample loop in dev so smoke tests don't take forever.
-# Production should drop this cap by overriding via step_overrides on the TestCase.
-_DEV_SAMPLE_LIMIT = 20
+# Phase 2d: each "sample" is now an independent UXM stat window (≈ stat_count
+# subframes ≈ stat_count ms), not a 20ms poll. Production wants ≥ 5-12 windows
+# per azimuth for stable std; dev caps at 3 to keep smoke tests fast.
+_DEV_SAMPLE_WINDOWS = 3
+# Floor for window duration so mock paths still take a perceptible amount of
+# time (helps surface ordering bugs) but don't actually wait 5s in unit tests.
+_MOCK_WINDOW_FLOOR_S = 0.05
 
 
 @register_executor(MIMOOTAStepType.MEASURE.value)
@@ -58,6 +62,10 @@ class MeasureExecutor(IStepExecutor):
         from app.services.channel_generation.base_generator import EngineMode
         from app.services.channel_generation.gcm_strategy import NativeModelStrategy
         from app.services.instrument_hal_service import get_hal_service
+        from app.services.mimo_ota.cleanup import cleanup_chamber_instruments
+        from app.services.mimo_ota.switch_orchestrator import (
+            orchestrate_switch_topology,
+        )
         from app.hal.channel_emulator import ChannelLoadMode
 
         hal = get_hal_service()
@@ -71,210 +79,249 @@ class MeasureExecutor(IStepExecutor):
 
         await positioner.connect()
         await base_station.connect()
-
-        # --- Base station cell config (band + duplex inferred from frequency_mhz) ---
-        await base_station.set_cell_config(
-            {
-                "frequency_mhz": config.frequency_hz / 1e6,
-                "bandwidth_mhz": config.bandwidth_mhz,
-                "scs_khz": config.subcarrier_spacing_khz,
-                "mimo_layers": config.mimo_layers,
-                "dl_power_dbm": config.target_tx_power_dbm,
-            }
-        )
-
-        # --- 3GPP MAC throughput config (was hard-coded; now from TestCase) ---
-        if hasattr(base_station, "configure_mac_throughput_test"):
-            await base_station.configure_mac_throughput_test(
-                mimo_layers=config.mimo_layers,
-                mcs=config.mcs,
-                enable_amc=config.enable_amc,
-                tdd_pattern=config.tdd_pattern,
-                tdd_period=config.tdd_period,
-                harq_max_trans=config.harq_max_trans,
-                harq_processes=config.harq_processes,
-                stat_count=config.stat_count,
+        # Anything from here through the azimuth loop must be wrapped so an
+        # exception (HAL hiccup, channel-gen timeout, DUT drop) doesn't leave
+        # UXM signaling, F64 emulating, and the turntable mid-rotation.
+        cleanup_warnings: List[str] = []
+        try:
+            # --- Base station cell config (band + duplex inferred from frequency_mhz) ---
+            await base_station.set_cell_config(
+                {
+                    "frequency_mhz": config.frequency_hz / 1e6,
+                    "bandwidth_mhz": config.bandwidth_mhz,
+                    "scs_khz": config.subcarrier_spacing_khz,
+                    "mimo_layers": config.mimo_layers,
+                    "dl_power_dbm": config.target_tx_power_dbm,
+                }
             )
 
-        await base_station.start_signaling()
+            # --- 3GPP MAC throughput config (was hard-coded; now from TestCase) ---
+            if hasattr(base_station, "configure_mac_throughput_test"):
+                await base_station.configure_mac_throughput_test(
+                    mimo_layers=config.mimo_layers,
+                    mcs=config.mcs,
+                    enable_amc=config.enable_amc,
+                    tdd_pattern=config.tdd_pattern,
+                    tdd_period=config.tdd_period,
+                    harq_max_trans=config.harq_max_trans,
+                    harq_processes=config.harq_processes,
+                    stat_count=config.stat_count,
+                )
 
-        # --- Resolve chamber from LabProfile, then run channel generation ---
-        chamber: ChamberConfiguration = lab.chamber_config
-        if chamber is None:
-            return StepExecutionResult(
-                status=StepExecutionStatus.FAILED,
-                error_message=f"LabProfile {lab.name} has no chamber_config",
-            )
+            await base_station.start_signaling()
 
-        ce_client = ChannelEngineClient(context.db)
-        emulator = hal.drivers.get("channelEmulator")
-        if emulator is None:
-            from app.hal.channel_emulator import MockChannelEmulator
-
-            logger.warning(
-                "[%s] No channelEmulator in HAL — falling back to MockChannelEmulator",
-                context.test_execution.id,
-            )
-            emulator = MockChannelEmulator(
-                instrument_id="mock_ce_mimo_ota",
-                config={"model": "Mock"},
-            )
-            await emulator.connect()
-
-        calibration_entries = ce_client._query_calibration_entries(
-            chamber.id, config.frequency_hz, chamber
-        )
-
-        # --- Phase 2a: apply chamber-level path-loss to the RSRP baseline ---
-        # Per-probe (azimuth → probe_id) compensation lives in ANALYSIS together
-        # with quiet-zone ripple; here we only correct the bulk RSRP target so
-        # the synthesized samples land near what the DUT actually sees.
-        from app.services.path_loss_calibration_service import (
-            ProbePathLossCalibrationService,
-        )
-
-        pl_service = ProbePathLossCalibrationService(context.db, use_mock=False)
-        path_loss_cert = pl_service.get_latest_calibration(
-            chamber.id, config.frequency_hz / 1e6
-        )
-        if path_loss_cert is not None:
-            avg_path_loss_db = float(path_loss_cert.avg_path_loss_db or 0.0)
-            logger.info(
-                "[%s] Phase 2a: applying chamber path-loss avg=%.2f dB (cert=%s)",
-                context.test_execution.id,
-                avg_path_loss_db,
-                path_loss_cert.id,
-            )
-        else:
-            avg_path_loss_db = 0.0
-            logger.warning(
-                "[%s] Phase 2a: no path-loss calibration for chamber %s @ %.0f MHz; "
-                "RSRP baseline uncompensated",
-                context.test_execution.id,
-                chamber.id,
-                config.frequency_hz / 1e6,
-            )
-
-        engine_mode = EngineMode(config.engine_mode)
-        if engine_mode == EngineMode.GCM_NATIVE:
-            supported = emulator.get_supported_load_modes()
-            if ChannelLoadMode.NATIVE_MODEL not in supported:
+            # --- Resolve chamber from LabProfile, then run channel generation ---
+            chamber: ChamberConfiguration = lab.chamber_config
+            if chamber is None:
                 return StepExecutionResult(
                     status=StepExecutionStatus.FAILED,
-                    error_message=(
-                        f"channelEmulator ({type(emulator).__name__}) does not support "
-                        f"native model loading; engine_mode=GCM_NATIVE rejected. "
-                        f"Supported modes: {[m.value for m in supported]}"
-                    ),
+                    error_message=f"LabProfile {lab.name} has no chamber_config",
                 )
-            generator = NativeModelStrategy(emulator, chamber, calibration_entries)
-        else:
-            generator = ExternalWaveformStrategy(
-                emulator, ce_client, chamber, calibration_entries
+
+            ce_client = ChannelEngineClient(context.db)
+            emulator = hal.drivers.get("channelEmulator")
+            if emulator is None:
+                from app.hal.channel_emulator import MockChannelEmulator
+
+                logger.warning(
+                    "[%s] No channelEmulator in HAL — falling back to MockChannelEmulator",
+                    context.test_execution.id,
+                )
+                emulator = MockChannelEmulator(
+                    instrument_id="mock_ce_mimo_ota",
+                    config={"model": "Mock"},
+                )
+                await emulator.connect()
+
+            # --- Phase 2c: verify SwitchTopology declares mimo_ota mode for this chamber ---
+            # CAICT-Lab-1 has a fixed cabling, so this is a *declaration check*
+            # rather than live switching: we surface the topology id, mode, and
+            # CE-port→probe bindings into the result for traceability and
+            # downstream channel-gen consumption. Missing topology is a warning,
+            # not a hard failure.
+            topology_result = orchestrate_switch_topology(
+                context.db, chamber.id, mode_id="mimo_ota"
+            )
+            if topology_result.success:
+                logger.info(
+                    "[%s] Phase 2c: switch topology '%s' v%s mode=%s, %d probe bindings",
+                    context.test_execution.id,
+                    topology_result.topology_name,
+                    topology_result.topology_version,
+                    topology_result.mode_id,
+                    len(topology_result.probe_bindings),
+                )
+            else:
+                for w in topology_result.warnings:
+                    logger.warning("[%s] %s", context.test_execution.id, w)
+
+            calibration_entries = ce_client._query_calibration_entries(
+                chamber.id, config.frequency_hz, chamber
             )
 
-        sim_rules = {
-            "frequency_hz": config.frequency_hz,
-            "target_tx_power_dbm": config.target_tx_power_dbm,
-            "target_rsrp_dbm": config.target_rsrp_dbm,
-            "target_snr_db": config.target_snr_db,
-        }
-        cdl_model_data = {
-            "model_name": config.cdl_model_name,
-            "session_id": str(context.test_execution.id),
-        }
-        gen_ok = await generator.generate_and_load(sim_rules, cdl_model_data)
-        if not gen_ok:
-            return StepExecutionResult(
-                status=StepExecutionStatus.FAILED,
-                error_message=f"Channel generation failed for engine_mode={config.engine_mode}",
+            # --- Phase 2a: apply chamber-level path-loss to the RSRP baseline ---
+            # Per-probe (azimuth → probe_id) compensation lives in ANALYSIS together
+            # with quiet-zone ripple; here we only correct the bulk RSRP target so
+            # the synthesized samples land near what the DUT actually sees.
+            from app.services.path_loss_calibration_service import (
+                ProbePathLossCalibrationService,
             )
 
-        # --- Per-azimuth measurement loop ---
-        azimuth_results: List[Dict[str, Any]] = []
-        # Path-loss attenuates DL signal at the DUT, so subtract from target.
-        ce_base_rsrp = config.target_rsrp_dbm - avg_path_loss_db
-        sample_cap = min(config.num_samples_per_azimuth, _DEV_SAMPLE_LIMIT)
-
-        loop = asyncio.get_event_loop()
-        t_start = loop.time()
-
-        for azimuth in config.azimuths_deg:
-            logger.info(
-                "[%s] Phase 3: positioner -> azimuth %.1f°",
-                context.test_execution.id,
-                azimuth,
+            pl_service = ProbePathLossCalibrationService(context.db, use_mock=False)
+            path_loss_cert = pl_service.get_latest_calibration(
+                chamber.id, config.frequency_hz / 1e6
             )
-            await positioner.move_to(azimuth, 0.0)
-            await asyncio.sleep(config.settling_time_s)
+            if path_loss_cert is not None:
+                avg_path_loss_db = float(path_loss_cert.avg_path_loss_db or 0.0)
+                logger.info(
+                    "[%s] Phase 2a: applying chamber path-loss avg=%.2f dB (cert=%s)",
+                    context.test_execution.id,
+                    avg_path_loss_db,
+                    path_loss_cert.id,
+                )
+            else:
+                avg_path_loss_db = 0.0
+                logger.warning(
+                    "[%s] Phase 2a: no path-loss calibration for chamber %s @ %.0f MHz; "
+                    "RSRP baseline uncompensated",
+                    context.test_execution.id,
+                    chamber.id,
+                    config.frequency_hz / 1e6,
+                )
 
-            samples_rsrp: List[float] = []
-            samples_sinr: List[float] = []
-            samples_tput: List[float] = []
-            samples_ri: List[float] = []
+            engine_mode = EngineMode(config.engine_mode)
+            if engine_mode == EngineMode.GCM_NATIVE:
+                supported = emulator.get_supported_load_modes()
+                if ChannelLoadMode.NATIVE_MODEL not in supported:
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            f"channelEmulator ({type(emulator).__name__}) does not support "
+                            f"native model loading; engine_mode=GCM_NATIVE rejected. "
+                            f"Supported modes: {[m.value for m in supported]}"
+                        ),
+                    )
+                generator = NativeModelStrategy(emulator, chamber, calibration_entries)
+            else:
+                generator = ExternalWaveformStrategy(
+                    emulator, ce_client, chamber, calibration_entries
+                )
 
-            for _ in range(sample_cap):
-                metrics = await base_station.get_throughput_metrics()
-
-                # RF KPIs (RSRP/SINR) are normally UE-reported; until that path
-                # exists we synthesize from target + position-aware perturbation.
-                az_factor = math.cos(math.radians(azimuth)) * 0.1
-                rsrp = ce_base_rsrp + az_factor * 5 + random.gauss(0, 0.5)
-                sinr = config.target_snr_db + az_factor * 3 + random.gauss(0, 0.8)
-
-                samples_rsrp.append(rsrp)
-                samples_sinr.append(sinr)
-                samples_tput.append(metrics.dl_throughput_mbps)
-                samples_ri.append(float(metrics.rank_indicator))
-
-                await asyncio.sleep(0.02)
-
-            az = {
-                "azimuth_deg": azimuth,
-                "rsrp_dbm": sum(samples_rsrp) / len(samples_rsrp),
-                "sinr_db": sum(samples_sinr) / len(samples_sinr),
-                "throughput_mbps": sum(samples_tput) / len(samples_tput),
-                "rank_indicator": sum(samples_ri) / len(samples_ri),
-                "num_samples": len(samples_rsrp),
-                "rsrp_std_db": stddev(samples_rsrp),
-                "sinr_std_db": stddev(samples_sinr),
-                "throughput_std_mbps": stddev(samples_tput),
+            sim_rules = {
+                "frequency_hz": config.frequency_hz,
+                "target_tx_power_dbm": config.target_tx_power_dbm,
+                "target_rsrp_dbm": config.target_rsrp_dbm,
+                "target_snr_db": config.target_snr_db,
             }
-            azimuth_results.append(az)
+            cdl_model_data = {
+                "model_name": config.cdl_model_name,
+                "session_id": str(context.test_execution.id),
+            }
+            gen_ok = await generator.generate_and_load(sim_rules, cdl_model_data)
+            if not gen_ok:
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    error_message=f"Channel generation failed for engine_mode={config.engine_mode}",
+                )
 
-            logger.info(
-                "  azimuth=%.0f°: RSRP=%.1f, SINR=%.1f, Tput=%.0f Mbps, RI=%.2f",
-                azimuth,
-                az["rsrp_dbm"],
-                az["sinr_db"],
-                az["throughput_mbps"],
-                az["rank_indicator"],
+            # --- Per-azimuth measurement loop (Phase 2d windowed sampling) ---
+            azimuth_results: List[Dict[str, Any]] = []
+            # Path-loss attenuates DL signal at the DUT, so subtract from target.
+            ce_base_rsrp = config.target_rsrp_dbm - avg_path_loss_db
+            # One sample per stat window (≈ stat_count subframes × 1ms);
+            # cap aggressively in dev so smoke tests don't wait minutes.
+            num_windows = min(config.num_samples_per_azimuth, _DEV_SAMPLE_WINDOWS)
+            window_s = max(config.stat_count / 1000.0, _MOCK_WINDOW_FLOOR_S)
+
+            loop = asyncio.get_event_loop()
+            t_start = loop.time()
+
+            for azimuth in config.azimuths_deg:
+                logger.info(
+                    "[%s] Phase 3: positioner -> azimuth %.1f° (%d windows × %.2fs)",
+                    context.test_execution.id,
+                    azimuth,
+                    num_windows,
+                    window_s,
+                )
+                await positioner.move_to(azimuth, 0.0)
+                await asyncio.sleep(config.settling_time_s)
+
+                samples_rsrp: List[float] = []
+                samples_sinr: List[float] = []
+                samples_tput: List[float] = []
+                samples_ri: List[float] = []
+
+                for _ in range(num_windows):
+                    metrics = await base_station.measure_throughput_window(window_s)
+
+                    # RF KPIs (RSRP/SINR) are normally UE-reported; until that path
+                    # exists we synthesize from target + position-aware perturbation.
+                    az_factor = math.cos(math.radians(azimuth)) * 0.1
+                    rsrp = ce_base_rsrp + az_factor * 5 + random.gauss(0, 0.5)
+                    sinr = config.target_snr_db + az_factor * 3 + random.gauss(0, 0.8)
+
+                    samples_rsrp.append(rsrp)
+                    samples_sinr.append(sinr)
+                    samples_tput.append(metrics.dl_throughput_mbps)
+                    samples_ri.append(float(metrics.rank_indicator))
+
+                az = {
+                    "azimuth_deg": azimuth,
+                    "rsrp_dbm": sum(samples_rsrp) / len(samples_rsrp),
+                    "sinr_db": sum(samples_sinr) / len(samples_sinr),
+                    "throughput_mbps": sum(samples_tput) / len(samples_tput),
+                    "rank_indicator": sum(samples_ri) / len(samples_ri),
+                    "num_samples": len(samples_rsrp),
+                    "rsrp_std_db": stddev(samples_rsrp),
+                    "sinr_std_db": stddev(samples_sinr),
+                    "throughput_std_mbps": stddev(samples_tput),
+                }
+                azimuth_results.append(az)
+
+                logger.info(
+                    "  azimuth=%.0f°: RSRP=%.1f, SINR=%.1f, Tput=%.0f Mbps, RI=%.2f",
+                    azimuth,
+                    az["rsrp_dbm"],
+                    az["sinr_db"],
+                    az["throughput_mbps"],
+                    az["rank_indicator"],
+                )
+
+            total_duration = loop.time() - t_start
+
+            result_payload: Dict[str, Any] = {
+                "cdl_model_name": config.cdl_model_name,
+                "frequency_ghz": config.frequency_hz / 1e9,
+                "mimo_config": f"{config.mimo_layers}x{config.mimo_layers}",
+                "asc_files_loaded": True,
+                "azimuth_results": azimuth_results,
+                "total_duration_s": total_duration,
+                "engine_mode": config.engine_mode,
+                "calibration_entries_used": len(calibration_entries) if calibration_entries else 0,
+                "path_loss_compensation_db": avg_path_loss_db,
+                "path_loss_certificate_id": (
+                    str(path_loss_cert.id) if path_loss_cert is not None else None
+                ),
+                "switch_topology": topology_result.to_payload(),
+                "sampling": {
+                    "num_windows_per_azimuth": num_windows,
+                    "window_duration_s": window_s,
+                    "stat_count_subframes": config.stat_count,
+                },
+            }
+        finally:
+            cleanup_warnings = await cleanup_chamber_instruments(
+                hal, context.test_execution.id
             )
 
-        await positioner.disconnect()
-        await base_station.stop_signaling()
-        await base_station.disconnect()
-
-        total_duration = loop.time() - t_start
-
-        result_payload: Dict[str, Any] = {
-            "cdl_model_name": config.cdl_model_name,
-            "frequency_ghz": config.frequency_hz / 1e9,
-            "mimo_config": f"{config.mimo_layers}x{config.mimo_layers}",
-            "asc_files_loaded": True,
-            "azimuth_results": azimuth_results,
-            "total_duration_s": total_duration,
-            "engine_mode": config.engine_mode,
-            "calibration_entries_used": len(calibration_entries) if calibration_entries else 0,
-            "path_loss_compensation_db": avg_path_loss_db,
-            "path_loss_certificate_id": (
-                str(path_loss_cert.id) if path_loss_cert is not None else None
-            ),
-        }
+        if cleanup_warnings:
+            result_payload["cleanup_warnings"] = cleanup_warnings
         write_phase_result(context.test_execution, "measure", result_payload)
         context.db.commit()
 
         return StepExecutionResult(
             status=StepExecutionStatus.SUCCESS,
             measurements=result_payload,
+            warnings=cleanup_warnings or None,
         )
