@@ -4,6 +4,62 @@ Mirrors what the legacy `commissioning_config.StaticMIMOConfig` dataclass
 held, but lives inside `TestCase.configuration` (JSON) so it travels with the
 TestCase row instead of being a process-memory thing. Also defines the canonical
 step-type strings used by the ExecutorRegistry.
+
+═══════════════════════════════════════════════════════════════════════════
+RECONCILIATION NOTE — read before adding a 2nd test_type schema (TRP/TIS/...)
+═══════════════════════════════════════════════════════════════════════════
+
+We deliberately did NOT factor out a shared `BaseRFTestConfig` parent class
+when this schema was written, because at the time MIMO_OTA was the only
+test_type using the new TestCase.configuration JSON shape. Rule-of-three
+applies: refactor when the third user shows up.
+
+When you build the next test_type schema (TRP / TIS / Throughput / ...), use
+the names + units below as canonical. Discrepancies surface as "this should
+have been `frequency_hz` not `freq_ghz`" — fix them at write time, do NOT
+add another column with a different unit.
+
+Canonical RF parameters (all test_types):
+- frequency_hz: float        # always Hz, never MHz/GHz inside configuration
+                             # (TestCase.frequency_mhz column stays as it is
+                             # for filterability — it's a derived view)
+- bandwidth_mhz: float       # always MHz here (legacy column matches)
+- tx_power_dbm: float        # downlink BS transmit power; NOT DUT power
+- target_rsrp_dbm: float     # absolute, signed (e.g. -85.0)
+- target_snr_db: float       # SNR target at DUT input
+
+Spatial sweep (TRP / TIS / MIMO_OTA when sampling specific positions):
+- azimuths_deg: List[float]                  # MIMO_OTA-style: 4 discrete points
+  OR
+- spatial_grid: {theta_step_deg, phi_step_deg, theta_range, phi_range}
+                                             # TRP/TIS-style: full sphere grid
+  Use one OR the other, not both. Pick based on whether the test walks discrete
+  azimuths (MIMO_OTA) or sweeps a sphere (TRP/TIS).
+
+- settling_time_s: float
+- num_samples_per_position: int              # rename `num_samples_per_azimuth`
+                                             # to this when going generic
+
+Channel model (MIMO_OTA / Throughput / VRT):
+- cdl_model_name: str                        # 3GPP CDL profile, e.g. "CDL-A"
+                                             # The TestCase.channel_model
+                                             # column is a higher-level label
+                                             # ("UMi-LOS"); both can coexist.
+
+MIMO-specific (MIMO_OTA / Throughput / VRT-conducted):
+- mimo_layers: int           # number of layers, NOT antennas
+- modulation: str            # "256QAM" / "1024QAM"
+- mcs: int                   # 3GPP MCS index
+- tdd_pattern, tdd_period: str
+- harq_max_trans, harq_processes: int
+
+Pass criteria (every test_type):
+- prefix with min_ / max_, suffix with the unit (e.g. min_throughput_mbps,
+  max_rsrp_variance_db). Avoid bare names like `throughput` or `bler`.
+
+If any of the above genuinely doesn't fit a new test_type's needs, document
+the deviation here AND open a refactor ticket — do not silently diverge.
+═══════════════════════════════════════════════════════════════════════════
 """
 from enum import Enum
 from typing import List, Optional
