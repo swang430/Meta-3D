@@ -37,6 +37,7 @@ import {
   IconRadar,
   IconArrowsShuffle,
   IconChecklist,
+  IconEdit,
 } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
 import {
@@ -45,6 +46,7 @@ import {
   type TestCaseType,
   getTestTypeLabel,
 } from '../../api/testPlanService';
+import { TestCaseEditModal } from './TestCaseEditModal';
 
 // Category icon mapping
 const CATEGORY_ICONS: Record<string, React.ReactNode> = {
@@ -88,6 +90,8 @@ export function TestCaseLibrary({
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<string | null>(null);
+  // Phase 3b: edit dialog state
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const loadTestCases = useCallback(async () => {
     setLoading(true);
@@ -326,9 +330,26 @@ export function TestCaseLibrary({
                               </Text>
                             </Group>
                           </div>
-                          <Badge size="xs" variant="light" color={color}>
-                            {getTestTypeLabel(tc.test_type)}
-                          </Badge>
+                          <Group gap={4} wrap="nowrap">
+                            <Badge size="xs" variant="light" color={color}>
+                              {getTestTypeLabel(tc.test_type)}
+                            </Badge>
+                            {!selectionMode && (
+                              <Tooltip label="编辑" withArrow>
+                                <ActionIcon
+                                  size="xs"
+                                  variant="subtle"
+                                  color="gray"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setEditingId(tc.id)
+                                  }}
+                                >
+                                  <IconEdit size={14} />
+                                </ActionIcon>
+                              </Tooltip>
+                            )}
+                          </Group>
                         </Group>
 
                         {(tc as any).description && (
@@ -381,6 +402,17 @@ export function TestCaseLibrary({
           );
         })}
       </Accordion>
+
+      <TestCaseEditModal
+        opened={editingId !== null}
+        testCaseId={editingId}
+        onClose={() => setEditingId(null)}
+        onSaved={() => {
+          // Refresh after edit
+          loadTestCases()
+          setEditingId(null)
+        }}
+      />
     </Stack>
   );
 }

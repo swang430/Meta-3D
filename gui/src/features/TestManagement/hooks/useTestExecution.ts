@@ -14,6 +14,7 @@ import * as api from '../api/testManagementAPI'
 import { testPlansKeys } from './useTestPlans'
 import { testQueueKeys } from './useTestQueue'
 import * as ReportsAPI from '../../Reports/api/reportsAPI'
+import { logFrontendEvent } from '../../../observability/frontendLogger'
 
 // ==================== Mutations ====================
 
@@ -39,12 +40,23 @@ export function useStartExecution() {
         message: `测试计划 "${updatedPlan.name}" 开始执行`,
         color: 'blue',
       })
+      logFrontendEvent({
+        action: 'test_plan.execution.started',
+        component: 'useStartExecution',
+        message: `plan_id=${updatedPlan.id} name="${updatedPlan.name}"`,
+      })
     },
     onError: (error: Error) => {
       notifications.show({
         title: '启动失败',
         message: error.message || '无法启动测试计划执行',
         color: 'red',
+      })
+      logFrontendEvent({
+        level: 'ERROR',
+        action: 'test_plan.execution.start_failed',
+        component: 'useStartExecution',
+        error: error.message,
       })
     },
   })
@@ -138,12 +150,22 @@ export function useCancelExecution() {
         message: `测试计划 "${updatedPlan.name}" 已取消`,
         color: 'orange',
       })
+      logFrontendEvent({
+        action: 'test_plan.execution.cancelled',
+        component: 'useCancelExecution',
+        message: `plan_id=${updatedPlan.id}`,
+      })
     },
     onError: (error: Error) => {
       notifications.show({
         title: '取消失败',
         message: error.message || '无法取消测试计划',
         color: 'red',
+      })
+      logFrontendEvent({
+        level: 'ERROR',
+        action: 'test_plan.execution.cancel_failed',
+        error: error.message,
       })
     },
   })
@@ -170,6 +192,11 @@ export function useCompleteExecution() {
         title: '执行已完成',
         message: `测试计划 "${updatedPlan.name}" 已完成`,
         color: 'green',
+      })
+      logFrontendEvent({
+        action: 'test_plan.execution.completed',
+        component: 'useCompleteExecution',
+        message: `plan_id=${updatedPlan.id} name="${updatedPlan.name}"`,
       })
 
       // Auto-create report record for the completed execution

@@ -13,3 +13,5 @@ export { ProbeCalibrationGrid } from './ProbeCalibrationGrid'
 export { ProbeCalibrationDashboard } from './ProbeCalibrationDashboard'
 
 export { ProbeCalibrationDetail } from './ProbeCalibrationDetail'
+
+export { PatternImportPanel } from './PatternImportPanel'

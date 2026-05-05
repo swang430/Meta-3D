@@ -201,6 +201,65 @@ export async function getPatternCalibration(
   return response.data
 }
 
+// ==================== Phase 2a-import: Pattern File Upload ====================
+
+export interface ImportPatternFormParams {
+  file: File
+  probeId: number
+  polarization: string
+  frequencyMhz: number
+  fileFormat?: 'ticra_cut' | 'csv' | 'json'
+  probeModel?: string
+  probeVendor?: string
+  probeSerial?: string
+  measuredBy?: string
+  replaceExisting?: boolean
+}
+
+export interface ImportPatternResponse {
+  success: boolean
+  pattern_id?: string
+  invalidated_id?: string
+  peak_gain_dbi?: number
+  peak_azimuth_deg?: number
+  peak_elevation_deg?: number
+  hpbw_azimuth_deg?: number
+  hpbw_elevation_deg?: number
+  front_to_back_ratio_db?: number
+  num_az_points: number
+  num_el_points: number
+  warnings: string[]
+  error?: string
+}
+
+/**
+ * Upload a vendor-datasheet pattern file (.cut / .csv / .json) for a probe.
+ * Calls multipart POST /api/v1/calibration/probe/pattern/import.
+ */
+export async function importProbePattern(
+  params: ImportPatternFormParams
+): Promise<ImportPatternResponse> {
+  const fd = new FormData()
+  fd.append('file', params.file)
+  fd.append('probe_id', String(params.probeId))
+  fd.append('polarization', params.polarization)
+  fd.append('frequency_mhz', String(params.frequencyMhz))
+  if (params.fileFormat) fd.append('file_format', params.fileFormat)
+  if (params.probeModel) fd.append('probe_model', params.probeModel)
+  if (params.probeVendor) fd.append('probe_vendor', params.probeVendor)
+  if (params.probeSerial) fd.append('probe_serial', params.probeSerial)
+  if (params.measuredBy) fd.append('measured_by', params.measuredBy)
+  if (params.replaceExisting !== undefined)
+    fd.append('replace_existing', params.replaceExisting ? 'true' : 'false')
+
+  const response = await apiClient.post<ImportPatternResponse>(
+    `${BASE_URL}/pattern/import`,
+    fd,
+    { headers: { 'Content-Type': 'multipart/form-data' } }
+  )
+  return response.data
+}
+
 // ==================== Link Calibration APIs ====================
 
 /**

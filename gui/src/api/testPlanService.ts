@@ -251,6 +251,20 @@ export async function deleteTestCase(id: string): Promise<void> {
   await testPlanClient.delete(`/test-plans/cases/${id}`);
 }
 
+export async function updateTestCase(
+  id: string,
+  payload: Partial<{
+    name: string;
+    description: string | null;
+    configuration: Record<string, unknown>;
+    pass_criteria: Record<string, unknown>;
+    tags: string[];
+  }>
+): Promise<TestCase> {
+  const response = await testPlanClient.patch<TestCase>(`/test-plans/cases/${id}`, payload);
+  return response.data;
+}
+
 // Queue Management
 export async function queueTestPlan(request: QueueTestPlanRequest): Promise<TestQueueItem> {
   const response = await testPlanClient.post<TestQueueItem>('/test-plans/queue', request);
