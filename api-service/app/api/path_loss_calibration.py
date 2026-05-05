@@ -21,6 +21,7 @@ from app.models.probe_calibration import (
 )
 from app.schemas.probe_calibration import (
     StartProbePathLossCalibrationRequest,
+    StartProbePathLossCalibrationForLabRequest,
     ProbePathLossCalibrationResponse,
     StartRFChainCalibrationRequest,
     RFChainCalibrationResponse,
@@ -119,6 +120,50 @@ async def start_path_loss_calibration(
         calibration_job_id=UUID(result.data["calibration_id"]),
         status=CalibrationJobStatus.COMPLETED,
         message=result.message
+    )
+
+
+@router.post("/start-for-lab", response_model=CalibrationJobResponse)
+async def start_path_loss_calibration_for_lab(
+    request: StartProbePathLossCalibrationForLabRequest,
+    db: Session = Depends(get_db),
+):
+    """P0: lab-profile-aware path-loss calibration.
+
+    Resolves SwitchTopology active chains for the requested operating mode and
+    calibrates each declared chain (per probe + polarization), persisting
+    per-chain `total_insertion_loss_db` (= spatial SGH→probe + per-connection
+    cable loss) on the resulting cert. measure.py looks up compensation by
+    chain id rather than averaging across the whole chamber.
+
+    Use the legacy `/start` endpoint when no LabProfile + topology exist yet
+    (early-stage labs without seeded topology rows).
+    """
+    service = ProbePathLossCalibrationService(db, use_mock=request.use_mock)
+    result = await service.start_calibration_for_lab_profile(
+        lab_profile_id=request.lab_profile_id,
+        operating_mode=request.operating_mode,
+        frequency_mhz=request.frequency_mhz,
+        sgh_model=request.sgh_model,
+        sgh_gain_dbi=request.sgh_gain_dbi,
+        sgh_serial=request.sgh_serial,
+        vna_id=request.vna_id,
+        calibrated_by=request.calibrated_by,
+    )
+
+    if not result.success:
+        # 422 (unprocessable) reads better than 500 here since the failure mode
+        # is "topology not seeded" or "lab profile missing chamber" — caller
+        # config issue rather than a server fault.
+        raise HTTPException(status_code=422, detail={
+            "message": result.message,
+            "warnings": result.warnings,
+        })
+
+    return CalibrationJobResponse(
+        calibration_job_id=UUID(result.data["calibration_id"]),
+        status=CalibrationJobStatus.COMPLETED,
+        message=result.message,
     )
 
 

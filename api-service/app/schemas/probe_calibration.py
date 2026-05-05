@@ -564,6 +564,33 @@ class StartProbePathLossCalibrationRequest(BaseModel):
     )
 
 
+class StartProbePathLossCalibrationForLabRequest(BaseModel):
+    """P0 lab-profile-aware path-loss calibration request.
+
+    Resolves SwitchTopology active chains for the requested operating_mode
+    and calibrates each chain individually, persisting per-chain
+    insertion loss in addition to the legacy per-probe aggregate.
+    """
+    lab_profile_id: UUID = Field(..., description="LabProfile to calibrate (chamber + topology resolved from this)")
+    operating_mode: str = Field(
+        default="mimo_ota",
+        description="SwitchTopology.operating_modes[*].id, e.g. 'mimo_ota' / 'siso_trp'",
+    )
+    frequency_mhz: float = Field(..., ge=100, le=100000)
+
+    sgh_model: str
+    sgh_serial: Optional[str] = None
+    sgh_gain_dbi: float
+
+    vna_id: Optional[str] = None
+    calibrated_by: str
+
+    use_mock: bool = Field(
+        default=True,
+        description="True = mock data; False = real VNA via HAL.",
+    )
+
+
 class ProbePathLossCalibrationResponse(BaseModel):
     """探头路损校准响应"""
     id: UUID

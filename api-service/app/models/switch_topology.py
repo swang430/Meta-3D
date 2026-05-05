@@ -10,7 +10,7 @@ Switch Topology Database Model
   - Connection: 两个 Node 之间的物理连线 (含电缆参数和校准数据)
   - OperatingMode: 一组活跃 Connection 的集合 (MIMO OTA / SISO TRP / TIS / Passive)
 """
-from sqlalchemy import Column, String, Integer, Text, Boolean, DateTime, Float
+from sqlalchemy import Column, String, Integer, Text, Boolean, DateTime, Float, JSON
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 from sqlalchemy import ForeignKey
@@ -19,6 +19,11 @@ import uuid
 import enum
 
 from app.db.database import Base
+
+# JSONB on Postgres (prod), JSON on SQLite (tests). Without the variant,
+# create_all on SQLite fails to compile the table because JSONB has no
+# SQLite renderer. We keep JSONB semantics in prod (indexable, native ops).
+_JSON_PG_OR_SQLITE = JSONB().with_variant(JSON(), "sqlite")
 
 
 class SwitchTopology(Base):
@@ -67,7 +72,7 @@ class SwitchTopology(Base):
 
     # 节点定义
     nodes = Column(
-        JSONB,
+        _JSON_PG_OR_SQLITE,
         nullable=False,
         default=list,
         comment="""
@@ -84,7 +89,7 @@ class SwitchTopology(Base):
 
     # 连线定义
     connections = Column(
-        JSONB,
+        _JSON_PG_OR_SQLITE,
         nullable=False,
         default=list,
         comment="""
@@ -107,7 +112,7 @@ class SwitchTopology(Base):
 
     # 操作模式定义
     operating_modes = Column(
-        JSONB,
+        _JSON_PG_OR_SQLITE,
         nullable=False,
         default=list,
         comment="""

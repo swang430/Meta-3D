@@ -236,10 +236,13 @@ class MeasureExecutor(IStepExecutor):
                 chamber.id, config.frequency_hz, chamber
             )
 
-            # --- Phase 2a: apply chamber-level path-loss to the RSRP baseline ---
-            # Per-probe (azimuth → probe_id) compensation lives in ANALYSIS together
-            # with quiet-zone ripple; here we only correct the bulk RSRP target so
-            # the synthesized samples land near what the DUT actually sees.
+            # --- Phase 2a / P0: path-loss compensation ---
+            # Old: chamber-wide avg (`avg_path_loss_db`) applied uniformly.
+            # New: per-RFChain `total_insertion_loss_db` looked up by
+            #   (active_probe_id, polarization) → connection_id, populated
+            #   when the cert was created via /calibration/path-loss/start-for-lab.
+            # Falls back to avg when the cert is legacy (no per-chain map) so
+            # existing chamber-keyed calibrations still work.
             from app.services.path_loss_calibration_service import (
                 ProbePathLossCalibrationService,
             )
@@ -250,14 +253,18 @@ class MeasureExecutor(IStepExecutor):
             )
             if path_loss_cert is not None:
                 avg_path_loss_db = float(path_loss_cert.avg_path_loss_db or 0.0)
+                per_chain_pl: Dict[str, Any] = (
+                    getattr(path_loss_cert, "path_loss_db_by_rf_chain", None) or {}
+                )
                 logger.info(
-                    "[%s] Phase 2a: applying chamber path-loss avg=%.2f dB (cert=%s)",
+                    "[%s] Phase 2a/P0: path-loss avg=%.2f dB cert=%s "
+                    "(per-chain entries: %d)",
                     context.test_execution.id,
-                    avg_path_loss_db,
-                    path_loss_cert.id,
+                    avg_path_loss_db, path_loss_cert.id, len(per_chain_pl),
                 )
             else:
                 avg_path_loss_db = 0.0
+                per_chain_pl = {}
                 logger.warning(
                     "[%s] Phase 2a: no path-loss calibration for chamber %s @ %.0f MHz; "
                     "RSRP baseline uncompensated",
@@ -265,6 +272,21 @@ class MeasureExecutor(IStepExecutor):
                     chamber.id,
                     config.frequency_hz / 1e6,
                 )
+
+            # P0: invert per_chain_pl into a (probe_id, pol) → total_insertion_loss_db map.
+            # Each entry already has probe_id + polarization stamped at calibration
+            # time, so we don't have to re-resolve the topology here — saving a
+            # query and keeping the compensation pinned to whatever topology was
+            # active when the cert was issued.
+            chain_pl_by_probe_pol: Dict[tuple, float] = {}
+            for entry in per_chain_pl.values():
+                if not isinstance(entry, dict):
+                    continue
+                pid = entry.get("probe_id")
+                pol = entry.get("polarization")
+                total = entry.get("total_insertion_loss_db")
+                if pid is not None and pol and total is not None:
+                    chain_pl_by_probe_pol[(int(pid), str(pol).upper())] = float(total)
 
             engine_mode = EngineMode(config.engine_mode)
             if engine_mode == EngineMode.GCM_NATIVE:
@@ -303,8 +325,8 @@ class MeasureExecutor(IStepExecutor):
 
             # --- Per-azimuth measurement loop (Phase 2d windowed sampling) ---
             azimuth_results: List[Dict[str, Any]] = []
-            # Path-loss attenuates DL signal at the DUT, so subtract from target.
-            ce_base_rsrp = config.target_rsrp_dbm - avg_path_loss_db
+            # P0: ce_base_rsrp is now per-azimuth (computed inside loop) since
+            # path-loss varies by chain. avg_path_loss_db is the fallback.
             # One sample per stat window (≈ stat_count subframes × 1ms);
             # cap aggressively in dev so smoke tests don't wait minutes.
             num_windows = min(config.num_samples_per_azimuth, _DEV_SAMPLE_WINDOWS)
@@ -313,9 +335,11 @@ class MeasureExecutor(IStepExecutor):
             loop = asyncio.get_event_loop()
             t_start = loop.time()
 
-            # Phase 2f: pre-resolve per-azimuth probe + pattern gain so the
-            # inner sample loop doesn't hammer the DB. None entries fall back
-            # to nominal chamber.probe_gain_dbi inside the loop.
+            # Phase 2f / P0: pre-resolve per-azimuth probe + pattern gain +
+            # per-chain path-loss so the inner sample loop doesn't hammer the
+            # DB. Chain lookup uses "V" by default — current measurement
+            # synthesis is also V-pol; H-pol gets the same value (acceptable
+            # until per-azimuth pol switching is wired).
             nominal_probe_gain_dbi = float(chamber.probe_gain_dbi or 0.0)
             azimuth_probe_gains: Dict[float, Dict[str, Any]] = {}
             for az_target in config.azimuths_deg:
@@ -323,6 +347,7 @@ class MeasureExecutor(IStepExecutor):
                 pattern_gain_v = get_probe_gain_at_azimuth(
                     context.db, chamber.num_probes, az_target, config.frequency_hz / 1e6, "V"
                 )
+                chain_pl_db = chain_pl_by_probe_pol.get((pid, "V"))
                 azimuth_probe_gains[az_target] = {
                     "probe_id": pid,
                     "pattern_gain_dbi": pattern_gain_v,
@@ -330,10 +355,26 @@ class MeasureExecutor(IStepExecutor):
                         pattern_gain_v - nominal_probe_gain_dbi
                         if pattern_gain_v is not None else None
                     ),
+                    # Per-chain path-loss; None falls back to chamber avg in loop.
+                    "path_loss_db": chain_pl_db,
                 }
             patterns_used = sum(
                 1 for v in azimuth_probe_gains.values() if v["pattern_gain_dbi"] is not None
             )
+            chains_used = sum(
+                1 for v in azimuth_probe_gains.values() if v["path_loss_db"] is not None
+            )
+            if chains_used:
+                logger.info(
+                    "[%s] P0: per-RFChain path-loss applied for %d/%d azimuths",
+                    context.test_execution.id, chains_used, len(config.azimuths_deg),
+                )
+            elif per_chain_pl:
+                logger.warning(
+                    "[%s] P0: cert has %d chain entries but none matched any "
+                    "azimuth's active probe (V) — falling back to avg path-loss",
+                    context.test_execution.id, len(per_chain_pl),
+                )
             if patterns_used == 0:
                 logger.warning(
                     "[%s] Phase 2f: no ProbePattern data for any azimuth — RSRP/SINR "
@@ -386,6 +427,11 @@ class MeasureExecutor(IStepExecutor):
 
                 az_meta = azimuth_probe_gains.get(azimuth, {})
                 gain_offset = az_meta.get("gain_offset_db")
+                # P0: per-chain path-loss when available; falls back to avg.
+                az_path_loss_db = az_meta.get("path_loss_db")
+                if az_path_loss_db is None:
+                    az_path_loss_db = avg_path_loss_db
+                ce_base_rsrp = config.target_rsrp_dbm - az_path_loss_db
 
                 for _ in range(num_windows):
                     metrics = await base_station.measure_throughput_window(window_s)
@@ -419,6 +465,10 @@ class MeasureExecutor(IStepExecutor):
                     "throughput_std_mbps": stddev(samples_tput),
                     "active_probe_id": az_meta.get("probe_id"),
                     "probe_pattern_gain_dbi": az_meta.get("pattern_gain_dbi"),
+                    "path_loss_compensation_db": az_path_loss_db,
+                    "path_loss_source": (
+                        "rf_chain" if az_meta.get("path_loss_db") is not None else "chamber_avg"
+                    ),
                 }
                 azimuth_results.append(az)
 
@@ -446,6 +496,8 @@ class MeasureExecutor(IStepExecutor):
                 "path_loss_certificate_id": (
                     str(path_loss_cert.id) if path_loss_cert is not None else None
                 ),
+                "path_loss_per_chain_used": chains_used,
+                "path_loss_per_chain_available": len(per_chain_pl),
                 "switch_topology": topology_result.to_payload(),
                 "sampling": {
                     "num_windows_per_azimuth": num_windows,

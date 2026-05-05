@@ -20,12 +20,14 @@ Notes:
   that point at this profile.
 """
 import uuid
-from sqlalchemy import Column, String, Boolean, Text, ForeignKey, DateTime
+from sqlalchemy import Column, String, Boolean, Text, ForeignKey, DateTime, JSON
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.db.database import Base
+
+_JSON_PG_OR_SQLITE = JSONB().with_variant(JSON(), "sqlite")
 
 
 class LabProfile(Base):
@@ -59,7 +61,7 @@ class LabProfile(Base):
     )
 
     instrument_bindings = Column(
-        JSONB,
+        _JSON_PG_OR_SQLITE,
         comment='Array of {category_id, instrument_model_id, connection_endpoint, '
                 'driver_mode, role}. Schema: '
                 '[{"category_id": uuid, "instrument_model_id": uuid?, '
@@ -68,12 +70,12 @@ class LabProfile(Base):
     )
 
     network_config = Column(
-        JSONB,
+        _JSON_PG_OR_SQLITE,
         comment="Lab-level network parameters: subnet, vlan, time_sync_server, etc.",
     )
 
     extra_metadata = Column(
-        JSONB,
+        _JSON_PG_OR_SQLITE,
         comment="Free-form: accreditation body, contact info, equipment notes, etc.",
     )
 

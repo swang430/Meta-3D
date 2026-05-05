@@ -401,6 +401,29 @@ class ProbePathLossCalibration(Base):
         comment="探头路损数据，格式: {probe_id: {path_loss_db, uncertainty_db, pol_v_db, pol_h_db}}"
     )
 
+    # P0: per-RFChain breakdown — populated by start_calibration_for_lab_profile.
+    # Legacy chamber-keyed start_calibration leaves this NULL and consumers
+    # fall back to probe_path_losses + chamber.typical_cable_loss_db.
+    # Format: {chain_id (= SwitchTopology.connections[*].id): {
+    #     probe_id: int, polarization: "V"|"H",
+    #     space_loss_db: float,        # SGH→probe spatial loss (no cable)
+    #     cable_loss_db: float,        # per-connection from topology
+    #     total_insertion_loss_db: float,  # space + cable (what measure.py wants)
+    #     uncertainty_db: float
+    # }}
+    path_loss_db_by_rf_chain = Column(
+        JSON,
+        comment="Per-RFChain path-loss breakdown keyed by SwitchTopology connection id",
+    )
+    # Traceability for the lab-profile-aware path. NULL when the legacy
+    # chamber-only entrypoint is used.
+    lab_profile_id = Column(UUID(as_uuid=True), index=True, comment="LabProfile this cert was calibrated against")
+    operating_mode = Column(
+        String(50),
+        comment="SwitchTopology operating mode at calibration time, e.g. 'mimo_ota'",
+    )
+    topology_id = Column(UUID(as_uuid=True), comment="Resolved SwitchTopology id at calibration time")
+
     # 参考天线 (SGH)
     sgh_model = Column(String(255), nullable=False, comment="SGH 型号，如 'ETS-Lindgren 3164-06'")
     sgh_serial = Column(String(255), comment="SGH 序列号")

@@ -150,15 +150,18 @@ def reset_in_memory_storage():
 
     This fixture runs automatically before each test function
     """
-    # Import the in-memory storage from road_test API
+    # Import the in-memory storage from road_test API. After the road_test
+    # refactor moved scenarios to the DB, several of these attrs no longer
+    # exist; clear them defensively so unrelated test files still run.
     import app.api.road_test as road_test_module
 
-    # Clear all data
-    road_test_module._custom_scenarios.clear()
-    road_test_module._executions.clear()
-    road_test_module._topologies.clear()
-    road_test_module._execution_status.clear()
-    road_test_module._execution_metrics.clear()
+    for attr in (
+        "_custom_scenarios", "_executions", "_topologies",
+        "_execution_status", "_execution_metrics",
+    ):
+        store = getattr(road_test_module, attr, None)
+        if store is not None and hasattr(store, "clear"):
+            store.clear()
 
     # Note: Standard scenarios are loaded from scenario_library.py on demand
     # No need to repopulate here

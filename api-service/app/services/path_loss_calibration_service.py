@@ -31,6 +31,10 @@ from app.schemas.probe_calibration import (
     CalibrationJobStatus,
     ChainTypeEnum,
 )
+# Note: LabProfile + rf_chain_resolver are imported lazily inside
+# `start_calibration_for_lab_profile`. They transitively pull in SwitchTopology,
+# which uses Postgres JSONB and breaks SQLite-based unit tests of the legacy
+# chamber-keyed entrypoint that doesn't need them.
 
 logger = logging.getLogger("app.calibration.path_loss")
 
@@ -335,6 +339,198 @@ class ProbePathLossCalibrationService:
                 "num_probes": len(probe_ids)
             },
             warnings=warnings
+        )
+
+    async def start_calibration_for_lab_profile(
+        self,
+        lab_profile_id: UUID,
+        operating_mode: str,
+        frequency_mhz: float,
+        sgh_model: str,
+        sgh_gain_dbi: float,
+        sgh_serial: Optional[str] = None,
+        vna_id: Optional[str] = None,
+        calibrated_by: str = "System",
+    ) -> CalibrationResult:
+        """P0 entrypoint: calibrate per RFChain declared by SwitchTopology.
+
+        Iterates over RFChainSpec entries (one per probe×polarization actually
+        wired in the requested operating mode) instead of doing
+        `for probe in range(num_probes)`. Per-connection cable_loss from the
+        topology is added to the spatial SGH→probe loss to produce
+        `total_insertion_loss_db` per chain — what measure.py wants on the DL
+        signal path.
+
+        Falls through to the legacy `start_calibration` path when:
+        - the LabProfile has no chamber bound (raises),
+        - the topology resolver returns no chains (returns failure with the
+          resolver's warnings — caller is expected to seed the topology
+          before retrying).
+        """
+        # Lazy: pulls in SwitchTopology (JSONB) which breaks SQLite tests of
+        # the legacy chamber-keyed path that don't exercise this method.
+        from app.models.lab_profile import LabProfile
+        from app.services.calibration.rf_chain_resolver import resolve_rf_chains
+
+        lab = self.db.query(LabProfile).filter(LabProfile.id == lab_profile_id).first()
+        if lab is None:
+            return CalibrationResult(success=False, message=f"LabProfile {lab_profile_id} not found")
+        if lab.chamber_config_id is None:
+            return CalibrationResult(
+                success=False,
+                message=f"LabProfile {lab.name} has no chamber_config — bind one before calibrating",
+            )
+
+        chamber = self.db.query(ChamberConfiguration).filter(
+            ChamberConfiguration.id == lab.chamber_config_id
+        ).first()
+        if chamber is None:
+            return CalibrationResult(
+                success=False,
+                message=f"Chamber {lab.chamber_config_id} referenced by lab not found",
+            )
+
+        try:
+            resolution = resolve_rf_chains(self.db, lab_profile_id, operating_mode)
+        except ValueError as e:
+            return CalibrationResult(success=False, message=str(e))
+
+        if not resolution.success:
+            return CalibrationResult(
+                success=False,
+                message=(
+                    f"No RF chains resolved for lab '{lab.name}' mode '{operating_mode}'. "
+                    "Seed SwitchTopology + operating_mode.active_connections before calibrating."
+                ),
+                warnings=resolution.warnings,
+            )
+
+        warnings: List[str] = list(resolution.warnings)
+        probe_path_losses: Dict[str, Dict[str, Any]] = {}
+        path_loss_db_by_rf_chain: Dict[str, Dict[str, Any]] = {}
+
+        for chain in resolution.chains:
+            try:
+                pol_enum = PolarizationType(chain.polarization)
+            except ValueError:
+                warnings.append(
+                    f"chain {chain.chain_id}: unknown polarization {chain.polarization!r}, skipped"
+                )
+                continue
+
+            try:
+                if self.use_mock:
+                    measurement = self._mock_path_loss_measurement(
+                        chain.probe_id, pol_enum, frequency_mhz,
+                        chamber.chamber_radius_m, sgh_gain_dbi, chamber.probe_gain_dbi,
+                    )
+                else:
+                    measurement = await self._real_path_loss_measurement(
+                        chain.probe_id, pol_enum, frequency_mhz, vna_id,
+                        sgh_gain_dbi, chamber.probe_gain_dbi, chain.cable_loss_db,
+                    )
+            except Exception as e:
+                logger.error(
+                    "Path-loss measurement failed for chain %s probe %d %s: %s",
+                    chain.chain_id, chain.probe_id, chain.polarization, e,
+                )
+                return CalibrationResult(
+                    success=False,
+                    message=f"Measurement failed for chain {chain.chain_id}: {e}",
+                )
+
+            # Per-probe aggregate (legacy structure — keeps get_path_loss_for_probe working).
+            pid_key = str(chain.probe_id)
+            entry = probe_path_losses.setdefault(
+                pid_key,
+                {"path_loss_db": 0.0, "uncertainty_db": 0.5, "pol_v_db": None, "pol_h_db": None},
+            )
+            if pol_enum == PolarizationType.V:
+                entry["pol_v_db"] = measurement.path_loss_db
+            else:
+                entry["pol_h_db"] = measurement.path_loss_db
+            entry["uncertainty_db"] = max(entry["uncertainty_db"], measurement.uncertainty_db)
+            valid_losses = [v for v in (entry["pol_v_db"], entry["pol_h_db"]) if v is not None]
+            if valid_losses:
+                entry["path_loss_db"] = float(statistics.mean(valid_losses))
+
+            # Per-chain breakdown — what the per-azimuth consumer reads.
+            # space_loss_db is what `_real_path_loss_measurement` already
+            # subtracts cable_loss from, so we add it back here for clarity:
+            # the measurement returns spatial PL with the connection cable
+            # already removed, so total_insertion = space + cable.
+            space_loss_db = float(measurement.path_loss_db)
+            total_insertion_loss_db = space_loss_db + float(chain.cable_loss_db)
+            path_loss_db_by_rf_chain[chain.chain_id] = {
+                "probe_id": chain.probe_id,
+                "polarization": chain.polarization,
+                "ce_port": chain.ce_port,
+                "space_loss_db": space_loss_db,
+                "cable_loss_db": float(chain.cable_loss_db),
+                "total_insertion_loss_db": total_insertion_loss_db,
+                "uncertainty_db": float(measurement.uncertainty_db),
+            }
+
+            if measurement.uncertainty_db > PATH_LOSS_UNCERTAINTY_THRESHOLD_DB:
+                warnings.append(
+                    f"chain {chain.chain_id} probe {chain.probe_id} {chain.polarization}: "
+                    f"uncertainty {measurement.uncertainty_db:.2f} dB exceeds threshold"
+                )
+
+        all_losses = [
+            float(d["total_insertion_loss_db"]) for d in path_loss_db_by_rf_chain.values()
+        ]
+        avg_loss = float(statistics.mean(all_losses)) if all_losses else 0.0
+        max_loss = float(max(all_losses)) if all_losses else 0.0
+        min_loss = float(min(all_losses)) if all_losses else 0.0
+        std_dev = float(statistics.stdev(all_losses)) if len(all_losses) > 1 else 0.0
+
+        calibration = ProbePathLossCalibration(
+            chamber_id=chamber.id,
+            frequency_mhz=frequency_mhz,
+            probe_path_losses=probe_path_losses,
+            path_loss_db_by_rf_chain=path_loss_db_by_rf_chain,
+            lab_profile_id=lab.id,
+            operating_mode=operating_mode,
+            topology_id=UUID(resolution.topology_id) if resolution.topology_id else None,
+            sgh_model=sgh_model,
+            sgh_serial=sgh_serial,
+            sgh_gain_dbi=sgh_gain_dbi,
+            vna_model="Mock VNA" if self.use_mock else vna_id,
+            cable_loss_db=0.0,  # per-chain values now hold the real cable loss
+            measurement_distance_m=chamber.chamber_radius_m,
+            avg_path_loss_db=avg_loss,
+            max_path_loss_db=max_loss,
+            min_path_loss_db=min_loss,
+            std_dev_db=std_dev,
+            calibrated_at=datetime.utcnow(),
+            calibrated_by=calibrated_by,
+            valid_until=datetime.utcnow() + timedelta(days=PATH_LOSS_VALIDITY_DAYS),
+            status=CalibrationStatus.VALID.value,
+        )
+        self.db.add(calibration)
+        self.db.commit()
+        self.db.refresh(calibration)
+
+        return CalibrationResult(
+            success=True,
+            message=(
+                f"Path-loss calibration completed for {len(resolution.chains)} RF chains "
+                f"(lab='{lab.name}', mode='{operating_mode}')"
+            ),
+            data={
+                "calibration_id": str(calibration.id),
+                "lab_profile_id": str(lab.id),
+                "topology_id": resolution.topology_id,
+                "operating_mode": operating_mode,
+                "num_chains": len(resolution.chains),
+                "num_probes": len(probe_path_losses),
+                "avg_total_insertion_loss_db": avg_loss,
+                "max_total_insertion_loss_db": max_loss,
+                "min_total_insertion_loss_db": min_loss,
+                "std_dev_db": std_dev,
+            },
+            warnings=warnings,
         )
 
     def _mock_path_loss_measurement(
