@@ -152,6 +152,25 @@ class TestCase(Base):
     # Tags
     tags = Column(JSON, comment="Array of tags")
 
+    # ── Lab + Calibration binding (Phase 0) ──
+    # Nullable for backward-compatibility with existing TestCases and for
+    # test types that do not need a physical lab (e.g. VRT digital_twin).
+    lab_profile_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("lab_profiles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="LabProfile this TestCase targets — supplies chamber + instruments + network",
+    )
+    calibration_certificate_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("calibration_certificates.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Specific calibration certificate to apply at execution. If null, "
+                "executor falls back to LabProfile.active_calibration_certificate_id.",
+    )
+
 
 class TestExecution(Base):
     """
