@@ -289,6 +289,39 @@ class BaseStationDriver(InstrumentDriver):
         raise NotImplementedError
 
     # ===================================================================
+    # 载波聚合 (Phase 2g)
+    # ===================================================================
+
+    async def add_secondary_cell(
+        self,
+        cc_index: int,
+        cc_config: Dict[str, Any],
+    ) -> bool:
+        """
+        添加 SCell (Secondary Cell)。
+
+        NR-CA 中 PCell 走 set_cell_config (cc_index=0 隐式), SCell 走本接口
+        (cc_index ≥ 1)。一次测试可以串多次 add_secondary_cell, 然后调
+        activate_secondary_cells 一次性激活全部。
+
+        Args:
+            cc_index: SCell 序号, 从 1 开始 (PCell 是 0)
+            cc_config: 与 set_cell_config 同结构, 至少含 frequency_mhz / bandwidth_mhz
+
+        Returns:
+            True if SCell add succeeded (基站接受配置, 但尚未激活)
+        """
+        raise NotImplementedError
+
+    async def activate_secondary_cells(self) -> bool:
+        """激活所有已 add 的 SCell, 触发 UE 端 SCellActivation MAC CE。"""
+        raise NotImplementedError
+
+    async def remove_all_secondary_cells(self) -> bool:
+        """移除所有 SCell (cleanup 用; 异常退出时避免下次测试碰到残留状态)。"""
+        raise NotImplementedError
+
+    # ===================================================================
     # 能力查询
     # ===================================================================
 
@@ -504,6 +537,36 @@ class MockBaseStation(BaseStationDriver):
             logger.info("[MockBS] RRC reconfig: mimo_layers → %d", mimo_layers)
         if modulation is not None:
             logger.info("[MockBS] RRC reconfig: modulation → %s", modulation)
+        return True
+
+    async def add_secondary_cell(
+        self,
+        cc_index: int,
+        cc_config: Dict[str, Any],
+    ) -> bool:
+        """Mock: track SCell list in memory."""
+        if not hasattr(self, "_scells"):
+            self._scells = {}
+        self._scells[cc_index] = dict(cc_config)
+        logger.info(
+            "[MockBS] SCell %d added: freq=%.0f MHz BW=%.0f MHz band=%s",
+            cc_index,
+            cc_config.get("frequency_mhz", 0),
+            cc_config.get("bandwidth_mhz", 0),
+            cc_config.get("band"),
+        )
+        return True
+
+    async def activate_secondary_cells(self) -> bool:
+        scells = getattr(self, "_scells", {}) or {}
+        logger.info("[MockBS] Activating %d SCell(s): %s",
+                    len(scells), sorted(scells.keys()))
+        return True
+
+    async def remove_all_secondary_cells(self) -> bool:
+        n = len(getattr(self, "_scells", {}) or {})
+        self._scells = {}
+        logger.info("[MockBS] Removed %d SCell(s)", n)
         return True
 
     def get_supported_technologies(self) -> List[RadioTechnology]:

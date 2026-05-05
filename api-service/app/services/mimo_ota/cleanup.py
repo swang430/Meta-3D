@@ -24,6 +24,17 @@ async def cleanup_chamber_instruments(hal: Any, execution_id: Any) -> List[str]:
 
     base_station = hal.drivers.get("baseStation")
     if base_station is not None:
+        # Phase 2g: SCells must be removed before stop_signaling so the next
+        # test starts with a clean PCell. Wrapped before the generic
+        # stop/disconnect tuple so its failure doesn't skip those.
+        if hasattr(base_station, "remove_all_secondary_cells"):
+            try:
+                await base_station.remove_all_secondary_cells()
+            except Exception as e:  # noqa: BLE001
+                msg = f"baseStation.remove_all_secondary_cells failed during cleanup: {e}"
+                warnings.append(msg)
+                logger.warning("[%s] %s", execution_id, msg)
+
         for action_name, coro in (
             ("stop_signaling", lambda: base_station.stop_signaling()),
             ("disconnect", lambda: base_station.disconnect()),

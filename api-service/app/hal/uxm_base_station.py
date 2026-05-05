@@ -130,6 +130,21 @@ class UxmScpiCommands:
     RRC_RECONFIG_MODULATION = "CALL:NR5G:{cell}:RRC:RECon:MODulation:DL {mod}"
     RRC_RECONFIG_APPLY = "CALL:NR5G:{cell}:RRC:RECon:APPLy"
 
+    # --- Phase 2g: 载波聚合 (Carrier Aggregation) ---
+    # NOTE: SCell SCPI surface varies between UXM firmware lines.
+    #   - V12+ "SCEL" subsystem: CALL:NR5G:CELL{idx}:SCEL:CONF:* / SCEL:ACTive
+    #   - V10/V11 "SCELL" subsystem: CALL:NR5G:SCELL{idx}:CONF:*
+    # Format strings below cover the V12+ convention; older firmware needs
+    # the strings replaced via lab profile config.
+    SCELL_CONF_FREQ = "CALL:NR5G:{cell}:SCEL{idx}:CONF:FREQuency {freq_mhz}MHz"
+    SCELL_CONF_BW = "CALL:NR5G:{cell}:SCEL{idx}:CONF:BWIDth {bw_mhz}MHz"
+    SCELL_CONF_SCS = "CALL:NR5G:{cell}:SCEL{idx}:CONF:SCS {scs_khz}KHz"
+    SCELL_CONF_BAND = "CALL:NR5G:{cell}:SCEL{idx}:CONF:BAND {band}"
+    SCELL_ADD = "CALL:NR5G:{cell}:SCEL{idx}:ADD"
+    SCELL_ACTIVATE = "CALL:NR5G:{cell}:SCEL{idx}:ACTive ON"
+    SCELL_REMOVE_ALL = "CALL:NR5G:{cell}:SCEL:REMove:ALL"
+    SCELL_LIST_QUERY = "CALL:NR5G:{cell}:SCEL:LIST?"
+
     # --- CSI 测量 (CQI, RI, PMI) ---
     MEAS_CSI_START = "MEASure:NR5G:{cell}:CSI:STARt"
     MEAS_CSI_STOP = "MEASure:NR5G:{cell}:CSI:STOP"
@@ -1488,6 +1503,86 @@ class RealUxmDriver(BaseStationDriver):
             return True
         except Exception as e:  # noqa: BLE001
             logger.error("[UXM] RRC reconfiguration failed: %s", e)
+            return False
+
+    async def add_secondary_cell(
+        self,
+        cc_index: int,
+        cc_config: Dict[str, Any],
+    ) -> bool:
+        """Phase 2g: configure + add an SCell.
+
+        Lifecycle: CONF:FREQ/BW/SCS/BAND → ADD. Activation is separate
+        (call activate_secondary_cells after all SCells added).
+        """
+        if cc_index < 1:
+            logger.error("[UXM] add_secondary_cell: cc_index must be ≥ 1 (PCell is 0)")
+            return False
+        cell = self._cell_id
+        try:
+            freq_mhz = float(cc_config.get("frequency_mhz", 0))
+            bw_mhz = float(cc_config.get("bandwidth_mhz", 100))
+            scs_khz = int(cc_config.get("scs_khz", 30))
+            band = cc_config.get("band")
+
+            self._write(UxmScpiCommands.SCELL_CONF_FREQ.format(
+                cell=cell, idx=cc_index, freq_mhz=freq_mhz
+            ))
+            self._write(UxmScpiCommands.SCELL_CONF_BW.format(
+                cell=cell, idx=cc_index, bw_mhz=bw_mhz
+            ))
+            self._write(UxmScpiCommands.SCELL_CONF_SCS.format(
+                cell=cell, idx=cc_index, scs_khz=scs_khz
+            ))
+            if band:
+                self._write(UxmScpiCommands.SCELL_CONF_BAND.format(
+                    cell=cell, idx=cc_index, band=band
+                ))
+            self._write(UxmScpiCommands.SCELL_ADD.format(
+                cell=cell, idx=cc_index
+            ))
+            self._query(UxmScpiCommands.OPC)
+            logger.info(
+                "[UXM] SCell %d added: freq=%.1f MHz BW=%.0f MHz scs=%dkHz band=%s",
+                cc_index, freq_mhz, bw_mhz, scs_khz, band or "auto",
+            )
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.error("[UXM] SCell %d add failed: %s", cc_index, e)
+            return False
+
+    async def activate_secondary_cells(self) -> bool:
+        """Phase 2g: query SCell list, activate each one. UE receives
+        SCellActivation MAC CE on the next subframe.
+        """
+        cell = self._cell_id
+        try:
+            scell_resp = self._query(
+                UxmScpiCommands.SCELL_LIST_QUERY.format(cell=cell)
+            )
+            if not scell_resp or not scell_resp.strip():
+                logger.warning("[UXM] No SCells configured to activate")
+                return True
+            indices = [int(s) for s in scell_resp.strip().split(",") if s.strip().isdigit()]
+            for idx in indices:
+                self._write(UxmScpiCommands.SCELL_ACTIVATE.format(cell=cell, idx=idx))
+            self._query(UxmScpiCommands.OPC)
+            logger.info("[UXM] Activated %d SCell(s): %s", len(indices), indices)
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.error("[UXM] SCell activation failed: %s", e)
+            return False
+
+    async def remove_all_secondary_cells(self) -> bool:
+        """Phase 2g: cleanup helper — remove every SCell on this PCell."""
+        cell = self._cell_id
+        try:
+            self._write(UxmScpiCommands.SCELL_REMOVE_ALL.format(cell=cell))
+            self._query(UxmScpiCommands.OPC)
+            logger.info("[UXM] All SCells removed for cell %s", cell)
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.error("[UXM] SCell remove-all failed: %s", e)
             return False
 
     # ===================================================================

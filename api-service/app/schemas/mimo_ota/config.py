@@ -62,9 +62,9 @@ the deviation here AND open a refactor ticket — do not silently diverge.
 ═══════════════════════════════════════════════════════════════════════════
 """
 from enum import Enum
-from typing import List, Optional
+from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 # Canonical TestCase.test_type value
@@ -89,6 +89,33 @@ MIMO_OTA_DEFAULT_STEPS: List[MIMOOTAStepType] = [
     MIMOOTAStepType.ANALYSIS,
     MIMOOTAStepType.REPORT,
 ]
+
+
+class ComponentCarrierConfig(BaseModel):
+    """Phase 2g: 单个 component carrier 配置(支持载波聚合 CA)。
+
+    NR-CA 场景下 PCell + N 个 SCell 同时传输, 各自有独立频率/带宽。
+    第一个 CC 自动作为 PCell, 后续作为 SCell, 由
+    MIMOOTAConfiguration._resolve_component_carriers() 统一保证。
+
+    单 CC (非 CA) 场景下 component_carriers 列表只有一个元素,
+    或保持空让 backward-compat validator 从 frequency_hz/bandwidth_mhz
+    自动构造。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    frequency_hz: float = Field(..., description="中心频率 (Hz)")
+    bandwidth_mhz: float = Field(..., description="信道带宽 (MHz)")
+    subcarrier_spacing_khz: int = Field(default=30, description="子载波间隔 (kHz)")
+    band: Optional[str] = Field(
+        default=None,
+        description="3GPP NR 频段 e.g. 'n78' / 'n41' / 'n77' / 'n79'; 留空时由频率推断",
+    )
+    role: Literal["pcell", "scell"] = Field(
+        default="scell",
+        description="PCell / SCell 角色; 由 _resolve_component_carriers 强制 cc[0]=pcell",
+    )
 
 
 class MIMOOTAPassCriteria(BaseModel):
@@ -119,6 +146,13 @@ class MIMOOTAConfiguration(BaseModel):
     cdl_model_name: str = "UMa CDL-C NLOS"
     frequency_hz: float = 3.5e9
     bandwidth_mhz: float = 100.0
+
+    # === Phase 2g: 载波聚合 (CA) ===
+    # 为 None / 空时, _resolve_component_carriers() 自动从 frequency_hz +
+    # bandwidth_mhz + subcarrier_spacing_khz 构造单 CC 列表 (向后兼容)。
+    # CA 场景下显式传 ≥2 个 ComponentCarrierConfig, 第一个自动 pcell,
+    # 余下 scell。空集合 / 传入但只 1 个的情况 = 单 CC 测试。
+    component_carriers: Optional[List[ComponentCarrierConfig]] = None
 
     # === MIMO ===
     mimo_layers: int = 2
@@ -165,3 +199,31 @@ class MIMOOTAConfiguration(BaseModel):
     # Keyed by MIMOOTAStepType.value; merged into step.parameters by the factory.
     # Lets tests pin one phase without rewriting the whole config.
     step_overrides: Optional[dict] = None
+
+    @model_validator(mode="after")
+    def _resolve_component_carriers(self) -> "MIMOOTAConfiguration":
+        """向后兼容 + 角色强制 (Phase 2g)。
+
+        - component_carriers 为 None / 空 → 从 frequency_hz/bandwidth_mhz/scs
+          构造一个单 CC 列表
+        - 传入了列表 → 强制 cc[0].role='pcell', cc[1..].role='scell'
+        - 列表长度必须 ≥ 1 (运行时这是 measure 的输入合同)
+        """
+        if not self.component_carriers:
+            self.component_carriers = [
+                ComponentCarrierConfig(
+                    frequency_hz=self.frequency_hz,
+                    bandwidth_mhz=self.bandwidth_mhz,
+                    subcarrier_spacing_khz=self.subcarrier_spacing_khz,
+                    role="pcell",
+                )
+            ]
+        else:
+            normalized: List[ComponentCarrierConfig] = []
+            for idx, cc in enumerate(self.component_carriers):
+                target_role = "pcell" if idx == 0 else "scell"
+                if cc.role != target_role:
+                    cc = cc.model_copy(update={"role": target_role})
+                normalized.append(cc)
+            self.component_carriers = normalized
+        return self

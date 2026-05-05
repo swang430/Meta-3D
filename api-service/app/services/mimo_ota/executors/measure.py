@@ -88,16 +88,70 @@ class MeasureExecutor(IStepExecutor):
         # UXM signaling, F64 emulating, and the turntable mid-rotation.
         cleanup_warnings: List[str] = []
         try:
-            # --- Base station cell config (band + duplex inferred from frequency_mhz) ---
+            # --- Phase 2g: PCell from component_carriers[0] (always populated
+            # by MIMOOTAConfiguration._resolve_component_carriers); SCells
+            # added below before start_signaling so RRC reconfig sees full set.
+            ccs = list(config.component_carriers or [])
+            pcell = ccs[0] if ccs else None
+            if pcell is None:
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    error_message=(
+                        "component_carriers is empty after schema validation — "
+                        "this should be impossible; check MIMOOTAConfiguration validator"
+                    ),
+                )
+            scells = ccs[1:]
+
             await base_station.set_cell_config(
                 {
-                    "frequency_mhz": config.frequency_hz / 1e6,
-                    "bandwidth_mhz": config.bandwidth_mhz,
-                    "scs_khz": config.subcarrier_spacing_khz,
+                    "frequency_mhz": pcell.frequency_hz / 1e6,
+                    "bandwidth_mhz": pcell.bandwidth_mhz,
+                    "scs_khz": pcell.subcarrier_spacing_khz,
+                    "band": pcell.band,
                     "mimo_layers": config.mimo_layers,
                     "dl_power_dbm": config.target_tx_power_dbm,
                 }
             )
+
+            # --- Phase 2g: SCell add + activate for CA scenarios ---
+            scells_added: List[Dict[str, Any]] = []
+            if scells and hasattr(base_station, "add_secondary_cell"):
+                for cc_idx, scell in enumerate(scells, start=1):
+                    ok = await base_station.add_secondary_cell(
+                        cc_idx,
+                        {
+                            "frequency_mhz": scell.frequency_hz / 1e6,
+                            "bandwidth_mhz": scell.bandwidth_mhz,
+                            "scs_khz": scell.subcarrier_spacing_khz,
+                            "band": scell.band,
+                        },
+                    )
+                    if ok:
+                        scells_added.append({
+                            "cc_index": cc_idx,
+                            "frequency_ghz": scell.frequency_hz / 1e9,
+                            "bandwidth_mhz": scell.bandwidth_mhz,
+                            "band": scell.band,
+                        })
+                    else:
+                        logger.warning(
+                            "[%s] SCell %d add failed; CA may run with fewer carriers than requested",
+                            context.test_execution.id, cc_idx,
+                        )
+                if scells_added and hasattr(base_station, "activate_secondary_cells"):
+                    await base_station.activate_secondary_cells()
+                logger.info(
+                    "[%s] Phase 2g: PCell %.2fGHz + %d SCell(s)",
+                    context.test_execution.id,
+                    pcell.frequency_hz / 1e9, len(scells_added),
+                )
+            elif scells:
+                logger.warning(
+                    "[%s] Config has %d SCell(s) but baseStation driver lacks "
+                    "add_secondary_cell — running PCell-only",
+                    context.test_execution.id, len(scells),
+                )
 
             # --- 3GPP MAC throughput config (was hard-coded; now from TestCase) ---
             if hasattr(base_station, "configure_mac_throughput_test"):
@@ -370,6 +424,15 @@ class MeasureExecutor(IStepExecutor):
                     "num_windows_per_azimuth": num_windows,
                     "window_duration_s": window_s,
                     "stat_count_subframes": config.stat_count,
+                },
+                "carrier_aggregation": {
+                    "num_component_carriers": len(ccs),
+                    "pcell": {
+                        "frequency_ghz": pcell.frequency_hz / 1e9,
+                        "bandwidth_mhz": pcell.bandwidth_mhz,
+                        "band": pcell.band,
+                    },
+                    "scells": scells_added,
                 },
             }
         finally:
