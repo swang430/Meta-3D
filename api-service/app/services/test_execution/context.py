@@ -2,14 +2,41 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, Protocol, TYPE_CHECKING
 from uuid import UUID
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
     from app.models.lab_profile import LabProfile
     from app.models.calibration import CalibrationCertificate
-    from app.models.test_plan import TestStep, TestExecution
+    from app.models.test_plan import TestExecution
+
+
+class StepLike(Protocol):
+    """Minimal contract a step object must satisfy to be dispatchable.
+
+    Both the ORM `TestStep` row and the lightweight `StepDescriptor` dataclass
+    fit this protocol — the framework doesn't care which one you pass in.
+    """
+
+    id: Any
+    type: str
+    parameters: Dict[str, Any]
+
+
+@dataclass
+class StepDescriptor:
+    """Lightweight, in-memory step representation.
+
+    Used when a TestCase fully describes its steps in `configuration.steps`
+    rather than materializing rows in the `test_steps` table. This is the path
+    taken by VRT and now by MIMO_OTA — keeps the schema simpler when steps
+    are an internal split of one TestCase, not independently reusable units.
+    """
+
+    id: str
+    type: str
+    parameters: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -24,7 +51,7 @@ class StepExecutionContext:
     """
 
     db: "Session"
-    step: "TestStep"
+    step: StepLike  # ORM TestStep row OR lightweight StepDescriptor
     test_execution: "TestExecution"
 
     # Resolved per-execution environment

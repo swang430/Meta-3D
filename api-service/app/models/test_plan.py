@@ -29,7 +29,8 @@ class TestCaseType(str, enum.Enum):
     TIS = "TIS"  # Total Isotropic Sensitivity
     THROUGHPUT = "Throughput"  # 吞吐量测试
     HANDOVER = "Handover"  # 切换测试
-    MIMO = "MIMO"  # MIMO 性能测试
+    MIMO = "MIMO"  # MIMO 性能测试 (legacy — kept for backward compat)
+    MIMO_OTA = "MIMO_OTA"  # 3GPP Static MIMO OTA — Commissioning 收口后的标准类型
     CHANNEL_MODEL = "ChannelModel"  # 信道模型测试
     VIRTUAL_ROAD_TEST = "VirtualRoadTest"  # 虚拟路测 — 复杂领域衍生 (TestCase 的特化)
     CUSTOM = "Custom"  # 自定义测试

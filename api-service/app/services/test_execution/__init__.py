@@ -19,7 +19,11 @@ This module intentionally contains only the framework. Concrete executors
 (MIMO_OTA, TRP, TIS, VRT phases) are registered by their owning service
 modules so the framework stays free of test-domain coupling.
 """
-from app.services.test_execution.context import StepExecutionContext
+from app.services.test_execution.context import (
+    StepDescriptor,
+    StepExecutionContext,
+    StepLike,
+)
 from app.services.test_execution.executor_base import (
     IStepExecutor,
     StepExecutionResult,
@@ -35,6 +39,8 @@ from app.services.test_execution.registry import (
 
 __all__ = [
     "StepExecutionContext",
+    "StepDescriptor",
+    "StepLike",
     "IStepExecutor",
     "StepExecutionResult",
     "StepExecutionStatus",
