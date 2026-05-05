@@ -115,6 +115,21 @@ class UxmScpiCommands:
     MEAS_BTHROUGHPUT_DL_JSON = "MEASure:NR5G:{cell}:BTHRoughput:DL:TSTatistics:JSON?"
     MEAS_BTHROUGHPUT_DL_BLER = "MEASure:NR5G:{cell}:BTHRoughput:DL:BLER:STATistical:ALL?"
 
+    # --- Phase 2e: UE Capability + RRC reconfiguration ---
+    # NOTE: UXM firmware ≥ V12.x exposes UE capability via CALL:NR5G:CELL:UEINFO
+    #       subsystem. Older firmware (V10/V11) uses CALL:NR5G:CELL:UE:CAPability.
+    #       Operators on different firmware should override the format strings
+    #       below in their lab profile config.
+    UE_CAPABILITY_QUERY = "CALL:NR5G:{cell}:UEINFO:CAPability?"
+    UE_MAX_DL_LAYERS_QUERY = "CALL:NR5G:{cell}:UEINFO:CAPability:MIMO:DL:LAYers?"
+    UE_MAX_UL_LAYERS_QUERY = "CALL:NR5G:{cell}:UEINFO:CAPability:MIMO:UL:LAYers?"
+    UE_MAX_MODULATION_DL_QUERY = "CALL:NR5G:{cell}:UEINFO:CAPability:MODulation:DL?"
+    UE_SUPPORTED_BANDS_QUERY = "CALL:NR5G:{cell}:UEINFO:CAPability:BANDs?"
+
+    RRC_RECONFIG_LAYERS = "CALL:NR5G:{cell}:RRC:RECon:MIMO:LAYers {layers}"
+    RRC_RECONFIG_MODULATION = "CALL:NR5G:{cell}:RRC:RECon:MODulation:DL {mod}"
+    RRC_RECONFIG_APPLY = "CALL:NR5G:{cell}:RRC:RECon:APPLy"
+
     # --- CSI 测量 (CQI, RI, PMI) ---
     MEAS_CSI_START = "MEASure:NR5G:{cell}:CSI:STARt"
     MEAS_CSI_STOP = "MEASure:NR5G:{cell}:CSI:STOP"
@@ -1396,6 +1411,84 @@ class RealUxmDriver(BaseStationDriver):
             "connected": self._cell_state == CellState.CONNECTED,
             "cell_id": self._cell_id,
         }
+
+    async def query_ue_capability(self) -> Dict[str, Any]:
+        """Phase 2e: 查询已 attach UE 的 3GPP 能力。
+
+        4x4 测试前必须确认 DUT 真支持 4 layer DL。如果 UE 没 attach 或
+        UXM 返回错误, 标 source='unavailable' + 让 caller 决定是否硬 fail。
+        """
+        cell = self._cell_id
+
+        def _safe_query(scpi: str, parser=str) -> Any:
+            try:
+                resp = self._query(scpi.format(cell=cell))
+                if resp is None:
+                    return None
+                return parser(resp.strip())
+            except Exception as e:  # noqa: BLE001
+                logger.debug("[UXM] capability query %s failed: %s", scpi, e)
+                return None
+
+        max_dl = _safe_query(UxmScpiCommands.UE_MAX_DL_LAYERS_QUERY, lambda s: int(float(s)))
+        max_ul = _safe_query(UxmScpiCommands.UE_MAX_UL_LAYERS_QUERY, lambda s: int(float(s)))
+        max_mod = _safe_query(UxmScpiCommands.UE_MAX_MODULATION_DL_QUERY)
+        bands_str = _safe_query(UxmScpiCommands.UE_SUPPORTED_BANDS_QUERY)
+        bands = (
+            [b.strip() for b in bands_str.split(",") if b.strip()]
+            if bands_str else []
+        )
+
+        source = "real_ue" if max_dl is not None else "unavailable"
+        if source == "unavailable":
+            logger.warning(
+                "[UXM] UE capability unavailable (likely no UE attached or "
+                "firmware doesn't support UEINFO subsystem; check operator's "
+                "UXM version against UxmScpiCommands.UE_CAPABILITY_* SCPI strings)"
+            )
+
+        return {
+            "max_dl_layers": max_dl,
+            "max_ul_layers": max_ul,
+            "max_modulation_dl": max_mod,
+            "max_modulation_ul": None,  # not all firmware exposes UL modulation
+            "supported_bands": bands,
+            "ca_combinations": [],  # CA combo query is firmware-specific; TODO Phase 2g
+            "source": source,
+        }
+
+    async def reconfigure_rrc(
+        self,
+        *,
+        mimo_layers: Optional[int] = None,
+        modulation: Optional[str] = None,
+    ) -> bool:
+        """Phase 2e: trigger RRC reconfiguration.
+
+        Some UXM firmware applies cell config changes via RRC reconfig
+        automatically; on those firmwares this is a no-op + APPLY. On
+        older firmware the explicit RRC:RECon SCPI sequence is required.
+        """
+        cell = self._cell_id
+        try:
+            if mimo_layers is not None:
+                self._write(UxmScpiCommands.RRC_RECONFIG_LAYERS.format(
+                    cell=cell, layers=int(mimo_layers)
+                ))
+            if modulation is not None:
+                self._write(UxmScpiCommands.RRC_RECONFIG_MODULATION.format(
+                    cell=cell, mod=modulation
+                ))
+            self._write(UxmScpiCommands.RRC_RECONFIG_APPLY.format(cell=cell))
+            self._query(UxmScpiCommands.OPC)
+            logger.info(
+                "[UXM] RRC reconfigured: layers=%s modulation=%s",
+                mimo_layers, modulation,
+            )
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.error("[UXM] RRC reconfiguration failed: %s", e)
+            return False
 
     # ===================================================================
     # 5. 标准 InstrumentDriver 接口

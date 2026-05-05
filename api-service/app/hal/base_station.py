@@ -245,6 +245,49 @@ class BaseStationDriver(InstrumentDriver):
         """
         raise NotImplementedError
 
+    async def query_ue_capability(self) -> Dict[str, Any]:
+        """
+        查询 UE 上报的 3GPP 能力 (Phase 2e)。
+
+        4x4 MIMO 测试前必须确认 DUT 真支持 4 layer DL — 否则下行配置
+        4 layer 但 UE 默认 2 layer attach, 跑出来的数据其实是 2 layer。
+
+        典型返回字段(driver 各自填充):
+            - max_dl_layers: int      (1/2/4/8)
+            - max_ul_layers: int
+            - max_modulation_dl: str  ('64QAM' / '256QAM' / '1024QAM')
+            - max_modulation_ul: str
+            - supported_bands: List[str]
+            - ca_combinations: List[str]  (载波聚合组合, e.g. ['n78+n41'])
+            - source: 'real_ue' | 'mock' | 'unavailable'
+
+        Returns:
+            能力字典; 至少必须有 'max_dl_layers' 和 'source'
+        """
+        raise NotImplementedError
+
+    async def reconfigure_rrc(
+        self,
+        *,
+        mimo_layers: Optional[int] = None,
+        modulation: Optional[str] = None,
+    ) -> bool:
+        """
+        触发 RRC reconfiguration, 把新参数下推给已 attach 的 UE。
+
+        set_cell_config() 改的是基站内部配置, RRC 重配是把这些变化通知到
+        UE 的 RadioBearer/PDSCH-Config。某些 UXM firmware 在 cell config
+        变化时会自动触发 RRC reconfig; 其它需要显式调用本接口。
+
+        Args:
+            mimo_layers: 目标 DL layer 数 (1/2/4/8); None = 不改
+            modulation: 'QPSK' | '16QAM' | '64QAM' | '256QAM' | '1024QAM'; None = 不改
+
+        Returns:
+            True if RRC reconfiguration completed (UE acked)
+        """
+        raise NotImplementedError
+
     # ===================================================================
     # 能力查询
     # ===================================================================
@@ -436,6 +479,32 @@ class MockBaseStation(BaseStationDriver):
             "ue_category": "NR-DC",
             "connected": self._cell_running,
         }
+
+    async def query_ue_capability(self) -> Dict[str, Any]:
+        """Phase 2e: mock UE that supports up to 4x4 256QAM on n78/n41."""
+        return {
+            "max_dl_layers": 4,
+            "max_ul_layers": 2,
+            "max_modulation_dl": "256QAM",
+            "max_modulation_ul": "64QAM",
+            "supported_bands": ["n78", "n41", "n77", "n79"],
+            "ca_combinations": ["n78+n41", "n77+n79"],
+            "source": "mock",
+        }
+
+    async def reconfigure_rrc(
+        self,
+        *,
+        mimo_layers: Optional[int] = None,
+        modulation: Optional[str] = None,
+    ) -> bool:
+        """Mock: pretend RRC reconfig succeeded."""
+        if mimo_layers is not None:
+            self._mimo_layers = mimo_layers
+            logger.info("[MockBS] RRC reconfig: mimo_layers → %d", mimo_layers)
+        if modulation is not None:
+            logger.info("[MockBS] RRC reconfig: modulation → %s", modulation)
+        return True
 
     def get_supported_technologies(self) -> List[RadioTechnology]:
         return [RadioTechnology.NR5G, RadioTechnology.LTE]

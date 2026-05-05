@@ -66,6 +66,10 @@ class MeasureExecutor(IStepExecutor):
         from app.services.mimo_ota.switch_orchestrator import (
             orchestrate_switch_topology,
         )
+        from app.services.probe_pattern.consumer import (
+            get_probe_gain_at_azimuth,
+            select_active_probe_id,
+        )
         from app.hal.channel_emulator import ChannelLoadMode
 
         hal = get_hal_service()
@@ -109,6 +113,20 @@ class MeasureExecutor(IStepExecutor):
                 )
 
             await base_station.start_signaling()
+
+            # --- Phase 2e: RRC reconfig pushes new layer/modulation to attached UE.
+            # Some UXM firmware applies cell-config changes via RRC automatically;
+            # explicit reconfig is a no-op there but harmless. Old firmware needs it.
+            if hasattr(base_station, "reconfigure_rrc"):
+                rrc_ok = await base_station.reconfigure_rrc(
+                    mimo_layers=config.mimo_layers,
+                    modulation=config.modulation,
+                )
+                if not rrc_ok:
+                    logger.warning(
+                        "[%s] RRC reconfig returned False; UE may still be on prior layer/modulation",
+                        context.test_execution.id,
+                    )
 
             # --- Resolve chamber from LabProfile, then run channel generation ---
             chamber: ChamberConfiguration = lab.chamber_config
@@ -236,6 +254,39 @@ class MeasureExecutor(IStepExecutor):
             loop = asyncio.get_event_loop()
             t_start = loop.time()
 
+            # Phase 2f: pre-resolve per-azimuth probe + pattern gain so the
+            # inner sample loop doesn't hammer the DB. None entries fall back
+            # to nominal chamber.probe_gain_dbi inside the loop.
+            nominal_probe_gain_dbi = float(chamber.probe_gain_dbi or 0.0)
+            azimuth_probe_gains: Dict[float, Dict[str, Any]] = {}
+            for az_target in config.azimuths_deg:
+                pid = select_active_probe_id(chamber.num_probes, az_target)
+                pattern_gain_v = get_probe_gain_at_azimuth(
+                    context.db, chamber.num_probes, az_target, config.frequency_hz / 1e6, "V"
+                )
+                azimuth_probe_gains[az_target] = {
+                    "probe_id": pid,
+                    "pattern_gain_dbi": pattern_gain_v,
+                    "gain_offset_db": (
+                        pattern_gain_v - nominal_probe_gain_dbi
+                        if pattern_gain_v is not None else None
+                    ),
+                }
+            patterns_used = sum(
+                1 for v in azimuth_probe_gains.values() if v["pattern_gain_dbi"] is not None
+            )
+            if patterns_used == 0:
+                logger.warning(
+                    "[%s] Phase 2f: no ProbePattern data for any azimuth — RSRP/SINR "
+                    "synthesis falls back to position-aware approximation",
+                    context.test_execution.id,
+                )
+            else:
+                logger.info(
+                    "[%s] Phase 2f: ProbePattern available for %d/%d azimuths",
+                    context.test_execution.id, patterns_used, len(config.azimuths_deg),
+                )
+
             for azimuth in config.azimuths_deg:
                 logger.info(
                     "[%s] Phase 3: positioner -> azimuth %.1f° (%d windows × %.2fs)",
@@ -252,14 +303,23 @@ class MeasureExecutor(IStepExecutor):
                 samples_tput: List[float] = []
                 samples_ri: List[float] = []
 
+                az_meta = azimuth_probe_gains.get(azimuth, {})
+                gain_offset = az_meta.get("gain_offset_db")
+
                 for _ in range(num_windows):
                     metrics = await base_station.measure_throughput_window(window_s)
 
-                    # RF KPIs (RSRP/SINR) are normally UE-reported; until that path
-                    # exists we synthesize from target + position-aware perturbation.
-                    az_factor = math.cos(math.radians(azimuth)) * 0.1
-                    rsrp = ce_base_rsrp + az_factor * 5 + random.gauss(0, 0.5)
-                    sinr = config.target_snr_db + az_factor * 3 + random.gauss(0, 0.8)
+                    # RF KPIs (RSRP/SINR) are normally UE-reported; until that
+                    # path exists we synthesize from target + per-probe pattern
+                    # offset (Phase 2f) when available, falling back to a coarse
+                    # cos(az) approximation when no pattern is loaded.
+                    if gain_offset is not None:
+                        rsrp = ce_base_rsrp + gain_offset + random.gauss(0, 0.3)
+                        sinr = config.target_snr_db + gain_offset * 0.5 + random.gauss(0, 0.5)
+                    else:
+                        az_factor = math.cos(math.radians(azimuth)) * 0.1
+                        rsrp = ce_base_rsrp + az_factor * 5 + random.gauss(0, 0.5)
+                        sinr = config.target_snr_db + az_factor * 3 + random.gauss(0, 0.8)
 
                     samples_rsrp.append(rsrp)
                     samples_sinr.append(sinr)
@@ -276,6 +336,8 @@ class MeasureExecutor(IStepExecutor):
                     "rsrp_std_db": stddev(samples_rsrp),
                     "sinr_std_db": stddev(samples_sinr),
                     "throughput_std_mbps": stddev(samples_tput),
+                    "active_probe_id": az_meta.get("probe_id"),
+                    "probe_pattern_gain_dbi": az_meta.get("pattern_gain_dbi"),
                 }
                 azimuth_results.append(az)
 
