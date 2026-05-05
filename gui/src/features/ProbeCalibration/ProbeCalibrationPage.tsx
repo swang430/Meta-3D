@@ -16,12 +16,14 @@ import {
   IconDashboard,
   IconGridDots,
   IconFileImport,
+  IconLink,
 } from '@tabler/icons-react'
 import {
   ProbeCalibrationDashboard,
   ProbeCalibrationGrid,
   ProbeCalibrationDetail,
   PatternImportPanel,
+  RFChainDiagramPanel,
 } from './components'
 import type { CalibrationType } from '../../types/probeCalibration'
 
@@ -73,6 +75,9 @@ export function ProbeCalibrationPage({ defaultTab = 'dashboard' }: ProbeCalibrat
             <Tabs.Tab value="pattern_import" leftSection={<IconFileImport size={14} />}>
               Pattern 导入
             </Tabs.Tab>
+            <Tabs.Tab value="rf_chain_diagram" leftSection={<IconLink size={14} />}>
+              链路 + 路损启动
+            </Tabs.Tab>
           </Tabs.List>
 
           <Tabs.Panel value="dashboard" pt="md">
@@ -92,6 +97,10 @@ export function ProbeCalibrationPage({ defaultTab = 'dashboard' }: ProbeCalibrat
 
           <Tabs.Panel value="pattern_import" pt="md">
             <PatternImportPanel />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="rf_chain_diagram" pt="md">
+            <RFChainDiagramPanel />
           </Tabs.Panel>
         </Tabs>
       </Stack>

@@ -41,15 +41,24 @@ def override_get_db():
         db.close()
 
 
-app.dependency_overrides[get_db] = override_get_db
 client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
 def setup_database():
+    # Per-test dep override (see test_lab_profile_api for why module-scoped
+    # overrides collide between test modules).
     Base.metadata.create_all(bind=engine)
-    yield
-    Base.metadata.drop_all(bind=engine)
+    prev = app.dependency_overrides.get(get_db)
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        yield
+    finally:
+        if prev is None:
+            app.dependency_overrides.pop(get_db, None)
+        else:
+            app.dependency_overrides[get_db] = prev
+        Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture

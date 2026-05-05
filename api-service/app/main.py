@@ -13,6 +13,7 @@ from app.db.database import init_db
 from app.api import health, calibration, test_plan, test_execution, test_sequence
 from app.api import dashboard, probe, instrument, monitoring, report, road_test, alert, sync, topology, scenario, switch_topology
 from app.api import probe_calibration, channel_calibration, workflow, calibration_report, chamber
+from app.api import lab_profile
 from app.api.path_loss_calibration import router as path_loss_router, orchestrator_router, compensation_router, switch_router, e2e_router, phase_router, ce_router, baseline_router
 from app.api.commissioning import router as commissioning_router
 from app.api.system_logs import router as system_logs_router
@@ -172,6 +173,9 @@ app.include_router(calibration_report.router, prefix=settings.api_v1_prefix, tag
 
 # Chamber configuration
 app.include_router(chamber.router, prefix=settings.api_v1_prefix, tags=["Chamber Configuration"])
+
+# Lab profile (P2) — list + RF chain resolution for calibration UI preview
+app.include_router(lab_profile.router, prefix=settings.api_v1_prefix)
 
 # Path loss calibration
 app.include_router(path_loss_router, prefix=settings.api_v1_prefix)
