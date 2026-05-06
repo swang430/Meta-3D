@@ -65,6 +65,7 @@ import { SystemCalibration } from './components/SystemCalibration'
 import { TestManagement } from './features/TestManagement/TestManagement'
 import { ReportsPage } from './features/Reports/pages/ReportsPage'
 import { CommissioningSandbox } from './components/Commissioning'
+import { DiagnosticsPage } from './features/Diagnostics/DiagnosticsPage'
 import { TopologyEditor } from './features/TopologyEditor/TopologyEditor'
 import { RealtimeMetricsCard } from './components/RealtimeMetricsCard'
 import { ExecutionMetricsCard } from './features/Monitoring'
@@ -138,7 +139,7 @@ const hexToRgba = (hex: string, alpha: number) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
-type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'topologyEditor' | 'testManagement' | 'results' | 'systemCalibration' | 'commissioning' | 'chartsDemo'
+type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'topologyEditor' | 'testManagement' | 'results' | 'systemCalibration' | 'commissioning' | 'diagnostics' | 'chartsDemo'
 
 type ProbeFormState = Pick<ProbeType, 'ring' | 'polarization' | 'position' | 'is_active'>
 
@@ -285,6 +286,11 @@ const sections: Array<{ key: SectionKey; label: string; description: string }> =
     key: 'commissioning',
     label: '暗室首测',
     description: '3GPP Static MIMO OTA 调试专区 - 基于 UMa CDL-C 模型与 CTIA 门限。',
+  },
+  {
+    key: 'diagnostics',
+    label: '调试序列',
+    description: '硬编码 SCPI 序列 (instrument *IDN? 扫描 / 基站 attach 探针等)，现场快速验证链路。',
   },
   {
     key: 'chartsDemo',
@@ -1185,6 +1191,8 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
       return <SystemCalibration />
     case 'commissioning':
       return <CommissioningSandbox />
+    case 'diagnostics':
+      return <DiagnosticsPage />
     case 'chartsDemo':
       return <ChartsDemoPage />
     default:

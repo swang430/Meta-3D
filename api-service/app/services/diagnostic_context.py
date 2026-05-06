@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.models.chamber import ChamberConfiguration
 from app.models.diagnostic_run import DiagnosticKind, DiagnosticRun
-from app.models.instrument import InstrumentCategory, InstrumentConnection
+from app.models.instrument import InstrumentCategory
 from app.models.lab_profile import LabProfile
 from app.services.calibration.rf_chain_resolver import (
     RFChainResolution,
@@ -181,7 +181,7 @@ def _parse_instrument_bindings(
         for cat in db.query(InstrumentCategory).filter(
             InstrumentCategory.id.in_(category_ids)
         ).all():
-            keys_by_id[cat.id] = cat.key
+            keys_by_id[cat.id] = cat.category_key
 
     bindings: List[InstrumentBinding] = []
     for row in rows:

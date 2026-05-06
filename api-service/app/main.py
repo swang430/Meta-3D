@@ -13,7 +13,7 @@ from app.db.database import init_db
 from app.api import health, calibration, test_plan, test_execution, test_sequence
 from app.api import dashboard, probe, instrument, monitoring, report, road_test, alert, sync, topology, scenario, switch_topology
 from app.api import probe_calibration, channel_calibration, workflow, calibration_report, chamber
-from app.api import lab_profile, diagnostic_run
+from app.api import lab_profile, diagnostic_run, diagnostic_sequence
 from app.api.path_loss_calibration import router as path_loss_router, orchestrator_router, compensation_router, switch_router, e2e_router, phase_router, ce_router, baseline_router
 from app.api.commissioning import router as commissioning_router
 from app.api.system_logs import router as system_logs_router
@@ -179,6 +179,9 @@ app.include_router(lab_profile.router, prefix=settings.api_v1_prefix)
 
 # Diagnostic runs (P3) — workshop-tier audit trail for SCPI / Commissioning
 app.include_router(diagnostic_run.router, prefix=settings.api_v1_prefix)
+
+# Diagnostic sequences (P3 Phase 2) — list + run sequence modules
+app.include_router(diagnostic_sequence.router, prefix=settings.api_v1_prefix)
 
 # Path loss calibration
 app.include_router(path_loss_router, prefix=settings.api_v1_prefix)
