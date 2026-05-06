@@ -12,6 +12,7 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 
 from app.db.database import get_db
+from app.models.diagnostic_run import DiagnosticKind
 from app.models.instrument import (
     InstrumentCategory as InstrumentCategoryModel,
     InstrumentModel as InstrumentModelDB,
@@ -20,6 +21,7 @@ from app.models.instrument import (
 from app.schemas.instrument import (
     UpdateInstrumentCategoryRequest,
 )
+from app.services.diagnostic_context import build_diagnostic_context
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -328,6 +330,7 @@ class TestConnectionRequest(BaseModel):
     ip: Optional[str] = None      # 覆盖数据库中的 IP（用于测试未保存的编辑）
     port: Optional[int] = None    # 覆盖数据库中的端口
     protocol: Optional[str] = None
+    run_by: Optional[str] = None  # 操作员标识，写入 diagnostic_runs.run_by
 
 
 @router.post("/instruments/{category_key}/test-connection", response_model=TestConnectionResult)
@@ -491,6 +494,7 @@ class ScpiCommandRequest(BaseModel):
     ip: Optional[str] = None
     port: Optional[int] = None
     timeout_ms: int = 3000  # 默认 3 秒超时
+    run_by: Optional[str] = None  # 操作员标识，写入 diagnostic_runs.run_by
 
 
 class ScpiCommandResult(BaseModel):
@@ -647,6 +651,45 @@ def _validate_ip_address(ip: str) -> bool:
     return all(0 <= int(g) <= 255 for g in match.groups())
 
 
+def _audit_scpi_run(
+    db: Session,
+    *,
+    category_key: str,
+    target_name: str,
+    params: Dict[str, Any],
+    success: bool,
+    output: Optional[str],
+    error_message: Optional[str],
+    duration_ms: int,
+    run_by: Optional[str],
+) -> None:
+    """Persist one diagnostic_runs row for an SCPI Console action.
+
+    SCPI Console fires direct-IP, so lab_profile_id=None — the minimal
+    DiagnosticContext still gives us the truncate + record helpers.
+    Best-effort: audit failures are logged but never propagated, since
+    the operator already has the SCPI result and the audit trail is
+    secondary to the primary action.
+    """
+    try:
+        ctx = build_diagnostic_context(db, lab_profile_id=None)
+        ctx.record_run(
+            db,
+            kind=DiagnosticKind.SCPI_COMMAND,
+            target_name=target_name,
+            success=success,
+            params=params,
+            output=output,
+            error_message=error_message,
+            duration_ms=duration_ms,
+            run_by=run_by,
+        )
+    except Exception as e:
+        logger.warning(
+            "Failed to audit SCPI run for %s: %s", category_key, e, exc_info=True
+        )
+
+
 @router.post("/instruments/{category_key}/scpi-command", response_model=ScpiCommandResult)
 async def send_scpi_command(
     category_key: str,
@@ -660,6 +703,7 @@ async def send_scpi_command(
     写入命令只发送不读取。
     """
     import socket
+    import time
 
     scpi_logger = logging.getLogger("app.hal.scpi")
 
@@ -674,20 +718,44 @@ async def send_scpi_command(
     ).first()
 
     ip, port = _resolve_ip_port(request.ip, request.port, conn)
+    target_name = f"{category_key}: {request.command.strip()}"
+    audit_params: Dict[str, Any] = {
+        "category_key": category_key,
+        "command": request.command.strip(),
+        "ip": ip,
+        "port": port,
+        "timeout_ms": request.timeout_ms,
+    }
+    audit_started = time.monotonic()
+
+    def _audit(result: ScpiCommandResult) -> ScpiCommandResult:
+        _audit_scpi_run(
+            db,
+            category_key=category_key,
+            target_name=target_name,
+            params=audit_params,
+            success=result.success,
+            output=result.response,
+            error_message=result.error,
+            duration_ms=int((time.monotonic() - audit_started) * 1000),
+            run_by=request.run_by,
+        )
+        return result
+
     if not ip:
-        return ScpiCommandResult(
+        return _audit(ScpiCommandResult(
             command=request.command,
             success=False,
             error="未配置 IP 地址",
             latency_ms=0,
-        )
+        ))
     if not _validate_ip_address(ip):
-        return ScpiCommandResult(
+        return _audit(ScpiCommandResult(
             command=request.command,
             success=False,
             error=f"IP 地址格式无效: '{ip}'",
             latency_ms=0,
-        )
+        ))
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -697,22 +765,22 @@ async def send_scpi_command(
         result = _send_scpi_command(sock, request.command, scpi_logger, category_key)
 
         sock.close()
-        return result
+        return _audit(result)
 
     except socket.timeout:
-        return ScpiCommandResult(
+        return _audit(ScpiCommandResult(
             command=request.command,
             success=False,
             error=f"连接超时: {ip}:{port}",
             latency_ms=request.timeout_ms,
-        )
+        ))
     except Exception as e:
-        return ScpiCommandResult(
+        return _audit(ScpiCommandResult(
             command=request.command,
             success=False,
             error=str(e),
             latency_ms=0,
-        )
+        ))
 
 
 @router.post("/instruments/{category_key}/scpi-probe", response_model=ScpiProbeResult)
@@ -727,6 +795,7 @@ async def probe_scpi_commands(
     用于连接成功后快速检查仪器状态。
     """
     import socket
+    import time
 
     scpi_logger = logging.getLogger("app.hal.scpi")
 
@@ -749,6 +818,7 @@ async def probe_scpi_commands(
         raise HTTPException(400, f"IP 地址格式无效: '{ip}'。请检查端点配置。")
 
     results: List[ScpiCommandResult] = []
+    audit_started = time.monotonic()
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -781,6 +851,31 @@ async def probe_scpi_commands(
                     error=str(e),
                     latency_ms=0,
                 ))
+
+    # Single audit row for the whole probe — operator cognition is
+    # "one health check", per-command rows would just be noise.
+    all_succeeded = bool(results) and all(r.success for r in results)
+    output_summary = "\n".join(
+        f"{r.command} → {'OK: ' + (r.response or '(no response)') if r.success else 'FAIL: ' + (r.error or 'unknown')}"
+        for r in results
+    )
+    first_error = next((r.error for r in results if not r.success and r.error), None)
+    _audit_scpi_run(
+        db,
+        category_key=category_key,
+        target_name=f"probe:{category_key}",
+        params={
+            "category_key": category_key,
+            "ip": ip,
+            "port": port,
+            "commands": [cmd for cmd, _ in COMMON_SCPI_COMMANDS],
+        },
+        success=all_succeeded,
+        output=output_summary,
+        error_message=None if all_succeeded else first_error,
+        duration_ms=int((time.monotonic() - audit_started) * 1000),
+        run_by=body.run_by if body else None,
+    )
 
     return ScpiProbeResult(ip=ip, port=port, results=results)
 
