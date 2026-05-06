@@ -326,8 +326,17 @@ async def create_session(req: CreateSessionRequest, db: Session = Depends(get_db
 
 
 @router.get("/sessions", response_model=List[SessionResponse])
-async def list_sessions(db: Session = Depends(get_db)):
-    """List all MIMO_OTA sessions (TestExecutions whose TestCase.test_type=MIMO_OTA)."""
+async def list_sessions(
+    include_ad_hoc: bool = False,
+    db: Session = Depends(get_db),
+):
+    """List MIMO_OTA sessions (TestExecutions whose TestCase.test_type=MIMO_OTA).
+
+    Phase 3 introduced 'diagnostic_ad_hoc' single-phase runs that *must* live
+    in test_executions (executors need a row to write measurements into) but
+    aren't actual commissioning sessions. Default behaviour hides them so
+    the regular list view stays clean; pass include_ad_hoc=true to see them.
+    """
     rows = (
         db.query(TestExecution, TestCase)
         .join(TestCase, TestExecution.test_case_id == TestCase.id)
@@ -336,6 +345,11 @@ async def list_sessions(db: Session = Depends(get_db)):
         .limit(200)
         .all()
     )
+    if not include_ad_hoc:
+        rows = [
+            (ex, tc) for ex, tc in rows
+            if not (ex.config or {}).get("diagnostic_ad_hoc")
+        ]
     return [_execution_to_session_response(ex, tc) for ex, tc in rows]
 
 

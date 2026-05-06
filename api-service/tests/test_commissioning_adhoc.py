@@ -189,6 +189,41 @@ class TestAdhocPhaseEndpoint:
         assert params.get("num_samples_per_azimuth") == 1
 
 
+class TestSessionsListFilter:
+    def test_ad_hoc_runs_hidden_by_default(self, lab):
+        """Ad-hoc rows shouldn't appear in the regular sessions list."""
+        # Create a regular session via the legacy endpoint
+        regular = client.post(
+            "/api/v1/commissioning/sessions",
+            json={"lab_profile_id": str(lab.id), "frequency_hz": 3.5e9},
+        )
+        assert regular.status_code == 201
+        regular_id = regular.json()["session_id"]
+
+        # And an ad-hoc one
+        adhoc = client.post(
+            "/api/v1/commissioning/diagnostic/run-phase",
+            json={"lab_profile_id": str(lab.id), "phase_name": "precheck"},
+        )
+        assert adhoc.status_code == 200
+        adhoc_id = adhoc.json()["test_execution_id"]
+
+        # Default list: regular present, ad-hoc absent.
+        listed = client.get("/api/v1/commissioning/sessions").json()
+        ids = [s["session_id"] for s in listed]
+        assert regular_id in ids
+        assert adhoc_id not in ids
+
+        # include_ad_hoc=true: both present.
+        full = client.get(
+            "/api/v1/commissioning/sessions",
+            params={"include_ad_hoc": True},
+        ).json()
+        ids = [s["session_id"] for s in full]
+        assert regular_id in ids
+        assert adhoc_id in ids
+
+
 class TestHALTraceTail:
     def test_returns_lines_when_log_present(self, tmp_path, monkeypatch):
         """If logs/measurement.log doesn't exist (test env), make a tiny one."""

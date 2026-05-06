@@ -246,7 +246,17 @@ type DemoRunProgress = {
   finishedAt: number | null
 }
 
-const sections: Array<{ key: SectionKey; label: string; description: string }> = [
+// P3 Phase 4: sidebar groups. Items with the same `group` cluster under one
+// header in the rendered nav. `group` is omitted for the main flow so the
+// default appearance stays unchanged.
+type SectionGroup = '调试维护' | '其他'
+
+const sections: Array<{
+  key: SectionKey
+  label: string
+  description: string
+  group?: SectionGroup
+}> = [
   {
     key: 'dashboard',
     label: '主控台',
@@ -285,17 +295,20 @@ const sections: Array<{ key: SectionKey; label: string; description: string }> =
   {
     key: 'commissioning',
     label: '暗室首测',
-    description: '3GPP Static MIMO OTA 调试专区 - 基于 UMa CDL-C 模型与 CTIA 门限。',
+    description: '3GPP Static MIMO OTA 调试专区 - 基于 UMa CDL-C 模型与 CTIA 门限。现场调试用。',
+    group: '调试维护',
   },
   {
     key: 'diagnostics',
-    label: '调试序列',
-    description: '硬编码 SCPI 序列 (instrument *IDN? 扫描 / 基站 attach 探针等)，现场快速验证链路。',
+    label: '调试序列 + 单阶段',
+    description: 'SCPI 硬编码序列 + commissioning 单阶段 ad-hoc + HAL trace。workshop tier, 不进 TestPlan。',
+    group: '调试维护',
   },
   {
     key: 'chartsDemo',
     label: '📊 高级图表演示',
     description: '展示 Plotly.js 交互式图表：时间序列分析、统计对比、性能基准等。',
+    group: '其他',
   },
 ]
 
@@ -953,7 +966,12 @@ function App() {
 
             <ScrollArea type="auto" style={{ flex: 1, minHeight: 0 }} scrollbarSize={12}>
               <Stack gap="sm" pt="xs" pb="sm">
-                {sections.map((item) => {
+                {sections.map((item, idx) => {
+                  // P3 Phase 4: when entering a new sidebar group, emit a small
+                  // header. Items without a `group` (default flow) skip it so
+                  // the existing nav looks unchanged for the main sections.
+                  const prevGroup = idx > 0 ? sections[idx - 1].group : undefined
+                  const showGroupHeader = item.group !== undefined && item.group !== prevGroup
                   const active = item.key === activeSection
                   const cardBg = active
                     ? `linear-gradient(135deg, ${theme.colors.brand[5]} 0%, ${theme.colors.brand[7]} 100%)`
@@ -964,8 +982,21 @@ function App() {
                       ? hexToRgba(theme.colors.dark[4], 0.8)
                       : hexToRgba(theme.colors.brand[4], 0.35)
                   return (
+                    <Box key={item.key}>
+                      {showGroupHeader && (
+                        <Text
+                          size="xs"
+                          tt="uppercase"
+                          fw={700}
+                          c={isDark ? theme.colors.gray[5] : theme.colors.gray[6]}
+                          mt={idx === 0 ? 0 : 'xs'}
+                          mb={4}
+                          style={{ letterSpacing: '0.08em', paddingLeft: 4 }}
+                        >
+                          {item.group}
+                        </Text>
+                      )}
                     <UnstyledButton
-                      key={item.key}
                       type="button"
                       onClick={() => setActiveSection(item.key)}
                       onKeyDown={(event) => {
@@ -1014,6 +1045,7 @@ function App() {
                         </Text>
                       </Stack>
                     </UnstyledButton>
+                    </Box>
                   )
                 })}
               </Stack>
