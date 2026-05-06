@@ -180,3 +180,113 @@ class TestActiveTopologyRequiresChamber:
         )
         assert resp.status_code == 200
         assert resp.json()["chamber_id"] == str(chamber.id)
+
+
+class TestListFilterByChamber:
+    """Two chambers can each own their own topology row. The list endpoint
+    must support filtering by chamber_id so TopologyEditor can pull the
+    chamber-specific row without sweeping in others'."""
+
+    def test_chamber_id_filter_returns_only_matching_chamber(self, db, chamber):
+        """Two topologies for the same switch, different chambers — filter
+        by chamber must narrow to one."""
+        # Second chamber for the same switch
+        chamber_b = create_chamber_from_preset(ChamberType.TYPE_C.value, name="Chamber-B")
+        db.add(chamber_b)
+        db.commit()
+        db.refresh(chamber_b)
+
+        switch_cat_id = uuid.uuid4()
+        topo_a = SwitchTopology(
+            switch_category_id=switch_cat_id,
+            chamber_id=chamber.id,
+            name="topo-for-A",
+            nodes=[], connections=[], operating_modes=[],
+            is_active=True,
+        )
+        topo_b = SwitchTopology(
+            switch_category_id=switch_cat_id,
+            chamber_id=chamber_b.id,
+            name="topo-for-B",
+            nodes=[], connections=[], operating_modes=[],
+            is_active=True,
+        )
+        db.add(topo_a)
+        db.add(topo_b)
+        db.commit()
+
+        # No filter: both rows visible.
+        all_resp = client.get(
+            "/api/v1/switch-topologies",
+            params={"switch_category_id": str(switch_cat_id)},
+        )
+        assert all_resp.status_code == 200
+        assert all_resp.json()["total"] == 2
+
+        # Filter by chamber A: only topo-for-A.
+        a_resp = client.get(
+            "/api/v1/switch-topologies",
+            params={
+                "switch_category_id": str(switch_cat_id),
+                "chamber_id": str(chamber.id),
+            },
+        )
+        assert a_resp.status_code == 200
+        a_items = a_resp.json()["items"]
+        assert len(a_items) == 1
+        assert a_items[0]["name"] == "topo-for-A"
+        assert a_items[0]["chamber_id"] == str(chamber.id)
+
+        # Filter by chamber B: only topo-for-B.
+        b_resp = client.get(
+            "/api/v1/switch-topologies",
+            params={
+                "switch_category_id": str(switch_cat_id),
+                "chamber_id": str(chamber_b.id),
+            },
+        )
+        assert b_resp.status_code == 200
+        b_items = b_resp.json()["items"]
+        assert len(b_items) == 1
+        assert b_items[0]["name"] == "topo-for-B"
+        assert b_items[0]["chamber_id"] == str(chamber_b.id)
+
+    def test_chamber_id_filter_excludes_legacy_null_chamber_rows(self, db, chamber):
+        """Legacy rows with chamber_id=NULL must NOT match a chamber filter,
+        since SQL '= chamber_uuid' excludes NULL by definition."""
+        switch_cat_id = uuid.uuid4()
+        legacy = SwitchTopology(
+            switch_category_id=switch_cat_id,
+            chamber_id=None,
+            name="legacy-null",
+            nodes=[], connections=[], operating_modes=[],
+            is_active=True,
+        )
+        bound = SwitchTopology(
+            switch_category_id=switch_cat_id,
+            chamber_id=chamber.id,
+            name="bound",
+            nodes=[], connections=[], operating_modes=[],
+            is_active=True,
+        )
+        db.add(legacy)
+        db.add(bound)
+        db.commit()
+
+        # No filter: both visible.
+        no_filter = client.get(
+            "/api/v1/switch-topologies",
+            params={"switch_category_id": str(switch_cat_id)},
+        ).json()
+        assert no_filter["total"] == 2
+
+        # With chamber filter: only the bound one.
+        with_filter = client.get(
+            "/api/v1/switch-topologies",
+            params={
+                "switch_category_id": str(switch_cat_id),
+                "chamber_id": str(chamber.id),
+            },
+        ).json()
+        assert with_filter["total"] == 1
+        assert with_filter["items"][0]["name"] == "bound"

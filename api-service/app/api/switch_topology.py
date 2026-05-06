@@ -33,6 +33,15 @@ def list_switch_topologies(
     limit: int = Query(50, ge=1, le=100),
     is_active: Optional[bool] = Query(None),
     switch_category_id: Optional[UUID] = Query(None),
+    chamber_id: Optional[UUID] = Query(
+        None,
+        description=(
+            "Filter by chamber. Each (switch_category_id, chamber_id) pair has its "
+            "own topology row — TopologyEditor uses this to pull the chamber-specific "
+            "wiring without sweeping in other chambers' rows. Legacy rows with "
+            "chamber_id=NULL are excluded when this filter is set."
+        ),
+    ),
     db: Session = Depends(get_db)
 ):
     """List all switch topologies"""
@@ -42,6 +51,8 @@ def list_switch_topologies(
         query = query.filter(SwitchTopology.is_active == is_active)
     if switch_category_id:
         query = query.filter(SwitchTopology.switch_category_id == switch_category_id)
+    if chamber_id:
+        query = query.filter(SwitchTopology.chamber_id == chamber_id)
 
     total = query.count()
     topologies = query.order_by(SwitchTopology.created_at.desc()).offset(skip).limit(limit).all()

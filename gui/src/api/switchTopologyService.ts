@@ -61,11 +61,17 @@ export interface SwitchTopology {
 }
 
 export const switchTopologyService = {
-  async getTopologies(categoryId?: string) {
-    let url = '/switch-topologies';
-    if (categoryId) {
-      url += `?switch_category_id=${categoryId}`;
-    }
+  async getTopologies(categoryId?: string, chamberId?: string) {
+    // Each (switch_category_id, chamber_id) pair has its own topology row.
+    // Pass both when known to load the chamber-specific topology; pass switch
+    // only on first mount before chamber is known (returns whichever topology
+    // sorts first, used to seed the chamber dropdown).
+    const params = new URLSearchParams();
+    if (categoryId) params.append('switch_category_id', categoryId);
+    if (chamberId) params.append('chamber_id', chamberId);
+    const url = params.toString()
+      ? `/switch-topologies?${params.toString()}`
+      : '/switch-topologies';
     const response = await apiClient.get(url);
     return response.data;
   },
