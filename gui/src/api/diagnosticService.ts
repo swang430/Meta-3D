@@ -51,11 +51,11 @@ export interface DiagnosticRunSummary {
   run_at: string
   run_by?: string | null
   error_message?: string | null
+  output_excerpt?: string | null
 }
 
 export interface DiagnosticRunDetail extends DiagnosticRunSummary {
   params?: Record<string, unknown> | null
-  output_excerpt?: string | null
   hal_trace_log_path?: string | null
 }
 
@@ -91,6 +91,9 @@ export interface ListRunsParams {
   kind?: string
   lab_profile_id?: string
   success?: boolean
+  /** Substring filter on target_name. EquipmentManager uses this with
+   *  category_key to pull per-instrument SCPI history. */
+  target_contains?: string
   limit?: number
   offset?: number
 }

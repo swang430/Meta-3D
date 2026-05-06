@@ -24,7 +24,6 @@ from app.main import app
 from app.models.diagnostic_run import DiagnosticKind, DiagnosticRun
 from app.models.instrument import (
     InstrumentCategory as InstrumentCategoryModel,
-    InstrumentConnection as InstrumentConnectionDB,
 )
 
 
@@ -241,3 +240,73 @@ class TestAuditListIntegration:
         assert len(items) == 1
         assert items[0]["kind"] == DiagnosticKind.SCPI_COMMAND.value
         assert items[0]["target_name"].startswith("vna:")
+        # Summary now carries output_excerpt so EquipmentManager history can
+        # render the response inline without a per-row detail roundtrip.
+        assert "output_excerpt" in items[0]
+
+    def test_target_contains_filters_to_one_category(self, db):
+        """EquipmentManager pulls per-instrument history with target_contains=key."""
+        # Two categories, two scpi-command runs each.
+        for key in ("vna", "baseStation"):
+            cat = InstrumentCategoryModel(
+                id=uuid.uuid4(),
+                category_key=key,
+                category_name=f"{key} fixture",
+                description="",
+                is_active=True,
+                usage_phase=["test"],
+                driver_mode="auto",
+            )
+            db.add(cat)
+        db.commit()
+
+        for key in ("vna", "baseStation"):
+            client.post(
+                f"/api/v1/instruments/{key}/scpi-command",
+                json={"command": "*IDN?"},
+            )
+            client.post(
+                f"/api/v1/instruments/{key}/scpi-probe",
+                json={"ip": "127.0.0.1", "port": 1},
+            )
+
+        # No filter: 4 rows total (2 single + 2 probe).
+        all_rows = client.get(
+            "/api/v1/diagnostic-runs",
+            params={"kind": "scpi_command"},
+        ).json()["items"]
+        assert len(all_rows) == 4
+
+        # target_contains=vna: 2 rows (vna single + probe:vna).
+        vna_rows = client.get(
+            "/api/v1/diagnostic-runs",
+            params={"kind": "scpi_command", "target_contains": "vna"},
+        ).json()["items"]
+        assert len(vna_rows) == 2
+        for r in vna_rows:
+            assert "vna" in r["target_name"]
+            assert "baseStation" not in r["target_name"]
+
+        # target_contains=baseStation: 2 rows.
+        bs_rows = client.get(
+            "/api/v1/diagnostic-runs",
+            params={"kind": "scpi_command", "target_contains": "baseStation"},
+        ).json()["items"]
+        assert len(bs_rows) == 2
+        for r in bs_rows:
+            assert "baseStation" in r["target_name"]
+
+    def test_target_contains_escapes_like_wildcards(self, category):
+        """A literal '%' in target_contains shouldn't match everything."""
+        client.post(
+            f"/api/v1/instruments/{category.category_key}/scpi-command",
+            json={"command": "*IDN?"},
+        )
+        # Search for "%" — should match nothing because target names contain
+        # no literal % character. Without escaping this would match everything.
+        resp = client.get(
+            "/api/v1/diagnostic-runs",
+            params={"kind": "scpi_command", "target_contains": "%"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["items"] == []

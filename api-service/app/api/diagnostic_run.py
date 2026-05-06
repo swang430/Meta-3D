@@ -36,11 +36,14 @@ class DiagnosticRunSummary(BaseModel):
     run_at: datetime
     run_by: Optional[str] = None
     error_message: Optional[str] = None
+    # Output excerpt is bounded at ~2KB on write; include in summary so
+    # customer-facing list views (EquipmentManager SCPI history) can show
+    # the response inline without a per-row detail roundtrip.
+    output_excerpt: Optional[str] = None
 
 
 class DiagnosticRunDetail(DiagnosticRunSummary):
     params: Optional[dict] = None
-    output_excerpt: Optional[str] = None
     hal_trace_log_path: Optional[str] = None
 
 
@@ -54,6 +57,14 @@ def list_diagnostic_runs(
     kind: Optional[str] = Query(None, description="Filter by kind enum value"),
     lab_profile_id: Optional[UUID] = Query(None),
     success: Optional[bool] = Query(None, description="True/false to filter; omit for all"),
+    target_contains: Optional[str] = Query(
+        None,
+        description=(
+            "Case-sensitive substring filter on target_name. EquipmentManager "
+            "uses this with category_key to pull per-instrument SCPI history "
+            "(target_name patterns are '{category_key}: {cmd}' or 'probe:{category_key}')."
+        ),
+    ),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -76,6 +87,10 @@ def list_diagnostic_runs(
         q = q.filter(DiagnosticRun.lab_profile_id == lab_profile_id)
     if success is not None:
         q = q.filter(DiagnosticRun.success.is_(success))
+    if target_contains:
+        # Escape LIKE wildcards from caller input to avoid surprise matches.
+        needle = target_contains.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        q = q.filter(DiagnosticRun.target_name.like(f"%{needle}%", escape="\\"))
 
     total = q.count()
     rows = (
@@ -96,6 +111,7 @@ def list_diagnostic_runs(
                 run_at=r.run_at,
                 run_by=r.run_by,
                 error_message=r.error_message,
+                output_excerpt=r.output_excerpt,
             )
             for r in rows
         ],

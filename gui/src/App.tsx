@@ -101,6 +101,7 @@ import {
   updateProbe,
 } from './api/service'
 import client from './api/client'
+import { listDiagnosticRuns, type DiagnosticRunSummary } from './api/diagnosticService'
 import type {
   AlertItem,
   DemoRunPlan,
@@ -1441,6 +1442,136 @@ function parseEndpointToIpPort(endpoint: string): { ip?: string; port?: number }
   return { ip: ep }
 }
 
+// SCPI history query key — exported as a const so EquipmentManager handlers
+// can invalidate the right key after each successful command send.
+const scpiHistoryQueryKey = (categoryKey: string) => ['scpi-history', categoryKey] as const
+
+function formatRelativeTime(iso: string): string {
+  const then = new Date(iso).getTime()
+  const now = Date.now()
+  const diffSec = Math.max(0, Math.round((now - then) / 1000))
+  if (diffSec < 60) return `${diffSec}秒前`
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}分钟前`
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}小时前`
+  return new Date(iso).toLocaleString()
+}
+
+function parseScpiHistoryRow(row: DiagnosticRunSummary, categoryKey: string): {
+  command: string
+  isBatch: boolean
+  resultText: string
+} {
+  const probePrefix = `probe:${categoryKey}`
+  const singlePrefix = `${categoryKey}: `
+  if (row.target_name === probePrefix) {
+    return {
+      command: '🔍 诊断命令组 (5 条)',
+      isBatch: true,
+      resultText: row.success
+        ? '全部通过'
+        : (row.error_message ?? row.output_excerpt?.split('\n')[0] ?? '失败'),
+    }
+  }
+  const command = row.target_name.startsWith(singlePrefix)
+    ? row.target_name.slice(singlePrefix.length)
+    : row.target_name
+  const resultText = row.success
+    ? (row.output_excerpt ?? '(OK, no response)')
+    : (row.error_message ?? '失败')
+  return { command, isBatch: false, resultText }
+}
+
+interface ScpiHistoryFeedProps {
+  categoryKey: string
+}
+
+/**
+ * Customer-facing SCPI history embedded in EquipmentManager.
+ *
+ * Differs from the developer-facing DiagnosticsPage audit feed: this view
+ * is scoped to ONE instrument category, shows compact "command → result"
+ * rows, and refreshes after each send. The customer is a field engineer
+ * checking what they/colleagues have tried on this specific instrument.
+ */
+function ScpiHistoryFeed({ categoryKey }: ScpiHistoryFeedProps) {
+  const { data, isLoading, isFetching, refetch } = useQuery({
+    queryKey: scpiHistoryQueryKey(categoryKey),
+    queryFn: () => listDiagnosticRuns({
+      kind: 'scpi_command',
+      target_contains: categoryKey,
+      limit: 20,
+    }),
+    staleTime: 10_000,
+  })
+  const rows = data?.items ?? []
+
+  return (
+    <Stack gap={6}>
+      <Group justify="space-between" align="center">
+        <Text size="sm" fw={600} c="dimmed" style={{ fontFamily: 'monospace' }}>
+          📜 历史命令 (最近 20 条, 跨会话持久化)
+        </Text>
+        <Button
+          size="compact-xs"
+          variant="subtle"
+          color="gray"
+          loading={isFetching && !isLoading}
+          onClick={() => refetch()}
+        >
+          刷新
+        </Button>
+      </Group>
+
+      {isLoading ? (
+        <Text size="xs" c="dimmed">加载中…</Text>
+      ) : rows.length === 0 ? (
+        <Text size="xs" c="dimmed">暂无历史 — 发送一条命令即可记录。</Text>
+      ) : (
+        <Card withBorder padding="xs" radius="sm" bg="dark.9" style={{ maxHeight: 240, overflowY: 'auto' }}>
+          <Stack gap={4}>
+            {rows.map((row) => {
+              const { command, isBatch, resultText } = parseScpiHistoryRow(row, categoryKey)
+              return (
+                <Group
+                  key={row.id}
+                  gap="xs"
+                  wrap="nowrap"
+                  align="flex-start"
+                  style={{ fontFamily: 'monospace', fontSize: 12 }}
+                >
+                  <Text span c="dimmed" style={{ whiteSpace: 'nowrap', minWidth: 64 }}>
+                    {formatRelativeTime(row.run_at)}
+                  </Text>
+                  <Text
+                    span
+                    c={isBatch ? 'yellow.4' : 'cyan'}
+                    fw={600}
+                    style={{ whiteSpace: 'nowrap', minWidth: 120 }}
+                  >
+                    {command}
+                  </Text>
+                  <Text
+                    span
+                    c={row.success ? 'green.4' : 'red.4'}
+                    style={{ wordBreak: 'break-all', flex: 1 }}
+                  >
+                    {row.success ? '→ ' : '✗ '}{resultText}
+                  </Text>
+                  {row.run_by && (
+                    <Text span c="dimmed" size="xs" style={{ whiteSpace: 'nowrap' }}>
+                      @{row.run_by}
+                    </Text>
+                  )}
+                </Group>
+              )
+            })}
+          </Stack>
+        </Card>
+      )}
+    </Stack>
+  )
+}
+
 function EquipmentManager() {
   const queryClient = useQueryClient()
   const { data, isLoading } = useQuery({
@@ -1817,6 +1948,7 @@ function EquipmentManager() {
                             showFeedback(key, 'error', `SCPI 探测失败: ${err.message}`)
                           } finally {
                             setScpiLoading(p => ({ ...p, [key]: false }))
+                            queryClient.invalidateQueries({ queryKey: scpiHistoryQueryKey(key) })
                           }
                         }}
                       >
@@ -1888,6 +2020,7 @@ function EquipmentManager() {
                               }))
                             } finally {
                               setScpiLoading(p => ({ ...p, [key]: false }))
+                              queryClient.invalidateQueries({ queryKey: scpiHistoryQueryKey(key) })
                             }
                           }
                         }}
@@ -1920,6 +2053,7 @@ function EquipmentManager() {
                             }))
                           } finally {
                             setScpiLoading(p => ({ ...p, [key]: false }))
+                            queryClient.invalidateQueries({ queryKey: scpiHistoryQueryKey(key) })
                           }
                         }}
                       >
@@ -1937,7 +2071,7 @@ function EquipmentManager() {
                       )}
                     </Group>
 
-                    {/* 手动命令历史 */}
+                    {/* 手动命令历史 (本会话) */}
                     {(scpiManualResults[category.key]?.length ?? 0) > 0 && (
                       <Card withBorder padding="xs" radius="sm" bg="dark.9" style={{ maxHeight: 200, overflowY: 'auto' }}>
                         <Stack gap={4}>
@@ -1953,6 +2087,11 @@ function EquipmentManager() {
                         </Stack>
                       </Card>
                     )}
+
+                    <Divider my={4} />
+
+                    {/* 跨会话持久化历史 (来自 diagnostic_runs) */}
+                    <ScpiHistoryFeed categoryKey={category.key} />
                   </Stack>
                 </Card>
               </Stack>
