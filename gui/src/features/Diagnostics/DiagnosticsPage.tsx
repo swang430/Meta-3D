@@ -6,9 +6,10 @@
  * sidebar so commissioning + diagnostics live under one "调试维护" group.
  */
 import { Container, Stack, Tabs, Title, Group, Badge } from '@mantine/core'
-import { IconTerminal, IconTool } from '@tabler/icons-react'
+import { IconAdjustments, IconTerminal, IconTool } from '@tabler/icons-react'
 
 import { SequenceRunnerPanel } from './SequenceRunnerPanel'
+import { CommissioningAdhocPanel } from './CommissioningAdhocPanel'
 
 export function DiagnosticsPage() {
   return (
@@ -24,10 +25,16 @@ export function DiagnosticsPage() {
             <Tabs.Tab value="sequences" leftSection={<IconTerminal size={14} />}>
               调试序列
             </Tabs.Tab>
+            <Tabs.Tab value="adhoc_phase" leftSection={<IconAdjustments size={14} />}>
+              单阶段 ad-hoc
+            </Tabs.Tab>
           </Tabs.List>
 
           <Tabs.Panel value="sequences" pt="md">
             <SequenceRunnerPanel />
+          </Tabs.Panel>
+          <Tabs.Panel value="adhoc_phase" pt="md">
+            <CommissioningAdhocPanel />
           </Tabs.Panel>
         </Tabs>
       </Stack>

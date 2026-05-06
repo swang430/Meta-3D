@@ -106,3 +106,54 @@ export async function getDiagnosticRun(id: string): Promise<DiagnosticRunDetail>
   const res = await apiClient.get<DiagnosticRunDetail>(`/diagnostic-runs/${id}`)
   return res.data
 }
+
+// ── P3 Phase 3: ad-hoc commissioning + HAL trace ────────────────────────
+
+export type CommissioningPhaseName =
+  | 'precheck'
+  | 'reference'
+  | 'mimo_test'
+  | 'analysis'
+  | 'report'
+
+export interface AdhocPhaseRequest {
+  lab_profile_id?: string
+  phase_name: CommissioningPhaseName
+  config_overrides?: Record<string, unknown>
+  phase_overrides?: Record<string, unknown>
+  run_by?: string
+}
+
+export interface AdhocPhaseResponse {
+  diagnostic_run_id: string
+  test_execution_id: string
+  phase: string
+  status: string
+  duration_ms: number
+  result: Record<string, unknown>
+  error_message?: string | null
+}
+
+export async function runAdhocPhase(
+  payload: AdhocPhaseRequest,
+): Promise<AdhocPhaseResponse> {
+  const res = await apiClient.post<AdhocPhaseResponse>(
+    '/commissioning/diagnostic/run-phase',
+    payload,
+  )
+  return res.data
+}
+
+export interface HALTraceTailResponse {
+  log_path: string
+  lines: string[]
+  total_lines_returned: number
+}
+
+export async function fetchHALTraceTail(lines = 200): Promise<HALTraceTailResponse> {
+  const res = await apiClient.get<HALTraceTailResponse>(
+    '/commissioning/diagnostic/hal-trace-tail',
+    { params: { lines } },
+  )
+  return res.data
+}

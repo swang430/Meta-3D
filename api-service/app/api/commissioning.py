@@ -34,6 +34,8 @@ from app.services.test_execution import (
     StepExecutionContext,
     dispatch_step,
 )
+from app.models.diagnostic_run import DiagnosticKind
+from app.services.diagnostic_context import build_diagnostic_context
 
 router = APIRouter(prefix="/commissioning", tags=["暗室首测"])
 logger = logging.getLogger(__name__)
@@ -380,6 +382,211 @@ async def run_phase(
         phase=phase_name,
         status=result.status.value,
         result=phase_payload or {"_executor_status": result.status.value},
+    )
+
+
+# ==================== P3 Phase 3: ad-hoc single-phase (workshop tier) ====================
+
+
+class AdhocPhaseRequest(BaseModel):
+    """One-shot run of a single MIMO_OTA executor against a synthetic session.
+
+    Differs from /sessions + /sessions/{id}/phase/{name} in that:
+      - The created TestCase + TestExecution are tagged 'diagnostic_ad_hoc'
+        so the regular commissioning list view can hide them.
+      - A diagnostic_run audit row is written (kind=COMMISSIONING_PHASE) so
+        ops history is searchable across SCPI sequences + ad-hoc phases.
+      - phase_overrides override the descriptor.parameters dict for this
+        phase (e.g. skip a precheck assertion that's known broken-but-
+        irrelevant for the current debug goal).
+      - config_overrides override MIMOOTAConfiguration before descriptor build,
+        same shape as CreateSessionRequest fields.
+    """
+
+    lab_profile_id: Optional[UUID] = None
+    phase_name: str  # one of _PHASE_NAME_TO_STEP_TYPE keys
+    config_overrides: Optional[Dict[str, Any]] = None
+    phase_overrides: Optional[Dict[str, Any]] = None
+    run_by: Optional[str] = None
+
+
+class AdhocPhaseResponse(BaseModel):
+    diagnostic_run_id: UUID
+    test_execution_id: UUID
+    phase: str
+    status: str
+    duration_ms: int
+    result: Dict[str, Any]
+    error_message: Optional[str] = None
+
+
+@router.post("/diagnostic/run-phase", response_model=AdhocPhaseResponse)
+async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db)):
+    """Run ONE MIMO_OTA executor as a debug probe.
+
+    Creates a tagged TestCase + TestExecution (the executors need a row to
+    write measurements into), runs the requested phase, persists a
+    diagnostic_run audit row, returns the executor's payload + status.
+    """
+    import time
+
+    if req.phase_name not in _PHASE_NAME_TO_STEP_TYPE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown phase: {req.phase_name}. "
+                f"Valid: {list(_PHASE_NAME_TO_STEP_TYPE.keys())}"
+            ),
+        )
+    target_step_type = _PHASE_NAME_TO_STEP_TYPE[req.phase_name]
+
+    # Build a regular MIMO_OTA TestCase but tag it so the commissioning list
+    # view can filter these out.
+    overrides = req.config_overrides or {}
+    test_case, descriptors = build_mimo_ota_test_case(
+        db,
+        name=f"ADHOC {req.phase_name} {datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
+        description=f"Ad-hoc workshop run of phase '{req.phase_name}'",
+        lab_profile_id=req.lab_profile_id,
+        config_overrides=overrides,
+        created_by="commissioning_adhoc",
+        tags=["diagnostic_ad_hoc", f"phase:{req.phase_name}"],
+    )
+
+    step = next((d for d in descriptors if d.type == target_step_type), None)
+    if step is None:
+        raise HTTPException(
+            status_code=500,
+            detail=f"No step descriptor for {target_step_type} (factory bug)",
+        )
+
+    # Apply per-phase parameter overrides on the in-memory descriptor only.
+    if req.phase_overrides:
+        step.parameters = {**(step.parameters or {}), **req.phase_overrides}
+
+    execution = TestExecution(
+        test_case_id=test_case.id,
+        status="pending",
+        started_at=datetime.utcnow(),
+        config={
+            "step_descriptors": [
+                {"id": step.id, "type": step.type, "parameters": step.parameters},
+            ],
+            "diagnostic_ad_hoc": True,
+            "phase_overrides": req.phase_overrides or {},
+        },
+        executed_by="commissioning_adhoc",
+    )
+    db.add(execution)
+    db.commit()
+    db.refresh(execution)
+
+    started = time.monotonic()
+    error_message: Optional[str] = None
+    status_value = "failed"
+    try:
+        ctx = _build_context(db, execution, test_case, step)
+        result = await dispatch_step(ctx)
+        status_value = result.status.value
+        error_message = result.error_message
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[adhoc] phase=%s aborted", req.phase_name)
+        error_message = str(e)
+    duration_ms = int((time.monotonic() - started) * 1000)
+
+    db.refresh(execution)
+    phases_key = _STEP_TYPE_TO_PHASES_KEY[target_step_type]
+    phase_payload = (execution.measurements or {}).get("phases", {}).get(phases_key) or {}
+
+    # Workshop audit row — keyed by phase_name so list views can filter.
+    ctx_for_audit = build_diagnostic_context(
+        db,
+        lab_profile_id=req.lab_profile_id,
+        resolve_rf_chains_too=False,  # speed: this is debug, not measurement
+    )
+    summary_text = (
+        f"phase={req.phase_name} status={status_value} "
+        f"test_execution_id={execution.id} "
+        f"phase_overrides={req.phase_overrides or {}}"
+    )
+    if error_message:
+        summary_text += f"\nerror: {error_message}"
+    audit_row = ctx_for_audit.record_run(
+        db,
+        kind=DiagnosticKind.COMMISSIONING_PHASE,
+        target_name=req.phase_name,
+        success=status_value == "success",
+        params={
+            "phase_name": req.phase_name,
+            "config_overrides": overrides,
+            "phase_overrides": req.phase_overrides or {},
+            "test_execution_id": str(execution.id),
+        },
+        output=summary_text,
+        error_message=error_message,
+        duration_ms=duration_ms,
+        run_by=req.run_by,
+    )
+
+    return AdhocPhaseResponse(
+        diagnostic_run_id=audit_row.id,
+        test_execution_id=execution.id,
+        phase=req.phase_name,
+        status=status_value,
+        duration_ms=duration_ms,
+        result=phase_payload or {"_executor_status": status_value},
+        error_message=error_message,
+    )
+
+
+# ==================== HAL trace tail (workshop tier) ====================
+
+
+class HALTraceTailResponse(BaseModel):
+    """Last N lines from the HAL/SCPI log file."""
+
+    log_path: str
+    lines: List[str]
+    total_lines_returned: int
+
+
+@router.get("/diagnostic/hal-trace-tail", response_model=HALTraceTailResponse)
+async def hal_trace_tail(lines: int = 200):
+    """Return the tail of the SCPI / HAL log so the GUI can render a live console.
+
+    Workshop tier debugging hinges on "what did the box send back". Right
+    now operators have to ssh and tail; this surfaces the same lines next
+    to the ad-hoc result so debug stays in one window.
+    """
+    from pathlib import Path
+
+    # The logging config writes SCPI traffic to ./logs/calibration.log
+    # (for calibration paths) and ./logs/app.log catches general HAL events.
+    # Workshop tools mostly want the SCPI/measurement stream — start with
+    # measurement.log, fall back to app.log.
+    candidates = [
+        Path("logs/measurement.log"),
+        Path("logs/calibration.log"),
+        Path("logs/app.log"),
+    ]
+    chosen = next((p for p in candidates if p.exists()), None)
+    if chosen is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No log file found in {candidates}; check logging config",
+        )
+
+    n = max(1, min(2000, lines))  # cap so a malformed query doesn't OOM
+    # Cheap-and-correct tail for typical log sizes (< 100MB). The "right"
+    # answer is seek-from-end + read-back, but log files here are small.
+    with chosen.open("r", encoding="utf-8", errors="replace") as f:
+        all_lines = f.readlines()
+    tail = [line.rstrip("\n") for line in all_lines[-n:]]
+
+    return HALTraceTailResponse(
+        log_path=str(chosen),
+        lines=tail,
+        total_lines_returned=len(tail),
     )
 
 
