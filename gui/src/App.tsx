@@ -960,7 +960,7 @@ function App() {
                   Meta-3D
                 </Title>
                 <Text size="sm" c={isDark ? theme.colors.gray[4] : theme.colors.gray[7]}>
-                  软件定义静区 · 车规级实验室
+                  软件定义测试 · 虚拟路测
                 </Text>
               </Stack>
             </Paper>
