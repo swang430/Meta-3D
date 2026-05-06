@@ -2,9 +2,16 @@
 
 Memory `project_calibration_ce_sa_decision.md`: probe-to-QZ path-loss uses
 CE-as-source + SA-as-receiver, not VNA. This test pins the math, the driver
-contract (set_calibration_tone / stop_calibration_tone / measure_channel_power),
-the failure modes (missing CE / SA, tone setup fail, finally-stop), and the
-chamber-flag dispatch (cable_sgh_to_sa_loss_db = None → legacy VNA fallback).
+contract (D path: set_calibration_tone / stop_calibration_tone; B path:
+set_passthrough_mode / clear_passthrough_mode + upstream SG.set_cw / start_tx
+/ stop_tx; common: SA.measure_channel_power), the failure modes (missing CE
+/ SA, tone setup fail, finally-stop, missing upstream source on B path), and
+the chamber-flag dispatch (cable_sgh_to_sa_loss_db = None → legacy VNA fallback).
+
+The two CE-side paths (D = CE-internal CW gen, B = SG/BSE upstream + CE
+passthrough) are dispatched by ChannelEmulatorDriver.get_calibration_tone_capabilities():
+PROPSIM with Internal Interference Generator option goes D, anything else
+falls back to B.
 """
 from __future__ import annotations
 
@@ -16,6 +23,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
+from app.hal.channel_emulator import CalibrationToneCapability
 from app.models.chamber import ChamberType, create_chamber_from_preset
 from app.services.path_loss_calibration_service import (
     PathLossMeasurement,
@@ -61,29 +69,66 @@ def chamber_with_cable_loss(db):
     return c
 
 
-def _patched_hal(monkeypatch, ce=None, sa=None):
-    """Replace path_loss_service's HAL lookup with stubbed drivers."""
+def _patched_hal(monkeypatch, ce=None, sa=None, sg=None, bse=None):
+    """Replace path_loss_service's HAL lookup with stubbed drivers.
+
+    sg / bse are the optional upstream sources for the B (passthrough) path —
+    omit them to test the failure mode where a PASSTHROUGH_ONLY CE has nothing
+    to drive it.
+    """
     fake_hal = MagicMock()
     fake_hal.drivers = {}
     if ce is not None:
         fake_hal.drivers["channelEmulator"] = ce
     if sa is not None:
         fake_hal.drivers["signalAnalyzer"] = sa
+    if sg is not None:
+        fake_hal.drivers["signalGenerator"] = sg
+    if bse is not None:
+        fake_hal.drivers["baseStation"] = bse
     monkeypatch.setattr(
         "app.services.instrument_hal_service.get_hal_service", lambda: fake_hal
     )
 
 
+def _make_ce(caps, *, internal_ok=True, passthrough_ok=True):
+    """Build a MagicMock CE that declares `caps` and stubs both paths' SCPI.
+
+    `caps` is a list of CalibrationToneCapability — controls dispatch.
+    internal_ok / passthrough_ok flip the corresponding driver returns to
+    False so we can exercise mid-flight failure handling without conflating
+    the two paths.
+    """
+    ce = MagicMock()
+    # capabilities is a sync method, not async — the abstract returns a list
+    ce.get_calibration_tone_capabilities = MagicMock(return_value=list(caps))
+    # D path stubs
+    ce.set_calibration_tone = AsyncMock(return_value=internal_ok)
+    ce.stop_calibration_tone = AsyncMock(return_value=True)
+    # B path stubs
+    ce.set_passthrough_mode = AsyncMock(return_value=passthrough_ok)
+    ce.clear_passthrough_mode = AsyncMock(return_value=True)
+    return ce
+
+
+def _make_sg(*, set_cw_ok=True, start_ok=True):
+    sg = MagicMock()
+    sg.set_cw = AsyncMock(return_value=set_cw_ok)
+    sg.start_tx = AsyncMock(return_value=start_ok)
+    sg.stop_tx = AsyncMock(return_value=True)
+    return sg
+
+
 class TestCeSaMeasurement:
-    """Direct unit tests for _real_path_loss_measurement_via_ce_sa."""
+    """Unit tests for _real_path_loss_measurement_via_ce_sa — D path (CE
+    declares INTERNAL_CW_GENERATOR, single-instrument tone source).
+    """
 
     @pytest.mark.asyncio
     async def test_happy_path_math(self, db, monkeypatch):
         """CE_TX -20 dBm, SA reads -85 dBm steady; G_sgh=10, G_probe=8,
         cable=1.5 → path_loss = -20 - (-85) + 10 + 8 - 1.5 = 81.5 dB."""
-        ce = MagicMock()
-        ce.set_calibration_tone = AsyncMock(return_value=True)
-        ce.stop_calibration_tone = AsyncMock(return_value=True)
+        ce = _make_ce([CalibrationToneCapability.INTERNAL_CW_GENERATOR])
         sa = MagicMock()
         sa.setup_spectrum = AsyncMock(return_value=True)
         sa.measure_channel_power = AsyncMock(return_value=-85.0)
@@ -120,9 +165,7 @@ class TestCeSaMeasurement:
     async def test_stop_tone_called_even_if_sa_fails(self, db, monkeypatch):
         """SA setup_spectrum False → method raises, but stop_calibration_tone
         must still be called so CE doesn't keep transmitting."""
-        ce = MagicMock()
-        ce.set_calibration_tone = AsyncMock(return_value=True)
-        ce.stop_calibration_tone = AsyncMock(return_value=True)
+        ce = _make_ce([CalibrationToneCapability.INTERNAL_CW_GENERATOR])
         sa = MagicMock()
         sa.setup_spectrum = AsyncMock(return_value=False)  # ← fails
         sa.measure_channel_power = AsyncMock(return_value=-85.0)
@@ -161,7 +204,7 @@ class TestCeSaMeasurement:
 
     @pytest.mark.asyncio
     async def test_missing_sa_driver_raises(self, db, monkeypatch):
-        ce = MagicMock()
+        ce = _make_ce([CalibrationToneCapability.INTERNAL_CW_GENERATOR])
         _patched_hal(monkeypatch, ce=ce, sa=None)
         svc = ProbePathLossCalibrationService(db, use_mock=False)
         with pytest.raises(RuntimeError, match="signalAnalyzer"):
@@ -178,9 +221,9 @@ class TestCeSaMeasurement:
     @pytest.mark.asyncio
     async def test_ce_set_tone_failure_raises(self, db, monkeypatch):
         """If CE refuses the tone (e.g. out of range), abort without reading SA."""
-        ce = MagicMock()
-        ce.set_calibration_tone = AsyncMock(return_value=False)
-        ce.stop_calibration_tone = AsyncMock(return_value=True)
+        ce = _make_ce(
+            [CalibrationToneCapability.INTERNAL_CW_GENERATOR], internal_ok=False,
+        )
         sa = MagicMock()
         sa.setup_spectrum = AsyncMock(return_value=True)
         sa.measure_channel_power = AsyncMock(return_value=-85.0)
@@ -201,9 +244,217 @@ class TestCeSaMeasurement:
         sa.setup_spectrum.assert_not_awaited()
 
 
+class TestPassthroughBPath:
+    """B path: CE declares only PASSTHROUGH_ONLY → service must drive an
+    upstream SG.set_cw + start_tx + (later) stop_tx + ce.clear_passthrough."""
+
+    @pytest.mark.asyncio
+    async def test_passthrough_happy_path(self, db, monkeypatch):
+        """Same math as D path (SG output = CE output, 0 dB passthrough),
+        but driver calls hit set_passthrough_mode + SG.set_cw / start_tx
+        instead of CE.set_calibration_tone."""
+        ce = _make_ce([CalibrationToneCapability.PASSTHROUGH_ONLY])
+        sg = _make_sg()
+        sa = MagicMock()
+        sa.setup_spectrum = AsyncMock(return_value=True)
+        sa.measure_channel_power = AsyncMock(return_value=-85.0)
+        _patched_hal(monkeypatch, ce=ce, sa=sa, sg=sg)
+
+        svc = ProbePathLossCalibrationService(db, use_mock=False)
+        m = await svc._real_path_loss_measurement_via_ce_sa(
+            probe_id=7,
+            polarization=PolarizationType.H,
+            frequency_mhz=3500.0,
+            ce_tx_power_dbm=-20.0,
+            sgh_gain_dbi=10.0,
+            probe_gain_dbi=8.0,
+            cable_sgh_to_sa_loss_db=1.5,
+        )
+        # Same algebra: -20 - (-85) + 10 + 8 - 1.5 = 81.5 dB
+        assert m.path_loss_db == pytest.approx(81.5, abs=0.01)
+        assert m.polarization == "H"
+
+        # D path SCPI must NOT be touched
+        ce.set_calibration_tone.assert_not_awaited()
+        ce.stop_calibration_tone.assert_not_awaited()
+        # B path SCPI in the right order
+        ce.set_passthrough_mode.assert_awaited_once()
+        sg.set_cw.assert_awaited_once()
+        cw_args, _ = sg.set_cw.call_args
+        assert cw_args[0] == pytest.approx(3500e6)
+        assert cw_args[1] == pytest.approx(-20.0)
+        sg.start_tx.assert_awaited_once()
+        # Cleanup: stop_tx + clear_passthrough always run, even on success
+        sg.stop_tx.assert_awaited_once()
+        ce.clear_passthrough_mode.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_passthrough_uses_bse_when_only_bse_present(self, db, monkeypatch):
+        """B path with only baseStation bound: BSE drives CW (it implements
+        set_cw / start_tx / stop_tx for testmode CW emission)."""
+        ce = _make_ce([CalibrationToneCapability.PASSTHROUGH_ONLY])
+        bse = _make_sg()  # same shape as SG — set_cw/start_tx/stop_tx
+        sa = MagicMock()
+        sa.setup_spectrum = AsyncMock(return_value=True)
+        sa.measure_channel_power = AsyncMock(return_value=-85.0)
+        _patched_hal(monkeypatch, ce=ce, sa=sa, bse=bse)
+
+        svc = ProbePathLossCalibrationService(db, use_mock=False)
+        m = await svc._real_path_loss_measurement_via_ce_sa(
+            probe_id=1,
+            polarization=PolarizationType.V,
+            frequency_mhz=3500.0,
+            ce_tx_power_dbm=-20.0,
+            sgh_gain_dbi=10.0,
+            probe_gain_dbi=8.0,
+            cable_sgh_to_sa_loss_db=1.5,
+        )
+        assert isinstance(m, PathLossMeasurement)
+        bse.set_cw.assert_awaited_once()
+        bse.stop_tx.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_passthrough_prefers_bse_over_sg_when_both_present(
+        self, db, monkeypatch
+    ):
+        """When both BSE and SG bound: must pick BSE (it's the production-time
+        upstream source, so calibration path stays identical to test path).
+        SG must NOT be touched."""
+        ce = _make_ce([CalibrationToneCapability.PASSTHROUGH_ONLY])
+        bse = _make_sg()
+        sg = _make_sg()
+        sa = MagicMock()
+        sa.setup_spectrum = AsyncMock(return_value=True)
+        sa.measure_channel_power = AsyncMock(return_value=-85.0)
+        _patched_hal(monkeypatch, ce=ce, sa=sa, bse=bse, sg=sg)
+
+        svc = ProbePathLossCalibrationService(db, use_mock=False)
+        await svc._real_path_loss_measurement_via_ce_sa(
+            probe_id=1,
+            polarization=PolarizationType.V,
+            frequency_mhz=3500.0,
+            ce_tx_power_dbm=-20.0,
+            sgh_gain_dbi=10.0,
+            probe_gain_dbi=8.0,
+            cable_sgh_to_sa_loss_db=1.5,
+        )
+        bse.set_cw.assert_awaited_once()
+        bse.start_tx.assert_awaited_once()
+        bse.stop_tx.assert_awaited_once()
+        # SG present but unused — keeps cal/test path identical
+        sg.set_cw.assert_not_awaited()
+        sg.start_tx.assert_not_awaited()
+        sg.stop_tx.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_passthrough_without_upstream_source_raises(self, db, monkeypatch):
+        """PASSTHROUGH_ONLY CE with no SG and no BSE → must fail loudly with
+        actionable error, never silently proceed."""
+        ce = _make_ce([CalibrationToneCapability.PASSTHROUGH_ONLY])
+        sa = MagicMock()
+        sa.setup_spectrum = AsyncMock(return_value=True)
+        sa.measure_channel_power = AsyncMock(return_value=-85.0)
+        _patched_hal(monkeypatch, ce=ce, sa=sa)  # no sg, no bse
+
+        svc = ProbePathLossCalibrationService(db, use_mock=False)
+        with pytest.raises(RuntimeError, match="PASSTHROUGH_ONLY"):
+            await svc._real_path_loss_measurement_via_ce_sa(
+                probe_id=1,
+                polarization=PolarizationType.V,
+                frequency_mhz=3500.0,
+                ce_tx_power_dbm=-20.0,
+                sgh_gain_dbi=10.0,
+                probe_gain_dbi=8.0,
+                cable_sgh_to_sa_loss_db=1.5,
+            )
+        # Neither path was touched
+        ce.set_calibration_tone.assert_not_awaited()
+        ce.set_passthrough_mode.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_passthrough_stop_tx_called_when_sa_fails(self, db, monkeypatch):
+        """SG started → SA setup fails → SG.stop_tx + ce.clear_passthrough
+        must STILL run (no leaking RF on the bench)."""
+        ce = _make_ce([CalibrationToneCapability.PASSTHROUGH_ONLY])
+        sg = _make_sg()
+        sa = MagicMock()
+        sa.setup_spectrum = AsyncMock(return_value=False)  # ← fails after SG running
+        sa.measure_channel_power = AsyncMock(return_value=-85.0)
+        _patched_hal(monkeypatch, ce=ce, sa=sa, sg=sg)
+
+        svc = ProbePathLossCalibrationService(db, use_mock=False)
+        with pytest.raises(RuntimeError, match="SA setup_spectrum failed"):
+            await svc._real_path_loss_measurement_via_ce_sa(
+                probe_id=1,
+                polarization=PolarizationType.V,
+                frequency_mhz=3500.0,
+                ce_tx_power_dbm=-20.0,
+                sgh_gain_dbi=10.0,
+                probe_gain_dbi=8.0,
+                cable_sgh_to_sa_loss_db=1.5,
+            )
+        sg.start_tx.assert_awaited_once()
+        sg.stop_tx.assert_awaited_once()  # critical: RF off
+        ce.clear_passthrough_mode.assert_awaited_once()  # critical: passthrough off
+
+    @pytest.mark.asyncio
+    async def test_dispatch_prefers_internal_when_both_caps_declared(
+        self, db, monkeypatch
+    ):
+        """When CE declares BOTH caps, service must prefer D (single-instrument
+        is simpler / one less failure mode), NOT touch SG even if bound."""
+        ce = _make_ce([
+            CalibrationToneCapability.INTERNAL_CW_GENERATOR,
+            CalibrationToneCapability.PASSTHROUGH_ONLY,
+        ])
+        sg = _make_sg()
+        sa = MagicMock()
+        sa.setup_spectrum = AsyncMock(return_value=True)
+        sa.measure_channel_power = AsyncMock(return_value=-85.0)
+        _patched_hal(monkeypatch, ce=ce, sa=sa, sg=sg)
+
+        svc = ProbePathLossCalibrationService(db, use_mock=False)
+        await svc._real_path_loss_measurement_via_ce_sa(
+            probe_id=1,
+            polarization=PolarizationType.V,
+            frequency_mhz=3500.0,
+            ce_tx_power_dbm=-20.0,
+            sgh_gain_dbi=10.0,
+            probe_gain_dbi=8.0,
+            cable_sgh_to_sa_loss_db=1.5,
+        )
+        # D was used, B was not
+        ce.set_calibration_tone.assert_awaited_once()
+        ce.set_passthrough_mode.assert_not_awaited()
+        sg.set_cw.assert_not_awaited()
+
+
+class TestCapabilityGating:
+    """A CE driver that declares no capabilities at all must be rejected with
+    a clear error — silent fall-through to either path is the worst outcome."""
+
+    @pytest.mark.asyncio
+    async def test_empty_capabilities_raises(self, db, monkeypatch):
+        ce = _make_ce([])  # ← no caps declared
+        sa = MagicMock()
+        _patched_hal(monkeypatch, ce=ce, sa=sa)
+
+        svc = ProbePathLossCalibrationService(db, use_mock=False)
+        with pytest.raises(RuntimeError, match="no calibration-tone capabilities"):
+            await svc._real_path_loss_measurement_via_ce_sa(
+                probe_id=1,
+                polarization=PolarizationType.V,
+                frequency_mhz=3500.0,
+                ce_tx_power_dbm=-20.0,
+                sgh_gain_dbi=10.0,
+                probe_gain_dbi=8.0,
+                cable_sgh_to_sa_loss_db=1.5,
+            )
+
+
 class TestMockCeCalibrationTone:
-    """The Mock CE driver must implement set/stop_calibration_tone so dev
-    environments and unit tests can exercise the CE+SA path without hardware."""
+    """The Mock CE must implement BOTH paths so dev environments and unit
+    tests can cover the full dispatch matrix without hardware."""
 
     @pytest.mark.asyncio
     async def test_mock_ce_records_tone_state(self):
@@ -234,6 +485,30 @@ class TestMockCeCalibrationTone:
         assert await ce.set_calibration_tone(3500e6, -100.0) is False
         # Reasonable tone is accepted.
         assert await ce.set_calibration_tone(3500e6, -20.0) is True
+
+    @pytest.mark.asyncio
+    async def test_mock_ce_supports_passthrough_path(self):
+        from app.hal.channel_emulator import MockChannelEmulator
+
+        ce = MockChannelEmulator("ce-test", {})
+        await ce.connect()
+        ok = await ce.set_passthrough_mode(ce_port="B1.1", ce_input_port="A1")
+        assert ok is True
+        assert ce._passthrough_active is True
+        assert ce._passthrough_out_port == "B1.1"
+        assert ce._passthrough_in_port == "A1"
+
+        ok = await ce.clear_passthrough_mode()
+        assert ok is True
+        assert ce._passthrough_active is False
+
+    def test_mock_ce_declares_both_caps(self):
+        from app.hal.channel_emulator import MockChannelEmulator
+
+        ce = MockChannelEmulator("ce-test", {})
+        caps = ce.get_calibration_tone_capabilities()
+        assert CalibrationToneCapability.INTERNAL_CW_GENERATOR in caps
+        assert CalibrationToneCapability.PASSTHROUGH_ONLY in caps
 
 
 class TestChamberFlagDispatch:

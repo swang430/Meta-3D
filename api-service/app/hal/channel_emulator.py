@@ -54,6 +54,33 @@ class ChannelLoadMode(str, Enum):
     EXTERNAL_WAVEFORM = "external_waveform"
 
 
+class CalibrationToneCapability(str, Enum):
+    """CE 在 CE+SA 路损校准链路里能扮演什么角色。
+
+    决定服务层走 D 路径还是 B 路径:
+
+    - **INTERNAL_CW_GENERATOR (D 路径)**: CE 自身能在指定 OTA 输出口生成
+      已知频率 + 已知功率的 CW tone, 不需要任何上游信号源。
+      实现示例:
+        - PROPSIM F64 + Internal Interference Generator option
+          (`OUTPut:INTERFerence:ADD <out>, <id>, 2` type=2 = CW)
+      service 调 `set_calibration_tone(freq, power)` 即可。
+
+    - **PASSTHROUGH_ONLY (B 路径)**: CE 不会自己产 tone, 但可以把上游
+      BSE/SG 输入的信号原样透传到指定 OTA 输出口 (零增益 / 已知 fixed
+      attenuation). 此时校准链路是 SG.set_cw → CE 透传 → switch → PA →
+      probe → SGH → SA。需要 LabProfile 上额外绑一个 SG 或 BSE driver。
+      实现示例:
+        - 没买 PROPSIM Interference Generator license 的部署
+        - 第三方 CE (R&S, Spirent) 没有内置 CW gen 的型号
+      service 调 `set_passthrough_mode(...)` + 上游 `set_cw(...)`。
+
+    Mock CE 同时声明两个 (BOTH), 让单元测试可以无硬件覆盖两条路径。
+    """
+    INTERNAL_CW_GENERATOR = "internal_cw_generator"
+    PASSTHROUGH_ONLY = "passthrough_only"
+
+
 class ChannelEmulatorDriver(InstrumentDriver):
     """
     Abstract interface for Channel Emulator instruments (HAL Layer 2)
@@ -244,39 +271,86 @@ class ChannelEmulatorDriver(InstrumentDriver):
         """
         raise NotImplementedError
 
+    # ==================================================================
+    # 路损校准 tone 链路 (CE+SA 校准的 CE 端)
+    #
+    # 两条物理可行路径都用 HAL 抽象出来, service 层按 capability 自动选:
+    #   D 路径 = INTERNAL_CW_GENERATOR → set_calibration_tone(...)
+    #   B 路径 = PASSTHROUGH_ONLY      → set_passthrough_mode(...)
+    #
+    # 详见 CalibrationToneCapability docstring.
+    # ==================================================================
+
+    def get_calibration_tone_capabilities(self) -> List[CalibrationToneCapability]:
+        """声明该 CE 在 CE+SA 路损校准链路里支持哪些角色。
+
+        默认返回 [] —— 子类必须显式声明, 服务层会拒绝在没声明能力的 CE
+        上跑校准 (避免 silent 走错路径).
+
+        Mock CE 通常声明两个都支持 (BOTH), 真实驱动按硬件 / license 决定。
+        """
+        return []
+
     async def set_calibration_tone(
         self,
         frequency_hz: float,
         power_dbm: float,
         ce_port: Optional[str] = None,
     ) -> bool:
-        """Output a known CW tone for path-loss calibration (CE-as-source).
+        """[D 路径] CE 自己出已知 CW tone (需 INTERNAL_CW_GENERATOR 能力)。
 
-        路损校准走 CE+SA 路径时, CE 在选定的 OTA 输出口出一个已知频率 + 已知
-        功率的 CW tone. SA 在静区中心 SGH 端读到的功率 + 已知 cable_loss
-        反算 path_loss = CE_TX - SA_RX + G_sgh + G_probe - cable_sgh_to_sa.
-
-        典型实现 (取决于 CE 厂商):
-          - PROPSIM 系列: 内部 calibration tone generator, 厂商专用 SCPI 触发
-          - 其他: 把 CE 切到 passthrough 模式 + 接外部 SG (绑定在 LabProfile)
+        实现示例 — PROPSIM Internal Interference Generator (option):
+            OUTPut:INTERFerence:ADD <ce_port>, cal_tone, 2     # type=2=CW
+            OUTPut:INTERFerence:STRATegy:SET cal_tone, 1       # 恒定功率
+            OUTPut:INTERFerence:FREQuency:SET cal_tone, <MHz>
+            OUTPut:INTERFerence:POWer:SET cal_tone, <dBm>
+            OUTPut:INTERFerence:STatus cal_tone, 1             # enable
 
         Args:
             frequency_hz: tone 中心频率 (Hz)
-            power_dbm: tone 输出功率 (dBm), CE OTA 端口的标称值
-            ce_port: 可选, 指定从哪个 OTA 端口出 (如 "B1.1"); None = 主端口.
-                通常路损校准只需主端口, 配合 RF switch 路由到目标 probe.
+            power_dbm: tone 输出功率 (dBm), CE OTA 端口标称值
+            ce_port: 可选, 指定从哪个 OTA 端口出 (如 "B1.1"); None = 主端口
 
         Returns:
-            True if CE tone is on at the requested frequency/power (within
-            tolerance); 必须跟 stop_calibration_tone 配对调用避免长时间发射.
+            True if CE tone on at requested freq/power; 必须跟
+            stop_calibration_tone 配对避免长时间发射。
         """
         raise NotImplementedError
 
     async def stop_calibration_tone(self) -> bool:
-        """Stop the calibration tone (release CE output, return to idle).
+        """[D 路径] 停 CW tone, 回 idle. finally 块里调用。"""
+        raise NotImplementedError
 
-        finally 块里调用避免 CE 长时间发射 (热漂 + 影响相邻测试).
+    async def set_passthrough_mode(
+        self,
+        ce_port: Optional[str] = None,
+        ce_input_port: Optional[str] = None,
+    ) -> bool:
+        """[B 路径] 把 CE 切到透传模式 (需 PASSTHROUGH_ONLY 能力)。
+
+        透传模式下: 上游 SG/BSE 注入 CW → CE 不加 fading / 不加增益, 原样
+        从指定 OTA 输出口出来。配合 SG.set_cw + SG.start_tx, 实现 CE+SA
+        路损校准的 tone 源。
+
+        实现示例 — PROPSIM 透传 (无 fading 的 baseline emulation):
+            // 假设一个 zero-fading 的 1×1 CDL emulation 已 open, in_port → out_port
+            // 调用方负责确保 emulation 已 build/load (一次性, 不是每次校准都重做)
+            EMUlation:GAIN:CH <out_port>, 0          # 0 dB pass-through
+            // 或具体厂商相关的 "calibration mode"
+
+        Args:
+            ce_port: 可选, 走哪个 OTA 输出 (如 "B1.1"); None = 主端口
+            ce_input_port: 可选, 上游 SG 接到 CE 哪个 input (如 "A1");
+                None = 默认 input. 真实驱动需要 input port 知道做信号路由.
+
+        Returns:
+            True if CE 已切到透传 + 输出端就绪。必须跟
+            clear_passthrough_mode 配对调用。
         """
+        raise NotImplementedError
+
+    async def clear_passthrough_mode(self) -> bool:
+        """[B 路径] 退出透传模式, 恢复正常 fading 配置。finally 块里调用。"""
         raise NotImplementedError
 
 
@@ -307,6 +381,10 @@ class MockChannelEmulator(ChannelEmulatorDriver):
         self._cal_tone_freq_hz: float = 0.0
         self._cal_tone_power_dbm: float = 0.0
         self._cal_tone_port: str = "MAIN"
+        # Passthrough mode state (B path: SG/BSE upstream → CE passthrough → SA)
+        self._passthrough_active = False
+        self._passthrough_in_port: str = "A1"
+        self._passthrough_out_port: str = "MAIN"
 
     async def connect(self) -> bool:
         """Simulate connection to emulator"""
@@ -347,6 +425,16 @@ class MockChannelEmulator(ChannelEmulatorDriver):
     def get_supported_load_modes(self) -> List[ChannelLoadMode]:
         """Mock 支持所有加载模式，以便在无硬件时完整测试两条流水线"""
         return [ChannelLoadMode.EXTERNAL_WAVEFORM, ChannelLoadMode.NATIVE_MODEL]
+
+    def get_calibration_tone_capabilities(self) -> List[CalibrationToneCapability]:
+        """Mock 默认两条路径都支持, 让单元测试无硬件覆盖 D / B 两条 dispatch.
+
+        测试要单独验证某一条路径时, 子类化 Mock 并 override 这个方法。
+        """
+        return [
+            CalibrationToneCapability.INTERNAL_CW_GENERATOR,
+            CalibrationToneCapability.PASSTHROUGH_ONLY,
+        ]
 
     async def get_capabilities(self) -> list[InstrumentCapability]:
         """Return supported capabilities"""
@@ -582,4 +670,20 @@ class MockChannelEmulator(ChannelEmulatorDriver):
     async def stop_calibration_tone(self) -> bool:
         """Mock stop — clear state, return True."""
         self._cal_tone_active = False
+        return True
+
+    async def set_passthrough_mode(
+        self,
+        ce_port: Optional[str] = None,
+        ce_input_port: Optional[str] = None,
+    ) -> bool:
+        """Mock B path — record passthrough state, return True."""
+        self._passthrough_active = True
+        self._passthrough_out_port = ce_port or "MAIN"
+        self._passthrough_in_port = ce_input_port or "A1"
+        return True
+
+    async def clear_passthrough_mode(self) -> bool:
+        """Mock clear — reset state, return True."""
+        self._passthrough_active = False
         return True

@@ -595,15 +595,20 @@ class ProbePathLossCalibrationService:
         probe_gain_dbi: float,
         cable_sgh_to_sa_loss_db: float,
     ) -> PathLossMeasurement:
-        """CE-as-source + SA-as-receiver path-loss (主路径, 不需要 VNA).
+        """CE+SA 路损测量 — 自动按 CE driver capability 选 D / B 路径。
 
-        信号路径 (跟生产测试路径完全一致, 不动任何东西):
-            CE_OUT → switch → PA → probe → 自由空间 → SGH → SA_IN
-        CE 出已知 tone, SA 读到的功率反算端到端 loss. PA gain 自动包含,
-        switch 插损自动包含, probe-side cable 自动包含 — 这正是测量时
-        要补偿的整体量.
+        两条物理可行路径都支持 (HAL 抽象), 服务层透明选:
 
-        算式:
+        - **D 路径 (INTERNAL_CW_GENERATOR)**: CE 自己出 CW (PROPSIM Internal
+          Interference Generator option 等). 单仪器, 最干净。
+        - **B 路径 (PASSTHROUGH_ONLY)**: 上游 SG/BSE 出 CW + CE 透传。需要
+          LabProfile 上额外绑 SG 或 BSE driver, 也是 fallback 给没买
+          interference generator option 的 PROPSIM。
+
+        信号路径 (两条共同 — 跟生产测试链路完全一致, 不动任何东西):
+            [tone source] → CE_OUT → switch → PA → probe → 自由空间 → SGH → SA_IN
+
+        算式 (两条共用, 改变的只是 ce_tx_power 来源):
             path_loss_db = ce_tx_dbm - sa_rx_dbm + G_sgh + G_probe - cable_sgh_to_sa
 
         前置条件:
@@ -616,7 +621,8 @@ class ProbePathLossCalibrationService:
             probe_id, polarization: 当前测的探头 + 极化
             frequency_mhz: 测试频点
             ce_tx_power_dbm: CE 输出 tone 功率, 推荐 -20 dBm (远离 CE 饱和 +
-                高于 SA 底噪 ~80 dB 余量)
+                高于 SA 底噪 ~80 dB 余量). 在 B 路径里是上游 SG 设的功率
+                (CE 透传 0 dB), 在 D 路径里是 CE 内置 generator 设的功率。
             sgh_gain_dbi: SGH 标定增益 (LabProfile 或 chamber config)
             probe_gain_dbi: 探头标称增益 (datasheet)
             cable_sgh_to_sa_loss_db: SGH→SA 那一根 cable 的损耗
@@ -624,6 +630,8 @@ class ProbePathLossCalibrationService:
         Returns:
             PathLossMeasurement(probe_id, polarization, path_loss_db, uncertainty_db)
         """
+        # Lazy import — avoid circular and SQLite-test-killing pulls.
+        from app.hal.channel_emulator import CalibrationToneCapability
         from app.services.instrument_hal_service import get_hal_service
 
         hal = get_hal_service()
@@ -642,6 +650,16 @@ class ProbePathLossCalibrationService:
                 "use the legacy VNA path."
             )
 
+        # Capability-based dispatch: prefer D (single-instrument) when CE
+        # supports it, else fall through to B (needs upstream SG/BSE).
+        caps = ce.get_calibration_tone_capabilities()
+        if not caps:
+            raise RuntimeError(
+                f"CE driver {type(ce).__name__} declares no calibration-tone "
+                "capabilities. Override get_calibration_tone_capabilities() "
+                "to return INTERNAL_CW_GENERATOR and/or PASSTHROUGH_ONLY."
+            )
+
         # NOTE: rf_switch routing per (probe_id, polarization) — topology-aware
         # auto-routing is follow-up work. For this commit the switch is assumed
         # pre-routed by the caller (or already in the right state from prior
@@ -653,40 +671,38 @@ class ProbePathLossCalibrationService:
             probe_id, polarization.value,
         )
 
-        center_hz = frequency_mhz * 1e6
-        rx_powers_dbm: list[float] = []
-        try:
-            # 1. CE outputs known CW tone
-            if not await ce.set_calibration_tone(center_hz, ce_tx_power_dbm):
-                raise RuntimeError(
-                    f"CE set_calibration_tone failed (probe={probe_id} pol={polarization.value})"
-                )
-
-            # 2. SA setup + read channel power (a few times, for noise averaging)
-            # span 1 MHz with 10 kHz RBW gives clean tone discrimination
-            if not await sa.setup_spectrum(center_hz, 1e6, 10e3):
-                raise RuntimeError(
-                    f"SA setup_spectrum failed (probe={probe_id} pol={polarization.value})"
-                )
-            for _ in range(5):
-                rx_power = await sa.measure_channel_power(1e6)
-                if rx_power is not None:
-                    rx_powers_dbm.append(rx_power)
-
-        finally:
-            # 3. Always stop the tone — protects CE from prolonged transmission
-            try:
-                await ce.stop_calibration_tone()
-            except Exception as e:
-                logger.warning("[PathLoss CE+SA] stop_calibration_tone failed (non-fatal): %s", e)
-
-        if not rx_powers_dbm:
-            raise RuntimeError(
-                f"SA returned no readings (probe={probe_id} pol={polarization.value})"
+        if CalibrationToneCapability.INTERNAL_CW_GENERATOR in caps:
+            sa_rx_mean_dbm, sa_rx_std_db = await self._measure_via_ce_internal_tone(
+                ce, sa, probe_id, polarization, frequency_mhz, ce_tx_power_dbm,
             )
-
-        sa_rx_mean_dbm = statistics.mean(rx_powers_dbm)
-        sa_rx_std_db = statistics.stdev(rx_powers_dbm) if len(rx_powers_dbm) > 1 else 0.0
+            tone_source_label = "CE-internal"
+        elif CalibrationToneCapability.PASSTHROUGH_ONLY in caps:
+            # Prefer BSE over a standalone SG: every chamber has a BSE
+            # (it's the throughput-test master), most chambers don't have
+            # a separate SG. Using BSE also keeps the signal path 100%
+            # identical between calibration (BSE in CW testmode) and
+            # production (BSE in LTE/5G mode) — that's the whole point of
+            # B path vs VNA. SG is only used as fallback for benches that
+            # actually have one but no BSE driver bound (rare).
+            source = hal.drivers.get("baseStation") or hal.drivers.get("signalGenerator")
+            if source is None:
+                raise RuntimeError(
+                    f"CE {type(ce).__name__} only supports PASSTHROUGH_ONLY for "
+                    "calibration tone, but no upstream baseStation / "
+                    "signalGenerator driver is bound on this LabProfile. Bind "
+                    "the BSE (preferred — keeps cal/test path identical) or "
+                    "an SG, both must implement set_cw / start_tx / stop_tx, "
+                    "or use a CE with INTERNAL_CW_GENERATOR capability."
+                )
+            sa_rx_mean_dbm, sa_rx_std_db = await self._measure_via_ce_passthrough(
+                ce, sa, source, probe_id, polarization, frequency_mhz, ce_tx_power_dbm,
+            )
+            tone_source_label = f"passthrough({type(source).__name__})"
+        else:
+            raise RuntimeError(
+                f"CE driver {type(ce).__name__} declared capabilities {caps} "
+                "but none match INTERNAL_CW_GENERATOR / PASSTHROUGH_ONLY."
+            )
 
         # path_loss = CE_TX - SA_RX + G_sgh + G_probe - cable_sgh_to_sa
         # (signs: TX higher = more loss; subtract antenna gains both sides;
@@ -700,8 +716,9 @@ class ProbePathLossCalibrationService:
         uncertainty_db = sa_rx_std_db + 0.3
 
         logger.info(
-            "[PathLoss CE+SA] probe=%d pol=%s freq=%.1fMHz CE_TX=%.1f SA_RX=%.2f±%.2f → PL=%.2f dB",
-            probe_id, polarization.value, frequency_mhz,
+            "[PathLoss CE+SA src=%s] probe=%d pol=%s freq=%.1fMHz "
+            "CE_TX=%.1f SA_RX=%.2f±%.2f → PL=%.2f dB",
+            tone_source_label, probe_id, polarization.value, frequency_mhz,
             ce_tx_power_dbm, sa_rx_mean_dbm, sa_rx_std_db, path_loss_db,
         )
 
@@ -710,6 +727,111 @@ class ProbePathLossCalibrationService:
             polarization=polarization.value,
             path_loss_db=float(abs(path_loss_db)),
             uncertainty_db=float(uncertainty_db),
+        )
+
+    async def _measure_via_ce_internal_tone(
+        self,
+        ce: Any,
+        sa: Any,
+        probe_id: int,
+        polarization: PolarizationType,
+        frequency_mhz: float,
+        ce_tx_power_dbm: float,
+    ) -> Tuple[float, float]:
+        """[D 路径] CE 自己出 CW, SA 读 — returns (mean_dbm, std_db)."""
+        center_hz = frequency_mhz * 1e6
+        rx_powers_dbm: list[float] = []
+        try:
+            if not await ce.set_calibration_tone(center_hz, ce_tx_power_dbm):
+                raise RuntimeError(
+                    f"CE set_calibration_tone failed (probe={probe_id} pol={polarization.value})"
+                )
+            if not await sa.setup_spectrum(center_hz, 1e6, 10e3):
+                raise RuntimeError(
+                    f"SA setup_spectrum failed (probe={probe_id} pol={polarization.value})"
+                )
+            for _ in range(5):
+                rx = await sa.measure_channel_power(1e6)
+                if rx is not None:
+                    rx_powers_dbm.append(rx)
+        finally:
+            try:
+                await ce.stop_calibration_tone()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[PathLoss D] stop_calibration_tone failed (non-fatal): %s", e)
+
+        if not rx_powers_dbm:
+            raise RuntimeError(
+                f"SA returned no readings (probe={probe_id} pol={polarization.value})"
+            )
+        return (
+            statistics.mean(rx_powers_dbm),
+            statistics.stdev(rx_powers_dbm) if len(rx_powers_dbm) > 1 else 0.0,
+        )
+
+    async def _measure_via_ce_passthrough(
+        self,
+        ce: Any,
+        sa: Any,
+        source: Any,
+        probe_id: int,
+        polarization: PolarizationType,
+        frequency_mhz: float,
+        ce_tx_power_dbm: float,
+    ) -> Tuple[float, float]:
+        """[B 路径] 上游 SG/BSE 出 CW → CE 透传 → SA. returns (mean_dbm, std_db).
+
+        约定: CE 透传按 0 dB 增益, 所以 SG 输出功率 = CE 输出功率 = ce_tx_power_dbm.
+        如果未来要用非零透传 attenuation, 由 driver 内部补偿后再 expose 给上层。
+        """
+        center_hz = frequency_mhz * 1e6
+        rx_powers_dbm: list[float] = []
+        passthrough_set = False
+        tx_started = False
+        try:
+            if not await ce.set_passthrough_mode():
+                raise RuntimeError(
+                    f"CE set_passthrough_mode failed (probe={probe_id} pol={polarization.value})"
+                )
+            passthrough_set = True
+
+            if not await source.set_cw(center_hz, ce_tx_power_dbm):
+                raise RuntimeError(
+                    f"{type(source).__name__}.set_cw failed at {frequency_mhz} MHz / {ce_tx_power_dbm} dBm"
+                )
+            if not await source.start_tx():
+                raise RuntimeError(
+                    f"{type(source).__name__}.start_tx failed (probe={probe_id} pol={polarization.value})"
+                )
+            tx_started = True
+
+            if not await sa.setup_spectrum(center_hz, 1e6, 10e3):
+                raise RuntimeError(
+                    f"SA setup_spectrum failed (probe={probe_id} pol={polarization.value})"
+                )
+            for _ in range(5):
+                rx = await sa.measure_channel_power(1e6)
+                if rx is not None:
+                    rx_powers_dbm.append(rx)
+        finally:
+            if tx_started:
+                try:
+                    await source.stop_tx()
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("[PathLoss B] source.stop_tx failed (non-fatal): %s", e)
+            if passthrough_set:
+                try:
+                    await ce.clear_passthrough_mode()
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("[PathLoss B] clear_passthrough_mode failed (non-fatal): %s", e)
+
+        if not rx_powers_dbm:
+            raise RuntimeError(
+                f"SA returned no readings (probe={probe_id} pol={polarization.value})"
+            )
+        return (
+            statistics.mean(rx_powers_dbm),
+            statistics.stdev(rx_powers_dbm) if len(rx_powers_dbm) > 1 else 0.0,
         )
 
     async def _real_path_loss_measurement(
