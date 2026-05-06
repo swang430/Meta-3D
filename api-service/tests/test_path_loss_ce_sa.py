@@ -69,12 +69,15 @@ def chamber_with_cable_loss(db):
     return c
 
 
-def _patched_hal(monkeypatch, ce=None, sa=None, sg=None, bse=None):
+def _patched_hal(monkeypatch, ce=None, sa=None, sg=None, bse=None, rf_switch=None):
     """Replace path_loss_service's HAL lookup with stubbed drivers.
 
     sg / bse are the optional upstream sources for the B (passthrough) path —
     omit them to test the failure mode where a PASSTHROUGH_ONLY CE has nothing
     to drive it.
+
+    rf_switch optional: omit to simulate fixed-cabling sites (CAICT-Lab-1
+    style) where no relay matrix exists — service must skip routing silently.
     """
     fake_hal = MagicMock()
     fake_hal.drivers = {}
@@ -86,9 +89,17 @@ def _patched_hal(monkeypatch, ce=None, sa=None, sg=None, bse=None):
         fake_hal.drivers["signalGenerator"] = sg
     if bse is not None:
         fake_hal.drivers["baseStation"] = bse
+    if rf_switch is not None:
+        fake_hal.drivers["rfSwitch"] = rf_switch
     monkeypatch.setattr(
         "app.services.instrument_hal_service.get_hal_service", lambda: fake_hal
     )
+
+
+def _make_rf_switch(*, set_path_ok=True):
+    sw = MagicMock()
+    sw.set_mapped_path = AsyncMock(return_value=set_path_ok)
+    return sw
 
 
 def _make_ce(caps, *, internal_ok=True, passthrough_ok=True):
@@ -427,6 +438,161 @@ class TestPassthroughBPath:
         ce.set_calibration_tone.assert_awaited_once()
         ce.set_passthrough_mode.assert_not_awaited()
         sg.set_cw.assert_not_awaited()
+
+
+class TestSwitchAutoRouting:
+    """C1: when caller passes route_target (typically RFChainSpec.chain_id),
+    service must drive rfSwitch.set_mapped_path. Three regimes:
+      - rfSwitch driver bound       → set_mapped_path called with chain_id
+      - no rfSwitch driver bound    → fixed cabling, skip silently (CAICT-Lab-1)
+      - set_mapped_path returns False → loud RuntimeError, don't measure on
+                                        the wrong probe
+    """
+
+    @pytest.mark.asyncio
+    async def test_route_target_drives_switch_when_driver_bound(
+        self, db, monkeypatch
+    ):
+        """rfSwitch bound + route_target → set_mapped_path called once with the
+        chain_id BEFORE the CE tone goes on (so the right probe is energized).
+        """
+        ce = _make_ce([CalibrationToneCapability.INTERNAL_CW_GENERATOR])
+        sa = MagicMock()
+        sa.setup_spectrum = AsyncMock(return_value=True)
+        sa.measure_channel_power = AsyncMock(return_value=-85.0)
+        sw = _make_rf_switch()
+        _patched_hal(monkeypatch, ce=ce, sa=sa, rf_switch=sw)
+
+        svc = ProbePathLossCalibrationService(db, use_mock=False)
+        await svc._real_path_loss_measurement_via_ce_sa(
+            probe_id=5,
+            polarization=PolarizationType.V,
+            frequency_mhz=3500.0,
+            ce_tx_power_dbm=-20.0,
+            sgh_gain_dbi=10.0,
+            probe_gain_dbi=8.0,
+            cable_sgh_to_sa_loss_db=1.5,
+            ce_port="B1.1",
+            route_target="conn-42",
+        )
+        sw.set_mapped_path.assert_awaited_once_with("conn-42")
+        # ce_port must thread through to set_calibration_tone (PROPSIM SCPI
+        # OUTPut:INTERFerence:ADD <ce_port>, ... requires it).
+        ce.set_calibration_tone.assert_awaited_once()
+        _, kwargs = ce.set_calibration_tone.call_args
+        assert kwargs.get("ce_port") == "B1.1"
+
+    @pytest.mark.asyncio
+    async def test_no_switch_driver_means_fixed_cabling_skip_silently(
+        self, db, monkeypatch
+    ):
+        """Fixed-cabling site (CAICT-Lab-1): no rfSwitch driver bound. Service
+        must NOT raise — every CE port is permanently wired to one probe, so
+        ce_port selection alone routes the signal."""
+        ce = _make_ce([CalibrationToneCapability.INTERNAL_CW_GENERATOR])
+        sa = MagicMock()
+        sa.setup_spectrum = AsyncMock(return_value=True)
+        sa.measure_channel_power = AsyncMock(return_value=-85.0)
+        _patched_hal(monkeypatch, ce=ce, sa=sa)  # ← no rf_switch
+
+        svc = ProbePathLossCalibrationService(db, use_mock=False)
+        m = await svc._real_path_loss_measurement_via_ce_sa(
+            probe_id=5,
+            polarization=PolarizationType.V,
+            frequency_mhz=3500.0,
+            ce_tx_power_dbm=-20.0,
+            sgh_gain_dbi=10.0,
+            probe_gain_dbi=8.0,
+            cable_sgh_to_sa_loss_db=1.5,
+            ce_port="B1.1",
+            route_target="conn-42",  # given but no driver → no-op
+        )
+        assert m.path_loss_db == pytest.approx(81.5, abs=0.01)
+        # Measurement still went through; ce_port still threaded.
+        ce.set_calibration_tone.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_switch_set_mapped_path_failure_raises(
+        self, db, monkeypatch
+    ):
+        """rfSwitch can't reach the requested chain → must abort BEFORE turning
+        on CE tone (otherwise we'd measure the wrong probe and silently corrupt
+        the calibration cert)."""
+        ce = _make_ce([CalibrationToneCapability.INTERNAL_CW_GENERATOR])
+        sa = MagicMock()
+        sa.setup_spectrum = AsyncMock(return_value=True)
+        sa.measure_channel_power = AsyncMock(return_value=-85.0)
+        sw = _make_rf_switch(set_path_ok=False)  # ← can't route
+        _patched_hal(monkeypatch, ce=ce, sa=sa, rf_switch=sw)
+
+        svc = ProbePathLossCalibrationService(db, use_mock=False)
+        with pytest.raises(RuntimeError, match="set_mapped_path.*returned False"):
+            await svc._real_path_loss_measurement_via_ce_sa(
+                probe_id=5,
+                polarization=PolarizationType.V,
+                frequency_mhz=3500.0,
+                ce_tx_power_dbm=-20.0,
+                sgh_gain_dbi=10.0,
+                probe_gain_dbi=8.0,
+                cable_sgh_to_sa_loss_db=1.5,
+                ce_port="B1.1",
+                route_target="conn-missing",
+            )
+        # Critical: CE tone must NOT have been turned on (would emit on wrong probe).
+        ce.set_calibration_tone.assert_not_awaited()
+        ce.set_passthrough_mode.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_route_target_warns_and_proceeds(self, db, monkeypatch):
+        """Legacy chamber-keyed entry point doesn't supply route_target. Service
+        must proceed (operator pre-routed manually) but log a warning."""
+        ce = _make_ce([CalibrationToneCapability.INTERNAL_CW_GENERATOR])
+        sa = MagicMock()
+        sa.setup_spectrum = AsyncMock(return_value=True)
+        sa.measure_channel_power = AsyncMock(return_value=-85.0)
+        sw = _make_rf_switch()  # bound, but should NOT be called
+        _patched_hal(monkeypatch, ce=ce, sa=sa, rf_switch=sw)
+
+        svc = ProbePathLossCalibrationService(db, use_mock=False)
+        await svc._real_path_loss_measurement_via_ce_sa(
+            probe_id=5,
+            polarization=PolarizationType.V,
+            frequency_mhz=3500.0,
+            ce_tx_power_dbm=-20.0,
+            sgh_gain_dbi=10.0,
+            probe_gain_dbi=8.0,
+            cable_sgh_to_sa_loss_db=1.5,
+            # route_target intentionally omitted
+        )
+        # Without route_target we don't know what chain to route to —
+        # don't touch the switch.
+        sw.set_mapped_path.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_passthrough_b_path_threads_ce_port_too(self, db, monkeypatch):
+        """B path: ce_port must thread to set_passthrough_mode so the right
+        OTA output port is the passthrough sink."""
+        ce = _make_ce([CalibrationToneCapability.PASSTHROUGH_ONLY])
+        bse = _make_sg()
+        sa = MagicMock()
+        sa.setup_spectrum = AsyncMock(return_value=True)
+        sa.measure_channel_power = AsyncMock(return_value=-85.0)
+        _patched_hal(monkeypatch, ce=ce, sa=sa, bse=bse)
+
+        svc = ProbePathLossCalibrationService(db, use_mock=False)
+        await svc._real_path_loss_measurement_via_ce_sa(
+            probe_id=5,
+            polarization=PolarizationType.V,
+            frequency_mhz=3500.0,
+            ce_tx_power_dbm=-20.0,
+            sgh_gain_dbi=10.0,
+            probe_gain_dbi=8.0,
+            cable_sgh_to_sa_loss_db=1.5,
+            ce_port="B2.3",
+        )
+        ce.set_passthrough_mode.assert_awaited_once()
+        _, kwargs = ce.set_passthrough_mode.call_args
+        assert kwargs.get("ce_port") == "B2.3"
 
 
 class TestCapabilityGating:

@@ -441,11 +441,31 @@ class ProbePathLossCalibrationService:
                         chain.probe_id, pol_enum, frequency_mhz,
                         chamber.chamber_radius_m, sgh_gain_dbi, chamber.probe_gain_dbi,
                     )
+                    measurement_path = "mock"
+                elif chamber.cable_sgh_to_sa_loss_db is not None:
+                    # CE+SA primary path with topology-driven auto-routing.
+                    # ce_port + chain_id flow from RFChainSpec, so the right
+                    # probe lights up and (if rfSwitch bound) the matrix is
+                    # driven automatically. Measurement returns end-to-end
+                    # path-loss including the chain's own cable.
+                    measurement = await self._real_path_loss_measurement_via_ce_sa(
+                        probe_id=chain.probe_id,
+                        polarization=pol_enum,
+                        frequency_mhz=frequency_mhz,
+                        ce_tx_power_dbm=-20.0,
+                        sgh_gain_dbi=sgh_gain_dbi,
+                        probe_gain_dbi=chamber.probe_gain_dbi,
+                        cable_sgh_to_sa_loss_db=chamber.cable_sgh_to_sa_loss_db,
+                        ce_port=chain.ce_port,
+                        route_target=chain.chain_id,
+                    )
+                    measurement_path = "ce_sa"
                 else:
                     measurement = await self._real_path_loss_measurement(
                         chain.probe_id, pol_enum, frequency_mhz, vna_id,
                         sgh_gain_dbi, chamber.probe_gain_dbi, chain.cable_loss_db,
                     )
+                    measurement_path = "vna"
             except Exception as e:
                 logger.error(
                     "Path-loss measurement failed for chain %s probe %d %s: %s",
@@ -471,13 +491,18 @@ class ProbePathLossCalibrationService:
             if valid_losses:
                 entry["path_loss_db"] = float(statistics.mean(valid_losses))
 
-            # Per-chain breakdown — what the per-azimuth consumer reads.
-            # space_loss_db is what `_real_path_loss_measurement` already
-            # subtracts cable_loss from, so we add it back here for clarity:
-            # the measurement returns spatial PL with the connection cable
-            # already removed, so total_insertion = space + cable.
-            space_loss_db = float(measurement.path_loss_db)
-            total_insertion_loss_db = space_loss_db + float(chain.cable_loss_db)
+            # Per-chain breakdown — measurement semantics differ by path:
+            #   - VNA / mock: returns spatial loss only (cable already subtracted),
+            #     so total_insertion = space + cable.
+            #   - CE+SA: returns end-to-end including the chain cable, so the
+            #     measurement IS total_insertion; space_loss = total - cable.
+            # Both paths produce the same fields for downstream consumers.
+            if measurement_path == "ce_sa":
+                total_insertion_loss_db = float(measurement.path_loss_db)
+                space_loss_db = total_insertion_loss_db - float(chain.cable_loss_db)
+            else:
+                space_loss_db = float(measurement.path_loss_db)
+                total_insertion_loss_db = space_loss_db + float(chain.cable_loss_db)
             path_loss_db_by_rf_chain[chain.chain_id] = {
                 "probe_id": chain.probe_id,
                 "polarization": chain.polarization,
@@ -486,6 +511,7 @@ class ProbePathLossCalibrationService:
                 "cable_loss_db": float(chain.cable_loss_db),
                 "total_insertion_loss_db": total_insertion_loss_db,
                 "uncertainty_db": float(measurement.uncertainty_db),
+                "measurement_path": measurement_path,
             }
 
             if measurement.uncertainty_db > PATH_LOSS_UNCERTAINTY_THRESHOLD_DB:
@@ -594,6 +620,8 @@ class ProbePathLossCalibrationService:
         sgh_gain_dbi: float,
         probe_gain_dbi: float,
         cable_sgh_to_sa_loss_db: float,
+        ce_port: Optional[str] = None,
+        route_target: Optional[str] = None,
     ) -> PathLossMeasurement:
         """CE+SA 路损测量 — 自动按 CE driver capability 选 D / B 路径。
 
@@ -660,20 +688,34 @@ class ProbePathLossCalibrationService:
                 "to return INTERNAL_CW_GENERATOR and/or PASSTHROUGH_ONLY."
             )
 
-        # NOTE: rf_switch routing per (probe_id, polarization) — topology-aware
-        # auto-routing is follow-up work. For this commit the switch is assumed
-        # pre-routed by the caller (or already in the right state from prior
-        # measurement step). Logging the assumption so operators don't miss it.
-        logger.info(
-            "[PathLoss CE+SA] probe=%d pol=%s — assuming RF switch already "
-            "routed to this (probe, pol). Topology-derived auto-routing is a "
-            "follow-up.",
-            probe_id, polarization.value,
-        )
+        # Switch routing — drive rfSwitch to (probe, pol) when caller gave us
+        # a route_target (typically the SwitchTopology chain_id). Three cases:
+        #   1. route_target + rfSwitch driver bound → set_mapped_path(chain_id),
+        #      driver looks up port_maps to translate to (switch_id, output_port).
+        #      Failure → loud RuntimeError, can't measure on the wrong probe.
+        #   2. route_target without rfSwitch driver → fixed-cabling site
+        #      (CAICT-Lab-1 style: every CE port is permanently wired to one
+        #      probe, no relays). Skip silently with debug log; CE port
+        #      selection alone determines which probe is energized.
+        #   3. No route_target → legacy chamber-keyed entry point with no
+        #      topology info. Operator pre-routed manually; warn so it doesn't
+        #      get missed in production.
+        if route_target is not None:
+            await self._route_switch_to_chain(
+                hal, route_target, probe_id, polarization,
+            )
+        else:
+            logger.warning(
+                "[PathLoss CE+SA] probe=%d pol=%s — no route_target supplied, "
+                "assuming RF switch already routed manually. Pass a chain_id "
+                "via lab_profile entrypoint for auto-routing.",
+                probe_id, polarization.value,
+            )
 
         if CalibrationToneCapability.INTERNAL_CW_GENERATOR in caps:
             sa_rx_mean_dbm, sa_rx_std_db = await self._measure_via_ce_internal_tone(
                 ce, sa, probe_id, polarization, frequency_mhz, ce_tx_power_dbm,
+                ce_port=ce_port,
             )
             tone_source_label = "CE-internal"
         elif CalibrationToneCapability.PASSTHROUGH_ONLY in caps:
@@ -696,6 +738,7 @@ class ProbePathLossCalibrationService:
                 )
             sa_rx_mean_dbm, sa_rx_std_db = await self._measure_via_ce_passthrough(
                 ce, sa, source, probe_id, polarization, frequency_mhz, ce_tx_power_dbm,
+                ce_port=ce_port,
             )
             tone_source_label = f"passthrough({type(source).__name__})"
         else:
@@ -729,6 +772,42 @@ class ProbePathLossCalibrationService:
             uncertainty_db=float(uncertainty_db),
         )
 
+    async def _route_switch_to_chain(
+        self,
+        hal: Any,
+        route_target: str,
+        probe_id: int,
+        polarization: PolarizationType,
+    ) -> None:
+        """Drive rfSwitch driver to the given chain_id, if a driver is bound.
+
+        Fixed-cabling chambers (CAICT-Lab-1 style) don't bind an rfSwitch
+        driver — every CE output is permanently wired, so this becomes a
+        debug log + no-op. Sites with relay matrices bind a real driver
+        whose port_maps was seeded with chain_id keys at commissioning.
+        """
+        rf_switch = hal.drivers.get("rfSwitch")
+        if rf_switch is None:
+            logger.debug(
+                "[PathLoss CE+SA] route_target=%s but no rfSwitch driver bound "
+                "— assuming fixed cabling (probe=%d pol=%s).",
+                route_target, probe_id, polarization.value,
+            )
+            return
+
+        ok = await rf_switch.set_mapped_path(route_target)
+        if not ok:
+            raise RuntimeError(
+                f"rfSwitch.set_mapped_path({route_target!r}) returned False "
+                f"(probe={probe_id} pol={polarization.value}). Check the "
+                f"driver's port_maps config — chain_id {route_target!r} must "
+                "be keyed in port_maps with switch_id + output_port."
+            )
+        logger.info(
+            "[PathLoss CE+SA] rfSwitch routed to chain_id=%s (probe=%d pol=%s)",
+            route_target, probe_id, polarization.value,
+        )
+
     async def _measure_via_ce_internal_tone(
         self,
         ce: Any,
@@ -737,12 +816,17 @@ class ProbePathLossCalibrationService:
         polarization: PolarizationType,
         frequency_mhz: float,
         ce_tx_power_dbm: float,
+        ce_port: Optional[str] = None,
     ) -> Tuple[float, float]:
-        """[D 路径] CE 自己出 CW, SA 读 — returns (mean_dbm, std_db)."""
+        """[D 路径] CE 自己出 CW, SA 读 — returns (mean_dbm, std_db).
+
+        ce_port: 指定 CE 输出口 (e.g. "B1.1") — PROPSIM 的
+        OUTPut:INTERFerence:ADD <ce_port>, ... 必填. None → driver 默认主端口.
+        """
         center_hz = frequency_mhz * 1e6
         rx_powers_dbm: list[float] = []
         try:
-            if not await ce.set_calibration_tone(center_hz, ce_tx_power_dbm):
+            if not await ce.set_calibration_tone(center_hz, ce_tx_power_dbm, ce_port=ce_port):
                 raise RuntimeError(
                     f"CE set_calibration_tone failed (probe={probe_id} pol={polarization.value})"
                 )
@@ -778,18 +862,21 @@ class ProbePathLossCalibrationService:
         polarization: PolarizationType,
         frequency_mhz: float,
         ce_tx_power_dbm: float,
+        ce_port: Optional[str] = None,
     ) -> Tuple[float, float]:
         """[B 路径] 上游 SG/BSE 出 CW → CE 透传 → SA. returns (mean_dbm, std_db).
 
         约定: CE 透传按 0 dB 增益, 所以 SG 输出功率 = CE 输出功率 = ce_tx_power_dbm.
-        如果未来要用非零透传 attenuation, 由 driver 内部补偿后再 expose 给上层。
+        如果未来要用非零透传 attenuation, 由 driver 内部补偿后再 expose 给上层.
+
+        ce_port: 指定 CE 输出口 (e.g. "B1.1") — 透传到这个端口的探头. None → 默认.
         """
         center_hz = frequency_mhz * 1e6
         rx_powers_dbm: list[float] = []
         passthrough_set = False
         tx_started = False
         try:
-            if not await ce.set_passthrough_mode():
+            if not await ce.set_passthrough_mode(ce_port=ce_port):
                 raise RuntimeError(
                     f"CE set_passthrough_mode failed (probe={probe_id} pol={polarization.value})"
                 )
