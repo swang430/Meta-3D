@@ -256,7 +256,24 @@ class ProbePathLossCalibrationService:
                             chamber.chamber_radius_m, sgh_gain_dbi,
                             chamber.probe_gain_dbi
                         )
+                    elif chamber.cable_sgh_to_sa_loss_db is not None:
+                        # CE+SA primary path (no VNA, no relay swaps).
+                        # cable_loss_db comes from chamber, ce_tx_power_dbm uses
+                        # a sensible default (-20 dBm) which sits comfortably
+                        # above SA noise floor and below CE OTA-port saturation.
+                        measurement = await self._real_path_loss_measurement_via_ce_sa(
+                            probe_id=probe_id,
+                            polarization=pol,
+                            frequency_mhz=frequency_mhz,
+                            ce_tx_power_dbm=-20.0,
+                            sgh_gain_dbi=sgh_gain_dbi,
+                            probe_gain_dbi=chamber.probe_gain_dbi,
+                            cable_sgh_to_sa_loss_db=chamber.cable_sgh_to_sa_loss_db,
+                        )
                     else:
+                        # Legacy VNA + manual cable_loss path. Kept for chambers
+                        # without CE+SA wiring; deprecated, will be removed once
+                        # all production chambers populate cable_sgh_to_sa_loss_db.
                         measurement = await self._real_path_loss_measurement(
                             probe_id, pol, frequency_mhz, vna_id,
                             sgh_gain_dbi, chamber.probe_gain_dbi, cable_loss_db
@@ -568,6 +585,133 @@ class ProbePathLossCalibrationService:
             uncertainty_db=float(uncertainty)
         )
 
+    async def _real_path_loss_measurement_via_ce_sa(
+        self,
+        probe_id: int,
+        polarization: PolarizationType,
+        frequency_mhz: float,
+        ce_tx_power_dbm: float,
+        sgh_gain_dbi: float,
+        probe_gain_dbi: float,
+        cable_sgh_to_sa_loss_db: float,
+    ) -> PathLossMeasurement:
+        """CE-as-source + SA-as-receiver path-loss (主路径, 不需要 VNA).
+
+        信号路径 (跟生产测试路径完全一致, 不动任何东西):
+            CE_OUT → switch → PA → probe → 自由空间 → SGH → SA_IN
+        CE 出已知 tone, SA 读到的功率反算端到端 loss. PA gain 自动包含,
+        switch 插损自动包含, probe-side cable 自动包含 — 这正是测量时
+        要补偿的整体量.
+
+        算式:
+            path_loss_db = ce_tx_dbm - sa_rx_dbm + G_sgh + G_probe - cable_sgh_to_sa
+
+        前置条件:
+          - chamber.cable_sgh_to_sa_loss_db 已 commissioning 标定 (一次性)
+          - SGH 永久挂在 SA 一个输入端口 (零接触)
+          - rf_switch 已路由到 (probe_id, polarization) — 当前需要外部编排,
+            topology-derived 自动路由是 follow-up
+
+        Args:
+            probe_id, polarization: 当前测的探头 + 极化
+            frequency_mhz: 测试频点
+            ce_tx_power_dbm: CE 输出 tone 功率, 推荐 -20 dBm (远离 CE 饱和 +
+                高于 SA 底噪 ~80 dB 余量)
+            sgh_gain_dbi: SGH 标定增益 (LabProfile 或 chamber config)
+            probe_gain_dbi: 探头标称增益 (datasheet)
+            cable_sgh_to_sa_loss_db: SGH→SA 那一根 cable 的损耗
+
+        Returns:
+            PathLossMeasurement(probe_id, polarization, path_loss_db, uncertainty_db)
+        """
+        from app.services.instrument_hal_service import get_hal_service
+
+        hal = get_hal_service()
+        ce = hal.drivers.get("channelEmulator")
+        sa = hal.drivers.get("signalAnalyzer")
+        if ce is None or sa is None:
+            missing = []
+            if ce is None:
+                missing.append("channelEmulator")
+            if sa is None:
+                missing.append("signalAnalyzer")
+            raise RuntimeError(
+                f"CE+SA path-loss requires HAL drivers: {missing}. "
+                "Ensure both are bound on the active LabProfile, or fall back "
+                "to use_mock=True / set chamber.cable_sgh_to_sa_loss_db=None to "
+                "use the legacy VNA path."
+            )
+
+        # NOTE: rf_switch routing per (probe_id, polarization) — topology-aware
+        # auto-routing is follow-up work. For this commit the switch is assumed
+        # pre-routed by the caller (or already in the right state from prior
+        # measurement step). Logging the assumption so operators don't miss it.
+        logger.info(
+            "[PathLoss CE+SA] probe=%d pol=%s — assuming RF switch already "
+            "routed to this (probe, pol). Topology-derived auto-routing is a "
+            "follow-up.",
+            probe_id, polarization.value,
+        )
+
+        center_hz = frequency_mhz * 1e6
+        rx_powers_dbm: list[float] = []
+        try:
+            # 1. CE outputs known CW tone
+            if not await ce.set_calibration_tone(center_hz, ce_tx_power_dbm):
+                raise RuntimeError(
+                    f"CE set_calibration_tone failed (probe={probe_id} pol={polarization.value})"
+                )
+
+            # 2. SA setup + read channel power (a few times, for noise averaging)
+            # span 1 MHz with 10 kHz RBW gives clean tone discrimination
+            if not await sa.setup_spectrum(center_hz, 1e6, 10e3):
+                raise RuntimeError(
+                    f"SA setup_spectrum failed (probe={probe_id} pol={polarization.value})"
+                )
+            for _ in range(5):
+                rx_power = await sa.measure_channel_power(1e6)
+                if rx_power is not None:
+                    rx_powers_dbm.append(rx_power)
+
+        finally:
+            # 3. Always stop the tone — protects CE from prolonged transmission
+            try:
+                await ce.stop_calibration_tone()
+            except Exception as e:
+                logger.warning("[PathLoss CE+SA] stop_calibration_tone failed (non-fatal): %s", e)
+
+        if not rx_powers_dbm:
+            raise RuntimeError(
+                f"SA returned no readings (probe={probe_id} pol={polarization.value})"
+            )
+
+        sa_rx_mean_dbm = statistics.mean(rx_powers_dbm)
+        sa_rx_std_db = statistics.stdev(rx_powers_dbm) if len(rx_powers_dbm) > 1 else 0.0
+
+        # path_loss = CE_TX - SA_RX + G_sgh + G_probe - cable_sgh_to_sa
+        # (signs: TX higher = more loss; subtract antenna gains both sides;
+        #  subtract the SGH→SA cable that's NOT in the production signal path)
+        path_loss_db = (
+            ce_tx_power_dbm - sa_rx_mean_dbm
+            + sgh_gain_dbi + probe_gain_dbi
+            - cable_sgh_to_sa_loss_db
+        )
+        # Uncertainty: SA reading noise + 0.3 dB SGH gain calibration ref unc.
+        uncertainty_db = sa_rx_std_db + 0.3
+
+        logger.info(
+            "[PathLoss CE+SA] probe=%d pol=%s freq=%.1fMHz CE_TX=%.1f SA_RX=%.2f±%.2f → PL=%.2f dB",
+            probe_id, polarization.value, frequency_mhz,
+            ce_tx_power_dbm, sa_rx_mean_dbm, sa_rx_std_db, path_loss_db,
+        )
+
+        return PathLossMeasurement(
+            probe_id=probe_id,
+            polarization=polarization.value,
+            path_loss_db=float(abs(path_loss_db)),
+            uncertainty_db=float(uncertainty_db),
+        )
+
     async def _real_path_loss_measurement(
         self,
         probe_id: int,
@@ -579,6 +723,13 @@ class ProbePathLossCalibrationService:
         cable_loss_db: float
     ) -> PathLossMeasurement:
         """
+        [DEPRECATED] Legacy VNA-based path-loss measurement.
+
+        新部署应该用 _real_path_loss_measurement_via_ce_sa (零额外硬件, 跟
+        生产链路一致). 本方法保留是因为某些没装 SA 或 SGH 不固定的暗室
+        仍依赖 VNA + 手动 cable_loss_db. 等所有生产暗室填了
+        chamber.cable_sgh_to_sa_loss_db 之后可以删除.
+
         通过 HAL 中的 VNA 驱动 (RealRsZnaDriver / RealKeysightEnaDriver / MockVNA)
         测量 SGH→探头的 S21, 反算路损。
 

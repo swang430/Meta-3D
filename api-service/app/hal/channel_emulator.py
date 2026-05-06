@@ -244,6 +244,41 @@ class ChannelEmulatorDriver(InstrumentDriver):
         """
         raise NotImplementedError
 
+    async def set_calibration_tone(
+        self,
+        frequency_hz: float,
+        power_dbm: float,
+        ce_port: Optional[str] = None,
+    ) -> bool:
+        """Output a known CW tone for path-loss calibration (CE-as-source).
+
+        路损校准走 CE+SA 路径时, CE 在选定的 OTA 输出口出一个已知频率 + 已知
+        功率的 CW tone. SA 在静区中心 SGH 端读到的功率 + 已知 cable_loss
+        反算 path_loss = CE_TX - SA_RX + G_sgh + G_probe - cable_sgh_to_sa.
+
+        典型实现 (取决于 CE 厂商):
+          - PROPSIM 系列: 内部 calibration tone generator, 厂商专用 SCPI 触发
+          - 其他: 把 CE 切到 passthrough 模式 + 接外部 SG (绑定在 LabProfile)
+
+        Args:
+            frequency_hz: tone 中心频率 (Hz)
+            power_dbm: tone 输出功率 (dBm), CE OTA 端口的标称值
+            ce_port: 可选, 指定从哪个 OTA 端口出 (如 "B1.1"); None = 主端口.
+                通常路损校准只需主端口, 配合 RF switch 路由到目标 probe.
+
+        Returns:
+            True if CE tone is on at the requested frequency/power (within
+            tolerance); 必须跟 stop_calibration_tone 配对调用避免长时间发射.
+        """
+        raise NotImplementedError
+
+    async def stop_calibration_tone(self) -> bool:
+        """Stop the calibration tone (release CE output, return to idle).
+
+        finally 块里调用避免 CE 长时间发射 (热漂 + 影响相邻测试).
+        """
+        raise NotImplementedError
+
 
 class MockChannelEmulator(ChannelEmulatorDriver):
     """
@@ -267,6 +302,11 @@ class MockChannelEmulator(ChannelEmulatorDriver):
         self._cdl_model_name = ""
         self._baseband_power_dbm = 0.0
         self._attenuator_values_db: list[float] = []
+        # Calibration tone state (CE-as-source for CE+SA path-loss calibration)
+        self._cal_tone_active = False
+        self._cal_tone_freq_hz: float = 0.0
+        self._cal_tone_power_dbm: float = 0.0
+        self._cal_tone_port: str = "MAIN"
 
     async def connect(self) -> bool:
         """Simulate connection to emulator"""
@@ -517,4 +557,29 @@ class MockChannelEmulator(ChannelEmulatorDriver):
             return False
 
         self._baseband_power_dbm = power_dbm
+        return True
+
+    async def set_calibration_tone(
+        self,
+        frequency_hz: float,
+        power_dbm: float,
+        ce_port: Optional[str] = None,
+    ) -> bool:
+        """Mock CE calibration tone — record state, return True.
+
+        Production drivers (PROPSIM etc.) need vendor SCPI; the mock just
+        captures the request so unit tests + dev environments can exercise
+        the CE+SA path-loss flow without hardware.
+        """
+        if power_dbm < -50 or power_dbm > 20:
+            return False
+        self._cal_tone_active = True
+        self._cal_tone_freq_hz = frequency_hz
+        self._cal_tone_power_dbm = power_dbm
+        self._cal_tone_port = ce_port or "MAIN"
+        return True
+
+    async def stop_calibration_tone(self) -> bool:
+        """Mock stop — clear state, return True."""
+        self._cal_tone_active = False
         return True

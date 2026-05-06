@@ -86,6 +86,20 @@ class ChamberConfiguration(Base):
     typical_cable_loss_db = Column(Float, default=5.0, comment="典型电缆损耗 (dB)")
     probe_gain_dbi = Column(Float, default=8.0, comment="探头增益 (dBi)")
 
+    # === CE+SA 路损校准常数 (一次性 commissioning 测好) ===
+    # 当 SGH 永久挂在 SA 输入端时, 这是 SGH→SA 的电缆+连接器损耗.
+    # 路损校准走 CE-as-source + SA-as-receiver 路径时, 这是唯一需要预先标定
+    # 的常数 (其他段的 cable + switch + PA gain 全都包含在端到端测量里).
+    # None = 没标过, fallback 走 legacy VNA 路径; 设了值 = CE+SA 主路径生效.
+    cable_sgh_to_sa_loss_db = Column(
+        Float,
+        nullable=True,
+        comment=(
+            "SGH→SA 电缆损耗 (dB), commissioning 时一次性 SOLT 测好. "
+            "为空时 fallback 到 legacy VNA 路径; 设值后路损校准走 CE+SA 主路径."
+        ),
+    )
+
     # === 元数据 ===
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
