@@ -318,6 +318,18 @@ const instrumentStatusColor: Record<InstrumentStatus, string> = {
   reserved: 'yellow',
   maintenance: 'orange',
   offline: 'gray',
+  pending_dev: 'red',
+}
+
+// Operator-facing label per status. 'pending_dev' is the only one that
+// surfaces a model "exists in catalog but no HAL driver" — must read
+// loud enough that no one picks it expecting real signaling.
+const instrumentStatusLabel: Record<InstrumentStatus, string> = {
+  available: '可用',
+  reserved: '已预约',
+  maintenance: '维护中',
+  offline: '离线',
+  pending_dev: '驱动未实现',
 }
 
 const severityBadgeColor: Record<AlertItem['severity'], string> = {
@@ -1811,7 +1823,7 @@ function EquipmentManager() {
                           </Text>
                         </Stack>
                         <Badge color={instrumentStatusColor[drawerSelectedModel.status]} variant="light">
-                          {drawerSelectedModel.status.toUpperCase()}
+                          {instrumentStatusLabel[drawerSelectedModel.status]}
                         </Badge>
                       </Group>
                       <Group gap="sm" c="gray.6" wrap="wrap">
@@ -2242,7 +2254,7 @@ function EquipmentManager() {
                       <Group justify="space-between">
                          <Text size="sm" c="dimmed">型号</Text>
                          <Badge color={instrumentStatusColor[selectedModelInfo.status]} variant="dot" size="xs">
-                            {selectedModelInfo.status.toUpperCase()}
+                            {instrumentStatusLabel[selectedModelInfo.status]}
                          </Badge>
                       </Group>
                       <Text fw={600}>{selectedModelInfo.vendor} {selectedModelInfo.model}</Text>

@@ -131,24 +131,37 @@ CATEGORIES = [
                 "model": "CMW500",
                 "full_name": "Rohde & Schwarz CMW500 Wideband Radio Communication Tester",
                 "capabilities": {
-                    "technology": ["5G NR FR1", "LTE", "LTE-A", "WCDMA"],
-                    "frequency_range_ghz": [0.07, 6.0],
-                    "max_bandwidth_mhz": 100,
+                    # LTE-only: 驱动 (cmw500_base_station.py) 仅实现 LTE 信令.
+                    # 早先 catalog 误标 5G NR FR1 + WCDMA — 真选了会跑挂.
+                    # 5G NR 走 R&S 阵营请等 CMX500 驱动落地.
+                    "technology": ["LTE", "LTE-A"],
+                    "frequency_range_ghz": [0.45, 6.0],
+                    # CMW500 LTE 物理层最大带宽 20 MHz (B5/B10/B15/B20).
+                    # 驱动 SCPI (CELL_DL_BW = "B{bw}") 也只支持到 20.
+                    "max_bandwidth_mhz": 20,
                     "mimo_layers": 4,
                     "max_tx_power_dbm": 27,
                     "interfaces": ["LAN", "GPIB", "USB"],
+                    "modulation": ["QPSK", "16QAM", "64QAM", "256QAM"],
                 },
             },
             {
+                # CMX500: 驱动尚未实现. 选了它会被 instrument_hal_service 标记
+                # status="pending_dev" (前端会显示橙色 "驱动未实现" badge),
+                # 实际跑测试时会回退到 mock — 不要在生产路径用.
+                # 启动条件: R&S CMX500 SCPI 手册到位 + 客户明确要求 5G NR FR1/FR2
+                # 走 R&S 阵营 (TRIGGER-DEFERRED, 见 phase2_phase3_roadmap.md).
                 "vendor": "R&S",
                 "model": "CMX500",
-                "full_name": "Rohde & Schwarz CMX500 5G One-Box Signaling Tester",
+                "full_name": "Rohde & Schwarz CMX500 5G One-Box Signaling Tester (驱动待开发)",
                 "capabilities": {
                     "technology": ["5G NR FR1", "5G NR FR2", "LTE-A Pro"],
                     "frequency_range_ghz": [0.4, 6.0],
                     "max_bandwidth_mhz": 200,
                     "mimo_layers": 8,
                     "interfaces": ["LAN"],
+                    "driver_status": "not_implemented",
+                    "driver_notes": "等 R&S CMX500 SCPI 手册到位再开工",
                 },
             },
         ],
