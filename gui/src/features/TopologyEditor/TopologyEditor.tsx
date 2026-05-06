@@ -651,9 +651,12 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
         if (items.length > 0) {
           const t = items[0];
           setTopology(t);
-          // Sync chamber dropdown with whatever the existing topology declares,
-          // so the operator immediately sees which chamber this is bound to.
-          if (t.chamber_id) {
+          // Sync chamber dropdown with the topology's bound chamber on FIRST
+          // load only (when the dropdown is still empty). Re-overwriting on
+          // every fetch traps the user — picking a different chamber would
+          // re-trigger this effect and snap the dropdown right back to the
+          // topology's stored chamber_id.
+          if (t.chamber_id && !selectedChamberId) {
             setSelectedChamberId(t.chamber_id);
           }
           return;
@@ -761,6 +764,31 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
         {topology && !topology.chamber_id && selectedChamberId && (
           <Alert color="orange" variant="light" icon={<IconAlertTriangle size={16} />} mt="sm">
             当前拓扑未绑定暗室。点击"保存拓扑"会将其绑定到所选暗室。
+          </Alert>
+        )}
+
+        {/* Mismatch hint: dropdown is on a different chamber than the topology
+            is bound to. Two valid resolutions, operator chooses:
+            - 「重导入默认拓扑」 = wipe connections, import the new chamber's default
+            - 「保存拓扑」 = keep connections as-is, only rebind chamber_id FK
+              (use this only when the operator has verified the wiring still
+              applies to the new chamber — usually it doesn't). */}
+        {topology && topology.chamber_id && selectedChamberId &&
+          topology.chamber_id !== selectedChamberId && (
+          <Alert color="orange" variant="light" icon={<IconAlertTriangle size={16} />} mt="sm">
+            <Text fw={600} size="sm">拓扑当前绑定的暗室与下拉所选不一致</Text>
+            <Text size="xs" mt={4} c="dimmed">
+              当前布线是为「{availableChambers.find(c => c.value === topology.chamber_id)?.label
+                ?? topology.chamber_id.slice(0, 8)}」设计的。
+              切换到「{availableChambers.find(c => c.value === selectedChamberId)?.label
+                ?? selectedChamberId.slice(0, 8)}」请按需:
+            </Text>
+            <Text size="xs" mt={2}>
+              • 点「重导入默认拓扑」→ 清空当前布线, 按新暗室预设重建
+            </Text>
+            <Text size="xs">
+              • 点「保存拓扑」→ 仅更新 chamber 绑定, 布线保留 (只在你确认仍适用时)
+            </Text>
           </Alert>
         )}
 
