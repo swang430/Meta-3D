@@ -1,6 +1,6 @@
 """Test Plan and Test Case database models"""
 from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, JSON, Text, ForeignKey, Enum
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 import uuid
@@ -9,6 +9,14 @@ import enum
 
 
 from app.db.database import Base
+
+
+# Postgres-native binary JSON for high-volume runtime blobs that benefit
+# from binary storage + GIN indexability. Falls back to plain JSON on
+# SQLite so unit tests still work. Plain ``JSON`` columns elsewhere stay
+# as plain JSON — only the columns explicitly marked as JSONB in
+# production use this variant.
+_JSONB = JSON().with_variant(JSONB(), "postgresql")
 
 
 class TestPlanStatus(str, enum.Enum):
@@ -225,13 +233,13 @@ class TestExecution(Base):
     topology_id = Column(String(255), comment="VRT: linked Topology id (UUID string), only for conducted mode")
     mode = Column(String(50), comment="VRT: digital_twin | conducted | ota")
     notes = Column(Text, comment="Operator notes")
-    config = Column(JSON, comment="Executor config snapshot (immutable once execution starts)")
-    vrt_runtime_status = Column(JSON, comment="Live progress: {progress_percent, current_waypoint_index, current_position, elapsed/remaining}")
-    execution_logs = Column(JSON, comment="Array of {timestamp, level, message, source}")
-    execution_events = Column(JSON, comment="Scenario events array {time_s, type, payload}")
-    execution_warnings = Column(JSON, comment="Array of warning messages")
-    phase_results = Column(JSON, comment="Array of {name, status, duration_s, start/end_time, notes}")
-    hardware_status = Column(JSON, comment="{instruments_connected, instrument_status: {id: status}}")
+    config = Column(_JSONB, comment="Executor config snapshot (immutable once execution starts)")
+    vrt_runtime_status = Column(_JSONB, comment="Live progress: {progress_percent, current_waypoint_index, current_position, elapsed/remaining}")
+    execution_logs = Column(_JSONB, comment="Array of {timestamp, level, message, source}")
+    execution_events = Column(_JSONB, comment="Scenario events array {time_s, type, payload}")
+    execution_warnings = Column(_JSONB, comment="Array of warning messages")
+    phase_results = Column(_JSONB, comment="Array of {name, status, duration_s, start/end_time, notes}")
+    hardware_status = Column(_JSONB, comment="{instruments_connected, instrument_status: {id: status}}")
 
     # Metadata
     executed_by = Column(String(100), comment="User who executed the test")
