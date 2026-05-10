@@ -137,14 +137,15 @@ class PrecheckExecutor(IStepExecutor):
         else:
             warnings.append("No calibration_certificate bound to TestCase or LabProfile")
 
-        # Path-loss calibration row (used by Phase 3 generation pipeline)
-        chamber_id_hex = (
-            chamber.id.hex if hasattr(chamber.id, "hex") else str(chamber.id).replace("-", "")
-        )
+        # Path-loss calibration row (used by Phase 3 generation pipeline).
+        # Pass chamber.id as UUID directly — UUID(as_uuid=True) column accepts
+        # the model attribute as-is. The previous .hex/str().replace("-","")
+        # workaround mis-fed a 32-char hex string into the UUID type processor,
+        # crashing SQLite tests with "'str' object has no attribute 'hex'".
         latest_pl = (
             context.db.query(ProbePathLossCalibration)
             .filter(
-                ProbePathLossCalibration.chamber_id == chamber_id_hex,
+                ProbePathLossCalibration.chamber_id == chamber.id,
                 ProbePathLossCalibration.status == CalibrationStatus.VALID.value,
             )
             .order_by(desc(ProbePathLossCalibration.calibrated_at))

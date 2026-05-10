@@ -57,3 +57,6 @@ certificates/
 # OS
 .DS_Store
 Thumbs.db
+
+# OOP profile artifacts generated at runtime by NativeModelStrategy
+app/data/oop_profiles/

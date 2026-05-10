@@ -77,8 +77,18 @@ def db_session():
 
 
 @pytest.fixture
+def type_a_chamber(db_session):
+    """Create a Type A chamber (no LNA, no PA)"""
+    chamber = create_chamber_from_preset(ChamberType.TYPE_A.value, name="Test Chamber A")
+    db_session.add(chamber)
+    db_session.commit()
+    db_session.refresh(chamber)
+    return chamber
+
+
+@pytest.fixture
 def type_c_chamber(db_session):
-    """Create a Type C chamber for testing"""
+    """Create a Type C chamber (no LNA, has PA)"""
     chamber = create_chamber_from_preset(ChamberType.TYPE_C.value, name="Test Chamber C")
     db_session.add(chamber)
     db_session.commit()
@@ -88,7 +98,7 @@ def type_c_chamber(db_session):
 
 @pytest.fixture
 def type_d_chamber(db_session):
-    """Create a Type D chamber for testing"""
+    """Create a Type D chamber (has LNA, has PA)"""
     chamber = create_chamber_from_preset(ChamberType.TYPE_D.value, name="Test Chamber D")
     db_session.add(chamber)
     db_session.commit()
@@ -210,12 +220,14 @@ class TestRFChainCalibrationService:
     """Test RF chain calibration service"""
 
     @pytest.mark.asyncio
-    async def test_uplink_calibration_with_lna(self, db_session, type_c_chamber):
-        """Should calibrate uplink when LNA exists"""
+    async def test_uplink_calibration_with_lna(self, db_session, type_d_chamber):
+        """Should calibrate uplink when LNA exists. Type D has LNA — Type C
+        does NOT (it only has PA), so the original test was paired with the
+        wrong fixture and fell into the early-return short-circuit."""
         service = RFChainCalibrationService(db_session, use_mock=True)
 
         result = await service.calibrate_uplink(
-            chamber_id=type_c_chamber.id,
+            chamber_id=type_d_chamber.id,
             frequency_mhz=3500.0,
             calibrated_by="Test Engineer"
         )
@@ -225,12 +237,15 @@ class TestRFChainCalibrationService:
         assert "lna_gain_db" in result.data
 
     @pytest.mark.asyncio
-    async def test_downlink_calibration_without_pa(self, db_session, type_c_chamber):
-        """Type C has no PA, should skip downlink calibration"""
+    async def test_downlink_calibration_without_pa(self, db_session, type_a_chamber):
+        """Type A has no PA → should skip downlink calibration with
+        data={'has_pa': False}. Original test used Type C which actually HAS
+        a PA, so it fell into the full-calibration branch where 'has_pa' is
+        not surfaced (calibration_id is)."""
         service = RFChainCalibrationService(db_session, use_mock=True)
 
         result = await service.calibrate_downlink(
-            chamber_id=type_c_chamber.id,
+            chamber_id=type_a_chamber.id,
             frequency_mhz=3500.0,
             calibrated_by="Test Engineer"
         )
@@ -253,17 +268,18 @@ class TestRFChainCalibrationService:
         assert "pa_gain_db" in result.data
 
     @pytest.mark.asyncio
-    async def test_get_uplink_gain(self, db_session, type_c_chamber):
-        """Should retrieve uplink gain after calibration"""
+    async def test_get_uplink_gain(self, db_session, type_d_chamber):
+        """Should retrieve uplink gain after calibration. Need a chamber with
+        LNA so calibrate_uplink actually creates a row to read back."""
         service = RFChainCalibrationService(db_session, use_mock=True)
 
         await service.calibrate_uplink(
-            chamber_id=type_c_chamber.id,
+            chamber_id=type_d_chamber.id,
             frequency_mhz=3500.0,
             calibrated_by="Test Engineer"
         )
 
-        gain = service.get_uplink_gain(type_c_chamber.id)
+        gain = service.get_uplink_gain(type_d_chamber.id)
         assert gain is not None
 
 
