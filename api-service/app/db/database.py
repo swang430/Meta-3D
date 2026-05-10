@@ -97,23 +97,43 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
-    """Initialize database (create all tables)"""
-    # Import all models to ensure they are registered with SQLAlchemy
-    from app.models.probe import Probe, ProbeConfiguration
-    from app.models.instrument import InstrumentCategory, InstrumentModel, InstrumentConnection, InstrumentLog
-    from app.models.test_plan import TestPlan, TestCase, TestExecution, TestQueue, TestStep, TestSequence
-    from app.models.calibration import CalibrationCertificate, QuietZoneCalibration, RepeatabilityTest, ComparabilityTest, SystemTRPCalibration, SystemTISCalibration
-    from app.models.probe_calibration import (
-        ProbeAmplitudeCalibration, ProbePhaseCalibration, ProbePolarizationCalibration,
-        ProbePattern, LinkCalibration, ProbeCalibrationValidity,
-        ProbePathLossCalibration, RFChainCalibration, MultiFrequencyPathLoss,
-        RFSwitchCalibration, E2ECompensationMatrix
-    )
-    from app.models.report import TestReport, ReportTemplate, ReportComparison, ReportSchedule
-    from app.models.chamber import ChamberConfiguration
-    from app.models.switch_topology import SwitchTopology
-    from app.models.road_test import VrtKpiSample
+    """Initialize the database schema.
 
-    logger.info("Initializing database schema (create_all)...")
+    Behavior depends on whether the DB is managed by alembic:
+
+    * **Production Postgres** — has an ``alembic_version`` table. We
+      skip ``Base.metadata.create_all()`` because it can only create
+      missing tables; it never adds new columns to existing ones, which
+      caused months of silent schema drift before alembic was wired up.
+      Run ``alembic upgrade head`` from the deployment script to apply
+      pending migrations.
+
+    * **Test SQLite (no alembic state)** — falls back to
+      ``create_all()`` so unit tests can bootstrap an empty in-memory
+      or file-backed DB without running migrations.
+    """
+    import importlib
+    import pkgutil
+
+    import app.models as _models_pkg
+    from sqlalchemy import inspect
+
+    # Walk the package so Base.metadata sees every model, regardless of
+    # whether the model is re-exported from app/models/__init__.py.
+    for mod_info in pkgutil.iter_modules(_models_pkg.__path__):
+        importlib.import_module(f"app.models.{mod_info.name}")
+
+    inspector = inspect(engine)
+    if "alembic_version" in inspector.get_table_names():
+        logger.info(
+            "Database is alembic-managed; skipping create_all(). "
+            "Run 'alembic upgrade head' to apply pending migrations."
+        )
+        return
+
+    logger.info(
+        "No alembic_version table found — bootstrapping schema with "
+        "create_all() (expected for test SQLite DBs)."
+    )
     Base.metadata.create_all(bind=engine)
     logger.info("Database schema initialized successfully")
