@@ -87,6 +87,14 @@ VISA_TIMEOUT_AUTOSET = 15000    # 自动电平校准
 F64_FTP_USER = "PROPSIM"
 F64_FTP_PASS = "propsim"
 
+# *OPT? 查询返回里, 表示 "Internal Interference Generator" license 的候选 token.
+# 不同 firmware revision 用不同代号, 命中任一即认定该 license 存在. CAICT 现场首
+# 测后建议把列表收紧到实际返回的唯一值.
+INTERFERENCE_GEN_OPTION_TOKENS = frozenset({
+    "K01", "INTGEN", "INT-GEN", "INTERFERENCE-GEN", "OPT-INT-GEN",
+    "INTERFERENCE_GENERATOR", "F64-K01",
+})
+
 
 class RealPropsimF64Driver(ChannelEmulatorDriver):
     """
@@ -115,13 +123,16 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self.waveform_dir: str = config.get("waveform_dir", F64_WAVEFORM_DIR)
 
         # Calibration-tone 能力: PROPSIM Internal Interference Generator 是
-        # optional license. 不做运行时 SCPI 探测 (会污染 emulation 状态), 由
-        # InstrumentCategory.config 显式声明:
-        #   has_interference_generator=True  → INTERNAL_CW_GENERATOR + PASSTHROUGH
-        #   has_interference_generator=False → 只 PASSTHROUGH (总是支持, 走
-        #                                       BypassMode.CALIBRATION)
-        self.has_interference_generator: bool = bool(
-            config.get("has_interference_generator", False)
+        # optional license. 默认在 connect() 中通过 *OPT? 探测 (见 base
+        # _probe_installed_options + 本类 _apply_discovered_capabilities).
+        # config 里显式给值 (True/False) 时跳过探测, 用于 mock / CI / 手动
+        # override 场景:
+        #   未设置        → connect() 时探测; 探测前为 None (按无 license 处理)
+        #   True / False  → 显式声明, 跳过探测
+        explicit = config.get("has_interference_generator")
+        self._explicit_interference_gen: bool = explicit is not None
+        self.has_interference_generator: Optional[bool] = (
+            bool(explicit) if self._explicit_interference_gen else None
         )
         # 固定 ID 给单 tone, 重复 set 时先 remove 旧的避免 "identifier in use".
         self._cal_tone_id: str = config.get("cal_tone_id", "ce_sa_cal_tone")
@@ -232,6 +243,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 self._channel_count = int(parts[1])
             except (IndexError, ValueError):
                 self._channel_count = 64
+
+            # 启动时探测安装选件 (license). 若 config 显式声明能力字段则跳过
+            # 应用阶段, 仍执行探测仅为日志可见性.
+            opts = await self._probe_installed_options()
+            await self._apply_discovered_capabilities(opts)
 
             # 清空错误队列
             await self._clear_error_queue()
@@ -861,8 +877,9 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         """声明本 PROPSIM 的 CE+SA tone 能力.
 
         D 路径 (INTERNAL_CW_GENERATOR) 需要 Internal Interference Generator
-        optional license, 没买就只声明 B 路径. 由 instrument config 字段
-        has_interference_generator 显式控制 (避免运行时 SCPI 探测污染状态).
+        optional license. has_interference_generator 在 connect() 时由
+        *OPT? 探测填充 (见 _apply_discovered_capabilities); config 显式声明
+        会跳过探测. 探测前 / 未连接时为 None, 按无 license 处理.
 
         B 路径 (PASSTHROUGH_ONLY) 任何 PROPSIM 都支持 — 走 BypassMode
         .CALIBRATION (DIAG:SIMU:MODEL:STATIC 3), 全通道等增益等延迟透传.
@@ -1371,6 +1388,23 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 self._last_error = err
         except Exception as e:
             logger.error(f"[F64] Error queue check failed: {e}")
+
+    async def _apply_discovered_capabilities(self, options: List[str]) -> None:
+        """*OPT? 解析出的 token → has_interference_generator.
+
+        Override base no-op. config 里显式给值时不覆盖 (尊重运维 / mock 决定).
+        Token 匹配大小写不敏感, 候选见 INTERFERENCE_GEN_OPTION_TOKENS.
+        """
+        if self._explicit_interference_gen:
+            return
+        upper = {opt.upper() for opt in options}
+        self.has_interference_generator = bool(
+            upper & INTERFERENCE_GEN_OPTION_TOKENS
+        )
+        logger.info(
+            f"[F64] Interference Generator license: "
+            f"{self.has_interference_generator} (probed from {options or '(empty)'})"
+        )
 
     async def _clear_error_queue(self) -> None:
         """连接后清空全部历史错误"""

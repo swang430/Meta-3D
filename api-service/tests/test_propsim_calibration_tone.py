@@ -22,7 +22,10 @@ from app.hal.channel_emulator import CalibrationToneCapability
 from app.hal.propsim_f64 import F64BypassMode, RealPropsimF64Driver
 
 
-def _make_driver(*, has_interference_generator: bool = True):
+_SENTINEL = object()
+
+
+def _make_driver(*, has_interference_generator=_SENTINEL):
     """Build a driver with a mocked VISA resource so SCPI writes / queries
     are captured but never go on the wire.
 
@@ -31,8 +34,17 @@ def _make_driver(*, has_interference_generator: bool = True):
     resource) doesn't try to coroutine-wrap our MagicMock. The visa_mock
     itself stays as the spy: every _write delegates to visa.write, every
     _query delegates to visa.query, so test assertions still work.
+
+    has_interference_generator semantics:
+      - omitted (sentinel) → no config key → driver state is None (probe path).
+                              In tests for tone behavior we then set it via
+                              `drv.has_interference_generator = True` to bypass
+                              probing (no real connect happens).
+      - True/False         → explicit config override (skips probe).
     """
-    cfg = {"has_interference_generator": has_interference_generator}
+    cfg: dict = {}
+    if has_interference_generator is not _SENTINEL:
+        cfg["has_interference_generator"] = has_interference_generator
     drv = RealPropsimF64Driver("propsim-test", cfg)
 
     visa_mock = MagicMock()
@@ -252,3 +264,142 @@ class TestPassthroughMode:
         assert CalibrationToneCapability.PASSTHROUGH_ONLY in caps
         ok = await drv.set_passthrough_mode()
         assert ok is True
+
+
+# ============================================================================
+# Startup *OPT? probe — license discovery instead of config declaration
+# ============================================================================
+
+class TestOptionsProbe:
+    """connect() 探测 *OPT? 推 has_interference_generator. config 显式给值
+    时跳过应用 (mock/CI override). 这些测试不调真 connect (避开 pyvisa
+    import), 直接调探测钩子."""
+
+    @pytest.mark.asyncio
+    async def test_probe_with_license_token_sets_capability_true(self):
+        drv, visa = _make_driver()  # no explicit config → probe path
+        assert drv.has_interference_generator is None
+        visa.query.return_value = "K01,K02,K05"
+
+        opts = await drv._probe_installed_options()
+        await drv._apply_discovered_capabilities(opts)
+
+        assert opts == ["K01", "K02", "K05"]
+        assert drv.has_interference_generator is True
+        # And the capability declaration now reflects D path
+        assert (
+            CalibrationToneCapability.INTERNAL_CW_GENERATOR
+            in drv.get_calibration_tone_capabilities()
+        )
+
+    @pytest.mark.asyncio
+    async def test_probe_without_license_token_sets_capability_false(self):
+        drv, visa = _make_driver()
+        visa.query.return_value = "K05,FOO,BAR"  # no interference-gen token
+
+        opts = await drv._probe_installed_options()
+        await drv._apply_discovered_capabilities(opts)
+
+        assert drv.has_interference_generator is False
+        caps = drv.get_calibration_tone_capabilities()
+        assert caps == [CalibrationToneCapability.PASSTHROUGH_ONLY]
+
+    @pytest.mark.asyncio
+    async def test_probe_token_match_is_case_insensitive(self):
+        drv, visa = _make_driver()
+        visa.query.return_value = "k01,foo"  # lower-case
+
+        opts = await drv._probe_installed_options()
+        await drv._apply_discovered_capabilities(opts)
+
+        assert drv.has_interference_generator is True
+
+    @pytest.mark.asyncio
+    async def test_probe_quoted_csv_is_parsed(self):
+        """Some firmware returns options as quoted strings."""
+        drv, visa = _make_driver()
+        visa.query.return_value = '"K01","K02"," INT-GEN "'
+
+        opts = await drv._probe_installed_options()
+        await drv._apply_discovered_capabilities(opts)
+
+        assert "K01" in opts
+        assert "INT-GEN" in opts
+        assert drv.has_interference_generator is True
+
+    @pytest.mark.asyncio
+    async def test_explicit_config_true_skips_probe_application(self):
+        """config explicitly says True → probe still runs (logging) but does
+        not override the explicit value, even if *OPT? returns nothing."""
+        drv, visa = _make_driver(has_interference_generator=True)
+        assert drv.has_interference_generator is True
+        visa.query.return_value = ""  # empty options
+
+        opts = await drv._probe_installed_options()
+        await drv._apply_discovered_capabilities(opts)
+
+        # Explicit config wins; probe doesn't downgrade to False
+        assert drv.has_interference_generator is True
+
+    @pytest.mark.asyncio
+    async def test_explicit_config_false_skips_probe_application(self):
+        drv, visa = _make_driver(has_interference_generator=False)
+        visa.query.return_value = "K01"  # license actually present
+
+        opts = await drv._probe_installed_options()
+        await drv._apply_discovered_capabilities(opts)
+
+        # Explicit False overrides discovered True (mock/CI scenario)
+        assert drv.has_interference_generator is False
+
+    @pytest.mark.asyncio
+    async def test_probe_failure_is_tolerated(self):
+        """Instrument that doesn't implement *OPT? must not break connect."""
+        drv, visa = _make_driver()
+
+        async def _query_raises(cmd, timeout=None):
+            raise RuntimeError("instrument does not support *OPT?")
+
+        drv._query = _query_raises  # type: ignore[assignment]
+
+        opts = await drv._probe_installed_options()
+        await drv._apply_discovered_capabilities(opts)
+
+        assert opts == []
+        # Probe failed → no token matched → capability stays False (the
+        # "not licensed" outcome). Conservative: better deny than assume.
+        assert drv.has_interference_generator is False
+
+    @pytest.mark.asyncio
+    async def test_probe_empty_response_means_no_license(self):
+        drv, visa = _make_driver()
+        visa.query.return_value = ""  # empty *OPT? response
+
+        opts = await drv._probe_installed_options()
+        await drv._apply_discovered_capabilities(opts)
+
+        assert opts == []
+        assert drv.has_interference_generator is False
+
+
+class TestParseOptionsResponse:
+    """Base helper coverage — parse_options_response on edge cases."""
+
+    def test_parses_simple_csv(self):
+        from app.hal.base import InstrumentDriver
+        assert InstrumentDriver._parse_options_response("K01,K02") == ["K01", "K02"]
+
+    def test_strips_quotes_and_whitespace(self):
+        from app.hal.base import InstrumentDriver
+        assert InstrumentDriver._parse_options_response(
+            '  "K01" , "K02"  ,"INT-GEN"'
+        ) == ["K01", "K02", "INT-GEN"]
+
+    def test_drops_empty_tokens(self):
+        from app.hal.base import InstrumentDriver
+        assert InstrumentDriver._parse_options_response("K01,,K02,") == ["K01", "K02"]
+
+    def test_empty_response_returns_empty_list(self):
+        from app.hal.base import InstrumentDriver
+        assert InstrumentDriver._parse_options_response("") == []
+        assert InstrumentDriver._parse_options_response("   ") == []

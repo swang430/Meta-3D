@@ -11,7 +11,7 @@ SCPI 日志架构:
 from abc import ABC, abstractmethod
 from enum import Enum
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 from pydantic import BaseModel
 
@@ -72,6 +72,10 @@ class InstrumentDriver(ABC):
         self.config = config
         self._status = InstrumentStatus.DISCONNECTED
         self._last_error: Optional[str] = None
+
+        # 安装选件 (license) 缓存。connect() 中由 _probe_installed_options()
+        # 调 *OPT? 填充。空列表 = 探测失败 / 仪表不支持 *OPT? / 尚未连接。
+        self._installed_options: List[str] = []
 
         # SCPI 通信专用 logger — 命名空间 app.hal.scpi.{id}
         # 被 logging_config 中的 SCPI handler 独立捕获到 scpi.log
@@ -138,6 +142,68 @@ class InstrumentDriver(ABC):
         真实驱动应覆盖此方法调用 visa_session.query()。
         """
         return ""
+
+    # ── 选件 / license 探测 (启动时, 不依赖 config 声明) ──────
+    #
+    # 设计原则: 仪表能告诉我们的事 (license / 选件 / 通道数 / 频段),
+    # 启动时通过 SCPI 查询; 不要让运维去填表。connect() 在 *IDN? 验证
+    # 身份后调 _probe_installed_options() 拿到 *OPT? 字符串, 解析成列表,
+    # 再交给子类的 _apply_discovered_capabilities() 映射为驱动内部能力
+    # 标志 (e.g. has_interference_generator on PROPSIM)。
+    #
+    # 子类应在 connect() 内显式触发:
+    #   opts = await self._probe_installed_options()
+    #   await self._apply_discovered_capabilities(opts)
+    #
+    # 默认 _probe_installed_options() 调标准 *OPT? — 失败时容错返回 [],
+    # 子类只在仪表用非标准查询时才 override (罕见)。
+    # 默认 _apply_discovered_capabilities() 是 no-op — 没有 license 类
+    # 能力字段的子类不需要 override。
+
+    async def _probe_installed_options(self) -> List[str]:
+        """启动时探测安装选件 (IEEE 488.2 标准 *OPT? 查询).
+
+        返回 list[str] 选件 token; 失败时返回 [] 并记录警告 (不抛). 容错是
+        刻意的: 不是所有仪表都实现 *OPT?, 不应阻断 connect.
+        """
+        try:
+            raw = await self._query("*OPT?")
+        except Exception as e:
+            logger.warning(
+                f"[{self.instrument_id}] *OPT? probe failed: {e}",
+                extra={"instrument_id": self.instrument_id},
+            )
+            self._installed_options = []
+            return []
+        opts = self._parse_options_response(raw)
+        self._installed_options = opts
+        logger.info(
+            f"[{self.instrument_id}] installed options: {opts or '(none)'}",
+            extra={"instrument_id": self.instrument_id},
+        )
+        return opts
+
+    @staticmethod
+    def _parse_options_response(raw: str) -> List[str]:
+        """解析 *OPT? CSV 响应.
+
+        典型格式:  'K01,K02,"INT-GEN", 0'  →  ['K01', 'K02', 'INT-GEN', '0']
+        空 / "0" / 空字符串过滤掉, 双引号剥掉, 大小写保持原样 (子类匹配时
+        自己做归一化).
+        """
+        if not raw:
+            return []
+        parts = [p.strip().strip('"').strip() for p in raw.split(",")]
+        # 过滤空 token; '0' 是 Keysight 表示"无选件"的占位符, 保留交给子类
+        return [p for p in parts if p]
+
+    async def _apply_discovered_capabilities(self, options: List[str]) -> None:
+        """子类钩子: 把 *OPT? 解析出的 token 映射到自己的能力字段.
+
+        默认 no-op. PROPSIM 用 token 推 has_interference_generator;
+        VNA 子类未来加 license-aware 测量时按同样方式 override.
+        """
+        return
 
     # ── 状态与属性 ────────────────────────────────────────────
 
