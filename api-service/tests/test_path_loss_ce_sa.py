@@ -26,6 +26,7 @@ from app.db.database import Base
 from app.hal.channel_emulator import CalibrationToneCapability
 from app.models.chamber import ChamberType, create_chamber_from_preset
 from app.services.path_loss_calibration_service import (
+    MultiFrequencyPathLossService,
     PathLossMeasurement,
     PolarizationType,
     ProbePathLossCalibrationService,
@@ -694,3 +695,126 @@ class TestChamberFlagDispatch:
     def test_chamber_field_can_be_populated(self, chamber_with_cable_loss):
         # The fixture sets it; verify it persisted.
         assert chamber_with_cable_loss.cable_sgh_to_sa_loss_db == pytest.approx(1.5)
+
+
+class TestMultiFrequencySweep:
+    """A3: MultiFrequencyPathLossService._real_frequency_sweep used to throw
+    NotImplementedError. Now it delegates per-frequency to single-freq CE+SA,
+    so we get D/B capability dispatch + BSE preference + finally-stop +
+    rfSwitch routing for free.
+    """
+
+    @pytest.mark.asyncio
+    async def test_real_sweep_loops_each_frequency(
+        self, db, monkeypatch, chamber_with_cable_loss
+    ):
+        """Happy path: 3 frequencies × 2 probes → 6 calls into the single-freq
+        CE+SA measurement, each at the correct freq."""
+        ce = _make_ce([CalibrationToneCapability.INTERNAL_CW_GENERATOR])
+        sa = MagicMock()
+        sa.setup_spectrum = AsyncMock(return_value=True)
+        sa.measure_channel_power = AsyncMock(return_value=-85.0)
+        _patched_hal(monkeypatch, ce=ce, sa=sa)
+
+        svc = MultiFrequencyPathLossService(db, use_mock=False)
+        result = await svc.calibrate_frequency_sweep(
+            chamber_id=chamber_with_cable_loss.id,
+            probe_ids=[0, 1],
+            polarization=PolarizationType.V,
+            freq_start_mhz=3400.0,
+            freq_stop_mhz=3500.0,
+            freq_step_mhz=50.0,  # → 3400, 3450, 3500
+            sgh_model="SGH-01",
+            sgh_gain_dbi=10.0,
+        )
+        assert result.success, result.message
+        assert result.data["num_freq_points"] == 3
+        assert result.data["num_probes"] == 2
+        # 3 freqs × 2 probes = 6 single-freq measurements
+        assert ce.set_calibration_tone.await_count == 6
+        # Each invocation passes one of the 3 freqs (in Hz).
+        called_freqs_hz = sorted({
+            call.args[0] for call in ce.set_calibration_tone.await_args_list
+        })
+        assert called_freqs_hz == pytest.approx([3400e6, 3450e6, 3500e6])
+
+    @pytest.mark.asyncio
+    async def test_real_sweep_without_cable_loss_field_returns_actionable_error(
+        self, db, monkeypatch
+    ):
+        """Chamber missing cable_sgh_to_sa_loss_db (commissioning skipped) +
+        use_mock=False → don't crash, return an actionable error so operator
+        knows to seed the field rather than getting NotImplementedError."""
+        c = create_chamber_from_preset(ChamberType.TYPE_C.value, name="not-comm")
+        db.add(c)
+        db.commit()
+        db.refresh(c)
+        assert c.cable_sgh_to_sa_loss_db is None  # precondition
+
+        ce = _make_ce([CalibrationToneCapability.INTERNAL_CW_GENERATOR])
+        sa = MagicMock()
+        _patched_hal(monkeypatch, ce=ce, sa=sa)
+
+        svc = MultiFrequencyPathLossService(db, use_mock=False)
+        result = await svc.calibrate_frequency_sweep(
+            chamber_id=c.id,
+            probe_ids=[0],
+            polarization=PolarizationType.V,
+            freq_start_mhz=3400.0,
+            freq_stop_mhz=3500.0,
+            freq_step_mhz=100.0,
+            sgh_model="SGH-01",
+            sgh_gain_dbi=10.0,
+        )
+        assert result.success is False
+        assert "cable_sgh_to_sa_loss_db" in result.message
+        # CE must not have been touched (no measurement attempted).
+        ce.set_calibration_tone.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_real_sweep_propagates_capability_dispatch(
+        self, db, monkeypatch, chamber_with_cable_loss
+    ):
+        """Sweep must inherit single-freq's D/B dispatch — verify by giving it
+        a PASSTHROUGH_ONLY CE + BSE: every freq must drive BSE.set_cw, never
+        ce.set_calibration_tone."""
+        ce = _make_ce([CalibrationToneCapability.PASSTHROUGH_ONLY])
+        bse = _make_sg()
+        sa = MagicMock()
+        sa.setup_spectrum = AsyncMock(return_value=True)
+        sa.measure_channel_power = AsyncMock(return_value=-85.0)
+        _patched_hal(monkeypatch, ce=ce, sa=sa, bse=bse)
+
+        svc = MultiFrequencyPathLossService(db, use_mock=False)
+        result = await svc.calibrate_frequency_sweep(
+            chamber_id=chamber_with_cable_loss.id,
+            probe_ids=[0],
+            polarization=PolarizationType.V,
+            freq_start_mhz=3400.0,
+            freq_stop_mhz=3500.0,
+            freq_step_mhz=50.0,
+            sgh_model="SGH-01",
+            sgh_gain_dbi=10.0,
+        )
+        assert result.success
+        # B path used 3 times (one per freq), D path never touched.
+        assert bse.set_cw.await_count == 3
+        ce.set_calibration_tone.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_mock_sweep_unaffected(self, db, chamber_with_cable_loss):
+        """use_mock=True must keep working as before — synthetic data only,
+        no driver calls."""
+        svc = MultiFrequencyPathLossService(db, use_mock=True)
+        result = await svc.calibrate_frequency_sweep(
+            chamber_id=chamber_with_cable_loss.id,
+            probe_ids=[0],
+            polarization=PolarizationType.V,
+            freq_start_mhz=3400.0,
+            freq_stop_mhz=3500.0,
+            freq_step_mhz=50.0,
+            sgh_model="SGH-01",
+            sgh_gain_dbi=10.0,
+        )
+        assert result.success
+        assert result.data["num_freq_points"] == 3

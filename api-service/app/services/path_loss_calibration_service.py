@@ -1558,10 +1558,27 @@ class MultiFrequencyPathLossService:
                         probe_id, polarization, frequency_points,
                         chamber.chamber_radius_m, chamber.probe_gain_dbi
                     )
+                elif chamber.cable_sgh_to_sa_loss_db is not None:
+                    # CE+SA real sweep — delegates each frequency point to
+                    # ProbePathLossCalibrationService._real_path_loss_measurement
+                    # _via_ce_sa, so D/B capability dispatch, BSE preference,
+                    # finally-stop, etc., are handled identically to single-freq.
+                    path_losses, uncertainties = await self._real_frequency_sweep_via_ce_sa(
+                        probe_id=probe_id,
+                        polarization=polarization,
+                        frequency_points=frequency_points,
+                        sgh_gain_dbi=sgh_gain_dbi,
+                        probe_gain_dbi=chamber.probe_gain_dbi,
+                        cable_sgh_to_sa_loss_db=chamber.cable_sgh_to_sa_loss_db,
+                    )
                 else:
-                    path_losses, uncertainties = await self._real_frequency_sweep(
-                        probe_id, polarization, frequency_points,
-                        vna_id, sgh_gain_dbi, chamber.probe_gain_dbi
+                    return CalibrationResult(
+                        success=False,
+                        message=(
+                            f"Multi-freq real sweep requires CE+SA wiring: set "
+                            f"chamber.cable_sgh_to_sa_loss_db (commissioning measured) "
+                            f"on chamber {chamber_id}, or call with use_mock=True."
+                        ),
                     )
 
                 calibration = MultiFrequencyPathLoss(
@@ -1641,6 +1658,49 @@ class MultiFrequencyPathLossService:
 
         return path_losses, uncertainties
 
+    async def _real_frequency_sweep_via_ce_sa(
+        self,
+        probe_id: int,
+        polarization: PolarizationType,
+        frequency_points: List[float],
+        sgh_gain_dbi: float,
+        probe_gain_dbi: float,
+        cable_sgh_to_sa_loss_db: float,
+    ) -> Tuple[List[float], List[float]]:
+        """[A3] CE+SA 真测多频点扫频 — delegates each freq to single-freq path.
+
+        Reuses ProbePathLossCalibrationService._real_path_loss_measurement_via
+        _ce_sa per-frequency, so we inherit the full D/B capability dispatch
+        (CE-internal CW gen vs BSE+passthrough), the BSE-over-SG preference,
+        the finally-stop guarantees, and the rfSwitch auto-routing logic for
+        free. Total operator action: 0 (same as single-freq).
+
+        ce_port + route_target left None: this entry point is chamber-keyed
+        (no RFChainSpec available). Multi-freq + topology-derived auto-routing
+        is a follow-up — would route once per (probe, pol) and sweep all freqs
+        on the same routed chain (more efficient than re-routing per freq, but
+        also more code).
+        """
+        # In-file delegation; both services live in this module so no import.
+        pl_service = ProbePathLossCalibrationService(self.db, use_mock=False)
+
+        path_losses: List[float] = []
+        uncertainties: List[float] = []
+        for freq_mhz in frequency_points:
+            m = await pl_service._real_path_loss_measurement_via_ce_sa(
+                probe_id=probe_id,
+                polarization=polarization,
+                frequency_mhz=freq_mhz,
+                ce_tx_power_dbm=-20.0,
+                sgh_gain_dbi=sgh_gain_dbi,
+                probe_gain_dbi=probe_gain_dbi,
+                cable_sgh_to_sa_loss_db=cable_sgh_to_sa_loss_db,
+            )
+            path_losses.append(m.path_loss_db)
+            uncertainties.append(m.uncertainty_db)
+
+        return path_losses, uncertainties
+
     async def _real_frequency_sweep(
         self,
         probe_id: int,
@@ -1650,8 +1710,18 @@ class MultiFrequencyPathLossService:
         sgh_gain_dbi: float,
         probe_gain_dbi: float
     ) -> Tuple[List[float], List[float]]:
-        """执行真实的扫频测量"""
-        raise NotImplementedError("Real frequency sweep not implemented yet")
+        """[DEPRECATED] Legacy VNA-based sweep — never implemented.
+
+        New deployments use _real_frequency_sweep_via_ce_sa (CE+SA), which is
+        the path `calibrate_frequency_sweep` dispatches to when
+        `chamber.cable_sgh_to_sa_loss_db` is populated. Kept only so the API
+        signature doesn't break for anyone wiring legacy.
+        """
+        raise NotImplementedError(
+            "Legacy VNA frequency sweep was never implemented. Set "
+            "chamber.cable_sgh_to_sa_loss_db so calibrate_frequency_sweep "
+            "routes to the CE+SA implementation instead."
+        )
 
     def get_path_loss_at_frequency(
         self,
