@@ -39,6 +39,9 @@ from app.services.path_loss_calibration_service import (
     RFChainCalibrationService,
     MultiFrequencyPathLossService,
 )
+from app.services.quiet_zone_validation_service import (
+    QuietZoneValidationService,
+)
 
 logger = logging.getLogger("app.calibration.orchestrator")
 
@@ -208,6 +211,7 @@ class CalibrationOrchestrator:
         self.path_loss_service = ProbePathLossCalibrationService(db, use_mock)
         self.rf_chain_service = RFChainCalibrationService(db, use_mock)
         self.multi_freq_service = MultiFrequencyPathLossService(db, use_mock)
+        self.qz_service = QuietZoneValidationService(db, use_mock)
 
     def get_required_calibrations(
         self,
@@ -845,6 +849,15 @@ class CalibrationOrchestrator:
                         chamber_id=chamber_id,
                         frequency_mhz=frequency_mhz,
                         calibrated_by=calibrated_by
+                    )
+
+                elif item == CalibrationItem.QUIET_ZONE_UNIFORMITY:
+                    result = await self.qz_service.run_field_uniformity_validation(
+                        chamber_id=chamber_id,
+                        frequency_mhz=frequency_mhz,
+                        sgh_model=sgh_model,
+                        sgh_gain_dbi=sgh_gain_dbi,
+                        calibrated_by=calibrated_by,
                     )
 
                 else:

@@ -658,6 +658,61 @@ class ProbePathLossCalibrationService:
         Returns:
             PathLossMeasurement(probe_id, polarization, path_loss_db, uncertainty_db)
         """
+        sa_rx_mean_dbm, sa_rx_std_db, tone_source_label = await self.acquire_sa_power_via_ce_tone(
+            frequency_mhz=frequency_mhz,
+            ce_tx_power_dbm=ce_tx_power_dbm,
+            ce_port=ce_port,
+            route_target=route_target,
+            probe_id=probe_id,
+            polarization=polarization,
+        )
+
+        # path_loss = CE_TX - SA_RX + G_sgh + G_probe - cable_sgh_to_sa
+        # (signs: TX higher = more loss; subtract antenna gains both sides;
+        #  subtract the SGH→SA cable that's NOT in the production signal path)
+        path_loss_db = (
+            ce_tx_power_dbm - sa_rx_mean_dbm
+            + sgh_gain_dbi + probe_gain_dbi
+            - cable_sgh_to_sa_loss_db
+        )
+        # Uncertainty: SA reading noise + 0.3 dB SGH gain calibration ref unc.
+        uncertainty_db = sa_rx_std_db + 0.3
+
+        logger.info(
+            "[PathLoss CE+SA src=%s] probe=%d pol=%s freq=%.1fMHz "
+            "CE_TX=%.1f SA_RX=%.2f±%.2f → PL=%.2f dB",
+            tone_source_label, probe_id, polarization.value, frequency_mhz,
+            ce_tx_power_dbm, sa_rx_mean_dbm, sa_rx_std_db, path_loss_db,
+        )
+
+        return PathLossMeasurement(
+            probe_id=probe_id,
+            polarization=polarization.value,
+            path_loss_db=float(abs(path_loss_db)),
+            uncertainty_db=float(uncertainty_db),
+        )
+
+    async def acquire_sa_power_via_ce_tone(
+        self,
+        frequency_mhz: float,
+        ce_tx_power_dbm: float = -20.0,
+        ce_port: Optional[str] = None,
+        route_target: Optional[str] = None,
+        probe_id: int = 0,
+        polarization: PolarizationType = PolarizationType.V,
+    ) -> Tuple[float, float, str]:
+        """[shared primitive] CE+SA 测一次 SA 功率读数 — D/B 自动 dispatch.
+
+        Returns (sa_mean_dbm, sa_std_db, tone_source_label).
+
+        通用 measurement primitive — 把 D/B capability dispatch + BSE 优先 +
+        finally-stop + auto-routing 集中在一处. 给 path_loss 的算式步骤,
+        和 QZ field uniformity / XPD / 任何"已知 CE tone, 测 SA 功率"流程
+        共用. probe_id / polarization 仅用于 log + 错误信息, 不参与算式.
+
+        前置: HAL 必须绑 channelEmulator + signalAnalyzer; CE driver 必须
+        声明 ≥1 个 CalibrationToneCapability.
+        """
         # Lazy import — avoid circular and SQLite-test-killing pulls.
         from app.hal.channel_emulator import CalibrationToneCapability
         from app.services.instrument_hal_service import get_hal_service
@@ -672,10 +727,8 @@ class ProbePathLossCalibrationService:
             if sa is None:
                 missing.append("signalAnalyzer")
             raise RuntimeError(
-                f"CE+SA path-loss requires HAL drivers: {missing}. "
-                "Ensure both are bound on the active LabProfile, or fall back "
-                "to use_mock=True / set chamber.cable_sgh_to_sa_loss_db=None to "
-                "use the legacy VNA path."
+                f"CE+SA tone acquisition requires HAL drivers: {missing}. "
+                "Bind both on the active LabProfile."
             )
 
         # Capability-based dispatch: prefer D (single-instrument) when CE
@@ -706,7 +759,7 @@ class ProbePathLossCalibrationService:
             )
         else:
             logger.warning(
-                "[PathLoss CE+SA] probe=%d pol=%s — no route_target supplied, "
+                "[CE+SA tone] probe=%d pol=%s — no route_target supplied, "
                 "assuming RF switch already routed manually. Pass a chain_id "
                 "via lab_profile entrypoint for auto-routing.",
                 probe_id, polarization.value,
@@ -717,8 +770,9 @@ class ProbePathLossCalibrationService:
                 ce, sa, probe_id, polarization, frequency_mhz, ce_tx_power_dbm,
                 ce_port=ce_port,
             )
-            tone_source_label = "CE-internal"
-        elif CalibrationToneCapability.PASSTHROUGH_ONLY in caps:
+            return sa_rx_mean_dbm, sa_rx_std_db, "CE-internal"
+
+        if CalibrationToneCapability.PASSTHROUGH_ONLY in caps:
             # Prefer BSE over a standalone SG: every chamber has a BSE
             # (it's the throughput-test master), most chambers don't have
             # a separate SG. Using BSE also keeps the signal path 100%
@@ -740,36 +794,11 @@ class ProbePathLossCalibrationService:
                 ce, sa, source, probe_id, polarization, frequency_mhz, ce_tx_power_dbm,
                 ce_port=ce_port,
             )
-            tone_source_label = f"passthrough({type(source).__name__})"
-        else:
-            raise RuntimeError(
-                f"CE driver {type(ce).__name__} declared capabilities {caps} "
-                "but none match INTERNAL_CW_GENERATOR / PASSTHROUGH_ONLY."
-            )
+            return sa_rx_mean_dbm, sa_rx_std_db, f"passthrough({type(source).__name__})"
 
-        # path_loss = CE_TX - SA_RX + G_sgh + G_probe - cable_sgh_to_sa
-        # (signs: TX higher = more loss; subtract antenna gains both sides;
-        #  subtract the SGH→SA cable that's NOT in the production signal path)
-        path_loss_db = (
-            ce_tx_power_dbm - sa_rx_mean_dbm
-            + sgh_gain_dbi + probe_gain_dbi
-            - cable_sgh_to_sa_loss_db
-        )
-        # Uncertainty: SA reading noise + 0.3 dB SGH gain calibration ref unc.
-        uncertainty_db = sa_rx_std_db + 0.3
-
-        logger.info(
-            "[PathLoss CE+SA src=%s] probe=%d pol=%s freq=%.1fMHz "
-            "CE_TX=%.1f SA_RX=%.2f±%.2f → PL=%.2f dB",
-            tone_source_label, probe_id, polarization.value, frequency_mhz,
-            ce_tx_power_dbm, sa_rx_mean_dbm, sa_rx_std_db, path_loss_db,
-        )
-
-        return PathLossMeasurement(
-            probe_id=probe_id,
-            polarization=polarization.value,
-            path_loss_db=float(abs(path_loss_db)),
-            uncertainty_db=float(uncertainty_db),
+        raise RuntimeError(
+            f"CE driver {type(ce).__name__} declared capabilities {caps} "
+            "but none match INTERNAL_CW_GENERATOR / PASSTHROUGH_ONLY."
         )
 
     async def _route_switch_to_chain(
