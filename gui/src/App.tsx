@@ -1878,12 +1878,55 @@ function EquipmentManager() {
                     autosize
                     minRows={4}
                     value={draft.connection_params || ''}
-                    onChange={(val) => setDrafts(prev => ({ 
-                      ...prev, 
-                      [category.key]: { ...prev[category.key], connection_params: val } 
+                    onChange={(val) => setDrafts(prev => ({
+                      ...prev,
+                      [category.key]: { ...prev[category.key], connection_params: val }
                     }))}
                   />
                 )}
+
+                {category.key === 'channelEmulator' && (() => {
+                  // Read/write alignment_name as a single field while keeping
+                  // the underlying connection_params JSON the source of truth
+                  // (handleSaveConnection already serializes it to the API).
+                  let parsedParams: Record<string, unknown> = {}
+                  try {
+                    parsedParams = draft.connection_params
+                      ? JSON.parse(draft.connection_params)
+                      : {}
+                  } catch {
+                    // If existing JSON is malformed, surface that to the
+                    // operator instead of silently swallowing — they need
+                    // to fix it before we can edit alignment_name cleanly.
+                  }
+                  const currentAlignment = typeof parsedParams.alignment_name === 'string'
+                    ? parsedParams.alignment_name
+                    : ''
+                  return (
+                    <TextInput
+                      label="F64 User Alignment 文件名"
+                      description="在 F64 上预存的 user alignment 文件名（§17.5: 仪器重启后驱动 connect() 自动 SYST:CALIB:USER:SET 重新激活该名）。留空 = 使用 F64 当前已加载的 alignment（如有）。"
+                      placeholder="例: CAICT_5G_3500MHz"
+                      value={currentAlignment}
+                      onChange={(e) => {
+                        const newName = e.currentTarget.value
+                        const next = { ...parsedParams }
+                        if (newName.trim()) {
+                          next.alignment_name = newName.trim()
+                        } else {
+                          delete next.alignment_name
+                        }
+                        const serialized = Object.keys(next).length > 0
+                          ? JSON.stringify(next, null, 2)
+                          : ''
+                        setDrafts(prev => ({
+                          ...prev,
+                          [category.key]: { ...prev[category.key], connection_params: serialized },
+                        }))
+                      }}
+                    />
+                  )
+                })()}
 
                 <Group justify="flex-end" mt="md">
                   <Button
