@@ -563,33 +563,38 @@ class WorkflowExecutor:
         params = {**execution.workflow.parameters, **step.parameters}
         session_id = uuid.UUID(execution.session_id) if execution.session_id else None
 
+        # The 3 channel-cal methods became async (A2 — temporal/doppler now
+        # acquire from SA when use_mock=False). Workflow engine runs in a
+        # background worker (not an event loop), so asyncio.run() bridges
+        # cleanly. If this ever moves into an async worker, switch to await.
+        import asyncio as _asyncio
         cal_type = step.calibration_type
         if cal_type == "temporal":
             scenario = params.get("scenario", {})
-            calibration = service.run_temporal_calibration(
+            calibration = _asyncio.run(service.run_temporal_calibration(
                 scenario_type=scenario.get("type", "UMa"),
                 scenario_condition=scenario.get("condition", "LOS"),
                 fc_ghz=params.get("fc_ghz", 3.5),
                 session_id=session_id,
                 calibrated_by=params.get("calibrated_by", "workflow"),
-            )
+            ))
         elif cal_type == "doppler":
-            calibration = service.run_doppler_calibration(
+            calibration = _asyncio.run(service.run_doppler_calibration(
                 velocity_kmh=params.get("velocity_kmh", 120),
                 fc_ghz=params.get("fc_ghz", 3.5),
                 session_id=session_id,
                 calibrated_by=params.get("calibrated_by", "workflow"),
-            )
+            ))
         elif cal_type == "spatial_correlation":
             scenario = params.get("scenario", {})
-            calibration = service.run_spatial_correlation_calibration(
+            calibration = _asyncio.run(service.run_spatial_correlation_calibration(
                 scenario_type=scenario.get("type", "UMa"),
                 scenario_condition=scenario.get("condition", "NLOS"),
                 fc_ghz=params.get("fc_ghz", 3.5),
                 antenna_spacing_wavelengths=params.get("antenna_spacing_wavelengths", 0.5),
                 session_id=session_id,
                 calibrated_by=params.get("calibrated_by", "workflow"),
-            )
+            ))
         elif cal_type == "angular_spread":
             scenario = params.get("scenario", {})
             calibration = service.run_angular_spread_calibration(

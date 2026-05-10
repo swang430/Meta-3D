@@ -717,7 +717,7 @@ class ChannelCalibrationService:
 
     # ========== 时域校准 ==========
 
-    def run_temporal_calibration(
+    async def run_temporal_calibration(
         self,
         scenario_type: str,
         scenario_condition: str,
@@ -725,21 +725,43 @@ class ChannelCalibrationService:
         distance_2d_m: Optional[float] = None,
         session_id: Optional[UUID] = None,
         channel_emulator: Optional[str] = None,
-        calibrated_by: Optional[str] = None
+        calibrated_by: Optional[str] = None,
+        use_mock: bool = True,
     ) -> TemporalChannelCalibration:
         """
         执行时域信道校准
 
-        1. 生成/获取 PDP 数据
+        1. 生成/获取 PDP 数据 (mock 用 generate_mock_pdp, real 用 SA.measure_pdp)
         2. 计算 RMS 时延扩展
         3. 检测簇
         4. 与 3GPP 参考对比
         5. 保存结果
+
+        use_mock=False 时, HAL 必须绑 signalAnalyzer driver 且实现 measure_pdp;
+        前置 CE 已加载目标 CDL 模型(由 caller 编排, 不在本方法范围).
         """
-        # 生成模拟 PDP (实际实现应从仪器获取)
-        delay_bins, power_db = generate_mock_pdp(
-            scenario_type, scenario_condition, fc_ghz
-        )
+        if use_mock:
+            delay_bins, power_db = generate_mock_pdp(
+                scenario_type, scenario_condition, fc_ghz
+            )
+        else:
+            from app.services.instrument_hal_service import get_hal_service
+            hal = get_hal_service()
+            sa = hal.drivers.get("signalAnalyzer")
+            if sa is None:
+                raise RuntimeError(
+                    "Temporal (PDP) calibration with use_mock=False needs a "
+                    "signalAnalyzer driver bound on the active LabProfile, "
+                    "implementing measure_pdp()."
+                )
+            center_hz = fc_ghz * 1e9
+            delay_list, power_list = await sa.measure_pdp(
+                center_freq_hz=center_hz,
+                max_delay_ns=2000.0,
+                resolution_ns=10.0,
+            )
+            delay_bins = np.array(delay_list)
+            power_db = np.array(power_list)
 
         # 计算 RMS 时延扩展
         rms_delay_ns, max_delay_ns = calculate_rms_delay_spread(delay_bins, power_db)
@@ -798,21 +820,22 @@ class ChannelCalibrationService:
 
     # ========== 多普勒校准 ==========
 
-    def run_doppler_calibration(
+    async def run_doppler_calibration(
         self,
         velocity_kmh: float,
         fc_ghz: float,
         session_id: Optional[UUID] = None,
         channel_emulator: Optional[str] = None,
-        calibrated_by: Optional[str] = None
+        calibrated_by: Optional[str] = None,
+        use_mock: bool = True,
     ) -> DopplerCalibration:
         """
         执行多普勒校准
 
         1. 计算预期多普勒频移
-        2. 生成参考频谱
-        3. 获取/模拟测量频谱
-        4. 计算频谱相关性
+        2. 生成参考频谱 (Jakes / classical)
+        3. 获取测量频谱 (mock 加 0.5 dB 噪声; real 用 SA.measure_doppler_spectrum)
+        4. 计算频谱相关性 (Pearson 相关 vs 参考)
         5. 保存结果
         """
         # 计算预期多普勒频移
@@ -821,8 +844,26 @@ class ChannelCalibrationService:
         # 生成参考频谱
         ref_freq, ref_power = generate_classical_doppler_spectrum(expected_doppler)
 
-        # 模拟测量频谱 (添加一些噪声)
-        meas_power = ref_power + np.random.normal(0, 0.5, len(ref_power))
+        # 获取测量频谱
+        if use_mock:
+            meas_power = ref_power + np.random.normal(0, 0.5, len(ref_power))
+        else:
+            from app.services.instrument_hal_service import get_hal_service
+            hal = get_hal_service()
+            sa = hal.drivers.get("signalAnalyzer")
+            if sa is None:
+                raise RuntimeError(
+                    "Doppler calibration with use_mock=False needs a "
+                    "signalAnalyzer driver bound on the active LabProfile, "
+                    "implementing measure_doppler_spectrum()."
+                )
+            center_hz = fc_ghz * 1e9
+            meas_freq_list, meas_power_list = await sa.measure_doppler_spectrum(
+                center_freq_hz=center_hz,
+                max_doppler_hz=max(expected_doppler * 2.0, 100.0),
+                num_bins=len(ref_freq),
+            )
+            meas_power = np.array(meas_power_list)
 
         # 计算相关性
         correlation = calculate_spectral_correlation(meas_power, ref_power)
@@ -867,7 +908,7 @@ class ChannelCalibrationService:
 
     # ========== 空间相关性校准 ==========
 
-    def run_spatial_correlation_calibration(
+    async def run_spatial_correlation_calibration(
         self,
         scenario_type: str,
         scenario_condition: str,
@@ -876,7 +917,7 @@ class ChannelCalibrationService:
         antenna_spacing_m: Optional[float] = None,
         antenna_type: str = "dipole",
         session_id: Optional[UUID] = None,
-        calibrated_by: Optional[str] = None
+        calibrated_by: Optional[str] = None,
     ) -> SpatialCorrelationCalibration:
         """
         执行空间相关性校准

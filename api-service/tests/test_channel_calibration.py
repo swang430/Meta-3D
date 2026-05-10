@@ -348,11 +348,12 @@ class TestChannelCalibrationService:
         assert updated.progress_percent == 50
         assert updated.current_stage == "temporal_calibration"
 
-    def test_run_temporal_calibration(self, db_session):
+    @pytest.mark.asyncio
+    async def test_run_temporal_calibration(self, db_session):
         """测试执行时域校准"""
         service = ChannelCalibrationService(db_session)
 
-        calibration = service.run_temporal_calibration(
+        calibration = await service.run_temporal_calibration(
             scenario_type="UMa",
             scenario_condition="LOS",
             fc_ghz=3.5,
@@ -366,11 +367,12 @@ class TestChannelCalibrationService:
         assert calibration.validation_pass is not None
         assert calibration.status == ChannelCalibrationStatus.VALID.value
 
-    def test_run_doppler_calibration(self, db_session):
+    @pytest.mark.asyncio
+    async def test_run_doppler_calibration(self, db_session):
         """测试执行多普勒校准"""
         service = ChannelCalibrationService(db_session)
 
-        calibration = service.run_doppler_calibration(
+        calibration = await service.run_doppler_calibration(
             velocity_kmh=120,
             fc_ghz=3.5,
             calibrated_by="test_user"
@@ -382,11 +384,12 @@ class TestChannelCalibrationService:
         assert calibration.spectral_correlation is not None
         assert calibration.validation_pass is not None
 
-    def test_run_spatial_correlation_calibration(self, db_session):
+    @pytest.mark.asyncio
+    async def test_run_spatial_correlation_calibration(self, db_session):
         """测试执行空间相关性校准"""
         service = ChannelCalibrationService(db_session)
 
-        calibration = service.run_spatial_correlation_calibration(
+        calibration = await service.run_spatial_correlation_calibration(
             scenario_type="UMa",
             scenario_condition="NLOS",
             fc_ghz=3.5,
@@ -400,14 +403,15 @@ class TestChannelCalibrationService:
         assert calibration.reference_correlation_magnitude is not None
         assert calibration.validation_pass is not None
 
-    def test_list_calibrations(self, db_session):
+    @pytest.mark.asyncio
+    async def test_list_calibrations(self, db_session):
         """测试列出校准记录"""
         service = ChannelCalibrationService(db_session)
 
         # 创建几个校准记录
-        service.run_temporal_calibration("UMa", "LOS", 3.5, calibrated_by="test")
-        service.run_temporal_calibration("UMi", "NLOS", 3.5, calibrated_by="test")
-        service.run_doppler_calibration(120, 3.5, calibrated_by="test")
+        await service.run_temporal_calibration("UMa", "LOS", 3.5, calibrated_by="test")
+        await service.run_temporal_calibration("UMi", "NLOS", 3.5, calibrated_by="test")
+        await service.run_doppler_calibration(120, 3.5, calibrated_by="test")
 
         # 列出所有
         results = service.list_calibrations(limit=10)

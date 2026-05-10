@@ -388,34 +388,37 @@ steps:
         assert session is not None
         assert session.id is not None
 
-        # Run calibrations
-        temporal = service.run_temporal_calibration(
+        # Run calibrations — service methods became async in A2 (channel-model
+        # validation can now acquire from SA driver when use_mock=False).
+        # Sync test bridges with asyncio.run.
+        import asyncio as _asyncio
+        temporal = _asyncio.run(service.run_temporal_calibration(
             scenario_type="UMa",
             scenario_condition="LOS",
             fc_ghz=3.5,
             session_id=session.id,
             calibrated_by="e2e_test",
-        )
+        ))
         assert temporal.id is not None
         assert temporal.session_id == session.id
 
-        doppler = service.run_doppler_calibration(
+        doppler = _asyncio.run(service.run_doppler_calibration(
             velocity_kmh=120,
             fc_ghz=3.5,
             session_id=session.id,
             calibrated_by="e2e_test",
-        )
+        ))
         assert doppler.id is not None
         assert doppler.session_id == session.id
 
-        spatial = service.run_spatial_correlation_calibration(
+        spatial = _asyncio.run(service.run_spatial_correlation_calibration(
             scenario_type="UMa",
             scenario_condition="NLOS",
             fc_ghz=3.5,
             antenna_spacing_wavelengths=0.5,
             session_id=session.id,
             calibrated_by="e2e_test",
-        )
+        ))
         assert spatial.id is not None
 
         # Complete session
@@ -450,22 +453,23 @@ steps:
         # Create session
         session = service.create_session(name="List Test Session")
 
+        import asyncio as _asyncio
         # Create multiple calibrations
         for scenario in ["UMa", "UMi"]:
             for condition in ["LOS", "NLOS"]:
-                service.run_temporal_calibration(
+                _asyncio.run(service.run_temporal_calibration(
                     scenario_type=scenario,
                     scenario_condition=condition,
                     fc_ghz=3.5,
                     session_id=session.id,
-                )
+                ))
 
         for velocity in [30, 60, 90, 120]:
-            service.run_doppler_calibration(
+            _asyncio.run(service.run_doppler_calibration(
                 velocity_kmh=velocity,
                 fc_ghz=3.5,
                 session_id=session.id,
-            )
+            ))
 
         # Query calibrations directly from database
         temporal_count = db_session.query(TemporalChannelCalibration).filter(

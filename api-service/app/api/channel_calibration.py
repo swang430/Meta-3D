@@ -171,7 +171,7 @@ async def start_temporal_calibration(
     service = ChannelCalibrationService(db)
 
     # 执行校准
-    calibration = service.run_temporal_calibration(
+    calibration = await service.run_temporal_calibration(
         scenario_type=request.scenario.type.value,
         scenario_condition=request.scenario.condition.value,
         fc_ghz=request.scenario.fc_ghz,
@@ -247,7 +247,7 @@ async def start_doppler_calibration(
     """
     service = ChannelCalibrationService(db)
 
-    calibration = service.run_doppler_calibration(
+    calibration = await service.run_doppler_calibration(
         velocity_kmh=request.velocity_kmh,
         fc_ghz=request.fc_ghz,
         session_id=request.session_id,
@@ -304,7 +304,7 @@ async def start_spatial_correlation_calibration(
     """
     service = ChannelCalibrationService(db)
 
-    calibration = service.run_spatial_correlation_calibration(
+    calibration = await service.run_spatial_correlation_calibration(
         scenario_type=request.scenario.type.value,
         scenario_condition=request.scenario.condition.value,
         fc_ghz=request.scenario.fc_ghz,
