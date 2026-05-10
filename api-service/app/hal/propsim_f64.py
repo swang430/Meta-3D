@@ -43,7 +43,11 @@ from app.hal.base import (
     InstrumentCapability,
     InstrumentMetrics,
 )
-from app.hal.channel_emulator import ChannelEmulatorDriver, ChannelLoadMode
+from app.hal.channel_emulator import (
+    CalibrationToneCapability,
+    ChannelEmulatorDriver,
+    ChannelLoadMode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +114,19 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self.emulation_dir: str = config.get("emulation_dir", F64_EMULATION_DIR)
         self.waveform_dir: str = config.get("waveform_dir", F64_WAVEFORM_DIR)
 
+        # Calibration-tone 能力: PROPSIM Internal Interference Generator 是
+        # optional license. 不做运行时 SCPI 探测 (会污染 emulation 状态), 由
+        # InstrumentCategory.config 显式声明:
+        #   has_interference_generator=True  → INTERNAL_CW_GENERATOR + PASSTHROUGH
+        #   has_interference_generator=False → 只 PASSTHROUGH (总是支持, 走
+        #                                       BypassMode.CALIBRATION)
+        self.has_interference_generator: bool = bool(
+            config.get("has_interference_generator", False)
+        )
+        # 固定 ID 给单 tone, 重复 set 时先 remove 旧的避免 "identifier in use".
+        self._cal_tone_id: str = config.get("cal_tone_id", "ce_sa_cal_tone")
+        self._cal_tone_active: bool = False
+
         # PyVISA 资源句柄
         self._visa_resource = None
         self._rm = None
@@ -119,6 +136,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self._loaded_emulation_file: Optional[str] = None
         self._emulation_running: bool = False
         self._bypass_mode: F64BypassMode = F64BypassMode.DISABLED
+        self._passthrough_active: bool = False
 
         # 信道参数缓存 (最近一次配置)
         self._current_model: Optional[str] = None
@@ -794,6 +812,205 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             logger.error(f"[F64] set_bypass_mode failed: {e}")
             self._last_error = str(e)
             return False
+
+    # ===================================================================
+    # 5b. CE+SA 路损校准 tone 链路 (3GPP MIMO OTA, 取代 VNA)
+    # ===================================================================
+    # 服务层 ProbePathLossCalibrationService.acquire_sa_power_via_ce_tone()
+    # 通过 capability dispatch 选 D 路径 (CE 自己出 CW) 或 B 路径 (上游 BSE/SG
+    # 出 CW + CE 透传). 两条路径都在这里实现:
+    #
+    #   D — Internal Interference Generator (optional license):
+    #       OUTPut:INTERFerence:ADD <port>, <id>, 2  (type=2 = CW)
+    #       + STRATegy:SET 1 (恒定功率) + FREQ:SET + POW:SET + STatus 1
+    #       (User Reference §13 + §20.4.9)
+    #   B — Calibration bypass (无 license 也支持):
+    #       DIAG:SIMU:MODEL:STATIC 3  (所有通道等增益/等延迟/零相位透传)
+    #       配合上游 SG/BSE 出 CW, 信号经 CE 原样输出.
+    # ===================================================================
+
+    @staticmethod
+    def _ce_port_to_output_num(ce_port: Optional[str]) -> str:
+        """ce_port 解析为 SCPI 用的 output number string.
+
+        - None → "1" (主端口默认)
+        - 纯数字 ("1", "12") → 直接用
+        - "B1.1" / "B1.2" 等 ETSL 风格 connector 表示法 → 取小数点后部分
+          作为 output index (这是 CAICT 现场约定; 跨实验室部署在
+          InstrumentCategory.config 里另写映射表覆盖)
+        - 解析失败 → "1" + warn (生产部署应在 LabProfile 显式声明 ce_port)
+        """
+        if ce_port is None:
+            return "1"
+        s = str(ce_port).strip()
+        if s.isdigit():
+            return s
+        # "B1.1" / "A2.3" → 小数点后的数字
+        if "." in s:
+            tail = s.rsplit(".", 1)[-1]
+            if tail.isdigit():
+                return tail
+        logger.warning(
+            "[F64] ce_port=%r unrecognized format, defaulting to output 1; "
+            "configure LabProfile.ce_port explicitly for production",
+            ce_port,
+        )
+        return "1"
+
+    def get_calibration_tone_capabilities(self) -> List[CalibrationToneCapability]:
+        """声明本 PROPSIM 的 CE+SA tone 能力.
+
+        D 路径 (INTERNAL_CW_GENERATOR) 需要 Internal Interference Generator
+        optional license, 没买就只声明 B 路径. 由 instrument config 字段
+        has_interference_generator 显式控制 (避免运行时 SCPI 探测污染状态).
+
+        B 路径 (PASSTHROUGH_ONLY) 任何 PROPSIM 都支持 — 走 BypassMode
+        .CALIBRATION (DIAG:SIMU:MODEL:STATIC 3), 全通道等增益等延迟透传.
+        """
+        caps: List[CalibrationToneCapability] = [
+            CalibrationToneCapability.PASSTHROUGH_ONLY,
+        ]
+        if self.has_interference_generator:
+            caps.insert(0, CalibrationToneCapability.INTERNAL_CW_GENERATOR)
+        return caps
+
+    async def set_calibration_tone(
+        self,
+        frequency_hz: float,
+        power_dbm: float,
+        ce_port: Optional[str] = None,
+    ) -> bool:
+        """[D 路径] 通过 Internal Interference Generator 出已知 CW tone.
+
+        SCPI sequence (User Reference §20.4.9):
+            OUTPut:INTERFerence:ADD <out>, <id>, 2     # type=2 = CW
+            OUTPut:INTERFerence:STRATegy:SET <id>, 1   # 恒定功率
+            OUTPut:INTERFerence:FREQuency:SET <id>, <MHz>
+            OUTPut:INTERFerence:POWer:SET <id>, <dBm>
+            OUTPut:INTERFerence:STatus <id>, 1         # 启用
+
+        前置: has_interference_generator=True (license 已开).
+
+        重复调用安全 — 先 REMove 旧 ID 避免 "identifier in use" 错误.
+        """
+        if not self._visa_resource:
+            return False
+        if not self.has_interference_generator:
+            logger.error(
+                "[F64] set_calibration_tone called but has_interference_generator"
+                " is False. Configure instrument with this option enabled, or "
+                "fall through to PASSTHROUGH path (BSE/SG upstream)."
+            )
+            return False
+
+        out_num = self._ce_port_to_output_num(ce_port)
+        cal_id = self._cal_tone_id
+        freq_mhz = frequency_hz / 1e6
+
+        try:
+            # 1. 先清掉同 id 的旧 interferer (重复调用幂等)
+            try:
+                await self._write(f"OUTPut:INTERFerence:REMove {cal_id}")
+            except Exception:
+                pass  # 没有旧的就忽略
+
+            # 2. 加 CW 干扰源到指定 output (type=2 = CW)
+            await self._write(
+                f"OUTPut:INTERFerence:ADD {out_num},{cal_id},2"
+            )
+            # 3. 恒定功率策略 (而非 C/I-ratio, 校准要绝对值)
+            await self._write(
+                f"OUTPut:INTERFerence:STRATegy:SET {cal_id},1"
+            )
+            # 4. 频率 (MHz) 和功率 (dBm)
+            await self._write(
+                f"OUTPut:INTERFerence:FREQuency:SET {cal_id},{freq_mhz:.6f}"
+            )
+            await self._write(
+                f"OUTPut:INTERFerence:POWer:SET {cal_id},{power_dbm:.2f}"
+            )
+            # 5. 启用
+            await self._write(f"OUTPut:INTERFerence:STatus {cal_id},1")
+
+            await self._check_errors()
+            self._cal_tone_active = True
+            logger.info(
+                "[F64] Calibration tone ON: out=%s freq=%.1fMHz power=%.1fdBm id=%s",
+                out_num, freq_mhz, power_dbm, cal_id,
+            )
+            return True
+        except Exception as e:
+            logger.error(f"[F64] set_calibration_tone failed: {e}")
+            self._last_error = str(e)
+            # 失败时尝试清理避免半状态
+            try:
+                await self._write(f"OUTPut:INTERFerence:REMove {cal_id}")
+            except Exception:
+                pass
+            self._cal_tone_active = False
+            return False
+
+    async def stop_calibration_tone(self) -> bool:
+        """[D 路径] 关 CW tone 并移除 interferer.
+
+        SCPI:
+            OUTPut:INTERFerence:STatus <id>, 0   # 禁用
+            OUTPut:INTERFerence:REMove <id>      # 移除
+
+        finally 块里调用避免 CE 长时间发射. 没启用过也安全 — REMove
+        不存在的 id 时报 -200, 我们捕获后忽略.
+        """
+        if not self._visa_resource:
+            return False
+        cal_id = self._cal_tone_id
+        try:
+            try:
+                await self._write(f"OUTPut:INTERFerence:STatus {cal_id},0")
+            except Exception:
+                pass
+            try:
+                await self._write(f"OUTPut:INTERFerence:REMove {cal_id}")
+            except Exception:
+                pass
+            await self._check_errors()
+            self._cal_tone_active = False
+            logger.info(f"[F64] Calibration tone OFF (id={cal_id})")
+            return True
+        except Exception as e:
+            logger.error(f"[F64] stop_calibration_tone failed: {e}")
+            self._last_error = str(e)
+            return False
+
+    async def set_passthrough_mode(
+        self,
+        ce_port: Optional[str] = None,
+        ce_input_port: Optional[str] = None,
+    ) -> bool:
+        """[B 路径] 切到 calibration bypass — 全通道等增益等延迟零相位透传.
+
+        实现复用 set_bypass_mode(F64BypassMode.CALIBRATION):
+            DIAG:SIMU:MODEL:STATIC 3   (User Reference §20.4.6.25)
+
+        在此模式下上游 SG/BSE 注入的 CW 经 CE 原样从所有 output 输出, 配合
+        switch 路由到指定 probe. ce_port / ce_input_port 在 CALIBRATION
+        bypass 下不需要 per-port 配置 (全局透传), 仅记录到状态用于 trace.
+        """
+        ok = await self.set_bypass_mode(F64BypassMode.CALIBRATION)
+        if ok:
+            self._passthrough_active = True
+            logger.info(
+                "[F64] Passthrough mode ON (out=%s, in=%s, calibration bypass)",
+                ce_port or "all", ce_input_port or "all",
+            )
+        return ok
+
+    async def clear_passthrough_mode(self) -> bool:
+        """[B 路径] 退出 calibration bypass, 恢复正常 fading 配置."""
+        ok = await self.set_bypass_mode(F64BypassMode.DISABLED)
+        if ok:
+            self._passthrough_active = False
+            logger.info("[F64] Passthrough mode OFF (bypass disabled)")
+        return ok
 
     async def set_center_frequency(self, channel: int, freq_mhz: float) -> bool:
         """
