@@ -2,26 +2,31 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# System deps. postgresql-client is kept around because some operations
+# (manual psql poking, future health-check scripts) want it on PATH.
 RUN apt-get update && apt-get install -y \
     gcc \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
+# Install Python deps first for layer caching.
 COPY requirements.txt .
-
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Application code + everything the entrypoint needs to run alembic
+# migrations and the bootstrap CLI on container start.
 COPY app/ ./app/
+COPY alembic/ ./alembic/
+COPY alembic.ini ./alembic.ini
+COPY scripts/ ./scripts/
 
-# Create directories for calibration data
+# Entrypoint: alembic upgrade head + bootstrap, then uvicorn.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Persistent data dirs (bind-mounted via docker-compose).
 RUN mkdir -p /app/calibration_data /app/certificates
 
-# Expose port
 EXPOSE 8000
 
-# Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

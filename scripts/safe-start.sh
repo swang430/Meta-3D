@@ -68,46 +68,75 @@ if [ "$DB_STATE" == "ERROR" ]; then
         echo "❌ 取消启动。"
         exit 1
     fi
-elif [ "$DB_STATE" == "EMPTY" ]; then
-    echo "==================================================="
-    echo "🌟 欢迎使用 Meta-3D OTA 系统！检测到初次运行 🌟"
-    echo "==================================================="
-    echo "系统检测到您的数据库为空。为了保证测试系统正常运行，我们需要初始化以下内容："
-    echo " - 自动创建所有关系型数据表结构"
-    echo " - 注入仪器设备型号名录 (Seed Instruments)"
-    echo " - 建立标准 32 探头暗室 3D 布局 (Init Probes)"
-    echo " - 加载基础测试报告模板 (Report Templates)"
-    echo " - 配置标准测试及路测序列 (Init Sequences)"
-    echo ""
-    read -p "是否现在自动为您完成全自动初始化？(Y/n) " -n 1 -r
-    echo ""
-    if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
-        echo "⏳ 正在初始化表结构与种子数据..."
-        cd api-service
-        
-        # 1. 创建表结构
-        .venv/bin/python -c "from app.db.database import init_db; init_db()"
-        echo "  ✅ 表结构创建成功"
-        
-        # 2. 注入种子数据
-        .venv/bin/python scripts/seed_instruments.py > /dev/null
-        echo "  ✅ 仪器名录加载成功"
-        
-        .venv/bin/python scripts/init_probes.py > /dev/null
-        echo "  ✅ 暗室探头布局初始化成功"
-        
-        .venv/bin/python scripts/init_report_templates.py > /dev/null
-        echo "  ✅ 报告模板初始化成功"
-        
-        .venv/bin/python scripts/init_sequences.py > /dev/null
-        echo "  ✅ 标准测试序列初始化成功"
-        
-        cd ..
-        echo ""
-        echo "🎉 数据库初始化完美完成！"
+else
+    # ── DB 在线 → 永远先把 alembic 推到 head ─────────────────
+    # 即使 DB 已经初始化过 (DB_STATE=OK)，团队成员拉到含新迁移的代码后
+    # 启动时也需要自动同步 schema。alembic 迁移天然幂等；已应用过的会被
+    # 跳过，不会重复执行。
+    echo "📦 检查并应用 schema 迁移 (alembic upgrade head)..."
+    cd api-service
+    if .venv/bin/alembic upgrade head; then
+        echo "  ✅ schema 已是最新"
     else
-        echo "⚠️ 跳过数据库初始化，系统可能无法正常运行所有功能。"
+        echo "  ❌ schema 迁移失败 — 请检查 alembic 输出"
+        cd ..
+        exit 1
     fi
+    cd ..
+    echo ""
+
+    # ── 默认数据 (bootstrap) ────────────────────────────────
+    if [ "$DB_STATE" == "EMPTY" ]; then
+        echo "==================================================="
+        echo "🌟 欢迎使用 Meta-3D OTA 系统！检测到初次运行 🌟"
+        echo "==================================================="
+        echo "系统检测到您的数据库为空。需要初始化以下内容："
+        echo " - 注入仪器设备型号名录 (Seed Instruments)"
+        echo " - 建立标准 32 探头暗室 3D 布局 (Init Probes)"
+        echo " - 加载基础测试报告模板 (Report Templates)"
+        echo " - 配置标准测试及路测序列 (Init Sequences)"
+        echo " - 落入 4 个默认暗室预设 (Bootstrap chamber presets)"
+        echo ""
+        read -p "是否现在自动为您完成全自动初始化？(Y/n) " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+            echo "⏳ 正在初始化默认数据..."
+            cd api-service
+
+            # 旧版散落 seed 脚本 — 后续 backlog 里会逐个收编进 bootstrap 框架
+            .venv/bin/python scripts/seed_instruments.py > /dev/null
+            echo "  ✅ 仪器名录加载成功"
+
+            .venv/bin/python scripts/init_probes.py > /dev/null
+            echo "  ✅ 暗室探头布局初始化成功"
+
+            .venv/bin/python scripts/init_report_templates.py > /dev/null
+            echo "  ✅ 报告模板初始化成功"
+
+            .venv/bin/python scripts/init_sequences.py > /dev/null
+            echo "  ✅ 标准测试序列初始化成功"
+
+            cd ..
+            echo ""
+            echo "🎉 全部默认数据完美就绪！"
+        else
+            echo "⚠️ 跳过初始化，系统可能无法正常运行所有功能。"
+        fi
+        echo ""
+    fi
+
+    # ── Bootstrap 总是跑一次 (幂等) ─────────────────────────
+    # 跟 alembic 同样思路：放进 bootstrap 的 seeder (e.g. chamber_presets)
+    # 在新版本时需要让所有现有部署自动 pick up，所以无论 EMPTY 还是 OK
+    # 都跑。已经 up-to-date 的 seeder 会被跳过。
+    echo "🌱 检查并应用 bootstrap 默认数据 (chamber presets 等)..."
+    cd api-service
+    if .venv/bin/python -m scripts.bootstrap; then
+        echo "  ✅ bootstrap 已是最新"
+    else
+        echo "  ⚠️ bootstrap 报错 — 详见上方日志，启动继续"
+    fi
+    cd ..
     echo ""
 fi
 
