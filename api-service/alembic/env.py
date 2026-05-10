@@ -24,7 +24,12 @@ for _module_info in pkgutil.iter_modules(_models_pkg.__path__):
     importlib.import_module(f"{_models_pkg.__name__}.{_module_info.name}")
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Default to ``settings.database_url`` (the project's normal config
+# source) unless the caller already set a URL on this Config — e.g.
+# tests building a Config in-process against a throwaway SQLite DB, or
+# operators running ``alembic -x dburl=... upgrade head`` for one-offs.
+if not config.get_main_option("sqlalchemy.url"):
+    config.set_main_option("sqlalchemy.url", settings.database_url)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
