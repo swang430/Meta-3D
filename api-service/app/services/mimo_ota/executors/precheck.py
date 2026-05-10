@@ -124,6 +124,44 @@ class PrecheckExecutor(IStepExecutor):
                 warnings.append(f"UE capability query raised: {e}; skipped")
         result_payload["ue_capability_pass"] = ue_cap_pass
 
+        # --- 2.6 Channel emulator user alignment (PROPSIM F64 §17) ---
+        # F64 user alignment 补偿内部通道相位/增益的时间&温度漂移. 重启后
+        # 必须 SYST:CALIB:USER:SET 重新激活 — connect() 已经做过, 这里只
+        # 上报状态供操作员判断当天 alignment 数据是否新鲜. 不在 alignment
+        # 状态上 hard-fail: 这是 OPTIONAL license, 多数现场不一定激活.
+        ce = hal.drivers.get("channelEmulator")
+        if ce is not None and hasattr(ce, "get_user_alignment_status"):
+            try:
+                alignment = await ce.get_user_alignment_status()
+            except Exception as e:  # noqa: BLE001
+                alignment = None
+                warnings.append(f"CE user-alignment query raised: {e}; skipped")
+            if alignment:
+                result_payload["channel_emulator_user_alignment"] = alignment
+                messages.append(
+                    f"CE user alignment: ACTIVE "
+                    f"(name={alignment.get('alignment_name')!r})"
+                )
+            else:
+                result_payload["channel_emulator_user_alignment"] = None
+                warnings.append(
+                    "Channel emulator has no user alignment loaded; "
+                    "internal channel phase/gain consistency relies on "
+                    "factory calibration only. Re-load via "
+                    "SYST:CALIB:USER:SET if the emulator was just restarted."
+                )
+            if hasattr(ce, "list_external_units"):
+                try:
+                    units = await ce.list_external_units()
+                    result_payload["channel_emulator_external_units"] = units
+                    if units:
+                        messages.append(
+                            f"CE external alignment units: "
+                            f"{len(units)} detected ({[u.get('unit') for u in units]})"
+                        )
+                except Exception as e:  # noqa: BLE001
+                    warnings.append(f"CE external-unit list raised: {e}; skipped")
+
         # --- 3. Calibration validity ---
         cal_cert = context.calibration_certificate
         if cal_cert is not None:

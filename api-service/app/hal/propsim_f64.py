@@ -138,6 +138,16 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self._cal_tone_id: str = config.get("cal_tone_id", "ce_sa_cal_tone")
         self._cal_tone_active: bool = False
 
+        # User alignment (Integrated Setup Calibration, optional license).
+        # alignment_name 在 connect() 后会尝试 SYST:CALIB:USER:SET 1,<name>
+        # 重新装载 — F64 重启后已存盘的 alignment 默认不激活, 必须显式调用 SET.
+        # 留空表示这台 F64 不使用 user alignment, 仅依赖工厂校准 + 我们自己的
+        # ProbePathLossCalibration.
+        self._preferred_alignment_name: Optional[str] = (
+            config.get("alignment_name") or None
+        )
+        self._active_alignment: Optional[Dict[str, Any]] = None
+
         # PyVISA 资源句柄
         self._visa_resource = None
         self._rm = None
@@ -248,6 +258,32 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             # 应用阶段, 仍执行探测仅为日志可见性.
             opts = await self._probe_installed_options()
             await self._apply_discovered_capabilities(opts)
+
+            # User alignment auto-reload (User Reference §17.5):
+            #   "Auto alignment results become obsolete when the emulator
+            #    shuts down" — alignment 文件保留在盘上, 但每次开机后必须调
+            #    SYST:CALIB:USER:SET 1,<name> 重新激活. 当前 active 状态先
+            #    存到 _active_alignment 供 precheck phase 上报.
+            self._active_alignment = await self.get_user_alignment_status()
+            if self._preferred_alignment_name:
+                current = (
+                    self._active_alignment.get("alignment_name")
+                    if self._active_alignment else None
+                )
+                if current != self._preferred_alignment_name:
+                    logger.info(
+                        f"[F64] Re-loading user alignment "
+                        f"\"{self._preferred_alignment_name}\" "
+                        f"(was: {current!r})"
+                    )
+                    if await self.enable_user_alignment(self._preferred_alignment_name):
+                        self._active_alignment = await self.get_user_alignment_status()
+                    else:
+                        logger.warning(
+                            f"[F64] Could not activate user alignment "
+                            f"\"{self._preferred_alignment_name}\" — "
+                            f"emulator may be missing the file or the license."
+                        )
 
             # 清空错误队列
             await self._clear_error_queue()
@@ -1095,6 +1131,127 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             self._passthrough_active = False
             logger.info("[F64] Passthrough mode OFF (bypass disabled)")
         return ok
+
+    # ===================================================================
+    # User alignment (Integrated Setup Calibration, optional license)
+    # User Reference §17 + §20.4.2.18-21, .32-36.
+    #
+    # 用户级 alignment 补偿 F64 内部各通道随时间/温度/环境的相位&增益漂移.
+    # 工厂校准 (§6.1) 给绝对计量基准, 用户 alignment 给相对一致性. 是
+    # OPTIONAL license, 不是每台 F64 都激活.
+    #
+    # 这些方法通过 SCPI 实现的能力:
+    #   - 查询当前是否激活 / alignment 名 / 元信息 (FW/SW/timestamp)
+    #   - 重启后用名字重新激活 (alignment 数据本身已存盘, 但开机不自动 active)
+    #   - 列出已连接的 ACU (Auto Calibration Unit) — 全自动 alignment 时用
+    #
+    # 不在 SCPI 接口里的 (必须人在仪器前操作):
+    #   - 跑一次新 alignment (要插拔 thru 走 wizard)
+    # ===================================================================
+
+    async def get_user_alignment_status(self) -> Optional[Dict[str, Any]]:
+        """查询当前激活的 user alignment 名 + 元信息.
+
+        SCPI: SYST:CALIB:USER:GET? + SYST:CALIB:USER:INFO? (§20.4.2.19, .21)
+
+        Returns:
+            {"alignment_name": <name>, "info": <info string>}
+                — 有激活的 alignment 时
+            None — 未激活, 或查询失败 (firmware 不支持本组命令也会落到这里)
+        """
+        if not self._visa_resource:
+            return None
+        try:
+            raw_name = await self._query("SYSTem:CALIBration:USER:GET?")
+        except Exception as e:
+            logger.warning(f"[F64] User alignment query failed: {e}")
+            return None
+        name = raw_name.strip().strip('"').strip("'")
+        if not name:
+            return None
+        info = ""
+        try:
+            raw_info = await self._query("SYSTem:CALIBration:USER:INFO?")
+            info = raw_info.strip().strip('"').strip("'")
+        except Exception as e:
+            logger.debug(
+                f"[F64] User alignment info query failed (non-fatal): {e}"
+            )
+        return {"alignment_name": name, "info": info}
+
+    async def enable_user_alignment(self, name: str) -> bool:
+        """重新激活已存盘的 user alignment.
+
+        典型场景: F64 重启后已存盘的 alignment 不会自动 active, 必须显式
+        调用 SYST:CALIB:USER:SET 1,<name> (§20.4.2.18). 设完用 GET? 回读
+        确认.
+
+        Args:
+            name: alignment 文件名 (跟 wizard 里 Configuration Name 一致)
+
+        Returns:
+            True  — set + GET? 回读匹配
+            False — alignment 不存在 / VISA 异常 / 名字不匹配
+        """
+        if not name:
+            raise ValueError("alignment name cannot be empty")
+        if not self._visa_resource:
+            return False
+        try:
+            await self._write(f"SYSTem:CALIBration:USER:SET 1,{name}")
+            raw = await self._query("SYSTem:CALIBration:USER:GET?")
+            active = raw.strip().strip('"').strip("'")
+            if active == name:
+                logger.info(f"[F64] User alignment activated: {name}")
+                return True
+            logger.warning(
+                f"[F64] enable_user_alignment(\"{name}\"): post-set GET? "
+                f"returned {active!r} — file may not exist on the emulator."
+            )
+            return False
+        except Exception as e:
+            logger.error(
+                f"[F64] enable_user_alignment(\"{name}\") failed: {e}"
+            )
+            return False
+
+    async def list_external_units(self) -> List[Dict[str, Any]]:
+        """列出连接到 F64 的 ACU (Auto Calibration Units).
+
+        SCPI: SYST:EXT:UNIT:LIST? 0 (§20.4.2.32)
+        响应示例: "ACU 12345 (C5),ACU 67890 (C6)"
+        括号里是控制电缆所连的 BNC connector (C5/C7 等).
+
+        Returns:
+            每个检测到的 ACU 一条 {"unit": "ACU 12345", "connector": "C5"}.
+            空列表表示没有 ACU 连接 (那么 alignment 只能走 manual mode).
+        """
+        if not self._visa_resource:
+            return []
+        try:
+            # 第二参数 0 = 仅返回缓存, 不触发 scan; 用 1 会让 F64 重新扫描所有
+            # connector, 耗时, 在 precheck 路径上不必要.
+            raw = await self._query("SYSTem:EXTernal:UNIT:LIST? 0")
+        except Exception as e:
+            logger.warning(f"[F64] External unit list query failed: {e}")
+            return []
+        raw = raw.strip()
+        if not raw:
+            return []
+        units: List[Dict[str, Any]] = []
+        for token in raw.split(","):
+            token = token.strip().strip('"').strip("'")
+            if not token:
+                continue
+            unit_id = token
+            connector: Optional[str] = None
+            # Manual 解析 "ACU 12345 (C5)" 形式 — 末尾括号 = connector
+            if "(" in token and token.endswith(")"):
+                head, _, rest = token.rpartition("(")
+                unit_id = head.strip()
+                connector = rest.rstrip(")").strip() or None
+            units.append({"unit": unit_id, "connector": connector})
+        return units
 
     async def set_center_frequency(self, channel: int, freq_mhz: float) -> bool:
         """
