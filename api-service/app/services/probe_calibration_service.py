@@ -1470,6 +1470,10 @@ class PatternCalibrationService:
         measurement_distance_m: float = 3.0,
         reference_antenna_id: Optional[str] = None,
         turntable_id: Optional[str] = None,
+        ce_port: Optional[str] = None,
+        ce_tx_power_dbm: float = -20.0,
+        sgh_gain_dbi: float = 10.0,
+        chain_correction_db: float = 0.0,
         use_mock: bool = True
     ) -> CalibrationResult:
         """
@@ -1532,8 +1536,19 @@ class PatternCalibrationService:
                         )
                     else:
                         measurements = await self._real_pattern_measurements(
-                            probe_id, polarization, azimuth_deg, elevation_deg,
-                            frequency_mhz, reference_antenna_id, turntable_id
+                            db=db,
+                            probe_id=probe_id,
+                            polarization=polarization,
+                            azimuth_deg=azimuth_deg,
+                            elevation_deg=elevation_deg,
+                            frequency_mhz=frequency_mhz,
+                            ce_port=ce_port,
+                            ce_tx_power_dbm=ce_tx_power_dbm,
+                            sgh_gain_dbi=sgh_gain_dbi,
+                            chain_correction_db=chain_correction_db,
+                            measurement_distance_m=measurement_distance_m,
+                            reference_antenna_id=reference_antenna_id,
+                            turntable_id=turntable_id,
                         )
 
                     # 提取增益数据 (行优先存储: elevation 外循环, azimuth 内循环)
@@ -1675,18 +1690,97 @@ class PatternCalibrationService:
 
     async def _real_pattern_measurements(
         self,
+        db: Session,
         probe_id: int,
         polarization: PolarizationType,
         azimuth_deg: List[float],
         elevation_deg: List[float],
         frequency_mhz: float,
+        ce_port: Optional[str],
+        ce_tx_power_dbm: float,
+        sgh_gain_dbi: float,
+        chain_correction_db: float,
+        measurement_distance_m: float,
         reference_antenna_id: Optional[str],
-        turntable_id: Optional[str]
+        turntable_id: Optional[str],
     ) -> List[PatternMeasurement]:
-        """执行实际方向图测量"""
-        if not self.instruments:
-            raise RuntimeError("No instruments connected")
-        raise NotImplementedError("Real pattern measurements not yet implemented")
+        """执行实际方向图测量 — CE+SA + positioner.
+
+        测量过程: CE 在选定 ce_port 出已知 CW tone, positioner 把 SGH (或
+        DUT 转台) 旋到 (az, el), SA 通过 SGH 接收功率, 重复 N×M 次扫遍
+        整个角度网格. 反算每点的 probe gain dBi.
+
+        算式:
+            G_probe(θ) = P_rx_sa - P_tx_ce + FSPL(d, f) - G_sgh - chain_correction
+
+        其中:
+            - P_tx_ce: CE 输出 tone 功率 (dBm)
+            - P_rx_sa: SA 在该 (az, el) 读到的功率 (dBm)
+            - FSPL(d, f): 自由空间路损 @ 测量距离 d 频率 f
+            - G_sgh: SGH 标定增益 (dBi)
+            - chain_correction: PA 增益 + switch 插损 + cable 损耗的端到端
+              修正 (dB). 通常由前置 path-loss 校准给出 (CE+SA 测的 path_loss
+              其实就是 -G_chain + FSPL_chamber - G_sgh - G_probe + cable, 拆出来
+              就是 chain_correction). 不传 → 0, 此时 gain_dbi 是"相对方向图"
+              而非绝对增益, peak 值无意义但 HPBW / 前后比 / 主瓣方向都正确.
+
+        前置: HAL 必须绑 positioner + channelEmulator + signalAnalyzer.
+        positioner 的 (azimuth, elevation) 在 cert 部署里是 DUT 转台 (探头不动,
+        SGH 跟着 DUT 一起转 — 等效于探头相对 SGH 转), 或专门的 SGH 反向定位台.
+        """
+        from app.services.instrument_hal_service import get_hal_service
+        from app.services.path_loss_calibration_service import (
+            ProbePathLossCalibrationService,
+            calculate_fspl,
+        )
+
+        hal = get_hal_service()
+        positioner = hal.drivers.get("positioner")
+        if positioner is None:
+            raise RuntimeError(
+                "Pattern calibration needs positioner driver (DUT/SGH turntable). "
+                "Bind a PositionerDriver on the active LabProfile."
+            )
+
+        fspl_db = calculate_fspl(frequency_mhz, measurement_distance_m)
+        pl_service = ProbePathLossCalibrationService(db, use_mock=False)
+
+        measurements: List[PatternMeasurement] = []
+        # Row-major (elevation outer, azimuth inner) — match _mock_pattern_measurements
+        # ordering so downstream peak / HPBW / FtB index math is identical.
+        for elev in elevation_deg:
+            for az in azimuth_deg:
+                ok = await positioner.move_to(
+                    azimuth=float(az), elevation=float(elev)
+                )
+                if not ok:
+                    raise RuntimeError(
+                        f"positioner.move_to(az={az}, el={elev}) failed; "
+                        f"aborting pattern scan for probe {probe_id} pol "
+                        f"{polarization.value if hasattr(polarization, 'value') else polarization}"
+                    )
+                sa_mean_dbm, sa_std_db, _ = await pl_service.acquire_sa_power_via_ce_tone(
+                    frequency_mhz=frequency_mhz,
+                    ce_tx_power_dbm=ce_tx_power_dbm,
+                    ce_port=ce_port,
+                    probe_id=probe_id,
+                    polarization=polarization,
+                )
+                gain_dbi = (
+                    sa_mean_dbm
+                    - ce_tx_power_dbm
+                    + fspl_db
+                    - sgh_gain_dbi
+                    - chain_correction_db
+                )
+                measurements.append(PatternMeasurement(
+                    azimuth_deg=float(az),
+                    elevation_deg=float(elev),
+                    gain_dbi=float(gain_dbi),
+                    uncertainty_db=float(sa_std_db + 0.3),  # SA noise + SGH ref unc
+                ))
+
+        return measurements
 
     def get_latest_calibration(
         self,
