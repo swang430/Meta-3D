@@ -542,23 +542,42 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         try:
             ch_str = ",".join(str(ch) for ch in channels)
             response = await self._query(f"CH:MOD:CONT:ENV? {ch_str}")
-
-            result = {}
-            parts = response.strip().split(",")
-            # 每 5 个 token 为一组: ch, env, gain, delay, doppler
-            for i in range(0, len(parts), 5):
-                if i + 4 < len(parts):
-                    ch_num = int(parts[i].strip())
-                    result[ch_num] = {
-                        "environment": parts[i + 1].strip(),
-                        "gain_db": float(parts[i + 2]) if parts[i + 2].strip() else None,
-                        "delay_ns": int(parts[i + 3]) if parts[i + 3].strip() else None,
-                        "doppler_hz": int(parts[i + 4]) if parts[i + 4].strip() else None,
-                    }
-            return result
         except Exception as e:
-            logger.error(f"[F64] query_runtime_environment failed: {e}")
+            # SCPI 层失败 (timeout / 仪表错误) — 整体返回空, 调用方自行重试
+            logger.error(f"[F64] query_runtime_environment SCPI failed: {e}")
             return {}
+
+        result: Dict[int, Dict[str, Any]] = {}
+        parts = response.strip().split(",")
+        # 每 5 个 token 为一组: ch, env, gain, delay, doppler. 单组解析失败
+        # 跳过该组 (e.g. 仪表临时返回畸形 token), 其他组照常返回 — 比"全
+        # 部丢弃"更有用.
+        skipped = 0
+        for i in range(0, len(parts), 5):
+            if i + 5 > len(parts):
+                # 末尾不足一组 — 截断, 不算错误
+                break
+            try:
+                ch_num = int(parts[i].strip())
+                result[ch_num] = {
+                    "environment": parts[i + 1].strip(),
+                    "gain_db": float(parts[i + 2]) if parts[i + 2].strip() else None,
+                    "delay_ns": int(parts[i + 3]) if parts[i + 3].strip() else None,
+                    "doppler_hz": int(parts[i + 4]) if parts[i + 4].strip() else None,
+                }
+            except (ValueError, IndexError) as e:
+                skipped += 1
+                logger.warning(
+                    f"[F64] query_runtime_environment skipped malformed group "
+                    f"at index {i}: {parts[i:i+5]!r} ({e})"
+                )
+
+        if skipped:
+            logger.info(
+                f"[F64] query_runtime_environment: parsed {len(result)} channels, "
+                f"skipped {skipped} malformed groups"
+            )
+        return result
 
     # ===================================================================
     # 4. 通用仿真控制 (两种管线共享)
@@ -571,16 +590,47 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         correlation_matrix: Optional[list[list[float]]] = None
     ) -> bool:
         """
-        配置 MIMO 端口拓扑。
+        配置 MIMO 端口拓扑 (软 setter, F64 真正的拓扑在 .smu/.rtc 文件里).
 
-        注意: F64 的 MIMO 端口拓扑在仿真文件 (.smu) 的 Scenario Wizard 中定义,
-        而非通过 SCPI 动态配置。此方法更新内部状态缓存, 并验证仿真文件的
-        实际通道数是否匹配。
+        F64 的 MIMO 端口拓扑通过 Scenario Wizard 烘到仿真文件中, SCPI 不能
+        动态改路径数. 本方法做两件事:
+          1. 校验请求的 tx×rx 是否超出本机通道数 (connect 时探测)
+          2. 缓存 (tx, rx) 给上层服务 (set_path_loss 等) 计算输出数
 
-        对于已加载的仿真, 可通过连接器重映射调整端口:
-          INP:CON:SET <input>, <emulator>, <unit>, <position>
-          OUTP:CON:SET <output>, <emulator>, <unit>, <position>
+        若已有仿真文件加载, 拓扑已固定, 此时调用本方法 ≠ 缓存值就 **拒绝并
+        返回 False** —— 否则 set_path_loss 等下游计算会用错误的输出数. 真要
+        改拓扑必须 reload 不同的 .smu/.rtc.
+
+        connector 重映射 (INP:CON:SET / OUTP:CON:SET) 是另一回事 (物理路由,
+        不是逻辑路径数), 不在本方法范围.
+
+        Returns:
+            True  校验通过 (或与已加载文件一致, 无需改动)
+            False 超出本机通道数 / 已加载文件且请求拓扑不一致
         """
+        required_paths = tx_antennas * rx_antennas
+        if required_paths > self._channel_count:
+            msg = (
+                f"requested MIMO {tx_antennas}x{rx_antennas} = {required_paths} "
+                f"paths exceeds device capacity {self._channel_count}"
+            )
+            logger.error(f"[F64] set_mimo_config refused: {msg}")
+            self._last_error = msg
+            return False
+
+        if self._loaded_emulation_file is not None:
+            if (tx_antennas, rx_antennas) != (self._tx_antennas, self._rx_antennas):
+                logger.warning(
+                    f"[F64] set_mimo_config refused: file '{self._loaded_emulation_file}' "
+                    f"is loaded with {self._tx_antennas}x{self._rx_antennas}; "
+                    f"requested {tx_antennas}x{rx_antennas} would silently mismatch — "
+                    f"reload a different file to change topology"
+                )
+                self._last_error = "topology fixed by loaded file"
+                return False
+            # 与已加载文件一致, no-op
+            return True
+
         self._tx_antennas = tx_antennas
         self._rx_antennas = rx_antennas
         logger.info(f"[F64] MIMO config cached: {tx_antennas}x{rx_antennas}")
@@ -773,34 +823,51 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         """
         查询 F64 当前全面状态。
 
-        汇总: 仿真状态、旁路模式、管线类型、中心频率、输入/输出电平等。
+        汇总: 仿真状态、旁路模式、管线类型、中心频率、输入/输出电平等.
+
+        语义: 静态字段 (pipeline / center_freq 等内存缓存) 总是返回. 动态
+        查询 (旁路状态 / SCPI 版本) per-query try, 失败的项不出现在 state
+        里, 错误进 query_errors. 上层可据此区分:
+          - status='disconnected'  → 无 visa
+          - 'error' in state       → 整机故障
+          - 'query_errors' present → 部分查询失败, 主体状态可用
+          - 三者皆无                → 全部成功
         """
         if not self._visa_resource:
             return {"status": "disconnected"}
 
+        # 静态字段 (内存缓存, 不会失败)
+        state: Dict[str, Any] = {
+            "pipeline": self._active_pipeline.value if self._active_pipeline else None,
+            "emulation_running": self._emulation_running,
+            "loaded_file": self._loaded_emulation_file,
+            "model": self._current_model,
+            "scenario": self._current_scenario,
+            "center_freq_mhz": self._center_freq_mhz,
+            "mimo_config": f"{self._tx_antennas}x{self._rx_antennas}",
+        }
+        query_errors: List[str] = []
+
+        # 查询旁路状态
         try:
-            state: Dict[str, Any] = {
-                "pipeline": self._active_pipeline.value if self._active_pipeline else None,
-                "emulation_running": self._emulation_running,
-                "loaded_file": self._loaded_emulation_file,
-                "model": self._current_model,
-                "scenario": self._current_scenario,
-                "center_freq_mhz": self._center_freq_mhz,
-                "mimo_config": f"{self._tx_antennas}x{self._rx_antennas}",
-            }
-
-            # 查询旁路状态
             bypass_str = await self._query("DIAG:SIMU:MODEL:STATIC?")
-            state["bypass_mode"] = int(bypass_str.strip()) if bypass_str.strip().isdigit() else 0
+            state["bypass_mode"] = (
+                int(bypass_str.strip()) if bypass_str.strip().isdigit() else 0
+            )
+        except Exception as e:
+            query_errors.append(f"bypass_mode: {e}")
 
-            # 查询 SCPI 版本
+        # 查询 SCPI 版本
+        try:
             scpi_ver = await self._query("SYST:VERS?")
             state["scpi_version"] = scpi_ver.strip()
-
-            return state
         except Exception as e:
-            logger.error(f"[F64] get_channel_state failed: {e}")
-            return {"status": "error", "error": str(e)}
+            query_errors.append(f"scpi_version: {e}")
+
+        if query_errors:
+            state["query_errors"] = query_errors
+
+        return state
 
     # ===================================================================
     # 5. 校准与诊断 SCPI (两种管线共享)
@@ -1072,8 +1139,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             await self._write(
                 f"INP:LEV:AUTOSET {input_num},{measurement_time_s}",
             )
-            # Autoset 需要等待测量完成
-            await asyncio.sleep(measurement_time_s + 1)
+            # 用 IEEE 488.2 *OPC? 同步等待 autoset 完成 — 比硬 sleep 可靠:
+            # *OPC? 阻塞直到所有挂起的 SCPI 操作完成, 立即返回 "1".
+            # timeout 给 (measurement_time + 2)s 缓冲, 防止 PROPSIM 内部
+            # autoset 略超额定时间.
+            opc_timeout_ms = int((measurement_time_s + 2) * 1000)
+            await self._query("*OPC?", timeout=opc_timeout_ms)
 
             logger.info(f"[F64] Input {input_num} autoset: {level_dbm} dBm, crest={crest_db} dB")
             return level_dbm
@@ -1137,45 +1208,73 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             self._last_error = str(e)
             return False
 
-    async def get_output_calibration(self, output_num: int) -> Optional[Dict[str, float]]:
+    async def get_output_calibration(
+        self,
+        output_num: int,
+        *,
+        retries: int = 3,
+        retry_delay_s: float = 0.5,
+    ) -> Optional[Dict[str, float]]:
         """
-        获取输出通道校准数据。
+        获取输出通道校准数据 (含 not-ready 重试).
 
         User Reference §20.4.5.24:
           OUTP:CALIB:GET? <output>
           返回: <gain_dB>,<phase_degrees>
+
+        紧接 autoset 后调用容易碰到 "not ready", retry 重试 retries 次,
+        每次间 retry_delay_s; 全部 not-ready 或异常则 None.
         """
         if not self._visa_resource:
             return None
+        raw = await self._query_with_retry(
+            f"OUTP:CALIB:GET? {output_num}",
+            retries=retries,
+            delay_s=retry_delay_s,
+        )
+        if raw is None:
+            return None
         try:
-            result = await self._query(f"OUTP:CALIB:GET? {output_num}")
-            parts = result.strip().split(",")
+            parts = raw.split(",")
             return {
                 "gain_db": float(parts[0]),
-                "phase_deg": float(parts[1]) if len(parts) > 1 else 0.0
+                "phase_deg": float(parts[1]) if len(parts) > 1 else 0.0,
             }
-        except Exception as e:
-            logger.error(f"[F64] get_output_calibration failed: {e}")
+        except (ValueError, IndexError) as e:
+            logger.error(f"[F64] get_output_calibration parse failed: {raw!r} ({e})")
             return None
 
-    async def get_output_power(self, output_num: int) -> Optional[float]:
+    async def get_output_power(
+        self,
+        output_num: int,
+        *,
+        retries: int = 3,
+        retry_delay_s: float = 0.5,
+    ) -> Optional[float]:
         """
-        获取输出功率测量值。
+        获取输出功率测量值 (含 not-ready 重试).
 
         User Reference §20.4.5.22:
           OUTP:MEAS:RES:GET? <output>[,<option>]
           option 0: 基于输入功率计算 (legacy)
           option 1: 在输出端直接测量 (含内部干扰源)
+
+        刚启动仿真 / 改路损 / autoset 后, F64 内部测量缓冲尚未填满会返回
+        'not ready' — retry 多次后仍 not-ready 才放弃.
         """
         if not self._visa_resource:
             return None
+        raw = await self._query_with_retry(
+            f"OUTP:MEAS:RES:GET? {output_num}",
+            retries=retries,
+            delay_s=retry_delay_s,
+        )
+        if raw is None:
+            return None
         try:
-            result = await self._query(f"OUTP:MEAS:RES:GET? {output_num}")
-            if "not ready" in result.lower():
-                return None
-            return float(result.strip())
-        except Exception as e:
-            logger.error(f"[F64] get_output_power failed: {e}")
+            return float(raw)
+        except ValueError as e:
+            logger.error(f"[F64] get_output_power parse failed: {raw!r} ({e})")
             return None
 
     async def set_input_phase(self, input_num: int, phase_deg: float) -> bool:
@@ -1239,7 +1338,14 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     # ===================================================================
 
     async def get_metrics(self) -> InstrumentMetrics:
-        """获取 F64 运行状态指标"""
+        """获取 F64 运行状态指标 (含逐通道功率)。
+
+        输入电平按 _tx_antennas 数量逐路查 INP:MEAS:RES:GET? <i>;
+        输出电平按 _tx_antennas × _rx_antennas (仿真路径数) 逐路查
+        OUTP:MEAS:RES:GET? <i>. 单路查询失败 (含 'not ready') 不影响其他
+        路 — 该路记 None, 用 query_errors 累计错误以便 dashboard 区分
+        "通道未就绪" 与 "整机故障".
+        """
         if not self._visa_resource:
             return InstrumentMetrics(
                 timestamp=datetime.utcnow(),
@@ -1253,23 +1359,49 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 "pipeline": self._active_pipeline.value if self._active_pipeline else "none",
                 "bypass_mode": self._bypass_mode.name,
                 "loaded_file": self._loaded_emulation_file,
+                "tx_antennas": self._tx_antennas,
+                "rx_antennas": self._rx_antennas,
             }
+            query_errors: List[str] = []
 
-            # 读取输入功率 (第一个输入)
-            try:
-                inp_power = await self._query("INP:MEAS:RES:GET? 1")
-                metrics["input_1_power_dbm"] = float(inp_power.strip())
-            except Exception:
-                metrics["input_1_power_dbm"] = None
+            # 输入电平: 1..tx_antennas
+            input_powers: Dict[int, Optional[float]] = {}
+            for inp in range(1, self._tx_antennas + 1):
+                try:
+                    raw = await self._query(f"INP:MEAS:RES:GET? {inp}")
+                    raw_l = raw.strip().lower()
+                    if not raw_l or "not ready" in raw_l:
+                        input_powers[inp] = None
+                    else:
+                        input_powers[inp] = float(raw.strip())
+                except Exception as e:
+                    input_powers[inp] = None
+                    query_errors.append(f"input_{inp}: {e}")
+            metrics["input_powers_dbm"] = input_powers
 
-            # 读取输出功率 (第一个输出)
-            try:
-                out_power = await self._query("OUTP:MEAS:RES:GET? 1")
-                if "not ready" not in out_power.lower():
-                    metrics["output_1_power_dbm"] = float(out_power.strip())
-            except Exception:
-                metrics["output_1_power_dbm"] = None
+            # 输出电平: 1..(tx_antennas × rx_antennas), 但不超本机通道数
+            num_outputs = min(
+                self._tx_antennas * self._rx_antennas,
+                self._channel_count,
+            )
+            output_powers: Dict[int, Optional[float]] = {}
+            for out in range(1, num_outputs + 1):
+                try:
+                    raw = await self._query(f"OUTP:MEAS:RES:GET? {out}")
+                    raw_l = raw.strip().lower()
+                    if not raw_l or "not ready" in raw_l:
+                        output_powers[out] = None
+                    else:
+                        output_powers[out] = float(raw.strip())
+                except Exception as e:
+                    output_powers[out] = None
+                    query_errors.append(f"output_{out}: {e}")
+            metrics["output_powers_dbm"] = output_powers
 
+            if query_errors:
+                metrics["query_errors"] = query_errors
+
+            # 单路失败不降级整体状态 — 仿真在跑就是 normal
             return InstrumentMetrics(
                 timestamp=datetime.utcnow(),
                 metrics=metrics,
@@ -1284,8 +1416,13 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             )
 
     async def get_capabilities(self) -> List[InstrumentCapability]:
-        """返回 F64 支持的能力列表"""
-        return [
+        """返回 F64 支持的能力列表 (含 *OPT? 探测出的 license-aware 能力).
+
+        非 license 能力 (Channel Emulation / GCM / Runtime / RSRP / Bypass)
+        是 F64 出厂内置, 无条件声明. license 能力 (Internal Interference
+        Generator) 取决于 *OPT? 探测结果, supported 字段反映实际状态.
+        """
+        caps: List[InstrumentCapability] = [
             InstrumentCapability(
                 name="Channel Emulation",
                 description=f"Up to {self._channel_count} fading channels",
@@ -1314,6 +1451,42 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 supported=True
             ),
         ]
+
+        # License-aware: Internal Interference Generator (CW tone source).
+        # has_interference_generator 在 connect() 时由 *OPT? 探测填充
+        # (None = 探测前 / 探测失败, 当作不可用).
+        caps.append(
+            InstrumentCapability(
+                name="Internal Interference Generator",
+                description="Optional license for internal CW/noise tone "
+                            "injection (calibration D path)",
+                supported=bool(self.has_interference_generator),
+                parameters={
+                    "license_status": (
+                        "licensed" if self.has_interference_generator
+                        else "not_licensed"
+                    ),
+                    "matched_options": [
+                        opt for opt in self._installed_options
+                        if opt.upper() in INTERFERENCE_GEN_OPTION_TOKENS
+                    ],
+                },
+            )
+        )
+
+        # 透明声明所有 *OPT? 探测出的选件 — 上层 (lab dashboard / commissioning
+        # 报告) 能直接看到这台 F64 装了哪些 license, 不需要再额外查询.
+        caps.append(
+            InstrumentCapability(
+                name="Installed Options",
+                description=f"{len(self._installed_options)} license token(s) "
+                            f"reported by *OPT?",
+                supported=bool(self._installed_options),
+                parameters={"options": list(self._installed_options)},
+            )
+        )
+
+        return caps
 
     async def reset(self) -> bool:
         """
@@ -1405,6 +1578,53 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             f"[F64] Interference Generator license: "
             f"{self.has_interference_generator} (probed from {options or '(empty)'})"
         )
+
+    async def _query_with_retry(
+        self,
+        cmd: str,
+        *,
+        retries: int = 3,
+        delay_s: float = 0.5,
+    ) -> Optional[str]:
+        """SCPI 查询 + not-ready / 异常重试.
+
+        F64 在测量缓冲尚未填满时返回 'not ready' 字符串. 紧接 autoset / 仿真
+        启动 / 路损改动后调用 OUTP:MEAS:RES:GET? / OUTP:CALIB:GET? 容易碰
+        到. 这个 helper 把"重试 N 次, 每次间隔 delay_s"的样板封掉.
+
+        Returns:
+            stripped response 字符串 — 成功;
+            None — 全部重试都 not-ready / 异常.
+        """
+        for attempt in range(retries):
+            try:
+                raw = await self._query(cmd)
+                stripped = raw.strip()
+                if not stripped or "not ready" in stripped.lower():
+                    if attempt + 1 < retries:
+                        logger.debug(
+                            f"[F64] {cmd}: not ready, retry "
+                            f"{attempt + 1}/{retries} in {delay_s}s"
+                        )
+                        await asyncio.sleep(delay_s)
+                        continue
+                    logger.warning(
+                        f"[F64] {cmd}: not ready after {retries} attempts"
+                    )
+                    return None
+                return stripped
+            except Exception as e:
+                if attempt + 1 < retries:
+                    logger.warning(
+                        f"[F64] {cmd} failed (attempt {attempt + 1}/{retries}): {e}"
+                    )
+                    await asyncio.sleep(delay_s)
+                else:
+                    logger.error(
+                        f"[F64] {cmd} failed after {retries} attempts: {e}"
+                    )
+                    return None
+        return None
 
     async def _clear_error_queue(self) -> None:
         """连接后清空全部历史错误"""
