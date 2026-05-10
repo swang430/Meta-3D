@@ -105,6 +105,18 @@ class ChamberConfiguration(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
     created_by = Column(String(100))
 
+    # System presets are seeded by scripts.bootstrap and are read-only via
+    # the API: PUT/DELETE on a row with is_system_preset=True is rejected
+    # so the canonical out-of-the-box options stay available even after a
+    # user fork. To customize, the user clones a preset (POST /chambers/
+    # {id}/duplicate) and edits the copy (which has is_system_preset=False).
+    is_system_preset = Column(
+        Boolean, nullable=False, default=False, server_default='false',
+        index=True,
+        comment='True for canonical out-of-the-box presets seeded by '
+                'scripts.bootstrap; rejects PUT/DELETE. User copies clear it.',
+    )
+
     # === 关联关系 ===
     probes = relationship("Probe", back_populates="chamber_config", lazy="dynamic")
 

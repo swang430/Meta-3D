@@ -41,6 +41,7 @@ def _to_response(chamber: ChamberConfiguration) -> ChamberConfigurationResponse:
         "description": chamber.description,
         "chamber_type": chamber.chamber_type,
         "is_active": chamber.is_active,
+        "is_system_preset": chamber.is_system_preset,
         "chamber_radius_m": chamber.chamber_radius_m,
         "quiet_zone_diameter_m": chamber.quiet_zone_diameter_m,
         "num_probes": chamber.num_probes,
@@ -217,6 +218,15 @@ def update_chamber(
     if not chamber:
         raise HTTPException(status_code=404, detail="Chamber configuration not found")
 
+    if chamber.is_system_preset:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This chamber is a system preset and cannot be edited. "
+                "POST /api/v1/chambers/{id}/duplicate to create an editable copy."
+            ),
+        )
+
     update_dict = update_data.model_dump(exclude_unset=True)
     for key, value in update_dict.items():
         setattr(chamber, key, value)
@@ -224,6 +234,46 @@ def update_chamber(
     db.commit()
     db.refresh(chamber)
     return _to_response(chamber)
+
+
+@router.post("/{chamber_id}/duplicate", response_model=ChamberConfigurationResponse, status_code=201)
+def duplicate_chamber(chamber_id: UUID, db: Session = Depends(get_db)):
+    """复制一个现有暗室配置，得到一份用户可编辑的副本.
+
+    System presets (``is_system_preset=True``) cannot be edited in place
+    by design — call this endpoint to clone the preset, then modify the
+    returned row freely. The clone:
+
+    - Has a fresh ``id``
+    - Has ``is_system_preset=False`` (so PUT/DELETE are allowed)
+    - Has ``is_active=False`` (operator decides when to activate)
+    - Carries a ``"<原名> (副本)"`` name so it sorts next to the source
+    """
+    source = db.query(ChamberConfiguration).filter(
+        ChamberConfiguration.id == chamber_id
+    ).first()
+
+    if not source:
+        raise HTTPException(status_code=404, detail="Chamber configuration not found")
+
+    # Copy every persisted column except identity/lifecycle fields.
+    excluded = {
+        "id", "created_at", "updated_at", "is_active", "is_system_preset",
+    }
+    payload = {
+        col.name: getattr(source, col.name)
+        for col in ChamberConfiguration.__table__.columns
+        if col.name not in excluded
+    }
+    payload["name"] = f"{source.name} (副本)"
+    payload["is_system_preset"] = False
+    payload["is_active"] = False
+
+    clone = ChamberConfiguration(**payload)
+    db.add(clone)
+    db.commit()
+    db.refresh(clone)
+    return _to_response(clone)
 
 
 @router.post("/{chamber_id}/activate", response_model=ChamberConfigurationResponse)
@@ -259,6 +309,15 @@ def delete_chamber(chamber_id: UUID, db: Session = Depends(get_db)):
 
     if not chamber:
         raise HTTPException(status_code=404, detail="Chamber configuration not found")
+
+    if chamber.is_system_preset:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This chamber is a system preset and cannot be deleted. "
+                "If you no longer want to see it, hide it in the GUI rather than removing the row."
+            ),
+        )
 
     if chamber.is_active:
         raise HTTPException(status_code=400, detail="Cannot delete active chamber configuration")

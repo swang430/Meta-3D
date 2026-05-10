@@ -377,6 +377,7 @@ export type ChamberConfiguration = {
   description: string | null
   chamber_type: string
   is_active: boolean
+  is_system_preset: boolean
 
   // 物理参数
   chamber_radius_m: number

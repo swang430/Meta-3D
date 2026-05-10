@@ -280,6 +280,14 @@ export const activateChamber = async (chamberId: string): Promise<ChamberConfigu
 }
 
 /**
+ * 复制暗室配置 — 系统预设是只读的，要修改先复制成可编辑副本
+ */
+export const duplicateChamber = async (chamberId: string): Promise<ChamberConfiguration> => {
+  const response = await client.post<ChamberConfiguration>(`/chambers/${chamberId}/duplicate`)
+  return response.data
+}
+
+/**
  * 删除暗室配置
  */
 export const deleteChamber = async (chamberId: string): Promise<{ message: string }> => {
