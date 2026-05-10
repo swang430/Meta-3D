@@ -42,6 +42,9 @@ from app.services.path_loss_calibration_service import (
 from app.services.quiet_zone_validation_service import (
     QuietZoneValidationService,
 )
+from app.services.channel_calibration_service import (
+    ChannelCalibrationService,
+)
 
 logger = logging.getLogger("app.calibration.orchestrator")
 
@@ -57,6 +60,7 @@ class CalibrationItem(str, Enum):
     CE_BIDIRECTIONAL = "ce_bidirectional_calibration"  # CE 双向校准
     PROBE_MUTUAL_COUPLING = "probe_mutual_coupling"  # 探头互耦
     MULTI_FREQUENCY = "multi_frequency_path_loss"  # 多频点路损
+    CDL_MODEL_VALIDATION = "cdl_model_validation"  # CDL 信道模型验证 (PDP/Doppler/Spatial)
 
 
 class CalibrationPriority(int, Enum):
@@ -147,6 +151,15 @@ CALIBRATION_CONFIG = {
         "dependencies": [CalibrationItem.PROBE_PATH_LOSS],
         "required_for": [],
     },
+    CalibrationItem.CDL_MODEL_VALIDATION: {
+        "name": "CDL 信道模型验证",
+        "description": "PDP / Doppler / 空间相关性 — 3GPP TR 38.151 § 7.3",
+        "priority": CalibrationPriority.HIGH,
+        "validity_days": 180,
+        "dependencies": [CalibrationItem.PROBE_PATH_LOSS, CalibrationItem.QUIET_ZONE_UNIFORMITY],
+        "required_for": ["MIMO_OTA"],
+        "condition": lambda c: c.has_channel_emulator,
+    },
 }
 
 
@@ -212,6 +225,8 @@ class CalibrationOrchestrator:
         self.rf_chain_service = RFChainCalibrationService(db, use_mock)
         self.multi_freq_service = MultiFrequencyPathLossService(db, use_mock)
         self.qz_service = QuietZoneValidationService(db, use_mock)
+        self.channel_service = ChannelCalibrationService(db)
+        self.use_mock = use_mock
 
     def get_required_calibrations(
         self,
@@ -859,6 +874,50 @@ class CalibrationOrchestrator:
                         sgh_gain_dbi=sgh_gain_dbi,
                         calibrated_by=calibrated_by,
                     )
+
+                elif item == CalibrationItem.CDL_MODEL_VALIDATION:
+                    # 3-in-1: PDP + Doppler + spatial correlation per 3GPP TR
+                    # 38.151 § 7.3. Default scenario UMa/NLOS, velocity 30 km/h
+                    # (urban driving), 0.5λ antenna spacing — these are sane
+                    # cert defaults; specific cert plans can call the channel
+                    # service directly with custom params.
+                    fc_ghz = frequency_mhz / 1000.0
+                    pdp_cal = await self.channel_service.run_temporal_calibration(
+                        scenario_type="UMa", scenario_condition="NLOS",
+                        fc_ghz=fc_ghz, calibrated_by=calibrated_by,
+                        use_mock=self.use_mock,
+                    )
+                    dop_cal = await self.channel_service.run_doppler_calibration(
+                        velocity_kmh=30.0, fc_ghz=fc_ghz,
+                        calibrated_by=calibrated_by,
+                        use_mock=self.use_mock,
+                    )
+                    sp_cal = await self.channel_service.run_spatial_correlation_calibration(
+                        scenario_type="UMa", scenario_condition="NLOS",
+                        fc_ghz=fc_ghz, antenna_spacing_wavelengths=0.5,
+                        antenna_spacing_m=0.5 * (3e8 / (fc_ghz * 1e9)),
+                        calibrated_by=calibrated_by,
+                        use_mock=self.use_mock,
+                    )
+                    overall_pass = bool(
+                        pdp_cal.validation_pass
+                        and dop_cal.validation_pass
+                        and sp_cal.validation_pass
+                    )
+                    result = type('Result', (), {
+                        'success': True,
+                        'message': (
+                            f"CDL model validation: PDP={'PASS' if pdp_cal.validation_pass else 'FAIL'}, "
+                            f"Doppler={'PASS' if dop_cal.validation_pass else 'FAIL'}, "
+                            f"Spatial={'PASS' if sp_cal.validation_pass else 'FAIL'}"
+                        ),
+                        'data': {
+                            'pdp_calibration_id': str(pdp_cal.id),
+                            'doppler_calibration_id': str(dop_cal.id),
+                            'spatial_calibration_id': str(sp_cal.id),
+                            'overall_pass': overall_pass,
+                        }
+                    })()
 
                 else:
                     # TODO: 实现其他校准类型

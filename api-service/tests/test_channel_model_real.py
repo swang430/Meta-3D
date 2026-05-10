@@ -205,10 +205,8 @@ class TestRunDopplerCalibrationReal:
             )
 
 
-class TestSpatialCorrelationStillAsyncCompatible:
-    """run_spatial_correlation_calibration is now async but still uses mock
-    correlation generator (real IQ-capture path is A2-2 follow-up). Verify
-    it still works after the async conversion."""
+class TestSpatialCorrelationMock:
+    """Mock path: theoretical correlation → synthesized h1/h2 samples, no driver."""
 
     @pytest.mark.asyncio
     async def test_spatial_correlation_mock_unchanged(self, db):
@@ -224,3 +222,127 @@ class TestSpatialCorrelationStillAsyncCompatible:
         assert cal.antenna_spacing_wavelengths == 0.5
         assert cal.measured_correlation_magnitude is not None
         assert cal.validation_pass is not None
+
+
+class TestSpatialCorrelationReal:
+    """A2-2 real path: positioner moves SGH between two antenna positions,
+    SA captures IQ at each, Pearson correlation vs theoretical Laplacian."""
+
+    @pytest.mark.asyncio
+    async def test_real_path_drives_positioner_twice_and_captures_iq(
+        self, db, monkeypatch
+    ):
+        sa = MagicMock()
+        # Two IQ captures: identical signal → high correlation
+        i1 = [1.0, 2.0, 3.0, 4.0, 5.0] * 100
+        q1 = [0.5, 1.5, 2.5, 3.5, 4.5] * 100
+        sa.capture_iq = AsyncMock(side_effect=[(i1, q1), (i1, q1)])
+        positioner = MagicMock()
+        positioner.move_to = AsyncMock(return_value=True)
+        _patched_hal(monkeypatch, sa=sa)
+
+        # Inject positioner into the same fake hal
+        from app.services.instrument_hal_service import get_hal_service as _orig
+        hal = _orig()
+        hal.drivers["positioner"] = positioner
+
+        svc = ChannelCalibrationService(db)
+        cal = await svc.run_spatial_correlation_calibration(
+            scenario_type="UMa",
+            scenario_condition="NLOS",
+            fc_ghz=3.5,
+            antenna_spacing_wavelengths=0.5,
+            antenna_spacing_m=0.043,  # 0.5λ at 3.5 GHz
+            calibrated_by="test",
+            use_mock=False,
+            num_iq_samples=500,
+        )
+        # Positioner moved twice (two antenna positions)
+        assert positioner.move_to.await_count == 2
+        first = positioner.move_to.await_args_list[0]
+        second = positioner.move_to.await_args_list[1]
+        assert first.kwargs["azimuth"] == pytest.approx(0.0)
+        assert second.kwargs["azimuth"] == pytest.approx(4.3, abs=0.01)  # 0.043 m → 4.3 cm
+        # SA captured IQ twice
+        assert sa.capture_iq.await_count == 2
+        # Identical IQ → magnitude correlation ≈ 1
+        assert cal.measured_correlation_magnitude == pytest.approx(1.0, abs=0.01)
+
+    @pytest.mark.asyncio
+    async def test_real_path_no_positioner_raises(self, db, monkeypatch):
+        sa = MagicMock()
+        sa.capture_iq = AsyncMock(return_value=([0.0] * 100, [0.0] * 100))
+        _patched_hal(monkeypatch, sa=sa)  # no positioner
+
+        svc = ChannelCalibrationService(db)
+        with pytest.raises(RuntimeError, match="positioner"):
+            await svc.run_spatial_correlation_calibration(
+                scenario_type="UMa", scenario_condition="NLOS",
+                fc_ghz=3.5, antenna_spacing_wavelengths=0.5,
+                antenna_spacing_m=0.043,
+                calibrated_by="test", use_mock=False,
+            )
+
+    @pytest.mark.asyncio
+    async def test_real_path_no_antenna_spacing_raises(self, db, monkeypatch):
+        sa = MagicMock()
+        sa.capture_iq = AsyncMock(return_value=([0.0] * 100, [0.0] * 100))
+        positioner = MagicMock()
+        positioner.move_to = AsyncMock(return_value=True)
+
+        # Patch HAL to include both
+        fake_hal = MagicMock()
+        fake_hal.drivers = {"signalAnalyzer": sa, "positioner": positioner}
+        monkeypatch.setattr(
+            "app.services.instrument_hal_service.get_hal_service", lambda: fake_hal
+        )
+
+        svc = ChannelCalibrationService(db)
+        with pytest.raises(RuntimeError, match="antenna_spacing_m"):
+            await svc.run_spatial_correlation_calibration(
+                scenario_type="UMa", scenario_condition="NLOS",
+                fc_ghz=3.5, antenna_spacing_wavelengths=0.5,
+                # antenna_spacing_m intentionally omitted
+                calibrated_by="test", use_mock=False,
+            )
+
+
+class TestOrchestratorCdlDispatch:
+    """CalibrationOrchestrator.execute_calibration_plan now dispatches
+    CDL_MODEL_VALIDATION → channel_service triple (PDP + Doppler + Spatial).
+    """
+
+    @pytest.mark.asyncio
+    async def test_cdl_validation_runs_three_subtests_and_aggregates(
+        self, db, monkeypatch
+    ):
+        from app.models.chamber import ChamberType, create_chamber_from_preset
+        from app.services.calibration_orchestrator import (
+            CalibrationItem, CalibrationOrchestrator,
+        )
+
+        c = create_chamber_from_preset(ChamberType.TYPE_C.value, name="CDL Lab")
+        db.add(c)
+        db.commit()
+        db.refresh(c)
+
+        orch = CalibrationOrchestrator(db, use_mock=True)
+        results = await orch.execute_calibration_plan(
+            chamber_id=c.id,
+            items=[CalibrationItem.CDL_MODEL_VALIDATION],
+            frequency_mhz=3500.0,
+            sgh_model="SGH-01",
+            sgh_gain_dbi=10.0,
+            calibrated_by="test",
+        )
+        cdl_result = results["results"]["cdl_model_validation"]
+        assert cdl_result["success"] is True
+        # All 3 sub-cals persisted
+        assert cdl_result["data"]["pdp_calibration_id"]
+        assert cdl_result["data"]["doppler_calibration_id"]
+        assert cdl_result["data"]["spatial_calibration_id"]
+        assert "overall_pass" in cdl_result["data"]
+        # Message names all 3 sub-tests
+        assert "PDP" in cdl_result["message"]
+        assert "Doppler" in cdl_result["message"]
+        assert "Spatial" in cdl_result["message"]
