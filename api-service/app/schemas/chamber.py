@@ -130,6 +130,11 @@ class ChamberConfigurationResponse(ChamberConfigurationBase):
     """暗室配置响应"""
     id: UUID
     is_active: bool
+    is_system_preset: bool = Field(
+        default=False,
+        description="True for canonical out-of-the-box presets; PUT/DELETE rejected with 409. "
+                    "Use POST /chambers/{id}/duplicate to get an editable copy.",
+    )
     created_at: UTCDateTime
     updated_at: Optional[UTCDateTime]
     created_by: Optional[str]

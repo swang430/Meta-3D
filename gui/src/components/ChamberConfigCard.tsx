@@ -14,12 +14,14 @@ import {
     Modal,
 } from '@mantine/core'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { notifications } from '@mantine/notifications'
 import {
     fetchActiveChamber,
     fetchChamberConfigurations,
     fetchChamberPresets,
     activateChamber,
     createChamberFromTemplate,
+    duplicateChamber,
     fetchChamberCalibration,
 } from '../api/service'
 import { CreateChamberForm } from './CreateChamberForm'
@@ -86,6 +88,28 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
             setCreateModalOpen(false)
             // 自动激活新创建的配置
             activateMutation.mutate(newChamber.id)
+        },
+    })
+
+    // 复制暗室配置 (系统预设要改先复制)
+    const duplicateMutation = useMutation({
+        mutationFn: duplicateChamber,
+        onSuccess: (cloned) => {
+            queryClient.invalidateQueries({ queryKey: ['chambers'] })
+            notifications.show({
+                color: 'green',
+                title: '已创建副本',
+                message: `${cloned.name} — 现在可以编辑这份副本了`,
+            })
+            // 自动激活副本，方便用户直接进入编辑
+            activateMutation.mutate(cloned.id)
+        },
+        onError: (err: any) => {
+            notifications.show({
+                color: 'red',
+                title: '复制失败',
+                message: err?.response?.data?.detail ?? err?.message ?? String(err),
+            })
         },
     })
 
@@ -169,8 +193,30 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
                 <Stack gap="md">
                     {/* 标题和操作按钮 */}
                     <Group justify="space-between">
-                        <Title order={3}>暗室配置</Title>
+                        <Group gap="sm" align="center">
+                            <Title order={3}>暗室配置</Title>
+                            {activeChamber?.is_system_preset && (
+                                <Badge color="gray" variant="light" size="sm">
+                                    系统预设（只读）
+                                </Badge>
+                            )}
+                        </Group>
                         <Group gap="sm">
+                            {activeChamber && (
+                                <Button
+                                    variant={activeChamber.is_system_preset ? 'filled' : 'subtle'}
+                                    color={activeChamber.is_system_preset ? 'brand' : undefined}
+                                    onClick={() => duplicateMutation.mutate(activeChamber.id)}
+                                    loading={duplicateMutation.isPending}
+                                    title={
+                                        activeChamber.is_system_preset
+                                            ? '系统预设不能直接修改 — 复制一份再改'
+                                            : '复制此暗室为新副本'
+                                    }
+                                >
+                                    复制配置
+                                </Button>
+                            )}
                             <Button
                                 variant="subtle"
                                 onClick={() => setCreateModalOpen(true)}
