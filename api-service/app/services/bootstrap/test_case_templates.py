@@ -1,43 +1,43 @@
-"""
-Seed standard test case templates for MIMO OTA testing.
+"""Seed standard test-case templates for TRP/TIS/Throughput/Handover/MIMO OTA.
 
-Based on 3GPP TR 37.977, CTIA OTA Test Plan, and internal VRT requirements.
+Templates are based on 3GPP TR 37.977 + CTIA OTA Test Plan + internal
+VRT requirements. They land with ``is_template=True`` and
+``lab_profile_id=None``: each deployment's LabProfile is per-customer,
+so attaching the templates to one specific LabProfile (as the legacy
+script did) would bind defaults to the wrong lab. Operators clone a
+template via ``POST /test-cases`` or the GUI, then set their own
+``lab_profile_id`` on the copy.
 
-Usage:
-    cd api-service
-    .venv/bin/python scripts/seed_test_cases.py
+Migrated from ``scripts/seed_test_cases.py`` with two changes:
+  1. ``lab_profile_id`` is forced to ``None`` (matches the "system
+     preset" model — defaults stay deployment-agnostic).
+  2. Idempotency is per-template-name (skip a template with that name
+     if it already exists) instead of "any template exists ⇒ skip all".
 """
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import logging
 
 from sqlalchemy.orm import Session
-from app.db.database import SessionLocal
-from app.models.lab_profile import LabProfile
+
 from app.models.test_plan import TestCase
 from app.schemas.mimo_ota.config import MIMO_OTA_TEST_TYPE
+from app.services.bootstrap import SeedResult, Seeder
 from app.services.mimo_ota.legacy_migration import legacy_to_mimo_ota_config
+
+logger = logging.getLogger(__name__)
 
 MIMO_OTA_CATEGORY = "MIMO OTA 吞吐量"
 
 
-def _resolve_default_lab_profile_id(db: Session):
-    """Find the unique active LabProfile to attach to MIMO_OTA seed cases.
+def _upgrade_to_mimo_ota(case_data: dict) -> dict:
+    """Transform a legacy MIMO seed dict into a MIMO_OTA TestCase row spec.
 
-    Returns None if no active profile exists yet (the seed will still run,
-    rows will get lab_profile_id=NULL and can be backfilled later).
+    Note: ``lab_profile_id`` is intentionally left unset (defaults to
+    NULL on the model) — see the module docstring for why we don't
+    auto-attach to an active LabProfile.
     """
-    profile = db.query(LabProfile).filter(LabProfile.is_active.is_(True)).first()
-    return profile.id if profile else None
-
-
-def _upgrade_to_mimo_ota(case_data: dict, lab_profile_id) -> dict:
-    """Transform a legacy MIMO seed dict into a MIMO_OTA TestCase row spec."""
     upgraded = dict(case_data)
     upgraded["test_type"] = MIMO_OTA_TEST_TYPE
     upgraded["configuration"] = legacy_to_mimo_ota_config(case_data)
-    if lab_profile_id is not None:
-        upgraded["lab_profile_id"] = lab_profile_id
     # pass_criteria moves into configuration.pass_criteria; keep the column
     # mirror for backward-compat (e.g. TestCaseSummary.pass_criteria readers)
     upgraded["pass_criteria"] = upgraded["configuration"]["pass_criteria"]
@@ -514,47 +514,49 @@ def get_test_cases():
     ]
 
 
-def seed_test_cases():
-    """Seed test case templates into database."""
-    db: Session = SessionLocal()
-    try:
-        existing = db.query(TestCase).filter(TestCase.is_template == True).count()
-        if existing > 0:
-            print(f"⚠️  已有 {existing} 个模板测试用例，跳过初始化。")
-            print("   如需重新初始化，请先清空 test_cases 表中 is_template=True 的记录。")
-            return
-
-        cases = get_test_cases()
-        lab_profile_id = _resolve_default_lab_profile_id(db)
-        if lab_profile_id is None:
-            print("⚠️  无活跃 LabProfile,MIMO_OTA 用例的 lab_profile_id 将为 NULL")
-            print("   建议先跑 scripts/seed_caict_lab_profile.py 再回头跑此脚本")
-
-        upgraded_count = 0
-        for case_data in cases:
-            if case_data.get("template_category") == MIMO_OTA_CATEGORY:
-                case_data = _upgrade_to_mimo_ota(case_data, lab_profile_id)
-                upgraded_count += 1
-            tc = TestCase(**case_data)
-            db.add(tc)
-
-        db.commit()
-        print(f"✅ 成功创建 {len(cases)} 个标准测试用例模板 (其中 {upgraded_count} 个升级到 MIMO_OTA schema)\n")
-
-        # Print summary by category
-        from collections import Counter
-        categories = Counter(c["template_category"] for c in cases)
-        for cat, count in categories.items():
-            print(f"   📁 {cat}: {count} 个用例")
-
-    except Exception as e:
-        print(f"❌ 初始化失败: {e}")
-        import traceback
-        traceback.print_exc()
-        db.rollback()
-    finally:
-        db.close()
+# ─────────────────────────────────────────────────────────────────────
+# Bootstrap seeder
+# ─────────────────────────────────────────────────────────────────────
 
 
-if __name__ == "__main__":
-    seed_test_cases()
+def _seed(db: Session) -> SeedResult:
+    inserted = 0
+    skipped = 0
+    upgraded = 0
+
+    for case_data in get_test_cases():
+        existing = (
+            db.query(TestCase)
+            .filter(
+                TestCase.name == case_data["name"],
+                TestCase.is_template.is_(True),
+            )
+            .first()
+        )
+        if existing is not None:
+            skipped += 1
+            continue
+
+        if case_data.get("template_category") == MIMO_OTA_CATEGORY:
+            case_data = _upgrade_to_mimo_ota(case_data)
+            upgraded += 1
+
+        # lab_profile_id stays as None — templates are deployment-agnostic
+        db.add(TestCase(**case_data))
+        inserted += 1
+
+    db.flush()
+    if inserted:
+        logger.info(
+            "[test_case_templates] seeded %d templates (%d MIMO_OTA-upgraded)",
+            inserted, upgraded,
+        )
+    return SeedResult(inserted=inserted, skipped=skipped)
+
+
+test_case_templates_seeder = Seeder(
+    name="test_case_templates",
+    version=1,
+    description="Standard TRP/TIS/Throughput/Handover/MIMO_OTA test-case templates (lab_profile_id=None — clone before binding)",
+    run=_seed,
+)
