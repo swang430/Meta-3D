@@ -15,6 +15,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Application code + everything the entrypoint needs to run alembic
 # migrations and the bootstrap CLI on container start.
+#
+# These COPYs are intentionally broad. The build context is filtered by
+# .dockerignore — notably ``scripts/dev-fixtures/`` is excluded so the
+# topology-template registry stays empty in commercial images (see
+# app/api/switch_topology.py:_TEMPLATES_DIR). Edit .dockerignore, not the
+# COPYs, when you need to add a new exclusion.
 COPY app/ ./app/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./alembic.ini
