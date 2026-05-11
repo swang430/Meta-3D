@@ -1,16 +1,27 @@
-"""Initialize default report templates"""
-import sys
-import os
+"""Seed the canonical report templates.
 
-# Add parent directory to path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+Six templates that cover the report types our reporting pipeline knows
+how to render:
 
-from sqlalchemy.orm import Session
-from app.db.database import SessionLocal, init_db
-from app.models.report import ReportTemplate, TemplateType
+  1. Standard Test Report
+  2. Comparison Analysis Report
+  3. 3GPP Regulatory Compliance Report
+  4. Performance Analysis Report
+  5. Executive Summary Report
+  6. Virtual Road Test Report
+
+Migrated from ``scripts/init_report_templates.py`` with two changes:
+each ``create_*_template`` is now wrapped in a name-based idempotency
+check (skip if a template with that name already exists), and the
+seeder is registered with the bootstrap framework.
+"""
 import logging
 
-logging.basicConfig(level=logging.INFO)
+from sqlalchemy.orm import Session
+
+from app.models.report import ReportTemplate, TemplateType
+from app.services.bootstrap import SeedResult, Seeder
+
 logger = logging.getLogger(__name__)
 
 
@@ -122,9 +133,8 @@ def create_standard_template(db: Session) -> ReportTemplate:
     )
 
     db.add(template)
-    db.commit()
-    db.refresh(template)
-    logger.info(f"Created template: {template.name} (ID: {template.id})")
+    db.flush()  # populate template.id; outer bootstrap transaction owns commit
+    logger.info(f"Created template: {template.name}")
     return template
 
 
@@ -221,9 +231,8 @@ def create_comparison_template(db: Session) -> ReportTemplate:
     )
 
     db.add(template)
-    db.commit()
-    db.refresh(template)
-    logger.info(f"Created template: {template.name} (ID: {template.id})")
+    db.flush()  # populate template.id; outer bootstrap transaction owns commit
+    logger.info(f"Created template: {template.name}")
     return template
 
 
@@ -317,9 +326,8 @@ def create_regulatory_template(db: Session) -> ReportTemplate:
     )
 
     db.add(template)
-    db.commit()
-    db.refresh(template)
-    logger.info(f"Created template: {template.name} (ID: {template.id})")
+    db.flush()  # populate template.id; outer bootstrap transaction owns commit
+    logger.info(f"Created template: {template.name}")
     return template
 
 
@@ -479,9 +487,8 @@ Key Findings:
     )
 
     db.add(template)
-    db.commit()
-    db.refresh(template)
-    logger.info(f"Created template: {template.name} (ID: {template.id})")
+    db.flush()  # populate template.id; outer bootstrap transaction owns commit
+    logger.info(f"Created template: {template.name}")
     return template
 
 
@@ -572,9 +579,8 @@ def create_executive_summary_template(db: Session) -> ReportTemplate:
     )
 
     db.add(template)
-    db.commit()
-    db.refresh(template)
-    logger.info(f"Created template: {template.name} (ID: {template.id})")
+    db.flush()  # populate template.id; outer bootstrap transaction owns commit
+    logger.info(f"Created template: {template.name}")
     return template
 
 
@@ -777,53 +783,45 @@ def create_virtual_road_test_template(db: Session) -> ReportTemplate:
     )
 
     db.add(template)
-    db.commit()
-    db.refresh(template)
-    logger.info(f"Created template: {template.name} (ID: {template.id})")
+    db.flush()  # populate template.id; outer bootstrap transaction owns commit
+    logger.info(f"Created template: {template.name}")
     return template
 
 
-def main():
-    """Initialize all default report templates"""
-    logger.info("Initializing database...")
-    init_db()
+# ─────────────────────────────────────────────────────────────────────
+# Bootstrap seeder
+# ─────────────────────────────────────────────────────────────────────
 
-    logger.info("Creating default report templates...")
-    db = SessionLocal()
-
-    try:
-        # Check if templates already exist
-        existing_count = db.query(ReportTemplate).count()
-        if existing_count > 0:
-            logger.warning(f"Found {existing_count} existing templates. Skipping initialization.")
-            logger.info("To reinitialize, delete existing templates first.")
-            return
-
-        # Create templates
-        standard_template = create_standard_template(db)
-        comparison_template = create_comparison_template(db)
-        regulatory_template = create_regulatory_template(db)
-        performance_template = create_performance_analysis_template(db)
-        executive_template = create_executive_summary_template(db)
-        vrt_template = create_virtual_road_test_template(db)
-
-        logger.info("=" * 60)
-        logger.info("Successfully initialized report templates:")
-        logger.info(f"  1. {standard_template.name} (default)")
-        logger.info(f"  2. {comparison_template.name}")
-        logger.info(f"  3. {regulatory_template.name}")
-        logger.info(f"  4. {performance_template.name}")
-        logger.info(f"  5. {executive_template.name}")
-        logger.info(f"  6. {vrt_template.name} (VRT)")
-        logger.info("=" * 60)
-
-    except Exception as e:
-        logger.error(f"Error initializing templates: {e}")
-        db.rollback()
-        raise
-    finally:
-        db.close()
+_TEMPLATE_FACTORIES = (
+    ("Standard Test Report", create_standard_template),
+    ("Comparison Analysis Report", create_comparison_template),
+    ("3GPP Regulatory Compliance Report", create_regulatory_template),
+    ("Performance Analysis Report", create_performance_analysis_template),
+    ("Executive Summary Report", create_executive_summary_template),
+    ("Virtual Road Test Report", create_virtual_road_test_template),
+)
 
 
-if __name__ == "__main__":
-    main()
+def _seed(db: Session) -> SeedResult:
+    inserted = 0
+    skipped = 0
+    for name, factory in _TEMPLATE_FACTORIES:
+        existing = (
+            db.query(ReportTemplate)
+            .filter(ReportTemplate.name == name)
+            .first()
+        )
+        if existing is not None:
+            skipped += 1
+            continue
+        factory(db)
+        inserted += 1
+    return SeedResult(inserted=inserted, skipped=skipped)
+
+
+report_templates_seeder = Seeder(
+    name="report_templates",
+    version=1,
+    description=f"{len(_TEMPLATE_FACTORIES)} canonical report templates (Standard, Comparison, Regulatory, Performance, Executive, VRT)",
+    run=_seed,
+)

@@ -85,56 +85,32 @@ else
     cd ..
     echo ""
 
-    # ── 默认数据 (bootstrap) ────────────────────────────────
+    # ── EMPTY DB greeting ─────────────────────────────────────
+    # bootstrap 自己幂等，但 EMPTY 时打个欢迎信息帮新用户理解将要发生什么.
     if [ "$DB_STATE" == "EMPTY" ]; then
         echo "==================================================="
         echo "🌟 欢迎使用 Meta-3D OTA 系统！检测到初次运行 🌟"
         echo "==================================================="
-        echo "系统检测到您的数据库为空。需要初始化以下内容："
-        echo " - 注入仪器设备型号名录 (Seed Instruments)"
-        echo " - 建立标准 32 探头暗室 3D 布局 (Init Probes)"
-        echo " - 加载基础测试报告模板 (Report Templates)"
-        echo " - 配置标准测试及路测序列 (Init Sequences)"
-        echo " - 落入 4 个默认暗室预设 (Bootstrap chamber presets)"
-        echo ""
-        read -p "是否现在自动为您完成全自动初始化？(Y/n) " -n 1 -r
-        echo ""
-        if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
-            echo "⏳ 正在初始化默认数据..."
-            cd api-service
-
-            # 旧版散落 seed 脚本 — 后续 backlog 里会逐个收编进 bootstrap 框架
-            .venv/bin/python scripts/seed_instruments.py > /dev/null
-            echo "  ✅ 仪器名录加载成功"
-
-            .venv/bin/python scripts/init_probes.py > /dev/null
-            echo "  ✅ 暗室探头布局初始化成功"
-
-            .venv/bin/python scripts/init_report_templates.py > /dev/null
-            echo "  ✅ 报告模板初始化成功"
-
-            .venv/bin/python scripts/init_sequences.py > /dev/null
-            echo "  ✅ 标准测试序列初始化成功"
-
-            cd ..
-            echo ""
-            echo "🎉 全部默认数据完美就绪！"
-        else
-            echo "⚠️ 跳过初始化，系统可能无法正常运行所有功能。"
-        fi
+        echo "即将通过 bootstrap 落入下列默认数据 (全部幂等, 后续重启不重复):"
+        echo " - 4 个默认暗室预设 (Type A/B/C/D)"
+        echo " - 7 类仪器目录 + 默认型号 + 默认连接配置"
+        echo " - 32 探头 MPAC 三环布局 (链接到默认 Type-C 暗室)"
+        echo " - 14 个标准测试序列 (TRP/TIS/MIMO/校准 + VRT 8 步)"
+        echo " - 6 个标准报告模板"
+        echo " - 25 个 CTIA / 3GPP 测试用例模板 (lab_profile_id=NULL)"
         echo ""
     fi
 
-    # ── Bootstrap 总是跑一次 (幂等) ─────────────────────────
-    # 跟 alembic 同样思路：放进 bootstrap 的 seeder (e.g. chamber_presets)
-    # 在新版本时需要让所有现有部署自动 pick up，所以无论 EMPTY 还是 OK
-    # 都跑。已经 up-to-date 的 seeder 会被跳过。
-    echo "🌱 检查并应用 bootstrap 默认数据 (chamber presets 等)..."
+    # ── Bootstrap (always idempotent) ────────────────────────
+    # 跟 alembic 同样思路: 放进 bootstrap 的 seeder 在新版本时需要让所有
+    # 现有部署自动 pick up. 所以无论 EMPTY 还是 OK 都跑. 已经 up-to-date
+    # 的 seeder 会被自动跳过.
+    echo "🌱 检查并应用 bootstrap 默认数据..."
     cd api-service
     if .venv/bin/python -m scripts.bootstrap; then
         echo "  ✅ bootstrap 已是最新"
     else
-        echo "  ⚠️ bootstrap 报错 — 详见上方日志，启动继续"
+        echo "  ⚠️ bootstrap 报错 — 详见上方日志, 启动继续"
     fi
     cd ..
     echo ""

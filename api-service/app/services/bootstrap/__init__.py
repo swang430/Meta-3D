@@ -142,12 +142,25 @@ def run_all(
     return report
 
 
-# Registered seeders, in dependency order.
-# Future seeders (instrument catalog, lab profile templates, etc.)
-# append here. Keep dependency-correct: chamber presets first because
-# downstream seeders may reference chamber.id.
+# Registered seeders, in dependency order. Each seeder is idempotent on
+# its natural key, so re-running ``bootstrap`` produces no duplicates.
+# Order matters when a later seeder references rows an earlier one
+# creates — ``probes`` looks up the Type-C chamber preset by FK, so
+# ``chamber_presets`` must run first. The remaining seeders are
+# independent and could in principle run in any order, but a stable
+# order makes the bootstrap report easier to scan.
 from app.services.bootstrap.chamber_presets import chamber_presets_seeder
+from app.services.bootstrap.instruments import instruments_seeder
+from app.services.bootstrap.probes import probes_seeder
+from app.services.bootstrap.report_templates import report_templates_seeder
+from app.services.bootstrap.sequences import sequences_seeder
+from app.services.bootstrap.test_case_templates import test_case_templates_seeder
 
 ALL_SEEDERS: List[Seeder] = [
     chamber_presets_seeder,
+    probes_seeder,
+    instruments_seeder,
+    sequences_seeder,
+    report_templates_seeder,
+    test_case_templates_seeder,
 ]
