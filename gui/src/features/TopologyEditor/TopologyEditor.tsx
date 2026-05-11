@@ -556,10 +556,13 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
         }
       }
 
-      // Import fresh default for this chamber
-      const imported = await switchTopologyService.importCaictDefault(
+      // Import fresh default for this chamber. template_id is hardcoded to
+      // 'caict_v4' as the only shipped dev-fixture template; a future change
+      // could expose a template picker here once a second template lands.
+      const imported = await switchTopologyService.importFromTemplate(
         selectedSwitchId,
         selectedChamberId,
+        'caict_v4',
       );
       setTopology(imported);
       notifications.show({
@@ -671,9 +674,10 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
           // No topology AND no chamber chosen — defer auto-import.
           return;
         }
-        return switchTopologyService.importCaictDefault(
+        return switchTopologyService.importFromTemplate(
           selectedSwitchId,
           selectedChamberId,
+          'caict_v4',
         ).then(imported => setTopology(imported));
       })
       .catch(err => {

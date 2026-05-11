@@ -6,7 +6,7 @@ and advanced endpoints for path resolution and calibration matrix.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from uuid import UUID
 import logging
 
@@ -21,10 +21,87 @@ from app.schemas.switch_topology import (
     CalibrationMatrixResponse,
 )
 from app.services.topology_service import TopologyService
-from app.hal.port_maps.caict_default import generate_caict_topology_record
 
 router = APIRouter(prefix="/switch-topologies", tags=["Switch Topologies"])
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Topology template registry — loads dev-fixture template files at runtime.
+#
+# Templates live in ``api-service/scripts/dev-fixtures/topology-templates/`` so
+# the *commercial* code path ships zero templates. New customers should build
+# their topology in the GUI editor; developers who want a starter for a new
+# site drop a ``<site>_<version>.py`` file in that directory exporting
+# ``generate_topology_record() -> dict``.
+#
+# We resolve the directory via ``__file__`` (api-service is the repo subdir)
+# and load each template via ``importlib.util.spec_from_file_location`` so
+# the hyphenated ``dev-fixtures`` dir doesn't need to be an importable package.
+# Production deployments that ship without ``scripts/dev-fixtures/`` will see
+# an empty registry and the endpoint will 404 — which is exactly what we want
+# (the workflow there is "build via GUI editor").
+# ---------------------------------------------------------------------------
+
+import importlib.util
+from pathlib import Path
+from typing import Callable
+
+_TEMPLATES_DIR = (
+    Path(__file__).resolve().parents[2]  # app/api/.. → app/.. → api-service/
+    / "scripts" / "dev-fixtures" / "topology-templates"
+)
+
+
+def _list_template_ids() -> list[str]:
+    """Return template_id values available on disk (filename without .py)."""
+    if not _TEMPLATES_DIR.is_dir():
+        return []
+    return sorted(
+        p.stem
+        for p in _TEMPLATES_DIR.glob("*.py")
+        if not p.name.startswith("_")
+    )
+
+
+def _load_template(template_id: str) -> Callable[[], dict]:
+    """Load a template module by id and return its ``generate_topology_record``.
+
+    Raises HTTPException(404) if the file doesn't exist or doesn't export
+    the contract function.
+    """
+    if "/" in template_id or template_id.startswith(".") or not template_id.isidentifier():
+        # Defensive: keep this constrained to bare module names — never let
+        # an arbitrary path get joined with _TEMPLATES_DIR.
+        raise HTTPException(status_code=400, detail=f"Invalid template_id: {template_id!r}")
+
+    path = _TEMPLATES_DIR / f"{template_id}.py"
+    if not path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Topology template '{template_id}' not found. Available: "
+                f"{_list_template_ids() or '(none — commercial deploy has no templates; build via GUI)'}"
+            ),
+        )
+
+    spec = importlib.util.spec_from_file_location(f"topology_template_{template_id}", path)
+    if spec is None or spec.loader is None:
+        raise HTTPException(status_code=500, detail=f"Failed to load template module {template_id!r}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    fn = getattr(module, "generate_topology_record", None)
+    if not callable(fn):
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Template '{template_id}' does not export generate_topology_record(). "
+                "Every template module must define a zero-arg function returning a "
+                "SwitchTopology record dict."
+            ),
+        )
+    return fn
 
 
 @router.get("", response_model=SwitchTopologyListResponse)
@@ -103,6 +180,84 @@ def create_switch_topology(
     db.commit()
     db.refresh(topology)
     logger.info(f"Created switch topology: {topology.id} - {topology.name}")
+    return topology
+
+
+# ---------------------------------------------------------------------------
+# Template endpoints are registered BEFORE the /{topology_id} parametric
+# routes so FastAPI matches "templates" and "import/from-template" as literal
+# path segments first. Otherwise GET /switch-topologies/templates would be
+# routed to get_switch_topology with topology_id="templates" and fail UUID
+# parsing with a 422.
+# ---------------------------------------------------------------------------
+
+@router.get("/templates", response_model=List[str])
+def list_topology_templates():
+    """List topology template ids loadable via /import/from-template.
+
+    On a commercial deploy without ``scripts/dev-fixtures/`` shipped, this
+    returns ``[]`` — operators are expected to build via the GUI editor.
+    """
+    return _list_template_ids()
+
+
+@router.post("/import/from-template", response_model=SwitchTopologyResponse)
+def import_topology_from_template(
+    switch_category_id: UUID,
+    chamber_id: UUID,
+    template_id: str = Query(
+        ...,
+        description=(
+            "Filename (without .py) of a template under "
+            "scripts/dev-fixtures/topology-templates/. The template must "
+            "export ``generate_topology_record() -> dict``."
+        ),
+    ),
+    db: Session = Depends(get_db),
+):
+    """Import a topology structure from a named template file.
+
+    chamber_id is required: a topology models physical cabling inside a
+    specific chamber, so importing one without binding it leaves a row that
+    no consumer (calibration / measure / analysis) can resolve.
+
+    Templates are loaded dynamically from
+    ``api-service/scripts/dev-fixtures/topology-templates/<template_id>.py``
+    by ``importlib`` — commercial deploys that don't ship dev-fixtures will
+    see an empty registry and get 404.
+    """
+    from app.models.chamber import ChamberConfiguration
+    chamber = db.query(ChamberConfiguration).filter(
+        ChamberConfiguration.id == chamber_id
+    ).first()
+    if chamber is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Chamber {chamber_id} not found — pick an existing chamber before importing topology",
+        )
+
+    generate = _load_template(template_id)
+    topo_data = generate()
+
+    db.query(SwitchTopology).filter(
+        SwitchTopology.switch_category_id == switch_category_id,
+        SwitchTopology.is_default == True
+    ).update({"is_default": False})
+
+    topology = SwitchTopology(
+        switch_category_id=switch_category_id,
+        chamber_id=chamber_id,
+        **topo_data
+    )
+    topology.update_statistics()
+
+    db.add(topology)
+    db.commit()
+    db.refresh(topology)
+    logger.info(
+        "Imported topology from template '%s' for switch category %s into chamber %s",
+        template_id, switch_category_id, chamber_id,
+    )
     return topology
 
 
@@ -195,57 +350,6 @@ def delete_switch_topology(
     db.delete(topology)
     db.commit()
     return None
-
-
-@router.post("/import/caict-default", response_model=SwitchTopologyResponse)
-def import_caict_default_topology(
-    switch_category_id: UUID,
-    chamber_id: UUID,
-    db: Session = Depends(get_db)
-):
-    """Import the default CAICT AMS8947 topology structure.
-
-    P1: chamber_id is now required. A topology models physical cabling
-    inside a specific chamber, so importing one without binding it to a
-    chamber leaves a row that no consumer (calibration, measure, analysis)
-    can resolve. Legacy rows seeded with chamber_id=NULL stay queryable but
-    new imports must specify it.
-    """
-    # Validate that the chamber exists before seeding (FK violation here would
-    # surface as a 500; a 422 with the offending id is friendlier).
-    from app.models.chamber import ChamberConfiguration
-    chamber = db.query(ChamberConfiguration).filter(
-        ChamberConfiguration.id == chamber_id
-    ).first()
-    if chamber is None:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Chamber {chamber_id} not found — pick an existing chamber before importing topology",
-        )
-
-    topo_data = generate_caict_topology_record()
-
-    # Reset existing defaults for this category
-    db.query(SwitchTopology).filter(
-        SwitchTopology.switch_category_id == switch_category_id,
-        SwitchTopology.is_default == True
-    ).update({"is_default": False})
-
-    topology = SwitchTopology(
-        switch_category_id=switch_category_id,
-        chamber_id=chamber_id,
-        **topo_data
-    )
-    topology.update_statistics()
-
-    db.add(topology)
-    db.commit()
-    db.refresh(topology)
-    logger.info(
-        "Imported default CAICT topology for switch category %s into chamber %s",
-        switch_category_id, chamber_id,
-    )
-    return topology
 
 
 # ==========================================
