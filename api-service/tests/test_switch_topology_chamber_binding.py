@@ -136,6 +136,34 @@ class TestImportFromTemplateRequiresChamber:
         assert resp.status_code == 200
         assert "caict_v4" in resp.json()
 
+    def test_templates_endpoint_empty_when_dev_fixtures_absent(self, monkeypatch, tmp_path, chamber):
+        # Simulates the commercial-deploy invariant: .dockerignore strips
+        # scripts/dev-fixtures/ out of the production image, so _TEMPLATES_DIR
+        # resolves to a non-existent directory. The registry must report empty
+        # and /import/from-template must 404 — without this the PR's stated
+        # "commercial code ships zero templates" goal silently regresses
+        # (Codex review on aa29a7969e flagged this).
+        import app.api.switch_topology as topology_api
+
+        missing_dir = tmp_path / "no-such-dir"
+        assert not missing_dir.exists()
+        monkeypatch.setattr(topology_api, "_TEMPLATES_DIR", missing_dir)
+
+        list_resp = client.get("/api/v1/switch-topologies/templates")
+        assert list_resp.status_code == 200
+        assert list_resp.json() == []
+
+        import_resp = client.post(
+            "/api/v1/switch-topologies/import/from-template",
+            params={
+                "switch_category_id": str(uuid.uuid4()),
+                "chamber_id": str(chamber.id),
+                "template_id": "caict_v4",
+            },
+        )
+        assert import_resp.status_code == 404
+        assert "not found" in import_resp.json()["detail"].lower()
+
 
 class TestActiveTopologyRequiresChamber:
     def test_patch_active_topology_to_null_chamber_returns_422(self, db, chamber):
