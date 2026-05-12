@@ -40,7 +40,10 @@ class EnaScpi:
     DATA_FMT = "FORM:DATA ASC"            # ASCII data
     INIT_CONT = "INIT1:CONT OFF"          # Single sweep mode
     TRIG_SING = "INIT1; *OPC?"            # Trigger and wait
-    READ_DATA = "CALC1:DATA? SDATA"       # Get Complex pairs
+    # E5071C native trace-readback syntax (verified on A.09.60). The
+    # PNA-style "CALC1:DATA? SDATA" form errors -113 "Undefined header"
+    # on E5071C firmware; the selected-trace SDAT query works cleanly.
+    READ_DATA = "CALC1:SEL:DATA:SDAT?"
 
 
 class RealKeysightEnaDriver(VNADriver):
