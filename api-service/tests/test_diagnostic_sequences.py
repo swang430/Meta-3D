@@ -114,6 +114,38 @@ def lab_with_bs(db, chamber):
     return lp
 
 
+@pytest.fixture
+def lab_with_vna(db, chamber):
+    """Lab with a vna binding so VNA health probe can run."""
+    from app.models.instrument import InstrumentCategory
+
+    cat = InstrumentCategory(
+        id=uuid.uuid4(),
+        category_key="vna",
+        category_name="Vector Network Analyzer",
+        is_active=True,
+    )
+    db.add(cat)
+    db.commit()
+    lp = LabProfile(
+        name="P3-Phase2-VNA-Lab",
+        chamber_config_id=chamber.id,
+        instrument_bindings=[
+            {
+                "category_id": str(cat.id),
+                "connection_endpoint": "TCPIP::192.168.0.10::INSTR",
+                "driver_mode": "real",
+                "role": "calibration_vna",
+            },
+        ],
+        is_active=True,
+    )
+    db.add(lp)
+    db.commit()
+    db.refresh(lp)
+    return lp
+
+
 def _patched_hal(monkeypatch, drivers: dict):
     """Replace get_hal_service() with a stub returning the given drivers dict."""
     fake_hal = MagicMock()
@@ -366,3 +398,140 @@ class TestUxmScpiCompatibilitySequence:
         body = resp.json()
         assert body["success"] is False
         assert "baseStation driver" in body["summary"]
+
+
+class TestVnaEnaHealthSequence:
+    """Four-step pre-calibration health probe for Keysight E5071C ENA.
+
+    The sequence drives ``vna.get_identity()``, ``vna.setup_sweep()``,
+    ``vna.measure_s_param()``, ``vna.get_trace_data()`` — we mock each with
+    AsyncMock so tests stay decoupled from a live VISA session.
+    """
+
+    def test_registered_in_loader(self):
+        loader.reset_cache()
+        resp = client.get("/api/v1/diagnostic-sequences")
+        assert resp.status_code == 200
+        keys = [s["key"] for s in resp.json()]
+        assert "vna_ena_health" in keys
+
+    def test_metadata_requires_vna(self):
+        resp = client.get("/api/v1/diagnostic-sequences")
+        entry = next(s for s in resp.json() if s["key"] == "vna_ena_health")
+        assert entry["required_categories"] == ["vna"]
+        assert entry["safe_during_test"] is False
+        param_names = {p["name"] for p in entry["params_schema"]}
+        assert {"center_freq_mhz", "span_mhz", "points"}.issubset(param_names)
+
+    def _build_vna(
+        self,
+        idn: str = "Keysight Technologies,E5071C,MY12345678,A.12.34",
+        setup_ok: bool = True,
+        measure_ok: bool = True,
+        trace=None,
+    ):
+        """Build a fake VNA driver with the four methods the sequence needs."""
+        if trace is None:
+            # 101 points of plausible S21 around -40 dB.
+            trace = [complex(0.01 * (i + 1), 0.001 * i) for i in range(101)]
+        vna = MagicMock()
+        vna.get_identity = AsyncMock(return_value=idn)
+        vna.setup_sweep = AsyncMock(return_value=setup_ok)
+        vna.measure_s_param = AsyncMock(return_value=measure_ok)
+        vna.get_trace_data = AsyncMock(return_value=trace)
+        return vna
+
+    def test_happy_path_returns_trace(self, lab_with_vna, monkeypatch):
+        vna = self._build_vna()
+        _patched_hal(monkeypatch, drivers={"vna": vna})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/vna_ena_health/run",
+            json={"lab_profile_id": str(lab_with_vna.id)},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True, body
+        assert "E5071C health OK" in body["summary"]
+        labels = [s["label"] for s in body["steps"]]
+        assert "*IDN?" in labels
+        assert any("setup_sweep" in lb for lb in labels)
+        assert "measure_s_param('S21')" in labels
+        assert "get_trace_data()" in labels
+        assert body["extra"]["trace_stats"]["len"] == 101
+        assert body["extra"]["trace_stats"]["nan_count"] == 0
+        # setup_sweep was called with sweep around center 2450 MHz ± 50 MHz.
+        start_hz, stop_hz, pts = vna.setup_sweep.call_args.args
+        assert pts == 101
+        assert abs(start_hz - 2.4e9) < 1e3
+        assert abs(stop_hz - 2.5e9) < 1e3
+
+    def test_idn_wrong_model_fails(self, lab_with_vna, monkeypatch):
+        """IP points at a different instrument — IDN check guards us."""
+        vna = self._build_vna(idn="Keysight Technologies,N5227B,SOMEONE_ELSES_PNA,A.1.0")
+        _patched_hal(monkeypatch, drivers={"vna": vna})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/vna_ena_health/run",
+            json={"lab_profile_id": str(lab_with_vna.id)},
+        )
+        body = resp.json()
+        assert body["success"] is False
+        assert "N5227B" in body["summary"]
+        assert "not an E5071-family ENA" in body["summary"]
+        # We bail after IDN — setup_sweep must not have been called.
+        vna.setup_sweep.assert_not_called()
+
+    def test_setup_sweep_failure_fails_clean(self, lab_with_vna, monkeypatch):
+        vna = self._build_vna(setup_ok=False)
+        _patched_hal(monkeypatch, drivers={"vna": vna})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/vna_ena_health/run",
+            json={"lab_profile_id": str(lab_with_vna.id)},
+        )
+        body = resp.json()
+        assert body["success"] is False
+        assert "setup_sweep failed" in body["summary"]
+        # measure_s_param must not have been called once setup failed.
+        vna.measure_s_param.assert_not_called()
+
+    def test_trace_with_nan_fails(self, lab_with_vna, monkeypatch):
+        bad_trace = [complex(1.0, 1.0)] * 50 + [complex(float("nan"), 0.0)] * 51
+        vna = self._build_vna(trace=bad_trace)
+        _patched_hal(monkeypatch, drivers={"vna": vna})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/vna_ena_health/run",
+            json={"lab_profile_id": str(lab_with_vna.id)},
+        )
+        body = resp.json()
+        assert body["success"] is False
+        assert body["extra"]["trace_stats"]["nan_count"] == 51
+        assert "NaN" in body["steps"][-1]["detail"]
+
+    def test_all_zero_trace_passes_with_note(self, lab_with_vna, monkeypatch):
+        """Open port → S21 ~ 0 — legit operator scenario, must not fail."""
+        zero_trace = [complex(0.0, 0.0)] * 101
+        vna = self._build_vna(trace=zero_trace)
+        _patched_hal(monkeypatch, drivers={"vna": vna})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/vna_ena_health/run",
+            json={"lab_profile_id": str(lab_with_vna.id)},
+        )
+        body = resp.json()
+        assert body["success"] is True
+        assert "ALL-ZERO" in body["steps"][-1]["detail"]
+        assert "trace all-zero" in body["summary"]
+
+    def test_fails_clean_when_no_driver_loaded(self, lab_with_vna, monkeypatch):
+        _patched_hal(monkeypatch, drivers={})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/vna_ena_health/run",
+            json={"lab_profile_id": str(lab_with_vna.id)},
+        )
+        body = resp.json()
+        assert body["success"] is False
+        assert "vna driver" in body["summary"]
