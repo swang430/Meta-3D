@@ -1,9 +1,12 @@
 """P1: chamber_id is required when importing or saving a SwitchTopology.
 
-Before P1, importing /switch-topologies/import/caict-default left chamber_id
+Before P1, importing /switch-topologies/import/from-template left chamber_id
 NULL, and PATCH could clear it again — the topology row existed but had no
 chamber to point at, so calibration / measure couldn't resolve it. P1 makes
 chamber_id required at the API layer for new imports + active saves.
+
+(Endpoint was renamed from /import/caict-default to /import/from-template as
+part of moving site-specific topology code out of the commercial codebase.)
 """
 from __future__ import annotations
 
@@ -79,37 +82,87 @@ def chamber(db):
     return c
 
 
-class TestImportCaictDefaultRequiresChamber:
+class TestImportFromTemplateRequiresChamber:
     def test_import_without_chamber_id_returns_422(self):
         # FastAPI returns 422 for missing required query param.
         resp = client.post(
-            "/api/v1/switch-topologies/import/caict-default",
-            params={"switch_category_id": str(uuid.uuid4())},
+            "/api/v1/switch-topologies/import/from-template",
+            params={
+                "switch_category_id": str(uuid.uuid4()),
+                "template_id": "caict_v4",
+            },
         )
         assert resp.status_code == 422
 
     def test_import_with_unknown_chamber_id_returns_422(self):
         resp = client.post(
-            "/api/v1/switch-topologies/import/caict-default",
+            "/api/v1/switch-topologies/import/from-template",
             params={
                 "switch_category_id": str(uuid.uuid4()),
                 "chamber_id": str(uuid.uuid4()),
+                "template_id": "caict_v4",
             },
         )
         assert resp.status_code == 422
         assert "Chamber" in resp.json()["detail"]
 
-    def test_import_with_valid_chamber_succeeds(self, chamber):
+    def test_import_with_unknown_template_returns_404(self, chamber):
         resp = client.post(
-            "/api/v1/switch-topologies/import/caict-default",
+            "/api/v1/switch-topologies/import/from-template",
             params={
                 "switch_category_id": str(uuid.uuid4()),
                 "chamber_id": str(chamber.id),
+                "template_id": "no_such_template",
+            },
+        )
+        assert resp.status_code == 404
+        assert "not found" in resp.json()["detail"].lower()
+
+    def test_import_with_valid_chamber_and_template_succeeds(self, chamber):
+        resp = client.post(
+            "/api/v1/switch-topologies/import/from-template",
+            params={
+                "switch_category_id": str(uuid.uuid4()),
+                "chamber_id": str(chamber.id),
+                "template_id": "caict_v4",
             },
         )
         assert resp.status_code == 200
         body = resp.json()
         assert body["chamber_id"] == str(chamber.id)
+
+    def test_templates_endpoint_lists_caict_v4(self):
+        resp = client.get("/api/v1/switch-topologies/templates")
+        assert resp.status_code == 200
+        assert "caict_v4" in resp.json()
+
+    def test_templates_endpoint_empty_when_dev_fixtures_absent(self, monkeypatch, tmp_path, chamber):
+        # Simulates the commercial-deploy invariant: .dockerignore strips
+        # scripts/dev-fixtures/ out of the production image, so _TEMPLATES_DIR
+        # resolves to a non-existent directory. The registry must report empty
+        # and /import/from-template must 404 — without this the PR's stated
+        # "commercial code ships zero templates" goal silently regresses
+        # (Codex review on aa29a7969e flagged this).
+        import app.api.switch_topology as topology_api
+
+        missing_dir = tmp_path / "no-such-dir"
+        assert not missing_dir.exists()
+        monkeypatch.setattr(topology_api, "_TEMPLATES_DIR", missing_dir)
+
+        list_resp = client.get("/api/v1/switch-topologies/templates")
+        assert list_resp.status_code == 200
+        assert list_resp.json() == []
+
+        import_resp = client.post(
+            "/api/v1/switch-topologies/import/from-template",
+            params={
+                "switch_category_id": str(uuid.uuid4()),
+                "chamber_id": str(chamber.id),
+                "template_id": "caict_v4",
+            },
+        )
+        assert import_resp.status_code == 404
+        assert "not found" in import_resp.json()["detail"].lower()
 
 
 class TestActiveTopologyRequiresChamber:

@@ -17,7 +17,12 @@ Idempotent: re-running updates the existing CAICT topology in place.
 
 Usage:
     cd api-service
-    .venv/bin/python scripts/seed_caict_switch_topology.py
+    .venv/bin/python scripts/dev-fixtures/seed_caict_switch_topology.py
+
+Note: This script seeds a *simplified* 32-port direct topology. For the full
+CAICT V4.0 layout (horizontal ring + vertical ring + calibration paths), use
+the GUI: TopologyEditor → 「重导入」 (calls /import/from-template?template_id=caict_v4
+which loads scripts/dev-fixtures/topology-templates/caict_v4.py).
 """
 from __future__ import annotations
 

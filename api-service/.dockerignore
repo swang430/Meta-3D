@@ -1,0 +1,57 @@
+# Build context filter for `docker build` (and docker-compose build:).
+#
+# Anything matched here is invisible to the Docker daemon, so the broad
+# `COPY app/ ./app/` and `COPY scripts/ ./scripts/` in Dockerfile won't
+# accidentally bundle developer-only or sensitive paths into the image.
+
+# --- DEV-FIXTURES (the reason this file exists) ----------------------------
+# scripts/dev-fixtures/ ships site-specific seeders + topology templates
+# (e.g. caict_v4.py). PR #5's stated invariant is that *commercial code
+# carries zero topology templates* — operators on a fresh image must build
+# their topology in the GUI editor. Without this exclusion, the Dockerfile's
+# `COPY scripts/ ./scripts/` brings dev-fixtures into the image and
+# `GET /switch-topologies/templates` would surface CAICT to every customer.
+scripts/dev-fixtures/
+
+# --- Secrets ----------------------------------------------------------------
+# .env contains DATABASE_URL with credentials. Production should inject
+# this via docker-compose `environment:` / orchestrator secrets, not bake
+# it into the image. .env.example is safe (it's a template) but excluded
+# for consistency.
+.env
+.env.local
+.env.*.local
+
+# --- Python build hygiene ---------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Local virtualenv -------------------------------------------------------
+.venv/
+venv/
+
+# --- Stale dev SQLite artifacts ---------------------------------------------
+# Container talks to Postgres via DATABASE_URL; these are leftovers from
+# test runs that pollute the image and confuse newcomers.
+*.db
+*.db.bak
+*.sqlite
+*.sqlite3
+
+# --- Dev logs ---------------------------------------------------------------
+logs/
+
+# --- Tests ------------------------------------------------------------------
+# Not needed at runtime; CI runs pytest outside the production image.
+tests/
+
+# --- Git / editor metadata --------------------------------------------------
+.git/
+.gitignore
+.vscode/
+.idea/
+*.swp

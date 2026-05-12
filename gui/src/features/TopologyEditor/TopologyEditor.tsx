@@ -527,6 +527,28 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
   const [topoError, setTopoError] = useState<string | null>(null);
   const [reimporting, setReimporting] = useState(false);
 
+  // List of topology templates available on this deployment. `null` while
+  // we're still asking the backend; `[]` on a commercial image where
+  // .dockerignore excluded scripts/dev-fixtures/. Loaded once per mount —
+  // the registry is filesystem-backed and doesn't change at runtime.
+  const [availableTemplates, setAvailableTemplates] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    switchTopologyService.listTemplates()
+      .then(setAvailableTemplates)
+      .catch(() => setAvailableTemplates([]));  // treat fetch failure as "none"
+  }, []);
+
+  // Pick the default template to auto-import: prefer 'caict_v4' if it ships;
+  // otherwise the first one. Returns null when no templates available — the
+  // editor then falls through to the build-from-scratch empty state instead
+  // of crashing on a 404.
+  const pickDefaultTemplate = useCallback((): string | null => {
+    if (!availableTemplates || availableTemplates.length === 0) return null;
+    if (availableTemplates.includes('caict_v4')) return 'caict_v4';
+    return availableTemplates[0];
+  }, [availableTemplates]);
+
   // Reimport: delete old topology and import fresh V4.0
   const handleReimport = useCallback(async () => {
     if (!selectedSwitchId) return;
@@ -535,6 +557,18 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
         title: '需要先选择目标暗室',
         message: '导入拓扑前必须绑定一个暗室,以便后续校准/测量能够解析。',
         color: 'orange',
+        icon: <IconAlertTriangle size={16} />,
+      });
+      return;
+    }
+    // Resolve the template *before* deleting the existing topology, so a
+    // commercial-deploy 404 doesn't leave the chamber with no wiring at all.
+    const templateId = pickDefaultTemplate();
+    if (!templateId) {
+      notifications.show({
+        title: '本部署没有可用拓扑模板',
+        message: '当前镜像不带 dev-fixture 模板。直接在编辑器里搭拓扑然后保存。',
+        color: 'blue',
         icon: <IconAlertTriangle size={16} />,
       });
       return;
@@ -556,10 +590,13 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
         }
       }
 
-      // Import fresh default for this chamber
-      const imported = await switchTopologyService.importCaictDefault(
+      // Import fresh default for this chamber. template_id is whichever
+      // template the deployment ships; pickDefaultTemplate() prefers
+      // 'caict_v4' when present.
+      const imported = await switchTopologyService.importFromTemplate(
         selectedSwitchId,
         selectedChamberId,
+        templateId,
       );
       setTopology(imported);
       notifications.show({
@@ -585,7 +622,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
     } finally {
       setReimporting(false);
     }
-  }, [selectedSwitchId, selectedChamberId]);
+  }, [selectedSwitchId, selectedChamberId, pickDefaultTemplate]);
 
   // Fetch instrument catalog
   useEffect(() => {
@@ -671,17 +708,44 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
           // No topology AND no chamber chosen — defer auto-import.
           return;
         }
-        return switchTopologyService.importCaictDefault(
+        // The template list resolves once per mount via a separate effect.
+        // If it hasn't arrived yet, defer — this effect will re-fire when
+        // `availableTemplates` flips from null to a value.
+        if (availableTemplates === null) return;
+
+        const templateId = pickDefaultTemplate();
+        if (!templateId) {
+          // Commercial deploy: .dockerignore excluded scripts/dev-fixtures/
+          // so the backend reports an empty template registry. Leave
+          // topology=null; the canvas falls through to the "尚无拓扑配置"
+          // empty state, and the operator builds wiring from scratch +
+          // saves via POST /switch-topologies. No error to surface.
+          return;
+        }
+        return switchTopologyService.importFromTemplate(
           selectedSwitchId,
           selectedChamberId,
-        ).then(imported => setTopology(imported));
+          templateId,
+        )
+          .then(imported => setTopology(imported))
+          .catch(err => {
+            // Race: template list said the file was there, the import
+            // says it isn't (operator deleted it, file moved, container
+            // hot-reload, etc.). Fall through to scratch mode rather than
+            // breaking the page with a hard error.
+            if (err?.response?.status === 404) {
+              console.warn('Template auto-import 404; falling through to scratch mode', err);
+              return;
+            }
+            throw err;
+          });
       })
       .catch(err => {
         console.error('Topology fetch failed:', err);
         setTopoError(`加载拓扑失败: ${err.response?.data?.detail || err.message}`);
       })
       .finally(() => setTopoLoading(false));
-  }, [selectedSwitchId, selectedChamberId]);
+  }, [selectedSwitchId, selectedChamberId, availableTemplates, pickDefaultTemplate]);
 
   return (
     <Stack gap="lg" h="100%">
@@ -741,7 +805,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
                 未检测到射频开关设备
               </Badge>
             )}
-            {topology && (
+            {topology && availableTemplates && availableTemplates.length > 0 && (
               <Button
                 variant="light"
                 color="orange"

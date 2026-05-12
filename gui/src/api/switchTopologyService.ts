@@ -86,11 +86,28 @@ export const switchTopologyService = {
     return response.data;
   },
 
-  async importCaictDefault(switchCategoryId: string, chamberId: string) {
-    // P1: chamber_id is required by the backend so the imported topology binds
-    // to an existing chamber row instead of leaving a referentially-broken stub.
+  async listTemplates(): Promise<string[]> {
+    const response = await apiClient.get('/switch-topologies/templates');
+    return response.data;
+  },
+
+  async importFromTemplate(
+    switchCategoryId: string,
+    chamberId: string,
+    templateId: string,
+  ) {
+    // chamber_id is required by the backend so the imported topology binds to
+    // an existing chamber row instead of leaving a referentially-broken stub.
+    // template_id resolves a file under scripts/dev-fixtures/topology-templates/
+    // — commercial deploys without dev-fixtures will see an empty template list
+    // (listTemplates returns []) and operators build from scratch in the editor.
+    const params = new URLSearchParams({
+      switch_category_id: switchCategoryId,
+      chamber_id: chamberId,
+      template_id: templateId,
+    });
     const response = await apiClient.post(
-      `/switch-topologies/import/caict-default?switch_category_id=${switchCategoryId}&chamber_id=${chamberId}`
+      `/switch-topologies/import/from-template?${params.toString()}`
     );
     return response.data;
   },
