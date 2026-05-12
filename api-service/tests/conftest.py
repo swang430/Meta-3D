@@ -144,6 +144,35 @@ def sample_topology_data() -> Dict[str, Any]:
 # ===== Cleanup Fixtures =====
 
 @pytest.fixture(autouse=True)
+def _isolate_dependency_overrides():
+    """Per-test snapshot+restore of ``app.dependency_overrides``.
+
+    Several test modules install FastAPI dependency overrides (typically
+    to swap ``get_db`` with a SQLite test session). Historically some did
+    this at module level, which meant pytest's collection order
+    determined which override was "active" — the last imported module
+    won, and earlier modules ran their tests against the wrong DB,
+    surfacing as confusing ``no such table`` errors.
+
+    This fixture is the safety net: every test starts with whatever
+    overrides are currently installed, runs, then we restore that exact
+    state on teardown. Combined with each polluting test module
+    converting its module-level mutation into a module-scoped autouse
+    fixture (which installs/uninstalls its own override correctly), this
+    eliminates cross-module bleeding.
+
+    The fixture is intentionally cheap: a single dict copy. It's safe
+    even for tests that don't touch overrides.
+    """
+    saved = dict(app.dependency_overrides)
+    try:
+        yield
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(saved)
+
+
+@pytest.fixture(autouse=True)
 def reset_in_memory_storage():
     """
     Reset in-memory storage before each test

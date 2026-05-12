@@ -46,7 +46,17 @@ def override_get_db():
         db.close()
 
 
-app.dependency_overrides[get_db] = override_get_db
+@pytest.fixture(autouse=True, scope="module")
+def _install_get_db_override():
+    """Module-scoped: install the SQLite-backed ``get_db`` override for
+    every test in this file, then remove it. Replacing the previous
+    module-level mutation ensures the override doesn't bleed into other
+    test modules (the conftest safety net also restores it per test)."""
+    app.dependency_overrides[get_db] = override_get_db
+    yield
+    app.dependency_overrides.pop(get_db, None)
+
+
 client = TestClient(app)
 
 
