@@ -22,25 +22,6 @@ profile shipped to customers, the right move is to **generalize the
 data** (parameterize names + IDs) and add a new generic seeder under
 `app/services/bootstrap/`, not to promote one of these scripts as-is.
 
-## `probe_uxm_scpi.py`
-
-On-site probe that verifies which of the 76 SCPI commands our UXM driver
-depends on actually exist on the connected UXM's firmware. Walks every
-constant on `UxmScpiCommands`, sends a safe `?` query for each, classifies
-the `SYSTem:ERRor?` response into SUPPORTED / SUPPORTED_BUT_STATE /
-UNSUPPORTED / INFERRED. Takes about 30 seconds end to end and reports a
-list of broken commands ordered by criticality — used in place of asking
-the site engineer to pre-verify the SCPI list before a trip.
-
-```bash
-cd api-service
-.venv/bin/python scripts/dev-fixtures/probe_uxm_scpi.py --ip <UXM IP>
-.venv/bin/python scripts/dev-fixtures/probe_uxm_scpi.py --ip <UXM IP> --json /tmp/scpi.json
-```
-
-Exit code: 0 if all critical commands SUPPORTED, 1 if any critical
-UNSUPPORTED (driver needs a vendor alias), 2 if VISA connection failed.
-
 ## `topology-templates/`
 
 `SwitchTopology` is a much heavier structure than the other dev fixtures

@@ -256,3 +256,113 @@ class TestRunSequence:
             DiagnosticRun.id == uuid.UUID(body["diagnostic_run_id"])
         ).first()
         assert audit.success is False
+
+
+class TestUxmScpiCompatibilitySequence:
+    """Probe sequence that walks every UxmScpiCommands constant and reports
+    which are supported by the connected firmware.
+
+    The sequence calls bs._query() for each command + once more for
+    SYSTem:ERRor?. We mock _query with a programmable side_effect so each
+    test can simulate a specific firmware-error-queue scenario.
+    """
+
+    def test_registered_in_loader(self):
+        loader.reset_cache()
+        resp = client.get("/api/v1/diagnostic-sequences")
+        assert resp.status_code == 200
+        keys = [s["key"] for s in resp.json()]
+        assert "uxm_scpi_compatibility" in keys
+
+    def test_metadata_requires_base_station(self):
+        resp = client.get("/api/v1/diagnostic-sequences")
+        entry = next(s for s in resp.json() if s["key"] == "uxm_scpi_compatibility")
+        assert entry["required_categories"] == ["baseStation"]
+        assert entry["safe_during_test"] is False
+        assert any(p["name"] == "include_supported" for p in entry["params_schema"])
+
+    def _build_bs(self, err_for_cmd):
+        """Build a fake baseStation driver whose _query returns canned errs.
+
+        err_for_cmd: callable(last_probed_cmd_str) -> error_queue_response.
+        """
+        bs = MagicMock()
+        bs._write = MagicMock(return_value=None)
+        state = {"last_probe": None}
+
+        def fake_query(cmd):
+            if cmd == "SYSTem:ERRor?":
+                last = state["last_probe"]
+                return err_for_cmd(last) if last else '0,"No error"'
+            state["last_probe"] = cmd
+            return ""
+
+        bs._query = fake_query
+        return bs
+
+    def test_all_supported_when_firmware_responds_clean(self, lab_with_bs, monkeypatch):
+        bs = self._build_bs(lambda cmd: '0,"No error"')
+        _patched_hal(monkeypatch, drivers={"baseStation": bs})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/uxm_scpi_compatibility/run",
+            json={"lab_profile_id": str(lab_with_bs.id), "params": {"include_supported": False}},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert "critical" in body["summary"]
+        # With include_supported=False and zero unsupported, steps stay empty.
+        assert body["steps"] == []
+        assert body["extra"]["counts"]["UNSUPPORTED"] == 0
+
+    def test_critical_unsupported_fails_with_blocker(self, lab_with_bs, monkeypatch):
+        broken = "CONFig:NR5G:CELL0:BAND?"  # _to_probe_command(CELL_BAND)
+
+        def err_for(probe_cmd):
+            if probe_cmd == broken:
+                return '-113,"Undefined header"'
+            return '0,"No error"'
+
+        bs = self._build_bs(err_for)
+        _patched_hal(monkeypatch, drivers={"baseStation": bs})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/uxm_scpi_compatibility/run",
+            json={"lab_profile_id": str(lab_with_bs.id)},
+        )
+        body = resp.json()
+        assert body["success"] is False
+        assert "BLOCKER" in body["summary"]
+        assert "CELL_BAND" in body["summary"]
+        cell_band_steps = [s for s in body["steps"] if s["label"].startswith("CELL_BAND ")]
+        assert len(cell_band_steps) == 1
+        assert cell_band_steps[0]["success"] is False
+        assert "UNSUPPORTED" in cell_band_steps[0]["detail"]
+        assert body["extra"]["critical_unsupported"] == ["CELL_BAND"]
+
+    def test_state_error_categorized_as_ok(self, lab_with_bs, monkeypatch):
+        """-200..-299 = header exists, wrong state — not a blocker."""
+        bs = self._build_bs(lambda cmd: '-220,"Parameter error;current state"')
+        _patched_hal(monkeypatch, drivers={"baseStation": bs})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/uxm_scpi_compatibility/run",
+            json={"lab_profile_id": str(lab_with_bs.id)},
+        )
+        body = resp.json()
+        assert body["success"] is True
+        assert body["extra"]["counts"]["SUPPORTED_BUT_STATE"] > 0
+        assert body["extra"]["counts"]["UNSUPPORTED"] == 0
+
+    def test_fails_clean_when_no_driver_loaded(self, lab_with_bs, monkeypatch):
+        """HAL has the binding but the driver class failed to init."""
+        _patched_hal(monkeypatch, drivers={})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/uxm_scpi_compatibility/run",
+            json={"lab_profile_id": str(lab_with_bs.id)},
+        )
+        body = resp.json()
+        assert body["success"] is False
+        assert "baseStation driver" in body["summary"]
