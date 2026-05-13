@@ -371,36 +371,14 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     async def list_channel_models(self) -> List[Dict[str, Any]]:
         """Operator-curated list of selectable .smu / .rtc channel models.
 
-        See ChannelEmulatorDriver.list_channel_models docstring for why
-        this isn't dynamic discovery on the F64. Source of truth is
-        ``InstrumentConnection.connection_params['available_channel_models']``,
-        normalised here into a uniform dict shape for the GUI.
-
-        Each entry returned: ``{filename, label, description, type}``.
-        - ``filename`` is required; bare strings in config get expanded
-          to ``{"filename": "<str>"}``.
-        - ``label`` defaults to the filename when not provided.
-        - ``type`` is the lowercased file extension (smu/rtc/asc).
-
-        Returns ``[]`` when the operator hasn't populated the config.
+        Source of truth is
+        ``InstrumentConnection.connection_params['available_channel_models']``;
+        normalisation lives in ``channel_emulator.normalize_channel_model_entries``
+        so the API endpoint's offline DB-fallback path returns the same
+        shape as a live driver. Returns ``[]`` when nothing is configured.
         """
-        out: List[Dict[str, Any]] = []
-        for entry in self._available_channel_models:
-            if isinstance(entry, str):
-                entry = {"filename": entry}
-            if not isinstance(entry, dict):
-                continue
-            filename = entry.get("filename")
-            if not filename or not isinstance(filename, str):
-                continue
-            ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "unknown"
-            out.append({
-                "filename": filename,
-                "label": entry.get("label") or filename,
-                "description": entry.get("description"),
-                "type": ext,
-            })
-        return out
+        from app.hal.channel_emulator import normalize_channel_model_entries
+        return normalize_channel_model_entries(self._available_channel_models)
 
     # ===================================================================
     # 2. Pipeline A — GCM 原生管线 SCPI 翻译

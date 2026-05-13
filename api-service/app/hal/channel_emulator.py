@@ -198,6 +198,46 @@ class ChannelEmulatorDriver(InstrumentDriver):
         """
         return []
 
+
+def normalize_channel_model_entries(entries: Any) -> list[Dict[str, Any]]:
+    """Normalise raw ``connection_params['available_channel_models']`` to
+    the API contract: ``[{filename, label, description, type}, ...]``.
+
+    Single source of truth for shape coercion, shared by every concrete
+    ``list_channel_models`` implementation AND by the API endpoint's
+    DB-fallback path (operators planning before HAL is up / the F64 is
+    online). Without this shared helper we'd duplicate the rules and
+    risk drift between "what the driver returns when connected" and
+    "what the GUI sees when offline".
+
+    Coercion rules:
+    - Bare strings expand to ``{"filename": "<str>"}``.
+    - Non-dict / non-string entries are silently dropped.
+    - Entries missing ``filename`` (or with non-string filename) dropped.
+    - ``label`` defaults to ``filename``.
+    - ``type`` is the lowercased file extension (``smu``/``rtc``/``asc``
+      etc.), or ``"unknown"`` if no extension.
+    """
+    if not entries:
+        return []
+    out: list[Dict[str, Any]] = []
+    for entry in entries:
+        if isinstance(entry, str):
+            entry = {"filename": entry}
+        if not isinstance(entry, dict):
+            continue
+        filename = entry.get("filename")
+        if not filename or not isinstance(filename, str):
+            continue
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "unknown"
+        out.append({
+            "filename": filename,
+            "label": entry.get("label") or filename,
+            "description": entry.get("description"),
+            "type": ext,
+        })
+    return out
+
     async def set_mimo_config(
         self,
         tx_antennas: int,
