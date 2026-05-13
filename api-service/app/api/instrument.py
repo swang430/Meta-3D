@@ -567,6 +567,109 @@ class ScpiProbeResult(BaseModel):
     results: List[ScpiCommandResult]
 
 
+async def _maybe_await(value):
+    """Return ``value`` directly if sync, otherwise await it. Lets us treat
+    sync and async HAL driver primitives (``_query``/``_write``) the same
+    — see app/hal/base.py for the polymorphic dispatch we rely on here.
+    """
+    import asyncio
+    if asyncio.iscoroutine(value):
+        return await value
+    return value
+
+
+async def _run_command_via_hal(
+    driver,
+    command: str,
+    scpi_logger: logging.Logger,
+    category_key: str,
+) -> ScpiCommandResult:
+    """Execute one SCPI command through the loaded HAL driver's primitives.
+
+    Reuses the live VISA session the driver already holds — critical for
+    single-client instruments (e.g. PROPSIM FS16's TCP SOCKET port,
+    where opening a second client either times out at the application
+    layer or is silently ignored). On 2026-05-13 at CAICT, FS16's
+    diagnostic terminal showed 5/5 "timed out, 0ms" exactly because
+    the old socket-only path opened a parallel SOCKET while HAL already
+    held one.
+    """
+    import time
+
+    is_query = command.strip().endswith("?")
+    start = time.monotonic()
+    try:
+        scpi_logger.debug(
+            f"[SCPI-TERM via HAL] {category_key} → {command}",
+            extra={"instrument_id": category_key, "direction": "WRITE", "command": command},
+        )
+        if is_query:
+            raw = await _maybe_await(driver._query(command.strip()))
+            raw_str = str(raw or "").strip()
+            scpi_logger.debug(
+                f"[SCPI-TERM via HAL] {category_key} ← {raw_str[:200] if raw_str else '(empty)'}",
+                extra={"instrument_id": category_key, "direction": "READ"},
+            )
+            latency = (time.monotonic() - start) * 1000
+            if not raw_str:
+                return ScpiCommandResult(
+                    command=command.strip(),
+                    response=None,
+                    success=False,
+                    error="仪器未返回数据（空响应）",
+                    latency_ms=round(latency, 1),
+                )
+            return ScpiCommandResult(
+                command=command.strip(),
+                response=raw_str,
+                success=True,
+                latency_ms=round(latency, 1),
+            )
+        # Write command — no response expected.
+        await _maybe_await(driver._write(command.strip()))
+        latency = (time.monotonic() - start) * 1000
+        return ScpiCommandResult(
+            command=command.strip(),
+            response=None,
+            success=True,
+            latency_ms=round(latency, 1),
+        )
+    except Exception as e:  # noqa: BLE001
+        latency = (time.monotonic() - start) * 1000
+        scpi_logger.warning(
+            f"[SCPI-TERM via HAL] {category_key} ← ERROR on '{command}': {e}",
+            extra={"instrument_id": category_key, "direction": "ERROR"},
+        )
+        return ScpiCommandResult(
+            command=command.strip(),
+            success=False,
+            error=f"{type(e).__name__}: {e}",
+            latency_ms=round(latency, 1),
+        )
+
+
+def _get_loaded_hal_driver(category_key: str):
+    """Return the live HAL driver instance for ``category_key`` if loaded
+    AND it exposes ``_query``/``_write``; otherwise None (caller should
+    fall back to opening a fresh socket).
+    """
+    try:
+        from app.services.instrument_hal_service import get_hal_service
+        hal = get_hal_service()
+    except Exception:  # noqa: BLE001
+        return None
+    if hal is None:
+        return None
+    driver = (hal.drivers or {}).get(category_key)
+    if driver is None:
+        return None
+    if not callable(getattr(driver, "_query", None)):
+        return None
+    if not callable(getattr(driver, "_write", None)):
+        return None
+    return driver
+
+
 def _send_scpi_command(
     sock: "socket.socket",
     command: str,
@@ -796,6 +899,12 @@ async def send_scpi_command(
         )
         return result
 
+    # HAL-first routing same as /scpi-probe. See _run_command_via_hal docstring.
+    hal_driver = _get_loaded_hal_driver(category_key)
+    if hal_driver is not None:
+        result = await _run_command_via_hal(hal_driver, request.command, scpi_logger, category_key)
+        return _audit(result)
+
     if not ip:
         return _audit(ScpiCommandResult(
             command=request.command,
@@ -874,37 +983,53 @@ async def probe_scpi_commands(
     results: List[ScpiCommandResult] = []
     audit_started = time.monotonic()
 
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(3.0)
-        sock.connect((ip, port))
-
+    # Prefer the live HAL driver session if loaded — avoids opening a
+    # parallel TCP client to single-session instruments. Fall back to
+    # opening a fresh socket only when HAL hasn't loaded this category
+    # (e.g. driver_mode=mock, or before HAL init has run).
+    hal_driver = _get_loaded_hal_driver(category_key)
+    if hal_driver is not None:
         scpi_logger.info(
-            f"[SCPI-PROBE] {category_key} → Running {len(COMMON_SCPI_COMMANDS)} diagnostic commands on {ip}:{port}",
+            f"[SCPI-PROBE] {category_key} → Running {len(COMMON_SCPI_COMMANDS)} "
+            f"diagnostic commands via live HAL driver ({type(hal_driver).__name__})",
             extra={"instrument_id": category_key, "direction": "PROBE"},
         )
-
         for cmd, _desc in COMMON_SCPI_COMMANDS:
-            result = _send_scpi_command(sock, cmd, scpi_logger, category_key)
-            results.append(result)
+            results.append(await _run_command_via_hal(hal_driver, cmd, scpi_logger, category_key))
+    else:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(3.0)
+            sock.connect((ip, port))
 
-        sock.close()
+            scpi_logger.info(
+                f"[SCPI-PROBE] {category_key} → Running {len(COMMON_SCPI_COMMANDS)} "
+                f"diagnostic commands on {ip}:{port} via fresh socket "
+                f"(HAL driver not loaded)",
+                extra={"instrument_id": category_key, "direction": "PROBE"},
+            )
 
-    except Exception as e:
-        scpi_logger.error(
-            f"[SCPI-PROBE] {category_key} → Connection failed: {e}",
-            extra={"instrument_id": category_key, "direction": "ERROR"},
-        )
-        # 将连接错误作为所有未执行命令的结果
-        executed = {r.command for r in results}
-        for cmd, _desc in COMMON_SCPI_COMMANDS:
-            if cmd not in executed:
-                results.append(ScpiCommandResult(
-                    command=cmd,
-                    success=False,
-                    error=str(e),
-                    latency_ms=0,
-                ))
+            for cmd, _desc in COMMON_SCPI_COMMANDS:
+                result = _send_scpi_command(sock, cmd, scpi_logger, category_key)
+                results.append(result)
+
+            sock.close()
+
+        except Exception as e:
+            scpi_logger.error(
+                f"[SCPI-PROBE] {category_key} → Connection failed: {e}",
+                extra={"instrument_id": category_key, "direction": "ERROR"},
+            )
+            # 将连接错误作为所有未执行命令的结果
+            executed = {r.command for r in results}
+            for cmd, _desc in COMMON_SCPI_COMMANDS:
+                if cmd not in executed:
+                    results.append(ScpiCommandResult(
+                        command=cmd,
+                        success=False,
+                        error=str(e),
+                        latency_ms=0,
+                    ))
 
     # Single audit row for the whole probe — operator cognition is
     # "one health check", per-command rows would just be noise.
