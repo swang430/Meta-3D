@@ -179,6 +179,25 @@ class ChannelEmulatorDriver(InstrumentDriver):
         """Set channel propagation model (NATIVE_MODEL 管线的底层实现)"""
         raise NotImplementedError
 
+    async def list_channel_models(self) -> list[Dict[str, Any]]:
+        """List channel-model files the operator can pick from the GUI.
+
+        Each entry: ``{filename, label, description, type}``.
+
+        Implementation note — *not* runtime file discovery on the
+        instrument: the F64's ATE Server doesn't expose MMEM SCPI for
+        directory listing, and FTP isn't always running on chamber-side
+        units (verified at CAICT 2026-05-13 — F64 0.132 has FTP closed).
+        So the default behaviour is to surface a user-curated list from
+        ``connection_params['available_channel_models']`` instead of
+        scraping the device. Drivers with a usable file-listing channel
+        (SMB, working FTP, vendor REST API) may override this to do
+        dynamic discovery.
+
+        Returns the empty list when nothing is configured.
+        """
+        return []
+
     async def set_mimo_config(
         self,
         tx_antennas: int,

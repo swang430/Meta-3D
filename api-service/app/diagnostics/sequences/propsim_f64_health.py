@@ -25,11 +25,16 @@ For each curated SCPI header:
   ``DIAG:SIMU:MODEL:STATIC`` → ``DIAG:SIMU:MODEL:STATIC?``).
 * Read ``SYST:ERR?`` after each probe and categorize the error code:
 
-    *  0 / -100..-109 ........ SUPPORTED (header recognized)
+    *  0 ..................... SUPPORTED (command succeeded)
     * -200..-299 ............. SUPPORTED_BUT_STATE (header ok,
                                instrument state rejects query — fine
                                for a probe)
-    * -113 / -114 ............ UNSUPPORTED (firmware doesn't know it)
+    * -113 / -114 ............ UNSUPPORTED (undefined header)
+    * -100..-109 ............. UNSUPPORTED (F64 returns -100,"ATE
+                               command not supported" for unknown
+                               commands; Keysight reuses the SCPI
+                               "command error" range to mean
+                               "not in firmware")
     * anything else .......... UNKNOWN (surfaced raw)
 
 The "critical" set tags the commands without which path-loss
@@ -124,6 +129,14 @@ PROPSIM_SCPI: List[Tuple[str, str, bool, str]] = [
     ("CAL_USER_INFO",      "SYSTem:CALIBration:USER:INFO?",    False, "user calibration metadata"),
     # External units — SGH discovery, required for path-loss across SGH.
     ("EXT_UNIT_LIST",      "SYSTem:EXTernal:UNIT:LIST? 0",     False, "connected external units (SGH)"),
+    # Mass-memory subsystem — required if we want to list available .smu
+    # channel-model files on the F64's local disk (GUI dropdown of
+    # operator-selectable models, instead of typing a path). FS16 already
+    # supports these; F64 same firmware family is expected to as well,
+    # but we've never verified on a real F64 — this probe row is the
+    # verification step.
+    ("MMEM_CDIR",          "MMEM:CDIR?",                       False, "current mass-memory working directory"),
+    ("MMEM_CAT",           "MMEM:CAT?",                        False, "directory listing (used,free,\"name,type,size\",...)"),
     # Interference generator (license-dependent CW tone path).
     ("INT_LIST",           "OUTPut:INTERFerence:LIST?",        False, "active interference signals"),
     # RSRP measurement subsystem (queries existence, doesn't trigger one).
@@ -147,6 +160,13 @@ def _parse_err(raw: str) -> Tuple[Optional[int], str]:
 
 
 def _categorize_status(err_code: Optional[int]) -> str:
+    # F64's ATE Server uses ``-100,"ATE command not supported"`` to report
+    # "this command is not implemented" — same pattern as FS16. The
+    # IEEE 488.2 spec defines -100..-109 as "command error" sub-codes
+    # (header parses but something's off), but Keysight repurposed the
+    # range to mean "command not in firmware", so anything in -100..-109
+    # is functionally UNSUPPORTED, not SUPPORTED. -113/-114 ("undefined
+    # header") are also UNSUPPORTED — we collapse both groups.
     """Same buckets as the UXM probe — kept identical so the GUI can
     treat the two probes uniformly for filtering."""
     if err_code is None:
@@ -156,7 +176,8 @@ def _categorize_status(err_code: Optional[int]) -> str:
     if err_code in (-113, -114):
         return "UNSUPPORTED"
     if -109 <= err_code <= -100:
-        return "SUPPORTED"
+        # F64 ATE Server says "ATE command not supported" in this range.
+        return "UNSUPPORTED"
     if -299 <= err_code <= -200:
         return "SUPPORTED_BUT_STATE"
     return "UNKNOWN"

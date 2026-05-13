@@ -162,6 +162,17 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         # 信道参数缓存 (最近一次配置)
         self._current_model: Optional[str] = None
         self._current_scenario: Optional[str] = None
+
+        # 操作员维护的可选信道模型清单 (CAICT 现场验证: F64 SCPI 不支持
+        # MMEM, FTP 在这台 F64 上未启用 — 不能动态发现 D:\User Emulations
+        # 下有哪些 .smu/.rtc 文件. 操作员把文件名列在 InstrumentConnection.
+        # connection_params['available_channel_models'] 里, GUI 下拉框拉这
+        # 个清单). 等 F64 那边启了 FTP 或者我们走通 SMB 之后, 这个 field
+        # 由动态发现取代, 但 API 接口形态不变.
+        # 每条可以是 str (只有文件名) 或 dict {filename, label, description}.
+        self._available_channel_models: List[Any] = (
+            config.get("available_channel_models") or []
+        )
         self._center_freq_mhz: float = 3500.0
         self._channel_count: int = 64
         self._tx_antennas: int = 2
@@ -352,6 +363,44 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 config.get("parameters", {})
             )
         return True
+
+    # ===================================================================
+    # 1.5 信道模型清单 (操作员维护, 非动态发现)
+    # ===================================================================
+
+    async def list_channel_models(self) -> List[Dict[str, Any]]:
+        """Operator-curated list of selectable .smu / .rtc channel models.
+
+        See ChannelEmulatorDriver.list_channel_models docstring for why
+        this isn't dynamic discovery on the F64. Source of truth is
+        ``InstrumentConnection.connection_params['available_channel_models']``,
+        normalised here into a uniform dict shape for the GUI.
+
+        Each entry returned: ``{filename, label, description, type}``.
+        - ``filename`` is required; bare strings in config get expanded
+          to ``{"filename": "<str>"}``.
+        - ``label`` defaults to the filename when not provided.
+        - ``type`` is the lowercased file extension (smu/rtc/asc).
+
+        Returns ``[]`` when the operator hasn't populated the config.
+        """
+        out: List[Dict[str, Any]] = []
+        for entry in self._available_channel_models:
+            if isinstance(entry, str):
+                entry = {"filename": entry}
+            if not isinstance(entry, dict):
+                continue
+            filename = entry.get("filename")
+            if not filename or not isinstance(filename, str):
+                continue
+            ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "unknown"
+            out.append({
+                "filename": filename,
+                "label": entry.get("label") or filename,
+                "description": entry.get("description"),
+                "type": ext,
+            })
+        return out
 
     # ===================================================================
     # 2. Pipeline A — GCM 原生管线 SCPI 翻译

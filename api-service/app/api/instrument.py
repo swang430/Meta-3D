@@ -242,6 +242,26 @@ class HalReloadResult(BaseModel):
     duration_ms: int
 
 
+class ChannelModelEntry(BaseModel):
+    """One operator-selectable channel-model file."""
+    filename: str
+    label: str
+    description: Optional[str] = None
+    type: str  # smu / rtc / asc / unknown
+
+
+class ChannelModelsListResult(BaseModel):
+    """Response for GET /instruments/{category_key}/channel-models.
+
+    ``items`` may be empty for legitimate reasons (no driver loaded yet,
+    driver doesn't speak channel models, or operator hasn't populated
+    the curated list). ``reason`` distinguishes the cases so the GUI can
+    show "loading..." vs "no driver" vs "configure in settings".
+    """
+    items: List[ChannelModelEntry]
+    reason: Optional[str] = None  # "driver_not_loaded" | "not_a_channel_emulator" | None
+
+
 @router.post("/instruments/hal/reload", response_model=HalReloadResult)
 async def reload_hal_service() -> HalReloadResult:
     """Tear down the HAL service and re-init it from the current DB state.
@@ -287,6 +307,74 @@ async def reload_hal_service() -> HalReloadResult:
         drivers=drivers,
         duration_ms=duration_ms,
     )
+
+
+@router.get(
+    "/instruments/{category_key}/channel-models",
+    response_model=ChannelModelsListResult,
+)
+async def list_channel_models_endpoint(
+    category_key: str,
+    db: Session = Depends(get_db),
+) -> ChannelModelsListResult:
+    """List operator-selectable channel-model files for a category.
+
+    Only meaningful for ``channelEmulator``-style categories whose driver
+    overrides ``ChannelEmulatorDriver.list_channel_models``. Other
+    categories return an empty list with ``reason="not_a_channel_emulator"``.
+
+    Source of truth (today): the operator's curated list in
+    ``InstrumentConnection.connection_params['available_channel_models']``.
+    We deliberately don't probe the F64 over SCPI/FTP because:
+    - F64 ATE Server doesn't expose MMEM SCPI (verified 2026-05-13);
+    - the CAICT chamber's F64 has its FTP service disabled.
+
+    See memory ``project_f64_ate_server_capabilities`` for the field reality.
+
+    When ``items`` is empty:
+    - ``reason="driver_not_loaded"`` — HAL hasn't bound a driver for this
+      category yet. GUI should suggest "Reload HAL drivers" or check
+      that the instrument is selected + connection IP filled in.
+    - ``reason="not_a_channel_emulator"`` — wrong category for this
+      endpoint.
+    - ``reason=None`` with empty items — driver loaded, but nothing
+      configured in ``connection_params['available_channel_models']``.
+      GUI should suggest "configure available models in instrument
+      resources".
+    """
+    cat = (
+        db.query(InstrumentCategoryModel)
+        .filter(InstrumentCategoryModel.category_key == category_key)
+        .first()
+    )
+    if cat is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Instrument category '{category_key}' not found",
+        )
+
+    # Resolve HAL driver. ``hal.drivers`` is keyed by category_key.
+    try:
+        from app.services.instrument_hal_service import get_hal_service
+        hal = get_hal_service()
+    except Exception:  # noqa: BLE001
+        hal = None
+    driver = (hal.drivers or {}).get(category_key) if hal else None
+    if driver is None:
+        return ChannelModelsListResult(items=[], reason="driver_not_loaded")
+
+    list_fn = getattr(driver, "list_channel_models", None)
+    if not callable(list_fn):
+        # Driver doesn't speak the channel-emulator contract — fine,
+        # not an error. (E.g. asking VNA category for channel models.)
+        return ChannelModelsListResult(items=[], reason="not_a_channel_emulator")
+
+    # _maybe_await tolerates both async and sync implementations of
+    # list_channel_models — the base class is async but drivers could
+    # override with a sync method for simple curated-list cases.
+    raw_items = await _maybe_await(list_fn())
+    items = [ChannelModelEntry(**entry) for entry in raw_items]
+    return ChannelModelsListResult(items=items)
 
 
 @router.put("/instruments/{category_key}", response_model=FEInstrumentCategory)

@@ -86,6 +86,7 @@ import {
   fetchReportTemplates,
   fetchTestCaseDetail,
   fetchInstrumentCatalog,
+  fetchChannelModels,
   fetchSequenceLibrary,
   fetchTestCases,
   fetchTestPlan,
@@ -1584,6 +1585,115 @@ function ScpiHistoryFeed({ categoryKey }: ScpiHistoryFeedProps) {
   )
 }
 
+/**
+ * Channel-model list card for the channelEmulator category drawer.
+ *
+ * Pulls the operator-curated list of selectable channel-model files
+ * from the backend (driver reads it from
+ * ``InstrumentConnection.connection_params['available_channel_models']``).
+ *
+ * Why a dedicated component: needs its own ``useQuery`` for the
+ * channel-models endpoint, which can't live inside the IIFE we use for
+ * channelEmulator-specific drawer fields.
+ *
+ * Why no inline editor today (CAICT 2026-05-13): F64's ATE Server
+ * doesn't expose MMEM SCPI and FTP is closed on the chamber's F64, so
+ * we can't dynamic-discover .smu files. The operator-curated list lives
+ * in connection_params JSON; this card is read-only display. A future
+ * iteration adds in-place add/remove UI.
+ */
+function ChannelModelsCard({ categoryKey }: { categoryKey: string }) {
+  const { data, isLoading, isError, refetch, isFetching } = useQuery({
+    queryKey: ['instruments', 'channelModels', categoryKey],
+    queryFn: () => fetchChannelModels(categoryKey),
+    // Don't auto-refetch on window focus — this is a config view, not
+    // a live status feed; nothing changes without operator action.
+    refetchOnWindowFocus: false,
+  })
+
+  const items = data?.items ?? []
+  const reason = data?.reason ?? null
+
+  // Pretty status banner. Each "empty" reason has a different actionable
+  // hint so the operator knows what to fix.
+  const statusBanner = (() => {
+    if (isLoading) return null
+    if (isError) {
+      return <Alert color="red" variant="light">无法加载信道模型清单 — 请重试或检查后端日志</Alert>
+    }
+    if (reason === 'driver_not_loaded') {
+      return (
+        <Alert color="yellow" variant="light">
+          驱动未加载. 请确认仪器型号已选 + 端点 IP 已填, 然后点击页面顶部「↻ 重新加载驱动」.
+        </Alert>
+      )
+    }
+    if (reason === 'not_a_channel_emulator') {
+      return <Alert color="gray" variant="light">该类别不支持信道模型清单功能.</Alert>
+    }
+    if (items.length === 0) {
+      return (
+        <Alert color="blue" variant="light">
+          清单为空. 在「备注」字段下方的 connection_params JSON 中加入&nbsp;
+          <code>available_channel_models</code> 数组 (操作员手工维护;
+          F64 ATE Server 不支持 SCPI MMEM 文件列表, FTP 也未启用).
+        </Alert>
+      )
+    }
+    return null
+  })()
+
+  return (
+    <Card withBorder padding="md" radius="md" shadow="xs" bg="gray.0">
+      <Stack gap="sm">
+        <Group justify="space-between" align="center">
+          <Stack gap={0}>
+            <Text fw={600} size="sm">可用信道模型</Text>
+            <Text size="xs" c="dimmed">
+              GCM 原生管线 (.smu) / Runtime 管线 (.rtc / .asc). 操作员维护清单, 测试编排从这里下拉选择.
+            </Text>
+          </Stack>
+          <Button
+            variant="subtle"
+            size="xs"
+            onClick={() => refetch()}
+            loading={isFetching}
+          >
+            ↻ 刷新
+          </Button>
+        </Group>
+
+        {statusBanner}
+
+        {items.length > 0 ? (
+          <Stack gap="xs">
+            {items.map((item) => (
+              <Group key={item.filename} justify="space-between" wrap="nowrap" align="flex-start">
+                <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
+                  <Group gap="xs" align="baseline">
+                    <Text size="sm" fw={500} style={{ fontFamily: 'monospace' }}>
+                      {item.filename}
+                    </Text>
+                    <Badge size="xs" variant="outline" color="brand">
+                      {item.type}
+                    </Badge>
+                  </Group>
+                  {item.label !== item.filename ? (
+                    <Text size="xs" c="gray.7">{item.label}</Text>
+                  ) : null}
+                  {item.description ? (
+                    <Text size="xs" c="dimmed">{item.description}</Text>
+                  ) : null}
+                </Stack>
+              </Group>
+            ))}
+          </Stack>
+        ) : null}
+      </Stack>
+    </Card>
+  )
+}
+
 function EquipmentManager() {
   const queryClient = useQueryClient()
   const { data, isLoading } = useQuery({
@@ -1778,6 +1888,33 @@ function EquipmentManager() {
     }
   }, [refetchHAL, showFeedback])
 
+  const [halReloading, setHalReloading] = useState(false)
+  const handleHALReload = useCallback(async () => {
+    // POST /instruments/hal/reload — needed after editing endpoint /
+    // selectedModel / driver_mode for the change to take effect without
+    // restarting the backend (HAL init runs once at FastAPI lifespan
+    // startup). 10s+ duration is normal — driver.connect() runs once
+    // per category, with full VISA / SOCKET dial timeouts.
+    setHalReloading(true)
+    try {
+      const resp = await client.post('/instruments/hal/reload')
+      const result = resp.data as { drivers_loaded: number; drivers: string[]; duration_ms: number }
+      showFeedback(
+        '__hal__',
+        'success',
+        `✅ 已重新加载 ${result.drivers_loaded} 个驱动 (${result.duration_ms}ms): ${result.drivers.join(', ')}`,
+      )
+      refetchHAL()
+      // Channel-models endpoint is driver-bound; invalidate the cache so
+      // any open dropdown refetches against the freshly-loaded driver.
+      queryClient.invalidateQueries({ queryKey: ['instruments', 'channelModels'] })
+    } catch (err: any) {
+      showFeedback('__hal__', 'error', `❌ 重新加载失败: ${err.message}`)
+    } finally {
+      setHalReloading(false)
+    }
+  }, [queryClient, refetchHAL, showFeedback])
+
   return (
     <Stack gap="xl">
       <Drawer
@@ -1903,28 +2040,31 @@ function EquipmentManager() {
                     ? parsedParams.alignment_name
                     : ''
                   return (
-                    <TextInput
-                      label="F64 User Alignment 文件名"
-                      description="在 F64 上预存的 user alignment 文件名（§17.5: 仪器重启后驱动 connect() 自动 SYST:CALIB:USER:SET 重新激活该名）。留空 = 使用 F64 当前已加载的 alignment（如有）。"
-                      placeholder="例: CAICT_5G_3500MHz"
-                      value={currentAlignment}
-                      onChange={(e) => {
-                        const newName = e.currentTarget.value
-                        const next = { ...parsedParams }
-                        if (newName.trim()) {
-                          next.alignment_name = newName.trim()
-                        } else {
-                          delete next.alignment_name
-                        }
-                        const serialized = Object.keys(next).length > 0
-                          ? JSON.stringify(next, null, 2)
-                          : ''
-                        setDrafts(prev => ({
-                          ...prev,
-                          [category.key]: { ...prev[category.key], connection_params: serialized },
-                        }))
-                      }}
-                    />
+                    <>
+                      <TextInput
+                        label="F64 User Alignment 文件名"
+                        description="在 F64 上预存的 user alignment 文件名（§17.5: 仪器重启后驱动 connect() 自动 SYST:CALIB:USER:SET 重新激活该名）。留空 = 使用 F64 当前已加载的 alignment（如有）。"
+                        placeholder="例: CAICT_5G_3500MHz"
+                        value={currentAlignment}
+                        onChange={(e) => {
+                          const newName = e.currentTarget.value
+                          const next = { ...parsedParams }
+                          if (newName.trim()) {
+                            next.alignment_name = newName.trim()
+                          } else {
+                            delete next.alignment_name
+                          }
+                          const serialized = Object.keys(next).length > 0
+                            ? JSON.stringify(next, null, 2)
+                            : ''
+                          setDrafts(prev => ({
+                            ...prev,
+                            [category.key]: { ...prev[category.key], connection_params: serialized },
+                          }))
+                        }}
+                      />
+                      <ChannelModelsCard categoryKey={category.key} />
+                    </>
                   )
                 })()}
 
@@ -2185,6 +2325,15 @@ function EquipmentManager() {
                 { label: '🔌 Real', value: 'real' },
               ]}
             />
+            <Button
+              variant="light"
+              color="brand"
+              onClick={handleHALReload}
+              loading={halReloading}
+              title="重新初始化所有驱动 (改完仪器配置后必须点这个,新配置才生效)"
+            >
+              ↻ 重新加载驱动
+            </Button>
           </Group>
         </Group>
         {feedback['__hal__'] ? (
