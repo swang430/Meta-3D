@@ -19,7 +19,7 @@ References:
 
 import asyncio
 import logging
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, List, Tuple, Optional
 from datetime import datetime
 
 from app.hal.base import (
@@ -118,6 +118,14 @@ class RealAerotechDriver(PositionerDriver):
         # 通信锁 (串行化命令发送，防止交错)
         self._lock = asyncio.Lock()
 
+        # Axes actually recognised by this controller, discovered during
+        # connect() via read-only PFBK probes. Chamber DUT turntables are
+        # often single-axis (azimuth only — chamber elevation comes from
+        # the probe array, not the positioner), so the configured
+        # ``elevation_axis`` may legitimately be absent. ``_axes_present``
+        # is the authoritative list every per-axis method consults.
+        self._axes_present: List[str] = []
+
     # ==================================================================
     # 底层通信
     # ==================================================================
@@ -190,6 +198,30 @@ class RealAerotechDriver(PositionerDriver):
         """检查 AXISSTATUS 位掩码中的指定位"""
         return bool(status_int & (1 << bit))
 
+    async def _probe_axis(self, axis: str) -> bool:
+        """Read-only probe: does the controller recognise this axis name?
+
+        Sends ``PFBK(<axis>)`` — pure feedback read, never touches servo
+        state. ACK (``%``) means the controller has this axis; NAK (``!``,
+        raised as ``AerotechError``) means it doesn't. Used during
+        ``connect()`` to decide whether the configured ``elevation_axis``
+        actually exists on this hardware.
+        """
+        try:
+            await self._send(AeroBasicCmd.POSITION_FEEDBACK.format(axis=axis))
+            return True
+        except AerotechError:
+            return False
+
+    @property
+    def is_single_axis(self) -> bool:
+        """True when the controller exposes only the azimuth axis.
+        Populated after ``connect()``; meaningless before."""
+        return (
+            self.az_axis in self._axes_present
+            and self.el_axis not in self._axes_present
+        )
+
     # ==================================================================
     # InstrumentDriver 基础生命周期
     # ==================================================================
@@ -209,21 +241,52 @@ class RealAerotechDriver(PositionerDriver):
             # 清除控制器错误缓冲区
             await self._send(AeroBasicCmd.ACKNOWLEDGE_ALL)
 
-            # 启用轴
-            axes = f"{self.az_axis} {self.el_axis}"
-            await self._send(AeroBasicCmd.ENABLE.format(axes=axes))
+            # Discover which configured axes actually exist on this
+            # controller. Field-verified at CAICT 2026-05-13 that some
+            # chamber turntables are azimuth-only — Y NAK on PFBK is
+            # the normal case, not a connect failure.
+            self._axes_present = []
+            if await self._probe_axis(self.az_axis):
+                self._axes_present.append(self.az_axis)
+            if self.el_axis and await self._probe_axis(self.el_axis):
+                self._axes_present.append(self.el_axis)
 
-            # 读取当前位置作为初始值
+            if self.az_axis not in self._axes_present:
+                raise AerotechError(
+                    f"Azimuth axis {self.az_axis!r} not recognised by "
+                    f"controller — check `azimuth_axis` config matches "
+                    f"the controller's actual axis name."
+                )
+            if self.is_single_axis:
+                logger.info(
+                    f"[Aerotech] Single-axis turntable detected — "
+                    f"elevation axis {self.el_axis!r} not present on "
+                    f"controller. Elevation commands will be ignored; "
+                    f"get_position() returns elevation=0.0."
+                )
+
+            # ENABLE only the axes the controller actually has.
+            await self._send(
+                AeroBasicCmd.ENABLE.format(axes=" ".join(self._axes_present))
+            )
+
+            # Read initial position(s); elevation defaults to 0 in
+            # single-axis mode so the PositionerDriver contract still
+            # returns a (az, el) tuple.
             self._current_azimuth = await self._query_value(
                 AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.az_axis)
             )
-            self._current_elevation = await self._query_value(
-                AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.el_axis)
+            self._current_elevation = (
+                await self._query_value(
+                    AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.el_axis)
+                )
+                if not self.is_single_axis else 0.0
             )
 
             logger.info(
-                f"[Aerotech] Connected. Position: "
-                f"Az={self._current_azimuth:.2f}°, El={self._current_elevation:.2f}°"
+                f"[Aerotech] Connected. Axes: {self._axes_present}. "
+                f"Position: Az={self._current_azimuth:.2f}°, "
+                f"El={self._current_elevation:.2f}°"
             )
             self._set_status(InstrumentStatus.CONNECTED)
             self._clear_error()
@@ -238,18 +301,21 @@ class RealAerotechDriver(PositionerDriver):
         """安全断开连接"""
         try:
             if self._writer:
-                # 禁用轴
-                axes = f"{self.az_axis} {self.el_axis}"
-                try:
-                    await self._send(AeroBasicCmd.DISABLE.format(axes=axes))
-                except Exception:
-                    pass  # 断连时忽略发送错误
+                # 禁用所有已知存在的轴 (single-axis controllers reject 'DISABLE Y')
+                if self._axes_present:
+                    try:
+                        await self._send(AeroBasicCmd.DISABLE.format(
+                            axes=" ".join(self._axes_present)
+                        ))
+                    except Exception:
+                        pass  # 断连时忽略发送错误
 
                 self._writer.close()
                 await self._writer.wait_closed()
                 self._writer = None
                 self._reader = None
 
+            self._axes_present = []
             self._set_status(InstrumentStatus.DISCONNECTED)
             logger.info("[Aerotech] Disconnected")
             return True
@@ -265,16 +331,24 @@ class RealAerotechDriver(PositionerDriver):
         return True
 
     async def get_capabilities(self) -> list[InstrumentCapability]:
+        single = self.is_single_axis
+        params: Dict[str, Any] = {
+            "azimuth_range": [0, 360],
+            "protocol": "AeroBasic/TCP",
+            "axes_present": list(self._axes_present),
+        }
+        if not single:
+            params["elevation_range"] = [-90, 90]
         return [
             InstrumentCapability(
-                name="3d_positioning",
-                description="Aerotech dual-axis positioning (AeroBasic protocol)",
+                name="3d_positioning" if not single else "2d_positioning",
+                description=(
+                    "Aerotech "
+                    + ("single-axis azimuth" if single else "dual-axis")
+                    + " positioning (AeroBasic protocol)"
+                ),
                 supported=True,
-                parameters={
-                    "azimuth_range": [0, 360],
-                    "elevation_range": [-90, 90],
-                    "protocol": "AeroBasic/TCP",
-                },
+                parameters=params,
             )
         ]
 
@@ -291,8 +365,11 @@ class RealAerotechDriver(PositionerDriver):
     async def reset(self) -> bool:
         """回原点"""
         try:
-            axes = f"{self.az_axis} {self.el_axis}"
-            await self._send(AeroBasicCmd.HOME.format(axes=axes))
+            if not self._axes_present:
+                raise AerotechError("Not connected — no axes to home")
+            await self._send(AeroBasicCmd.HOME.format(
+                axes=" ".join(self._axes_present)
+            ))
             await self._wait_for_settle()
             self._current_azimuth = 0.0
             self._current_elevation = 0.0
@@ -310,36 +387,65 @@ class RealAerotechDriver(PositionerDriver):
     async def move_to(self, azimuth: float, elevation: float) -> bool:
         """
         命令转台移动到绝对位置。
-        
+
         发送 MOVEABS 后轮询 AXISSTATUS 等待到位 (InPosition bit)。
+        单轴转台 (无 elevation 轴) 会忽略 elevation 参数, 只移动 azimuth。
         """
         try:
+            if not self._axes_present:
+                raise AerotechError("Not connected — cannot move")
             self._set_status(InstrumentStatus.BUSY)
+
+            # Single-axis controllers ignore elevation. Warn (not error)
+            # so an operator misreading "move(180, 30)" as 3D motion
+            # sees something in the log when only az moves.
+            if self.is_single_axis and elevation != 0.0:
+                logger.warning(
+                    f"[Aerotech] Single-axis turntable — elevation="
+                    f"{elevation:.2f}° ignored, only Az={azimuth:.2f}° "
+                    f"will be commanded."
+                )
+
             logger.info(
-                f"[Aerotech] Moving to Az={azimuth:.2f}°, El={elevation:.2f}°"
+                f"[Aerotech] Moving to Az={azimuth:.2f}°"
+                + (f", El={elevation:.2f}°" if not self.is_single_axis else "")
             )
 
-            # 构建 MOVEABS 命令
-            cmd = AeroBasicCmd.MOVE_ABS.format(
-                axes=f"{self.az_axis} {self.el_axis}",
-                positions=f"{azimuth:.4f} {elevation:.4f}",
-            )
-            await self._send(cmd)
+            # AeroBasic MOVEABS uses axis-position interleaving:
+            #     MOVEABS X 180.0 Y 45.0
+            # (NOT MOVEABS X Y 180.0 45.0 — that NAKs because the parser
+            # reads tokens as axis,position,axis,position alternating.)
+            # Skip the AeroBasicCmd.MOVE_ABS template here for the dual-
+            # axis case; the template's two-bucket "{axes} {positions}"
+            # shape is wrong for the multi-axis form.
+            if self.is_single_axis:
+                cmd_str = f"MOVEABS {self.az_axis} {azimuth:.4f}"
+            else:
+                cmd_str = (
+                    f"MOVEABS {self.az_axis} {azimuth:.4f}"
+                    f" {self.el_axis} {elevation:.4f}"
+                )
+            await self._send(cmd_str)
 
             # 等待到位
             await self._wait_for_settle()
 
-            # 读取实际位置
+            # Read back actual position(s). Elevation cache stays at 0
+            # in single-axis mode.
             self._current_azimuth = await self._query_value(
                 AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.az_axis)
             )
-            self._current_elevation = await self._query_value(
-                AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.el_axis)
+            self._current_elevation = (
+                await self._query_value(
+                    AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.el_axis)
+                )
+                if not self.is_single_axis else 0.0
             )
 
             logger.info(
-                f"[Aerotech] Arrived: Az={self._current_azimuth:.2f}°, "
-                f"El={self._current_elevation:.2f}°"
+                f"[Aerotech] Arrived: Az={self._current_azimuth:.2f}°"
+                + (f", El={self._current_elevation:.2f}°"
+                   if not self.is_single_axis else "")
             )
             self._set_status(InstrumentStatus.READY)
             return True
@@ -359,9 +465,10 @@ class RealAerotechDriver(PositionerDriver):
             self._current_azimuth = await self._query_value(
                 AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.az_axis)
             )
-            self._current_elevation = await self._query_value(
-                AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.el_axis)
-            )
+            if not self.is_single_axis:
+                self._current_elevation = await self._query_value(
+                    AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.el_axis)
+                )
         except Exception as e:
             logger.warning(f"[Aerotech] Position read failed: {e}")
         return (self._current_azimuth, self._current_elevation)
@@ -369,8 +476,12 @@ class RealAerotechDriver(PositionerDriver):
     async def stop(self) -> bool:
         """紧急停止所有轴"""
         try:
-            axes = f"{self.az_axis} {self.el_axis}"
-            await self._send(AeroBasicCmd.ABORT.format(axes=axes))
+            if not self._axes_present:
+                logger.warning("[Aerotech] stop() called before connect — nothing to abort")
+                return False
+            await self._send(AeroBasicCmd.ABORT.format(
+                axes=" ".join(self._axes_present)
+            ))
             self._set_status(InstrumentStatus.READY)
             logger.warning("[Aerotech] Emergency stop executed")
             return True
@@ -394,32 +505,30 @@ class RealAerotechDriver(PositionerDriver):
         while asyncio.get_event_loop().time() < deadline:
             await asyncio.sleep(self.poll_interval_s)
 
-            # 查询两个轴的状态
-            az_status_raw = await self._query_value(
+            az_status = int(await self._query_value(
                 AeroBasicCmd.AXIS_STATUS.format(axis=self.az_axis)
-            )
-            el_status_raw = await self._query_value(
-                AeroBasicCmd.AXIS_STATUS.format(axis=self.el_axis)
-            )
-
-            az_status = int(az_status_raw)
-            el_status = int(el_status_raw)
-
-            # 检查是否有故障
+            ))
             if self._check_status_bit(az_status, AxisStatusBit.FAULT):
                 raise AerotechError(
-                    f"Azimuth axis fault detected (status=0x{az_status:04X})"
+                    f"Azimuth axis fault detected (status=0x{az_status & 0xFFFFFFFF:08X})"
                 )
-            if self._check_status_bit(el_status, AxisStatusBit.FAULT):
-                raise AerotechError(
-                    f"Elevation axis fault detected (status=0x{el_status:04X})"
-                )
-
-            # 两个轴都到位 (InPosition=1, MoveActive=0)
             az_settled = (
                 self._check_status_bit(az_status, AxisStatusBit.IN_POSITION)
                 and not self._check_status_bit(az_status, AxisStatusBit.MOVE_ACTIVE)
             )
+
+            if self.is_single_axis:
+                if az_settled:
+                    return
+                continue
+
+            el_status = int(await self._query_value(
+                AeroBasicCmd.AXIS_STATUS.format(axis=self.el_axis)
+            ))
+            if self._check_status_bit(el_status, AxisStatusBit.FAULT):
+                raise AerotechError(
+                    f"Elevation axis fault detected (status=0x{el_status & 0xFFFFFFFF:08X})"
+                )
             el_settled = (
                 self._check_status_bit(el_status, AxisStatusBit.IN_POSITION)
                 and not self._check_status_bit(el_status, AxisStatusBit.MOVE_ACTIVE)
