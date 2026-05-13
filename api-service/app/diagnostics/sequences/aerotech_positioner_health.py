@@ -127,15 +127,26 @@ def _categorize(response: Optional[str], exception: Optional[BaseException]) -> 
     if exception is not None:
         # Driver translates NAK (! prefix) → AerotechError. Timeout →
         # asyncio.TimeoutError. Connection drop → AerotechError("Not
-        # connected").
+        # connected") or AerotechError("Connection lost ... reconnect
+        # failed").
         if isinstance(exception, asyncio.TimeoutError):
             return "UNKNOWN"
         msg = str(exception)
-        if "Not connected" in msg:
+        if "Not connected" in msg or "reconnect failed" in msg.lower():
             return "UNKNOWN"
         # AerotechError on ! prefix = controller rejected the command.
         return "UNSUPPORTED"
     if response is None:
+        return "UNKNOWN"
+    # Empty string means the driver got EOF on readline (controller-side
+    # half-close, common on idle TCP) but didn't raise — the pre-#14 idle-
+    # close behaviour. Without this guard, the categorizer treats it as
+    # SUPPORTED and the probe summary says "8/8 supported" on a dead
+    # session. With #14 in place ``_send`` synthesises ConnectionResetError
+    # on EOF, so this branch is defence-in-depth: still triggered if a
+    # driver _send returns "" for any future reason (e.g. controller
+    # ACK with no payload — which we don't issue here, but).
+    if response == "":
         return "UNKNOWN"
     # _send strips the leading '%' already, so a fault response that the
     # driver doesn't translate comes back starting with '#'.
