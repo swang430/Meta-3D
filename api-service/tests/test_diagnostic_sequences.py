@@ -431,6 +431,61 @@ class TestUxmScpiCompatibilitySequence:
         assert body["success"] is False
         assert "baseStation driver" in body["summary"]
 
+    def test_irat_profile_walks_smaller_command_set(self, lab_with_bs, monkeypatch):
+        """LTE_NR_IRAT app exposes ~32 BSE-prefixed commands (vs ~76 in
+        5G_NR_Test). Driver must expose its _cmds for the probe to pick
+        the right profile. Verified live at CAICT 2026-05-13 against
+        E7515B firmware 28.21.0.32."""
+        from app.hal.uxm_command_profiles import UxmLteNrIratProfile
+
+        bs = self._build_bs(lambda cmd: '0,"No error"')
+        bs._cmds = UxmLteNrIratProfile  # type: ignore[attr-defined]
+        _patched_hal(monkeypatch, drivers={"baseStation": bs})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/uxm_scpi_compatibility/run",
+            json={"lab_profile_id": str(lab_with_bs.id), "params": {"include_supported": True}},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["extra"]["profile"] == "LTE_NR_IRAT"
+        # IRAT profile has fewer commands than 5G_NR_Test (~32 vs ~76).
+        total = body["extra"]["total_probed"]
+        assert total < 50, f"expected pruned IRAT command set, got {total}"
+        # All emitted steps should use the BSE: prefix and CELL1.
+        non_bse = [s for s in body["steps"] if "CONFig:NR5G:CELL1" in s["label"] and "BSE:" not in s["label"]]
+        assert non_bse == [], f"IRAT profile emitted non-BSE NR commands: {non_bse}"
+
+    def test_fail_fast_aborts_after_consecutive_timeouts(self, lab_with_bs, monkeypatch):
+        """If 3 commands in a row hit VI_ERROR_TMO (stuck SCPI channel),
+        probe aborts early instead of grinding through all 76. Same
+        pattern as the FS16/F64 probes; saves the operator from a
+        5-minute hang when HAL session goes half-closed."""
+        bs = MagicMock()
+        bs._write = MagicMock(return_value=None)
+
+        # Every query raises a VISA timeout exception.
+        def fake_query(cmd):
+            if cmd == "SYSTem:ERRor?":
+                raise Exception("VisaIOError: VI_ERROR_TMO (-1073807339)")
+            raise Exception("VisaIOError: VI_ERROR_TMO (-1073807339)")
+        bs._query = fake_query
+        _patched_hal(monkeypatch, drivers={"baseStation": bs})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/uxm_scpi_compatibility/run",
+            json={"lab_profile_id": str(lab_with_bs.id)},
+        )
+        body = resp.json()
+        assert body["success"] is False
+        assert body["extra"]["aborted_early"] is True
+        # Should NOT have probed all 76 — bail-out triggered early.
+        # Be generous on the upper bound to avoid flake (timeout-detection
+        # streak resets if SYST:ERR? happens to return, etc.).
+        assert body["extra"]["total_probed"] >= 5, "total_probed reports the full set size, not progress; sanity"
+        assert "ABORTED" in body["summary"]
+        assert "/api/v1/instruments/hal/reload" in body["summary"]
+
 
 class TestVnaEnaHealthSequence:
     """Four-step pre-calibration health probe for Keysight E5071C ENA.

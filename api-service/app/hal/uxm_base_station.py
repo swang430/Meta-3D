@@ -35,6 +35,12 @@ from app.hal.base_station import (
     CellState,
     ThroughputMetrics,
 )
+from app.hal.uxm_command_profiles import (
+    UxmCommandProfile,
+    Uxm5GNRTestAppProfile,
+    UxmLteNrIratProfile,
+    detect_profile,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,168 +48,32 @@ logger = logging.getLogger(__name__)
 # ===========================================================================
 # UXM SCPI 命令映射表
 # ===========================================================================
+#
+# Command profiles moved to app.hal.uxm_command_profiles (CAICT 2026-05-13:
+# E7515B platform hosts multiple Test Apps, each with its own SCPI dialect).
+# UxmScpiCommands is kept as an alias to the 5G NR Test App profile for
+# backward compat with callers that import it directly.
 
-class UxmScpiCommands:
-    """UXM 5G NR SCPI 命令速查表 (从官方文档提取)
+class UxmScpiCommands(Uxm5GNRTestAppProfile):
+    """UXM SCPI 命令速查表 — backward-compat alias for the 5G NR Test App profile.
 
-    命名约定:
-      <cell> = CELL0 | CELL1 | CELL2 | CELL3  (最多 4 个 NR 小区)
-      <BWP>  = BWP0 | BWP1                      (带宽部分)
+    Historically a flat namespace of class attributes. Now the full attribute
+    table lives in :class:`Uxm5GNRTestAppProfile` (see uxm_command_profiles).
+
+    DEPRECATED for new code. Inside :class:`RealUxmDriver` use ``self._cmds.X``
+    so the driver auto-switches to LTE_NR_IRAT's BSE: dialect when that's
+    the running Test App.
     """
+    # Intentionally empty body — inherits everything from Uxm5GNRTestAppProfile.
+    pass
 
-    # --- 系统 ---
-    IDN = "*IDN?"
-    RST = "*RST"
-    OPC = "*OPC?"
-    CLS = "*CLS"
-    ERR = "SYSTem:ERRor?"
 
-    # --- 应用选择 ---
-    APP_SELECT = 'SYSTem:APPLication:NAME "5G_NR_Test"'
-
-    # --- 小区配置 (CONFig:NR5G 子系统) ---
-    CELL_BAND = "CONFig:NR5G:{cell}:BAND"                    # e.g., "N78"
-    CELL_DL_ARFCN = "CONFig:NR5G:{cell}:DL:ARFCN"            # DL ARFCN
-    CELL_DL_BW = "CONFig:NR5G:{cell}:DL:BW"                  # DL 带宽 (MHz)
-    CELL_UL_BW = "CONFig:NR5G:{cell}:UL:BW"                  # UL 带宽 (MHz)
-    CELL_SCS = "CONFig:NR5G:{cell}:SCS"                       # 子载波间隔 (kHz)
-    CELL_DUPLEX = "CONFig:NR5G:{cell}:DUPLex"                 # TDD/FDD
-    CELL_ACTIVE = "CONFig:NR5G:{cell}:ACTive:STATe"           # 小区激活
-    CELL_DL_POINTA = "CONFig:NR5G:{cell}:DL:POINta"           # Point A (Hz)
-
-    # --- SSB (同步信号块) ---
-    SSB_ARFCN = "CONFig:NR5G:{cell}:{bwp}:SSB:NCD:ARFCn"
-
-    # --- 下行功率 ---
-    DL_POWER = "CONFig:NR5G:{cell}:PHY:DL:POWer"              # 总下行功率
-    PDSCH_POWER = "CONFig:NR5G:{cell}:{bwp}:PDSCH:POWer"      # PDSCH 功率
-    SSB_POWER = "CONFig:NR5G:{cell}:SSB:POWer"                # SSB 功率
-
-    # --- PDSCH/PUSCH 传输配置 ---
-    PDSCH_MCS = "CONFig:NR5G:{cell}:{bwp}:PDSCH:MCS"
-    PDSCH_RB_ALLOC = "CONFig:NR5G:{cell}:{bwp}:PDSCH:RB:ALLocation"
-    PUSCH_MCS = "CONFig:NR5G:{cell}:{bwp}:PUSCH:MCS"
-    PUSCH_RB_ALLOC = "CONFig:NR5G:{cell}:{bwp}:PUSCH:RB:ALLocation"
-
-    # --- MIMO 逻辑层配置 ---
-    MIMO_DL_LAYERS = "CONFig:NR5G:{cell}:PHY:DL:MIMO:LAYers"
-    MIMO_DL_CODEBOOK = "CONFig:NR5G:{cell}:PHY:DL:MIMO:CODEbook"
-
-    # --- MIMO 天线到物理端口路由 (Layer 1) ---
-    # 将 NR 逻辑天线映射到 UXM 前面板的物理 RF 端口
-    # 语法: ROUTe:NR5G:CELL0:HARDware:TX:ANTenna{n}:PORT RF{m}OUT
-    #       ROUTe:NR5G:CELL0:HARDware:RX:ANTenna{n}:PORT RF{m}IN
-    #
-    # 物理端口命名约定 (UXM E7515B 前面板):
-    #   RF1OUT / RF1IN  — 第 1 组射频端口
-    #   RF2OUT / RF2IN  — 第 2 组射频端口
-    #   RF3OUT / RF3IN  — 第 3 组射频端口 (4x4 MIMO 需要)
-    #   RF4OUT / RF4IN  — 第 4 组射频端口 (4x4 MIMO 需要)
-    MIMO_TX_ANT_PORT = "ROUTe:NR5G:{cell}:HARDware:TX:ANTenna{ant}:PORT"
-    MIMO_RX_ANT_PORT = "ROUTe:NR5G:{cell}:HARDware:RX:ANTenna{ant}:PORT"
-    MIMO_TX_ANT_PORT_QUERY = "ROUTe:NR5G:{cell}:HARDware:TX:ANTenna{ant}:PORT?"
-    MIMO_RX_ANT_PORT_QUERY = "ROUTe:NR5G:{cell}:HARDware:RX:ANTenna{ant}:PORT?"
-
-    # --- 信令 / 连接管理 ---
-    CELL_STATE_ON = "CONFig:NR5G:{cell}:ACTive:STATe ON"
-    CELL_STATE_OFF = "CONFig:NR5G:{cell}:ACTive:STATe OFF"
-    CELL_STATE_QUERY = "CONFig:NR5G:{cell}:ACTive:STATe?"
-
-    # --- 吞吐量测量 (MEASure 子系统) ---
-    MEAS_BTHROUGHPUT_DL_START = "MEASure:NR5G:{cell}:BTHRoughput:DL:TSTatistics:STARt"
-    MEAS_BTHROUGHPUT_DL_STOP = "MEASure:NR5G:{cell}:BTHRoughput:DL:TSTatistics:STOP"
-    MEAS_BTHROUGHPUT_DL_JSON = "MEASure:NR5G:{cell}:BTHRoughput:DL:TSTatistics:JSON?"
-    MEAS_BTHROUGHPUT_DL_BLER = "MEASure:NR5G:{cell}:BTHRoughput:DL:BLER:STATistical:ALL?"
-
-    # --- Phase 2e: UE Capability + RRC reconfiguration ---
-    # NOTE: UXM firmware ≥ V12.x exposes UE capability via CALL:NR5G:CELL:UEINFO
-    #       subsystem. Older firmware (V10/V11) uses CALL:NR5G:CELL:UE:CAPability.
-    #       Operators on different firmware should override the format strings
-    #       below in their lab profile config.
-    UE_CAPABILITY_QUERY = "CALL:NR5G:{cell}:UEINFO:CAPability?"
-    UE_MAX_DL_LAYERS_QUERY = "CALL:NR5G:{cell}:UEINFO:CAPability:MIMO:DL:LAYers?"
-    UE_MAX_UL_LAYERS_QUERY = "CALL:NR5G:{cell}:UEINFO:CAPability:MIMO:UL:LAYers?"
-    UE_MAX_MODULATION_DL_QUERY = "CALL:NR5G:{cell}:UEINFO:CAPability:MODulation:DL?"
-    UE_SUPPORTED_BANDS_QUERY = "CALL:NR5G:{cell}:UEINFO:CAPability:BANDs?"
-
-    RRC_RECONFIG_LAYERS = "CALL:NR5G:{cell}:RRC:RECon:MIMO:LAYers {layers}"
-    RRC_RECONFIG_MODULATION = "CALL:NR5G:{cell}:RRC:RECon:MODulation:DL {mod}"
-    RRC_RECONFIG_APPLY = "CALL:NR5G:{cell}:RRC:RECon:APPLy"
-
-    # --- Phase 2g: 载波聚合 (Carrier Aggregation) ---
-    # NOTE: SCell SCPI surface varies between UXM firmware lines.
-    #   - V12+ "SCEL" subsystem: CALL:NR5G:CELL{idx}:SCEL:CONF:* / SCEL:ACTive
-    #   - V10/V11 "SCELL" subsystem: CALL:NR5G:SCELL{idx}:CONF:*
-    # Format strings below cover the V12+ convention; older firmware needs
-    # the strings replaced via lab profile config.
-    SCELL_CONF_FREQ = "CALL:NR5G:{cell}:SCEL{idx}:CONF:FREQuency {freq_mhz}MHz"
-    SCELL_CONF_BW = "CALL:NR5G:{cell}:SCEL{idx}:CONF:BWIDth {bw_mhz}MHz"
-    SCELL_CONF_SCS = "CALL:NR5G:{cell}:SCEL{idx}:CONF:SCS {scs_khz}KHz"
-    SCELL_CONF_BAND = "CALL:NR5G:{cell}:SCEL{idx}:CONF:BAND {band}"
-    SCELL_ADD = "CALL:NR5G:{cell}:SCEL{idx}:ADD"
-    SCELL_ACTIVATE = "CALL:NR5G:{cell}:SCEL{idx}:ACTive ON"
-    SCELL_REMOVE_ALL = "CALL:NR5G:{cell}:SCEL:REMove:ALL"
-    SCELL_LIST_QUERY = "CALL:NR5G:{cell}:SCEL:LIST?"
-
-    # --- CSI 测量 (CQI, RI, PMI) ---
-    MEAS_CSI_START = "MEASure:NR5G:{cell}:CSI:STARt"
-    MEAS_CSI_STOP = "MEASure:NR5G:{cell}:CSI:STOP"
-    MEAS_CSI_CQI = "MEASure:NR5G:{cell}:CSI:CQI:STATistics?"
-    MEAS_CSI_RI = "MEASure:NR5G:{cell}:CSI:RI:HISTogram?"
-
-    # --- UE 测量上报 (RSRP / SINR) ---
-    # UXM 通过 UE Measurement Report 子系统获取 L3 滤波后的 RSRP 和 SINR
-    # 返回格式: "mean,min,max" (dBm / dB)
-    MEAS_UE_RSRP = "MEASure:NR5G:{cell}:UEReport:RSRP:STATistics?"
-    MEAS_UE_SINR = "MEASure:NR5G:{cell}:UEReport:SINR:STATistics?"
-
-    # --- EVM (错误向量幅度) ---
-    MEAS_EVM_START = "MEASure:NR5G:{cell}:PHY:EVM:STARt"
-
-    # --- 配置文件保存/恢复 (一键配置) ---
-    # UXM 支持将完整仪器状态（小区参数、功率、MIMO、RF 路由等）
-    # 保存为 .state 文件，之后通过单条 SCPI 命令一次恢复全部配置。
-    # 文件存储在 UXM 本机的 D:\User Files\ 目录下。
-    STATE_SAVE = 'SYSTem:CONFiguration:SAVE "{filepath}"'
-    STATE_LOAD = 'SYSTem:CONFiguration:LOAD "{filepath}"'
-    STATE_LIST = 'MMEMory:CATalog? "D:\\User Files"'
-
-    # --- RF 路由 (射频通路配置) ---
-    RF_CONNECTOR = "CONFig:NR5G:{cell}:RFSettings:CHANnel"
-    RF_PORT_DL = "CONFig:NR5G:{cell}:RFSettings:DL:PORT"
-    RF_PORT_UL = "CONFig:NR5G:{cell}:RFSettings:UL:PORT"
-
-    # --- TDD 配置 ---
-    TDD_PATTERN = "CONFig:NR5G:{cell}:TDD:PATTern"
-    TDD_PERIOD  = "CONFig:NR5G:{cell}:TDD:PERiod"
-
-    # --- PDSCH 调度算法 (Full Buffer 模式) ---
-    # Full Buffer = UXM 持续调度 PDSCH，不留空 TTI
-    # 这是 3GPP TR 37.977 MAC 吞吐量测试的强制要求
-    PDSCH_SCHED_ALGO = "CONFig:NR5G:{cell}:{bwp}:PDSCH:SchedAlgoritm"
-
-    # --- AMC (自适应调制编码) 开关 ---
-    # AMC OFF = 固定 MCS，不随 CQI 变化
-    # 3GPP 规范要求关闭 AMC，确保吞吐量测试结果可重复
-    PDSCH_AMC_ENABLE  = "CONFig:NR5G:{cell}:{bwp}:PDSCH:AMC:ENABle"
-    PUSCH_AMC_ENABLE  = "CONFig:NR5G:{cell}:{bwp}:PUSCH:AMC:ENABle"
-
-    # --- HARQ 配置 ---
-    HARQ_MAX_TRANS   = "CONFig:NR5G:{cell}:HARQ:MaxTrans"
-    HARQ_PROCESSES   = "CONFig:NR5G:{cell}:HARQ:PROCesses"
-
-    # --- CSI-RS 端口数 (须与 MIMO 层数匹配) ---
-    # 2x2 MIMO → 4 CSI-RS 端口; 4x4 MIMO → 8 CSI-RS 端口
-    CSIRS_PORTS = "CONFig:NR5G:{cell}:CSIRS:PORTs"
-
-    # --- 吞吐量统计窗口 ---
-    # 3GPP TR 37.977 建议统计窗口 ≥ 5000 个子帧 (≥ 5 秒)
-    MEAS_TPUT_STAT_COUNT  = "MEASure:NR5G:{cell}:BTHRoughput:DL:TSTatistics:COUNt"
-    MEAS_TPUT_UL_JSON     = "MEASure:NR5G:{cell}:BTHRoughput:UL:TSTatistics:JSON?"
-    MEAS_TPUT_UL_BLER     = "MEASure:NR5G:{cell}:BTHRoughput:UL:BLER:STATistical:ALL?"
-
-    # --- 状态查询 ---
-    STATUS_FAULTY = "STATus:FAULty:RECovery"
+# === REMOVED: in-line command constants (now in uxm_command_profiles.py) ===
+# The deleted block previously held ~80 SCPI format strings hard-coded for
+# the pure 5G NR Test App. Moved verbatim to Uxm5GNRTestAppProfile so a
+# parallel UxmLteNrIratProfile can ship the BSE: variants without polluting
+# the driver file. See uxm_command_profiles.py.
+_LEGACY_UXM_SCPI_COMMANDS_BODY_REMOVED = True
 
 
 # VISA 超时常量
@@ -276,12 +146,20 @@ class RealUxmDriver(BaseStationDriver):
         self.port: int = config.get("port", 5025)
         self.protocol: str = config.get("protocol", "TCPIP")  # TCPIP or HiSLIP
         self.visa_resource: Optional[str] = config.get("visa_resource")
+        # Test-App command profile (CAICT 2026-05-13: E7515B platform hosts
+        # multiple test apps with different SCPI dialects). Default profile
+        # is 5G NR Test App for backward compat; auto-detected in connect()
+        # by reading SYSTem:APPLication:NAME? on the Test App Framework
+        # endpoint. Operators can pre-set via config["uxm_profile"] = "irat"
+        # to skip auto-detect when the host doesn't expose hislip0.
+        self._cmds: type[UxmCommandProfile] = self._resolve_initial_profile(config)
         # VISA session
         self._visa_rm = None
         self._visa_session = None
-        # 小区配置状态
-        self._cell_id: str = "CELL0"  # 默认使用主小区
-        self._bwp_id: str = "BWP0"
+        # 小区配置状态 — primary cell defaults to profile's PRIMARY_CELL
+        # ("CELL0" for 5G NR Test App, "CELL1" for LTE_NR_IRAT)
+        self._cell_id: str = self._cmds.PRIMARY_CELL
+        self._bwp_id: str = self._cmds.PRIMARY_BWP
         self._band: str = "N78"
         self._frequency_mhz: float = 3500.0
         self._bandwidth_mhz: float = 100.0
@@ -300,12 +178,39 @@ class RealUxmDriver(BaseStationDriver):
         custom_arfcn = config.get("nr_band_arfcn_map")
         self._nr_band_arfcn_map = dict(custom_arfcn) if custom_arfcn else NR_BAND_ARFCN_MAP
 
+    @staticmethod
+    def _resolve_initial_profile(config: Dict[str, Any]):
+        """Pick command profile before connect() runs.
+
+        Used to set self._cmds in __init__ so PRIMARY_CELL etc are available
+        immediately. connect() re-confirms via live SYSTem:APPLication:NAME?
+        and overwrites if mismatch.
+        """
+        hint = (config.get("uxm_profile") or "").lower()
+        if hint in ("irat", "lte_nr_irat", "lte+nr"):
+            return UxmLteNrIratProfile
+        return Uxm5GNRTestAppProfile
+
     # ===================================================================
     # 1. 连接生命周期
     # ===================================================================
 
     async def connect(self) -> bool:
-        """通过 PyVISA 建立与 UXM 的连接"""
+        """通过 PyVISA 建立与 UXM 的连接。
+
+        E7515B 平台双 SCPI 入口：
+          hislip0 → Platform 本身（只 IEEE 488.2）
+          hislip2 → Test Application Framework（真测试 App SCPI 在这）
+
+        本方法按以下顺序探测：
+          1. config["visa_resource"] 给了，直接用
+          2. protocol=HISLIP — 按 self._cmds.HISLIP_INDEX 决定 hislipN（默认 0；
+             IRAT profile 默认 2）
+          3. 否则走 SOCKET 端口 5025
+
+        连上后 query SYSTem:APPLication:NAME? 决定实际 Test App，按结果切换
+        self._cmds。若检测不到（如纯 Platform 模式），保留 __init__ 时的初值。
+        """
         self._set_status(InstrumentStatus.CONNECTING)
         try:
             import pyvisa
@@ -314,7 +219,8 @@ class RealUxmDriver(BaseStationDriver):
             if self.visa_resource:
                 resource_str = self.visa_resource
             elif self.protocol.upper() == "HISLIP":
-                resource_str = f"TCPIP::{self.ip_address}::hislip0::INSTR"
+                hislip_idx = self._cmds.HISLIP_INDEX
+                resource_str = f"TCPIP::{self.ip_address}::hislip{hislip_idx}::INSTR"
             else:
                 resource_str = (
                     f"TCPIP::{self.ip_address}::{self.port}::SOCKET"
@@ -332,14 +238,77 @@ class RealUxmDriver(BaseStationDriver):
 
             # 验证身份
             idn = self._query("*IDN?").strip()
+
+            # Two-tier auto-detection for E7515B platform (CAICT 2026-05-13):
+            #
+            # E7515B Platform IDN = "Keysight Technologies,E7515B Platform,..."
+            # Hosts Test Applications on separate SCPI endpoints. Real test
+            # commands live on hislip2 (Test App Framework), not on hislip0
+            # nor on raw SOCKET 5025. If we opened a Platform endpoint and
+            # the operator didn't explicitly pick a profile, auto-reconnect
+            # to hislip2 to find the running Test App.
+            on_platform_endpoint = (
+                "E7515B Platform" in idn
+                and ("SOCKET" in resource_str or "hislip0" in resource_str)
+                and not self.visa_resource  # don't override explicit config
+            )
+            if on_platform_endpoint:
+                try:
+                    framework_resource = f"TCPIP::{self.ip_address}::hislip2::INSTR"
+                    logger.info(
+                        f"[UXM] IDN says E7515B Platform; switching session "
+                        f"to Test App Framework at {framework_resource}"
+                    )
+                    self._visa_session.close()
+                    self._visa_session = self._visa_rm.open_resource(
+                        framework_resource,
+                        timeout=VISA_TIMEOUT_DEFAULT,
+                    )
+                    resource_str = framework_resource
+                    idn = self._query("*IDN?").strip()
+                    logger.info(f"[UXM] Framework IDN: {idn}")
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        f"[UXM] Failed to switch to hislip2 ({type(e).__name__}: "
+                        f"{e}); staying on Platform endpoint — only IEEE 488.2 "
+                        f"commands will work"
+                    )
+            # Auto-detect Test App via SYSTem:APPLication:NAME?. Only meaningful
+            # if we're on the Test App Framework endpoint (else it just times
+            # out — Platform doesn't expose this).
+            try:
+                app_name = self._query("SYSTem:APPLication:NAME?").strip().strip('"')
+                if app_name:
+                    detected = detect_profile(app_name)
+                    if detected is not self._cmds:
+                        logger.info(
+                            f"[UXM] App detected: {app_name!r} — switching "
+                            f"command profile {self._cmds.PROFILE_NAME} → {detected.PROFILE_NAME}"
+                        )
+                        self._cmds = detected
+                        # Re-sync default cell index to new profile's
+                        self._cell_id = self._cmds.PRIMARY_CELL
+                        self._bwp_id = self._cmds.PRIMARY_BWP
+                    else:
+                        logger.info(
+                            f"[UXM] App detected: {app_name!r} — profile {self._cmds.PROFILE_NAME} confirmed"
+                        )
+            except Exception as e:  # noqa: BLE001
+                logger.info(
+                    f"[UXM] SYSTem:APPLication:NAME? not available ({type(e).__name__}); "
+                    f"keeping profile {self._cmds.PROFILE_NAME}"
+                )
             logger.info(f"[UXM] Connected: {idn}")
 
             # 清除状态
             self._write("*CLS")
 
-            # 选择 5G NR 测试应用
-            self._write(UxmScpiCommands.APP_SELECT)
-            self._query("*OPC?")
+            # Select Test App via SCPI — only for profiles that expose
+            # APP_SELECT (pure 5G NR Test App). On LTE_NR_IRAT the app
+            # is GUI-launched; APP_SELECT is None so we skip.
+            if self._cmds.APP_SELECT:
+                self._write(self._cmds.APP_SELECT)
+                self._query("*OPC?")
 
             self._set_status(InstrumentStatus.CONNECTED)
             self._clear_error()
@@ -450,14 +419,14 @@ class RealUxmDriver(BaseStationDriver):
                 band = config["band"].upper()
                 self._band = band
                 self._write(
-                    UxmScpiCommands.CELL_BAND.format(cell=cell) + f" {band}"
+                    self._cmds.CELL_BAND.format(cell=cell) + f" {band}"
                 )
 
             # ---- 2. 双工模式 (必须紧跟 Band 之后) ----
             if "duplex" in config:
                 duplex_mode = config["duplex"].upper()
                 self._write(
-                    UxmScpiCommands.CELL_DUPLEX.format(cell=cell)
+                    self._cmds.CELL_DUPLEX.format(cell=cell)
                     + f" {duplex_mode}"
                 )
                 logger.info(f"[UXM] Duplex: {duplex_mode}")
@@ -467,11 +436,11 @@ class RealUxmDriver(BaseStationDriver):
                 bw = config["bandwidth_mhz"]
                 self._bandwidth_mhz = bw
                 self._write(
-                    UxmScpiCommands.CELL_DL_BW.format(cell=cell)
+                    self._cmds.CELL_DL_BW.format(cell=cell)
                     + f" {int(bw)}"
                 )
                 self._write(
-                    UxmScpiCommands.CELL_UL_BW.format(cell=cell)
+                    self._cmds.CELL_UL_BW.format(cell=cell)
                     + f" {int(bw)}"
                 )
 
@@ -480,7 +449,7 @@ class RealUxmDriver(BaseStationDriver):
                 scs = config["scs_khz"]
                 self._scs_khz = scs
                 self._write(
-                    UxmScpiCommands.CELL_SCS.format(cell=cell) + f" {scs}"
+                    self._cmds.CELL_SCS.format(cell=cell) + f" {scs}"
                 )
 
             # ---- 5. ARFCN (自动查表或手动指定) ----
@@ -489,7 +458,7 @@ class RealUxmDriver(BaseStationDriver):
             else:
                 arfcn = NR_BAND_ARFCN_MAP.get(self._band, 632628)
             self._write(
-                UxmScpiCommands.CELL_DL_ARFCN.format(cell=cell)
+                self._cmds.CELL_DL_ARFCN.format(cell=cell)
                 + f" {arfcn}"
             )
 
@@ -497,7 +466,7 @@ class RealUxmDriver(BaseStationDriver):
             if "mimo_layers" in config:
                 layers = config["mimo_layers"]
                 self._write(
-                    UxmScpiCommands.MIMO_DL_LAYERS.format(cell=cell)
+                    self._cmds.MIMO_DL_LAYERS.format(cell=cell)
                     + f" {layers}"
                 )
 
@@ -520,14 +489,14 @@ class RealUxmDriver(BaseStationDriver):
             if "dl_power_dbm" in config:
                 self._dl_power_dbm = config["dl_power_dbm"]
                 self._write(
-                    UxmScpiCommands.DL_POWER.format(cell=cell)
+                    self._cmds.DL_POWER.format(cell=cell)
                     + f" {self._dl_power_dbm:.1f}"
                 )
 
             # ---- 9. SSB 功率 ----
             if "ssb_power_dbm" in config:
                 self._write(
-                    UxmScpiCommands.SSB_POWER.format(cell=cell)
+                    self._cmds.SSB_POWER.format(cell=cell)
                     + f" {config['ssb_power_dbm']:.1f}"
                 )
 
@@ -535,31 +504,31 @@ class RealUxmDriver(BaseStationDriver):
             if "pdsch_rb_alloc" in config:
                 bwp = config.get("bwp_id", self._bwp_id)
                 self._write(
-                    UxmScpiCommands.PDSCH_RB_ALLOC.format(cell=cell, bwp=bwp)
+                    self._cmds.PDSCH_RB_ALLOC.format(cell=cell, bwp=bwp)
                     + f" {config['pdsch_rb_alloc']}"
                 )
 
             # ---- 11. RF 通道级端口路由 (Layer 2, 备选) ----
             if "rf_port_dl" in config:
                 self._write(
-                    UxmScpiCommands.RF_PORT_DL.format(cell=cell)
+                    self._cmds.RF_PORT_DL.format(cell=cell)
                     + f" {config['rf_port_dl']}"
                 )
             if "rf_port_ul" in config:
                 self._write(
-                    UxmScpiCommands.RF_PORT_UL.format(cell=cell)
+                    self._cmds.RF_PORT_UL.format(cell=cell)
                     + f" {config['rf_port_ul']}"
                 )
 
             # ---- 12. TDD 时隙格式 ----
             if "tdd_pattern" in config:
                 self._write(
-                    UxmScpiCommands.TDD_PATTERN.format(cell=cell)
+                    self._cmds.TDD_PATTERN.format(cell=cell)
                     + f" {config['tdd_pattern'].upper()}"
                 )
             if "tdd_period" in config:
                 self._write(
-                    UxmScpiCommands.TDD_PERIOD.format(cell=cell)
+                    self._cmds.TDD_PERIOD.format(cell=cell)
                     + f" {config['tdd_period']}"
                 )
 
@@ -567,7 +536,7 @@ class RealUxmDriver(BaseStationDriver):
             if "sched_algo" in config:
                 bwp = config.get("bwp_id", self._bwp_id)
                 self._write(
-                    UxmScpiCommands.PDSCH_SCHED_ALGO.format(cell=cell, bwp=bwp)
+                    self._cmds.PDSCH_SCHED_ALGO.format(cell=cell, bwp=bwp)
                     + f" {config['sched_algo'].upper()}"
                 )
 
@@ -576,11 +545,11 @@ class RealUxmDriver(BaseStationDriver):
                 bwp = config.get("bwp_id", self._bwp_id)
                 amc_val = "ON" if config["enable_amc"] else "OFF"
                 self._write(
-                    UxmScpiCommands.PDSCH_AMC_ENABLE.format(cell=cell, bwp=bwp)
+                    self._cmds.PDSCH_AMC_ENABLE.format(cell=cell, bwp=bwp)
                     + f" {amc_val}"
                 )
                 self._write(
-                    UxmScpiCommands.PUSCH_AMC_ENABLE.format(cell=cell, bwp=bwp)
+                    self._cmds.PUSCH_AMC_ENABLE.format(cell=cell, bwp=bwp)
                     + f" {amc_val}"
                 )
                 logger.info(f"[UXM] AMC: {amc_val}")
@@ -588,33 +557,33 @@ class RealUxmDriver(BaseStationDriver):
             # ---- 15. HARQ 配置 ----
             if "harq_max_trans" in config:
                 self._write(
-                    UxmScpiCommands.HARQ_MAX_TRANS.format(cell=cell)
+                    self._cmds.HARQ_MAX_TRANS.format(cell=cell)
                     + f" {config['harq_max_trans']}"
                 )
             if "harq_processes" in config:
                 self._write(
-                    UxmScpiCommands.HARQ_PROCESSES.format(cell=cell)
+                    self._cmds.HARQ_PROCESSES.format(cell=cell)
                     + f" {config['harq_processes']}"
                 )
 
             # ---- 16. CSI-RS 端口数 (与 MIMO 层数对齐) ----
             if "csi_rs_ports" in config:
                 self._write(
-                    UxmScpiCommands.CSIRS_PORTS.format(cell=cell)
+                    self._cmds.CSIRS_PORTS.format(cell=cell)
                     + f" {config['csi_rs_ports']}"
                 )
             elif "mimo_layers" in config:
                 # 自动推断: 1L→2ports, 2L→4ports, 4L→8ports
                 auto_ports = max(2, config["mimo_layers"] * 2)
                 self._write(
-                    UxmScpiCommands.CSIRS_PORTS.format(cell=cell)
+                    self._cmds.CSIRS_PORTS.format(cell=cell)
                     + f" {auto_ports}"
                 )
 
             # ---- 17. 统计窗口 (子帧数) ----
             if "stat_count" in config:
                 self._write(
-                    UxmScpiCommands.MEAS_TPUT_STAT_COUNT.format(cell=cell)
+                    self._cmds.MEAS_TPUT_STAT_COUNT.format(cell=cell)
                     + f" {config['stat_count']}"
                 )
 
@@ -732,7 +701,7 @@ class RealUxmDriver(BaseStationDriver):
             # 配置 TX 天线端口
             for ant_num, port_name in tx_map.items():
                 self._write(
-                    UxmScpiCommands.MIMO_TX_ANT_PORT.format(
+                    self._cmds.MIMO_TX_ANT_PORT.format(
                         cell=cell, ant=ant_num
                     ) + f" {port_name}"
                 )
@@ -740,7 +709,7 @@ class RealUxmDriver(BaseStationDriver):
             # 配置 RX 天线端口
             for ant_num, port_name in rx_map.items():
                 self._write(
-                    UxmScpiCommands.MIMO_RX_ANT_PORT.format(
+                    self._cmds.MIMO_RX_ANT_PORT.format(
                         cell=cell, ant=ant_num
                     ) + f" {port_name}"
                 )
@@ -775,7 +744,7 @@ class RealUxmDriver(BaseStationDriver):
             for ant_num in range(1, 5):
                 # TX
                 tx_port = self._query(
-                    UxmScpiCommands.MIMO_TX_ANT_PORT_QUERY.format(
+                    self._cmds.MIMO_TX_ANT_PORT_QUERY.format(
                         cell=cell, ant=ant_num
                     )
                 ).strip()
@@ -784,7 +753,7 @@ class RealUxmDriver(BaseStationDriver):
 
                 # RX
                 rx_port = self._query(
-                    UxmScpiCommands.MIMO_RX_ANT_PORT_QUERY.format(
+                    self._cmds.MIMO_RX_ANT_PORT_QUERY.format(
                         cell=cell, ant=ant_num
                     )
                 ).strip()
@@ -821,7 +790,7 @@ class RealUxmDriver(BaseStationDriver):
                 }
                 mcs = mod_map.get(modulation, 24)
                 self._write(
-                    UxmScpiCommands.PDSCH_MCS.format(cell=cell, bwp=bwp)
+                    self._cmds.PDSCH_MCS.format(cell=cell, bwp=bwp)
                     + f" {mcs}"
                 )
 
@@ -894,63 +863,63 @@ class RealUxmDriver(BaseStationDriver):
 
             # 1. Full Buffer 调度
             self._write(
-                UxmScpiCommands.PDSCH_SCHED_ALGO.format(cell=cell, bwp=bwp)
+                self._cmds.PDSCH_SCHED_ALGO.format(cell=cell, bwp=bwp)
                 + " FULLBUFFER"
             )
 
             # 2. AMC 开关
             amc_val = "ON" if enable_amc else "OFF"
             self._write(
-                UxmScpiCommands.PDSCH_AMC_ENABLE.format(cell=cell, bwp=bwp)
+                self._cmds.PDSCH_AMC_ENABLE.format(cell=cell, bwp=bwp)
                 + f" {amc_val}"
             )
             self._write(
-                UxmScpiCommands.PUSCH_AMC_ENABLE.format(cell=cell, bwp=bwp)
+                self._cmds.PUSCH_AMC_ENABLE.format(cell=cell, bwp=bwp)
                 + f" {amc_val}"
             )
 
             # 3. 固定 MCS (当 AMC=OFF 时生效)
             self._write(
-                UxmScpiCommands.PDSCH_MCS.format(cell=cell, bwp=bwp)
+                self._cmds.PDSCH_MCS.format(cell=cell, bwp=bwp)
                 + f" {mcs}"
             )
 
             # 4. 全 RB 分配
             self._write(
-                UxmScpiCommands.PDSCH_RB_ALLOC.format(cell=cell, bwp=bwp)
+                self._cmds.PDSCH_RB_ALLOC.format(cell=cell, bwp=bwp)
                 + f" {rb_alloc}"
             )
 
             # 5. TDD 时隙格式
             self._write(
-                UxmScpiCommands.TDD_PATTERN.format(cell=cell)
+                self._cmds.TDD_PATTERN.format(cell=cell)
                 + f" {tdd_pattern}"
             )
             self._write(
-                UxmScpiCommands.TDD_PERIOD.format(cell=cell)
+                self._cmds.TDD_PERIOD.format(cell=cell)
                 + f" {tdd_period}"
             )
 
             # 6. HARQ
             self._write(
-                UxmScpiCommands.HARQ_MAX_TRANS.format(cell=cell)
+                self._cmds.HARQ_MAX_TRANS.format(cell=cell)
                 + f" {harq_max_trans}"
             )
             self._write(
-                UxmScpiCommands.HARQ_PROCESSES.format(cell=cell)
+                self._cmds.HARQ_PROCESSES.format(cell=cell)
                 + f" {harq_processes}"
             )
 
             # 7. CSI-RS 端口数 (1L→2ports, 2L→4ports, 4L→8ports)
             csi_rs_ports = max(2, mimo_layers * 2)
             self._write(
-                UxmScpiCommands.CSIRS_PORTS.format(cell=cell)
+                self._cmds.CSIRS_PORTS.format(cell=cell)
                 + f" {csi_rs_ports}"
             )
 
             # 8. 统计窗口
             self._write(
-                UxmScpiCommands.MEAS_TPUT_STAT_COUNT.format(cell=cell)
+                self._cmds.MEAS_TPUT_STAT_COUNT.format(cell=cell)
                 + f" {stat_count}"
             )
 
@@ -979,7 +948,7 @@ class RealUxmDriver(BaseStationDriver):
         """
         try:
             self._write(
-                UxmScpiCommands.DL_POWER.format(cell=self._cell_id)
+                self._cmds.DL_POWER.format(cell=self._cell_id)
                 + f" {power_dbm:.1f}"
             )
             self._dl_power_dbm = power_dbm
@@ -1012,7 +981,7 @@ class RealUxmDriver(BaseStationDriver):
             self._visa_session.timeout = VISA_TIMEOUT_CELL
 
             # 激活小区
-            self._write(UxmScpiCommands.CELL_STATE_ON.format(cell=cell))
+            self._write(self._cmds.CELL_STATE_ON.format(cell=cell))
             self._query("*OPC?")
             self._cell_state = CellState.ON
 
@@ -1028,7 +997,7 @@ class RealUxmDriver(BaseStationDriver):
                 # 查询连接状态
                 # UXM 返回: "IDLE" / "ATT" / "CONN" / "OFF"
                 state_str = self._query(
-                    UxmScpiCommands.CELL_STATE_QUERY.format(cell=cell)
+                    self._cmds.CELL_STATE_QUERY.format(cell=cell)
                 ).strip().upper()
 
                 if "CONN" in state_str or "ATT" in state_str:
@@ -1059,7 +1028,7 @@ class RealUxmDriver(BaseStationDriver):
         """关闭小区信令"""
         try:
             self._write(
-                UxmScpiCommands.CELL_STATE_OFF.format(cell=self._cell_id)
+                self._cmds.CELL_STATE_OFF.format(cell=self._cell_id)
             )
             self._query("*OPC?")
             self._cell_state = CellState.OFF
@@ -1074,7 +1043,7 @@ class RealUxmDriver(BaseStationDriver):
         """查询小区当前状态"""
         try:
             state = self._query(
-                UxmScpiCommands.CELL_STATE_QUERY.format(cell=self._cell_id)
+                self._cmds.CELL_STATE_QUERY.format(cell=self._cell_id)
             ).strip().upper()
             if "OFF" in state:
                 return CellState.OFF
@@ -1127,7 +1096,7 @@ class RealUxmDriver(BaseStationDriver):
             self._visa_session.timeout = VISA_TIMEOUT_STATE_LOAD
 
             self._write(
-                UxmScpiCommands.STATE_LOAD.format(filepath=filepath)
+                self._cmds.STATE_LOAD.format(filepath=filepath)
             )
             self._query("*OPC?")
 
@@ -1167,7 +1136,7 @@ class RealUxmDriver(BaseStationDriver):
         try:
             logger.info(f"[UXM] Saving state: {filepath}")
             self._write(
-                UxmScpiCommands.STATE_SAVE.format(filepath=filepath)
+                self._cmds.STATE_SAVE.format(filepath=filepath)
             )
             self._query("*OPC?")
             logger.info(f"[UXM] State saved: {filepath}")
@@ -1185,7 +1154,7 @@ class RealUxmDriver(BaseStationDriver):
             文件名列表
         """
         try:
-            result = self._query(UxmScpiCommands.STATE_LIST)
+            result = self._query(self._cmds.STATE_LIST)
             # 解析 MMEMory:CATalog? 返回格式
             # 典型: '"file1.state","file2.state",...'
             files = []
@@ -1210,28 +1179,28 @@ class RealUxmDriver(BaseStationDriver):
         try:
             # 回读频段
             band = self._query(
-                UxmScpiCommands.CELL_BAND.format(cell=cell) + "?"
+                self._cmds.CELL_BAND.format(cell=cell) + "?"
             ).strip()
             if band:
                 self._band = band.upper()
 
             # 回读带宽
             bw = self._query(
-                UxmScpiCommands.CELL_DL_BW.format(cell=cell) + "?"
+                self._cmds.CELL_DL_BW.format(cell=cell) + "?"
             ).strip()
             if bw:
                 self._bandwidth_mhz = float(bw)
 
             # 回读 SCS
             scs = self._query(
-                UxmScpiCommands.CELL_SCS.format(cell=cell) + "?"
+                self._cmds.CELL_SCS.format(cell=cell) + "?"
             ).strip()
             if scs:
                 self._scs_khz = int(float(scs))
 
             # 回读功率
             pwr = self._query(
-                UxmScpiCommands.DL_POWER.format(cell=cell) + "?"
+                self._cmds.DL_POWER.format(cell=cell) + "?"
             ).strip()
             if pwr:
                 self._dl_power_dbm = float(pwr)
@@ -1266,7 +1235,7 @@ class RealUxmDriver(BaseStationDriver):
         try:
             # ── DL 吞吐量 (JSON 格式，包含 Mbps / 子帧数 / 传输块统计) ──
             tput_json = self._query(
-                UxmScpiCommands.MEAS_BTHROUGHPUT_DL_JSON.format(cell=cell)
+                self._cmds.MEAS_BTHROUGHPUT_DL_JSON.format(cell=cell)
             )
             if tput_json and tput_json.strip():
                 try:
@@ -1290,7 +1259,7 @@ class RealUxmDriver(BaseStationDriver):
 
             # ── DL BLER (格式: "mean,min,max" 或单值) ──
             bler_str = self._query(
-                UxmScpiCommands.MEAS_BTHROUGHPUT_DL_BLER.format(cell=cell)
+                self._cmds.MEAS_BTHROUGHPUT_DL_BLER.format(cell=cell)
             )
             if bler_str and bler_str.strip():
                 try:
@@ -1300,7 +1269,7 @@ class RealUxmDriver(BaseStationDriver):
 
             # ── UL 吞吐量 ──
             ul_json = self._query(
-                UxmScpiCommands.MEAS_TPUT_UL_JSON.format(cell=cell)
+                self._cmds.MEAS_TPUT_UL_JSON.format(cell=cell)
             )
             if ul_json and ul_json.strip():
                 try:
@@ -1321,7 +1290,7 @@ class RealUxmDriver(BaseStationDriver):
 
             # ── UL BLER ──
             ul_bler_str = self._query(
-                UxmScpiCommands.MEAS_TPUT_UL_BLER.format(cell=cell)
+                self._cmds.MEAS_TPUT_UL_BLER.format(cell=cell)
             )
             if ul_bler_str and ul_bler_str.strip():
                 try:
@@ -1331,7 +1300,7 @@ class RealUxmDriver(BaseStationDriver):
 
             # ── CQI (均值, 格式: "mean,std,min,max,...") ──
             cqi_str = self._query(
-                UxmScpiCommands.MEAS_CSI_CQI.format(cell=cell)
+                self._cmds.MEAS_CSI_CQI.format(cell=cell)
             )
             if cqi_str and cqi_str.strip():
                 try:
@@ -1341,7 +1310,7 @@ class RealUxmDriver(BaseStationDriver):
 
             # ── RI (均值, 直方图第一个值) ──
             ri_str = self._query(
-                UxmScpiCommands.MEAS_CSI_RI.format(cell=cell)
+                self._cmds.MEAS_CSI_RI.format(cell=cell)
             )
             if ri_str and ri_str.strip():
                 try:
@@ -1365,7 +1334,7 @@ class RealUxmDriver(BaseStationDriver):
 
             # ── RSRP (UE 测量上报, 格式: "mean,min,max") ──
             rsrp_str = self._query(
-                UxmScpiCommands.MEAS_UE_RSRP.format(cell=cell)
+                self._cmds.MEAS_UE_RSRP.format(cell=cell)
             )
             if rsrp_str and rsrp_str.strip():
                 try:
@@ -1375,7 +1344,7 @@ class RealUxmDriver(BaseStationDriver):
 
             # ── SINR (UE 测量上报, 格式: "mean,min,max") ──
             sinr_str = self._query(
-                UxmScpiCommands.MEAS_UE_SINR.format(cell=cell)
+                self._cmds.MEAS_UE_SINR.format(cell=cell)
             )
             if sinr_str and sinr_str.strip():
                 try:
@@ -1425,7 +1394,7 @@ class RealUxmDriver(BaseStationDriver):
         """
         cell = self._cell_id
         try:
-            self._write(UxmScpiCommands.MEAS_BTHROUGHPUT_DL_START.format(cell=cell))
+            self._write(self._cmds.MEAS_BTHROUGHPUT_DL_START.format(cell=cell))
         except Exception as e:  # noqa: BLE001
             logger.warning("[UXM] BTHR:DL:START failed (%s) — falling back to plain query", e)
             return await self.get_throughput_metrics()
@@ -1435,7 +1404,7 @@ class RealUxmDriver(BaseStationDriver):
             metrics = await self.get_throughput_metrics()
         finally:
             try:
-                self._write(UxmScpiCommands.MEAS_BTHROUGHPUT_DL_STOP.format(cell=cell))
+                self._write(self._cmds.MEAS_BTHROUGHPUT_DL_STOP.format(cell=cell))
             except Exception as e:  # noqa: BLE001
                 logger.debug("[UXM] BTHR:DL:STOP failed (%s); ignored", e)
         return metrics
@@ -1465,10 +1434,10 @@ class RealUxmDriver(BaseStationDriver):
                 logger.debug("[UXM] capability query %s failed: %s", scpi, e)
                 return None
 
-        max_dl = _safe_query(UxmScpiCommands.UE_MAX_DL_LAYERS_QUERY, lambda s: int(float(s)))
-        max_ul = _safe_query(UxmScpiCommands.UE_MAX_UL_LAYERS_QUERY, lambda s: int(float(s)))
-        max_mod = _safe_query(UxmScpiCommands.UE_MAX_MODULATION_DL_QUERY)
-        bands_str = _safe_query(UxmScpiCommands.UE_SUPPORTED_BANDS_QUERY)
+        max_dl = _safe_query(self._cmds.UE_MAX_DL_LAYERS_QUERY, lambda s: int(float(s)))
+        max_ul = _safe_query(self._cmds.UE_MAX_UL_LAYERS_QUERY, lambda s: int(float(s)))
+        max_mod = _safe_query(self._cmds.UE_MAX_MODULATION_DL_QUERY)
+        bands_str = _safe_query(self._cmds.UE_SUPPORTED_BANDS_QUERY)
         bands = (
             [b.strip() for b in bands_str.split(",") if b.strip()]
             if bands_str else []
@@ -1479,7 +1448,7 @@ class RealUxmDriver(BaseStationDriver):
             logger.warning(
                 "[UXM] UE capability unavailable (likely no UE attached or "
                 "firmware doesn't support UEINFO subsystem; check operator's "
-                "UXM version against UxmScpiCommands.UE_CAPABILITY_* SCPI strings)"
+                "UXM version against self._cmds.UE_CAPABILITY_* SCPI strings)"
             )
 
         return {
@@ -1507,15 +1476,15 @@ class RealUxmDriver(BaseStationDriver):
         cell = self._cell_id
         try:
             if mimo_layers is not None:
-                self._write(UxmScpiCommands.RRC_RECONFIG_LAYERS.format(
+                self._write(self._cmds.RRC_RECONFIG_LAYERS.format(
                     cell=cell, layers=int(mimo_layers)
                 ))
             if modulation is not None:
-                self._write(UxmScpiCommands.RRC_RECONFIG_MODULATION.format(
+                self._write(self._cmds.RRC_RECONFIG_MODULATION.format(
                     cell=cell, mod=modulation
                 ))
-            self._write(UxmScpiCommands.RRC_RECONFIG_APPLY.format(cell=cell))
-            self._query(UxmScpiCommands.OPC)
+            self._write(self._cmds.RRC_RECONFIG_APPLY.format(cell=cell))
+            self._query(self._cmds.OPC)
             logger.info(
                 "[UXM] RRC reconfigured: layers=%s modulation=%s",
                 mimo_layers, modulation,
@@ -1545,23 +1514,23 @@ class RealUxmDriver(BaseStationDriver):
             scs_khz = int(cc_config.get("scs_khz", 30))
             band = cc_config.get("band")
 
-            self._write(UxmScpiCommands.SCELL_CONF_FREQ.format(
+            self._write(self._cmds.SCELL_CONF_FREQ.format(
                 cell=cell, idx=cc_index, freq_mhz=freq_mhz
             ))
-            self._write(UxmScpiCommands.SCELL_CONF_BW.format(
+            self._write(self._cmds.SCELL_CONF_BW.format(
                 cell=cell, idx=cc_index, bw_mhz=bw_mhz
             ))
-            self._write(UxmScpiCommands.SCELL_CONF_SCS.format(
+            self._write(self._cmds.SCELL_CONF_SCS.format(
                 cell=cell, idx=cc_index, scs_khz=scs_khz
             ))
             if band:
-                self._write(UxmScpiCommands.SCELL_CONF_BAND.format(
+                self._write(self._cmds.SCELL_CONF_BAND.format(
                     cell=cell, idx=cc_index, band=band
                 ))
-            self._write(UxmScpiCommands.SCELL_ADD.format(
+            self._write(self._cmds.SCELL_ADD.format(
                 cell=cell, idx=cc_index
             ))
-            self._query(UxmScpiCommands.OPC)
+            self._query(self._cmds.OPC)
             logger.info(
                 "[UXM] SCell %d added: freq=%.1f MHz BW=%.0f MHz scs=%dkHz band=%s",
                 cc_index, freq_mhz, bw_mhz, scs_khz, band or "auto",
@@ -1578,15 +1547,15 @@ class RealUxmDriver(BaseStationDriver):
         cell = self._cell_id
         try:
             scell_resp = self._query(
-                UxmScpiCommands.SCELL_LIST_QUERY.format(cell=cell)
+                self._cmds.SCELL_LIST_QUERY.format(cell=cell)
             )
             if not scell_resp or not scell_resp.strip():
                 logger.warning("[UXM] No SCells configured to activate")
                 return True
             indices = [int(s) for s in scell_resp.strip().split(",") if s.strip().isdigit()]
             for idx in indices:
-                self._write(UxmScpiCommands.SCELL_ACTIVATE.format(cell=cell, idx=idx))
-            self._query(UxmScpiCommands.OPC)
+                self._write(self._cmds.SCELL_ACTIVATE.format(cell=cell, idx=idx))
+            self._query(self._cmds.OPC)
             logger.info("[UXM] Activated %d SCell(s): %s", len(indices), indices)
             return True
         except Exception as e:  # noqa: BLE001
@@ -1597,8 +1566,8 @@ class RealUxmDriver(BaseStationDriver):
         """Phase 2g: cleanup helper — remove every SCell on this PCell."""
         cell = self._cell_id
         try:
-            self._write(UxmScpiCommands.SCELL_REMOVE_ALL.format(cell=cell))
-            self._query(UxmScpiCommands.OPC)
+            self._write(self._cmds.SCELL_REMOVE_ALL.format(cell=cell))
+            self._query(self._cmds.OPC)
             logger.info("[UXM] All SCells removed for cell %s", cell)
             return True
         except Exception as e:  # noqa: BLE001
@@ -1673,7 +1642,7 @@ class RealUxmDriver(BaseStationDriver):
     def _check_errors(self) -> None:
         """检查并清除错误队列"""
         while True:
-            err = self._query(UxmScpiCommands.ERR).strip()
+            err = self._query(self._cmds.ERR).strip()
             if err.startswith("0,") or err.startswith("+0,"):
                 break
             logger.warning(f"[UXM] Instrument error: {err}")

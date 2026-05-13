@@ -74,7 +74,21 @@ from app.diagnostics.protocol import (
     SequenceStepResult,
 )
 from app.hal.uxm_base_station import UxmScpiCommands
+from app.hal.uxm_command_profiles import (
+    UxmCommandProfile,
+    Uxm5GNRTestAppProfile,
+    UxmLteNrIratProfile,
+)
 from app.services.diagnostic_context import DiagnosticContext
+
+
+# Fail-fast threshold — abort the SCPI walk after this many consecutive
+# VISA timeouts. Mirrors the pattern proven on PROPSIM FS16 / F64 probes
+# 2026-05-13: when a session goes half-closed mid-walk, every subsequent
+# command costs 5 s (VISA default timeout), and the probe drags on for
+# minutes before reporting useless data. 3 strikes = bail, tell operator
+# to reload HAL.
+_MAX_CONSECUTIVE_TIMEOUTS = 3
 
 
 # Placeholder substitutions used when formatting a template into a concrete
@@ -128,10 +142,20 @@ _CRITICAL_NAMES = frozenset({
 # Helpers — pure functions, unit-testable without a driver/UXM.
 # ---------------------------------------------------------------------------
 
-def _to_probe_command(value: str) -> str:
-    """Format placeholders + reduce a WRITE command to its query form."""
+def _to_probe_command(value: str, profile: Optional[type] = None) -> str:
+    """Format placeholders + reduce a WRITE command to its query form.
+
+    If ``profile`` is given, its ``PRIMARY_CELL`` overrides the default
+    ``CELL0`` (so e.g. LTE_NR_IRAT correctly probes ``CELL1`` since that
+    app doesn't expose ``CELL0``).
+    """
     formatted = value
-    for k, v in _PLACEHOLDERS.items():
+    placeholders = dict(_PLACEHOLDERS)
+    if profile is not None and getattr(profile, "PRIMARY_CELL", None):
+        placeholders["cell"] = profile.PRIMARY_CELL
+    if profile is not None and getattr(profile, "PRIMARY_BWP", None):
+        placeholders["bwp"] = profile.PRIMARY_BWP
+    for k, v in placeholders.items():
         formatted = formatted.replace("{" + k + "}", v)
     head = formatted.split(None, 1)[0]
     if not head.endswith("?"):
@@ -151,28 +175,76 @@ def _parse_err(raw: str) -> Tuple[Optional[int], str]:
 
 
 def _categorize_status(err_code: Optional[int]) -> str:
+    """Map IEEE 488.2 error codes to probe outcome.
+
+    -113 / -114 = "Undefined header" / "Header suffix out of range" — the
+    only codes that mean the SCPI mnemonic genuinely doesn't exist.
+
+    -100 .. -112 = "Command header error" family. These mean the parser
+    recognized the header (it's in the SCPI tree) but the form was
+    wrong (write-only command probed as a query, missing parameter,
+    bad separator, etc.). For a *compatibility* probe, that's SUPPORTED
+    — the driver can use the header, just with the right form.
+
+    -200 .. -299 = execution error family. Header is recognized AND
+    valid syntax; instrument state is what's preventing the command
+    from running right now. Also OK for the probe.
+    """
     if err_code is None:
         return "UNKNOWN"
     if err_code == 0:
         return "SUPPORTED"
     if err_code in (-113, -114):
         return "UNSUPPORTED"
-    if -109 <= err_code <= -100:
+    if -112 <= err_code <= -100:
         return "SUPPORTED"
     if -299 <= err_code <= -200:
         return "SUPPORTED_BUT_STATE"
     return "UNKNOWN"
 
 
-def _all_commands() -> List[Tuple[str, str]]:
-    """Enumerate (name, value) for every string constant on UxmScpiCommands."""
+def _all_commands(profile: type) -> List[Tuple[str, str]]:
+    """Enumerate (name, value) for every string-valued SCPI command attribute
+    on ``profile``.
+
+    Skips:
+      - dunders / private attrs (``_``)
+      - non-string attributes (PROFILE_NAME etc are str so they leak in;
+        we drop them by exclusion list below — they're not real SCPI)
+      - attributes set to ``None`` in the profile (means "this Test App
+        doesn't expose this command", per profile design contract)
+    """
+    skip = {
+        "PROFILE_NAME",
+        # APP_NAME_MATCH is a tuple, naturally filtered by isinstance str
+    }
     pairs: List[Tuple[str, str]] = []
-    for name, value in inspect.getmembers(UxmScpiCommands):
-        if name.startswith("_") or not isinstance(value, str):
+    for name, value in inspect.getmembers(profile):
+        if name.startswith("_") or name in skip or not isinstance(value, str):
+            continue
+        # Profile-design contract: cell/bwp constants like PRIMARY_CELL also
+        # appear as str — exclude them because they aren't SCPI commands.
+        if name in {"PRIMARY_CELL", "PRIMARY_BWP"}:
             continue
         pairs.append((name, value))
     pairs.sort(key=lambda p: p[0])
     return pairs
+
+
+def _profile_for_driver(bs: Any) -> type:
+    """Return the live driver's command profile class, or default if not set.
+
+    UXM/RealUxmDriver stores its profile in ``bs._cmds`` (a *class*, set in
+    __init__, confirmed in connect()). Tests using a MagicMock baseStation
+    won't have a real ``_cmds`` — MagicMock will auto-create one but it
+    won't be a UxmCommandProfile subclass. Defensive check: must be an
+    actual class subclassing UxmCommandProfile to be used; else fall back
+    to 5G_NR_Test (the pre-2026-05-13 default).
+    """
+    profile = getattr(bs, "_cmds", None)
+    if isinstance(profile, type) and issubclass(profile, UxmCommandProfile):
+        return profile
+    return Uxm5GNRTestAppProfile
 
 
 # ---------------------------------------------------------------------------
@@ -276,14 +348,23 @@ async def run(
         except Exception:  # noqa: BLE001
             pass
 
-    all_cmds = _all_commands()
-    log(f"  · probing {len(all_cmds)} commands from UxmScpiCommands ...")
+    profile = _profile_for_driver(bs)
+    all_cmds = _all_commands(profile)
+    log(
+        f"  · probing {len(all_cmds)} commands from profile "
+        f"{profile.PROFILE_NAME} (driver={type(bs).__name__}) ..."
+    )
 
     steps: List[SequenceStepResult] = []
     results_by_name: Dict[str, SequenceStepResult] = {}
     counts = {"SUPPORTED": 0, "SUPPORTED_BUT_STATE": 0, "UNSUPPORTED": 0, "UNKNOWN": 0}
     critical_unsupported: List[str] = []
     action_pending: List[Tuple[str, str]] = []
+    consecutive_timeouts = 0
+    aborted_early = False
+    last_probed = ""
+
+    err_query = profile.ERR or UxmScpiCommands.ERR
 
     for name, value in all_cmds:
         # Skip ACTIONs in the first pass; infer from neighbors later.
@@ -291,7 +372,8 @@ async def run(
             action_pending.append((name, value))
             continue
 
-        probe_cmd = _to_probe_command(value)
+        probe_cmd = _to_probe_command(value, profile)
+        last_probed = probe_cmd
         started = time.monotonic()
         err_code: Optional[int] = None
         err_text = ""
@@ -302,10 +384,30 @@ async def run(
                 # Query may timeout on commands that don't return data;
                 # what matters is the error queue, not this response.
                 pass
-            raw_err = await _q(UxmScpiCommands.ERR)
+            raw_err = await _q(err_query)
             err_code, err_text = _parse_err(raw_err)
+            # The real failure signal is "SYST:ERR? itself stops responding"
+            # — that means the SCPI channel is genuinely stuck. An unsupported
+            # command will normally make the probe_cmd time out (UXM silently
+            # logs -113 to the queue without sending a response) but SYST:ERR?
+            # still returns the queued -113. That's not a stuck channel,
+            # just a missing command — must NOT trip fail-fast.
+            channel_alive = err_code is not None
+            consecutive_timeouts = 0 if channel_alive else consecutive_timeouts + 1
         except Exception as e:  # noqa: BLE001
             err_text = f"probe exception: {e}"
+            # SYST:ERR? itself threw — real channel-stuck signal.
+            if "VI_ERROR_TMO" in str(e) or "timeout" in str(e).lower():
+                consecutive_timeouts += 1
+
+        if consecutive_timeouts >= _MAX_CONSECUTIVE_TIMEOUTS:
+            log(
+                f"  ✗ ABORTING — {_MAX_CONSECUTIVE_TIMEOUTS} consecutive VISA "
+                f"timeouts. Last probed: {last_probed}. SCPI channel is stuck; "
+                f"reload HAL (POST /api/v1/instruments/hal/reload) and retry."
+            )
+            aborted_early = True
+            break
 
         status = _categorize_status(err_code)
         counts[status] = counts.get(status, 0) + 1
@@ -369,22 +471,30 @@ async def run(
         f"{counts.get('SUPPORTED_BUT_STATE', 0)} state, "
         f"{counts.get('UNSUPPORTED', 0)} unsupported, "
         f"{counts.get('UNKNOWN', 0)} unknown"
+        + (" — ABORTED EARLY (SCPI channel stuck)" if aborted_early else "")
     )
     if critical_unsupported:
         log(f"  ✗ CRITICAL UNSUPPORTED: {sorted(critical_unsupported)}")
 
-    success = not critical_unsupported
-    if success:
+    success = (not critical_unsupported) and (not aborted_early)
+    if aborted_early:
         summary = (
-            f"All {len(_CRITICAL_NAMES)} critical SCPI commands supported "
+            f"ABORTED: {_MAX_CONSECUTIVE_TIMEOUTS} consecutive VISA timeouts on "
+            f"profile {profile.PROFILE_NAME}. Last probed: {last_probed}. "
+            f"SCPI session is stuck — POST /api/v1/instruments/hal/reload and retry."
+        )
+    elif not critical_unsupported:
+        summary = (
+            f"All {len(_CRITICAL_NAMES)} critical SCPI commands supported on "
+            f"profile {profile.PROFILE_NAME} "
             f"({counts.get('UNSUPPORTED', 0)} non-critical unsupported, "
             f"{counts.get('SUPPORTED_BUT_STATE', 0)} state errors — both OK)"
         )
     else:
         summary = (
             f"BLOCKER: {len(critical_unsupported)} critical SCPI command(s) "
-            f"unsupported on this firmware. Driver needs vendor aliases for: "
-            f"{sorted(critical_unsupported)}"
+            f"unsupported on profile {profile.PROFILE_NAME}. Driver needs vendor "
+            f"aliases for: {sorted(critical_unsupported)}"
         )
 
     return SequenceRunResult(
@@ -392,9 +502,11 @@ async def run(
         summary=summary,
         steps=steps,
         extra={
+            "profile": profile.PROFILE_NAME,
             "counts": counts,
             "critical_unsupported": sorted(critical_unsupported),
             "total_probed": len(all_cmds),
             "include_supported": include_supported,
+            "aborted_early": aborted_early,
         },
     )
