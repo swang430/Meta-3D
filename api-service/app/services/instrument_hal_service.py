@@ -111,6 +111,58 @@ class DriverMode(str, Enum):
     REAL = "real"  # Real hardware drivers for production
 
 
+async def tcp_preflight(
+    host: str,
+    port: int,
+    timeout_s: float = 1.0,
+) -> tuple[bool, Optional[str]]:
+    """Quick TCP-reachability probe before a heavier VISA/socket open.
+
+    Returns ``(host_alive, reason_when_dead)``.
+
+    What "alive" means here is "we got a TCP-level reply within
+    ``timeout_s``". That covers two cases:
+    - Clean connect — the instrument is listening on this exact port.
+    - Connection refused — host is up, port is closed. Driver may still
+      succeed if it uses a different port (e.g. VISA HiSLIP on 4880 when
+      we preflighted 5025). We treat host-up-port-closed as "alive" so
+      we don't skip legitimately-reachable instruments.
+
+    What "dead" means is timeout / no route / DNS failure — connecting
+    won't succeed without operator intervention. Surfacing this in 1 s
+    instead of the 10 s VISA default × N instruments is the whole point
+    of this preflight.
+
+    Field motivation (CAICT 2026-05-13): switching the Mac between F64's
+    subnet (192.168.0.x) and UXM's subnet (192.168.1.x) leaves half the
+    instruments unreachable. Pre-#15 HAL init took ~60 s waiting for
+    each VISA timeout in series; with preflight it's ~5 s.
+    """
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port),
+            timeout=timeout_s,
+        )
+    except asyncio.TimeoutError:
+        return False, f"SYN timeout after {timeout_s:.1f}s — host {host} unreachable"
+    except ConnectionRefusedError:
+        # Host responded with RST. It's up, just not listening on this port.
+        # Treat as alive so VISA-on-different-port drivers aren't skipped.
+        return True, None
+    except OSError as e:
+        # ENETUNREACH / EHOSTUNREACH / DNS failure / etc — driver can't recover.
+        return False, f"{type(e).__name__}: {e}"
+    try:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return True, None
+
+
 class InstrumentHALService:
     """
     Manages instrument driver lifecycle and data collection
@@ -345,6 +397,42 @@ class InstrumentHALService:
                     f"{conn.controller_ip}:{conn.port}" if conn and conn.controller_ip
                     else (conn.endpoint if conn and conn.endpoint else "")
                 )
+
+                # Pre-flight TCP reachability — skip driver.connect()
+                # entirely when the host is unreachable. Avoids 10s × N
+                # serial VISA timeouts when a subnet is wrong or an
+                # instrument is offline. We only preflight real drivers
+                # (mocks don't open sockets) and only when we have IP+port.
+                # Connection refused doesn't fail preflight — host is up,
+                # driver may legitimately connect on a different port.
+                if (
+                    not isinstance(driver, tuple(MOCK_FALLBACK.values()))
+                    and conn
+                    and conn.controller_ip
+                    and conn.port
+                ):
+                    alive, reason = await tcp_preflight(
+                        conn.controller_ip, int(conn.port), timeout_s=1.0
+                    )
+                    if not alive:
+                        logger.warning(
+                            f"[HAL] {cat.category_key}: preflight failed "
+                            f"({reason}); skipping driver.connect() — set the "
+                            f"correct IP/port and reload HAL."
+                        )
+                        if conn:
+                            conn.status = "error"
+                            conn.last_error = f"preflight: {reason}"
+                            db.commit()
+                        report_rows.append({
+                            "category": cat.category_key,
+                            "model": f"{model.vendor} {model.model}",
+                            "endpoint": endpoint_str,
+                            "status": "fail",
+                            "detail": f"preflight: {reason}",
+                        })
+                        continue
+
                 try:
                     success = await driver.connect()
                     if success:
