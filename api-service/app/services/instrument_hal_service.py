@@ -24,7 +24,7 @@ from app.hal.signal_generator import MockSignalGenerator
 from app.hal.rf_switch import MockRfSwitch, EtslSwitchDriver
 
 SUPPORTED_REAL_DRIVERS = {
-    "channelEmulator": ["PROPSIM F64"],
+    "channelEmulator": ["PROPSIM F64", "PROPSIM FS16"],
     "baseStation": ["UXM 5G E7515B", "CMW500"],
     "signalAnalyzer": ["N9020B MXA", "FSW43", "FSVA3000"],
     "vectorSignalGenerator": ["N5182B MXG", "SMW200A", "SMU200A"],
@@ -167,6 +167,7 @@ class InstrumentHALService:
         )
 
         from app.hal.propsim_f64 import RealPropsimF64Driver
+        from app.hal.propsim_fs16 import RealPropsimFs16Driver
         from app.hal.uxm_base_station import RealUxmDriver
         from app.hal.cmw500_base_station import RealCmw500Driver
         from app.hal.ets_positioner import RealEtsEmcenterDriver
@@ -185,6 +186,7 @@ class InstrumentHALService:
         REAL_DRIVER_REGISTRY: Dict[str, Dict[str, type]] = {
             "channelEmulator": {
                 "PROPSIM F64": RealPropsimF64Driver,
+                "PROPSIM FS16": RealPropsimFs16Driver,
             },
             "baseStation": {
                 "UXM 5G E7515B": RealUxmDriver,

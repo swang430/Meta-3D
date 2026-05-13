@@ -115,6 +115,38 @@ def lab_with_bs(db, chamber):
 
 
 @pytest.fixture
+def lab_with_ce(db, chamber):
+    """Lab with a channelEmulator binding so PROPSIM probe can run."""
+    from app.models.instrument import InstrumentCategory
+
+    cat = InstrumentCategory(
+        id=uuid.uuid4(),
+        category_key="channelEmulator",
+        category_name="Channel Emulator",
+        is_active=True,
+    )
+    db.add(cat)
+    db.commit()
+    lp = LabProfile(
+        name="P3-Phase2-CE-Lab",
+        chamber_config_id=chamber.id,
+        instrument_bindings=[
+            {
+                "category_id": str(cat.id),
+                "connection_endpoint": "TCPIP0::192.168.0.100::5025::SOCKET",
+                "driver_mode": "real",
+                "role": "primary_channel_emulator",
+            },
+        ],
+        is_active=True,
+    )
+    db.add(lp)
+    db.commit()
+    db.refresh(lp)
+    return lp
+
+
+@pytest.fixture
 def lab_with_vna(db, chamber):
     """Lab with a vna binding so VNA health probe can run."""
     from app.models.instrument import InstrumentCategory
@@ -535,3 +567,478 @@ class TestVnaEnaHealthSequence:
         body = resp.json()
         assert body["success"] is False
         assert "vna driver" in body["summary"]
+
+
+class TestPropsimF64HealthSequence:
+    """Two-phase PROPSIM F64 health probe.
+
+    Phase A walks ~24 SCPI headers, classifying each by SYST:ERR? response.
+    Phase B exercises 5 read-only driver APIs to catch parser/timeout
+    failures that header probes miss.
+
+    Tests mock the CE driver: ``_query`` is set to a callable with a
+    programmable side_effect; ``_write`` is a MagicMock; the high-level
+    methods (``query_runtime_environment`` etc.) are AsyncMock'd.
+    """
+
+    DEFAULT_IDN = "PROPSIM,F64,SN12345,FW1.4.0"
+
+    def test_registered_in_loader(self):
+        loader.reset_cache()
+        resp = client.get("/api/v1/diagnostic-sequences")
+        assert resp.status_code == 200
+        keys = [s["key"] for s in resp.json()]
+        assert "propsim_f64_health" in keys
+
+    def test_metadata_requires_channel_emulator(self):
+        resp = client.get("/api/v1/diagnostic-sequences")
+        entry = next(s for s in resp.json() if s["key"] == "propsim_f64_health")
+        assert entry["required_categories"] == ["channelEmulator"]
+        assert entry["safe_during_test"] is False
+        param_names = {p["name"] for p in entry["params_schema"]}
+        assert {"include_supported", "functional_checks"}.issubset(param_names)
+
+    def _build_ce(
+        self,
+        *,
+        idn: str = DEFAULT_IDN,
+        err_for_probe=lambda probed_cmd: '0,"No error"',
+        runtime_env=None,
+        alignment=None,
+        external_units=None,
+        output_cal=None,
+        metrics_obj=None,
+    ):
+        """Build a fake PROPSIM driver.
+
+        `err_for_probe(last_cmd_str)` decides what SYST:ERR? returns
+        after the last probed command. Default: clean queue.
+        """
+        from datetime import datetime
+        from app.hal.base import InstrumentMetrics
+
+        ce = MagicMock()
+        ce._write = MagicMock(return_value=None)
+        state = {"last_probe": None}
+
+        def fake_query(cmd, *_args, **_kw):
+            if cmd == "*IDN?":
+                return idn
+            if cmd == "SYST:ERR?":
+                last = state["last_probe"]
+                return err_for_probe(last) if last else '0,"No error"'
+            state["last_probe"] = cmd
+            return ""
+
+        ce._query = fake_query
+        ce.query_runtime_environment = AsyncMock(
+            return_value=runtime_env if runtime_env is not None
+            else {1: {"channel_count": 64, "running": False}}
+        )
+        ce.get_user_alignment_status = AsyncMock(return_value=alignment)
+        ce.list_external_units = AsyncMock(
+            return_value=external_units if external_units is not None else []
+        )
+        ce.get_output_calibration = AsyncMock(return_value=output_cal)
+        ce.get_metrics = AsyncMock(
+            return_value=metrics_obj if metrics_obj is not None
+            else InstrumentMetrics(timestamp=datetime.utcnow(), metrics={})
+        )
+        return ce
+
+    def test_happy_path_all_supported(self, lab_with_ce, monkeypatch):
+        ce = self._build_ce()
+        _patched_hal(monkeypatch, drivers={"channelEmulator": ce})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_f64_health/run",
+            json={"lab_profile_id": str(lab_with_ce.id)},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["success"] is True, body
+        assert "PROPSIM F64 health OK" in body["summary"]
+        assert body["extra"]["counts"]["UNSUPPORTED"] == 0
+        assert body["extra"]["critical_unsupported"] == []
+        assert body["extra"]["functional_failures"] == 0
+        # Phase B steps are emitted as a group at the end.
+        labels = [s["label"] for s in body["steps"]]
+        assert "get_metrics()" in labels
+        assert any("query_runtime_environment" in lb for lb in labels)
+
+    def test_critical_unsupported_fails_with_blocker(self, lab_with_ce, monkeypatch):
+        """*OPT? returns Undefined header → license probing broken,
+        critical command → BLOCKER summary."""
+        broken = "*OPT?"
+
+        def err_for(probe_cmd):
+            if probe_cmd == broken:
+                return '-113,"Undefined header"'
+            return '0,"No error"'
+
+        ce = self._build_ce(err_for_probe=err_for)
+        _patched_hal(monkeypatch, drivers={"channelEmulator": ce})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_f64_health/run",
+            json={"lab_profile_id": str(lab_with_ce.id)},
+        )
+        body = resp.json()
+        assert body["success"] is False
+        assert "BLOCKER" in body["summary"]
+        assert "OPT" in body["extra"]["critical_unsupported"]
+
+    def test_state_error_categorized_as_ok(self, lab_with_ce, monkeypatch):
+        """-200..-299 = header exists, state rejects query — not a blocker."""
+        ce = self._build_ce(
+            err_for_probe=lambda cmd: '-220,"Parameter error;not ready"',
+        )
+        _patched_hal(monkeypatch, drivers={"channelEmulator": ce})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_f64_health/run",
+            json={"lab_profile_id": str(lab_with_ce.id)},
+        )
+        body = resp.json()
+        assert body["success"] is True
+        assert body["extra"]["counts"]["SUPPORTED_BUT_STATE"] > 0
+        assert body["extra"]["counts"]["UNSUPPORTED"] == 0
+
+    def test_idn_wrong_model_fails_before_surface(self, lab_with_ce, monkeypatch):
+        """Wrong IDN → bail before walking 24 commands against the
+        wrong instrument."""
+        ce = self._build_ce(idn="VENDOR_X,SomethingElse,SN0,FW0")
+        _patched_hal(monkeypatch, drivers={"channelEmulator": ce})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_f64_health/run",
+            json={"lab_profile_id": str(lab_with_ce.id)},
+        )
+        body = resp.json()
+        assert body["success"] is False
+        assert "PROPSIM" in body["summary"]
+        assert "expected substring" in body["summary"]
+        # Only the IDN step should appear — Phase A didn't run.
+        assert len(body["steps"]) == 1
+
+    def test_functional_failure_fails_overall(self, lab_with_ce, monkeypatch):
+        ce = self._build_ce()
+        # Make query_runtime_environment raise — proves Phase B catches
+        # crashes that Phase A header-probing can't.
+        ce.query_runtime_environment = AsyncMock(
+            side_effect=RuntimeError("CH:MOD:CONT:ENV parser exploded")
+        )
+        _patched_hal(monkeypatch, drivers={"channelEmulator": ce})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_f64_health/run",
+            json={"lab_profile_id": str(lab_with_ce.id)},
+        )
+        body = resp.json()
+        assert body["success"] is False
+        assert "functional check" in body["summary"]
+        assert body["extra"]["functional_failures"] >= 1
+        runtime_step = next(
+            s for s in body["steps"] if s["label"].startswith("query_runtime_environment")
+        )
+        assert runtime_step["success"] is False
+        assert "RuntimeError" in runtime_step["detail"]
+
+    def test_functional_checks_can_be_disabled(self, lab_with_ce, monkeypatch):
+        ce = self._build_ce()
+        _patched_hal(monkeypatch, drivers={"channelEmulator": ce})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_f64_health/run",
+            json={
+                "lab_profile_id": str(lab_with_ce.id),
+                "params": {"functional_checks": False},
+            },
+        )
+        body = resp.json()
+        assert body["success"] is True
+        # No Phase B step labels present.
+        assert not any(
+            lb in {s["label"] for s in body["steps"]}
+            for lb in (
+                "query_runtime_environment([1])",
+                "get_user_alignment_status()",
+                "list_external_units()",
+                "get_output_calibration(1)",
+                "get_metrics()",
+            )
+        )
+        assert body["extra"]["functional_failures"] == 0
+        assert body["extra"]["functional_checks"] is False
+
+    def test_soft_pass_when_license_returns_none(self, lab_with_ce, monkeypatch):
+        """User alignment / output cal returning None = license absent,
+        no SGH attached — soft pass, not a failure."""
+        ce = self._build_ce(alignment=None, output_cal=None)
+        _patched_hal(monkeypatch, drivers={"channelEmulator": ce})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_f64_health/run",
+            json={"lab_profile_id": str(lab_with_ce.id)},
+        )
+        body = resp.json()
+        assert body["success"] is True
+        align_step = next(
+            s for s in body["steps"] if s["label"] == "get_user_alignment_status()"
+        )
+        assert align_step["success"] is True
+        assert "None" in align_step["detail"]
+
+    def test_fails_clean_when_no_driver_loaded(self, lab_with_ce, monkeypatch):
+        _patched_hal(monkeypatch, drivers={})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_f64_health/run",
+            json={"lab_profile_id": str(lab_with_ce.id)},
+        )
+        body = resp.json()
+        assert body["success"] is False
+        assert "channelEmulator driver" in body["summary"]
+
+
+class TestPropsimFs16HealthSequence:
+    """PROPSIM FS16 (F8820A) health probe — different SCPI dialect from F64.
+
+    The mock CE here mimics FS16's empirically-observed behaviour:
+    *IDN? returns F8820A, SYST:INFO? returns "PROPSIM FS16,...", *OPT?
+    returns ``-100,"ATE command not supported"``, channel-indexed
+    queries return ``-200,"Channel not found"`` (state error), and
+    everything else returns 0,"No error".
+    """
+
+    DEFAULT_IDN = "Keysight Technologies,F8820A,MY62500170,10.2"
+    DEFAULT_INFO = "PROPSIM FS16,4,RF,v2.0,4,Band: 3MHz - 6000MHz,Main license,Bandwidth:100.000MHz"
+
+    def test_registered_in_loader(self):
+        loader.reset_cache()
+        resp = client.get("/api/v1/diagnostic-sequences")
+        assert resp.status_code == 200
+        keys = [s["key"] for s in resp.json()]
+        assert "propsim_fs16_health" in keys
+
+    def test_metadata_requires_channel_emulator(self):
+        resp = client.get("/api/v1/diagnostic-sequences")
+        entry = next(s for s in resp.json() if s["key"] == "propsim_fs16_health")
+        assert entry["required_categories"] == ["channelEmulator"]
+        assert entry["safe_during_test"] is False
+
+    def _build_ce(
+        self,
+        *,
+        idn: str = DEFAULT_IDN,
+        sys_info: str = DEFAULT_INFO,
+        # Function mapping last_probed_cmd -> SYST:ERR? response text.
+        # The default mimics real FS16: *OPT? UNSUPPORTED, channel-indexed
+        # queries STATE-rejected, everything else clean.
+        err_for_probe=None,
+        sim_state: str = "CLOSED",
+        playback_dir: str = "01.smu,02.smu",
+        alignment_name=None,
+    ):
+        from datetime import datetime
+        from app.hal.base import InstrumentMetrics
+
+        ce = MagicMock()
+        ce._write = MagicMock(return_value=None)
+        state = {"last_probe": None}
+
+        def default_err_for_probe(cmd):
+            if cmd == "*OPT?":
+                return '-100,"Command error;ATE command not supported"'
+            # Channel-indexed queries on a CLOSED simulation return -200
+            if cmd and ":CH " in cmd or (cmd and cmd.endswith(":CH? 1")):
+                return '-200,"Execution error;Channel not found"'
+            if cmd in ("DIAG:SIMU:MODEL:STATIC?", "OUTP:CALIB:GET? 1",
+                       "OUTP:MEAS:RES:GET? 1", "ROUT:PATH:CONN? 1"):
+                return '-200,"Execution error;Wrong device state for command"'
+            return '0,"No error"'
+
+        eff_err = err_for_probe or default_err_for_probe
+
+        def fake_query(cmd, *_a, **_kw):
+            if cmd == "*IDN?":
+                return idn
+            if cmd == "SYST:INFO?":
+                return sys_info
+            if cmd == "SYST:ERR?":
+                last = state["last_probe"]
+                resp = eff_err(last) if last else '0,"No error"'
+                state["last_probe"] = None  # consume
+                return resp
+            state["last_probe"] = cmd
+            return ""
+
+        ce._query = fake_query
+        ce.query_simulation_state = AsyncMock(return_value=sim_state)
+        ce.list_playback_directory = AsyncMock(return_value=playback_dir)
+        ce.query_user_alignment_name = AsyncMock(return_value=alignment_name)
+        ce.get_metrics = AsyncMock(
+            return_value=InstrumentMetrics(
+                timestamp=datetime.utcnow(),
+                metrics={"product": "PROPSIM FS16", "simulation_state": sim_state},
+            )
+        )
+        return ce
+
+    def test_happy_path_with_real_fs16_shape(self, lab_with_ce, monkeypatch):
+        """Default mock = real FS16 behaviour. Should succeed: *OPT?
+        UNSUPPORTED is expected; channel-indexed STATE-rejects are fine
+        (no sim open)."""
+        ce = self._build_ce()
+        _patched_hal(monkeypatch, drivers={"channelEmulator": ce})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_fs16_health/run",
+            json={"lab_profile_id": str(lab_with_ce.id)},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["success"] is True, body
+        assert "PROPSIM FS16 health OK" in body["summary"]
+        assert body["extra"]["critical_unsupported"] == []
+        assert body["extra"]["functional_failures"] == 0
+        # *OPT? row should be present + marked as expected, success=True
+        opt_step = next(s for s in body["steps"] if s["label"].startswith("OPT "))
+        assert "(expected)" in opt_step["detail"]
+        assert opt_step["success"] is True
+
+    def test_identity_falls_back_to_sys_info(self, lab_with_ce, monkeypatch):
+        """If IDN doesn't carry an F8820/FS16 tag but SYST:INFO? does,
+        we still pass the gate."""
+        ce = self._build_ce(
+            idn="Keysight Technologies,GenericFW,SN0,1.0",  # no F8820 / FS16
+            sys_info="PROPSIM FS16,4,RF,...",
+        )
+        _patched_hal(monkeypatch, drivers={"channelEmulator": ce})
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_fs16_health/run",
+            json={"lab_profile_id": str(lab_with_ce.id)},
+        )
+        body = resp.json()
+        assert body["success"] is True, body
+
+    def test_identity_fails_when_neither_matches(self, lab_with_ce, monkeypatch):
+        ce = self._build_ce(
+            idn="VENDOR_X,SomethingElse,SN0,FW0",
+            sys_info="SomethingElse,1,RF",
+        )
+        _patched_hal(monkeypatch, drivers={"channelEmulator": ce})
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_fs16_health/run",
+            json={"lab_profile_id": str(lab_with_ce.id)},
+        )
+        body = resp.json()
+        assert body["success"] is False
+        assert "Identity check failed" in body["summary"]
+        # Bailed before Phase A — only the IDN step row.
+        assert len(body["steps"]) == 1
+
+    def test_critical_simulation_state_unsupported_blocks(self, lab_with_ce, monkeypatch):
+        """If DIAG:SIMU:STATe? itself is UNSUPPORTED, that's a real
+        blocker — we can't tell whether the box is healthy."""
+
+        def err_for(cmd):
+            if cmd == "DIAG:SIMU:STATe?":
+                return '-113,"Undefined header"'
+            if cmd == "*OPT?":
+                return '-100,"ATE command not supported"'
+            return '0,"No error"'
+
+        ce = self._build_ce(err_for_probe=err_for)
+        _patched_hal(monkeypatch, drivers={"channelEmulator": ce})
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_fs16_health/run",
+            json={"lab_profile_id": str(lab_with_ce.id)},
+        )
+        body = resp.json()
+        assert body["success"] is False
+        assert "BLOCKER" in body["summary"]
+        assert "SIMU_STATE" in body["extra"]["critical_unsupported"]
+
+    def test_state_rejected_channel_queries_pass_overall(self, lab_with_ce, monkeypatch):
+        """Default mock has channel-indexed queries STATE-rejected — the
+        expected reality when no simulation is OPEN. Should NOT fail
+        overall; counts.SUPPORTED_BUT_STATE > 0."""
+        ce = self._build_ce()
+        _patched_hal(monkeypatch, drivers={"channelEmulator": ce})
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_fs16_health/run",
+            json={"lab_profile_id": str(lab_with_ce.id)},
+        )
+        body = resp.json()
+        assert body["success"] is True
+        assert body["extra"]["counts"]["SUPPORTED_BUT_STATE"] > 0
+
+    def test_functional_failure_fails_overall(self, lab_with_ce, monkeypatch):
+        ce = self._build_ce()
+        ce.get_metrics = AsyncMock(side_effect=RuntimeError("VISA timeout"))
+        _patched_hal(monkeypatch, drivers={"channelEmulator": ce})
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_fs16_health/run",
+            json={"lab_profile_id": str(lab_with_ce.id)},
+        )
+        body = resp.json()
+        assert body["success"] is False
+        assert "functional check" in body["summary"]
+        metrics_step = next(s for s in body["steps"] if s["label"] == "get_metrics()")
+        assert metrics_step["success"] is False
+        assert "RuntimeError" in metrics_step["detail"]
+
+    def test_fails_clean_when_no_driver_loaded(self, lab_with_ce, monkeypatch):
+        _patched_hal(monkeypatch, drivers={})
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_fs16_health/run",
+            json={"lab_profile_id": str(lab_with_ce.id)},
+        )
+        body = resp.json()
+        assert body["success"] is False
+        assert "channelEmulator driver" in body["summary"]
+
+
+class TestRealPropsimFs16Driver:
+    """Unit tests for the FS16 driver itself (no real instrument)."""
+
+    def _make_driver(self, **overrides):
+        from app.hal.propsim_fs16 import RealPropsimFs16Driver
+        config = {"ip": "192.168.0.100", "port": 5025, **overrides}
+        return RealPropsimFs16Driver("fs16-test", config)
+
+    def test_load_modes_external_waveform_only(self):
+        """FS16 has no GCM-native equivalent — only external waveform."""
+        from app.hal.channel_emulator import ChannelLoadMode
+        d = self._make_driver()
+        modes = d.get_supported_load_modes()
+        assert modes == [ChannelLoadMode.EXTERNAL_WAVEFORM]
+
+    def test_calibration_tone_capabilities_empty_in_mvp(self):
+        d = self._make_driver()
+        assert d.get_calibration_tone_capabilities() == []
+
+    def test_parse_sys_info_extracts_fs16_fields(self):
+        d = self._make_driver()
+        d._parse_sys_info(
+            "PROPSIM FS16,4,RF,v2.0,4,Band: 3MHz - 6000MHz,Main license,Bandwidth:100.000MHz"
+        )
+        assert d._product_family == "PROPSIM FS16"
+        assert d._channel_count == 4
+        assert d._bandwidth_mhz == 100.0
+        assert "3MHz" in d._band_label
+        assert "license" in d._license_label.lower()
+
+    def test_parse_sys_info_resilient_to_empty(self):
+        d = self._make_driver()
+        d._parse_sys_info("")
+        # Stays at constructor defaults
+        assert d._channel_count == 4
+
+    def test_parse_sys_info_resilient_to_garbage(self):
+        d = self._make_driver()
+        d._parse_sys_info("not-a-valid-info-string")
+        assert d._product_family == "not-a-valid-info-string"
+        # Bandwidth label absent → stays default
+        assert d._bandwidth_mhz == 100.0
