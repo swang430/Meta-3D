@@ -176,6 +176,31 @@ export const updateInstrumentCategory = async (
   return response.data
 }
 
+export interface ChannelModelEntry {
+  filename: string
+  label: string
+  description: string | null
+  type: string // smu / rtc / asc / unknown
+}
+
+export interface ChannelModelsListResult {
+  items: ChannelModelEntry[]
+  reason: string | null // "driver_not_loaded" | "not_a_channel_emulator" | null
+}
+
+export const fetchChannelModels = async (
+  categoryKey: string,
+): Promise<ChannelModelsListResult> => {
+  // Operator-curated list of selectable .smu/.rtc files. F64's ATE Server
+  // doesn't expose MMEM SCPI and its FTP is closed (verified at CAICT
+  // 2026-05-13), so we don't probe the instrument — we surface the
+  // operator's list from connection_params['available_channel_models'].
+  const response = await client.get<ChannelModelsListResult>(
+    `/instruments/${categoryKey}/channel-models`,
+  )
+  return response.data
+}
+
 export const createTestCaseFromPlan = async (
   payload: CreateTestCaseFromPlanPayload,
 ): Promise<CreateTestCaseResponse> => {
