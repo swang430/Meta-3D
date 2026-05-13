@@ -602,6 +602,7 @@ class TestPropsimF64HealthSequence:
         self,
         *,
         idn: str = DEFAULT_IDN,
+        sys_info: str = "",
         err_for_probe=lambda probed_cmd: '0,"No error"',
         runtime_env=None,
         alignment=None,
@@ -613,6 +614,8 @@ class TestPropsimF64HealthSequence:
 
         `err_for_probe(last_cmd_str)` decides what SYST:ERR? returns
         after the last probed command. Default: clean queue.
+        `sys_info` lets a test simulate a rebranded firmware where IDN
+        doesn't say PROPSIM but SYST:INFO? does (or vice versa).
         """
         from datetime import datetime
         from app.hal.base import InstrumentMetrics
@@ -624,6 +627,8 @@ class TestPropsimF64HealthSequence:
         def fake_query(cmd, *_args, **_kw):
             if cmd == "*IDN?":
                 return idn
+            if cmd == "SYST:INFO?":
+                return sys_info
             if cmd == "SYST:ERR?":
                 last = state["last_probe"]
                 return err_for_probe(last) if last else '0,"No error"'
@@ -799,6 +804,46 @@ class TestPropsimF64HealthSequence:
         body = resp.json()
         assert body["success"] is False
         assert "channelEmulator driver" in body["summary"]
+
+    def test_identity_falls_back_to_sys_info(self, lab_with_ce, monkeypatch):
+        """Backported from FS16 probe: if IDN doesn't carry the PROPSIM
+        tag but SYST:INFO? does, we still pass the identity gate. Future-
+        proofs against firmware rebrands."""
+        ce = self._build_ce(
+            idn="Keysight Technologies,GenericFW,SN0,1.0",  # no PROPSIM
+            sys_info="PROPSIM F64,64,RF,v1.0,16,Band: 450MHz - 3000MHz",
+        )
+        _patched_hal(monkeypatch, drivers={"channelEmulator": ce})
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_f64_health/run",
+            json={"lab_profile_id": str(lab_with_ce.id)},
+        )
+        body = resp.json()
+        assert body["success"] is True, body
+        assert body["extra"]["sys_info"] is not None
+
+    def test_phase_a_aborts_on_consecutive_timeouts(self, lab_with_ce, monkeypatch):
+        """Backported circuit breaker: 3 consecutive VISA timeouts on
+        SYST:ERR? short-circuits the rest of Phase A. Without this, a
+        stuck SCPI channel would eat ~10 s per remaining command."""
+        # Every probe gets a VISA timeout response in the error queue.
+        ce = self._build_ce(
+            err_for_probe=lambda cmd: 'err-read raised: VI_ERROR_TMO timeout',
+        )
+        _patched_hal(monkeypatch, drivers={"channelEmulator": ce})
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_f64_health/run",
+            json={"lab_profile_id": str(lab_with_ce.id)},
+        )
+        body = resp.json()
+        assert body["success"] is False
+        assert "ABORTED" in body["summary"]
+        assert "3 consecutive VISA timeouts" in body["summary"]
+        assert body["extra"]["phase_a_aborted"] is True
+        # Phase B must NOT have run (would have eaten more time)
+        labels = [s["label"] for s in body["steps"]]
+        assert "get_metrics()" not in labels
+        assert any(lb == "ABORTED" for lb in labels)
 
 
 class TestPropsimFs16HealthSequence:

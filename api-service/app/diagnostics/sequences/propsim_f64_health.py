@@ -211,8 +211,8 @@ async def _run_scpi_surface(
     *,
     include_supported: bool,
     log: Callable[[str], None],
-) -> Tuple[List[SequenceStepResult], Dict[str, int], List[str]]:
-    """Phase A. Returns (steps, counts, critical_unsupported_names)."""
+) -> Tuple[List[SequenceStepResult], Dict[str, int], List[str], bool]:
+    """Phase A. Returns (steps, counts, critical_unsupported_names, aborted_early)."""
     query_fn = ce._query  # noqa: SLF001
     write_fn = getattr(ce, "_write", None)
     # Clear the error queue once so the first probe sees a clean state.
@@ -225,6 +225,12 @@ async def _run_scpi_surface(
     steps: List[SequenceStepResult] = []
     counts = {"SUPPORTED": 0, "SUPPORTED_BUT_STATE": 0, "UNSUPPORTED": 0, "UNKNOWN": 0}
     critical_unsupported: List[str] = []
+    # Fail-fast: 3 consecutive VISA timeouts during err-read => SCPI
+    # channel is stuck. Continuing eats ~10 s per remaining command for
+    # no useful signal. (Backported from the FS16 probe after the
+    # 2026-05-13 on-site session hit a stuck channel via *TST?.)
+    consecutive_timeouts = 0
+    aborted_early = False
 
     log(f"  · Phase A: probing {len(PROPSIM_SCPI)} SCPI headers ...")
 
@@ -243,6 +249,12 @@ async def _run_scpi_surface(
         step_ok = status in ("SUPPORTED", "SUPPORTED_BUT_STATE")
         if not step_ok and is_critical:
             critical_unsupported.append(name)
+
+        # Track consecutive VISA timeouts to short-circuit a stuck channel.
+        if "VI_ERROR_TMO" in err_text:
+            consecutive_timeouts += 1
+        else:
+            consecutive_timeouts = 0
 
         crit_part = " ★" if is_critical else ""
         err_part = (
@@ -264,6 +276,26 @@ async def _run_scpi_surface(
                 duration_ms=duration_ms,
             ))
 
+        if consecutive_timeouts >= 3:
+            log(
+                f"  ✗ ABORTING Phase A — 3 consecutive VISA timeouts. "
+                f"Last probed: {name}. SCPI channel is stuck; "
+                f"reconnect the F64 driver (kill backend worker) and retry."
+            )
+            steps.append(SequenceStepResult(
+                label="ABORTED",
+                success=False,
+                detail=(
+                    "3 consecutive VISA timeouts on SYST:ERR? — SCPI "
+                    "channel stuck. Skipped remaining probes to save time. "
+                    "Reconnect the driver (kill backend worker → uvicorn "
+                    "auto-reload reopens the SOCKET) and retry."
+                ),
+                duration_ms=0,
+            ))
+            aborted_early = True
+            break
+
     log(
         f"  · Phase A done: "
         f"{counts.get('SUPPORTED', 0)} supported, "
@@ -274,7 +306,7 @@ async def _run_scpi_surface(
     if critical_unsupported:
         log(f"  ✗ CRITICAL UNSUPPORTED: {sorted(critical_unsupported)}")
 
-    return steps, counts, critical_unsupported
+    return steps, counts, critical_unsupported, aborted_early
 
 
 async def _run_functional_check(
@@ -365,6 +397,10 @@ async def run(
 
     # Pre-flight: verify IDN says PROPSIM before running 24 probes against
     # something that might be a different instrument behind the same IP.
+    # Two-tier identity gate: IDN first, SYST:INFO? as fallback for the
+    # firmware-rebranded case (backported from the FS16 probe — FS16's
+    # IDN says "F8820A" but SYST:INFO carries "PROPSIM FS16"; future F64
+    # firmware revs might do the same).
     try:
         idn_raw = await _maybe_await(query_fn("*IDN?"))
     except Exception as e:  # noqa: BLE001
@@ -373,31 +409,45 @@ async def run(
             summary=f"*IDN? raised: {type(e).__name__}: {e}",
         )
     idn_str = str(idn_raw or "").strip()
-    if _IDN_MODEL_TAG not in idn_str.upper():
+    idn_match = _IDN_MODEL_TAG in idn_str.upper()
+    info_str = ""
+    info_match = False
+    if not idn_match:
+        try:
+            info_raw = await _maybe_await(query_fn("SYST:INFO?"))
+            info_str = str(info_raw or "").strip()
+            info_match = _IDN_MODEL_TAG in info_str.upper()
+        except Exception as e:  # noqa: BLE001
+            info_str = f"<err: {e}>"
+
+    if not (idn_match or info_match):
         return SequenceRunResult(
             success=False,
             summary=(
-                f"IDN reports '{idn_str}' — expected substring '{_IDN_MODEL_TAG}'. "
-                "Check the IP / VISA endpoint points at the right instrument."
+                f"Identity check failed: IDN={idn_str!r}, "
+                f"SYST:INFO={info_str!r}; expected substring "
+                f"'{_IDN_MODEL_TAG}' in either."
             ),
             steps=[SequenceStepResult(
                 label="*IDN?",
                 success=False,
-                detail=f"{idn_str} — expected '{_IDN_MODEL_TAG}'",
+                detail=f"{idn_str} — SYST:INFO?={info_str}",
             )],
-            extra={"idn": idn_str},
+            extra={"idn": idn_str, "sys_info": info_str},
         )
     log(f"  ✓ *IDN?: {idn_str}")
 
     # ----- Phase A: SCPI surface -----
-    steps_a, counts, critical_unsupported = await _run_scpi_surface(
+    steps_a, counts, critical_unsupported, phase_a_aborted = await _run_scpi_surface(
         ce, include_supported=include_supported, log=log
     )
 
     # ----- Phase B: Functional smoke (driver APIs) -----
+    # Skipped if Phase A aborted on a stuck channel — Phase B would reuse
+    # the same channel and each call would eat 5+ s timing out.
     steps_b: List[SequenceStepResult] = []
     functional_failures = 0
-    if do_functional:
+    if do_functional and not phase_a_aborted:
         log("  · Phase B: functional smoke ...")
         functional_checks = [
             # (name, factory, none_means_unsupported)
@@ -436,8 +486,20 @@ async def run(
                 functional_failures += 1
 
     # ----- Verdict -----
-    success = not critical_unsupported and functional_failures == 0
-    if success:
+    success = (
+        not critical_unsupported
+        and functional_failures == 0
+        and not phase_a_aborted
+    )
+    if phase_a_aborted:
+        summary = (
+            "ABORTED: SCPI channel got stuck (3 consecutive VISA "
+            "timeouts) — reconnect the F64 driver and retry. Typical "
+            "causes: stale TCP session after long idle, a previous "
+            "command that triggered an in-instrument operation, or "
+            "another client holding the SOCKET."
+        )
+    elif success:
         summary = (
             f"PROPSIM F64 health OK: IDN matched, "
             f"{counts.get('SUPPORTED', 0)} SCPI commands supported, "
@@ -465,10 +527,12 @@ async def run(
         steps=steps_a + steps_b,
         extra={
             "idn": idn_str,
+            "sys_info": info_str if info_str else None,
             "counts": counts,
             "critical_unsupported": sorted(critical_unsupported),
             "scpi_probed": len(PROPSIM_SCPI),
             "functional_failures": functional_failures,
+            "phase_a_aborted": phase_a_aborted,
             "include_supported": include_supported,
             "functional_checks": do_functional,
         },
