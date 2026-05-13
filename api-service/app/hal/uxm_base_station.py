@@ -191,6 +191,42 @@ class RealUxmDriver(BaseStationDriver):
             return UxmLteNrIratProfile
         return Uxm5GNRTestAppProfile
 
+    def _cmd(self, name: str, **fmt) -> Optional[str]:
+        """Resolve a profile command template, returning ``None`` if the
+        active Test App doesn't expose it.
+
+        Background: ``UxmLteNrIratProfile`` deliberately sets many command
+        templates to ``None`` for commands that exist in pure 5G_NR_Test
+        but aren't surfaced by LTE_NR_IRAT (e.g. ``CELL_SCS``,
+        ``MIMO_DL_LAYERS``, ``TDD_PATTERN`` — the IRAT app routes those
+        through different paths or hard-codes them). Driver methods that
+        used to do ``self._cmds.X.format(...)`` will crash with
+        ``AttributeError: 'NoneType' object has no attribute 'format'``
+        when X is None.
+
+        This helper centralises the skip-or-format decision:
+
+        * Optional-feature branches (``if "duplex" in config: ...``) call
+          ``q = self._cmd("CELL_DUPLEX", cell=cell)`` and check ``if q
+          is None: continue`` to gracefully degrade.
+        * Mandatory commands (``CELL_BAND``, ``CELL_DL_ARFCN``, etc.)
+          should keep using ``self._cmds.X.format(...)`` directly — if
+          those are ``None`` the profile is misconfigured and a loud
+          crash is the right outcome.
+
+        The skip is logged at INFO so operators see why a feature in
+        their lab profile wasn't applied.
+        """
+        template = getattr(self._cmds, name, None)
+        if template is None:
+            logger.info(
+                f"[UXM/{self._cmds.PROFILE_NAME}] {name} not exposed by this "
+                f"Test App; skipping (set it in the profile if your firmware "
+                f"supports a vendor alias)"
+            )
+            return None
+        return template.format(**fmt) if fmt else template
+
     # ===================================================================
     # 1. 连接生命周期
     # ===================================================================
@@ -425,11 +461,9 @@ class RealUxmDriver(BaseStationDriver):
             # ---- 2. 双工模式 (必须紧跟 Band 之后) ----
             if "duplex" in config:
                 duplex_mode = config["duplex"].upper()
-                self._write(
-                    self._cmds.CELL_DUPLEX.format(cell=cell)
-                    + f" {duplex_mode}"
-                )
-                logger.info(f"[UXM] Duplex: {duplex_mode}")
+                if (q := self._cmd("CELL_DUPLEX", cell=cell)) is not None:
+                    self._write(f"{q} {duplex_mode}")
+                    logger.info(f"[UXM] Duplex: {duplex_mode}")
 
             # ---- 3. 带宽 (DL + UL 同步设置) ----
             if "bandwidth_mhz" in config:
@@ -448,9 +482,8 @@ class RealUxmDriver(BaseStationDriver):
             if "scs_khz" in config:
                 scs = config["scs_khz"]
                 self._scs_khz = scs
-                self._write(
-                    self._cmds.CELL_SCS.format(cell=cell) + f" {scs}"
-                )
+                if (q := self._cmd("CELL_SCS", cell=cell)) is not None:
+                    self._write(f"{q} {scs}")
 
             # ---- 5. ARFCN (自动查表或手动指定) ----
             if "arfcn" in config:
@@ -465,10 +498,8 @@ class RealUxmDriver(BaseStationDriver):
             # ---- 6. MIMO 层数 ----
             if "mimo_layers" in config:
                 layers = config["mimo_layers"]
-                self._write(
-                    self._cmds.MIMO_DL_LAYERS.format(cell=cell)
-                    + f" {layers}"
-                )
+                if (q := self._cmd("MIMO_DL_LAYERS", cell=cell)) is not None:
+                    self._write(f"{q} {layers}")
 
             # ---- 7. MIMO 天线→物理端口路由 (Layer 1) ----
             # 支持两种方式:
@@ -488,104 +519,77 @@ class RealUxmDriver(BaseStationDriver):
             # ---- 8. 下行功率 ----
             if "dl_power_dbm" in config:
                 self._dl_power_dbm = config["dl_power_dbm"]
-                self._write(
-                    self._cmds.DL_POWER.format(cell=cell)
-                    + f" {self._dl_power_dbm:.1f}"
-                )
+                if (q := self._cmd("DL_POWER", cell=cell)) is not None:
+                    self._write(f"{q} {self._dl_power_dbm:.1f}")
 
             # ---- 9. SSB 功率 ----
             if "ssb_power_dbm" in config:
-                self._write(
-                    self._cmds.SSB_POWER.format(cell=cell)
-                    + f" {config['ssb_power_dbm']:.1f}"
-                )
+                if (q := self._cmd("SSB_POWER", cell=cell)) is not None:
+                    self._write(f"{q} {config['ssb_power_dbm']:.1f}")
 
             # ---- 10. PDSCH RB 分配 (Full allocation 默认) ----
             if "pdsch_rb_alloc" in config:
                 bwp = config.get("bwp_id", self._bwp_id)
-                self._write(
-                    self._cmds.PDSCH_RB_ALLOC.format(cell=cell, bwp=bwp)
-                    + f" {config['pdsch_rb_alloc']}"
-                )
+                if (q := self._cmd("PDSCH_RB_ALLOC", cell=cell, bwp=bwp)) is not None:
+                    self._write(f"{q} {config['pdsch_rb_alloc']}")
 
             # ---- 11. RF 通道级端口路由 (Layer 2, 备选) ----
             if "rf_port_dl" in config:
-                self._write(
-                    self._cmds.RF_PORT_DL.format(cell=cell)
-                    + f" {config['rf_port_dl']}"
-                )
+                if (q := self._cmd("RF_PORT_DL", cell=cell)) is not None:
+                    self._write(f"{q} {config['rf_port_dl']}")
             if "rf_port_ul" in config:
-                self._write(
-                    self._cmds.RF_PORT_UL.format(cell=cell)
-                    + f" {config['rf_port_ul']}"
-                )
+                if (q := self._cmd("RF_PORT_UL", cell=cell)) is not None:
+                    self._write(f"{q} {config['rf_port_ul']}")
 
             # ---- 12. TDD 时隙格式 ----
             if "tdd_pattern" in config:
-                self._write(
-                    self._cmds.TDD_PATTERN.format(cell=cell)
-                    + f" {config['tdd_pattern'].upper()}"
-                )
+                if (q := self._cmd("TDD_PATTERN", cell=cell)) is not None:
+                    self._write(f"{q} {config['tdd_pattern'].upper()}")
             if "tdd_period" in config:
-                self._write(
-                    self._cmds.TDD_PERIOD.format(cell=cell)
-                    + f" {config['tdd_period']}"
-                )
+                if (q := self._cmd("TDD_PERIOD", cell=cell)) is not None:
+                    self._write(f"{q} {config['tdd_period']}")
 
             # ---- 13. PDSCH 调度算法 (Full Buffer) ----
             if "sched_algo" in config:
                 bwp = config.get("bwp_id", self._bwp_id)
-                self._write(
-                    self._cmds.PDSCH_SCHED_ALGO.format(cell=cell, bwp=bwp)
-                    + f" {config['sched_algo'].upper()}"
-                )
+                if (q := self._cmd("PDSCH_SCHED_ALGO", cell=cell, bwp=bwp)) is not None:
+                    self._write(f"{q} {config['sched_algo'].upper()}")
 
             # ---- 14. AMC 开关 (关闭以固定 MCS) ----
             if "enable_amc" in config:
                 bwp = config.get("bwp_id", self._bwp_id)
                 amc_val = "ON" if config["enable_amc"] else "OFF"
-                self._write(
-                    self._cmds.PDSCH_AMC_ENABLE.format(cell=cell, bwp=bwp)
-                    + f" {amc_val}"
-                )
-                self._write(
-                    self._cmds.PUSCH_AMC_ENABLE.format(cell=cell, bwp=bwp)
-                    + f" {amc_val}"
-                )
-                logger.info(f"[UXM] AMC: {amc_val}")
+                dl_amc = self._cmd("PDSCH_AMC_ENABLE", cell=cell, bwp=bwp)
+                ul_amc = self._cmd("PUSCH_AMC_ENABLE", cell=cell, bwp=bwp)
+                if dl_amc is not None:
+                    self._write(f"{dl_amc} {amc_val}")
+                if ul_amc is not None:
+                    self._write(f"{ul_amc} {amc_val}")
+                if dl_amc is not None or ul_amc is not None:
+                    logger.info(f"[UXM] AMC: {amc_val}")
 
             # ---- 15. HARQ 配置 ----
             if "harq_max_trans" in config:
-                self._write(
-                    self._cmds.HARQ_MAX_TRANS.format(cell=cell)
-                    + f" {config['harq_max_trans']}"
-                )
+                if (q := self._cmd("HARQ_MAX_TRANS", cell=cell)) is not None:
+                    self._write(f"{q} {config['harq_max_trans']}")
             if "harq_processes" in config:
-                self._write(
-                    self._cmds.HARQ_PROCESSES.format(cell=cell)
-                    + f" {config['harq_processes']}"
-                )
+                if (q := self._cmd("HARQ_PROCESSES", cell=cell)) is not None:
+                    self._write(f"{q} {config['harq_processes']}")
 
             # ---- 16. CSI-RS 端口数 (与 MIMO 层数对齐) ----
             if "csi_rs_ports" in config:
-                self._write(
-                    self._cmds.CSIRS_PORTS.format(cell=cell)
-                    + f" {config['csi_rs_ports']}"
-                )
+                if (q := self._cmd("CSIRS_PORTS", cell=cell)) is not None:
+                    self._write(f"{q} {config['csi_rs_ports']}")
             elif "mimo_layers" in config:
                 # 自动推断: 1L→2ports, 2L→4ports, 4L→8ports
                 auto_ports = max(2, config["mimo_layers"] * 2)
-                self._write(
-                    self._cmds.CSIRS_PORTS.format(cell=cell)
-                    + f" {auto_ports}"
-                )
+                if (q := self._cmd("CSIRS_PORTS", cell=cell)) is not None:
+                    self._write(f"{q} {auto_ports}")
 
             # ---- 17. 统计窗口 (子帧数) ----
             if "stat_count" in config:
-                self._write(
-                    self._cmds.MEAS_TPUT_STAT_COUNT.format(cell=cell)
-                    + f" {config['stat_count']}"
-                )
+                if (q := self._cmd("MEAS_TPUT_STAT_COUNT", cell=cell)) is not None:
+                    self._write(f"{q} {config['stat_count']}")
 
             # 同步等待
             self._query("*OPC?")
