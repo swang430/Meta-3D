@@ -19,6 +19,7 @@ References:
 
 import asyncio
 import logging
+import socket
 from typing import Dict, Any, List, Tuple, Optional
 from datetime import datetime
 
@@ -159,9 +160,18 @@ class RealAerotechDriver(PositionerDriver):
         async with self._lock:
             try:
                 return await self._tx_rx(cmd)
-            except (ConnectionResetError, BrokenPipeError, OSError) as e:
-                # Idle-close path. Only one retry — if the controller is
-                # genuinely down we don't want to hammer it.
+            except ConnectionError as e:
+                # Idle-close path. Catches the three concrete
+                # ``ConnectionError`` subclasses (``ConnectionResetError``,
+                # ``BrokenPipeError``, ``ConnectionAbortedError``) plus the
+                # ``ConnectionResetError`` we synthesise on EOF readline.
+                # Deliberately NOT ``OSError`` here — Python 3.11 unified
+                # ``asyncio.TimeoutError`` onto built-in ``TimeoutError``
+                # which is itself an ``OSError`` subclass, so catching
+                # OSError here would swallow ``wait_for`` timeouts and
+                # silently retry slow but otherwise healthy commands.
+                # Only one retry — if the controller is genuinely down
+                # we don't want to hammer it.
                 logger.warning(
                     f"[Aerotech] connection lost during '{cmd}' "
                     f"({type(e).__name__}: {e}) — attempting silent reconnect"
@@ -242,6 +252,7 @@ class RealAerotechDriver(PositionerDriver):
                 asyncio.open_connection(self.ip_address, self.port),
                 timeout=self.timeout_s,
             )
+            self._enable_tcp_keepalive(self._writer)
         except Exception as e:
             logger.error(
                 f"[Aerotech] silent reconnect: open_connection failed: {e}"
@@ -287,6 +298,60 @@ class RealAerotechDriver(PositionerDriver):
         """检查 AXISSTATUS 位掩码中的指定位"""
         return bool(status_int & (1 << bit))
 
+    @staticmethod
+    def _enable_tcp_keepalive(writer: asyncio.StreamWriter) -> None:
+        """Turn on SO_KEEPALIVE + tight idle/intvl/cnt on the writer's
+        underlying socket.
+
+        Why we need this on top of the silent-reconnect path:
+        - silent-reconnect only fires AFTER an attempted write or read
+          surfaces the close. For polling/probe code that hits the wire
+          every few seconds anyway that's fine.
+        - Keepalive lets the OS detect half-closes within ~30 s of going
+          idle, so the *next* write isn't the discovery event. Matters for
+          calibration loops where minutes pass between motion commands.
+
+        Field-verified at CAICT 2026-05-13: NAT/firewall on the lab
+        network silently drops idle TCP entries; without keepalive the
+        socket appeared healthy until the next write timed out.
+
+        macOS exposes the idle time as ``TCP_KEEPALIVE``, Linux as
+        ``TCP_KEEPIDLE``. Setsockopt failures are non-fatal — the socket
+        still works without tighter tuning, just falls back to OS default
+        keepidle (~2 hours on most systems).
+        """
+        try:
+            sock = writer.get_extra_info("socket")
+        except Exception:
+            return
+        if sock is None:
+            return
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        except OSError as e:
+            logger.debug(f"[Aerotech] SO_KEEPALIVE not settable: {e}")
+            return
+        # Idle time before keepalive probes start. Aim for ~20s so we
+        # detect a half-close well before the next user command, but stay
+        # above OS minimums (Linux ≥1, macOS ≥1).
+        for optname_attr, value in (
+            # Linux
+            ("TCP_KEEPIDLE", 20),
+            # macOS — same semantics, different name
+            ("TCP_KEEPALIVE", 20),
+            # Probe interval after first probe
+            ("TCP_KEEPINTVL", 5),
+            # Probe count before declaring dead
+            ("TCP_KEEPCNT", 3),
+        ):
+            optname = getattr(socket, optname_attr, None)
+            if optname is None:
+                continue
+            try:
+                sock.setsockopt(socket.IPPROTO_TCP, optname, value)
+            except OSError as e:
+                logger.debug(f"[Aerotech] {optname_attr} not settable: {e}")
+
     async def _probe_axis(self, axis: str) -> bool:
         """Read-only probe: does the controller recognise this axis name?
 
@@ -326,6 +391,7 @@ class RealAerotechDriver(PositionerDriver):
                 asyncio.open_connection(self.ip_address, self.port),
                 timeout=self.timeout_s,
             )
+            self._enable_tcp_keepalive(self._writer)
 
             # 清除控制器错误缓冲区
             await self._send(AeroBasicCmd.ACKNOWLEDGE_ALL)
