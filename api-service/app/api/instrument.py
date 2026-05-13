@@ -360,21 +360,44 @@ async def list_channel_models_endpoint(
     except Exception:  # noqa: BLE001
         hal = None
     driver = (hal.drivers or {}).get(category_key) if hal else None
-    if driver is None:
-        return ChannelModelsListResult(items=[], reason="driver_not_loaded")
 
-    list_fn = getattr(driver, "list_channel_models", None)
-    if not callable(list_fn):
-        # Driver doesn't speak the channel-emulator contract — fine,
-        # not an error. (E.g. asking VNA category for channel models.)
-        return ChannelModelsListResult(items=[], reason="not_a_channel_emulator")
+    if driver is not None:
+        list_fn = getattr(driver, "list_channel_models", None)
+        if not callable(list_fn):
+            # Driver doesn't speak the channel-emulator contract — fine,
+            # not an error. (E.g. asking VNA category for channel models.)
+            return ChannelModelsListResult(items=[], reason="not_a_channel_emulator")
 
-    # _maybe_await tolerates both async and sync implementations of
-    # list_channel_models — the base class is async but drivers could
-    # override with a sync method for simple curated-list cases.
-    raw_items = await _maybe_await(list_fn())
-    items = [ChannelModelEntry(**entry) for entry in raw_items]
-    return ChannelModelsListResult(items=items)
+        # _maybe_await tolerates both async and sync implementations of
+        # list_channel_models — the base class is async but drivers could
+        # override with a sync method for simple curated-list cases.
+        raw_items = await _maybe_await(list_fn())
+        items = [ChannelModelEntry(**entry) for entry in raw_items]
+        return ChannelModelsListResult(items=items)
+
+    # No live driver. Stage 1 source of truth is the curated list in
+    # ``InstrumentConnection.connection_params['available_channel_models']``,
+    # which is set by the operator in the GUI and lives in the DB
+    # independent of whether the F64 is reachable. Read + normalise so
+    # offline planning works (HAL in mock mode, instrument unreachable,
+    # or driver hasn't been loaded yet).
+    from app.hal.channel_emulator import normalize_channel_model_entries
+    conn = (
+        db.query(InstrumentConnectionDB)
+        .filter(InstrumentConnectionDB.category_id == cat.id)
+        .first()
+    )
+    raw_params = (conn.connection_params if conn else None) or {}
+    raw_entries = raw_params.get("available_channel_models") or []
+    normalised = normalize_channel_model_entries(raw_entries)
+    items = [ChannelModelEntry(**entry) for entry in normalised]
+    # ``reason`` stays ``driver_not_loaded`` when items is empty so the GUI
+    # still tells the operator "drivers aren't bound" — but if the DB has
+    # a curated list, the items are surfaced and ``reason=None``.
+    return ChannelModelsListResult(
+        items=items,
+        reason="driver_not_loaded" if not items else None,
+    )
 
 
 @router.put("/instruments/{category_key}", response_model=FEInstrumentCategory)
