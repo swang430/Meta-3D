@@ -358,24 +358,13 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
     # ------------------------------------------------------------------
     # 5. SCPI primitives
     #
-    # We override both _write and _query (not just _do_*) because the
-    # base class's _query is *synchronous* — it calls _do_query() and
-    # immediately passes the result to _log_scpi_response(). When
-    # _do_query is async (as ours is, via asyncio.to_thread for pyvisa),
-    # the base hands the coroutine itself to the logger, which tries
-    # .strip() on it and crashes. Awaiting inside our override gives
-    # _log_scpi_response a real string.
+    # Only _do_write / _do_query are defined here — the base class's
+    # _write / _query template methods now handle both sync and async
+    # _do_* implementations transparently (see base.py for the dispatch
+    # logic). Driver code calls ``await self._query(...)`` because our
+    # _do_query is async; sync drivers would call ``self._query(...)``
+    # directly without await.
     # ------------------------------------------------------------------
-
-    async def _write(self, cmd: str, **kwargs) -> None:
-        self._log_scpi_write(cmd)
-        await self._do_write(cmd, **kwargs)
-
-    async def _query(self, cmd: str, **kwargs) -> str:
-        self._log_scpi_write(cmd)
-        response = await self._do_query(cmd, **kwargs)
-        self._log_scpi_response(cmd, response)
-        return response
 
     async def _do_write(self, cmd: str, timeout: Optional[int] = None) -> None:
         if not self._visa_resource:

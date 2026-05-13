@@ -235,6 +235,60 @@ def get_instrument_catalog(db: Session = Depends(get_db)):
         return FEInstrumentsResponse(categories=[])
 
 
+class HalReloadResult(BaseModel):
+    """Response for POST /instruments/hal/reload."""
+    drivers_loaded: int
+    drivers: List[str]
+    duration_ms: int
+
+
+@router.post("/instruments/hal/reload", response_model=HalReloadResult)
+async def reload_hal_service() -> HalReloadResult:
+    """Tear down the HAL service and re-init it from the current DB state.
+
+    Use after editing instrument selection / endpoint / driver_mode in
+    the GUI — without this, those changes don't take effect until a
+    backend restart (HAL initializes once at FastAPI lifespan startup).
+
+    Returns a summary of what's now loaded. The full readiness report
+    is also logged to stdout/log file with the formatted table.
+
+    Side effects:
+    - Drops every active VISA / pyvisa session held by the previous
+      driver instances. In-flight diagnostic sequences using those
+      drivers will fail mid-flight; coordinate with operators before
+      hitting this during a test run.
+    - Calls each driver's disconnect() — fine if drivers are well-
+      behaved, but a misbehaving driver could block here.
+
+    See docs/site-debug/2026-05-13-retrospective.md §B for the
+    motivating problem (init-once HAL + config-then-restart loop).
+    """
+    import time
+    from app.services.instrument_hal_service import (
+        get_hal_service,
+        initialize_hal_service,
+        shutdown_hal_service,
+        DriverMode,
+    )
+    started = time.monotonic()
+    # Preserve the mode the service was running in (REAL vs MOCK_FALLBACK
+    # vs MOCK_FORCE) — operators usually don't want to switch global mode
+    # when reloading specific instruments.
+    prior_service = get_hal_service()
+    prior_mode = getattr(prior_service, "mode", DriverMode.REAL) if prior_service else DriverMode.REAL
+    await shutdown_hal_service()
+    await initialize_hal_service(mode=prior_mode)
+    fresh = get_hal_service()
+    drivers = sorted(fresh.drivers.keys()) if fresh else []
+    duration_ms = int((time.monotonic() - started) * 1000)
+    return HalReloadResult(
+        drivers_loaded=len(drivers),
+        drivers=drivers,
+        duration_ms=duration_ms,
+    )
+
+
 @router.put("/instruments/{category_key}", response_model=FEInstrumentCategory)
 def update_instrument_category(
     category_key: str,

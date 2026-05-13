@@ -8,6 +8,7 @@ SCPI 日志架构:
   子类只需覆盖 _do_write() / _do_query() 实现具体的 I/O 操作。
 """
 
+import asyncio
 from abc import ABC, abstractmethod
 from enum import Enum
 import logging
@@ -102,26 +103,60 @@ class InstrumentDriver(ABC):
         )
 
     # ── SCPI 模板方法 (子类覆盖 _do_write / _do_query) ────────
+    #
+    # 这两个模板方法对 sync 和 async 的 _do_query / _do_write 都透明:
+    #
+    #   - 如果子类的 _do_query 是 def 返回 str（pyvisa 直接调用，
+    #     ENA / UXM / Keysight MXG 等），_query() 返回 str，调用方按
+    #     ``idn = driver._query("*IDN?").strip()`` 用。
+    #
+    #   - 如果子类的 _do_query 是 async def 返回 str（pyvisa 走
+    #     ``asyncio.to_thread``，PROPSIM F64 / FS16 等），_query() 返回
+    #     一个 coroutine，调用方按 ``idn = await driver._query("*IDN?")``
+    #     用。Coroutine 内部 await _do_query 拿到字符串再写 RX 日志，
+    #     避免把 coroutine 对象丢进 _log_scpi_response 触发
+    #     ``'coroutine' object has no attribute 'strip'`` 崩溃
+    #     （CAICT 2026-05-13 现场实际遇到的 bug，详见
+    #     docs/site-debug/2026-05-13-retrospective.md）。
 
-    def _write(self, cmd: str, **kwargs) -> None:
+    def _write(self, cmd: str, **kwargs):
         """
         发送 SCPI 写命令（模板方法）。
-        
-        自动记录到 scpi.log，然后调用子类的 _do_write() 实现。
+
+        Sync _do_write: 同步执行，无返回值。
+        Async _do_write: 返回 coroutine，调用方需 await。
+
         子类应覆盖 _do_write() 而非本方法。
         """
         self._log_scpi_write(cmd)
-        return self._do_write(cmd, **kwargs)
+        result = self._do_write(cmd, **kwargs)
+        # _do_write 可能是同步或异步实现 — 异步时返回 coroutine,
+        # 直接交给调用方 await。
+        return result
 
-    def _query(self, cmd: str, **kwargs) -> str:
+    def _query(self, cmd: str, **kwargs):
         """
         发送 SCPI 查询命令并返回响应（模板方法）。
-        
-        自动记录 TX/RX 到 scpi.log，然后调用子类的 _do_query() 实现。
+
+        Sync _do_query: 返回 str。
+        Async _do_query: 返回 coroutine，调用方需 await。
+
         子类应覆盖 _do_query() 而非本方法。
         """
         self._log_scpi_write(cmd)
-        response = self._do_query(cmd, **kwargs)
+        result = self._do_query(cmd, **kwargs)
+        if asyncio.iscoroutine(result):
+            # 异步路径：包装一层 coroutine，让 RX 日志在真正拿到字符串
+            # 之后再写。直接 ``return result`` 会让 _log_scpi_response
+            # 永远拿不到 RX，scpi.log 里只有 TX 没有 RX。
+            return self._log_response_after_await(cmd, result)
+        # 同步路径：直接写日志 + 返回。
+        self._log_scpi_response(cmd, result)
+        return result
+
+    async def _log_response_after_await(self, cmd: str, coro):
+        """Helper: await an async _do_query result, log RX, return string."""
+        response = await coro
         self._log_scpi_response(cmd, response)
         return response
 
