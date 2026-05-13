@@ -310,3 +310,97 @@ class TestAuditListIntegration:
         )
         assert resp.status_code == 200
         assert resp.json()["items"] == []
+
+
+class TestHalDriverGate:
+    """``_get_loaded_hal_driver()`` is the gate that picks "talk through the
+    live HAL session" vs "open a fresh TCP socket" for ``/scpi-probe`` and
+    ``/scpi-command``. It must exclude Mock drivers — Mock drivers inherit
+    the base ``_do_query`` that returns ``""``, so routing through them
+    yields silent 1–2 ms empty responses instead of probing the configured
+    IP. Hit live at CAICT 2026-05-13.
+    """
+
+    def test_excludes_mock_driver(self, monkeypatch):
+        from app.api.instrument import _get_loaded_hal_driver
+
+        class MockBaseStation:
+            def _query(self, cmd: str) -> str: return ""
+            def _write(self, cmd: str) -> None: pass
+
+        class FakeHal:
+            drivers = {"baseStation": MockBaseStation()}
+
+        # _get_loaded_hal_driver does `from app.services.instrument_hal_service
+        # import get_hal_service` inside the function, so we patch the source.
+        monkeypatch.setattr(
+            "app.services.instrument_hal_service.get_hal_service",
+            lambda: FakeHal(),
+        )
+        # Even though the driver has _query/_write callables, gate returns
+        # None because the class name starts with "Mock".
+        assert _get_loaded_hal_driver("baseStation") is None
+
+    def test_accepts_real_driver(self, monkeypatch):
+        from app.api.instrument import _get_loaded_hal_driver
+
+        class RealUxmDriver:
+            def _query(self, cmd: str) -> str: return "Keysight,UXM,SN,FW"
+            def _write(self, cmd: str) -> None: pass
+
+        real = RealUxmDriver()
+        class FakeHal:
+            drivers = {"baseStation": real}
+
+        monkeypatch.setattr(
+            "app.services.instrument_hal_service.get_hal_service",
+            lambda: FakeHal(),
+        )
+        assert _get_loaded_hal_driver("baseStation") is real
+
+    def test_returns_none_when_hal_empty(self, monkeypatch):
+        from app.api.instrument import _get_loaded_hal_driver
+
+        class FakeHal:
+            drivers: dict = {}
+
+        monkeypatch.setattr(
+            "app.services.instrument_hal_service.get_hal_service",
+            lambda: FakeHal(),
+        )
+        assert _get_loaded_hal_driver("baseStation") is None
+
+    def test_scpi_probe_uses_socket_when_only_mock_loaded(self, category, monkeypatch):
+        """End-to-end: /scpi-probe with Mock loaded falls back to socket
+        path (port 1 is the canary unreachable port) instead of routing
+        through Mock — the audit row's output should reflect socket-layer
+        failure, not "empty response from live HAL"."""
+
+        class MockBaseStation:
+            def _query(self, cmd: str) -> str: return ""
+            def _write(self, cmd: str) -> None: pass
+
+        class FakeHal:
+            drivers = {"vna": MockBaseStation()}  # category from fixture
+
+        monkeypatch.setattr(
+            "app.services.instrument_hal_service.get_hal_service",
+            lambda: FakeHal(),
+        )
+
+        resp = client.post(
+            f"/api/v1/instruments/{category.category_key}/scpi-probe",
+            json={"ip": "127.0.0.1", "port": 1},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # Socket path was taken — port 1 connection refused / per-cmd error.
+        # Each result should report a socket-layer error, not an empty
+        # "no response" from the Mock path which would have 1–2 ms latency.
+        results = body.get("results", [])
+        assert len(results) == 5
+        for r in results:
+            # Socket fallback: success=False with a socket-style error,
+            # NOT the HAL-empty-response path which says "(empty)".
+            assert r["success"] is False
+            assert "(empty)" not in (r.get("error") or "")
