@@ -227,6 +227,10 @@ class InstrumentHALService:
         }
 
         db = SessionLocal()
+        # Per-category readiness rows for the startup report. Each entry:
+        # {category, model, endpoint, status, detail}
+        # status ∈ {"ok", "skipped", "fail"}
+        report_rows: List[Dict[str, Any]] = []
         try:
             categories = db.query(InstrumentCategoryModel).filter(
                 InstrumentCategoryModel.is_active == True
@@ -235,6 +239,13 @@ class InstrumentHALService:
             for cat in categories:
                 if not cat.selected_model_id:
                     logger.info(f"[HAL-REAL] {cat.category_key}: no model selected, skipping")
+                    report_rows.append({
+                        "category": cat.category_key,
+                        "model": "(not configured)",
+                        "endpoint": "",
+                        "status": "skipped",
+                        "detail": "no model selected in GUI",
+                    })
                     continue
 
                 model = db.query(InstrumentModelDB).filter(
@@ -330,6 +341,10 @@ class InstrumentHALService:
                     instrument_id=f"{cat.category_key}_{str(cat.id)[:8]}",
                     config=driver_config,
                 )
+                endpoint_str = (
+                    f"{conn.controller_ip}:{conn.port}" if conn and conn.controller_ip
+                    else (conn.endpoint if conn and conn.endpoint else "")
+                )
                 try:
                     success = await driver.connect()
                     if success:
@@ -341,33 +356,112 @@ class InstrumentHALService:
                         # Update connection status in DB
                         if conn:
                             conn.status = "connected"
+                            conn.last_error = None
                             from datetime import datetime
                             conn.last_connected_at = datetime.utcnow()
                             db.commit()
+                        report_rows.append({
+                            "category": cat.category_key,
+                            "model": f"{model.vendor} {model.model}",
+                            "endpoint": endpoint_str,
+                            "status": "ok",
+                            "detail": f"{DriverClass.__name__}",
+                        })
                     else:
+                        # driver.connect() returned False — pull the real
+                        # error from the driver itself rather than writing
+                        # a generic "Connection failed during HAL init".
+                        # See docs/site-debug/2026-05-13-retrospective.md
+                        # category F (error message ergonomics).
+                        real_err = getattr(driver, "_last_error", None) or "connect() returned False"
                         logger.error(
-                            f"[HAL-REAL] {cat.category_key}: connection failed"
+                            f"[HAL-REAL] {cat.category_key}: connection failed — {real_err}"
                         )
                         if conn:
                             conn.status = "error"
-                            conn.last_error = "Connection failed during HAL init"
+                            conn.last_error = real_err
                             db.commit()
+                        report_rows.append({
+                            "category": cat.category_key,
+                            "model": f"{model.vendor} {model.model}",
+                            "endpoint": endpoint_str,
+                            "status": "fail",
+                            "detail": real_err,
+                        })
                 except Exception as e:
+                    err_str = f"{type(e).__name__}: {e}"
                     logger.error(
-                        f"[HAL-REAL] {cat.category_key}: exception during connect: {e}"
+                        f"[HAL-REAL] {cat.category_key}: exception during connect: {err_str}"
                     )
                     if conn:
                         conn.status = "error"
-                        conn.last_error = str(e)
+                        conn.last_error = err_str
                         db.commit()
+                    report_rows.append({
+                        "category": cat.category_key,
+                        "model": f"{model.vendor} {model.model}",
+                        "endpoint": endpoint_str,
+                        "status": "fail",
+                        "detail": err_str,
+                    })
 
             logger.info(
                 f"[HAL-REAL] Driver factory complete: "
                 f"{len(self.drivers)} drivers initialized"
             )
+            self._log_readiness_report(report_rows)
 
         finally:
             db.close()
+
+    @staticmethod
+    def _log_readiness_report(rows: List[Dict[str, Any]]) -> None:
+        """Print a formatted readiness summary so operators don't have to
+        grep mixed stdout to know whether HAL came up.
+
+        Format (printed via logger.info so it lands in the same log
+        stream + log file as the rest of HAL init):
+
+            ═══════ HAL READINESS REPORT ═══════
+            ✓ vna            E5071C ENA       192.168.0.10:5025    RealKeysightEnaDriver
+            ✗ channelEmul.   PROPSIM F64      192.168.0.100:5025   ImportError: pyvisa
+            ○ baseStation    (not configured)
+            ════════════════════════════════════
+            2/3 categories loaded · 1 failed · 1 skipped
+        """
+        if not rows:
+            logger.info("[HAL] readiness: no instrument categories configured")
+            return
+        # Compute column widths so the table aligns at any terminal width.
+        cat_w = max(len(r["category"]) for r in rows)
+        cat_w = max(cat_w, len("category"))
+        model_w = max(len(r["model"]) for r in rows)
+        model_w = max(model_w, len("model"))
+        endpoint_w = max(len(r["endpoint"]) for r in rows)
+        endpoint_w = max(endpoint_w, len("endpoint"))
+
+        icons = {"ok": "✓", "fail": "✗", "skipped": "○"}
+        header_label = "═" * 19 + " HAL READINESS REPORT " + "═" * 19
+        lines = [header_label]
+        for r in rows:
+            icon = icons.get(r["status"], "?")
+            lines.append(
+                f"{icon} {r['category']:<{cat_w}}  "
+                f"{r['model']:<{model_w}}  "
+                f"{r['endpoint']:<{endpoint_w}}  "
+                f"{r['detail']}"
+            )
+        lines.append("═" * len(header_label))
+        # Tallies
+        ok = sum(1 for r in rows if r["status"] == "ok")
+        fail = sum(1 for r in rows if r["status"] == "fail")
+        skipped = sum(1 for r in rows if r["status"] == "skipped")
+        lines.append(
+            f"{ok}/{len(rows)} categories loaded · "
+            f"{fail} failed · {skipped} skipped"
+        )
+        for line in lines:
+            logger.info("[HAL] %s", line)
 
     async def shutdown(self):
         """Shutdown all drivers and cleanup"""
