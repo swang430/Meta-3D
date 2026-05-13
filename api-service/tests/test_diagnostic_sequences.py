@@ -722,7 +722,7 @@ class TestPropsimF64HealthSequence:
         body = resp.json()
         assert body["success"] is False
         assert "PROPSIM" in body["summary"]
-        assert "expected substring" in body["summary"]
+        assert "expected any of" in body["summary"]
         # Only the IDN step should appear — Phase A didn't run.
         assert len(body["steps"]) == 1
 

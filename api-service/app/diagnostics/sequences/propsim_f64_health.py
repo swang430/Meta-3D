@@ -73,9 +73,12 @@ from app.diagnostics.protocol import (
 from app.services.diagnostic_context import DiagnosticContext
 
 
-# IDN substring used to verify the box behind that IP is actually a F64
-# (not a different PROPSIM model or some other emulator).
-_IDN_MODEL_TAG = "PROPSIM"
+# IDN substrings used to verify the box behind that IP is actually a F64
+# (not a different PROPSIM model or some other emulator). Match if ANY tag
+# appears in IDN or SYST:INFO. Real F64 IDN observed at CAICT 2026-05-13 is
+# ``Keysight Technologies,F8800A,...`` — no "PROPSIM" — so the Keysight SKU
+# is the practical gate; SYST:INFO? typically carries "PROPSIM F64,...".
+_IDN_MODEL_TAGS = ("PROPSIM", "F8800")
 
 
 # ---------------------------------------------------------------------------
@@ -409,14 +412,14 @@ async def run(
             summary=f"*IDN? raised: {type(e).__name__}: {e}",
         )
     idn_str = str(idn_raw or "").strip()
-    idn_match = _IDN_MODEL_TAG in idn_str.upper()
+    idn_match = any(tag in idn_str.upper() for tag in _IDN_MODEL_TAGS)
     info_str = ""
     info_match = False
     if not idn_match:
         try:
             info_raw = await _maybe_await(query_fn("SYST:INFO?"))
             info_str = str(info_raw or "").strip()
-            info_match = _IDN_MODEL_TAG in info_str.upper()
+            info_match = any(tag in info_str.upper() for tag in _IDN_MODEL_TAGS)
         except Exception as e:  # noqa: BLE001
             info_str = f"<err: {e}>"
 
@@ -425,8 +428,8 @@ async def run(
             success=False,
             summary=(
                 f"Identity check failed: IDN={idn_str!r}, "
-                f"SYST:INFO={info_str!r}; expected substring "
-                f"'{_IDN_MODEL_TAG}' in either."
+                f"SYST:INFO={info_str!r}; expected any of "
+                f"{_IDN_MODEL_TAGS} in either."
             ),
             steps=[SequenceStepResult(
                 label="*IDN?",
