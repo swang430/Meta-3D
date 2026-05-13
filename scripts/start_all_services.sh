@@ -61,6 +61,39 @@ check_port() {
     fi
 }
 
+# 等待 API 服务的 HAL 完成驱动加载,最长 ${2:-30} 秒。
+# HAL init 在 lifespan startup 中跑完之后会输出一行 "N/M categories loaded · X failed · Y skipped"
+# 作为完成标志。
+wait_for_hal_readiness() {
+    local log_file=$1
+    local timeout=${2:-30}
+    local elapsed=0
+    while [ $elapsed -lt $timeout ]; do
+        if grep -q "categories loaded ·" "${log_file}" 2>/dev/null; then
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    return 1
+}
+
+# 把 HAL 启动汇报表 (✓/✗/○ 哪些 instrument loaded 了) 从 API.log 抽出来打到终端,
+# 不要让用户在 tail -f 一堆 mixed log 里自己找。
+# 抽取范围: 从 "HAL READINESS REPORT" 表头到 "categories loaded ·" tally,
+# sed 把 logging 前缀 "时间戳 │ INFO │ … │ [HAL] " 削掉,只留报告本体。
+print_hal_readiness() {
+    local log_file=$1
+    echo ""
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BLUE}🔌 HAL Readiness (硬件驱动加载结果):${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    awk '/HAL READINESS REPORT/,/categories loaded ·/' "${log_file}" \
+      | sed -E 's/.*\[HAL\] //'
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+}
+
 # 检查依赖端口
 echo "检查依赖端口..."
 PORTS_OK=true
@@ -120,7 +153,16 @@ if [ -d "${PROJECT_ROOT}/api-service" ]; then
             "python3 -m app.main" \
             8000
     fi
-    echo ""
+
+    # HAL init runs inside FastAPI lifespan startup. Block here until it
+    # finishes (or 30s) so the readiness table prints in a stable place
+    # — before GUI logs start flowing past in tail -f.
+    if wait_for_hal_readiness "${LOG_DIR}/API.log" 30; then
+        print_hal_readiness "${LOG_DIR}/API.log"
+    else
+        echo -e "${YELLOW}⚠️  HAL readiness report not seen within 30s — check ${LOG_DIR}/API.log${NC}"
+        echo ""
+    fi
 fi
 
 # 3. 启动 GUI 开发服务器 (Node.js)

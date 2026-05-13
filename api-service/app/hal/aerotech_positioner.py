@@ -133,57 +133,146 @@ class RealAerotechDriver(PositionerDriver):
     async def _send(self, cmd: str) -> str:
         """
         发送 AeroBasic 命令并等待响应。
-        
+
         AeroBasic TCP 协议:
           TX: 命令字符串 + '\\n'
           RX: '%' + 可选返回值  (成功)
               '!' + 错误码       (失败)
-        
+
+        Idle-close handling: Ensemble Socket2 silently closes the TCP
+        connection after an idle period (field-verified at CAICT
+        2026-05-13 — first command after ~30s gap raises BrokenPipe /
+        ConnectionReset). One transparent reconnect is attempted; the
+        cached ``_axes_present`` is re-ENABLE'd before the original
+        command is retried so callers never see the idle close.
+
         Returns:
             响应内容 (去掉 '%' 前缀)
-            
+
         Raises:
-            AerotechError: 当控制器返回 '!' 错误响应时
+            AerotechError: 当控制器返回 '!' 错误响应, 或 reconnect 失败时
             asyncio.TimeoutError: 当超时未收到响应时
         """
         if not self._writer or not self._reader:
             raise AerotechError("Not connected to Aerotech controller")
 
         async with self._lock:
-            # 记录到通信日志 (复用 scpi.log 基础设施)
-            self._scpi_logger.debug(
-                f"TX: {cmd}",
-                extra={"instrument_id": self.instrument_id, "direction": "TX"},
+            try:
+                return await self._tx_rx(cmd)
+            except (ConnectionResetError, BrokenPipeError, OSError) as e:
+                # Idle-close path. Only one retry — if the controller is
+                # genuinely down we don't want to hammer it.
+                logger.warning(
+                    f"[Aerotech] connection lost during '{cmd}' "
+                    f"({type(e).__name__}: {e}) — attempting silent reconnect"
+                )
+                if not await self._silent_reconnect():
+                    raise AerotechError(
+                        f"Connection lost during '{cmd}' and reconnect failed"
+                    ) from e
+                return await self._tx_rx(cmd)
+
+    async def _tx_rx(self, cmd: str) -> str:
+        """One write + readline cycle. Assumes the lock is held and the
+        socket pair is non-None.
+
+        Raises ``ConnectionResetError`` on EOF (empty readline) so the
+        outer retry path treats clean half-closes the same as broken-pipe
+        writes — both come from the same controller behaviour, both need
+        the same recovery.
+        """
+        self._scpi_logger.debug(
+            f"TX: {cmd}",
+            extra={"instrument_id": self.instrument_id, "direction": "TX"},
+        )
+        self._writer.write((cmd + "\n").encode("ascii"))
+        await self._writer.drain()
+
+        raw = await asyncio.wait_for(
+            self._reader.readline(), timeout=self.timeout_s
+        )
+        if raw == b"":
+            raise ConnectionResetError(
+                "EOF reading from Aerotech controller (socket closed)"
             )
+        response = raw.decode("ascii", errors="replace").strip()
 
-            # 发送
-            self._writer.write((cmd + "\n").encode("ascii"))
-            await self._writer.drain()
+        self._scpi_logger.debug(
+            f"RX: {response}",
+            extra={
+                "instrument_id": self.instrument_id,
+                "direction": "RX",
+                "query": cmd,
+            },
+        )
 
-            # 接收响应
-            raw = await asyncio.wait_for(
-                self._reader.readline(), timeout=self.timeout_s
+        if response.startswith("!"):
+            error_msg = f"AeroBasic error for '{cmd}': {response}"
+            logger.error(f"[Aerotech] {error_msg}")
+            raise AerotechError(error_msg)
+
+        return response.lstrip("%").strip()
+
+    async def _silent_reconnect(self) -> bool:
+        """Reopen TCP + restore ACK/ENABLE state after an idle close.
+
+        Returns True on success. Caller (``_send``) only invokes us with
+        the lock held — we use ``_tx_rx`` directly during the handshake
+        so we don't re-enter the outer retry loop and risk recursion.
+
+        Refuses to run if ``_axes_present`` is empty — that means
+        ``connect()`` never finished, so there's no prior good state to
+        restore. The caller should raise instead.
+        """
+        if not self._axes_present:
+            return False
+
+        # Tear down the broken pair. ``close()`` is best-effort here —
+        # the transport may already be in a half-closed state.
+        if self._writer:
+            try:
+                self._writer.close()
+            except Exception:
+                pass
+        self._reader = None
+        self._writer = None
+
+        try:
+            self._reader, self._writer = await asyncio.wait_for(
+                asyncio.open_connection(self.ip_address, self.port),
+                timeout=self.timeout_s,
             )
-            response = raw.decode("ascii", errors="replace").strip()
-
-            # 记录响应
-            self._scpi_logger.debug(
-                f"RX: {response}",
-                extra={
-                    "instrument_id": self.instrument_id,
-                    "direction": "RX",
-                    "query": cmd,
-                },
+        except Exception as e:
+            logger.error(
+                f"[Aerotech] silent reconnect: open_connection failed: {e}"
             )
+            self._reader = None
+            self._writer = None
+            return False
 
-            # 解析响应
-            if response.startswith("!"):
-                error_msg = f"AeroBasic error for '{cmd}': {response}"
-                logger.error(f"[Aerotech] {error_msg}")
-                raise AerotechError(error_msg)
+        try:
+            await self._tx_rx(AeroBasicCmd.ACKNOWLEDGE_ALL)
+            await self._tx_rx(
+                AeroBasicCmd.ENABLE.format(axes=" ".join(self._axes_present))
+            )
+        except Exception as e:
+            logger.error(
+                f"[Aerotech] silent reconnect: handshake failed: {e}"
+            )
+            if self._writer:
+                try:
+                    self._writer.close()
+                except Exception:
+                    pass
+            self._reader = None
+            self._writer = None
+            return False
 
-            # 成功: 去掉 '%' 前缀
-            return response.lstrip("%").strip()
+        logger.info(
+            f"[Aerotech] silent reconnect succeeded — re-enabled "
+            f"axes={self._axes_present}"
+        )
+        return True
 
     async def _query_value(self, cmd: str) -> float:
         """发送查询命令并解析为浮点数"""
