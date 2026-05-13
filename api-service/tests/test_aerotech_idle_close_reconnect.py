@@ -332,3 +332,77 @@ class TestReconnectBounded:
         with pytest.raises(AerotechError):
             await d._send("PFBK(X)")
         assert spare.sent == []  # reconnect path never even opened a socket
+
+
+# ---------------------------------------------------------------------------
+# Command timeouts must NOT trigger the reconnect path
+# ---------------------------------------------------------------------------
+
+class TestCommandTimeoutDoesNotReconnect:
+    """Codex review on PR #14:
+
+    The original `except (ConnectionResetError, BrokenPipeError, OSError)`
+    swallowed `TimeoutError` because Python 3.11 unified
+    `asyncio.TimeoutError` onto built-in `TimeoutError`, which is an
+    `OSError` subclass. That meant a slow-but-healthy command would
+    silently retransmit instead of surfacing the timeout — masking a real
+    "controller is wedged but socket is fine" failure.
+
+    The fix narrows the catch to `ConnectionError` (covers all three
+    concrete subclasses + our synthesised EOF). These tests pin that
+    narrowing in place.
+    """
+
+    @pytest.mark.asyncio
+    async def test_readline_timeout_surfaces_without_reconnect(self, monkeypatch):
+        """When ``readline()`` blocks past ``timeout_s``, ``wait_for``
+        raises ``TimeoutError``. The driver must let it through — no
+        reconnect, no retry."""
+
+        class _HangingReader:
+            """``readline()`` blocks forever — caller's ``wait_for`` is
+            the only thing that lets the test finish."""
+            async def readline(self) -> bytes:
+                await asyncio.sleep(3600)  # effectively forever
+                return b""
+
+        srv = _FakeServer("primary")
+        d = _make_driver_with_streams(srv)
+        d._reader = _HangingReader()
+        d.timeout_s = 0.05  # 50 ms — keep the test fast
+        # Provision NO post-reconnect fakes — if the driver tries to
+        # reconnect, open_connection raises and the test gets a different,
+        # equally-loud failure.
+        _install_open_connection(monkeypatch, [])
+
+        with pytest.raises((asyncio.TimeoutError, TimeoutError)):
+            await d._send("PFBK(X)")
+
+        # No reconnect attempted — caller still owns the original socket
+        # and can decide whether to disconnect/retry at a higher level.
+        assert d._writer is not None
+        assert not d._writer.is_closing()
+
+    @pytest.mark.asyncio
+    async def test_no_swallowing_of_timeout_error_subclasses(self, monkeypatch):
+        """Explicitly raise the built-in ``TimeoutError`` (not Connection-
+        Error) from inside ``_tx_rx`` to verify the outer catch is
+        strictly ConnectionError. If a future refactor widens the catch
+        back to ``OSError``, this test fails noisily."""
+        srv = _FakeServer("primary")
+        d = _make_driver_with_streams(srv)
+
+        original_tx_rx = d._tx_rx
+        call_count = {"n": 0}
+
+        async def boom(cmd: str) -> str:
+            call_count["n"] += 1
+            raise TimeoutError("simulated wait_for timeout")
+
+        d._tx_rx = boom  # type: ignore[assignment]
+        _install_open_connection(monkeypatch, [_FakeServer("never used")])
+
+        with pytest.raises(TimeoutError):
+            await d._send("PFBK(X)")
+        # Exactly one call — _send did NOT retry after the timeout.
+        assert call_count["n"] == 1
