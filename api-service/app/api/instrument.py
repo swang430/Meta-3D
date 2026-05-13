@@ -649,9 +649,24 @@ async def _run_command_via_hal(
 
 
 def _get_loaded_hal_driver(category_key: str):
-    """Return the live HAL driver instance for ``category_key`` if loaded
-    AND it exposes ``_query``/``_write``; otherwise None (caller should
-    fall back to opening a fresh socket).
+    """Return the live HAL driver instance for ``category_key`` if it's a
+    *real* driver that can actually talk to hardware; otherwise None so
+    the caller falls back to opening a fresh TCP socket.
+
+    Skip cases:
+      1. HAL service not initialised yet.
+      2. No driver loaded for this category.
+      3. Driver is a Mock — Mock drivers inherit the base no-op
+         ``_do_query`` that returns ``""``. Routing the SCPI terminal
+         through a Mock makes ``/scpi-probe`` and ``/scpi-command``
+         silently return empty (latency 1-2 ms) instead of probing the
+         configured IP. We hit this on 2026-05-13 at CAICT when HAL
+         was in mock_fallback mode and the operator tried the UXM SCPI
+         terminal on a freshly-configured IP — every command came back
+         "instrument did not return data" because the Mock was happily
+         intercepting them. Skipping Mock here lets the socket fallback
+         take over so the operator can probe the real box.
+      4. Driver doesn't expose ``_query`` / ``_write`` primitives.
     """
     try:
         from app.services.instrument_hal_service import get_hal_service
@@ -662,6 +677,11 @@ def _get_loaded_hal_driver(category_key: str):
         return None
     driver = (hal.drivers or {}).get(category_key)
     if driver is None:
+        return None
+    # Skip Mock* drivers — project convention names every mock class
+    # MockXxx (MockBaseStation, MockChannelEmulator, MockRfSwitch, etc.)
+    # and reserves RealXxx for actual hardware-talking implementations.
+    if type(driver).__name__.startswith("Mock"):
         return None
     if not callable(getattr(driver, "_query", None)):
         return None
