@@ -1674,6 +1674,29 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     # ===================================================================
     # 7. 内部工具方法
     # ===================================================================
+    #
+    # We override the SCPI template methods _write / _query to make them
+    # async — the base class is synchronous and passes the result of
+    # _do_query() straight into _log_scpi_response(). When _do_query is
+    # async (as ours is, via asyncio.to_thread), the base hands a
+    # coroutine to the logger, which tries .strip() on it and crashes
+    # connect(). Discovered while bringing up the sibling FS16 driver
+    # (2026-05-13 on-site). Same latent issue in any HAL driver with
+    # async _do_query — fix is applied here pre-emptively before F64 is
+    # exercised on a real chassis.
+    # ===================================================================
+
+    async def _write(self, cmd: str, **kwargs) -> None:
+        """Async override of the base template — logs then awaits _do_write."""
+        self._log_scpi_write(cmd)
+        await self._do_write(cmd, **kwargs)
+
+    async def _query(self, cmd: str, **kwargs) -> str:
+        """Async override of the base template — logs, awaits _do_query, logs response."""
+        self._log_scpi_write(cmd)
+        response = await self._do_query(cmd, **kwargs)
+        self._log_scpi_response(cmd, response)
+        return response
 
     async def _do_write(self, cmd: str, timeout: Optional[int] = None) -> None:
         """发送 SCPI 写命令（由基类 _write() 自动调用，SCPI 日志已由基类记录）"""
