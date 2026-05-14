@@ -366,19 +366,92 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
     # directly without await.
     # ------------------------------------------------------------------
 
+    # ── Connection-loss-aware retry (same shape as F64, see #15) ────
+    # Shared classifier in ``app.hal._visa_reconnect`` decides which
+    # VisaIOError codes mean "socket dropped" vs "timeout / state error".
+    # Each driver supplies its own ``_silent_reconnect_visa`` because
+    # only the driver knows its resource string + open kwargs.
+
+    @staticmethod
+    def _is_visa_conn_lost(exc: BaseException) -> bool:
+        from app.hal._visa_reconnect import is_visa_conn_lost
+        return is_visa_conn_lost(exc)
+
+    async def _silent_reconnect_visa(self) -> bool:
+        """Reopen the FS16 VISA resource after a PyVISA conn-lost shape.
+
+        Closes the half-dead resource (best-effort) and re-opens with
+        the same resource string. SCPI state survives the socket
+        reconnect, so we skip the heavy ``connect()`` post-open work
+        (alignment reload, etc.) — caller's retry just needs a fresh
+        session to retransmit on.
+        """
+        if self._rm is None or not getattr(self, "ip_address", None):
+            return False
+        try:
+            if self._visa_resource is not None:
+                await asyncio.to_thread(self._visa_resource.close)
+        except Exception:
+            pass
+        self._visa_resource = None
+        try:
+            resource_string = f"TCPIP0::{self.ip_address}::{self.port}::SOCKET"
+            self._visa_resource = await asyncio.to_thread(
+                self._rm.open_resource,
+                resource_string,
+                read_termination="\n",
+                write_termination="\n",
+            )
+            logger.info(
+                f"[FS16] silent reconnect succeeded — resource reopened "
+                f"({resource_string})"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"[FS16] silent reconnect failed: {e}")
+            self._visa_resource = None
+            return False
+
     async def _do_write(self, cmd: str, timeout: Optional[int] = None) -> None:
-        if not self._visa_resource:
-            raise RuntimeError("[FS16] No VISA resource")
-        if timeout is not None:
-            self._visa_resource.timeout = timeout
-        await asyncio.to_thread(self._visa_resource.write, cmd)
+        for attempt in (0, 1):
+            if not self._visa_resource:
+                raise RuntimeError("[FS16] No VISA resource")
+            if timeout is not None:
+                self._visa_resource.timeout = timeout
+            try:
+                await asyncio.to_thread(self._visa_resource.write, cmd)
+                return
+            except Exception as e:
+                if attempt == 0 and self._is_visa_conn_lost(e):
+                    logger.warning(
+                        f"[FS16] VISA connection lost on write '{cmd[:40]}...' "
+                        f"(code=0x{getattr(e, 'error_code', 0) & 0xFFFFFFFF:08X}) "
+                        f"— silent reconnect"
+                    )
+                    if await self._silent_reconnect_visa():
+                        continue
+                raise
 
     async def _do_query(self, cmd: str, timeout: Optional[int] = None) -> str:
-        if not self._visa_resource:
-            raise RuntimeError("[FS16] No VISA resource")
-        if timeout is not None:
-            self._visa_resource.timeout = timeout
-        return await asyncio.to_thread(self._visa_resource.query, cmd)
+        for attempt in (0, 1):
+            if not self._visa_resource:
+                raise RuntimeError("[FS16] No VISA resource")
+            if timeout is not None:
+                self._visa_resource.timeout = timeout
+            try:
+                return await asyncio.to_thread(self._visa_resource.query, cmd)
+            except Exception as e:
+                if attempt == 0 and self._is_visa_conn_lost(e):
+                    logger.warning(
+                        f"[FS16] VISA connection lost on query '{cmd[:40]}...' "
+                        f"(code=0x{getattr(e, 'error_code', 0) & 0xFFFFFFFF:08X}) "
+                        f"— silent reconnect"
+                    )
+                    if await self._silent_reconnect_visa():
+                        continue
+                raise
+        # Unreachable — the loop returns or raises.
+        return ""
 
     async def _clear_error_queue(self) -> None:
         """Drain ``SYST:ERR?`` until it returns the "no error" sentinel.

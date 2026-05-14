@@ -142,13 +142,73 @@ class RealKeysightEnaDriver(VNADriver):
         except Exception:
             return False
 
+    # ── VISA conn-lost silent reconnect (same as F64/FS16/UXM) ─────
+    # The ENA was NOT exercised at CAICT 2026-05-13, so unlike F64 we
+    # don't have field evidence that idle close happens here. The
+    # reconnect path is added for uniformity — same Codex P2 lesson:
+    # VI_ERROR_CONN_LOST / VI_ERROR_INV_OBJECT trigger one retry,
+    # VI_ERROR_TMO propagates.
+
+    @staticmethod
+    def _is_visa_conn_lost(exc: BaseException) -> bool:
+        from app.hal._visa_reconnect import is_visa_conn_lost
+        return is_visa_conn_lost(exc)
+
+    def _silent_reconnect_visa(self) -> bool:
+        if self._visa_rm is None or not self.ip_address:
+            return False
+        try:
+            if self._visa_session is not None:
+                self._visa_session.close()
+        except Exception:
+            pass
+        self._visa_session = None
+        try:
+            self._visa_session = self._visa_rm.open_resource(
+                f"TCPIP::{self.ip_address}::INSTR",
+                timeout=10000,
+            )
+            logger.info(f"[ENA] silent reconnect succeeded — {self.ip_address}")
+            return True
+        except Exception as e:
+            logger.error(f"[ENA] silent reconnect failed: {e}")
+            self._visa_session = None
+            return False
+
     def _do_write(self, cmd: str) -> None:
         """发送 SCPI 写命令（由基类 _write() 自动调用）"""
-        if self._visa_session:
-            self._visa_session.write(cmd)
+        for attempt in (0, 1):
+            if not self._visa_session:
+                return  # legacy contract: silent no-op when not connected
+            try:
+                self._visa_session.write(cmd)
+                return
+            except Exception as e:
+                if attempt == 0 and self._is_visa_conn_lost(e):
+                    logger.warning(
+                        f"[ENA] VISA connection lost on write '{cmd[:40]}...' "
+                        f"(code=0x{getattr(e, 'error_code', 0) & 0xFFFFFFFF:08X}) "
+                        f"— silent reconnect"
+                    )
+                    if self._silent_reconnect_visa():
+                        continue
+                raise
 
     def _do_query(self, cmd: str) -> str:
         """发送 SCPI 查询并返回响应（由基类 _query() 自动调用）"""
-        if self._visa_session:
-            return self._visa_session.query(cmd)
+        for attempt in (0, 1):
+            if not self._visa_session:
+                return ""  # legacy contract
+            try:
+                return self._visa_session.query(cmd)
+            except Exception as e:
+                if attempt == 0 and self._is_visa_conn_lost(e):
+                    logger.warning(
+                        f"[ENA] VISA connection lost on query '{cmd[:40]}...' "
+                        f"(code=0x{getattr(e, 'error_code', 0) & 0xFFFFFFFF:08X}) "
+                        f"— silent reconnect"
+                    )
+                    if self._silent_reconnect_visa():
+                        continue
+                raise
         return ""

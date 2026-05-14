@@ -1708,28 +1708,131 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     # calls ``await self._query(...)`` because our _do_query is async.
     # ===================================================================
 
-    async def _do_write(self, cmd: str, timeout: Optional[int] = None) -> None:
-        """发送 SCPI 写命令（由基类 _write() 自动调用，SCPI 日志已由基类记录）"""
-        if timeout:
-            original_timeout = self._visa_resource.timeout
-            self._visa_resource.timeout = timeout
+    # ── Connection-loss-aware retry (PyVISA equivalent of Aerotech #14) ─
+    #
+    # PyVISA surfaces dropped sockets as ``VisaIOError`` with one of two
+    # status codes:
+    #   - ``VI_ERROR_CONN_LOST`` (0xBFFF00B5) — TCP RST / FIN seen
+    #   - ``VI_ERROR_INV_OBJECT`` (0xBFFF000E) — session handle dead
+    # ``VI_ERROR_TMO`` (0xBFFF0015) is also a VisaIOError BUT means
+    # "device too slow", NOT "connection broken" — same lesson as the
+    # Aerotech Codex P2 (timeout != reconnect trigger). We explicitly
+    # whitelist the two conn-lost codes and let everything else (timeout,
+    # syntax errors, etc.) propagate.
+    #
+    # Reconnect strategy: close + reopen the VISA resource with the same
+    # resource string. F64's SCPI state lives in the controller, not in
+    # the socket — most state survives reconnect. The session-specific
+    # bits (active alignment, queued errors) we don't re-issue here; if
+    # the operator needs a hard reset they should call connect() again.
+
+    @staticmethod
+    def _is_visa_conn_lost(exc: BaseException) -> bool:
+        """Delegate to the shared classifier so all VISA-backed drivers
+        agree on which error codes mean 'reconnect to recover'."""
+        from app.hal._visa_reconnect import is_visa_conn_lost
+        return is_visa_conn_lost(exc)
+
+    async def _silent_reconnect_visa(self) -> bool:
+        """Reopen the VISA resource after a connection drop.
+
+        Returns True on success. Best-effort closes the half-dead
+        resource, then ``rm.open_resource`` again with the same string
+        and timeout. We do NOT re-run ``connect()`` (which would issue
+        ``*IDN?`` + ``SYST:INFO?`` + alignment reload — heavy + state-
+        mutating); SCPI device state survives a TCP reconnect, so the
+        bare resource is enough for the in-flight command to succeed.
+        """
+        if self._rm is None or not self.ip_address:
+            return False
+        # Tear down the broken resource. ``close()`` on a dead session
+        # can itself raise — swallow, the underlying socket is gone.
         try:
-            await asyncio.to_thread(self._visa_resource.write, cmd)
-        finally:
+            if self._visa_resource is not None:
+                await asyncio.to_thread(self._visa_resource.close)
+        except Exception:
+            pass
+        self._visa_resource = None
+
+        try:
+            resource_string = f"TCPIP0::{self.ip_address}::{self.port}::SOCKET"
+            self._visa_resource = await asyncio.to_thread(
+                self._rm.open_resource,
+                resource_string,
+                read_termination='\n',
+                write_termination='\n',
+                timeout=VISA_TIMEOUT_DEFAULT,
+            )
+            logger.info(
+                f"[F64] silent reconnect succeeded — resource reopened "
+                f"({resource_string})"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"[F64] silent reconnect failed: {e}")
+            self._visa_resource = None
+            return False
+
+    async def _do_write(self, cmd: str, timeout: Optional[int] = None) -> None:
+        """发送 SCPI 写命令（由基类 _write() 自动调用，SCPI 日志已由基类记录）。
+
+        Transparently retries once on ``VI_ERROR_CONN_LOST`` /
+        ``VI_ERROR_INV_OBJECT`` (PyVISA conn-lost shapes). Timeouts and
+        other VisaIOError codes propagate unchanged.
+        """
+        for attempt in (0, 1):
             if timeout:
-                self._visa_resource.timeout = original_timeout
+                original_timeout = self._visa_resource.timeout
+                self._visa_resource.timeout = timeout
+            try:
+                await asyncio.to_thread(self._visa_resource.write, cmd)
+                return
+            except Exception as e:
+                if attempt == 0 and self._is_visa_conn_lost(e):
+                    logger.warning(
+                        f"[F64] VISA connection lost on write '{cmd[:40]}...' "
+                        f"({type(e).__name__}: code=0x{getattr(e, 'error_code', 0) & 0xFFFFFFFF:08X}) — "
+                        f"silent reconnect"
+                    )
+                    if await self._silent_reconnect_visa():
+                        continue  # retry once with fresh session
+                raise
+            finally:
+                if timeout and self._visa_resource is not None:
+                    try:
+                        self._visa_resource.timeout = original_timeout
+                    except Exception:
+                        pass
 
     async def _do_query(self, cmd: str, timeout: Optional[int] = None) -> str:
-        """发送 SCPI 查询命令并返回响应（由基类 _query() 自动调用，SCPI 日志已由基类记录）"""
-        if timeout:
-            original_timeout = self._visa_resource.timeout
-            self._visa_resource.timeout = timeout
-        try:
-            response = await asyncio.to_thread(self._visa_resource.query, cmd)
-            return response
-        finally:
+        """发送 SCPI 查询命令并返回响应（由基类 _query() 自动调用，SCPI 日志已由基类记录）。
+
+        Same retry semantics as ``_do_write``."""
+        for attempt in (0, 1):
             if timeout:
-                self._visa_resource.timeout = original_timeout
+                original_timeout = self._visa_resource.timeout
+                self._visa_resource.timeout = timeout
+            try:
+                response = await asyncio.to_thread(self._visa_resource.query, cmd)
+                return response
+            except Exception as e:
+                if attempt == 0 and self._is_visa_conn_lost(e):
+                    logger.warning(
+                        f"[F64] VISA connection lost on query '{cmd[:40]}...' "
+                        f"({type(e).__name__}: code=0x{getattr(e, 'error_code', 0) & 0xFFFFFFFF:08X}) — "
+                        f"silent reconnect"
+                    )
+                    if await self._silent_reconnect_visa():
+                        continue
+                raise
+            finally:
+                if timeout and self._visa_resource is not None:
+                    try:
+                        self._visa_resource.timeout = original_timeout
+                    except Exception:
+                        pass
+        # Unreachable: the loop either returns or re-raises.
+        return ""
 
 
     async def _check_errors(self) -> None:
@@ -1768,6 +1871,133 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             f"[F64] Interference Generator license: "
             f"{self.has_interference_generator} (probed from {options or '(empty)'})"
         )
+
+    # ──────────────────────────────────────────────────────────────────
+    # F64-specific replacement for *OPT?
+    # ──────────────────────────────────────────────────────────────────
+    #
+    # Verified CAICT 2026-05-13 (memory ``project_f64_ate_server_capabilities``):
+    # the F64 ATE Server doesn't implement ``*OPT?`` — it answers
+    # ``-100,"ATE command not supported"``. The base class default
+    # therefore got nothing and ``_apply_discovered_capabilities`` always
+    # received an empty list, silently setting ``has_interference_generator``
+    # to False even on units that have the K01 license. Operators then
+    # had to manually set ``config['has_interference_generator']`` to
+    # work around the failure.
+    #
+    # The override below replaces ``*OPT?`` with a two-source probe:
+    #
+    #   (a) **SYST:INFO? keyword scan** — SYST:INFO? is the one
+    #       confirmed-working introspection query on F64; its text
+    #       contains free-form capability hints. We scan for known
+    #       license-related keywords and emit canonical tokens. Cheap
+    #       and never NAKs (the command itself works).
+    #
+    #   (b) **Soft feature probes** — for each option we care about,
+    #       send a single read-only SCPI that's gated by the same
+    #       license as the feature. If the controller answers, the
+    #       license is installed; if it NAKs with -100/-113, the
+    #       license is absent. Probes are NEVER write commands and
+    #       NEVER mutate device state.
+    #
+    # Adding a new license check is one row in ``_F64_OPTION_PROBES``.
+    # Each entry has a clear ``why`` so the next engineer doesn't have
+    # to guess what feature the probe gates.
+    #
+    # The exact SCPI for each soft probe needs on-site verification
+    # against the F64 firmware — comments below mark each entry's
+    # provenance. If a probe turns out wrong, the worst case is a
+    # false-negative (option not detected, operator falls back to
+    # explicit config), never a false-positive.
+
+    # (canonical_token, probe_scpi, rationale).
+    # canonical_token is the value that lands in self._installed_options;
+    # _apply_discovered_capabilities then maps it onto has_*  flags.
+    _F64_OPTION_PROBES: List[tuple] = [
+        # CAICT to-verify: OUTPut:INTERFerence:LIST? — read-only query
+        # for currently-defined interferer ids. Expected to NAK with
+        # -100 when the K01 (Internal Interference Generator) license
+        # is missing, ACK (possibly with empty/0 payload) when present.
+        # Token "INT-GEN" matches INTERFERENCE_GEN_OPTION_TOKENS.
+        ("INT-GEN", "OUTPut:INTERFerence:LIST?",
+         "K01 Interference Generator — gates set_calibration_tone()"),
+        # SYSTem:CALibration:USER:LIST? — read-only query for stored
+        # user-alignment names. Should NAK without the User Alignment
+        # license; ACK (CSV or empty) when present.
+        ("USER-ALIGN", "SYSTem:CALibration:USER:LIST?",
+         "Integrated Setup Calibration (user alignment) license"),
+    ]
+
+    # Keyword → canonical token. Used by SYST:INFO? scan. All lower-case;
+    # match is substring on the lower-cased SYST:INFO? response.
+    _F64_SYSTINFO_KEYWORDS: Dict[str, str] = {
+        "interference": "INT-GEN",
+        "int-gen": "INT-GEN",
+        "int_gen": "INT-GEN",
+        "calibration user": "USER-ALIGN",
+        "user alignment": "USER-ALIGN",
+    }
+
+    async def _probe_installed_options(self) -> List[str]:
+        """F64-specific replacement for the base class ``*OPT?`` probe.
+
+        Returns a list of canonical option tokens. Failure to detect an
+        option (probe NAKs / SYST:INFO? missing keyword) is treated as
+        "license absent" — safer default than assuming installed.
+
+        Never raises; SYST:INFO? failure is logged + scan skipped, soft-
+        probe failures are silently treated as "feature absent".
+        """
+        discovered: List[str] = []
+        seen: set = set()
+
+        # Step (a): SYST:INFO? keyword scan. SYST:INFO? is the confirmed-
+        # working introspection query (returns the channel-count line we
+        # already parse in connect() — see propsim_f64.py:257-266).
+        try:
+            info_raw = await self._query("SYST:INFO?")
+            info_lower = (info_raw or "").lower()
+            for keyword, token in self._F64_SYSTINFO_KEYWORDS.items():
+                if keyword in info_lower and token not in seen:
+                    discovered.append(token)
+                    seen.add(token)
+        except Exception as e:
+            logger.warning(
+                f"[F64] SYST:INFO? license scan failed: {e}",
+                extra={"instrument_id": self.instrument_id},
+            )
+
+        # Step (b): soft feature probes. One round-trip per option;
+        # don't propagate per-probe failures so a missing license can't
+        # block startup.
+        for token, probe_cmd, rationale in self._F64_OPTION_PROBES:
+            if token in seen:
+                continue
+            try:
+                response = await self._query(probe_cmd)
+                # Any non-None response counts as "the controller has
+                # this command", i.e. license present. Empty string is
+                # still a valid ACK ("no items in the list" ≠ "command
+                # not supported").
+                if response is not None:
+                    discovered.append(token)
+                    seen.add(token)
+                    logger.debug(
+                        f"[F64] feature probe '{probe_cmd}' → {token} ({rationale})"
+                    )
+            except Exception:
+                # NAK / -100 / -113 / transient I/O — treat as "license
+                # absent" without spamming the log. The probe table is
+                # the source of truth for what's expected to fail.
+                pass
+
+        self._installed_options = discovered
+        logger.info(
+            f"[F64] installed options (feature-probed, not *OPT?): "
+            f"{discovered or '(none)'}",
+            extra={"instrument_id": self.instrument_id},
+        )
+        return discovered
 
     async def _query_with_retry(
         self,

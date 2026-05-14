@@ -156,6 +156,12 @@ class RealUxmDriver(BaseStationDriver):
         # VISA session
         self._visa_rm = None
         self._visa_session = None
+        # The final resource string that connect() landed on after any
+        # Platform → hislip2 auto-redirection. Silent reconnect re-opens
+        # this exact string so a half-dead session can be replaced
+        # without re-deriving the endpoint (which depends on a runtime
+        # *IDN? probe).
+        self._active_resource_string: Optional[str] = None
         # 小区配置状态 — primary cell defaults to profile's PRIMARY_CELL
         # ("CELL0" for 5G NR Test App, "CELL1" for LTE_NR_IRAT)
         self._cell_id: str = self._cmds.PRIMARY_CELL
@@ -335,6 +341,9 @@ class RealUxmDriver(BaseStationDriver):
                     f"keeping profile {self._cmds.PROFILE_NAME}"
                 )
             logger.info(f"[UXM] Connected: {idn}")
+            # Remember the endpoint we actually ended up on (post any
+            # Platform→hislip2 redirect) for silent reconnect.
+            self._active_resource_string = resource_str
 
             # 清除状态
             self._write("*CLS")
@@ -1631,17 +1640,86 @@ class RealUxmDriver(BaseStationDriver):
     # 内部 VISA 工具方法 (SCPI 日志由基类 _write/_query 自动处理)
     # ===================================================================
 
+    # ── Connection-loss-aware retry (sync flavour — F64/FS16 are async) ─
+    # Same Codex P2 lesson: only VI_ERROR_CONN_LOST / VI_ERROR_INV_OBJECT
+    # trigger reconnect; VI_ERROR_TMO propagates (let timeout be a
+    # timeout). UXM's _do_* are sync (PyVISA call without to_thread)
+    # because the base ``_query`` template handles both shapes — sync
+    # _do_query just returns str directly.
+
+    @staticmethod
+    def _is_visa_conn_lost(exc: BaseException) -> bool:
+        from app.hal._visa_reconnect import is_visa_conn_lost
+        return is_visa_conn_lost(exc)
+
+    def _silent_reconnect_visa(self) -> bool:
+        """Sync reopen of the UXM VISA session — reuses the resource
+        string captured by connect() so we don't re-run the Platform/
+        hislip2 auto-detection."""
+        if self._visa_rm is None or not self._active_resource_string:
+            return False
+        try:
+            if self._visa_session is not None:
+                self._visa_session.close()
+        except Exception:
+            pass
+        self._visa_session = None
+        try:
+            self._visa_session = self._visa_rm.open_resource(
+                self._active_resource_string,
+                timeout=VISA_TIMEOUT_DEFAULT,
+            )
+            if "SOCKET" in self._active_resource_string:
+                self._visa_session.read_termination = "\n"
+                self._visa_session.write_termination = "\n"
+            logger.info(
+                f"[UXM] silent reconnect succeeded — reopened "
+                f"{self._active_resource_string}"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"[UXM] silent reconnect failed: {e}")
+            self._visa_session = None
+            return False
+
     def _do_write(self, cmd: str) -> None:
         """发送 SCPI 写命令（由基类 _write() 自动调用）"""
-        if not self._visa_session:
-            raise ConnectionError("[UXM] Not connected")
-        self._visa_session.write(cmd)
+        for attempt in (0, 1):
+            if not self._visa_session:
+                raise ConnectionError("[UXM] Not connected")
+            try:
+                self._visa_session.write(cmd)
+                return
+            except Exception as e:
+                if attempt == 0 and self._is_visa_conn_lost(e):
+                    logger.warning(
+                        f"[UXM] VISA connection lost on write '{cmd[:40]}...' "
+                        f"(code=0x{getattr(e, 'error_code', 0) & 0xFFFFFFFF:08X}) "
+                        f"— silent reconnect"
+                    )
+                    if self._silent_reconnect_visa():
+                        continue
+                raise
 
     def _do_query(self, cmd: str) -> str:
         """发送 SCPI 查询并返回响应（由基类 _query() 自动调用）"""
-        if not self._visa_session:
-            raise ConnectionError("[UXM] Not connected")
-        return self._visa_session.query(cmd)
+        for attempt in (0, 1):
+            if not self._visa_session:
+                raise ConnectionError("[UXM] Not connected")
+            try:
+                return self._visa_session.query(cmd)
+            except Exception as e:
+                if attempt == 0 and self._is_visa_conn_lost(e):
+                    logger.warning(
+                        f"[UXM] VISA connection lost on query '{cmd[:40]}...' "
+                        f"(code=0x{getattr(e, 'error_code', 0) & 0xFFFFFFFF:08X}) "
+                        f"— silent reconnect"
+                    )
+                    if self._silent_reconnect_visa():
+                        continue
+                raise
+        # Unreachable.
+        return ""
 
     def _check_errors(self) -> None:
         """检查并清除错误队列"""
