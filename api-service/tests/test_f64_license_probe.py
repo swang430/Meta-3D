@@ -24,6 +24,7 @@ import pytest
 from app.hal.propsim_f64 import (
     INTERFERENCE_GEN_OPTION_TOKENS,
     RealPropsimF64Driver,
+    _is_unsupported_error_payload,
 )
 
 
@@ -239,3 +240,127 @@ class TestTokenSetAlignment:
         # so the probe's canonical token must round-trip through .upper()
         # to a member of INTERFERENCE_GEN_OPTION_TOKENS.
         assert "INT-GEN".upper() in INTERFERENCE_GEN_OPTION_TOKENS
+
+
+# ---------------------------------------------------------------------------
+# Error-payload guard (Codex P1 on PR #15)
+# ---------------------------------------------------------------------------
+
+class TestUnsupportedErrorPayloadDetector:
+    """``_is_unsupported_error_payload`` recognises IEEE 488.2 error
+    tuples the F64 sometimes returns as the **query response** itself
+    (not raised) when a SCPI command isn't supported.
+
+    Without this guard the soft-probe ``if response is not None`` would
+    credit ``-100,"ATE command not supported"`` as proof the license is
+    installed — exactly the false-positive Codex flagged.
+    """
+
+    def test_canonical_minus_100_payload_is_rejected(self):
+        # The exact payload F64 returns for unsupported commands.
+        assert _is_unsupported_error_payload(
+            '-100,"ATE command not supported"'
+        ) is True
+
+    def test_other_unsupported_codes_rejected(self):
+        # The whole -100..-109 / -113 / -114 range is treated as
+        # unsupported, matching propsim_f64_health._categorize_status.
+        for code in (-100, -103, -109, -113, -114):
+            payload = f'{code},"description"'
+            assert _is_unsupported_error_payload(payload) is True, (
+                f"code={code} should map to unsupported, got accept"
+            )
+
+    def test_no_error_sentinel_not_treated_as_unsupported(self):
+        # SYST:ERR? "all clear" sentinel — looks SCPI-shaped but means
+        # "everything is fine", must NOT be confused with unsupported.
+        assert _is_unsupported_error_payload('0,"No error"') is False
+        assert _is_unsupported_error_payload('+0,"No error"') is False
+
+    def test_state_error_codes_not_treated_as_unsupported(self):
+        # -200..-299 is "execution error" (controller knows the command,
+        # just refused this state). Distinct bucket — don't lump in.
+        for code in (-200, -222, -250, -299):
+            payload = f'{code},"execution error"'
+            assert _is_unsupported_error_payload(payload) is False, (
+                f"code={code} is execution-error, not unsupported"
+            )
+
+    def test_real_response_not_treated_as_unsupported(self):
+        # Normal-looking responses must pass through.
+        assert _is_unsupported_error_payload("ce_sa_cal_tone,interferer_2") is False
+        assert _is_unsupported_error_payload("12.345") is False
+        assert _is_unsupported_error_payload("PROPSIM,F64,SN12345") is False
+
+    def test_empty_string_not_treated_as_unsupported(self):
+        # Empty ACK = "command ran, list is empty" = license present.
+        # Must not be confused with an error payload.
+        assert _is_unsupported_error_payload("") is False
+
+    def test_whitespace_around_payload_tolerated(self):
+        # F64 has been seen to add stray whitespace; the regex is
+        # anchored with optional surrounding whitespace so leading /
+        # trailing newlines don't fool the guard.
+        assert _is_unsupported_error_payload(
+            '  -100,"ATE command not supported"  '
+        ) is True
+
+    def test_non_string_response_safe(self):
+        # Defence-in-depth — None / non-string never crashes the guard.
+        assert _is_unsupported_error_payload(None) is False  # type: ignore[arg-type]
+
+
+class TestProbeRejectsInlineErrorPayload:
+    """End-to-end: the F64 license probe must NOT credit an option when
+    the soft probe ``response`` is itself a SCPI error payload."""
+
+    @pytest.mark.asyncio
+    async def test_inline_minus_100_payload_keeps_option_absent(self):
+        d = _make_driver_with_query_table({
+            "SYST:INFO?": "PROPSIM F64,64,RF",
+            # F64 returns the error TEXT as the query response — does
+            # NOT raise. Probe must detect and reject.
+            "OUTPut:INTERFerence:LIST?": '-100,"ATE command not supported"',
+            "SYSTem:CALibration:USER:LIST?": '-100,"ATE command not supported"',
+        })
+        opts = await d._probe_installed_options()
+        assert opts == []
+
+    @pytest.mark.asyncio
+    async def test_no_error_sentinel_does_credit_option(self):
+        """Negative control — ``0,"No error"`` (SCPI-shaped but not an
+        error) must NOT be misclassified as unsupported. The probe
+        should treat it as proof the command ran."""
+        d = _make_driver_with_query_table({
+            "SYST:INFO?": "PROPSIM F64,64,RF",
+            "OUTPut:INTERFerence:LIST?": '0,"No error"',
+            "SYSTem:CALibration:USER:LIST?": None,
+        })
+        opts = await d._probe_installed_options()
+        assert "INT-GEN" in opts
+
+    @pytest.mark.asyncio
+    async def test_mixed_inline_error_and_real_response(self):
+        """One probe returns inline -100, the other returns real data
+        — only the latter's option ends up in the list."""
+        d = _make_driver_with_query_table({
+            "SYST:INFO?": "PROPSIM F64,64,RF",
+            "OUTPut:INTERFerence:LIST?": '-100,"ATE command not supported"',
+            "SYSTem:CALibration:USER:LIST?": "lab_alignment_v1",
+        })
+        opts = await d._probe_installed_options()
+        assert opts == ["USER-ALIGN"]
+
+    @pytest.mark.asyncio
+    async def test_inline_error_payload_with_apply_keeps_has_flag_false(self):
+        """End-to-end: an unlicensed unit emitting inline ``-100,...``
+        as the probe response must NOT end up with
+        ``has_interference_generator = True`` (the Codex P1 concern)."""
+        d = _make_driver_with_query_table({
+            "SYST:INFO?": "PROPSIM F64,64,RF",
+            "OUTPut:INTERFerence:LIST?": '-100,"ATE command not supported"',
+            "SYSTem:CALibration:USER:LIST?": None,
+        })
+        opts = await d._probe_installed_options()
+        await d._apply_discovered_capabilities(opts)
+        assert d.has_interference_generator is False

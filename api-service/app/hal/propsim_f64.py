@@ -33,6 +33,7 @@ TCP 端口说明 (Table 6, User Reference §1.2.5.2):
 import logging
 import asyncio
 import os
+import re
 import ftplib
 from enum import Enum
 from typing import Dict, Any, List, Optional
@@ -86,6 +87,54 @@ VISA_TIMEOUT_AUTOSET = 15000    # 自动电平校准
 # FTP 凭据 (PROPSIM 出厂默认)
 F64_FTP_USER = "PROPSIM"
 F64_FTP_PASS = "propsim"
+
+
+# F64 ATE Server sometimes returns IEEE 488.2-shaped error strings as
+# the *response* to a query instead of raising. Probe code that just
+# checks "did we get a non-None string?" gets fooled — the payload says
+# the command isn't supported but looks like a normal response to the
+# transport. Detect these here so license-probe / feature-probe code
+# can reject them uniformly.
+#
+# Shape:  '<+|-><code>,"<description>"'  with optional leading whitespace.
+# Codes in -100..-109 / -113 / -114 mean "command not supported" — same
+# buckets the propsim_f64_health categorizer treats as UNSUPPORTED.
+_F64_SCPI_ERROR_RE = re.compile(
+    r'^\s*([+-]?\d+)\s*,\s*"[^"]*"\s*$'
+)
+
+
+def _is_unsupported_error_payload(response: str) -> bool:
+    """True iff ``response`` looks like an IEEE 488.2 error tuple whose
+    code maps to UNSUPPORTED.
+
+    Matches the canonical ``-100,"ATE command not supported"`` shape
+    F64 emits when a SCPI command isn't in firmware (Codex P1 review
+    on #15). Same code ranges as
+    ``propsim_f64_health._categorize_status`` — adding a code there
+    should also update this guard.
+
+    Returns False for empty strings, normal-looking responses, and
+    non-error tuples (e.g. ``0,"No error"`` is the SYST:ERR? "all
+    clear" sentinel — not an unsupported flag, must NOT count as such).
+    """
+    if not response or not isinstance(response, str):
+        return False
+    m = _F64_SCPI_ERROR_RE.match(response)
+    if m is None:
+        return False
+    try:
+        code = int(m.group(1))
+    except ValueError:
+        return False
+    # Same buckets as propsim_f64_health._categorize_status.
+    # -100..-109: F64 ATE Server "command not in firmware"
+    # -113/-114:  IEEE 488.2 undefined header / suffix
+    if -109 <= code <= -100:
+        return True
+    if code in (-113, -114):
+        return True
+    return False
 
 # *OPT? 查询返回里, 表示 "Internal Interference Generator" license 的候选 token.
 # 不同 firmware revision 用不同代号, 命中任一即认定该 license 存在. CAICT 现场首
@@ -1938,6 +1987,13 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         "user alignment": "USER-ALIGN",
     }
 
+    @staticmethod
+    def _looks_like_unsupported_payload(response: str) -> bool:
+        """Delegate to module-level helper so subclasses / tests share
+        the same SCPI-error-payload detection logic. See module docstring
+        on ``_is_unsupported_error_payload`` for the shapes recognised."""
+        return _is_unsupported_error_payload(response)
+
     async def _probe_installed_options(self) -> List[str]:
         """F64-specific replacement for the base class ``*OPT?`` probe.
 
@@ -1975,21 +2031,33 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 continue
             try:
                 response = await self._query(probe_cmd)
-                # Any non-None response counts as "the controller has
-                # this command", i.e. license present. Empty string is
-                # still a valid ACK ("no items in the list" ≠ "command
-                # not supported").
-                if response is not None:
-                    discovered.append(token)
-                    seen.add(token)
-                    logger.debug(
-                        f"[F64] feature probe '{probe_cmd}' → {token} ({rationale})"
-                    )
             except Exception:
-                # NAK / -100 / -113 / transient I/O — treat as "license
-                # absent" without spamming the log. The probe table is
-                # the source of truth for what's expected to fail.
-                pass
+                # NAK raised / transient I/O — treat as "license absent"
+                # without spamming the log. The probe table is the
+                # source of truth for what's expected to fail.
+                continue
+            if response is None:
+                continue
+            # CRITICAL: F64 sometimes returns the SCPI error payload
+            # ``-100,"ATE command not supported"`` as the response
+            # string instead of raising. (Codex P1 review on PR #15 —
+            # the same controller behaviour the categoriser in
+            # propsim_f64_health._categorize_status already maps to
+            # UNSUPPORTED.) Without this guard we'd credit a license
+            # that's actually missing and later send OUTPut:INTERFerence:*
+            # commands the controller has already said it doesn't
+            # implement.
+            if self._looks_like_unsupported_payload(response):
+                logger.debug(
+                    f"[F64] feature probe '{probe_cmd}' returned SCPI "
+                    f"error payload {response.strip()!r} → {token} absent"
+                )
+                continue
+            discovered.append(token)
+            seen.add(token)
+            logger.debug(
+                f"[F64] feature probe '{probe_cmd}' → {token} ({rationale})"
+            )
 
         self._installed_options = discovered
         logger.info(
