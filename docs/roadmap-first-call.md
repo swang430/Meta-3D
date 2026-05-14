@@ -123,8 +123,9 @@ to lifespan startup.
 - Tests: empty-DB cold start → 4 chambers visible; warm-restart → no
   duplicates
 
-**Status**: `[ ]` not started
-**Estimate**: 1 day
+**Status**: ✅ Done — PR #17 (merged 2026-05-14). Codex P1 follow-up
+on the same PR added a PG advisory lock to serialise startup across
+concurrent gunicorn workers.
 
 ---
 
@@ -152,10 +153,12 @@ Profile before tests can run.
 - LabProfile API is currently read-only (`GET /lab-profiles` only,
   designed for deployment-seeded profiles). The wizard needs a new
   `POST /lab-profiles` endpoint covering name + chamber_config_id +
-  instrument_bindings + is_active.
+  instrument_bindings + is_active. *(Done in PR #18.)*
 
-**Status**: `[ ]` in progress (PR pending)
-**Estimate**: 1 day (revised down from 1.5 after scope decision)
+**Status**: ✅ Done — PR #18 (merged 2026-05-14). Codex P1 follow-up
+fixed the wizard to send the real `InstrumentCategory.id` UUID
+instead of the catalog key string, so downstream diagnostics resolve
+`category_key` correctly.
 
 ---
 
@@ -249,13 +252,20 @@ hardware second.
   completion
 - `phase_statuses` ends at `{"precheck": "passed", "reference":
   "passed", "mimo_test": "passed", "analysis": "passed", "report":
-  "passed"}`
+  "passed"}` — implementation note: the API derives status from
+  measurement payloads as `pending` / `failed` / `completed`; the
+  roadmap-informal "passed" maps to `completed`.
 - A PDF report is generated
 - No phase errors surfaced
 
-**Status**: `[ ]` not started
-**Estimate**: 1.5 days
-**Dependencies**: none — purely local, can start anytime
+**Status**: ✅ Done — PR #19 (merged 2026-05-15). Root cause of
+"completes without PDF" was a swallowed `AttributeError` on
+`execution.test_plan` (relationship commented out in the model);
+fix added in `report.py` + strict E2E test
+`test_commissioning_e2e_p06.py` pins PDF-on-disk acceptance going
+forward. Codex P2 follow-up added `db.expire_all()` to those tests
+to defend against SQLAlchemy identity-map stale reads under
+non-StaticPool configurations.
 
 ---
 
