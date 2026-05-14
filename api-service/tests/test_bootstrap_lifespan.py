@@ -223,3 +223,118 @@ class TestEnvVarDisablesBootstrap:
         finally:
             db.close()
         assert n == 4
+
+
+# ---------------------------------------------------------------------------
+# Concurrent-worker race protection (Codex P1 on #17)
+# ---------------------------------------------------------------------------
+#
+# Production runs the API under ``gunicorn --workers 4`` — every worker
+# process enters the FastAPI lifespan concurrently against the same DB.
+# Without serialization, two workers can both observe an empty
+# ``bootstrap_history`` and both insert factory defaults; ChamberConfiguration
+# has no unique constraint on (chamber_type, is_system_preset), so duplicate
+# rows would land silently.
+#
+# The wrapper acquires ``pg_advisory_lock(_PG_BOOTSTRAP_LOCK_KEY)`` at the
+# top of ``run_bootstrap_on_startup`` and releases it at the bottom. The
+# second worker blocks on the lock until the first commits, then proceeds,
+# reads bootstrap_history, and all seeders skip as up-to-date.
+#
+# We can't drive a real Postgres race from a unit test, so we test the
+# *contract*: when the session reports a postgresql dialect, the wrapper
+# issues the lock SQL exactly once before run_all and the unlock SQL
+# exactly once afterward. SQLite never sees either SQL.
+
+class _RecordingSession:
+    """Captures every ``execute()`` call so the test can pin the order
+    and arguments of advisory-lock SQL without touching a real DB."""
+
+    def __init__(self, dialect_name: str):
+        from types import SimpleNamespace
+        self.calls: list[tuple[str, dict]] = []
+        # Mimic SQLAlchemy: ``session.bind.dialect.name``
+        self.bind = SimpleNamespace(dialect=SimpleNamespace(name=dialect_name))
+        self.closed = False
+        self.committed = 0
+
+    # Minimum surface used by run_bootstrap_on_startup + run_all.
+    def execute(self, stmt, params=None):
+        self.calls.append((str(stmt), params or {}))
+        return None
+
+    def query(self, *_args, **_kwargs):
+        # run_all calls this; return an object whose .filter().first()
+        # returns None so every seeder is treated as "never run".
+        # We don't actually want to seed here — we patch ALL_SEEDERS to
+        # an empty list in the test so run_all is a no-op shell.
+        raise AssertionError(
+            "run_all should have been called with empty seeders list — "
+            "if you see this the test set-up is wrong"
+        )
+
+    def close(self):
+        self.closed = True
+
+    def commit(self):
+        self.committed += 1
+
+
+class TestPgAdvisoryLock:
+    """Contract: on Postgres, the wrapper serializes via session-level
+    advisory lock; on SQLite, no lock SQL is issued."""
+
+    def _drive_wrapper(self, dialect: str, monkeypatch):
+        """Run the wrapper with an empty seeder list so we exercise just
+        the lock acquire/release plumbing, not the real seeders."""
+        from app.services import bootstrap as bootstrap_pkg
+
+        monkeypatch.setattr(bootstrap_pkg, "ALL_SEEDERS", [])
+        recording = _RecordingSession(dialect)
+        bootstrap_pkg.run_bootstrap_on_startup(lambda: recording)
+        return recording
+
+    def test_postgres_acquires_and_releases_lock(self, monkeypatch):
+        rec = self._drive_wrapper("postgresql", monkeypatch)
+        # Exactly one lock + one unlock, in order.
+        lock_calls = [c for c in rec.calls if "pg_advisory" in c[0]]
+        assert len(lock_calls) == 2, [c[0] for c in rec.calls]
+        assert "pg_advisory_lock" in lock_calls[0][0]
+        assert "pg_advisory_unlock" in lock_calls[1][0]
+        # Same key on both sides — releases the lock we acquired, not a
+        # different one.
+        assert lock_calls[0][1] == lock_calls[1][1]
+        assert lock_calls[0][1]["key"] != 0  # arbitrary stable nonzero
+        # Session always closed; explicit commit flushes the unlock so
+        # the lock is released cleanly before connection return-to-pool.
+        assert rec.closed is True
+        assert rec.committed >= 1
+
+    def test_sqlite_skips_lock_entirely(self, monkeypatch):
+        rec = self._drive_wrapper("sqlite", monkeypatch)
+        lock_calls = [c for c in rec.calls if "pg_advisory" in c[0]]
+        assert lock_calls == []
+        # No commit needed on the lock path; just close.
+        assert rec.closed is True
+
+    def test_lock_released_even_if_run_all_raises(self, monkeypatch):
+        """If a seeder somehow escapes ``run_all``'s own try/except, the
+        wrapper must still release the lock — otherwise the next worker
+        startup hangs forever."""
+        from app.services import bootstrap as bootstrap_pkg
+
+        def boom(_db, _seeders):
+            raise RuntimeError("simulated catastrophic failure inside run_all")
+
+        monkeypatch.setattr(bootstrap_pkg, "ALL_SEEDERS", [])
+        monkeypatch.setattr(bootstrap_pkg, "run_all", boom)
+
+        rec = _RecordingSession("postgresql")
+        with pytest.raises(RuntimeError, match="catastrophic"):
+            bootstrap_pkg.run_bootstrap_on_startup(lambda: rec)
+
+        lock_calls = [c for c in rec.calls if "pg_advisory" in c[0]]
+        # Lock was acquired, then released in the finally block.
+        assert len(lock_calls) == 2
+        assert "pg_advisory_unlock" in lock_calls[1][0]
+        assert rec.closed is True

@@ -180,6 +180,13 @@ ALL_SEEDERS: List[Seeder] = [
 # logic. Idempotent: re-running the app on an already-seeded DB is a no-op
 # (each seeder's history row pins its applied version).
 
+# Stable 64-bit key for the PG advisory lock that serializes startup
+# bootstrap across concurrent workers. Arbitrary value picked once and
+# kept constant — changing it would let two app generations seed in
+# parallel during a rolling deploy.
+_PG_BOOTSTRAP_LOCK_KEY = 0x7E7C_B007_57AB_1ED1
+
+
 def run_bootstrap_on_startup(session_factory: Callable[[], Session]) -> bool:
     """Run all registered seeders against a session opened from
     ``session_factory`` (typically ``app.db.database.SessionLocal``).
@@ -189,15 +196,63 @@ def run_bootstrap_on_startup(session_factory: Callable[[], Session]) -> bool:
     abort the others — see ``run_all`` — but the caller may want to log
     a louder warning, so we surface the aggregate result.
 
-    The function logs a formatted ``BOOTSTRAP REPORT`` block at INFO level
-    so operators can confirm what was seeded without grepping mixed
-    startup output. Format mirrors ``HAL READINESS REPORT`` for visual
-    parity in tail-f.
+    # Concurrent-worker safety (Codex P1 on #17)
+
+    Production runs the API as ``gunicorn --workers 4`` — every worker
+    enters the FastAPI lifespan concurrently and reaches this function
+    against the same shared DB. Without serialization, two workers can
+    both observe an empty ``bootstrap_history`` and both insert factory
+    defaults; the chamber-preset natural key has no unique constraint,
+    so duplicates land silently.
+
+    The fix is a Postgres advisory lock held for the lifetime of this
+    session: the first worker acquires it and seeds; the others block
+    until release, then proceed and find ``bootstrap_history`` already
+    populated (so all seeders short-circuit as "up-to-date"). We use a
+    *session-level* lock — not ``pg_advisory_xact_lock`` — because
+    ``run_all`` commits once per seeder, and an xact lock would release
+    mid-bootstrap, reopening the race for seeders 2..N.
+
+    SQLite (tests) has no advisory locks. Tests run single-threaded so
+    the race doesn't exist there; we silently skip the lock for any
+    non-Postgres dialect rather than emulating it.
+
+    The function logs a formatted ``BOOTSTRAP REPORT`` block at INFO
+    level so operators can confirm what was seeded without grepping
+    mixed startup output. Format mirrors ``HAL READINESS REPORT``.
     """
     db = session_factory()
+    lock_acquired = False
     try:
+        if db.bind is not None and db.bind.dialect.name == "postgresql":
+            from sqlalchemy import text
+            db.execute(
+                text("SELECT pg_advisory_lock(:key)"),
+                {"key": _PG_BOOTSTRAP_LOCK_KEY},
+            )
+            lock_acquired = True
+            logger.info(
+                "[bootstrap] acquired PG advisory lock %s — serialising "
+                "concurrent worker startup",
+                hex(_PG_BOOTSTRAP_LOCK_KEY),
+            )
         report = run_all(db, ALL_SEEDERS)
     finally:
+        if lock_acquired:
+            try:
+                from sqlalchemy import text
+                db.execute(
+                    text("SELECT pg_advisory_unlock(:key)"),
+                    {"key": _PG_BOOTSTRAP_LOCK_KEY},
+                )
+                db.commit()  # ensure unlock is flushed before close
+            except Exception as exc:  # noqa: BLE001
+                # Connection close releases session-level locks anyway,
+                # so a failed explicit unlock isn't fatal — just noisy.
+                logger.warning(
+                    "[bootstrap] explicit advisory unlock failed: %s "
+                    "(lock will be released on connection close)", exc,
+                )
         db.close()
 
     _log_bootstrap_report(report)
