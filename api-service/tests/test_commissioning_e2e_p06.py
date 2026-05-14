@@ -273,6 +273,16 @@ class TestP06MockFirstCall:
                 f"full statuses: {ps}"
             )
 
+        # The endpoint's commits happened in a different SQLAlchemy
+        # session (the dependency-injected one from _override_get_db).
+        # Without expiring, this test's `db` session would hand back
+        # the cached TestExecution instance from before the request
+        # — stale measurements, stale status, stale duration_sec.
+        # Empirically the test still passes on SQLite + StaticPool
+        # today, but the cached-read pattern is fragile across pool /
+        # autoflush / Postgres changes (Codex P2 review on PR #19).
+        db.expire_all()
+
         # Acceptance #2: a PDF report is generated AND the file exists
         # on disk. Pre-fix, ReportExecutor caught the AttributeError on
         # execution.test_plan and downgraded it to a warning, leaving
@@ -327,6 +337,11 @@ class TestP06MockFirstCall:
         — verifies the wiring instead of just trusting the fixture."""
         session_id = _create_fast_session(lab, db)
         client.post(f"/api/v1/commissioning/sessions/{session_id}/phase/precheck")
+
+        # Endpoint committed in its own session; expire ours so the
+        # query below sees the post-precheck row state, not the cached
+        # pre-request instance. See test above for the rationale.
+        db.expire_all()
 
         execution = (
             db.query(TestExecution)
