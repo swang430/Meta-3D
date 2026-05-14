@@ -1,18 +1,18 @@
-"""LabProfile API — list + RF chain resolution.
+"""LabProfile API — list + create + RF chain resolution.
 
-P2: the calibration-startup UI needs to (1) let operators pick a LabProfile
-and (2) preview the resolved RF chains for a given operating mode before
-hitting Start. Both reads are tiny enough that they live here together
-rather than in a dedicated CRUD module — there's no LabProfile create/edit
-flow yet (labs are seeded by deployment scripts).
+P2 historic note: the first version of this module was read-only because
+labs were expected to be seeded by deployment scripts. P0-2 (first-call
+roadmap) added the wizard-driven self-serve create flow so operators can
+spin up a lab on a fresh install without filing a deploy ticket.
 """
 from __future__ import annotations
 
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -34,6 +34,88 @@ class LabProfileSummary(BaseModel):
     is_active: bool
 
 
+# ---------------------------------------------------------------------------
+# Create-LabProfile request — used by the P0-2 wizard
+# ---------------------------------------------------------------------------
+#
+# Schema mirrors the `LabProfile` model's columns but only exposes fields
+# the wizard collects. `chamber_config_id` is required (acceptance: "wizard
+# completes → LabProfile with a Chamber") and `instrument_bindings` must
+# have at least one entry (acceptance: "≥1 Instrument bound"). Everything
+# else is optional and editable post-wizard via the lab settings UI.
+
+class InstrumentBinding(BaseModel):
+    """One row in the LabProfile.instrument_bindings JSONB array.
+
+    Mirrors the schema documented in the model column comment. Kept loose
+    (instrument_model_id optional) because the wizard step that wires up
+    each category may legitimately leave a model unselected if the operator
+    only knows the IP at install time — but the binding row itself must
+    exist so the calibration UI can show that category as 'configured'.
+
+    ``category_id`` is typed as ``str`` rather than ``UUID``: the wizard
+    holds the catalog category by its stable string ``key`` ("channelEmulator",
+    "vna", …) rather than the DB UUID, which isn't exposed on the public
+    /instruments/catalog response. JSONB stores both shapes equally well;
+    existing deployment-seeded LabProfiles that wrote real UUIDs here
+    keep working because every UUID is a valid str.
+    """
+    category_id: str = Field(
+        min_length=1,
+        description='InstrumentCategory identifier (key string OR UUID), e.g. "channelEmulator"',
+    )
+    instrument_model_id: Optional[UUID] = Field(
+        None,
+        description="Chosen InstrumentModel.id, or null if model TBD",
+    )
+    connection_endpoint: str = Field(
+        description='Transport address, e.g. "192.168.1.10:5025" or "TCPIP0::host::INSTR"',
+        min_length=1,
+    )
+    driver_mode: str = Field(
+        "auto",
+        description="auto | mock | real (matches DriverMode enum the HAL uses)",
+    )
+    role: Optional[str] = Field(
+        None,
+        description="Human-readable role for this binding, e.g. 'primary_channel_emulator'",
+    )
+
+
+class LabProfileCreateRequest(BaseModel):
+    """Wizard payload for POST /lab-profiles."""
+    name: str = Field(
+        min_length=1, max_length=255,
+        description='Unique lab identifier, e.g. "CAICT-Lab-1"',
+    )
+    chamber_config_id: UUID = Field(
+        description="FK to chamber_configurations.id — the chamber this lab uses",
+    )
+    instrument_bindings: List[InstrumentBinding] = Field(
+        min_length=1,
+        description="At least one instrument category must be bound for first-call to work",
+    )
+    description: Optional[str] = None
+    organization: Optional[str] = None
+    location: Optional[str] = None
+    is_active: bool = Field(
+        True,
+        description="Wizard-created labs default to active so calibration can begin immediately",
+    )
+    created_by: Optional[str] = Field(
+        None,
+        description="Operator login or display name; null when no auth context",
+    )
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("name must not be blank after trimming")
+        return v
+
+
 class RFChainEntry(BaseModel):
     chain_id: str = Field(description="SwitchTopology connection id; stable lookup key")
     ce_port: str = Field(description="Source-side label, e.g. 'B1.1' for the channel emulator port")
@@ -53,6 +135,76 @@ class RFChainResolutionResponse(BaseModel):
     chains: List[RFChainEntry]
     warnings: List[str]
     success: bool
+
+
+def _to_summary(row: LabProfile, chamber_name: Optional[str]) -> LabProfileSummary:
+    return LabProfileSummary(
+        id=row.id,
+        name=row.name,
+        description=row.description,
+        organization=row.organization,
+        location=row.location,
+        chamber_config_id=row.chamber_config_id,
+        chamber_name=chamber_name,
+        is_active=row.is_active,
+    )
+
+
+@router.post(
+    "",
+    response_model=LabProfileSummary,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_lab_profile(
+    payload: LabProfileCreateRequest,
+    db: Session = Depends(get_db),
+):
+    """Create a LabProfile from the init wizard (P0-2).
+
+    Errors:
+      - 409 if ``name`` already exists (unique constraint).
+      - 422 if ``chamber_config_id`` does not resolve to a row.
+
+    On success returns the same shape as ``GET /lab-profiles`` so the
+    wizard can stash the response directly into the TanStack Query
+    cache without a second round-trip.
+    """
+    chamber = (
+        db.query(ChamberConfiguration)
+        .filter(ChamberConfiguration.id == payload.chamber_config_id)
+        .first()
+    )
+    if chamber is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"chamber_config_id {payload.chamber_config_id} not found",
+        )
+
+    profile = LabProfile(
+        name=payload.name,
+        description=payload.description,
+        organization=payload.organization,
+        location=payload.location,
+        chamber_config_id=payload.chamber_config_id,
+        instrument_bindings=[b.model_dump(mode="json") for b in payload.instrument_bindings],
+        is_active=payload.is_active,
+        created_by=payload.created_by,
+    )
+    db.add(profile)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        # Most likely: unique constraint on `name`. Inspecting the inner
+        # SQLSTATE would let us split this further, but for the wizard
+        # the actionable surface is just "pick a different name".
+        raise HTTPException(
+            status_code=409,
+            detail=f"LabProfile with this name already exists: {exc.orig}",
+        ) from exc
+
+    db.refresh(profile)
+    return _to_summary(profile, chamber.name)
 
 
 @router.get("", response_model=List[LabProfileSummary])

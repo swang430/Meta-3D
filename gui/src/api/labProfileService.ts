@@ -49,6 +49,38 @@ export async function fetchLabProfiles(activeOnly = true): Promise<LabProfileSum
   return res.data
 }
 
+/**
+ * P0-2: payload the first-run wizard sends to create a LabProfile.
+ * Mirrors `LabProfileCreateRequest` on the backend; keep both sides in
+ * lock-step when adding fields.
+ */
+export interface InstrumentBindingPayload {
+  category_id: string
+  /** Optional — wizard may save IP without a model selection. */
+  instrument_model_id?: string | null
+  connection_endpoint: string
+  driver_mode?: 'auto' | 'mock' | 'real'
+  role?: string | null
+}
+
+export interface CreateLabProfileRequest {
+  name: string
+  chamber_config_id: string
+  instrument_bindings: InstrumentBindingPayload[]
+  description?: string | null
+  organization?: string | null
+  location?: string | null
+  is_active?: boolean
+  created_by?: string | null
+}
+
+export async function createLabProfile(
+  payload: CreateLabProfileRequest,
+): Promise<LabProfileSummary> {
+  const res = await apiClient.post<LabProfileSummary>('/lab-profiles', payload)
+  return res.data
+}
+
 export async function fetchRFChains(
   labProfileId: string,
   operatingMode = 'mimo_ota',

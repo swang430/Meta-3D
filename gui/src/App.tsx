@@ -67,6 +67,8 @@ import { ReportsPage } from './features/Reports/pages/ReportsPage'
 import { CommissioningSandbox } from './components/Commissioning'
 import { DiagnosticsPage } from './features/Diagnostics/DiagnosticsPage'
 import { TopologyEditor } from './features/TopologyEditor/TopologyEditor'
+import { LabProfileWizard } from './components/LabProfile/LabProfileWizard'
+import { fetchLabProfiles } from './api/labProfileService'
 import { RealtimeMetricsCard } from './components/RealtimeMetricsCard'
 import { ExecutionMetricsCard } from './features/Monitoring'
 import ChartsDemoPage from './components/Charts/ChartsDemoPage'
@@ -465,6 +467,20 @@ function App() {
     queryKey: ['dashboard'],
     queryFn: fetchDashboard,
   })
+
+  // P0-2: first-run gate. If the DB has zero active LabProfiles the
+  // operator can't do anything in the main UI (no lab → calibration /
+  // measurement screens have nothing to operate on), so we show the
+  // init wizard instead. We deliberately do NOT block on isLoading:
+  // letting the rest of the app render briefly is preferable to a
+  // blank loading screen on every startup; the gate kicks in as soon
+  // as the query resolves.
+  const labProfilesQuery = useQuery({
+    queryKey: ['lab-profiles'],
+    queryFn: () => fetchLabProfiles(true),
+  })
+  const needsLabProfileWizard =
+    labProfilesQuery.data !== undefined && labProfilesQuery.data.length === 0
 
   const scheduleNextEvent = useCallback(() => {
     if (!demoRunPlanData?.plan) return
@@ -940,6 +956,21 @@ function App() {
       lastRunMeta,
     ],
   )
+
+  // P0-2: render the wizard in place of AppShell if there are no
+  // active LabProfiles. The wizard owns its own resumability state
+  // and calls onComplete after a successful create OR explicit
+  // cancel — both paths invalidate the gate query so this branch
+  // flips automatically.
+  if (needsLabProfileWizard) {
+    return (
+      <LabProfileWizard
+        onComplete={() => {
+          queryClient.invalidateQueries({ queryKey: ['lab-profiles'] })
+        }}
+      />
+    )
+  }
 
   return (
     <AppShell
