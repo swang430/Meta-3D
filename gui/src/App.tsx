@@ -87,6 +87,8 @@ import {
   fetchTestCaseDetail,
   fetchInstrumentCatalog,
   fetchChannelModels,
+  addChannelModel,
+  removeChannelModel,
   fetchSequenceLibrary,
   fetchTestCases,
   fetchTestPlan,
@@ -1603,6 +1605,7 @@ function ScpiHistoryFeed({ categoryKey }: ScpiHistoryFeedProps) {
  * iteration adds in-place add/remove UI.
  */
 function ChannelModelsCard({ categoryKey }: { categoryKey: string }) {
+  const queryClient = useQueryClient()
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['instruments', 'channelModels', categoryKey],
     queryFn: () => fetchChannelModels(categoryKey),
@@ -1614,6 +1617,62 @@ function ChannelModelsCard({ categoryKey }: { categoryKey: string }) {
   const items = data?.items ?? []
   const reason = data?.reason ?? null
 
+  // Add form state — kept local to the card so the parent's render
+  // costs don't grow with this UI. Fields are intentionally minimal:
+  // filename is required, label / description optional.
+  const [addOpen, setAddOpen] = useState(false)
+  const [newFilename, setNewFilename] = useState('')
+  const [newLabel, setNewLabel] = useState('')
+  const [newDescription, setNewDescription] = useState('')
+  const [opError, setOpError] = useState<string | null>(null)
+
+  const addMutation = useMutation({
+    mutationFn: () =>
+      addChannelModel(categoryKey, {
+        filename: newFilename.trim(),
+        label: newLabel.trim() || undefined,
+        description: newDescription.trim() || undefined,
+      }),
+    onSuccess: (result) => {
+      // Backend returns the post-add list shape (same as fetchChannelModels)
+      // so we can seed the cache directly instead of refetching.
+      queryClient.setQueryData(
+        ['instruments', 'channelModels', categoryKey],
+        result,
+      )
+      setNewFilename('')
+      setNewLabel('')
+      setNewDescription('')
+      setOpError(null)
+      setAddOpen(false)
+    },
+    onError: (err: unknown) => {
+      // Surface backend 409 (duplicate) / 422 (invalid) as inline error
+      // — better than a generic toast since the user is mid-input.
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data
+          ?.detail ?? '添加失败'
+      setOpError(String(detail))
+    },
+  })
+
+  const removeMutation = useMutation({
+    mutationFn: (filename: string) => removeChannelModel(categoryKey, filename),
+    onSuccess: (result) => {
+      queryClient.setQueryData(
+        ['instruments', 'channelModels', categoryKey],
+        result,
+      )
+      setOpError(null)
+    },
+    onError: (err: unknown) => {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data
+          ?.detail ?? '删除失败'
+      setOpError(String(detail))
+    },
+  })
+
   // Pretty status banner. Each "empty" reason has a different actionable
   // hint so the operator knows what to fix.
   const statusBanner = (() => {
@@ -1621,10 +1680,10 @@ function ChannelModelsCard({ categoryKey }: { categoryKey: string }) {
     if (isError) {
       return <Alert color="red" variant="light">无法加载信道模型清单 — 请重试或检查后端日志</Alert>
     }
-    if (reason === 'driver_not_loaded') {
+    if (reason === 'driver_not_loaded' && items.length === 0) {
       return (
         <Alert color="yellow" variant="light">
-          驱动未加载. 请确认仪器型号已选 + 端点 IP 已填, 然后点击页面顶部「↻ 重新加载驱动」.
+          驱动未加载. 清单可在此处直接编辑 — 编辑完成后请点击页面顶部「↻ 重新加载驱动」.
         </Alert>
       )
     }
@@ -1634,9 +1693,8 @@ function ChannelModelsCard({ categoryKey }: { categoryKey: string }) {
     if (items.length === 0) {
       return (
         <Alert color="blue" variant="light">
-          清单为空. 在「备注」字段下方的 connection_params JSON 中加入&nbsp;
-          <code>available_channel_models</code> 数组 (操作员手工维护;
-          F64 ATE Server 不支持 SCPI MMEM 文件列表, FTP 也未启用).
+          清单为空. 点击下方「+ 添加」按钮添加 .smu / .rtc / .asc 文件名
+          (F64 不支持文件浏览, 由操作员手工维护清单).
         </Alert>
       )
     }
@@ -1653,17 +1711,86 @@ function ChannelModelsCard({ categoryKey }: { categoryKey: string }) {
               GCM 原生管线 (.smu) / Runtime 管线 (.rtc / .asc). 操作员维护清单, 测试编排从这里下拉选择.
             </Text>
           </Stack>
-          <Button
-            variant="subtle"
-            size="xs"
-            onClick={() => refetch()}
-            loading={isFetching}
-          >
-            ↻ 刷新
-          </Button>
+          <Group gap="xs">
+            <Button
+              variant="light"
+              size="xs"
+              onClick={() => {
+                setAddOpen((v) => !v)
+                setOpError(null)
+              }}
+            >
+              {addOpen ? '× 关闭' : '+ 添加'}
+            </Button>
+            <Button
+              variant="subtle"
+              size="xs"
+              onClick={() => refetch()}
+              loading={isFetching}
+            >
+              ↻ 刷新
+            </Button>
+          </Group>
         </Group>
 
         {statusBanner}
+
+        {opError ? (
+          <Alert color="red" variant="light" onClose={() => setOpError(null)} withCloseButton>
+            {opError}
+          </Alert>
+        ) : null}
+
+        {addOpen ? (
+          <Card withBorder padding="sm" radius="sm" bg="white">
+            <Stack gap="xs">
+              <TextInput
+                size="xs"
+                label="文件名 (必填, .smu / .rtc / .asc)"
+                placeholder="EPA_5Hz.smu"
+                value={newFilename}
+                onChange={(e) => setNewFilename(e.currentTarget.value)}
+              />
+              <TextInput
+                size="xs"
+                label="显示名 (可选)"
+                placeholder="EPA 5 Hz (low-speed pedestrian)"
+                value={newLabel}
+                onChange={(e) => setNewLabel(e.currentTarget.value)}
+              />
+              <TextInput
+                size="xs"
+                label="描述 (可选)"
+                placeholder="3GPP TS 36.521-1 Table B.2.1-1"
+                value={newDescription}
+                onChange={(e) => setNewDescription(e.currentTarget.value)}
+              />
+              <Group justify="flex-end" gap="xs">
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  onClick={() => {
+                    setAddOpen(false)
+                    setNewFilename('')
+                    setNewLabel('')
+                    setNewDescription('')
+                    setOpError(null)
+                  }}
+                >
+                  取消
+                </Button>
+                <Button
+                  size="xs"
+                  onClick={() => addMutation.mutate()}
+                  loading={addMutation.isPending}
+                  disabled={!newFilename.trim()}
+                >
+                  保存
+                </Button>
+              </Group>
+            </Stack>
+          </Card>
+        ) : null}
 
         {items.length > 0 ? (
           <Stack gap="xs">
@@ -1685,6 +1812,29 @@ function ChannelModelsCard({ categoryKey }: { categoryKey: string }) {
                     <Text size="xs" c="dimmed">{item.description}</Text>
                   ) : null}
                 </Stack>
+                <ActionIcon
+                  variant="subtle"
+                  color="red"
+                  size="sm"
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        `从清单中删除 "${item.filename}"?\n\n` +
+                          `这只是从 GUI curated list 删掉, 不会动 F64 上的实际文件.`,
+                      )
+                    ) {
+                      removeMutation.mutate(item.filename)
+                    }
+                  }}
+                  loading={
+                    removeMutation.isPending &&
+                    removeMutation.variables === item.filename
+                  }
+                  aria-label={`删除 ${item.filename}`}
+                  title="删除此条目"
+                >
+                  ×
+                </ActionIcon>
               </Group>
             ))}
           </Stack>
@@ -3172,7 +3322,34 @@ type StepFieldTextarea = {
   description?: string
 }
 
-type StepFieldDefinition = StepFieldNumber | StepFieldSelect | StepFieldText | StepFieldTextarea
+/**
+ * Pulls the F64 curated channel-model list from
+ * ``/instruments/channelEmulator/channel-models`` and renders a Select.
+ * Extends select-with-options (built-in scenario types like 3GPP_CDL-C)
+ * with the operator's actual .smu / .rtc filenames so test steps can
+ * pick a real F64 file, not just an abstract scenario.
+ *
+ * Why a dedicated field type rather than overloading 'select':
+ * - Needs useQuery; existing renderField is a plain function, can't
+ *   hold hook state per-call without one component per row.
+ * - Per-type discriminator keeps the type system precise — a 'select'
+ *   stays "pure static options", a 'channelModel' is "API-backed".
+ */
+type StepFieldChannelModel = {
+  key: string
+  label: string
+  type: 'channelModel'
+  description?: string
+  /**
+   * Extra static options merged ABOVE the API entries. Lets existing
+   * scenario presets (3GPP_CDL-C / UMa / TDL-A) coexist with operator-
+   * curated F64 filenames in one dropdown — operators don't need to
+   * switch UIs based on "is this a 3GPP scenario or a literal file".
+   */
+  staticOptions?: Array<{ value: string; label: string }>
+}
+
+type StepFieldDefinition = StepFieldNumber | StepFieldSelect | StepFieldText | StepFieldTextarea | StepFieldChannelModel
 
 type StepTemplateDefinition = {
   displayName: string
@@ -3256,11 +3433,15 @@ const stepTemplateDefinitions: Record<string, StepTemplateDefinition> = {
       {
         key: 'channelModel',
         label: '信道模型',
-        type: 'select',
-        options: [
-          { value: '3GPP_CDL-C', label: '3GPP CDL-C' },
-          { value: '3GPP_TDL-A', label: '3GPP TDL-A' },
-          { value: 'ITU_VehA', label: 'ITU VehA' },
+        type: 'channelModel',
+        // Built-in scenario presets first, then the operator-curated F64
+        // .smu / .rtc filenames sourced from /channel-models. Both end up
+        // in the same dropdown — operator picks abstract scenario OR
+        // concrete F64 file in one place.
+        staticOptions: [
+          { value: '3GPP_CDL-C', label: '3GPP CDL-C (场景预设)' },
+          { value: '3GPP_TDL-A', label: '3GPP TDL-A (场景预设)' },
+          { value: 'ITU_VehA', label: 'ITU VehA (场景预设)' },
           { value: 'custom', label: '自定义波场' },
         ],
       },
@@ -3843,9 +4024,71 @@ function _TestConfig({
     [parameterState],
   )
 
+  // Sub-component because the channelModel field type needs its own
+  // useQuery — a hook can't live inside renderField (which is called
+  // per field in a single React render and isn't a component itself).
+  const ChannelModelSelectField = ({
+    field,
+    value,
+    onChange,
+  }: {
+    field: StepFieldChannelModel
+    value: string
+    onChange: (next: string) => void
+  }) => {
+    const { data, isLoading, isError } = useQuery({
+      queryKey: ['instruments', 'channelModels', 'channelEmulator'],
+      queryFn: () => fetchChannelModels('channelEmulator'),
+      refetchOnWindowFocus: false,
+    })
+    const apiOptions = (data?.items ?? []).map((item) => ({
+      value: item.filename,
+      label: item.label && item.label !== item.filename
+        ? `${item.filename} — ${item.label}`
+        : item.filename,
+    }))
+    // Static (abstract scenario) options first, then a divider-by-label,
+    // then the operator-curated F64 filenames. Operators can choose
+    // either; the executor decides routing based on the value.
+    const merged = [
+      ...(field.staticOptions ?? []),
+      ...apiOptions,
+    ]
+    const description = (() => {
+      if (isLoading) return '正在加载 F64 信道文件清单 ...'
+      if (isError) return '无法加载 F64 清单, 只显示场景预设 (在仪器页配置 F64 清单)'
+      if (apiOptions.length === 0) {
+        return field.description
+          ? `${field.description} · F64 清单为空 (在仪器页添加 .smu / .rtc 文件)`
+          : 'F64 清单为空 (在仪器页添加 .smu / .rtc 文件)'
+      }
+      return field.description ?? `场景预设 + ${apiOptions.length} 个 F64 文件`
+    })()
+    return (
+      <Select
+        key={field.key}
+        label={field.label}
+        data={merged}
+        value={value || null}
+        onChange={(next) => onChange(next ?? '')}
+        description={description}
+        searchable
+      />
+    )
+  }
+
   const renderField = (field: StepFieldDefinition) => {
     const baseValue = currentParams?.[field.key] ?? templateDefinition?.defaults[field.key] ?? ''
     switch (field.type) {
+      case 'channelModel':
+        return (
+          <ChannelModelSelectField
+            key={field.key}
+            field={field}
+            value={baseValue}
+            onChange={(next) => handleParameterChange(field.key, next)}
+          />
+        )
       case 'number':
         return (
           <NumberInput

@@ -400,6 +400,176 @@ async def list_channel_models_endpoint(
     )
 
 
+# ============================================================
+# Channel-model curated-list CRUD
+# ------------------------------------------------------------
+# Operators were maintaining the list by hand-editing the JSON in the
+# ``connection_params`` field. These endpoints replace that with surgical
+# add / remove that:
+#   - preserves unrelated keys in connection_params (don't blow away
+#     port-map / alignment_name / etc when editing channel models)
+#   - de-dupes by filename (case-sensitive — F64's SCPI is case-sensitive)
+#   - rejects empty / non-string filenames at the API boundary so they
+#     never reach the normaliser as a silent drop
+#
+# The endpoints don't trigger HAL reload — the GUI does that explicitly
+# via the existing /hal/reload button so the operator controls timing
+# (mid-test edits are a thing they may want to do without bouncing the
+# driver, even if the new entry won't be visible until reload).
+# ============================================================
+
+class AddChannelModelRequest(BaseModel):
+    """Payload for POST /instruments/{cat}/channel-models."""
+    filename: str
+    label: Optional[str] = None
+    description: Optional[str] = None
+
+
+@router.post(
+    "/instruments/{category_key}/channel-models",
+    response_model=ChannelModelsListResult,
+)
+def add_channel_model_entry(
+    category_key: str,
+    payload: AddChannelModelRequest,
+    db: Session = Depends(get_db),
+) -> ChannelModelsListResult:
+    """Append one entry to ``connection_params['available_channel_models']``.
+
+    De-duplicates by ``filename`` — if a row with the same filename exists,
+    the request 409s. Use DELETE first if you mean to replace it.
+    """
+    from app.hal.channel_emulator import normalize_channel_model_entries
+
+    filename = (payload.filename or "").strip()
+    if not filename:
+        raise HTTPException(status_code=422, detail="filename must be a non-empty string")
+
+    cat = (
+        db.query(InstrumentCategoryModel)
+        .filter(InstrumentCategoryModel.category_key == category_key)
+        .first()
+    )
+    if cat is None:
+        raise HTTPException(status_code=404, detail=f"category '{category_key}' not found")
+
+    conn = (
+        db.query(InstrumentConnectionDB)
+        .filter(InstrumentConnectionDB.category_id == cat.id)
+        .first()
+    )
+    if conn is None:
+        # The category exists but the operator hasn't created an
+        # InstrumentConnection record yet — happens when they're seeding
+        # a fresh DB. Create a minimal record so the channel-model list
+        # has somewhere to live.
+        conn = InstrumentConnectionDB(category_id=cat.id, created_by="system")
+        db.add(conn)
+        db.flush()
+
+    params = dict(conn.connection_params or {})
+    existing = list(params.get("available_channel_models") or [])
+    # Check duplicates using the normaliser output so the comparison is
+    # against canonical filenames — protects against "EPA_5Hz.smu" added
+    # twice with different surrounding shapes (bare string vs dict).
+    for normalised in normalize_channel_model_entries(existing):
+        if normalised["filename"] == filename:
+            raise HTTPException(
+                status_code=409,
+                detail=f"channel model '{filename}' already in the list",
+            )
+
+    new_entry: Dict[str, Any] = {"filename": filename}
+    if payload.label:
+        new_entry["label"] = payload.label
+    if payload.description:
+        new_entry["description"] = payload.description
+    existing.append(new_entry)
+    params["available_channel_models"] = existing
+    conn.connection_params = params
+    # JSONB columns need an explicit "modified" flag for SQLAlchemy to
+    # detect the in-place mutation; reassigning the dict (above) is
+    # sufficient on most backends, but flag_modified is the belt-and-
+    # suspenders form that works across PG/SQLite without behaviour drift.
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(conn, "connection_params")
+    db.commit()
+
+    normalised_all = normalize_channel_model_entries(existing)
+    items = [ChannelModelEntry(**entry) for entry in normalised_all]
+    return ChannelModelsListResult(items=items)
+
+
+@router.delete(
+    "/instruments/{category_key}/channel-models/{filename}",
+    response_model=ChannelModelsListResult,
+)
+def remove_channel_model_entry(
+    category_key: str,
+    filename: str,
+    db: Session = Depends(get_db),
+) -> ChannelModelsListResult:
+    """Remove the entry with the matching ``filename``.
+
+    404 if the category or the entry doesn't exist. Preserves every other
+    key in ``connection_params``.
+    """
+    from app.hal.channel_emulator import normalize_channel_model_entries
+
+    cat = (
+        db.query(InstrumentCategoryModel)
+        .filter(InstrumentCategoryModel.category_key == category_key)
+        .first()
+    )
+    if cat is None:
+        raise HTTPException(status_code=404, detail=f"category '{category_key}' not found")
+
+    conn = (
+        db.query(InstrumentConnectionDB)
+        .filter(InstrumentConnectionDB.category_id == cat.id)
+        .first()
+    )
+    if conn is None or not conn.connection_params:
+        raise HTTPException(status_code=404, detail=f"no curated list configured for '{category_key}'")
+
+    params = dict(conn.connection_params)
+    existing = list(params.get("available_channel_models") or [])
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"curated list for '{category_key}' is empty")
+
+    # Filter by matching the normalised filename — handles the mixed-
+    # shape case (some entries are bare strings, others dicts) without
+    # the caller having to know.
+    kept_raw: List[Any] = []
+    removed = False
+    for raw in existing:
+        if isinstance(raw, str):
+            if raw == filename:
+                removed = True
+                continue
+            kept_raw.append(raw)
+        elif isinstance(raw, dict) and raw.get("filename") == filename:
+            removed = True
+            continue
+        else:
+            kept_raw.append(raw)
+
+    if not removed:
+        raise HTTPException(
+            status_code=404,
+            detail=f"channel model '{filename}' not in the curated list",
+        )
+
+    params["available_channel_models"] = kept_raw
+    conn.connection_params = params
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(conn, "connection_params")
+    db.commit()
+
+    items = [ChannelModelEntry(**entry) for entry in normalize_channel_model_entries(kept_raw)]
+    return ChannelModelsListResult(items=items)
+
+
 @router.put("/instruments/{category_key}", response_model=FEInstrumentCategory)
 def update_instrument_category(
     category_key: str,
