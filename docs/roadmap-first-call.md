@@ -399,6 +399,7 @@ to the existing HAL readiness table.
 > Items added mid-task. Reviewed weekly; promoted to P1/P2/P3 or dropped.
 
 - `[discovered 2026-05-14 during P0-1]` `tests/test_chamber_configuration.py::TestChamberPresets::test_preset_type_c_exists` and the two `test_create_chamber_from_preset` variants fail on clean `main` (pre-existing — `has_lna` on Type-C preset is False but tests assert True). Either the seeder default drifted or the test expectations did. Triage: ~30 min in `app/services/bootstrap/chamber_presets.py` vs `tests/test_chamber_configuration.py`.
+- `[discovered 2026-05-14 during P0-2]` IDE (VSCode) diagnostics resolve Python imports against system Python 3.13 (`/opt/homebrew/lib/python3.13/site-packages`) instead of the project venv at `api-service/.venv/`, so every edit to a Python file emits 1-3 phantom `Cannot find module sqlalchemy / pydantic_settings / sqlalchemy.orm` errors. Tests pass fine — this is purely IDE noise. Fix: add `.vscode/settings.json` with `"python.defaultInterpreterPath": "${workspaceFolder}/api-service/.venv/bin/python"` (or per-folder `python.analysis.extraPaths` pointing at the venv site-packages). Triage: ~10 min, P3 polish but worth doing because diagnostic noise hides real type errors when they surface.
 
 ---
 
