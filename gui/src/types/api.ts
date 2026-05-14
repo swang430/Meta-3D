@@ -79,6 +79,10 @@ export type InstrumentConnection = {
 }
 
 export type InstrumentCategory = {
+  /** DB UUID for this category. Stable identifier used by LabProfile
+   *  instrument_bindings, topology editor links, etc. Distinct from
+   *  `key` (which is the human-stable string slug like "channelEmulator"). */
+  categoryId?: string | null
   key: string
   label: string
   description: string
