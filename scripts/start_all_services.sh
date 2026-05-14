@@ -94,6 +94,25 @@ print_hal_readiness() {
     echo ""
 }
 
+# 把 BOOTSTRAP REPORT (P0-1 — DB factory-defaults seeder 的 ✓/○/✗ 表) 从
+# API.log 抽出来打到终端, 跟 HAL readiness 同款的展示位置。
+# 抽取范围: 从 "BOOTSTRAP REPORT" 表头到第一个 "seeders ·" tally 行。
+# 没匹配到 (BOOTSTRAP_ON_STARTUP=false 或 init_db 失败) 时静默退出。
+print_bootstrap_report() {
+    local log_file=$1
+    if ! grep -q "BOOTSTRAP REPORT" "${log_file}" 2>/dev/null; then
+        return 0
+    fi
+    echo ""
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BLUE}🌱 Bootstrap (DB 工厂默认数据播种结果):${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    awk '/BOOTSTRAP REPORT/,/seeders ·/' "${log_file}" \
+      | sed -E 's/.*\[bootstrap\] //'
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+}
+
 # 检查依赖端口
 echo "检查依赖端口..."
 PORTS_OK=true
@@ -156,8 +175,11 @@ if [ -d "${PROJECT_ROOT}/api-service" ]; then
 
     # HAL init runs inside FastAPI lifespan startup. Block here until it
     # finishes (or 30s) so the readiness table prints in a stable place
-    # — before GUI logs start flowing past in tail -f.
+    # — before GUI logs start flowing past in tail -f. Bootstrap runs
+    # BEFORE HAL inside the same lifespan, so its block is already in
+    # the log by the time HAL marker shows up.
     if wait_for_hal_readiness "${LOG_DIR}/API.log" 30; then
+        print_bootstrap_report "${LOG_DIR}/API.log"
         print_hal_readiness "${LOG_DIR}/API.log"
     else
         echo -e "${YELLOW}⚠️  HAL readiness report not seen within 30s — check ${LOG_DIR}/API.log${NC}"

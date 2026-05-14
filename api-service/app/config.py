@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     # Mock instruments (for development without hardware)
     use_mock_instruments: bool = True
 
+    # Bootstrap (DB factory-defaults seeder) — runs on lifespan startup
+    # after init_db(). Escape hatch for ops who want to manage seed data
+    # out-of-band (e.g. by running `python -m scripts.bootstrap` from
+    # their own deploy script).
+    bootstrap_on_startup: bool = True
+
     # Calibration settings
     calibration_data_path: str = "./calibration_data"
     certificate_output_path: str = "./certificates"

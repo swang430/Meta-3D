@@ -391,8 +391,7 @@ to the existing HAL readiness table.
 
 > Items added mid-task. Reviewed weekly; promoted to P1/P2/P3 or dropped.
 
-(empty — append as discoveries happen, format:
-`[discovered YYYY-MM-DD during P0-X] <one-line note>`)
+- `[discovered 2026-05-14 during P0-1]` `tests/test_chamber_configuration.py::TestChamberPresets::test_preset_type_c_exists` and the two `test_create_chamber_from_preset` variants fail on clean `main` (pre-existing — `has_lna` on Type-C preset is False but tests assert True). Either the seeder default drifted or the test expectations did. Triage: ~30 min in `app/services/bootstrap/chamber_presets.py` vs `tests/test_chamber_configuration.py`.
 
 ---
 

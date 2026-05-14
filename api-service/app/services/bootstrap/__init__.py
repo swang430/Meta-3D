@@ -164,3 +164,100 @@ ALL_SEEDERS: List[Seeder] = [
     report_templates_seeder,
     test_case_templates_seeder,
 ]
+
+
+# ---------------------------------------------------------------------------
+# Lifespan wrapper
+# ---------------------------------------------------------------------------
+#
+# P0-1 (first-call roadmap): the FastAPI lifespan calls this once at startup
+# so a fresh deploy is never "empty DB + no chambers + no instruments + no
+# templates". Operators stop needing to run `python -m scripts.bootstrap`
+# manually as a deploy step.
+#
+# This is a *wrapper*, not a re-implementation, so the manual CLI and the
+# auto-on-startup path go through the same `run_all` + `bootstrap_history`
+# logic. Idempotent: re-running the app on an already-seeded DB is a no-op
+# (each seeder's history row pins its applied version).
+
+def run_bootstrap_on_startup(session_factory: Callable[[], Session]) -> bool:
+    """Run all registered seeders against a session opened from
+    ``session_factory`` (typically ``app.db.database.SessionLocal``).
+
+    Returns True if all seeders succeeded (including "skipped (up-to-date)"
+    paths), False if any seeder failed. Failure of one seeder does not
+    abort the others — see ``run_all`` — but the caller may want to log
+    a louder warning, so we surface the aggregate result.
+
+    The function logs a formatted ``BOOTSTRAP REPORT`` block at INFO level
+    so operators can confirm what was seeded without grepping mixed
+    startup output. Format mirrors ``HAL READINESS REPORT`` for visual
+    parity in tail-f.
+    """
+    db = session_factory()
+    try:
+        report = run_all(db, ALL_SEEDERS)
+    finally:
+        db.close()
+
+    _log_bootstrap_report(report)
+    return not any(status.startswith("failed") for _, _, status in report)
+
+
+def _log_bootstrap_report(
+    report: List[tuple[Seeder, SeedResult | None, str]],
+) -> None:
+    """Print a formatted bootstrap summary alongside the HAL readiness
+    block so operators see seed status in the same place.
+
+    Example output (printed via ``logger.info`` so it lands in the same
+    log stream + log file as the rest of startup)::
+
+        ═══════ BOOTSTRAP REPORT ═══════
+        ✓ chamber_presets        v1   ran                    +4 new / =0 kept
+        ○ probes                 v1   skipped (up-to-date)
+        ✓ instruments            v2   ran                    +12 new / =0 kept
+        ✗ sequences              v1   failed: ...
+        ═════════════════════════════════
+        6 seeders · +16 new · =0 kept · 1 failed
+    """
+    if not report:
+        logger.info("[bootstrap] no seeders registered")
+        return
+
+    icons = {"ran": "✓", "failed": "✗"}  # "skipped" → ○ via default below
+
+    name_w = max(len(s.name) for s, _, _ in report)
+    name_w = max(name_w, len("seeder"))
+    status_w = max(len(status) for _, _, status in report)
+    status_w = max(status_w, len("status"))
+
+    header_label = "═" * 19 + " BOOTSTRAP REPORT " + "═" * 19
+    lines = [header_label]
+    total_inserted = 0
+    total_skipped_rows = 0
+    ran = failed = up_to_date = 0
+    for seeder, result, status in report:
+        icon = icons.get(status, "○") if not status.startswith("failed") else "✗"
+        detail = ""
+        if result is not None:
+            detail = f"+{result.inserted} new / ={result.skipped} kept"
+            total_inserted += result.inserted
+            total_skipped_rows += result.skipped
+        lines.append(
+            f"{icon} {seeder.name:<{name_w}}  v{seeder.version}  "
+            f"{status:<{status_w}}  {detail}"
+        )
+        if status == "ran":
+            ran += 1
+        elif status.startswith("failed"):
+            failed += 1
+        else:
+            up_to_date += 1
+    lines.append("═" * len(header_label))
+    lines.append(
+        f"{len(report)} seeders · +{total_inserted} new · "
+        f"={total_skipped_rows} kept · {failed} failed"
+    )
+    for line in lines:
+        logger.info("[bootstrap] %s", line)
