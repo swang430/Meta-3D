@@ -66,14 +66,22 @@ Each one is "won't run first-call without it".
 
 ### P0-1 — DB auto-bootstrap on startup ⭐ Current Focus
 
-**What**: `app/main.py` lifespan calls `run_all()` after `init_db()`. The 4
-chamber presets (A/B/C/D), instrument model catalog, sequence library,
-report templates, and test-case templates land in the DB on first boot.
+> **Repo path note**: 本项 (以及后续 P0 中提到的 `app/...`) 路径全部相对
+> `api-service/` 子包。FastAPI 入口是 [`api-service/app/main.py`](../api-service/app/main.py),
+> 播种器在 [`api-service/app/services/bootstrap/`](../api-service/app/services/bootstrap/),
+> 手动 CLI 是 `cd api-service && python -m scripts.bootstrap`。
+> 不要在仓库根新建 `app/` —— 它不存在。
+
+**What**: [`api-service/app/main.py`](../api-service/app/main.py) lifespan
+calls `run_all()` after `init_db()`. The 4 chamber presets (A/B/C/D),
+instrument model catalog, sequence library, report templates, and test-case
+templates land in the DB on first boot.
 
 **Why**: New installs see empty everything → operators can't get past the
-"create your first chamber" step without running `python -m scripts.bootstrap`
-manually. The seeders + idempotent `bootstrap_history` are already built —
-nobody wired the pipe to lifespan startup.
+"create your first chamber" step without running
+`cd api-service && python -m scripts.bootstrap` manually. The seeders +
+idempotent `bootstrap_history` are already built — nobody wired the pipe
+to lifespan startup.
 
 **Acceptance**:
 - `docker-compose up` on an empty DB seeds 4 chambers + 12+ instrument
