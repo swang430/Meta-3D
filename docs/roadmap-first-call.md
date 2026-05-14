@@ -8,21 +8,41 @@
 
 ## 🎯 Current Focus
 
-**`P0-6` — Mock-data first-call end-to-end (local rehearsal)**
+**`P1-3` — PyVISA "not installed" investigation** *(provisional — see note)*
 
-- **WIP limit: 1**. Only one P0 may be `in-progress` at any time.
+- **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
   gets appended to the backlog instead of done inline.
-- **Ordering note (2026-05-15)**: P0-3/P0-4/P0-5 all require on-site
-  hardware (real SA / real DUT / real path-loss measurement). We
-  are NOT on-site today. Jumping to P0-6 — the only purely-local
-  P0 — is consistent with that item's own rationale: "Going on-site
-  without this means we again debug driver layer + commissioning at
-  the same time. Decouple them: software pipeline first, hardware
-  second." P0-3/4/5 stay queued for the next CAICT trip.
+
+**State (2026-05-15)**: P0-6 merged (PR #19). Remaining P0 items
+(P0-3, P0-4, P0-5) all require on-site hardware — they sit in the
+🚧 Blocked-on-hardware queue below until the next CAICT trip.
+
+Per the WIP=1 rule's "upper bound, not always-on" clarification in
+CLAUDE.md, all-P0-blocked permits descending to a P1 item. P1-3 is
+the only directly-local P1 today; the more substantial P1-1
+(Capability registry) is itself blocked on P2-2 (Capability
+centralisation). Operator decision pending: take P1-3 (small, 1
+hour) or do the P2-2 → P1-1 chain (1+2=3 days, unblocks substantial
+P1 work).
 
 Last review: 2026-05-15
 Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md)
+
+---
+
+## 🚧 Blocked on hardware (P0 queue for next on-site)
+
+| ID | Item | Blocker |
+|----|------|---------|
+| P0-3 | Path-loss calibration (CAL-01) loop closure + cal cert | SA in HAL + on-site CE/SA |
+| P0-4 | SignalAnalyzer in HAL for reference TRP | on-site real SA + horn antenna |
+| P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | on-site real DUT |
+
+These are still the highest-priority items overall — they just can't
+be progressed from a remote dev box. When the next on-site trip
+opens, the Current Focus must move back to P0-3 (or whichever P0 is
+unblocked) BEFORE starting any new P1.
 
 ---
 
@@ -65,6 +85,8 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 | D4 | F64 license probe — SYST:INFO? + soft-probe replacement for `*OPT?` + Codex P1 inline error-payload guard | PR #15 |
 | D5 | F64 -100 categorizer regression tests + 5/13 team summary | PR #15 |
 | D6 | P0-1 — DB auto-bootstrap on FastAPI lifespan startup + PG advisory lock (Codex P1) | PR #17 (merged 2026-05-14) |
+| D7 | P0-2 — Lab Profile init wizard + Codex P1 (real UUID via /instruments/catalog) | PR #18 (merged 2026-05-14) |
+| D8 | P0-6 — Mock-data first-call end-to-end PDF (fix `execution.test_plan` AttributeError + Codex P2 stale-read) | PR #19 (merged 2026-05-15) |
 
 ---
 
@@ -137,7 +159,7 @@ Profile before tests can run.
 
 ---
 
-### P0-3 — Path-loss calibration (CAL-01) loop closure + cal cert generation
+### P0-3 — Path-loss calibration (CAL-01) loop closure + cal cert generation 🚧 Blocked on-site
 
 **What**: Run the CE+SA path-loss calibration end-to-end on real hardware,
 producing a `CalibrationCertificate` row with the 32-element
@@ -163,7 +185,7 @@ numbers.
 
 ---
 
-### P0-4 — SignalAnalyzer in HAL for reference TRP
+### P0-4 — SignalAnalyzer in HAL for reference TRP 🚧 Blocked on-site
 
 **What**: Bind a Keysight N9020B MXA (or equivalent) to the HAL
 `signalAnalyzer` category and connect it to a known-gain reference horn
@@ -187,7 +209,7 @@ needs config + on-site connection
 
 ---
 
-### P0-5 — DUT attach → bearer → PDSCH on UXM 5G NR
+### P0-5 — DUT attach → bearer → PDSCH on UXM 5G NR 🚧 Blocked on-site
 
 **What**: Put a real DUT in the chamber, attach it to UXM via SIM + RRC,
 establish a default bearer, push PDSCH traffic, and read back actual
@@ -210,12 +232,7 @@ doesn't report them via SCPI). Throughput is real *if a DUT is attached*
 
 ---
 
-### P0-6 — Mock-data first-call end-to-end (local rehearsal) ⭐ Current Focus
-
-> **Ordering rationale (2026-05-15)**: P0-3/P0-4/P0-5 need on-site
-> hardware; we are not on-site. P0-6 is the only purely-local P0
-> and explicitly exists to validate the software pipeline before
-> the next on-site trip.
+### P0-6 — Mock-data first-call end-to-end (local rehearsal) ✅ Done (PR #19)
 
 
 **What**: Run all 5 commissioning phases locally with mock cal cert /
@@ -273,7 +290,7 @@ on a unit where the licensed state is known a priori.
 **Status**: `[ ]` not started
 **Estimate**: on-site 1 hour
 
-### P1-3 — PyVISA "not installed" investigation
+### P1-3 — PyVISA "not installed" investigation ⭐ Current Focus (provisional)
 
 **What**: Reproduce the "PyVISA missing" condition seen during ENA
 debugging. Run `which python && python -c "import pyvisa"` in the same
