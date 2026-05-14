@@ -2,6 +2,61 @@
 
 本文件为 Claude Code (claude.ai/code) 提供在此代码库中工作的指导。
 
+## ⭐ 工作准则 — 适用于所有 agent / session（最高优先级）
+
+> 本节是项目契约。任何非琐碎改动开始前必须遵守。
+
+### 1. 先读路线图
+
+任何非琐碎改动开始前，**先读 [`docs/roadmap-first-call.md`](docs/roadmap-first-call.md)**，
+明确这次改动对应哪个 roadmap 编号（P0-X / P1-X / P2-X / P3-X）。
+
+### 2. WIP = 1 on P0
+
+路线图顶部 `Current Focus` 字段是当前唯一允许 in-progress 的 P0 项。
+该项 PR merged + acceptance criteria 验证通过之前，**不开新的 P0**。
+
+### 3. 不在路线图上的改动 — 三种处理
+
+- **琐碎 (<30 分钟)**：直接做，commit message 标 `chore:` 前缀。
+- **中等大小**：在 roadmap.md 的 "Discovered during X" backlog 区加一行
+  (`[discovered YYYY-MM-DD during P0-X] <一句话>`)，然后**回到当前 P0**。
+- **大改**：停下来跟人讨论。
+
+### 4. 严禁"顺手优化"
+
+看到代码 mess 不要清理。Mess 不是 bug。如果它不让当前 P0 更容易，
+就进 P3 backlog，不是 inline cleanup。
+
+### 5. PR 必须声明 roadmap 对齐
+
+PR 描述必须包含：
+```
+Roadmap: P0-X  (或)  Out-of-roadmap, reason: ...
+```
+模板在 [`.github/pull_request_template.md`](.github/pull_request_template.md)。
+
+### 6. Review 反馈的处理
+
+Codex / 人类 reviewer 的 P0/P1 安全问题：当下修。
+P2/P3 风格类反馈：appended to backlog, not 当下修，避免 review 黑洞。
+
+### 7. 周度短 review
+
+每周五 15 分钟自问 3 个问题：
+1. 这周原本要做的是哪个 P0，实际做了什么？
+2. 偏移程度（0% / 30% / 100%）？
+3. 偏移原因属于上面 1-5 的哪一类？
+
+**这些规则的存在原因**：CAICT 2026-05-12/13 两天现场调试本应交付 first-call，
+实际全部消耗在 driver 层（F64 IDN / UXM Test App / Aerotech 单轴 / idle-close）。
+工作本身有价值，但 first-call 没出来。下次去现场前，软件链路要先在本地走通
+（mock-data first-call），现场只调硬件，不写 driver 代码。
+
+详细 governance 论证见 [`docs/announcements/2026-05-14-roadmap-baseline.md`](docs/announcements/2026-05-14-roadmap-baseline.md)。
+
+---
+
 ## 项目概述
 
 这是一个面向汽车无线通信的 MIMO OTA（空中接口）测试系统。系统采用多探头暗室（Multi-Probe Anechoic Chamber, MPAC）技术，在可控的电磁环境中测试全尺寸车辆。
