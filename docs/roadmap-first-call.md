@@ -8,7 +8,7 @@
 
 ## 🎯 Current Focus
 
-**`P0-1` — DB 自动播种 (chamber presets / instrument catalog / sequences / templates)**
+**`P0-2` — Lab Profile init wizard (GUI)**
 
 - **WIP limit: 1**. Only one P0 may be `in-progress` at any time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
@@ -57,6 +57,7 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 | D3 | silent-reconnect pattern broadcast to F64 / FS16 / UXM / ENA (PyVISA) | PR #15 |
 | D4 | F64 license probe — SYST:INFO? + soft-probe replacement for `*OPT?` + Codex P1 inline error-payload guard | PR #15 |
 | D5 | F64 -100 categorizer regression tests + 5/13 team summary | PR #15 |
+| D6 | P0-1 — DB auto-bootstrap on FastAPI lifespan startup + PG advisory lock (Codex P1) | PR #17 (merged 2026-05-14) |
 
 ---
 
@@ -64,7 +65,7 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 
 Each one is "won't run first-call without it".
 
-### P0-1 — DB auto-bootstrap on startup ⭐ Current Focus
+### P0-1 — DB auto-bootstrap on startup ✅ Done (PR #17)
 
 > **Repo path note**: 本项 (以及后续 P0 中提到的 `app/...`) 路径全部相对
 > `api-service/` 子包。FastAPI 入口是 [`api-service/app/main.py`](../api-service/app/main.py),
@@ -98,18 +99,18 @@ to lifespan startup.
 
 ---
 
-### P0-2 — Lab Profile init wizard
+### P0-2 — Lab Profile init wizard ⭐ Current Focus
 
 **What**: GUI detects `LabProfile.count() == 0` on first launch and shows a
-wizard:
-1. Pick chamber template (A/B/C/D cards)
-2. Adjust dimensions / probe layout if needed
-3. Bind instruments (model + IP/port for each category)
-4. Done — lab is ready for calibration
+3-step wizard (chamber dimension editing deferred to existing chamber config
+tab — out of wizard scope, per 2026-05-14 scope decision):
+1. Pick chamber template (A/B/C/D cards) + name your lab
+2. Bind instruments (model + IP/port for each category)
+3. Confirm + create LabProfile
 
 **Why**: Without this, even seeded chambers don't help — operators don't
-know that the chamber template needs to be cloned + customized + assigned
-to a Lab Profile before tests can run.
+know that the chamber template needs to be cloned + assigned to a Lab
+Profile before tests can run.
 
 **Acceptance**:
 - Fresh install → GUI shows wizard, not empty dashboard
@@ -118,8 +119,14 @@ to a Lab Profile before tests can run.
 - Cancellable + resumable (don't lose progress on browser refresh)
 - Existing lab → wizard does not appear
 
-**Status**: `[ ]` not started — **depends on P0-1**
-**Estimate**: 1.5 days
+**Implementation prerequisites**:
+- LabProfile API is currently read-only (`GET /lab-profiles` only,
+  designed for deployment-seeded profiles). The wizard needs a new
+  `POST /lab-profiles` endpoint covering name + chamber_config_id +
+  instrument_bindings + is_active.
+
+**Status**: `[ ]` in progress (PR pending)
+**Estimate**: 1 day (revised down from 1.5 after scope decision)
 
 ---
 
