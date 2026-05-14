@@ -16,6 +16,13 @@
 路线图顶部 `Current Focus` 字段是当前唯一允许 in-progress 的 P0 项。
 该项 PR merged + acceptance criteria 验证通过之前，**不开新的 P0**。
 
+**注意**：本规则约束的是 **WIP 上限**（最多一个 P0 并发），不是
+"必须永远有 P0 在做"。如果剩余 P0 全部物理 blocked（例如等下次现场、
+等硬件采购），降级到 P1 不算违规 —— 这时把 Current Focus 字段挪到
+具体 P1 项，并在路线图的 "🚧 Blocked on hardware" 区显式标注哪些 P0
+在排队等什么。一旦 blocker 消失（下次现场），P0 自动回到队首,
+此时不能再启动新 P1。
+
 ### 3. 不在路线图上的改动 — 三种处理
 
 - **琐碎 (<30 分钟)**：直接做，commit message 标 `chore:` 前缀。
