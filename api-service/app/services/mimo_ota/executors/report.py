@@ -48,9 +48,19 @@ class ReportExecutor(IStepExecutor):
         try:
             content_data = _build_mimo_ota_content_data(execution, now)
             svc = ReportService()
+            # MIMO_OTA executions come from a TestCase, not a TestPlan, so
+            # test_plan_id is typically None and `execution.test_plan` is
+            # always None. The relationship itself is commented out in the
+            # TestExecution model (see app/models/test_plan.py L249), so
+            # accessing it as an attribute would raise AttributeError —
+            # use getattr() to keep the null-guard semantics working.
+            test_plan_for_title = getattr(execution, "test_plan", None)
             report = svc.create_report(
                 db=context.db,
-                title=f"MIMO OTA Test Report — {execution.test_plan.name if execution.test_plan else 'Unknown Plan'}",
+                title=(
+                    f"MIMO OTA Test Report — "
+                    f"{test_plan_for_title.name if test_plan_for_title else 'Unknown Plan'}"
+                ),
                 report_type=ReportType.SINGLE_EXECUTION.value,
                 format=ReportFormat.PDF.value,
                 generated_by="mimo_ota.executors.report",
@@ -123,7 +133,10 @@ def _build_mimo_ota_content_data(execution: Any, now: datetime) -> Dict[str, Any
     measure = phases.get("measure", {}) or {}
     analysis = phases.get("analysis", {}) or {}
 
-    test_plan = execution.test_plan
+    # See report.execute(): `execution.test_plan` may be unset (commented-
+    # out relationship) or None (MIMO_OTA sessions are TestCase-based, not
+    # Plan-based). getattr keeps both branches safe.
+    test_plan = getattr(execution, "test_plan", None)
     plan_info = {
         "name": test_plan.name if test_plan else "Unknown Plan",
         "description": (test_plan.description if test_plan else None) or "—",
