@@ -50,6 +50,28 @@ async def lifespan(app: FastAPI):
         logger.error(f"Database initialization failed: {e}")
         logger.warning("Continuing with degraded functionality")
 
+    # P0-1: auto-seed factory-defaults DB on startup (idempotent — re-runs
+    # are no-ops via bootstrap_history version pinning). Without this an
+    # empty deploy strands the operator on "create your first chamber"
+    # until they remember to run `python -m scripts.bootstrap` manually.
+    # Failure of one seeder does not abort the others; failure of the
+    # whole bootstrap step does not abort app startup.
+    if settings.bootstrap_on_startup:
+        try:
+            from app.db.database import SessionLocal
+            from app.services.bootstrap import run_bootstrap_on_startup
+            ok = run_bootstrap_on_startup(SessionLocal)
+            if not ok:
+                logger.warning(
+                    "Bootstrap finished with at least one failed seeder — "
+                    "see [bootstrap] log lines above for detail"
+                )
+        except Exception as e:
+            logger.error(f"Bootstrap startup hook crashed: {e}")
+            logger.warning("Continuing without auto-seeded defaults")
+    else:
+        logger.info("[bootstrap] BOOTSTRAP_ON_STARTUP=false — skipping auto-seed")
+
     # Initialize HAL service (Phase 2.4.5)
     from app.services.instrument_hal_service import initialize_hal_service, DriverMode
     try:
