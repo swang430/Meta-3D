@@ -201,6 +201,36 @@ export const fetchChannelModels = async (
   return response.data
 }
 
+export interface AddChannelModelPayload {
+  filename: string
+  label?: string
+  description?: string
+}
+
+export const addChannelModel = async (
+  categoryKey: string,
+  payload: AddChannelModelPayload,
+): Promise<ChannelModelsListResult> => {
+  const response = await client.post<ChannelModelsListResult>(
+    `/instruments/${categoryKey}/channel-models`,
+    payload,
+  )
+  return response.data
+}
+
+export const removeChannelModel = async (
+  categoryKey: string,
+  filename: string,
+): Promise<ChannelModelsListResult> => {
+  // encodeURIComponent for filenames with spaces / special chars
+  // (operator-supplied — F64 .smu filenames can contain hyphens, dots,
+  // sometimes spaces in lab-internal naming conventions).
+  const response = await client.delete<ChannelModelsListResult>(
+    `/instruments/${categoryKey}/channel-models/${encodeURIComponent(filename)}`,
+  )
+  return response.data
+}
+
 export const createTestCaseFromPlan = async (
   payload: CreateTestCaseFromPlanPayload,
 ): Promise<CreateTestCaseResponse> => {
