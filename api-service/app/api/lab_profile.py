@@ -53,16 +53,17 @@ class InstrumentBinding(BaseModel):
     only knows the IP at install time — but the binding row itself must
     exist so the calibration UI can show that category as 'configured'.
 
-    ``category_id`` is typed as ``str`` rather than ``UUID``: the wizard
-    holds the catalog category by its stable string ``key`` ("channelEmulator",
-    "vna", …) rather than the DB UUID, which isn't exposed on the public
-    /instruments/catalog response. JSONB stores both shapes equally well;
-    existing deployment-seeded LabProfiles that wrote real UUIDs here
-    keep working because every UUID is a valid str.
+    ``category_id`` is the DB UUID for InstrumentCategory.id. We tighten
+    this rather than accept arbitrary strings because the diagnostic
+    context resolver (`services/diagnostic_context._parse_instrument_bindings`)
+    joins on UUID to populate `category_key`; non-UUID values would
+    silently degrade the *IDN? sweep into "no HAL driver" for every
+    bound instrument. Wizard reads the UUID from
+    `GET /instruments/catalog` → `categoryId` field, which is exposed
+    precisely for this purpose. (Codex P1 review on PR #18.)
     """
-    category_id: str = Field(
-        min_length=1,
-        description='InstrumentCategory identifier (key string OR UUID), e.g. "channelEmulator"',
+    category_id: UUID = Field(
+        description='InstrumentCategory.id (DB UUID, available on /instruments/catalog as categoryId)',
     )
     instrument_model_id: Optional[UUID] = Field(
         None,

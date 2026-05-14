@@ -122,17 +122,6 @@ def _minimal_payload(chamber_id, *, name="CAICT-Lab-1") -> dict:
 # ---------------------------------------------------------------------------
 
 class TestCreateHappyPath:
-    def test_accepts_string_category_key_not_uuid(self, client, seeded_chamber):
-        """The wizard sends ``category_id: "channelEmulator"`` (the catalog
-        key string), not the DB UUID — that field is intentionally typed
-        ``str`` so JSONB stores both shapes interchangeably. Regression
-        guard against tightening to UUID in the future."""
-        c, _ = client
-        payload = _minimal_payload(seeded_chamber.id, name="lab-str-cat")
-        payload["instrument_bindings"][0]["category_id"] = "channelEmulator"
-        r = c.post("/api/v1/lab-profiles", json=payload)
-        assert r.status_code == 201, r.text
-
     def test_201_returns_summary_shape(self, client, seeded_chamber):
         c, _ = client
         r = c.post(
@@ -234,3 +223,75 @@ class TestNameUniqueness:
         )
         assert r2.status_code == 409, r2.text
         assert "already exists" in r2.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# category_id must be a UUID — Codex P1 review on PR #18.
+# ---------------------------------------------------------------------------
+#
+# `services/diagnostic_context._parse_instrument_bindings` joins
+# bindings back to `InstrumentCategory.id` to populate `category_key`.
+# Non-UUID `category_id` values silently degrade `category_key` to
+# None, which collapses the *IDN? diagnostic sweep into "no HAL
+# driver" for every binding. Pin both the rejection (so a future
+# wizard regression that sends the catalog `key` string can't sneak
+# through) and the happy path (so the resolver contract is exercised
+# end-to-end).
+
+class TestCategoryIdMustBeUuid:
+    def test_string_category_key_rejected_422(self, client, seeded_chamber):
+        c, _ = client
+        payload = _minimal_payload(seeded_chamber.id, name="lab-cat-str")
+        payload["instrument_bindings"][0]["category_id"] = "channelEmulator"
+        r = c.post("/api/v1/lab-profiles", json=payload)
+        assert r.status_code == 422, r.text
+        # Pydantic surfaces the UUID-parse failure on the right field
+        # so the wizard's notifications block can show something
+        # actionable instead of a generic 500.
+        body = r.json()
+        assert any(
+            "uuid" in (e.get("type") or "").lower()
+            and "category_id" in (e.get("loc") or [])
+            for e in body.get("detail", [])
+        ), body
+
+    def test_uuid_category_id_resolves_through_diagnostic_context(
+        self, client, seeded_chamber, db_session,
+    ):
+        """End-to-end: persist a binding with a real InstrumentCategory.id,
+        then ask the diagnostic context resolver to round-trip it.
+        Guards against the original Codex regression where the wizard
+        stored catalog keys and the resolver couldn't find them."""
+        from app.models.instrument import InstrumentCategory
+        from app.services.diagnostic_context import build_diagnostic_context
+
+        db, _ = db_session
+        cat = InstrumentCategory(
+            id=uuid.uuid4(),
+            category_key="channelEmulator",
+            category_name="Channel Emulator",
+            display_order=1,
+            is_active=True,
+        )
+        db.add(cat)
+        db.commit()
+
+        c, _ = client
+        payload = _minimal_payload(seeded_chamber.id, name="lab-resolves")
+        payload["instrument_bindings"][0]["category_id"] = str(cat.id)
+        payload["instrument_bindings"][0]["role"] = "primary_channel_emulator"
+        r = c.post("/api/v1/lab-profiles", json=payload)
+        assert r.status_code == 201, r.text
+        lab_id = uuid.UUID(r.json()["id"])
+
+        # The diagnostic context resolver should hydrate
+        # category_key from the UUID we sent — proving the contract
+        # the original bug broke. Skip rf-chain resolution; this
+        # test only exercises the binding-resolve path.
+        ctx = build_diagnostic_context(
+            db, lab_profile_id=lab_id, resolve_rf_chains_too=False,
+        )
+        bindings = ctx.instrument_bindings
+        assert len(bindings) == 1
+        assert bindings[0].category_key == "channelEmulator"
+        assert bindings[0].category_id == cat.id

@@ -240,18 +240,19 @@ export function LabProfileWizard({ onComplete }: LabProfileWizardProps) {
       catalog.categories.map((c) => [c.key, c]),
     )
 
+    // Send the catalog category's DB UUID (categoryId), NOT its
+    // string key. Downstream resolvers (services/diagnostic_context
+    // `_parse_instrument_bindings`) parse this field as UUID to join
+    // back to InstrumentCategory.id; a non-UUID silently collapses
+    // to category_key=None, and the *IDN? diagnostic sweep then
+    // reports "no HAL driver" for every binding the wizard created.
+    // (Codex P1 review on PR #18.)
     const bindingsPayload: InstrumentBindingPayload[] = configuredBindings.flatMap(
       (b) => {
         const cat = catByKey.get(b.categoryKey)
-        if (!cat) return []
+        if (!cat || !cat.categoryId) return []
         return [{
-          // The catalog category's `key` is a stable string ID; the
-          // model schema needs a UUID. We rely on the backend treating
-          // the JSONB array as opaque (no FK), so passing the key here
-          // is fine for the binding shape. If a future migration
-          // promotes bindings to a join table, this becomes a
-          // join-on-key lookup.
-          category_id: cat.key,
+          category_id: cat.categoryId,
           instrument_model_id: b.modelId ?? undefined,
           connection_endpoint: b.endpoint,
           driver_mode: b.driverMode,
