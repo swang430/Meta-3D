@@ -271,38 +271,20 @@ class TestPassthroughMode:
 # ============================================================================
 
 class TestOptionsProbe:
-    """connect() 探测 *OPT? 推 has_interference_generator. config 显式给值
-    时跳过应用 (mock/CI override). 这些测试不调真 connect (避开 pyvisa
-    import), 直接调探测钩子."""
+    """connect() 启动时推 has_interference_generator (license discovery).
 
-    @pytest.mark.asyncio
-    async def test_probe_with_license_token_sets_capability_true(self):
-        drv, visa = _make_driver()  # no explicit config → probe path
-        assert drv.has_interference_generator is None
-        visa.query.return_value = "K01,K02,K05"
+    CAICT 2026-05-13 confirmed F64's ATE Server doesn't implement
+    ``*OPT?`` — returns -100 (memory ``project_f64_ate_server_capabilities``).
+    F64 now overrides ``_probe_installed_options`` with a feature-probe
+    strategy (SYST:INFO? keyword scan + soft per-feature probes).
 
-        opts = await drv._probe_installed_options()
-        await drv._apply_discovered_capabilities(opts)
-
-        assert opts == ["K01", "K02", "K05"]
-        assert drv.has_interference_generator is True
-        # And the capability declaration now reflects D path
-        assert (
-            CalibrationToneCapability.INTERNAL_CW_GENERATOR
-            in drv.get_calibration_tone_capabilities()
-        )
-
-    @pytest.mark.asyncio
-    async def test_probe_without_license_token_sets_capability_false(self):
-        drv, visa = _make_driver()
-        visa.query.return_value = "K05,FOO,BAR"  # no interference-gen token
-
-        opts = await drv._probe_installed_options()
-        await drv._apply_discovered_capabilities(opts)
-
-        assert drv.has_interference_generator is False
-        caps = drv.get_calibration_tone_capabilities()
-        assert caps == [CalibrationToneCapability.PASSTHROUGH_ONLY]
+    Token-shape pinning for the old ``*OPT?`` CSV path moved to
+    ``tests/test_f64_license_probe.py`` against the new probe surface.
+    The remaining cases here pin the **outcome contract** that must
+    survive any future probe replacement: explicit config overrides
+    discovery, probe failure doesn't break connect, empty discovery
+    means "no license".
+    """
 
     @pytest.mark.asyncio
     async def test_probe_token_match_is_case_insensitive(self):
@@ -315,22 +297,9 @@ class TestOptionsProbe:
         assert drv.has_interference_generator is True
 
     @pytest.mark.asyncio
-    async def test_probe_quoted_csv_is_parsed(self):
-        """Some firmware returns options as quoted strings."""
-        drv, visa = _make_driver()
-        visa.query.return_value = '"K01","K02"," INT-GEN "'
-
-        opts = await drv._probe_installed_options()
-        await drv._apply_discovered_capabilities(opts)
-
-        assert "K01" in opts
-        assert "INT-GEN" in opts
-        assert drv.has_interference_generator is True
-
-    @pytest.mark.asyncio
     async def test_explicit_config_true_skips_probe_application(self):
         """config explicitly says True → probe still runs (logging) but does
-        not override the explicit value, even if *OPT? returns nothing."""
+        not override the explicit value, even if discovery returns nothing."""
         drv, visa = _make_driver(has_interference_generator=True)
         assert drv.has_interference_generator is True
         visa.query.return_value = ""  # empty options
@@ -354,11 +323,12 @@ class TestOptionsProbe:
 
     @pytest.mark.asyncio
     async def test_probe_failure_is_tolerated(self):
-        """Instrument that doesn't implement *OPT? must not break connect."""
+        """Instrument that doesn't implement the probe SCPIs must not
+        break connect."""
         drv, visa = _make_driver()
 
         async def _query_raises(cmd, timeout=None):
-            raise RuntimeError("instrument does not support *OPT?")
+            raise RuntimeError("simulated NAK")
 
         drv._query = _query_raises  # type: ignore[assignment]
 
@@ -368,17 +338,6 @@ class TestOptionsProbe:
         assert opts == []
         # Probe failed → no token matched → capability stays False (the
         # "not licensed" outcome). Conservative: better deny than assume.
-        assert drv.has_interference_generator is False
-
-    @pytest.mark.asyncio
-    async def test_probe_empty_response_means_no_license(self):
-        drv, visa = _make_driver()
-        visa.query.return_value = ""  # empty *OPT? response
-
-        opts = await drv._probe_installed_options()
-        await drv._apply_discovered_capabilities(opts)
-
-        assert opts == []
         assert drv.has_interference_generator is False
 
 
