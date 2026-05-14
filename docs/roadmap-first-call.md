@@ -8,13 +8,20 @@
 
 ## 🎯 Current Focus
 
-**`P0-2` — Lab Profile init wizard (GUI)**
+**`P0-6` — Mock-data first-call end-to-end (local rehearsal)**
 
 - **WIP limit: 1**. Only one P0 may be `in-progress` at any time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
   gets appended to the backlog instead of done inline.
+- **Ordering note (2026-05-15)**: P0-3/P0-4/P0-5 all require on-site
+  hardware (real SA / real DUT / real path-loss measurement). We
+  are NOT on-site today. Jumping to P0-6 — the only purely-local
+  P0 — is consistent with that item's own rationale: "Going on-site
+  without this means we again debug driver layer + commissioning at
+  the same time. Decouple them: software pipeline first, hardware
+  second." P0-3/4/5 stay queued for the next CAICT trip.
 
-Last review: 2026-05-14
+Last review: 2026-05-15
 Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md)
 
 ---
@@ -99,7 +106,7 @@ to lifespan startup.
 
 ---
 
-### P0-2 — Lab Profile init wizard ⭐ Current Focus
+### P0-2 — Lab Profile init wizard ✅ Done (PR #18)
 
 **What**: GUI detects `LabProfile.count() == 0` on first launch and shows a
 3-step wizard (chamber dimension editing deferred to existing chamber config
@@ -203,7 +210,13 @@ doesn't report them via SCPI). Throughput is real *if a DUT is attached*
 
 ---
 
-### P0-6 — Mock-data first-call end-to-end (local rehearsal)
+### P0-6 — Mock-data first-call end-to-end (local rehearsal) ⭐ Current Focus
+
+> **Ordering rationale (2026-05-15)**: P0-3/P0-4/P0-5 need on-site
+> hardware; we are not on-site. P0-6 is the only purely-local P0
+> and explicitly exists to validate the software pipeline before
+> the next on-site trip.
+
 
 **What**: Run all 5 commissioning phases locally with mock cal cert /
 mock SA / mock DUT to **confirm the software pipeline has no blind
