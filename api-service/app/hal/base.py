@@ -78,6 +78,13 @@ class InstrumentDriver(ABC):
         # 调 *OPT? 填充。空列表 = 探测失败 / 仪表不支持 *OPT? / 尚未连接。
         self._installed_options: List[str] = []
 
+        # P2-2: 单一 capability 出口。 子类在 connect() / probe 时把
+        # canonical token 加进来 (见 app/hal/capabilities.py 词表)。新代码
+        # 应当读这个 set, 旧的 has_interference_generator / is_single_axis
+        # 等 bool 字段会作为过渡 alias 保留, 内部由 driver 自己同步两边。
+        # Consumer 不应直接 mutate 这个 set —— 走 _add_capability().
+        self.capabilities: set[str] = set()
+
         # SCPI 通信专用 logger — 命名空间 app.hal.scpi.{id}
         # 被 logging_config 中的 SCPI handler 独立捕获到 scpi.log
         self._scpi_logger = logging.getLogger(f"app.hal.scpi.{instrument_id}")
@@ -239,6 +246,36 @@ class InstrumentDriver(ABC):
         VNA 子类未来加 license-aware 测量时按同样方式 override.
         """
         return
+
+    def _add_capability(self, token: str) -> None:
+        """P2-2: register a canonical capability token on this driver.
+
+        Subclasses call this from connect / probe / configure paths to
+        declare what they expose at runtime. ``token`` must be a member
+        of ``app.hal.capabilities.KNOWN_CAPABILITIES`` — unknown tokens
+        are still added (so a typo doesn't break first-call), but a
+        warning is logged so the drift is visible in scpi/hal logs.
+
+        Idempotent: adding a token that's already in the set is a no-op
+        (a probe that reruns produces the same set).
+        """
+        from app.hal.capabilities import KNOWN_CAPABILITIES
+
+        if token not in KNOWN_CAPABILITIES:
+            logger.warning(
+                "[%s] non-canonical capability token registered: %r — add it "
+                "to app/hal/capabilities.py:KNOWN_CAPABILITIES or fix the typo",
+                self.instrument_id, token,
+                extra={"instrument_id": self.instrument_id},
+            )
+        self.capabilities.add(token)
+
+    def _remove_capability(self, token: str) -> None:
+        """Mirror of ``_add_capability`` for capabilities that probe-out as
+        absent on this unit. Mostly used when a driver flips an explicit
+        config override at construction time and needs to clear a token
+        that a default might have populated."""
+        self.capabilities.discard(token)
 
     # ── 状态与属性 ────────────────────────────────────────────
 

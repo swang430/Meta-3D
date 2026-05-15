@@ -183,6 +183,16 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self.has_interference_generator: Optional[bool] = (
             bool(explicit) if self._explicit_interference_gen else None
         )
+        # P2-2: mirror the legacy bool into the canonical capability set.
+        # When the explicit-override path declares True/False at construct
+        # time, ``_apply_discovered_capabilities`` will never run (it's
+        # short-circuited at line 1913), so the set must be seeded here
+        # too — otherwise plan-level pre-flight (P1-1) would think this
+        # F64 doesn't have the interference generator even though config
+        # said it does.
+        if self._explicit_interference_gen and self.has_interference_generator:
+            from app.hal.capabilities import CE_INTERFERENCE_GENERATOR
+            self._add_capability(CE_INTERFERENCE_GENERATOR)
         # 固定 ID 给单 tone, 重复 set 时先 remove 旧的避免 "identifier in use".
         self._cal_tone_id: str = config.get("cal_tone_id", "ce_sa_cal_tone")
         self._cal_tone_active: bool = False
@@ -325,6 +335,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             #    SYST:CALIB:USER:SET 1,<name> 重新激活. 当前 active 状态先
             #    存到 _active_alignment 供 precheck phase 上报.
             self._active_alignment = await self.get_user_alignment_status()
+            self._update_user_alignment_capability()
             if self._preferred_alignment_name:
                 current = (
                     self._active_alignment.get("alignment_name")
@@ -338,6 +349,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     )
                     if await self.enable_user_alignment(self._preferred_alignment_name):
                         self._active_alignment = await self.get_user_alignment_status()
+                        self._update_user_alignment_capability()
                     else:
                         logger.warning(
                             f"[F64] Could not activate user alignment "
@@ -1904,6 +1916,35 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         except Exception as e:
             logger.error(f"[F64] Error queue check failed: {e}")
 
+    def _update_user_alignment_capability(self) -> None:
+        """Mirror ``self._active_alignment`` into the canonical capability
+        set (Codex P2 on PR #21).
+
+        Called from ``connect()`` after each ``_active_alignment`` refresh
+        so ``ce.user_alignment`` reflects runtime state, not just the
+        token's presence in the vocabulary. Semantic: the token is set
+        IFF this F64 currently has an active user alignment loaded —
+        i.e. the SYST:CALIB:USER:SET 1,<name> handshake produced a row
+        with a non-empty ``alignment_name``.
+
+        Without this, P1-1's plan pre-flight would reject every step
+        that ``needs: ["ce.user_alignment"]`` even on an F64 that
+        actually has alignment active (the token sat in
+        KNOWN_CAPABILITIES but no code ever populated it — exactly the
+        speculative-vocabulary drift the module-level docstring warns
+        against).
+        """
+        from app.hal.capabilities import CE_USER_ALIGNMENT
+
+        has_active = bool(
+            self._active_alignment
+            and self._active_alignment.get("alignment_name")
+        )
+        if has_active:
+            self._add_capability(CE_USER_ALIGNMENT)
+        else:
+            self._remove_capability(CE_USER_ALIGNMENT)
+
     async def _apply_discovered_capabilities(self, options: List[str]) -> None:
         """*OPT? 解析出的 token → has_interference_generator.
 
@@ -1916,6 +1957,14 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self.has_interference_generator = bool(
             upper & INTERFERENCE_GEN_OPTION_TOKENS
         )
+        # P2-2: mirror to canonical capability set. New consumers should
+        # read `driver.capabilities`; the legacy bool is kept for current
+        # call sites + tests that already assert against it.
+        from app.hal.capabilities import CE_INTERFERENCE_GENERATOR
+        if self.has_interference_generator:
+            self._add_capability(CE_INTERFERENCE_GENERATOR)
+        else:
+            self._remove_capability(CE_INTERFERENCE_GENERATOR)
         logger.info(
             f"[F64] Interference Generator license: "
             f"{self.has_interference_generator} (probed from {options or '(empty)'})"

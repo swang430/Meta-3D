@@ -8,7 +8,7 @@
 
 ## 🎯 Current Focus
 
-**`P1-3` — PyVISA "not installed" investigation** *(provisional — see note)*
+**`P2-2` — Capability centralisation (prerequisite for P1-1)**
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
@@ -19,12 +19,13 @@
 🚧 Blocked-on-hardware queue below until the next CAICT trip.
 
 Per the WIP=1 rule's "upper bound, not always-on" clarification in
-CLAUDE.md, all-P0-blocked permits descending to a P1 item. P1-3 is
-the only directly-local P1 today; the more substantial P1-1
-(Capability registry) is itself blocked on P2-2 (Capability
-centralisation). Operator decision pending: take P1-3 (small, 1
-hour) or do the P2-2 → P1-1 chain (1+2=3 days, unblocks substantial
-P1 work).
+CLAUDE.md, all-P0-blocked permits descending. Operator picked the
+**P2-2 → P1-1 chain** (substantial 3-day path) over P1-3 (1h
+investigation) — P2-2 collapses scattered driver-capability flags
+(``has_interference_generator``, ``is_single_axis``, …) into a
+single ``driver.capabilities: Set[str]`` so P1-1 can implement
+plan-level pre-flight against one vocabulary rather than
+per-driver attribute peeks. P2-2 ships first; P1-1 follows.
 
 Last review: 2026-05-15
 Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md)
@@ -300,7 +301,7 @@ on a unit where the licensed state is known a priori.
 **Status**: `[ ]` not started
 **Estimate**: on-site 1 hour
 
-### P1-3 — PyVISA "not installed" investigation ⭐ Current Focus (provisional)
+### P1-3 — PyVISA "not installed" investigation
 
 **What**: Reproduce the "PyVISA missing" condition seen during ENA
 debugging. Run `which python && python -c "import pyvisa"` in the same
@@ -362,14 +363,24 @@ instrument (CMW500, CMP200) will hit the same gap.
 **Status**: `[ ]` not started
 **Estimate**: 3-5 days
 
-### P2-2 — Capability centralisation
+### P2-2 — Capability centralisation ⭐ Current Focus
 
 **What**: Collapse scattered `has_interference_generator` /
 `is_single_axis` / `has_user_alignment` into `driver.capabilities:
 Set[str]`. Single source of truth for "what does this driver expose
 right now".
 
-**Status**: `[ ]` not started — **blocks P1-1**
+**Implementation note (2026-05-15)**: chose dual-write over property-
+delegation. The legacy bool attributes (`has_interference_generator`,
+`is_single_axis`) stay live as backward-compat aliases — tests + call
+sites that already write to them keep working. The driver writes both
+the legacy bool AND the canonical token in lock-step inside its own
+probe/connect path; new consumers (P1-1, GUI pre-flight) read from
+`driver.capabilities` exclusively. Dual-write is contained to the
+driver itself; from outside the driver, the set IS the single
+source of truth.
+
+**Status**: `[ ]` in progress (PR pending)
 **Estimate**: 1 day
 
 ### P2-3 — Per-model capability discovery
@@ -440,6 +451,7 @@ to the existing HAL readiness table.
 
 - `[discovered 2026-05-14 during P0-1]` `tests/test_chamber_configuration.py::TestChamberPresets::test_preset_type_c_exists` and the two `test_create_chamber_from_preset` variants fail on clean `main` (pre-existing — `has_lna` on Type-C preset is False but tests assert True). Either the seeder default drifted or the test expectations did. Triage: ~30 min in `app/services/bootstrap/chamber_presets.py` vs `tests/test_chamber_configuration.py`.
 - `[discovered 2026-05-14 during P0-2]` IDE (VSCode) diagnostics resolve Python imports against system Python 3.13 (`/opt/homebrew/lib/python3.13/site-packages`) instead of the project venv at `api-service/.venv/`, so every edit to a Python file emits 1-3 phantom `Cannot find module sqlalchemy / pydantic_settings / sqlalchemy.orm` errors. Tests pass fine — this is purely IDE noise. Fix: add `.vscode/settings.json` with `"python.defaultInterpreterPath": "${workspaceFolder}/api-service/.venv/bin/python"` (or per-folder `python.analysis.extraPaths` pointing at the venv site-packages). Triage: ~10 min, P3 polish but worth doing because diagnostic noise hides real type errors when they surface.
+- `[discovered 2026-05-15 during P2-2]` **Commissioning factory's "default lab" path is fragile**. When `POST /api/v1/commissioning/sessions` omits `lab_profile_id`, `app/services/mimo_ota/factory.py` resolves the lab by querying `LabProfile.is_active=true` and **requires exactly one row** — raises `Multiple active LabProfiles found ... pass an explicit lab_profile_id to disambiguate` (surfaced as 500) when there are ≥2. Hit live today because P0-2 smoke testing left 3 orphan active labs in dev PG (cleaned up via soft-deactivate). Real production will legitimately have multiple labs (per-chamber, per-line); this default path must either pick a sane default (e.g. `created_at DESC` newest, or `is_default=true` flag), or fail with 422 + actionable detail rather than 500. Triage: ~half day in `factory.py` + GUI (current GUI doesn't expose `lab_profile_id` selector on the commissioning create dialog). P1 candidate — promote to P1 if next on-site adds a second lab. Also: leftover smoke artifacts in shared dev DB are themselves an anti-pattern; should be cleaned at end-of-PR, not "noted in PR description for the reviewer to handle".
 
 ---
 
