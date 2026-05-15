@@ -412,13 +412,25 @@ class RealAerotechDriver(PositionerDriver):
                     f"controller — check `azimuth_axis` config matches "
                     f"the controller's actual axis name."
                 )
+            # P2-2: mirror axis-discovery outcome to the canonical
+            # capability set so plan-level pre-flight (P1-1) can branch
+            # on `pos.single_axis_az` vs `pos.dual_axis_azel` without
+            # poking at `_axes_present` internals.
+            from app.hal.capabilities import (
+                POS_DUAL_AXIS_AZEL, POS_SINGLE_AXIS_AZ,
+            )
             if self.is_single_axis:
+                self._add_capability(POS_SINGLE_AXIS_AZ)
+                self._remove_capability(POS_DUAL_AXIS_AZEL)
                 logger.info(
                     f"[Aerotech] Single-axis turntable detected — "
                     f"elevation axis {self.el_axis!r} not present on "
                     f"controller. Elevation commands will be ignored; "
                     f"get_position() returns elevation=0.0."
                 )
+            else:
+                self._add_capability(POS_DUAL_AXIS_AZEL)
+                self._remove_capability(POS_SINGLE_AXIS_AZ)
 
             # ENABLE only the axes the controller actually has.
             await self._send(

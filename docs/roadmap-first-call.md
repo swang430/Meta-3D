@@ -8,7 +8,7 @@
 
 ## 🎯 Current Focus
 
-**`P1-3` — PyVISA "not installed" investigation** *(provisional — see note)*
+**`P2-2` — Capability centralisation (prerequisite for P1-1)**
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
@@ -19,12 +19,13 @@
 🚧 Blocked-on-hardware queue below until the next CAICT trip.
 
 Per the WIP=1 rule's "upper bound, not always-on" clarification in
-CLAUDE.md, all-P0-blocked permits descending to a P1 item. P1-3 is
-the only directly-local P1 today; the more substantial P1-1
-(Capability registry) is itself blocked on P2-2 (Capability
-centralisation). Operator decision pending: take P1-3 (small, 1
-hour) or do the P2-2 → P1-1 chain (1+2=3 days, unblocks substantial
-P1 work).
+CLAUDE.md, all-P0-blocked permits descending. Operator picked the
+**P2-2 → P1-1 chain** (substantial 3-day path) over P1-3 (1h
+investigation) — P2-2 collapses scattered driver-capability flags
+(``has_interference_generator``, ``is_single_axis``, …) into a
+single ``driver.capabilities: Set[str]`` so P1-1 can implement
+plan-level pre-flight against one vocabulary rather than
+per-driver attribute peeks. P2-2 ships first; P1-1 follows.
 
 Last review: 2026-05-15
 Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md)
@@ -300,7 +301,7 @@ on a unit where the licensed state is known a priori.
 **Status**: `[ ]` not started
 **Estimate**: on-site 1 hour
 
-### P1-3 — PyVISA "not installed" investigation ⭐ Current Focus (provisional)
+### P1-3 — PyVISA "not installed" investigation
 
 **What**: Reproduce the "PyVISA missing" condition seen during ENA
 debugging. Run `which python && python -c "import pyvisa"` in the same
@@ -362,14 +363,24 @@ instrument (CMW500, CMP200) will hit the same gap.
 **Status**: `[ ]` not started
 **Estimate**: 3-5 days
 
-### P2-2 — Capability centralisation
+### P2-2 — Capability centralisation ⭐ Current Focus
 
 **What**: Collapse scattered `has_interference_generator` /
 `is_single_axis` / `has_user_alignment` into `driver.capabilities:
 Set[str]`. Single source of truth for "what does this driver expose
 right now".
 
-**Status**: `[ ]` not started — **blocks P1-1**
+**Implementation note (2026-05-15)**: chose dual-write over property-
+delegation. The legacy bool attributes (`has_interference_generator`,
+`is_single_axis`) stay live as backward-compat aliases — tests + call
+sites that already write to them keep working. The driver writes both
+the legacy bool AND the canonical token in lock-step inside its own
+probe/connect path; new consumers (P1-1, GUI pre-flight) read from
+`driver.capabilities` exclusively. Dual-write is contained to the
+driver itself; from outside the driver, the set IS the single
+source of truth.
+
+**Status**: `[ ]` in progress (PR pending)
 **Estimate**: 1 day
 
 ### P2-3 — Per-model capability discovery

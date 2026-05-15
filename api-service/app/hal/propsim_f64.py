@@ -183,6 +183,16 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self.has_interference_generator: Optional[bool] = (
             bool(explicit) if self._explicit_interference_gen else None
         )
+        # P2-2: mirror the legacy bool into the canonical capability set.
+        # When the explicit-override path declares True/False at construct
+        # time, ``_apply_discovered_capabilities`` will never run (it's
+        # short-circuited at line 1913), so the set must be seeded here
+        # too — otherwise plan-level pre-flight (P1-1) would think this
+        # F64 doesn't have the interference generator even though config
+        # said it does.
+        if self._explicit_interference_gen and self.has_interference_generator:
+            from app.hal.capabilities import CE_INTERFERENCE_GENERATOR
+            self._add_capability(CE_INTERFERENCE_GENERATOR)
         # 固定 ID 给单 tone, 重复 set 时先 remove 旧的避免 "identifier in use".
         self._cal_tone_id: str = config.get("cal_tone_id", "ce_sa_cal_tone")
         self._cal_tone_active: bool = False
@@ -1916,6 +1926,14 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self.has_interference_generator = bool(
             upper & INTERFERENCE_GEN_OPTION_TOKENS
         )
+        # P2-2: mirror to canonical capability set. New consumers should
+        # read `driver.capabilities`; the legacy bool is kept for current
+        # call sites + tests that already assert against it.
+        from app.hal.capabilities import CE_INTERFERENCE_GENERATOR
+        if self.has_interference_generator:
+            self._add_capability(CE_INTERFERENCE_GENERATOR)
+        else:
+            self._remove_capability(CE_INTERFERENCE_GENERATOR)
         logger.info(
             f"[F64] Interference Generator license: "
             f"{self.has_interference_generator} (probed from {options or '(empty)'})"
