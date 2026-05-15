@@ -175,6 +175,67 @@ class TestF64CapabilityMirroring:
 # Aerotech — single/dual axis capability mirroring
 # ---------------------------------------------------------------------------
 
+class TestF64UserAlignmentCapability:
+    """``ce.user_alignment`` is set IFF the F64 has an active user
+    alignment loaded — runtime state, not vocabulary placeholder.
+    These tests cover the helper directly so they don't have to
+    simulate the full connect() handshake; the connect path itself
+    is already covered by the F64 connection tests.
+
+    Pre-fix, the token sat in KNOWN_CAPABILITIES but no driver path
+    ever wrote it — P1-1 pre-flight would reject every step needing
+    user alignment, even on an active F64 (Codex P2 on PR #21).
+    """
+
+    def _drv(self):
+        return RealPropsimF64Driver("f64-align", {})
+
+    def test_no_active_alignment_does_not_set_token(self):
+        drv = self._drv()
+        drv._active_alignment = None
+        drv._update_user_alignment_capability()
+        assert CE_USER_ALIGNMENT not in drv.capabilities
+
+    def test_active_alignment_with_name_sets_token(self):
+        drv = self._drv()
+        drv._active_alignment = {
+            "alignment_name": "caict-bench-2026",
+            "loaded_at": "2026-05-15T10:00:00Z",
+        }
+        drv._update_user_alignment_capability()
+        assert CE_USER_ALIGNMENT in drv.capabilities
+
+    def test_active_alignment_missing_name_does_not_set_token(self):
+        """A status row with no alignment_name (F64 returns an empty
+        struct in some edge states) should not falsely register the
+        token — the populate helper guards on the name being truthy."""
+        drv = self._drv()
+        drv._active_alignment = {"loaded_at": "2026-05-15T10:00:00Z"}
+        drv._update_user_alignment_capability()
+        assert CE_USER_ALIGNMENT not in drv.capabilities
+
+    def test_helper_is_idempotent(self):
+        drv = self._drv()
+        drv._active_alignment = {"alignment_name": "x"}
+        drv._update_user_alignment_capability()
+        drv._update_user_alignment_capability()
+        assert drv.capabilities == {CE_USER_ALIGNMENT}
+
+    def test_token_cleared_when_alignment_drops(self):
+        """A re-probe after an alignment was unloaded should clear
+        the token — otherwise the GUI / P1-1 pre-flight would still
+        green-light a step that needs alignment after operator
+        explicitly cleared it."""
+        drv = self._drv()
+        drv._active_alignment = {"alignment_name": "x"}
+        drv._update_user_alignment_capability()
+        assert CE_USER_ALIGNMENT in drv.capabilities
+
+        drv._active_alignment = None
+        drv._update_user_alignment_capability()
+        assert CE_USER_ALIGNMENT not in drv.capabilities
+
+
 class TestAerotechCapabilityMirroring:
     """Drive Aerotech's axis-discovery path via mocked probe results and
     verify the canonical pos.* tokens land in the capability set."""

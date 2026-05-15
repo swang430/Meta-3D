@@ -66,9 +66,13 @@ CE_INTERFERENCE_GENERATOR = "ce.interference_generator"
 suitable for the CE+SA path-loss calibration loop."""
 
 CE_USER_ALIGNMENT = "ce.user_alignment"
-"""F64 K02 / equivalent — driver supports the Integrated Setup
-Calibration (User Alignment) feature; required for per-deployment cal
-tables that ride on top of factory cal."""
+"""F64 / equivalent — driver currently has an active user alignment
+loaded (Integrated Setup Calibration, the per-deployment cal table
+that rides on top of factory cal). Runtime state: set after a
+successful ``SYST:CALIB:USER:SET 1,<name>`` handshake on connect,
+cleared when ``_active_alignment`` goes None. Reflects whether the
+F64 will actually USE per-deployment cal at run time, not just
+whether the feature is licensed."""
 
 # Positioner
 POS_SINGLE_AXIS_AZ = "pos.single_axis_az"

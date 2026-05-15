@@ -335,6 +335,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             #    SYST:CALIB:USER:SET 1,<name> 重新激活. 当前 active 状态先
             #    存到 _active_alignment 供 precheck phase 上报.
             self._active_alignment = await self.get_user_alignment_status()
+            self._update_user_alignment_capability()
             if self._preferred_alignment_name:
                 current = (
                     self._active_alignment.get("alignment_name")
@@ -348,6 +349,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     )
                     if await self.enable_user_alignment(self._preferred_alignment_name):
                         self._active_alignment = await self.get_user_alignment_status()
+                        self._update_user_alignment_capability()
                     else:
                         logger.warning(
                             f"[F64] Could not activate user alignment "
@@ -1913,6 +1915,35 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 self._last_error = err
         except Exception as e:
             logger.error(f"[F64] Error queue check failed: {e}")
+
+    def _update_user_alignment_capability(self) -> None:
+        """Mirror ``self._active_alignment`` into the canonical capability
+        set (Codex P2 on PR #21).
+
+        Called from ``connect()`` after each ``_active_alignment`` refresh
+        so ``ce.user_alignment`` reflects runtime state, not just the
+        token's presence in the vocabulary. Semantic: the token is set
+        IFF this F64 currently has an active user alignment loaded —
+        i.e. the SYST:CALIB:USER:SET 1,<name> handshake produced a row
+        with a non-empty ``alignment_name``.
+
+        Without this, P1-1's plan pre-flight would reject every step
+        that ``needs: ["ce.user_alignment"]`` even on an F64 that
+        actually has alignment active (the token sat in
+        KNOWN_CAPABILITIES but no code ever populated it — exactly the
+        speculative-vocabulary drift the module-level docstring warns
+        against).
+        """
+        from app.hal.capabilities import CE_USER_ALIGNMENT
+
+        has_active = bool(
+            self._active_alignment
+            and self._active_alignment.get("alignment_name")
+        )
+        if has_active:
+            self._add_capability(CE_USER_ALIGNMENT)
+        else:
+            self._remove_capability(CE_USER_ALIGNMENT)
 
     async def _apply_discovered_capabilities(self, options: List[str]) -> None:
         """*OPT? 解析出的 token → has_interference_generator.
