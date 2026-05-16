@@ -39,6 +39,7 @@ import {
   IconSearch,
   IconCopy,
   IconCheck,
+  IconShieldCheck,
 } from '@tabler/icons-react'
 import {
   useTestPlans,
@@ -49,6 +50,7 @@ import {
   useRemoveFromQueue,
 } from '../../hooks'
 import type { TestPlanStatus } from '../../types'
+import { PreflightModal } from './PreflightModal'
 
 interface TestPlanListProps {
   onCreateNew: () => void
@@ -90,6 +92,7 @@ export function TestPlanList({ onCreateNew, onEdit, onSelect }: TestPlanListProp
   const [searchQuery, setSearchQuery] = useState('')
   const [deleteModalOpened, setDeleteModalOpened] = useState(false)
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
+  const [preflightPlan, setPreflightPlan] = useState<{ id: string; name: string } | null>(null)
 
   // Query hooks
   const { data: plansData, isLoading, refetch } = useTestPlans({ status: statusFilter })
@@ -339,6 +342,22 @@ export function TestPlanList({ onCreateNew, onEdit, onSelect }: TestPlanListProp
                             </Tooltip>
                           )}
 
+                          {/* P1-1 PR B: pre-flight gap check. Available on any
+                              non-terminal status — operator can sanity-check a
+                              draft before marking ready, or re-check before
+                              re-queuing a failed plan. */}
+                          {!['running', 'completed', 'cancelled'].includes(plan.status) && (
+                            <Tooltip label="预检 (检查能力是否满足)">
+                              <ActionIcon
+                                variant="light"
+                                color="teal"
+                                onClick={() => setPreflightPlan({ id: plan.id, name: plan.name })}
+                              >
+                                <IconShieldCheck size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
+
                           {/* More actions menu */}
                           <Menu position="bottom-end">
                             <Menu.Target>
@@ -406,6 +425,13 @@ export function TestPlanList({ onCreateNew, onEdit, onSelect }: TestPlanListProp
           </Button>
         </Group>
       </Modal>
+
+      <PreflightModal
+        opened={preflightPlan !== null}
+        onClose={() => setPreflightPlan(null)}
+        planId={preflightPlan?.id ?? null}
+        planName={preflightPlan?.name ?? null}
+      />
     </Stack>
   )
 }
