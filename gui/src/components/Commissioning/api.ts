@@ -18,8 +18,37 @@ export interface SessionResponse {
   report_id: string | null
 }
 
-export const createSession = async (engineMode: string = 'mimo_first_asc') => {
-  return client.post<SessionResponse>('/commissioning/sessions', { engine_mode: engineMode })
+export interface LabResolutionDetail {
+  /** "none" → no active labs in DB; "ambiguous" → ≥2 active labs */
+  kind: 'none' | 'ambiguous'
+  /** Human-readable, safe to display unchanged */
+  message: string
+  /** Picker data when kind === "ambiguous". Empty for kind="none". */
+  active_labs: Array<{ id: string; name: string }>
+}
+
+/**
+ * Create a commissioning session. ``labProfileId`` is optional —
+ * when omitted, the backend picks the unique active LabProfile if
+ * there's exactly one (back-compat). With 0 or ≥2 active labs the
+ * call returns **422** with a structured detail (see
+ * ``LabResolutionDetail``) that the GUI uses to render a picker.
+ *
+ * Pre-fix (before factory.py refactor) the 0 / ≥2 paths returned
+ * 500 with an unactionable message — operator saw "初始化失败 错误
+ * 代码500" with no recovery path.
+ */
+export const createSession = async (
+  engineMode: string = 'mimo_first_asc',
+  labProfileId?: string,
+) => {
+  const body: { engine_mode: string; lab_profile_id?: string } = {
+    engine_mode: engineMode,
+  }
+  if (labProfileId) {
+    body.lab_profile_id = labProfileId
+  }
+  return client.post<SessionResponse>('/commissioning/sessions', body)
 }
 
 export const getSession = async (sessionId: string) => {
