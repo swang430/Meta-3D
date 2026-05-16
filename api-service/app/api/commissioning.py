@@ -28,12 +28,41 @@ from app.models.calibration import CalibrationCertificate
 from app.models.lab_profile import LabProfile
 from app.models.test_plan import TestCase, TestExecution
 from app.schemas.mimo_ota.config import MIMO_OTA_TEST_TYPE, MIMOOTAStepType
+from app.services.lab_resolution import LabResolutionError
 from app.services.mimo_ota import build_mimo_ota_test_case
 from app.services.test_execution import (
     StepDescriptor,
     StepExecutionContext,
     dispatch_step,
 )
+
+
+def _lab_resolution_to_422(err: LabResolutionError) -> HTTPException:
+    """Translate a ``LabResolutionError`` into an actionable 422 the
+    GUI can render directly.
+
+    Detail shape (so the GUI can build a picker without re-fetching):
+        {
+          "kind": "none" | "ambiguous",
+          "message": "<human-readable>",
+          "active_labs": [{"id": str, "name": str}, ...],
+        }
+
+    Pre-this-fix the underlying ValueError propagated uncaught and
+    FastAPI returned 500 — surfaced in the GUI's commissioning
+    sandbox as "初始化失败 错误代码500" with no recovery path.
+    """
+    return HTTPException(
+        status_code=422,
+        detail={
+            "kind": err.kind,
+            "message": str(err),
+            "active_labs": [
+                {"id": str(lab.id), "name": lab.name}
+                for lab in err.active_labs
+            ],
+        },
+    )
 from app.models.diagnostic_run import DiagnosticKind
 from app.services.diagnostic_context import build_diagnostic_context
 
@@ -291,15 +320,22 @@ def _build_context(
 async def create_session(req: CreateSessionRequest, db: Session = Depends(get_db)):
     """Create a new MIMO_OTA session (TestCase + TestExecution + 5 step descriptors)."""
     overrides = _request_overrides(req)
-    test_case, descriptors = build_mimo_ota_test_case(
-        db,
-        name=f"MIMO_OTA Session {datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
-        description="Created by /commissioning/sessions REST endpoint",
-        lab_profile_id=req.lab_profile_id,
-        config_overrides=overrides,
-        created_by="commissioning_api",
-        tags=["mimo_ota_session", "commissioning"],
-    )
+    try:
+        test_case, descriptors = build_mimo_ota_test_case(
+            db,
+            name=f"MIMO_OTA Session {datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
+            description="Created by /commissioning/sessions REST endpoint",
+            lab_profile_id=req.lab_profile_id,
+            config_overrides=overrides,
+            created_by="commissioning_api",
+            tags=["mimo_ota_session", "commissioning"],
+        )
+    except LabResolutionError as err:
+        raise _lab_resolution_to_422(err) from err
+    except ValueError as err:
+        # explicit lab_profile_id that's missing/inactive — caller bug,
+        # but a clean 422 is more useful than a 500 traceback
+        raise HTTPException(status_code=422, detail=str(err)) from err
 
     execution = TestExecution(
         test_case_id=test_case.id,
@@ -457,15 +493,20 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
     # Build a regular MIMO_OTA TestCase but tag it so the commissioning list
     # view can filter these out.
     overrides = req.config_overrides or {}
-    test_case, descriptors = build_mimo_ota_test_case(
-        db,
-        name=f"ADHOC {req.phase_name} {datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
-        description=f"Ad-hoc workshop run of phase '{req.phase_name}'",
-        lab_profile_id=req.lab_profile_id,
-        config_overrides=overrides,
-        created_by="commissioning_adhoc",
-        tags=["diagnostic_ad_hoc", f"phase:{req.phase_name}"],
-    )
+    try:
+        test_case, descriptors = build_mimo_ota_test_case(
+            db,
+            name=f"ADHOC {req.phase_name} {datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
+            description=f"Ad-hoc workshop run of phase '{req.phase_name}'",
+            lab_profile_id=req.lab_profile_id,
+            config_overrides=overrides,
+            created_by="commissioning_adhoc",
+            tags=["diagnostic_ad_hoc", f"phase:{req.phase_name}"],
+        )
+    except LabResolutionError as err:
+        raise _lab_resolution_to_422(err) from err
+    except ValueError as err:
+        raise HTTPException(status_code=422, detail=str(err)) from err
 
     step = next((d for d in descriptors if d.type == target_step_type), None)
     if step is None:

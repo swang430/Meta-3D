@@ -3,7 +3,9 @@
 `build_mimo_ota_test_case` is the canonical entrypoint replacing the legacy
 `CommissioningService.create_session`. It:
 
-1. Resolves the LabProfile (caller passes id, or we look up the active default).
+1. Resolves the LabProfile via ``app.services.lab_resolution.resolve_lab_profile``
+   (caller passes id, or we look up the unique active one; ambiguity raises
+   ``LabResolutionError`` that the API layer maps to 422).
 2. Merges Pydantic defaults + caller overrides into a MIMOOTAConfiguration.
 3. Persists a TestCase row with test_type='MIMO_OTA' bound to the LabProfile
    and (optionally) a specific calibration certificate.
@@ -19,41 +21,14 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.models.lab_profile import LabProfile
 from app.models.test_plan import TestCase, TestCaseType
 from app.schemas.mimo_ota.config import (
     MIMO_OTA_DEFAULT_STEPS,
     MIMO_OTA_TEST_TYPE,
     MIMOOTAConfiguration,
 )
+from app.services.lab_resolution import resolve_lab_profile
 from app.services.test_execution import StepDescriptor
-
-
-def _resolve_lab_profile(
-    db: Session, lab_profile_id: Optional[UUID]
-) -> LabProfile:
-    """Look up the requested LabProfile, or the unique active one as fallback."""
-    if lab_profile_id is not None:
-        profile = db.query(LabProfile).filter(LabProfile.id == lab_profile_id).first()
-        if not profile:
-            raise ValueError(f"LabProfile {lab_profile_id} not found")
-        if not profile.is_active:
-            raise ValueError(f"LabProfile {lab_profile_id} is inactive")
-        return profile
-
-    active = db.query(LabProfile).filter(LabProfile.is_active.is_(True)).all()
-    if not active:
-        raise ValueError(
-            "No active LabProfile in DB. Run scripts/seed_caict_lab_profile.py "
-            "to create one before building a MIMO_OTA TestCase."
-        )
-    if len(active) > 1:
-        names = ", ".join(p.name for p in active)
-        raise ValueError(
-            f"Multiple active LabProfiles found ({names}); pass an explicit "
-            "lab_profile_id to disambiguate."
-        )
-    return active[0]
 
 
 def _build_step_descriptors(
@@ -99,7 +74,7 @@ def build_mimo_ota_test_case(
     The TestCase row is created and committed. The step descriptors are
     in-memory objects the caller passes through dispatch_step one by one.
     """
-    profile = _resolve_lab_profile(db, lab_profile_id)
+    profile = resolve_lab_profile(db, lab_profile_id)
 
     # Resolve calibration cert: explicit > LabProfile.active > None
     cert_id = calibration_certificate_id or profile.active_calibration_certificate_id
