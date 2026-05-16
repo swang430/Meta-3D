@@ -9,11 +9,13 @@ Pins both layers:
   function — pins the operator-facing surface (response shape, error
   codes, the deliberate no-auto-resolve-lab decision).
 
-Lab-scoping (PR #23, fixing Codex P1 on PR #22): the validator counts
-ONLY drivers whose category the lab binds via
-``lab.instrument_bindings``. A driver HAL happens to have loaded for a
-different lab doesn't satisfy needs for the selected lab. Tests below
-cover this filter and the bound-but-not-loaded surface.
+Lab-scoping evolves over two Codex P1s on PR #22:
+- 1st fix (commit 4daf3d0): only drivers whose CATEGORY the lab binds
+  count toward "lab can satisfy this need".
+- 2nd fix (this iteration): only drivers whose ENDPOINT also matches
+  the binding count. Mismatches surface in `mismatched_drivers`
+  separate from `not_loaded_categories` (different remediation hint).
+Tests below cover both layers and the bound-but-not-loaded surface.
 
 What it does NOT cover:
 - Seeded sequence templates propagating ``needs`` into materialised
@@ -23,7 +25,7 @@ What it does NOT cover:
 from __future__ import annotations
 
 import uuid
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Sequence, Set, Tuple, Union
 from unittest.mock import MagicMock
 
 import pytest
@@ -95,11 +97,25 @@ def db():
         s.close()
 
 
-def _mock_driver(capabilities: Set[str]) -> Any:
-    """Stand-in for a real driver instance. The validator only reads
-    `.capabilities`; nothing else on the driver matters here."""
+# Test-only endpoint used by both ``_mock_driver`` and ``_make_lab``
+# default-path bindings. Keeping them identical means the realistic
+# (strict) scoping path passes; tests that want to exercise endpoint
+# mismatch override one side via explicit args.
+DEFAULT_TEST_ENDPOINT = "10.0.0.1:5025"
+
+
+def _mock_driver(
+    capabilities: Set[str],
+    *,
+    endpoint: str = DEFAULT_TEST_ENDPOINT,
+) -> Any:
+    """Stand-in for a real driver instance. The validator reads both
+    ``.capabilities`` (P2-2) and ``.config["endpoint"]`` (Codex P1
+    follow-up on PR #22 — endpoint scoping). Default endpoint matches
+    ``_make_lab``'s default so most tests run on the strict path."""
     d = MagicMock()
     d.capabilities = set(capabilities)
+    d.config = {"endpoint": endpoint}
     return d
 
 
@@ -140,20 +156,33 @@ def _ensure_category(db, key: str) -> InstrumentCategory:
     return cat
 
 
-def _make_lab(db, *, binds: List[str] = ()) -> LabProfile:
-    """Build a LabProfile bound to the given list of category keys.
+def _make_lab(
+    db,
+    *,
+    binds: Sequence[Union[str, Tuple[str, str]]] = (),
+) -> LabProfile:
+    """Build a LabProfile bound to the given list of categories.
+
+    Each ``binds`` entry is either:
+    - a category-key string → endpoint defaults to ``DEFAULT_TEST_ENDPOINT``
+      (matches ``_mock_driver``'s default — exercises the strict path)
+    - a ``(category_key, endpoint)`` tuple → explicit endpoint, for
+      mismatch tests where binding ≠ driver endpoint, or weak-binding
+      tests where ``endpoint == ""``
 
     ``binds=[]`` (the default) produces a lab with no bindings — useful
-    for "lab is unconfigured" tests. Any other list produces real
-    ``InstrumentCategory`` rows and wires their UUIDs into
-    ``instrument_bindings`` so the validator's scoping path sees them.
+    for "lab is unconfigured" tests.
     """
     bindings: List[Dict[str, Any]] = []
-    for key in binds:
+    for entry in binds:
+        if isinstance(entry, tuple):
+            key, endpoint = entry
+        else:
+            key, endpoint = entry, DEFAULT_TEST_ENDPOINT
         cat = _ensure_category(db, key)
         bindings.append({
             "category_id": str(cat.id),
-            "connection_endpoint": "",
+            "connection_endpoint": endpoint,
             "driver_mode": "auto",
             "role": f"primary_{key}",
         })
@@ -201,6 +230,7 @@ class TestValidatorPureFunction:
         assert result.unknown_tokens == []
         assert result.lab_capabilities == []
         assert result.not_loaded_categories == []
+        assert result.mismatched_drivers == []
 
     def test_step_with_empty_needs_is_permissive(self, db):
         plan = _make_plan(db)
@@ -215,12 +245,15 @@ class TestValidatorPureFunction:
         lab = _make_lab(db, binds=["channelEmulator"])
         _add_step(db, plan, order=1, name="cal-tone",
                   needs=[CE_INTERFERENCE_GENERATOR])
+        # Lab default endpoint and driver default endpoint align —
+        # this exercises the strict (endpoint-matched) scoping path.
         hal = {"channelEmulator": _mock_driver({CE_INTERFERENCE_GENERATOR})}
         result = validate_plan(plan, lab, db, hal_drivers=hal)
         assert result.ready is True
         assert result.gaps == []
         assert result.lab_capabilities == [CE_INTERFERENCE_GENERATOR]
         assert result.not_loaded_categories == []
+        assert result.mismatched_drivers == []
 
     def test_unsatisfied_need_creates_gap(self, db):
         plan = _make_plan(db)
@@ -364,6 +397,100 @@ class TestLabScopedSemantics:
         assert "channelEmulator" in result.gaps[0].reason
         assert "not loaded" in result.gaps[0].reason.lower()
 
+    def test_mismatched_endpoint_surfaces_distinct_field(self, db):
+        """Lab binds CE at endpoint A. HAL has a CE driver loaded but
+        at endpoint B (e.g., HAL was started from a different lab's
+        config). Pre-2nd-fix this satisfied the need because category
+        matched. Post-fix: driver doesn't contribute capabilities AND
+        surfaces in mismatched_drivers with both endpoints, so the
+        operator can decide between "reload HAL with this lab's
+        config" vs "fix the lab binding endpoint".
+        Codex P1 (2nd iteration) on PR #22."""
+        plan = _make_plan(db)
+        # Lab binds CE explicitly at endpoint A.
+        lab = _make_lab(
+            db, binds=[("channelEmulator", "192.168.10.100:5025")],
+        )
+        _add_step(db, plan, order=1, name="cal-tone",
+                  needs=[CE_INTERFERENCE_GENERATOR])
+        # HAL has CE driver up — has the right capability — but its
+        # endpoint is for a DIFFERENT physical unit.
+        hal = {
+            "channelEmulator": _mock_driver(
+                {CE_INTERFERENCE_GENERATOR},
+                endpoint="192.168.20.200:5025",
+            ),
+        }
+        result = validate_plan(plan, lab, db, hal_drivers=hal)
+        assert result.ready is False, (
+            "loaded driver is for a different unit — must NOT count "
+            "toward satisfying this lab's needs"
+        )
+        # Mismatch is visible as its own field with both endpoints.
+        assert len(result.mismatched_drivers) == 1
+        m = result.mismatched_drivers[0]
+        assert m.category == "channelEmulator"
+        assert m.expected_endpoint == "192.168.10.100:5025"
+        assert m.loaded_endpoint == "192.168.20.200:5025"
+        # not_loaded should be empty — driver IS loaded, just for
+        # the wrong unit. Different remediation hint from not-loaded.
+        assert result.not_loaded_categories == []
+        # lab_capabilities should NOT include the mismatched driver's
+        # token — that's the whole point of the strict scoping.
+        assert CE_INTERFERENCE_GENERATOR not in result.lab_capabilities
+        # Gap reason should mention the mismatch path so the GUI's
+        # text rendering doesn't need to re-derive remediation.
+        reason_lower = result.gaps[0].reason.lower()
+        assert "different unit" in reason_lower or "bound to a different" in reason_lower
+
+    def test_endpoint_match_is_whitespace_and_case_insensitive(self, db):
+        """Trivially-different endpoint strings must still match —
+        otherwise the operator paranoia (typing IP with trailing
+        space, mixed case for hostnames) breaks scoping false-negative."""
+        plan = _make_plan(db)
+        lab = _make_lab(
+            db, binds=[("channelEmulator", "  192.168.0.10:5025  ")],
+        )
+        _add_step(db, plan, order=1, name="cal-tone",
+                  needs=[CE_INTERFERENCE_GENERATOR])
+        hal = {
+            "channelEmulator": _mock_driver(
+                {CE_INTERFERENCE_GENERATOR},
+                endpoint="192.168.0.10:5025",
+            ),
+        }
+        result = validate_plan(plan, lab, db, hal_drivers=hal)
+        assert result.ready is True, (
+            f"endpoints differ only by whitespace — should match. "
+            f"mismatches={result.mismatched_drivers}"
+        )
+        assert result.mismatched_drivers == []
+
+    def test_weak_binding_no_endpoint_falls_back_to_category_match(self, db):
+        """Older lab profile rows (saved before the wizard collected
+        endpoints) have ``connection_endpoint=""``. The validator
+        cannot strict-match without an expected value, so it falls
+        back to category-only match. Preserves backwards-compat for
+        existing data; operators can tighten by re-saving via the
+        wizard. The fallback is intentionally silent today — if it
+        becomes a real source of false-positives we'll add a warning
+        field."""
+        plan = _make_plan(db)
+        # Explicit empty endpoint = weak binding.
+        lab = _make_lab(db, binds=[("channelEmulator", "")])
+        _add_step(db, plan, order=1, name="cal-tone",
+                  needs=[CE_INTERFERENCE_GENERATOR])
+        hal = {
+            "channelEmulator": _mock_driver(
+                {CE_INTERFERENCE_GENERATOR},
+                endpoint="anywhere:1234",  # ignored — weak binding
+            ),
+        }
+        result = validate_plan(plan, lab, db, hal_drivers=hal)
+        assert result.ready is True
+        assert result.mismatched_drivers == []
+        assert CE_INTERFERENCE_GENERATOR in result.lab_capabilities
+
     def test_lab_with_no_bindings_treats_everything_as_out_of_scope(self, db):
         """An unconfigured lab (no instrument_bindings) cannot satisfy
         any needs, even if HAL has every driver loaded globally."""
@@ -414,6 +541,43 @@ class TestPreflightEndpoint:
         assert body["lab_profile_id"] == str(lab.id)
         assert CE_INTERFERENCE_GENERATOR in body["lab_capabilities"]
         assert body["not_loaded_categories"] == []
+        assert body["mismatched_drivers"] == []
+
+    def test_endpoint_returns_mismatched_drivers_field(self, db, monkeypatch):
+        """End-to-end mismatch path through the HTTP surface — pins
+        the JSON shape the GUI (PR B) will render."""
+        plan = _make_plan(db)
+        lab = _make_lab(
+            db, binds=[("channelEmulator", "192.168.1.1:5025")],
+        )
+        _add_step(db, plan, order=1, name="cal-tone",
+                  needs=[CE_INTERFERENCE_GENERATOR])
+
+        class _StubHal:
+            drivers = {
+                "channelEmulator": _mock_driver(
+                    {CE_INTERFERENCE_GENERATOR},
+                    endpoint="192.168.2.2:5025",
+                ),
+            }
+
+        monkeypatch.setattr(
+            "app.services.instrument_hal_service.get_hal_service",
+            lambda: _StubHal(),
+        )
+        r = client.post(
+            f"/api/v1/test-plans/{plan.id}/preflight",
+            params={"lab_profile_id": str(lab.id)},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["ready"] is False
+        assert body["not_loaded_categories"] == []
+        assert len(body["mismatched_drivers"]) == 1
+        m = body["mismatched_drivers"][0]
+        assert m["category"] == "channelEmulator"
+        assert m["expected_endpoint"] == "192.168.1.1:5025"
+        assert m["loaded_endpoint"] == "192.168.2.2:5025"
 
     def test_gap_path_returns_actionable_detail(self, db, monkeypatch):
         plan = _make_plan(db)

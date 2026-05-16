@@ -597,14 +597,25 @@ class PreflightGapResponse(BaseModel):
     reason: str
 
 
+class DriverMismatchResponse(BaseModel):
+    """A bound category has a driver loaded for a DIFFERENT unit than
+    this lab binds (different endpoint). Operator remedy is "reload
+    HAL with this lab's config" or "fix the binding endpoint" — distinct
+    from `not_loaded_categories` ("driver isn't up at all")."""
+    category: str
+    expected_endpoint: str
+    loaded_endpoint: str
+
+
 class PreflightResultResponse(BaseModel):
     plan_id: UUID
     lab_profile_id: UUID
     ready: bool
     gaps: List[PreflightGapResponse]
     unknown_tokens: List[str]  # tokens in step.needs not in KNOWN_CAPABILITIES (typo warnings)
-    lab_capabilities: List[str]  # sorted union of tokens exposed by drivers SCOPED to this lab's bindings
+    lab_capabilities: List[str]  # sorted union of tokens exposed by drivers SCOPED per-binding to this lab
     not_loaded_categories: List[str]  # categories the lab binds but HAL hasn't loaded — usually "reload HAL"
+    mismatched_drivers: List[DriverMismatchResponse]  # driver loaded for wrong unit (endpoint mismatch)
 
 
 @router.post(
@@ -658,6 +669,14 @@ def preflight_test_plan(
         unknown_tokens=result.unknown_tokens,
         lab_capabilities=result.lab_capabilities,
         not_loaded_categories=result.not_loaded_categories,
+        mismatched_drivers=[
+            DriverMismatchResponse(
+                category=m.category,
+                expected_endpoint=m.expected_endpoint,
+                loaded_endpoint=m.loaded_endpoint,
+            )
+            for m in result.mismatched_drivers
+        ],
     )
 
 
