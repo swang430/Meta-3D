@@ -8,24 +8,23 @@
 
 ## 🎯 Current Focus
 
-**`P2-2` — Capability centralisation (prerequisite for P1-1)**
+**`P1-1` — Capability registry + plan-level pre-flight (split: PR A backend, PR B GUI)**
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
   gets appended to the backlog instead of done inline.
 
-**State (2026-05-15)**: P0-6 merged (PR #19). Remaining P0 items
-(P0-3, P0-4, P0-5) all require on-site hardware — they sit in the
-🚧 Blocked-on-hardware queue below until the next CAICT trip.
+**State (2026-05-16)**: P2-2 merged (PR #21). P0-3/P0-4/P0-5 still in
+the 🚧 Blocked-on-hardware queue below until the next on-site trip.
 
-Per the WIP=1 rule's "upper bound, not always-on" clarification in
-CLAUDE.md, all-P0-blocked permits descending. Operator picked the
-**P2-2 → P1-1 chain** (substantial 3-day path) over P1-3 (1h
-investigation) — P2-2 collapses scattered driver-capability flags
-(``has_interference_generator``, ``is_single_axis``, …) into a
-single ``driver.capabilities: Set[str]`` so P1-1 can implement
-plan-level pre-flight against one vocabulary rather than
-per-driver attribute peeks. P2-2 ships first; P1-1 follows.
+P1-1 is the planned consumer of P2-2's `driver.capabilities` set —
+adds `TestStep.needs: List[str]` to step templates, a
+`validate_plan(plan, lab)` function returning the gap list, and a
+GUI "预检" button. Split into two PRs for review hygiene:
+**PR A** ships the backend (column, validator, endpoint, seeded
+dogfood example, tests) — independently shippable via curl.
+**PR B** ships the GUI button + modal after PR A merges. Both PRs
+declare `Roadmap: P1-1`.
 
 Last review: 2026-05-15
 Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md)
@@ -88,6 +87,7 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 | D6 | P0-1 — DB auto-bootstrap on FastAPI lifespan startup + PG advisory lock (Codex P1) | PR #17 (merged 2026-05-14) |
 | D7 | P0-2 — Lab Profile init wizard + Codex P1 (real UUID via /instruments/catalog) | PR #18 (merged 2026-05-14) |
 | D8 | P0-6 — Mock-data first-call end-to-end PDF (fix `execution.test_plan` AttributeError + Codex P2 stale-read) | PR #19 (merged 2026-05-15) |
+| D9 | P2-2 — Capability centralisation (`driver.capabilities: Set[str]` + Codex P2 follow-up populating `ce.user_alignment` from F64 connect) | PR #21 (merged 2026-05-15) |
 
 ---
 
@@ -272,7 +272,7 @@ non-StaticPool configurations.
 
 ## 🟠 P1 — First-call confidence / repeatability
 
-### P1-1 — Capability registry + plan-level pre-flight
+### P1-1 — Capability registry + plan-level pre-flight ⭐ Current Focus
 
 **What**: Standard vocabulary of capability tokens
 (`ce.gcm_native`, `ce.interference_gen`, `bs.5g_nr`, `pos.single_axis_az`,
@@ -284,10 +284,25 @@ function returns the gap list. GUI shows a "预检" button on each plan.
 runtime. Today the chain is "compose plan → run → step 4 fails because
 F64 license not installed → diagnose 30 minutes".
 
-**Acceptance**: see [P2-2](#p2-2--capability-集中化) (prerequisite)
+**Acceptance** (concrete now P2-2 is done):
+- `TestStep` declares `needs: List[str]` of canonical tokens (column,
+  default `[]`).
+- `validate_plan(plan, lab, db, hal)` returns a typed `PreflightResult`
+  with `gaps: List[Gap]` where each Gap names step + missing token +
+  category. Empty `gaps` == plan is runnable for that lab.
+- `POST /api/v1/test-plans/{plan_id}/preflight` returns the result.
+- ≥1 seeded step template ships with a real `needs` declaration as
+  dogfood proof (F64 calibration-tone → `ce.interference_generator`).
+- GUI plan row gains a "预检" button calling the endpoint and
+  showing gap details in a Mantine Modal (PR B).
 
-**Status**: `[ ]` not started — **depends on P2-2**
-**Estimate**: 2 days
+**Implementation split (2026-05-16)**:
+- **PR A** — backend: column + validator + endpoint + seed update +
+  tests. Independently usable via curl.
+- **PR B** — GUI: button + Mantine Modal listing gaps. Lands after PR A.
+
+**Status**: `[ ]` in progress — PR A pending
+**Estimate**: 2 days (PR A ~1d, PR B ~1d)
 
 ### P1-2 — F64 license probe SCPI on-site verification
 
@@ -363,25 +378,16 @@ instrument (CMW500, CMP200) will hit the same gap.
 **Status**: `[ ]` not started
 **Estimate**: 3-5 days
 
-### P2-2 — Capability centralisation ⭐ Current Focus
+### P2-2 — Capability centralisation ✅ Done (PR #21)
 
 **What**: Collapse scattered `has_interference_generator` /
 `is_single_axis` / `has_user_alignment` into `driver.capabilities:
 Set[str]`. Single source of truth for "what does this driver expose
 right now".
 
-**Implementation note (2026-05-15)**: chose dual-write over property-
-delegation. The legacy bool attributes (`has_interference_generator`,
-`is_single_axis`) stay live as backward-compat aliases — tests + call
-sites that already write to them keep working. The driver writes both
-the legacy bool AND the canonical token in lock-step inside its own
-probe/connect path; new consumers (P1-1, GUI pre-flight) read from
-`driver.capabilities` exclusively. Dual-write is contained to the
-driver itself; from outside the driver, the set IS the single
-source of truth.
-
-**Status**: `[ ]` in progress (PR pending)
-**Estimate**: 1 day
+**Status**: ✅ Done — PR #21 (merged 2026-05-15). Codex P2 follow-up
+on the same PR populated `ce.user_alignment` from F64's connect
+path so the token isn't a documented-but-never-set placeholder.
 
 ### P2-3 — Per-model capability discovery
 
