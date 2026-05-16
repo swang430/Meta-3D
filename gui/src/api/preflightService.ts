@@ -57,8 +57,16 @@ export interface PreflightResult {
   /** Categories where HAL has a driver loaded, but for a different
    * physical unit (endpoint mismatch). Different remediation hint
    * from `not_loaded_categories` — usually "reload HAL with this
-   * lab's config" or "fix the binding endpoint to match". */
-  mismatched_drivers: PreflightDriverMismatch[]
+   * lab's config" or "fix the binding endpoint to match".
+   *
+   * **Optional** because this field landed on the backend in
+   * commit 4e3f835 (Codex P1 iter 2 on PR #22) AFTER PR #22 was
+   * already squash-merged. Until that follow-up PR lands in main,
+   * the response from a running API won't include this key, so
+   * callers must tolerate `undefined`. Once the backend follow-up
+   * is in main, treating this as required becomes safe (consider
+   * dropping the `?` in a future cleanup PR). */
+  mismatched_drivers?: PreflightDriverMismatch[]
 }
 
 /**

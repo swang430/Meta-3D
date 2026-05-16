@@ -259,7 +259,12 @@ function PreflightResultView({
           to this lab" or "fix the binding endpoint" depending on
           which side is wrong — show both endpoints so the operator
           can decide. */}
-      {result.mismatched_drivers.length > 0 && (
+      {/* Defensive default: backend's mismatched_drivers field landed
+          in 4e3f835 AFTER PR #22 was squash-merged, so until the
+          follow-up backend PR lands in main the field is absent from
+          live responses. `?? []` collapses both shapes to a single
+          render path. */}
+      {(result.mismatched_drivers ?? []).length > 0 && (
         <Alert
           color="orange"
           icon={<IconAlertTriangle size={18} />}
@@ -270,7 +275,7 @@ function PreflightResultView({
             说明 HAL 是按别的 LabProfile 起的，或者本 Lab 的 binding endpoint 写错了：
           </Text>
           <Stack gap={4}>
-            {result.mismatched_drivers.map((m) => (
+            {(result.mismatched_drivers ?? []).map((m) => (
               <Group key={m.category} gap="xs" wrap="nowrap">
                 <Badge color="orange" variant="light">
                   {m.category}
