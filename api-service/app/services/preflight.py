@@ -147,16 +147,28 @@ def _parse_endpoint(raw: Any) -> Tuple[str, str]:
 
     Recognized forms (return value in parentheses):
     - ``TCPIP[N]::host::port::INSTR/SOCKET/RAW`` → ``(host, port)``
-    - ``TCPIP[N]::host::named::INSTR`` (HiSLIP named resource) →
-      ``(host, "")`` — no explicit port; HiSLIP default applies and
-      we don't try to encode it (keeps comparison conservative; same
-      HiSLIP named binding on both sides will still tuple-equal).
+    - ``TCPIP[N]::host::named::INSTR`` (HiSLIP / VXI-11 named
+      resource like ``hislip0`` / ``hislip2`` / ``inst0``) →
+      ``(host, name)`` — name is **preserved verbatim**, NOT
+      collapsed to ``(host, "")``. Different named resources on
+      the same host address different SCPI subsystems and must
+      not compare equal. UXM 5G (E7515B) is the canonical example:
+      on the same IP, ``hislip0`` is the platform endpoint
+      (system-level SCPI) and ``hislip2`` is the test-application
+      framework (different command tree — see
+      ``app/hal/uxm_command_profiles.py``). Codex P1 on PR #25
+      caught the earlier conservative-but-wrong collapse.
     - ``host:port`` → ``(host, port)``
     - ``host`` (bare) → ``(host, "")``
     - non-TCPIP VISA (``USB::``, ``GPIB::``, ``ASRL::``) → the whole
       normalized string as ``(s, "")`` — we don't try to parse
       vendor/serial-shaped tokens, but identical strings still match
     - empty / None → ``("", "")``
+
+    Strict interpretation: ``(host, "5025")`` ≠ ``(host, "hislip0")``
+    ≠ ``(host, "")``. Operators who bind one form against a HAL
+    loaded on another get a legitimate ``mismatched_drivers`` entry —
+    same host but different SCPI endpoint is a real divergence.
     """
     s = _normalize_endpoint(raw)
     if not s:
@@ -167,10 +179,13 @@ def _parse_endpoint(raw: Any) -> Tuple[str, str]:
         if len(parts) >= 3 and parts[0].startswith("tcpip"):
             host = parts[1]
             port_or_name = parts[2]
-            if port_or_name.isdigit():
-                return (host, port_or_name)
-            # HiSLIP / VXI-11 named resource — host-only canonical
-            return (host, "")
+            # Keep the third token verbatim — numeric port OR named
+            # resource (hislip0/hislip2/inst0). Collapsing names to
+            # the host alone would let a UXM driver loaded on
+            # hislip0 (platform) satisfy a binding declared on
+            # hislip2 (test-app framework) — different SCPI
+            # subsystems on the same instrument.
+            return (host, port_or_name)
         # Non-TCPIP VISA — return the full normalized string as-is.
         # Identical USB::0x2A8D::... strings on both sides still match.
         return (s, "")

@@ -607,12 +607,10 @@ class TestLabScopedSemantics:
         assert "tcpip" not in m.loaded_endpoint.lower()
         assert "instr" not in m.loaded_endpoint.lower()
 
-    def test_visa_hislip_named_resource_matches_hostname_only(self, db):
-        """HiSLIP named resources (TCPIP0::host::hislip0::INSTR) don't
-        carry an explicit port — both binding-side and driver-side
-        canonicalize to (host, '') so identical host bindings still
-        match. Conservative: doesn't try to encode the HiSLIP default
-        port 4880 since the user binding may or may not include one."""
+    def test_visa_hislip_same_named_resource_matches(self, db):
+        """Same VISA HiSLIP named resource on both sides → match.
+        The named resource (hislip0) is part of the canonical
+        identity tuple, just as a numeric port would be."""
         plan = _make_plan(db)
         lab = _make_lab(
             db,
@@ -629,6 +627,71 @@ class TestLabScopedSemantics:
         result = validate_plan(plan, lab, db, hal_drivers=hal)
         assert result.ready is True
         assert result.mismatched_drivers == []
+
+    def test_uxm_hislip0_vs_hislip2_is_mismatch(self, db):
+        """UXM E7515B real scenario (Codex P1 on PR #25): on the
+        same instrument IP, `hislip0` is the platform endpoint
+        (system-level SCPI) and `hislip2` is the test-application
+        framework — different SCPI subsystems on the same physical
+        UXM, see app/hal/uxm_command_profiles.py. A lab binding
+        declared on `hislip2` must NOT be satisfied by a driver
+        HAL loaded on `hislip0`: SCPI commands would target the
+        wrong subsystem.
+
+        Pre-fix (commit 1f28ed8) this collapsed both forms to
+        (host, '') and matched — false-positive letting plans
+        run against the wrong endpoint. Fix preserves the named
+        resource in the canonical tuple."""
+        plan = _make_plan(db)
+        lab = _make_lab(
+            db,
+            binds=[("baseStation",
+                    "TCPIP0::uxm.lab1::hislip2::INSTR")],
+        )
+        _add_step(db, plan, order=1, name="rf-link",
+                  needs=[CE_USER_ALIGNMENT])  # any KNOWN token
+        # HAL loaded the UXM driver on the *platform* endpoint —
+        # different SCPI subsystem from what the plan needs.
+        hal = {
+            "baseStation": _mock_driver(
+                {CE_USER_ALIGNMENT},
+                endpoint="TCPIP0::uxm.lab1::hislip0::INSTR",
+            ),
+        }
+        result = validate_plan(plan, lab, db, hal_drivers=hal)
+        assert result.ready is False, (
+            "hislip0 (platform) and hislip2 (test-app) are different "
+            "SCPI subsystems on the same UXM — must NOT match"
+        )
+        assert len(result.mismatched_drivers) == 1
+        m = result.mismatched_drivers[0]
+        assert m.category == "baseStation"
+        # Both display verbatim (no parsed ip:port aliases in this
+        # config) so operator sees the exact named-resource divergence.
+        assert "hislip2" in m.expected_endpoint
+        assert "hislip0" in m.loaded_endpoint
+
+    def test_visa_inst0_does_not_match_numeric_port(self, db):
+        """`TCPIP::host::inst0::INSTR` (VXI-11-style default named
+        resource) is a different connection path from `host:5025`
+        (raw SOCKET). Strict tuple: (host,'inst0') ≠ (host,'5025').
+        Operators bind the form their wizard captured; if HAL ends
+        up on the other form, that's a real divergence."""
+        plan = _make_plan(db)
+        lab = _make_lab(
+            db, binds=[("channelEmulator", "host.example:5025")],
+        )
+        _add_step(db, plan, order=1, name="cal-tone",
+                  needs=[CE_INTERFERENCE_GENERATOR])
+        hal = {
+            "channelEmulator": _mock_driver(
+                {CE_INTERFERENCE_GENERATOR},
+                endpoint="TCPIP0::host.example::inst0::INSTR",
+            ),
+        }
+        result = validate_plan(plan, lab, db, hal_drivers=hal)
+        assert result.ready is False
+        assert len(result.mismatched_drivers) == 1
 
     def test_endpoint_match_is_whitespace_and_case_insensitive_visa(self, db):
         """The earlier whitespace/case test covered plain ip:port.
