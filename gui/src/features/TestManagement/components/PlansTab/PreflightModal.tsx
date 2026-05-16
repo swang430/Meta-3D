@@ -227,10 +227,10 @@ function PreflightResultView({
         </Alert>
       )}
 
-      {/* not_loaded_categories — distinct remedy from gaps, so a
-          distinct visual. Even when this is non-empty the gaps list
-          above already captures the impact; this Alert is the
-          "operator: probably need to reload HAL" hint. */}
+      {/* not_loaded_categories — driver not up at all. Different
+          from mismatched_drivers (driver up but for wrong unit) —
+          we surface them in separate Alerts because the operator
+          remedy is subtly different. */}
       {result.not_loaded_categories.length > 0 && (
         <Alert
           color="yellow"
@@ -238,7 +238,7 @@ function PreflightResultView({
           title="部分绑定类别 HAL 未加载"
         >
           <Text size="sm" mb="xs">
-            此 Lab 绑定了以下类别，但 HAL 当前没有加载对应驱动：
+            此 Lab 绑定了以下类别，但 HAL 当前没有加载任何对应驱动：
           </Text>
           <Group gap="xs">
             {result.not_loaded_categories.map((c) => (
@@ -249,6 +249,42 @@ function PreflightResultView({
           </Group>
           <Text size="xs" c="dimmed" mt="xs">
             通常表示连接没起来或 LabProfile 切换后未重载 HAL。先尝试在仪器面板重载，再重跑预检。
+          </Text>
+        </Alert>
+      )}
+
+      {/* mismatched_drivers — driver loaded BUT for a different unit
+          (endpoint doesn't match this lab's binding). Backend's 2nd
+          Codex P1 fix on PR #22. Remedy is either "reload HAL bound
+          to this lab" or "fix the binding endpoint" depending on
+          which side is wrong — show both endpoints so the operator
+          can decide. */}
+      {result.mismatched_drivers.length > 0 && (
+        <Alert
+          color="orange"
+          icon={<IconAlertTriangle size={18} />}
+          title="部分驱动绑定到了其他设备"
+        >
+          <Text size="sm" mb="xs">
+            HAL 加载了以下类别的驱动，但它们的 endpoint 跟此 Lab 绑定的不一致 —
+            说明 HAL 是按别的 LabProfile 起的，或者本 Lab 的 binding endpoint 写错了：
+          </Text>
+          <Stack gap={4}>
+            {result.mismatched_drivers.map((m) => (
+              <Group key={m.category} gap="xs" wrap="nowrap">
+                <Badge color="orange" variant="light">
+                  {m.category}
+                </Badge>
+                <Text size="xs" c="dimmed">
+                  Lab 期望 <Code>{m.expected_endpoint || '(空)'}</Code>，
+                  HAL 加载的是 <Code>{m.loaded_endpoint}</Code>
+                </Text>
+              </Group>
+            ))}
+          </Stack>
+          <Text size="xs" c="dimmed" mt="xs">
+            修复路径二选一：(1) 在仪器面板按此 Lab 的 binding 重载 HAL；
+            (2) 在 Lab Profile 编辑器里把 endpoint 改成跟 HAL 实际加载的一致。
           </Text>
         </Alert>
       )}

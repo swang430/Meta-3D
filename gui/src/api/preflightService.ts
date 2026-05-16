@@ -1,12 +1,13 @@
 /**
  * P1-1 PR B — plan-level pre-flight validation client.
  *
- * Wraps POST /api/v1/test-plans/{id}/preflight (added in PR #22, scoped
- * to lab.instrument_bindings in PR #23). The endpoint deliberately
- * requires `lab_profile_id` as a query param — it does NOT auto-resolve
- * "the single active lab" (that path tripped the commissioning factory
- * during P2-2 smoke). The GUI is responsible for asking the operator
- * which lab to validate against.
+ * Wraps POST /api/v1/test-plans/{id}/preflight (added in PR #22; scoped
+ * to lab.instrument_bindings category in commit 4daf3d0; further scoped
+ * to per-binding endpoint match in 4e3f835 — both fixing Codex P1s).
+ * The endpoint deliberately requires `lab_profile_id` as a query param —
+ * it does NOT auto-resolve "the single active lab" (that path tripped
+ * the commissioning factory during P2-2 smoke). The GUI is responsible
+ * for asking the operator which lab to validate against.
  */
 import apiClient from './client'
 
@@ -18,8 +19,20 @@ export interface PreflightGap {
   missing_token: string
   /** Human-readable, names both the missing token and the loaded-in-scope
    * categories so the operator can correlate without reading code. When
-   * `not_loaded_categories` is non-empty the reason also calls that out. */
+   * `not_loaded_categories` or `mismatched_drivers` is non-empty the
+   * reason calls those out too. */
   reason: string
+}
+
+/** A bound category has a driver loaded for a DIFFERENT physical unit
+ * (different endpoint) than this lab declares. The operator hint is
+ * "reload HAL with this lab's config" or "fix the lab binding's
+ * endpoint" — distinct from `not_loaded_categories` ("driver isn't
+ * up at all"). Pairs with the backend's DriverMismatch dataclass. */
+export interface PreflightDriverMismatch {
+  category: string
+  expected_endpoint: string
+  loaded_endpoint: string
 }
 
 export interface PreflightResult {
@@ -32,14 +45,20 @@ export interface PreflightResult {
    * almost always typos. Surfaced so the dev can fix without losing the
    * green light on the rest of the plan. */
   unknown_tokens: string[]
-  /** Sorted union of tokens exposed by drivers SCOPED to this lab's
-   * `instrument_bindings`. Does NOT include capabilities from drivers
-   * HAL loaded for other labs. */
+  /** Sorted union of tokens exposed by drivers scoped per-binding
+   * (category + endpoint) to this lab. Does NOT include capabilities
+   * from drivers HAL loaded for other labs even if the category
+   * matches. */
   lab_capabilities: string[]
-  /** Categories the lab binds but HAL hasn't loaded a driver for.
+  /** Categories the lab binds but HAL hasn't loaded any driver for.
    * Surfacing this separately lets the GUI direct the operator to
    * "reload HAL / check connection" instead of "buy a license". */
   not_loaded_categories: string[]
+  /** Categories where HAL has a driver loaded, but for a different
+   * physical unit (endpoint mismatch). Different remediation hint
+   * from `not_loaded_categories` — usually "reload HAL with this
+   * lab's config" or "fix the binding endpoint to match". */
+  mismatched_drivers: PreflightDriverMismatch[]
 }
 
 /**
