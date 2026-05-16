@@ -8,25 +8,31 @@
 
 ## 🎯 Current Focus
 
-**`P1-1` — Capability registry + plan-level pre-flight (split: PR A backend, PR B GUI)**
+**Backlog cleanup pass (P1-3 + commissioning-default-lab fragility)**
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
   gets appended to the backlog instead of done inline.
 
-**State (2026-05-16)**: P2-2 merged (PR #21). P0-3/P0-4/P0-5 still in
-the 🚧 Blocked-on-hardware queue below until the next on-site trip.
+**State (2026-05-16, late afternoon)**: P1-1 shipped — see D10 in the
+Done table. PR #22 (backend), #23 (GUI), #24 (Codex P1 iter 2:
+per-binding endpoint scoping), and #25 (Codex P2: VISA + plain
+endpoint alias matching with named-resource preservation) are all in
+main. P0-3/P0-4/P0-5 still in the 🚧 Blocked-on-hardware queue below
+until the next on-site trip.
 
-P1-1 is the planned consumer of P2-2's `driver.capabilities` set —
-adds `TestStep.needs: List[str]` to step templates, a
-`validate_plan(plan, lab)` function returning the gap list, and a
-GUI "预检" button. Split into two PRs for review hygiene:
-**PR A** ships the backend (column, validator, endpoint, seeded
-dogfood example, tests) — independently shippable via curl.
-**PR B** ships the GUI button + modal after PR A merges. Both PRs
-declare `Roadmap: P1-1`.
+With all P0 hardware-blocked, the rule-2 fallback to P1 kicks in.
+P1-2/P1-4/P1-5 are also on-site-blocked; only **P1-3** and the
+P2-2-era "commissioning default-lab fragility" backlog item are
+locally workable. Both are in PRs right now:
+- PR #26 — P1-3 PyVISA "missing" investigation (this PR, docs-only)
+- PR #27 — commissioning factory 500 → 422 with picker recovery
 
-Last review: 2026-05-15
+After both merge, the next slot should descend to P2 — P2-3 (per-model
+capability discovery) is the natural successor to P2-2 since the
+codebase context is still fresh.
+
+Last review: 2026-05-16 (after P1-1 ship)
 Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md)
 
 ---
@@ -88,7 +94,7 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 | D7 | P0-2 — Lab Profile init wizard + Codex P1 (real UUID via /instruments/catalog) | PR #18 (merged 2026-05-14) |
 | D8 | P0-6 — Mock-data first-call end-to-end PDF (fix `execution.test_plan` AttributeError + Codex P2 stale-read) | PR #19 (merged 2026-05-15) |
 | D9 | P2-2 — Capability centralisation (`driver.capabilities: Set[str]` + Codex P2 follow-up populating `ce.user_alignment` from F64 connect) | PR #21 (merged 2026-05-15) |
-| D10 | P1-1 — Plan-level pre-flight validator + GUI 预检 button (PR #22 backend + PR #23 GUI + PR #24/#25 Codex P1/P2 follow-ups on per-binding endpoint scoping with VISA-aware tuple matching) | PRs #22/#23/#24/#25 (merged 2026-05-16; #25 in late review) |
+| D10 | P1-1 — Plan-level pre-flight validator + GUI 预检 button (PR #22 backend + PR #23 GUI + PR #24 Codex P1 per-binding endpoint scoping + PR #25 Codex P2 VISA-aware tuple matching with named-resource preservation) | PRs #22/#23/#24/#25 (all merged 2026-05-16) |
 | D11 | P1-3 — PyVISA "not installed" investigation: IDE interpreter drift, same root cause as 2026-05-14 IDE-diagnostics backlog | this PR (2026-05-16) |
 
 ---
@@ -274,7 +280,7 @@ non-StaticPool configurations.
 
 ## 🟠 P1 — First-call confidence / repeatability
 
-### P1-1 — Capability registry + plan-level pre-flight ⭐ Current Focus
+### P1-1 — Capability registry + plan-level pre-flight ✅ Done (see D10)
 
 **What**: Standard vocabulary of capability tokens
 (`ce.gcm_native`, `ce.interference_gen`, `bs.5g_nr`, `pos.single_axis_az`,
@@ -303,10 +309,15 @@ F64 license not installed → diagnose 30 minutes".
   tests. Independently usable via curl.
 - **PR B** — GUI: button + Mantine Modal listing gaps. Lands after PR A.
 
-**Status**: `[≈]` in review — PR A (#22, backend + Codex P1 follow-up
-`4daf3d0` scopes validator to `lab.instrument_bindings`) + PR B (GUI
-button + PreflightModal, opening now). Becomes Done when both merge.
-**Estimate**: 2 days (PR A ~1d, PR B ~1d)
+**Status**: ✅ Done — see D10 in the Done table. All four PRs in main:
+#22 (PR A backend), #23 (PR B GUI), #24 (Codex P1 iter 2: per-binding
+endpoint scoping with `mismatched_drivers` field distinct from
+`not_loaded_categories`), #25 (Codex P2: VISA + plain endpoint alias
+matching, preserving HiSLIP / VXI-11 named resources verbatim so
+`hislip0` ≠ `hislip2` on the same UXM host).
+**Estimate**: 2 days (actual: ~6 hours implementation + 4 review iterations
+across 4 PRs — review surface dominated, see Codex retrospective notes
+in the relevant PR descriptions)
 
 ### P1-2 — F64 license probe SCPI on-site verification
 
