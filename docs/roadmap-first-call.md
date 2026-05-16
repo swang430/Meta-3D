@@ -88,6 +88,8 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 | D7 | P0-2 — Lab Profile init wizard + Codex P1 (real UUID via /instruments/catalog) | PR #18 (merged 2026-05-14) |
 | D8 | P0-6 — Mock-data first-call end-to-end PDF (fix `execution.test_plan` AttributeError + Codex P2 stale-read) | PR #19 (merged 2026-05-15) |
 | D9 | P2-2 — Capability centralisation (`driver.capabilities: Set[str]` + Codex P2 follow-up populating `ce.user_alignment` from F64 connect) | PR #21 (merged 2026-05-15) |
+| D10 | P1-1 — Plan-level pre-flight validator + GUI 预检 button (PR #22 backend + PR #23 GUI + PR #24/#25 Codex P1/P2 follow-ups on per-binding endpoint scoping with VISA-aware tuple matching) | PRs #22/#23/#24/#25 (merged 2026-05-16; #25 in late review) |
+| D11 | P1-3 — PyVISA "not installed" investigation: IDE interpreter drift, same root cause as 2026-05-14 IDE-diagnostics backlog | this PR (2026-05-16) |
 
 ---
 
@@ -318,17 +320,27 @@ on a unit where the licensed state is known a priori.
 **Status**: `[ ]` not started
 **Estimate**: on-site 1 hour
 
-### P1-3 — PyVISA "not installed" investigation
+### P1-3 — PyVISA "not installed" investigation ✅ Done (2026-05-16)
 
 **What**: Reproduce the "PyVISA missing" condition seen during ENA
 debugging. Run `which python && python -c "import pyvisa"` in the same
 context. Confirm whether it was IDE-warning misread, wrong-venv, or
 genuinely missing.
 
-**Acceptance**: root cause documented in a memory entry.
+**Outcome**: IDE-warning misread. PyVISA 1.16.2 is installed and
+working in the project venv (`api-service/.venv/`); it's missing
+from the system Python at `/opt/homebrew/bin/python3`, which is
+what the IDE was statically analyzing against. Same root cause as
+the 2026-05-14 IDE-diagnostics backlog entry — they were two faces
+of the same interpreter-path-drift problem. Real fix (committing
+`.vscode/settings.json`) is the IDE-diagnostics backlog item;
+deferred here because `.vscode/` is currently gitignored and that
+decision needs its own scoped change.
 
-**Status**: `[ ]` not started
-**Estimate**: 1 hour
+**Acceptance**: root cause documented — see
+[`docs/site-debug/2026-05-16-pyvisa-ide-interpreter-investigation.md`](site-debug/2026-05-16-pyvisa-ide-interpreter-investigation.md).
+
+**Status**: ✅ Done
 
 ### P1-4 — first-call repeatability test
 
