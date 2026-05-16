@@ -61,7 +61,7 @@ GUI's "预检" button (PR B) renders it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Sequence, Set, Tuple
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -126,32 +126,102 @@ class PreflightResult:
 
 
 def _normalize_endpoint(raw: Any) -> str:
-    """Endpoint comparison is purely textual — strip whitespace and
-    lowercase so trivial-but-different strings ("192.168.0.10:5025"
-    vs "  192.168.0.10:5025 ") still match."""
+    """Strip whitespace and lowercase. Used both for display and as
+    input to ``_parse_endpoint``."""
     if raw is None:
         return ""
     return str(raw).strip().lower()
 
 
-def _driver_endpoint(driver: Any) -> str:
-    """Read the driver's connection endpoint from its config dict.
+def _parse_endpoint(raw: Any) -> Tuple[str, str]:
+    """Normalize an endpoint string into a ``(host, port)`` tuple
+    so VISA-style and plain forms for the same physical unit
+    compare equal.
 
-    HAL drivers receive their config via the constructor from
-    InstrumentHALService — the dict has either `endpoint` (single
-    string from InstrumentConnection.endpoint) or `ip` + `port`
-    (separate fields from the same row). We accept either shape so
-    older drivers that don't populate `endpoint` still match."""
+    Codex P2 on PR #24 caught the gap: when InstrumentHALService
+    builds ``driver.config``, it copies ``InstrumentConnection.endpoint``
+    verbatim — which for VISA-managed drivers is the resource string
+    (``TCPIP0::192.168.0.132::5025::INSTR``). The lab wizard saves
+    bindings as the documented plain form (``192.168.0.132:5025``).
+    String compare reports false-positive mismatch.
+
+    Recognized forms (return value in parentheses):
+    - ``TCPIP[N]::host::port::INSTR/SOCKET/RAW`` → ``(host, port)``
+    - ``TCPIP[N]::host::named::INSTR`` (HiSLIP named resource) →
+      ``(host, "")`` — no explicit port; HiSLIP default applies and
+      we don't try to encode it (keeps comparison conservative; same
+      HiSLIP named binding on both sides will still tuple-equal).
+    - ``host:port`` → ``(host, port)``
+    - ``host`` (bare) → ``(host, "")``
+    - non-TCPIP VISA (``USB::``, ``GPIB::``, ``ASRL::``) → the whole
+      normalized string as ``(s, "")`` — we don't try to parse
+      vendor/serial-shaped tokens, but identical strings still match
+    - empty / None → ``("", "")``
+    """
+    s = _normalize_endpoint(raw)
+    if not s:
+        return ("", "")
+    if "::" in s:
+        parts = s.split("::")
+        # VISA TCPIP family: "tcpip", "tcpip0", "tcpip1" etc.
+        if len(parts) >= 3 and parts[0].startswith("tcpip"):
+            host = parts[1]
+            port_or_name = parts[2]
+            if port_or_name.isdigit():
+                return (host, port_or_name)
+            # HiSLIP / VXI-11 named resource — host-only canonical
+            return (host, "")
+        # Non-TCPIP VISA — return the full normalized string as-is.
+        # Identical USB::0x2A8D::... strings on both sides still match.
+        return (s, "")
+    if ":" in s:
+        host, _, port = s.rpartition(":")
+        return (host, port)
+    return (s, "")
+
+
+def _driver_endpoint_candidates(driver: Any) -> Set[Tuple[str, str]]:
+    """Collect ALL plausible ``(host, port)`` tuples for a driver.
+
+    When ``InstrumentHALService._initialize_from_db`` builds the
+    config it may set BOTH ``endpoint`` (raw connection string,
+    often VISA-shaped) AND ``ip`` + ``port`` (parsed alias fields
+    from the same DB row). Pre-fix the validator returned the first
+    non-empty form, so a binding using one form against a driver
+    serving the other was falsely flagged. Now we yield every form
+    we can parse out of the config — the binding-side parse just
+    needs to match ANY of them."""
     cfg = getattr(driver, "config", None) or {}
+    out: Set[Tuple[str, str]] = set()
     ep = cfg.get("endpoint")
     if ep:
-        return _normalize_endpoint(ep)
+        parsed = _parse_endpoint(ep)
+        if parsed != ("", ""):
+            out.add(parsed)
     ip = cfg.get("ip")
     port = cfg.get("port")
     if ip and port:
-        return _normalize_endpoint(f"{ip}:{port}")
+        out.add(_parse_endpoint(f"{ip}:{port}"))
+    elif ip:
+        out.add(_parse_endpoint(ip))
+    return out
+
+
+def _driver_endpoint_for_display(driver: Any) -> str:
+    """Pick the most operator-friendly endpoint form for surfacing
+    in a ``DriverMismatch`` — prefer the parsed ``ip:port`` since
+    it's what the wizard speaks, fall back to the raw VISA string
+    only when nothing else is set."""
+    cfg = getattr(driver, "config", None) or {}
+    ip = cfg.get("ip")
+    port = cfg.get("port")
+    if ip and port:
+        return f"{ip}:{port}"
+    ep = cfg.get("endpoint")
+    if ep:
+        return str(ep)
     if ip:
-        return _normalize_endpoint(ip)
+        return str(ip)
     return ""
 
 
@@ -249,18 +319,27 @@ def validate_plan(
             # profiles that the wizard saved without endpoints.
             scoped_drivers[cat_key] = driver
             continue
-        driver_ep = _driver_endpoint(driver)
-        if driver_ep and driver_ep == expected_ep:
+        # Compare on parsed (host, port) tuples so VISA-style
+        # endpoints and plain ip:port for the same physical unit
+        # both match (Codex P2 follow-up on #24). Driver may have
+        # multiple parseable forms in its config (raw VISA endpoint
+        # AND parsed ip/port aliases) — accept a match against any.
+        binding_tuple = _parse_endpoint(expected_ep)
+        driver_tuples = _driver_endpoint_candidates(driver)
+        if binding_tuple in driver_tuples:
             scoped_drivers[cat_key] = driver
         else:
             # Driver up but for a different unit — record mismatch
             # and DON'T pull its capabilities into scope. The lab's
-            # needs in this category will gap.
+            # needs in this category will gap. Display the cleanest
+            # representation (parsed ip:port preferred over verbose
+            # VISA resource string) so the operator can compare
+            # against the binding without parsing TCPIP::host::...
             mismatches.append(DriverMismatch(
                 category=cat_key,
                 expected_endpoint=expected_ep,
-                loaded_endpoint=driver_ep or "(unknown — driver did "
-                                            "not expose endpoint in config)",
+                loaded_endpoint=_driver_endpoint_for_display(driver) or
+                                "(unknown — driver did not expose endpoint in config)",
             ))
 
     loaded_in_scope: Sequence[str] = sorted(scoped_drivers.keys())

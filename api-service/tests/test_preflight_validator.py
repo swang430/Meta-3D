@@ -108,14 +108,27 @@ def _mock_driver(
     capabilities: Set[str],
     *,
     endpoint: str = DEFAULT_TEST_ENDPOINT,
+    ip: str = "",
+    port: str = "",
 ) -> Any:
-    """Stand-in for a real driver instance. The validator reads both
-    ``.capabilities`` (P2-2) and ``.config["endpoint"]`` (Codex P1
-    follow-up on PR #22 — endpoint scoping). Default endpoint matches
-    ``_make_lab``'s default so most tests run on the strict path."""
+    """Stand-in for a real driver instance. The validator reads
+    ``.capabilities`` (P2-2) and ``.config``'s endpoint aliases
+    (Codex P1 + P2 follow-ups on #22).
+
+    ``endpoint`` populates ``config["endpoint"]`` — for VISA-managed
+    drivers this is the raw resource string
+    (``TCPIP0::host::port::INSTR``).
+    ``ip`` + ``port`` populate the parsed alias fields the HAL
+    factory sets when ``InstrumentConnection`` had them. Setting both
+    sides exercises the multi-candidate match path."""
     d = MagicMock()
     d.capabilities = set(capabilities)
-    d.config = {"endpoint": endpoint}
+    cfg: Dict[str, Any] = {"endpoint": endpoint}
+    if ip:
+        cfg["ip"] = ip
+    if port:
+        cfg["port"] = port
+    d.config = cfg
     return d
 
 
@@ -508,6 +521,134 @@ class TestLabScopedSemantics:
         # Reason explicitly names the "no bindings" case so the GUI
         # can route the operator to the lab profile editor.
         assert "no instrument_bindings" in result.gaps[0].reason
+
+    # -----------------------------------------------------------------
+    # VISA endpoint aliasing — Codex P2 on PR #24
+    # -----------------------------------------------------------------
+    # InstrumentHALService builds driver.config from
+    # InstrumentConnection rows, which often have BOTH an `endpoint`
+    # (raw VISA resource string from pyvisa) AND parsed `ip`/`port`
+    # fields. Lab bindings are saved by the wizard as plain ip:port.
+    # The validator must treat VISA-shaped and plain forms for the
+    # same physical unit as equal — otherwise a perfectly runnable
+    # plan gets blocked by a false-positive mismatch.
+
+    def test_visa_endpoint_matches_plain_binding(self, db):
+        """Driver.config.endpoint = TCPIP0::host::port::INSTR (VISA
+        form), lab binds the same host:port in plain form. Must
+        match — same physical unit."""
+        plan = _make_plan(db)
+        lab = _make_lab(
+            db, binds=[("channelEmulator", "192.168.0.132:5025")],
+        )
+        _add_step(db, plan, order=1, name="cal-tone",
+                  needs=[CE_INTERFERENCE_GENERATOR])
+        hal = {
+            "channelEmulator": _mock_driver(
+                {CE_INTERFERENCE_GENERATOR},
+                endpoint="TCPIP0::192.168.0.132::5025::INSTR",
+            ),
+        }
+        result = validate_plan(plan, lab, db, hal_drivers=hal)
+        assert result.ready is True, (
+            f"VISA + plain forms for same unit should match. "
+            f"mismatches={result.mismatched_drivers}"
+        )
+        assert result.mismatched_drivers == []
+        assert CE_INTERFERENCE_GENERATOR in result.lab_capabilities
+
+    def test_driver_with_both_visa_and_parsed_ip_port_matches_either(self, db):
+        """When InstrumentHALService sets BOTH `endpoint` (VISA) AND
+        parsed `ip`/`port` on the same config, the validator must
+        accept a binding match against either form."""
+        plan = _make_plan(db)
+        lab = _make_lab(
+            db, binds=[("channelEmulator", "10.20.30.40:5025")],
+        )
+        _add_step(db, plan, order=1, name="cal-tone",
+                  needs=[CE_INTERFERENCE_GENERATOR])
+        hal = {
+            "channelEmulator": _mock_driver(
+                {CE_INTERFERENCE_GENERATOR},
+                endpoint="TCPIP0::10.20.30.40::5025::INSTR",
+                ip="10.20.30.40",
+                port="5025",
+            ),
+        }
+        result = validate_plan(plan, lab, db, hal_drivers=hal)
+        assert result.ready is True
+        assert result.mismatched_drivers == []
+
+    def test_visa_endpoint_genuine_mismatch_shows_clean_display(self, db):
+        """When endpoints genuinely refer to different units, the
+        mismatch display should surface the operator-friendly form
+        (parsed ip:port) rather than the verbose VISA resource —
+        the operator compares against the binding, which is plain."""
+        plan = _make_plan(db)
+        lab = _make_lab(
+            db, binds=[("channelEmulator", "192.168.0.100:5025")],
+        )
+        _add_step(db, plan, order=1, name="cal-tone",
+                  needs=[CE_INTERFERENCE_GENERATOR])
+        hal = {
+            "channelEmulator": _mock_driver(
+                {CE_INTERFERENCE_GENERATOR},
+                endpoint="TCPIP0::192.168.0.200::5025::INSTR",
+                ip="192.168.0.200",
+                port="5025",
+            ),
+        }
+        result = validate_plan(plan, lab, db, hal_drivers=hal)
+        assert result.ready is False
+        assert len(result.mismatched_drivers) == 1
+        m = result.mismatched_drivers[0]
+        # Display: clean ip:port, NOT the TCPIP0:: prefix or ::INSTR suffix
+        assert m.loaded_endpoint == "192.168.0.200:5025"
+        assert "tcpip" not in m.loaded_endpoint.lower()
+        assert "instr" not in m.loaded_endpoint.lower()
+
+    def test_visa_hislip_named_resource_matches_hostname_only(self, db):
+        """HiSLIP named resources (TCPIP0::host::hislip0::INSTR) don't
+        carry an explicit port — both binding-side and driver-side
+        canonicalize to (host, '') so identical host bindings still
+        match. Conservative: doesn't try to encode the HiSLIP default
+        port 4880 since the user binding may or may not include one."""
+        plan = _make_plan(db)
+        lab = _make_lab(
+            db,
+            binds=[("channelEmulator", "TCPIP0::lab1.example::hislip0::INSTR")],
+        )
+        _add_step(db, plan, order=1, name="cal-tone",
+                  needs=[CE_INTERFERENCE_GENERATOR])
+        hal = {
+            "channelEmulator": _mock_driver(
+                {CE_INTERFERENCE_GENERATOR},
+                endpoint="TCPIP0::lab1.example::hislip0::INSTR",
+            ),
+        }
+        result = validate_plan(plan, lab, db, hal_drivers=hal)
+        assert result.ready is True
+        assert result.mismatched_drivers == []
+
+    def test_endpoint_match_is_whitespace_and_case_insensitive_visa(self, db):
+        """The earlier whitespace/case test covered plain ip:port.
+        Re-confirm the same property holds after parsing through the
+        VISA-aware path — operators commonly paste with stray case."""
+        plan = _make_plan(db)
+        lab = _make_lab(
+            db,
+            binds=[("channelEmulator", "  Tcpip0::HOST.EXAMPLE::5025::INSTR  ")],
+        )
+        _add_step(db, plan, order=1, name="cal-tone",
+                  needs=[CE_INTERFERENCE_GENERATOR])
+        hal = {
+            "channelEmulator": _mock_driver(
+                {CE_INTERFERENCE_GENERATOR},
+                endpoint="host.example:5025",
+            ),
+        }
+        result = validate_plan(plan, lab, db, hal_drivers=hal)
+        assert result.ready is True, result.mismatched_drivers
 
 
 # ---------------------------------------------------------------------------
