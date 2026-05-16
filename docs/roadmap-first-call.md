@@ -301,7 +301,9 @@ F64 license not installed → diagnose 30 minutes".
   tests. Independently usable via curl.
 - **PR B** — GUI: button + Mantine Modal listing gaps. Lands after PR A.
 
-**Status**: `[ ]` in progress — PR A pending
+**Status**: `[≈]` in review — PR A (#22, backend + Codex P1 follow-up
+`4daf3d0` scopes validator to `lab.instrument_bindings`) + PR B (GUI
+button + PreflightModal, opening now). Becomes Done when both merge.
 **Estimate**: 2 days (PR A ~1d, PR B ~1d)
 
 ### P1-2 — F64 license probe SCPI on-site verification
