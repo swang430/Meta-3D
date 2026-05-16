@@ -603,7 +603,8 @@ class PreflightResultResponse(BaseModel):
     ready: bool
     gaps: List[PreflightGapResponse]
     unknown_tokens: List[str]  # tokens in step.needs not in KNOWN_CAPABILITIES (typo warnings)
-    lab_capabilities: List[str]  # union of tokens loaded HAL drivers expose, sorted
+    lab_capabilities: List[str]  # sorted union of tokens exposed by drivers SCOPED to this lab's bindings
+    not_loaded_categories: List[str]  # categories the lab binds but HAL hasn't loaded — usually "reload HAL"
 
 
 @router.post(
@@ -656,6 +657,7 @@ def preflight_test_plan(
         ],
         unknown_tokens=result.unknown_tokens,
         lab_capabilities=result.lab_capabilities,
+        not_loaded_categories=result.not_loaded_categories,
     )
 
 
