@@ -575,6 +575,90 @@ def mark_test_plan_ready(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+# ==================== Pre-flight (P1-1) ====================
+#
+# Capability gap check the operator runs from the GUI's "预检" button
+# (PR B) before kicking off a plan. Reads each step's `needs: List[str]`
+# (added in same PR) and compares against the union of capabilities
+# exposed by HAL-loaded drivers (from P2-2's `driver.capabilities` set).
+#
+# Endpoint deliberately requires `lab_profile_id` as a query parameter
+# rather than auto-resolving "the single active lab" — the commissioning
+# factory's magic auto-resolve produced a 500 storm during P2-2 smoke
+# (see roadmap "Discovered during P2-2" backlog entry). This endpoint
+# fails loudly with 422 if the caller didn't pass a lab, so the GUI
+# is forced to specify one explicitly.
+
+class PreflightGapResponse(BaseModel):
+    step_id: UUID
+    step_name: str
+    step_order: int
+    missing_token: str
+    reason: str
+
+
+class PreflightResultResponse(BaseModel):
+    plan_id: UUID
+    lab_profile_id: UUID
+    ready: bool
+    gaps: List[PreflightGapResponse]
+    unknown_tokens: List[str]  # tokens in step.needs not in KNOWN_CAPABILITIES (typo warnings)
+    lab_capabilities: List[str]  # union of tokens loaded HAL drivers expose, sorted
+
+
+@router.post(
+    "/{test_plan_id}/preflight",
+    response_model=PreflightResultResponse,
+)
+def preflight_test_plan(
+    test_plan_id: UUID,
+    lab_profile_id: UUID = Query(
+        ..., description="LabProfile to validate against. Required — no magic auto-resolve.",
+    ),
+    db: Session = Depends(get_db),
+):
+    """Validate a plan's step capability requirements against a lab's
+    bound drivers. Returns a typed gap list so the GUI can render
+    actionable warnings before the operator hits Run.
+    """
+    from app.models.lab_profile import LabProfile
+    from app.services.instrument_hal_service import get_hal_service
+    from app.services.preflight import validate_plan
+
+    plan = db.query(TestPlan).filter(TestPlan.id == test_plan_id).first()
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"TestPlan {test_plan_id} not found")
+
+    lab = db.query(LabProfile).filter(LabProfile.id == lab_profile_id).first()
+    if lab is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"LabProfile {lab_profile_id} not found — check the id "
+                   f"passed in the query string.",
+        )
+
+    hal = get_hal_service()
+    result = validate_plan(plan, lab, db, hal.drivers)
+
+    return PreflightResultResponse(
+        plan_id=result.plan_id,
+        lab_profile_id=result.lab_profile_id,
+        ready=result.ready,
+        gaps=[
+            PreflightGapResponse(
+                step_id=g.step_id,
+                step_name=g.step_name,
+                step_order=g.step_order,
+                missing_token=g.missing_token,
+                reason=g.reason,
+            )
+            for g in result.gaps
+        ],
+        unknown_tokens=result.unknown_tokens,
+        lab_capabilities=result.lab_capabilities,
+    )
+
+
 # ==================== Test Step Endpoints ====================
 
 def _build_step_dict(step):

@@ -364,6 +364,18 @@ class TestStep(Base):
     # Parameters (flexible JSON structure)
     parameters = Column(JSON, nullable=False, default={}, comment="Step parameters with types and values")
 
+    # P1-1: capability tokens this step requires the bound lab's drivers
+    # to expose (e.g. ["ce.interference_generator"] for a calibration-tone
+    # step). Plan-level pre-flight (`validate_plan` in
+    # `app/services/preflight.py`) reads this against each driver's
+    # `driver.capabilities` set (P2-2) and returns a gap list before
+    # the operator hits Run. Default empty: existing seeded steps stay
+    # permissive; we add `needs` only where it carries real meaning.
+    # Kept as a top-level column (not nested in `parameters`) because
+    # `needs` is a step-template contract, not user-configurable per
+    # execution — mixing them would muddle the schema.
+    needs = Column(JSON, nullable=False, default=list, comment="List of canonical capability tokens this step requires; see app/hal/capabilities.py:KNOWN_CAPABILITIES")
+
     # Execution config
     timeout_seconds = Column(Integer, default=300, comment="Step timeout in seconds")
     retry_count = Column(Integer, default=0, comment="Number of retries on failure")
