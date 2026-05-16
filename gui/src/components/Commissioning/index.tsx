@@ -39,6 +39,13 @@ export function CommissioningSandbox() {
   const [pickerLabs, setPickerLabs] = useState<Array<{ id: string; name: string }>>([])
   const [noActiveLab, setNoActiveLab] = useState(false)
   const [labChoiceMade, setLabChoiceMade] = useState(false)
+  // Bumped on every explicit retry attempt (button click) so the init
+  // effect re-fires even when labChoiceMade and labId haven't changed.
+  // Without this, a transient failure (500, network blip, explicit lab
+  // rejected by backend) would leave the page stuck — labChoiceMade
+  // stays true, the button's setLabChoiceMade(true) is a no-op, and
+  // the effect's deps don't change so nothing re-runs. Codex P2 on PR #27.
+  const [initAttempt, setInitAttempt] = useState(0)
 
   // Pre-load active labs so the Select can render its options even
   // before a 422 surfaces a candidate list (single-active case still
@@ -116,8 +123,11 @@ export function CommissioningSandbox() {
     // before the lab list has even loaded.
     if (!labChoiceMade && !labId) return
     initSession()
+    // labId in deps so that switching labs after a failed create
+    // re-fires init. initAttempt in deps so that re-clicking the
+    // "启动首测会话" button (same lab) is a valid retry path.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engineMode, labChoiceMade])
+  }, [engineMode, labChoiceMade, labId, initAttempt])
 
   const handleLabSelect = (value: string | null) => {
     setLabId(value)
@@ -208,6 +218,12 @@ export function CommissioningSandbox() {
                     setLabId(pickerLabs[0].id)
                   }
                   setLabChoiceMade(true)
+                  // Bump the attempt counter so the init effect re-fires
+                  // even when labChoiceMade is already true and labId hasn't
+                  // changed — i.e., retry after a transient failure on the
+                  // same lab. Without this the button is a dead end after
+                  // the first failure. Codex P2 on PR #27.
+                  setInitAttempt((n) => n + 1)
                 }}
                 leftSection={<IconPlayerPlay size={16} />}
               >
