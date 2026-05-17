@@ -35,6 +35,7 @@ import asyncio
 import os
 import re
 import ftplib
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Any, List, Optional
 from datetime import datetime
@@ -139,6 +140,108 @@ def _is_unsupported_error_payload(response: str) -> bool:
 # *OPT? 查询返回里, 表示 "Internal Interference Generator" license 的候选 token.
 # 不同 firmware revision 用不同代号, 命中任一即认定该 license 存在. CAICT 现场首
 # 测后建议把列表收紧到实际返回的唯一值.
+@dataclass(frozen=True)
+class F64SysInfo:
+    """Structured parse of PROPSIM F64 ``SYST:INFO?`` response (P3-4).
+
+    F64's SYST:INFO? returns a comma-separated mix of positional + labeled
+    fields. Pre-P3-4, ``connect()`` only extracted ``parts[1]`` for
+    channel_count and threw the rest away. This dataclass surfaces:
+        - product_family / firmware_version / band_label for the startup
+          readiness report (operator at the console can confirm what F64
+          firmware they're talking to without manually checking the
+          device panel)
+        - secondary_count (positional [4], semantic unclear — kept as raw
+          int for future label-discovery)
+        - extra_tokens for forward compatibility with firmware revisions
+          adding new fields
+
+    Field positions verified against:
+        - propsim_f64.py inline comment (CAICT 2026-05-13 site reference)
+        - test_f64_license_probe.py fixture strings (multiple
+          firmware variants)
+
+    Pure data — no methods, no I/O. The legacy keyword scan in
+    ``_probe_installed_options()`` continues to handle license-token
+    discovery; this dataclass is for hardware metadata only.
+    """
+    raw: str  # original SYST:INFO? response as received
+    product_family: Optional[str] = None  # e.g. "PROPSIM F64"
+    channel_count: Optional[int] = None  # positional [1]
+    signal_type: Optional[str] = None  # positional [2], typically "RF"
+    firmware_version: Optional[str] = None  # positional [3], e.g. "v1.0"
+    secondary_count: Optional[int] = None  # positional [4]; semantics TBD
+    band_label: Optional[str] = None  # labeled "Band: 450MHz - 3000MHz"
+    extra_tokens: List[str] = field(default_factory=list)
+
+
+def parse_f64_sys_info(raw: Optional[str]) -> F64SysInfo:
+    """Parse a SYST:INFO? response string into structured fields (P3-4).
+
+    Defensive: every field falls back to ``None`` if missing or
+    unparseable. Empty input → ``F64SysInfo(raw="")`` with all
+    fields None. Never raises.
+
+    Recognized shapes (verified samples):
+        Full:    "PROPSIM F64,64,RF,v1.0,16,Band: 450MHz - 3000MHz,Interference Generator,Calibration User Alignment"
+        Trimmed: "PROPSIM F64,64,RF,v1.0,16,Band: 450MHz - 3000MHz"
+        Minimal: "PROPSIM F64,64,RF,v1.0,16"
+        Skinny:  "PROPSIM F64,64,RF"
+
+    Tokens not matched by a positional slot or a known label end up in
+    ``extra_tokens`` (license keywords like "Interference Generator"
+    or future firmware additions) so they survive into the readiness
+    report without parser changes.
+    """
+    if not raw:
+        return F64SysInfo(raw=raw or "")
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    if not parts:
+        return F64SysInfo(raw=raw)
+
+    product_family = parts[0] if len(parts) > 0 else None
+
+    channel_count: Optional[int] = None
+    if len(parts) > 1:
+        try:
+            channel_count = int(parts[1])
+        except ValueError:
+            pass
+
+    signal_type = parts[2] if len(parts) > 2 else None
+    firmware_version = parts[3] if len(parts) > 3 else None
+
+    secondary_count: Optional[int] = None
+    if len(parts) > 4:
+        try:
+            secondary_count = int(parts[4])
+        except ValueError:
+            pass
+
+    band_label: Optional[str] = None
+    extra: List[str] = []
+    # Anything from index 5 onward: try the "Band:" label first; otherwise
+    # bucket as extra_tokens (preserves license keywords + forward-compat
+    # for unknown future fields). Case-insensitive label match because
+    # firmware capitalisation has drifted historically.
+    for p in parts[5:]:
+        if p.lower().startswith("band:"):
+            band_label = p[len("band:"):].strip()
+        else:
+            extra.append(p)
+
+    return F64SysInfo(
+        raw=raw,
+        product_family=product_family,
+        channel_count=channel_count,
+        signal_type=signal_type,
+        firmware_version=firmware_version,
+        secondary_count=secondary_count,
+        band_label=band_label,
+        extra_tokens=extra,
+    )
+
+
 INTERFERENCE_GEN_OPTION_TOKENS = frozenset({
     "K01", "INTGEN", "INT-GEN", "INTERFERENCE-GEN", "OPT-INT-GEN",
     "INTERFERENCE_GENERATOR", "F64-K01",
@@ -252,6 +355,18 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self._tx_antennas: int = 2
         self._rx_antennas: int = 2
 
+        # P3-4: structured SYST:INFO? metadata populated during connect().
+        # Pre-P3-4 only ``_channel_count`` survived; these surface in the
+        # startup readiness log + driver_selftest CLI output so the operator
+        # sees firmware revision and band coverage without reading SCPI
+        # transcripts. ``sys_info`` is the full parsed dataclass; the
+        # individual ``firmware_version`` / ``band_label`` mirrors are
+        # convenience attrs for the existing log call sites.
+        self.sys_info: Optional[F64SysInfo] = None
+        self.firmware_version: Optional[str] = None
+        self.band_label: Optional[str] = None
+        self.product_family: Optional[str] = None
+
     # ===================================================================
     # 0. 管线能力声明与统一入口 (重写母类)
     # ===================================================================
@@ -328,16 +443,28 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             logger.info(f"[F64] Connected: {idn}")
 
             # 查询硬件信息: 通道数、频段、License
-            sys_info = await self._query("SYST:INFO?")
-            logger.info(f"[F64] System Info: {sys_info}")
+            sys_info_raw = await self._query("SYST:INFO?")
+            logger.info(f"[F64] System Info: {sys_info_raw}")
 
-            # 从 SYST:INFO? 响应中解析通道数
-            # 格式: "PROPSIM F64,64,RF,v1.0,16,Band: 450MHz - 3000MHz,..."
-            try:
-                parts = sys_info.split(",")
-                self._channel_count = int(parts[1])
-            except (IndexError, ValueError):
+            # P3-4: structured parse — beyond just channel_count, surface
+            # firmware_version + band_label + product_family for the
+            # readiness report. Defensive: unparseable fields fall back
+            # to None / 64 default. See parse_f64_sys_info docstring for
+            # the recognized shapes.
+            self.sys_info = parse_f64_sys_info(sys_info_raw)
+            if self.sys_info.channel_count is not None:
+                self._channel_count = self.sys_info.channel_count
+            else:
                 self._channel_count = 64
+            self.firmware_version = self.sys_info.firmware_version
+            self.band_label = self.sys_info.band_label
+            self.product_family = self.sys_info.product_family
+            logger.info(
+                f"[F64] Parsed: family={self.product_family!r}, "
+                f"firmware={self.firmware_version!r}, "
+                f"channels={self._channel_count}, "
+                f"band={self.band_label!r}"
+            )
 
             # 启动时探测安装选件 (license). 若 config 显式声明能力字段则跳过
             # 应用阶段, 仍执行探测仅为日志可见性.
