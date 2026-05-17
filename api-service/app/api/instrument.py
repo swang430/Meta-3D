@@ -4,6 +4,7 @@
 后端 DB 模型 → 前端友好的扁平化 JSON。
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from uuid import UUID
 import logging
@@ -386,11 +387,19 @@ async def reload_hal_service(
             )
             # 409 Conflict — semantic match: "the request is valid but
             # the current state of the target resource (HAL + in-flight
-            # tests) makes it impossible to apply right now". Detail
-            # body sits in HTTPException(detail=...) so it round-trips
-            # through FastAPI's default JSON serialisation.
-            raise HTTPException(
-                status_code=409, detail=payload.model_dump(),
+            # tests) makes it impossible to apply right now".
+            #
+            # Codex P2 fix: return JSONResponse directly so the body
+            # shape IS the documented HalReloadRefusedResult model
+            # (top-level ``refused`` / ``blockers`` / etc.). The
+            # previous HTTPException(detail=payload.model_dump()) form
+            # wrapped the payload in ``{"detail": {...}}``, mismatching
+            # the ``responses={409: {"model": HalReloadRefusedResult}}``
+            # contract — any generated client would look for
+            # ``response.blockers`` at the top level and miss the
+            # nested copy.
+            return JSONResponse(
+                status_code=409, content=payload.model_dump(),
             )
 
     started = time.monotonic()

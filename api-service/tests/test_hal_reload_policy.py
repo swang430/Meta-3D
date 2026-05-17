@@ -216,9 +216,13 @@ class TestReloadEndpointRefuse:
         ):
             resp = client.post("/api/v1/instruments/hal/reload")
         assert resp.status_code == 409
-        body = resp.json()
-        # HTTPException(detail=...) wraps the payload under "detail".
-        payload = body["detail"]
+        # Codex P2 fix on this PR: 409 body IS the documented
+        # HalReloadRefusedResult — top-level fields, not nested under
+        # ``detail``. Pin top-level so a future regression to the
+        # ``HTTPException(detail=...)`` form fails this assertion
+        # instead of silently shifting consumers' parse path.
+        payload = resp.json()
+        assert "detail" not in payload  # not the FastAPI HTTPException wrapper
         assert payload["refused"] is True
         assert "1 active blocker" in payload["reason"]
         assert "?force=true" in payload["reason"]
@@ -287,7 +291,9 @@ class TestReloadEndpointRefuse:
         ):
             resp = client.post("/api/v1/instruments/hal/reload")
         assert resp.status_code == 409
-        payload = resp.json()["detail"]
+        # See Codex P2 fix note above — top-level body, not detail-wrapped.
+        payload = resp.json()
+        assert "detail" not in payload
         assert "2 active blocker" in payload["reason"]
         kinds = {b["kind"] for b in payload["blockers"]}
         statuses = {b["status"] for b in payload["blockers"]}
