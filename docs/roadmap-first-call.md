@@ -404,6 +404,16 @@ same lab".
 proper quiet zone. Endpoint exists (`phase_router`), workflow needs to
 be exercised on-site.
 
+**Why we're building this even though 3GPP TR 37.977 PFS doesn't
+require it**: see [`docs/features/calibration/pfs-phase-immunity.md`](features/calibration/pfs-phase-immunity.md).
+TR 37.977 §F.2 (MPAC normative cal) is power-only; PFS-mode is
+mathematically immune to per-probe chamber phase errors via per-probe
+independent fading. **But** the project is planned to extend to PWS
+(Plane Wave Synthesis) mode in the future — PWS uses coherent
+per-probe signals, immunity breaks, per-probe phase cal becomes
+mandatory. Keeping the infrastructure (DB table, service, endpoint,
+tests) avoids a costly rebuild when PWS lands.
+
 **Acceptance**: phase cal cert generated; quiet zone metric improves
 vs uncalibrated baseline.
 
