@@ -57,6 +57,28 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/InstrumentCategoryResponse'
+  /api/v1/instruments/hal/readiness:
+    get:
+      summary: HAL composite readiness snapshot (P3-5)
+      description: |
+        Returns the snapshot built during the last HAL initialise / reload:
+        per-driver rows (category, model, endpoint, status, detail, plus
+        driver-specific `extras` like F64 firmware_version), the active
+        LabProfile state, the active calibration certificate validity,
+        and a DUT-attach placeholder. `available=false` means HAL is not
+        initialised yet — the sub-sections carry placeholders, the GUI
+        should render "HAL not ready" rather than consuming them as live.
+        Sibling HAL endpoints (`/hal/status`, `/hal/reload`, `/hal/switch`)
+        are not currently in this contract; the GUI consumes them via
+        inline-typed `axios.get`. Bringing them under generated types is
+        out of scope for P3-5.
+      responses:
+        '200':
+          description: Readiness snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HALReadinessResponse'
 components:
   schemas:
     DashboardResponse:
@@ -232,3 +254,109 @@ components:
           type: string
           nullable: true
       additionalProperties: false
+    HALReadinessResponse:
+      type: object
+      description: |
+        P3-5 composite snapshot. `available=false` means HAL is not
+        initialised; sub-sections still carry valid shapes (with
+        placeholder values) so the GUI never has to handle a 404 or
+        missing-field path.
+      properties:
+        available:
+          type: boolean
+        drivers:
+          type: array
+          items:
+            $ref: '#/components/schemas/DriverReadinessRow'
+        lab_profile:
+          $ref: '#/components/schemas/LabProfileReadiness'
+        calibration:
+          $ref: '#/components/schemas/CalibrationReadiness'
+        dut_attach:
+          $ref: '#/components/schemas/DutAttachReadiness'
+        generated_at_iso:
+          type: string
+      required: [available, drivers, lab_profile, calibration, dut_attach, generated_at_iso]
+    DriverReadinessRow:
+      type: object
+      properties:
+        category:
+          type: string
+        model:
+          type: string
+        endpoint:
+          type: string
+        status:
+          type: string
+          enum: [ok, fail, skipped]
+        detail:
+          type: string
+        extras:
+          type: object
+          description: |
+            Driver-specific metadata (string-keyed). F64 surfaces
+            firmware_version / band_label / product_family from the
+            parsed SYST:INFO? response (P3-4); other drivers return an
+            empty object until they override `readiness_metadata()`.
+            Field values may be null when a driver field is unpopulated.
+          additionalProperties: true
+          default: {}
+      required: [category, model, endpoint, status, detail]
+    LabProfileReadiness:
+      type: object
+      description: |
+        Active LabProfile state. `status` distinguishes "no profiles at
+        all" (`missing`) from "profiles exist but none active"
+        (`inactive`) — different operator next-steps.
+      properties:
+        profile_id:
+          type: string
+          nullable: true
+        profile_name:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        status:
+          type: string
+          enum: [ok, inactive, missing, ambiguous]
+        detail:
+          type: string
+      required: [is_active, status, detail]
+    CalibrationReadiness:
+      type: object
+      description: |
+        Validity of the active lab's bound calibration certificate.
+        `no_lab` (no lab to look at a cert through) is distinct from
+        `missing` (lab exists but cert FK is NULL) — the former hints
+        "set up lab first", the latter hints "run calibration".
+      properties:
+        certificate_number:
+          type: string
+          nullable: true
+        valid_until_iso:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [valid, expired, missing, no_lab]
+        days_remaining:
+          type: integer
+          nullable: true
+        detail:
+          type: string
+      required: [status, detail]
+    DutAttachReadiness:
+      type: object
+      description: |
+        DUT-attach state — placeholder in this build. `status` is
+        always `not_implemented` since no runtime model exists for
+        "DUT present in chamber" (no probe-sensing / RFID / session
+        table). Field is in the contract so future probe-sensing
+        work can land without breaking the response shape.
+      properties:
+        status:
+          type: string
+        detail:
+          type: string
+      required: [status, detail]

@@ -10,11 +10,17 @@ Phase 3+: Real drivers for production
 
 import asyncio
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, TYPE_CHECKING
 from datetime import datetime, timedelta
 from enum import Enum
 
 from app.hal.base import InstrumentDriver, InstrumentStatus
+
+if TYPE_CHECKING:
+    # P3-5: only needed for the type annotation on _log_readiness_report;
+    # the runtime import lives inside _initialize_from_db so the existing
+    # lazy-import discipline at the top of the module stays uniform.
+    from app.services.readiness import ReadinessReport
 from app.hal.channel_emulator import MockChannelEmulator
 from app.hal.base_station import MockBaseStation
 from app.hal.signal_analyzer import MockSignalAnalyzer
@@ -271,6 +277,15 @@ class InstrumentHALService:
         self._initialized = False
         self._monitoring_task: Optional[asyncio.Task] = None
         self._metrics_cache = MetricsCache(ttl_seconds=cache_ttl)
+        # P3-5: composite readiness snapshot, refreshed on each
+        # initialize() / reload. None until the first init completes.
+        # See app/services/readiness.py for the dataclass shape; the
+        # snapshot is what GET /instruments/hal/readiness returns to
+        # the GUI, so a future driver swap that doesn't refresh this
+        # would silently leak stale state — keep the refresh inside
+        # _initialize_from_db so there's a single update point.
+        from app.services.readiness import ReadinessReport
+        self.last_readiness_report: Optional[ReadinessReport] = None
 
     def _decide_use_real(self, cat_mode: str) -> bool:
         """Decide whether to load a real or mock driver for one
@@ -351,11 +366,21 @@ class InstrumentHALService:
             "rfSwitch": MockRfSwitch,
         }
 
+        from app.services.readiness import (
+            DriverReadinessRow,
+            ReadinessReport,
+            build_calibration_readiness,
+            build_dut_attach_readiness,
+            build_lab_profile_readiness,
+        )
+
         db = SessionLocal()
-        # Per-category readiness rows for the startup report. Each entry:
-        # {category, model, endpoint, status, detail}
-        # status ∈ {"ok", "skipped", "fail"}
-        report_rows: List[Dict[str, Any]] = []
+        # Per-category readiness rows for the startup report (P3-5: now
+        # typed dataclass instead of dict — same five core fields plus an
+        # ``extras`` slot that the connect-success branch populates from
+        # ``driver.readiness_metadata()`` so e.g. F64 firmware/band fields
+        # land in the report without per-driver branches here).
+        report_rows: List[DriverReadinessRow] = []
         try:
             categories = db.query(InstrumentCategoryModel).filter(
                 InstrumentCategoryModel.is_active == True
@@ -364,13 +389,13 @@ class InstrumentHALService:
             for cat in categories:
                 if not cat.selected_model_id:
                     logger.info(f"[HAL-REAL] {cat.category_key}: no model selected, skipping")
-                    report_rows.append({
-                        "category": cat.category_key,
-                        "model": "(not configured)",
-                        "endpoint": "",
-                        "status": "skipped",
-                        "detail": "no model selected in GUI",
-                    })
+                    report_rows.append(DriverReadinessRow(
+                        category=cat.category_key,
+                        model="(not configured)",
+                        endpoint="",
+                        status="skipped",
+                        detail="no model selected in GUI",
+                    ))
                     continue
 
                 model = db.query(InstrumentModelDB).filter(
@@ -500,13 +525,13 @@ class InstrumentHALService:
                             conn.status = "error"
                             conn.last_error = f"preflight: {reason}"
                             db.commit()
-                        report_rows.append({
-                            "category": cat.category_key,
-                            "model": f"{model.vendor} {model.model}",
-                            "endpoint": endpoint_str,
-                            "status": "fail",
-                            "detail": f"preflight: {reason}",
-                        })
+                        report_rows.append(DriverReadinessRow(
+                            category=cat.category_key,
+                            model=f"{model.vendor} {model.model}",
+                            endpoint=endpoint_str,
+                            status="fail",
+                            detail=f"preflight: {reason}",
+                        ))
                         continue
 
                 try:
@@ -524,13 +549,27 @@ class InstrumentHALService:
                             from datetime import datetime
                             conn.last_connected_at = datetime.utcnow()
                             db.commit()
-                        report_rows.append({
-                            "category": cat.category_key,
-                            "model": f"{model.vendor} {model.model}",
-                            "endpoint": endpoint_str,
-                            "status": "ok",
-                            "detail": f"{DriverClass.__name__}",
-                        })
+                        # P3-5: pull driver-specific extras (F64 surfaces
+                        # parsed SYST:INFO? fields here; other drivers
+                        # return ``{}`` from the base default).
+                        try:
+                            extras = driver.readiness_metadata()
+                        except Exception as e:
+                            # Don't let a buggy driver subclass torpedo
+                            # the whole readiness report.
+                            logger.warning(
+                                f"[HAL] {cat.category_key}: readiness_metadata() raised "
+                                f"{type(e).__name__}: {e} — treating as no extras"
+                            )
+                            extras = {}
+                        report_rows.append(DriverReadinessRow(
+                            category=cat.category_key,
+                            model=f"{model.vendor} {model.model}",
+                            endpoint=endpoint_str,
+                            status="ok",
+                            detail=f"{DriverClass.__name__}",
+                            extras=extras,
+                        ))
                     else:
                         # driver.connect() returned False — pull the real
                         # error from the driver itself rather than writing
@@ -545,13 +584,13 @@ class InstrumentHALService:
                             conn.status = "error"
                             conn.last_error = real_err
                             db.commit()
-                        report_rows.append({
-                            "category": cat.category_key,
-                            "model": f"{model.vendor} {model.model}",
-                            "endpoint": endpoint_str,
-                            "status": "fail",
-                            "detail": real_err,
-                        })
+                        report_rows.append(DriverReadinessRow(
+                            category=cat.category_key,
+                            model=f"{model.vendor} {model.model}",
+                            endpoint=endpoint_str,
+                            status="fail",
+                            detail=real_err,
+                        ))
                 except Exception as e:
                     err_str = f"{type(e).__name__}: {e}"
                     logger.error(
@@ -561,69 +600,121 @@ class InstrumentHALService:
                         conn.status = "error"
                         conn.last_error = err_str
                         db.commit()
-                    report_rows.append({
-                        "category": cat.category_key,
-                        "model": f"{model.vendor} {model.model}",
-                        "endpoint": endpoint_str,
-                        "status": "fail",
-                        "detail": err_str,
-                    })
+                    report_rows.append(DriverReadinessRow(
+                        category=cat.category_key,
+                        model=f"{model.vendor} {model.model}",
+                        endpoint=endpoint_str,
+                        status="fail",
+                        detail=err_str,
+                    ))
 
             logger.info(
                 f"[HAL-REAL] Driver factory complete: "
                 f"{len(self.drivers)} drivers initialized"
             )
-            self._log_readiness_report(report_rows)
+
+            # P3-5: build the full readiness snapshot (drivers + lab +
+            # cal + dut-attach placeholder), persist on self for
+            # GET /instruments/hal/readiness, and log the formatted
+            # version. Lab + cal sections are pure SQL reads — no HAL
+            # imports — so a buggy driver doesn't affect them.
+            lab_section = build_lab_profile_readiness(db)
+            cal_section = build_calibration_readiness(db, lab_section)
+            dut_section = build_dut_attach_readiness()
+            report = ReadinessReport(
+                drivers=report_rows,
+                lab_profile=lab_section,
+                calibration=cal_section,
+                dut_attach=dut_section,
+                generated_at_iso=datetime.utcnow().isoformat(),
+            )
+            self.last_readiness_report = report
+            self._log_readiness_report(report)
 
         finally:
             db.close()
 
     @staticmethod
-    def _log_readiness_report(rows: List[Dict[str, Any]]) -> None:
-        """Print a formatted readiness summary so operators don't have to
-        grep mixed stdout to know whether HAL came up.
+    def _log_readiness_report(report: "ReadinessReport") -> None:
+        """Print the composite readiness snapshot so operators don't have
+        to grep mixed stdout to know whether HAL came up.
 
-        Format (printed via logger.info so it lands in the same log
-        stream + log file as the rest of HAL init):
+        P3-5: now logs three sections — drivers (the original table),
+        lab profile + calibration validity, and the DUT-attach
+        placeholder. The driver table format is unchanged so on-call
+        screenshot diffs vs older captures still line up.
+
+        Format:
 
             ═══════ HAL READINESS REPORT ═══════
             ✓ vna            E5071C ENA       192.168.0.10:5025    RealKeysightEnaDriver
             ✗ channelEmul.   PROPSIM F64      192.168.0.100:5025   ImportError: pyvisa
+              └─ firmware_version=v1.0  band_label=450MHz - 3000MHz
             ○ baseStation    (not configured)
+            ────────────────────────────────────
+            lab profile : ok       — active LabProfile 'CAICT-Lab-1'
+            calibration : expired  — certificate CAL-2025-001 expired 12 day(s) ago
+            dut attach  : not_implemented — DUT attach sensing not implemented ...
             ════════════════════════════════════
             2/3 categories loaded · 1 failed · 1 skipped
         """
-        if not rows:
-            logger.info("[HAL] readiness: no instrument categories configured")
-            return
-        # Compute column widths so the table aligns at any terminal width.
-        cat_w = max(len(r["category"]) for r in rows)
-        cat_w = max(cat_w, len("category"))
-        model_w = max(len(r["model"]) for r in rows)
-        model_w = max(model_w, len("model"))
-        endpoint_w = max(len(r["endpoint"]) for r in rows)
-        endpoint_w = max(endpoint_w, len("endpoint"))
-
-        icons = {"ok": "✓", "fail": "✗", "skipped": "○"}
+        rows = report.drivers
         header_label = "═" * 19 + " HAL READINESS REPORT " + "═" * 19
+        divider = "─" * len(header_label)
         lines = [header_label]
-        for r in rows:
-            icon = icons.get(r["status"], "?")
-            lines.append(
-                f"{icon} {r['category']:<{cat_w}}  "
-                f"{r['model']:<{model_w}}  "
-                f"{r['endpoint']:<{endpoint_w}}  "
-                f"{r['detail']}"
-            )
-        lines.append("═" * len(header_label))
-        # Tallies
-        ok = sum(1 for r in rows if r["status"] == "ok")
-        fail = sum(1 for r in rows if r["status"] == "fail")
-        skipped = sum(1 for r in rows if r["status"] == "skipped")
+
+        if rows:
+            # Compute column widths so the table aligns at any terminal width.
+            cat_w = max(max(len(r.category) for r in rows), len("category"))
+            model_w = max(max(len(r.model) for r in rows), len("model"))
+            endpoint_w = max(max(len(r.endpoint) for r in rows), len("endpoint"))
+
+            icons = {"ok": "✓", "fail": "✗", "skipped": "○"}
+            for r in rows:
+                icon = icons.get(r.status, "?")
+                lines.append(
+                    f"{icon} {r.category:<{cat_w}}  "
+                    f"{r.model:<{model_w}}  "
+                    f"{r.endpoint:<{endpoint_w}}  "
+                    f"{r.detail}"
+                )
+                if r.extras:
+                    extras_str = "  ".join(
+                        f"{k}={v}" for k, v in r.extras.items() if v is not None
+                    )
+                    if extras_str:
+                        lines.append(f"  └─ {extras_str}")
+        else:
+            lines.append("(no instrument categories configured)")
+
+        # P3-5: lab + cal + dut-attach sections. Aligned with a fixed
+        # label width so the three rows form a column block under the
+        # driver table.
+        lines.append(divider)
         lines.append(
-            f"{ok}/{len(rows)} categories loaded · "
-            f"{fail} failed · {skipped} skipped"
+            f"lab profile : {report.lab_profile.status:<15}  "
+            f"— {report.lab_profile.detail}"
         )
+        lines.append(
+            f"calibration : {report.calibration.status:<15}  "
+            f"— {report.calibration.detail}"
+        )
+        lines.append(
+            f"dut attach  : {report.dut_attach.status:<15}  "
+            f"— {report.dut_attach.detail}"
+        )
+
+        lines.append("═" * len(header_label))
+        # Driver tallies (unchanged from pre-P3-5).
+        if rows:
+            ok = sum(1 for r in rows if r.status == "ok")
+            fail = sum(1 for r in rows if r.status == "fail")
+            skipped = sum(1 for r in rows if r.status == "skipped")
+            lines.append(
+                f"{ok}/{len(rows)} categories loaded · "
+                f"{fail} failed · {skipped} skipped"
+            )
+
         for line in lines:
             logger.info("[HAL] %s", line)
 

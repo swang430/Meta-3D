@@ -548,6 +548,24 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self._active_pipeline = None
         return True
 
+    def readiness_metadata(self) -> Dict[str, Any]:
+        """P3-5: expose parsed SYST:INFO? fields to the HAL readiness
+        report. Pre-P3-5 these were stored on the driver instance (P3-4)
+        but the readiness payload had no field to carry them out, so the
+        operator could only see them in stdout logs at connect time.
+
+        Returns ``{}`` (not partial keys) when ``sys_info`` is None — we
+        either parsed a full response or nothing useful, partial dicts
+        would make GUI rendering branching harder for no signal.
+        """
+        if self.sys_info is None:
+            return {}
+        return {
+            "firmware_version": self.firmware_version,
+            "band_label": self.band_label,
+            "product_family": self.product_family,
+        }
+
     async def configure(self, config: Dict[str, Any]) -> bool:
         """
         通用配置入口, 支持以下 config 键:
