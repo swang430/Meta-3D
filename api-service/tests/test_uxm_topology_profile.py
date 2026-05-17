@@ -383,6 +383,40 @@ class TestListTopologyProfilesEndpoint:
         body = resp.json()
         assert body["selected_topology_profile_id"] == "caict_n78_2x2"
 
+    def test_compat_flag_uses_resolved_profile_name_not_raw_alias(self, db):
+        """Codex P2 (PR #36) — if SYSTem:APPLication:NAME? returns a
+        recognised alias like ``"5G NR Test"`` (with space), detect_profile()
+        maps it to canonical ``"5G_NR_Test"`` and the driver runs on
+        ``Uxm5GNRTestAppProfile``. The endpoint must compat-check against
+        the resolved ``_cmds.PROFILE_NAME``, not the raw alias — otherwise
+        every built-in (which declares ``compatible_test_apps=["5G_NR_Test"]``)
+        false-negatives and the GUI greys them all out while the driver
+        would happily apply them."""
+        cat = _make_basestation_category(db)
+        fake_driver = MagicMock()
+        # Raw alias the instrument actually reported — would fail
+        # exact-match against ["5G_NR_Test"] declarations.
+        fake_driver.detected_test_app = "5G NR Test"
+        # Resolved profile after detect_profile() normalisation — what
+        # apply_topology_profile() uses for its own compat check.
+        fake_driver._cmds = Uxm5GNRTestAppProfile
+
+        class FakeHal:
+            drivers = {"baseStation": fake_driver}
+
+        with patch(
+            "app.services.instrument_hal_service.get_hal_service",
+            return_value=FakeHal(),
+        ):
+            resp = client.get(f"/api/v1/instruments/{cat.category_key}/topology-profiles")
+        body = resp.json()
+        # Report canonical to the GUI so operator sees the same name
+        # the compat decision was made against (avoids "current_test_app
+        # = '5G NR Test' but profile wants '5G_NR_Test'" cognitive mismatch).
+        assert body["current_test_app"] == "5G_NR_Test"
+        for item in body["items"]:
+            assert item["compatible_with_current_test_app"] is True
+
 
 # ============================================================
 # Layer 5: HTTP endpoint PUT /instruments/{cat}/topology-profile
@@ -524,6 +558,41 @@ class TestSelectTopologyProfileEndpoint:
         assert body["persisted"] is True
         assert body["applied_now"] is True
         assert body["test_app"] == "5G_NR_Test"
+        fake_driver.apply_topology_profile.assert_awaited_once_with("caict_n78_2x2")
+
+    def test_accepts_recognised_alias_via_resolved_profile_name(self, db):
+        """Codex P2 (PR #36) — UXM hardware reports ``"5G NR Test"`` (with
+        space, alias in ``Uxm5GNRTestAppProfile.APP_NAME_MATCH``); driver
+        normalises to ``_cmds.PROFILE_NAME = "5G_NR_Test"``. Endpoint
+        preflight must use the resolved name, otherwise a request for
+        a built-in profile (declared ``compatible_test_apps=["5G_NR_Test"]``)
+        comes back 409 even though the driver-level apply would succeed.
+        """
+        cat = _make_basestation_category(db)
+        _make_connection(db, cat)
+
+        fake_driver = MagicMock()
+        fake_driver.detected_test_app = "5G NR Test"  # raw alias
+        fake_driver._cmds = Uxm5GNRTestAppProfile      # resolved
+        fake_driver.apply_topology_profile = AsyncMock(
+            return_value={"applied": True, "profile_id": "caict_n78_2x2",
+                          "test_app": "5G_NR_Test"},
+        )
+
+        class FakeHal:
+            drivers = {"baseStation": fake_driver}
+
+        with patch(
+            "app.services.instrument_hal_service.get_hal_service",
+            return_value=FakeHal(),
+        ):
+            resp = client.put(
+                f"/api/v1/instruments/{cat.category_key}/topology-profile",
+                json={"profile_id": "caict_n78_2x2"},
+            )
+        assert resp.status_code == 200, resp.json()
+        body = resp.json()
+        assert body["applied_now"] is True
         fake_driver.apply_topology_profile.assert_awaited_once_with("caict_n78_2x2")
 
     def test_404_when_no_connection_row(self, db):

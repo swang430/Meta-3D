@@ -605,6 +605,33 @@ def _list_topology_profiles_for_category(
     ]
 
 
+def _resolve_current_test_app(driver: Any) -> Optional[str]:
+    """Return the canonical command-profile name for ``driver`` (post
+    ``detect_profile()`` normalisation), falling back to the raw
+    ``detected_test_app`` alias when the driver doesn't expose
+    ``_cmds`` (non-UXM drivers, mocks in tests).
+
+    Codex P2 (PR #36): ``RealUxmDriver.apply_topology_profile()``
+    compares the proposed profile's ``compatible_test_apps`` against
+    ``self._cmds.PROFILE_NAME`` (canonical, e.g. ``"5G_NR_Test"``).
+    The endpoint preflights here must agree, otherwise a UXM that
+    reports a recognised alias such as ``"5G NR Test"`` (with space)
+    or ``"5G_NR_TEST"`` (uppercase) — both listed in
+    ``Uxm5GNRTestAppProfile.APP_NAME_MATCH`` — gets exact-match-rejected
+    against ``["5G_NR_Test"]`` and returns 409 / greys-out a valid
+    choice, even though the driver-level apply would have accepted it.
+    """
+    # ``isinstance(..., str)`` guard rather than truthiness so unittest
+    # MagicMock drivers (which auto-fabricate any attribute as a Mock
+    # object) don't slip a Mock through as the "resolved" name.
+    cmds = getattr(driver, "_cmds", None)
+    profile_name = getattr(cmds, "PROFILE_NAME", None)
+    if isinstance(profile_name, str) and profile_name:
+        return profile_name
+    raw = getattr(driver, "detected_test_app", None)
+    return raw if isinstance(raw, str) else None
+
+
 @router.get(
     "/instruments/{category_key}/topology-profiles",
     response_model=TopologyProfilesListResult,
@@ -652,7 +679,7 @@ def list_topology_profiles_endpoint(
     driver = (hal.drivers or {}).get(category_key) if hal else None
     current_test_app: Optional[str] = None
     if driver is not None:
-        current_test_app = getattr(driver, "detected_test_app", None)
+        current_test_app = _resolve_current_test_app(driver)
 
     # Persisted selection (operator's last PUT).
     conn = (
@@ -771,7 +798,7 @@ async def select_topology_profile_endpoint(
                 proposed = get_profile(profile_id)
             except KeyError as e:
                 raise HTTPException(status_code=404, detail=str(e))
-            current_app = getattr(driver, "detected_test_app", None)
+            current_app = _resolve_current_test_app(driver)
             if not proposed.is_compatible_with(current_app):
                 return JSONResponse(
                     status_code=409,
