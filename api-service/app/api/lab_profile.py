@@ -40,9 +40,15 @@ class LabProfileSummary(BaseModel):
 #
 # Schema mirrors the `LabProfile` model's columns but only exposes fields
 # the wizard collects. `chamber_config_id` is required (acceptance: "wizard
-# completes → LabProfile with a Chamber") and `instrument_bindings` must
-# have at least one entry (acceptance: "≥1 Instrument bound"). Everything
-# else is optional and editable post-wizard via the lab settings UI.
+# completes → LabProfile with a Chamber"). `instrument_bindings` accepts
+# an empty list — the seeded default lab (CAICT-Lab-1) is created with 0
+# bindings via the bootstrap path, so the API must accept that shape too
+# (audit 2026-05-17 Y1: validator previously rejected empty arrays with
+# 422 while the seeded lab was 0-binding, blocking any clone-and-edit
+# operator workflow). Downstream calibration / commissioning still
+# requires bindings at use time; the create endpoint is no longer the
+# place that enforces "≥1 binding". Everything else is optional and
+# editable post-wizard via the lab settings UI.
 
 class InstrumentBinding(BaseModel):
     """One row in the LabProfile.instrument_bindings JSONB array.
@@ -93,8 +99,13 @@ class LabProfileCreateRequest(BaseModel):
         description="FK to chamber_configurations.id — the chamber this lab uses",
     )
     instrument_bindings: List[InstrumentBinding] = Field(
-        min_length=1,
-        description="At least one instrument category must be bound for first-call to work",
+        default_factory=list,
+        description=(
+            "Instrument category bindings. May be empty at create time "
+            "(seeded default CAICT-Lab-1 has 0 bindings); downstream "
+            "calibration / commissioning will surface a clear error at "
+            "use time if no instruments are bound when actually needed."
+        ),
     )
     description: Optional[str] = None
     organization: Optional[str] = None

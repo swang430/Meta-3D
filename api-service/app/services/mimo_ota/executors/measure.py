@@ -487,7 +487,6 @@ class MeasureExecutor(IStepExecutor):
                 "cdl_model_name": config.cdl_model_name,
                 "frequency_ghz": config.frequency_hz / 1e9,
                 "mimo_config": f"{config.mimo_layers}x{config.mimo_layers}",
-                "asc_files_loaded": True,
                 "azimuth_results": azimuth_results,
                 "total_duration_s": total_duration,
                 "engine_mode": config.engine_mode,
@@ -517,6 +516,18 @@ class MeasureExecutor(IStepExecutor):
                 "azimuths_completed": len(azimuth_results),
                 "azimuths_requested": len(config.azimuths_deg),
             }
+
+            # ``asc_files_loaded`` is ASC-specific (ExternalWaveformStrategy):
+            # GCM mode (NativeModelStrategy) doesn't consume .asc files at
+            # all — the channel is generated inside Keysight GCM Studio's
+            # native runtime. Audit 2026-05-17 Y2 (PR #53) — was hardcoded
+            # True in both modes which made the GCM result payload
+            # semantically wrong (and confused operator log analysis).
+            # Omit in GCM, keep in ASC where the field is meaningful as a
+            # "channel-engine-service responded + emulator loaded the
+            # waveforms" diagnostic signal.
+            if engine_mode != EngineMode.GCM_NATIVE:
+                result_payload["asc_files_loaded"] = True
         finally:
             cleanup_warnings = await cleanup_chamber_instruments(
                 hal, context.test_execution.id
