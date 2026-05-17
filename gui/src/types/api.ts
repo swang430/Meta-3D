@@ -265,6 +265,8 @@ export type TestPlanDetail = {
   updatedAt: string
   notes?: string
   steps: SequenceStep[]
+  // P2-1 Phase 2.3: plan-level UXM topology override (null = use binding-level)
+  topology_profile_id?: string | null
 }
 
 export type TestPlanListResponse = {
@@ -300,6 +302,8 @@ export type CreatePlanPayload = {
   created_by: string
   notes?: string
   tags?: string[]
+  // P2-1 Phase 2.3: optional plan-level UXM topology override
+  topology_profile_id?: string | null
 }
 
 export type UpdatePlanPayload = {
@@ -307,6 +311,10 @@ export type UpdatePlanPayload = {
   status?: string
   notes?: string
   steps?: SequenceStep[]
+  // P2-1 Phase 2.3: plan-level UXM topology override. Set via this
+  // payload only sets (the legacy update endpoint filters explicit
+  // nulls). Use setPlanTopologyProfile() to clear.
+  topology_profile_id?: string
 }
 
 export type ReorderPlanQueuePayload = {

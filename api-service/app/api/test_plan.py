@@ -96,6 +96,8 @@ def create_test_plan(
         priority=request.priority,
         notes=request.notes,
         tags=request.tags,
+        # P2-1 Phase 2.3: optional plan-level UXM topology override.
+        topology_profile_id=request.topology_profile_id,
     )
     return test_plan
 
@@ -922,15 +924,21 @@ def duplicate_test_step(
 # ==================== Execution Control Endpoints ====================
 
 @router.post("/{test_plan_id}/start", response_model=TestPlanResponse)
-def start_test_plan(
+async def start_test_plan(
     test_plan_id: UUID,
     request: StartTestPlanRequest,
     db: Session = Depends(get_db)
 ):
     """
-    Start executing a test plan
+    Start executing a test plan.
 
-    This will begin sequential execution of all test cases in the plan.
+    This transitions the plan to RUNNING and (P2-1 Phase 2.3) applies
+    the optional plan-level topology profile to the live baseStation
+    driver in a best-effort follow-up step. Topology apply failures are
+    logged but don't fail the start — the plan is already RUNNING by
+    the time we attempt the apply, and operators may want the run to
+    proceed even if the UXM topology can't switch (e.g. testing other
+    instruments, mock mode).
     """
     service = TestExecutionService()
 
@@ -940,9 +948,109 @@ def start_test_plan(
             test_plan_id=test_plan_id,
             started_by=request.started_by
         )
-        return test_plan
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # P2-1 Phase 2.3: apply plan-level topology override if set. Result is
+    # logged for operator audit (visible via the audit log + uvicorn
+    # stdout) but does NOT shape the response body — the plan IS started
+    # regardless. Future GUI work may surface the result via a separate
+    # status endpoint; today the operator sees it in the readiness panel
+    # after the apply landed.
+    await service.apply_plan_topology_profile_if_set(db, test_plan)
+    return test_plan
+
+
+# P2-1 Phase 2.3: dedicated set/clear endpoint for plan-level topology
+# override. Mirrors `PUT /instruments/{cat}/topology-profile` shape
+# (binding-level) so the GUI uses the same Pydantic shape for both
+# scope levels. Distinct from the generic `PATCH /{id}` update because
+# that endpoint's existing `if value is not None` filter blocks the
+# clear-by-explicit-null path; touching that filter for one field
+# would be opportunistic — out-of-scope for Phase 2.3 per project
+# governance rule #4 ("严禁顺手优化").
+
+class SetPlanTopologyProfileRequest(BaseModel):
+    """Payload for PUT /test-plans/{id}/topology-profile.
+
+    ``profile_id=null`` clears the override (plan falls back to
+    binding-level at next start). ``profile_id="..."`` validates the
+    profile exists then persists. Validation source is
+    ``topology_profile_service`` (DB) with in-code fallback for
+    greenfield first-boot.
+    """
+    profile_id: Optional[str] = None
+
+
+class SetPlanTopologyProfileResult(BaseModel):
+    """Response for PUT /test-plans/{id}/topology-profile."""
+    persisted: bool
+    profile_id: Optional[str]
+
+
+@router.put(
+    "/{test_plan_id}/topology-profile",
+    response_model=SetPlanTopologyProfileResult,
+    responses={
+        404: {"description": "Plan or profile_id not found"},
+    },
+)
+def set_plan_topology_profile_endpoint(
+    test_plan_id: UUID,
+    request: SetPlanTopologyProfileRequest,
+    db: Session = Depends(get_db),
+) -> SetPlanTopologyProfileResult:
+    """P2-1 Phase 2.3: set or clear the plan-level UXM topology override.
+
+    The override is applied to the live baseStation driver in a
+    best-effort step inside ``POST /{id}/start`` (not here). This
+    endpoint only persists the operator's intent — no driver SCPI is
+    issued at the moment of PUT.
+    """
+    from app.models.test_plan import TestPlan as TestPlanModel
+
+    plan = (
+        db.query(TestPlanModel)
+        .filter(TestPlanModel.id == test_plan_id)
+        .first()
+    )
+    if plan is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Test plan {test_plan_id} not found",
+        )
+
+    profile_id = request.profile_id
+    if profile_id is not None:
+        # Validate it exists somewhere — DB first, then in-code fallback
+        # (same precedence as HAL service post-connect + binding-level
+        # PUT). Operator-visible 404 with available IDs so they can
+        # pick a real one.
+        from app.services.topology_profile_service import (
+            TopologyProfileNotFound, get_dataclass, list_rows,
+        )
+        try:
+            get_dataclass(db, profile_id)
+        except TopologyProfileNotFound:
+            from app.hal.uxm_test_profiles import (
+                _PROFILE_REGISTRY, _register_builtin_profiles,
+            )
+            if not _PROFILE_REGISTRY:
+                _register_builtin_profiles()
+            if profile_id not in _PROFILE_REGISTRY:
+                db_ids = [r.profile_id for r in list_rows(db)]
+                available = sorted(set(db_ids) | set(_PROFILE_REGISTRY.keys()))
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Topology profile {profile_id!r} not found. "
+                           f"Available: {available}",
+                )
+
+    plan.topology_profile_id = profile_id
+    db.commit()
+    return SetPlanTopologyProfileResult(
+        persisted=True, profile_id=profile_id,
+    )
 
 
 @router.post("/{test_plan_id}/pause", response_model=TestPlanResponse)

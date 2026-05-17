@@ -20,6 +20,13 @@ class TestPlanCreate(BaseModel):
     created_by: Optional[str] = Field(None, description="User who created the plan (derived from auth if not provided)")
     notes: Optional[str] = None
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorization")
+    topology_profile_id: Optional[str] = Field(
+        None,
+        description="P2-1 Phase 2.3: optional plan-level UXM topology "
+                    "override (e.g. 'caict_n78_2x2'). Applied to live "
+                    "baseStation driver at plan start. Null = use the "
+                    "binding-level selection set at HAL bring-up.",
+    )
 
 
 class TestPlanUpdate(BaseModel):
@@ -34,6 +41,12 @@ class TestPlanUpdate(BaseModel):
     priority: Optional[int] = Field(None, ge=1, le=10)
     notes: Optional[str] = None
     tags: Optional[List[str]] = None
+    topology_profile_id: Optional[str] = Field(
+        None,
+        description="P2-1 Phase 2.3: plan-level UXM topology override. "
+                    "Pass a profile_id (string) to set, omit the key to "
+                    "leave unchanged. Explicit null clears the override.",
+    )
 
 
 class TestPlanResponse(BaseModel):
@@ -62,6 +75,7 @@ class TestPlanResponse(BaseModel):
     updated_at: UTCDateTime
     notes: Optional[str]
     tags: Optional[List[str]]
+    topology_profile_id: Optional[str] = None  # P2-1 Phase 2.3
 
     class Config:
         from_attributes = True

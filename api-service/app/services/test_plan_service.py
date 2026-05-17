@@ -510,6 +510,14 @@ class TestPlanService:
             created_by=original.created_by,
             notes=f"Duplicated from: {original.name}",
             tags=original.tags.copy() if original.tags else [],
+            # P2-1 Phase 2.3 (Codex P2 on PR #39): preserve the
+            # plan-level topology override on duplicate. Operator's
+            # common workflow is "clone customer A's plan, edit
+            # title, queue" — silently dropping the override would
+            # have the cloned plan start against the binding-level
+            # topology (wrong customer's UXM config) without any
+            # indication to the operator.
+            topology_profile_id=original.topology_profile_id,
             # Reset execution-related fields
             current_test_case_index=0,
             completed_test_cases=0,
@@ -594,6 +602,11 @@ class TestPlanService:
                     "priority": test_plan.priority,
                     "notes": test_plan.notes,
                     "tags": test_plan.tags,
+                    # P2-1 Phase 2.3 (Codex P2 on PR #39): carry the
+                    # plan-level topology override through export so
+                    # exported-then-imported plans don't silently fall
+                    # back to the binding-level topology.
+                    "topology_profile_id": test_plan.topology_profile_id,
                     "steps": [
                         {
                             "order": step.order,
@@ -666,6 +679,11 @@ class TestPlanService:
                     created_by=created_by,
                     notes=plan_data.get("notes"),
                     tags=plan_data.get("tags", []),
+                    # P2-1 Phase 2.3 (Codex P2 on PR #39): carry the
+                    # plan-level topology override through import; safely
+                    # absent on older export payloads (.get returns None,
+                    # which is the "no override" sentinel).
+                    topology_profile_id=plan_data.get("topology_profile_id"),
                     # Reset execution fields
                     current_test_case_index=0,
                     completed_test_cases=0,
@@ -1440,6 +1458,108 @@ class TestExecutionService:
 
         logger.info(f"Started test plan {test_plan_id} by {started_by}")
         return test_plan
+
+    async def apply_plan_topology_profile_if_set(
+        self,
+        db: Session,
+        test_plan: TestPlan,
+    ) -> dict:
+        """P2-1 Phase 2.3: best-effort apply of the plan's optional UXM
+        topology override on the live baseStation driver.
+
+        Called by the start endpoint immediately after the synchronous
+        ``start_test_plan`` returns. Best-effort semantics — every
+        failure mode (no override / no live driver / unknown profile /
+        incompatible Test App / driver raises) is logged and returned
+        as a structured dict rather than raising; the plan is already
+        RUNNING by the time we get here, and operators may want to
+        proceed (e.g. testing other instruments) even if the UXM
+        topology didn't switch.
+
+        Returns one of:
+        - ``{"applied": False, "reason": "no_plan_override"}`` — column null
+        - ``{"applied": False, "reason": "no_live_driver"}`` — HAL not init / no baseStation
+        - ``{"applied": False, "reason": "driver_does_not_support_topology_profiles"}``
+        - ``{"applied": False, "reason": "profile_not_found", "profile_id": ...}``
+        - ``{"applied": False, "reason": "incompatible_test_app", "profile_id": ...,
+          "test_app": ..., "profile_compatible_with": [...]}``
+        - ``{"applied": False, "reason": "apply_raised", "profile_id": ...,
+          "error": "<type>: <msg>"}``
+        - ``{"applied": True, "profile_id": ..., "test_app": ...}``
+        """
+        if not test_plan.topology_profile_id:
+            return {"applied": False, "reason": "no_plan_override"}
+
+        profile_id = test_plan.topology_profile_id
+
+        try:
+            from app.services.instrument_hal_service import get_hal_service
+            hal = get_hal_service()
+        except Exception:  # noqa: BLE001
+            hal = None
+        driver = (hal.drivers or {}).get("baseStation") if hal else None
+        if driver is None:
+            logger.info(
+                f"[start_test_plan] {test_plan.id}: plan-level topology "
+                f"{profile_id!r} requested but no live baseStation driver "
+                f"— skipping. Override will apply on next HAL reload "
+                f"only if the binding selection matches."
+            )
+            return {"applied": False, "reason": "no_live_driver"}
+        if not hasattr(driver, "apply_topology_profile"):
+            return {
+                "applied": False,
+                "reason": "driver_does_not_support_topology_profiles",
+            }
+
+        # Lookup profile dataclass via the same service the binding-level
+        # apply uses (DB first, in-code fallback for greenfield first-boot).
+        from app.services.topology_profile_service import (
+            TopologyProfileNotFound, get_dataclass,
+        )
+        try:
+            profile_dc = get_dataclass(db, profile_id)
+        except TopologyProfileNotFound:
+            from app.hal.uxm_test_profiles import (
+                _PROFILE_REGISTRY, _register_builtin_profiles,
+            )
+            if not _PROFILE_REGISTRY:
+                _register_builtin_profiles()
+            profile_dc = _PROFILE_REGISTRY.get(profile_id)
+            if profile_dc is None:
+                logger.warning(
+                    f"[start_test_plan] {test_plan.id}: plan-level topology "
+                    f"{profile_id!r} not found in DB or in-code registry — "
+                    f"plan starting without topology apply. Operator should "
+                    f"clear or fix the plan's topology_profile_id."
+                )
+                return {
+                    "applied": False, "reason": "profile_not_found",
+                    "profile_id": profile_id,
+                }
+
+        try:
+            result = await driver.apply_topology_profile(profile_dc)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"[start_test_plan] {test_plan.id}: "
+                f"apply_topology_profile({profile_id!r}) raised "
+                f"{type(e).__name__}: {e} — plan running without "
+                f"topology apply."
+            )
+            return {
+                "applied": False, "reason": "apply_raised",
+                "profile_id": profile_id,
+                "error": f"{type(e).__name__}: {e}",
+            }
+
+        if not result.get("applied"):
+            logger.warning(
+                f"[start_test_plan] {test_plan.id}: plan-level topology "
+                f"{profile_id!r} NOT applied — reason={result.get('reason')}; "
+                f"plan running without topology apply."
+            )
+        return result
 
     def complete_test_plan(
         self,
