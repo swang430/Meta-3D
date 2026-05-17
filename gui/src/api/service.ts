@@ -328,6 +328,19 @@ export const selectTopologyProfile = async (
 // editor surface (TopologyEditor component, deferred to Phase 2.2)
 // consumes these.
 
+// P2-1 Phase 2.2: full single-profile detail for the editor modal.
+// List endpoint returns truncated TopologyProfileEntry; this returns
+// the full 25+ field TopologyProfileDetail needed to populate the form.
+export const fetchTopologyProfile = async (
+  categoryKey: string,
+  profileId: string,
+): Promise<TopologyProfileDetail> => {
+  const response = await client.get<TopologyProfileDetail>(
+    `/instruments/${categoryKey}/topology-profiles/${encodeURIComponent(profileId)}`,
+  )
+  return response.data
+}
+
 export const createTopologyProfile = async (
   categoryKey: string,
   payload: CreateTopologyProfilePayload,

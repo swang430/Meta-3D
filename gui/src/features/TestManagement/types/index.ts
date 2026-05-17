@@ -191,6 +191,10 @@ export interface UnifiedTestPlan {
   updated_at: string                   // 更新时间 (ISO 8601)
   notes?: string                       // 备注
   tags?: string[]                      // 标签数组
+
+  // P2-1 Phase 2.3: 可选的 plan 级 UXM 拓扑覆盖
+  // null = 使用 binding 级（HAL bring-up 时的选择）
+  topology_profile_id?: string | null
 }
 
 /**

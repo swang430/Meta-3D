@@ -67,6 +67,7 @@ import { ReportsPage } from './features/Reports/pages/ReportsPage'
 import { CommissioningSandbox } from './components/Commissioning'
 import { DiagnosticsPage } from './features/Diagnostics/DiagnosticsPage'
 import { TopologyEditor } from './features/TopologyEditor/TopologyEditor'
+import { TopologyProfileEditor } from './features/TopologyProfileEditor'
 import { LabProfileWizard } from './components/LabProfile/LabProfileWizard'
 import { fetchLabProfiles } from './api/labProfileService'
 import { RealtimeMetricsCard } from './components/RealtimeMetricsCard'
@@ -93,6 +94,9 @@ import {
   removeChannelModel,
   fetchTopologyProfiles,
   selectTopologyProfile,
+  deleteTopologyProfile,
+  duplicateTopologyProfile,
+  type TopologyProfileDetail,
   fetchSequenceLibrary,
   fetchTestCases,
   fetchTestPlan,
@@ -1645,6 +1649,87 @@ function TopologyProfileCard({ categoryKey }: { categoryKey: string }) {
   const [opError, setOpError] = useState<string | null>(null)
   const [opMessage, setOpMessage] = useState<string | null>(null)
 
+  // P2-1 Phase 2.2: editor modal state. `mode` distinguishes create
+  // (blank form) from edit (pre-filled from initialDetail). System
+  // presets open in edit mode with all inputs disabled — the modal
+  // shows a banner directing the operator to duplicate first.
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [editorMode, setEditorMode] = useState<'create' | 'edit'>('create')
+  const [editorInitial, setEditorInitial] =
+    useState<TopologyProfileDetail | null>(null)
+  // Loading flag for the on-demand fetch when opening editor for an
+  // existing profile (the list response only carries the truncated
+  // entry; the editor needs full detail).
+  const [editorLoading, setEditorLoading] = useState(false)
+
+  const openCreate = () => {
+    setEditorMode('create')
+    setEditorInitial(null)
+    setEditorOpen(true)
+  }
+
+  const openEdit = async (profileId: string) => {
+    setEditorLoading(true)
+    try {
+      const { fetchTopologyProfile } = await import('./api/service')
+      const detail = await fetchTopologyProfile(categoryKey, profileId)
+      setEditorMode('edit')
+      setEditorInitial(detail)
+      setEditorOpen(true)
+    } catch (err) {
+      setOpError(
+        err instanceof Error ? err.message : '加载拓扑详情失败',
+      )
+    } finally {
+      setEditorLoading(false)
+    }
+  }
+
+  const duplicateMutation = useMutation({
+    mutationFn: (profileId: string) =>
+      duplicateTopologyProfile(categoryKey, profileId),
+    onSuccess: (copy) => {
+      queryClient.invalidateQueries({
+        queryKey: ['instruments', 'topologyProfiles', categoryKey],
+      })
+      setOpError(null)
+      setOpMessage(`已复制为副本: ${copy.name}（${copy.profile_id}）`)
+      // Open the new copy in edit mode so operator can immediately
+      // adjust it — primary motivation for cloning a preset.
+      setEditorMode('edit')
+      setEditorInitial(copy)
+      setEditorOpen(true)
+    },
+    onError: (err: unknown) => {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data
+          ?.detail ?? '复制失败'
+      setOpError(String(detail))
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (profileId: string) =>
+      deleteTopologyProfile(categoryKey, profileId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ['instruments', 'topologyProfiles', categoryKey],
+      })
+      setOpError(null)
+      setOpMessage('已删除')
+    },
+    onError: (err: unknown) => {
+      // 409 on system preset surfaces refused payload; fall through
+      // to .detail otherwise.
+      const data = (err as { response?: { data?: any } })?.response?.data
+      if (data?.refused) {
+        setOpError(`无法删除：${data.detail ?? data.reason}`)
+      } else {
+        setOpError(String(data?.detail ?? '删除失败'))
+      }
+    },
+  })
+
   const items = data?.items ?? []
   const currentTestApp = data?.current_test_app ?? null
   const selectedId = data?.selected_topology_profile_id ?? null
@@ -1720,6 +1805,15 @@ function TopologyProfileCard({ categoryKey }: { categoryKey: string }) {
     }
   })
 
+  // P2-1 Phase 2.2: action buttons need to know what the operator's
+  // currently selected ROW looks like — is it a system preset
+  // (Edit -> read-only banner, Duplicate is the meaningful action)
+  // or operator-owned (Edit / Delete are meaningful, Duplicate is
+  // still allowed). The list response carries `is_system_preset` so
+  // we don't need an extra fetch just for the affordance logic.
+  const selectedItem = items.find((i) => i.profile_id === selectedId) ?? null
+  const selectedIsPreset = selectedItem?.is_system_preset === true
+
   return (
     <Card withBorder padding="md" radius="md" shadow="xs">
       <Stack gap="sm">
@@ -1732,14 +1826,24 @@ function TopologyProfileCard({ categoryKey }: { categoryKey: string }) {
                 : 'HAL 未加载或 Test App 未检测到 — 选择会在下次 HAL 重载生效'}
             </Text>
           </Stack>
-          <Button
-            size="xs"
-            variant="subtle"
-            onClick={() => refetch()}
-            disabled={isFetching}
-          >
-            刷新
-          </Button>
+          <Group gap="xs">
+            <Button
+              size="xs"
+              variant="light"
+              onClick={openCreate}
+              disabled={categoryKey !== 'baseStation'}
+            >
+              + 新建
+            </Button>
+            <Button
+              size="xs"
+              variant="subtle"
+              onClick={() => refetch()}
+              disabled={isFetching}
+            >
+              刷新
+            </Button>
+          </Group>
         </Group>
 
         {isLoading ? (
@@ -1755,15 +1859,65 @@ function TopologyProfileCard({ categoryKey }: { categoryKey: string }) {
             (该 category 无可选拓扑 profile)
           </Text>
         ) : (
-          <Select
-            label="选择拓扑"
-            placeholder="(未选择 — HAL 重载时不会自动应用)"
-            data={selectData}
-            value={selectedId}
-            clearable
-            onChange={(value) => selectMutation.mutate(value)}
-            disabled={selectMutation.isPending}
-          />
+          <>
+            <Select
+              label="选择拓扑"
+              placeholder="(未选择 — HAL 重载时不会自动应用)"
+              data={selectData}
+              value={selectedId}
+              clearable
+              onChange={(value) => selectMutation.mutate(value)}
+              disabled={selectMutation.isPending}
+            />
+            {/* P2-1 Phase 2.2: row-level CRUD actions on the
+                selected profile. Disabled when nothing selected,
+                or (for Delete) when it's a system preset since the
+                backend rejects with 409 anyway. */}
+            {selectedItem ? (
+              <Group gap="xs">
+                <Button
+                  size="xs"
+                  variant="light"
+                  onClick={() => openEdit(selectedItem.profile_id)}
+                  loading={editorLoading}
+                >
+                  {selectedIsPreset ? '查看（只读）' : '编辑'}
+                </Button>
+                <Button
+                  size="xs"
+                  variant="light"
+                  color="grape"
+                  onClick={() =>
+                    duplicateMutation.mutate(selectedItem.profile_id)
+                  }
+                  loading={duplicateMutation.isPending}
+                >
+                  复制为副本
+                </Button>
+                <Button
+                  size="xs"
+                  variant="light"
+                  color="red"
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        `删除拓扑 ${selectedItem.name}？此操作不可撤销。`,
+                      )
+                    ) {
+                      deleteMutation.mutate(selectedItem.profile_id)
+                    }
+                  }}
+                  loading={deleteMutation.isPending}
+                  disabled={selectedIsPreset}
+                  title={
+                    selectedIsPreset ? '系统预设不可删除（请复制后删除副本）' : ''
+                  }
+                >
+                  删除
+                </Button>
+              </Group>
+            ) : null}
+          </>
         )}
 
         {opError ? (
@@ -1777,6 +1931,18 @@ function TopologyProfileCard({ categoryKey }: { categoryKey: string }) {
           </Text>
         ) : null}
       </Stack>
+
+      {/* P2-1 Phase 2.2: editor modal — overlays the card; closes
+          back to it on save / cancel. invalidateQueries inside the
+          modal's mutation hooks refreshes the list automatically. */}
+      <TopologyProfileEditor
+        opened={editorOpen}
+        mode={editorMode}
+        initialData={editorInitial}
+        categoryKey={categoryKey}
+        onClose={() => setEditorOpen(false)}
+        onSaved={() => setEditorOpen(false)}
+      />
     </Card>
   )
 }

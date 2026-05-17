@@ -156,6 +156,33 @@ paths:
         '404':
           description: Category does not host topology profiles
   /api/v1/instruments/{categoryKey}/topology-profiles/{profileId}:
+    get:
+      summary: Get full detail for a single topology profile (P2-1 Phase 2.2)
+      description: |
+        Returns the full 25+ field row so the GUI editor modal can
+        populate the form. The list endpoint returns only the
+        truncated `TopologyProfileEntry`; this endpoint returns the
+        full `TopologyProfileDetail`.
+      parameters:
+        - name: categoryKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: profileId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Full profile detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopologyProfileDetail'
+        '404':
+          description: Profile not found
     put:
       summary: Update an operator-owned topology profile (P2-1 Phase 2.1)
       description: |

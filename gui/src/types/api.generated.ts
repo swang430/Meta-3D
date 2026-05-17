@@ -319,7 +319,43 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get full detail for a single topology profile (P2-1 Phase 2.2)
+         * @description Returns the full 25+ field row so the GUI editor modal can
+         *     populate the form. The list endpoint returns only the
+         *     truncated `TopologyProfileEntry`; this endpoint returns the
+         *     full `TopologyProfileDetail`.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    categoryKey: string;
+                    profileId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Full profile detail */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TopologyProfileDetail"];
+                    };
+                };
+                /** @description Profile not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
         /**
          * Update an operator-owned topology profile (P2-1 Phase 2.1)
          * @description Partial-update. Refuses `is_system_preset=true` rows with 409 —

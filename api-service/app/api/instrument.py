@@ -1059,6 +1059,67 @@ def _row_to_detail(row) -> TopologyProfileDetail:
     )
 
 
+def _profile_dataclass_to_detail(profile) -> TopologyProfileDetail:
+    """Map in-code ``UxmTestProfile`` dataclass → API detail schema.
+
+    Used as the greenfield first-boot fallback for the single-GET
+    endpoint, mirroring the same fallback in
+    ``_list_topology_profiles_for_category``: if the bootstrap seeder
+    hasn't run, the list endpoint surfaces the in-code built-ins, so the
+    detail endpoint must too — otherwise the GUI lists profiles whose
+    editor 404s.
+
+    Built-ins are always system presets (``is_system_preset=True``,
+    ``created_by=None``) — the editor will banner read-only as expected.
+    """
+    return TopologyProfileDetail(
+        profile_id=profile.profile_id,
+        name=profile.name,
+        description=profile.description,
+        category=profile.category,
+        band=profile.band,
+        frequency_mhz=profile.frequency_mhz,
+        bandwidth_mhz=profile.bandwidth_mhz,
+        scs_khz=profile.scs_khz,
+        duplex=profile.duplex,
+        arfcn=profile.arfcn,
+        mimo_layers=profile.mimo_layers,
+        mimo_port_preset=profile.mimo_port_preset,
+        dl_power_dbm=profile.dl_power_dbm,
+        ssb_power_dbm=profile.ssb_power_dbm,
+        modulation=profile.modulation,
+        target_mcs=profile.target_mcs,
+        sched_algo=profile.sched_algo,
+        enable_amc=bool(profile.enable_amc),
+        tdd_pattern=profile.tdd_pattern,
+        tdd_period=profile.tdd_period,
+        harq_max_trans=profile.harq_max_trans,
+        harq_processes=profile.harq_processes,
+        csi_rs_ports=profile.csi_rs_ports,
+        stat_count=profile.stat_count,
+        cell_id=profile.cell_id,
+        state_file=profile.state_file,
+        compatible_test_apps=list(profile.compatible_test_apps or []),
+        notes=profile.notes or "",
+        is_system_preset=True,
+        created_by=None,
+    )
+
+
+def _lookup_builtin_profile(profile_id: str):
+    """Greenfield first-boot fallback lookup. Returns the in-code
+    ``UxmTestProfile`` dataclass for ``profile_id`` if it's a built-in,
+    else ``None``. Mirrors the registry-initialization pattern used by
+    ``_list_topology_profiles_for_category``.
+    """
+    from app.hal.uxm_test_profiles import (
+        _PROFILE_REGISTRY, _register_builtin_profiles,
+    )
+    if not _PROFILE_REGISTRY:
+        _register_builtin_profiles()
+    return _PROFILE_REGISTRY.get(profile_id)
+
+
 def _require_baseStation(category_key: str) -> None:
     """Reject CRUD calls on non-baseStation categories.
 
@@ -1072,6 +1133,49 @@ def _require_baseStation(category_key: str) -> None:
             detail=f"Topology profiles are not defined for category "
                    f"'{category_key}' (only 'baseStation' today).",
         )
+
+
+@router.get(
+    "/instruments/{category_key}/topology-profiles/{profile_id}",
+    response_model=TopologyProfileDetail,
+    responses={404: {"description": "Profile not found"}},
+)
+def get_topology_profile_endpoint(
+    category_key: str,
+    profile_id: str,
+    db: Session = Depends(get_db),
+) -> TopologyProfileDetail:
+    """P2-1 Phase 2.2: full single-profile detail for the GUI editor.
+
+    The list endpoint deliberately returns only the truncated
+    ``TopologyProfileEntry`` shape (profile_id / name / category /
+    compatible_test_apps + live compat flag) to keep list responses
+    small. The editor modal needs all 25+ knobs to populate the form,
+    so it hits this endpoint on open.
+    """
+    _require_baseStation(category_key)
+    from app.services.topology_profile_service import (
+        TopologyProfileNotFound, get_row, list_rows,
+    )
+    try:
+        row = get_row(db, profile_id)
+    except TopologyProfileNotFound:
+        # Greenfield first-boot fallback: mirror
+        # ``_list_topology_profiles_for_category``'s behavior — if the
+        # bootstrap seeder hasn't populated the table yet, the list
+        # endpoint surfaces in-code built-ins, so the detail endpoint
+        # must too (otherwise GUI lists profiles whose editor 404s).
+        # Codex P2 (PR #40 review): without this, clicking edit on a
+        # built-in profile in greenfield boot opens an empty modal.
+        if not list_rows(db):
+            builtin = _lookup_builtin_profile(profile_id)
+            if builtin is not None:
+                return _profile_dataclass_to_detail(builtin)
+        raise HTTPException(
+            status_code=404,
+            detail=f"Topology profile {profile_id!r} not found",
+        )
+    return _row_to_detail(row)
 
 
 @router.post(
