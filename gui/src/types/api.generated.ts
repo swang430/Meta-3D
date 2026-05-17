@@ -224,8 +224,21 @@ export interface components {
             model_capabilities: string[];
             bandwidth?: string | null;
             channels?: string | null;
-            /** @enum {string} */
-            status: "available" | "reserved" | "maintenance" | "offline";
+            /**
+             * @description Catalog availability status.
+             *     - `available`: real driver class registered + HAL can bring it up
+             *     - `pending_dev`: catalog row exists but no real driver class
+             *       is registered yet (`_convert_model` in `app/api/instrument.py`
+             *       maps to this when `get_real_driver_class()` returns None).
+             *       Distinct from `offline` (which means "driver registered but
+             *       not currently reachable") — operators picking a model need to
+             *       see these as two different states so they don't try to
+             *       connect to a model that fundamentally has no driver.
+             *     - `offline` / `reserved` / `maintenance`: operational states
+             *       for driver-backed models.
+             * @enum {string}
+             */
+            status: "available" | "reserved" | "maintenance" | "offline" | "pending_dev";
         };
         InstrumentConnection: {
             endpoint?: string | null;
