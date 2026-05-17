@@ -8,12 +8,24 @@
 
 ## 🎯 Current Focus
 
-**🚧 Blocked on hardware — waiting on next on-site trip.**
+**Mostly blocked on hardware — 2 remote-doable items remain.**
 
-All flaky-test cleanup is done (P3-10/11/12/13 ✅). The remaining
-P0/P1 backlog can't be progressed from a remote dev box. Current
-Focus stays empty until the next on-site opens, at which point it
-must move to **P0-3** (or whichever P0 is unblocked first).
+All flaky-test cleanup is done (P3-10/11/12/13 ✅, full sweep clean).
+7 of the 9 open items can't be progressed from a remote dev box (all
+P0 + most P1 + P2-4 on-site verification). 2 items can:
+
+- **P3-1** — HAL Reload confirm dialog (0.5 day, pure GUI)
+- **P1-5 local half** — phase calibration local prep (~0.5 day local
+  + 0.5 day on-site; the local half can ship in advance)
+
+P1-6 (silent-reconnect integration tests for FS16/UXM/ENA) is
+**gated**, not blocked: roadmap text pins it to "pulled forward only
+if a real production idle-close is seen on those drivers", so it
+stays parked.
+
+When the next on-site opens, Current Focus must move back to **P0-3**
+(or whichever P0 is unblocked first) per WIP=1 sequencing, regardless
+of which remote items are in flight at that moment.
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
@@ -26,11 +38,10 @@ must move to **P0-3** (or whichever P0 is unblocked first).
 | P3-10 ✅ | 1 | alembic chain test hardcoded head SHA | PR #46 merged |
 | P3-11 ✅ | 2 | `bootstrap_lifespan` expected-seeder set drifted from new seeders | PR #47 merged |
 | P3-12 ✅ | 1 | alembic `fileConfig(disable_existing_loggers=True)` silenced `app.hal.base` for downstream caplog | PR #48 merged |
-| P3-13 ✅ | 5 | `probe_calibration_service` tests used `probe_id=100` literal as "invalid" sentinel; 1106cb2 widened `PROBE_ID_MAX` 63→1023 making `100` valid | this PR |
+| P3-13 ✅ | 5 | `probe_calibration_service` tests used `probe_id=100` literal as "invalid" sentinel; 1106cb2 widened `PROBE_ID_MAX` 63→1023 making `100` valid | PR #49 merged |
 
 Full-sweep flaky count: 9 (pre-batch) → 8 (post-P3-10) → 6 (post-P3-11)
-→ 5 (post-P3-12) → **0 (this PR)**. Full test suite is clean. All open
-P0/P1 still 🚧 Blocked-on-hardware.
+→ 5 (post-P3-12) → **0 (post-P3-13)**. Full test suite is clean.
 
 Last review: 2026-05-17 (post Phase-2.3 merge)
 Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md)
@@ -586,7 +597,7 @@ idle-then-poke test to confirm.
 **Status**: `[ ]` not started
 **Estimate**: 0.5 day
 
-### P2-5 — HAL Reload behaviour audit
+### P2-5 — HAL Reload behaviour audit ✅ Done (PR #35)
 
 **What**: When operator clicks HAL Reload mid-test, what happens to the
 in-flight diagnostic? Pre-P2-5: silently fails — `TestPlan.status='running'`
@@ -650,7 +661,7 @@ NOT done (deferred):
   (consistent precedent — all `/hal/*` endpoints are GUI inline-
   typed). New `forced` field is backward-compatible additive.
 
-**Status**: `[≈]` in review — this PR
+**Status**: ✅ Done — PR #35 (merged 2026-05-17)
 **Estimate**: 1 day (actual: ~2 hours)
 
 ---
@@ -984,21 +995,20 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 
 ## 📊 Summary
 
-> Counts as of 2026-05-17 (P3-13 in this PR — **closes the 4-PR
-> flaky-test cleanup batch**). All 4 cleanup PRs ✅. Full-sweep flaky
-> count 9 (pre-batch) → 8 (post-P3-10) → 6 (post-P3-11) → 5 (post-P3-12)
-> → **0 (this PR)**. Test suite is clean (1176/1176 + 2 skipped).
-> Roadmap now in "waiting on next on-site" mode — all 7 remaining
-> P0/P1 items are 🚧 Blocked-on-hardware.
+> Counts as of 2026-05-17 (post-P3-13, post-PR-#49 — 4-PR flaky-test
+> cleanup batch complete). Full-sweep flaky count 9 (pre-batch) →
+> 8 → 6 → 5 → **0**. Test suite is clean (1176/1176 + 2 skipped).
+> Of the 9 open items, 7 are 🚧 blocked-on-hardware and 2 are
+> remote-doable (P3-1 + P1-5 local half).
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
 | ✅ Done | 32 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 6 total | 4 days | 4 days |
 | 🟠 P1 (confidence) | 4 open / 6 total | 3 days | 2.5 days |
-| 🟡 P2 (abstraction debt) | 0 open / 5 total | 0 days | 0 |
-| 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
-| **Total open** | **7** | **~7 days** | **6.5 days** |
+| 🟡 P2 (abstraction debt) | 1 open / 5 total | 0.5 day | 0.5 day |
+| 🟢 P3 (polish) | 1 open / 13 total | 0.5 day | 0 |
+| **Total open** | **9** | **~8 days** | **7 days** |
 
 ---
 
