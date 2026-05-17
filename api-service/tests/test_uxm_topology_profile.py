@@ -878,6 +878,44 @@ class TestTopologyProfileCrudEndpoints:
         )
         assert resp.status_code == 404
 
+    def test_get_endpoint_falls_back_to_builtins_on_greenfield(self, db):
+        """Codex P2 (PR #40 review): list endpoint surfaces in-code
+        built-ins when the bootstrap seeder hasn't run, so GET must too
+        — otherwise clicking edit on a built-in in greenfield boot
+        404s and the modal can't open.
+
+        Note: this test deliberately does NOT call
+        ``topology_profiles_seeder.run(db)`` — the DB row count is 0,
+        triggering the fallback path.
+        """
+        # Sanity: confirm the DB really is empty before the request.
+        from app.services.topology_profile_service import list_rows
+        assert list_rows(db) == []
+
+        resp = client.get(
+            "/api/v1/instruments/baseStation/topology-profiles/caict_n78_2x2",
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["profile_id"] == "caict_n78_2x2"
+        # Fallback path always marks as system preset (in-code built-in)
+        assert body["is_system_preset"] is True
+        assert body["created_by"] is None
+        # Full field set still populated from the dataclass defaults
+        assert body["band"] == "N78"
+        assert body["compatible_test_apps"] == ["5G_NR_Test"]
+
+    def test_get_endpoint_no_fallback_when_db_seeded(self, db):
+        """After seeding, an unknown ID must 404 even if it'd match an
+        in-code built-in by string equality — fallback is gated on the
+        DB-empty condition (mirrors the list endpoint exactly).
+        """
+        topology_profiles_seeder.run(db)
+        resp = client.get(
+            "/api/v1/instruments/baseStation/topology-profiles/totally_made_up",
+        )
+        assert resp.status_code == 404
+
     def test_get_endpoint_404_non_basestation(self, db):
         """Non-baseStation categories don't host topology profiles —
         returns 404 from the require-baseStation gate."""
