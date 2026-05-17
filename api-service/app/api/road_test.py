@@ -90,13 +90,22 @@ def _list_custom_scenarios(db: Session) -> List[RoadTestScenario]:
 
 
 def _get_custom_scenario(db: Session, scenario_id: str) -> Optional[RoadTestScenario]:
-    """Fetch a single VRT TestCase by id (UUID string) and convert."""
+    """Fetch a single VRT TestCase by id (UUID string) and convert.
+
+    Companion TestCases (FK-target placeholders auto-created by
+    legacy scenario-based TestPlan flow) are not real VRT scenarios
+    and are reported as not-found here — `vrt_test_case_to_scenario`
+    would otherwise raise a clear ValueError on them; this layer
+    just maps that to a 404 / None for the GET endpoint (P3-8).
+    """
+    from app.services.road_test.vrt_service import is_companion_test_case
+
     try:
         from uuid import UUID
         tc = vrt_service.get_vrt_test_case(db, UUID(scenario_id))
     except (ValueError, AttributeError):
         return None
-    if tc is None:
+    if tc is None or is_companion_test_case(tc):
         return None
     return vrt_service.vrt_test_case_to_scenario(tc)
 

@@ -31,6 +31,29 @@ from app.schemas.road_test import (
 logger = logging.getLogger(__name__)
 
 
+def is_companion_test_case(test_case: TestCase) -> bool:
+    """A TestCase is a *companion* (FK-target placeholder) — not a real VRT
+    scenario — when its ``configuration`` JSON only carries the auto-
+    generated marker shape produced by
+    ``TestPlanService._create_road_test_steps``:
+    ``{auto_generated: True, scenario_id, steps_count}``.
+
+    These rows exist only so ``TestExecution.test_case_id`` (NOT NULL FK)
+    has a valid target when a legacy scenario-based TestPlan is created;
+    they intentionally do NOT satisfy the ``VirtualRoadTestConfig``
+    schema (mode / category / network / base_stations / route /
+    environment / traffic / kpi_definitions are absent).
+
+    Treating companions as real VRT scenarios in enumeration / detail
+    endpoints crashes ``vrt_test_case_to_scenario`` with a Pydantic
+    ``ValidationError`` (P3-8). Filter at the service boundary so the
+    placeholder shape stays an internal implementation detail of
+    ``test_plan_service`` and doesn't leak into scenario listings.
+    """
+    cfg = test_case.configuration or {}
+    return cfg.get("auto_generated") is True
+
+
 class VRTService:
     """CRUD + scenario↔config conversion for VRT TestCases."""
 
@@ -71,6 +94,18 @@ class VRTService:
             raise ValueError(
                 f"TestCase {test_case.id} is not a VirtualRoadTest "
                 f"(test_type={test_case.test_type!r})"
+            )
+        # Refuse companions explicitly so callers see a clear error rather
+        # than 8 missing-field Pydantic ValidationError messages (P3-8).
+        # Companions don't carry a real VRT config and aren't user-facing
+        # scenarios — callers should filter them at enumeration time via
+        # ``list_vrt_test_cases(include_companions=False)`` (the default).
+        if is_companion_test_case(test_case):
+            raise ValueError(
+                f"TestCase {test_case.id} is an auto-generated companion "
+                f"(FK-target placeholder for a legacy scenario-based "
+                f"TestPlan) — not a real VRT scenario. Use "
+                f"list_vrt_test_cases(include_companions=False) to exclude."
             )
         config = VirtualRoadTestConfig.model_validate(test_case.configuration or {})
         return RoadTestScenario(
@@ -166,7 +201,31 @@ class VRTService:
         is_template: Optional[bool] = None,
         template_category: Optional[str] = None,
         created_by: Optional[str] = None,
+        include_companions: bool = False,
     ) -> List[TestCase]:
+        """List VRT TestCases.
+
+        ``include_companions`` (default ``False``) controls whether
+        auto-generated FK-target placeholder rows
+        (``configuration.auto_generated == True``) are returned.
+        Scenario enumeration paths want the default (companions are not
+        real scenarios); internal/admin paths that need to inspect them
+        can opt in.
+
+        Pagination strategy when ``include_companions=False``:
+        bounded-batch fetch with an overshoot factor. We can't push the
+        companion predicate into SQL portably — ``configuration`` is a
+        plain ``JSON`` column and the predicate diverges per dialect
+        (``->>`` on PG vs ``json_extract`` on SQLite) — so the filter
+        runs in Python. Loading the whole table before pagination would
+        be O(table size) memory (Codex P2 on PR #41); instead we fetch
+        ``needed * OVERSHOOT_FACTOR`` rows per round-trip and stop as
+        soon as we have enough non-companion rows for the requested
+        page. Companion density is low in practice (one row per legacy
+        scenario-based TestPlan; ~10% in the dev DB sample at fix time)
+        so the first batch almost always satisfies the page; the loop
+        is correctness-insurance for the edge case where it doesn't.
+        """
         query = db.query(TestCase).filter(TestCase.test_type == VRT_TEST_TYPE)
         if is_template is not None:
             query = query.filter(TestCase.is_template == is_template)
@@ -174,9 +233,35 @@ class VRTService:
             query = query.filter(TestCase.template_category == template_category)
         if created_by is not None:
             query = query.filter(TestCase.created_by == created_by)
-        return (
-            query.order_by(TestCase.created_at.desc()).offset(skip).limit(limit).all()
-        )
+        ordered = query.order_by(TestCase.created_at.desc())
+
+        if include_companions:
+            return ordered.offset(skip).limit(limit).all()
+
+        # Bounded-batch fetch — memory is O(batch_size), not O(table).
+        # OVERSHOOT_FACTOR=2 means a uniform companion density of <=50%
+        # converges in one round-trip; densities above that just cost
+        # extra round-trips, never extra memory.
+        OVERSHOOT_FACTOR = 2
+        MIN_BATCH = 50
+        needed = skip + limit
+        if needed <= 0:
+            return []
+        batch_size = max(needed * OVERSHOOT_FACTOR, MIN_BATCH)
+
+        collected: List[TestCase] = []
+        db_offset = 0
+        while len(collected) < needed:
+            batch = ordered.offset(db_offset).limit(batch_size).all()
+            if not batch:
+                break  # exhausted the table
+            for row in batch:
+                if not is_companion_test_case(row):
+                    collected.append(row)
+                    if len(collected) >= needed:
+                        break
+            db_offset += batch_size
+        return collected[skip:needed]
 
     def update_vrt_test_case(
         self,
