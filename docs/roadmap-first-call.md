@@ -8,26 +8,29 @@
 
 ## 🎯 Current Focus
 
-**`P3-13` — probe_calibration_service mock pattern shared root cause
-(last of 4-PR flaky-test cleanup batch P3-10/11/12/13)**
+**🚧 Blocked on hardware — waiting on next on-site trip.**
+
+All flaky-test cleanup is done (P3-10/11/12/13 ✅). The remaining
+P0/P1 backlog can't be progressed from a remote dev box. Current
+Focus stays empty until the next on-site opens, at which point it
+must move to **P0-3** (or whichever P0 is unblocked first).
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
   gets appended to the backlog instead of done inline.
 
-**State (2026-05-17)**: PR #47 (P3-11) merged. Flaky-test cleanup
-batch sequenced:
+**State (2026-05-17)**: 4-PR flaky-test cleanup batch complete:
 
 | ID | Tests | Root cause | Status |
 |----|-------|------------|--------|
 | P3-10 ✅ | 1 | alembic chain test hardcoded head SHA | PR #46 merged |
 | P3-11 ✅ | 2 | `bootstrap_lifespan` expected-seeder set drifted from new seeders | PR #47 merged |
-| P3-12 ✅ | 1 | alembic `fileConfig(disable_existing_loggers=True)` silenced `app.hal.base` for downstream caplog | this PR |
-| P3-13 | 5 | `probe_calibration_service` mock pattern shared root cause | last |
+| P3-12 ✅ | 1 | alembic `fileConfig(disable_existing_loggers=True)` silenced `app.hal.base` for downstream caplog | PR #48 merged |
+| P3-13 ✅ | 5 | `probe_calibration_service` tests used `probe_id=100` literal as "invalid" sentinel; 1106cb2 widened `PROBE_ID_MAX` 63→1023 making `100` valid | this PR |
 
 Full-sweep flaky count: 9 (pre-batch) → 8 (post-P3-10) → 6 (post-P3-11)
-→ 5 (this PR). All open P0/P1 still 🚧 Blocked-on-hardware. After P3-13
-merges, roadmap enters "waiting on next on-site trip" mode.
+→ 5 (post-P3-12) → **0 (this PR)**. Full test suite is clean. All open
+P0/P1 still 🚧 Blocked-on-hardware.
 
 Last review: 2026-05-17 (post Phase-2.3 merge)
 Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md)
@@ -113,7 +116,8 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 | D28 | VRT integration test isolation (last discovered-during chore deferred from P3-8). Three VRT integration test files (`test_road_test_{scenarios,executions,websocket}.py`) ran against the **shared dev Postgres**, accumulating 50+ leftover VRT TestCases over time and breaking assertions like `len(scenarios) == 5` and `all(s["category"] == "standard" for s in scenarios)`. Was always broken; the P3-8 pydantic crash had been masking it. Fix per-file `_isolated_db` autouse fixture that overrides `get_db` with an in-memory SQLite TestingSessionLocal (same pattern as `test_uxm_topology_profile.py` / `test_plan_topology_override.py`). **Caveat for the websocket file**: the WS endpoint handler at `road_test.py:1312` imports `SessionLocal` directly inside the function (FastAPI's `Depends(get_db)` doesn't apply to WebSockets), so the fixture also monkeypatches `app.db.database.SessionLocal` so the function-level re-import picks up the test session — without this all 7 WS tests fail with "Execution not found" because the lookup hits the real configured DB. Result: 40/40 in the 3 integration suites (was 28 failed / 12 passed pre-PR #41, then 2 failed / 38 passed post-PR #41, now 40/40). Full-suite sweep matches main's pre-existing 9 flaky failures (none introduced by this PR). After this PR merges, all discovered-during backlog items are resolved; only on-site-blocked P0/P1 work remains on the roadmap. | PR #45 (merged 2026-05-17) |
 | D29 | P3-10 — alembic chain head hardcoded SHA (1 of 4 in the flaky-test cleanup batch). `tests/test_alembic_chain.py::test_greenfield_upgrade_from_scratch` asserted `version_num == "e863f092696b"` (hardcoded constant from when the test was written); PRs #28/#38/#39 then added 3 migrations (`a1b2c3d4e5f6` / `c7a91b3e5d04` / `d8b412ca9f15`) and the constant rotted. **Structural fix** (B not A): replaced the hardcoded SHA with `ScriptDirectory.from_config(cfg).get_current_head()` so the test asserts its actual intent ("DB reaches alembic head") rather than "DB reaches specific SHA X" — same "fix the test's structure, not just the value" pattern as P3-6's Type-C signature pinning. Verified by revert/re-apply: temporarily appended `_FAKE` to the expected head, assertion correctly failed; restored, all 3 tests in `test_alembic_chain.py` pass. Full-sweep flaky count 9→8. **Also promotes P3-11/12/13 to the open roadmap as P3 slots** so the rest of the batch has explicit Current Focus targets per WIP=1 sequencing; this PR's Current Focus shifts to P3-11 after merge. | PR #46 (merged 2026-05-17) |
 | D30 | P3-11 — bootstrap_lifespan seeder set drift (2 of 4 in the flaky-test cleanup batch). 2 tests in `tests/test_bootstrap_lifespan.py` failed on clean main: `test_bootstrap_history_records_each_seeder` (expected set missing `"topology_profiles"`) and `test_second_lifespan_is_idempotent` (`assert 7 == 6`). Root cause: PR #38 (P2-1 Phase 2.1) added the `topology_profiles` seeder to the bootstrap registry without updating these test expectations. **Value drift** (not structural — count and set are intrinsically tied to a fixed registry), same family as P3-6. Fixed by adding `"topology_profiles"` to the expected set + bumping `6 → 7`; tagged both with comments naming PR #38 so future seeder additions get a clearer "bump these too" signal. Verified by revert/re-apply: replaced `7` with `999` sentinel, assertion correctly failed (`assert 7 == 999`). 9/9 in `test_bootstrap_lifespan.py`; full-sweep flaky count 8 → 6. Current Focus shifts to P3-12 after merge. | PR #47 (merged 2026-05-17) |
-| D31 | P3-12 — driver_capabilities test-isolation pollution (3 of 4 in the flaky-test cleanup batch). `tests/test_driver_capabilities.py::TestDriverBaseCapabilitySet::test_non_canonical_token_warns_but_adds` passed alone but failed in full sweep with `AssertionError: []` (caplog captured zero records). **Bisect**: narrowed polluter to `test_alembic_chain.py` (single test reproduces it). **Root cause**: `alembic/env.py:35` calls `logging.config.fileConfig(config.config_file_name)` which defaults to `disable_existing_loggers=True` — every already-imported logger (including `app.hal.base`, populated when pytest collects sibling modules that import HAL drivers) has its `disabled` flag flipped to `True`, silently dropping all subsequent log records and starving downstream `caplog`-based tests. Production alembic runs via CLI in a fresh process where there is nothing to disable, so the leak is pure pytest-in-process pollution — fix scoped to the test file rather than modifying `env.py` (preserves CLI behavior untouched, matches P3-10's "fix at the right layer" pattern). **Fix**: autouse fixture in `test_alembic_chain.py` snapshots every existing logger's `disabled` flag pre-test and restores on teardown. Verified by revert/re-apply: stashed the fixture, `test_alembic_chain.py + test_non_canonical_token_warns_but_adds` reproduced the failure; restored, both pass. Full-sweep flaky count 6 → 5 (only the 5 P3-13 `probe_calibration_service` mock failures remain). Current Focus shifts to P3-13 after merge. | this PR (2026-05-17) |
+| D31 | P3-12 — driver_capabilities test-isolation pollution (3 of 4 in the flaky-test cleanup batch). `tests/test_driver_capabilities.py::TestDriverBaseCapabilitySet::test_non_canonical_token_warns_but_adds` passed alone but failed in full sweep with `AssertionError: []` (caplog captured zero records). **Bisect**: narrowed polluter to `test_alembic_chain.py` (single test reproduces it). **Root cause**: `alembic/env.py:35` calls `logging.config.fileConfig(config.config_file_name)` which defaults to `disable_existing_loggers=True` — every already-imported logger (including `app.hal.base`, populated when pytest collects sibling modules that import HAL drivers) has its `disabled` flag flipped to `True`, silently dropping all subsequent log records and starving downstream `caplog`-based tests. Production alembic runs via CLI in a fresh process where there is nothing to disable, so the leak is pure pytest-in-process pollution — fix scoped to the test file rather than modifying `env.py` (preserves CLI behavior untouched, matches P3-10's "fix at the right layer" pattern). **Fix**: autouse fixture in `test_alembic_chain.py` snapshots every existing logger's `disabled` flag pre-test and restores on teardown. Verified by revert/re-apply: stashed the fixture, `test_alembic_chain.py + test_non_canonical_token_warns_but_adds` reproduced the failure; restored, both pass. Full-sweep flaky count 6 → 5 (only the 5 P3-13 `probe_calibration_service` mock failures remain). Current Focus shifts to P3-13 after merge. | PR #48 (merged 2026-05-17) |
+| D32 | P3-13 — probe_calibration_service invalid-probe sentinel drift (4 of 4 in the flaky-test cleanup batch; closes the batch). 5 tests in `tests/test_probe_calibration_service.py` (`test_execute_calibration_invalid_probe` / `test_execute_phase_calibration_invalid_probe` / `test_execute_phase_calibration_invalid_reference` / `test_execute_polarization_calibration_invalid_probe` / `test_execute_pattern_calibration_invalid_probe`) all failed with `assert True is False`. **Root cause** (`git log -S` on `PROBE_ID_MAX = 1023` pinpointed commit 1106cb2 dated 2026-05-05 "Phase 2a 真校准链路接通"): the tests hardcoded `probe_ids=[100]` / `reference_probe_id=100` as their "deliberately invalid" sentinel back when `PROBE_ID_MAX = 63`; the Phase-2a commit widened it to 1023 (probe arrays grew) without updating these tests, so `100` became a valid id and `success` flipped `False → True`. Same family of **value drift** as P3-6 (Type-C `has_lna`) and P3-11 (seeder count) — model widened, test sentinel stale. **Structural fix** (B, not A): imported `PROBE_ID_MAX` from the service and replaced all 5 literal `100` sentinels with `PROBE_ID_MAX + 1`, so the tests now pin the validator's actual contract ("anything past the upper bound is rejected") rather than a magic number — future widening can't reintroduce this drift. Added a comment at the first call site naming the original drift cause so the choice is grep-able. Verified by revert/re-apply: stashed the fix, all 5 reproduced; restored, 126/126 in `test_probe_calibration_service.py`. **Full-sweep flaky count 5 → 0 — entire test suite is clean (1176/1176 + 2 skipped)**; closes the 4-PR flaky-test cleanup batch. After this PR merges, roadmap enters "waiting on next on-site trip" mode — Current Focus stays empty until the next on-site, at which point it must move to P0-3 (or whichever P0 is unblocked first). | this PR (2026-05-17) |
 
 ---
 
@@ -924,21 +928,25 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 **Status**: ✅ Done — this PR
 **Estimate**: 30-45 min (actual: ~25 min — bisect narrowed in 4 runs)
 
-### P3-13 — probe_calibration_service mock pattern (×5)
+### P3-13 — probe_calibration_service invalid-probe sentinel drift ✅ Done (this PR)
 
-**What**: 5 tests in `tests/test_probe_calibration_service.py` all fail with `assert True is False`:
+**What**: 5 tests in `tests/test_probe_calibration_service.py` all failed with `assert True is False`:
 - `TestAmplitudeCalibrationService::test_execute_calibration_invalid_probe`
 - `TestPhaseCalibrationService::test_execute_phase_calibration_invalid_probe`
 - `TestPhaseCalibrationService::test_execute_phase_calibration_invalid_reference`
 - `TestPolarizationCalibrationService::test_execute_polarization_calibration_invalid_probe`
 - `TestPatternCalibrationService::test_execute_pattern_calibration_invalid_probe`
 
-Symptom uniformity suggests shared root cause — probably mock pattern (e.g. service returns success when it should fail for invalid probe IDs, or mocked DB doesn't raise the expected error).
+**Root cause** (one shared cause as the symptom uniformity suggested — but **not** mock pattern): all 5 tests hardcoded `probe_ids=[100]` / `reference_probe_id=100` as their "deliberately invalid" sentinel when the service's range was `PROBE_ID_MIN..PROBE_ID_MAX = 0..63`. Commit 1106cb2 (2026-05-05, "Phase 2a 真校准链路接通") widened `PROBE_ID_MAX` to 1023 for larger probe arrays — `100` became valid, the service completed the calibration, and `assert result.success is False` flipped. Same **value drift** family as P3-6 (Type-C `has_lna`) and P3-11 (seeder count) — model widened, test sentinel stale.
 
-**Acceptance**: fix the shared root cause; all 5 pass; full sweep clean.
+**Fix** (structural, B): imported `PROBE_ID_MAX` from the service and replaced all 5 literal `100` sentinels with `PROBE_ID_MAX + 1`, so the tests pin the validator's actual contract ("anything past the upper bound is rejected") rather than a magic number. Added a comment at the first call site naming 1106cb2 as the original drift cause so the choice is grep-able. Future widening can't reintroduce this drift.
 
-**Status**: `[ ]` not started (this batch, after P3-12)
-**Estimate**: 30-60 min (one root cause covers 5 tests)
+**Verified by revert/re-apply**: stashed the fix, all 5 reproduced (`assert True is False`); restored, 126/126 in `test_probe_calibration_service.py`; **full sweep 1176/1176 + 2 skipped, 0 flaky**.
+
+**Acceptance**: ✅ all 5 pass; ✅ full sweep clean; ✅ closes the 4-PR cleanup batch.
+
+**Status**: ✅ Done — this PR
+**Estimate**: 30-60 min (actual: ~15 min — `git log -S "PROBE_ID_MAX = 1023"` pinpointed the widening commit on the first try)
 
 ---
 
@@ -976,18 +984,21 @@ Symptom uniformity suggests shared root cause — probably mock pattern (e.g. se
 
 ## 📊 Summary
 
-> Counts as of 2026-05-17 (P3-12 in this PR). Batch progress:
-> P3-10 ✅ + P3-11 ✅ + P3-12 ✅; only P3-13 remains. Full-sweep flaky
-> count 9 (pre-batch) → 8 (post-P3-10) → 6 (post-P3-11) → 5 (post-P3-12).
+> Counts as of 2026-05-17 (P3-13 in this PR — **closes the 4-PR
+> flaky-test cleanup batch**). All 4 cleanup PRs ✅. Full-sweep flaky
+> count 9 (pre-batch) → 8 (post-P3-10) → 6 (post-P3-11) → 5 (post-P3-12)
+> → **0 (this PR)**. Test suite is clean (1176/1176 + 2 skipped).
+> Roadmap now in "waiting on next on-site" mode — all 7 remaining
+> P0/P1 items are 🚧 Blocked-on-hardware.
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 31 | — | — |
+| ✅ Done | 32 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 6 total | 4 days | 4 days |
 | 🟠 P1 (confidence) | 4 open / 6 total | 3 days | 2.5 days |
 | 🟡 P2 (abstraction debt) | 0 open / 5 total | 0 days | 0 |
-| 🟢 P3 (polish) | 1 open / 13 total | ~30-60 min | 0 |
-| **Total open** | **8** | **~7 days + 1 hr** | **6.5 days** |
+| 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
+| **Total open** | **7** | **~7 days** | **6.5 days** |
 
 ---
 

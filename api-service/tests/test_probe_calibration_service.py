@@ -28,6 +28,7 @@ from app.schemas.probe_calibration import (
 )
 from app.services.probe_calibration_service import (
     # 常数
+    PROBE_ID_MAX,
     RECIPROCITY_THRESHOLD_DB,
     MAX_GAIN_UNCERTAINTY_DB,
     DEFAULT_VALIDITY_DAYS,
@@ -331,12 +332,22 @@ class TestAmplitudeCalibrationService:
 
     @pytest.mark.asyncio
     async def test_execute_calibration_invalid_probe(self, db_session):
-        """测试无效探头 ID"""
+        """测试无效探头 ID — out-of-range sentinel via ``PROBE_ID_MAX + 1``.
+
+        Hardcoding a literal (the original tests used ``100``) silently
+        broke when commit 1106cb2 widened ``PROBE_ID_MAX`` from 63 to 1023
+        for larger probe arrays — ``100`` became valid and the service
+        completed the calibration, so ``assert result.success is False``
+        flipped from passing to failing. Deriving the sentinel from the
+        constant tracks the validator's actual contract ("anything past
+        the upper bound is rejected") rather than a magic number, so
+        future widening can't reintroduce this drift.
+        """
         service = AmplitudeCalibrationService()
 
         result = await service.execute_amplitude_calibration(
             db=db_session,
-            probe_ids=[100],  # 无效 ID
+            probe_ids=[PROBE_ID_MAX + 1],
             polarizations=[PolarizationType.V],
             frequency_range=FrequencyRange(start_mhz=3300, stop_mhz=3500, step_mhz=100),
             calibrated_by="Test Engineer",
@@ -710,7 +721,7 @@ class TestPhaseCalibrationService:
 
         result = await service.execute_phase_calibration(
             db=db_session,
-            probe_ids=[100],
+            probe_ids=[PROBE_ID_MAX + 1],
             polarizations=[PolarizationType.V],
             frequency_range=FrequencyRange(start_mhz=3300, stop_mhz=3500, step_mhz=100),
             reference_probe_id=0,
@@ -722,7 +733,7 @@ class TestPhaseCalibrationService:
 
     @pytest.mark.asyncio
     async def test_execute_phase_calibration_invalid_reference(self, db_session):
-        """测试无效参考探头 ID"""
+        """测试无效参考探头 ID — out-of-range sentinel via PROBE_ID_MAX+1."""
         service = PhaseCalibrationService()
 
         result = await service.execute_phase_calibration(
@@ -730,7 +741,7 @@ class TestPhaseCalibrationService:
             probe_ids=[1],
             polarizations=[PolarizationType.V],
             frequency_range=FrequencyRange(start_mhz=3300, stop_mhz=3500, step_mhz=100),
-            reference_probe_id=100,  # 无效
+            reference_probe_id=PROBE_ID_MAX + 1,
             calibrated_by="Test",
             use_mock=True
         )
@@ -993,7 +1004,7 @@ class TestPolarizationCalibrationService:
 
         result = await service.execute_polarization_calibration(
             db=db_session,
-            probe_ids=[100],
+            probe_ids=[PROBE_ID_MAX + 1],
             probe_type="dual_linear",
             frequency_range=FrequencyRange(start_mhz=3300, stop_mhz=3500, step_mhz=100),
             calibrated_by="Test",
@@ -1293,7 +1304,7 @@ class TestPatternCalibrationService:
 
         result = await service.execute_pattern_calibration(
             db=db_session,
-            probe_ids=[100],
+            probe_ids=[PROBE_ID_MAX + 1],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500,
             calibrated_by="Test",
