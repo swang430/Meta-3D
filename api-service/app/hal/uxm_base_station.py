@@ -158,7 +158,10 @@ class RealUxmDriver(BaseStationDriver):
         # by reading SYSTem:APPLication:NAME? on the Test App Framework
         # endpoint. Operators can pre-set via config["uxm_profile"] = "irat"
         # to skip auto-detect when the host doesn't expose hislip0.
-        self._cmds: type[UxmCommandProfile] = self._resolve_initial_profile(config)
+        # Store an *instance* of the profile (not the class itself) so any
+        # future mutation of profile attrs stays scoped to this driver
+        # rather than leaking to every UXM driver via class-level state.
+        self._cmds: UxmCommandProfile = self._resolve_initial_profile(config)()
         # P2-1: Test App actually detected at connect() (via
         # SYSTem:APPLication:NAME?), as opposed to the resolved-from-
         # config initial guess. ``None`` pre-connect / when probe failed
@@ -342,12 +345,12 @@ class RealUxmDriver(BaseStationDriver):
                     # detect_profile() registry didn't recognise it.
                     self.detected_test_app = app_name
                     detected = detect_profile(app_name)
-                    if detected is not self._cmds:
+                    if not isinstance(self._cmds, detected):
                         logger.info(
                             f"[UXM] App detected: {app_name!r} — switching "
                             f"command profile {self._cmds.PROFILE_NAME} → {detected.PROFILE_NAME}"
                         )
-                        self._cmds = detected
+                        self._cmds = detected()
                         # Re-sync default cell index to new profile's
                         self._cell_id = self._cmds.PRIMARY_CELL
                         self._bwp_id = self._cmds.PRIMARY_BWP
