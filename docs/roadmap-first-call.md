@@ -8,28 +8,27 @@
 
 ## 🎯 Current Focus
 
-**`P3-3` — Capability gap viewer in GUI**
+**`P3-2` — Driver self-test CLI**
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
   gets appended to the backlog instead of done inline.
 
-**State (2026-05-17)**: P2-3 shipped (PR #28, D13). P0-3/P0-4/P0-5
+**State (2026-05-17)**: P3-3 shipped (PR #29, D14). P0-3/P0-4/P0-5
 still in the 🚧 Blocked-on-hardware queue below until the next
 on-site trip.
 
-P3-3 is the immediate consumer of P2-3's `model_capabilities` catalog
-surface — closes the loop so the operator sees declared capabilities
-at binding-edit time + in the pre-flight modal alongside the LIVE
-`lab_capabilities`. Two surfaces touched in this PR: PreflightModal
-adds a "Model Declarations" section (per-binding static tokens
-read from the new `bound_models` field on `PreflightResult`);
-EquipmentManager drawer adds a `model_capabilities` badge group
-next to the existing datasheet badges. Backend change is small
-(extends `PreflightResult` with `bound_models: List[BoundModelDeclaration]`)
-since the static declaration was already in place from P2-3.
+P3-2 is the offline / slack-paste sibling of P3-3's in-GUI viewer:
+`python -m scripts.driver_selftest` dumps per-loaded-driver runtime
+state (live `capabilities`, status, endpoint, last error) +
+declared `model_capabilities` ClassVar, plus the diff between them
+(declared-but-not-live = license absent? probe failed?). Three
+output formats: text (terminal), json (pipe to jq), md (slack/
+issue paste). Reuses P2-2 live capabilities + P2-3 static
+declaration + the HAL init/shutdown lifecycle that lifespan uses,
+so the CLI's view matches what the API actually serves.
 
-Last review: 2026-05-17 (after P2-3 ship)
+Last review: 2026-05-17 (after P3-3 ship)
 Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md)
 
 ---
@@ -95,7 +94,8 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 | D11 | P1-3 — PyVISA "not installed" investigation: IDE interpreter drift, same root cause as 2026-05-14 IDE-diagnostics backlog | PR #26 (merged 2026-05-16) |
 | D12 | Commissioning default-lab fragility (was P1-candidate backlog) — extracted `app/services/lab_resolution.py` with typed `LabResolutionError`, both mimo_ota + trp factories now share it; commissioning API maps ambiguous/none to 422 with picker-ready `active_labs[]` (was 500); GUI `Commissioning/index.tsx` renders lab Select pre-session + recovers from 422 picker payload + localStorage default | PR #27 (merged 2026-05-17) |
 | D13 | P2-3 — per-Model static `model_capabilities` ClassVar + catalog API surface + `_real_driver_registry()` lazy module-level helper collapsing the old `SUPPORTED_REAL_DRIVERS` drift; openapi.yaml + GUI generated types synced (Codex P2 fix in same PR). Stale-doc correction here: P2-3 was already in main when this PR (P3-3) started, but PR #28 didn't update its section status; consumed directly by D14 below so the dependency chain stays linked in one place. | PR #28 (merged 2026-05-17) |
-| D14 | P3-3 — Capability gap viewer in GUI. Backend extends `PreflightResult` with `bound_models: List[BoundModelDeclaration]` (per-binding static `model_capabilities` from P2-3). GUI: PreflightModal gains "各绑定模型的声明能力" section alongside live `lab_capabilities`; EquipmentManager drawer gains `model_capabilities` badge group next to existing datasheet badges. | this PR (2026-05-17) |
+| D14 | P3-3 — Capability gap viewer in GUI. Backend extends `PreflightResult` with `bound_models: List[BoundModelDeclaration]` (per-binding static `model_capabilities` from P2-3). GUI: PreflightModal gains "各绑定模型的声明能力" section alongside live `lab_capabilities`; EquipmentManager drawer gains `model_capabilities` badge group next to existing datasheet badges. | PR #29 (merged 2026-05-17) |
+| D15 | P3-2 — Driver self-test CLI (`python -m scripts.driver_selftest`). Dumps per-loaded-driver runtime (live `capabilities`, status, endpoint, error) + declared `model_capabilities` + diffs (declared-but-not-live, invariant-breach live-not-declared) in text / json / md formats. Tears HAL down after each run so repeated invocations stay clean. | this PR (2026-05-17) |
 
 ---
 
@@ -479,11 +479,34 @@ in-flight diagnostic? Today: silently fails. Decide policy
 ### P3-1 — HAL Reload confirm dialog
 0.5 day. Prevent accidental reload mid-test.
 
-### P3-2 — Driver self-test CLI
-0.5 day. `python -m scripts.driver_selftest` dumps capabilities for every
-loaded driver.
+### P3-2 — Driver self-test CLI ⭐ Current Focus
 
-### P3-3 — Capability gap viewer in GUI ⭐ Current Focus
+**What**: `python -m scripts.driver_selftest` initialises HAL in the
+same way FastAPI's lifespan does, dumps per-loaded-driver state to
+stdout, then tears HAL down clean.
+
+**Why**: GUI's HAL readiness table is a one-line-per-driver summary;
+it doesn't surface canonical capability tokens (live P2-2
+`driver.capabilities` + declared P2-3 `DriverClass.model_capabilities`).
+For on-site debugging the operator wants to slack-paste "this is
+what HAL came up with" without screenshotting the GUI, and for
+offline review (post-trip log analysis) JSON output is the right
+input to triage tooling.
+
+**Acceptance**:
+- New `api-service/scripts/driver_selftest.py` (single-file CLI,
+  no new dependencies)
+- Three output formats via `--format text|json|md` — text for
+  terminal, json for `| jq` piping, md for slack/issue paste
+- `--mode mock|real` selects HAL bootstrap mode (default mock so
+  the script never accidentally hits hardware)
+- `--category KEY` filters to one binding when only one matters
+- Exit codes: 0 success, 1 HAL init raised, 2 init OK but 0 drivers
+- Per-driver report surfaces both capability surfaces + the diff
+  (`declared_but_not_live`, `live_but_not_declared`) so vocabulary
+  drift between code + driver is visible at a glance
+
+### P3-3 — Capability gap viewer in GUI ✅ Done (see D14)
 
 **What**: Surface the static capability declarations (P2-3
 `model_capabilities`) in the GUI so the operator sees gaps at
@@ -511,7 +534,7 @@ tokens (P2-3), the GUI can warn earlier.
   serialization edge cases (binding without model, unregistered
   model, stable sort, independence from HAL state).
 
-**Status**: `[≈]` in review — this PR
+**Status**: ✅ Done — see D14 in the Done table. PR #29 merged 2026-05-17.
 **Estimate**: 1 day (actual: ~3 hours, backend reuse from P2-3 made
 the GUI work the bulk of it)
 
@@ -550,16 +573,16 @@ to the existing HAL readiness table.
 
 ## 📊 Summary
 
-> Counts as of 2026-05-17 (P3-3 in this PR, not yet merged).
+> Counts as of 2026-05-17 (P3-2 in this PR, not yet merged).
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 14 | — | — |
+| ✅ Done | 15 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 6 total | 4 days | 4 days |
 | 🟠 P1 (confidence) | 4 open / 6 total | 3 days | 2.5 days |
 | 🟡 P2 (abstraction debt) | 3 open / 5 total | 4.5 days | 0 |
-| 🟢 P3 (polish) | 4 open / 5 total | 2 days | 0 |
-| **Total open** | **14** | **13.5 days** | **6.5 days** |
+| 🟢 P3 (polish) | 3 open / 5 total | 1.5 days | 0 |
+| **Total open** | **13** | **13 days** | **6.5 days** |
 
 ---
 
