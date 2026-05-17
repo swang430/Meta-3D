@@ -84,10 +84,10 @@ class AerotechError(Exception):
 class RealAerotechDriver(PositionerDriver):
     """
     Aerotech A3200 Real HAL Driver.
-    
+
     通过 TCP Socket 发送 AeroBasic ASCII 命令控制转台。
     不走 PyVISA / SCPI，直接使用 asyncio 的 TCP 流。
-    
+
     配置参数 (config dict):
         ip: 控制器 IP 地址 (默认 192.168.1.10)
         port: TCP 端口 (默认 8000, A3200 ASCII Interface)
@@ -97,6 +97,15 @@ class RealAerotechDriver(PositionerDriver):
         settle_timeout_s: 到位等待超时 (默认 60)
         poll_interval_s: 状态轮询间隔 (默认 0.2)
     """
+
+    # P2-3: A3200 controllers can be wired single-axis (CAICT bench) or
+    # dual-axis (production chamber). Which one a specific unit is gets
+    # determined at connect() by probing axis availability; both tokens
+    # belong to the model-level "what's possible" set.
+    model_capabilities = frozenset({
+        "pos.single_axis_az",
+        "pos.dual_axis_azel",
+    })
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)

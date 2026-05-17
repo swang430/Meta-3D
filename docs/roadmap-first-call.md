@@ -8,31 +8,26 @@
 
 ## 🎯 Current Focus
 
-**Backlog cleanup pass (P1-3 + commissioning-default-lab fragility)**
+**`P2-3` — Per-model static capability declaration**
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
   gets appended to the backlog instead of done inline.
 
-**State (2026-05-16, late afternoon)**: P1-1 shipped — see D10 in the
-Done table. PR #22 (backend), #23 (GUI), #24 (Codex P1 iter 2:
-per-binding endpoint scoping), and #25 (Codex P2: VISA + plain
-endpoint alias matching with named-resource preservation) are all in
-main. P0-3/P0-4/P0-5 still in the 🚧 Blocked-on-hardware queue below
-until the next on-site trip.
+**State (2026-05-17)**: P1-1 / P1-3 / commissioning-default-lab cleanup
+all landed (D10/D11/D12). P0-3/P0-4/P0-5 still in the 🚧
+Blocked-on-hardware queue below until the next on-site trip.
 
-With all P0 hardware-blocked, the rule-2 fallback to P1 kicks in.
-P1-2/P1-4/P1-5 are also on-site-blocked; only **P1-3** and the
-P2-2-era "commissioning default-lab fragility" backlog item are
-locally workable. Both are in PRs right now:
-- PR #26 — P1-3 PyVISA "missing" investigation (this PR, docs-only)
-- PR #27 — commissioning factory 500 → 422 with picker recovery
+P0/P1 are all either done or on-site-blocked (P1-2/P1-4/P1-5 need
+hardware, P1-6 is opportunistic on real idle-close), so the rule-2
+fallback to P2 kicks in. P2-3 is the natural successor to P2-2 — adds
+a `model_capabilities: ClassVar[FrozenSet[str]]` declaration per
+driver class so the catalog API can answer "does FS16 support
+ce.interference_generator?" without HAL Reload. Live
+`driver.capabilities` (P2-2) stays as the post-connect refinement;
+static `model_capabilities` is the catalog/GUI-time superset.
 
-After both merge, the next slot should descend to P2 — P2-3 (per-model
-capability discovery) is the natural successor to P2-2 since the
-codebase context is still fresh.
-
-Last review: 2026-05-16 (after P1-1 ship)
+Last review: 2026-05-17 (after P1-1/P1-3/D12 ship)
 Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md)
 
 ---
@@ -415,14 +410,44 @@ right now".
 on the same PR populated `ce.user_alignment` from F64's connect
 path so the token isn't a documented-but-never-set placeholder.
 
-### P2-3 — Per-model capability discovery
+### P2-3 — Per-model capability discovery ⭐ Current Focus
 
-**What**: Move capability declaration from per-Category to per-Model.
-F64 ≠ FS16 even though both are channelEmulator — driver-level
-capability sets resolve this without `if model == "FS16"` branches.
+**What**: Add `model_capabilities: ClassVar[FrozenSet[str]]` to every
+driver class — the static "what this MODEL can expose" superset,
+distinct from P2-2's live `self.capabilities` (post-connect subset).
+Surface in catalog API (`GET /api/v1/instruments/catalog`) so the GUI
+can answer "does FS16 satisfy ce.interference_generator?" at
+binding-edit time, before HAL Reload.
 
-**Status**: `[ ]` not started — depends on P2-2
-**Estimate**: 1.5 days
+**Why**: Today the only way to know what a bound model supports is to
+connect the driver and read live `capabilities`. So picking FS16 as
+channelEmulator for a plan that needs `ce.interference_generator`
+silently passes binding-time validation; the mismatch only surfaces
+after HAL Reload (when live `driver.capabilities` comes back empty).
+Static declaration closes that gap.
+
+**Scope clarification**: The roadmap line "without `if model == 'FS16'`
+branches" turned out to be a non-issue — P2-2's registry already
+gives F64 and FS16 different driver classes (`(category, model) →
+DriverClass`), so no per-category branches exist to remove. Real
+deliverable is the static declaration + catalog surfacing described
+above.
+
+**Acceptance**:
+- `InstrumentDriver` base declares `model_capabilities: ClassVar[FrozenSet[str]] = frozenset()`.
+- F64 / FS16 / Aerotech driver classes override with the canonical
+  superset they can expose (F64: ce.interference_generator + ce.user_alignment;
+  FS16: empty; A3200: pos.single_axis_az + pos.dual_axis_azel).
+- Catalog response gains `model_capabilities: List[str]` per model,
+  empty list when no real driver is registered.
+- Invariant test: live `driver.capabilities` ⊆ `DriverClass.model_capabilities`
+  (live can't exceed declared).
+- Single source of truth: `_real_driver_registry()` lazy-init replaces
+  the previous SUPPORTED_REAL_DRIVERS hardcoded list, used by both
+  HAL bootstrap and catalog API.
+
+**Status**: `[≈]` in review — this PR
+**Estimate**: 1.5 days (actual: ~3 hours)
 
 ### P2-4 — NAT/firewall idle-drop hypothesis verification
 
@@ -484,19 +509,23 @@ to the existing HAL readiness table.
 - `[discovered 2026-05-14 during P0-1]` `tests/test_chamber_configuration.py::TestChamberPresets::test_preset_type_c_exists` and the two `test_create_chamber_from_preset` variants fail on clean `main` (pre-existing — `has_lna` on Type-C preset is False but tests assert True). Either the seeder default drifted or the test expectations did. Triage: ~30 min in `app/services/bootstrap/chamber_presets.py` vs `tests/test_chamber_configuration.py`.
 - `[discovered 2026-05-14 during P0-2]` IDE (VSCode) diagnostics resolve Python imports against system Python 3.13 (`/opt/homebrew/lib/python3.13/site-packages`) instead of the project venv at `api-service/.venv/`, so every edit to a Python file emits 1-3 phantom `Cannot find module sqlalchemy / pydantic_settings / sqlalchemy.orm` errors. Tests pass fine — this is purely IDE noise. Fix: add `.vscode/settings.json` with `"python.defaultInterpreterPath": "${workspaceFolder}/api-service/.venv/bin/python"` (or per-folder `python.analysis.extraPaths` pointing at the venv site-packages). Triage: ~10 min, P3 polish but worth doing because diagnostic noise hides real type errors when they surface.
 - ~~`[discovered 2026-05-15 during P2-2]` **Commissioning factory's "default lab" path is fragile**~~. ✅ Resolved 2026-05-16 — see D12 in Done table.
+- `[discovered 2026-05-17 during P2-3]` `tests/test_road_test_*.py` (executions / scenarios / websocket) — 38 failures on clean `main` from `VirtualRoadTestConfig` Pydantic v2 strict-mode validation: 8 required fields missing (`kpi_definitions`, etc.) when `vrt_service.py:75` builds the config from seeded scenario rows. Pre-existing — not caused by P2-3 changes, just surfaced by my full pytest sweep. Triage: likely a model field was renamed / added without backfilling the seeder. ~1 hour. P2 candidate; VRT is post-first-call so not P0/P1 critical, but blocks anyone running the full test suite.
+- `[discovered 2026-05-17 during P2-3]` Catalog API returns `status: "pending_dev"` (for models without a registered real driver) but `api/openapi.yaml`'s `InstrumentModel.status` enum is `[available, reserved, maintenance, offline]` — `pending_dev` was added on the backend side without contract update. Same drift class Codex P2 caught on PR #28, just on a different field. Not fixed in PR #28 to keep that PR scoped to `model_capabilities`. Fix: either widen the enum to include `pending_dev`, or change `_convert_model` to map it to one of the existing values. ~15 min. P3 polish.
 
 ---
 
 ## 📊 Summary
 
+> Counts as of 2026-05-17 (P2-3 in this PR, not yet merged).
+
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 5 | — | — |
-| 🔴 P0 (first-call critical) | 6 | 8 days | 4 days |
-| 🟠 P1 (confidence) | 6 | 6 days | 2.5 days |
-| 🟡 P2 (abstraction debt) | 5 | 7 days | 0 |
-| 🟢 P3 (polish) | 5 | 3 days | 0 |
-| **Total open** | **22** | **24 days** | **6.5 days** |
+| ✅ Done | 12 | — | — |
+| 🔴 P0 (first-call critical) | 3 open / 6 total | 4 days | 4 days |
+| 🟠 P1 (confidence) | 4 open / 6 total | 3 days | 2.5 days |
+| 🟡 P2 (abstraction debt) | 4 open / 5 total | 6 days | 0 |
+| 🟢 P3 (polish) | 5 open / 5 total | 3 days | 0 |
+| **Total open** | **16** | **16 days** | **6.5 days** |
 
 ---
 

@@ -99,6 +99,14 @@ _INFO_PRODUCT_TAG = "PROPSIM FS16"
 class RealPropsimFs16Driver(ChannelEmulatorDriver):
     """PROPSIM FS16 (Keysight F8820A) channel emulator driver — MVP."""
 
+    # P2-3: FS16 fundamentally lacks K01 internal interference gen (no
+    # license SKU for that family) and user-alignment is not in MVP. Empty
+    # set is the honest catalog answer: any plan needing ce.* tokens must
+    # not bind FS16 as channelEmulator. Explicit frozenset() (rather than
+    # relying on the base default) so the absence is grep-able when
+    # someone wonders why FS16 fails pre-flight on those tokens.
+    model_capabilities = frozenset()
+
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         # Connection params
