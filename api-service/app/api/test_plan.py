@@ -607,15 +607,27 @@ class DriverMismatchResponse(BaseModel):
     loaded_endpoint: str
 
 
+class BoundModelDeclarationResponse(BaseModel):
+    """P3-3: per-binding STATIC capability declaration read off
+    ``DriverClass.model_capabilities`` (P2-3). Independent of HAL load
+    state — answers "what does the model claim it CAN expose?" without
+    needing to connect. GUI shows alongside live ``lab_capabilities``
+    so the operator can decide at binding-edit time."""
+    category: str
+    model_name: str | None
+    model_capabilities: List[str]
+
+
 class PreflightResultResponse(BaseModel):
     plan_id: UUID
     lab_profile_id: UUID
     ready: bool
     gaps: List[PreflightGapResponse]
     unknown_tokens: List[str]  # tokens in step.needs not in KNOWN_CAPABILITIES (typo warnings)
-    lab_capabilities: List[str]  # sorted union of tokens exposed by drivers SCOPED per-binding to this lab
+    lab_capabilities: List[str]  # sorted union of tokens exposed by drivers SCOPED per-binding to this lab (LIVE)
     not_loaded_categories: List[str]  # categories the lab binds but HAL hasn't loaded — usually "reload HAL"
     mismatched_drivers: List[DriverMismatchResponse]  # driver loaded for wrong unit (endpoint mismatch)
+    bound_models: List[BoundModelDeclarationResponse]  # P3-3: per-binding STATIC declaration (catalog-time, pre-HAL)
 
 
 @router.post(
@@ -676,6 +688,14 @@ def preflight_test_plan(
                 loaded_endpoint=m.loaded_endpoint,
             )
             for m in result.mismatched_drivers
+        ],
+        bound_models=[
+            BoundModelDeclarationResponse(
+                category=b.category,
+                model_name=b.model_name,
+                model_capabilities=b.model_capabilities,
+            )
+            for b in result.bound_models
         ],
     )
 

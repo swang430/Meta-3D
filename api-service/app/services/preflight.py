@@ -97,6 +97,33 @@ class DriverMismatch:
 
 
 @dataclass(frozen=True)
+class BoundModelDeclaration:
+    """P3-3: per-binding static capability declaration, read from
+    ``DriverClass.model_capabilities`` (P2-3) without instantiating or
+    connecting the driver.
+
+    Distinct from ``PreflightResult.lab_capabilities`` (which is the
+    live, post-connect union from drivers HAL actually loaded): this
+    is what the model *claims* it can expose. Side-by-side they answer
+    two operator questions:
+        - declared but not live → "HAL Reload needed" or "license absent"
+        - live but not declared → vocabulary drift (impossible if invariant
+          tests pass, but defensive)
+        - declared and live → ready
+        - neither → wrong model bound; pick a different one
+    Surfaced via the GUI's pre-flight modal so the operator can decide at
+    binding-edit time rather than after a HAL Reload round-trip.
+
+    ``model_name`` is the catalog ``InstrumentModel.model`` string (e.g.
+    "PROPSIM F64"). ``None`` when the binding has no model selected, or
+    the model is registered in the catalog but has no real driver class
+    (``pending_dev`` in the catalog status enum)."""
+    category: str
+    model_name: str | None
+    model_capabilities: List[str]  # sorted; empty when no driver class / declared empty
+
+
+@dataclass(frozen=True)
 class PreflightResult:
     plan_id: UUID
     lab_profile_id: UUID
@@ -115,6 +142,13 @@ class PreflightResult:
     """Categories where HAL has a driver loaded, but for a different
     instrument (endpoint) than this lab binds. Separate from
     not_loaded_categories because the operator hint is different."""
+    bound_models: List[BoundModelDeclaration] = field(default_factory=list)
+    """P3-3: per-binding static declaration from
+    ``DriverClass.model_capabilities``. Independent of HAL load state —
+    populated by reading the model's driver class directly. Sorted by
+    category for stable rendering. GUI uses this to show "model X
+    declares Y" alongside live ``lab_capabilities``, giving the operator
+    a binding-time view of what the lab *would* expose."""
 
     @property
     def ready(self) -> bool:
@@ -298,6 +332,105 @@ def _bound_endpoints_by_key(
     return out
 
 
+def _bound_model_declarations(
+    lab: LabProfile, db: Session,
+) -> List[BoundModelDeclaration]:
+    """Walk ``lab.instrument_bindings``, look up each binding's selected
+    model in the catalog, and read the registered DriverClass's static
+    ``model_capabilities`` declaration (P2-3) — no instantiation, no
+    HAL access. One declaration per binding, sorted by category for
+    stable rendering.
+
+    ``model_name`` is ``None`` and ``model_capabilities=[]`` when:
+      - binding row has no ``instrument_model_id`` (operator saved
+        endpoint without picking a model yet)
+      - the catalog row exists but no real driver class is registered
+        for that (category, model) pair (``pending_dev`` in the catalog)
+
+    Empty ``model_capabilities`` is the honest catalog answer "this
+    model declares nothing" — distinct from "model unknown", which
+    leaves ``model_name=None`` so the GUI can branch on the difference.
+    """
+    bindings = lab.instrument_bindings or []
+    if not bindings:
+        return []
+
+    from app.models.instrument import (  # avoid cycle
+        InstrumentCategory,
+        InstrumentModel,
+    )
+    from app.services.instrument_hal_service import get_real_driver_class
+
+    # Collect (category_id, model_id) pairs first so we can batch the
+    # catalog lookup into two queries rather than one per binding.
+    pairs: List[Tuple[UUID, UUID | None]] = []
+    for entry in bindings:
+        if not isinstance(entry, dict):
+            continue
+        cid_raw = entry.get("category_id")
+        if cid_raw is None:
+            continue
+        try:
+            cid = UUID(str(cid_raw))
+        except (ValueError, TypeError):
+            continue
+        mid_raw = entry.get("instrument_model_id")
+        mid: UUID | None
+        if mid_raw is None:
+            mid = None
+        else:
+            try:
+                mid = UUID(str(mid_raw))
+            except (ValueError, TypeError):
+                mid = None
+        pairs.append((cid, mid))
+    if not pairs:
+        return []
+
+    cat_ids = {cid for cid, _ in pairs}
+    model_ids = {mid for _, mid in pairs if mid is not None}
+
+    cat_rows = (
+        db.query(InstrumentCategory.id, InstrumentCategory.category_key)
+        .filter(InstrumentCategory.id.in_(cat_ids))
+        .all()
+    )
+    cat_key_by_id: Dict[UUID, str] = {cid: key for cid, key in cat_rows if key}
+
+    model_rows = (
+        db.query(InstrumentModel.id, InstrumentModel.model)
+        .filter(InstrumentModel.id.in_(model_ids))
+        .all()
+        if model_ids
+        else []
+    )
+    model_name_by_id: Dict[UUID, str] = {mid: name for mid, name in model_rows if name}
+
+    out: List[BoundModelDeclaration] = []
+    for cid, mid in pairs:
+        cat_key = cat_key_by_id.get(cid)
+        if cat_key is None:
+            # Binding references a category the DB no longer knows
+            # about — skip rather than synthesise a fake category key.
+            continue
+        model_name = model_name_by_id.get(mid) if mid is not None else None
+        tokens: List[str] = []
+        if model_name is not None:
+            driver_cls = get_real_driver_class(cat_key, model_name)
+            if driver_cls is not None:
+                tokens = sorted(
+                    getattr(driver_cls, "model_capabilities", frozenset())
+                    or frozenset()
+                )
+        out.append(BoundModelDeclaration(
+            category=cat_key,
+            model_name=model_name,
+            model_capabilities=tokens,
+        ))
+    out.sort(key=lambda b: b.category)
+    return out
+
+
 def validate_plan(
     plan: TestPlan,
     lab: LabProfile,
@@ -433,4 +566,5 @@ def validate_plan(
         lab_capabilities=sorted(all_capabilities),
         not_loaded_categories=list(not_loaded),
         mismatched_drivers=list(mismatches),
+        bound_models=_bound_model_declarations(lab, db),
     )

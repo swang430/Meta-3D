@@ -65,7 +65,17 @@ export type InstrumentModel = {
   model: string
   summary: string
   interfaces: string[]
+  /** Freeform datasheet-derived badges built from the InstrumentModel
+   * row's `capabilities` JSON column (channels, bandwidth, MIMO config,
+   * etc). Distinct from `model_capabilities` below. */
   capabilities: string[]
+  /** P2-3: canonical capability tokens this model CAN expose, read off
+   * `DriverClass.model_capabilities` server-side. Empty list means
+   * either no real driver class is registered, or the driver
+   * intentionally declared empty (e.g. FS16). Used by binding-edit UI
+   * + PreflightModal to surface mismatches before HAL Reload. Optional
+   * because older backends don't include the field. */
+  model_capabilities?: string[]
   bandwidth?: string
   channels?: string
   status: InstrumentStatus

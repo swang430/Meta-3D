@@ -8,26 +8,28 @@
 
 ## 🎯 Current Focus
 
-**`P2-3` — Per-model static capability declaration**
+**`P3-3` — Capability gap viewer in GUI**
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
   gets appended to the backlog instead of done inline.
 
-**State (2026-05-17)**: P1-1 / P1-3 / commissioning-default-lab cleanup
-all landed (D10/D11/D12). P0-3/P0-4/P0-5 still in the 🚧
-Blocked-on-hardware queue below until the next on-site trip.
+**State (2026-05-17)**: P2-3 shipped (PR #28, D13). P0-3/P0-4/P0-5
+still in the 🚧 Blocked-on-hardware queue below until the next
+on-site trip.
 
-P0/P1 are all either done or on-site-blocked (P1-2/P1-4/P1-5 need
-hardware, P1-6 is opportunistic on real idle-close), so the rule-2
-fallback to P2 kicks in. P2-3 is the natural successor to P2-2 — adds
-a `model_capabilities: ClassVar[FrozenSet[str]]` declaration per
-driver class so the catalog API can answer "does FS16 support
-ce.interference_generator?" without HAL Reload. Live
-`driver.capabilities` (P2-2) stays as the post-connect refinement;
-static `model_capabilities` is the catalog/GUI-time superset.
+P3-3 is the immediate consumer of P2-3's `model_capabilities` catalog
+surface — closes the loop so the operator sees declared capabilities
+at binding-edit time + in the pre-flight modal alongside the LIVE
+`lab_capabilities`. Two surfaces touched in this PR: PreflightModal
+adds a "Model Declarations" section (per-binding static tokens
+read from the new `bound_models` field on `PreflightResult`);
+EquipmentManager drawer adds a `model_capabilities` badge group
+next to the existing datasheet badges. Backend change is small
+(extends `PreflightResult` with `bound_models: List[BoundModelDeclaration]`)
+since the static declaration was already in place from P2-3.
 
-Last review: 2026-05-17 (after P1-1/P1-3/D12 ship)
+Last review: 2026-05-17 (after P2-3 ship)
 Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md)
 
 ---
@@ -91,7 +93,9 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 | D9 | P2-2 — Capability centralisation (`driver.capabilities: Set[str]` + Codex P2 follow-up populating `ce.user_alignment` from F64 connect) | PR #21 (merged 2026-05-15) |
 | D10 | P1-1 — Plan-level pre-flight validator + GUI 预检 button (PR #22 backend + PR #23 GUI + PR #24 Codex P1 per-binding endpoint scoping + PR #25 Codex P2 VISA-aware tuple matching with named-resource preservation) | PRs #22/#23/#24/#25 (all merged 2026-05-16) |
 | D11 | P1-3 — PyVISA "not installed" investigation: IDE interpreter drift, same root cause as 2026-05-14 IDE-diagnostics backlog | PR #26 (merged 2026-05-16) |
-| D12 | Commissioning default-lab fragility (was P1-candidate backlog) — extracted `app/services/lab_resolution.py` with typed `LabResolutionError`, both mimo_ota + trp factories now share it; commissioning API maps ambiguous/none to 422 with picker-ready `active_labs[]` (was 500); GUI `Commissioning/index.tsx` renders lab Select pre-session + recovers from 422 picker payload + localStorage default | this PR (2026-05-16) |
+| D12 | Commissioning default-lab fragility (was P1-candidate backlog) — extracted `app/services/lab_resolution.py` with typed `LabResolutionError`, both mimo_ota + trp factories now share it; commissioning API maps ambiguous/none to 422 with picker-ready `active_labs[]` (was 500); GUI `Commissioning/index.tsx` renders lab Select pre-session + recovers from 422 picker payload + localStorage default | PR #27 (merged 2026-05-17) |
+| D13 | P2-3 — per-Model static `model_capabilities` ClassVar + catalog API surface + `_real_driver_registry()` lazy module-level helper collapsing the old `SUPPORTED_REAL_DRIVERS` drift; openapi.yaml + GUI generated types synced (Codex P2 fix in same PR). Stale-doc correction here: P2-3 was already in main when this PR (P3-3) started, but PR #28 didn't update its section status; consumed directly by D14 below so the dependency chain stays linked in one place. | PR #28 (merged 2026-05-17) |
+| D14 | P3-3 — Capability gap viewer in GUI. Backend extends `PreflightResult` with `bound_models: List[BoundModelDeclaration]` (per-binding static `model_capabilities` from P2-3). GUI: PreflightModal gains "各绑定模型的声明能力" section alongside live `lab_capabilities`; EquipmentManager drawer gains `model_capabilities` badge group next to existing datasheet badges. | this PR (2026-05-17) |
 
 ---
 
@@ -410,7 +414,7 @@ right now".
 on the same PR populated `ce.user_alignment` from F64's connect
 path so the token isn't a documented-but-never-set placeholder.
 
-### P2-3 — Per-model capability discovery ⭐ Current Focus
+### P2-3 — Per-model capability discovery ✅ Done (see D13)
 
 **What**: Add `model_capabilities: ClassVar[FrozenSet[str]]` to every
 driver class — the static "what this MODEL can expose" superset,
@@ -446,7 +450,8 @@ above.
   the previous SUPPORTED_REAL_DRIVERS hardcoded list, used by both
   HAL bootstrap and catalog API.
 
-**Status**: `[≈]` in review — this PR
+**Status**: ✅ Done — see D13 in the Done table. PR #28 + Codex P2 follow-up
+commit (contract sync: openapi.yaml + regen TS types) both in main.
 **Estimate**: 1.5 days (actual: ~3 hours)
 
 ### P2-4 — NAT/firewall idle-drop hypothesis verification
@@ -478,8 +483,37 @@ in-flight diagnostic? Today: silently fails. Decide policy
 0.5 day. `python -m scripts.driver_selftest` dumps capabilities for every
 loaded driver.
 
-### P3-3 — Capability gap viewer in GUI
-1 day. Depends on P1-1.
+### P3-3 — Capability gap viewer in GUI ⭐ Current Focus
+
+**What**: Surface the static capability declarations (P2-3
+`model_capabilities`) in the GUI so the operator sees gaps at
+binding-edit time and in the pre-flight modal, not only after HAL
+Reload.
+
+**Why**: Today picking FS16 as channelEmulator for a plan needing
+`ce.interference_generator` silently passes binding validation; the
+mismatch only surfaces after HAL Reload (live `driver.capabilities`
+comes back empty). With the catalog already carrying the declared
+tokens (P2-3), the GUI can warn earlier.
+
+**Acceptance**:
+- Backend extends `PreflightResult` with `bound_models: List[BoundModelDeclaration]`
+  (one entry per `lab.instrument_bindings` row, with category +
+  model_name + sorted model_capabilities).
+- Endpoint serializes the new field as `BoundModelDeclarationResponse`.
+- PreflightModal renders the entries in a collapsible "各绑定模型的声明能力"
+  section paralleling the existing "Lab 提供的能力" (LIVE) collapse,
+  so operator can compare declared vs live.
+- EquipmentManager drawer renders `model_capabilities` as a `blue`
+  Badge group beneath the existing freeform datasheet badges so the
+  binding picker UI shows canonical tokens too.
+- Tests: 9 new backend cases pinning bound_models shape + HTTP
+  serialization edge cases (binding without model, unregistered
+  model, stable sort, independence from HAL state).
+
+**Status**: `[≈]` in review — this PR
+**Estimate**: 1 day (actual: ~3 hours, backend reuse from P2-3 made
+the GUI work the bulk of it)
 
 ### P3-4 — F64 SYST:INFO? structured parser
 0.5 day. Currently only keyword scan; extract channel_count / bands /
@@ -516,16 +550,16 @@ to the existing HAL readiness table.
 
 ## 📊 Summary
 
-> Counts as of 2026-05-17 (P2-3 in this PR, not yet merged).
+> Counts as of 2026-05-17 (P3-3 in this PR, not yet merged).
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 12 | — | — |
+| ✅ Done | 14 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 6 total | 4 days | 4 days |
 | 🟠 P1 (confidence) | 4 open / 6 total | 3 days | 2.5 days |
-| 🟡 P2 (abstraction debt) | 4 open / 5 total | 6 days | 0 |
-| 🟢 P3 (polish) | 5 open / 5 total | 3 days | 0 |
-| **Total open** | **16** | **16 days** | **6.5 days** |
+| 🟡 P2 (abstraction debt) | 3 open / 5 total | 4.5 days | 0 |
+| 🟢 P3 (polish) | 4 open / 5 total | 2 days | 0 |
+| **Total open** | **14** | **13.5 days** | **6.5 days** |
 
 ---
 
