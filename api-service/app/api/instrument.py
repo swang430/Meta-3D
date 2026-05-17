@@ -1074,6 +1074,38 @@ def _require_baseStation(category_key: str) -> None:
         )
 
 
+@router.get(
+    "/instruments/{category_key}/topology-profiles/{profile_id}",
+    response_model=TopologyProfileDetail,
+    responses={404: {"description": "Profile not found"}},
+)
+def get_topology_profile_endpoint(
+    category_key: str,
+    profile_id: str,
+    db: Session = Depends(get_db),
+) -> TopologyProfileDetail:
+    """P2-1 Phase 2.2: full single-profile detail for the GUI editor.
+
+    The list endpoint deliberately returns only the truncated
+    ``TopologyProfileEntry`` shape (profile_id / name / category /
+    compatible_test_apps + live compat flag) to keep list responses
+    small. The editor modal needs all 25+ knobs to populate the form,
+    so it hits this endpoint on open.
+    """
+    _require_baseStation(category_key)
+    from app.services.topology_profile_service import (
+        TopologyProfileNotFound, get_row,
+    )
+    try:
+        row = get_row(db, profile_id)
+    except TopologyProfileNotFound:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Topology profile {profile_id!r} not found",
+        )
+    return _row_to_detail(row)
+
+
 @router.post(
     "/instruments/{category_key}/topology-profiles",
     response_model=TopologyProfileDetail,

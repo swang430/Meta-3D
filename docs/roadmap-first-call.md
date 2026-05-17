@@ -8,22 +8,21 @@
 
 ## 🎯 Current Focus
 
-**`P2-1` Phase 2.3 — Per-plan UXM topology override**
+**`P2-1` Phase 2.2 — Topology editor GUI + per-plan picker integration**
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
   gets appended to the backlog instead of done inline.
 
-**State (2026-05-17)**: PR #38 merged (Phase 2.1 — DB persistence +
-operator CRUD + Codex P2 nullable-handling fix). Current Focus
-moves to **P2-1 Phase 2.3** (per-plan `TestPlan.topology_profile_id`
-override + apply at plan start) — picked before Phase 2.2 (GUI
-editor) per "完成功能后做 GUI" sequencing: per-plan override is the
-multi-customer functional gap; GUI editor is convenience layer on
-top of the now-existing CRUD. P0-3/P0-4/P0-5 still 🚧 Blocked-on-
+**State (2026-05-17)**: PR #38 (Phase 2.1) + PR #39 (Phase 2.3 +
+Codex P2 fan-out fix) merged. Current Focus moves to **P2-1 Phase
+2.2** (GUI editor for the 25+ topology knobs + per-plan picker in
+the EditTestPlanWizard integrating Phase 2.3's
+`setPlanTopologyProfile`). Closing the last P2-1 sub-item — after
+this, P2-1 ✅ Done entirely. P0-3/P0-4/P0-5 still 🚧 Blocked-on-
 hardware below until next on-site trip.
 
-Last review: 2026-05-17 (post Phase-2.1 merge)
+Last review: 2026-05-17 (post Phase-2.3 merge)
 Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md)
 
 ---
@@ -98,7 +97,8 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 | D20 | P2-1 Phase 1 — UXM two-layer architecture (Test App auto-detect + Topology profile operator-managed). `UxmTestProfile` gains `compatible_test_apps` + `is_compatible_with()`; 7 built-ins declare `["5G_NR_Test"]`. `RealUxmDriver` gains `detected_test_app` instance attr, `readiness_metadata()` override (exposes Test App layer to P3-5 panel), `apply_topology_profile(id)` with refuse-on-incompat (structured dict, not raise). HAL service post-connect: persists `detected_test_app` to `connection_params` + auto-applies binding's selected topology. New endpoints: `GET /instruments/{cat}/topology-profiles` (live compat flag per item), `PUT /instruments/{cat}/topology-profile` (refuse with 409 on incompat — `JSONResponse` not `HTTPException(detail=...)` per Codex P2 lesson from PR #35). `api/openapi.yaml` + TS regen. New `TopologyProfileCard` in EquipmentManager drawer (baseStation only, compat-aware option labelling). 23 new tests. Deferred to follow-up chore PRs: name cleanup (`UxmCommandProfile` → `UxmTestApp`), `self._cmds` class-vs-instance fix. Phase 2 (user-custom topology / GUI editor / per-test override) deferred to future P2. | this PR (2026-05-17) |
 | D18 | P3-5 — Composite HAL readiness snapshot. New `app/services/readiness.py` aggregates per-driver rows (now with `extras` dict — F64 surfaces firmware_version / band_label / product_family via a polymorphic `readiness_metadata()` hook on `InstrumentDriver`) + active `LabProfile` status + active `CalibrationCertificate` validity + DUT-attach **placeholder** (`not_implemented` — no runtime sensing model exists; surfaced anyway for forward-compat). Snapshot is persisted on the HAL service instance and exposed via `GET /api/v1/instruments/hal/readiness` (also added to `openapi.yaml` + regenerated TS types). 20 new tests pin section semantics + endpoint shape. **Out of scope**: GUI consumption of the new endpoint (sibling HAL endpoints `/hal/status`/`/hal/reload`/`/hal/switch` still consume via inline-typed axios; consistent precedent); DUT-attach sensing implementation (future P3 item). | this PR (2026-05-17) |
 | D21 | P2-1 Phase 2.1 — Topology profile DB persistence + operator CRUD. New `instrument_topology_profiles` table (flat-column schema matching `chamber_configurations`, Alembic migration `c7a91b3e5d04`) replaces the in-code-only `UxmTestProfile` dataclass registry as source of truth. New bootstrap seeder `topology_profiles_seeder` inserts 7 built-ins with `is_system_preset=true` (idempotent via natural-key `(profile_id, is_system_preset)`). New service layer `app/services/topology_profile_service.py` exposes `get_dataclass` / `list_rows` / `create` / `update` / `delete` / `duplicate`; system presets reject mutation (clone-to-edit pattern, mirrors chamber). **Driver interface change**: `RealUxmDriver.apply_topology_profile(profile_id: str)` → `apply_topology_profile(profile: UxmTestProfile)` so HAL layer stays DB-free; callers (HAL service post-connect + PUT endpoint) do the DB lookup + pass the dataclass. New endpoints: `POST /instruments/{cat}/topology-profiles` (auto-allocates `custom_<slug>` ID), `PUT /…/{profile_id}` (partial update, 409 on system preset), `DELETE /…/{profile_id}` (409 on system preset), `POST /…/{profile_id}/duplicate` (always operator-owned copy). GET endpoint now reads DB with in-code fallback for greenfield first-boot window. `api/openapi.yaml` + 4 paths + 3 schemas, regenerated TS types, service.ts CRUD wrappers. 24 new tests on top of existing 25 (seeder idempotency + service CRUD + immutability + endpoint flows + DB-vs-fallback list). **Codex P2 follow-up in same PR**: explicit-null on non-nullable field hardening (CREATE skips → defaults; UPDATE raises 400) + `_NULLABLE_MUTABLE_FIELDS` derived from ORM model introspection. **GUI editor deferred to Phase 2.2**. | PR #38 (merged 2026-05-17) |
-| D22 | P2-1 Phase 2.3 — Per-plan UXM topology override. New `test_plans.topology_profile_id` column (Alembic migration `d8b412ca9f15`, nullable string ID rather than UUID FK to instrument_topology_profiles so profile delete doesn't block at FK constraint — start-time apply just logs warning and proceeds). `TestExecutionService.apply_plan_topology_profile_if_set` async helper: best-effort apply to the live baseStation driver, all failure modes return a structured dict (`no_plan_override` / `no_live_driver` / `driver_does_not_support_topology_profiles` / `profile_not_found` / `apply_raised` / driver-level `incompatible_test_app`); plan is already RUNNING by the time the apply attempts, so apply failure never fails the start. `POST /test-plans/{id}/start` async-ified to await the apply. New `PUT /test-plans/{id}/topology-profile` dedicated set/clear endpoint mirroring `PUT /instruments/{cat}/topology-profile` binding-level shape — distinct from the generic `PATCH /{id}` because that endpoint's `value is not None` filter blocks explicit-null clearing (touching it would be out-of-scope opportunistic per governance rule #4). `topology_profile_id` added to `TestPlanCreate` / `TestPlanUpdate` / `TestPlanResponse` Pydantic schemas + GUI `api.ts` `CreatePlanPayload` / `UpdatePlanPayload` / `TestPlanDetail` + `service.ts` `setPlanTopologyProfile` wrapper. 16 new tests (column persistence + set/clear/validate endpoint + 6 reason values × structured-dict shape + start-endpoint end-to-end). **GUI plan editor integration deferred to Phase 2.2** (backend ready, frontend picker work bundles into the topology editor PR). | this PR (2026-05-17) |
+| D22 | P2-1 Phase 2.3 — Per-plan UXM topology override. New `test_plans.topology_profile_id` column (Alembic migration `d8b412ca9f15`, nullable string ID rather than UUID FK to instrument_topology_profiles so profile delete doesn't block at FK constraint — start-time apply just logs warning and proceeds). `TestExecutionService.apply_plan_topology_profile_if_set` async helper: best-effort apply to the live baseStation driver, all failure modes return a structured dict (`no_plan_override` / `no_live_driver` / `driver_does_not_support_topology_profiles` / `profile_not_found` / `apply_raised` / driver-level `incompatible_test_app`); plan is already RUNNING by the time the apply attempts, so apply failure never fails the start. `POST /test-plans/{id}/start` async-ified to await the apply. New `PUT /test-plans/{id}/topology-profile` dedicated set/clear endpoint mirroring `PUT /instruments/{cat}/topology-profile` binding-level shape. **Codex P2 follow-up in same PR**: `topology_profile_id` carry-through across all three "plan fan-out" paths (`duplicate_test_plan` / `export_test_plans` / `import_test_plans`) — Codex caught duplicate; grep found export+import had same omission; all three fixed together. 21 tests (column persistence + set/clear/validate + 6 reason-value structured-dict shapes + end-to-end start + 5 fan-out preservation). | PR #39 (merged 2026-05-17) |
+| D23 | P2-1 Phase 2.2 — Topology editor GUI + per-plan picker. New `TopologyProfileEditor` modal (under `gui/src/features/TopologyProfileEditor/`, distinct from existing `TopologyEditor` for RF switch wiring — namespace clash avoided by Profile suffix) with 7 Paper sections covering 25+ knobs (NR cell / MIMO / power / FRC / MAC throughput / advanced); supports create / edit / read-only-banner-on-system-preset modes. `TopologyProfileCard` (EquipmentManager drawer) gains `+ 新建` + `编辑 / 查看（只读）` + `复制为副本` + `删除` actions with confirm dialog on delete and clone-to-edit affordance on system presets. New backend `GET /api/v1/instruments/{cat}/topology-profiles/{profile_id}` endpoint returns full `TopologyProfileDetail` for the editor to populate the form (list endpoint returns truncated entries). `EditTestPlanWizard` gains "UXM 拓扑覆盖（计划级，P2-1 Phase 2.3）" Paper section with profile picker — bound to plan via `setPlanTopologyProfile` mutation rather than the generic update PATCH (PATCH filters explicit null, can't clear). 3 new backend tests for the GET endpoint (round-trip / 404 unknown / 404 non-baseStation). Backend 77/77 in topology+plan-topology sweeps. **Honesty note**: TypeScript / lint / production build all pass green, but I can't drive browser clicks from CLI — manual smoke for the editor flows deferred to user review. With this PR, **all 3 P2-1 sub-items are ✅ Done**. | this PR (2026-05-17) |
 
 ---
 
@@ -394,7 +394,7 @@ production idle-close is seen on those drivers
 
 ## 🟡 P2 — Abstraction debt
 
-### P2-1 — UXM two-layer architecture: Test App + Topology Profile
+### P2-1 — UXM two-layer architecture: Test App + Topology Profile ✅ Done
 
 **Audit-driven re-scope** (was: "InstrumentProfile abstraction layer
 across UXM / CMW500 / CMP200"). Investigation found:
@@ -474,19 +474,22 @@ across UXM / CMW500 / CMP200"). Investigation found:
   follow-up: explicit-null on non-nullable handling. Architecture
   memo cross-link → see
   [`docs/architecture/uxm-license-scenario-model.md`](architecture/uxm-license-scenario-model.md).
-- **Phase 2.3 ✅ Done — Per-test topology override** (this PR, D22).
+- **Phase 2.3 ✅ Done — Per-test topology override** (PR #39, D22).
   New `test_plans.topology_profile_id` nullable string column
   (Alembic `d8b412ca9f15`); `TestExecutionService.apply_plan_topology_profile_if_set`
   best-effort apply on `POST /test-plans/{id}/start`; dedicated
-  `PUT /test-plans/{id}/topology-profile` endpoint for set/clear
-  (the generic plan PATCH filters explicit null, can't clear via it).
-  16 new tests pin the 6 reason-value structured-dict shapes +
-  end-to-end start integration.
-- **Phase 2.2 `[ ]` not started — GUI topology editor**. Operator-
-  facing form for the 25+ knobs surfaced by Phase 2.1 CRUD +
-  per-plan topology picker integrating Phase 2.3's
-  `setPlanTopologyProfile` wrapper. Backend is ready; this is the
-  pure-UI deliverable.
+  `PUT /test-plans/{id}/topology-profile` endpoint for set/clear.
+  Codex P2 follow-up: `topology_profile_id` carry-through across
+  duplicate / export / import fan-out paths.
+- **Phase 2.2 ✅ Done — Topology editor GUI + per-plan picker**
+  (this PR, D23). New `TopologyProfileEditor` modal (`features/
+  TopologyProfileEditor/`) with 7 Paper sections for the 25+
+  knobs; create / edit / read-only-banner-on-preset modes.
+  `TopologyProfileCard` (binding drawer) gains create / edit /
+  duplicate / delete row-level actions. New `GET /api/v1/
+  instruments/{cat}/topology-profiles/{profile_id}` endpoint for
+  editor pre-fill. `EditTestPlanWizard` gains per-plan topology
+  picker wired to `setPlanTopologyProfile`.
 
 **Out of scope** (with reason — see PR description for full list):
 - Name cleanup (`UxmCommandProfile` → `UxmTestApp`, `UxmTestProfile`
@@ -499,11 +502,10 @@ across UXM / CMW500 / CMP200"). Investigation found:
 - Generalising Profile into `app/hal/base.py` — only one concrete
   consumer (UXM) today; premature abstraction risk.
 
-**Status**: Phase 1 ✅ Done (PR #36 merged) · Phase 2.1 ✅ Done
-(PR #38 merged) · Phase 2.3 `[≈]` in review (this PR) · Phase 2.2
-`[ ]` not started (GUI deliverable; backend ready)
-**Estimate**: original 3-5 days; actual Phase 1 ~2-3 days; Phase 2.1
-~1 day; Phase 2.3 ~0.5 day; Phase 2.2 ~0.5-1 day (deferred).
+**Status**: ✅ Done — Phase 1 (PR #36) + Phase 2.1 (PR #38) +
+Phase 2.3 (PR #39) + Phase 2.2 (this PR) all merged.
+**Estimate**: original 3-5 days; actual ~5 days total across all
+4 sub-PRs over 2026-05-17.
 
 ### P2-2 — Capability centralisation ✅ Done (PR #21)
 
@@ -876,18 +878,17 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 
 ## 📊 Summary
 
-> Counts as of 2026-05-17 (P2-1 Phase 2.3 in this PR, not yet merged).
-> P2-1 Phase 2.2 (GUI editor) remains the last open P2-1 sub-item;
-> counted under P2 still-open below.
+> Counts as of 2026-05-17 (P2-1 Phase 2.2 in this PR, not yet merged).
+> With this PR, all 3 P2-1 sub-items are done — P2 open count drops to 0.
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 22 | — | — |
+| ✅ Done | 23 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 6 total | 4 days | 4 days |
 | 🟠 P1 (confidence) | 4 open / 6 total | 3 days | 2.5 days |
-| 🟡 P2 (abstraction debt) | 1 open / 5 total | 0.5 days | 0 |
+| 🟡 P2 (abstraction debt) | 0 open / 5 total | 0 days | 0 |
 | 🟢 P3 (polish) | 4 open / 9 total | ~2.5 days | 0 |
-| **Total open** | **12** | **10 days** | **6.5 days** |
+| **Total open** | **11** | **9.5 days** | **6.5 days** |
 
 ---
 

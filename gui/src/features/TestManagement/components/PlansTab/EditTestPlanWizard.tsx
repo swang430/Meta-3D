@@ -22,7 +22,12 @@ import {
   Select,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTestPlan, useUpdateTestPlan } from '../../hooks'
+import {
+  fetchTopologyProfiles,
+  setPlanTopologyProfile,
+} from '../../../../api/service'
 
 interface EditTestPlanWizardProps {
   opened: boolean
@@ -59,9 +64,53 @@ export function EditTestPlanWizard({
   )
   const [envNotes, setEnvNotes] = useState('')
 
+  // P2-1 Phase 2.3: plan-level UXM topology override. Distinct from
+  // the rest of the form because:
+  // 1. It uses a dedicated PUT /test-plans/{id}/topology-profile
+  //    endpoint (the generic update PATCH filters explicit null, so
+  //    clearing wouldn't work through it).
+  // 2. The list of valid profile IDs comes from the topology profiles
+  //    API, not from a static enum.
+  const [topologyProfileId, setTopologyProfileId] = useState<string | null>(null)
+
   // Query hooks
   const { data: testPlan, isLoading } = useTestPlan(opened ? planId : undefined)
   const { mutate: updatePlan, isPending } = useUpdateTestPlan()
+
+  // P2-1 Phase 2.3: fetch available topology profiles for the picker.
+  // Scoped to baseStation (only category with UXM topology profiles
+  // today). `enabled: opened` so we don't hit the endpoint on a
+  // closed wizard.
+  const queryClient = useQueryClient()
+  const { data: topologyData } = useQuery({
+    queryKey: ['instruments', 'topologyProfiles', 'baseStation'],
+    queryFn: () => fetchTopologyProfiles('baseStation'),
+    enabled: opened,
+    refetchOnWindowFocus: false,
+  })
+
+  const setPlanTopologyMutation = useMutation({
+    mutationFn: (profileId: string | null) =>
+      setPlanTopologyProfile(planId, profileId),
+    onSuccess: () => {
+      // Refresh the plan detail so the wizard reopens with the new
+      // value next time. Note: we don't close the wizard on this
+      // change — the operator may still be editing other fields.
+      queryClient.invalidateQueries({ queryKey: ['testPlans', 'detail', planId] })
+      notifications.show({
+        title: '已更新拓扑覆盖',
+        message: '将在下次启动该计划时应用',
+        color: 'teal',
+      })
+    },
+    onError: (err: Error) => {
+      notifications.show({
+        title: '更新拓扑覆盖失败',
+        message: err.message,
+        color: 'red',
+      })
+    },
+  })
 
   // Load test plan data into form
   useEffect(() => {
@@ -88,6 +137,9 @@ export function EditTestPlanWizard({
         setAtmosphericPressure(testPlan.test_environment.atmospheric_pressure)
         setEnvNotes(testPlan.test_environment.notes || '')
       }
+
+      // P2-1 Phase 2.3: plan-level topology override
+      setTopologyProfileId(testPlan.topology_profile_id ?? null)
     }
   }, [testPlan])
 
@@ -316,6 +368,36 @@ export function EditTestPlanWizard({
               minRows={2}
             />
           </Stack>
+        </Paper>
+
+        {/* P2-1 Phase 2.3: plan-level UXM topology override.
+            Independent of the rest of the form — change is committed
+            immediately via the dedicated endpoint rather than batched
+            with the Save button (matches the row-level select-and-go
+            UX on the binding-side TopologyProfileCard). */}
+        <Paper p="md" withBorder>
+          <Text size="sm" fw={600} mb="md">
+            UXM 拓扑覆盖（计划级，P2-1 Phase 2.3）
+          </Text>
+          <Text size="xs" c="gray.6" mb="sm">
+            未设置 = 使用 binding 级拓扑（HAL 启动时设的选择）。设置后，
+            该计划启动时会先尝试在 baseStation 驱动上应用该拓扑。
+          </Text>
+          <Select
+            label="拓扑 Profile"
+            placeholder="(未设置 — 使用 binding 级)"
+            data={(topologyData?.items ?? []).map((item) => ({
+              value: item.profile_id,
+              label: `${item.name}${item.is_system_preset ? ' [预设]' : ''}`,
+            }))}
+            value={topologyProfileId}
+            clearable
+            onChange={(value) => {
+              setTopologyProfileId(value)
+              setPlanTopologyMutation.mutate(value)
+            }}
+            disabled={setPlanTopologyMutation.isPending}
+          />
         </Paper>
       </Stack>
 

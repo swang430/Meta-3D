@@ -848,6 +848,44 @@ class TestListTopologyProfilesReadsDb:
 class TestTopologyProfileCrudEndpoints:
     """POST / PUT / DELETE / duplicate flows on the new CRUD surface."""
 
+    def test_get_endpoint_returns_full_detail(self, db):
+        """P2-1 Phase 2.2: editor modal fetches full 25+ field detail
+        via this endpoint (the list endpoint returns truncated entries
+        without the full field set). All built-in seed fields must
+        round-trip; testing the 2x2 preset's canonical values."""
+        topology_profiles_seeder.run(db)
+        resp = client.get(
+            "/api/v1/instruments/baseStation/topology-profiles/caict_n78_2x2",
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # Identification
+        assert body["profile_id"] == "caict_n78_2x2"
+        assert body["is_system_preset"] is True
+        # NR cell (pin canonical CAICT 2x2 values)
+        assert body["band"] == "N78"
+        assert body["frequency_mhz"] == 3500.0
+        assert body["mimo_layers"] == 2
+        assert body["target_mcs"] == 28
+        # MAC throughput knobs
+        assert body["sched_algo"] == "FULLBUFFER"
+        assert body["enable_amc"] is False
+        assert body["compatible_test_apps"] == ["5G_NR_Test"]
+
+    def test_get_endpoint_404_unknown_profile(self, db):
+        resp = client.get(
+            "/api/v1/instruments/baseStation/topology-profiles/does_not_exist",
+        )
+        assert resp.status_code == 404
+
+    def test_get_endpoint_404_non_basestation(self, db):
+        """Non-baseStation categories don't host topology profiles —
+        returns 404 from the require-baseStation gate."""
+        resp = client.get(
+            "/api/v1/instruments/channelEmulator/topology-profiles/anything",
+        )
+        assert resp.status_code == 404
+
     def test_create_endpoint_assigns_custom_prefix(self, db):
         resp = client.post(
             "/api/v1/instruments/baseStation/topology-profiles",
