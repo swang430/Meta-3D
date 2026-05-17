@@ -7,7 +7,13 @@ dist/
 *.log
 /.vite
 /.idea
-/.vscode
+# .vscode/ stays ignored by default (personal prefs in launch.json /
+# tasks.json / sftp.json don't belong in the repo), but settings.json
+# is whitelisted because it pins the Python interpreter path so
+# VSCode stops emitting phantom "Cannot find module sqlalchemy /
+# pydantic_settings" errors against system Python. See P3-7.
+/.vscode/*
+!/.vscode/settings.json
 
 # Claude Code
 .claude/

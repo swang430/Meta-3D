@@ -1,0 +1,11 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/api-service/.venv/bin/python",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/api-service"
+  ],
+  "python.testing.pytestEnabled": true,
+  "python.testing.pytestArgs": [
+    "tests"
+  ],
+  "python.testing.cwd": "${workspaceFolder}/api-service"
+}
