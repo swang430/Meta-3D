@@ -50,6 +50,7 @@ import {
   useMantineColorScheme,
   useComputedColorScheme,
 } from '@mantine/core'
+import { modals } from '@mantine/modals'
 import './App.css'
 import { appEventBus, type ExecutionStartEvent } from './lib/eventBus'
 import {
@@ -2400,31 +2401,103 @@ function EquipmentManager() {
   }, [refetchHAL, showFeedback])
 
   const [halReloading, setHalReloading] = useState(false)
-  const handleHALReload = useCallback(async () => {
+  // P3-1: two-stage confirm flow. Reload tears down every VISA/SOCKET
+  // session — if it happens mid-test, the in-flight diagnostic dies
+  // with a closed-session error after a ~30s timeout. Stage 1 is the
+  // accidental-click guard (always shown); stage 2 only appears if
+  // the backend's P2-5 refuse-while-in-flight policy returned HTTP 409
+  // with a blockers list, and asks the operator to take responsibility
+  // for the abort by force-overriding.
+  const performHALReload = useCallback(
+    async (force: boolean) => {
+      setHalReloading(true)
+      try {
+        const url = force ? '/instruments/hal/reload?force=true' : '/instruments/hal/reload'
+        const resp = await client.post(url)
+        const result = resp.data as {
+          drivers_loaded: number
+          drivers: string[]
+          duration_ms: number
+          forced?: boolean
+        }
+        const prefix = result.forced ? '⚠️ 已强制重新加载' : '✅ 已重新加载'
+        showFeedback(
+          '__hal__',
+          'success',
+          `${prefix} ${result.drivers_loaded} 个驱动 (${result.duration_ms}ms): ${result.drivers.join(', ')}`,
+        )
+        refetchHAL()
+        // Channel-models endpoint is driver-bound; invalidate the cache so
+        // any open dropdown refetches against the freshly-loaded driver.
+        queryClient.invalidateQueries({ queryKey: ['instruments', 'channelModels'] })
+      } catch (err: any) {
+        // P2-5 refuse path: 409 + structured HalReloadRefusedResult body.
+        // Stage-2 confirm offers a force-override; on accept we re-POST
+        // with force=true. Any other error (network, 5xx, unexpected
+        // shape) falls through to the generic feedback.
+        const refused = err?.response?.status === 409 ? err.response.data : null
+        if (refused?.refused && Array.isArray(refused.blockers)) {
+          modals.openConfirmModal({
+            title: '⚠️ 强制重新加载？',
+            centered: true,
+            children: (
+              <Stack gap="sm">
+                <Text size="sm">
+                  HAL 拒绝重新加载，因为有 <strong>{refused.blockers.length}</strong> 个正在进行的任务：
+                </Text>
+                <Stack gap={4} pl="md">
+                  {refused.blockers.map((b: { id: string; name: string; status: string }) => (
+                    <Text key={b.id} size="sm" c="gray.7">
+                      • {b.name} <Text component="span" size="xs" c="gray.5">({b.status})</Text>
+                    </Text>
+                  ))}
+                </Stack>
+                <Text size="sm" c="red.7">
+                  强制重新加载将中断这些任务（VISA 会话会被关闭，结果可能丢失）。操作员需自行处理后续清理。
+                </Text>
+              </Stack>
+            ),
+            labels: { confirm: '强制重新加载', cancel: '取消' },
+            confirmProps: { color: 'red' },
+            onConfirm: () => {
+              void performHALReload(true)
+            },
+          })
+        } else {
+          showFeedback('__hal__', 'error', `❌ 重新加载失败: ${err.message}`)
+        }
+      } finally {
+        setHalReloading(false)
+      }
+    },
+    [queryClient, refetchHAL, showFeedback],
+  )
+  const handleHALReload = useCallback(() => {
     // POST /instruments/hal/reload — needed after editing endpoint /
     // selectedModel / driver_mode for the change to take effect without
     // restarting the backend (HAL init runs once at FastAPI lifespan
     // startup). 10s+ duration is normal — driver.connect() runs once
     // per category, with full VISA / SOCKET dial timeouts.
-    setHalReloading(true)
-    try {
-      const resp = await client.post('/instruments/hal/reload')
-      const result = resp.data as { drivers_loaded: number; drivers: string[]; duration_ms: number }
-      showFeedback(
-        '__hal__',
-        'success',
-        `✅ 已重新加载 ${result.drivers_loaded} 个驱动 (${result.duration_ms}ms): ${result.drivers.join(', ')}`,
-      )
-      refetchHAL()
-      // Channel-models endpoint is driver-bound; invalidate the cache so
-      // any open dropdown refetches against the freshly-loaded driver.
-      queryClient.invalidateQueries({ queryKey: ['instruments', 'channelModels'] })
-    } catch (err: any) {
-      showFeedback('__hal__', 'error', `❌ 重新加载失败: ${err.message}`)
-    } finally {
-      setHalReloading(false)
-    }
-  }, [queryClient, refetchHAL, showFeedback])
+    modals.openConfirmModal({
+      title: '确认重新加载驱动',
+      centered: true,
+      children: (
+        <Stack gap="sm">
+          <Text size="sm">
+            将会断开并重新初始化所有仪器驱动，过程通常需要 10 秒以上。
+          </Text>
+          <Text size="sm" c="gray.7">
+            如果当前有测试计划正在运行，后端会拒绝并提示是否强制覆盖。
+          </Text>
+        </Stack>
+      ),
+      labels: { confirm: '重新加载', cancel: '取消' },
+      confirmProps: { color: 'brand' },
+      onConfirm: () => {
+        void performHALReload(false)
+      },
+    })
+  }, [performHALReload])
 
   return (
     <Stack gap="xl">
