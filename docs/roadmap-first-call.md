@@ -8,25 +8,27 @@
 
 ## 🎯 Current Focus
 
-**`P3-6` (chamber preset Type-C test reconciliation) + `P3-9` doc-only
-catch-up (engineering already shipped in PR #32)**
+**P3 backlog cleanup batch: P3-7 + 2 discovered-during chores
+(`self._cmds` mutability + UXM name cleanup)**
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
   gets appended to the backlog instead of done inline.
 
-**State (2026-05-17)**: PR #41 (P3-8) and PR #42 (out-of-roadmap
-HAL `datetime` shadow fix — operator-reported P0 blocker on real
-mode init when all drivers fail) both merged. All open P0/P1
-still 🚧 Blocked-on-hardware. Per governance rule #2, Current
-Focus stays in P3 cleanups. This PR: **P3-6** (Type-C `has_lna`
-test expectation drifted from the physically-correct model —
-unidirectional chamber uses PA not LNA; fix the tests, not the
-model) + **P3-9 docs sync** (the actual code work was already
-shipped in PR #32; this PR just marks Done in the roadmap and
-fixes the stale `[≈] in review` notation). After merge, last
-remaining P3 candidate is **P3-7** (VSCode interpreter / `.vscode/`
-policy).
+**State (2026-05-17)**: PR #43 (P3-6 + P3-9 + Codex P2
+capability-flag-vs-hardware-gate fix) merged → P3 open count
+dropped to 1 (just P3-7). All open P0/P1 still 🚧 Blocked-on-
+hardware. Per governance rule #2, Current Focus stays in P3
+cleanups. This PR bundles the remaining easy chores: **P3-7**
+(`.vscode/settings.json` pinning venv Python interpreter to clear
+phantom IDE diagnostics) + two discovered-during items deferred
+from P2-1 (`self._cmds` class-vs-instance latent mutability fix
+in `RealUxmDriver`; UXM name cleanup `UxmCommandProfile` →
+`UxmTestApp`, `UxmTestProfile` → `UxmTopologyProfile`). After
+merge: **VRT integration test isolation** (the only remaining
+non-trivial discovered-during item, ~1 hr engineering — promoted
+to its own PR because surfacing the dev-PG-shared-state cleanup
+is likely to expose new latent test assumptions).
 
 Last review: 2026-05-17 (post Phase-2.3 merge)
 Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md)
@@ -107,7 +109,8 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 | D23 | P2-1 Phase 2.2 — Topology editor GUI + per-plan picker. New `TopologyProfileEditor` modal (under `gui/src/features/TopologyProfileEditor/`, distinct from existing `TopologyEditor` for RF switch wiring — namespace clash avoided by Profile suffix) with 7 Paper sections covering 25+ knobs (NR cell / MIMO / power / FRC / MAC throughput / advanced); supports create / edit / read-only-banner-on-system-preset modes. `TopologyProfileCard` (EquipmentManager drawer) gains `+ 新建` + `编辑 / 查看（只读）` + `复制为副本` + `删除` actions with confirm dialog on delete and clone-to-edit affordance on system presets. New backend `GET /api/v1/instruments/{cat}/topology-profiles/{profile_id}` endpoint returns full `TopologyProfileDetail` for the editor to populate the form (list endpoint returns truncated entries); Codex P2 follow-up in same PR added greenfield-first-boot in-code fallback to the new GET (mirrors the list endpoint's `_PROFILE_REGISTRY` fallback) so clicking edit on a built-in before the seeder runs doesn't 404. `EditTestPlanWizard` gains "UXM 拓扑覆盖（计划级，P2-1 Phase 2.3）" Paper section with profile picker — bound to plan via `setPlanTopologyProfile` mutation rather than the generic update PATCH (PATCH filters explicit null, can't clear). 5 new backend tests for the GET endpoint (round-trip / 404 unknown / 404 non-baseStation / greenfield fallback / no-fallback-when-seeded). Backend 79/79 in topology+plan-topology sweeps. With this PR, **all 3 P2-1 sub-items are ✅ Done**. | PR #40 (merged 2026-05-17) |
 | D24 | P3-8 — VRT pydantic regression fix (test-discipline cleanup). 28 failing integration tests in `tests/test_road_test_{scenarios,executions,websocket}.py` resolved (root cause: `vrt_service.vrt_test_case_to_scenario` was being called on auto-generated companion `TestCase` rows whose 3-key placeholder `configuration` doesn't satisfy `VirtualRoadTestConfig` — companions exist solely so `TestExecution.test_case_id` NOT NULL FK has a target on legacy scenario-based TestPlans). Fix filters at the service boundary, not the schema: new `is_companion_test_case` helper + `list_vrt_test_cases(include_companions: bool = False)` (default off; companions are not real scenarios) + `vrt_test_case_to_scenario` raises a clean ValueError on companions (not opaque ValidationError) + `_get_custom_scenario` maps companion-id to 404. **Did NOT** modify the companion-creation code in `test_plan_service.py` (rule #4 — companions are intentionally minimal). 9 new SQLite-isolated unit tests in `tests/test_vrt_companion_filter.py` (detection / pagination after filter / refuse semantics). **Codex P2 follow-up in same PR**: replaced "fetch all + Python slice" with bounded-batch fetch — memory now O(batch_size) not O(table); 2 additional tests pin LIMIT-bounded SQL + loop-continues-past-companion-heavy-batches behavior. **Surfaced second-layer issue** (out of scope, promoted to backlog): 2 of the 28 tests flipped from pydantic 500 to `assert 55 == 5` — pre-existing test-isolation bug where VRT integration tests share the dev PG and assume an empty DB; was always broken, masked by the pydantic crash. | PR #41 (merged 2026-05-17) |
 | D25 | Out-of-roadmap P0 — HAL real-mode init `UnboundLocalError` on `datetime`. Operator-reported blocker switching HAL mock → real with four unreachable bindings (ENA timeout, RF switch refused, SMW200A timeout, VSG timeout): `_initialize_from_db` crashed with `cannot access local variable 'datetime' where it is not associated with a value`. Root cause: function-local `from datetime import datetime` inside the per-driver success branch made `datetime` a LOCAL name throughout the entire function per Python static scoping, shadowing the module-level import. When zero drivers reached the success branch, the local was never assigned and the readiness-report builder's `datetime.utcnow()` blew up. One-line fix (delete the local import — module-level `datetime` already in scope). 2 new SQLite-isolated regression tests in `tests/test_hal_init_no_drivers.py` (4-binding scenario mirroring the operator's screenshot + degenerate zero-categories) — verified by revert/re-apply that they catch the bug. 54/54 across all `test_hal_*` suites. Out-of-roadmap drive-by, ~30 min including regression test. | PR #42 (merged 2026-05-17) |
-| D26 | P3-6 (Type-C `has_lna` test reconciliation) + P3-9 (docs catch-up — engineering already shipped PR #32). **P3-6**: model defined Type-C as a unidirectional chamber compensating downlink path loss via PA (`has_pa=True, pa_gain_db=20.0, has_lna=False`, description "适用于车载 MIMO OTA 测试，配置 PA 补偿下行链路损耗"); 3 tests in `test_chamber_configuration.py` asserted `has_lna=True` — leftover from an older "any large chamber needs LNA" assumption pre-dating the unidirectional/bidirectional refactor (Type-D bidirectional has both LNA and PA because it does TIS). Model is internally consistent + physically correct, so tests were the loser — updated to assert the actual Type-C signature (`has_pa=True, pa_gain_db=20.0, has_lna=False`) which pins what makes Type-C *distinct* rather than asserting an obsolete boolean. 27/27 in `test_chamber_configuration.py` (was 24/27). **P3-9**: PR #32 (merged 2026-05-17) already shipped the openapi enum widening + TS regen + GUI consumer alignment + round-trip test pinning; roadmap was never updated to mark Done. This PR is the docs catch-up — paired with P3-6 to avoid a one-PR review cycle for a 2-line docs change. | this PR (2026-05-17) |
+| D26 | P3-6 (Type-C `has_lna` test reconciliation) + P3-9 (docs catch-up — engineering already shipped PR #32). **P3-6**: model defined Type-C as a unidirectional chamber compensating downlink path loss via PA (`has_pa=True, pa_gain_db=20.0, has_lna=False`, description "适用于车载 MIMO OTA 测试，配置 PA 补偿下行链路损耗"); 3 tests in `test_chamber_configuration.py` asserted `has_lna=True` — leftover from an older "any large chamber needs LNA" assumption pre-dating the unidirectional/bidirectional refactor (Type-D bidirectional has both LNA and PA because it does TIS). Model is internally consistent + physically correct, so tests were the loser — updated to assert the actual Type-C signature (`has_pa=True, pa_gain_db=20.0, has_lna=False`) which pins what makes Type-C *distinct* rather than asserting an obsolete boolean. **Codex P2 follow-up in same PR**: capability flags must match hardware gates — flipped `supports_trp: True → False` on Type-C because the calibration orchestrator's `UPLINK_CHAIN` gate requires `has_lna`; Type-C was advertising TRP that the orchestrator would refuse at calibration time. Extended tests pin the hardware-vs-capability consistency contract (`get_supported_tests() == ["MIMO_OTA"]` + JSON API round-trip). 27/27 in `test_chamber_configuration.py` (was 24/27); 122/122 across all 6 Type-C-touching test files. **P3-9**: PR #32 (merged 2026-05-17) already shipped the openapi enum widening + TS regen + GUI consumer alignment + round-trip test pinning; roadmap was never updated to mark Done. This PR is the docs catch-up — paired with P3-6 to avoid a one-PR review cycle for a 2-line docs change. | PR #43 (merged 2026-05-17) |
+| D27 | P3-7 + 2 discovered-during chores deferred from P2-1. **P3-7**: `.vscode/settings.json` pins venv Python interpreter (`api-service/.venv/bin/python`) + `python.analysis.extraPaths` + pytest auto-discovery; clears the phantom `Cannot find module sqlalchemy / pydantic_settings` diagnostics VSCode was emitting against system Python (same interpreter-drift root cause as P1-3 PyVISA). Gitignore policy: standard JS/Python pattern — `.vscode/*` stays ignored but `!/.vscode/settings.json` whitelisted (personal `launch.json` / `tasks.json` / `sftp.json` don't leak). **`self._cmds` class-vs-instance fix**: `RealUxmDriver` now stores a profile **instance** (`self._cmds: UxmTestApp = ProfileClass()`) instead of the class itself; latent mutability bug — no current write path triggers it but any future `self._cmds.SOME_FIELD = value` would mutate class-level state shared across UXM driver instances. Connect-time profile-switch path uses `isinstance(self._cmds, detected)` instead of `is`; `detect_profile()` still returns the class for caller flexibility. 2 `is` assertions in `tests/test_uxm_driver_profile.py` → `isinstance`; other test fixtures unchanged (attribute-read paths work on class or instance). **UXM name cleanup**: `UxmCommandProfile` → `UxmTestApp` (the "Test App" is the operator-facing concept = which Keysight software is running), `UxmTestProfile` → `UxmTopologyProfile` (matches the DB table name + GUI vocab). Subclasses (`Uxm5GNRTestAppProfile`, `UxmLteNrIratProfile`) keep their descriptive names. File names unchanged (would touch 19 imports for cosmetic gain only). 155/155 across 8 relevant test suites; full-suite sweep matches main's pre-existing 6-9 flaky failures (none introduced by these changes). | this PR (2026-05-17) |
 
 ---
 
@@ -821,18 +824,18 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 **Status**: ✅ Done — this PR
 **Estimate**: ~30 min (actual: ~15 min)
 
-### P3-7 — VSCode interpreter settings + `.vscode/` gitignore policy
+### P3-7 — VSCode interpreter settings + `.vscode/` gitignore policy ✅ Done
 
-**What**: VSCode resolves Python imports against system Python 3.13 (`/opt/homebrew/lib/python3.13/site-packages`) instead of the project venv at `api-service/.venv/`, so every Python file edit emits 1-3 phantom `Cannot find module sqlalchemy / pydantic_settings / sqlalchemy.orm` errors. Tests pass fine — purely IDE noise. Fix: add `.vscode/settings.json` with `"python.defaultInterpreterPath": "${workspaceFolder}/api-service/.venv/bin/python"` (or per-folder `python.analysis.extraPaths` pointing at the venv site-packages).
+**What was wrong**: VSCode resolved Python imports against system Python 3.13 (`/opt/homebrew/lib/python3.13/site-packages`) instead of the project venv at `api-service/.venv/`. Every Python edit emitted phantom `Cannot find module sqlalchemy / pydantic_settings / sqlalchemy.orm` diagnostics — same interpreter-drift root cause as P1-3's PyVISA investigation. Tests passed fine; IDE noise hid real type errors when they surfaced.
 
-**Why**: phantom IDE diagnostics hide real type errors when they surface. Same root cause as P1-3's PyVISA interpreter-drift investigation (see [`feedback_pyvisa_ide_interpreter_drift`](../../memory)).
+**Policy decided**: standard JS/Python ecosystem pattern — keep `.vscode/` ignored by default (personal `launch.json` / `tasks.json` / `sftp.json` don't belong in the repo) but **whitelist `settings.json`** as the one file with team-wide value. `.gitignore` changed from `/.vscode` (whole dir) to `/.vscode/*` + `!/.vscode/settings.json`.
 
-**Caveat — `.vscode/` is currently gitignored**: committing `settings.json` requires reversing that. The decision touches contributor workflow ("do we ship a team-wide IDE config?") so this P3 item carries a small upfront policy step before the 10-min code change.
+**Fix**: `.vscode/settings.json` pins the venv interpreter + `python.analysis.extraPaths` for cross-folder imports + pytest auto-discovery config. No personal prefs (theme, font, keybindings, sftp targets) shipped.
 
-**Acceptance**: `.vscode/` gitignore policy decided + documented; `.vscode/settings.json` committed pointing at the venv interpreter; phantom imports cleared on a fresh VSCode open.
+**Acceptance**: gitignore policy decided + documented (in the commit message + this entry); `.vscode/settings.json` committed; `git check-ignore` confirms only `settings.json` un-ignored; phantom imports clear on a fresh VSCode open.
 
-**Status**: `[ ]` not started (discovered 2026-05-14 during P0-2, triaged 2026-05-17)
-**Estimate**: ~10 min code change + decision step
+**Status**: ✅ Done — this PR
+**Estimate**: ~10 min code + decision (actual: ~10 min)
 
 ### P3-8 — VRT pydantic regression fix ✅ Done
 
@@ -897,26 +900,28 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 - ~~`[discovered 2026-05-14 during P0-2]` VSCode Python interpreter drift~~. → Promoted to **P3-7** (2026-05-17 triage).
 - ~~`[discovered 2026-05-17 during P2-3]` VRT pydantic regression (38 failures)~~. → Promoted to **P3-8** (2026-05-17 triage).
 - ~~`[discovered 2026-05-17 during P2-3]` catalog `status` enum drift~~. → Promoted to **P3-9** (2026-05-17 triage).
-- `[discovered 2026-05-17 during P2-1 design]` **UXM name-cleanup chore**: rename `UxmCommandProfile` → `UxmTestApp` and `UxmTestProfile` → `UxmTopologyProfile` to reduce "profile" overloading. Pure rename, no behaviour change. ~30 min. Deferred from P2-1 to keep that PR functionally focused.
-- `[discovered 2026-05-17 during P2-1 design]` **`self._cmds` class-vs-instance mutability fix**: `RealUxmDriver` assigns `self._cmds = ProfileClass` (class ref, not instance) in 3 places. Latent bug — no one currently mutates `self._cmds.X` so it doesn't trigger, but two concurrent UXM driver instances would share class-level state if a future write path appears. Refactor: 4 LOC + update 2 `is` assertions in `tests/test_uxm_driver_profile.py` to `isinstance`. Deferred from P2-1 to keep that PR functionally focused.
+- ~~`[discovered 2026-05-17 during P2-1 design]` **UXM name-cleanup chore**: rename `UxmCommandProfile` → `UxmTestApp` and `UxmTestProfile` → `UxmTopologyProfile`~~. ✅ Resolved 2026-05-17 — see D27 in Done table.
+- ~~`[discovered 2026-05-17 during P2-1 design]` **`self._cmds` class-vs-instance mutability fix**~~. ✅ Resolved 2026-05-17 — see D27 in Done table.
 - `[discovered 2026-05-17 during P3-8]` **VRT integration tests share dev PG state** (test-isolation): `tests/test_road_test_scenarios.py::TestScenarioList::test_list_all_scenarios` asserts `len(scenarios) == 5` (the 5 standard scenarios from the in-code library) but runs against the **shared dev PostgreSQL** which has 50+ accumulated VRT TestCases from prior dev / test runs. `test_filter_by_category` similarly assumes a clean DB. Was always broken; masked by the P3-8 pydantic crash. Fix options: (a) move VRT integration tests to an isolated test DB (SQLite or fresh PG schema per session, same pattern as `test_uxm_topology_profile.py`); (b) add a per-test reset fixture that wipes the relevant `test_cases` / scenario rows before each test. (a) is the better long-term answer — these tests shouldn't be hitting `meta3d_ota` directly. ~1 hour. Not promoted to P3 yet — see if other suites suffer the same issue first.
 
 ---
 
 ## 📊 Summary
 
-> Counts as of 2026-05-17 (P3-6 + P3-9 in this PR, not yet merged).
-> With this PR, P3-6 ✅ + P3-9 ✅ Done (P3-9 docs catch-up to PR #32) —
-> P3 open count drops from 3 to 1 (only P3-7 remains).
+> Counts as of 2026-05-17 (P3-7 + 2 discovered-during chores in this
+> PR, not yet merged). With this PR, P3-7 ✅ Done + 2 backlog items
+> resolved → P3 open count drops from 1 to 0. Only remaining open
+> item not blocked-on-hardware is the VRT test isolation chore in
+> the discovered-during backlog (~1 hr, going to its own PR).
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 26 | — | — |
+| ✅ Done | 27 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 6 total | 4 days | 4 days |
 | 🟠 P1 (confidence) | 4 open / 6 total | 3 days | 2.5 days |
 | 🟡 P2 (abstraction debt) | 0 open / 5 total | 0 days | 0 |
-| 🟢 P3 (polish) | 1 open / 9 total | ~10 min | 0 |
-| **Total open** | **8** | **~7 days** | **6.5 days** |
+| 🟢 P3 (polish) | 0 open / 9 total | — | — |
+| **Total open** | **7** | **~7 days** | **6.5 days** |
 
 ---
 

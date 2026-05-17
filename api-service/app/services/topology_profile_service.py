@@ -4,7 +4,7 @@ Sits between the API layer (``app/api/instrument.py``) and the
 ``InstrumentTopologyProfile`` ORM model. Key responsibilities:
 
 - ``get_dataclass(db, profile_id)`` — fetch a row and return the
-  runtime ``UxmTestProfile`` dataclass the HAL driver consumes. Drivers
+  runtime ``UxmTopologyProfile`` dataclass the HAL driver consumes. Drivers
   must NOT touch ``Session`` directly; this seam keeps HAL layer clean.
 - ``list_dataclass_profiles(db)`` — same as above but for the GET
   endpoint's list view.
@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from app.hal.uxm_test_profiles import UxmTestProfile
+from app.hal.uxm_test_profiles import UxmTopologyProfile
 from app.models.instrument_topology_profile import InstrumentTopologyProfile
 
 logger = logging.getLogger(__name__)
@@ -56,11 +56,11 @@ class TopologyProfileImmutable(PermissionError):
 # Fields the dataclass has but that are operator-meta / DB-managed rather
 # than knobs the driver consumes. Used by ``to_dataclass()`` to defend
 # against schema drift between the row and the dataclass.
-_DATACLASS_FIELD_NAMES = {f.name for f in dc_fields(UxmTestProfile)}
+_DATACLASS_FIELD_NAMES = {f.name for f in dc_fields(UxmTopologyProfile)}
 
 
-def to_dataclass(row: InstrumentTopologyProfile) -> UxmTestProfile:
-    """Convert a DB row into the runtime ``UxmTestProfile`` dataclass.
+def to_dataclass(row: InstrumentTopologyProfile) -> UxmTopologyProfile:
+    """Convert a DB row into the runtime ``UxmTopologyProfile`` dataclass.
 
     The driver consumes the dataclass — it knows nothing about
     ``InstrumentTopologyProfile`` or ``Session``. Keeps the HAL layer
@@ -78,7 +78,7 @@ def to_dataclass(row: InstrumentTopologyProfile) -> UxmTestProfile:
         if name == "compatible_test_apps":
             value = list(value or [])
         kwargs[name] = value
-    return UxmTestProfile(**kwargs)
+    return UxmTopologyProfile(**kwargs)
 
 
 # ============================================================
@@ -101,7 +101,7 @@ def get_row(db: Session, profile_id: str) -> InstrumentTopologyProfile:
     return row
 
 
-def get_dataclass(db: Session, profile_id: str) -> UxmTestProfile:
+def get_dataclass(db: Session, profile_id: str) -> UxmTopologyProfile:
     """Convenience: fetch row + convert to runtime dataclass."""
     return to_dataclass(get_row(db, profile_id))
 

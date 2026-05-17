@@ -13,7 +13,7 @@ UXM 综测仪标准测试配置模板
 使用方式:
 
     from app.hal.uxm_test_profiles import (
-        get_profile, list_profiles, UxmTestProfile,
+        get_profile, list_profiles, UxmTopologyProfile,
     )
 
     # 方式 1: 直接使用预定义配置
@@ -52,7 +52,7 @@ PROFILES_DIR = os.path.join(
 # ===========================================================================
 
 @dataclass
-class UxmTestProfile:
+class UxmTopologyProfile:
     """
     UXM 综测仪测试配置模板
 
@@ -239,7 +239,7 @@ class UxmTestProfile:
         return filepath
 
     @classmethod
-    def from_json(cls, filepath: str) -> "UxmTestProfile":
+    def from_json(cls, filepath: str) -> "UxmTopologyProfile":
         """从 JSON 文件加载配置模板"""
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -251,7 +251,7 @@ class UxmTestProfile:
 # ===========================================================================
 
 # ---- SISO (1x1) 基线测试 ----
-PROFILE_SISO_N78 = UxmTestProfile(
+PROFILE_SISO_N78 = UxmTopologyProfile(
     profile_id="siso_n78_100m",
     name="SISO 基线测试 (N78 100MHz)",
     description="单天线基线测试，用于暗室调试和参考天线校准",
@@ -271,7 +271,7 @@ PROFILE_SISO_N78 = UxmTestProfile(
     notes="RF1 OUT→F64 CH1→探头; RF1 IN←DUT UL",
 )
 
-PROFILE_SISO_N78_LOW_POWER = UxmTestProfile(
+PROFILE_SISO_N78_LOW_POWER = UxmTopologyProfile(
     profile_id="siso_n78_low_power",
     name="SISO 低功率基线 (N78 100MHz)",
     description="低功率 SISO 测试，用于灵敏度校准和底噪测量",
@@ -292,7 +292,7 @@ PROFILE_SISO_N78_LOW_POWER = UxmTestProfile(
 )
 
 # ---- 2x2 MIMO (标准 OTA 测试) ----
-PROFILE_2X2_N78 = UxmTestProfile(
+PROFILE_2X2_N78 = UxmTopologyProfile(
     profile_id="caict_n78_2x2",
     name="CAICT 暗室 2x2 MIMO (N78 100MHz)",
     description="2x2 MIMO 标准 OTA 吞吐量测试 (3GPP TR 37.977)",
@@ -324,7 +324,7 @@ PROFILE_2X2_N78 = UxmTestProfile(
     ),
 )
 
-PROFILE_2X2_N41 = UxmTestProfile(
+PROFILE_2X2_N41 = UxmTopologyProfile(
     profile_id="caict_n41_2x2",
     name="CAICT 暗室 2x2 MIMO (N41 100MHz)",
     description="2x2 MIMO OTA 测试 - N41 频段 (2.6 GHz)",
@@ -353,7 +353,7 @@ PROFILE_2X2_N41 = UxmTestProfile(
 )
 
 # ---- 4x4 MIMO (高阶测试) ----
-PROFILE_4X4_N78 = UxmTestProfile(
+PROFILE_4X4_N78 = UxmTopologyProfile(
     profile_id="caict_n78_4x4",
     name="CAICT 暗室 4x4 MIMO (N78 100MHz)",
     description="4x4 MIMO OTA 高阶测试，需要 UXM 8 端口 (满配)",
@@ -386,7 +386,7 @@ PROFILE_4X4_N78 = UxmTestProfile(
 )
 
 # ---- 校准专用 ----
-PROFILE_CAL_POWER = UxmTestProfile(
+PROFILE_CAL_POWER = UxmTopologyProfile(
     profile_id="cal_power_sweep",
     name="功率扫描校准 (N78)",
     description="综测仪输出功率校准 - 用于 path loss 测量",
@@ -406,7 +406,7 @@ PROFILE_CAL_POWER = UxmTestProfile(
     notes="高功率输出用于 VNA/频谱仪 path loss 校准",
 )
 
-PROFILE_CAL_2X2_ALT = UxmTestProfile(
+PROFILE_CAL_2X2_ALT = UxmTopologyProfile(
     profile_id="cal_2x2_alt_port",
     name="2x2 MIMO 备用端口校准 (RF3+RF4)",
     description="使用 RF3+RF4 端口进行 2x2 交叉校准验证",
@@ -432,7 +432,7 @@ PROFILE_CAL_2X2_ALT = UxmTestProfile(
 # ===========================================================================
 
 # 所有预定义配置注册表
-_PROFILE_REGISTRY: Dict[str, UxmTestProfile] = {}
+_PROFILE_REGISTRY: Dict[str, UxmTopologyProfile] = {}
 
 
 def _register_builtin_profiles() -> None:
@@ -449,7 +449,7 @@ def _register_builtin_profiles() -> None:
         _PROFILE_REGISTRY[profile.profile_id] = profile
 
 
-def get_profile(profile_id: str) -> UxmTestProfile:
+def get_profile(profile_id: str) -> UxmTopologyProfile:
     """
     获取预定义测试配置。
 
@@ -503,7 +503,7 @@ def list_profiles(category: Optional[str] = None) -> List[Dict[str, str]]:
     return results
 
 
-def register_profile(profile: UxmTestProfile) -> None:
+def register_profile(profile: UxmTopologyProfile) -> None:
     """注册自定义配置模板"""
     if not _PROFILE_REGISTRY:
         _register_builtin_profiles()

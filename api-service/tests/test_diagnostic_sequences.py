@@ -487,6 +487,69 @@ class TestUxmScpiCompatibilitySequence:
         assert "/api/v1/instruments/hal/reload" in body["summary"]
 
 
+class TestProfileForDriverHelper:
+    """Codex P2 on PR #44 follow-up: ``_profile_for_driver`` must accept
+    BOTH instance (current ``RealUxmDriver._cmds``) AND class (legacy
+    test fixtures still doing ``mock._cmds = SomeProfileClass``). Pre-fix
+    the helper gated on ``isinstance(profile, type)``, so an IRAT driver
+    with ``_cmds = UxmLteNrIratProfile()`` fell through to the 5G
+    fallback and the diagnostic probed CELL0 / wrong SCPI tree.
+    """
+
+    def test_returns_instance_when_cmds_is_instance(self):
+        from app.diagnostics.sequences.uxm_scpi_compatibility import (
+            _profile_for_driver,
+        )
+        from app.hal.uxm_command_profiles import UxmLteNrIratProfile
+
+        bs = MagicMock()
+        bs._cmds = UxmLteNrIratProfile()  # PR #44 storage shape
+        result = _profile_for_driver(bs)
+        # Returns the instance itself, not the class — downstream helpers
+        # use getattr / inspect.getmembers, which work on both.
+        assert isinstance(result, UxmLteNrIratProfile)
+        assert result is bs._cmds
+        # Pin the field that would have been wrong if fallback kicked in:
+        # IRAT uses CELL1, 5G default uses CELL0.
+        assert result.PRIMARY_CELL == "CELL1"
+
+    def test_returns_class_when_cmds_is_class_legacy(self):
+        from app.diagnostics.sequences.uxm_scpi_compatibility import (
+            _profile_for_driver,
+        )
+        from app.hal.uxm_command_profiles import UxmLteNrIratProfile
+
+        bs = MagicMock()
+        bs._cmds = UxmLteNrIratProfile  # legacy fixture shape
+        result = _profile_for_driver(bs)
+        assert result is UxmLteNrIratProfile
+        assert result.PRIMARY_CELL == "CELL1"
+
+    def test_falls_back_to_5g_when_cmds_is_magicmock_auto(self):
+        from app.diagnostics.sequences.uxm_scpi_compatibility import (
+            _profile_for_driver,
+        )
+        from app.hal.uxm_command_profiles import Uxm5GNRTestAppProfile
+
+        # MagicMock auto-fabricates _cmds as another Mock — neither
+        # an instance nor a class subclassing UxmTestApp. Must fall back.
+        bs = MagicMock()
+        result = _profile_for_driver(bs)
+        assert result is Uxm5GNRTestAppProfile
+
+    def test_falls_back_to_5g_when_cmds_missing(self):
+        from app.diagnostics.sequences.uxm_scpi_compatibility import (
+            _profile_for_driver,
+        )
+        from app.hal.uxm_command_profiles import Uxm5GNRTestAppProfile
+
+        class BareBS:
+            pass
+
+        result = _profile_for_driver(BareBS())
+        assert result is Uxm5GNRTestAppProfile
+
+
 class TestVnaEnaHealthSequence:
     """Four-step pre-calibration health probe for Keysight E5071C ENA.
 

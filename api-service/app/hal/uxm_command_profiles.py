@@ -29,7 +29,7 @@ from __future__ import annotations
 from typing import Optional, Type
 
 
-class UxmCommandProfile:
+class UxmTestApp:
     """Base profile — IEEE 488.2 minimal set, common to every Test App.
 
     Subclasses override app-specific format strings. Driver methods read
@@ -173,7 +173,7 @@ class UxmCommandProfile:
     STATUS_FAULTY: Optional[str] = None
 
 
-class Uxm5GNRTestAppProfile(UxmCommandProfile):
+class Uxm5GNRTestAppProfile(UxmTestApp):
     """Pure 5G NR Test Application — SA mode, CONFig:NR5G:* root.
 
     Cell indices CELL0..CELL3. This is the dialect the original UxmScpiCommands
@@ -281,7 +281,7 @@ class Uxm5GNRTestAppProfile(UxmCommandProfile):
     STATUS_FAULTY = "STATus:FAULty:RECovery"
 
 
-class UxmLteNrIratProfile(UxmCommandProfile):
+class UxmLteNrIratProfile(UxmTestApp):
     """LTE + NR Inter-RAT (EN-DC / NSA) Test Application.
 
     Hosted on hislip2 under the Test Application Framework. Commands rooted
@@ -369,13 +369,13 @@ class UxmLteNrIratProfile(UxmCommandProfile):
 # Profile registry + detection
 # ===========================================================================
 
-ALL_PROFILES: tuple[Type[UxmCommandProfile], ...] = (
+ALL_PROFILES: tuple[Type[UxmTestApp], ...] = (
     Uxm5GNRTestAppProfile,
     UxmLteNrIratProfile,
 )
 
 
-def detect_profile(app_name: str) -> Type[UxmCommandProfile]:
+def detect_profile(app_name: str) -> Type[UxmTestApp]:
     """Return the profile class matching ``app_name`` (case-insensitive
     substring match against each profile's APP_NAME_MATCH tuple).
 

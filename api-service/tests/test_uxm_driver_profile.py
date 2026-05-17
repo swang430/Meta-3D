@@ -149,10 +149,12 @@ class TestProfileSelectedByConfigHint:
     so PRIMARY_CELL etc. take effect before connect()."""
 
     def test_default_profile_is_5g(self, driver_5g):
-        assert driver_5g._cmds is Uxm5GNRTestAppProfile
+        # ``isinstance`` not ``is`` — ``_cmds`` is an instance of the
+        # profile class (per-driver state), not the class itself.
+        assert isinstance(driver_5g._cmds, Uxm5GNRTestAppProfile)
         assert driver_5g._cell_id == "CELL0"
 
     def test_irat_hint_picks_irat(self, driver_irat):
-        assert driver_irat._cmds is UxmLteNrIratProfile
+        assert isinstance(driver_irat._cmds, UxmLteNrIratProfile)
         assert driver_irat._cell_id == "CELL1"
         assert driver_irat._cmds.HISLIP_INDEX == 2

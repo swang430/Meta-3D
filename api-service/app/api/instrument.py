@@ -531,7 +531,7 @@ class TopologyProfileEntry(BaseModel):
     profile_id: str
     name: str
     description: str
-    category: str  # "siso" / "mimo" / "calibration" — from UxmTestProfile.category
+    category: str  # "siso" / "mimo" / "calibration" — from UxmTopologyProfile.category
     compatible_test_apps: List[str]
     compatible_with_current_test_app: Optional[bool] = None
     is_system_preset: bool = False
@@ -905,7 +905,7 @@ async def select_topology_profile_endpoint(
 class TopologyProfileDetail(BaseModel):
     """Full topology profile row — operator-mutable fields + meta.
 
-    Mirrors ``UxmTestProfile`` dataclass + DB row. Used as the
+    Mirrors ``UxmTopologyProfile`` dataclass + DB row. Used as the
     request/response shape for create / update / duplicate / single-get.
     """
     profile_id: str
@@ -952,7 +952,7 @@ class CreateTopologyProfileRequest(BaseModel):
     """Payload for POST /instruments/{cat}/topology-profiles.
 
     ``name`` is required (used to generate the ``custom_<slug>``
-    profile_id). All other fields fall back to ``UxmTestProfile``
+    profile_id). All other fields fall back to ``UxmTopologyProfile``
     dataclass defaults — operator can build a minimal profile by
     sending only ``{"name": "..."}`` and tweaking later via PUT.
     """
@@ -1060,7 +1060,7 @@ def _row_to_detail(row) -> TopologyProfileDetail:
 
 
 def _profile_dataclass_to_detail(profile) -> TopologyProfileDetail:
-    """Map in-code ``UxmTestProfile`` dataclass → API detail schema.
+    """Map in-code ``UxmTopologyProfile`` dataclass → API detail schema.
 
     Used as the greenfield first-boot fallback for the single-GET
     endpoint, mirroring the same fallback in
@@ -1108,7 +1108,7 @@ def _profile_dataclass_to_detail(profile) -> TopologyProfileDetail:
 
 def _lookup_builtin_profile(profile_id: str):
     """Greenfield first-boot fallback lookup. Returns the in-code
-    ``UxmTestProfile`` dataclass for ``profile_id`` if it's a built-in,
+    ``UxmTopologyProfile`` dataclass for ``profile_id`` if it's a built-in,
     else ``None``. Mirrors the registry-initialization pattern used by
     ``_list_topology_profiles_for_category``.
     """

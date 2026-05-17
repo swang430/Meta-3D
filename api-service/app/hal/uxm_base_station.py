@@ -36,7 +36,7 @@ from app.hal.base_station import (
     ThroughputMetrics,
 )
 from app.hal.uxm_command_profiles import (
-    UxmCommandProfile,
+    UxmTestApp,
     Uxm5GNRTestAppProfile,
     UxmLteNrIratProfile,
     detect_profile,
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     # P2-1 Phase 2.1: apply_topology_profile() consumes the dataclass.
     # Import only for type checking — runtime callers pass an already-
     # constructed instance, so we don't need the import at runtime.
-    from app.hal.uxm_test_profiles import UxmTestProfile  # noqa: F401
+    from app.hal.uxm_test_profiles import UxmTopologyProfile  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +158,10 @@ class RealUxmDriver(BaseStationDriver):
         # by reading SYSTem:APPLication:NAME? on the Test App Framework
         # endpoint. Operators can pre-set via config["uxm_profile"] = "irat"
         # to skip auto-detect when the host doesn't expose hislip0.
-        self._cmds: type[UxmCommandProfile] = self._resolve_initial_profile(config)
+        # Store an *instance* of the profile (not the class itself) so any
+        # future mutation of profile attrs stays scoped to this driver
+        # rather than leaking to every UXM driver via class-level state.
+        self._cmds: UxmTestApp = self._resolve_initial_profile(config)()
         # P2-1: Test App actually detected at connect() (via
         # SYSTem:APPLication:NAME?), as opposed to the resolved-from-
         # config initial guess. ``None`` pre-connect / when probe failed
@@ -342,12 +345,12 @@ class RealUxmDriver(BaseStationDriver):
                     # detect_profile() registry didn't recognise it.
                     self.detected_test_app = app_name
                     detected = detect_profile(app_name)
-                    if detected is not self._cmds:
+                    if not isinstance(self._cmds, detected):
                         logger.info(
                             f"[UXM] App detected: {app_name!r} — switching "
                             f"command profile {self._cmds.PROFILE_NAME} → {detected.PROFILE_NAME}"
                         )
-                        self._cmds = detected
+                        self._cmds = detected()
                         # Re-sync default cell index to new profile's
                         self._cell_id = self._cmds.PRIMARY_CELL
                         self._bwp_id = self._cmds.PRIMARY_BWP
@@ -423,7 +426,7 @@ class RealUxmDriver(BaseStationDriver):
 
         Distinct from the raw ``detected_test_app`` (= what the
         instrument reported via SYSTem:APPLication:NAME?): also exposes
-        ``command_profile`` (the registered ``UxmCommandProfile``
+        ``command_profile`` (the registered ``UxmTestApp``
         subclass name) so the operator can tell when our profile
         detect_profile() fell back to the 5G_NR_Test default for an
         app name we don't yet have a profile for.
@@ -440,14 +443,14 @@ class RealUxmDriver(BaseStationDriver):
     # ===================================================================
 
     async def apply_topology_profile(
-        self, profile: "UxmTestProfile",
+        self, profile: "UxmTopologyProfile",
     ) -> Dict[str, Any]:
         """P2-1: 把操作员预选的拓扑 profile 应用到当前运行的 Test App.
 
         分层语义:
         - Test App (``self._cmds.PROFILE_NAME``): UXM 实时硬件状态决定的
           SCPI 命令词汇变体 + cell index 编码。connect() 时 auto-detect.
-        - Topology profile (``UxmTestProfile``): 操作员在 GUI 选的 cell/
+        - Topology profile (``UxmTopologyProfile``): 操作员在 GUI 选的 cell/
           MIMO/功率/FRC 配置, 在已确定的 Test App 词汇下设置具体值。
 
         两层 must match: 拓扑里 ``cell_id="CELL0"`` 配 IRAT Test App
