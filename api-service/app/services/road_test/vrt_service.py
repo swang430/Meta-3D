@@ -31,6 +31,29 @@ from app.schemas.road_test import (
 logger = logging.getLogger(__name__)
 
 
+def is_companion_test_case(test_case: TestCase) -> bool:
+    """A TestCase is a *companion* (FK-target placeholder) — not a real VRT
+    scenario — when its ``configuration`` JSON only carries the auto-
+    generated marker shape produced by
+    ``TestPlanService._create_road_test_steps``:
+    ``{auto_generated: True, scenario_id, steps_count}``.
+
+    These rows exist only so ``TestExecution.test_case_id`` (NOT NULL FK)
+    has a valid target when a legacy scenario-based TestPlan is created;
+    they intentionally do NOT satisfy the ``VirtualRoadTestConfig``
+    schema (mode / category / network / base_stations / route /
+    environment / traffic / kpi_definitions are absent).
+
+    Treating companions as real VRT scenarios in enumeration / detail
+    endpoints crashes ``vrt_test_case_to_scenario`` with a Pydantic
+    ``ValidationError`` (P3-8). Filter at the service boundary so the
+    placeholder shape stays an internal implementation detail of
+    ``test_plan_service`` and doesn't leak into scenario listings.
+    """
+    cfg = test_case.configuration or {}
+    return cfg.get("auto_generated") is True
+
+
 class VRTService:
     """CRUD + scenario↔config conversion for VRT TestCases."""
 
@@ -71,6 +94,18 @@ class VRTService:
             raise ValueError(
                 f"TestCase {test_case.id} is not a VirtualRoadTest "
                 f"(test_type={test_case.test_type!r})"
+            )
+        # Refuse companions explicitly so callers see a clear error rather
+        # than 8 missing-field Pydantic ValidationError messages (P3-8).
+        # Companions don't carry a real VRT config and aren't user-facing
+        # scenarios — callers should filter them at enumeration time via
+        # ``list_vrt_test_cases(include_companions=False)`` (the default).
+        if is_companion_test_case(test_case):
+            raise ValueError(
+                f"TestCase {test_case.id} is an auto-generated companion "
+                f"(FK-target placeholder for a legacy scenario-based "
+                f"TestPlan) — not a real VRT scenario. Use "
+                f"list_vrt_test_cases(include_companions=False) to exclude."
             )
         config = VirtualRoadTestConfig.model_validate(test_case.configuration or {})
         return RoadTestScenario(
@@ -166,7 +201,20 @@ class VRTService:
         is_template: Optional[bool] = None,
         template_category: Optional[str] = None,
         created_by: Optional[str] = None,
+        include_companions: bool = False,
     ) -> List[TestCase]:
+        """List VRT TestCases.
+
+        ``include_companions`` (default ``False``) controls whether
+        auto-generated FK-target placeholder rows
+        (``configuration.auto_generated == True``) are returned.
+        Scenario enumeration paths want the default (companions are not
+        real scenarios); internal/admin paths that need to inspect them
+        can opt in. Filtering is applied in Python because the JSON
+        column predicate is verbose / dialect-specific and the
+        companion population is small (one row per legacy
+        scenario-based TestPlan).
+        """
         query = db.query(TestCase).filter(TestCase.test_type == VRT_TEST_TYPE)
         if is_template is not None:
             query = query.filter(TestCase.is_template == is_template)
@@ -174,9 +222,13 @@ class VRTService:
             query = query.filter(TestCase.template_category == template_category)
         if created_by is not None:
             query = query.filter(TestCase.created_by == created_by)
-        return (
-            query.order_by(TestCase.created_at.desc()).offset(skip).limit(limit).all()
-        )
+        # Apply ordering + pagination AFTER companion filtering so the
+        # ``limit`` reflects real scenarios. SQL-side LIMIT followed by
+        # Python filter would silently shrink the page.
+        rows = query.order_by(TestCase.created_at.desc()).all()
+        if not include_companions:
+            rows = [r for r in rows if not is_companion_test_case(r)]
+        return rows[skip : skip + limit]
 
     def update_vrt_test_case(
         self,
