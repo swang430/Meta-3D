@@ -74,12 +74,31 @@ class TestChamberPresets:
         assert preset["supports_mimo_ota"] is True
 
     def test_preset_type_c_exists(self):
-        """Type C preset (large unidirectional) should exist"""
+        """Type C preset (large unidirectional, downlink-only) should exist.
+
+        Type-C is unidirectional — it compensates the downlink path loss
+        via a PA on the TX path; uplink isn't tested in this config, so
+        no RX-path LNA. Type-D adds LNA (bidirectional with TIS).
+
+        Hardware-vs-capability consistency (Codex P2 on PR #43): the
+        support flags must agree with the calibration_orchestrator
+        gates — TRP needs has_lna (UPLINK_CHAIN), TIS needs has_pa
+        (DOWNLINK_CHAIN). Type-C has no LNA, so supports_trp must be
+        False; supports_tis is deliberately False per the "适用于车载
+        MIMO OTA 测试" scoping (the PA + CE loadout is for MIMO OTA,
+        not bare sensitivity).
+        """
         assert ChamberType.TYPE_C.value in CHAMBER_PRESETS
         preset = CHAMBER_PRESETS[ChamberType.TYPE_C.value]
-        assert preset["has_lna"] is True
-        assert preset["has_pa"] is False
+        # Hardware loadout (PA-only, no LNA)
+        assert preset["has_pa"] is True
+        assert preset["pa_gain_db"] == 20.0
+        assert preset["has_lna"] is False
         assert preset["chamber_radius_m"] == 4.0
+        # Support flags must match hardware capability
+        assert preset["supports_trp"] is False
+        assert preset["supports_tis"] is False
+        assert preset["supports_mimo_ota"] is True
 
     def test_preset_type_d_exists(self):
         """Type D preset (large bidirectional) should exist"""
@@ -92,12 +111,17 @@ class TestChamberPresets:
         assert preset["supports_tis"] is True
 
     def test_create_chamber_from_preset(self):
-        """Should create chamber from preset"""
+        """Should create chamber from preset (Type-C, downlink-only via PA)"""
         chamber = create_chamber_from_preset(ChamberType.TYPE_C.value)
         assert chamber.name == "大型单向暗室"
         assert chamber.chamber_radius_m == 4.0
-        assert chamber.has_lna is True
-        assert chamber.lna_gain_db == 20.0
+        assert chamber.has_pa is True
+        assert chamber.pa_gain_db == 20.0
+        assert chamber.has_lna is False
+        # Codex P2 on PR #43: support flags must match hardware capability.
+        # No LNA → TRP impossible (UPLINK_CHAIN gate); only MIMO OTA per
+        # the unidirectional "适用于车载 MIMO OTA 测试" scoping.
+        assert chamber.get_supported_tests() == ["MIMO_OTA"]
 
     def test_create_chamber_from_preset_with_custom_name(self):
         """Should create chamber from preset with custom name"""
@@ -190,7 +214,7 @@ class TestChamberAPI:
         assert len(data["presets"]) == 4  # Type A, B, C, D
 
     def test_create_chamber_from_preset(self):
-        """POST /chambers/from-preset should create chamber"""
+        """POST /chambers/from-preset should create chamber (Type-C signature)"""
         response = client.post(
             "/api/v1/chambers/from-preset",
             json={"preset_type": "type_c", "name": "Test Chamber C"}
@@ -199,8 +223,16 @@ class TestChamberAPI:
         data = response.json()
         assert data["name"] == "Test Chamber C"
         assert data["chamber_type"] == "type_c"
-        assert data["has_lna"] is True
+        assert data["has_pa"] is True
+        assert data["has_lna"] is False
         assert data["chamber_radius_m"] == 4.0
+        # Codex P2 on PR #43: support flags reflect hardware capability —
+        # API consumers seeing supports_trp=True without LNA would route
+        # the chamber to a TRP test that the calibration orchestrator
+        # would then refuse.
+        assert data["supports_trp"] is False
+        assert data["supports_tis"] is False
+        assert data["supports_mimo_ota"] is True
 
     def test_create_custom_chamber(self):
         """POST /chambers should create custom chamber"""

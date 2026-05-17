@@ -230,7 +230,9 @@ CHAMBER_PRESETS = {
         "ce_min_input_dbm": -30.0,
         "freq_min_mhz": 400.0,
         "freq_max_mhz": 7125.0,
-        "supports_trp": True,
+        # supports_trp=False: TRP requires LNA on chamber RX path
+        # (calibration_orchestrator UPLINK_CHAIN gates on has_lna).
+        "supports_trp": False,
         "supports_tis": False,
         "supports_mimo_ota": True,
         "typical_cable_loss_db": 5.0,
