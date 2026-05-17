@@ -8,19 +8,30 @@
 
 ## 🎯 Current Focus
 
-**VRT integration test isolation (last discovered-during chore)**
+**`P3-11` — bootstrap_lifespan seeder set drift (next of 4-PR
+flaky-test cleanup batch P3-10/11/12/13)**
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
   gets appended to the backlog instead of done inline.
 
-**State (2026-05-17)**: PR #44 (P3-7 + 2 discovered-during chores)
-merged → P3 open count is 0, only remaining tracked work is the
-VRT integration test isolation chore (last discovered-during item
-not blocked-on-hardware). All open P0/P1 still 🚧 Blocked-on-
-hardware. After this PR merges, the only roadmap items left are
-on-site-blocked (P0-3/4/5 + P1-2/4/5/6) — roadmap enters "waiting
-on next on-site trip" mode.
+**State (2026-05-17)**: PR #45 (VRT integration test isolation +
+D28) merged. Full pytest sweep on clean main has 9 pre-existing
+flaky failures — separate root causes, not first-call critical
+but they poison the regression signal (contributors spend cycles
+filtering known-broken from "did I break it"). Promoted as 4 new
+P3 items, sequenced because per-PR triage gives reviewer one
+root cause per PR (vs. mega-PR mixing 4 unrelated fixes).
+
+| ID | Tests | Root cause |
+|----|-------|------------|
+| P3-10 ✅ | 1 | alembic chain test hardcoded head SHA — this PR |
+| P3-11 | 2 | `bootstrap_lifespan` expected-seeder set drifted from new seeders |
+| P3-12 | 1 | `driver_capabilities` test-isolation pollution (passes alone) |
+| P3-13 | 5 | `probe_calibration_service` mock pattern shared root cause |
+
+All open P0/P1 still 🚧 Blocked-on-hardware. After P3-13 merges,
+roadmap enters "waiting on next on-site trip" mode.
 
 Last review: 2026-05-17 (post Phase-2.3 merge)
 Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md)
@@ -103,7 +114,8 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 | D25 | Out-of-roadmap P0 — HAL real-mode init `UnboundLocalError` on `datetime`. Operator-reported blocker switching HAL mock → real with four unreachable bindings (ENA timeout, RF switch refused, SMW200A timeout, VSG timeout): `_initialize_from_db` crashed with `cannot access local variable 'datetime' where it is not associated with a value`. Root cause: function-local `from datetime import datetime` inside the per-driver success branch made `datetime` a LOCAL name throughout the entire function per Python static scoping, shadowing the module-level import. When zero drivers reached the success branch, the local was never assigned and the readiness-report builder's `datetime.utcnow()` blew up. One-line fix (delete the local import — module-level `datetime` already in scope). 2 new SQLite-isolated regression tests in `tests/test_hal_init_no_drivers.py` (4-binding scenario mirroring the operator's screenshot + degenerate zero-categories) — verified by revert/re-apply that they catch the bug. 54/54 across all `test_hal_*` suites. Out-of-roadmap drive-by, ~30 min including regression test. | PR #42 (merged 2026-05-17) |
 | D26 | P3-6 (Type-C `has_lna` test reconciliation) + P3-9 (docs catch-up — engineering already shipped PR #32). **P3-6**: model defined Type-C as a unidirectional chamber compensating downlink path loss via PA (`has_pa=True, pa_gain_db=20.0, has_lna=False`, description "适用于车载 MIMO OTA 测试，配置 PA 补偿下行链路损耗"); 3 tests in `test_chamber_configuration.py` asserted `has_lna=True` — leftover from an older "any large chamber needs LNA" assumption pre-dating the unidirectional/bidirectional refactor (Type-D bidirectional has both LNA and PA because it does TIS). Model is internally consistent + physically correct, so tests were the loser — updated to assert the actual Type-C signature (`has_pa=True, pa_gain_db=20.0, has_lna=False`) which pins what makes Type-C *distinct* rather than asserting an obsolete boolean. **Codex P2 follow-up in same PR**: capability flags must match hardware gates — flipped `supports_trp: True → False` on Type-C because the calibration orchestrator's `UPLINK_CHAIN` gate requires `has_lna`; Type-C was advertising TRP that the orchestrator would refuse at calibration time. Extended tests pin the hardware-vs-capability consistency contract (`get_supported_tests() == ["MIMO_OTA"]` + JSON API round-trip). 27/27 in `test_chamber_configuration.py` (was 24/27); 122/122 across all 6 Type-C-touching test files. **P3-9**: PR #32 (merged 2026-05-17) already shipped the openapi enum widening + TS regen + GUI consumer alignment + round-trip test pinning; roadmap was never updated to mark Done. This PR is the docs catch-up — paired with P3-6 to avoid a one-PR review cycle for a 2-line docs change. | PR #43 (merged 2026-05-17) |
 | D27 | P3-7 + 2 discovered-during chores deferred from P2-1. **P3-7**: `.vscode/settings.json` pins venv Python interpreter (`api-service/.venv/bin/python`) + `python.analysis.extraPaths` + pytest auto-discovery; clears the phantom `Cannot find module sqlalchemy / pydantic_settings` diagnostics VSCode was emitting against system Python (same interpreter-drift root cause as P1-3 PyVISA). Gitignore policy: standard JS/Python pattern — `.vscode/*` stays ignored but `!/.vscode/settings.json` whitelisted (personal `launch.json` / `tasks.json` / `sftp.json` don't leak). **`self._cmds` class-vs-instance fix**: `RealUxmDriver` now stores a profile **instance** (`self._cmds: UxmTestApp = ProfileClass()`) instead of the class itself; latent mutability bug — no current write path triggers it but any future `self._cmds.SOME_FIELD = value` would mutate class-level state shared across UXM driver instances. Connect-time profile-switch path uses `isinstance(self._cmds, detected)` instead of `is`; `detect_profile()` still returns the class for caller flexibility. 2 `is` assertions in `tests/test_uxm_driver_profile.py` → `isinstance`; other test fixtures unchanged (attribute-read paths work on class or instance). **Codex P2 follow-up in same PR**: caught a downstream consequence — `app/diagnostics/sequences/uxm_scpi_compatibility.py:_profile_for_driver` gated on `isinstance(profile, type)` so post-refactor IRAT instances fell through to the 5G fallback, false-flagging IRAT commands as unsupported. Helper now accepts either instance or class; downstream `_all_commands` + `_to_probe_command` annotations widened to `Union[type, UxmTestApp]`. 4 new tests in `TestProfileForDriverHelper` pin both branches + verified by revert/re-apply that they catch the bug. **UXM name cleanup**: `UxmCommandProfile` → `UxmTestApp` (the "Test App" is the operator-facing concept = which Keysight software is running), `UxmTestProfile` → `UxmTopologyProfile` (matches the DB table name + GUI vocab). Subclasses (`Uxm5GNRTestAppProfile`, `UxmLteNrIratProfile`) keep their descriptive names. File names unchanged (would touch 19 imports for cosmetic gain only). 155/155 across 8 relevant test suites; full-suite sweep matches main's pre-existing 6-9 flaky failures (none introduced by these changes). | PR #44 (merged 2026-05-17) |
-| D28 | VRT integration test isolation (last discovered-during chore deferred from P3-8). Three VRT integration test files (`test_road_test_{scenarios,executions,websocket}.py`) ran against the **shared dev Postgres**, accumulating 50+ leftover VRT TestCases over time and breaking assertions like `len(scenarios) == 5` and `all(s["category"] == "standard" for s in scenarios)`. Was always broken; the P3-8 pydantic crash had been masking it. Fix per-file `_isolated_db` autouse fixture that overrides `get_db` with an in-memory SQLite TestingSessionLocal (same pattern as `test_uxm_topology_profile.py` / `test_plan_topology_override.py`). **Caveat for the websocket file**: the WS endpoint handler at `road_test.py:1312` imports `SessionLocal` directly inside the function (FastAPI's `Depends(get_db)` doesn't apply to WebSockets), so the fixture also monkeypatches `app.db.database.SessionLocal` so the function-level re-import picks up the test session — without this all 7 WS tests fail with "Execution not found" because the lookup hits the real configured DB. Result: 40/40 in the 3 integration suites (was 28 failed / 12 passed pre-PR #41, then 2 failed / 38 passed post-PR #41, now 40/40). Full-suite sweep matches main's pre-existing 9 flaky failures (none introduced by this PR). After this PR merges, all discovered-during backlog items are resolved; only on-site-blocked P0/P1 work remains on the roadmap. | this PR (2026-05-17) |
+| D28 | VRT integration test isolation (last discovered-during chore deferred from P3-8). Three VRT integration test files (`test_road_test_{scenarios,executions,websocket}.py`) ran against the **shared dev Postgres**, accumulating 50+ leftover VRT TestCases over time and breaking assertions like `len(scenarios) == 5` and `all(s["category"] == "standard" for s in scenarios)`. Was always broken; the P3-8 pydantic crash had been masking it. Fix per-file `_isolated_db` autouse fixture that overrides `get_db` with an in-memory SQLite TestingSessionLocal (same pattern as `test_uxm_topology_profile.py` / `test_plan_topology_override.py`). **Caveat for the websocket file**: the WS endpoint handler at `road_test.py:1312` imports `SessionLocal` directly inside the function (FastAPI's `Depends(get_db)` doesn't apply to WebSockets), so the fixture also monkeypatches `app.db.database.SessionLocal` so the function-level re-import picks up the test session — without this all 7 WS tests fail with "Execution not found" because the lookup hits the real configured DB. Result: 40/40 in the 3 integration suites (was 28 failed / 12 passed pre-PR #41, then 2 failed / 38 passed post-PR #41, now 40/40). Full-suite sweep matches main's pre-existing 9 flaky failures (none introduced by this PR). After this PR merges, all discovered-during backlog items are resolved; only on-site-blocked P0/P1 work remains on the roadmap. | PR #45 (merged 2026-05-17) |
+| D29 | P3-10 — alembic chain head hardcoded SHA (1 of 4 in the flaky-test cleanup batch). `tests/test_alembic_chain.py::test_greenfield_upgrade_from_scratch` asserted `version_num == "e863f092696b"` (hardcoded constant from when the test was written); PRs #28/#38/#39 then added 3 migrations (`a1b2c3d4e5f6` / `c7a91b3e5d04` / `d8b412ca9f15`) and the constant rotted. **Structural fix** (B not A): replaced the hardcoded SHA with `ScriptDirectory.from_config(cfg).get_current_head()` so the test asserts its actual intent ("DB reaches alembic head") rather than "DB reaches specific SHA X" — same "fix the test's structure, not just the value" pattern as P3-6's Type-C signature pinning. Verified by revert/re-apply: temporarily appended `_FAKE` to the expected head, assertion correctly failed; restored, all 3 tests in `test_alembic_chain.py` pass. Full-sweep flaky count 9→8. **Also promotes P3-11/12/13 to the open roadmap as P3 slots** so the rest of the batch has explicit Current Focus targets per WIP=1 sequencing; this PR's Current Focus shifts to P3-11 after merge. | this PR (2026-05-17) |
 
 ---
 
@@ -865,6 +877,57 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 **Status**: ✅ Done — engineering in PR #32, roadmap docs catch-up in this PR
 **Estimate**: ~15 min engineering (actual PR #32: ~10 min) + 2 min docs catch-up
 
+### P3-10 — Alembic chain head hardcoded SHA ✅ Done
+
+**What**: `tests/test_alembic_chain.py::test_greenfield_upgrade_from_scratch` hardcoded the expected migration head SHA (`"e863f092696b"`). When PR #28 / #38 / #39 added 3 new migrations (`a1b2c3d4e5f6` / `c7a91b3e5d04` / `d8b412ca9f15`), the constant wasn't bumped → test failed `AssertionError: assert 'd8b412ca9f15' == 'e863f092696b'`.
+
+**Triage**: test had a *structural* mistake, not a value drift — the hardcoded SHA pattern guarantees breakage on every future migration. The test's intent per the docstring is "DB reaches head", not "DB reaches specific SHA X".
+
+**Fix** (B not A): replace the hardcoded SHA with `ScriptDirectory.from_config(cfg).get_current_head()` — asks alembic what the current head is, asserts DB matches. Doesn't drift on new migrations. 1-line behaviour change + import. Same "fix the structure, not the value" pattern as P3-6 (Type-C signature pinning).
+
+**Verified by revert/re-apply**: temporarily appended `"_FAKE"` to the expected head; the assertion correctly failed (`assert 'd8b412ca9f15' == 'd8b412ca9f15_FAKE'`), confirming the gate isn't tautological.
+
+**Acceptance**: 3/3 in `test_alembic_chain.py`; full sweep 9→8 pre-existing failures.
+
+**Status**: ✅ Done — this PR
+**Estimate**: 20-40 min (actual: ~15 min)
+
+### P3-11 — bootstrap_lifespan seeder set drift
+
+**What**: 2 tests in `tests/test_bootstrap_lifespan.py` fail on clean main:
+- `TestLifespanColdStart::test_bootstrap_history_records_each_seeder` — expected seeders set mismatches actual (probably the `topology_profiles` seeder added in PR #38 wasn't added to the test expectation)
+- `TestLifespanWarmRestart::test_second_lifespan_is_idempotent` — `assert 7 == 6` (count drift, same root cause likely)
+
+**Acceptance**: triage which seeder is missing from the test expectation; update test (model is correct since seeders are real); both tests pass; full sweep clean.
+
+**Status**: `[ ]` not started (this batch, after P3-10 merges)
+**Estimate**: 15-20 min (both at once — same root cause)
+
+### P3-12 — driver_capabilities test-isolation pollution
+
+**What**: `tests/test_driver_capabilities.py::TestDriverBaseCapabilitySet::test_non_canonical_token_warns_but_adds` PASSES when run alone, FAILS when run as part of the full suite. Classic test-isolation pollution: another test registers state on the driver capability registry that leaks into this test.
+
+**Acceptance**: identify the polluting test; either fix the polluter (add cleanup) or make the affected test more defensive (reset capability state in fixture).
+
+**Status**: `[ ]` not started (this batch, after P3-11)
+**Estimate**: 30-45 min (need to find polluting test via bisect)
+
+### P3-13 — probe_calibration_service mock pattern (×5)
+
+**What**: 5 tests in `tests/test_probe_calibration_service.py` all fail with `assert True is False`:
+- `TestAmplitudeCalibrationService::test_execute_calibration_invalid_probe`
+- `TestPhaseCalibrationService::test_execute_phase_calibration_invalid_probe`
+- `TestPhaseCalibrationService::test_execute_phase_calibration_invalid_reference`
+- `TestPolarizationCalibrationService::test_execute_polarization_calibration_invalid_probe`
+- `TestPatternCalibrationService::test_execute_pattern_calibration_invalid_probe`
+
+Symptom uniformity suggests shared root cause — probably mock pattern (e.g. service returns success when it should fail for invalid probe IDs, or mocked DB doesn't raise the expected error).
+
+**Acceptance**: fix the shared root cause; all 5 pass; full sweep clean.
+
+**Status**: `[ ]` not started (this batch, after P3-12)
+**Estimate**: 30-60 min (one root cause covers 5 tests)
+
 ---
 
 ## ⚠️ Known unknowns (verify on-site / next session)
@@ -901,20 +964,19 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 
 ## 📊 Summary
 
-> Counts as of 2026-05-17 (VRT integration test isolation in this PR,
-> not yet merged). With this PR, the last discovered-during chore is
-> resolved → no remaining non-on-site work. All open items
-> (P0-3/4/5 + P1-2/4/5/6) are 🚧 Blocked-on-hardware. Roadmap
-> enters "waiting on next on-site trip" mode.
+> Counts as of 2026-05-17 (P3-10 in this PR; P3-11/12/13 promoted as
+> open targets for the next 3 PRs in this batch). With this PR,
+> P3-10 ✅ Done + 3 new P3 slots opened (the flaky-test cleanup
+> batch). Net P3 open count goes from 0 to 3.
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 28 | — | — |
+| ✅ Done | 29 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 6 total | 4 days | 4 days |
 | 🟠 P1 (confidence) | 4 open / 6 total | 3 days | 2.5 days |
 | 🟡 P2 (abstraction debt) | 0 open / 5 total | 0 days | 0 |
-| 🟢 P3 (polish) | 0 open / 9 total | — | — |
-| **Total open** | **7** | **~7 days** | **6.5 days** (all of it) |
+| 🟢 P3 (polish) | 3 open / 13 total | ~1.5 hr | 0 |
+| **Total open** | **10** | **~7 days + 1.5 hr** | **6.5 days** |
 
 ---
 
