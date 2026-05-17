@@ -2,11 +2,60 @@
 Integration Tests for Virtual Road Test - WebSocket Streaming
 
 Tests real-time metrics streaming via WebSocket
+
+Test isolation (P3-8 follow-up): each test runs against an isolated
+in-memory SQLite DB instead of the shared dev Postgres. See
+``test_road_test_scenarios.py`` module docstring for the rationale.
 """
 
 import pytest
 import json
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.db.database import Base, get_db
+from app.main import app
+
+
+_engine = create_engine(
+    "sqlite:///:memory:",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+_TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
+
+
+def _override_get_db():
+    db = _TestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_db(monkeypatch):
+    Base.metadata.create_all(bind=_engine)
+    prior = app.dependency_overrides.get(get_db)
+    app.dependency_overrides[get_db] = _override_get_db
+    # WebSocket handler at road_test.py:1312 imports SessionLocal directly
+    # (FastAPI Depends doesn't apply to WebSockets); the function-level
+    # ``from app.db.database import SessionLocal`` re-imports per call,
+    # so monkeypatching the attribute on the module redirects the WS
+    # session at runtime too. Without this the WS handler hits the real
+    # configured DB even though FastAPI HTTP routes hit the test SQLite.
+    import app.db.database as dbmod
+    monkeypatch.setattr(dbmod, "SessionLocal", _TestingSessionLocal)
+    try:
+        yield
+    finally:
+        if prior is None:
+            app.dependency_overrides.pop(get_db, None)
+        else:
+            app.dependency_overrides[get_db] = prior
+        Base.metadata.drop_all(bind=_engine)
 
 
 @pytest.mark.integration

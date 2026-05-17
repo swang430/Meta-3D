@@ -2,10 +2,54 @@
 Integration Tests for Virtual Road Test - Scenario Management
 
 Tests scenario CRUD operations and filtering
+
+Test isolation (P3-8 follow-up): each test runs against an isolated
+in-memory SQLite DB instead of the shared dev Postgres. Pre-isolation
+the dev PG accumulated 50+ VRT TestCases from prior dev/test runs,
+breaking assertions like ``len(scenarios) == 5`` and ``all(s["category"]
+== "standard" for s in scenarios)``. Same isolation pattern as
+``test_uxm_topology_profile.py`` / ``test_plan_topology_override.py``.
 """
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.db.database import Base, get_db
+from app.main import app
+
+
+_engine = create_engine(
+    "sqlite:///:memory:",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+_TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
+
+
+def _override_get_db():
+    db = _TestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_db():
+    Base.metadata.create_all(bind=_engine)
+    prior = app.dependency_overrides.get(get_db)
+    app.dependency_overrides[get_db] = _override_get_db
+    try:
+        yield
+    finally:
+        if prior is None:
+            app.dependency_overrides.pop(get_db, None)
+        else:
+            app.dependency_overrides[get_db] = prior
+        Base.metadata.drop_all(bind=_engine)
 
 
 @pytest.mark.integration
