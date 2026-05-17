@@ -125,6 +125,127 @@ paths:
           description: Category, connection, or profile_id not found
         '409':
           description: Topology incompatible with detected Test App
+    post:
+      summary: Create a new operator-owned topology profile (P2-1 Phase 2.1)
+      description: |
+        `profile_id` is auto-allocated (`custom_<slug>`) — operators
+        don't pick raw IDs (prevents collisions with built-ins and
+        slug-formatting surprises). Returns the full row including the
+        assigned ID so the GUI can pre-select it.
+      parameters:
+        - name: categoryKey
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTopologyProfileRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopologyProfileDetail'
+        '400':
+          description: Bad request — empty name or unknown field
+        '404':
+          description: Category does not host topology profiles
+  /api/v1/instruments/{categoryKey}/topology-profiles/{profileId}:
+    put:
+      summary: Update an operator-owned topology profile (P2-1 Phase 2.1)
+      description: |
+        Partial-update. Refuses `is_system_preset=true` rows with 409 —
+        operator must duplicate first. Unknown field keys return 400.
+      parameters:
+        - name: categoryKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: profileId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTopologyProfileRequest'
+      responses:
+        '200':
+          description: Updated row
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopologyProfileDetail'
+        '400':
+          description: Bad request — unknown field
+        '404':
+          description: Profile not found
+        '409':
+          description: System preset — duplicate to edit
+    delete:
+      summary: Delete an operator-owned topology profile (P2-1 Phase 2.1)
+      description: |
+        Refuses `is_system_preset=true` rows with 409. Does NOT touch
+        bindings — if a category has the profile bound via
+        `connection_params['topology_profile_id']`, that selection
+        silently becomes stale on next HAL reload (HAL warns + skips
+        auto-apply). GUI should warn before delete if bindings exist.
+      parameters:
+        - name: categoryKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: profileId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Deleted
+        '404':
+          description: Profile not found
+        '409':
+          description: System preset — cannot delete
+  /api/v1/instruments/{categoryKey}/topology-profiles/{profileId}/duplicate:
+    post:
+      summary: Clone any topology profile into a new editable copy (P2-1 Phase 2.1)
+      description: |
+        Supported source for both system presets and operator-owned
+        rows. The new copy has `is_system_preset=false` (always) and
+        a `(副本)` suffix on the name so it's visually distinct in the
+        dropdown. Useful for the GUI's "duplicate-to-edit" flow on a
+        system preset.
+      parameters:
+        - name: categoryKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: profileId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: New editable copy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopologyProfileDetail'
+        '404':
+          description: Source profile not found
   /api/v1/instruments/hal/readiness:
     get:
       summary: HAL composite readiness snapshot (P3-5)
@@ -452,6 +573,12 @@ components:
         compatible_with_current_test_app:
           type: boolean
           nullable: true
+        is_system_preset:
+          type: boolean
+          description: |
+            P2-1 Phase 2.1: true for the 7 built-ins seeded by the
+            bootstrap seeder. GUI renders these as read-only with a
+            'duplicate to edit' affordance (clone-to-edit pattern).
       required: [profile_id, name, description, category, compatible_test_apps]
     TopologyProfilesListResult:
       type: object
@@ -507,3 +634,266 @@ components:
           type: string
           nullable: true
       required: [persisted, applied_now]
+    TopologyProfileDetail:
+      type: object
+      description: |
+        P2-1 Phase 2.1: full topology profile row returned by CRUD
+        endpoints (create / update / duplicate). Mirrors the
+        `UxmTestProfile` dataclass + DB columns.
+      properties:
+        profile_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        category:
+          type: string
+        band:
+          type: string
+        frequency_mhz:
+          type: number
+        bandwidth_mhz:
+          type: number
+        scs_khz:
+          type: integer
+        duplex:
+          type: string
+        arfcn:
+          type: integer
+          nullable: true
+        mimo_layers:
+          type: integer
+        mimo_port_preset:
+          type: string
+        dl_power_dbm:
+          type: number
+        ssb_power_dbm:
+          type: number
+        modulation:
+          type: string
+        target_mcs:
+          type: integer
+        sched_algo:
+          type: string
+        enable_amc:
+          type: boolean
+        tdd_pattern:
+          type: string
+        tdd_period:
+          type: string
+        harq_max_trans:
+          type: integer
+        harq_processes:
+          type: integer
+        csi_rs_ports:
+          type: integer
+          nullable: true
+        stat_count:
+          type: integer
+        cell_id:
+          type: string
+        state_file:
+          type: string
+          nullable: true
+        compatible_test_apps:
+          type: array
+          items:
+            type: string
+        notes:
+          type: string
+          nullable: true
+        is_system_preset:
+          type: boolean
+        created_by:
+          type: string
+          nullable: true
+      required: [profile_id, name, category, band, frequency_mhz, bandwidth_mhz,
+        scs_khz, duplex, mimo_layers, mimo_port_preset, dl_power_dbm,
+        ssb_power_dbm, modulation, target_mcs, sched_algo, enable_amc,
+        tdd_pattern, tdd_period, harq_max_trans, harq_processes, stat_count,
+        cell_id, compatible_test_apps, is_system_preset]
+    CreateTopologyProfileRequest:
+      type: object
+      description: |
+        P2-1 Phase 2.1: POST payload. `name` required; everything else
+        falls back to dataclass defaults. profile_id is auto-allocated
+        as `custom_<slug>` so the operator doesn't pick raw IDs.
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        category:
+          type: string
+          nullable: true
+        band:
+          type: string
+          nullable: true
+        frequency_mhz:
+          type: number
+          nullable: true
+        bandwidth_mhz:
+          type: number
+          nullable: true
+        scs_khz:
+          type: integer
+          nullable: true
+        duplex:
+          type: string
+          nullable: true
+        arfcn:
+          type: integer
+          nullable: true
+        mimo_layers:
+          type: integer
+          nullable: true
+        mimo_port_preset:
+          type: string
+          nullable: true
+        dl_power_dbm:
+          type: number
+          nullable: true
+        ssb_power_dbm:
+          type: number
+          nullable: true
+        modulation:
+          type: string
+          nullable: true
+        target_mcs:
+          type: integer
+          nullable: true
+        sched_algo:
+          type: string
+          nullable: true
+        enable_amc:
+          type: boolean
+          nullable: true
+        tdd_pattern:
+          type: string
+          nullable: true
+        tdd_period:
+          type: string
+          nullable: true
+        harq_max_trans:
+          type: integer
+          nullable: true
+        harq_processes:
+          type: integer
+          nullable: true
+        csi_rs_ports:
+          type: integer
+          nullable: true
+        stat_count:
+          type: integer
+          nullable: true
+        cell_id:
+          type: string
+          nullable: true
+        state_file:
+          type: string
+          nullable: true
+        compatible_test_apps:
+          type: array
+          nullable: true
+          items:
+            type: string
+        notes:
+          type: string
+          nullable: true
+        created_by:
+          type: string
+          nullable: true
+      required: [name]
+    UpdateTopologyProfileRequest:
+      type: object
+      description: |
+        P2-1 Phase 2.1: PUT payload — all fields optional. Same field
+        allowlist as Create minus `created_by` (audit field, immutable
+        post-create).
+      properties:
+        name:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        category:
+          type: string
+          nullable: true
+        band:
+          type: string
+          nullable: true
+        frequency_mhz:
+          type: number
+          nullable: true
+        bandwidth_mhz:
+          type: number
+          nullable: true
+        scs_khz:
+          type: integer
+          nullable: true
+        duplex:
+          type: string
+          nullable: true
+        arfcn:
+          type: integer
+          nullable: true
+        mimo_layers:
+          type: integer
+          nullable: true
+        mimo_port_preset:
+          type: string
+          nullable: true
+        dl_power_dbm:
+          type: number
+          nullable: true
+        ssb_power_dbm:
+          type: number
+          nullable: true
+        modulation:
+          type: string
+          nullable: true
+        target_mcs:
+          type: integer
+          nullable: true
+        sched_algo:
+          type: string
+          nullable: true
+        enable_amc:
+          type: boolean
+          nullable: true
+        tdd_pattern:
+          type: string
+          nullable: true
+        tdd_period:
+          type: string
+          nullable: true
+        harq_max_trans:
+          type: integer
+          nullable: true
+        harq_processes:
+          type: integer
+          nullable: true
+        csi_rs_ports:
+          type: integer
+          nullable: true
+        stat_count:
+          type: integer
+          nullable: true
+        cell_id:
+          type: string
+          nullable: true
+        state_file:
+          type: string
+          nullable: true
+        compatible_test_apps:
+          type: array
+          nullable: true
+          items:
+            type: string
+        notes:
+          type: string
+          nullable: true

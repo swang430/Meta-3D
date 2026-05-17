@@ -259,7 +259,216 @@ export interface paths {
                 };
             };
         };
+        /**
+         * Create a new operator-owned topology profile (P2-1 Phase 2.1)
+         * @description `profile_id` is auto-allocated (`custom_<slug>`) — operators
+         *     don't pick raw IDs (prevents collisions with built-ins and
+         *     slug-formatting surprises). Returns the full row including the
+         *     assigned ID so the GUI can pre-select it.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    categoryKey: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateTopologyProfileRequest"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TopologyProfileDetail"];
+                    };
+                };
+                /** @description Bad request — empty name or unknown field */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Category does not host topology profiles */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instruments/{categoryKey}/topology-profiles/{profileId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update an operator-owned topology profile (P2-1 Phase 2.1)
+         * @description Partial-update. Refuses `is_system_preset=true` rows with 409 —
+         *     operator must duplicate first. Unknown field keys return 400.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    categoryKey: string;
+                    profileId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["UpdateTopologyProfileRequest"];
+                };
+            };
+            responses: {
+                /** @description Updated row */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TopologyProfileDetail"];
+                    };
+                };
+                /** @description Bad request — unknown field */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Profile not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description System preset — duplicate to edit */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
         post?: never;
+        /**
+         * Delete an operator-owned topology profile (P2-1 Phase 2.1)
+         * @description Refuses `is_system_preset=true` rows with 409. Does NOT touch
+         *     bindings — if a category has the profile bound via
+         *     `connection_params['topology_profile_id']`, that selection
+         *     silently becomes stale on next HAL reload (HAL warns + skips
+         *     auto-apply). GUI should warn before delete if bindings exist.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    categoryKey: string;
+                    profileId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Profile not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description System preset — cannot delete */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instruments/{categoryKey}/topology-profiles/{profileId}/duplicate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clone any topology profile into a new editable copy (P2-1 Phase 2.1)
+         * @description Supported source for both system presets and operator-owned
+         *     rows. The new copy has `is_system_preset=false` (always) and
+         *     a `(副本)` suffix on the name so it's visually distinct in the
+         *     dropdown. Useful for the GUI's "duplicate-to-edit" flow on a
+         *     system preset.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    categoryKey: string;
+                    profileId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description New editable copy */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TopologyProfileDetail"];
+                    };
+                };
+                /** @description Source profile not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -491,6 +700,12 @@ export interface components {
             category: string;
             compatible_test_apps: string[];
             compatible_with_current_test_app?: boolean | null;
+            /**
+             * @description P2-1 Phase 2.1: true for the 7 built-ins seeded by the
+             *     bootstrap seeder. GUI renders these as read-only with a
+             *     'duplicate to edit' affordance (clone-to-edit pattern).
+             */
+            is_system_preset?: boolean;
         };
         TopologyProfilesListResult: {
             items: components["schemas"]["TopologyProfileEntry"][];
@@ -524,6 +739,112 @@ export interface components {
              */
             apply_skipped_reason?: string | null;
             test_app?: string | null;
+        };
+        /**
+         * @description P2-1 Phase 2.1: full topology profile row returned by CRUD
+         *     endpoints (create / update / duplicate). Mirrors the
+         *     `UxmTestProfile` dataclass + DB columns.
+         */
+        TopologyProfileDetail: {
+            profile_id: string;
+            name: string;
+            description?: string | null;
+            category: string;
+            band: string;
+            frequency_mhz: number;
+            bandwidth_mhz: number;
+            scs_khz: number;
+            duplex: string;
+            arfcn?: number | null;
+            mimo_layers: number;
+            mimo_port_preset: string;
+            dl_power_dbm: number;
+            ssb_power_dbm: number;
+            modulation: string;
+            target_mcs: number;
+            sched_algo: string;
+            enable_amc: boolean;
+            tdd_pattern: string;
+            tdd_period: string;
+            harq_max_trans: number;
+            harq_processes: number;
+            csi_rs_ports?: number | null;
+            stat_count: number;
+            cell_id: string;
+            state_file?: string | null;
+            compatible_test_apps: string[];
+            notes?: string | null;
+            is_system_preset: boolean;
+            created_by?: string | null;
+        };
+        /**
+         * @description P2-1 Phase 2.1: POST payload. `name` required; everything else
+         *     falls back to dataclass defaults. profile_id is auto-allocated
+         *     as `custom_<slug>` so the operator doesn't pick raw IDs.
+         */
+        CreateTopologyProfileRequest: {
+            name: string;
+            description?: string | null;
+            category?: string | null;
+            band?: string | null;
+            frequency_mhz?: number | null;
+            bandwidth_mhz?: number | null;
+            scs_khz?: number | null;
+            duplex?: string | null;
+            arfcn?: number | null;
+            mimo_layers?: number | null;
+            mimo_port_preset?: string | null;
+            dl_power_dbm?: number | null;
+            ssb_power_dbm?: number | null;
+            modulation?: string | null;
+            target_mcs?: number | null;
+            sched_algo?: string | null;
+            enable_amc?: boolean | null;
+            tdd_pattern?: string | null;
+            tdd_period?: string | null;
+            harq_max_trans?: number | null;
+            harq_processes?: number | null;
+            csi_rs_ports?: number | null;
+            stat_count?: number | null;
+            cell_id?: string | null;
+            state_file?: string | null;
+            compatible_test_apps?: string[] | null;
+            notes?: string | null;
+            created_by?: string | null;
+        };
+        /**
+         * @description P2-1 Phase 2.1: PUT payload — all fields optional. Same field
+         *     allowlist as Create minus `created_by` (audit field, immutable
+         *     post-create).
+         */
+        UpdateTopologyProfileRequest: {
+            name?: string | null;
+            description?: string | null;
+            category?: string | null;
+            band?: string | null;
+            frequency_mhz?: number | null;
+            bandwidth_mhz?: number | null;
+            scs_khz?: number | null;
+            duplex?: string | null;
+            arfcn?: number | null;
+            mimo_layers?: number | null;
+            mimo_port_preset?: string | null;
+            dl_power_dbm?: number | null;
+            ssb_power_dbm?: number | null;
+            modulation?: string | null;
+            target_mcs?: number | null;
+            sched_algo?: string | null;
+            enable_amc?: boolean | null;
+            tdd_pattern?: string | null;
+            tdd_period?: string | null;
+            harq_max_trans?: number | null;
+            harq_processes?: number | null;
+            csi_rs_ports?: number | null;
+            stat_count?: number | null;
+            cell_id?: string | null;
+            state_file?: string | null;
+            compatible_test_apps?: string[] | null;
+            notes?: string | null;
         };
     };
     responses: never;

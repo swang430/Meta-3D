@@ -155,6 +155,7 @@ from app.services.bootstrap.probes import probes_seeder
 from app.services.bootstrap.report_templates import report_templates_seeder
 from app.services.bootstrap.sequences import sequences_seeder
 from app.services.bootstrap.test_case_templates import test_case_templates_seeder
+from app.services.bootstrap.topology_profiles import topology_profiles_seeder
 
 ALL_SEEDERS: List[Seeder] = [
     chamber_presets_seeder,
@@ -163,6 +164,7 @@ ALL_SEEDERS: List[Seeder] = [
     sequences_seeder,
     report_templates_seeder,
     test_case_templates_seeder,
+    topology_profiles_seeder,
 ]
 
 

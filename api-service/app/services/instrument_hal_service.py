@@ -587,21 +587,50 @@ class InstrumentHALService:
                         if conn and isinstance(conn.connection_params, dict):
                             topology_id = conn.connection_params.get("topology_profile_id")
                         if topology_id and hasattr(driver, "apply_topology_profile"):
+                            # P2-1 Phase 2.1: driver consumes the dataclass;
+                            # lookup happens here so HAL stays DB-free.
+                            # Prefer DB-persisted row (operators may have
+                            # edited a built-in or created a custom one);
+                            # fall back to in-code registry if the bootstrap
+                            # seeder hasn't run yet (greenfield first-boot
+                            # race window).
+                            from app.services.topology_profile_service import (
+                                TopologyProfileNotFound, get_dataclass,
+                            )
                             try:
-                                result = await driver.apply_topology_profile(topology_id)
-                                if not result.get("applied"):
+                                profile_dc = get_dataclass(db, topology_id)
+                            except TopologyProfileNotFound:
+                                from app.hal.uxm_test_profiles import (
+                                    _PROFILE_REGISTRY, _register_builtin_profiles,
+                                )
+                                if not _PROFILE_REGISTRY:
+                                    _register_builtin_profiles()
+                                profile_dc = _PROFILE_REGISTRY.get(topology_id)
+                                if profile_dc is None:
                                     logger.warning(
                                         f"[HAL] {cat.category_key}: "
-                                        f"topology profile {topology_id!r} NOT applied — "
-                                        f"reason={result.get('reason')}"
+                                        f"topology profile {topology_id!r} not in DB or "
+                                        f"in-code registry — operator's selection is stale; "
+                                        f"clearing won't happen automatically, fix via PUT "
+                                        f"/instruments/{cat.category_key}/topology-profile."
                                     )
-                            except Exception as e:
-                                logger.warning(
-                                    f"[HAL] {cat.category_key}: "
-                                    f"apply_topology_profile({topology_id!r}) raised "
-                                    f"{type(e).__name__}: {e} — driver loaded but "
-                                    f"binding's topology not applied"
-                                )
+                                    profile_dc = None
+                            if profile_dc is not None:
+                                try:
+                                    result = await driver.apply_topology_profile(profile_dc)
+                                    if not result.get("applied"):
+                                        logger.warning(
+                                            f"[HAL] {cat.category_key}: "
+                                            f"topology profile {topology_id!r} NOT applied — "
+                                            f"reason={result.get('reason')}"
+                                        )
+                                except Exception as e:
+                                    logger.warning(
+                                        f"[HAL] {cat.category_key}: "
+                                        f"apply_topology_profile({topology_id!r}) raised "
+                                        f"{type(e).__name__}: {e} — driver loaded but "
+                                        f"binding's topology not applied"
+                                    )
 
                         report_rows.append(DriverReadinessRow(
                             category=cat.category_key,

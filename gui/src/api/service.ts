@@ -243,6 +243,7 @@ export interface TopologyProfileEntry {
   category: string                // "siso" / "mimo" / "calibration"
   compatible_test_apps: string[]  // empty = any
   compatible_with_current_test_app?: boolean | null
+  is_system_preset?: boolean      // P2-1 Phase 2.1
 }
 
 export interface TopologyProfilesListResult {
@@ -260,6 +261,48 @@ export interface SelectTopologyProfileResult {
   test_app?: string | null
 }
 
+// P2-1 Phase 2.1: full topology profile row — returned by CRUD endpoints.
+export interface TopologyProfileDetail {
+  profile_id: string
+  name: string
+  description?: string | null
+  category: string
+  band: string
+  frequency_mhz: number
+  bandwidth_mhz: number
+  scs_khz: number
+  duplex: string
+  arfcn?: number | null
+  mimo_layers: number
+  mimo_port_preset: string
+  dl_power_dbm: number
+  ssb_power_dbm: number
+  modulation: string
+  target_mcs: number
+  sched_algo: string
+  enable_amc: boolean
+  tdd_pattern: string
+  tdd_period: string
+  harq_max_trans: number
+  harq_processes: number
+  csi_rs_ports?: number | null
+  stat_count: number
+  cell_id: string
+  state_file?: string | null
+  compatible_test_apps: string[]
+  notes?: string | null
+  is_system_preset: boolean
+  created_by?: string | null
+}
+
+// All fields optional except `name` on create. Allowlisted on the
+// backend; unknown keys silently dropped by Pydantic at the request
+// schema layer.
+export type CreateTopologyProfilePayload = Partial<Omit<TopologyProfileDetail,
+  'profile_id' | 'is_system_preset'>> & { name: string }
+export type UpdateTopologyProfilePayload = Partial<Omit<TopologyProfileDetail,
+  'profile_id' | 'is_system_preset' | 'created_by'>>
+
 export const fetchTopologyProfiles = async (
   categoryKey: string,
 ): Promise<TopologyProfilesListResult> => {
@@ -276,6 +319,53 @@ export const selectTopologyProfile = async (
   const response = await client.put<SelectTopologyProfileResult>(
     `/instruments/${categoryKey}/topology-profile`,
     { profile_id: profileId },
+  )
+  return response.data
+}
+
+// P2-1 Phase 2.1: CRUD on topology profile entities themselves.
+// The four endpoints map 1:1 to the backend operations; the GUI
+// editor surface (TopologyEditor component, deferred to Phase 2.2)
+// consumes these.
+
+export const createTopologyProfile = async (
+  categoryKey: string,
+  payload: CreateTopologyProfilePayload,
+): Promise<TopologyProfileDetail> => {
+  const response = await client.post<TopologyProfileDetail>(
+    `/instruments/${categoryKey}/topology-profiles`,
+    payload,
+  )
+  return response.data
+}
+
+export const updateTopologyProfile = async (
+  categoryKey: string,
+  profileId: string,
+  payload: UpdateTopologyProfilePayload,
+): Promise<TopologyProfileDetail> => {
+  const response = await client.put<TopologyProfileDetail>(
+    `/instruments/${categoryKey}/topology-profiles/${encodeURIComponent(profileId)}`,
+    payload,
+  )
+  return response.data
+}
+
+export const deleteTopologyProfile = async (
+  categoryKey: string,
+  profileId: string,
+): Promise<void> => {
+  await client.delete(
+    `/instruments/${categoryKey}/topology-profiles/${encodeURIComponent(profileId)}`,
+  )
+}
+
+export const duplicateTopologyProfile = async (
+  categoryKey: string,
+  profileId: string,
+): Promise<TopologyProfileDetail> => {
+  const response = await client.post<TopologyProfileDetail>(
+    `/instruments/${categoryKey}/topology-profiles/${encodeURIComponent(profileId)}/duplicate`,
   )
   return response.data
 }
