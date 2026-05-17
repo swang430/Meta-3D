@@ -66,7 +66,7 @@ import asyncio
 import inspect
 import re
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from app.diagnostics.protocol import (
     SequenceMetadata,
@@ -142,7 +142,7 @@ _CRITICAL_NAMES = frozenset({
 # Helpers — pure functions, unit-testable without a driver/UXM.
 # ---------------------------------------------------------------------------
 
-def _to_probe_command(value: str, profile: Optional[type] = None) -> str:
+def _to_probe_command(value: str, profile: Optional[Union[type, UxmTestApp]] = None) -> str:
     """Format placeholders + reduce a WRITE command to its query form.
 
     If ``profile`` is given, its ``PRIMARY_CELL`` overrides the default
@@ -203,7 +203,7 @@ def _categorize_status(err_code: Optional[int]) -> str:
     return "UNKNOWN"
 
 
-def _all_commands(profile: type) -> List[Tuple[str, str]]:
+def _all_commands(profile: Union[type, UxmTestApp]) -> List[Tuple[str, str]]:
     """Enumerate (name, value) for every string-valued SCPI command attribute
     on ``profile``.
 
@@ -231,19 +231,29 @@ def _all_commands(profile: type) -> List[Tuple[str, str]]:
     return pairs
 
 
-def _profile_for_driver(bs: Any) -> type:
-    """Return the live driver's command profile class, or default if not set.
+def _profile_for_driver(bs: Any) -> Union[type, UxmTestApp]:
+    """Return the live driver's command profile (instance OR class).
 
-    UXM/RealUxmDriver stores its profile in ``bs._cmds`` (a *class*, set in
-    __init__, confirmed in connect()). Tests using a MagicMock baseStation
-    won't have a real ``_cmds`` — MagicMock will auto-create one but it
-    won't be a UxmTestApp subclass. Defensive check: must be an
-    actual class subclassing UxmTestApp to be used; else fall back
-    to 5G_NR_Test (the pre-2026-05-13 default).
+    ``RealUxmDriver._cmds`` is an *instance* of a ``UxmTestApp`` subclass
+    since PR #44 (class-vs-instance mutability fix). Older test fixtures
+    that build a MagicMock baseStation and set ``_cmds`` to the class
+    directly still work because downstream ``_all_commands`` /
+    ``_to_probe_command`` use ``inspect.getmembers`` + ``getattr`` —
+    both class and instance expose the SCPI command attrs identically.
+
+    Codex P2 (PR #44 review): previously gated on
+    ``isinstance(profile, type)`` so the live instance fell through to
+    the 5G fallback, causing the IRAT diagnostic to probe the wrong
+    SCPI tree + CELL0 defaults and false-flag commands as unsupported.
+
+    MagicMock / missing ``_cmds`` still fall back to the 5G class
+    (the pre-2026-05-13 default).
     """
     profile = getattr(bs, "_cmds", None)
+    if isinstance(profile, UxmTestApp):
+        return profile  # live RealUxmDriver instance (current)
     if isinstance(profile, type) and issubclass(profile, UxmTestApp):
-        return profile
+        return profile  # class ref (legacy test fixtures)
     return Uxm5GNRTestAppProfile
 
 
