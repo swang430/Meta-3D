@@ -19,6 +19,7 @@ couldn't bootstrap a fresh install. This test exercises both paths.
 from __future__ import annotations
 
 import importlib
+import logging
 import pkgutil
 from pathlib import Path
 
@@ -27,6 +28,35 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
+
+
+@pytest.fixture(autouse=True)
+def _restore_logger_disabled_state():
+    """Contain alembic's logger pollution.
+
+    alembic/env.py calls ``logging.config.fileConfig(config.config_file_name)``
+    which defaults to ``disable_existing_loggers=True`` — every already-imported
+    logger (e.g. ``app.hal.base``, populated when pytest collects sibling test
+    modules that import HAL drivers) has its ``disabled`` flag flipped to
+    ``True``. Downstream tests that rely on log capture
+    (``test_driver_capabilities.py::test_non_canonical_token_warns_but_adds``
+    asserts ``caplog`` saw a WARNING from ``app.hal.base``) then silently get
+    zero records and fail. Production alembic is invoked via CLI in a fresh
+    process where there is nothing to disable, so the leak is purely a
+    pytest-in-process concern; containing it here keeps env.py's CLI behavior
+    untouched. Snapshot the ``disabled`` flag of every existing logger
+    pre-test and restore on teardown."""
+    manager = logging.Logger.manager
+    snapshot = {
+        name: lg.disabled
+        for name, lg in manager.loggerDict.items()
+        if isinstance(lg, logging.Logger)
+    }
+    yield
+    for name, was_disabled in snapshot.items():
+        lg = manager.loggerDict.get(name)
+        if isinstance(lg, logging.Logger):
+            lg.disabled = was_disabled
 
 
 # Tables + columns the chain MUST land regardless of starting state.

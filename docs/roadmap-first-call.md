@@ -8,25 +8,25 @@
 
 ## 🎯 Current Focus
 
-**`P3-12` — driver_capabilities test-isolation pollution (next of
-4-PR flaky-test cleanup batch P3-10/11/12/13)**
+**`P3-13` — probe_calibration_service mock pattern shared root cause
+(last of 4-PR flaky-test cleanup batch P3-10/11/12/13)**
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
   gets appended to the backlog instead of done inline.
 
-**State (2026-05-17)**: PR #46 (P3-10) merged. Flaky-test cleanup
+**State (2026-05-17)**: PR #47 (P3-11) merged. Flaky-test cleanup
 batch sequenced:
 
 | ID | Tests | Root cause | Status |
 |----|-------|------------|--------|
 | P3-10 ✅ | 1 | alembic chain test hardcoded head SHA | PR #46 merged |
-| P3-11 ✅ | 2 | `bootstrap_lifespan` expected-seeder set drifted from new seeders | this PR |
-| P3-12 | 1 | `driver_capabilities` test-isolation pollution (passes alone) | next |
+| P3-11 ✅ | 2 | `bootstrap_lifespan` expected-seeder set drifted from new seeders | PR #47 merged |
+| P3-12 ✅ | 1 | alembic `fileConfig(disable_existing_loggers=True)` silenced `app.hal.base` for downstream caplog | this PR |
 | P3-13 | 5 | `probe_calibration_service` mock pattern shared root cause | last |
 
-Full-sweep flaky count: 9 (pre-batch) → 8 (post-P3-10) → 6 (this
-PR). All open P0/P1 still 🚧 Blocked-on-hardware. After P3-13
+Full-sweep flaky count: 9 (pre-batch) → 8 (post-P3-10) → 6 (post-P3-11)
+→ 5 (this PR). All open P0/P1 still 🚧 Blocked-on-hardware. After P3-13
 merges, roadmap enters "waiting on next on-site trip" mode.
 
 Last review: 2026-05-17 (post Phase-2.3 merge)
@@ -112,7 +112,8 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 | D27 | P3-7 + 2 discovered-during chores deferred from P2-1. **P3-7**: `.vscode/settings.json` pins venv Python interpreter (`api-service/.venv/bin/python`) + `python.analysis.extraPaths` + pytest auto-discovery; clears the phantom `Cannot find module sqlalchemy / pydantic_settings` diagnostics VSCode was emitting against system Python (same interpreter-drift root cause as P1-3 PyVISA). Gitignore policy: standard JS/Python pattern — `.vscode/*` stays ignored but `!/.vscode/settings.json` whitelisted (personal `launch.json` / `tasks.json` / `sftp.json` don't leak). **`self._cmds` class-vs-instance fix**: `RealUxmDriver` now stores a profile **instance** (`self._cmds: UxmTestApp = ProfileClass()`) instead of the class itself; latent mutability bug — no current write path triggers it but any future `self._cmds.SOME_FIELD = value` would mutate class-level state shared across UXM driver instances. Connect-time profile-switch path uses `isinstance(self._cmds, detected)` instead of `is`; `detect_profile()` still returns the class for caller flexibility. 2 `is` assertions in `tests/test_uxm_driver_profile.py` → `isinstance`; other test fixtures unchanged (attribute-read paths work on class or instance). **Codex P2 follow-up in same PR**: caught a downstream consequence — `app/diagnostics/sequences/uxm_scpi_compatibility.py:_profile_for_driver` gated on `isinstance(profile, type)` so post-refactor IRAT instances fell through to the 5G fallback, false-flagging IRAT commands as unsupported. Helper now accepts either instance or class; downstream `_all_commands` + `_to_probe_command` annotations widened to `Union[type, UxmTestApp]`. 4 new tests in `TestProfileForDriverHelper` pin both branches + verified by revert/re-apply that they catch the bug. **UXM name cleanup**: `UxmCommandProfile` → `UxmTestApp` (the "Test App" is the operator-facing concept = which Keysight software is running), `UxmTestProfile` → `UxmTopologyProfile` (matches the DB table name + GUI vocab). Subclasses (`Uxm5GNRTestAppProfile`, `UxmLteNrIratProfile`) keep their descriptive names. File names unchanged (would touch 19 imports for cosmetic gain only). 155/155 across 8 relevant test suites; full-suite sweep matches main's pre-existing 6-9 flaky failures (none introduced by these changes). | PR #44 (merged 2026-05-17) |
 | D28 | VRT integration test isolation (last discovered-during chore deferred from P3-8). Three VRT integration test files (`test_road_test_{scenarios,executions,websocket}.py`) ran against the **shared dev Postgres**, accumulating 50+ leftover VRT TestCases over time and breaking assertions like `len(scenarios) == 5` and `all(s["category"] == "standard" for s in scenarios)`. Was always broken; the P3-8 pydantic crash had been masking it. Fix per-file `_isolated_db` autouse fixture that overrides `get_db` with an in-memory SQLite TestingSessionLocal (same pattern as `test_uxm_topology_profile.py` / `test_plan_topology_override.py`). **Caveat for the websocket file**: the WS endpoint handler at `road_test.py:1312` imports `SessionLocal` directly inside the function (FastAPI's `Depends(get_db)` doesn't apply to WebSockets), so the fixture also monkeypatches `app.db.database.SessionLocal` so the function-level re-import picks up the test session — without this all 7 WS tests fail with "Execution not found" because the lookup hits the real configured DB. Result: 40/40 in the 3 integration suites (was 28 failed / 12 passed pre-PR #41, then 2 failed / 38 passed post-PR #41, now 40/40). Full-suite sweep matches main's pre-existing 9 flaky failures (none introduced by this PR). After this PR merges, all discovered-during backlog items are resolved; only on-site-blocked P0/P1 work remains on the roadmap. | PR #45 (merged 2026-05-17) |
 | D29 | P3-10 — alembic chain head hardcoded SHA (1 of 4 in the flaky-test cleanup batch). `tests/test_alembic_chain.py::test_greenfield_upgrade_from_scratch` asserted `version_num == "e863f092696b"` (hardcoded constant from when the test was written); PRs #28/#38/#39 then added 3 migrations (`a1b2c3d4e5f6` / `c7a91b3e5d04` / `d8b412ca9f15`) and the constant rotted. **Structural fix** (B not A): replaced the hardcoded SHA with `ScriptDirectory.from_config(cfg).get_current_head()` so the test asserts its actual intent ("DB reaches alembic head") rather than "DB reaches specific SHA X" — same "fix the test's structure, not just the value" pattern as P3-6's Type-C signature pinning. Verified by revert/re-apply: temporarily appended `_FAKE` to the expected head, assertion correctly failed; restored, all 3 tests in `test_alembic_chain.py` pass. Full-sweep flaky count 9→8. **Also promotes P3-11/12/13 to the open roadmap as P3 slots** so the rest of the batch has explicit Current Focus targets per WIP=1 sequencing; this PR's Current Focus shifts to P3-11 after merge. | PR #46 (merged 2026-05-17) |
-| D30 | P3-11 — bootstrap_lifespan seeder set drift (2 of 4 in the flaky-test cleanup batch). 2 tests in `tests/test_bootstrap_lifespan.py` failed on clean main: `test_bootstrap_history_records_each_seeder` (expected set missing `"topology_profiles"`) and `test_second_lifespan_is_idempotent` (`assert 7 == 6`). Root cause: PR #38 (P2-1 Phase 2.1) added the `topology_profiles` seeder to the bootstrap registry without updating these test expectations. **Value drift** (not structural — count and set are intrinsically tied to a fixed registry), same family as P3-6. Fixed by adding `"topology_profiles"` to the expected set + bumping `6 → 7`; tagged both with comments naming PR #38 so future seeder additions get a clearer "bump these too" signal. Verified by revert/re-apply: replaced `7` with `999` sentinel, assertion correctly failed (`assert 7 == 999`). 9/9 in `test_bootstrap_lifespan.py`; full-sweep flaky count 8 → 6. Current Focus shifts to P3-12 after merge. | this PR (2026-05-17) |
+| D30 | P3-11 — bootstrap_lifespan seeder set drift (2 of 4 in the flaky-test cleanup batch). 2 tests in `tests/test_bootstrap_lifespan.py` failed on clean main: `test_bootstrap_history_records_each_seeder` (expected set missing `"topology_profiles"`) and `test_second_lifespan_is_idempotent` (`assert 7 == 6`). Root cause: PR #38 (P2-1 Phase 2.1) added the `topology_profiles` seeder to the bootstrap registry without updating these test expectations. **Value drift** (not structural — count and set are intrinsically tied to a fixed registry), same family as P3-6. Fixed by adding `"topology_profiles"` to the expected set + bumping `6 → 7`; tagged both with comments naming PR #38 so future seeder additions get a clearer "bump these too" signal. Verified by revert/re-apply: replaced `7` with `999` sentinel, assertion correctly failed (`assert 7 == 999`). 9/9 in `test_bootstrap_lifespan.py`; full-sweep flaky count 8 → 6. Current Focus shifts to P3-12 after merge. | PR #47 (merged 2026-05-17) |
+| D31 | P3-12 — driver_capabilities test-isolation pollution (3 of 4 in the flaky-test cleanup batch). `tests/test_driver_capabilities.py::TestDriverBaseCapabilitySet::test_non_canonical_token_warns_but_adds` passed alone but failed in full sweep with `AssertionError: []` (caplog captured zero records). **Bisect**: narrowed polluter to `test_alembic_chain.py` (single test reproduces it). **Root cause**: `alembic/env.py:35` calls `logging.config.fileConfig(config.config_file_name)` which defaults to `disable_existing_loggers=True` — every already-imported logger (including `app.hal.base`, populated when pytest collects sibling modules that import HAL drivers) has its `disabled` flag flipped to `True`, silently dropping all subsequent log records and starving downstream `caplog`-based tests. Production alembic runs via CLI in a fresh process where there is nothing to disable, so the leak is pure pytest-in-process pollution — fix scoped to the test file rather than modifying `env.py` (preserves CLI behavior untouched, matches P3-10's "fix at the right layer" pattern). **Fix**: autouse fixture in `test_alembic_chain.py` snapshots every existing logger's `disabled` flag pre-test and restores on teardown. Verified by revert/re-apply: stashed the fixture, `test_alembic_chain.py + test_non_canonical_token_warns_but_adds` reproduced the failure; restored, both pass. Full-sweep flaky count 6 → 5 (only the 5 P3-13 `probe_calibration_service` mock failures remain). Current Focus shifts to P3-13 after merge. | this PR (2026-05-17) |
 
 ---
 
@@ -906,14 +907,22 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 **Status**: ✅ Done — this PR
 **Estimate**: 15-20 min (actual: ~10 min — root cause confirmed on first reproduce)
 
-### P3-12 — driver_capabilities test-isolation pollution
+### P3-12 — driver_capabilities test-isolation pollution ✅ Done (this PR)
 
-**What**: `tests/test_driver_capabilities.py::TestDriverBaseCapabilitySet::test_non_canonical_token_warns_but_adds` PASSES when run alone, FAILS when run as part of the full suite. Classic test-isolation pollution: another test registers state on the driver capability registry that leaks into this test.
+**What**: `tests/test_driver_capabilities.py::TestDriverBaseCapabilitySet::test_non_canonical_token_warns_but_adds` passed alone but failed in full sweep with `AssertionError: []` — `caplog.records` was empty.
 
-**Acceptance**: identify the polluting test; either fix the polluter (add cleanup) or make the affected test more defensive (reset capability state in fixture).
+**Root cause** (bisect narrowed polluter to `test_alembic_chain.py`): `alembic/env.py:35` calls `logging.config.fileConfig(config.config_file_name)` which defaults to `disable_existing_loggers=True`. Every already-imported logger (including `app.hal.base`, populated by sibling tests that import HAL drivers) gets its `disabled` flag flipped to `True`, silently dropping every subsequent log record.
 
-**Status**: `[ ]` not started (this batch, after P3-11)
-**Estimate**: 30-45 min (need to find polluting test via bisect)
+**Why test-scoped fix, not env.py**: production runs alembic via CLI in a fresh process where there is nothing to disable — the disable-spread is purely a pytest-in-process artifact. Changing env.py would alter CLI behavior to satisfy a test-only concern; containing the pollution at the source (the polluting test file) keeps production behavior identical. Same "fix at the right layer" pattern as P3-10.
+
+**Fix**: autouse fixture in `test_alembic_chain.py` snapshots every existing logger's `disabled` flag pre-test and restores on teardown.
+
+**Verified by revert/re-apply**: stashed the fixture, `test_alembic_chain.py + test_non_canonical_token_warns_but_adds` reproduced the failure (`AssertionError: []`); restored, both pass.
+
+**Acceptance**: failing test passes in full sweep; flaky count 6 → 5; only P3-13's 5 `probe_calibration_service` failures remain.
+
+**Status**: ✅ Done — this PR
+**Estimate**: 30-45 min (actual: ~25 min — bisect narrowed in 4 runs)
 
 ### P3-13 — probe_calibration_service mock pattern (×5)
 
@@ -967,18 +976,18 @@ Symptom uniformity suggests shared root cause — probably mock pattern (e.g. se
 
 ## 📊 Summary
 
-> Counts as of 2026-05-17 (P3-11 in this PR). Batch progress:
-> P3-10 ✅ + P3-11 ✅; P3-12 + P3-13 remain. Full-sweep flaky count
-> 9 (pre-batch) → 8 (post-P3-10) → 6 (post-P3-11).
+> Counts as of 2026-05-17 (P3-12 in this PR). Batch progress:
+> P3-10 ✅ + P3-11 ✅ + P3-12 ✅; only P3-13 remains. Full-sweep flaky
+> count 9 (pre-batch) → 8 (post-P3-10) → 6 (post-P3-11) → 5 (post-P3-12).
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 30 | — | — |
+| ✅ Done | 31 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 6 total | 4 days | 4 days |
 | 🟠 P1 (confidence) | 4 open / 6 total | 3 days | 2.5 days |
 | 🟡 P2 (abstraction debt) | 0 open / 5 total | 0 days | 0 |
-| 🟢 P3 (polish) | 2 open / 13 total | ~1 hr | 0 |
-| **Total open** | **9** | **~7 days + 1 hr** | **6.5 days** |
+| 🟢 P3 (polish) | 1 open / 13 total | ~30-60 min | 0 |
+| **Total open** | **8** | **~7 days + 1 hr** | **6.5 days** |
 
 ---
 
