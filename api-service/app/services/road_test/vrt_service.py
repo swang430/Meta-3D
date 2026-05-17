@@ -210,10 +210,21 @@ class VRTService:
         (``configuration.auto_generated == True``) are returned.
         Scenario enumeration paths want the default (companions are not
         real scenarios); internal/admin paths that need to inspect them
-        can opt in. Filtering is applied in Python because the JSON
-        column predicate is verbose / dialect-specific and the
-        companion population is small (one row per legacy
-        scenario-based TestPlan).
+        can opt in.
+
+        Pagination strategy when ``include_companions=False``:
+        bounded-batch fetch with an overshoot factor. We can't push the
+        companion predicate into SQL portably — ``configuration`` is a
+        plain ``JSON`` column and the predicate diverges per dialect
+        (``->>`` on PG vs ``json_extract`` on SQLite) — so the filter
+        runs in Python. Loading the whole table before pagination would
+        be O(table size) memory (Codex P2 on PR #41); instead we fetch
+        ``needed * OVERSHOOT_FACTOR`` rows per round-trip and stop as
+        soon as we have enough non-companion rows for the requested
+        page. Companion density is low in practice (one row per legacy
+        scenario-based TestPlan; ~10% in the dev DB sample at fix time)
+        so the first batch almost always satisfies the page; the loop
+        is correctness-insurance for the edge case where it doesn't.
         """
         query = db.query(TestCase).filter(TestCase.test_type == VRT_TEST_TYPE)
         if is_template is not None:
@@ -222,13 +233,35 @@ class VRTService:
             query = query.filter(TestCase.template_category == template_category)
         if created_by is not None:
             query = query.filter(TestCase.created_by == created_by)
-        # Apply ordering + pagination AFTER companion filtering so the
-        # ``limit`` reflects real scenarios. SQL-side LIMIT followed by
-        # Python filter would silently shrink the page.
-        rows = query.order_by(TestCase.created_at.desc()).all()
-        if not include_companions:
-            rows = [r for r in rows if not is_companion_test_case(r)]
-        return rows[skip : skip + limit]
+        ordered = query.order_by(TestCase.created_at.desc())
+
+        if include_companions:
+            return ordered.offset(skip).limit(limit).all()
+
+        # Bounded-batch fetch — memory is O(batch_size), not O(table).
+        # OVERSHOOT_FACTOR=2 means a uniform companion density of <=50%
+        # converges in one round-trip; densities above that just cost
+        # extra round-trips, never extra memory.
+        OVERSHOOT_FACTOR = 2
+        MIN_BATCH = 50
+        needed = skip + limit
+        if needed <= 0:
+            return []
+        batch_size = max(needed * OVERSHOOT_FACTOR, MIN_BATCH)
+
+        collected: List[TestCase] = []
+        db_offset = 0
+        while len(collected) < needed:
+            batch = ordered.offset(db_offset).limit(batch_size).all()
+            if not batch:
+                break  # exhausted the table
+            for row in batch:
+                if not is_companion_test_case(row):
+                    collected.append(row)
+                    if len(collected) >= needed:
+                        break
+            db_offset += batch_size
+        return collected[skip:needed]
 
     def update_vrt_test_case(
         self,

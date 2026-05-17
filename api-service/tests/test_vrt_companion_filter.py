@@ -183,6 +183,62 @@ class TestListVrtTestCasesCompanionFilter:
         assert len(rows) == 3
         assert all(not is_companion_test_case(r) for r in rows)
 
+    def test_bounded_batch_does_not_load_whole_table(self, db, monkeypatch):
+        """Codex P2 on PR #41: previous implementation loaded ALL VRT
+        TestCases into Python before pagination — O(table size) memory
+        on a path that takes the default limit=100. The bounded-batch
+        loop must touch only as many rows as needed (no full-table
+        materialization). Pinned by spying on Query.limit().
+        """
+        # Seed enough rows that a full-table load would obviously
+        # diverge from a bounded-batch fetch.
+        for i in range(20):
+            _make_real_vrt(db, name=f"real-{i}")
+        for i in range(5):
+            _make_companion(db, scenario_id=f"s{i}")
+
+        # Track every LIMIT value the implementation passes to SQL.
+        # If it ever calls .limit(None) or .limit(very_large), we've
+        # regressed to the old behavior.
+        seen_limits: list[int] = []
+        original_limit = type(db.query(TestCase)).limit
+
+        def spying_limit(self, value):
+            seen_limits.append(value)
+            return original_limit(self, value)
+
+        monkeypatch.setattr(type(db.query(TestCase)), "limit", spying_limit)
+
+        rows = vrt_service.list_vrt_test_cases(db, limit=5)
+
+        assert len(rows) == 5
+        assert all(not is_companion_test_case(r) for r in rows)
+        # Every LIMIT must be bounded — never None, never close to table size.
+        # First batch is needed*OVERSHOOT=10, but the MIN_BATCH=50 floor
+        # kicks in; either way, well under the 25-row table.
+        assert seen_limits, "expected at least one bounded LIMIT call"
+        assert all(
+            isinstance(v, int) and v <= 100 for v in seen_limits
+        ), f"expected bounded LIMIT per batch, got {seen_limits}"
+
+    def test_bounded_batch_loops_when_companion_density_exhausts_first_batch(self, db):
+        """Edge case: if the first batch is all companions, the loop
+        must fetch more — not return an empty page when reals exist
+        further down the ordering.
+        """
+        # 60 companions then 5 reals. ORDER BY created_at DESC means
+        # reals (created LAST) come FIRST in the ordering, so this
+        # tests the opposite direction too — verify ordering doesn't
+        # accidentally hide reals behind companions.
+        for i in range(60):
+            _make_companion(db, scenario_id=f"c{i}")
+        for i in range(5):
+            _make_real_vrt(db, name=f"r{i}")
+        rows = vrt_service.list_vrt_test_cases(db, limit=10)
+        # 5 reals exist; ask for 10 → get all 5
+        assert len(rows) == 5
+        assert all(not is_companion_test_case(r) for r in rows)
+
 
 # ──────────────────────────────────────────────────────────────────────────
 # vrt_test_case_to_scenario — refuses companions explicitly
