@@ -329,6 +329,29 @@ class TestP06MockFirstCall:
         assert execution.status == "completed", execution.status
         assert execution.duration_sec is not None
 
+        # Audit 2026-05-17 Y2: ``asc_files_loaded`` is ASC-specific
+        # (ExternalWaveformStrategy); GCM mode doesn't use .asc files at
+        # all. Was hardcoded True in both modes before — semantically
+        # misleading. Pin that the field is OMITTED in GCM result so a
+        # regression that re-hardcodes it would fail here. This session
+        # was created with engine_mode="keysight_gcm".
+        # Note: storage key is "measure" (see measure.py:write_phase_result),
+        # not "mimo_test" (which is the public API phase alias).
+        measure_payload = (
+            (execution.measurements or {}).get("phases", {}).get("measure", {})
+        )
+        assert measure_payload.get("engine_mode") == "keysight_gcm", (
+            f"sanity: this test expects GCM mode (got "
+            f"{measure_payload.get('engine_mode')!r}); ASC-specific "
+            f"assertion below would not be meaningful otherwise. "
+            f"Available phases: {list((execution.measurements or {}).get('phases', {}).keys())}"
+        )
+        assert "asc_files_loaded" not in measure_payload, (
+            f"asc_files_loaded should NOT appear in GCM mode result "
+            f"(audit Y2 — engine-specific field). Got: "
+            f"{measure_payload.get('asc_files_loaded')!r}"
+        )
+
     def test_precheck_no_missing_cert_warning(
         self, lab, hal_with_mocks, db,
     ):

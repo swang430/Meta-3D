@@ -1,13 +1,16 @@
 """POST /lab-profiles — wizard-driven create flow (P0-2 roadmap).
 
-The wizard collects a chamber + ≥1 instrument binding + a name, then
-sends one POST. These tests pin:
+The wizard collects a chamber + (optionally ≥1) instrument bindings +
+a name, then sends one POST. These tests pin:
   - Happy path: payload lands as a real LabProfile row, response shape
     matches GET summary.
   - 422 when the chamber FK doesn't resolve.
-  - 422 when instrument_bindings is empty (acceptance forbids zero-
-    instrument labs — wizard would let the operator stumble into a
-    "Lab exists but no calibration possible" trap otherwise).
+  - **201 when instrument_bindings is empty** (2026-05-17 audit Y1
+    reversal — was 422; relaxed because the seeded default
+    `CAICT-Lab-1` has 0 bindings, so the validator was rejecting a
+    shape the system itself produces. Downstream calibration /
+    commissioning enforces "≥1 binding" at use time, which is the
+    right layer; the create endpoint should accept seed-shaped input.)
   - 409 when the name collides (uniqueness is the operator-facing
     error, not 500).
   - Defaults: is_active defaults to True so first-call can start
@@ -181,16 +184,36 @@ class TestCreateHappyPath:
 
 
 # ---------------------------------------------------------------------------
-# Validation: ≥1 instrument binding (acceptance criterion)
+# Validation: empty instrument_bindings now ACCEPTED (audit 2026-05-17 Y1)
 # ---------------------------------------------------------------------------
 
-class TestInstrumentBindingsRequired:
-    def test_empty_bindings_array_rejected_422(self, client, seeded_chamber):
+class TestInstrumentBindingsOptionalAtCreate:
+    """The previous "≥1 binding at create" rule was inconsistent with
+    the seeded default lab (CAICT-Lab-1, 0 bindings via bootstrap path);
+    operators trying to clone-and-edit the default lab hit 422 with no
+    recovery. Audit 2026-05-17 (PR #53) flagged the mismatch; user
+    decision was to loosen the create endpoint and let downstream
+    calibration / commissioning be the layer that requires bindings."""
+
+    def test_empty_bindings_array_accepted_201(self, client, seeded_chamber):
         c, _ = client
         payload = _minimal_payload(seeded_chamber.id)
         payload["instrument_bindings"] = []
         r = c.post("/api/v1/lab-profiles", json=payload)
-        assert r.status_code == 422, r.text
+        assert r.status_code == 201, r.text
+        # Don't pin response shape for the bindings field (the summary
+        # response model may omit it). Just confirm row exists in DB.
+        body = r.json()
+        assert "id" in body, body
+
+    def test_omitted_bindings_field_accepted_201(self, client, seeded_chamber):
+        """Omitting the field entirely should also work — uses the
+        default_factory=list rather than rejecting as missing."""
+        c, _ = client
+        payload = _minimal_payload(seeded_chamber.id)
+        payload.pop("instrument_bindings", None)
+        r = c.post("/api/v1/lab-profiles", json=payload)
+        assert r.status_code == 201, r.text
 
 
 # ---------------------------------------------------------------------------
