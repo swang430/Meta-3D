@@ -8,27 +8,25 @@
 
 ## 🎯 Current Focus
 
-**`P3-2` — Driver self-test CLI**
+**`P3-9` — Catalog `status` enum contract drift fix**
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
   gets appended to the backlog instead of done inline.
 
-**State (2026-05-17)**: P3-3 shipped (PR #29, D14). P0-3/P0-4/P0-5
-still in the 🚧 Blocked-on-hardware queue below until the next
-on-site trip.
+**State (2026-05-17)**: P3-2 shipped (PR #30, D15). Backlog triaged
+(PR #31, 4 entries promoted to P3-6..P3-9). P0-3/P0-4/P0-5 still in
+the 🚧 Blocked-on-hardware queue below until the next on-site trip.
 
-P3-2 is the offline / slack-paste sibling of P3-3's in-GUI viewer:
-`python -m scripts.driver_selftest` dumps per-loaded-driver runtime
-state (live `capabilities`, status, endpoint, last error) +
-declared `model_capabilities` ClassVar, plus the diff between them
-(declared-but-not-live = license absent? probe failed?). Three
-output formats: text (terminal), json (pipe to jq), md (slack/
-issue paste). Reuses P2-2 live capabilities + P2-3 static
-declaration + the HAL init/shutdown lifecycle that lifespan uses,
-so the CLI's view matches what the API actually serves.
+P3-9 is a small (~15 min) contract-sync chore — widens
+`InstrumentModel.status` enum in `api/openapi.yaml` to include
+`pending_dev` (which the backend has been returning since `_convert_model`
+added it). Practice run of the 4-step API contract sync flow
+(openapi.yaml → npm run openapi:generate → service.ts consumers →
+mockServer fixtures) recorded in
+[`feedback_api_contract_sync_after_pydantic_change`](../../memory).
 
-Last review: 2026-05-17 (after P3-3 ship)
+Last review: 2026-05-17 (after backlog triage)
 Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md)
 
 ---
@@ -95,7 +93,8 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 | D12 | Commissioning default-lab fragility (was P1-candidate backlog) — extracted `app/services/lab_resolution.py` with typed `LabResolutionError`, both mimo_ota + trp factories now share it; commissioning API maps ambiguous/none to 422 with picker-ready `active_labs[]` (was 500); GUI `Commissioning/index.tsx` renders lab Select pre-session + recovers from 422 picker payload + localStorage default | PR #27 (merged 2026-05-17) |
 | D13 | P2-3 — per-Model static `model_capabilities` ClassVar + catalog API surface + `_real_driver_registry()` lazy module-level helper collapsing the old `SUPPORTED_REAL_DRIVERS` drift; openapi.yaml + GUI generated types synced (Codex P2 fix in same PR). Stale-doc correction here: P2-3 was already in main when this PR (P3-3) started, but PR #28 didn't update its section status; consumed directly by D14 below so the dependency chain stays linked in one place. | PR #28 (merged 2026-05-17) |
 | D14 | P3-3 — Capability gap viewer in GUI. Backend extends `PreflightResult` with `bound_models: List[BoundModelDeclaration]` (per-binding static `model_capabilities` from P2-3). GUI: PreflightModal gains "各绑定模型的声明能力" section alongside live `lab_capabilities`; EquipmentManager drawer gains `model_capabilities` badge group next to existing datasheet badges. | PR #29 (merged 2026-05-17) |
-| D15 | P3-2 — Driver self-test CLI (`python -m scripts.driver_selftest`). Dumps per-loaded-driver runtime (live `capabilities`, status, endpoint, error) + declared `model_capabilities` + diffs (declared-but-not-live, invariant-breach live-not-declared) in text / json / md formats. Tears HAL down after each run so repeated invocations stay clean. | this PR (2026-05-17) |
+| D15 | P3-2 — Driver self-test CLI (`python -m scripts.driver_selftest`). Dumps per-loaded-driver runtime (live `capabilities`, status, endpoint, error) + declared `model_capabilities` + diffs (declared-but-not-live, invariant-breach live-not-declared) in text / json / md formats. Tears HAL down after each run so repeated invocations stay clean. **Codex P1 follow-up in same PR**: introduced `DriverMode.MOCK_FORCE` to override per-instrument `driver_mode='real'` — without it, `--mode mock` was still opening real VISA/TCP to configured hardware (operator safety bug). | PR #30 (merged 2026-05-17) |
+| D16 | P3-9 — Widened `api/openapi.yaml`'s `InstrumentModel.status` enum to include `pending_dev` (which the backend has been returning since `_convert_model` started using it). Regenerated `gui/src/types/api.generated.ts`; verified GUI consumers (`App.tsx` status color + label maps) already handled the value via the hand-written `InstrumentStatus` union. Practice run of the 4-step API contract sync flow. | this PR (2026-05-17) |
 
 ---
 
@@ -479,7 +478,7 @@ in-flight diagnostic? Today: silently fails. Decide policy
 ### P3-1 — HAL Reload confirm dialog
 0.5 day. Prevent accidental reload mid-test.
 
-### P3-2 — Driver self-test CLI ⭐ Current Focus
+### P3-2 — Driver self-test CLI ✅ Done (see D15)
 
 **What**: `python -m scripts.driver_selftest` initialises HAL in the
 same way FastAPI's lifespan does, dumps per-loaded-driver state to
@@ -589,8 +588,8 @@ to the existing HAL readiness table.
 
 **Acceptance**: pick one of (a) widen openapi enum to include `pending_dev` + regen TS types, (b) change `_convert_model` to map `pending_dev` to an existing enum value (likely `offline`). Both sides aligned.
 
-**Status**: `[ ]` not started (discovered 2026-05-17 during P2-3, triaged 2026-05-17)
-**Estimate**: ~15 min
+**Status**: `[≈]` in review — this PR
+**Estimate**: ~15 min (actual: ~10 min)
 
 ---
 
@@ -625,17 +624,16 @@ to the existing HAL readiness table.
 
 ## 📊 Summary
 
-> Counts as of 2026-05-17 (post-P3-2 merge; 2026-05-17 backlog triage
-> promoted 4 discovered entries to P3-6 / P3-7 / P3-8 / P3-9).
+> Counts as of 2026-05-17 (P3-9 in this PR, not yet merged).
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 15 | — | — |
+| ✅ Done | 16 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 6 total | 4 days | 4 days |
 | 🟠 P1 (confidence) | 4 open / 6 total | 3 days | 2.5 days |
 | 🟡 P2 (abstraction debt) | 3 open / 5 total | 4.5 days | 0 |
-| 🟢 P3 (polish) | 7 open / 9 total | ~3.5 days | 0 |
-| **Total open** | **17** | **15 days** | **6.5 days** |
+| 🟢 P3 (polish) | 6 open / 9 total | ~3 days | 0 |
+| **Total open** | **16** | **14.5 days** | **6.5 days** |
 
 ---
 
