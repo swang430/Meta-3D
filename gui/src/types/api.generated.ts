@@ -154,6 +154,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/instruments/hal/readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * HAL composite readiness snapshot (P3-5)
+         * @description Returns the snapshot built during the last HAL initialise / reload:
+         *     per-driver rows (category, model, endpoint, status, detail, plus
+         *     driver-specific `extras` like F64 firmware_version), the active
+         *     LabProfile state, the active calibration certificate validity,
+         *     and a DUT-attach placeholder. `available=false` means HAL is not
+         *     initialised yet — the sub-sections carry placeholders, the GUI
+         *     should render "HAL not ready" rather than consuming them as live.
+         *     Sibling HAL endpoints (`/hal/status`, `/hal/reload`, `/hal/switch`)
+         *     are not currently in this contract; the GUI consumes them via
+         *     inline-typed `axios.get`. Bringing them under generated types is
+         *     out of scope for P3-5.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Readiness snapshot */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HALReadinessResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -244,6 +293,77 @@ export interface components {
             endpoint?: string | null;
             controller?: string | null;
             notes?: string | null;
+        };
+        /**
+         * @description P3-5 composite snapshot. `available=false` means HAL is not
+         *     initialised; sub-sections still carry valid shapes (with
+         *     placeholder values) so the GUI never has to handle a 404 or
+         *     missing-field path.
+         */
+        HALReadinessResponse: {
+            available: boolean;
+            drivers: components["schemas"]["DriverReadinessRow"][];
+            lab_profile: components["schemas"]["LabProfileReadiness"];
+            calibration: components["schemas"]["CalibrationReadiness"];
+            dut_attach: components["schemas"]["DutAttachReadiness"];
+            generated_at_iso: string;
+        };
+        DriverReadinessRow: {
+            category: string;
+            model: string;
+            endpoint: string;
+            /** @enum {string} */
+            status: "ok" | "fail" | "skipped";
+            detail: string;
+            /**
+             * @description Driver-specific metadata (string-keyed). F64 surfaces
+             *     firmware_version / band_label / product_family from the
+             *     parsed SYST:INFO? response (P3-4); other drivers return an
+             *     empty object until they override `readiness_metadata()`.
+             *     Field values may be null when a driver field is unpopulated.
+             * @default {}
+             */
+            extras: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * @description Active LabProfile state. `status` distinguishes "no profiles at
+         *     all" (`missing`) from "profiles exist but none active"
+         *     (`inactive`) — different operator next-steps.
+         */
+        LabProfileReadiness: {
+            profile_id?: string | null;
+            profile_name?: string | null;
+            is_active: boolean;
+            /** @enum {string} */
+            status: "ok" | "inactive" | "missing" | "ambiguous";
+            detail: string;
+        };
+        /**
+         * @description Validity of the active lab's bound calibration certificate.
+         *     `no_lab` (no lab to look at a cert through) is distinct from
+         *     `missing` (lab exists but cert FK is NULL) — the former hints
+         *     "set up lab first", the latter hints "run calibration".
+         */
+        CalibrationReadiness: {
+            certificate_number?: string | null;
+            valid_until_iso?: string | null;
+            /** @enum {string} */
+            status: "valid" | "expired" | "missing" | "no_lab";
+            days_remaining?: number | null;
+            detail: string;
+        };
+        /**
+         * @description DUT-attach state — placeholder in this build. `status` is
+         *     always `not_implemented` since no runtime model exists for
+         *     "DUT present in chamber" (no probe-sensing / RFID / session
+         *     table). Field is in the contract so future probe-sensing
+         *     work can land without breaking the response shape.
+         */
+        DutAttachReadiness: {
+            status: string;
+            detail: string;
         };
     };
     responses: never;

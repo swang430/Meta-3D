@@ -383,6 +383,23 @@ class InstrumentDriver(ABC):
             "timestamp": datetime.utcnow().isoformat()
         }
 
+    def readiness_metadata(self) -> Dict[str, Any]:
+        """P3-5: driver-specific extras for the HAL readiness report.
+
+        Returns a key/value dict surfaced alongside the row's core fields
+        (status, endpoint, detail) in ``GET /instruments/hal/readiness`` +
+        the formatted startup table. Default empty so the base contract is
+        zero-cost — subclasses opt-in by overriding when they have parsed
+        metadata worth exposing (e.g. PROPSIM F64 surfaces SYST:INFO?
+        fields here, since P3-4 parses them onto the driver instance but
+        the readiness report is the only outward-facing surface).
+
+        Must be safe to call when the driver is not connected (return
+        ``{}`` rather than raise) — the readiness builder doesn't filter
+        by status before calling.
+        """
+        return {}
+
     def _set_status(self, status: InstrumentStatus, error: Optional[str] = None):
         """Internal method to update status with lifecycle logging"""
         old_status = self._status

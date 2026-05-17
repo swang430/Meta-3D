@@ -1413,6 +1413,155 @@ def get_hal_status():
     )
 
 
+# ============================================================
+# P3-5: composite readiness snapshot (drivers + lab + cal + dut-attach)
+# ============================================================
+
+class DriverReadinessRowResponse(BaseModel):
+    """One driver's row in the readiness report. Shape mirrors
+    ``app.services.readiness.DriverReadinessRow``.
+
+    ``extras`` is driver-specific (F64 surfaces firmware_version /
+    band_label / product_family from P3-4's SYST:INFO? parse; other
+    drivers return ``{}`` until they override ``readiness_metadata()``).
+    """
+    category: str
+    model: str
+    endpoint: str
+    status: str  # "ok" | "fail" | "skipped"
+    detail: str
+    extras: Dict[str, Any] = {}
+
+
+class LabProfileReadinessResponse(BaseModel):
+    """Active LabProfile state. ``status`` ∈
+    {"ok", "inactive", "missing", "ambiguous"} — see
+    ``app.services.readiness.LabProfileReadiness`` for semantics."""
+    profile_id: Optional[str] = None
+    profile_name: Optional[str] = None
+    is_active: bool
+    status: str
+    detail: str
+
+
+class CalibrationReadinessResponse(BaseModel):
+    """Active lab's calibration certificate validity. ``status`` ∈
+    {"valid", "expired", "missing", "no_lab"} — distinguishes
+    "no lab to even look at a cert through" from "lab exists but
+    has no cert bound" so the GUI can suggest the right next step
+    (set up lab vs run calibration)."""
+    certificate_number: Optional[str] = None
+    valid_until_iso: Optional[str] = None
+    status: str
+    days_remaining: Optional[int] = None
+    detail: str
+
+
+class DutAttachReadinessResponse(BaseModel):
+    """DUT-attach state — placeholder in this build. ``status`` is
+    always ``"not_implemented"`` because no runtime model exists
+    (no probe-sensing, RFID, session table). Field is surfaced so
+    the readiness shape is forward-compatible with future sensing
+    work — swapping in a real implementation won't break the
+    openapi contract or GUI consumers."""
+    status: str
+    detail: str
+
+
+class HALReadinessResponse(BaseModel):
+    """Composite snapshot returned by ``GET /instruments/hal/readiness``.
+
+    ``available=False`` means HAL hasn't initialised yet (the
+    lifespan startup hasn't run, or a reload is mid-flight). The
+    GUI should render "HAL not ready" rather than treating the
+    placeholder sub-sections as the live state."""
+    available: bool
+    drivers: List[DriverReadinessRowResponse]
+    lab_profile: LabProfileReadinessResponse
+    calibration: CalibrationReadinessResponse
+    dut_attach: DutAttachReadinessResponse
+    generated_at_iso: str
+
+
+@router.get("/instruments/hal/readiness", response_model=HALReadinessResponse)
+def get_hal_readiness():
+    """P3-5: composite "is the chamber actually ready?" snapshot.
+
+    Bundles the per-driver readiness rows (previously only logged at
+    startup) with active LabProfile state, active calibration
+    certificate validity, and a DUT-attach placeholder. Operator can
+    Slack-paste a single JSON or open one GUI panel instead of grep-
+    ing log files for HAL init + checking LabProfile separately +
+    looking up cert expiry by hand.
+
+    Returns ``available=false`` with empty/placeholder sub-sections
+    when HAL hasn't initialised yet (lifespan not run, mid-reload).
+    GUI should treat that as "not ready" rather than rendering the
+    placeholder values as live.
+    """
+    from app.services.instrument_hal_service import get_hal_service
+
+    hal = get_hal_service()
+    report = hal.last_readiness_report if hal else None
+
+    if report is None:
+        # HAL not initialised — return a shaped placeholder so the GUI
+        # doesn't have to special-case 404 / missing field handling.
+        from datetime import datetime as _dt
+        return HALReadinessResponse(
+            available=False,
+            drivers=[],
+            lab_profile=LabProfileReadinessResponse(
+                is_active=False,
+                status="missing",
+                detail="HAL not initialised yet",
+            ),
+            calibration=CalibrationReadinessResponse(
+                status="no_lab",
+                detail="HAL not initialised yet",
+            ),
+            dut_attach=DutAttachReadinessResponse(
+                status="not_implemented",
+                detail="HAL not initialised yet",
+            ),
+            generated_at_iso=_dt.utcnow().isoformat(),
+        )
+
+    return HALReadinessResponse(
+        available=True,
+        drivers=[
+            DriverReadinessRowResponse(
+                category=r.category,
+                model=r.model,
+                endpoint=r.endpoint,
+                status=r.status,
+                detail=r.detail,
+                extras=r.extras,
+            )
+            for r in report.drivers
+        ],
+        lab_profile=LabProfileReadinessResponse(
+            profile_id=report.lab_profile.profile_id,
+            profile_name=report.lab_profile.profile_name,
+            is_active=report.lab_profile.is_active,
+            status=report.lab_profile.status,
+            detail=report.lab_profile.detail,
+        ),
+        calibration=CalibrationReadinessResponse(
+            certificate_number=report.calibration.certificate_number,
+            valid_until_iso=report.calibration.valid_until_iso,
+            status=report.calibration.status,
+            days_remaining=report.calibration.days_remaining,
+            detail=report.calibration.detail,
+        ),
+        dut_attach=DutAttachReadinessResponse(
+            status=report.dut_attach.status,
+            detail=report.dut_attach.detail,
+        ),
+        generated_at_iso=report.generated_at_iso,
+    )
+
+
 @router.post("/instruments/hal/switch", response_model=HALModeSwitchResult)
 async def switch_hal_mode_endpoint(request: HALModeSwitchRequest):
     """

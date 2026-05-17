@@ -96,6 +96,7 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 | D15 | P3-2 — Driver self-test CLI (`python -m scripts.driver_selftest`). Dumps per-loaded-driver runtime (live `capabilities`, status, endpoint, error) + declared `model_capabilities` + diffs (declared-but-not-live, invariant-breach live-not-declared) in text / json / md formats. Tears HAL down after each run so repeated invocations stay clean. **Codex P1 follow-up in same PR**: introduced `DriverMode.MOCK_FORCE` to override per-instrument `driver_mode='real'` — without it, `--mode mock` was still opening real VISA/TCP to configured hardware (operator safety bug). | PR #30 (merged 2026-05-17) |
 | D16 | P3-9 — Widened `api/openapi.yaml`'s `InstrumentModel.status` enum to include `pending_dev` (which the backend has been returning since `_convert_model` started using it). Regenerated `gui/src/types/api.generated.ts`; verified GUI consumers (`App.tsx` status color + label maps) already handled the value via the hand-written `InstrumentStatus` union. Practice run of the 4-step API contract sync flow. | PR #32 (merged 2026-05-17) |
 | D17 | P3-4 — Structured `SYST:INFO?` parser for F64 — new `F64SysInfo` dataclass + `parse_f64_sys_info` function extract product_family / channel_count / signal_type / firmware_version / secondary_count / band_label / extra_tokens. F64 `connect()` populates the structured fields (was only extracting channel_count). 21 new parser test cases pin positional + labeled + defensive shapes. | this PR (2026-05-17) |
+| D18 | P3-5 — Composite HAL readiness snapshot. New `app/services/readiness.py` aggregates per-driver rows (now with `extras` dict — F64 surfaces firmware_version / band_label / product_family via a polymorphic `readiness_metadata()` hook on `InstrumentDriver`) + active `LabProfile` status + active `CalibrationCertificate` validity + DUT-attach **placeholder** (`not_implemented` — no runtime sensing model exists; surfaced anyway for forward-compat). Snapshot is persisted on the HAL service instance and exposed via `GET /api/v1/instruments/hal/readiness` (also added to `openapi.yaml` + regenerated TS types). 20 new tests pin section semantics + endpoint shape. **Out of scope**: GUI consumption of the new endpoint (sibling HAL endpoints `/hal/status`/`/hal/reload`/`/hal/switch` still consume via inline-typed axios; consistent precedent); DUT-attach sensing implementation (future P3 item). | this PR (2026-05-17) |
 
 ---
 
@@ -572,8 +573,68 @@ the metadata to the readiness report (and via P3-2's
 **Estimate**: 0.5 day (actual: ~30 min)
 
 ### P3-5 — Startup readiness summary expansion
-0.5 day. Add lab-profile status + cal-cert validity + DUT-attach state
-to the existing HAL readiness table.
+
+**What**: Pre-P3-5 the only "is the chamber ready?" surface was a
+per-driver table logged once to stdout during HAL init; lab-profile
+state, calibration validity, and any driver-specific metadata
+(firmware version, band coverage from P3-4) were either invisible or
+required separate API calls + manual cross-referencing. P3-5 unifies
+these into a single composite snapshot persisted on the HAL service
+and exposed via `GET /api/v1/instruments/hal/readiness`.
+
+**Why**: Operators on-site lose minutes per debugging round grepping
+mixed logs to answer "is the lab fully ready?" — the answer is now
+a single `available + status` JSON. Surface gives the future GUI HAL
+panel + Slack `curl | jq` triage one source of truth instead of three.
+
+**Acceptance**:
+- New `app/services/readiness.py` with `ReadinessReport` dataclass
+  (drivers + lab_profile + calibration + dut_attach sub-sections)
+  and pure SQL helpers `build_lab_profile_readiness` /
+  `build_calibration_readiness` / `build_dut_attach_readiness`
+  (no HAL coupling — tests synthesise DB rows directly).
+- Per-driver rows gain an `extras` dict populated from a new
+  polymorphic `InstrumentDriver.readiness_metadata()` hook; F64
+  overrides to surface `firmware_version` / `band_label` /
+  `product_family` from P3-4's parsed `sys_info`.
+- HAL service stores the snapshot on `self.last_readiness_report`,
+  refreshed on each `initialize()` / reload. `_log_readiness_report`
+  prints the three new sections under the driver table.
+- New `GET /api/v1/instruments/hal/readiness` endpoint + Pydantic
+  response models; `openapi.yaml` schemas added (`HALReadinessResponse`,
+  `DriverReadinessRow`, `LabProfileReadiness`, `CalibrationReadiness`,
+  `DutAttachReadiness`); TS types regenerated.
+- `available=false` placeholder path: when HAL hasn't initialised
+  yet the endpoint returns a shaped response (all sub-sections
+  present with placeholder details) instead of 404 — GUI never
+  has to handle missing-field cases.
+- 20 new tests in `tests/test_hal_readiness.py` covering: lab
+  status branches (missing/inactive/ok/ambiguous), cal status
+  branches (no_lab/missing/valid/expired), DUT-attach placeholder,
+  F64 extras via `readiness_metadata`, base driver empty default,
+  endpoint serialisation (available true + false), null-field
+  preservation in JSON.
+- **NOT in scope** (explicit deferral, see Out-of-scope below).
+
+**Out of scope** (deliberate):
+- GUI consumption of the new endpoint (panel that renders the
+  snapshot). Sibling HAL endpoints (`/status` / `/reload` /
+  `/switch`) all consume via inline-typed `axios.get` rather than
+  generated types — consistent precedent. GUI panel is a separate
+  P3-? item if/when an operator asks for it.
+- DUT-attach sensing implementation. No runtime model exists
+  (no probe-sensing / chamber-RFID / session table). Field is
+  surfaced as `status="not_implemented"` so the contract is
+  forward-compatible when sensing lands later (probably ties to
+  a future positioner-driven probe-presence detection).
+- FS16 / Aerotech / other drivers overriding `readiness_metadata`.
+  Hook is in place, default empty is honest about not having
+  parsed extras. Future PRs override when there's metadata worth
+  exposing (Rule 4: no "顺手" overrides without driver-specific
+  signal to surface).
+
+**Status**: `[≈]` in review — this PR
+**Estimate**: 0.5 day (actual: ~2 hours)
 
 ### P3-6 — Chamber preset Type-C `has_lna` test reconciliation
 
@@ -654,16 +715,16 @@ to the existing HAL readiness table.
 
 ## 📊 Summary
 
-> Counts as of 2026-05-17 (P3-4 in this PR, not yet merged).
+> Counts as of 2026-05-17 (P3-5 in this PR, not yet merged).
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 17 | — | — |
+| ✅ Done | 18 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 6 total | 4 days | 4 days |
 | 🟠 P1 (confidence) | 4 open / 6 total | 3 days | 2.5 days |
 | 🟡 P2 (abstraction debt) | 3 open / 5 total | 4.5 days | 0 |
-| 🟢 P3 (polish) | 5 open / 9 total | ~3 days | 0 |
-| **Total open** | **15** | **14.5 days** | **6.5 days** |
+| 🟢 P3 (polish) | 4 open / 9 total | ~2.5 days | 0 |
+| **Total open** | **14** | **14 days** | **6.5 days** |
 
 ---
 
