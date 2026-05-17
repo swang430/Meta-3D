@@ -566,7 +566,9 @@ class InstrumentHALService:
                         if conn:
                             conn.status = "connected"
                             conn.last_error = None
-                            from datetime import datetime
+                            # Use module-level ``datetime`` (line 14). A function-local
+                            # ``from datetime import datetime`` would shadow it and
+                            # UnboundLocalError later when every driver fails.
                             conn.last_connected_at = datetime.utcnow()
                             detected = extras.get("detected_test_app")
                             if detected is not None:
