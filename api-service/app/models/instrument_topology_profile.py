@@ -1,6 +1,6 @@
 """P2-1 Phase 2.1: persisted UXM topology profile.
 
-Replaces the in-code-only ``UxmTestProfile`` dataclass registry (kept
+Replaces the in-code-only ``UxmTopologyProfile`` dataclass registry (kept
 in ``app/hal/uxm_test_profiles.py``). Operators can now create / edit /
 delete topology profiles in the GUI without a code change + redeploy.
 
@@ -30,7 +30,7 @@ from app.db.database import Base
 class InstrumentTopologyProfile(Base):
     """A persisted topology profile bound to a UXM Test App.
 
-    See ``UxmTestProfile`` (``app/hal/uxm_test_profiles.py``) for the
+    See ``UxmTopologyProfile`` (``app/hal/uxm_test_profiles.py``) for the
     field-by-field semantics — this table mirrors that dataclass field
     set. The dataclass remains the canonical runtime shape;
     ``topology_profile_service.to_dataclass()`` builds one from a row.

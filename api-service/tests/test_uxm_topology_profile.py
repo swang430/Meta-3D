@@ -3,7 +3,7 @@
 
 Pins three layers:
 
-1. **`UxmTestProfile.compatible_test_apps`** dataclass field + the
+1. **`UxmTopologyProfile.compatible_test_apps`** dataclass field + the
    `is_compatible_with()` decision table. Empty list = any; non-empty
    list = case-insensitive exact match. None argument = "no Test App
    detected" treated as compatible (mock / pre-connect / offline mode).
@@ -40,7 +40,7 @@ from app.hal.uxm_command_profiles import (
     UxmLteNrIratProfile,
 )
 from app.hal.uxm_test_profiles import (
-    UxmTestProfile,
+    UxmTopologyProfile,
     get_profile,
     list_profiles,
 )
@@ -125,7 +125,7 @@ def _make_connection(
 
 
 # ============================================================
-# Layer 1: UxmTestProfile.compatible_test_apps semantics
+# Layer 1: UxmTopologyProfile.compatible_test_apps semantics
 # ============================================================
 
 
@@ -134,7 +134,7 @@ class TestProfileCompatDeclaration:
     operator-facing refuse path."""
 
     def test_empty_compat_list_means_any_test_app(self):
-        profile = UxmTestProfile(profile_id="any", name="any")
+        profile = UxmTopologyProfile(profile_id="any", name="any")
         assert profile.compatible_test_apps == []
         assert profile.is_compatible_with("5G_NR_Test") is True
         assert profile.is_compatible_with("LTE_NR_IRAT") is True
@@ -142,7 +142,7 @@ class TestProfileCompatDeclaration:
         assert profile.is_compatible_with(None) is True
 
     def test_specific_test_app_only_matches_that_app(self):
-        profile = UxmTestProfile(
+        profile = UxmTopologyProfile(
             profile_id="5g_only", name="5G only",
             compatible_test_apps=["5G_NR_Test"],
         )
@@ -153,7 +153,7 @@ class TestProfileCompatDeclaration:
         """Profile declares `5G_NR_Test`; driver may report
         `5G_NR_test` or `5g_nr_test` depending on firmware version
         formatting. The compat check must be case-insensitive."""
-        profile = UxmTestProfile(
+        profile = UxmTopologyProfile(
             profile_id="5g", name="5G",
             compatible_test_apps=["5G_NR_Test"],
         )
@@ -165,7 +165,7 @@ class TestProfileCompatDeclaration:
         """`None` = "we don't know which Test App is running" (mock
         mode, offline, pre-connect). Don't refuse the operator's
         selection — apply will catch real incompat later if needed."""
-        profile = UxmTestProfile(
+        profile = UxmTopologyProfile(
             profile_id="5g_only", name="5G",
             compatible_test_apps=["5G_NR_Test"],
         )

@@ -75,7 +75,7 @@ from app.diagnostics.protocol import (
 )
 from app.hal.uxm_base_station import UxmScpiCommands
 from app.hal.uxm_command_profiles import (
-    UxmCommandProfile,
+    UxmTestApp,
     Uxm5GNRTestAppProfile,
     UxmLteNrIratProfile,
 )
@@ -237,12 +237,12 @@ def _profile_for_driver(bs: Any) -> type:
     UXM/RealUxmDriver stores its profile in ``bs._cmds`` (a *class*, set in
     __init__, confirmed in connect()). Tests using a MagicMock baseStation
     won't have a real ``_cmds`` — MagicMock will auto-create one but it
-    won't be a UxmCommandProfile subclass. Defensive check: must be an
-    actual class subclassing UxmCommandProfile to be used; else fall back
+    won't be a UxmTestApp subclass. Defensive check: must be an
+    actual class subclassing UxmTestApp to be used; else fall back
     to 5G_NR_Test (the pre-2026-05-13 default).
     """
     profile = getattr(bs, "_cmds", None)
-    if isinstance(profile, type) and issubclass(profile, UxmCommandProfile):
+    if isinstance(profile, type) and issubclass(profile, UxmTestApp):
         return profile
     return Uxm5GNRTestAppProfile
 
