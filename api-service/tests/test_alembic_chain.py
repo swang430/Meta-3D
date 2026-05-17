@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 
 
@@ -86,11 +87,17 @@ def test_greenfield_upgrade_from_scratch(tmp_path):
 
     _assert_chain_end_state(engine)
 
-    # alembic_version recorded at head
+    # alembic_version recorded at head. Derive expected head from the
+    # script directory rather than hardcoding the SHA — the latter
+    # is brittle (every new migration breaks this test) and was the
+    # P3-10 root cause: 3 migrations landed after the constant was
+    # written. ScriptDirectory.get_current_head() asserts the test's
+    # actual intent ("DB reaches alembic head") not the incidental SHA.
+    expected_head = ScriptDirectory.from_config(cfg).get_current_head()
     with engine.connect() as conn:
         row = conn.execute(text("SELECT version_num FROM alembic_version")).first()
     assert row is not None
-    assert row[0] == "e863f092696b"
+    assert row[0] == expected_head
 
 
 def test_brownfield_stamp_then_upgrade(tmp_path):
