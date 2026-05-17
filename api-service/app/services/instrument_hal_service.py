@@ -23,19 +23,92 @@ from app.hal.positioner import MockPositioner
 from app.hal.signal_generator import MockSignalGenerator
 from app.hal.rf_switch import MockRfSwitch, EtslSwitchDriver
 
-SUPPORTED_REAL_DRIVERS = {
-    "channelEmulator": ["PROPSIM F64", "PROPSIM FS16"],
-    "baseStation": ["UXM 5G E7515B", "CMW500"],
-    "signalAnalyzer": ["N9020B MXA", "FSW43", "FSVA3000"],
-    "vectorSignalGenerator": ["N5182B MXG", "SMW200A", "SMU200A"],
-    "vna": ["E5071C ENA", "ZNA67"],
-    "positioner": ["EMCenter", "A3200"],
-    "rfSwitch": ["EMCenter Switch"],
-}
+# Driver registry: maps (category_key, model_name) → DriverClass.
+# Lazy-built so the HAL driver modules (which import each other + the
+# service layer) don't form an import cycle at module-load time.
+# Single source of truth for: (a) which real drivers exist, (b) which
+# DriverClass HAL bootstrap instantiates, (c) per-model capability
+# declarations exposed in the catalog API (P2-3).
+_REAL_DRIVER_REGISTRY_CACHE: Optional[Dict[str, Dict[str, type]]] = None
+
+
+def _real_driver_registry() -> Dict[str, Dict[str, type]]:
+    """Lazy-init + cache the (category_key, model_name) → DriverClass table.
+
+    Imports are deferred to first call because the driver modules pull in
+    base classes / VISA shims that take real time to load, and they may
+    themselves import from this service module — top-level imports would
+    deadlock on first import.
+    """
+    global _REAL_DRIVER_REGISTRY_CACHE
+    if _REAL_DRIVER_REGISTRY_CACHE is not None:
+        return _REAL_DRIVER_REGISTRY_CACHE
+
+    from app.hal.propsim_f64 import RealPropsimF64Driver
+    from app.hal.propsim_fs16 import RealPropsimFs16Driver
+    from app.hal.uxm_base_station import RealUxmDriver
+    from app.hal.cmw500_base_station import RealCmw500Driver
+    from app.hal.ets_positioner import RealEtsEmcenterDriver
+    from app.hal.aerotech_positioner import RealAerotechDriver
+    from app.hal.keysight_ena import RealKeysightEnaDriver
+    from app.hal.keysight_mxg import RealKeysightMxgDriver
+    from app.hal.rs_smw200a import RealRsSmw200aDriver
+    from app.hal.keysight_x_series_sa import RealKeysightXSeriesSaDriver
+    from app.hal.rs_fsw import RealRsFswDriver
+    from app.hal.rs_zna import RealRsZnaDriver
+    from app.hal.rs_fsva import RealRsFsvaDriver
+
+    _REAL_DRIVER_REGISTRY_CACHE = {
+        "channelEmulator": {
+            "PROPSIM F64": RealPropsimF64Driver,
+            "PROPSIM FS16": RealPropsimFs16Driver,
+        },
+        "baseStation": {
+            "UXM 5G E7515B": RealUxmDriver,
+            "CMW500": RealCmw500Driver,
+        },
+        "signalAnalyzer": {
+            "N9020B MXA": RealKeysightXSeriesSaDriver,
+            "FSW43": RealRsFswDriver,
+            "FSVA3000": RealRsFsvaDriver,
+        },
+        "vectorSignalGenerator": {
+            "N5182B MXG": RealKeysightMxgDriver,
+            "SMW200A": RealRsSmw200aDriver,
+            "SMU200A": RealRsSmw200aDriver,
+        },
+        "vna": {
+            "E5071C ENA": RealKeysightEnaDriver,
+            "ZNA67": RealRsZnaDriver,
+        },
+        "positioner": {
+            "EMCenter": RealEtsEmcenterDriver,
+            "A3200": RealAerotechDriver,
+        },
+        "rfSwitch": {
+            "EMCenter Switch": EtslSwitchDriver,
+        },
+    }
+    return _REAL_DRIVER_REGISTRY_CACHE
+
+
+def get_real_driver_class(category_key: str, model_name: str) -> Optional[type]:
+    """P2-3: look up the registered real-driver class for a catalog entry,
+    without instantiating or connecting. Returns ``None`` if no real
+    driver is registered (caller falls back to mock or marks as
+    pending_dev).
+
+    Catalog API uses this to read ``DriverClass.model_capabilities`` so
+    "what does FS16 support?" can be answered before HAL Reload —
+    operator can see capability mismatches at binding-edit time, not at
+    runtime.
+    """
+    return _real_driver_registry().get(category_key, {}).get(model_name)
+
 
 def has_real_driver(category_key: str, model_name: str) -> bool:
     """Helper to check if a real driver is backed by HAL implementation."""
-    return model_name in SUPPORTED_REAL_DRIVERS.get(category_key, [])
+    return get_real_driver_class(category_key, model_name) is not None
 
 logger = logging.getLogger(__name__)
 
@@ -218,54 +291,9 @@ class InstrumentHALService:
             InstrumentConnection as InstrumentConnectionDB,
         )
 
-        from app.hal.propsim_f64 import RealPropsimF64Driver
-        from app.hal.propsim_fs16 import RealPropsimFs16Driver
-        from app.hal.uxm_base_station import RealUxmDriver
-        from app.hal.cmw500_base_station import RealCmw500Driver
-        from app.hal.ets_positioner import RealEtsEmcenterDriver
-        from app.hal.aerotech_positioner import RealAerotechDriver
-        from app.hal.keysight_ena import RealKeysightEnaDriver
-        from app.hal.keysight_mxg import RealKeysightMxgDriver
-        from app.hal.rs_smw200a import RealRsSmw200aDriver
-        from app.hal.keysight_x_series_sa import RealKeysightXSeriesSaDriver
-        from app.hal.rs_fsw import RealRsFswDriver
-        from app.hal.rs_zna import RealRsZnaDriver
-        from app.hal.rs_fsva import RealRsFsvaDriver
-
-        # Driver registry: maps (category_key, model_name) → DriverClass
-        # When real VISA/SCPI drivers are implemented, register them here.
-        # Format: "category_key": { "Model Name": RealDriverClass }
-        REAL_DRIVER_REGISTRY: Dict[str, Dict[str, type]] = {
-            "channelEmulator": {
-                "PROPSIM F64": RealPropsimF64Driver,
-                "PROPSIM FS16": RealPropsimFs16Driver,
-            },
-            "baseStation": {
-                "UXM 5G E7515B": RealUxmDriver,
-                "CMW500": RealCmw500Driver,
-            },
-            "signalAnalyzer": {
-                "N9020B MXA": RealKeysightXSeriesSaDriver,
-                "FSW43": RealRsFswDriver,
-                "FSVA3000": RealRsFsvaDriver,
-            },
-            "vectorSignalGenerator": {
-                "N5182B MXG": RealKeysightMxgDriver,
-                "SMW200A": RealRsSmw200aDriver,
-                "SMU200A": RealRsSmw200aDriver,
-            },
-            "vna": {
-                "E5071C ENA": RealKeysightEnaDriver,
-                "ZNA67": RealRsZnaDriver,
-            },
-            "positioner": {
-                "EMCenter": RealEtsEmcenterDriver,
-                "A3200": RealAerotechDriver,
-            },
-            "rfSwitch": {
-                "EMCenter Switch": EtslSwitchDriver,
-            },
-        }
+        # Real driver registry shared with the catalog API — single source
+        # of truth (P2-3). See ``_real_driver_registry`` at module level.
+        REAL_DRIVER_REGISTRY = _real_driver_registry()
 
         # Mock fallback registry (same category → mock driver class mapping)
         MOCK_FALLBACK: Dict[str, type] = {

@@ -307,3 +307,131 @@ class TestAerotechCapabilityMirroring:
         assert driver.is_single_axis is True
         assert POS_SINGLE_AXIS_AZ in driver.capabilities
         assert POS_DUAL_AXIS_AZEL not in driver.capabilities
+
+
+# ---------------------------------------------------------------------------
+# P2-3: per-Model static capability declaration (model_capabilities ClassVar)
+# ---------------------------------------------------------------------------
+#
+# ``driver.capabilities`` (P2-2) is the LIVE set populated at connect() time.
+# ``DriverClass.model_capabilities`` (P2-3) is the STATIC superset — what a
+# given model CAN expose, independent of license / connection / probe state.
+# Catalog API reads model_capabilities so GUI can answer "does FS16 support
+# ce.interference_generator?" without HAL Reload.
+
+class TestModelCapabilitiesStaticDeclaration:
+    """Pin per-driver-class static declarations so a future PR that swaps a
+    token (or forgets to declare one on a newly-added driver) trips here."""
+
+    def test_f64_declares_ce_tokens(self):
+        from app.hal.propsim_f64 import RealPropsimF64Driver
+        assert RealPropsimF64Driver.model_capabilities == frozenset({
+            CE_INTERFERENCE_GENERATOR,
+            CE_USER_ALIGNMENT,
+        })
+
+    def test_fs16_declares_empty_set(self):
+        """FS16 fundamentally lacks K01 + user-alignment MVP — the empty
+        set is the catalog answer "binding FS16 satisfies neither ce.*
+        token". Pinning emptiness so a future bolt-on doesn't silently
+        promote FS16 to claiming it supports interference gen."""
+        from app.hal.propsim_fs16 import RealPropsimFs16Driver
+        assert RealPropsimFs16Driver.model_capabilities == frozenset()
+
+    def test_aerotech_declares_both_axis_modes(self):
+        from app.hal.aerotech_positioner import RealAerotechDriver
+        assert RealAerotechDriver.model_capabilities == frozenset({
+            POS_SINGLE_AXIS_AZ,
+            POS_DUAL_AXIS_AZEL,
+        })
+
+    def test_base_default_is_empty_frozenset(self):
+        """A driver that doesn't override gets an empty frozenset, not
+        None — keeps catalog code path uniform (no isinstance / None
+        guards in callers)."""
+        from app.hal.base import InstrumentDriver
+        assert InstrumentDriver.model_capabilities == frozenset()
+
+    def test_undeclared_drivers_inherit_empty(self):
+        """UXM / ENA / MXG don't override model_capabilities yet (no
+        tokens fit them in the current vocabulary). They should resolve
+        to empty, not raise — so a forgotten override is a quiet "no
+        capabilities declared" rather than an AttributeError."""
+        from app.hal.uxm_base_station import RealUxmDriver
+        from app.hal.keysight_ena import RealKeysightEnaDriver
+
+        assert RealUxmDriver.model_capabilities == frozenset()
+        assert RealKeysightEnaDriver.model_capabilities == frozenset()
+
+
+class TestModelCapabilitiesInvariant:
+    """LIVE capabilities must be a subset of STATIC model_capabilities. A
+    driver that registers a token not in its model_capabilities means
+    either the declaration is wrong (model can actually do more than
+    declared) or the runtime probe is hallucinating (likely a typo
+    bypassing the canonical vocabulary). Either way, surface it."""
+
+    def test_f64_explicit_override_stays_in_model_set(self):
+        from app.hal.propsim_f64 import RealPropsimF64Driver
+        drv = RealPropsimF64Driver(
+            "inv-test", {"has_interference_generator": True}
+        )
+        assert drv.capabilities <= drv.model_capabilities
+
+    def test_f64_user_alignment_stays_in_model_set(self):
+        from app.hal.propsim_f64 import RealPropsimF64Driver
+        drv = RealPropsimF64Driver("inv-test", {})
+        drv._active_alignment = {"alignment_name": "test"}
+        drv._update_user_alignment_capability()
+        assert drv.capabilities <= drv.model_capabilities
+
+    def test_aerotech_dual_axis_stays_in_model_set(self):
+        from app.hal.aerotech_positioner import RealAerotechDriver
+        drv = RealAerotechDriver(
+            "inv-test", {"ip_address": "127.0.0.1", "port": 8000}
+        )
+        drv._add_capability(POS_DUAL_AXIS_AZEL)
+        assert drv.capabilities <= drv.model_capabilities
+
+
+class TestRealDriverRegistryAccessor:
+    """``get_real_driver_class`` is the catalog API's single entry point
+    for reading static capability declarations. Pin its contract so the
+    catalog can't accidentally start returning stale / divergent answers
+    relative to what HAL bootstrap actually instantiates."""
+
+    def test_known_real_drivers_resolve(self):
+        from app.services.instrument_hal_service import get_real_driver_class
+        from app.hal.propsim_f64 import RealPropsimF64Driver
+        from app.hal.propsim_fs16 import RealPropsimFs16Driver
+        from app.hal.aerotech_positioner import RealAerotechDriver
+
+        assert get_real_driver_class("channelEmulator", "PROPSIM F64") is RealPropsimF64Driver
+        assert get_real_driver_class("channelEmulator", "PROPSIM FS16") is RealPropsimFs16Driver
+        assert get_real_driver_class("positioner", "A3200") is RealAerotechDriver
+
+    def test_unknown_model_returns_none(self):
+        from app.services.instrument_hal_service import get_real_driver_class
+        assert get_real_driver_class("channelEmulator", "DEFINITELY-NOT-A-MODEL") is None
+
+    def test_unknown_category_returns_none(self):
+        from app.services.instrument_hal_service import get_real_driver_class
+        assert get_real_driver_class("notACategory", "PROPSIM F64") is None
+
+    def test_has_real_driver_matches_registry(self):
+        """``has_real_driver`` is now a thin alias on ``get_real_driver_class``.
+        Pin the equivalence so a future refactor doesn't reintroduce a
+        second hardcoded model list (the old SUPPORTED_REAL_DRIVERS that
+        drifted from the registry)."""
+        from app.services.instrument_hal_service import (
+            get_real_driver_class,
+            has_real_driver,
+            _real_driver_registry,
+        )
+        for category_key, models in _real_driver_registry().items():
+            for model_name in models:
+                assert has_real_driver(category_key, model_name) is True
+                assert get_real_driver_class(category_key, model_name) is not None
+
+        assert has_real_driver("channelEmulator", "NOPE") is False
+        assert has_real_driver("nope", "PROPSIM F64") is False

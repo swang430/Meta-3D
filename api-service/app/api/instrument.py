@@ -39,6 +39,14 @@ class FEInstrumentModel(BaseModel):
     summary: str
     interfaces: List[str]
     capabilities: List[str]
+    # P2-3: canonical capability tokens this model CAN expose (per
+    # ``DriverClass.model_capabilities``). Distinct from ``capabilities``
+    # above, which is a freeform datasheet-derived badge list. Empty
+    # list means either no real driver is registered for the model, or
+    # the driver intentionally declared no tokens. Used by GUI to gate
+    # plan-binding picks before HAL Reload (closes the P1-1 pre-flight
+    # gap of needing the driver connected to know what it'd support).
+    model_capabilities: List[str] = []
     bandwidth: Optional[str] = None
     channels: Optional[str] = None
     status: str  # 'available' | 'offline' | 'reserved' | 'maintenance'
@@ -133,12 +141,18 @@ def _make_summary(model_db: InstrumentModelDB) -> str:
 
 def _convert_model(model_db: InstrumentModelDB, category_key: str) -> FEInstrumentModel:
     """DB InstrumentModel → 前端 FEInstrumentModel"""
-    from app.services.instrument_hal_service import has_real_driver
+    from app.services.instrument_hal_service import get_real_driver_class
     caps = model_db.capabilities or {}
-    
-    is_supported = has_real_driver(category_key, model_db.model)
-    status = "available" if is_supported else "pending_dev"
-    
+
+    # Single lookup serves two purposes: support-status badge (was the
+    # legacy ``has_real_driver`` call) and P2-3 model_capabilities
+    # surface. Sharing one registry read keeps the two answers in sync.
+    driver_cls = get_real_driver_class(category_key, model_db.model)
+    status = "available" if driver_cls is not None else "pending_dev"
+    model_capability_tokens = sorted(
+        getattr(driver_cls, "model_capabilities", frozenset()) or frozenset()
+    )
+
     return FEInstrumentModel(
         id=str(model_db.id),
         vendor=model_db.vendor,
@@ -146,6 +160,7 @@ def _convert_model(model_db: InstrumentModelDB, category_key: str) -> FEInstrume
         summary=_make_summary(model_db),
         interfaces=_extract_interfaces(caps),
         capabilities=_extract_capabilities_summary(caps),
+        model_capabilities=model_capability_tokens,
         bandwidth=f"{caps['bandwidth_mhz']}MHz" if caps.get("bandwidth_mhz") else (
             f"{caps['analysis_bandwidth_mhz']}MHz" if caps.get("analysis_bandwidth_mhz") else (
                 f"{caps['max_bandwidth_mhz']}MHz" if caps.get("max_bandwidth_mhz") else None

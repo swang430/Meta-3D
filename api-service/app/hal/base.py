@@ -12,7 +12,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from enum import Enum
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Any, ClassVar, Dict, FrozenSet, List, Optional
 from datetime import datetime
 from pydantic import BaseModel
 
@@ -60,6 +60,21 @@ class InstrumentDriver(ABC):
       而是覆盖 _do_write() / _do_query()。
       基类的 _write() / _query() 会自动记录 SCPI 通信到 scpi.log。
     """
+
+    # P2-3: static "what this MODEL can expose" declaration. Read without
+    # instantiating / connecting the driver, so catalog API + offline plan
+    # editing can answer "does FS16 support ce.interference_generator?"
+    # before HAL Reload. Subclasses override with a frozenset of canonical
+    # tokens (see app/hal/capabilities.py). Default empty so a forgotten
+    # override is honest about lack of declaration rather than inheriting
+    # a parent's set.
+    #
+    # Invariant (enforced in tests): runtime ``self.capabilities`` must be
+    # a subset of ``model_capabilities`` — a live driver can't expose what
+    # the model doesn't declare. Adding a runtime token outside this set
+    # means either the model declaration is wrong or the runtime probe is
+    # reading something the vocabulary doesn't cover.
+    model_capabilities: ClassVar[FrozenSet[str]] = frozenset()
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         """

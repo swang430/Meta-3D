@@ -160,6 +160,21 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
       - EXTERNAL_WAVEFORM:  ASC Runtime 管线 (FTP → CALC:FILT:FILE → CH:MOD:CONT:ENV)
     """
 
+    # P2-3: F64 family CAN expose these tokens — whether a given unit
+    # actually does depends on optional K01 license + on whether operator
+    # has loaded a user alignment. Live ``self.capabilities`` is the
+    # subset that this physical unit confirmed at connect().
+    model_capabilities = frozenset({
+        # F64 K01 internal interference generator (license-gated, probed
+        # via *OPT?). Catalog answer for "can F64 do CE+SA path-loss cal":
+        # yes, conditional on license.
+        "ce.interference_generator",
+        # F64 integrated setup calibration (per-deployment alignment table
+        # loaded via SYST:CALIB:USER:SET). Catalog answer for "can F64
+        # apply user alignment": yes, conditional on alignment being loaded.
+        "ce.user_alignment",
+    })
+
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         # 连接参数
