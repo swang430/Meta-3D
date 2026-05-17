@@ -743,6 +743,52 @@ class TestTopologyProfileService:
         with pytest.raises(TopologyProfileNotFound):
             get_dataclass(db, pid)
 
+    def test_create_with_explicit_null_on_non_nullable_uses_default(self, db):
+        """Codex P2 (PR #38): operator-cleared GUI field arrives as
+        explicit null in JSON; Pydantic ``exclude_unset=True`` keeps
+        the null in the dump. For non-nullable columns (band, mimo_layers,
+        etc.) the service must skip the setattr so the column's Python /
+        server default fills in — without the skip we'd ``setattr None``
+        and Postgres would NOT-NULL-violate at flush time."""
+        row = create(db, name="x", fields={"band": None, "mimo_layers": None})
+        db.commit()
+        # Defaults kicked in.
+        assert row.band == "N78"
+        assert row.mimo_layers == 2
+
+    def test_create_with_explicit_null_on_nullable_keeps_null(self, db):
+        """Nullable columns (arfcn, csi_rs_ports, description, …) DO
+        accept the operator's explicit null — the skip rule only applies
+        to non-nullable columns."""
+        row = create(db, name="x", fields={"arfcn": None,
+                                            "csi_rs_ports": None,
+                                            "description": None})
+        db.commit()
+        assert row.arfcn is None
+        assert row.csi_rs_ports is None
+        assert row.description is None
+
+    def test_update_with_explicit_null_on_non_nullable_rejects(self, db):
+        """On UPDATE there's no default to fall back to, so explicit
+        null on a non-nullable field would generate UPDATE ... col=NULL
+        and IntegrityError everywhere. Service raises ValueError (→ 400)
+        with a message that disambiguates 'omit to leave unchanged' vs
+        'send a value'."""
+        row = create(db, name="x", fields={})
+        db.commit()
+        with pytest.raises(ValueError, match="non-nullable"):
+            update(db, row.profile_id, {"band": None})
+
+    def test_update_with_explicit_null_on_nullable_clears_field(self, db):
+        """Operator clearing arfcn / csi_rs_ports is the intended UX
+        for nullable columns — must succeed."""
+        row = create(db, name="x", fields={"arfcn": 632628, "csi_rs_ports": 4})
+        db.commit()
+        updated = update(db, row.profile_id, {"arfcn": None, "csi_rs_ports": None})
+        db.commit()
+        assert updated.arfcn is None
+        assert updated.csi_rs_ports is None
+
     def test_duplicate_creates_editable_copy_with_unique_id(self, db):
         topology_profiles_seeder.run(db)
         copy = duplicate(db, "caict_n78_2x2")

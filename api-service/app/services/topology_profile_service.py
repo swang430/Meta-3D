@@ -139,6 +139,26 @@ _MUTABLE_FIELDS = {
     "compatible_test_apps", "notes",
 }
 
+# Single-source-of-truth for which mutable fields are nullable: introspect
+# the ORM model columns. Avoids drifting from the migration when fields
+# get added/changed.
+#
+# Why this matters (Codex P2 on PR #38): the request schemas declare each
+# field as ``Optional[X] = None`` so the JSON shape allows explicit null.
+# Pydantic ``exclude_unset=True`` keeps explicit nulls in the dump. Without
+# this guard, ``{"band": null}`` on a CREATE would slip into
+# ``setattr(row, 'band', None)`` — which on Postgres generates
+# ``INSERT ... band=NULL`` (bypassing the column's server_default since the
+# column IS present in the INSERT, just with a NULL value) and the NOT
+# NULL constraint blows. SQLite happens to be saved by the column's
+# Python ``default='N78'`` kicking in for ``None`` on flush, but UPDATE
+# fails everywhere because there's no default substitution on UPDATE.
+_NULLABLE_MUTABLE_FIELDS = {
+    col.name
+    for col in InstrumentTopologyProfile.__table__.columns
+    if col.name in _MUTABLE_FIELDS and col.nullable
+}
+
 _SLUG_RE = re.compile(r"[^a-zA-Z0-9_]+")
 
 
@@ -213,7 +233,16 @@ def create(
     )
     # Apply operator fields. ``compatible_test_apps`` JSON column gets
     # a list copy so caller-side mutation doesn't bleed in.
+    #
+    # Codex P2 (PR #38): explicit-null on a non-nullable field (operator
+    # clears a GUI form field that has no real null meaning) is treated
+    # as "use the column default" — we skip the setattr so SQLAlchemy
+    # falls through to the Python default + server_default. Without this
+    # skip, ``setattr(row, 'band', None)`` on a NOT NULL column generates
+    # ``INSERT ... band=NULL`` on Postgres (silent NOT NULL violation).
     for key, value in fields.items():
+        if value is None and key not in _NULLABLE_MUTABLE_FIELDS:
+            continue
         if key == "compatible_test_apps" and value is not None:
             value = list(value)
         setattr(row, key, value)
@@ -249,6 +278,26 @@ def update(
         raise ValueError(
             f"Unknown topology profile fields: {sorted(unknown)}. "
             f"Allowed: {sorted(_MUTABLE_FIELDS)}"
+        )
+
+    # Codex P2 (PR #38): on UPDATE there's no Python default to fall back
+    # to, so ``setattr(row, 'band', None)`` would generate
+    # ``UPDATE ... band=NULL`` and the NOT NULL constraint blows
+    # everywhere (verified on SQLite + Postgres). Reject explicit null on
+    # non-nullable fields with a 4xx-shaped error rather than letting the
+    # operator hit an opaque IntegrityError. Operator intent here is
+    # almost certainly a client bug — if they wanted "leave it alone",
+    # they should omit the field; if they wanted "clear it", the field
+    # can't be cleared.
+    null_on_non_nullable = sorted(
+        k for k, v in fields.items()
+        if v is None and k not in _NULLABLE_MUTABLE_FIELDS
+    )
+    if null_on_non_nullable:
+        raise ValueError(
+            f"Cannot set non-nullable field(s) to null: "
+            f"{null_on_non_nullable}. Omit the field to leave it unchanged, "
+            f"or send a non-null value."
         )
 
     for key, value in fields.items():
