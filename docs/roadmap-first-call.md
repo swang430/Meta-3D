@@ -546,6 +546,52 @@ firmware version.
 0.5 day. Add lab-profile status + cal-cert validity + DUT-attach state
 to the existing HAL readiness table.
 
+### P3-6 — Chamber preset Type-C `has_lna` test reconciliation
+
+**What**: `tests/test_chamber_configuration.py::TestChamberPresets::test_preset_type_c_exists` plus the two `test_create_chamber_from_preset` variants fail on clean `main` (pre-existing). `has_lna` on the Type-C preset is False but the tests assert True. Either the seeder default in `app/services/bootstrap/chamber_presets.py` drifted or the test expectations did.
+
+**Why**: 3 failures in `pytest` muddy any regression sweep — every contributor hits them and then has to mentally filter "these are the known-broken ones, mine isn't new". Pin the canonical answer once.
+
+**Acceptance**: triage which side is correct (seeder or test); fix the loser; all three test cases pass on clean `main`.
+
+**Status**: `[ ]` not started (discovered 2026-05-14 during P0-1, triaged 2026-05-17)
+**Estimate**: ~30 min
+
+### P3-7 — VSCode interpreter settings + `.vscode/` gitignore policy
+
+**What**: VSCode resolves Python imports against system Python 3.13 (`/opt/homebrew/lib/python3.13/site-packages`) instead of the project venv at `api-service/.venv/`, so every Python file edit emits 1-3 phantom `Cannot find module sqlalchemy / pydantic_settings / sqlalchemy.orm` errors. Tests pass fine — purely IDE noise. Fix: add `.vscode/settings.json` with `"python.defaultInterpreterPath": "${workspaceFolder}/api-service/.venv/bin/python"` (or per-folder `python.analysis.extraPaths` pointing at the venv site-packages).
+
+**Why**: phantom IDE diagnostics hide real type errors when they surface. Same root cause as P1-3's PyVISA interpreter-drift investigation (see [`feedback_pyvisa_ide_interpreter_drift`](../../memory)).
+
+**Caveat — `.vscode/` is currently gitignored**: committing `settings.json` requires reversing that. The decision touches contributor workflow ("do we ship a team-wide IDE config?") so this P3 item carries a small upfront policy step before the 10-min code change.
+
+**Acceptance**: `.vscode/` gitignore policy decided + documented; `.vscode/settings.json` committed pointing at the venv interpreter; phantom imports cleared on a fresh VSCode open.
+
+**Status**: `[ ]` not started (discovered 2026-05-14 during P0-2, triaged 2026-05-17)
+**Estimate**: ~10 min code change + decision step
+
+### P3-8 — VRT pydantic regression fix
+
+**What**: `tests/test_road_test_*.py` (executions / scenarios / websocket) has 38 failures on clean `main` — `VirtualRoadTestConfig` Pydantic v2 strict-mode validation reports 8 required fields missing (`kpi_definitions`, etc.) when `vrt_service.py:75` builds the config from seeded scenario rows. Pre-existing — surfaced by the full pytest sweep during P2-3, not caused by P2-3 changes.
+
+**Why**: 38 failing tests in `main` poison every regression run. Even though VRT is post-first-call (not on the critical commissioning path), broken tests in `main` hurt test discipline — contributors stop trusting the suite as a signal, which lets real regressions hide.
+
+**Acceptance**: triage which side is correct (model fields or scenario seeder); fix the loser; full `pytest` clean on `main`.
+
+**Status**: `[ ]` not started (discovered 2026-05-17 during P2-3, triaged 2026-05-17)
+**Estimate**: ~1 hour
+
+### P3-9 — Catalog `status` enum contract drift
+
+**What**: `GET /api/v1/instruments/catalog` returns `status: "pending_dev"` for models without a registered real driver (`_convert_model` in `app/api/instrument.py`), but `api/openapi.yaml`'s `InstrumentModel.status` enum is `[available, reserved, maintenance, offline]` — `pending_dev` was added on the backend without contract update. Same drift class Codex P2 caught on PR #28 (PR #28 only fixed `model_capabilities`, deferred this one).
+
+**Why**: typed GUI consumers generated from the contract can't accept `pending_dev` — runtime parse warnings, or worse, the value gets coerced. Same single-source-of-truth concern as [`feedback_api_contract_sync_after_pydantic_change`](../../memory).
+
+**Acceptance**: pick one of (a) widen openapi enum to include `pending_dev` + regen TS types, (b) change `_convert_model` to map `pending_dev` to an existing enum value (likely `offline`). Both sides aligned.
+
+**Status**: `[ ]` not started (discovered 2026-05-17 during P2-3, triaged 2026-05-17)
+**Estimate**: ~15 min
+
 ---
 
 ## ⚠️ Known unknowns (verify on-site / next session)
@@ -563,17 +609,24 @@ to the existing HAL readiness table.
 
 > Items added mid-task. Reviewed weekly; promoted to P1/P2/P3 or dropped.
 
-- `[discovered 2026-05-14 during P0-1]` `tests/test_chamber_configuration.py::TestChamberPresets::test_preset_type_c_exists` and the two `test_create_chamber_from_preset` variants fail on clean `main` (pre-existing — `has_lna` on Type-C preset is False but tests assert True). Either the seeder default drifted or the test expectations did. Triage: ~30 min in `app/services/bootstrap/chamber_presets.py` vs `tests/test_chamber_configuration.py`.
-- `[discovered 2026-05-14 during P0-2]` IDE (VSCode) diagnostics resolve Python imports against system Python 3.13 (`/opt/homebrew/lib/python3.13/site-packages`) instead of the project venv at `api-service/.venv/`, so every edit to a Python file emits 1-3 phantom `Cannot find module sqlalchemy / pydantic_settings / sqlalchemy.orm` errors. Tests pass fine — this is purely IDE noise. Fix: add `.vscode/settings.json` with `"python.defaultInterpreterPath": "${workspaceFolder}/api-service/.venv/bin/python"` (or per-folder `python.analysis.extraPaths` pointing at the venv site-packages). Triage: ~10 min, P3 polish but worth doing because diagnostic noise hides real type errors when they surface.
+> **Triage history**: 2026-05-17 — promoted 4 active entries to P3
+> slots (P3-6: chamber preset Type-C test reconciliation; P3-7: VSCode
+> interpreter settings + `.vscode/` policy; P3-8: VRT pydantic
+> regression; P3-9: catalog status enum drift). Resolved entries kept
+> below for audit trail.
+
 - ~~`[discovered 2026-05-15 during P2-2]` **Commissioning factory's "default lab" path is fragile**~~. ✅ Resolved 2026-05-16 — see D12 in Done table.
-- `[discovered 2026-05-17 during P2-3]` `tests/test_road_test_*.py` (executions / scenarios / websocket) — 38 failures on clean `main` from `VirtualRoadTestConfig` Pydantic v2 strict-mode validation: 8 required fields missing (`kpi_definitions`, etc.) when `vrt_service.py:75` builds the config from seeded scenario rows. Pre-existing — not caused by P2-3 changes, just surfaced by my full pytest sweep. Triage: likely a model field was renamed / added without backfilling the seeder. ~1 hour. P2 candidate; VRT is post-first-call so not P0/P1 critical, but blocks anyone running the full test suite.
-- `[discovered 2026-05-17 during P2-3]` Catalog API returns `status: "pending_dev"` (for models without a registered real driver) but `api/openapi.yaml`'s `InstrumentModel.status` enum is `[available, reserved, maintenance, offline]` — `pending_dev` was added on the backend side without contract update. Same drift class Codex P2 caught on PR #28, just on a different field. Not fixed in PR #28 to keep that PR scoped to `model_capabilities`. Fix: either widen the enum to include `pending_dev`, or change `_convert_model` to map it to one of the existing values. ~15 min. P3 polish.
+- ~~`[discovered 2026-05-14 during P0-1]` chamber preset Type-C `has_lna` test mismatch~~. → Promoted to **P3-6** (2026-05-17 triage).
+- ~~`[discovered 2026-05-14 during P0-2]` VSCode Python interpreter drift~~. → Promoted to **P3-7** (2026-05-17 triage).
+- ~~`[discovered 2026-05-17 during P2-3]` VRT pydantic regression (38 failures)~~. → Promoted to **P3-8** (2026-05-17 triage).
+- ~~`[discovered 2026-05-17 during P2-3]` catalog `status` enum drift~~. → Promoted to **P3-9** (2026-05-17 triage).
 
 ---
 
 ## 📊 Summary
 
-> Counts as of 2026-05-17 (P3-2 in this PR, not yet merged).
+> Counts as of 2026-05-17 (post-P3-2 merge; 2026-05-17 backlog triage
+> promoted 4 discovered entries to P3-6 / P3-7 / P3-8 / P3-9).
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
@@ -581,8 +634,8 @@ to the existing HAL readiness table.
 | 🔴 P0 (first-call critical) | 3 open / 6 total | 4 days | 4 days |
 | 🟠 P1 (confidence) | 4 open / 6 total | 3 days | 2.5 days |
 | 🟡 P2 (abstraction debt) | 3 open / 5 total | 4.5 days | 0 |
-| 🟢 P3 (polish) | 3 open / 5 total | 1.5 days | 0 |
-| **Total open** | **13** | **13 days** | **6.5 days** |
+| 🟢 P3 (polish) | 7 open / 9 total | ~3.5 days | 0 |
+| **Total open** | **17** | **15 days** | **6.5 days** |
 
 ---
 
