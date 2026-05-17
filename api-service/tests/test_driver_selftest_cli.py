@@ -376,6 +376,47 @@ class TestMainExitCodes:
         mod.main(["--mode", "real", "--category", "channelEmulator"])
         assert captured == {"mode": "real", "category": "channelEmulator"}
 
+    def test_default_mode_maps_to_mock_force(self, monkeypatch):
+        """Codex P1 on PR #30: ``--mode mock`` (default) must map to
+        ``DriverMode.MOCK_FORCE`` not ``DriverMode.MOCK``, otherwise
+        per-instrument ``driver_mode='real'`` bindings still open
+        real TCP/VISA. Pin the mapping so a future refactor of
+        ``_run`` can't silently regress the safety guarantee."""
+        import scripts.driver_selftest as mod
+        from app.services.instrument_hal_service import DriverMode
+
+        captured = {}
+
+        async def _stub_initialize(mode):
+            captured["mode"] = mode
+
+        async def _stub_shutdown():
+            pass
+
+        class _StubHal:
+            drivers: dict = {}
+
+        monkeypatch.setattr(
+            "app.services.instrument_hal_service.initialize_hal_service",
+            _stub_initialize,
+        )
+        monkeypatch.setattr(
+            "app.services.instrument_hal_service.shutdown_hal_service",
+            _stub_shutdown,
+        )
+        monkeypatch.setattr(
+            "app.services.instrument_hal_service.get_hal_service",
+            lambda: _StubHal(),
+        )
+
+        # No --mode arg → default 'mock' → must hit MOCK_FORCE.
+        mod.main([])
+        assert captured["mode"] == DriverMode.MOCK_FORCE
+
+        # Explicit --mode real → DriverMode.REAL (unchanged path).
+        mod.main(["--mode", "real"])
+        assert captured["mode"] == DriverMode.REAL
+
     @pytest.mark.parametrize("fmt", ["text", "json", "md"])
     def test_format_choice_round_trips(self, monkeypatch, capsys, fmt):
         import scripts.driver_selftest as mod

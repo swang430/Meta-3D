@@ -43,7 +43,7 @@ import json
 import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 
 # ----------------------------------------------------------------------------
@@ -275,7 +275,16 @@ async def _run(mode: str, category_filter: Optional[str]) -> SelftestReport:
         shutdown_hal_service,
     )
 
-    target_mode = DriverMode.REAL if mode == "real" else DriverMode.MOCK
+    # Codex P1 on PR #30: ``--mode mock`` must guarantee no hardware
+    # traffic. ``DriverMode.MOCK`` is "soft mock" — per-instrument
+    # ``driver_mode='real'`` overrides still connect. For a self-test
+    # tool the operator runs ad-hoc, that's unsafe (they could poke
+    # configured equipment by running the no-arg invocation). Map
+    # ``mock`` → ``MOCK_FORCE`` which overrides per-instrument 'real'
+    # too. ``real`` keeps the existing semantic (per-instrument
+    # 'mock' is still respected — operator opts into hardware traffic
+    # explicitly).
+    target_mode = DriverMode.REAL if mode == "real" else DriverMode.MOCK_FORCE
     try:
         await initialize_hal_service(mode=target_mode)
     except Exception as exc:  # noqa: BLE001

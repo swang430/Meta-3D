@@ -179,9 +179,27 @@ class MetricsCache:
 
 
 class DriverMode(str, Enum):
-    """Driver operation mode"""
-    MOCK = "mock"  # Mock drivers for development/testing
-    REAL = "real"  # Real hardware drivers for production
+    """Driver operation mode.
+
+    Three semantics distinguish what happens to instruments with a
+    per-instrument ``InstrumentCategory.driver_mode`` override:
+
+    - ``MOCK``: global default is mock; per-instrument ``'real'``
+      override IS still honoured (drivers for those categories
+      connect to hardware). The usual dev / GUI HAL switch target —
+      operators set one instrument to ``'real'`` specifically to
+      keep it live even in mock dev.
+    - ``REAL``: global default is real; per-instrument ``'mock'``
+      override is still honoured.
+    - ``MOCK_FORCE``: per-instrument ``'real'`` is **overridden**.
+      Every driver loads as Mock, no hardware traffic. Use this
+      from one-shot inspection tools (``scripts/driver_selftest``,
+      smoke checks) where the operator must not accidentally poke
+      configured equipment.
+    """
+    MOCK = "mock"  # Mock by default; per-instrument 'real' STILL connects to hardware
+    REAL = "real"  # Real by default; per-instrument 'mock' STILL goes mock
+    MOCK_FORCE = "mock_force"  # Hard mock; overrides per-instrument 'real' too (no hardware traffic)
 
 
 async def tcp_preflight(
@@ -253,6 +271,33 @@ class InstrumentHALService:
         self._initialized = False
         self._monitoring_task: Optional[asyncio.Task] = None
         self._metrics_cache = MetricsCache(ttl_seconds=cache_ttl)
+
+    def _decide_use_real(self, cat_mode: str) -> bool:
+        """Decide whether to load a real or mock driver for one
+        instrument, given that instrument's per-instrument
+        ``InstrumentCategory.driver_mode`` value.
+
+        Precedence (top-to-bottom):
+        1. ``self.mode == MOCK_FORCE`` — always mock, no exceptions.
+           Overrides per-instrument ``'real'`` (Codex P1 on PR #30:
+           ``scripts/driver_selftest --mode mock`` must never poke
+           configured hardware).
+        2. per-instrument ``'mock'`` — always mock.
+        3. per-instrument ``'real'`` — always real.
+        4. per-instrument ``'auto'`` / unset — follow global
+           (``DriverMode.REAL`` → real, ``DriverMode.MOCK`` → mock).
+
+        Pure function (only reads ``self.mode``) so tests can
+        construct an instance and exercise the table directly without
+        a DB or driver factory.
+        """
+        if self.mode == DriverMode.MOCK_FORCE:
+            return False
+        if cat_mode == "mock":
+            return False
+        if cat_mode == "real":
+            return True
+        return self.mode == DriverMode.REAL
 
     async def initialize(self):
         """Initialize all instrument drivers"""
@@ -361,15 +406,18 @@ class InstrumentHALService:
                 DriverClass = None
                 cat_mode = getattr(cat, 'driver_mode', None) or "auto"
 
-                # 决定该仪器是否应使用真实驱动
-                if cat_mode == "mock":
-                    use_real = False
+                use_real = self._decide_use_real(cat_mode)
+                if self.mode == DriverMode.MOCK_FORCE:
+                    mode_source = (
+                        f"global MOCK_FORCE (overrides per-instrument {cat_mode!r})"
+                        if cat_mode == "real"
+                        else f"global MOCK_FORCE (per-instrument {cat_mode!r})"
+                    )
+                elif cat_mode == "mock":
                     mode_source = "per-instrument (forced mock)"
                 elif cat_mode == "real":
-                    use_real = True
                     mode_source = "per-instrument (forced real)"
-                else:  # "auto" — 跟随全局
-                    use_real = (self.mode == DriverMode.REAL)
+                else:
                     mode_source = f"auto (global={self.mode.value})"
 
                 logger.info(
