@@ -96,6 +96,8 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 | D15 | P3-2 — Driver self-test CLI (`python -m scripts.driver_selftest`). Dumps per-loaded-driver runtime (live `capabilities`, status, endpoint, error) + declared `model_capabilities` + diffs (declared-but-not-live, invariant-breach live-not-declared) in text / json / md formats. Tears HAL down after each run so repeated invocations stay clean. **Codex P1 follow-up in same PR**: introduced `DriverMode.MOCK_FORCE` to override per-instrument `driver_mode='real'` — without it, `--mode mock` was still opening real VISA/TCP to configured hardware (operator safety bug). | PR #30 (merged 2026-05-17) |
 | D16 | P3-9 — Widened `api/openapi.yaml`'s `InstrumentModel.status` enum to include `pending_dev` (which the backend has been returning since `_convert_model` started using it). Regenerated `gui/src/types/api.generated.ts`; verified GUI consumers (`App.tsx` status color + label maps) already handled the value via the hand-written `InstrumentStatus` union. Practice run of the 4-step API contract sync flow. | PR #32 (merged 2026-05-17) |
 | D17 | P3-4 — Structured `SYST:INFO?` parser for F64 — new `F64SysInfo` dataclass + `parse_f64_sys_info` function extract product_family / channel_count / signal_type / firmware_version / secondary_count / band_label / extra_tokens. F64 `connect()` populates the structured fields (was only extracting channel_count). 21 new parser test cases pin positional + labeled + defensive shapes. | this PR (2026-05-17) |
+| D18 | P3-5 — Composite HAL readiness snapshot. New `app/services/readiness.py` aggregates per-driver rows (with `extras` dict — F64 surfaces firmware_version / band_label / product_family via polymorphic `readiness_metadata()` hook) + active LabProfile status + active CalibrationCertificate validity + DUT-attach placeholder. Persisted on HAL service + exposed via `GET /api/v1/instruments/hal/readiness` (+ openapi schemas + TS regen). 20 new tests. | this PR (2026-05-17) |
+| D19 | P2-5 — HAL Reload refuse/force policy (A+D from audit). New `app/services/hal_reload_policy.py` with TestPlan blocker finder (running / paused). `POST /hal/reload` returns HTTP 409 with structured blocker payload by default; `?force=true` overrides and marks the success response `forced=true` for audit. Module-level `asyncio.Lock` in `instrument_hal_service.py` serialises shutdown/init across concurrent reload + mode-switch calls (split into `_shutdown_hal_service_inner` / `_initialize_hal_service_inner` + atomic `reload_hal_service_atomic` helper). Shutdown logs at WARNING when drivers are still attached. 15 new tests pin per-status semantics + endpoint refuse/force/empty + lock serialisation. Deferred (with reason): pause+drain registry (B), in-flight diagnostic/SCPI detection (no DB row to query), openapi sync for `/hal/reload` (sibling endpoints precedent). | this PR (2026-05-17) |
 | D18 | P3-5 — Composite HAL readiness snapshot. New `app/services/readiness.py` aggregates per-driver rows (now with `extras` dict — F64 surfaces firmware_version / band_label / product_family via a polymorphic `readiness_metadata()` hook on `InstrumentDriver`) + active `LabProfile` status + active `CalibrationCertificate` validity + DUT-attach **placeholder** (`not_implemented` — no runtime sensing model exists; surfaced anyway for forward-compat). Snapshot is persisted on the HAL service instance and exposed via `GET /api/v1/instruments/hal/readiness` (also added to `openapi.yaml` + regenerated TS types). 20 new tests pin section semantics + endpoint shape. **Out of scope**: GUI consumption of the new endpoint (sibling HAL endpoints `/hal/status`/`/hal/reload`/`/hal/switch` still consume via inline-typed axios; consistent precedent); DUT-attach sensing implementation (future P3 item). | this PR (2026-05-17) |
 
 ---
@@ -467,11 +469,69 @@ idle-then-poke test to confirm.
 ### P2-5 — HAL Reload behaviour audit
 
 **What**: When operator clicks HAL Reload mid-test, what happens to the
-in-flight diagnostic? Today: silently fails. Decide policy
-(refuse / pause / let-fail) and document.
+in-flight diagnostic? Pre-P2-5: silently fails — `TestPlan.status='running'`
+row stays in DB, in-flight VISA queries raise `visa.Error` after ~30s
+timeout, error surfaces to the GUI as a cryptic late HTTP response. AND
+two concurrent reload requests would race the global `_hal_service`
+assignment with no mutex.
 
-**Status**: `[ ]` not started
-**Estimate**: 1 day
+**Audit findings** (pre-implementation, see PR body for full table):
+- Diagnostic exceptions ARE caught + persisted to `diagnostic_runs`
+  (`success=false`, `error_message=visa.Error: ...`) — the "silently
+  fails" framing was inaccurate; failures are audited, just not
+  surfaced to the GUI in real-time.
+- `TestPlan.status` IS in DB (`running` / `paused` / `queued` / etc.) —
+  cheap to check for a refuse arm.
+- No mutex around `_hal_service` reassignment → concurrent reload race.
+
+**Policy decision (A+D from the audit's table)**:
+- **A — Refuse with force override**: default `POST /hal/reload`
+  returns HTTP 409 with a structured blocker list when any TestPlan
+  is `running` or `paused`. Operator can re-POST with `?force=true`
+  to override (takes responsibility for the abort).
+- **D — Lifecycle mutex**: `asyncio.Lock` serialises shutdown + init
+  across concurrent reload / mode-switch calls so the global
+  `_hal_service` can't be assigned mid-flight by two coroutines.
+
+NOT done (deferred):
+- **B — Pause + Drain**: needs an in-process task registry + per-
+  driver pause/resume hooks. Too big for the 1-day P2-5 slot;
+  belongs to a future P2 or P3 item.
+- **C — Let-Fail + Notify**: reload-doesn't-refuse approach is
+  anti-operator UX; rejected.
+
+**Acceptance**:
+- New `app/services/hal_reload_policy.py` with `ReloadBlocker`
+  dataclass + `find_test_plan_blockers` / `find_reload_blockers`
+  pure-SQL finders. `BLOCKING_TEST_PLAN_STATUSES = ("running",
+  "paused")` constant pinned in tests so future additions are
+  explicit (not silently inherited from the enum).
+- New module-level `_hal_lifecycle_lock: asyncio.Lock` in
+  `instrument_hal_service.py`. Split `_shutdown_hal_service_inner`
+  / `_initialize_hal_service_inner` (no lock) from public
+  `shutdown_hal_service` / `initialize_hal_service` (lock).
+  New `reload_hal_service_atomic` holds the lock across both
+  shutdown + init so concurrent reloads serialise. `switch_hal_mode`
+  refactored to use `reload_hal_service_atomic` so it gets the
+  same protection.
+- `POST /api/v1/instruments/hal/reload` gains `?force=bool=false`
+  query param. Default returns HTTP 409 with
+  `HalReloadRefusedResult` (refused, reason, blockers list, force
+  hint). Force=true sets `forced=true` on the 200 success body for
+  audit-log distinction.
+- `InstrumentHALService.shutdown()` logs at WARNING (not INFO) when
+  drivers are still attached, listing them — post-mortem help for
+  "did something else trigger HAL shutdown?".
+- 15 new tests in `tests/test_hal_reload_policy.py`: per-status
+  finder semantics (9), endpoint refuse/force/empty (4), lock
+  serialisation (2).
+- Sibling HAL endpoints (`/hal/status`, `/hal/switch`) remain
+  unchanged. The reload endpoint isn't in `api/openapi.yaml`
+  (consistent precedent — all `/hal/*` endpoints are GUI inline-
+  typed). New `forced` field is backward-compatible additive.
+
+**Status**: `[≈]` in review — this PR
+**Estimate**: 1 day (actual: ~2 hours)
 
 ---
 
@@ -715,16 +775,16 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 
 ## 📊 Summary
 
-> Counts as of 2026-05-17 (P3-5 in this PR, not yet merged).
+> Counts as of 2026-05-17 (P2-5 in this PR, not yet merged).
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 18 | — | — |
+| ✅ Done | 19 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 6 total | 4 days | 4 days |
 | 🟠 P1 (confidence) | 4 open / 6 total | 3 days | 2.5 days |
-| 🟡 P2 (abstraction debt) | 3 open / 5 total | 4.5 days | 0 |
+| 🟡 P2 (abstraction debt) | 2 open / 5 total | 3.5 days | 0 |
 | 🟢 P3 (polish) | 4 open / 9 total | ~2.5 days | 0 |
-| **Total open** | **14** | **14 days** | **6.5 days** |
+| **Total open** | **13** | **13 days** | **6.5 days** |
 
 ---
 
