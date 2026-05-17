@@ -210,6 +210,18 @@ export interface components {
             summary: string;
             interfaces: string[];
             capabilities: string[];
+            /**
+             * @description P2-3: canonical capability tokens this model CAN expose
+             *     (per DriverClass.model_capabilities ClassVar). Distinct
+             *     from the freeform datasheet-derived `capabilities` badges
+             *     above. Empty list means either no real driver is
+             *     registered for the model, or the driver intentionally
+             *     declared no tokens. Used by GUI to gate plan-binding
+             *     picks before HAL Reload (closes the P1-1 pre-flight gap
+             *     of needing a connected driver to know what it'd support).
+             * @default []
+             */
+            model_capabilities: string[];
             bandwidth?: string | null;
             channels?: string | null;
             /** @enum {string} */
