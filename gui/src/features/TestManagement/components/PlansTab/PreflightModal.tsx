@@ -77,6 +77,10 @@ export function PreflightModal({
   const [labId, setLabId] = useState<string | null>(null)
   const [result, setResult] = useState<PreflightResult | null>(null)
   const [showCapabilities, setShowCapabilities] = useState(false)
+  // P3-3: separate collapse state from `showCapabilities` because the
+  // two sections answer different questions (live vs declared) — the
+  // operator may want one open and the other closed.
+  const [showDeclarations, setShowDeclarations] = useState(false)
 
   // Load active labs once the modal opens. `enabled: opened` avoids
   // a fetch when the modal is closed but the component is mounted.
@@ -182,7 +186,15 @@ export function PreflightModal({
           </Button>
         </Group>
 
-        {result && <PreflightResultView result={result} showCapabilities={showCapabilities} setShowCapabilities={setShowCapabilities} />}
+        {result && (
+          <PreflightResultView
+            result={result}
+            showCapabilities={showCapabilities}
+            setShowCapabilities={setShowCapabilities}
+            showDeclarations={showDeclarations}
+            setShowDeclarations={setShowDeclarations}
+          />
+        )}
 
         <Group justify="flex-end">
           <Button variant="default" onClick={handleClose}>
@@ -198,13 +210,22 @@ interface ResultViewProps {
   result: PreflightResult
   showCapabilities: boolean
   setShowCapabilities: (v: boolean) => void
+  showDeclarations: boolean
+  setShowDeclarations: (v: boolean) => void
 }
 
 function PreflightResultView({
   result,
   showCapabilities,
   setShowCapabilities,
+  showDeclarations,
+  setShowDeclarations,
 }: ResultViewProps) {
+  // P3-3: tolerate `bound_models` being undefined on responses from
+  // pre-P3-3 backends (same defensive pattern as `mismatched_drivers`
+  // — cross-PR coupling means GUI may run against a backend without
+  // the field briefly).
+  const boundModels = result.bound_models ?? []
   return (
     <Stack gap="sm">
       {result.ready ? (
@@ -373,6 +394,72 @@ function PreflightResultView({
               </Badge>
             ))}
           </Group>
+        )}
+      </Collapse>
+
+      {/* P3-3: per-binding STATIC declarations from
+          DriverClass.model_capabilities (P2-3). Catalog-time view,
+          independent of HAL load state — answers "what does each
+          bound model CLAIM it supports" before HAL Reload. Pair with
+          the live "Lab Capabilities" above to spot declared-but-not-
+          loaded (HAL Reload needed) vs declared-empty (wrong model
+          bound, pick a different one) at binding-edit time. */}
+      <Group
+        gap={4}
+        onClick={() => setShowDeclarations(!showDeclarations)}
+        style={{ cursor: 'pointer' }}
+      >
+        {showDeclarations ? (
+          <IconChevronDown size={14} />
+        ) : (
+          <IconChevronRight size={14} />
+        )}
+        <Text size="xs" c="dimmed">
+          各绑定模型的声明能力 ({boundModels.length})
+        </Text>
+      </Group>
+      <Collapse in={showDeclarations}>
+        {boundModels.length === 0 ? (
+          <Text size="xs" c="dimmed">
+            (空 — 此 lab 没有 instrument_bindings)
+          </Text>
+        ) : (
+          <Stack gap={6}>
+            {boundModels.map((bm) => (
+              <Paper key={bm.category} withBorder p="xs">
+                <Group gap="xs" wrap="nowrap" align="flex-start">
+                  <Badge size="sm" variant="outline">
+                    {bm.category}
+                  </Badge>
+                  {bm.model_name === null ? (
+                    <Text size="xs" c="dimmed">
+                      未选型号 — 在 Lab Profile 编辑器里给此类别挑一个 model
+                    </Text>
+                  ) : bm.model_capabilities.length === 0 ? (
+                    <Group gap={6} wrap="nowrap" align="center">
+                      <Code>{bm.model_name}</Code>
+                      <Text size="xs" c="dimmed">
+                        未声明任何 capability token (catalog 中 driver
+                        类未注册, 或 model 明确声明空) — 此 binding 不能满足
+                        任何能力需求
+                      </Text>
+                    </Group>
+                  ) : (
+                    <Stack gap={4}>
+                      <Code>{bm.model_name}</Code>
+                      <Group gap="xs">
+                        {bm.model_capabilities.map((t) => (
+                          <Badge key={t} variant="light" color="blue" size="sm">
+                            {t}
+                          </Badge>
+                        ))}
+                      </Group>
+                    </Stack>
+                  )}
+                </Group>
+              </Paper>
+            ))}
+          </Stack>
         )}
       </Collapse>
     </Stack>

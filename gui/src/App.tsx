@@ -2156,6 +2156,33 @@ function EquipmentManager() {
                           </Badge>
                         ))}
                       </Group>
+                      {/* P3-3: canonical capability tokens from
+                          DriverClass.model_capabilities (P2-3). Distinct
+                          from the freeform datasheet badges above —
+                          these are what plan-level pre-flight actually
+                          checks. Hide when empty so an unregistered
+                          model doesn't show a misleading "Declared:
+                          (none)" row (the catalog status badge above
+                          already conveys pending_dev vs available). */}
+                      {(drawerSelectedModel.model_capabilities ?? []).length > 0 && (
+                        <Stack gap={4}>
+                          <Text size="xs" c="gray.6">
+                            声明能力 (catalog 中 driver 类的 model_capabilities)
+                          </Text>
+                          <Group gap="xs" wrap="wrap">
+                            {(drawerSelectedModel.model_capabilities ?? []).map((token) => (
+                              <Badge
+                                key={token}
+                                variant="light"
+                                color="blue"
+                                size="sm"
+                              >
+                                {token}
+                              </Badge>
+                            ))}
+                          </Group>
+                        </Stack>
+                      )}
                     </Stack>
                   ) : (
                     <Stack align="center" py="xl" c="gray.6">

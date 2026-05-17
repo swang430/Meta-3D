@@ -35,6 +35,27 @@ export interface PreflightDriverMismatch {
   loaded_endpoint: string
 }
 
+/** P3-3: per-binding STATIC capability declaration read from the
+ * driver class's `model_capabilities` ClassVar (P2-3). Independent
+ * of HAL load state — answers "what does the model claim it CAN
+ * expose?" without needing to connect. PreflightModal renders this
+ * alongside the LIVE `lab_capabilities` so the operator can see
+ * declared-vs-live mismatches at binding-edit time.
+ *
+ * `model_name === null` means the binding row had no
+ * `instrument_model_id` (operator picked endpoint without picking a
+ * model yet). `model_capabilities === []` either because the driver
+ * intentionally declared empty (e.g. FS16) OR because the model has
+ * no real driver class registered (catalog `status: pending_dev`).
+ * The GUI uses `model_name === null` to differentiate "pick a model"
+ * from "this model declares nothing".
+ */
+export interface PreflightBoundModel {
+  category: string
+  model_name: string | null
+  model_capabilities: string[]
+}
+
 export interface PreflightResult {
   plan_id: string
   lab_profile_id: string
@@ -67,6 +88,12 @@ export interface PreflightResult {
    * is in main, treating this as required becomes safe (consider
    * dropping the `?` in a future cleanup PR). */
   mismatched_drivers?: PreflightDriverMismatch[]
+  /** P3-3: per-binding STATIC capability declarations (one entry per
+   * lab binding). Sorted by category. **Optional** for the same
+   * cross-PR-coupling reason as `mismatched_drivers`: backend
+   * support lands in the P3-3 PR; consumers must tolerate
+   * `undefined` until that PR is in main. */
+  bound_models?: PreflightBoundModel[]
 }
 
 /**

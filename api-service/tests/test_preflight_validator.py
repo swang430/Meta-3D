@@ -888,3 +888,254 @@ class TestPreflightEndpoint:
         )
         assert r.status_code == 422, r.text
         assert str(bogus_lab) in r.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# P3-3 — bound_models: per-binding static model_capabilities declaration
+# ---------------------------------------------------------------------------
+#
+# Tests the binding-time view that PreflightModal renders alongside the
+# LIVE lab_capabilities. Independent of HAL state (no `hal_drivers`
+# arg is required to be non-empty for these to work).
+
+def _make_model(db, *, category_key: str, model_name: str, vendor: str = "VendorX"):
+    """Create an InstrumentModel row for a category. Tests use this to
+    bind labs to real catalog rows so the validator can look up the
+    registered driver class + its model_capabilities declaration."""
+    from app.models.instrument import InstrumentModel
+    cat = _ensure_category(db, category_key)
+    m = InstrumentModel(
+        id=uuid.uuid4(),
+        category_id=cat.id,
+        vendor=vendor,
+        model=model_name,
+        full_name=f"{vendor} {model_name}",
+        capabilities={},  # NOT NULL column; empty dict is fine, validator
+                          # reads model_capabilities off the driver class, not this row
+    )
+    db.add(m)
+    db.commit()
+    db.refresh(m)
+    return m
+
+
+def _make_lab_with_model_bindings(
+    db, *, bindings: List[Tuple[str, "uuid.UUID | None", str]],
+) -> LabProfile:
+    """Each binding entry: ``(category_key, model_id_or_None, endpoint)``.
+    Model id None covers the "operator picked endpoint but not model
+    yet" case the bound_models contract must handle gracefully."""
+    rows: List[Dict[str, Any]] = []
+    for cat_key, model_id, endpoint in bindings:
+        cat = _ensure_category(db, cat_key)
+        row: Dict[str, Any] = {
+            "category_id": str(cat.id),
+            "connection_endpoint": endpoint,
+            "driver_mode": "auto",
+        }
+        if model_id is not None:
+            row["instrument_model_id"] = str(model_id)
+        rows.append(row)
+    lab = LabProfile(
+        id=uuid.uuid4(),
+        name=f"Preflight-Lab-{uuid.uuid4().hex[:6]}",
+        is_active=True,
+        instrument_bindings=rows,
+    )
+    db.add(lab)
+    db.commit()
+    db.refresh(lab)
+    return lab
+
+
+class TestBoundModelsField:
+    """The validator populates bound_models from lab.instrument_bindings
+    by looking up each binding's selected model → DriverClass →
+    model_capabilities (P2-3 declaration). Independent of HAL state."""
+
+    def test_f64_binding_declares_ce_tokens(self, db):
+        plan = _make_plan(db)
+        f64 = _make_model(db, category_key="channelEmulator",
+                          model_name="PROPSIM F64", vendor="Keysight")
+        lab = _make_lab_with_model_bindings(
+            db,
+            bindings=[("channelEmulator", f64.id, DEFAULT_TEST_ENDPOINT)],
+        )
+        result = validate_plan(plan, lab, db, hal_drivers={})
+        assert len(result.bound_models) == 1
+        b = result.bound_models[0]
+        assert b.category == "channelEmulator"
+        assert b.model_name == "PROPSIM F64"
+        # Static catalog answer — independent of HAL load state. Sorted.
+        assert b.model_capabilities == [
+            "ce.interference_generator",
+            "ce.user_alignment",
+        ]
+
+    def test_fs16_binding_declares_empty(self, db):
+        """FS16 has no ce.* tokens declared (intentional, P2-3). The
+        bound_models entry shows the model_name so the operator knows
+        the lookup happened, but model_capabilities is empty — that's
+        the catalog answer "FS16 satisfies nothing"."""
+        plan = _make_plan(db)
+        fs16 = _make_model(db, category_key="channelEmulator",
+                           model_name="PROPSIM FS16", vendor="Keysight")
+        lab = _make_lab_with_model_bindings(
+            db,
+            bindings=[("channelEmulator", fs16.id, DEFAULT_TEST_ENDPOINT)],
+        )
+        result = validate_plan(plan, lab, db, hal_drivers={})
+        assert len(result.bound_models) == 1
+        assert result.bound_models[0].model_name == "PROPSIM FS16"
+        assert result.bound_models[0].model_capabilities == []
+
+    def test_binding_without_model_shows_none_name(self, db):
+        """Wizard-saved binding with endpoint but no model picked yet —
+        the entry stays in bound_models with model_name=None so the GUI
+        can render 'no model selected' rather than silently dropping the
+        category from the view."""
+        plan = _make_plan(db)
+        lab = _make_lab_with_model_bindings(
+            db,
+            bindings=[("channelEmulator", None, DEFAULT_TEST_ENDPOINT)],
+        )
+        result = validate_plan(plan, lab, db, hal_drivers={})
+        assert len(result.bound_models) == 1
+        b = result.bound_models[0]
+        assert b.category == "channelEmulator"
+        assert b.model_name is None
+        assert b.model_capabilities == []
+
+    def test_binding_with_unregistered_model_shows_empty_capabilities(self, db):
+        """Model exists in the catalog but no real driver class is
+        registered for it (pending_dev). The lookup returns None for
+        the driver class — bound_models surfaces model_name (so the
+        operator sees what's bound) with empty capabilities (the
+        honest 'no declaration to read' answer)."""
+        plan = _make_plan(db)
+        unknown = _make_model(db, category_key="channelEmulator",
+                              model_name="DEFINITELY_NOT_REGISTERED")
+        lab = _make_lab_with_model_bindings(
+            db,
+            bindings=[("channelEmulator", unknown.id, DEFAULT_TEST_ENDPOINT)],
+        )
+        result = validate_plan(plan, lab, db, hal_drivers={})
+        assert len(result.bound_models) == 1
+        assert result.bound_models[0].model_name == "DEFINITELY_NOT_REGISTERED"
+        assert result.bound_models[0].model_capabilities == []
+
+    def test_multiple_bindings_sorted_by_category(self, db):
+        """Stable sort by category key so the GUI rendering doesn't
+        flicker between requests with the same backing data."""
+        plan = _make_plan(db)
+        f64 = _make_model(db, category_key="channelEmulator",
+                          model_name="PROPSIM F64", vendor="Keysight")
+        a3200 = _make_model(db, category_key="positioner",
+                            model_name="A3200", vendor="Aerotech")
+        lab = _make_lab_with_model_bindings(
+            db,
+            bindings=[
+                ("positioner", a3200.id, DEFAULT_TEST_ENDPOINT),
+                ("channelEmulator", f64.id, DEFAULT_TEST_ENDPOINT),
+            ],
+        )
+        result = validate_plan(plan, lab, db, hal_drivers={})
+        categories = [b.category for b in result.bound_models]
+        assert categories == sorted(categories)
+        assert categories == ["channelEmulator", "positioner"]
+
+    def test_empty_bindings_returns_empty_list(self, db):
+        plan = _make_plan(db)
+        lab = _make_lab(db)  # binds=() default → no bindings
+        result = validate_plan(plan, lab, db, hal_drivers={})
+        assert result.bound_models == []
+
+    def test_independent_of_hal_load_state(self, db):
+        """The whole point of bound_models is that it works at binding
+        edit time, before HAL Reload. Pinning that empty hal_drivers
+        dict doesn't suppress the field, AND a fully-populated HAL
+        doesn't change the static declaration."""
+        plan = _make_plan(db)
+        f64 = _make_model(db, category_key="channelEmulator",
+                          model_name="PROPSIM F64", vendor="Keysight")
+        lab = _make_lab_with_model_bindings(
+            db,
+            bindings=[("channelEmulator", f64.id, DEFAULT_TEST_ENDPOINT)],
+        )
+
+        no_hal = validate_plan(plan, lab, db, hal_drivers={})
+        with_hal = validate_plan(plan, lab, db, hal_drivers={
+            "channelEmulator": _mock_driver({"ce.interference_generator"}),
+        })
+
+        # Same static declaration regardless of HAL state.
+        assert no_hal.bound_models == with_hal.bound_models
+        # But lab_capabilities differs: empty without HAL, populated with.
+        assert no_hal.lab_capabilities == []
+        assert with_hal.lab_capabilities == ["ce.interference_generator"]
+
+
+class TestBoundModelsHTTPSerialization:
+    """The endpoint surfaces bound_models in the response JSON. Pin the
+    field name + shape so a GUI rewrite breaks here before it breaks
+    the PreflightModal's Model Declarations section."""
+
+    def test_endpoint_response_includes_bound_models(self, db, monkeypatch):
+        plan = _make_plan(db)
+        f64 = _make_model(db, category_key="channelEmulator",
+                          model_name="PROPSIM F64", vendor="Keysight")
+        lab = _make_lab_with_model_bindings(
+            db,
+            bindings=[("channelEmulator", f64.id, DEFAULT_TEST_ENDPOINT)],
+        )
+
+        class _StubHal:
+            drivers: Dict[str, Any] = {}
+
+        monkeypatch.setattr(
+            "app.services.instrument_hal_service.get_hal_service",
+            lambda: _StubHal(),
+        )
+
+        r = client.post(
+            f"/api/v1/test-plans/{plan.id}/preflight",
+            params={"lab_profile_id": str(lab.id)},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert "bound_models" in body
+        assert len(body["bound_models"]) == 1
+        entry = body["bound_models"][0]
+        assert entry["category"] == "channelEmulator"
+        assert entry["model_name"] == "PROPSIM F64"
+        assert sorted(entry["model_capabilities"]) == [
+            "ce.interference_generator",
+            "ce.user_alignment",
+        ]
+
+    def test_endpoint_response_handles_unset_model(self, db, monkeypatch):
+        """Pin the null serialization for model_name when binding has
+        no instrument_model_id — GUI uses null to render the 'pick a
+        model' hint."""
+        plan = _make_plan(db)
+        lab = _make_lab_with_model_bindings(
+            db,
+            bindings=[("channelEmulator", None, DEFAULT_TEST_ENDPOINT)],
+        )
+
+        class _StubHal:
+            drivers: Dict[str, Any] = {}
+
+        monkeypatch.setattr(
+            "app.services.instrument_hal_service.get_hal_service",
+            lambda: _StubHal(),
+        )
+
+        r = client.post(
+            f"/api/v1/test-plans/{plan.id}/preflight",
+            params={"lab_profile_id": str(lab.id)},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["bound_models"][0]["model_name"] is None
+        assert body["bound_models"][0]["model_capabilities"] == []
