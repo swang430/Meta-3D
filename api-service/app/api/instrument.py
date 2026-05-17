@@ -3,7 +3,7 @@
 输出格式适配前端 InstrumentsResponse / InstrumentCategory 类型定义。
 后端 DB 模型 → 前端友好的扁平化 JSON。
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from uuid import UUID
 import logging
@@ -251,10 +251,41 @@ def get_instrument_catalog(db: Session = Depends(get_db)):
 
 
 class HalReloadResult(BaseModel):
-    """Response for POST /instruments/hal/reload."""
+    """Response for POST /instruments/hal/reload (success path)."""
     drivers_loaded: int
     drivers: List[str]
     duration_ms: int
+    forced: bool = False  # True when reload proceeded despite active blockers (force=true)
+
+
+class HalReloadBlocker(BaseModel):
+    """One reason a HAL reload was refused.
+
+    Mirrors ``app.services.hal_reload_policy.ReloadBlocker`` for the
+    wire surface. ``kind`` lets the GUI branch on blocker type when
+    additional sources (in-flight diagnostics, calibration sessions)
+    get wired in later — today only ``"test_plan"`` is emitted."""
+    kind: str
+    id: str
+    name: str
+    status: str
+    detail: str
+
+
+class HalReloadRefusedResult(BaseModel):
+    """Response body for HTTP 409 from POST /instruments/hal/reload
+    when ``force=false`` and active blockers exist.
+
+    GUI uses ``blockers`` to render a precise message ("3 test plans
+    are running: …") and offers a "Force reload anyway" button that
+    re-POSTs with ``?force=true``."""
+    refused: bool = True
+    reason: str
+    blockers: List[HalReloadBlocker]
+    force_hint: str = (
+        "Re-POST with ?force=true to override (will abort the in-flight "
+        "work — operator takes responsibility for the cleanup)."
+    )
 
 
 class ChannelModelEntry(BaseModel):
@@ -277,8 +308,23 @@ class ChannelModelsListResult(BaseModel):
     reason: Optional[str] = None  # "driver_not_loaded" | "not_a_channel_emulator" | None
 
 
-@router.post("/instruments/hal/reload", response_model=HalReloadResult)
-async def reload_hal_service() -> HalReloadResult:
+@router.post(
+    "/instruments/hal/reload",
+    response_model=HalReloadResult,
+    responses={409: {"model": HalReloadRefusedResult}},
+)
+async def reload_hal_service(
+    force: bool = Query(
+        False,
+        description=(
+            "Override the refuse-while-in-flight check (P2-5). When "
+            "True, reload proceeds even with running TestPlans — the "
+            "in-flight work will fail with closed-VISA-session errors. "
+            "Default False = safe behaviour."
+        ),
+    ),
+    db: Session = Depends(get_db),
+) -> HalReloadResult:
     """Tear down the HAL service and re-init it from the current DB state.
 
     Use after editing instrument selection / endpoint / driver_mode in
@@ -288,32 +334,72 @@ async def reload_hal_service() -> HalReloadResult:
     Returns a summary of what's now loaded. The full readiness report
     is also logged to stdout/log file with the formatted table.
 
-    Side effects:
+    **P2-5 refuse-while-in-flight policy**: when a ``TestPlan`` is in
+    ``running`` or ``paused`` state, the default reload returns HTTP
+    409 with the blocker list instead of tearing down the drivers.
+    Operator can re-POST with ``?force=true`` to override (they take
+    responsibility for the aborted test).
+
+    **P2-5 concurrency**: shutdown + reinit run inside the HAL
+    lifecycle lock (``reload_hal_service_atomic``) so two concurrent
+    reloads serialise instead of racing the global ``_hal_service``
+    assignment.
+
+    Side effects (when proceeding):
     - Drops every active VISA / pyvisa session held by the previous
-      driver instances. In-flight diagnostic sequences using those
-      drivers will fail mid-flight; coordinate with operators before
-      hitting this during a test run.
+      driver instances.
     - Calls each driver's disconnect() — fine if drivers are well-
       behaved, but a misbehaving driver could block here.
 
     See docs/site-debug/2026-05-13-retrospective.md §B for the
-    motivating problem (init-once HAL + config-then-restart loop).
+    motivating problem (init-once HAL + config-then-restart loop)
+    and docs/roadmap-first-call.md P2-5 for the policy decision
+    (refuse + force + mutex, audit-driven A+D combo).
     """
     import time
+    from app.services.hal_reload_policy import find_reload_blockers
     from app.services.instrument_hal_service import (
-        get_hal_service,
-        initialize_hal_service,
-        shutdown_hal_service,
         DriverMode,
+        get_hal_service,
+        reload_hal_service_atomic,
     )
+
+    # Refuse arm: check blockers BEFORE acquiring the lifecycle lock,
+    # so a no-op refusal doesn't serialise behind in-progress reloads.
+    if not force:
+        blockers = find_reload_blockers(db)
+        if blockers:
+            payload = HalReloadRefusedResult(
+                reason=(
+                    f"HAL reload refused: {len(blockers)} active "
+                    f"blocker(s). Operator must cancel/complete the "
+                    f"in-flight work first, or re-POST with ?force=true "
+                    f"to abort it."
+                ),
+                blockers=[
+                    HalReloadBlocker(
+                        kind=b.kind, id=b.id, name=b.name,
+                        status=b.status, detail=b.detail,
+                    )
+                    for b in blockers
+                ],
+            )
+            # 409 Conflict — semantic match: "the request is valid but
+            # the current state of the target resource (HAL + in-flight
+            # tests) makes it impossible to apply right now". Detail
+            # body sits in HTTPException(detail=...) so it round-trips
+            # through FastAPI's default JSON serialisation.
+            raise HTTPException(
+                status_code=409, detail=payload.model_dump(),
+            )
+
     started = time.monotonic()
     # Preserve the mode the service was running in (REAL vs MOCK_FALLBACK
     # vs MOCK_FORCE) — operators usually don't want to switch global mode
     # when reloading specific instruments.
     prior_service = get_hal_service()
     prior_mode = getattr(prior_service, "mode", DriverMode.REAL) if prior_service else DriverMode.REAL
-    await shutdown_hal_service()
-    await initialize_hal_service(mode=prior_mode)
+    await reload_hal_service_atomic(prior_mode)
     fresh = get_hal_service()
     drivers = sorted(fresh.drivers.keys()) if fresh else []
     duration_ms = int((time.monotonic() - started) * 1000)
@@ -321,6 +407,7 @@ async def reload_hal_service() -> HalReloadResult:
         drivers_loaded=len(drivers),
         drivers=drivers,
         duration_ms=duration_ms,
+        forced=force,
     )
 
 

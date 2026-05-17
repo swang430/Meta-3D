@@ -719,8 +719,24 @@ class InstrumentHALService:
             logger.info("[HAL] %s", line)
 
     async def shutdown(self):
-        """Shutdown all drivers and cleanup"""
-        logger.info("Shutting down InstrumentHALService")
+        """Shutdown all drivers and cleanup.
+
+        P2-5: when drivers are still attached, log at WARNING (not INFO)
+        with the driver list — any in-flight diagnostic / SCPI / test
+        execution that's mid-``await driver._query()`` will fail when
+        we close the underlying VISA session below. The refuse policy
+        in ``app/services/hal_reload_policy.py`` warns the operator
+        BEFORE we get here, but the warning log helps post-mortem
+        triage ("did something else trigger HAL shutdown?").
+        """
+        if self.drivers:
+            logger.warning(
+                f"[HAL] Shutting down with {len(self.drivers)} active driver(s): "
+                f"{sorted(self.drivers.keys())} — any in-flight operations "
+                f"will fail with closed VISA session errors"
+            )
+        else:
+            logger.info("Shutting down InstrumentHALService (no active drivers)")
 
         # Log cache statistics before shutdown
         cache_stats = self._metrics_cache.get_stats()
@@ -946,6 +962,36 @@ class InstrumentHALService:
 # Global singleton instance
 _hal_service: Optional[InstrumentHALService] = None
 
+# P2-5: serialise HAL lifecycle operations (initialise / shutdown / mode
+# switch / reload) so two concurrent operator clicks on "HAL Reload" or
+# the rare init-vs-shutdown interleave can't race the global
+# ``_hal_service`` assignment. Pre-P2-5 audit found that two concurrent
+# POSTs to /hal/reload would both enter shutdown_hal_service +
+# initialize_hal_service, and the global could end up holding a
+# half-constructed instance.
+#
+# This lock is module-level (not per-instance) because the thing we're
+# protecting IS the instance assignment itself. Holding it across
+# shutdown + init is fine — both are async and the lock yields to other
+# coroutines that AREN'T touching HAL lifecycle (metrics queries,
+# diagnostic sequences). Those will likely fail because the underlying
+# driver was just torn down, but that's the operator-known risk of
+# reload mid-test — see ``app/services/hal_reload_policy.py`` for the
+# refuse + force protocol that warns them before they get there.
+_hal_lifecycle_lock: Optional[asyncio.Lock] = None
+
+
+def _get_lifecycle_lock() -> asyncio.Lock:
+    """Lazy-init the lifecycle lock so it binds to the running event
+    loop. Tests that spin up TestClient per case end up with different
+    loops; module-level ``asyncio.Lock()`` would lock to the first loop
+    and raise ``RuntimeError: ... attached to a different loop`` later.
+    """
+    global _hal_lifecycle_lock
+    if _hal_lifecycle_lock is None:
+        _hal_lifecycle_lock = asyncio.Lock()
+    return _hal_lifecycle_lock
+
 
 def get_hal_service() -> InstrumentHALService:
     """Get the global HAL service instance"""
@@ -955,16 +1001,22 @@ def get_hal_service() -> InstrumentHALService:
     return _hal_service
 
 
-async def initialize_hal_service(mode: DriverMode = DriverMode.MOCK):
-    """Initialize the global HAL service"""
+async def _initialize_hal_service_inner(mode: DriverMode) -> None:
+    """Init without acquiring the lifecycle lock — caller must hold it
+    OR be the FastAPI lifespan path (single-process startup, no
+    concurrency). Split out from the public ``initialize_hal_service``
+    so the reload-atomic helper below can do shutdown + init in one
+    locked region without acquiring the same non-reentrant lock twice.
+    """
     global _hal_service
     _hal_service = InstrumentHALService(mode=mode)
     await _hal_service.initialize()
     logger.info("Global HAL service initialized")
 
 
-async def shutdown_hal_service():
-    """Shutdown the global HAL service"""
+async def _shutdown_hal_service_inner() -> None:
+    """Shutdown without acquiring the lifecycle lock — see
+    ``_initialize_hal_service_inner`` for why."""
     global _hal_service
     if _hal_service:
         await _hal_service.shutdown()
@@ -972,28 +1024,53 @@ async def shutdown_hal_service():
         logger.info("Global HAL service shutdown complete")
 
 
-async def switch_hal_mode(new_mode: DriverMode) -> Dict[str, Any]:
-    """
-    运行时切换 HAL 驱动模式（Mock ↔ Real）
+async def initialize_hal_service(mode: DriverMode = DriverMode.MOCK):
+    """Initialise the global HAL service (serialised via lifecycle lock)."""
+    async with _get_lifecycle_lock():
+        await _initialize_hal_service_inner(mode)
 
-    流程: shutdown 旧驱动 → 用新模式重新初始化
-    返回切换结果和当前激活的驱动列表。
+
+async def shutdown_hal_service():
+    """Shutdown the global HAL service (serialised via lifecycle lock)."""
+    async with _get_lifecycle_lock():
+        await _shutdown_hal_service_inner()
+
+
+async def reload_hal_service_atomic(mode: DriverMode) -> None:
+    """P2-5: shutdown + reinitialise in a SINGLE locked region.
+
+    Pre-P2-5 the reload endpoint called ``shutdown_hal_service`` then
+    ``initialize_hal_service``, each acquiring and releasing the
+    (newly-added) lifecycle lock. The release-then-reacquire window let
+    a concurrent reload sneak in and assign to the global mid-flight,
+    leaving the second reload's init clobbering the first's. Holding
+    the lock across the whole shutdown + init closes that window
+    without needing a re-entrant lock.
+    """
+    async with _get_lifecycle_lock():
+        await _shutdown_hal_service_inner()
+        await _initialize_hal_service_inner(mode)
+
+
+async def switch_hal_mode(new_mode: DriverMode) -> Dict[str, Any]:
+    """运行时切换 HAL 驱动模式 (Mock ↔ Real)。
+
+    P2-5: shutdown + reinit run inside the lifecycle lock (via
+    ``reload_hal_service_atomic``) so a concurrent reload or another
+    switch can't race the global ``_hal_service`` assignment.
     """
     global _hal_service
 
     old_mode = _hal_service.mode if _hal_service else "none"
     logger.info(f"[HAL] Switching mode: {old_mode} → {new_mode.value}")
 
-    # 1. 关闭旧驱动
-    if _hal_service:
-        await _hal_service.shutdown()
+    await reload_hal_service_atomic(new_mode)
 
-    # 2. 用新模式重新初始化
-    _hal_service = InstrumentHALService(mode=new_mode)
-    await _hal_service.initialize()
-
-    # 3. 收集结果
-    active_drivers = list(_hal_service.drivers.keys())
+    # ``_hal_service`` is freshly assigned by the atomic helper — safe to
+    # read the new driver list now without the lock (no other lifecycle
+    # op is in progress; ordinary metric queries against the new instance
+    # are independent of this caller).
+    active_drivers = list(_hal_service.drivers.keys()) if _hal_service else []
     logger.info(
         f"[HAL] Mode switched to {new_mode.value}, "
         f"{len(active_drivers)} drivers active: {active_drivers}"
