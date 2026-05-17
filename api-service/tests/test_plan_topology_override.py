@@ -417,3 +417,92 @@ class TestStartTestPlanInvokesTopologyApply:
         assert resp.status_code == 200
         assert resp.json()["status"] == "running"
         fake_driver.apply_topology_profile.assert_not_awaited()
+
+
+# ============================================================
+# Codex P2 on PR #39: topology_profile_id MUST flow through every
+# "plan-fan-out" mutation path (duplicate / export / import). Each
+# of these builds a new TestPlan from an existing one and previously
+# omitted topology_profile_id from the field copy list — silently
+# dropping the customer-specific override and falling back to the
+# binding-level topology.
+# ============================================================
+
+
+from app.services.test_plan_service import TestPlanService  # noqa: E402
+
+
+class TestPlanFanOutPreservesTopologyOverride:
+    def test_duplicate_carries_topology_profile_id(self, db):
+        """Codex P2 (PR #39) — operator's common workflow is 'clone
+        customer A's plan as a template + edit'. Without carrying the
+        override, the clone starts against the wrong UXM topology."""
+        original = _make_ready_plan(db, topology_profile_id="caict_n78_2x2")
+        service = TestPlanService()
+        copy = service.duplicate_test_plan(db, original.id)
+        assert copy.topology_profile_id == "caict_n78_2x2"
+        # Independent rows
+        assert copy.id != original.id
+
+    def test_duplicate_with_no_override_stays_none(self, db):
+        """Plan-without-override duplicates to plan-without-override —
+        the carry-through must not invent a value."""
+        original = _make_ready_plan(db)
+        service = TestPlanService()
+        copy = service.duplicate_test_plan(db, original.id)
+        assert copy.topology_profile_id is None
+
+    def test_export_carries_topology_profile_id(self, db):
+        """Export payload must include the override so re-import on
+        another instance doesn't silently fall back."""
+        plan = _make_ready_plan(db, topology_profile_id="caict_n78_4x4")
+        service = TestPlanService()
+        export = service.export_test_plans(db, [str(plan.id)])
+        assert len(export["test_plans"]) == 1
+        assert export["test_plans"][0]["topology_profile_id"] == "caict_n78_4x4"
+
+    def test_import_carries_topology_profile_id(self, db):
+        """Round-trip: export-then-import preserves the override.
+        Critical for moving customer-specific plans between dev/
+        staging/prod chambers."""
+        plan = _make_ready_plan(db, topology_profile_id="caict_n78_2x2")
+        # test_case_ids defaulted to None on the column; an unrelated
+        # latent bug in import_test_plans does ``len(plan_data.get(
+        # "test_case_ids", []))`` which returns None (key present with
+        # None value) and explodes. Out-of-scope to fix here; give the
+        # plan an explicit empty list so the import path stays on its
+        # happy line.
+        plan.test_case_ids = []
+        db.commit()
+        service = TestPlanService()
+        export = service.export_test_plans(db, [str(plan.id)])
+        # Rename to avoid collision with the source plan in the same DB.
+        export["test_plans"][0]["name"] = "Imported"
+        imported = service.import_test_plans(db, export, created_by="tester")
+        assert len(imported) == 1
+        assert imported[0].topology_profile_id == "caict_n78_2x2"
+
+    def test_import_tolerates_legacy_export_without_field(self, db):
+        """An export from a pre-Phase-2.3 instance won't have the key.
+        Import must default to None (= use binding-level topology)
+        rather than KeyError."""
+        legacy_export = {
+            "version": "1.0",
+            "export_date": "2026-05-16T00:00:00",
+            "test_plans": [
+                {
+                    "name": "Legacy",
+                    "description": "from before Phase 2.3",
+                    "version": "1.0",
+                    "test_case_ids": [],
+                    "priority": 5,
+                    # no topology_profile_id key
+                    "steps": [],
+                },
+            ],
+            "count": 1,
+        }
+        service = TestPlanService()
+        imported = service.import_test_plans(db, legacy_export, created_by="tester")
+        assert len(imported) == 1
+        assert imported[0].topology_profile_id is None

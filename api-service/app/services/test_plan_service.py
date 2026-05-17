@@ -510,6 +510,14 @@ class TestPlanService:
             created_by=original.created_by,
             notes=f"Duplicated from: {original.name}",
             tags=original.tags.copy() if original.tags else [],
+            # P2-1 Phase 2.3 (Codex P2 on PR #39): preserve the
+            # plan-level topology override on duplicate. Operator's
+            # common workflow is "clone customer A's plan, edit
+            # title, queue" — silently dropping the override would
+            # have the cloned plan start against the binding-level
+            # topology (wrong customer's UXM config) without any
+            # indication to the operator.
+            topology_profile_id=original.topology_profile_id,
             # Reset execution-related fields
             current_test_case_index=0,
             completed_test_cases=0,
@@ -594,6 +602,11 @@ class TestPlanService:
                     "priority": test_plan.priority,
                     "notes": test_plan.notes,
                     "tags": test_plan.tags,
+                    # P2-1 Phase 2.3 (Codex P2 on PR #39): carry the
+                    # plan-level topology override through export so
+                    # exported-then-imported plans don't silently fall
+                    # back to the binding-level topology.
+                    "topology_profile_id": test_plan.topology_profile_id,
                     "steps": [
                         {
                             "order": step.order,
@@ -666,6 +679,11 @@ class TestPlanService:
                     created_by=created_by,
                     notes=plan_data.get("notes"),
                     tags=plan_data.get("tags", []),
+                    # P2-1 Phase 2.3 (Codex P2 on PR #39): carry the
+                    # plan-level topology override through import; safely
+                    # absent on older export payloads (.get returns None,
+                    # which is the "no override" sentinel).
+                    topology_profile_id=plan_data.get("topology_profile_id"),
                     # Reset execution fields
                     current_test_case_index=0,
                     completed_test_cases=0,
