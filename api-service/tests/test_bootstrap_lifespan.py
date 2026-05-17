@@ -119,7 +119,8 @@ class TestLifespanColdStart:
         finally:
             db.close()
         names = {h.seeder_name for h in history}
-        # All six registered seeders must appear in bootstrap_history.
+        # All seven registered seeders must appear in bootstrap_history.
+        # ``topology_profiles`` added by PR #38 (P2-1 Phase 2.1).
         assert names == {
             "chamber_presets",
             "probes",
@@ -127,6 +128,7 @@ class TestLifespanColdStart:
             "sequences",
             "report_templates",
             "test_case_templates",
+            "topology_profiles",
         }, names
 
     def test_instrument_catalog_seeded_with_at_least_twelve(self, test_db):
@@ -171,7 +173,10 @@ class TestLifespanWarmRestart:
             db.close()
         assert chambers == 4
         # bootstrap_history has one row per seeder name (PK enforced).
-        assert history_rows == 6
+        # 7 seeders: chamber_presets / probes / instruments / sequences /
+        # report_templates / test_case_templates / topology_profiles
+        # (last added by PR #38, P2-1 Phase 2.1).
+        assert history_rows == 7
 
 
 # ---------------------------------------------------------------------------
