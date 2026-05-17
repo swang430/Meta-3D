@@ -21,7 +21,7 @@ SCPI 子系统参考:
 import logging
 import asyncio
 from enum import Enum
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from datetime import datetime
 
 from app.hal.base import (
@@ -41,6 +41,12 @@ from app.hal.uxm_command_profiles import (
     UxmLteNrIratProfile,
     detect_profile,
 )
+
+if TYPE_CHECKING:
+    # P2-1 Phase 2.1: apply_topology_profile() consumes the dataclass.
+    # Import only for type checking — runtime callers pass an already-
+    # constructed instance, so we don't need the import at runtime.
+    from app.hal.uxm_test_profiles import UxmTestProfile  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -433,7 +439,9 @@ class RealUxmDriver(BaseStationDriver):
     # P2-1 Phase 1: Topology Profile 应用 (operator-managed)
     # ===================================================================
 
-    async def apply_topology_profile(self, profile_id: str) -> Dict[str, Any]:
+    async def apply_topology_profile(
+        self, profile: "UxmTestProfile",
+    ) -> Dict[str, Any]:
         """P2-1: 把操作员预选的拓扑 profile 应用到当前运行的 Test App.
 
         分层语义:
@@ -446,6 +454,11 @@ class RealUxmDriver(BaseStationDriver):
         (PRIMARY_CELL=CELL1) 会发到不存在的 cell — refuse 在这里, 而
         不是让操作员事后看 -113 报错。
 
+        P2-1 Phase 2.1: 接受 dataclass 而非 profile_id —— driver 不再
+        负责 lookup, 调用方 (HAL service / API endpoint) 从 DB 或
+        code-defined registry 拿到 dataclass 再传进来. 这样 HAL 层
+        完全摆脱 DB session 依赖.
+
         Returns:
             ``{"applied": True, "profile_id": ..., "test_app": ...}`` 成功,
             或 ``{"applied": False, "reason": "incompatible_test_app",
@@ -456,39 +469,33 @@ class RealUxmDriver(BaseStationDriver):
             根据"被拒"还是"成功"分别 surface 给操作员, raise 会丢上下文
             (test_app + profile.compatible_test_apps 都要让操作员看到).
         """
-        from app.hal.uxm_test_profiles import get_profile
-
-        # Resolve profile by id — propagates KeyError up to caller if the
-        # id is bogus. The caller (HTTP endpoint) maps that to 404 for
-        # the operator; HAL init logs + skips.
-        profile = get_profile(profile_id)
-
         active_test_app = self._cmds.PROFILE_NAME
         if not profile.is_compatible_with(active_test_app):
             logger.warning(
-                f"[UXM] Refused to apply topology profile {profile_id!r} — "
-                f"declares compatibility with {profile.compatible_test_apps}, "
-                f"but UXM is currently running Test App {active_test_app!r}. "
-                f"Operator should pick a compatible profile or wait until "
-                f"the UXM hardware is on a matching Test App."
+                f"[UXM] Refused to apply topology profile "
+                f"{profile.profile_id!r} — declares compatibility with "
+                f"{profile.compatible_test_apps}, but UXM is currently "
+                f"running Test App {active_test_app!r}. Operator should "
+                f"pick a compatible profile or wait until the UXM "
+                f"hardware is on a matching Test App."
             )
             return {
                 "applied": False,
                 "reason": "incompatible_test_app",
-                "profile_id": profile_id,
+                "profile_id": profile.profile_id,
                 "test_app": active_test_app,
                 "profile_compatible_with": list(profile.compatible_test_apps),
             }
 
         logger.info(
-            f"[UXM] Applying topology profile {profile_id!r} "
+            f"[UXM] Applying topology profile {profile.profile_id!r} "
             f"(compat: {profile.compatible_test_apps or 'any'}) "
             f"to active Test App {active_test_app!r}"
         )
         await self.set_cell_config(profile.to_config_dict())
         return {
             "applied": True,
-            "profile_id": profile_id,
+            "profile_id": profile.profile_id,
             "test_app": active_test_app,
         }
 

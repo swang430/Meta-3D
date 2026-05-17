@@ -8,25 +8,21 @@
 
 ## 🎯 Current Focus
 
-**`P3-9` — Catalog `status` enum contract drift fix**
+**`P2-1` Phase 2.1 — Topology profile DB persistence**
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
   gets appended to the backlog instead of done inline.
 
-**State (2026-05-17)**: P3-2 shipped (PR #30, D15). Backlog triaged
-(PR #31, 4 entries promoted to P3-6..P3-9). P0-3/P0-4/P0-5 still in
-the 🚧 Blocked-on-hardware queue below until the next on-site trip.
+**State (2026-05-17)**: Throughput burst on P2-1 + P2-5 + P3-* this
+session — PR #32 (P3-9), #33 (P3-4), #34 (P3-5), #35 (P2-5), #36
+(P2-1 Phase 1), #37 (architecture memo) all merged. Current Focus
+moves to **P2-1 Phase 2.1** (DB persistence for topology profiles +
+operator CRUD) — closes the "can't edit profiles without a code
+change + redeploy" gap exposed by Phase 1. P0-3/P0-4/P0-5 still
+🚧 Blocked-on-hardware below until next on-site trip.
 
-P3-9 is a small (~15 min) contract-sync chore — widens
-`InstrumentModel.status` enum in `api/openapi.yaml` to include
-`pending_dev` (which the backend has been returning since `_convert_model`
-added it). Practice run of the 4-step API contract sync flow
-(openapi.yaml → npm run openapi:generate → service.ts consumers →
-mockServer fixtures) recorded in
-[`feedback_api_contract_sync_after_pydantic_change`](../../memory).
-
-Last review: 2026-05-17 (after backlog triage)
+Last review: 2026-05-17 (post Phase-1 merge + Codex P2 fix)
 Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md)
 
 ---
@@ -100,6 +96,7 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 | D19 | P2-5 — HAL Reload refuse/force policy (A+D from audit). New `app/services/hal_reload_policy.py` with TestPlan blocker finder (running / paused). `POST /hal/reload` returns HTTP 409 with structured blocker payload by default; `?force=true` overrides and marks the success response `forced=true` for audit. Module-level `asyncio.Lock` in `instrument_hal_service.py` serialises shutdown/init across concurrent reload + mode-switch calls (split into `_shutdown_hal_service_inner` / `_initialize_hal_service_inner` + atomic `reload_hal_service_atomic` helper). Shutdown logs at WARNING when drivers are still attached. 15 new tests pin per-status semantics + endpoint refuse/force/empty + lock serialisation. Deferred (with reason): pause+drain registry (B), in-flight diagnostic/SCPI detection (no DB row to query), openapi sync for `/hal/reload` (sibling endpoints precedent). | this PR (2026-05-17) |
 | D20 | P2-1 Phase 1 — UXM two-layer architecture (Test App auto-detect + Topology profile operator-managed). `UxmTestProfile` gains `compatible_test_apps` + `is_compatible_with()`; 7 built-ins declare `["5G_NR_Test"]`. `RealUxmDriver` gains `detected_test_app` instance attr, `readiness_metadata()` override (exposes Test App layer to P3-5 panel), `apply_topology_profile(id)` with refuse-on-incompat (structured dict, not raise). HAL service post-connect: persists `detected_test_app` to `connection_params` + auto-applies binding's selected topology. New endpoints: `GET /instruments/{cat}/topology-profiles` (live compat flag per item), `PUT /instruments/{cat}/topology-profile` (refuse with 409 on incompat — `JSONResponse` not `HTTPException(detail=...)` per Codex P2 lesson from PR #35). `api/openapi.yaml` + TS regen. New `TopologyProfileCard` in EquipmentManager drawer (baseStation only, compat-aware option labelling). 23 new tests. Deferred to follow-up chore PRs: name cleanup (`UxmCommandProfile` → `UxmTestApp`), `self._cmds` class-vs-instance fix. Phase 2 (user-custom topology / GUI editor / per-test override) deferred to future P2. | this PR (2026-05-17) |
 | D18 | P3-5 — Composite HAL readiness snapshot. New `app/services/readiness.py` aggregates per-driver rows (now with `extras` dict — F64 surfaces firmware_version / band_label / product_family via a polymorphic `readiness_metadata()` hook on `InstrumentDriver`) + active `LabProfile` status + active `CalibrationCertificate` validity + DUT-attach **placeholder** (`not_implemented` — no runtime sensing model exists; surfaced anyway for forward-compat). Snapshot is persisted on the HAL service instance and exposed via `GET /api/v1/instruments/hal/readiness` (also added to `openapi.yaml` + regenerated TS types). 20 new tests pin section semantics + endpoint shape. **Out of scope**: GUI consumption of the new endpoint (sibling HAL endpoints `/hal/status`/`/hal/reload`/`/hal/switch` still consume via inline-typed axios; consistent precedent); DUT-attach sensing implementation (future P3 item). | this PR (2026-05-17) |
+| D21 | P2-1 Phase 2.1 — Topology profile DB persistence + operator CRUD. New `instrument_topology_profiles` table (flat-column schema matching `chamber_configurations`, Alembic migration `c7a91b3e5d04`) replaces the in-code-only `UxmTestProfile` dataclass registry as source of truth. New bootstrap seeder `topology_profiles_seeder` inserts 7 built-ins with `is_system_preset=true` (idempotent via natural-key `(profile_id, is_system_preset)`). New service layer `app/services/topology_profile_service.py` exposes `get_dataclass` / `list_rows` / `create` / `update` / `delete` / `duplicate`; system presets reject mutation (clone-to-edit pattern, mirrors chamber). **Driver interface change**: `RealUxmDriver.apply_topology_profile(profile_id: str)` → `apply_topology_profile(profile: UxmTestProfile)` so HAL layer stays DB-free; callers (HAL service post-connect + PUT endpoint) do the DB lookup + pass the dataclass. New endpoints: `POST /instruments/{cat}/topology-profiles` (auto-allocates `custom_<slug>` ID), `PUT /…/{profile_id}` (partial update, 409 on system preset), `DELETE /…/{profile_id}` (409 on system preset), `POST /…/{profile_id}/duplicate` (always operator-owned copy). GET endpoint now reads DB with in-code fallback for greenfield first-boot window. `api/openapi.yaml` + 4 paths + 3 schemas, regenerated TS types, service.ts CRUD wrappers. 24 new tests on top of existing 25 (seeder idempotency + service CRUD + immutability + endpoint flows + DB-vs-fallback list). **GUI editor deferred to Phase 2.2** (this PR only ships the backend surface). | this PR (2026-05-17) |
 
 ---
 
@@ -463,12 +460,25 @@ across UXM / CMW500 / CMP200"). Investigation found:
 - 23 new tests across compat semantics + apply happy/refuse + readiness
   metadata + endpoint shapes + DB persistence + 409 refuse path.
 
-**Phase 2 (NOT in this PR)** — user-customisable topology profiles:
-- Topology profiles persisted in DB (`instrument_topology_profiles`
-  table), not just code-defined templates
-- GUI topology editor (create / modify operator-owned profiles)
-- Per-test topology override (`TestPlan.topology_profile_id`) — today
-  only binding-level
+**Phase 2** — split into 3 sub-items (2.1 / 2.2 / 2.3):
+
+- **Phase 2.1 ✅ Done — DB persistence + operator CRUD** (this PR,
+  D21). New `instrument_topology_profiles` table (Alembic
+  `c7a91b3e5d04` + bootstrap seeder for the 7 built-ins), service
+  layer with system-preset immutability (clone-to-edit), driver
+  `apply_topology_profile()` takes the dataclass instead of an ID so
+  HAL stays DB-free, 4 new CRUD endpoints
+  (`POST` create / `PUT` update / `DELETE` delete /
+  `POST .../duplicate`). Architecture memo cross-link → see
+  [`docs/architecture/uxm-license-scenario-model.md`](architecture/uxm-license-scenario-model.md).
+- **Phase 2.2 `[ ]` not started — GUI topology editor**. Operator-
+  facing form for the 25+ knobs surfaced by Phase 2.1 CRUD; clone-
+  to-edit affordance on system presets.
+- **Phase 2.3 `[ ]` not started — Per-test topology override**. New
+  `TestPlan.topology_profile_id` column; execution path prefers
+  plan-level over binding-level. Critical for multi-customer
+  scenarios where the same chamber binding serves several test plans
+  with different profiles.
 
 **Out of scope** (with reason — see PR description for full list):
 - Name cleanup (`UxmCommandProfile` → `UxmTestApp`, `UxmTestProfile`
@@ -481,9 +491,10 @@ across UXM / CMW500 / CMP200"). Investigation found:
 - Generalising Profile into `app/hal/base.py` — only one concrete
   consumer (UXM) today; premature abstraction risk.
 
-**Status**: `[≈]` in review — this PR
-**Estimate**: original 3-5 days; actual scope after audit ~2-3 days
-(Phase 1 only); user-custom + GUI editor deferred to Phase 2.
+**Status**: Phase 1 ✅ Done (PR #36 merged) · Phase 2.1 `[≈]` in
+review (this PR) · Phase 2.2 / 2.3 `[ ]` not started
+**Estimate**: original 3-5 days; actual Phase 1 ~2-3 days; Phase 2.1
+~1 day (DB + CRUD); Phase 2.2 + 2.3 ~0.5-1 day each (deferred).
 
 ### P2-2 — Capability centralisation ✅ Done (PR #21)
 
@@ -856,11 +867,13 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 
 ## 📊 Summary
 
-> Counts as of 2026-05-17 (P2-1 Phase 1 in this PR, not yet merged).
+> Counts as of 2026-05-17 (P2-1 Phase 2.1 in this PR, not yet merged).
+> P2-1 Phase 2.2 (GUI editor) + Phase 2.3 (per-test override) remain
+> open as deferred sub-items; counted under P2 still-open below.
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 20 | — | — |
+| ✅ Done | 21 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 6 total | 4 days | 4 days |
 | 🟠 P1 (confidence) | 4 open / 6 total | 3 days | 2.5 days |
 | 🟡 P2 (abstraction debt) | 1 open / 5 total | 0.5 days | 0 |

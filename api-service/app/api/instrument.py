@@ -523,13 +523,18 @@ class TopologyProfileEntry(BaseModel):
     driver's detected_test_app at request time — null when there's no
     live driver to compare against (HAL not initialised, mock mode,
     no UXM driver bound) so the GUI doesn't have to special-case the
-    'we don't know yet' state."""
+    'we don't know yet' state.
+
+    P2-1 Phase 2.1: `is_system_preset` flags the 7 built-in templates
+    (seeded by ``app.services.bootstrap.topology_profiles_seeder``); GUI
+    renders these as read-only with a 'duplicate to edit' affordance."""
     profile_id: str
     name: str
     description: str
     category: str  # "siso" / "mimo" / "calibration" — from UxmTestProfile.category
     compatible_test_apps: List[str]
     compatible_with_current_test_app: Optional[bool] = None
+    is_system_preset: bool = False
 
 
 class TopologyProfilesListResult(BaseModel):
@@ -576,32 +581,56 @@ class SelectTopologyProfileResult(BaseModel):
 
 
 def _list_topology_profiles_for_category(
-    category_key: str,
+    db: Session, category_key: str,
 ) -> List[Dict[str, Any]]:
     """Today: UXM is the only category with topology profiles. Future
     multi-app instruments (CMX500, etc.) add their own profile registry
     + a category → registry dispatch here.
 
-    Returns the raw template dicts — caller wraps them in Pydantic + adds
+    Returns the raw row dicts — caller wraps them in Pydantic + adds
     runtime compat status. Empty list means 'no profiles for this
     category' (and caller should set reason='not_a_uxm' or equivalent).
+
+    P2-1 Phase 2.1: source is now ``instrument_topology_profiles`` DB
+    table (includes built-ins seeded by the bootstrap seeder + any
+    operator-created custom profiles). The in-code ``_PROFILE_REGISTRY``
+    is only a fallback if the seeder hasn't run yet (first-boot race).
     """
     if category_key != "baseStation":
         # No other category exposes topology profiles in Phase 1.
         return []
-    from app.hal.uxm_test_profiles import _PROFILE_REGISTRY, _register_builtin_profiles
+    from app.services.topology_profile_service import list_rows
 
-    if not _PROFILE_REGISTRY:
-        _register_builtin_profiles()
+    rows = list_rows(db)
+    if not rows:
+        # Greenfield first-boot fallback — surface the in-code built-ins
+        # so the GUI isn't empty before bootstrap has run.
+        from app.hal.uxm_test_profiles import (
+            _PROFILE_REGISTRY, _register_builtin_profiles,
+        )
+        if not _PROFILE_REGISTRY:
+            _register_builtin_profiles()
+        return [
+            {
+                "profile_id": p.profile_id,
+                "name": p.name,
+                "description": p.description,
+                "category": p.category,
+                "compatible_test_apps": list(p.compatible_test_apps),
+                "is_system_preset": True,
+            }
+            for p in _PROFILE_REGISTRY.values()
+        ]
     return [
         {
-            "profile_id": p.profile_id,
-            "name": p.name,
-            "description": p.description,
-            "category": p.category,
-            "compatible_test_apps": list(p.compatible_test_apps),
+            "profile_id": r.profile_id,
+            "name": r.name,
+            "description": r.description or "",
+            "category": r.category,
+            "compatible_test_apps": list(r.compatible_test_apps or []),
+            "is_system_preset": bool(r.is_system_preset),
         }
-        for p in _PROFILE_REGISTRY.values()
+        for r in rows
     ]
 
 
@@ -662,7 +691,7 @@ def list_topology_profiles_endpoint(
             detail=f"Instrument category '{category_key}' not found",
         )
 
-    raw = _list_topology_profiles_for_category(category_key)
+    raw = _list_topology_profiles_for_category(db, category_key)
     if not raw:
         return TopologyProfilesListResult(
             items=[], current_test_app=None,
@@ -765,17 +794,35 @@ async def select_topology_profile_endpoint(
 
     profile_id = request.profile_id
 
-    # Validate profile_id (if non-null) exists in the registry.
+    # Validate profile_id (if non-null) exists. P2-1 Phase 2.1: source of
+    # truth is the DB table (built-ins seeded by bootstrap + operator
+    # custom profiles). Fall back to in-code registry for the greenfield
+    # first-boot window where bootstrap hasn't run yet.
+    proposed_dc = None
     if profile_id is not None:
-        from app.hal.uxm_test_profiles import _PROFILE_REGISTRY, _register_builtin_profiles
-        if not _PROFILE_REGISTRY:
-            _register_builtin_profiles()
-        if profile_id not in _PROFILE_REGISTRY:
-            available = sorted(_PROFILE_REGISTRY.keys())
-            raise HTTPException(
-                status_code=404,
-                detail=f"Topology profile {profile_id!r} not found. Available: {available}",
+        from app.services.topology_profile_service import (
+            TopologyProfileNotFound, get_dataclass,
+        )
+        try:
+            proposed_dc = get_dataclass(db, profile_id)
+        except TopologyProfileNotFound:
+            from app.hal.uxm_test_profiles import (
+                _PROFILE_REGISTRY, _register_builtin_profiles,
             )
+            if not _PROFILE_REGISTRY:
+                _register_builtin_profiles()
+            proposed_dc = _PROFILE_REGISTRY.get(profile_id)
+            if proposed_dc is None:
+                # Surface what's actually available so operator can pick
+                # a real one (DB + in-code combined for completeness).
+                from app.services.topology_profile_service import list_rows
+                db_ids = [r.profile_id for r in list_rows(db)]
+                available = sorted(set(db_ids) | set(_PROFILE_REGISTRY.keys()))
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Topology profile {profile_id!r} not found. "
+                           f"Available: {available}",
+                )
 
     # Get live driver (if any) for compat check + immediate apply.
     try:
@@ -786,20 +833,10 @@ async def select_topology_profile_endpoint(
     driver = (hal.drivers or {}).get(category_key) if hal else None
 
     # Compat check BEFORE DB write — refuses don't half-persist.
-    if profile_id is not None and driver is not None:
+    if proposed_dc is not None and driver is not None:
         if hasattr(driver, "apply_topology_profile"):
-            # Pre-flight: call apply with the proposed id, see if it
-            # would refuse, but DON'T let it actually run SCPI yet
-            # (we want to commit DB first if compat passes). Cheap
-            # path: load the profile + run is_compatible_with directly
-            # rather than letting apply_topology_profile do its log + return.
-            from app.hal.uxm_test_profiles import get_profile
-            try:
-                proposed = get_profile(profile_id)
-            except KeyError as e:
-                raise HTTPException(status_code=404, detail=str(e))
             current_app = _resolve_current_test_app(driver)
-            if not proposed.is_compatible_with(current_app):
+            if not proposed_dc.is_compatible_with(current_app):
                 return JSONResponse(
                     status_code=409,
                     content={
@@ -807,10 +844,10 @@ async def select_topology_profile_endpoint(
                         "reason": "incompatible_test_app",
                         "profile_id": profile_id,
                         "test_app": current_app,
-                        "profile_compatible_with": list(proposed.compatible_test_apps),
+                        "profile_compatible_with": list(proposed_dc.compatible_test_apps),
                         "detail": (
                             f"Topology profile {profile_id!r} compatible with "
-                            f"{proposed.compatible_test_apps}, but UXM is currently "
+                            f"{proposed_dc.compatible_test_apps}, but UXM is currently "
                             f"running Test App {current_app!r}. Pick a compatible "
                             f"profile or switch the UXM hardware to a matching Test App."
                         ),
@@ -837,7 +874,8 @@ async def select_topology_profile_endpoint(
     elif not hasattr(driver, "apply_topology_profile"):
         apply_skipped_reason = "driver_does_not_support_topology_profiles"
     else:
-        result = await driver.apply_topology_profile(profile_id)
+        # P2-1 Phase 2.1: driver consumes the dataclass directly.
+        result = await driver.apply_topology_profile(proposed_dc)
         applied_now = bool(result.get("applied"))
         test_app = result.get("test_app")
         if not applied_now:
@@ -850,6 +888,349 @@ async def select_topology_profile_endpoint(
         apply_skipped_reason=apply_skipped_reason,
         test_app=test_app,
     )
+
+
+# ============================================================
+# P2-1 Phase 2.1: topology profile CRUD
+# ------------------------------------------------------------
+# Operator-owned create / update / delete / duplicate. System presets
+# (is_system_preset=True) reject PUT/DELETE — operator clones first
+# via duplicate(), then edits the copy. Same pattern as chamber
+# presets (ChamberConfiguration.is_system_preset). Path scoped under
+# the category so future per-instrument profile registries (CMX500
+# etc.) can branch on category_key without API churn.
+# ============================================================
+
+
+class TopologyProfileDetail(BaseModel):
+    """Full topology profile row — operator-mutable fields + meta.
+
+    Mirrors ``UxmTestProfile`` dataclass + DB row. Used as the
+    request/response shape for create / update / duplicate / single-get.
+    """
+    profile_id: str
+    name: str
+    description: Optional[str] = None
+    category: str = "general"
+
+    band: str = "N78"
+    frequency_mhz: float = 3500.0
+    bandwidth_mhz: float = 100.0
+    scs_khz: int = 30
+    duplex: str = "TDD"
+    arfcn: Optional[int] = None
+
+    mimo_layers: int = 2
+    mimo_port_preset: str = "2x2"
+
+    dl_power_dbm: float = -50.0
+    ssb_power_dbm: float = -50.0
+
+    modulation: str = "256QAM"
+    target_mcs: int = 28
+
+    sched_algo: str = "FULLBUFFER"
+    enable_amc: bool = False
+    tdd_pattern: str = "DDDSU"
+    tdd_period: str = "5MS"
+    harq_max_trans: int = 4
+    harq_processes: int = 16
+    csi_rs_ports: Optional[int] = None
+    stat_count: int = 5000
+
+    cell_id: str = "CELL0"
+    state_file: Optional[str] = None
+
+    compatible_test_apps: List[str] = []
+    notes: Optional[str] = ""
+
+    is_system_preset: bool = False
+    created_by: Optional[str] = None
+
+
+class CreateTopologyProfileRequest(BaseModel):
+    """Payload for POST /instruments/{cat}/topology-profiles.
+
+    ``name`` is required (used to generate the ``custom_<slug>``
+    profile_id). All other fields fall back to ``UxmTestProfile``
+    dataclass defaults — operator can build a minimal profile by
+    sending only ``{"name": "..."}`` and tweaking later via PUT.
+    """
+    name: str
+    description: Optional[str] = None
+    category: Optional[str] = None
+    band: Optional[str] = None
+    frequency_mhz: Optional[float] = None
+    bandwidth_mhz: Optional[float] = None
+    scs_khz: Optional[int] = None
+    duplex: Optional[str] = None
+    arfcn: Optional[int] = None
+    mimo_layers: Optional[int] = None
+    mimo_port_preset: Optional[str] = None
+    dl_power_dbm: Optional[float] = None
+    ssb_power_dbm: Optional[float] = None
+    modulation: Optional[str] = None
+    target_mcs: Optional[int] = None
+    sched_algo: Optional[str] = None
+    enable_amc: Optional[bool] = None
+    tdd_pattern: Optional[str] = None
+    tdd_period: Optional[str] = None
+    harq_max_trans: Optional[int] = None
+    harq_processes: Optional[int] = None
+    csi_rs_ports: Optional[int] = None
+    stat_count: Optional[int] = None
+    cell_id: Optional[str] = None
+    state_file: Optional[str] = None
+    compatible_test_apps: Optional[List[str]] = None
+    notes: Optional[str] = None
+    created_by: Optional[str] = None
+
+
+class UpdateTopologyProfileRequest(BaseModel):
+    """Payload for PUT /instruments/{cat}/topology-profiles/{profile_id}.
+
+    All fields optional — partial update. Unknown fields rejected at
+    the service layer so frontend drift surfaces loudly. Same allowlist
+    as create.
+    """
+    name: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    band: Optional[str] = None
+    frequency_mhz: Optional[float] = None
+    bandwidth_mhz: Optional[float] = None
+    scs_khz: Optional[int] = None
+    duplex: Optional[str] = None
+    arfcn: Optional[int] = None
+    mimo_layers: Optional[int] = None
+    mimo_port_preset: Optional[str] = None
+    dl_power_dbm: Optional[float] = None
+    ssb_power_dbm: Optional[float] = None
+    modulation: Optional[str] = None
+    target_mcs: Optional[int] = None
+    sched_algo: Optional[str] = None
+    enable_amc: Optional[bool] = None
+    tdd_pattern: Optional[str] = None
+    tdd_period: Optional[str] = None
+    harq_max_trans: Optional[int] = None
+    harq_processes: Optional[int] = None
+    csi_rs_ports: Optional[int] = None
+    stat_count: Optional[int] = None
+    cell_id: Optional[str] = None
+    state_file: Optional[str] = None
+    compatible_test_apps: Optional[List[str]] = None
+    notes: Optional[str] = None
+
+
+def _row_to_detail(row) -> TopologyProfileDetail:
+    """Map ORM row → API detail schema. Tolerates ``None`` for nullable
+    columns by falling back to schema defaults (description / notes)."""
+    return TopologyProfileDetail(
+        profile_id=row.profile_id,
+        name=row.name,
+        description=row.description,
+        category=row.category,
+        band=row.band,
+        frequency_mhz=row.frequency_mhz,
+        bandwidth_mhz=row.bandwidth_mhz,
+        scs_khz=row.scs_khz,
+        duplex=row.duplex,
+        arfcn=row.arfcn,
+        mimo_layers=row.mimo_layers,
+        mimo_port_preset=row.mimo_port_preset,
+        dl_power_dbm=row.dl_power_dbm,
+        ssb_power_dbm=row.ssb_power_dbm,
+        modulation=row.modulation,
+        target_mcs=row.target_mcs,
+        sched_algo=row.sched_algo,
+        enable_amc=bool(row.enable_amc),
+        tdd_pattern=row.tdd_pattern,
+        tdd_period=row.tdd_period,
+        harq_max_trans=row.harq_max_trans,
+        harq_processes=row.harq_processes,
+        csi_rs_ports=row.csi_rs_ports,
+        stat_count=row.stat_count,
+        cell_id=row.cell_id,
+        state_file=row.state_file,
+        compatible_test_apps=list(row.compatible_test_apps or []),
+        notes=row.notes or "",
+        is_system_preset=bool(row.is_system_preset),
+        created_by=row.created_by,
+    )
+
+
+def _require_baseStation(category_key: str) -> None:
+    """Reject CRUD calls on non-baseStation categories.
+
+    Today topology profiles only apply to UXM baseStation; routing CRUD
+    calls under category-scoped paths means a future CMX500 / etc. can
+    plug in with its own profile schema without breaking existing URLs.
+    """
+    if category_key != "baseStation":
+        raise HTTPException(
+            status_code=404,
+            detail=f"Topology profiles are not defined for category "
+                   f"'{category_key}' (only 'baseStation' today).",
+        )
+
+
+@router.post(
+    "/instruments/{category_key}/topology-profiles",
+    response_model=TopologyProfileDetail,
+    status_code=201,
+    responses={400: {"description": "Bad request — unknown field or empty name"}},
+)
+def create_topology_profile_endpoint(
+    category_key: str,
+    request: CreateTopologyProfileRequest,
+    db: Session = Depends(get_db),
+) -> TopologyProfileDetail:
+    """Create a new operator-owned topology profile.
+
+    ``profile_id`` is auto-allocated (``custom_<slug>``) — operators
+    don't pick raw IDs (prevents namespace collisions with built-ins
+    and slug-formatting surprises). Operator gets the assigned ID back
+    in the response so the GUI can pre-select it.
+    """
+    _require_baseStation(category_key)
+    from app.services.topology_profile_service import create
+    fields = request.model_dump(exclude_unset=True, exclude={"name", "created_by"})
+    try:
+        row = create(
+            db, name=request.name, fields=fields, created_by=request.created_by,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    db.commit()
+    return _row_to_detail(row)
+
+
+@router.put(
+    "/instruments/{category_key}/topology-profiles/{profile_id}",
+    response_model=TopologyProfileDetail,
+    responses={
+        404: {"description": "Profile not found"},
+        409: {"description": "System preset — duplicate to edit"},
+        400: {"description": "Bad request — unknown field"},
+    },
+)
+def update_topology_profile_endpoint(
+    category_key: str,
+    profile_id: str,
+    request: UpdateTopologyProfileRequest,
+    db: Session = Depends(get_db),
+) -> TopologyProfileDetail:
+    """Partial-update an existing topology profile.
+
+    Refuses ``is_system_preset=True`` rows with 409 — operator must
+    duplicate first. Unknown field keys return 400 (loud frontend drift).
+    """
+    _require_baseStation(category_key)
+    from app.services.topology_profile_service import (
+        TopologyProfileImmutable, TopologyProfileNotFound, update,
+    )
+    fields = request.model_dump(exclude_unset=True)
+    try:
+        row = update(db, profile_id, fields)
+    except TopologyProfileNotFound:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Topology profile {profile_id!r} not found",
+        )
+    except TopologyProfileImmutable as e:
+        # 409 mirrors P2-5 refuse pattern — request well-formed but the
+        # target's state forbids the operation.
+        return JSONResponse(
+            status_code=409,
+            content={
+                "refused": True,
+                "reason": "is_system_preset",
+                "profile_id": profile_id,
+                "detail": str(e),
+            },
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    db.commit()
+    return _row_to_detail(row)
+
+
+@router.delete(
+    "/instruments/{category_key}/topology-profiles/{profile_id}",
+    responses={
+        204: {"description": "Deleted"},
+        404: {"description": "Profile not found"},
+        409: {"description": "System preset — cannot delete"},
+    },
+    status_code=204,
+)
+def delete_topology_profile_endpoint(
+    category_key: str,
+    profile_id: str,
+    db: Session = Depends(get_db),
+):
+    """Delete an operator-owned topology profile.
+
+    Refuses ``is_system_preset=True`` rows with 409. Does NOT touch
+    bindings — if some category has the profile bound via
+    ``connection_params['topology_profile_id']``, that selection silently
+    becomes stale (HAL reload warns + skips auto-apply). The GUI should
+    warn before delete if bindings reference the row.
+    """
+    _require_baseStation(category_key)
+    from app.services.topology_profile_service import (
+        TopologyProfileImmutable, TopologyProfileNotFound, delete,
+    )
+    try:
+        delete(db, profile_id)
+    except TopologyProfileNotFound:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Topology profile {profile_id!r} not found",
+        )
+    except TopologyProfileImmutable as e:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "refused": True,
+                "reason": "is_system_preset",
+                "profile_id": profile_id,
+                "detail": str(e),
+            },
+        )
+    db.commit()
+
+
+@router.post(
+    "/instruments/{category_key}/topology-profiles/{profile_id}/duplicate",
+    response_model=TopologyProfileDetail,
+    status_code=201,
+    responses={404: {"description": "Source profile not found"}},
+)
+def duplicate_topology_profile_endpoint(
+    category_key: str,
+    profile_id: str,
+    db: Session = Depends(get_db),
+) -> TopologyProfileDetail:
+    """Clone any profile (incl. system presets) into a new editable copy.
+
+    The new copy gets ``is_system_preset=False`` so operator can edit /
+    delete it. The name is suffixed with ``(副本)`` so it's visually
+    distinct in the dropdown.
+    """
+    _require_baseStation(category_key)
+    from app.services.topology_profile_service import (
+        TopologyProfileNotFound, duplicate,
+    )
+    try:
+        row = duplicate(db, profile_id)
+    except TopologyProfileNotFound:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Topology profile {profile_id!r} not found",
+        )
+    db.commit()
+    return _row_to_detail(row)
 
 
 # ============================================================

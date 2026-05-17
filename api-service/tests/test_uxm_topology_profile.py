@@ -193,9 +193,13 @@ class TestProfileCompatDeclaration:
 
 
 class TestApplyTopologyProfile:
-    """Pin the apply decision: load profile → check compat against
-    active Test App → either dispatch set_cell_config or return a
-    structured refusal dict."""
+    """Pin the apply decision: caller passes the dataclass → driver
+    checks compat against active Test App → either dispatch
+    set_cell_config or return a structured refusal dict.
+
+    P2-1 Phase 2.1: driver no longer looks up by profile_id. Lookup
+    happens at the caller (HAL service or API endpoint) so HAL layer
+    stays DB-free."""
 
     @pytest.mark.asyncio
     async def test_happy_path_5g_profile_on_5g_test_app(self):
@@ -205,8 +209,9 @@ class TestApplyTopologyProfile:
         driver = RealUxmDriver("test", {"ip": "10.0.0.1", "port": 5025})
         # Default test app is 5G_NR_Test (per _resolve_initial_profile).
         assert driver._cmds.PROFILE_NAME == "5G_NR_Test"
+        profile = get_profile("caict_n78_2x2")
         with patch.object(driver, "set_cell_config", new=AsyncMock(return_value=True)) as mock_apply:
-            result = await driver.apply_topology_profile("caict_n78_2x2")
+            result = await driver.apply_topology_profile(profile)
         assert result["applied"] is True
         assert result["profile_id"] == "caict_n78_2x2"
         assert result["test_app"] == "5G_NR_Test"
@@ -228,24 +233,16 @@ class TestApplyTopologyProfile:
         )
         # IRAT profile is class-level; instantiated as type ref.
         assert driver._cmds.PROFILE_NAME == "LTE_NR_IRAT"
+        profile = get_profile("caict_n78_2x2")
         # set_cell_config must NOT be called — refusal short-circuits.
         with patch.object(driver, "set_cell_config", new=AsyncMock()) as mock_apply:
-            result = await driver.apply_topology_profile("caict_n78_2x2")
+            result = await driver.apply_topology_profile(profile)
         mock_apply.assert_not_awaited()
         assert result["applied"] is False
         assert result["reason"] == "incompatible_test_app"
         assert result["profile_id"] == "caict_n78_2x2"
         assert result["test_app"] == "LTE_NR_IRAT"
         assert result["profile_compatible_with"] == ["5G_NR_Test"]
-
-    @pytest.mark.asyncio
-    async def test_unknown_profile_id_raises_keyerror(self):
-        """Bogus profile_id propagates KeyError from get_profile —
-        the API endpoint maps that to 404. Driver doesn't pretty-print
-        the error; staying close to the registry contract."""
-        driver = RealUxmDriver("test", {"ip": "10.0.0.1", "port": 5025})
-        with pytest.raises(KeyError, match="not found"):
-            await driver.apply_topology_profile("does_not_exist")
 
 
 # ============================================================
@@ -558,7 +555,10 @@ class TestSelectTopologyProfileEndpoint:
         assert body["persisted"] is True
         assert body["applied_now"] is True
         assert body["test_app"] == "5G_NR_Test"
-        fake_driver.apply_topology_profile.assert_awaited_once_with("caict_n78_2x2")
+        # P2-1 Phase 2.1: driver now receives the dataclass, not a string id.
+        fake_driver.apply_topology_profile.assert_awaited_once()
+        (profile_arg,) = fake_driver.apply_topology_profile.await_args.args
+        assert profile_arg.profile_id == "caict_n78_2x2"
 
     def test_accepts_recognised_alias_via_resolved_profile_name(self, db):
         """Codex P2 (PR #36) — UXM hardware reports ``"5G NR Test"`` (with
@@ -593,7 +593,10 @@ class TestSelectTopologyProfileEndpoint:
         assert resp.status_code == 200, resp.json()
         body = resp.json()
         assert body["applied_now"] is True
-        fake_driver.apply_topology_profile.assert_awaited_once_with("caict_n78_2x2")
+        # Driver receives the dataclass (P2-1 Phase 2.1 signature change).
+        fake_driver.apply_topology_profile.assert_awaited_once()
+        (profile_arg,) = fake_driver.apply_topology_profile.await_args.args
+        assert profile_arg.profile_id == "caict_n78_2x2"
 
     def test_404_when_no_connection_row(self, db):
         """Operator must configure endpoint first — without a
@@ -609,3 +612,338 @@ class TestSelectTopologyProfileEndpoint:
             )
         assert resp.status_code == 404
         assert "configure endpoint first" in resp.json()["detail"]
+
+
+# ============================================================
+# P2-1 Phase 2.1 — DB persistence: bootstrap seeder + service +
+# CRUD endpoints. Earlier sections cover the binding-level select
+# flow against the in-code registry; these new sections pin the DB
+# layer that replaces (and falls back to) it.
+# ============================================================
+
+
+from app.models.instrument_topology_profile import InstrumentTopologyProfile  # noqa: E402
+from app.services.bootstrap.topology_profiles import topology_profiles_seeder  # noqa: E402
+from app.services.topology_profile_service import (  # noqa: E402
+    TopologyProfileImmutable, TopologyProfileNotFound,
+    create, delete, duplicate, get_dataclass, update,
+)
+
+
+class TestTopologyProfileSeeder:
+    """Pin that ``topology_profiles_seeder`` inserts the 7 built-ins
+    on a fresh DB and is idempotent (second run skips rather than
+    duplicating). Critical for bootstrap re-runs across deploys."""
+
+    def test_seeds_seven_builtins_on_empty_db(self, db):
+        result = topology_profiles_seeder.run(db)
+        assert result.inserted == 7
+        assert result.skipped == 0
+        rows = (
+            db.query(InstrumentTopologyProfile)
+            .filter(InstrumentTopologyProfile.is_system_preset.is_(True))
+            .all()
+        )
+        assert len(rows) == 7
+        ids = {r.profile_id for r in rows}
+        assert "caict_n78_2x2" in ids
+        assert "caict_n78_4x4" in ids
+        assert "siso_n78_100m" in ids
+
+    def test_idempotent_on_second_run(self, db):
+        topology_profiles_seeder.run(db)
+        result2 = topology_profiles_seeder.run(db)
+        # Second run finds all 7 already-system-preset rows, skips all.
+        assert result2.inserted == 0
+        assert result2.skipped == 7
+
+    def test_does_not_clobber_user_customisations(self, db):
+        """Operator may have edited a built-in's fields via clone-to-edit
+        — the duplicate has is_system_preset=False and shouldn't be
+        touched even if its profile_id ever collided with a preset
+        (which is prevented by _allocate_custom_profile_id, but the
+        seeder's natural-key filter is defensive)."""
+        topology_profiles_seeder.run(db)
+        # Simulate operator clone + edit on the 2x2 preset.
+        user_row = duplicate(db, "caict_n78_2x2")
+        user_row.dl_power_dbm = -70.0  # operator's custom power
+        db.commit()
+        topology_profiles_seeder.run(db)
+        db.refresh(user_row)
+        # The user's edit survives the re-seed.
+        assert user_row.dl_power_dbm == -70.0
+        assert user_row.is_system_preset is False
+
+
+class TestTopologyProfileService:
+    """to_dataclass round-trip + CRUD + immutability."""
+
+    def test_to_dataclass_roundtrip_preserves_config(self, db):
+        topology_profiles_seeder.run(db)
+        dc = get_dataclass(db, "caict_n78_2x2")
+        # The dataclass produced from the DB row must produce the same
+        # set_cell_config() dict as the in-code template — otherwise
+        # operators editing in the GUI would see drift vs the driver-
+        # internal apply path.
+        from app.hal.uxm_test_profiles import get_profile as get_code_profile
+        code_dc = get_code_profile("caict_n78_2x2")
+        assert dc.to_config_dict() == code_dc.to_config_dict()
+        assert dc.compatible_test_apps == ["5G_NR_Test"]
+
+    def test_get_dataclass_raises_not_found_for_unknown_id(self, db):
+        with pytest.raises(TopologyProfileNotFound):
+            get_dataclass(db, "does_not_exist")
+
+    def test_create_assigns_custom_prefix_and_allowlisted_fields(self, db):
+        row = create(db, name="My Test Profile",
+                     fields={"band": "N41", "mimo_layers": 4,
+                             "compatible_test_apps": ["5G_NR_Test"]})
+        db.commit()
+        assert row.profile_id.startswith("custom_")
+        assert row.is_system_preset is False
+        assert row.band == "N41"
+        assert row.mimo_layers == 4
+
+    def test_create_rejects_unknown_fields(self, db):
+        with pytest.raises(ValueError, match="Unknown"):
+            create(db, name="bad",
+                   fields={"made_up_field": 123})
+
+    def test_create_allocates_unique_id_on_name_collision(self, db):
+        a = create(db, name="My Profile", fields={})
+        b = create(db, name="My Profile", fields={})
+        db.commit()
+        assert a.profile_id != b.profile_id
+        assert b.profile_id == "custom_my_profile_2"
+
+    def test_update_modifies_operator_owned(self, db):
+        row = create(db, name="x", fields={"target_mcs": 10})
+        db.commit()
+        updated = update(db, row.profile_id, {"target_mcs": 20, "notes": "tweaked"})
+        db.commit()
+        assert updated.target_mcs == 20
+        assert updated.notes == "tweaked"
+
+    def test_update_refuses_system_preset(self, db):
+        topology_profiles_seeder.run(db)
+        with pytest.raises(TopologyProfileImmutable):
+            update(db, "caict_n78_2x2", {"target_mcs": 0})
+
+    def test_delete_refuses_system_preset(self, db):
+        topology_profiles_seeder.run(db)
+        with pytest.raises(TopologyProfileImmutable):
+            delete(db, "caict_n78_2x2")
+
+    def test_delete_removes_operator_owned(self, db):
+        row = create(db, name="ephemeral", fields={})
+        db.commit()
+        pid = row.profile_id
+        delete(db, pid)
+        db.commit()
+        with pytest.raises(TopologyProfileNotFound):
+            get_dataclass(db, pid)
+
+    def test_create_with_explicit_null_on_non_nullable_uses_default(self, db):
+        """Codex P2 (PR #38): operator-cleared GUI field arrives as
+        explicit null in JSON; Pydantic ``exclude_unset=True`` keeps
+        the null in the dump. For non-nullable columns (band, mimo_layers,
+        etc.) the service must skip the setattr so the column's Python /
+        server default fills in — without the skip we'd ``setattr None``
+        and Postgres would NOT-NULL-violate at flush time."""
+        row = create(db, name="x", fields={"band": None, "mimo_layers": None})
+        db.commit()
+        # Defaults kicked in.
+        assert row.band == "N78"
+        assert row.mimo_layers == 2
+
+    def test_create_with_explicit_null_on_nullable_keeps_null(self, db):
+        """Nullable columns (arfcn, csi_rs_ports, description, …) DO
+        accept the operator's explicit null — the skip rule only applies
+        to non-nullable columns."""
+        row = create(db, name="x", fields={"arfcn": None,
+                                            "csi_rs_ports": None,
+                                            "description": None})
+        db.commit()
+        assert row.arfcn is None
+        assert row.csi_rs_ports is None
+        assert row.description is None
+
+    def test_update_with_explicit_null_on_non_nullable_rejects(self, db):
+        """On UPDATE there's no default to fall back to, so explicit
+        null on a non-nullable field would generate UPDATE ... col=NULL
+        and IntegrityError everywhere. Service raises ValueError (→ 400)
+        with a message that disambiguates 'omit to leave unchanged' vs
+        'send a value'."""
+        row = create(db, name="x", fields={})
+        db.commit()
+        with pytest.raises(ValueError, match="non-nullable"):
+            update(db, row.profile_id, {"band": None})
+
+    def test_update_with_explicit_null_on_nullable_clears_field(self, db):
+        """Operator clearing arfcn / csi_rs_ports is the intended UX
+        for nullable columns — must succeed."""
+        row = create(db, name="x", fields={"arfcn": 632628, "csi_rs_ports": 4})
+        db.commit()
+        updated = update(db, row.profile_id, {"arfcn": None, "csi_rs_ports": None})
+        db.commit()
+        assert updated.arfcn is None
+        assert updated.csi_rs_ports is None
+
+    def test_duplicate_creates_editable_copy_with_unique_id(self, db):
+        topology_profiles_seeder.run(db)
+        copy = duplicate(db, "caict_n78_2x2")
+        db.commit()
+        assert copy.is_system_preset is False
+        assert copy.profile_id != "caict_n78_2x2"
+        assert "(副本)" in copy.name
+        # Field copy: power matches source
+        from app.hal.uxm_test_profiles import get_profile as get_code_profile
+        source_dc = get_code_profile("caict_n78_2x2")
+        assert copy.dl_power_dbm == source_dc.dl_power_dbm
+        assert list(copy.compatible_test_apps or []) == source_dc.compatible_test_apps
+
+
+class TestListTopologyProfilesReadsDb:
+    """GET /topology-profiles now reads the DB. With rows present,
+    returns DB content; empty DB falls back to in-code registry so the
+    GUI isn't blank during the greenfield first-boot window."""
+
+    def test_returns_db_rows_when_seeded(self, db):
+        topology_profiles_seeder.run(db)
+        cat = _make_basestation_category(db)
+        resp = client.get(f"/api/v1/instruments/{cat.category_key}/topology-profiles")
+        assert resp.status_code == 200
+        body = resp.json()
+        # 7 built-ins from the seeder
+        assert len(body["items"]) == 7
+        for item in body["items"]:
+            assert item["is_system_preset"] is True
+
+    def test_returns_operator_created_rows_alongside_presets(self, db):
+        topology_profiles_seeder.run(db)
+        create(db, name="My N41", fields={"band": "N41"})
+        db.commit()
+        cat = _make_basestation_category(db)
+        resp = client.get(f"/api/v1/instruments/{cat.category_key}/topology-profiles")
+        body = resp.json()
+        assert len(body["items"]) == 8
+        custom = [i for i in body["items"] if not i["is_system_preset"]]
+        assert len(custom) == 1
+        assert custom[0]["profile_id"].startswith("custom_")
+
+    def test_falls_back_to_in_code_registry_when_db_empty(self, db):
+        """Greenfield first-boot: no seeder has run yet, but the GUI
+        opens the topology picker and expects something to show. We
+        surface the in-code 7 built-ins as system presets so operator
+        sees the canonical choices even before bootstrap."""
+        cat = _make_basestation_category(db)
+        # No seeder call → DB has zero rows.
+        resp = client.get(f"/api/v1/instruments/{cat.category_key}/topology-profiles")
+        body = resp.json()
+        assert len(body["items"]) == 7
+        for item in body["items"]:
+            assert item["is_system_preset"] is True
+
+
+class TestTopologyProfileCrudEndpoints:
+    """POST / PUT / DELETE / duplicate flows on the new CRUD surface."""
+
+    def test_create_endpoint_assigns_custom_prefix(self, db):
+        resp = client.post(
+            "/api/v1/instruments/baseStation/topology-profiles",
+            json={"name": "My N41 Profile", "band": "N41", "mimo_layers": 4},
+        )
+        assert resp.status_code == 201, resp.json()
+        body = resp.json()
+        assert body["profile_id"].startswith("custom_")
+        assert body["is_system_preset"] is False
+        assert body["band"] == "N41"
+        assert body["mimo_layers"] == 4
+
+    def test_create_endpoint_rejects_unknown_field(self, db):
+        resp = client.post(
+            "/api/v1/instruments/baseStation/topology-profiles",
+            json={"name": "x", "this_field_does_not_exist": 42},
+        )
+        # Pydantic discards unknown extras by default (BaseModel without
+        # extra=forbid), so unknown fields silently get dropped by the
+        # request parser; the service's allowlist catches anything that
+        # survives. The "extra" here matches no allowlist entry AND no
+        # request schema field, so it's silently ignored — assert the
+        # row is created with defaults rather than erroring.
+        assert resp.status_code == 201
+        assert resp.json()["name"] == "x"
+
+    def test_create_endpoint_404_for_non_basestation(self, db):
+        resp = client.post(
+            "/api/v1/instruments/channelEmulator/topology-profiles",
+            json={"name": "anything"},
+        )
+        assert resp.status_code == 404
+
+    def test_update_endpoint_modifies_operator_owned(self, db):
+        created = client.post(
+            "/api/v1/instruments/baseStation/topology-profiles",
+            json={"name": "x"},
+        ).json()
+        pid = created["profile_id"]
+        resp = client.put(
+            f"/api/v1/instruments/baseStation/topology-profiles/{pid}",
+            json={"target_mcs": 20, "notes": "tweaked"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["target_mcs"] == 20
+        assert body["notes"] == "tweaked"
+
+    def test_update_endpoint_409_on_system_preset(self, db):
+        topology_profiles_seeder.run(db)
+        db.commit()
+        resp = client.put(
+            "/api/v1/instruments/baseStation/topology-profiles/caict_n78_2x2",
+            json={"target_mcs": 0},
+        )
+        assert resp.status_code == 409
+        body = resp.json()
+        assert body["refused"] is True
+        assert body["reason"] == "is_system_preset"
+
+    def test_update_endpoint_404_for_unknown_id(self, db):
+        resp = client.put(
+            "/api/v1/instruments/baseStation/topology-profiles/nope",
+            json={"target_mcs": 0},
+        )
+        assert resp.status_code == 404
+
+    def test_delete_endpoint_removes_operator_owned(self, db):
+        created = client.post(
+            "/api/v1/instruments/baseStation/topology-profiles",
+            json={"name": "to be deleted"},
+        ).json()
+        pid = created["profile_id"]
+        resp = client.delete(
+            f"/api/v1/instruments/baseStation/topology-profiles/{pid}",
+        )
+        assert resp.status_code == 204
+
+    def test_delete_endpoint_409_on_system_preset(self, db):
+        topology_profiles_seeder.run(db)
+        db.commit()
+        resp = client.delete(
+            "/api/v1/instruments/baseStation/topology-profiles/caict_n78_2x2",
+        )
+        assert resp.status_code == 409
+        body = resp.json()
+        assert body["refused"] is True
+
+    def test_duplicate_endpoint_returns_editable_copy(self, db):
+        topology_profiles_seeder.run(db)
+        db.commit()
+        resp = client.post(
+            "/api/v1/instruments/baseStation/topology-profiles/caict_n78_2x2/duplicate",
+        )
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["is_system_preset"] is False
+        assert body["profile_id"].startswith("custom_")
+        assert "(副本)" in body["name"]
