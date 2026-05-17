@@ -154,6 +154,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/instruments/{categoryKey}/topology-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List operator-selectable topology profiles for a binding (P2-1)
+         * @description Two-layer UXM architecture (P2-1 Phase 1):
+         *     - Test App layer = SCPI command vocabulary, AUTO-DETECTED at
+         *       connect via `SYSTem:APPLication:NAME?`. Operator does not pick.
+         *     - Topology profile layer = cell/MIMO/power/FRC configuration
+         *       within the running Test App. Operator-picked, persisted in
+         *       `InstrumentConnection.connection_params['topology_profile_id']`,
+         *       auto-applied on HAL reload.
+         *     The `compatible_with_current_test_app` flag per item reflects
+         *     the live HAL driver's detected_test_app — GUI greys out
+         *     incompatible options. Empty `compatible_test_apps` on a profile
+         *     means "compatible with any Test App" (no constraint).
+         *     Only `baseStation` category exposes profiles today (UXM
+         *     specific); other categories return empty + `reason="not_a_uxm"`.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    categoryKey: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Topology profile list + live compat status */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TopologyProfilesListResult"];
+                    };
+                };
+                /** @description Category not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        /**
+         * Operator selects (or clears) the topology profile for a binding (P2-1)
+         * @description - `profile_id=null` clears the selection.
+         *     - `profile_id="known_id"` with no live driver: persists; takes
+         *       effect on next HAL reload.
+         *     - `profile_id="known_id"` + live driver + compatible: persists
+         *       AND immediately applies on the driver. Response carries
+         *       `applied_now=true`.
+         *     - `profile_id="known_id"` + live driver + INCOMPATIBLE: returns
+         *       409 with `refused: true` + structured reason. Binding is NOT
+         *       persisted (refuses bail before DB write so operator can't
+         *       save a doomed selection). Matches the P2-5 refuse pattern.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    categoryKey: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SelectTopologyProfileRequest"];
+                };
+            };
+            responses: {
+                /** @description Selection persisted (and optionally applied) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SelectTopologyProfileResult"];
+                    };
+                };
+                /** @description Category, connection, or profile_id not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Topology incompatible with detected Test App */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/instruments/hal/readiness": {
         parameters: {
             query?: never;
@@ -364,6 +476,54 @@ export interface components {
         DutAttachReadiness: {
             status: string;
             detail: string;
+        };
+        /**
+         * @description P2-1: one row in the topology profile listing.
+         *     `compatible_with_current_test_app` is null when there's no
+         *     live driver to check against (HAL not initialised, mock mode,
+         *     no UXM driver bound) — GUI should treat null as "unknown,
+         *     allow selection but warn".
+         */
+        TopologyProfileEntry: {
+            profile_id: string;
+            name: string;
+            description: string;
+            category: string;
+            compatible_test_apps: string[];
+            compatible_with_current_test_app?: boolean | null;
+        };
+        TopologyProfilesListResult: {
+            items: components["schemas"]["TopologyProfileEntry"][];
+            current_test_app?: string | null;
+            selected_topology_profile_id?: string | null;
+            /**
+             * @description `"not_a_uxm"` when the category doesn't host topology
+             *     profiles (today everything except baseStation); otherwise
+             *     null. Future categories (CMX500 etc.) extend the dispatch
+             *     in `_list_topology_profiles_for_category`.
+             */
+            reason?: string | null;
+        };
+        SelectTopologyProfileRequest: {
+            /**
+             * @description Topology profile ID to bind to this category. Null clears
+             *     the selection so HAL reload won't auto-apply anything.
+             */
+            profile_id?: string | null;
+        };
+        SelectTopologyProfileResult: {
+            persisted: boolean;
+            profile_id?: string | null;
+            applied_now: boolean;
+            /**
+             * @description Non-null when the binding was persisted but the driver
+             *     was NOT live-applied. Values: `no_selection` (cleared),
+             *     `no_live_driver` (HAL not initialised), `driver_does_not_support_topology_profiles`
+             *     (e.g. mock driver), `incompatible_test_app` (compat check
+             *     failed at the driver level — usually caught earlier as 409).
+             */
+            apply_skipped_reason?: string | null;
+            test_app?: string | null;
         };
     };
     responses: never;

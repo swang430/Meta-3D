@@ -542,13 +542,6 @@ class InstrumentHALService:
                             f"[HAL-{self.mode.value.upper()}] {cat.category_key}: connected → "
                             f"{model.vendor} {model.model}"
                         )
-                        # Update connection status in DB
-                        if conn:
-                            conn.status = "connected"
-                            conn.last_error = None
-                            from datetime import datetime
-                            conn.last_connected_at = datetime.utcnow()
-                            db.commit()
                         # P3-5: pull driver-specific extras (F64 surfaces
                         # parsed SYST:INFO? fields here; other drivers
                         # return ``{}`` from the base default).
@@ -562,6 +555,54 @@ class InstrumentHALService:
                                 f"{type(e).__name__}: {e} — treating as no extras"
                             )
                             extras = {}
+
+                        # Update connection status in DB.
+                        # P2-1: persist detected_test_app (UXM) into
+                        # connection_params so operator-facing GUI can
+                        # show "currently running LTE_NR_IRAT" without
+                        # poking the readiness endpoint; also pre-warm
+                        # the binding-time topology compat check before
+                        # HAL is queried again.
+                        if conn:
+                            conn.status = "connected"
+                            conn.last_error = None
+                            from datetime import datetime
+                            conn.last_connected_at = datetime.utcnow()
+                            detected = extras.get("detected_test_app")
+                            if detected is not None:
+                                params = dict(conn.connection_params or {})
+                                params["detected_test_app"] = detected
+                                conn.connection_params = params
+                            db.commit()
+
+                        # P2-1: auto-apply the binding's operator-selected
+                        # topology profile (if any) after successful
+                        # connect. Compat check is inside
+                        # apply_topology_profile — incompatible profile
+                        # logs a WARNING but doesn't fail the HAL init
+                        # (operator can fix via PUT
+                        # /instruments/{cat}/topology-profile without
+                        # re-running HAL reload).
+                        topology_id = None
+                        if conn and isinstance(conn.connection_params, dict):
+                            topology_id = conn.connection_params.get("topology_profile_id")
+                        if topology_id and hasattr(driver, "apply_topology_profile"):
+                            try:
+                                result = await driver.apply_topology_profile(topology_id)
+                                if not result.get("applied"):
+                                    logger.warning(
+                                        f"[HAL] {cat.category_key}: "
+                                        f"topology profile {topology_id!r} NOT applied — "
+                                        f"reason={result.get('reason')}"
+                                    )
+                            except Exception as e:
+                                logger.warning(
+                                    f"[HAL] {cat.category_key}: "
+                                    f"apply_topology_profile({topology_id!r}) raised "
+                                    f"{type(e).__name__}: {e} — driver loaded but "
+                                    f"binding's topology not applied"
+                                )
+
                         report_rows.append(DriverReadinessRow(
                             category=cat.category_key,
                             model=f"{model.vendor} {model.model}",

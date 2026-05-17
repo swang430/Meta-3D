@@ -231,6 +231,55 @@ export const removeChannelModel = async (
   return response.data
 }
 
+// ============================================================
+// P2-1: Topology profile (operator-selectable UXM cell/MIMO config
+// templates within a detected Test App)
+// ============================================================
+
+export interface TopologyProfileEntry {
+  profile_id: string
+  name: string
+  description: string
+  category: string                // "siso" / "mimo" / "calibration"
+  compatible_test_apps: string[]  // empty = any
+  compatible_with_current_test_app?: boolean | null
+}
+
+export interface TopologyProfilesListResult {
+  items: TopologyProfileEntry[]
+  current_test_app?: string | null
+  selected_topology_profile_id?: string | null
+  reason?: string | null // "not_a_uxm" | null
+}
+
+export interface SelectTopologyProfileResult {
+  persisted: boolean
+  profile_id?: string | null
+  applied_now: boolean
+  apply_skipped_reason?: string | null
+  test_app?: string | null
+}
+
+export const fetchTopologyProfiles = async (
+  categoryKey: string,
+): Promise<TopologyProfilesListResult> => {
+  const response = await client.get<TopologyProfilesListResult>(
+    `/instruments/${categoryKey}/topology-profiles`,
+  )
+  return response.data
+}
+
+export const selectTopologyProfile = async (
+  categoryKey: string,
+  profileId: string | null,
+): Promise<SelectTopologyProfileResult> => {
+  const response = await client.put<SelectTopologyProfileResult>(
+    `/instruments/${categoryKey}/topology-profile`,
+    { profile_id: profileId },
+  )
+  return response.data
+}
+
 export const createTestCaseFromPlan = async (
   payload: CreateTestCaseFromPlanPayload,
 ): Promise<CreateTestCaseResponse> => {

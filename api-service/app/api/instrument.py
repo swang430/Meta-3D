@@ -512,6 +512,320 @@ async def list_channel_models_endpoint(
 
 
 # ============================================================
+# P2-1 Phase 1: Topology profile endpoints (UXM-specific today,
+# pattern generalisable when CMX500 / other multi-app instruments land)
+# ============================================================
+
+class TopologyProfileEntry(BaseModel):
+    """One row in the topology profile listing.
+
+    `compatible_with_current_test_app` is computed against the live HAL
+    driver's detected_test_app at request time — null when there's no
+    live driver to compare against (HAL not initialised, mock mode,
+    no UXM driver bound) so the GUI doesn't have to special-case the
+    'we don't know yet' state."""
+    profile_id: str
+    name: str
+    description: str
+    category: str  # "siso" / "mimo" / "calibration" — from UxmTestProfile.category
+    compatible_test_apps: List[str]
+    compatible_with_current_test_app: Optional[bool] = None
+
+
+class TopologyProfilesListResult(BaseModel):
+    """Response for GET /instruments/{cat}/topology-profiles.
+
+    `current_test_app` is the live-detected app name from the driver
+    (e.g. `'LTE_NR_IRAT'`), null when no live driver. GUI uses this to
+    label the dropdown ('Currently running: LTE_NR_IRAT — only LTE
+    topologies compatible') and to grey out incompatible options.
+
+    `selected_topology_profile_id` is what's currently persisted on
+    the binding (operator's last selection); GUI pre-selects this in
+    the dropdown."""
+    items: List[TopologyProfileEntry]
+    current_test_app: Optional[str] = None
+    selected_topology_profile_id: Optional[str] = None
+    reason: Optional[str] = None  # "not_a_uxm" | None
+
+
+class SelectTopologyProfileRequest(BaseModel):
+    """Payload for PUT /instruments/{cat}/topology-profile.
+
+    `profile_id=null` clears the selection (operator wants no auto-apply
+    on next HAL reload). `profile_id="some_id"` persists + (if live
+    driver available + compat) immediately calls apply on the driver."""
+    profile_id: Optional[str] = None
+
+
+class SelectTopologyProfileResult(BaseModel):
+    """Response for PUT /instruments/{cat}/topology-profile.
+
+    `persisted` is always True on a 200 (we never partially persist —
+    refuses bail before the DB write). `applied_now` is True only
+    when the live driver was reachable AND compat allowed; False with
+    a non-empty `apply_skipped_reason` when we wrote the binding but
+    didn't push to the driver (no live driver / not a UXM / etc).
+    Distinguishes 'saved your preference, will take effect next HAL
+    reload' from 'saved + already live'."""
+    persisted: bool
+    profile_id: Optional[str]
+    applied_now: bool = False
+    apply_skipped_reason: Optional[str] = None
+    test_app: Optional[str] = None
+
+
+def _list_topology_profiles_for_category(
+    category_key: str,
+) -> List[Dict[str, Any]]:
+    """Today: UXM is the only category with topology profiles. Future
+    multi-app instruments (CMX500, etc.) add their own profile registry
+    + a category → registry dispatch here.
+
+    Returns the raw template dicts — caller wraps them in Pydantic + adds
+    runtime compat status. Empty list means 'no profiles for this
+    category' (and caller should set reason='not_a_uxm' or equivalent).
+    """
+    if category_key != "baseStation":
+        # No other category exposes topology profiles in Phase 1.
+        return []
+    from app.hal.uxm_test_profiles import _PROFILE_REGISTRY, _register_builtin_profiles
+
+    if not _PROFILE_REGISTRY:
+        _register_builtin_profiles()
+    return [
+        {
+            "profile_id": p.profile_id,
+            "name": p.name,
+            "description": p.description,
+            "category": p.category,
+            "compatible_test_apps": list(p.compatible_test_apps),
+        }
+        for p in _PROFILE_REGISTRY.values()
+    ]
+
+
+@router.get(
+    "/instruments/{category_key}/topology-profiles",
+    response_model=TopologyProfilesListResult,
+)
+def list_topology_profiles_endpoint(
+    category_key: str,
+    db: Session = Depends(get_db),
+) -> TopologyProfilesListResult:
+    """P2-1: list operator-selectable topology profiles for a binding.
+
+    Operator picks one in the GUI; it persists to
+    `InstrumentConnection.connection_params['topology_profile_id']`
+    and gets auto-applied on the next HAL reload (after the live
+    Test App is detected and compat-verified).
+
+    The 'compatible_with_current_test_app' flag per item reflects the
+    live HAL state — operator sees grey-out for choices that won't
+    work today (without preventing them from picking one if they
+    plan to change the UXM Test App first)."""
+    cat = (
+        db.query(InstrumentCategoryModel)
+        .filter(InstrumentCategoryModel.category_key == category_key)
+        .first()
+    )
+    if cat is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Instrument category '{category_key}' not found",
+        )
+
+    raw = _list_topology_profiles_for_category(category_key)
+    if not raw:
+        return TopologyProfilesListResult(
+            items=[], current_test_app=None,
+            selected_topology_profile_id=None,
+            reason="not_a_uxm" if category_key != "baseStation" else None,
+        )
+
+    # Live HAL state — for compat-flagging items.
+    try:
+        from app.services.instrument_hal_service import get_hal_service
+        hal = get_hal_service()
+    except Exception:
+        hal = None
+    driver = (hal.drivers or {}).get(category_key) if hal else None
+    current_test_app: Optional[str] = None
+    if driver is not None:
+        current_test_app = getattr(driver, "detected_test_app", None)
+
+    # Persisted selection (operator's last PUT).
+    conn = (
+        db.query(InstrumentConnectionDB)
+        .filter(InstrumentConnectionDB.category_id == cat.id)
+        .first()
+    )
+    selected = None
+    if conn and isinstance(conn.connection_params, dict):
+        selected = conn.connection_params.get("topology_profile_id")
+
+    items = []
+    for entry in raw:
+        compat = None
+        if current_test_app is not None:
+            # Compat-check: empty list = compatible-with-any; else
+            # exact-match (case-insensitive) check.
+            if not entry["compatible_test_apps"]:
+                compat = True
+            else:
+                target = current_test_app.upper()
+                compat = any(a.upper() == target for a in entry["compatible_test_apps"])
+        items.append(TopologyProfileEntry(
+            compatible_with_current_test_app=compat,
+            **entry,
+        ))
+
+    return TopologyProfilesListResult(
+        items=items,
+        current_test_app=current_test_app,
+        selected_topology_profile_id=selected,
+    )
+
+
+@router.put(
+    "/instruments/{category_key}/topology-profile",
+    response_model=SelectTopologyProfileResult,
+    responses={409: {"description": "Topology incompatible with detected Test App"}},
+)
+async def select_topology_profile_endpoint(
+    category_key: str,
+    request: SelectTopologyProfileRequest,
+    db: Session = Depends(get_db),
+) -> SelectTopologyProfileResult:
+    """P2-1: operator selects a topology profile for a UXM binding.
+
+    Behaviour:
+    - `profile_id=null`: clears the selection (`connection_params`
+      drops the `topology_profile_id` key). 200, applied_now=False.
+    - `profile_id="..."` with unknown id: 404.
+    - `profile_id="..."` with known id, no live HAL driver: persists
+      to `connection_params`, 200 with applied_now=False +
+      apply_skipped_reason='no_live_driver'. Takes effect on next
+      HAL reload.
+    - `profile_id="..."` known + live driver + compatible: persists,
+      calls `driver.apply_topology_profile`, 200 with applied_now=True.
+    - `profile_id="..."` known + live driver + INCOMPATIBLE: 409 with
+      reason='incompatible_test_app' (matches P2-5 refuse pattern).
+      The binding is NOT persisted — refuses bail before DB write so
+      operator can't accidentally save a doomed selection.
+    """
+    cat = (
+        db.query(InstrumentCategoryModel)
+        .filter(InstrumentCategoryModel.category_key == category_key)
+        .first()
+    )
+    if cat is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Instrument category '{category_key}' not found",
+        )
+
+    conn = (
+        db.query(InstrumentConnectionDB)
+        .filter(InstrumentConnectionDB.category_id == cat.id)
+        .first()
+    )
+    if conn is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No connection row for category '{category_key}' — configure endpoint first",
+        )
+
+    profile_id = request.profile_id
+
+    # Validate profile_id (if non-null) exists in the registry.
+    if profile_id is not None:
+        from app.hal.uxm_test_profiles import _PROFILE_REGISTRY, _register_builtin_profiles
+        if not _PROFILE_REGISTRY:
+            _register_builtin_profiles()
+        if profile_id not in _PROFILE_REGISTRY:
+            available = sorted(_PROFILE_REGISTRY.keys())
+            raise HTTPException(
+                status_code=404,
+                detail=f"Topology profile {profile_id!r} not found. Available: {available}",
+            )
+
+    # Get live driver (if any) for compat check + immediate apply.
+    try:
+        from app.services.instrument_hal_service import get_hal_service
+        hal = get_hal_service()
+    except Exception:
+        hal = None
+    driver = (hal.drivers or {}).get(category_key) if hal else None
+
+    # Compat check BEFORE DB write — refuses don't half-persist.
+    if profile_id is not None and driver is not None:
+        if hasattr(driver, "apply_topology_profile"):
+            # Pre-flight: call apply with the proposed id, see if it
+            # would refuse, but DON'T let it actually run SCPI yet
+            # (we want to commit DB first if compat passes). Cheap
+            # path: load the profile + run is_compatible_with directly
+            # rather than letting apply_topology_profile do its log + return.
+            from app.hal.uxm_test_profiles import get_profile
+            try:
+                proposed = get_profile(profile_id)
+            except KeyError as e:
+                raise HTTPException(status_code=404, detail=str(e))
+            current_app = getattr(driver, "detected_test_app", None)
+            if not proposed.is_compatible_with(current_app):
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "refused": True,
+                        "reason": "incompatible_test_app",
+                        "profile_id": profile_id,
+                        "test_app": current_app,
+                        "profile_compatible_with": list(proposed.compatible_test_apps),
+                        "detail": (
+                            f"Topology profile {profile_id!r} compatible with "
+                            f"{proposed.compatible_test_apps}, but UXM is currently "
+                            f"running Test App {current_app!r}. Pick a compatible "
+                            f"profile or switch the UXM hardware to a matching Test App."
+                        ),
+                    },
+                )
+
+    # Persist (or clear) the selection.
+    params = dict(conn.connection_params or {})
+    if profile_id is None:
+        params.pop("topology_profile_id", None)
+    else:
+        params["topology_profile_id"] = profile_id
+    conn.connection_params = params
+    db.commit()
+
+    # Optionally apply NOW if we have a live driver.
+    applied_now = False
+    apply_skipped_reason: Optional[str] = None
+    test_app: Optional[str] = None
+    if profile_id is None:
+        apply_skipped_reason = "no_selection"
+    elif driver is None:
+        apply_skipped_reason = "no_live_driver"
+    elif not hasattr(driver, "apply_topology_profile"):
+        apply_skipped_reason = "driver_does_not_support_topology_profiles"
+    else:
+        result = await driver.apply_topology_profile(profile_id)
+        applied_now = bool(result.get("applied"))
+        test_app = result.get("test_app")
+        if not applied_now:
+            apply_skipped_reason = result.get("reason") or "unknown"
+
+    return SelectTopologyProfileResult(
+        persisted=True,
+        profile_id=profile_id,
+        applied_now=applied_now,
+        apply_skipped_reason=apply_skipped_reason,
+        test_app=test_app,
+    )
+
+
+# ============================================================
 # Channel-model curated-list CRUD
 # ------------------------------------------------------------
 # Operators were maintaining the list by hand-editing the JSON in the

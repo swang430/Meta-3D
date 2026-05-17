@@ -153,6 +153,15 @@ class RealUxmDriver(BaseStationDriver):
         # endpoint. Operators can pre-set via config["uxm_profile"] = "irat"
         # to skip auto-detect when the host doesn't expose hislip0.
         self._cmds: type[UxmCommandProfile] = self._resolve_initial_profile(config)
+        # P2-1: Test App actually detected at connect() (via
+        # SYSTem:APPLication:NAME?), as opposed to the resolved-from-
+        # config initial guess. ``None`` pre-connect / when probe failed
+        # — distinguishes "we don't know" from "5G_NR_Test confirmed".
+        # Surfaced in readiness_metadata + written to
+        # InstrumentConnection.connection_params["detected_test_app"]
+        # by the HAL service post-connect for GUI audit / P3-5 readiness
+        # panel.
+        self.detected_test_app: Optional[str] = None
         # VISA session
         self._visa_rm = None
         self._visa_session = None
@@ -321,6 +330,11 @@ class RealUxmDriver(BaseStationDriver):
             try:
                 app_name = self._query("SYSTem:APPLication:NAME?").strip().strip('"')
                 if app_name:
+                    # P2-1: store the RAW detected name (not the profile
+                    # name we mapped it to) so audit reflects what the
+                    # instrument actually reported, even when our
+                    # detect_profile() registry didn't recognise it.
+                    self.detected_test_app = app_name
                     detected = detect_profile(app_name)
                     if detected is not self._cmds:
                         logger.info(
@@ -395,6 +409,88 @@ class RealUxmDriver(BaseStationDriver):
         if state_file:
             return await self.load_state_file(state_file)
         return await self.set_cell_config(config)
+
+    def readiness_metadata(self) -> Dict[str, Any]:
+        """P2-1 / P3-5: expose Test App detection state to the readiness
+        report so operators see which UXM app is running + which command
+        profile / cell-index conventions the driver landed on.
+
+        Distinct from the raw ``detected_test_app`` (= what the
+        instrument reported via SYSTem:APPLication:NAME?): also exposes
+        ``command_profile`` (the registered ``UxmCommandProfile``
+        subclass name) so the operator can tell when our profile
+        detect_profile() fell back to the 5G_NR_Test default for an
+        app name we don't yet have a profile for.
+        """
+        return {
+            "detected_test_app": self.detected_test_app,
+            "command_profile": self._cmds.PROFILE_NAME,
+            "primary_cell": self._cmds.PRIMARY_CELL,
+            "hislip_index": self._cmds.HISLIP_INDEX,
+        }
+
+    # ===================================================================
+    # P2-1 Phase 1: Topology Profile 应用 (operator-managed)
+    # ===================================================================
+
+    async def apply_topology_profile(self, profile_id: str) -> Dict[str, Any]:
+        """P2-1: 把操作员预选的拓扑 profile 应用到当前运行的 Test App.
+
+        分层语义:
+        - Test App (``self._cmds.PROFILE_NAME``): UXM 实时硬件状态决定的
+          SCPI 命令词汇变体 + cell index 编码。connect() 时 auto-detect.
+        - Topology profile (``UxmTestProfile``): 操作员在 GUI 选的 cell/
+          MIMO/功率/FRC 配置, 在已确定的 Test App 词汇下设置具体值。
+
+        两层 must match: 拓扑里 ``cell_id="CELL0"`` 配 IRAT Test App
+        (PRIMARY_CELL=CELL1) 会发到不存在的 cell — refuse 在这里, 而
+        不是让操作员事后看 -113 报错。
+
+        Returns:
+            ``{"applied": True, "profile_id": ..., "test_app": ...}`` 成功,
+            或 ``{"applied": False, "reason": "incompatible_test_app",
+            "profile_id": ..., "test_app": ..., "profile_compatible_with":
+            [...]}`` 拒绝.
+
+            刻意返回 dict 而非 raise: 调用方 (HAL init / API endpoint) 想
+            根据"被拒"还是"成功"分别 surface 给操作员, raise 会丢上下文
+            (test_app + profile.compatible_test_apps 都要让操作员看到).
+        """
+        from app.hal.uxm_test_profiles import get_profile
+
+        # Resolve profile by id — propagates KeyError up to caller if the
+        # id is bogus. The caller (HTTP endpoint) maps that to 404 for
+        # the operator; HAL init logs + skips.
+        profile = get_profile(profile_id)
+
+        active_test_app = self._cmds.PROFILE_NAME
+        if not profile.is_compatible_with(active_test_app):
+            logger.warning(
+                f"[UXM] Refused to apply topology profile {profile_id!r} — "
+                f"declares compatibility with {profile.compatible_test_apps}, "
+                f"but UXM is currently running Test App {active_test_app!r}. "
+                f"Operator should pick a compatible profile or wait until "
+                f"the UXM hardware is on a matching Test App."
+            )
+            return {
+                "applied": False,
+                "reason": "incompatible_test_app",
+                "profile_id": profile_id,
+                "test_app": active_test_app,
+                "profile_compatible_with": list(profile.compatible_test_apps),
+            }
+
+        logger.info(
+            f"[UXM] Applying topology profile {profile_id!r} "
+            f"(compat: {profile.compatible_test_apps or 'any'}) "
+            f"to active Test App {active_test_app!r}"
+        )
+        await self.set_cell_config(profile.to_config_dict())
+        return {
+            "applied": True,
+            "profile_id": profile_id,
+            "test_app": active_test_app,
+        }
 
     # ===================================================================
     # 2. 小区配置
