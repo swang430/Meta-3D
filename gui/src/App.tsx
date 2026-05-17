@@ -91,6 +91,8 @@ import {
   fetchChannelModels,
   addChannelModel,
   removeChannelModel,
+  fetchTopologyProfiles,
+  selectTopologyProfile,
   fetchSequenceLibrary,
   fetchTestCases,
   fetchTestPlan,
@@ -1619,6 +1621,168 @@ function ScpiHistoryFeed({ categoryKey }: ScpiHistoryFeedProps) {
 }
 
 /**
+ * P2-1 Phase 1: Topology profile selector for the UXM (baseStation) binding.
+ *
+ * UXM has two layers: Test App (SCPI command vocabulary, auto-detected at
+ * connect) and Topology profile (cell/MIMO/power/FRC config WITHIN the
+ * running Test App, operator-managed).
+ *
+ * This card lives only in the baseStation drawer (other categories don't
+ * have topology profiles today — empty list with reason='not_a_uxm').
+ * Operator picks a profile; PUT persists to connection_params and, if
+ * a live driver is available + compat allows, applies on the driver
+ * immediately. 409 path = incompatible with detected Test App, surfaced
+ * inline so operator sees the reason before re-attempting.
+ */
+function TopologyProfileCard({ categoryKey }: { categoryKey: string }) {
+  const queryClient = useQueryClient()
+  const { data, isLoading, isError, refetch, isFetching } = useQuery({
+    queryKey: ['instruments', 'topologyProfiles', categoryKey],
+    queryFn: () => fetchTopologyProfiles(categoryKey),
+    refetchOnWindowFocus: false,
+  })
+
+  const [opError, setOpError] = useState<string | null>(null)
+  const [opMessage, setOpMessage] = useState<string | null>(null)
+
+  const items = data?.items ?? []
+  const currentTestApp = data?.current_test_app ?? null
+  const selectedId = data?.selected_topology_profile_id ?? null
+  const reason = data?.reason ?? null
+
+  const selectMutation = useMutation({
+    mutationFn: (profileId: string | null) =>
+      selectTopologyProfile(categoryKey, profileId),
+    onSuccess: (result) => {
+      // Refetch to pick up the new selection + compat status (live driver
+      // detected_test_app may have changed since last load).
+      queryClient.invalidateQueries({
+        queryKey: ['instruments', 'topologyProfiles', categoryKey],
+      })
+      setOpError(null)
+      if (result.applied_now) {
+        setOpMessage(
+          `已选择并立即应用到运行中的 ${result.test_app ?? 'Test App'}`,
+        )
+      } else if (result.profile_id === null) {
+        setOpMessage('已清除拓扑选择（HAL 重载时不会自动应用）')
+      } else {
+        const skip = result.apply_skipped_reason
+        const skipLabel: Record<string, string> = {
+          no_live_driver: 'HAL 未加载驱动，HAL 重载时生效',
+          driver_does_not_support_topology_profiles: '该驱动不支持拓扑应用',
+          incompatible_test_app: '驱动层兼容性拒绝（请检查 Test App）',
+        }
+        setOpMessage(
+          `已保存（${skipLabel[skip ?? ''] ?? `apply_skipped_reason=${skip}`}）`,
+        )
+      }
+    },
+    onError: (err: unknown) => {
+      // 409 from refuse arm carries `refused: true` + structured reason.
+      // Surface the detail so operator sees WHY (incompatible Test App
+      // is the common case).
+      const data = (err as { response?: { data?: any } })?.response?.data
+      if (data?.refused) {
+        const compatList =
+          (data.profile_compatible_with as string[] | undefined)?.join(', ') ??
+          '?'
+        setOpError(
+          `拒绝：拓扑 ${data.profile_id} 与当前 Test App "${data.test_app}" ` +
+            `不兼容（兼容范围：${compatList}）`,
+        )
+      } else {
+        const detail =
+          (err as { response?: { data?: { detail?: string } } })?.response?.data
+            ?.detail ?? '选择失败'
+        setOpError(String(detail))
+      }
+      setOpMessage(null)
+    },
+  })
+
+  if (reason === 'not_a_uxm') {
+    // Don't render the card on non-UXM bindings.
+    return null
+  }
+
+  const selectData = items.map((item) => {
+    const compatTag =
+      item.compatible_with_current_test_app === false
+        ? ' (不兼容当前 Test App)'
+        : item.compatible_with_current_test_app === null
+          ? ' (HAL 未加载)'
+          : ''
+    return {
+      value: item.profile_id,
+      label: `${item.name}${compatTag}`,
+      disabled: item.compatible_with_current_test_app === false,
+    }
+  })
+
+  return (
+    <Card withBorder padding="md" radius="md" shadow="xs">
+      <Stack gap="sm">
+        <Group justify="space-between" align="center">
+          <Stack gap={2}>
+            <Text fw={600}>拓扑 Profile (P2-1)</Text>
+            <Text size="xs" c="gray.6">
+              {currentTestApp
+                ? `当前 Test App: ${currentTestApp}（不兼容选项已禁用）`
+                : 'HAL 未加载或 Test App 未检测到 — 选择会在下次 HAL 重载生效'}
+            </Text>
+          </Stack>
+          <Button
+            size="xs"
+            variant="subtle"
+            onClick={() => refetch()}
+            disabled={isFetching}
+          >
+            刷新
+          </Button>
+        </Group>
+
+        {isLoading ? (
+          <Text size="sm" c="gray.6">
+            加载中...
+          </Text>
+        ) : isError ? (
+          <Text size="sm" c="red.6">
+            加载失败
+          </Text>
+        ) : items.length === 0 ? (
+          <Text size="sm" c="gray.6">
+            (该 category 无可选拓扑 profile)
+          </Text>
+        ) : (
+          <Select
+            label="选择拓扑"
+            placeholder="(未选择 — HAL 重载时不会自动应用)"
+            data={selectData}
+            value={selectedId}
+            clearable
+            onChange={(value) => selectMutation.mutate(value)}
+            disabled={selectMutation.isPending}
+          />
+        )}
+
+        {opError ? (
+          <Text size="xs" c="red.6">
+            {opError}
+          </Text>
+        ) : null}
+        {opMessage ? (
+          <Text size="xs" c="teal.7">
+            {opMessage}
+          </Text>
+        ) : null}
+      </Stack>
+    </Card>
+  )
+}
+
+
+/**
  * Channel-model list card for the channelEmulator category drawer.
  *
  * Pulls the operator-curated list of selectable channel-model files
@@ -2275,6 +2439,13 @@ function EquipmentManager() {
                     </>
                   )
                 })()}
+
+                {category.key === 'baseStation' && (
+                  // P2-1: UXM topology profile picker. Component itself
+                  // bails (returns null) if backend says reason='not_a_uxm'
+                  // — safe to render unconditionally for baseStation.
+                  <TopologyProfileCard categoryKey={category.key} />
+                )}
 
                 <Group justify="flex-end" mt="md">
                   <Button

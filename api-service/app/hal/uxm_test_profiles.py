@@ -117,8 +117,44 @@ class UxmTestProfile:
     # --- 仪器端配置文件 (可选, 优先级最高) ---
     state_file: Optional[str] = None
 
+    # --- P2-1 Phase 1: Test App 兼容性声明 ---
+    #
+    # 拓扑 profile 在哪个 / 哪些 Test App 下工作。Test App 决定 UXM SCPI
+    # 命令词汇 (CONFig:NR5G:* vs BSE:CONFig:NR5G:*) + cell index 编码
+    # (CELL0 vs CELL1) + 带宽值形式 (40 vs "BW40"), 拓扑里 ``cell_id`` 等
+    # 字段必须跟运行中的 Test App 匹配, 否则发命令会得到 -113 Undefined
+    # Header 或操作到不存在的 cell.
+    #
+    # 空列表 = 兼容所有 Test App (类似 "any"); 显式列出代表"只跟这些 app
+    # 兼容"。操作员在 GUI 选拓扑时, 跟 detected_test_app 不匹配的会被
+    # ``RealUxmDriver.apply_topology_profile`` refuse (返回结构化错误,
+    # 不进入 SCPI 路径); 同时 GUI 可读这个字段灰化不兼容选项.
+    #
+    # 当前 7 个 built-in template 用的都是 cell_id="CELL0" + 直接数字
+    # 带宽, 仅在 5G_NR_Test 下工作; 显式声明这点比依赖 cell_id 形式推断
+    # 更稳健 (未来加 IRAT 拓扑时不会因为 cell_id 改成 "CELL1" 就被认为
+    # 通用兼容).
+    compatible_test_apps: List[str] = field(default_factory=list)
+
     # --- 备注 ---
     notes: str = ""
+
+    def is_compatible_with(self, test_app_name: Optional[str]) -> bool:
+        """P2-1: 这个拓扑能在 ``test_app_name`` 标识的 Test App 下安全运行吗?
+
+        - ``compatible_test_apps`` 空 = 兼容任何 (含 None / 未知)
+        - ``test_app_name`` 是 None = "未检测到 Test App", 当兼容处理
+          (Mock 模式 / 离线模式 / 刚 boot HAL 但还没 connect 都属于这种)
+        - 否则: ``test_app_name`` 落在声明的 ``compatible_test_apps`` 里
+          (大小写不敏感, 精确字符串相等; substring 匹配交给 Test App 层
+          自己的 ``APP_NAME_MATCH`` registry 做, 拓扑层就读最终 profile 名)
+        """
+        if not self.compatible_test_apps:
+            return True
+        if test_app_name is None:
+            return True
+        target = test_app_name.upper()
+        return any(allowed.upper() == target for allowed in self.compatible_test_apps)
 
     def to_config_dict(self) -> Dict[str, Any]:
         """
@@ -231,6 +267,7 @@ PROFILE_SISO_N78 = UxmTestProfile(
     ssb_power_dbm=-50.0,
     modulation="64QAM",
     target_mcs=19,
+    compatible_test_apps=["5G_NR_Test"],
     notes="RF1 OUT→F64 CH1→探头; RF1 IN←DUT UL",
 )
 
@@ -250,6 +287,7 @@ PROFILE_SISO_N78_LOW_POWER = UxmTestProfile(
     ssb_power_dbm=-80.0,
     modulation="QPSK",
     target_mcs=0,
+    compatible_test_apps=["5G_NR_Test"],
     notes="用于 RSRP/SINR 灵敏度标定",
 )
 
@@ -278,6 +316,7 @@ PROFILE_2X2_N78 = UxmTestProfile(
     harq_processes=16,
     csi_rs_ports=4,          # 2x2 MIMO → 4 CSI-RS ports
     stat_count=5000,         # ≥5s 统计窗口
+    compatible_test_apps=["5G_NR_Test"],
     notes=(
         "RF1 OUT→F64 CH1→探头天线 1~16 (V极化)\n"
         "RF2 OUT→F64 CH2→探头天线 1~16 (H极化)\n"
@@ -309,6 +348,7 @@ PROFILE_2X2_N41 = UxmTestProfile(
     harq_processes=16,
     csi_rs_ports=4,
     stat_count=5000,
+    compatible_test_apps=["5G_NR_Test"],
     notes="适用于 N41 频段车载天线测试",
 )
 
@@ -337,6 +377,7 @@ PROFILE_4X4_N78 = UxmTestProfile(
     harq_processes=16,
     csi_rs_ports=8,          # 4x4 MIMO → 8 CSI-RS ports
     stat_count=5000,
+    compatible_test_apps=["5G_NR_Test"],
     notes=(
         "需要满配 UXM (8 端口)\n"
         "RF1~RF4 OUT→F64 CH1~CH4→探头\n"
@@ -361,6 +402,7 @@ PROFILE_CAL_POWER = UxmTestProfile(
     ssb_power_dbm=-30.0,
     modulation="QPSK",
     target_mcs=0,
+    compatible_test_apps=["5G_NR_Test"],
     notes="高功率输出用于 VNA/频谱仪 path loss 校准",
 )
 
@@ -380,6 +422,7 @@ PROFILE_CAL_2X2_ALT = UxmTestProfile(
     ssb_power_dbm=-50.0,
     modulation="256QAM",
     target_mcs=24,
+    compatible_test_apps=["5G_NR_Test"],
     notes="验证 RF3+RF4 通路与 RF1+RF2 的一致性",
 )
 

@@ -98,6 +98,7 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 | D17 | P3-4 — Structured `SYST:INFO?` parser for F64 — new `F64SysInfo` dataclass + `parse_f64_sys_info` function extract product_family / channel_count / signal_type / firmware_version / secondary_count / band_label / extra_tokens. F64 `connect()` populates the structured fields (was only extracting channel_count). 21 new parser test cases pin positional + labeled + defensive shapes. | this PR (2026-05-17) |
 | D18 | P3-5 — Composite HAL readiness snapshot. New `app/services/readiness.py` aggregates per-driver rows (with `extras` dict — F64 surfaces firmware_version / band_label / product_family via polymorphic `readiness_metadata()` hook) + active LabProfile status + active CalibrationCertificate validity + DUT-attach placeholder. Persisted on HAL service + exposed via `GET /api/v1/instruments/hal/readiness` (+ openapi schemas + TS regen). 20 new tests. | this PR (2026-05-17) |
 | D19 | P2-5 — HAL Reload refuse/force policy (A+D from audit). New `app/services/hal_reload_policy.py` with TestPlan blocker finder (running / paused). `POST /hal/reload` returns HTTP 409 with structured blocker payload by default; `?force=true` overrides and marks the success response `forced=true` for audit. Module-level `asyncio.Lock` in `instrument_hal_service.py` serialises shutdown/init across concurrent reload + mode-switch calls (split into `_shutdown_hal_service_inner` / `_initialize_hal_service_inner` + atomic `reload_hal_service_atomic` helper). Shutdown logs at WARNING when drivers are still attached. 15 new tests pin per-status semantics + endpoint refuse/force/empty + lock serialisation. Deferred (with reason): pause+drain registry (B), in-flight diagnostic/SCPI detection (no DB row to query), openapi sync for `/hal/reload` (sibling endpoints precedent). | this PR (2026-05-17) |
+| D20 | P2-1 Phase 1 — UXM two-layer architecture (Test App auto-detect + Topology profile operator-managed). `UxmTestProfile` gains `compatible_test_apps` + `is_compatible_with()`; 7 built-ins declare `["5G_NR_Test"]`. `RealUxmDriver` gains `detected_test_app` instance attr, `readiness_metadata()` override (exposes Test App layer to P3-5 panel), `apply_topology_profile(id)` with refuse-on-incompat (structured dict, not raise). HAL service post-connect: persists `detected_test_app` to `connection_params` + auto-applies binding's selected topology. New endpoints: `GET /instruments/{cat}/topology-profiles` (live compat flag per item), `PUT /instruments/{cat}/topology-profile` (refuse with 409 on incompat — `JSONResponse` not `HTTPException(detail=...)` per Codex P2 lesson from PR #35). `api/openapi.yaml` + TS regen. New `TopologyProfileCard` in EquipmentManager drawer (baseStation only, compat-aware option labelling). 23 new tests. Deferred to follow-up chore PRs: name cleanup (`UxmCommandProfile` → `UxmTestApp`), `self._cmds` class-vs-instance fix. Phase 2 (user-custom topology / GUI editor / per-test override) deferred to future P2. | this PR (2026-05-17) |
 | D18 | P3-5 — Composite HAL readiness snapshot. New `app/services/readiness.py` aggregates per-driver rows (now with `extras` dict — F64 surfaces firmware_version / band_label / product_family via a polymorphic `readiness_metadata()` hook on `InstrumentDriver`) + active `LabProfile` status + active `CalibrationCertificate` validity + DUT-attach **placeholder** (`not_implemented` — no runtime sensing model exists; surfaced anyway for forward-compat). Snapshot is persisted on the HAL service instance and exposed via `GET /api/v1/instruments/hal/readiness` (also added to `openapi.yaml` + regenerated TS types). 20 new tests pin section semantics + endpoint shape. **Out of scope**: GUI consumption of the new endpoint (sibling HAL endpoints `/hal/status`/`/hal/reload`/`/hal/switch` still consume via inline-typed axios; consistent precedent); DUT-attach sensing implementation (future P3 item). | this PR (2026-05-17) |
 
 ---
@@ -394,17 +395,95 @@ production idle-close is seen on those drivers
 
 ## 🟡 P2 — Abstraction debt
 
-### P2-1 — InstrumentProfile abstraction layer
+### P2-1 — UXM two-layer architecture: Test App + Topology Profile
 
-**What**: Insert a `Profile` layer between `Model` and `Connection`. UXM
-Test App, CMW500 mode, multi-carrier topology become first-class
-profiles instead of bolt-on per-driver hacks.
+**Audit-driven re-scope** (was: "InstrumentProfile abstraction layer
+across UXM / CMW500 / CMP200"). Investigation found:
+- **CMW500** has scalar mode fields (`MIMO_MODE`, `TM_MODE`) — not
+  command-vocabulary variants. Doesn't fit Profile shape.
+- **CMP200** doesn't exist (made up from audit extrapolation; not in
+  Keysight product line).
+- **CMX500** is a separate physical instrument from CMW500 (not a
+  "mode" of it) — gets its own driver class, not a Profile.
+- Real Profile use case today is UXM only.
 
-**Why**: PR #10's UXM multi-app system is bolt-on. Next host-style
-instrument (CMW500, CMP200) will hit the same gap.
+**Two-layer architecture** (operator's framing — sticky):
+- **Layer 1 — Test App** (= which Keysight software is running on UXM:
+  C8700200A / C8714000A RF App / Protocol Cert / etc.). Decides SCPI
+  command vocabulary (`CONFig:NR5G:*` vs `BSE:CONFig:NR5G:*`) +
+  cell-index conventions (CELL0 vs CELL1) + value encoding (BW40 vs
+  raw 40). **Auto-detected** at connect via
+  `SYSTem:APPLication:NAME?` — operator does NOT pick (hardware
+  state-of-truth).
+- **Layer 2 — Topology profile** (cell/MIMO/power/FRC config WITHIN
+  the running Test App). Operator-selected via GUI, persisted on the
+  UXM binding, auto-applied on next HAL reload after Test App detect
+  + compat verify. IRAT scenario configurations live here.
 
-**Status**: `[ ]` not started
-**Estimate**: 3-5 days
+**Phase 1 deliverables** (this PR, ~2-3 days actual):
+
+- `UxmTestProfile` (existing dataclass with 7 built-in templates, was
+  orphan code zero-called from production) gains
+  `compatible_test_apps: List[str]` + `is_compatible_with()`. All 7
+  built-ins declare `["5G_NR_Test"]` so a future IRAT topology must
+  declare its own compat explicitly rather than inheriting empty=any.
+- `RealUxmDriver`:
+  - `detected_test_app: Optional[str]` instance attr captured at
+    `connect()` (raw value from `SYSTem:APPLication:NAME?`).
+  - `readiness_metadata()` override exposes `detected_test_app` +
+    `command_profile` + `primary_cell` + `hislip_index` (consumed by
+    P3-5 readiness panel — clean wiring on top of the P3-5 hook).
+  - `apply_topology_profile(profile_id)` method: loads profile, runs
+    compat check vs active `_cmds.PROFILE_NAME`, dispatches to
+    `set_cell_config` or returns structured refusal dict (caller
+    surfaces test_app + compatible_with to operator).
+- HAL service `_initialize_from_db` post-connect:
+  - Persists driver's `detected_test_app` into
+    `InstrumentConnection.connection_params["detected_test_app"]` for
+    GUI audit / pre-warming the binding's compat check.
+  - If binding has `connection_params["topology_profile_id"]` set,
+    auto-calls `driver.apply_topology_profile()` (incompat is logged
+    WARNING but doesn't fail HAL init — operator fixes via PUT
+    endpoint, no need to re-reload HAL).
+- New endpoints:
+  - `GET /api/v1/instruments/{cat}/topology-profiles` — list
+    built-in templates + per-item live compat flag against detected
+    Test App + currently-persisted selection. Reason `not_a_uxm` for
+    non-baseStation categories so GUI hides the picker.
+  - `PUT /api/v1/instruments/{cat}/topology-profile` — operator
+    selects (or nulls). Refuses 409 with structured payload when
+    incompatible with detected Test App (matches P2-5 refuse
+    pattern). Persists then optionally apply-now on live driver.
+- `api/openapi.yaml` + regenerated TS types.
+- GUI: `TopologyProfileCard` in EquipmentManager drawer, shown only
+  for baseStation. Dropdown with compat-aware option labelling
+  (incompat options disabled + flagged); inline status banner
+  (`applied immediately to 5G_NR_Test` / `persisted, takes effect on
+  next HAL reload` / refuse reason).
+- 23 new tests across compat semantics + apply happy/refuse + readiness
+  metadata + endpoint shapes + DB persistence + 409 refuse path.
+
+**Phase 2 (NOT in this PR)** — user-customisable topology profiles:
+- Topology profiles persisted in DB (`instrument_topology_profiles`
+  table), not just code-defined templates
+- GUI topology editor (create / modify operator-owned profiles)
+- Per-test topology override (`TestPlan.topology_profile_id`) — today
+  only binding-level
+
+**Out of scope** (with reason — see PR description for full list):
+- Name cleanup (`UxmCommandProfile` → `UxmTestApp`, `UxmTestProfile`
+  → `UxmTopologyProfile`). Pure renaming, no behaviour change —
+  follow-up chore PR for clarity, kept out of this functional PR.
+- `self._cmds` class-vs-instance mutability fix (latent bug, not
+  triggered today since nothing mutates `self._cmds.X`). Backlog
+  chore.
+- CMX500 driver — separate instrument, separate work item.
+- Generalising Profile into `app/hal/base.py` — only one concrete
+  consumer (UXM) today; premature abstraction risk.
+
+**Status**: `[≈]` in review — this PR
+**Estimate**: original 3-5 days; actual scope after audit ~2-3 days
+(Phase 1 only); user-custom + GUI editor deferred to Phase 2.
 
 ### P2-2 — Capability centralisation ✅ Done (PR #21)
 
@@ -770,21 +849,23 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 - ~~`[discovered 2026-05-14 during P0-2]` VSCode Python interpreter drift~~. → Promoted to **P3-7** (2026-05-17 triage).
 - ~~`[discovered 2026-05-17 during P2-3]` VRT pydantic regression (38 failures)~~. → Promoted to **P3-8** (2026-05-17 triage).
 - ~~`[discovered 2026-05-17 during P2-3]` catalog `status` enum drift~~. → Promoted to **P3-9** (2026-05-17 triage).
+- `[discovered 2026-05-17 during P2-1 design]` **UXM name-cleanup chore**: rename `UxmCommandProfile` → `UxmTestApp` and `UxmTestProfile` → `UxmTopologyProfile` to reduce "profile" overloading. Pure rename, no behaviour change. ~30 min. Deferred from P2-1 to keep that PR functionally focused.
+- `[discovered 2026-05-17 during P2-1 design]` **`self._cmds` class-vs-instance mutability fix**: `RealUxmDriver` assigns `self._cmds = ProfileClass` (class ref, not instance) in 3 places. Latent bug — no one currently mutates `self._cmds.X` so it doesn't trigger, but two concurrent UXM driver instances would share class-level state if a future write path appears. Refactor: 4 LOC + update 2 `is` assertions in `tests/test_uxm_driver_profile.py` to `isinstance`. Deferred from P2-1 to keep that PR functionally focused.
 
 ---
 
 ## 📊 Summary
 
-> Counts as of 2026-05-17 (P2-5 in this PR, not yet merged).
+> Counts as of 2026-05-17 (P2-1 Phase 1 in this PR, not yet merged).
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 19 | — | — |
+| ✅ Done | 20 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 6 total | 4 days | 4 days |
 | 🟠 P1 (confidence) | 4 open / 6 total | 3 days | 2.5 days |
-| 🟡 P2 (abstraction debt) | 2 open / 5 total | 3.5 days | 0 |
+| 🟡 P2 (abstraction debt) | 1 open / 5 total | 0.5 days | 0 |
 | 🟢 P3 (polish) | 4 open / 9 total | ~2.5 days | 0 |
-| **Total open** | **13** | **13 days** | **6.5 days** |
+| **Total open** | **12** | **10 days** | **6.5 days** |
 
 ---
 
