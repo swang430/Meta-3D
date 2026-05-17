@@ -94,7 +94,8 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 | D13 | P2-3 — per-Model static `model_capabilities` ClassVar + catalog API surface + `_real_driver_registry()` lazy module-level helper collapsing the old `SUPPORTED_REAL_DRIVERS` drift; openapi.yaml + GUI generated types synced (Codex P2 fix in same PR). Stale-doc correction here: P2-3 was already in main when this PR (P3-3) started, but PR #28 didn't update its section status; consumed directly by D14 below so the dependency chain stays linked in one place. | PR #28 (merged 2026-05-17) |
 | D14 | P3-3 — Capability gap viewer in GUI. Backend extends `PreflightResult` with `bound_models: List[BoundModelDeclaration]` (per-binding static `model_capabilities` from P2-3). GUI: PreflightModal gains "各绑定模型的声明能力" section alongside live `lab_capabilities`; EquipmentManager drawer gains `model_capabilities` badge group next to existing datasheet badges. | PR #29 (merged 2026-05-17) |
 | D15 | P3-2 — Driver self-test CLI (`python -m scripts.driver_selftest`). Dumps per-loaded-driver runtime (live `capabilities`, status, endpoint, error) + declared `model_capabilities` + diffs (declared-but-not-live, invariant-breach live-not-declared) in text / json / md formats. Tears HAL down after each run so repeated invocations stay clean. **Codex P1 follow-up in same PR**: introduced `DriverMode.MOCK_FORCE` to override per-instrument `driver_mode='real'` — without it, `--mode mock` was still opening real VISA/TCP to configured hardware (operator safety bug). | PR #30 (merged 2026-05-17) |
-| D16 | P3-9 — Widened `api/openapi.yaml`'s `InstrumentModel.status` enum to include `pending_dev` (which the backend has been returning since `_convert_model` started using it). Regenerated `gui/src/types/api.generated.ts`; verified GUI consumers (`App.tsx` status color + label maps) already handled the value via the hand-written `InstrumentStatus` union. Practice run of the 4-step API contract sync flow. | this PR (2026-05-17) |
+| D16 | P3-9 — Widened `api/openapi.yaml`'s `InstrumentModel.status` enum to include `pending_dev` (which the backend has been returning since `_convert_model` started using it). Regenerated `gui/src/types/api.generated.ts`; verified GUI consumers (`App.tsx` status color + label maps) already handled the value via the hand-written `InstrumentStatus` union. Practice run of the 4-step API contract sync flow. | PR #32 (merged 2026-05-17) |
+| D17 | P3-4 — Structured `SYST:INFO?` parser for F64 — new `F64SysInfo` dataclass + `parse_f64_sys_info` function extract product_family / channel_count / signal_type / firmware_version / secondary_count / band_label / extra_tokens. F64 `connect()` populates the structured fields (was only extracting channel_count). 21 new parser test cases pin positional + labeled + defensive shapes. | this PR (2026-05-17) |
 
 ---
 
@@ -538,8 +539,37 @@ tokens (P2-3), the GUI can warn earlier.
 the GUI work the bulk of it)
 
 ### P3-4 — F64 SYST:INFO? structured parser
-0.5 day. Currently only keyword scan; extract channel_count / bands /
-firmware version.
+
+**What**: Parse the full PROPSIM F64 `SYST:INFO?` response (was only
+extracting `parts[1]` for channel count) into a structured dataclass
+covering product_family, channel_count, signal_type, firmware_version,
+secondary_count, band_label, and `extra_tokens` for forward-compat.
+
+**Why**: Pre-P3-4 the F64 driver threw away firmware version, band
+coverage, and the license keywords that follow position [4]. On-site
+debugging needed those — operator had to read SCPI transcripts to
+confirm what firmware they were talking to. Structured parse surfaces
+the metadata to the readiness report (and via P3-2's
+`driver_selftest` CLI). The keyword-scan license-discovery path in
+`_probe_installed_options()` is unchanged (separate concern).
+
+**Acceptance**:
+- New `F64SysInfo` frozen dataclass + `parse_f64_sys_info` function
+  in `app/hal/propsim_f64.py`
+- F64 `connect()` calls the parser, populates `sys_info` +
+  convenience attrs (`firmware_version`, `band_label`,
+  `product_family`)
+- 21 test cases in new `tests/test_propsim_f64_sys_info_parser.py`
+  covering: positional extraction, labeled extraction (Band:
+  case-insensitive), defensive shapes (empty/None/whitespace/
+  skinny/non-int positions), raw preservation, fixture round-trip
+- Zero regression in F64 + diagnostic test bundle (176/176)
+- **NOT in scope**: FS16 has its own `_parse_sys_info` method —
+  deliberately NOT refactored to share (Rule 4: no 顺手优化).
+  Future PR can dedupe if FS16 picks up more fields.
+
+**Status**: `[≈]` in review — this PR
+**Estimate**: 0.5 day (actual: ~30 min)
 
 ### P3-5 — Startup readiness summary expansion
 0.5 day. Add lab-profile status + cal-cert validity + DUT-attach state
@@ -624,16 +654,16 @@ to the existing HAL readiness table.
 
 ## 📊 Summary
 
-> Counts as of 2026-05-17 (P3-9 in this PR, not yet merged).
+> Counts as of 2026-05-17 (P3-4 in this PR, not yet merged).
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 16 | — | — |
+| ✅ Done | 17 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 6 total | 4 days | 4 days |
 | 🟠 P1 (confidence) | 4 open / 6 total | 3 days | 2.5 days |
 | 🟡 P2 (abstraction debt) | 3 open / 5 total | 4.5 days | 0 |
-| 🟢 P3 (polish) | 6 open / 9 total | ~3 days | 0 |
-| **Total open** | **16** | **14.5 days** | **6.5 days** |
+| 🟢 P3 (polish) | 5 open / 9 total | ~3 days | 0 |
+| **Total open** | **15** | **14.5 days** | **6.5 days** |
 
 ---
 
