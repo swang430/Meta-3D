@@ -370,6 +370,28 @@ export const duplicateTopologyProfile = async (
   return response.data
 }
 
+// P2-1 Phase 2.3: dedicated set/clear endpoint for plan-level topology
+// override. Mirrors the binding-level `selectTopologyProfile` shape.
+// Use this rather than the generic plan update PATCH for clear (the
+// PATCH endpoint's `value is not None` filter blocks explicit-null
+// clearing).
+
+export interface SetPlanTopologyProfileResult {
+  persisted: boolean
+  profile_id: string | null
+}
+
+export const setPlanTopologyProfile = async (
+  planId: string,
+  profileId: string | null,
+): Promise<SetPlanTopologyProfileResult> => {
+  const response = await client.put<SetPlanTopologyProfileResult>(
+    `/test-plans/${planId}/topology-profile`,
+    { profile_id: profileId },
+  )
+  return response.data
+}
+
 export const createTestCaseFromPlan = async (
   payload: CreateTestCaseFromPlanPayload,
 ): Promise<CreateTestCaseResponse> => {

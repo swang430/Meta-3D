@@ -102,6 +102,30 @@ class TestPlan(Base):
     notes = Column(Text, comment="Additional notes")
     tags = Column(JSON, comment="Array of tags for categorization")
 
+    # P2-1 Phase 2.3: optional plan-level UXM topology override. When
+    # set, ``TestExecutionService.start_test_plan`` looks up the
+    # profile via topology_profile_service and applies it to the
+    # baseStation driver BEFORE running the first test case. When
+    # null, the binding-level selection
+    # (``InstrumentConnection.connection_params['topology_profile_id']``)
+    # remains in effect — set at HAL bring-up time.
+    #
+    # Stable string ID (not UUID FK) so it survives profile rename /
+    # delete with a logged warning rather than an FK constraint error
+    # (the topology_profiles row may be deleted while a draft plan
+    # still references it — better UX is "warn at start time" than
+    # "DELETE refused due to FK"). Matches the
+    # ``connection_params['topology_profile_id']`` shape so the same
+    # service layer handles both.
+    topology_profile_id = Column(
+        String(100), nullable=True,
+        comment='P2-1 Phase 2.3: optional plan-level UXM topology '
+                'override. References instrument_topology_profiles.profile_id; '
+                'null = use binding-level selection. Stable string ID, '
+                'not UUID FK, so profile delete logs a warning at plan '
+                'start instead of blocking the delete with FK constraints.',
+    )
+
 
 class TestCase(Base):
     """
