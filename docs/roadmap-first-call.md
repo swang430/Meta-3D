@@ -675,6 +675,25 @@ NOT done (deferred):
 **Status**: ✅ Done — PR #35 (merged 2026-05-17)
 **Estimate**: 1 day (actual: ~2 hours)
 
+### P2-6 — Strict PFS implementation in ChannelEgine (cross-repo)
+
+**What**: Current self-developed ASC channel synthesis (`mimo_ota_simulator/simulator.py` in the external `ChannelEgine` repo) uses three methods (`pinv` / `cluster` / `ray`) — **none** satisfy strict PFS (per-(probe, cluster) independent fading). All have residual cross-probe coherence. The `probe_phase_jitter` flag provides only partial mitigation (ensemble-average equivalent to PFS, but per-realization residual is non-zero and ~L·M slower convergence; also mutually exclusive with phase calibration cert application). See [`docs/features/calibration/pfs-phase-immunity.md`](features/calibration/pfs-phase-immunity.md) for the math.
+
+**Scope**: External `ChannelEgine` repo (`git@git.metaradio.tech:swang/channelengine.git`), **not** MIMO-First. This is a placeholder so the work has an owner + estimate + visibility from the first-call roadmap, since strict PFS directly affects phase-cal value (P1-5) and chamber-path uncertainty budget on MIMO-First side.
+
+**Why P2 (abstraction debt) rather than P0/P1**: doesn't block first-call (current implementation produces usable ASC files; CTIA throughput-style tests get ensemble-averaged enough that the gap is masked). But it's the right architecture for cert-level traceability + beam-pattern / single-shot KPIs + future PWS mode.
+
+**Acceptance**: Two new `synthesis_method` values (`cluster_strict` / `ray_strict`) implemented in `simulator.py`; spatial correlation validation test confirms strict variants converge to target $R_{m,n}$ in ~$L \cdot M$ × fewer realizations than current `cluster` / `ray` + jitter; legacy methods stay as `*_legacy` for backward compatibility (existing ASC consumers unaffected); strict + phase-cal cert verified to compose additively (cal info not absorbed, unlike jitter case).
+
+**Estimate breakdown** (focused work in ChannelEgine repo):
+- Minimum (simulator refactor + validation test): **~4 days**
+- Plus microservice integration (fixes the `run_with_external_clusters` missing-method backlog gap too) + GUI three-way toggle: **+2 days = 6 days**
+- Plus GCM Studio cross-validation + CAICT chamber empirical measurement: **+2 days local + half day on-site = 8-10 days end-to-end**
+
+**Status**: `[ ]` not started (placeholder)
+**Estimate**: 4 days minimum / 6-10 days full
+**Cross-repo coordination**: see [`ChannelEgine/claude.md`](/Users/Simon/Tools/ChannelEgine/claude.md) "Cross-project context" section — entering that repo surfaces this MIMO-First context automatically.
+
 ---
 
 ## 🟢 P3 — Polish / tooling
@@ -1016,19 +1035,19 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 
 ## 📊 Summary
 
-> Counts as of 2026-05-17 (post-P3-1, this PR). Full-sweep flaky
-> count remains **0** (P3-1 is pure GUI, no backend tests). Of the
-> 8 open items, 7 are 🚧 blocked-on-hardware and 1 is remote-doable
-> (P1-5 local half).
+> Counts as of 2026-05-17 (post-P3-1 + PFS-investigation placeholder).
+> Full-sweep flaky count remains **0**. Of the 9 open items, 7 are
+> 🚧 blocked-on-hardware and 2 are remote-doable (P1-5 local half +
+> P2-6 strict-PFS in ChannelEgine repo).
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
 | ✅ Done | 33 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 6 total | 4 days | 4 days |
 | 🟠 P1 (confidence) | 4 open / 6 total | 3 days | 2.5 days |
-| 🟡 P2 (abstraction debt) | 1 open / 5 total | 0.5 day | 0.5 day |
+| 🟡 P2 (abstraction debt) | 2 open / 6 total | 4.5 days | 0.5 day |
 | 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
-| **Total open** | **8** | **~7.5 days** | **7 days** |
+| **Total open** | **9** | **~11.5 days** | **7 days** |
 
 ---
 
