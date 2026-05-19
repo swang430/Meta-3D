@@ -63,7 +63,7 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
             # 内部 38.901 generator 算簇.
             from app.services.cdl_model_parser import parse_cdl_model_name
 
-            model_name = cdl_model_data.get("model_name", "UMa CDL-C NLOS")
+            model_name = cdl_model_data.get("model_name", "UMa NLOS CDL-C")
             parsed = parse_cdl_model_name(model_name)
             logger.info(
                 f"[ExternalWaveform Strategy] {model_name} → "
