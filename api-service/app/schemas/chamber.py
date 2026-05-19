@@ -19,6 +19,18 @@ class ChamberTypeEnum(str, Enum):
     CUSTOM = "custom"
 
 
+class ProbeDistributionEnum(str, Enum):
+    """探头空间分布枚举 (P1-10, 2026-05-19).
+
+    跟 ORM 层 ``app.models.chamber.ProbeDistribution`` + ChannelEgine Phase 8
+    ``ChamberConfig.distribution`` 完全一致。Pydantic 枚举值就是 wire token
+    ("ring" / "multi-ring" / "custom") — 不引入翻译层。
+    """
+    RING = "ring"
+    MULTI_RING = "multi-ring"
+    CUSTOM = "custom"
+
+
 class ChamberPresetInfo(BaseModel):
     """暗室预设信息"""
     type: str = Field(..., description="预设类型")
@@ -46,6 +58,13 @@ class ChamberConfigurationBase(BaseModel):
     num_probes: int = Field(default=32, ge=1, le=128, description="探头数量")
     num_polarizations: int = Field(default=2, ge=1, le=2, description="极化数量")
     num_rings: int = Field(default=5, ge=1, le=10, description="探头环数")
+    # P1-10: 探头空间分布; 默认 "ring" 保持向后兼容. 非 ring (multi-ring / custom)
+    # 走 ChannelEngineClient._build_probe_positions DB 读 per-probe az/el 路径.
+    probe_distribution: ProbeDistributionEnum = Field(
+        default=ProbeDistributionEnum.RING,
+        description="探头分布: ring (默认/等距, ChannelEgine 走 (p × 360°/N) 公式) | "
+                    "multi-ring | custom (任意几何, 走 DB Probe.position 列)",
+    )
 
     # LNA 配置
     has_lna: bool = Field(default=False, description="是否配置 LNA")
@@ -123,6 +142,7 @@ class ChamberConfigurationUpdate(BaseModel):
     supports_mimo_ota: Optional[bool] = None
     typical_cable_loss_db: Optional[float] = None
     probe_gain_dbi: Optional[float] = None
+    probe_distribution: Optional[ProbeDistributionEnum] = None  # P1-10
     is_active: Optional[bool] = None
 
 

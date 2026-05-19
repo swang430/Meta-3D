@@ -69,6 +69,7 @@ def _to_response(chamber: ChamberConfiguration) -> ChamberConfigurationResponse:
         "supports_mimo_ota": chamber.supports_mimo_ota,
         "typical_cable_loss_db": chamber.typical_cable_loss_db,
         "probe_gain_dbi": chamber.probe_gain_dbi,
+        "probe_distribution": chamber.probe_distribution,  # P1-10
         "created_at": chamber.created_at,
         "updated_at": chamber.updated_at,
         "created_by": chamber.created_by,
