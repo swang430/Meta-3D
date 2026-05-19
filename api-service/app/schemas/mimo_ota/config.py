@@ -223,6 +223,20 @@ class MIMOOTAConfiguration(BaseModel):
     # === Theoretical reference for ratio calculations (3GPP 2x2 256QAM 100MHz ≈ 450 Mbps) ===
     theoretical_peak_throughput_mbps: float = 450.0
 
+    # === Precheck behavior (P1-8, 2026-05-19) ===
+    precheck_strict_cal: bool = True
+    # When True (production default): precheck FAILS if path_loss_calibration
+    # is missing/invalid or if cal_cert exists but overall_pass=False. Prevents
+    # commissioning from running on uncalibrated chambers and silently using
+    # the typical_cable_loss_db fallback (see docs/architecture/
+    # channel-engine-data-flow.md surprising #3).
+    #
+    # Set False to bypass the cal gate for lab dev / smoke / unit-test setups
+    # where calibration data is intentionally absent. Bypass leaves an audit
+    # trail in result_payload["cal_pass_reason"]. GUI commissioning workflow
+    # does not expose this flag — bypass is intended for config/fixture-level
+    # opt-in only, so an operator can't accidentally disable the safety gate.
+
     # === Pass/fail thresholds ===
     pass_criteria: MIMOOTAPassCriteria = Field(default_factory=MIMOOTAPassCriteria)
 

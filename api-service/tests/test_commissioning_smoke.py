@@ -230,6 +230,10 @@ class TestFivePhaseCommissioningSmoke:
             "stat_count": 50,
             "settling_time_s": 0.05,
             "num_samples_per_azimuth": 1,
+            # P1-8 (2026-05-19): smoke 不灌 ProbePathLossCalibration, 走
+            # bypass 维持 5-phase chain 跑通的语义. cal gate 本身由
+            # test_mimo_ota_precheck_cal_gate.py 单独覆盖.
+            "precheck_strict_cal": False,
             "pass_criteria": {
                 "min_throughput_ratio": 0.0,
                 "min_throughput_mbps": 0.0,

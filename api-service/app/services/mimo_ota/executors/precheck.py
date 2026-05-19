@@ -229,11 +229,50 @@ class PrecheckExecutor(IStepExecutor):
             f"[{result_payload['quiet_zone_ripple_source']}]"
         )
 
-        # --- 5. Overall verdict ---
+        # --- 5. Calibration gate (P1-8, 2026-05-19) ---
+        # 默认 strict: path_loss_cal 必有 + cal_cert 若存在则 overall_pass=True;
+        # 显式 opt-out (config.precheck_strict_cal=False) 跳过 gate 维持 audit-only 行为.
+        path_loss_valid = result_payload.get("path_loss_calibration_valid", False)
+        cal_cert_broken = cal_cert is not None and not cal_cert.overall_pass
+        cal_cert_missing_only = cal_cert is None  # warning, not FAIL — see P1-8 design #1
+
+        if config.precheck_strict_cal:
+            cal_pass = path_loss_valid and (not cal_cert_broken)
+            cal_pass_reason_parts: list[str] = []
+            if not path_loss_valid:
+                cal_pass_reason_parts.append(
+                    "path-loss calibration missing or invalid "
+                    "(no VALID ProbePathLossCalibration for this chamber)"
+                )
+            if cal_cert_broken:
+                cal_pass_reason_parts.append(
+                    f"calibration_certificate not passed "
+                    f"(cert={cal_cert.certificate_number}, overall_pass=False)"
+                )
+            cal_pass_reason = "; ".join(cal_pass_reason_parts) if cal_pass_reason_parts else "ok"
+        else:
+            # Bypass: cal_pass forced True but audit trail tells you which
+            # gate(s) would have failed under strict mode. Lets ops grep the
+            # measurements row to know "this run happened despite missing cal".
+            cal_pass = True
+            bypass_parts: list[str] = []
+            if not path_loss_valid:
+                bypass_parts.append("path-loss calibration missing")
+            if cal_cert_broken:
+                bypass_parts.append("cal_cert.overall_pass=False")
+            if cal_cert_missing_only:
+                bypass_parts.append("cal_cert is None")
+            bypass_suffix = f" (would-fail-under-strict: {', '.join(bypass_parts)})" if bypass_parts else ""
+            cal_pass_reason = f"bypassed via precheck_strict_cal=False{bypass_suffix}"
+
+        result_payload["cal_pass"] = cal_pass
+        result_payload["cal_pass_reason"] = cal_pass_reason
+
+        # --- 6. Overall verdict ---
         critical_online = all(
             instruments_online.get(k, False) for k in _CRITICAL_INSTRUMENT_CATEGORIES
         )
-        overall_pass = critical_online and qz_pass and ue_cap_pass
+        overall_pass = critical_online and qz_pass and ue_cap_pass and cal_pass
         result_payload["critical_instruments_online"] = critical_online
         result_payload["overall_pass"] = overall_pass
         result_payload["messages"] = messages
@@ -260,6 +299,8 @@ class PrecheckExecutor(IStepExecutor):
                     f"UE max_dl_layers={ue_cap.get('max_dl_layers')} < requested "
                     f"{config.mimo_layers}"
                 )
+            if not cal_pass:
+                failure_reason.append(cal_pass_reason)
             return StepExecutionResult(
                 status=StepExecutionStatus.FAILED,
                 measurements=result_payload,
