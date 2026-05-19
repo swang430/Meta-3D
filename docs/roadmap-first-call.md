@@ -8,21 +8,24 @@
 
 ## 🎯 Current Focus
 
-**P1-7 — CDL data source wire-up: commissioning → ChannelEgine 标准 38.901 (this PR).**
+**P1-6 — FS16 / UXM / ENA 静默重连 integration tests (next).**
 
-P0-7 (#56) + P1-5 local half (#57) + chore key fix (#58) 全 merged。WIP=1 释放。
-P0-3/4/5 仍然 on-site-blocked。P1-7 接 P0-7 留下的最后一段漂移: `asc_strategy.py:66`
-硬编码 `CDLCluster(delay_s=0.0, power_relative_linear=1.0)  # Mock`, 即使 P0-7
-把客户端 + 微服务 + ChannelEgine library 都修通了, **commissioning `mimo_first_asc`
-模式实际打到 ChannelEgine 的还是 1 个 placeholder 簇**, 不是真 3GPP 多径。
+P1-7 (#59) merged。Commissioning `mimo_first_asc` 模式现在打到 ChannelEgine 的是真
+24-cluster 38.901 多径 (vs P0-7 时代的 1 个 placeholder 簇, smoke 见 zip 86 KB →
+725 KB 的 8× 跳)。Codex P1 follow-up (commit c5a2068) — 初版 parser 假设 token
+顺序跟 GUI `MIMOOTAConfigForm.tsx` 现有 `CDL_OPTIONS` 不一致, 改成 token-order-agnostic
++ alias (`UMi`/`InH`) + bare cluster (`CDL-A`...`CDL-E`) 都接受 — 也 push 进同一个
+PR 一并 merge。本 PR (docs catch-up) 整理 wire-up 全景图为 architecture note,
+把 ring-only silent constraint 落到 P2-7 跟踪。WIP=1 释放。
 
-P1-7 设计: ChannelEgine 当 3GPP 权威源 (它已经实现了 7 scenarios × 7 cluster
-models × 2 conditions, `Standard3GPPBuilder` 是 Phase 5+ stable API), MIMO-First
-只解析 cdl_model_name 字符串成 (scenario, cluster_model, condition) 并透传,
-不复制 38.901 表到本 repo。
+P0 全部 on-site-blocked (P0-3/4/5 都需要现场 SA + DUT + CE/SA 联调), 按
+governance §3 降级到 P1 不违规。P1 里本地可做的只剩 **P1-6**: lab 里模拟 NAT/FW
+60s 断流, 验证 FS16 / UXM / ENA 三个驱动能自动重连。把 CAICT 现场踩过两次的
+idle-close firefighting 提前在 lab 暴露。其他 P1 (P1-2/P1-4/P1-5 on-site half)
+全 hardware-blocked。
 
 下次现场打开时, Current Focus 必须切回 **P0-3** (或最先解锁的 P0) per WIP=1。
-P1-5 on-site half + P2-4 在 P0 解锁前排队。
+P1-5 on-site half + P2-4 + P2-7 在 P0 解锁前排队。
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
@@ -489,7 +492,7 @@ production idle-close is seen on those drivers
 
 ---
 
-### P1-7 — CDL data source wire-up: commissioning → ChannelEgine standard 38.901 🔄 In progress (this PR)
+### P1-7 — CDL data source wire-up: commissioning → ChannelEgine standard 38.901 ✅ Done (PR #59)
 
 **What** (closes P0-7's upstream mock gap):
 
@@ -563,8 +566,24 @@ generator。MIMO-First **不复制** 38.901 表到本 repo, 只:
 - 操作员 GUI 加 `scenario` / `cluster_model` 独立下拉: 现有 `cdl_model_name` 单字符串足够, 解析器在 api-service 端拆。GUI 后续要细化 (例如让操作员单独改 force_condition) 时再开 PR
 - UMa CDL-C **LOS** 模式 K-factor 操作员定制 (现在用 ChannelEgine 内部默认值)
 
-**Status**: 🔄 In progress — this PR
-**Estimate**: 1-1.5 days
+**Status**: ✅ Done — PR #59 (merged 2026-05-19). Codex P1 follow-up
+(commit c5a2068, 同一 PR 内 push) 修了一个真 regression: 初版 parser 假设 token
+顺序 `{Scenario} {ClusterModel} {Condition}`, 但 GUI `MIMOOTAConfigForm.tsx`
+的 `CDL_OPTIONS` 实际用 `{Scenario} {Condition} {ClusterModel}` + 有 alias
+(`UMi`→`UMi-StreetCanyon`, `InH`→`InH-Office`) + bare cluster (`CDL-A`...`CDL-E`),
+所以每个 operator 选择都会被旧 parser 拒。改成 token-order-agnostic classification
+(按 `SCENARIO_NAMES`/`CLUSTER_MODEL_NAMES`/`CONDITION_NAMES` 三个 disjoint 集合
+归类, 不按位置) + 加 `SCENARIO_ALIASES` + 1-3 token 支持。Parser tests 113 → 239。
+Architecture note 全景图见 [`docs/architecture/channel-engine-data-flow.md`](architecture/channel-engine-data-flow.md)
+(本 PR 同步落)。
+
+**Estimate**: 1-1.5 days (实际 1 天 + Codex follow-up ~30 分钟)
+
+**On-site followup**: 真 F64 硬件 + commissioning `mimo_first_asc` 模式 + 24-cluster
+.asc 落地 + KPI 跟 P0-7 1-cluster baseline 对比 — hardware-blocked, 等下次现场。
+HTTP distributed pytest (api-service → 真 HTTP → 微服务): P0-7 留下的 namespace
+冲突 gap 没修, 生产代码路径用真 httpx 但 pytest 没独立验证 HTTP layer。两者
+不阻塞 P1-6。
 
 ---
 
@@ -829,6 +848,62 @@ NOT done (deferred):
 **Status**: ✅ Done — ChannelEgine PR #1-#6 (all merged 2026-05-18)
 **Estimate**: 4-10 days planned, ChannelEgine 实际 ~10 days
 **Cross-repo coordination**: see [`ChannelEgine/CLAUDE.md`](/Users/Simon/Tools/ChannelEgine/CLAUDE.md) "Cross-project context" section — entering that repo surfaces full status automatically.
+
+---
+
+### P2-7 — 非 ring 暗室 probe 几何支持 (cross-repo)
+
+**What**: 当前 commissioning → ChannelEgine 链路写死 `chamber_config.distribution
+= "ring"`, probe 物理 azimuth/elevation 角度**不进** HTTP payload。ChannelEgine
+内部按 `(port_id - 1) × 360° / num_probes` 推 ring 等间距假设 (3GPP TR 37.977
+§6.1 标准布局)。MIMO-First DB 里 `Probe` 表实际存了每个 probe 的真实
+`position: {azimuth, elevation}` (PAS rotation 代码读得到), 但这些角度从来没
+传给 ChannelEgine。详细数据流见
+[`docs/architecture/channel-engine-data-flow.md`](architecture/channel-engine-data-flow.md)。
+
+**Why**: 当前是 **silent failure mode** — 操作员配一个非标 chamber (sparse
+layout / PWS sector / dual-ring), MIMO-First DB 不会拒, ChannelEgine 算 .asc
+时 silently 当成 ring 等间距, 物理几何跟 .asc 反映的角度不符, 没人会报错。
+目前 lab 唯一在用的就是 ring 8-probe (符合假设), 这个漂移**没显化**, 但
+schema 层一直有 gap。任何 fail-loud (e.g. ChannelEgine 收到非 ring distribution
+就 reject, 或 MIMO-First side 拦截 non-ring chamber) 都好过现在的 silent
+mis-synthesis。
+
+**触发场景** (按优先级):
+- **PWS 工程** — PWS 用 sector probe geometry, 不是 ring; 是这个 P2-7 最可能
+  的真触发场景 (跟 PFS / PWS phase cal 决策一致, see
+  [`docs/features/calibration/pfs-phase-immunity.md`](features/calibration/pfs-phase-immunity.md))
+- **Sparse probe layout** — 低成本非标暗室, 省 probe 数
+- **Dual-ring / triple-ring** — vertical stacking 增强 elevation 维度
+
+**Scope** (跨 repo, 主要在 ChannelEgine):
+
+| Step | Repo | What |
+|------|------|------|
+| 1 | ChannelEgine | `ChamberConfig` 加 `probe_positions: List[Position]` 字段 (向后兼容: 不传则 fallback 现有 ring 推算) |
+| 2 | ChannelEgine | **核心硬骨头**: PAS / cluster→port 映射代码读真实 `probe_positions` 角度而不是 `(port-1)×360°/N` 推算 |
+| 3 | ChannelEgine | `distribution` 枚举扩 `"ring" / "sector" / "sparse" / "dual-ring"`; 加 fail-loud — 收到 explicit `non-ring` 但没 `probe_positions` 就 reject |
+| 4 | MIMO-First (channel-engine-service) | `chamber_config` payload schema 加 `probe_positions: Optional[List[Position]]` 透传字段 |
+| 5 | MIMO-First (api-service) | `ChannelEngineClient._build_payload` 从 DB `Probe` 表读 az/el 进 payload (仅当 `chamber.distribution != "ring"` 时, 保持 ring 路径向后兼容) |
+| 6 | MIMO-First (api-service + Alembic) | `ChamberConfiguration` model 加 `distribution` enum 字段 (当前 hardcoded "ring") + 数据库迁移 |
+
+**Acceptance**:
+- ChannelEgine 能跑一个 sparse 4-probe 非均匀配置 (e.g. 0°/45°/180°/270°) 生成
+  .asc, 4 个 cluster→port angle assignment 跟 `probe_positions` 一致 (不是
+  `(port-1)*360/4 = 0/90/180/270` 假设)
+- MIMO-First commissioning ring 配置向后兼容 (现有 8-probe ring lab smoke 不回归)
+- 非 ring chamber 配置 + 旧版 ChannelEgine (不接 probe_positions) → MIMO-First
+  侧 fail-loud, 不进 measure phase
+
+**触发条件**: PWS 工程要开始 / 或者现场要接非标暗室 — 当前 (2026-05-19) lab
+唯一在用的就是 ring 8-probe, 不阻塞 first-call。
+
+**Status**: `[ ]` not started — architecture gap, 当前 lab 配置不触发,
+no immediate blocker
+**Estimate**: ChannelEgine 1-2 天 (核心 PAS 映射重写 + fail-loud), MIMO-First
+0.5 天 (schema + DB plumbing + migration)
+**Cross-repo coordination**: 主要在 ChannelEgine; MIMO-First 这边等 ChannelEgine
+PR merged 后做 plumbing
 
 ---
 
@@ -1166,24 +1241,27 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 - ~~`[discovered 2026-05-17 during P3-8]` **VRT integration tests share dev PG state** (test-isolation)~~. ✅ Resolved 2026-05-17 — see D28 in Done table.
 - ~~`[discovered 2026-05-17 during PFS-doc investigation]` **`channel-engine-service` real-mode endpoint calls missing method**~~. → Promoted to **P0-7** (2026-05-18 triage) — D11 ruled `run_with_external_clusters` unimplementable in ChannelEgine; responsibility moved to MIMO-First adapter rewrite + scope broadened to include Phase 5/6 field plumbing + `external_asc` debug mode + fail-fast.
 - ~~`[discovered 2026-05-17 during PFS-doc investigation]` **`probe_phase_jitter` UI label says "±10°" but code applies "±180°"**~~. ✅ Resolved 2026-05-18 — ChannelEgine Phase 0 (PR #1) updated UI label + runtime warnings to match ±180° code path; jitter / cal mutex now enforced at runtime + UI level.
+- `[discovered 2026-05-19 during P1-7 docs catch-up review]` **Commissioning precheck 不拦未校准 chamber** (Codex P2 on PR #60). [`PrecheckExecutor`](../api-service/app/services/mimo_ota/executors/precheck.py) 的 `overall_pass` 只读 `critical_online and qz_pass and ue_cap_pass` (precheck.py:236), 校准状态 (`path_loss_calibration_valid`, `cal_cert.overall_pass`) 写进 `result_payload` 但**完全没进 `overall_pass`** — 没建过任何 cal cert / 没跑过路损校准的 chamber 也能从 precheck 通过, measure phase 用 `typical_cable_loss_db + duplexer - pa_gain` 公式的 fallback 跑出 .asc, 没人会报错。当前规避只有 GUI workflow 主观顺序 "先 cal 后 commission", 没有 code-level 安全 net。详见 [`docs/architecture/channel-engine-data-flow.md`](architecture/channel-engine-data-flow.md) surprising #3。**Triage 候选**: 加严格 strict-mode flag 把 `path_loss_calibration_valid == False` 或 `cal_cert is None` 升 `overall_pass = False` (P1-level 候选, 跟 first-call repeatability P1-4 相关)。
 
 ---
 
 ## 📊 Summary
 
-> Counts as of 2026-05-19 (post P0-7 #56 + P1-5 local-half #57 + chore #58 merged).
-> Full-sweep flaky count remains **0**. Of the 9 open items, 7 are
-> 🚧 blocked-on-hardware (3 × P0 + P1-5 on-site half + P1-1/P1-2/P1-4
-> + P2-4); 1 fully-remote-doable (P1-7, this PR); 1 gated (P1-6 on idle-close incident).
+> Counts as of 2026-05-19 (post P0-7 #56 + P1-5 local-half #57 + chore #58 + P1-7 #59 merged + 本 docs-catchup PR)。
+> Full-sweep flaky count remains **0**。9 个 open items 里, 7 个
+> 🚧 blocked-on-hardware (3 × P0 + P1-5 on-site half + P1-2 + P1-4 + P2-4);
+> 1 个 fully-remote-doable (P1-6, FS16/UXM/ENA silent-reconnect, next Current Focus);
+> 1 个 architecture gap 没即时 trigger (P2-7, 非 ring distribution, 等 PWS / 非标
+> 暗室触发)。
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 35 | — | — |
+| ✅ Done | 36 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 7 total | 4 days | 4 days |
-| 🟠 P1 (confidence) | 5 open / 7 total | 4 days | 2 days |
-| 🟡 P2 (abstraction debt) | 1 open / 6 total | 0.5 day | 0.5 day |
+| 🟠 P1 (confidence) | 4 open / 7 total | 3 days | 1.5 days |
+| 🟡 P2 (abstraction debt) | 2 open / 7 total | 2.5 days | 0.5 day |
 | 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
-| **Total open** | **9** | **~8.5 days** | **6.5 days** |
+| **Total open** | **9** | **~9.5 days** | **6 days** |
 
 ---
 
