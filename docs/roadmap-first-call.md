@@ -8,21 +8,34 @@
 
 ## 🎯 Current Focus
 
-**P1-6 — FS16 / UXM / ENA 静默重连 integration tests (next).**
+**P1-8 — Commissioning precheck cal-missing fail-loud gate (next).**
 
-P1-7 (#59) merged。Commissioning `mimo_first_asc` 模式现在打到 ChannelEgine 的是真
-24-cluster 38.901 多径 (vs P0-7 时代的 1 个 placeholder 簇, smoke 见 zip 86 KB →
-725 KB 的 8× 跳)。Codex P1 follow-up (commit c5a2068) — 初版 parser 假设 token
-顺序跟 GUI `MIMOOTAConfigForm.tsx` 现有 `CDL_OPTIONS` 不一致, 改成 token-order-agnostic
-+ alias (`UMi`/`InH`) + bare cluster (`CDL-A`...`CDL-E`) 都接受 — 也 push 进同一个
-PR 一并 merge。本 PR (docs catch-up) 整理 wire-up 全景图为 architecture note,
-把 ring-only silent constraint 落到 P2-7 跟踪。WIP=1 释放。
+P1-7 (#59) merged。本 PR (#60, docs catch-up) review 过程中 Codex P2 抓到一个
+真错误: architecture note 初版宣称 "precheck gate + lazy DB lookup + silent
+fallback 三层保护", 但 [`precheck.py:236`](../api-service/app/services/mimo_ota/executors/precheck.py#L236)
+`overall_pass = critical_online and qz_pass and ue_cap_pass` **不读校准状态** —
+没建过任何 cal cert / 没跑过路损校准的 chamber 也能从 precheck 通过, measure phase
+silently 用 `typical_cable_loss_db + duplexer - pa_gain` fallback 跑出 .asc,
+没人会报错 (详见
+[`docs/architecture/channel-engine-data-flow.md`](architecture/channel-engine-data-flow.md)
+surprising #3)。当前规避只有 GUI workflow 主观顺序 "先 cal 后 commission"。
 
-P0 全部 on-site-blocked (P0-3/4/5 都需要现场 SA + DUT + CE/SA 联调), 按
-governance §3 降级到 P1 不违规。P1 里本地可做的只剩 **P1-6**: lab 里模拟 NAT/FW
-60s 断流, 验证 FS16 / UXM / ENA 三个驱动能自动重连。把 CAICT 现场踩过两次的
-idle-close firefighting 提前在 lab 暴露。其他 P1 (P1-2/P1-4/P1-5 on-site half)
-全 hardware-blocked。
+P1-8 把这条 backlog 条目升级为正式 P1 项目, 修 `precheck.py` 加 fail-loud gate:
+路损校准 / cert 缺失或 cert `overall_pass=False` → precheck FAIL with 具体
+错误。不阻断真校准的 chamber, 但拒绝未校准的。Next 现场之前修掉是 first-call
+repeatability (P1-4) 的硬 prerequisite。
+
+> **关于 P1-6**: 之前 (本 PR 初版) Current Focus 错选 P1-6, 没验证它的 trigger
+> condition。看 P1-6 entry: `"pulled forward only if a real production
+> idle-close is seen on those drivers"` —— 这是 incident-conditional, 跟
+> [2026-05-13 现场 summary](site-debug/2026-05-13-summary.md) 一致 (当时只在
+> Aerotech 上看到 idle-close, F64/UXM/ENA 都没看到)。trigger 没满足前不该启动。
+> 这次 ad-hoc triage 把 P1-8 提到 next focus, P1-6 继续 hold 等真 incident。
+
+P0 全部 on-site-blocked (P0-3/4/5 都需要现场 SA + DUT + CE/SA 联调), P1 里
+P1-2/P1-4/P1-5 on-site half 全 hardware-blocked, P1-6 incident-conditional
+hold。**P1-8 是当前唯一 fully-remote-doable 的 P1 项目** + 是 next 现场的
+prerequisite。
 
 下次现场打开时, Current Focus 必须切回 **P0-3** (或最先解锁的 P0) per WIP=1。
 P1-5 on-site half + P2-4 + P2-7 在 P0 解锁前排队。
@@ -583,7 +596,96 @@ Architecture note 全景图见 [`docs/architecture/channel-engine-data-flow.md`]
 .asc 落地 + KPI 跟 P0-7 1-cluster baseline 对比 — hardware-blocked, 等下次现场。
 HTTP distributed pytest (api-service → 真 HTTP → 微服务): P0-7 留下的 namespace
 冲突 gap 没修, 生产代码路径用真 httpx 但 pytest 没独立验证 HTTP layer。两者
-不阻塞 P1-6。
+不阻塞 P1-8 (next focus, per 本 PR review-driven re-triage)。
+
+---
+
+### P1-8 — Commissioning precheck cal-missing fail-loud gate
+
+**What**: [`PrecheckExecutor`](../api-service/app/services/mimo_ota/executors/precheck.py)
+当前 `overall_pass` 只读 `critical_online and qz_pass and ue_cap_pass`
+(precheck.py:236), 校准状态完全没进:
+
+```python
+# 当前 (broken):
+overall_pass = critical_online and qz_pass and ue_cap_pass
+# path_loss_calibration_valid / cal_cert.overall_pass 写进 result_payload
+# 但不参与 overall_pass 计算
+```
+
+修法: 把校准状态升进 `overall_pass`, 默认 strict (未校准就拒):
+
+```python
+# 目标 (strict default):
+cal_pass = (
+    path_loss_calibration_valid
+    and (cal_cert is None or cal_cert.overall_pass)
+    # cal_cert is None 还是 allow? 见 acceptance 讨论
+)
+overall_pass = critical_online and qz_pass and ue_cap_pass and cal_pass
+```
+
+**Why P1 (not P2)**: 直接威胁 P1-4 first-call repeatability。production 运行
+时 random 踩 (operator 忘了先 cal 就直接跑 commissioning) → 测出来的 KPI 基于
+`ChamberConfiguration.typical_cable_loss_db` 折算 fallback, 不是真测过的路损 →
+不可能 first-call repeatable (不同 chamber 误差不同, 不同时段未跑 cal 测出来
+的"基线"漂)。Next 现场之前修掉是硬 prerequisite。
+
+**Why discovered now**: Codex P2 on PR #60 commit 81f6923 — 写 architecture note
+"跟 cal cert 工作链的衔接" 节时假设 precheck 是 fail-loud gate, Codex 抓了我的
+错记并指向 precheck.py:236 的真实计算。
+
+**Design 决策点** (需要 acceptance 时定):
+
+1. **cal_cert 缺失算 PASS 还是 FAIL?** —— `cal_cert` 是 LabProfile / TestCase
+   binding, 实验室初始化阶段可能 None。倾向: cal_cert 缺失 → warning 不 fail
+   (跟现在一致); cal_cert 存在但 `overall_pass=False` → FAIL (是显式 broken
+   状态)。
+
+2. **path_loss_calibration 缺失算 PASS 还是 FAIL?** —— 这是 measure phase
+   会真用的数据。倾向: **FAIL** (没这个就 fallback, fallback 是 silent 失真,
+   严格拒)。
+
+3. **是否要 strict-mode flag?** —— lab dev / unit test 环境可能想跳过 cal
+   要求快速 smoke。倾向: 加 `MIMOOTAConfiguration.precheck_strict_cal: bool
+   = True`, default True 走 strict, dev/test 显式关闭。**或者** 只走 strict
+   不加 flag (简单), 测试用 fixture 灌 cal 数据。决策时再选。
+
+**Scope** (single PR):
+
+| Step | File | What |
+|---|---|---|
+| 1 | `api-service/app/services/mimo_ota/executors/precheck.py` | `overall_pass` 计算加 `cal_pass`; 加 `cal_pass_reason` 进 `result_payload` 说清楚为什么 fail |
+| 2 | `api-service/app/services/mimo_ota/executors/precheck.py` | failure_reason 列表加上 cal 缺失原因 (跟 critical_online / qz / ue_cap 分类一致) |
+| 3 | `api-service/app/schemas/mimo_ota/config.py` (可选) | 加 `precheck_strict_cal: bool = True` (Design 决策 #3 选加 flag 时) |
+| 4 | `api-service/tests/test_mimo_ota_precheck.py` (existing? new?) | 加 cartesian: (cal_cert None / valid / overall_pass=False) × (path_loss_cal None / VALID) = 6 cases, 验证 overall_pass 对应正确; 用 fixture 灌 cal 数据 |
+| 5 | 现有 precheck 测试 audit | 没灌 cal 的现有测试需要补 cal fixture (否则会从 PASS 翻 FAIL); 这是预期的 — 旧测试 silently 在未校准 chamber 上 PASS 跟 P1-8 的修复目标一致 |
+
+**Acceptance**:
+
+- 未校准 chamber (no `ProbePathLossCalibration` VALID) 跑 precheck → FAIL
+  with `error_message` 含 "path-loss calibration missing or invalid"
+- `cal_cert.overall_pass = False` 跑 precheck → FAIL with `error_message` 含
+  "calibration_certificate not passed"
+- 完整 cal 的 chamber 跑 precheck → 维持 PASS (不回归)
+- `result_payload["cal_pass_reason"]` 在 FAIL 时含具体原因, PASS 时为 "ok"
+  或 None
+- 新增 6 个 cartesian test 全过
+- 现有 precheck 测试要么补 cal fixture, 要么明确标 `@pytest.mark.parametrize`
+  覆盖 strict-mode off 路径 (如果走 flag 方案)
+- (可选) `precheck_strict_cal=False` 时维持旧行为 — 仅当 Design 决策 #3 选加 flag
+
+**Out of scope**:
+
+- ChannelEngineClient 端的 fallback 行为不动 (precheck 已经拦, fallback 就是
+  纯防御 dead code, 不删因为别的调用路径还可能用到)
+- GUI 端 cal-missing UX 改进 (现在 commissioning 一上来就 fail, GUI 自然弹
+  error; 后续 P3-level polish 可以做 inline 提示 "请先跑 cal")
+
+**Status**: `[ ]` ad-hoc triage 2026-05-19 — promoted from `[discovered
+2026-05-19 during P1-7 docs catch-up review]` per user decision in PR #60
+review (走 ad-hoc 而不是 weekly triage 因为 next 现场之前必须有 fail-loud gate)
+**Estimate**: 0.5-1 day local
 
 ---
 
@@ -1241,27 +1343,28 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 - ~~`[discovered 2026-05-17 during P3-8]` **VRT integration tests share dev PG state** (test-isolation)~~. ✅ Resolved 2026-05-17 — see D28 in Done table.
 - ~~`[discovered 2026-05-17 during PFS-doc investigation]` **`channel-engine-service` real-mode endpoint calls missing method**~~. → Promoted to **P0-7** (2026-05-18 triage) — D11 ruled `run_with_external_clusters` unimplementable in ChannelEgine; responsibility moved to MIMO-First adapter rewrite + scope broadened to include Phase 5/6 field plumbing + `external_asc` debug mode + fail-fast.
 - ~~`[discovered 2026-05-17 during PFS-doc investigation]` **`probe_phase_jitter` UI label says "±10°" but code applies "±180°"**~~. ✅ Resolved 2026-05-18 — ChannelEgine Phase 0 (PR #1) updated UI label + runtime warnings to match ±180° code path; jitter / cal mutex now enforced at runtime + UI level.
-- `[discovered 2026-05-19 during P1-7 docs catch-up review]` **Commissioning precheck 不拦未校准 chamber** (Codex P2 on PR #60). [`PrecheckExecutor`](../api-service/app/services/mimo_ota/executors/precheck.py) 的 `overall_pass` 只读 `critical_online and qz_pass and ue_cap_pass` (precheck.py:236), 校准状态 (`path_loss_calibration_valid`, `cal_cert.overall_pass`) 写进 `result_payload` 但**完全没进 `overall_pass`** — 没建过任何 cal cert / 没跑过路损校准的 chamber 也能从 precheck 通过, measure phase 用 `typical_cable_loss_db + duplexer - pa_gain` 公式的 fallback 跑出 .asc, 没人会报错。当前规避只有 GUI workflow 主观顺序 "先 cal 后 commission", 没有 code-level 安全 net。详见 [`docs/architecture/channel-engine-data-flow.md`](architecture/channel-engine-data-flow.md) surprising #3。**Triage 候选**: 加严格 strict-mode flag 把 `path_loss_calibration_valid == False` 或 `cal_cert is None` 升 `overall_pass = False` (P1-level 候选, 跟 first-call repeatability P1-4 相关)。
+- ~~`[discovered 2026-05-19 during P1-7 docs catch-up review]` **Commissioning precheck 不拦未校准 chamber** (Codex P2 on PR #60)~~. → **Promoted to P1-8** (2026-05-19 ad-hoc triage, in response to Codex P2 on PR #60; 走 ad-hoc 因为 next 现场之前必须有 fail-loud gate, 不能等 weekly review)。
 
 ---
 
 ## 📊 Summary
 
-> Counts as of 2026-05-19 (post P0-7 #56 + P1-5 local-half #57 + chore #58 + P1-7 #59 merged + 本 docs-catchup PR)。
-> Full-sweep flaky count remains **0**。9 个 open items 里, 7 个
+> Counts as of 2026-05-19 (post P0-7 #56 + P1-5 local-half #57 + chore #58 + P1-7 #59 merged + 本 docs-catchup PR + P1-8 ad-hoc promotion from Codex P2 review)。
+> Full-sweep flaky count remains **0**。10 个 open items 里, 7 个
 > 🚧 blocked-on-hardware (3 × P0 + P1-5 on-site half + P1-2 + P1-4 + P2-4);
-> 1 个 fully-remote-doable (P1-6, FS16/UXM/ENA silent-reconnect, next Current Focus);
-> 1 个 architecture gap 没即时 trigger (P2-7, 非 ring distribution, 等 PWS / 非标
-> 暗室触发)。
+> 1 个 fully-remote-doable (**P1-8 precheck cal-missing fail-loud gate**, next
+> Current Focus); 1 个 incident-conditional hold (P1-6 FS16/UXM/ENA silent-reconnect,
+> trigger 没满足); 1 个 architecture gap 没即时 trigger (P2-7, 非 ring distribution,
+> 等 PWS / 非标暗室触发)。
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
 | ✅ Done | 36 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 7 total | 4 days | 4 days |
-| 🟠 P1 (confidence) | 4 open / 7 total | 3 days | 1.5 days |
+| 🟠 P1 (confidence) | 5 open / 8 total | 3.5 days | 1.5 days |
 | 🟡 P2 (abstraction debt) | 2 open / 7 total | 2.5 days | 0.5 day |
 | 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
-| **Total open** | **9** | **~9.5 days** | **6 days** |
+| **Total open** | **10** | **~10 days** | **6 days** |
 
 ---
 
