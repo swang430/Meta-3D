@@ -1300,11 +1300,11 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 ## 📊 Summary
 
 > Counts as of 2026-05-19 (post P0-7 #56 + P1-5 local-half #57 + chore #58 + P1-7 #59 + P1-8 #61 merged + 本 docs-catchup PR 矫正 roadmap)。
-> Full-sweep flaky count remains **0**。8 个 open items 全部 not-immediately-startable
+> Full-sweep flaky count remains **0**。9 个 open items 全部 not-immediately-startable
 > (按 trigger condition 筛, 本地可启动的 P0/P1/P2 = 0):
 > - 7 个 🚧 blocked-on-hardware (3 × P0 + P1-2 + P1-4 + P1-5 on-site half + P2-4)
-> - 1 个 ⏸️ incident-conditional hold (P1-6 FS16/UXM/ENA, trigger = 真 idle-close 出现, 当前没证据)
-> - 1 个 ⏸️ architecture gap 没即时 trigger (P2-7 非 ring distribution, 等 PWS / 非标暗室)
+> - 1 个 ⏸️ incident-conditional hold (P1-6 FS16/UXM/ENA, trigger = 真 idle-close 出现, 当前没证据 — 仍计 open since `Status: [ ] not started`)
+> - 1 个 ⏸️ architecture gap 没即时 trigger (P2-7 非 ring distribution, 等 PWS / 非标暗室 — 仍计 open)
 >
 > 本地唯一 sensible 工作 = **主动 audit silent failure modes** (Codex 这次抓了 2
 > 个 = P1-8 cal gate + P1-8 frequency window, audit ROI 已经证明); 挖到东西可
@@ -1314,10 +1314,10 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 |----------|-------|---------------|---------------|
 | ✅ Done | 37 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 7 total | 4 days | 4 days |
-| 🟠 P1 (confidence) | 3 open / 8 total | 2.5 days | 1.5 days |
+| 🟠 P1 (confidence) | 4 open / 8 total | 3 days | 2 days |
 | 🟡 P2 (abstraction debt) | 2 open / 7 total | 2.5 days | 0.5 day |
 | 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
-| **Total open** | **8** | **~9 days** | **6 days** |
+| **Total open** | **9** | **~9.5 days** | **6.5 days** |
 
 ---
 
