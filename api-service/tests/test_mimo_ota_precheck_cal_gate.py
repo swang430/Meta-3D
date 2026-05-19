@@ -334,3 +334,125 @@ async def test_precheck_cal_gate_cartesian(
         assert any(k in result.error_message for k in cal_keywords), (
             f"error_message {result.error_message!r} missing cal keywords {cal_keywords}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Frequency-window boundary tests (P1-8 Codex P1 follow-up on 42af8ca)
+#
+# Codex flagged that the initial P1-8 implementation just checked
+# `path_loss_calibration_valid` set by a chamber-only query — an old/
+# different-band VALID cert (e.g. 700 MHz cert for a 3500 MHz test) would
+# pass precheck silently and then leave Phase 3 with no usable cert.
+#
+# Fix: precheck now goes through ProbePathLossCalibrationService.
+# get_latest_calibration(chamber_id, freq_mhz), which applies the same ±5%
+# frequency window measure.py uses. These tests pin that window contract:
+#   - 3500 MHz target accepts certs in 3325-3675 MHz
+#   - 700 MHz cert at 3500 MHz target → strict FAIL with audit trail showing
+#     "frequency_out_of_window"
+#   - bypass: same setup PASSes but cal_pass_reason still records would-fail
+# ---------------------------------------------------------------------------
+
+
+class TestFrequencyWindow:
+    """Pin the ±5% frequency-matching contract between precheck and measure."""
+
+    @pytest.mark.asyncio
+    async def test_mismatched_frequency_strict_fails(
+        self, db, lab, chamber, hal_with_mocks,
+    ):
+        """Cert at 700 MHz can't satisfy a 3500 MHz commissioning run."""
+        _seed_path_loss_cal(db, chamber.id, frequency_mhz=700.0)
+        ctx = _build_context(db, lab, cal_cert=None, strict_mode=True)
+        result = await PrecheckExecutor().execute(ctx)
+        measurements = result.measurements or {}
+
+        assert result.status == StepExecutionStatus.FAILED
+        assert measurements["overall_pass"] is False
+        assert measurements["cal_pass"] is False
+        assert measurements["path_loss_calibration_valid"] is False
+        # The cert exists for the chamber, just out of window — the audit
+        # field disambiguates from "no cert at all" for operator UX
+        assert measurements["path_loss_calibration_reason"] == "frequency_out_of_window"
+        assert "missing or invalid" in measurements["cal_pass_reason"]
+
+    @pytest.mark.asyncio
+    async def test_mismatched_frequency_bypass_passes_with_audit(
+        self, db, lab, chamber, hal_with_mocks,
+    ):
+        """Bypass lets the run continue but audit trail flags the mismatch."""
+        _seed_path_loss_cal(db, chamber.id, frequency_mhz=700.0)
+        ctx = _build_context(db, lab, cal_cert=None, strict_mode=False)
+        result = await PrecheckExecutor().execute(ctx)
+        measurements = result.measurements or {}
+
+        assert result.status == StepExecutionStatus.SUCCESS
+        assert measurements["overall_pass"] is True
+        assert measurements["cal_pass"] is True
+        # path_loss_calibration_valid still reflects reality (mismatched)
+        assert measurements["path_loss_calibration_valid"] is False
+        assert measurements["path_loss_calibration_reason"] == "frequency_out_of_window"
+        # Audit trail proves "this run happened despite the mismatch"
+        assert "bypassed" in measurements["cal_pass_reason"]
+        assert "path-loss calibration missing" in measurements["cal_pass_reason"]
+
+    @pytest.mark.asyncio
+    async def test_upper_boundary_within_window_passes(
+        self, db, lab, chamber, hal_with_mocks,
+    ):
+        """3500 × 1.05 = 3675 MHz cert ↔ 3500 MHz target: at-window edge,
+        must pass strict."""
+        _seed_path_loss_cal(db, chamber.id, frequency_mhz=3675.0)
+        ctx = _build_context(db, lab, cal_cert=None, strict_mode=True)
+        result = await PrecheckExecutor().execute(ctx)
+        measurements = result.measurements or {}
+
+        assert result.status == StepExecutionStatus.SUCCESS
+        assert measurements["overall_pass"] is True
+        assert measurements["cal_pass"] is True
+        assert measurements["path_loss_calibration_valid"] is True
+        assert measurements["path_loss_calibration_frequency_mhz"] == 3675.0
+
+    @pytest.mark.asyncio
+    async def test_lower_boundary_within_window_passes(
+        self, db, lab, chamber, hal_with_mocks,
+    ):
+        """3500 × 0.95 = 3325 MHz cert ↔ 3500 MHz target: at-window edge,
+        must pass strict."""
+        _seed_path_loss_cal(db, chamber.id, frequency_mhz=3325.0)
+        ctx = _build_context(db, lab, cal_cert=None, strict_mode=True)
+        result = await PrecheckExecutor().execute(ctx)
+        measurements = result.measurements or {}
+
+        assert result.status == StepExecutionStatus.SUCCESS
+        assert measurements["overall_pass"] is True
+        assert measurements["cal_pass"] is True
+        assert measurements["path_loss_calibration_valid"] is True
+
+    @pytest.mark.asyncio
+    async def test_just_outside_upper_boundary_fails_strict(
+        self, db, lab, chamber, hal_with_mocks,
+    ):
+        """Just above the +5% window: 3676 MHz cert vs 3500 MHz target →
+        out of window → FAIL strict."""
+        _seed_path_loss_cal(db, chamber.id, frequency_mhz=3676.0)
+        ctx = _build_context(db, lab, cal_cert=None, strict_mode=True)
+        result = await PrecheckExecutor().execute(ctx)
+        measurements = result.measurements or {}
+
+        assert result.status == StepExecutionStatus.FAILED
+        assert measurements["path_loss_calibration_reason"] == "frequency_out_of_window"
+
+    @pytest.mark.asyncio
+    async def test_target_frequency_recorded_in_audit_trail(
+        self, db, lab, chamber, hal_with_mocks,
+    ):
+        """`path_loss_calibration_target_frequency_mhz` always written so
+        operator / audit can correlate the cert window with the test config."""
+        _seed_path_loss_cal(db, chamber.id, frequency_mhz=3500.0)
+        ctx = _build_context(db, lab, cal_cert=None, strict_mode=True)
+        result = await PrecheckExecutor().execute(ctx)
+        measurements = result.measurements or {}
+
+        assert measurements["path_loss_calibration_target_frequency_mhz"] == 3500.0
+        assert measurements["path_loss_calibration_frequency_mhz"] == 3500.0

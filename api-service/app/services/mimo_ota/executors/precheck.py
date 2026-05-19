@@ -9,8 +9,6 @@ import logging
 from datetime import datetime
 from typing import Any, Dict
 
-from sqlalchemy import desc
-
 from app.models.probe_calibration import (
     CalibrationStatus,
     ProbePathLossCalibration,
@@ -176,30 +174,60 @@ class PrecheckExecutor(IStepExecutor):
             warnings.append("No calibration_certificate bound to TestCase or LabProfile")
 
         # Path-loss calibration row (used by Phase 3 generation pipeline).
-        # Pass chamber.id as UUID directly — UUID(as_uuid=True) column accepts
-        # the model attribute as-is. The previous .hex/str().replace("-","")
-        # workaround mis-fed a 32-char hex string into the UUID type processor,
-        # crashing SQLite tests with "'str' object has no attribute 'hex'".
-        latest_pl = (
-            context.db.query(ProbePathLossCalibration)
-            .filter(
-                ProbePathLossCalibration.chamber_id == chamber.id,
-                ProbePathLossCalibration.status == CalibrationStatus.VALID.value,
-            )
-            .order_by(desc(ProbePathLossCalibration.calibrated_at))
-            .first()
+        # 2026-05-19 P1-8 (Codex P1 on commit 42af8ca): use the same
+        # frequency-matched lookup that the measure phase uses, otherwise
+        # an old/different-band VALID cert could pass precheck but leave
+        # measure phase with no usable cert (silent fallback we're trying
+        # to prevent). The ProbePathLossCalibrationService applies a ±5%
+        # frequency window (e.g. 3500 MHz target matches 3325-3675 MHz certs)
+        # — same windowing measure.py uses at
+        # api-service/app/services/mimo_ota/executors/measure.py:254.
+        from app.services.path_loss_calibration_service import (
+            ProbePathLossCalibrationService,
         )
+
+        target_freq_mhz = config.frequency_hz / 1e6
+        pl_service = ProbePathLossCalibrationService(context.db, use_mock=False)
+        latest_pl = pl_service.get_latest_calibration(chamber.id, target_freq_mhz)
+
+        result_payload["path_loss_calibration_target_frequency_mhz"] = target_freq_mhz
         if latest_pl is not None:
             age_h = (datetime.utcnow() - latest_pl.calibrated_at).total_seconds() / 3600.0
             result_payload["path_loss_calibration_valid"] = True
             result_payload["path_loss_calibration_age_hours"] = age_h
-            messages.append(f"Path-loss calibration: VALID (age {age_h:.1f}h)")
-        else:
-            result_payload["path_loss_calibration_valid"] = False
-            warnings.append(
-                "No valid ProbePathLossCalibration for this chamber — "
-                "Phase 3 will fall back to default cable loss"
+            result_payload["path_loss_calibration_frequency_mhz"] = latest_pl.frequency_mhz
+            messages.append(
+                f"Path-loss calibration: VALID (age {age_h:.1f}h, "
+                f"cert@{latest_pl.frequency_mhz:.0f} MHz matches target "
+                f"{target_freq_mhz:.0f} MHz within ±5% window)"
             )
+        else:
+            # Disambiguate the two failure modes for audit trail / operator UX:
+            # - chamber has no VALID cert at all
+            # - chamber has VALID cert(s), just none in the ±5% window
+            any_valid_for_chamber = (
+                context.db.query(ProbePathLossCalibration)
+                .filter(
+                    ProbePathLossCalibration.chamber_id == chamber.id,
+                    ProbePathLossCalibration.status == CalibrationStatus.VALID.value,
+                )
+                .first()
+            )
+            result_payload["path_loss_calibration_valid"] = False
+            if any_valid_for_chamber is not None:
+                result_payload["path_loss_calibration_reason"] = "frequency_out_of_window"
+                warnings.append(
+                    f"No ProbePathLossCalibration in ±5% window of "
+                    f"{target_freq_mhz:.0f} MHz for this chamber "
+                    f"(chamber has VALID cert(s) but none at matching frequency) — "
+                    f"Phase 3 will fall back to default cable loss"
+                )
+            else:
+                result_payload["path_loss_calibration_reason"] = "no_cert_for_chamber"
+                warnings.append(
+                    "No valid ProbePathLossCalibration for this chamber — "
+                    "Phase 3 will fall back to default cable loss"
+                )
 
         # --- 4. Quiet zone ripple (Phase 2f: cross-probe pattern variation proxy) ---
         from app.services.probe_pattern.consumer import estimate_quiet_zone_ripple_db
