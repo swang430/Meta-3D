@@ -8,20 +8,23 @@
 
 ## 🎯 Current Focus
 
-**Mostly blocked on hardware — 1 remote-doable item remains.**
+**P0-7 — Channel-Engine real-mode path + external_asc debug mode (this PR).**
 
-All flaky-test cleanup is done (P3-10/11/12/13 ✅, full sweep clean).
-P3-1 ✅ (HAL Reload two-stage confirm — this PR). 7 of the 8 open
-items can't be progressed from a remote dev box (all P0 + most P1
-+ P2-4 on-site verification). 1 item can:
+ChannelEgine 远端 Phase 0-6 全部 merged (strict_pfs 生产可用, 详见
+[`ChannelEgine/CLAUDE.md`](../../ChannelEgine/CLAUDE.md) "Cross-project
+context")。MIMO-First 侧的 channel-engine-service adapter 三层 API
+全错, 任何 `mimo_first_asc` engine mode 请求都静默 fallback 到 mock
+→ 操作员拿到的"channel synthesis"实际是 1-tap Doppler shift placeholder,
+**不是真实 PFS 信道**。下次现场之前必须修, 否则 `mimo_first_asc` 路径
+在现场也跑假数据。
 
-- **P1-5 local half** — phase calibration local prep (~0.5 day local
-  + 0.5 day on-site; the local half can ship in advance)
+P0-3/4/5 仍然 on-site-blocked。P0-7 补位 Current Focus 因为它是 P0-tier
+(生产假数据 + 现场必需) 且 remote-doable。P1-5 local half + P2-4 在
+P0-7 完成后排队。
 
-P1-6 (silent-reconnect integration tests for FS16/UXM/ENA) is
-**gated**, not blocked: roadmap text pins it to "pulled forward only
-if a real production idle-close is seen on those drivers", so it
-stays parked.
+- **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
+- Anything that's not the Current Focus item and not a triviality (<30 min)
+  gets appended to the backlog instead of done inline.
 
 When the next on-site opens, Current Focus must move back to **P0-3**
 (or whichever P0 is unblocked first) per WIP=1 sequencing, regardless
@@ -309,6 +312,54 @@ fix added in `report.py` + strict E2E test
 forward. Codex P2 follow-up added `db.expire_all()` to those tests
 to defend against SQLAlchemy identity-map stale reads under
 non-StaticPool configurations.
+
+---
+
+### P0-7 — Channel-Engine real-mode path + external_asc debug mode 🔄 In progress (this PR)
+
+**What** (three coupled issues fixed together):
+
+1. **`mimo_first_asc` engine mode 永远跑 mock**: [`channel-engine-service/app/api/endpoints/hardware_pipeline.py:40-49`](../channel-engine-service/app/api/endpoints/hardware_pipeline.py#L40)
+   - L45 `from mimo_ota_simulator.simulator import OTASimulator` — 真实类名是 `MIMO_OTA_Simulator`, ImportError 被静默吞掉
+   - L208 构造签名错 — 真实构造无参数
+   - L224 `sim.run_with_external_clusters(...)` — 真实 API 是 `.run(chamber, config, synthesis_method=...)`, `run_with_external_clusters` 是 ChannelEgine D11 决定**不实现**的别名
+   - 任何 real-mode 请求 → ImportError → fallback `_run_mock_synthesis` → 1-tap Doppler shift placeholder .asc → 操作员收到假信道, 没有 warning
+   - 默认 `CHANNEL_ENGINE_PATH=~/ChannelEgine` 在本机不存在 (实际 clone 在 `/Users/Simon/Tools/ChannelEgine`), 这是 ImportError 的双重根因
+
+2. **端到端参数链路缺 Phase 5/6 字段**: ChannelEgine 远端已 merge PR #5/#6, 但 MIMO-First `HardwarePipelineRequest` schema + `ChannelEngineClient` 都不知道这些字段存在
+   - per-cluster: `xpr_db`, `initial_phases_rad: [4]` (4-ray init phases)
+   - top-level: `k_factor_db` (LOS boost), `synthesis_method: strict_pfs|ray|cluster_legacy`
+   - antenna: `polarization: V|H` 字段 (Tx + Rx 各一个)
+   - 速度: `ue_velocity_mps: [vx, vy, vz]` (现有 scalar `velocity_kph` 是简化, ChannelEgine 期望 3-vector m/s)
+
+3. **手工搬 ASC 调试能力是隐式 hack**: 操作员当前调试 commissioning 时直接跑 ChannelEgine `app.py` Streamlit 在本机产 .asc, 然后绕过 api-service 用 FTP 直接塞 F64。这条路径没有 first-class 支持, 操作员手工干预的 audit trail 也没记录。
+
+**Why P0** (production-fake-data 严重 + 下次现场前 must-fix):
+- Commissioning 宣称的"two-engine PFS" 实际只有 `keysight_gcm` 一条能用; `mimo_first_asc` 在生产 100% fake. 下次现场前必须修否则现场也跑假数据。
+- 当前所有真 P0 (P0-3/4/5) 都 on-site-blocked → P0-7 补位 Current Focus 是 WIP=1 合规的 (不是 "顺手优化", 是 P0-tier 补位)
+- "外部 ASC 调试通道"上 production 路径后特别有价值: 出 bug 时操作员用 ChannelEgine GUI 产已知好的 .asc 喂进 MIMO-First, 立刻分辨 bug 在 MIMO-First 端还是集成链路
+
+**Scope** (single PR, P0):
+
+| Step | Subject | Files |
+|------|---------|-------|
+| 0 | `CHANNEL_ENGINE_PATH` fail-fast on microservice startup; remove silent ImportError → mock fallback; mock 升级为显式 `MOCK_ASC_MODE=1` env flag (debug-only) | `channel-engine-service/app/main.py`, `.../api/endpoints/hardware_pipeline.py`, `.env.example` |
+| 1 | api-service 加 `EngineMode.EXTERNAL_ASC` + `asc_source_path` 字段 + measure dispatch 分支 (external_asc 跳过 ChannelEngineClient, 直接读本地目录, metadata 仍要求填) | `api-service/app/schemas/mimo_ota/`, `.../services/mimo_ota/executors/measure.py` |
+| 2 | `HardwarePipelineRequest` schema 加 6 个 Phase 5/6 字段 | `channel-engine-service/app/models/hardware_pipeline_models.py` |
+| 3 | 重写 `_run_real_synthesis`: `MIMO_OTA_Simulator().run(chamber, config, synthesis_method='strict_pfs')` + `CustomCDLProfile.from_dict()` + `ChamberConfig` + `TargetChannelConfig` (per [`ChannelEgine/CLAUDE.md`](../../ChannelEgine/CLAUDE.md) "MIMO-First 集成路径") | `channel-engine-service/app/api/endpoints/hardware_pipeline.py` |
+| 4 | `ChannelEngineClient.synthesize_hardware_pipeline()` payload 透传新字段 | `api-service/app/services/channel_engine_client.py` |
+
+OpenAPI contract sync (4 步标准流程: openapi.yaml + `npm run openapi:generate` + service.ts + mockServer), GUI commissioning 引擎下拉三选一 + external_asc 路径输入。
+
+**Acceptance**:
+- ChannelEgine 真路径打通, e2e 测试 (gated on `CHANNEL_ENGINE_PATH` 存在且 import 成功) 验证 .asc 内容**不是** placeholder Doppler shift
+- `external_asc` 模式: 给定一个目录, 系统能扫到所有 `channel_InX_OutY.asc` 文件, FTP 上传 F64, audit trail 记录 `external_asc_source_path` + metadata
+- ImportError 路径: 微服务启动期 fail-fast (而不是 runtime 静默假数据); 显式 `MOCK_ASC_MODE=1` 启用时 response 中带 `"mock_mode": true` 警告
+- 单元测试: payload shape 含全部新字段; assertion 错误指向具体字段
+- Memory + roadmap: 3 个 PFS memory 更新到 post-Phase-6 现状, P2-6 标 Done (指向 ChannelEgine PR #1-#6), 两条 backlog 关闭
+
+**Status**: 🔄 In progress — this PR
+**Estimate**: 2-3 days
 
 ---
 
@@ -675,24 +726,25 @@ NOT done (deferred):
 **Status**: ✅ Done — PR #35 (merged 2026-05-17)
 **Estimate**: 1 day (actual: ~2 hours)
 
-### P2-6 — Strict PFS implementation in ChannelEgine (cross-repo)
+### P2-6 — Strict PFS implementation in ChannelEgine (cross-repo) ✅ Done
 
-**What**: Current self-developed ASC channel synthesis (`mimo_ota_simulator/simulator.py` in the external `ChannelEgine` repo) uses three methods (`pinv` / `cluster` / `ray`) — **none** satisfy strict PFS (per-(probe, cluster) independent fading). All have residual cross-probe coherence. The `probe_phase_jitter` flag provides only partial mitigation (ensemble-average equivalent to PFS, but per-realization residual is non-zero and ~L·M slower convergence; also mutually exclusive with phase calibration cert application). See [`docs/features/calibration/pfs-phase-immunity.md`](features/calibration/pfs-phase-immunity.md) for the math.
+**What**: Strict-PFS rollout (per-(probe, cluster) independent fading) plus dual-pol / external CDL synthesis pathway, delivered in the external `ChannelEgine` repo.
 
-**Scope**: External `ChannelEgine` repo (`git@git.metaradio.tech:swang/channelengine.git`), **not** MIMO-First. This is a placeholder so the work has an owner + estimate + visibility from the first-call roadmap, since strict PFS directly affects phase-cal value (P1-5) and chamber-path uncertainty budget on MIMO-First side.
+**Resolution (2026-05-18)**: ChannelEgine maintainer shipped the full Phase 0-6 rollout (PR #1-#6), going further than this entry's original acceptance criteria:
+- **Phase 1 (PR #1)**: `synthesis_method='strict_pfs'` 生产可用; per-(probe, cluster) 独立 fading; `E[A_i·A_j*]=0` per realization
+- **Phase 0 (PR #1)**: `probe_phase_jitter` UI 修到 ±180° (跟代码一致); jitter / cal mutex runtime warning + UI st.warning; strict_pfs 下 UI auto-disable jitter
+- **Phase 2 (PR #2)**: Statistical validation tests — cross-corr → 0, cal superposition, ray regression golden
+- **Phase 3 (PR #2)**: `cluster` + `pinv` 标 DeprecationWarning; D11 决定 `run_with_external_clusters` 不实现 (责任划在 MIMO-First adapter 侧)
+- **Phase 5 (PR #5)**: `CustomCDLProfile` Pydantic schema (`from_file` / `from_dict`); K-factor LOS boost; per-ray init phases; external CDL → strict_pfs → ASC e2e
+- **Phase 6 (PR #6)**: Dual-pol synthesizer with real XPR + cross-pol init phases (TR 38.901 §7.3.2 per-cluster 2×2 pol matrix); `AntennaArrayConfig.polarization: V|H`
 
-**Why P2 (abstraction debt) rather than P0/P1**: doesn't block first-call (current implementation produces usable ASC files; CTIA throughput-style tests get ensemble-averaged enough that the gap is masked). But it's the right architecture for cert-level traceability + beam-pattern / single-shot KPIs + future PWS mode.
+**Cross-repo coordination**: ChannelEgine [`CLAUDE.md`](../../ChannelEgine/CLAUDE.md) "Cross-project context" 同步; Meta-3D Issue #55 跟踪 MIMO-First 侧 adapter 重写 (→ P0-7 接手)。
 
-**Acceptance**: Two new `synthesis_method` values (`cluster_strict` / `ray_strict`) implemented in `simulator.py`; spatial correlation validation test confirms strict variants converge to target $R_{m,n}$ in ~$L \cdot M$ × fewer realizations than current `cluster` / `ray` + jitter; legacy methods stay as `*_legacy` for backward compatibility (existing ASC consumers unaffected); strict + phase-cal cert verified to compose additively (cal info not absorbed, unlike jitter case).
+**MIMO-First 侧后续**: adapter API mismatch 修复 + 透传新字段 (XPR / K-factor / init_phases / polarization / synthesis_method) → **P0-7** (in progress, this PR)。
 
-**Estimate breakdown** (focused work in ChannelEgine repo):
-- Minimum (simulator refactor + validation test): **~4 days**
-- Plus microservice integration (fixes the `run_with_external_clusters` missing-method backlog gap too) + GUI three-way toggle: **+2 days = 6 days**
-- Plus GCM Studio cross-validation + CAICT chamber empirical measurement: **+2 days local + half day on-site = 8-10 days end-to-end**
-
-**Status**: `[ ]` not started (placeholder)
-**Estimate**: 4 days minimum / 6-10 days full
-**Cross-repo coordination**: see [`ChannelEgine/claude.md`](/Users/Simon/Tools/ChannelEgine/claude.md) "Cross-project context" section — entering that repo surfaces this MIMO-First context automatically.
+**Status**: ✅ Done — ChannelEgine PR #1-#6 (all merged 2026-05-18)
+**Estimate**: 4-10 days planned, ChannelEgine 实际 ~10 days
+**Cross-repo coordination**: see [`ChannelEgine/CLAUDE.md`](/Users/Simon/Tools/ChannelEgine/CLAUDE.md) "Cross-project context" section — entering that repo surfaces full status automatically.
 
 ---
 
@@ -1028,26 +1080,26 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 - ~~`[discovered 2026-05-17 during P2-1 design]` **UXM name-cleanup chore**: rename `UxmCommandProfile` → `UxmTestApp` and `UxmTestProfile` → `UxmTopologyProfile`~~. ✅ Resolved 2026-05-17 — see D27 in Done table.
 - ~~`[discovered 2026-05-17 during P2-1 design]` **`self._cmds` class-vs-instance mutability fix**~~. ✅ Resolved 2026-05-17 — see D27 in Done table.
 - ~~`[discovered 2026-05-17 during P3-8]` **VRT integration tests share dev PG state** (test-isolation)~~. ✅ Resolved 2026-05-17 — see D28 in Done table.
-- `[discovered 2026-05-17 during PFS-doc investigation]` **`channel-engine-service` real-mode endpoint calls missing method**: [`hardware_pipeline.py:224`](../channel-engine-service/app/api/endpoints/hardware_pipeline.py#L224) invokes `sim.run_with_external_clusters(...)` on `OTASimulator`, but this method does **not exist** anywhere in the `ChannelEgine` repo (grep'd: only `run()` is defined). Any actual call to `POST /api/v1/synthesize_hardware_pipeline` with `OTASimulatorClass != None` would AttributeError at runtime, get caught by the outer try/except, and return a 200 with `status='error'`. Production ASC generation probably bypasses the microservice entirely (operators run `ChannelEgine/app.py` Streamlit or `gui.py` Tkinter directly). **Scope**: fix likely belongs in `MIMO-First/channel-engine-service/` (call `sim.run()` with correct args + adapt the cluster-injection contract), not in the external `ChannelEgine` repo. ~0.5-1 day. Low urgency until the microservice path is actually used in production.
-- `[discovered 2026-05-17 during PFS-doc investigation]` **`probe_phase_jitter` UI label says "±10°" but code applies "±180°"**: [`ChannelEgine/app.py:196`](/Users/Simon/Tools/ChannelEgine/app.py#L196) Streamlit checkbox describes jitter as `"+/- 10度"` but [`simulator.py:536`](/Users/Simon/Tools/ChannelEgine/mimo_ota_simulator/simulator.py#L536) uses `jitter_rad = np.pi` (±180°). 18× discrepancy with different operational meanings — ±10° is "hardware uncertainty simulation" (E[exp(jφ)] ≈ 0.99, won't ensemble-average to PFS); ±180° is "ensemble PFS equivalent" (E[exp(jφ)] = 0, will). Operator opt-in expectation is wrong. **Scope**: external `ChannelEgine` repo (separate PR target). Need original author to confirm intent before fixing. ~0.5 day once intent confirmed.
+- ~~`[discovered 2026-05-17 during PFS-doc investigation]` **`channel-engine-service` real-mode endpoint calls missing method**~~. → Promoted to **P0-7** (2026-05-18 triage) — D11 ruled `run_with_external_clusters` unimplementable in ChannelEgine; responsibility moved to MIMO-First adapter rewrite + scope broadened to include Phase 5/6 field plumbing + `external_asc` debug mode + fail-fast.
+- ~~`[discovered 2026-05-17 during PFS-doc investigation]` **`probe_phase_jitter` UI label says "±10°" but code applies "±180°"**~~. ✅ Resolved 2026-05-18 — ChannelEgine Phase 0 (PR #1) updated UI label + runtime warnings to match ±180° code path; jitter / cal mutex now enforced at runtime + UI level.
 
 ---
 
 ## 📊 Summary
 
-> Counts as of 2026-05-17 (post-P3-1 + PFS-investigation placeholder).
-> Full-sweep flaky count remains **0**. Of the 9 open items, 7 are
-> 🚧 blocked-on-hardware and 2 are remote-doable (P1-5 local half +
-> P2-6 strict-PFS in ChannelEgine repo).
+> Counts as of 2026-05-18 (post P0-7 promotion + P2-6 close via ChannelEgine
+> Phase 0-6). Full-sweep flaky count remains **0**. Of the 9 open items, 6
+> are 🚧 blocked-on-hardware and 3 are remote-doable (P0-7 this PR + P1-5
+> local half + P2-4 NAT/firewall verification but P2-4 needs on-site too).
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 33 | — | — |
-| 🔴 P0 (first-call critical) | 3 open / 6 total | 4 days | 4 days |
+| ✅ Done | 34 | — | — |
+| 🔴 P0 (first-call critical) | 4 open / 7 total | 6-7 days | 4 days |
 | 🟠 P1 (confidence) | 4 open / 6 total | 3 days | 2.5 days |
-| 🟡 P2 (abstraction debt) | 2 open / 6 total | 4.5 days | 0.5 day |
+| 🟡 P2 (abstraction debt) | 1 open / 6 total | 0.5 day | 0.5 day |
 | 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
-| **Total open** | **9** | **~11.5 days** | **7 days** |
+| **Total open** | **9** | **~10 days** | **7 days** |
 
 ---
 

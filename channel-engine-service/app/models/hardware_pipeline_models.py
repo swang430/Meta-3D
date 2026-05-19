@@ -73,6 +73,11 @@ class AntennaConfig(BaseModel):
     num_cols: int = Field(2, description="列数", ge=1)
     spacing_h: float = Field(0.5, description="水平间距 (波长)")
     spacing_v: float = Field(0.5, description="垂直间距 (波长)")
+    # 2026-05-18 P0-7 / Spec v2.0: ChannelEgine Phase 6 dual-pol synthesizer
+    # 要求 Tx/Rx 各自显式声明 V 或 H. 历史默认 V 维持 back-compat (单 pol DUT).
+    polarization: Literal["V", "H"] = Field(
+        "V", description="天线极化方向 (V=垂直, H=水平). ChannelEgine Phase 6 dual-pol 必需."
+    )
 
 
 class SimulationRules(BaseModel):
@@ -88,6 +93,25 @@ class SimulationRules(BaseModel):
         default_factory=AntennaConfig, description="接收天线配置"
     )
     ue_velocity_kph: float = Field(0.0, description="UE 速度 (km/h)", ge=0)
+    # 2026-05-18 P0-7 / Spec v2.0: 3-vector m/s, ChannelEgine 内部期望此形式
+    # (kph scalar 是 1D 简化, 不能表达多普勒方向). None → adapter 从 kph 派生
+    # [kph/3.6, 0, 0] 维持 back-compat.
+    ue_velocity_mps: Optional[List[float]] = Field(
+        None,
+        description=(
+            "UE 速度 3-vector (m/s) [vx, vy, vz]. 设置时优先于 ue_velocity_kph; "
+            "None 时 adapter 从 kph 派生 [kph/3.6, 0, 0] (沿 x 轴运动)."
+        ),
+    )
+    # 2026-05-18 P0-7 / Spec v2.0: 信道合成方法选择
+    synthesis_method: Literal["strict_pfs", "ray", "cluster_legacy"] = Field(
+        "strict_pfs",
+        description=(
+            "ChannelEgine 合成方法. strict_pfs (推荐, Phase 1+): per-(probe, cluster) "
+            "独立 fading, 跟 phase cal 兼容. ray: 传统 20-sub-ray, 大平均统计场景. "
+            "cluster_legacy: rank-1 outer product, DeprecationWarning, 仅 back-compat."
+        ),
+    )
 
 
 class CDLCluster(BaseModel):
@@ -104,6 +128,22 @@ class CDLCluster(BaseModel):
     zoa_deg: float = Field(90.0, description="到达天顶角 (deg)")
     zod_deg: float = Field(90.0, description="出发天顶角 (deg)")
     as_aoa_deg: float = Field(2.0, description="到达角度扩展 (deg)")
+    # 2026-05-18 P0-7 / Spec v2.0: ChannelEgine Phase 6 cross-pol ratio.
+    # 7 dB 是 TR 38.901 §7.5 默认 (NLOS UMa/UMi/RMa); LOS 通常用 0 dB.
+    xpr_db: float = Field(
+        7.0,
+        description="交叉极化比 (dB), TR 38.901 §7.5 默认 7 dB",
+    )
+    # 2026-05-18 P0-7 / Spec v2.0: ChannelEgine Phase 5 per-ray init phases.
+    # 4-element vec 对应 [VV, VH, HV, HH] init phases. None → ChannelEgine 内部
+    # 随机初始化 (跨 realization 不可重复); 显式给定则 trace 可复现.
+    initial_phases_rad: Optional[List[float]] = Field(
+        None,
+        description=(
+            "4-element 初始相位 (rad) [VV, VH, HV, HH], 控制 dual-pol 合成的 "
+            "起始相位. None → 随机. Phase 5+ 才会被读."
+        ),
+    )
 
 
 class CDLModelData(BaseModel):
@@ -125,6 +165,15 @@ class CDLModelData(BaseModel):
     is_los: bool = Field(False, description="是否为视距")
     clusters: List[CDLCluster] = Field(
         ..., description="多径簇列表", min_length=1
+    )
+    # 2026-05-18 P0-7 / Spec v2.0: LOS K-factor (dB), only meaningful when is_los=True.
+    # TR 38.901 §7.5.6 LOS-mode K-factor boost on cluster #0 power.
+    k_factor_db: Optional[float] = Field(
+        None,
+        description=(
+            "LOS K-factor (dB). 仅 is_los=True 时被读; None 用 ChannelEgine "
+            "内部 TR 38.901 §7.5.6 默认值. NLOS 时该字段被忽略."
+        ),
     )
 
 
@@ -186,7 +235,7 @@ class HardwarePipelineResponse(BaseModel):
     """
     硬件流水线合成响应
 
-    对应 Integration Spec v1.0 §2.2
+    对应 Integration Spec v1.0 §2.2 + v2.0 (mock_mode 字段, 2026-05-18 P0-7)
     """
     status: Literal["success", "error"] = Field(..., description="状态")
     computation_time_ms: float = Field(..., description="计算耗时 (ms)")
@@ -194,3 +243,10 @@ class HardwarePipelineResponse(BaseModel):
     control_instructions: Optional[ControlInstructions] = None
     diagnostics: Optional[Diagnostics] = None
     error_message: Optional[str] = Field(None, description="错误信息")
+    mock_mode: bool = Field(
+        False,
+        description=(
+            "True 当且仅当服务以 MOCK_ASC_MODE=1 启动且本次响应是 mock 合成 "
+            "(占位 .asc, 非真实 PFS)。生产模式永远 False。"
+        ),
+    )

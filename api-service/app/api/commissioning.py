@@ -106,6 +106,9 @@ class CreateSessionRequest(BaseModel):
     azimuths_deg: List[float] = [0.0, 90.0, 180.0, 270.0]
     measurement_duration_s: float = 10.0
     engine_mode: str = "mimo_first_asc"
+    # 2026-05-18 P0-7: engine_mode='external_asc' 时必填 (本机绝对路径,
+    # 操作员手工产 .asc 的目录). 其他 engine_mode 该字段被忽略.
+    asc_source_path: Optional[str] = None
     min_throughput_ratio: float = 0.70
     max_rsrp_variance_db: float = 3.0
     # New optional field — pin a specific lab; falls back to the unique active one.
@@ -146,6 +149,7 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
         "azimuths_deg": req.azimuths_deg,
         "measurement_duration_s": req.measurement_duration_s,
         "engine_mode": req.engine_mode,
+        "asc_source_path": req.asc_source_path,
         "pass_criteria": {
             "min_throughput_ratio": req.min_throughput_ratio,
             "max_rsrp_variance_db": req.max_rsrp_variance_db,

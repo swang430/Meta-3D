@@ -16,6 +16,12 @@ from app.hal.channel_emulator import ChannelEmulatorDriver
 class EngineMode(str, Enum):
     GCM_NATIVE = "keysight_gcm"       # Keysight native Channel Studio GCM
     ASC_SYNTHESIS = "mimo_first_asc"  # MIMO-First Custom ASC Synthesis Engine
+    EXTERNAL_ASC = "external_asc"     # Operator-provided .asc bundle (debug-only path).
+    # 2026-05-18 P0-7: EXTERNAL_ASC formalizes the previously-implicit "operator
+    # ran ChannelEgine app.py/gui.py locally and hand-fed .asc to F64" workflow.
+    # Skips channel-engine-service; api-service scans the operator-given local
+    # directory and uploads via HAL. Metadata (cdl_model_name, chamber config,
+    # etc.) still required for audit-trail traceability.
 
 
 class BaseChannelGenerator(ABC):
