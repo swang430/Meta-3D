@@ -35,7 +35,7 @@ export function PrecheckPhase({ data }: { data: any }) {
       <Table striped>
         <Table.Tbody>
           <Table.Tr><Table.Td>暗室 ID</Table.Td><Table.Td>{data.chamber_id}</Table.Td></Table.Tr>
-          <Table.Tr><Table.Td>校准有效性</Table.Td><Table.Td>{data.calibration_valid ? '有效' : '已过期'}</Table.Td></Table.Tr>
+          <Table.Tr><Table.Td>校准有效性</Table.Td><Table.Td>{data.path_loss_calibration_valid ? '有效' : '已过期'}</Table.Td></Table.Tr>
           <Table.Tr><Table.Td>静区纹波 (Ripple)</Table.Td><Table.Td>±{data.quiet_zone_ripple_db} dB</Table.Td></Table.Tr>
         </Table.Tbody>
       </Table>

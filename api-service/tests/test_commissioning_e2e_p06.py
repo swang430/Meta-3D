@@ -380,3 +380,41 @@ class TestP06MockFirstCall:
         assert not any(
             "calibration_certificate" in w.lower() for w in warnings
         ), f"unexpected cert warning even with fixture present: {warnings}"
+
+    def test_precheck_payload_carries_path_loss_calibration_valid_key(
+        self, lab, hal_with_mocks, db,
+    ):
+        """Pin the canonical key the GUI Commissioning/Phases.tsx reads
+        to render '校准有效性: 有效/已过期'.
+
+        2026-05-19 chore: discovered during P1-5 local-half on-site smoke
+        check — GUI was reading ``data.calibration_valid`` (no prefix),
+        backend writes ``data.path_loss_calibration_valid``, so the badge
+        rendered '已过期' regardless of DB state. Fixed by renaming the
+        GUI read to match the canonical backend key. This test pins the
+        backend side so any future rename surfaces immediately rather
+        than silently re-breaking the GUI badge.
+        """
+        session_id = _create_fast_session(lab, db)
+        client.post(f"/api/v1/commissioning/sessions/{session_id}/phase/precheck")
+        db.expire_all()
+
+        execution = (
+            db.query(TestExecution)
+            .filter(TestExecution.id == uuid.UUID(session_id))
+            .first()
+        )
+        precheck = (execution.measurements or {}).get("phases", {}).get("precheck", {})
+
+        # Key MUST exist (GUI Phases.tsx:38 reads data.path_loss_calibration_valid)
+        assert "path_loss_calibration_valid" in precheck, (
+            f"precheck result_payload missing 'path_loss_calibration_valid' — "
+            f"GUI badge '校准有效性' will always render '已过期'. "
+            f"Available keys: {sorted(precheck.keys())}"
+        )
+        # Value must be a real bool, not None/missing
+        assert isinstance(precheck["path_loss_calibration_valid"], bool), (
+            f"path_loss_calibration_valid must be bool, got "
+            f"{type(precheck['path_loss_calibration_valid']).__name__}: "
+            f"{precheck['path_loss_calibration_valid']!r}"
+        )
