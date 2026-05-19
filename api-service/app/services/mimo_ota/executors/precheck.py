@@ -75,6 +75,11 @@ class PrecheckExecutor(IStepExecutor):
         messages.append(f"Instruments (HAL): {online_n}/{len(instruments_online)} online")
 
         # --- 2.4 DUT attach record check (Phase 2l: 防对错 IMSI 测试) ---
+        # P1-9 (2026-05-19): missing/broken dut_attach now drives the strict
+        # DUT gate at section 5b. Warning text reflects whether the run will
+        # actually FAIL or only carry an audit trail (depends on
+        # config.precheck_strict_dut). The dut_attach value is set here in
+        # all cases; the gate below consumes it.
         dut_attach = (context.test_execution.measurements or {}).get("dut_attach")
         if dut_attach:
             result_payload["dut_attach"] = dut_attach
@@ -84,27 +89,49 @@ class PrecheckExecutor(IStepExecutor):
                 f"rrc_connected={dut_attach.get('rrc_connected')}"
             )
         else:
-            warnings.append(
-                "No DUT attach record on this execution; "
-                "POST /api/v1/test-executions/{id}/attach-dut before running. "
-                "Test will proceed assuming DUT is already in chamber."
-            )
+            if config.precheck_strict_dut:
+                # Will be turned into FAIL at section 5b; emit explanatory
+                # warning here so the operator-facing log makes the chain
+                # of cause-and-effect obvious.
+                warnings.append(
+                    "No DUT attach record on this execution — strict DUT gate "
+                    "will fail this precheck. "
+                    "POST /api/v1/test-executions/{id}/attach-dut before retry, "
+                    "or set precheck_strict_dut=False for lab smoke."
+                )
+            else:
+                warnings.append(
+                    "No DUT attach record on this execution; "
+                    "precheck_strict_dut=False — will proceed assuming DUT "
+                    "is already in chamber (audit trail in dut_pass_reason)."
+                )
 
         # --- 2.5 UE Capability check (Phase 2e: 4x4 阻塞前防御) ---
+        # P1-9 (Codex P2 on 655d7e3, 2026-05-19): 同时设 `live_ue_query_state`
+        # 给 section 5b 的 DUT gate 用 — cached `dut_attach.rrc_connected`
+        # 快照可能在 attach 跟 precheck 之间 stale (DUT 掉线), strict 模式
+        # 必须 cross-check 实时 query 状态。"available" = query 成功且 source
+        # 非 unavailable; "unavailable" = query 报 unavailable; "unknown" =
+        # 没有 BS / 没有 query_ue_capability / query 抛异常。
         bs = hal.drivers.get("baseStation")
         ue_cap_pass = True  # default pass when bs unavailable (no DUT to check)
+        live_ue_query_state: str = "unknown"
         if bs is not None and hasattr(bs, "query_ue_capability"):
             try:
                 cap = await bs.query_ue_capability()
                 result_payload["ue_capability"] = cap
                 cap_max_dl = cap.get("max_dl_layers")
+                if cap.get("source") == "unavailable":
+                    live_ue_query_state = "unavailable"
+                else:
+                    live_ue_query_state = "available"
                 if cap_max_dl is not None and cap_max_dl < config.mimo_layers:
                     ue_cap_pass = False
                     messages.append(
                         f"UE Capability: max_dl_layers={cap_max_dl} < requested "
                         f"{config.mimo_layers} — DUT will fall back to {cap_max_dl} layer DL"
                     )
-                elif cap.get("source") == "unavailable":
+                elif live_ue_query_state == "unavailable":
                     warnings.append(
                         "UE capability unavailable (DUT may not be attached yet); "
                         "proceeding without 4x4 layer verification"
@@ -120,7 +147,9 @@ class PrecheckExecutor(IStepExecutor):
                     )
             except Exception as e:  # noqa: BLE001
                 warnings.append(f"UE capability query raised: {e}; skipped")
+                live_ue_query_state = "unknown"
         result_payload["ue_capability_pass"] = ue_cap_pass
+        result_payload["live_ue_query_state"] = live_ue_query_state
 
         # --- 2.6 Channel emulator user alignment (PROPSIM F64 §17) ---
         # F64 user alignment 补偿内部通道相位/增益的时间&温度漂移. 重启后
@@ -296,11 +325,77 @@ class PrecheckExecutor(IStepExecutor):
         result_payload["cal_pass"] = cal_pass
         result_payload["cal_pass_reason"] = cal_pass_reason
 
+        # --- 5b. DUT attach gate (P1-9, 2026-05-19; Codex P2 on 655d7e3) ---
+        # 默认 strict: dut_attach 必须存在 + rrc_connected == True + live BS
+        # query 必须 confirm "available" (cached snapshot 可能 stale: DUT 在
+        # attach 跟 precheck 之间掉线 / RRC re-establishment 失败 / UE 死机).
+        # 显式 opt-out (config.precheck_strict_dut=False) 跳过 gate, 维持
+        # 旧的 "warning only" 行为. dut_attach 在 section 2.4 已经写进
+        # result_payload (when present); live_ue_query_state 在 section 2.5
+        # 通过 bs.query_ue_capability() 实时获取.
+        dut_attach_missing = dut_attach is None or not dut_attach
+        dut_rrc_state = (
+            dut_attach.get("rrc_connected") if isinstance(dut_attach, dict) else None
+        )
+        dut_rrc_broken = (not dut_attach_missing) and (dut_rrc_state is not True)
+        # live verification: cached snapshot 单独不够, 因为 attach 到 precheck
+        # 之间 DUT 可能掉线. 但 mock BS 永远返回 source="mock" (available),
+        # 所以 mock smoke 自然 pass; 真生产 (UXM) 时 RRC 掉线 query 会返回
+        # source="unavailable", 这里 catch.
+        live_unverified = live_ue_query_state != "available"
+
+        if config.precheck_strict_dut:
+            dut_pass = (
+                (not dut_attach_missing)
+                and (not dut_rrc_broken)
+                and (not live_unverified)
+            )
+            dut_reason_parts: list[str] = []
+            if dut_attach_missing:
+                dut_reason_parts.append(
+                    "DUT attach record missing "
+                    "(POST /api/v1/test-executions/{id}/attach-dut before precheck)"
+                )
+            if dut_rrc_broken:
+                dut_reason_parts.append(
+                    f"DUT attached but rrc_connected={dut_rrc_state!r} "
+                    "(expected True — measure phase needs RRC for PDSCH)"
+                )
+            if live_unverified and not dut_attach_missing:
+                # Only call out live failure when there's an attach record
+                # claiming connected; otherwise the "missing" message above
+                # already covers it.
+                dut_reason_parts.append(
+                    f"live BS query state={live_ue_query_state!r} "
+                    "(cached rrc_connected snapshot may be stale — "
+                    "DUT may have dropped between attach and precheck)"
+                )
+            dut_pass_reason = "; ".join(dut_reason_parts) if dut_reason_parts else "ok"
+        else:
+            dut_pass = True
+            bypass_parts: list[str] = []
+            if dut_attach_missing:
+                bypass_parts.append("dut_attach missing")
+            if dut_rrc_broken:
+                bypass_parts.append(f"rrc_connected={dut_rrc_state!r}")
+            if live_unverified:
+                bypass_parts.append(f"live_ue_query_state={live_ue_query_state!r}")
+            bypass_suffix = (
+                f" (would-fail-under-strict: {', '.join(bypass_parts)})"
+                if bypass_parts else ""
+            )
+            dut_pass_reason = f"bypassed via precheck_strict_dut=False{bypass_suffix}"
+
+        result_payload["dut_pass"] = dut_pass
+        result_payload["dut_pass_reason"] = dut_pass_reason
+
         # --- 6. Overall verdict ---
         critical_online = all(
             instruments_online.get(k, False) for k in _CRITICAL_INSTRUMENT_CATEGORIES
         )
-        overall_pass = critical_online and qz_pass and ue_cap_pass and cal_pass
+        overall_pass = (
+            critical_online and qz_pass and ue_cap_pass and cal_pass and dut_pass
+        )
         result_payload["critical_instruments_online"] = critical_online
         result_payload["overall_pass"] = overall_pass
         result_payload["messages"] = messages
@@ -329,6 +424,8 @@ class PrecheckExecutor(IStepExecutor):
                 )
             if not cal_pass:
                 failure_reason.append(cal_pass_reason)
+            if not dut_pass:
+                failure_reason.append(dut_pass_reason)
             return StepExecutionResult(
                 status=StepExecutionStatus.FAILED,
                 measurements=result_payload,
