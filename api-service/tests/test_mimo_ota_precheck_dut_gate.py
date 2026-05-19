@@ -372,3 +372,149 @@ class TestDutAndCalGatesIndependent:
         # Reasons stored separately
         assert "calibration missing" in (measurements.get("cal_pass_reason") or "")
         assert "DUT attach record missing" in (measurements.get("dut_pass_reason") or "")
+
+
+# ---------------------------------------------------------------------------
+# Live BS query verification (P1-9 Codex P2 follow-up on commit 655d7e3)
+#
+# Codex flagged that the initial P1-9 gate trusted the cached
+# measurements['dut_attach'].rrc_connected snapshot. If the DUT attached
+# successfully but then dropped RRC before precheck runs, the gate still
+# passed because nothing re-verified the live state. Fix reuses the
+# bs.query_ue_capability() call already happening in section 2.5 and exposes
+# its result as `live_ue_query_state` ("available" / "unavailable" /
+# "unknown"). The strict dut gate now requires "available" — anything else
+# means the cached snapshot can't be trusted.
+# ---------------------------------------------------------------------------
+
+
+def _patch_mock_bs_to_unavailable(hal):
+    """Force the mock BS to report `source: 'unavailable'` so we can test the
+    live-unverified branch of the dut gate.
+
+    Mock default returns `source: 'mock'` which maps to live_ue_query_state
+    = 'available', so the cartesian above never exercises the unavailable
+    path. This helper monkey-patches the in-memory mock for one test."""
+    mock_bs = hal.drivers["baseStation"]
+
+    async def _unavailable_cap() -> Dict[str, Any]:
+        return {
+            "max_dl_layers": None,
+            "max_ul_layers": None,
+            "source": "unavailable",
+        }
+
+    mock_bs.query_ue_capability = _unavailable_cap  # type: ignore[method-assign]
+    return mock_bs
+
+
+class TestLiveQueryVerification:
+    """Pin that strict dut gate requires live BS query confirmation, not
+    just the cached attach snapshot."""
+
+    @pytest.mark.asyncio
+    async def test_cached_rrc_true_but_live_unavailable_strict_fails(
+        self, db, lab, chamber, hal_with_mocks,
+    ):
+        """Worst case: attach said RRC connected, but DUT has since dropped
+        — live query reports unavailable, strict gate must FAIL despite the
+        cached snapshot saying connected."""
+        _seed_valid_cal(db, chamber.id)
+        _patch_mock_bs_to_unavailable(hal_with_mocks)
+
+        ctx = _build_context(
+            db, lab,
+            dut_attach=_DUT_STATES["present_rrc_true"],  # cached says connected
+            strict_mode=True,
+        )
+        result = await PrecheckExecutor().execute(ctx)
+        measurements = result.measurements or {}
+
+        assert result.status == StepExecutionStatus.FAILED
+        assert measurements["dut_pass"] is False
+        assert measurements["live_ue_query_state"] == "unavailable"
+        reason = measurements["dut_pass_reason"]
+        assert "live BS query state" in reason
+        assert "stale" in reason
+
+    @pytest.mark.asyncio
+    async def test_cached_rrc_true_but_live_unavailable_bypass_passes_with_audit(
+        self, db, lab, chamber, hal_with_mocks,
+    ):
+        """Bypass lets the run continue but audit trail records the mismatch."""
+        _seed_valid_cal(db, chamber.id)
+        _patch_mock_bs_to_unavailable(hal_with_mocks)
+
+        ctx = _build_context(
+            db, lab,
+            dut_attach=_DUT_STATES["present_rrc_true"],
+            strict_mode=False,
+        )
+        result = await PrecheckExecutor().execute(ctx)
+        measurements = result.measurements or {}
+
+        assert result.status == StepExecutionStatus.SUCCESS
+        assert measurements["overall_pass"] is True
+        assert measurements["dut_pass"] is True  # forced by bypass
+        assert measurements["live_ue_query_state"] == "unavailable"
+        reason = measurements["dut_pass_reason"]
+        assert "bypassed" in reason
+        assert "live_ue_query_state='unavailable'" in reason
+
+    @pytest.mark.asyncio
+    async def test_cached_rrc_true_and_live_available_strict_passes(
+        self, db, lab, chamber, hal_with_mocks,
+    ):
+        """Sanity: mock BS default returns 'mock' source → 'available' →
+        gate passes (regression guard so we don't break the happy path)."""
+        _seed_valid_cal(db, chamber.id)
+        # Don't patch — default mock returns source="mock"
+        ctx = _build_context(
+            db, lab,
+            dut_attach=_DUT_STATES["present_rrc_true"],
+            strict_mode=True,
+        )
+        result = await PrecheckExecutor().execute(ctx)
+        measurements = result.measurements or {}
+
+        assert result.status == StepExecutionStatus.SUCCESS
+        assert measurements["dut_pass"] is True
+        assert measurements["live_ue_query_state"] == "available"
+
+    @pytest.mark.asyncio
+    async def test_no_bs_driver_strict_fails(
+        self, db, lab, chamber, instrument_categories,
+    ):
+        """Without a baseStation driver in HAL, critical_online would already
+        fail this precheck. But test that live_ue_query_state stays 'unknown'
+        which would cause dut_pass=False under strict — i.e. defense-in-depth
+        rather than relying solely on the critical_online check."""
+        from app.hal import MockChannelEmulator
+        from app.services.instrument_hal_service import get_hal_service
+
+        hal = get_hal_service()
+        saved = dict(hal.drivers)
+        hal.drivers["channelEmulator"] = MockChannelEmulator(
+            "mock-ce", {"model": "Mock"}
+        )
+        # NOTE: deliberately no baseStation driver
+        try:
+            _seed_valid_cal(db, chamber.id)
+            ctx = _build_context(
+                db, lab,
+                dut_attach=_DUT_STATES["present_rrc_true"],
+                strict_mode=True,
+            )
+            result = await PrecheckExecutor().execute(ctx)
+            measurements = result.measurements or {}
+
+            # critical_online would already fail (baseStation offline), and
+            # dut_pass would also fail since live_ue_query_state='unknown'.
+            # Both should be False — verifying the defense-in-depth.
+            assert result.status == StepExecutionStatus.FAILED
+            assert measurements["dut_pass"] is False
+            assert measurements["live_ue_query_state"] == "unknown"
+            assert "live BS query state" in measurements["dut_pass_reason"]
+        finally:
+            hal.drivers.clear()
+            hal.drivers.update(saved)
