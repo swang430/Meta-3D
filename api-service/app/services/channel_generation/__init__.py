@@ -12,10 +12,12 @@ channel_generation - 并行信道生成策略包
 from app.services.channel_generation.base_generator import BaseChannelGenerator, EngineMode
 from app.services.channel_generation.gcm_strategy import NativeModelStrategy
 from app.services.channel_generation.asc_strategy import ExternalWaveformStrategy
+from app.services.channel_generation.external_asc_strategy import ExternalAscPathStrategy
 
 __all__ = [
     "BaseChannelGenerator",
     "EngineMode",
     "NativeModelStrategy",
     "ExternalWaveformStrategy",
+    "ExternalAscPathStrategy",
 ]

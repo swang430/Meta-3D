@@ -65,6 +65,9 @@ class MeasureExecutor(IStepExecutor):
             ExternalWaveformStrategy,
         )
         from app.services.channel_generation.base_generator import EngineMode
+        from app.services.channel_generation.external_asc_strategy import (
+            ExternalAscPathStrategy,
+        )
         from app.services.channel_generation.gcm_strategy import NativeModelStrategy
         from app.services.instrument_hal_service import get_hal_service
         from app.services.mimo_ota.cleanup import cleanup_chamber_instruments
@@ -301,6 +304,18 @@ class MeasureExecutor(IStepExecutor):
                         ),
                     )
                 generator = NativeModelStrategy(emulator, chamber, calibration_entries)
+            elif engine_mode == EngineMode.EXTERNAL_ASC:
+                # 2026-05-18 P0-7: operator-supplied .asc directory; skip
+                # channel-engine-service entirely. Schema already validated
+                # asc_source_path is set; path-exists check happens in
+                # ExternalAscPathStrategy.generate_and_load so failures land
+                # with the same logging context as other generator failures.
+                generator = ExternalAscPathStrategy(
+                    emulator,
+                    chamber,
+                    calibration_entries,
+                    asc_source_path=config.asc_source_path,
+                )
             else:
                 generator = ExternalWaveformStrategy(
                     emulator, ce_client, chamber, calibration_entries
@@ -517,17 +532,22 @@ class MeasureExecutor(IStepExecutor):
                 "azimuths_requested": len(config.azimuths_deg),
             }
 
-            # ``asc_files_loaded`` is ASC-specific (ExternalWaveformStrategy):
-            # GCM mode (NativeModelStrategy) doesn't consume .asc files at
-            # all — the channel is generated inside Keysight GCM Studio's
-            # native runtime. Audit 2026-05-17 Y2 (PR #53) — was hardcoded
-            # True in both modes which made the GCM result payload
-            # semantically wrong (and confused operator log analysis).
-            # Omit in GCM, keep in ASC where the field is meaningful as a
-            # "channel-engine-service responded + emulator loaded the
-            # waveforms" diagnostic signal.
+            # ``asc_files_loaded`` is ASC-specific (ExternalWaveformStrategy /
+            # ExternalAscPathStrategy): GCM mode (NativeModelStrategy) doesn't
+            # consume .asc files at all — the channel is generated inside
+            # Keysight GCM Studio's native runtime. Audit 2026-05-17 Y2 (PR #53)
+            # established the omit-in-GCM rule; 2026-05-18 P0-7 extended it to
+            # also cover the new EXTERNAL_ASC mode (still ASC-based, so the
+            # diagnostic signal "emulator loaded waveforms" remains meaningful).
+            # In EXTERNAL_ASC mode we additionally stamp the operator-provided
+            # source path for audit-trail traceability.
             if engine_mode != EngineMode.GCM_NATIVE:
                 result_payload["asc_files_loaded"] = True
+                if engine_mode == EngineMode.EXTERNAL_ASC:
+                    result_payload["asc_source"] = "external"
+                    result_payload["external_asc_source_path"] = config.asc_source_path
+                else:
+                    result_payload["asc_source"] = "channel_engine_service"
         finally:
             cleanup_warnings = await cleanup_chamber_instruments(
                 hal, context.test_execution.id

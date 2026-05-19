@@ -30,23 +30,90 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Channel Engine 算法库路径
-CHANNEL_ENGINE_PATH = os.environ.get(
-    'CHANNEL_ENGINE_PATH',
-    os.path.expanduser('~/ChannelEgine')
+# ---------------------------------------------------------------------------
+# Configuration — CHANNEL_ENGINE_PATH + MOCK_ASC_MODE
+# ---------------------------------------------------------------------------
+#
+# CHANNEL_ENGINE_PATH: 本地 ChannelEgine clone 的绝对路径. 必须设置.
+#   无 sane default — 上一版默认 ~/ChannelEgine 在大多数环境不存在,
+#   导致 ImportError → 静默 fallback 到 mock → 操作员拿到假 .asc.
+#   2026-05-18 P0-7 修复: 启动期 fail-fast (除非 MOCK_ASC_MODE=1).
+#
+# MOCK_ASC_MODE: 显式 mock-only 调试模式. 设为 "1"/"true"/"yes" 时:
+#   - 启动期跳过 CHANNEL_ENGINE_PATH 校验
+#   - 所有 synthesize_hardware_pipeline 请求返回占位 .asc + mock_mode=True
+#   - 适用场景: 本地开发, 没装 ChannelEgine 时验证 endpoint 形状
+#   - 生产**严禁**启用.
+# ---------------------------------------------------------------------------
+
+CHANNEL_ENGINE_PATH = os.environ.get('CHANNEL_ENGINE_PATH', '').strip()
+
+MOCK_ASC_MODE = os.environ.get('MOCK_ASC_MODE', '').strip().lower() in (
+    '1', 'true', 'yes',
 )
 
 
-def _get_simulator():
-    """按需导入 Channel Engine 核心库"""
+class ChannelEngineUnavailable(RuntimeError):
+    """ChannelEgine 库不可导入 (路径不存在 / Python module 找不到 / 类名漂移)."""
+
+
+def _import_simulator_class():
+    """Import the ChannelEgine `MIMO_OTA_Simulator` class.
+
+    Raises `ChannelEngineUnavailable` with an actionable message on failure;
+    never returns None (callers that want a mock-only path must check
+    `MOCK_ASC_MODE` upstream and skip the call entirely).
+    """
+    if not CHANNEL_ENGINE_PATH:
+        raise ChannelEngineUnavailable(
+            "CHANNEL_ENGINE_PATH env var is not set. "
+            "Point it at a local ChannelEgine clone "
+            "(e.g. CHANNEL_ENGINE_PATH=/Users/yourname/Tools/ChannelEgine), "
+            "or set MOCK_ASC_MODE=1 for debug-only mock synthesis."
+        )
+    if not os.path.isdir(CHANNEL_ENGINE_PATH):
+        raise ChannelEngineUnavailable(
+            f"CHANNEL_ENGINE_PATH does not exist or is not a directory: "
+            f"{CHANNEL_ENGINE_PATH!r}. Check the path or set MOCK_ASC_MODE=1 "
+            f"for debug-only mock synthesis."
+        )
     if CHANNEL_ENGINE_PATH not in sys.path:
         sys.path.insert(0, CHANNEL_ENGINE_PATH)
     try:
-        from mimo_ota_simulator.simulator import OTASimulator
-        return OTASimulator
-    except ImportError:
-        logger.warning("OTASimulator not available, using mock mode")
-        return None
+        from mimo_ota_simulator.simulator import MIMO_OTA_Simulator
+    except ImportError as e:
+        raise ChannelEngineUnavailable(
+            f"Failed to import MIMO_OTA_Simulator from {CHANNEL_ENGINE_PATH}: {e}. "
+            f"The clone must include Phase 1+ (strict_pfs rollout, PR #1 onward). "
+            f"Update the clone with `git pull` in {CHANNEL_ENGINE_PATH}."
+        ) from e
+    return MIMO_OTA_Simulator
+
+
+def validate_channel_engine_at_startup() -> None:
+    """启动期 fail-fast 校验. 由 main.py startup_event 调用.
+
+    - MOCK_ASC_MODE=1: 跳过校验, 写显眼 WARNING 日志.
+    - 否则: 尝试 import; 失败时让异常冒泡 → uvicorn 启动 fail.
+    """
+    if MOCK_ASC_MODE:
+        logger.warning(
+            "=" * 60 + "\n"
+            "MOCK_ASC_MODE=1 — ChannelEgine validation skipped at startup.\n"
+            "All synthesize_hardware_pipeline requests will return placeholder\n"
+            ".asc with mock_mode=true in the response. DO NOT USE IN PRODUCTION.\n"
+            + "=" * 60
+        )
+        return
+    try:
+        _import_simulator_class()
+        logger.info(
+            f"ChannelEgine validation passed at startup "
+            f"(CHANNEL_ENGINE_PATH={CHANNEL_ENGINE_PATH})"
+        )
+    except ChannelEngineUnavailable as e:
+        logger.error(f"ChannelEgine validation FAILED at startup: {e}")
+        raise
 
 
 @router.post(
@@ -90,34 +157,23 @@ async def synthesize_hardware_pipeline(
         )
 
         # -----------------------------------------------------------
-        # 尝试调用真实算法库
+        # 路由: MOCK_ASC_MODE (debug-only) vs 真实算法库
+        # 2026-05-18 P0-7: 不再静默 ImportError fallback. 真实路径失败
+        # 一定 raise → 500; mock 路径只在显式 MOCK_ASC_MODE=1 时生效.
+        # 两条路径都返回 (zip_base64, total_files) — 真实路径用 ChannelEgine
+        # PropsimASCIIExporter.export_to_zip_memory 直出 base64, 不落盘.
         # -----------------------------------------------------------
-        OTASimulatorClass = _get_simulator()
-        asc_content_map: Dict[str, bytes] = {}
-
-        if OTASimulatorClass is not None:
-            asc_content_map = _run_real_synthesis(
-                OTASimulatorClass, request
-            )
-        else:
-            # Mock 模式：生成合理的占位 .asc 文件
-            asc_content_map = _run_mock_synthesis(
+        if MOCK_ASC_MODE:
+            zip_base64, total_files = _run_mock_synthesis(
                 num_tx=num_tx,
                 num_ports=num_ports,
                 clusters=cdl_data.clusters,
                 frequency_hz=sim_rules.center_frequency_hz,
                 velocity_kph=sim_rules.ue_velocity_kph,
             )
-
-        # -----------------------------------------------------------
-        # ZIP 打包并 Base64 编码
-        # -----------------------------------------------------------
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-            for filename, content in asc_content_map.items():
-                zf.writestr(filename, content)
-
-        zip_base64 = base64.b64encode(zip_buffer.getvalue()).decode('ascii')
+        else:
+            simulator_cls = _import_simulator_class()  # raises on failure
+            zip_base64, total_files = _run_real_synthesis(simulator_cls, request)
 
         # -----------------------------------------------------------
         # 计算硬件控制指令
@@ -140,8 +196,8 @@ async def synthesize_hardware_pipeline(
         elapsed_ms = (time.time() - start_time) * 1000
 
         logger.info(
-            f"Hardware pipeline complete: {len(asc_content_map)} files, "
-            f"{elapsed_ms:.0f}ms"
+            f"Hardware pipeline complete: {total_files} files, "
+            f"{elapsed_ms:.0f}ms (mock_mode={MOCK_ASC_MODE})"
         )
 
         return HardwarePipelineResponse(
@@ -149,13 +205,27 @@ async def synthesize_hardware_pipeline(
             computation_time_ms=round(elapsed_ms, 1),
             hardware_artifacts=HardwareArtifacts(
                 f64_asc_files_zip_base64=zip_base64,
-                total_files_generated=len(asc_content_map),
+                total_files_generated=total_files,
                 cdl_model_name=cdl_data.model_name,
             ),
             control_instructions=control,
             diagnostics=diagnostics,
+            mock_mode=MOCK_ASC_MODE,
         )
 
+    except ChannelEngineUnavailable as e:
+        # 配置错误 (CHANNEL_ENGINE_PATH 不存在 / import fail) — 503 表达
+        # "服务暂时不可用, 不是请求错误". 跟 generic Exception 区分.
+        elapsed_ms = (time.time() - start_time) * 1000
+        logger.error(f"ChannelEgine unavailable: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Channel Engine library unavailable: {e}. "
+                f"Fix the microservice configuration or set MOCK_ASC_MODE=1 "
+                f"for debug-only mock synthesis."
+            ),
+        ) from e
     except Exception as e:
         elapsed_ms = (time.time() - start_time) * 1000
         logger.exception(f"Hardware pipeline failed: {e}")
@@ -163,83 +233,157 @@ async def synthesize_hardware_pipeline(
             status="error",
             computation_time_ms=round(elapsed_ms, 1),
             error_message=str(e),
+            mock_mode=MOCK_ASC_MODE,
         )
 
 
 # ==================== 真实合成 ====================
 
-def _run_real_synthesis(
-    OTASimulatorClass,
-    request: HardwarePipelineRequest,
-) -> Dict[str, bytes]:
+def _build_custom_cdl_profile(request: HardwarePipelineRequest):
+    """把 HardwarePipelineRequest 的 cdl_model_data + simulation_rules 映射到
+    ChannelEgine `CustomCDLProfile`. 2026-05-18 P0-7 / Spec v2.0.
+
+    跨 schema 字段名差异:
+    - microservice CDLCluster.power_relative_linear → CDLClusterSpec.power_linear
+    - microservice SimulationRules.ue_velocity_kph (scalar) → CustomCDLProfile.ue_velocity_mps (3-vec)
+      优先使用显式的 ue_velocity_mps; 缺省时从 kph 派生 [kph/3.6, 0, 0].
     """
-    调用 Channel Engine 核心算法库进行真实合成。
+    from mimo_ota_simulator.cdl_schema import CustomCDLProfile  # type: ignore  # 运行时路径
 
-    将 Spec v1.0 的 Payload 转换为 OTASimulator 的输入格式，
-    运行仿真并导出 .asc 文件。
-    """
-    original_cwd = os.getcwd()
-    try:
-        os.chdir(CHANNEL_ENGINE_PATH)
+    sim_rules = request.simulation_rules
+    cdl_data = request.cdl_model_data
 
-        # 构造簇参数（从 cdl_model_data 转化）
-        cdl_data = request.cdl_model_data
-        cluster_params = []
-        for c in cdl_data.clusters:
-            cluster_params.append({
-                "delay_s": c.delay_s,
-                "power_linear": c.power_relative_linear,
-                "aoa_phi": c.aoa_deg,
-                "aod_phi": c.aod_deg,
-                "zoa_theta": c.zoa_deg,
-                "zod_theta": c.zod_deg,
-                "as_aoa": c.as_aoa_deg,
-            })
+    if sim_rules.ue_velocity_mps is not None:
+        if len(sim_rules.ue_velocity_mps) != 3:
+            raise ValueError(
+                f"ue_velocity_mps must be a 3-vector [vx, vy, vz]; "
+                f"got {sim_rules.ue_velocity_mps!r}"
+            )
+        velocity_mps = tuple(sim_rules.ue_velocity_mps)
+    else:
+        # 默认沿 x 轴运动 (3GPP TR 37.977 现场惯例)
+        velocity_mps = (sim_rules.ue_velocity_kph / 3.6, 0.0, 0.0)
 
-        # 构造校准查找表
-        cal_lookup = {}
-        for entry in request.calibration_data.entries:
-            cal_lookup[entry.port_id] = {
-                "cable_loss_db": entry.cable_loss_db,
-                "cable_phase_deg": entry.cable_phase_deg,
-                "probe_gain_dbi": entry.probe_gain_dbi,
-            }
+    clusters_payload = []
+    for c in cdl_data.clusters:
+        clusters_payload.append({
+            "delay_s": c.delay_s,
+            "power_linear": c.power_relative_linear,
+            "aoa_deg": c.aoa_deg,
+            "aod_deg": c.aod_deg,
+            "zoa_deg": c.zoa_deg,
+            "zod_deg": c.zod_deg,
+            "as_aoa_deg": c.as_aoa_deg,
+            "xpr_db": c.xpr_db,
+            # ChannelEgine 的 initial_phases_rad 接受 None (内部随机); 显式传 None
+            # 而不是 omit, 这样 schema validator 仍走 Optional 分支.
+            "initial_phases_rad": c.initial_phases_rad,
+        })
 
-        sim = OTASimulatorClass(
-            center_frequency_hz=request.simulation_rules.center_frequency_hz,
-            num_probes=request.chamber_config.num_probes,
-            chamber_radius_m=request.chamber_config.radius_m,
-            dual_polarized=request.chamber_config.dual_polarized,
-            tx_array_config={
-                "type": request.simulation_rules.tx_antenna.array_type,
-                "rows": request.simulation_rules.tx_antenna.num_rows,
-                "cols": request.simulation_rules.tx_antenna.num_cols,
-                "spacing_h": request.simulation_rules.tx_antenna.spacing_h,
-            },
-            ue_velocity_kph=request.simulation_rules.ue_velocity_kph,
-            calibration_data=cal_lookup,
+    return CustomCDLProfile.from_dict({
+        "center_frequency_hz": sim_rules.center_frequency_hz,
+        "pathloss_db": cdl_data.pathloss_db,
+        "ue_velocity_mps": velocity_mps,
+        "is_los": cdl_data.is_los,
+        "k_factor_db": cdl_data.k_factor_db,
+        "clusters": clusters_payload,
+    })
+
+
+def _build_chamber_config(request: HardwarePipelineRequest):
+    """微服务 ChamberConfig → ChannelEgine ChamberConfig."""
+    from mimo_ota_simulator.data_models import ChamberConfig as CEChamberConfig  # type: ignore
+
+    chamber = request.chamber_config
+    return CEChamberConfig(
+        num_probes=chamber.num_probes,
+        dual_polarized=chamber.dual_polarized,
+        distribution=chamber.distribution,
+        radius_m=chamber.radius_m,
+    )
+
+
+def _build_target_channel_config(request: HardwarePipelineRequest, profile):
+    """微服务 SimulationRules + CustomCDLProfile → ChannelEgine TargetChannelConfig."""
+    from mimo_ota_simulator.data_models import (  # type: ignore
+        AntennaArrayConfig, TargetChannelConfig as CETargetChannelConfig,
+    )
+
+    sim_rules = request.simulation_rules
+
+    def _antenna(ant):
+        return AntennaArrayConfig(
+            array_type=ant.array_type,
+            num_rows=ant.num_rows,
+            num_cols=ant.num_cols,
+            spacing_h=ant.spacing_h,
+            spacing_v=ant.spacing_v,
+            polarization=ant.polarization,  # Phase 6 dual-pol 关键字段
         )
 
-        # 注入外部簇参数并运行
-        results = sim.run_with_external_clusters(
-            clusters=cluster_params,
-            pathloss_db=cdl_data.pathloss_db,
-            is_los=cdl_data.is_los,
-        )
+    return CETargetChannelConfig(
+        input_mode="custom",
+        custom_profile=profile,
+        center_frequency_hz=sim_rules.center_frequency_hz,
+        tx_antenna=_antenna(sim_rules.tx_antenna),
+        rx_antenna=_antenna(sim_rules.rx_antenna),
+    )
 
-        # 收集导出的 .asc 文件
-        asc_files = {}
-        export_dir = results.get("export_dir", ".")
-        for fname in os.listdir(export_dir):
-            if fname.endswith(".asc"):
-                fpath = os.path.join(export_dir, fname)
-                with open(fpath, 'rb') as f:
-                    asc_files[fname] = f.read()
 
-        return asc_files
+def _run_real_synthesis(SimulatorClass, request: HardwarePipelineRequest):
+    """通过 ChannelEgine `MIMO_OTA_Simulator().run()` 真实合成 .asc.
 
-    finally:
-        os.chdir(original_cwd)
+    2026-05-18 P0-7 / Spec v2.0 重写: 此前调用 `run_with_external_clusters`
+    + 命名空间错误的类 `OTASimulator` + 错误的构造签名, 100% 调用 fail 静默
+    fallback 到 mock. 新版按 ChannelEgine Phase 1-6 stable public API 调用,
+    用 `PropsimASCIIExporter.export_to_zip_memory` 直出 base64, 不落盘.
+
+    Returns:
+        (zip_base64: str, total_files: int)
+    """
+    from mimo_ota_simulator.data_models import PropsimExportConfig  # type: ignore
+    from mimo_ota_simulator.exporters import PropsimASCIIExporter  # type: ignore
+
+    profile = _build_custom_cdl_profile(request)
+    chamber_cfg = _build_chamber_config(request)
+    channel_cfg = _build_target_channel_config(request, profile)
+
+    sim_rules = request.simulation_rules
+    synthesis_method = sim_rules.synthesis_method
+    # ChannelEgine Phase 3 (PR #2) DEPRECATED `cluster` (内部叫 cluster).
+    # 微服务 schema 用 `cluster_legacy` 显式标 legacy 意图; 翻译回原生命名.
+    ce_synthesis_method = (
+        "cluster" if synthesis_method == "cluster_legacy" else synthesis_method
+    )
+
+    simulator = SimulatorClass()  # ChannelEgine: 无参构造
+    sim_result = simulator.run(
+        chamber_cfg,
+        channel_cfg,
+        synthesis_method=ce_synthesis_method,
+    )
+
+    # base64-direct export, 跨进程 / 跨容器都不依赖 host filesystem
+    exporter = PropsimASCIIExporter(PropsimExportConfig(
+        filename=f"{request.cdl_model_data.model_name.replace(' ', '_')}.asc",
+        mode="B",
+        duration_s=0.1,
+        sample_rate_hz=1000.0,
+    ))
+    base_name = request.cdl_model_data.model_name.replace(" ", "_") or "propsim_export"
+    zip_base64 = exporter.export_to_zip_memory(
+        sim_result, base_name=base_name, direction="dl"
+    )
+
+    # 计算 total_files: PropsimASCIIExporter 输出 (num_tx × num_effective_probes)
+    # 个 .asc. 微服务 schema 跟 ChannelEgine 计算口径一致.
+    num_tx = sim_rules.tx_antenna.num_rows * sim_rules.tx_antenna.num_cols
+    num_ports = request.chamber_config.num_probes * (
+        2 if request.chamber_config.dual_polarized else 1
+    )
+    total_files = num_tx * num_ports
+
+    return zip_base64, total_files
 
 
 # ==================== Mock 合成 ====================
@@ -250,12 +394,15 @@ def _run_mock_synthesis(
     clusters,
     frequency_hz: float,
     velocity_kph: float,
-) -> Dict[str, bytes]:
-    """
-    Mock 模式：生成合理的占位 .asc 文件。
+):
+    """Mock 模式：生成占位 .asc 文件 zip + base64 (debug-only).
 
-    每个文件包含一条带有多普勒偏移的 TDL 抽头序列，
-    格式兼容 Keysight Propsim F64。
+    每个文件包含一条带有多普勒偏移的 TDL 抽头序列, 格式兼容 Keysight
+    Propsim F64. 2026-05-18 P0-7: 返回 (zip_base64, total_files) 跟真实
+    路径同形, 只在显式 MOCK_ASC_MODE=1 时被调用.
+
+    Returns:
+        (zip_base64: str, total_files: int)
     """
     speed_of_light = 3e8
     max_doppler_hz = (velocity_kph / 3.6) * frequency_hz / speed_of_light
@@ -327,7 +474,13 @@ def _run_mock_synthesis(
 
             asc_files[filename] = "\n".join(lines).encode('utf-8')
 
-    return asc_files
+    # 把 dict-of-bytes 打 ZIP → base64, 跟真实路径同形 (调用方现在期待 tuple)
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for filename, content in asc_files.items():
+            zf.writestr(filename, content)
+    zip_base64 = base64.b64encode(zip_buffer.getvalue()).decode('ascii')
+    return zip_base64, len(asc_files)
 
 
 # ==================== 控制指令计算 ====================

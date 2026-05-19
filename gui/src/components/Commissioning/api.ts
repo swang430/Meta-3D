@@ -41,12 +41,24 @@ export interface LabResolutionDetail {
 export const createSession = async (
   engineMode: string = 'mimo_first_asc',
   labProfileId?: string,
+  ascSourcePath?: string,
 ) => {
-  const body: { engine_mode: string; lab_profile_id?: string } = {
+  // 2026-05-18 P0-7: engine_mode='external_asc' requires asc_source_path
+  // (operator-supplied .asc directory). For the other two engine modes the
+  // field is ignored server-side; we drop it from the payload anyway to keep
+  // the request body minimal.
+  const body: {
+    engine_mode: string
+    lab_profile_id?: string
+    asc_source_path?: string
+  } = {
     engine_mode: engineMode,
   }
   if (labProfileId) {
     body.lab_profile_id = labProfileId
+  }
+  if (engineMode === 'external_asc' && ascSourcePath) {
+    body.asc_source_path = ascSourcePath
   }
   return client.post<SessionResponse>('/commissioning/sessions', body)
 }

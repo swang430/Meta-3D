@@ -170,6 +170,12 @@ async def startup_event():
     logger.info("健康检查: http://localhost:8001/api/v1/health")
     logger.info("=" * 60)
 
+    # 2026-05-18 P0-7: fail-fast on CHANNEL_ENGINE_PATH 未设/不存在/import fail.
+    # 上一版默认 ~/ChannelEgine 在多数环境不存在 → ImportError → 静默 mock,
+    # 操作员拿到假 .asc 没有任何 warning. 显式 MOCK_ASC_MODE=1 仍可绕过.
+    from app.api.endpoints.hardware_pipeline import validate_channel_engine_at_startup
+    validate_channel_engine_at_startup()
+
 
 @app.on_event("shutdown")
 async def shutdown_event():

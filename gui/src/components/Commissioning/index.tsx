@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Container, Title, Text, Stepper, Group, Button, Paper, Stack, Divider, Loader, Select, Badge, Alert } from '@mantine/core'
+import { Container, Title, Text, Stepper, Group, Button, Paper, Stack, Divider, Loader, Select, Badge, Alert, TextInput } from '@mantine/core'
 import { IconTestPipe, IconPlayerPlay, IconPlayerTrackNext, IconAlertTriangle } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 import { PrecheckPhase, ReferencePhase, MIMOTestPhase, AnalysisPhase, ReportPhase } from './Phases'
@@ -26,6 +26,10 @@ export function CommissioningSandbox() {
   const [loading, setLoading] = useState(false)
   const [activeStep, setActiveStep] = useState(0)
   const [engineMode, setEngineMode] = useState<string>('mimo_first_asc')
+  // 2026-05-18 P0-7: only meaningful when engineMode==='external_asc'.
+  // Operator-supplied absolute path of a local directory of channel_InX_OutY.asc
+  // files (typically produced by ChannelEgine app.py Streamlit on the same host).
+  const [ascSourcePath, setAscSourcePath] = useState<string>('')
 
   // Lab-resolution state — see api.ts LabResolutionDetail.
   // `labId` is the currently selected lab (sent on session create);
@@ -73,7 +77,11 @@ export function CommissioningSandbox() {
   const initSession = async () => {
     try {
       setLoading(true)
-      const res = await api.createSession(engineMode, labId || undefined)
+      const res = await api.createSession(
+        engineMode,
+        labId || undefined,
+        engineMode === 'external_asc' ? ascSourcePath : undefined,
+      )
       setSession(res.data)
       setActiveStep(0)
       setPickerLabs([])
@@ -211,7 +219,11 @@ export function CommissioningSandbox() {
               />
               <Button
                 loading={loading}
-                disabled={!labId && pickerLabs.length !== 1}
+                disabled={
+                  (!labId && pickerLabs.length !== 1) ||
+                  // 2026-05-18 P0-7: external_asc 必须给路径才能启动会话
+                  (engineMode === 'external_asc' && !ascSourcePath.trim())
+                }
                 onClick={() => {
                   // If exactly one lab and operator hasn't picked, auto-fill.
                   if (!labId && pickerLabs.length === 1) {
@@ -267,6 +279,7 @@ export function CommissioningSandbox() {
                 data={[
                   { value: 'mimo_first_asc', label: '🧠 MIMO-First 自研引擎 (ASC Synthesis)' },
                   { value: 'keysight_gcm', label: '🔧 Keysight F64 原生 GCM (Native)' },
+                  { value: 'external_asc', label: '📂 External ASC (operator-supplied, debug)' },
                 ]}
                 value={engineMode}
                 onChange={(val) => val && setEngineMode(val)}
@@ -287,19 +300,56 @@ export function CommissioningSandbox() {
             </Group>
             <Group gap="xs">
               <Badge
-                color={engineMode === 'mimo_first_asc' ? 'blue' : 'orange'}
+                color={
+                  engineMode === 'mimo_first_asc'
+                    ? 'blue'
+                    : engineMode === 'keysight_gcm'
+                      ? 'orange'
+                      : 'gray'
+                }
                 variant="light"
                 size="lg"
               >
-                {engineMode === 'mimo_first_asc' ? '自研算力' : 'F64 原生'}
+                {engineMode === 'mimo_first_asc'
+                  ? '自研算力'
+                  : engineMode === 'keysight_gcm'
+                    ? 'F64 原生'
+                    : 'External ASC (调试)'}
               </Badge>
               {session?.config?.engine_mode && (
                 <Badge color="gray" variant="outline" size="lg">
-                  会话锁定: {session.config.engine_mode === 'mimo_first_asc' ? 'MIMO-First' : 'GCM'}
+                  会话锁定: {
+                    session.config.engine_mode === 'mimo_first_asc'
+                      ? 'MIMO-First'
+                      : session.config.engine_mode === 'keysight_gcm'
+                        ? 'GCM'
+                        : 'External ASC'
+                  }
                 </Badge>
               )}
             </Group>
           </Group>
+
+          {/* 2026-05-18 P0-7: External ASC 模式下的本机路径输入 — 仅在没创建
+              会话之前可编辑; 会话锁定后该字段由 session.config.asc_source_path 显示. */}
+          {engineMode === 'external_asc' && !session && (
+            <TextInput
+              mt="md"
+              label="ASC 目录绝对路径"
+              description="本机存放 channel_InX_OutY.asc 文件的目录 (操作员从 ChannelEgine app.py 产出)"
+              placeholder="/Users/yourname/asc_outputs/2026-05-19"
+              value={ascSourcePath}
+              onChange={(e) => setAscSourcePath(e.currentTarget.value)}
+            />
+          )}
+          {session?.config?.engine_mode === 'external_asc' &&
+            session?.config?.asc_source_path && (
+              <Alert color="gray" mt="md" title="External ASC 锁定路径">
+                <Text size="sm" ff="monospace">
+                  {session.config.asc_source_path as string}
+                </Text>
+              </Alert>
+            )}
         </Paper>
 
         {/* Stepper */}

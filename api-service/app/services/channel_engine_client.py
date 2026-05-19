@@ -111,12 +111,14 @@ def build_cdl_model_name(
 
 @dataclass
 class AntennaConfig:
-    """天线阵列配置"""
+    """天线阵列配置 (跟微服务 schema 镜像)"""
     array_type: str = "ULA"
     num_rows: int = 1
     num_cols: int = 2
     spacing_h: float = 0.5
     spacing_v: float = 0.5
+    # 2026-05-18 P0-7: ChannelEgine Phase 6 dual-pol synthesizer 显式要求
+    polarization: str = "V"  # "V" 或 "H"
 
 
 @dataclass
@@ -134,6 +136,10 @@ class CDLCluster:
     zoa_deg: float = 90.0
     zod_deg: float = 90.0
     as_aoa_deg: float = 2.0
+    # 2026-05-18 P0-7: ChannelEgine Phase 6 cross-pol ratio (dB), TR 38.901 §7.5 默认 7
+    xpr_db: float = 7.0
+    # 2026-05-18 P0-7: ChannelEgine Phase 5 per-ray init phases [VV, VH, HV, HH], None=随机
+    initial_phases_rad: Optional[List[float]] = None
 
 
 @dataclass
@@ -184,6 +190,10 @@ class ChannelEngineClient:
         target_snr_db: float = 20.0,
         ue_velocity_kph: float = 15.0,
         session_id: Optional[str] = None,
+        # 2026-05-18 P0-7 / Spec v2.0: ChannelEgine Phase 5/6 透传字段
+        synthesis_method: str = "strict_pfs",
+        ue_velocity_mps: Optional[List[float]] = None,
+        k_factor_db: Optional[float] = None,
     ) -> HardwarePipelineResult:
         """
         调用 Channel Engine 硬件流水线合成 API。
@@ -255,6 +265,9 @@ class ChannelEngineClient:
             target_snr_db=target_snr_db,
             ue_velocity_kph=ue_velocity_kph,
             pas_rotation=pas_result,
+            synthesis_method=synthesis_method,
+            ue_velocity_mps=ue_velocity_mps,
+            k_factor_db=k_factor_db,
         )
 
         logger.info(
@@ -448,8 +461,12 @@ class ChannelEngineClient:
         target_snr_db: float,
         ue_velocity_kph: float,
         pas_rotation: Optional[PASRotationResult] = None,
+        # 2026-05-18 P0-7 / Spec v2.0: Phase 5/6 透传字段
+        synthesis_method: str = "strict_pfs",
+        ue_velocity_mps: Optional[List[float]] = None,
+        k_factor_db: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """组装 Spec v1.0 请求 Payload"""
+        """组装 Spec v2.0 请求 Payload (含 Phase 5/6 字段)"""
         payload = {
             "chamber_config": {
                 "num_probes": chamber.num_probes,
@@ -471,6 +488,7 @@ class ChannelEngineClient:
                     "num_cols": tx_antenna.num_cols,
                     "spacing_h": tx_antenna.spacing_h,
                     "spacing_v": tx_antenna.spacing_v,
+                    "polarization": tx_antenna.polarization,
                 },
                 "rx_antenna": {
                     "array_type": rx_antenna.array_type,
@@ -478,13 +496,17 @@ class ChannelEngineClient:
                     "num_cols": rx_antenna.num_cols,
                     "spacing_h": rx_antenna.spacing_h,
                     "spacing_v": rx_antenna.spacing_v,
+                    "polarization": rx_antenna.polarization,
                 },
                 "ue_velocity_kph": ue_velocity_kph,
+                "ue_velocity_mps": ue_velocity_mps,
+                "synthesis_method": synthesis_method,
             },
             "cdl_model_data": {
                 "model_name": cdl_model_name,
                 "pathloss_db": pathloss_db,
                 "is_los": is_los,
+                "k_factor_db": k_factor_db,
                 "clusters": [
                     {
                         "delay_s": c.delay_s,
@@ -494,6 +516,8 @@ class ChannelEngineClient:
                         "zoa_deg": c.zoa_deg,
                         "zod_deg": c.zod_deg,
                         "as_aoa_deg": c.as_aoa_deg,
+                        "xpr_db": c.xpr_db,
+                        "initial_phases_rad": c.initial_phases_rad,
                     }
                     for c in clusters
                 ],

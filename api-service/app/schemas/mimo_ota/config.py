@@ -204,7 +204,21 @@ class MIMOOTAConfiguration(BaseModel):
     stat_count: int = 5000
 
     # === Channel generation engine ===
-    engine_mode: str = "mimo_first_asc"  # "mimo_first_asc" | "keysight_gcm"
+    engine_mode: str = "mimo_first_asc"
+    # Allowed: "mimo_first_asc" | "keysight_gcm" | "external_asc"
+    #   - mimo_first_asc: api-service → channel-engine-service → ChannelEgine strict_pfs
+    #   - keysight_gcm:   Keysight F64 GCM Studio (vendor native, no microservice)
+    #   - external_asc:   operator-provided .asc directory (debug-only, see asc_source_path)
+
+    # === External ASC source (only when engine_mode == "external_asc") ===
+    asc_source_path: Optional[str] = None
+    # Absolute path on the api-service host pointing at a directory of
+    # `channel_InX_OutY.asc` files (typically produced by operator running
+    # ChannelEgine app.py Streamlit / gui.py Tkinter locally). 2026-05-18 P0-7:
+    # formalizes the previously-implicit "manual asc handoff" workflow used
+    # for debugging. Cross-validated by the _validate_external_asc_path
+    # model_validator below to fail-fast on misconfiguration before measure
+    # phase touches HAL.
 
     # === Theoretical reference for ratio calculations (3GPP 2x2 256QAM 100MHz ≈ 450 Mbps) ===
     theoretical_peak_throughput_mbps: float = 450.0
@@ -243,4 +257,22 @@ class MIMOOTAConfiguration(BaseModel):
                     cc = cc.model_copy(update={"role": target_role})
                 normalized.append(cc)
             self.component_carriers = normalized
+        return self
+
+    @model_validator(mode="after")
+    def _validate_external_asc_path(self) -> "MIMOOTAConfiguration":
+        """external_asc 模式必须给路径; 其他模式忽略 (留空也允许)。
+
+        2026-05-18 P0-7: 路径存在性 *不* 在 schema 校验 (host filesystem 跟
+        测试机器可能不同, 也跟 dev/prod 部署不同)。运行时由
+        ExternalAscPathStrategy.generate_and_load 防御性检查并 surface
+        actionable error。schema 这里只保证 mode-vs-path 配对完整。
+        """
+        if self.engine_mode == "external_asc":
+            if not self.asc_source_path or not self.asc_source_path.strip():
+                raise ValueError(
+                    "engine_mode='external_asc' requires asc_source_path to be "
+                    "set to an absolute path of a directory containing operator-"
+                    "produced channel_InX_OutY.asc files."
+                )
         return self
