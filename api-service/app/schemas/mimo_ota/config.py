@@ -223,7 +223,7 @@ class MIMOOTAConfiguration(BaseModel):
     # === Theoretical reference for ratio calculations (3GPP 2x2 256QAM 100MHz ≈ 450 Mbps) ===
     theoretical_peak_throughput_mbps: float = 450.0
 
-    # === Precheck behavior (P1-8, 2026-05-19) ===
+    # === Precheck behavior (P1-8 / P1-9, 2026-05-19) ===
     precheck_strict_cal: bool = True
     # When True (production default): precheck FAILS if path_loss_calibration
     # is missing/invalid or if cal_cert exists but overall_pass=False. Prevents
@@ -236,6 +236,20 @@ class MIMOOTAConfiguration(BaseModel):
     # trail in result_payload["cal_pass_reason"]. GUI commissioning workflow
     # does not expose this flag — bypass is intended for config/fixture-level
     # opt-in only, so an operator can't accidentally disable the safety gate.
+
+    precheck_strict_dut: bool = True
+    # When True (production default): precheck FAILS if dut_attach record is
+    # missing or if rrc_connected != True. Prevents commissioning from running
+    # without a DUT actually attached — measure phase otherwise still produces
+    # numbers (synthesized RSRP from target + path-loss, BS-side mock metrics)
+    # that look plausible but don't reflect any real DUT in the chamber.
+    # See P1-8 audit finding #3 + docs/architecture/channel-engine-data-flow.md
+    # surprising #3 (sibling gap to the cal-missing gate).
+    #
+    # Set False to bypass for lab dev / smoke / unit-test setups where the
+    # 5-phase chain is tested without a DUT. Bypass leaves an audit trail in
+    # result_payload["dut_pass_reason"]. GUI commissioning workflow does not
+    # expose this flag — same opt-in-only contract as precheck_strict_cal.
 
     # === Pass/fail thresholds ===
     pass_criteria: MIMOOTAPassCriteria = Field(default_factory=MIMOOTAPassCriteria)

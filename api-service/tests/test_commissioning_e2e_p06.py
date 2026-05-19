@@ -214,6 +214,10 @@ def _create_fast_session(lab: LabProfile, db) -> str:
             # bypass 维持 5-phase chain 跑通的语义. cal gate 本身由
             # test_mimo_ota_precheck_cal_gate.py 单独覆盖.
             "precheck_strict_cal": False,
+            # P1-9 (2026-05-19): smoke 不 POST /attach-dut, 走 bypass 维持
+            # 5-phase chain 跑通的语义. DUT gate 本身由
+            # test_mimo_ota_precheck_dut_gate.py 单独覆盖.
+            "precheck_strict_dut": False,
             "pass_criteria": {
                 "min_throughput_ratio": 0.0,
                 "min_throughput_mbps": 0.0,

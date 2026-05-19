@@ -639,6 +639,77 @@ PASS, measure 用真路损。Hardware-blocked, 等下次现场。
 
 ---
 
+### P1-9 — Commissioning precheck DUT-attach fail-loud gate 🔄 In progress (this PR)
+
+**What**: 修 [`PrecheckExecutor`](../api-service/app/services/mimo_ota/executors/precheck.py)
+section 2.4 `dut_attach` 缺失 / `rrc_connected != True` 时**只 warning 不 gate**
+的 silent failure mode (跟 P1-8 cal gate 完全同 pattern)。
+
+**Why discovered**: PR #62 (P1-8 docs catch-up) Current Focus 段提议"主动 audit
+silent failure modes"; 用户同意后我盘查了 precheck.py 跟 measure phase 的字段
+契约, 发现 [`precheck.py:78-91`](../api-service/app/services/mimo_ota/executors/precheck.py#L78-L91)
+原版只 `warnings.append("Test will proceed assuming DUT is already in chamber")`,
+`overall_pass` 不消费 `dut_attach`, measure.py 也完全不读 `dut_attach`
+(`grep dut_attach measure.py` → 0 hits)。
+
+**Why P1**: 直接威胁 first-call quality。操作员忘 `POST /attach-dut` 直接跑
+commissioning → measure phase 合成 RSRP (target - path_loss + 高斯噪声), BS
+mock 返回 canned throughput → analysis 可能 PASS, 但**整个测试没有真 DUT
+attached**。这跟 P1-8 cal gate 完全同 pattern。
+
+**3 个 design 决策** (跟 P1-8 平行套用):
+
+1. `dut_attach is None` (没 POST /attach-dut) → **FAIL** (不像 P1-8 `cal_cert is
+   None` 只 warning — 因为 cal_cert binding 是 LabProfile 阶段事情可能没绑就跑,
+   但 dut_attach 是 per-execution 必须的, 不该有"先跑后绑"场景)
+2. `dut_attach present 但 rrc_connected != True` → **FAIL** (RRC 没 connected
+   等于 BS 找不到 DUT, measure phase 跑没意义)
+3. `MIMOOTAConfiguration.precheck_strict_dut: bool = True` flag, default True
+   (跟 `precheck_strict_cal` 同 pattern); GUI 不暴露; bypass 留 audit trail
+   `dut_pass_reason: "bypassed via precheck_strict_dut=False (would-fail-under-strict:
+   ...)"`.
+
+**Scope** (single PR):
+
+| Step | File | What |
+|---|---|---|
+| 1 | `api-service/app/schemas/mimo_ota/config.py` | 加 `precheck_strict_dut: bool = True` 字段 + 注释 |
+| 2 | `api-service/app/services/mimo_ota/executors/precheck.py` | section 5b 加 dut gate (strict / bypass 分路); section 6 overall_pass 加 `and dut_pass`; failure_reason 加 dut 原因; section 2.4 warning 文本根据 strict 模式区分 |
+| 3 | `api-service/tests/test_mimo_ota_precheck_dut_gate.py` (NEW) | 6 cartesian (dut_state × strict) + 1 independence test (cal + dut 两 gate 同时 fail 时 error_message 都体现) |
+| 4 | `tests/test_mimo_ota_precheck_cal_gate.py` (existing) audit | `_build_context` 加 `precheck_strict_dut: False` 让 P1-8 cartesian 不被 P1-9 dut gate fight |
+| 5 | `tests/test_commissioning_smoke.py` + `tests/test_commissioning_e2e_p06.py` audit | 显式 `precheck_strict_dut=False`, smoke 走 bypass 维持 5-phase chain 跑通的语义 |
+
+**Acceptance**:
+
+- (strict, default) `dut_attach is None` → FAIL with `error_message` 含
+  "DUT attach record missing"
+- (strict) `dut_attach.rrc_connected != True` → FAIL with `error_message` 含
+  "rrc_connected=False" (或其他 truthy 不 True 值)
+- (strict) `dut_attach.rrc_connected = True` → PASS
+- (bypass) 三种 dut_state 都 PASS, 但 `dut_pass_reason` 记录 would-fail-under-strict
+- `result_payload["dut_pass"]` (bool) 在 strict PASS / strict FAIL / bypass 三
+  种情况都正确反映
+- cal gate + dut gate 两条独立 — 一个 fail 不掩盖另一个的 audit trail
+- 7 个 new tests 全过 (6 cartesian + 1 independence)
+- 现有 cal_gate / smoke / e2e_p06 tests 不回归 (cal_gate 加 strict_dut=False
+  fixture; smoke/e2e 加 strict_dut=False override)
+
+**Out of scope**:
+
+- measure.py 真消费 `dut_attach` 数据 (e.g. compare imsi against BS attached
+  imsi) — P0-5 prerequisite (真 DUT attach via UXM 5G NR RRC), P1-9 只防
+  precheck 层放过, 不动 measure 真测逻辑
+- GUI 端 "请先 attach DUT" inline 提示 — P3 polish, 当前 GUI 自然弹 precheck
+  FAIL error message 含具体原因
+- Roadmap mark P1-9 ✅ Done + Summary counts 同步 — 本 PR 是 in-progress, merge
+  后跟之前 P1-8 pattern 一致用 docs catch-up chore PR 收口 (per memory
+  `feedback_d_row_stale_this_pr_reflex.md`)
+
+**Status**: 🔄 In progress — this PR
+**Estimate**: 0.5 day (实际 ~1 day local audit + impl + tests)
+
+---
+
 ## 🟡 P2 — Abstraction debt
 
 ### P2-1 — UXM two-layer architecture: Test App + Topology Profile ✅ Done

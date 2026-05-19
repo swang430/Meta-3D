@@ -206,6 +206,12 @@ def _build_context(
         lab_profile_id=lab.id,
         config_overrides={
             "precheck_strict_cal": strict_mode,
+            # P1-9 (2026-05-19): dut gate disabled so it doesn't fight the
+            # cal_pass test signal — dut gate is covered by
+            # test_mimo_ota_precheck_dut_gate.py. Without this, the cartesian's
+            # no-dut default would fail at dut_pass first and we couldn't
+            # observe cal_pass behavior in isolation.
+            "precheck_strict_dut": False,
             # Keep config defaults; pass_criteria.max_quiet_zone_ripple_db=1.0
             # so the precheck QZ ripple gate (default fallback 0.7 dB) passes.
         },

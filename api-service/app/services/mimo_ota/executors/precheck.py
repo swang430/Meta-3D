@@ -75,6 +75,11 @@ class PrecheckExecutor(IStepExecutor):
         messages.append(f"Instruments (HAL): {online_n}/{len(instruments_online)} online")
 
         # --- 2.4 DUT attach record check (Phase 2l: 防对错 IMSI 测试) ---
+        # P1-9 (2026-05-19): missing/broken dut_attach now drives the strict
+        # DUT gate at section 5b. Warning text reflects whether the run will
+        # actually FAIL or only carry an audit trail (depends on
+        # config.precheck_strict_dut). The dut_attach value is set here in
+        # all cases; the gate below consumes it.
         dut_attach = (context.test_execution.measurements or {}).get("dut_attach")
         if dut_attach:
             result_payload["dut_attach"] = dut_attach
@@ -84,11 +89,22 @@ class PrecheckExecutor(IStepExecutor):
                 f"rrc_connected={dut_attach.get('rrc_connected')}"
             )
         else:
-            warnings.append(
-                "No DUT attach record on this execution; "
-                "POST /api/v1/test-executions/{id}/attach-dut before running. "
-                "Test will proceed assuming DUT is already in chamber."
-            )
+            if config.precheck_strict_dut:
+                # Will be turned into FAIL at section 5b; emit explanatory
+                # warning here so the operator-facing log makes the chain
+                # of cause-and-effect obvious.
+                warnings.append(
+                    "No DUT attach record on this execution — strict DUT gate "
+                    "will fail this precheck. "
+                    "POST /api/v1/test-executions/{id}/attach-dut before retry, "
+                    "or set precheck_strict_dut=False for lab smoke."
+                )
+            else:
+                warnings.append(
+                    "No DUT attach record on this execution; "
+                    "precheck_strict_dut=False — will proceed assuming DUT "
+                    "is already in chamber (audit trail in dut_pass_reason)."
+                )
 
         # --- 2.5 UE Capability check (Phase 2e: 4x4 阻塞前防御) ---
         bs = hal.drivers.get("baseStation")
@@ -296,11 +312,54 @@ class PrecheckExecutor(IStepExecutor):
         result_payload["cal_pass"] = cal_pass
         result_payload["cal_pass_reason"] = cal_pass_reason
 
+        # --- 5b. DUT attach gate (P1-9, 2026-05-19) ---
+        # 默认 strict: dut_attach 必须存在 + rrc_connected == True.
+        # 显式 opt-out (config.precheck_strict_dut=False) 跳过 gate, 维持
+        # 旧的 "warning only" 行为. dut_attach 在 section 2.4 已经写进
+        # result_payload (when present).
+        dut_attach_missing = dut_attach is None or not dut_attach
+        dut_rrc_state = (
+            dut_attach.get("rrc_connected") if isinstance(dut_attach, dict) else None
+        )
+        dut_rrc_broken = (not dut_attach_missing) and (dut_rrc_state is not True)
+
+        if config.precheck_strict_dut:
+            dut_pass = (not dut_attach_missing) and (not dut_rrc_broken)
+            dut_reason_parts: list[str] = []
+            if dut_attach_missing:
+                dut_reason_parts.append(
+                    "DUT attach record missing "
+                    "(POST /api/v1/test-executions/{id}/attach-dut before precheck)"
+                )
+            if dut_rrc_broken:
+                dut_reason_parts.append(
+                    f"DUT attached but rrc_connected={dut_rrc_state!r} "
+                    "(expected True — measure phase needs RRC for PDSCH)"
+                )
+            dut_pass_reason = "; ".join(dut_reason_parts) if dut_reason_parts else "ok"
+        else:
+            dut_pass = True
+            bypass_parts: list[str] = []
+            if dut_attach_missing:
+                bypass_parts.append("dut_attach missing")
+            if dut_rrc_broken:
+                bypass_parts.append(f"rrc_connected={dut_rrc_state!r}")
+            bypass_suffix = (
+                f" (would-fail-under-strict: {', '.join(bypass_parts)})"
+                if bypass_parts else ""
+            )
+            dut_pass_reason = f"bypassed via precheck_strict_dut=False{bypass_suffix}"
+
+        result_payload["dut_pass"] = dut_pass
+        result_payload["dut_pass_reason"] = dut_pass_reason
+
         # --- 6. Overall verdict ---
         critical_online = all(
             instruments_online.get(k, False) for k in _CRITICAL_INSTRUMENT_CATEGORIES
         )
-        overall_pass = critical_online and qz_pass and ue_cap_pass and cal_pass
+        overall_pass = (
+            critical_online and qz_pass and ue_cap_pass and cal_pass and dut_pass
+        )
         result_payload["critical_instruments_online"] = critical_online
         result_payload["overall_pass"] = overall_pass
         result_payload["messages"] = messages
@@ -329,6 +388,8 @@ class PrecheckExecutor(IStepExecutor):
                 )
             if not cal_pass:
                 failure_reason.append(cal_pass_reason)
+            if not dut_pass:
+                failure_reason.append(dut_pass_reason)
             return StepExecutionResult(
                 status=StepExecutionStatus.FAILED,
                 measurements=result_payload,
