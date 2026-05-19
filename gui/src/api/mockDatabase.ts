@@ -754,12 +754,12 @@ const demoRunPlan: DemoRunPlan = {
 
 let instrumentCatalog: InstrumentCategory[] = [
   {
-    key: 'channel-emulator',
+    key: 'channelEmulator',
     label: '信道仿真器',
     description: '驱动MPAC阵列并合成目标波场，支持WFS/PWG模式。',
     tags: ['64TRX', 'WFS', 'PWG'],
     selectedModelId: 'propsim-f64',
-    connection: { endpoint: '192.168.100.21', controller: 'LAN', notes: '暗室机柜1#' },
+    connection: { endpoint: '192.168.100.21', controller: 'LAN', notes: '暗室机柜1#', status: 'disconnected' },
     models: [
       {
         id: 'ksw-wns02b',
@@ -770,7 +770,8 @@ let instrumentCatalog: InstrumentCategory[] = [
         capabilities: ['64x64 MIMO', '400 MHz 带宽', '多机同步'],
         bandwidth: '400 MHz',
         channels: '64 TRX',
-        status: 'available',
+        status: 'missing',
+        driverStatus: 'missing',
       },
       {
         id: 'propsim-f64',
@@ -781,7 +782,8 @@ let instrumentCatalog: InstrumentCategory[] = [
         capabilities: ['64x2 TRX', '动态场景回放', '可编程噪声'],
         bandwidth: '400 MHz',
         channels: '64 TRX',
-        status: 'available',
+        status: 'supported',
+        driverStatus: 'supported',
       },
       {
         id: 'spirent-vertex',
@@ -792,17 +794,18 @@ let instrumentCatalog: InstrumentCategory[] = [
         capabilities: ['多机级联', '毫米波扩展', '实时统计'],
         bandwidth: '500 MHz',
         channels: '64 TRX',
-        status: 'reserved',
+        status: 'missing',
+        driverStatus: 'missing',
       },
     ],
   },
   {
-    key: "rf-switch-matrix",
+    key: "rfSwitch",
     label: "RF开关矩阵",
     description: "用于在基站仿真器、信道仿真器与MIMO探头之间灵活路由射频信号。",
     tags: ["开关", "矩阵"],
     selectedModelId: "caict-custom-matrix",
-    connection: { endpoint: "192.168.100.50", controller: "LAN", notes: "机柜顶部" },
+    connection: { endpoint: "192.168.100.50", controller: "LAN", notes: "机柜顶部", status: "disconnected" },
     models: [
       {
         id: "caict-custom-matrix",
@@ -811,17 +814,18 @@ let instrumentCatalog: InstrumentCategory[] = [
         summary: "中国信通院定制的多层射频开关矩阵，支持校准与SISO/MIMO切换。",
         interfaces: ["LAN/SCPI", "GPIO"],
         capabilities: ["8进32出", "插损补偿", "相位校正"],
-        status: "available",
+        status: "missing",
+        driverStatus: "missing",
       }
     ],
   },
   {
-    key: 'base-station-emulator',
+    key: 'baseStation',
     label: '基站仿真器',
     description: '生成5G NR/LTE/C-V2X协议栈信号，提供核心网交互。',
     tags: ['5G NR', 'C-V2X'],
-    selectedModelId: 'rs-cmx500',
-    connection: { endpoint: '192.168.100.11', controller: 'LAN', notes: 'NR-SA 模式' },
+    selectedModelId: 'keysight-uxm',
+    connection: { endpoint: '192.168.100.11', controller: 'LAN', notes: 'NR-SA 模式', status: 'disconnected' },
     models: [
       {
         id: 'rs-cmx500',
@@ -830,16 +834,18 @@ let instrumentCatalog: InstrumentCategory[] = [
         summary: '支持5G NR Rel-17与Wi-Fi 7，内置端到端测量工作流。',
         interfaces: ['LAN/SCPI', 'REST'],
         capabilities: ['NR SA/NSA', 'C-V2X PC5', 'VoNR'],
-        status: 'available',
+        status: 'missing',
+        driverStatus: 'missing',
       },
       {
         id: 'keysight-uxm',
         vendor: 'Keysight',
-        model: 'UXM 5G',
+        model: 'UXM 5G E7515B',
         summary: '多小区基站仿真平台，适配空口一致性与OTA联调。',
         interfaces: ['LAN/SCPI', 'REST'],
         capabilities: ['MIMO/CA', '高阶调制', 'NB-IoT'],
-        status: 'maintenance',
+        status: 'supported',
+        driverStatus: 'supported',
       },
       {
         id: 'anritsu-md8475',
@@ -848,7 +854,8 @@ let instrumentCatalog: InstrumentCategory[] = [
         summary: '多制式综合测试平台，兼容LTE-A、C-V2X及Legacy制式。',
         interfaces: ['LAN/SCPI'],
         capabilities: ['LTE/LTE-A', 'WCDMA', 'C-V2X PC5'],
-        status: 'available',
+        status: 'missing',
+        driverStatus: 'missing',
       },
     ],
   },
@@ -858,7 +865,7 @@ let instrumentCatalog: InstrumentCategory[] = [
     description: '用于静区路径校准与探头S参数测量，覆盖FR1全频段。',
     tags: ['校准', 'S参数'],
     selectedModelId: 'keysight-pna',
-    connection: { endpoint: '192.168.100.31', controller: 'LAN', notes: '校准台专用' },
+    connection: { endpoint: '192.168.100.31', controller: 'LAN', notes: '校准台专用', status: 'disconnected' },
     models: [
       {
         id: 'keysight-pna',
@@ -867,7 +874,8 @@ let instrumentCatalog: InstrumentCategory[] = [
         summary: '67 GHz 双端口PNA，支持时间域转换与脉冲测量。',
         interfaces: ['LAN/SCPI', 'USB'],
         capabilities: ['时域转换', '脉冲调制', '宽带S参数'],
-        status: 'available',
+        status: 'missing',
+        driverStatus: 'missing',
       },
       {
         id: 'rs-zna43',
@@ -876,7 +884,8 @@ let instrumentCatalog: InstrumentCategory[] = [
         summary: '43.5 GHz 四端口VNA，具备多端口校准向导。',
         interfaces: ['LAN/SCPI', 'GPIB'],
         capabilities: ['四端口', '相位同步', '高动态范围'],
-        status: 'available',
+        status: 'missing',
+        driverStatus: 'missing',
       },
       {
         id: 'copper-mtn-6080',
@@ -885,17 +894,18 @@ let instrumentCatalog: InstrumentCategory[] = [
         summary: '紧凑型6.5 GHz USB VNA，适合便携校准与现场验证。',
         interfaces: ['USB', 'LAN'],
         capabilities: ['2端口', '便携式', '脚本自动化'],
-        status: 'offline',
+        status: 'missing',
+        driverStatus: 'missing',
       },
     ],
   },
   {
-    key: 'spectrum-analyzer',
+    key: 'signalAnalyzer',
     label: '频谱与信号分析仪',
     description: '用于实时监控静区内杂散、干扰与波束功率分布。',
     tags: ['监控', '干扰'],
     selectedModelId: 'rsa-306',
-    connection: { endpoint: '', controller: 'USB', notes: '便携式采样' },
+    connection: { endpoint: '', controller: 'USB', notes: '便携式采样', status: 'disconnected' },
     models: [
       {
         id: 'rs-fsv3070',
@@ -904,7 +914,8 @@ let instrumentCatalog: InstrumentCategory[] = [
         summary: '7 GHz 中档频谱仪，支持EVM与ACLR分析。',
         interfaces: ['LAN/SCPI', 'USB'],
         capabilities: ['ACLR', 'EVM', '多信号存储'],
-        status: 'available',
+        status: 'missing',
+        driverStatus: 'missing',
       },
       {
         id: 'tek-rsa7100',
@@ -913,7 +924,8 @@ let instrumentCatalog: InstrumentCategory[] = [
         summary: '110 MHz 实时带宽，适合干扰监测与录波。',
         interfaces: ['LAN', 'USB3.0'],
         capabilities: ['实时频谱', '长时捕获', 'IQ导出'],
-        status: 'reserved',
+        status: 'missing',
+        driverStatus: 'missing',
       },
       {
         id: 'rsa-306',
@@ -922,11 +934,30 @@ let instrumentCatalog: InstrumentCategory[] = [
         summary: 'USB 6.2 GHz 便携频谱仪，快速部署于暗室巡检。',
         interfaces: ['USB3.0'],
         capabilities: ['便携式', '实时DPX', 'SignalVu-PC'],
-        status: 'available',
+        status: 'missing',
+        driverStatus: 'missing',
       },
     ],
   },
 ]
+
+let mockHalMode: 'mock' | 'real' = 'mock'
+
+const getSelectedInstrumentModel = (item: InstrumentCategory) =>
+  item.models.find((model) => model.id === item.selectedModelId) ?? null
+
+const hasSupportedMockDriver = (item: InstrumentCategory) =>
+  getSelectedInstrumentModel(item)?.driverStatus === 'supported'
+
+const resolveMockConnectionStatus = (
+  item: InstrumentCategory,
+  mode: 'auto' | 'mock' | 'real' = item.driverMode ?? 'auto',
+) => {
+  const effectiveMode = mode === 'auto' ? mockHalMode : mode
+  return effectiveMode === 'mock' && hasSupportedMockDriver(item)
+    ? 'connected'
+    : 'disconnected'
+}
 
 const bumpPlanTimestamp = (plan: TestPlanRecord) => {
   const now = new Date()
@@ -1217,6 +1248,93 @@ export const mockDatabase = {
   },
   getInstrumentCatalog(): InstrumentsResponse {
     return { categories: clone(instrumentCatalog) }
+  },
+  getHalStatus() {
+    return {
+      mode: mockHalMode,
+      driver_count: instrumentCatalog.filter((item) => item.isActive !== false).length,
+      active_drivers: instrumentCatalog
+        .filter((item) => item.isActive !== false)
+        .map((item) => item.key),
+    }
+  },
+  switchHalMode(mode: 'mock' | 'real') {
+    mockHalMode = mode
+    instrumentCatalog = instrumentCatalog.map((item) => ({
+      ...item,
+      connection: {
+        ...item.connection,
+        status: resolveMockConnectionStatus(item),
+        lastError: null,
+      },
+    }))
+    return {
+      success: true,
+      previous_mode: mode === 'mock' ? 'real' : 'mock',
+      current_mode: mockHalMode,
+      active_drivers: instrumentCatalog
+        .filter((item) => item.isActive !== false)
+        .map((item) => item.key),
+      driver_count: instrumentCatalog.filter((item) => item.isActive !== false).length,
+      message: `已切换到 ${mockHalMode} 模式`,
+    }
+  },
+  updateInstrumentDriverMode(categoryKey: string, mode: 'auto' | 'mock' | 'real') {
+    const index = instrumentCatalog.findIndex((item) => item.key === categoryKey)
+    if (index === -1) return null
+    const current = instrumentCatalog[index]
+    const next: InstrumentCategory = {
+      ...current,
+      driverMode: mode,
+      connection: {
+        ...current.connection,
+        status: resolveMockConnectionStatus(current, mode),
+        lastError: null,
+      },
+    }
+    instrumentCatalog[index] = next
+    return clone({
+      key: next.key,
+      driverMode: next.driverMode,
+      message: `已将 ${next.label} 设为 ${mode} 模式`,
+    })
+  },
+  testInstrumentConnection(categoryKey: string, payload: { ip?: string; port?: number }) {
+    const index = instrumentCatalog.findIndex((item) => item.key === categoryKey)
+    if (index === -1) return null
+    const current = instrumentCatalog[index]
+    if (!payload.ip) {
+      const next: InstrumentCategory = {
+        ...current,
+        connection: {
+          ...current.connection,
+          status: 'disconnected',
+          lastError: '未配置连接信息（IP 地址为空）',
+        },
+      }
+      instrumentCatalog[index] = next
+      return {
+        success: false,
+        status: 'error',
+        message: '未配置连接信息（IP 地址为空）',
+      }
+    }
+    const next: InstrumentCategory = {
+      ...current,
+      connection: {
+        ...current.connection,
+        status: 'connected',
+        lastError: null,
+        lastConnectedAt: new Date().toISOString(),
+      },
+    }
+    instrumentCatalog[index] = next
+    return {
+      success: true,
+      status: 'connected',
+      message: `成功连接到 ${payload.ip}:${payload.port ?? 5025}`,
+      latency_ms: 12,
+    }
   },
   updateInstrumentCategory(categoryKey: string, payload: UpdateInstrumentPayload): InstrumentCategory | null {
     const index = instrumentCatalog.findIndex((item) => item.key === categoryKey)

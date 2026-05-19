@@ -353,12 +353,19 @@ class InstrumentHALService:
                             f"[HAL-{self.mode.value.upper()}] {cat.category_key}: connected → "
                             f"{model.vendor} {model.model}"
                         )
-                        # Update connection status in DB
+                        # GUI connection semantics differ by mode:
+                        # - Mock-effective mode: connected means the mock
+                        #   driver is loaded and usable.
+                        # - Real-effective mode: keep GUI status disconnected
+                        #   until the operator explicitly runs test-connection.
                         if conn:
-                            conn.status = "connected"
                             conn.last_error = None
-                            from datetime import datetime
-                            conn.last_connected_at = datetime.utcnow()
+                            if not use_real:
+                                conn.status = "connected"
+                                from datetime import datetime
+                                conn.last_connected_at = datetime.utcnow()
+                            else:
+                                conn.status = "disconnected"
                             db.commit()
                         report_rows.append({
                             "category": cat.category_key,

@@ -24,6 +24,7 @@ import {
     duplicateChamber,
     fetchChamberCalibration,
 } from '../api/service'
+import { createLabProfile } from '../api/labProfileService'
 import { CreateChamberForm } from './CreateChamberForm'
 
 type ChamberConfigCardProps = {
@@ -113,6 +114,26 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
         },
     })
 
+    const createLabProfileMutation = useMutation({
+        mutationFn: createLabProfile,
+        onSuccess: (profile) => {
+            queryClient.invalidateQueries({ queryKey: ['labProfiles'] })
+            notifications.show({
+                color: 'green',
+                title: '实验室配置已创建',
+                message: `${profile.name} 已绑定当前暗室`,
+            })
+        },
+        onError: (err) => {
+            const error = err as { response?: { data?: { detail?: string } }; message?: string }
+            notifications.show({
+                color: 'red',
+                title: '创建实验室配置失败',
+                message: error?.response?.data?.detail ?? error?.message ?? String(err),
+            })
+        },
+    })
+
     const chambers = chambersData?.items ?? []
     const presets = presetsData?.presets ?? []
 
@@ -177,6 +198,17 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
         resetForm()
     }
 
+    const handleCreateLabProfile = () => {
+        if (!activeChamber) return
+        createLabProfileMutation.mutate({
+            name: `LabProfile - ${activeChamber.name}`,
+            description: 'Created from active chamber configuration in GUI',
+            chamber_config_id: activeChamber.id,
+            is_active: true,
+            created_by: 'gui',
+        })
+    }
+
     if (isActiveLoading) {
         return (
             <Card withBorder radius="md" padding="xl">
@@ -223,6 +255,15 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
                             >
                                 新建配置
                             </Button>
+                            {activeChamber && (
+                                <Button
+                                    variant="subtle"
+                                    onClick={handleCreateLabProfile}
+                                    loading={createLabProfileMutation.isPending}
+                                >
+                                    创建实验室配置
+                                </Button>
+                            )}
                             {onNavigate && (
                                 <Button
                                     variant="subtle"

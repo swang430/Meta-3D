@@ -5,6 +5,7 @@ import { notifications } from '@mantine/notifications'
 import { PrecheckPhase, ReferencePhase, MIMOTestPhase, AnalysisPhase, ReportPhase } from './Phases'
 import * as api from './api'
 import type { SessionResponse } from './api'
+import { fetchLabProfiles, type LabProfileSummary } from '../../api/labProfileService'
 
 const PHASE_STEPS = [
   { id: 'precheck', label: '系统预检', desc: '仪表状态与校准验证' },
@@ -17,14 +18,26 @@ const PHASE_STEPS = [
 export function CommissioningSandbox() {
   const [session, setSession] = useState<SessionResponse | null>(null)
   const [loading, setLoading] = useState(false)
+  const [labsLoading, setLabsLoading] = useState(true)
+  const [labs, setLabs] = useState<LabProfileSummary[]>([])
+  const [selectedLabId, setSelectedLabId] = useState<string>('')
   const [activeStep, setActiveStep] = useState(0)
   const [engineMode, setEngineMode] = useState<string>('mimo_first_asc')
 
   // Initialization
-  const initSession = async () => {
+  const initSession = async (labProfileId = selectedLabId, mode = engineMode) => {
+    if (!labProfileId) {
+      setSession(null)
+      notifications.show({
+        title: '初始化失败',
+        message: '请先选择 LabProfile',
+        color: 'red',
+      })
+      return
+    }
     try {
       setLoading(true)
-      const res = await api.createSession(engineMode)
+      const res = await api.createSession(mode, labProfileId)
       setSession(res.data)
       setActiveStep(0)
       notifications.show({ title: '首测会话已创建', message: `ID: ${res.data.session_id}`, color: 'blue' })
@@ -37,8 +50,40 @@ export function CommissioningSandbox() {
   }
 
   useEffect(() => {
-    initSession()
-  }, [engineMode])
+    let cancelled = false
+    setLabsLoading(true)
+    fetchLabProfiles(true)
+      .then((data) => {
+        if (cancelled) return
+        setLabs(data)
+        const firstLabId = data[0]?.id ?? ''
+        setSelectedLabId(firstLabId)
+        if (firstLabId) {
+          initSession(firstLabId, engineMode)
+        } else {
+          setSession(null)
+        }
+      })
+      .catch((err: any) => {
+        if (cancelled) return
+        const detail = err.response?.data?.detail || err.message
+        notifications.show({ title: '加载 LabProfile 失败', message: detail, color: 'red' })
+      })
+      .finally(() => {
+        if (!cancelled) setLabsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const handleEngineModeChange = (value: string | null) => {
+    if (!value) return
+    setEngineMode(value)
+    if (selectedLabId) {
+      initSession(selectedLabId, value)
+    }
+  }
 
   const handleRunPhase = async (phaseId: string) => {
     if (!session) return
@@ -78,10 +123,28 @@ export function CommissioningSandbox() {
     }
   }
 
-  if (!session) {
+  if (labsLoading) {
     return (
       <Container size="xl" py="md">
-        <Loader /> <Text>初始化会话中...</Text>
+        <Loader /> <Text>加载 LabProfile...</Text>
+      </Container>
+    )
+  }
+
+  if (labs.length === 0) {
+    return (
+      <Container size="xl" py="md">
+        <Stack gap="md">
+          <Group gap="sm" align="center">
+            <IconTestPipe size={28} />
+            <Title order={2}>暗室首测 (Sandbox)</Title>
+          </Group>
+          <Paper withBorder p="md" radius="md">
+            <Text size="sm" c="dimmed">
+              未找到 active LabProfile。请先在“探头与暗室配置”中点击“创建实验室配置”，再返回暗室首测。
+            </Text>
+          </Paper>
+        </Stack>
       </Container>
     )
   }
@@ -111,8 +174,20 @@ export function CommissioningSandbox() {
                 { value: 'keysight_gcm', label: '🔧 Keysight F64 原生 GCM (Native)' },
               ]}
               value={engineMode}
-              onChange={(val) => val && setEngineMode(val)}
+              onChange={handleEngineModeChange}
               w={400}
+            />
+            <Select
+              label="LabProfile"
+              description="选择本次首测绑定的实验室配置"
+              data={labs.map((lab) => ({
+                value: lab.id,
+                label: lab.chamber_name ? `${lab.name} — ${lab.chamber_name}` : lab.name,
+              }))}
+              value={selectedLabId || null}
+              onChange={(value) => setSelectedLabId(value || '')}
+              w={400}
+              allowDeselect={false}
             />
             <Group gap="xs">
               <Badge
@@ -132,7 +207,8 @@ export function CommissioningSandbox() {
         </Paper>
 
         {/* Stepper */}
-        <Paper withBorder p="xl" radius="md">
+        {session ? (
+          <Paper withBorder p="xl" radius="md">
           <Stepper active={activeStep} onStepClick={setActiveStep}>
             {PHASE_STEPS.map((step, idx) => {
               const status = session.phase_statuses[step.id]
@@ -200,15 +276,22 @@ export function CommissioningSandbox() {
                   <Button variant="light" onClick={() => setActiveStep(2)}>查看 MIMO 吞吐量表格</Button>
                   <Button variant="light" color="grape" onClick={() => setActiveStep(3)}>查看 CTIA 分析结果</Button>
                 </Group>
-                <Button variant="outline" onClick={initSession} mt="md">开启新会话</Button>
+                <Button variant="outline" onClick={() => initSession()} mt="md">开启新会话</Button>
               </Stack>
             </Stepper.Completed>
           </Stepper>
-        </Paper>
+          </Paper>
+        ) : (
+          <Paper withBorder p="xl" radius="md">
+            <Text size="sm" c="dimmed">
+              请选择 LabProfile 后点击“重置会话”创建首测会话。
+            </Text>
+          </Paper>
+        )}
         
         {/* Debug Controls */}
         <Group justify="space-between">
-          <Button variant="light" color="gray" onClick={initSession}>重置会话</Button>
+          <Button variant="light" color="gray" onClick={() => initSession()}>重置会话</Button>
           <Button variant="light" color="grape" onClick={handleRunAll}>一键执行全流程(Mock)</Button>
         </Group>
 

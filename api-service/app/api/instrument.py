@@ -41,7 +41,8 @@ class FEInstrumentModel(BaseModel):
     capabilities: List[str]
     bandwidth: Optional[str] = None
     channels: Optional[str] = None
-    status: str  # 'available' | 'offline' | 'reserved' | 'maintenance'
+    status: str  # compatibility alias for driverStatus
+    driverStatus: str  # 'supported' | 'missing' | 'disabled'
 
 
 class FEInstrumentConnection(BaseModel):
@@ -50,6 +51,9 @@ class FEInstrumentConnection(BaseModel):
     controller: Optional[str] = None
     notes: Optional[str] = None
     connection_params: Optional[Dict[str, Any]] = None
+    status: str = "unknown"  # 'connected' | 'disconnected' | 'error' | 'unknown'
+    lastConnectedAt: Optional[str] = None
+    lastError: Optional[str] = None
 
 
 class FEInstrumentCategory(BaseModel):
@@ -136,8 +140,11 @@ def _convert_model(model_db: InstrumentModelDB, category_key: str) -> FEInstrume
     from app.services.instrument_hal_service import has_real_driver
     caps = model_db.capabilities or {}
     
-    is_supported = has_real_driver(category_key, model_db.model)
-    status = "available" if is_supported else "pending_dev"
+    if model_db.is_available is False:
+        driver_status = "disabled"
+    else:
+        is_supported = has_real_driver(category_key, model_db.model)
+        driver_status = "supported" if is_supported else "missing"
     
     return FEInstrumentModel(
         id=str(model_db.id),
@@ -154,7 +161,8 @@ def _convert_model(model_db: InstrumentModelDB, category_key: str) -> FEInstrume
         channels=str(caps["channels"]) if caps.get("channels") else (
             f"{caps['ports']}-Port" if caps.get("ports") else None
         ),
-        status=status,
+        status=driver_status,
+        driverStatus=driver_status,
     )
 
 
@@ -167,6 +175,9 @@ def _convert_connection(conn_db: Optional[InstrumentConnectionDB]) -> FEInstrume
         controller=conn_db.protocol or "",
         notes=conn_db.notes or "",
         connection_params=conn_db.connection_params,
+        status=conn_db.status or "unknown",
+        lastConnectedAt=conn_db.last_connected_at.isoformat() if conn_db.last_connected_at else None,
+        lastError=conn_db.last_error,
     )
 
 
@@ -1220,6 +1231,28 @@ def set_instrument_driver_mode(
         raise HTTPException(404, f"Category '{category_key}' not found")
 
     category.driver_mode = request.mode
+    connection = db.query(InstrumentConnectionDB).filter(
+        InstrumentConnectionDB.category_id == category.id
+    ).first()
+    if connection:
+        connection.last_error = None
+        if request.mode == "mock":
+            selected_model = None
+            if category.selected_model_id:
+                selected_model = db.query(InstrumentModelDB).filter(
+                    InstrumentModelDB.id == category.selected_model_id
+                ).first()
+            if selected_model:
+                from app.services.instrument_hal_service import has_real_driver
+                driver_supported = (
+                    selected_model.is_available is not False
+                    and has_real_driver(category.category_key, selected_model.model)
+                )
+                connection.status = "connected" if driver_supported else "disconnected"
+            else:
+                connection.status = "disconnected"
+        else:
+            connection.status = "disconnected"
     db.commit()
 
     mode_labels = {"auto": "自动", "mock": "强制仿真", "real": "强制真实"}

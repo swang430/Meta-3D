@@ -19,6 +19,16 @@ export interface LabProfileSummary {
   is_active: boolean
 }
 
+export interface CreateLabProfileRequest {
+  name: string
+  description?: string | null
+  organization?: string | null
+  location?: string | null
+  chamber_config_id?: string | null
+  is_active?: boolean
+  created_by?: string | null
+}
+
 export interface RFChainEntry {
   /** SwitchTopology connection id — stable lookup key. */
   chain_id: string
@@ -46,6 +56,13 @@ export async function fetchLabProfiles(activeOnly = true): Promise<LabProfileSum
   const res = await apiClient.get<LabProfileSummary[]>('/lab-profiles', {
     params: { is_active: activeOnly },
   })
+  return res.data
+}
+
+export async function createLabProfile(
+  payload: CreateLabProfileRequest,
+): Promise<LabProfileSummary> {
+  const res = await apiClient.post<LabProfileSummary>('/lab-profiles', payload)
   return res.data
 }
 

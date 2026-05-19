@@ -1,10 +1,10 @@
-"""LabProfile API — list + RF chain resolution.
+"""LabProfile API — list/create + RF chain resolution.
 
 P2: the calibration-startup UI needs to (1) let operators pick a LabProfile
 and (2) preview the resolved RF chains for a given operating mode before
-hitting Start. Both reads are tiny enough that they live here together
-rather than in a dedicated CRUD module — there's no LabProfile create/edit
-flow yet (labs are seeded by deployment scripts).
+hitting Start. The create endpoint is intentionally small: it creates the
+operator-facing lab bundle from an existing chamber and current instrument
+catalog, without introducing a separate CRUD surface yet.
 """
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.models.chamber import ChamberConfiguration
+from app.models.instrument import InstrumentCategory, InstrumentConnection
 from app.models.lab_profile import LabProfile
 from app.services.calibration.rf_chain_resolver import resolve_rf_chains
 
@@ -32,6 +33,16 @@ class LabProfileSummary(BaseModel):
     chamber_config_id: Optional[UUID] = None
     chamber_name: Optional[str] = Field(None, description="Resolved name for chamber_config_id")
     is_active: bool
+
+
+class CreateLabProfileRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    organization: Optional[str] = None
+    location: Optional[str] = None
+    chamber_config_id: Optional[UUID] = None
+    is_active: bool = True
+    created_by: Optional[str] = None
 
 
 class RFChainEntry(BaseModel):
@@ -53,6 +64,54 @@ class RFChainResolutionResponse(BaseModel):
     chains: List[RFChainEntry]
     warnings: List[str]
     success: bool
+
+
+def _build_instrument_bindings(db: Session) -> List[dict]:
+    bindings: List[dict] = []
+    categories = (
+        db.query(InstrumentCategory)
+        .filter(InstrumentCategory.is_active == True)  # noqa: E712
+        .all()
+    )
+    for category in categories:
+        connection = (
+            db.query(InstrumentConnection)
+            .filter(InstrumentConnection.category_id == category.id)
+            .first()
+        )
+        bindings.append(
+            {
+                "category_id": str(category.id),
+                "category_key": category.category_key,
+                "instrument_model_id": None,
+                "connection_endpoint": connection.endpoint if connection else None,
+                "driver_mode": "auto",
+                "role": f"primary_{category.category_key}",
+            }
+        )
+    return bindings
+
+
+def _to_summary(db: Session, profile: LabProfile) -> LabProfileSummary:
+    chamber_name: Optional[str] = None
+    if profile.chamber_config_id is not None:
+        chamber = (
+            db.query(ChamberConfiguration)
+            .filter(ChamberConfiguration.id == profile.chamber_config_id)
+            .first()
+        )
+        chamber_name = chamber.name if chamber else None
+
+    return LabProfileSummary(
+        id=profile.id,
+        name=profile.name,
+        description=profile.description,
+        organization=profile.organization,
+        location=profile.location,
+        chamber_config_id=profile.chamber_config_id,
+        chamber_name=chamber_name,
+        is_active=profile.is_active,
+    )
 
 
 @router.get("", response_model=List[LabProfileSummary])
@@ -87,6 +146,60 @@ def list_lab_profiles(
         )
         for r in rows
     ]
+
+
+@router.post("", response_model=LabProfileSummary, status_code=201)
+def create_lab_profile(
+    request: CreateLabProfileRequest,
+    db: Session = Depends(get_db),
+):
+    """Create a LabProfile from an existing chamber and current instruments."""
+    existing = db.query(LabProfile).filter(LabProfile.name == request.name).first()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"LabProfile name already exists: {request.name}",
+        )
+
+    chamber_id = request.chamber_config_id
+    if chamber_id is None:
+        active_chamber = (
+            db.query(ChamberConfiguration)
+            .filter(ChamberConfiguration.is_active == True)  # noqa: E712
+            .first()
+        )
+        if not active_chamber:
+            raise HTTPException(
+                status_code=422,
+                detail="No active chamber configuration found",
+            )
+        chamber_id = active_chamber.id
+    else:
+        chamber = (
+            db.query(ChamberConfiguration)
+            .filter(ChamberConfiguration.id == chamber_id)
+            .first()
+        )
+        if not chamber:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Chamber configuration not found: {chamber_id}",
+            )
+
+    profile = LabProfile(
+        name=request.name,
+        description=request.description,
+        organization=request.organization,
+        location=request.location,
+        chamber_config_id=chamber_id,
+        instrument_bindings=_build_instrument_bindings(db),
+        is_active=request.is_active,
+        created_by=request.created_by,
+    )
+    db.add(profile)
+    db.commit()
+    db.refresh(profile)
+    return _to_summary(db, profile)
 
 
 @router.get("/{lab_profile_id}/rf-chains", response_model=RFChainResolutionResponse)

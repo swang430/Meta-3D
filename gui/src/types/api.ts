@@ -53,11 +53,8 @@ export type Probe = {
   created_by: string | null
 }
 
-// 'pending_dev' = backend has the catalog row but no real HAL driver
-// registered yet (instrument.py:_convert_model assigns this when
-// has_real_driver(category, model) is false). Operators must see this
-// distinctly from 'available' so they don't pick it expecting real signaling.
-export type InstrumentStatus = 'available' | 'offline' | 'reserved' | 'maintenance' | 'pending_dev'
+export type InstrumentDriverStatus = 'supported' | 'missing' | 'disabled'
+export type InstrumentConnectionStatus = 'connected' | 'disconnected' | 'error' | 'unknown'
 
 export type InstrumentModel = {
   id: string
@@ -68,14 +65,18 @@ export type InstrumentModel = {
   capabilities: string[]
   bandwidth?: string
   channels?: string
-  status: InstrumentStatus
+  status?: InstrumentDriverStatus
+  driverStatus?: InstrumentDriverStatus
 }
 
 export type InstrumentConnection = {
   endpoint?: string
   controller?: string
   notes?: string
-  connection_params?: Record<string, any>
+  connection_params?: Record<string, unknown>
+  status?: InstrumentConnectionStatus
+  lastConnectedAt?: string | null
+  lastError?: string | null
 }
 
 export type InstrumentCategory = {
@@ -83,7 +84,10 @@ export type InstrumentCategory = {
   label: string
   description: string
   tags?: string[]
+  categoryId?: string
   isActive?: boolean
+  usagePhase?: string[]
+  driverMode?: 'auto' | 'mock' | 'real'
   selectedModelId: string | null
   connection: InstrumentConnection
   models: InstrumentModel[]

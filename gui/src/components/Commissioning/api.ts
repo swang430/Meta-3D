@@ -18,8 +18,14 @@ export interface SessionResponse {
   report_id: string | null
 }
 
-export const createSession = async (engineMode: string = 'mimo_first_asc') => {
-  return client.post<SessionResponse>('/commissioning/sessions', { engine_mode: engineMode })
+export const createSession = async (
+  engineMode: string,
+  labProfileId: string,
+) => {
+  return client.post<SessionResponse>('/commissioning/sessions', {
+    engine_mode: engineMode,
+    lab_profile_id: labProfileId,
+  })
 }
 
 export const getSession = async (sessionId: string) => {

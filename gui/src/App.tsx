@@ -107,7 +107,8 @@ import type {
   DemoRunPlan,
   DemoRunResult,
   InstrumentsResponse,
-  InstrumentStatus,
+  InstrumentConnectionStatus,
+  InstrumentDriverStatus,
   MetricItem,
   SystemStatusItem,
   Probe as ProbeType,
@@ -313,23 +314,69 @@ const sections: Array<{
   },
 ]
 
-const instrumentStatusColor: Record<InstrumentStatus, string> = {
-  available: 'green',
-  reserved: 'yellow',
-  maintenance: 'orange',
-  offline: 'gray',
-  pending_dev: 'red',
+const instrumentDriverStatusColor: Record<InstrumentDriverStatus, string> = {
+  supported: 'green',
+  missing: 'red',
+  disabled: 'red',
 }
 
-// Operator-facing label per status. 'pending_dev' is the only one that
-// surfaces a model "exists in catalog but no HAL driver" — must read
-// loud enough that no one picks it expecting real signaling.
-const instrumentStatusLabel: Record<InstrumentStatus, string> = {
-  available: '可用',
-  reserved: '已预约',
-  maintenance: '维护中',
-  offline: '离线',
-  pending_dev: '驱动未实现',
+const instrumentDriverStatusLabel: Record<InstrumentDriverStatus, string> = {
+  supported: '已支持',
+  missing: '未实现',
+  disabled: '未实现',
+}
+
+const instrumentConnectionStatusColor: Record<'connected' | 'notConnected', string> = {
+  connected: 'green',
+  notConnected: 'gray',
+}
+
+const instrumentConnectionStatusLabel: Record<'connected' | 'notConnected', string> = {
+  connected: '已连接',
+  notConnected: '未连接',
+}
+
+const instrumentModeStatusColor: Record<'auto' | 'mock' | 'real', string> = {
+  auto: 'blue',
+  mock: 'orange',
+  real: 'teal',
+}
+
+const normalizeDriverStatus = (status?: string): InstrumentDriverStatus => {
+  if (status === 'supported' || status === 'missing' || status === 'disabled') {
+    return status
+  }
+  // Backward compatibility for older mock/API payloads.
+  if (status === 'available' || status === 'reserved' || status === 'maintenance') {
+    return 'supported'
+  }
+  if (status === 'pending_dev') {
+    return 'missing'
+  }
+  return 'missing'
+}
+
+const normalizeConnectionStatus = (status?: string): InstrumentConnectionStatus => {
+  if (status === 'connected' || status === 'disconnected' || status === 'error' || status === 'unknown') {
+    return status
+  }
+  return 'unknown'
+}
+
+const toConnectionBadgeStatus = (status?: string): 'connected' | 'notConnected' =>
+  normalizeConnectionStatus(status) === 'connected' ? 'connected' : 'notConnected'
+
+const normalizeInstrumentMode = (mode?: string): 'auto' | 'mock' | 'real' => {
+  if (mode === 'mock' || mode === 'real') return mode
+  return 'auto'
+}
+
+const resolveEffectiveInstrumentMode = (
+  mode: 'auto' | 'mock' | 'real',
+  globalMode?: string,
+): 'mock' | 'real' => {
+  if (mode === 'mock' || mode === 'real') return mode
+  return globalMode === 'real' ? 'real' : 'mock'
 }
 
 const severityBadgeColor: Record<AlertItem['severity'], string> = {
@@ -1794,6 +1841,9 @@ function EquipmentManager() {
           const draft = drafts[category.key]
           if (!draft) return null
           const drawerSelectedModel = category.models.find((model) => model.id === draft.modelId) ?? null
+          const drawerDriverStatus = normalizeDriverStatus(
+            drawerSelectedModel?.driverStatus ?? drawerSelectedModel?.status,
+          )
 
           return (
             <Stack gap="xl">
@@ -1822,8 +1872,8 @@ function EquipmentManager() {
                             {drawerSelectedModel.summary}
                           </Text>
                         </Stack>
-                        <Badge color={instrumentStatusColor[drawerSelectedModel.status]} variant="light">
-                          {instrumentStatusLabel[drawerSelectedModel.status]}
+                        <Badge color={instrumentDriverStatusColor[drawerDriverStatus]} variant="light">
+                          {instrumentDriverStatusLabel[drawerDriverStatus]}
                         </Badge>
                       </Group>
                       <Group gap="sm" c="gray.6" wrap="wrap">
@@ -1950,6 +2000,7 @@ function EquipmentManager() {
                         } else {
                           showFeedback(category.key, 'error', `❌ ${result.message}`)
                         }
+                        queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
                       } catch (err: any) {
                         showFeedback(category.key, 'error', `测试失败: ${err.message}`)
                       }
@@ -2215,18 +2266,31 @@ function EquipmentManager() {
       ) : null}
       {categories.map((category) => {
         const selectedModelInfo = category.models.find((model) => model.id === category.selectedModelId) ?? null
+        const selectedDriverStatus = normalizeDriverStatus(
+          selectedModelInfo?.driverStatus ?? selectedModelInfo?.status,
+        )
+        const instrumentMode = normalizeInstrumentMode(category.driverMode)
+        const effectiveInstrumentMode = resolveEffectiveInstrumentMode(instrumentMode, halStatus?.mode)
+        const connectionBadgeStatus = effectiveInstrumentMode === 'mock' && selectedDriverStatus === 'supported'
+          ? 'connected'
+          : toConnectionBadgeStatus(category.connection?.status)
+        const cardAccentColor = connectionBadgeStatus === 'connected'
+            ? '#40c057'
+            : category.isActive === false
+              ? '#dee2e6'
+              : '#868e96'
 
         return (
           <Card key={category.key} withBorder radius="md" padding="lg" style={{
             opacity: category.isActive === false ? 0.5 : 1,
             transition: 'opacity 0.3s ease',
-            borderLeft: `4px solid ${category.isActive === false ? '#dee2e6' : '#2c77f5'}`
+            borderLeft: `4px solid ${cardAccentColor}`
           }}>
             <Stack gap="md">
               <Group justify="space-between" align="center">
                 <Group gap="sm" align="center">
                   <Title order={4}>{category.label}</Title>
-                  {(category as any).usagePhase?.map((phase: string) => (
+                  {category.usagePhase?.map((phase: string) => (
                     <Badge
                       key={phase}
                       size="sm"
@@ -2245,7 +2309,7 @@ function EquipmentManager() {
                   <Tooltip label={`Auto = 跟随全局 (当前: ${halStatus?.mode?.toUpperCase() || 'MOCK'})`} position="bottom">
                     <SegmentedControl
                       size="xs"
-                      value={(category as any).driverMode || 'auto'}
+                      value={instrumentMode}
                       onChange={async (val) => {
                         try {
                           await client.patch(`/instruments/${category.key}/driver-mode`, { mode: val })
@@ -2261,11 +2325,7 @@ function EquipmentManager() {
                         { label: '🧪 Mock', value: 'mock' },
                         { label: '🔌 Real', value: 'real' },
                       ]}
-                      color={
-                        (category as any).driverMode === 'real' ? 'teal'
-                          : (category as any).driverMode === 'mock' ? 'orange'
-                          : 'blue'
-                      }
+                      color={instrumentModeStatusColor[instrumentMode]}
                       disabled={category.isActive === false}
                     />
                   </Tooltip>
@@ -2296,8 +2356,8 @@ function EquipmentManager() {
                     <Stack gap={4}>
                       <Group justify="space-between">
                          <Text size="sm" c="dimmed">型号</Text>
-                         <Badge color={instrumentStatusColor[selectedModelInfo.status]} variant="dot" size="xs">
-                            {instrumentStatusLabel[selectedModelInfo.status]}
+                         <Badge color={instrumentDriverStatusColor[selectedDriverStatus]} variant="dot" size="xs">
+                            驱动: {instrumentDriverStatusLabel[selectedDriverStatus]}
                          </Badge>
                       </Group>
                       <Text fw={600}>{selectedModelInfo.vendor} {selectedModelInfo.model}</Text>
@@ -2308,9 +2368,18 @@ function EquipmentManager() {
                       <Text size="sm" c="dimmed">互联</Text>
                       <Group gap="xs">
                         <Badge size="xs" variant="outline">{category.connection?.controller || 'Unknown'}</Badge>
+                        <Badge
+                          size="xs"
+                          color={instrumentConnectionStatusColor[connectionBadgeStatus]}
+                          variant={connectionBadgeStatus === 'connected' ? 'light' : 'dot'}
+                        >
+                          连接: {instrumentConnectionStatusLabel[connectionBadgeStatus]}
+                        </Badge>
                         <Text fw={500} size="sm">{category.connection?.endpoint || '未配置IP'}</Text>
                       </Group>
-                      <Text size="xs" c="gray.6" truncate>{category.connection?.notes || '无备注'}</Text>
+                      <Text size="xs" c="gray.6" truncate>
+                        {category.connection?.notes || '无备注'}
+                      </Text>
                     </Stack>
                   </SimpleGrid>
                 ) : (

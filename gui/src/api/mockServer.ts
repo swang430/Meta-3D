@@ -29,6 +29,33 @@ export function setupMockServer() {
 
   mock.onGet('/instruments/catalog').reply(200, mockDatabase.getInstrumentCatalog())
 
+  mock.onGet('/instruments/hal/status').reply(200, mockDatabase.getHalStatus())
+
+  mock.onPost('/instruments/hal/switch').reply((config) => {
+    try {
+      const payload = config.data ? JSON.parse(config.data) : {}
+      if (payload.mode !== 'mock' && payload.mode !== 'real') {
+        return [400, { message: '无效的 HAL 模式' }]
+      }
+      return [200, mockDatabase.switchHalMode(payload.mode)]
+    } catch {
+      return [400, { message: '切换 HAL 模式失败' }]
+    }
+  })
+
+  mock.onPost(/\/instruments\/[^/]+\/test-connection$/).reply((config) => {
+    try {
+      const parts = config.url?.split('/') ?? []
+      const categoryKey = parts[parts.length - 2] ?? ''
+      const payload = config.data ? JSON.parse(config.data) : {}
+      const result = mockDatabase.testInstrumentConnection(categoryKey, payload)
+      if (!result) return [404, { message: '未找到仪器类别' }]
+      return [200, result]
+    } catch {
+      return [400, { message: '测试连接失败' }]
+    }
+  })
+
   mock.onPost('/probes').reply((config) => {
     try {
       const payload = JSON.parse(config.data)
@@ -299,9 +326,25 @@ export function setupMockServer() {
       const payload = config.data ? JSON.parse(config.data) : {}
       const updated = mockDatabase.updateInstrumentCategory(categoryKey, payload)
       if (!updated) return [404, { message: '未找到仪器类别' }]
-      return [200, { category: updated }]
+      return [200, updated]
     } catch {
       return [400, { message: '更新仪器配置失败' }]
+    }
+  })
+
+  mock.onPatch(/\/instruments\/[^/]+\/driver-mode$/).reply((config) => {
+    try {
+      const parts = config.url?.split('/') ?? []
+      const categoryKey = parts[parts.length - 2] ?? ''
+      const payload = config.data ? JSON.parse(config.data) : {}
+      if (payload.mode !== 'auto' && payload.mode !== 'mock' && payload.mode !== 'real') {
+        return [400, { message: '无效的驱动模式' }]
+      }
+      const updated = mockDatabase.updateInstrumentDriverMode(categoryKey, payload.mode)
+      if (!updated) return [404, { message: '未找到仪器类别' }]
+      return [200, updated]
+    } catch {
+      return [400, { message: '切换驱动模式失败' }]
     }
   })
 
