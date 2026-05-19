@@ -23,6 +23,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -153,6 +154,27 @@ def import_phase_calibration_from_csv(
                     f"row={row!r}, err={e}"
                 ),
             )
+
+        # 2026-05-19 Codex P2 on PR #57: `float("NaN")` / `float("Inf")` both
+        # parse to non-finite numbers; subsequent `<=` / `<` bound checks
+        # silently return False against NaN, letting non-finite values land
+        # in JSONB arrays and corrupting downstream averaging/interpolation.
+        # Reject upfront with explicit message.
+        for col_name, val in (
+            ("frequency_mhz", f),
+            ("phase_offset_deg", p),
+            ("group_delay_ns", g),
+            ("phase_uncertainty_deg", u),
+        ):
+            if not math.isfinite(val):
+                return ImportResult(
+                    success=False,
+                    error=(
+                        f"Row {row_idx}: {col_name}={val!r} is not a finite "
+                        f"number (NaN / +Inf / -Inf rejected — these usually "
+                        f"indicate a VNA export gap or unit-conversion bug)"
+                    ),
+                )
 
         # Physical bounds
         if f <= 0:

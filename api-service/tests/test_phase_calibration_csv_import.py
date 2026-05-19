@@ -207,6 +207,43 @@ class TestCSVValidation:
         assert r.status_code == 400
         assert "group_delay_ns" in r.json()["detail"]
 
+    @pytest.mark.parametrize(
+        "bad_token,column",
+        [
+            ("NaN", "frequency_mhz"),
+            ("NaN", "phase_offset_deg"),
+            ("NaN", "group_delay_ns"),
+            ("NaN", "phase_uncertainty_deg"),
+            ("Inf", "frequency_mhz"),
+            ("Inf", "group_delay_ns"),
+            ("Inf", "phase_uncertainty_deg"),
+            ("-Inf", "phase_offset_deg"),
+        ],
+    )
+    def test_non_finite_value_rejected(self, client, bad_token, column):
+        """Codex P2 on PR #57: float() accepts NaN/Inf tokens, and the
+        physical-bound checks (`<=`, `<`) silently return False against NaN.
+        Without an explicit `math.isfinite` guard, these would land in the
+        JSONB array and corrupt downstream averaging/interpolation."""
+        cols = ["frequency_mhz", "phase_offset_deg", "group_delay_ns",
+                "phase_uncertainty_deg"]
+        good_vals = {
+            "frequency_mhz": "3400",
+            "phase_offset_deg": "-12.5",
+            "group_delay_ns": "0.85",
+            "phase_uncertainty_deg": "2.1",
+        }
+        good_vals[column] = bad_token
+        csv = (
+            ",".join(cols).encode("utf-8") + b"\n"
+            + ",".join(good_vals[c] for c in cols).encode("utf-8") + b"\n"
+        )
+        r = _post_csv(client, csv)
+        assert r.status_code == 400, r.text
+        detail = r.json()["detail"]
+        assert "finite" in detail.lower() or "nan" in detail.lower() or "inf" in detail.lower()
+        assert column in detail
+
     def test_non_monotonic_frequency_accepted_with_warning(self, client):
         """Non-monotonic frequency is a soft issue — accept + warn so operators
         with interleaved test plans aren't blocked; downstream consumers sort."""
