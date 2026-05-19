@@ -28,7 +28,7 @@ CDL 模型命名规范
 """
 
 from typing import List, Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ==================== 请求体子模型 ====================
@@ -156,6 +156,11 @@ class CDLModelData(BaseModel):
       例如: "UMa CDL-C NLOS"
     - Ray-Tracing 数据: ``{ScenarioName} CDL Snapshot-{N}``
       例如: "Highway_Beijing CDL Snapshot-42"
+
+    2026-05-19 P1-7: `clusters` 改 Optional. input_mode='custom' 时仍需 ≥1 簇;
+    input_mode='standard' 时该字段被忽略 (ChannelEgine `Standard3GPPBuilder`
+    内部从 38.901 表生成簇)。dispatch + 校验在 HardwarePipelineRequest model
+    validator.
     """
     model_name: str = Field(
         ...,
@@ -163,8 +168,12 @@ class CDLModelData(BaseModel):
     )
     pathloss_db: float = Field(..., description="路径损耗 (dB)")
     is_los: bool = Field(False, description="是否为视距")
-    clusters: List[CDLCluster] = Field(
-        ..., description="多径簇列表", min_length=1
+    clusters: Optional[List[CDLCluster]] = Field(
+        None,
+        description=(
+            "多径簇列表。input_mode='custom' 时必填 (≥1 簇); "
+            "input_mode='standard' 时忽略 (ChannelEgine 从 38.901 表生成)。"
+        ),
     )
     # 2026-05-18 P0-7 / Spec v2.0: LOS K-factor (dB), only meaningful when is_los=True.
     # TR 38.901 §7.5.6 LOS-mode K-factor boost on cluster #0 power.
@@ -177,13 +186,69 @@ class CDLModelData(BaseModel):
     )
 
 
+# 2026-05-19 P1-7: ChannelEgine `Standard3GPPBuilder` 接受的 scenario / cluster_model
+# 枚举值, 跟 [`ChannelEgine/mimo_ota_simulator/channel_builders.py`] 的常量对齐.
+# 这里只是字符串规约 (不是 3GPP 数据本身) — 数据生成在 ChannelEgine 内部.
+ScenarioName = Literal[
+    "UMa", "UMi-StreetCanyon", "UMi-OpenArea", "RMa",
+    "InH-Office", "SMa", "InF",
+]
+ClusterModelName = Literal[
+    "Stochastic", "CDL-A", "CDL-B", "CDL-C", "CDL-D", "CDL-E", "SCME",
+]
+ForceCondition = Literal["LOS", "NLOS", "auto"]
+
+
+class Standard3GPPConfig(BaseModel):
+    """3GPP TR 38.901 standard-mode 输入参数 (input_mode='standard' 时必填).
+
+    数据生成在 ChannelEgine 内部的 38.901 generator (`Standard3GPPBuilder`);
+    MIMO-First 这一层只透传操作员的模型选择 + 几何配置, 不实现 38.901 表。
+    """
+    scenario_name: ScenarioName = Field(
+        ...,
+        description=(
+            "Large-scale environment (TR 38.901 §7.2). 决定 path loss + LSP "
+            "统计特性. 取值见 ScenarioName Literal."
+        ),
+    )
+    cluster_model_name: ClusterModelName = Field(
+        "Stochastic",
+        description=(
+            "Small-scale cluster model. `Stochastic` = 38.901 §7.5 default; "
+            "CDL-A..E = §7.7.1 fixed clustered delay line; SCME = legacy."
+        ),
+    )
+    force_condition: ForceCondition = Field(
+        "auto",
+        description=(
+            "LOS / NLOS / auto. auto = 让 38.901 generator 按 scenario "
+            "几何概率决定 (推荐); LOS/NLOS = 强制覆盖."
+        ),
+    )
+    bs_position: List[float] = Field(
+        default_factory=lambda: [0.0, 0.0, 25.0],
+        description="BS position [x, y, z] (m). 默认 [0,0,25] (UMa 典型基站高度)",
+        min_length=3, max_length=3,
+    )
+    ue_position: List[float] = Field(
+        default_factory=lambda: [50.0, 0.0, 1.5],
+        description="UE position [x, y, z] (m). 默认 [50,0,1.5] (UE 在 50m 外 1.5m 高)",
+        min_length=3, max_length=3,
+    )
+    random_seed: Optional[int] = Field(
+        None,
+        description="38.901 generator 随机种子, None 时每次跑随机 realization",
+    )
+
+
 # ==================== 请求体 ====================
 
 class HardwarePipelineRequest(BaseModel):
     """
     硬件流水线合成请求
 
-    对应 Integration Spec v1.0 §2.1
+    对应 Integration Spec v1.0 §2.1 + v2.1 (2026-05-19 P1-7 加 input_mode 分路)
     """
     chamber_config: ChamberConfig
     calibration_data: CalibrationData = Field(default_factory=CalibrationData)
@@ -191,6 +256,38 @@ class HardwarePipelineRequest(BaseModel):
     cdl_model_data: CDLModelData = Field(
         ..., description="CDL 模型数据（3GPP 标准或 Ray-Tracing 导出）"
     )
+    # 2026-05-19 P1-7: dispatch 入口
+    input_mode: Literal["standard", "custom"] = Field(
+        "custom",
+        description=(
+            "信道生成入口. 'standard' = ChannelEgine 内部 38.901 generator "
+            "(用 standard_3gpp 字段). 'custom' = 操作员/上游提供 CDLCluster "
+            "列表 (用 cdl_model_data.clusters). 默认 'custom' 保持 P0-7 行为."
+        ),
+    )
+    standard_3gpp: Optional[Standard3GPPConfig] = Field(
+        None,
+        description="input_mode='standard' 时必填. ChannelEgine 38.901 输入参数.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_input_mode_consistency(self) -> "HardwarePipelineRequest":
+        """input_mode 跟 clusters / standard_3gpp 必须一致 — fail-fast 比让
+        ChannelEgine 那边返回 generic error 友好得多 (2026-05-19 P1-7)."""
+        if self.input_mode == "standard":
+            if self.standard_3gpp is None:
+                raise ValueError(
+                    "input_mode='standard' requires standard_3gpp config "
+                    "(scenario_name + cluster_model_name + positions)."
+                )
+        else:  # custom
+            if not self.cdl_model_data.clusters:
+                raise ValueError(
+                    "input_mode='custom' requires cdl_model_data.clusters "
+                    "(≥1 cluster). For 38.901 standard models use "
+                    "input_mode='standard' + standard_3gpp."
+                )
+        return self
 
 
 # ==================== 响应体子模型 ====================

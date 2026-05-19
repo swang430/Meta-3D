@@ -57,23 +57,50 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
         session_id = cdl_model_data.get("session_id", "par_bench_session")
 
         try:
-            from app.services.channel_engine_client import CDLCluster
+            # 2026-05-19 P1-7: 替换 P0-7 留下的 hardcoded mock cluster — 解析
+            # 操作员选的 cdl_model_name → (scenario, cluster_model, condition),
+            # 调 ChannelEngineClient 走 input_mode='standard', 让 ChannelEgine
+            # 内部 38.901 generator 算簇.
+            from app.services.cdl_model_parser import parse_cdl_model_name
+
+            model_name = cdl_model_data.get("model_name", "UMa NLOS CDL-C")
+            parsed = parse_cdl_model_name(model_name)
+            logger.info(
+                f"[ExternalWaveform Strategy] {model_name} → "
+                f"scenario={parsed.scenario_name}, "
+                f"cluster_model={parsed.cluster_model_name}, "
+                f"condition={parsed.condition}"
+            )
+
+            # ue_velocity_mps 从 simulation_rules 提取 (操作员上游已经规约为
+            # 3-vec m/s 优先); 否则让 client 从 kph 默认派生.
+            ue_velocity_mps = simulation_rules.get("ue_velocity_mps")
 
             pipeline_result = await self.ce_client.synthesize_hardware_pipeline(
                 chamber_id=self.chamber_config.id,
                 frequency_hz=simulation_rules.get("frequency_hz", 3.5e9),
-                clusters=[
-                    CDLCluster(delay_s=0.0, power_relative_linear=1.0)
-                ],  # Mock
-                cdl_model_name=cdl_model_data.get(
-                    "model_name", "UMa CDL-C NLOS"
-                ),
+                cdl_model_name=model_name,
+                pathloss_db=simulation_rules.get("pathloss_db", 100.0),
+                is_los=parsed.is_los,
                 target_tx_power_dbm=simulation_rules.get(
                     "target_tx_power_dbm", 0.0
                 ),
                 target_rsrp_dbm=simulation_rules.get("target_rsrp_dbm", -85.0),
                 target_snr_db=simulation_rules.get("target_snr_db", 20.0),
+                ue_velocity_kph=simulation_rules.get("ue_velocity_kph", 15.0),
                 session_id=session_id,
+                # 2026-05-19 P1-7: standard 3GPP dispatch + transparent passthrough
+                input_mode="standard",
+                scenario_name=parsed.scenario_name,
+                cluster_model_name=parsed.cluster_model_name,
+                force_condition=parsed.condition,  # LOS / NLOS 显式 (跳过 auto)
+                # 2026-05-18 P0-7 Phase 5/6 fields — was defaulted in P0-7,
+                # now operator-controllable from simulation_rules.
+                synthesis_method=simulation_rules.get(
+                    "synthesis_method", "strict_pfs"
+                ),
+                ue_velocity_mps=ue_velocity_mps,
+                k_factor_db=simulation_rules.get("k_factor_db"),
             )
 
             if not pipeline_result.success:
