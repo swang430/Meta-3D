@@ -163,7 +163,7 @@ P1-7 (#59) 拆掉这个 mock cluster, 走 `input_mode='standard'` 让 ChannelEgi
 
 ---
 
-## 三个 surprising 点 — 不是 bug, 但容易踩坑
+## 四个 surprising 点 — 不是 bug, 但容易踩坑
 
 ### 1. 链路损耗是 **static folding**, 不是 dynamic compensation
 
@@ -200,7 +200,55 @@ ChannelEgine 看不到 `has_pa` / `has_duplexer` 这些原始字段, 看的只�
 for N/M ports", 但 .asc 输出跟 phase cal 没关系。**别误以为 phase cal 接入了
 就等于在用**。
 
-### 3. `BaseChannelGenerator.calibration_entries` 是 **dead weight** (constructor 漂移)
+### 3. Commissioning **precheck 不拦未校准 chamber** (silent failure mode #2)
+
+> **修订 2026-05-19** (Codex P2 on PR #60 commit 81f6923): 本节初版描述
+> "Cert 没灌好 → precheck fail-loud" — **错的**。实际行为见下。
+
+[`PrecheckExecutor`](../../api-service/app/services/mimo_ota/executors/precheck.py)
+第 236 行计算:
+
+```python
+overall_pass = critical_online and qz_pass and ue_cap_pass
+```
+
+`overall_pass` 只检查三件事:
+1. `critical_online` — `baseStation` + `channelEmulator` HAL driver 在线
+2. `qz_pass` — quiet zone ripple ≤ `max_quiet_zone_ripple_db` threshold
+3. `ue_cap_pass` — UE max_dl_layers ≥ `config.mimo_layers`
+
+**校准状态完全没进 `overall_pass`**:
+
+- `path_loss_calibration_valid = False` (没找到 VALID 的 ProbePathLossCalibration)
+  → 只 append warning `"Phase 3 will fall back to default cable loss"`,
+  不阻断 (precheck.py:198-202)
+- `calibration_certificate is None` → 只 warning, 不阻断 (precheck.py:175-176)
+- `cal_cert.overall_pass = False` (cert 存在但 cert 自己标 not pass) → record 进
+  `result_payload` 但**不影响 precheck 的 overall_pass** (precheck.py:170-173)
+
+**实际后果**: 操作员可以从零开始 (没建过任何 cal cert / 没跑过路损校准) 直接
+跑 commissioning, precheck phase 会 PASS, 然后:
+
+- measure phase 调 `ChannelEngineClient` → `_query_calibration_entries`
+- 没找到 `ProbePathLossCalibration` → fallback 公式:
+  `effective_loss = typical_cable_loss_db + duplexer - pa_gain` (见上面 surprising #1)
+- 拿这个标量当所有 port 的 cable_loss_db → 生成 .asc → 上传到 F64 → 跑测试
+
+→ commissioning 实际跑出来的 KPI 是基于 `ChamberConfiguration` 表里的**典型值**,
+不是这个 chamber 真实测过的路损。在 lab 内 ring 8-probe 这种"配置参数贴近
+典型"的场景, 数值上可能差不多 (1-3 dB), 但**这不是设计意图**, 设计意图是
+operator 必须先跑路损校准 (P0-3 输出) 才能跑 commissioning。
+
+**当前规避**: GUI commissioning workflow 实际是"先 calibration tab 后 commission",
+operator 主观上不太会忘 — 但**没有 code-level 安全 net**。
+
+**该修**: precheck 至少应该把 `path_loss_calibration_valid == False` 或
+`cal_cert is None` 升到 `overall_pass = False` (或加新的 strict mode flag),
+让 commissioning fail-loud 拒绝在未校准 chamber 上跑。Triage in
+[`roadmap-first-call.md`](../roadmap-first-call.md) "Discovered during P1-7
+catch-up review" backlog 区。
+
+### 4. `BaseChannelGenerator.calibration_entries` 是 **dead weight** (constructor 漂移)
 
 ```python
 class BaseChannelGenerator(ABC):
@@ -261,21 +309,33 @@ MIMO-First 这边是 schema + DB plumbing 的小工作。
 
 ## 跟 cal cert 工作链的衔接
 
+> **修订 2026-05-19** (Codex P2 on PR #60 commit 81f6923): 本节初版宣称
+> "precheck gate + lazy DB lookup + silent fallback 三层保护", **错的** —
+> precheck 实际不拦 cal-missing (见 surprising #3)。
+
 P0-3 (path-loss cal cert) + P1-5 (phase cal cert) 在搭的
-`ProbePathLossCalibration` + `ProbePhaseCalibration` 链路, **已经 silently
-接进生产路径**:
+`ProbePathLossCalibration` + `ProbePhaseCalibration` 链路, **接进生产路径但
+缺安全 net**:
 
-1. operator 跑 commissioning → measure phase 之前, precheck 拦
-   [`path_loss_calibration_valid == True`](../../api-service/app/api/commissioning.py)
-2. operator 进 measure phase → asc_strategy → ChannelEngineClient
-3. ChannelEngineClient `_query_calibration_entries` 自动查最新 VALID 的
-   `ProbePathLossCalibration`, 灌进 HTTP payload `calibration_data.entries`
-4. ChannelEgine 用这些 entries 做 .asc 合成
+1. operator 跑 commissioning → precheck phase
+   ([`precheck.py:165-202`](../../api-service/app/services/mimo_ota/executors/precheck.py#L165-L202))
+   读 `ProbePathLossCalibration` + `calibration_certificate`, 写进
+   `result_payload` 让下游 audit 可见, 但**任何 cal 缺失只 append warning,
+   不拦 `overall_pass`** (详见 surprising #3)
+2. precheck 通过 → measure phase → asc_strategy → ChannelEngineClient
+3. ChannelEngineClient `_query_calibration_entries` 查最新 VALID 的
+   `ProbePathLossCalibration`, **没找到则 silently fallback 到**
+   `typical_cable_loss_db + duplexer - pa_gain` 公式 (见 surprising #1)
+4. fallback 标量进 HTTP payload `calibration_data.entries` 每个 port,
+   ChannelEgine 用这些 entries 做 .asc 合成
 
-→ cal cert → simulator 链路是 **precheck gate + lazy DB lookup + silent fallback**
-三层保护。Cert 没灌好 → precheck fail-loud; cert 灌好但有缺漏 → fallback 到
-`typical_cable_loss_db` (这一层**不 fail-loud**, 跟上面 surprising #1 的折算
-是同一段代码)。
+→ cal cert → simulator 链路实际是 **lazy DB lookup + 两层 silent fallback**
+(precheck 不算 gate, 因为不阻断)。Cert 没灌好 → precheck 只 warn, measure
+phase 照样跑, 用典型值算 .asc, **没人会报错**。
+
+当前规避: GUI commissioning workflow 主观上是"先 calibration tab 后 commission",
+operator 不太会忘 — 但**没有 code-level 安全 net**。triage 见
+[`roadmap-first-call.md`](../roadmap-first-call.md) "Discovered during" backlog 区。
 
 ---
 
@@ -298,7 +358,7 @@ pytest session import 会冲突。
 ## 落实文档的目的
 
 1. 把 P1-7 整条 wire-up 第一次完整闭环这件事**留个版本快照**
-2. 标记三个 surprising 点 — 防 future 工程师踩坑
+2. 标记四个 surprising 点 — 防 future 工程师踩坑
 3. 把 ring-only silent constraint 显式连到 P2-7 — 防"忘了我们还有这个 gap"
-4. 给将来上 PWS / 真 PA dynamic compensation 留 stub (在三个 surprising 点
+4. 给将来上 PWS / 真 PA dynamic compensation 留 stub (在四个 surprising 点
    里都已经标了"将来怎么扩")
