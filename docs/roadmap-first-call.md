@@ -635,45 +635,63 @@ overall_pass = critical_online and qz_pass and ue_cap_pass and cal_pass
 "跟 cal cert 工作链的衔接" 节时假设 precheck 是 fail-loud gate, Codex 抓了我的
 错记并指向 precheck.py:236 的真实计算。
 
-**Design 决策点** (需要 acceptance 时定):
+**Design 决策** (本 PR review 中已定, 2026-05-19):
 
-1. **cal_cert 缺失算 PASS 还是 FAIL?** —— `cal_cert` 是 LabProfile / TestCase
-   binding, 实验室初始化阶段可能 None。倾向: cal_cert 缺失 → warning 不 fail
-   (跟现在一致); cal_cert 存在但 `overall_pass=False` → FAIL (是显式 broken
-   状态)。
+1. **cal_cert 缺失 → warning, 不 FAIL**。`cal_cert` 是 LabProfile / TestCase
+   binding, 实验室初始化阶段可能 None — 不能因为没绑 cert 就拦 commissioning。
+   但 cal_cert 存在但 `overall_pass=False` → **FAIL** (是 cert 自己显式标 broken,
+   不该 silently 接受)。
 
-2. **path_loss_calibration 缺失算 PASS 还是 FAIL?** —— 这是 measure phase
-   会真用的数据。倾向: **FAIL** (没这个就 fallback, fallback 是 silent 失真,
-   严格拒)。
+2. **path_loss_calibration 缺失 → FAIL**。这是 measure phase 真用的数据,
+   没这个就走 `typical_cable_loss_db + duplexer - pa_gain` fallback (silent
+   失真, 见 [`channel-engine-data-flow.md`](architecture/channel-engine-data-flow.md)
+   surprising #1)。严格拒, 这是 P1-8 的核心目的。
 
-3. **是否要 strict-mode flag?** —— lab dev / unit test 环境可能想跳过 cal
-   要求快速 smoke。倾向: 加 `MIMOOTAConfiguration.precheck_strict_cal: bool
-   = True`, default True 走 strict, dev/test 显式关闭。**或者** 只走 strict
-   不加 flag (简单), 测试用 fixture 灌 cal 数据。决策时再选。
+3. **加 strict-mode flag, default True (用户决定 2026-05-19)**:
+
+   ```python
+   # api-service/app/schemas/mimo_ota/config.py
+   class MIMOOTAConfiguration:
+       precheck_strict_cal: bool = True  # production-safe default
+       # ...
+   ```
+
+   - **Default True**: production / 现场 / GUI commissioning 走严格路径, cal
+     缺失就 FAIL。这是 P1-8 "防 silent fallback" 的 raison d'être。
+   - **显式 opt-out**: lab dev 写 yaml / 测试 fixture 灌 config / TestCase
+     configuration override 都可以 `False`, 跳过 cal gate 维持旧行为
+     ("先跑通流程, cal 后补"工作流)。
+   - **GUI 不暴露 bypass**: 避免 operator 误点。要 bypass 走 config 文件 /
+     测试 fixture, 显式 opt-in 让人知道在做什么。
+   - **Bypass 时 precheck 不静默**: `result_payload["cal_pass_reason"]` 写
+     `"bypassed via precheck_strict_cal=False"`, audit trail 保留。
 
 **Scope** (single PR):
 
 | Step | File | What |
 |---|---|---|
-| 1 | `api-service/app/services/mimo_ota/executors/precheck.py` | `overall_pass` 计算加 `cal_pass`; 加 `cal_pass_reason` 进 `result_payload` 说清楚为什么 fail |
-| 2 | `api-service/app/services/mimo_ota/executors/precheck.py` | failure_reason 列表加上 cal 缺失原因 (跟 critical_online / qz / ue_cap 分类一致) |
-| 3 | `api-service/app/schemas/mimo_ota/config.py` (可选) | 加 `precheck_strict_cal: bool = True` (Design 决策 #3 选加 flag 时) |
-| 4 | `api-service/tests/test_mimo_ota_precheck.py` (existing? new?) | 加 cartesian: (cal_cert None / valid / overall_pass=False) × (path_loss_cal None / VALID) = 6 cases, 验证 overall_pass 对应正确; 用 fixture 灌 cal 数据 |
-| 5 | 现有 precheck 测试 audit | 没灌 cal 的现有测试需要补 cal fixture (否则会从 PASS 翻 FAIL); 这是预期的 — 旧测试 silently 在未校准 chamber 上 PASS 跟 P1-8 的修复目标一致 |
+| 1 | `api-service/app/schemas/mimo_ota/config.py` | 加 `precheck_strict_cal: bool = True` 字段, default True (production-safe) |
+| 2 | `api-service/app/services/mimo_ota/executors/precheck.py` | `overall_pass` 计算加 `cal_pass`; `cal_pass = path_loss_calibration_valid AND (cal_cert is None OR cal_cert.overall_pass)`; 若 `config.precheck_strict_cal == False` → cal_pass 强制 True (跳过 gate) |
+| 3 | `api-service/app/services/mimo_ota/executors/precheck.py` | failure_reason 列表加 cal 缺失原因 (跟 critical_online / qz / ue_cap 分类一致); bypass 时 `result_payload["cal_pass_reason"] = "bypassed via precheck_strict_cal=False"` audit trail |
+| 4 | `api-service/tests/test_mimo_ota_precheck.py` | 加 cartesian: (cal_cert: None / valid / overall_pass=False) × (path_loss_cal: None / VALID) × (precheck_strict_cal: True / False) = 12 cases |
+| 5 | 现有 precheck 测试 audit | 没灌 cal 的现有测试要么补 cal fixture (推荐, 跟 production 路径一致), 要么显式 `precheck_strict_cal=False`。每个测试明确意图: "测 strict 路径" 或 "测 bypass 路径" |
 
 **Acceptance**:
 
-- 未校准 chamber (no `ProbePathLossCalibration` VALID) 跑 precheck → FAIL
-  with `error_message` 含 "path-loss calibration missing or invalid"
-- `cal_cert.overall_pass = False` 跑 precheck → FAIL with `error_message` 含
-  "calibration_certificate not passed"
-- 完整 cal 的 chamber 跑 precheck → 维持 PASS (不回归)
-- `result_payload["cal_pass_reason"]` 在 FAIL 时含具体原因, PASS 时为 "ok"
-  或 None
-- 新增 6 个 cartesian test 全过
-- 现有 precheck 测试要么补 cal fixture, 要么明确标 `@pytest.mark.parametrize`
-  覆盖 strict-mode off 路径 (如果走 flag 方案)
-- (可选) `precheck_strict_cal=False` 时维持旧行为 — 仅当 Design 决策 #3 选加 flag
+- (strict, default) 未校准 chamber (no `ProbePathLossCalibration` VALID) 跑
+  precheck → FAIL with `error_message` 含 "path-loss calibration missing or invalid"
+- (strict, default) `cal_cert.overall_pass = False` 跑 precheck → FAIL with
+  `error_message` 含 "calibration_certificate not passed"
+- (strict, default) 完整 cal 的 chamber 跑 precheck → 维持 PASS (不回归)
+- (strict, default) `cal_cert is None` 跑 precheck → 跟旧行为一致 (warning,
+  不 fail), 因为 cal_cert binding 是 LabProfile 阶段事情, 不该拦 commissioning
+- **(bypass) `precheck_strict_cal=False` 时**: 未校准 chamber 跑 precheck
+  → PASS (跟旧行为一致), 但 `result_payload["cal_pass_reason"]` 含 `"bypassed
+  via precheck_strict_cal=False"` audit trail
+- `result_payload["cal_pass"]` (bool) 在 strict PASS / strict FAIL / bypass
+  三种情况都正确反映
+- 12 个 cartesian test 全过
+- 现有 precheck 测试不回归 (补 fixture 或显式 bypass 都可以)
 
 **Out of scope**:
 
