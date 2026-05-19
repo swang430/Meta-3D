@@ -36,7 +36,8 @@ import httpx
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
-from app.models.chamber import ChamberConfiguration
+from app.models.chamber import ChamberConfiguration, ProbeDistribution
+from app.models.probe import Probe
 from app.models.probe_calibration import (
     ProbePathLossCalibration,
     ChannelPhaseCalibration,
@@ -262,6 +263,9 @@ class ChannelEngineClient:
                 clusters=clusters, chamber=chamber
             )
 
+        # ----- Step 2.6: P1-10 — 非 ring chamber 时从 DB 读 probe 几何 -----
+        probe_positions = self._build_probe_positions(chamber)
+
         # ----- Step 3: 组装 Payload -----
         payload = self._build_payload(
             chamber=chamber,
@@ -288,6 +292,7 @@ class ChannelEngineClient:
             bs_position=bs_position,
             ue_position=ue_position,
             random_seed=random_seed,
+            probe_positions=probe_positions,
         )
 
         if input_mode == "standard":
@@ -501,6 +506,8 @@ class ChannelEngineClient:
         bs_position: Optional[List[float]] = None,
         ue_position: Optional[List[float]] = None,
         random_seed: Optional[int] = None,
+        # 2026-05-19 P1-10: 非 ring chamber 几何 (ChannelEgine Phase 8)
+        probe_positions: Optional[List[Dict[str, float]]] = None,
     ) -> Dict[str, Any]:
         """组装 Spec v2.1 请求 Payload (Phase 5/6 字段 + P1-7 input_mode 分路)。
 
@@ -510,13 +517,19 @@ class ChannelEngineClient:
         + random_seed). 微服务按 input_mode 分路到 ChannelEgine
         `CustomCDLBuilder` 或 `Standard3GPPBuilder`.
         """
+        chamber_config_payload: Dict[str, Any] = {
+            "num_probes": chamber.num_probes,
+            "radius_m": float(chamber.chamber_radius_m),
+            "dual_polarized": chamber.num_polarizations >= 2,
+            # P1-10: 跟 ChannelEgine Phase 8 wire format 一致 (ring/multi-ring/custom).
+            # `chamber.probe_distribution` 默认 "ring", 历史行回填同值 → 向后兼容.
+            "distribution": chamber.probe_distribution,
+        }
+        if probe_positions is not None:
+            chamber_config_payload["probe_positions"] = probe_positions
+
         payload: Dict[str, Any] = {
-            "chamber_config": {
-                "num_probes": chamber.num_probes,
-                "radius_m": float(chamber.chamber_radius_m),
-                "dual_polarized": chamber.num_polarizations >= 2,
-                "distribution": "ring",
-            },
+            "chamber_config": chamber_config_payload,
             "calibration_data": {
                 "entries": calibration_entries,
             },
@@ -589,6 +602,76 @@ class ChannelEngineClient:
             payload["pas_rotation"] = pas_rotation.to_dict()
 
         return payload
+
+    def _build_probe_positions(
+        self,
+        chamber: ChamberConfiguration,
+    ) -> Optional[List[Dict[str, float]]]:
+        """P1-10 (2026-05-19): 非 ring chamber 从 DB Probe 表读 per-probe
+        az/el, 编成 ChannelEgine Phase 8 ``probe_positions`` list.
+
+        Ring 路径 (默认): 返回 None, ChannelEgine 走 ``(p × 360°/N)`` 等距公式,
+        跟当前 lab 8-probe ring smoke 行为完全一致 (backward compat).
+
+        非 ring 路径 (multi-ring / custom): 查 DB Probe 表, 按 ``probe_number``
+        排序, 按 ``(az, el)`` dedupe (dual-polarized chamber 每个物理 probe 有
+        V + H 两行共享 position), 返回 ``num_probes`` 个 dict。fail-loud 三个
+        前提条件:
+        - 至少有 active probe (无则 chamber 配置半成品, raise);
+        - 每个 probe 都有 ``position.azimuth`` (无则 schema 漂移, raise);
+        - 物理 probe 个数 == ``chamber.num_probes`` (不对则 DB 跟 chamber
+          spec 漂移, raise — 跟 ChannelEgine Phase 8 validator 同语义)。
+        """
+        if chamber.probe_distribution == ProbeDistribution.RING.value:
+            return None
+
+        probes = self.db.query(Probe).filter(
+            Probe.chamber_config_id == chamber.id,
+            Probe.is_active == True,  # noqa: E712
+        ).order_by(Probe.probe_number).all()
+
+        if not probes:
+            raise ValueError(
+                f"chamber.probe_distribution={chamber.probe_distribution!r} "
+                f"requires probe_positions, but no active probes found for "
+                f"chamber {chamber.id}"
+            )
+
+        seen_positions: set = set()
+        positions: List[Dict[str, float]] = []
+        for probe in probes:
+            pos = probe.position or {}
+            az = pos.get("azimuth") if isinstance(pos, dict) else None
+            el = pos.get("elevation", 0.0) if isinstance(pos, dict) else 0.0
+            if az is None:
+                raise ValueError(
+                    f"probe {probe.probe_number} (chamber {chamber.id}) has "
+                    f"no azimuth in position field; cannot build probe_positions "
+                    f"for distribution={chamber.probe_distribution!r}"
+                )
+            key = (round(float(az), 4), round(float(el or 0.0), 4))
+            if key in seen_positions:
+                continue
+            seen_positions.add(key)
+            positions.append({
+                "azimuth_deg": float(az),
+                "elevation_deg": float(el or 0.0),
+            })
+
+        if len(positions) != chamber.num_probes:
+            raise ValueError(
+                f"chamber.probe_distribution={chamber.probe_distribution!r} "
+                f"expects len(probe_positions) == num_probes "
+                f"({chamber.num_probes}), but DB has {len(positions)} unique "
+                f"physical probe positions for chamber {chamber.id}; "
+                f"check Probe seeding or num_probes consistency"
+            )
+
+        logger.info(
+            f"Built {len(positions)} probe positions for chamber {chamber.id} "
+            f"(distribution={chamber.probe_distribution!r})"
+        )
+        return positions
 
     def _apply_pas_rotation(
         self,

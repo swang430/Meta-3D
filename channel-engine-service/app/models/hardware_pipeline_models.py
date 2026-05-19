@@ -33,14 +33,72 @@ from pydantic import BaseModel, Field, model_validator
 
 # ==================== 请求体子模型 ====================
 
+class ProbePosition(BaseModel):
+    """单 probe 物理位置 (P1-10 / ChannelEgine Phase 8).
+
+    跟 ChannelEgine ``mimo_ota_simulator.data_models.ProbePosition`` wire 完全
+    一致 (azimuth_deg ∈ [-360, 360], elevation_deg ∈ [-90, 90], 默认 0)。
+    MIMO-First 的 DB ``Probe.position`` 字段 (JSON {azimuth, elevation, radius})
+    直接 map 到这里; radius 走 ChamberConfig.radius_m chamber-wide uniform。
+    """
+    azimuth_deg: float = Field(
+        ..., ge=-360.0, le=360.0,
+        description="方位角 (水平面, 度数, CCW from +x). DB Probe.position.azimuth.",
+    )
+    elevation_deg: float = Field(
+        0.0, ge=-90.0, le=90.0,
+        description="仰角 (度数, 0=水平). DB Probe.position.elevation, 缺省 0.",
+    )
+
+
 class ChamberConfig(BaseModel):
-    """暗室物理配置"""
+    """暗室物理配置.
+
+    P1-10 (2026-05-19): ``distribution`` 取值跟 ChannelEgine Phase 8 对齐
+    (``ring`` / ``multi-ring`` / ``custom``)。``probe_positions`` 仅当
+    ``distribution != "ring"`` 时必填; ring 路径向后兼容, 走 ChannelEgine
+    ``(p × 360°/N)`` 等距公式。
+    """
     num_probes: int = Field(..., description="探头数量", ge=8, le=64)
     radius_m: float = Field(..., description="暗室半径 (m)", gt=0)
     dual_polarized: bool = Field(True, description="是否为双极化探头")
-    distribution: Literal["ring", "sphere", "custom"] = Field(
-        "ring", description="探头分布类型"
+    distribution: Literal["ring", "multi-ring", "custom"] = Field(
+        "ring",
+        description=(
+            "探头分布. 'ring' (默认): 等距单环, ChannelEgine 走 (p × 360°/N) 公式. "
+            "'multi-ring' / 'custom': 任意几何, 必须显式传 probe_positions."
+        ),
     )
+    probe_positions: Optional[List[ProbePosition]] = Field(
+        None,
+        description=(
+            "P1-10: 每 probe 物理 az/el. distribution != 'ring' 时必填且 "
+            "len() == num_probes; ring 时可省略 (Pydantic validator 强制此规则)."
+        ),
+    )
+
+    @model_validator(mode='after')
+    def _check_distribution_consistency(self) -> 'ChamberConfig':
+        """非 ring distribution 必须显式传 probe_positions 且长度等于 num_probes.
+
+        Why: ChannelEgine Phase 8 ``ChamberConfig`` 也做同样 check (cross-repo
+        spec). 在 MIMO-First 微服务侧也做一遍, 让 fail-loud 更早 (HTTP 422 vs
+        ChannelEgine 内部 ValueError 包成 generic 500)。
+        Ring 路径不要求 probe_positions, 保持现有 lab 8-probe ring smoke 向后
+        兼容; 但允许显式传 (会被 ChannelEgine 忽略, 走 ring 公式)。
+        """
+        if self.distribution != "ring" and not self.probe_positions:
+            raise ValueError(
+                f"distribution={self.distribution!r} requires probe_positions "
+                f"to be set (one per probe); got None."
+            )
+        if self.probe_positions is not None:
+            if len(self.probe_positions) != self.num_probes:
+                raise ValueError(
+                    f"probe_positions length ({len(self.probe_positions)}) "
+                    f"must match num_probes ({self.num_probes})."
+                )
+        return self
 
 
 class CalibrationEntry(BaseModel):

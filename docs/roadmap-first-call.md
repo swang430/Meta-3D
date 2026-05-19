@@ -710,6 +710,84 @@ attached**。这跟 P1-8 cal gate 完全同 pattern。
 
 ---
 
+### P1-10 — Non-Ring Chamber 几何 plumbing (closes P2-7 cross-repo half) 🔄 In progress (this PR)
+
+**What**: 关掉 [`docs/architecture/channel-engine-data-flow.md`](architecture/channel-engine-data-flow.md)
+点名的 "ring-only silent constraint" — `ChannelEngineClient._build_payload`
+此前硬编码 `chamber_config.distribution = "ring"`, probe 物理 az/el **不进**
+HTTP payload, 非标 chamber 配置 ChannelEgine silently 按 ring 等距推算, 物理
+几何跟 .asc 反映角度不符无人报错。本 PR 接通 MIMO-First 这边的 schema +
+DB plumbing (P2-7 step 4/5/6), 完成跨 repo 闭环。
+
+**Why ad-hoc promoted from P2-7**: ChannelEgine 那边 2026-05-19 主动 ship 了
+Phase 8 (cross-repo trigger 来自我们这条 architecture note), 加完 `ChamberConfig`
+新枚举 `'ring' / 'multi-ring' / 'custom'` + `probe_positions: Optional[List[ProbePosition]]`
++ `_check_distribution_consistency` validator + `_calculate_probe_positions` /
+`_calculate_weights_for_cluster` 真消费 az/el (不再 `(p × 360°/N)` 推算)。
+MIMO-First 这边不收尾就是浪费 cross-repo 协作 — 0.5-1 天 plumbing 把整条
+silent constraint 关掉, ROI 远好于继续 ⏸️ 等 PWS trigger。Promotion 走的就是
+"P1-8/P1-9 主动 audit silent failure mode → fail-loud gate" 同 spirit。
+
+**3 个 design 决策**:
+
+1. distribution enum 取值跟 ChannelEgine Phase 8 wire 完全一致 (`"ring"` /
+   `"multi-ring"` / `"custom"`) — 不发明新名字。历史 microservice schema
+   列了 `"sphere"` 但没人 actually 传过 (`channel_engine_client.py` 只写
+   `"ring"`), 现替换为 `"multi-ring"` 跟 ChannelEgine 对齐。
+2. ring 路径完全向后兼容: `ChamberConfiguration.probe_distribution` 列默认
+   `"ring"`, `server_default='ring'` 历史行回填同值 → payload 不带
+   `probe_positions` 字段, ChannelEgine 走原有 ring 公式, 现有 8-probe ring
+   lab smoke 0 回归。
+3. 非 ring fail-loud 三处 (defense in depth): (a) `channel-engine-service`
+   `ChamberConfig` Pydantic validator 422; (b) `ChannelEngineClient
+   ._build_probe_positions` `ValueError` (DB 无 probe / 缺 az / 数对不上);
+   (c) ChannelEgine `ChamberConfig` 自己也 validate 同语义。任何一层先 fail
+   都比 silent mis-synthesis 强。
+
+**Scope** (single PR):
+
+| Step | File | What |
+|---|---|---|
+| 1 | `api-service/app/models/chamber.py` | 加 `ProbeDistribution` 枚举 + `ChamberConfiguration.probe_distribution` 列 (default `"ring"`) |
+| 2 | `api-service/alembic/versions/f1d23a7b9c84_add_probe_distribution_p1_10.py` (NEW) | `server_default='ring'` 回填历史行, `column_exists` idempotent guard |
+| 3 | `channel-engine-service/app/models/hardware_pipeline_models.py` | 加 `ProbePosition` 模型 + `ChamberConfig.probe_positions` 字段 + `_check_distribution_consistency` validator; `distribution` Literal 跟 ChannelEgine 对齐 (`'sphere'` → `'multi-ring'`) |
+| 4 | `channel-engine-service/app/api/endpoints/hardware_pipeline.py` `_build_chamber_config` | `probe_positions` 翻译成 ChannelEgine `ProbePosition` list 透传 |
+| 5 | `api-service/app/services/channel_engine_client.py` | 加 `_build_probe_positions` (DB query Probe 表 + dedupe + fail-loud); `_build_payload` 用 `chamber.probe_distribution` + emit `probe_positions` 进 chamber_config |
+| 6 | `api-service/tests/test_channel_engine_probe_positions.py` (NEW) | 15 tests: 6 helper unit + 3 `_build_payload` chamber_config wire + 5 microservice schema validator + 1 sphere-rename alignment |
+
+**Acceptance**:
+
+- ring (默认) chamber → payload `chamber_config` 不带 `probe_positions`,
+  `distribution = "ring"`, 现有 8-probe ring lab smoke 完全不回归 (`tests/
+  test_channel_engine_real_path.py` P0-7 payload-shape regression 7/7 不掉)
+- custom chamber + 匹配 DB Probe → `payload.chamber_config.probe_positions`
+  == 物理 probe 列表 (按 `probe_number` 顺序, dual-pol 按 (az, el) dedupe)
+- multi-ring chamber 走 custom 同一路径
+- 非 ring + DB 无 probe / probe 缺 azimuth / 物理 probe 数对不上
+  `num_probes` → fail-loud (MIMO-First `ValueError`, microservice
+  `ValidationError`)
+- 15 new tests 全过 (P1-10) + existing `channel_engine_real_path` 8/8 不回归
+- commissioning smoke + e2e_p06 + cal/dut gate (62 tests downstream) 全过
+
+**Out of scope**:
+
+- Roadmap mark P1-10 ✅ Done + Summary counts 同步 + P2-7 entry 完整 ✅ archive
+  — 本 PR 是 in-progress, merge 后跟 P1-8/P1-9 pattern 一致用 docs catch-up
+  chore PR 收口 (per memory `feedback_d_row_stale_this_pr_reflex.md`)
+- GUI 端 chamber 编辑器加 `probe_distribution` 下拉 — P3 polish, 当前没
+  chamber CRUD UI 触发场景
+- ChannelEgine real-mode E2E 跑非 ring chamber — 本地有 `CHANNEL_ENGINE_PATH`
+  clone 就可以手测, 但 CI 跑不了 (P0-7 已有同 pattern env-gated skip)
+- measure phase 真消费 per-probe az/el — 现 ChannelEgine 内部已经做 (Phase 8
+  `_calculate_weights_for_cluster` 读真 az), MIMO-First 这边只负责把数据
+  透下去
+
+**Status**: 🔄 In progress — this PR
+**Estimate**: 0.5 day (实际 ~0.5 day local impl + tests + 1 cross-repo schema
+naming 对齐)
+
+---
+
 ## 🟡 P2 — Abstraction debt
 
 ### P2-1 — UXM two-layer architecture: Test App + Topology Profile ✅ Done
@@ -974,10 +1052,21 @@ NOT done (deferred):
 
 ---
 
-### P2-7 — 非 ring 暗室 probe 几何支持 (cross-repo)
+### P2-7 — 非 ring 暗室 probe 几何支持 (cross-repo) — ✅ Promoted to P1-10 (2026-05-19)
 
-**What**: 当前 commissioning → ChannelEgine 链路写死 `chamber_config.distribution
-= "ring"`, probe 物理 azimuth/elevation 角度**不进** HTTP payload。ChannelEgine
+**Status (2026-05-19)**: ChannelEgine 那边 Phase 8 主动 ship 完 (`'ring' /
+'multi-ring' / 'custom'` enum + `probe_positions` + 真消费 az/el, 不再
+`(p × 360°/N)` 假设); MIMO-First 这边 P1-10 (this PR) 收口 schema + DB
+plumbing 半 — 本 entry 保留作为完整 cross-repo design 历史, 实际 status
+跟踪挪到 [P1-10](#p1-10--non-ring-chamber-几何-plumbing-closes-p2-7-cross-repo-half--in-progress-this-pr)。
+ad-hoc promotion 原因: cross-repo 协作成本已花, 不收 MIMO-First 侧就是浪费,
+本地 P0 hardware-blocked 时 0.5 天 plumbing ROI 远好于继续 ⏸️ 等 trigger。
+
+---
+
+**What** (历史 design, kept for reference): 当前 commissioning → ChannelEgine
+链路写死 `chamber_config.distribution = "ring"`, probe 物理 azimuth/elevation
+角度**不进** HTTP payload。ChannelEgine
 内部按 `(port_id - 1) × 360° / num_probes` 推 ring 等间距假设 (3GPP TR 37.977
 §6.1 标准布局)。MIMO-First DB 里 `Probe` 表实际存了每个 probe 的真实
 `position: {azimuth, elevation}` (PAS rotation 代码读得到), 但这些角度从来没

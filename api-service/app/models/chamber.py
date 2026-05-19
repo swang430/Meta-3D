@@ -23,6 +23,24 @@ class ChamberType(str, enum.Enum):
     CUSTOM = "custom"  # 自定义配置
 
 
+class ProbeDistribution(str, enum.Enum):
+    """探头空间分布类型 (P1-10, 2026-05-19).
+
+    跟 ChannelEgine Phase 8 `ChamberConfig.distribution` 三选一对齐:
+    - RING (默认): 单一水平环, 探头按 (port-1)*360/N 等距摆位; 跟 lab 8-probe
+      ring 一致, 走 ChannelEgine 的 ring 公式。
+    - MULTI_RING: 多个水平环堆叠 (e.g. ring-3 在 0° 仰角 + ring-1 在 +60°),
+      需要传 probe_positions 给 ChannelEgine; 用于增强 elevation 覆盖。
+    - CUSTOM: 任意非均匀布局 (sparse / sector / PWS), 需要传 probe_positions。
+
+    DB 端用 String(50) 存; downstream 跟 ChannelEgine 的 wire format 完全一致
+    ("ring" / "multi-ring" / "custom")。
+    """
+    RING = "ring"
+    MULTI_RING = "multi-ring"
+    CUSTOM = "custom"
+
+
 class ChamberConfiguration(Base):
     """
     暗室配置模型
@@ -50,6 +68,18 @@ class ChamberConfiguration(Base):
     num_probes = Column(Integer, nullable=False, default=32, comment="探头数量")
     num_polarizations = Column(Integer, default=2, comment="极化数量: 1=单极化, 2=双极化")
     num_rings = Column(Integer, default=5, comment="探头环数")
+
+    # P1-10 (2026-05-19): 探头空间分布. ChannelEgine Phase 8 ChamberConfig
+    # 配套字段, 取值: "ring" (默认, 等距单环, 走 ChannelEgine ring 公式) /
+    # "multi-ring" (多环堆叠, 需要 probe_positions) / "custom" (任意非均匀,
+    # 需要 probe_positions). 历史数据全部回填 "ring" 保持向后兼容.
+    probe_distribution = Column(
+        String(20),
+        nullable=False,
+        default=ProbeDistribution.RING.value,
+        server_default=ProbeDistribution.RING.value,
+        comment="探头分布: ring (默认/等距) | multi-ring | custom (P1-10)",
+    )
 
     # === 硬件配置 (可选组件) ===
     has_lna = Column(Boolean, default=False, comment="是否配置 LNA (低噪放)")
