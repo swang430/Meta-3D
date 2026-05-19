@@ -351,6 +351,24 @@ class ImportProbePatternResponse(BaseModel):
     error: Optional[str] = None
 
 
+class ImportPhaseCalibrationResponse(BaseModel):
+    """ProbePhaseCalibration CSV 导入响应 (P1-5 local half)"""
+    success: bool
+    calibration_id: Optional[UUID] = None
+    invalidated_id: Optional[UUID] = Field(
+        None,
+        description=(
+            "若替换了同 (probe_id, polarization) 的有效旧 cert, 这是被 "
+            "invalidate 的旧记录 id"
+        ),
+    )
+    num_frequency_points: int = Field(
+        0, description="解析并入库的 CSV 数据行数 (= frequency 点数)"
+    )
+    warnings: List[str] = Field(default_factory=list)
+    error: Optional[str] = None
+
+
 # ==================== Link Calibration Schemas ====================
 
 class StandardDUT(BaseModel):

@@ -27,6 +27,7 @@ from app.schemas.probe_calibration import (
     # Phase
     StartPhaseCalibrationRequest,
     PhaseCalibrationResponse,
+    ImportPhaseCalibrationResponse,
     # Polarization
     StartPolarizationCalibrationRequest,
     PolarizationCalibrationResponse,
@@ -322,6 +323,100 @@ async def start_phase_calibration(
         status=CalibrationJobStatus.COMPLETED,
         estimated_duration_minutes=estimated_minutes,
         message=f"Phase calibration completed for {num_probes} probes, {num_polarizations} polarizations"
+    )
+
+
+@router.post(
+    "/phase/import-csv",
+    response_model=ImportPhaseCalibrationResponse,
+    status_code=201,
+)
+async def import_phase_calibration_csv_endpoint(
+    file: UploadFile = File(
+        ...,
+        description=(
+            "CSV file with header line containing exactly the columns "
+            "frequency_mhz, phase_offset_deg, group_delay_ns, "
+            "phase_uncertainty_deg (any order); one data row per frequency point."
+        ),
+    ),
+    probe_id: int = Form(..., description="探头编号 (0..PROBE_ID_MAX)"),
+    polarization: str = Form(..., description="极化: V / H / LHCP / RHCP"),
+    reference_probe_id: int = Form(0, description="参考探头 (typically 0)"),
+    vna_model: Optional[str] = Form(None, description="VNA 型号 (traceability)"),
+    vna_serial: Optional[str] = Form(None, description="VNA 序列号"),
+    calibrated_by: str = Form("csv_import", description="操作人员标识"),
+    replace_existing: bool = Form(
+        True,
+        description=(
+            "True = 把同 (probe_id, polarization) 的旧有效 cert 置为 "
+            "INVALIDATED 后再写新行; False = 并存 (仅做跨证书对比时用)"
+        ),
+    ),
+    allow_unwrapped_phase: bool = Form(
+        False,
+        description=(
+            "True = 跳过 ±180° wrap-bound 校验 (操作员明知传 unwrapped 数据); "
+            "默认 False — 严格 wrap, 防止单位/解包错误"
+        ),
+    ),
+    db: Session = Depends(get_db),
+) -> ImportPhaseCalibrationResponse:
+    """P1-5 local half — offline CSV import for probe phase calibration.
+
+    操作员用外部 VNA 测得每个 probe 相对参考 probe 的 phase offset + group delay +
+    uncertainty (per frequency), 导出 CSV, 通过本端点入库。绕过 SCPI 流程,
+    适用 on-site 之前在 lab 单独跑过 VNA 测量 + 想把数据预导入做 dry-run 的场景。
+
+    Spec v1.0 CSV format (header line + data rows):
+
+    ```csv
+    frequency_mhz,phase_offset_deg,group_delay_ns,phase_uncertainty_deg
+    3400,-12.5,0.85,2.1
+    3450,-12.8,0.86,2.1
+    ...
+    ```
+
+    入库后行为跟 mock `POST /phase/start` 完全一致 — 同样的 ProbePhaseCalibration
+    行结构, status=VALID, valid_until=now+90d, 可被 GET /phase/{probe_id} 消费。
+
+    Returns:
+        ImportPhaseCalibrationResponse — 含新 calibration_id 和导入统计
+    """
+    from app.services.probe_phase_calibration_import import (
+        import_phase_calibration_from_csv,
+    )
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Uploaded CSV is empty")
+
+    result = import_phase_calibration_from_csv(
+        db,
+        file_content=raw,
+        probe_id=probe_id,
+        polarization=polarization,
+        reference_probe_id=reference_probe_id,
+        vna_model=vna_model,
+        vna_serial=vna_serial,
+        calibrated_by=calibrated_by,
+        replace_existing=replace_existing,
+        allow_unwrapped_phase=allow_unwrapped_phase,
+    )
+
+    if not result.success:
+        # 400: 错在 payload/CSV 内容; 422 留给 FastAPI Form-field 验证失败
+        raise HTTPException(
+            status_code=400,
+            detail=result.error or "Phase calibration CSV import failed",
+        )
+
+    return ImportPhaseCalibrationResponse(
+        success=True,
+        calibration_id=UUID(result.calibration_id) if result.calibration_id else None,
+        invalidated_id=UUID(result.invalidated_id) if result.invalidated_id else None,
+        num_frequency_points=result.num_frequency_points,
+        warnings=result.warnings,
     )
 
 

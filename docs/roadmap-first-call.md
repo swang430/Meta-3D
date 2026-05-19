@@ -8,27 +8,19 @@
 
 ## 🎯 Current Focus
 
-**P0-7 — Channel-Engine real-mode path + external_asc debug mode (this PR).**
+**P1-5 local half — CAL-04 phase calibration offline CSV import (this PR).**
 
-ChannelEgine 远端 Phase 0-6 全部 merged (strict_pfs 生产可用, 详见
-[`ChannelEgine/CLAUDE.md`](../../ChannelEgine/CLAUDE.md) "Cross-project
-context")。MIMO-First 侧的 channel-engine-service adapter 三层 API
-全错, 任何 `mimo_first_asc` engine mode 请求都静默 fallback 到 mock
-→ 操作员拿到的"channel synthesis"实际是 1-tap Doppler shift placeholder,
-**不是真实 PFS 信道**。下次现场之前必须修, 否则 `mimo_first_asc` 路径
-在现场也跑假数据。
+P0-7 ✅ merged (PR #56) 2026-05-18 — ChannelEgine real-mode path 跟上 Phase 0-6,
+external_asc debug 模式上线。P0-3/4/5 仍然 on-site-blocked。
 
-P0-3/4/5 仍然 on-site-blocked。P0-7 补位 Current Focus 因为它是 P0-tier
-(生产假数据 + 现场必需) 且 remote-doable。P1-5 local half + P2-4 在
-P0-7 完成后排队。
+P1-5 (CAL-04 phase calibration) 在路线图被显式拆成"local 0.5 day + on-site 0.5 day",
+local 部分允许提前 ship。本 PR 落地 local half: 操作员用外部 VNA 测好 per-probe
+per-frequency phase 数据导出 CSV, 通过 multipart endpoint 直接 ingest 到
+`probe_phase_calibrations` 表。on-site half (SCPI-driven live measurement) 等下次
+现场, 不在本 PR 范围。
 
-- **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
-- Anything that's not the Current Focus item and not a triviality (<30 min)
-  gets appended to the backlog instead of done inline.
-
-When the next on-site opens, Current Focus must move back to **P0-3**
-(or whichever P0 is unblocked first) per WIP=1 sequencing, regardless
-of which remote items are in flight at that moment.
+下次现场打开时, Current Focus 必须切回 **P0-3** (或最先解锁的 P0) per WIP=1。
+P1-5 on-site half + P2-4 在 P0 解锁前排队。
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
@@ -315,7 +307,7 @@ non-StaticPool configurations.
 
 ---
 
-### P0-7 — Channel-Engine real-mode path + external_asc debug mode 🔄 In progress (this PR)
+### P0-7 — Channel-Engine real-mode path + external_asc debug mode ✅ Done (PR #56)
 
 **What** (three coupled issues fixed together):
 
@@ -358,8 +350,11 @@ OpenAPI contract sync (4 步标准流程: openapi.yaml + `npm run openapi:genera
 - 单元测试: payload shape 含全部新字段; assertion 错误指向具体字段
 - Memory + roadmap: 3 个 PFS memory 更新到 post-Phase-6 现状, P2-6 标 Done (指向 ChannelEgine PR #1-#6), 两条 backlog 关闭
 
-**Status**: 🔄 In progress — this PR
-**Estimate**: 2-3 days
+**Status**: ✅ Done — PR #56 (merged 2026-05-18). Codex P2 follow-up in
+the same PR moved the engine-selector + asc_source_path TextInput from
+post-session unreachable code into pre-session UI so external_asc
+sessions can actually be created.
+**Estimate**: 2-3 days planned, actual ~1 day
 
 ---
 
@@ -468,8 +463,16 @@ tests) avoids a costly rebuild when PWS lands.
 **Acceptance**: phase cal cert generated; quiet zone metric improves
 vs uncalibrated baseline.
 
-**Status**: `[ ]` not started
-**Estimate**: on-site 0.5 day + local 0.5 day
+**Two halves**:
+
+| Half | Scope | Status |
+|---|---|---|
+| **Local** | Offline CSV import: operator measures per-probe per-frequency phase with external VNA → exports CSV → `POST /api/v1/probe-calibrations/phase/import-csv` ingests directly into `probe_phase_calibrations`. No SCPI, no hardware. Enables phase-cert workflow to exist on the production code path before live measurement is built. | ✅ Done — this PR |
+| **On-site** | Replace the mock body of `POST /phase/start` with real SCPI sequence (CE injects tone → SA measures phase per probe, looped through topology switch). Requires real CE+SA at chamber. | 🔄 Not started, blocked on next on-site |
+
+**Status**: 🟡 Half done — local CSV-import path shipped (this PR);
+on-site SCPI workflow still pending real-chamber measurement
+**Estimate**: 0.5 day local (this PR), 0.5 day on-site (next trip)
 
 ### P1-6 — FS16 / UXM / ENA silent-reconnect integration tests
 
@@ -1087,19 +1090,19 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 
 ## 📊 Summary
 
-> Counts as of 2026-05-18 (post P0-7 promotion + P2-6 close via ChannelEgine
-> Phase 0-6). Full-sweep flaky count remains **0**. Of the 9 open items, 6
-> are 🚧 blocked-on-hardware and 3 are remote-doable (P0-7 this PR + P1-5
-> local half + P2-4 NAT/firewall verification but P2-4 needs on-site too).
+> Counts as of 2026-05-19 (post P0-7 merge #56 + P1-5 local-half ship).
+> Full-sweep flaky count remains **0**. Of the 8 open items, 7 are
+> 🚧 blocked-on-hardware (3 × P0 + P1-5 on-site half + P1-1/P1-2/P1-4
+> + P2-4) and 1 is fully remote (P1-6, gated on idle-close incident).
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 34 | — | — |
-| 🔴 P0 (first-call critical) | 4 open / 7 total | 6-7 days | 4 days |
-| 🟠 P1 (confidence) | 4 open / 6 total | 3 days | 2.5 days |
+| ✅ Done | 35 | — | — |
+| 🔴 P0 (first-call critical) | 3 open / 7 total | 4 days | 4 days |
+| 🟠 P1 (confidence) | 4 open / 6 total | 2.5 days | 2 days |
 | 🟡 P2 (abstraction debt) | 1 open / 6 total | 0.5 day | 0.5 day |
 | 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
-| **Total open** | **9** | **~10 days** | **7 days** |
+| **Total open** | **8** | **~7 days** | **6.5 days** |
 
 ---
 
