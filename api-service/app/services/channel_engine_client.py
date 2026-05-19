@@ -27,7 +27,7 @@ import io
 import base64
 import zipfile
 import logging
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Literal, Optional, Any
 from uuid import UUID
 from dataclasses import dataclass, field
 from enum import Enum
@@ -179,8 +179,8 @@ class ChannelEngineClient:
         self,
         chamber_id: UUID,
         frequency_hz: float,
-        clusters: List[CDLCluster],
-        cdl_model_name: str,
+        clusters: Optional[List[CDLCluster]] = None,
+        cdl_model_name: str = "UMa CDL-C NLOS",
         pathloss_db: float = 100.0,
         is_los: bool = False,
         tx_antenna: Optional[AntennaConfig] = None,
@@ -194,6 +194,14 @@ class ChannelEngineClient:
         synthesis_method: str = "strict_pfs",
         ue_velocity_mps: Optional[List[float]] = None,
         k_factor_db: Optional[float] = None,
+        # 2026-05-19 P1-7 / Spec v2.1: dispatch + standard-mode 字段
+        input_mode: Literal["standard", "custom"] = "custom",
+        scenario_name: Optional[str] = None,
+        cluster_model_name: Optional[str] = None,
+        force_condition: Optional[Literal["LOS", "NLOS", "auto"]] = "auto",
+        bs_position: Optional[List[float]] = None,
+        ue_position: Optional[List[float]] = None,
+        random_seed: Optional[int] = None,
     ) -> HardwarePipelineResult:
         """
         调用 Channel Engine 硬件流水线合成 API。
@@ -245,9 +253,14 @@ class ChannelEngineClient:
         )
 
         # ----- Step 2.5: Automatic PAS Rotation (GCM 合规性) -----
-        pas_result = self._apply_pas_rotation(
-            clusters=clusters, chamber=chamber
-        )
+        # P1-7: PAS rotation 只在 custom mode (操作员/上游提供簇) 才有意义;
+        # standard mode 由 ChannelEgine 内部 38.901 generator 生成簇, 不需要
+        # MIMO-First 这边再做旋转。clusters 是 None 时跳过.
+        pas_result = None
+        if clusters and input_mode == "custom":
+            pas_result = self._apply_pas_rotation(
+                clusters=clusters, chamber=chamber
+            )
 
         # ----- Step 3: 组装 Payload -----
         payload = self._build_payload(
@@ -268,13 +281,28 @@ class ChannelEngineClient:
             synthesis_method=synthesis_method,
             ue_velocity_mps=ue_velocity_mps,
             k_factor_db=k_factor_db,
+            input_mode=input_mode,
+            scenario_name=scenario_name,
+            cluster_model_name=cluster_model_name,
+            force_condition=force_condition,
+            bs_position=bs_position,
+            ue_position=ue_position,
+            random_seed=random_seed,
         )
 
-        logger.info(
-            f"Sending to CE [{cdl_model_name}]: "
-            f"{len(clusters)} clusters, "
-            f"{len(calibration_entries)} cal entries"
-        )
+        if input_mode == "standard":
+            logger.info(
+                f"Sending to CE (standard 38.901) [{cdl_model_name}]: "
+                f"scenario={scenario_name} cluster_model={cluster_model_name} "
+                f"force_condition={force_condition} "
+                f"{len(calibration_entries)} cal entries"
+            )
+        else:
+            logger.info(
+                f"Sending to CE (custom CDL) [{cdl_model_name}]: "
+                f"{len(clusters or [])} clusters, "
+                f"{len(calibration_entries)} cal entries"
+            )
 
         # ----- Step 4: 调用 CE -----
         try:
@@ -450,7 +478,7 @@ class ChannelEngineClient:
         chamber: ChamberConfiguration,
         calibration_entries: List[Dict],
         frequency_hz: float,
-        clusters: List[CDLCluster],
+        clusters: Optional[List[CDLCluster]],
         cdl_model_name: str,
         pathloss_db: float,
         is_los: bool,
@@ -465,9 +493,24 @@ class ChannelEngineClient:
         synthesis_method: str = "strict_pfs",
         ue_velocity_mps: Optional[List[float]] = None,
         k_factor_db: Optional[float] = None,
+        # 2026-05-19 P1-7 / Spec v2.1: dispatch + standard 3GPP 字段
+        input_mode: Literal["standard", "custom"] = "custom",
+        scenario_name: Optional[str] = None,
+        cluster_model_name: Optional[str] = None,
+        force_condition: Optional[Literal["LOS", "NLOS", "auto"]] = "auto",
+        bs_position: Optional[List[float]] = None,
+        ue_position: Optional[List[float]] = None,
+        random_seed: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """组装 Spec v2.0 请求 Payload (含 Phase 5/6 字段)"""
-        payload = {
+        """组装 Spec v2.1 请求 Payload (Phase 5/6 字段 + P1-7 input_mode 分路)。
+
+        custom mode: cdl_model_data.clusters 含操作员/上游提供的簇列表。
+        standard mode: cdl_model_data.clusters = None, 顶层加 standard_3gpp 子模型
+        (scenario_name + cluster_model_name + force_condition + bs/ue positions
+        + random_seed). 微服务按 input_mode 分路到 ChannelEgine
+        `CustomCDLBuilder` 或 `Standard3GPPBuilder`.
+        """
+        payload: Dict[str, Any] = {
             "chamber_config": {
                 "num_probes": chamber.num_probes,
                 "radius_m": float(chamber.chamber_radius_m),
@@ -507,22 +550,39 @@ class ChannelEngineClient:
                 "pathloss_db": pathloss_db,
                 "is_los": is_los,
                 "k_factor_db": k_factor_db,
-                "clusters": [
-                    {
-                        "delay_s": c.delay_s,
-                        "power_relative_linear": c.power_relative_linear,
-                        "aoa_deg": c.aoa_deg,
-                        "aod_deg": c.aod_deg,
-                        "zoa_deg": c.zoa_deg,
-                        "zod_deg": c.zod_deg,
-                        "as_aoa_deg": c.as_aoa_deg,
-                        "xpr_db": c.xpr_db,
-                        "initial_phases_rad": c.initial_phases_rad,
-                    }
-                    for c in clusters
-                ],
+                "clusters": (
+                    [
+                        {
+                            "delay_s": c.delay_s,
+                            "power_relative_linear": c.power_relative_linear,
+                            "aoa_deg": c.aoa_deg,
+                            "aod_deg": c.aod_deg,
+                            "zoa_deg": c.zoa_deg,
+                            "zod_deg": c.zod_deg,
+                            "as_aoa_deg": c.as_aoa_deg,
+                            "xpr_db": c.xpr_db,
+                            "initial_phases_rad": c.initial_phases_rad,
+                        }
+                        for c in clusters
+                    ]
+                    if clusters
+                    else None
+                ),
             },
+            "input_mode": input_mode,
         }
+
+        if input_mode == "standard":
+            payload["standard_3gpp"] = {
+                "scenario_name": scenario_name,
+                "cluster_model_name": cluster_model_name,
+                "force_condition": force_condition,
+                # bs/ue positions: 给默认值 (3GPP TR 38.901 §7.2 典型几何),
+                # 操作员可以覆盖
+                "bs_position": bs_position or [0.0, 0.0, 25.0],
+                "ue_position": ue_position or [50.0, 0.0, 1.5],
+                "random_seed": random_seed,
+            }
 
         # 附加 PAS 旋转元数据供 CE 和上层使用
         if pas_rotation and pas_rotation.applied:

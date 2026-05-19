@@ -8,16 +8,18 @@
 
 ## 🎯 Current Focus
 
-**P1-5 local half — CAL-04 phase calibration offline CSV import (this PR).**
+**P1-7 — CDL data source wire-up: commissioning → ChannelEgine 标准 38.901 (this PR).**
 
-P0-7 ✅ merged (PR #56) 2026-05-18 — ChannelEgine real-mode path 跟上 Phase 0-6,
-external_asc debug 模式上线。P0-3/4/5 仍然 on-site-blocked。
+P0-7 (#56) + P1-5 local half (#57) + chore key fix (#58) 全 merged。WIP=1 释放。
+P0-3/4/5 仍然 on-site-blocked。P1-7 接 P0-7 留下的最后一段漂移: `asc_strategy.py:66`
+硬编码 `CDLCluster(delay_s=0.0, power_relative_linear=1.0)  # Mock`, 即使 P0-7
+把客户端 + 微服务 + ChannelEgine library 都修通了, **commissioning `mimo_first_asc`
+模式实际打到 ChannelEgine 的还是 1 个 placeholder 簇**, 不是真 3GPP 多径。
 
-P1-5 (CAL-04 phase calibration) 在路线图被显式拆成"local 0.5 day + on-site 0.5 day",
-local 部分允许提前 ship。本 PR 落地 local half: 操作员用外部 VNA 测好 per-probe
-per-frequency phase 数据导出 CSV, 通过 multipart endpoint 直接 ingest 到
-`probe_phase_calibrations` 表。on-site half (SCPI-driven live measurement) 等下次
-现场, 不在本 PR 范围。
+P1-7 设计: ChannelEgine 当 3GPP 权威源 (它已经实现了 7 scenarios × 7 cluster
+models × 2 conditions, `Standard3GPPBuilder` 是 Phase 5+ stable API), MIMO-First
+只解析 cdl_model_name 字符串成 (scenario, cluster_model, condition) 并透传,
+不复制 38.901 表到本 repo。
 
 下次现场打开时, Current Focus 必须切回 **P0-3** (或最先解锁的 P0) per WIP=1。
 P1-5 on-site half + P2-4 在 P0 解锁前排队。
@@ -484,6 +486,85 @@ evidence.
 **Status**: `[ ]` not started — pulled forward only if a real
 production idle-close is seen on those drivers
 **Estimate**: 0.5 day
+
+---
+
+### P1-7 — CDL data source wire-up: commissioning → ChannelEgine standard 38.901 🔄 In progress (this PR)
+
+**What** (closes P0-7's upstream mock gap):
+
+P0-7 (PR #56) 把 client + 微服务 + ChannelEgine library 三层之间的 API mismatch
+全修了, 端到端 e2e gated test 也跑通。但 commissioning `mimo_first_asc` 实际
+被调用站点 [`asc_strategy.py:62-77`](../api-service/app/services/channel_generation/asc_strategy.py#L62)
+仍然是:
+
+```python
+pipeline_result = await self.ce_client.synthesize_hardware_pipeline(
+    chamber_id=...,
+    frequency_hz=...,
+    clusters=[
+        CDLCluster(delay_s=0.0, power_relative_linear=1.0)   # ← Mock, 1 cluster
+    ],
+    cdl_model_name=cdl_model_data.get("model_name", "UMa CDL-C NLOS"),
+    # synthesis_method / ue_velocity_mps / k_factor_db: 完全没传, 走 default
+    ...
+)
+```
+
+操作员选 "UMa CDL-C NLOS" 等 3GPP 标准模型, 通过 GUI 触发 commissioning measure
+phase → 实际打到 ChannelEgine 的是 strict_pfs 算 **1 簇** 的 OTA 信道, 不是 38.901
+完整 multi-path。P0-7 在 client 加的 Phase 5/6 字段 (xpr_db / k_factor_db /
+initial_phases_rad / polarization / synthesis_method / ue_velocity_mps) 在这个
+调用站点全部没透传, 全部走 client signature 的 default。
+
+**Why P1 (not P0)**: 不是 silently broken — `cdl_model_name` 透传到 microservice
+response 里, 操作员能看到。`keysight_gcm` 走 vendor F64 GCM Studio 路径不受影响,
+`external_asc` 走操作员手工 .asc 也不受影响。所以现场可以用其他两个 mode 跑
+first-call。但 `mimo_first_asc` 是宣称的"production default", 这条不修等于这条
+路径还停在 placeholder 状态, 不能算 GA。
+
+**Design — ChannelEgine 当 3GPP 权威源** (B 方案):
+
+ChannelEgine 已经在 [`mimo_ota_simulator/channel_builders.py:17`](/Users/Simon/Tools/ChannelEgine/mimo_ota_simulator/channel_builders.py#L17)
+实现 `Standard3GPPBuilder`, 通过 `TargetChannelConfig(input_mode='standard',
+model_name=..., cluster_model_name=...)` 调用 `ChannelSimulator` 内部 38.901
+generator。MIMO-First **不复制** 38.901 表到本 repo, 只:
+
+- 解析 `cdl_model_name` "UMa CDL-C NLOS" → `(scenario="UMa", cluster_model="CDL-C", condition="NLOS")`
+  — 这只是字符串规约, 不是 3GPP 数据
+- 透传 scenario + cluster_model + force_condition + bs/ue position + velocity 给微服务
+- 微服务发 `input_mode='standard'` 给 ChannelEgine, 后者用自己的表生成簇
+
+合理性: A 方案 (MIMO-First 复制 38.901 表) 在 ChannelEgine 升级时会漂; B 方案
+单点 source of truth, 任何 ChannelEgine 模型更新对 MIMO-First 透明。
+
+**Scope** (6 steps, single PR):
+
+| Step | Subject | Files |
+|------|---------|-------|
+| 1 | 微服务 `HardwarePipelineRequest` schema 加 `input_mode: Literal['standard','custom']` + standard-path 字段 (`scenario_name`, `cluster_model_name`, `force_condition`, `bs_position`, `ue_position`, `random_seed`). Custom path 字段保持向后兼容。 | `channel-engine-service/app/models/hardware_pipeline_models.py` |
+| 2 | 微服务 `_run_real_synthesis` 按 `input_mode` 分路: standard → `TargetChannelConfig(input_mode='standard', model_name=..., cluster_model_name=..., ...)`; custom → 现有 `CustomCDLProfile` 路径不变。 | `channel-engine-service/app/api/endpoints/hardware_pipeline.py` |
+| 3 | api-service 新 `cdl_model_parser` 服务: `"UMa CDL-C NLOS"` → `(scenario, cluster_model, condition)`. 规约表 (7 scenarios × 7 cluster_models × 2 conditions) 枚举为 Python 常量, 不是 3GPP 数据。未知名 → raise ValueError。 | `api-service/app/services/cdl_model_parser.py` (new) |
+| 4 | `ChannelEngineClient.synthesize_hardware_pipeline` 签名加 `input_mode` + standard-path 参数, `_build_payload` 按 mode 分路。`clusters` 改 Optional (standard 模式不用)。向后兼容: 不传 `input_mode` 默认 `'custom'` 保持 P0-7 行为。 | `api-service/app/services/channel_engine_client.py` |
+| 5 | `asc_strategy.py.generate_and_load` 重写: 删 `Mock` cluster, 调解析器拿 (scenario, cluster_model, condition), 调 client `input_mode='standard'` + 透传 Phase 5/6 字段 (synthesis_method='strict_pfs', ue_velocity_mps 从 simulation_rules 派生, k_factor_db None 让 ChannelEgine 内部默认)。 | `api-service/app/services/channel_generation/asc_strategy.py` |
+| 6 | 测试: 解析器单元 (7×7×2 + 几个 invalid) + payload-shape (standard mode 不带 clusters, 带 scenario/cluster) + e2e gated on `CHANNEL_ENGINE_PATH` (standard 路径返回非 placeholder, total_files > 1 cluster baseline). Revert-reapply 验证。 | `tests/test_cdl_model_parser.py` (new), `tests/test_channel_engine_real_path.py` (扩展) |
+
+**Acceptance**:
+
+- 解析器覆盖 7 scenarios (`UMa`/`UMi-StreetCanyon`/`UMi-OpenArea`/`RMa`/`InH-Office`/`SMa`/`InF`) × 7 cluster_models (`Stochastic`/`CDL-A..E`/`SCME`) × 2 conditions (`LOS`/`NLOS`) — 命中即可拆, 不命中 raise ValueError
+- 微服务 `input_mode='standard'` 路径调 ChannelEgine 后, response 跟 P0-7 的 custom 路径行为一致 (status='success' / mock_mode=False / 非 1-cluster placeholder zip 大小)
+- `asc_strategy.py` 不再 grep 到 `# Mock` 注释或 `delay_s=0.0, power_relative_linear=1.0` 硬编码 cluster
+- e2e gated test (`CHANNEL_ENGINE_PATH` 设好): standard 模式生成的 zip 包含**多于 1 簇** 的 channel impulse response (通过 PropsimASCIIExporter 输出文件数 / 总 zip 大小验证)
+- 现有 P0-7 e2e (`test_channelegine_api_still_callable_with_our_adapter_args`) 不回归
+
+**Out of scope**:
+
+- HTTP distributed test (api-service → 真的 HTTP → 微服务): P0-7 留下的同一个 gap, 单独跟进
+- 操作员 GUI 加 `scenario` / `cluster_model` 独立下拉: 现有 `cdl_model_name` 单字符串足够, 解析器在 api-service 端拆。GUI 后续要细化 (例如让操作员单独改 force_condition) 时再开 PR
+- UMa CDL-C **LOS** 模式 K-factor 操作员定制 (现在用 ChannelEgine 内部默认值)
+
+**Status**: 🔄 In progress — this PR
+**Estimate**: 1-1.5 days
 
 ---
 
@@ -1090,19 +1171,19 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 
 ## 📊 Summary
 
-> Counts as of 2026-05-19 (post P0-7 merge #56 + P1-5 local-half ship).
-> Full-sweep flaky count remains **0**. Of the 8 open items, 7 are
+> Counts as of 2026-05-19 (post P0-7 #56 + P1-5 local-half #57 + chore #58 merged).
+> Full-sweep flaky count remains **0**. Of the 9 open items, 7 are
 > 🚧 blocked-on-hardware (3 × P0 + P1-5 on-site half + P1-1/P1-2/P1-4
-> + P2-4) and 1 is fully remote (P1-6, gated on idle-close incident).
+> + P2-4); 1 fully-remote-doable (P1-7, this PR); 1 gated (P1-6 on idle-close incident).
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
 | ✅ Done | 35 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 7 total | 4 days | 4 days |
-| 🟠 P1 (confidence) | 4 open / 6 total | 2.5 days | 2 days |
+| 🟠 P1 (confidence) | 5 open / 7 total | 4 days | 2 days |
 | 🟡 P2 (abstraction debt) | 1 open / 6 total | 0.5 day | 0.5 day |
 | 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
-| **Total open** | **8** | **~7 days** | **6.5 days** |
+| **Total open** | **9** | **~8.5 days** | **6.5 days** |
 
 ---
 

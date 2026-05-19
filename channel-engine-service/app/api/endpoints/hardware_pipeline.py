@@ -149,10 +149,16 @@ async def synthesize_hardware_pipeline(
         num_ports = chamber.num_probes * (2 if chamber.dual_polarized else 1)
         total_files = num_tx * num_ports
 
+        # cdl_data.clusters is None in standard mode (ChannelEgine generates them)
+        cluster_count_str = (
+            f"{len(cdl_data.clusters)} clusters (custom)"
+            if cdl_data.clusters is not None
+            else f"{request.input_mode} mode (clusters from ChannelEgine)"
+        )
         logger.info(
             f"Hardware pipeline [{cdl_data.model_name}]: "
             f"{chamber.num_probes} probes, "
-            f"{len(cdl_data.clusters)} clusters, "
+            f"{cluster_count_str}, "
             f"freq={sim_rules.center_frequency_hz/1e9:.2f} GHz"
         )
 
@@ -304,7 +310,13 @@ def _build_chamber_config(request: HardwarePipelineRequest):
 
 
 def _build_target_channel_config(request: HardwarePipelineRequest, profile):
-    """微服务 SimulationRules + CustomCDLProfile → ChannelEgine TargetChannelConfig."""
+    """微服务 SimulationRules + (CustomCDLProfile | Standard3GPPConfig) →
+    ChannelEgine TargetChannelConfig. 按 request.input_mode 分路.
+
+    - 'custom' (P0-7 路径): CustomCDLProfile 喂 ChannelEgine `CustomCDLBuilder`
+    - 'standard' (P1-7 新增): 透传 scenario / cluster_model / positions, 让
+      ChannelEgine `Standard3GPPBuilder` 内部 38.901 generator 生成簇集
+    """
     from mimo_ota_simulator.data_models import (  # type: ignore
         AntennaArrayConfig, TargetChannelConfig as CETargetChannelConfig,
     )
@@ -321,12 +333,48 @@ def _build_target_channel_config(request: HardwarePipelineRequest, profile):
             polarization=ant.polarization,  # Phase 6 dual-pol 关键字段
         )
 
-    return CETargetChannelConfig(
-        input_mode="custom",
-        custom_profile=profile,
+    # UE velocity: 跟 _build_custom_cdl_profile 同一规则 (3-vec 优先, 否则
+    # 从 kph 派生). standard 路径里 TargetChannelConfig.ue_velocity 是 m/s 3-vec.
+    if sim_rules.ue_velocity_mps is not None:
+        ue_velocity = list(sim_rules.ue_velocity_mps)
+    else:
+        ue_velocity = [sim_rules.ue_velocity_kph / 3.6, 0.0, 0.0]
+
+    common_kwargs = dict(
         center_frequency_hz=sim_rules.center_frequency_hz,
         tx_antenna=_antenna(sim_rules.tx_antenna),
         rx_antenna=_antenna(sim_rules.rx_antenna),
+        ue_velocity=ue_velocity,
+    )
+
+    if request.input_mode == "standard":
+        std = request.standard_3gpp
+        if std is None:
+            # schema validator 应该已经拦了, 但防御性 raise 给清晰错误
+            raise ValueError(
+                "input_mode='standard' but request.standard_3gpp is None "
+                "(schema validator should have caught this)"
+            )
+        return CETargetChannelConfig(
+            input_mode="standard",
+            model_name=std.scenario_name,
+            cluster_model_name=std.cluster_model_name,
+            bs_position=std.bs_position,
+            ue_position=std.ue_position,
+            random_seed=std.random_seed,
+            # force_condition: 'auto' 不传 (让 ChannelEgine 用 None default
+            # = scenario 几何概率), 显式 LOS/NLOS 才透传
+            force_condition=(
+                None if std.force_condition == "auto" else std.force_condition
+            ),
+            **common_kwargs,
+        )
+
+    # input_mode == "custom" (P0-7 路径不变)
+    return CETargetChannelConfig(
+        input_mode="custom",
+        custom_profile=profile,
+        **common_kwargs,
     )
 
 
@@ -344,7 +392,14 @@ def _run_real_synthesis(SimulatorClass, request: HardwarePipelineRequest):
     from mimo_ota_simulator.data_models import PropsimExportConfig  # type: ignore
     from mimo_ota_simulator.exporters import PropsimASCIIExporter  # type: ignore
 
-    profile = _build_custom_cdl_profile(request)
+    # 2026-05-19 P1-7: standard mode 不需要 CustomCDLProfile (ChannelEgine
+    # `Standard3GPPBuilder` 内部生成簇), 跳过这一步避免对 cdl_model_data.clusters
+    # 的 None 解引用 (clusters 在 standard 模式是 Optional).
+    profile = (
+        _build_custom_cdl_profile(request)
+        if request.input_mode == "custom"
+        else None
+    )
     chamber_cfg = _build_chamber_config(request)
     channel_cfg = _build_target_channel_config(request, profile)
 

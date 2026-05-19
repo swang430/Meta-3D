@@ -139,6 +139,115 @@ class TestChannelEngineClientPayloadShape:
 
 
 # ---------------------------------------------------------------------------
+# (1b) P1-7 — standard 3GPP mode payload-shape contract
+# ---------------------------------------------------------------------------
+
+class TestStandard3GPPPayloadShape:
+    """P1-7 (2026-05-19): pin the standard-mode payload structure so future
+    plumbing drops surface immediately. Verifies:
+
+    - clusters omitted (None) — ChannelEgine generates from 38.901 table
+    - top-level input_mode='standard'
+    - standard_3gpp sub-model carries scenario / cluster / condition / positions
+    - back-compat: omitting input_mode defaults to 'custom' (P0-7 behavior)
+    """
+
+    def _chamber(self):
+        from app.models.chamber import ChamberConfiguration
+
+        return ChamberConfiguration(
+            id=uuid.uuid4(), name="std-test", chamber_type="type_a",
+            chamber_radius_m=1.5, quiet_zone_diameter_m=0.6,
+            num_probes=16, num_polarizations=2, num_rings=4,
+            is_system_preset=False, is_active=True,
+        )
+
+    def test_standard_mode_payload_clusters_omitted(self):
+        from app.services.channel_engine_client import (
+            AntennaConfig, ChannelEngineClient,
+        )
+        client = ChannelEngineClient(db=None)
+        p = client._build_payload(
+            chamber=self._chamber(),
+            calibration_entries=[],
+            frequency_hz=3.5e9,
+            clusters=None,
+            cdl_model_name="UMa CDL-C NLOS",
+            pathloss_db=88.5,
+            is_los=False,
+            tx_antenna=AntennaConfig(polarization="V"),
+            rx_antenna=AntennaConfig(polarization="H"),
+            target_tx_power_dbm=0.0, target_rsrp_dbm=-85.0,
+            target_snr_db=20.0, ue_velocity_kph=15.0,
+            input_mode="standard",
+            scenario_name="UMa",
+            cluster_model_name="CDL-C",
+            force_condition="NLOS",
+            random_seed=42,
+        )
+        assert p["input_mode"] == "standard"
+        assert p["cdl_model_data"]["clusters"] is None, (
+            "standard mode must omit clusters; ChannelEgine generates them"
+        )
+
+    def test_standard_mode_carries_standard_3gpp_sub_model(self):
+        from app.services.channel_engine_client import (
+            AntennaConfig, ChannelEngineClient,
+        )
+        client = ChannelEngineClient(db=None)
+        p = client._build_payload(
+            chamber=self._chamber(),
+            calibration_entries=[],
+            frequency_hz=3.5e9,
+            clusters=None,
+            cdl_model_name="UMa CDL-C NLOS",
+            pathloss_db=88.5,
+            is_los=False,
+            tx_antenna=AntennaConfig(), rx_antenna=AntennaConfig(),
+            target_tx_power_dbm=0.0, target_rsrp_dbm=-85.0,
+            target_snr_db=20.0, ue_velocity_kph=15.0,
+            input_mode="standard",
+            scenario_name="UMa",
+            cluster_model_name="CDL-C",
+            force_condition="NLOS",
+            bs_position=[0.0, 0.0, 30.0],
+            ue_position=[60.0, 0.0, 1.5],
+            random_seed=42,
+        )
+        std = p["standard_3gpp"]
+        assert std["scenario_name"] == "UMa"
+        assert std["cluster_model_name"] == "CDL-C"
+        assert std["force_condition"] == "NLOS"
+        assert std["bs_position"] == [0.0, 0.0, 30.0]
+        assert std["ue_position"] == [60.0, 0.0, 1.5]
+        assert std["random_seed"] == 42
+
+    def test_custom_mode_default_back_compat(self):
+        """Omitting input_mode keeps P0-7 behavior — clusters present, no
+        standard_3gpp sub-model."""
+        from app.services.channel_engine_client import (
+            AntennaConfig, CDLCluster, ChannelEngineClient,
+        )
+        client = ChannelEngineClient(db=None)
+        p = client._build_payload(
+            chamber=self._chamber(),
+            calibration_entries=[],
+            frequency_hz=3.5e9,
+            clusters=[CDLCluster()],
+            cdl_model_name="custom",
+            pathloss_db=88.5,
+            is_los=False,
+            tx_antenna=AntennaConfig(), rx_antenna=AntennaConfig(),
+            target_tx_power_dbm=0.0, target_rsrp_dbm=-85.0,
+            target_snr_db=20.0, ue_velocity_kph=15.0,
+        )
+        assert p["input_mode"] == "custom"
+        assert p["cdl_model_data"]["clusters"] is not None
+        assert len(p["cdl_model_data"]["clusters"]) == 1
+        assert "standard_3gpp" not in p
+
+
+# ---------------------------------------------------------------------------
 # (2) engine_mode='external_asc' schema gate
 # ---------------------------------------------------------------------------
 
@@ -274,4 +383,61 @@ class TestChannelEngineRealSynthesis:
         assert len(zip_base64) > 10_000, (
             f"ZIP unexpectedly small ({len(zip_base64)} chars) — "
             f"ChannelEgine may have changed exporter shape"
+        )
+
+    def test_standard_3gpp_path_produces_multi_cluster_channel(self):
+        """P1-7: standard-mode (ChannelEgine `Standard3GPPBuilder`) must
+        produce a channel with multiple clusters — not the 1-cluster
+        placeholder that `asc_strategy.py` was sending pre-fix.
+
+        Verifies by zip size: P0-7's 1-cluster custom-mode baseline was
+        ~86 KB; CDL-C UMa NLOS has ~24 sub-clusters per the 38.901 table,
+        so the standard-mode zip should be significantly larger.
+        """
+        sys.path.insert(0, CHANNEL_ENGINE_PATH)
+        from mimo_ota_simulator.data_models import (  # type: ignore
+            AntennaArrayConfig, ChamberConfig, PropsimExportConfig,
+            TargetChannelConfig,
+        )
+        from mimo_ota_simulator.exporters import PropsimASCIIExporter  # type: ignore
+        from mimo_ota_simulator.simulator import MIMO_OTA_Simulator  # type: ignore
+
+        chamber = ChamberConfig(
+            num_probes=16, dual_polarized=True, distribution="ring", radius_m=1.5,
+        )
+        # Standard-mode TargetChannelConfig — no custom_profile, just
+        # scenario / cluster_model that ChannelEgine resolves internally.
+        channel = TargetChannelConfig(
+            input_mode="standard",
+            model_name="UMa",
+            cluster_model_name="CDL-C",
+            center_frequency_hz=3.5e9,
+            tx_antenna=AntennaArrayConfig(num_cols=2, polarization="V"),
+            rx_antenna=AntennaArrayConfig(num_cols=2, polarization="H"),
+            ue_velocity=[4.17, 0.0, 0.0],
+        )
+
+        result = MIMO_OTA_Simulator().run(
+            chamber, channel, synthesis_method="strict_pfs",
+        )
+        # Standard-mode result must carry the actual clusters ChannelEgine
+        # generated from the 38.901 table.
+        assert "clusters" in result or "channel_impulse_response" in result
+
+        exporter = PropsimASCIIExporter(PropsimExportConfig(
+            filename="std_test.asc", mode="B",
+            duration_s=0.1, sample_rate_hz=1000.0,
+        ))
+        zip_base64 = exporter.export_to_zip_memory(
+            result, base_name="standard-3gpp-test", direction="dl",
+        )
+        # CDL-C has ~24 clusters per TR 38.901 §7.7.1 — zip should be
+        # multi-cluster sized (much larger than 1-cluster ~86 KB baseline).
+        # Threshold 200 KB chosen with margin so a future refactor that
+        # accidentally drops cluster generation surfaces immediately.
+        assert len(zip_base64) > 200_000, (
+            f"Standard-mode zip ({len(zip_base64)} chars) is suspiciously "
+            f"close to 1-cluster baseline (~86 KB) — `Standard3GPPBuilder` "
+            f"may not be generating multi-cluster output. Check "
+            f"`channel_builders.py` Standard3GPPBuilder path."
         )
