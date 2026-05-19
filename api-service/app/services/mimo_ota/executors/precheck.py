@@ -9,8 +9,6 @@ import logging
 from datetime import datetime
 from typing import Any, Dict
 
-from sqlalchemy import desc
-
 from app.models.probe_calibration import (
     CalibrationStatus,
     ProbePathLossCalibration,
@@ -176,30 +174,60 @@ class PrecheckExecutor(IStepExecutor):
             warnings.append("No calibration_certificate bound to TestCase or LabProfile")
 
         # Path-loss calibration row (used by Phase 3 generation pipeline).
-        # Pass chamber.id as UUID directly — UUID(as_uuid=True) column accepts
-        # the model attribute as-is. The previous .hex/str().replace("-","")
-        # workaround mis-fed a 32-char hex string into the UUID type processor,
-        # crashing SQLite tests with "'str' object has no attribute 'hex'".
-        latest_pl = (
-            context.db.query(ProbePathLossCalibration)
-            .filter(
-                ProbePathLossCalibration.chamber_id == chamber.id,
-                ProbePathLossCalibration.status == CalibrationStatus.VALID.value,
-            )
-            .order_by(desc(ProbePathLossCalibration.calibrated_at))
-            .first()
+        # 2026-05-19 P1-8 (Codex P1 on commit 42af8ca): use the same
+        # frequency-matched lookup that the measure phase uses, otherwise
+        # an old/different-band VALID cert could pass precheck but leave
+        # measure phase with no usable cert (silent fallback we're trying
+        # to prevent). The ProbePathLossCalibrationService applies a ±5%
+        # frequency window (e.g. 3500 MHz target matches 3325-3675 MHz certs)
+        # — same windowing measure.py uses at
+        # api-service/app/services/mimo_ota/executors/measure.py:254.
+        from app.services.path_loss_calibration_service import (
+            ProbePathLossCalibrationService,
         )
+
+        target_freq_mhz = config.frequency_hz / 1e6
+        pl_service = ProbePathLossCalibrationService(context.db, use_mock=False)
+        latest_pl = pl_service.get_latest_calibration(chamber.id, target_freq_mhz)
+
+        result_payload["path_loss_calibration_target_frequency_mhz"] = target_freq_mhz
         if latest_pl is not None:
             age_h = (datetime.utcnow() - latest_pl.calibrated_at).total_seconds() / 3600.0
             result_payload["path_loss_calibration_valid"] = True
             result_payload["path_loss_calibration_age_hours"] = age_h
-            messages.append(f"Path-loss calibration: VALID (age {age_h:.1f}h)")
-        else:
-            result_payload["path_loss_calibration_valid"] = False
-            warnings.append(
-                "No valid ProbePathLossCalibration for this chamber — "
-                "Phase 3 will fall back to default cable loss"
+            result_payload["path_loss_calibration_frequency_mhz"] = latest_pl.frequency_mhz
+            messages.append(
+                f"Path-loss calibration: VALID (age {age_h:.1f}h, "
+                f"cert@{latest_pl.frequency_mhz:.0f} MHz matches target "
+                f"{target_freq_mhz:.0f} MHz within ±5% window)"
             )
+        else:
+            # Disambiguate the two failure modes for audit trail / operator UX:
+            # - chamber has no VALID cert at all
+            # - chamber has VALID cert(s), just none in the ±5% window
+            any_valid_for_chamber = (
+                context.db.query(ProbePathLossCalibration)
+                .filter(
+                    ProbePathLossCalibration.chamber_id == chamber.id,
+                    ProbePathLossCalibration.status == CalibrationStatus.VALID.value,
+                )
+                .first()
+            )
+            result_payload["path_loss_calibration_valid"] = False
+            if any_valid_for_chamber is not None:
+                result_payload["path_loss_calibration_reason"] = "frequency_out_of_window"
+                warnings.append(
+                    f"No ProbePathLossCalibration in ±5% window of "
+                    f"{target_freq_mhz:.0f} MHz for this chamber "
+                    f"(chamber has VALID cert(s) but none at matching frequency) — "
+                    f"Phase 3 will fall back to default cable loss"
+                )
+            else:
+                result_payload["path_loss_calibration_reason"] = "no_cert_for_chamber"
+                warnings.append(
+                    "No valid ProbePathLossCalibration for this chamber — "
+                    "Phase 3 will fall back to default cable loss"
+                )
 
         # --- 4. Quiet zone ripple (Phase 2f: cross-probe pattern variation proxy) ---
         from app.services.probe_pattern.consumer import estimate_quiet_zone_ripple_db
@@ -229,11 +257,50 @@ class PrecheckExecutor(IStepExecutor):
             f"[{result_payload['quiet_zone_ripple_source']}]"
         )
 
-        # --- 5. Overall verdict ---
+        # --- 5. Calibration gate (P1-8, 2026-05-19) ---
+        # 默认 strict: path_loss_cal 必有 + cal_cert 若存在则 overall_pass=True;
+        # 显式 opt-out (config.precheck_strict_cal=False) 跳过 gate 维持 audit-only 行为.
+        path_loss_valid = result_payload.get("path_loss_calibration_valid", False)
+        cal_cert_broken = cal_cert is not None and not cal_cert.overall_pass
+        cal_cert_missing_only = cal_cert is None  # warning, not FAIL — see P1-8 design #1
+
+        if config.precheck_strict_cal:
+            cal_pass = path_loss_valid and (not cal_cert_broken)
+            cal_pass_reason_parts: list[str] = []
+            if not path_loss_valid:
+                cal_pass_reason_parts.append(
+                    "path-loss calibration missing or invalid "
+                    "(no VALID ProbePathLossCalibration for this chamber)"
+                )
+            if cal_cert_broken:
+                cal_pass_reason_parts.append(
+                    f"calibration_certificate not passed "
+                    f"(cert={cal_cert.certificate_number}, overall_pass=False)"
+                )
+            cal_pass_reason = "; ".join(cal_pass_reason_parts) if cal_pass_reason_parts else "ok"
+        else:
+            # Bypass: cal_pass forced True but audit trail tells you which
+            # gate(s) would have failed under strict mode. Lets ops grep the
+            # measurements row to know "this run happened despite missing cal".
+            cal_pass = True
+            bypass_parts: list[str] = []
+            if not path_loss_valid:
+                bypass_parts.append("path-loss calibration missing")
+            if cal_cert_broken:
+                bypass_parts.append("cal_cert.overall_pass=False")
+            if cal_cert_missing_only:
+                bypass_parts.append("cal_cert is None")
+            bypass_suffix = f" (would-fail-under-strict: {', '.join(bypass_parts)})" if bypass_parts else ""
+            cal_pass_reason = f"bypassed via precheck_strict_cal=False{bypass_suffix}"
+
+        result_payload["cal_pass"] = cal_pass
+        result_payload["cal_pass_reason"] = cal_pass_reason
+
+        # --- 6. Overall verdict ---
         critical_online = all(
             instruments_online.get(k, False) for k in _CRITICAL_INSTRUMENT_CATEGORIES
         )
-        overall_pass = critical_online and qz_pass and ue_cap_pass
+        overall_pass = critical_online and qz_pass and ue_cap_pass and cal_pass
         result_payload["critical_instruments_online"] = critical_online
         result_payload["overall_pass"] = overall_pass
         result_payload["messages"] = messages
@@ -260,6 +327,8 @@ class PrecheckExecutor(IStepExecutor):
                     f"UE max_dl_layers={ue_cap.get('max_dl_layers')} < requested "
                     f"{config.mimo_layers}"
                 )
+            if not cal_pass:
+                failure_reason.append(cal_pass_reason)
             return StepExecutionResult(
                 status=StepExecutionStatus.FAILED,
                 measurements=result_payload,
