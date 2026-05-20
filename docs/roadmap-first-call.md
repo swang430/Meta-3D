@@ -8,7 +8,9 @@
 
 ## 🎯 Current Focus
 
-**无 — 等下次现场触发 P0-3/4/5。本地可启动 P1 已清空。**
+**P2-8 — 主控制台重设计为操作驾驶舱 (本地可启动)。** P0/P1 全 on-site-blocked,
+用阻塞期做这个纯前端 confidence 项 (零新后端, 接已有 readiness / WS / log API)。
+下次现场打开时, 本项让位, Current Focus 切回 **P0-3** per WIP=1。
 
 P1-7 (#59) + P1-8 (#61) + P1-9 (#63) + P1-10 (#64) 全 merged。Commissioning →
 ChannelEgine 链路第一次形成完整闭环 (P1-7 拆掉 hardcoded mock cluster, 走
@@ -25,7 +27,8 @@ constraint, non-ring chamber 几何透传 ChannelEgine, 同时收口 P2-7 cross-
 > section 翻 ✅ Done, Current Focus 切换, Summary counts 同步, P2-7 标 cross-repo
 > 关闭不再计 open (per memory `feedback_d_row_stale_this_pr_reflex.md`)。
 
-**严格按 trigger 筛, 本地可启动的 P0/P1/P2 是 0 个**:
+**on-site / blocked 项 (本地启动不了, 等现场或事件触发) —— 这些都不是
+Current Focus, P2-8 是**:
 
 | ID | Status | 触发条件 / blocker |
 |----|--------|------------------|
@@ -36,11 +39,12 @@ constraint, non-ring chamber 几何透传 ChannelEgine, 同时收口 P2-7 cross-
 | P1-6 | ⏸️ incident-conditional hold | trigger = 真 idle-close 出现在 FS16/UXM/ENA (当前没证据) |
 | P2-4 | 🚧 on-site | NAT/FW idle-drop hypothesis 现场 verify |
 
-下次现场打开时, Current Focus 必须切回 **P0-3** (或最先解锁的 P0) per WIP=1。
-当前唯一 sensible 的本地工作 = **主动 audit silent failure modes** (Codex 这次抓
-到 cal gate + frequency window 2 个, audit ROI 已经证明; 主动找下一个 = 下次现
-场前 quality 投资)。Audit 如果挖到东西 = candidate for P1-11 promotion; 没挖到 =
-进 "Known unknowns" 留档。
+下次现场打开时, Current Focus 必须切回 **P0-3** (或最先解锁的 P0) per WIP=1,
+P2-8 让位。当前本地 focus = **P2-8 主控制台重设计** (P0/P1 全 blocked 期间的
+confidence 投资, 纯前端接已有 API/WS)。P2-8 做完若现场仍未开, 退回到 **主动
+audit silent failure modes** (此前抓了 P1-8 cal gate + frequency window + P1-9
+DUT-attach + P1-10 ring-only, audit ROI 已反复证明); 挖到东西 = candidate for
+P1-11 promotion; 没挖到 = 进 "Known unknowns" 留档。
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
@@ -1125,6 +1129,61 @@ PR merged 后做 plumbing
 
 ---
 
+### P2-8 — 主控制台重设计为操作驾驶舱 (Operational Cockpit)
+
+**What**: 现有 Dashboard (`gui/src/App.tsx` 1294-1456) 本质是"统计摘要 + 导航
+快捷键"——4 个静态计数 + 3 个导航按钮 + 一个后端未实现 (`/test-executions/recent`
+TODO, 现 mock) 的最近测试表 + 取了不渲染的 `liveMetrics` 死字段。真正的实时
+能力 (WebSocket 指标 / execution 监控 / log 流) 割裂在下方独立 `Monitoring`
+组件。重设计为单屏 4 区操作驾驶舱: ①系统就绪带 ②运行态 ③实时指标 ④实时
+日志+告警, 并**合并吸收 `Monitoring` 组件** (删独立组件 + 导航项), 消除割裂。
+
+**Why**: 现 Dashboard 回答"系统里有多少东西", 不回答操作员现场真正要问的
+"能不能开测 / 卡在哪 / 在跑什么 / 报错没"。后端探查确认 cockpit 所需数据全部
+**已实现可用** (readiness composite snapshot + execution 状态机 + 2 个 WS 流 +
+system-logs + cert 有效期 + alerts), **零新后端**, 纯前端接已有 API/WS。
+①就绪带把 commissioning precheck 的 fail-loud gate 信息 (P1-8 校准 / P1-9
+DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
+
+**4 个设计原则**:
+1. **计数 → 状态** — 不是"3 个告警"而是"哪 3 个、多严重、什么颜色"
+2. **实时优先** — 首屏即 WS, 不靠手动刷新
+3. **就绪前置** — 顶部常驻就绪带 = 一眼"能不能开测 + 被什么卡住"
+4. **消灭死数据/mock** — `recentTests` TODO 与 `liveMetrics` 未渲染都清理或接真源
+
+**Scope** (single PR, 全 4 区一把做):
+
+| Zone | 数据源 | What |
+|---|---|---|
+| ① 系统就绪带 | `GET /instruments/hal/readiness` | 顶部常驻 traffic-light: 驱动链 / 活动 Lab / 校准证书(剩 N 天) / DUT attach 各 🟢🟡🔴 + 一句话总判 (可/不可开测 + 阻塞原因) |
+| ② 运行态 | execution 查询 (轮询 2-3s) | 当前 execution 名称/DUT/状态机阶段/进度条/已用时 + 队列深度; 空闲时一键去 TestManagement |
+| ③ 实时指标 | `WS /ws/monitoring` (1Hz) | QZ均匀度/SNR/EIRP/吞吐/温度 sparkline + 当前值 + 期望范围合规色; 复用 `RealtimeMetricsCard` / `ExecutionMetricsCard` + `useMonitoringWebSocket` |
+| ④ 实时日志+告警 | `GET /system-logs/tail` + `/dashboard/alerts` | log 流 (INFO/WARN/ERR 过滤 + 搜索 + 自动滚, 迁移自 Monitoring) + 活动告警按严重度 |
+| ⑤ 整合清理 | — | 删独立 `Monitoring` 组件 + 导航项, 能力并入主控制台; `liveMetrics` / `fetchRecentTests` 死路径清理 |
+
+**Acceptance**:
+- 首屏即显示 readiness 真值; DUT 未 attach / 证书过期等阻塞态用红色 + 文字明示
+  (文案跟 commissioning precheck FAIL 一致)
+- WS 断线自动重连, 指标卡显示 last-known + 断线标记 (不白屏)
+- 有 active execution 时运行态显示真实阶段/进度; 无 execution 显示空闲态
+- log 区接真 `system-logs/tail`, 过滤/搜索/自动滚动可用
+- 删独立 Monitoring 导航项后无悬空引用; `liveMetrics` 死字段 + `fetchRecentTests`
+  mock 路径清理或接真源
+- 复用现有 `useMonitoringWebSocket` hook, 不重复造 WS 逻辑
+
+**Out of scope**:
+- 后端告警规则引擎 (自动产 alert) — 仍是独立待实现项 (CLAUDE.md 注记), 本 PR
+  只消费现有 `/dashboard/alerts`
+- `/test-executions/recent` 后端实现 — 若运行态/历史需要再单开; 本 PR 优先用
+  现有 `/test-executions` 查询
+- 暗黑模式 / 移动端响应式布局 — P3 polish
+
+**Status**: `[ ]` not started — **本地可启动, 设为 Current Focus** (本地 P0/P1
+全 on-site-blocked 期间的 confidence 投资)
+**Estimate**: 2 days (纯前端 + 接已有 API/WS; 全 4 区一把做)
+
+---
+
 ## 🟢 P3 — Polish / tooling
 
 ### P3-1 — HAL Reload confirm dialog ✅ Done (this PR)
@@ -1465,9 +1524,10 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 
 ## 📊 Summary
 
-> Counts as of 2026-05-20 (post P0-7 #56 + P1-5 local-half #57 + chore #58 + P1-7 #59 + P1-8 #61 + P1-9 #63 + P1-10 #64 merged + 本 docs-catchup PR 矫正 roadmap)。
-> Full-sweep flaky count remains **0**。8 个 open items 全部 not-immediately-startable
-> (按 trigger condition 筛, 本地可启动的 P0/P1/P2 = 0):
+> Counts as of 2026-05-20 (post P1-7 #59 + P1-8 #61 + P1-9 #63 + P1-10 #64 merged
+> + #65 counts catch-up + 本 PR 加 P2-8 主控制台重设计)。
+> Full-sweep flaky count remains **0**。9 个 open items 中 **1 个本地可启动** (P2-8,
+> = 当前 Current Focus), 其余 8 个 not-immediately-startable:
 > - 7 个 🚧 blocked-on-hardware (3 × P0 + P1-2 + P1-4 + P1-5 on-site half + P2-4)
 > - 1 个 ⏸️ incident-conditional hold (P1-6 FS16/UXM/ENA, trigger = 真 idle-close 出现, 当前没证据 — 仍计 open since `Status: [ ] not started`)
 >
@@ -1475,19 +1535,22 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 > P1-10 (#64) 已关掉整条 cross-repo silent constraint, P2-7 promote 进 P1-10
 > (Done), 不再计 open。
 >
-> 本地唯一 sensible 工作 = **主动 audit silent failure modes** (此前抓了 P1-8 cal
-> gate + frequency window + P1-9 DUT-attach gate + P1-10 ring-only constraint,
-> audit ROI 已反复证明); 挖到东西可 promote 为 P1-11; 没挖到进 "Known unknowns"
-> 留档。详见 Current Focus 段。
+> P2-8 (主控制台重设计为操作驾驶舱) 新增: 现 Dashboard 是"统计摘要 + 导航快捷键"
+> 价值低, 后端 cockpit 数据 (readiness / WS / system-logs / cert / alerts) 全已
+> 实现, 纯前端可做 → 用 P0/P1 blocked 期做的 confidence 项, 设为 Current Focus。
+> 做完若现场仍未开, 退回 **主动 audit silent failure modes** (此前抓了 P1-8 cal
+> gate + frequency window + P1-9 DUT-attach + P1-10 ring-only, audit ROI 已反复
+> 证明); 挖到东西 promote 为 P1-11; 没挖到进 "Known unknowns" 留档。详见 Current
+> Focus 段。
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
 | ✅ Done | 39 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 7 total | 4 days | 4 days |
 | 🟠 P1 (confidence) | 4 open / 10 total | 3 days | 2 days |
-| 🟡 P2 (abstraction debt) | 1 open / 6 total | 0.5 day | 0.5 day |
+| 🟡 P2 (abstraction debt) | 2 open / 7 total | 2.5 days | 0.5 day |
 | 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
-| **Total open** | **8** | **~7.5 days** | **6.5 days** |
+| **Total open** | **9** | **~9.5 days** | **6.5 days** |
 
 ---
 
