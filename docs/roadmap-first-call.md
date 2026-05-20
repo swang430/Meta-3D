@@ -1487,7 +1487,7 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 | 🟠 P1 (confidence) | 4 open / 10 total | 3 days | 2 days |
 | 🟡 P2 (abstraction debt) | 1 open / 6 total | 0.5 day | 0.5 day |
 | 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
-| **Total open** | **8** | **~9 days** | **6.5 days** |
+| **Total open** | **8** | **~7.5 days** | **6.5 days** |
 
 ---
 
