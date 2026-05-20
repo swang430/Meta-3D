@@ -34,6 +34,11 @@ import type {
   CreateTestCasePayload,
   CreateTestCaseResponse,
   DeleteTestCaseResponse,
+  HALReadinessResponse,
+  TestExecutionListResponse,
+  SystemLogTailResponse,
+  DashboardAlertListResponse,
+  DashboardAlertSummary,
 } from '../types/api'
 
 const systemStatus = [
@@ -54,6 +59,185 @@ const liveMetrics: MetricItem[] = [
   { label: '测试进度', value: '62%' },
   { label: '静区幅度波纹', value: '0.9 dB' },
 ]
+
+// ── P2-8 Operational Cockpit mock fixtures ──
+
+const readinessSnapshot: HALReadinessResponse = {
+  available: true,
+  drivers: [
+    {
+      category: 'channelEmulator',
+      model: 'PROPSIM F64',
+      endpoint: 'TCPIP0::192.168.0.132::inst0::INSTR',
+      status: 'ok',
+      detail: 'IDN verified, ATE Server reachable',
+      extras: { firmware_version: '9.2.1', product_family: 'F64' },
+    },
+    {
+      category: 'baseStation',
+      model: 'UXM 5G',
+      endpoint: 'TCPIP0::192.168.1.40::hislip0::INSTR',
+      status: 'ok',
+      detail: 'Test App detected: 5G NR FR1',
+      extras: {},
+    },
+    {
+      category: 'signalAnalyzer',
+      model: 'N9042B',
+      endpoint: 'TCPIP0::192.168.1.55::inst0::INSTR',
+      status: 'skipped',
+      detail: 'not bound in active lab profile',
+      extras: {},
+    },
+  ],
+  lab_profile: {
+    profile_id: 'lab-001',
+    profile_name: 'CAICT MPAC 暗室 A',
+    is_active: true,
+    status: 'ok',
+    detail: "active LabProfile 'CAICT MPAC 暗室 A'",
+  },
+  calibration: {
+    certificate_number: 'CERT-2026-0421',
+    valid_until_iso: '2026-06-30T00:00:00',
+    status: 'valid',
+    days_remaining: 41,
+    detail: 'certificate CERT-2026-0421 valid for 41 more day(s)',
+  },
+  dut_attach: {
+    status: 'not_implemented',
+    detail:
+      'DUT attach sensing not implemented in this build (no probe-sensing / RFID / session table yet — future P3 item)',
+  },
+  generated_at_iso: new Date().toISOString(),
+}
+
+const testExecutions: TestExecutionListResponse = {
+  total: 3,
+  items: [
+    {
+      id: 'exec-3001',
+      test_plan_id: 'plan-001',
+      test_plan_name: 'NR FR1 城市 UMi 吞吐回放',
+      test_plan_version: '1.2',
+      status: 'completed',
+      total_steps: 12,
+      completed_steps: 12,
+      failed_steps: 0,
+      skipped_steps: 0,
+      success_rate: 100,
+      started_at: '2026-05-20T09:10:00',
+      completed_at: '2026-05-20T09:48:00',
+      duration_minutes: 38,
+      error_summary: null,
+      notes: null,
+      started_by: 'operator',
+      created_at: '2026-05-20T09:10:00',
+    },
+    {
+      id: 'exec-3000',
+      test_plan_id: 'plan-002',
+      test_plan_name: '静区均匀度扫描',
+      test_plan_version: '2.0',
+      status: 'failed',
+      total_steps: 8,
+      completed_steps: 5,
+      failed_steps: 1,
+      skipped_steps: 2,
+      success_rate: 62.5,
+      started_at: '2026-05-19T15:02:00',
+      completed_at: '2026-05-19T15:21:00',
+      duration_minutes: 19,
+      error_summary: 'probe #17 反馈延迟超阈值，阶段 6 中止',
+      notes: null,
+      started_by: 'operator',
+      created_at: '2026-05-19T15:02:00',
+    },
+    {
+      id: 'exec-2999',
+      test_plan_id: 'plan-001',
+      test_plan_name: 'NR FR1 城市 UMi 吞吐回放',
+      test_plan_version: '1.1',
+      status: 'cancelled',
+      total_steps: 12,
+      completed_steps: 3,
+      failed_steps: 0,
+      skipped_steps: 0,
+      success_rate: 25,
+      started_at: '2026-05-19T11:00:00',
+      completed_at: '2026-05-19T11:09:00',
+      duration_minutes: 9,
+      error_summary: null,
+      notes: '操作员手动取消',
+      started_by: 'operator',
+      created_at: '2026-05-19T11:00:00',
+    },
+  ],
+}
+
+const systemLogTail: SystemLogTailResponse = {
+  filename: 'app.log',
+  total_lines_read: 6,
+  filtered_count: 6,
+  entries: [
+    { ts: '2026-05-20T09:48:01', level: 'INFO', logger: 'app.execution', hal_mode: 'real', session_id: 's-3001', instrument_id: '-', msg: '执行 exec-3001 完成，成功率 100%', raw: null },
+    { ts: '2026-05-20T09:47:55', level: 'INFO', logger: 'app.hal.propsim_f64', hal_mode: 'real', session_id: 's-3001', instrument_id: 'F64-01', msg: '信道仿真器刷新多径权重', raw: null },
+    { ts: '2026-05-20T09:47:40', level: 'WARNING', logger: 'app.probe', hal_mode: 'real', session_id: 's-3001', instrument_id: 'probe-17', msg: '探头#17反馈延迟偏差 1.4ms', raw: null },
+    { ts: '2026-05-20T09:47:10', level: 'DEBUG', logger: 'app.monitoring', hal_mode: 'real', session_id: 's-3001', instrument_id: '-', msg: '静区均匀度采样 0.9 dB', raw: null },
+    { ts: '2026-05-20T09:46:30', level: 'ERROR', logger: 'app.hal.uxm', hal_mode: 'real', session_id: 's-3001', instrument_id: 'UXM-01', msg: 'SCPI 超时，已重试 1 次后恢复', raw: null },
+    { ts: '2026-05-20T09:46:00', level: 'INFO', logger: 'app.execution', hal_mode: 'real', session_id: 's-3001', instrument_id: '-', msg: '执行 exec-3001 开始', raw: null },
+  ],
+}
+
+const dashboardAlerts: DashboardAlertListResponse = {
+  total: 2,
+  alerts: [
+    {
+      id: 'AL-1024',
+      title: '放大器温度接近上限',
+      message: '功放模块温度 78°C，接近 80°C 阈值',
+      severity: 'warning',
+      alert_type: 'thermal',
+      source: 'monitoring',
+      status: 'active',
+      is_read: false,
+      related_entity_type: null,
+      related_entity_id: null,
+      created_at: '2026-05-20T10:21:00',
+      updated_at: '2026-05-20T10:21:00',
+      acknowledged_at: null,
+      resolved_at: null,
+      created_by: 'monitoring',
+      acknowledged_by: null,
+    },
+    {
+      id: 'AL-1026',
+      title: '探头#17反馈延迟偏差',
+      message: '反馈延迟偏差 1.4ms',
+      severity: 'info',
+      alert_type: 'probe',
+      source: 'monitoring',
+      status: 'active',
+      is_read: false,
+      related_entity_type: null,
+      related_entity_id: null,
+      created_at: '2026-05-20T09:58:00',
+      updated_at: '2026-05-20T09:58:00',
+      acknowledged_at: null,
+      resolved_at: null,
+      created_by: 'monitoring',
+      acknowledged_by: null,
+    },
+  ],
+}
+
+const dashboardAlertSummary: DashboardAlertSummary = {
+  total_active: 2,
+  info_count: 1,
+  warning_count: 1,
+  error_count: 0,
+  critical_count: 0,
+}
 
 // Mock probe data - minimal schema for type checking
 // NOTE: Real data comes from backend API at /api/v1/probes
@@ -1205,6 +1389,34 @@ export const mockDatabase = {
   },
   getRecentTests(): RecentTestsResponse {
     return { recentTests: clone(recentTests) }
+  },
+  // ── P2-8 Operational Cockpit ──
+  getReadiness(): HALReadinessResponse {
+    return clone({ ...readinessSnapshot, generated_at_iso: new Date().toISOString() })
+  },
+  getTestExecutions(limit?: number): TestExecutionListResponse {
+    const items = typeof limit === 'number' ? testExecutions.items.slice(0, limit) : testExecutions.items
+    return clone({ total: testExecutions.total, items })
+  },
+  getSystemLogsTail(filename?: string, level?: string, keyword?: string): SystemLogTailResponse {
+    let entries = systemLogTail.entries
+    if (level) entries = entries.filter((e) => e.level.toUpperCase() === level.toUpperCase())
+    if (keyword) {
+      const kw = keyword.toLowerCase()
+      entries = entries.filter((e) => e.msg.toLowerCase().includes(kw) || e.logger.toLowerCase().includes(kw))
+    }
+    return clone({
+      filename: filename || systemLogTail.filename,
+      total_lines_read: systemLogTail.entries.length,
+      filtered_count: entries.length,
+      entries,
+    })
+  },
+  getDashboardAlerts(): DashboardAlertListResponse {
+    return clone(dashboardAlerts)
+  },
+  getDashboardAlertSummary(): DashboardAlertSummary {
+    return clone(dashboardAlertSummary)
   },
   getReportTemplates(): ReportTemplatesResponse {
     return { reportTemplates: clone(reportTemplates) }

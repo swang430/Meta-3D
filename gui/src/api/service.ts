@@ -36,6 +36,11 @@ import type {
   UpdateChamberPayload,
   RequiredCalibrationsResponse,
   LinkBudgetResponse,
+  HALReadinessResponse,
+  TestExecutionListResponse,
+  SystemLogTailResponse,
+  DashboardAlertListResponse,
+  DashboardAlertSummary,
 } from '../types/api'
 
 export const fetchDashboard = async (): Promise<DashboardResponse> => {
@@ -142,6 +147,66 @@ export const deleteTestPlan = async (planId: string): Promise<DeletePlanResponse
 export const fetchRecentTests = async (): Promise<RecentTestsResponse> => {
   // TODO: 后端需要实现 /test-executions/recent 端点
   const response = await client.get<RecentTestsResponse>('/test-executions/recent')
+  return response.data
+}
+
+// ============================================================
+// P2-8: Operational Cockpit data sources
+// ============================================================
+
+/**
+ * ① 系统就绪带 — composite HAL readiness snapshot.
+ * `available=false` means HAL has not initialised yet; sub-sections carry
+ * placeholder values and the GUI should render "HAL 未就绪".
+ */
+export const fetchReadiness = async (): Promise<HALReadinessResponse> => {
+  const response = await client.get<HALReadinessResponse>('/instruments/hal/readiness')
+  return response.data
+}
+
+/**
+ * ② 运行态 — terminal-state execution history (completed/failed/cancelled).
+ * NOT a live-running stream; the cockpit surfaces it as "最近执行".
+ */
+export const fetchTestExecutions = async (
+  params?: { limit?: number; skip?: number; status?: string },
+): Promise<TestExecutionListResponse> => {
+  const response = await client.get<TestExecutionListResponse>('/test-executions', { params })
+  return response.data
+}
+
+/**
+ * ④ 实时日志 — tail a structured log file with optional level / keyword filter.
+ */
+export const fetchSystemLogsTail = async (params?: {
+  filename?: string
+  lines?: number
+  level?: string
+  keyword?: string
+  session_id?: string
+}): Promise<SystemLogTailResponse> => {
+  const response = await client.get<SystemLogTailResponse>('/system-logs/tail', { params })
+  return response.data
+}
+
+/**
+ * ④ 实时告警 — active alerts ordered by severity.
+ */
+export const fetchAlerts = async (params?: {
+  status?: string
+  severity?: string
+  limit?: number
+  skip?: number
+}): Promise<DashboardAlertListResponse> => {
+  const response = await client.get<DashboardAlertListResponse>('/dashboard/alerts', { params })
+  return response.data
+}
+
+/**
+ * ④ 实时告警 — counts of active alerts by severity (top-of-zone tally).
+ */
+export const fetchAlertSummary = async (): Promise<DashboardAlertSummary> => {
+  const response = await client.get<DashboardAlertSummary>('/dashboard/alerts/summary')
   return response.data
 }
 
