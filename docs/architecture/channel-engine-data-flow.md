@@ -271,39 +271,42 @@ class BaseChannelGenerator(ABC):
 
 ---
 
-## ★ ring-only silent constraint (→ P2-7)
+## ★ ring-only silent constraint — closed by P1-10 (2026-05-19)
 
-**当前 schema 写死**:
+**Status**: 已关 (cross-repo)。ChannelEgine Phase 8 (2026-05-19) ship 了真消费
+az/el 的 `_calculate_probe_positions` / `_calculate_weights_for_cluster`,
+MIMO-First P1-10 (this PR) 接通 schema + DB plumbing。
+
+**当前 schema** (post-P1-10):
 
 ```python
 "chamber_config": {
     "num_probes": 8,
     "radius_m": 2.0,
     "dual_polarized": True,
-    "distribution": "ring",   # ← hardcoded, 没有别的选项
+    "distribution": chamber.probe_distribution,  # ring / multi-ring / custom
+    "probe_positions": [...]                     # 仅非 ring 时, 从 DB Probe 表读
 }
 ```
 
-- probe 物理 azimuth/elevation 角度 **不进 payload**
-- ChannelEgine 内部按 `(port_id - 1) × 360° / num_probes` 推 ring 等间距假设
-  (3GPP TR 37.977 §6.1 标准布局)
-- MIMO-First DB 里 `Probe` 表实际存了 `position: {azimuth, elevation}` (PAS
-  rotation 代码就读这个), 但**没传给 ChannelEgine**
+- ring (默认): `probe_positions` 省略, ChannelEgine 走原有 `(p × 360°/N)`
+  等距公式; 现有 8-probe ring lab smoke 完全向后兼容。
+- multi-ring / custom: `ChannelEngineClient._build_probe_positions` 从
+  DB `Probe` 表读 per-probe (az, el), 按 `probe_number` 排序, dual-pol
+  按位置 dedupe, 透传给 ChannelEgine。ChannelEgine `_calculate_weights_for_cluster`
+  消费真实 az 选 cluster→port。
 
-**silent failure mode**: 操作员配一个非标 chamber (sparse / sector / dual-ring),
-MIMO-First DB 不会拒, ChannelEgine 算 .asc 时 silently 当成 ring 等间距,
-物理几何跟 .asc 反映的角度不符, **没人会报错**。
+**fail-loud 三处** (defense in depth, 任意一层 fail 早于 silent mis-synthesis):
 
-**当前不阻塞**: lab 唯一在用的就是 ring 8-probe, 跟假设一致。
+1. `channel-engine-service` `ChamberConfig` Pydantic validator: 非 ring +
+   缺 `probe_positions` / 长度 ≠ `num_probes` → HTTP 422。
+2. `ChannelEngineClient._build_probe_positions`: DB 无 active probe / 缺
+   azimuth / 物理 probe 数对不上 `num_probes` → `ValueError` (precheck 阶段
+   就 raise, 不进 measure)。
+3. ChannelEgine `ChamberConfig._check_distribution_consistency`: 同语义
+   兜底 check, MIMO-First 漏掉时仍能拦。
 
-**何时显化**:
-- PWS 工程开始 (PWS 用 sector geometry)
-- 非标暗室 (sparse layout 省 probe, dual-ring 增强 elevation)
-
-**跟踪**: P2-7 "非 ring 暗室 probe 几何支持 (cross-repo)" — 见
-[`roadmap-first-call.md`](../roadmap-first-call.md)。主要工作在 ChannelEgine
-(PAS / cluster→port 映射要消费真实角度, 不能再按 `(port-1)×360°/N` 算),
-MIMO-First 这边是 schema + DB plumbing 的小工作。
+**详见**: [P1-10 roadmap entry](../roadmap-first-call.md#p1-10--non-ring-chamber-几何-plumbing-closes-p2-7-cross-repo-half--in-progress-this-pr)。
 
 ---
 

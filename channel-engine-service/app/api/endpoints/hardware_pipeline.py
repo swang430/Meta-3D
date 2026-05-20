@@ -297,15 +297,35 @@ def _build_custom_cdl_profile(request: HardwarePipelineRequest):
 
 
 def _build_chamber_config(request: HardwarePipelineRequest):
-    """微服务 ChamberConfig → ChannelEgine ChamberConfig."""
-    from mimo_ota_simulator.data_models import ChamberConfig as CEChamberConfig  # type: ignore
+    """微服务 ChamberConfig → ChannelEgine ChamberConfig.
+
+    P1-10 (2026-05-19): probe_positions 透传给 ChannelEgine Phase 8
+    ``ChamberConfig.probe_positions``. ring 路径不传 (= None), 走 ChannelEgine
+    ``(p × 360°/N)`` 公式; multi-ring / custom 必传, 走 sphere → Cartesian.
+    """
+    from mimo_ota_simulator.data_models import (  # type: ignore
+        ChamberConfig as CEChamberConfig,
+        ProbePosition as CEProbePosition,
+    )
 
     chamber = request.chamber_config
+
+    ce_probe_positions = None
+    if chamber.probe_positions is not None:
+        ce_probe_positions = [
+            CEProbePosition(
+                azimuth_deg=p.azimuth_deg,
+                elevation_deg=p.elevation_deg,
+            )
+            for p in chamber.probe_positions
+        ]
+
     return CEChamberConfig(
         num_probes=chamber.num_probes,
         dual_polarized=chamber.dual_polarized,
         distribution=chamber.distribution,
         radius_m=chamber.radius_m,
+        probe_positions=ce_probe_positions,
     )
 
 

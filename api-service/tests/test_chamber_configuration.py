@@ -482,3 +482,74 @@ class TestChamberValidation:
             json={"preset_type": "type_z"}  # Invalid
         )
         assert response.status_code == 422
+
+
+class TestProbeDistributionRoundTrip:
+    """P1-10 (2026-05-19): API 契约真接 ``probe_distribution`` 列, 不是只在 ORM
+    存。Codex P1 on PR #64: 没接 schema + serializer 等于 column 实质 dead code,
+    客户端没法配置非 ring chamber, 整条 plumbing unreachable。
+
+    这 4 个测试 pin POST/PUT/GET 三个端点跟 schema layer 的契约:
+    - POST 默认值 = 'ring' (向后兼容 — 老客户端不传也行)
+    - POST 显式 'custom' → 落 DB 同值
+    - PUT 改成 'multi-ring' → 落 DB 同值
+    - 无效值 422 (Pydantic enum gate)
+    """
+
+    def test_post_default_distribution_is_ring(self):
+        response = client.post(
+            "/api/v1/chambers",
+            json={"name": "Default Dist", "chamber_radius_m": 2.0},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["probe_distribution"] == "ring"
+
+    def test_post_explicit_custom_distribution_round_trips(self):
+        response = client.post(
+            "/api/v1/chambers",
+            json={
+                "name": "Custom Geom",
+                "chamber_radius_m": 2.0,
+                "probe_distribution": "custom",
+            },
+        )
+        assert response.status_code == 200
+        chamber_id = response.json()["id"]
+        assert response.json()["probe_distribution"] == "custom"
+
+        # GET 重新读 — 验证真落 DB 不只是 _to_response echo
+        get_resp = client.get(f"/api/v1/chambers/{chamber_id}")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["probe_distribution"] == "custom"
+
+    def test_put_update_distribution_to_multi_ring(self):
+        create_resp = client.post(
+            "/api/v1/chambers",
+            json={"name": "Will Switch", "chamber_radius_m": 2.0},
+        )
+        chamber_id = create_resp.json()["id"]
+        assert create_resp.json()["probe_distribution"] == "ring"
+
+        put_resp = client.put(
+            f"/api/v1/chambers/{chamber_id}",
+            json={"probe_distribution": "multi-ring"},
+        )
+        assert put_resp.status_code == 200
+        assert put_resp.json()["probe_distribution"] == "multi-ring"
+
+        # 二次 GET 确认 DB 持久化
+        get_resp = client.get(f"/api/v1/chambers/{chamber_id}")
+        assert get_resp.json()["probe_distribution"] == "multi-ring"
+
+    def test_invalid_distribution_rejected_422(self):
+        """非法 enum 值在 schema 层就拦 (不依赖 DB CHECK / app logic)."""
+        response = client.post(
+            "/api/v1/chambers",
+            json={
+                "name": "Bad Dist",
+                "chamber_radius_m": 2.0,
+                "probe_distribution": "sphere",  # 历史名, 已被 ChannelEgine 替换
+            },
+        )
+        assert response.status_code == 422
