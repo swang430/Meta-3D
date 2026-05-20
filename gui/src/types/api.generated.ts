@@ -560,6 +560,178 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/test-executions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List test plan execution history (P2-8 cockpit run zone)
+         * @description Terminal-state execution rows (completed / failed / cancelled),
+         *     newest first by completed_at. This is HISTORY — not a live-running
+         *     stream. The cockpit "最近执行" zone polls this with limit=5.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                    skip?: number;
+                    status?: "completed" | "failed" | "cancelled";
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Execution history page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TestExecutionListResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system-logs/tail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tail a structured log file (P2-8 cockpit log zone)
+         * @description Reverse-reads the last N lines of a JSON-lines log file and parses
+         *     each into a structured entry, with optional level / keyword /
+         *     session filtering applied after read.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    filename?: string;
+                    lines?: number;
+                    /** @description Exact level match (DEBUG/INFO/WARNING/ERROR) */
+                    level?: string;
+                    /** @description Fuzzy match against msg + logger */
+                    keyword?: string;
+                    session_id?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Parsed tail page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SystemLogTailResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dashboard/alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List active alerts ordered by severity (P2-8 cockpit alert zone) */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Defaults to active when omitted */
+                    status?: string;
+                    severity?: "info" | "warning" | "error" | "critical";
+                    limit?: number;
+                    skip?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Alert page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DashboardAlertListResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dashboard/alerts/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Active-alert counts by severity (P2-8 cockpit alert tally) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Alert summary counts */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DashboardAlertSummary"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -721,6 +893,89 @@ export interface components {
         DutAttachReadiness: {
             status: string;
             detail: string;
+        };
+        /**
+         * @description P2-8: one terminal-state execution row. Mirrors api-service
+         *     TestPlanExecutionResponse.
+         */
+        TestExecutionItem: {
+            id: string;
+            test_plan_id: string;
+            test_plan_name: string;
+            test_plan_version: string;
+            /** @enum {string} */
+            status: "completed" | "failed" | "cancelled";
+            total_steps: number;
+            completed_steps: number;
+            failed_steps: number;
+            skipped_steps: number;
+            success_rate: number;
+            started_at: string;
+            completed_at: string;
+            duration_minutes: number;
+            error_summary?: string | null;
+            notes?: string | null;
+            started_by: string;
+            created_at: string;
+        };
+        TestExecutionListResponse: {
+            total: number;
+            items: components["schemas"]["TestExecutionItem"][];
+        };
+        /**
+         * @description P2-8: one parsed log line. `level` is RAW for non-JSON continuation
+         *     lines (e.g. Python traceback follow-ups). `raw` holds the original
+         *     JSON line for detail expansion.
+         */
+        SystemLogEntry: {
+            ts: string;
+            level: string;
+            logger: string;
+            hal_mode: string;
+            session_id: string;
+            instrument_id: string;
+            msg: string;
+            raw?: string | null;
+        };
+        SystemLogTailResponse: {
+            filename: string;
+            total_lines_read: number;
+            filtered_count: number;
+            entries: components["schemas"]["SystemLogEntry"][];
+        };
+        /**
+         * @description P2-8: one alert row. Mirrors api-service AlertResponse. `severity`
+         *     is the operator-facing color key (info < warning < error < critical).
+         */
+        DashboardAlert: {
+            id: string;
+            title: string;
+            message?: string | null;
+            /** @enum {string} */
+            severity: "info" | "warning" | "error" | "critical";
+            alert_type?: string | null;
+            source?: string | null;
+            status: string;
+            is_read: boolean;
+            related_entity_type?: string | null;
+            related_entity_id?: string | null;
+            created_at: string;
+            updated_at: string;
+            acknowledged_at?: string | null;
+            resolved_at?: string | null;
+            created_by?: string | null;
+            acknowledged_by?: string | null;
+        };
+        DashboardAlertListResponse: {
+            total: number;
+            alerts: components["schemas"]["DashboardAlert"][];
+        };
+        DashboardAlertSummary: {
+            total_active: number;
+            info_count: number;
+            warning_count: number;
+            error_count: number;
+            critical_count: number;
         };
         /**
          * @description P2-1: one row in the topology profile listing.

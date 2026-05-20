@@ -67,11 +67,11 @@ import { TestManagement } from './features/TestManagement/TestManagement'
 import { ReportsPage } from './features/Reports/pages/ReportsPage'
 import { CommissioningSandbox } from './components/Commissioning'
 import { DiagnosticsPage } from './features/Diagnostics/DiagnosticsPage'
+import { DashboardCockpit } from './features/Dashboard'
 import { TopologyEditor } from './features/TopologyEditor/TopologyEditor'
 import { TopologyProfileEditor } from './features/TopologyProfileEditor'
 import { LabProfileWizard } from './components/LabProfile/LabProfileWizard'
 import { fetchLabProfiles } from './api/labProfileService'
-import { RealtimeMetricsCard } from './components/RealtimeMetricsCard'
 import { ExecutionMetricsCard } from './features/Monitoring'
 import ChartsDemoPage from './components/Charts/ChartsDemoPage'
 import { ChamberConfigCard } from './components/ChamberConfigCard'
@@ -115,7 +115,6 @@ import {
 import client from './api/client'
 import { listDiagnosticRuns, type DiagnosticRunSummary } from './api/diagnosticService'
 import type {
-  AlertItem,
   DemoRunPlan,
   DemoRunResult,
   InstrumentsResponse,
@@ -342,12 +341,6 @@ const instrumentStatusLabel: Record<InstrumentStatus, string> = {
   maintenance: '维护中',
   offline: '离线',
   pending_dev: '驱动未实现',
-}
-
-const severityBadgeColor: Record<AlertItem['severity'], string> = {
-  info: 'blue',
-  warning: 'yellow',
-  critical: 'red',
 }
 
 const logLevelColor: Record<LogLevel, string> = {
@@ -1242,26 +1235,9 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
   switch (section) {
     case 'dashboard':
       return (
-        <Stack gap="xl">
-          <Dashboard selectedResultCount={payload.selectedResultCount} onNavigate={payload.setActiveSection} />
-          <Monitoring
-            logs={payload.logs}
-            setLogs={payload.setLogs}
-            scenarioMetrics={payload.demoMetrics}
-            scenarioStatus={payload.demoProgress.status}
-            progress={payload.demoProgress}
-            executionMode={payload.executionMode}
-            executingPlan={payload.executingPlan}
-            planDetail={payload.executingPlanDetail}
-            demoPlan={payload.demoPlan}
-            onRestart={payload.onDemoStart}
-            onPause={payload.onDemoPause}
-            onResume={payload.onDemoResume}
-            onStop={payload.onDemoStop}
-            onPlanExecute={payload.onPlanExecute}
-            autoChainExecution={payload.autoChainExecution}
-          />
-        </Stack>
+        <DashboardCockpit
+          onNavigateTestManagement={() => payload.setActiveSection('testManagement')}
+        />
       )
     case 'equipment':
       return <EquipmentManager />
@@ -1278,181 +1254,36 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
     case 'commissioning':
       return <CommissioningSandbox />
     case 'diagnostics':
-      return <DiagnosticsPage />
+      // P2-8: the legacy Monitoring 演示回放 player moved here from the old
+      // dashboard case (developer / 调试 surface, not an operational view).
+      return (
+        <DiagnosticsPage
+          monitoringSlot={
+            <Monitoring
+              logs={payload.logs}
+              setLogs={payload.setLogs}
+              scenarioMetrics={payload.demoMetrics}
+              scenarioStatus={payload.demoProgress.status}
+              progress={payload.demoProgress}
+              executionMode={payload.executionMode}
+              executingPlan={payload.executingPlan}
+              planDetail={payload.executingPlanDetail}
+              demoPlan={payload.demoPlan}
+              onRestart={payload.onDemoStart}
+              onPause={payload.onDemoPause}
+              onResume={payload.onDemoResume}
+              onStop={payload.onDemoStop}
+              onPlanExecute={payload.onPlanExecute}
+              autoChainExecution={payload.autoChainExecution}
+            />
+          }
+        />
+      )
     case 'chartsDemo':
       return <ChartsDemoPage />
     default:
       return null
   }
-}
-
-type DashboardProps = {
-  selectedResultCount: number
-  onNavigate: (section: SectionKey) => void
-}
-
-function Dashboard({ selectedResultCount, onNavigate }: DashboardProps) {
-  const { data: dashboardData, isLoading: isDashboardLoading } = useQuery({
-    queryKey: ['dashboard'],
-    queryFn: fetchDashboard,
-  })
-  const { data: probesData } = useQuery({
-    queryKey: ['probes'],
-    queryFn: fetchProbes,
-  })
-  const { data: testPlansSummary } = useQuery({
-    queryKey: ['tests', 'plans'],
-    queryFn: fetchTestPlans,
-    enabled: false, // TEMP: Disabled until API path mismatch is fixed (/tests/plans vs /test-plans)
-    retry: false,
-  })
-  const { data: recentTestsData, isLoading: isRecentLoading } = useQuery({
-    queryKey: ['tests', 'recent'],
-    queryFn: fetchRecentTests,
-  })
-
-  const liveMetrics = dashboardData?.liveMetrics ?? []
-  const activeAlerts = dashboardData?.activeAlerts ?? []
-  const probesCount = probesData?.probes.length ?? 0
-  const planCount = testPlansSummary?.plans.length ?? 0
-  const recentTestsList = useMemo(
-    () => recentTestsData?.recentTests ?? [],
-    [recentTestsData],
-  )
-
-  const summaryItems = [
-    { label: '探头数量', value: probesCount.toString() },
-    { label: '活动测试计划', value: planCount.toString() },
-    { label: '活动告警', value: activeAlerts.length.toString() },
-    { label: '已选对比', value: selectedResultCount.toString() },
-  ]
-
-  const quickActions: Array<{ label: string; note: string; target: SectionKey }> = [
-    { label: '新建测试计划', note: '基于模板快速创建完整序列', target: 'testManagement' },
-    { label: '执行静区校准', note: '触发自动路径/相位校准流程', target: 'systemCalibration' },
-    { label: '导出最新报告', note: '选择历史结果并生成PDF/HTML', target: 'results' },
-  ]
-
-  return (
-    <Stack gap="xl">
-      <Card withBorder radius="md" padding="lg">
-        <Stack gap="sm">
-          <Group justify="space-between">
-            <Title order={3}>系统总览</Title>
-            <Badge color="brand" variant="light">
-              概览
-            </Badge>
-          </Group>
-          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
-            {summaryItems.map((item) => (
-              <Stack key={item.label} gap={4}>
-                <Text size="xs" c="gray.6">
-                  {item.label}
-                </Text>
-                <Text fw={700} fz={28}>
-                  {item.value}
-                </Text>
-              </Stack>
-            ))}
-          </SimpleGrid>
-        </Stack>
-      </Card>
-
-      <SimpleGrid cols={{ base: 1, md: 2 }} spacing="xl">
-        <Card withBorder radius="md" padding="lg">
-          <Stack gap="md">
-            <Title order={3}>活动告警</Title>
-            {isDashboardLoading && activeAlerts.length === 0 ? (
-              <Text size="sm" c="gray.6">
-                数据加载中……
-              </Text>
-            ) : activeAlerts.length === 0 ? (
-              <Paper p="md" radius="md" withBorder>
-                <Text fw={600}>暂无告警</Text>
-                <Text size="sm" c="gray.6">
-                  系统运行正常
-                </Text>
-              </Paper>
-            ) : (
-              <Stack gap="sm">
-                {activeAlerts.map((alert) => (
-                  <Paper key={alert.id} p="md" radius="md" withBorder>
-                    <Group justify="space-between" align="flex-start">
-                      <div>
-                        <Text fw={600}>{alert.title}</Text>
-                        <Text size="xs" c="gray.6">
-                          #{alert.id} · {alert.timestamp}
-                        </Text>
-                      </div>
-                      <Badge color={severityBadgeColor[alert.severity]} variant="light">
-                        {alert.severity.toUpperCase()}
-                      </Badge>
-                    </Group>
-                  </Paper>
-                ))}
-              </Stack>
-            )}
-          </Stack>
-        </Card>
-
-        <Card withBorder radius="md" padding="lg">
-          <Stack gap="md">
-            <Title order={3}>快速操作</Title>
-            <Stack gap="sm">
-              {quickActions.map((action) => (
-                <Button
-                  key={action.label}
-                  variant="light"
-                  color="brand"
-                  justify="space-between"
-                  onClick={() => onNavigate(action.target)}
-                >
-                  <Text fw={600}>{action.label}</Text>
-                  <Text size="xs" c="gray.6">
-                    {action.note}
-                  </Text>
-                </Button>
-              ))}
-            </Stack>
-          </Stack>
-        </Card>
-      </SimpleGrid>
-
-      <Card withBorder radius="md" padding="lg">
-        <Stack gap="md">
-          <Title order={3}>最近测试记录</Title>
-          {isRecentLoading ? (
-            <Text size="sm" c="gray.6">
-              数据加载中……
-            </Text>
-          ) : (
-            <Table striped highlightOnHover withTableBorder>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>执行</Table.Th>
-                  <Table.Th>测试例</Table.Th>
-                  <Table.Th>DUT</Table.Th>
-                  <Table.Th>状态</Table.Th>
-                  <Table.Th>日期</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {recentTestsList.map((item) => (
-                  <Table.Tr key={item.id}>
-                    <Table.Td>{item.id}</Table.Td>
-                    <Table.Td>{item.name}</Table.Td>
-                    <Table.Td>{item.dut}</Table.Td>
-                    <Table.Td>{item.result}</Table.Td>
-                    <Table.Td>{item.date}</Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          )}
-        </Stack>
-      </Card>
-    </Stack>
-  )
 }
 
 /**

@@ -295,6 +295,124 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HALReadinessResponse'
+  /api/v1/test-executions:
+    get:
+      summary: List test plan execution history (P2-8 cockpit run zone)
+      description: |
+        Terminal-state execution rows (completed / failed / cancelled),
+        newest first by completed_at. This is HISTORY — not a live-running
+        stream. The cockpit "最近执行" zone polls this with limit=5.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            minimum: 1
+            maximum: 1000
+        - name: skip
+          in: query
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [completed, failed, cancelled]
+      responses:
+        '200':
+          description: Execution history page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestExecutionListResponse'
+  /api/v1/system-logs/tail:
+    get:
+      summary: Tail a structured log file (P2-8 cockpit log zone)
+      description: |
+        Reverse-reads the last N lines of a JSON-lines log file and parses
+        each into a structured entry, with optional level / keyword /
+        session filtering applied after read.
+      parameters:
+        - name: filename
+          in: query
+          schema:
+            type: string
+            default: app.log
+        - name: lines
+          in: query
+          schema:
+            type: integer
+            default: 200
+            minimum: 1
+            maximum: 2000
+        - name: level
+          in: query
+          schema:
+            type: string
+          description: Exact level match (DEBUG/INFO/WARNING/ERROR)
+        - name: keyword
+          in: query
+          schema:
+            type: string
+          description: Fuzzy match against msg + logger
+        - name: session_id
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Parsed tail page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemLogTailResponse'
+  /api/v1/dashboard/alerts:
+    get:
+      summary: List active alerts ordered by severity (P2-8 cockpit alert zone)
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+          description: Defaults to active when omitted
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [info, warning, error, critical]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 100
+        - name: skip
+          in: query
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+      responses:
+        '200':
+          description: Alert page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardAlertListResponse'
+  /api/v1/dashboard/alerts/summary:
+    get:
+      summary: Active-alert counts by severity (P2-8 cockpit alert tally)
+      responses:
+        '200':
+          description: Alert summary counts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardAlertSummary'
 components:
   schemas:
     DashboardResponse:
@@ -576,6 +694,187 @@ components:
         detail:
           type: string
       required: [status, detail]
+    TestExecutionItem:
+      type: object
+      description: |
+        P2-8: one terminal-state execution row. Mirrors api-service
+        TestPlanExecutionResponse.
+      properties:
+        id:
+          type: string
+        test_plan_id:
+          type: string
+        test_plan_name:
+          type: string
+        test_plan_version:
+          type: string
+        status:
+          type: string
+          enum: [completed, failed, cancelled]
+        total_steps:
+          type: integer
+        completed_steps:
+          type: integer
+        failed_steps:
+          type: integer
+        skipped_steps:
+          type: integer
+        success_rate:
+          type: number
+        started_at:
+          type: string
+        completed_at:
+          type: string
+        duration_minutes:
+          type: number
+        error_summary:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        started_by:
+          type: string
+        created_at:
+          type: string
+      required:
+        - id
+        - test_plan_id
+        - test_plan_name
+        - test_plan_version
+        - status
+        - total_steps
+        - completed_steps
+        - failed_steps
+        - skipped_steps
+        - success_rate
+        - started_at
+        - completed_at
+        - duration_minutes
+        - started_by
+        - created_at
+    TestExecutionListResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TestExecutionItem'
+      required: [total, items]
+    SystemLogEntry:
+      type: object
+      description: |
+        P2-8: one parsed log line. `level` is RAW for non-JSON continuation
+        lines (e.g. Python traceback follow-ups). `raw` holds the original
+        JSON line for detail expansion.
+      properties:
+        ts:
+          type: string
+        level:
+          type: string
+        logger:
+          type: string
+        hal_mode:
+          type: string
+        session_id:
+          type: string
+        instrument_id:
+          type: string
+        msg:
+          type: string
+        raw:
+          type: string
+          nullable: true
+      required: [ts, level, logger, hal_mode, session_id, instrument_id, msg]
+    SystemLogTailResponse:
+      type: object
+      properties:
+        filename:
+          type: string
+        total_lines_read:
+          type: integer
+        filtered_count:
+          type: integer
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/SystemLogEntry'
+      required: [filename, total_lines_read, filtered_count, entries]
+    DashboardAlert:
+      type: object
+      description: |
+        P2-8: one alert row. Mirrors api-service AlertResponse. `severity`
+        is the operator-facing color key (info < warning < error < critical).
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        message:
+          type: string
+          nullable: true
+        severity:
+          type: string
+          enum: [info, warning, error, critical]
+        alert_type:
+          type: string
+          nullable: true
+        source:
+          type: string
+          nullable: true
+        status:
+          type: string
+        is_read:
+          type: boolean
+        related_entity_type:
+          type: string
+          nullable: true
+        related_entity_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+        updated_at:
+          type: string
+        acknowledged_at:
+          type: string
+          nullable: true
+        resolved_at:
+          type: string
+          nullable: true
+        created_by:
+          type: string
+          nullable: true
+        acknowledged_by:
+          type: string
+          nullable: true
+      required: [id, title, severity, status, is_read, created_at, updated_at]
+    DashboardAlertListResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+        alerts:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardAlert'
+      required: [total, alerts]
+    DashboardAlertSummary:
+      type: object
+      properties:
+        total_active:
+          type: integer
+        info_count:
+          type: integer
+        warning_count:
+          type: integer
+        error_count:
+          type: integer
+        critical_count:
+          type: integer
+      required: [total_active, info_count, warning_count, error_count, critical_count]
     TopologyProfileEntry:
       type: object
       description: |

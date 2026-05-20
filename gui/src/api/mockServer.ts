@@ -293,6 +293,24 @@ export function setupMockServer() {
 
   mock.onGet('/monitoring/feeds').reply(200, mockDatabase.getMonitoringFeeds())
 
+  // ===== P2-8 Operational Cockpit =====
+  mock.onGet('/instruments/hal/readiness').reply(200, mockDatabase.getReadiness())
+
+  mock.onGet('/test-executions').reply((config) => {
+    const limit = config.params?.limit ? Number(config.params.limit) : undefined
+    return [200, mockDatabase.getTestExecutions(limit)]
+  })
+
+  mock.onGet('/system-logs/tail').reply((config) => {
+    const params = config.params || {}
+    return [200, mockDatabase.getSystemLogsTail(params.filename, params.level, params.keyword)]
+  })
+
+  // /dashboard/alerts/summary registered before /dashboard/alerts so the
+  // exact-string summary route isn't shadowed by the list route.
+  mock.onGet('/dashboard/alerts/summary').reply(200, mockDatabase.getDashboardAlertSummary())
+  mock.onGet('/dashboard/alerts').reply(200, mockDatabase.getDashboardAlerts())
+
   mock.onPut(/\/instruments\/[^/]+$/).reply((config) => {
     try {
       const categoryKey = config.url?.split('/').pop() ?? ''

@@ -183,6 +183,149 @@ export type RecentTestsResponse = {
   recentTests: RecentTest[]
 }
 
+// ============================================================
+// P2-8: Operational Cockpit data sources
+// ============================================================
+
+// ── ① 系统就绪带 — GET /instruments/hal/readiness ──
+// Shape mirrors api-service HALReadinessResponse (already in openapi.yaml +
+// api.generated.ts). Re-declared here as hand-written types to match the
+// service.ts convention (service consumes ../types/api, not generated).
+
+export type ReadinessDriverStatus = 'ok' | 'fail' | 'skipped'
+
+export type ReadinessDriverRow = {
+  category: string
+  model: string
+  endpoint: string
+  status: ReadinessDriverStatus
+  detail: string
+  extras?: Record<string, unknown>
+}
+
+export type ReadinessLabProfileStatus = 'ok' | 'inactive' | 'missing' | 'ambiguous'
+
+export type ReadinessLabProfile = {
+  profile_id?: string | null
+  profile_name?: string | null
+  is_active: boolean
+  status: ReadinessLabProfileStatus
+  detail: string
+}
+
+export type ReadinessCalibrationStatus = 'valid' | 'expired' | 'missing' | 'no_lab'
+
+export type ReadinessCalibration = {
+  certificate_number?: string | null
+  valid_until_iso?: string | null
+  status: ReadinessCalibrationStatus
+  days_remaining?: number | null
+  detail: string
+}
+
+// DUT-attach is deliberately a backend placeholder — status is always
+// "not_implemented" in this build (no probe-sensing / RFID / session table).
+export type ReadinessDutAttach = {
+  status: string // "not_implemented" in this build
+  detail: string
+}
+
+export type HALReadinessResponse = {
+  available: boolean
+  drivers: ReadinessDriverRow[]
+  lab_profile: ReadinessLabProfile
+  calibration: ReadinessCalibration
+  dut_attach: ReadinessDutAttach
+  generated_at_iso: string
+}
+
+// ── ② 运行态 — GET /test-executions?limit=N ──
+// These are TERMINAL-STATE history rows (completed/failed/cancelled), NOT
+// a live-running stream. The cockpit zone is titled "最近执行" accordingly.
+
+export type TestExecutionStatus = 'completed' | 'failed' | 'cancelled' | string
+
+export type TestExecutionItem = {
+  id: string
+  test_plan_id: string
+  test_plan_name: string
+  test_plan_version: string
+  status: TestExecutionStatus
+  total_steps: number
+  completed_steps: number
+  failed_steps: number
+  skipped_steps: number
+  success_rate: number
+  started_at: string
+  completed_at: string
+  duration_minutes: number
+  error_summary?: string | null
+  notes?: string | null
+  started_by: string
+  created_at: string
+}
+
+export type TestExecutionListResponse = {
+  total: number
+  items: TestExecutionItem[]
+}
+
+// ── ④ 实时日志 — GET /system-logs/tail ──
+export type SystemLogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'RAW' | string
+
+export type SystemLogEntry = {
+  ts: string
+  level: SystemLogLevel
+  logger: string
+  hal_mode: string
+  session_id: string
+  instrument_id: string
+  msg: string
+  raw?: string | null
+}
+
+export type SystemLogTailResponse = {
+  filename: string
+  total_lines_read: number
+  filtered_count: number
+  entries: SystemLogEntry[]
+}
+
+// ── ④ 实时告警 — GET /dashboard/alerts + /dashboard/alerts/summary ──
+export type DashboardAlertSeverity = 'info' | 'warning' | 'error' | 'critical' | string
+
+export type DashboardAlert = {
+  id: string
+  title: string
+  message?: string | null
+  severity: DashboardAlertSeverity
+  alert_type?: string | null
+  source?: string | null
+  status: string
+  is_read: boolean
+  related_entity_type?: string | null
+  related_entity_id?: string | null
+  created_at: string
+  updated_at: string
+  acknowledged_at?: string | null
+  resolved_at?: string | null
+  created_by?: string | null
+  acknowledged_by?: string | null
+}
+
+export type DashboardAlertListResponse = {
+  total: number
+  alerts: DashboardAlert[]
+}
+
+export type DashboardAlertSummary = {
+  total_active: number
+  info_count: number
+  warning_count: number
+  error_count: number
+  critical_count: number
+}
+
 export type ReportTemplatesResponse = {
   reportTemplates: ReportTemplate[]
 }
