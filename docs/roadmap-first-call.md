@@ -10,15 +10,20 @@
 
 **无 — 等下次现场触发 P0-3/4/5。本地可启动 P1 已清空。**
 
-P1-7 (#59) + P1-8 (#61) 全 merged。Commissioning → ChannelEgine 链路第一次形成
-完整闭环 (P1-7 拆掉 hardcoded mock cluster, 走 24-cluster 38.901; P1-8 加 strict
-cal gate, frequency-matched 查询跟 measure phase 对齐)。WIP=1 释放。
+P1-7 (#59) + P1-8 (#61) + P1-9 (#63) + P1-10 (#64) 全 merged。Commissioning →
+ChannelEgine 链路第一次形成完整闭环 (P1-7 拆掉 hardcoded mock cluster, 走
+24-cluster 38.901; P1-8 加 strict cal gate, frequency-matched 查询跟 measure
+phase 对齐; P1-9 加 DUT-attach fail-loud gate; P1-10 关掉 ring-only silent
+constraint, non-ring chamber 几何透传 ChannelEgine, 同时收口 P2-7 cross-repo
+半)。WIP=1 释放。
 
-> **本 PR 是 docs catch-up**: PR #60 squash merge 时只合了前 2 个 commits, P1-8
-> promotion 跟 design lock 那 2 个 commits 没进 main, 加上 PR #61 (P1-8 实现) 直接
-> 落地 — main 上有 P1-8 代码但 roadmap 没 P1-8 entry, Current Focus 还指 P1-6
-> (PR #60 v1 状态)。本 PR 把 main 矫正到准确状态: 加 P1-8 entry (Done), backlog
-> D-row 标 promoted, Summary counts 同步, Current Focus 切换。
+> **本 PR 是 docs catch-up**: PR #63 (P1-9 实现) + PR #64 (P1-10 实现) 都以
+> "🔄 In progress (this PR)" 落地, catch-up (status 翻 Done + Current Focus +
+> Summary counts + P2-7 归档) 按既定 pattern 留给本 chore PR。main 上有 P1-9 /
+> P1-10 代码但 roadmap 两个 section 还标 in-progress、Current Focus 还停在
+> P1-8 (#61) 时点、P2-7 还计入 open。本 PR 把 main 矫正到准确状态: P1-9 / P1-10
+> section 翻 ✅ Done, Current Focus 切换, Summary counts 同步, P2-7 标 cross-repo
+> 关闭不再计 open (per memory `feedback_d_row_stale_this_pr_reflex.md`)。
 
 **严格按 trigger 筛, 本地可启动的 P0/P1/P2 是 0 个**:
 
@@ -30,12 +35,11 @@ cal gate, frequency-matched 查询跟 measure phase 对齐)。WIP=1 释放。
 | P1-5 on-site half | 🚧 on-site | 完整 phase cal certificate generation |
 | P1-6 | ⏸️ incident-conditional hold | trigger = 真 idle-close 出现在 FS16/UXM/ENA (当前没证据) |
 | P2-4 | 🚧 on-site | NAT/FW idle-drop hypothesis 现场 verify |
-| P2-7 | ⏸️ architecture gap | trigger = PWS 工程启动 / 非标暗室到场 (当前 lab ring 8-probe 不触发) |
 
 下次现场打开时, Current Focus 必须切回 **P0-3** (或最先解锁的 P0) per WIP=1。
 当前唯一 sensible 的本地工作 = **主动 audit silent failure modes** (Codex 这次抓
 到 cal gate + frequency window 2 个, audit ROI 已经证明; 主动找下一个 = 下次现
-场前 quality 投资)。Audit 如果挖到东西 = candidate for P1-9 promotion; 没挖到 =
+场前 quality 投资)。Audit 如果挖到东西 = candidate for P1-11 promotion; 没挖到 =
 进 "Known unknowns" 留档。
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
@@ -639,7 +643,7 @@ PASS, measure 用真路损。Hardware-blocked, 等下次现场。
 
 ---
 
-### P1-9 — Commissioning precheck DUT-attach fail-loud gate 🔄 In progress (this PR)
+### P1-9 — Commissioning precheck DUT-attach fail-loud gate ✅ Done (PR #63)
 
 **What**: 修 [`PrecheckExecutor`](../api-service/app/services/mimo_ota/executors/precheck.py)
 section 2.4 `dut_attach` 缺失 / `rrc_connected != True` 时**只 warning 不 gate**
@@ -705,12 +709,12 @@ attached**。这跟 P1-8 cal gate 完全同 pattern。
   后跟之前 P1-8 pattern 一致用 docs catch-up chore PR 收口 (per memory
   `feedback_d_row_stale_this_pr_reflex.md`)
 
-**Status**: 🔄 In progress — this PR
+**Status**: ✅ Done — PR #63 (merged 2026-05-19)
 **Estimate**: 0.5 day (实际 ~1 day local audit + impl + tests)
 
 ---
 
-### P1-10 — Non-Ring Chamber 几何 plumbing (closes P2-7 cross-repo half) 🔄 In progress (this PR)
+### P1-10 — Non-Ring Chamber 几何 plumbing (closes P2-7 cross-repo half) ✅ Done (PR #64)
 
 **What**: 关掉 [`docs/architecture/channel-engine-data-flow.md`](architecture/channel-engine-data-flow.md)
 点名的 "ring-only silent constraint" — `ChannelEngineClient._build_payload`
@@ -782,7 +786,7 @@ silent constraint 关掉, ROI 远好于继续 ⏸️ 等 PWS trigger。Promotion
   `_calculate_weights_for_cluster` 读真 az), MIMO-First 这边只负责把数据
   透下去
 
-**Status**: 🔄 In progress — this PR
+**Status**: ✅ Done — PR #64 (merged 2026-05-19)
 **Estimate**: 0.5 day (实际 ~0.5 day local impl + tests + 1 cross-repo schema
 naming 对齐)
 
@@ -1056,11 +1060,13 @@ NOT done (deferred):
 
 **Status (2026-05-19)**: ChannelEgine 那边 Phase 8 主动 ship 完 (`'ring' /
 'multi-ring' / 'custom'` enum + `probe_positions` + 真消费 az/el, 不再
-`(p × 360°/N)` 假设); MIMO-First 这边 P1-10 (this PR) 收口 schema + DB
-plumbing 半 — 本 entry 保留作为完整 cross-repo design 历史, 实际 status
-跟踪挪到 [P1-10](#p1-10--non-ring-chamber-几何-plumbing-closes-p2-7-cross-repo-half--in-progress-this-pr)。
-ad-hoc promotion 原因: cross-repo 协作成本已花, 不收 MIMO-First 侧就是浪费,
-本地 P0 hardware-blocked 时 0.5 天 plumbing ROI 远好于继续 ⏸️ 等 trigger。
+`(p × 360°/N)` 假设); MIMO-First 这边 P1-10 (PR #64, merged 2026-05-19) 收口
+schema + DB plumbing 半 — 本 entry 保留作为完整 cross-repo design 历史, 实际
+status 跟踪挪到 [P1-10](#p1-10--non-ring-chamber-几何-plumbing-closes-p2-7-cross-repo-half--done-pr-64)。
+cross-repo silent constraint 整条已关闭 (ChannelEgine Phase 8 + MIMO-First
+P1-10), P2-7 不再计入 open。ad-hoc promotion 原因: cross-repo 协作成本已花,
+不收 MIMO-First 侧就是浪费, 本地 P0 hardware-blocked 时 0.5 天 plumbing ROI
+远好于继续 ⏸️ 等 trigger。
 
 ---
 
@@ -1459,25 +1465,29 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 
 ## 📊 Summary
 
-> Counts as of 2026-05-19 (post P0-7 #56 + P1-5 local-half #57 + chore #58 + P1-7 #59 + P1-8 #61 merged + 本 docs-catchup PR 矫正 roadmap)。
-> Full-sweep flaky count remains **0**。9 个 open items 全部 not-immediately-startable
+> Counts as of 2026-05-20 (post P0-7 #56 + P1-5 local-half #57 + chore #58 + P1-7 #59 + P1-8 #61 + P1-9 #63 + P1-10 #64 merged + 本 docs-catchup PR 矫正 roadmap)。
+> Full-sweep flaky count remains **0**。8 个 open items 全部 not-immediately-startable
 > (按 trigger condition 筛, 本地可启动的 P0/P1/P2 = 0):
 > - 7 个 🚧 blocked-on-hardware (3 × P0 + P1-2 + P1-4 + P1-5 on-site half + P2-4)
 > - 1 个 ⏸️ incident-conditional hold (P1-6 FS16/UXM/ENA, trigger = 真 idle-close 出现, 当前没证据 — 仍计 open since `Status: [ ] not started`)
-> - 1 个 ⏸️ architecture gap 没即时 trigger (P2-7 非 ring distribution, 等 PWS / 非标暗室 — 仍计 open)
 >
-> 本地唯一 sensible 工作 = **主动 audit silent failure modes** (Codex 这次抓了 2
-> 个 = P1-8 cal gate + P1-8 frequency window, audit ROI 已经证明); 挖到东西可
-> promote 为 P1-9; 没挖到进 "Known unknowns" 留档。详见 Current Focus 段。
+> P2-7 (非 ring distribution) 此前计 open; 现 ChannelEgine Phase 8 + MIMO-First
+> P1-10 (#64) 已关掉整条 cross-repo silent constraint, P2-7 promote 进 P1-10
+> (Done), 不再计 open。
+>
+> 本地唯一 sensible 工作 = **主动 audit silent failure modes** (此前抓了 P1-8 cal
+> gate + frequency window + P1-9 DUT-attach gate + P1-10 ring-only constraint,
+> audit ROI 已反复证明); 挖到东西可 promote 为 P1-11; 没挖到进 "Known unknowns"
+> 留档。详见 Current Focus 段。
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 37 | — | — |
+| ✅ Done | 39 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 7 total | 4 days | 4 days |
-| 🟠 P1 (confidence) | 4 open / 8 total | 3 days | 2 days |
-| 🟡 P2 (abstraction debt) | 2 open / 7 total | 2.5 days | 0.5 day |
+| 🟠 P1 (confidence) | 4 open / 10 total | 3 days | 2 days |
+| 🟡 P2 (abstraction debt) | 1 open / 6 total | 0.5 day | 0.5 day |
 | 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
-| **Total open** | **9** | **~9.5 days** | **6.5 days** |
+| **Total open** | **8** | **~7.5 days** | **6.5 days** |
 
 ---
 
