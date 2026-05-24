@@ -8,28 +8,28 @@
 
 ## 🎯 Current Focus
 
-**P1-11 — 多子网仪表连接 (runbook + 可达性诊断, 本地可启动)。** 直接打中 CAICT
-一天耗掉的「单网卡够不到全部子网」阻塞: 不改仪表 IP, 网络层 runbook (平坑 L2 →
-单网卡多 IP 别名, 零硬件) + 软件层 readiness 区分 unreachable vs SCPI-fail。
-下次现场打开时本项让位, Current Focus 切回 **P0-3** per WIP=1。
+**无 — P1-11 (#71) merged, 本地可启动 P0/P1/P2 重新归零。退回到主动 audit silent
+failure modes。** 下次现场打开时 Current Focus 切回 **P0-3** per WIP=1。
 
-P1-7 (#59) + P1-8 (#61) + P1-9 (#63) + P1-10 (#64) + P2-8 (#68) 全 merged。
+P1-7 (#59) + P1-8 (#61) + P1-9 (#63) + P1-10 (#64) + P2-8 (#68) + P1-11 (#71) 全 merged。
 Commissioning →
 ChannelEgine 链路第一次形成完整闭环 (P1-7 拆掉 hardcoded mock cluster, 走
 24-cluster 38.901; P1-8 加 strict cal gate, frequency-matched 查询跟 measure
 phase 对齐; P1-9 加 DUT-attach fail-loud gate; P1-10 关掉 ring-only silent
 constraint, non-ring chamber 几何透传 ChannelEgine, 同时收口 P2-7 cross-repo
 半)。另 P2-8 (#68) 把主控制台重设计为 4 区操作驾驶舱 (就绪带 / 运行态 / 实时
-指标 / 日志+告警), 全接真后端, demo 播放器移到 Diagnostics。WIP=1 释放。
+指标 / 日志+告警), 全接真后端, demo 播放器移到 Diagnostics。另 P1-11 (#71) 加
+多子网仪表连接 (runbook 方案 A/B/C + readiness 区分 unreachable vs SCPI-fail +
+按子网可达性面板)。WIP=1 释放。
 
-> **本 PR 是 docs catch-up**: PR #68 (P2-8 实现) merged 后, roadmap 的 P2-8
-> section 还标 not-started、Current Focus 还指 P2-8、Summary 还计 P2-8 为 open。
-> 本 PR 把 main 矫正到准确状态: P2-8 section 翻 ✅ Done, Current Focus 退回 audit
-> silent failures, Summary counts 同步 (per memory
+> **本 PR 是 docs catch-up**: PR #71 (P1-11 实现) merged 后, roadmap 的 P1-11
+> section 还标 in-progress、Current Focus 还指 P1-11、Summary 还计 P1-11 为
+> in-progress。本 PR 把 main 矫正到准确状态: P1-11 section 翻 ✅ Done, Current
+> Focus 退回 audit silent failures, Summary counts 同步 (per memory
 > `feedback_d_row_stale_this_pr_reflex.md` + `feedback_recompute_aggregate_rows_from_parts.md`)。
 
-**on-site / blocked 项 (本地启动不了, 等现场或事件触发) —— 这些都不是
-Current Focus, P1-11 是**:
+**on-site / blocked 项 (本地启动不了, 等现场或事件触发) —— 本地可启动 P0/P1/P2
+重新归零, 这些都不是 Current Focus**:
 
 | ID | Status | 触发条件 / blocker |
 |----|--------|------------------|
@@ -40,12 +40,11 @@ Current Focus, P1-11 是**:
 | P1-6 | ⏸️ incident-conditional hold | trigger = 真 idle-close 出现在 FS16/UXM/ENA (当前没证据) |
 | P2-4 | 🚧 on-site | NAT/FW idle-drop hypothesis 现场 verify |
 
-下次现场打开时, Current Focus 必须切回 **P0-3** (或最先解锁的 P0) per WIP=1,
-P1-11 让位。当前本地 focus = **P1-11 多子网仪表连接** (P0/P1 on-site 全 blocked
-期间的 confidence 投资, 直接解 CAICT 子网切换阻塞)。P1-11 做完若现场仍未开, 退回
-**主动 audit silent failure modes** (此前抓了 P1-8 cal gate + frequency window +
-P1-9 DUT-attach + P1-10 ring-only, P2-8 实现中又抓到 alert.py 路由顺序 bug 已
-spin off; audit ROI 已反复证明); 挖到东西 = candidate for P1-12 promotion; 没挖到
+下次现场打开时, Current Focus 必须切回 **P0-3** (或最先解锁的 P0) per WIP=1。
+P1-11 (#71) merged 后本地无其它可启动 P0/P1/P2 → 当前本地工作退回 **主动 audit
+silent failure modes** (此前抓了 P1-8 cal gate + frequency window + P1-9
+DUT-attach + P1-10 ring-only, P2-8 实现中又抓到 alert.py 路由顺序 bug 已 spin
+off; audit ROI 已反复证明); 挖到东西 = candidate for P1-12 promotion; 没挖到
 = 进 "Known unknowns" 留档。
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
@@ -798,7 +797,7 @@ naming 对齐)
 
 ---
 
-### P1-11 — 多子网仪表连接 (runbook + 可达性诊断) 🔄 In progress (this PR)
+### P1-11 — 多子网仪表连接 (runbook + 可达性诊断) ✅ Done (PR #71)
 
 **What**: 仪表默认 IP 分布在不同 `/24` 子网 (CAICT: F64 `192.168.0.x` / UXM +
 SA `192.168.1.x`), 控制 Mac 单网卡一次只在一个子网, 操作员被迫手工切静态 IP ——
@@ -847,7 +846,7 @@ actionable, 跟 P1-8/9 fail-loud + P2-8 就绪带哲学一脉相承。现场拓�
   churn; 出现具体需要再单开
 - 实际网络硬件采购/布线 (方案 B/C 的物理部分) —— ops, 非代码
 
-**Status**: 🔄 In progress — this PR
+**Status**: ✅ Done — PR #71 (merged 2026-05-20)
 **Estimate**: 1.5 day (runbook 0.5 + readiness 区分/聚合 0.5 + 契约+cockpit+测试 0.5)
 
 ---
@@ -1586,29 +1585,29 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 ## 📊 Summary
 
 > Counts as of 2026-05-20 (post P1-7 #59 + P1-8 #61 + P1-9 #63 + P1-10 #64 +
-> #65 counts catch-up + P2-8 #68 + 本 PR 加 P1-11 多子网仪表连接)。
-> Full-sweep flaky count remains **0**。9 个 open items 中 **1 个本地可启动**
-> (P1-11, = 当前 Current Focus), 其余 8 个 not-immediately-startable:
+> #65 counts catch-up + P2-8 #68 + P1-11 #71 + 本 PR P1-11 catch-up)。
+> Full-sweep flaky count remains **0**。P1-11 (#71) merged 后本地可启动 P0/P1/P2
+> 重新归零, 8 个 open items 全部 not-immediately-startable:
 > - 7 个 🚧 blocked-on-hardware (3 × P0 + P1-2 + P1-4 + P1-5 on-site half + P2-4)
 > - 1 个 ⏸️ incident-conditional hold (P1-6 FS16/UXM/ENA, trigger = 真 idle-close 出现, 当前没证据 — 仍计 open since `Status: [ ] not started`)
 >
 > P2-7 promote 进 P1-10 (#64, Done)。P2-8 (主控制台驾驶舱) #68 merged → Done。
+> P1-11 (多子网仪表连接: runbook + readiness 区分 unreachable vs SCPI-fail) #71
+> merged → Done。
 >
-> P1-11 (多子网仪表连接) 新增: CAICT 单网卡够不到多子网阻塞, 不改仪表 IP, 网络层
-> runbook (平坑 L2 → 单网卡多 IP 别名) + 软件层 readiness 区分 unreachable vs
-> SCPI-fail → 本地 confidence 项, 设为 Current Focus。做完若现场仍未开, 退回
-> **主动 audit silent failure modes** (此前抓了 P1-8 cal gate + frequency window +
-> P1-9 DUT-attach + P1-10 ring-only + P2-8 实现中 alert.py 路由顺序 bug, audit ROI
-> 已反复证明); 挖到东西 promote 为 P1-12; 没挖到进 "Known unknowns" 留档。
+> 当前本地工作退回 **主动 audit silent failure modes** (此前抓了 P1-8 cal gate +
+> frequency window + P1-9 DUT-attach + P1-10 ring-only + P2-8 实现中 alert.py
+> 路由顺序 bug, audit ROI 已反复证明); 挖到东西 promote 为 P1-12; 没挖到进
+> "Known unknowns" 留档。详见 Current Focus 段。
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 40 | — | — |
+| ✅ Done | 41 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 7 total | 4 days | 4 days |
-| 🟠 P1 (confidence) | 5 open / 11 total | 4.5 days | 2 days |
+| 🟠 P1 (confidence) | 4 open / 11 total | 3 days | 2 days |
 | 🟡 P2 (abstraction debt) | 1 open / 7 total | 0.5 day | 0.5 day |
 | 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
-| **Total open** | **9** | **~9 days** | **6.5 days** |
+| **Total open** | **8** | **~7.5 days** | **6.5 days** |
 
 ---
 
