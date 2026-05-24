@@ -73,14 +73,14 @@ function ExecutionRow({ item }: { item: TestExecutionItem }) {
             成功率
           </Text>
           <Progress
-            value={item.success_rate}
+            value={item.success_rate * 100}
             color={statusColor(item.status)}
             size="sm"
             radius="sm"
             style={{ flex: 1 }}
           />
           <Text size="xs" fw={600} w={48} ta="right">
-            {item.success_rate.toFixed(0)}%
+            {(item.success_rate * 100).toFixed(0)}%
           </Text>
         </Group>
 

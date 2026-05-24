@@ -255,7 +255,7 @@ export type TestExecutionItem = {
   completed_steps: number
   failed_steps: number
   skipped_steps: number
-  success_rate: number
+  success_rate: number // 0–1 fraction (backend completed/total); ×100 for display
   started_at: string
   completed_at: string
   duration_minutes: number
