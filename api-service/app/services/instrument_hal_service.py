@@ -208,6 +208,32 @@ class DriverMode(str, Enum):
     MOCK_FORCE = "mock_force"  # Hard mock; overrides per-instrument 'real' too (no hardware traffic)
 
 
+# Mock-fallback driver classes, by category. Keep in sync with the
+# ``MOCK_FALLBACK`` mapping inside ``InstrumentHALService`` (the method-local
+# one used at driver-load time). Exposed module-level so callers outside the
+# service (e.g. commissioning session-create) can ask "is this a real driver?"
+# without re-deriving the set. See ``is_mock_driver``.
+_MOCK_DRIVER_CLASSES: tuple = (
+    MockChannelEmulator,
+    MockBaseStation,
+    MockSignalAnalyzer,
+    MockSignalGenerator,
+    MockVNA,
+    MockPositioner,
+    MockRfSwitch,
+)
+
+
+def is_mock_driver(driver) -> bool:
+    """True iff ``driver`` is a mock-fallback instance (not real hardware).
+
+    ``None`` (driver absent) → ``False`` — absence is not the same as "mock";
+    the caller decides what an absent driver means for its gate. A real driver
+    instance (any class outside ``_MOCK_DRIVER_CLASSES``) → ``False``.
+    """
+    return driver is not None and isinstance(driver, _MOCK_DRIVER_CLASSES)
+
+
 async def tcp_preflight(
     host: str,
     port: int,
