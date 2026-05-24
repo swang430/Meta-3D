@@ -383,13 +383,32 @@ export function CommissioningSandbox() {
             description="mock 模式已自动跳过严格门，无需开此开关。仅真实仪表 + 无 DUT/校准空跑时才需要；切换后点「重置会话」生效。默认关闭以保留 fail-loud 保护。"
           />
 
-          {/* 2026-05-18 P0-7: External ASC 模式的路径输入在 pre-session UI
-              (L260+) 里, 这一块是 post-session, 只显示 read-only 锁定路径.
-              Codex P2 on PR #56 — 早期版本在这里放 TextInput 但 !session 永远
-              false (component 在 L187 已经按 !session 提前 return), 不可达. */}
+          {/* External ASC 路径输入 (post-session). 当操作员在已有会话里把引擎切到
+              external_asc 时, 需要在这里填 .asc 目录路径再「重置会话」—— 否则
+              createSession 会因缺 asc_source_path 被后端 422。会话创建后路径锁进
+              session.config (下方只读 Alert 显示). 早期 (PR #56) 这里没有可编辑
+              输入是因为假定 external_asc 只在 pre-session 选; 但带 saved-lab 的
+              操作员一进页面就 auto-fire 默认会话, 落到 post-session, 切 external_asc
+              便无处填。 */}
+          {engineMode === 'external_asc' && (
+            <TextInput
+              mt="sm"
+              label="ASC 目录绝对路径"
+              description="本机存放 channel_InX_OutY.asc 的目录 (ChannelEgine app.py 产出); 填好后点下方「重置会话」以 external_asc 重建会话"
+              placeholder="/Users/yourname/asc_outputs/2026-05-19"
+              value={ascSourcePath}
+              onChange={(e) => setAscSourcePath(e.currentTarget.value)}
+              error={
+                session?.config?.engine_mode !== 'external_asc' && !ascSourcePath.trim()
+                  ? '需填路径并「重置会话」才会生效'
+                  : undefined
+              }
+            />
+          )}
+
           {session?.config?.engine_mode === 'external_asc' &&
             session?.config?.asc_source_path && (
-              <Alert color="gray" mt="md" title="External ASC 锁定路径">
+              <Alert color="gray" mt="md" title="当前会话锁定的 ASC 路径">
                 <Text size="sm" ff="monospace">
                   {session.config.asc_source_path as string}
                 </Text>
@@ -474,7 +493,15 @@ export function CommissioningSandbox() {
         
         {/* Debug Controls */}
         <Group justify="space-between">
-          <Button variant="light" color="gray" onClick={initSession}>重置会话</Button>
+          <Button
+            variant="light"
+            color="gray"
+            onClick={initSession}
+            loading={loading}
+            disabled={engineMode === 'external_asc' && !ascSourcePath.trim()}
+          >
+            重置会话
+          </Button>
           <Button variant="light" color="grape" onClick={handleRunAll}>一键执行全流程(Mock)</Button>
         </Group>
 
