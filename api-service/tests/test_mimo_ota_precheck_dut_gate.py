@@ -124,9 +124,53 @@ def instrument_categories(db):
     return rows
 
 
+class _RealLikeBaseStation:
+    """A non-mock baseStation stand-in.
+
+    P1-9 runtime mock-awareness (Codex on PR #75): the strict DUT gate only
+    engages against a **real** baseStation (`is_mock_driver()` False). These
+    cartesian tests are about the strict gate's logic, so they need a BS that
+    reads as real — a `MockBaseStation` would now auto-skip the gate. Only the
+    surface precheck touches matters: `query_ue_capability()`.
+    """
+
+    async def query_ue_capability(self):
+        # source != "unavailable" → live_ue_query_state == "available";
+        # max_dl_layers 4 ≥ requested 2 → ue_cap_pass. Mirrors what the old
+        # MockBaseStation returned so the cartesian's expectations hold.
+        return {"max_dl_layers": 4, "max_ul_layers": 2, "source": "real"}
+
+
+class _RealLikeChannelEmulator:
+    """Non-mock channelEmulator stand-in so the strict CAL gate engages (it
+    too is now keyed on real hardware). precheck only optionally calls
+    get_user_alignment_status / list_external_units (both hasattr-guarded), so
+    a bare instance is enough — those are simply skipped."""
+
+
 @pytest.fixture
 def hal_with_mocks(instrument_categories):
-    """Inject mock drivers so precheck's critical_online check passes."""
+    """Inject *real-like* (non-mock) drivers so precheck's critical_online
+    check passes AND the strict DUT/CAL gates actually engage — a MockBaseStation
+    / MockChannelEmulator would now auto-skip the gates (P1-9 runtime
+    mock-awareness, Codex on PR #75). See `_RealLikeBaseStation` /
+    `_RealLikeChannelEmulator`."""
+    from app.services.instrument_hal_service import get_hal_service
+
+    hal = get_hal_service()
+    saved = dict(hal.drivers)
+    hal.drivers["channelEmulator"] = _RealLikeChannelEmulator()
+    hal.drivers["baseStation"] = _RealLikeBaseStation()
+    yield hal
+    hal.drivers.clear()
+    hal.drivers.update(saved)
+
+
+@pytest.fixture
+def hal_with_mock_bs(instrument_categories):
+    """Like `hal_with_mocks` but baseStation is a real **mock** driver —
+    used to verify the runtime auto-skip (P1-9 mock-awareness): strict DUT gate
+    must be N/A when there's no real BS, even with precheck_strict_dut=True."""
     from app.hal import MockBaseStation, MockChannelEmulator
     from app.services.instrument_hal_service import get_hal_service
 
@@ -311,6 +355,36 @@ async def test_precheck_dut_gate_cartesian(
 
 
 # ---------------------------------------------------------------------------
+# Runtime mock-awareness (Codex on PR #75): mock/absent BS auto-skips the gate
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_mock_baseStation_auto_skips_strict_dut_gate(
+    db, lab, chamber, hal_with_mock_bs,
+):
+    """precheck_strict_dut=True + NO DUT attach, but baseStation is a mock
+    driver → the gate is N/A (a real DUT can't attach to a mock BS), so
+    dut_pass is True and the run isn't blocked. This is the local-rehearsal
+    path that must 'just work' without any toggle."""
+    _seed_valid_cal(db, chamber.id)
+    ctx = _build_context(db, lab, dut_attach=None, strict_mode=True)
+    result = await PrecheckExecutor().execute(ctx)
+    measurements = result.measurements or {}
+
+    assert measurements.get("dut_pass") is True, (
+        f"mock BS should auto-skip the DUT gate; got dut_pass="
+        f"{measurements.get('dut_pass')}, reason={measurements.get('dut_pass_reason')!r}"
+    )
+    reason = measurements.get("dut_pass_reason", "") or ""
+    assert "gate N/A" in reason and "mock" in reason, (
+        f"expected mock-auto-skip reason, got {reason!r}"
+    )
+    # And with cal seeded + dut auto-skipped, the whole precheck passes.
+    assert measurements.get("overall_pass") is True
+    assert result.status == StepExecutionStatus.SUCCESS
+
+
+# ---------------------------------------------------------------------------
 # Independence from cal gate — verify dut_pass and cal_pass don't conflate
 # ---------------------------------------------------------------------------
 
@@ -482,13 +556,15 @@ class TestLiveQueryVerification:
         assert measurements["live_ue_query_state"] == "available"
 
     @pytest.mark.asyncio
-    async def test_no_bs_driver_strict_fails(
+    async def test_no_bs_driver_strict_run_still_fails_via_critical_online(
         self, db, lab, chamber, instrument_categories,
     ):
-        """Without a baseStation driver in HAL, critical_online would already
-        fail this precheck. But test that live_ue_query_state stays 'unknown'
-        which would cause dut_pass=False under strict — i.e. defense-in-depth
-        rather than relying solely on the critical_online check."""
+        """Without a baseStation driver, the run must still FAIL — but under
+        P1-9 runtime mock-awareness (Codex on PR #75) the protection now comes
+        from critical_online (baseStation offline), NOT the DUT gate: with no
+        real BS, no real DUT can attach, so the DUT gate is N/A (dut_pass=True,
+        gate-N/A reason). The important invariant is overall_pass=False — we
+        never measure real PDSCH with no baseStation."""
         from app.hal import MockChannelEmulator
         from app.services.instrument_hal_service import get_hal_service
 
@@ -508,13 +584,13 @@ class TestLiveQueryVerification:
             result = await PrecheckExecutor().execute(ctx)
             measurements = result.measurements or {}
 
-            # critical_online would already fail (baseStation offline), and
-            # dut_pass would also fail since live_ue_query_state='unknown'.
-            # Both should be False — verifying the defense-in-depth.
+            # Run fails — but via critical_online (baseStation offline), the
+            # real safety net here. The DUT gate itself is N/A (no real BS).
             assert result.status == StepExecutionStatus.FAILED
-            assert measurements["dut_pass"] is False
+            assert measurements["critical_instruments_online"] is False
+            assert measurements["dut_pass"] is True  # gate N/A — absent BS
+            assert "gate N/A" in measurements["dut_pass_reason"]
             assert measurements["live_ue_query_state"] == "unknown"
-            assert "live BS query state" in measurements["dut_pass_reason"]
         finally:
             hal.drivers.clear()
             hal.drivers.update(saved)

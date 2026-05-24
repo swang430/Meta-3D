@@ -165,8 +165,12 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
         },
     }
     # Only emit the strict-gate flags when the caller set them explicitly.
-    # Omitting them keeps the config schema default (True / strict) — passing
-    # None would override the default and falsy-bypass the gate for everyone.
+    # Omitting them keeps the config schema default (True / strict). The
+    # mock/real auto-skip is NOT applied here — it's evaluated live at precheck
+    # time (precheck.py sections 5 / 5b: `strict = config_flag AND hardware_real`)
+    # so a session created in mock but run on real hardware still gets the gate
+    # (Codex on PR #75). An explicit False here is the real-mode operator
+    # override (Lab-smoke toggle); None leaks nothing.
     if req.precheck_strict_dut is not None:
         overrides["precheck_strict_dut"] = req.precheck_strict_dut
     if req.precheck_strict_cal is not None:

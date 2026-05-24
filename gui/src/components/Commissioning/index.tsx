@@ -279,8 +279,8 @@ export function CommissioningSandbox() {
               <Switch
                 checked={labSmoke}
                 onChange={(e) => setLabSmoke(e.currentTarget.checked)}
-                label="Lab smoke（本地彩排，跳过严格 DUT / 校准门）"
-                description="打开后本次会话以 precheck_strict_dut=False + precheck_strict_cal=False 创建，无需真实 DUT / 校准即可走完预检。现场真测请保持关闭（默认），以保留 P1-8/P1-9 fail-loud 保护。"
+                label="强制跳过严格 DUT / 校准门（real 模式 override）"
+                description="mock 模式（无真实仪表）已自动跳过严格门，无需开此开关。仅当你接了真实仪表、但想在没有 DUT / 校准的情况下空跑预检时才打开。默认关闭，以保留 P1-8/P1-9 fail-loud 保护。"
               />
             </Stack>
           </Paper>
@@ -375,8 +375,8 @@ export function CommissioningSandbox() {
           <Switch
             checked={labSmoke}
             onChange={(e) => setLabSmoke(e.currentTarget.checked)}
-            label="Lab smoke（本地彩排，跳过严格 DUT / 校准门）"
-            description="切换后点「重置会话」生效。打开则以 precheck_strict_dut/cal=False 重建会话，本地无 DUT / 校准也能过预检；现场真测请关闭以保留 fail-loud 保护。"
+            label="强制跳过严格 DUT / 校准门（real 模式 override）"
+            description="mock 模式已自动跳过严格门，无需开此开关。仅真实仪表 + 无 DUT/校准空跑时才需要；切换后点「重置会话」生效。默认关闭以保留 fail-loud 保护。"
           />
 
           {/* 2026-05-18 P0-7: External ASC 模式的路径输入在 pre-session UI

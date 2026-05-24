@@ -57,7 +57,7 @@ class PrecheckExecutor(IStepExecutor):
         messages.append(f"Chamber: {chamber.name} ({chamber.num_probes} probes)")
 
         # --- 2. Instrument connectivity (HAL) ---
-        from app.services.instrument_hal_service import get_hal_service
+        from app.services.instrument_hal_service import get_hal_service, is_mock_driver
         from app.models.instrument import InstrumentCategory
 
         hal = get_hal_service()
@@ -90,14 +90,16 @@ class PrecheckExecutor(IStepExecutor):
             )
         else:
             if config.precheck_strict_dut:
-                # Will be turned into FAIL at section 5b; emit explanatory
-                # warning here so the operator-facing log makes the chain
-                # of cause-and-effect obvious.
+                # May be turned into FAIL at section 5b — the strict DUT gate
+                # only engages against a real baseStation (mock/absent BS
+                # auto-skips it, see section 5b). Emit the heads-up here so the
+                # operator-facing log makes the cause-and-effect obvious.
                 warnings.append(
                     "No DUT attach record on this execution — strict DUT gate "
-                    "will fail this precheck. "
+                    "will fail this precheck when run against a real baseStation "
+                    "(mock/absent baseStation auto-skips the gate). "
                     "POST /api/v1/test-executions/{id}/attach-dut before retry, "
-                    "or set precheck_strict_dut=False for lab smoke."
+                    "or set precheck_strict_dut=False to override on real hardware."
                 )
             else:
                 warnings.append(
@@ -289,11 +291,19 @@ class PrecheckExecutor(IStepExecutor):
         # --- 5. Calibration gate (P1-8, 2026-05-19) ---
         # 默认 strict: path_loss_cal 必有 + cal_cert 若存在则 overall_pass=True;
         # 显式 opt-out (config.precheck_strict_cal=False) 跳过 gate 维持 audit-only 行为.
+        #
+        # Runtime mock-awareness (Codex on PR #75): the gate is evaluated against
+        # LIVE HAL here, not a flag frozen at session-create. A mock/absent
+        # channelEmulator means the measurement is simulated, so the cal gate is
+        # moot → auto-N/A. Re-deriving live (rather than freezing at create)
+        # closes the mock-create-then-switch-to-real bypass: a session built in
+        # mock but RUN against real hardware still gets the strict gate.
+        ce_is_real = ce is not None and not is_mock_driver(ce)
         path_loss_valid = result_payload.get("path_loss_calibration_valid", False)
         cal_cert_broken = cal_cert is not None and not cal_cert.overall_pass
         cal_cert_missing_only = cal_cert is None  # warning, not FAIL — see P1-8 design #1
 
-        if config.precheck_strict_cal:
+        if config.precheck_strict_cal and ce_is_real:
             cal_pass = path_loss_valid and (not cal_cert_broken)
             cal_pass_reason_parts: list[str] = []
             if not path_loss_valid:
@@ -309,8 +319,8 @@ class PrecheckExecutor(IStepExecutor):
             cal_pass_reason = "; ".join(cal_pass_reason_parts) if cal_pass_reason_parts else "ok"
         else:
             # Bypass: cal_pass forced True but audit trail tells you which
-            # gate(s) would have failed under strict mode. Lets ops grep the
-            # measurements row to know "this run happened despite missing cal".
+            # gate(s) would have failed under strict mode, and WHY the gate
+            # was inactive (mock measurement vs operator opt-out).
             cal_pass = True
             bypass_parts: list[str] = []
             if not path_loss_valid:
@@ -320,7 +330,13 @@ class PrecheckExecutor(IStepExecutor):
             if cal_cert_missing_only:
                 bypass_parts.append("cal_cert is None")
             bypass_suffix = f" (would-fail-under-strict: {', '.join(bypass_parts)})" if bypass_parts else ""
-            cal_pass_reason = f"bypassed via precheck_strict_cal=False{bypass_suffix}"
+            if not ce_is_real:
+                cal_pass_reason = (
+                    f"gate N/A — channelEmulator is mock/absent (simulated "
+                    f"measurement, calibration moot){bypass_suffix}"
+                )
+            else:
+                cal_pass_reason = f"bypassed via precheck_strict_cal=False{bypass_suffix}"
 
         result_payload["cal_pass"] = cal_pass
         result_payload["cal_pass_reason"] = cal_pass_reason
@@ -344,7 +360,14 @@ class PrecheckExecutor(IStepExecutor):
         # source="unavailable", 这里 catch.
         live_unverified = live_ue_query_state != "available"
 
-        if config.precheck_strict_dut:
+        # Runtime mock-awareness (Codex on PR #75): a real DUT can only attach
+        # to a real baseStation. A mock/absent BS ⇒ no real DUT possible ⇒ the
+        # DUT gate is moot → auto-N/A. Evaluated against LIVE HAL (not a flag
+        # frozen at session-create), so a mock-created session RUN on real
+        # hardware still gets the strict gate — no silent P1-9 bypass.
+        bs_is_real = bs is not None and not is_mock_driver(bs)
+
+        if config.precheck_strict_dut and bs_is_real:
             dut_pass = (
                 (not dut_attach_missing)
                 and (not dut_rrc_broken)
@@ -384,7 +407,13 @@ class PrecheckExecutor(IStepExecutor):
                 f" (would-fail-under-strict: {', '.join(bypass_parts)})"
                 if bypass_parts else ""
             )
-            dut_pass_reason = f"bypassed via precheck_strict_dut=False{bypass_suffix}"
+            if not bs_is_real:
+                dut_pass_reason = (
+                    f"gate N/A — baseStation is mock/absent (no real DUT can "
+                    f"attach){bypass_suffix}"
+                )
+            else:
+                dut_pass_reason = f"bypassed via precheck_strict_dut=False{bypass_suffix}"
 
         result_payload["dut_pass"] = dut_pass
         result_payload["dut_pass_reason"] = dut_pass_reason
