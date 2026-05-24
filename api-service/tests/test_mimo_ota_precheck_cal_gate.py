@@ -134,16 +134,28 @@ def instrument_categories(db):
     return rows
 
 
+class _RealLikeChannelEmulator:
+    """Non-mock channelEmulator stand-in. P1-9 runtime mock-awareness (Codex on
+    PR #75): the strict CAL gate only engages against a real channelEmulator
+    (a mock CE = simulated measurement → cal moot → auto-skip). These tests are
+    about the cal gate's logic, so CE must read as real. precheck only
+    hasattr-guard-calls get_user_alignment_status / list_external_units, so a
+    bare instance is enough (they're skipped)."""
+
+
 @pytest.fixture
 def hal_with_mocks(instrument_categories):
-    """Inject mock drivers so precheck's `_CRITICAL_INSTRUMENT_CATEGORIES`
-    check passes. Cleared after the test."""
-    from app.hal import MockBaseStation, MockChannelEmulator
+    """Inject drivers so precheck's `_CRITICAL_INSTRUMENT_CATEGORIES` check
+    passes. channelEmulator is a *real-like* (non-mock) stub so the strict CAL
+    gate engages — see `_RealLikeChannelEmulator`. baseStation stays mock
+    (these tests set precheck_strict_dut=False, so BS mock-ness is irrelevant
+    to the CAL-gate signal). Cleared after the test."""
+    from app.hal import MockBaseStation
     from app.services.instrument_hal_service import get_hal_service
 
     hal = get_hal_service()
     saved = dict(hal.drivers)
-    hal.drivers["channelEmulator"] = MockChannelEmulator("mock-ce", {"model": "Mock"})
+    hal.drivers["channelEmulator"] = _RealLikeChannelEmulator()
     hal.drivers["baseStation"] = MockBaseStation("mock-bs", {"model": "Mock"})
     yield hal
     hal.drivers.clear()
@@ -462,3 +474,43 @@ class TestFrequencyWindow:
 
         assert measurements["path_loss_calibration_target_frequency_mhz"] == 3500.0
         assert measurements["path_loss_calibration_frequency_mhz"] == 3500.0
+
+
+# ---------------------------------------------------------------------------
+# Runtime mock-awareness (Codex on PR #75): mock/absent CE auto-skips cal gate
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def hal_with_mock_ce(instrument_categories):
+    """channelEmulator is a real **mock** driver — used to verify the runtime
+    auto-skip: strict CAL gate must be N/A when the measurement is simulated."""
+    from app.hal import MockBaseStation, MockChannelEmulator
+    from app.services.instrument_hal_service import get_hal_service
+
+    hal = get_hal_service()
+    saved = dict(hal.drivers)
+    hal.drivers["channelEmulator"] = MockChannelEmulator("mock-ce", {"model": "Mock"})
+    hal.drivers["baseStation"] = MockBaseStation("mock-bs", {"model": "Mock"})
+    yield hal
+    hal.drivers.clear()
+    hal.drivers.update(saved)
+
+
+@pytest.mark.asyncio
+async def test_mock_channelEmulator_auto_skips_strict_cal_gate(
+    db, lab, chamber, hal_with_mock_ce,
+):
+    """precheck_strict_cal=True + NO path-loss cal, but channelEmulator is a
+    mock driver → simulated measurement → cal gate N/A, cal_pass True. Local
+    rehearsal isn't blocked by a missing calibration."""
+    # Deliberately seed NO path-loss cal.
+    ctx = _build_context(db, lab, cal_cert=None, strict_mode=True)
+    result = await PrecheckExecutor().execute(ctx)
+    measurements = result.measurements or {}
+
+    assert measurements.get("cal_pass") is True, (
+        f"mock CE should auto-skip the cal gate; cal_pass="
+        f"{measurements.get('cal_pass')}, reason={measurements.get('cal_pass_reason')!r}"
+    )
+    reason = measurements.get("cal_pass_reason", "") or ""
+    assert "gate N/A" in reason and "mock" in reason, f"got {reason!r}"

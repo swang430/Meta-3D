@@ -165,44 +165,17 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
         },
     }
     # Only emit the strict-gate flags when the caller set them explicitly.
-    # Omitting them keeps the config schema default (True / strict) — passing
-    # None would override the default and falsy-bypass the gate for everyone.
-    # When omitted, `_apply_strict_gate_defaults` (called from create_session)
-    # fills them in by HAL mock/real mode.
+    # Omitting them keeps the config schema default (True / strict). The
+    # mock/real auto-skip is NOT applied here — it's evaluated live at precheck
+    # time (precheck.py sections 5 / 5b: `strict = config_flag AND hardware_real`)
+    # so a session created in mock but run on real hardware still gets the gate
+    # (Codex on PR #75). An explicit False here is the real-mode operator
+    # override (Lab-smoke toggle); None leaks nothing.
     if req.precheck_strict_dut is not None:
         overrides["precheck_strict_dut"] = req.precheck_strict_dut
     if req.precheck_strict_cal is not None:
         overrides["precheck_strict_cal"] = req.precheck_strict_cal
     return overrides
-
-
-def _apply_strict_gate_defaults(overrides: Dict[str, Any], hal) -> None:
-    """Default the strict precheck gates by HAL mock/real mode, in place.
-
-    Rationale (why not just always-strict): the strict DUT gate (P1-9) exists
-    to stop a *real* first-call measuring with no DUT attached. That safety
-    only means something when there's real hardware. In mock mode there is no
-    real DUT / no real measurement, so a strict gate just blocks local
-    rehearsal for zero safety gain (operator otherwise has to hunt for a
-    "Lab smoke" toggle — the trap this replaces).
-
-    So: a **real** baseStation (a real DUT can attach to it) → strict DUT gate
-    on; a **mock / absent** baseStation → no real DUT possible → gate off. Same
-    for the cal gate keyed on channelEmulator (mock CE = simulated measurement,
-    cal is moot).
-
-    Only fills flags the caller left unset — an explicit request value (the
-    Lab-smoke toggle, or a test passing config_overrides) always wins, so this
-    stays an opt-out override for the rare real-hardware-without-DUT rehearsal.
-    """
-    from app.services.instrument_hal_service import is_mock_driver
-
-    if "precheck_strict_dut" not in overrides:
-        bs = hal.drivers.get("baseStation")
-        overrides["precheck_strict_dut"] = bs is not None and not is_mock_driver(bs)
-    if "precheck_strict_cal" not in overrides:
-        ce = hal.drivers.get("channelEmulator")
-        overrides["precheck_strict_cal"] = ce is not None and not is_mock_driver(ce)
 
 
 def _phase_status_from_payload(payload: Dict[str, Any]) -> str:
@@ -372,11 +345,6 @@ def _build_context(
 async def create_session(req: CreateSessionRequest, db: Session = Depends(get_db)):
     """Create a new MIMO_OTA session (TestCase + TestExecution + 5 step descriptors)."""
     overrides = _request_overrides(req)
-    # Auto-default the strict precheck gates by HAL mock/real mode when the
-    # request didn't set them explicitly. Local import mirrors the precheck
-    # executor's pattern (avoids import-time cycles with the HAL service).
-    from app.services.instrument_hal_service import get_hal_service
-    _apply_strict_gate_defaults(overrides, get_hal_service())
     try:
         test_case, descriptors = build_mimo_ota_test_case(
             db,
