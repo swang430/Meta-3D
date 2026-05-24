@@ -372,6 +372,7 @@ class InstrumentHALService:
             build_calibration_readiness,
             build_dut_attach_readiness,
             build_lab_profile_readiness,
+            build_subnet_reachability,
         )
 
         db = SessionLocal()
@@ -531,6 +532,10 @@ class InstrumentHALService:
                             endpoint=endpoint_str,
                             status="fail",
                             detail=f"preflight: {reason}",
+                            # P1-11: TCP preflight couldn't reach the host —
+                            # the network layer can't route here (most often
+                            # the control PC isn't on this /24 subnet).
+                            fail_kind="network",
                         ))
                         continue
 
@@ -662,6 +667,11 @@ class InstrumentHALService:
                             endpoint=endpoint_str,
                             status="fail",
                             detail=real_err,
+                            # P1-11: TCP preflight already passed (host is
+                            # reachable) but the driver's session/*IDN?
+                            # handshake failed — instrument problem, not a
+                            # routing problem.
+                            fail_kind="scpi",
                         ))
                 except Exception as e:
                     err_str = f"{type(e).__name__}: {e}"
@@ -678,6 +688,11 @@ class InstrumentHALService:
                         endpoint=endpoint_str,
                         status="fail",
                         detail=err_str,
+                        # P1-11: exception was raised *during* driver.connect()
+                        # — preflight had already confirmed the host is
+                        # reachable, so this is a session/SCPI-layer failure,
+                        # not a network-routing one.
+                        fail_kind="scpi",
                     ))
 
             logger.info(
@@ -693,12 +708,17 @@ class InstrumentHALService:
             lab_section = build_lab_profile_readiness(db)
             cal_section = build_calibration_readiness(db, lab_section)
             dut_section = build_dut_attach_readiness()
+            # P1-11: roll up the driver rows by /24 subnet so the operator
+            # gets one "this subnet is unreachable, add an IP alias" hint
+            # per subnet instead of N opaque per-instrument VISA errors.
+            subnet_sections = build_subnet_reachability(report_rows)
             report = ReadinessReport(
                 drivers=report_rows,
                 lab_profile=lab_section,
                 calibration=cal_section,
                 dut_attach=dut_section,
                 generated_at_iso=datetime.utcnow().isoformat(),
+                subnets=subnet_sections,
             )
             self.last_readiness_report = report
             self._log_readiness_report(report)

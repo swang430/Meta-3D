@@ -2353,6 +2353,26 @@ class DriverReadinessRowResponse(BaseModel):
     status: str  # "ok" | "fail" | "skipped"
     detail: str
     extras: Dict[str, Any] = {}
+    # P1-11: when status=="fail", "network" (TCP unreachable — likely
+    # wrong subnet) vs "scpi" (TCP reached, *IDN?/connect failed). None
+    # whenever status != "fail".
+    fail_kind: Optional[str] = None
+
+
+class SubnetReachabilityResponse(BaseModel):
+    """P1-11: per-/24-subnet reachability rollup of the driver rows.
+
+    ``reachable=False`` means at least one instrument on this subnet
+    failed TCP preflight (``fail_kind=="network"``) — the control PC
+    most likely isn't on this subnet. ``hint`` is an actionable,
+    runbook-pointing string for unreachable subnets, ``null`` for
+    reachable ones. The sentinel cidr ``"unknown"`` buckets rows whose
+    endpoint had no parseable IPv4 host."""
+    cidr: str
+    reachable: bool
+    instrument_count: int
+    unreachable_count: int
+    hint: Optional[str] = None
 
 
 class LabProfileReadinessResponse(BaseModel):
@@ -2403,6 +2423,9 @@ class HALReadinessResponse(BaseModel):
     calibration: CalibrationReadinessResponse
     dut_attach: DutAttachReadinessResponse
     generated_at_iso: str
+    # P1-11: per-/24-subnet reachability rollup. Empty list when HAL
+    # hasn't initialised or no drivers carry a parseable IP.
+    subnets: List[SubnetReachabilityResponse] = []
 
 
 @router.get("/instruments/hal/readiness", response_model=HALReadinessResponse)
@@ -2447,6 +2470,7 @@ def get_hal_readiness():
                 detail="HAL not initialised yet",
             ),
             generated_at_iso=_dt.utcnow().isoformat(),
+            subnets=[],
         )
 
     return HALReadinessResponse(
@@ -2459,6 +2483,7 @@ def get_hal_readiness():
                 status=r.status,
                 detail=r.detail,
                 extras=r.extras,
+                fail_kind=r.fail_kind,
             )
             for r in report.drivers
         ],
@@ -2481,6 +2506,16 @@ def get_hal_readiness():
             detail=report.dut_attach.detail,
         ),
         generated_at_iso=report.generated_at_iso,
+        subnets=[
+            SubnetReachabilityResponse(
+                cidr=s.cidr,
+                reachable=s.reachable,
+                instrument_count=s.instrument_count,
+                unreachable_count=s.unreachable_count,
+                hint=s.hint,
+            )
+            for s in report.subnets
+        ],
     )
 
 

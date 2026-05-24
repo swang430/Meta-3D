@@ -610,6 +610,15 @@ components:
           $ref: '#/components/schemas/DutAttachReadiness'
         generated_at_iso:
           type: string
+        subnets:
+          type: array
+          description: |
+            P1-11: per-/24-subnet reachability rollup derived from the
+            driver rows. Empty when HAL hasn't initialised or no driver
+            carries a parseable IP.
+          items:
+            $ref: '#/components/schemas/SubnetReachability'
+          default: []
       required: [available, drivers, lab_profile, calibration, dut_attach, generated_at_iso]
     DriverReadinessRow:
       type: object
@@ -625,6 +634,15 @@ components:
           enum: [ok, fail, skipped]
         detail:
           type: string
+        fail_kind:
+          type: string
+          nullable: true
+          enum: [network, scpi]
+          description: |
+            P1-11: when `status == fail`, why. `network` = TCP preflight
+            couldn't reach the host (most likely wrong /24 subnet);
+            `scpi` = TCP reached but the driver session / *IDN? failed
+            (instrument/session problem). `null` whenever status != fail.
         extras:
           type: object
           description: |
@@ -694,6 +712,29 @@ components:
         detail:
           type: string
       required: [status, detail]
+    SubnetReachability:
+      type: object
+      description: |
+        P1-11: per-/24-subnet reachability rollup. `reachable=false`
+        means at least one instrument on this subnet failed TCP preflight
+        (`fail_kind=network`) — the control PC most likely isn't on this
+        subnet. `hint` is an actionable runbook-pointing string for
+        unreachable subnets, `null` for reachable ones. The sentinel cidr
+        `unknown` buckets rows whose endpoint had no parseable IPv4 host.
+      properties:
+        cidr:
+          type: string
+          description: '/24 CIDR (e.g. 192.168.0.0/24) or the sentinel "unknown"'
+        reachable:
+          type: boolean
+        instrument_count:
+          type: integer
+        unreachable_count:
+          type: integer
+        hint:
+          type: string
+          nullable: true
+      required: [cidr, reachable, instrument_count, unreachable_count]
     TestExecutionItem:
       type: object
       description: |

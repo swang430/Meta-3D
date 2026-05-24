@@ -72,6 +72,8 @@ const readinessSnapshot: HALReadinessResponse = {
       status: 'ok',
       detail: 'IDN verified, ATE Server reachable',
       extras: { firmware_version: '9.2.1', product_family: 'F64' },
+      // P1-11: status==='ok' → fail_kind null (no failure to classify).
+      fail_kind: null,
     },
     {
       category: 'baseStation',
@@ -80,6 +82,7 @@ const readinessSnapshot: HALReadinessResponse = {
       status: 'ok',
       detail: 'Test App detected: 5G NR FR1',
       extras: {},
+      fail_kind: null,
     },
     {
       category: 'signalAnalyzer',
@@ -88,6 +91,8 @@ const readinessSnapshot: HALReadinessResponse = {
       status: 'skipped',
       detail: 'not bound in active lab profile',
       extras: {},
+      // skipped (not fail) → fail_kind null.
+      fail_kind: null,
     },
   ],
   lab_profile: {
@@ -109,6 +114,29 @@ const readinessSnapshot: HALReadinessResponse = {
     detail:
       'DUT attach sensing not implemented in this build (no probe-sensing / RFID / session table yet — future P3 item)',
   },
+  // P1-11: per-/24-subnet reachability rollup. These values are exactly
+  // what the backend build_subnet_reachability() produces for the driver
+  // endpoints above — F64 on 192.168.0.x (1 instrument, no network fail →
+  // reachable), UXM + N9042B on 192.168.1.x (2 instruments, no network
+  // fail → reachable). Sorted by cidr, reachable subnets get hint=null.
+  // Keep this self-consistent with the driver rows above; do not invent
+  // values the backend wouldn't compute.
+  subnets: [
+    {
+      cidr: '192.168.0.0/24',
+      reachable: true,
+      instrument_count: 1,
+      unreachable_count: 0,
+      hint: null,
+    },
+    {
+      cidr: '192.168.1.0/24',
+      reachable: true,
+      instrument_count: 2,
+      unreachable_count: 0,
+      hint: null,
+    },
+  ],
   generated_at_iso: new Date().toISOString(),
 }
 

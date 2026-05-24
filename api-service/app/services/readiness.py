@@ -37,6 +37,8 @@ spinning up the full driver factory.
 """
 from __future__ import annotations
 
+import ipaddress
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -64,6 +66,43 @@ class DriverReadinessRow:
     status: str  # "ok" | "fail" | "skipped"
     detail: str
     extras: Dict[str, Any] = field(default_factory=dict)
+    # P1-11: when ``status == "fail"``, why did it fail?
+    #   "network" — TCP/preflight couldn't reach the host (most likely the
+    #               control PC isn't on the instrument's /24 subnet)
+    #   "scpi"    — TCP reached the host but driver.connect() / *IDN? failed
+    #               (instrument/session problem, not a routing problem)
+    # ``None`` whenever ``status != "fail"``. Surfaced so readiness can tell
+    # the operator "fix your subnet" (network) vs "check the instrument"
+    # (scpi) instead of a single opaque ``fail``.
+    fail_kind: Optional[str] = None  # "network" | "scpi" | None
+
+
+@dataclass(frozen=True)
+class SubnetReachability:
+    """P1-11: per-/24-subnet reachability rollup of the driver rows.
+
+    CAICT's instruments live across two /24 subnets (F64 on
+    ``192.168.0.x``, UXM + SA on ``192.168.1.x``) and the single-NIC
+    control Mac can only sit on one subnet at a time. When a whole
+    subnet is unreachable the operator was getting one opaque VISA
+    error per instrument; this rollup says "this entire subnet is
+    unreachable, here's what to do" once per subnet.
+
+    ``reachable`` is False iff *any* driver row on this subnet failed
+    with ``fail_kind == "network"`` (the network layer can't reach it).
+    A subnet with only ``scpi`` fails / ok / skipped rows is still
+    reachable at the network layer — the problem there is the
+    instrument, not the route.
+
+    ``hint`` is a runbook-pointing, actionable string for unreachable
+    subnets, ``None`` for reachable ones.
+    """
+
+    cidr: str
+    reachable: bool
+    instrument_count: int
+    unreachable_count: int
+    hint: Optional[str]
 
 
 @dataclass(frozen=True)
@@ -140,6 +179,8 @@ class ReadinessReport:
     calibration: CalibrationReadiness
     dut_attach: DutAttachReadiness
     generated_at_iso: str
+    # P1-11: per-/24-subnet reachability rollup derived from ``drivers``.
+    subnets: List[SubnetReachability] = field(default_factory=list)
 
 
 def build_lab_profile_readiness(db: Session) -> LabProfileReadiness:
@@ -298,3 +339,97 @@ def build_calibration_readiness(
 def build_dut_attach_readiness() -> DutAttachReadiness:
     """Placeholder — always returns ``not_implemented``. See module docstring."""
     return DutAttachReadiness()
+
+
+# P1-11: pull a bare IPv4 host out of an endpoint string. The driver
+# rows carry endpoints in two production shapes (see
+# instrument_hal_service._initialize_from_db):
+#   - "192.168.0.132:5025"                       (controller_ip:port)
+#   - "TCPIP0::192.168.0.132::inst0::INSTR"      (VISA resource string)
+# Either way we want the host. We deliberately do NOT resolve hostnames
+# — instruments are configured by IP in this system, and a DNS lookup in
+# a readiness path would reintroduce the slow-blocking problem P1-#15's
+# preflight removed.
+_IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+
+
+def parse_subnet_cidr(endpoint: str) -> Optional[str]:
+    """Return the ``/24`` CIDR for the first IPv4 host in ``endpoint``.
+
+    ``192.168.0.132:5025`` → ``"192.168.0.0/24"``;
+    ``TCPIP0::192.168.0.132::inst0::INSTR`` → ``"192.168.0.0/24"``.
+    Returns ``None`` when no parseable IPv4 host is present (hostname-only
+    endpoints, empty strings) — the caller buckets those as "unknown"
+    rather than crashing.
+    """
+    if not endpoint:
+        return None
+    m = _IPV4_RE.search(endpoint)
+    if not m:
+        return None
+    try:
+        net = ipaddress.ip_network(f"{m.group(0)}/24", strict=False)
+    except ValueError:
+        return None
+    return str(net)
+
+
+def build_subnet_reachability(
+    rows: List[DriverReadinessRow],
+) -> List[SubnetReachability]:
+    """Group driver rows by their /24 subnet and roll up reachability.
+
+    A subnet is ``reachable=False`` iff it contains at least one row with
+    ``fail_kind == "network"`` (the network layer can't get there). Rows
+    that are ok / skipped / scpi-failed do not make the subnet
+    unreachable — those are instrument/session problems, not routing.
+
+    Rows whose endpoint has no parseable IPv4 host are grouped under the
+    sentinel CIDR ``"unknown"`` (never marked unreachable on their own —
+    we can't claim a routing problem we can't locate).
+
+    Output is sorted by CIDR for stable rendering / diffable snapshots,
+    with ``"unknown"`` last.
+    """
+    # cidr -> [rows]
+    groups: Dict[str, List[DriverReadinessRow]] = {}
+    for r in rows:
+        cidr = parse_subnet_cidr(r.endpoint) or "unknown"
+        groups.setdefault(cidr, []).append(r)
+
+    result: List[SubnetReachability] = []
+    for cidr, group_rows in groups.items():
+        unreachable = [
+            r for r in group_rows
+            if r.status == "fail" and r.fail_kind == "network"
+        ]
+        # The "unknown" bucket holds rows we couldn't locate to a /24, so
+        # we can't honestly claim a routing problem against any subnet —
+        # report reachable=True / hint=None and let the GUI render it as a
+        # neutral "未知" group. (unreachable_count still surfaces the raw
+        # network-fail tally for transparency.)
+        if cidr == "unknown":
+            reachable = True
+        else:
+            reachable = len(unreachable) == 0
+        if reachable:
+            hint = None
+        else:
+            hint = (
+                f"子网 {cidr} 不可达：参见 "
+                "docs/guides/multi-subnet-instrument-network.md 方案 A"
+                "（单网卡加 IP 别名），或确认交换机连线"
+            )
+        result.append(
+            SubnetReachability(
+                cidr=cidr,
+                reachable=reachable,
+                instrument_count=len(group_rows),
+                unreachable_count=len(unreachable),
+                hint=hint,
+            )
+        )
+
+    # Stable order; keep the "unknown" bucket at the end.
+    result.sort(key=lambda s: (s.cidr == "unknown", s.cidr))
+    return result
