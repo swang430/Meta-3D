@@ -6,14 +6,55 @@ export function PrecheckPhase({ data }: { data: any }) {
   
   return (
     <Stack gap="md">
-      <Alert 
-        color={data.overall_pass ? 'green' : 'red'} 
+      <Alert
+        color={data.overall_pass ? 'green' : 'red'}
         title={data.overall_pass ? "预检通过" : "预检失败"}
         icon={data.overall_pass ? <IconCheck /> : <IconX />}
       >
         {data.overall_pass ? "所有系统与校准状态正常，可进行下一步测试。" : "系统存在异常，请检查以下信息。"}
       </Alert>
-      
+
+      {/* P1-9 follow-up: when overall_pass is false, the passing `messages`
+          list below doesn't tell the operator WHICH gate failed (e.g. all
+          checks read PASS but the strict DUT/cal gate failed). Surface the
+          failing gate reasons explicitly from the result payload. */}
+      {!data.overall_pass && (() => {
+        const reasons: string[] = []
+        if (data.critical_instruments_online === false) reasons.push('关键仪表离线 — 无法继续')
+        if (data.cal_pass === false && data.cal_pass_reason) reasons.push(`校准门未通过：${data.cal_pass_reason}`)
+        if (data.dut_pass === false && data.dut_pass_reason) reasons.push(`DUT 门未通过：${data.dut_pass_reason}`)
+        if (data.quiet_zone_pass === false) reasons.push(`静区纹波超阈值（±${data.quiet_zone_ripple_db} dB）`)
+        if (data.ue_capability_pass === false) reasons.push('UE 能力不足（max_dl_layers < 请求层数）')
+        if (typeof data.error_message === 'string' && reasons.length === 0) reasons.push(data.error_message)
+        const strictGateFailed = data.dut_pass === false || data.cal_pass === false
+        return (
+          <Alert color="red" variant="light" title="失败原因" icon={<IconX />}>
+            <List spacing="xs" size="sm">
+              {reasons.map((r, i) => (
+                <List.Item key={i}>{r}</List.Item>
+              ))}
+            </List>
+            {strictGateFailed && (
+              <Text size="sm" mt="sm" c="dimmed">
+                若这是<strong>本地彩排</strong>（无真实 DUT / 校准），可在「重置会话」前打开
+                顶部的 <strong>“Lab smoke”</strong> 开关跳过严格 DUT / 校准门；现场真测请
+                先 POST <code>/api/v1/test-executions/{'{id}'}/attach-dut</code> 并完成校准。
+              </Text>
+            )}
+          </Alert>
+        )
+      })()}
+
+      {Array.isArray(data.warnings) && data.warnings.length > 0 && (
+        <Alert color="yellow" variant="light" title="预检警告">
+          <List spacing="xs" size="sm">
+            {data.warnings.map((w: string, i: number) => (
+              <List.Item key={i}>{w}</List.Item>
+            ))}
+          </List>
+        </Alert>
+      )}
+
       <Card withBorder>
         <Text fw={500} mb="sm">预检详情</Text>
         <List spacing="sm" size="sm">

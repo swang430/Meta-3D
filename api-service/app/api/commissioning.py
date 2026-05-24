@@ -113,6 +113,15 @@ class CreateSessionRequest(BaseModel):
     max_rsrp_variance_db: float = 3.0
     # New optional field — pin a specific lab; falls back to the unique active one.
     lab_profile_id: Optional[UUID] = None
+    # Lab-smoke opt-outs for the strict precheck gates (P1-8 cal / P1-9 DUT).
+    # Default None = don't override → config schema default (True, strict) applies,
+    # so on-site real first-call keeps the fail-loud protection. The GUI's
+    # "Lab smoke" toggle sends False to rehearse locally without a real DUT /
+    # calibration (same path the e2e/smoke tests use). Optional[bool] not bool:
+    # a literal False must override, but None must leave the default untouched
+    # (passing None into the config would falsy-bypass the gate for everyone).
+    precheck_strict_dut: Optional[bool] = None
+    precheck_strict_cal: Optional[bool] = None
 
 
 class SessionResponse(BaseModel):
@@ -141,7 +150,7 @@ class PhaseResultResponse(BaseModel):
 
 def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
     """Translate CreateSessionRequest fields into MIMOOTAConfiguration overrides."""
-    return {
+    overrides: Dict[str, Any] = {
         "cdl_model_name": req.cdl_model_name,
         "frequency_hz": req.frequency_hz,
         "bandwidth_mhz": req.bandwidth_mhz,
@@ -155,6 +164,14 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
             "max_rsrp_variance_db": req.max_rsrp_variance_db,
         },
     }
+    # Only emit the strict-gate flags when the caller set them explicitly.
+    # Omitting them keeps the config schema default (True / strict) — passing
+    # None would override the default and falsy-bypass the gate for everyone.
+    if req.precheck_strict_dut is not None:
+        overrides["precheck_strict_dut"] = req.precheck_strict_dut
+    if req.precheck_strict_cal is not None:
+        overrides["precheck_strict_cal"] = req.precheck_strict_cal
+    return overrides
 
 
 def _phase_status_from_payload(payload: Dict[str, Any]) -> str:
