@@ -135,6 +135,10 @@ export function CommissioningSandbox() {
     // immediately fire init with no lab and bounce to the 422 picker
     // before the lab list has even loaded.
     if (!labChoiceMade && !labId) return
+    // external_asc 必须先有 ASC 路径才能建会话 (后端校验)。engineMode 在 deps 里,
+    // 切到 external_asc 会触发本 effect; 若此时路径还没填, 不要 auto-fire 一个注定
+    // 422 的 createSession。等操作员填好路径点「启动」(bump initAttempt) 再建。
+    if (engineMode === 'external_asc' && !ascSourcePath.trim()) return
     initSession()
     // labId in deps so that switching labs after a failed create
     // re-fires init. initAttempt in deps so that re-clicking the
