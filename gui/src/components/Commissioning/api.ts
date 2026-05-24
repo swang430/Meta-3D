@@ -42,6 +42,11 @@ export const createSession = async (
   engineMode: string = 'mimo_first_asc',
   labProfileId?: string,
   ascSourcePath?: string,
+  // Lab-smoke mode: relax the strict precheck gates (P1-8 cal / P1-9 DUT) so a
+  // local rehearsal without a real DUT / calibration can get past 系统预检.
+  // Omitted (undefined) → backend keeps its strict default (True) → on-site
+  // real first-call stays protected. Only sent when the operator opts in.
+  labSmoke?: boolean,
 ) => {
   // 2026-05-18 P0-7: engine_mode='external_asc' requires asc_source_path
   // (operator-supplied .asc directory). For the other two engine modes the
@@ -51,6 +56,8 @@ export const createSession = async (
     engine_mode: string
     lab_profile_id?: string
     asc_source_path?: string
+    precheck_strict_dut?: boolean
+    precheck_strict_cal?: boolean
   } = {
     engine_mode: engineMode,
   }
@@ -59,6 +66,12 @@ export const createSession = async (
   }
   if (engineMode === 'external_asc' && ascSourcePath) {
     body.asc_source_path = ascSourcePath
+  }
+  if (labSmoke) {
+    // Both gates relaxed together — the documented local-rehearsal path
+    // (mirrors test_commissioning_{smoke,e2e_p06} setting strict flags False).
+    body.precheck_strict_dut = false
+    body.precheck_strict_cal = false
   }
   return client.post<SessionResponse>('/commissioning/sessions', body)
 }

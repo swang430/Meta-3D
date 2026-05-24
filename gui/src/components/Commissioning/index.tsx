@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Container, Title, Text, Stepper, Group, Button, Paper, Stack, Divider, Loader, Select, Badge, Alert, TextInput } from '@mantine/core'
+import { Container, Title, Text, Stepper, Group, Button, Paper, Stack, Divider, Loader, Select, Badge, Alert, TextInput, Switch } from '@mantine/core'
 import { IconTestPipe, IconPlayerPlay, IconPlayerTrackNext, IconAlertTriangle } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 import { PrecheckPhase, ReferencePhase, MIMOTestPhase, AnalysisPhase, ReportPhase } from './Phases'
@@ -26,6 +26,10 @@ export function CommissioningSandbox() {
   const [loading, setLoading] = useState(false)
   const [activeStep, setActiveStep] = useState(0)
   const [engineMode, setEngineMode] = useState<string>('mimo_first_asc')
+  // Lab-smoke: relax strict precheck gates (P1-8 cal / P1-9 DUT) for local
+  // rehearsal without a real DUT / calibration. Default OFF = strict ON, so
+  // on-site real first-call keeps the fail-loud protection (P1-9 intent).
+  const [labSmoke, setLabSmoke] = useState(false)
   // 2026-05-18 P0-7: only meaningful when engineMode==='external_asc'.
   // Operator-supplied absolute path of a local directory of channel_InX_OutY.asc
   // files (typically produced by ChannelEgine app.py Streamlit on the same host).
@@ -81,6 +85,7 @@ export function CommissioningSandbox() {
         engineMode,
         labId || undefined,
         engineMode === 'external_asc' ? ascSourcePath : undefined,
+        labSmoke,
       )
       setSession(res.data)
       setActiveStep(0)
@@ -269,6 +274,14 @@ export function CommissioningSandbox() {
                   onChange={(e) => setAscSourcePath(e.currentTarget.value)}
                 />
               )}
+
+              <Divider my={4} />
+              <Switch
+                checked={labSmoke}
+                onChange={(e) => setLabSmoke(e.currentTarget.checked)}
+                label="Lab smoke（本地彩排，跳过严格 DUT / 校准门）"
+                description="打开后本次会话以 precheck_strict_dut=False + precheck_strict_cal=False 创建，无需真实 DUT / 校准即可走完预检。现场真测请保持关闭（默认），以保留 P1-8/P1-9 fail-loud 保护。"
+              />
             </Stack>
           </Paper>
 
@@ -357,6 +370,14 @@ export function CommissioningSandbox() {
               )}
             </Group>
           </Group>
+
+          <Divider my="sm" />
+          <Switch
+            checked={labSmoke}
+            onChange={(e) => setLabSmoke(e.currentTarget.checked)}
+            label="Lab smoke（本地彩排，跳过严格 DUT / 校准门）"
+            description="切换后点「重置会话」生效。打开则以 precheck_strict_dut/cal=False 重建会话，本地无 DUT / 校准也能过预检；现场真测请关闭以保留 fail-loud 保护。"
+          />
 
           {/* 2026-05-18 P0-7: External ASC 模式的路径输入在 pre-session UI
               (L260+) 里, 这一块是 post-session, 只显示 read-only 锁定路径.
