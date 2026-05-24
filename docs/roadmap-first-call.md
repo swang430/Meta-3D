@@ -82,6 +82,12 @@ be progressed from a remote dev box. When the next on-site trip
 opens, the Current Focus must move back to P0-3 (or whichever P0 is
 unblocked) BEFORE starting any new P1.
 
+> **下次现场执行按 [`docs/guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md)
+> 走**（现场首测调试协议）。该协议把这些 P0 排成依赖链 **P0-4 → P0-3 → P0-5** 的
+> 5 阶段 go/no-go gate（gate 标准 = 上面各 P0 的 acceptance），并固化 CAICT 教训:
+> 出发前硬门槛 (mock first-call 跑通 + driver 冻结) + 铁律「现场不写 driver 代码」+
+> timebox 救火 + 收工 review + retro 喂回本 roadmap。
+
 ---
 
 ## Governance rules
