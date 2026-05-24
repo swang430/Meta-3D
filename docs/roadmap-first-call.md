@@ -8,8 +8,10 @@
 
 ## 🎯 Current Focus
 
-**无 — P2-8 (#68) merged, 本地可启动 P0/P1/P2 重新归零。退回到主动 audit silent
-failure modes。** 下次现场打开时 Current Focus 切回 **P0-3** per WIP=1。
+**P1-11 — 多子网仪表连接 (runbook + 可达性诊断, 本地可启动)。** 直接打中 CAICT
+一天耗掉的「单网卡够不到全部子网」阻塞: 不改仪表 IP, 网络层 runbook (平坑 L2 →
+单网卡多 IP 别名, 零硬件) + 软件层 readiness 区分 unreachable vs SCPI-fail。
+下次现场打开时本项让位, Current Focus 切回 **P0-3** per WIP=1。
 
 P1-7 (#59) + P1-8 (#61) + P1-9 (#63) + P1-10 (#64) + P2-8 (#68) 全 merged。
 Commissioning →
@@ -26,7 +28,8 @@ constraint, non-ring chamber 几何透传 ChannelEgine, 同时收口 P2-7 cross-
 > silent failures, Summary counts 同步 (per memory
 > `feedback_d_row_stale_this_pr_reflex.md` + `feedback_recompute_aggregate_rows_from_parts.md`)。
 
-**严格按 trigger 筛, 本地可启动的 P0/P1/P2 重新归零 (P2-8 已 merged)**:
+**on-site / blocked 项 (本地启动不了, 等现场或事件触发) —— 这些都不是
+Current Focus, P1-11 是**:
 
 | ID | Status | 触发条件 / blocker |
 |----|--------|------------------|
@@ -37,12 +40,13 @@ constraint, non-ring chamber 几何透传 ChannelEgine, 同时收口 P2-7 cross-
 | P1-6 | ⏸️ incident-conditional hold | trigger = 真 idle-close 出现在 FS16/UXM/ENA (当前没证据) |
 | P2-4 | 🚧 on-site | NAT/FW idle-drop hypothesis 现场 verify |
 
-下次现场打开时, Current Focus 必须切回 **P0-3** (或最先解锁的 P0) per WIP=1。
-P2-8 已 merged, 本地无其它可启动 P0/P1/P2 → 当前本地工作退回 **主动 audit
-silent failure modes** (此前抓了 P1-8 cal gate + frequency window + P1-9
-DUT-attach + P1-10 ring-only, P2-8 实现中又抓到 alert.py 路由顺序 bug 已 spin
-off; audit ROI 已反复证明); 挖到东西 = candidate for P1-11 promotion; 没挖到 =
-进 "Known unknowns" 留档。
+下次现场打开时, Current Focus 必须切回 **P0-3** (或最先解锁的 P0) per WIP=1,
+P1-11 让位。当前本地 focus = **P1-11 多子网仪表连接** (P0/P1 on-site 全 blocked
+期间的 confidence 投资, 直接解 CAICT 子网切换阻塞)。P1-11 做完若现场仍未开, 退回
+**主动 audit silent failure modes** (此前抓了 P1-8 cal gate + frequency window +
+P1-9 DUT-attach + P1-10 ring-only, P2-8 实现中又抓到 alert.py 路由顺序 bug 已
+spin off; audit ROI 已反复证明); 挖到东西 = candidate for P1-12 promotion; 没挖到
+= 进 "Known unknowns" 留档。
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
@@ -794,6 +798,60 @@ naming 对齐)
 
 ---
 
+### P1-11 — 多子网仪表连接 (runbook + 可达性诊断) 🔄 In progress (this PR)
+
+**What**: 仪表默认 IP 分布在不同 `/24` 子网 (CAICT: F64 `192.168.0.x` / UXM +
+SA `192.168.1.x`), 控制 Mac 单网卡一次只在一个子网, 操作员被迫手工切静态 IP ——
+CAICT 两天现场相当一部分时间耗在这种来回上。本项**不改仪表 IP**, 从两层解决:
+(1) 网络/OS 层 runbook (怎么让单网卡 PC 同时够到多子网); (2) 软件层可达性诊断
+增强 (连不上时看得懂是子网问题还是仪表问题)。
+
+**Why**: 这直接打中 CAICT 一天耗掉的那个阻塞 —— 控制电脑够不到全部仪表, first-call
+就根本起不来。纯网络层是 ops, 但软件诊断把「甩一个 -1073807339 看不懂」变成
+actionable, 跟 P1-8/9 fail-loud + P2-8 就绪带哲学一脉相承。现场拓扑确认是**同一
+哑交换机、平坑 L2、无 VLAN 隔离** → 网络层最优解是「单网卡多 IP 别名」, 零硬件。
+
+**两层方案**:
+1. **网络/OS 层 (runbook, 不是代码)**: 见
+   [`docs/guides/multi-subnet-instrument-network.md`](guides/multi-subnet-instrument-network.md)。
+   - 方案 A 单网卡多 IP 别名 (平坑 L2 首选, 零硬件) ← CAICT 现场即此情形
+   - 方案 B 三层交换机/路由器 (固定实验室/VLAN 分隔)
+   - 方案 C 多物理网卡 (兜底) + 选型决策树 + 故障排查 (unreachable vs SCPI)
+2. **软件层 (本 PR 代码)**: readiness 区分 `unreachable` (TCP preflight 挂, 多半
+   子网不对) vs `scpi_fail` (TCP 通但 *IDN? 超时, 仪表/会话问题); 按 `/24` 子网
+   聚合可达性 + actionable 提示, surfaced 进 P2-8 主控制台就绪带。
+
+**Scope** (single PR):
+
+| Step | File | What |
+|---|---|---|
+| 1 | `docs/guides/multi-subnet-instrument-network.md` (NEW) | runbook: 方案 A/B/C + 命令 + 决策树 + 故障排查 |
+| 2 | `api-service/app/services/readiness.py` (+ `instrument_hal_service.py`) | DriverReadinessRow 用 tcp_preflight 区分 unreachable vs scpi_fail; 不再糊成单一 fail |
+| 3 | `api-service/app/services/readiness.py` | 按 `/24` 子网聚合 + per-subnet reachable 汇总 + guidance 文案 |
+| 4 | 契约同步 | readiness response schema 加 reachability 维度 → openapi.yaml + generate + service.ts + mock |
+| 5 | `gui/src/features/Dashboard/ZoneReadiness.tsx` | 就绪带展示 per-subnet 可达性 + unreachable 提示链到 runbook |
+| 6 | tests | unreachable vs scpi_fail 区分的回归测试 (现 `test_hal_tcp_preflight.py` 没覆盖 SCPI-timeout 分离) |
+
+**Acceptance**:
+- readiness 对「TCP 连不上」标 unreachable, 对「TCP 通但 IDN 超时」标 scpi_fail,
+  二者状态/文案可区分 (memory `project_caict_network_topology` 的 ○ skipped vs ✗
+  failed 诉求)
+- 就绪带按子网分组显示哪些子网可达, 不可达给「按 runbook 方案 A 加别名」提示
+- runbook 命令在 macOS + Linux 实测可用 (alias 配置 + nc 验证)
+- 回归测试覆盖 SCPI-timeout vs network-unreachable 两条路径
+- 现有 readiness 消费方 (P2-8 cockpit) 不回归
+
+**Out of scope**:
+- 给 InstrumentConnection 加 `source_ip`/`source_interface` 字段做源地址绑定 ——
+  YAGNI: 网卡在目标子网有 IP 后 OS 自动选对源地址, 这字段多数时候没用, 纯 model
+  churn; 出现具体需要再单开
+- 实际网络硬件采购/布线 (方案 B/C 的物理部分) —— ops, 非代码
+
+**Status**: 🔄 In progress — this PR
+**Estimate**: 1.5 day (runbook 0.5 + readiness 区分/聚合 0.5 + 契约+cockpit+测试 0.5)
+
+---
+
 ## 🟡 P2 — Abstraction debt
 
 ### P2-1 — UXM two-layer architecture: Test App + Topology Profile ✅ Done
@@ -1528,28 +1586,29 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 ## 📊 Summary
 
 > Counts as of 2026-05-20 (post P1-7 #59 + P1-8 #61 + P1-9 #63 + P1-10 #64 +
-> #65 counts catch-up + P2-8 #68 实现 + 本 PR P2-8 catch-up)。
-> Full-sweep flaky count remains **0**。P2-8 (#68) merged 后本地可启动 P0/P1/P2
-> 重新归零, 8 个 open items 全部 not-immediately-startable:
+> #65 counts catch-up + P2-8 #68 + 本 PR 加 P1-11 多子网仪表连接)。
+> Full-sweep flaky count remains **0**。9 个 open items 中 **1 个本地可启动**
+> (P1-11, = 当前 Current Focus), 其余 8 个 not-immediately-startable:
 > - 7 个 🚧 blocked-on-hardware (3 × P0 + P1-2 + P1-4 + P1-5 on-site half + P2-4)
 > - 1 个 ⏸️ incident-conditional hold (P1-6 FS16/UXM/ENA, trigger = 真 idle-close 出现, 当前没证据 — 仍计 open since `Status: [ ] not started`)
 >
-> P2-7 (非 ring distribution) promote 进 P1-10 (#64, Done), 不再计 open (P2 total
-> 7→6 已在 #65 反映)。P2-8 (主控制台重设计为操作驾驶舱) #68 merged → Done。
+> P2-7 promote 进 P1-10 (#64, Done)。P2-8 (主控制台驾驶舱) #68 merged → Done。
 >
-> 当前本地工作退回 **主动 audit silent failure modes** (此前抓了 P1-8 cal gate +
-> frequency window + P1-9 DUT-attach + P1-10 ring-only + P2-8 实现中 alert.py
-> 路由顺序 bug, audit ROI 已反复证明); 挖到东西 promote 为 P1-11; 没挖到进
-> "Known unknowns" 留档。详见 Current Focus 段。
+> P1-11 (多子网仪表连接) 新增: CAICT 单网卡够不到多子网阻塞, 不改仪表 IP, 网络层
+> runbook (平坑 L2 → 单网卡多 IP 别名) + 软件层 readiness 区分 unreachable vs
+> SCPI-fail → 本地 confidence 项, 设为 Current Focus。做完若现场仍未开, 退回
+> **主动 audit silent failure modes** (此前抓了 P1-8 cal gate + frequency window +
+> P1-9 DUT-attach + P1-10 ring-only + P2-8 实现中 alert.py 路由顺序 bug, audit ROI
+> 已反复证明); 挖到东西 promote 为 P1-12; 没挖到进 "Known unknowns" 留档。
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
 | ✅ Done | 40 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 7 total | 4 days | 4 days |
-| 🟠 P1 (confidence) | 4 open / 10 total | 3 days | 2 days |
+| 🟠 P1 (confidence) | 5 open / 11 total | 4.5 days | 2 days |
 | 🟡 P2 (abstraction debt) | 1 open / 7 total | 0.5 day | 0.5 day |
 | 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
-| **Total open** | **8** | **~7.5 days** | **6.5 days** |
+| **Total open** | **9** | **~9 days** | **6.5 days** |
 
 ---
 
