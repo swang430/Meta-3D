@@ -194,6 +194,11 @@ export type RecentTestsResponse = {
 
 export type ReadinessDriverStatus = 'ok' | 'fail' | 'skipped'
 
+// P1-11: when status === 'fail', why. 'network' = TCP preflight couldn't
+// reach the host (most likely wrong /24 subnet); 'scpi' = TCP reached but
+// the session / *IDN? failed. null/undefined whenever status !== 'fail'.
+export type ReadinessFailKind = 'network' | 'scpi'
+
 export type ReadinessDriverRow = {
   category: string
   model: string
@@ -201,6 +206,20 @@ export type ReadinessDriverRow = {
   status: ReadinessDriverStatus
   detail: string
   extras?: Record<string, unknown>
+  fail_kind?: ReadinessFailKind | null
+}
+
+// P1-11: per-/24-subnet reachability rollup. reachable=false means at
+// least one instrument on this subnet failed TCP preflight (the control
+// PC likely isn't on this subnet). hint is a runbook-pointing actionable
+// string for unreachable subnets, null for reachable ones. The sentinel
+// cidr 'unknown' buckets rows whose endpoint had no parseable IPv4 host.
+export type SubnetReachability = {
+  cidr: string
+  reachable: boolean
+  instrument_count: number
+  unreachable_count: number
+  hint?: string | null
 }
 
 export type ReadinessLabProfileStatus = 'ok' | 'inactive' | 'missing' | 'ambiguous'
@@ -237,6 +256,7 @@ export type HALReadinessResponse = {
   calibration: ReadinessCalibration
   dut_attach: ReadinessDutAttach
   generated_at_iso: string
+  subnets: SubnetReachability[]
 }
 
 // ── ② 运行态 — GET /test-executions?limit=N ──

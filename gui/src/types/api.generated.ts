@@ -836,6 +836,13 @@ export interface components {
             calibration: components["schemas"]["CalibrationReadiness"];
             dut_attach: components["schemas"]["DutAttachReadiness"];
             generated_at_iso: string;
+            /**
+             * @description P1-11: per-/24-subnet reachability rollup derived from the
+             *     driver rows. Empty when HAL hasn't initialised or no driver
+             *     carries a parseable IP.
+             * @default []
+             */
+            subnets: components["schemas"]["SubnetReachability"][];
         };
         DriverReadinessRow: {
             category: string;
@@ -844,6 +851,14 @@ export interface components {
             /** @enum {string} */
             status: "ok" | "fail" | "skipped";
             detail: string;
+            /**
+             * @description P1-11: when `status == fail`, why. `network` = TCP preflight
+             *     couldn't reach the host (most likely wrong /24 subnet);
+             *     `scpi` = TCP reached but the driver session / *IDN? failed
+             *     (instrument/session problem). `null` whenever status != fail.
+             * @enum {string|null}
+             */
+            fail_kind?: "network" | "scpi" | null;
             /**
              * @description Driver-specific metadata (string-keyed). F64 surfaces
              *     firmware_version / band_label / product_family from the
@@ -893,6 +908,22 @@ export interface components {
         DutAttachReadiness: {
             status: string;
             detail: string;
+        };
+        /**
+         * @description P1-11: per-/24-subnet reachability rollup. `reachable=false`
+         *     means at least one instrument on this subnet failed TCP preflight
+         *     (`fail_kind=network`) — the control PC most likely isn't on this
+         *     subnet. `hint` is an actionable runbook-pointing string for
+         *     unreachable subnets, `null` for reachable ones. The sentinel cidr
+         *     `unknown` buckets rows whose endpoint had no parseable IPv4 host.
+         */
+        SubnetReachability: {
+            /** @description /24 CIDR (e.g. 192.168.0.0/24) or the sentinel "unknown" */
+            cidr: string;
+            reachable: boolean;
+            instrument_count: number;
+            unreachable_count: number;
+            hint?: string | null;
         };
         /**
          * @description P2-8: one terminal-state execution row. Mirrors api-service

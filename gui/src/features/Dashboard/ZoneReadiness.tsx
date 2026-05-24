@@ -15,17 +15,19 @@
  * - Polls ~10s (readiness changes slowly).
  */
 import { useQuery } from '@tanstack/react-query'
-import { Card, Group, Stack, Text, Badge, SimpleGrid, Loader, Alert } from '@mantine/core'
+import { Card, Group, Stack, Text, Badge, SimpleGrid, Loader, Alert, Divider } from '@mantine/core'
 import {
   IconCircleCheck,
   IconAlertTriangle,
   IconCircleX,
   IconCircleDashed,
   IconShieldCheck,
+  IconNetwork,
 } from '@tabler/icons-react'
 import { fetchReadiness } from '../../api/service'
 import type {
   HALReadinessResponse,
+  ReadinessDriverRow,
   ReadinessDriverStatus,
   ReadinessLabProfileStatus,
   ReadinessCalibrationStatus,
@@ -89,6 +91,17 @@ function calLight(status: ReadinessCalibrationStatus): Light {
   }
 }
 
+// P1-11: render a driver's status with the fail cause distinguished —
+// "网络不可达" (子网/路由) vs "SCPI 无响应" (仪表/会话) vs 泛 fail.
+// This is the core of P1-11: a CAICT operator should read "网络不可达"
+// and reach for the subnet runbook, not stare at an opaque error code.
+function driverStatusLabel(d: ReadinessDriverRow): string {
+  if (d.status !== 'fail') return d.status
+  if (d.fail_kind === 'network') return 'fail · 网络不可达'
+  if (d.fail_kind === 'scpi') return 'fail · SCPI 无响应'
+  return 'fail'
+}
+
 type Cell = {
   key: string
   title: string
@@ -133,7 +146,9 @@ function buildCells(report: HALReadinessResponse): Cell[] {
       title: '驱动链',
       light: driverLight,
       valueText: driverValue,
-      detail: report.drivers.map((d) => `${d.category}: ${d.status}`).join(' · ') || '无已加载驱动',
+      detail:
+        report.drivers.map((d) => `${d.category}: ${driverStatusLabel(d)}`).join(' · ') ||
+        '无已加载驱动',
     },
     {
       key: 'lab',
@@ -170,6 +185,58 @@ function buildVerdict(cells: Cell[]): { canStart: boolean; text: string } {
     return { canStart: false, text: `🔴 不可开测：${reason}` }
   }
   return { canStart: true, text: '✅ 可开测' }
+}
+
+// P1-11: per-/24-subnet 可达性小节。诚实性原则: reachable=false 才标红
+// 不可达并给 runbook 提示; reachable=true 标绿; 'unknown' 桶 (解析不出 IP)
+// 不假装可达也不假装不可达 —— 直接展示 cidr='unknown' + 计数, 不给红/绿断言。
+function SubnetSection({ report }: { report: HALReadinessResponse }) {
+  const subnets = report.subnets ?? []
+  if (subnets.length === 0) return null
+
+  return (
+    <Stack gap="xs">
+      <Group gap="xs">
+        <IconNetwork size={16} />
+        <Text size="sm" fw={600}>
+          子网可达性
+        </Text>
+      </Group>
+      <Stack gap={6}>
+        {subnets.map((s) => {
+          const isUnknown = s.cidr === 'unknown'
+          // unknown 桶: 灰色诚实展示, 不做可达/不可达断言。
+          const light: Light = isUnknown ? 'gray' : s.reachable ? 'green' : 'red'
+          const mark = isUnknown ? '❔' : s.reachable ? '✅ 可达' : '🔴 不可达'
+          const label = isUnknown ? '未知 (IP 无法解析)' : s.cidr
+          return (
+            <Card key={s.cidr} withBorder radius="sm" padding="xs">
+              <Group justify="space-between" wrap="nowrap" gap="xs">
+                <Group gap="xs" wrap="nowrap">
+                  <LightIcon light={light} size={16} />
+                  <Text size="sm" fw={500}>
+                    {label}
+                  </Text>
+                  <Badge color={LIGHT_COLOR[light]} variant="light" size="sm">
+                    {mark}
+                  </Badge>
+                </Group>
+                <Text size="xs" c="dimmed">
+                  {s.instrument_count} 台仪表
+                  {s.unreachable_count > 0 ? ` · ${s.unreachable_count} 台不可达` : ''}
+                </Text>
+              </Group>
+              {s.hint && (
+                <Text size="xs" c="red.7" mt={4}>
+                  {s.hint}
+                </Text>
+              )}
+            </Card>
+          )
+        })}
+      </Stack>
+    </Stack>
+  )
 }
 
 export function ZoneReadiness() {
@@ -244,6 +311,13 @@ export function ZoneReadiness() {
               </Card>
             ))}
           </SimpleGrid>
+        )}
+
+        {data && data.subnets && data.subnets.length > 0 && (
+          <>
+            <Divider my={4} />
+            <SubnetSection report={data} />
+          </>
         )}
       </Stack>
     </Card>

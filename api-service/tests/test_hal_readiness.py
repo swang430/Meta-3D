@@ -463,6 +463,12 @@ class TestReadinessEndpoint:
         assert body["calibration"]["days_remaining"] == 10
         assert body["dut_attach"]["status"] == "not_implemented"
         assert body["generated_at_iso"] == NOW.isoformat()
+        # P1-11: subnets key is always present (empty list here since the
+        # report was built without a subnets rollup — default_factory=[]).
+        assert "subnets" in body
+        assert body["subnets"] == []
+        # P1-11: ok / skipped rows carry fail_kind=null (key present).
+        assert f64_row.get("fail_kind") is None
 
     def test_endpoint_omits_optional_fields_with_nulls_not_missing_keys(self, db):
         """When LabProfile / cert are absent, the response keeps the
