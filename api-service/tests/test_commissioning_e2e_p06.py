@@ -401,8 +401,27 @@ class TestP06MockFirstCall:
         )
         phases = (execution.measurements or {}).get("phases", {})
 
-        # Precheck passed via mock-aware auto-skip — pin the gate reasons so a
-        # regression that silently re-enables strict in mock is caught.
+        # First lock that this session really used the DEFAULT *strict* config —
+        # otherwise the "gate N/A" assertion below is a false guard: precheck.py
+        # emits "gate N/A — baseStation is mock/absent" whenever the BS is mock,
+        # REGARDLESS of the flag value (the not-bs_is_real branch fires first).
+        # So if the schema default ever flipped to non-strict, the reason string
+        # alone wouldn't catch it. Assert the effective flags are True. (Codex
+        # on PR #78.)
+        from app.services.mimo_ota.executors._helpers import load_mimo_ota_config
+
+        cfg = load_mimo_ota_config(execution)
+        assert cfg.precheck_strict_dut is True, (
+            "this test must exercise the DEFAULT strict config (schema default "
+            f"True), not an override — got precheck_strict_dut={cfg.precheck_strict_dut!r}"
+        )
+        assert cfg.precheck_strict_cal is True, (
+            f"expected default strict_cal=True, got {cfg.precheck_strict_cal!r}"
+        )
+
+        # With strict=True confirmed, the precheck still passing + dut_pass=True
+        # proves the mock-aware *runtime* bypass (mock BS → gate N/A), not a
+        # config opt-out.
         precheck = phases.get("precheck", {})
         assert precheck.get("overall_pass") is True, precheck
         assert precheck.get("dut_pass") is True
