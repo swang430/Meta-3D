@@ -1,5 +1,5 @@
 import { Stack, Text, Alert, List, ThemeIcon, Table, Group, Button, Card, Badge, Loader } from '@mantine/core'
-import { IconCheck, IconX, IconInfoCircle, IconAntenna, IconRotate3d } from '@tabler/icons-react'
+import { IconCheck, IconX, IconInfoCircle, IconAntenna, IconRotate3d, IconAlertTriangle } from '@tabler/icons-react'
 
 export function PrecheckPhase({ data }: { data: any }) {
   if (!data) return <Text c="dimmed">No data</Text>
@@ -59,26 +59,43 @@ export function PrecheckPhase({ data }: { data: any }) {
       <Card withBorder>
         <Text fw={500} mb="sm">预检详情</Text>
         <List spacing="sm" size="sm">
-          {data.messages?.map((msg: string, i: number) => (
-            <List.Item
-              key={i}
-              icon={
-                <ThemeIcon color={msg.includes('FAIL') || msg.includes('异常') ? 'red' : 'blue'} size={20} radius="xl">
-                  {msg.includes('FAIL') || msg.includes('异常') ? <IconX size={12} /> : <IconInfoCircle size={12} />}
-                </ThemeIcon>
-              }
-            >
-              {msg}
-            </List.Item>
-          ))}
+          {data.messages?.map((msg: string, i: number) => {
+            const isError = msg.includes('FAIL') || msg.includes('异常')
+            // 未验证(兜底值) 类消息 (如静区均匀度兜底) 用黄色警告色, 区别于
+            // 干净 PASS 的蓝色 info —— 操作员一眼看出"非实测"。
+            const isWarn = !isError && (msg.includes('未验证') || msg.includes('⚠️'))
+            const color = isError ? 'red' : isWarn ? 'yellow' : 'blue'
+            return (
+              <List.Item
+                key={i}
+                icon={
+                  <ThemeIcon color={color} size={20} radius="xl">
+                    {isError ? <IconX size={12} /> : isWarn ? <IconAlertTriangle size={12} /> : <IconInfoCircle size={12} />}
+                  </ThemeIcon>
+                }
+              >
+                {msg}
+              </List.Item>
+            )
+          })}
         </List>
       </Card>
-      
+
       <Table striped>
         <Table.Tbody>
           <Table.Tr><Table.Td>暗室 ID</Table.Td><Table.Td>{data.chamber_id}</Table.Td></Table.Tr>
           <Table.Tr><Table.Td>校准有效性</Table.Td><Table.Td>{data.path_loss_calibration_valid ? '有效' : '已过期'}</Table.Td></Table.Tr>
-          <Table.Tr><Table.Td>静区纹波 (Ripple)</Table.Td><Table.Td>±{data.quiet_zone_ripple_db} dB</Table.Td></Table.Tr>
+          <Table.Tr>
+            <Table.Td>静区纹波 (Ripple)</Table.Td>
+            <Table.Td>
+              ±{data.quiet_zone_ripple_db} dB
+              {data.quiet_zone_verified === false && (
+                <Text span c="yellow.8" fw={600} ml={6}>
+                  ⚠️ 未验证（兜底默认值，非实测）
+                </Text>
+              )}
+            </Table.Td>
+          </Table.Tr>
         </Table.Tbody>
       </Table>
     </Stack>

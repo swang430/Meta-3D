@@ -282,11 +282,28 @@ class PrecheckExecutor(IStepExecutor):
         result_payload["quiet_zone_ripple_db"] = ripple_db
         qz_pass = ripple_db <= criteria.max_quiet_zone_ripple_db
         result_payload["quiet_zone_pass"] = qz_pass
-        messages.append(
-            f"Quiet zone ripple: ±{ripple_db:.1f} dB "
-            f"({'PASS' if qz_pass else 'FAIL'}, threshold ±{criteria.max_quiet_zone_ripple_db:.1f}) "
-            f"[{result_payload['quiet_zone_ripple_source']}]"
-        )
+        # P1-12 audit (2026-05-25): QZ qualification is the heart of the
+        # software-defined quiet zone. When there's no real ProbePattern data we
+        # fall back to a legacy 0.7 dB constant — that's NOT a measured QZ
+        # qualification, so we must NOT report it as a clean PASS. We don't
+        # fail-loud (local/mock rehearsal has no pattern data and must still
+        # run); instead the result is explicitly flagged "未验证(兜底值)" in the
+        # precheck payload + message + downstream report/GUI, so an operator can
+        # never mistake a fallback for a real measured QZ.
+        qz_verified = result_payload["quiet_zone_ripple_source"] != "fallback_default"
+        result_payload["quiet_zone_verified"] = qz_verified
+        if qz_verified:
+            messages.append(
+                f"Quiet zone ripple: ±{ripple_db:.1f} dB "
+                f"({'PASS' if qz_pass else 'FAIL'}, threshold ±{criteria.max_quiet_zone_ripple_db:.1f}) "
+                f"[{result_payload['quiet_zone_ripple_source']}]"
+            )
+        else:
+            messages.append(
+                f"⚠️ 静区均匀度未验证: ±{ripple_db:.1f} dB 为兜底默认值 "
+                f"(无 ProbePattern 实测数据, 非实测合格; threshold "
+                f"±{criteria.max_quiet_zone_ripple_db:.1f}) [fallback_default]"
+            )
 
         # --- 5. Calibration gate (P1-8, 2026-05-19) ---
         # 默认 strict: path_loss_cal 必有 + cal_cert 若存在则 overall_pass=True;
