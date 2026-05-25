@@ -10,7 +10,8 @@ Phase 3+: Real drivers for production
 
 import asyncio
 import logging
-from typing import Dict, Any, Optional, List, TYPE_CHECKING
+import re
+from typing import Dict, Any, Optional, List, Tuple, TYPE_CHECKING
 from datetime import datetime, timedelta
 from enum import Enum
 
@@ -232,6 +233,45 @@ def is_mock_driver(driver) -> bool:
     instance (any class outside ``_MOCK_DRIVER_CLASSES``) → ``False``.
     """
     return driver is not None and isinstance(driver, _MOCK_DRIVER_CLASSES)
+
+
+_IPV4_RE = re.compile(r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b")
+
+
+def preflight_target(conn) -> Optional[Tuple[str, int]]:
+    """Resolve ``(host, port)`` for the TCP reachability preflight from a
+    connection binding.
+
+    P1-13: prefer the structured ``controller_ip`` / ``port`` columns, but fall
+    back to parsing the IPv4 host out of the VISA/endpoint string
+    (``TCPIP0::192.168.0.132::inst0::INSTR`` / ``192.168.0.132:5025``). Before
+    this, the preflight only fired when controller_ip+port were both set, so
+    bindings that store the address only in the resource string were NEVER
+    network-probed — their connect failure got classified ``scpi`` and their
+    subnet looked reachable even with no route to it.
+
+    Only the HOST decides the network-reachability verdict (a reachable host
+    refuses a closed port = "alive"); the port is best-effort — an explicit
+    ``:PORT`` in the string if present, else 5025 (raw-SCPI). Returns ``None``
+    when no IPv4 host can be resolved (caller skips preflight → row stays
+    network_reachable=None / 未探测)."""
+    if conn is None:
+        return None
+    if conn.controller_ip and conn.port:
+        return str(conn.controller_ip), int(conn.port)
+    ep = (conn.endpoint or "").strip()
+    if not ep:
+        return None
+    m = _IPV4_RE.search(ep)
+    if not m:
+        return None
+    host = m.group(1)
+    # explicit port: "ip:port" or VISA "::host::PORT::" numeric segment
+    pm = re.search(re.escape(host) + r":(\d+)", ep) or re.search(
+        re.escape(host) + r"::(\d+)::", ep
+    )
+    port = int(pm.group(1)) if pm else 5025
+    return host, port
 
 
 async def tcp_preflight(
@@ -530,18 +570,24 @@ class InstrumentHALService:
                 # entirely when the host is unreachable. Avoids 10s × N
                 # serial VISA timeouts when a subnet is wrong or an
                 # instrument is offline. We only preflight real drivers
-                # (mocks don't open sockets) and only when we have IP+port.
-                # Connection refused doesn't fail preflight — host is up,
-                # driver may legitimately connect on a different port.
-                if (
-                    not isinstance(driver, tuple(MOCK_FALLBACK.values()))
-                    and conn
-                    and conn.controller_ip
-                    and conn.port
-                ):
+                # (mocks don't open sockets). Connection refused doesn't fail
+                # preflight — host is up, driver may connect on a different port.
+                # P1-13: derive (host, port) from controller_ip/port OR the VISA
+                # endpoint string — so bindings that only carry the resource
+                # string still get network-probed (was the false-"reachable" bug).
+                # ``host_reachable`` is threaded into every row below so the
+                # subnet rollup can tell probed-alive from never-probed.
+                host_reachable: Optional[bool] = None
+                target = (
+                    None
+                    if isinstance(driver, tuple(MOCK_FALLBACK.values()))
+                    else preflight_target(conn)
+                )
+                if target is not None:
                     alive, reason = await tcp_preflight(
-                        conn.controller_ip, int(conn.port), timeout_s=1.0
+                        target[0], target[1], timeout_s=1.0
                     )
+                    host_reachable = alive
                     if not alive:
                         logger.warning(
                             f"[HAL] {cat.category_key}: preflight failed "
@@ -562,6 +608,7 @@ class InstrumentHALService:
                             # the network layer can't route here (most often
                             # the control PC isn't on this /24 subnet).
                             fail_kind="network",
+                            network_reachable=False,
                         ))
                         continue
 
@@ -672,6 +719,7 @@ class InstrumentHALService:
                             status="ok",
                             detail=f"{DriverClass.__name__}",
                             extras=extras,
+                            network_reachable=host_reachable,
                         ))
                     else:
                         # driver.connect() returned False — pull the real
@@ -693,11 +741,13 @@ class InstrumentHALService:
                             endpoint=endpoint_str,
                             status="fail",
                             detail=real_err,
-                            # P1-11: TCP preflight already passed (host is
-                            # reachable) but the driver's session/*IDN?
+                            # P1-11: preflight passed (or was skipped — no
+                            # parseable host) but the driver's session/*IDN?
                             # handshake failed — instrument problem, not a
-                            # routing problem.
+                            # routing problem. network_reachable carries the
+                            # actual probe outcome (True / None) for the rollup.
                             fail_kind="scpi",
+                            network_reachable=host_reachable,
                         ))
                 except Exception as e:
                     err_str = f"{type(e).__name__}: {e}"
@@ -714,11 +764,12 @@ class InstrumentHALService:
                         endpoint=endpoint_str,
                         status="fail",
                         detail=err_str,
-                        # P1-11: exception was raised *during* driver.connect()
-                        # — preflight had already confirmed the host is
-                        # reachable, so this is a session/SCPI-layer failure,
-                        # not a network-routing one.
+                        # P1-11: exception raised *during* driver.connect() —
+                        # preflight passed (or was skipped — no parseable host),
+                        # so this is a session/SCPI-layer failure, not network
+                        # routing. network_reachable carries the probe outcome.
                         fail_kind="scpi",
+                        network_reachable=host_reachable,
                     ))
 
             logger.info(

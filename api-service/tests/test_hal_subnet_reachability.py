@@ -51,6 +51,38 @@ from app.services.readiness import (
     build_subnet_reachability,
     parse_subnet_cidr,
 )
+from app.services.instrument_hal_service import preflight_target
+from types import SimpleNamespace
+
+
+# ──────────────────────────────────────────────────────────────────
+# 0. preflight_target — derive (host, port) incl. from VISA endpoint (P1-13)
+# ──────────────────────────────────────────────────────────────────
+class TestPreflightTarget:
+    def test_controller_ip_port_columns_win(self):
+        conn = SimpleNamespace(controller_ip="192.168.0.5", port=5025, endpoint="")
+        assert preflight_target(conn) == ("192.168.0.5", 5025)
+
+    def test_visa_string_no_port_defaults_5025(self):
+        # The pre-P1-13 bug: this binding (no controller_ip/port) was never
+        # preflighted. Now its IP is parsed from the VISA string.
+        conn = SimpleNamespace(
+            controller_ip=None, port=None,
+            endpoint="TCPIP0::192.168.0.132::inst0::INSTR",
+        )
+        assert preflight_target(conn) == ("192.168.0.132", 5025)
+
+    def test_ip_colon_port_endpoint(self):
+        conn = SimpleNamespace(controller_ip=None, port=None, endpoint="192.168.1.40:4880")
+        assert preflight_target(conn) == ("192.168.1.40", 4880)
+
+    def test_hostname_only_returns_none(self):
+        conn = SimpleNamespace(controller_ip=None, port=None, endpoint="instrument.local")
+        assert preflight_target(conn) is None
+
+    def test_empty_returns_none(self):
+        assert preflight_target(SimpleNamespace(controller_ip=None, port=None, endpoint="")) is None
+        assert preflight_target(None) is None
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -81,7 +113,18 @@ class TestParseSubnetCidr:
 # ──────────────────────────────────────────────────────────────────
 # 2. build_subnet_reachability — /24 rollup
 # ──────────────────────────────────────────────────────────────────
-def _row(category, endpoint, status="ok", fail_kind=None):
+def _row(category, endpoint, status="ok", fail_kind=None, network_reachable="auto"):
+    # P1-13: network_reachable is the network-probe outcome. Default "auto"
+    # derives the common case so existing tests read naturally:
+    #   network-fail → False (probed dead); ok / scpi-fail → True (probed alive);
+    #   skipped → None (not probed). Pass an explicit value to test edge cases.
+    if network_reachable == "auto":
+        if fail_kind == "network":
+            network_reachable = False
+        elif status == "skipped":
+            network_reachable = None
+        else:
+            network_reachable = True
     return DriverReadinessRow(
         category=category,
         model="X",
@@ -89,6 +132,7 @@ def _row(category, endpoint, status="ok", fail_kind=None):
         status=status,
         detail="",
         fail_kind=fail_kind,
+        network_reachable=network_reachable,
     )
 
 
@@ -165,18 +209,42 @@ class TestBuildSubnetReachability:
         assert subnets[0].instrument_count == 2
         assert subnets[0].reachable is True
 
-    def test_unparseable_endpoint_buckets_unknown_not_unreachable(self):
-        """A row with no parseable IP goes to the 'unknown' bucket and
-        is never claimed unreachable — we can't assert a routing problem
-        we can't locate (honesty principle)."""
-        rows = [_row("baseStation", "", status="fail", fail_kind="network")]
+    def test_unparseable_endpoint_buckets_unknown_not_reachable(self):
+        """A row with no parseable IP (hostname binding, never network-probed)
+        goes to the 'unknown' bucket — probed=False → 未探测, NOT claimed
+        reachable and NOT claimed a routing failure (honesty principle)."""
+        rows = [
+            _row("baseStation", "myinstrument.local", status="fail",
+                 fail_kind="scpi", network_reachable=None),
+        ]
         subnets = build_subnet_reachability(rows)
         assert len(subnets) == 1
         assert subnets[0].cidr == "unknown"
-        # network-fail in the unknown bucket does NOT flip reachable —
-        # the bucket has no hint and is reported as-is.
-        assert subnets[0].reachable is True
-        assert subnets[0].hint is None
+        assert subnets[0].probed is False        # never network-probed
+        assert subnets[0].reachable is False      # 未探测 ≠ 可达
+        assert subnets[0].unreachable_count == 0  # not a routing failure either
+
+    def test_not_probed_subnet_is_unknown_not_reachable(self):
+        """P1-13 core: a subnet whose instruments were never network-probed
+        (network_reachable=None, e.g. mock-HAL mode) is probed=False / 未探测 —
+        NOT mislabelled reachable (the pre-P1-13 false-positive bug)."""
+        rows = [
+            _row("channelEmulator", "192.168.0.132:5025", status="ok",
+                 network_reachable=None),  # connected but never preflighted
+        ]
+        subnets = build_subnet_reachability(rows)
+        s = subnets[0]
+        assert s.cidr == "192.168.0.0/24"
+        assert s.probed is False
+        assert s.reachable is False          # not reachable — just unknown
+        assert s.unreachable_count == 0
+        assert s.hint and "未探测" in s.hint
+
+    def test_probed_alive_subnet_reachable(self):
+        """≥1 instrument probed alive + none dead → reachable=True, probed=True."""
+        rows = [_row("ce", "192.168.0.132:5025", status="ok", network_reachable=True)]
+        s = build_subnet_reachability(rows)[0]
+        assert s.probed is True and s.reachable is True and s.hint is None
 
     def test_output_sorted_unknown_last(self):
         rows = [

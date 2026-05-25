@@ -2367,12 +2367,19 @@ class SubnetReachabilityResponse(BaseModel):
     most likely isn't on this subnet. ``hint`` is an actionable,
     runbook-pointing string for unreachable subnets, ``null`` for
     reachable ones. The sentinel cidr ``"unknown"`` buckets rows whose
-    endpoint had no parseable IPv4 host."""
+    endpoint had no parseable IPv4 host.
+
+    P1-13: ``probed`` is False when NO instrument on this subnet was actually
+    network-probed (mock-HAL mode, or bindings with no parseable host:port) —
+    the subnet is then 未探测/unknown and ``reachable`` is meaningless (don't
+    render it as reachable). Tri-state: ``!probed`` = unknown; ``probed &&
+    reachable`` = reachable; ``probed && !reachable`` = unreachable."""
     cidr: str
     reachable: bool
     instrument_count: int
     unreachable_count: int
     hint: Optional[str] = None
+    probed: bool = False
 
 
 class LabProfileReadinessResponse(BaseModel):
@@ -2513,6 +2520,7 @@ def get_hal_readiness():
                 instrument_count=s.instrument_count,
                 unreachable_count=s.unreachable_count,
                 hint=s.hint,
+                probed=s.probed,
             )
             for s in report.subnets
         ],

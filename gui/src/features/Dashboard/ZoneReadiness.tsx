@@ -187,9 +187,9 @@ function buildVerdict(cells: Cell[]): { canStart: boolean; text: string } {
   return { canStart: true, text: '✅ 可开测' }
 }
 
-// P1-11: per-/24-subnet 可达性小节。诚实性原则: reachable=false 才标红
-// 不可达并给 runbook 提示; reachable=true 标绿; 'unknown' 桶 (解析不出 IP)
-// 不假装可达也不假装不可达 —— 直接展示 cidr='unknown' + 计数, 不给红/绿断言。
+// P1-11/P1-13: per-/24-subnet 可达性小节。三态诚实性: 未探测(probed=false,
+// mock 模式不探网络 / binding 无 host:port) → 灰色"未探测", 不假装可达;
+// 探到可达 → 绿; 探到不可达(preflight 超时, 无路由) → 红 + runbook 提示。
 function SubnetSection({ report }: { report: HALReadinessResponse }) {
   const subnets = report.subnets ?? []
   if (subnets.length === 0) return null
@@ -204,11 +204,21 @@ function SubnetSection({ report }: { report: HALReadinessResponse }) {
       </Group>
       <Stack gap={6}>
         {subnets.map((s) => {
-          const isUnknown = s.cidr === 'unknown'
-          // unknown 桶: 灰色诚实展示, 不做可达/不可达断言。
-          const light: Light = isUnknown ? 'gray' : s.reachable ? 'green' : 'red'
-          const mark = isUnknown ? '❔' : s.reachable ? '✅ 可达' : '🔴 不可达'
-          const label = isUnknown ? '未知 (IP 无法解析)' : s.cidr
+          // P1-13 三态: 未探测(probed=false, mock 模式或无 host:port) → 灰色
+          // ❔, 不假装可达; 探到可达 → 绿 ✅; 探到不可达(preflight 超时) → 红 🔴。
+          let light: Light
+          let mark: string
+          if (!s.probed) {
+            light = 'gray'
+            mark = '❔ 未探测'
+          } else if (s.reachable) {
+            light = 'green'
+            mark = '✅ 可达'
+          } else {
+            light = 'red'
+            mark = '🔴 不可达'
+          }
+          const label = s.cidr === 'unknown' ? '未知 (IP 无法解析)' : s.cidr
           return (
             <Card key={s.cidr} withBorder radius="sm" padding="xs">
               <Group justify="space-between" wrap="nowrap" gap="xs">
@@ -227,7 +237,7 @@ function SubnetSection({ report }: { report: HALReadinessResponse }) {
                 </Text>
               </Group>
               {s.hint && (
-                <Text size="xs" c="red.7" mt={4}>
+                <Text size="xs" c={light === 'red' ? 'red.7' : 'dimmed'} mt={4}>
                   {s.hint}
                 </Text>
               )}
