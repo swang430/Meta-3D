@@ -41,10 +41,15 @@ class ReferenceExecutor(IStepExecutor):
     async def execute(self, context: StepExecutionContext) -> StepExecutionResult:
         config = load_mimo_ota_config(context.test_execution)
 
-        from app.services.instrument_hal_service import get_hal_service
+        from app.services.instrument_hal_service import get_hal_service, is_mock_driver
 
         hal = get_hal_service()
         sa = hal.drivers.get("signalAnalyzer")
+        # P1-12 audit: a real reference TRP needs a REAL signal analyzer. Two
+        # non-real cases must both be flagged 未验证(兜底值): (a) no SA driver →
+        # _MOCK_TRP_DBM constant; (b) a *mock* SA driver → simulated power that
+        # gets the "hal_signal_analyzer" source label but is NOT a real measure.
+        sa_is_real = sa is not None and not is_mock_driver(sa)
 
         warnings: list[str] = []
         result_payload: Dict[str, Any] = {
@@ -67,13 +72,22 @@ class ReferenceExecutor(IStepExecutor):
             )
             measured_trp_dbm = measured_pwr + _MOCK_SA_TO_TRP_OFFSET_DB
             result_payload["measurement_source"] = "hal_signal_analyzer"
+            if not sa_is_real:
+                # SA driver present but it's a MOCK — the "hal_signal_analyzer"
+                # label is misleading; the power is simulated, not measured.
+                warnings.append(
+                    "⚠️ 参考 TRP 未验证: signalAnalyzer 是 mock driver, 测得功率为仿真值"
+                    "非实测 (补偿因子因此也非实测)。真实参考测量需 real SA (P0-4)。"
+                )
         else:
             logger.warning(
                 "[%s] Phase 2: no signalAnalyzer in HAL; using mock TRP",
                 context.test_execution.id,
             )
             warnings.append(
-                "No signalAnalyzer driver in HAL — falling back to deterministic mock TRP"
+                "⚠️ 参考 TRP 未验证: 无 signalAnalyzer driver, 套用兜底默认值 "
+                f"{_MOCK_TRP_DBM} dBm (非实测; 补偿因子因此也非实测)。真实参考测量需 "
+                "SA 入 HAL (P0-4) + 喇叭天线。"
             )
             await asyncio.sleep(0.5)
             measured_trp_dbm = _MOCK_TRP_DBM + random.gauss(0, _MOCK_TRP_NOISE_STD_DB)
@@ -88,6 +102,14 @@ class ReferenceExecutor(IStepExecutor):
         result_payload["measured_trp_dbm"] = round(measured_trp_dbm, 3)
         result_payload["compensation_factor_db"] = round(compensation_factor_db, 3)
         result_payload["confirmed"] = True
+        # P1-12 audit: same pattern as the QZ fallback (PR #79). trp_verified is
+        # True ONLY when a real SA produced the measurement — covers both the
+        # no-SA constant fallback and the mock-SA simulated case (the latter
+        # carries the "hal_signal_analyzer" source label but is NOT real). When
+        # False the TRP + the compensation factor derived from it are not real
+        # measurements → report/GUI mark "未验证(兜底值)". Mark, don't fail —
+        # mock rehearsal must still run.
+        result_payload["trp_verified"] = sa_is_real
 
         write_phase_result(context.test_execution, "reference", result_payload)
         context.db.commit()
