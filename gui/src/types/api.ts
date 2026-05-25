@@ -209,17 +209,19 @@ export type ReadinessDriverRow = {
   fail_kind?: ReadinessFailKind | null
 }
 
-// P1-11: per-/24-subnet reachability rollup. reachable=false means at
-// least one instrument on this subnet failed TCP preflight (the control
-// PC likely isn't on this subnet). hint is a runbook-pointing actionable
-// string for unreachable subnets, null for reachable ones. The sentinel
-// cidr 'unknown' buckets rows whose endpoint had no parseable IPv4 host.
+// P1-11/P1-13: per-/24-subnet reachability rollup, tri-state via
+// (probed, reachable): probed=false → no instrument was network-probed
+// (mock-HAL mode, or binding without host:port) → 未探测/unknown, reachable
+// is meaningless (do NOT render reachable); probed && reachable → 可达;
+// probed && !reachable → 不可达. hint is a runbook string for unreachable
+// subnets, null otherwise. cidr 'unknown' buckets unparseable-IP rows.
 export type SubnetReachability = {
   cidr: string
   reachable: boolean
   instrument_count: number
   unreachable_count: number
   hint?: string | null
+  probed: boolean
 }
 
 export type ReadinessLabProfileStatus = 'ok' | 'inactive' | 'missing' | 'ambiguous'

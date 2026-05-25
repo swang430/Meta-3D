@@ -75,6 +75,13 @@ class DriverReadinessRow:
     # the operator "fix your subnet" (network) vs "check the instrument"
     # (scpi) instead of a single opaque ``fail``.
     fail_kind: Optional[str] = None  # "network" | "scpi" | None
+    # P1-13: explicit network-probe outcome, independent of status/fail_kind:
+    #   True  — TCP preflight ran and the host was alive (connect or refused)
+    #   False — TCP preflight ran and the host was dead (timeout / no route)
+    #   None  — preflight did NOT run (mock driver, or no parseable host:port).
+    # Needed because "no network-fail" ≠ "reachable": a row that was never
+    # probed (preflight skipped) must NOT make its subnet look reachable.
+    network_reachable: Optional[bool] = None
 
 
 @dataclass(frozen=True)
@@ -88,14 +95,23 @@ class SubnetReachability:
     error per instrument; this rollup says "this entire subnet is
     unreachable, here's what to do" once per subnet.
 
-    ``reachable`` is False iff *any* driver row on this subnet failed
-    with ``fail_kind == "network"`` (the network layer can't reach it).
-    A subnet with only ``scpi`` fails / ok / skipped rows is still
-    reachable at the network layer — the problem there is the
-    instrument, not the route.
+    P1-13 tri-state via (``probed``, ``reachable``):
+    - ``probed=False``                 — NO instrument on this subnet was
+      actually network-probed (all mock / no parseable host:port). The subnet
+      is **未探测/unknown** — we must NOT claim it reachable. (e.g. mock-HAL
+      mode never probes the network, so every subnet is unknown.)
+    - ``probed=True, reachable=False``  — ≥1 instrument's preflight timed out
+      (``network_reachable is False``): the network layer can't route here.
+    - ``probed=True, reachable=True``   — instruments were probed and none
+      failed at the network layer.
 
-    ``hint`` is a runbook-pointing, actionable string for unreachable
-    subnets, ``None`` for reachable ones.
+    The pre-P1-13 bug: a subnet whose instruments were never preflighted
+    (e.g. bindings with the IP only in the VISA endpoint string, so the
+    controller_ip/port-gated preflight was skipped) had no ``network`` fail and
+    was therefore mislabelled **reachable** — even with no route to it.
+
+    ``hint`` is a runbook-pointing actionable string for unreachable subnets,
+    ``None`` otherwise.
     """
 
     cidr: str
@@ -103,6 +119,9 @@ class SubnetReachability:
     instrument_count: int
     unreachable_count: int
     hint: Optional[str]
+    # P1-13: was any instrument on this subnet actually network-probed?
+    # False → 未探测/unknown (don't render as reachable).
+    probed: bool = False
 
 
 @dataclass(frozen=True)
@@ -379,17 +398,21 @@ def build_subnet_reachability(
 ) -> List[SubnetReachability]:
     """Group driver rows by their /24 subnet and roll up reachability.
 
-    A subnet is ``reachable=False`` iff it contains at least one row with
-    ``fail_kind == "network"`` (the network layer can't get there). Rows
-    that are ok / skipped / scpi-failed do not make the subnet
-    unreachable — those are instrument/session problems, not routing.
+    P1-13 tri-state, driven by each row's ``network_reachable`` probe outcome
+    (NOT by "absence of a network-fail", which the pre-P1-13 version used and
+    which mislabelled never-probed subnets as reachable):
+    - ``network_reachable is False`` on any row → subnet ``reachable=False``
+      (probed, route dead).
+    - else if ``network_reachable is True`` on any row → ``reachable=True,
+      probed=True`` (probed, route alive).
+    - else (every row ``None`` — none probed: mock / no host:port) →
+      ``probed=False`` → 未探测/unknown; ``reachable`` is meaningless, left
+      False, GUI renders neutral.
 
     Rows whose endpoint has no parseable IPv4 host are grouped under the
-    sentinel CIDR ``"unknown"`` (never marked unreachable on their own —
-    we can't claim a routing problem we can't locate).
+    sentinel CIDR ``"unknown"``.
 
-    Output is sorted by CIDR for stable rendering / diffable snapshots,
-    with ``"unknown"`` last.
+    Output is sorted by CIDR, ``"unknown"`` last.
     """
     # cidr -> [rows]
     groups: Dict[str, List[DriverReadinessRow]] = {}
@@ -399,34 +422,32 @@ def build_subnet_reachability(
 
     result: List[SubnetReachability] = []
     for cidr, group_rows in groups.items():
-        unreachable = [
-            r for r in group_rows
-            if r.status == "fail" and r.fail_kind == "network"
-        ]
-        # The "unknown" bucket holds rows we couldn't locate to a /24, so
-        # we can't honestly claim a routing problem against any subnet —
-        # report reachable=True / hint=None and let the GUI render it as a
-        # neutral "未知" group. (unreachable_count still surfaces the raw
-        # network-fail tally for transparency.)
-        if cidr == "unknown":
-            reachable = True
-        else:
-            reachable = len(unreachable) == 0
-        if reachable:
-            hint = None
-        else:
+        dead = [r for r in group_rows if r.network_reachable is False]
+        alive = [r for r in group_rows if r.network_reachable is True]
+        probed = bool(dead or alive)
+        # reachable only when probed AND nothing on it failed the network probe.
+        reachable = probed and not dead
+        if probed and dead:
             hint = (
                 f"子网 {cidr} 不可达：参见 "
                 "docs/guides/multi-subnet-instrument-network.md 方案 A"
                 "（单网卡加 IP 别名），或确认交换机连线"
             )
+        elif not probed:
+            hint = (
+                f"子网 {cidr} 未探测：本子网无仪表做 TCP preflight "
+                "（mock 模式不探网络，或 binding 缺 host:port）——可达性未知"
+            )
+        else:
+            hint = None
         result.append(
             SubnetReachability(
                 cidr=cidr,
                 reachable=reachable,
                 instrument_count=len(group_rows),
-                unreachable_count=len(unreachable),
+                unreachable_count=len(dead),
                 hint=hint,
+                probed=probed,
             )
         )
 

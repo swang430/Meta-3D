@@ -910,12 +910,15 @@ export interface components {
             detail: string;
         };
         /**
-         * @description P1-11: per-/24-subnet reachability rollup. `reachable=false`
-         *     means at least one instrument on this subnet failed TCP preflight
-         *     (`fail_kind=network`) — the control PC most likely isn't on this
-         *     subnet. `hint` is an actionable runbook-pointing string for
-         *     unreachable subnets, `null` for reachable ones. The sentinel cidr
-         *     `unknown` buckets rows whose endpoint had no parseable IPv4 host.
+         * @description P1-11/P1-13: per-/24-subnet reachability rollup. Tri-state via
+         *     (`probed`, `reachable`): `probed=false` → no instrument on this subnet
+         *     was actually network-probed (mock-HAL mode, or bindings with no
+         *     parseable host:port) → 未探测/unknown, `reachable` is meaningless (do
+         *     NOT render reachable); `probed=true && reachable=false` → ≥1 preflight
+         *     timed out (no route); `probed=true && reachable=true` → probed alive.
+         *     `hint` is a runbook-pointing string for unreachable subnets, `null`
+         *     otherwise. The sentinel cidr `unknown` buckets rows whose endpoint had
+         *     no parseable IPv4 host.
          */
         SubnetReachability: {
             /** @description /24 CIDR (e.g. 192.168.0.0/24) or the sentinel "unknown" */
@@ -924,6 +927,8 @@ export interface components {
             instrument_count: number;
             unreachable_count: number;
             hint?: string | null;
+            /** @description P1-13: was any instrument on this subnet actually network-probed? false → 未探测/unknown. */
+            probed: boolean;
         };
         /**
          * @description P2-8: one terminal-state execution row. Mirrors api-service

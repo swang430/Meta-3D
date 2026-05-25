@@ -128,6 +128,7 @@ const readinessSnapshot: HALReadinessResponse = {
       instrument_count: 1,
       unreachable_count: 0,
       hint: null,
+      probed: true,
     },
     {
       cidr: '192.168.1.0/24',
@@ -135,6 +136,7 @@ const readinessSnapshot: HALReadinessResponse = {
       instrument_count: 2,
       unreachable_count: 0,
       hint: null,
+      probed: true,
     },
   ],
   generated_at_iso: new Date().toISOString(),
