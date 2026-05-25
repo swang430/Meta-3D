@@ -189,35 +189,42 @@ def hal_with_mocks(instrument_categories):
     hal.drivers.update(saved)
 
 
-def _create_fast_session(lab: LabProfile, db) -> str:
+def _create_fast_session(lab: LabProfile, db, *, set_strict_false: bool = True) -> str:
     """Build a TestCase + TestExecution with tight mock timings — same
     factory the looser smoke uses, lifted into this file so the strict
     test is self-contained.
+
+    ``set_strict_false`` (default True): pin precheck_strict_cal/dut=False
+    explicitly (the historic smoke path). Pass ``False`` to leave them at the
+    schema default (True) and exercise the *operator's actual GUI path* —
+    where the mock-aware runtime gate (precheck.py: mock CE/BS → gate N/A)
+    is what lets the default-config sandbox flow complete.
     """
     from app.services.mimo_ota import build_mimo_ota_test_case
 
+    overrides: dict = {
+        "frequency_hz": 3.5e9,
+        "bandwidth_mhz": 100,
+        "mimo_layers": 2,
+        "azimuths_deg": [0.0, 90.0, 180.0],
+        "engine_mode": "keysight_gcm",
+        "stat_count": 50,
+        "settling_time_s": 0.05,
+        "num_samples_per_azimuth": 1,
+    }
+    if set_strict_false:
+        # P1-8/P1-9 (2026-05-19): historic smoke path — pin gates off so the
+        # 5-phase chain runs without a real cal/DUT. The gates themselves are
+        # covered by test_mimo_ota_precheck_{cal,dut}_gate.py.
+        overrides["precheck_strict_cal"] = False
+        overrides["precheck_strict_dut"] = False
     test_case, descriptors = build_mimo_ota_test_case(
         db,
         name="P0-6 Strict E2E",
         description="P0-6 acceptance: mock first-call end-to-end",
         lab_profile_id=lab.id,
         config_overrides={
-            "frequency_hz": 3.5e9,
-            "bandwidth_mhz": 100,
-            "mimo_layers": 2,
-            "azimuths_deg": [0.0, 90.0, 180.0],
-            "engine_mode": "keysight_gcm",
-            "stat_count": 50,
-            "settling_time_s": 0.05,
-            "num_samples_per_azimuth": 1,
-            # P1-8 (2026-05-19): smoke 不灌 ProbePathLossCalibration, 走
-            # bypass 维持 5-phase chain 跑通的语义. cal gate 本身由
-            # test_mimo_ota_precheck_cal_gate.py 单独覆盖.
-            "precheck_strict_cal": False,
-            # P1-9 (2026-05-19): smoke 不 POST /attach-dut, 走 bypass 维持
-            # 5-phase chain 跑通的语义. DUT gate 本身由
-            # test_mimo_ota_precheck_dut_gate.py 单独覆盖.
-            "precheck_strict_dut": False,
+            **overrides,
             "pass_criteria": {
                 "min_throughput_ratio": 0.0,
                 "min_throughput_mbps": 0.0,
@@ -359,6 +366,76 @@ class TestP06MockFirstCall:
             f"(audit Y2 — engine-specific field). Got: "
             f"{measure_payload.get('asc_files_loaded')!r}"
         )
+
+    def test_run_all_default_config_mock_aware_gates(
+        self, lab, hal_with_mocks, db,
+    ):
+        """The operator's ACTUAL GUI path: create a session with DEFAULT config
+        (precheck_strict_dut/cal NOT overridden → schema default True), then
+        run-all. With mock CE/BS the runtime mock-aware gate (precheck.py 5/5b)
+        makes the strict gates N/A, so all 5 phases must still complete + a PDF
+        lands — i.e. "mock first-call (full)" works from the sandbox without any
+        Lab-smoke toggle or explicit strict override. Distinct from
+        test_run_all_completes_with_pdf_on_disk, which pins gates off explicitly.
+        """
+        session_id = _create_fast_session(lab, db, set_strict_false=False)
+
+        r = client.post(f"/api/v1/commissioning/sessions/{session_id}/run-all")
+        assert r.status_code == 200, r.text
+        session = r.json()
+
+        ps = session["phase_statuses"]
+        expected_phases = {"precheck", "reference", "mimo_test", "analysis", "report"}
+        assert set(ps.keys()) == expected_phases, ps
+        for phase, status in ps.items():
+            assert status == "completed", (
+                f"phase {phase!r} ended at {status!r} under default config — "
+                f"mock-aware gate should have let it through. statuses: {ps}"
+            )
+
+        db.expire_all()
+        execution = (
+            db.query(TestExecution)
+            .filter(TestExecution.id == uuid.UUID(session_id))
+            .first()
+        )
+        phases = (execution.measurements or {}).get("phases", {})
+
+        # First lock that this session really used the DEFAULT *strict* config —
+        # otherwise the "gate N/A" assertion below is a false guard: precheck.py
+        # emits "gate N/A — baseStation is mock/absent" whenever the BS is mock,
+        # REGARDLESS of the flag value (the not-bs_is_real branch fires first).
+        # So if the schema default ever flipped to non-strict, the reason string
+        # alone wouldn't catch it. Assert the effective flags are True. (Codex
+        # on PR #78.)
+        from app.services.mimo_ota.executors._helpers import load_mimo_ota_config
+
+        cfg = load_mimo_ota_config(execution)
+        assert cfg.precheck_strict_dut is True, (
+            "this test must exercise the DEFAULT strict config (schema default "
+            f"True), not an override — got precheck_strict_dut={cfg.precheck_strict_dut!r}"
+        )
+        assert cfg.precheck_strict_cal is True, (
+            f"expected default strict_cal=True, got {cfg.precheck_strict_cal!r}"
+        )
+
+        # With strict=True confirmed, the precheck still passing + dut_pass=True
+        # proves the mock-aware *runtime* bypass (mock BS → gate N/A), not a
+        # config opt-out.
+        precheck = phases.get("precheck", {})
+        assert precheck.get("overall_pass") is True, precheck
+        assert precheck.get("dut_pass") is True
+        assert "gate N/A" in (precheck.get("dut_pass_reason") or ""), (
+            f"expected mock auto-skip reason, got {precheck.get('dut_pass_reason')!r}"
+        )
+
+        # And the full chain still produced a PDF on disk.
+        report_payload = phases.get("report", {})
+        pdf_path = report_payload.get("report_file_path")
+        assert pdf_path and os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0, (
+            f"default-config run-all didn't produce a PDF: report={report_payload}"
+        )
+        assert execution.status == "completed"
 
     def test_precheck_no_missing_cert_warning(
         self, lab, hal_with_mocks, db,
