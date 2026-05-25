@@ -8,8 +8,9 @@
 
 ## 🎯 Current Focus
 
-**无 — P1-11 (#71) merged, 本地可启动 P0/P1/P2 重新归零。退回到主动 audit silent
-failure modes。** 下次现场打开时 Current Focus 切回 **P0-3** per WIP=1。
+**无 — P1-12 silent-fallback audit (#79/#80/#81) merged, 本地可启动 P0/P1/P2 重新
+归零。silent-fallback audit 已完整覆盖已知兜底, 暂无明显待 audit 项。** 下次现场
+打开时 Current Focus 切回 **P0-3** per WIP=1。
 
 P1-7 (#59) + P1-8 (#61) + P1-9 (#63) + P1-10 (#64) + P2-8 (#68) + P1-11 (#71) 全 merged。
 Commissioning →
@@ -20,12 +21,14 @@ constraint, non-ring chamber 几何透传 ChannelEgine, 同时收口 P2-7 cross-
 半)。另 P2-8 (#68) 把主控制台重设计为 4 区操作驾驶舱 (就绪带 / 运行态 / 实时
 指标 / 日志+告警), 全接真后端, demo 播放器移到 Diagnostics。另 P1-11 (#71) 加
 多子网仪表连接 (runbook 方案 A/B/C + readiness 区分 unreachable vs SCPI-fail +
-按子网可达性面板)。WIP=1 释放。
+按子网可达性面板)。最后 P1-12 (#79/#80/#81) 把一批静默兜底 (QZ ripple / reference
+TRP / path-loss 未补偿) 改成显著标"未验证(兜底值)" —— 跑完整 mock first-call 时挖到
+的。WIP=1 释放。
 
-> **本 PR 是 docs catch-up**: PR #71 (P1-11 实现) merged 后, roadmap 的 P1-11
-> section 还标 in-progress、Current Focus 还指 P1-11、Summary 还计 P1-11 为
-> in-progress。本 PR 把 main 矫正到准确状态: P1-11 section 翻 ✅ Done, Current
-> Focus 退回 audit silent failures, Summary counts 同步 (per memory
+> **本 PR 是 docs catch-up**: PR #79/#80/#81 (P1-12 silent-fallback audit 三项)
+> merged 后, roadmap 没有 P1-12 entry、Current Focus 还指 P1-11、Summary 没计
+> P1-12。本 PR 把 main 矫正: 加 P1-12 entry (Done, 含第四项 CE real-mode 已由 P0-7
+> 覆盖的说明), Current Focus 更新, Summary counts 同步 (per memory
 > `feedback_d_row_stale_this_pr_reflex.md` + `feedback_recompute_aggregate_rows_from_parts.md`)。
 
 **on-site / blocked 项 (本地启动不了, 等现场或事件触发) —— 本地可启动 P0/P1/P2
@@ -41,11 +44,12 @@ constraint, non-ring chamber 几何透传 ChannelEgine, 同时收口 P2-7 cross-
 | P2-4 | 🚧 on-site | NAT/FW idle-drop hypothesis 现场 verify |
 
 下次现场打开时, Current Focus 必须切回 **P0-3** (或最先解锁的 P0) per WIP=1。
-P1-11 (#71) merged 后本地无其它可启动 P0/P1/P2 → 当前本地工作退回 **主动 audit
-silent failure modes** (此前抓了 P1-8 cal gate + frequency window + P1-9
-DUT-attach + P1-10 ring-only, P2-8 实现中又抓到 alert.py 路由顺序 bug 已 spin
-off; audit ROI 已反复证明); 挖到东西 = candidate for P1-12 promotion; 没挖到
-= 进 "Known unknowns" 留档。
+silent-failure audit 已成体系且 ROI 反复证明 (P1-8 cal gate / P1-9 DUT / P1-10
+ring-only / P1-12 QZ+TRP+path-loss 兜底标记 / 一串 drive-by bug fix)。**P1-12 后
+已知静默兜底基本扫净** (QZ/TRP/path-loss 已标, CE real-mode 已由 P0-7 fail-fast)。
+当前本地无明显待启动项: 下一轮若再 audit 挖到东西 = candidate for P1-13; 没挖到
+= 等下次现场触发 P0-3, 现场按
+[`on-site-debug-protocol`](guides/on-site-debug-protocol.md) 走。
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
@@ -857,6 +861,44 @@ actionable, 跟 P1-8/9 fail-loud + P2-8 就绪带哲学一脉相承。现场拓�
 
 ---
 
+### P1-12 — Silent-fallback audit: 兜底/未实测值显著标"未验证" ✅ Done (PR #79/#80/#81)
+
+**What**: 主动 audit silent failure modes (roadmap 指定的本地工作) 挖到一批"无真实
+校准/实测数据时静默套兜底值、还当干净 PASS / 实测呈现"的失败模式, 逐个改成在
+precheck / 报告 / cockpit GUI **显著标"未验证(兜底值)"**。
+
+**Why**: 跑完整 mock first-call (P0-6 + 在家彩排) 时暴露这些静默兜底——现场真测时
+操作员会分不清"真测值"还是"没数据的兜底值"。「软件定义静区」的可信度恰恰压在
+"合格性来自真实校准/实测"上, 静默兜底直接侵蚀这个前提。
+
+**取向: mark 不 fail-loud** —— 本地/mock 彩排没有真实数据仍必须能跑完整链路;
+标"未验证"既不阻断、又杜绝"把兜底当实测/合格"的静默失败。(real 模式的硬拦由
+P1-8 precheck cal gate + P0-7 fail-fast 负责, 那是 fail-loud 的正确场景。)
+
+| 静默兜底 | 修复 | PR |
+|---|---|---|
+| QZ ripple 无 ProbePattern → 套 0.7 dB 当 PASS | `quiet_zone_verified` 标 + 兜底时 message/GUI/报告显著标未验证 | #79 |
+| reference TRP 无/mock SA → 套 23.5 dBm, 补偿因子也假 | `trp_verified` keyed on **real SA** (is_mock_driver); 覆盖 no-SA + mock-SA 两路 | #80 |
+| measure 无 path-loss cert → RSRP 未补偿 (兜底 0 dB) | `path_loss_verified` 标 + warning "非校准值, 运行 CAL-01" | #81 |
+| CE real-mode ImportError → 静默 1-tap mock .asc | **已由 P0-7 #56 fail-fast 修复** (启动期 fail-fast + 显式 `MOCK_ASC_MODE`/`mock_mode=True`); 非遗留项 | #56 |
+
+**横切设计 (Codex on #80)**: report 渲染历史/迁移记录时, 缺失的 verified flag **绝不
+默认 True** —— 从 provenance 推导 (quiet_zone_ripple_source / measurement_source /
+path_loss_certificate_id); GUI 标记条件用 `!== true` 让 false 与缺失都显示未验证。
+(进 memory candidate: 默认值偏向"无证据=未验证"的安全方向。)
+
+**Drive-by 修复 (audit 副产物, out-of-roadmap bug fixes, 不单列 D-row)**: precheck
+失败不显示原因 (#73) / mock 模式被 strict DUT 门误拦 → runtime mock-aware gate (#75,
+Codex 推到 runtime 重判而非 create-time 冻结) / external_asc 选择 auto-fire 422 +
+post-session 无路径输入 (#76/#77) / cockpit success_rate 0-1 vs 0-100 标度 (#70) /
+完整 mock first-call 默认 config 回归守卫 (#78)。
+
+**Status**: ✅ Done — PR #79 (QZ) + #80 (reference TRP) + #81 (path-loss), 均 merged
+2026-05-25; 第四项 (CE real-mode) 早由 P0-7 #56 覆盖。
+**Estimate**: ~1.5 day (3 marking PR + backward-compat + 测试)
+
+---
+
 ## 🟡 P2 — Abstraction debt
 
 ### P2-1 — UXM two-layer architecture: Test App + Topology Profile ✅ Done
@@ -1590,27 +1632,26 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 
 ## 📊 Summary
 
-> Counts as of 2026-05-20 (post P1-7 #59 + P1-8 #61 + P1-9 #63 + P1-10 #64 +
-> #65 counts catch-up + P2-8 #68 + P1-11 #71 + 本 PR P1-11 catch-up)。
-> Full-sweep flaky count remains **0**。P1-11 (#71) merged 后本地可启动 P0/P1/P2
-> 重新归零, 8 个 open items 全部 not-immediately-startable:
+> Counts as of 2026-05-25 (post … P1-11 #71 + P1-12 #79/#80/#81 silent-fallback
+> audit + 本 PR P1-12 catch-up)。
+> Full-sweep flaky count remains **0**。P1-12 merged 后本地可启动 P0/P1/P2 重新
+> 归零, 8 个 open items 全部 not-immediately-startable:
 > - 7 个 🚧 blocked-on-hardware (3 × P0 + P1-2 + P1-4 + P1-5 on-site half + P2-4)
 > - 1 个 ⏸️ incident-conditional hold (P1-6 FS16/UXM/ENA, trigger = 真 idle-close 出现, 当前没证据 — 仍计 open since `Status: [ ] not started`)
 >
-> P2-7 promote 进 P1-10 (#64, Done)。P2-8 (主控制台驾驶舱) #68 merged → Done。
-> P1-11 (多子网仪表连接: runbook + readiness 区分 unreachable vs SCPI-fail) #71
-> merged → Done。
+> P2-7 promote 进 P1-10 (#64, Done)。P2-8 (主控制台驾驶舱) #68 → Done。P1-11 (多子网
+> 仪表连接) #71 → Done。P1-12 (silent-fallback audit: QZ/TRP/path-loss 标未验证)
+> #79/#80/#81 → Done; 第四项 CE real-mode 早由 P0-7 #56 fail-fast 覆盖。
 >
-> 当前本地工作退回 **主动 audit silent failure modes** (此前抓了 P1-8 cal gate +
-> frequency window + P1-9 DUT-attach + P1-10 ring-only + P2-8 实现中 alert.py
-> 路由顺序 bug, audit ROI 已反复证明); 挖到东西 promote 为 P1-12; 没挖到进
-> "Known unknowns" 留档。详见 Current Focus 段。
+> silent-failure audit 已扫净已知静默兜底。当前本地无明显待启动项; 下一轮 audit
+> 挖到东西 promote 为 P1-13, 否则等下次现场触发 P0-3 (按 on-site-debug-protocol)。
+> 详见 Current Focus 段。
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 41 | — | — |
+| ✅ Done | 42 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 7 total | 4 days | 4 days |
-| 🟠 P1 (confidence) | 4 open / 11 total | 3 days | 2 days |
+| 🟠 P1 (confidence) | 4 open / 12 total | 3 days | 2 days |
 | 🟡 P2 (abstraction debt) | 1 open / 7 total | 0.5 day | 0.5 day |
 | 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
 | **Total open** | **8** | **~7.5 days** | **6.5 days** |
