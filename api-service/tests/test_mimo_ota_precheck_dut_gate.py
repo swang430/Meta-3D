@@ -594,3 +594,32 @@ class TestLiveQueryVerification:
         finally:
             hal.drivers.clear()
             hal.drivers.update(saved)
+
+
+# ---------------------------------------------------------------------------
+# QZ ripple fallback must be marked "未验证(兜底值)", not a clean PASS (P1-12 audit)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_qz_ripple_fallback_marked_unverified(
+    db, lab, chamber, hal_with_mock_bs,
+):
+    """No ProbePattern data → QZ ripple falls back to the legacy 0.7 dB
+    constant. That is NOT a measured quiet-zone qualification, so precheck must
+    flag it: quiet_zone_verified=False + a 未验证 message (so report/GUI show it
+    显著). The run still proceeds (qz_pass stays True — we mark, not fail-loud,
+    so local/mock rehearsal without pattern data can still run)."""
+    _seed_valid_cal(db, chamber.id)
+    ctx = _build_context(db, lab, dut_attach=None, strict_mode=True)
+    result = await PrecheckExecutor().execute(ctx)
+    m = result.measurements or {}
+
+    assert m.get("quiet_zone_ripple_source") == "fallback_default", m.get("quiet_zone_ripple_source")
+    assert m.get("quiet_zone_verified") is False, "fallback QZ must be marked unverified"
+    assert m.get("quiet_zone_pass") is True, "marking, not failing — run still proceeds"
+    assert any("未验证" in msg for msg in m.get("messages", [])), (
+        f"expected a 未验证 QZ message, got {m.get('messages')!r}"
+    )
+    # The fallback QZ did NOT silently block the run (DUT auto-skipped via mock
+    # BS, cal seeded) — overall passes but with QZ flagged unverified.
+    assert m.get("overall_pass") is True

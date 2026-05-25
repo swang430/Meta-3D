@@ -195,7 +195,13 @@ def _build_mimo_ota_content_data(execution: Any, now: datetime) -> Dict[str, Any
 
     step_results = [
         {"phase": "precheck", "status": "PASS" if precheck.get("overall_pass") else "FAIL",
-         "messages": precheck.get("messages", [])},
+         "messages": precheck.get("messages", []),
+         # P1-12 audit: surface QZ qualification provenance structurally (not
+         # just buried in messages) so the report can显著 flag a fallback. When
+         # False the ±dB ripple is a legacy default, NOT a measured QZ — the
+         # run "passed" precheck but the quiet zone was never actually verified.
+         "quiet_zone_ripple_db": precheck.get("quiet_zone_ripple_db"),
+         "quiet_zone_verified": precheck.get("quiet_zone_verified", True)},
         {"phase": "reference",
          "trp_dbm": reference.get("measured_trp_dbm"),
          "compensation_db": reference.get("compensation_factor_db")},
