@@ -193,23 +193,39 @@ def _build_mimo_ota_content_data(execution: Any, now: datetime) -> Dict[str, Any
                 "RI": f"{a.get('rank_indicator', 0):.2f}",
             })
 
+    # Backward-compat for historical/migrated executions that predate the
+    # explicit verified flags (Codex on PR #80): NEVER default an absent flag to
+    # "verified" — an old fallback run would then be silently presented as a
+    # real measurement. Derive from provenance instead.
+    _qz_verified = precheck.get("quiet_zone_verified")
+    if _qz_verified is None:
+        # quiet_zone_ripple_source unambiguously recovers it: only the real
+        # probe-pattern source counts as verified; fallback_default / missing
+        # source → not verified.
+        _qz_verified = precheck.get("quiet_zone_ripple_source") == "probe_pattern_peak_spread"
+    _trp_verified = reference.get("trp_verified")
+    if _trp_verified is None:
+        # "mock" = no SA → unverified; legacy "hal_signal_analyzer" didn't
+        # distinguish real vs mock SA → unknown (None), rendered as not-verified.
+        _trp_verified = False if reference.get("measurement_source") == "mock" else None
+
     step_results = [
         {"phase": "precheck", "status": "PASS" if precheck.get("overall_pass") else "FAIL",
          "messages": precheck.get("messages", []),
          # P1-12 audit: surface QZ qualification provenance structurally (not
          # just buried in messages) so the report can显著 flag a fallback. When
-         # False the ±dB ripple is a legacy default, NOT a measured QZ — the
+         # not True the ±dB ripple is a legacy default, NOT a measured QZ — the
          # run "passed" precheck but the quiet zone was never actually verified.
          "quiet_zone_ripple_db": precheck.get("quiet_zone_ripple_db"),
-         "quiet_zone_verified": precheck.get("quiet_zone_verified", True)},
+         "quiet_zone_verified": _qz_verified},
         {"phase": "reference",
          "trp_dbm": reference.get("measured_trp_dbm"),
          "compensation_db": reference.get("compensation_factor_db"),
-         # P1-12 audit: mock TRP fallback → trp_verified False. The TRP +
-         # compensation are then NOT measured; report must flag 未验证(兜底值)
-         # rather than present them as real reference data.
+         # P1-12 audit: mock/fallback TRP → not verified. The TRP + compensation
+         # are then NOT measured; report must flag 未验证(兜底值) rather than
+         # present them as real reference data.
          "measurement_source": reference.get("measurement_source"),
-         "trp_verified": reference.get("trp_verified", True)},
+         "trp_verified": _trp_verified},
         {"phase": "measure",
          "frequency_ghz": measure.get("frequency_ghz"),
          "mimo_config": measure.get("mimo_config"),

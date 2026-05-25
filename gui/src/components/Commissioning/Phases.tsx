@@ -89,7 +89,7 @@ export function PrecheckPhase({ data }: { data: any }) {
             <Table.Td>静区纹波 (Ripple)</Table.Td>
             <Table.Td>
               ±{data.quiet_zone_ripple_db} dB
-              {data.quiet_zone_verified === false && (
+              {data.quiet_zone_verified !== true && (
                 <Text span c="yellow.8" fw={600} ml={6}>
                   ⚠️ 未验证（兜底默认值，非实测）
                 </Text>
@@ -132,7 +132,7 @@ export function ReferencePhase({
       
       {data?.measured_trp_dbm && (
         <>
-          {data.trp_verified === false && (
+          {data.trp_verified !== true && (
             <Alert color="yellow" variant="light" icon={<IconAlertTriangle />} title="参考 TRP 未验证（兜底默认值）">
               无 signalAnalyzer 实测，TRP 与补偿值为兜底默认值、非实测。真实参考测量需 SA 入 HAL（P0-4）+ 喇叭天线。
             </Alert>
@@ -144,7 +144,7 @@ export function ReferencePhase({
                 <Table.Td>测得 TRP</Table.Td>
                 <Table.Td>
                   {data.measured_trp_dbm.toFixed(1)} dBm
-                  {data.trp_verified === false && (
+                  {data.trp_verified !== true && (
                     <Text span c="yellow.8" fw={600} ml={6}>⚠️ 未验证（兜底值，非实测）</Text>
                   )}
                 </Table.Td>
@@ -153,7 +153,7 @@ export function ReferencePhase({
                 <Table.Td>计算补偿值</Table.Td>
                 <Table.Td>
                   {data.compensation_factor_db.toFixed(1)} dB
-                  {data.trp_verified === false && (
+                  {data.trp_verified !== true && (
                     <Text span c="yellow.8" fw={600} ml={6}>⚠️ 非实测</Text>
                   )}
                 </Table.Td>
