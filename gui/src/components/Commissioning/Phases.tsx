@@ -174,7 +174,13 @@ export function MIMOTestPhase({ data, config: _config }: { data: any, config: an
       <Alert color="grape" title="静态 MIMO OTA 测量" icon={<IconRotate3d />}>
         系统正在或已完成在多个转台方位的 KPI 测量。CDL 模型为 {data.cdl_model_name}。
       </Alert>
-      
+
+      {data.path_loss_verified !== true && (
+        <Alert color="yellow" variant="light" icon={<IconAlertTriangle />} title="路损未校准（RSRP 未补偿）">
+          无 path-loss certificate，RSRP 基线按兜底 0 dB 未补偿——下方 RSRP / 吞吐量为<strong>非校准值</strong>。运行 CAL-01 路损校准（P0-3）后重测。
+        </Alert>
+      )}
+
       {data.azimuth_results?.length > 0 && (
         <Table striped highlightOnHover>
           <Table.Thead>

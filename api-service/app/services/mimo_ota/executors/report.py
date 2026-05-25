@@ -208,6 +208,11 @@ def _build_mimo_ota_content_data(execution: Any, now: datetime) -> Dict[str, Any
         # "mock" = no SA → unverified; legacy "hal_signal_analyzer" didn't
         # distinguish real vs mock SA → unknown (None), rendered as not-verified.
         _trp_verified = False if reference.get("measurement_source") == "mock" else None
+    _pl_verified = measure.get("path_loss_verified")
+    if _pl_verified is None:
+        # Historical measure records carry path_loss_certificate_id — a non-null
+        # cert is the provenance that recovers "verified" without the flag.
+        _pl_verified = measure.get("path_loss_certificate_id") is not None
 
     step_results = [
         {"phase": "precheck", "status": "PASS" if precheck.get("overall_pass") else "FAIL",
@@ -231,6 +236,9 @@ def _build_mimo_ota_content_data(execution: Any, now: datetime) -> Dict[str, Any
          "mimo_config": measure.get("mimo_config"),
          "cdl_model": measure.get("cdl_model_name"),
          "path_loss_compensation_db": measure.get("path_loss_compensation_db"),
+         # P1-12 audit: no path-loss cert → RSRP uncompensated → results not
+         # calibrated. Flag so the report marks 未验证(无路损校准).
+         "path_loss_verified": _pl_verified,
          "azimuths_tested": len(azimuth_results)},
         {"phase": "analysis",
          "overall_pass": analysis.get("overall_pass"),

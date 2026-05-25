@@ -512,6 +512,13 @@ class MeasureExecutor(IStepExecutor):
                 ),
                 "path_loss_per_chain_used": chains_used,
                 "path_loss_per_chain_available": len(per_chain_pl),
+                # P1-12 audit (sibling QZ #79 / TRP #80): no path-loss cert →
+                # avg_path_loss_db=0.0, RSRP baseline UNcompensated. The RSRP /
+                # throughput numbers then aren't calibrated — flag explicitly so
+                # report/GUI mark 未验证(无路损校准) rather than presenting them as
+                # calibrated. (Real mode is already gated by P1-8 precheck cal
+                # gate; this marks the mock/bypass path + carries provenance.)
+                "path_loss_verified": path_loss_cert is not None,
                 "switch_topology": topology_result.to_payload(),
                 "sampling": {
                     "num_windows_per_azimuth": num_windows,
@@ -555,11 +562,22 @@ class MeasureExecutor(IStepExecutor):
 
         if cleanup_warnings:
             result_payload["cleanup_warnings"] = cleanup_warnings
+
+        # Surface the uncalibrated-path-loss case as a result warning (not just
+        # a server-side log) so it rides into the report / operator view.
+        measure_warnings: List[str] = list(cleanup_warnings or [])
+        if not result_payload.get("path_loss_verified"):
+            measure_warnings.insert(
+                0,
+                "⚠️ 路损未校准: 无 path-loss certificate, RSRP 基线未补偿 (兜底 0 dB) — "
+                "RSRP / 吞吐量为非校准值。运行 CAL-01 路损校准 (P0-3) 后重测。",
+            )
+
         write_phase_result(context.test_execution, "measure", result_payload)
         context.db.commit()
 
         return StepExecutionResult(
             status=StepExecutionStatus.SUCCESS,
             measurements=result_payload,
-            warnings=cleanup_warnings or None,
+            warnings=measure_warnings or None,
         )

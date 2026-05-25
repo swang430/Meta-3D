@@ -47,6 +47,22 @@ def test_historical_fallback_not_marked_verified():
     assert _step(content, "reference")["trp_verified"] is not True
 
 
+def test_measure_path_loss_verified_derived_from_cert_id():
+    """measure: absent path_loss_verified flag → derive from
+    path_loss_certificate_id (None → not verified, present → verified)."""
+    base = {
+        "precheck": {"overall_pass": True, "quiet_zone_ripple_source": "probe_pattern_peak_spread"},
+        "reference": {"measured_trp_dbm": 23.0, "compensation_factor_db": 8.0, "trp_verified": True},
+        "analysis": {"overall_pass": True},
+    }
+    no_cert = dict(base, measure={"path_loss_certificate_id": None})
+    c1 = _build_mimo_ota_content_data(_exec(no_cert), datetime(2026, 1, 1))
+    assert _step(c1, "measure")["path_loss_verified"] is False
+    with_cert = dict(base, measure={"path_loss_certificate_id": "cert-123"})
+    c2 = _build_mimo_ota_content_data(_exec(with_cert), datetime(2026, 1, 1))
+    assert _step(c2, "measure")["path_loss_verified"] is True
+
+
 def test_historical_real_provenance_derives_verified():
     """Legacy real-source payload (no flag) → derived verified=True for QZ
     (source unambiguously recovers it)."""
