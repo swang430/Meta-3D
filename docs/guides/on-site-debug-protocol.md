@@ -64,7 +64,7 @@ P1-11 多子网 runbook）的全部设计目标，就是把"写软件"挪到出�
 |------|---------|---------|--------------|
 | PROPSIM F64（信道仿真器） | `192.168.0.x` | **单 client SOCKET** | 连之前先确保**没有别的客户端 / GUI 占用**；身份查 `SYST:INFO?`（**不是 `*OPT?`**，F64 ATE Server 不支持）；返回 `-100` = 命令不存在，是正常分类不是 fail |
 | UXM E7515B（基站仿真器） | `192.168.1.x` | 多 client 友好 | 先确认 **Test App 已启动**（5G NR FR1）；用 hislip endpoint |
-| N9042B / N9020B（信号分析仪 SA） | `192.168.1.x` | — | IDN + 频段确认；P0-4 要把它 bind 到 `signalAnalyzer` |
+| R&S FSVA3000（信号分析仪 SA，校准接收端） | `192.168.1.x` | — | IDN + 频段确认；P0-4 把它 bind 到 `signalAnalyzer`，GUI 选 model=`FSVA3000`（HAL 自动用 `RealRsFsvaDriver`）；SCPI 是 R&S FSW/FSVA 命令族，非 Keysight X-Series |
 | ENA / VNA | — | — | IDN + 基本扫描 |
 | RF Switch | — | — | IDN + 通道切换 |
 | Aerotech 转台 | — | — | IDN + 单轴回零 / 定位（CAICT 曾卡在单轴） |
@@ -109,8 +109,8 @@ roadmap 对应 P0 项的 acceptance criteria。
 
 ### Phase 2 — SA 入 HAL（P0-4）
 **目标**：真 SA 读参考 TRP，替掉 `_MOCK_TRP_DBM` 假值。
-**步骤**：bind N9020B/N9042B 到 `signalAnalyzer` category；配 horn + offset；跑
-reference phase。
+**步骤**：在 GUI 把 `signalAnalyzer` 的 model 选成 `FSVA3000`（HAL 自动绑 `RealRsFsvaDriver`）；
+配 horn + offset；reload HAL；跑 reference phase。
 **Gate（= P0-4 acceptance）**：
 - `signalAnalyzer` driver loaded（readiness 表 ✓）
 - reference phase 日志 `measurement_source: "hal_signal_analyzer"`（不是 mock fallback）
