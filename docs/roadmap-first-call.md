@@ -8,9 +8,9 @@
 
 ## 🎯 Current Focus
 
-**无 — P1-12 silent-fallback audit (#79/#80/#81) merged, 本地可启动 P0/P1/P2 重新
-归零。silent-fallback audit 已完整覆盖已知兜底, 暂无明显待 audit 项。** 下次现场
-打开时 Current Focus 切回 **P0-3** per WIP=1。
+**无 — P1-12 (silent-fallback audit #79/#80/#81) + P1-13 (子网可达性假阳性 #83)
+merged, 本地可启动 P0/P1/P2 重新归零。** 已知静默兜底已扫净, readiness/子网可达性
+假阳性已修, 暂无明显待 audit 项。下次现场打开时 Current Focus 切回 **P0-3** per WIP=1。
 
 P1-7 (#59) + P1-8 (#61) + P1-9 (#63) + P1-10 (#64) + P2-8 (#68) + P1-11 (#71) 全 merged。
 Commissioning →
@@ -23,12 +23,13 @@ constraint, non-ring chamber 几何透传 ChannelEgine, 同时收口 P2-7 cross-
 多子网仪表连接 (runbook 方案 A/B/C + readiness 区分 unreachable vs SCPI-fail +
 按子网可达性面板)。最后 P1-12 (#79/#80/#81) 把一批静默兜底 (QZ ripple / reference
 TRP / path-loss 未补偿) 改成显著标"未验证(兜底值)" —— 跑完整 mock first-call 时挖到
-的。WIP=1 释放。
+的。再 P1-13 (#83) 修了 cockpit 子网可达性的假阳性 (preflight 跳过 VISA-only binding
+→ never-probed 误标可达), 改成 preflight 走 endpoint 串 + "未探测"三态 —— manual 测试
+挖到的。WIP=1 释放。
 
-> **本 PR 是 docs catch-up**: PR #79/#80/#81 (P1-12 silent-fallback audit 三项)
-> merged 后, roadmap 没有 P1-12 entry、Current Focus 还指 P1-11、Summary 没计
-> P1-12。本 PR 把 main 矫正: 加 P1-12 entry (Done, 含第四项 CE real-mode 已由 P0-7
-> 覆盖的说明), Current Focus 更新, Summary counts 同步 (per memory
+> **本 PR 是 docs catch-up**: PR #83 (P1-13) merged 后 roadmap 没有 P1-13 entry、
+> Current Focus 还指 P1-12、Summary 没计 P1-13。本 PR 把 main 矫正: 加 P1-13 entry
+> (Done), Current Focus 更新, Summary counts 同步 (per memory
 > `feedback_d_row_stale_this_pr_reflex.md` + `feedback_recompute_aggregate_rows_from_parts.md`)。
 
 **on-site / blocked 项 (本地启动不了, 等现场或事件触发) —— 本地可启动 P0/P1/P2
@@ -44,12 +45,11 @@ TRP / path-loss 未补偿) 改成显著标"未验证(兜底值)" —— 跑完�
 | P2-4 | 🚧 on-site | NAT/FW idle-drop hypothesis 现场 verify |
 
 下次现场打开时, Current Focus 必须切回 **P0-3** (或最先解锁的 P0) per WIP=1。
-silent-failure audit 已成体系且 ROI 反复证明 (P1-8 cal gate / P1-9 DUT / P1-10
-ring-only / P1-12 QZ+TRP+path-loss 兜底标记 / 一串 drive-by bug fix)。**P1-12 后
-已知静默兜底基本扫净** (QZ/TRP/path-loss 已标, CE real-mode 已由 P0-7 fail-fast)。
-当前本地无明显待启动项: 下一轮若再 audit 挖到东西 = candidate for P1-13; 没挖到
-= 等下次现场触发 P0-3, 现场按
-[`on-site-debug-protocol`](guides/on-site-debug-protocol.md) 走。
+silent-failure / readiness-correctness audit 已成体系且 ROI 反复证明 (P1-8 cal gate /
+P1-9 DUT / P1-10 ring-only / P1-12 QZ+TRP+path-loss 兜底标记 / P1-13 子网可达性假阳性 /
+一串 drive-by bug fix)。**已知静默兜底已扫净, readiness 假阳性已修。** 当前本地无明显
+待启动项: 下一轮若再 audit/manual 测试挖到东西 = candidate for P1-14; 没挖到 = 等下次
+现场触发 P0-3, 现场按 [`on-site-debug-protocol`](guides/on-site-debug-protocol.md) 走。
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
@@ -899,6 +899,34 @@ post-session 无路径输入 (#76/#77) / cockpit success_rate 0-1 vs 0-100 标�
 
 ---
 
+### P1-13 — 子网可达性假阳性: preflight 走 VISA endpoint + "未探测"三态 ✅ Done (PR #83)
+
+**What**: 操作员 manual 测试 cockpit 就绪带时发现: Mac 单网卡在 WiFi `192.168.1.98/24`,
+本该最可达的 `1.x` 显示不可达, 而无路由的 `0.x` / `100.x` 反而"可达" —— 现象完全反了。
+是 P1-11 子网可达性的两个洞 (audit 自己挖出来的回归):
+
+1. preflight gate 只在 `controller_ip` + `port` 两列都填时跑。很多 binding 把 IP 存在
+   VISA endpoint 串里 (那两列空) → preflight **被跳过** → connect 直接失败 → 归
+   `fail_kind=scpi` (而非 network) → 子网无 network-fail。
+2. 子网判据把"没有 network-fail"当"可达" → never-probed 的子网被误标**可达**。
+
+**Why**: 假"可达"现场会误导操作员 —— 以为网络通了去调 SCPI, 实际根本没路由。可达性
+信号必须诚实区分"探到可达 / 探到不可达 / 没探过"。
+
+**修复 (A 根治 + B 防御)**:
+- **A**: `preflight_target(conn)` —— `controller_ip/port` 缺失时从 VISA/endpoint 串
+  解析 IPv4(+端口, 默认 5025; 只 HOST 定网络可达性)。所有能定位 IP 的仪表都被探;
+  解析不出 (hostname) → 跳过 → "未探测"。
+- **B**: `DriverReadinessRow.network_reachable` (True/False/None) + `SubnetReachability
+  .probed`; `build_subnet_reachability` 三态: 任一 dead→不可达; 否则有 alive→可达;
+  全 None→**未探测**(不再假可达)。mock 模式不探网络 → 全"未探测"(更诚实)。
+- 契约同步 (openapi+generate+types+mock) + GUI SubnetSection 三态 (灰❔/绿/红)。
+
+**Status**: ✅ Done — PR #83 (merged 2026-05-25)
+**Estimate**: ~0.5 day (preflight 解析 + 三态 + 契约 + GUI + 测试)
+
+---
+
 ## 🟡 P2 — Abstraction debt
 
 ### P2-1 — UXM two-layer architecture: Test App + Topology Profile ✅ Done
@@ -1632,26 +1660,27 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 
 ## 📊 Summary
 
-> Counts as of 2026-05-25 (post … P1-11 #71 + P1-12 #79/#80/#81 silent-fallback
-> audit + 本 PR P1-12 catch-up)。
-> Full-sweep flaky count remains **0**。P1-12 merged 后本地可启动 P0/P1/P2 重新
-> 归零, 8 个 open items 全部 not-immediately-startable:
+> Counts as of 2026-05-25 (post … P1-11 #71 + P1-12 #79/#80/#81 + P1-13 #83 +
+> 本 PR P1-13 catch-up)。
+> Full-sweep flaky count remains **0**。本地可启动 P0/P1/P2 重新归零, 8 个 open
+> items 全部 not-immediately-startable:
 > - 7 个 🚧 blocked-on-hardware (3 × P0 + P1-2 + P1-4 + P1-5 on-site half + P2-4)
 > - 1 个 ⏸️ incident-conditional hold (P1-6 FS16/UXM/ENA, trigger = 真 idle-close 出现, 当前没证据 — 仍计 open since `Status: [ ] not started`)
 >
-> P2-7 promote 进 P1-10 (#64, Done)。P2-8 (主控制台驾驶舱) #68 → Done。P1-11 (多子网
-> 仪表连接) #71 → Done。P1-12 (silent-fallback audit: QZ/TRP/path-loss 标未验证)
-> #79/#80/#81 → Done; 第四项 CE real-mode 早由 P0-7 #56 fail-fast 覆盖。
+> P2-7→P1-10 (#64, Done)。P2-8 (驾驶舱) #68 → Done。P1-11 (多子网) #71 → Done。
+> P1-12 (silent-fallback audit: QZ/TRP/path-loss 标未验证) #79/#80/#81 → Done
+> (第四项 CE real-mode 早由 P0-7 #56 覆盖)。P1-13 (子网可达性假阳性: preflight 走
+> VISA endpoint + 未探测三态) #83 → Done。
 >
-> silent-failure audit 已扫净已知静默兜底。当前本地无明显待启动项; 下一轮 audit
-> 挖到东西 promote 为 P1-13, 否则等下次现场触发 P0-3 (按 on-site-debug-protocol)。
+> 已知静默兜底扫净 + readiness 假阳性已修。当前本地无明显待启动项; 下一轮 audit/manual
+> 挖到东西 promote 为 P1-14, 否则等下次现场触发 P0-3 (按 on-site-debug-protocol)。
 > 详见 Current Focus 段。
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 42 | — | — |
+| ✅ Done | 43 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 7 total | 4 days | 4 days |
-| 🟠 P1 (confidence) | 4 open / 12 total | 3 days | 2 days |
+| 🟠 P1 (confidence) | 4 open / 13 total | 3 days | 2 days |
 | 🟡 P2 (abstraction debt) | 1 open / 7 total | 0.5 day | 0.5 day |
 | 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
 | **Total open** | **8** | **~7.5 days** | **6.5 days** |
