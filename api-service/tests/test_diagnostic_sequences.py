@@ -431,6 +431,24 @@ class TestUxmScpiCompatibilitySequence:
         assert body["success"] is False
         assert "baseStation" in body["summary"] and "scpi-probe" in body["summary"]
 
+    def test_refuses_mock_driver(self, lab_with_bs, monkeypatch):
+        """P1-14: mock BS loads in mock mode → probe gets past the no-driver
+        check, but an SCPI-compat sweep against a mock is meaningless. Refuse
+        with the actionable mock summary."""
+        from app.hal import MockBaseStation
+
+        _patched_hal(monkeypatch, drivers={
+            "baseStation": MockBaseStation("mock-bs", {"model": "Mock"}),
+        })
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/uxm_scpi_compatibility/run",
+            json={"lab_profile_id": str(lab_with_bs.id)},
+        )
+        body = resp.json()
+        assert body["success"] is False
+        assert "mock 驱动" in body["summary"]
+        assert "real 模式" in body["summary"]
+
     def test_irat_profile_walks_smaller_command_set(self, lab_with_bs, monkeypatch):
         """LTE_NR_IRAT app exposes ~32 BSE-prefixed commands (vs ~76 in
         5G_NR_Test). Driver must expose its _cmds for the probe to pick
@@ -922,6 +940,26 @@ class TestPropsimF64HealthSequence:
         body = resp.json()
         assert body["success"] is False
         assert "channelEmulator" in body["summary"] and "scpi-probe" in body["summary"]
+
+    def test_refuses_mock_driver(self, lab_with_ce, monkeypatch):
+        """P1-14: in mock mode the mock CE loads, so the probe gets PAST the
+        no-driver check — but a hardware identity probe against a mock returns
+        empty IDN ("Identity check failed: IDN=''"). The probe must refuse the
+        mock with an actionable summary instead of that cryptic failure."""
+        from app.hal import MockChannelEmulator
+
+        _patched_hal(monkeypatch, drivers={
+            "channelEmulator": MockChannelEmulator("mock-ce", {"model": "Mock"}),
+        })
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/propsim_f64_health/run",
+            json={"lab_profile_id": str(lab_with_ce.id)},
+        )
+        body = resp.json()
+        assert body["success"] is False
+        assert "mock 驱动" in body["summary"]      # names it as mock
+        assert "real 模式" in body["summary"]       # actionable: switch to real
+        assert "Identity check failed" not in body["summary"]  # not the cryptic path
 
     def test_identity_falls_back_to_sys_info(self, lab_with_ce, monkeypatch):
         """Backported from FS16 probe: if IDN doesn't carry the PROPSIM

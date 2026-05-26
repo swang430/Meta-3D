@@ -73,6 +73,28 @@ def driver_not_loaded_summary(category: str) -> str:
     )
 
 
+def mock_driver_refusal_summary(category: str, driver: Any) -> Optional[str]:
+    """If ``driver`` is a mock, return an actionable refusal summary for a
+    hardware health/identity probe; otherwise ``None``.
+
+    Hardware probes (IDN/SYST:INFO identity checks, SCPI-command sweeps, DUT
+    signaling) are meaningless against a mock: the mock returns canned/empty
+    values, so the probe either silently "passes" (useless) or fails with a
+    cryptic message (e.g. ``Identity check failed: IDN=''`` against
+    MockChannelEmulator). Caller short-circuits with this summary so the
+    operator gets "this probe needs real hardware" instead. Mirrors the gate
+    aerotech_positioner_health + the SCPI Console already use (name-based, so a
+    driver class outside the Mock* family is treated as real)."""
+    cls_name = type(driver).__name__
+    if cls_name.startswith("Mock"):
+        return (
+            f"{category} 当前是 mock 驱动（{cls_name}，HAL 在 mock 模式）。本探针针对"
+            f"真实硬件（*IDN?/SYST:INFO?/信令 校验），对 mock 无意义（mock 返回空/占位值）。"
+            f"切到 real 模式并连接真实 {category} 后再跑本序列。"
+        )
+    return None
+
+
 # Sequence run signature. `log` lets the sequence emit human messages that
 # show up in the GUI live console + in diagnostic_runs.output_excerpt.
 SequenceRunFn = Callable[..., Awaitable[SequenceRunResult]]

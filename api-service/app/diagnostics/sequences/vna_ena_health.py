@@ -32,6 +32,7 @@ from app.diagnostics.protocol import (
     SequenceMetadata,
     SequenceRunResult,
     driver_not_loaded_summary,
+    mock_driver_refusal_summary,
     SequenceStepResult,
 )
 from app.services.diagnostic_context import DiagnosticContext
@@ -138,6 +139,13 @@ async def run(
             success=False,
             summary=driver_not_loaded_summary("vna"),
         )
+
+    # P1-14: hardware probe is meaningless against a mock driver —
+    # refuse with an actionable summary instead of running the
+    # identity/SCPI checks against canned/empty mock values.
+    refusal = mock_driver_refusal_summary("vna", vna)
+    if refusal:
+        return SequenceRunResult(success=False, summary=refusal)
 
     center_mhz = float(params.get("center_freq_mhz", 2450))
     span_mhz = float(params.get("span_mhz", 100))
