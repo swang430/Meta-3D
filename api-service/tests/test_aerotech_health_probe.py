@@ -280,9 +280,12 @@ class TestSequenceRegistration:
 # ---------------------------------------------------------------------------
 
 class TestDriverGating:
-    def test_no_driver_loaded_summary_says_bind_then_reload(self, lab_with_positioner, monkeypatch):
-        """HAL has no driver bound for 'positioner' — probe should report
-        an actionable summary, not crash on attribute lookup."""
+    def test_no_driver_loaded_summary_is_actionable(self, lab_with_positioner, monkeypatch):
+        """HAL has no driver loaded for 'positioner' — probe reports an
+        actionable summary (shared `driver_not_loaded_summary`), not a crash.
+        Post-PR #85 the summary is the unified actionable text: names the
+        category, points at the SCPI/connectivity probes, and tells the
+        operator to reload HAL after connecting."""
         _patched_hal(monkeypatch, drivers={})
 
         resp = client.post(
@@ -292,10 +295,10 @@ class TestDriverGating:
         assert resp.status_code == 200
         body = resp.json()
         assert body["success"] is False
-        assert "No positioner driver loaded" in body["summary"]
-        # actionable next step — case-insensitive match on either reload
-        # phrasing.
-        assert "reload hal" in body["summary"].lower()
+        summary = body["summary"]
+        assert "positioner" in summary            # names the category
+        assert "scpi-probe" in summary            # points at connectivity probe
+        assert "hal/reload" in summary.lower()    # tells operator to reload HAL
 
     def test_mock_driver_refused(self, lab_with_positioner, monkeypatch):
         """MockPositioner would silently 'succeed' on every probe — probe
