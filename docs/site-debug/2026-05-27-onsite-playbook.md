@@ -176,6 +176,12 @@ cockpit mock 全绿        cockpit 开起来           P4  DUT attach→吞吐(P
 
 > P1-8 是 runtime gate：strict = (config flag AND hardware real)。real 模式 + cert 缺失会 **fail-loud 拦住**，不会让你拿垃圾数走完。看到 fail-loud 是好事，按提示补 cert。
 
+> **🟡 校准天线不在位 → 把 Phase 3 当可选（dry-run，非交付件）**：若校准天线/SGH 当天不到位，无法出 cert，可临时跳过：Commissioning Sandbox 顶部开 **「强制跳过严格 DUT / 校准门（real 模式 override）」** → **「重置会话」**（一个开关同时置 `precheck_strict_cal=False` + `precheck_strict_dut=False`）。后果与边界：
+> - precheck 不再因缺 cert 而 FAIL，但 payload 会记 `bypassed via precheck_strict_cal=False (would-fail-under-strict: …)` —— **bypass 被记录，不是假 PASS**；路损走 default cable-loss 兜底，MEASURE 输出按 P1-12 标 **"未验证(兜底值)/未补偿"**，一路带进报告。
+> - 这版报告**带"未验证"标记 = link-up/dry-run 验证，不是可交付的真 first-call**（不满足上面的 P0-3 acceptance）。**别当交付件**；天线到位后重跑带 cert 的才算 P0-3 真过。
+> - 另在便签/收工记录上手写一句"本次 Phase 3 跳过，未校准"，与数字标记双保险。
+> - ⚠ 该开关是**一个开关关两个门**（cal + dut，见 `Commissioning/api.ts`）——所以 Phase 4 的 DUT fail-loud 保护也一并关了，attach 状态得自己盯。
+
 ---
 
 ### Phase 4 — DUT attach → bearer → PDSCH（= P0-5）
