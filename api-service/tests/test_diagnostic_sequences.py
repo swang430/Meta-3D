@@ -244,7 +244,7 @@ class TestRunSequence:
         assert body["success"] is False
         # One step (the lab has one binding), and it should report driver missing.
         assert len(body["steps"]) == 1
-        assert "No HAL driver" in body["steps"][0]["detail"]
+        assert "未加载" in body["steps"][0]["detail"]
         # Audit row written
         audit = db.query(DiagnosticRun).filter(
             DiagnosticRun.id == uuid.UUID(body["diagnostic_run_id"])
@@ -429,7 +429,7 @@ class TestUxmScpiCompatibilitySequence:
         )
         body = resp.json()
         assert body["success"] is False
-        assert "baseStation driver" in body["summary"]
+        assert "baseStation" in body["summary"] and "scpi-probe" in body["summary"]
 
     def test_irat_profile_walks_smaller_command_set(self, lab_with_bs, monkeypatch):
         """LTE_NR_IRAT app exposes ~32 BSE-prefixed commands (vs ~76 in
@@ -684,7 +684,7 @@ class TestVnaEnaHealthSequence:
         )
         body = resp.json()
         assert body["success"] is False
-        assert "vna driver" in body["summary"]
+        assert "vna" in body["summary"] and "scpi-probe" in body["summary"]
 
 
 class TestPropsimF64HealthSequence:
@@ -921,7 +921,7 @@ class TestPropsimF64HealthSequence:
         )
         body = resp.json()
         assert body["success"] is False
-        assert "channelEmulator driver" in body["summary"]
+        assert "channelEmulator" in body["summary"] and "scpi-probe" in body["summary"]
 
     def test_identity_falls_back_to_sys_info(self, lab_with_ce, monkeypatch):
         """Backported from FS16 probe: if IDN doesn't carry the PROPSIM
@@ -1160,7 +1160,7 @@ class TestPropsimFs16HealthSequence:
         )
         body = resp.json()
         assert body["success"] is False
-        assert "channelEmulator driver" in body["summary"]
+        assert "channelEmulator" in body["summary"] and "scpi-probe" in body["summary"]
 
 
 class TestRealPropsimFs16Driver:

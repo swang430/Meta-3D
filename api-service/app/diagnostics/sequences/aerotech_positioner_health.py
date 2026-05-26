@@ -58,6 +58,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from app.diagnostics.protocol import (
     SequenceMetadata,
     SequenceRunResult,
+    driver_not_loaded_summary,
     SequenceStepResult,
 )
 from app.services.diagnostic_context import DiagnosticContext
@@ -463,10 +464,9 @@ async def run(
         return SequenceRunResult(
             success=False,
             summary=(
-                "No positioner driver loaded. Bind an Aerotech instrument "
-                "to category 'positioner' with a valid IP (default port 8000 "
-                "= Ensemble Socket2), then reload HAL "
-                "(POST /api/v1/instruments/hal/reload)."
+                driver_not_loaded_summary("positioner")
+                + "（Aerotech 默认端口 8000 = Ensemble Socket2；连上后 POST "
+                "/api/v1/instruments/hal/reload 重载 HAL）"
             ),
         )
 

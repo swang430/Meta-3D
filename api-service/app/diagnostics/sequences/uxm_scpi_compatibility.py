@@ -71,6 +71,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from app.diagnostics.protocol import (
     SequenceMetadata,
     SequenceRunResult,
+    driver_not_loaded_summary,
     SequenceStepResult,
 )
 from app.hal.uxm_base_station import UxmScpiCommands
@@ -321,7 +322,7 @@ async def run(
     if bs is None:
         return SequenceRunResult(
             success=False,
-            summary="No baseStation driver loaded — check HAL init logs",
+            summary=driver_not_loaded_summary("baseStation"),
         )
 
     # The probe needs the driver's raw SCPI primitives. `_query` is the
