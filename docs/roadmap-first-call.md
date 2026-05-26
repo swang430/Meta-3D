@@ -9,8 +9,9 @@
 ## 🎯 Current Focus
 
 **无 — P1-12 (silent-fallback audit #79/#80/#81) + P1-13 (子网可达性假阳性 #83)
-merged, 本地可启动 P0/P1/P2 重新归零。** 已知静默兜底已扫净, readiness/子网可达性
-假阳性已修, 暂无明显待 audit 项。下次现场打开时 Current Focus 切回 **P0-3** per WIP=1。
++ P1-14 (mock 驱动探针拒绝 #86) merged, 本地可启动 P0/P1/P2 重新归零。** 已知静默兜底已
+扫净, readiness/子网可达性假阳性已修, 诊断探针 mock 报错已 actionable, 暂无明显待 audit 项。
+下次现场打开时 Current Focus 切回 **P0-3** per WIP=1。
 
 P1-7 (#59) + P1-8 (#61) + P1-9 (#63) + P1-10 (#64) + P2-8 (#68) + P1-11 (#71) 全 merged。
 Commissioning →
@@ -27,8 +28,8 @@ TRP / path-loss 未补偿) 改成显著标"未验证(兜底值)" —— 跑完�
 → never-probed 误标可达), 改成 preflight 走 endpoint 串 + "未探测"三态 —— manual 测试
 挖到的。WIP=1 释放。
 
-> **本 PR 是 docs catch-up**: PR #83 (P1-13) merged 后 roadmap 没有 P1-13 entry、
-> Current Focus 还指 P1-12、Summary 没计 P1-13。本 PR 把 main 矫正: 加 P1-13 entry
+> **本 PR 是 docs catch-up**: PR #86 (P1-14) merged 后 roadmap 没有 P1-14 entry、
+> Current Focus 没提 P1-14、Summary 没计 P1-14。本 PR 把 main 矫正: 加 P1-14 entry
 > (Done), Current Focus 更新, Summary counts 同步 (per memory
 > `feedback_d_row_stale_this_pr_reflex.md` + `feedback_recompute_aggregate_rows_from_parts.md`)。
 
@@ -47,9 +48,10 @@ TRP / path-loss 未补偿) 改成显著标"未验证(兜底值)" —— 跑完�
 下次现场打开时, Current Focus 必须切回 **P0-3** (或最先解锁的 P0) per WIP=1。
 silent-failure / readiness-correctness audit 已成体系且 ROI 反复证明 (P1-8 cal gate /
 P1-9 DUT / P1-10 ring-only / P1-12 QZ+TRP+path-loss 兜底标记 / P1-13 子网可达性假阳性 /
-一串 drive-by bug fix)。**已知静默兜底已扫净, readiness 假阳性已修。** 当前本地无明显
-待启动项: 下一轮若再 audit/manual 测试挖到东西 = candidate for P1-14; 没挖到 = 等下次
-现场触发 P0-3, 现场按 [`on-site-debug-protocol`](guides/on-site-debug-protocol.md) 走。
+P1-14 mock 探针拒绝 / 一串 drive-by bug fix)。**已知静默兜底已扫净, readiness 假阳性已修,
+诊断探针 mock 报错已 actionable。** 当前本地无明显待启动项: 下一轮若再 audit/manual 测试挖到
+东西 = candidate for P1-15; 没挖到 = 等下次现场触发 P0-3, 现场按
+[`on-site-debug-protocol`](guides/on-site-debug-protocol.md) 走。
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
@@ -927,6 +929,35 @@ post-session 无路径输入 (#76/#77) / cockpit success_rate 0-1 vs 0-100 标�
 
 ---
 
+### P1-14 — 硬件健康探针对 mock 驱动给出可操作拒绝信息 ✅ Done (PR #86)
+
+**What**: 操作员现场 manual 调试时, HAL 在 mock 模式下从诊断序列跑 F64 Probe, 撞到
+`Identity check failed: IDN='', SYST:INFO=''; expected any of ('PROPSIM','F8800')`
+—— 对操作员毫无指引的报错。根因: 硬件探针把 mock 驱动返回的空/占位值当真机应答去校验
+`*IDN?`/`SYST:INFO?`, 要么静默"通过"(无意义), 要么以看不懂的字符串失败。只有
+`aerotech_positioner_health` 之前有自己的 inline mock guard, 其余探针都没有。
+
+**Why**: 探针在 mock 下报"硬件身份不符"是答非所问 —— 真正问题是"你在 mock 模式跑了
+一个只对真机有意义的探针"。诚实信号应该是"切 real 连真机再跑", 而不是一个 IDN 校验失败。
+
+**修复**:
+- `protocol.py` 新增共享 `mock_driver_refusal_summary(category, driver)`: 驱动类名以
+  `Mock` 开头返回中文拒绝说明 (本探针针对真实硬件、对 mock 无意义、切 real 连真机后再跑),
+  否则 `None`。判定沿用 aerotech 已有的 name-based 方式 (Mock* 家族之外一律视为 real)。
+- 5 个硬件探针 (`propsim_f64` / `propsim_fs16` / `vna_ena` / `uxm_scpi_compatibility`
+  / `baseStation_attach_check`) 在"无驱动"返回后插入该 guard; aerotech 已有 inline guard 不动。
+- 新增 2 个测试 (F64 + uxm) 注入 `Mock*` 驱动, 断言 summary 含 "mock 驱动"/"real 模式"
+  且不含 "Identity check failed"。
+
+**Why P1-14**: 跟 P1-12/P1-13 同源 —— 都是跑完整 mock first-call / manual 测试时挖到的
+可用性洞。承接 Current Focus 段"下一轮若再 audit/manual 测试挖到东西 = candidate for
+P1-14"的占位。
+
+**Status**: ✅ Done — PR #86 (merged 2026-05-26)
+**Estimate**: ~0.25 day (helper + 5 探针 guard + 2 测试)
+
+---
+
 ## 🟡 P2 — Abstraction debt
 
 ### P2-1 — UXM two-layer architecture: Test App + Topology Profile ✅ Done
@@ -1660,8 +1691,8 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 
 ## 📊 Summary
 
-> Counts as of 2026-05-25 (post … P1-11 #71 + P1-12 #79/#80/#81 + P1-13 #83 +
-> 本 PR P1-13 catch-up)。
+> Counts as of 2026-05-26 (post … P1-11 #71 + P1-12 #79/#80/#81 + P1-13 #83 +
+> P1-14 #86 + 本 PR P1-14 catch-up)。
 > Full-sweep flaky count remains **0**。本地可启动 P0/P1/P2 重新归零, 8 个 open
 > items 全部 not-immediately-startable:
 > - 7 个 🚧 blocked-on-hardware (3 × P0 + P1-2 + P1-4 + P1-5 on-site half + P2-4)
@@ -1670,17 +1701,18 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 > P2-7→P1-10 (#64, Done)。P2-8 (驾驶舱) #68 → Done。P1-11 (多子网) #71 → Done。
 > P1-12 (silent-fallback audit: QZ/TRP/path-loss 标未验证) #79/#80/#81 → Done
 > (第四项 CE real-mode 早由 P0-7 #56 覆盖)。P1-13 (子网可达性假阳性: preflight 走
-> VISA endpoint + 未探测三态) #83 → Done。
+> VISA endpoint + 未探测三态) #83 → Done。P1-14 (mock 驱动探针拒绝: hardware probe
+> 对 Mock* 驱动给 actionable 拒绝而非 IDN 校验失败) #86 → Done。
 >
-> 已知静默兜底扫净 + readiness 假阳性已修。当前本地无明显待启动项; 下一轮 audit/manual
-> 挖到东西 promote 为 P1-14, 否则等下次现场触发 P0-3 (按 on-site-debug-protocol)。
-> 详见 Current Focus 段。
+> 已知静默兜底扫净 + readiness 假阳性已修 + 诊断探针 mock 报错已 actionable。当前本地无
+> 明显待启动项; 下一轮 audit/manual 挖到东西 promote 为 P1-15, 否则等下次现场触发 P0-3
+> (按 on-site-debug-protocol)。详见 Current Focus 段。
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 43 | — | — |
+| ✅ Done | 44 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 7 total | 4 days | 4 days |
-| 🟠 P1 (confidence) | 4 open / 13 total | 3 days | 2 days |
+| 🟠 P1 (confidence) | 4 open / 14 total | 3 days | 2 days |
 | 🟡 P2 (abstraction debt) | 1 open / 7 total | 0.5 day | 0.5 day |
 | 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
 | **Total open** | **8** | **~7.5 days** | **6.5 days** |
