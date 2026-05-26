@@ -326,6 +326,44 @@ async def tcp_preflight(
     return True, None
 
 
+# P1-15: negative-control / canary addresses for the preflight trust check.
+# RFC 5737 TEST-NET ranges are reserved for documentation and MUST NOT be
+# routable on any correct network — a TCP probe to them can only ever come back
+# "dead" (timeout / no route). If one comes back "alive", something on the path
+# (transparent proxy / corporate VPN / captive portal / blackhole-accept
+# gateway) is answering SYNs on behalf of destinations that cannot exist — which
+# means tcp_preflight's "connect-or-refused = host alive" heuristic is fooled and
+# EVERY "alive" verdict is meaningless. Field trigger: real-mode HAL with no
+# instruments showed all subnets 可达 because a VPN tunnel accepted every connect.
+_PREFLIGHT_CANARIES: Tuple[Tuple[str, int], ...] = (
+    ("192.0.2.1", 5025),       # RFC 5737 TEST-NET-1
+    ("198.51.100.1", 5025),    # RFC 5737 TEST-NET-2
+)
+
+
+async def detect_preflight_trustworthy(timeout_s: float = 1.0) -> bool:
+    """P1-15: probe the guaranteed-unroutable canary addresses.
+
+    Returns ``False`` (preflight signal NOT trustworthy) if ANY canary answers
+    at the TCP layer — a proxy/VPN/gateway is accepting connections for
+    addresses that cannot exist, so ``tcp_preflight`` can no longer tell a
+    reachable instrument apart from a lying network. Returns ``True`` when every
+    canary is correctly dead (timeout / no route), i.e. a normal LAN where
+    preflight verdicts can be trusted.
+
+    Probes run concurrently so the worst case (honest network → every canary
+    times out) costs ``timeout_s`` once, not once-per-canary, and only the
+    caller (HAL init, once per reload) pays it — never the per-instrument loop.
+    """
+    results = await asyncio.gather(
+        *(tcp_preflight(host, port, timeout_s=timeout_s) for host, port in _PREFLIGHT_CANARIES)
+    )
+    for alive, _reason in results:
+        if alive:
+            return False
+    return True
+
+
 class InstrumentHALService:
     """
     Manages instrument driver lifecycle and data collection
@@ -448,6 +486,12 @@ class InstrumentHALService:
         # ``driver.readiness_metadata()`` so e.g. F64 firmware/band fields
         # land in the report without per-driver branches here).
         report_rows: List[DriverReadinessRow] = []
+        # P1-15: preflight trust verdict from the canary negative-control.
+        # Computed lazily on the first real preflight (so a pure-mock init never
+        # pays the probe cost) and cached for the rest of this init. None = not
+        # yet checked; True = canary dead → preflight trustworthy; False = canary
+        # alive → network is lying, skip preflight network-wide.
+        preflight_trustworthy: Optional[bool] = None
         try:
             categories = db.query(InstrumentCategoryModel).filter(
                 InstrumentCategoryModel.is_active == True
@@ -584,33 +628,50 @@ class InstrumentHALService:
                     else preflight_target(conn)
                 )
                 if target is not None:
-                    alive, reason = await tcp_preflight(
-                        target[0], target[1], timeout_s=1.0
-                    )
-                    host_reachable = alive
-                    if not alive:
-                        logger.warning(
-                            f"[HAL] {cat.category_key}: preflight failed "
-                            f"({reason}); skipping driver.connect() — set the "
-                            f"correct IP/port and reload HAL."
+                    # P1-15: run the canary negative-control once (lazily) before
+                    # trusting ANY preflight verdict. If the network is lying
+                    # (proxy/VPN answering for unroutable canaries), connect-or-
+                    # refused no longer means "host alive", so skip preflight
+                    # network-wide and leave host_reachable=None → the subnet
+                    # rollup reports 未探测(不可信) instead of a false 可达.
+                    if preflight_trustworthy is None:
+                        preflight_trustworthy = await detect_preflight_trustworthy()
+                        if not preflight_trustworthy:
+                            logger.warning(
+                                "[HAL] preflight canary alive — 网络层有透明代理/VPN/"
+                                "网关在替不可路由地址应答 TCP；子网可达性不可信，本次跳过 "
+                                "preflight（所有子网标为未探测）。请在无代理/直连网络下重跑。"
+                            )
+                    if preflight_trustworthy:
+                        alive, reason = await tcp_preflight(
+                            target[0], target[1], timeout_s=1.0
                         )
-                        if conn:
-                            conn.status = "error"
-                            conn.last_error = f"preflight: {reason}"
-                            db.commit()
-                        report_rows.append(DriverReadinessRow(
-                            category=cat.category_key,
-                            model=f"{model.vendor} {model.model}",
-                            endpoint=endpoint_str,
-                            status="fail",
-                            detail=f"preflight: {reason}",
-                            # P1-11: TCP preflight couldn't reach the host —
-                            # the network layer can't route here (most often
-                            # the control PC isn't on this /24 subnet).
-                            fail_kind="network",
-                            network_reachable=False,
-                        ))
-                        continue
+                        host_reachable = alive
+                        if not alive:
+                            logger.warning(
+                                f"[HAL] {cat.category_key}: preflight failed "
+                                f"({reason}); skipping driver.connect() — set the "
+                                f"correct IP/port and reload HAL."
+                            )
+                            if conn:
+                                conn.status = "error"
+                                conn.last_error = f"preflight: {reason}"
+                                db.commit()
+                            report_rows.append(DriverReadinessRow(
+                                category=cat.category_key,
+                                model=f"{model.vendor} {model.model}",
+                                endpoint=endpoint_str,
+                                status="fail",
+                                detail=f"preflight: {reason}",
+                                # P1-11: TCP preflight couldn't reach the host —
+                                # the network layer can't route here (most often
+                                # the control PC isn't on this /24 subnet).
+                                fail_kind="network",
+                                network_reachable=False,
+                            ))
+                            continue
+                    # else: network untrusted → host_reachable stays None, fall
+                    # through to driver.connect() (still surfaces ok/scpi).
 
                 try:
                     success = await driver.connect()
@@ -788,7 +849,13 @@ class InstrumentHALService:
             # P1-11: roll up the driver rows by /24 subnet so the operator
             # gets one "this subnet is unreachable, add an IP alias" hint
             # per subnet instead of N opaque per-instrument VISA errors.
-            subnet_sections = build_subnet_reachability(report_rows)
+            # P1-15: tell the rollup whether the network was trustworthy so the
+            # 未探测 hint names the real cause (proxy/VPN) when the canary tripped.
+            # preflight_trustworthy is None when no real preflight ran (pure mock)
+            # → treat as trustworthy (the benign 未探测 hint is correct there).
+            subnet_sections = build_subnet_reachability(
+                report_rows, network_trustworthy=(preflight_trustworthy is not False)
+            )
             report = ReadinessReport(
                 drivers=report_rows,
                 lab_profile=lab_section,

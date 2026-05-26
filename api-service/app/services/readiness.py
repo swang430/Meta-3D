@@ -395,6 +395,7 @@ def parse_subnet_cidr(endpoint: str) -> Optional[str]:
 
 def build_subnet_reachability(
     rows: List[DriverReadinessRow],
+    network_trustworthy: bool = True,
 ) -> List[SubnetReachability]:
     """Group driver rows by their /24 subnet and roll up reachability.
 
@@ -408,6 +409,14 @@ def build_subnet_reachability(
     - else (every row ``None`` — none probed: mock / no host:port) →
       ``probed=False`` → 未探测/unknown; ``reachable`` is meaningless, left
       False, GUI renders neutral.
+
+    P1-15: ``network_trustworthy=False`` means the HAL canary negative-control
+    detected a transparent proxy / VPN / blackhole gateway answering TCP for
+    unroutable addresses — so preflight was skipped network-wide and every row
+    is ``network_reachable=None``. The subnets come out ``probed=False`` as
+    above, but the 未探测 hint is rewritten to name the *real* cause (network
+    层在说谎) instead of the benign "no instruments to probe" reason, so the
+    operator doesn't mistake a lying network for an empty subnet.
 
     Rows whose endpoint has no parseable IPv4 host are grouped under the
     sentinel CIDR ``"unknown"``.
@@ -432,6 +441,14 @@ def build_subnet_reachability(
                 f"子网 {cidr} 不可达：参见 "
                 "docs/guides/multi-subnet-instrument-network.md 方案 A"
                 "（单网卡加 IP 别名），或确认交换机连线"
+            )
+        elif not probed and not network_trustworthy:
+            # P1-15: the subnet is 未探测 because the network is lying, not
+            # because there was nothing to probe — say so.
+            hint = (
+                f"子网 {cidr} 未探测：网络层检测到透明代理/VPN/网关 "
+                "（canary 探测发现不可路由地址仍“可达”）——TCP 可达性不可信，"
+                "本次已跳过 preflight。请在无代理/直连网络下重跑 HAL reload。"
             )
         elif not probed:
             hint = (

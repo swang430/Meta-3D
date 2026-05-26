@@ -246,6 +246,31 @@ class TestBuildSubnetReachability:
         s = build_subnet_reachability(rows)[0]
         assert s.probed is True and s.reachable is True and s.hint is None
 
+    def test_untrusted_network_hint_names_proxy_not_empty_subnet(self):
+        """P1-15: when the canary tripped (network_trustworthy=False), every row
+        is network_reachable=None (preflight skipped network-wide). The subnet is
+        未探测 (probed=False, NOT a false 可达), and its hint must name the real
+        cause — proxy/VPN — not the benign "no instruments to probe" reason."""
+        rows = [
+            _row("channelEmulator", "192.168.0.132:5025", status="fail",
+                 fail_kind="scpi", network_reachable=None),
+        ]
+        s = build_subnet_reachability(rows, network_trustworthy=False)[0]
+        assert s.probed is False         # 未探测 — never trustworthily probed
+        assert s.reachable is False      # crucially NOT the old false 可达
+        assert s.hint is not None
+        assert "代理" in s.hint or "VPN" in s.hint
+        assert "无仪表" not in s.hint    # must NOT claim the benign empty-subnet reason
+
+    def test_trustworthy_default_keeps_benign_unprobed_hint(self):
+        """Sanity: the default (network_trustworthy=True) path is unchanged —
+        a never-probed subnet still gets the benign 未探测 hint, not the proxy one."""
+        rows = [_row("ce", "192.168.0.132:5025", status="ok", network_reachable=None)]
+        s = build_subnet_reachability(rows)[0]
+        assert s.probed is False and s.reachable is False
+        assert s.hint and "未探测" in s.hint
+        assert "代理" not in s.hint
+
     def test_output_sorted_unknown_last(self):
         rows = [
             _row("a", "", status="ok"),  # unknown
@@ -341,9 +366,19 @@ def _seed_category_with_model(db, *, category_key, ip, port=5025, model_name="FA
     return cat, model
 
 
-def _run_init_with_fake_driver(monkeypatch, *, category_key, model_name):
+def _run_init_with_fake_driver(monkeypatch, *, category_key, model_name, trustworthy=True):
     """Patch the real-driver registry so ``category_key`` resolves to
-    ``_FakeRealDriver`` for ``model_name``, then run init."""
+    ``_FakeRealDriver`` for ``model_name``, then run init.
+
+    P1-15: also pin the canary negative-control via ``detect_preflight_trustworthy``
+    so these tests don't depend on the CI box's actual network (a CI runner
+    behind a proxy would otherwise flip every preflight to 未探测). Default
+    ``trustworthy=True`` = honest LAN (existing fail_kind behavior); pass
+    ``trustworthy=False`` to exercise the lying-network path."""
+    async def _canary(timeout_s=1.0):
+        return trustworthy
+
+    monkeypatch.setattr(hal_mod, "detect_preflight_trustworthy", _canary)
     monkeypatch.setattr(
         hal_mod,
         "_real_driver_registry",
@@ -432,6 +467,45 @@ class TestFailKindClassification:
         assert bad.reachable is False
         assert bad.hint is not None
         assert "方案 A" in bad.hint
+
+    def test_lying_network_skips_preflight_and_marks_subnet_untrusted(self, monkeypatch, db):
+        """P1-15 core: when the canary detects a proxy/VPN (network NOT
+        trustworthy), preflight is skipped network-wide. Even though
+        tcp_preflight WOULD report every host alive (the bug), the row must NOT
+        come out network_reachable=True and the subnet must NOT show a false 可达
+        — it's 未探测 with a proxy-naming hint. connect() still runs (here it
+        fails → scpi), so the SCPI layer is still surfaced."""
+        _seed_category_with_model(
+            db, category_key="channelEmulator", ip="192.168.9.50", model_name="FAKE-1"
+        )
+
+        # The lying network: tcp_preflight answers alive for EVERYTHING (this is
+        # exactly the proxy/VPN behavior the canary exists to catch). If the
+        # canary guard were absent, this would mislabel the subnet 可达.
+        async def liar_preflight(host, port, timeout_s=1.0):
+            return (True, None)
+
+        monkeypatch.setattr(hal_mod, "tcp_preflight", liar_preflight)
+        _FakeRealDriver.connect_result = False  # instrument not really there
+
+        svc = _run_init_with_fake_driver(
+            monkeypatch, category_key="channelEmulator", model_name="FAKE-1",
+            trustworthy=False,
+        )
+
+        rows = svc.last_readiness_report.drivers
+        assert len(rows) == 1
+        row = rows[0]
+        # Preflight was skipped → the row carries no trustworthy network verdict.
+        assert row.network_reachable is None
+        assert row.status == "fail"
+        assert row.fail_kind == "scpi"  # connect ran and failed at the session layer
+
+        subnets = {s.cidr: s for s in svc.last_readiness_report.subnets}
+        bad = subnets["192.168.9.0/24"]
+        assert bad.probed is False          # NOT a false 可达
+        assert bad.reachable is False
+        assert bad.hint and ("代理" in bad.hint or "VPN" in bad.hint)
 
     @classmethod
     def teardown_class(cls):
