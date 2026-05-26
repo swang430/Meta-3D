@@ -269,10 +269,13 @@ numbers.
 
 ### P0-4 — SignalAnalyzer in HAL for reference TRP 🚧 Blocked on-site
 
-**What**: Bind a Keysight N9020B MXA (or equivalent) to the HAL
-`signalAnalyzer` category and connect it to a known-gain reference horn
-antenna in the chamber. Reference phase reads real channel power, applies
-the offset, and emits a real TRP — not the current mock 23.5 dBm fallback.
+**What**: Bind the on-site **R&S FSVA3000** signal analyzer (driver
+`RealRsFsvaDriver`, model `FSVA3000`) to the HAL `signalAnalyzer` category
+and connect it to a known-gain reference horn antenna in the chamber.
+Reference phase reads real channel power, applies the offset, and emits a
+real TRP — not the current mock 23.5 dBm fallback. (Catalog also carries
+R&S FSW43 + Keysight X-Series as alternates, but CAICT's receiver is the
+FSVA3000 — see `caict_v4` topology template.)
 
 **Why**: The `_MOCK_TRP_DBM` fallback means the compensation factor is
 fake. Real first-call needs the real path:
@@ -285,8 +288,9 @@ fake. Real first-call needs the real path:
 - Measured TRP within ±1 dB of horn datasheet TRP at the tested
   frequency
 
-**Status**: `[ ]` not started — `RealKeysightXSeriesSaDriver` exists,
-needs config + on-site connection
+**Status**: `[ ]` not started — `RealRsFsvaDriver` exists + registered
+(`signalAnalyzer→FSVA3000`) + seeded; needs on-site connection + model
+select. No driver work on-site (cardinal rule 1).
 **Estimate**: on-site 0.5 day + local 0.5 day
 
 ---
