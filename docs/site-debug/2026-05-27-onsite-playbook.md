@@ -65,8 +65,8 @@ cockpit mock 全绿        cockpit 开起来           P4  DUT attach→吞吐(P
 |------|---------|---------|----------|---------|--------------|
 | PROPSIM **F64**（信道仿真器） | `192.168.0.x` | `192.168.0.132` | 5025 (SOCKET) | **单 client** | 连之前先确保**没有别的客户端/GUI 占用**；身份查 `SYST:INFO?`（**不是 `*OPT?`/`*IDN?` 之外别指望 MMEM/FTP**）；`-100` = 命令不存在，是正常分类不是 fail |
 | **UXM** E7515B（基站仿真器） | `192.168.1.x` | `192.168.1.112` | hislip | 多 client 友好 | 先确认 **5G NR FR1 Test App 已在 UXM 上启动**；endpoint 走 hislip |
-| **N9042B/N9020B**（SA 信号分析仪） | `192.168.1.x` | `192.168.1.55` | 5025/hislip | — | IDN + 频段确认；P0-4 把它 bind 到 `signalAnalyzer` |
-| ENA / VNA | — | — | — | — | 路损校准用 **CE+SA**，VNA 非必需（仅备查） |
+| **R&S FSVA3000**（SA 信号分析仪，校准接收端） | `192.168.1.x` | `192.168.1.55` | 5025 / hislip(VXI-11) | — | IDN + 频段确认；P0-4 把它 bind 到 `signalAnalyzer`，**GUI 选 model = `FSVA3000`**（HAL 自动用 `RealRsFsvaDriver`，已注册+seed，无需写 driver）；SCPI 是 R&S FSW/FSVA 命令族（`SENSe:FREQuency:*` / `INITiate:IMMediate;*OPC?`），**不是** Keysight X-Series |
+| ENA / VNA | — | — | — | — | 路损校准用 **CE+SA(FSVA3000)**，VNA 非必需（仅无源测试/精密校准备查） |
 | RF Switch | — | — | — | — | IDN + 通道切换（如拓扑用到） |
 | Aerotech 转台 | — | — | — | — | IDN + **单轴回零/定位**（CAICT 曾卡单轴，本地探针已支持单轴模式） |
 
@@ -97,7 +97,7 @@ cockpit mock 全绿        cockpit 开起来           P4  DUT attach→吞吐(P
    ```bash
    nc -vz 192.168.0.132 5025   # F64
    nc -vz 192.168.1.112 4880   # UXM (hislip 端口按实际)
-   nc -vz 192.168.1.55  5025   # SA
+   nc -vz 192.168.1.55  5025   # SA (R&S FSVA3000)
    ```
 4. 起后端 + cockpit，HAL 切 real：`POST /instruments/hal/switch`（real）→ `POST /instruments/hal/reload`。看 cockpit 就绪带 **per-subnet 可达性**面板。
 
@@ -135,7 +135,8 @@ cockpit mock 全绿        cockpit 开起来           P4  DUT attach→吞吐(P
 ### Phase 2 — SA 入 HAL（= P0-4）
 **目标**：真 SA 读参考 TRP，替掉 `_MOCK_TRP_DBM`(23.5 dBm) 假值。
 
-**步骤**：bind N9020B/N9042B 到 `signalAnalyzer` category → 配 horn + offset → 跑 reference phase。
+**步骤**：在 GUI 把 `signalAnalyzer` category 的 model 选成 **`FSVA3000`**（HAL 自动绑 `RealRsFsvaDriver`）→ 配 horn + offset → `POST /instruments/hal/reload` → 跑 reference phase。
+> driver 已注册 + seed（`signalAnalyzer→FSVA3000→RealRsFsvaDriver`），**现场不需写/改 driver**；选错成 Keysight X-Series 会用错 SCPI 命令族，IDN 阶段就会暴露。
 
 **Gate（= P0-4 acceptance）**：
 - `signalAnalyzer` driver loaded（readiness 表 ✓）
