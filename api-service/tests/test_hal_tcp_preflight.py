@@ -26,7 +26,10 @@ import asyncio
 import pytest
 
 from app.services import instrument_hal_service as hal_mod
-from app.services.instrument_hal_service import tcp_preflight
+from app.services.instrument_hal_service import (
+    detect_preflight_trustworthy,
+    tcp_preflight,
+)
 
 
 class _StubWriter:
@@ -115,3 +118,44 @@ class TestPreflightDead:
         assert alive is False
         assert "OSError" in (reason or "")
         assert "Network is unreachable" in (reason or "")
+
+
+class TestPreflightCanary:
+    """P1-15: ``detect_preflight_trustworthy`` is the negative control that
+    keeps tcp_preflight honest. It probes RFC 5737 TEST-NET canaries, which can
+    only be dead on a correct network. If a canary is alive, a transparent
+    proxy / VPN / blackhole gateway is answering for unroutable addresses, so
+    every preflight "alive" is meaningless → the verdict must be 'untrustworthy'.
+    """
+
+    @pytest.mark.asyncio
+    async def test_all_canaries_dead_is_trustworthy(self, monkeypatch):
+        """Honest LAN: every canary times out / no-route → trustworthy=True."""
+        async def fake_open(host, port):
+            raise OSError("Network is unreachable")
+
+        monkeypatch.setattr(hal_mod.asyncio, "open_connection", fake_open)
+        assert await detect_preflight_trustworthy(timeout_s=0.05) is True
+
+    @pytest.mark.asyncio
+    async def test_any_canary_alive_is_untrustworthy(self, monkeypatch):
+        """Lying network (proxy/VPN/captive): a canary to an unroutable
+        TEST-NET address 'connects' → trustworthy=False. This is the exact
+        field symptom — a VPN accepted connects to every IP, so all subnets
+        showed 可达 with no instruments present."""
+        async def fake_open(host, port):
+            return object(), _StubWriter()
+
+        monkeypatch.setattr(hal_mod.asyncio, "open_connection", fake_open)
+        assert await detect_preflight_trustworthy(timeout_s=0.05) is False
+
+    @pytest.mark.asyncio
+    async def test_connection_refused_canary_is_also_untrustworthy(self, monkeypatch):
+        """RST from a TEST-NET canary still means *something* answered for an
+        address that can't exist (tcp_preflight treats refused as alive), so the
+        network is lying just the same → untrustworthy."""
+        async def fake_open(host, port):
+            raise ConnectionRefusedError("RST")
+
+        monkeypatch.setattr(hal_mod.asyncio, "open_connection", fake_open)
+        assert await detect_preflight_trustworthy(timeout_s=0.05) is False
