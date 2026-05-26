@@ -72,6 +72,7 @@ from app.diagnostics.protocol import (
     SequenceMetadata,
     SequenceRunResult,
     driver_not_loaded_summary,
+    mock_driver_refusal_summary,
     SequenceStepResult,
 )
 from app.hal.uxm_base_station import UxmScpiCommands
@@ -324,6 +325,13 @@ async def run(
             success=False,
             summary=driver_not_loaded_summary("baseStation"),
         )
+
+    # P1-14: hardware probe is meaningless against a mock driver —
+    # refuse with an actionable summary instead of running the
+    # identity/SCPI checks against canned/empty mock values.
+    refusal = mock_driver_refusal_summary("baseStation", bs)
+    if refusal:
+        return SequenceRunResult(success=False, summary=refusal)
 
     # The probe needs the driver's raw SCPI primitives. `_query` is the
     # template method that also writes to the SCPI log — exactly what we
