@@ -76,6 +76,21 @@ cockpit mock 全绿        cockpit 开起来           P4  DUT attach→吞吐(P
 
 ## 3. 现场分阶段执行（每阶段末一个 go/no-go gate）
 
+### 3.0 执行模型 —— 你到底怎么"跑"一个 Phase（先看这个）
+
+**没有一个"一键跑全程"的脚本。** 各 Phase 用三种方式驱动，分清楚省得现场找不到入口：
+
+| 类型 | 用什么 | 对应 Phase |
+|------|--------|-----------|
+| **GUI 按钮**（主力） | **Commissioning Sandbox（暗室首测）** 面板：每个 phase 一个按钮(单步)，或一个 "Run all" 按钮(顺序跑完、失败即停) | Phase 2/3/5 的 precheck → reference → measure → analysis → report |
+| **命令行 + GUI 面板** | `ifconfig`/`nc` 终端命令 + cockpit 就绪带看结果；Diagnostics 面板跑 SCPI 诊断序列 | Phase 0(网络)、Phase 1(SCPI 握手) |
+| **手动 REST 调用**（无按钮！） | **Swagger UI = `http://<后端>/api/docs`**，找到端点 → 填参数 → Execute；或 curl/Postman | **Phase 4 的 `attach-dut`**（见下，GUI 目前没有按钮） |
+
+**关于文档里的 `POST /xxx` 写法**：那是**底层 HTTP 端点**，不是脚本/命令。GUI 按钮点下去打的就是这些 POST。我标出端点是为了让你知道按钮在做什么、以及在没有按钮时(如 attach-dut)去 Swagger 手动打哪个。
+
+- **单步 vs Run-all**：现场**强烈建议单步**（一个 phase 一个按钮），因为每个 phase 末尾有 go/no-go gate，要逐个验证；`Run all` 适合本地 mock 彩排或链路已稳后回归。
+- **Swagger UI**：后端起来后浏览器开 `/api/docs`，所有端点都能交互式调用（填 `execution_id` 等参数点 Execute），是"无 GUI 按钮"那几步的标准手动入口——比 curl 直观，仍然程序化、可复现（符合"SCPI 探测 > GUI > RDP"的精神，不碰 RDP）。
+
 ### Phase 0 — 网络 / 连通性 bring-up
 **目标**：控制 PC 同时够到所有目标子网的所有仪表。
 
@@ -166,9 +181,16 @@ cockpit mock 全绿        cockpit 开起来           P4  DUT attach→吞吐(P
 ### Phase 4 — DUT attach → bearer → PDSCH（= P0-5）
 **目标**：真 DUT 接入 UXM，跑真吞吐。
 
-**步骤**：DUT 入舱 → `POST /test-executions/{id}/attach-dut`（记 IMSI + RRC）→ UE capability 查询 → 单方位扫吞吐 → 4 方位扫。
+**步骤**：DUT 入舱 → **手动** attach（见下）→ UE capability 查询 → 单方位扫吞吐 → 4 方位扫。
 
-**故障树**：attach 失败 → 先看 **P1-9 DUT-attach fail-loud gate** 报的原因（RRC 未连 / IMSI 缺失），按提示修配置（SIM/Test App/小区参数），**不是 driver**。
+> ⚠ **attach-dut 目前没有 GUI 按钮 —— 走 Swagger 手动 POST。** GUI 里只有一行说明文字，没有可点的按钮，别以为坏了。打开 **`http://<后端>/api/docs`** → 找 `POST /api/v1/test-executions/{execution_id}/attach-dut` → 填 `execution_id`(当前 commissioning 会话对应的 execution) + body(SIM/IMSI 等参数) → Execute。或 curl：
+> ```bash
+> curl -X POST http://<后端>:8000/api/v1/test-executions/<execution_id>/attach-dut \
+>   -H "Content-Type: application/json" -d '{ ...DUT/SIM 参数... }'
+> ```
+> 端点本身是好的、能用，只是 UI affordance 还没补 —— 记一条 `[discovered on-site 2026-05-27 during Phase4] attach-dut 缺 GUI 按钮`，**别当场写前端**。
+
+**故障树**：attach 失败 → 先看返回里 **P1-9 DUT-attach fail-loud gate** 报的原因（RRC 未连 / IMSI 缺失），按提示修配置（SIM/Test App/小区参数），**不是 driver**。
 
 **Gate（= P0-5 acceptance）**：
 - attach 成功，记录 IMSI + RRC 状态
@@ -198,6 +220,7 @@ cockpit mock 全绿        cockpit 开起来           P4  DUT attach→吞吐(P
 | `nc` 通但 `*IDN?` 不应答 | SCPI 会话层（仪表忙 / 单 client 占用 / Test App 没起） | 清 F64 其他客户端 / 起 UXM Test App；不碰 driver |
 | F64 SCPI 返回 `-100` | PROPSIM quirk：命令不存在 ≠ 标准错误 | 当 UNSUPPORTED 分类，换替代命令；不当 fail |
 | 探针提示"mock 驱动对探针无意义" | 该 category 还在 mock，没真连 | 切 real + reload，别在 mock 上空跑硬件探针 |
+| Phase 4 GUI 里找不到 attach 按钮 | attach-dut 无 GUI 按钮（仅说明文字） | 走 Swagger `/api/docs` 手动 POST attach-dut；记 backlog，**别当场写前端** |
 | 想列 F64 信道模型文件 | F64 FTP(21) 关、MMEM SCPI 不支持 | 走 SMB(445)，**且这跟 first-call 无关，记 backlog 别停** |
 | reference/report 出现"未验证(兜底值)" | 还在用 mock/兜底，没真测到 | gate 没过，回对应 Phase 真测；不是显示 bug |
 | 连上后过一会断开(idle-close) | NAT/FW idle drop 假设(P2-4) | 周期 poke 保活 + 记现象；**不改重连代码** |
@@ -232,16 +255,22 @@ cd api-service && .venv/bin/python -c "import asyncio; from app.services.instrum
 cd api-service && .venv/bin/python -m scripts.driver_selftest
 ```
 
-| 端点 | 用途 |
-|------|------|
-| `POST /instruments/hal/switch` | mock ⇄ real 切换 |
-| `POST /instruments/hal/reload` | 重新初始化 HAL（重跑 preflight + readiness 快照） |
-| `GET  /instruments/hal/readiness` | 就绪快照（cockpit 数据源；**是缓存快照**，改了网络要 reload 才刷新） |
-| `POST /instruments/{cat}/test-connection` | 单仪表连通 + IDN |
-| `POST /instruments/{cat}/scpi-probe` | 自开 socket SCPI 探测（不需已加载驱动） |
-| `POST /test-executions/{id}/attach-dut` | DUT attach（记 IMSI+RRC） |
+> 端点都在 `/api/v1` 前缀下；交互式调用走 **Swagger UI `http://<后端>/api/docs`**（填参数点 Execute）。下表"入口"列：🖱️=GUI 有按钮，🔧=手动(Swagger/curl)。
+
+| 端点 | 用途 | 入口 |
+|------|------|------|
+| `POST /instruments/hal/switch` | mock ⇄ real 切换 | 🖱️/🔧 |
+| `POST /instruments/hal/reload` | 重新初始化 HAL（重跑 preflight + readiness 快照） | 🖱️/🔧 |
+| `GET  /instruments/hal/readiness` | 就绪快照（cockpit 数据源；**是缓存快照**，改了网络要 reload 才刷新） | 🖱️ cockpit |
+| `POST /instruments/{cat}/test-connection` | 单仪表连通 + IDN | 🖱️/🔧 |
+| `POST /instruments/{cat}/scpi-probe` | 自开 socket SCPI 探测（不需已加载驱动） | 🖱️ Diagnostics |
+| `POST /commissioning/sessions/{id}/phase/{phase}` | 跑**单个** commissioning phase（逐 gate） | 🖱️ Sandbox 按钮 |
+| `POST /commissioning/sessions/{id}/run-all` | 顺序跑完 5 个 phase（失败即停） | 🖱️ Sandbox 按钮 |
+| `POST /commissioning/diagnostic/run-phase` | 单 phase 调试探针（ad-hoc） | 🖱️ Diagnostics |
+| `POST /test-executions/{id}/attach-dut` | DUT attach（记 IMSI+RRC） | 🔧 **仅手动**（无按钮，走 Swagger） |
 
 > ⚠ readiness 是**缓存快照**：现场改了子网别名 / 切了 mock↔real，**必须 `POST /instruments/hal/reload`** 才会重新探测刷新，否则 cockpit 显示的是上次 init 的旧值。
+> ⚠ `attach-dut` **目前无 GUI 按钮**，Phase 4 走 Swagger `/api/docs` 手动 POST（见 Phase 4）。
 
 ---
 
