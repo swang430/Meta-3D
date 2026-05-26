@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict
 from app.diagnostics.protocol import (
     SequenceMetadata,
     SequenceRunResult,
+    driver_not_loaded_summary,
     SequenceStepResult,
 )
 from app.services.diagnostic_context import DiagnosticContext
@@ -55,7 +56,7 @@ async def run(
     if bs is None:
         return SequenceRunResult(
             success=False,
-            summary="No baseStation driver loaded — check HAL init",
+            summary=driver_not_loaded_summary("baseStation"),
         )
 
     freq_mhz = float(params.get("frequency_mhz", 3500))

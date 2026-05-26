@@ -31,6 +31,7 @@ from typing import Any, Callable, Dict, List, Optional
 from app.diagnostics.protocol import (
     SequenceMetadata,
     SequenceRunResult,
+    driver_not_loaded_summary,
     SequenceStepResult,
 )
 from app.services.diagnostic_context import DiagnosticContext
@@ -135,7 +136,7 @@ async def run(
     if vna is None:
         return SequenceRunResult(
             success=False,
-            summary="No vna driver loaded — check HAL init logs",
+            summary=driver_not_loaded_summary("vna"),
         )
 
     center_mhz = float(params.get("center_freq_mhz", 2450))

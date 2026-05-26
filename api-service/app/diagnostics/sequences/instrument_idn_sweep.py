@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict
 from app.diagnostics.protocol import (
     SequenceMetadata,
     SequenceRunResult,
+    driver_not_loaded_summary,
     SequenceStepResult,
 )
 from app.services.diagnostic_context import DiagnosticContext
@@ -67,7 +68,7 @@ async def run(
             steps.append(SequenceStepResult(
                 label=label,
                 success=False,
-                detail=f"No HAL driver loaded for category '{cat_key}' — check HAL init logs",
+                detail=driver_not_loaded_summary(cat_key),
             ))
             failures += 1
             log(f"  ✗ {label}: driver not loaded")

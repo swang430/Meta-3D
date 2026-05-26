@@ -50,6 +50,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from app.diagnostics.protocol import (
     SequenceMetadata,
     SequenceRunResult,
+    driver_not_loaded_summary,
     SequenceStepResult,
 )
 from app.services.diagnostic_context import DiagnosticContext
@@ -357,7 +358,7 @@ async def run(
     if ce is None:
         return SequenceRunResult(
             success=False,
-            summary="No channelEmulator driver loaded — check HAL init logs",
+            summary=driver_not_loaded_summary("channelEmulator"),
         )
 
     query_fn = getattr(ce, "_query", None)

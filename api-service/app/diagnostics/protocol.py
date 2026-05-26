@@ -54,6 +54,25 @@ class SequenceRunResult:
     extra: Dict[str, Any] = field(default_factory=dict)
 
 
+def driver_not_loaded_summary(category: str) -> str:
+    """Actionable summary for the common "sequence needs a loaded driver but
+    none is present" failure.
+
+    A driver is only in ``hal.drivers`` after a SUCCESSFUL connect — setting a
+    category to ``real`` just means "attempt a real connection", not that it
+    succeeded. These signaling/SCPI sequences need a *connected* instrument, so
+    when the driver didn't load they can't run. The terse old message
+    ("No X driver loaded — check HAL init") left the operator stuck; point them
+    at the lower-level connectivity tools that DON'T need a loaded driver."""
+    return (
+        f"未加载 {category} 驱动：real 模式下该仪表连接失败/未连接（驱动仅在 "
+        f"connect 成功后才进 HAL）。本探针需要已连接的 {category}。"
+        f"先用「SCPI 探测 / 连接测试」(/instruments/{category}/scpi-probe · "
+        f"test-connection，自开 socket、无需已加载驱动) 或看主控台「系统就绪」的 "
+        f"{category} 行排查连通性（网络不可达 vs SCPI 无响应）；连上后重跑本序列。"
+    )
+
+
 # Sequence run signature. `log` lets the sequence emit human messages that
 # show up in the GUI live console + in diagnostic_runs.output_excerpt.
 SequenceRunFn = Callable[..., Awaitable[SequenceRunResult]]
