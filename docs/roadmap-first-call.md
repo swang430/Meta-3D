@@ -8,10 +8,11 @@
 
 ## 🎯 Current Focus
 
-**无 — P1-12 (silent-fallback audit #79/#80/#81) + P1-13 (子网可达性假阳性 #83)
-+ P1-14 (mock 驱动探针拒绝 #86) merged, 本地可启动 P0/P1/P2 重新归零。** 已知静默兜底已
-扫净, readiness/子网可达性假阳性已修, 诊断探针 mock 报错已 actionable, 暂无明显待 audit 项。
-下次现场打开时 Current Focus 切回 **P0-3** per WIP=1。
+**无（prep）— P1-12 (#79/#80/#81) + P1-13 (#83) + P1-14 (#86) + P1-15 (#88) merged,
+本地 readiness/silent-fallback audit 流收口。** 已知静默兜底已扫净, readiness/子网可达性
+假阳性已修, 诊断探针 mock 报错已 actionable, preflight 在代理/VPN 环境下不再假"可达"。
+**5/27 现场在即** —— 出发攻略见 [`docs/site-debug/2026-05-27-onsite-playbook.md`](site-debug/2026-05-27-onsite-playbook.md);
+现场打开当天 Current Focus 按依赖链切到 **P0-4 → P0-3 → P0-5** per WIP=1。
 
 P1-7 (#59) + P1-8 (#61) + P1-9 (#63) + P1-10 (#64) + P2-8 (#68) + P1-11 (#71) 全 merged。
 Commissioning →
@@ -26,11 +27,13 @@ constraint, non-ring chamber 几何透传 ChannelEgine, 同时收口 P2-7 cross-
 TRP / path-loss 未补偿) 改成显著标"未验证(兜底值)" —— 跑完整 mock first-call 时挖到
 的。再 P1-13 (#83) 修了 cockpit 子网可达性的假阳性 (preflight 跳过 VISA-only binding
 → never-probed 误标可达), 改成 preflight 走 endpoint 串 + "未探测"三态 —— manual 测试
-挖到的。WIP=1 释放。
+挖到的。再 P1-15 (#88) 给 preflight 加 canary 负对照: real 模式无设备时透明代理/VPN
+会让每个子网假"可达", canary 探到不可路由地址仍"alive"即判网络不可信, 子网回落"未探测" ——
+manual 测试挖到的, 且对 5/27 现场直接相关 (现场 Mac 挂 VPN 时面板会拒绝给可达性判定)。WIP=1 释放。
 
-> **本 PR 是 docs catch-up**: PR #86 (P1-14) merged 后 roadmap 没有 P1-14 entry、
-> Current Focus 没提 P1-14、Summary 没计 P1-14。本 PR 把 main 矫正: 加 P1-14 entry
-> (Done), Current Focus 更新, Summary counts 同步 (per memory
+> **本 PR 是 docs catch-up**: PR #88 (P1-15) merged 后 roadmap 没有 P1-15 entry、
+> Current Focus 没提 P1-15、Summary 没计 P1-15。本 PR 把 main 矫正: 加 P1-15 entry
+> (Done), Current Focus 更新, Summary counts 同步, 并链入 5/27 现场攻略 (per memory
 > `feedback_d_row_stale_this_pr_reflex.md` + `feedback_recompute_aggregate_rows_from_parts.md`)。
 
 **on-site / blocked 项 (本地启动不了, 等现场或事件触发) —— 本地可启动 P0/P1/P2
@@ -48,10 +51,11 @@ TRP / path-loss 未补偿) 改成显著标"未验证(兜底值)" —— 跑完�
 下次现场打开时, Current Focus 必须切回 **P0-3** (或最先解锁的 P0) per WIP=1。
 silent-failure / readiness-correctness audit 已成体系且 ROI 反复证明 (P1-8 cal gate /
 P1-9 DUT / P1-10 ring-only / P1-12 QZ+TRP+path-loss 兜底标记 / P1-13 子网可达性假阳性 /
-P1-14 mock 探针拒绝 / 一串 drive-by bug fix)。**已知静默兜底已扫净, readiness 假阳性已修,
-诊断探针 mock 报错已 actionable。** 当前本地无明显待启动项: 下一轮若再 audit/manual 测试挖到
-东西 = candidate for P1-15; 没挖到 = 等下次现场触发 P0-3, 现场按
-[`on-site-debug-protocol`](guides/on-site-debug-protocol.md) 走。
+P1-14 mock 探针拒绝 / P1-15 preflight canary / 一串 drive-by bug fix)。**已知静默兜底已扫净,
+readiness 假阳性已修, 诊断探针 mock 报错已 actionable, preflight 抗代理/VPN 干扰。** 本地审计流
+收口: 下一轮若再 audit/manual 测试挖到东西 = candidate for P1-16; 5/27 现场触发 P0-4→P0-3→P0-5,
+现场按 [`on-site-debug-protocol`](guides/on-site-debug-protocol.md) +
+[`5/27 攻略`](site-debug/2026-05-27-onsite-playbook.md) 走。
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
@@ -958,6 +962,36 @@ P1-14"的占位。
 
 ---
 
+### P1-15 — preflight canary 负对照: 识破代理/VPN 伪造的子网"可达" ✅ Done (PR #88)
+
+**What**: 操作员 manual 测试 cockpit: real 模式、**实际无任何设备**, 子网可达性却把三个
+子网全标"✅可达", 同时所有驱动报"SCPI 无响应" —— 自相矛盾。根因不是 P1-13 那个洞(已修),
+而是更深一层: `tcp_preflight` 的 "connect 成功或被 RST 拒绝 = 主机在线" 启发式, 在链路上有
+**透明代理 / 公司 VPN / 强制门户 / blackhole 网关** 时被骗 —— 它们替不可路由的目标 IP 应答
+SYN, 于是每个 IP 都"alive"、每个子网都"可达"。实测连 RFC5737 TEST-NET 死地址都返回 alive。
+
+**Why**: 跟 P1-13 同一类假"可达", 但 P1-13 修的是"VISA-only binding 被跳过 preflight →
+从没探过 → 默认可达"; 没碰"preflight 的 connect-or-refused 启发式在代理环境下本身不可信"。
+假"可达"会误导现场操作员去调 SCPI, 实际网络层在说谎。**对 5/27 现场直接相关**: 现场 Mac
+若挂 VPN/代理, 子网面板会(正确地)拒绝给可达性判定。
+
+**修复 (canary 负对照)**:
+- `detect_preflight_trustworthy()`: 并发探一组保证不可路由的 canary 地址 (RFC5737
+  TEST-NET-1/2)。任一 canary "alive" → 网络在说谎 → 返回 False(不可信); 全 dead → True。
+- `_initialize_from_db`: 首个 real preflight 前**惰性**跑一次 canary(纯 mock init 不付成本),
+  缓存整轮。不可信时整体跳过 preflight, `host_reachable` 留 None → 子网回落"未探测", 而非假
+  "可达"; connect 照常跑(仍能区分 ok/scpi)。
+- `build_subnet_reachability(network_trustworthy=...)`: 不可信时"未探测"提示改成点名真正
+  原因(透明代理/VPN)。复用现有 `probed=false` 三态渲染, **无契约/GUI 改动**。
+
+**Why P1-15**: 跟 P1-12/13/14 同源 —— 跑完整 mock first-call / manual 测试挖到的 readiness
+假阳性。承接 Current Focus 段"下一轮 manual 挖到东西 = candidate for P1-15"的占位。
+
+**Status**: ✅ Done — PR #88 (merged 2026-05-26)
+**Estimate**: ~0.5 day (canary + 惰性接入 + 三态 hint + 6 测试)
+
+---
+
 ## 🟡 P2 — Abstraction debt
 
 ### P2-1 — UXM two-layer architecture: Test App + Topology Profile ✅ Done
@@ -1692,7 +1726,7 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 ## 📊 Summary
 
 > Counts as of 2026-05-26 (post … P1-11 #71 + P1-12 #79/#80/#81 + P1-13 #83 +
-> P1-14 #86 + 本 PR P1-14 catch-up)。
+> P1-14 #86 + P1-15 #88 + 本 PR P1-15 catch-up)。
 > Full-sweep flaky count remains **0**。本地可启动 P0/P1/P2 重新归零, 8 个 open
 > items 全部 not-immediately-startable:
 > - 7 个 🚧 blocked-on-hardware (3 × P0 + P1-2 + P1-4 + P1-5 on-site half + P2-4)
@@ -1702,17 +1736,18 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 > P1-12 (silent-fallback audit: QZ/TRP/path-loss 标未验证) #79/#80/#81 → Done
 > (第四项 CE real-mode 早由 P0-7 #56 覆盖)。P1-13 (子网可达性假阳性: preflight 走
 > VISA endpoint + 未探测三态) #83 → Done。P1-14 (mock 驱动探针拒绝: hardware probe
-> 对 Mock* 驱动给 actionable 拒绝而非 IDN 校验失败) #86 → Done。
+> 对 Mock* 驱动给 actionable 拒绝而非 IDN 校验失败) #86 → Done。P1-15 (preflight canary
+> 负对照: 代理/VPN 伪造的子网"可达"识破, 子网回落未探测) #88 → Done。
 >
-> 已知静默兜底扫净 + readiness 假阳性已修 + 诊断探针 mock 报错已 actionable。当前本地无
-> 明显待启动项; 下一轮 audit/manual 挖到东西 promote 为 P1-15, 否则等下次现场触发 P0-3
-> (按 on-site-debug-protocol)。详见 Current Focus 段。
+> 已知静默兜底扫净 + readiness 假阳性已修 + 诊断探针 mock 报错已 actionable + preflight 抗
+> 代理/VPN 干扰。本地审计流收口; 下一轮 audit/manual 挖到东西 promote 为 P1-16, 5/27 现场
+> 触发 P0-4→P0-3→P0-5 (按 on-site-debug-protocol + 5/27 攻略)。详见 Current Focus 段。
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 44 | — | — |
+| ✅ Done | 45 | — | — |
 | 🔴 P0 (first-call critical) | 3 open / 7 total | 4 days | 4 days |
-| 🟠 P1 (confidence) | 4 open / 14 total | 3 days | 2 days |
+| 🟠 P1 (confidence) | 4 open / 15 total | 3 days | 2 days |
 | 🟡 P2 (abstraction debt) | 1 open / 7 total | 0.5 day | 0.5 day |
 | 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
 | **Total open** | **8** | **~7.5 days** | **6.5 days** |
