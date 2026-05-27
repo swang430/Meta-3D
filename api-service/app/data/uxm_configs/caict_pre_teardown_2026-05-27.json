@@ -1,0 +1,94 @@
+{
+  "_meta": {
+    "captured_at": "2026-05-27T13:32:37.492451+08:00",
+    "context": "LIVE working NSA call snapshot, taken immediately before SCPI teardown/rebuild drill (CAICT 2026-05-27 PM). DUT attached, DL 100% ACK single-layer, F64 manual passthrough.",
+    "mode": "NSA (EN-DC)",
+    "primary_cell": "CELL1",
+    "purpose": "restore map — if SCPI rebuild fails to re-attach, these are the known-good values to re-assert / hand to operator GUI."
+  },
+  "readback": {
+    "idn": {
+      "scpi": "*IDN?",
+      "response": "Keysight Technologies,C8700200A Test Application Framework,MY60102098,28.21.0.3252",
+      "error": null
+    },
+    "app": {
+      "scpi": "SYSTem:APPLication:NAME?",
+      "response": "LTE_NR_IRAT",
+      "error": null
+    },
+    "bse_status": {
+      "scpi": "BSE:STATus?",
+      "response": "CONN",
+      "error": null
+    },
+    "selected_cell": {
+      "scpi": "BSE:SELected:CELL?",
+      "response": "NR5G,CELL1",
+      "error": null
+    },
+    "nr5g_type": {
+      "scpi": "BSE:CONFig:NR5G:DEFault:TYPE?",
+      "response": "NSA",
+      "error": null
+    },
+    "cell_active": {
+      "scpi": "BSE:CONFig:NR5G:CELL1:ACTive:STATe?",
+      "response": "1",
+      "error": null
+    },
+    "band": {
+      "scpi": "BSE:CONFig:NR5G:CELL1:BAND?",
+      "response": "N78",
+      "error": null
+    },
+    "dl_arfcn": {
+      "scpi": "BSE:CONFig:NR5G:CELL1:DL:ARFCN?",
+      "response": "636666",
+      "error": null
+    },
+    "dl_bw": {
+      "scpi": "BSE:CONFig:NR5G:CELL1:DL:BW?",
+      "response": "BW40",
+      "error": null
+    },
+    "ul_bw": {
+      "scpi": "BSE:CONFig:NR5G:CELL1:UL:BW?",
+      "response": "BW40",
+      "error": null
+    },
+    "dl_pointa": {
+      "scpi": "BSE:CONFig:NR5G:CELL1:DL:POINta?",
+      "response": "632946",
+      "error": null
+    },
+    "dl_power": {
+      "scpi": "BSE:CONFig:NR5G:CELL1:DL:POWer?",
+      "response": "-4.600000000E+01",
+      "error": null
+    },
+    "ssb_power_adv": {
+      "scpi": "BSE:CONFig:NR5G:CELL1:SSB:POWer:ADVertised?",
+      "response": "0",
+      "error": null
+    }
+  },
+  "reassert_commands_settable_only": [
+    "BSE:CONFig:NR5G:CELL1:BAND N78",
+    "BSE:CONFig:NR5G:CELL1:DL:ARFCN 636666",
+    "BSE:CONFig:NR5G:CELL1:DL:BW BW40",
+    "BSE:CONFig:NR5G:CELL1:UL:BW BW40",
+    "BSE:CONFig:NR5G:CELL1:DL:POINta 632946"
+  ],
+  "GUI_only_NOT_restorable_via_scpi": [
+    "SCS",
+    "DUPLex",
+    "MIMO layers/codebook",
+    "TX/RX antenna→port routing",
+    "PDSCH MCS/RB",
+    "UL resource allocation",
+    "SIB1 state",
+    "search space",
+    "LTE anchor cell full config"
+  ]
+}
