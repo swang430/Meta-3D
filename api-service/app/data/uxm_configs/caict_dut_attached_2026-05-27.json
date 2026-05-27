@@ -1,0 +1,53 @@
+{
+  "_meta": {
+    "captured_at": "2026-05-27 CAICT 现场",
+    "context": "DUT-attached 工作态。F64 手动直通 (DIAG:SIMU:MODEL:STATIC 3, 无信道仿真); UXM CELL1 active; DL PDSCH 100% ACK (Tx1 单层)。这是现场实测可让 DUT attach+收数据的 UXM 配置。",
+    "instrument": "Keysight UXM E7515B",
+    "test_app": "C8700200A Test Application Framework",
+    "command_profile": "LTE_NR_IRAT",
+    "primary_cell": "CELL1",
+    "scpi_prefix": "BSE: (cell 级命令)"
+  },
+
+  "captured_config_via_scpi": {
+    "comment": "以下为 SCPI 实时回读到的可靠值 (原始字符串)。",
+    "cell_active": "1",
+    "band": "N78",
+    "dl_arfcn": "636666",
+    "dl_bw": "BW40",
+    "ul_bw": "BW40",
+    "dl_pointa_arfcn": "632946",
+    "approx_decode": "n78 (3300-3800MHz), DL ARFCN 636666 ≈ 3.55GHz 附近, BW 40MHz, Point A ARFCN 632946。精确中心以 ARFCN 为准。"
+  },
+
+  "NOT_capturable_via_scpi": {
+    "comment": "以下参数在 C8700200A/LTE_NR_IRAT 上查询形式不支持 (SCPI ? 超时), 无法自动回读。要完整保存必须走 app GUI 存档 (见 recall_instructions)。",
+    "params": [
+      "SCS (子载波间隔)", "DUPLex", "PHY:DL:POWer (DL 功率)", "SSB:POWer",
+      "PHY:DL:MIMO:LAYers (MIMO 层数)", "PHY:DL:MIMO:CODEbook",
+      "RFSettings:DL/UL:PORT (RF 端口)", "ROUTe HARDware TX/RX ANTenna PORT (天线→端口路由)",
+      "BWP0:PDSCH:MCS / RB:ALLocation"
+    ]
+  },
+
+  "native_save_attempt": {
+    "command_tried": "SYSTem:CONFiguration:SAVE \"<path>\"",
+    "result": "无效 — 命令被接受 (无报错) 但默认 MMEM 目录 catalog 后未见生成文件。该命令/路径不适用于 C8700200A。",
+    "mmem_default_dir_subdirs": ["[Keysight]", "[SEQAN]", "[Downloaded Installations]", "[My Music/Pictures/Videos]"]
+  },
+
+  "latent_warning": "SYST:ERR? 队列里有 -221 \"Settings conflict; PUCCH Resource ID 2 is enabled in Resource Set 0\" —— 没阻止 attach+数据, 但潜伏配置冲突, 待清理。",
+
+  "recall_instructions": {
+    "preferred": "用 C8700200A Test App 自己的 GUI 「Save Configuration / Save State」把当前完整 setup 存成文件 (RDP/控制台操作), 记下文件名; 下次开机后从 app GUI Load, 或试 SCPI `SYSTem:CONFiguration:LOAD \"<file>\"`。GUI 存档才能捕获上面 NOT_capturable 的全部参数。",
+    "fallback_rebuild_from_scpi": [
+      "BSE:CONFig:NR5G:CELL1:BAND N78",
+      "BSE:CONFig:NR5G:CELL1:DL:ARFCN 636666",
+      "BSE:CONFig:NR5G:CELL1:DL:BW BW40",
+      "BSE:CONFig:NR5G:CELL1:UL:BW BW40",
+      "BSE:CONFig:NR5G:CELL1:DL:POINta 632946",
+      "(SCS/功率/MIMO/天线路由/PDSCH 缺 — 需从 GUI 存档或厂商命令补全)",
+      "BSE:CONFig:NR5G:CELL1:ACTive:STATe ON"
+    ]
+  }
+}

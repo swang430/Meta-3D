@@ -10,7 +10,9 @@ against the session (DB-agnostic) and is idempotent per natural key:
   connection row per category)
 
 Operator-modified rows (e.g. an IP address set after seed) are
-preserved across re-runs.
+preserved across re-runs. (v2 例外: 历史 F64 channelEmulator 连接的错误端口
+5025→3334 会就地迁移 —— 见 ``_migrate_f64_channel_emulator_port``; 只改端口/
+transport, 保留操作员配的 IP。)
 """
 from __future__ import annotations
 
@@ -81,9 +83,11 @@ _CATEGORIES: list[dict] = [
                               "mimo_config": "up to 8x8 full", "dynamic_range_db": 45}},
         ],
         "connection": {
-            "endpoint": "TCPIP0::192.168.100.21::inst0::INSTR",
-            "controller_ip": "192.168.100.21", "port": 5025,
-            "protocol": "VISA/SCPI",
+            # PROPSIM F64 走 raw SOCKET, ATE/SCPI 端口硬件固定 3334 (非 5025/INSTR)。
+            # [现场 2026-05-27 实测; 详见 propsim_f64.py 顶注 + roadmap P0-8]
+            "endpoint": "TCPIP0::192.168.100.21::3334::SOCKET",
+            "controller_ip": "192.168.100.21", "port": 3334,
+            "protocol": "VISA/SCPI (raw SOCKET)",
         },
     },
     {
@@ -317,9 +321,64 @@ _CATEGORIES: list[dict] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# v2 迁移: F64 channelEmulator 历史端口 5025 → 3334
+# ---------------------------------------------------------------------------
+# PROPSIM F64 的 ATE/SCPI 端口硬件固定 3334 (User Reference §1.1.2.1)。早期 seed
+# 误写 5025/INSTR → 仪器目录 / readiness 显示的端口与驱动实连的 3334 脱节
+# (Codex on PR #92)。已 bootstrap 过的现场库不会因改默认值而自动修复 (旧连接走
+# skipped 分支), 故在 seeder v2 里就地迁移。
+# 约束 (避免误伤): 仅当 (a) 类别是 channelEmulator (b) 选中型号是 PROPSIM F64
+# (FS16 等其它 CE 合法使用 5025) (c) 端口仍是错误的 5025 时才迁移; 保留操作员已
+# 配的 controller_ip, 只改端口 + endpoint 的端口/transport 段。幂等。
+_CE_KEY = "channelEmulator"
+_F64_MODEL = "PROPSIM F64"
+_F64_FIXED_PORT = 3334
+_F64_LEGACY_PORT = 5025
+
+
+def _migrate_f64_channel_emulator_port(
+    cat_def: dict,
+    category: InstrumentCategory,
+    existing_conn: InstrumentConnection,
+    db: Session,
+) -> bool:
+    """就地把历史 F64 channelEmulator 连接的端口 5025→3334。返回是否实际改动。"""
+    if cat_def["key"] != _CE_KEY:
+        return False
+    if existing_conn.port != _F64_LEGACY_PORT:
+        return False  # 已是 3334 或操作员另设 → 幂等不动
+    selected = (
+        db.query(InstrumentModel)
+        .filter(InstrumentModel.id == category.selected_model_id)
+        .first()
+        if category.selected_model_id is not None
+        else None
+    )
+    if selected is None or selected.model != _F64_MODEL:
+        return False  # 只有 F64 端口硬件固定; 其它 CE 不迁移
+    old_port, old_endpoint = existing_conn.port, existing_conn.endpoint
+    existing_conn.port = _F64_FIXED_PORT
+    if existing_conn.controller_ip:
+        existing_conn.endpoint = (
+            f"TCPIP0::{existing_conn.controller_ip}::{_F64_FIXED_PORT}::SOCKET"
+        )
+    elif existing_conn.endpoint:
+        existing_conn.endpoint = existing_conn.endpoint.replace(
+            str(_F64_LEGACY_PORT), str(_F64_FIXED_PORT)
+        )
+    existing_conn.protocol = "VISA/SCPI (raw SOCKET)"
+    logger.info(
+        "[instruments] F64 channelEmulator 端口迁移 %s→%d (endpoint %r→%r)",
+        old_port, _F64_FIXED_PORT, old_endpoint, existing_conn.endpoint,
+    )
+    return True
+
+
 def _seed(db: Session) -> SeedResult:
     inserted = 0
     skipped = 0
+    updated = 0
     for cat_def in _CATEGORIES:
         category = (
             db.query(InstrumentCategory)
@@ -395,18 +454,22 @@ def _seed(db: Session) -> SeedResult:
                 notes="初始化默认配置，连接真实硬件后请更新IP",
             ))
             inserted += 1
+        elif _migrate_f64_channel_emulator_port(cat_def, category, existing_conn, db):
+            updated += 1
         else:
             skipped += 1
 
     db.flush()
     if inserted:
         logger.info("[instruments] seeded %d category/model/connection rows", inserted)
-    return SeedResult(inserted=inserted, skipped=skipped)
+    if updated:
+        logger.info("[instruments] migrated %d existing connection row(s) (seeder v2)", updated)
+    return SeedResult(inserted=inserted, skipped=skipped, updated=updated)
 
 
 instruments_seeder = Seeder(
     name="instruments",
-    version=1,
+    version=2,  # v2: F64 channelEmulator 历史端口迁移 5025→3334 (见 _migrate_f64_channel_emulator_port)
     description=f"{len(_CATEGORIES)} instrument categories + their model catalog + default connections",
     run=_seed,
 )

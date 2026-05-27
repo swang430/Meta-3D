@@ -2,6 +2,8 @@
 
 本文件为 Claude Code (claude.ai/code) 提供在此代码库中工作的指导。
 
+> **沟通语言：一律使用简体中文。** 与用户的所有对话、PR / commit 描述、文档、说明性注释均用简体中文；仅代码标识符、SCPI / 命令 / 路径等字面量、以及 `fix:` / `feat:` / `chore:` 等 commit prefix 保留英文。不要因 git log 历史或既有英文注释就 convention drift 回英文。(2026-05-27 用户明确要求)
+
 ## ⭐ 工作准则 — 适用于所有 agent / session（最高优先级）
 
 > 本节是项目契约。任何非琐碎改动开始前必须遵守。

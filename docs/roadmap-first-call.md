@@ -8,11 +8,28 @@
 
 ## 🎯 Current Focus
 
-**无（prep）— P1-12 (#79/#80/#81) + P1-13 (#83) + P1-14 (#86) + P1-15 (#88) merged,
-本地 readiness/silent-fallback audit 流收口。** 已知静默兜底已扫净, readiness/子网可达性
-假阳性已修, 诊断探针 mock 报错已 actionable, preflight 在代理/VPN 环境下不再假"可达"。
-**5/27 现场在即** —— 出发攻略见 [`docs/site-debug/2026-05-27-onsite-playbook.md`](site-debug/2026-05-27-onsite-playbook.md);
-现场打开当天 Current Focus 按依赖链切到 **P0-4 → P0-3 → P0-5** per WIP=1。
+**P0-8 — F64 driver 现场修复落地 (port 3334 + 输入信号参考/crest + 加载 gate + 默认 .smu)。本地可启动。**
+5/27 现场已结束 (全程见 [`docs/site-debug/2026-05-27-morning-log.md`](site-debug/2026-05-27-morning-log.md))。现场把两天的
+F64 first-call blocker 根因挖到底、并在真机上验证了修法, 但改动还是裸改 (`api-service/app/hal/propsim_f64.py:285`
+端口强制 3334, **未提交**), 且"输入信号参考"是全新缺失的 driver 能力。按治理本意 —— driver 代码必须出发前 offline
+落地, 现场只调硬件 —— **把 P0-8 (本地可启动) 升为 Current Focus**: 将现场验证过的修法正式化成 PR + 单测,
+下次现场只做硬件实测 (输入参考真值), 不再现场写 driver。之前的本地 audit 流 (P1-12~15) 已收口,
+P1-12 (#79/#80/#81) / P1-13 (#83) / P1-14 (#86) / P1-15 (#88) 全 merged。
+
+**5/27 现场产出 (诊断 + 真机验证, 非交付件 —— first-call PDF 未产出)**:
+- ✅ F64 两天 blocker 根因坐实: ATE/SCPI 端口硬件固定 **3334**, 早期误用 5025 → 响应 desync + 文件加载 -300。真机 3334 上 load / run / 改参全 0 error。
+- ✅ **今天最大新发现**: F64 每个输入需设"信号参考"(平均电平 dBm + crest factor dB), 否则前端增益错 → 输入口不变绿 → DL 失真 → DUT 能 attach 却解不出 PDSCH (0% ACK / all-NACK)。原 driver `set_channel_model()` 完全没有这一步。
+- ✅ 早上 -200 误诊纠正: 真因是"文件根本没加载"(错端口 5025 + 无 `SYST:ERR?` gate, `*OPC?=1≠成功`), 非通道数不匹配。
+- ◐ 暗室首测重现: DUT 经 SCPI 控制的 F64 + 3600M(N78) 稳定 **CONN + DL live**, 但 **0% ACK**(DL 失真未闭环 —— 根因=输入参考没设对, 后端 desync 挡住可靠设置)。
+- ✗ EMCenter switch 不吃 raw SCPI (EMQuest/GPIB 血统) → 新 **P2-9** (offline)。
+- ? 转台 (Aerotech) 测试了但无结论 → 记 **U-5** 供下次。
+- backend scpi-command 端点 slow-op desync (`timeout_ms` 没透传给 `driver._query`) → 新 **P1-16**。
+
+> **核心教训重演 (诚实记)**: 现场又一次大量消耗在 driver 层, first-call PDF 没出来。区别是这次用户明确授权修 driver
+> (覆盖铁律「现场不写 driver 代码」) → 属用户主动改优先级, 不是失控 drift。补救正是 P0-8: 把 driver 修法 offline
+> 落地, 让下次现场回到"只调硬件"。
+
+下次现场 (校准天线 / SGH / 真 DUT 到位) Current Focus 切回依赖链 **P0-4 → P0-3 → P0-5** per WIP=1。
 
 P1-7 (#59) + P1-8 (#61) + P1-9 (#63) + P1-10 (#64) + P2-8 (#68) + P1-11 (#71) 全 merged。
 Commissioning →
@@ -48,14 +65,13 @@ manual 测试挖到的, 且对 5/27 现场直接相关 (现场 Mac 挂 VPN 时�
 | P1-6 | ⏸️ incident-conditional hold | trigger = 真 idle-close 出现在 FS16/UXM/ENA (当前没证据) |
 | P2-4 | 🚧 on-site | NAT/FW idle-drop hypothesis 现场 verify |
 
-下次现场打开时, Current Focus 必须切回 **P0-3** (或最先解锁的 P0) per WIP=1。
+**5/27 现场已结束** (产出见上方 Current Focus + 下方 P0-8 / P1-16 / P2-9 + [morning-log](site-debug/2026-05-27-morning-log.md))。
+现场没拿到 first-call PDF (又消耗在 F64 driver 层), 但坐实并真机验证了 F64 修法 → 收敛为本地可启动的 **P0-8**。
 silent-failure / readiness-correctness audit 已成体系且 ROI 反复证明 (P1-8 cal gate /
 P1-9 DUT / P1-10 ring-only / P1-12 QZ+TRP+path-loss 兜底标记 / P1-13 子网可达性假阳性 /
-P1-14 mock 探针拒绝 / P1-15 preflight canary / 一串 drive-by bug fix)。**已知静默兜底已扫净,
-readiness 假阳性已修, 诊断探针 mock 报错已 actionable, preflight 抗代理/VPN 干扰。** 本地审计流
-收口: 下一轮若再 audit/manual 测试挖到东西 = candidate for P1-16; 5/27 现场触发 P0-4→P0-3→P0-5,
-现场按 [`on-site-debug-protocol`](guides/on-site-debug-protocol.md) +
-[`5/27 攻略`](site-debug/2026-05-27-onsite-playbook.md) 走。
+P1-14 mock 探针拒绝 / P1-15 preflight canary / 一串 drive-by bug fix)。本地审计流收口;
+下一轮若再 audit/manual 挖到东西 = candidate for **P1-17**。**当前 Current Focus = P0-8 (本地, F64 driver 落地)**;
+下次现场 (校准天线 / 真 DUT 到位) 按 [`on-site-debug-protocol`](guides/on-site-debug-protocol.md) 切回 P0-4→P0-3→P0-5。
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
@@ -314,6 +330,13 @@ doesn't report them via SCPI). Throughput is real *if a DUT is attached*
   is changing the link)
 
 **Status**: `[ ]` not started — UXM 5G NR profile already supported (PR #10)
+
+> **5/27 现场部分重现 (非验收)**: DUT 经 SCPI 控制的 UXM + F64(3600M/N78) 稳定 **CONN + DL live**,
+> 但吞吐 **0% ACK / all-NACK** (DUT 收到但解不出 PDSCH) —— 根因是 F64 输入信号参考/crest 没设对
+> 致 DL 失真 (见 P0-8), **不是** attach 链路问题。`attach-dut` 端点的 `query_ue_capability` 在
+> LTE_NR_IRAT profile 上不支持 (走 Swagger 手动)。**转台 (Aerotech) 4 方位扫今天未做** (转台本身
+> 测试无结论, 见 U-5)。真验收 (非零吞吐 + 4 方位不同值) 仍待 P0-8 输入参考闭环 + 真 DUT + 转台。
+
 **Estimate**: on-site 1-2 days
 
 ---
@@ -400,6 +423,43 @@ the same PR moved the engine-selector + asc_source_path TextInput from
 post-session unreachable code into pre-session UI so external_asc
 sessions can actually be created.
 **Estimate**: 2-3 days planned, actual ~1 day
+
+---
+
+### P0-8 — F64 driver 现场修复落地 (port 3334 + 输入信号参考/crest + 加载 gate + 默认 .smu) 🔄 Current Focus
+
+> **来源**: 2026-05-27 现场。F64 是 first-call 两天 blocker 的核心。现场把根因挖到底、
+> 在真机上验证了修法, 但都是裸改 (未提交) + "输入信号参考"是全新缺失能力。本项把验证过的修法
+> offline 正式化, 让下次现场只做硬件实测、不再写 driver —— **这正是治理铁律「现场不写 driver
+> 代码」的补救路径**。完整诊断见 [`docs/site-debug/2026-05-27-morning-log.md`](site-debug/2026-05-27-morning-log.md) §10。
+
+**根因 (现场坐实)**:
+1. **端口**: PROPSIM F64 的 ATE/SCPI 端口硬件固定 **3334** (User Reference §1.1.2.1)。早期默认/配置误用 **5025** (Keysight/R&S 风格 SCPI-RAW 口) → 响应 desync + 文件加载报 -300。[`api-service/app/hal/propsim_f64.py:285`](../api-service/app/hal/propsim_f64.py) 现场已强制 3334 (**未提交**); 文件头注释 28-29 行还写反 ("5025 standard / 3334 backup"); DB channelEmulator 绑定默认端口也还是 5025。
+2. **输入信号参考缺失 (今天最大新发现)**: F64 每个输入需设平均电平 (dBm) + crest factor (dB), 否则前端增益错 → 输入口不变绿 → DL 失真 → DUT 能 attach 却解不出 PDSCH (0% ACK)。原 driver `set_channel_model()` 完全没有这一步。命令族 (stopped 态): `INP:LEV:AMP:CH <in>,<dBm>` / `INP:CRE:SET <in>,<dB>` / `INP:LEV:AUTOSET <in>,<t>` (自动测+设, in=0=全部) / `INP:LEV:MEAS? <in>,<t>` (返回 level,crest; 无信号=-300) / `INP:LEV:AMP:LIM? <in>` (限值)。
+3. **加载无 gate**: 早上 -200 误诊根因 —— 文件加载后只看 `*OPC?=1` 就当成功, 实际文件没加载 ("No simulation opened")。必须加载后 `SYST:ERR?` gate。
+4. **channel_count 应从 `SYST:INFO?` 读** (现场确认: 射频通道恒 32, 2x2/4x4 是逻辑通道 2x32/4x32, 不需重新编译)。
+
+**Scope (single PR, 本地可启动)**:
+
+| Step | Subject | Files |
+|------|---------|-------|
+| 0 | 端口正式化: 强制 3334 + 忽略 config port (硬件固定) + 修文件头 28-29 行注释 | `api-service/app/hal/propsim_f64.py` |
+| 1 | DB channelEmulator 绑定默认端口 5025→3334 (seeder / catalog) | bootstrap seeder + catalog |
+| 2 | `set_channel_model()` 加输入信号参考+crest step (stopped 态逐输入设 level+crest 或 `INP:LEV:AUTOSET`); 失败 fail-loud | `api-service/app/hal/propsim_f64.py` |
+| 3 | 加载后 `SYST:ERR?` gate (不靠 `*OPC?=1` 误判); 运行用 `DIAG:SIMU:GO` | `api-service/app/hal/propsim_f64.py` |
+| 4 | 默认信道配置文件 = 今天的 3600M .smu (见下), 允许操作员改路径/名称 | channelEmulator 默认 scenario 配置 |
+| 5 | 单元测试: 端口固定 / 输入参考命令序列 / SYST:ERR? gate / SYST:INFO? channel_count 解析 (mock SCPI 交换, 不需硬件) | `tests/` |
+
+**默认信道配置文件 (用户 2026-05-27 指定)**:
+`D:\Scenario Packs\F9815064A TS 5G FR1 MIMO OTA\1.1\3GPP_FR1_OTA_CDLC_UMa_3600M.wiz\3GPP_FR1_OTA_CDLC_UMa_3600M.smu`
+—— 3GPP FR1 OTA CDL-C UMa, **3600 MHz (N78)**, 4 输入 MIMO OTA 模型。今天真机加载/运行通过, 设为 F64 默认供今后使用 (路径 / 名称可改)。
+
+**Acceptance**:
+- **本地半 (offline, 本 PR)**: 端口固定 3334 + 文件头注释修正 + DB 端口改 + `set_channel_model()` 含输入参考/crest step + 加载后 `SYST:ERR?` gate + channel_count 从 `SYST:INFO?` + 默认 .smu 配好; 单元测试全过 (mock SCPI)。
+- **现场半 (下次现场实测)**: real F64 上 load→run→改参全 0 error; 设对输入参考后 **输入口变绿**; DL 不失真 (DUT attach 后非 0% ACK)。正确的 level / crest 真值待实测 (见 U-6)。
+
+**Status**: 🔄 in-progress (Current Focus) —— 端口修法现场已在真机验证 (`propsim_f64.py:285` 裸改未提交), 待正式 PR + 单测 + 输入参考 step。
+**Estimate**: 本地 ~1.5 day + 现场实测 ~0.5 day
 
 ---
 
@@ -996,6 +1056,28 @@ SYN, 于是每个 IP 都"alive"、每个子网都"可达"。实测连 RFC5737 TE
 
 ---
 
+### P1-16 — backend scpi-command 端点 slow-op desync (timeout_ms 透传)
+
+**What**: `POST /api/v1/instruments/{cat}/scpi-command` 端点不把 `timeout_ms` 传给
+`driver._query` → 慢操作 (F64 加载后 `*OPC?`、`INP:LEV:MEAS?` / `INP:LEV:AUTOSET` 等几秒级命令)
+用默认短超时 → 超时返回 → 迟到的真响应串进**下一次**读取 (desync 级联), 后续每条 command 都读到
+上一条的回包。直连 socket (LF 逐字节读帧) 无此问题。
+
+**Why P1**: 不硬阻断 first-call (现场有 `/tmp/f64ctl.py` 直连 workaround), 但让 GUI/后端的 SCPI
+通道对任何慢操作都不可靠 —— 5/27 现场正是它挡住了"经后端可靠设置 F64 输入参考"(P0-8 现场半没闭环的
+直接原因之一)。修了之后 P0-8 的输入参考 step 才能经后端稳定下发。
+
+**Scope**: scpi-command 端点把 `timeout_ms` (或 per-command 超时) 透传到 `driver._query`; 慢操作
+给足超时; 必要时读前 drain 残留帧。**来源**: 2026-05-27 现场, 见 [morning-log](site-debug/2026-05-27-morning-log.md) §10.5。
+
+**Acceptance**: 经后端连发 F64 `*OPC?` (加载后) + `INP:LEV:AUTOSET` + `SYST:ERR?`, 每条都读到
+**自己**的回包, 无错位; 慢操作不被默认短超时截断。
+
+**Status**: `[ ]` not started — 本地可启动
+**Estimate**: ~0.5 day
+
+---
+
 ## 🟡 P2 — Abstraction debt
 
 ### P2-1 — UXM two-layer architecture: Test App + Topology Profile ✅ Done
@@ -1389,6 +1471,22 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 
 ---
 
+### P2-9 — EMCenter switch bring-up (协议/地址/EMQuest 调研)
+
+**What**: ETS-Lindgren EMCenter (AMS8947 RF switch matrix, 真实地址 `192.168.0.50`) 接入 HAL。
+现状: GPIB 血统仪表, 经 EMQuest 软件控制, **不监听 raw SCPI socket** —— 5/27 现场直连探测无 SCPI
+响应。需调研: 控制协议 (是否 EMQuest REST / 专有 TCP / 必须经 EMQuest 中转)、端口、认证。
+
+**Why P2**: 核心单路 first-call (CE/BS/SA/positioner) 不需要它; 但 **path-loss 校准 (P0-3) 的 32
+链路要经拓扑开关切换**, 完整校准链最终需要它。当前是 abstraction debt + 新仪表集成, 非 first-call
+即时阻塞。
+
+**Status**: `[ ]` not started — 🚧 blocked: 需 offline 协议调研 (EMQuest 文档) + 现场 EMQuest 访问。
+**来源**: 2026-05-27 现场, 见 [morning-log](site-debug/2026-05-27-morning-log.md) §10.1。文档: `Instrument_API_Doc/` 下 ETS-L EMCenter / EMSwitch + CAICT Chamber Switch (TMC AMS8947)。
+**Estimate**: offline 调研 0.5 day + 现场 0.5 day
+
+---
+
 ## 🟢 P3 — Polish / tooling
 
 ### P3-1 — HAL Reload confirm dialog ✅ Done (this PR)
@@ -1700,6 +1798,8 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 | U-2 | Are `OUTPut:INTERFerence:LIST?` / `SYSTem:CALibration:USER:LIST?` the right soft-probes on F64? | On-site execution, see [P1-2](#p1-2--f64-license-probe-scpi-on-site-verification) |
 | U-3 | Which UXM Test Apps does CAICT actually use (beyond 5G NR / LTE_NR_IRAT)? | Inventory at next on-site |
 | U-4 | What are the common DUT attach failure modes (IMSI / SIM / RRC state)? | First DUT attach session, see [P0-5](#p0-5--dut-attach--bearer--pdsch-on-uxm-5g-nr) |
+| U-5 | 转台 (Aerotech A3200) 在本系统驱动下单轴/多轴定位与回零行为如何? | 2026-05-27 现场测试了但**无结论**; 下次现场: 单轴回零 → 定位 → 4 方位扫验证, 关联 P0-5 |
+| U-6 | F64 各输入"信号参考"的正确 level (dBm) + crest factor (dB) 真值 (针对 3600M/N78 模型 + UXM DL 功率)? | 下次现场用 `INP:LEV:AUTOSET` 自动测 + 看输入口变绿 + DL 不失真, 关联 P0-8 |
 
 ---
 
@@ -1712,6 +1812,10 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 > interpreter settings + `.vscode/` policy; P3-8: VRT pydantic
 > regression; P3-9: catalog status enum drift). Resolved entries kept
 > below for audit trail.
+>
+> **2026-05-27 — 用户直接 triage 4 个现场发现** (现场授权, 非 weekly review): F64 driver
+> 修法 → **P0-8** (升 Current Focus, 本地); backend scpi-command desync → **P1-16** (本地);
+> EMCenter switch → **P2-9** (调研+现场); 转台无结论 → **U-5** (Known-unknown)。
 
 - ~~`[discovered 2026-05-15 during P2-2]` **Commissioning factory's "default lab" path is fragile**~~. ✅ Resolved 2026-05-16 — see D12 in Done table.
 - ~~`[discovered 2026-05-14 during P0-1]` chamber preset Type-C `has_lna` test mismatch~~. → Promoted to **P3-6** (2026-05-17 triage).
@@ -1724,37 +1828,40 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 - ~~`[discovered 2026-05-17 during PFS-doc investigation]` **`channel-engine-service` real-mode endpoint calls missing method**~~. → Promoted to **P0-7** (2026-05-18 triage) — D11 ruled `run_with_external_clusters` unimplementable in ChannelEgine; responsibility moved to MIMO-First adapter rewrite + scope broadened to include Phase 5/6 field plumbing + `external_asc` debug mode + fail-fast.
 - ~~`[discovered 2026-05-17 during PFS-doc investigation]` **`probe_phase_jitter` UI label says "±10°" but code applies "±180°"**~~. ✅ Resolved 2026-05-18 — ChannelEgine Phase 0 (PR #1) updated UI label + runtime warnings to match ±180° code path; jitter / cal mutex now enforced at runtime + UI level.
 - ~~`[discovered 2026-05-19 during P1-7 docs catch-up review]` **Commissioning precheck 不拦未校准 chamber** (Codex P2 on PR #60)~~. → **Promoted to P1-8** ✅ Done (PR #61 merged 2026-05-19; ad-hoc triage, 走 ad-hoc 因为 next 现场之前必须有 fail-loud gate, 不能等 weekly review)。Codex P1 follow-up on PR #61 commit 42af8ca 又抓到 strict gate 用 chamber-only 查询 (没 frequency filter) 漏过老 / 不同频段 cert, 同一 PR commit 743789c 修了, 换成跟 measure phase 同一个 `ProbePathLossCalibrationService.get_latest_calibration(chamber_id, freq_mhz)` ±5% 窗口查询。详见 P1-8 entry。
+- ~~`[discovered 2026-05-27 on-site]` **F64 ATE/SCPI 端口硬件固定 3334 (误用 5025 = 两天 blocker 根因) + 输入信号参考/crest 是全新缺失 driver 能力 + 加载需 SYST:ERR? gate**~~. → 用户 2026-05-27 直接 triage 为 **P0-8** (本地可启动, 升 Current Focus; 含默认 3600M .smu 设定)。
+- ~~`[discovered 2026-05-27 on-site]` **backend scpi-command 端点 slow-op desync (`timeout_ms` 没透传)**~~. → 用户 2026-05-27 triage 为 **P1-16** (本地)。
+- ~~`[discovered 2026-05-27 on-site]` **EMCenter switch 不吃 raw SCPI (EMQuest/GPIB 血统, `.50`)**~~. → 用户 2026-05-27 triage 为 **P2-9** (offline 调研 + 现场)。
+- ~~`[discovered 2026-05-27 on-site]` **转台 (Aerotech) 测试了但无结论, 记录供下次开发**~~. → Known-unknown **U-5** + P0-5 note (下次现场验证)。
 
 ---
 
 ## 📊 Summary
 
-> Counts as of 2026-05-26 (post … P1-11 #71 + P1-12 #79/#80/#81 + P1-13 #83 +
-> P1-14 #86 + P1-15 #88 + 本 PR P1-15 catch-up)。
-> Full-sweep flaky count remains **0**。本地可启动 P0/P1/P2 重新归零, 8 个 open
-> items 全部 not-immediately-startable:
-> - 7 个 🚧 blocked-on-hardware (3 × P0 + P1-2 + P1-4 + P1-5 on-site half + P2-4)
-> - 1 个 ⏸️ incident-conditional hold (P1-6 FS16/UXM/ENA, trigger = 真 idle-close 出现, 当前没证据 — 仍计 open since `Status: [ ] not started`)
+> Counts as of 2026-05-27 (post P1-11~15 #71/#79/#80/#81/#83/#86/#88 + 5/27 现场 triage
+> 3 新项: P0-8 / P1-16 / P2-9)。Full-sweep flaky count remains **0**。
 >
-> P2-7→P1-10 (#64, Done)。P2-8 (驾驶舱) #68 → Done。P1-11 (多子网) #71 → Done。
-> P1-12 (silent-fallback audit: QZ/TRP/path-loss 标未验证) #79/#80/#81 → Done
-> (第四项 CE real-mode 早由 P0-7 #56 覆盖)。P1-13 (子网可达性假阳性: preflight 走
-> VISA endpoint + 未探测三态) #83 → Done。P1-14 (mock 驱动探针拒绝: hardware probe
-> 对 Mock* 驱动给 actionable 拒绝而非 IDN 校验失败) #86 → Done。P1-15 (preflight canary
-> 负对照: 代理/VPN 伪造的子网"可达"识破, 子网回落未探测) #88 → Done。
+> **5/27 现场**: first-call PDF **未产出** (又消耗在 F64 driver 层, 用户授权修), 但把两天的 F64
+> blocker 根因坐实并真机验证修法 → 收敛为**本地可启动**的 P0-8 (port 3334 + 输入信号参考/crest +
+> 加载 gate + 默认 3600M .smu)。另开 P1-16 (scpi-command desync, 本地) + P2-9 (EMCenter switch,
+> 调研+现场) + U-5 (转台无结论) + U-6 (F64 输入参考真值)。
 >
-> 已知静默兜底扫净 + readiness 假阳性已修 + 诊断探针 mock 报错已 actionable + preflight 抗
-> 代理/VPN 干扰。本地审计流收口; 下一轮 audit/manual 挖到东西 promote 为 P1-16, 5/27 现场
-> 触发 P0-4→P0-3→P0-5 (按 on-site-debug-protocol + 5/27 攻略)。详见 Current Focus 段。
+> 11 个 open items: **不再全部 blocked** —— **P0-8 + P1-16 本地可启动** (Current Focus = P0-8,
+> 把现场验证过的 F64 修法 offline 正式化, 兑现"现场不写 driver"铁律); P2-9 需 offline 调研 + 现场;
+> 其余 7 项 (3 × on-site P0-3/4/5 + P1-2 + P1-4 + P1-5 on-site half + P2-4) 仍 on-site-blocked;
+> P1-6 ⏸️ incident-conditional hold (trigger = 真 idle-close, 当前没证据, 仍计 open)。下一轮本地
+> audit/manual 再挖到 = candidate for **P1-17**。
+>
+> (历史) P1-12 兜底标未验证 / P1-13 子网假阳性 / P1-14 mock 探针拒绝 / P1-15 preflight canary 全
+> Done; 已知静默兜底扫净 + readiness 假阳性已修 + preflight 抗代理/VPN。详见 Current Focus 段。
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
 | ✅ Done | 45 | — | — |
-| 🔴 P0 (first-call critical) | 3 open / 7 total | 4 days | 4 days |
-| 🟠 P1 (confidence) | 4 open / 15 total | 3 days | 2 days |
-| 🟡 P2 (abstraction debt) | 1 open / 7 total | 0.5 day | 0.5 day |
+| 🔴 P0 (first-call critical) | 4 open / 8 total | 6 days | 4.5 days |
+| 🟠 P1 (confidence) | 5 open / 16 total | 3.5 days | 2 days |
+| 🟡 P2 (abstraction debt) | 2 open / 8 total | 1.5 days | 1 day |
 | 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
-| **Total open** | **8** | **~7.5 days** | **6.5 days** |
+| **Total open** | **11** | **~11 days** | **7.5 days** |
 
 ---
 

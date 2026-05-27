@@ -20,7 +20,7 @@ HAL Driver Registry (驱动注册与工厂)
         "channel_emulator": {
             "driver_class": "RealPropsimF64Driver",
             "ip": "192.168.100.21",
-            "port": 5025,
+            "port": 3334,  # PROPSIM F64 ATE/SCPI 端口硬件固定 3334 (非 5025)
         },
         "base_station": {
             "driver_class": "auto",  # 自动探测
