@@ -18,7 +18,7 @@ P1-12 (#79/#80/#81) / P1-13 (#83) / P1-14 (#86) / P1-15 (#88) 全 merged。
 
 **5/27 现场产出 (诊断 + 真机验证, 非交付件 —— first-call PDF 未产出)**:
 - ✅ F64 两天 blocker 根因坐实: ATE/SCPI 端口硬件固定 **3334**, 早期误用 5025 → 响应 desync + 文件加载 -300。真机 3334 上 load / run / 改参全 0 error。
-- ✅ **今天最大新发现**: F64 每个输入需设"信号参考"(平均电平 dBm + crest factor dB), 否则前端增益错 → 输入口不变绿 → DL 失真 → DUT 能 attach 却解不出 PDSCH (0% ACK / all-NACK)。原 driver `set_channel_model()` 完全没有这一步。
+- ✅ **今天最大新发现**: F64 每个输入需设"信号参考"(平均电平 dBm + crest factor dB), 否则前端增益错 → 输入口不变绿 → DL 失真 → DUT 能 attach 却解不出 PDSCH (0% ACK / all-NACK)。**纠正**: driver 已有 autoset 方法但无人调用; 真实缺口是跨 driver 操作点闭环 (已起草设计文档 [f64-input-level-and-dynamic-range](architecture/f64-input-level-and-dynamic-range.md))。
 - ✅ 早上 -200 误诊纠正: 真因是"文件根本没加载"(错端口 5025 + 无 `SYST:ERR?` gate, `*OPC?=1≠成功`), 非通道数不匹配。
 - ◐ 暗室首测重现: DUT 经 SCPI 控制的 F64 + 3600M(N78) 稳定 **CONN + DL live**, 但 **0% ACK**(DL 失真未闭环 —— 根因=输入参考没设对, 后端 desync 挡住可靠设置)。
 - ✗ EMCenter switch 不吃 raw SCPI (EMQuest/GPIB 血统) → 新 **P2-9** (offline)。
@@ -429,13 +429,13 @@ sessions can actually be created.
 ### P0-8 — F64 driver 现场修复落地 (port 3334 + 输入信号参考/crest + 加载 gate + 默认 .smu) 🔄 Current Focus
 
 > **来源**: 2026-05-27 现场。F64 是 first-call 两天 blocker 的核心。现场把根因挖到底、
-> 在真机上验证了修法, 但都是裸改 (未提交) + "输入信号参考"是全新缺失能力。本项把验证过的修法
+> 在真机上验证了修法, 但都是裸改 (未提交); "输入信号参考"另立专项设计 (driver 有方法却无人调用, 需跨 driver 操作点闭环)。本项把验证过的修法
 > offline 正式化, 让下次现场只做硬件实测、不再写 driver —— **这正是治理铁律「现场不写 driver
 > 代码」的补救路径**。完整诊断见 [`docs/site-debug/2026-05-27-morning-log.md`](site-debug/2026-05-27-morning-log.md) §10。
 
 **根因 (现场坐实)**:
 1. **端口**: PROPSIM F64 的 ATE/SCPI 端口硬件固定 **3334** (User Reference §1.1.2.1)。早期默认/配置误用 **5025** (Keysight/R&S 风格 SCPI-RAW 口) → 响应 desync + 文件加载报 -300。[`api-service/app/hal/propsim_f64.py:285`](../api-service/app/hal/propsim_f64.py) 现场已强制 3334 (**未提交**); 文件头注释 28-29 行还写反 ("5025 standard / 3334 backup"); DB channelEmulator 绑定默认端口也还是 5025。
-2. **输入信号参考缺失 (今天最大新发现)**: F64 每个输入需设平均电平 (dBm) + crest factor (dB), 否则前端增益错 → 输入口不变绿 → DL 失真 → DUT 能 attach 却解不出 PDSCH (0% ACK)。原 driver `set_channel_model()` 完全没有这一步。命令族 (stopped 态): `INP:LEV:AMP:CH <in>,<dBm>` / `INP:CRE:SET <in>,<dB>` / `INP:LEV:AUTOSET <in>,<t>` (自动测+设, in=0=全部) / `INP:LEV:MEAS? <in>,<t>` (返回 level,crest; 无信号=-300) / `INP:LEV:AMP:LIM? <in>` (限值)。
+2. **输入信号参考缺失 (今天最大新发现)**: F64 每个输入需设平均电平 (dBm) + crest factor (dB), 否则前端增益错 → 输入口不变绿 → DL 失真 → DUT 能 attach 却解不出 PDSCH (0% ACK)。**纠正"完全没有"**: driver 其实已有 `autoset_input_level()` (`INP:LEV:MEAS?`+`INP:LEV:AUTOSET`, 含 crest) + `set_baseband_power()` (`INP:LEV:AMP:CH`), 但**无任何上层调用** —— 真实缺口 = 有方法没人调用 + 缺正确测量条件 (满 RB / burst) + 是个**跨 driver 操作点闭环** (UXM 功率↔F64 参考, 非 `set_channel_model` 加一行)。完整设计 (含静态 vs AGC、WiFi/双向) 见 [f64-input-level-and-dynamic-range](architecture/f64-input-level-and-dynamic-range.md)。命令族 (运行态亦可下发): `INP:LEV:AMP:CH <in>,<dBm>` / `INP:CRE:SET <in>,<dB>` / `INP:LEV:AUTOSET <in>,<t>` (自动测+设, in=0=全部) / `INP:LEV:MEAS? <in>,<t>` (返回 level,crest; 无信号=-300) / `INP:LEV:AMP:LIM? <in>` (限值)。
 3. **加载无 gate**: 早上 -200 误诊根因 —— 文件加载后只看 `*OPC?=1` 就当成功, 实际文件没加载 ("No simulation opened")。必须加载后 `SYST:ERR?` gate。
 4. **channel_count 应从 `SYST:INFO?` 读** (现场确认: 射频通道恒 32, 2x2/4x4 是逻辑通道 2x32/4x32, 不需重新编译)。
 
@@ -445,8 +445,8 @@ sessions can actually be created.
 |------|---------|-------|
 | 0 | 端口正式化: 强制 3334 + 忽略 config port (硬件固定) + 修文件头 28-29 行注释 | `api-service/app/hal/propsim_f64.py` |
 | 1 | DB channelEmulator 绑定默认端口 5025→3334 (seeder / catalog) | bootstrap seeder + catalog |
-| 2 | `set_channel_model()` 加输入信号参考+crest step (stopped 态逐输入设 level+crest 或 `INP:LEV:AUTOSET`); 失败 fail-loud | `api-service/app/hal/propsim_f64.py` |
-| 3 | 加载后 `SYST:ERR?` gate (不靠 `*OPC?=1` 误判); 运行用 `DIAG:SIMU:GO` | `api-service/app/hal/propsim_f64.py` |
+| 2 | **输入参考操作点子系统** (重定义, 见[设计文档](architecture/f64-input-level-and-dynamic-range.md)): driver 原子能力 (autoset-all / MEAS / burst 模式 / limits·clipping 状态) + CE↔BS 闭环 + **下行静态 AUTOSET** (满 RB 测一次锁定; AGC 留 WiFi/双向, 仅记录不实现) | `propsim_f64.py` + 操作点管理服务 |
+| 3 | 加载后 `SYST:ERR?` fail-loud gate (不靠 `*OPC?=1` 误判) + 加载前 drain 队列 (避免 stale FIFO 误判, Codex) | ✅ **PR #93** (in review) |
 | 4 | 默认信道配置文件 = 今天的 3600M .smu (见下), 允许操作员改路径/名称 | channelEmulator 默认 scenario 配置 |
 | 5 | 单元测试: 端口固定 / 输入参考命令序列 / SYST:ERR? gate / SYST:INFO? channel_count 解析 (mock SCPI 交换, 不需硬件) | `tests/` |
 
@@ -455,10 +455,10 @@ sessions can actually be created.
 —— 3GPP FR1 OTA CDL-C UMa, **3600 MHz (N78)**, 4 输入 MIMO OTA 模型。今天真机加载/运行通过, 设为 F64 默认供今后使用 (路径 / 名称可改)。
 
 **Acceptance**:
-- **本地半 (offline, 本 PR)**: 端口固定 3334 + 文件头注释修正 + DB 端口改 + `set_channel_model()` 含输入参考/crest step + 加载后 `SYST:ERR?` gate + channel_count 从 `SYST:INFO?` + 默认 .smu 配好; 单元测试全过 (mock SCPI)。
+- **本地半 (offline, 本 PR)**: 端口固定 3334 + 文件头注释修正 + DB 端口改 + 输入参考操作点子系统 (下行静态 AUTOSET) + 加载后 `SYST:ERR?` gate + channel_count 从 `SYST:INFO?` + 默认 .smu 配好; 单元测试全过 (mock SCPI)。
 - **现场半 (下次现场实测)**: real F64 上 load→run→改参全 0 error; 设对输入参考后 **输入口变绿**; DL 不失真 (DUT attach 后非 0% ACK)。正确的 level / crest 真值待实测 (见 U-6)。
 
-**Status**: 🔄 in-progress (Current Focus) —— 端口修法现场已在真机验证 (`propsim_f64.py:285` 裸改未提交), 待正式 PR + 单测 + 输入参考 step。
+**Status**: 🔄 in-progress (Current Focus) —— Step 0+1 (端口) ✅ PR #92 merged; Step 3 (加载 gate + drain) ✅ PR #93 in review; Step 2 (输入参考操作点子系统) 已起草[设计文档](architecture/f64-input-level-and-dynamic-range.md), 待实现 Phase 1; Step 4/5 待续。
 **Estimate**: 本地 ~1.5 day + 现场实测 ~0.5 day
 
 ---
