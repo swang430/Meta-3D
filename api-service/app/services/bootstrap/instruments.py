@@ -81,9 +81,11 @@ _CATEGORIES: list[dict] = [
                               "mimo_config": "up to 8x8 full", "dynamic_range_db": 45}},
         ],
         "connection": {
-            "endpoint": "TCPIP0::192.168.100.21::inst0::INSTR",
-            "controller_ip": "192.168.100.21", "port": 5025,
-            "protocol": "VISA/SCPI",
+            # PROPSIM F64 走 raw SOCKET, ATE/SCPI 端口硬件固定 3334 (非 5025/INSTR)。
+            # [现场 2026-05-27 实测; 详见 propsim_f64.py 顶注 + roadmap P0-8]
+            "endpoint": "TCPIP0::192.168.100.21::3334::SOCKET",
+            "controller_ip": "192.168.100.21", "port": 3334,
+            "protocol": "VISA/SCPI (raw SOCKET)",
         },
     },
     {

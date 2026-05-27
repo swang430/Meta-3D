@@ -3,7 +3,7 @@ Keysight PROPSIM F64 Channel Emulator HAL Driver
 =================================================
 
 型号专用驱动，实现 ChannelEmulatorDriver 抽象接口。
-基于 PyVISA 通过 TCP/IP Socket (端口 5025) 与 F64 ATE Server 通信。
+基于 PyVISA 通过 TCP/IP Socket (端口 3334, ATE/SCPI 硬件固定口) 与 F64 ATE Server 通信。
 
 支持两种信道加载管线：
   ┌──────────────────────────────────────────────────────┐
@@ -24,10 +24,12 @@ SCPI 参考文档:
   - PROPSIM Runtime Emulation User Guide
   - Propsim ATE Environment and Practices AN
 
-TCP 端口说明 (Table 6, User Reference §1.2.5.2):
-  - 5025: ATE/SCPI 标准端口
-  - 3334: ATE/SCPI 备用端口
+TCP 端口说明 (User Reference §1.1.2.1: "Fixed TCP/IP port for PROPSIM is 3334"):
+  - 3334: ATE/SCPI 端口 — PROPSIM 硬件固定不可改, 本驱动强制使用 (见 __init__)
   - 23:   Telnet ATE 端口
+  ⚠ 5025 (Keysight/R&S 风格 SCPI-RAW 口) 在 F64 上 *不工作*: 响应 desync + 文件
+     加载报 -300。早期配置/注释误用 5025 = 两天 first-call blocker 根因之一。
+     [现场 2026-05-27 实测: 3334 加载/运行/改参全 0 error, 5025 全 desync]
 """
 
 import logging
@@ -282,7 +284,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         super().__init__(instrument_id, config)
         # 连接参数
         self.ip_address: str = config.get("ip", "192.168.100.21")
-        self.port: int = config.get("port", 5025)
+        # PROPSIM F64 ATE/SCPI 端口固定为 3334 (User Reference §1.1.2.1:
+        # "Fixed TCP/IP port for PROPSIM is 3334")。早期配置/默认误用 5025
+        # (Keysight/R&S 风格的 SCPI-RAW 口) → 在 F64 上响应 desync + 文件加载报
+        # -300。强制 3334、忽略 config 端口 (PROPSIM 此口硬件固定不可改)。
+        # [现场 2026-05-27 实测: 3334 加载/运行/改参全 0 error, 5025 全 desync]
+        self.port: int = 3334
         self.ftp_user: str = config.get("ftp_user", F64_FTP_USER)
         self.ftp_pass: str = config.get("ftp_pass", F64_FTP_PASS)
         # Phase 2h: 跨实验室部署时由 InstrumentCategory.config 覆盖
@@ -421,7 +428,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
         连接流程:
           1. 创建 PyVISA ResourceManager
-          2. 打开 TCP Socket 连接 (端口 5025)
+          2. 打开 TCP Socket 连接 (端口 3334, 硬件固定)
           3. 发送 *IDN? 验证身份
           4. 查询 SYST:INFO? 获取硬件配置
         """
