@@ -661,6 +661,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 )
 
             # Step 3: 加载仿真文件 (需要延长 VISA 超时)
+            # 加载前先清空错误队列 (Codex on PR #93): SYST:ERR? 是 FIFO, 前序命令
+            # 遗留的 stale 错误会被下面的 fail-loud gate 误判成本次加载失败 → 即使
+            # 加载成功也返回 False、跳过设频。先 drain, 确保 gate 只评估本次
+            # CALC:FILT:FILE 产生的错误。
+            await self._drain_errors()
             # ATE Practice §2.2.4: 大文件加载可能需要数十秒
             await self._write(
                 f'CALC:FILT:FILE {emulation_file}',
@@ -2113,6 +2118,32 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         if "No error" in err:
             return None
         return err
+
+    async def _drain_errors(self) -> List[str]:
+        """清空 SYST:ERR? 队列, 返回被清掉的真错误 (供日志); **不改** self._last_error。
+
+        用于在会 fail-loud gate 的操作 (如加载) *之前* 清掉历史/前序命令遗留的队列项,
+        确保之后的 gate 只评估本次操作产生的错误 (Codex on PR #93)。与 _check_errors
+        (drain + WARNING + 写 _last_error) 的区别: 本方法静默清队列、不污染 _last_error。
+        有界 (防 misbehaving 仪器死循环)。
+        """
+        drained: List[str] = []
+        try:
+            for _ in range(64):  # 正常队列 0-数条; 上界防御
+                err = (await self._query("SYST:ERR?")).strip()
+                code_str = err.split(",", 1)[0].strip()
+                try:
+                    is_clean = int(code_str) == 0
+                except ValueError:
+                    is_clean = "No error" in err
+                if is_clean:
+                    break
+                drained.append(err)
+            if drained:
+                logger.info("[F64] 加载前清空 %d 条遗留错误: %s", len(drained), drained)
+        except Exception as e:
+            logger.warning("[F64] drain errors before load failed: %s", e)
+        return drained
 
     def _update_user_alignment_capability(self) -> None:
         """Mirror ``self._active_alignment`` into the canonical capability
