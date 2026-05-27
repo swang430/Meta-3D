@@ -668,6 +668,18 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             )
             # 使用 *OPC? 确保加载完成 (ATE Practice §2.2.4)
             await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
+            # P0-8 Step 3: 加载后 fail-loud gate。*OPC?=1 ≠ 加载成功 —— F64 对
+            # 文件缺失/损坏 (或早期错端口 5025) 仍答 OPC=1, 但 SYST:ERR? 报
+            # -200 "No simulation opened" / -300。2026-05-27 早上的 -200 洪水正
+            # 因这里没拦、继续设频 → 错误叠加而方法却返回 True。此处立刻拦。
+            load_err = await self._first_error()
+            if load_err is not None:
+                self._last_error = f"channel model load failed: {load_err}"
+                logger.error(
+                    "[F64/GCM] 加载失败 — SYST:ERR? after load: %s (file=%s)",
+                    load_err, emulation_file,
+                )
+                return False
             self._loaded_emulation_file = emulation_file
 
             # Step 4: 设置中心频率
@@ -2082,6 +2094,25 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 self._last_error = err
         except Exception as e:
             logger.error(f"[F64] Error queue check failed: {e}")
+
+    async def _first_error(self) -> Optional[str]:
+        """查询 SYST:ERR?, 返回第一条真错误字符串; 无错返回 None。
+
+        与 ``_check_errors`` (drain + log, 不影响控制流) 不同 —— 本方法供
+        fail-loud gate 使用: 把错误返回给调用方判定 (例如加载失败立刻 return
+        False)。F64 即便文件缺失/损坏 (或早期错端口) 也会对 *OPC? 答 "1", 唯一
+        可靠的失败信号是 SYST:ERR? (-200 "No simulation opened" / -300)。
+        """
+        err = (await self._query("SYST:ERR?")).strip()
+        code_str = err.split(",", 1)[0].strip()
+        try:
+            if int(code_str) == 0:
+                return None
+        except ValueError:
+            pass
+        if "No error" in err:
+            return None
+        return err
 
     def _update_user_alignment_capability(self) -> None:
         """Mirror ``self._active_alignment`` into the canonical capability
