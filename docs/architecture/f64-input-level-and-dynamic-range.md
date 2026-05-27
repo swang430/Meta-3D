@@ -9,26 +9,42 @@
 
 ## 0. 背景与动机（为什么必须做这个设计）
 
-### 0.1 现场实证（2026-05-27 CAICT）
+### 0.1 现场实证（2026-05-27 CAICT）—— 多因素，**不是干净的单变量 A/B**
 
-| 条件 | F64 状态 | 结果 |
-|---|---|---|
-| UXM CELL1 (N78, BW40, DL ARFCN 636666) + 单层 | `DIAG:SIMU:MODEL:STATIC 3`（calibration 直通，无衰落） | **DL PDSCH 100% ACK** ✓（DUT 正常收发） |
-| 同上 + 换 3600M 衰落模型（4 输入 MIMO OTA） | 真实信道仿真（数字缩放/衰落处理） | **0% ACK / all-NACK** ✗（DUT attach 成功、能收到、但解不出 PDSCH） |
+> ⚠ 本节有两组**互相矛盾**的观测，必须都记下，不能简化成"bypass=好 / 衰落=坏"。
+> 详见 [`docs/site-debug/2026-05-27-morning-log.md`](../site-debug/2026-05-27-morning-log.md) §10.6 / §10.8。
 
-两者唯一变量 = F64 是否做**衰落信道的数字处理**。clean 直通不缩放 → 不失真；衰落模型对
-输入做数字缩放 → **若输入信号参考（平均电平 + crest factor）没设对，数字域削顶
-(digital clipping) → 下行失真 → DUT 解不出**。这正是 User Reference §4.x 警告的
-"Scaling signal up digitally can cause clipping depending on used fading, input
-signals and their phases"。
+| # | 设置 | F64 状态 | 结果 |
+|---|---|---|---|
+| 观测 A（上午） | F64 **GUI 直通**、UXM 单层、非校准 dry-run | 直通（bypass） | **DL PDSCH 100% ACK** ✓ |
+| 观测 B（下午, SCPI 控制） | F64 **SCPI 加载 3600M**（4 输入 MIMO 模型）@ `CENT:CH 3550` | bypass **STATIC 2(BUTLER) 与 STATIC 3(CALIBRATION) 都试** | **0% ACK / all-NACK** ✗（DUT CONN+收到、PDSCH 全解错） |
+
+**关键**：观测 B 里 **bypass（STATIC 2/3）也是 0% ACK** —— 所以失败**不是**"只有衰落数字缩放
+才出问题"。A 与 B 之间还有多个**混淆变量**，未隔离：
+
+- **输入电平 / 参考**：下午实测输入 `-17 ~ -23 dBm`，**-23 已是 F64 input1 下限**
+  (`INP:LEV:AMP:LIM?`)；输入参考（avg+crest）当时未经系统设置 → 前端增益错 → **即便 bypass
+  也会失真**。
+- **3600M 单输入透传是否干净存疑**：3600M = 4 输入 MIMO 模型 (`MODEL:INFO?=4,128,32`)，
+  单输入 + bypass 是否真干净透传当时没定论（一度怀疑模型，操作员归因于输入参考）。
+- **setup / 控制路径不同**：上午 GUI 直通 vs 下午 SCPI 加载 3600M，是两套不同 setup。
+
+**因此（暂定主因，待隔离复现）**：输入参考/电平把前端增益设错 → DL 失真，是**贯穿 bypass 与
+衰落两种模式**的最可能主因（操作员归因，且与 -23 dBm 临界吻合）；衰落模型的**数字缩放削顶
+(digital clipping) 是另一条会叠加的失真路径**（User Reference §4.x："Scaling signal up
+digitally can cause clipping depending on used fading, input signals and their phases"）。
+但这**不是经过隔离的单变量证明**，真因待 P0-8 现场用受控变量复现确认（§7）。
+
+> **对 P0-8 实现的硬约束**：不能只验证"衰落/缩放 clipping"。必须同时验证**控制路径 + 输入
+> 参考/电平窗口**在 **bypass 模式下也正确**（观测 B 证明 bypass 也会失败）。
 
 ### 0.2 现状缺口
 
 - driver 里 `autoset_input_level()` / `set_baseband_power()` 已存在，但**没有任何上层
   调用**（commissioning / measure 全链路零调用）。
 - 没有任何系统级机制去设定/校验/监控 F64 的输入操作点。
-- 后果：衰落模型一上来就 clipping，吞吐量为 0，且操作员无从诊断（输入口不变绿是唯一
-  外部征兆）。
+- 后果：输入参考没设 → 前端增益错 → DL 失真（**bypass 与衰落模式都受影响**，见 §0.1）→
+  吞吐量 0，且操作员无从诊断（输入口不变绿是唯一外部征兆）。
 
 ### 0.3 目标（系统价值 — 不只是修一个 bug）
 
@@ -108,9 +124,12 @@ MIMO 组内所有输入一起测/调（保平衡）；AGC 模式下"最高功率
 
 加上 **TDD 本身是突发的**（只 DL 时隙有）。
 
-**失真链（0% ACK 的机理）**：若在**空载/广播态**做 autoset（或根本没设）→ F64 按低 avg +
-小 crest 预留 headroom → DUT attach 后**满 PDSCH 业务灌入，峰值超预留 → digital clipping
+**失真链之一 — 衰落下的 clipping**：若在**空载/广播态**做 autoset（或根本没设）→ F64 按低 avg
++ 小 crest 预留 headroom → DUT attach 后**满 PDSCH 业务灌入，峰值超预留 → digital clipping
 → 下行失真 → 收得到、解不出（all-NACK）**。
+
+> ⚠ 这是**衰落模式**下的一条失真路径；§0.1 观测 B 表明 **bypass 模式也失真** → 更基础的原因
+> 是"输入参考/电平把前端增益设错，在所有模式都失真"。两条机理都要在 §7 用受控变量复现区分。
 
 **设计结论**：autoset **必须在代表性最坏条件下做** —— 即 **满 RB DL PDSCH（最大吞吐
 配置）**，这也正是系统的吞吐量测试目标态。用 UXM 的 5G NR Test App 配置（§4.2）。
@@ -266,8 +285,12 @@ service），职责：
 - UXM 实际 TDD 配比（DLSLots/ULSLots/PERiod/SCS）与最大吞吐 FRC/MCS/RB 配置。
 - 满 RB DL 条件下，F64 各输入实测 avg（dBm）+ crest（dB）真值 → 锁定标称工作点。
 - burst 测量触发电平实际值。
-- 闭环收敛：从 100% ACK（STATIC 3 基线）切到 3600M 衰落后，调到无 clipping + 非 0% ACK 的
-  UXM 功率 / F64 参考组合。
+- **受控变量复现（首要 —— 解开 §0.1 的多因素，别再当单变量 A/B）**：固定其它条件逐一隔离:
+  ① bypass (STATIC 3) 下"输入参考设对 vs 没设"→ 隔离输入参考因素（观测 B 下 bypass 也 0%）;
+  ② 3600M 单输入 + bypass 是否干净透传（确认/排除模型怀疑）;
+  ③ 设对输入参考后再开衰落 → 是否仍 clipping（隔离衰落缩放因素）。
+- 闭环收敛：把输入电平从临界（`-17~-23 dBm`, -23 已是下限）调进窗口中部 + 设对 avg/crest，
+  到 **bypass 与衰落都非 0% ACK** 的 UXM 功率 / F64 参考组合。
 - 验证：动态 MIMO（时变信道）下静态参考是否确实稳定（验证 §3.1 的"输入稳定"假设）。
 
 ---
