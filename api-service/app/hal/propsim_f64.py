@@ -1655,25 +1655,18 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         if not self._visa_resource:
             return False
         try:
-            # ① 清空遗留 stale 错误 (SYST:ERR? 是 FIFO; 否则前序命令的错误会被 ③ 误判成
-            #    本次 AUTOSET 失败 —— 同 PR #93 load gate 的 stale-FIFO 教训)
-            for _ in range(64):
-                e = (await self._query("SYST:ERR?")).strip()
-                head = e.split(",", 1)[0].strip()
-                if head in ("0", "+0") or "No error" in e:
-                    break
+            # ① 清空遗留 stale 错误 (FIFO, 否则会被 ③ 误判成本次 AUTOSET 失败)
+            await self._drain_errors()
             # ② AUTOSET 全输入
             await self._write(f"INP:LEV:AUTOSET 0,{measurement_time_s}")
             opc_timeout_ms = int((measurement_time_s + 2) * 1000)
             await self._query("*OPC?", timeout=opc_timeout_ms)
-            # ③ fail-loud: AUTOSET 失败 (无信号/输出过强) 不改旧值、报 device error
-            #    (§20.4.4.7)。必须 return False —— 不能像 _check_errors 只 log 后仍 return
-            #    True, 否则 Phase 2 编排会拿 stale/无效的 level+crest 参考继续 (Codex on PR #95)。
-            err = (await self._query("SYST:ERR?")).strip()
-            head = err.split(",", 1)[0].strip()
-            if not (head in ("0", "+0") or "No error" in err):
-                self._last_error = f"autoset failed: {err}"
-                logger.error(f"[F64] autoset_all_inputs 失败 (SYST:ERR?): {err}")
+            # ③ fail-loud: AUTOSET 失败 (无信号/过强) 报 device error (§20.4.4.7) →
+            #    return False, 不能让 Phase 2 编排拿 stale/无效参考继续 (Codex on PR #95)
+            autoset_err = await self._first_error()
+            if autoset_err is not None:
+                self._last_error = f"autoset failed: {autoset_err}"
+                logger.error(f"[F64] autoset_all_inputs 失败 (SYST:ERR?): {autoset_err}")
                 return False
             logger.info(f"[F64] autoset all inputs ok (t={measurement_time_s}s)")
             return True
