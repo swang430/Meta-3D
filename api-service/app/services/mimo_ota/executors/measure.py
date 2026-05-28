@@ -338,6 +338,37 @@ class MeasureExecutor(IStepExecutor):
                     error_message=f"Channel generation failed for engine_mode={config.engine_mode}",
                 )
 
+            # --- P0-8 Step 2 Phase 2b: F64 输入操作点闭环 (CE↔BS) ---
+            # F64 fading 已经载入、UXM DL 已开 → 此时 F64 输入端信号即真实工作条件,
+            # 跑 §4 A-F 闭环锁住 avg+crest 在窗口内、clipping 不爆、无 cut-off。
+            # capability 检测 (hasattr) 跟项目 pattern 一致 (get_user_alignment_status /
+            # reconfigure_rrc / add_secondary_cell) — 任一方缺接口 (mock driver /
+            # 新 vendor 未实现) 自动跳, 不影响 mock dry-run。
+            # 设计依据: docs/architecture/f64-input-level-and-dynamic-range.md §4.
+            input_level_payload = await self._run_input_level_closed_loop(
+                emulator=emulator,
+                base_station=base_station,
+                config=config,
+                execution_id=context.test_execution.id,
+            )
+            if (
+                not input_level_payload.get("skipped")
+                and not input_level_payload.get("success")
+                and config.precheck_strict_input_level
+            ):
+                # strict 模式: 操作点未确定 → 后续 RSRP/吞吐都是 garbage, fail-loud。
+                # finally 块仍会做 cleanup (UXM stop / F64 stop / 转台 home)。
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    measurements={"input_level_calibration": input_level_payload},
+                    error_message=(
+                        f"Input-level closed loop did not converge: "
+                        f"{input_level_payload.get('failure_reason')}. "
+                        "操作点未确定 → 跳过 azimuth 测量 (后续 RSRP/吞吐失去物理意义)。"
+                        " 现场调试可临时设 precheck_strict_input_level=False 降级为 warning。"
+                    ),
+                )
+
             # --- Per-azimuth measurement loop (Phase 2d windowed sampling) ---
             azimuth_results: List[Dict[str, Any]] = []
             # P0: ce_base_rsrp is now per-azimuth (computed inside loop) since
@@ -537,6 +568,10 @@ class MeasureExecutor(IStepExecutor):
                 "dut_disconnect_warnings": dut_disconnect_warnings,
                 "azimuths_completed": len(azimuth_results),
                 "azimuths_requested": len(config.azimuths_deg),
+                # Phase 2b: input-level closed-loop telemetry (success/skipped/
+                # opt-out audit). strict-fail 路径不会到这里 — 早期 return 时
+                # input_level_calibration 已经塞进 measurements。
+                "input_level_calibration": input_level_payload,
             }
 
             # ``asc_files_loaded`` is ASC-specific (ExternalWaveformStrategy /
@@ -581,3 +616,140 @@ class MeasureExecutor(IStepExecutor):
             measurements=result_payload,
             warnings=measure_warnings or None,
         )
+
+    # ---------------------------------------------------------------------
+    # P0-8 Step 2 Phase 2b: F64 输入操作点闭环 wiring
+    # ---------------------------------------------------------------------
+    async def _run_input_level_closed_loop(
+        self,
+        *,
+        emulator: Any,
+        base_station: Any,
+        config: Any,
+        execution_id: Any,
+    ) -> Dict[str, Any]:
+        """跑 InputLevelController + 落遥测。返回 input_level_calibration payload。
+
+        capability hasattr 检测 (mock CE / 未实现 atomic 的 vendor 自动跳); 跑过
+        controller 后无论成败都返回结构化 payload, 上层据 success/skipped + strict
+        flag 决定 phase verdict。
+        """
+        required_ce_methods = (
+            "autoset_inputs",
+            "measure_input",
+            "get_input_level_limits",
+            "set_input_measurement_mode",
+            "set_burst_trigger_level",
+            "get_group_clipping",
+            "get_system_status",
+        )
+        ce_caps = {m: hasattr(emulator, m) for m in required_ce_methods}
+        ce_supports = all(ce_caps.values())
+        bs_supports = hasattr(base_station, "set_downlink_power")
+
+        if not ce_supports or not bs_supports:
+            reason_parts: List[str] = []
+            missing_ce = [m for m, ok in ce_caps.items() if not ok]
+            if missing_ce:
+                reason_parts.append(f"CE 缺接口: {missing_ce}")
+            if not bs_supports:
+                reason_parts.append("BS 缺 set_downlink_power")
+            skip_reason = (
+                "; ".join(reason_parts)
+                + " — 至少一方缺 capability (e.g. mock driver / 未实现 atomic 的 vendor), "
+                "跳过闭环 (不影响 mock dry-run)"
+            )
+            logger.info(
+                "[%s] Phase 2b: input-level closed loop SKIPPED — %s",
+                execution_id, skip_reason,
+            )
+            return {"skipped": True, "reason": skip_reason}
+
+        # active_inputs 推导 (Codex on PR #98): **跟 BS 实际驱动的 layer 数 1:1**,
+        # 不是 CE 的 _tx_antennas。execute() 早期已经 set_cell_config(mimo_layers=
+        # config.mimo_layers), BS 只发 config.mimo_layers 路 → F64 也只有这几路
+        # input 有信号; 多 autoset 一路 = 在 unconnected 端口上 autoset, no-signal
+        # fail-loud, strict 模式把 measure phase 早死在 azimuth loop 之前。
+        # CE _tx_antennas (.smu 的 TX 端口数) 只用作 sanity bound: BS layers 超过
+        # 它 = 物理上跑不了 (e.g. 2x2 .smu 上 BS 想发 4 layer)。
+        n_layers = int(config.mimo_layers)
+        ce_tx = getattr(emulator, "_tx_antennas", None)
+        if ce_tx is not None and n_layers > ce_tx:
+            msg = (
+                f"拓扑不匹配: config.mimo_layers={n_layers} > CE _tx_antennas={ce_tx} "
+                f"(BS 想发的 layer 数超过当前 .smu 输入端口数, 物理上跑不了)。"
+                f" 操作员应调整 config.mimo_layers 或换 .smu "
+                f"(默认 3600M 是 4x4, set_mimo_config 可改)。"
+            )
+            logger.error("[%s] Phase 2b: %s", execution_id, msg)
+            return {
+                "success": False,
+                "failure_reason": msg,
+                "topology_mismatch": True,
+                "ce_tx_antennas": ce_tx,
+                "config_mimo_layers": n_layers,
+                "iterations": 0,
+                "uxm_dl_power_dbm": None,
+                "clipping_per_mille": None,
+                "system_warnings": [],
+                "operating_point": [],
+                "active_inputs": list(range(1, n_layers + 1)),
+                "strict": bool(config.precheck_strict_input_level),
+            }
+        active_inputs = tuple(range(1, n_layers + 1))
+
+        from app.services.input_level_controller import InputLevelController
+
+        controller = InputLevelController(
+            ce_driver=emulator,
+            bs_driver=base_station,
+            active_inputs=active_inputs,
+        )
+        logger.info(
+            "[%s] Phase 2b: input-level closed loop START — active_inputs=%s",
+            execution_id, active_inputs,
+        )
+        il_result = await controller.establish()
+
+        payload: Dict[str, Any] = {
+            "success": il_result.success,
+            "uxm_dl_power_dbm": il_result.uxm_dl_power_dbm,
+            "clipping_per_mille": il_result.clipping_per_mille,
+            "iterations": il_result.iterations,
+            "system_warnings": il_result.system_warnings,
+            "operating_point": [
+                {
+                    "input_num": op.input_num,
+                    "avg_dbm": op.avg_dbm,
+                    "crest_db": op.crest_db,
+                }
+                for op in il_result.operating_point
+            ],
+            "failure_reason": il_result.failure_reason,
+            "active_inputs": list(active_inputs),
+            "strict": config.precheck_strict_input_level,
+        }
+
+        if il_result.success:
+            logger.info(
+                "[%s] Phase 2b: input-level closed loop CONVERGED "
+                "(iter=%d, UXM=%.1f dBm, clipping=%s‰)",
+                execution_id,
+                il_result.iterations,
+                il_result.uxm_dl_power_dbm,
+                il_result.clipping_per_mille,
+            )
+        elif config.precheck_strict_input_level:
+            # strict-fail: 这里只 log, 上层根据 success 字段触发早期 FAILED return。
+            logger.error(
+                "[%s] Phase 2b: input-level closed loop FAILED (strict) — %s",
+                execution_id, il_result.failure_reason,
+            )
+        else:
+            # opt-out: 降级为 warning, 继续 azimuth 扫描 (audit-only)
+            logger.warning(
+                "[%s] Phase 2b: input-level closed loop FAILED "
+                "(precheck_strict_input_level=False, audit-only) — %s",
+                execution_id, il_result.failure_reason,
+            )
+        return payload
