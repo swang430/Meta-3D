@@ -12,15 +12,19 @@ from unittest.mock import MagicMock
 from app.hal.propsim_f64 import F64InputMeasMode, RealPropsimF64Driver
 
 
-def _make_driver(query_map=None):
-    """mock 驱动: query_map 把 SCPI 查询映射到响应; 其余默认安全值。"""
+def _make_driver(query_map=None, syst_err_responses=None):
+    """mock 驱动: query_map 映射查询→响应; syst_err_responses 给 SYST:ERR? 一个序列
+    (耗尽后默认 no-error), 用于测 autoset 的 drain + fail-loud; 其余默认安全值。"""
     drv = RealPropsimF64Driver("propsim-test", {})
     visa = MagicMock()
+    err_q = list(syst_err_responses) if syst_err_responses is not None else None
 
     def _router(cmd):
         if cmd == "*OPC?":
             return "1"
         if cmd == "SYST:ERR?":
+            if err_q is not None:
+                return err_q.pop(0) if err_q else '0,"No error"'
             return '0,"No error"'
         if query_map and cmd in query_map:
             return query_map[cmd]
@@ -66,10 +70,32 @@ class TestMeasureInput:
 
 
 class TestAutosetAllInputs:
-    async def test_issues_autoset_zero(self):
-        drv, visa = _make_driver()
+    async def test_issues_autoset_zero_and_succeeds_clean(self):
+        drv, visa = _make_driver()  # SYST:ERR? 恒 no-error
         assert await drv.autoset_all_inputs(3.0) is True
         assert "INP:LEV:AUTOSET 0,3.0" in _writes(visa)  # in=0 = 全部输入同测
+
+    async def test_fails_loud_on_device_error(self):
+        # AUTOSET 失败 (无信号/过强) → SYST:ERR? 报 device error → return False
+        # (而非像 _check_errors 只 log 后仍 return True; Codex on PR #95)
+        drv, visa = _make_driver(syst_err_responses=[
+            '0,"No error"',                 # ① drain: 队列已空
+            '-300,"No input signal"',       # ③ check: 本次 AUTOSET 失败
+        ])
+        ok = await drv.autoset_all_inputs(3.0)
+        assert ok is False
+        assert drv._last_error and "No input signal" in drv._last_error
+        assert "INP:LEV:AUTOSET 0,3.0" in _writes(visa)
+
+    async def test_drains_stale_then_succeeds(self):
+        # 前序命令遗留的 stale 错误 → drain 清掉 → 本次 AUTOSET 干净 → True
+        # (stale 不能被误判成 AUTOSET 失败 —— 同 PR #93 stale-FIFO 教训)
+        drv, _ = _make_driver(syst_err_responses=[
+            '-221,"Settings conflict (stale)"',  # ① drain: stale
+            '0,"No error"',                       # ① drain 终止
+            '0,"No error"',                       # ③ check: 本次 AUTOSET 干净
+        ])
+        assert await drv.autoset_all_inputs(3.0) is True
 
 
 class TestLimits:

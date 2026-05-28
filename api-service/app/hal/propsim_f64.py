@@ -1633,15 +1633,32 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
         <in>=0 = 全部输入同测 (保 MIMO 平衡)。测量失败 (无信号/过强) 不改旧值、报错。
         用于"下行静态参考": 满 RB 代表性信号下测一次锁定 (见设计文档 §3.3/§4)。
+        **失败 (device error) 时 fail-loud 返回 False**, 不让上层拿 stale 参考继续。
         """
         if not self._visa_resource:
             return False
         try:
+            # ① 清空遗留 stale 错误 (SYST:ERR? 是 FIFO; 否则前序命令的错误会被 ③ 误判成
+            #    本次 AUTOSET 失败 —— 同 PR #93 load gate 的 stale-FIFO 教训)
+            for _ in range(64):
+                e = (await self._query("SYST:ERR?")).strip()
+                head = e.split(",", 1)[0].strip()
+                if head in ("0", "+0") or "No error" in e:
+                    break
+            # ② AUTOSET 全输入
             await self._write(f"INP:LEV:AUTOSET 0,{measurement_time_s}")
             opc_timeout_ms = int((measurement_time_s + 2) * 1000)
             await self._query("*OPC?", timeout=opc_timeout_ms)
-            await self._check_errors()
-            logger.info(f"[F64] autoset all inputs (t={measurement_time_s}s)")
+            # ③ fail-loud: AUTOSET 失败 (无信号/输出过强) 不改旧值、报 device error
+            #    (§20.4.4.7)。必须 return False —— 不能像 _check_errors 只 log 后仍 return
+            #    True, 否则 Phase 2 编排会拿 stale/无效的 level+crest 参考继续 (Codex on PR #95)。
+            err = (await self._query("SYST:ERR?")).strip()
+            head = err.split(",", 1)[0].strip()
+            if not (head in ("0", "+0") or "No error" in err):
+                self._last_error = f"autoset failed: {err}"
+                logger.error(f"[F64] autoset_all_inputs 失败 (SYST:ERR?): {err}")
+                return False
+            logger.info(f"[F64] autoset all inputs ok (t={measurement_time_s}s)")
             return True
         except Exception as e:
             logger.error(f"[F64] autoset_all_inputs failed: {e}")
