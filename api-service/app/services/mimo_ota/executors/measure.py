@@ -665,12 +665,38 @@ class MeasureExecutor(IStepExecutor):
             )
             return {"skipped": True, "reason": skip_reason}
 
-        # active_inputs 推导: F64 driver 内部约定 inputs 数 = _tx_antennas
-        # (PR #97 让加载默认 .smu 时自动 sync 到 metadata 拓扑 e.g. 3600M=4)。
-        # fallback 到 config.mimo_layers 仅在 driver 没暴露 _tx_antennas 时用 —
-        # 真 F64 driver 一定有这个 attr。
-        n_inputs = getattr(emulator, "_tx_antennas", None) or int(config.mimo_layers)
-        active_inputs = tuple(range(1, n_inputs + 1))
+        # active_inputs 推导 (Codex on PR #98): **跟 BS 实际驱动的 layer 数 1:1**,
+        # 不是 CE 的 _tx_antennas。execute() 早期已经 set_cell_config(mimo_layers=
+        # config.mimo_layers), BS 只发 config.mimo_layers 路 → F64 也只有这几路
+        # input 有信号; 多 autoset 一路 = 在 unconnected 端口上 autoset, no-signal
+        # fail-loud, strict 模式把 measure phase 早死在 azimuth loop 之前。
+        # CE _tx_antennas (.smu 的 TX 端口数) 只用作 sanity bound: BS layers 超过
+        # 它 = 物理上跑不了 (e.g. 2x2 .smu 上 BS 想发 4 layer)。
+        n_layers = int(config.mimo_layers)
+        ce_tx = getattr(emulator, "_tx_antennas", None)
+        if ce_tx is not None and n_layers > ce_tx:
+            msg = (
+                f"拓扑不匹配: config.mimo_layers={n_layers} > CE _tx_antennas={ce_tx} "
+                f"(BS 想发的 layer 数超过当前 .smu 输入端口数, 物理上跑不了)。"
+                f" 操作员应调整 config.mimo_layers 或换 .smu "
+                f"(默认 3600M 是 4x4, set_mimo_config 可改)。"
+            )
+            logger.error("[%s] Phase 2b: %s", execution_id, msg)
+            return {
+                "success": False,
+                "failure_reason": msg,
+                "topology_mismatch": True,
+                "ce_tx_antennas": ce_tx,
+                "config_mimo_layers": n_layers,
+                "iterations": 0,
+                "uxm_dl_power_dbm": None,
+                "clipping_per_mille": None,
+                "system_warnings": [],
+                "operating_point": [],
+                "active_inputs": list(range(1, n_layers + 1)),
+                "strict": bool(config.precheck_strict_input_level),
+            }
+        active_inputs = tuple(range(1, n_layers + 1))
 
         from app.services.input_level_controller import InputLevelController
 

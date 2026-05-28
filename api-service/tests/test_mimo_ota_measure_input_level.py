@@ -179,24 +179,28 @@ class TestCapabilityDetection:
 
 
 class TestActiveInputsDerivation:
-    """active_inputs 应来自 emulator._tx_antennas (F64 driver 内部约定)。"""
+    """active_inputs 应来自 config.mimo_layers (= BS 实际驱动的 layer 数), CE
+    _tx_antennas 只用作 sanity bound。Codex on PR #98: 反过来用 _tx_antennas
+    会让 autoset 跑去 unconnected input → no-signal → strict 早死。"""
 
-    async def test_uses_emulator_tx_antennas_when_available(self):
+    async def test_uses_config_mimo_layers_not_emulator_tx_antennas(self):
+        """Codex regression: 默认 .smu (3600M, 4x4) + config.mimo_layers=2 →
+        BS 只发 2 路, active_inputs 必须是 [1,2] 不能是 [1,2,3,4]。"""
         executor = MeasureExecutor()
         ce = _FakeRealCE(tx_antennas=4)
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
             emulator=ce, base_station=bs, config=_MiniConfig(mimo_layers=2), execution_id="t1",
         )
-        # 优先用 emulator._tx_antennas=4, 不是 config.mimo_layers=2
-        assert payload["active_inputs"] == [1, 2, 3, 4]
+        assert payload["active_inputs"] == [1, 2]
 
-    async def test_falls_back_to_config_when_emulator_lacks_tx_antennas(self):
+    async def test_no_topology_validation_when_emulator_lacks_tx_attr(self):
+        """CE 没暴露 _tx_antennas → 没 sanity bound 可查, 直接信 config.mimo_layers
+        (跟 production F64 driver 一定有这个 attr 的预期相反, 但 fake CE 还要能用)。"""
         executor = MeasureExecutor()
 
         class _CEWithoutTxAttr(_FakeRealCE):
             def __init__(self):
-                # 故意不设 _tx_antennas; 用其它默认
                 self._avg = -30.0
                 self.calls = {}
 
@@ -205,8 +209,48 @@ class TestActiveInputsDerivation:
         payload = await executor._run_input_level_closed_loop(
             emulator=ce, base_station=bs, config=_MiniConfig(mimo_layers=2), execution_id="t1",
         )
-        # 没 _tx_antennas → 回退 config.mimo_layers=2
+        # 无 sanity bound, 直接 config.mimo_layers=2
         assert payload["active_inputs"] == [1, 2]
+        # 跑通了 controller (没 topology_mismatch 短路)
+        assert payload.get("topology_mismatch") is None
+        assert payload.get("success") is True
+
+
+class TestTopologyMismatch:
+    """BS 想发的 layer 数 > CE _tx_antennas (.smu 输入端口数) = 物理上跑不了,
+    早期 fail with audit fields, 不调 controller。Codex on PR #98。"""
+
+    async def test_layers_exceeding_ce_tx_fails_loud(self):
+        executor = MeasureExecutor()
+        ce = _FakeRealCE(tx_antennas=4)  # 当前 .smu 4x4
+        bs = _FakeRealBS()
+        payload = await executor._run_input_level_closed_loop(
+            emulator=ce, base_station=bs,
+            config=_MiniConfig(mimo_layers=8),  # BS 想发 8 layer > 4 端口
+            execution_id="t1",
+        )
+        assert payload["success"] is False
+        assert payload["topology_mismatch"] is True
+        assert payload["ce_tx_antennas"] == 4
+        assert payload["config_mimo_layers"] == 8
+        assert "拓扑不匹配" in payload["failure_reason"]
+        # 早期 short-circuit: controller 没被调
+        assert ce.calls == {}
+        assert bs.set_calls == []
+
+    async def test_layers_equal_ce_tx_runs_controller(self):
+        """边界: layers == _tx_antennas 是 OK 的 (e.g. 4x4 .smu + 4 layer BS)。"""
+        executor = MeasureExecutor()
+        ce = _FakeRealCE(tx_antennas=4)
+        bs = _FakeRealBS()
+        payload = await executor._run_input_level_closed_loop(
+            emulator=ce, base_station=bs,
+            config=_MiniConfig(mimo_layers=4),
+            execution_id="t1",
+        )
+        assert payload.get("topology_mismatch") is None
+        assert payload.get("success") is True
+        assert payload["active_inputs"] == [1, 2, 3, 4]
 
 
 class TestPayloadShape:
