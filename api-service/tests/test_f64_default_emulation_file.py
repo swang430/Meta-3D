@@ -15,7 +15,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from app.hal.propsim_f64 import F64_DEFAULT_EMULATION_FILE, RealPropsimF64Driver
+from app.hal.propsim_f64 import (
+    F64_DEFAULT_EMULATION_FILE,
+    F64_DEFAULT_EMULATION_FILE_TOPOLOGY,
+    RealPropsimF64Driver,
+)
 
 
 def _make_driver(config=None):
@@ -92,3 +96,63 @@ class TestF64DefaultEmulationFile:
         assert path is not None
         # 默认 _tx_antennas=_rx_antennas=2 → "CDL-A_UMi_2x2.smu"
         assert path.endswith("CDL-A_UMi_2x2.smu")
+
+
+class TestF64DefaultTopologySync:
+    """加载默认文件后自动同步 _tx_antennas/_rx_antennas 缓存 (Codex on PR #97):
+
+    否则 stale 2x2 缓存让下游 set_path_loss 等按 4 个输出配, 漏配实际 16 通道
+    (4x4 = 3600M 的拓扑) → RF 失真。非默认文件由 operator 经 set_mimo_config
+    预设拓扑 (现有惯例)。
+    """
+
+    async def test_topology_constant_is_4x4(self):
+        # 3600M = 4-input MIMO OTA, 4x4 (BS 4 TX × UE 4 RX layers)
+        assert F64_DEFAULT_EMULATION_FILE_TOPOLOGY == (4, 4)
+
+    async def test_load_default_syncs_cache_from_2x2_to_4x4(self):
+        drv, _ = _make_driver()
+        # 构造默认: 2x2
+        assert (drv._tx_antennas, drv._rx_antennas) == (2, 2)
+        await drv.set_channel_model("CDL-C", "UMa", {})  # 无 emulation_file → 走默认
+        # 加载默认 (3600M) 后同步到 (4, 4)
+        assert (drv._tx_antennas, drv._rx_antennas) == (4, 4)
+
+    async def test_load_default_idempotent_when_already_matching(self):
+        # 已经 (4, 4) → 加载默认 → 仍 (4, 4), 不日志噪音 (本测试只验值)
+        drv, _ = _make_driver()
+        drv._tx_antennas, drv._rx_antennas = 4, 4
+        await drv.set_channel_model("CDL-C", "UMa", {})
+        assert (drv._tx_antennas, drv._rx_antennas) == (4, 4)
+
+    async def test_load_non_default_file_does_not_touch_cache(self):
+        # 加载与默认不同的自定义文件 → 缓存保持原值 (operator 应另调 set_mimo_config)
+        drv, _ = _make_driver()
+        await drv.set_channel_model(
+            "CDL-A", "UMi", {"emulation_file": r"D:\My\custom.smu"}
+        )
+        assert (drv._tx_antennas, drv._rx_antennas) == (2, 2)  # 不变
+
+    async def test_config_topology_override_takes_effect(self):
+        # operator 经 connection_params 同时 override file + topology
+        custom_file = r"D:\My\custom_default.smu"
+        drv, _ = _make_driver({
+            "default_emulation_file": custom_file,
+            "default_emulation_file_topology": (8, 2),
+        })
+        await drv.set_channel_model("CDL-C", "UMa", {})  # 走 driver 默认 = custom_file
+        assert (drv._tx_antennas, drv._rx_antennas) == (8, 2)
+
+    async def test_per_call_file_matching_default_path_syncs(self):
+        # per-call 明确传默认路径 → 仍触发同步 (路径相等就同步, 与"怎么进来"无关)
+        drv, _ = _make_driver()
+        await drv.set_channel_model(
+            "CDL-C", "UMa", {"emulation_file": F64_DEFAULT_EMULATION_FILE}
+        )
+        assert (drv._tx_antennas, drv._rx_antennas) == (4, 4)
+
+    async def test_explicit_empty_default_no_topology_sync(self):
+        # 默认显式清空 → auto-name 路径不等于默认路径 → 不同步, 缓存保持构造默认
+        drv, _ = _make_driver({"default_emulation_file": ""})
+        await drv.set_channel_model("CDL-A", "UMi", {})
+        assert (drv._tx_antennas, drv._rx_antennas) == (2, 2)

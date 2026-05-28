@@ -107,6 +107,16 @@ F64_DEFAULT_EMULATION_FILE = (
     r"\3GPP_FR1_OTA_CDLC_UMa_3600M.smu"
 )
 
+# 3600M 默认文件的 (tx_antennas, rx_antennas) 拓扑元数据 (Codex on PR #97):
+# 加载默认文件后, 驱动据此同步 _tx_antennas/_rx_antennas 缓存; 否则下游
+# set_path_loss 等会按 stale 2x2 = 4 个输出配, 漏配 32 个 probe 输出的实际通道,
+# 导致 RF 数据失真。3600M = 4-input MIMO OTA model (MODEL:INFO? = 4,128,32),
+# F64 拓扑约定 4x4 (BS 4 TX × UE 4 RX layers)。
+# 操作员若 override default_emulation_file (per-binding connection_params), 也应
+# 同步 override default_emulation_file_topology, 否则缓存会 sync 到 (4,4) 但实际文件
+# 拓扑可能不同 —— 非默认文件由 operator 经 set_mimo_config 预设拓扑 (现有惯例)。
+F64_DEFAULT_EMULATION_FILE_TOPOLOGY: Tuple[int, int] = (4, 4)
+
 # VISA 超时常量 (毫秒)
 VISA_TIMEOUT_DEFAULT = 5000
 VISA_TIMEOUT_FILE_LOAD = 30000  # 大文件加载需要更长超时
@@ -325,6 +335,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         # 设为 falsy ("" / None) 则回退到 auto-name (legacy 行为)。
         self._default_emulation_file: str = config.get(
             "default_emulation_file", F64_DEFAULT_EMULATION_FILE
+        )
+        # P0-8 Step 4 (Codex on PR #97): 默认文件的已知拓扑, 加载后同步缓存,
+        # 避免下游 set_path_loss 等按 stale 2x2 缓存配错输出数 (见常量注释)。
+        self._default_emulation_file_topology: Optional[Tuple[int, int]] = config.get(
+            "default_emulation_file_topology", F64_DEFAULT_EMULATION_FILE_TOPOLOGY
         )
 
         # Calibration-tone 能力: PROPSIM Internal Interference Generator 是
@@ -718,6 +733,24 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 )
                 return False
             self._loaded_emulation_file = emulation_file
+
+            # 加载默认文件 → 同步 MIMO 拓扑缓存 (Codex on PR #97):
+            # 否则 _tx_antennas/_rx_antennas 仍是构造默认 2x2, 下游 set_path_loss 等
+            # 按 4 个输出配, 漏配实际 16 (4x4) 通道 → RF 失真。非默认文件由 operator
+            # 经 set_mimo_config 设拓扑 (现有惯例; set_mimo_config 在文件加载后会拒绝
+            # 与缓存不一致的请求, 故必须在 load 前设, 或加载默认时自动同步)。
+            if (
+                emulation_file == self._default_emulation_file
+                and self._default_emulation_file_topology is not None
+            ):
+                new_tx, new_rx = self._default_emulation_file_topology
+                old = (self._tx_antennas, self._rx_antennas)
+                if old != (new_tx, new_rx):
+                    self._tx_antennas, self._rx_antennas = new_tx, new_rx
+                    logger.info(
+                        "[F64/GCM] 默认文件加载 → 同步 MIMO 拓扑 %dx%d → %dx%d",
+                        old[0], old[1], new_tx, new_rx,
+                    )
 
             # Step 4: 设置中心频率
             freq_mhz = parameters.get("center_frequency_mhz", self._center_freq_mhz)
