@@ -39,7 +39,7 @@ import re
 import ftplib
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 
 from app.hal.base import (
@@ -73,6 +73,18 @@ class F64BypassMode(int, Enum):
     CHANNEL_MODEL = 1      # 信道模型旁路 (平均衰减, 零相位)
     BUTLER = 2             # Butler 矩阵旁路 (拓扑感知相位)
     CALIBRATION = 3        # 校准旁路 (所有通道等增益/等延迟/零相位)
+
+
+class F64InputMeasMode(int, Enum):
+    """F64 输入功率测量模式 (INP:MEAS:MODE:SET, User Reference §20.4.4.23)。
+
+    对 TDD 5G 下行 (只在 DL 时隙有信号) 必须用 BURST —— 它"在信号占空期测量",
+    抓 DL 突发的真实 avg/crest; CONTINUOUS 会把 UL/保护间隔静默一起平均进去 → 低估。
+    """
+    DISABLED = 0
+    BASIC = 1
+    CONTINUOUS = 2
+    BURST = 3
 
 
 # F64 远程文件存储路径默认 (Windows F64 ATE 出厂约定)。
@@ -1562,6 +1574,205 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             return level_dbm
         except Exception as e:
             logger.error(f"[F64] autoset_input_level failed: {e}")
+            return None
+
+    # ===================================================================
+    # 输入信号参考原子能力 (P0-8 Step 2 Phase 1)
+    # ===================================================================
+    # F64 每输入需正确的"平均电平 + crest factor"前端参考, 否则前端增益错 →
+    # DL 失真 (bypass 与衰落模式都受影响) → DUT 解不出 PDSCH。这些是 driver 层
+    # 薄封装; 跨 driver 闭环 (UXM 功率 ↔ F64 参考) + 编排在上层服务。
+    # 设计见 docs/architecture/f64-input-level-and-dynamic-range.md。
+
+    async def _query_float_pair(self, scpi: str) -> Optional[Tuple[float, float]]:
+        """查询返回 "<a>,<b>" 的两浮点对 (limits 类); 解析失败返回 None。"""
+        if not self._visa_resource:
+            return None
+        raw = ""
+        try:
+            raw = (await self._query(scpi)).strip()
+            parts = raw.split(",")
+            return (float(parts[0]), float(parts[1]))
+        except (ValueError, IndexError) as e:
+            logger.warning(f"[F64] {scpi} parse failed: {raw!r} ({e})")
+            return None
+        except Exception as e:
+            logger.error(f"[F64] {scpi} failed: {e}")
+            return None
+
+    async def measure_input(
+        self, input_num: int, measurement_time_s: float = 1.0
+    ) -> Optional[Tuple[float, float]]:
+        """测量 (不设) 输入的平均电平 + crest factor。
+
+        INP:LEV:MEAS? <in>,<t> → "<avg_dBm>,<crest_dB>" (User Reference §20.4.4.6)。
+        <t> = 0.5/1/3/5/10 秒。无信号/输出过强 → device error → 返回 None。
+        返回 (avg_dbm, crest_db) 或 None。
+        """
+        if not self._visa_resource:
+            return None
+        resp = ""
+        try:
+            resp = (await self._query(
+                f"INP:LEV:MEAS? {input_num},{measurement_time_s}",
+                timeout=VISA_TIMEOUT_AUTOSET,
+            )).strip()
+            parts = resp.split(",")
+            avg = float(parts[0])
+            crest = float(parts[1]) if len(parts) > 1 else 0.0
+            return (avg, crest)
+        except (ValueError, IndexError) as e:
+            logger.warning(f"[F64] measure_input({input_num}) parse failed: {resp!r} ({e})")
+            return None
+        except Exception as e:
+            logger.error(f"[F64] measure_input({input_num}) failed: {e}")
+            return None
+
+    async def autoset_all_inputs(self, measurement_time_s: float = 3.0) -> bool:
+        """对所有输入同时测量并设定 avg + crest (INP:LEV:AUTOSET 0,<t>, §20.4.4.7)。
+
+        <in>=0 = 全部输入同测 (保 MIMO 平衡)。测量失败 (无信号/过强) 不改旧值、报错。
+        用于"下行静态参考": 满 RB 代表性信号下测一次锁定 (见设计文档 §3.3/§4)。
+        """
+        if not self._visa_resource:
+            return False
+        try:
+            await self._write(f"INP:LEV:AUTOSET 0,{measurement_time_s}")
+            opc_timeout_ms = int((measurement_time_s + 2) * 1000)
+            await self._query("*OPC?", timeout=opc_timeout_ms)
+            await self._check_errors()
+            logger.info(f"[F64] autoset all inputs (t={measurement_time_s}s)")
+            return True
+        except Exception as e:
+            logger.error(f"[F64] autoset_all_inputs failed: {e}")
+            self._last_error = str(e)
+            return False
+
+    async def get_input_level_limits(
+        self, input_num: int
+    ) -> Optional[Tuple[float, float]]:
+        """输入平均电平允许窗口 (INP:LEV:AMP:LIM? <in> → "<lo>,<hi>", §20.4.4.5)。
+
+        电平不能设到窗口外。返回 (lower_dbm, upper_dbm) 或 None。
+        """
+        return await self._query_float_pair(f"INP:LEV:AMP:LIM? {input_num}")
+
+    async def get_crest_limits(
+        self, input_num: int
+    ) -> Optional[Tuple[float, float]]:
+        """crest factor 允许窗口 (INP:CRE:LIM? <in> → "<lo>,<hi>", §20.4.4.11)。"""
+        return await self._query_float_pair(f"INP:CRE:LIM? {input_num}")
+
+    async def get_crest_factor(self, input_num: int) -> Optional[float]:
+        """读 crest factor (INP:CRE:GET? <in>, §20.4.4.10)。"""
+        if not self._visa_resource:
+            return None
+        try:
+            return float((await self._query(f"INP:CRE:GET? {input_num}")).strip())
+        except Exception as e:
+            logger.warning(f"[F64] get_crest_factor({input_num}) failed: {e}")
+            return None
+
+    async def set_crest_factor(self, input_num: int, crest_db: float) -> bool:
+        """设 crest factor (INP:CRE:SET <in>,<dB>, §20.4.4.9)。
+
+        超窗口会被自动设到最近合法值 (手册)。手动设法; 一般优先 autoset。
+        """
+        if not self._visa_resource:
+            return False
+        try:
+            await self._write(f"INP:CRE:SET {input_num},{crest_db:.2f}")
+            await self._check_errors()
+            return True
+        except Exception as e:
+            logger.error(f"[F64] set_crest_factor({input_num}) failed: {e}")
+            self._last_error = str(e)
+            return False
+
+    async def set_input_measurement_mode(
+        self, input_num: int, mode: F64InputMeasMode
+    ) -> bool:
+        """设输入测量模式 (INP:MEAS:MODE:SET <in>,<mode>, §20.4.4.23)。
+
+        TDD 5G DL 用 BURST (见 F64InputMeasMode)。<in>=0 = 全部输入。
+        """
+        if not self._visa_resource:
+            return False
+        try:
+            await self._write(f"INP:MEAS:MODE:SET {input_num},{int(mode)}")
+            await self._check_errors()
+            return True
+        except Exception as e:
+            logger.error(f"[F64] set_input_measurement_mode({input_num}) failed: {e}")
+            self._last_error = str(e)
+            return False
+
+    async def get_input_measurement_mode(
+        self, input_num: int
+    ) -> Optional[F64InputMeasMode]:
+        """读输入测量模式 (INP:MEAS:MODE:GET? <in>, §20.4.4.24)。"""
+        if not self._visa_resource:
+            return None
+        try:
+            raw = (await self._query(f"INP:MEAS:MODE:GET? {input_num}")).strip()
+            return F64InputMeasMode(int(raw))
+        except Exception as e:
+            logger.warning(f"[F64] get_input_measurement_mode({input_num}) failed: {e}")
+            return None
+
+    async def set_burst_trigger_level(self, input_num: int, trigger_dbm: float) -> bool:
+        """设 burst 测量绝对触发电平 (INP:MEAS:BURST:TRIG:SET <in>,<dBm>, §20.4.4.27)。
+
+        仅在 burst 测量模式下可用。
+        """
+        if not self._visa_resource:
+            return False
+        try:
+            await self._write(f"INP:MEAS:BURST:TRIG:SET {input_num},{trigger_dbm:.2f}")
+            await self._check_errors()
+            return True
+        except Exception as e:
+            logger.error(f"[F64] set_burst_trigger_level({input_num}) failed: {e}")
+            self._last_error = str(e)
+            return False
+
+    async def get_system_status(self) -> Optional[Tuple[bool, List[str]]]:
+        """系统警告/告警状态 (SYST:STAT? §20.4.2.5)。
+
+        覆盖 Input cut-off / Digital Clipping / Reference status / Unstable level。
+        返回 "1" → (True, []); "0,<src1>,..." → (False, [srcs])。
+        """
+        if not self._visa_resource:
+            return None
+        try:
+            raw = (await self._query("SYST:STAT?")).strip()
+            parts = [p.strip() for p in raw.split(",")]
+            if parts and parts[0] == "1":
+                return (True, [])
+            if parts and parts[0] == "0":
+                return (False, [p for p in parts[1:] if p])
+            return (False, [raw])  # 非预期格式: 当作有警告, 原样带出
+        except Exception as e:
+            logger.warning(f"[F64] get_system_status failed: {e}")
+            return None
+
+    async def get_group_clipping(
+        self, group_num: int = 1, reset: bool = False
+    ) -> Optional[float]:
+        """通道组的平均 digital clipping, per-mille (GROup:CLIpping:GET? <g>,<reset>, §20.4.7.6)。
+
+        per-mille = 削顶样本占比 (千分之)。reset=True 同时清零平均累计。
+        avg+crest 超 ADC 满量程 → 这里非零 (闭环 verify 用)。
+        """
+        if not self._visa_resource:
+            return None
+        try:
+            raw = (await self._query(
+                f"GROup:CLIpping:GET? {group_num},{1 if reset else 0}"
+            )).strip()
+            return float(raw)
+        except Exception as e:
+            logger.warning(f"[F64] get_group_clipping({group_num}) failed: {e}")
             return None
 
     async def measure_rsrp(
