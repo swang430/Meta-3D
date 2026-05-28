@@ -98,6 +98,44 @@ class TestAutosetAllInputs:
         assert await drv.autoset_all_inputs(3.0) is True
 
 
+class TestAutosetInputsSubset:
+    """子集 autoset (Codex on PR #96: 避免对未连接输入触发 no-signal 错误)。"""
+
+    async def test_subset_succeeds_per_input(self):
+        drv, visa = _make_driver()
+        assert await drv.autoset_inputs([1, 3], 1.0) is True
+        autosets = [w for w in _writes(visa) if w.startswith("INP:LEV:AUTOSET")]
+        # 按顺序对 1 和 3 各发一次 (in!=0, 不是 AUTOSET 0)
+        assert autosets == ["INP:LEV:AUTOSET 1,1.0", "INP:LEV:AUTOSET 3,1.0"]
+
+    async def test_empty_list_is_noop(self):
+        drv, visa = _make_driver()
+        assert await drv.autoset_inputs([], 1.0) is True
+        assert not any(w.startswith("INP:LEV:AUTOSET") for w in _writes(visa))
+
+    async def test_per_input_fail_loud(self):
+        # input 3 autoset 失败 → return False; _last_error 标该输入
+        drv, visa = _make_driver(syst_err_responses=[
+            '0,"No error"',                  # drain 终止 (无 stale)
+            '0,"No error"',                  # input 1 check ok
+            '-300,"No input signal"',        # input 3 check fail
+        ])
+        ok = await drv.autoset_inputs([1, 3], 1.0)
+        assert ok is False
+        assert drv._last_error and "input 3" in drv._last_error
+        assert "No input signal" in drv._last_error
+
+    async def test_drains_stale_before_loop(self):
+        # 前序 stale 错误 → drain 清掉 → 后续 per-input 干净 → True
+        drv, _ = _make_driver(syst_err_responses=[
+            '-221,"stale"',                  # drain: stale
+            '0,"No error"',                  # drain 终止
+            '0,"No error"',                  # input 1 check ok
+            '0,"No error"',                  # input 2 check ok
+        ])
+        assert await drv.autoset_inputs([1, 2], 1.0) is True
+
+
 class TestLimits:
     async def test_level_limits(self):
         drv, _ = _make_driver({"INP:LEV:AMP:LIM? 1": "-23,0"})
