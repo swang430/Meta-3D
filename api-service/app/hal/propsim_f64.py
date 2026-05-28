@@ -94,6 +94,19 @@ class F64InputMeasMode(int, Enum):
 F64_EMULATION_DIR = r"D:\User Emulations"
 F64_WAVEFORM_DIR = r"D:\User Emulations\ASC"
 
+# F64 默认信道仿真文件 (3GPP FR1 OTA CDL-C UMa, 3600 MHz/N78, 4 输入 MIMO OTA)。
+# 现场 2026-05-27 真机实测 100% load/run 通过, 用户指定为默认 (P0-8 Step 4)。
+# 操作员覆盖优先级 (高 → 低):
+#   1) set_channel_model(parameters={"emulation_file": <path>}) —— per-call
+#   2) InstrumentConnection.connection_params["default_emulation_file"] —— per-binding
+#   3) F64_DEFAULT_EMULATION_FILE —— 本常量 (系统默认)
+#   4) f"{self.emulation_dir}\\{model_type}_{scenario}_{tx}x{rx}.smu" —— 兜底 auto-name
+F64_DEFAULT_EMULATION_FILE = (
+    r"D:\Scenario Packs\F9815064A TS 5G FR1 MIMO OTA\1.1"
+    r"\3GPP_FR1_OTA_CDLC_UMa_3600M.wiz"
+    r"\3GPP_FR1_OTA_CDLC_UMa_3600M.smu"
+)
+
 # VISA 超时常量 (毫秒)
 VISA_TIMEOUT_DEFAULT = 5000
 VISA_TIMEOUT_FILE_LOAD = 30000  # 大文件加载需要更长超时
@@ -307,6 +320,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         # Phase 2h: 跨实验室部署时由 InstrumentCategory.config 覆盖
         self.emulation_dir: str = config.get("emulation_dir", F64_EMULATION_DIR)
         self.waveform_dir: str = config.get("waveform_dir", F64_WAVEFORM_DIR)
+        # P0-8 Step 4: 默认信道仿真文件。操作员可经 connection_params 覆盖
+        # (HAL service 在 init 时已 merge connection_params 进 config; 无需迁移)。
+        # 设为 falsy ("" / None) 则回退到 auto-name (legacy 行为)。
+        self._default_emulation_file: str = config.get(
+            "default_emulation_file", F64_DEFAULT_EMULATION_FILE
+        )
 
         # Calibration-tone 能力: PROPSIM Internal Interference Generator 是
         # optional license. 默认在 connect() 中通过 *OPT? 探测 (见 base
@@ -662,11 +681,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             await self._write("DIAG:SIMU:CLOSE")
             self._emulation_running = False
 
-            # Step 2: 构建仿真文件路径
-            # 支持用户手动指定 .smu 路径, 或使用标准命名约定
-            emulation_file = parameters.get("emulation_file")
+            # Step 2: 构建仿真文件路径 (优先级见 F64_DEFAULT_EMULATION_FILE 注释, P0-8 Step 4)
+            # 1) per-call parameters["emulation_file"]; 2) 驱动默认 (config / 常量);
+            # 3) 兜底 auto-name (仅当默认被显式清空)
+            emulation_file = parameters.get("emulation_file") or self._default_emulation_file
             if not emulation_file:
-                # 标准命名: D:\User Emulations\CDL-A_UMi_2x2.smu
+                # 默认被操作员显式清空 → 回退 auto-name (legacy)
                 emulation_file = (
                     f"{self.emulation_dir}\\{model_type}_{scenario}"
                     f"_{self._tx_antennas}x{self._rx_antennas}.smu"
