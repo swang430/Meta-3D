@@ -251,6 +251,15 @@ class MIMOOTAConfiguration(BaseModel):
     # result_payload["dut_pass_reason"]. GUI commissioning workflow does not
     # expose this flag — same opt-in-only contract as precheck_strict_cal.
 
+    precheck_strict_input_level: bool = True
+    # P0-8 Step 2 Phase 2b (2026-05-28): F64 输入操作点闭环 (InputLevelController)
+    # 在 measure phase 内部、generator 载完 fading 后跑。CE+BS 同时具备 input-level
+    # capability (hasattr 检测) 时启用; 缺一方自动跳过 (mock dry-run 不受影响)。
+    # True (生产默认): 闭环不收敛 → measure phase FAILED (操作点是 RF 正确性前置,
+    # 不收敛后续 RSRP/吞吐都不可信). False (opt-out): 不收敛降级为 warning, 继续
+    # azimuth 扫描, 在 result_payload["input_level_calibration"] 留 audit 痕迹。
+    # 同 precheck_strict_cal/dut: GUI 不暴露, fixture/config 级别 opt-in。
+
     # === Pass/fail thresholds ===
     pass_criteria: MIMOOTAPassCriteria = Field(default_factory=MIMOOTAPassCriteria)
 
