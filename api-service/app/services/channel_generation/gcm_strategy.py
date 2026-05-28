@@ -148,12 +148,13 @@ class NativeModelStrategy(BaseChannelGenerator):
                 f"[NativeModel Strategy] Using explicit .smu: {emulation_file}"
             )
         else:
-            # 使用标准命名约定, 交给 HAL 驱动自行构造路径
-            # (F64 驱动的 set_channel_model 会使用:
-            #  D:\User Emulations\{model}_{scenario}_{tx}x{rx}.smu)
+            # 不指定 emulation_file → 委托驱动选默认 (P0-8 Step 4):
+            # F64 驱动优先级 = connection_params["default_emulation_file"] >
+            # F64_DEFAULT_EMULATION_FILE (3600M) > auto-name (legacy)。
             simulation_rules_with_file = dict(simulation_rules)
             logger.info(
-                "[NativeModel Strategy] Using standard .smu naming convention"
+                "[NativeModel Strategy] No explicit .smu in simulation_rules; "
+                "delegating to driver default (F64: connection_params or code default)."
             )
 
         # ----- Step 3: 通过 HAL 统一接口加载 -----
