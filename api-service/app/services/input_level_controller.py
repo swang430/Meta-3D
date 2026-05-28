@@ -132,8 +132,9 @@ class InputLevelController:
                     failure_reason=mode_err,
                 )
 
-            # D: AUTOSET 所有输入 (Phase 1 fail-loud: device error → False)
-            if not await self._ce.autoset_all_inputs(self._autoset_t):
+            # D: AUTOSET 仅 active_inputs (子集 — 避免 INP:LEV:AUTOSET 0 对未连接输入
+            #    触发 no-signal 错误, Codex on PR #96)。fail-loud: device error → False。
+            if not await self._ce.autoset_inputs(self._inputs, self._autoset_t):
                 # autoset 失败 (无信号/过强) → 调 UXM 功率重试。
                 # heuristic: 第一轮多半是信号弱/未到 → 升; 后续可能是过强 → 降。
                 if iteration == 1:
@@ -214,7 +215,8 @@ class InputLevelController:
 
         返回 (操作点列表, out_of_window_low, out_of_window_high, 失败原因)。
         out_lo = avg < hard_lower; out_hi = avg > (upper - target_offset) (软目标,
-        留 crest headroom)。limits 查询失败的输入只记 avg/crest, 不参与窗口判定。
+        留 crest headroom)。**limits 查询失败 → fail-fast** (Codex on PR #96: 无窗口
+        就无法证明 avg 在限内, 不能默认通过)。
         """
         op_point: List[InputOperatingPoint] = []
         out_lo = False
@@ -227,7 +229,10 @@ class InputLevelController:
             op_point.append(InputOperatingPoint(in_num, avg, crest))
             limits = await self._ce.get_input_level_limits(in_num)
             if limits is None:
-                continue
+                # 无窗口 → 无法证明 avg 在限内, 不能默认通过 (Codex on PR #96)。
+                return op_point, out_lo, out_hi, (
+                    f"get_input_level_limits({in_num}) 失败: 无法验证操作点是否在窗口内"
+                )
             lo, hi = limits
             target_max = hi - self._target_offset
             if avg < lo:

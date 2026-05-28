@@ -70,7 +70,7 @@ class _FakeCE:
         self._system_status = system_status
         self._set_mode = set_mode
         self._set_burst = set_burst
-        self.autoset_calls: List[float] = []
+        self.autoset_calls: List[Tuple[List[int], float]] = []
         self.mode_calls: List[Tuple[int, F64InputMeasMode]] = []
         self.burst_calls: List[Tuple[int, float]] = []
         self.measure_calls: List[Tuple[int, float]] = []
@@ -85,8 +85,9 @@ class _FakeCE:
         self.burst_calls.append((in_num, dbm))
         return self._set_burst
 
-    async def autoset_all_inputs(self, t: float) -> bool:
-        self.autoset_calls.append(t)
+    async def autoset_inputs(self, input_nums, t: float) -> bool:
+        # 子集 autoset (PR #96 Codex fix): 只对 input_nums 操作, 不用 INP:LEV:AUTOSET 0
+        self.autoset_calls.append((list(input_nums), t))
         if isinstance(self._autoset, list):
             i = self._autoset_idx
             self._autoset_idx += 1
@@ -279,7 +280,8 @@ class TestAgcModeNotImplemented:
 
 class TestActiveInputsSubset:
     async def test_only_specified_inputs_operated(self):
-        # active_inputs=(1, 2) 只对 1 和 2 设 mode/trigger/measure
+        # active_inputs=(1, 2) 只对 1 和 2 设 mode/trigger/measure/AUTOSET
+        # (Codex on PR #96: autoset 必须用子集, 不能 INP:LEV:AUTOSET 0 触发未连接输入错误)
         bs = _FakeBS()
         ce = _FakeCE(measure=_coupled_measure(bs))
         ctrl = InputLevelController(ce, bs, active_inputs=(1, 2))
@@ -289,3 +291,24 @@ class TestActiveInputsSubset:
         assert [op.input_num for op in result.operating_point] == [1, 2]
         assert [c[0] for c in ce.mode_calls] == [1, 2]
         assert [c[0] for c in ce.burst_calls] == [1, 2]
+        # autoset 必须只对子集 [1, 2], 而非 [0] (= 全部) —— 这是 Codex 修复的核心
+        assert ce.autoset_calls == [([1, 2], 3.0)]
+
+
+class TestLimitsUnreadable:
+    """Codex on PR #96: 若 get_input_level_limits 失败 → fail-fast。
+    不能默认通过 (无窗口就证明不了 avg 在限内)。"""
+
+    async def test_limits_none_fails_fast_not_silent_success(self):
+        bs = _FakeBS()
+        # limits=None 模拟 SCPI 超时/格式错; clipping/status 干净 (旧逻辑会误报 success)
+        ce = _FakeCE(
+            measure=_coupled_measure(bs),
+            limits=None,
+            clipping=0.0,
+            system_status=(True, []),
+        )
+        result = await InputLevelController(ce, bs).establish()
+        assert result.success is False, "limits 不可读时不能默默成功"
+        assert "get_input_level_limits" in (result.failure_reason or "")
+        assert "窗口" in (result.failure_reason or "")

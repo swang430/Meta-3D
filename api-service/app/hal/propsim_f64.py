@@ -39,7 +39,7 @@ import re
 import ftplib
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, Iterable, List, Optional, Tuple
 from datetime import datetime
 
 from app.hal.base import (
@@ -1672,6 +1672,47 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             return True
         except Exception as e:
             logger.error(f"[F64] autoset_all_inputs failed: {e}")
+            self._last_error = str(e)
+            return False
+
+    async def autoset_inputs(
+        self, input_nums: Iterable[int], measurement_time_s: float = 3.0
+    ) -> bool:
+        """对**指定子集**输入逐个 AUTOSET (INP:LEV:AUTOSET <in>,<t>), fail-loud。
+
+        与 ``autoset_all_inputs`` (INP:LEV:AUTOSET 0, 全输入同测、保 MIMO 平衡) 不同:
+        本方法只对 ``input_nums`` 列表中的输入做 autoset, **避免对未连接输入触发
+        no-signal device error** (Codex on PR #96: 子集拓扑下 INP:LEV:AUTOSET 0 会因
+        未连接的输入而失败)。代价: 失去同测的 MIMO 平衡 (per-input 顺序而非并发)。
+
+        失败 (任一输入报 device error) 即 fail-loud 返回 False, 不让上层拿部分更新的
+        参考继续。空列表视为 no-op (True)。
+        """
+        if not self._visa_resource:
+            return False
+        inputs_list = list(input_nums)
+        if not inputs_list:
+            return True  # no-op
+        try:
+            # 清空遗留 stale 错误 (FIFO, 否则首个 per-input check 会误判)
+            await self._drain_errors()
+            for in_num in inputs_list:
+                await self._write(f"INP:LEV:AUTOSET {in_num},{measurement_time_s}")
+                opc_timeout_ms = int((measurement_time_s + 2) * 1000)
+                await self._query("*OPC?", timeout=opc_timeout_ms)
+                err = await self._first_error()
+                if err is not None:
+                    self._last_error = f"autoset input {in_num} failed: {err}"
+                    logger.error(
+                        "[F64] autoset_inputs({}) 失败 (SYST:ERR?): {}".format(in_num, err)
+                    )
+                    return False
+            logger.info(
+                "[F64] autoset inputs %s ok (t=%ss)", inputs_list, measurement_time_s
+            )
+            return True
+        except Exception as e:
+            logger.error(f"[F64] autoset_inputs failed: {e}")
             self._last_error = str(e)
             return False
 
