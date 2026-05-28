@@ -8,13 +8,14 @@
 
 ## 🎯 Current Focus
 
-**P0-8 — F64 driver 现场修复落地 (port 3334 + 输入信号参考/crest + 加载 gate + 默认 .smu)。本地可启动。**
-5/27 现场已结束 (全程见 [`docs/site-debug/2026-05-27-morning-log.md`](site-debug/2026-05-27-morning-log.md))。现场把两天的
-F64 first-call blocker 根因挖到底、并在真机上验证了修法, 但改动还是裸改 (`api-service/app/hal/propsim_f64.py:285`
-端口强制 3334, **未提交**), 且"输入信号参考"是全新缺失的 driver 能力。按治理本意 —— driver 代码必须出发前 offline
-落地, 现场只调硬件 —— **把 P0-8 (本地可启动) 升为 Current Focus**: 将现场验证过的修法正式化成 PR + 单测,
-下次现场只做硬件实测 (输入参考真值), 不再现场写 driver。之前的本地 audit 流 (P1-12~15) 已收口,
-P1-12 (#79/#80/#81) / P1-13 (#83) / P1-14 (#86) / P1-15 (#88) 全 merged。
+**P1-16 — backend `scpi-command` 端点 slow-op desync (timeout_ms 透传)。本地可启动。**
+**P0-8 本地半已全部 ✅ Done** (port 3334 / 输入参考 atomic / InputLevelController / wiring /
+加载 gate / 默认 .smu — PR #92 / #93 / #95 / #96 / #97 / #98 全 merged), 现场半待下次现场实测
+(输入参考真值 U-6 + DL 不失真)。所有真 P0 (P0-3/4/5) 仍 🚧 on-site blocked (校准天线 / SGH /
+真 DUT 不在位) → 按 WIP=1 governance 降级到 P1 队列, 唯一本地可启动 = **P1-16** (5/27 现场
+直连 `/tmp/f64ctl.py` workaround 暴露的 backend desync; 修了之后下次现场 input level loop
+才能经后端稳定下发)。之前的本地 audit 流 P1-12 (#79/#80/#81) / P1-13 (#83) / P1-14 (#86) /
+P1-15 (#88) 全 merged。
 
 **5/27 现场产出 (诊断 + 真机验证, 非交付件 —— first-call PDF 未产出)**:
 - ✅ F64 两天 blocker 根因坐实: ATE/SCPI 端口硬件固定 **3334**, 早期误用 5025 → 响应 desync + 文件加载 -300。真机 3334 上 load / run / 改参全 0 error。
@@ -66,12 +67,15 @@ manual 测试挖到的, 且对 5/27 现场直接相关 (现场 Mac 挂 VPN 时�
 | P2-4 | 🚧 on-site | NAT/FW idle-drop hypothesis 现场 verify |
 
 **5/27 现场已结束** (产出见上方 Current Focus + 下方 P0-8 / P1-16 / P2-9 + [morning-log](site-debug/2026-05-27-morning-log.md))。
-现场没拿到 first-call PDF (又消耗在 F64 driver 层), 但坐实并真机验证了 F64 修法 → 收敛为本地可启动的 **P0-8**。
+现场没拿到 first-call PDF (又消耗在 F64 driver 层), 但坐实并真机验证了 F64 修法 → 收敛为本地可启动的 **P0-8** (2026-05-28 本地半全部 ✅ Done, 6 个 PR #92/#93/#95/#96/#97/#98 merged)。
 silent-failure / readiness-correctness audit 已成体系且 ROI 反复证明 (P1-8 cal gate /
 P1-9 DUT / P1-10 ring-only / P1-12 QZ+TRP+path-loss 兜底标记 / P1-13 子网可达性假阳性 /
 P1-14 mock 探针拒绝 / P1-15 preflight canary / 一串 drive-by bug fix)。本地审计流收口;
-下一轮若再 audit/manual 挖到东西 = candidate for **P1-17**。**当前 Current Focus = P0-8 (本地, F64 driver 落地)**;
-下次现场 (校准天线 / 真 DUT 到位) 按 [`on-site-debug-protocol`](guides/on-site-debug-protocol.md) 切回 P0-4→P0-3→P0-5。
+下一轮若再 audit/manual 挖到东西 = candidate for **P1-17**。**当前 Current Focus = P1-16
+(scpi-command timeout 透传, 本地)** — P0-8 本地半 done 后, 所有真 P0 (P0-3/4/5) 仍 on-site
+blocked, 按 WIP=1 governance 降级到 P1 队列里唯一本地可启动项。下次现场 (校准天线 / 真 DUT
+到位) 按 [`on-site-debug-protocol`](guides/on-site-debug-protocol.md) **必须先切回 P0-4 →
+P0-3 → P0-5** (无论 P1-16 状态)。
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
@@ -426,7 +430,7 @@ sessions can actually be created.
 
 ---
 
-### P0-8 — F64 driver 现场修复落地 (port 3334 + 输入信号参考/crest + 加载 gate + 默认 .smu) 🔄 Current Focus
+### P0-8 — F64 driver 现场修复落地 (port 3334 + 输入信号参考/crest + 加载 gate + 默认 .smu) ✅ 本地半 Done, 🚧 现场半 on-site
 
 > **来源**: 2026-05-27 现场。F64 是 first-call 两天 blocker 的核心。现场把根因挖到底、
 > 在真机上验证了修法, 但都是裸改 (未提交); "输入信号参考"另立专项设计 (driver 有方法却无人调用, 需跨 driver 操作点闭环)。本项把验证过的修法
@@ -458,8 +462,15 @@ sessions can actually be created.
 - **本地半 (offline, 本 PR)**: 端口固定 3334 + 文件头注释修正 + DB 端口改 + 输入参考操作点子系统 (下行静态 AUTOSET) + 加载后 `SYST:ERR?` gate + channel_count 从 `SYST:INFO?` + 默认 .smu 配好; 单元测试全过 (mock SCPI)。
 - **现场半 (下次现场实测)**: real F64 上 load→run→改参全 0 error; 设对输入参考后 **输入口变绿**; DL 不失真 (DUT attach 后非 0% ACK)。正确的 level / crest 真值待实测 (见 U-6)。
 
-**Status**: 🔄 in-progress (Current Focus) —— Step 0+1 (端口) ✅ PR #92 merged; Step 3 (加载 gate + drain) ✅ PR #93 in review; Step 2 (输入参考操作点子系统) 已起草[设计文档](architecture/f64-input-level-and-dynamic-range.md), 待实现 Phase 1; Step 4/5 待续。
-**Estimate**: 本地 ~1.5 day + 现场实测 ~0.5 day
+**Status**: **本地半 ✅ Done** (2026-05-28) —— Step 0+1 (端口 3334 + DB seeder) ✅ PR #92;
+Step 3 (加载后 `SYST:ERR?` gate + drain) ✅ PR #93; Step 2 输入参考操作点子系统 ✅:
+Phase 1 (atomic) PR #95 + Phase 2 (InputLevelController stand-alone) PR #96 +
+Phase 2b (接入 measure phase 闭环) PR #98; Step 4 (默认 3600M .smu + connection_params
+override + 加载默认时拓扑同步) ✅ PR #97; Step 5 (单元测试) 跟 Step 2/3/4 一起 ✅. 🚧
+**现场半待下次现场实测**: real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真
+(DUT attach 后非 0% ACK); 正确的 level / crest 真值由 [`InputLevelController` 默认参数]
+(`api-service/app/services/input_level_controller.py`) 兜底, 真值待标 (U-6)。
+**Estimate**: 本地 ~1.5 day (实际 ~2.5 day 含 6 个 PR + Codex review iterate) + 现场实测 ~0.5 day
 
 ---
 
@@ -1056,7 +1067,7 @@ SYN, 于是每个 IP 都"alive"、每个子网都"可达"。实测连 RFC5737 TE
 
 ---
 
-### P1-16 — backend scpi-command 端点 slow-op desync (timeout_ms 透传)
+### P1-16 — backend scpi-command 端点 slow-op desync (timeout_ms 透传) 🔄 Current Focus
 
 **What**: `POST /api/v1/instruments/{cat}/scpi-command` 端点不把 `timeout_ms` 传给
 `driver._query` → 慢操作 (F64 加载后 `*OPC?`、`INP:LEV:MEAS?` / `INP:LEV:AUTOSET` 等几秒级命令)
@@ -1073,7 +1084,7 @@ SYN, 于是每个 IP 都"alive"、每个子网都"可达"。实测连 RFC5737 TE
 **Acceptance**: 经后端连发 F64 `*OPC?` (加载后) + `INP:LEV:AUTOSET` + `SYST:ERR?`, 每条都读到
 **自己**的回包, 无错位; 慢操作不被默认短超时截断。
 
-**Status**: `[ ]` not started — 本地可启动
+**Status**: 🔄 in-progress (2026-05-28, P0-8 本地半 close 后按 WIP=1 governance 降级到 P1).
 **Estimate**: ~0.5 day
 
 ---
