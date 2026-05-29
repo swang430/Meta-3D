@@ -80,8 +80,9 @@ alembic upgrade head
 # 3. 灌默认数据 — bootstrap (暗室/探头/仪器/序列/模板/拓扑; 幂等可重跑)
 python -m scripts.bootstrap
 
-# 3b. (纯离线 / 无硬件开发) 注入虚拟校准 fixture — bootstrap 不含校准数据,
-#     缺它拓扑编辑器/测试引擎会报错。详见 docs/Database-Operations-Guide.md
+# 3b. (纯离线 / 无硬件开发) 注入虚拟校准 fixture — bootstrap 不含校准数据。
+#     ⚠️ fixture 硬编码 chamber ID, fresh DB 须先对齐 (查 chamber id → 改 fixture
+#     顶部 CHAMBER_ID), 否则校准行挂错 chamber 查不到。详见 Database-Operations-Guide.md §3。
 python scripts/dev-fixtures/seed_dummy_calibration.py
 ```
 
