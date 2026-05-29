@@ -8,13 +8,11 @@
 
 ## 🎯 Current Focus
 
-**P1-16 — backend `scpi-command` 端点 slow-op desync (timeout_ms 透传)。本地可启动。**
-**P0-8 本地半已全部 ✅ Done** (port 3334 / 输入参考 atomic / InputLevelController / wiring /
-加载 gate / 默认 .smu — PR #92 / #93 / #95 / #96 / #97 / #98 全 merged), 现场半待下次现场实测
-(输入参考真值 U-6 + DL 不失真)。所有真 P0 (P0-3/4/5) 仍 🚧 on-site blocked (校准天线 / SGH /
-真 DUT 不在位) → 按 WIP=1 governance 降级到 P1 队列, 唯一本地可启动 = **P1-16** (5/27 现场
-直连 `/tmp/f64ctl.py` workaround 暴露的 backend desync; 修了之后下次现场 input level loop
-才能经后端稳定下发)。之前的本地 audit 流 P1-12 (#79/#80/#81) / P1-13 (#83) / P1-14 (#86) /
+**下一个待用户确认启动 — 仪器配置可复现性收口 (P1-17 UXM / P2-10 F64 精细化)。本地可启动。**
+
+**已收口** (2026-05-28/29): P0-8 本地半 ✅ (F64 端口/输入参考/默认.smu/加载gate, #92/#93/#95/#96/#97/#98) + P1-16 ✅ (scpi-command timeout 透传, #99) + Docker durability ✅ (备份/external→具名volume/重命名/安装文档, #102/#103)。所有真 P0 (P0-3/4/5) 仍 🚧 on-site blocked (校准天线/SGH/真DUT)。
+
+**2026-05-29 全景规划** (用户复盘三大块 F64/UXM/Docker + 开关/转台 现状与前瞻): 把"仪器配置可复现性"缺口结构化成新条目 —— **P1-17 UXM fresh-start 配置落地** (对称 P0-8, 消除现场 UXM "快速路", 最大未规划缺口, 本地可启动) + **P2-10 F64 工程精细化** (配置文件资产/外部输出/user alignment cal, 部分本地) + **U-7** (UXM 参数集真值) + enrich P2-9 (射频开关下一步) / U-5 (转台)。**核心洞察**: F64 和 UXM 是同一个"配置可复现性"问题两面, UXM 落后 F64 一身位 (有 `load_state_file` + Topology Profile 但缺"默认自动应用")。**下一个 Current Focus 强候选 = P1-17** (待用户确认启动)。之前的本地 audit 流 P1-12 (#79/#80/#81) / P1-13 (#83) / P1-14 (#86) /
 P1-15 (#88) 全 merged。
 
 **5/27 现场产出 (诊断 + 真机验证, 非交付件 —— first-call PDF 未产出)**:
@@ -1084,8 +1082,39 @@ SYN, 于是每个 IP 都"alive"、每个子网都"可达"。实测连 RFC5737 TE
 **Acceptance**: 经后端连发 F64 `*OPC?` (加载后) + `INP:LEV:AUTOSET` + `SYST:ERR?`, 每条都读到
 **自己**的回包, 无错位; 慢操作不被默认短超时截断。
 
-**Status**: 🔄 in-progress (2026-05-28, P0-8 本地半 close 后按 WIP=1 governance 降级到 P1).
+**Status**: ✅ Done — PR #99 (merged 2026-05-29). reconcile: 本条 status 之前 stale 写 in-progress, #99 已 merged。
 **Estimate**: ~0.5 day
+
+---
+
+### P1-17 — UXM fresh-start 配置落地 (对称 P0-8: 现场不再临时配 UXM)
+
+**What**: 给 UXM 加"默认测试参数集 fresh-start 自动应用"那一层, 让 UXM 从开机/重连到就位是可复现的, 消除现场"快速路"(手动前面板点 / 临时 SCPI)。对称 P0-8 对 F64 做的 (默认 .smu 自动加载)。
+
+**Why P1**: 5/27 现场 UXM 走了快速路 —— 能跑通但靠手动配, 没 offline 可复现入口。下次现场要么重复手动 (慢 + 易漏), 要么出发前把"参数集 + 自动应用"备好、现场只验硬件。这是 first-call repeatability (P1-4) 的前提, 也是"现场不临时配"铁律对 UXM 的落实。
+
+**现状盘点 (2026-05-29 调研)**:
+- ✅ 基建零件齐: `load_state_file()` (UXM .state 一键 recall) + Topology Profile (P2-1, DB 持久化参数集 cell/MIMO/power/FRC, 7 内置模板) + Test App 自动检测 (`SYSTem:APPLication:NAME?`) + `MIMO_PORT_PRESETS`。
+- ✅ auto-apply 机制有: HAL reload 时若 binding 的 `connection_params["topology_profile_id"]` 已设, 自动 `apply_topology_profile()` (instrument_hal_service.py:719)。
+- ❌ **缺"默认 profile"**: fresh-start 时若 binding 没设 profile_id, 不 apply 任何基线 → 空配置。对称 F64 有 `F64_DEFAULT_EMULATION_FILE` 自动加载, UXM 无对称默认。
+- ❓ **remote .state 盘点空白**: 现场 UXM 上 save 过哪些 .state、路径、内容 —— 未盘点 (见 U-7)。
+
+**Scope (本地半, 出发前)**:
+
+| Step | Subject |
+|------|---------|
+| 1 | 默认 Topology Profile: 标一个内置 profile 为 default (e.g. 3600M/N78 4x4 对齐 F64 默认 .smu), fresh-start binding 无显式 profile 时自动 apply (对称 P0-8 Step 4 默认 .smu + connection_params override) |
+| 2 | .state 路径 override: connection_params 支持 `default_state_file`, `configure()` 优先 recall (机制已有 `load_state_file`, 补默认 + override 链) |
+| 3 | fresh-start 编排 runbook: UXM 开机 → Test App 检测 → 默认参数集应用 的可复现文档 |
+| 4 | 单测: 默认 profile fresh-start 自动 apply / override 优先级 / 无 profile 不再空配 |
+
+**Acceptance**:
+- **本地半**: 全新 binding (无显式 profile) HAL reload → 自动 apply 默认参数集 (3600M/N78 对齐 F64); connection_params override 默认 profile / state_file 生效; 单测全过 (mock UXM)。
+- **现场半 (下次现场)**: real UXM fresh-start 一键就位 (cell live + 对齐 F64 频率/MIMO) 无需手动前面板; .state 盘点完成 (U-7)。
+
+**依赖**: P2-1 (✅ Done)。关联: U-7 (参数集真值), P0-5 (DUT attach 用 UXM), P1-4 (repeatability)。
+**Status**: `[ ]` not started — 本地可启动 (强候选 Current Focus)。
+**Estimate**: 本地 ~1.5 day + 现场 ~0.5 day。
 
 ---
 
@@ -1493,8 +1522,38 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 即时阻塞。
 
 **Status**: `[ ]` not started — 🚧 blocked: 需 offline 协议调研 (EMQuest 文档) + 现场 EMQuest 访问。
+**下一步 (用户 2026-05-29 复盘: "射频开关还没完全受控")**: ① offline 把 `Instrument_API_Doc/` 的 EMCenter/EMSwitch/AMS8947 协议读透 (REST? 专有 TCP? 必须 EMQuest 中转?) → ② driver method 设计 (set_route / get_route) → ③ 接入 TopologyEditor 的 mapping/连线 (见 memory: TopologyEditor 核心价值是 mapping 不是设备选型)。①②本地可启动。
 **来源**: 2026-05-27 现场, 见 [morning-log](site-debug/2026-05-27-morning-log.md) §10.1。文档: `Instrument_API_Doc/` 下 ETS-L EMCenter / EMSwitch + CAICT Chamber Switch (TMC AMS8947)。
 **Estimate**: offline 调研 0.5 day + 现场 0.5 day
+
+---
+
+### P2-10 — F64 工程精细化 (配置文件资产 + 外部输出 + 内部 cal 打磨)
+
+**What**: P0-8 让 F64 first-call 链路通 (端口 / 输入参考 / 默认 .smu / 加载 gate) 之后, F64 还有一系列工程精细应用没接: remote .smu 配置文件资产的盘点/管理、外部输出端口的精细配置、内部 user alignment cal 的刷新策略。
+
+**Why P2**: 非 first-call 即时阻塞 (P0-8 已让链路通), 是 F64 从"能跑"到"精细工程可用"的打磨 (用户 2026-05-29 复盘: "打磨 F64 内部校准、外部输出等工程精细应用")。
+
+**现状盘点 (2026-05-29 调研)**:
+- ✅ 输出端基础 method 有: `OUTP:LOSS:SET <output>,<loss_db>` (路损补偿, set_path_loss 用) + `OUTP:CON:SET` (connector 物理路由)。
+- ✅ user alignment 机制有: `get_user_alignment_status` / `enable_user_alignment` / `SYST:CALIB:USER:SET`; connect() 尝试激活 preferred alignment。
+- ⚠️ 缺: remote .smu 文件资产盘点 (有哪些可用模型, 现状 `available_channel_models` 是 connection_params 静态清单 → 应动态发现或盘点) + 外部输出电平/功率精细配置 (当前只有 loss 补偿) + user alignment cal 刷新策略 (何时重标 / 漂移监控)。
+
+**Scope (拆本地 vs 现场)**:
+
+| Step | Subject | 本地/现场 |
+|------|---------|----------|
+| 1 | remote .smu 配置文件 inventory: 列举 remote 可用模型 (动态发现或盘点文档, 对称 UXM .state 盘点) | 现场盘点 + 本地 API |
+| 2 | 外部输出端口精细配置: 输出电平/功率 method (超出当前 loss 补偿) + 物理路由 OUTP:CON 接入 topology | 本地 driver + 现场验 |
+| 3 | user alignment cal 刷新策略: 何时重标 (温度/时间漂移) + readiness 上报 + 漂移监控 (关联 operating-point uncertainty backlog) | 本地策略 + 现场真值 |
+
+**Acceptance**:
+- **本地**: .smu inventory API + 输出端口配置 method + user alignment 刷新策略 + 单测 (mock SCPI)。
+- **现场 (下次现场)**: user alignment cal 真值 + 输出功率校准 + .smu 资产盘点。
+
+**依赖**: P0-8 (✅ 本地半 Done)。关联: U-6 (输入参考真值), operating-point uncertainty backlog (#101)。
+**Status**: `[ ]` not started — Step 1/2/3 各有本地半可启动。
+**Estimate**: 本地 ~2 day + 现场 ~1 day。
 
 ---
 
@@ -1809,8 +1868,9 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 | U-2 | Are `OUTPut:INTERFerence:LIST?` / `SYSTem:CALibration:USER:LIST?` the right soft-probes on F64? | On-site execution, see [P1-2](#p1-2--f64-license-probe-scpi-on-site-verification) |
 | U-3 | Which UXM Test Apps does CAICT actually use (beyond 5G NR / LTE_NR_IRAT)? | Inventory at next on-site |
 | U-4 | What are the common DUT attach failure modes (IMSI / SIM / RRC state)? | First DUT attach session, see [P0-5](#p0-5--dut-attach--bearer--pdsch-on-uxm-5g-nr) |
-| U-5 | 转台 (Aerotech A3200) 在本系统驱动下单轴/多轴定位与回零行为如何? | 2026-05-27 现场测试了但**无结论**; 下次现场: 单轴回零 → 定位 → 4 方位扫验证, 关联 P0-5 |
+| U-5 | 转台 (Aerotech A3200) 在本系统驱动下单轴/多轴定位与回零行为如何? | 2026-05-27 现场测试了但**无结论**; 本地可先完善单轴/多轴 driver 逻辑 + mock 测试, 现场验真实回零 → 定位 → 4 方位扫, 关联 P0-5 |
 | U-6 | F64 各输入"信号参考"的正确 level (dBm) + crest factor (dB) 真值 (针对 3600M/N78 模型 + UXM DL 功率)? | 下次现场用 `INP:LEV:AUTOSET` 自动测 + 看输入口变绿 + DL 不失真, 关联 P0-8 |
+| U-7 | UXM 正确测试参数集真值 (band/BW/SCS/ARFCN/MIMO/power/FRC for 3600M N78) + remote 机器上现存哪些 `.state` 文件 (路径/内容)? | 下次现场: 盘点 UXM 已存 `.state` + 用默认 Topology Profile (P1-17) 验 cell live + 对齐 F64 频率/MIMO; 关联 P1-17 |
 
 ---
 
@@ -1852,7 +1912,11 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 ## 📊 Summary
 
 > Counts as of 2026-05-27 (post P1-11~15 #71/#79/#80/#81/#83/#86/#88 + 5/27 现场 triage
-> 3 新项: P0-8 / P1-16 / P2-9)。Full-sweep flaky count remains **0**。
+> 3 新项: P0-8 / P1-16 / P2-9)。**2026-05-29 update**: P0-8 本地半 / P1-16 (#99) / Docker
+> durability (#102/#103) 全收口; 新增 **P1-17** (UXM 配置落地) + **P2-10** (F64 精细化) +
+> **U-7** (UXM 真值)。⚠️ 下方数字表为 5/27 快照, **未含 2026-05-29 新增 3 项, 计数待下次
+> weekly review 从各条 status 精确重算** (避免在 stale 基数上 delta 算错)。Full-sweep flaky
+> count remains **0**。
 >
 > **5/27 现场**: first-call PDF **未产出** (又消耗在 F64 driver 层, 用户授权修), 但把两天的 F64
 > blocker 根因坐实并真机验证修法 → 收敛为**本地可启动**的 P0-8 (port 3334 + 输入信号参考/crest +
@@ -1863,7 +1927,7 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 > 把现场验证过的 F64 修法 offline 正式化, 兑现"现场不写 driver"铁律); P2-9 需 offline 调研 + 现场;
 > 其余 7 项 (3 × on-site P0-3/4/5 + P1-2 + P1-4 + P1-5 on-site half + P2-4) 仍 on-site-blocked;
 > P1-6 ⏸️ incident-conditional hold (trigger = 真 idle-close, 当前没证据, 仍计 open)。下一轮本地
-> audit/manual 再挖到 = candidate for **P1-17**。
+> audit/manual 再挖到 = candidate for **P1-18** (P1-17 已于 2026-05-29 分配给 UXM fresh-start 配置落地)。
 >
 > (历史) P1-12 兜底标未验证 / P1-13 子网假阳性 / P1-14 mock 探针拒绝 / P1-15 preflight canary 全
 > Done; 已知静默兜底扫净 + readiness 假阳性已修 + preflight 抗代理/VPN。详见 Current Focus 段。
