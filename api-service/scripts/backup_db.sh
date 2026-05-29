@@ -1,7 +1,7 @@
 #!/bin/sh
 # PostgreSQL 备份脚本 (2026-05-29 durability 改进 — out-of-roadmap)。
 #
-# 把运行中的 meta3d-postgres 容器里的库 pg_dump (custom format) 导到
+# 把运行中的 meta3d_db 容器里的库 pg_dump (custom format) 导到
 # host 的 db-backups/ 目录, 轮转保留最近 N 份。custom format (-Fc) 压缩 +
 # 支持 pg_restore 选择性恢复。
 #
@@ -16,7 +16,7 @@
 #   (或 launchd 定时, 见 scripts/com.meta3d.db-backup.plist)
 #
 # 可调环境变量 (都有默认):
-#   META3D_PG_CONTAINER  (meta3d-postgres)
+#   META3D_PG_CONTAINER  (meta3d_db)
 #   META3D_PG_DB         (meta3d_ota)
 #   META3D_PG_USER       (meta3d)
 #   META3D_BACKUP_DIR    (脚本同级 ../db-backups)
@@ -26,7 +26,7 @@ set -e
 # launchd 环境 PATH 不含 docker — 显式补全 (Docker Desktop / Homebrew 常见位置)。
 export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:$PATH"
 
-CONTAINER="${META3D_PG_CONTAINER:-meta3d-postgres}"
+CONTAINER="${META3D_PG_CONTAINER:-meta3d_db}"
 DB="${META3D_PG_DB:-meta3d_ota}"
 PGUSER_="${META3D_PG_USER:-meta3d}"
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)

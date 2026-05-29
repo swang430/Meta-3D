@@ -45,7 +45,7 @@
 - **端口:** API(8000), Engine(8001), GUI(5173)。
 - **依赖:** Channel Engine 依赖本地路径 `/Users/Simon/Tools/ChannelEgine`。
 - **数据存储:**
-    - 结构化数据 (Topology, Users): PostgreSQL (Docker: `meta3d-postgres`, Database: `meta3d_ota`).
+    - 结构化数据 (Topology, Users): PostgreSQL (Docker: `meta3d_db`, Database: `meta3d_ota`).
     - 临时/自定义场景: JSON 文件 (`api-service/data/custom_scenarios.json`).
 
 ## 3. 待办事项与未来计划 (Backlog & Future Plans)

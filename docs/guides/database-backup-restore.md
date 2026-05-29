@@ -7,7 +7,7 @@
 
 实测发现两个 🔴 鲁棒性问题:
 
-1. **启动不可复现 + volume 漂移**:运行中的 `meta3d-postgres` 是**手动 `docker run`** 起的(无 compose label),挂 named volume `meta3d_postgres_data`(真数据)。而 `docker-compose.yml` 若直接 `docker compose up`,默认 project=目录名 `api-service` → 会连到**另一个废弃 volume `api-service_postgres_data`**(旧数据)→ 在旧库上跑测试 = 真相分裂。
+1. **启动不可复现 + volume 漂移**:运行中的 `meta3d_db` 是**手动 `docker run`** 起的(无 compose label),挂 named volume `meta3d_postgres_data`(真数据)。而 `docker-compose.yml` 若直接 `docker compose up`,默认 project=目录名 `api-service` → 会连到**另一个废弃 volume `api-service_postgres_data`**(旧数据)→ 在旧库上跑测试 = 真相分裂。
 2. **零备份 + Docker Desktop VM 单点**:macOS 上 named volume 实际在 Docker Desktop 的 Linux VM 虚拟磁盘镜像(`Docker.raw`)里。Docker Desktop「Troubleshoot → Reset / Purge data」一键清空;host 硬断电可能损坏 VM 磁盘 → 整库全丢。PG 自己的 WAL 只保**容器内**崩溃恢复,**保不了 VM 磁盘镜像损坏**。默认不在 Time Machine。
 
 本套机制:
@@ -55,7 +55,7 @@ tail db-backups/backup.log               # 看结果
 ```bash
 # ⚠️ 会覆盖现有数据 — 恢复前先备份当前状态 (sh scripts/backup_db.sh)
 DUMP=db-backups/meta3d_ota_<时间戳>.dump
-cat "$DUMP" | docker exec -i meta3d-postgres pg_restore -U meta3d -d meta3d_ota --clean --if-exists
+cat "$DUMP" | docker exec -i meta3d_db pg_restore -U meta3d -d meta3d_ota --clean --if-exists
 ```
 
 ### 恢复到全新库(灾难恢复,volume 已丢)
@@ -64,11 +64,11 @@ cat "$DUMP" | docker exec -i meta3d-postgres pg_restore -U meta3d -d meta3d_ota 
 # 1. 起空 postgres (external volume 若已丢, 先临时去掉 external 让 compose 建新的)
 docker compose up -d postgres
 # 2. 建库 (POSTGRES_DB 已自动建 meta3d_ota; 若没有:)
-docker exec meta3d-postgres createdb -U meta3d meta3d_ota 2>/dev/null || true
+docker exec meta3d_db createdb -U meta3d meta3d_ota 2>/dev/null || true
 # 3. 灌数据
-cat db-backups/meta3d_ota_<时间戳>.dump | docker exec -i meta3d-postgres pg_restore -U meta3d -d meta3d_ota --clean --if-exists
+cat db-backups/meta3d_ota_<时间戳>.dump | docker exec -i meta3d_db pg_restore -U meta3d -d meta3d_ota --clean --if-exists
 # 4. 验证表数
-docker exec meta3d-postgres psql -U meta3d -d meta3d_ota -c \
+docker exec meta3d_db psql -U meta3d -d meta3d_ota -c \
   "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';"
 ```
 
@@ -85,13 +85,13 @@ docker compose config | grep -A3 'postgres_data'    # 应看到 external + name:
 sh scripts/backup_db.sh
 
 # 3. 停 + 删手动容器 (named volume 不受影响)
-docker stop meta3d-postgres && docker rm meta3d-postgres
+docker stop meta3d_db && docker rm meta3d_db
 
 # 4. 用 compose 起 (只起 postgres, 不碰 host 上的 uvicorn :8000)
 docker compose up -d postgres
 
 # 5. 验证连的是真数据 (表数应跟切换前一致, 当前 = 55)
-docker exec meta3d-postgres psql -U meta3d -d meta3d_ota -c \
+docker exec meta3d_db psql -U meta3d -d meta3d_ota -c \
   "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';"
 ```
 

@@ -66,7 +66,7 @@ USE_MOCK_INSTRUMENTS=true
 
 ```bash
 # Start PostgreSQL (Docker)
-docker run --name meta3d-postgres \
+docker run --name meta3d_db \
   -e POSTGRES_USER=meta3d \
   -e POSTGRES_PASSWORD=meta3d_password \
   -e POSTGRES_DB=meta3d_ota \
