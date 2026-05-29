@@ -79,6 +79,10 @@ alembic upgrade head
 
 # 3. 灌默认数据 — bootstrap (暗室/探头/仪器/序列/模板/拓扑; 幂等可重跑)
 python -m scripts.bootstrap
+
+# 3b. (纯离线 / 无硬件开发) 注入虚拟校准 fixture — bootstrap 不含校准数据,
+#     缺它拓扑编辑器/测试引擎会报错。详见 docs/Database-Operations-Guide.md
+python scripts/dev-fixtures/seed_dummy_calibration.py
 ```
 
 > **全自动**:`docker compose up -d`(不带 service 名)会连 api 容器一起起,其
