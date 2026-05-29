@@ -1,0 +1,9 @@
+# 数据库备份产物 — 含真实数据 + 体积大, 绝不进版本库。
+# 备份脚本本身在 scripts/backup_db.sh (那个进 git)。
+*.dump
+*.sql
+*.sql.gz
+*.gz
+*.log
+# 保留本目录结构 + 此 .gitignore
+!.gitignore

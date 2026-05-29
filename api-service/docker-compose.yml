@@ -2,13 +2,20 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:14
+    # Pin minor (was bare `postgres:14`): 避免 docker pull 静默升 14.x minor,
+    # 保证任何机器/任何时间 build 出的环境跟当前运行的一致 (当前 = 14.20)。
+    image: postgres:14.20
     container_name: meta3d-postgres
+    # host / Docker Desktop 重启后自动拉起 — 之前手动 docker run 起的容器
+    # RestartPolicy=no, 重启后服务不起 (数据不丢但要手动 docker start, 现场易踩)。
+    restart: unless-stopped
     environment:
       POSTGRES_USER: meta3d
       POSTGRES_PASSWORD: meta3d_password
       POSTGRES_DB: meta3d_ota
     ports:
+      # ⚠️ 仍绑所有接口 (0.0.0.0) — 信息安全加固 (改 127.0.0.1 / 强密码) 是
+      # 单独一轮工作, 本次只动 durability。见 docs/guides/database-backup-restore.md。
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -35,4 +42,13 @@ services:
       - ./certificates:/app/certificates
 
 volumes:
+  # external + 固定 name: 消除"启动方式决定 volume 名"的漂移。
+  # 实测发现: 运行中的 meta3d-postgres 是手动 docker run 起的, 挂的是
+  # `meta3d_postgres_data` (72M 真数据); 而 `docker compose up` 默认 project=
+  # 目录名 api-service → 会连到另一个废弃的 `api-service_postgres_data` (49.9M
+  # 旧数据) → 在旧库上跑测试 = 真相分裂。显式 external 锁定到真数据 volume,
+  # 不管用什么 project 名 / 怎么起, compose 都连同一个库, 且 compose 不会
+  # 自动创建/删除它 (external = 外部管理, 防误删)。
   postgres_data:
+    external: true
+    name: meta3d_postgres_data
