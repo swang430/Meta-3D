@@ -40,38 +40,37 @@ DATABASE_URL=postgresql://meta3d:meta3d_password@localhost:5432/meta3d_ota
 
 ---
 
-## 3. 初始化向导与脚本
+## 3. 初始化：建表 (Alembic) + 灌默认数据 (Bootstrap)
 
-为方便首次部署，系统内嵌了智能的数据库初始化向导。
+数据库初始化 = 两步：**Alembic 建表** + **Bootstrap 灌默认数据**。两条部署路径殊途同归（都汇到同一套 `alembic upgrade head` + `run_all` / `bootstrap_history` 逻辑）。
 
-### 3.1 自动启动向导
-当您首次通过 `npm run dev:safe:all` 启动系统时，启动脚本会自动探测数据库状态。如果发现核心表为空，系统会在终端提示您进入**全自动初始化向导**：
-1. 自动生成所有所需的表结构 (Schema)
-2. 注入仪器型号目录 (Seed Instruments)
-3. 生成 CAICT 默认 32 探头物理布局
-4. 生成基础测试报告模板
-5. 加载标准通用与路测测试序列
+### 3.1 自动（推荐，无需手动干预）
+- **Docker 全栈**：`docker compose up -d` —— api 容器的 `docker-entrypoint.sh` 自动按顺序跑 `alembic upgrade head` → `python -m scripts.bootstrap` → uvicorn。
+- **host 开发**（host 直接跑 uvicorn）：`app/main.py` 的 lifespan 启动时自动调 `init_db()`（检测到 `alembic_version` 表则跳过 `create_all`）+ `run_bootstrap_on_startup()`（受 config `bootstrap_on_startup=True` 控制）。
 
-### 3.2 手动执行初始化脚本
-如果因故自动向导未能完成，或者您需要重置特定部分的数据，您可以手动在后端虚拟环境中执行这些 Python 脚本：
+> [!WARNING]
+> **host 开发全新空库必须先手动 `alembic upgrade head` 再启动 app**。否则 `init_db()` 检测不到 `alembic_version` 表，会 fallback 用 `create_all()` 建表 —— 表是建了，但没有 alembic 版本跟踪，后续 migration 会冲突。Docker 全栈的 entrypoint 已把顺序焊死，无此坑。
+
+### 3.2 手动（重置 / 排查时）
 
 ```bash
-# 1. 切换到后端目录并激活虚拟环境
 cd api-service
 source .venv/bin/activate
 
-# 2. 如果需要建表（通常 FastAPI 启动时会自动建表）
-python -c "from app.db.database import init_db; init_db()"
+# 1. 建表 — Alembic 迁移到 head (幂等: 只跑未应用的 migration)
+alembic upgrade head
 
-# 3. 依次执行数据注入
-python scripts/seed_instruments.py
-python scripts/init_probes.py
-python scripts/init_report_templates.py
-python scripts/init_sequences.py
+# 2. 灌默认数据 — bootstrap 框架 (幂等: bootstrap_history 版本跟踪, 重跑 no-op)
+python -m scripts.bootstrap
+#   --dry-run          只报计划不写库
+#   --force            无视 history 强制重跑
+#   --only <seeder>    只跑指定 seeder
 ```
 
-> [!TIP]
-> 如果您是在没有连接真实物理硬件的纯离线开发环境中，强烈建议执行 `python scripts/seed_dummy_calibration.py` 来注入虚拟的路径校准损耗数据，这能防止拓扑编辑器和测试引擎因缺少校准文件而报错。
+**7 个 seeder（依赖序）**：`chamber_presets` → `probes` → `instruments` → `sequences` → `report_templates` → `test_case_templates` → `topology_profiles`（暗室预设 / 32 探头布局 / 仪器型号目录 / 标准测试序列 / 报告模板 / TestCase 模板 / UXM 拓扑 profile）。
+
+> [!NOTE]
+> 旧的单独脚本（`seed_instruments.py` / `init_probes.py` / `init_report_templates.py` / `init_sequences.py` / `seed_dummy_calibration.py`）已整合进 bootstrap 框架并删除。任何引用它们的旧步骤一律改用 `python -m scripts.bootstrap`。
 
 ---
 
@@ -91,12 +90,16 @@ cat your_backup_file.dump | docker exec -i meta3d_db pg_restore -U meta3d -d met
 ```
 
 ### 4.3 重置/清空数据库
-如果需要在开发期间彻底清空并重新开始：
+> [!WARNING]
+> `down -v` 会**永久删除 volume 数据**（volume 现在是非 external 具名卷，`-v` 会真删）。重置前务必先备份。
+
 ```bash
-docker-compose down -v
-docker-compose up -d postgres
+sh scripts/backup_db.sh          # 1. 先备份当前数据 (止血, → db-backups/)
+docker compose down -v           # 2. 删容器 + volume
+docker compose up -d postgres    # 3. 起空库 (volume 自动重建)
+alembic upgrade head             # 4. 重新建表
+python -m scripts.bootstrap      # 5. 重新灌默认数据
 ```
-然后再次运行 `npm run dev:safe:all` 触发全新的初始化向导。
 
 ---
 

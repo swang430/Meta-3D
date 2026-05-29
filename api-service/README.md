@@ -62,21 +62,37 @@ USE_MOCK_INSTRUMENTS=true
 
 ### 4. Database Setup
 
-#### Option A: PostgreSQL (Production)
+数据库一律 PostgreSQL,由 `docker-compose.yml` 管理(named volume + restart +
+pin `postgres:14.20`)。建表靠 Alembic,灌默认数据靠 bootstrap 框架。
+
+> ⚠️ **不要用裸 `docker run` 起 PostgreSQL** —— 会绕过 compose 管理,且极易漏挂
+> `-v` volume(数据存容器可写层,容器删即全丢)。一律走 `docker compose`。
+
+#### Option A: Docker Compose(推荐)
 
 ```bash
-# Start PostgreSQL (Docker)
-docker run --name meta3d_db \
-  -e POSTGRES_USER=meta3d \
-  -e POSTGRES_PASSWORD=meta3d_password \
-  -e POSTGRES_DB=meta3d_ota \
-  -p 5432:5432 \
-  -d postgres:14
+# 1. 起 PostgreSQL 容器 (volume 缺失自动创建; POSTGRES_DB 自动建空库)
+docker compose up -d postgres
+
+# 2. 建表 — Alembic 迁移到 head
+alembic upgrade head
+
+# 3. 灌默认数据 — bootstrap (暗室/探头/仪器/序列/模板/拓扑; 幂等可重跑)
+python -m scripts.bootstrap
 ```
 
-#### Option B: SQLite (Development)
+> **全自动**:`docker compose up -d`(不带 service 名)会连 api 容器一起起,其
+> `docker-entrypoint.sh` 自动按 `alembic upgrade head → bootstrap → uvicorn`
+> 跑完,步骤 2-3 无需手动执行。
+>
+> ⚠️ **host 开发**(host 直接跑 uvicorn)时,全新空库**必须先 `alembic upgrade
+> head`** 再启动 app —— 否则 lifespan 的 `init_db()` 会 fallback 用
+> `create_all()` 建表,绕过 alembic 版本跟踪。详见
+> [数据库操作指南](../docs/Database-Operations-Guide.md)。
 
-No setup needed, just change `DATABASE_URL` in `.env`:
+#### Option B: SQLite(仅单元测试隔离)
+
+测试用(内存 / 文件);生产与开发一律 PostgreSQL。改 `.env`:
 
 ```env
 DATABASE_URL=sqlite:///./meta3d_ota.db
