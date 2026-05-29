@@ -47,13 +47,17 @@ services:
       - ./certificates:/app/certificates
 
 volumes:
-  # external + 固定 name: 消除"启动方式决定 volume 名"的漂移。
-  # 实测发现: 运行中的 meta3d_db 是手动 docker run 起的, 挂的是
-  # `meta3d_postgres_data` (72M 真数据); 而 `docker compose up` 默认 project=
-  # 目录名 api-service → 会连到另一个废弃的 `api-service_postgres_data` (49.9M
-  # 旧数据) → 在旧库上跑测试 = 真相分裂。显式 external 锁定到真数据 volume,
-  # 不管用什么 project 名 / 怎么起, compose 都连同一个库, 且 compose 不会
-  # 自动创建/删除它 (external = 外部管理, 防误删)。
+  # 固定 name (不随 compose project 名漂移), 但【不设 external】:
+  #   - 显式 name 锁定到 meta3d_postgres_data: 不管 project=api-service 还是
+  #     meta3d, volume 都是这一个 → 消除"启动方式决定 volume 名"的漂移
+  #     (实测踩过: project=api-service 默认会连到废弃的 api-service_postgres_data
+  #     而非真数据 meta3d_postgres_data)。
+  #   - 【不设 external】: compose 在 up 时缺失则自动创建、存在则复用。对全新
+  #     checkout / Docker Desktop purge 后 / 换机器至关重要 —— external=true 会让
+  #     compose 在 volume 缺失时直接报错起不来, 而灾后恢复正是 volume 缺失的
+  #     场景 (Codex on PR #102)。
+  # ⚠️ 代价: 没了 external 的防误删 —— `docker compose down -v` 会删这个 volume
+  #    (普通 `down` 不会)。别用 down -v; 有 scripts/backup_db.sh + 灾后恢复
+  #    runbook (docs/guides/database-backup-restore.md) 兜底。
   postgres_data:
-    external: true
     name: meta3d_postgres_data

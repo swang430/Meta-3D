@@ -11,7 +11,7 @@
 2. **零备份 + Docker Desktop VM 单点**:macOS 上 named volume 实际在 Docker Desktop 的 Linux VM 虚拟磁盘镜像(`Docker.raw`)里。Docker Desktop「Troubleshoot → Reset / Purge data」一键清空;host 硬断电可能损坏 VM 磁盘 → 整库全丢。PG 自己的 WAL 只保**容器内**崩溃恢复,**保不了 VM 磁盘镜像损坏**。默认不在 Time Machine。
 
 本套机制:
-- `docker-compose.yml` 用 **external volume**(固定 `name: meta3d_postgres_data`)锁定真数据,消除漂移 + 防 compose 误删。
+- `docker-compose.yml` 用固定 `name: meta3d_postgres_data`(**非 external**)锁定真数据 volume,消除漂移;且缺失时 compose 自动创建 —— 全新 checkout / Docker Desktop purge 后 / 灾后恢复可直接 `docker compose up`,不会因 volume 缺失报错(`external: true` 会报错,Codex on PR #102)。
 - `scripts/backup_db.sh` + launchd 定时把库 `pg_dump` 导到 **host 真实文件系统**(进 Time Machine / 可拷走)—— 唯一跨 VM-磁盘-损坏的副本。
 
 ## 数据存在哪
@@ -20,7 +20,7 @@
 |---|---|
 | 库文件(权威副本) | named volume `meta3d_postgres_data` → Docker Desktop VM 内 `/var/lib/docker/volumes/meta3d_postgres_data/_data` |
 | 备份 dump | host `api-service/db-backups/*.dump`(custom format,gitignored)|
-| 废弃 volume | `api-service_postgres_data`(旧数据,确认无用后可删,先留)|
+| ~~废弃 volume~~ | `api-service_postgres_data` 已删(2026-05-29,orphan 旧数据);删前 tar 留底 `db-backups/abandoned_*.tar.gz` |
 
 ## 备份
 
@@ -61,7 +61,7 @@ cat "$DUMP" | docker exec -i meta3d_db pg_restore -U meta3d -d meta3d_ota --clea
 ### 恢复到全新库(灾难恢复,volume 已丢)
 
 ```bash
-# 1. 起空 postgres (external volume 若已丢, 先临时去掉 external 让 compose 建新的)
+# 1. 起空 postgres (volume 已丢也没关系: 非 external, compose 会自动建空 volume)
 docker compose up -d postgres
 # 2. 建库 (POSTGRES_DB 已自动建 meta3d_ota; 若没有:)
 docker exec meta3d_db createdb -U meta3d meta3d_ota 2>/dev/null || true
@@ -79,7 +79,7 @@ docker exec meta3d_db psql -U meta3d -d meta3d_ota -c \
 ```bash
 cd api-service
 # 1. 验证 compose 解析到真数据 volume (不改任何状态)
-docker compose config | grep -A3 'postgres_data'    # 应看到 external + name: meta3d_postgres_data
+docker compose config | grep -A3 'postgres_data'    # 应看到 name: meta3d_postgres_data (非 external)
 
 # 2. 先备份 (止血)
 sh scripts/backup_db.sh
