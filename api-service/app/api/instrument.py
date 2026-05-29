@@ -1796,11 +1796,35 @@ async def _maybe_await(value):
     return value
 
 
+def _driver_supports_timeout_kwarg(driver) -> bool:
+    """driver._do_query/_do_write 是否接受 timeout 关键字参数。
+
+    P1-16 (2026-05-28): F64/FS16 (socket-based, asyncio.to_thread + raw recv)
+    `_do_query` 显式签名 `(cmd, timeout=None)` — 慢操作 (F64 加载后 *OPC?、
+    INP:LEV:MEAS?) 必须显式给足 timeout, 否则默认短超时让真响应迟到串到下一次读
+    (desync 级联)。pyvisa-based driver (UXM/ENA/FSVA/CMW500 等) `_do_query(cmd)`
+    没 timeout 形参 (timeout 是 visa_resource.timeout) — 透传 timeout=X 会 TypeError。
+    introspect `_do_query` 而非 `_query`: 后者是 base 模板方法 (一律 **kwargs),
+    真正的 signature constraint 在子类 override 的 `_do_query` 上。
+    """
+    import inspect
+
+    try:
+        sig = inspect.signature(driver._do_query)
+    except (ValueError, TypeError, AttributeError):
+        return False
+    params = sig.parameters
+    if "timeout" in params:
+        return True
+    return any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
 async def _run_command_via_hal(
     driver,
     command: str,
     scpi_logger: logging.Logger,
     category_key: str,
+    timeout_ms: Optional[int] = None,
 ) -> ScpiCommandResult:
     """Execute one SCPI command through the loaded HAL driver's primitives.
 
@@ -1811,18 +1835,27 @@ async def _run_command_via_hal(
     diagnostic terminal showed 5/5 "timed out, 0ms" exactly because
     the old socket-only path opened a parallel SOCKET while HAL already
     held one.
+
+    P1-16: ``timeout_ms`` 在 driver 接受 ``timeout`` kwarg 时透传 — 修 F64/FS16
+    慢操作 desync (5/27 CAICT 现场: 经后端 set 输入参考的 closed-loop 没闭环
+    的直接原因之一, 见 [morning-log §10.5])。不支持的 driver 保持默认行为。
     """
     import time
 
     is_query = command.strip().endswith("?")
     start = time.monotonic()
+    pass_timeout = timeout_ms is not None and _driver_supports_timeout_kwarg(driver)
     try:
         scpi_logger.debug(
-            f"[SCPI-TERM via HAL] {category_key} → {command}",
+            f"[SCPI-TERM via HAL] {category_key} → {command}"
+            + (f" (timeout={timeout_ms}ms)" if pass_timeout else ""),
             extra={"instrument_id": category_key, "direction": "WRITE", "command": command},
         )
         if is_query:
-            raw = await _maybe_await(driver._query(command.strip()))
+            if pass_timeout:
+                raw = await _maybe_await(driver._query(command.strip(), timeout=timeout_ms))
+            else:
+                raw = await _maybe_await(driver._query(command.strip()))
             raw_str = str(raw or "").strip()
             scpi_logger.debug(
                 f"[SCPI-TERM via HAL] {category_key} ← {raw_str[:200] if raw_str else '(empty)'}",
@@ -1844,7 +1877,10 @@ async def _run_command_via_hal(
                 latency_ms=round(latency, 1),
             )
         # Write command — no response expected.
-        await _maybe_await(driver._write(command.strip()))
+        if pass_timeout:
+            await _maybe_await(driver._write(command.strip(), timeout=timeout_ms))
+        else:
+            await _maybe_await(driver._write(command.strip()))
         latency = (time.monotonic() - start) * 1000
         return ScpiCommandResult(
             command=command.strip(),
@@ -2138,9 +2174,14 @@ async def send_scpi_command(
         return result
 
     # HAL-first routing same as /scpi-probe. See _run_command_via_hal docstring.
+    # P1-16: 透传 request.timeout_ms 给 driver (F64/FS16 慢操作必须明给, 见
+    # _driver_supports_timeout_kwarg)。pyvisa driver 自动 fallback 不变。
     hal_driver = _get_loaded_hal_driver(category_key)
     if hal_driver is not None:
-        result = await _run_command_via_hal(hal_driver, request.command, scpi_logger, category_key)
+        result = await _run_command_via_hal(
+            hal_driver, request.command, scpi_logger, category_key,
+            timeout_ms=request.timeout_ms,
+        )
         return _audit(result)
 
     if not ip:
