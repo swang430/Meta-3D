@@ -44,6 +44,19 @@ class TestDefault3600Profile:
         assert p.frequency_mhz == 3600.0
         assert "3600M" in F64_DEFAULT_EMULATION_FILE
 
+    def test_default_profile_arfcn_actually_drives_uxm_to_3600(self):
+        # Codex on PR #107: UXM 真正用 ARFCN 定频, 不是 frequency_mhz。只验
+        # frequency_mhz==3600 不够 (我第一版的漏洞) —— profile 必须显式设
+        # arfcn, 否则 set_cell_config fallback 到 NR_BAND_ARFCN_MAP["N78"]=
+        # 632628 (3489MHz), "对齐 F64"的 profile 实际驱动 UXM 到 3489 → 没对齐。
+        p = _PROFILE_REGISTRY["caict_n78_3600_4x4"]
+        # 640000 = 3600.0 MHz 的 NR-ARFCN (FR1 range2: 600000+(F-3000)/0.015)
+        assert p.arfcn == 640000
+        # 端到端: to_config_dict (set_cell_config 的输入) 真带 arfcn,
+        # 否则 driver fallback 到 N78 默认 3489MHz。这才是 UXM 实际用的频率参数。
+        cfg = p.to_config_dict()
+        assert cfg.get("arfcn") == 640000
+
 
 class TestDefaultConstant:
     def test_default_const_points_to_3600_profile(self):
