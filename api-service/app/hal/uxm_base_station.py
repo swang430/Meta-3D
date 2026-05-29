@@ -88,6 +88,14 @@ VISA_TIMEOUT_CELL = 30000
 VISA_TIMEOUT_ATTACH = 90000
 VISA_TIMEOUT_STATE_LOAD = 60000  # 配置文件加载可能需要较长时间
 
+# P1-17: UXM fresh-start 系统默认 topology profile (对齐 F64 默认 .smu =
+# 3GPP_FR1_OTA_CDLC_UMa_3600M, N78 4-input, 3600 MHz)。_initialize_from_db 在
+# binding 没显式选 profile 时 fallback 到它, 消除现场"快速路"(手动 PUT 选 profile)。
+# 对称 F64_DEFAULT_EMULATION_FILE。操作员可经
+# connection_params["default_topology_profile_id"] 覆盖。
+# ⚠️ 必须跟 F64 默认 .smu 同频 (3600M) — 否则 BS 发 3600 而 CE 在另一频 = 链路打架。
+UXM_DEFAULT_TOPOLOGY_PROFILE_ID = "caict_n78_3600_4x4"
+
 # 默认 ARFCN 映射 (NR 频段 → ARFCN)
 NR_BAND_ARFCN_MAP = {
     "N78": 632628,  # 3.5 GHz
@@ -171,6 +179,13 @@ class RealUxmDriver(BaseStationDriver):
         # by the HAL service post-connect for GUI audit / P3-5 readiness
         # panel.
         self.detected_test_app: Optional[str] = None
+        # P1-17: fresh-start 系统默认 topology profile id。binding 没显式选
+        # profile 时, HAL service _initialize_from_db 读这个 attr 做 fallback
+        # (见 UXM_DEFAULT_TOPOLOGY_PROFILE_ID)。operator 经 connection_params
+        # ["default_topology_profile_id"] 覆盖 (对称 F64 default_emulation_file)。
+        self._default_topology_profile_id: str = config.get(
+            "default_topology_profile_id", UXM_DEFAULT_TOPOLOGY_PROFILE_ID
+        )
         # VISA session
         self._visa_rm = None
         self._visa_session = None

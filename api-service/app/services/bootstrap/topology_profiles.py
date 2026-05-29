@@ -1,4 +1,4 @@
-"""Seed the 7 canonical UXM topology profiles for P2-1 Phase 2.1.
+"""Seed the 8 canonical UXM topology profiles (P2-1 Phase 2.1 + P1-17 default).
 
 Source of truth is ``app.hal.uxm_test_profiles._PROFILE_REGISTRY`` —
 the in-code dataclass registry that pre-dates DB persistence. Keeping
@@ -106,8 +106,8 @@ def _seed(db: Session) -> SeedResult:
 
 topology_profiles_seeder = Seeder(
     name="topology_profiles",
-    version=1,
-    description="7 canonical UXM topology profiles (SISO/MIMO/calibration) "
-                "marked is_system_preset=true",
+    version=2,  # P1-17: +caict_n78_3600_4x4 (fresh-start 默认, 对齐 F64 3600M)
+    description="8 canonical UXM topology profiles (SISO/MIMO/calibration + "
+                "3600M fresh-start default) marked is_system_preset=true",
     run=_seed,
 )

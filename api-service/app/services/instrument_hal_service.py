@@ -727,6 +727,18 @@ class InstrumentHALService:
                         topology_id = None
                         if conn and isinstance(conn.connection_params, dict):
                             topology_id = conn.connection_params.get("topology_profile_id")
+                        # P1-17: binding 没显式选 profile → fallback 到 driver 的
+                        # 系统默认 (_default_topology_profile_id, 对齐 F64 默认 .smu),
+                        # 消除 fresh-start "快速路" (空配置 / 手动 PUT)。operator 在
+                        # connection_params 显式设 topology_profile_id 仍优先。对称
+                        # F64 set_channel_model 的默认 .smu fallback。
+                        if not topology_id:
+                            topology_id = getattr(driver, "_default_topology_profile_id", None)
+                            if topology_id:
+                                logger.info(
+                                    f"[HAL] {cat.category_key}: binding 未选 topology "
+                                    f"profile, fallback 到系统默认 {topology_id!r} (P1-17)"
+                                )
                         if topology_id and hasattr(driver, "apply_topology_profile"):
                             # P2-1 Phase 2.1: driver consumes the dataclass;
                             # lookup happens here so HAL stays DB-free.
