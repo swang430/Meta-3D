@@ -69,11 +69,12 @@ manual 测试挖到的, 且对 5/27 现场直接相关 (现场 Mac 挂 VPN 时�
 silent-failure / readiness-correctness audit 已成体系且 ROI 反复证明 (P1-8 cal gate /
 P1-9 DUT / P1-10 ring-only / P1-12 QZ+TRP+path-loss 兜底标记 / P1-13 子网可达性假阳性 /
 P1-14 mock 探针拒绝 / P1-15 preflight canary / 一串 drive-by bug fix)。本地审计流收口;
-下一轮若再 audit/manual 挖到东西 = candidate for **P1-17**。**当前 Current Focus = P1-16
-(scpi-command timeout 透传, 本地)** — P0-8 本地半 done 后, 所有真 P0 (P0-3/4/5) 仍 on-site
-blocked, 按 WIP=1 governance 降级到 P1 队列里唯一本地可启动项。下次现场 (校准天线 / 真 DUT
+下一轮若再 audit/manual 挖到东西 = candidate for **P1-18**。**P0-8 本地半 / P1-16 (#99) /
+Docker durability (#102/#103) 全收口; 下一个 Current Focus 强候选 = P1-17 (UXM fresh-start
+配置落地, 本地, 待用户确认启动)** — 所有真 P0 (P0-3/4/5) 仍 on-site blocked, 按 WIP=1
+governance 在 P1 队列推进本地可启动项 (P1-17 / P2-10 本地半)。下次现场 (校准天线 / 真 DUT
 到位) 按 [`on-site-debug-protocol`](guides/on-site-debug-protocol.md) **必须先切回 P0-4 →
-P0-3 → P0-5** (无论 P1-16 状态)。
+P0-3 → P0-5** (无论本地 P1 状态)。
 
 - **WIP limit: 1**. Only one Current Focus item may be in-progress at a time.
 - Anything that's not the Current Focus item and not a triviality (<30 min)
@@ -1923,8 +1924,8 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 > 加载 gate + 默认 3600M .smu)。另开 P1-16 (scpi-command desync, 本地) + P2-9 (EMCenter switch,
 > 调研+现场) + U-5 (转台无结论) + U-6 (F64 输入参考真值)。
 >
-> 11 个 open items: **不再全部 blocked** —— **P0-8 + P1-16 本地可启动** (Current Focus = P0-8,
-> 把现场验证过的 F64 修法 offline 正式化, 兑现"现场不写 driver"铁律); P2-9 需 offline 调研 + 现场;
+> 11 个 open items: **不再全部 blocked** —— **P0-8 + P1-16 本地可启动** (5/27 当时 Current Focus
+> = P0-8; 现 P0-8 本地半 / P1-16 均已 merged, 权威现状见顶部 Current Focus 段); P2-9 需 offline 调研 + 现场;
 > 其余 7 项 (3 × on-site P0-3/4/5 + P1-2 + P1-4 + P1-5 on-site half + P2-4) 仍 on-site-blocked;
 > P1-6 ⏸️ incident-conditional hold (trigger = 真 idle-close, 当前没证据, 仍计 open)。下一轮本地
 > audit/manual 再挖到 = candidate for **P1-18** (P1-17 已于 2026-05-29 分配给 UXM fresh-start 配置落地)。
