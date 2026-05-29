@@ -70,7 +70,14 @@ python -m scripts.bootstrap
 **7 个 seeder（依赖序）**：`chamber_presets` → `probes` → `instruments` → `sequences` → `report_templates` → `test_case_templates` → `topology_profiles`（暗室预设 / 32 探头布局 / 仪器型号目录 / 标准测试序列 / 报告模板 / TestCase 模板 / UXM 拓扑 profile）。
 
 > [!NOTE]
-> 旧的单独脚本（`seed_instruments.py` / `init_probes.py` / `init_report_templates.py` / `init_sequences.py` / `seed_dummy_calibration.py`）已整合进 bootstrap 框架并删除。任何引用它们的旧步骤一律改用 `python -m scripts.bootstrap`。
+> 旧的单独 seed 脚本（`seed_instruments.py` / `init_probes.py` / `init_report_templates.py` / `init_sequences.py`）已整合进 bootstrap 框架并删除。任何引用它们的旧步骤一律改用 `python -m scripts.bootstrap`。
+
+> [!TIP]
+> **纯离线 / 无真实硬件的开发环境**额外跑一步注入虚拟校准数据：
+> ```bash
+> python scripts/dev-fixtures/seed_dummy_calibration.py
+> ```
+> bootstrap 的 7 个 seeder **不含校准 fixture**（`probe_*_calibrations` / RF-chain / link / CE 校准），缺它会让拓扑编辑器 / 测试引擎因无校准数据报错。同目录 `scripts/dev-fixtures/` 下另有 `seed_caict_lab_profile.py` / `seed_caict_switch_topology.py` 等 dev-only fixture（不进 bootstrap，按需手动跑）。
 
 ---
 
