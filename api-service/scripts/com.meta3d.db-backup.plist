@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS launchd 定时备份 meta3d_ota 数据库 (2026-05-29 durability 改进)。
+
+  ⚠️ 路径是 host 特定的 — 当前填的是 Simon 的机器路径。换机器要改
+     ProgramArguments / StandardOutPath / StandardErrorPath 里的绝对路径。
+
+  安装:
+    cp scripts/com.meta3d.db-backup.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.meta3d.db-backup.plist
+  停用:
+    launchctl unload ~/Library/LaunchAgents/com.meta3d.db-backup.plist
+  立即跑一次测试:
+    launchctl start com.meta3d.db-backup
+  完整说明见 docs/guides/database-backup-restore.md。
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.meta3d.db-backup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>/Users/Simon/Tools/MIMO-First/api-service/scripts/backup_db.sh</string>
+    </array>
+
+    <!-- 每天 03:00 跑一次 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- 备份日志 (db-backups/.gitignore 已挡 *.log, 不进 git) -->
+    <key>StandardOutPath</key>
+    <string>/Users/Simon/Tools/MIMO-First/api-service/db-backups/backup.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/Simon/Tools/MIMO-First/api-service/db-backups/backup.err.log</string>
+
+    <!-- 不在 load 时立即跑 (避免装的时候误触发); 想测手动 launchctl start -->
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

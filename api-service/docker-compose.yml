@@ -1,14 +1,26 @@
-version: '3.8'
+# 固定 compose project name = meta3d (默认会取目录名 api-service, 跟项目名 +
+# gaokao 等其它 stack 风格不一致, 且让 project 名取决于在哪个目录启动)。固定后
+# 不管在哪起 / 怎么起, Docker Desktop 都显示 meta3d stack, 容器/network/label
+# 全归到 meta3d 命名空间。配合 external volume, 启动状态 100% 确定。
+# (顺带删 obsolete 的 `version:` 字段 — compose v2 已忽略它且每次命令报 warning。)
+name: meta3d
 
 services:
   postgres:
-    image: postgres:14
-    container_name: meta3d-postgres
+    # Pin minor (was bare `postgres:14`): 避免 docker pull 静默升 14.x minor,
+    # 保证任何机器/任何时间 build 出的环境跟当前运行的一致 (当前 = 14.20)。
+    image: postgres:14.20
+    container_name: meta3d_db
+    # host / Docker Desktop 重启后自动拉起 — 之前手动 docker run 起的容器
+    # RestartPolicy=no, 重启后服务不起 (数据不丢但要手动 docker start, 现场易踩)。
+    restart: unless-stopped
     environment:
       POSTGRES_USER: meta3d
       POSTGRES_PASSWORD: meta3d_password
       POSTGRES_DB: meta3d_ota
     ports:
+      # ⚠️ 仍绑所有接口 (0.0.0.0) — 信息安全加固 (改 127.0.0.1 / 强密码) 是
+      # 单独一轮工作, 本次只动 durability。见 docs/guides/database-backup-restore.md。
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -35,4 +47,17 @@ services:
       - ./certificates:/app/certificates
 
 volumes:
+  # 固定 name (不随 compose project 名漂移), 但【不设 external】:
+  #   - 显式 name 锁定到 meta3d_postgres_data: 不管 project=api-service 还是
+  #     meta3d, volume 都是这一个 → 消除"启动方式决定 volume 名"的漂移
+  #     (实测踩过: project=api-service 默认会连到废弃的 api-service_postgres_data
+  #     而非真数据 meta3d_postgres_data)。
+  #   - 【不设 external】: compose 在 up 时缺失则自动创建、存在则复用。对全新
+  #     checkout / Docker Desktop purge 后 / 换机器至关重要 —— external=true 会让
+  #     compose 在 volume 缺失时直接报错起不来, 而灾后恢复正是 volume 缺失的
+  #     场景 (Codex on PR #102)。
+  # ⚠️ 代价: 没了 external 的防误删 —— `docker compose down -v` 会删这个 volume
+  #    (普通 `down` 不会)。别用 down -v; 有 scripts/backup_db.sh + 灾后恢复
+  #    runbook (docs/guides/database-backup-restore.md) 兜底。
   postgres_data:
+    name: meta3d_postgres_data

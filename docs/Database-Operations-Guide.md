@@ -81,13 +81,13 @@ python scripts/init_sequences.py
 
 ### 4.1 备份数据库
 ```bash
-docker exec -t meta3d-postgres pg_dump -U meta3d meta3d_ota -F c > meta3d_backup_$(date +%Y%m%d).dump
+docker exec -t meta3d_db pg_dump -U meta3d meta3d_ota -F c > meta3d_backup_$(date +%Y%m%d).dump
 ```
 
 ### 4.2 恢复数据库
 ```bash
 # ⚠️ 警告: 这将覆盖当前数据库中的所有数据
-cat your_backup_file.dump | docker exec -i meta3d-postgres pg_restore -U meta3d -d meta3d_ota --clean
+cat your_backup_file.dump | docker exec -i meta3d_db pg_restore -U meta3d -d meta3d_ota --clean
 ```
 
 ### 4.3 重置/清空数据库
@@ -104,7 +104,7 @@ docker-compose up -d postgres
 
 **问题：终端提示“⚠️ 数据库连接失败！”**
 - **原因**：PostgreSQL 容器未运行，或端口被占用。
-- **解决**：进入 `api-service` 目录，执行 `docker-compose up -d postgres`，然后使用 `docker ps` 确保 `meta3d-postgres` 容器处于 `Up` 状态。
+- **解决**：进入 `api-service` 目录，执行 `docker-compose up -d postgres`，然后使用 `docker ps` 确保 `meta3d_db` 容器处于 `Up` 状态。
 
 **问题：数据未保存或修改丢失**
 - **原因**：可能因为错误修改了 `.env` 文件，导致连接到了本地的 SQLite (`meta3d_ota.db`) 而非 Docker。
