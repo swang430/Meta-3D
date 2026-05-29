@@ -1,4 +1,9 @@
-version: '3.8'
+# 固定 compose project name = meta3d (默认会取目录名 api-service, 跟项目名 +
+# gaokao 等其它 stack 风格不一致, 且让 project 名取决于在哪个目录启动)。固定后
+# 不管在哪起 / 怎么起, Docker Desktop 都显示 meta3d stack, 容器/network/label
+# 全归到 meta3d 命名空间。配合 external volume, 启动状态 100% 确定。
+# (顺带删 obsolete 的 `version:` 字段 — compose v2 已忽略它且每次命令报 warning。)
+name: meta3d
 
 services:
   postgres:
