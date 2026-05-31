@@ -732,6 +732,11 @@ class InstrumentHALService:
                         # 消除 fresh-start "快速路" (空配置 / 手动 PUT)。operator 在
                         # connection_params 显式设 topology_profile_id 仍优先。对称
                         # F64 set_channel_model 的默认 .smu fallback。
+                        # ── 路径 A/B 边界 (P2-11 Phase 5): 这是**路径 A (bring-up)
+                        # 的 HAL-init 默认**。正式测试 (路径 B) 的 measure phase 走
+                        # set_cell_config(TestCase) + arfcn/switch_mode_id 驱动, **不
+                        # apply 这个 profile** —— 两路天然分开。见 docs/architecture/
+                        # testcase-driven-instrument-config.md §2/§6。
                         if not topology_id:
                             topology_id = getattr(driver, "_default_topology_profile_id", None)
                             if topology_id:

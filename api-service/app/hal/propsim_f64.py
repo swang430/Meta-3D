@@ -101,6 +101,13 @@ F64_WAVEFORM_DIR = r"D:\User Emulations\ASC"
 #   2) InstrumentConnection.connection_params["default_emulation_file"] —— per-binding
 #   3) F64_DEFAULT_EMULATION_FILE —— 本常量 (系统默认)
 #   4) f"{self.emulation_dir}\\{model_type}_{scenario}_{tx}x{rx}.smu" —— 兜底 auto-name
+#
+# ── 路径 A/B 边界 (P2-11 Phase 5 固化) ──────────────────────────────────────
+# 本常量是**路径 A (bring-up / 暗室首测) 的默认锚点**: 开机即就位到一个被确认工作的
+# 已知基准。**正式测试 (路径 B) 不靠它** —— TestCase.emulation_file 经 measure →
+# sim_rules 显式驱动 (上面优先级 #1 per-call), GCM 真 F64 未指定时 measure 严格门
+# fail-loud (precheck_strict_emulation_file)。路径切分见
+# docs/architecture/testcase-driven-instrument-config.md §2 (A/B) + §7 (Phase 表)。
 F64_DEFAULT_EMULATION_FILE = (
     r"D:\Scenario Packs\F9815064A TS 5G FR1 MIMO OTA\1.1"
     r"\3GPP_FR1_OTA_CDLC_UMa_3600M.wiz"

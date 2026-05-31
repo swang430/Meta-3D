@@ -14,6 +14,16 @@ LabProfile contributes the chamber row (calibration entries, geometry).
 TestCase.calibration_certificate_id (optional) is referenced for traceability;
 the actual per-probe path-loss data still comes from chamber-keyed
 ProbePathLossCalibration rows.
+
+── 路径 A/B 边界 (P2-11 Phase 5 固化) ──────────────────────────────────────
+本 executor 是**路径 B (正式测试) 的核心**: 仪表关键参数全由 TestCase
+(MIMOOTAConfiguration) 单一真值源驱动, **不读 HAL-init 默认** —— UXM
+set_cell_config(arfcn=freq→ARFCN) / F64 emulation_file(GCM)+ engine 频率 /
+switch orchestrate(switch_mode_id)/ 路损 cert(operating_mode 过滤)/ SA /
+positioner 全 TestCase 派生, 下发后多方频率一致性 + GCM .smu + switch mode 三道
+fail-loud 门挡静默错配 (Phase 1/2/3)。路径 A (bring-up 默认: P0-8 F64 .smu /
+P1-17 UXM profile) 只在 HAL-init 用, 跟这里天然分开。总览见
+docs/architecture/testcase-driven-instrument-config.md §2/§6/§7。
 """
 import asyncio
 import logging

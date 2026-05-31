@@ -8,9 +8,9 @@
 
 ## 🎯 Current Focus
 
-**TestCase 驱动仪表配置架构 (P2-11) Phase 1+2+3 已落地 (频率 / GCM .smu / switch mode 全 TestCase 驱动 + fail-loud)。下一个待用户确认 — P2-10 F64 精细化 / P2-11 Phase 4-5 (信号源·VNA 按需, 路径边界注释) / U-7。本地可启动。**
+**TestCase 驱动仪表配置架构 (P2-11) 本地完结 (Phase 1+2+3+5: 频率 / GCM .smu / switch mode 全 TestCase 驱动 + fail-loud + 路径 A/B 边界固化); 只剩 Phase 4 信号源·VNA deferred 按需。下一个待用户确认 — P2-10 F64 精细化 / U-7 (UXM 参数集真值)。本地可启动。**
 
-**已收口** (2026-05-28/31): P0-8 本地半 ✅ (#92-#98) + P1-16 ✅ (#99) + Docker durability ✅ (#102/#103) + **P1-17 UXM fresh-start 默认 profile ✅ (#107)** + **P2-11 架构 (#108) + Phase 1 多方频率一致性门 ✅ (#109 + Codex fix) + Phase 2 GCM .smu TestCase 驱动 ✅ (#110) + Phase 3 switch mode TestCase 驱动 ✅ (本 PR)**。所有真 P0 (P0-3/4/5) 仍 🚧 on-site blocked (校准天线/SGH/真DUT)。
+**已收口** (2026-05-28/31): P0-8 本地半 ✅ (#92-#98) + P1-16 ✅ (#99) + Docker durability ✅ (#102/#103) + **P1-17 UXM fresh-start 默认 profile ✅ (#107)** + **P2-11 架构 (#108) + Phase 1 多方频率一致性门 ✅ (#109 + Codex fix) + Phase 2 GCM .smu TestCase 驱动 ✅ (#110) + Phase 3 switch mode TestCase 驱动 ✅ (#111 + Codex 路损 mode 过滤) + Phase 5 路径 A/B 边界固化 ✅ (本 PR) → P2-11 本地完结, 只剩 Phase 4 信号源·VNA 按需**。所有真 P0 (P0-3/4/5) 仍 🚧 on-site blocked (校准天线/SGH/真DUT)。
 
 **2026-05-29 全景规划** (用户复盘三大块 F64/UXM/Docker + 开关/转台 现状与前瞻): 把"仪器配置可复现性"缺口结构化成新条目 —— **P1-17 UXM fresh-start 配置落地** (对称 P0-8, 消除现场 UXM "快速路", 最大未规划缺口, 本地可启动) + **P2-10 F64 工程精细化** (配置文件资产/外部输出/user alignment cal, 部分本地) + **U-7** (UXM 参数集真值) + enrich P2-9 (射频开关下一步) / U-5 (转台)。**核心洞察**: F64 和 UXM 是同一个"配置可复现性"问题两面, UXM 落后 F64 一身位 (有 `load_state_file` + Topology Profile 但缺"默认自动应用")。**下一个 Current Focus 强候选 = P1-17** (待用户确认启动)。之前的本地 audit 流 P1-12 (#79/#80/#81) / P1-13 (#83) / P1-14 (#86) /
 P1-15 (#88) 全 merged。
@@ -1576,7 +1576,7 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 | 2 ✅ | **TestCase → F64 GCM .smu 联动**: `MIMOOTAConfiguration.emulation_file` 字段 + `sim_rules` 透传 + `precheck_strict_emulation_file` 严格门 (mock-aware, 真 F64 未指定 → fail-loud 不静默 fallback) + `.smu` 来源 audit — **done (本条 PR)** | 本地 | ⭐ 高 |
 | 3 ✅ | switch topology 纳入 TestCase 驱动: `switch_mode_id` 字段 (默认 "mimo_ota" 不再硬编码) + measure 透传给 `orchestrate_switch_topology` + `precheck_strict_switch_mode` 门 (有拓扑但请求 mode 不提供 → fail-loud; 无拓扑/固定布线 → warn) — **本 PR done** | 本地 | 中 |
 | 4 | 信号源 / VNA 纳入 TestCase 驱动 (干扰 / 在线校准) | 按需 | 低 |
-| 5 | 默认配置角色 (路径 A) 文档化 + 路径 A/B 边界代码注释固化 | 本地 | 贯穿 |
+| 5 ✅ | 默认配置角色 (路径 A) 文档化 + 路径 A/B 边界代码注释固化: 架构文档 §6.1 代码锚点地图 + propsim_f64 / instrument_hal_service / measure docstring 三处 `路径 A/B 边界` 注释 — **本 PR done** | 本地 | 贯穿 |
 
 **Acceptance**:
 - **Phase 1 (本地)**: measure/precheck 加多方频率一致性校验, mock 下 UXM/F64/TestCase 频率不一致时 FAIL; 单测覆盖一致/不一致两路。
@@ -1584,8 +1584,8 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 - **现场**: real GCM 测试一键 TestCase 驱动 UXM+F64 同频跑通。
 
 **依赖**: P0-8 (F64 默认) + P1-17 (UXM 默认, 路径 A 实现) ✅。关联: ARFCN profile/频率 audit (spawned), U-6 (输入参考真值)。
-**Status**: 🔄 in-progress — 架构文档 (#108) + **Phase 1 done (#109 + Codex fix)** + **Phase 2 done (#110)** + **Phase 3 done (本 PR)**。剩 Phase 4 (信号源·VNA, 按需) / Phase 5 (路径 A/B 边界代码注释固化); 均非本地即时阻塞, 按需推进。
-**Estimate**: Phase 1 ~0.5 day ✅ + Phase 2 ~1.5 day ✅ + Phase 3 ✅ (本地) + Phase 4-5 现场/按需。
+**Status**: ✅ **本地完结** — 架构文档 (#108) + **Phase 1 (#109 + Codex fix)** + **Phase 2 (#110)** + **Phase 3 (#111 + Codex 路损 mode 过滤)** + **Phase 5 路径 A/B 边界固化 (本 PR)**。**只剩 Phase 4 (信号源·VNA, deferred 按需)** —— driver 已在但 executor 未接, 缺具体干扰/在线校准测试方法学, 等真实需求 (很可能现场/客户驱动) 再 wiring, 不投机建基建。
+**Estimate**: Phase 1 ~0.5d ✅ + Phase 2 ~1.5d ✅ + Phase 3 ✅ + Phase 5 ✅ (本地全做完) + Phase 4 按需。
 
 ---
 
