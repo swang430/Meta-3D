@@ -69,8 +69,11 @@ class MeasureExecutor(IStepExecutor):
             ExternalAscPathStrategy,
         )
         from app.services.channel_generation.gcm_strategy import NativeModelStrategy
-        from app.services.instrument_hal_service import get_hal_service
+        from app.services.instrument_hal_service import get_hal_service, is_mock_driver
         from app.services.mimo_ota.cleanup import cleanup_chamber_instruments
+        from app.services.mimo_ota.emulation_file_gate import (
+            evaluate_emulation_file_gate,
+        )
         from app.services.mimo_ota.switch_orchestrator import (
             orchestrate_switch_topology,
         )
@@ -315,6 +318,28 @@ class MeasureExecutor(IStepExecutor):
                         ),
                     )
                 generator = NativeModelStrategy(emulator, chamber, calibration_entries)
+                # P2-11 Phase 2: GCM 的 .smu 必须由 TestCase 驱动 (路径 B), 不能静默
+                # fallback 到 F64 驱动默认 .smu —— 默认频率可能跟 TestCase 错配。strict
+                # 默认 FAIL; opt-out (bring-up 路径 A) 降级 warning 用驱动默认。下面
+                # sim_rules 透传 emulation_file 给 F64。门只对**真 F64** 生效 (mock-aware,
+                # 读 LIVE HAL, 同 precheck cal/dut 门 Codex on PR #75); 决策见
+                # emulation_file_gate.evaluate_emulation_file_gate。
+                emulation_gate = evaluate_emulation_file_gate(
+                    emulator_is_real=(
+                        emulator is not None and not is_mock_driver(emulator)
+                    ),
+                    emulation_file=config.emulation_file,
+                    strict=config.precheck_strict_emulation_file,
+                )
+                if emulation_gate.should_fail:
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=emulation_gate.message,
+                    )
+                if emulation_gate.should_warn:
+                    logger.warning(
+                        "[%s] %s", context.test_execution.id, emulation_gate.message
+                    )
             elif engine_mode == EngineMode.EXTERNAL_ASC:
                 # 2026-05-18 P0-7: operator-supplied .asc directory; skip
                 # channel-engine-service entirely. Schema already validated
@@ -338,6 +363,11 @@ class MeasureExecutor(IStepExecutor):
                 "target_rsrp_dbm": config.target_rsrp_dbm,
                 "target_snr_db": config.target_snr_db,
             }
+            # P2-11 Phase 2: TestCase 显式指定 .smu → 透传给 F64 GCM
+            # (NativeModelStrategy → load_channel parameters["emulation_file"],
+            # propsim_f64 line 745 优先于驱动默认; 加载失败 P0-8 gate fail-loud)。
+            if config.emulation_file:
+                sim_rules["emulation_file"] = config.emulation_file
             cdl_model_data = {
                 "model_name": config.cdl_model_name,
                 "session_id": str(context.test_execution.id),
@@ -640,6 +670,12 @@ class MeasureExecutor(IStepExecutor):
                     result_payload["external_asc_source_path"] = config.asc_source_path
                 else:
                     result_payload["asc_source"] = "channel_engine_service"
+            else:
+                # P2-11 Phase 2: GCM .smu 来源 audit (TestCase 驱动 vs 驱动默认 fallback)
+                result_payload["emulation_file"] = config.emulation_file
+                result_payload["emulation_file_source"] = (
+                    "testcase" if config.emulation_file else "driver_default"
+                )
         finally:
             cleanup_warnings = await cleanup_chamber_instruments(
                 hal, context.test_execution.id

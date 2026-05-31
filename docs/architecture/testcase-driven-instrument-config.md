@@ -74,16 +74,14 @@ TestCase (单一真值源) → executor → 逐级下发 + 一致性校验
 | **positioner** (转台) | ✅ `move_to(TestCase.azimuths_deg)` | — |
 | **SA** (signalAnalyzer) | ✅ `setup_spectrum(TestCase.frequency_hz)` (reference phase) | — |
 | **F64 ASC** (`mimo_first_asc`) | ✅ channel-engine-service 按 `frequency_hz` 生成 .asc | — |
-| **F64 GCM** (`keysight_gcm`) | ❌ `sim_rules` 不传 emulation_file → **fallback 默认 .smu** | **TestCase 无法驱动 .smu;频率不联动** |
-| **switch** (rfSwitch) | ❌ `orchestrate_switch_topology(chamber, mode_id)` | **chamber 驱动,非 TestCase** |
-| **信号源 / VNA** | ❌ executor 未接 | 干扰生成 / 在线校准未纳入 |
+| **F64 GCM** (`keysight_gcm`) | ✅ **P2-11 Phase 2 已补**: `emulation_file` 字段 + `sim_rules` 透传 + GCM 严格门 (真 F64 未指定 → fail-loud) | — (mock-aware: bring-up 路径 A 走默认; 正式测试 fail-loud) |
+| **switch** (rfSwitch) | ❌ `orchestrate_switch_topology(chamber, mode_id)` | **chamber 驱动,非 TestCase** (Phase 3) |
+| **信号源 / VNA** | ❌ executor 未接 | 干扰生成 / 在线校准未纳入 (Phase 4) |
 
-**两个硬证据**(GCM 缺口):
-- `MIMOOTAConfiguration` **没有 `emulation_file` 字段** → TestCase 根本无法指定 F64 .smu。
-- `measure.py` 的 `sim_rules` 只有 `frequency_hz/power/rsrp/snr`,**没 emulation_file**。
-
-**后果**:GCM 模式下 TestCase 频率=3500 → UXM 配 3500、F64 用默认 3600M .smu →
-**链路打架,且无人报警**。
+**GCM 缺口已闭合**(P2-11 Phase 2,原"两个硬证据"已解):
+- ~~`MIMOOTAConfiguration` 没有 `emulation_file` 字段~~ → **已加** `emulation_file` + `precheck_strict_emulation_file`。
+- ~~`measure.py` 的 `sim_rules` 没 emulation_file~~ → **已透传**(`config.emulation_file` → `sim_rules["emulation_file"]` → F64 GCM)。
+- 历史后果(GCM TestCase 3500 / F64 默认 3600 静默打架)现双重拦截:**Phase 1** 频率一致性门当场抓错配,**Phase 2** 严格门让正式 GCM 测试必须 TestCase 驱动 .smu(真 F64 未指定 → measure FAIL,不静默 fallback)。bring-up(路径 A)经 `precheck_strict_emulation_file=False` 或 mock-aware 走默认。
 
 ## 4. 一致性校验是安全网(不管谁驱动,最后都拦)
 
@@ -127,7 +125,7 @@ P0-8(F64 默认 .smu)+ P1-17(UXM 默认 profile)**是路径 A 的实现,正确�
 | 阶段 | 内容 | 性质 | 优先 |
 |------|------|------|------|
 | **1** ✅ | 多方频率一致性 fail-loud 校验(measure) — **已实现 (P2-11 Phase 1)**: `nr_arfcn.py` 工具 + 各 driver `get_frequency_identity()` 归一到 (中心 ARFCN, 带宽) + `frequency_consistency.check_*` 精确比对 + measure phase `precheck_strict_frequency` gate | silent-failure 防护,本地可做,小 | ⭐ 最先(保护测试可信度)|
-| **2** | TestCase → F64 GCM .smu 联动(`emulation_file` 字段 + sim_rules 透传 + 不 fallback) | GCM 优先 | ⭐ 高(下一步)|
+| **2** ✅ | TestCase → F64 GCM .smu 联动 — **已实现 (P2-11 Phase 2)**: `MIMOOTAConfiguration.emulation_file` 字段 + measure `sim_rules` 透传 + `emulation_file_gate.evaluate_*` 严格门 (`precheck_strict_emulation_file`, mock-aware, 真 F64 未指定 → fail-loud 不静默 fallback) + result_payload `.smu` 来源 audit | GCM 优先 | ⭐ 高 |
 | **3** | switch topology 纳入 TestCase 驱动(现 chamber-driven)| 架构补全 | 中 |
 | **4** | 信号源 / VNA 纳入 TestCase 驱动(干扰 / 在线校准)| 架构补全 | 低(按需)|
 | **5** | 默认配置角色文档化 + 路径 A/B 边界在代码注释固化 | 防认知漂移 | 贯穿 |
