@@ -1558,6 +1558,37 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 
 ---
 
+### P2-11 — TestCase 驱动的仪表配置下发架构 (单一真值源 + 多方一致性校验)
+
+**What**: 确立并补全"TestCase 是测试配置单一真值源, 驱动整个仪表层级配置下发 + 下发后多方一致性 fail-loud 校验"的架构。完整设计见 [`docs/architecture/testcase-driven-instrument-config.md`](architecture/testcase-driven-instrument-config.md)。
+
+**Why**: 2026-05-30 用户提出的架构级问题 —— P1-17 ARFCN review 暴露 UXM profile 标称 vs 实际下发不一致 (微观); 放大到架构层, **TestCase 频率驱动了 UXM/SA/positioner, 但 F64 GCM .smu 没被驱动 (sim_rules 不传 emulation_file → fallback 默认 3600M), 且无任何多方频率一致性校验** → GCM 模式下 TestCase 3500 / F64 默认 3600 静默打架。switch 还是 chamber-driven 非 TestCase-driven。这是测试正确性 (而非 first-call 即时阻塞) 的架构债。
+
+**核心切分** (用户强调): **暗室首测可走捷径** (路径 A: bring-up 用默认仪表配置, P0-8/P1-17 是它的实现, 保留不推翻); **正式测试必须 TestCase 驱动** (路径 B: 单一真值源 → 全仪表层级下发 + 一致性校验)。两路正交, 边界清楚。
+
+**现状覆盖** (measure/reference executor 调研): UXM ✅ / positioner ✅ / SA ✅ / F64-ASC ✅ / **F64-GCM ❌ (fallback 默认)** / **switch ❌ (chamber-driven)** / 信号源·VNA ❌ (未接)。
+
+**Scope (分阶段, GCM 优先 — 用户 2026-05-30: "GCM 是首先要测的")**:
+
+| Phase | 内容 | 本地/现场 | 优先 |
+|-------|------|----------|------|
+| 1 | **多方频率一致性 fail-loud 校验** (UXM ARFCN频率 ≈ F64 .smu/.asc 频率 ≈ SA ≈ TestCase) — silent-failure 防护 (P1-8/9/12 同族), 防静默错配 | 本地 | ⭐ 最先 |
+| 2 | **TestCase → F64 GCM .smu 联动**: `MIMOOTAConfiguration` 加 `emulation_file` (或 frequency→.smu 库映射) + `sim_rules` 透传 + 不再 fallback 默认 (真没匹配 fail-loud) | 本地 + .smu 资产盘点 | ⭐ 高 |
+| 3 | switch topology 纳入 TestCase 驱动 (现 chamber-driven) | 本地 + 现场 | 中 |
+| 4 | 信号源 / VNA 纳入 TestCase 驱动 (干扰 / 在线校准) | 按需 | 低 |
+| 5 | 默认配置角色 (路径 A) 文档化 + 路径 A/B 边界代码注释固化 | 本地 | 贯穿 |
+
+**Acceptance**:
+- **Phase 1 (本地)**: measure/precheck 加多方频率一致性校验, mock 下 UXM/F64/TestCase 频率不一致时 FAIL; 单测覆盖一致/不一致两路。
+- **Phase 2 (本地)**: TestCase 能指定 F64 .smu (GCM), measure phase 用 TestCase 派生而非默认; TestCase 频率 != .smu 频率时 fail-loud。
+- **现场**: real GCM 测试一键 TestCase 驱动 UXM+F64 同频跑通。
+
+**依赖**: P0-8 (F64 默认) + P1-17 (UXM 默认, 路径 A 实现) ✅。关联: ARFCN profile/频率 audit (spawned), U-6 (输入参考真值)。**Phase 1+2 本地可启动, 是 P1-17 之后的下一个本地候选**。
+**Status**: `[ ]` not started — 架构文档已确立 (本条 PR); Phase 1+2 本地可启动。
+**Estimate**: Phase 1 ~0.5 day + Phase 2 ~1.5 day (本地) + 现场验证。
+
+---
+
 ## 🟢 P3 — Polish / tooling
 
 ### P3-1 — HAL Reload confirm dialog ✅ Done (this PR)
