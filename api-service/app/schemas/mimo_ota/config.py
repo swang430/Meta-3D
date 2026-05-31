@@ -270,6 +270,22 @@ class MIMOOTAConfiguration(BaseModel):
     # 标称 3500 实际下发 ARFCN 3489)。False (opt-out): 降级 warning, 留 audit 痕迹。
     # 同 precheck_strict_cal/dut/input_level: GUI 不暴露, fixture/config 级别 opt-in。
 
+    # === F64 GCM .smu TestCase 驱动 (P2-11 Phase 2, 2026-05-31) ===
+    emulation_file: Optional[str] = None
+    # GCM (keysight_gcm) 模式下 F64 加载的 .smu 仿真文件完整路径 (F64 Windows 主机上,
+    # e.g. "D:\\Scenario Packs\\...\\..._3600M.smu")。None = 不由 TestCase 指定。
+    # 路径 B (正式测试): 显式指定 → measure 经 sim_rules 透传给 F64 GCM, 优先于驱动
+    # 默认 .smu。ASC 模式无关 (.asc 由 channel-engine 按 frequency_hz 生成, 不用 .smu)。
+
+    precheck_strict_emulation_file: bool = True
+    # P2-11 Phase 2: GCM 模式 TestCase 未指定 emulation_file 时的 measure 行为。
+    # True (生产默认): measure FAILED —— GCM 正式测试 (路径 B) 必须由 TestCase 驱动
+    # .smu, 不能静默 fallback 到 F64 驱动默认 (默认 .smu 频率可能跟 TestCase 错配, 见
+    # docs/architecture/testcase-driven-instrument-config.md 路径 A/B 切分)。
+    # False (opt-out): 降级 warning, 用 F64 驱动默认 .smu (路径 A bring-up / 暗室首测
+    # 走捷径)。仅 GCM 模式生效 (ASC 不用 .smu)。同 precheck_strict_cal/dut/frequency:
+    # GUI 不暴露, fixture/config 级别 opt-in。
+
     # === Pass/fail thresholds ===
     pass_criteria: MIMOOTAPassCriteria = Field(default_factory=MIMOOTAPassCriteria)
 
