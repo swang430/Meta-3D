@@ -270,8 +270,11 @@ class MeasureExecutor(IStepExecutor):
                     "[%s] %s", context.test_execution.id, switch_gate.message
                 )
 
+            # P2-11 Phase 3 (Codex on PR #111): 校准 cert 按 TestCase 的 switch
+            # operating mode 过滤 —— 否则多 mode 同频校准的 lab 会喂错 RF 通路的损耗。
             calibration_entries = ce_client._query_calibration_entries(
-                chamber.id, config.frequency_hz, chamber
+                chamber.id, config.frequency_hz, chamber,
+                operating_mode=config.switch_mode_id,
             )
 
             # --- Phase 2a / P0: path-loss compensation ---
@@ -286,8 +289,11 @@ class MeasureExecutor(IStepExecutor):
             )
 
             pl_service = ProbePathLossCalibrationService(context.db, use_mock=False)
+            # P2-11 Phase 3 (Codex on PR #111): 按 TestCase switch_mode_id 过滤 cert,
+            # 让 per-chain 线损来自请求的 RF 通路 (精确优先, 退回 legacy NULL)。
             path_loss_cert = pl_service.get_latest_calibration(
-                chamber.id, config.frequency_hz / 1e6
+                chamber.id, config.frequency_hz / 1e6,
+                operating_mode=config.switch_mode_id,
             )
             if path_loss_cert is not None:
                 avg_path_loss_db = float(path_loss_cert.avg_path_loss_db or 0.0)
@@ -295,10 +301,12 @@ class MeasureExecutor(IStepExecutor):
                     getattr(path_loss_cert, "path_loss_db_by_rf_chain", None) or {}
                 )
                 logger.info(
-                    "[%s] Phase 2a/P0: path-loss avg=%.2f dB cert=%s "
-                    "(per-chain entries: %d)",
+                    "[%s] Phase 2a/P0: path-loss avg=%.2f dB cert=%s mode=%s "
+                    "(req=%s, per-chain entries: %d)",
                     context.test_execution.id,
-                    avg_path_loss_db, path_loss_cert.id, len(per_chain_pl),
+                    avg_path_loss_db, path_loss_cert.id,
+                    getattr(path_loss_cert, "operating_mode", None),
+                    config.switch_mode_id, len(per_chain_pl),
                 )
             else:
                 avg_path_loss_db = 0.0

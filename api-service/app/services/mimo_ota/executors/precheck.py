@@ -219,7 +219,12 @@ class PrecheckExecutor(IStepExecutor):
 
         target_freq_mhz = config.frequency_hz / 1e6
         pl_service = ProbePathLossCalibrationService(context.db, use_mock=False)
-        latest_pl = pl_service.get_latest_calibration(chamber.id, target_freq_mhz)
+        # P2-11 Phase 3 (Codex on PR #111): 按 TestCase switch_mode_id 过滤, 否则 cal
+        # gate 会拿别的 operating mode 的 cert 通过 precheck, 但 measure 用对的 mode 查
+        # 不到 → precheck 通过却 measure 静默退兜底 (P1-8 要防的正是这种 gate↔measure 漂移)。
+        latest_pl = pl_service.get_latest_calibration(
+            chamber.id, target_freq_mhz, operating_mode=config.switch_mode_id
+        )
 
         result_payload["path_loss_calibration_target_frequency_mhz"] = target_freq_mhz
         if latest_pl is not None:
