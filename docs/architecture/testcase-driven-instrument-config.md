@@ -120,6 +120,33 @@ P0-8(F64 默认 .smu)+ P1-17(UXM 默认 profile)**是路径 A 的实现,正确�
 一句话:**默认配置 = bring-up 锚点(走捷径);TestCase = 测试驱动(架构正道)。两者
 并存,边界清楚。**
 
+### 6.1 路径 A/B 边界代码锚点(P2-11 Phase 5 固化)
+
+防认知漂移:**加新仪表默认前先问"这是路径 A 还是 B";加新仪表参数前先问"路径 B 有没有
+从 TestCase 驱动它 + fail-loud 校验它"。** 边界在代码里的锚点(均已加 `路径 A/B 边界`
+注释指回本文档):
+
+**路径 A — bring-up 默认(在 HAL-init / 手动调试用)**:
+
+| 默认 | 代码锚点 | path B 隔离 |
+|------|---------|------------|
+| F64 默认 .smu(3600M)| `app/hal/propsim_f64.py` → `F64_DEFAULT_EMULATION_FILE`(P0-8)| ✅ 干净:measure 由 `emulation_file` 覆盖 |
+| UXM 默认 topology profile | `app/services/instrument_hal_service.py` → `_initialize_from_db` 的 `_default_topology_profile_id` fallback(P1-17)| ⚠️ **不完全**:见下方 leak |
+
+> ⚠️ **已知 leak(Codex on PR #112,roadmap "Discovered" backlog)**:UXM 默认 profile 经 `apply_topology_profile → set_cell_config(to_config_dict())` 在 HAL-init 把 `mimo_port_preset` / `tdd_pattern` / `sched_algo` / `csi_rs_ports` 落到硬件。measure(path B)的 `set_cell_config` 只传 frequency/ARFCN/BW/SCS/band/`mimo_layers`/power,**不覆盖上述 profile 字段** → 它们**残留**进正式测试(如 2x2 TestCase 跑在残留的 4x4 端口路由上)。待补成 TestCase 驱动或 measure 显式 reset。**这正是"加新仪表参数前先问 path B 有没有驱动它"准则要防的——port routing / TDD / scheduler 当前没被 path B 驱动。**
+
+**路径 B — TestCase 驱动(measure executor,全从 `MIMOOTAConfiguration` 派生)**:
+
+| 仪表参数 | TestCase 字段 → 下发点 | fail-loud 门 |
+|---------|----------------------|-------------|
+| UXM 频率 / MIMO | `frequency_hz`→ARFCN / `mimo_layers` → `set_cell_config` | `precheck_strict_frequency`(Phase 1)|
+| F64 GCM .smu | `emulation_file` → `sim_rules` → F64 | `precheck_strict_emulation_file`(Phase 2)|
+| switch RF 通路 | `switch_mode_id` → `orchestrate_switch_topology` | `precheck_strict_switch_mode`(Phase 3)|
+| 路损 cert | `switch_mode_id` → `get_latest_calibration(operating_mode=)` + `_query_calibration_entries` | 随 switch mode 过滤(Codex on #111)|
+| SA / positioner | `frequency_hz` / `azimuths_deg` → setup/move | —(同源)|
+
+measure executor(`app/services/mimo_ota/executors/measure.py`)docstring 顶部有路径 B 总览。
+
 ## 7. 分阶段实施(建议)
 
 | 阶段 | 内容 | 性质 | 优先 |
@@ -128,7 +155,7 @@ P0-8(F64 默认 .smu)+ P1-17(UXM 默认 profile)**是路径 A 的实现,正确�
 | **2** ✅ | TestCase → F64 GCM .smu 联动 — **已实现 (P2-11 Phase 2)**: `MIMOOTAConfiguration.emulation_file` 字段 + measure `sim_rules` 透传 + `emulation_file_gate.evaluate_*` 严格门 (`precheck_strict_emulation_file`, mock-aware, 真 F64 未指定 → fail-loud 不静默 fallback) + result_payload `.smu` 来源 audit | GCM 优先 | ⭐ 高 |
 | **3** ✅ | switch topology 纳入 TestCase 驱动 — **已实现 (P2-11 Phase 3)**: `MIMOOTAConfiguration.switch_mode_id` 字段 (默认 "mimo_ota", 不再硬编码) + measure 透传给 `orchestrate_switch_topology` + `switch_mode_gate.evaluate_*` 门 (`precheck_strict_switch_mode`, 有拓扑但请求 mode 不提供 → fail-loud; 无拓扑/固定布线 → warn) | 架构补全 | 中 |
 | **4** | 信号源 / VNA 纳入 TestCase 驱动(干扰 / 在线校准)| 架构补全 | 低(按需)|
-| **5** | 默认配置角色文档化 + 路径 A/B 边界在代码注释固化 | 防认知漂移 | 贯穿 |
+| **5** ✅ | 默认配置角色文档化 + 路径 A/B 边界在代码注释固化 — **已实现 (P2-11 Phase 5)**: §6.1 代码锚点地图 + propsim_f64 / instrument_hal_service / measure docstring 三处 `路径 A/B 边界` 注释 | 防认知漂移 | 贯穿 |
 
 ## 附:这跟 ARFCN 问题是同一母题的两个层次
 

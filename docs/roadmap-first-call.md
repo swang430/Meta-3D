@@ -8,9 +8,9 @@
 
 ## 🎯 Current Focus
 
-**TestCase 驱动仪表配置架构 (P2-11) Phase 1+2+3 已落地 (频率 / GCM .smu / switch mode 全 TestCase 驱动 + fail-loud)。下一个待用户确认 — P2-10 F64 精细化 / P2-11 Phase 4-5 (信号源·VNA 按需, 路径边界注释) / U-7。本地可启动。**
+**TestCase 驱动仪表配置架构 (P2-11) 本地完结 (Phase 1+2+3+5: 频率 / GCM .smu / switch mode 全 TestCase 驱动 + fail-loud + 路径 A/B 边界固化); 只剩 Phase 4 信号源·VNA deferred 按需。下一个待用户确认 — P2-10 F64 精细化 / U-7 (UXM 参数集真值)。本地可启动。**
 
-**已收口** (2026-05-28/31): P0-8 本地半 ✅ (#92-#98) + P1-16 ✅ (#99) + Docker durability ✅ (#102/#103) + **P1-17 UXM fresh-start 默认 profile ✅ (#107)** + **P2-11 架构 (#108) + Phase 1 多方频率一致性门 ✅ (#109 + Codex fix) + Phase 2 GCM .smu TestCase 驱动 ✅ (#110) + Phase 3 switch mode TestCase 驱动 ✅ (本 PR)**。所有真 P0 (P0-3/4/5) 仍 🚧 on-site blocked (校准天线/SGH/真DUT)。
+**已收口** (2026-05-28/31): P0-8 本地半 ✅ (#92-#98) + P1-16 ✅ (#99) + Docker durability ✅ (#102/#103) + **P1-17 UXM fresh-start 默认 profile ✅ (#107)** + **P2-11 架构 (#108) + Phase 1 多方频率一致性门 ✅ (#109 + Codex fix) + Phase 2 GCM .smu TestCase 驱动 ✅ (#110) + Phase 3 switch mode TestCase 驱动 ✅ (#111 + Codex 路损 mode 过滤) + Phase 5 路径 A/B 边界固化 ✅ (本 PR) → P2-11 本地完结, 只剩 Phase 4 信号源·VNA 按需**。所有真 P0 (P0-3/4/5) 仍 🚧 on-site blocked (校准天线/SGH/真DUT)。
 
 **2026-05-29 全景规划** (用户复盘三大块 F64/UXM/Docker + 开关/转台 现状与前瞻): 把"仪器配置可复现性"缺口结构化成新条目 —— **P1-17 UXM fresh-start 配置落地** (对称 P0-8, 消除现场 UXM "快速路", 最大未规划缺口, 本地可启动) + **P2-10 F64 工程精细化** (配置文件资产/外部输出/user alignment cal, 部分本地) + **U-7** (UXM 参数集真值) + enrich P2-9 (射频开关下一步) / U-5 (转台)。**核心洞察**: F64 和 UXM 是同一个"配置可复现性"问题两面, UXM 落后 F64 一身位 (有 `load_state_file` + Topology Profile 但缺"默认自动应用")。**下一个 Current Focus 强候选 = P1-17** (待用户确认启动)。之前的本地 audit 流 P1-12 (#79/#80/#81) / P1-13 (#83) / P1-14 (#86) /
 P1-15 (#88) 全 merged。
@@ -1576,7 +1576,7 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 | 2 ✅ | **TestCase → F64 GCM .smu 联动**: `MIMOOTAConfiguration.emulation_file` 字段 + `sim_rules` 透传 + `precheck_strict_emulation_file` 严格门 (mock-aware, 真 F64 未指定 → fail-loud 不静默 fallback) + `.smu` 来源 audit — **done (本条 PR)** | 本地 | ⭐ 高 |
 | 3 ✅ | switch topology 纳入 TestCase 驱动: `switch_mode_id` 字段 (默认 "mimo_ota" 不再硬编码) + measure 透传给 `orchestrate_switch_topology` + `precheck_strict_switch_mode` 门 (有拓扑但请求 mode 不提供 → fail-loud; 无拓扑/固定布线 → warn) — **本 PR done** | 本地 | 中 |
 | 4 | 信号源 / VNA 纳入 TestCase 驱动 (干扰 / 在线校准) | 按需 | 低 |
-| 5 | 默认配置角色 (路径 A) 文档化 + 路径 A/B 边界代码注释固化 | 本地 | 贯穿 |
+| 5 ✅ | 默认配置角色 (路径 A) 文档化 + 路径 A/B 边界代码注释固化: 架构文档 §6.1 代码锚点地图 + 三处 `路径 A/B 边界` 注释; **+ 修暗室首测捷径缺口** ("强制跳过严格门" 开关从 cal/dut 扩到覆盖全 5 道门 — GUI api.ts + 后端 CreateSessionRequest); **+ 修 Codex on #112 指出的 UXM profile isolation 注释不准** (承认 port routing/TDD/sched leak, 记 Discovered backlog) — **本 PR done** | 本地 | 贯穿 |
 
 **Acceptance**:
 - **Phase 1 (本地)**: measure/precheck 加多方频率一致性校验, mock 下 UXM/F64/TestCase 频率不一致时 FAIL; 单测覆盖一致/不一致两路。
@@ -1584,8 +1584,8 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 - **现场**: real GCM 测试一键 TestCase 驱动 UXM+F64 同频跑通。
 
 **依赖**: P0-8 (F64 默认) + P1-17 (UXM 默认, 路径 A 实现) ✅。关联: ARFCN profile/频率 audit (spawned), U-6 (输入参考真值)。
-**Status**: 🔄 in-progress — 架构文档 (#108) + **Phase 1 done (#109 + Codex fix)** + **Phase 2 done (#110)** + **Phase 3 done (本 PR)**。剩 Phase 4 (信号源·VNA, 按需) / Phase 5 (路径 A/B 边界代码注释固化); 均非本地即时阻塞, 按需推进。
-**Estimate**: Phase 1 ~0.5 day ✅ + Phase 2 ~1.5 day ✅ + Phase 3 ✅ (本地) + Phase 4-5 现场/按需。
+**Status**: ✅ **本地完结** — 架构文档 (#108) + **Phase 1 (#109 + Codex fix)** + **Phase 2 (#110)** + **Phase 3 (#111 + Codex 路损 mode 过滤)** + **Phase 5 路径 A/B 边界固化 + 暗室首测捷径缺口修复 (全 5 道门统一 bypass) + Codex #112 注释修正 (本 PR)**。**剩 Phase 4 (信号源·VNA, deferred 按需)** + **1 个 Discovered backlog: UXM profile 字段 (port routing/TDD/sched) 泄漏进 path B** (待用户定 port-routing 语义)。
+**Estimate**: Phase 1 ~0.5d ✅ + Phase 2 ~1.5d ✅ + Phase 3 ✅ + Phase 5 ✅ (本地全做完) + Phase 4 按需。
 
 ---
 
@@ -1938,6 +1938,7 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 - `[discovered 2026-05-28 post-P0-8 review]` **InputLevelController: cal-based feed-forward 粗设 + autoset 兜底验证 (hybrid)**. 当前是纯闭环 — UXM 起手 -10dBm → F64 AUTOSET → measure → 不在窗口调 UXM 重试 (最多 5 轮, 每轮 ~3-5s SCPI)。如果有 (a) UXM 输出 cal、(b) UXM-to-F64 cable_loss cal、(c) signal structure PAPR, 就能一次性算 `F64_input_avg = UXM_dBm - cable_loss` + `crest = PAPR` → `INP:LEV:AMP:CH` + `INP:CRE:SET` 粗设 → `measure_input` 一轮校验 (不 autoset) → 在窗口 + clipping OK 直接锁定; 偏差大才退到现有 autoset 闭环兜底。**核心**: 闭环不替, 给"粗设"路径并接 cal 漂移监控副产物 — (粗设值 - 实测值) 写遥测, 持续累计 = cable bend / 接头老化 / cross-band 误差的可观测信号, 知道 cable cal 该重标。GPS+末段制导哲学。依赖下一条的 UXM-to-F64 cable_loss cal 基础设施。
 - `[discovered 2026-05-28 post-P0-8 review]` **多端口 MIMO input 不一致 — imbalance metric + 容忍带 + cable balance cal**. 3600M 4x4 各 input 累加 ±1-2.5 dB imbalance 是物理必然 (cable 长度/质量 ±0.5-1dB + UXM TX port ±0.3dB + F64 ADC 增益 ±0.5dB + 接头老化 ±0.2dB + 测量噪声 ±0.1-0.3dB)。当前 `_measure_and_check_window` 任一 input 越界 → strict 整体 fail, 0.3 dB 边缘越界也死, 反而不科学 — 缺 imbalance 概念。三段递进: **(1) 本地 ~半天**: 加 `imbalance_dB = max(avg) - min(avg)` 写 `result_payload["input_level_calibration"]`, soft 窗口 + balance 容忍带 (e.g. <2dB 收敛, 0.3-1dB 越界 marginal warning, >1dB fail); **(2) 现场+本地**: 新 cal cert 类型 `CableBalanceCalibration{cable_loss_by_port_db: Dict[int, float]}`, 现场用 SA/VNA 测一次落库, 上一条 feed-forward 用 per-port cable_loss 取代 chamber-avg; **(3) 长期**: cal 漂移监控持续 N 次差异中位数 > 阈值 → 主动告警操作员。CTIA MPAC OTA 标准做法, 我们当前缺。
 - `[discovered 2026-05-28 post-P0-8 review]` **operating point measurement uncertainty 进报告 uncertainty budget**. AUTOSET **不破坏任何 cal cert** (path-loss / F64 user-alignment / UXM 输出 cal 都不被写脏 —— AUTOSET 只调单 input 前端 PGA 挡位, F64 内部映射保证测出的 dBm 仍是正确绝对值, 不动 channel-to-channel 关系也不动 output 端绝对功率), 但 AUTOSET 后 F64 处于一个具体 PGA 挡位, 该挡位的 absolute 精度继承 factory ADC cal 的 ±0.5-1 dB 不确定性 + AUTOSET 单次 measurement noise ±0.3 dB。当前 reference/measure 报告把 RSRP / 吞吐当确定值呈现, 没把这部分不确定性跟 path-loss cal / SA cal 不确定性并联累加进 combined measurement uncertainty budget (报告里 "RSRP ±0" 是骗人, 实际应是 combined U)。应: reference/measure phase 输出携带 operating-point uncertainty 分量, report phase 按 GUM 累加成 combined U (k=2)。模式上 "测试前 setup + 测试中 frozen PGA" 是 RF 标准做法 (等同 SA 测前设 ref level), **不算测试中扰动**; 但记两个边界: (a) **严格 PFS / PWS 未来场景** AUTOSET 改 PGA 可能引入 group-delay→phase shift, 须 cal 后不动 PGA 或 re-cal phase (当前 power-only PFS 不受影响, TR 37.977 F.2); (b) **VRT 跨场景切 cell config** 时 PAPR 漂 → operating point 需 re-setup (VRT 当前未接 InputLevelController, 接入时一起做)。另可加 idempotency gate (setup 过 + 同 cell config 跳过) 防 azimuth loop 内误调 AUTOSET 污染跨 azimuth 可比性。
+- `[discovered 2026-05-31 during P2-11 Phase 5]` **UXM 默认 topology profile 字段泄漏进 path B** (Codex on PR #112). HAL-init 经 `apply_topology_profile → set_cell_config(profile.to_config_dict())` 把 profile 的 `mimo_port_preset` / `tdd_pattern` / `sched_algo` / `csi_rs_ports` 落到 UXM 硬件; measure (path B) 的 `set_cell_config` 只传 frequency/ARFCN/BW/SCS/band/`mimo_layers`/power, **不覆盖上述字段** → 它们残留进正式测试 (如 2x2 TestCase 跑在残留的 4x4 端口路由上)。频率/ARFCN/MIMO layers 已 TestCase 驱动, 但 port routing / TDD / scheduler 既没被 path B 驱动也没被 reset。**待定方向 (需用户定 port-routing 语义)**: (a) measure 从 `mimo_layers` 派生并传 `mimo_port_preset` (2→"2x2"/4→"4x4"/1→"siso") + TDD/sched 补成 TestCase 字段或显式 reset; 或 (b) `MIMOOTAConfiguration` 直接加这些字段。⚠️ 注意 layers≠preset 在某些 diversity 配置下合法, 不能盲目自动派生。属 P2-11 同族 (TestCase 单一真值源驱动) 的下一块, 跟 Phase 4 一样 deferred 待具体决策。Phase 5 PR 已把三处误称"天然分开"的注释改准 (承认 leak)。
 
 ---
 

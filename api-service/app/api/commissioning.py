@@ -122,6 +122,12 @@ class CreateSessionRequest(BaseModel):
     # (passing None into the config would falsy-bypass the gate for everyone).
     precheck_strict_dut: Optional[bool] = None
     precheck_strict_cal: Optional[bool] = None
+    # P2-11: 暗室首测 (路径 A) 的 "强制跳过严格门" 还要覆盖 Phase 1/2/3 新加的门, 否则
+    # 真仪表空跑会撞上它们而无法绕过 (cal/dut 之外的捷径缺口)。同 Optional[bool] 语义:
+    # 显式 False = real-mode operator override; None = 留 schema 默认 (strict)。
+    precheck_strict_frequency: Optional[bool] = None
+    precheck_strict_emulation_file: Optional[bool] = None
+    precheck_strict_switch_mode: Optional[bool] = None
 
 
 class SessionResponse(BaseModel):
@@ -175,6 +181,13 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
         overrides["precheck_strict_dut"] = req.precheck_strict_dut
     if req.precheck_strict_cal is not None:
         overrides["precheck_strict_cal"] = req.precheck_strict_cal
+    # P2-11: Phase 1/2/3 新门同样的 explicit-False-override / None-leaves-default 语义。
+    if req.precheck_strict_frequency is not None:
+        overrides["precheck_strict_frequency"] = req.precheck_strict_frequency
+    if req.precheck_strict_emulation_file is not None:
+        overrides["precheck_strict_emulation_file"] = req.precheck_strict_emulation_file
+    if req.precheck_strict_switch_mode is not None:
+        overrides["precheck_strict_switch_mode"] = req.precheck_strict_switch_mode
     return overrides
 
 

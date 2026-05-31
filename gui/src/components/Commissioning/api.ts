@@ -58,6 +58,9 @@ export const createSession = async (
     asc_source_path?: string
     precheck_strict_dut?: boolean
     precheck_strict_cal?: boolean
+    precheck_strict_frequency?: boolean
+    precheck_strict_emulation_file?: boolean
+    precheck_strict_switch_mode?: boolean
   } = {
     engine_mode: engineMode,
   }
@@ -68,10 +71,14 @@ export const createSession = async (
     body.asc_source_path = ascSourcePath
   }
   if (labSmoke) {
-    // Both gates relaxed together — the documented local-rehearsal path
-    // (mirrors test_commissioning_{smoke,e2e_p06} setting strict flags False).
+    // P2-11: "强制跳过严格门" = 统一的暗室首测 (路径 A) bypass —— 一次降级**全部**
+    // 5 道 strict 门, 否则真仪表空跑会撞上 P2-11 新加的频率/.smu/switch mode 门 (它们
+    // 只对真硬件生效, mock 空跑本就 N/A)。镜像 test_commissioning_{smoke,e2e_p06}。
     body.precheck_strict_dut = false
     body.precheck_strict_cal = false
+    body.precheck_strict_frequency = false
+    body.precheck_strict_emulation_file = false
+    body.precheck_strict_switch_mode = false
   }
   return client.post<SessionResponse>('/commissioning/sessions', body)
 }

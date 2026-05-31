@@ -732,6 +732,17 @@ class InstrumentHALService:
                         # 消除 fresh-start "快速路" (空配置 / 手动 PUT)。operator 在
                         # connection_params 显式设 topology_profile_id 仍优先。对称
                         # F64 set_channel_model 的默认 .smu fallback。
+                        # ── 路径 A/B 边界 (P2-11 Phase 5; 注释经 Codex on PR #112 修正):
+                        # 这是**路径 A (bring-up) 的 HAL-init 默认** —— 经
+                        # apply_topology_profile → set_cell_config(profile.to_config_dict())
+                        # 把 profile 的 mimo_port_preset / tdd_pattern / sched_algo /
+                        # csi_rs_ports 等落到 UXM 硬件。正式测试 (路径 B) 的 measure 只
+                        # set_cell_config(frequency/ARFCN/BW/SCS/band/mimo_layers/power),
+                        # **不覆盖上面那些 profile 字段** → 它们会**残留**进 path B (port
+                        # routing / TDD / scheduler 仍是本默认, 非"天然分开")。频率 /
+                        # ARFCN / MIMO layers 已 TestCase 驱动; port routing 等是已知 leak
+                        # 点 (roadmap "Discovered" backlog: 待补成 TestCase 驱动或显式 reset)。
+                        # 见 docs/architecture/testcase-driven-instrument-config.md §2/§6/§6.1。
                         if not topology_id:
                             topology_id = getattr(driver, "_default_topology_profile_id", None)
                             if topology_id:
