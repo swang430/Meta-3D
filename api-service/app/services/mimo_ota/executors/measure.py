@@ -338,6 +338,42 @@ class MeasureExecutor(IStepExecutor):
                     error_message=f"Channel generation failed for engine_mode={config.engine_mode}",
                 )
 
+            # --- P2-11 Phase 1: 多方频率一致性 fail-loud 校验 ---
+            # UXM (set_cell_config 后, _arfcn 已设) + F64 (信道加载后) 都已配置; 把各
+            # 仪表归一到 (中心 ARFCN, 带宽) 跟 TestCase 精确比对。不一致 = 静默错配
+            # (GCM 模式 F64 默认 .smu 3600 但 TestCase 3500, 或 UXM 没传 arfcn → 实际
+            # 下发 632628=3489 ≠ 标称), strict 模式 FAIL。频率错了下面 input level /
+            # RSRP / 吞吐都不可信, 所以放在 Phase 2b input level 之前。
+            from app.hal.nr_arfcn import FrequencyIdentity
+            from app.services.mimo_ota.frequency_consistency import (
+                check_frequency_consistency,
+            )
+            freq_result = check_frequency_consistency(
+                FrequencyIdentity.from_center_freq_mhz(
+                    pcell.frequency_hz / 1e6, pcell.bandwidth_mhz
+                ),
+                {
+                    "UXM": base_station.get_frequency_identity()
+                    if hasattr(base_station, "get_frequency_identity") else None,
+                    "F64": emulator.get_frequency_identity()
+                    if hasattr(emulator, "get_frequency_identity") else None,
+                },
+            )
+            if not freq_result.consistent:
+                if config.precheck_strict_frequency:
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            "P2-11 频率一致性校验失败: "
+                            + (freq_result.failure_reason() or "")
+                        ),
+                        measurements={"frequency_consistency": freq_result.to_payload()},
+                    )
+                logger.warning(
+                    "[%s] P2-11 频率不一致 (precheck_strict_frequency=False, 继续): %s",
+                    context.test_execution.id, freq_result.failure_reason(),
+                )
+
             # --- P0-8 Step 2 Phase 2b: F64 输入操作点闭环 (CE↔BS) ---
             # F64 fading 已经载入、UXM DL 已开 → 此时 F64 输入端信号即真实工作条件,
             # 跑 §4 A-F 闭环锁住 avg+crest 在窗口内、clipping 不爆、无 cut-off。
@@ -572,6 +608,9 @@ class MeasureExecutor(IStepExecutor):
                 # opt-out audit). strict-fail 路径不会到这里 — 早期 return 时
                 # input_level_calibration 已经塞进 measurements。
                 "input_level_calibration": input_level_payload,
+                # P2-11 Phase 1: 多方频率一致性校验 (一致/opt-out 路径留 audit;
+                # strict-fail 路径早期 return 时已塞进 measurements)。
+                "frequency_consistency": freq_result.to_payload(),
             }
 
             # ``asc_files_loaded`` is ASC-specific (ExternalWaveformStrategy /
