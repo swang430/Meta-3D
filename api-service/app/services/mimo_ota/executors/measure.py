@@ -79,6 +79,7 @@ class MeasureExecutor(IStepExecutor):
             select_active_probe_id,
         )
         from app.hal.channel_emulator import ChannelLoadMode
+        from app.hal.nr_arfcn import freq_mhz_to_nr_arfcn
 
         hal = get_hal_service()
         positioner = hal.drivers.get("positioner")
@@ -111,9 +112,16 @@ class MeasureExecutor(IStepExecutor):
                 )
             scells = ccs[1:]
 
+            # P2-11 (Codex on PR #109 P1): 从 TestCase 中心频推导规范 ARFCN 显式下发。
+            # 不传 arfcn 时 RealUxmDriver.set_cell_config fallback 到 NR_BAND_ARFCN_MAP
+            # [band] (N78→632628=3489.42 MHz), 让 UXM 实际下发频率 ≠ TestCase, 下面的
+            # 频率一致性校验会正确判失败 → 任何 TestCase 频率 ≠ band fallback 的真实
+            # run 都被误杀。ARFCN 是频率真值 (frequency_mhz 只是派生视图), 必须显式驱动。
+            pcell_freq_mhz = pcell.frequency_hz / 1e6
             await base_station.set_cell_config(
                 {
-                    "frequency_mhz": pcell.frequency_hz / 1e6,
+                    "frequency_mhz": pcell_freq_mhz,
+                    "arfcn": freq_mhz_to_nr_arfcn(pcell_freq_mhz),
                     "bandwidth_mhz": pcell.bandwidth_mhz,
                     "scs_khz": pcell.subcarrier_spacing_khz,
                     "band": pcell.band,
@@ -126,6 +134,9 @@ class MeasureExecutor(IStepExecutor):
             scells_added: List[Dict[str, Any]] = []
             if scells and hasattr(base_station, "add_secondary_cell"):
                 for cc_idx, scell in enumerate(scells, start=1):
+                    # SCell 走 SCELL_CONF_FREQ 直接按 frequency_mhz 程控 (无 ARFCN
+                    # band fallback, 见 add_secondary_cell) → 没有 PCell 那个坑, 不需
+                    # 显式 arfcn。频率一致性校验也只比 PCell。
                     ok = await base_station.add_secondary_cell(
                         cc_idx,
                         {
@@ -336,6 +347,42 @@ class MeasureExecutor(IStepExecutor):
                 return StepExecutionResult(
                     status=StepExecutionStatus.FAILED,
                     error_message=f"Channel generation failed for engine_mode={config.engine_mode}",
+                )
+
+            # --- P2-11 Phase 1: 多方频率一致性 fail-loud 校验 ---
+            # UXM (set_cell_config 后, _arfcn 已设) + F64 (信道加载后) 都已配置; 把各
+            # 仪表归一到 (中心 ARFCN, 带宽) 跟 TestCase 精确比对。不一致 = 静默错配
+            # (GCM 模式 F64 默认 .smu 3600 但 TestCase 3500, 或 UXM 没传 arfcn → 实际
+            # 下发 632628=3489 ≠ 标称), strict 模式 FAIL。频率错了下面 input level /
+            # RSRP / 吞吐都不可信, 所以放在 Phase 2b input level 之前。
+            from app.hal.nr_arfcn import FrequencyIdentity
+            from app.services.mimo_ota.frequency_consistency import (
+                check_frequency_consistency,
+            )
+            freq_result = check_frequency_consistency(
+                FrequencyIdentity.from_center_freq_mhz(
+                    pcell.frequency_hz / 1e6, pcell.bandwidth_mhz
+                ),
+                {
+                    "UXM": base_station.get_frequency_identity()
+                    if hasattr(base_station, "get_frequency_identity") else None,
+                    "F64": emulator.get_frequency_identity()
+                    if hasattr(emulator, "get_frequency_identity") else None,
+                },
+            )
+            if not freq_result.consistent:
+                if config.precheck_strict_frequency:
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            "P2-11 频率一致性校验失败: "
+                            + (freq_result.failure_reason() or "")
+                        ),
+                        measurements={"frequency_consistency": freq_result.to_payload()},
+                    )
+                logger.warning(
+                    "[%s] P2-11 频率不一致 (precheck_strict_frequency=False, 继续): %s",
+                    context.test_execution.id, freq_result.failure_reason(),
                 )
 
             # --- P0-8 Step 2 Phase 2b: F64 输入操作点闭环 (CE↔BS) ---
@@ -572,6 +619,9 @@ class MeasureExecutor(IStepExecutor):
                 # opt-out audit). strict-fail 路径不会到这里 — 早期 return 时
                 # input_level_calibration 已经塞进 measurements。
                 "input_level_calibration": input_level_payload,
+                # P2-11 Phase 1: 多方频率一致性校验 (一致/opt-out 路径留 audit;
+                # strict-fail 路径早期 return 时已塞进 measurements)。
+                "frequency_consistency": freq_result.to_payload(),
             }
 
             # ``asc_files_loaded`` is ASC-specific (ExternalWaveformStrategy /

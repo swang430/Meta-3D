@@ -16,6 +16,21 @@
 要么(在 bring-up 场景)来自显式声明的默认 fallback,绝不能"半 TestCase 半默认"地
 静默拼出一个错配的链路。
 
+### 1.1 频率的规范标识 = 中心频点 ARFCN + 带宽 (用户 2026-05-30 确立)
+
+**系统中频率的规范标识是「中心频点 ARFCN + 带宽」,不是 `frequency_mhz`。**
+
+- **ARFCN 是 3GPP TS 38.104 标准定义的整数** channel number, 精确 → **根本没有浮点
+  "容差"问题**。容差恰恰是"用近似 MHz 而非标准 ARFCN"混出来的。
+- **中心频点** (不是起始/边缘频率), 带宽单独标识。
+- 系统里**所有仪表** (UXM cell / F64 .smu / SA center) 都归一到 `(中心 ARFCN, 带宽)`
+  再比对。
+
+`frequency_mhz` 是给人看的**派生视图**, 不是真值。这同时是 P1-17 ARFCN bug 的根本解:
+那个 bug (profile 标称 `frequency_mhz=3600` 但实际下发 ARFCN→3489) 正是因为没拿
+ARFCN 当真值。工具 + 规范标识类见 `app/hal/nr_arfcn.py` (`freq_mhz_to_nr_arfcn` /
+`FrequencyIdentity`)。
+
 ## 2. 两条路径的切分(关键)
 
 系统有两条**正交**的配置路径,边界必须清楚,不能混用:
@@ -111,8 +126,8 @@ P0-8(F64 默认 .smu)+ P1-17(UXM 默认 profile)**是路径 A 的实现,正确�
 
 | 阶段 | 内容 | 性质 | 优先 |
 |------|------|------|------|
-| **1** | 多方频率一致性 fail-loud 校验(measure/precheck) | silent-failure 防护,本地可做,小 | ⭐ 最先(保护测试可信度)|
-| **2** | TestCase → F64 GCM .smu 联动(`emulation_file` 字段 + sim_rules 透传 + 不 fallback) | GCM 优先 | ⭐ 高 |
+| **1** ✅ | 多方频率一致性 fail-loud 校验(measure) — **已实现 (P2-11 Phase 1)**: `nr_arfcn.py` 工具 + 各 driver `get_frequency_identity()` 归一到 (中心 ARFCN, 带宽) + `frequency_consistency.check_*` 精确比对 + measure phase `precheck_strict_frequency` gate | silent-failure 防护,本地可做,小 | ⭐ 最先(保护测试可信度)|
+| **2** | TestCase → F64 GCM .smu 联动(`emulation_file` 字段 + sim_rules 透传 + 不 fallback) | GCM 优先 | ⭐ 高(下一步)|
 | **3** | switch topology 纳入 TestCase 驱动(现 chamber-driven)| 架构补全 | 中 |
 | **4** | 信号源 / VNA 纳入 TestCase 驱动(干扰 / 在线校准)| 架构补全 | 低(按需)|
 | **5** | 默认配置角色文档化 + 路径 A/B 边界在代码注释固化 | 防认知漂移 | 贯穿 |

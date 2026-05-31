@@ -202,6 +202,10 @@ class RealUxmDriver(BaseStationDriver):
         self._band: str = "N78"
         self._frequency_mhz: float = 3500.0
         self._bandwidth_mhz: float = 100.0
+        # P2-11: 实际下发的中心 ARFCN (set_cell_config 时存)。getter 用它而非
+        # _frequency_mhz 标称 → 抓 ARFCN fallback 坑 (标称 3500 但没传 arfcn 时
+        # 实际下发 NR_BAND_ARFCN_MAP[N78]=632628=3489.42 MHz)。None=未配置。
+        self._arfcn: Optional[int] = None
         self._scs_khz: int = 30
         self._dl_power_dbm: float = -50.0
         self._cell_state: CellState = CellState.OFF
@@ -453,6 +457,20 @@ class RealUxmDriver(BaseStationDriver):
             "hislip_index": self._cmds.HISLIP_INDEX,
         }
 
+    def get_frequency_identity(self):
+        """P2-11: 当前配置的频率规范标识 (中心 ARFCN + 带宽), 供多方一致性校验。
+
+        用**实际下发的 `_arfcn`** (不是 `_frequency_mhz` 标称) —— 抓 set_cell_config
+        没传 arfcn 时 fallback 到 `NR_BAND_ARFCN_MAP` 的坑 (标称 3500 但实际下发
+        632628=3489.42 MHz)。返回 None = 还没 set_cell_config (无频率可报)。
+        """
+        if self._arfcn is None:
+            return None
+        from app.hal.nr_arfcn import FrequencyIdentity
+        return FrequencyIdentity(
+            center_arfcn=self._arfcn, bandwidth_mhz=self._bandwidth_mhz
+        )
+
     # ===================================================================
     # P2-1 Phase 1: Topology Profile 应用 (operator-managed)
     # ===================================================================
@@ -620,6 +638,7 @@ class RealUxmDriver(BaseStationDriver):
                 arfcn = config["arfcn"]
             else:
                 arfcn = NR_BAND_ARFCN_MAP.get(self._band, 632628)
+            self._arfcn = arfcn  # P2-11: 存实际下发的中心 ARFCN (getter / 一致性校验用)
             self._write(
                 self._cmds.CELL_DL_ARFCN.format(cell=cell)
                 + f" {arfcn}"
