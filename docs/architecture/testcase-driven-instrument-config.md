@@ -126,12 +126,14 @@ P0-8(F64 默认 .smu)+ P1-17(UXM 默认 profile)**是路径 A 的实现,正确�
 从 TestCase 驱动它 + fail-loud 校验它"。** 边界在代码里的锚点(均已加 `路径 A/B 边界`
 注释指回本文档):
 
-**路径 A — bring-up 默认(只在 HAL-init / 手动调试用,measure 不读)**:
+**路径 A — bring-up 默认(在 HAL-init / 手动调试用)**:
 
-| 默认 | 代码锚点 |
-|------|---------|
-| F64 默认 .smu(3600M)| `app/hal/propsim_f64.py` → `F64_DEFAULT_EMULATION_FILE`(P0-8)|
-| UXM 默认 topology profile | `app/services/instrument_hal_service.py` → `_initialize_from_db` 的 `_default_topology_profile_id` fallback(P1-17)|
+| 默认 | 代码锚点 | path B 隔离 |
+|------|---------|------------|
+| F64 默认 .smu(3600M)| `app/hal/propsim_f64.py` → `F64_DEFAULT_EMULATION_FILE`(P0-8)| ✅ 干净:measure 由 `emulation_file` 覆盖 |
+| UXM 默认 topology profile | `app/services/instrument_hal_service.py` → `_initialize_from_db` 的 `_default_topology_profile_id` fallback(P1-17)| ⚠️ **不完全**:见下方 leak |
+
+> ⚠️ **已知 leak(Codex on PR #112,roadmap "Discovered" backlog)**:UXM 默认 profile 经 `apply_topology_profile → set_cell_config(to_config_dict())` 在 HAL-init 把 `mimo_port_preset` / `tdd_pattern` / `sched_algo` / `csi_rs_ports` 落到硬件。measure(path B)的 `set_cell_config` 只传 frequency/ARFCN/BW/SCS/band/`mimo_layers`/power,**不覆盖上述 profile 字段** → 它们**残留**进正式测试(如 2x2 TestCase 跑在残留的 4x4 端口路由上)。待补成 TestCase 驱动或 measure 显式 reset。**这正是"加新仪表参数前先问 path B 有没有驱动它"准则要防的——port routing / TDD / scheduler 当前没被 path B 驱动。**
 
 **路径 B — TestCase 驱动(measure executor,全从 `MIMOOTAConfiguration` 派生)**:
 

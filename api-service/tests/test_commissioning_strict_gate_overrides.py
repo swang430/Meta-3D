@@ -20,20 +20,37 @@ override translation: omitted leaves the schema default, explicit value carries.
 from app.api.commissioning import CreateSessionRequest, _request_overrides
 
 
+# P2-11: Phase 1/2/3 加了 3 道新 strict 门; 暗室首测 "强制跳过严格门" 必须一并降级它们,
+# 否则真仪表空跑撞上新门无法绕过 (cal/dut 之外的捷径缺口)。新门同样走 null/False/value
+# cartesian, 一并钉死。
+_P2_11_FLAGS = (
+    "precheck_strict_frequency",
+    "precheck_strict_emulation_file",
+    "precheck_strict_switch_mode",
+)
+_ALL_STRICT_FLAGS = ("precheck_strict_dut", "precheck_strict_cal", *_P2_11_FLAGS)
+
+
 def test_strict_flags_omitted_are_absent_from_overrides():
     """Default request → flags not in overrides → config keeps strict default."""
     overrides = _request_overrides(CreateSessionRequest())
-    assert "precheck_strict_dut" not in overrides
-    assert "precheck_strict_cal" not in overrides
+    for flag in _ALL_STRICT_FLAGS:
+        assert flag not in overrides, f"{flag} leaked into overrides as None"
 
 
 def test_strict_flags_false_pass_through():
-    """Lab-smoke toggle → explicit False is carried into overrides."""
+    """Lab-smoke toggle → explicit False is carried into overrides (全 5 道门)。"""
     overrides = _request_overrides(
-        CreateSessionRequest(precheck_strict_dut=False, precheck_strict_cal=False)
+        CreateSessionRequest(
+            precheck_strict_dut=False,
+            precheck_strict_cal=False,
+            precheck_strict_frequency=False,
+            precheck_strict_emulation_file=False,
+            precheck_strict_switch_mode=False,
+        )
     )
-    assert overrides["precheck_strict_dut"] is False
-    assert overrides["precheck_strict_cal"] is False
+    for flag in _ALL_STRICT_FLAGS:
+        assert overrides[flag] is False, f"{flag} not carried as False"
 
 
 def test_strict_flags_true_pass_through():
@@ -50,6 +67,30 @@ def test_one_flag_set_other_omitted():
     overrides = _request_overrides(CreateSessionRequest(precheck_strict_dut=False))
     assert overrides["precheck_strict_dut"] is False
     assert "precheck_strict_cal" not in overrides
+
+
+def test_p2_11_flag_set_others_omitted():
+    """P2-11: 只设 frequency 门, 其余 (含另两道新门) 不能被拖成 None 静默绕过。"""
+    overrides = _request_overrides(
+        CreateSessionRequest(precheck_strict_frequency=False)
+    )
+    assert overrides["precheck_strict_frequency"] is False
+    for flag in ("precheck_strict_emulation_file", "precheck_strict_switch_mode",
+                 "precheck_strict_cal", "precheck_strict_dut"):
+        assert flag not in overrides
+
+
+def test_p2_11_flags_true_pass_through():
+    """显式 True 也透传 (跟 omitted 区分, 虽同效)。"""
+    overrides = _request_overrides(
+        CreateSessionRequest(
+            precheck_strict_frequency=True,
+            precheck_strict_emulation_file=True,
+            precheck_strict_switch_mode=True,
+        )
+    )
+    for flag in _P2_11_FLAGS:
+        assert overrides[flag] is True
 
 # NOTE: the mock/real auto-skip is verified at the precheck gate level (live
 # HAL), see test_mimo_ota_precheck_{dut,cal}_gate.py

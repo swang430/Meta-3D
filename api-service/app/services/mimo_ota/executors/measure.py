@@ -22,8 +22,11 @@ set_cell_config(arfcn=freq→ARFCN) / F64 emulation_file(GCM)+ engine 频率 /
 switch orchestrate(switch_mode_id)/ 路损 cert(operating_mode 过滤)/ SA /
 positioner 全 TestCase 派生, 下发后多方频率一致性 + GCM .smu + switch mode 三道
 fail-loud 门挡静默错配 (Phase 1/2/3)。路径 A (bring-up 默认: P0-8 F64 .smu /
-P1-17 UXM profile) 只在 HAL-init 用, 跟这里天然分开。总览见
-docs/architecture/testcase-driven-instrument-config.md §2/§6/§7。
+P1-17 UXM profile) 主要在 HAL-init 用 —— F64 .smu 这里由 emulation_file 覆盖,
+**但 UXM 默认 profile 的 port routing / TDD / scheduler 等字段 set_cell_config
+没覆盖 → 会残留进本 path B** (Codex on PR #112; roadmap "Discovered" backlog,
+待补成 TestCase 驱动或显式 reset)。边界总览见
+docs/architecture/testcase-driven-instrument-config.md §2/§6/§6.1。
 """
 import asyncio
 import logging
