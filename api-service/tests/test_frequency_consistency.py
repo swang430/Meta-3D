@@ -7,7 +7,7 @@
 """
 from __future__ import annotations
 
-from app.hal.nr_arfcn import FrequencyIdentity
+from app.hal.nr_arfcn import FrequencyIdentity, freq_mhz_to_nr_arfcn
 from app.hal.propsim_f64 import RealPropsimF64Driver
 from app.hal.uxm_base_station import RealUxmDriver
 from app.services.mimo_ota.frequency_consistency import check_frequency_consistency
@@ -101,3 +101,81 @@ class TestF64FrequencyIdentity:
         drv = RealPropsimF64Driver("test", {})
         drv._loaded_emulation_file = r"D:\some\arbitrary_channel.smu"
         assert drv.get_frequency_identity() is None
+
+    def test_programmed_center_overrides_filename(self):
+        # Codex on PR #109 P2: 复用 ".._3600M.smu" 但显式下发中心频到 3500 → 自报
+        # **实际下发的 3500**, 不是 stale 的文件名 3600 (否则校验门会误判已正确调谐
+        # 的 run, 或放过错调的 run)。
+        drv = RealPropsimF64Driver("test", {})
+        drv._loaded_emulation_file = (
+            r"D:\Scenario Packs\...\3GPP_FR1_OTA_CDLC_UMa_3600M.smu"
+        )
+        drv._center_freq_mhz = 3500.0
+        drv._center_freq_programmed = True
+        fi = drv.get_frequency_identity()
+        assert fi == FrequencyIdentity.from_center_freq_mhz(3500.0, 100.0)
+        assert fi != FrequencyIdentity.from_center_freq_mhz(3600.0, 100.0)  # 非文件名
+
+    async def test_configure_marks_programmed_and_reports_it(self):
+        # configure(center_frequency_mhz=...) 显式下发 → 标记 programmed → 自报该频率,
+        # 即使文件名 token 是别的。
+        drv = RealPropsimF64Driver("test", {})
+        drv._loaded_emulation_file = (
+            r"D:\Scenario Packs\...\3GPP_FR1_OTA_CDLC_UMa_3600M.smu"
+        )
+        assert drv._center_freq_programmed is False  # 默认未下发
+        await drv.configure({"center_frequency_mhz": 3500.0})
+        assert drv._center_freq_programmed is True
+        assert drv.get_frequency_identity() == FrequencyIdentity.from_center_freq_mhz(
+            3500.0, 100.0
+        )
+
+
+class TestUxmSetCellConfigArfcn:
+    """P1 (Codex on PR #109): measure 必须把从 TestCase 中心频推导的规范 ARFCN 显式
+    传给 set_cell_config; 否则 RealUxmDriver fallback 到 NR_BAND_ARFCN_MAP[band], UXM
+    实际下发频率 ≠ TestCase → 频率一致性门把任何 (频率 ≠ band fallback) 的真实 run 误杀。
+    这里测**真实下发的 SCPI / _arfcn**, 不停在 frequency_mhz 标称层。
+    """
+
+    async def test_explicit_arfcn_dispatched_aligns_to_testcase(self):
+        drv = RealUxmDriver("test", {"ip": "10.0.0.1", "port": 5025})
+        sent: list = []
+        drv._write = lambda s: sent.append(s)   # 捕获真实下发的 SCPI
+        drv._query = lambda *a, **k: "1"
+        arfcn = freq_mhz_to_nr_arfcn(3500.0)
+        assert arfcn != 632628  # 跟 N78 fallback 不同, 测试才有意义
+        await drv.set_cell_config(
+            {
+                "frequency_mhz": 3500.0,
+                "arfcn": arfcn,
+                "bandwidth_mhz": 100.0,
+                "band": "N78",
+                "scs_khz": 30,
+            }
+        )
+        # 实际下发的 ARFCN (state + SCPI wire body) 是 TestCase 的, 不是 band fallback
+        assert drv._arfcn == arfcn
+        assert any("ARFCN" in s.upper() and str(arfcn) in s for s in sent)
+        # 频率自报 round-trip 跟 TestCase 精确一致
+        assert drv.get_frequency_identity() == FrequencyIdentity.from_center_freq_mhz(
+            3500.0, 100.0
+        )
+
+    async def test_missing_arfcn_falls_back_and_mismatches_testcase(self):
+        # 文档化旧 bug: 不传 arfcn → N78 fallback 632628 (3489.42) ≠ TestCase 3500。
+        drv = RealUxmDriver("test", {"ip": "10.0.0.1", "port": 5025})
+        drv._write = lambda s: None
+        drv._query = lambda *a, **k: "1"
+        await drv.set_cell_config(
+            {
+                "frequency_mhz": 3500.0,
+                "bandwidth_mhz": 100.0,
+                "band": "N78",
+                "scs_khz": 30,
+            }
+        )
+        assert drv._arfcn == 632628  # band fallback, 不是 3500 的 ARFCN
+        assert drv.get_frequency_identity() != FrequencyIdentity.from_center_freq_mhz(
+            3500.0, 100.0
+        )

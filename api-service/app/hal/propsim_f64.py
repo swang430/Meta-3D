@@ -404,6 +404,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             config.get("available_channel_models") or []
         )
         self._center_freq_mhz: float = 3500.0
+        # P2-11 (Codex on PR #109 P2): 是否**显式下发过**中心频 (CALC:FILT:CENT:CH)。
+        # False 时 _center_freq_mhz 只是默认值 3500, 不能当真值上报 —— get_frequency_
+        # identity 退回解析 .smu 文件名。True (configure/set_channel_model 显式给了
+        # center_frequency_mhz) 时 _center_freq_mhz 才是实际下发频率, 优先于文件名
+        # (抓 "3600M.smu 被 configure 重调到 3500" 的坑)。
+        self._center_freq_programmed: bool = False
         self._channel_count: int = 64
         self._tx_antennas: int = 2
         self._rx_antennas: int = 2
@@ -636,12 +642,20 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     def get_frequency_identity(self):
         """P2-11: F64 当前加载信道的频率规范标识 (中心 ARFCN + 带宽), 供多方一致性校验。
 
-        GCM: 从 `_loaded_emulation_file` 文件名解析中心频率 (".._3600M.smu" → 3600 MHz)
-        → ARFCN。返回 None = 没加载 / 无法解析 (e.g. ASC 路径 — 频率由 channel-engine
-        按 TestCase 生成, 不在 F64 driver 状态; 此时校验跳过 F64, 由 ASC 同源保证)。
+        频率来源优先级 (Codex on PR #109 P2 — 报"实际下发", 不是"文件名 token"):
+        1. **显式下发过的中心频** (`_center_freq_programmed`): configure / set_channel_model
+           收到 `center_frequency_mhz` 时驱动 `CALC:FILT:CENT:CH`, 此即 F64 实际工作频率。
+           优先 —— 能抓 "复用 3600M.smu 但 configure 重调到 3500" 这种文件名已 stale 的坑。
+        2. **否则**解析 `_loaded_emulation_file` 文件名 (".._3600M.smu" → 3600 MHz): 没显式
+           下发中心频时 _center_freq_mhz 只是默认 3500, 不可信; .smu 文件名才是该信道频率。
+        返回 None = 既没显式下发、文件名也无法解析 (e.g. ASC 路径 — 频率由 channel-engine
+        按 TestCase 生成, 不在 F64 driver 状态; 校验跳过 F64, 由 ASC 同源保证)。
         带宽信道仿真器不强标识, 用 N78 标准 100M。
         """
-        freq_mhz = self._parse_loaded_center_freq_mhz()
+        if self._center_freq_programmed:
+            freq_mhz = self._center_freq_mhz
+        else:
+            freq_mhz = self._parse_loaded_center_freq_mhz()
         if freq_mhz is None:
             return None
         from app.hal.nr_arfcn import FrequencyIdentity
@@ -656,6 +670,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         """
         if "center_frequency_mhz" in config:
             self._center_freq_mhz = config["center_frequency_mhz"]
+            self._center_freq_programmed = True  # P2-11: 显式下发了中心频
         if "pipeline" in config:
             self._active_pipeline = F64Pipeline(config["pipeline"])
         if "channel_model" in config:
@@ -781,8 +796,13 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     )
 
             # Step 4: 设置中心频率
-            freq_mhz = parameters.get("center_frequency_mhz", self._center_freq_mhz)
-            self._center_freq_mhz = freq_mhz
+            # P2-11: 只有 parameters 显式给了 center_frequency_mhz 才标记"已下发"
+            # (并更新真值); 否则沿用既有 _center_freq_mhz 程控但不当真值上报 (它可能
+            # 只是默认 3500, 此时 get_frequency_identity 退回 .smu 文件名)。
+            if "center_frequency_mhz" in parameters:
+                self._center_freq_mhz = parameters["center_frequency_mhz"]
+                self._center_freq_programmed = True
+            freq_mhz = self._center_freq_mhz
             # 为所有通道设置中心频率
             for ch in range(1, self._channel_count + 1):
                 await self._write(f"CALC:FILT:CENT:CH {ch},{freq_mhz}")

@@ -79,6 +79,7 @@ class MeasureExecutor(IStepExecutor):
             select_active_probe_id,
         )
         from app.hal.channel_emulator import ChannelLoadMode
+        from app.hal.nr_arfcn import freq_mhz_to_nr_arfcn
 
         hal = get_hal_service()
         positioner = hal.drivers.get("positioner")
@@ -111,9 +112,16 @@ class MeasureExecutor(IStepExecutor):
                 )
             scells = ccs[1:]
 
+            # P2-11 (Codex on PR #109 P1): 从 TestCase 中心频推导规范 ARFCN 显式下发。
+            # 不传 arfcn 时 RealUxmDriver.set_cell_config fallback 到 NR_BAND_ARFCN_MAP
+            # [band] (N78→632628=3489.42 MHz), 让 UXM 实际下发频率 ≠ TestCase, 下面的
+            # 频率一致性校验会正确判失败 → 任何 TestCase 频率 ≠ band fallback 的真实
+            # run 都被误杀。ARFCN 是频率真值 (frequency_mhz 只是派生视图), 必须显式驱动。
+            pcell_freq_mhz = pcell.frequency_hz / 1e6
             await base_station.set_cell_config(
                 {
-                    "frequency_mhz": pcell.frequency_hz / 1e6,
+                    "frequency_mhz": pcell_freq_mhz,
+                    "arfcn": freq_mhz_to_nr_arfcn(pcell_freq_mhz),
                     "bandwidth_mhz": pcell.bandwidth_mhz,
                     "scs_khz": pcell.subcarrier_spacing_khz,
                     "band": pcell.band,
@@ -126,6 +134,9 @@ class MeasureExecutor(IStepExecutor):
             scells_added: List[Dict[str, Any]] = []
             if scells and hasattr(base_station, "add_secondary_cell"):
                 for cc_idx, scell in enumerate(scells, start=1):
+                    # SCell 走 SCELL_CONF_FREQ 直接按 frequency_mhz 程控 (无 ARFCN
+                    # band fallback, 见 add_secondary_cell) → 没有 PCell 那个坑, 不需
+                    # 显式 arfcn。频率一致性校验也只比 PCell。
                     ok = await base_station.add_secondary_cell(
                         cc_idx,
                         {
