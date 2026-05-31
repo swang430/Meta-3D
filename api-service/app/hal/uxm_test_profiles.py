@@ -385,6 +385,55 @@ PROFILE_4X4_N78 = UxmTopologyProfile(
     ),
 )
 
+# ---- 4x4 MIMO @ 3600M (fresh-start 系统默认, 对齐 F64 默认 .smu) ----
+# P1-17: F64 默认 .smu = 3GPP_FR1_OTA_CDLC_UMa_3600M (N78, 4-input, 3600 MHz)。
+# UXM fresh-start 默认必须跟它**同频** (否则 BS 发 3600 而现有 3500M profile 让
+# BS 发 3500 → 跟 F64 信道频率打架)。这个 profile 专门对齐 F64 默认, 作为
+# UXM_DEFAULT_TOPOLOGY_PROFILE_ID。现有 caict_n78_4x4 (3500M) 保留不动 (其它
+# 引用/测试可能依赖)。
+PROFILE_4X4_N78_3600 = UxmTopologyProfile(
+    profile_id="caict_n78_3600_4x4",
+    name="CAICT 暗室 4x4 MIMO (N78 3600MHz, F64 默认对齐)",
+    description=(
+        "4x4 MIMO OTA 高阶测试 @ 3600 MHz — 频率/MIMO 对齐 F64 默认 .smu "
+        "(3GPP_FR1_OTA_CDLC_UMa_3600M, N78 4-input)。P1-17 fresh-start 系统默认, "
+        "保证 UXM 一键就位时跟 F64 默认信道同频。"
+    ),
+    category="mimo",
+    band="N78",
+    frequency_mhz=3600.0,
+    # ⚠️ arfcn 必须显式设 (Codex on PR #107)! UXM 真正用 ARFCN 定频, 不是
+    # frequency_mhz。缺省 (None) 时 set_cell_config fallback 到
+    # NR_BAND_ARFCN_MAP["N78"]=632628 (= 3489.42 MHz, N78 默认), 让"对齐 F64
+    # 3600M"的本 profile 实际驱动 UXM 到 3489 → 根本没对齐。
+    # 640000 = 3600.0 MHz 的精确 NR-ARFCN (FR1 range2: 600000+(F−3000)/0.015)。
+    arfcn=640000,
+    bandwidth_mhz=100.0,
+    scs_khz=30,
+    duplex="TDD",
+    mimo_layers=4,
+    mimo_port_preset="4x4",
+    dl_power_dbm=-50.0,
+    ssb_power_dbm=-50.0,
+    modulation="256QAM",
+    target_mcs=28,
+    sched_algo="FULLBUFFER",
+    enable_amc=False,
+    tdd_pattern="DDDSU",
+    tdd_period="5MS",
+    harq_max_trans=4,
+    harq_processes=16,
+    csi_rs_ports=8,          # 4x4 MIMO → 8 CSI-RS ports
+    stat_count=5000,
+    compatible_test_apps=["5G_NR_Test"],
+    notes=(
+        "fresh-start 系统默认 (P1-17), 对齐 F64 默认 3600M .smu (arfcn=640000)。\n"
+        "需要满配 UXM (8 端口)\n"
+        "RF1~RF4 OUT→F64 CH1~CH4→探头\n"
+        "RF6 IN←暗室独立通信天线 (UL)"
+    ),
+)
+
 # ---- 校准专用 ----
 PROFILE_CAL_POWER = UxmTopologyProfile(
     profile_id="cal_power_sweep",
@@ -443,6 +492,7 @@ def _register_builtin_profiles() -> None:
         PROFILE_2X2_N78,
         PROFILE_2X2_N41,
         PROFILE_4X4_N78,
+        PROFILE_4X4_N78_3600,   # P1-17: fresh-start 系统默认 (对齐 F64 3600M)
         PROFILE_CAL_POWER,
         PROFILE_CAL_2X2_ALT,
     ]:

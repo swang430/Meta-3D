@@ -43,12 +43,19 @@ from app.hal.uxm_test_profiles import (
     UxmTopologyProfile,
     get_profile,
     list_profiles,
+    _PROFILE_REGISTRY,
+    _register_builtin_profiles,
 )
 from app.main import app
 from app.models.instrument import (
     InstrumentCategory as InstrumentCategoryModel,
     InstrumentConnection as InstrumentConnectionDB,
 )
+
+# 内置 profile 数量从 registry 算, 不硬编码 (P1-17 加了第 8 个 caict_n78_3600_4x4;
+# 防 P3-11 式 count drift —— 以后加 built-in 不用再改下面这些计数断言)。
+_register_builtin_profiles()
+_N_BUILTIN = len(_PROFILE_REGISTRY)
 
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -172,13 +179,13 @@ class TestProfileCompatDeclaration:
         assert profile.is_compatible_with(None) is True
 
     def test_all_builtin_templates_declare_5g_compat(self):
-        """All 7 built-in templates use `cell_id="CELL0"` which only
+        """All built-in templates use `cell_id="CELL0"` which only
         works on 5G_NR_Test (IRAT's primary cell is CELL1). Pin that
         they all DECLARE this constraint explicitly — a future template
         for IRAT must declare its own compat (not silently inherit
         empty=any and break at SCPI time)."""
         templates = list_profiles()
-        assert len(templates) == 7
+        assert len(templates) == _N_BUILTIN
         for entry in templates:
             full = get_profile(entry["profile_id"])
             assert full.compatible_test_apps == ["5G_NR_Test"], (
@@ -320,7 +327,7 @@ class TestListTopologyProfilesEndpoint:
         resp = client.get(f"/api/v1/instruments/{cat.category_key}/topology-profiles")
         assert resp.status_code == 200
         body = resp.json()
-        assert len(body["items"]) == 7
+        assert len(body["items"]) == _N_BUILTIN
         ids = sorted(item["profile_id"] for item in body["items"])
         # Pin the canonical set so a future template drop is loud.
         assert "caict_n78_2x2" in ids
@@ -631,20 +638,20 @@ from app.services.topology_profile_service import (  # noqa: E402
 
 
 class TestTopologyProfileSeeder:
-    """Pin that ``topology_profiles_seeder`` inserts the 7 built-ins
+    """Pin that ``topology_profiles_seeder`` inserts all built-ins
     on a fresh DB and is idempotent (second run skips rather than
     duplicating). Critical for bootstrap re-runs across deploys."""
 
-    def test_seeds_seven_builtins_on_empty_db(self, db):
+    def test_seeds_all_builtins_on_empty_db(self, db):
         result = topology_profiles_seeder.run(db)
-        assert result.inserted == 7
+        assert result.inserted == _N_BUILTIN
         assert result.skipped == 0
         rows = (
             db.query(InstrumentTopologyProfile)
             .filter(InstrumentTopologyProfile.is_system_preset.is_(True))
             .all()
         )
-        assert len(rows) == 7
+        assert len(rows) == _N_BUILTIN
         ids = {r.profile_id for r in rows}
         assert "caict_n78_2x2" in ids
         assert "caict_n78_4x4" in ids
@@ -653,9 +660,9 @@ class TestTopologyProfileSeeder:
     def test_idempotent_on_second_run(self, db):
         topology_profiles_seeder.run(db)
         result2 = topology_profiles_seeder.run(db)
-        # Second run finds all 7 already-system-preset rows, skips all.
+        # Second run finds all already-system-preset rows, skips all.
         assert result2.inserted == 0
-        assert result2.skipped == 7
+        assert result2.skipped == _N_BUILTIN
 
     def test_does_not_clobber_user_customisations(self, db):
         """Operator may have edited a built-in's fields via clone-to-edit
@@ -815,7 +822,7 @@ class TestListTopologyProfilesReadsDb:
         assert resp.status_code == 200
         body = resp.json()
         # 7 built-ins from the seeder
-        assert len(body["items"]) == 7
+        assert len(body["items"]) == _N_BUILTIN
         for item in body["items"]:
             assert item["is_system_preset"] is True
 
@@ -826,7 +833,7 @@ class TestListTopologyProfilesReadsDb:
         cat = _make_basestation_category(db)
         resp = client.get(f"/api/v1/instruments/{cat.category_key}/topology-profiles")
         body = resp.json()
-        assert len(body["items"]) == 8
+        assert len(body["items"]) == _N_BUILTIN + 1
         custom = [i for i in body["items"] if not i["is_system_preset"]]
         assert len(custom) == 1
         assert custom[0]["profile_id"].startswith("custom_")
@@ -834,13 +841,13 @@ class TestListTopologyProfilesReadsDb:
     def test_falls_back_to_in_code_registry_when_db_empty(self, db):
         """Greenfield first-boot: no seeder has run yet, but the GUI
         opens the topology picker and expects something to show. We
-        surface the in-code 7 built-ins as system presets so operator
+        surface the in-code built-ins as system presets so operator
         sees the canonical choices even before bootstrap."""
         cat = _make_basestation_category(db)
         # No seeder call → DB has zero rows.
         resp = client.get(f"/api/v1/instruments/{cat.category_key}/topology-profiles")
         body = resp.json()
-        assert len(body["items"]) == 7
+        assert len(body["items"]) == _N_BUILTIN
         for item in body["items"]:
             assert item["is_system_preset"] is True
 
