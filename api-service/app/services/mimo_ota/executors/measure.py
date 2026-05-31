@@ -74,6 +74,9 @@ class MeasureExecutor(IStepExecutor):
         from app.services.mimo_ota.emulation_file_gate import (
             evaluate_emulation_file_gate,
         )
+        from app.services.mimo_ota.switch_mode_gate import (
+            evaluate_switch_mode_gate,
+        )
         from app.services.mimo_ota.switch_orchestrator import (
             orchestrate_switch_topology,
         )
@@ -227,14 +230,15 @@ class MeasureExecutor(IStepExecutor):
                 )
                 await emulator.connect()
 
-            # --- Phase 2c: verify SwitchTopology declares mimo_ota mode for this chamber ---
-            # CAICT-Lab-1 has a fixed cabling, so this is a *declaration check*
-            # rather than live switching: we surface the topology id, mode, and
-            # CE-port→probe bindings into the result for traceability and
-            # downstream channel-gen consumption. Missing topology is a warning,
-            # not a hard failure.
+            # --- Phase 2c: resolve TestCase-driven switch mode for this chamber ---
+            # P2-11 Phase 3: mode_id 由 TestCase.switch_mode_id 驱动 (chamber active
+            # SwitchTopology + TestCase 选哪个 operating mode), 不再硬编码 "mimo_ota"。
+            # CAICT 固定布线时这是 *declaration check* 非 live switching: surface
+            # topology id/mode/CE→probe 绑定供下游 channel-gen 消费。无 active topology
+            # row = warning (固定布线手工接线, 见下面门放行); 有 topology 但请求 mode
+            # 不提供 = strict FAIL (switch_mode_gate)。
             topology_result = orchestrate_switch_topology(
-                context.db, chamber.id, mode_id="mimo_ota"
+                context.db, chamber.id, mode_id=config.switch_mode_id
             )
             if topology_result.success:
                 logger.info(
@@ -248,9 +252,29 @@ class MeasureExecutor(IStepExecutor):
             else:
                 for w in topology_result.warnings:
                     logger.warning("[%s] %s", context.test_execution.id, w)
+            # P2-11 Phase 3 门: 有 active topology 但 TestCase 请求的 mode 未解析 →
+            # strict FAIL (无 topology row 时放行 —— 固定布线 orchestrator 已 warn)。
+            switch_gate = evaluate_switch_mode_gate(
+                topology_present=topology_result.topology_id is not None,
+                mode_resolved=topology_result.success,
+                requested_mode_id=config.switch_mode_id,
+                strict=config.precheck_strict_switch_mode,
+            )
+            if switch_gate.should_fail:
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    error_message=switch_gate.message,
+                )
+            if switch_gate.should_warn:
+                logger.warning(
+                    "[%s] %s", context.test_execution.id, switch_gate.message
+                )
 
+            # P2-11 Phase 3 (Codex on PR #111): 校准 cert 按 TestCase 的 switch
+            # operating mode 过滤 —— 否则多 mode 同频校准的 lab 会喂错 RF 通路的损耗。
             calibration_entries = ce_client._query_calibration_entries(
-                chamber.id, config.frequency_hz, chamber
+                chamber.id, config.frequency_hz, chamber,
+                operating_mode=config.switch_mode_id,
             )
 
             # --- Phase 2a / P0: path-loss compensation ---
@@ -265,8 +289,11 @@ class MeasureExecutor(IStepExecutor):
             )
 
             pl_service = ProbePathLossCalibrationService(context.db, use_mock=False)
+            # P2-11 Phase 3 (Codex on PR #111): 按 TestCase switch_mode_id 过滤 cert,
+            # 让 per-chain 线损来自请求的 RF 通路 (精确优先, 退回 legacy NULL)。
             path_loss_cert = pl_service.get_latest_calibration(
-                chamber.id, config.frequency_hz / 1e6
+                chamber.id, config.frequency_hz / 1e6,
+                operating_mode=config.switch_mode_id,
             )
             if path_loss_cert is not None:
                 avg_path_loss_db = float(path_loss_cert.avg_path_loss_db or 0.0)
@@ -274,10 +301,12 @@ class MeasureExecutor(IStepExecutor):
                     getattr(path_loss_cert, "path_loss_db_by_rf_chain", None) or {}
                 )
                 logger.info(
-                    "[%s] Phase 2a/P0: path-loss avg=%.2f dB cert=%s "
-                    "(per-chain entries: %d)",
+                    "[%s] Phase 2a/P0: path-loss avg=%.2f dB cert=%s mode=%s "
+                    "(req=%s, per-chain entries: %d)",
                     context.test_execution.id,
-                    avg_path_loss_db, path_loss_cert.id, len(per_chain_pl),
+                    avg_path_loss_db, path_loss_cert.id,
+                    getattr(path_loss_cert, "operating_mode", None),
+                    config.switch_mode_id, len(per_chain_pl),
                 )
             else:
                 avg_path_loss_db = 0.0

@@ -286,6 +286,24 @@ class MIMOOTAConfiguration(BaseModel):
     # 走捷径)。仅 GCM 模式生效 (ASC 不用 .smu)。同 precheck_strict_cal/dut/frequency:
     # GUI 不暴露, fixture/config 级别 opt-in。
 
+    # === RF 开关拓扑 operating mode TestCase 驱动 (P2-11 Phase 3, 2026-05-31) ===
+    switch_mode_id: str = "mimo_ota"
+    # 选 chamber 的 active SwitchTopology 里哪个 operating mode (RF 通路子集)。
+    # 不同 mode = 不同 active_connections (e.g. "mimo_ota" 全 MIMO 通路 /
+    # "cal_power_sweep" 校准通路 / 2x2 子集)。默认 "mimo_ota" = 现历史硬编码值
+    # (backward-compat); TestCase 按测试类型覆盖。measure phase 2c 把它传给
+    # orchestrate_switch_topology, 解析出 CE→probe 绑定供下游 channel-gen 消费。
+
+    precheck_strict_switch_mode: bool = True
+    # P2-11 Phase 3: chamber 有 active SwitchTopology 但其中**没有** switch_mode_id
+    # 声明的 mode (或该 mode 无 active_connections) 时的 measure 行为。
+    # True (生产默认): measure FAILED —— TestCase 显式请求的 RF 通路 mode 链路声明不
+    # 提供 = 真错配 (e.g. 4x4 TestCase 请求的 mode 不在拓扑里)。
+    # False (opt-out): 降级 warning, 继续 (probe 绑定可能空, 下游退回 chamber 几何)。
+    # 注意: chamber **没有** active topology row (固定布线手工接线) → 始终只 warning
+    # (不受本 flag 影响), 这是 CAICT 固定布线的既有语义。同 precheck_strict_*:
+    # GUI 不暴露, fixture/config 级别 opt-in。
+
     # === Pass/fail thresholds ===
     pass_criteria: MIMOOTAPassCriteria = Field(default_factory=MIMOOTAPassCriteria)
 

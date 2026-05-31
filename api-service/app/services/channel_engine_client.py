@@ -43,6 +43,9 @@ from app.models.probe_calibration import (
     ChannelPhaseCalibration,
     CalibrationStatus,
 )
+from app.services.path_loss_calibration_service import (
+    select_latest_path_loss_by_mode,
+)
 from app.services.channel_generation.pas_rotation import (
     align_pas_to_nearest_probe,
     PASRotationResult,
@@ -384,6 +387,7 @@ class ChannelEngineClient:
         chamber_id: UUID,
         frequency_hz: float,
         chamber: ChamberConfiguration,
+        operating_mode: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         从 PostgreSQL 查询校准数据，构造 calibration_data.entries[]。
@@ -401,12 +405,16 @@ class ChannelEngineClient:
         frequency_mhz = frequency_hz / 1e6
 
         # 查询最新的路损校准
-        latest_cal = self.db.query(ProbePathLossCalibration).filter(
-            ProbePathLossCalibration.chamber_id == chamber_id,
-            ProbePathLossCalibration.status == CalibrationStatus.VALID.value,
-        ).order_by(
-            desc(ProbePathLossCalibration.calibrated_at)
-        ).first()
+        # P2-11 Phase 3 (Codex on PR #111): 按请求的 switch operating_mode 过滤 cert
+        # (精确优先, 退回 legacy NULL), 否则多 mode 同频校准的 lab 会喂错 RF 通路的
+        # per-port cable_loss/probe_gain 给 channel gen。
+        latest_cal = select_latest_path_loss_by_mode(
+            self.db.query(ProbePathLossCalibration).filter(
+                ProbePathLossCalibration.chamber_id == chamber_id,
+                ProbePathLossCalibration.status == CalibrationStatus.VALID.value,
+            ),
+            operating_mode,
+        )
 
         num_ports = chamber.num_probes * (2 if chamber.num_polarizations >= 2 else 1)
 

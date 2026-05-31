@@ -39,6 +39,35 @@ from app.schemas.probe_calibration import (
 logger = logging.getLogger("app.calibration.path_loss")
 
 
+def select_latest_path_loss_by_mode(base_query, operating_mode: Optional[str]):
+    """P2-11 Phase 3 (Codex on PR #111): 在已 filter chamber/status[/freq] 的 query 上
+    按请求的 switch operating_mode 选最新 cert。
+
+    多 operating mode 同频校准的 lab 里, 不按 mode 过滤会让一个 '2x2' run 静默拿到最新
+    的 'mimo_ota' / 'cal_power_sweep' cert → per-chain 线损来自错的 RF 通路 (或退 chamber
+    平均)。这里:
+    - operating_mode=None: 不过滤 (调用方未声明 mode, 保持旧行为)。
+    - 否则: **精确匹配优先** (operating_mode == 请求值); 找不到再退回 **legacy 未标记**
+      cert (operating_mode IS NULL —— mode-tagging 之前的 chamber-only 入口留 NULL, 向后
+      兼容)。**绝不**返回 tagged-不同-mode 的 cert (这正是 Codex 指的静默错配)。
+    """
+    order = desc(ProbePathLossCalibration.calibrated_at)
+    if operating_mode is None:
+        return base_query.order_by(order).first()
+    exact = (
+        base_query.filter(ProbePathLossCalibration.operating_mode == operating_mode)
+        .order_by(order)
+        .first()
+    )
+    if exact is not None:
+        return exact
+    return (
+        base_query.filter(ProbePathLossCalibration.operating_mode.is_(None))
+        .order_by(order)
+        .first()
+    )
+
+
 # ==================== 校准常数 ====================
 
 # 路损校准有效期 (天)
@@ -1033,9 +1062,15 @@ class ProbePathLossCalibrationService:
     def get_latest_calibration(
         self,
         chamber_id: UUID,
-        frequency_mhz: Optional[float] = None
+        frequency_mhz: Optional[float] = None,
+        operating_mode: Optional[str] = None,
     ) -> Optional[ProbePathLossCalibration]:
-        """获取最新的路损校准数据"""
+        """获取最新的路损校准数据。
+
+        P2-11 Phase 3 (Codex on PR #111): operating_mode 非 None 时按请求的 switch
+        operating mode 过滤 cert (精确匹配优先, 退回 legacy 未标记), 否则多 mode 同频
+        校准的 lab 会拿错 RF 通路的 per-chain 线损。见 select_latest_path_loss_by_mode。
+        """
         query = self.db.query(ProbePathLossCalibration).filter(
             ProbePathLossCalibration.chamber_id == chamber_id,
             ProbePathLossCalibration.status == CalibrationStatus.VALID.value
@@ -1049,7 +1084,7 @@ class ProbePathLossCalibrationService:
                 )
             )
 
-        return query.order_by(desc(ProbePathLossCalibration.calibrated_at)).first()
+        return select_latest_path_loss_by_mode(query, operating_mode)
 
     def get_path_loss_for_probe(
         self,
