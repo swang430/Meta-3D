@@ -457,6 +457,38 @@ class MeasureExecutor(IStepExecutor):
                     context.test_execution.id, freq_result.failure_reason(),
                 )
 
+            # --- P2-11 Phase 6: UXM cell config 下发后一致性 (吞吐链版频率校验) ---
+            # set_cell_config + RRC reconfig 后, 拿 **UE 协商能力** (max_dl_layers) 跟
+            # TestCase 请求层数比 —— 请求 4 层但 UE 只支持 2 → UXM 静默 clamp, 吞吐其实
+            # 2 层却当 4 层测 (跟频率错配同等危害)。Codex on PR #114: 读 UE 能力而非
+            # CONF:...:LAY? 配置旋钮 (后者回读只原样返回配置值, 抓不到 clamp)。UE 未
+            # attach / firmware 不支持 (mock / dry-run) → skipped 跳过 (同 Phase 1)。
+            if hasattr(base_station, "get_applied_cell_config"):
+                from app.services.mimo_ota.cell_config_consistency import (
+                    check_cell_config_consistency,
+                )
+                cc_result = check_cell_config_consistency(
+                    requested_mimo_layers=config.mimo_layers,
+                    applied=await base_station.get_applied_cell_config(),
+                )
+                if not cc_result.consistent:
+                    if config.precheck_strict_cell_config:
+                        return StepExecutionResult(
+                            status=StepExecutionStatus.FAILED,
+                            error_message=(
+                                "P2-11 Phase 6 cell config 一致性校验失败: "
+                                + (cc_result.failure_reason() or "")
+                            ),
+                            measurements={
+                                "cell_config_consistency": cc_result.to_payload()
+                            },
+                        )
+                    logger.warning(
+                        "[%s] P2-11 Phase 6 cell config 不一致 "
+                        "(precheck_strict_cell_config=False, 继续): %s",
+                        context.test_execution.id, cc_result.failure_reason(),
+                    )
+
             # --- P0-8 Step 2 Phase 2b: F64 输入操作点闭环 (CE↔BS) ---
             # F64 fading 已经载入、UXM DL 已开 → 此时 F64 输入端信号即真实工作条件,
             # 跑 §4 A-F 闭环锁住 avg+crest 在窗口内、clipping 不爆、无 cut-off。

@@ -22,6 +22,7 @@ import logging
 import asyncio
 from enum import Enum
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
+from dataclasses import dataclass
 from datetime import datetime
 
 from app.hal.base import (
@@ -133,6 +134,22 @@ def _infer_band_from_freq(
         if min_f <= freq_mhz <= max_f:
             return band, duplex
     return "N78", "TDD"  # 默认 fallback
+
+
+@dataclass(frozen=True)
+class AppliedCellConfig:
+    """P2-11 Phase 6: UXM/UE **实际能用**的 cell config, 供 measure 跟 TestCase 请求值做
+    "下发后"一致性校验 (频率一致性 Phase 1 的吞吐链延伸)。
+
+    ⚠️ Codex on PR #114: **不能读 `CONF:...:MIMO:LAYers?`** —— 那是 set_cell_config 写入
+    的同一个**配置旋钮**, 回读只会原样返回配置的 4, 抓不到 UE 把 4 层静默 clamp 到 2 的
+    降级。改读 **UE 协商能力** (`query_ue_capability().max_dl_layers`): TestCase 请求的 DL
+    layers 超过 UE 能力上限 → 必被 clamp → fail-loud (吞吐其实 2 层却当 4 层测)。
+
+    None 字段 = 不可核对 (UE 未 attach / firmware 不支持 UEINFO), 校验跳过该项。
+    """
+
+    ue_max_dl_layers: Optional[int] = None
 
 
 class RealUxmDriver(BaseStationDriver):
@@ -470,6 +487,30 @@ class RealUxmDriver(BaseStationDriver):
         return FrequencyIdentity(
             center_arfcn=self._arfcn, bandwidth_mhz=self._bandwidth_mhz
         )
+
+    async def get_applied_cell_config(self) -> Optional[AppliedCellConfig]:
+        """P2-11 Phase 6: 读 UXM/UE **实际能用**的 cell config, 供 measure 做下发后一致性
+        校验 (吞吐链版的 get_frequency_identity)。
+
+        当前核对 **DL MIMO layers 是否被 UE 能力 clamp**: Codex on PR #114 指出回读
+        `CONF:...:LAY?` 配置旋钮只会原样返回配置值 (抓不到降级), 所以这里改读 **UE 协商
+        能力** (`query_ue_capability().max_dl_layers`) —— TestCase 请求 4 层但 UE 只支持
+        2 → 必被静默 clamp, 吞吐其实 2 层却当 4 层测。consistency helper 判
+        `请求 > UE 上限 → fail-loud`。
+
+        UE 未 attach / firmware 不支持 UEINFO (mock / dry-run 无真 DUT) → max_dl_layers
+        None → 返回 None (无法核对, 校验跳过, 同 Phase 1 mock-skip)。DL power 不核对
+        (InputLevelController 闭环合法改它); MCS 受 AMC 浮动, 都留后续延伸。
+        """
+        try:
+            cap = await self.query_ue_capability()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[UXM] get_applied_cell_config: query_ue_capability 失败: %s", e)
+            return None
+        max_dl = cap.get("max_dl_layers")
+        if max_dl is None:  # UE 未 attach / firmware 不支持 → 无法核对, 跳过
+            return None
+        return AppliedCellConfig(ue_max_dl_layers=int(max_dl))
 
     # ===================================================================
     # P2-1 Phase 1: Topology Profile 应用 (operator-managed)

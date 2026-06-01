@@ -304,6 +304,17 @@ class MIMOOTAConfiguration(BaseModel):
     # (不受本 flag 影响), 这是 CAICT 固定布线的既有语义。同 precheck_strict_*:
     # GUI 不暴露, fixture/config 级别 opt-in。
 
+    precheck_strict_cell_config: bool = True
+    # P2-11 Phase 6: measure 在 set_cell_config + RRC reconfig 后, 拿 **UE 协商能力**
+    # (max_dl_layers) 跟 TestCase 请求层数比 —— Phase 1 频率回读校验在吞吐链上的延伸。
+    # True (生产默认): 请求层数 > UE 能力上限 → measure FAILED。UE 撑不住请求层数时 UXM
+    # 会把请求的 4 层静默 clamp 到 2 而不报错, 吞吐其实是 2 层却当 4 层测 (跟频率错配同等
+    # 危害)。Codex on PR #114: 读 UE 协商能力, **不**读 CONF:...:LAY? 配置旋钮 (那个回读只
+    # 会原样返回配置值, 抓不到 clamp)。
+    # False (opt-out): 降级 warning。不可核对 (mock / UE 未 attach / firmware 不支持
+    # UEINFO) → 始终跳过 (不受本 flag 影响, 同 Phase 1 mock-skip)。同 precheck_strict_*:
+    # GUI 不暴露, fixture/config 级别 opt-in。
+
     # === Pass/fail thresholds ===
     pass_criteria: MIMOOTAPassCriteria = Field(default_factory=MIMOOTAPassCriteria)
 
