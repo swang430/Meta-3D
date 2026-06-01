@@ -269,14 +269,23 @@ Step 1 的解析器(§8/本 PR)**不白做** —— 从"真值"降为"cross-chec
 
 Phase 2 的 `emulation_file` 现在是裸路径。SCD 落地后,TestCase 可引用 **SCD(按规范配置)** 而非裸路径 —— "3500 MHz 用哪个 .smu" 从"赌文件名"变"查 SCD by `FrequencyIdentity`"。这也是 §5 提到的 "frequency → .smu 库映射" 的正解。
 
+### 与静态清单(`available_channel_models`)的关系:synced projection(2026-06-01 用户确立)
+
+用户决定:**静态清单不是独立手维护的死清单,而是 SCD↔文件关联的同步投影**。"每次 SCD 命名跟 F64 本地文件关联后,静态清单应被更新 —— 否则放一个并不存在(或不需要存在)的清单没用。"
+
+- **SCD 是源**(规范配置真值 + 标准名);`available_channel_models`(GUI 下拉框读的那个 JSON)退化成**派生视图** —— SCD 关联即更新,**不再手敲**、不放不存在的条目。
+- **路径 a/b**(我们/操作员按标准名生成):清单 entry 的 `filename` = 标准名(实际 F64 文件就叫这名)。
+- **路径 c**(关联已有厂商 .smu):`filename` = **厂商实际文件**(`CALC:FILT:FILE` 要加载真文件),但 entry 用 **SCD 规范配置充实**(频率/MIMO/极化等是**声明真值**,非从名解析);关联时跑 `check_channel_filename_freq`(厂商名解析频率 vs SCD 声明 ARFCN),**不符 → fail-loud**(抓关联错文件)。
+- 结果:下拉框/inventory 永远反映"**真实存在 + 已登记的 SCD**",频率元数据来自**声明**(权威)而非**解析**(§8 Step 1 降为关联时的 cross-check)。存量手敲条目在迁移成 SCD 前保留,逐步收敛。
+
 ### 实施切分(建议,均本地除路径 a)
 
 | Step | 内容 | 本地/现场 |
 |------|------|----------|
-| 1 | `standard_channel_filename(config)` 命名契约函数 + 反解 + 跟 Step 1 松解析的一致性校验 | 本地 |
-| 2 | `StandardChannelDefinition` DB 实体(规范配置 + 标准名 + .smu 映射)+ CRUD API | 本地 |
-| 3 | 路径 c(关联已有 .smu → SCD)+ 路径 b(生成标准名给操作员)GUI 工作流 | 本地 |
-| 4 | Phase 2 `emulation_file` 改引用 SCD | 本地 |
+| 1 ✅ | `standard_channel_filename(config)` 命名契约函数 + 反解 + `check_channel_filename_freq` cross-check(`channel_naming.py`)| 本地 |
+| 2 | `StandardChannelDefinition` DB 实体(规范配置 + 标准名 + 关联 .smu 文件)+ CRUD API | 本地 |
+| 3 | 路径 c(关联已有 .smu → SCD,关联时 cross-check)+ 路径 b(生成标准名给操作员)GUI 工作流;**关联即更新 `available_channel_models`(synced projection)** | 本地 |
+| 4 | Phase 2 `emulation_file` 改引用 SCD(按 `FrequencyIdentity` 查)| 本地 |
 | 5 | 路径 a(SCPI 驱动 Channel Studio 生成)| 现场 / vendor 调研 |
 
 ## 附:这跟 ARFCN 问题是同一母题的两个层次
