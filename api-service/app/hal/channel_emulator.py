@@ -217,9 +217,15 @@ def normalize_channel_model_entries(entries: Any) -> list[Dict[str, Any]]:
     - ``label`` defaults to ``filename``.
     - ``type`` is the lowercased file extension (``smu``/``rtc``/``asc``
       etc.), or ``"unknown"`` if no extension.
+    - ``center_frequency_mhz`` + ``nr_arfcn`` (P2-10 Step 1): 资产盘点元数据 —— 优先用
+      entry 里 operator 显式给的 ``center_frequency_mhz``, 否则从文件名频率 token 解析
+      (``_3600M.smu`` → 3600), 让 inventory 从"名字清单"变"带频率的资产盘点", 直接服务
+      emulation_file 选择 (P2-11 Phase 2: .smu↔TestCase 频率匹配)。无频率 token → None。
     """
     if not entries:
         return []
+    from app.hal.nr_arfcn import freq_mhz_to_nr_arfcn, parse_smu_center_freq_mhz
+
     out: list[Dict[str, Any]] = []
     for entry in entries:
         if isinstance(entry, str):
@@ -230,11 +236,25 @@ def normalize_channel_model_entries(entries: Any) -> list[Dict[str, Any]]:
         if not filename or not isinstance(filename, str):
             continue
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "unknown"
+        raw_center = entry.get("center_frequency_mhz")
+        center_mhz = (
+            float(raw_center)
+            if isinstance(raw_center, (int, float))
+            else parse_smu_center_freq_mhz(filename)
+        )
+        nr_arfcn_val: Optional[int] = None
+        if center_mhz is not None:
+            try:
+                nr_arfcn_val = freq_mhz_to_nr_arfcn(center_mhz)
+            except ValueError:  # 频率超出 NR-ARFCN 范围 (异常命名) → 不强标 ARFCN
+                nr_arfcn_val = None
         out.append({
             "filename": filename,
             "label": entry.get("label") or filename,
             "description": entry.get("description"),
             "type": ext,
+            "center_frequency_mhz": center_mhz,
+            "nr_arfcn": nr_arfcn_val,
         })
     return out
 

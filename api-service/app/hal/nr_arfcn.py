@@ -23,7 +23,9 @@ NR-ARFCN 公式 (3GPP TS 38.104 §5.4.2.1, Table 5.4.2.1-1):
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from typing import Optional
 
 
 # (ΔF_Global_kHz, F_REF_Offs_MHz, N_REF_Offs, F_low_MHz, F_high_MHz)
@@ -61,6 +63,29 @@ def nr_arfcn_to_freq_mhz(arfcn: int) -> float:
         if n_low <= arfcn <= n_high:
             return f_offs + (delta_khz / 1000.0) * (arfcn - n_offs)
     raise ValueError(f"ARFCN {arfcn} 超出 NR-ARFCN 定义范围 (0–3279165)")
+
+
+# .smu / .asc 文件名里的频率 token 正则: `_<3-5位数字>M` (后接 . 或 _ 或结尾),
+# 避免误匹配 "FR1" / "UMa" 等。e.g. "3GPP_FR1_OTA_CDLC_UMa_3600M.smu" → 3600。
+_SMU_FREQ_TOKEN_RE = re.compile(r"[_-](\d{3,5})M(?=[._]|$)")
+
+
+def parse_smu_center_freq_mhz(filename: Optional[str]) -> Optional[float]:
+    """从信道文件名 (.smu / .asc) 解析中心频率 (MHz)。
+
+    Channel Studio / 厂商 .smu 命名约定把频率编进文件名 (频率固定在文件里, 见 P2-11
+    Phase 2 GCM 缺口讨论)。取**最后**一个 `_<数字>M` token (最可能是频率, 排在场景/
+    带宽描述之后)。None = filename 空 / 无频率 token。
+
+    单一真值: propsim_f64 (回读已加载 .smu 频率) 和 channel model inventory (盘点可用
+    .smu 的频率元数据, P2-10 Step 1) 共用此解析, 避免命名约定漂移成两套。
+    """
+    if not filename:
+        return None
+    matches = _SMU_FREQ_TOKEN_RE.findall(filename)
+    if not matches:
+        return None
+    return float(matches[-1])
 
 
 @dataclass(frozen=True)

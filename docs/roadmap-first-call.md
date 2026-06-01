@@ -8,7 +8,7 @@
 
 ## 🎯 Current Focus
 
-**TestCase 驱动仪表配置架构 (P2-11) Phase 1+2+3+5 done + Phase 6 首条线 done (频率 / GCM .smu / switch mode / 路径边界 / **DL MIMO layers 回读校验**)。2026-05-31 核心参数驱动审计 (架构文档 §8) 把 DL 链分 A/B/C/D 类; Phase 6 一致性网首条线 (MIMO layers) 已落地 (本 PR), 剩 MCS/功率延伸 + 2 个 C 类 backlog (端口路由泄漏 / 操作点, 待定语义)。下一个待用户确认 — P2-11 Phase 6 延伸 / P2-10 F64 精细化 / U-7。本地可启动。**
+**TestCase 驱动仪表配置架构 (P2-11) Phase 1+2+3+5 done + Phase 6 首条线 done (频率 / GCM .smu / switch mode / 路径边界 / **DL MIMO layers 回读校验**)。2026-05-31 核心参数驱动审计 (架构文档 §8) 把 DL 链分 A/B/C/D 类; Phase 6 一致性网首条线 (MIMO layers) 已落地 (本 PR), 剩 MCS/功率延伸 + 2 个 C 类 backlog (端口路由泄漏 / 操作点, 待定语义)。**P2-10 (F64 精细化) Step 1 本地半 in-progress (本 PR: .smu inventory 频率元数据)**。其余待确认 — P2-11 Phase 6 延伸 / P2-10 Step 2-3 / U-7。本地可启动。**
 
 **已收口** (2026-05-28/31): P0-8 本地半 ✅ (#92-#98) + P1-16 ✅ (#99) + Docker durability ✅ (#102/#103) + **P1-17 UXM fresh-start 默认 profile ✅ (#107)** + **P2-11 架构 (#108) + Phase 1 多方频率一致性门 ✅ (#109 + Codex fix) + Phase 2 GCM .smu TestCase 驱动 ✅ (#110) + Phase 3 switch mode TestCase 驱动 ✅ (#111 + Codex 路损 mode 过滤) + Phase 5 路径 A/B 边界固化 + 暗室首测捷径修复 ✅ (#112) → P2-11 Phase 1/2/3/5 done; 2026-05-31 核心参数审计 (架构文档 §8) 揭出 **Phase 6** (B 类一致性网, 本地下一个最有价值) + 2 个 C 类 Discovered backlog (端口路由泄漏 / 操作点); 剩 Phase 4 (信号源·VNA 按需) + Phase 6 按本地优先级**。所有真 P0 (P0-3/4/5) 仍 🚧 on-site blocked (校准天线/SGH/真DUT)。
 
@@ -1544,7 +1544,7 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 
 | Step | Subject | 本地/现场 |
 |------|---------|----------|
-| 1 | remote .smu 配置文件 inventory: 列举 remote 可用模型 (动态发现或盘点文档, 对称 UXM .state 盘点) | 现场盘点 + 本地 API |
+| 1 🔄 | remote .smu 配置文件 inventory: 列举 remote 可用模型 (动态发现或盘点文档, 对称 UXM .state 盘点) — **本地半 done (本 PR)**: inventory 加频率元数据 (`center_frequency_mhz` + `nr_arfcn`, 从文件名 token 解析或 config 显式给), 从"名字清单"变"带频率的资产盘点", 服务 emulation_file 选择 (.smu↔TestCase 频率匹配, P2-11 Phase 2)。`parse_smu_center_freq_mhz` 抽共享 (propsim 回读 + inventory 同源)。剩: F64 MMEM 不可用 → 动态发现 blocked, **现场 .smu 资产盘点**填 config | 现场盘点 + 本地 API |
 | 2 | 外部输出端口精细配置: 输出电平/功率 method (超出当前 loss 补偿) + 物理路由 OUTP:CON 接入 topology | 本地 driver + 现场验 |
 | 3 | user alignment cal 刷新策略: 何时重标 (温度/时间漂移) + readiness 上报 + 漂移监控 (关联 operating-point uncertainty backlog) | 本地策略 + 现场真值 |
 
@@ -1553,7 +1553,7 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 - **现场 (下次现场)**: user alignment cal 真值 + 输出功率校准 + .smu 资产盘点。
 
 **依赖**: P0-8 (✅ 本地半 Done)。关联: U-6 (输入参考真值), operating-point uncertainty backlog (#101)。
-**Status**: `[ ]` not started — Step 1/2/3 各有本地半可启动。
+**Status**: 🔄 in-progress — **Step 1 本地半 done (本 PR)**: .smu inventory 频率元数据 (`center_frequency_mhz`/`nr_arfcn`) + `parse_smu_center_freq_mhz` 共享解析器 + API `ChannelModelEntry` 加字段。剩 Step 1 现场盘点 + Step 2 (输出端口) / Step 3 (alignment 刷新) 本地半待启动。
 **Estimate**: 本地 ~2 day + 现场 ~1 day。
 
 ---

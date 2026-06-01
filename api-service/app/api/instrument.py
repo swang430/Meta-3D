@@ -295,6 +295,10 @@ class ChannelModelEntry(BaseModel):
     label: str
     description: Optional[str] = None
     type: str  # smu / rtc / asc / unknown
+    # P2-10 Step 1: 资产盘点元数据 (从文件名频率 token 解析或 config 显式给), 服务
+    # emulation_file 选择 (.smu↔TestCase 频率匹配)。None = 文件名无频率 token。
+    center_frequency_mhz: Optional[float] = None
+    nr_arfcn: Optional[int] = None
 
 
 class ChannelModelsListResult(BaseModel):
