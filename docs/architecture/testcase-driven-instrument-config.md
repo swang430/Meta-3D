@@ -244,8 +244,14 @@ B 类。**已实现的首条线 = DL MIMO layers**:
 
 ### SCD 实体:"信道自声明",平行 LabProfile / DUTProfile
 
-- **规范配置**:`FrequencyIdentity`(ARFCN+带宽)+ CDL/TDL 模型 + MIMO 拓扑 + scenario + 生成参数。
-- **标准名**:`standard_channel_filename(SCD) -> str` —— **我们拥有的确定性函数**(config→name),e.g. `MF_N78_640000_BW100_CDLC_UMa_4x4.smu`。两个方向都我们拥有 → 反解必然正确(不像 Step 1 赌厂商约定)。
+- **规范配置**:`FrequencyIdentity`(ARFCN+带宽)+ CDL/TDL 模型 + MIMO 拓扑 + scenario + **极化**(polarization)+ **版本号**(version)+ 生成参数。
+- **标准名**:`format_standard_channel_filename(SCD) -> str` —— **我们拥有的确定性函数**(config→name),格式:
+  ```
+  MF_<band>_<ARFCN>_BW<bw>_<model>_<scenario>_<MIMO>_<pol>_v<version>.smu
+  例: MF_N78_640000_BW100_CDLC_UMa_4x4_DP_v3.smu
+  ```
+  - `MF_` 前缀标识"我们标准命名的"(跟厂商原始 .smu 区分);**ARFCN** 进名字(非 frequency_mhz,规范真值,贯彻 Phase 1);**极化** `<pol>`(MIMO OTA 核心参数:`V` / `H` 单极化 / `DP` 双极化〔V+H 或 ±45° slant〕);**版本号** `v<version>` 重标/重生成时递增(可追溯,关联 Step 3 alignment 漂移/重标)。
+  - 字段一律 alnum 无下划线(下划线是分隔符);两个方向都我们拥有 → 反解必然正确(不像 Step 1 赌厂商约定)。
 - **映射**:SCD → 实际 .smu 路径(`emulation_file`),经路径 a/b/c 填。
 - **DB 实体,GUI 可编辑**,平行 `LabProfile`(chamber)/ `DUTProfile`(DUT,#115 backlog)—— 同一套 **"declared > inferred"** 架构(= ARFCN 规范 vs frequency_mhz 标称,= DUT 自声明)。
 
