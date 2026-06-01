@@ -156,6 +156,62 @@ measure executor(`app/services/mimo_ota/executors/measure.py`)docstring 顶部�
 | **3** ✅ | switch topology 纳入 TestCase 驱动 — **已实现 (P2-11 Phase 3)**: `MIMOOTAConfiguration.switch_mode_id` 字段 (默认 "mimo_ota", 不再硬编码) + measure 透传给 `orchestrate_switch_topology` + `switch_mode_gate.evaluate_*` 门 (`precheck_strict_switch_mode`, 有拓扑但请求 mode 不提供 → fail-loud; 无拓扑/固定布线 → warn) | 架构补全 | 中 |
 | **4** | 信号源 / VNA 纳入 TestCase 驱动(干扰 / 在线校准)| 架构补全 | 低(按需)|
 | **5** ✅ | 默认配置角色文档化 + 路径 A/B 边界在代码注释固化 — **已实现 (P2-11 Phase 5)**: §6.1 代码锚点地图 + propsim_f64 / instrument_hal_service / measure docstring 三处 `路径 A/B 边界` 注释 | 防认知漂移 | 贯穿 |
+| **6** | **一致性网从频率扩到整条 DL 吞吐链**: measure 在下发后**回读 UXM 实际生效的 `mimo_layers` / MCS / DL power**, 跟 TestCase 精确比对, 不一致 fail-loud。Phase 1 只给频率做了回读校验; B 类参数(见 §8)同等决定吞吐可信度却只 fire-and-forget。频率是这张网的第一根线。 | silent-failure 防护(频率同族)| ⭐ 高(本地可做, Phase 1 的自然延伸)|
+
+## 8. 核心参数驱动审计(2026-05-31)— A/B/C/D 分类 + Phase 6 一致性网
+
+> 用户 2026-05-31 问:"暗室首测捷径检查后,除了频率一致,测试中还有哪些核心参数需要
+> 系统级兜底、由测试例驱动?" 本节是对 DL 测量链**每个核心参数**驱动状态的全审计。
+
+**判据**:该参数 (1) 从哪来(TestCase / chamber 物理 / HAL 默认 / 硬编码);(2) 不一致会不会
+**静默污染测试结果**(= 是否需要 fail-loud)。
+
+### A 类 — ✅ 已 TestCase 驱动 **+ fail-loud 一致性**(P2-11 Phase 1-3 成果)
+
+| 参数 | 机制 |
+|------|------|
+| 频率 ARFCN **+ 带宽** | Phase 1(identity = ARFCN + BW,带宽一并覆盖)|
+| F64 .smu(GCM)| Phase 2 |
+| switch RF 通路 mode | Phase 3 |
+| 路损 cert(mode + freq 过滤)| Codex on #111 |
+
+### B 类 — ⚠️ 已 TestCase 驱动,**但无"下发后回读校验"**(频率有,这些没有)
+
+| 参数 | 下发 | 缺口 |
+|------|------|------|
+| `mimo_layers` | `set_cell_config` | 不回读 UXM 实际生效的 layers |
+| `modulation` / `mcs` / `enable_amc` | throughput 参数下发 | UXM 若静默 clamp(不支持的 MCS)不报警 |
+| `tdd_pattern` / `harq_*` | throughput 参数下发 | 无回读 |
+| `target_tx_power_dbm`(→DL power)/ `rsrp` / `snr` | `set_downlink_power` / `sim_rules` | DUT 处实际 RSRP/功率**不跟 target 校验**(RSRP 当前是模拟值)|
+
+> **B 类是个"类"问题,不是单点**:这些参数跟频率**同等决定吞吐**,但只 fire-and-forget 下发。
+> 一个静默 clamp 的 MCS、一个没到 target 的 DL 功率 = 吞吐测错而无人报警 —— 跟频率错配**同等
+> 危害,却无同等防护**。这正是 **Phase 6** 要补的。
+
+### C 类 — ❌ 系统级兜底 / 泄漏,**未 TestCase 驱动**(真缺口,均已 backlog)
+
+| 参数 | 现状 | backlog |
+|------|------|---------|
+| **MIMO 端口路由** `mimo_port_preset` / `csi_rs_ports` / `sched_algo` | UXM profile 在 HAL-init 设,`MIMOOTAConfiguration` 无对应字段,measure 不驱动也不 reset → 残留进 path B(2x2 TestCase 跑在残留 4x4 路由)| Discovered(Codex #112)🔴 高影响 |
+| **操作点 / F64 输入参考**(avg 电平 + crest)| 仪表限值(`upper − 15dB`)+ 硬编码偏移(`-10` 起手 / `-30` burst)驱动,非 TestCase,且不跟 `target_tx_power` 交叉校验 | Discovered 2026-05-28(feed-forward + imbalance)🔴 CAICT 现场 0% ACK 根因 |
+
+### D 类 — 🟢 **设计上就不该** TestCase 驱动(物理量,正确)
+
+chamber 几何 / 探头位置·方向图 / SGH 参考天线 / DUT(SIM·IMSI)= 物理 · LabProfile · 操作员,
+不进 TestCase。校准证书 = TestCase 可绑定 + LabProfile 兜底 + P1-8 strict gate,合理。
+
+### Phase 6 — 一致性网扩展(B 类的解药)
+
+Phase 1 给**频率**做了"下发后**回读**(`get_frequency_identity`)+ 多方精确比对"。Phase 6 把这张
+网扩到 B 类:measure 在 `set_cell_config` / throughput 下发后**回读 UXM 实际生效的 `mimo_layers` /
+MCS / DL power**,跟 TestCase 比,不一致 fail-loud(`precheck_strict_*` 同族)。
+
+- **本地可做**:mock UXM 加回读 getter 即可单测,不依赖现场。
+- **依赖**:UXM driver 加 `get_applied_mimo_config()` / `get_applied_mcs()` / `get_applied_dl_power()`
+  等回读 getter,对称 `get_frequency_identity()`。
+- **不在 Phase 6 范围**:C 类两项(端口路由泄漏、操作点)需先定语义(见各自 backlog);D 类不动。
+
+**一句话**:频率只是一致性网的第一根线;Phase 6 把网织完整,覆盖整条决定吞吐可信度的 DL 链。
 
 ## 附:这跟 ARFCN 问题是同一母题的两个层次
 
