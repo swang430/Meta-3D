@@ -22,6 +22,7 @@ import logging
 import asyncio
 from enum import Enum
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
+from dataclasses import dataclass
 from datetime import datetime
 
 from app.hal.base import (
@@ -133,6 +134,20 @@ def _infer_band_from_freq(
         if min_f <= freq_mhz <= max_f:
             return band, duplex
     return "N78", "TDD"  # 默认 fallback
+
+
+@dataclass(frozen=True)
+class AppliedCellConfig:
+    """P2-11 Phase 6: UXM **实际生效**的 cell config (live SCPI 回读, 非标称/记录值)。
+
+    供 measure phase 跟 TestCase 请求值做"下发后回读"一致性校验 —— 抓 UXM 静默 clamp/
+    reject (e.g. 请求 4 DL MIMO layers 但 UE 能力 / 端口路由只支持 2, UXM 把它 clamp 到
+    2 而不报错 → 吞吐其实是 2 层却当 4 层测)。频率一致性 (Phase 1) 的吞吐链延伸。
+
+    None 字段 = 该项回读失败 / 不支持 (校验跳过该项, 不 fail)。
+    """
+
+    mimo_layers: Optional[int] = None
 
 
 class RealUxmDriver(BaseStationDriver):
@@ -470,6 +485,33 @@ class RealUxmDriver(BaseStationDriver):
         return FrequencyIdentity(
             center_arfcn=self._arfcn, bandwidth_mhz=self._bandwidth_mhz
         )
+
+    def get_applied_cell_config(self) -> Optional[AppliedCellConfig]:
+        """P2-11 Phase 6: live 回读 UXM **实际生效**的 cell config, 供 measure 做下发后
+        一致性校验 (吞吐链版的 get_frequency_identity)。
+
+        当前回读 **DL MIMO layers**: UE 能力 / 端口路由限制会让 UXM 把请求的 4 层静默
+        clamp 到 2 而不报错 → 吞吐其实是 2 层却当 4 层测。回读 ≠ 请求时 measure
+        fail-loud (precheck_strict_cell_config)。layers 回读还**间接**抓 UXM profile 端口
+        路由泄漏 (2x2 路由跑 4 层 → UXM clamp), 而不碰 port-routing 语义本身。
+
+        未连接 (mock / 未 connect) / 命令不支持 / 查询失败 → None (校验跳过该项, 同
+        Phase 1 mock-skip)。DL power 不回读 (InputLevelController 闭环合法改它, 见
+        AppliedCellConfig docstring); MCS 受 AMC 浮动, 都留后续延伸。
+        """
+        if not self._visa_session:  # 未连接 (mock 走通用 BS, 无此状态)
+            return None
+        cmd = self._cmd("MIMO_DL_LAYERS", cell=self._cell_id)
+        if cmd is None:  # 该 Test App 词汇没有 MIMO layers 命令
+            return None
+        try:
+            raw = self._query(cmd + "?").strip()
+            if not raw:
+                return None
+            return AppliedCellConfig(mimo_layers=int(float(raw)))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[UXM] get_applied_cell_config 回读失败: %s", e)
+            return None
 
     # ===================================================================
     # P2-1 Phase 1: Topology Profile 应用 (operator-managed)

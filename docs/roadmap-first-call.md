@@ -8,7 +8,7 @@
 
 ## 🎯 Current Focus
 
-**TestCase 驱动仪表配置架构 (P2-11) Phase 1+2+3+5 done (频率 / GCM .smu / switch mode 全驱动 + fail-loud + 路径 A/B 边界固化)。2026-05-31 核心参数驱动审计 (架构文档 §8) 揭出 Phase 6 (B 类: 一致性网从频率扩到 MIMO/MCS/功率回读校验, 本地可做, ⭐ 下一个最有价值) + 2 个 C 类 backlog (端口路由泄漏 / 操作点, 待定语义)。下一个待用户确认 — P2-11 Phase 6 / P2-10 F64 精细化 / U-7。本地可启动。**
+**TestCase 驱动仪表配置架构 (P2-11) Phase 1+2+3+5 done + Phase 6 首条线 done (频率 / GCM .smu / switch mode / 路径边界 / **DL MIMO layers 回读校验**)。2026-05-31 核心参数驱动审计 (架构文档 §8) 把 DL 链分 A/B/C/D 类; Phase 6 一致性网首条线 (MIMO layers) 已落地 (本 PR), 剩 MCS/功率延伸 + 2 个 C 类 backlog (端口路由泄漏 / 操作点, 待定语义)。下一个待用户确认 — P2-11 Phase 6 延伸 / P2-10 F64 精细化 / U-7。本地可启动。**
 
 **已收口** (2026-05-28/31): P0-8 本地半 ✅ (#92-#98) + P1-16 ✅ (#99) + Docker durability ✅ (#102/#103) + **P1-17 UXM fresh-start 默认 profile ✅ (#107)** + **P2-11 架构 (#108) + Phase 1 多方频率一致性门 ✅ (#109 + Codex fix) + Phase 2 GCM .smu TestCase 驱动 ✅ (#110) + Phase 3 switch mode TestCase 驱动 ✅ (#111 + Codex 路损 mode 过滤) + Phase 5 路径 A/B 边界固化 + 暗室首测捷径修复 ✅ (#112) → P2-11 Phase 1/2/3/5 done; 2026-05-31 核心参数审计 (架构文档 §8) 揭出 **Phase 6** (B 类一致性网, 本地下一个最有价值) + 2 个 C 类 Discovered backlog (端口路由泄漏 / 操作点); 剩 Phase 4 (信号源·VNA 按需) + Phase 6 按本地优先级**。所有真 P0 (P0-3/4/5) 仍 🚧 on-site blocked (校准天线/SGH/真DUT)。
 
@@ -1577,7 +1577,7 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 | 3 ✅ | switch topology 纳入 TestCase 驱动: `switch_mode_id` 字段 (默认 "mimo_ota" 不再硬编码) + measure 透传给 `orchestrate_switch_topology` + `precheck_strict_switch_mode` 门 (有拓扑但请求 mode 不提供 → fail-loud; 无拓扑/固定布线 → warn) — **本 PR done** | 本地 | 中 |
 | 4 | 信号源 / VNA 纳入 TestCase 驱动 (干扰 / 在线校准) | 按需 | 低 |
 | 5 ✅ | 默认配置角色 (路径 A) 文档化 + 路径 A/B 边界代码注释固化: 架构文档 §6.1 代码锚点地图 + 三处 `路径 A/B 边界` 注释; **+ 修暗室首测捷径缺口** ("强制跳过严格门" 开关从 cal/dut 扩到覆盖全 5 道门 — GUI api.ts + 后端 CreateSessionRequest); **+ 修 Codex on #112 指出的 UXM profile isolation 注释不准** (承认 port routing/TDD/sched leak, 记 Discovered backlog) — **本 PR done** | 本地 | 贯穿 |
-| 6 | **一致性网从频率扩到整条 DL 吞吐链**: measure 下发后**回读 UXM 实际生效的 `mimo_layers` / MCS / DL power** 跟 TestCase 精确比对 fail-loud (Phase 1 只覆盖频率; B 类参数同等决定吞吐却 fire-and-forget 无回读 — 见架构文档 §8 核心参数驱动审计)。依赖 UXM driver 加 `get_applied_*` 回读 getter (对称 `get_frequency_identity`) | 本地 | ⭐ 高 (Phase 1 自然延伸) |
+| 6 ✅ | **一致性网从频率扩到 DL 吞吐链** — **首条线 DL MIMO layers 已实现 (本 PR)**: `RealUxmDriver.get_applied_cell_config()` live 回读 `MIMO:LAY?` + `cell_config_consistency.check_*` 跟 TestCase 精确比对 + measure `precheck_strict_cell_config` 门 (mock/未连接 → skip)。抓 UXM 静默 clamp (4→2 层) + 间接抓端口路由泄漏 (不碰 port-routing 语义)。MCS (AMC 浮动) / DL power (InputLevelController 闭环改) 留延伸 | 本地 | ⭐ 高 (Phase 1 自然延伸) |
 
 **Acceptance**:
 - **Phase 1 (本地)**: measure/precheck 加多方频率一致性校验, mock 下 UXM/F64/TestCase 频率不一致时 FAIL; 单测覆盖一致/不一致两路。
@@ -1585,8 +1585,8 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 - **现场**: real GCM 测试一键 TestCase 驱动 UXM+F64 同频跑通。
 
 **依赖**: P0-8 (F64 默认) + P1-17 (UXM 默认, 路径 A 实现) ✅。关联: ARFCN profile/频率 audit (spawned), U-6 (输入参考真值)。
-**Status**: 🔄 Phase 1/2/3/5 done (#109/#110/#111/#112 + Codex fixes)。**2026-05-31 核心参数驱动审计 (架构文档 §8, 本 PR)** —— 用户问"除频率外哪些核心参数需 TestCase 驱动兜底", 把 DL 测量链每个参数分 **A 类** (已驱动+fail-loud) / **B 类** (已驱动但无回读校验: MIMO/MCS/功率) / **C 类** (未驱动真缺口, 均已 backlog: UXM 端口路由泄漏 + 操作点输入参考) / **D 类** (物理量不该驱动)。审计揭出 **Phase 6** (B 类: 一致性网从频率扩到 MIMO/MCS/功率回读校验, 本地可做, ⭐ 下一个最有价值)。剩: Phase 4 (信号源·VNA 按需) + Phase 6 (B 类) + 2 个 C 类 Discovered backlog (待定语义)。
-**Estimate**: Phase 1 ~0.5d ✅ + Phase 2 ~1.5d ✅ + Phase 3 ✅ + Phase 5 ✅ + Phase 6 ~1d (本地, 待启动) + Phase 4 按需。
+**Status**: 🔄 Phase 1/2/3/5 done (#109/#110/#111/#112 + Codex fixes)。**2026-05-31 核心参数驱动审计 (架构文档 §8, 本 PR)** —— 用户问"除频率外哪些核心参数需 TestCase 驱动兜底", 把 DL 测量链每个参数分 **A 类** (已驱动+fail-loud) / **B 类** (已驱动但无回读校验: MIMO/MCS/功率) / **C 类** (未驱动真缺口, 均已 backlog: UXM 端口路由泄漏 + 操作点输入参考) / **D 类** (物理量不该驱动)。审计揭出 **Phase 6** (B 类一致性网)。**Phase 6 首条线 DL MIMO layers 回读校验已实现 (本 PR)** —— UXM `get_applied_cell_config()` 回读 + `cell_config_consistency` + `precheck_strict_cell_config` 门, 抓静默 layer clamp + 间接抓端口路由泄漏。剩: Phase 4 (信号源·VNA 按需) + Phase 6 延伸 (MCS AMC-off / DL power 结合操作点 backlog) + 2 个 C 类 Discovered backlog (待定语义)。
+**Estimate**: Phase 1 ~0.5d ✅ + Phase 2 ~1.5d ✅ + Phase 3 ✅ + Phase 5 ✅ + Phase 6 首条线 ✅ (MCS/功率延伸待启动) + Phase 4 按需。
 
 ---
 

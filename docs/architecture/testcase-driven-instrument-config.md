@@ -156,7 +156,7 @@ measure executor(`app/services/mimo_ota/executors/measure.py`)docstring 顶部�
 | **3** ✅ | switch topology 纳入 TestCase 驱动 — **已实现 (P2-11 Phase 3)**: `MIMOOTAConfiguration.switch_mode_id` 字段 (默认 "mimo_ota", 不再硬编码) + measure 透传给 `orchestrate_switch_topology` + `switch_mode_gate.evaluate_*` 门 (`precheck_strict_switch_mode`, 有拓扑但请求 mode 不提供 → fail-loud; 无拓扑/固定布线 → warn) | 架构补全 | 中 |
 | **4** | 信号源 / VNA 纳入 TestCase 驱动(干扰 / 在线校准)| 架构补全 | 低(按需)|
 | **5** ✅ | 默认配置角色文档化 + 路径 A/B 边界在代码注释固化 — **已实现 (P2-11 Phase 5)**: §6.1 代码锚点地图 + propsim_f64 / instrument_hal_service / measure docstring 三处 `路径 A/B 边界` 注释 | 防认知漂移 | 贯穿 |
-| **6** | **一致性网从频率扩到整条 DL 吞吐链**: measure 在下发后**回读 UXM 实际生效的 `mimo_layers` / MCS / DL power**, 跟 TestCase 精确比对, 不一致 fail-loud。Phase 1 只给频率做了回读校验; B 类参数(见 §8)同等决定吞吐可信度却只 fire-and-forget。频率是这张网的第一根线。 | silent-failure 防护(频率同族)| ⭐ 高(本地可做, Phase 1 的自然延伸)|
+| **6** ✅ | **一致性网从频率扩到 DL 吞吐链** — **已实现 (P2-11 Phase 6)**: `RealUxmDriver.get_applied_cell_config()` live 回读 **DL MIMO layers** + `cell_config_consistency.check_*` 跟 TestCase 精确比对 + measure `precheck_strict_cell_config` 门 (mock/未连接回读不到 → skip)。**首条线: MIMO layers** (回读还间接抓端口路由泄漏 —— 2x2 路由跑 4 层 UXM 自己 clamp, 不碰 port-routing 语义)。MCS (受 AMC 浮动) / DL power (InputLevelController 闭环合法改) 留延伸, 见 §8。 | silent-failure 防护(频率同族)| ⭐ 高(Phase 1 自然延伸)|
 
 ## 8. 核心参数驱动审计(2026-05-31)— A/B/C/D 分类 + Phase 6 一致性网
 
@@ -177,12 +177,12 @@ measure executor(`app/services/mimo_ota/executors/measure.py`)docstring 顶部�
 
 ### B 类 — ⚠️ 已 TestCase 驱动,**但无"下发后回读校验"**(频率有,这些没有)
 
-| 参数 | 下发 | 缺口 |
-|------|------|------|
-| `mimo_layers` | `set_cell_config` | 不回读 UXM 实际生效的 layers |
-| `modulation` / `mcs` / `enable_amc` | throughput 参数下发 | UXM 若静默 clamp(不支持的 MCS)不报警 |
-| `tdd_pattern` / `harq_*` | throughput 参数下发 | 无回读 |
-| `target_tx_power_dbm`(→DL power)/ `rsrp` / `snr` | `set_downlink_power` / `sim_rules` | DUT 处实际 RSRP/功率**不跟 target 校验**(RSRP 当前是模拟值)|
+| 参数 | 下发 | 回读校验 |
+|------|------|---------|
+| `mimo_layers` | `set_cell_config` | ✅ **Phase 6 已补**: `get_applied_cell_config()` 回读 MIMO:LAY? + `precheck_strict_cell_config` 门 |
+| `modulation` / `mcs` / `enable_amc` | throughput 参数下发 | ⬜ 待补(AMC on 时 MCS 浮动 → 仅 AMC off 可回读校验)|
+| `tdd_pattern` / `harq_*` | throughput 参数下发 | ⬜ 待补 |
+| `target_tx_power_dbm`(→DL power)/ `rsrp` / `snr` | `set_downlink_power` / `sim_rules` | ⬜ 待补,**但有坑**: InputLevelController(Phase 2b)闭环会合法改 UXM DL power,"功率==target" 会误杀;且 RSRP 当前模拟。需结合操作点 backlog 一起设计 |
 
 > **B 类是个"类"问题,不是单点**:这些参数跟频率**同等决定吞吐**,但只 fire-and-forget 下发。
 > 一个静默 clamp 的 MCS、一个没到 target 的 DL 功率 = 吞吐测错而无人报警 —— 跟频率错配**同等
@@ -200,18 +200,27 @@ measure executor(`app/services/mimo_ota/executors/measure.py`)docstring 顶部�
 chamber 几何 / 探头位置·方向图 / SGH 参考天线 / DUT(SIM·IMSI)= 物理 · LabProfile · 操作员,
 不进 TestCase。校准证书 = TestCase 可绑定 + LabProfile 兜底 + P1-8 strict gate,合理。
 
-### Phase 6 — 一致性网扩展(B 类的解药)
+### Phase 6 — 一致性网扩展(B 类的解药)✅ 首条线已实现
 
-Phase 1 给**频率**做了"下发后**回读**(`get_frequency_identity`)+ 多方精确比对"。Phase 6 把这张
-网扩到 B 类:measure 在 `set_cell_config` / throughput 下发后**回读 UXM 实际生效的 `mimo_layers` /
-MCS / DL power**,跟 TestCase 比,不一致 fail-loud(`precheck_strict_*` 同族)。
+Phase 1 给**频率**做了"下发后**回读**(`get_frequency_identity`)+ 精确比对"。Phase 6 把这张网扩到
+B 类。**已实现的首条线 = DL MIMO layers**:
 
-- **本地可做**:mock UXM 加回读 getter 即可单测,不依赖现场。
-- **依赖**:UXM driver 加 `get_applied_mimo_config()` / `get_applied_mcs()` / `get_applied_dl_power()`
-  等回读 getter,对称 `get_frequency_identity()`。
-- **不在 Phase 6 范围**:C 类两项(端口路由泄漏、操作点)需先定语义(见各自 backlog);D 类不动。
+- `RealUxmDriver.get_applied_cell_config()`:live SCPI 回读 `MIMO:LAY?` → `AppliedCellConfig`
+  (未连接 / 命令不支持 / 查询失败 → None,校验跳过,同 Phase 1 mock-skip)。
+- `app/services/mimo_ota/cell_config_consistency.check_cell_config_consistency`:回读值 vs
+  TestCase `mimo_layers` 精确比对。
+- measure 在 set_cell_config + RRC reconfig 后调用,`precheck_strict_cell_config` 门(默认 True)。
+- **抓什么**:UXM 在 UE 能力 / 端口路由不支持时把请求的 4 层静默 clamp 到 2 而不报错(吞吐其实
+  2 层却当 4 层测)。**且 layers 回读间接抓 C 类端口路由泄漏**(2x2 残留路由跑 4 层 → UXM 自己
+  clamp → 回读 ≠ 请求),**而不碰 port-routing 语义本身**(只比 layers-to-layers)。
 
-**一句话**:频率只是一致性网的第一根线;Phase 6 把网织完整,覆盖整条决定吞吐可信度的 DL 链。
+**剩余 B 类(同机制延伸,各有特定坑)**:
+- `MCS`:AMC on 时浮动,仅 AMC off 可回读校验(条件化)。
+- `DL power`:InputLevelController 闭环会合法改它,"功率==target" 会误杀 → 需结合操作点 backlog。
+- **不在范围**:C 类(端口路由泄漏、操作点)需先定语义;D 类不动。
+
+**一句话**:频率是一致性网的第一根线,**MIMO layers 是第二根**(本 Phase);MCS / 功率是同一台
+织机上待织的线。
 
 ## 附:这跟 ARFCN 问题是同一母题的两个层次
 
