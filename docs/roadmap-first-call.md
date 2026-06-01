@@ -1558,6 +1558,22 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 
 ---
 
+### P2-12 — 标准信道文件定义 (Standard Channel Definition) — 软件掌控 .smu 命名
+
+**What**: 用户 2026-06-01 确立: **命名标准是我们软件的, 不是 F64 的**。软件里有一个 SCD 实体 (规范配置 `FrequencyIdentity`+CDL+MIMO+scenario + 我们掌控的标准名), 是真值; 实际 .smu 用三路之一满足: **(a) SCPI 驱动 Channel Studio 自动生成** (现场/vendor 调研) / **(b) 指导操作员手工按标准名生成** / **(c) 关联已有 .smu 到 SCD**。完整设计见 [`docs/architecture/testcase-driven-instrument-config.md`](architecture/testcase-driven-instrument-config.md) §9。
+
+**Why**: P2-10 Step 1 的文件名解析是**被动**的 (逆向不掌控的厂商命名, 跟 #109 Codex P2 "3600M 重调 3500 文件名说谎" 同病根)。ASC 已是生成式 (config 是真值); GCM 落后的被动一半。SCD 把 .smu 拉进 "declared > inferred" 架构 (= ARFCN 规范 vs 标称, = DUT 自声明 #115)。
+
+**核心**: Step 1 解析器**从真值源降为 cross-check** (parse 文件名 vs SCD 声明 → 不一致 fail-loud, 正好抓文件名说谎)。Phase 2 emulation_file 从裸路径 → 引用 SCD (按 FrequencyIdentity 查), 即 §5 "frequency→.smu 库映射" 的正解。
+
+**Scope (切分见 §9, 均本地除路径 a)**: 1) `standard_channel_filename` 命名契约 + 反解 + 一致性校验 (本地) → 2) `StandardChannelDefinition` DB 实体 + CRUD (本地) → 3) 路径 b/c GUI 工作流 (本地) → 4) Phase 2 引用 SCD (本地) → 5) 路径 a SCPI 生成 (现场/vendor)。
+
+**依赖**: P2-10 Step 1 (parser, 本 PR 引入即被 §9 定位为 cross-check) + P2-11 Phase 2 (emulation_file)。关联: DUT 自声明 (#115, 同架构)。
+**Status**: `[ ]` not started — 架构已确立 (§9, 本 PR); Step 1-4 本地可启动。
+**Estimate**: 本地 ~2-3 day + 路径 a 现场。
+
+---
+
 ### P2-11 — TestCase 驱动的仪表配置下发架构 (单一真值源 + 多方一致性校验)
 
 **What**: 确立并补全"TestCase 是测试配置单一真值源, 驱动整个仪表层级配置下发 + 下发后多方一致性 fail-loud 校验"的架构。完整设计见 [`docs/architecture/testcase-driven-instrument-config.md`](architecture/testcase-driven-instrument-config.md)。
