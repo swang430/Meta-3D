@@ -138,16 +138,18 @@ def _infer_band_from_freq(
 
 @dataclass(frozen=True)
 class AppliedCellConfig:
-    """P2-11 Phase 6: UXM **实际生效**的 cell config (live SCPI 回读, 非标称/记录值)。
+    """P2-11 Phase 6: UXM/UE **实际能用**的 cell config, 供 measure 跟 TestCase 请求值做
+    "下发后"一致性校验 (频率一致性 Phase 1 的吞吐链延伸)。
 
-    供 measure phase 跟 TestCase 请求值做"下发后回读"一致性校验 —— 抓 UXM 静默 clamp/
-    reject (e.g. 请求 4 DL MIMO layers 但 UE 能力 / 端口路由只支持 2, UXM 把它 clamp 到
-    2 而不报错 → 吞吐其实是 2 层却当 4 层测)。频率一致性 (Phase 1) 的吞吐链延伸。
+    ⚠️ Codex on PR #114: **不能读 `CONF:...:MIMO:LAYers?`** —— 那是 set_cell_config 写入
+    的同一个**配置旋钮**, 回读只会原样返回配置的 4, 抓不到 UE 把 4 层静默 clamp 到 2 的
+    降级。改读 **UE 协商能力** (`query_ue_capability().max_dl_layers`): TestCase 请求的 DL
+    layers 超过 UE 能力上限 → 必被 clamp → fail-loud (吞吐其实 2 层却当 4 层测)。
 
-    None 字段 = 该项回读失败 / 不支持 (校验跳过该项, 不 fail)。
+    None 字段 = 不可核对 (UE 未 attach / firmware 不支持 UEINFO), 校验跳过该项。
     """
 
-    mimo_layers: Optional[int] = None
+    ue_max_dl_layers: Optional[int] = None
 
 
 class RealUxmDriver(BaseStationDriver):
@@ -486,32 +488,29 @@ class RealUxmDriver(BaseStationDriver):
             center_arfcn=self._arfcn, bandwidth_mhz=self._bandwidth_mhz
         )
 
-    def get_applied_cell_config(self) -> Optional[AppliedCellConfig]:
-        """P2-11 Phase 6: live 回读 UXM **实际生效**的 cell config, 供 measure 做下发后
-        一致性校验 (吞吐链版的 get_frequency_identity)。
+    async def get_applied_cell_config(self) -> Optional[AppliedCellConfig]:
+        """P2-11 Phase 6: 读 UXM/UE **实际能用**的 cell config, 供 measure 做下发后一致性
+        校验 (吞吐链版的 get_frequency_identity)。
 
-        当前回读 **DL MIMO layers**: UE 能力 / 端口路由限制会让 UXM 把请求的 4 层静默
-        clamp 到 2 而不报错 → 吞吐其实是 2 层却当 4 层测。回读 ≠ 请求时 measure
-        fail-loud (precheck_strict_cell_config)。layers 回读还**间接**抓 UXM profile 端口
-        路由泄漏 (2x2 路由跑 4 层 → UXM clamp), 而不碰 port-routing 语义本身。
+        当前核对 **DL MIMO layers 是否被 UE 能力 clamp**: Codex on PR #114 指出回读
+        `CONF:...:LAY?` 配置旋钮只会原样返回配置值 (抓不到降级), 所以这里改读 **UE 协商
+        能力** (`query_ue_capability().max_dl_layers`) —— TestCase 请求 4 层但 UE 只支持
+        2 → 必被静默 clamp, 吞吐其实 2 层却当 4 层测。consistency helper 判
+        `请求 > UE 上限 → fail-loud`。
 
-        未连接 (mock / 未 connect) / 命令不支持 / 查询失败 → None (校验跳过该项, 同
-        Phase 1 mock-skip)。DL power 不回读 (InputLevelController 闭环合法改它, 见
-        AppliedCellConfig docstring); MCS 受 AMC 浮动, 都留后续延伸。
+        UE 未 attach / firmware 不支持 UEINFO (mock / dry-run 无真 DUT) → max_dl_layers
+        None → 返回 None (无法核对, 校验跳过, 同 Phase 1 mock-skip)。DL power 不核对
+        (InputLevelController 闭环合法改它); MCS 受 AMC 浮动, 都留后续延伸。
         """
-        if not self._visa_session:  # 未连接 (mock 走通用 BS, 无此状态)
-            return None
-        cmd = self._cmd("MIMO_DL_LAYERS", cell=self._cell_id)
-        if cmd is None:  # 该 Test App 词汇没有 MIMO layers 命令
-            return None
         try:
-            raw = self._query(cmd + "?").strip()
-            if not raw:
-                return None
-            return AppliedCellConfig(mimo_layers=int(float(raw)))
+            cap = await self.query_ue_capability()
         except Exception as e:  # noqa: BLE001
-            logger.warning("[UXM] get_applied_cell_config 回读失败: %s", e)
+            logger.warning("[UXM] get_applied_cell_config: query_ue_capability 失败: %s", e)
             return None
+        max_dl = cap.get("max_dl_layers")
+        if max_dl is None:  # UE 未 attach / firmware 不支持 → 无法核对, 跳过
+            return None
+        return AppliedCellConfig(ue_max_dl_layers=int(max_dl))
 
     # ===================================================================
     # P2-1 Phase 1: Topology Profile 应用 (operator-managed)

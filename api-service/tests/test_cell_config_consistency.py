@@ -1,9 +1,11 @@
-"""P2-11 Phase 6: UXM cell config 下发后回读一致性 + getter 测试.
+"""P2-11 Phase 6: UXM cell config 下发后一致性 (UE 能力核对) + getter 测试.
 
-钉死:
-1. check_cell_config_consistency 比对逻辑 (一致 / clamp 不一致 / None 跳过 / 字段 None 跳过)。
-2. RealUxmDriver.get_applied_cell_config 回读: 连接时查 MIMO:LAY? 返回实际 layers;
-   未连接 / 查询失败 / 命令不支持 → None (跳过, 同 Phase 1 mock-skip)。
+钉死 (Codex on PR #114 修正后):
+1. check_cell_config_consistency: 请求层数 > UE 能力上限 → 不一致; <= → 一致;
+   None → 跳过。
+2. RealUxmDriver.get_applied_cell_config 读的是 **UE 协商能力** (query_ue_capability 的
+   max_dl_layers), 不是 set_cell_config 写入的配置旋钮 (那个回读只原样返回配置值,
+   抓不到 UE 把 4 层 clamp 到 2 的降级)。UE 未 attach / firmware 不支持 → None 跳过。
 """
 from __future__ import annotations
 
@@ -13,40 +15,54 @@ from app.services.mimo_ota.cell_config_consistency import (
 )
 
 
+def _async_ret(value):
+    """返回一个 await 后给出 value 的 async 函数 (mock async 方法用)。"""
+    async def _coro(*args, **kwargs):
+        return value
+    return _coro
+
+
 class TestConsistencyLogic:
-    def test_consistent(self):
+    def test_request_within_ue_capability_ok(self):
+        # 请求 2 层, UE 支持 4 → 2 <= 4 → 一致
         r = check_cell_config_consistency(
-            requested_mimo_layers=4, applied=AppliedCellConfig(mimo_layers=4)
+            requested_mimo_layers=2, applied=AppliedCellConfig(ue_max_dl_layers=4)
         )
         assert r.consistent and not r.skipped
         assert r.failure_reason() is None
 
-    def test_clamp_mismatch_fails(self):
-        # 核心: 请求 4 层但 UXM 实际生效 2 (UE 能力/端口路由 clamp) → 不一致
+    def test_request_equals_capability_ok(self):
         r = check_cell_config_consistency(
-            requested_mimo_layers=4, applied=AppliedCellConfig(mimo_layers=2)
+            requested_mimo_layers=4, applied=AppliedCellConfig(ue_max_dl_layers=4)
+        )
+        assert r.consistent
+
+    def test_request_exceeds_capability_fails(self):
+        # 核心: 请求 4 层但 UE 只支持 2 → 4 > 2 → 不一致 (UXM 会静默 clamp)
+        r = check_cell_config_consistency(
+            requested_mimo_layers=4, applied=AppliedCellConfig(ue_max_dl_layers=2)
         )
         assert not r.consistent
         assert len(r.mismatches) == 1
         assert r.mismatches[0].field == "mimo_layers"
         assert r.mismatches[0].requested == 4 and r.mismatches[0].applied == 2
-        assert "mimo_layers" in (r.failure_reason() or "")
+        assert "clamp" in (r.failure_reason() or "")
 
     def test_none_applied_skipped(self):
-        # 回读不到 (mock / 未连接) → skipped, 不算不一致
+        # UE 未 attach / mock → skipped, 不算不一致
         r = check_cell_config_consistency(requested_mimo_layers=4, applied=None)
         assert r.consistent and r.skipped
 
     def test_field_none_skipped(self):
-        # applied 有但 mimo_layers 那项没回读到 → 跳过该项, 不算不一致
+        # applied 有但 ue_max_dl_layers 不可核对 → 跳过该项
         r = check_cell_config_consistency(
-            requested_mimo_layers=4, applied=AppliedCellConfig(mimo_layers=None)
+            requested_mimo_layers=4, applied=AppliedCellConfig(ue_max_dl_layers=None)
         )
         assert r.consistent and not r.skipped
 
     def test_payload_shape(self):
         r = check_cell_config_consistency(
-            requested_mimo_layers=4, applied=AppliedCellConfig(mimo_layers=2)
+            requested_mimo_layers=4, applied=AppliedCellConfig(ue_max_dl_layers=2)
         )
         p = r.to_payload()
         assert p["consistent"] is False and p["skipped"] is False
@@ -57,30 +73,28 @@ class TestUxmGetApplied:
     def _drv(self):
         return RealUxmDriver("test", {"ip": "10.0.0.1", "port": 5025})
 
-    def test_reads_actual_layers(self):
+    async def test_reads_ue_capability_not_config_knob(self):
+        # 读 UE 协商能力 max_dl_layers (不是配置旋钮回读)
         drv = self._drv()
-        drv._visa_session = object()  # 模拟已连接
-        drv._query = lambda cmd: "2"  # UXM 回读实际生效 2 层
-        applied = drv.get_applied_cell_config()
-        assert applied is not None and applied.mimo_layers == 2
+        drv.query_ue_capability = _async_ret(
+            {"max_dl_layers": 2, "source": "real_ue"}
+        )
+        applied = await drv.get_applied_cell_config()
+        assert applied is not None and applied.ue_max_dl_layers == 2
 
-    def test_none_when_not_connected(self):
+    async def test_none_when_ue_unavailable(self):
+        # UE 未 attach / firmware 不支持 → max_dl_layers None → 整体 None (跳过)
         drv = self._drv()
-        # _visa_session 默认 None (未 connect)
-        assert drv.get_applied_cell_config() is None
+        drv.query_ue_capability = _async_ret(
+            {"max_dl_layers": None, "source": "unavailable"}
+        )
+        assert await drv.get_applied_cell_config() is None
 
-    def test_none_when_query_empty(self):
+    async def test_none_when_capability_query_raises(self):
         drv = self._drv()
-        drv._visa_session = object()
-        drv._query = lambda cmd: ""  # 空回读
-        assert drv.get_applied_cell_config() is None
 
-    def test_none_when_query_raises(self):
-        drv = self._drv()
-        drv._visa_session = object()
+        async def _boom(*a, **k):
+            raise RuntimeError("UXM UEINFO 不支持 / 超时")
 
-        def _boom(cmd):
-            raise RuntimeError("UXM 不支持该查询 / 超时")
-
-        drv._query = _boom
-        assert drv.get_applied_cell_config() is None  # 不崩, 优雅跳过
+        drv.query_ue_capability = _boom
+        assert await drv.get_applied_cell_config() is None  # 不崩, 优雅跳过

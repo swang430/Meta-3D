@@ -156,7 +156,7 @@ measure executor(`app/services/mimo_ota/executors/measure.py`)docstring 顶部�
 | **3** ✅ | switch topology 纳入 TestCase 驱动 — **已实现 (P2-11 Phase 3)**: `MIMOOTAConfiguration.switch_mode_id` 字段 (默认 "mimo_ota", 不再硬编码) + measure 透传给 `orchestrate_switch_topology` + `switch_mode_gate.evaluate_*` 门 (`precheck_strict_switch_mode`, 有拓扑但请求 mode 不提供 → fail-loud; 无拓扑/固定布线 → warn) | 架构补全 | 中 |
 | **4** | 信号源 / VNA 纳入 TestCase 驱动(干扰 / 在线校准)| 架构补全 | 低(按需)|
 | **5** ✅ | 默认配置角色文档化 + 路径 A/B 边界在代码注释固化 — **已实现 (P2-11 Phase 5)**: §6.1 代码锚点地图 + propsim_f64 / instrument_hal_service / measure docstring 三处 `路径 A/B 边界` 注释 | 防认知漂移 | 贯穿 |
-| **6** ✅ | **一致性网从频率扩到 DL 吞吐链** — **已实现 (P2-11 Phase 6)**: `RealUxmDriver.get_applied_cell_config()` live 回读 **DL MIMO layers** + `cell_config_consistency.check_*` 跟 TestCase 精确比对 + measure `precheck_strict_cell_config` 门 (mock/未连接回读不到 → skip)。**首条线: MIMO layers** (回读还间接抓端口路由泄漏 —— 2x2 路由跑 4 层 UXM 自己 clamp, 不碰 port-routing 语义)。MCS (受 AMC 浮动) / DL power (InputLevelController 闭环合法改) 留延伸, 见 §8。 | silent-failure 防护(频率同族)| ⭐ 高(Phase 1 自然延伸)|
+| **6** ✅ | **一致性网从频率扩到 DL 吞吐链** — **已实现 (P2-11 Phase 6)**: `RealUxmDriver.get_applied_cell_config()` 读 **UE 协商能力** `max_dl_layers` + `cell_config_consistency.check_*` 判**请求层数 > UE 上限 → fail** + measure `precheck_strict_cell_config` 门 (UE 未 attach/mock → skip)。**首条线: DL MIMO layers**。⚠️ Codex on PR #114: 读 UE 能力**不读** `CONF:...:LAY?` 配置旋钮 (后者回读只原样返回配置值, 抓不到 UE 把 4 层 clamp 到 2)。MCS (受 AMC 浮动) / DL power (InputLevelController 闭环合法改) 留延伸, 见 §8。 | silent-failure 防护(频率同族)| ⭐ 高(Phase 1 自然延伸)|
 
 ## 8. 核心参数驱动审计(2026-05-31)— A/B/C/D 分类 + Phase 6 一致性网
 
@@ -179,7 +179,7 @@ measure executor(`app/services/mimo_ota/executors/measure.py`)docstring 顶部�
 
 | 参数 | 下发 | 回读校验 |
 |------|------|---------|
-| `mimo_layers` | `set_cell_config` | ✅ **Phase 6 已补**: `get_applied_cell_config()` 回读 MIMO:LAY? + `precheck_strict_cell_config` 门 |
+| `mimo_layers` | `set_cell_config` | ✅ **Phase 6 已补**: 读 UE 协商能力 `max_dl_layers`, 请求 > UE 上限 → fail (`precheck_strict_cell_config`)。读 UE 能力**非** `CONF:LAY?` 配置旋钮 (Codex #114) |
 | `modulation` / `mcs` / `enable_amc` | throughput 参数下发 | ⬜ 待补(AMC on 时 MCS 浮动 → 仅 AMC off 可回读校验)|
 | `tdd_pattern` / `harq_*` | throughput 参数下发 | ⬜ 待补 |
 | `target_tx_power_dbm`(→DL power)/ `rsrp` / `snr` | `set_downlink_power` / `sim_rules` | ⬜ 待补,**但有坑**: InputLevelController(Phase 2b)闭环会合法改 UXM DL power,"功率==target" 会误杀;且 RSRP 当前模拟。需结合操作点 backlog 一起设计 |
@@ -205,14 +205,16 @@ chamber 几何 / 探头位置·方向图 / SGH 参考天线 / DUT(SIM·IMSI)= �
 Phase 1 给**频率**做了"下发后**回读**(`get_frequency_identity`)+ 精确比对"。Phase 6 把这张网扩到
 B 类。**已实现的首条线 = DL MIMO layers**:
 
-- `RealUxmDriver.get_applied_cell_config()`:live SCPI 回读 `MIMO:LAY?` → `AppliedCellConfig`
-  (未连接 / 命令不支持 / 查询失败 → None,校验跳过,同 Phase 1 mock-skip)。
-- `app/services/mimo_ota/cell_config_consistency.check_cell_config_consistency`:回读值 vs
-  TestCase `mimo_layers` 精确比对。
+- `RealUxmDriver.get_applied_cell_config()`:读 **UE 协商能力** `query_ue_capability().max_dl_layers`
+  → `AppliedCellConfig`(UE 未 attach / firmware 不支持 UEINFO / mock → None,跳过,同 Phase 1 mock-skip)。
+- `app/services/mimo_ota/cell_config_consistency.check_cell_config_consistency`:判
+  **TestCase 请求层数 > UE 能力上限 → fail**。
 - measure 在 set_cell_config + RRC reconfig 后调用,`precheck_strict_cell_config` 门(默认 True)。
-- **抓什么**:UXM 在 UE 能力 / 端口路由不支持时把请求的 4 层静默 clamp 到 2 而不报错(吞吐其实
-  2 层却当 4 层测)。**且 layers 回读间接抓 C 类端口路由泄漏**(2x2 残留路由跑 4 层 → UXM 自己
-  clamp → 回读 ≠ 请求),**而不碰 port-routing 语义本身**(只比 layers-to-layers)。
+- **抓什么**:UE 撑不住请求层数时 UXM 把请求的 4 层静默 clamp 到 2 而不报错(吞吐其实 2 层却当
+  4 层测)。⚠️ **Codex on PR #114**:必须读 **UE 协商能力**,**不能**读 `CONF:...:LAY?` 配置旋钮 ——
+  那是 `set_cell_config` 写入的同一个值,回读只会原样返回配置的 4,对"UE 把 4 clamp 到 2"完全
+  no-op。**注意**:UE 能力核对**不**覆盖 C 类端口路由泄漏(那是 cell 端口路由限制,跟 UE 能力是
+  两回事);port-routing 仍是待定语义的 backlog。
 
 **剩余 B 类(同机制延伸,各有特定坑)**:
 - `MCS`:AMC on 时浮动,仅 AMC off 可回读校验(条件化)。

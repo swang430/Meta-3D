@@ -457,18 +457,19 @@ class MeasureExecutor(IStepExecutor):
                     context.test_execution.id, freq_result.failure_reason(),
                 )
 
-            # --- P2-11 Phase 6: UXM cell config 下发后回读一致性 (吞吐链版频率校验) ---
-            # set_cell_config + RRC reconfig 后回读 UXM **实际生效**的 DL MIMO layers 跟
-            # TestCase 比 —— UXM 在 UE 能力 / 端口路由不支持时会静默 clamp (4→2 层) 而不
-            # 报错, 吞吐其实是 2 层却当 4 层测 (跟频率错配同等危害)。回读不到 (mock / 未
-            # 连接 / 命令不支持) → skipped 跳过 (同 Phase 1 mock-skip)。
+            # --- P2-11 Phase 6: UXM cell config 下发后一致性 (吞吐链版频率校验) ---
+            # set_cell_config + RRC reconfig 后, 拿 **UE 协商能力** (max_dl_layers) 跟
+            # TestCase 请求层数比 —— 请求 4 层但 UE 只支持 2 → UXM 静默 clamp, 吞吐其实
+            # 2 层却当 4 层测 (跟频率错配同等危害)。Codex on PR #114: 读 UE 能力而非
+            # CONF:...:LAY? 配置旋钮 (后者回读只原样返回配置值, 抓不到 clamp)。UE 未
+            # attach / firmware 不支持 (mock / dry-run) → skipped 跳过 (同 Phase 1)。
             if hasattr(base_station, "get_applied_cell_config"):
                 from app.services.mimo_ota.cell_config_consistency import (
                     check_cell_config_consistency,
                 )
                 cc_result = check_cell_config_consistency(
                     requested_mimo_layers=config.mimo_layers,
-                    applied=base_station.get_applied_cell_config(),
+                    applied=await base_station.get_applied_cell_config(),
                 )
                 if not cc_result.consistent:
                     if config.precheck_strict_cell_config:
