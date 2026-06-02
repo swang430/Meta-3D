@@ -109,6 +109,18 @@ class TestCreate:
         with pytest.raises(svc.StandardChannelError):
             _create(db, ce_binding, model="CDL_C")
 
+    def test_out_of_range_arfcn_raises(self, db, ce_binding):
+        # Codex #118: arfcn 为正但超 NR-ARFCN 定义域 (>3279165) —— Pydantic gt=0 拦不住。
+        # 必须 create 就 StandardChannelError (→ 400); 否则建出 zombie SCD, 到 associate
+        # 重建 projection 时 nr_arfcn_to_freq_mhz 抛裸 ValueError → 路由不 catch → 500。
+        with pytest.raises(svc.StandardChannelError):
+            _create(db, ce_binding, arfcn=3279166)
+
+    def test_max_valid_arfcn_ok(self, db, ce_binding):
+        # 边界: NR-ARFCN 上界 3279165 仍合法 (守 off-by-one, 别把合法值误拒)
+        scd = _create(db, ce_binding, arfcn=3279165)
+        assert scd.arfcn == 3279165
+
     def test_duplicate_same_binding_raises(self, db, ce_binding):
         _create(db, ce_binding)
         with pytest.raises(svc.StandardChannelError):

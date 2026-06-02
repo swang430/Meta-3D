@@ -84,6 +84,23 @@ def _compute_standard_name(
         raise StandardChannelError(str(e)) from e
 
 
+def _validate_arfcn_domain(arfcn: int) -> None:
+    """arfcn 必须落在 NR-ARFCN 定义域 (nr_arfcn 模块是单一真值源)。
+
+    SCDCreateRequest 的 Pydantic 只校验 arfcn>0 (下界); 上界 (超 NR-ARFCN 范围 3279165)
+    未校验。越界但为正的 arfcn 仍能建出 SCD, 到 associate / delete 重建 synced projection
+    时 _scd_to_projection_entry 调 nr_arfcn_to_freq_mhz 抛**裸 ValueError** (非
+    StandardChannelError), 路由不 catch → /associate 返回 500 而非文档承诺的客户端可修 400
+    (Codex #118)。在 create 这道门 fail-loud → 已持久化的 SCD 必有可转换 arfcn, projection
+    的反查因此恒不越界 (不必在 projection 再加防御层)。上界用 nr_arfcn 转换本身判, 不在此
+    硬编码 3279165 (避免跟单一真值源漂移)。
+    """
+    try:
+        nr_arfcn_to_freq_mhz(arfcn)
+    except ValueError as e:
+        raise StandardChannelError(str(e)) from e
+
+
 def create_scd(
     db: Session,
     *,
@@ -101,10 +118,13 @@ def create_scd(
     """定义一个标准信道 (declared_only, 未关联文件)。标准名从规范配置算 (单一真值)。
 
     绑定非法 (不存在 / 非信道仿真器) → StandardChannelError。
+    arfcn 越界 (超 NR-ARFCN 定义域) / 字段非 alnum → StandardChannelError。
     重复 (同绑定同标准名) → StandardChannelError。
     """
     # 先校验 binding: 最根本的前置条件 (挂到哪台 F64), 失败比字段非法 / 重复更基础。
     _resolve_channel_emulator_binding(db, instrument_connection_id)
+    # arfcn 越界但为正否则能建出 zombie SCD, 到 associate 重建 projection 才以 500 暴露 (Codex #118)。
+    _validate_arfcn_domain(arfcn)
     standard_name = _compute_standard_name(
         band=band, arfcn=arfcn, bandwidth_mhz=bandwidth_mhz, model=model,
         scenario=scenario, mimo=mimo, polarization=polarization, version=version,
@@ -191,6 +211,7 @@ def _scd_to_projection_entry(scd: StandardChannelDefinition) -> dict:
     是声明真值。``scd_id`` 标记此条为 SCD 派生 (sync 时按此重建; normalizer 会忽略它,
     不进 API 响应) —— 不要在持久化时 strip 掉。
     """
+    # arfcn 在 create_scd 已校验落在 NR-ARFCN 域 (越界 → StandardChannelError), 故此反查恒不越界。
     center_mhz = nr_arfcn_to_freq_mhz(scd.arfcn)  # 声明 → 频率 (round-trip 无损)
     return {
         "filename": scd.associated_file_path,  # CALC:FILT:FILE 加载这个 (路径 c 是厂商真文件)
