@@ -73,6 +73,9 @@ class TestEntryNormalisation:
             "label": "CDL-A_UMi_2x2.smu",  # defaults to filename
             "description": None,
             "type": "smu",
+            # 无频率 token (2x2 / UMi 不匹配) → None (P2-10 Step 1)
+            "center_frequency_mhz": None,
+            "nr_arfcn": None,
         }]
 
     @pytest.mark.asyncio
@@ -88,6 +91,8 @@ class TestEntryNormalisation:
             "label": "5G NR UMa 4×4",
             "description": "3GPP TR 38.901 CDL-C profile",
             "type": "smu",
+            "center_frequency_mhz": None,  # 无频率 token
+            "nr_arfcn": None,
         }]
 
     @pytest.mark.asyncio
@@ -190,6 +195,38 @@ class TestMixedRealisticPayload:
         # Spot-check the rich middle entry.
         assert items[1]["label"] == "5G NR Urban Macro 4x4 (CDL-C)"
         assert items[1]["description"].startswith("3GPP TR 38.901")
+
+
+# ---------------------------------------------------------------------------
+# P2-10 Step 1 — 资产盘点频率元数据 (center_frequency_mhz + nr_arfcn)
+# ---------------------------------------------------------------------------
+
+class TestFrequencyMetadata:
+    @pytest.mark.asyncio
+    async def test_freq_token_parsed_from_filename(self):
+        # ".._3600M.smu" → 3600 MHz → ARFCN 640000 (服务 emulation_file 频率匹配)
+        d = _driver(available=["3GPP_FR1_OTA_CDLC_UMa_3600M.smu"])
+        item = (await d.list_channel_models())[0]
+        assert item["center_frequency_mhz"] == 3600.0
+        assert item["nr_arfcn"] == 640000
+
+    @pytest.mark.asyncio
+    async def test_no_freq_token_is_none(self):
+        d = _driver(available=["CDL-A_UMi_2x2.smu"])  # 无 _<数字>M token
+        item = (await d.list_channel_models())[0]
+        assert item["center_frequency_mhz"] is None
+        assert item["nr_arfcn"] is None
+
+    @pytest.mark.asyncio
+    async def test_explicit_config_center_overrides_filename(self):
+        # operator 在 config 显式给 center_frequency_mhz → 优先于文件名解析
+        d = _driver(available=[{
+            "filename": "reusable_3600M.smu",  # 文件名说 3600
+            "center_frequency_mhz": 3500,       # 但 operator 声明实际跑 3500
+        }])
+        item = (await d.list_channel_models())[0]
+        assert item["center_frequency_mhz"] == 3500.0
+        assert item["nr_arfcn"] == 633333  # 3500 MHz 的 ARFCN, 非 3600 的
 
 
 # ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@ from app.hal.nr_arfcn import (
     FrequencyIdentity,
     freq_mhz_to_nr_arfcn,
     nr_arfcn_to_freq_mhz,
+    parse_smu_center_freq_mhz,
 )
 
 
@@ -84,3 +85,27 @@ class TestFrequencyIdentity:
         fi = FrequencyIdentity.from_center_freq_mhz(3600.0, 100.0)
         d = fi.describe()
         assert "640000" in d and "3600" in d and "100" in d
+
+
+class TestParseSmuCenterFreq:
+    def test_simple_token(self):
+        assert parse_smu_center_freq_mhz("..._3600M.smu") == 3600.0
+
+    def test_full_windows_path(self):
+        p = r"D:\Scenario Packs\F9815064A\3GPP_FR1_OTA_CDLC_UMa_3600M.smu"
+        assert parse_smu_center_freq_mhz(p) == 3600.0
+
+    def test_takes_last_token(self):
+        # 多个 _<数字>M token, 取最后一个 (最可能是频率, 排在带宽/场景描述后)
+        assert parse_smu_center_freq_mhz("_100M_UMa_3500M.smu") == 3500.0
+
+    def test_no_token_returns_none(self):
+        assert parse_smu_center_freq_mhz("CDL-A_UMi_2x2.smu") is None
+
+    def test_avoids_false_match_fr1_uma(self):
+        # "FR1" / "UMa" 不是 _<数字>M 形式 → 不误匹配
+        assert parse_smu_center_freq_mhz("3GPP_FR1_OTA_UMa.smu") is None
+
+    def test_none_and_empty(self):
+        assert parse_smu_center_freq_mhz(None) is None
+        assert parse_smu_center_freq_mhz("") is None

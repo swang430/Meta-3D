@@ -224,6 +224,70 @@ B 类。**已实现的首条线 = DL MIMO layers**:
 **一句话**:频率是一致性网的第一根线,**MIMO layers 是第二根**(本 Phase);MCS / 功率是同一台
 织机上待织的线。
 
+## 9. 标准信道文件定义(Standard Channel Definition)— 软件掌控命名(2026-06-01 用户确立)
+
+> 用户 2026-06-01:"**不管 F64 有没有自动化窗口,在我们的软件中都要标准化命名。** SCPI 能控制 F64 自动生成最好;不能,指导操作员手工产生〔按我们的标准命名〕;或者将已定义好的文件关联到我们软件中的标准信道文件上。"
+
+### 决定:命名标准是**我们的**,不是 F64 的
+
+§8 Step 1 的 .smu 文件名解析(`parse_smu_center_freq_mhz`)是**被动**的 —— 逆向一个我们不掌控的厂商命名约定。这跟 **#109 Codex P2 同病根**:一个 `3600M.smu` 被 `configure(3500)` 重调后文件名还说 3600,**文件名说谎**。赌"文件名忠实反映内容",而这个赌注我们不控制。
+
+对照:**ASC 路径已经是生成式的**(`channel_engine.synthesize_hardware_pipeline` 按 TestCase 合成 .asc,config 是真值)。**GCM 是落后的被动一半。**
+
+决定:软件里有一个**标准信道文件定义(SCD)** = 规范配置 + **我们掌控的标准名**,是真值。实际 .smu 用三种方式之一满足它(F64 能力只决定走哪条):
+
+| 路径 | 做法 | 前提 |
+|------|------|------|
+| **a 自动生成** | SCPI 驱动 Channel Studio 按规范配置生成 + 标准命名 | Channel Studio 有 automation(现场/vendor 调研)|
+| **b 手工按标准** | 指导操作员在 Channel Studio 生成,**用我们给的标准名** | 任何时候可做 |
+| **c 关联已有** | 把已有厂商 .smu 映射到一个 SCD(SCD 的规范配置是真值,文件只是字节)| 任何时候可做 |
+
+### SCD 实体:"信道自声明",平行 LabProfile / DUTProfile
+
+- **规范配置**:`FrequencyIdentity`(ARFCN+带宽)+ CDL/TDL 模型 + MIMO 拓扑 + scenario + **极化**(polarization)+ **版本号**(version)+ 生成参数。
+- **标准名**:`format_standard_channel_filename(SCD) -> str` —— **我们拥有的确定性函数**(config→name),格式:
+  ```
+  MF_<band>_<ARFCN>_BW<bw>_<model>_<scenario>_<MIMO>_<pol>_v<version>.smu
+  例: MF_N78_640000_BW100_CDLC_UMa_4x4_DP_v3.smu
+  ```
+  - `MF_` 前缀标识"我们标准命名的"(跟厂商原始 .smu 区分);**ARFCN** 进名字(非 frequency_mhz,规范真值,贯彻 Phase 1);**极化** `<pol>`(MIMO OTA 核心参数:`V` / `H` 单极化 / `DP` 双极化〔V+H 或 ±45° slant〕);**版本号** `v<version>` 重标/重生成时递增(可追溯,关联 Step 3 alignment 漂移/重标)。
+  - 字段一律 alnum 无下划线(下划线是分隔符);两个方向都我们拥有 → 反解必然正确(不像 Step 1 赌厂商约定)。
+- **映射**:SCD → 实际 .smu 路径(`emulation_file`),经路径 a/b/c 填。
+- **DB 实体,GUI 可编辑**,平行 `LabProfile`(chamber)/ `DUTProfile`(DUT,#115 backlog)—— 同一套 **"declared > inferred"** 架构(= ARFCN 规范 vs frequency_mhz 标称,= DUT 自声明)。
+
+### Step 1 解析器**重新定位**:真值源 → cross-check 层
+
+```
+SCD 规范配置 (声明)            ← 真值
+  ↕ 一致性校验: parse_smu_center_freq_mhz(实际文件名) vs SCD 声明频率
+                不一致 → fail-loud (文件被重命名 / 重调 / 关联错)
+实际 .smu 文件名               ← 不再信任, 只做 cross-check
+```
+Step 1 的解析器(§8/本 PR)**不白做** —— 从"真值"降为"cross-check",正好抓 #109 那种文件名说谎。
+
+### 跟 P2-11 Phase 2 的关系
+
+Phase 2 的 `emulation_file` 现在是裸路径。SCD 落地后,TestCase 可引用 **SCD(按规范配置)** 而非裸路径 —— "3500 MHz 用哪个 .smu" 从"赌文件名"变"查 SCD by `FrequencyIdentity`"。这也是 §5 提到的 "frequency → .smu 库映射" 的正解。
+
+### 与静态清单(`available_channel_models`)的关系:synced projection(2026-06-01 用户确立)
+
+用户决定:**静态清单不是独立手维护的死清单,而是 SCD↔文件关联的同步投影**。"每次 SCD 命名跟 F64 本地文件关联后,静态清单应被更新 —— 否则放一个并不存在(或不需要存在)的清单没用。"
+
+- **SCD 是源**(规范配置真值 + 标准名);`available_channel_models`(GUI 下拉框读的那个 JSON)退化成**派生视图** —— SCD 关联即更新,**不再手敲**、不放不存在的条目。
+- **路径 a/b**(我们/操作员按标准名生成):清单 entry 的 `filename` = 标准名(实际 F64 文件就叫这名)。
+- **路径 c**(关联已有厂商 .smu):`filename` = **厂商实际文件**(`CALC:FILT:FILE` 要加载真文件),但 entry 用 **SCD 规范配置充实**(频率/MIMO/极化等是**声明真值**,非从名解析);关联时跑 `check_channel_filename_freq`(厂商名解析频率 vs SCD 声明 ARFCN),**不符 → fail-loud**(抓关联错文件)。
+- 结果:下拉框/inventory 永远反映"**真实存在 + 已登记的 SCD**",频率元数据来自**声明**(权威)而非**解析**(§8 Step 1 降为关联时的 cross-check)。存量手敲条目在迁移成 SCD 前保留,逐步收敛。
+
+### 实施切分(建议,均本地除路径 a)
+
+| Step | 内容 | 本地/现场 |
+|------|------|----------|
+| 1 ✅ | `standard_channel_filename(config)` 命名契约函数 + 反解 + `check_channel_filename_freq` cross-check(`channel_naming.py`)| 本地 |
+| 2 | `StandardChannelDefinition` DB 实体(规范配置 + 标准名 + 关联 .smu 文件)+ CRUD API | 本地 |
+| 3 | 路径 c(关联已有 .smu → SCD,关联时 cross-check)+ 路径 b(生成标准名给操作员)GUI 工作流;**关联即更新 `available_channel_models`(synced projection)** | 本地 |
+| 4 | Phase 2 `emulation_file` 改引用 SCD(按 `FrequencyIdentity` 查)| 本地 |
+| 5 | 路径 a(SCPI 驱动 Channel Studio 生成)| 现场 / vendor 调研 |
+
 ## 附:这跟 ARFCN 问题是同一母题的两个层次
 
 ```

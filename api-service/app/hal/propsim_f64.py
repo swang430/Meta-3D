@@ -635,16 +635,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     def _parse_loaded_center_freq_mhz(self) -> Optional[float]:
         """从 `_loaded_emulation_file` 文件名解析中心频率 (MHz)。
 
-        .smu 命名约定含频率 token, e.g. "3GPP_FR1_OTA_CDLC_UMa_3600M.smu" → 3600。
-        匹配 `_<3-5位数字>M` (后接 . 或 _ 或结尾), 避免误匹配 "FR1"/"UMa" 等。取最后
-        一个匹配 (最可能是频率)。None = 没加载 / 文件名无频率 token。
+        复用 nr_arfcn.parse_smu_center_freq_mhz (P2-10 Step 1 抽共享) —— 跟 channel model
+        inventory 盘点 .smu 频率元数据走同一套命名约定解析, 避免漂移成两套。
         """
-        if not self._loaded_emulation_file:
-            return None
-        matches = re.findall(r"[_-](\d{3,5})M(?=[._]|$)", self._loaded_emulation_file)
-        if not matches:
-            return None
-        return float(matches[-1])
+        from app.hal.nr_arfcn import parse_smu_center_freq_mhz
+        return parse_smu_center_freq_mhz(self._loaded_emulation_file)
 
     def get_frequency_identity(self):
         """P2-11: F64 当前加载信道的频率规范标识 (中心 ARFCN + 带宽), 供多方一致性校验。

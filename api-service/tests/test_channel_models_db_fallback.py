@@ -48,6 +48,8 @@ class TestNormaliseEntries:
             "label": "urban_macro.smu",
             "description": None,
             "type": "smu",
+            "center_frequency_mhz": None,  # 无频率 token (P2-10 Step 1)
+            "nr_arfcn": None,
         }]
 
     def test_dict_entry_with_label_and_description_preserved(self):
@@ -59,6 +61,8 @@ class TestNormaliseEntries:
             "label": "Ramp test",
             "description": "3GPP TR 38.901",
             "type": "rtc",
+            "center_frequency_mhz": None,  # 无频率 token
+            "nr_arfcn": None,
         }]
 
     def test_dropped_when_filename_missing(self):
