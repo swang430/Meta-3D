@@ -1574,6 +1574,8 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 **Status**: 🔄 in-progress — 架构已确立 (§9, 本 PR) + **slice 1 命名契约 done (本 PR, channel_naming.py)**; slice 2-4 本地可启动。
 **Estimate**: 本地 ~2-3 day + 路径 a 现场。
 
+**Discovered (2026-06-02, slice 2b Codex review 期间排查 GUI 消费端)**: slice 3 比预想大且背死代码债 —— 现有唯一消费 `available_channel_models` 的 `.smu` 下拉 (`type:'channelModel'` → `fetchChannelModels` → `/instruments/channelEmulator/channel-models`) 挂在**死代码** `App.tsx::_TestConfig` (全库零渲染点) + mock 时代 `stepTemplateDefinitions`; 真实测试模块 `features/TestManagement` **从未实现**该字段 → **SCD 产物在真实 GUI 测试流程无消费端** (唯一露出 = 仪器抽屉 `ChannelModelsCard` 只读列表)。slice 3 需含: TestManagement 步骤编辑接 `/channel-models` + 清理/隔离 `_TestConfig` 死代码 + 隔离 mock (`mockDatabase.ts` TP-317/404/CTIA + `stepTemplateDefinitions`, 本次排查曾被其误导多轮; 教训见 memory feedback_distinguish_live_vs_mock_dead_code)。
+
 ---
 
 ### P2-11 — TestCase 驱动的仪表配置下发架构 (单一真值源 + 多方一致性校验)
