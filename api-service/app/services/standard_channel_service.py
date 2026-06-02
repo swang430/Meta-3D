@@ -11,16 +11,23 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.hal.nr_arfcn import nr_arfcn_to_freq_mhz
 from app.models.instrument import InstrumentCategory, InstrumentConnection
 from app.models.standard_channel import StandardChannelDefinition
 from app.services.mimo_ota.channel_naming import (
     StandardChannelName,
+    check_channel_filename_freq,
     format_standard_channel_filename,
 )
 
 
 class StandardChannelError(ValueError):
-    """SCD 业务错误 (字段非法 / 重复 / 不存在 / 绑定非法), caller (API) 映射成 4xx。"""
+    """SCD 业务错误 (字段非法 / 重复 / 绑定非法 / 关联不符), caller (API) 映射成 4xx。"""
+
+
+class StandardChannelNotFound(StandardChannelError):
+    """SCD 按 id 找不到。是 StandardChannelError 的子类 (既有 except 仍捕获), 但让 caller
+    能把"资源不存在"映射成 404 而非 400 (associate 端点区分 scd_id 失效 vs 关联非法)。"""
 
 
 # SCD 绑定必须是信道仿真器连接: synced projection 更新的是该 binding 的
@@ -144,11 +151,133 @@ def list_scds(
 def get_scd(db: Session, scd_id: UUID) -> StandardChannelDefinition:
     scd = db.get(StandardChannelDefinition, scd_id)
     if scd is None:
-        raise StandardChannelError(f"标准信道 {scd_id} 不存在")
+        raise StandardChannelNotFound(f"标准信道 {scd_id} 不存在")
     return scd
 
 
 def delete_scd(db: Session, scd_id: UUID) -> None:
     scd = get_scd(db, scd_id)
+    binding_id = scd.instrument_connection_id
+    had_file = scd.associated_file_path is not None
     db.delete(scd)
+    db.flush()  # 让后续 projection 重建 query 看不到它
+    if had_file:
+        # 删掉的是已关联 SCD → synced projection 同步移除它的派生条目
+        _sync_projection_for_binding(db, binding_id)
     db.commit()
+
+
+# ---- 关联实际 .smu + synced projection (slice 2b) ----
+
+# 路径 a/b: 文件按我们标准名生成 (filename == standard_name);
+# 路径 c: 关联已有厂商 .smu (filename = 厂商真文件, 频率元数据仍用 SCD 声明充实)。
+_ASSOCIATION_SOURCE_STANDARD = "standard_generated"
+_ASSOCIATION_SOURCE_VENDOR = "vendor_associated"
+_VALID_ASSOCIATION_SOURCES = frozenset(
+    {_ASSOCIATION_SOURCE_STANDARD, _ASSOCIATION_SOURCE_VENDOR}
+)
+
+
+def _basename(path: str) -> str:
+    return path.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def _scd_to_projection_entry(scd: StandardChannelDefinition) -> dict:
+    """SCD (已关联) → available_channel_models 的一条派生 entry。
+
+    频率元数据 (center_frequency_mhz) 从 SCD **声明 ARFCN** 算 = 权威, 非从厂商文件名解析
+    (§8 Step 1 解析降为关联时 cross-check; 路径 c 厂商名可能无频率 token 或不可信)。
+    normalize_channel_model_entries 优先用 entry 显式 center, 故下游 inventory/下拉框看到的
+    是声明真值。``scd_id`` 标记此条为 SCD 派生 (sync 时按此重建; normalizer 会忽略它,
+    不进 API 响应) —— 不要在持久化时 strip 掉。
+    """
+    center_mhz = nr_arfcn_to_freq_mhz(scd.arfcn)  # 声明 → 频率 (round-trip 无损)
+    return {
+        "filename": scd.associated_file_path,  # CALC:FILT:FILE 加载这个 (路径 c 是厂商真文件)
+        "label": scd.standard_name,            # GUI 永远显示标准名
+        "description": (
+            f"SCD {scd.band} ARFCN {scd.arfcn} BW{scd.bandwidth_mhz} "
+            f"{scd.model}/{scd.scenario} {scd.mimo} {scd.polarization} v{scd.version}"
+        ),
+        "center_frequency_mhz": center_mhz,
+        "scd_id": str(scd.id),
+    }
+
+
+def _sync_projection_for_binding(db: Session, instrument_connection_id: UUID) -> None:
+    """重建 F64 绑定的 available_channel_models = 该绑定所有"已关联文件"SCD 的派生条目
+    + **保留**非 SCD 派生的存量手敲条目 (§9: 逐步收敛, 不 nuke)。
+
+    SCD 派生条目按 ``scd_id`` 标记识别并整体重建 (天然处理新增/改关联/删除 —— 改关联时旧
+    文件条目随 scd_id 一并丢弃重建, 不留 phantom)。
+    """
+    conn = db.get(InstrumentConnection, instrument_connection_id)
+    if conn is None:
+        return  # SCD 的 FK 保证存在; 防御性早返回
+    params = dict(conn.connection_params or {})
+    existing = params.get("available_channel_models") or []
+    # 保留非 SCD 派生条目 (没有 scd_id 标记的 = 存量手敲 / 别处来源)
+    preserved = [
+        e for e in existing
+        if not (isinstance(e, dict) and e.get("scd_id"))
+    ]
+    associated = (
+        db.query(StandardChannelDefinition)
+        .filter(
+            StandardChannelDefinition.instrument_connection_id == instrument_connection_id,
+            StandardChannelDefinition.associated_file_path.isnot(None),
+        )
+        .order_by(StandardChannelDefinition.standard_name)
+        .all()
+    )
+    derived = [_scd_to_projection_entry(s) for s in associated]
+    params["available_channel_models"] = preserved + derived
+    # 整体重新赋值 dict 触发 SQLAlchemy JSON 变更检测 (in-place mutate 不会被 track)
+    conn.connection_params = params
+
+
+def associate_file(
+    db: Session,
+    scd_id: UUID,
+    *,
+    file_path: str,
+    association_source: str = _ASSOCIATION_SOURCE_VENDOR,
+) -> StandardChannelDefinition:
+    """把一个实际 .smu 文件关联到 SCD, 并更新 synced projection。
+
+    - scd 不存在 → StandardChannelNotFound。
+    - file_path 空 / source 非法 → StandardChannelError。
+    - cross-check: check_channel_filename_freq(file_path, scd.arfcn) 不一致 (文件名能解析出
+      频率但 ≠ 声明) → StandardChannelError (fail-loud, 抓关联错文件); 解析不出 → 放行
+      (SCD 声明本就是真值, 跟 Phase 1 None-skip 一致)。
+    - standard_generated (路径 a/b): 文件由我们标准名生成 → basename 必须 == standard_name
+      (否则是把别的文件误标成 standard; 抓 mislabel)。
+    """
+    scd = get_scd(db, scd_id)
+    if not file_path or not isinstance(file_path, str):
+        raise StandardChannelError("file_path 必须为非空字符串")
+    if association_source not in _VALID_ASSOCIATION_SOURCES:
+        raise StandardChannelError(
+            f"association_source={association_source!r} 非法, 必须是 "
+            f"{sorted(_VALID_ASSOCIATION_SOURCES)}"
+        )
+
+    check = check_channel_filename_freq(file_path, scd.arfcn)
+    if not check.consistent:
+        raise StandardChannelError(check.failure_reason())
+
+    if association_source == _ASSOCIATION_SOURCE_STANDARD:
+        if _basename(file_path) != scd.standard_name:
+            raise StandardChannelError(
+                f"association_source=standard_generated 要求文件名 == 标准名 "
+                f"{scd.standard_name!r}, 实际 {_basename(file_path)!r} "
+                f"(路径 a/b 文件须按标准名生成; 关联厂商已有文件用 vendor_associated)"
+            )
+
+    scd.associated_file_path = file_path
+    scd.association_source = association_source
+    db.flush()  # 让 projection 重建 query 看到本次关联 (不赌 session autoflush)
+    _sync_projection_for_binding(db, scd.instrument_connection_id)
+    db.commit()
+    db.refresh(scd)
+    return scd

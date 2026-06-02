@@ -283,8 +283,9 @@ Phase 2 的 `emulation_file` 现在是裸路径。SCD 落地后,TestCase 可引�
 | Step | 内容 | 本地/现场 |
 |------|------|----------|
 | 1 ✅ | `standard_channel_filename(config)` 命名契约函数 + 反解 + `check_channel_filename_freq` cross-check(`channel_naming.py`)| 本地 |
-| 2 | `StandardChannelDefinition` DB 实体(规范配置 + 标准名 + 关联 .smu 文件)+ CRUD API | 本地 |
-| 3 | 路径 c(关联已有 .smu → SCD,关联时 cross-check)+ 路径 b(生成标准名给操作员)GUI 工作流;**关联即更新 `available_channel_models`(synced projection)** | 本地 |
+| 2a ✅ | `StandardChannelDefinition` DB 实体(规范配置 + 标准名 + 关联 .smu 文件)+ CRUD API + 绑定校验(必须 channelEmulator 连接)(#117)| 本地 |
+| 2b ✅ | `associate_file`:关联实际 .smu(`check_channel_filename_freq` cross-check **不符 fail-loud**)+ **关联即更新 `available_channel_models`(synced projection)后端** —— 派生条目按 `scd_id` 标记重建、存量手敲条目保留、删除同步移除(`standard_channel_service.py`)| 本地 |
+| 3 | 路径 c(关联已有 .smu → SCD)+ 路径 b(生成标准名给操作员)GUI 工作流(调 2b 后端)| 本地 |
 | 4 | Phase 2 `emulation_file` 改引用 SCD(按 `FrequencyIdentity` 查)| 本地 |
 | 5 | 路径 a(SCPI 驱动 Channel Studio 生成)| 现场 / vendor 调研 |
 
