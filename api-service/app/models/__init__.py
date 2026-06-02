@@ -84,6 +84,7 @@ from app.models.channel_calibration import (
 from app.models.switch_topology import SwitchTopology
 from app.models.lab_profile import LabProfile
 from app.models.instrument_topology_profile import InstrumentTopologyProfile
+from app.models.standard_channel import StandardChannelDefinition
 
 __all__ = [
     # System Calibration
@@ -143,6 +144,7 @@ __all__ = [
     "LabProfile",
     # UXM Topology Profile (P2-1 Phase 2.1)
     "InstrumentTopologyProfile",
+    "StandardChannelDefinition",
     # Channel Calibration Enums
     "ScenarioType",
     "ScenarioCondition",
