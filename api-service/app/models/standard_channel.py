@@ -34,10 +34,12 @@ from app.db.database import Base
 class StandardChannelDefinition(Base):
     """一个标准信道定义 = 规范配置 + 标准名 + (可选) 关联的实际 .smu 文件。
 
-    唯一性: (instrument_connection_id, standard_name) —— 同一标准信道在一个 F64 绑定上
-    只一份; 同一规范配置可在多个 F64 绑定上各有一份 (回答"一个配置多个物理文件" =
-    每绑定一个)。版本号是规范配置一部分 (重标/重生成递增), 不同 version = 不同标准名 =
-    不同 SCD。
+    唯一性: (instrument_connection_id, standard_name)。生产 schema 里 InstrumentCategory
+    .category_key 全局 unique + InstrumentConnection.category_id unique → 一套系统只有一台
+    信道仿真器 (channelEmulator) 连接, 故此约束实际等价于"标准名在该 F64 上唯一";
+    composite 形式是防御性通用写法 (将来若放开多信道仿真器仍正确)。
+    "一个规范配置的多个物理文件" 由版本号承载 (重标/重生成时 version 递增 → 不同标准名 =
+    不同 SCD), 不是靠多绑定。
     """
 
     __tablename__ = "standard_channel_definitions"

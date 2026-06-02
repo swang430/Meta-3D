@@ -11,6 +11,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.models.instrument import InstrumentCategory, InstrumentConnection
 from app.models.standard_channel import StandardChannelDefinition
 from app.services.mimo_ota.channel_naming import (
     StandardChannelName,
@@ -19,7 +20,45 @@ from app.services.mimo_ota.channel_naming import (
 
 
 class StandardChannelError(ValueError):
-    """SCD 业务错误 (字段非法 / 重复 / 不存在), caller (API) 映射成 4xx。"""
+    """SCD 业务错误 (字段非法 / 重复 / 不存在 / 绑定非法), caller (API) 映射成 4xx。"""
+
+
+# SCD 绑定必须是信道仿真器连接: synced projection 更新的是该 binding 的
+# connection_params['available_channel_models'], 而只有 channelEmulator category 的
+# connection 会被 list_channel_models / F64 流程消费 (见 app/api/instrument.py
+# list_channel_models_endpoint)。挂到别的类别 = projection 永不被消费的死数据。
+#
+# 注意: 这里是 DB 的 category_key (camelCase "channelEmulator"), 跟 HAL driver registry
+# 用的 "channel_emulator" (snake) 不是一个命名空间, 别混 (bootstrap/instruments.py _CE_KEY
+# 是同一个 camelCase 取值)。
+_CHANNEL_EMULATOR_CATEGORY_KEY = "channelEmulator"
+
+
+def _resolve_channel_emulator_binding(
+    db: Session, instrument_connection_id: UUID,
+) -> InstrumentConnection:
+    """resolve + 校验 binding 是存在的 channelEmulator 连接, 否则 StandardChannelError。
+
+    Codex (#117): 不校验直接插入, 在生产 PostgreSQL 上 stale/填错的 id 会变成 commit 时
+    未捕获的 IntegrityError (500 而非 4xx); 而存在但非 channelEmulator 的连接被静默接受,
+    SCD 挂到一个 available_channel_models projection 根本不被 F64 流程消费的 binding 上
+    (死数据)。所以先 resolve, 缺失 / 错类别都 fail-loud 成业务错误。
+    """
+    conn = db.get(InstrumentConnection, instrument_connection_id)
+    if conn is None:
+        raise StandardChannelError(
+            f"F64 绑定 {instrument_connection_id} 不存在 "
+            f"(instrument_connection_id 失效或填错)"
+        )
+    category = conn.category or db.get(InstrumentCategory, conn.category_id)
+    category_key = getattr(category, "category_key", None)
+    if category_key != _CHANNEL_EMULATOR_CATEGORY_KEY:
+        raise StandardChannelError(
+            f"绑定 {instrument_connection_id} 是 {category_key!r} 类别, 不是信道仿真器 "
+            f"({_CHANNEL_EMULATOR_CATEGORY_KEY!r}); SCD 的 available_channel_models "
+            f"projection 只被信道仿真器流程消费, 挂到别的类别是死数据"
+        )
+    return conn
 
 
 def _compute_standard_name(
@@ -54,8 +93,11 @@ def create_scd(
 ) -> StandardChannelDefinition:
     """定义一个标准信道 (declared_only, 未关联文件)。标准名从规范配置算 (单一真值)。
 
+    绑定非法 (不存在 / 非信道仿真器) → StandardChannelError。
     重复 (同绑定同标准名) → StandardChannelError。
     """
+    # 先校验 binding: 最根本的前置条件 (挂到哪台 F64), 失败比字段非法 / 重复更基础。
+    _resolve_channel_emulator_binding(db, instrument_connection_id)
     standard_name = _compute_standard_name(
         band=band, arfcn=arfcn, bandwidth_mhz=bandwidth_mhz, model=model,
         scenario=scenario, mimo=mimo, polarization=polarization, version=version,
