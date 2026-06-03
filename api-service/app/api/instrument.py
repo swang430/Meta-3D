@@ -55,6 +55,7 @@ class FEInstrumentModel(BaseModel):
 
 class FEInstrumentConnection(BaseModel):
     """对应前端 InstrumentConnection 类型"""
+    id: Optional[str] = None  # DB InstrumentConnection UUID, 供 SCD 等按 connection 关联的 API 用
     endpoint: Optional[str] = None
     controller: Optional[str] = None
     notes: Optional[str] = None
@@ -179,6 +180,7 @@ def _convert_connection(conn_db: Optional[InstrumentConnectionDB]) -> FEInstrume
     if not conn_db:
         return FEInstrumentConnection()
     return FEInstrumentConnection(
+        id=str(conn_db.id),
         endpoint=conn_db.endpoint or "",
         controller=conn_db.protocol or "",
         notes=conn_db.notes or "",

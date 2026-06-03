@@ -82,6 +82,8 @@ export type InstrumentModel = {
 }
 
 export type InstrumentConnection = {
+  /** DB InstrumentConnection UUID, 供 SCD 等按 connection 关联的 API 用 */
+  id?: string | null
   endpoint?: string
   controller?: string
   notes?: string
