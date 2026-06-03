@@ -17,8 +17,11 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
+from app.hal.channel_emulator import normalize_channel_model_entries
 from app.models.instrument import InstrumentCategory, InstrumentConnection
 from app.services import standard_channel_service as svc
+
+_STD_NAME = "MF_N78_640000_BW100_CDLC_UMa_4x4_DP_v3.smu"  # 默认 _create 配置的标准名
 
 engine = create_engine(
     "sqlite:///:memory:",
@@ -106,6 +109,18 @@ class TestCreate:
         with pytest.raises(svc.StandardChannelError):
             _create(db, ce_binding, model="CDL_C")
 
+    def test_out_of_range_arfcn_raises(self, db, ce_binding):
+        # Codex #118: arfcn 为正但超 NR-ARFCN 定义域 (>3279165) —— Pydantic gt=0 拦不住。
+        # 必须 create 就 StandardChannelError (→ 400); 否则建出 zombie SCD, 到 associate
+        # 重建 projection 时 nr_arfcn_to_freq_mhz 抛裸 ValueError → 路由不 catch → 500。
+        with pytest.raises(svc.StandardChannelError):
+            _create(db, ce_binding, arfcn=3279166)
+
+    def test_max_valid_arfcn_ok(self, db, ce_binding):
+        # 边界: NR-ARFCN 上界 3279165 仍合法 (守 off-by-one, 别把合法值误拒)
+        scd = _create(db, ce_binding, arfcn=3279165)
+        assert scd.arfcn == 3279165
+
     def test_duplicate_same_binding_raises(self, db, ce_binding):
         _create(db, ce_binding)
         with pytest.raises(svc.StandardChannelError):
@@ -151,3 +166,141 @@ class TestListGetDelete:
         svc.delete_scd(db, scd.id)
         with pytest.raises(svc.StandardChannelError):
             svc.get_scd(db, scd.id)
+
+
+def _models(db, conn_id):
+    """读 F64 绑定的 available_channel_models (原始存储形式, 带 scd_id 标记)。"""
+    conn = db.get(InstrumentConnection, conn_id)
+    return (conn.connection_params or {}).get("available_channel_models") or []
+
+
+class TestAssociate:
+    def test_associate_standard_named_file_ok(self, db, ce_binding):
+        # 路径 a/b: 文件名 == 标准名, source=standard_generated
+        scd = _create(db, ce_binding)
+        out = svc.associate_file(
+            db, scd.id, file_path=_STD_NAME, association_source="standard_generated"
+        )
+        assert out.associated_file_path == _STD_NAME
+        assert out.association_source == "standard_generated"
+        entries = _models(db, ce_binding)
+        assert len(entries) == 1
+        assert entries[0]["filename"] == _STD_NAME
+        assert entries[0]["label"] == _STD_NAME
+        assert entries[0]["scd_id"] == str(scd.id)
+
+    def test_associate_vendor_file_matching_freq_ok(self, db, ce_binding):
+        # 路径 c: 厂商文件名带匹配频率 token (3600M → ARFCN 640000 == 声明)
+        scd = _create(db, ce_binding)
+        out = svc.associate_file(
+            db, scd.id, file_path="vendor_run_3600M.smu",
+            association_source="vendor_associated",
+        )
+        assert out.associated_file_path == "vendor_run_3600M.smu"
+        entries = _models(db, ce_binding)
+        assert entries[0]["filename"] == "vendor_run_3600M.smu"
+        assert entries[0]["label"] == _STD_NAME  # 标签仍是标准名
+
+    def test_associate_vendor_file_unparseable_ok(self, db, ce_binding):
+        # 厂商文件名无频率 token → cross-check 无从核对 → 放行 (声明是真值)
+        scd = _create(db, ce_binding)
+        out = svc.associate_file(
+            db, scd.id, file_path="customer_channel.smu",
+            association_source="vendor_associated",
+        )
+        assert out.associated_file_path == "customer_channel.smu"
+
+    def test_projection_uses_declared_freq_not_parsed(self, db, ce_binding):
+        # §9 关键: projection 频率来自声明 (权威), 非解析厂商名。
+        # 厂商名无频率 token, 但归一后 entry 的频率必须是声明的 3600 / ARFCN 640000。
+        scd = _create(db, ce_binding)
+        svc.associate_file(
+            db, scd.id, file_path="customer_channel.smu",
+            association_source="vendor_associated",
+        )
+        normalised = normalize_channel_model_entries(_models(db, ce_binding))
+        assert normalised[0]["center_frequency_mhz"] == 3600.0
+        assert normalised[0]["nr_arfcn"] == 640000
+
+    def test_associate_freq_mismatch_fails(self, db, ce_binding):
+        # 厂商文件名解析出 3500M (ARFCN 633333) ≠ 声明 640000 → fail-loud
+        scd = _create(db, ce_binding)
+        with pytest.raises(svc.StandardChannelError):
+            svc.associate_file(
+                db, scd.id, file_path="legacy_3500M.smu",
+                association_source="vendor_associated",
+            )
+
+    def test_associate_standard_source_wrong_name_fails(self, db, ce_binding):
+        # source=standard_generated 但文件名 != 标准名 (UMi vs UMa, 频率仍对) → fail-loud
+        scd = _create(db, ce_binding)
+        wrong = "MF_N78_640000_BW100_CDLC_UMi_4x4_DP_v3.smu"
+        with pytest.raises(svc.StandardChannelError):
+            svc.associate_file(
+                db, scd.id, file_path=wrong, association_source="standard_generated"
+            )
+
+    def test_associate_invalid_source_fails(self, db, ce_binding):
+        scd = _create(db, ce_binding)
+        with pytest.raises(svc.StandardChannelError):
+            svc.associate_file(
+                db, scd.id, file_path=_STD_NAME, association_source="garbage"
+            )
+
+    def test_associate_missing_scd_raises(self, db):
+        with pytest.raises(svc.StandardChannelNotFound):
+            svc.associate_file(
+                db, uuid4(), file_path=_STD_NAME,
+                association_source="standard_generated",
+            )
+
+    def test_projection_preserves_legacy_entries(self, db, ce_binding):
+        # §9: 存量手敲条目 (无 scd_id) 关联时保留, 逐步收敛
+        conn = db.get(InstrumentConnection, ce_binding)
+        conn.connection_params = {
+            "available_channel_models": [
+                {"filename": "legacy_handmade.smu", "label": "老条目"}
+            ]
+        }
+        db.flush()
+        scd = _create(db, ce_binding)
+        svc.associate_file(
+            db, scd.id, file_path=_STD_NAME, association_source="standard_generated"
+        )
+        entries = _models(db, ce_binding)
+        names = {e["filename"] for e in entries}
+        assert "legacy_handmade.smu" in names  # 存量保留
+        assert _STD_NAME in names              # SCD 派生新增
+        assert len(entries) == 2
+
+    def test_reassociate_replaces_entry(self, db, ce_binding):
+        # 改关联: 旧文件条目随 scd_id 丢弃重建, 不留 phantom
+        scd = _create(db, ce_binding)
+        svc.associate_file(
+            db, scd.id, file_path=_STD_NAME, association_source="standard_generated"
+        )
+        svc.associate_file(
+            db, scd.id, file_path="vendor_run_3600M.smu",
+            association_source="vendor_associated",
+        )
+        entries = _models(db, ce_binding)
+        scd_entries = [e for e in entries if e.get("scd_id") == str(scd.id)]
+        assert len(scd_entries) == 1
+        assert scd_entries[0]["filename"] == "vendor_run_3600M.smu"
+
+    def test_delete_associated_scd_removes_projection_entry(self, db, ce_binding):
+        # 删已关联 SCD → synced projection 同步移除其派生条目 (存量保留)
+        conn = db.get(InstrumentConnection, ce_binding)
+        conn.connection_params = {
+            "available_channel_models": [{"filename": "legacy.smu", "label": "x"}]
+        }
+        db.flush()
+        scd = _create(db, ce_binding)
+        svc.associate_file(
+            db, scd.id, file_path=_STD_NAME, association_source="standard_generated"
+        )
+        assert len(_models(db, ce_binding)) == 2
+        svc.delete_scd(db, scd.id)
+        entries = _models(db, ce_binding)
+        assert len(entries) == 1
+        assert entries[0]["filename"] == "legacy.smu"  # 存量保留, 派生移除

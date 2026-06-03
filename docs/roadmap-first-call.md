@@ -1566,12 +1566,12 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 
 **核心**: Step 1 解析器**从真值源降为 cross-check** (parse 文件名 vs SCD 声明 → 不一致 fail-loud, 正好抓文件名说谎)。Phase 2 emulation_file 从裸路径 → 引用 SCD (按 FrequencyIdentity 查), 即 §5 "frequency→.smu 库映射" 的正解。
 
-**Scope (切分见 §9, 均本地除路径 a)**: 1) `standard_channel_filename` 命名契约 + 反解 + cross-check (本地) → 2) `StandardChannelDefinition` DB 实体 + CRUD (本地) → 3) 路径 b/c GUI 工作流 + **关联即更新 `available_channel_models` (synced projection)** (本地) → 4) Phase 2 引用 SCD (本地) → 5) 路径 a SCPI 生成 (现场/vendor)。
+**Scope (切分见 §9, 均本地除路径 a)**: 1) `standard_channel_filename` 命名契约 + 反解 + cross-check (本地) → 2a) `StandardChannelDefinition` DB 实体 + CRUD (本地) → 2b) `associate_file` 关联实际 .smu (cross-check fail-loud) + **关联即更新 `available_channel_models` (synced projection) 后端** (本地) → 3) 路径 b/c GUI 工作流 (调 2b 后端) (本地) → 4) Phase 2 引用 SCD (本地) → 5) 路径 a SCPI 生成 (现场/vendor)。
 
 **静态清单定位 (用户 2026-06-01)**: `available_channel_models` 不是独立手维护死清单, 而是 SCD↔文件关联的**同步投影** —— 关联即更新, 不放不存在的条目; 频率元数据来自 SCD **声明** (权威) 而非解析 (Step 1 降为关联时 cross-check)。
 
 **依赖**: P2-10 Step 1 (parser, 本 PR 引入即被 §9 定位为 cross-check) + P2-11 Phase 2 (emulation_file)。关联: DUT 自声明 (#115, 同架构)。
-**Status**: 🔄 in-progress — 架构已确立 (§9, 本 PR) + **slice 1 命名契约 done (本 PR, channel_naming.py)**; slice 2-4 本地可启动。
+**Status**: 🔄 in-progress — 架构已确立 (§9) + slice 1 命名契约 (#116, channel_naming.py) + slice 2a SCD 实体/CRUD (#117) + **slice 2b `associate_file` + synced projection 后端 done (本 PR)**; 剩 slice 3 GUI 工作流 (调 2b 后端) / slice 4 Phase 2 引用 SCD / slice 5 路径 a SCPI 生成 (现场)。
 **Estimate**: 本地 ~2-3 day + 路径 a 现场。
 
 ---

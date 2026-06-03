@@ -55,6 +55,19 @@ class SCDResponse(BaseModel):
     updated_at: Optional[datetime] = None
 
 
+class SCDAssociateRequest(BaseModel):
+    """把一个实际 .smu 文件关联到 SCD (slice 2b)。"""
+
+    file_path: str = Field(
+        ..., description="实际 .smu 文件 (CALC:FILT:FILE 加载这个; 路径 c 是厂商真文件)"
+    )
+    association_source: str = Field(
+        "vendor_associated",
+        description="standard_generated (路径 a/b, 文件按标准名生成, basename 须 == 标准名) | "
+        "vendor_associated (路径 c, 关联已有厂商文件, 仅频率 cross-check)",
+    )
+
+
 @router.post("", response_model=SCDResponse, status_code=status.HTTP_201_CREATED)
 def create_standard_channel(req: SCDCreateRequest, db: Session = Depends(get_db)):
     try:
@@ -87,6 +100,27 @@ def get_standard_channel(scd_id: UUID, db: Session = Depends(get_db)):
         return svc.get_scd(db, scd_id)
     except svc.StandardChannelError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.post("/{scd_id}/associate", response_model=SCDResponse)
+def associate_standard_channel_file(
+    scd_id: UUID, req: SCDAssociateRequest, db: Session = Depends(get_db)
+):
+    """关联实际 .smu 文件 + 更新 synced projection (available_channel_models)。
+
+    cross-check 文件名频率 vs SCD 声明 ARFCN, 不符 → 400 (fail-loud)。
+    """
+    try:
+        return svc.associate_file(
+            db, scd_id,
+            file_path=req.file_path,
+            association_source=req.association_source,
+        )
+    except svc.StandardChannelNotFound as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except svc.StandardChannelError as e:
+        # cross-check 不符 / source 非法 / standard 名不匹配 → 400 (客户端可修)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @router.delete("/{scd_id}", status_code=status.HTTP_204_NO_CONTENT)
