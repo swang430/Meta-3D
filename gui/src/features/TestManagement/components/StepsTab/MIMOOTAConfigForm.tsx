@@ -27,6 +27,9 @@ import {
   Text,
   TextInput,
 } from '@mantine/core'
+import { useQuery } from '@tanstack/react-query'
+
+import { fetchChannelModels } from '../../../../api/service'
 
 // --- Local typings: mirror the backend MIMOOTAConfiguration shape ---
 
@@ -42,6 +45,9 @@ interface PassCriteria {
 
 export interface MIMOOTAConfiguration {
   cdl_model_name?: string
+  // GCM (keysight_gcm) 模式下 F64 加载的 .smu 完整路径 (= available_channel_models
+  // entry 的 filename = SCD associated_file_path)。ASC 模式无关 (.asc 按 frequency 生成)。
+  emulation_file?: string
   frequency_hz?: number
   bandwidth_mhz?: number
   mimo_layers?: number
@@ -117,6 +123,25 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
     onChange({ ...value, pass_criteria: { ...(value.pass_criteria ?? {}), [key]: next } })
   }
 
+  // GCM 模式 F64 加载的 .smu 来自 operator-curated available_channel_models (SCD 关联 +
+  // 手敲); 按类别取 (生产里 channelEmulator 全局唯一 = 一台 F64), 跟 ChannelModelsCard 同源。
+  const channelModelsQuery = useQuery({
+    queryKey: ['channelModels', 'channelEmulator'],
+    queryFn: () => fetchChannelModels('channelEmulator'),
+  })
+  // value=filename (F64 CALC:FILT:FILE 加载的真实路径, 直接当 emulation_file), 显示=label (SCD 标准名)。
+  const fetchedEmulationOptions = (channelModelsQuery.data?.items ?? []).map((e) => ({
+    value: e.filename,
+    label: e.label,
+  }))
+  // 当前已存的 emulation_file 若不在清单 (别处设的/清单外), 也列出来, 避免静默丢显示。
+  const emulationFileOptions =
+    value.emulation_file && !fetchedEmulationOptions.some((o) => o.value === value.emulation_file)
+      ? [...fetchedEmulationOptions, { value: value.emulation_file, label: `${value.emulation_file} (清单外)` }]
+      : fetchedEmulationOptions
+  // engine_mode = ASC 时 .smu 无关 (channel-engine 按 frequency 生成 .asc, 不用 .smu)。
+  const isAscEngine = value.engine_mode === 'mimo_first_asc'
+
   const azimuths = value.azimuths_deg ?? []
   const pass = value.pass_criteria ?? {}
   const rsrpLow = pass.rsrp_range_dbm?.[0]
@@ -174,6 +199,26 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
               min={1}
               max={400}
               disabled={readOnly}
+            />
+            <Select
+              label="信道仿真文件 (.smu)"
+              description={
+                isAscEngine
+                  ? 'ASC 模式按频率自动生成 .asc, 无需指定'
+                  : 'GCM 模式 F64 加载的标准信道文件 (来自信道仿真器清单 / SCD)'
+              }
+              data={emulationFileOptions}
+              value={value.emulation_file ?? null}
+              onChange={(v) => update('emulation_file', v ?? undefined)}
+              disabled={readOnly || isAscEngine}
+              placeholder={
+                emulationFileOptions.length === 0
+                  ? '无可选 .smu — 去信道仿真器抽屉或 SCD 管理添加'
+                  : '选择标准信道文件'
+              }
+              searchable
+              clearable
+              nothingFoundMessage="无匹配的信道文件"
             />
           </SimpleGrid>
         </Stack>

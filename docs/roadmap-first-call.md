@@ -1571,10 +1571,10 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 **静态清单定位 (用户 2026-06-01)**: `available_channel_models` 不是独立手维护死清单, 而是 SCD↔文件关联的**同步投影** —— 关联即更新, 不放不存在的条目; 频率元数据来自 SCD **声明** (权威) 而非解析 (Step 1 降为关联时 cross-check)。
 
 **依赖**: P2-10 Step 1 (parser, 本 PR 引入即被 §9 定位为 cross-check) + P2-11 Phase 2 (emulation_file)。关联: DUT 自声明 (#115, 同架构)。
-**Status**: 🔄 in-progress — 架构已确立 (§9) + slice 1 命名契约 (#116, channel_naming.py) + slice 2a SCD 实体/CRUD (#117) + **slice 2b `associate_file` + synced projection 后端 done (本 PR)**; 剩 slice 3 GUI 工作流 (调 2b 后端) / slice 4 Phase 2 引用 SCD / slice 5 路径 a SCPI 生成 (现场)。
+**Status**: 🔄 in-progress — 架构已确立 (§9) + slice 1 命名契约 (#116) + slice 2a SCD 实体/CRUD (#117) + slice 2b `associate_file` + synced projection 后端 (#118) + **mock 死代码清理 + 数据源地图 (#119)**; **slice 3 拆为 (B) TestCase 选 emulation_file GUI (MIMOOTAConfigForm 接 channel-models 下拉) — done (本 PR) + (A) SCD 管理建库 GUI (create+associate, 待做)**; 剩 slice 4 Phase 2 引用 SCD / slice 5 路径 a SCPI 生成 (现场)。
 **Estimate**: 本地 ~2-3 day + 路径 a 现场。
 
-**Discovered (2026-06-02, slice 2b Codex review 期间排查 GUI 消费端)**: slice 3 比预想大且背死代码债 —— 现有唯一消费 `available_channel_models` 的 `.smu` 下拉 (`type:'channelModel'` → `fetchChannelModels` → `/instruments/channelEmulator/channel-models`) 挂在**死代码** `App.tsx::_TestConfig` (全库零渲染点) + mock 时代 `stepTemplateDefinitions`; 真实测试模块 `features/TestManagement` **从未实现**该字段 → **SCD 产物在真实 GUI 测试流程无消费端** (唯一露出 = 仪器抽屉 `ChannelModelsCard` 只读列表)。slice 3 需含: TestManagement 步骤编辑接 `/channel-models` + 清理/隔离 `_TestConfig` 死代码 + 隔离 mock (`mockDatabase.ts` TP-317/404/CTIA + `stepTemplateDefinitions`, 本次排查曾被其误导多轮; 教训见 memory feedback_distinguish_live_vs_mock_dead_code)。
+**Discovered (2026-06-02, slice 2b Codex review 期间排查 GUI 消费端)**: slice 3 比预想大且背死代码债 —— 现有唯一消费 `available_channel_models` 的 `.smu` 下拉 (`type:'channelModel'` → `fetchChannelModels` → `/instruments/channelEmulator/channel-models`) 挂在**死代码** `App.tsx::_TestConfig` (全库零渲染点) + mock 时代 `stepTemplateDefinitions`; 真实测试模块 `features/TestManagement` **从未实现**该字段 → **SCD 产物在真实 GUI 测试流程无消费端** (唯一露出 = 仪器抽屉 `ChannelModelsCard` 只读列表)。slice 3 需含: TestManagement 步骤编辑接 `/channel-models` + 清理/隔离 `_TestConfig` 死代码 + 隔离 mock (`mockDatabase.ts` TP-317/404/CTIA + `stepTemplateDefinitions`, 本次排查曾被其误导多轮; 教训见 memory feedback_distinguish_live_vs_mock_dead_code)。**进展**: 清死代码 + 数据源地图 #119 done; **(B) TestCase 选 emulation_file GUI 本 PR done** (MIMOOTAConfigForm 加 .smu 下拉, value=filename 真路径 / 显示=标准名, engine_mode=ASC 时禁用); 剩 **(A) SCD 管理建库 GUI** (路径 b/c create+associate)。
 
 ---
 
