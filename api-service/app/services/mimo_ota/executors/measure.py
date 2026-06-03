@@ -347,24 +347,13 @@ class MeasureExecutor(IStepExecutor):
                 if pid is not None and pol and total is not None:
                     chain_pl_by_probe_pol[(int(pid), str(pol).upper())] = float(total)
 
-            # P2-12 slice 4: scd_id 引用优先于裸 emulation_file。helper 查 SCD →
-            # (resolved_emulation_file, SCD 声明频率), 给下方统一区的 sim_rules / Phase 1
-            # 频率门用 (仅 GCM 相关; scd_id 没给时 scd_freq=None 不进一致性网)。
-            from app.services.standard_channel_service import (
-                StandardChannelError,
-                resolve_emulation_for_measure,
-            )
-            try:
-                resolved_emulation_file, scd_freq_identity = resolve_emulation_for_measure(
-                    context.db,
-                    scd_id=config.scd_id,
-                    fallback_emulation_file=config.emulation_file,
-                )
-            except (StandardChannelError, ValueError) as e:
-                return StepExecutionResult(
-                    status=StepExecutionStatus.FAILED,
-                    error_message=f"P2-12 slice 4: scd_id={config.scd_id} 无效/不存在: {e}",
-                )
+            # P2-12 slice 4: scd_id 引用优先于裸 emulation_file。但 SCD/.smu **只 GCM 相关**
+            # (ASC 按 frequency 生成 .asc 不用 .smu)。这里给 ASC / 非 GCM 路径的默认值: 裸
+            # emulation_file (ASC strategy 忽略它) + 无 SCD 频率 (不进一致性网)。SCD 解析只在
+            # 下方 GCM 分支做 —— Codex on #122: 在 GCM 选了 SCD 再切 ASC 时 config 残留 scd_id,
+            # 不该让 ASC run 去 resolve (SCD 删了/非法会误 fail) 或撞 SCD 频率门 (ASC 不用 SCD)。
+            resolved_emulation_file = config.emulation_file
+            scd_freq_identity = None
 
             engine_mode = EngineMode(config.engine_mode)
             if engine_mode == EngineMode.GCM_NATIVE:
@@ -379,6 +368,23 @@ class MeasureExecutor(IStepExecutor):
                         ),
                     )
                 generator = NativeModelStrategy(emulator, chamber, calibration_entries)
+                # P2-12 slice 4: 只在 GCM 分支 resolve scd_id → SCD (associated .smu + 声明
+                # ARFCN 喂下方频率门)。ASC config 残留的 scd_id 在此不触发 (Codex on #122)。
+                from app.services.standard_channel_service import (
+                    StandardChannelError,
+                    resolve_emulation_for_measure,
+                )
+                try:
+                    resolved_emulation_file, scd_freq_identity = resolve_emulation_for_measure(
+                        context.db,
+                        scd_id=config.scd_id,
+                        fallback_emulation_file=config.emulation_file,
+                    )
+                except (StandardChannelError, ValueError) as e:
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=f"P2-12 slice 4: scd_id={config.scd_id} 无效/不存在: {e}",
+                    )
                 # P2-11 Phase 2: GCM 的 .smu 必须由 TestCase 驱动 (路径 B), 不能静默
                 # fallback 到 F64 驱动默认 .smu —— 默认频率可能跟 TestCase 错配。strict
                 # 默认 FAIL; opt-out (bring-up 路径 A) 降级 warning 用驱动默认。下面
