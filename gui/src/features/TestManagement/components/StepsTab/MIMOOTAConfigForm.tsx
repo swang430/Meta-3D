@@ -130,10 +130,15 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
     queryFn: () => fetchChannelModels('channelEmulator'),
   })
   // value=filename (F64 CALC:FILT:FILE 加载的真实路径, 直接当 emulation_file), 显示=label (SCD 标准名)。
-  const fetchedEmulationOptions = (channelModelsQuery.data?.items ?? []).map((e) => ({
-    value: e.filename,
-    label: e.label,
-  }))
+  // 只列 type==='smu' (Codex on #120): keysight_gcm 走 F64 原生管线 (CALC:FILT:FILE →
+  // DIAG:SIMU:GO) 只播 .smu; .rtc 是 Runtime 管线 (CH:MOD:CONT:ENV)、.asc 是 ASC 引擎产物 ——
+  // 选进 emulation_file 会在 F64 信道加载时才失败, 在表单这里就挡掉无效原生 GCM 文件。
+  const fetchedEmulationOptions = (channelModelsQuery.data?.items ?? [])
+    .filter((e) => e.type === 'smu')
+    .map((e) => ({
+      value: e.filename,
+      label: e.label,
+    }))
   // 当前已存的 emulation_file 若不在清单 (别处设的/清单外), 也列出来, 避免静默丢显示。
   const emulationFileOptions =
     value.emulation_file && !fetchedEmulationOptions.some((o) => o.value === value.emulation_file)
