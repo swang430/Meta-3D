@@ -75,6 +75,7 @@ import { fetchLabProfiles } from './api/labProfileService'
 import { ExecutionMetricsCard } from './features/Monitoring'
 import ChartsDemoPage from './components/Charts/ChartsDemoPage'
 import { ChamberConfigCard } from './components/ChamberConfigCard'
+import { StandardChannelDefinitionCard } from './components/StandardChannelDefinitionCard'
 import {
   appendPlanStep,
   createProbe,
@@ -2506,6 +2507,9 @@ function EquipmentManager() {
                         }}
                       />
                       <ChannelModelsCard categoryKey={category.key} />
+                      {category.connection?.id && (
+                        <StandardChannelDefinitionCard connectionId={category.connection.id} />
+                      )}
                     </>
                   )
                 })()}
