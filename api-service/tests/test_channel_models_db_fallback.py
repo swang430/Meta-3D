@@ -50,7 +50,16 @@ class TestNormaliseEntries:
             "type": "smu",
             "center_frequency_mhz": None,  # 无频率 token (P2-10 Step 1)
             "nr_arfcn": None,
+            "scd_id": None,  # P2-12 slice 4: bare string 非 SCD 派生 → scd_id None
         }]
+
+    def test_scd_id_preserved_for_derived_entry(self):
+        # P2-12 slice 4: SCD 派生 entry (projection 打了 scd_id) → normalize 保留, 让 GUI
+        # 下拉区分 SCD 派生 (选中存 scd_id 走 cross-check) vs 手敲 (存裸 emulation_file)。
+        out = normalize_channel_model_entries([
+            {"filename": "MF_N78_640000.smu", "label": "标准名", "scd_id": "abc-123"},
+        ])
+        assert out[0]["scd_id"] == "abc-123"
 
     def test_dict_entry_with_label_and_description_preserved(self):
         out = normalize_channel_model_entries([
@@ -63,6 +72,7 @@ class TestNormaliseEntries:
             "type": "rtc",
             "center_frequency_mhz": None,  # 无频率 token
             "nr_arfcn": None,
+            "scd_id": None,  # P2-12 slice 4
         }]
 
     def test_dropped_when_filename_missing(self):

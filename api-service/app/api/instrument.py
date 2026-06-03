@@ -301,6 +301,9 @@ class ChannelModelEntry(BaseModel):
     # emulation_file 选择 (.smu↔TestCase 频率匹配)。None = 文件名无频率 token。
     center_frequency_mhz: Optional[float] = None
     nr_arfcn: Optional[int] = None
+    # P2-12 slice 4: SCD 派生 entry 的 SCD UUID (手敲条目为 None)。GUI 下拉选 SCD 派生项
+    # 时存 scd_id (measure 查 SCD 解析 .smu + 频率 cross-check), 选手敲项存裸 emulation_file。
+    scd_id: Optional[str] = None
 
 
 class ChannelModelsListResult(BaseModel):

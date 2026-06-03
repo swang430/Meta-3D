@@ -347,31 +347,23 @@ class MeasureExecutor(IStepExecutor):
                 if pid is not None and pol and total is not None:
                     chain_pl_by_probe_pol[(int(pid), str(pol).upper())] = float(total)
 
-            # P2-12 slice 4: scd_id 引用优先于裸 emulation_file。在 engine_mode 分支前
-            # 解析 (resolved_emulation_file + scd_freq_identity 给下方统一区的 sim_rules /
-            # Phase 1 频率门用); 仅 GCM 相关 (ASC 不用 .smu, scd_freq 留 None 不进一致性网)。
-            resolved_emulation_file = config.emulation_file
-            scd_freq_identity = None
-            if config.scd_id:
-                from uuid import UUID as _UUID
-
-                from app.services.standard_channel_service import (
-                    StandardChannelError,
-                    get_scd,
+            # P2-12 slice 4: scd_id 引用优先于裸 emulation_file。helper 查 SCD →
+            # (resolved_emulation_file, SCD 声明频率), 给下方统一区的 sim_rules / Phase 1
+            # 频率门用 (仅 GCM 相关; scd_id 没给时 scd_freq=None 不进一致性网)。
+            from app.services.standard_channel_service import (
+                StandardChannelError,
+                resolve_emulation_for_measure,
+            )
+            try:
+                resolved_emulation_file, scd_freq_identity = resolve_emulation_for_measure(
+                    context.db,
+                    scd_id=config.scd_id,
+                    fallback_emulation_file=config.emulation_file,
                 )
-                try:
-                    scd = get_scd(context.db, _UUID(config.scd_id))
-                except (StandardChannelError, ValueError) as e:
-                    return StepExecutionResult(
-                        status=StepExecutionStatus.FAILED,
-                        error_message=f"P2-12 slice 4: scd_id={config.scd_id} 无效/不存在: {e}",
-                    )
-                # SCD 关联的实际 .smu (未关联 = None → 下方 GCM gate fail-loud 抓)。
-                resolved_emulation_file = scd.associated_file_path
-                # SCD 声明 ARFCN 作为一个 source 进 Phase 1 频率一致性网 (vs TestCase/UXM/F64)。
-                from app.hal.nr_arfcn import FrequencyIdentity as _FreqId
-                scd_freq_identity = _FreqId(
-                    center_arfcn=scd.arfcn, bandwidth_mhz=float(scd.bandwidth_mhz)
+            except (StandardChannelError, ValueError) as e:
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    error_message=f"P2-12 slice 4: scd_id={config.scd_id} 无效/不存在: {e}",
                 )
 
             engine_mode = EngineMode(config.engine_mode)

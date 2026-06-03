@@ -48,6 +48,8 @@ export interface MIMOOTAConfiguration {
   // GCM (keysight_gcm) 模式下 F64 加载的 .smu 完整路径 (= available_channel_models
   // entry 的 filename = SCD associated_file_path)。ASC 模式无关 (.asc 按 frequency 生成)。
   emulation_file?: string
+  // P2-12 slice 4: 引用 SCD (优先于裸 emulation_file; measure 查 SCD 解析 .smu + 频率 cross-check)。
+  scd_id?: string
   frequency_hz?: number
   bandwidth_mhz?: number
   mimo_layers?: number
@@ -133,16 +135,19 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
   // 只列 type==='smu' (Codex on #120): keysight_gcm 走 F64 原生管线 (CALC:FILT:FILE →
   // DIAG:SIMU:GO) 只播 .smu; .rtc 是 Runtime 管线 (CH:MOD:CONT:ENV)、.asc 是 ASC 引擎产物 ——
   // 选进 emulation_file 会在 F64 信道加载时才失败, 在表单这里就挡掉无效原生 GCM 文件。
-  const fetchedEmulationOptions = (channelModelsQuery.data?.items ?? [])
-    .filter((e) => e.type === 'smu')
-    .map((e) => ({
-      value: e.filename,
-      label: e.label,
-    }))
-  // 当前已存的 emulation_file 若不在清单 (别处设的/清单外), 也列出来, 避免静默丢显示。
+  const smuItems = (channelModelsQuery.data?.items ?? []).filter((e) => e.type === 'smu')
+  // slice 4: filename → scd_id 查找。SCD 派生 entry 有 scd_id → 选中存 scd_id (measure 查
+  // SCD + 频率 cross-check); 手敲 entry 无 scd_id → 选中存裸 emulation_file (legacy, 无 cross-check)。
+  const scdIdByFilename = new Map(smuItems.map((e) => [e.filename, e.scd_id ?? null]))
+  const fetchedEmulationOptions = smuItems.map((e) => ({ value: e.filename, label: e.label }))
+  // Select 以 filename 为统一 value: scd_id 引用 → 反查它的 filename; 否则用裸 emulation_file。
+  const selectedFilename = value.scd_id
+    ? (smuItems.find((e) => e.scd_id === value.scd_id)?.filename ?? null)
+    : (value.emulation_file ?? null)
+  // 当前选中若不在清单 (别处设的/清单外), 也列出来避免静默丢显示。
   const emulationFileOptions =
-    value.emulation_file && !fetchedEmulationOptions.some((o) => o.value === value.emulation_file)
-      ? [...fetchedEmulationOptions, { value: value.emulation_file, label: `${value.emulation_file} (清单外)` }]
+    selectedFilename && !fetchedEmulationOptions.some((o) => o.value === selectedFilename)
+      ? [...fetchedEmulationOptions, { value: selectedFilename, label: `${selectedFilename} (清单外)` }]
       : fetchedEmulationOptions
   // engine_mode = ASC 时 .smu 无关 (channel-engine 按 frequency 生成 .asc, 不用 .smu)。
   const isAscEngine = value.engine_mode === 'mimo_first_asc'
@@ -213,8 +218,14 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
                   : 'GCM 模式 F64 加载的标准信道文件 (来自信道仿真器清单 / SCD)'
               }
               data={emulationFileOptions}
-              value={value.emulation_file ?? null}
-              onChange={(v) => update('emulation_file', v ?? undefined)}
+              value={selectedFilename}
+              onChange={(v) => {
+                // slice 4: 选 SCD 派生项 (有 scd_id) → 存 scd_id 走 cross-check; 选手敲项 →
+                // 存裸 emulation_file (legacy); 二者互斥, 清掉另一个。
+                const scd = v ? scdIdByFilename.get(v) : null
+                if (scd) onChange({ ...value, scd_id: scd, emulation_file: undefined })
+                else onChange({ ...value, scd_id: undefined, emulation_file: v ?? undefined })
+              }}
               disabled={readOnly || isAscEngine}
               placeholder={
                 emulationFileOptions.length === 0

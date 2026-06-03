@@ -11,7 +11,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.hal.nr_arfcn import nr_arfcn_to_freq_mhz
+from app.hal.nr_arfcn import FrequencyIdentity, nr_arfcn_to_freq_mhz
 from app.models.instrument import InstrumentCategory, InstrumentConnection
 from app.models.standard_channel import StandardChannelDefinition
 from app.services.mimo_ota.channel_naming import (
@@ -173,6 +173,29 @@ def get_scd(db: Session, scd_id: UUID) -> StandardChannelDefinition:
     if scd is None:
         raise StandardChannelNotFound(f"标准信道 {scd_id} 不存在")
     return scd
+
+
+def resolve_emulation_for_measure(
+    db: Session,
+    *,
+    scd_id: Optional[str],
+    fallback_emulation_file: Optional[str],
+) -> tuple[Optional[str], Optional[FrequencyIdentity]]:
+    """P2-12 slice 4: TestCase 的 scd_id → measure 用的 (emulation_file, SCD 声明频率)。
+
+    scd_id 给了: 查 SCD → (associated_file_path 当 .smu, SCD 声明 ARFCN 的 FrequencyIdentity
+    供 measure 喂进 Phase 1 多方频率一致性网做 cross-check)。SCD 不存在 →
+    StandardChannelNotFound; 非法 UUID 字符串 → ValueError (caller measure 都映射成 FAILED)。
+    未关联文件时 associated_file_path=None → caller 的 GCM gate fail-loud 抓。
+    scd_id 没给: 返回 (fallback_emulation_file 裸路径, None) —— 路径 A bring-up / legacy。
+    """
+    if not scd_id:
+        return fallback_emulation_file, None
+    scd = get_scd(db, UUID(scd_id))
+    freq = FrequencyIdentity(
+        center_arfcn=scd.arfcn, bandwidth_mhz=float(scd.bandwidth_mhz)
+    )
+    return scd.associated_file_path, freq
 
 
 def delete_scd(db: Session, scd_id: UUID) -> None:

@@ -304,3 +304,50 @@ class TestAssociate:
         entries = _models(db, ce_binding)
         assert len(entries) == 1
         assert entries[0]["filename"] == "legacy.smu"  # 存量保留, 派生移除
+
+
+class TestResolveEmulationForMeasure:
+    """P2-12 slice 4: resolve_emulation_for_measure — measure 用 scd_id 解析 .smu + 声明频率。"""
+
+    def test_no_scd_id_returns_fallback(self, db):
+        # scd_id 没给 → 裸 fallback emulation_file (路径 A / legacy), 无 SCD 频率
+        path, freq = svc.resolve_emulation_for_measure(
+            db, scd_id=None, fallback_emulation_file="D:\\legacy.smu"
+        )
+        assert path == "D:\\legacy.smu"
+        assert freq is None
+
+    def test_scd_unassociated_returns_none_path_with_decl_freq(self, db, ce_binding):
+        # SCD 已声明未关联文件 → path None (caller GCM gate fail-loud 抓), 但有声明频率
+        scd = _create(db, ce_binding)  # arfcn=640000, bw=100, declared_only
+        path, freq = svc.resolve_emulation_for_measure(
+            db, scd_id=str(scd.id), fallback_emulation_file="ignored.smu"
+        )
+        assert path is None
+        assert freq is not None
+        assert freq.center_arfcn == 640000 and freq.bandwidth_mhz == 100
+
+    def test_scd_associated_returns_file_and_decl_freq(self, db, ce_binding):
+        # 关联后 → path=实际 .smu, freq=SCD 声明 ARFCN (供 measure cross-check, 非文件名解析)
+        scd = _create(db, ce_binding)
+        svc.associate_file(
+            db, scd.id, file_path="vendor_run_3600M.smu",
+            association_source="vendor_associated",
+        )
+        path, freq = svc.resolve_emulation_for_measure(
+            db, scd_id=str(scd.id), fallback_emulation_file=None
+        )
+        assert path == "vendor_run_3600M.smu"
+        assert freq.center_arfcn == 640000  # SCD 声明值, 不是文件名 3600M 解析
+
+    def test_scd_not_found_raises(self, db):
+        with pytest.raises(svc.StandardChannelNotFound):
+            svc.resolve_emulation_for_measure(
+                db, scd_id=str(uuid4()), fallback_emulation_file=None
+            )
+
+    def test_malformed_uuid_raises(self, db):
+        with pytest.raises(ValueError):
+            svc.resolve_emulation_for_measure(
+                db, scd_id="not-a-uuid", fallback_emulation_file=None
+            )
