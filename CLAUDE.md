@@ -172,11 +172,30 @@ GUI 遵循 **API优先架构**，包含以下层次：
 
 ## 开发工作流
 
-### 使用 Mock 数据
-应用在开发期间完全使用 mock 服务器运行：
-- Mock 服务器在 `gui/src/api/mockServer.ts` 中配置
-- Mock 数据在 `gui/src/api/mockDatabase.ts` 中定义
-- 添加新端点时：同时更新 mock 服务器处理器和 OpenAPI 规范
+### ⭐ 数据源真相 — 默认连真实后端, mock 已禁用 (排查前先对照, 别被 mock 误导)
+
+> **2026-06-02 教训**: `mockDatabase.ts` 演示数据 + 旧 mock UI 死代码曾让"GUI 实现在哪"
+> 排查误导多轮。读代码判断"功能怎么工作"前, **先确认它走真实路径还是 mock/演示数据**
+> (方法见 memory `feedback_distinguish_live_vs_mock_dead_code`)。
+
+**运行时默认连真实后端**: `gui/src/main.tsx` 的 `setupMockServer()` **已注释掉**, Vite
+代理把 `/api` 转发后端。前端 mock 数据 (`mockDatabase.ts` 的 TP-317/404/CTIA-01-40 等)
+**不出现在运行的应用里** —— GUI 的测试例 / 步骤来自后端 DB。
+
+**真实生效路径地图** (找"X 在哪"时认准这些):
+
+| 关注点 | ✅ 真实生效路径 |
+|--------|----------------|
+| 测试管理 UI | `gui/src/features/TestManagement/` (`<TestManagement/>`) |
+| 测试例 / 序列库 seed | 后端 `api-service/app/services/bootstrap/{test_case_templates,sequences}.py` |
+| 信道模型 .smu 清单 | 仪器抽屉 `ChannelModelsCard` (只读, 读 `/instruments/{cat}/channel-models`) |
+
+> 旧 mock 时代的 `App.tsx::_TestConfig` + `stepTemplateDefinitions` (lib-* 模板) 死代码已删
+> (零渲染, 曾是误导源)。
+
+**仅显式开发时启用 mock** (取消 `main.tsx` 注释): mock 配置在 `gui/src/api/mockServer.ts`,
+数据在 `gui/src/api/mockDatabase.ts`; 启用后整个应用走 mock adapter 不连后端, TP-* 等演示
+数据跟真实后端会漂移。添加新端点的 mock / 契约同步见下方「添加新 API 端点」。
 
 ### 添加新 API 端点
 1. 在 `api/openapi.yaml` 中定义端点
