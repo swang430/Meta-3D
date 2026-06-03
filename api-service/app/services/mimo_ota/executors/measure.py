@@ -347,6 +347,33 @@ class MeasureExecutor(IStepExecutor):
                 if pid is not None and pol and total is not None:
                     chain_pl_by_probe_pol[(int(pid), str(pol).upper())] = float(total)
 
+            # P2-12 slice 4: scd_id 引用优先于裸 emulation_file。在 engine_mode 分支前
+            # 解析 (resolved_emulation_file + scd_freq_identity 给下方统一区的 sim_rules /
+            # Phase 1 频率门用); 仅 GCM 相关 (ASC 不用 .smu, scd_freq 留 None 不进一致性网)。
+            resolved_emulation_file = config.emulation_file
+            scd_freq_identity = None
+            if config.scd_id:
+                from uuid import UUID as _UUID
+
+                from app.services.standard_channel_service import (
+                    StandardChannelError,
+                    get_scd,
+                )
+                try:
+                    scd = get_scd(context.db, _UUID(config.scd_id))
+                except (StandardChannelError, ValueError) as e:
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=f"P2-12 slice 4: scd_id={config.scd_id} 无效/不存在: {e}",
+                    )
+                # SCD 关联的实际 .smu (未关联 = None → 下方 GCM gate fail-loud 抓)。
+                resolved_emulation_file = scd.associated_file_path
+                # SCD 声明 ARFCN 作为一个 source 进 Phase 1 频率一致性网 (vs TestCase/UXM/F64)。
+                from app.hal.nr_arfcn import FrequencyIdentity as _FreqId
+                scd_freq_identity = _FreqId(
+                    center_arfcn=scd.arfcn, bandwidth_mhz=float(scd.bandwidth_mhz)
+                )
+
             engine_mode = EngineMode(config.engine_mode)
             if engine_mode == EngineMode.GCM_NATIVE:
                 supported = emulator.get_supported_load_modes()
@@ -370,7 +397,7 @@ class MeasureExecutor(IStepExecutor):
                     emulator_is_real=(
                         emulator is not None and not is_mock_driver(emulator)
                     ),
-                    emulation_file=config.emulation_file,
+                    emulation_file=resolved_emulation_file,
                     strict=config.precheck_strict_emulation_file,
                 )
                 if emulation_gate.should_fail:
@@ -408,8 +435,9 @@ class MeasureExecutor(IStepExecutor):
             # P2-11 Phase 2: TestCase 显式指定 .smu → 透传给 F64 GCM
             # (NativeModelStrategy → load_channel parameters["emulation_file"],
             # propsim_f64 line 745 优先于驱动默认; 加载失败 P0-8 gate fail-loud)。
-            if config.emulation_file:
-                sim_rules["emulation_file"] = config.emulation_file
+            # slice 4: resolved = SCD 解析的 .smu (scd_id 优先) 或裸 emulation_file (legacy)
+            if resolved_emulation_file:
+                sim_rules["emulation_file"] = resolved_emulation_file
             cdl_model_data = {
                 "model_name": config.cdl_model_name,
                 "session_id": str(context.test_execution.id),
@@ -440,6 +468,8 @@ class MeasureExecutor(IStepExecutor):
                     if hasattr(base_station, "get_frequency_identity") else None,
                     "F64": emulator.get_frequency_identity()
                     if hasattr(emulator, "get_frequency_identity") else None,
+                    # slice 4: SCD 声明 ARFCN 进一致性网 (scd_id 给了才非 None; None 时忽略)
+                    "SCD": scd_freq_identity,
                 },
             )
             if not freq_result.consistent:
