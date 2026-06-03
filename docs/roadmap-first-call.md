@@ -1576,6 +1576,8 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 
 **Discovered (2026-06-02, slice 2b Codex review 期间排查 GUI 消费端)**: slice 3 比预想大且背死代码债 —— 现有唯一消费 `available_channel_models` 的 `.smu` 下拉 (`type:'channelModel'` → `fetchChannelModels` → `/instruments/channelEmulator/channel-models`) 挂在**死代码** `App.tsx::_TestConfig` (全库零渲染点) + mock 时代 `stepTemplateDefinitions`; 真实测试模块 `features/TestManagement` **从未实现**该字段 → **SCD 产物在真实 GUI 测试流程无消费端** (唯一露出 = 仪器抽屉 `ChannelModelsCard` 只读列表)。slice 3 需含: TestManagement 步骤编辑接 `/channel-models` + 清理/隔离 `_TestConfig` 死代码 + 隔离 mock (`mockDatabase.ts` TP-317/404/CTIA + `stepTemplateDefinitions`, 本次排查曾被其误导多轮; 教训见 memory feedback_distinguish_live_vs_mock_dead_code)。**进展**: 清死代码 + 数据源地图 #119 done; **(B) TestCase 选 emulation_file GUI 本 PR done** (MIMOOTAConfigForm 加 .smu 下拉, value=filename 真路径 / 显示=标准名, engine_mode=ASC 时禁用); 剩 **(A) SCD 管理建库 GUI** (路径 b/c create+associate)。
 
+**Backlog [discovered 2026-06-03 during #120 review]**: 后端 measure precheck 给 `emulation_file` 加**扩展 fail-loud 校验** (GCM 模式只接受 `.smu`) —— 前端 filter (#120, 只列 `type==='smu'`) 是 UX 第一道防线, 但 API 直传 / 绕过前端时非 `.smu` (`.rtc` Runtime 管线 / `.asc` ASC 引擎) 仍运行时才在 F64 信道加载失败; `precheck_strict_emulation_file` 现只校验"是否指定"不校验扩展。跟 `precheck_strict_*` 同族 (防御深度), 是 Codex #120 那条的后端另一半。
+
 ---
 
 ### P2-11 — TestCase 驱动的仪表配置下发架构 (单一真值源 + 多方一致性校验)
