@@ -478,26 +478,16 @@ async def list_channel_models_endpoint(
         hal = None
     driver = (hal.drivers or {}).get(category_key) if hal else None
 
-    if driver is not None:
-        list_fn = getattr(driver, "list_channel_models", None)
-        if not callable(list_fn):
-            # Driver doesn't speak the channel-emulator contract — fine,
-            # not an error. (E.g. asking VNA category for channel models.)
-            return ChannelModelsListResult(items=[], reason="not_a_channel_emulator")
+    # driver 仅用于区分 not_a_channel_emulator (非信道仿真器类别, 如 VNA), **不从 driver
+    # 读数据**。available_channel_models 的真值源是实时 DB connection_params (operator /
+    # SCD associate 维护): RealPropsimF64Driver.list_channel_models 读 HAL 启动注入的
+    # self._available_channel_models 快照, MockChannelEmulator 没 override 返回 [] —— 两者在
+    # SCD associate / ChannelModelsCard add 更新 DB 后都 stale (smoke 2026-06-03 抓到:
+    # associate 后 emulation_file 下拉 / ChannelModelsCard 看不到新条目)。且无 driver 做真正
+    # 动态发现 (F64 ATE Server 无 MMEM SCPI, FTP closed)。故统一读实时 DB connection_params。
+    if driver is not None and not callable(getattr(driver, "list_channel_models", None)):
+        return ChannelModelsListResult(items=[], reason="not_a_channel_emulator")
 
-        # _maybe_await tolerates both async and sync implementations of
-        # list_channel_models — the base class is async but drivers could
-        # override with a sync method for simple curated-list cases.
-        raw_items = await _maybe_await(list_fn())
-        items = [ChannelModelEntry(**entry) for entry in raw_items]
-        return ChannelModelsListResult(items=items)
-
-    # No live driver. Stage 1 source of truth is the curated list in
-    # ``InstrumentConnection.connection_params['available_channel_models']``,
-    # which is set by the operator in the GUI and lives in the DB
-    # independent of whether the F64 is reachable. Read + normalise so
-    # offline planning works (HAL in mock mode, instrument unreachable,
-    # or driver hasn't been loaded yet).
     from app.hal.channel_emulator import normalize_channel_model_entries
     conn = (
         db.query(InstrumentConnectionDB)
@@ -513,7 +503,9 @@ async def list_channel_models_endpoint(
     # a curated list, the items are surfaced and ``reason=None``.
     return ChannelModelsListResult(
         items=items,
-        reason="driver_not_loaded" if not items else None,
+        # 空清单: driver 没绑 → driver_not_loaded (提示 reload); driver 绑了但 DB 没配 →
+        # reason=None (GUI 引导去配置)。DB 有 curated list → items 出来 reason=None。
+        reason="driver_not_loaded" if (not items and driver is None) else None,
     )
 
 

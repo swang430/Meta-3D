@@ -280,3 +280,67 @@ class TestReasonStillFlagsEmptyDb:
         body = r.json()
         assert body["items"] == []
         assert body["reason"] == "driver_not_loaded"
+
+
+# ---------------------------------------------------------------------------
+# Endpoint reads LIVE DB even when a driver IS bound (smoke 2026-06-03 fix)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def hal_with_stale_driver(monkeypatch):
+    """driver 已绑, 但其 list_channel_models 返回 stale 快照 — 模拟 HAL 启动注入
+    self._available_channel_models 后, DB 又被 SCD associate / ChannelModelsCard add
+    更新。endpoint 必须读实时 DB, 不返回 driver 快照。"""
+    class _StaleDriver:
+        async def list_channel_models(self):
+            return [{
+                "filename": "STALE_driver_snapshot.smu",
+                "label": "stale", "description": None, "type": "smu",
+            }]
+
+    class _Hal:
+        drivers = {"channelEmulator": _StaleDriver()}
+
+    monkeypatch.setattr(
+        "app.services.instrument_hal_service.get_hal_service",
+        lambda: _Hal(),
+    )
+
+
+class TestEndpointReadsLiveDbEvenWithDriver:
+    """smoke 2026-06-03: driver 绑定后 SCD associate 更新 DB, 但 driver 的
+    self._available_channel_models 是 HAL 启动快照 (Real) / [] (Mock 没 override) —
+    旧 endpoint 读 driver → (A) 建库后 (B) emulation_file 下拉看不到。fix: 统一读实时 DB。"""
+
+    def test_driver_loaded_still_reads_live_db_not_snapshot(
+        self, client, channel_emulator_category, hal_with_stale_driver
+    ):
+        r = client.get("/api/v1/instruments/channelEmulator/channel-models")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        filenames = [e["filename"] for e in body["items"]]
+        # 读实时 DB 的 3 条 curated, 不是 driver 快照的 STALE 条目
+        assert filenames == ["EPA_5Hz.smu", "EVA_70Hz.smu", "urban_macro.rtc"]
+        assert "STALE_driver_snapshot.smu" not in filenames
+        assert body["reason"] is None
+
+
+class TestNotAChannelEmulatorStillFlagged:
+    def test_driver_without_list_channel_models_flagged(
+        self, client, channel_emulator_category, monkeypatch
+    ):
+        """driver 绑了但不是信道仿真器类 (无 list_channel_models, 如 VNA) →
+        not_a_channel_emulator (该 endpoint 对它无意义), 不读 DB。"""
+        class _VnaLikeDriver:
+            pass  # 无 list_channel_models
+
+        class _Hal:
+            drivers = {"channelEmulator": _VnaLikeDriver()}
+
+        monkeypatch.setattr(
+            "app.services.instrument_hal_service.get_hal_service",
+            lambda: _Hal(),
+        )
+        r = client.get("/api/v1/instruments/channelEmulator/channel-models")
+        assert r.status_code == 200
+        assert r.json()["reason"] == "not_a_channel_emulator"
