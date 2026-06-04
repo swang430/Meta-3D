@@ -10,7 +10,7 @@
 
 **P2-11 (TestCase 驱动仪表配置架构) Phase 1/2/3/5/6 done + UXM 端口路由 path B (#1974) 收口。Phase 6 一致性网四根线 (频率 #109 + DL MIMO layers #114 + 调制阶数 #124 + 生效 MCS #126) 全部落地; UXM 端口路由/TDD/调度 path B TestCase 驱动 (后端 #127 + GUI #128) 闭环; 2026-05-31 核心参数审计 (架构文档 §8) 分 A/B/C/D 类。P2-10 (F64 精细化) Step 1/2/3 本地框架 done (#116/#125); P2-12 (SCD .smu) slice 1-4 + 扩展门 done (#116-#123) —— 三条 P2 线本地全收口, 各剩现场半 (P2-11 DL power 待操作点语义 / P2-10 现场真值 / P2-12 slice 5 SCPI 生成)。下一本地候选: DUTProfile (#1965, 三层能力交叉校验, 用户 6-01 提) 或停。本地可启动。**
 
-**2026-06-02/04 — P2-12 SCD 线本地收口**: `.smu` 命名软件掌控 (SCD 实体 + 关联 + synced projection), slice 1-4 (#116-#122) + **emulation_file 扩展 fail-loud 门 (#123, Codex #120 后端另一半)** done; GCM .smu 扩展校验全链闭合 (前端 #120 filter + 后端 measure gate)。只剩 slice 5 路径 a SCPI 生成 (现场 blocked)。**下一本地候选**: P2-11 Phase 6 (MCS/功率一致性网, §8 审计标"最有价值") / P2-10 Step 2-3 / DUTProfile (#1965, 用户 6-01 提)。**
+**2026-06-02/04 — P2-12 SCD 线本地收口**: `.smu` 命名软件掌控 (SCD 实体 + 关联 + synced projection), slice 1-4 (#116-#122) + **emulation_file 扩展 fail-loud 门 (#123, Codex #120 后端另一半)** done; GCM .smu 扩展校验全链闭合 (前端 #120 filter + 后端 measure gate)。只剩 slice 5 路径 a SCPI 生成 (现场 blocked)。**下一本地候选** (该快照时列): ~~P2-11 Phase 6 MCS~~ ✅ #126 / ~~P2-10 Step 2-3~~ ✅ #125 (快照后已完成) / DUTProfile (#1965, 用户 6-01 提)。真正剩余候选 = P2-11 DL power (待操作点语义) / DUTProfile; 最新见顶部 line 11。**
 
 **2026-06-04 — P2-11 Phase 6 第二根线 DL modulation 已补 (#124)**: `get_applied_cell_config` 读 UE `max_modulation_dl`, 请求调制阶数 > UE 上限 → fail (复用 `precheck_strict_cell_config`, `_modulation_order` 归一化容忍 SCPI 格式)。一致性网累计 = 频率 + MIMO layers + 调制阶数 + 生效 MCS (AMC off, #126)。剩 Phase 6 仅 DL power (结合操作点 backlog, 有 InputLevelController 闭环坑)。**
 
