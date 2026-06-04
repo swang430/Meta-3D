@@ -30,6 +30,7 @@ import {
 import { useQuery } from '@tanstack/react-query'
 
 import { fetchChannelModels } from '../../../../api/service'
+import { fetchDUTProfiles } from '../../../../api/dutProfileService'
 
 // --- Local typings: mirror the backend MIMOOTAConfiguration shape ---
 
@@ -72,6 +73,11 @@ export interface MIMOOTAConfiguration {
   harq_max_trans?: number
   harq_processes?: number
   stat_count?: number
+  // DUTProfile 阶段 2/3: 引用一个 DUT 自声明能力档案。precheck section 2.3 拿请求 (mimo_layers/
+  // modulation) 跟声明比, 请求 > 声明提前 fail (规划期, attach 前)。留空=不做声明校验。
+  dut_profile_id?: string
+  // strict: 请求超声明时 FAIL (默认 true); false=降级 warning 继续 (bring-up 旁路)。
+  precheck_strict_dut_capability?: boolean
   // P2-11 #1974: UXM 端口路由/调度 per-test 驱动 (留空=用 Topology Profile 默认, 不覆盖)
   mimo_port_preset?: string
   sched_algo?: string
@@ -163,6 +169,42 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
       : fetchedEmulationOptions
   // engine_mode = ASC 时 .smu 无关 (channel-engine 按 frequency 生成 .asc, 不用 .smu)。
   const isAscEngine = value.engine_mode === 'mimo_first_asc'
+
+  // DUTProfile 阶段 3: 列规划期建好的 DUT 声明供选 (precheck section 2.3 拿请求跟它比)。
+  const dutProfilesQuery = useQuery({
+    queryKey: ['dut-profiles'],
+    queryFn: () => fetchDUTProfiles(false),
+  })
+  const dutProfiles = dutProfilesQuery.data ?? []
+  const dutOptions = dutProfiles.map((d) => ({ value: d.id, label: d.name }))
+  const selectedDut = dutProfiles.find((d) => d.id === value.dut_profile_id) ?? null
+  // 选中若不在清单 (别处设的 id / 已删) 也列出避免静默丢显示。
+  const dutSelectOptions =
+    value.dut_profile_id && !dutOptions.some((o) => o.value === value.dut_profile_id)
+      ? [...dutOptions, { value: value.dut_profile_id, label: `${value.dut_profile_id} (清单外)` }]
+      : dutOptions
+  // strict 默认 true (后端 default), 仅当显式 false 才关。
+  const dutStrict = value.precheck_strict_dut_capability !== false
+  // 实时一致性预览 — 跟后端 precheck section 2.3 / check_dut_capability 同口径, 表单里就给反馈,
+  // 不用等真跑。声明项缺失 (null) 跳过该项。调制阶数用 MODULATION_OPTIONS 顺序 (= 后端 _MODULATIONS)。
+  const dutPreviewViolations: string[] = []
+  if (selectedDut) {
+    if (
+      selectedDut.max_dl_layers != null &&
+      value.mimo_layers != null &&
+      value.mimo_layers > selectedDut.max_dl_layers
+    ) {
+      dutPreviewViolations.push(`DL 层 ${value.mimo_layers} > 声明 ${selectedDut.max_dl_layers}`)
+    }
+    const modIdx = (m?: string | null) => (m ? MODULATION_OPTIONS.indexOf(m.toUpperCase()) : -1)
+    const reqMod = modIdx(value.modulation)
+    const decMod = modIdx(selectedDut.max_modulation_dl)
+    if (reqMod >= 0 && decMod >= 0 && reqMod > decMod) {
+      dutPreviewViolations.push(
+        `DL 调制 ${value.modulation} > 声明 ${selectedDut.max_modulation_dl}`,
+      )
+    }
+  }
 
   const azimuths = value.azimuths_deg ?? []
   const pass = value.pass_criteria ?? {}
@@ -296,6 +338,56 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
               disabled={readOnly}
             />
           </SimpleGrid>
+        </Stack>
+      </Paper>
+
+      {/* DUT 声明能力校验 */}
+      <Paper p="md" withBorder>
+        <Stack gap="md">
+          <Text size="sm" fw={600}>
+            DUT 声明能力校验
+          </Text>
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+            <Select
+              label="DUT 声明"
+              description="选规划期建好的 DUT 能力档案 (在「DUT 声明」页维护); 留空=不校验"
+              data={dutSelectOptions}
+              value={value.dut_profile_id ?? null}
+              onChange={(v) => update('dut_profile_id', v ?? undefined)}
+              disabled={readOnly}
+              clearable
+              searchable
+              placeholder={
+                dutSelectOptions.length === 0
+                  ? '无 DUT 声明 — 去「DUT 声明」页新建'
+                  : '选择 DUT 声明'
+              }
+              nothingFoundMessage="无匹配的 DUT 声明"
+            />
+            <Switch
+              label="严格校验 (请求超声明则 fail)"
+              description="关 = 仅降级 warning 继续 (bring-up 旁路)"
+              checked={dutStrict}
+              onChange={(e) =>
+                update('precheck_strict_dut_capability', e.currentTarget.checked)
+              }
+              disabled={readOnly || !value.dut_profile_id}
+              mt="lg"
+            />
+          </SimpleGrid>
+          {selectedDut ? (
+            <Text size="xs" c="dimmed">
+              声明: 最大 DL {selectedDut.max_dl_layers ?? '—'} 层 / 调制{' '}
+              {selectedDut.max_modulation_dl ?? '—'}
+              {selectedDut.duplex_mode ? ` / ${selectedDut.duplex_mode}` : ''}
+            </Text>
+          ) : null}
+          {selectedDut && dutPreviewViolations.length > 0 ? (
+            <Text size="xs" c="red">
+              ⚠ 请求超声明: {dutPreviewViolations.join('; ')} —{' '}
+              {dutStrict ? '严格模式下预检会 fail' : '当前降级 warning 继续'}
+            </Text>
+          ) : null}
         </Stack>
       </Paper>
 
