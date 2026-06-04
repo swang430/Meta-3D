@@ -147,9 +147,15 @@ class AppliedCellConfig:
     layers 超过 UE 能力上限 → 必被 clamp → fail-loud (吞吐其实 2 层却当 4 层测)。
 
     None 字段 = 不可核对 (UE 未 attach / firmware 不支持 UEINFO), 校验跳过该项。
+
+    P2-11 Phase 6 延伸: 加 ue_max_modulation_dl —— 请求调制阶数超 UE 能力同样会被静默
+    clamp (TestCase 请求 256QAM 但 UE 只协商到 64QAM → 实际跑 64QAM 却当 256QAM 测),
+    跟 layers 同机制 (读 UE 协商能力, 非配置旋钮回读)。调制能力上限是 UE 固有能力, 不受
+    AMC 影响 (AMC 只浮动生效 MCS index, 不改 UE 的最高可协商调制)。
     """
 
     ue_max_dl_layers: Optional[int] = None
+    ue_max_modulation_dl: Optional[str] = None
 
 
 class RealUxmDriver(BaseStationDriver):
@@ -498,9 +504,12 @@ class RealUxmDriver(BaseStationDriver):
         2 → 必被静默 clamp, 吞吐其实 2 层却当 4 层测。consistency helper 判
         `请求 > UE 上限 → fail-loud`。
 
-        UE 未 attach / firmware 不支持 UEINFO (mock / dry-run 无真 DUT) → max_dl_layers
-        None → 返回 None (无法核对, 校验跳过, 同 Phase 1 mock-skip)。DL power 不核对
-        (InputLevelController 闭环合法改它); MCS 受 AMC 浮动, 都留后续延伸。
+        UE 未 attach / firmware 不支持 UEINFO (mock / dry-run 无真 DUT) → layers 和
+        modulation 能力**都**不可用 → 返回 None (整体跳过, 同 Phase 1 mock-skip)。Codex on
+        PR #124: 任一能力可用就返回对象 (per-field None semantics), 不能因 layers 缺失就丢
+        掉可用的 modulation 结果 (否则 256QAM 请求在 64QAM UE 上漏检)。DL power 不核对
+        (InputLevelController 闭环合法改它); 生效 MCS index 受 AMC 浮动留延伸 —— UE DL 调制
+        能力上限 (ue_max_modulation_dl) 这里一并读, 它是 UE 固有能力不受 AMC 影响。
         """
         try:
             cap = await self.query_ue_capability()
@@ -508,9 +517,17 @@ class RealUxmDriver(BaseStationDriver):
             logger.warning("[UXM] get_applied_cell_config: query_ue_capability 失败: %s", e)
             return None
         max_dl = cap.get("max_dl_layers")
-        if max_dl is None:  # UE 未 attach / firmware 不支持 → 无法核对, 跳过
+        max_mod = cap.get("max_modulation_dl")
+        # Codex on PR #124: 两个能力独立可核对 —— 只有 **都** 不可用 (UE 未 attach /
+        # firmware 全不支持) 才整体 None。layers 查询失败但 modulation 成功时仍返回带
+        # ue_max_modulation_dl 的对象, 否则 modulation 校验被这个 early return 静默跳过
+        # (256QAM 请求在 64QAM UE 上不 fail-loud)。各字段 None → check 独立跳过该项。
+        if max_dl is None and max_mod is None:
             return None
-        return AppliedCellConfig(ue_max_dl_layers=int(max_dl))
+        return AppliedCellConfig(
+            ue_max_dl_layers=int(max_dl) if max_dl is not None else None,
+            ue_max_modulation_dl=max_mod,
+        )
 
     # ===================================================================
     # P2-1 Phase 1: Topology Profile 应用 (operator-managed)

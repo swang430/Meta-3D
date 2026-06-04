@@ -1,11 +1,12 @@
 """P2-11 Phase 6: UXM 下发后 cell config 一致性校验 (吞吐链版的频率一致性)。
 
 Phase 1 给**频率**做了"下发后回读 (get_frequency_identity) + 跟 TestCase 精确比对"。
-Phase 6 把这张一致性网扩到决定吞吐的 cell config —— 当前是 **DL MIMO layers**: UE 能力
-撑不住请求层数时 UXM 会把请求的 4 层静默 clamp 到 2 而不报错, 吞吐其实是 2 层却当 4 层
-测。measure 在 set_cell_config + RRC reconfig 后, 拿 **UE 协商能力** (max_dl_layers) 跟
-TestCase 请求比 —— 请求 > UE 上限 → fail-loud (precheck_strict_cell_config), 跟
-P1-8/9/12 + Phase 1/2/3 同族的 silent-failure 防护。
+Phase 6 把这张一致性网扩到决定吞吐的 cell config —— **DL MIMO layers** (首条线 #114) +
+**DL 调制阶数** (本次延伸): UE 能力撑不住请求时 UXM 会静默 clamp (4 层 clamp 到 2 /
+256QAM clamp 到 64QAM) 而不报错, 吞吐其实更低却当请求值测。measure 在 set_cell_config +
+RRC reconfig 后, 拿 **UE 协商能力** (max_dl_layers / max_modulation_dl) 跟 TestCase 请求
+比 —— 请求 > UE 上限 → fail-loud (precheck_strict_cell_config), 跟 P1-8/9/12 + Phase
+1/2/3 同族的 silent-failure 防护。
 
 ⚠️ Codex on PR #114: 校验源是 **UE 协商能力**, 不是 `CONF:...:LAY?` 配置旋钮 —— 后者是
 set_cell_config 写入的同一个值, 回读只会原样返回配置的 4, 抓不到 UE 侧的 clamp。
@@ -15,10 +16,35 @@ Phase 1 mock-skip)。
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from app.hal.uxm_base_station import AppliedCellConfig
+
+
+# 调制方式 → 阶数 (bits/symbol)。比较"请求调制阶数 vs UE 能力上限"用 —— 阶数越高 =
+# 每符号 bit 越多 = 吞吐越高, UE 撑不住会 clamp 到它支持的最高阶。
+_MODULATION_BITS = {4: 2, 16: 4, 64: 6, 256: 8, 1024: 10}
+
+
+def _modulation_order(modulation: Optional[str]) -> Optional[int]:
+    """归一化调制方式到阶数 (bits/symbol)。无法识别 → None (该项跳过校验)。
+
+    容忍多种格式: '256QAM' / 'QAM256' / '256-QAM' / 'qam256' / 'QPSK'。TestCase 用
+    '256QAM', 但真 UXM SCPI (UEINFO:CAPability:MODulation:DL?) 返回格式不保证 —— 按数字
+    (QAM 点数) 或 QPSK 特例提取阶数, 避免纯字符串相等比较因格式差异误判
+    (feedback_normalize_identifier_compare)。
+    """
+    if not modulation:
+        return None
+    s = re.sub(r"[\s_\-]", "", str(modulation).upper())
+    if "QPSK" in s:
+        return 2
+    m = re.search(r"(\d+)", s)
+    if not m:
+        return None
+    return _MODULATION_BITS.get(int(m.group(1)))
 
 
 @dataclass(frozen=True)
@@ -62,19 +88,26 @@ def check_cell_config_consistency(
     *,
     requested_mimo_layers: int,
     applied: Optional[AppliedCellConfig],
+    requested_modulation: Optional[str] = None,
 ) -> CellConfigConsistencyResult:
-    """比对 TestCase 请求的 cell config vs UXM 实际生效 (回读)。
+    """比对 TestCase 请求的 cell config vs UXM/UE 实际能力 (读 UE 协商能力)。
 
     - applied=None (mock / UE 未 attach / firmware 不支持): skipped=True, consistent=True。
-    - applied.ue_max_dl_layers=None (该项不可核对): 跳过该项, 不算不一致。
-    - requested_mimo_layers > applied.ue_max_dl_layers: 不一致 (UE 能力撑不住请求层数 →
-      UXM 会静默 clamp, 吞吐其实更少却当请求层数测)。Codex on PR #114: 读 UE 协商能力,
-      不读 set_cell_config 写入的配置旋钮 (那个回读只会原样返回配置值)。
+    - 各字段 None (该项不可核对): 跳过该项, 不算不一致。
+    - requested_mimo_layers > applied.ue_max_dl_layers: 不一致 (UE 撑不住请求层数 → UXM
+      静默 clamp, 吞吐其实更少却当请求层数测)。
+    - requested_modulation 阶数 > applied.ue_max_modulation_dl 阶数: 不一致 (UE 调制能力
+      撑不住 → clamp 到更低调制, 同等危害)。阶数归一化容忍格式差异; 任一侧无法识别 → 跳过。
+
+    Codex on PR #114: 全部读 UE **协商能力**, 不读 set_cell_config 写入的配置旋钮 (那个
+    回读只会原样返回配置值, 抓不到 UE 侧 clamp)。
     """
     if applied is None:
         return CellConfigConsistencyResult(consistent=True, skipped=True)
 
     mismatches: List[CellConfigMismatch] = []
+
+    # --- 第一条线 (#114): DL MIMO layers ---
     if (
         applied.ue_max_dl_layers is not None
         and requested_mimo_layers > applied.ue_max_dl_layers
@@ -84,6 +117,18 @@ def check_cell_config_consistency(
                 field="mimo_layers",
                 requested=requested_mimo_layers,
                 applied=applied.ue_max_dl_layers,
+            )
+        )
+
+    # --- 第二条线 (Phase 6 延伸): DL 调制阶数 ---
+    req_mod_ord = _modulation_order(requested_modulation)
+    ue_mod_ord = _modulation_order(applied.ue_max_modulation_dl)
+    if req_mod_ord is not None and ue_mod_ord is not None and req_mod_ord > ue_mod_ord:
+        mismatches.append(
+            CellConfigMismatch(
+                field="modulation",
+                requested=requested_modulation,
+                applied=applied.ue_max_modulation_dl,
             )
         )
 
