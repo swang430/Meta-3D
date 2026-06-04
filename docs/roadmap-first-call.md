@@ -1518,7 +1518,7 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 
 ---
 
-### P2-9 — EMCenter switch bring-up (协议/地址/EMQuest 调研)
+### P2-9 — EMCenter switch bring-up (协议/地址/EMQuest 调研) 🔄 本地半 done (协议调研 + driver 协议修正)
 
 **What**: ETS-Lindgren EMCenter (AMS8947 RF switch matrix, 真实地址 `192.168.0.50`) 接入 HAL。
 现状: GPIB 血统仪表, 经 EMQuest 软件控制, **不监听 raw SCPI socket** —— 5/27 现场直连探测无 SCPI
@@ -1528,8 +1528,8 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 链路要经拓扑开关切换**, 完整校准链最终需要它。当前是 abstraction debt + 新仪表集成, 非 first-call
 即时阻塞。
 
-**Status**: `[ ]` not started — 🚧 blocked: 需 offline 协议调研 (EMQuest 文档) + 现场 EMQuest 访问。
-**下一步 (用户 2026-05-29 复盘: "射频开关还没完全受控")**: ① offline 把 `Instrument_API_Doc/` 的 EMCenter/EMSwitch/AMS8947 协议读透 (REST? 专有 TCP? 必须 EMQuest 中转?) → ② driver method 设计 (set_route / get_route) → ③ 接入 TopologyEditor 的 mapping/连线 (见 memory: TopologyEditor 核心价值是 mapping 不是设备选型)。①②本地可启动。
+**Status**: 🔄 本地半 done (本 PR) — ① 协议调研 ✅ + ② driver 协议修正 ✅; ③ 接入 TopologyEditor + 现场实测 🚧 blocked。**关键发现**: `EtslSwitchDriver` 早已存在但有协议 bug (Write/Query 前缀误读文档动作标签 + LF 终止符, 极可能是 5/27 现场 raw socket 无响应真因) + 零协议单测。**① 调研结论**: AMS8947-195-1 = ETS-Lindgren EMCenter + EMSwitch 插卡, 原生 SCPI over LAN/GPIB **不必经 EMQuest** (EMQuest 是可选上位软件; 系统图 "EMQuest NET Port" 只是物理接线盘标签); 命令裸 `<slot>:<cmd>` + CR 终止 (非 Write/Query 包装)。**② 修正**: driver 改默认裸命令 + CR + 可配置回退 (`command_style`/`line_terminator`, 现场只调配置不改代码, 同 P0-8) + SP6T reset 安全跳过 + 18 例协议单测; 完整调研 + 命令集 + 拓扑 + 现场 runbook 见 [docs/site-debug/2026-06-04-emcenter-switch-protocol.md](site-debug/2026-06-04-emcenter-switch-protocol.md)。**现场缺口**: TCP 端口 (主手册 399342 未到手, 候选 9221/5025/2001 **均未证实**) + 每槽卡型号 + SP6T↔天线映射 + SP6T 复位语义。
+**下一步**: ③ 现场按 runbook 定端口 (raw+CR 默认, 逃生开关试 verbose/lf) + `<slot>:*IDN?` 认卡 + 标定 SP6T 映射 → 接入 TopologyEditor 的 mapping/连线 (见 memory: TopologyEditor 核心价值是 mapping 不是设备选型)。
 **来源**: 2026-05-27 现场, 见 [morning-log](site-debug/2026-05-27-morning-log.md) §10.1。文档: `Instrument_API_Doc/` 下 ETS-L EMCenter / EMSwitch + CAICT Chamber Switch (TMC AMS8947)。
 **Estimate**: offline 调研 0.5 day + 现场 0.5 day
 
