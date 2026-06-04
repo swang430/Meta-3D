@@ -337,6 +337,16 @@ class MIMOOTAConfiguration(BaseModel):
     # UEINFO) → 始终跳过 (不受本 flag 影响, 同 Phase 1 mock-skip)。同 precheck_strict_*:
     # GUI 不暴露, fixture/config 级别 opt-in。
 
+    dut_profile_id: Optional[str] = None
+    # 关联的 DUTProfile id (str UUID); None = 不做声明校验。operator 在 GUI / API 设。
+    precheck_strict_dut_capability: bool = True
+    # DUTProfile 声明能力校验 (规划期, attach 前): config.dut_profile_id 指向一个 DUTProfile 时,
+    # precheck 拿 TestCase 请求 (mimo_layers / modulation) 跟 DUT **声明**能力比 —— 请求 > 声明
+    # (e.g. 请求 4 层但 DUT 声明 max 2) 提前 FAIL, 不浪费一次真跑 (跟 cell_config attach 后协商
+    # 核对互补: 这个最早, 查 DB 声明, 不需硬件)。
+    # True (生产默认): 请求 > 声明 → precheck FAILED。无 dut_profile_id / 声明项未填 → 跳过。
+    # False (opt-out / 暗室首测 bring-up): 降级 warning。同 precheck_strict_* 走 bring-up bypass。
+
     # === Pass/fail thresholds ===
     pass_criteria: MIMOOTAPassCriteria = Field(default_factory=MIMOOTAPassCriteria)
 
