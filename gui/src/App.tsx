@@ -71,6 +71,7 @@ import { DashboardCockpit } from './features/Dashboard'
 import { TopologyEditor } from './features/TopologyEditor/TopologyEditor'
 import { TopologyProfileEditor } from './features/TopologyProfileEditor'
 import { LabProfileWizard } from './components/LabProfile/LabProfileWizard'
+import { DUTProfileManager } from './components/DUTProfile/DUTProfileManager'
 import { fetchLabProfiles } from './api/labProfileService'
 import { ExecutionMetricsCard } from './features/Monitoring'
 import ChartsDemoPage from './components/Charts/ChartsDemoPage'
@@ -152,7 +153,7 @@ const hexToRgba = (hex: string, alpha: number) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
-type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'topologyEditor' | 'testManagement' | 'results' | 'systemCalibration' | 'commissioning' | 'diagnostics' | 'chartsDemo'
+type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'topologyEditor' | 'dutProfiles' | 'testManagement' | 'results' | 'systemCalibration' | 'commissioning' | 'diagnostics' | 'chartsDemo'
 
 type ProbeFormState = Pick<ProbeType, 'ring' | 'polarization' | 'position' | 'is_active'>
 
@@ -289,6 +290,11 @@ const sections: Array<{
     key: 'topologyEditor',
     label: '射频拓扑编辑器',
     description: '通过拖拽设计和查看基于 RF Switch 的端到端信号物理链路与校准路径。',
+  },
+  {
+    key: 'dutProfiles',
+    label: 'DUT 声明',
+    description: '维护被测设备 (DUT) 自声明能力档案 (层数/调制/频段/双工)，供测试例配置选用与预检校验。',
   },
   {
     key: 'testManagement',
@@ -1246,6 +1252,8 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
       return <ProbeManager onNavigate={payload.setActiveSection} />
     case 'topologyEditor':
       return <TopologyEditor />
+    case 'dutProfiles':
+      return <DUTProfileManager />
     case 'testManagement':
       return <TestManagement />
     case 'results':
