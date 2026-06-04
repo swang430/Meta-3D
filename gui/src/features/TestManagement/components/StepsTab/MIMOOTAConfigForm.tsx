@@ -72,6 +72,10 @@ export interface MIMOOTAConfiguration {
   harq_max_trans?: number
   harq_processes?: number
   stat_count?: number
+  // P2-11 #1974: UXM 端口路由/调度 per-test 驱动 (留空=用 Topology Profile 默认, 不覆盖)
+  mimo_port_preset?: string
+  sched_algo?: string
+  csi_rs_ports?: number | null
   engine_mode?: string
   theoretical_peak_throughput_mbps?: number
   pass_criteria?: PassCriteria
@@ -111,6 +115,14 @@ const SCS_OPTIONS = [
 const ENGINE_OPTIONS = [
   { value: 'mimo_first_asc', label: 'MIMO-First ASC (自研)' },
   { value: 'keysight_gcm', label: 'Keysight GCM (原生)' },
+]
+
+// P2-11 #1974: UXM MIMO 天线→物理端口路由 preset (跟后端 RealUxmDriver.MIMO_PORT_PRESETS 同步)
+const MIMO_PORT_PRESET_OPTIONS = [
+  { value: 'siso', label: 'SISO (单端口)' },
+  { value: '2x2', label: '2×2' },
+  { value: '4x4', label: '4×4' },
+  { value: '2x2_alt', label: '2×2 备用端口 (RF3+RF4)' },
 ]
 
 export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) {
@@ -263,6 +275,25 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
               onChange={(v) => update('modulation', v ?? undefined)}
               disabled={readOnly}
               allowDeselect={false}
+            />
+            <Select
+              label="MIMO 端口路由 (preset)"
+              description="留空=用 Topology Profile 默认 (不覆盖)"
+              data={MIMO_PORT_PRESET_OPTIONS}
+              value={value.mimo_port_preset ?? null}
+              onChange={(v) => update('mimo_port_preset', v ?? undefined)}
+              disabled={readOnly}
+              clearable
+              placeholder="(用 profile 默认)"
+            />
+            <NumberInput
+              label="CSI-RS 端口数"
+              description="留空=按 MIMO 层数自动推断"
+              value={value.csi_rs_ports ?? undefined}
+              onChange={(v) => update('csi_rs_ports', typeof v === 'number' ? v : null)}
+              min={1}
+              max={32}
+              disabled={readOnly}
             />
           </SimpleGrid>
         </Stack>
@@ -557,6 +588,14 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
                 placeholder="5MS"
                 value={value.tdd_period ?? ''}
                 onChange={(e) => update('tdd_period', e.target.value)}
+                disabled={readOnly}
+              />
+              <TextInput
+                label="PDSCH 调度算法"
+                description="留空=用 profile 默认"
+                placeholder="FULLBUFFER"
+                value={value.sched_algo ?? ''}
+                onChange={(e) => update('sched_algo', e.target.value || undefined)}
                 disabled={readOnly}
               />
               <NumberInput
