@@ -192,7 +192,10 @@ class EtslSwitchDriver(RfSwitchDriver):
         verbose (现场逃生): 旧 Write/Query 包装 (无文档依据, 仅当 raw 现场无响应时回退试)。
         """
         if self._command_style == "verbose":
-            body = f"Query {cmd}" if cmd.endswith("?") else f"Write {cmd}"
+            # 查询判定用 "?" in cmd, 跟 _send_command 读响应的判定一致 —— 否则像
+            # `INTLK? SAFETYRELAY` (? 在中间) 会被包成 Write 却又等响应, verbose 下挂死
+            # (Codex P2 on PR #130)。
+            body = f"Query {cmd}" if "?" in cmd else f"Write {cmd}"
         else:
             body = cmd
         return body + self._line_terminator

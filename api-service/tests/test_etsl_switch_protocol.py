@@ -110,6 +110,15 @@ class TestFieldEscapeHatches:
         await drv.get_path("1:INT_RELAY_A")
         assert _written(writer) == [_cmd("Query 1:INT_RELAY_A?")]
 
+    async def test_verbose_mid_string_query_wrapped_as_query(self):
+        # Codex P2 #130: "?" 在中间的查询 (INTLK? SAFETYRELAY) verbose 下也应包 Query
+        # (跟 _send_command 读响应判定一致), 否则包成 Write 却又等响应 -> 挂死
+        drv, writer = _make_driver(
+            config={"command_style": "verbose"}, responses=[_resp("0")]
+        )
+        assert await drv._send_command("INTLK? SAFETYRELAY") == "0"
+        assert _written(writer) == [_cmd("Query INTLK? SAFETYRELAY")]
+
     async def test_terminator_lf(self):
         drv, writer = _make_driver(config={"line_terminator": "lf"})
         await drv.switch_path("1:INT_RELAY_A", 0, 4)
