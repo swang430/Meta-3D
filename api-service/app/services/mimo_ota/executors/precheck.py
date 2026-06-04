@@ -112,8 +112,22 @@ class PrecheckExecutor(IStepExecutor):
                 }
                 if not dut_cap.consistent:
                     if config.precheck_strict_dut_capability:
+                        # Codex P2 (3083096): 早期 return 必须先持久化 precheck phase
+                        # result —— 否则 execution.measurements.phases.precheck 为空,
+                        # session 读出来还是 pending, UI/API 看不到 dut_capability_check
+                        # violations (即便 phase 已 fail)。对齐 section 6 正常失败路径:
+                        # write_phase_result + commit, return 带 measurements/warnings。
+                        # 保留 fail-fast (请求层数根本超声明时, 不必再查 QZ/cal)。
+                        result_payload["overall_pass"] = False
+                        result_payload["messages"] = messages
+                        write_phase_result(
+                            context.test_execution, "precheck", result_payload
+                        )
+                        context.db.commit()
                         return StepExecutionResult(
                             status=StepExecutionStatus.FAILED,
+                            measurements=result_payload,
+                            warnings=warnings,
                             error_message=(
                                 f"DUT '{dut_profile.name}' 声明能力不满足 TestCase 请求: "
                                 + "; ".join(dut_cap.violations)

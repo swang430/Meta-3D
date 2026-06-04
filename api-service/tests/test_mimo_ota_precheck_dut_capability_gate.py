@@ -112,21 +112,31 @@ async def _run_precheck(db, lab, *, dut_profile_id, mimo_layers, modulation, str
         db=db, step=StepDescriptor(id="pc", type="MIMO_OTA_PRECHECK", parameters={}),
         test_execution=execution, lab_profile=lab, calibration_certificate=None,
     )
-    return await PrecheckExecutor().execute(ctx)
+    result = await PrecheckExecutor().execute(ctx)
+    return result, execution
 
 
 class TestDUTCapabilityPrecheckGate:
     async def test_layers_exceed_strict_fails(self, db, lab):
         dut = _make_dut(db, max_dl_layers=2)
-        res = await _run_precheck(
+        res, execution = await _run_precheck(
             db, lab, dut_profile_id=str(dut.id), mimo_layers=4, modulation="256QAM", strict=True,
         )
         assert res.status == StepExecutionStatus.FAILED
         assert "声明能力不满足" in (res.error_message or "")
+        # Codex P2 (3083096): 早期 strict fail 也必须持久化 precheck phase result —
+        # 否则 session 读出来是 pending, UI 看不到 violation。验返回值 + DB 两侧。
+        assert res.measurements is not None
+        assert res.measurements["dut_capability_check"]["violations"]
+        assert res.measurements["overall_pass"] is False
+        db.refresh(execution)
+        persisted = (execution.measurements or {})["phases"]["precheck"]
+        assert persisted["dut_capability_check"]["consistent"] is False
+        assert persisted["dut_capability_check"]["violations"]
 
     async def test_layers_exceed_optout_no_dutcap_fail(self, db, lab):
         dut = _make_dut(db, max_dl_layers=2)
-        res = await _run_precheck(
+        res, _ = await _run_precheck(
             db, lab, dut_profile_id=str(dut.id), mimo_layers=4, modulation="256QAM", strict=False,
         )
         # opt-out: section 2.3 降级 warning, 不因 dut_capability FAILED
@@ -134,13 +144,13 @@ class TestDUTCapabilityPrecheckGate:
 
     async def test_within_declared_no_dutcap_fail(self, db, lab):
         dut = _make_dut(db, max_dl_layers=4, max_modulation_dl="256QAM")
-        res = await _run_precheck(
+        res, _ = await _run_precheck(
             db, lab, dut_profile_id=str(dut.id), mimo_layers=2, modulation="64QAM", strict=True,
         )
         assert "声明能力不满足" not in (res.error_message or "")
 
     async def test_no_dut_profile_id_skips(self, db, lab):
-        res = await _run_precheck(
+        res, _ = await _run_precheck(
             db, lab, dut_profile_id=None, mimo_layers=4, modulation="256QAM", strict=True,
         )
         assert "声明能力" not in (res.error_message or "")
