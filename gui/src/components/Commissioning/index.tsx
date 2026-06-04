@@ -30,6 +30,9 @@ export function CommissioningSandbox() {
   // rehearsal without a real DUT / calibration. Default OFF = strict ON, so
   // on-site real first-call keeps the fail-loud protection (P1-9 intent).
   const [labSmoke, setLabSmoke] = useState(false)
+  // U-5: 暗室首测前逐设备自检 (借鉴转台/EMCenter standalone 验证, 首测前先单独验各仪表通)
+  const [selfcheck, setSelfcheck] = useState<api.DeviceSelfcheckResult | null>(null)
+  const [selfcheckLoading, setSelfcheckLoading] = useState(false)
   // 2026-05-18 P0-7: only meaningful when engineMode==='external_asc'.
   // Operator-supplied absolute path of a local directory of channel_InX_OutY.asc
   // files (typically produced by ChannelEgine app.py Streamlit on the same host).
@@ -382,6 +385,59 @@ export function CommissioningSandbox() {
             label="强制跳过严格 DUT / 校准门（real 模式 override）"
             description="mock 模式已自动跳过严格门，无需开此开关。仅真实仪表 + 无 DUT/校准空跑时才需要；切换后点「重置会话」生效。默认关闭以保留 fail-loud 保护。"
           />
+
+          <Divider my={4} />
+          <Group justify="space-between" align="center">
+            <div>
+              <Text size="sm" fw={500}>设备自检（首测前）</Text>
+              <Text size="xs" c="dimmed">
+                先单独验各仪表连接 + 响应, 不在首测中途撞设备问题（借鉴转台/EMCenter standalone 验证）
+              </Text>
+            </div>
+            <Button
+              size="xs"
+              variant="light"
+              loading={selfcheckLoading}
+              onClick={async () => {
+                setSelfcheckLoading(true)
+                try {
+                  const res = await api.deviceSelfcheck()
+                  setSelfcheck(res.data)
+                } catch {
+                  setSelfcheck(null)
+                } finally {
+                  setSelfcheckLoading(false)
+                }
+              }}
+            >
+              运行设备自检
+            </Button>
+          </Group>
+          {selfcheck && (
+            <Alert color={selfcheck.all_ready ? 'green' : 'orange'} variant="light">
+              <Text size="sm" fw={500} mb={4}>
+                {selfcheck.message}
+              </Text>
+              <Stack gap={2}>
+                {selfcheck.devices.map((d) => (
+                  <Group key={d.category} gap="xs">
+                    <Badge
+                      color={d.connected && d.responsive ? 'green' : 'red'}
+                      variant="light"
+                      size="sm"
+                    >
+                      {d.connected && d.responsive ? '✓' : '✗'} {d.category}
+                    </Badge>
+                    {d.detail && (
+                      <Text size="xs" c="dimmed">
+                        {d.detail}
+                      </Text>
+                    )}
+                  </Group>
+                ))}
+              </Stack>
+            </Alert>
+          )}
 
           {/* External ASC 路径输入 (post-session). 当操作员在已有会话里把引擎切到
               external_asc 时, 需要在这里填 .asc 目录路径再「重置会话」—— 否则

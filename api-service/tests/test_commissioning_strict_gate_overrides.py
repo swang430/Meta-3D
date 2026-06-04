@@ -20,13 +20,16 @@ override translation: omitted leaves the schema default, explicit value carries.
 from app.api.commissioning import CreateSessionRequest, _request_overrides
 
 
-# P2-11: Phase 1/2/3 加了 3 道新 strict 门; 暗室首测 "强制跳过严格门" 必须一并降级它们,
-# 否则真仪表空跑撞上新门无法绕过 (cal/dut 之外的捷径缺口)。新门同样走 null/False/value
-# cartesian, 一并钉死。
+# P2-11: Phase 1/2/3 加了 3 道新 strict 门 + Phase 6 (#114/#124/#126) 加 cell_config 门;
+# 暗室首测 "强制跳过严格门" 必须一并降级它们, 否则真仪表 bring-up 撞上新门无法绕过
+# (cal/dut 之外的捷径缺口)。cell_config 门此前漏接三层 bypass (GUI labSmoke + CreateSessionRequest
+# + _request_overrides), feedback_strict_gate_extend_bypass_toggle 母题又踩, 本测试一并钉死。
+# 新门同样走 null/False/value cartesian。
 _P2_11_FLAGS = (
     "precheck_strict_frequency",
     "precheck_strict_emulation_file",
     "precheck_strict_switch_mode",
+    "precheck_strict_cell_config",
 )
 _ALL_STRICT_FLAGS = ("precheck_strict_dut", "precheck_strict_cal", *_P2_11_FLAGS)
 
@@ -39,7 +42,7 @@ def test_strict_flags_omitted_are_absent_from_overrides():
 
 
 def test_strict_flags_false_pass_through():
-    """Lab-smoke toggle → explicit False is carried into overrides (全 5 道门)。"""
+    """Lab-smoke toggle → explicit False is carried into overrides (全 6 道门)。"""
     overrides = _request_overrides(
         CreateSessionRequest(
             precheck_strict_dut=False,
@@ -47,6 +50,7 @@ def test_strict_flags_false_pass_through():
             precheck_strict_frequency=False,
             precheck_strict_emulation_file=False,
             precheck_strict_switch_mode=False,
+            precheck_strict_cell_config=False,
         )
     )
     for flag in _ALL_STRICT_FLAGS:
@@ -76,7 +80,7 @@ def test_p2_11_flag_set_others_omitted():
     )
     assert overrides["precheck_strict_frequency"] is False
     for flag in ("precheck_strict_emulation_file", "precheck_strict_switch_mode",
-                 "precheck_strict_cal", "precheck_strict_dut"):
+                 "precheck_strict_cell_config", "precheck_strict_cal", "precheck_strict_dut"):
         assert flag not in overrides
 
 
@@ -87,6 +91,7 @@ def test_p2_11_flags_true_pass_through():
             precheck_strict_frequency=True,
             precheck_strict_emulation_file=True,
             precheck_strict_switch_mode=True,
+            precheck_strict_cell_config=True,
         )
     )
     for flag in _P2_11_FLAGS:

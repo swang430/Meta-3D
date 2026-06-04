@@ -61,6 +61,7 @@ export const createSession = async (
     precheck_strict_frequency?: boolean
     precheck_strict_emulation_file?: boolean
     precheck_strict_switch_mode?: boolean
+    precheck_strict_cell_config?: boolean
   } = {
     engine_mode: engineMode,
   }
@@ -72,13 +73,15 @@ export const createSession = async (
   }
   if (labSmoke) {
     // P2-11: "强制跳过严格门" = 统一的暗室首测 (路径 A) bypass —— 一次降级**全部**
-    // 5 道 strict 门, 否则真仪表空跑会撞上 P2-11 新加的频率/.smu/switch mode 门 (它们
-    // 只对真硬件生效, mock 空跑本就 N/A)。镜像 test_commissioning_{smoke,e2e_p06}。
+    // 6 道 strict 门 (cal/dut/频率/.smu/switch mode/cell_config), 否则真仪表 bring-up 会
+    // 撞上它们 (只对真硬件生效, mock 空跑本就 N/A)。Phase 6 cell_config 门 (#114/#124/#126)
+    // 此前漏接 (feedback_strict_gate_extend_bypass_toggle 母题)。镜像 test_commissioning_strict_gate_overrides。
     body.precheck_strict_dut = false
     body.precheck_strict_cal = false
     body.precheck_strict_frequency = false
     body.precheck_strict_emulation_file = false
     body.precheck_strict_switch_mode = false
+    body.precheck_strict_cell_config = false
   }
   return client.post<SessionResponse>('/commissioning/sessions', body)
 }
@@ -93,4 +96,20 @@ export const runPhase = async (sessionId: string, phaseName: string) => {
 
 export const runAll = async (sessionId: string) => {
   return client.post<SessionResponse>(`/commissioning/sessions/${sessionId}/run-all`)
+}
+
+// U-5 借鉴: 暗室首测前逐设备快速自检 (连接 + 响应主动探测), 先单独验各仪表通再跑首测
+export interface DeviceSelfcheckItem {
+  category: string
+  connected: boolean
+  responsive: boolean
+  detail?: string | null
+}
+export interface DeviceSelfcheckResult {
+  all_ready: boolean
+  devices: DeviceSelfcheckItem[]
+  message: string
+}
+export const deviceSelfcheck = async () => {
+  return client.post<DeviceSelfcheckResult>('/commissioning/device-selfcheck')
 }
