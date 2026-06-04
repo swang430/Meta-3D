@@ -74,14 +74,12 @@ class PrecheckExecutor(IStepExecutor):
         online_n = sum(1 for v in instruments_online.values() if v)
         messages.append(f"Instruments (HAL): {online_n}/{len(instruments_online)} online")
 
-        # --- 2.3 DUT 声明能力校验 (规划期, attach 前) ---
-        # config.dut_profile_id 指向 DUTProfile 时, 拿 TestCase 请求跟 DUT **声明**能力比 (请求 >
-        # 声明 → 提前 fail, 不浪费真跑)。跟 2.5 UE capability (attach 后协商) 互补: 这个最早, 查
-        # DB 声明不需硬件。strict 可经 bring-up bypass 关 (precheck_strict_dut_capability)。
+        # --- 2.3a 载入 DUTProfile (供 2.3 声明校验 + 2.5b 交叉核对共用) ---
+        # config.dut_profile_id 指向 DUTProfile 时载入一次; 非法 UUID / 不存在 → None + warn。
+        # 2.5b 交叉核对要复用这个 dut_profile, 所以载入提到函数作用域 (不留在 2.3 局部块)。
+        dut_profile = None
         if config.dut_profile_id:
             from app.models.dut_profile import DUTProfile
-            from app.services.mimo_ota.dut_capability_check import check_dut_capability
-
             from uuid import UUID as _UUID
 
             try:
@@ -98,53 +96,60 @@ class PrecheckExecutor(IStepExecutor):
                     f"config.dut_profile_id={config.dut_profile_id} 指向的 DUTProfile 不存在 "
                     "(已删 / 填错 / 非法 id) — 跳过声明校验"
                 )
-            else:
-                dut_cap = check_dut_capability(
-                    requested_layers=config.mimo_layers,
-                    requested_modulation=config.modulation,
-                    declared_max_dl_layers=dut_profile.max_dl_layers,
-                    declared_max_modulation_dl=dut_profile.max_modulation_dl,
+
+        # --- 2.3 DUT 声明能力校验 (规划期, attach 前) ---
+        # 拿 TestCase 请求跟 DUT **声明**能力比 (请求 > 声明 → 提前 fail, 不浪费真跑)。跟 2.5b
+        # 交叉核对互补: 这个最早 (查 DB 声明不需硬件, 请求 vs 声明单向); 2.5b 是 attach 后
+        # 声明 vs 实测协商双向。strict 可经 bring-up bypass 关 (precheck_strict_dut_capability)。
+        if dut_profile is not None:
+            from app.services.mimo_ota.dut_capability_check import check_dut_capability
+
+            dut_cap = check_dut_capability(
+                requested_layers=config.mimo_layers,
+                requested_modulation=config.modulation,
+                declared_max_dl_layers=dut_profile.max_dl_layers,
+                declared_max_modulation_dl=dut_profile.max_modulation_dl,
+            )
+            result_payload["dut_capability_check"] = {
+                "dut_profile": dut_profile.name,
+                "consistent": dut_cap.consistent,
+                "violations": dut_cap.violations,
+            }
+            if not dut_cap.consistent:
+                if config.precheck_strict_dut_capability:
+                    # Codex P2 (3083096): 早期 return 必须先持久化 precheck phase
+                    # result —— 否则 execution.measurements.phases.precheck 为空,
+                    # session 读出来还是 pending, UI/API 看不到 dut_capability_check
+                    # violations (即便 phase 已 fail)。对齐 section 6 正常失败路径:
+                    # write_phase_result + commit, return 带 measurements/warnings。
+                    # 保留 fail-fast (请求层数根本超声明时, 不必再查 QZ/cal)。
+                    result_payload["overall_pass"] = False
+                    result_payload["messages"] = messages
+                    write_phase_result(
+                        context.test_execution, "precheck", result_payload
+                    )
+                    context.db.commit()
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        measurements=result_payload,
+                        warnings=warnings,
+                        error_message=(
+                            f"DUT '{dut_profile.name}' 声明能力不满足 TestCase 请求: "
+                            + "; ".join(dut_cap.violations)
+                            + " (规划期提前 fail, 不浪费真跑; "
+                            "precheck_strict_dut_capability=False 可绕)"
+                        ),
+                    )
+                warnings.append(
+                    f"DUT '{dut_profile.name}' 声明能力不满足请求 "
+                    f"(precheck_strict_dut_capability=False, 继续): "
+                    + "; ".join(dut_cap.violations)
                 )
-                result_payload["dut_capability_check"] = {
-                    "dut_profile": dut_profile.name,
-                    "consistent": dut_cap.consistent,
-                    "violations": dut_cap.violations,
-                }
-                if not dut_cap.consistent:
-                    if config.precheck_strict_dut_capability:
-                        # Codex P2 (3083096): 早期 return 必须先持久化 precheck phase
-                        # result —— 否则 execution.measurements.phases.precheck 为空,
-                        # session 读出来还是 pending, UI/API 看不到 dut_capability_check
-                        # violations (即便 phase 已 fail)。对齐 section 6 正常失败路径:
-                        # write_phase_result + commit, return 带 measurements/warnings。
-                        # 保留 fail-fast (请求层数根本超声明时, 不必再查 QZ/cal)。
-                        result_payload["overall_pass"] = False
-                        result_payload["messages"] = messages
-                        write_phase_result(
-                            context.test_execution, "precheck", result_payload
-                        )
-                        context.db.commit()
-                        return StepExecutionResult(
-                            status=StepExecutionStatus.FAILED,
-                            measurements=result_payload,
-                            warnings=warnings,
-                            error_message=(
-                                f"DUT '{dut_profile.name}' 声明能力不满足 TestCase 请求: "
-                                + "; ".join(dut_cap.violations)
-                                + " (规划期提前 fail, 不浪费真跑; "
-                                "precheck_strict_dut_capability=False 可绕)"
-                            ),
-                        )
-                    warnings.append(
-                        f"DUT '{dut_profile.name}' 声明能力不满足请求 "
-                        f"(precheck_strict_dut_capability=False, 继续): "
-                        + "; ".join(dut_cap.violations)
-                    )
-                else:
-                    messages.append(
-                        f"DUT 声明能力校验: '{dut_profile.name}' 满足请求 "
-                        f"({config.mimo_layers} 层 / {config.modulation})"
-                    )
+            else:
+                messages.append(
+                    f"DUT 声明能力校验: '{dut_profile.name}' 满足请求 "
+                    f"({config.mimo_layers} 层 / {config.modulation})"
+                )
 
         # --- 2.4 DUT attach record check (Phase 2l: 防对错 IMSI 测试) ---
         # P1-9 (2026-05-19): missing/broken dut_attach now drives the strict
@@ -219,6 +224,53 @@ class PrecheckExecutor(IStepExecutor):
                         f"UE Capability: max_dl_layers={cap_max_dl} ≥ requested "
                         f"{config.mimo_layers} (PASS)"
                     )
+
+                # --- 2.5b DUTProfile 声明 vs 实测协商交叉核对 (阶段 4) ---
+                # 声明 (DUTProfile, 规划期) vs 协商 (query_ue_capability, attach 后) 双向比;
+                # 不一致 = 有用发现 (固件 / SIM / 声明过时), **audit-only surface, 不 fail
+                # 不覆盖声明**。observed 单独记 measurements, operator 在 DUT 声明页**显式**
+                # 反写。仅真实 UE (source==real_ue) 核对; mock / unavailable → skipped (避免假阳)。
+                if dut_profile is not None:
+                    from app.services.mimo_ota.dut_capability_crosscheck import (
+                        check_dut_capability_mismatch,
+                    )
+
+                    observed_source = cap.get("source")
+                    mismatch = check_dut_capability_mismatch(
+                        declared_max_dl_layers=dut_profile.max_dl_layers,
+                        declared_max_ul_layers=dut_profile.max_ul_layers,
+                        declared_max_modulation_dl=dut_profile.max_modulation_dl,
+                        declared_max_modulation_ul=dut_profile.max_modulation_ul,
+                        observed_max_dl_layers=cap.get("max_dl_layers"),
+                        observed_max_ul_layers=cap.get("max_ul_layers"),
+                        observed_max_modulation_dl=cap.get("max_modulation_dl"),
+                        observed_max_modulation_ul=cap.get("max_modulation_ul"),
+                        observed_available=(observed_source == "real_ue"),
+                    )
+                    # observed 单独记录 (含 dut_profile_id 供 GUI 反写定位); 永不写回声明。
+                    result_payload["dut_capability_observed"] = {
+                        "dut_profile_id": str(dut_profile.id),
+                        "dut_profile_name": dut_profile.name,
+                        "source": observed_source,
+                        "max_dl_layers": cap.get("max_dl_layers"),
+                        "max_ul_layers": cap.get("max_ul_layers"),
+                        "max_modulation_dl": cap.get("max_modulation_dl"),
+                        "max_modulation_ul": cap.get("max_modulation_ul"),
+                    }
+                    result_payload["dut_capability_mismatch"] = mismatch.to_payload()
+                    if mismatch.mismatches:
+                        warnings.append(
+                            f"DUT '{dut_profile.name}' 声明 vs 实测协商不一致 (audit, 不影响 "
+                            f"pass; 可在 DUT 声明页采纳实测值): " + (mismatch.failure_reason() or "")
+                        )
+                        messages.append(
+                            f"DUT 能力交叉核对: 声明 vs 实测协商有 "
+                            f"{len(mismatch.mismatches)} 处不一致 (见 dut_capability_mismatch)"
+                        )
+                    elif not mismatch.skipped:
+                        messages.append(
+                            f"DUT 能力交叉核对: '{dut_profile.name}' 声明跟实测协商一致"
+                        )
             except Exception as e:  # noqa: BLE001
                 warnings.append(f"UE capability query raised: {e}; skipped")
                 live_ue_query_state = "unknown"
