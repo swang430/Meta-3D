@@ -23,10 +23,10 @@ switch orchestrate(switch_mode_id)/ 路损 cert(operating_mode 过滤)/ SA /
 positioner 全 TestCase 派生, 下发后多方频率一致性 + GCM .smu + switch mode 三道
 fail-loud 门挡静默错配 (Phase 1/2/3)。路径 A (bring-up 默认: P0-8 F64 .smu /
 P1-17 UXM profile) 主要在 HAL-init 用 —— F64 .smu 这里由 emulation_file 覆盖,
-**但 UXM 默认 profile 的 port routing / TDD / scheduler 等字段 set_cell_config
-没覆盖 → 会残留进本 path B** (Codex on PR #112; roadmap "Discovered" backlog,
-待补成 TestCase 驱动或显式 reset)。边界总览见
-docs/architecture/testcase-driven-instrument-config.md §2/§6/§6.1。
+UXM port routing / TDD / scheduler (mimo_port_preset/tdd_pattern/sched_algo/
+csi_rs_ports) **P2-11 #1974 已补**: path B 经 _build_pcell_cell_config 从 TestCase
+显式驱动 set_cell_config, 不再残留 HAL-init 默认 profile (原 Codex on PR #112 缺口)。
+边界总览见 docs/architecture/testcase-driven-instrument-config.md §2/§6/§6.1。
 """
 import asyncio
 import logging
@@ -63,6 +63,42 @@ _MOCK_WINDOW_FLOOR_S = 0.05
 # 单 azimuth 内不检查 (统计窗口本身已 >= 50ms, 中途掉线被 measure_throughput_window
 # 内部 retry 兜底). azimuth 间隔检查能在转台移动期间发现, 是最佳折衷.
 _DUT_HEALTH_CHECK_EVERY_N_AZIMUTHS = 1
+
+
+def _build_pcell_cell_config(
+    config,
+    *,
+    frequency_mhz: float,
+    arfcn: int,
+    bandwidth_mhz: float,
+    scs_khz: int,
+    band: str,
+) -> Dict[str, Any]:
+    """构造 measure path B 的 PCell set_cell_config dict (P2-11 #1974)。
+
+    path B 显式驱动端口路由/TDD/调度 (mimo_port_preset/tdd_pattern/tdd_period/
+    sched_algo), 避免残留 HAL-init 默认 topology profile 的值 (如 2x2 TestCase 跑在
+    残留 4x4 端口路由上, 跟频率/MCS 错配同等危害)。csi_rs_ports=None **不放进 dict**
+    (让 set_cell_config 按 mimo_layers 自动推断, 避免 SCPI 写字面 "None" —— 缺省哨兵
+    内层值处理, 见 feedback_endpoint_null_field_cartesian)。频率/arfcn 由 caller 算好
+    传入 (arfcn 是频率真值)。
+    """
+    cell_cfg: Dict[str, Any] = {
+        "frequency_mhz": frequency_mhz,
+        "arfcn": arfcn,
+        "bandwidth_mhz": bandwidth_mhz,
+        "scs_khz": scs_khz,
+        "band": band,
+        "mimo_layers": config.mimo_layers,
+        "dl_power_dbm": config.target_tx_power_dbm,
+        "mimo_port_preset": config.mimo_port_preset,
+        "tdd_pattern": config.tdd_pattern,
+        "tdd_period": config.tdd_period,
+        "sched_algo": config.sched_algo,
+    }
+    if config.csi_rs_ports is not None:
+        cell_cfg["csi_rs_ports"] = config.csi_rs_ports
+    return cell_cfg
 
 
 @register_executor(MIMOOTAStepType.MEASURE.value)
@@ -137,17 +173,18 @@ class MeasureExecutor(IStepExecutor):
             # 频率一致性校验会正确判失败 → 任何 TestCase 频率 ≠ band fallback 的真实
             # run 都被误杀。ARFCN 是频率真值 (frequency_mhz 只是派生视图), 必须显式驱动。
             pcell_freq_mhz = pcell.frequency_hz / 1e6
-            await base_station.set_cell_config(
-                {
-                    "frequency_mhz": pcell_freq_mhz,
-                    "arfcn": freq_mhz_to_nr_arfcn(pcell_freq_mhz),
-                    "bandwidth_mhz": pcell.bandwidth_mhz,
-                    "scs_khz": pcell.subcarrier_spacing_khz,
-                    "band": pcell.band,
-                    "mimo_layers": config.mimo_layers,
-                    "dl_power_dbm": config.target_tx_power_dbm,
-                }
+            # P2-11 #1974: path B 显式驱动端口路由/TDD/调度 (见 _build_pcell_cell_config),
+            # 不残留 HAL-init 默认 topology profile 的值 (否则如 2x2 TestCase 跑在残留 4x4
+            # 端口路由上)。
+            cell_cfg = _build_pcell_cell_config(
+                config,
+                frequency_mhz=pcell_freq_mhz,
+                arfcn=freq_mhz_to_nr_arfcn(pcell_freq_mhz),
+                bandwidth_mhz=pcell.bandwidth_mhz,
+                scs_khz=pcell.subcarrier_spacing_khz,
+                band=pcell.band,
             )
+            await base_station.set_cell_config(cell_cfg)
 
             # --- Phase 2g: SCell add + activate for CA scenarios ---
             scells_added: List[Dict[str, Any]] = []

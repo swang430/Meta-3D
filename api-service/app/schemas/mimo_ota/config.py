@@ -203,6 +203,16 @@ class MIMOOTAConfiguration(BaseModel):
     harq_processes: int = 16
     stat_count: int = 5000
 
+    # === UXM 端口路由 / 调度 TestCase 驱动 (P2-11 #1974, 2026-06-04) ===
+    # path B (正式测试) measure 显式驱动这些, 避免残留 HAL-init 默认 topology profile 的
+    # 值 (如 2x2 TestCase 跑在残留的 4x4 端口路由上, 跟频率/MCS 错配同等危害)。默认对齐
+    # 内置 profile (backward-compat)。⚠️ mimo_port_preset 跟 mimo_layers **不自动派生**
+    # (某些 diversity 配置 layers≠preset 合法), 由 TestCase 显式给 —— 用户 2026-06-04 选
+    # 方案 b (config 加字段) 而非 a (从 layers 派生)。set_cell_config 已支持这些 key。
+    mimo_port_preset: str = "2x2"  # siso / 2x2 / 4x4 (MIMO 天线→物理端口路由 preset)
+    sched_algo: str = "FULLBUFFER"  # PDSCH 调度算法
+    csi_rs_ports: Optional[int] = None  # CSI-RS 端口数; None → 按 mimo_layers 自动推断
+
     # === Channel generation engine ===
     engine_mode: str = "mimo_first_asc"
     # Allowed: "mimo_first_asc" | "keysight_gcm" | "external_asc"

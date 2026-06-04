@@ -193,7 +193,7 @@ measure executor(`app/services/mimo_ota/executors/measure.py`)docstring 顶部�
 
 | 参数 | 现状 | backlog |
 |------|------|---------|
-| **MIMO 端口路由** `mimo_port_preset` / `csi_rs_ports` / `sched_algo` | UXM profile 在 HAL-init 设,`MIMOOTAConfiguration` 无对应字段,measure 不驱动也不 reset → 残留进 path B(2x2 TestCase 跑在残留 4x4 路由)| Discovered(Codex #112)🔴 高影响 |
+| ~~**MIMO 端口路由**~~ `mimo_port_preset` / `csi_rs_ports` / `sched_algo` | ✅ **#1974 已修 (方案 b)**: `MIMOOTAConfiguration` 加这些字段, measure 经 `_build_pcell_cell_config` 显式驱动 set_cell_config(不再残留 HAL-init profile)| ✅ done(原 Discovered Codex #112)|
 | **操作点 / F64 输入参考**(avg 电平 + crest)| 仪表限值(`upper − 15dB`)+ 硬编码偏移(`-10` 起手 / `-30` burst)驱动,非 TestCase,且不跟 `target_tx_power` 交叉校验 | Discovered 2026-05-28(feed-forward + imbalance)🔴 CAICT 现场 0% ACK 根因 |
 
 ### D 类 — 🟢 **设计上就不该** TestCase 驱动(物理量,正确)
