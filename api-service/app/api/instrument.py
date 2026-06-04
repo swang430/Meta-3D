@@ -2703,3 +2703,177 @@ def set_instrument_driver_mode(
         driverMode=request.mode,
         message=f"已将 {category.category_name} 设为 {label} 模式",
     )
+
+
+# ============================================================
+# U-5: Positioner (转台) standalone 控制端点
+#
+# driver 的 move_to/get_position/stop/reset(=HOME) 此前只被 cal/QZ 服务内部调, 无
+# standalone HTTP 入口 → 2026-05-27 现场无法单独验证转台回零/定位/4方位扫 (morning-log
+# §10, U-5 "无结论"真因)。本段补 standalone 端点, 让现场连上即可经 Swagger/GUI 单独驱动
+# 转台, 不依赖完整 cal 流程。遵循 hal/reload·scpi-command 先例 (HAL 操作端点不进 checked-in
+# openapi.yaml, D19); GUI 经 service.ts 手写消费。Aerotech 协议见
+# docs/site-debug/2026-06-04-positioner-turntable.md。
+# ============================================================
+
+class PositionerMoveRequest(BaseModel):
+    azimuth: float
+    elevation: float = 0.0
+
+
+class PositionerSweepRequest(BaseModel):
+    # 默认 4 方位 (P0-5 验收: 4 azimuth 给 4 个不同吞吐值)
+    angles: List[float] = [0.0, 90.0, 180.0, 270.0]
+    home_first: bool = True
+    tolerance_deg: float = 0.5
+
+
+class PositionerResult(BaseModel):
+    ok: bool
+    azimuth: float = 0.0
+    elevation: float = 0.0
+    reason: Optional[str] = None
+    message: Optional[str] = None
+
+
+class PositionerSweepPoint(BaseModel):
+    target: float
+    actual_azimuth: float
+    actual_elevation: float
+    within_tolerance: bool
+
+
+class PositionerSweepResult(BaseModel):
+    ok: bool
+    points: List[PositionerSweepPoint] = []
+    reason: Optional[str] = None
+    message: Optional[str] = None
+
+
+_POSITIONER_REASON_MSG = {
+    "hal_unavailable": "HAL 服务不可用",
+    "driver_not_loaded": "positioner 驱动未加载 — 检查仪器已选 + 连接 IP 已填, 或重载 HAL 驱动",
+    "not_a_positioner": "绑定的驱动不是转台驱动",
+}
+
+
+def _resolve_positioner():
+    """拿 positioner HAL driver。返回 (driver, error_reason); 成功 (driver, None)。"""
+    try:
+        from app.services.instrument_hal_service import get_hal_service
+        hal = get_hal_service()
+    except Exception:  # noqa: BLE001
+        return None, "hal_unavailable"
+    driver = (hal.drivers or {}).get("positioner") if hal else None
+    if driver is None:
+        return None, "driver_not_loaded"
+    # PositionerDriver 鸭子检查 (move_to + get_position 是接口核心)
+    if not (callable(getattr(driver, "move_to", None))
+            and callable(getattr(driver, "get_position", None))):
+        return None, "not_a_positioner"
+    return driver, None
+
+
+async def _positioner_position(driver) -> tuple[float, float]:
+    try:
+        return await driver.get_position()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[Positioner] get_position failed: {e}")
+        return (0.0, 0.0)
+
+
+@router.post("/instruments/positioner/home", response_model=PositionerResult)
+async def positioner_home() -> PositionerResult:
+    """转台回零 (HOME)。首次上电 / 位置不可信时必须先回零。"""
+    driver, reason = _resolve_positioner()
+    if driver is None:
+        return PositionerResult(ok=False, reason=reason,
+                                message=_POSITIONER_REASON_MSG.get(reason))
+    ok = await driver.reset()  # PositionerDriver.reset() == HOME 回零
+    az, el = await _positioner_position(driver)
+    return PositionerResult(
+        ok=bool(ok), azimuth=az, elevation=el,
+        reason=None if ok else "home_failed",
+        message="已回零" if ok else "回零失败 — 查控制器故障 (AXISFAULT) / 限位 / 使能",
+    )
+
+
+@router.post("/instruments/positioner/move", response_model=PositionerResult)
+async def positioner_move(request: PositionerMoveRequest) -> PositionerResult:
+    """转台绝对定位 (MOVEABS)。单轴转台忽略 elevation。"""
+    driver, reason = _resolve_positioner()
+    if driver is None:
+        return PositionerResult(ok=False, reason=reason,
+                                message=_POSITIONER_REASON_MSG.get(reason))
+    ok = await driver.move_to(request.azimuth, request.elevation)
+    az, el = await _positioner_position(driver)
+    return PositionerResult(
+        ok=bool(ok), azimuth=az, elevation=el,
+        reason=None if ok else "move_failed",
+        message=(f"已到位 Az={az:.2f}°" if ok
+                 else "定位失败 — 查到位超时 / 故障 / 位置超差"),
+    )
+
+
+@router.get("/instruments/positioner/position", response_model=PositionerResult)
+async def positioner_position() -> PositionerResult:
+    """读转台当前位置反馈 (PFBK)。"""
+    driver, reason = _resolve_positioner()
+    if driver is None:
+        return PositionerResult(ok=False, reason=reason,
+                                message=_POSITIONER_REASON_MSG.get(reason))
+    az, el = await _positioner_position(driver)
+    return PositionerResult(ok=True, azimuth=az, elevation=el)
+
+
+@router.post("/instruments/positioner/stop", response_model=PositionerResult)
+async def positioner_stop() -> PositionerResult:
+    """转台急停 (ABORT)。异常 / 门禁 / 急停联锁时调用。"""
+    driver, reason = _resolve_positioner()
+    if driver is None:
+        return PositionerResult(ok=False, reason=reason,
+                                message=_POSITIONER_REASON_MSG.get(reason))
+    ok = await driver.stop()
+    az, el = await _positioner_position(driver)
+    return PositionerResult(
+        ok=bool(ok), azimuth=az, elevation=el,
+        reason=None if ok else "stop_failed",
+        message="已急停" if ok else "急停失败",
+    )
+
+
+@router.post("/instruments/positioner/sweep", response_model=PositionerSweepResult)
+async def positioner_sweep(request: PositionerSweepRequest) -> PositionerSweepResult:
+    """4 方位 (或自定义角度) 扫描验证: 每角度定位 + 回读 + 比对容差。
+
+    P0-5 验收预演 (4 azimuth 应给 4 个不同吞吐值; 此端点先验证转台几何到位)。
+    任一角度定位失败即停止并返回已完成点。
+    """
+    driver, reason = _resolve_positioner()
+    if driver is None:
+        return PositionerSweepResult(ok=False, reason=reason,
+                                     message=_POSITIONER_REASON_MSG.get(reason))
+    if request.home_first and not await driver.reset():
+        return PositionerSweepResult(ok=False, reason="home_failed",
+                                     message="回零失败, 中止扫描")
+    points: List[PositionerSweepPoint] = []
+    for target in request.angles:
+        moved = await driver.move_to(target, 0.0)
+        az, el = await _positioner_position(driver)
+        within = bool(moved) and abs(az - target) <= request.tolerance_deg
+        points.append(PositionerSweepPoint(
+            target=target, actual_azimuth=az, actual_elevation=el,
+            within_tolerance=within,
+        ))
+        if not moved:
+            return PositionerSweepResult(
+                ok=False, points=points, reason="move_failed",
+                message=f"定位到 {target:.1f}° 失败, 已完成 {len(points) - 1} 点",
+            )
+    all_ok = all(p.within_tolerance for p in points)
+    return PositionerSweepResult(
+        ok=all_ok, points=points,
+        reason=None if all_ok else "tolerance_exceeded",
+        message=(f"{len(points)} 方位全部到位 (±{request.tolerance_deg}°)" if all_ok
+                 else "部分角度位置超差, 查 degree/counts 换算 / 机械传动"),
+    )

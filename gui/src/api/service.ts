@@ -620,3 +620,68 @@ export const calculateLinkBudget = async (
   )
   return response.data
 }
+
+// ============================================================
+// U-5: Positioner (转台) standalone 控制 (调试维护 / 现场转台验证)
+// 后端 app/api/instrument.py positioner 段; 遵循 HAL 操作端点不进 openapi.yaml 先例,
+// 手写 type (类比 MIMOOTAConfigForm)。
+// ============================================================
+
+export interface PositionerResult {
+  ok: boolean
+  azimuth: number
+  elevation: number
+  reason?: string | null
+  message?: string | null
+}
+
+export interface PositionerSweepPoint {
+  target: number
+  actual_azimuth: number
+  actual_elevation: number
+  within_tolerance: boolean
+}
+
+export interface PositionerSweepResult {
+  ok: boolean
+  points: PositionerSweepPoint[]
+  reason?: string | null
+  message?: string | null
+}
+
+export async function positionerHome(): Promise<PositionerResult> {
+  const response = await client.post<PositionerResult>('/instruments/positioner/home')
+  return response.data
+}
+
+export async function positionerMove(azimuth: number, elevation = 0): Promise<PositionerResult> {
+  const response = await client.post<PositionerResult>('/instruments/positioner/move', {
+    azimuth,
+    elevation,
+  })
+  return response.data
+}
+
+export async function positionerPosition(): Promise<PositionerResult> {
+  const response = await client.get<PositionerResult>('/instruments/positioner/position')
+  return response.data
+}
+
+export async function positionerStop(): Promise<PositionerResult> {
+  const response = await client.post<PositionerResult>('/instruments/positioner/stop')
+  return response.data
+}
+
+export async function positionerSweep(
+  angles?: number[],
+  homeFirst = true,
+  toleranceDeg = 0.5,
+): Promise<PositionerSweepResult> {
+  const payload: Record<string, unknown> = { home_first: homeFirst, tolerance_deg: toleranceDeg }
+  if (angles) payload.angles = angles
+  const response = await client.post<PositionerSweepResult>(
+    '/instruments/positioner/sweep',
+    payload,
+  )
+  return response.data
+}
