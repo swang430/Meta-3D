@@ -5,7 +5,10 @@
 """
 from __future__ import annotations
 
-from app.services.mimo_ota.dut_capability_crosscheck import check_dut_capability_mismatch
+from app.services.mimo_ota.dut_capability_crosscheck import (
+    canonical_modulation,
+    check_dut_capability_mismatch,
+)
 
 
 def _check(**kw):
@@ -102,3 +105,23 @@ class TestDUTCapabilityCrosscheck:
         reason = res.failure_reason()
         assert reason is not None
         assert "声明 4" in reason and "实测协商 2" in reason
+
+
+class TestCanonicalModulation:
+    """Codex P2 (#137): 实测上报格式不保证, 归一化到 DUTProfile 接受的 canonical 供采纳反写。"""
+
+    def test_non_canonical_normalized(self):
+        assert canonical_modulation("QAM64") == "64QAM"
+        assert canonical_modulation("64 qam") == "64QAM"
+        assert canonical_modulation("256-QAM") == "256QAM"
+        assert canonical_modulation("qpsk") == "QPSK"
+
+    def test_already_canonical_unchanged(self):
+        assert canonical_modulation("64QAM") == "64QAM"
+        assert canonical_modulation("1024QAM") == "1024QAM"
+
+    def test_none_and_unrecognized_passthrough(self):
+        assert canonical_modulation(None) is None
+        assert canonical_modulation("") == ""
+        # 识别不出阶数 → 原样 (不臆造; 后端会拒非法值)
+        assert canonical_modulation("WeirdMod") == "WeirdMod"

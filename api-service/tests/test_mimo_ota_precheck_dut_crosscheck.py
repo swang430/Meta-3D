@@ -184,6 +184,23 @@ class TestDUTCapabilityCrosscheckPrecheck:
         mm = (res.measurements or {}).get("dut_capability_mismatch")
         assert mm is not None and mm["skipped"] is True and mm["consistent"] is True
 
+    async def test_observed_modulation_canonicalized_for_adopt(self, db, lab, _hal_with_bs):
+        # Codex P2 (#137): 真实 UE 上报非规范格式 (QAM64), observed/mismatch 记进 measurements
+        # 必须归一化成 canonical (64QAM) —— 否则 GUI 采纳反写 PUT 会被后端 _validate 400 拒。
+        dut = _make_dut(db, max_modulation_dl="256QAM")
+        _hal_with_bs({
+            "source": "real_ue", "max_dl_layers": 2,
+            "max_modulation_dl": "QAM64",  # 非规范格式上报
+        })
+        res, _ = await _run_precheck(
+            db, lab, dut_profile_id=str(dut.id), mimo_layers=2, modulation="64QAM",
+        )
+        obs = (res.measurements or {}).get("dut_capability_observed")
+        assert obs["max_modulation_dl"] == "64QAM"  # 已归一化, 非 "QAM64"
+        mm = (res.measurements or {}).get("dut_capability_mismatch")
+        mod_item = next(m for m in mm["mismatches"] if m["field"] == "max_modulation_dl")
+        assert mod_item["observed"] == "64QAM"  # 采纳时 GUI 发的就是这个 canonical 值
+
     async def test_no_dut_profile_no_crosscheck(self, db, lab, _hal_with_bs):
         _hal_with_bs({"source": "real_ue", "max_dl_layers": 2})
         res, _ = await _run_precheck(

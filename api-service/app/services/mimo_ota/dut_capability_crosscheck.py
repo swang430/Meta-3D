@@ -26,6 +26,29 @@ from typing import Any, Dict, List, Optional
 from app.services.mimo_ota.cell_config_consistency import _modulation_order
 
 
+# 阶数 (bits/symbol) → DUTProfile 接受的 canonical 调制名 (跟 dut_profile_service._MODULATIONS
+# 对齐)。_modulation_order 的逆映射。
+_ORDER_TO_CANONICAL = {2: "QPSK", 4: "16QAM", 6: "64QAM", 8: "256QAM", 10: "1024QAM"}
+
+
+def canonical_modulation(modulation: Optional[str]) -> Optional[str]:
+    """把实测协商上报的调制 (格式不保证: 'QAM64' / '64 qam' / '64QAM') 归一化到 DUTProfile
+    接受的 canonical 形式 ('64QAM')。
+
+    Codex P2 (#137): observed 记进 measurements 后, GUI「采纳实测值」直接 PUT 回 DUTProfile;
+    后端 dut_profile_service._validate 只认 canonical (`64QAM`), 不归一化会让非规范上报的反写
+    被 400 拒。在交叉核对记录边界 (拿到原始 UE 上报处) 归一化一次, 单一真值, GUI 转发即可。
+
+    识别不出阶数 (非常规调制名) → 原样返回 (不臆造; adopt 时后端会拒非法值, 比静默改值安全)。
+    """
+    if not modulation:
+        return modulation
+    order = _modulation_order(modulation)
+    if order is None:
+        return modulation
+    return _ORDER_TO_CANONICAL.get(order, modulation)
+
+
 @dataclass(frozen=True)
 class DUTCapabilityMismatch:
     """一项 DUT 声明值 vs 实测协商值不一致。"""

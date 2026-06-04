@@ -232,10 +232,16 @@ class PrecheckExecutor(IStepExecutor):
                 # 反写。仅真实 UE (source==real_ue) 核对; mock / unavailable → skipped (避免假阳)。
                 if dut_profile is not None:
                     from app.services.mimo_ota.dut_capability_crosscheck import (
+                        canonical_modulation,
                         check_dut_capability_mismatch,
                     )
 
                     observed_source = cap.get("source")
+                    # Codex P2 (#137): 在记录边界 (拿到原始 UE 上报处) 把调制归一化到 canonical
+                    # 一次 —— observed payload + mismatch.observed 都用它, GUI「采纳实测值」PUT
+                    # 回 DUTProfile 时发的就是后端接受的 '64QAM' (而非上报的 'QAM64' 被 400 拒)。
+                    obs_mod_dl = canonical_modulation(cap.get("max_modulation_dl"))
+                    obs_mod_ul = canonical_modulation(cap.get("max_modulation_ul"))
                     mismatch = check_dut_capability_mismatch(
                         declared_max_dl_layers=dut_profile.max_dl_layers,
                         declared_max_ul_layers=dut_profile.max_ul_layers,
@@ -243,19 +249,20 @@ class PrecheckExecutor(IStepExecutor):
                         declared_max_modulation_ul=dut_profile.max_modulation_ul,
                         observed_max_dl_layers=cap.get("max_dl_layers"),
                         observed_max_ul_layers=cap.get("max_ul_layers"),
-                        observed_max_modulation_dl=cap.get("max_modulation_dl"),
-                        observed_max_modulation_ul=cap.get("max_modulation_ul"),
+                        observed_max_modulation_dl=obs_mod_dl,
+                        observed_max_modulation_ul=obs_mod_ul,
                         observed_available=(observed_source == "real_ue"),
                     )
                     # observed 单独记录 (含 dut_profile_id 供 GUI 反写定位); 永不写回声明。
+                    # 调制用 canonical (供采纳反写); 层数原值。
                     result_payload["dut_capability_observed"] = {
                         "dut_profile_id": str(dut_profile.id),
                         "dut_profile_name": dut_profile.name,
                         "source": observed_source,
                         "max_dl_layers": cap.get("max_dl_layers"),
                         "max_ul_layers": cap.get("max_ul_layers"),
-                        "max_modulation_dl": cap.get("max_modulation_dl"),
-                        "max_modulation_ul": cap.get("max_modulation_ul"),
+                        "max_modulation_dl": obs_mod_dl,
+                        "max_modulation_ul": obs_mod_ul,
                     }
                     result_payload["dut_capability_mismatch"] = mismatch.to_payload()
                     if mismatch.mismatches:
