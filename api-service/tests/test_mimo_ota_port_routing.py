@@ -1,23 +1,27 @@
 """P2-11 #1974: UXM 端口路由 / 调度 TestCase 驱动 (path B 显式驱动, 堵残留 profile)。
 
-config 加 mimo_port_preset/sched_algo/csi_rs_ports; measure path B 经
-_build_pcell_cell_config 显式传给 set_cell_config —— 避免残留 HAL-init 默认 topology
-profile 的值 (如 2x2 TestCase 跑在残留 4x4 端口路由)。csi_rs_ports=None **不放进 dict**
-(缺省哨兵, 避免 set_cell_config SCPI 写字面 "None")。用户 2026-06-04 选方案 b。
+config 加 mimo_port_preset/sched_algo/csi_rs_ports (默认 None = 未指定); measure path B
+经 _build_pcell_cell_config 显式传给 set_cell_config —— **None 时不传** (保持 HAL profile,
+旧 saved case 不被默认值覆盖, Codex P1 #127), 显式给才驱动。typo preset 经
+_validate_port_preset 前置 fail-loud (Codex P2 #127)。用户 2026-06-04 选方案 b。
 """
 from __future__ import annotations
 
 from app.schemas.mimo_ota.config import MIMOOTAConfiguration
-from app.services.mimo_ota.executors.measure import _build_pcell_cell_config
+from app.services.mimo_ota.executors.measure import (
+    _build_pcell_cell_config,
+    _validate_port_preset,
+)
 
 
 class TestPortRoutingSchemaFields:
-    def test_defaults_align_builtin_profile(self):
+    def test_defaults_are_none_distinguishable(self):
+        # Codex P1 #127: 默认 None = "未指定" (不是 "2x2") → 旧 saved case 不被默认值覆盖
         cfg = MIMOOTAConfiguration()
-        assert cfg.mimo_port_preset == "2x2"
-        assert cfg.sched_algo == "FULLBUFFER"
-        assert cfg.csi_rs_ports is None  # None → set_cell_config 按 mimo_layers 推断
-        assert cfg.tdd_pattern == "DDDSU"  # 已有 (Phase 3)
+        assert cfg.mimo_port_preset is None
+        assert cfg.sched_algo is None
+        assert cfg.csi_rs_ports is None
+        assert cfg.tdd_pattern == "DDDSU"  # 旧字段不变 (由 configure_mac 驱动)
 
     def test_override(self):
         cfg = MIMOOTAConfiguration(
@@ -40,13 +44,32 @@ def _build(**cfg_kw):
 
 
 class TestBuildPcellCellConfig:
-    def test_port_routing_fields_explicitly_driven(self):
-        # #1974 核心: path B 显式传端口路由/TDD/调度, 覆盖残留 profile
-        d = _build(mimo_port_preset="4x4", tdd_pattern="DSUUU", sched_algo="ROUNDROBIN")
+    def test_optional_fields_omitted_when_none(self):
+        # Codex P1 #127: 默认 None → 三个可选字段都不放进 dict (保持 HAL profile, 旧 4x4
+        # case 不被默认 2x2 覆盖)。base 字段照常。
+        d = _build()  # 全默认 (None)
+        assert "mimo_port_preset" not in d
+        assert "sched_algo" not in d
+        assert "csi_rs_ports" not in d
+        assert d["frequency_mhz"] == 3500.0 and d["mimo_layers"] == 2
+
+    def test_tdd_not_in_helper(self):
+        # tdd_pattern/tdd_period 由 configure_mac_throughput_test 驱动, 不在 helper (避免冗余)
+        d = _build()
+        assert "tdd_pattern" not in d and "tdd_period" not in d
+
+    def test_explicit_fields_driven(self):
+        # 显式给 → 进 dict (堵残留)
+        d = _build(mimo_port_preset="4x4", sched_algo="ROUNDROBIN", csi_rs_ports=8)
         assert d["mimo_port_preset"] == "4x4"
-        assert d["tdd_pattern"] == "DSUUU"
         assert d["sched_algo"] == "ROUNDROBIN"
-        assert d["tdd_period"] == "5MS"  # 默认也带上
+        assert d["csi_rs_ports"] == 8
+
+    def test_partial_explicit_others_omitted(self):
+        # 只给 mimo_port_preset, 其它仍 omit
+        d = _build(mimo_port_preset="siso")
+        assert d["mimo_port_preset"] == "siso"
+        assert "sched_algo" not in d and "csi_rs_ports" not in d
 
     def test_base_fields_carried(self):
         d = _build(mimo_layers=4, target_tx_power_dbm=-10.0)
@@ -54,19 +77,25 @@ class TestBuildPcellCellConfig:
         assert d["bandwidth_mhz"] == 100.0 and d["scs_khz"] == 30 and d["band"] == "N78"
         assert d["mimo_layers"] == 4 and d["dl_power_dbm"] == -10.0
 
-    def test_csi_rs_ports_none_omitted(self):
-        # 关键边缘 (缺省哨兵): csi_rs_ports=None 不放进 dict —— set_cell_config 的
-        # `if "csi_rs_ports" in config` 会对 None 写字面 "None" 崩真 UXM。
-        d = _build()  # csi_rs_ports 默认 None
-        assert "csi_rs_ports" not in d
 
-    def test_csi_rs_ports_value_included(self):
-        d = _build(csi_rs_ports=8)
-        assert d["csi_rs_ports"] == 8
+class TestValidatePortPreset:
+    """Codex P2 #127: typo preset 前置 fail-loud (set_cell_config 对 unknown preset 不 abort
+    会静默保留旧路由)。"""
 
-    def test_defaults_match_builtin_profile_backward_compat(self):
-        # 默认值对齐内置 profile (2x2/FULLBUFFER/DDDSU): 不改变现有 2x2 测试行为
-        d = _build()
-        assert d["mimo_port_preset"] == "2x2"
-        assert d["sched_algo"] == "FULLBUFFER"
-        assert d["tdd_pattern"] == "DDDSU"
+    _VALID = {"siso": {}, "2x2": {}, "4x4": {}, "2x2_alt": {}}  # 模拟 MIMO_PORT_PRESETS
+
+    def test_none_preset_skips(self):
+        # TestCase 未指定 → 不校验 (走 backward-compat 不传)
+        assert _validate_port_preset(None, self._VALID) is None
+
+    def test_mock_driver_no_presets_skips(self):
+        # mock driver 没 MIMO_PORT_PRESETS → mock-aware skip
+        assert _validate_port_preset("4x4", None) is None
+
+    def test_valid_preset_passes(self):
+        assert _validate_port_preset("4x4", self._VALID) is None
+        assert _validate_port_preset("SISO", self._VALID) is None  # 大小写不敏感
+
+    def test_typo_preset_returns_error(self):
+        err = _validate_port_preset("4X4_typo", self._VALID)
+        assert err is not None and "非法" in err and "4X4_typo" in err
