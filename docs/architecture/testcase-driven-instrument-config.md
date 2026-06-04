@@ -181,7 +181,7 @@ measure executor(`app/services/mimo_ota/executors/measure.py`)docstring 顶部�
 |------|------|---------|
 | `mimo_layers` | `set_cell_config` | ✅ **Phase 6 已补**: 读 UE 协商能力 `max_dl_layers`, 请求 > UE 上限 → fail (`precheck_strict_cell_config`)。读 UE 能力**非** `CONF:LAY?` 配置旋钮 (Codex #114) |
 | `modulation` | `reconfigure_rrc` DL 调制 | ✅ **Phase 6 已补**: 读 UE 协商能力 `max_modulation_dl`, 请求阶数 > UE 上限 → fail (`precheck_strict_cell_config`, 同 layers)。阶数归一化容忍 SCPI 格式差异。调制能力是 UE 固有上限, 不受 AMC 影响 |
-| `mcs` / `enable_amc` | throughput 参数下发 | ⬜ 待补(生效 MCS index 受 AMC 浮动 → 仅 AMC off 可回读校验)|
+| `mcs` / `enable_amc` | throughput 参数下发 | ✅ **Phase 6 已补 (AMC off)**: AMC off 时 throughput 实测 mcs_dl 众数 vs 请求 mcs, < 请求 → clamp fail (`check_mcs_consistency`, mock-aware)。AMC on 时 mcs 浮动 → skip |
 | `tdd_pattern` / `harq_*` | throughput 参数下发 | ⬜ 待补 |
 | `target_tx_power_dbm`(→DL power)/ `rsrp` / `snr` | `set_downlink_power` / `sim_rules` | ⬜ 待补,**但有坑**: InputLevelController(Phase 2b)闭环会合法改 UXM DL power,"功率==target" 会误杀;且 RSRP 当前模拟。需结合操作点 backlog 一起设计 |
 
@@ -223,12 +223,12 @@ B 类。**已实现的首条线 = DL MIMO layers**:
 格式差异(`256QAM`/`QAM256`/`QPSK`)。调制能力是 UE 固有上限, 不受 AMC 影响(区别于生效 MCS index)。
 
 **剩余 B 类(同机制延伸,各有特定坑)**:
-- `MCS index`:AMC on 时浮动,仅 AMC off 可回读**生效 MCS** 校验(条件化,区别于已补的 modulation 能力核对)。
+- ~~`MCS index`~~ ✅ **本次已补 (AMC off)**: throughput 实测 mcs_dl 众数 vs 请求 mcs, < 请求 → clamp fail (`check_mcs_consistency`, mock-aware + AMC on skip)。是 throughput **实际生效回读** (区别于 layers/modulation 的 attach 后 UE 能力核对)。
 - `DL power`:InputLevelController 闭环会合法改它,"功率==target" 会误杀 → 需结合操作点 backlog。
 - **不在范围**:C 类(端口路由泄漏、操作点)需先定语义;D 类不动。
 
-**一句话**:频率是一致性网的第一根线,**MIMO layers + 调制阶数是第二、三根**(本 Phase 累计);
-生效 MCS / 功率是同一台织机上待织的线。
+**一句话**:频率是一致性网的第一根线,**MIMO layers / 调制阶数 / 生效 MCS 是第二、三、四根**
+(本 Phase 累计); DL 功率是同一台织机上待织的最后一根 (需先定操作点语义)。
 
 ## 9. 标准信道文件定义(Standard Channel Definition)— 软件掌控命名(2026-06-01 用户确立)
 

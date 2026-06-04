@@ -555,6 +555,9 @@ class MeasureExecutor(IStepExecutor):
 
             # --- Per-azimuth measurement loop (Phase 2d windowed sampling) ---
             azimuth_results: List[Dict[str, Any]] = []
+            # P2-11 Phase 6 (MCS index 线): 跨所有 az/window 收集实测 mcs_dl, 循环后校验
+            # AMC off 下是否被 UE clamp (实测众数 < 请求)。
+            mcs_samples: List[Any] = []
             # P0: ce_base_rsrp is now per-azimuth (computed inside loop) since
             # path-loss varies by chain. avg_path_loss_db is the fallback.
             # One sample per stat window (≈ stat_count subframes × 1ms);
@@ -682,6 +685,7 @@ class MeasureExecutor(IStepExecutor):
                     samples_sinr.append(sinr)
                     samples_tput.append(metrics.dl_throughput_mbps)
                     samples_ri.append(float(metrics.rank_indicator))
+                    mcs_samples.append(getattr(metrics, "mcs_dl", None))
 
                 az = {
                     "azimuth_deg": azimuth,
@@ -713,6 +717,38 @@ class MeasureExecutor(IStepExecutor):
 
             total_duration = loop.time() - t_start
 
+            # --- P2-11 Phase 6 (MCS index 线): AMC off 时实测生效 mcs_dl vs 请求 mcs ---
+            # UE 撑不住请求 MCS → 静默 clamp (吞吐反映 clamp 后 MCS 却当请求 MCS 测)。是
+            # throughput **实际生效回读** (区别于 layers/modulation 的 attach 后 UE
+            # capability 核对)。AMC on / 无样本 → skip。strict 复用 precheck_strict_cell_config。
+            from app.services.mimo_ota.cell_config_consistency import (
+                check_mcs_consistency,
+            )
+            from app.services.instrument_hal_service import is_mock_driver
+            mcs_result = check_mcs_consistency(
+                requested_mcs=config.mcs,
+                enable_amc=config.enable_amc,
+                measured_mcs_samples=mcs_samples,
+                bs_is_real=(
+                    base_station is not None and not is_mock_driver(base_station)
+                ),
+            )
+            if not mcs_result.consistent and config.precheck_strict_cell_config:
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    error_message=(
+                        "P2-11 Phase 6 MCS 一致性校验失败: " + (mcs_result.reason or "")
+                    ),
+                    measurements={"mcs_consistency": mcs_result.to_payload()},
+                )
+            if not mcs_result.consistent:
+                logger.warning(
+                    "[%s] P2-11 Phase 6 MCS 不一致 (precheck_strict_cell_config=False, "
+                    "继续): %s",
+                    context.test_execution.id,
+                    mcs_result.reason,
+                )
+
             result_payload: Dict[str, Any] = {
                 "cdl_model_name": config.cdl_model_name,
                 "frequency_ghz": config.frequency_hz / 1e9,
@@ -735,6 +771,7 @@ class MeasureExecutor(IStepExecutor):
                 # gate; this marks the mock/bypass path + carries provenance.)
                 "path_loss_verified": path_loss_cert is not None,
                 "switch_topology": topology_result.to_payload(),
+                "mcs_consistency": mcs_result.to_payload(),
                 "sampling": {
                     "num_windows_per_azimuth": num_windows,
                     "window_duration_s": window_s,
