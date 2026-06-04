@@ -8,13 +8,13 @@
 
 ## 🎯 Current Focus
 
-**TestCase 驱动仪表配置架构 (P2-11) Phase 1+2+3+5 done + Phase 6 首条线 done (频率 / GCM .smu / switch mode / 路径边界 / **DL MIMO layers 回读校验**)。2026-05-31 核心参数驱动审计 (架构文档 §8) 把 DL 链分 A/B/C/D 类; Phase 6 一致性网首条线 (MIMO layers) 已落地 (本 PR), 剩 功率延伸 + 1 个 C 类 backlog (操作点输入参考, 待定语义; 端口路由泄漏 ✅ #1974 已修)。**P2-10 (F64 精细化) Step 1 本地半 in-progress (本 PR: .smu inventory 频率元数据)**。其余待确认 — P2-11 Phase 6 延伸 / P2-10 Step 2-3 / U-7。本地可启动。**
+**P2-11 (TestCase 驱动仪表配置架构) Phase 1/2/3/5/6 done + UXM 端口路由 path B (#1974) 收口。Phase 6 一致性网四根线 (频率 #109 + DL MIMO layers #114 + 调制阶数 #124 + 生效 MCS #126) 全部落地; UXM 端口路由/TDD/调度 path B TestCase 驱动 (后端 #127 + GUI #128) 闭环; 2026-05-31 核心参数审计 (架构文档 §8) 分 A/B/C/D 类。P2-10 (F64 精细化) Step 1/2/3 本地框架 done (#116/#125); P2-12 (SCD .smu) slice 1-4 + 扩展门 done (#116-#123) —— 三条 P2 线本地全收口, 各剩现场半 (P2-11 DL power 待操作点语义 / P2-10 现场真值 / P2-12 slice 5 SCPI 生成)。下一本地候选: DUTProfile (#1965, 三层能力交叉校验, 用户 6-01 提) 或停。本地可启动。**
 
-**2026-06-02/04 — P2-12 SCD 线本地收口**: `.smu` 命名软件掌控 (SCD 实体 + 关联 + synced projection), slice 1-4 (#116-#122) + **emulation_file 扩展 fail-loud 门 (本 PR, Codex #120 后端另一半)** done; GCM .smu 扩展校验全链闭合 (前端 #120 filter + 后端 measure gate)。只剩 slice 5 路径 a SCPI 生成 (现场 blocked)。**下一本地候选**: P2-11 Phase 6 (MCS/功率一致性网, §8 审计标"最有价值") / P2-10 Step 2-3 / DUTProfile (#1965, 用户 6-01 提)。**
+**2026-06-02/04 — P2-12 SCD 线本地收口**: `.smu` 命名软件掌控 (SCD 实体 + 关联 + synced projection), slice 1-4 (#116-#122) + **emulation_file 扩展 fail-loud 门 (#123, Codex #120 后端另一半)** done; GCM .smu 扩展校验全链闭合 (前端 #120 filter + 后端 measure gate)。只剩 slice 5 路径 a SCPI 生成 (现场 blocked)。**下一本地候选** (该快照时列): ~~P2-11 Phase 6 MCS~~ ✅ #126 / ~~P2-10 Step 2-3~~ ✅ #125 (快照后已完成) / DUTProfile (#1965, 用户 6-01 提)。真正剩余候选 = P2-11 DL power (待操作点语义) / DUTProfile; 最新见顶部 line 11。**
 
-**2026-06-04 — P2-11 Phase 6 第二根线 DL modulation 已补 (本 PR)**: `get_applied_cell_config` 读 UE `max_modulation_dl`, 请求调制阶数 > UE 上限 → fail (复用 `precheck_strict_cell_config`, `_modulation_order` 归一化容忍 SCPI 格式)。一致性网累计 = 频率 + MIMO layers + 调制阶数 + 生效 MCS (AMC off, 本 PR)。剩 Phase 6 仅 DL power (结合操作点 backlog, 有 InputLevelController 闭环坑)。**
+**2026-06-04 — P2-11 Phase 6 第二根线 DL modulation 已补 (#124)**: `get_applied_cell_config` 读 UE `max_modulation_dl`, 请求调制阶数 > UE 上限 → fail (复用 `precheck_strict_cell_config`, `_modulation_order` 归一化容忍 SCPI 格式)。一致性网累计 = 频率 + MIMO layers + 调制阶数 + 生效 MCS (AMC off, #126)。剩 Phase 6 仅 DL power (结合操作点 backlog, 有 InputLevelController 闭环坑)。**
 
-**2026-06-04 — P2-10 Step 2+3 本地框架 done (本 PR)**: Step 2 F64 per-output 输出端精细 method (`set_output_path_loss`/`set_output_gain`, 单通道 vs batch); Step 3 alignment 新鲜度 (`alignment_freshness` 解析 INFO? 标定日期 + 阈值 → stale 建议重标, precheck 上报)。F64 精细化"外部输出 + 内部校准"两面框架就位, 现场补真值 (OUTP:CON topology / INFO 格式全集 / 漂移监控)。**
+**2026-06-04 — P2-10 Step 2+3 本地框架 done (#125)**: Step 2 F64 per-output 输出端精细 method (`set_output_path_loss`/`set_output_gain`, 单通道 vs batch); Step 3 alignment 新鲜度 (`alignment_freshness` 解析 INFO? 标定日期 + 阈值 → stale 建议重标, precheck 上报)。F64 精细化"外部输出 + 内部校准"两面框架就位, 现场补真值 (OUTP:CON topology / INFO 格式全集 / 漂移监控)。**
 
 **已收口** (2026-05-28/31): P0-8 本地半 ✅ (#92-#98) + P1-16 ✅ (#99) + Docker durability ✅ (#102/#103) + **P1-17 UXM fresh-start 默认 profile ✅ (#107)** + **P2-11 架构 (#108) + Phase 1 多方频率一致性门 ✅ (#109 + Codex fix) + Phase 2 GCM .smu TestCase 驱动 ✅ (#110) + Phase 3 switch mode TestCase 驱动 ✅ (#111 + Codex 路损 mode 过滤) + Phase 5 路径 A/B 边界固化 + 暗室首测捷径修复 ✅ (#112) → P2-11 Phase 1/2/3/5 done; 2026-05-31 核心参数审计 (架构文档 §8) 揭出 **Phase 6** (B 类一致性网, 本地下一个最有价值) + 2 个 C 类 Discovered backlog (端口路由泄漏 / 操作点); 剩 Phase 4 (信号源·VNA 按需) + Phase 6 按本地优先级**。所有真 P0 (P0-3/4/5) 仍 🚧 on-site blocked (校准天线/SGH/真DUT)。
 
@@ -1072,7 +1072,7 @@ SYN, 于是每个 IP 都"alive"、每个子网都"可达"。实测连 RFC5737 TE
 
 ---
 
-### P1-16 — backend scpi-command 端点 slow-op desync (timeout_ms 透传) 🔄 Current Focus
+### P1-16 — backend scpi-command 端点 slow-op desync (timeout_ms 透传) ✅ Done (PR #99)
 
 **What**: `POST /api/v1/instruments/{cat}/scpi-command` 端点不把 `timeout_ms` 传给
 `driver._query` → 慢操作 (F64 加载后 `*OPC?`、`INP:LEV:MEAS?` / `INP:LEV:AUTOSET` 等几秒级命令)
@@ -1094,7 +1094,7 @@ SYN, 于是每个 IP 都"alive"、每个子网都"可达"。实测连 RFC5737 TE
 
 ---
 
-### P1-17 — UXM fresh-start 配置落地 (对称 P0-8: 现场不再临时配 UXM)
+### P1-17 — UXM fresh-start 配置落地 (对称 P0-8: 现场不再临时配 UXM) ✅ 本地半 Done (PR #107), 🚧 现场半 on-site
 
 **What**: 给 UXM 加"默认测试参数集 fresh-start 自动应用"那一层, 让 UXM 从开机/重连到就位是可复现的, 消除现场"快速路"(手动前面板点 / 临时 SCPI)。对称 P0-8 对 F64 做的 (默认 .smu 自动加载)。
 
@@ -1120,8 +1120,8 @@ SYN, 于是每个 IP 都"alive"、每个子网都"可达"。实测连 RFC5737 TE
 - **现场半 (下次现场)**: real UXM fresh-start 一键就位 (cell live + 对齐 F64 频率/MIMO) 无需手动前面板; .state 盘点完成 (U-7)。
 
 **依赖**: P2-1 (✅ Done)。关联: U-7 (参数集真值), P0-5 (DUT attach 用 UXM), P1-4 (repeatability)。
-**Status**: `[ ]` not started — 本地可启动 (强候选 Current Focus)。
-**Estimate**: 本地 ~1.5 day + 现场 ~0.5 day。
+**Status**: ✅ 本地半 Done — PR #107 (默认 Topology Profile fresh-start 自动应用, 对齐 F64 3600M/N78; Codex follow-up 36e9d07 给 3600 profile 显式设 `arfcn=640000`)。🚧 现场半待下次现场: real UXM fresh-start 一键就位 (cell live + 对齐 F64 频率/MIMO, 无需手动前面板) + remote `.state` 盘点 (U-7)。
+**Estimate**: 本地 ~1.5 day ✅ + 现场 ~0.5 day。
 
 ---
 
@@ -1535,7 +1535,7 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 
 ---
 
-### P2-10 — F64 工程精细化 (配置文件资产 + 外部输出 + 内部 cal 打磨)
+### P2-10 — F64 工程精细化 (配置文件资产 + 外部输出 + 内部 cal 打磨) 🔄 in-progress (本地框架 done, 现场补真值)
 
 **What**: P0-8 让 F64 first-call 链路通 (端口 / 输入参考 / 默认 .smu / 加载 gate) 之后, F64 还有一系列工程精细应用没接: remote .smu 配置文件资产的盘点/管理、外部输出端口的精细配置、内部 user alignment cal 的刷新策略。
 
@@ -1550,21 +1550,21 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 
 | Step | Subject | 本地/现场 |
 |------|---------|----------|
-| 1 🔄 | remote .smu 配置文件 inventory: 列举 remote 可用模型 (动态发现或盘点文档, 对称 UXM .state 盘点) — **本地半 done (本 PR)**: inventory 加频率元数据 (`center_frequency_mhz` + `nr_arfcn`, 从文件名 token 解析或 config 显式给), 从"名字清单"变"带频率的资产盘点", 服务 emulation_file 选择 (.smu↔TestCase 频率匹配, P2-11 Phase 2)。`parse_smu_center_freq_mhz` 抽共享 (propsim 回读 + inventory 同源)。剩: F64 MMEM 不可用 → 动态发现 blocked, **现场 .smu 资产盘点**填 config | 现场盘点 + 本地 API |
-| 2 🔄 | 外部输出端口精细配置: 输出电平/功率 method (超出当前 loss 补偿) + 物理路由 OUTP:CON 接入 topology — **本地 driver 框架 done (本 PR)**: per-output `set_output_path_loss` (单通道, vs batch set_path_loss) + `set_output_gain` (支持正增益, vs set_external_attenuators 强制衰减)。剩: OUTP:CON connector 路由 method + topology 集成 (待 topology 语义) + 现场验 | 本地 driver + 现场验 |
-| 3 🔄 | user alignment cal 刷新策略: 何时重标 (温度/时间漂移) + readiness 上报 + 漂移监控 — **本地框架 done (本 PR)**: `alignment_freshness` 解析 INFO? 标定日期 (实测 DD.MM.YYYY 格式) + `alignment_max_age_days` 阈值 → fresh/stale/unknown; precheck 上报 + stale warning 建议重标。剩: 现场确认 INFO 格式全集 + 漂移监控 (关联 operating-point backlog) | 本地框架 + 现场真值 |
+| 1 🔄 | remote .smu 配置文件 inventory: 列举 remote 可用模型 (动态发现或盘点文档, 对称 UXM .state 盘点) — **本地半 done (#116)**: inventory 加频率元数据 (`center_frequency_mhz` + `nr_arfcn`, 从文件名 token 解析或 config 显式给), 从"名字清单"变"带频率的资产盘点", 服务 emulation_file 选择 (.smu↔TestCase 频率匹配, P2-11 Phase 2)。`parse_smu_center_freq_mhz` 抽共享 (propsim 回读 + inventory 同源)。剩: F64 MMEM 不可用 → 动态发现 blocked, **现场 .smu 资产盘点**填 config | 现场盘点 + 本地 API |
+| 2 🔄 | 外部输出端口精细配置: 输出电平/功率 method (超出当前 loss 补偿) + 物理路由 OUTP:CON 接入 topology — **本地 driver 框架 done (#125)**: per-output `set_output_path_loss` (单通道, vs batch set_path_loss) + `set_output_gain` (支持正增益, vs set_external_attenuators 强制衰减)。剩: OUTP:CON connector 路由 method + topology 集成 (待 topology 语义) + 现场验 | 本地 driver + 现场验 |
+| 3 🔄 | user alignment cal 刷新策略: 何时重标 (温度/时间漂移) + readiness 上报 + 漂移监控 — **本地框架 done (#125)**: `alignment_freshness` 解析 INFO? 标定日期 (实测 DD.MM.YYYY 格式) + `alignment_max_age_days` 阈值 → fresh/stale/unknown; precheck 上报 + stale warning 建议重标。剩: 现场确认 INFO 格式全集 + 漂移监控 (关联 operating-point backlog) | 本地框架 + 现场真值 |
 
 **Acceptance**:
 - **本地**: .smu inventory API + 输出端口配置 method + user alignment 刷新策略 + 单测 (mock SCPI)。
 - **现场 (下次现场)**: user alignment cal 真值 + 输出功率校准 + .smu 资产盘点。
 
 **依赖**: P0-8 (✅ 本地半 Done)。关联: U-6 (输入参考真值), operating-point uncertainty backlog (#101)。
-**Status**: 🔄 in-progress — Step 1 本地半 done (#116): .smu inventory 频率元数据 (`center_frequency_mhz`/`nr_arfcn`) + `parse_smu_center_freq_mhz` 共享解析器。**Step 2 + Step 3 本地框架 done (本 PR)**: Step 2 per-output `set_output_path_loss`/`set_output_gain` (单通道精细, vs batch set_path_loss / 强制衰减 set_external_attenuators); Step 3 `alignment_freshness` (INFO? 标定日期解析 DD.MM.YYYY + 阈值 → fresh/stale/unknown, precheck 上报 + stale warning)。剩: Step 1 现场盘点 + Step 2 OUTP:CON topology 集成 + Step 3 现场 INFO 格式全集/漂移监控 + 现场验。
+**Status**: 🔄 in-progress — Step 1 本地半 done (#116): .smu inventory 频率元数据 (`center_frequency_mhz`/`nr_arfcn`) + `parse_smu_center_freq_mhz` 共享解析器。**Step 2 + Step 3 本地框架 done (#125)**: Step 2 per-output `set_output_path_loss`/`set_output_gain` (单通道精细, vs batch set_path_loss / 强制衰减 set_external_attenuators); Step 3 `alignment_freshness` (INFO? 标定日期解析 DD.MM.YYYY + 阈值 → fresh/stale/unknown, precheck 上报 + stale warning)。剩: Step 1 现场盘点 + Step 2 OUTP:CON topology 集成 + Step 3 现场 INFO 格式全集/漂移监控 + 现场验。
 **Estimate**: 本地 ~2 day + 现场 ~1 day。
 
 ---
 
-### P2-12 — 标准信道文件定义 (Standard Channel Definition) — 软件掌控 .smu 命名
+### P2-12 — 标准信道文件定义 (Standard Channel Definition) — 软件掌控 .smu 命名 🔄 本地收口 (slice 1-4 + 扩展门 done, slice 5 现场 blocked)
 
 **What**: 用户 2026-06-01 确立: **命名标准是我们软件的, 不是 F64 的**。软件里有一个 SCD 实体 (规范配置 `FrequencyIdentity`+CDL+MIMO+scenario + 我们掌控的标准名), 是真值; 实际 .smu 用三路之一满足: **(a) SCPI 驱动 Channel Studio 自动生成** (现场/vendor 调研) / **(b) 指导操作员手工按标准名生成** / **(c) 关联已有 .smu 到 SCD**。完整设计见 [`docs/architecture/testcase-driven-instrument-config.md`](architecture/testcase-driven-instrument-config.md) §9。
 
@@ -1576,21 +1576,21 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 
 **静态清单定位 (用户 2026-06-01)**: `available_channel_models` 不是独立手维护死清单, 而是 SCD↔文件关联的**同步投影** —— 关联即更新, 不放不存在的条目; 频率元数据来自 SCD **声明** (权威) 而非解析 (Step 1 降为关联时 cross-check)。
 
-**依赖**: P2-10 Step 1 (parser, 本 PR 引入即被 §9 定位为 cross-check) + P2-11 Phase 2 (emulation_file)。关联: DUT 自声明 (#115, 同架构)。
-**Status**: 🔄 本地收口 — 架构已确立 (§9) + slice 1 命名契约 (#116) + slice 2a SCD 实体/CRUD (#117) + slice 2b `associate_file` + synced projection 后端 (#118) + mock 死代码清理 + 数据源地图 (#119) + slice 3 [(B) emulation_file GUI 下拉 (#120) + (A) SCD 管理建库 GUI create/list/associate/delete + 后端暴露 connection.id (#121)] + **slice 4 Phase 2 引用 SCD (scd_id + 多方频率一致性网) (#122)** + **emulation_file 扩展 fail-loud 门 (GCM 只接受 .smu, Codex #120 后端另一半) (本 PR)**; **本地 slice 1-4 + 扩展门全部 done, 只剩 slice 5 路径 a SCPI 生成 (现场 blocked)**。
+**依赖**: P2-10 Step 1 (parser, #116 引入即被 §9 定位为 cross-check) + P2-11 Phase 2 (emulation_file)。关联: DUT 自声明 (#115, 同架构)。
+**Status**: 🔄 本地收口 — 架构已确立 (§9) + slice 1 命名契约 (#116) + slice 2a SCD 实体/CRUD (#117) + slice 2b `associate_file` + synced projection 后端 (#118) + mock 死代码清理 + 数据源地图 (#119) + slice 3 [(B) emulation_file GUI 下拉 (#120) + (A) SCD 管理建库 GUI create/list/associate/delete + 后端暴露 connection.id (#121)] + **slice 4 Phase 2 引用 SCD (scd_id + 多方频率一致性网) (#122)** + **emulation_file 扩展 fail-loud 门 (GCM 只接受 .smu, Codex #120 后端另一半) (#123)**; **本地 slice 1-4 + 扩展门全部 done, 只剩 slice 5 路径 a SCPI 生成 (现场 blocked)**。
 **Estimate**: 本地 ~2-3 day + 路径 a 现场。
 
-**Discovered (2026-06-02, slice 2b Codex review 期间排查 GUI 消费端)**: slice 3 比预想大且背死代码债 —— 现有唯一消费 `available_channel_models` 的 `.smu` 下拉 (`type:'channelModel'` → `fetchChannelModels` → `/instruments/channelEmulator/channel-models`) 挂在**死代码** `App.tsx::_TestConfig` (全库零渲染点) + mock 时代 `stepTemplateDefinitions`; 真实测试模块 `features/TestManagement` **从未实现**该字段 → **SCD 产物在真实 GUI 测试流程无消费端** (唯一露出 = 仪器抽屉 `ChannelModelsCard` 只读列表)。slice 3 需含: TestManagement 步骤编辑接 `/channel-models` + 清理/隔离 `_TestConfig` 死代码 + 隔离 mock (`mockDatabase.ts` TP-317/404/CTIA + `stepTemplateDefinitions`, 本次排查曾被其误导多轮; 教训见 memory feedback_distinguish_live_vs_mock_dead_code)。**进展**: 清死代码 + 数据源地图 #119 done; **(B) TestCase 选 emulation_file GUI 本 PR done** (MIMOOTAConfigForm 加 .smu 下拉, value=filename 真路径 / 显示=标准名, engine_mode=ASC 时禁用); **(A) SCD 管理建库 GUI 本 PR done**: StandardChannelDefinitionCard (create/list/associate/delete) + 后端暴露 connection.id, 挂信道仿真器抽屉 ChannelModelsCard 下方; associate 后 invalidate channel-models 让 (B) emulation_file 下拉刷新。**slice 3 完成**。
+**Discovered (2026-06-02, slice 2b Codex review 期间排查 GUI 消费端)**: slice 3 比预想大且背死代码债 —— 现有唯一消费 `available_channel_models` 的 `.smu` 下拉 (`type:'channelModel'` → `fetchChannelModels` → `/instruments/channelEmulator/channel-models`) 挂在**死代码** `App.tsx::_TestConfig` (全库零渲染点) + mock 时代 `stepTemplateDefinitions`; 真实测试模块 `features/TestManagement` **从未实现**该字段 → **SCD 产物在真实 GUI 测试流程无消费端** (唯一露出 = 仪器抽屉 `ChannelModelsCard` 只读列表)。slice 3 需含: TestManagement 步骤编辑接 `/channel-models` + 清理/隔离 `_TestConfig` 死代码 + 隔离 mock (`mockDatabase.ts` TP-317/404/CTIA + `stepTemplateDefinitions`, 本次排查曾被其误导多轮; 教训见 memory feedback_distinguish_live_vs_mock_dead_code)。**进展**: 清死代码 + 数据源地图 #119 done; **(B) TestCase 选 emulation_file GUI #120 done** (MIMOOTAConfigForm 加 .smu 下拉, value=filename 真路径 / 显示=标准名, engine_mode=ASC 时禁用); **(A) SCD 管理建库 GUI #121 done**: StandardChannelDefinitionCard (create/list/associate/delete) + 后端暴露 connection.id, 挂信道仿真器抽屉 ChannelModelsCard 下方; associate 后 invalidate channel-models 让 (B) emulation_file 下拉刷新。**slice 3 完成**。
 
-**Backlog [discovered 2026-06-03 during #120 review] — ✅ done (本 PR)**: 后端 measure precheck 给 `emulation_file` 加**扩展 fail-loud 校验** (GCM 模式只接受 `.smu`) —— 前端 filter (#120, 只列 `type==='smu'`) 是 UX 第一道防线, 但 API 直传 / 绕过前端时非 `.smu` (`.rtc` Runtime 管线 / `.asc` ASC 引擎) 仍运行时才在 F64 信道加载失败; `precheck_strict_emulation_file` 现只校验"是否指定"不校验扩展。跟 `precheck_strict_*` 同族 (防御深度), 是 Codex #120 那条的后端另一半。**实现 (本 PR)**: `evaluate_emulation_file_gate` 在"指定了文件"分支加扩展校验 (`.smu`, 大小写不敏感), strict→FAIL / opt-out→WARN (尊重 bring-up bypass 开关, per feedback_strict_gate_extend_bypass_toggle), 天然 mock-aware (校验在 `emulator_is_real` 之后, 只对真 F64), 对象是 `resolved_emulation_file` → 覆盖 scd_id 解析 + 裸路径两路; +5 单测。
+**Backlog [discovered 2026-06-03 during #120 review] — ✅ done (#123)**: 后端 measure precheck 给 `emulation_file` 加**扩展 fail-loud 校验** (GCM 模式只接受 `.smu`) —— 前端 filter (#120, 只列 `type==='smu'`) 是 UX 第一道防线, 但 API 直传 / 绕过前端时非 `.smu` (`.rtc` Runtime 管线 / `.asc` ASC 引擎) 仍运行时才在 F64 信道加载失败; `precheck_strict_emulation_file` 现只校验"是否指定"不校验扩展。跟 `precheck_strict_*` 同族 (防御深度), 是 Codex #120 那条的后端另一半。**实现 (#123)**: `evaluate_emulation_file_gate` 在"指定了文件"分支加扩展校验 (`.smu`, 大小写不敏感), strict→FAIL / opt-out→WARN (尊重 bring-up bypass 开关, per feedback_strict_gate_extend_bypass_toggle), 天然 mock-aware (校验在 `emulator_is_real` 之后, 只对真 F64), 对象是 `resolved_emulation_file` → 覆盖 scd_id 解析 + 裸路径两路; +5 单测。
 
-**Discovered (2026-06-04, during 本 PR emulation_file 扩展门)**:
-- `associate_file` 的 `vendor_associated` 路径 (路径 c) **不校验关联文件扩展** —— SCD 关联非 `.smu` (如 `.rtc`) 不在 associate 时拒绝, 要到 measure gate (本 PR) 才 fail-loud。gate 已兜底 (resolved=非.smu → FAIL), associate 时校验是"更早 fail" (符合 SCD 关联=.smu 语义)。同族防御深度前移, 规模小, deferred。
-- roadmap 详细 section stale: P1-17 (§P1-17 `[ ] not started`) 实际 #107 done; P1-16 (§P1-16 `🔄 Current Focus`) 实际 #99 done —— 底部详细 section 没跟上顶部 Current Focus 区。纯 doc consistency, 单独 chore 修 (本 PR 聚焦 P2-12, 不顺手跨线改, per feedback_d_row_stale_this_pr_reflex)。
+**Discovered (2026-06-04, during #123 emulation_file 扩展门)**:
+- `associate_file` 的 `vendor_associated` 路径 (路径 c) **不校验关联文件扩展** —— SCD 关联非 `.smu` (如 `.rtc`) 不在 associate 时拒绝, 要到 measure gate (#123) 才 fail-loud。gate 已兜底 (resolved=非.smu → FAIL), associate 时校验是"更早 fail" (符合 SCD 关联=.smu 语义)。同族防御深度前移, 规模小, deferred。
+- ~~roadmap 详细 section stale: P1-17 (§P1-17 `[ ] not started`) 实际 #107 done; P1-16 (§P1-16 `🔄 Current Focus`) 实际 #99 done —— 底部详细 section 没跟上顶部 Current Focus 区。~~ ✅ **已修 (2026-06-04 roadmap stale catch-up chore PR)**: P1-16 header → ✅ Done (#99); P1-17 header+Status → ✅ 本地半 (#107) / 🚧 现场半; P2-10/11/12 header + Status/Scope 表 "本 PR" 指代矫正成具体 PR 号 (#116/#125/#123/#124/#126/#112); P2-11 C 类 backlog count (端口路由 #1974 done → 只剩操作点) + Estimate; Summary 表从各 section status 精确重算。当时 #123 聚焦 P2-12 不顺手跨线改 (per feedback_d_row_stale_this_pr_reflex), 留给本专项 chore 收口。
 
 ---
 
-### P2-11 — TestCase 驱动的仪表配置下发架构 (单一真值源 + 多方一致性校验)
+### P2-11 — TestCase 驱动的仪表配置下发架构 (单一真值源 + 多方一致性校验) 🔄 Phase 1/2/3/5/6 done (Phase 4 按需)
 
 **What**: 确立并补全"TestCase 是测试配置单一真值源, 驱动整个仪表层级配置下发 + 下发后多方一致性 fail-loud 校验"的架构。完整设计见 [`docs/architecture/testcase-driven-instrument-config.md`](architecture/testcase-driven-instrument-config.md)。
 
@@ -1606,10 +1606,10 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 |-------|------|----------|------|
 | 1 ✅ | **多方频率一致性 fail-loud 校验** (UXM ARFCN频率 ≈ F64 .smu/.asc 频率 ≈ SA ≈ TestCase) — silent-failure 防护 (P1-8/9/12 同族), 防静默错配 — **done #109 + Codex fix** | 本地 | ⭐ 最先 |
 | 2 ✅ | **TestCase → F64 GCM .smu 联动**: `MIMOOTAConfiguration.emulation_file` 字段 + `sim_rules` 透传 + `precheck_strict_emulation_file` 严格门 (mock-aware, 真 F64 未指定 → fail-loud 不静默 fallback) + `.smu` 来源 audit — **done (本条 PR)** | 本地 | ⭐ 高 |
-| 3 ✅ | switch topology 纳入 TestCase 驱动: `switch_mode_id` 字段 (默认 "mimo_ota" 不再硬编码) + measure 透传给 `orchestrate_switch_topology` + `precheck_strict_switch_mode` 门 (有拓扑但请求 mode 不提供 → fail-loud; 无拓扑/固定布线 → warn) — **本 PR done** | 本地 | 中 |
+| 3 ✅ | switch topology 纳入 TestCase 驱动: `switch_mode_id` 字段 (默认 "mimo_ota" 不再硬编码) + measure 透传给 `orchestrate_switch_topology` + `precheck_strict_switch_mode` 门 (有拓扑但请求 mode 不提供 → fail-loud; 无拓扑/固定布线 → warn) — **#111 done** | 本地 | 中 |
 | 4 | 信号源 / VNA 纳入 TestCase 驱动 (干扰 / 在线校准) | 按需 | 低 |
-| 5 ✅ | 默认配置角色 (路径 A) 文档化 + 路径 A/B 边界代码注释固化: 架构文档 §6.1 代码锚点地图 + 三处 `路径 A/B 边界` 注释; **+ 修暗室首测捷径缺口** ("强制跳过严格门" 开关从 cal/dut 扩到覆盖全 5 道门 — GUI api.ts + 后端 CreateSessionRequest); **+ 修 Codex on #112 指出的 UXM profile isolation 注释不准** (承认 port routing/TDD/sched leak, 记 Discovered backlog) — **本 PR done** | 本地 | 贯穿 |
-| 6 ✅ | **一致性网从频率扩到 DL 吞吐链** — **DL MIMO layers (首条线 #114) + DL modulation (第二根线, 本 PR) 已实现**: `get_applied_cell_config()` 读 **UE 协商能力** `max_dl_layers` + `max_modulation_dl` + `cell_config_consistency.check_*` 判**请求 > UE 上限 → fail** + measure `precheck_strict_cell_config` 门 (UE 未 attach/mock → skip)。抓 UE 撑不住请求时 UXM 静默 clamp (4→2 层 / 256QAM→64QAM)。⚠️ Codex #114: 读 UE 能力**非** `CONF:LAY?` 配置旋钮。modulation 阶数归一化容忍 SCPI 格式差异 (`256QAM`/`QAM256`/`QPSK`), 不受 AMC 影响。**DL 生效 MCS (第三条线, 本 PR): AMC off 时 throughput 实测 mcs_dl 众数 vs 请求, clamp → fail (`check_mcs_consistency`, mock-aware + AMC on skip; 生效回读 ≠ 上两条 capability 核对)**。剩 DL power (InputLevelController 闭环改, 需操作点语义) | 本地 | ⭐ 高 (Phase 1 自然延伸) |
+| 5 ✅ | 默认配置角色 (路径 A) 文档化 + 路径 A/B 边界代码注释固化: 架构文档 §6.1 代码锚点地图 + 三处 `路径 A/B 边界` 注释; **+ 修暗室首测捷径缺口** ("强制跳过严格门" 开关从 cal/dut 扩到覆盖全 5 道门 — GUI api.ts + 后端 CreateSessionRequest); **+ 修 Codex on #112 指出的 UXM profile isolation 注释不准** (承认 port routing/TDD/sched leak, 记 Discovered backlog) — **#112 done** | 本地 | 贯穿 |
+| 6 ✅ | **一致性网从频率扩到 DL 吞吐链** — **DL MIMO layers (首条线 #114) + DL modulation (第二根线, #124) 已实现**: `get_applied_cell_config()` 读 **UE 协商能力** `max_dl_layers` + `max_modulation_dl` + `cell_config_consistency.check_*` 判**请求 > UE 上限 → fail** + measure `precheck_strict_cell_config` 门 (UE 未 attach/mock → skip)。抓 UE 撑不住请求时 UXM 静默 clamp (4→2 层 / 256QAM→64QAM)。⚠️ Codex #114: 读 UE 能力**非** `CONF:LAY?` 配置旋钮。modulation 阶数归一化容忍 SCPI 格式差异 (`256QAM`/`QAM256`/`QPSK`), 不受 AMC 影响。**DL 生效 MCS (第三条线, #126): AMC off 时 throughput 实测 mcs_dl 众数 vs 请求, clamp → fail (`check_mcs_consistency`, mock-aware + AMC on skip; 生效回读 ≠ 上两条 capability 核对)**。剩 DL power (InputLevelController 闭环改, 需操作点语义) | 本地 | ⭐ 高 (Phase 1 自然延伸) |
 
 **Acceptance**:
 - **Phase 1 (本地)**: measure/precheck 加多方频率一致性校验, mock 下 UXM/F64/TestCase 频率不一致时 FAIL; 单测覆盖一致/不一致两路。
@@ -1617,8 +1617,8 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 - **现场**: real GCM 测试一键 TestCase 驱动 UXM+F64 同频跑通。
 
 **依赖**: P0-8 (F64 默认) + P1-17 (UXM 默认, 路径 A 实现) ✅。关联: ARFCN profile/频率 audit (spawned), U-6 (输入参考真值)。
-**Status**: 🔄 Phase 1/2/3/5 done (#109/#110/#111/#112 + Codex fixes)。**2026-05-31 核心参数驱动审计 (架构文档 §8, 本 PR)** —— 用户问"除频率外哪些核心参数需 TestCase 驱动兜底", 把 DL 测量链每个参数分 **A 类** (已驱动+fail-loud) / **B 类** (已驱动但无回读校验: MIMO/MCS/功率) / **C 类** (未驱动真缺口, 均已 backlog: UXM 端口路由泄漏 + 操作点输入参考) / **D 类** (物理量不该驱动)。审计揭出 **Phase 6** (B 类一致性网)。**Phase 6 首条线 DL MIMO layers 已实现 (本 PR + Codex #114 修正)** —— UXM `get_applied_cell_config()` 读 **UE 协商能力** (非配置旋钮回读, Codex 指出后者 no-op) + `cell_config_consistency` 判请求 > UE 上限 + `precheck_strict_cell_config` 门, 抓 UE 撑不住请求层数的静默 clamp。**Phase 6 第二/三根线 DL modulation + 生效 MCS 已补**: modulation 读 UE `max_modulation_dl` 能力核对 (#124); MCS (本 PR) AMC off 时 throughput 实测 mcs_dl 众数 vs 请求 clamp → fail (`check_mcs_consistency`, mock-aware)。一致性网累计: 频率 + MIMO layers + 调制 + 生效 MCS。剩: Phase 4 (信号源·VNA 按需) + Phase 6 仅剩 DL power (结合操作点 backlog, InputLevelController 闭环坑) + 2 个 C 类 Discovered backlog (待定语义)。
-**Estimate**: Phase 1 ~0.5d ✅ + Phase 2 ~1.5d ✅ + Phase 3 ✅ + Phase 5 ✅ + Phase 6 首条线 ✅ (MCS/功率延伸待启动) + Phase 4 按需。
+**Status**: 🔄 Phase 1/2/3/5 done (#109/#110/#111/#112 + Codex fixes)。**2026-05-31 核心参数驱动审计 (架构文档 §8, #114)** —— 用户问"除频率外哪些核心参数需 TestCase 驱动兜底", 把 DL 测量链每个参数分 **A 类** (已驱动+fail-loud) / **B 类** (已驱动但无回读校验: MIMO/MCS/功率) / **C 类** (未驱动真缺口, 均已 backlog: UXM 端口路由泄漏 + 操作点输入参考) / **D 类** (物理量不该驱动)。审计揭出 **Phase 6** (B 类一致性网)。**Phase 6 首条线 DL MIMO layers 已实现 (#114 + Codex 修正)** —— UXM `get_applied_cell_config()` 读 **UE 协商能力** (非配置旋钮回读, Codex 指出后者 no-op) + `cell_config_consistency` 判请求 > UE 上限 + `precheck_strict_cell_config` 门, 抓 UE 撑不住请求层数的静默 clamp。**Phase 6 第二/三根线 DL modulation + 生效 MCS 已补**: modulation 读 UE `max_modulation_dl` 能力核对 (#124); MCS (#126) AMC off 时 throughput 实测 mcs_dl 众数 vs 请求 clamp → fail (`check_mcs_consistency`, mock-aware)。一致性网累计: 频率 + MIMO layers + 调制 + 生效 MCS。**UXM 端口路由/TDD/调度 path B 驱动 (#1974, 后端 #127 + GUI #128) 已收口** (C 类端口路由泄漏从 backlog 转 done)。剩: Phase 4 (信号源·VNA 按需) + Phase 6 仅剩 DL power (结合操作点 backlog, InputLevelController 闭环坑) + 1 个 C 类 Discovered backlog (操作点输入参考, 待定语义)。
+**Estimate**: Phase 1 ~0.5d ✅ + Phase 2 ~1.5d ✅ + Phase 3 ✅ + Phase 5 ✅ + Phase 6 (layers/调制/MCS) ✅ (剩 DL power, 待操作点语义) + Phase 4 按需。
 
 ---
 
@@ -1971,42 +1971,42 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 - `[discovered 2026-05-28 post-P0-8 review]` **InputLevelController: cal-based feed-forward 粗设 + autoset 兜底验证 (hybrid)**. 当前是纯闭环 — UXM 起手 -10dBm → F64 AUTOSET → measure → 不在窗口调 UXM 重试 (最多 5 轮, 每轮 ~3-5s SCPI)。如果有 (a) UXM 输出 cal、(b) UXM-to-F64 cable_loss cal、(c) signal structure PAPR, 就能一次性算 `F64_input_avg = UXM_dBm - cable_loss` + `crest = PAPR` → `INP:LEV:AMP:CH` + `INP:CRE:SET` 粗设 → `measure_input` 一轮校验 (不 autoset) → 在窗口 + clipping OK 直接锁定; 偏差大才退到现有 autoset 闭环兜底。**核心**: 闭环不替, 给"粗设"路径并接 cal 漂移监控副产物 — (粗设值 - 实测值) 写遥测, 持续累计 = cable bend / 接头老化 / cross-band 误差的可观测信号, 知道 cable cal 该重标。GPS+末段制导哲学。依赖下一条的 UXM-to-F64 cable_loss cal 基础设施。
 - `[discovered 2026-05-28 post-P0-8 review]` **多端口 MIMO input 不一致 — imbalance metric + 容忍带 + cable balance cal**. 3600M 4x4 各 input 累加 ±1-2.5 dB imbalance 是物理必然 (cable 长度/质量 ±0.5-1dB + UXM TX port ±0.3dB + F64 ADC 增益 ±0.5dB + 接头老化 ±0.2dB + 测量噪声 ±0.1-0.3dB)。当前 `_measure_and_check_window` 任一 input 越界 → strict 整体 fail, 0.3 dB 边缘越界也死, 反而不科学 — 缺 imbalance 概念。三段递进: **(1) 本地 ~半天**: 加 `imbalance_dB = max(avg) - min(avg)` 写 `result_payload["input_level_calibration"]`, soft 窗口 + balance 容忍带 (e.g. <2dB 收敛, 0.3-1dB 越界 marginal warning, >1dB fail); **(2) 现场+本地**: 新 cal cert 类型 `CableBalanceCalibration{cable_loss_by_port_db: Dict[int, float]}`, 现场用 SA/VNA 测一次落库, 上一条 feed-forward 用 per-port cable_loss 取代 chamber-avg; **(3) 长期**: cal 漂移监控持续 N 次差异中位数 > 阈值 → 主动告警操作员。CTIA MPAC OTA 标准做法, 我们当前缺。
 - `[discovered 2026-05-28 post-P0-8 review]` **operating point measurement uncertainty 进报告 uncertainty budget**. AUTOSET **不破坏任何 cal cert** (path-loss / F64 user-alignment / UXM 输出 cal 都不被写脏 —— AUTOSET 只调单 input 前端 PGA 挡位, F64 内部映射保证测出的 dBm 仍是正确绝对值, 不动 channel-to-channel 关系也不动 output 端绝对功率), 但 AUTOSET 后 F64 处于一个具体 PGA 挡位, 该挡位的 absolute 精度继承 factory ADC cal 的 ±0.5-1 dB 不确定性 + AUTOSET 单次 measurement noise ±0.3 dB。当前 reference/measure 报告把 RSRP / 吞吐当确定值呈现, 没把这部分不确定性跟 path-loss cal / SA cal 不确定性并联累加进 combined measurement uncertainty budget (报告里 "RSRP ±0" 是骗人, 实际应是 combined U)。应: reference/measure phase 输出携带 operating-point uncertainty 分量, report phase 按 GUM 累加成 combined U (k=2)。模式上 "测试前 setup + 测试中 frozen PGA" 是 RF 标准做法 (等同 SA 测前设 ref level), **不算测试中扰动**; 但记两个边界: (a) **严格 PFS / PWS 未来场景** AUTOSET 改 PGA 可能引入 group-delay→phase shift, 须 cal 后不动 PGA 或 re-cal phase (当前 power-only PFS 不受影响, TR 37.977 F.2); (b) **VRT 跨场景切 cell config** 时 PAPR 漂 → operating point 需 re-setup (VRT 当前未接 InputLevelController, 接入时一起做)。另可加 idempotency gate (setup 过 + 同 cell config 跳过) 防 azimuth loop 内误调 AUTOSET 污染跨 azimuth 可比性。
-- `[discovered 2026-05-31 during P2-11 Phase 5]` **UXM 默认 topology profile 字段泄漏进 path B** (Codex on PR #112) — **✅ done 2026-06-04 (本 PR, 方案 b)**. HAL-init 经 `apply_topology_profile → set_cell_config(profile.to_config_dict())` 把 profile 的 `mimo_port_preset` / `tdd_pattern` / `sched_algo` / `csi_rs_ports` 落到 UXM 硬件; measure (path B) 的 `set_cell_config` 只传 frequency/ARFCN/BW/SCS/band/`mimo_layers`/power, **不覆盖上述字段** → 它们残留进正式测试 (如 2x2 TestCase 跑在残留的 4x4 端口路由上)。频率/ARFCN/MIMO layers 已 TestCase 驱动, 但 port routing / TDD / scheduler 既没被 path B 驱动也没被 reset。**待定方向 (需用户定 port-routing 语义)**: (a) measure 从 `mimo_layers` 派生并传 `mimo_port_preset` (2→"2x2"/4→"4x4"/1→"siso") + TDD/sched 补成 TestCase 字段或显式 reset; 或 (b) `MIMOOTAConfiguration` 直接加这些字段。⚠️ 注意 layers≠preset 在某些 diversity 配置下合法, 不能盲目自动派生。属 P2-11 同族 (TestCase 单一真值源驱动) 的下一块。Phase 5 PR 已把三处误称"天然分开"的注释改准 (承认 leak)。**实现 (本 PR)**: 用户 2026-06-04 选**方案 b** —— `MIMOOTAConfiguration` 加 `mimo_port_preset`/`sched_algo`/`csi_rs_ports` (`tdd_pattern`/`tdd_period` 已有), measure 经 `_build_pcell_cell_config` 显式传给 set_cell_config (set_cell_config 早已支持这些 key, 只是 measure 没传); `csi_rs_ports=None` 不放进 dict (缺省哨兵, 避免 SCPI 写 "None"); 默认对齐内置 profile (backward-compat); **不**从 layers 自动派生 (尊重 diversity layers≠preset)。+9 单测。**GUI 入口 (后续 GUI PR)**: MIMOOTAConfigForm 暴露 mimo_port_preset (Select siso/2x2/4x4/2x2_alt) / sched_algo / csi_rs_ports, 都可空 (留空=用 profile)。注: 上文"默认对齐 profile (backward-compat)"是 cf97251 初版述, Codex P1 #127 后**默认实为 None** (= 未指定, 不覆盖旧 saved 数据)。tsc + 浏览器 smoke 验证渲染+选值。**#1974 GUI 闭环。**
+- `[discovered 2026-05-31 during P2-11 Phase 5]` **UXM 默认 topology profile 字段泄漏进 path B** (Codex on PR #112) — **✅ done 2026-06-04 (#127 后端 + #128 GUI, 方案 b)**. HAL-init 经 `apply_topology_profile → set_cell_config(profile.to_config_dict())` 把 profile 的 `mimo_port_preset` / `tdd_pattern` / `sched_algo` / `csi_rs_ports` 落到 UXM 硬件; measure (path B) 的 `set_cell_config` 只传 frequency/ARFCN/BW/SCS/band/`mimo_layers`/power, **不覆盖上述字段** → 它们残留进正式测试 (如 2x2 TestCase 跑在残留的 4x4 端口路由上)。频率/ARFCN/MIMO layers 已 TestCase 驱动, 但 port routing / TDD / scheduler 既没被 path B 驱动也没被 reset。**待定方向 (需用户定 port-routing 语义)**: (a) measure 从 `mimo_layers` 派生并传 `mimo_port_preset` (2→"2x2"/4→"4x4"/1→"siso") + TDD/sched 补成 TestCase 字段或显式 reset; 或 (b) `MIMOOTAConfiguration` 直接加这些字段。⚠️ 注意 layers≠preset 在某些 diversity 配置下合法, 不能盲目自动派生。属 P2-11 同族 (TestCase 单一真值源驱动) 的下一块。Phase 5 PR 已把三处误称"天然分开"的注释改准 (承认 leak)。**实现 (#127)**: 用户 2026-06-04 选**方案 b** —— `MIMOOTAConfiguration` 加 `mimo_port_preset`/`sched_algo`/`csi_rs_ports` (`tdd_pattern`/`tdd_period` 已有), measure 经 `_build_pcell_cell_config` 显式传给 set_cell_config (set_cell_config 早已支持这些 key, 只是 measure 没传); `csi_rs_ports=None` 不放进 dict (缺省哨兵, 避免 SCPI 写 "None"); 默认对齐内置 profile (backward-compat); **不**从 layers 自动派生 (尊重 diversity layers≠preset)。+9 单测。**GUI 入口 (#128)**: MIMOOTAConfigForm 暴露 mimo_port_preset (Select siso/2x2/4x4/2x2_alt) / sched_algo / csi_rs_ports, 都可空 (留空=用 profile)。注: 上文"默认对齐 profile (backward-compat)"是 cf97251 初版述, Codex P1 #127 后**默认实为 None** (= 未指定, 不覆盖旧 saved 数据)。tsc + 浏览器 smoke 验证渲染+选值。**#1974 GUI 闭环。**
 - `[discovered 2026-06-01 during P2-11 Phase 6, 用户提出]` **DUT 自声明能力文件 (declared capability) + 三层能力交叉校验**. Phase 6 从 UXM `query_ue_capability()` 拿 UE **协商**能力 (max_dl_layers) 做下发后校验 —— 但这是 **attach 之后**才有的运行时值, 规划 / precheck 阶段 (未 attach / 未上硬件) 拿不到。**用户提出**: 加一个**用户可填写 / 编辑的 DUT 自声明文件** (DUT capability profile: max DL/UL layers、支持频段、最大调制、UE category、双工等), 测试**从这个自声明开始了解 DUT 能力** —— 早在 attach 前就能拿 TestCase 跟声明能力比 (e.g. TestCase 请求 4 层但 DUT 声明 max 2 → 提前 fail, 不浪费一次真跑)。**最终准确能力仍以 UXM (或其它综测仪) 上报参数为准** (`query_ue_capability`): 自声明 = "expected/spec", UXM 上报 = "actual/negotiated", 两者**交叉校验** (不一致 = DUT 实际行为跟它的 spec 声明不符, 本身是有用发现)。**三层能力**: 声明 (自声明文件, 规划期) → 协商 (UXM `query_ue_capability`, attach 后, Phase 6 用) → 运行时 (CSI RI, 测量中)。设计方向: 新建 `DUTProfile` 实体 (平行于 `LabProfile` 之于 chamber), GUI 让操作员填 / 编辑, precheck 早期拿它校验 TestCase, attach 后跟 UXM 上报交叉核对。把 D 类"DUT config (操作员 attach 时给)"从临时输入升级成**结构化可预声明 + 可校验**。属 P2-11 同族, deferred 待启动。
 
 ---
 
 ## 📊 Summary
 
-> Counts as of 2026-05-27 (post P1-11~15 #71/#79/#80/#81/#83/#86/#88 + 5/27 现场 triage
-> 3 新项: P0-8 / P1-16 / P2-9)。**2026-05-29 update**: P0-8 本地半 / P1-16 (#99) / Docker
-> durability (#102/#103) 全收口; 新增 **P1-17** (UXM 配置落地) + **P2-10** (F64 精细化) +
-> **U-7** (UXM 真值)。⚠️ 下方数字表为 5/27 快照, **未含 2026-05-29 新增 3 项, 计数待下次
-> weekly review 从各条 status 精确重算** (避免在 stale 基数上 delta 算错)。Full-sweep flaky
-> count remains **0**。
+> **Counts 重算 2026-06-04** (roadmap stale catch-up chore): 下方表已从各 ### P section 当前
+> status 精确重算, 口径 = roadmap P 项 (P2-7 已 promoted 到 P1-10, 计入非 open)。修正前 5/27 快照
+> 漏计 2026-05-29 后新增项 → P1 16→**17** total (补 P1-17), P2 8→**12** total (补 P2-9/10/11/12),
+> Total open 11→**14**; Done 口径从混合 D-row 计数改为 P 项完成数 (45→**36**)。天数列因新增项
+> estimate 散落各 section 未逐项重算 (见各 section Estimate)。Full-sweep flaky count remains **0**。
 >
 > **5/27 现场**: first-call PDF **未产出** (又消耗在 F64 driver 层, 用户授权修), 但把两天的 F64
 > blocker 根因坐实并真机验证修法 → 收敛为**本地可启动**的 P0-8 (port 3334 + 输入信号参考/crest +
 > 加载 gate + 默认 3600M .smu)。另开 P1-16 (scpi-command desync, 本地) + P2-9 (EMCenter switch,
 > 调研+现场) + U-5 (转台无结论) + U-6 (F64 输入参考真值)。
 >
-> 11 个 open items: **不再全部 blocked** —— **P0-8 + P1-16 本地可启动** (5/27 当时 Current Focus
-> = P0-8; 现 P0-8 本地半 / P1-16 均已 merged, 权威现状见顶部 Current Focus 段); P2-9 需 offline 调研 + 现场;
-> 其余 7 项 (3 × on-site P0-3/4/5 + P1-2 + P1-4 + P1-5 on-site half + P2-4) 仍 on-site-blocked;
-> P1-6 ⏸️ incident-conditional hold (trigger = 真 idle-close, 当前没证据, 仍计 open)。下一轮本地
-> audit/manual 再挖到 = candidate for **P1-18** (P1-17 已于 2026-05-29 分配给 UXM fresh-start 配置落地)。
+> 14 open items 现状 (2026-06-04): **本地进行中** = P2-10 (F64 精细化, Step 1/2/3 本地框架 done)
+> + P2-11 (TestCase 驱动, Phase 1/2/3/5/6 done, 剩 DL power) + P2-12 (SCD .smu, slice 1-4 done,
+> 剩 slice 5 现场); P2-9 (EMCenter switch) offline 调研可先做。**on-site-blocked (9)**: P0-3/4/5
+> + P0-8 现场半 + P1-2 + P1-4 + P1-5 现场半 + P1-17 现场半 + P2-4。**P1-6** ⏸️ incident-conditional
+> hold (trigger = 真 idle-close, 当前没证据, 仍计 open)。下一轮本地 audit/manual 再挖到 =
+> candidate for **P1-18**。权威现状见顶部 Current Focus 段。
 >
 > (历史) P1-12 兜底标未验证 / P1-13 子网假阳性 / P1-14 mock 探针拒绝 / P1-15 preflight canary 全
 > Done; 已知静默兜底扫净 + readiness 假阳性已修 + preflight 抗代理/VPN。详见 Current Focus 段。
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
-| ✅ Done | 45 | — | — |
-| 🔴 P0 (first-call critical) | 4 open / 8 total | 6 days | 4.5 days |
-| 🟠 P1 (confidence) | 5 open / 16 total | 3.5 days | 2 days |
-| 🟡 P2 (abstraction debt) | 2 open / 8 total | 1.5 days | 1 day |
+| ✅ Done | 36 | — | — |
+| 🔴 P0 (first-call critical) | 4 open / 8 total | ~6 days | ~4.5 days |
+| 🟠 P1 (confidence) | 5 open / 17 total | 见各 section | 见各 section |
+| 🟡 P2 (abstraction debt) | 5 open / 12 total | 见各 section | 见各 section |
 | 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
-| **Total open** | **11** | **~11 days** | **7.5 days** |
+| **Total open** | **14** | 见各 section | — |
 
 ---
 
