@@ -60,6 +60,62 @@ class TestEmulationFileGate:
         )
         assert d.action == GATE_FAIL
 
+    # ---- P2-12 (Codex #120 后端另一半): GCM 只接受 .smu 扩展 ----
+
+    def test_real_rtc_ext_strict_fails(self):
+        # 真 F64 + GCM + 指定了 .rtc (Runtime 管线, 非 GCM 原生) + strict → FAIL。
+        # 前端 #120 已 filter type=='smu', 但 API 直传 / 绕过前端时进得来。
+        d = evaluate_emulation_file_gate(
+            emulator_is_real=True,
+            emulation_file=r"D:\packs\CDLC_3500M.rtc",
+            strict=True,
+        )
+        assert d.action == GATE_FAIL
+        assert d.should_fail
+        assert d.message and ".smu" in d.message and ".rtc" in d.message
+
+    def test_real_asc_ext_strict_fails(self):
+        # 真 F64 + GCM + 指定了 .asc (ASC 引擎文件) + strict → FAIL
+        d = evaluate_emulation_file_gate(
+            emulator_is_real=True,
+            emulation_file="/scenarios/umi_los.asc",
+            strict=True,
+        )
+        assert d.action == GATE_FAIL
+        assert d.message and "umi_los.asc" in d.message
+
+    def test_real_non_smu_ext_optout_warns(self):
+        # opt-out (bring-up): 错扩展降级 warning 放行, 不 FAIL (尊重 bypass 开关,
+        # feedback_strict_gate_extend_bypass_toggle)。
+        d = evaluate_emulation_file_gate(
+            emulator_is_real=True,
+            emulation_file=r"D:\packs\x.rtc",
+            strict=False,
+        )
+        assert d.action == GATE_WARN_FALLBACK
+        assert d.should_warn
+        assert d.message and ".rtc" in d.message
+
+    def test_mock_non_smu_ext_proceeds(self):
+        # mock-aware: mock 不真加载, 错扩展运行时不会失败 → PROCEED (不进扩展校验)。
+        # 钉死扩展校验在 emulator_is_real 之后, mock 路径不受影响。
+        d = evaluate_emulation_file_gate(
+            emulator_is_real=False,
+            emulation_file=r"D:\packs\x.rtc",
+            strict=True,
+        )
+        assert d.action == GATE_PROCEED
+        assert not d.should_fail and not d.should_warn
+
+    def test_uppercase_smu_ext_proceeds(self):
+        # 扩展大小写不敏感: .SMU 同 .smu → PROCEED (Windows 路径常见大写)
+        d = evaluate_emulation_file_gate(
+            emulator_is_real=True,
+            emulation_file=r"D:\Packs\CDLC_3600M.SMU",
+            strict=True,
+        )
+        assert d.action == GATE_PROCEED
+
 
 class TestEmulationFileSchemaFields:
     def test_defaults(self):
