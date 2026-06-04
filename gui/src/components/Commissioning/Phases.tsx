@@ -1,6 +1,8 @@
 import { Stack, Text, Alert, List, ThemeIcon, Table, Group, Button, Card, Badge, Loader } from '@mantine/core'
 import { IconCheck, IconX, IconInfoCircle, IconAntenna, IconRotate3d, IconAlertTriangle } from '@tabler/icons-react'
 
+import { DUTCapabilityCrosscheckCard } from './DUTCapabilityCrosscheckCard'
+
 export function PrecheckPhase({ data }: { data: any }) {
   if (!data) return <Text c="dimmed">No data</Text>
   
@@ -55,6 +57,9 @@ export function PrecheckPhase({ data }: { data: any }) {
           </List>
         </Alert>
       )}
+
+      {/* 阶段 4: DUT 声明 vs 实测协商交叉核对 + operator 显式反写 */}
+      <DUTCapabilityCrosscheckCard data={data} />
 
       <Card withBorder>
         <Text fw={500} mb="sm">预检详情</Text>
