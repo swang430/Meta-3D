@@ -11,10 +11,11 @@
  */
 import type { ReactNode } from 'react'
 import { Container, Stack, Tabs, Title, Group, Badge } from '@mantine/core'
-import { IconAdjustments, IconTerminal, IconTool, IconPlayerPlay } from '@tabler/icons-react'
+import { IconAdjustments, IconTerminal, IconTool, IconPlayerPlay, IconRotate } from '@tabler/icons-react'
 
 import { SequenceRunnerPanel } from './SequenceRunnerPanel'
 import { CommissioningAdhocPanel } from './CommissioningAdhocPanel'
+import { PositionerControlPanel } from './PositionerControlPanel'
 
 export function DiagnosticsPage({ monitoringSlot }: { monitoringSlot?: ReactNode }) {
   return (
@@ -33,6 +34,9 @@ export function DiagnosticsPage({ monitoringSlot }: { monitoringSlot?: ReactNode
             <Tabs.Tab value="adhoc_phase" leftSection={<IconAdjustments size={14} />}>
               单阶段 ad-hoc
             </Tabs.Tab>
+            <Tabs.Tab value="positioner" leftSection={<IconRotate size={14} />}>
+              转台控制
+            </Tabs.Tab>
             {monitoringSlot && (
               <Tabs.Tab value="demo_playback" leftSection={<IconPlayerPlay size={14} />}>
                 演示回放
@@ -45,6 +49,9 @@ export function DiagnosticsPage({ monitoringSlot }: { monitoringSlot?: ReactNode
           </Tabs.Panel>
           <Tabs.Panel value="adhoc_phase" pt="md">
             <CommissioningAdhocPanel />
+          </Tabs.Panel>
+          <Tabs.Panel value="positioner" pt="md">
+            <PositionerControlPanel />
           </Tabs.Panel>
           {monitoringSlot && (
             <Tabs.Panel value="demo_playback" pt="md">
