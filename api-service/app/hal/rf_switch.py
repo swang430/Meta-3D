@@ -134,22 +134,26 @@ class EtslSwitchDriver(RfSwitchDriver):
     - 双槽卡 (SP6T) 用两槽中靠前的槽号寻址 (文档 p5)。
 
     现场未证实项 (做成 config 可调, 默认按权威文档; 现场只调配置不改代码, 同 P0-8 哲学):
-    - ``port``: TCP 端口号三份在仓文档都没有 (在未到手的主手册 399342)。默认占位, 现场实测 /
-      查机箱触摸屏 Info 界面填 binding connection_params.port; 候选见调研文档。
+    - ``port``: 官方手册 (主手册 399342 + SCPI 命令文档) 均不写 LAN 端口 (ETS 系统性不文档化)。
+      默认用 SCPI 行业标准 raw-socket 端口 5025 (IANA/Keysight 标准, EMCenter 命令是裸 SCPI 风格,
+      有依据)。现场试序 5025 -> 5024 (SCPI-telnet) -> 23; 不通切串口 plan B (见调研文档)。真实值
+      查机箱触摸屏 Configuration Screen 后填 binding connection_params.port。
     - ``command_style``: "raw" (默认, 裸命令, 符合文档) | "verbose" (回退 Write/Query 包装,
       仅当 raw 现场无响应时试; 无文档依据)。
     - ``line_terminator``: "cr" (默认, 符合文档) | "lf" | "crlf"。
     """
 
-    # 未经文档证实的占位端口; 真实值现场实测后填 binding connection_params.port。
-    # 调研推断候选: 9221 / 5025 / 2001 (均未证实, 见调研文档)。
-    _DEFAULT_PORT_UNVERIFIED = 2001
+    # LAN socket 端口: 官方主手册 399342 + SCPI 命令文档均不写 (ETS 系统性不文档化)。默认用 SCPI
+    # 行业标准 raw-socket 端口 5025 (IANA/Keysight 标准; EMCenter 命令是裸 SCPI 风格, 有依据非瞎猜)。
+    # 现场试序 5025 -> 5024 (SCPI-telnet) -> 23; 不通切串口 plan B (tcp_serial_redirect 桥
+    # RS-232 9600 8N1 -> TCP, driver 直接连该 TCP 口)。真实值填 binding connection_params.port。
+    _DEFAULT_PORT = 5025
     _TERMINATOR_MAP = {"cr": "\r", "lf": "\n", "crlf": "\r\n"}
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         self._ip = config.get("ip_address", "127.0.0.1")
-        self._port = int(config.get("port") or self._DEFAULT_PORT_UNVERIFIED)
+        self._port = int(config.get("port") or self._DEFAULT_PORT)
         self._command_style = str(config.get("command_style") or "raw").lower()
         self._line_terminator = self._TERMINATOR_MAP.get(
             str(config.get("line_terminator", "cr")).lower(), "\r"
