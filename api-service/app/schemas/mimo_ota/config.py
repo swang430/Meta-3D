@@ -203,6 +203,19 @@ class MIMOOTAConfiguration(BaseModel):
     harq_processes: int = 16
     stat_count: int = 5000
 
+    # === UXM 端口路由 / 调度 TestCase 驱动 (P2-11 #1974, 2026-06-04) ===
+    # path B (正式测试) measure 显式驱动这些, 避免残留 HAL-init 默认 topology profile 的
+    # 值 (如 2x2 TestCase 跑在残留的 4x4 端口路由上, 跟频率/MCS 错配同等危害)。
+    # ⚠️ 默认 None = "TestCase 未指定" (Codex P1 #127): measure **None 时不传**
+    # set_cell_config → 保持 HAL profile, 旧 saved case (没这些字段, 反序列化得 None) 不被
+    # 默认值覆盖 (否则旧 4x4 case 被默认 "2x2" 强制成 2x2 路由 → 静默 layer/port mismatch)。
+    # 显式给才驱动 (堵残留)。⚠️ 不从 mimo_layers 自动派生 (diversity 配置 layers≠preset
+    # 合法) —— 用户 2026-06-04 选方案 b。非法 preset 在 measure 前置 fail-loud (Codex P2
+    # #127)。tdd_pattern/tdd_period 不在这里 (已由 configure_mac_throughput_test 驱动)。
+    mimo_port_preset: Optional[str] = None  # siso / 2x2 / 4x4 / 2x2_alt
+    sched_algo: Optional[str] = None  # PDSCH 调度算法 (e.g. FULLBUFFER)
+    csi_rs_ports: Optional[int] = None  # CSI-RS 端口数
+
     # === Channel generation engine ===
     engine_mode: str = "mimo_first_asc"
     # Allowed: "mimo_first_asc" | "keysight_gcm" | "external_asc"
