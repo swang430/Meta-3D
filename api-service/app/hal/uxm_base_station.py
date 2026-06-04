@@ -504,10 +504,12 @@ class RealUxmDriver(BaseStationDriver):
         2 → 必被静默 clamp, 吞吐其实 2 层却当 4 层测。consistency helper 判
         `请求 > UE 上限 → fail-loud`。
 
-        UE 未 attach / firmware 不支持 UEINFO (mock / dry-run 无真 DUT) → max_dl_layers
-        None → 返回 None (无法核对, 校验跳过, 同 Phase 1 mock-skip)。DL power 不核对
-        (InputLevelController 闭环合法改它); 生效 MCS index 受 AMC 浮动留延伸 —— 但 UE 的
-        DL 调制能力上限 (ue_max_modulation_dl) 这里一并读, 它是 UE 固有能力不受 AMC 影响。
+        UE 未 attach / firmware 不支持 UEINFO (mock / dry-run 无真 DUT) → layers 和
+        modulation 能力**都**不可用 → 返回 None (整体跳过, 同 Phase 1 mock-skip)。Codex on
+        PR #124: 任一能力可用就返回对象 (per-field None semantics), 不能因 layers 缺失就丢
+        掉可用的 modulation 结果 (否则 256QAM 请求在 64QAM UE 上漏检)。DL power 不核对
+        (InputLevelController 闭环合法改它); 生效 MCS index 受 AMC 浮动留延伸 —— UE DL 调制
+        能力上限 (ue_max_modulation_dl) 这里一并读, 它是 UE 固有能力不受 AMC 影响。
         """
         try:
             cap = await self.query_ue_capability()
@@ -515,12 +517,16 @@ class RealUxmDriver(BaseStationDriver):
             logger.warning("[UXM] get_applied_cell_config: query_ue_capability 失败: %s", e)
             return None
         max_dl = cap.get("max_dl_layers")
-        if max_dl is None:  # UE 未 attach / firmware 不支持 → 无法核对, 跳过
+        max_mod = cap.get("max_modulation_dl")
+        # Codex on PR #124: 两个能力独立可核对 —— 只有 **都** 不可用 (UE 未 attach /
+        # firmware 全不支持) 才整体 None。layers 查询失败但 modulation 成功时仍返回带
+        # ue_max_modulation_dl 的对象, 否则 modulation 校验被这个 early return 静默跳过
+        # (256QAM 请求在 64QAM UE 上不 fail-loud)。各字段 None → check 独立跳过该项。
+        if max_dl is None and max_mod is None:
             return None
         return AppliedCellConfig(
-            ue_max_dl_layers=int(max_dl),
-            # P2-11 Phase 6 延伸: UE 协商的 DL 调制能力上限 (None → check 跳过该项)。
-            ue_max_modulation_dl=cap.get("max_modulation_dl"),
+            ue_max_dl_layers=int(max_dl) if max_dl is not None else None,
+            ue_max_modulation_dl=max_mod,
         )
 
     # ===================================================================

@@ -169,6 +169,18 @@ class TestConsistencyLogic:
         )
         assert not bad.consistent
 
+    def test_layers_none_modulation_still_checked(self):
+        # Codex on PR #124: layers 不可核对 (None) 不能连累 modulation 校验 —— 请求 256QAM
+        # 但 UE 只 64QAM 仍要 fail (layers 字段跳过, modulation 字段独立判)。
+        r = check_cell_config_consistency(
+            requested_mimo_layers=4,
+            requested_modulation="256QAM",
+            applied=AppliedCellConfig(ue_max_dl_layers=None, ue_max_modulation_dl="64QAM"),
+        )
+        assert not r.consistent
+        assert len(r.mismatches) == 1
+        assert r.mismatches[0].field == "modulation"
+
 
 class TestUxmGetApplied:
     def _drv(self):
@@ -219,6 +231,26 @@ class TestUxmGetApplied:
         )
         applied = await drv.get_applied_cell_config()
         assert applied is not None and applied.ue_max_modulation_dl is None
+
+    async def test_layers_missing_but_modulation_available(self):
+        # Codex on PR #124: layers 能力查询失败/不支持但 modulation 可用 → 不能整体 None
+        # (否则 modulation 校验被静默跳过)。返回 ue_max_dl_layers=None + 可用的 modulation。
+        drv = self._drv()
+        drv.query_ue_capability = _async_ret(
+            {"max_dl_layers": None, "max_modulation_dl": "64QAM", "source": "real_ue"}
+        )
+        applied = await drv.get_applied_cell_config()
+        assert applied is not None
+        assert applied.ue_max_dl_layers is None
+        assert applied.ue_max_modulation_dl == "64QAM"
+
+    async def test_both_capabilities_missing_returns_none(self):
+        # layers 和 modulation 都不可用 → 整体 None (整体跳过, 同 Phase 1 mock-skip)
+        drv = self._drv()
+        drv.query_ue_capability = _async_ret(
+            {"max_dl_layers": None, "max_modulation_dl": None, "source": "unavailable"}
+        )
+        assert await drv.get_applied_cell_config() is None
 
 
 class TestModulationOrder:
