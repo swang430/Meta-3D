@@ -386,9 +386,16 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self._active_alignment: Optional[Dict[str, Any]] = None
         # P2-10 Step 3: user alignment 新鲜度阈值 (天)。alignment 补偿随温度/时间漂移,
         # 超过阈值 → precheck 标 stale 建议重标。lab 维护策略, connection_params override。
-        self._alignment_max_age_days: int = int(
-            config.get("alignment_max_age_days", 30)
-        )
+        # Codex on PR #125: operator 清空该 optional override 时 connection_params 会留
+        # null/"" (key 在但值空, 不走 .get 默认) → int(None)/int("") 崩 driver 构造, 一个
+        # 可选设置拖垮整个 CE driver。容错回退默认 30 (非法字符串同理)。
+        _raw_max_age = config.get("alignment_max_age_days")
+        try:
+            self._alignment_max_age_days: int = (
+                int(_raw_max_age) if _raw_max_age not in (None, "") else 30
+            )
+        except (ValueError, TypeError):
+            self._alignment_max_age_days = 30
 
         # PyVISA 资源句柄
         self._visa_resource = None

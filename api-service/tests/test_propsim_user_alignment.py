@@ -425,3 +425,23 @@ class TestAlignmentFreshness:
         drv, _ = _make_driver()
         r = drv.alignment_freshness("29.01.2024", today=date(2024, 2, 8), max_age_days=5)
         assert r["freshness"] == "stale" and r["max_age_days"] == 5
+
+    def test_max_age_blank_override_falls_back_to_default(self):
+        # Codex on PR #125: operator 清空 optional override → connection_params 留 null/""
+        # → 不能崩 driver 构造, 回退默认 30。
+        from datetime import date
+        for blank in (None, ""):
+            drv = RealPropsimF64Driver("propsim-test", {"alignment_max_age_days": blank})
+            assert drv._alignment_max_age_days == 30
+            r = drv.alignment_freshness("29.01.2024", today=date(2024, 2, 8))
+            assert r["max_age_days"] == 30 and r["freshness"] == "fresh"
+
+    def test_max_age_invalid_string_falls_back_to_default(self):
+        # 非法字符串 (无法 int) 同样回退默认, 不崩
+        drv = RealPropsimF64Driver("propsim-test", {"alignment_max_age_days": "abc"})
+        assert drv._alignment_max_age_days == 30
+
+    def test_max_age_numeric_string_coerced(self):
+        # JSON 里字符串数字 "7" → 7
+        drv = RealPropsimF64Driver("propsim-test", {"alignment_max_age_days": "7"})
+        assert drv._alignment_max_age_days == 7
