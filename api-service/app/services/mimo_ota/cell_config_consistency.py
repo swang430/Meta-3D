@@ -17,6 +17,7 @@ Phase 1 mock-skip)。
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -136,4 +137,96 @@ def check_cell_config_consistency(
         consistent=not mismatches,
         skipped=False,
         mismatches=mismatches,
+    )
+
+
+# ===========================================================================
+# Phase 6 第三条线: DL MCS index (实际生效回读, 区别于上面的 UE 协商能力核对)
+# ===========================================================================
+
+
+@dataclass
+class McsConsistencyResult:
+    """AMC off 时请求 MCS vs throughput 实测生效 mcs_dl 的一致性。"""
+
+    consistent: bool = True
+    skipped: bool = False  # AMC on (mcs 浮动) / 无样本 → 不可核对
+    requested_mcs: Optional[int] = None
+    effective_mcs: Optional[int] = None  # 实测 mcs_dl 众数
+    reason: Optional[str] = None
+
+    def to_payload(self) -> Dict[str, Any]:
+        return {
+            "consistent": self.consistent,
+            "skipped": self.skipped,
+            "requested_mcs": self.requested_mcs,
+            "effective_mcs": self.effective_mcs,
+            "reason": self.reason,
+        }
+
+
+def check_mcs_consistency(
+    *,
+    requested_mcs: int,
+    enable_amc: bool,
+    measured_mcs_samples: List[Optional[int]],
+    bs_is_real: bool = True,
+) -> McsConsistencyResult:
+    """Phase 6 第三条线: AMC off 时固定 MCS 下发后, throughput 实测生效 mcs_dl 应 ==
+    请求 mcs。UE 撑不住请求 MCS → 静默 clamp 到更低 (吞吐反映 clamp 后 MCS 却当请求
+    MCS 测, 跟 layers/modulation clamp 同等危害)。
+
+    跟 layers/modulation **不同**: 那两条读 attach 后 UE 协商能力 (capability); MCS 是跑
+    流量后的**实际生效回读** (throughput metrics.mcs_dl), 只有 AMC off 固定 MCS 才有意义。
+
+    - bs_is_real=False (mock BS): skipped —— mock mcs_dl 是合成随机值 (base_station
+      mock 返回 randint), 不反映真实 clamp, 校验无意义 (mock-aware, 同 cell_config /
+      emulation_file 门; 否则 mock measure 会因 mock mcs<请求 全部误 FAIL)。
+    - enable_amc=True: AMC 动态调 MCS, mcs_dl 浮动是设计行为 → skipped (不校验)。
+    - 无有效样本 (没跑流量): skipped。
+    - 实测众数 effective < requested: 不一致 (被 clamp)。effective >= requested: 一致
+      (AMC off 下正常应相等; > 不该发生但不算错)。
+    """
+    if not bs_is_real:
+        return McsConsistencyResult(
+            consistent=True,
+            skipped=True,
+            requested_mcs=requested_mcs,
+            reason="mock baseStation: mcs_dl 合成值不反映真实 clamp, 不校验",
+        )
+    if enable_amc:
+        return McsConsistencyResult(
+            consistent=True,
+            skipped=True,
+            requested_mcs=requested_mcs,
+            reason="enable_amc=True: AMC 动态调 MCS, mcs_dl 浮动为设计行为, 不校验",
+        )
+    # mcs_dl 默认 0 = "UXM 未报 DL_MCS" 哨兵 (Codex P1 #126): 过滤 None 和 <=0, 不当
+    # 真实样本 (否则真 UXM 缺 DL_MCS 时 0 被当 clamp 误 FAIL)。MCS 0 (QPSK 最低) 吞吐
+    # 测试不会用, 跟"未报"无法区分 → 一并 skip 取保守。
+    samples = [int(s) for s in measured_mcs_samples if s is not None and int(s) > 0]
+    if not samples:
+        return McsConsistencyResult(
+            consistent=True,
+            skipped=True,
+            requested_mcs=requested_mcs,
+            reason="无 mcs_dl 样本 (mock / 未跑流量)",
+        )
+    effective = Counter(samples).most_common(1)[0][0]  # 众数 (AMC off 应稳定)
+    if effective < requested_mcs:
+        return McsConsistencyResult(
+            consistent=False,
+            skipped=False,
+            requested_mcs=requested_mcs,
+            effective_mcs=effective,
+            reason=(
+                f"AMC off 固定 MCS={requested_mcs} 但实测生效 mcs_dl 众数={effective} "
+                f"(< 请求 → UE 静默 clamp; 吞吐反映 MCS {effective} 却当 {requested_mcs} 测)"
+            ),
+        )
+    return McsConsistencyResult(
+        consistent=True,
+        skipped=False,
+        requested_mcs=requested_mcs,
+        effective_mcs=effective,
     )

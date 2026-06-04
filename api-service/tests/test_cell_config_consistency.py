@@ -13,6 +13,7 @@ from app.hal.uxm_base_station import AppliedCellConfig, RealUxmDriver
 from app.services.mimo_ota.cell_config_consistency import (
     _modulation_order,
     check_cell_config_consistency,
+    check_mcs_consistency,
 )
 
 
@@ -277,3 +278,89 @@ class TestModulationOrder:
         assert _modulation_order("") is None
         assert _modulation_order("WEIRD") is None
         assert _modulation_order("32QAM") is None  # 非标准 QAM 点数 → 不在表里
+
+
+class TestMcsConsistency:
+    """P2-11 Phase 6 第三条线: AMC off 时实测生效 mcs_dl vs 请求 mcs (clamp 检测)。
+    跟 layers/modulation 不同 —— 这是 throughput 实际生效回读, 不是 UE capability 核对。"""
+
+    def test_mock_bs_skipped(self):
+        # mock BS: mcs_dl 合成随机值不反映真实 clamp → skip (否则 mock measure 全误 FAIL)
+        r = check_mcs_consistency(
+            requested_mcs=28, enable_amc=False, measured_mcs_samples=[24, 24],
+            bs_is_real=False,
+        )
+        assert r.consistent and r.skipped
+
+    def test_amc_on_skipped(self):
+        # AMC on: mcs 浮动是设计行为 → skip
+        r = check_mcs_consistency(
+            requested_mcs=28, enable_amc=True, measured_mcs_samples=[24, 26],
+        )
+        assert r.consistent and r.skipped
+
+    def test_no_samples_skipped(self):
+        r = check_mcs_consistency(
+            requested_mcs=28, enable_amc=False, measured_mcs_samples=[],
+        )
+        assert r.consistent and r.skipped
+
+    def test_all_none_samples_skipped(self):
+        r = check_mcs_consistency(
+            requested_mcs=28, enable_amc=False, measured_mcs_samples=[None, None],
+        )
+        assert r.consistent and r.skipped
+
+    def test_effective_equals_requested_ok(self):
+        # AMC off, 实测 == 请求 → 一致
+        r = check_mcs_consistency(
+            requested_mcs=28, enable_amc=False, measured_mcs_samples=[28, 28, 28],
+        )
+        assert r.consistent and not r.skipped
+        assert r.effective_mcs == 28
+
+    def test_clamp_detected(self):
+        # 核心: AMC off 固定 28 但实测众数 24 (< 28, UE clamp) → 不一致
+        r = check_mcs_consistency(
+            requested_mcs=28, enable_amc=False, measured_mcs_samples=[24, 24, 24, 25],
+        )
+        assert not r.consistent and not r.skipped
+        assert r.effective_mcs == 24  # 众数
+        assert "clamp" in (r.reason or "")
+
+    def test_effective_above_requested_ok(self):
+        # 实测 > 请求 (AMC off 下不该发生, 但不算错)
+        r = check_mcs_consistency(
+            requested_mcs=20, enable_amc=False, measured_mcs_samples=[24, 24],
+        )
+        assert r.consistent
+
+    def test_mode_ignores_none_mixed(self):
+        # 混合 None + 值, 众数忽略 None
+        r = check_mcs_consistency(
+            requested_mcs=28, enable_amc=False, measured_mcs_samples=[None, 24, 24, None],
+        )
+        assert not r.consistent and r.effective_mcs == 24
+
+    def test_payload_shape(self):
+        r = check_mcs_consistency(
+            requested_mcs=28, enable_amc=False, measured_mcs_samples=[24, 24],
+        )
+        p = r.to_payload()
+        assert p["consistent"] is False and p["requested_mcs"] == 28
+        assert p["effective_mcs"] == 24 and p["skipped"] is False
+
+    def test_zero_samples_treated_as_absent(self):
+        # Codex P1 #126: mcs_dl 默认 0 = "UXM 未报 DL_MCS", 不是真实 clamp。全 0 → 过滤
+        # 后无样本 → skip, 不能当众数 0 < 请求 误 FAIL 把整组有效测量 abort。
+        r = check_mcs_consistency(
+            requested_mcs=28, enable_amc=False, measured_mcs_samples=[0, 0, 0],
+        )
+        assert r.consistent and r.skipped
+
+    def test_zero_mixed_with_real_ignores_zero(self):
+        # 0 (未报) 混真实读数 → 0 被过滤, 众数取真实值
+        r = check_mcs_consistency(
+            requested_mcs=28, enable_amc=False, measured_mcs_samples=[0, 24, 24, 0],
+        )
+        assert not r.consistent and r.effective_mcs == 24
