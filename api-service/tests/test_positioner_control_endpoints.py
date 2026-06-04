@@ -6,9 +6,12 @@ mock driver 测端点逻辑; driver 协议行为由 test_aerotech_* 覆盖。不
 """
 from __future__ import annotations
 
+import pytest
+
 from app.api.instrument import (
     PositionerMoveRequest,
     PositionerSweepRequest,
+    _positioner_stop_flag,
     positioner_home,
     positioner_move,
     positioner_position,
@@ -50,6 +53,19 @@ class _DriftPositioner(_FakePositioner):
         return True
 
 
+class _ReadFailPositioner(_FakePositioner):
+    async def get_position(self):
+        raise RuntimeError("PFBK timeout")  # 模拟回读通信坏 (Codex P2)
+
+
+class _AbortMidSweepPositioner(_FakePositioner):
+    """move_to 后置急停 flag, 模拟 operator 急停落在 sweep 中途 (Codex P1)。"""
+
+    async def move_to(self, az, el):
+        _positioner_stop_flag["requested"] = True
+        return await super().move_to(az, el)
+
+
 class _FakeHal:
     def __init__(self, drivers):
         self.drivers = drivers
@@ -58,6 +74,14 @@ class _FakeHal:
 def _patch_hal(monkeypatch, drivers):
     import app.services.instrument_hal_service as svc
     monkeypatch.setattr(svc, "get_hal_service", lambda: _FakeHal(drivers))
+
+
+@pytest.fixture(autouse=True)
+def _reset_abort_flag():
+    """急停 flag 是模块级共享状态, 每测试前后归零防污染。"""
+    _positioner_stop_flag["requested"] = False
+    yield
+    _positioner_stop_flag["requested"] = False
 
 
 class TestHappyPath:
@@ -141,3 +165,49 @@ class TestFailureModes:
         )
         assert r.ok is False and r.reason == "tolerance_exceeded"
         assert all(p.within_tolerance is False for p in r.points)
+
+
+class TestPositionReadFailure:
+    """Codex P2 #132: PFBK 读失败不伪造到位, 显式失败 (现场不误判转台在 home)。"""
+
+    async def test_position_endpoint_read_fail(self, monkeypatch):
+        _patch_hal(monkeypatch, {"positioner": _ReadFailPositioner()})
+        r = await positioner_position()
+        assert r.ok is False and r.reason == "position_read_failed"
+
+    async def test_move_read_fail_not_false_success(self, monkeypatch):
+        # 动作可能成功但回读失败 → 不报假 Az=0.00° 成功
+        _patch_hal(monkeypatch, {"positioner": _ReadFailPositioner()})
+        r = await positioner_move(PositionerMoveRequest(azimuth=90.0))
+        assert r.ok is False and r.reason == "position_read_failed"
+
+    async def test_sweep_read_fail_stops(self, monkeypatch):
+        _patch_hal(monkeypatch, {"positioner": _ReadFailPositioner()})
+        r = await positioner_sweep(PositionerSweepRequest(home_first=False))
+        assert r.ok is False and r.reason == "position_read_failed"
+
+
+class TestEmergencyStopCoordination:
+    """Codex P1 #132: 急停时 in-flight sweep 须停止调度后续 move。"""
+
+    async def test_stop_sets_abort_flag(self, monkeypatch):
+        _patch_hal(monkeypatch, {"positioner": _FakePositioner()})
+        await positioner_stop()
+        assert _positioner_stop_flag["requested"] is True
+
+    async def test_sweep_aborts_on_stop_request(self, monkeypatch):
+        # 急停落在第一步后 → 第二步循环顶 abort, 不继续发 move
+        _patch_hal(monkeypatch, {"positioner": _AbortMidSweepPositioner()})
+        r = await positioner_sweep(
+            PositionerSweepRequest(angles=[0.0, 90.0, 180.0], home_first=False)
+        )
+        assert r.ok is False and r.reason == "aborted"
+        assert len(r.points) == 1  # 只完成第一步, 后续 move 被中止
+
+    async def test_move_clears_stale_abort_flag(self, monkeypatch):
+        # 单次 move 开始清除旧急停态 (急停后还能手动 move)
+        _patch_hal(monkeypatch, {"positioner": _FakePositioner()})
+        _positioner_stop_flag["requested"] = True
+        r = await positioner_move(PositionerMoveRequest(azimuth=45.0))
+        assert r.ok is True
+        assert _positioner_stop_flag["requested"] is False

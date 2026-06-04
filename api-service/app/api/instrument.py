@@ -2754,7 +2754,15 @@ _POSITIONER_REASON_MSG = {
     "hal_unavailable": "HAL 服务不可用",
     "driver_not_loaded": "positioner 驱动未加载 — 检查仪器已选 + 连接 IP 已填, 或重载 HAL 驱动",
     "not_a_positioner": "绑定的驱动不是转台驱动",
+    "position_read_failed": "位置回读失败 (PFBK 通信?) — 实际位置未知, 勿信显示值",
+    "aborted": "已被急停中止",
 }
+
+# 急停协调 (Codex P1 #132): sweep 是多步 long-running loop, operator 按急停时该 loop 需观察到
+# 中止信号, 否则会在 ABORT 后继续发 move。模块级 flag: stop 端点 set, sweep 每步前检查; 单次
+# 指令 (move/home/sweep) 开始时 clear (新指令覆盖旧急停态)。FastAPI 端点同 event loop 串行,
+# 无锁够用 (用可变 dict 免 global 声明)。
+_positioner_stop_flag = {"requested": False}
 
 
 def _resolve_positioner():
@@ -2774,12 +2782,18 @@ def _resolve_positioner():
     return driver, None
 
 
-async def _positioner_position(driver) -> tuple[float, float]:
+async def _positioner_position(driver) -> tuple[tuple[float, float], Optional[str]]:
+    """读位置反馈 (PFBK)。返回 ((az, el), error); 失败时 error 非 None。
+
+    不伪造到位 (Codex P2 #132): 吞异常返回 (0,0) 会让现场误判转台在 home / within tolerance,
+    而实际 PFBK 通信坏了。callers 据 error 标 position_read_failed, 不返回假成功。
+    """
     try:
-        return await driver.get_position()
+        az, el = await driver.get_position()
+        return (az, el), None
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[Positioner] get_position failed: {e}")
-        return (0.0, 0.0)
+        return (0.0, 0.0), str(e)
 
 
 @router.post("/instruments/positioner/home", response_model=PositionerResult)
@@ -2789,13 +2803,16 @@ async def positioner_home() -> PositionerResult:
     if driver is None:
         return PositionerResult(ok=False, reason=reason,
                                 message=_POSITIONER_REASON_MSG.get(reason))
+    _positioner_stop_flag["requested"] = False  # 新指令清除旧急停态
     ok = await driver.reset()  # PositionerDriver.reset() == HOME 回零
-    az, el = await _positioner_position(driver)
-    return PositionerResult(
-        ok=bool(ok), azimuth=az, elevation=el,
-        reason=None if ok else "home_failed",
-        message="已回零" if ok else "回零失败 — 查控制器故障 (AXISFAULT) / 限位 / 使能",
-    )
+    (az, el), pos_err = await _positioner_position(driver)
+    if not ok:
+        return PositionerResult(ok=False, azimuth=az, elevation=el, reason="home_failed",
+                                message="回零失败 — 查控制器故障 (AXISFAULT) / 限位 / 使能")
+    if pos_err:
+        return PositionerResult(ok=False, azimuth=az, elevation=el, reason="position_read_failed",
+                                message=_POSITIONER_REASON_MSG["position_read_failed"])
+    return PositionerResult(ok=True, azimuth=az, elevation=el, message="已回零")
 
 
 @router.post("/instruments/positioner/move", response_model=PositionerResult)
@@ -2805,14 +2822,16 @@ async def positioner_move(request: PositionerMoveRequest) -> PositionerResult:
     if driver is None:
         return PositionerResult(ok=False, reason=reason,
                                 message=_POSITIONER_REASON_MSG.get(reason))
+    _positioner_stop_flag["requested"] = False  # 新指令清除旧急停态
     ok = await driver.move_to(request.azimuth, request.elevation)
-    az, el = await _positioner_position(driver)
-    return PositionerResult(
-        ok=bool(ok), azimuth=az, elevation=el,
-        reason=None if ok else "move_failed",
-        message=(f"已到位 Az={az:.2f}°" if ok
-                 else "定位失败 — 查到位超时 / 故障 / 位置超差"),
-    )
+    (az, el), pos_err = await _positioner_position(driver)
+    if not ok:
+        return PositionerResult(ok=False, azimuth=az, elevation=el, reason="move_failed",
+                                message="定位失败 — 查到位超时 / 故障 / 位置超差")
+    if pos_err:
+        return PositionerResult(ok=False, azimuth=az, elevation=el, reason="position_read_failed",
+                                message=_POSITIONER_REASON_MSG["position_read_failed"])
+    return PositionerResult(ok=True, azimuth=az, elevation=el, message=f"已到位 Az={az:.2f}°")
 
 
 @router.get("/instruments/positioner/position", response_model=PositionerResult)
@@ -2822,7 +2841,10 @@ async def positioner_position() -> PositionerResult:
     if driver is None:
         return PositionerResult(ok=False, reason=reason,
                                 message=_POSITIONER_REASON_MSG.get(reason))
-    az, el = await _positioner_position(driver)
+    (az, el), pos_err = await _positioner_position(driver)
+    if pos_err:
+        return PositionerResult(ok=False, azimuth=az, elevation=el, reason="position_read_failed",
+                                message=_POSITIONER_REASON_MSG["position_read_failed"])
     return PositionerResult(ok=True, azimuth=az, elevation=el)
 
 
@@ -2833,8 +2855,9 @@ async def positioner_stop() -> PositionerResult:
     if driver is None:
         return PositionerResult(ok=False, reason=reason,
                                 message=_POSITIONER_REASON_MSG.get(reason))
+    _positioner_stop_flag["requested"] = True  # 通知 in-flight sweep 停止后续 move (Codex P1)
     ok = await driver.stop()
-    az, el = await _positioner_position(driver)
+    (az, el), _ = await _positioner_position(driver)  # 急停回读失败不影响急停本身判定
     return PositionerResult(
         ok=bool(ok), azimuth=az, elevation=el,
         reason=None if ok else "stop_failed",
@@ -2853,14 +2876,18 @@ async def positioner_sweep(request: PositionerSweepRequest) -> PositionerSweepRe
     if driver is None:
         return PositionerSweepResult(ok=False, reason=reason,
                                      message=_POSITIONER_REASON_MSG.get(reason))
+    _positioner_stop_flag["requested"] = False  # 新 sweep 清除旧急停态
     if request.home_first and not await driver.reset():
         return PositionerSweepResult(ok=False, reason="home_failed",
                                      message="回零失败, 中止扫描")
     points: List[PositionerSweepPoint] = []
     for target in request.angles:
+        if _positioner_stop_flag["requested"]:  # 急停: 停止调度后续 move (Codex P1)
+            return PositionerSweepResult(ok=False, points=points, reason="aborted",
+                                         message=f"已被急停中止, 完成 {len(points)} 点")
         moved = await driver.move_to(target, 0.0)
-        az, el = await _positioner_position(driver)
-        within = bool(moved) and abs(az - target) <= request.tolerance_deg
+        (az, el), pos_err = await _positioner_position(driver)
+        within = bool(moved) and pos_err is None and abs(az - target) <= request.tolerance_deg
         points.append(PositionerSweepPoint(
             target=target, actual_azimuth=az, actual_elevation=el,
             within_tolerance=within,
@@ -2869,6 +2896,11 @@ async def positioner_sweep(request: PositionerSweepRequest) -> PositionerSweepRe
             return PositionerSweepResult(
                 ok=False, points=points, reason="move_failed",
                 message=f"定位到 {target:.1f}° 失败, 已完成 {len(points) - 1} 点",
+            )
+        if pos_err:
+            return PositionerSweepResult(
+                ok=False, points=points, reason="position_read_failed",
+                message=f"{target:.1f}° 位置回读失败 (PFBK?), 中止扫描",
             )
     all_ok = all(p.within_tolerance for p in points)
     return PositionerSweepResult(
