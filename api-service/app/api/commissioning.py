@@ -128,6 +128,10 @@ class CreateSessionRequest(BaseModel):
     precheck_strict_frequency: Optional[bool] = None
     precheck_strict_emulation_file: Optional[bool] = None
     precheck_strict_switch_mode: Optional[bool] = None
+    # P2-11 Phase 6 (#114/#124/#126): DL layers/调制/MCS 一致性门也是暗室首测 (路径 A) 要跳的 ——
+    # 此前漏接 → 真硬件 bring-up 撞 cell_config 门 (DUT 协商能力 < 默认请求 / MCS clamp) 挡住快速
+    # first-call (feedback_strict_gate_extend_bypass_toggle 母题又踩)。同 Optional[bool] 语义。
+    precheck_strict_cell_config: Optional[bool] = None
 
 
 class SessionResponse(BaseModel):
@@ -188,6 +192,8 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
         overrides["precheck_strict_emulation_file"] = req.precheck_strict_emulation_file
     if req.precheck_strict_switch_mode is not None:
         overrides["precheck_strict_switch_mode"] = req.precheck_strict_switch_mode
+    if req.precheck_strict_cell_config is not None:
+        overrides["precheck_strict_cell_config"] = req.precheck_strict_cell_config
     return overrides
 
 
@@ -703,3 +709,63 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
     db.refresh(execution)
     db.refresh(test_case)
     return _execution_to_session_response(execution, test_case)
+
+
+# ============================================================
+# 暗室首测前逐设备快速自检 (借鉴转台 #132 / EMCenter standalone 验证理念)
+#
+# 暗室首测目的是快速 first-call 验整体思路, 不在细节调试上耗。但首测中途撞设备问题 (某仪表
+# 没连上 / 不响应) 会打断这个目的。本端点在跑首测前对每个 HAL driver 主动探测 "连接 + 响应"
+# (get_metrics 轻量查询), 让操作员先确认各设备单独通再开始首测 —— 把 "首测中途撞设备细节"
+# 前移成 "首测前先单独验设备"。深度单设备控制验证去调试维护页 (转台控制 Tab / 调试序列)。
+# ============================================================
+
+class DeviceSelfcheckItem(BaseModel):
+    category: str
+    connected: bool
+    responsive: bool  # get_metrics 不抛 = driver 能响应
+    detail: Optional[str] = None
+
+
+class DeviceSelfcheckResult(BaseModel):
+    all_ready: bool
+    devices: List[DeviceSelfcheckItem]
+    message: str
+
+
+@router.post("/commissioning/device-selfcheck", response_model=DeviceSelfcheckResult)
+async def device_selfcheck() -> DeviceSelfcheckResult:
+    """暗室首测前逐设备快速自检 (连接 + 响应性主动探测)。"""
+    try:
+        from app.services.instrument_hal_service import get_hal_service
+        hal = get_hal_service()
+    except Exception:  # noqa: BLE001
+        return DeviceSelfcheckResult(all_ready=False, devices=[], message="HAL 服务不可用")
+    drivers = (hal.drivers or {}) if hal else {}
+    if not drivers:
+        return DeviceSelfcheckResult(
+            all_ready=False, devices=[],
+            message="无 HAL 驱动加载 — 检查仪器已选 + 连接 IP 已填, 或重载 HAL 驱动",
+        )
+    items: List[DeviceSelfcheckItem] = []
+    for category, driver in sorted(drivers.items()):
+        status = getattr(driver, "status", None)
+        status_str = str(getattr(status, "value", status) or "").lower()
+        connected = status_str in ("connected", "ready", "busy")
+        responsive = False
+        detail: Optional[str] = None
+        try:
+            await driver.get_metrics()  # 主动轻量探测 driver 是否响应
+            responsive = True
+        except Exception as e:  # noqa: BLE001
+            detail = str(e)
+        items.append(DeviceSelfcheckItem(
+            category=category, connected=connected, responsive=responsive, detail=detail,
+        ))
+    all_ready = all(d.connected and d.responsive for d in items)
+    return DeviceSelfcheckResult(
+        all_ready=all_ready,
+        devices=items,
+        message=("各设备已连接且响应, 可开始暗室首测" if all_ready
+                 else "部分设备未就绪 — 去调试维护页单独验证 (转台控制 / 调试序列) 后重试"),
+    )
