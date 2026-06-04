@@ -147,9 +147,15 @@ class AppliedCellConfig:
     layers 超过 UE 能力上限 → 必被 clamp → fail-loud (吞吐其实 2 层却当 4 层测)。
 
     None 字段 = 不可核对 (UE 未 attach / firmware 不支持 UEINFO), 校验跳过该项。
+
+    P2-11 Phase 6 延伸: 加 ue_max_modulation_dl —— 请求调制阶数超 UE 能力同样会被静默
+    clamp (TestCase 请求 256QAM 但 UE 只协商到 64QAM → 实际跑 64QAM 却当 256QAM 测),
+    跟 layers 同机制 (读 UE 协商能力, 非配置旋钮回读)。调制能力上限是 UE 固有能力, 不受
+    AMC 影响 (AMC 只浮动生效 MCS index, 不改 UE 的最高可协商调制)。
     """
 
     ue_max_dl_layers: Optional[int] = None
+    ue_max_modulation_dl: Optional[str] = None
 
 
 class RealUxmDriver(BaseStationDriver):
@@ -500,7 +506,8 @@ class RealUxmDriver(BaseStationDriver):
 
         UE 未 attach / firmware 不支持 UEINFO (mock / dry-run 无真 DUT) → max_dl_layers
         None → 返回 None (无法核对, 校验跳过, 同 Phase 1 mock-skip)。DL power 不核对
-        (InputLevelController 闭环合法改它); MCS 受 AMC 浮动, 都留后续延伸。
+        (InputLevelController 闭环合法改它); 生效 MCS index 受 AMC 浮动留延伸 —— 但 UE 的
+        DL 调制能力上限 (ue_max_modulation_dl) 这里一并读, 它是 UE 固有能力不受 AMC 影响。
         """
         try:
             cap = await self.query_ue_capability()
@@ -510,7 +517,11 @@ class RealUxmDriver(BaseStationDriver):
         max_dl = cap.get("max_dl_layers")
         if max_dl is None:  # UE 未 attach / firmware 不支持 → 无法核对, 跳过
             return None
-        return AppliedCellConfig(ue_max_dl_layers=int(max_dl))
+        return AppliedCellConfig(
+            ue_max_dl_layers=int(max_dl),
+            # P2-11 Phase 6 延伸: UE 协商的 DL 调制能力上限 (None → check 跳过该项)。
+            ue_max_modulation_dl=cap.get("max_modulation_dl"),
+        )
 
     # ===================================================================
     # P2-1 Phase 1: Topology Profile 应用 (operator-managed)

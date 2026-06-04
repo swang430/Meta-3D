@@ -180,7 +180,8 @@ measure executor(`app/services/mimo_ota/executors/measure.py`)docstring 顶部�
 | 参数 | 下发 | 回读校验 |
 |------|------|---------|
 | `mimo_layers` | `set_cell_config` | ✅ **Phase 6 已补**: 读 UE 协商能力 `max_dl_layers`, 请求 > UE 上限 → fail (`precheck_strict_cell_config`)。读 UE 能力**非** `CONF:LAY?` 配置旋钮 (Codex #114) |
-| `modulation` / `mcs` / `enable_amc` | throughput 参数下发 | ⬜ 待补(AMC on 时 MCS 浮动 → 仅 AMC off 可回读校验)|
+| `modulation` | `reconfigure_rrc` DL 调制 | ✅ **Phase 6 已补**: 读 UE 协商能力 `max_modulation_dl`, 请求阶数 > UE 上限 → fail (`precheck_strict_cell_config`, 同 layers)。阶数归一化容忍 SCPI 格式差异。调制能力是 UE 固有上限, 不受 AMC 影响 |
+| `mcs` / `enable_amc` | throughput 参数下发 | ⬜ 待补(生效 MCS index 受 AMC 浮动 → 仅 AMC off 可回读校验)|
 | `tdd_pattern` / `harq_*` | throughput 参数下发 | ⬜ 待补 |
 | `target_tx_power_dbm`(→DL power)/ `rsrp` / `snr` | `set_downlink_power` / `sim_rules` | ⬜ 待补,**但有坑**: InputLevelController(Phase 2b)闭环会合法改 UXM DL power,"功率==target" 会误杀;且 RSRP 当前模拟。需结合操作点 backlog 一起设计 |
 
@@ -200,7 +201,7 @@ measure executor(`app/services/mimo_ota/executors/measure.py`)docstring 顶部�
 chamber 几何 / 探头位置·方向图 / SGH 参考天线 / DUT(SIM·IMSI)= 物理 · LabProfile · 操作员,
 不进 TestCase。校准证书 = TestCase 可绑定 + LabProfile 兜底 + P1-8 strict gate,合理。
 
-### Phase 6 — 一致性网扩展(B 类的解药)✅ 首条线已实现
+### Phase 6 — 一致性网扩展(B 类的解药)✅ 首条线 + 调制能力已实现
 
 Phase 1 给**频率**做了"下发后**回读**(`get_frequency_identity`)+ 精确比对"。Phase 6 把这张网扩到
 B 类。**已实现的首条线 = DL MIMO layers**:
@@ -216,13 +217,18 @@ B 类。**已实现的首条线 = DL MIMO layers**:
   no-op。**注意**:UE 能力核对**不**覆盖 C 类端口路由泄漏(那是 cell 端口路由限制,跟 UE 能力是
   两回事);port-routing 仍是待定语义的 backlog。
 
+**DL modulation(第二根线, 本次延伸已补)**:`get_applied_cell_config` 一并读 UE 协商
+`max_modulation_dl` → `check_cell_config_consistency` 判请求调制阶数 > UE 上限 → fail
+(复用 `precheck_strict_cell_config` 门)。阶数归一化(`_modulation_order`)容忍 UXM SCPI
+格式差异(`256QAM`/`QAM256`/`QPSK`)。调制能力是 UE 固有上限, 不受 AMC 影响(区别于生效 MCS index)。
+
 **剩余 B 类(同机制延伸,各有特定坑)**:
-- `MCS`:AMC on 时浮动,仅 AMC off 可回读校验(条件化)。
+- `MCS index`:AMC on 时浮动,仅 AMC off 可回读**生效 MCS** 校验(条件化,区别于已补的 modulation 能力核对)。
 - `DL power`:InputLevelController 闭环会合法改它,"功率==target" 会误杀 → 需结合操作点 backlog。
 - **不在范围**:C 类(端口路由泄漏、操作点)需先定语义;D 类不动。
 
-**一句话**:频率是一致性网的第一根线,**MIMO layers 是第二根**(本 Phase);MCS / 功率是同一台
-织机上待织的线。
+**一句话**:频率是一致性网的第一根线,**MIMO layers + 调制阶数是第二、三根**(本 Phase 累计);
+生效 MCS / 功率是同一台织机上待织的线。
 
 ## 9. 标准信道文件定义(Standard Channel Definition)— 软件掌控命名(2026-06-01 用户确立)
 
