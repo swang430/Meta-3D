@@ -171,6 +171,25 @@ class PrecheckExecutor(IStepExecutor):
                     f"CE user alignment: ACTIVE "
                     f"(name={alignment.get('alignment_name')!r})"
                 )
+                # P2-10 Step 3: alignment 新鲜度 (标定数据该不该重标)。注释 159 说"供操作员
+                # 判断当天数据是否新鲜" —— 这里把判断从人工眼看升级成 info 时间戳解析 + 阈值。
+                if hasattr(ce, "alignment_freshness"):
+                    from datetime import date
+                    fresh = ce.alignment_freshness(
+                        alignment.get("info"), today=date.today()
+                    )
+                    result_payload["channel_emulator_alignment_freshness"] = fresh
+                    if fresh["freshness"] == "stale":
+                        warnings.append(
+                            f"CE user alignment STALE: 标定于 {fresh['calibrated_date']} "
+                            f"({fresh['age_days']} 天前 > {fresh['max_age_days']} 天阈值), "
+                            f"建议重标 (温度/时间漂移补偿已可能失效)"
+                        )
+                    elif fresh["freshness"] == "fresh":
+                        messages.append(
+                            f"CE alignment 新鲜 (标定 {fresh['age_days']} 天前, "
+                            f"阈值 {fresh['max_age_days']} 天)"
+                        )
             else:
                 result_payload["channel_emulator_user_alignment"] = None
                 warnings.append(
