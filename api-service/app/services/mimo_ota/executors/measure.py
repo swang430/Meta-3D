@@ -391,6 +391,9 @@ class MeasureExecutor(IStepExecutor):
                 # sim_rules 透传 emulation_file 给 F64。门只对**真 F64** 生效 (mock-aware,
                 # 读 LIVE HAL, 同 precheck cal/dut 门 Codex on PR #75); 决策见
                 # emulation_file_gate.evaluate_emulation_file_gate。
+                # P2-12 (Codex #120 后端另一半): 同一道门还校验 resolved_emulation_file
+                # 扩展非 .smu (.rtc/.asc) → strict FAIL, 抓 API 直传 / 绕过前端 #120
+                # filter 的非 GCM 原生文件 (覆盖 scd_id 解析 + 裸路径两路)。
                 emulation_gate = evaluate_emulation_file_gate(
                     emulator_is_real=(
                         emulator is not None and not is_mock_driver(emulator)
