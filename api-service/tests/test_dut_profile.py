@@ -99,6 +99,12 @@ class TestDUTProfileService:
         with pytest.raises(DUTProfileError, match="已存在"):
             update_dut_profile(db, b.id, name="A")
 
+    def test_update_blank_name_rejected(self, db):
+        # Codex P2 #134: update 不能把 name 改成空白 (后续 plan/precheck 按 name 引用)
+        p = create_dut_profile(db, name="X")
+        with pytest.raises(DUTProfileError, match="不能为空"):
+            update_dut_profile(db, p.id, name="   ")
+
     def test_get_not_found(self, db):
         with pytest.raises(DUTProfileNotFound):
             get_dut_profile(db, uuid.uuid4())

@@ -85,8 +85,12 @@ def get_dut_profile(db: Session, profile_id: UUID) -> DUTProfile:
 def update_dut_profile(db: Session, profile_id: UUID, **fields) -> DUTProfile:
     profile = get_dut_profile(db, profile_id)
     new_name = fields.get("name")
-    if new_name is not None and new_name != profile.name:
-        if db.query(DUTProfile).filter(DUTProfile.name == new_name).first() is not None:
+    if new_name is not None:
+        if not new_name.strip():
+            raise DUTProfileError("name 不能为空")  # update 同样拒空白名 (Codex P2 #134)
+        if new_name != profile.name and (
+            db.query(DUTProfile).filter(DUTProfile.name == new_name).first() is not None
+        ):
             raise DUTProfileError(f"DUTProfile 名 {new_name!r} 已存在")
     _validate(fields)
     for k, v in fields.items():
