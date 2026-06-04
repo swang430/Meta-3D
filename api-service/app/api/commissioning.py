@@ -132,6 +132,9 @@ class CreateSessionRequest(BaseModel):
     # 此前漏接 → 真硬件 bring-up 撞 cell_config 门 (DUT 协商能力 < 默认请求 / MCS clamp) 挡住快速
     # first-call (feedback_strict_gate_extend_bypass_toggle 母题又踩)。同 Optional[bool] 语义。
     precheck_strict_cell_config: Optional[bool] = None
+    # DUTProfile 声明能力门 (规划期, attach 前): 暗室首测 bring-up 也要可跳 (快速跑不关心 DUT
+    # 声明)。新 strict 门同步 bypass (feedback_strict_gate_extend_bypass_toggle, 这次提前补)。
+    precheck_strict_dut_capability: Optional[bool] = None
 
 
 class SessionResponse(BaseModel):
@@ -194,6 +197,8 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
         overrides["precheck_strict_switch_mode"] = req.precheck_strict_switch_mode
     if req.precheck_strict_cell_config is not None:
         overrides["precheck_strict_cell_config"] = req.precheck_strict_cell_config
+    if req.precheck_strict_dut_capability is not None:
+        overrides["precheck_strict_dut_capability"] = req.precheck_strict_dut_capability
     return overrides
 
 

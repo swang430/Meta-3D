@@ -74,6 +74,78 @@ class PrecheckExecutor(IStepExecutor):
         online_n = sum(1 for v in instruments_online.values() if v)
         messages.append(f"Instruments (HAL): {online_n}/{len(instruments_online)} online")
 
+        # --- 2.3 DUT 声明能力校验 (规划期, attach 前) ---
+        # config.dut_profile_id 指向 DUTProfile 时, 拿 TestCase 请求跟 DUT **声明**能力比 (请求 >
+        # 声明 → 提前 fail, 不浪费真跑)。跟 2.5 UE capability (attach 后协商) 互补: 这个最早, 查
+        # DB 声明不需硬件。strict 可经 bring-up bypass 关 (precheck_strict_dut_capability)。
+        if config.dut_profile_id:
+            from app.models.dut_profile import DUTProfile
+            from app.services.mimo_ota.dut_capability_check import check_dut_capability
+
+            from uuid import UUID as _UUID
+
+            try:
+                _dut_id = _UUID(str(config.dut_profile_id))
+            except (ValueError, TypeError, AttributeError):
+                _dut_id = None  # dut_profile_id 非法 UUID (填错) → 当不存在处理
+            dut_profile = (
+                context.db.query(DUTProfile).filter(DUTProfile.id == _dut_id).first()
+                if _dut_id is not None
+                else None
+            )
+            if dut_profile is None:
+                warnings.append(
+                    f"config.dut_profile_id={config.dut_profile_id} 指向的 DUTProfile 不存在 "
+                    "(已删 / 填错 / 非法 id) — 跳过声明校验"
+                )
+            else:
+                dut_cap = check_dut_capability(
+                    requested_layers=config.mimo_layers,
+                    requested_modulation=config.modulation,
+                    declared_max_dl_layers=dut_profile.max_dl_layers,
+                    declared_max_modulation_dl=dut_profile.max_modulation_dl,
+                )
+                result_payload["dut_capability_check"] = {
+                    "dut_profile": dut_profile.name,
+                    "consistent": dut_cap.consistent,
+                    "violations": dut_cap.violations,
+                }
+                if not dut_cap.consistent:
+                    if config.precheck_strict_dut_capability:
+                        # Codex P2 (3083096): 早期 return 必须先持久化 precheck phase
+                        # result —— 否则 execution.measurements.phases.precheck 为空,
+                        # session 读出来还是 pending, UI/API 看不到 dut_capability_check
+                        # violations (即便 phase 已 fail)。对齐 section 6 正常失败路径:
+                        # write_phase_result + commit, return 带 measurements/warnings。
+                        # 保留 fail-fast (请求层数根本超声明时, 不必再查 QZ/cal)。
+                        result_payload["overall_pass"] = False
+                        result_payload["messages"] = messages
+                        write_phase_result(
+                            context.test_execution, "precheck", result_payload
+                        )
+                        context.db.commit()
+                        return StepExecutionResult(
+                            status=StepExecutionStatus.FAILED,
+                            measurements=result_payload,
+                            warnings=warnings,
+                            error_message=(
+                                f"DUT '{dut_profile.name}' 声明能力不满足 TestCase 请求: "
+                                + "; ".join(dut_cap.violations)
+                                + " (规划期提前 fail, 不浪费真跑; "
+                                "precheck_strict_dut_capability=False 可绕)"
+                            ),
+                        )
+                    warnings.append(
+                        f"DUT '{dut_profile.name}' 声明能力不满足请求 "
+                        f"(precheck_strict_dut_capability=False, 继续): "
+                        + "; ".join(dut_cap.violations)
+                    )
+                else:
+                    messages.append(
+                        f"DUT 声明能力校验: '{dut_profile.name}' 满足请求 "
+                        f"({config.mimo_layers} 层 / {config.modulation})"
+                    )
+
         # --- 2.4 DUT attach record check (Phase 2l: 防对错 IMSI 测试) ---
         # P1-9 (2026-05-19): missing/broken dut_attach now drives the strict
         # DUT gate at section 5b. Warning text reflects whether the run will
