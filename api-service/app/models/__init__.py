@@ -85,6 +85,7 @@ from app.models.switch_topology import SwitchTopology
 from app.models.lab_profile import LabProfile
 from app.models.instrument_topology_profile import InstrumentTopologyProfile
 from app.models.standard_channel import StandardChannelDefinition
+from app.models.dut_profile import DUTProfile
 
 __all__ = [
     # System Calibration
@@ -145,6 +146,8 @@ __all__ = [
     # UXM Topology Profile (P2-1 Phase 2.1)
     "InstrumentTopologyProfile",
     "StandardChannelDefinition",
+    # DUT Profile (declared capability, 三层能力交叉校验)
+    "DUTProfile",
     # Channel Calibration Enums
     "ScenarioType",
     "ScenarioCondition",
