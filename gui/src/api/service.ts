@@ -246,6 +246,7 @@ export interface ChannelModelEntry {
   label: string
   description: string | null
   type: string // smu / rtc / asc / unknown
+  scd_id?: string | null // P2-12 slice 4: SCD 派生 entry 的 SCD UUID (手敲条目为 null)
 }
 
 export interface ChannelModelsListResult {

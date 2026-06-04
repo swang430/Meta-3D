@@ -255,6 +255,10 @@ def normalize_channel_model_entries(entries: Any) -> list[Dict[str, Any]]:
             "type": ext,
             "center_frequency_mhz": center_mhz,
             "nr_arfcn": nr_arfcn_val,
+            # P2-12 slice 4: SCD 派生 entry 带 scd_id (手敲条目为 None) —— 让 GUI 的
+            # emulation_file 下拉选 SCD 派生项时存 scd_id (measure 查 SCD + 频率 cross-check)
+            # 而非裸 filename。projection entry 由 _scd_to_projection_entry 打上 scd_id。
+            "scd_id": entry.get("scd_id"),
         })
     return out
 

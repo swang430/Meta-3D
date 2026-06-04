@@ -286,6 +286,15 @@ class MIMOOTAConfiguration(BaseModel):
     # 走捷径)。仅 GCM 模式生效 (ASC 不用 .smu)。同 precheck_strict_cal/dut/frequency:
     # GUI 不暴露, fixture/config 级别 opt-in。
 
+    # === SCD 引用 (P2-12 slice 4, 2026-06-03) ===
+    scd_id: Optional[str] = None
+    # 引用 StandardChannelDefinition (按规范配置声明的标准信道) 的 UUID 字符串。优先于
+    # 裸 emulation_file —— measure 查 SCD → associated_file_path 当 .smu, 并把 SCD 声明
+    # ARFCN 作为一个 source 纳入 Phase 1 多方频率一致性网 (TestCase 频率 vs SCD 声明
+    # cross-check, 抓"选了个频率错配的 .smu")。"3500 用哪个 .smu" 从赌文件名变查 SCD by
+    # FrequencyIdentity (declared>inferred, 见架构文档 §9)。None = 用裸 emulation_file
+    # (路径 A bring-up / legacy)。仅 GCM 模式相关 (ASC 按 frequency_hz 生成 .asc 不用 .smu)。
+
     # === RF 开关拓扑 operating mode TestCase 驱动 (P2-11 Phase 3, 2026-05-31) ===
     switch_mode_id: str = "mimo_ota"
     # 选 chamber 的 active SwitchTopology 里哪个 operating mode (RF 通路子集)。

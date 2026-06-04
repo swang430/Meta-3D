@@ -76,6 +76,7 @@ class TestEntryNormalisation:
             # 无频率 token (2x2 / UMi 不匹配) → None (P2-10 Step 1)
             "center_frequency_mhz": None,
             "nr_arfcn": None,
+            "scd_id": None,  # P2-12 slice 4: bare string 非 SCD 派生
         }]
 
     @pytest.mark.asyncio
@@ -93,6 +94,7 @@ class TestEntryNormalisation:
             "type": "smu",
             "center_frequency_mhz": None,  # 无频率 token
             "nr_arfcn": None,
+            "scd_id": None,  # P2-12 slice 4
         }]
 
     @pytest.mark.asyncio
