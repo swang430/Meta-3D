@@ -69,3 +69,14 @@ class TestDeviceSelfcheck:
         _patch_hal(monkeypatch, {"positioner": _FakeDriver(status=InstrumentStatus.READY)})
         r = await device_selfcheck()
         assert r.devices[0].connected is True
+
+
+def test_endpoint_path_reachable():
+    """Codex P2 #133 回归: router prefix=/commissioning, 端点须用 /device-selfcheck (非
+    /commissioning/device-selfcheck, 否则双前缀 → GUI 调 /commissioning/device-selfcheck 撞 404)。
+    单测调函数测不到路由路径, 这里用 TestClient 钉死实际 HTTP 路径可达 (非 404)。"""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    resp = TestClient(app).post("/api/v1/commissioning/device-selfcheck")
+    assert resp.status_code == 200, f"期望 200, 得 {resp.status_code} (路由路径注册错?)"
+    assert "all_ready" in resp.json()

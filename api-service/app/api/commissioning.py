@@ -733,7 +733,7 @@ class DeviceSelfcheckResult(BaseModel):
     message: str
 
 
-@router.post("/commissioning/device-selfcheck", response_model=DeviceSelfcheckResult)
+@router.post("/device-selfcheck", response_model=DeviceSelfcheckResult)
 async def device_selfcheck() -> DeviceSelfcheckResult:
     """暗室首测前逐设备快速自检 (连接 + 响应性主动探测)。"""
     try:
