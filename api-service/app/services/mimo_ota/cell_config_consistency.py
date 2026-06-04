@@ -201,7 +201,10 @@ def check_mcs_consistency(
             requested_mcs=requested_mcs,
             reason="enable_amc=True: AMC 动态调 MCS, mcs_dl 浮动为设计行为, 不校验",
         )
-    samples = [int(s) for s in measured_mcs_samples if s is not None]
+    # mcs_dl 默认 0 = "UXM 未报 DL_MCS" 哨兵 (Codex P1 #126): 过滤 None 和 <=0, 不当
+    # 真实样本 (否则真 UXM 缺 DL_MCS 时 0 被当 clamp 误 FAIL)。MCS 0 (QPSK 最低) 吞吐
+    # 测试不会用, 跟"未报"无法区分 → 一并 skip 取保守。
+    samples = [int(s) for s in measured_mcs_samples if s is not None and int(s) > 0]
     if not samples:
         return McsConsistencyResult(
             consistent=True,

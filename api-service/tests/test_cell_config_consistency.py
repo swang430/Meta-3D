@@ -349,3 +349,18 @@ class TestMcsConsistency:
         p = r.to_payload()
         assert p["consistent"] is False and p["requested_mcs"] == 28
         assert p["effective_mcs"] == 24 and p["skipped"] is False
+
+    def test_zero_samples_treated_as_absent(self):
+        # Codex P1 #126: mcs_dl 默认 0 = "UXM 未报 DL_MCS", 不是真实 clamp。全 0 → 过滤
+        # 后无样本 → skip, 不能当众数 0 < 请求 误 FAIL 把整组有效测量 abort。
+        r = check_mcs_consistency(
+            requested_mcs=28, enable_amc=False, measured_mcs_samples=[0, 0, 0],
+        )
+        assert r.consistent and r.skipped
+
+    def test_zero_mixed_with_real_ignores_zero(self):
+        # 0 (未报) 混真实读数 → 0 被过滤, 众数取真实值
+        r = check_mcs_consistency(
+            requested_mcs=28, enable_amc=False, measured_mcs_samples=[0, 24, 24, 0],
+        )
+        assert not r.consistent and r.effective_mcs == 24

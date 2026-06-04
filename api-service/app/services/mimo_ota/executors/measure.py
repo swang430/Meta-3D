@@ -685,7 +685,11 @@ class MeasureExecutor(IStepExecutor):
                     samples_sinr.append(sinr)
                     samples_tput.append(metrics.dl_throughput_mbps)
                     samples_ri.append(float(metrics.rank_indicator))
-                    mcs_samples.append(getattr(metrics, "mcs_dl", None))
+                    # P1 (Codex #126): ThroughputMetrics.mcs_dl 默认 0 —— 真 UXM 不报
+                    # DL_MCS 时保持 0, 不能当有效样本 (否则众数 0 < 请求 → 误判 clamp 把
+                    # 整组有效测量 abort)。只收真实报告的 (>0); 0/None 都视作"未报" skip。
+                    _mcs = getattr(metrics, "mcs_dl", None)
+                    mcs_samples.append(_mcs if (_mcs and _mcs > 0) else None)
 
                 az = {
                     "azimuth_deg": azimuth,
