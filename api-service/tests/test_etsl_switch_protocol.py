@@ -160,8 +160,8 @@ class TestPortConfig:
     def test_port_from_config(self):
         assert EtslSwitchDriver("t", {"port": 9221})._port == 9221
 
-    def test_default_port_is_unverified_placeholder(self):
-        assert (
-            EtslSwitchDriver("t", {})._port
-            == EtslSwitchDriver._DEFAULT_PORT_UNVERIFIED
-        )
+    def test_default_port_is_scpi_standard_5025(self):
+        # 端口默认 = SCPI 行业标准 raw-socket 端口 5025 (官方手册不写 LAN 端口, 5025 有标准依据)
+        drv = EtslSwitchDriver("t", {})
+        assert drv._port == 5025
+        assert EtslSwitchDriver._DEFAULT_PORT == 5025

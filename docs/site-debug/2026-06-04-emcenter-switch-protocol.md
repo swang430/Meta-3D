@@ -34,7 +34,7 @@ CAICT 暗室射频开关 **"TMC Beijing AMS8947-195-1"**。2026-05-27 现场用 
 | 命令前缀 | `Write/Query <slot>:<cmd>` | **裸** `<slot>:<cmd>` | 文档表格里 Write/Query/Read 是**动作标签**不是协议;EMCenter 收到 `Write 1:...` 无法解析 → 无响应 |
 | 终止符 | LF | **CR (0x0D)** | 文档 p5 "carriage return (CR) **must** terminate";严格设备收 LF 不回包 |
 | 响应解析 | 硬剥 `Read ` 前缀 | 裸响应 (`NC` / `3`) | 同一误读;裸响应时无害但反映同源问题 |
-| TCP 端口 | 默认 `2001` | 三份在仓文档**都没有** | 在未到手的主手册 399342;2001 来源不明 |
+| TCP 端口 | 默认 `2001`(来源不明) | 官方手册都不写 → SCPI 标准 `5025` | 修正: 默认 → 5025 + 串口 plan B(见 web 补充) |
 | 协议单测 | **零** | — | bug 无人发现的根因 |
 
 **前两条(Write/Query 前缀 + LF 终止符)极可能就是 2026-05-27 现场 raw socket 无响应的真因**
@@ -49,7 +49,7 @@ CAICT 暗室射频开关 **"TMC Beijing AMS8947-195-1"**。2026-05-27 现场用 
 - **命令格式**: 默认裸 `<slot>:<cmd>`;`command_style="verbose"` 可回退旧 Write/Query 包装(逃生)。
 - **终止符**: 默认 CR;`line_terminator="lf"|"crlf"` 可切(逃生)。
 - **响应解析**: 统一 `_parse_response`(去终止符,容错剥 `Read ` 前缀)。
-- **端口**: 默认值标注"未证实占位",真实值由 binding `connection_params.port` 提供。
+- **端口**: 默认 `5025`(SCPI 行业标准 raw-socket 端口, 有依据 —— 见下方 web 调研补充), 真实值由 binding `connection_params.port` 提供。
 - **reset_paths SP6T 安全**: mapping 标 `relay_type="sp6t"` 的项跳过复位(不发非法 `_NC`),仅 warning;
   SP6T 复位语义待现场确认。
 - **单测**: `tests/test_etsl_switch_protocol.py` 18 例,断言命令字节流 = 裸+CR、响应解析、逃生开关、
@@ -94,9 +94,9 @@ CAICT 暗室射频开关 **"TMC Beijing AMS8947-195-1"**。2026-05-27 现场用 
 ## 现场半 runbook (下次现场,按 SCPI 探测优先)
 
 1. **核对地址/端口**: 机箱触摸屏 Info/Settings 界面看真实 IP 是否 `.50`、有无端口配置项。
-2. **定端口**(三份文档都没有,**必须现场实测或查主手册 399342**):
-   - 候选(**均未证实,纯推断,勿当事实**):9221 / 5025 / 2001。
-   - 用本 PR 的 driver 改 `connection_params.port` 逐个试,先发无前缀 `*IDN?`+CR 探机箱有无命。
+2. **定端口**(官方手册都不写,见下方 web 调研补充):
+   - 试序: **5025**(SCPI 标准 raw-socket, driver 默认)→ 5024(SCPI-telnet)→ 23(telnet)。改 `connection_params.port` 逐个试, 先发无前缀 `*IDN?`+CR 探机箱有无命。
+   - 都不通 → **串口 plan B**: 现场跑 `tcp_serial_redirect`(RS-232 9600 8N1 → 本地 TCP), driver 连该 TCP 口(不用加 pyserial)。
 3. **确认协议格式**: 默认 `command_style=raw` + `line_terminator=cr`。若无响应,逐一试
    `line_terminator=lf/crlf`、`command_style=verbose`(逃生开关,不用改代码)。
 4. **认卡**: `4:*IDN?` / `5:*IDN?` 确认每槽实际插的卡型号(SPDT vs SP6T)。
@@ -109,12 +109,26 @@ CAICT 暗室射频开关 **"TMC Beijing AMS8947-195-1"**。2026-05-27 现场用 
 
 | 缺口 | 来源 | 备注 |
 |------|------|------|
-| TCP 端口号 | 主手册 399342(未到手)/ 现场 | **最关键**;三份在仓文档都没有 |
+| TCP 端口号 | 现场实测(5025 首选)/ 触摸屏 | 官方手册都不写; 5025 是 SCPI 标准首选, 有串口 plan B 兜底, 非阻塞 |
 | 每槽实际卡型号 | 现场 `<slot>:*IDN?` | Slot4=? Slot5=? |
 | SP6T 位置↔天线映射 | 现场实拨 | set_route 映射表依赖它 |
 | SP6T 复位安全位 | 现场 | reset_paths SP6T 分支待实现 |
 | "195 / -1" 型号编码含义 | 向 ETS 确认 | 不影响 driver,配置文档要写对 |
 | MIMO 页是否含可切换继电器 | 现场 | 决定要不要给 16 探头也写 set_route |
+
+## 2026-06-04 web 调研补充 (端口确认 + 串口 plan B)
+
+初版 (#130) 留"端口三份在仓文档都没有, 只能现场试"。用户追问"还是只能现场试?" 后做 web 调研, 把不确定性大幅收敛:
+
+1. **挖到主手册 399342 Rev B** (archive.org 公开, 即初版说"未到手"那份): Configuration Screen (p31) 确认 EMCenter 有 IP 配置 (示例 192.168.8.253 / Gateway 192.168.8.1, 触摸屏可改); Remote Control (p33) **二次印证 CR 终止** (原文 "Terminate each command with a carriage return (CR)"); 错误码表 (p36)。**但连主手册都不写 LAN 的 TCP 端口号** —— ETS 系统性不文档化, 留给 VISA / 标准约定。
+
+2. **端口候选收敛 + 纠错**: 初版 agent 推断的 **9221 是错的** (那是 Prologix GPIB-网口适配器端口, 跟 EMCenter 无关)。按 SCPI 行业标准, raw-socket 标准端口是 **5025** (IANA / Keysight 标准化); EMCenter 命令是裸 SCPI 风格, 所以 **5025 是有依据的首选** (driver 默认已从 2001 改 5025)。试序 5025 → 5024 (SCPI-telnet) → 23。
+
+3. **串口 9600 8N1 是已验证 plan B**: 开源 klingm/EMCenter-Controller 实测走 EMCenter RS-232 (9600 8N1), 经 `tcp_serial_redirect` (本地 TCP) 桥接。**现有 TCP driver 不用加 pyserial** —— 现场跑 redirect 脚本, driver 连它的本地 TCP 口即可。注: klingm 用 LF 终止 (串口路径容忍), 跟主手册的 CR 不冲突 (正是 driver `line_terminator` 可配的价值)。
+
+4. **错误码表** (主手册 p36, 可补进 driver 解析): ERROR 1 buffer overflow / 2 command too long / 3 invalid command / 4 too short / 5 invalid param / 6 param too high / 7 too low / 8 hardware failure / 20 unknown device type / 21 unknown device number。
+
+**结论**: LAN 端口的确切数字仍需现场确认 (官方系统性不写), 但已从"盲试"变成"有依据的优先试序 (5025 首选) + 串口 plan B 兜底"。
 
 ## 参考文档
 
@@ -122,5 +136,7 @@ CAICT 暗室射频开关 **"TMC Beijing AMS8947-195-1"**。2026-05-27 现场用 
   (命令语法 p5、EMSwitch 全命令 p8-14、错误码 p83)
 - 系统接线图: `Instrument_API_Doc/CAICT Chamber Switch/TMC Beijing AMS8947-195-1 system diagram V3.0(1).pdf`
 - EMSwitch 卡手册: `Instrument_API_Doc/ETS-L EMSwitch/399343-EMSwitch-Rev-K.pdf`(卡型号表 p7)
-- **缺失**: 399342 EMCenter 主产品手册(含 LAN/IP/端口章节,仓库里没有 → 建议向 ETS 索取)
+- 主手册 399342 Rev B(archive.org 公开): https://ia601800.us.archive.org/9/items/manualzilla-id-5822155/5822155.pdf —— Configuration Screen (p31, IP 配置) + Remote Control (p33, CR 二次印证) + 错误码 (p36); **但 LAN 端口号它也不写**
+- 开源参考: https://github.com/klingm/EMCenter-Controller —— 实测走 RS-232 9600 8N1 经 tcp_serial_redirect 桥 TCP
+- SCPI 标准端口 5025: 行业约定 (IANA / Keysight 标准化 raw-socket 口)
 - 现场背景: [`2026-05-27-morning-log.md`](2026-05-27-morning-log.md) §10.1
