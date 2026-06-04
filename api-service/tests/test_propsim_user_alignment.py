@@ -356,3 +356,92 @@ class TestPrecheckAlignmentSurface:
 
         assert status is None
         assert units == []
+
+
+# ============================================================================
+# P2-10 Step 3: alignment 标定数据新鲜度 (该不该重标)
+# ============================================================================
+
+class TestAlignmentFreshness:
+    """alignment 补偿随温度/时间漂移, 标定数据会过期。解析 INFO? 时间戳跟 today 比,
+    超阈值 → stale 建议重标。把注释 159 的"供操作员判断是否新鲜"从人工眼看升级成解析。"""
+
+    def test_parse_f64_real_info_format(self):
+        # F64 INFO? 实测格式 (本文件 test_returns_name_and_info 同款): DD.MM.YYYY 点分隔
+        from datetime import date
+        drv, _ = _make_driver()
+        assert drv._parse_alignment_date(
+            "FI1234567, 29.01.2024, External Response Calibration Tool 3.0, PROPSIM FW 10.0"
+        ) == date(2024, 1, 29)
+
+    def test_parse_iso_and_slash_variants(self):
+        from datetime import date
+        drv, _ = _make_driver()
+        assert drv._parse_alignment_date("calibrated 2026-05-27 ok") == date(2026, 5, 27)
+        assert drv._parse_alignment_date("2026/05/27") == date(2026, 5, 27)
+
+    def test_parse_unparseable_returns_none(self):
+        drv, _ = _make_driver()
+        assert drv._parse_alignment_date("no date here") is None
+        assert drv._parse_alignment_date("") is None
+        assert drv._parse_alignment_date(None) is None
+
+    def test_freshness_fresh(self):
+        from datetime import date
+        drv, _ = _make_driver()  # default max_age 30
+        r = drv.alignment_freshness("29.01.2024", today=date(2024, 2, 8))  # 10 天前
+        assert r["freshness"] == "fresh"
+        assert r["calibrated_date"] == "2024-01-29"
+        assert r["age_days"] == 10
+
+    def test_freshness_stale(self):
+        from datetime import date
+        drv, _ = _make_driver()  # default max_age 30
+        r = drv.alignment_freshness("29.01.2024", today=date(2024, 5, 8))  # 100 天前
+        assert r["freshness"] == "stale"
+        assert r["age_days"] == 100
+
+    def test_freshness_unknown_when_no_date(self):
+        from datetime import date
+        drv, _ = _make_driver()
+        r = drv.alignment_freshness("no date in info", today=date(2024, 5, 8))
+        assert r["freshness"] == "unknown"
+        assert r["calibrated_date"] is None and r["age_days"] is None
+
+    def test_boundary_exactly_max_age_is_fresh(self):
+        from datetime import date
+        drv, _ = _make_driver()  # max_age 30
+        r = drv.alignment_freshness("29.01.2024", today=date(2024, 2, 28))  # 恰好 30 天
+        assert r["age_days"] == 30 and r["freshness"] == "fresh"  # age > max 才 stale
+
+    def test_max_age_override_from_connection_params(self):
+        from datetime import date
+        drv = RealPropsimF64Driver("propsim-test", {"alignment_max_age_days": 7})
+        r = drv.alignment_freshness("29.01.2024", today=date(2024, 2, 8))  # 10 天 > 7
+        assert r["freshness"] == "stale" and r["max_age_days"] == 7
+
+    def test_max_age_param_overrides_default(self):
+        from datetime import date
+        drv, _ = _make_driver()
+        r = drv.alignment_freshness("29.01.2024", today=date(2024, 2, 8), max_age_days=5)
+        assert r["freshness"] == "stale" and r["max_age_days"] == 5
+
+    def test_max_age_blank_override_falls_back_to_default(self):
+        # Codex on PR #125: operator 清空 optional override → connection_params 留 null/""
+        # → 不能崩 driver 构造, 回退默认 30。
+        from datetime import date
+        for blank in (None, ""):
+            drv = RealPropsimF64Driver("propsim-test", {"alignment_max_age_days": blank})
+            assert drv._alignment_max_age_days == 30
+            r = drv.alignment_freshness("29.01.2024", today=date(2024, 2, 8))
+            assert r["max_age_days"] == 30 and r["freshness"] == "fresh"
+
+    def test_max_age_invalid_string_falls_back_to_default(self):
+        # 非法字符串 (无法 int) 同样回退默认, 不崩
+        drv = RealPropsimF64Driver("propsim-test", {"alignment_max_age_days": "abc"})
+        assert drv._alignment_max_age_days == 30
+
+    def test_max_age_numeric_string_coerced(self):
+        # JSON 里字符串数字 "7" → 7
+        drv = RealPropsimF64Driver("propsim-test", {"alignment_max_age_days": "7"})
+        assert drv._alignment_max_age_days == 7

@@ -384,6 +384,18 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             config.get("alignment_name") or None
         )
         self._active_alignment: Optional[Dict[str, Any]] = None
+        # P2-10 Step 3: user alignment 新鲜度阈值 (天)。alignment 补偿随温度/时间漂移,
+        # 超过阈值 → precheck 标 stale 建议重标。lab 维护策略, connection_params override。
+        # Codex on PR #125: operator 清空该 optional override 时 connection_params 会留
+        # null/"" (key 在但值空, 不走 .get 默认) → int(None)/int("") 崩 driver 构造, 一个
+        # 可选设置拖垮整个 CE driver。容错回退默认 30 (非法字符串同理)。
+        _raw_max_age = config.get("alignment_max_age_days")
+        try:
+            self._alignment_max_age_days: int = (
+                int(_raw_max_age) if _raw_max_age not in (None, "") else 30
+            )
+        except (ValueError, TypeError):
+            self._alignment_max_age_days = 30
 
         # PyVISA 资源句柄
         self._visa_resource = None
@@ -1242,6 +1254,47 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             self._last_error = str(e)
             return False
 
+    async def set_output_path_loss(self, output_num: int, loss_db: float) -> bool:
+        """P2-10 Step 2: 单通道输出路损补偿 (per-output), 区别于 set_path_loss 的 batch 统一。
+
+        set_path_loss 给所有输出统一 loss (校准早期简化); 真实暗室每个 probe 路损不同
+        (校准 per-probe 出值), 精细工程需逐通道设。HAL 能力先行 (供 per-probe 校准应用 /
+        topology 集成 / 现场调用), SCPI 同 set_path_loss:
+          OUTP:LOSS:SET <output>,<loss_db>  (User Reference §20.4.5.19)
+          取值范围: OUTP:LOSS:LIM? (典型 -30 ~ 80 dB)。
+        """
+        if not self._visa_resource:
+            return False
+        try:
+            await self._write(f"OUTP:LOSS:SET {output_num},{loss_db:.1f}")
+            logger.info(f"[F64] Output {output_num} path loss set: {loss_db:.1f} dB")
+            await self._check_errors()
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[F64] set_output_path_loss(out={output_num}) failed: {e}")
+            self._last_error = str(e)
+            return False
+
+    async def set_output_gain(self, output_num: int, gain_db: float) -> bool:
+        """P2-10 Step 2: 单通道输出增益 (OUTP:GAIN:CH), 支持正负 —— 区别于
+        set_external_attenuators 的 batch map + 强制负 (`-abs`, 只衰减)。
+
+        正增益 (放大) 补偿 probe 链路插损; 负增益 = 衰减。是 loss (set_output_path_loss)
+        之外的另一个输出端电平旋钮 (Step 2: 超出 loss 补偿的精细配置)。SCPI:
+          OUTP:GAIN:CH <output>,<gain_db>  (User Reference §20.4.5.8)
+        """
+        if not self._visa_resource:
+            return False
+        try:
+            await self._write(f"OUTP:GAIN:CH {output_num},{gain_db:.2f}")
+            logger.info(f"[F64] Output {output_num} gain set: {gain_db:.2f} dB")
+            await self._check_errors()
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[F64] set_output_gain(out={output_num}) failed: {e}")
+            self._last_error = str(e)
+            return False
+
     async def get_channel_state(self) -> Dict[str, Any]:
         """
         查询 F64 当前全面状态。
@@ -1601,6 +1654,69 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 f"[F64] enable_user_alignment(\"{name}\") failed: {e}"
             )
             return False
+
+    @staticmethod
+    def _parse_alignment_date(info: Optional[str]) -> Optional["date"]:
+        """P2-10 Step 3: 从 SYST:CALIB:USER:INFO? 的 info string 容错解析标定日期。
+
+        info 格式是**现场真值** (firmware 相关, 未实测) —— 尝试常见日期格式 (ISO 优先),
+        解析不出返回 None (freshness 标 unknown, 不误判)。现场确认格式后可 tighten。
+        """
+        if not info:
+            return None
+        import re
+        from datetime import date
+        # F64 INFO? 实测含 DD.MM.YYYY 点分隔 (test_propsim_user_alignment 示例
+        # "FI..., 29.01.2024, ..."); 另容错 ISO / 斜杠。order 决定 group → (y,m,d) 映射。
+        for pat, order in (
+            (r"(\d{1,2})\.(\d{1,2})\.(\d{4})", "dmy"),  # 29.01.2024 (F64 INFO 实测格式)
+            (r"(\d{4})-(\d{1,2})-(\d{1,2})", "ymd"),    # 2026-05-27 (ISO)
+            (r"(\d{4})/(\d{1,2})/(\d{1,2})", "ymd"),    # 2026/05/27
+            (r"(\d{1,2})/(\d{1,2})/(\d{4})", "mdy"),    # 05/27/2026
+        ):
+            m = re.search(pat, info)
+            if not m:
+                continue
+            try:
+                if order == "ymd":
+                    return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                if order == "dmy":
+                    return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+                return date(int(m.group(3)), int(m.group(1)), int(m.group(2)))  # mdy
+            except ValueError:
+                return None
+        return None
+
+    def alignment_freshness(
+        self, info: Optional[str], *, today: "date", max_age_days: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """P2-10 Step 3: 判断 user alignment 标定数据新鲜度 (该不该重标)。
+
+        alignment 补偿内部通道相位/增益的温度&时间漂移, 标定数据随时间过期。解析 info
+        里的标定日期跟 today 比 —— 超过 max_age_days → stale (建议重标)。
+
+        - calibrated_date 解析不出 (info 无日期 / 格式未知) → freshness="unknown" (不误判)。
+        - age <= max_age → "fresh"; > max_age → "stale"。
+
+        today 注入 (单测可控, 避免 driver 内 date.today() 不可测); max_age_days 缺省用
+        driver 的 _alignment_max_age_days (connection_params 可 override)。
+        """
+        max_age = self._alignment_max_age_days if max_age_days is None else max_age_days
+        d = self._parse_alignment_date(info)
+        if d is None:
+            return {
+                "freshness": "unknown",
+                "calibrated_date": None,
+                "age_days": None,
+                "max_age_days": max_age,
+            }
+        age = (today - d).days
+        return {
+            "freshness": "stale" if age > max_age else "fresh",
+            "calibrated_date": d.isoformat(),
+            "age_days": age,
+            "max_age_days": max_age,
+        }
 
     async def list_external_units(self) -> List[Dict[str, Any]]:
         """列出连接到 F64 的 ACU (Auto Calibration Units).
