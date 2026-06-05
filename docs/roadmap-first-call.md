@@ -2037,7 +2037,7 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
 | 🟠 P1 (confidence) | 5 open / 17 total | 见各 section | 见各 section |
 | 🟡 P2 (abstraction debt) | 6 open / 13 total | 见各 section | 见各 section |
 | 🟢 P3 (polish) | 0 open / 13 total | 0 | 0 |
-| **Total open** | **14** | 见各 section | — |
+| **Total open** | **15** | 见各 section | — |
 
 ---
 
