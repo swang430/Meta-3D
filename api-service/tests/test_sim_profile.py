@@ -122,6 +122,26 @@ class TestSIMProfileService:
         got = get_sim_profile(db, p.id)
         assert got.auth_algorithm == "TUAK" and got.ki == _KI
 
+    def test_update_to_commercial_with_existing_ki_rejected(self, db):
+        # Codex P2 #140: 半量 update 校验合并后状态 —— 已有 ki 的卡只提交 card_kind=commercial
+        # 不能绕过"commercial 不存 Ki"
+        p = create_sim_profile(db, name="X", card_kind="test_sim", ki=_KI)
+        with pytest.raises(SIMProfileError, match="commercial"):
+            update_sim_profile(db, p.id, card_kind="commercial")
+
+    def test_update_to_commercial_clearing_ki_ok(self, db):
+        # 正路: 切 commercial 同时显式清 ki → 合并后合法
+        p = create_sim_profile(db, name="X", card_kind="test_sim", ki=_KI)
+        update_sim_profile(db, p.id, card_kind="commercial", ki=None)
+        got = get_sim_profile(db, p.id)
+        assert got.card_kind == "commercial" and got.ki is None
+
+    def test_update_mcc_breaking_imsi_prefix_rejected(self, db):
+        # Codex P2 #140: 只改 mcc 让它跟已存 imsi 前缀不一致, 也要被合并校验抓到
+        p = create_sim_profile(db, name="X", imsi="460001234567890", mcc="460", mnc="00")
+        with pytest.raises(SIMProfileError, match="前缀"):
+            update_sim_profile(db, p.id, mcc="310")
+
     def test_update_blank_name_rejected(self, db):
         p = create_sim_profile(db, name="X")
         with pytest.raises(SIMProfileError, match="不能为空"):
@@ -197,6 +217,15 @@ class TestSIMProfileAPI:
 
     def test_create_invalid_imsi_400(self, client):
         r = client.post("/api/v1/sim-profiles", json={"name": "bad", "imsi": "xyz"})
+        assert r.status_code == 400
+
+    def test_update_commercial_with_existing_ki_400(self, client):
+        # Codex P2 #140: HTTP 层也验半量 update 合并校验
+        r = client.post("/api/v1/sim-profiles", json={
+            "name": "U-comm", "card_kind": "test_sim", "ki": _KI,
+        })
+        pid = r.json()["id"]
+        r = client.put(f"/api/v1/sim-profiles/{pid}", json={"card_kind": "commercial"})
         assert r.status_code == 400
 
     def test_get_404(self, client):

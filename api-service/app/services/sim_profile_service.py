@@ -131,7 +131,13 @@ def update_sim_profile(db: Session, profile_id: UUID, **fields) -> SIMProfile:
             db.query(SIMProfile).filter(SIMProfile.name == new_name).first() is not None
         ):
             raise SIMProfileError(f"SIMProfile 名 {new_name!r} 已存在")
-    _validate(fields)
+    # 校验**合并后**状态 (现有值 + 本次 delta), 不只 delta —— PATCH 半量提交不能绕过跨字段
+    # 不变量 (Codex P2 #140: 已有 ki 的卡只提交 card_kind=commercial / 只改 mcc 让 IMSI 前缀
+    # 不一致, 都因 _validate 只看 delta 漏过)。同 feedback_runtime_gate_not_frozen_snapshot
+    # 母题: 校验对最终生效状态, 不是孤立增量。
+    merged = {f: getattr(profile, f) for f in _MUTABLE_FIELDS}
+    merged.update({k: v for k, v in fields.items() if k in _MUTABLE_FIELDS})
+    _validate(merged)
     for k, v in fields.items():
         if k in _MUTABLE_FIELDS:
             setattr(profile, k, v)
