@@ -72,6 +72,7 @@ import { TopologyEditor } from './features/TopologyEditor/TopologyEditor'
 import { TopologyProfileEditor } from './features/TopologyProfileEditor'
 import { LabProfileWizard } from './components/LabProfile/LabProfileWizard'
 import { DUTProfileManager } from './components/DUTProfile/DUTProfileManager'
+import { SIMProfileManager } from './components/SIMProfile/SIMProfileManager'
 import { fetchLabProfiles } from './api/labProfileService'
 import { ExecutionMetricsCard } from './features/Monitoring'
 import ChartsDemoPage from './components/Charts/ChartsDemoPage'
@@ -153,7 +154,7 @@ const hexToRgba = (hex: string, alpha: number) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
-type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'topologyEditor' | 'dutProfiles' | 'testManagement' | 'results' | 'systemCalibration' | 'commissioning' | 'diagnostics' | 'chartsDemo'
+type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'topologyEditor' | 'dutProfiles' | 'simProfiles' | 'testManagement' | 'results' | 'systemCalibration' | 'commissioning' | 'diagnostics' | 'chartsDemo'
 
 type ProbeFormState = Pick<ProbeType, 'ring' | 'polarization' | 'position' | 'is_active'>
 
@@ -295,6 +296,11 @@ const sections: Array<{
     key: 'dutProfiles',
     label: 'DUT 声明',
     description: '维护被测设备 (DUT) 自声明能力档案 (层数/调制/频段/双工)，供测试例配置选用与预检校验。',
+  },
+  {
+    key: 'simProfiles',
+    label: 'SIM 卡管理',
+    description: '维护测试卡池 (SIM/eSIM 身份 IMSI/PLMN + 鉴权 Ki/OPc/算法)，供测试例选卡与防插错卡预检。',
   },
   {
     key: 'testManagement',
@@ -1254,6 +1260,8 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
       return <TopologyEditor />
     case 'dutProfiles':
       return <DUTProfileManager />
+    case 'simProfiles':
+      return <SIMProfileManager />
     case 'testManagement':
       return <TestManagement />
     case 'results':
