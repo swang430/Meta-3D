@@ -89,6 +89,14 @@ class TestSIMProfileService:
         with pytest.raises(SIMProfileError, match="ki"):
             create_sim_profile(db, name="bad2", ki="00112233", card_kind="test_sim")  # too short
 
+    def test_invalid_ki_error_does_not_echo_credential(self, db):
+        # Codex P1 #142: 凭据输错的错误 detail 不能回显原值 (会进 GUI 通知 + 前端日志)
+        secret = "deadbeefdeadbeefdeadbeef"  # 24 字符, 非法长度, 形似真凭据
+        with pytest.raises(SIMProfileError) as exc:
+            create_sim_profile(db, name="bad", ki=secret, card_kind="test_sim")
+        assert secret not in str(exc.value) and "deadbeef" not in str(exc.value)
+        assert "24 字符" in str(exc.value)  # 报长度辅助排查 (非密)
+
     def test_invalid_auth_algorithm(self, db):
         with pytest.raises(SIMProfileError, match="auth_algorithm"):
             create_sim_profile(db, name="bad", auth_algorithm="COMP128")  # 2G, 不支持

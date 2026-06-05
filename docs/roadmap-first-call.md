@@ -1636,7 +1636,7 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 |-------|------|----------|------|
 | 1 ✅ | **SIMProfile 实体** (model/migration `d5b82c9f3e41`/CRUD `/sim-profiles`, 平行 DUTProfile) + TestCase 引用 `sim_profile_id`。字段: imsi/iccid, mcc/mnc (校验=IMSI前缀), ki/opc (脱敏)/auth_algorithm (MILENAGE/TUAK/XOR), card_kind (test_sim/operator_test/commercial 当鉴权门, commercial 不存 ki), sim_form (usim/esim), eid/esim_profile_id (一 profile 一行), extra_metadata; **不要** sqn (运行时态) — **✅ done 本 PR** (凭据脱敏不回显, 23 测, dev PG applied) | 本地 | ⭐ 先 |
 | 2 ◐ | **precheck SIM↔UXM 一致性 (档 B)**: ① **attach 后 IMSI vs 声明核对 (防插错卡) — ✅ done 本 PR** (`sim_identity_check` + precheck 2.4b: dut_attach.imsi vs SIMProfile.imsi, strict `precheck_strict_sim_identity` → FAIL / opt-out warn, IMSI 脱敏; bypass 4 处同步; 10 测); ② SIMProfile vs 声明小区 PLMN cross-check — **待现场/驱动扩展** (UXM 不暴露 PLMN 读, TestCase 无小区 PLMN); ③ **鉴权 fail-loud 分根因** (MAC=Ki/OPc 不符 / sync=SQN 去同步可恢复 / no subscriber=HSS 没此卡) — **待现场/驱动扩展** (需 emulator 上报鉴权失败原因, mock 给不出) | 本地①/现场②③ | ⭐ 高 |
-| 3 | **GUI**: SIMProfile CRUD 管理页 (平行 DUTProfileManager) + 侧栏导航 + TestCase 配置选 SIM + 交叉核对结果展示 | 本地 | 中 |
+| 3 ✅ | **GUI** (本 PR): `simProfileService` (ki/opc write-only 脱敏) + `SIMProfileManager` CRUD 页 (凭据 PasswordInput, 编辑留空保持, commercial 禁 ki) + 侧栏「SIM 卡管理」导航 + `MIMOOTAConfigForm` SIM 选择器/严格开关/声明提示。**浏览器端到端实测**: 建卡 (Ki 脱敏 badge "Ki 已设") → TestCase 步骤选 SIM → 声明提示 IMSI/PLMN/卡类型 + 严格开关启用 | 本地 | 中 |
 | 4 | **档 A 自动 provision (现场)**: 确认 UXM SCPI subscriber/auth/PLMN 命令 → 从 SIMProfile 写 UXM HSS (IMSI/Ki/OPc/算法/PLMN), 消除手配 | 现场 | 待 SCPI 确认 |
 
 **Acceptance**:
@@ -1646,7 +1646,7 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 - **现场 (档 A)**: 确认 UXM SCPI 鉴权命令 → 一键从 SIMProfile provision UXM HSS, 测试卡↔UXM 同凭据真鉴权跑通。
 
 **依赖**: DUTProfile (P2-11 backlog #1965, 已收口) —— 复用脚手架 (model/CRUD/cross-check 模式 `dut_capability_crosscheck`) + GUI 模式 (`DUTProfileManager`)。档 A 待现场 UXM SCPI 确认。
-**Status**: 🔄 in-progress —— **Phase 1 ✅ done** (实体/migration `d5b82c9f3e41`/CRUD + TestCase 引用 + 凭据脱敏, 27 测)。**Phase 2 本地部分 ✅ done** (①防插错卡 IMSI 核对 `sim_identity_check` + precheck 2.4b + `precheck_strict_sim_identity` 门 bypass 4 处同步; ②PLMN cross-check + ③鉴权 fail-loud 分根因 待现场/驱动扩展 —— UXM 不暴露 PLMN 读 + 鉴权失败原因 mock 给不出)。设为 Current Focus (真 P0 仍现场 blocked, 按治理"P0 全 blocked 时 Current Focus 可挪本地项")。**档 B 续: Phase 3 (GUI: SIMProfile 管理页 + TestCase 选 SIM, 本地)**; 档 A (Phase 4) + Phase 2 ②③ 待现场确认 S8711A SCPI / 扩 BS 驱动。
+**Status**: 🔄 in-progress —— **Phase 1 ✅ done** (实体/migration `d5b82c9f3e41`/CRUD + TestCase 引用 + 凭据脱敏, 27 测)。**Phase 2 本地部分 ✅ done** (①防插错卡 IMSI 核对 `sim_identity_check` + precheck 2.4b + `precheck_strict_sim_identity` 门 bypass 4 处同步; ②PLMN cross-check + ③鉴权 fail-loud 分根因 待现场/驱动扩展 —— UXM 不暴露 PLMN 读 + 鉴权失败原因 mock 给不出)。**Phase 3 GUI ✅ done** (本 PR, 浏览器实测: SIMProfileManager 凭据脱敏 + TestCase SIM 选择器 + 声明提示)。**→ P2-13 本地三阶段 (1/2本地/3) 全收口**; 剩 Phase 2②③ (PLMN/鉴权 fail-loud) + Phase 4 (档 A auto-provision) 待现场确认 S8711A SCPI / 扩 BS 驱动。曾设 Current Focus (真 P0 现场 blocked); 本地完结后 Current Focus 移下一本地项 (backlog #2001 imbalance metric)。
 **Estimate**: Phase 1 ~1d (镜像 DUTProfile 阶段1) + Phase 2 ~1-1.5d + Phase 3 ~1d + Phase 4 现场。
 
 ---

@@ -31,6 +31,7 @@ import { useQuery } from '@tanstack/react-query'
 
 import { fetchChannelModels } from '../../../../api/service'
 import { fetchDUTProfiles } from '../../../../api/dutProfileService'
+import { fetchSIMProfiles } from '../../../../api/simProfileService'
 
 // --- Local typings: mirror the backend MIMOOTAConfiguration shape ---
 
@@ -78,6 +79,10 @@ export interface MIMOOTAConfiguration {
   dut_profile_id?: string
   // strict: 请求超声明时 FAIL (默认 true); false=降级 warning 继续 (bring-up 旁路)。
   precheck_strict_dut_capability?: boolean
+  // P2-13 Phase 3: 引用一张 SIMProfile (测试卡)。precheck 拿 attach IMSI 跟声明核对 (防插错卡)。
+  sim_profile_id?: string
+  // strict: attach IMSI ≠ 声明 → FAIL (默认 true); false=降级 warning。
+  precheck_strict_sim_identity?: boolean
   // P2-11 #1974: UXM 端口路由/调度 per-test 驱动 (留空=用 Topology Profile 默认, 不覆盖)
   mimo_port_preset?: string
   sched_algo?: string
@@ -185,6 +190,19 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
       : dutOptions
   // strict 默认 true (后端 default), 仅当显式 false 才关。
   const dutStrict = value.precheck_strict_dut_capability !== false
+  // P2-13 Phase 3: 列卡池供选 (precheck 拿 attach IMSI 跟它声明 IMSI 比, 防插错卡)。
+  const simProfilesQuery = useQuery({
+    queryKey: ['sim-profiles'],
+    queryFn: () => fetchSIMProfiles(false),
+  })
+  const simProfiles = simProfilesQuery.data ?? []
+  const simOptions = simProfiles.map((s) => ({ value: s.id, label: s.name }))
+  const selectedSim = simProfiles.find((s) => s.id === value.sim_profile_id) ?? null
+  const simSelectOptions =
+    value.sim_profile_id && !simOptions.some((o) => o.value === value.sim_profile_id)
+      ? [...simOptions, { value: value.sim_profile_id, label: `${value.sim_profile_id} (清单外)` }]
+      : simOptions
+  const simStrict = value.precheck_strict_sim_identity !== false
   // 实时一致性预览 — 跟后端 precheck section 2.3 / check_dut_capability 同口径, 表单里就给反馈,
   // 不用等真跑。声明项缺失 (null) 跳过该项。调制阶数用 MODULATION_OPTIONS 顺序 (= 后端 _MODULATIONS)。
   const dutPreviewViolations: string[] = []
@@ -386,6 +404,51 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
             <Text size="xs" c="red">
               ⚠ 请求超声明: {dutPreviewViolations.join('; ')} —{' '}
               {dutStrict ? '严格模式下预检会 fail' : '当前降级 warning 继续'}
+            </Text>
+          ) : null}
+        </Stack>
+      </Paper>
+
+      {/* SIM 卡 (防插错卡) */}
+      <Paper p="md" withBorder>
+        <Stack gap="md">
+          <Text size="sm" fw={600}>
+            SIM 卡 (防插错卡)
+          </Text>
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+            <Select
+              label="SIM 卡"
+              description="选规划期建好的测试卡 (在「SIM 卡管理」页维护); 留空=不校验"
+              data={simSelectOptions}
+              value={value.sim_profile_id ?? null}
+              onChange={(v) => update('sim_profile_id', v ?? undefined)}
+              disabled={readOnly}
+              clearable
+              searchable
+              placeholder={
+                simSelectOptions.length === 0
+                  ? '无 SIM 卡 — 去「SIM 卡管理」页新建'
+                  : '选择 SIM 卡'
+              }
+              nothingFoundMessage="无匹配的 SIM 卡"
+            />
+            <Switch
+              label="严格校验 (attach IMSI 不符则 fail)"
+              description="关 = 仅降级 warning 继续 (bring-up 旁路)"
+              checked={simStrict}
+              onChange={(e) =>
+                update('precheck_strict_sim_identity', e.currentTarget.checked)
+              }
+              disabled={readOnly || !value.sim_profile_id}
+              mt="lg"
+            />
+          </SimpleGrid>
+          {selectedSim ? (
+            <Text size="xs" c="dimmed">
+              声明: IMSI {selectedSim.imsi ?? '—'}
+              {selectedSim.mcc && selectedSim.mnc ? ` / PLMN ${selectedSim.mcc}-${selectedSim.mnc}` : ''}
+              {selectedSim.card_kind ? ` / ${selectedSim.card_kind}` : ''} ——
+              attach 后拿实测 IMSI 跟它比, 不符提示插错卡
             </Text>
           ) : null}
         </Stack>

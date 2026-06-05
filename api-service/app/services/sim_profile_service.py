@@ -69,7 +69,12 @@ def _validate(fields: dict) -> None:
     for f in ("ki", "opc"):
         v = fields.get(f)
         if v is not None and v != "" and not _HEX32_RE.match(str(v).strip()):
-            raise SIMProfileError(f"{f} 必须是 32 位十六进制 (128-bit; 得 {v!r})")
+            # ⚠️ Codex P1 (#142): 不回显凭据原值 —— 错误 detail 会进 GUI 通知 + 前端日志,
+            # echo 输错的 Ki/OPc 会泄漏 (可能是真值的笔误)。只报长度 (非密) 辅助排查。
+            raise SIMProfileError(
+                f"{f} 格式非法: 必须是 32 位十六进制 (128-bit, 32 字符); "
+                f"收到 {len(str(v).strip())} 字符 (凭据值已隐去)"
+            )
     alg = fields.get("auth_algorithm")
     if alg is not None and str(alg).upper() not in _AUTH_ALGORITHMS:
         raise SIMProfileError(
