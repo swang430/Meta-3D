@@ -1622,7 +1622,7 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 
 ---
 
-### P2-13 — SIMProfile (SIM/eSIM 身份 + 鉴权声明) + SIM↔UXM 一致性 fail-loud 📋 scheduled (2026-06-05 用户排期, 未启动)
+### P2-13 — SIMProfile (SIM/eSIM 身份 + 鉴权声明) + SIM↔UXM 一致性 fail-loud 🔄 in-progress (Phase 1 实体+CRUD done, 档 B Phase 2-3 继续)
 
 **What**: 把 DUT 测试用的 SIM/eSIM 身份与鉴权 (IMSI/PLMN/Ki/OPc/算法) 从"Test App 手配的工艺前提黑箱"升级成**结构化可声明 + 下发前一致性可校验**的 `SIMProfile` 实体。跟 P2-11 (TestCase 单一真值源驱动) 同族、跟 DUTProfile (P2-11 backlog #1965, 已收口) 平行: DUTProfile = 能力层 (max layers/调制), SIMProfile = **身份/接入层** (卡凭据)。完整设计见 backlog 条目 (本文件 "Discovered during" 区, 2026-06-05 条) + [`docs/architecture/testcase-driven-instrument-config.md`](architecture/testcase-driven-instrument-config.md)。
 
@@ -1634,7 +1634,7 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 
 | Phase | 内容 | 本地/现场 | 优先 |
 |-------|------|----------|------|
-| 1 | **SIMProfile 实体** (model/migration/CRUD `/sim-profiles`, 平行 DUTProfile) + TestCase 引用 `sim_profile_id`。字段: imsi/iccid, mcc/mnc (校验=IMSI前缀), ki/opc (脱敏)/auth_algorithm (MILENAGE/TUAK/XOR), card_kind (test_sim/operator_test/commercial 当鉴权门, commercial 不存 ki), sim_form (usim/esim), eid/esim_profile_id (一 profile 一行), extra_metadata; **不要** sqn (运行时态) | 本地 | ⭐ 先 |
+| 1 ✅ | **SIMProfile 实体** (model/migration `d5b82c9f3e41`/CRUD `/sim-profiles`, 平行 DUTProfile) + TestCase 引用 `sim_profile_id`。字段: imsi/iccid, mcc/mnc (校验=IMSI前缀), ki/opc (脱敏)/auth_algorithm (MILENAGE/TUAK/XOR), card_kind (test_sim/operator_test/commercial 当鉴权门, commercial 不存 ki), sim_form (usim/esim), eid/esim_profile_id (一 profile 一行), extra_metadata; **不要** sqn (运行时态) — **✅ done 本 PR** (凭据脱敏不回显, 23 测, dev PG applied) | 本地 | ⭐ 先 |
 | 2 | **precheck SIM↔UXM 一致性 (档 B)**: SIMProfile vs 声明小区 PLMN cross-check + warn; **attach 后实测 IMSI vs 声明核对** (强化现"防对错设备"门, 替代操作员手敲 IMSI); **鉴权 fail-loud 分根因** (MAC failure=Ki/OPc 不符 / sync failure=SQN 去同步可恢复 / no subscriber=HSS 没此卡) | 本地 | ⭐ 高 |
 | 3 | **GUI**: SIMProfile CRUD 管理页 (平行 DUTProfileManager) + 侧栏导航 + TestCase 配置选 SIM + 交叉核对结果展示 | 本地 | 中 |
 | 4 | **档 A 自动 provision (现场)**: 确认 UXM SCPI subscriber/auth/PLMN 命令 → 从 SIMProfile 写 UXM HSS (IMSI/Ki/OPc/算法/PLMN), 消除手配 | 现场 | 待 SCPI 确认 |
@@ -1646,7 +1646,7 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 - **现场 (档 A)**: 确认 UXM SCPI 鉴权命令 → 一键从 SIMProfile provision UXM HSS, 测试卡↔UXM 同凭据真鉴权跑通。
 
 **依赖**: DUTProfile (P2-11 backlog #1965, 已收口) —— 复用脚手架 (model/CRUD/cross-check 模式 `dut_capability_crosscheck`) + GUI 模式 (`DUTProfileManager`)。档 A 待现场 UXM SCPI 确认。
-**Status**: 📋 scheduled (2026-06-05 用户排期), 未启动。设为 Current Focus —— 真 P0 (P0-3/4/5) 仍现场 blocked, 按治理"P0 全 blocked 时 Current Focus 可挪本地项"。档 B (Phase 1-3) 本地可启动; 档 A (Phase 4) 待现场。
+**Status**: 🔄 in-progress —— **Phase 1 (实体 model/migration `d5b82c9f3e41`/CRUD + TestCase 引用 `sim_profile_id` + 凭据脱敏) ✅ done (本 PR, 23 测, dev PG applied)**。设为 Current Focus (真 P0 仍现场 blocked, 按治理"P0 全 blocked 时 Current Focus 可挪本地项")。档 B 续: Phase 2 (precheck SIM↔UXM cross-check/防对错卡/鉴权 fail-loud 分根因) + Phase 3 (GUI); 档 A (Phase 4) 待现场确认 S8711A SCPI。
 **Estimate**: Phase 1 ~1d (镜像 DUTProfile 阶段1) + Phase 2 ~1-1.5d + Phase 3 ~1d + Phase 4 现场。
 
 ---
