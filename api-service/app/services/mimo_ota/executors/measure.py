@@ -1033,6 +1033,8 @@ class MeasureExecutor(IStepExecutor):
                 for op in il_result.operating_point
             ],
             "failure_reason": il_result.failure_reason,
+            "imbalance_db": il_result.imbalance_db,        # #2001(1): 多端口不平衡 max-min
+            "imbalance_status": il_result.imbalance_status,  # ok/marginal/excessive/None
             "active_inputs": list(active_inputs),
             "strict": config.precheck_strict_input_level,
         }

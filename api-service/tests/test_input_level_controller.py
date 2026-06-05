@@ -312,3 +312,51 @@ class TestLimitsUnreadable:
         assert result.success is False, "limits 不可读时不能默默成功"
         assert "get_input_level_limits" in (result.failure_reason or "")
         assert "窗口" in (result.failure_reason or "")
+
+
+def _imbalanced_measure(bs, avg_by_input, crest_db=10.0):
+    """measure_input fn: 每 input 返回各自 avg (制造 imbalance)。bs 未设功率 → None。"""
+    def _fn(in_num: int, t: float):
+        if bs.current_power is None:
+            return None
+        return (avg_by_input[in_num], crest_db)
+    return _fn
+
+
+class TestImbalanceMetric:
+    """#2001(1): 多端口 input 不平衡 = max(avg)-min(avg), 容忍带分类, surface 不阻断收敛。"""
+
+    async def test_balanced_is_ok_no_warning(self):
+        # 各 input avg 全 -20 (coupled, 同值) → imbalance 0, status ok, 无 imbalance warning
+        bs = _FakeBS()
+        ce = _FakeCE(measure=_coupled_measure(bs))
+        result = await InputLevelController(ce, bs).establish()
+        assert result.success is True
+        assert result.imbalance_db == 0.0 and result.imbalance_status == "ok"
+        assert not any("imbalance" in w for w in result.system_warnings)
+
+    async def test_marginal_imbalance_warns_but_converges(self):
+        # avgs ∈ [-23,-15] 全在窗口 → 收敛; spread = -18.5-(-20)=1.5 → marginal (1<1.5≤2.5)
+        bs = _FakeBS()
+        ce = _FakeCE(measure=_imbalanced_measure(bs, {1: -20.0, 2: -20.0, 3: -20.0, 4: -18.5}))
+        result = await InputLevelController(ce, bs).establish()
+        assert result.success is True  # imbalance 不阻断收敛
+        assert result.imbalance_db == 1.5 and result.imbalance_status == "marginal"
+        assert any("imbalance" in w and "marginal" in w for w in result.system_warnings)
+
+    async def test_excessive_imbalance_warns(self):
+        # spread = -16-(-20) = 4.0 → excessive (>2.5); 全在窗口仍收敛 (surface 不阻断)
+        bs = _FakeBS()
+        ce = _FakeCE(measure=_imbalanced_measure(bs, {1: -20.0, 2: -20.0, 3: -20.0, 4: -16.0}))
+        result = await InputLevelController(ce, bs).establish()
+        assert result.success is True
+        assert result.imbalance_db == 4.0 and result.imbalance_status == "excessive"
+        assert any("imbalance" in w and "excessive" in w for w in result.system_warnings)
+
+    async def test_single_input_no_imbalance(self):
+        # 单 input → imbalance 概念不适用 → None
+        bs = _FakeBS()
+        ce = _FakeCE(measure=_coupled_measure(bs))
+        result = await InputLevelController(ce, bs, active_inputs=(1,)).establish()
+        assert result.success is True
+        assert result.imbalance_db is None and result.imbalance_status is None

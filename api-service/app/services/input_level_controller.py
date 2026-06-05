@@ -47,6 +47,10 @@ class InputLevelResult:
     system_warnings: List[str] = field(default_factory=list)
     iterations: int = 0
     failure_reason: Optional[str] = None
+    # #2001(1): 多端口 input 不平衡 = max(avg) - min(avg) 跨 input。status: ok/marginal/
+    # excessive/None(单 input)。收敛时填; surface 不阻断 (容忍带见 _classify_imbalance)。
+    imbalance_db: Optional[float] = None
+    imbalance_status: Optional[str] = None
 
 
 class InputLevelController:
@@ -86,6 +90,10 @@ class InputLevelController:
         clipping_threshold_per_mille: float = 1.0,
         uxm_power_step_db: float = 3.0,
         max_iterations: int = 5,
+        # —— 多端口 imbalance 容忍带 (#2001(1)): 4x4 各 input avg 间距 ±1-2.5dB 物理必然
+        #    (cable 长度/质量/接头/ADC 增益), surface 不阻断; per-port cable cal 补偿是 (2)(3) ——
+        imbalance_marginal_db: float = 1.0,    # ≤ 此 = ok
+        imbalance_excessive_db: float = 2.5,   # marginal..excessive ≤ 此; 之上 = excessive
         # —— 通用 ——
         active_inputs: Tuple[int, ...] = (1, 2, 3, 4),
         group_num: int = 1,
@@ -104,6 +112,8 @@ class InputLevelController:
         self._clip_thresh = clipping_threshold_per_mille
         self._uxm_step = uxm_power_step_db
         self._max_iter = max_iterations
+        self._imbalance_marginal = imbalance_marginal_db
+        self._imbalance_excessive = imbalance_excessive_db
         self._inputs = tuple(active_inputs)
         self._group = group_num
 
@@ -169,9 +179,17 @@ class InputLevelController:
                 not out_lo and not out_hi and not clip_bad and not cut_off
             )
             if converged:
+                imb_db, imb_status = self._classify_imbalance(op_point)
+                if imb_status in ("marginal", "excessive"):
+                    warnings = warnings + [
+                        f"input imbalance {imb_db} dB ({imb_status}): 各 input avg 间距偏大 "
+                        f"(> {self._imbalance_marginal} dB) — 检查 cable 长度/接头/per-port cal "
+                        "(audit, 不阻断收敛; CTIA MPAC 容忍带, per-port 补偿见 #2001 (2)(3))"
+                    ]
                 logger.info(
-                    "[InputLevelController] 收敛 (iter=%d, UXM=%.1f dBm, clipping=%s‰)",
-                    iteration, uxm_power, clipping,
+                    "[InputLevelController] 收敛 (iter=%d, UXM=%.1f dBm, clipping=%s‰, "
+                    "imbalance=%s dB %s)",
+                    iteration, uxm_power, clipping, imb_db, imb_status,
                 )
                 return InputLevelResult(
                     success=True,
@@ -180,6 +198,8 @@ class InputLevelController:
                     clipping_per_mille=clipping,
                     system_warnings=warnings,
                     iterations=iteration,
+                    imbalance_db=imb_db,
+                    imbalance_status=imb_status,
                 )
 
             # 调整 UXM 功率重试
@@ -198,6 +218,27 @@ class InputLevelController:
         )
 
     # —— 内部辅助 ——
+
+    def _classify_imbalance(
+        self, op_point: List[InputOperatingPoint]
+    ) -> Tuple[Optional[float], Optional[str]]:
+        """多端口 input 不平衡 = max(avg) - min(avg) 跨 input。<2 input → (None, None)。
+
+        容忍带 (#2001): 4x4 各 input avg ±1-2.5 dB 间距是物理必然 (cable 长度/质量 ±0.5-1dB +
+        UXM TX port ±0.3dB + F64 ADC 增益 ±0.5dB + 接头老化)。ok ≤ marginal < marginal..
+        excessive ≤ excessive < excessive。surface 不阻断收敛 (per-port cable cal 补偿是 (2)(3))。
+        """
+        avgs = [op.avg_dbm for op in op_point]
+        if len(avgs) < 2:
+            return None, None
+        imbalance = round(max(avgs) - min(avgs), 2)
+        if imbalance <= self._imbalance_marginal:
+            status = "ok"
+        elif imbalance <= self._imbalance_excessive:
+            status = "marginal"
+        else:
+            status = "excessive"
+        return imbalance, status
 
     async def _configure_burst_mode(self) -> Optional[str]:
         """对每个 active input 设 BURST 模式 + burst 触发电平; 失败返回原因字符串。"""
