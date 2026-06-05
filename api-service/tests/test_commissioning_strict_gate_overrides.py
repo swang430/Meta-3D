@@ -31,6 +31,7 @@ _P2_11_FLAGS = (
     "precheck_strict_switch_mode",
     "precheck_strict_cell_config",
     "precheck_strict_dut_capability",
+    "precheck_strict_sim_identity",
 )
 _ALL_STRICT_FLAGS = ("precheck_strict_dut", "precheck_strict_cal", *_P2_11_FLAGS)
 
@@ -53,6 +54,7 @@ def test_strict_flags_false_pass_through():
             precheck_strict_switch_mode=False,
             precheck_strict_cell_config=False,
             precheck_strict_dut_capability=False,
+            precheck_strict_sim_identity=False,
         )
     )
     for flag in _ALL_STRICT_FLAGS:
@@ -83,6 +85,7 @@ def test_p2_11_flag_set_others_omitted():
     assert overrides["precheck_strict_frequency"] is False
     for flag in ("precheck_strict_emulation_file", "precheck_strict_switch_mode",
                  "precheck_strict_cell_config", "precheck_strict_dut_capability",
+                 "precheck_strict_sim_identity",
                  "precheck_strict_cal", "precheck_strict_dut"):
         assert flag not in overrides
 
@@ -96,6 +99,7 @@ def test_p2_11_flags_true_pass_through():
             precheck_strict_switch_mode=True,
             precheck_strict_cell_config=True,
             precheck_strict_dut_capability=True,
+            precheck_strict_sim_identity=True,
         )
     )
     for flag in _P2_11_FLAGS:

@@ -135,6 +135,9 @@ class CreateSessionRequest(BaseModel):
     # DUTProfile 声明能力门 (规划期, attach 前): 暗室首测 bring-up 也要可跳 (快速跑不关心 DUT
     # 声明)。新 strict 门同步 bypass (feedback_strict_gate_extend_bypass_toggle, 这次提前补)。
     precheck_strict_dut_capability: Optional[bool] = None
+    # P2-13 Phase 2: SIM 身份核对门 (防插错卡)。bring-up 也要可跳 (快速跑可能不绑 SIMProfile /
+    # 用临时卡)。新 strict 门同步 bypass (feedback_strict_gate_extend_bypass_toggle)。
+    precheck_strict_sim_identity: Optional[bool] = None
 
 
 class SessionResponse(BaseModel):
@@ -199,6 +202,8 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
         overrides["precheck_strict_cell_config"] = req.precheck_strict_cell_config
     if req.precheck_strict_dut_capability is not None:
         overrides["precheck_strict_dut_capability"] = req.precheck_strict_dut_capability
+    if req.precheck_strict_sim_identity is not None:
+        overrides["precheck_strict_sim_identity"] = req.precheck_strict_sim_identity
     return overrides
 
 

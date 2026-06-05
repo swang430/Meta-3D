@@ -185,6 +185,71 @@ class PrecheckExecutor(IStepExecutor):
                     "is already in chamber (audit trail in dut_pass_reason)."
                 )
 
+        # --- 2.4b SIM 身份核对 (P2-13 Phase 2: 防插错卡) ---
+        # config.sim_profile_id 指向声明卡时, 拿 attach 记录 IMSI 跟 SIMProfile.imsi 比 —— 不一致 =
+        # 实际 attach 的卡跟 TestCase 选的卡对不上 (插错卡 / IMSI 敲错), 测的不是预期那张, 结果无意义。
+        # strict (precheck_strict_sim_identity, 默认 True) → FAIL; opt-out → warn。mock-aware:
+        # 无 sim_profile_id / SIMProfile 不存在 / 卡无声明 imsi / 无 dut_attach → 跳过。
+        if config.sim_profile_id:
+            from app.models.sim_profile import SIMProfile
+            from uuid import UUID as _UUID
+
+            try:
+                _sim_id = _UUID(str(config.sim_profile_id))
+            except (ValueError, TypeError, AttributeError):
+                _sim_id = None  # 非法 UUID (填错) → 当不存在
+            sim_profile = (
+                context.db.query(SIMProfile).filter(SIMProfile.id == _sim_id).first()
+                if _sim_id is not None
+                else None
+            )
+            if sim_profile is None:
+                warnings.append(
+                    f"config.sim_profile_id={config.sim_profile_id} 指向的 SIMProfile 不存在 "
+                    "(已删 / 填错 / 非法 id) — 跳过 SIM 身份核对"
+                )
+            elif sim_profile.imsi and dut_attach and dut_attach.get("imsi"):
+                from app.services.mimo_ota.sim_identity_check import check_sim_identity
+
+                sim_id = check_sim_identity(
+                    declared_imsi=sim_profile.imsi,
+                    attached_imsi=dut_attach.get("imsi"),
+                )
+                result_payload["sim_identity_check"] = {
+                    "sim_profile": sim_profile.name,
+                    "consistent": sim_id.consistent,
+                    "declared_imsi": sim_id.declared_imsi_masked,
+                    "attached_imsi": sim_id.attached_imsi_masked,
+                }
+                if not sim_id.consistent:
+                    if config.precheck_strict_sim_identity:
+                        # 早期 fail 持久化 phase result (同 dut_capability strict, Codex P2 #135)
+                        result_payload["overall_pass"] = False
+                        result_payload["messages"] = messages
+                        write_phase_result(
+                            context.test_execution, "precheck", result_payload
+                        )
+                        context.db.commit()
+                        return StepExecutionResult(
+                            status=StepExecutionStatus.FAILED,
+                            measurements=result_payload,
+                            warnings=warnings,
+                            error_message=(
+                                f"SIM 身份不符: TestCase 选的卡 '{sim_profile.name}' 声明 IMSI "
+                                f"({sim_id.declared_imsi_masked}) 跟 attach 记录 IMSI "
+                                f"({sim_id.attached_imsi_masked}) 不一致 —— 可能插错卡 / IMSI 敲错; "
+                                "precheck_strict_sim_identity=False 可绕"
+                            ),
+                        )
+                    warnings.append(
+                        f"SIM 身份不符 (precheck_strict_sim_identity=False, 继续): TestCase 选卡 "
+                        f"'{sim_profile.name}' 声明 IMSI 跟 attach IMSI 不一致"
+                    )
+                else:
+                    messages.append(
+                        f"SIM 身份核对: attach IMSI 匹配 TestCase 选的卡 '{sim_profile.name}'"
+                    )
+
         # --- 2.5 UE Capability check (Phase 2e: 4x4 阻塞前防御) ---
         # P1-9 (Codex P2 on 655d7e3, 2026-05-19): 同时设 `live_ue_query_state`
         # 给 section 5b 的 DUT gate 用 — cached `dut_attach.rrc_connected`
