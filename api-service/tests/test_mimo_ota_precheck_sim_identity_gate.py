@@ -82,7 +82,7 @@ def _make_sim(db, *, imsi=None) -> SIMProfile:
     return s
 
 
-async def _run_precheck(db, lab, *, sim_profile_id, attach_imsi, strict):
+async def _run_precheck(db, lab, *, sim_profile_id, attach_imsi, strict, observed_imsi=None):
     test_case, _ = build_mimo_ota_test_case(
         db, name=f"SIMIdCase-{uuid.uuid4().hex[:8]}", description="sim identity gate",
         lab_profile_id=lab.id,
@@ -97,8 +97,11 @@ async def _run_precheck(db, lab, *, sim_profile_id, attach_imsi, strict):
         created_by="pytest-simid",
     )
     measurements = {}
-    if attach_imsi is not None:
-        measurements["dut_attach"] = {"imsi": attach_imsi, "rrc_connected": True}
+    if attach_imsi is not None or observed_imsi is not None:
+        attach = {"imsi": attach_imsi, "rrc_connected": True}
+        if observed_imsi is not None:
+            attach["ue_info_snapshot"] = {"imsi": observed_imsi}  # modem 实测身份
+        measurements["dut_attach"] = attach
     execution = TestExecution(
         test_case_id=test_case.id, status="pending", started_at=datetime.utcnow(),
         config={"step_descriptors": []}, measurements=measurements, executed_by="pytest-simid",
@@ -139,7 +142,23 @@ class TestSIMIdentityPrecheckGate:
             db, lab, sim_profile_id=str(sim.id), attach_imsi="460001234567890", strict=True,
         )
         assert "SIM 身份不符" not in (res.error_message or "")
-        assert (res.measurements or {})["sim_identity_check"]["consistent"] is True
+        mm = (res.measurements or {})["sim_identity_check"]
+        assert mm["consistent"] is True and mm["imsi_source"] == "declared"  # 无 snapshot → 手敲
+
+    async def test_observed_imsi_preferred_over_typed(self, db, lab):
+        # ⭐ Codex P2 #141: 操作员手敲对了 A 但 modem 实测报 B (真插错卡) —— 比手敲会假通过,
+        # 比实测才抓得到。优先用 ue_info_snapshot.imsi (实测) → mismatch FAIL。
+        sim = _make_sim(db, imsi="460001234567890")
+        res, _ = await _run_precheck(
+            db, lab, sim_profile_id=str(sim.id),
+            attach_imsi="460001234567890",     # 手敲对了 (= 声明)
+            observed_imsi="310260000000001",   # 但 modem 实测是别的卡
+            strict=True,
+        )
+        assert res.status == StepExecutionStatus.FAILED
+        assert "SIM 身份不符" in (res.error_message or "")
+        mm = (res.measurements or {})["sim_identity_check"]
+        assert mm["imsi_source"] == "observed" and mm["consistent"] is False
 
     async def test_no_dut_attach_skips(self, db, lab):
         # 没 attach 记录 → 无可比, 跳过 (不 fail)
