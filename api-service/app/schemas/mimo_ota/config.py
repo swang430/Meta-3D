@@ -347,6 +347,11 @@ class MIMOOTAConfiguration(BaseModel):
     # True (生产默认): 请求 > 声明 → precheck FAILED。无 dut_profile_id / 声明项未填 → 跳过。
     # False (opt-out / 暗室首测 bring-up): 降级 warning。同 precheck_strict_* 走 bring-up bypass。
 
+    sim_profile_id: Optional[str] = None
+    # P2-13 阶段 1: 关联的 SIMProfile id (str UUID) —— 本次测试用哪张测试卡 (IMSI/PLMN/Ki/OPc)。
+    # None = 不做 SIM↔UXM 一致性校验。后续阶段: precheck 拿 SIMProfile vs UXM 小区 PLMN/HSS 比 +
+    # attach 后实测认证 IMSI vs 声明核对 (防对错卡)。本阶段只承载字段, 不消费。
+
     # === Pass/fail thresholds ===
     pass_criteria: MIMOOTAPassCriteria = Field(default_factory=MIMOOTAPassCriteria)
 
