@@ -63,6 +63,7 @@ export const createSession = async (
     precheck_strict_switch_mode?: boolean
     precheck_strict_cell_config?: boolean
     precheck_strict_dut_capability?: boolean
+    precheck_strict_sim_identity?: boolean
   } = {
     engine_mode: engineMode,
   }
@@ -73,11 +74,11 @@ export const createSession = async (
     body.asc_source_path = ascSourcePath
   }
   if (labSmoke) {
-    // P2-11: "强制跳过严格门" = 统一的暗室首测 (路径 A) bypass —— 一次降级**全部**
-    // 7 道 strict 门 (cal/dut/频率/.smu/switch mode/cell_config/dut_capability), 否则真仪表
-    // bring-up 会撞上它们。dut_capability = DUTProfile 声明门 (规划期), 跟其它门一起 bypass
-    // (feedback_strict_gate_extend_bypass_toggle: 加门同步 4 处, 这次提前补)。镜像
-    // test_commissioning_strict_gate_overrides。
+    // P2-11/P2-13: "强制跳过严格门" = 统一的暗室首测 (路径 A) bypass —— 一次降级**全部**
+    // 8 道 strict 门 (cal/dut/频率/.smu/switch mode/cell_config/dut_capability/sim_identity),
+    // 否则真仪表 bring-up 会撞上它们。dut_capability = DUTProfile 声明门, sim_identity = SIMProfile
+    // 防插错卡门 (都规划期/attach 校验), 跟其它门一起 bypass (feedback_strict_gate_extend_bypass_toggle:
+    // 加门同步 4 处, 这次提前补)。镜像 test_commissioning_strict_gate_overrides。
     body.precheck_strict_dut = false
     body.precheck_strict_cal = false
     body.precheck_strict_frequency = false
@@ -85,6 +86,7 @@ export const createSession = async (
     body.precheck_strict_switch_mode = false
     body.precheck_strict_cell_config = false
     body.precheck_strict_dut_capability = false
+    body.precheck_strict_sim_identity = false
   }
   return client.post<SessionResponse>('/commissioning/sessions', body)
 }

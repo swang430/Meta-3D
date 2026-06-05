@@ -350,7 +350,12 @@ class MIMOOTAConfiguration(BaseModel):
     sim_profile_id: Optional[str] = None
     # P2-13 阶段 1: 关联的 SIMProfile id (str UUID) —— 本次测试用哪张测试卡 (IMSI/PLMN/Ki/OPc)。
     # None = 不做 SIM↔UXM 一致性校验。后续阶段: precheck 拿 SIMProfile vs UXM 小区 PLMN/HSS 比 +
-    # attach 后实测认证 IMSI vs 声明核对 (防对错卡)。本阶段只承载字段, 不消费。
+    # attach 后实测认证 IMSI vs 声明核对 (防对错卡)。
+    precheck_strict_sim_identity: bool = True
+    # P2-13 阶段 2: SIM 身份核对门 (防插错卡)。config.sim_profile_id 指向声明卡时, precheck 拿
+    # attach 记录 IMSI 跟 SIMProfile.imsi 比 —— 不一致 = 实际 attach 的卡跟 TestCase 选的卡对不上。
+    # True (生产默认): 不一致 → precheck FAILED。无 sim_profile_id / 卡无声明 imsi / 无 dut_attach
+    # → 跳过。False (opt-out / 暗室首测 bring-up): 降级 warning。同 precheck_strict_* 走 bypass。
 
     # === Pass/fail thresholds ===
     pass_criteria: MIMOOTAPassCriteria = Field(default_factory=MIMOOTAPassCriteria)
