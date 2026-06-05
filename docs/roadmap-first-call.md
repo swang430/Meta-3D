@@ -1723,7 +1723,7 @@ tokens (P2-3), the GUI can warn earlier.
 **Estimate**: 1 day (actual: ~3 hours, backend reuse from P2-3 made
 the GUI work the bulk of it)
 
-### P3-4 — F64 SYST:INFO? structured parser
+### P3-4 — F64 SYST:INFO? structured parser ✅ Done (D17, 2026-05-17)
 
 **What**: Parse the full PROPSIM F64 `SYST:INFO?` response (was only
 extracting `parts[1]` for channel count) into a structured dataclass
@@ -1753,10 +1753,10 @@ the metadata to the readiness report (and via P3-2's
   deliberately NOT refactored to share (Rule 4: no 顺手优化).
   Future PR can dedupe if FS16 picks up more fields.
 
-**Status**: `[≈]` in review — this PR
+**Status**: ✅ Done (D17, 2026-05-17 已 merge; section 标题/Status 此前漏标, 本 PR 矫正 stale)
 **Estimate**: 0.5 day (actual: ~30 min)
 
-### P3-5 — Startup readiness summary expansion
+### P3-5 — Startup readiness summary expansion ✅ Done (D18, 2026-05-17)
 
 **What**: Pre-P3-5 the only "is the chamber ready?" surface was a
 per-driver table logged once to stdout during HAL init; lab-profile
@@ -1817,7 +1817,7 @@ panel + Slack `curl | jq` triage one source of truth instead of three.
   exposing (Rule 4: no "顺手" overrides without driver-specific
   signal to surface).
 
-**Status**: `[≈]` in review — this PR
+**Status**: ✅ Done (D18, 2026-05-17 已 merge; section 标题/Status 此前漏标, 本 PR 矫正 stale)
 **Estimate**: 0.5 day (actual: ~2 hours)
 
 ### P3-6 — Chamber preset Type-C `has_lna` test reconciliation ✅ Done
