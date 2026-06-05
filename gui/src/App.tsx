@@ -71,8 +71,7 @@ import { DashboardCockpit } from './features/Dashboard'
 import { TopologyEditor } from './features/TopologyEditor/TopologyEditor'
 import { TopologyProfileEditor } from './features/TopologyProfileEditor'
 import { LabProfileWizard } from './components/LabProfile/LabProfileWizard'
-import { DUTProfileManager } from './components/DUTProfile/DUTProfileManager'
-import { SIMProfileManager } from './components/SIMProfile/SIMProfileManager'
+import { AssetProfilesPanel } from './components/AssetProfiles/AssetProfilesPanel'
 import { fetchLabProfiles } from './api/labProfileService'
 import { ExecutionMetricsCard } from './features/Monitoring'
 import ChartsDemoPage from './components/Charts/ChartsDemoPage'
@@ -154,7 +153,7 @@ const hexToRgba = (hex: string, alpha: number) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
-type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'topologyEditor' | 'dutProfiles' | 'simProfiles' | 'testManagement' | 'results' | 'systemCalibration' | 'commissioning' | 'diagnostics' | 'chartsDemo'
+type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'topologyEditor' | 'assetProfiles' | 'testManagement' | 'results' | 'systemCalibration' | 'commissioning' | 'diagnostics' | 'chartsDemo'
 
 type ProbeFormState = Pick<ProbeType, 'ring' | 'polarization' | 'position' | 'is_active'>
 
@@ -293,14 +292,9 @@ const sections: Array<{
     description: '通过拖拽设计和查看基于 RF Switch 的端到端信号物理链路与校准路径。',
   },
   {
-    key: 'dutProfiles',
-    label: 'DUT 声明',
-    description: '维护被测设备 (DUT) 自声明能力档案 (层数/调制/频段/双工)，供测试例配置选用与预检校验。',
-  },
-  {
-    key: 'simProfiles',
-    label: 'SIM 卡管理',
-    description: '维护测试卡池 (SIM/eSIM 身份 IMSI/PLMN + 鉴权 Ki/OPc/算法)，供测试例选卡与防插错卡预检。',
+    key: 'assetProfiles',
+    label: 'DUT 与 SIM 卡',
+    description: '统一维护被测设备 (DUT) 能力声明与测试卡池 (SIM/eSIM 身份 + 鉴权)，分 Tab 管理，供测试例选用与防插错卡预检。',
   },
   {
     key: 'testManagement',
@@ -1258,10 +1252,8 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
       return <ProbeManager onNavigate={payload.setActiveSection} />
     case 'topologyEditor':
       return <TopologyEditor />
-    case 'dutProfiles':
-      return <DUTProfileManager />
-    case 'simProfiles':
-      return <SIMProfileManager />
+    case 'assetProfiles':
+      return <AssetProfilesPanel />
     case 'testManagement':
       return <TestManagement />
     case 'results':
