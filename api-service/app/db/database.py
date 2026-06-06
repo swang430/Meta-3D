@@ -1,7 +1,7 @@
 """Database configuration and session management"""
 import logging
 import time
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from typing import Generator
@@ -94,6 +94,62 @@ def get_db() -> Generator[Session, None, None]:
         raise
     finally:
         db.close()
+
+
+def _mask_db_url(url: str) -> str:
+    """隐去 DB URL 里的密码: postgresql://user:pass@host/db → user:***@host。"""
+    import re
+    return re.sub(r"(://[^:/@]+:)[^@]+(@)", r"\1***\2", url)
+
+
+def preflight_database(
+    eng=None,
+    retries: int = 5,
+    delay: float = 2.0,
+    emit_fatal_log: bool = True,
+) -> bool:
+    """启动期 DB 连通性 fail-loud 预检（在 init_db 之前调用）。
+
+    背景：重启后（尤其 macOS Docker Desktop）postgres 容器虽自启，host 发布端口可能
+    未重新绑定 → 后端连不到 localhost:5432 → 所有 DB 端点 500、GUI 满屏"未就绪"，
+    但根因被各处 try/except 吞掉，排查极慢。本预检主动连一次 DB：连不上时打一条
+    **显著的、含修复命令的 ERROR banner**，把 20 分钟侦探活变 5 秒。
+
+    设计：**不 raise**（与 init_db 一致续跑降级）—— 既不破坏 34 个跑 lifespan 的
+    测试，也让 GUI 仍能加载。``retries`` 吸收重启后 DB 慢启动的 race（refused 是
+    瞬时返回，retries 之间才 sleep）。
+
+    返回 True=可达 / False=不可达。
+    """
+    eng = eng if eng is not None else engine
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            with eng.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            if attempt:
+                logger.info(f"[db-preflight] 数据库在第 {attempt} 次重试后可达")
+            return True
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            if attempt < retries:
+                logger.warning(
+                    f"[db-preflight] 数据库暂不可达 (尝试 {attempt + 1}/{retries + 1})，"
+                    f"{delay}s 后重试…"
+                )
+                time.sleep(delay)
+    if emit_fatal_log:
+        masked = _mask_db_url(str(eng.url))
+        bar = "=" * 72
+        logger.error(bar)
+        logger.error("[db-preflight] ❌ 数据库不可达 —— 后端将降级启动，所有 DB 端点会 500 / GUI 满屏未就绪")
+        logger.error(f"  目标 : {masked}")
+        logger.error(f"  原因 : {last_err}")
+        logger.error("  常见根因: Docker Desktop / 机器重启后 postgres 容器端口转发未重建 (host:5432 未绑定)")
+        logger.error("  修复 : ./scripts/db-up.sh    (确保容器起 + 端口真绑上，必要时 force-recreate 自愈)")
+        logger.error("    或 : cd api-service && docker compose up -d --force-recreate postgres")
+        logger.error(bar)
+    return False
 
 
 def init_db() -> None:

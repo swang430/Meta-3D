@@ -45,6 +45,14 @@ async def lifespan(app: FastAPI):
     logger.info(f"Debug mode: {settings.debug}")
     logger.info(f"Mock instruments: {settings.use_mock_instruments}")
 
+    # DB 连通性 fail-loud 预检 (在 init_db 之前): 重启后 postgres 端口转发丢失等场景,
+    # 立刻打一条含修复命令的显著 banner, 不再让根因被下面的 try/except 吞成满屏静默 500。
+    # pytest 下 retries=0 + 不打 banner (避免拖慢 / 噪音; 测试用 SQLite 必然可达)。
+    import sys as _sys
+    from app.db.database import preflight_database
+    _under_test = "pytest" in _sys.modules
+    preflight_database(retries=0 if _under_test else 5, emit_fatal_log=not _under_test)
+
     # Initialize database
     try:
         init_db()
