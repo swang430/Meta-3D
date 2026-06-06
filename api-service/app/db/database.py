@@ -106,6 +106,7 @@ def preflight_database(
     eng=None,
     retries: int = 5,
     delay: float = 2.0,
+    connect_timeout: int = 3,
     emit_fatal_log: bool = True,
 ) -> bool:
     """启动期 DB 连通性 fail-loud 预检（在 init_db 之前调用）。
@@ -122,22 +123,38 @@ def preflight_database(
     返回 True=可达 / False=不可达。
     """
     eng = eng if eng is not None else engine
+    # 用带 connect_timeout 的临时引擎探测: 黑洞网络 (丢包而非 refused) 下, eng.connect()
+    # 会用驱动默认超时, 远超 delay、把启动卡死在 banner 之前 (Codex P2 #153, 对齐
+    # check_db_state.py 的 connect_timeout=3)。SQLite 等本地后端无网络超时概念, 直接用 eng。
+    if eng.url.get_backend_name().startswith("postgresql"):
+        from sqlalchemy.pool import NullPool
+        probe = create_engine(
+            eng.url,
+            connect_args={"connect_timeout": connect_timeout},
+            poolclass=NullPool,
+        )
+    else:
+        probe = eng
     last_err = None
-    for attempt in range(retries + 1):
-        try:
-            with eng.connect() as conn:
-                conn.execute(text("SELECT 1"))
-            if attempt:
-                logger.info(f"[db-preflight] 数据库在第 {attempt} 次重试后可达")
-            return True
-        except Exception as e:  # noqa: BLE001
-            last_err = e
-            if attempt < retries:
-                logger.warning(
-                    f"[db-preflight] 数据库暂不可达 (尝试 {attempt + 1}/{retries + 1})，"
-                    f"{delay}s 后重试…"
-                )
-                time.sleep(delay)
+    try:
+        for attempt in range(retries + 1):
+            try:
+                with probe.connect() as conn:
+                    conn.execute(text("SELECT 1"))
+                if attempt:
+                    logger.info(f"[db-preflight] 数据库在第 {attempt} 次重试后可达")
+                return True
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                if attempt < retries:
+                    logger.warning(
+                        f"[db-preflight] 数据库暂不可达 (尝试 {attempt + 1}/{retries + 1})，"
+                        f"{delay}s 后重试…"
+                    )
+                    time.sleep(delay)
+    finally:
+        if probe is not eng:
+            probe.dispose()
     if emit_fatal_log:
         masked = _mask_db_url(str(eng.url))
         bar = "=" * 72
