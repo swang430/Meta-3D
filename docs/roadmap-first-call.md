@@ -98,7 +98,7 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 
 ## ✅ Done — do not redo
 
-> **已完成项（D1–D33 done log）详情已迁出** → [`roadmap-archive.md`](roadmap-archive.md)（只读审计存档）。本文件保持聚焦 open / active 工作。已完成项**不要重做**。
+> **已完成项（D1–D33 done log）详情已迁出** → [`roadmap-archive.md`](roadmap-archive.md)（只读审计存档）。本文件保持聚焦 open / active 工作。已完成项**不要重做**；正文各处 “see DXX” 引用现指向该存档。
 
 ---
 
@@ -418,7 +418,7 @@ F64 license not installed → diagnose 30 minutes".
   tests. Independently usable via curl.
 - **PR B** — GUI: button + Mantine Modal listing gaps. Lands after PR A.
 
-**Status**: ✅ Done — see D10 in the Done table. All four PRs in main:
+**Status**: ✅ Done — see D10 in [`roadmap-archive.md`](roadmap-archive.md). All four PRs in main:
 #22 (PR A backend), #23 (PR B GUI), #24 (Codex P1 iter 2: per-binding
 endpoint scoping with `mismatched_drivers` field distinct from
 `not_loaded_categories`), #25 (Codex P2: VISA + plain endpoint alias
@@ -1195,7 +1195,7 @@ above.
   the previous SUPPORTED_REAL_DRIVERS hardcoded list, used by both
   HAL bootstrap and catalog API.
 
-**Status**: ✅ Done — see D13 in the Done table. PR #28 + Codex P2 follow-up
+**Status**: ✅ Done — see D13 in [`roadmap-archive.md`](roadmap-archive.md). PR #28 + Codex P2 follow-up
 commit (contract sync: openapi.yaml + regen TS types) both in main.
 **Estimate**: 1.5 days (actual: ~3 hours)
 
@@ -1609,14 +1609,14 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 > 修法 → **P0-8** (升 Current Focus, 本地); backend scpi-command desync → **P1-16** (本地);
 > EMCenter switch → **P2-9** (调研+现场); 转台无结论 → **U-5** (Known-unknown)。
 
-- ~~`[discovered 2026-05-15 during P2-2]` **Commissioning factory's "default lab" path is fragile**~~. ✅ Resolved 2026-05-16 — see D12 in Done table.
+- ~~`[discovered 2026-05-15 during P2-2]` **Commissioning factory's "default lab" path is fragile**~~. ✅ Resolved 2026-05-16 — see D12 in [`roadmap-archive.md`](roadmap-archive.md).
 - ~~`[discovered 2026-05-14 during P0-1]` chamber preset Type-C `has_lna` test mismatch~~. → Promoted to **P3-6** (2026-05-17 triage).
 - ~~`[discovered 2026-05-14 during P0-2]` VSCode Python interpreter drift~~. → Promoted to **P3-7** (2026-05-17 triage).
 - ~~`[discovered 2026-05-17 during P2-3]` VRT pydantic regression (38 failures)~~. → Promoted to **P3-8** (2026-05-17 triage).
 - ~~`[discovered 2026-05-17 during P2-3]` catalog `status` enum drift~~. → Promoted to **P3-9** (2026-05-17 triage).
-- ~~`[discovered 2026-05-17 during P2-1 design]` **UXM name-cleanup chore**: rename `UxmCommandProfile` → `UxmTestApp` and `UxmTestProfile` → `UxmTopologyProfile`~~. ✅ Resolved 2026-05-17 — see D27 in Done table.
-- ~~`[discovered 2026-05-17 during P2-1 design]` **`self._cmds` class-vs-instance mutability fix**~~. ✅ Resolved 2026-05-17 — see D27 in Done table.
-- ~~`[discovered 2026-05-17 during P3-8]` **VRT integration tests share dev PG state** (test-isolation)~~. ✅ Resolved 2026-05-17 — see D28 in Done table.
+- ~~`[discovered 2026-05-17 during P2-1 design]` **UXM name-cleanup chore**: rename `UxmCommandProfile` → `UxmTestApp` and `UxmTestProfile` → `UxmTopologyProfile`~~. ✅ Resolved 2026-05-17 — see D27 in [`roadmap-archive.md`](roadmap-archive.md).
+- ~~`[discovered 2026-05-17 during P2-1 design]` **`self._cmds` class-vs-instance mutability fix**~~. ✅ Resolved 2026-05-17 — see D27 in [`roadmap-archive.md`](roadmap-archive.md).
+- ~~`[discovered 2026-05-17 during P3-8]` **VRT integration tests share dev PG state** (test-isolation)~~. ✅ Resolved 2026-05-17 — see D28 in [`roadmap-archive.md`](roadmap-archive.md).
 - ~~`[discovered 2026-05-17 during PFS-doc investigation]` **`channel-engine-service` real-mode endpoint calls missing method**~~. → Promoted to **P0-7** (2026-05-18 triage) — D11 ruled `run_with_external_clusters` unimplementable in ChannelEgine; responsibility moved to MIMO-First adapter rewrite + scope broadened to include Phase 5/6 field plumbing + `external_asc` debug mode + fail-fast.
 - ~~`[discovered 2026-05-17 during PFS-doc investigation]` **`probe_phase_jitter` UI label says "±10°" but code applies "±180°"**~~. ✅ Resolved 2026-05-18 — ChannelEgine Phase 0 (PR #1) updated UI label + runtime warnings to match ±180° code path; jitter / cal mutex now enforced at runtime + UI level.
 - ~~`[discovered 2026-05-19 during P1-7 docs catch-up review]` **Commissioning precheck 不拦未校准 chamber** (Codex P2 on PR #60)~~. → **Promoted to P1-8** ✅ Done (PR #61 merged 2026-05-19; ad-hoc triage, 走 ad-hoc 因为 next 现场之前必须有 fail-loud gate, 不能等 weekly review)。Codex P1 follow-up on PR #61 commit 42af8ca 又抓到 strict gate 用 chamber-only 查询 (没 frequency filter) 漏过老 / 不同频段 cert, 同一 PR commit 743789c 修了, 换成跟 measure phase 同一个 `ProbePathLossCalibrationService.get_latest_calibration(chamber_id, freq_mhz)` ±5% 窗口查询。详见 P1-8 entry。
