@@ -54,6 +54,10 @@ fi
 echo "✨ 端口检查完成，开始检查数据库状态..."
 echo ""
 
+# 确保 Postgres 容器在运行且 host:5432 端口真的绑上 (重启后 Docker 端口转发丢失的自愈)。
+# 否则 host 后端连不到 DB → 所有 DB 端点 500 / GUI 满屏"未就绪"。见 scripts/db-up.sh。
+bash "$(dirname "$0")/db-up.sh" || { echo "❌ 数据库无法就绪，取消启动。"; exit 1; }
+
 cd api-service
 DB_STATE=$(.venv/bin/python scripts/check_db_state.py)
 cd ..

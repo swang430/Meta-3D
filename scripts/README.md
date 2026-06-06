@@ -49,6 +49,29 @@ npm run dev:safe:all
 - 不确定端口是否被占用时
 - 需要可靠启动的场景
 
+### 3. db-up.sh
+
+**用途**: 确保 Postgres 容器在运行，且 **host:5432 端口真的绑上**。
+
+**使用方法**:
+```bash
+bash scripts/db-up.sh
+```
+
+**功能**:
+- `docker compose up -d postgres` 拉起 DB 容器
+- 等待容器内 Postgres ready (`pg_isready`)
+- **验证 host:5432 是否真的可达**；连不上则 `--force-recreate` 自愈（命名卷数据不动）
+- 复验，仍失败给出排查指引（端口占用 / 重启 Docker Desktop）
+
+**适用场景 / 为什么需要**:
+- **机器或 Docker Desktop 重启后**：postgres 容器被 restart 策略自启，但已声明的发布端口
+  (5432:5432) 可能没被重新绑定到 host（`HostConfig.PortBindings` 有、`NetworkSettings.Ports`
+  空、host 无人 listen）→ host 后端（`.env` 连 `localhost:5432`）连不到 DB → 所有 DB 端点
+  500、GUI 满屏"未就绪"。普通 `docker compose up -d` 在配置未变时是 no-op 修不好，必须
+  force-recreate —— 本脚本封装了"检测 + 自愈"。
+- `safe-start.sh` 已在检查 DB 状态前自动调用本脚本。
+
 ## 端口分配
 
 | 端口 | 服务 | 用途 |
