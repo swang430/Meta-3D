@@ -4,12 +4,27 @@
 
 | Category | Description |
 |----------|-------------|
+| [治理 / Roadmap](roadmap-first-call.md) | First-call 路线图 + WIP=1 治理（单一真相源） |
+| [项目历程回顾](project-retrospective.md) | 从第一次现场到现在的全程总结 |
+| [现场经验与教训](field-experience.md) | 经验性文档归类索引（现场记录 / 治理 / 现场衍生设计 / 审计） |
 | [architecture/](architecture/) | System architecture and design |
 | [features/](features/) | Feature modules |
 | [hardware/](hardware/) | Hardware abstraction layer |
 | [api/](api/) | API documentation |
 | [guides/](guides/) | Development guides |
 | [archive/](archive/) | Historical documents |
+
+---
+
+## 项目历程 & 现场经验
+
+| Document | Description |
+|----------|-------------|
+| [project-retrospective](project-retrospective.md) | ⭐ 从第一次现场（CAICT 2026-05）到现在的全程回顾 + 5 条贯穿主线 |
+| [field-experience](field-experience.md) | ⭐ 经验性文档归类索引（按"想解决什么"速查现场记录/治理/现场衍生设计/审计/教训） |
+| [roadmap-first-call](roadmap-first-call.md) | 路线图 + governance rules + 可规划工作 audit |
+| [announcements/2026-05-14-roadmap-baseline](announcements/2026-05-14-roadmap-baseline.md) | Governance baseline 由来 |
+| [guides/on-site-debug-protocol](guides/on-site-debug-protocol.md) | 下次现场执行协议（6 铁律 + go/no-go gate） |
 
 ---
 
