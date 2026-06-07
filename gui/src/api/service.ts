@@ -68,8 +68,16 @@ export const deleteProbe = async (id: string) => {
   return true
 }
 
-export const replaceProbes = async (probes: CreateProbePayload[]): Promise<ProbesResponse> => {
-  const response = await client.put<ProbesResponse>('/probes/bulk', { probes })
+export const replaceProbes = async (
+  probes: CreateProbePayload[],
+  chamberId: string,
+): Promise<ProbesResponse> => {
+  // chamber_config_id 必传: 批量替换按**单个暗室**作用域 (后端拒绝全局替换, 防止一次
+  // 清空所有暗室的探头)。chamberId 由调用方传入当前激活暗室。
+  const response = await client.put<ProbesResponse>('/probes/bulk', {
+    probes,
+    chamber_config_id: chamberId,
+  })
   return response.data
 }
 

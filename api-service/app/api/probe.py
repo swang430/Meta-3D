@@ -65,20 +65,30 @@ def create_probe(request: ProbeCreateRequest, db: Session = Depends(get_db)):
 
 @router.put("/probes/bulk", response_model=BulkProbeResponse)
 def replace_probes(request: BulkProbeRequest, db: Session = Depends(get_db)):
-    """Replace all probes in bulk"""
-    # Count existing probes
-    deleted_count = db.query(Probe).count()
+    """按**单个暗室作用域**批量替换探头。
 
-    # Delete all existing probes
-    db.query(Probe).delete()
+    chamber_config_id **必填**: 只删除并重建该暗室的探头。拒绝全局替换 ——
+    此前不带 chamber 时会一次性清空**所有**暗室的探头 (数据丢失炸弹, GUI
+    「加载默认布局」误触即全没)。
+    """
+    if request.chamber_config_id is None:
+        raise HTTPException(
+            400,
+            "chamber_config_id 必填: 批量替换只作用于单个暗室, 拒绝全局替换 "
+            "(会清空所有暗室的探头)。请先选择一个暗室。",
+        )
+    chamber_id = request.chamber_config_id
 
-    # Create new probes
+    # 仅删除该暗室的探头 (不再全局 delete)
+    scoped = db.query(Probe).filter(Probe.chamber_config_id == chamber_id)
+    deleted_count = scoped.count()
+    scoped.delete(synchronize_session=False)
+
+    # 创建新探头, 强制归属目标暗室 (忽略 per-probe chamber, 保证作用域)
     created_probes = []
     for probe_data in request.probes:
         probe_dict = probe_data.model_dump(exclude={'position'})
-        # 如果单个探头未指定 chamber_config_id，使用请求级别的
-        if probe_dict.get('chamber_config_id') is None and request.chamber_config_id:
-            probe_dict['chamber_config_id'] = request.chamber_config_id
+        probe_dict['chamber_config_id'] = chamber_id
         probe = Probe(
             **probe_dict,
             position=probe_data.position.model_dump()
