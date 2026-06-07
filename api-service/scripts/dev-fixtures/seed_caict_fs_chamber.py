@@ -22,8 +22,6 @@ from pathlib import Path
 # 让 `app` 可导入 (parents[2] = api-service), 不依赖 cwd
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from sqlalchemy import func
-
 from app.db.database import SessionLocal
 from app.models.chamber import ChamberConfiguration
 from app.models.probe import Probe
@@ -133,16 +131,15 @@ def main() -> int:
         db.add(chamber)
         db.flush()  # 拿到 chamber.id
 
-        # probes.probe_number 是**全局唯一**约束 → 跨暗室必须偏移, 避免跟现有暗室
-        # (已占 1..N) 撞。build_fs_probe_specs 返回局部编号 1..62, 这里加 offset 落库;
-        # 局部可读编号保留在 name ("CAICT-FS Probe 1-V")。
-        offset = db.query(func.max(Probe.probe_number)).scalar() or 0
+        # probe_number 按 chamber **局部**编号 (1..62); 全局唯一靠 (chamber_config_id,
+        # probe_number) 复合键 (uq_probes_chamber_probe_number) 保证, 无需偏移。
+        # 人读标识 = 暗室名 + #probe_number, 见 name ("CAICT-FS Probe 1-V")。
         specs = build_fs_probe_specs(chamber.chamber_radius_m)
         for s in specs:
             db.add(
                 Probe(
                     chamber_config_id=chamber.id,
-                    probe_number=offset + s["probe_number"],
+                    probe_number=s["probe_number"],
                     name=f"CAICT-FS {s['name']}",
                     ring=s["ring"],
                     polarization=s["polarization"],
