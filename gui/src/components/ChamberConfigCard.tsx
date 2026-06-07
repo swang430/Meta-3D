@@ -52,9 +52,13 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
     })
 
     // 获取所有暗室配置 (分页聚合全部, 否则 124 个暗室只取前 20, CAICT-FS 等靠后暗室
-    // 在下拉框里"消失")
+    // 在下拉框里"消失")。
+    // queryKey 用 ['chambers','all']: 本次把 queryFn 从返回 ChamberListResponse({items})
+    // 改成返回数组, 旧 ['chambers'] 缓存里残留的 {items,total} 对象会让下面 chambers.map
+    // 崩 (TypeError: chambers.map is not a function)。换 key 走全新缓存即拿数组; 现有
+    // invalidateQueries(['chambers']) 按前缀仍能命中 ['chambers','all']。
     const { data: chambersData } = useQuery({
-        queryKey: ['chambers'],
+        queryKey: ['chambers', 'all'],
         queryFn: fetchAllChamberConfigurations,
     })
 
@@ -114,7 +118,8 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
         },
     })
 
-    const chambers = chambersData ?? []
+    // 防御: 即便缓存里塞进了非数组 (旧 {items,total} 结构残留), 也不让 .map 崩。
+    const chambers = Array.isArray(chambersData) ? chambersData : []
     const presets = presetsData?.presets ?? []
 
     // 调试日志
