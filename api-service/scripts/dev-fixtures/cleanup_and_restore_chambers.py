@@ -34,8 +34,12 @@ from sqlalchemy import or_
 from app.db.database import SessionLocal
 from app.models.chamber import ChamberConfiguration
 from app.models.probe import Probe
+from app.models.switch_topology import SwitchTopology
 
-KEEP_NAMES = {"CAICT-FS", "3GPP 16 Probe Dual"}
+# 保留 8 个 (用户 2026-06-07 选定): 全部系统预设 (4) + 下列具名暗室。
+# CAICT-16-Probe-Dual = active lab CAICT-Lab-1 绑定的现役 16 探头暗室;
+# CAICT 5-13 = 3 个测试 lab 绑定 (保留以免 orphan)。
+KEEP_NAMES = {"CAICT-FS", "3GPP 16 Probe Dual", "CAICT-16-Probe-Dual", "CAICT 5-13"}
 
 # 各保留暗室的探头几何 (用于恢复; 仅当该暗室当前 0 探头才插入)。
 # 每个环: ring_id / elevation / count(方位数) / az_offset(环间交错)。极化 V+H。
@@ -79,10 +83,12 @@ def _restore_layout_for(chamber: ChamberConfiguration) -> list[dict] | None:
     """返回该暗室应恢复的探头几何; 不需恢复则 None。"""
     if chamber.name == "CAICT-FS":
         return _LAYOUT_CAICT_FS
-    if chamber.name == "3GPP 16 Probe Dual":
+    # 3GPP 与 CAICT-16-Probe-Dual 同为 16 位置单环双极化 (el=0)。
+    if chamber.name in ("3GPP 16 Probe Dual", "CAICT-16-Probe-Dual"):
         return _LAYOUT_3GPP
     if chamber.is_system_preset and chamber.chamber_type == "type_c":
         return _LAYOUT_TYPE_C_PRESET
+    # CAICT 5-13 仅因 lab 绑定保留, 历史无探头 → 不恢复 (保持 probe-less)。
     return None
 
 
@@ -108,6 +114,15 @@ def main(apply: bool) -> int:
         )
         print(f"\n待删探头 (孤儿 NULL + 属于待删暗室): {probes_to_delete}")
 
+        # switch_topologies.chamber_id 是 RESTRICT 外键, 删暗室前必须先删指向待删暗室的拓扑,
+        # 否则删暗室会 FK 报错回滚。(指向保留暗室或 NULL 的拓扑不动)
+        drop_ids = [c.id for c in drop]
+        topos_to_delete = (
+            db.query(SwitchTopology).filter(SwitchTopology.chamber_id.in_(drop_ids)).count()
+            if drop_ids else 0
+        )
+        print(f"待删 switch_topology (指向待删暗室, RESTRICT 外键): {topos_to_delete}")
+
         print("\n待恢复探头 (仅当该暗室当前 0 探头):")
         restore_plan: list[tuple[ChamberConfiguration, list[dict]]] = []
         for c in keep:
@@ -131,12 +146,17 @@ def main(apply: bool) -> int:
         db.query(Probe).filter(
             or_(Probe.chamber_config_id.is_(None), Probe.chamber_config_id.notin_(keep_ids))
         ).delete(synchronize_session=False)
-        # 2. 删暗室
+        # 2. 删指向待删暗室的 switch_topology (RESTRICT 外键, 必须先于删暗室)
+        if drop_ids:
+            db.query(SwitchTopology).filter(
+                SwitchTopology.chamber_id.in_(drop_ids)
+            ).delete(synchronize_session=False)
+        # 3. 删暗室
         if drop:
             db.query(ChamberConfiguration).filter(
-                ChamberConfiguration.id.in_([c.id for c in drop])
+                ChamberConfiguration.id.in_(drop_ids)
             ).delete(synchronize_session=False)
-        # 3. 恢复探头
+        # 4. 恢复探头
         for c, specs in restore_plan:
             for s in specs:
                 db.add(Probe(
