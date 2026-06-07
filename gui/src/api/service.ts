@@ -520,6 +520,26 @@ export const fetchChamberConfigurations = async (params?: {
 }
 
 /**
+ * 取**全部**暗室配置 (分页聚合)。
+ * 后端 /chambers 的 limit 上限为 100, 默认仅 20; 暗室总数可能 > 100 (现场已 124 个),
+ * 单次请求会漏掉靠后的暗室 (如 CAICT-FS 在第 84 位 → 默认 limit 20 根本选不到),
+ * 导致下拉框里"暗室凭空消失"。这里按 limit=100 翻页直到取满 total。
+ */
+export const fetchAllChamberConfigurations = async (): Promise<ChamberConfiguration[]> => {
+  const pageSize = 100
+  let skip = 0
+  const all: ChamberConfiguration[] = []
+  for (;;) {
+    const page = await fetchChamberConfigurations({ skip, limit: pageSize })
+    const items = page.items ?? []
+    all.push(...items)
+    if (items.length < pageSize || all.length >= (page.total ?? all.length)) break
+    skip += pageSize
+  }
+  return all
+}
+
+/**
  * 获取当前激活的暗室配置
  */
 export const fetchActiveChamber = async (): Promise<ChamberConfiguration> => {

@@ -17,7 +17,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { notifications } from '@mantine/notifications'
 import {
     fetchActiveChamber,
-    fetchChamberConfigurations,
+    fetchAllChamberConfigurations,
     fetchChamberPresets,
     activateChamber,
     createChamberFromTemplate,
@@ -51,10 +51,11 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
         retry: 1,
     })
 
-    // 获取所有暗室配置
+    // 获取所有暗室配置 (分页聚合全部, 否则 124 个暗室只取前 20, CAICT-FS 等靠后暗室
+    // 在下拉框里"消失")
     const { data: chambersData } = useQuery({
         queryKey: ['chambers'],
-        queryFn: () => fetchChamberConfigurations(),
+        queryFn: fetchAllChamberConfigurations,
     })
 
     // 获取预设模板
@@ -113,7 +114,7 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
         },
     })
 
-    const chambers = chambersData?.items ?? []
+    const chambers = chambersData ?? []
     const presets = presetsData?.presets ?? []
 
     // 调试日志
@@ -237,12 +238,14 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
                     {/* 当前配置选择器 */}
                     <Select
                         label="当前激活配置"
-                        description="选择要使用的暗室配置"
-                        placeholder="选择暗室配置"
+                        description={`选择要使用的暗室配置 (共 ${chamberSelectData.length} 个, 可搜索)`}
+                        placeholder="选择或搜索暗室配置"
                         data={chamberSelectData}
                         value={activeChamber?.id ?? ''}
                         onChange={handleChamberChange}
                         disabled={activateMutation.isPending}
+                        searchable
+                        nothingFoundMessage="无匹配暗室"
                     />
 
                     {/* 当前配置详情 */}
