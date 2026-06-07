@@ -53,7 +53,10 @@ CAICT_FS_CHAMBER = dict(
     is_active=False,  # 不抢占当前激活暗室; 需显式激活/绑定 (见设计文档 §5)
     chamber_radius_m=4.0,
     quiet_zone_diameter_m=1.0,
-    num_probes=62,
+    # multi-ring 约定 (Codex P1 #154): num_probes = **物理位置数** (去重 (az,el) 后),
+    # 而非极化通道数。channel_engine_client._build_probe_positions 去重 V/H 后要求
+    # len(unique positions) == num_probes; num_ports = num_probes × 极化 = 62。
+    num_probes=31,
     num_polarizations=2,
     num_rings=4,
     probe_distribution="multi-ring",

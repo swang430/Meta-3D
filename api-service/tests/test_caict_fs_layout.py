@@ -53,9 +53,17 @@ class TestCaictFsLayout:
     def test_chamber_spec_consistency(self):
         c = mod.CAICT_FS_CHAMBER
         assert c["name"] == "CAICT-FS"
-        assert c["num_probes"] == 62
+        # multi-ring 约定: num_probes = 物理位置数 (31), 通道 = 31×2极化 = 62
+        assert c["num_probes"] == 31
         assert c["num_polarizations"] == 2
         assert c["num_rings"] == 4
         assert c["probe_distribution"] == "multi-ring"
         assert c["is_active"] is False  # 不抢占当前激活暗室
         assert c["supports_mimo_ota"] is True
+
+    def test_num_probes_equals_unique_positions(self):
+        # Codex P1 #154: _build_probe_positions 去重 (az,el) 后要求
+        # len(unique positions) == chamber.num_probes (multi-ring 约定)。
+        specs = mod.build_fs_probe_specs(4.0)
+        uniq = {(s["position"]["azimuth"], s["position"]["elevation"]) for s in specs}
+        assert len(uniq) == mod.CAICT_FS_CHAMBER["num_probes"] == 31

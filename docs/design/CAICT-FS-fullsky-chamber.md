@@ -50,7 +50,7 @@
 | `chamber_type` | `custom` | 非 A/B/C/D 标准型，特定部署 |
 | `chamber_radius_m` | 4.0 | 车载大暗室 |
 | `quiet_zone_diameter_m` | 1.0 | 静区直径（可按真车调） |
-| `num_probes` | 62 | = 31 位置 × 2 极化 |
+| `num_probes` | **31** | 物理位置数（multi-ring 约定：= 去重 (az,el) 后唯一位置数）。通道数 = num_probes × 极化 = 62 = `ce_num_ota_ports` |
 | `num_polarizations` | 2 | 双极化（V/H = ±45°） |
 | `num_rings` | 4 | 见 §2 |
 | `probe_distribution` | `multi-ring` | 多环 → ChannelEngine 读 DB probe_positions |
