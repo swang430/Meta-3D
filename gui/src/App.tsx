@@ -89,6 +89,7 @@ import {
   fetchMonitoringFeeds,
   fetchProbes,
   fetchChamber,
+  fetchActiveChamber,
   fetchRecentTests,
   fetchReportTemplates,
   fetchTestCaseDetail,
@@ -2975,6 +2976,21 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
     ),
     [chamberQueries],
   )
+  // 选中/激活的暗室 (复用 ChamberConfigCard 的 ['chamber','active'] 查询: 在该卡片选暗室
+  // 即激活, 这里读同一缓存 → 总览/布局/计数随之过滤)。
+  // Bug 修复 (2026-06-07): 此前总览表/3D 布局/系统信息计数都用全量 probes, 选暗室不起作用
+  // (列出所有暗室探头); 现按激活暗室过滤, 无激活暗室时回退全部。
+  const { data: activeChamber } = useQuery({
+    queryKey: ['chamber', 'active'],
+    queryFn: fetchActiveChamber,
+    retry: 1,
+  })
+  const activeChamberId = activeChamber?.id
+  const displayedProbes = useMemo(
+    () => (activeChamberId ? probes.filter((p) => p.chamber_config_id === activeChamberId) : probes),
+    [probes, activeChamberId],
+  )
+
   const probeLabel = (probe: typeof probes[number]): string => {
     const cn = probe.chamber_config_id ? chamberNameById[probe.chamber_config_id] : undefined
     return cn ? `${cn} #${probe.probe_number}` : `#${probe.probe_number} ${probe.name ?? ''}`
@@ -3013,16 +3029,16 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
   })
 
   useEffect(() => {
-    if (probes.length === 0) {
+    if (displayedProbes.length === 0) {
       setSelectedId('')
       return
     }
-    if (!selectedId || !probes.some((probe) => probe.id === selectedId)) {
-      setSelectedId(probes[0].id)
+    if (!selectedId || !displayedProbes.some((probe) => probe.id === selectedId)) {
+      setSelectedId(displayedProbes[0].id)
     }
-  }, [probes, selectedId])
+  }, [displayedProbes, selectedId])
 
-  const selectedProbe = probes.find((probe) => probe.id === selectedId) ?? null
+  const selectedProbe = displayedProbes.find((probe) => probe.id === selectedId) ?? null
 
   useEffect(() => {
     if (selectedProbe) {
@@ -3346,7 +3362,12 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
       <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="xl">
         <Card withBorder radius="md" padding="xl" style={{ display: 'flex', flexDirection: 'column' }}>
           <Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
-            <Title order={3}>探头阵列总览</Title>
+            <Group justify="space-between" align="center">
+              <Title order={3}>探头阵列总览</Title>
+              <Badge variant="light" color="brand">
+                {activeChamber ? `${activeChamber.name} · ${displayedProbes.length} 探头` : `全部暗室 · ${displayedProbes.length} 探头`}
+              </Badge>
+            </Group>
             <Box style={{ flex: 1, overflow: 'auto', minHeight: 200 }}>
               <Table highlightOnHover withTableBorder stickyHeader>
                 <Table.Thead>
@@ -3359,7 +3380,7 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
-                  {probes.map((probe) => (
+                  {displayedProbes.map((probe) => (
                     <Table.Tr
                       key={probe.id}
                       bg={probe.id === selectedId ? 'brand.0' : undefined}
@@ -3561,14 +3582,17 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
               <Title order={3}>系统信息</Title>
               <Stack gap="sm">
                 <Text size="sm" c="gray.7">
-                  <strong>探头总数:</strong> {probes.length} 个
+                  <strong>当前暗室:</strong> {activeChamber ? activeChamber.name : '全部暗室 (未选激活)'}
                 </Text>
                 <Text size="sm" c="gray.7">
-                  <strong>活动探头:</strong> {probes.filter(p => p.is_active).length} 个
+                  <strong>探头总数:</strong> {displayedProbes.length} 个
+                </Text>
+                <Text size="sm" c="gray.7">
+                  <strong>活动探头:</strong> {displayedProbes.filter(p => p.is_active).length} 个
                 </Text>
                 <Text size="sm" c="gray.7">
                   <strong>已校准:</strong>{' '}
-                  {probes.filter(p => p.calibration_status === 'valid').length} 个
+                  {displayedProbes.filter(p => p.calibration_status === 'valid').length} 个
                 </Text>
                 <Alert color="yellow" variant="light" mt="md">
                   探头配置由后端初始化脚本管理。如需添加或修改探头配置，请联系系统管理员。
@@ -3584,7 +3608,7 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
           <Card withBorder radius="md" padding="xl" style={{ height: '100%' }}>
             <Stack gap="md">
               <Title order={3}>探头空间布局</Title>
-              <ProbeLayoutView probes={probes} selectedId={selectedId} onSelect={setSelectedId} />
+              <ProbeLayoutView probes={displayedProbes} selectedId={selectedId} onSelect={setSelectedId} />
             </Stack>
           </Card>
         </Grid.Col>
