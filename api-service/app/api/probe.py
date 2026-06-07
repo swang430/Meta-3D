@@ -27,7 +27,7 @@ def get_probes(
 ):
     """Get all probes, optionally filtered by chamber configuration"""
     try:
-        query = db.query(Probe).order_by(Probe.probe_number)
+        query = db.query(Probe).order_by(Probe.chamber_config_id, Probe.probe_number)
         if chamber_id:
             logger.info(f"Filtering probes with chamber_id: {chamber_id} (type: {type(chamber_id)})")
             query = query.filter(Probe.chamber_config_id == chamber_id)
@@ -42,12 +42,16 @@ def get_probes(
 @router.post("/probes", response_model=ProbeResponse, status_code=201)
 def create_probe(request: ProbeCreateRequest, db: Session = Depends(get_db)):
     """Create a new probe"""
-    # Check duplicate probe_number
+    # Check duplicate probe_number — 按 chamber 局部唯一 (复合键), 不同暗室可同号
     existing = db.query(Probe).filter(
-        Probe.probe_number == request.probe_number
+        Probe.probe_number == request.probe_number,
+        Probe.chamber_config_id == request.chamber_config_id,
     ).first()
     if existing:
-        raise HTTPException(400, f"Probe number {request.probe_number} already exists")
+        raise HTTPException(
+            400,
+            f"Probe number {request.probe_number} already exists in this chamber",
+        )
 
     probe = Probe(
         **request.dict(exclude={'position'}),

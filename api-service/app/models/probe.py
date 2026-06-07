@@ -1,5 +1,5 @@
 """Probe database models"""
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, JSON, Float, Text, ForeignKey
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, JSON, Float, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
@@ -23,6 +23,14 @@ class Probe(Base):
     探头分为4个环（ring），每个ring在不同的高度/角度位置。
     """
     __tablename__ = "probes"
+    # probe_number 按 chamber **局部**编号 (每暗室 1..N); 全局唯一性靠 (chamber, probe_number)
+    # 复合键保证。人读标识 = 暗室名 + #probe_number (如 "CAICT-FS #1")。
+    __table_args__ = (
+        UniqueConstraint(
+            "chamber_config_id", "probe_number",
+            name="uq_probes_chamber_probe_number",
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
@@ -36,7 +44,10 @@ class Probe(Base):
     chamber_config = relationship("ChamberConfiguration", back_populates="probes")
 
     # 基本标识
-    probe_number = Column(Integer, nullable=False, unique=True, comment="探头编号 (1-32)")
+    probe_number = Column(
+        Integer, nullable=False,
+        comment="探头编号 (按 chamber 局部, 1..N; 全局唯一靠复合键 uq_probes_chamber_probe_number)",
+    )
     name = Column(String(100), comment="探头名称，如 'Probe 1-V'")
 
     # 位置信息

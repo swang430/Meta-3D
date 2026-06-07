@@ -10,7 +10,7 @@ import {
   type FormEvent,
   type DragEvent,
 } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AppShell,
   ActionIcon,
@@ -88,6 +88,7 @@ import {
   fetchDemoRunPlan,
   fetchMonitoringFeeds,
   fetchProbes,
+  fetchChamber,
   fetchRecentTests,
   fetchReportTemplates,
   fetchTestCaseDetail,
@@ -2952,6 +2953,33 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
 
   const probes = useMemo(() => data?.probes ?? [], [data])
 
+  // 暗室 id→name 映射: probe_number 按 chamber 局部编号 (1..N), 全局标识 = 暗室名 + #探头号。
+  // 只精确拉取 probes 实际引用的 chamber (按 id), 不受暗室总数/分页 (默认 limit 20) 影响。
+  const referencedChamberIds = useMemo(
+    () => [...new Set(probes.map((p) => p.chamber_config_id).filter((x): x is string => !!x))],
+    [probes],
+  )
+  const chamberQueries = useQueries({
+    queries: referencedChamberIds.map((id) => ({
+      queryKey: ['chamber', id],
+      queryFn: () => fetchChamber(id),
+      staleTime: 5 * 60 * 1000,
+    })),
+  })
+  const chamberNameById = useMemo(
+    () => Object.fromEntries(
+      chamberQueries
+        .map((q) => q.data)
+        .filter((c): c is NonNullable<typeof c> => !!c)
+        .map((c) => [c.id, c.name] as [string, string]),
+    ),
+    [chamberQueries],
+  )
+  const probeLabel = (probe: typeof probes[number]): string => {
+    const cn = probe.chamber_config_id ? chamberNameById[probe.chamber_config_id] : undefined
+    return cn ? `${cn} #${probe.probe_number}` : `#${probe.probe_number} ${probe.name ?? ''}`
+  }
+
   // Helper functions to format probe data for display
   const formatRing = (ring: number): string => {
     const ringNames: Record<number, string> = { 1: '内层 Ring-1', 2: '中层 Ring-2', 3: '外层 Ring-3', 4: '顶层 Ring-4' }
@@ -3338,7 +3366,7 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
                       onClick={() => setSelectedId(probe.id)}
                       style={{ cursor: 'pointer' }}
                     >
-                      <Table.Td>#{probe.probe_number} {probe.name || ''}</Table.Td>
+                      <Table.Td>{probeLabel(probe)}</Table.Td>
                       <Table.Td>{formatRing(probe.ring)}</Table.Td>
                       <Table.Td>{probe.polarization}</Table.Td>
                       <Table.Td>{formatPosition(probe.position)}</Table.Td>
@@ -3369,7 +3397,7 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
               <Title order={3}>探头详细信息</Title>
               {selectedProbe ? (
                 <Stack gap="sm">
-                  <TextInput label="探头编号" value={`#${selectedProbe.probe_number}`} readOnly />
+                  <TextInput label="探头编号" value={probeLabel(selectedProbe)} readOnly />
                   <TextInput
                     label="探头名称"
                     value={formState.ring ? selectedProbe.name || '' : ''}
