@@ -35,6 +35,14 @@ ARFCN 当真值。工具 + 规范标识类见 `app/hal/nr_arfcn.py` (`freq_mhz_t
 
 系统有两条**正交**的配置路径,边界必须清楚,不能混用:
 
+> ⚠️ **命名消歧(易混)**:本文的「**路径 A/B**」= *配置来源* 轴(路径 A = bring-up 默认配置;
+> 路径 B = TestCase 驱动配置)。**不要**与 PROPSIM 信道注入参考
+> [`../hardware/PROPSIM_F64_信道注入工程文档_A-B路线_SCPI_V1.2.docx`](../hardware/PROPSIM_F64_信道注入工程文档_A-B路线_SCPI_V1.2.docx)
+> 里的「**路线 A/B**」混淆 —— 那是 *信道合成实现* 轴(路线 A = GCM 许可包揽几何→多普勒→相关→天线;
+> 路线 B = 自研 file-based 合成,含 B-1 确定性 CIR 回放 / B-2 参数化 TDL+硬件实时衰落)。
+> 两轴**正交**:任一「路径」都可用任一「路线」产出的信道文件(如 路径 B 正式测试既可下发
+> GCM 出的 `.smu`,也可下发自研 `.asc`/`.tdlx`)。
+
 ### 路径 A — bring-up / 暗室首测(无 TestCase)
 ```
 HAL-init / fresh-start → connect → 默认仪表配置
