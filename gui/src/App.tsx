@@ -3136,9 +3136,12 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
   })
 
   const replaceMutation = useMutation({
-    mutationFn: replaceProbes,
+    // 批量替换按**当前激活暗室**作用域 (后端要求 chamber_config_id, 不再全局清空)。
+    mutationFn: (incoming: Parameters<typeof replaceProbes>[0]) =>
+      replaceProbes(incoming, activeChamberId as string),
     onSuccess: (result) => {
-      queryClient.setQueryData(['probes'], result)
+      // 作用域替换只返回该暗室的新探头; 全量 ['probes'] 列表需 refetch, 不能用局部结果覆盖
+      queryClient.invalidateQueries({ queryKey: ['probes'] })
       const firstId = result.probes[0]?.id ?? ''
       setSelectedId(firstId)
       setFileError('')
@@ -3232,6 +3235,10 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
 
   const handleImportFile = async (file: File | null) => {
     if (!file) return
+    if (!activeChamberId) {
+      setFileError('请先在上方「当前激活配置」选择一个暗室，再导入布局（导入只替换该暗室的探头）。')
+      return
+    }
     try {
       const text = await file.text()
       const parsed = JSON.parse(text)
@@ -3246,6 +3253,10 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
   }
 
   const handleLoadDefault = async () => {
+    if (!activeChamberId) {
+      setFileError('请先在上方「当前激活配置」选择一个暗室，再加载默认布局（只替换该暗室的探头）。')
+      return
+    }
     try {
       const response = await fetch('/config/probes/default.json')
       if (!response.ok) throw new Error('请求失败')
@@ -3329,16 +3340,23 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
 
       <Card withBorder radius="md" padding="xl">
         <Stack gap="md">
-          <Group justify="space-between">
-            <Title order={3}>探头配置文件</Title>
+          <Group justify="space-between" align="flex-start">
+            <Stack gap={2}>
+              <Title order={3}>探头配置文件</Title>
+              <Text size="xs" c="dimmed">
+                导入/加载默认只替换当前暗室
+                {activeChamber ? `「${activeChamber.name}」` : '（未选）'}
+                的探头，不影响其它暗室
+              </Text>
+            </Stack>
             <Group gap="sm">
               <Button variant="subtle" onClick={handleExportLayout}>
                 导出当前布局
               </Button>
               <FileButton onChange={handleImportFile} accept="application/json">
                 {(props) => (
-                  <Button variant="subtle" {...props} loading={replaceMutation.isPending}>
-                    导入自定义布局
+                  <Button variant="subtle" {...props} loading={replaceMutation.isPending} disabled={!activeChamberId}>
+                    导入布局到当前暗室
                   </Button>
                 )}
               </FileButton>
@@ -3346,8 +3364,9 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
                 color="brand"
                 onClick={handleLoadDefault}
                 loading={replaceMutation.isPending}
+                disabled={!activeChamberId}
               >
-                加载默认布局
+                加载默认布局到当前暗室
               </Button>
             </Group>
           </Group>
