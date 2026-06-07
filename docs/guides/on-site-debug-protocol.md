@@ -178,6 +178,26 @@ fail-loud gate 通过。
 
 ---
 
+## 7. PROPSIM F64 信道注入现场验证清单
+
+> 源：信道注入参考 [`../hardware/PROPSIM_F64_信道注入工程文档_A-B路线_SCPI_V1.2.docx`](../hardware/PROPSIM_F64_信道注入工程文档_A-B路线_SCPI_V1.2.docx) §10。
+> 这些项**只能真机确认**（符合铁律「现场只调硬件、不写 driver」），扩展 **Phase 1**（F64 SCPI 握手）+ 信道模型加载。
+> 开发期能 mock 的先用同源 N7605 命令本地走通；现场逐项打勾，结论回填 docx 升版（V1.3…）+ roadmap backlog。
+
+- [ ] **运行时多普勒上限**：GCM 内可设 ±500 kHz；GCM 外目前仅查到运行时约 200 kHz（`CH:MOD:CONT:ENV` 的 `<doppler>`）。验证非-GCM 路径能否开到 ±500 kHz（很可能同一硬件引擎，差别在 API/许可）→ 决定 B 路能否免 GCM 覆盖 NTN Ka。
+- [ ] **`CALC:FILT:CENT:CH` 载频偏置**：能否当 B 路「常数大质心」频偏（载频平移 ≈ Doppler），其可设范围 + 步进精度。
+- [ ] **射频前端独立频偏接口**：是否暴露独立频偏接口，用于 B 路动态大质心。
+- [ ] **file-based per-link 上限**：每链路最大抽头数 + 最大 CIRs（长轨迹 / 多簇是否受限）。
+- [ ] **锁定状态改速度边界**：`CIRUpdateRateLocked=1` 下运行时改速度的可行范围。
+- [ ] **逐通道独立模型许可**：`.smu` 拓扑里 Concurrent / 独立每通道模型是否需额外许可（与基础 Scenario Wizard 区分）。
+- [ ] **`.tdlx` / `.tap` 字段表(schema)**：真机 Channel Studio TDL Tool 另存逆向确认字段顺序、各多普勒谱形状关键字、user-defined PSD 写法。
+- [ ] **per-path 衰落 SCPI mnemonics**：运行时逐抽头 delay/power/谱/fmax/K/AoA 完整 mnemonics 在客户 ATE 手册；开发期用同源 **N7605 `FSIM:FAD:PATH[1..24]:{DELay|LOSS|DFRequency|FTYPe|AOA|AOD}`** mock，需向 Keysight 求证 PROPSIM 等价命令。
+- [ ] **`.rtc` 环境切换延迟**：逐点（100 Hz = 10 ms）切换 environment 的抖动是否落到 OFDM 符号尺度，实测避免切换瞬态污染。
+- [ ] **mobile speed 标量 vs per-path fmax**：`DIAG:SIMU:MOB:MAN:CHG` 是整通道标量缩放；若各 path 需不同 fmax，须 per-path SCPI 或重载 `.rtc`。
+- [ ] **标准谱对 RT 簇逼近误差**：B-2 用标准谱 + user-defined PSD 逼近射线追踪簇实际多普勒角度谱的误差 → 决定是否触发购买 GCM。
+
+---
+
 ## 附：与现有资产的关系
 
 | 资产 | 在本协议中的角色 |
