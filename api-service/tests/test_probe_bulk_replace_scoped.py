@@ -92,7 +92,7 @@ def test_bulk_replace_is_chamber_scoped():
 
 
 def test_bulk_replace_without_chamber_rejected():
-    """缺 chamber_config_id → 400, 拒绝全局替换 (防数据丢失炸弹)。"""
+    """缺 chamber_config_id → 422 (schema 必填), 拒绝全局替换 (防数据丢失炸弹)。"""
     db = TestingSessionLocal()
     a = _chamber(db, "A")
     db.add_all([_probe(a.id, 1), _probe(a.id, 2)])
@@ -101,7 +101,7 @@ def test_bulk_replace_without_chamber_rejected():
     db.close()
 
     resp = client.put("/api/v1/probes/bulk", json={"probes": [_payload(1)]})
-    assert resp.status_code == 400
+    assert resp.status_code == 422  # Pydantic 必填校验, 在进 handler 前就拦下
     assert "chamber_config_id" in resp.text
 
     # 原有探头未被动 (没有发生全局删除)

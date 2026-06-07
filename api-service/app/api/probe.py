@@ -67,16 +67,10 @@ def create_probe(request: ProbeCreateRequest, db: Session = Depends(get_db)):
 def replace_probes(request: BulkProbeRequest, db: Session = Depends(get_db)):
     """按**单个暗室作用域**批量替换探头。
 
-    chamber_config_id **必填**: 只删除并重建该暗室的探头。拒绝全局替换 ——
-    此前不带 chamber 时会一次性清空**所有**暗室的探头 (数据丢失炸弹, GUI
-    「加载默认布局」误触即全没)。
+    chamber_config_id 在 schema 中为**必填** (缺失 → 422): 只删除并重建该暗室的探头。
+    拒绝全局替换 —— 此前不带 chamber 时会一次性清空**所有**暗室的探头 (数据丢失炸弹,
+    GUI「加载默认布局」误触即全没)。
     """
-    if request.chamber_config_id is None:
-        raise HTTPException(
-            400,
-            "chamber_config_id 必填: 批量替换只作用于单个暗室, 拒绝全局替换 "
-            "(会清空所有暗室的探头)。请先选择一个暗室。",
-        )
     chamber_id = request.chamber_config_id
 
     # 仅删除该暗室的探头 (不再全局 delete)

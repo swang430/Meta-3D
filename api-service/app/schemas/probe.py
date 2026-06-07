@@ -65,9 +65,11 @@ class ProbeUpdateRequest(BaseModel):
 
 
 class BulkProbeRequest(BaseModel):
-    """Request to replace all probes in bulk"""
+    """Request to replace probes for a SINGLE chamber (scoped)."""
     probes: List[ProbeCreateRequest] = Field(..., max_length=128)
-    chamber_config_id: Optional[UUID] = Field(None, description="所有探头的所属暗室配置 ID")
+    # **必填**: 批量替换只作用于单个暗室, 拒绝全局替换 (防一次清空所有暗室的探头)。
+    # 字段设为 required → OpenAPI/生成客户端都标必填, 缺失时 422 (而非到 handler 才 400)。
+    chamber_config_id: UUID = Field(..., description="目标暗室配置 ID (必填; 批量替换按此暗室作用域)")
 
 
 # ==================== Response Schemas ====================
