@@ -41,7 +41,9 @@ ARFCN 当真值。工具 + 规范标识类见 `app/hal/nr_arfcn.py` (`freq_mhz_t
 > 里的「**路线 A/B**」混淆 —— 那是 *信道合成实现* 轴(路线 A = GCM 许可包揽几何→多普勒→相关→天线;
 > 路线 B = 自研 file-based 合成,含 B-1 确定性 CIR 回放 / B-2 参数化 TDL+硬件实时衰落)。
 > 两轴**正交**:任一「路径」都可用任一「路线」产出的信道文件(如 路径 B 正式测试既可下发
-> GCM 出的 `.smu`,也可下发自研 `.asc`/`.tdlx`)。
+> GCM 出的 `.smu`,也可下发自研 `.asc`(路线 B-1,当前唯一端到端打通的自研格式))。
+> ⚠️ 路线 B-2 的 `.tdlx`/`.tap` **生成层尚未实现**(驱动能播 `.rtc`,但我们还不自研产出它),
+> 见 [roadmap backlog](../roadmap-first-call.md) 的 channel-injection 缺口条目——别按本注误选 `.tdlx`。
 
 ### 路径 A — bring-up / 暗室首测(无 TestCase)
 ```
