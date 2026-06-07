@@ -651,7 +651,8 @@ class MeasureExecutor(IStepExecutor):
             for az_target in config.azimuths_deg:
                 pid = select_active_probe_id(chamber.num_probes, az_target)
                 pattern_gain_v = get_probe_gain_at_azimuth(
-                    context.db, chamber.num_probes, az_target, config.frequency_hz / 1e6, "V"
+                    context.db, chamber.num_probes, az_target, config.frequency_hz / 1e6, "V",
+                    chamber_id=chamber.id,
                 )
                 chain_pl_db = chain_pl_by_probe_pol.get((pid, "V"))
                 azimuth_probe_gains[az_target] = {

@@ -503,6 +503,7 @@ class PrecheckExecutor(IStepExecutor):
             num_probes=chamber.num_probes,
             frequency_mhz=config.frequency_hz / 1e6,
             polarization="V",
+            chamber_id=chamber.id,
         )
         if ripple_db is None:
             # Conservative legacy fallback when no ProbePattern data exists yet

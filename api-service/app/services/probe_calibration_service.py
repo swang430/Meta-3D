@@ -252,7 +252,8 @@ class AmplitudeCalibrationService:
         calibrated_by: str,
         reference_antenna_id: Optional[str] = None,
         power_meter_id: Optional[str] = None,
-        use_mock: bool = True
+        use_mock: bool = True,
+        chamber_id: Optional[UUID] = None,
     ) -> CalibrationResult:
         """
         执行幅度校准
@@ -318,6 +319,7 @@ class AmplitudeCalibrationService:
                     # 创建校准记录
                     calibration = ProbeAmplitudeCalibration(
                         probe_id=probe_id,
+                        chamber_id=chamber_id,  # 校准 chamber-scoping; None=未标注/legacy
                         polarization=pol.value,
                         frequency_points_mhz=freq_points,
                         tx_gain_dbi=tx_gains,
@@ -441,7 +443,8 @@ class AmplitudeCalibrationService:
         self,
         db: Session,
         probe_id: int,
-        polarization: Optional[str] = None
+        polarization: Optional[str] = None,
+        chamber_id: Optional[UUID] = None,
     ) -> Optional[ProbeAmplitudeCalibration]:
         """
         获取探头的最新幅度校准记录
@@ -450,6 +453,7 @@ class AmplitudeCalibrationService:
             db: 数据库会话
             probe_id: 探头 ID
             polarization: 可选的极化过滤
+            chamber_id: 可选的暗室作用域过滤 (校准 chamber-scoping; 给定时只取该暗室)
 
         Returns:
             最新的校准记录，或 None
@@ -460,6 +464,8 @@ class AmplitudeCalibrationService:
 
         if polarization:
             query = query.filter(ProbeAmplitudeCalibration.polarization == polarization)
+        if chamber_id is not None:
+            query = query.filter(ProbeAmplitudeCalibration.chamber_id == chamber_id)
 
         return query.order_by(desc(ProbeAmplitudeCalibration.calibrated_at)).first()
 
@@ -659,7 +665,8 @@ class PhaseCalibrationService:
         reference_probe_id: int,
         calibrated_by: str,
         vna_id: Optional[str] = None,
-        use_mock: bool = True
+        use_mock: bool = True,
+        chamber_id: Optional[UUID] = None,
     ) -> CalibrationResult:
         """
         执行相位校准
@@ -723,6 +730,7 @@ class PhaseCalibrationService:
 
                     calibration = ProbePhaseCalibration(
                         probe_id=probe_id,
+                        chamber_id=chamber_id,  # 校准 chamber-scoping; None=未标注/legacy
                         polarization=pol.value,
                         reference_probe_id=reference_probe_id,
                         frequency_points_mhz=freq_points,
@@ -813,14 +821,17 @@ class PhaseCalibrationService:
         self,
         db: Session,
         probe_id: int,
-        polarization: Optional[str] = None
+        polarization: Optional[str] = None,
+        chamber_id: Optional[UUID] = None,
     ) -> Optional[ProbePhaseCalibration]:
-        """获取最新相位校准记录"""
+        """获取最新相位校准记录 (chamber_id 给定时按暗室作用域过滤)"""
         query = db.query(ProbePhaseCalibration).filter(
             ProbePhaseCalibration.probe_id == probe_id
         )
         if polarization:
             query = query.filter(ProbePhaseCalibration.polarization == polarization)
+        if chamber_id is not None:
+            query = query.filter(ProbePhaseCalibration.chamber_id == chamber_id)
         return query.order_by(desc(ProbePhaseCalibration.calibrated_at)).first()
 
     def analyze_phase_trend(
@@ -1022,7 +1033,8 @@ class PolarizationCalibrationService:
         calibrated_by: str,
         reference_antenna_id: Optional[str] = None,
         positioner_id: Optional[str] = None,
-        use_mock: bool = True
+        use_mock: bool = True,
+        chamber_id: Optional[UUID] = None,
     ) -> CalibrationResult:
         """
         执行极化校准
@@ -1084,6 +1096,7 @@ class PolarizationCalibrationService:
 
                     calibration = ProbePolarizationCalibration(
                         probe_id=probe_id,
+                        chamber_id=chamber_id,  # 校准 chamber-scoping; None=未标注/legacy
                         probe_type=probe_type,
                         v_to_h_isolation_db=avg_v_to_h,
                         h_to_v_isolation_db=avg_h_to_v,
@@ -1112,6 +1125,7 @@ class PolarizationCalibrationService:
 
                     calibration = ProbePolarizationCalibration(
                         probe_id=probe_id,
+                        chamber_id=chamber_id,  # 校准 chamber-scoping; None=未标注/legacy
                         probe_type=probe_type,
                         polarization_hand=hand,
                         axial_ratio_db=avg_ar,
@@ -1208,12 +1222,16 @@ class PolarizationCalibrationService:
     def get_latest_calibration(
         self,
         db: Session,
-        probe_id: int
+        probe_id: int,
+        chamber_id: Optional[UUID] = None,
     ) -> Optional[ProbePolarizationCalibration]:
-        """获取最新极化校准记录"""
-        return db.query(ProbePolarizationCalibration).filter(
+        """获取最新极化校准记录 (chamber_id 给定时按暗室作用域过滤)"""
+        query = db.query(ProbePolarizationCalibration).filter(
             ProbePolarizationCalibration.probe_id == probe_id
-        ).order_by(desc(ProbePolarizationCalibration.calibrated_at)).first()
+        )
+        if chamber_id is not None:
+            query = query.filter(ProbePolarizationCalibration.chamber_id == chamber_id)
+        return query.order_by(desc(ProbePolarizationCalibration.calibrated_at)).first()
 
     def get_calibration_history(
         self,
@@ -1474,7 +1492,8 @@ class PatternCalibrationService:
         ce_tx_power_dbm: float = -20.0,
         sgh_gain_dbi: float = 10.0,
         chain_correction_db: float = 0.0,
-        use_mock: bool = True
+        use_mock: bool = True,
+        chamber_id: Optional[UUID] = None,
     ) -> CalibrationResult:
         """
         执行方向图校准
@@ -1591,6 +1610,7 @@ class PatternCalibrationService:
 
                     calibration = ProbePattern(
                         probe_id=probe_id,
+                        chamber_id=chamber_id,  # 校准 chamber-scoping; None=未标注/legacy
                         polarization=polarization.value if hasattr(polarization, 'value') else str(polarization),
                         frequency_mhz=frequency_mhz,
                         azimuth_deg=azimuth_deg_native,
@@ -1786,14 +1806,17 @@ class PatternCalibrationService:
         self,
         db: Session,
         probe_id: int,
-        frequency_mhz: Optional[float] = None
+        frequency_mhz: Optional[float] = None,
+        chamber_id: Optional[UUID] = None,
     ) -> Optional[ProbePattern]:
-        """获取最新方向图校准记录"""
+        """获取最新方向图校准记录 (chamber_id 给定时按暗室作用域过滤)"""
         query = db.query(ProbePattern).filter(
             ProbePattern.probe_id == probe_id
         )
         if frequency_mhz is not None:
             query = query.filter(ProbePattern.frequency_mhz == frequency_mhz)
+        if chamber_id is not None:
+            query = query.filter(ProbePattern.chamber_id == chamber_id)
         return query.order_by(desc(ProbePattern.measured_at)).first()
 
     def get_calibrations_by_frequency(

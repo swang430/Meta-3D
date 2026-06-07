@@ -64,6 +64,10 @@ class ProbeAmplitudeCalibration(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     probe_id = Column(Integer, nullable=False, index=True, comment="探头 ID (0-63)")
+    # 校准 chamber-scoping foundation: probe_id 在多暗室下不再全局唯一 (CAICT-FS 与
+    # Type-C 各有 probe 1..N), 故按 chamber 限定校准记录, 避免跨暗室取错数据。
+    # nullable: 现有单暗室 dummy 数据保持 NULL; 查询侧 prefer exact-chamber, 回退 NULL/legacy。
+    chamber_id = Column(UUID(as_uuid=True), nullable=True, index=True, comment="关联暗室配置 ID (校准 chamber-scoping; NULL=未标注/legacy)")
     polarization = Column(String(10), nullable=False, comment="极化类型: V, H, LHCP, RHCP")
 
     # 频率-增益数据 (JSONB 数组)
@@ -135,6 +139,8 @@ class ProbePhaseCalibration(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     probe_id = Column(Integer, nullable=False, index=True, comment="探头 ID (0-63)")
+    # 校准 chamber-scoping foundation, 见 ProbeAmplitudeCalibration.chamber_id 说明。
+    chamber_id = Column(UUID(as_uuid=True), nullable=True, index=True, comment="关联暗室配置 ID (校准 chamber-scoping; NULL=未标注/legacy)")
     polarization = Column(String(10), nullable=False, comment="极化类型")
     reference_probe_id = Column(
         Integer, nullable=False, default=0,
@@ -194,6 +200,8 @@ class ProbePolarizationCalibration(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     probe_id = Column(Integer, nullable=False, index=True)
+    # 校准 chamber-scoping foundation, 见 ProbeAmplitudeCalibration.chamber_id 说明。
+    chamber_id = Column(UUID(as_uuid=True), nullable=True, index=True, comment="关联暗室配置 ID (校准 chamber-scoping; NULL=未标注/legacy)")
     probe_type = Column(
         String(50), nullable=False,
         comment="探头类型: dual_linear, dual_slant, circular"
@@ -248,6 +256,9 @@ class ProbePattern(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     probe_id = Column(Integer, nullable=False, index=True)
+    # 校准 chamber-scoping foundation (测量路径活跃消费方: probe_pattern.consumer):
+    # consumer 查询时 prefer exact-chamber, 回退 NULL/legacy。见 chamber_id 综述。
+    chamber_id = Column(UUID(as_uuid=True), nullable=True, index=True, comment="关联暗室配置 ID (校准 chamber-scoping; NULL=未标注/legacy)")
     polarization = Column(String(10), nullable=False)
     frequency_mhz = Column(Float, nullable=False, index=True, comment="测量频率 (MHz)")
 
@@ -603,6 +614,11 @@ class ProbeCalibrationValidity(Base):
     __tablename__ = "probe_calibration_validity"
 
     probe_id = Column(Integer, primary_key=True, comment="探头 ID")
+    # 校准 chamber-scoping foundation: 本表是 per-probe 有效性汇总。当前 PK 仅 probe_id,
+    # 故 chamber_id 先作为可空列存在 (记录该汇总属于哪个暗室)。真正的 per-(probe,chamber)
+    # 汇总需把 PK 改为复合 (probe_id, chamber_id) — 该迁移连同 check_validity/report 的
+    # chamber 作用域一并 backlog (见 docs/roadmap-first-call.md)。
+    chamber_id = Column(UUID(as_uuid=True), nullable=True, index=True, comment="关联暗室配置 ID (校准 chamber-scoping; NULL=未标注/legacy)")
 
     # 幅度校准
     amplitude_valid = Column(Boolean, default=False)

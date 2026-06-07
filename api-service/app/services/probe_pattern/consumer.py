@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from typing import List, Optional
+from uuid import UUID
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
@@ -35,19 +36,45 @@ def _query_valid_pattern(
     polarization: str,
     frequency_mhz: float,
     freq_tolerance_pct: float = 5.0,
+    chamber_id: Optional[UUID] = None,
 ) -> Optional[ProbePattern]:
-    """Most-recent VALID ProbePattern matching probe_id+pol within ±5% freq."""
+    """Most-recent VALID ProbePattern matching probe_id+pol within ±5% freq.
+
+    校准 chamber-scoping foundation: probe_id 在多暗室下不再全局唯一 (CAICT-FS 与
+    Type-C 各有 probe 1..N)。给定 chamber_id 时:
+      1. 优先返回**显式标注**该暗室 (ProbePattern.chamber_id == chamber_id) 的方向图;
+      2. 若无, 回退到**未标注/legacy** 行 (chamber_id IS NULL) — 这样在 import 端
+         尚未写 chamber_id 前 (该改造 backlog) 已有导入数据仍可用, 不造成回归;
+      3. **绝不**返回标注为**其它**暗室的方向图 (这正是要消除的取错数据风险)。
+    chamber_id 为 None 时维持历史行为 (仅按 probe_id+pol+freq 取最新)。
+    """
     f_min = frequency_mhz * (1.0 - freq_tolerance_pct / 100.0)
     f_max = frequency_mhz * (1.0 + freq_tolerance_pct / 100.0)
-    return (
-        db.query(ProbePattern)
-        .filter(
+
+    def _base():
+        return db.query(ProbePattern).filter(
             ProbePattern.probe_id == probe_id,
             ProbePattern.polarization == polarization,
             ProbePattern.frequency_mhz >= f_min,
             ProbePattern.frequency_mhz <= f_max,
             ProbePattern.status == CalibrationStatus.VALID.value,
         )
+
+    if chamber_id is None:
+        return _base().order_by(desc(ProbePattern.measured_at)).first()
+
+    exact = (
+        _base()
+        .filter(ProbePattern.chamber_id == chamber_id)
+        .order_by(desc(ProbePattern.measured_at))
+        .first()
+    )
+    if exact is not None:
+        return exact
+    # 回退: 仅未标注/legacy 行 (NULL), 不含其它暗室
+    return (
+        _base()
+        .filter(ProbePattern.chamber_id.is_(None))
         .order_by(desc(ProbePattern.measured_at))
         .first()
     )
@@ -72,6 +99,7 @@ def get_probe_gain_at_azimuth(
     azimuth_deg: float,
     frequency_mhz: float,
     polarization: str = "V",
+    chamber_id: Optional[UUID] = None,
 ) -> Optional[float]:
     """Return peak gain (dBi) of the probe closest to `azimuth_deg`.
 
@@ -79,13 +107,17 @@ def get_probe_gain_at_azimuth(
     gain_pattern_dbi at the actual angle offset, but for canonical 4-azimuth
     tests where each azimuth aligns with a probe, peak gain is appropriate.
 
+    chamber_id: 见 _query_valid_pattern — 限定取该暗室 (或 legacy) 的方向图。
+
     Returns None if no valid pattern exists for the resolved probe — caller
     should fall back to nominal gain or synthesize.
     """
     probe_id = select_active_probe_id(num_probes, azimuth_deg)
     if probe_id is None:
         return None
-    pattern = _query_valid_pattern(db, probe_id, polarization, frequency_mhz)
+    pattern = _query_valid_pattern(
+        db, probe_id, polarization, frequency_mhz, chamber_id=chamber_id
+    )
     if pattern is None or pattern.peak_gain_dbi is None:
         return None
     return float(pattern.peak_gain_dbi)
@@ -96,6 +128,7 @@ def estimate_quiet_zone_ripple_db(
     num_probes: int,
     frequency_mhz: float,
     polarization: str = "V",
+    chamber_id: Optional[UUID] = None,
 ) -> Optional[float]:
     """Estimate QZ ripple from cross-probe peak-gain spread.
 
@@ -113,7 +146,9 @@ def estimate_quiet_zone_ripple_db(
     """
     patterns: List[ProbePattern] = []
     for probe_id in range(num_probes):
-        p = _query_valid_pattern(db, probe_id, polarization, frequency_mhz)
+        p = _query_valid_pattern(
+            db, probe_id, polarization, frequency_mhz, chamber_id=chamber_id
+        )
         if p is not None and p.peak_gain_dbi is not None:
             patterns.append(p)
 
