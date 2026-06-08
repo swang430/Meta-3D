@@ -226,7 +226,7 @@ class TestChamberDuplicateAndWriteProtection:
 
         resp = client.delete(f"/api/v1/chambers/{preset['id']}")
         assert resp.status_code == 409, resp.text
-        assert "system preset" in resp.json()["detail"].lower()
+        assert "预设" in resp.json()["detail"]  # 系统预设不可删 (中文文案)
 
         # Row still exists
         assert client.get(f"/api/v1/chambers/{preset['id']}").status_code == 200

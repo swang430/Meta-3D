@@ -11,6 +11,8 @@ import math
 
 from app.db.database import get_db
 from app.models.probe import Probe
+from app.models.switch_topology import SwitchTopology
+from app.models.lab_profile import LabProfile
 from app.schemas.probe import ProbesListResponse
 from app.models.chamber import (
     ChamberConfiguration,
@@ -301,8 +303,16 @@ def activate_chamber(chamber_id: UUID, db: Session = Depends(get_db)):
 
 @router.delete("/{chamber_id}")
 def delete_chamber(chamber_id: UUID, db: Session = Depends(get_db)):
-    """
-    删除暗室配置
+    """删除暗室配置 (连同其探头 + RF 拓扑一起删, 单事务)。
+
+    守门:
+    - 系统预设 → 409 (不可删)
+    - 当前激活暗室 → 400 (先激活其它暗室)
+    - 被 lab profile 引用 → 409 (先改指向/删除该 lab, 避免 orphan 掉 lab 的暗室关联)
+
+    依赖清理 (避免 orphan / FK 报错):
+    - switch_topologies.chamber_id 是 RESTRICT 外键 → 必须先删该暗室的拓扑, 否则 500
+    - probes.chamber_config_id 是 SET NULL → 直接删暗室会把探头 orphan 成 NULL, 故显式删除
     """
     chamber = db.query(ChamberConfiguration).filter(
         ChamberConfiguration.id == chamber_id
@@ -314,18 +324,41 @@ def delete_chamber(chamber_id: UUID, db: Session = Depends(get_db)):
     if chamber.is_system_preset:
         raise HTTPException(
             status_code=409,
-            detail=(
-                "This chamber is a system preset and cannot be deleted. "
-                "If you no longer want to see it, hide it in the GUI rather than removing the row."
-            ),
+            detail="系统预设暗室不可删除（如不想看到，请在界面隐藏，而非删除该行）。",
         )
 
     if chamber.is_active:
-        raise HTTPException(status_code=400, detail="Cannot delete active chamber configuration")
+        raise HTTPException(
+            status_code=400,
+            detail="不能删除当前激活的暗室，请先激活其它暗室再删除。",
+        )
 
+    # 被 lab profile 引用 → 拦截 (否则 SET NULL 会断掉 lab 的暗室关联)
+    labs = db.query(LabProfile).filter(LabProfile.chamber_config_id == chamber_id).all()
+    if labs:
+        names = "、".join(lp.name for lp in labs)
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"暗室被 {len(labs)} 个 Lab Profile 引用（{names}），"
+                "请先把它们改指向其它暗室或删除这些 Lab 后再删暗室。"
+            ),
+        )
+
+    # 清理依赖后删暗室 (单事务)
+    deleted_topos = db.query(SwitchTopology).filter(
+        SwitchTopology.chamber_id == chamber_id
+    ).delete(synchronize_session=False)
+    deleted_probes = db.query(Probe).filter(
+        Probe.chamber_config_id == chamber_id
+    ).delete(synchronize_session=False)
     db.delete(chamber)
     db.commit()
-    return {"message": "Chamber configuration deleted"}
+    return {
+        "message": "Chamber configuration deleted",
+        "deleted_probes": deleted_probes,
+        "deleted_topologies": deleted_topos,
+    }
 
 
 @router.get("/{chamber_id}/required-calibrations", response_model=RequiredCalibrationsResponse)

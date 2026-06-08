@@ -22,6 +22,7 @@ import {
     activateChamber,
     createChamberFromTemplate,
     duplicateChamber,
+    deleteChamber,
     fetchChamberCalibration,
 } from '../api/service'
 import { CreateChamberForm } from './CreateChamberForm'
@@ -117,6 +118,34 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
             })
         },
     })
+
+    // 删除暗室 (后端连同探头 + RF 拓扑一起删; 预设/激活/被 lab 引用会被后端拦并给 409/400)
+    const deleteMutation = useMutation({
+        mutationFn: deleteChamber,
+        onSuccess: (res: any) => {
+            queryClient.invalidateQueries({ queryKey: ['chambers'] })
+            queryClient.invalidateQueries({ queryKey: ['chamber', 'active'] })
+            queryClient.invalidateQueries({ queryKey: ['probes'] })
+            notifications.show({
+                color: 'green',
+                title: '已删除暗室',
+                message: `连同探头 ${res?.deleted_probes ?? 0}、拓扑 ${res?.deleted_topologies ?? 0} 一并删除`,
+            })
+            setConfirmDelete(null)
+        },
+        onError: (err: any) => {
+            notifications.show({
+                color: 'red',
+                title: '删除失败',
+                message: err?.response?.data?.detail ?? err?.message ?? String(err),
+            })
+            setConfirmDelete(null)
+        },
+    })
+
+    // 暗室管理弹窗 + 待确认删除项
+    const [manageOpen, setManageOpen] = useState(false)
+    const [confirmDelete, setConfirmDelete] = useState<{ id: string; name: string } | null>(null)
 
     // 防御: 即便缓存里塞进了非数组 (旧 {items,total} 结构残留), 也不让 .map 崩。
     const chambers = Array.isArray(chambersData) ? chambersData : []
@@ -228,6 +257,12 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
                                 onClick={() => setCreateModalOpen(true)}
                             >
                                 新建配置
+                            </Button>
+                            <Button
+                                variant="subtle"
+                                onClick={() => setManageOpen(true)}
+                            >
+                                管理暗室
                             </Button>
                             {onNavigate && (
                                 <Button
@@ -425,6 +460,84 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
                     onCancel={() => setCreateModalOpen(false)}
                     isLoading={createFromTemplateMutation.isPending}
                 />
+            </Modal>
+
+            {/* 暗室管理: 列出全部, 逐个删除 (替代手工脚本) */}
+            <Modal opened={manageOpen} onClose={() => setManageOpen(false)} title="管理暗室" size="lg">
+                <Stack gap="sm">
+                    <Text size="xs" c="dimmed">
+                        共 {chambers.length} 个暗室。删除会<b>连同该暗室的探头与 RF 拓扑一并删除</b>；
+                        系统预设、当前激活、被 Lab Profile 引用的暗室不可删（后端会拦截并提示）。
+                    </Text>
+                    <Table.ScrollContainer minWidth={480} mah={420}>
+                        <Table highlightOnHover withTableBorder stickyHeader>
+                            <Table.Thead>
+                                <Table.Tr>
+                                    <Table.Th>名称</Table.Th>
+                                    <Table.Th>类型</Table.Th>
+                                    <Table.Th w={80}>操作</Table.Th>
+                                </Table.Tr>
+                            </Table.Thead>
+                            <Table.Tbody>
+                                {chambers.map((c) => {
+                                    const blocked = c.is_system_preset || c.is_active
+                                    return (
+                                        <Table.Tr key={c.id}>
+                                            <Table.Td>
+                                                {c.name}
+                                                {c.is_active && (
+                                                    <Badge ml="xs" size="xs" color="brand">当前</Badge>
+                                                )}
+                                                {c.is_system_preset && (
+                                                    <Badge ml="xs" size="xs" color="gray" variant="light">预设</Badge>
+                                                )}
+                                            </Table.Td>
+                                            <Table.Td>{c.chamber_type}</Table.Td>
+                                            <Table.Td>
+                                                <Button
+                                                    size="compact-xs"
+                                                    variant="subtle"
+                                                    color="red"
+                                                    disabled={blocked}
+                                                    title={blocked ? '系统预设 / 当前激活暗室不可删除' : '删除此暗室'}
+                                                    onClick={() => setConfirmDelete({ id: c.id, name: c.name })}
+                                                >
+                                                    删除
+                                                </Button>
+                                            </Table.Td>
+                                        </Table.Tr>
+                                    )
+                                })}
+                            </Table.Tbody>
+                        </Table>
+                    </Table.ScrollContainer>
+                </Stack>
+            </Modal>
+
+            {/* 删除确认 */}
+            <Modal
+                opened={!!confirmDelete}
+                onClose={() => setConfirmDelete(null)}
+                title="确认删除暗室"
+                size="sm"
+            >
+                <Stack gap="md">
+                    <Text size="sm">
+                        确定删除暗室「{confirmDelete?.name}」？将<b>连同其探头与 RF 拓扑一并永久删除</b>，不可恢复。
+                    </Text>
+                    <Group justify="flex-end" gap="sm">
+                        <Button variant="default" onClick={() => setConfirmDelete(null)}>
+                            取消
+                        </Button>
+                        <Button
+                            color="red"
+                            loading={deleteMutation.isPending}
+                            onClick={() => confirmDelete && deleteMutation.mutate(confirmDelete.id)}
+                        >
+                            删除
+                        </Button>
+                    </Group>
+                </Stack>
             </Modal>
         </>
     )

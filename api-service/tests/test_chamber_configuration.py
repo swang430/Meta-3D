@@ -377,7 +377,7 @@ class TestChamberAPI:
 
         response = client.delete(f"/api/v1/chambers/{chamber_id}")
         assert response.status_code == 400
-        assert "active" in response.json()["detail"].lower()
+        assert "激活" in response.json()["detail"]  # 不能删除当前激活暗室 (中文文案)
 
     def test_get_required_calibrations_type_a(self):
         """Type A chamber should require basic calibrations only"""
