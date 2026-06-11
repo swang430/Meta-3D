@@ -186,6 +186,15 @@ class CDLCluster(BaseModel):
     zoa_deg: float = Field(90.0, description="到达天顶角 (deg)")
     zod_deg: float = Field(90.0, description="出发天顶角 (deg)")
     as_aoa_deg: float = Field(2.0, description="到达角度扩展 (deg)")
+    # 2026-06-11 audit batch 2 跟进 / Spec v2.0 §3: 库端 CDLClusterSpec 的另三个
+    # 角度扩展字段 (≥0, 默认 0 同库)。as_zoa_deg 兼作 (az,el) 各向异性探头权重
+    # 高斯的 el 宽度 — 3D 仰角簇 (38.901 ZoD / CAICT-FS 满天星) 的必要旋钮。
+    as_aod_deg: float = Field(0.0, ge=0.0, description="出发方位角度扩展 (deg)")
+    as_zoa_deg: float = Field(
+        0.0, ge=0.0,
+        description="到达天顶角度扩展 (deg); 兼作探头权重高斯 el 宽度 (spec §3)",
+    )
+    as_zod_deg: float = Field(0.0, ge=0.0, description="出发天顶角度扩展 (deg)")
     # 2026-05-18 P0-7 / Spec v2.0: ChannelEgine Phase 6 cross-pol ratio.
     # 7 dB 是 TR 38.901 §7.5 默认 (NLOS UMa/UMi/RMa); LOS 通常用 0 dB.
     xpr_db: float = Field(

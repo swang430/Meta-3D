@@ -64,6 +64,9 @@ class TestChannelEngineClientPayloadShape:
                 CDLCluster(
                     delay_s=0.0, power_relative_linear=1.0,
                     aoa_deg=10.0, aod_deg=20.0,
+                    # audit batch 2 跟进: 三个角度扩展字段端到端透传
+                    # (as_zoa 兼作探头权重高斯 el 宽度, spec v2.0 §3)
+                    as_aod_deg=3.0, as_zoa_deg=4.5, as_zod_deg=1.5,
                     xpr_db=8.0,
                     initial_phases_rad=[0.0, 0.785, 1.57, 3.14],
                 ),
@@ -96,6 +99,17 @@ class TestChannelEngineClientPayloadShape:
         assert cdl["k_factor_db"] == 10.0
         assert cdl["clusters"][0]["xpr_db"] == 8.0
         assert cdl["clusters"][0]["initial_phases_rad"] == [0.0, 0.785, 1.57, 3.14]
+
+    def test_cluster_angular_spreads_all_four_carried(self):
+        """audit batch 2 跟进: as_aod/as_zoa/as_zod 此前在 client payload 被丢
+        (库端落默认 0) → 调用方控制不了 (az,el) 探头权重高斯的 el 宽度。
+        本测试钉住四个角度扩展全部进 payload。"""
+        p = self._build_payload()
+        c0 = p["cdl_model_data"]["clusters"][0]
+        assert c0["as_aoa_deg"] == 2.0   # dataclass 默认 (helper 未覆盖)
+        assert c0["as_aod_deg"] == 3.0
+        assert c0["as_zoa_deg"] == 4.5   # 探头权重高斯 el 宽度 (spec §3)
+        assert c0["as_zod_deg"] == 1.5
 
     def test_synthesis_method_defaults_to_strict_pfs(self):
         """Per ChannelEgine cross-project context: strict_pfs is the
@@ -354,6 +368,15 @@ class TestChannelEngineRealSynthesis:
                 "delay_s": 0.0, "power_linear": 1.0,
                 "aoa_deg": 0.0, "aod_deg": 10.0, "as_aoa_deg": 1.0,
                 "xpr_db": 7.0, "initial_phases_rad": None,
+            }, {
+                # audit batch 2 跟进: 仰角簇 + 全四个角度扩展 — 钉住库端
+                # CDLClusterSpec 接受 adapter 现在透传的全部字段 (含 as_zoa
+                # 作探头权重高斯 el 宽度的新路径, spec v2.0 §0.3/§3)
+                "delay_s": 50e-9, "power_linear": 0.5,
+                "aoa_deg": 120.0, "aod_deg": 30.0, "zoa_deg": 60.0,
+                "as_aoa_deg": 5.0, "as_aod_deg": 2.0,
+                "as_zoa_deg": 4.0, "as_zod_deg": 1.0,
+                "xpr_db": 9.0, "initial_phases_rad": None,
             }],
         })
         chamber = ChamberConfig(
