@@ -3,7 +3,8 @@ Hardware Pipeline Synthesis Endpoint
 
 POST /api/v1/synthesize_hardware_pipeline
 
-基于 MIMO_First_Integration_Spec.md v1.0 实现。
+基于 `ChannelEgine/doc/MIMO_First_Integration_Spec.md` **v2.0** 实现
+(2026-05-18 P0-7 重写; 升级注意事项见该 spec §0 audit batch 2)。
 接收 MIMO-First 下发的完整仿真参数，返回 .asc 硬件驱动文件和控制指令。
 """
 
@@ -280,6 +281,11 @@ def _build_custom_cdl_profile(request: HardwarePipelineRequest):
             "zoa_deg": c.zoa_deg,
             "zod_deg": c.zod_deg,
             "as_aoa_deg": c.as_aoa_deg,
+            # audit batch 2 跟进: 三个角度扩展补透传 (as_zoa 兼作探头权重高斯
+            # el 宽度, spec v2.0 §3); 此前 adapter 丢弃 → 库端落默认 0。
+            "as_aod_deg": c.as_aod_deg,
+            "as_zoa_deg": c.as_zoa_deg,
+            "as_zod_deg": c.as_zod_deg,
             "xpr_db": c.xpr_db,
             # ChannelEgine 的 initial_phases_rad 接受 None (内部随机); 显式传 None
             # 而不是 omit, 这样 schema validator 仍走 Optional 分支.

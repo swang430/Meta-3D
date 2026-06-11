@@ -140,6 +140,12 @@ class CDLCluster:
     zoa_deg: float = 90.0
     zod_deg: float = 90.0
     as_aoa_deg: float = 2.0
+    # 2026-06-11 audit batch 2 跟进: 库端 CDLClusterSpec 的另三个角度扩展字段
+    # (默认 0, 跟库一致)。as_zoa_deg 同时是新 (az,el) 各向异性探头权重高斯的
+    # el 宽度 (spec v2.0 §3) — 3D 仰角簇 (38.901 ZoD / CAICT-FS) 必须能传。
+    as_aod_deg: float = 0.0
+    as_zoa_deg: float = 0.0
+    as_zod_deg: float = 0.0
     # 2026-05-18 P0-7: ChannelEgine Phase 6 cross-pol ratio (dB), TR 38.901 §7.5 默认 7
     xpr_db: float = 7.0
     # 2026-05-18 P0-7: ChannelEgine Phase 5 per-ray init phases [VV, VH, HV, HH], None=随机
@@ -581,6 +587,9 @@ class ChannelEngineClient:
                             "zoa_deg": c.zoa_deg,
                             "zod_deg": c.zod_deg,
                             "as_aoa_deg": c.as_aoa_deg,
+                            "as_aod_deg": c.as_aod_deg,
+                            "as_zoa_deg": c.as_zoa_deg,
+                            "as_zod_deg": c.as_zod_deg,
                             "xpr_db": c.xpr_db,
                             "initial_phases_rad": c.initial_phases_rad,
                         }
