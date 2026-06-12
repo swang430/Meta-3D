@@ -13,6 +13,7 @@ export interface SequenceParamSpec {
   label: string
   type: 'number' | 'string' | 'boolean'
   default?: number | string | boolean | null
+  options?: string[]
 }
 
 export interface DiagnosticSequenceMetadata {

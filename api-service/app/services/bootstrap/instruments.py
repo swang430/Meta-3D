@@ -66,7 +66,10 @@ _CATEGORIES: list[dict] = [
                               "fading_profiles": ["Playback (file-based, .smu)"],
                               "mimo_config": "up to 2x2",
                               "scpi_dialect": "FS-series (different from F64)",
-                              "driver_status": "MVP — connect/identify/state only; channel loading + path-loss not yet wired"}},
+                              "driver_status": (
+                                  "playback extension — load/start/stop wired; "
+                                  "local upload requires explicit enable_scpi_file_upload"
+                              )}},
             {"vendor": "Spirent", "model": "VR5",
              "full_name": "Spirent Vertex VR5 Channel Emulator",
              "capabilities": {"channels": 16, "bandwidth_mhz": 160,

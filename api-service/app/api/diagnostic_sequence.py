@@ -45,6 +45,7 @@ class SequenceParamSpec(BaseModel):
     label: str
     type: str
     default: Optional[Any] = None
+    options: Optional[List[str]] = None
 
 
 class SequenceMetadataResponse(BaseModel):

@@ -51,6 +51,7 @@ from app.hal.rf_switch import RfSwitchDriver, MockRfSwitch
 
 # --- Real 驱动 ---
 from app.hal.propsim_f64 import RealPropsimF64Driver
+from app.hal.propsim_fs16_playback import RealPropsimFs16PlaybackDriver
 from app.hal.uxm_base_station import RealUxmDriver
 from app.hal.cmw500_base_station import RealCmw500Driver
 from app.hal.aerotech_positioner import RealAerotechDriver
@@ -75,6 +76,7 @@ DRIVER_CLASS_MAP: Dict[str, Type[InstrumentDriver]] = {
     # Channel Emulators
     "MockChannelEmulator": MockChannelEmulator,
     "RealPropsimF64Driver": RealPropsimF64Driver,
+    "RealPropsimFs16PlaybackDriver": RealPropsimFs16PlaybackDriver,
 
     # Base Stations
     "MockBaseStation": MockBaseStation,
@@ -121,7 +123,7 @@ DEFAULT_MOCK_MAP: Dict[str, Type[InstrumentDriver]] = {
 
 # 设备类别 → 优先级排序的 Real 驱动 (第一个能连接的就用)
 DEFAULT_REAL_MAP: Dict[str, list] = {
-    "channel_emulator": [RealPropsimF64Driver],
+    "channel_emulator": [RealPropsimF64Driver, RealPropsimFs16PlaybackDriver],
     "base_station": [RealUxmDriver, RealCmw500Driver],
     "positioner": [RealAerotechDriver, RealEtsEmcenterDriver],
     "rf_switch": [EtslSwitchDriver],

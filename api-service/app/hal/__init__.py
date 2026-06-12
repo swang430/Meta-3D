@@ -30,6 +30,7 @@ from app.hal.rf_switch import RfSwitchDriver, MockRfSwitch
 
 # --- Layer 3: 真实驱动 ---
 from app.hal.propsim_f64 import RealPropsimF64Driver
+from app.hal.propsim_fs16_playback import RealPropsimFs16PlaybackDriver
 from app.hal.uxm_base_station import RealUxmDriver
 from app.hal.cmw500_base_station import RealCmw500Driver
 from app.hal.aerotech_positioner import RealAerotechDriver
@@ -57,6 +58,7 @@ __all__ = [
     'ChannelLoadMode',
     'MockChannelEmulator',
     'RealPropsimF64Driver',
+    'RealPropsimFs16PlaybackDriver',
 
     # Base Station Emulator
     'BaseStationDriver',

@@ -22,6 +22,7 @@ import pytest
 
 from app.api.instrument import (
     _driver_supports_timeout_kwarg,
+    _looks_like_scpi_query,
     _run_command_via_hal,
 )
 
@@ -206,3 +207,27 @@ class TestRunCommandViaHalTimeoutPassthrough:
         result = await _run_command_via_hal(drv, "*IDN?", scpi_logger, "channelEmulator")
         assert result.success is True
         assert "timeout" not in drv.query_calls[0]
+
+    async def test_query_with_path_argument_reads_response(self, scpi_logger):
+        drv = _FakeF64LikeDriver()
+        result = await _run_command_via_hal(
+            drv,
+            'MMEM:CAT? "D:\\User Playbacks"',
+            scpi_logger,
+            "channelEmulator",
+        )
+        assert result.success is True
+        assert len(drv.query_calls) == 1
+        assert drv.query_calls[0]["cmd"] == 'MMEM:CAT? "D:\\User Playbacks"'
+        assert drv.write_calls == []
+
+
+class TestLooksLikeScpiQuery:
+    def test_plain_query(self):
+        assert _looks_like_scpi_query("*IDN?") is True
+
+    def test_query_with_argument_after_question_mark(self):
+        assert _looks_like_scpi_query('MMEM:CAT? "D:\\User Playbacks"') is True
+
+    def test_write_command(self):
+        assert _looks_like_scpi_query('MMEM:CDIR "D:\\User Playbacks"') is False

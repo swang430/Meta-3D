@@ -494,6 +494,8 @@ class MockBaseStation(BaseStationDriver):
     async def get_throughput_metrics(self) -> ThroughputMetrics:
         if not self._cell_running:
             return ThroughputMetrics()
+        rsrp_dbm = max(-120.0, min(-45.0, self._dl_power_dbm - 25.0 + random.gauss(0, 2.5)))
+        sinr_db = max(-5.0, min(30.0, 18.0 + (self._dl_power_dbm + 50.0) * 0.08 + random.gauss(0, 2.0)))
         return ThroughputMetrics(
             dl_throughput_mbps=420.0 + random.gauss(0, 15),
             ul_throughput_mbps=80.0 + random.gauss(0, 5),
@@ -503,6 +505,8 @@ class MockBaseStation(BaseStationDriver):
             rank_indicator=min(self._mimo_layers, random.randint(1, 2)),
             mcs_dl=random.randint(24, 27),
             mcs_ul=random.randint(20, 24),
+            rsrp_dbm=rsrp_dbm,
+            sinr_db=sinr_db,
         )
 
     async def get_ue_info(self) -> Dict[str, Any]:
