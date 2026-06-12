@@ -2004,6 +2004,15 @@ function EquipmentManager() {
           const draft = drafts[category.key]
           if (!draft) return null
           const drawerSelectedModel = category.models.find((model) => model.id === draft.modelId) ?? null
+          const drawerModelText = [
+            drawerSelectedModel?.vendor,
+            drawerSelectedModel?.model,
+            drawerSelectedModel?.summary,
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+          const drawerIsFs16Model = drawerModelText.includes('fs16')
 
           return (
             <Stack gap="xl">
@@ -2087,7 +2096,8 @@ function EquipmentManager() {
               <Stack gap="md">
                 <TextInput
                   label="控制端点"
-                  placeholder="例: 192.168.100.21:5025"
+                  description={drawerIsFs16Model ? 'FS16 现场优先使用 HiSLIP；raw 5025 仅作为诊断排查项。' : undefined}
+                  placeholder={drawerIsFs16Model ? 'TCPIP0::192.168.0.100::hislip0::INSTR' : '例: 192.168.100.21:5025'}
                   value={draft.endpoint}
                   onChange={handleFieldChange(category.key, 'endpoint')}
                 />
@@ -2136,33 +2146,104 @@ function EquipmentManager() {
                     // operator instead of silently swallowing — they need
                     // to fix it before we can edit alignment_name cleanly.
                   }
+                  const modelText = [
+                    drawerSelectedModel?.vendor,
+                    drawerSelectedModel?.model,
+                    drawerSelectedModel?.summary,
+                  ]
+                    .filter(Boolean)
+                    .join(' ')
+                    .toLowerCase()
+                  const isF64Model = modelText.includes('f64')
+                  const isFs16Model = modelText.includes('fs16')
                   const currentAlignment = typeof parsedParams.alignment_name === 'string'
                     ? parsedParams.alignment_name
                     : ''
+                  const currentRemotePlaybackFile = typeof parsedParams.remote_playback_file === 'string'
+                    ? parsedParams.remote_playback_file
+                    : ''
+                  const currentPlaybackEntryFile = typeof parsedParams.playback_entry_file === 'string'
+                    ? parsedParams.playback_entry_file
+                    : ''
+                  const updateChannelParam = (key: string, value: string | boolean) => {
+                    const next = { ...parsedParams }
+                    if (typeof value === 'string') {
+                      const trimmed = value.trim()
+                      if (trimmed) {
+                        next[key] = trimmed
+                      } else {
+                        delete next[key]
+                      }
+                    } else if (value) {
+                      next[key] = true
+                    } else {
+                      delete next[key]
+                    }
+                    const serialized = Object.keys(next).length > 0
+                      ? JSON.stringify(next, null, 2)
+                      : ''
+                    setDrafts(prev => ({
+                      ...prev,
+                      [category.key]: { ...prev[category.key], connection_params: serialized },
+                    }))
+                  }
                   return (
                     <>
-                      <TextInput
-                        label="F64 User Alignment 文件名"
-                        description="在 F64 上预存的 user alignment 文件名（§17.5: 仪器重启后驱动 connect() 自动 SYST:CALIB:USER:SET 重新激活该名）。留空 = 使用 F64 当前已加载的 alignment（如有）。"
-                        placeholder="例: CAICT_5G_3500MHz"
-                        value={currentAlignment}
-                        onChange={(e) => {
-                          const newName = e.currentTarget.value
-                          const next = { ...parsedParams }
-                          if (newName.trim()) {
-                            next.alignment_name = newName.trim()
-                          } else {
-                            delete next.alignment_name
-                          }
-                          const serialized = Object.keys(next).length > 0
-                            ? JSON.stringify(next, null, 2)
-                            : ''
-                          setDrafts(prev => ({
-                            ...prev,
-                            [category.key]: { ...prev[category.key], connection_params: serialized },
-                          }))
-                        }}
-                      />
+                      {isF64Model ? (
+                        <TextInput
+                          label="F64 User Alignment 文件名"
+                          description="在 F64 上预存的 user alignment 文件名（§17.5: 仪器重启后驱动 connect() 自动 SYST:CALIB:USER:SET 重新激活该名）。留空 = 使用 F64 当前已加载的 alignment（如有）。"
+                          placeholder="例: CAICT_5G_3500MHz"
+                          value={currentAlignment}
+                          onChange={(e) => updateChannelParam('alignment_name', e.currentTarget.value)}
+                        />
+                      ) : null}
+                      {isFs16Model ? (
+                        <Card withBorder padding="md" radius="md" shadow="xs" bg="gray.0">
+                          <Stack gap="sm">
+                            <Stack gap={2}>
+                              <Text fw={600} size="sm">FS16 Playback 文件</Text>
+                              <Text size="xs" c="dimmed">
+                                填写 FS16 上已经存在的 .smu playback 文件名。只填文件名时驱动默认按 D:\User Playbacks\ 文件夹加载；这不会从本机上传文件。
+                              </Text>
+                            </Stack>
+                            <TextInput
+                              label="FS16 内文件名或完整路径"
+                              description="推荐先把文件放到 FS16 上，再在这里填文件名。"
+                              placeholder="例: Emulation0609.smu"
+                              value={currentRemotePlaybackFile}
+                              onChange={(e) => updateChannelParam('remote_playback_file', e.currentTarget.value)}
+                            />
+                            <TextInput
+                              label="本机上传入口文件名"
+                              description="仅在启用下方 SCPI 上传时使用；第一次真实联调建议留空。"
+                              placeholder="例: Emulation0609.smu"
+                              value={currentPlaybackEntryFile}
+                              onChange={(e) => updateChannelParam('playback_entry_file', e.currentTarget.value)}
+                            />
+                            <Group align="flex-start" gap="xl">
+                              <Switch
+                                label="加载前校验文件存在"
+                                description="通过 FS16 目录查询确认文件可见。"
+                                checked={parsedParams.verify_remote_file_exists === true}
+                                onChange={(e) => updateChannelParam('verify_remote_file_exists', e.currentTarget.checked)}
+                              />
+                              <Switch
+                                label="加载后自动开始播放"
+                                description="load 成功后自动发送 start 命令。"
+                                checked={parsedParams.auto_start_after_load === true}
+                                onChange={(e) => updateChannelParam('auto_start_after_load', e.currentTarget.checked)}
+                              />
+                            </Group>
+                            <Switch
+                              label="允许从本机经 SCPI 上传文件（实验性）"
+                              description="默认关闭；真实 FS16 首次联调建议使用 FS16 内已有文件。"
+                              checked={parsedParams.enable_scpi_file_upload === true}
+                              onChange={(e) => updateChannelParam('enable_scpi_file_upload', e.currentTarget.checked)}
+                            />
+                          </Stack>
+                        </Card>
+                      ) : null}
                       <ChannelModelsCard categoryKey={category.key} />
                       {category.connection?.id && (
                         <StandardChannelDefinitionCard connectionId={category.connection.id} />

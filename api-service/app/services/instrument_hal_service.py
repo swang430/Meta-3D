@@ -52,7 +52,7 @@ def _real_driver_registry() -> Dict[str, Dict[str, type]]:
         return _REAL_DRIVER_REGISTRY_CACHE
 
     from app.hal.propsim_f64 import RealPropsimF64Driver
-    from app.hal.propsim_fs16 import RealPropsimFs16Driver
+    from app.hal.propsim_fs16_playback import RealPropsimFs16PlaybackDriver
     from app.hal.uxm_base_station import RealUxmDriver
     from app.hal.cmw500_base_station import RealCmw500Driver
     from app.hal.ets_positioner import RealEtsEmcenterDriver
@@ -68,7 +68,7 @@ def _real_driver_registry() -> Dict[str, Dict[str, type]]:
     _REAL_DRIVER_REGISTRY_CACHE = {
         "channelEmulator": {
             "PROPSIM F64": RealPropsimF64Driver,
-            "PROPSIM FS16": RealPropsimFs16Driver,
+            "PROPSIM FS16": RealPropsimFs16PlaybackDriver,
         },
         "baseStation": {
             "UXM 5G E7515B": RealUxmDriver,

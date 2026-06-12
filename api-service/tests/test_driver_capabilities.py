@@ -419,11 +419,11 @@ class TestRealDriverRegistryAccessor:
     def test_known_real_drivers_resolve(self):
         from app.services.instrument_hal_service import get_real_driver_class
         from app.hal.propsim_f64 import RealPropsimF64Driver
-        from app.hal.propsim_fs16 import RealPropsimFs16Driver
+        from app.hal.propsim_fs16_playback import RealPropsimFs16PlaybackDriver
         from app.hal.aerotech_positioner import RealAerotechDriver
 
         assert get_real_driver_class("channelEmulator", "PROPSIM F64") is RealPropsimF64Driver
-        assert get_real_driver_class("channelEmulator", "PROPSIM FS16") is RealPropsimFs16Driver
+        assert get_real_driver_class("channelEmulator", "PROPSIM FS16") is RealPropsimFs16PlaybackDriver
         assert get_real_driver_class("positioner", "A3200") is RealAerotechDriver
 
     def test_unknown_model_returns_none(self):

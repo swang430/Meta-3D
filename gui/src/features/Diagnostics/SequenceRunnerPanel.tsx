@@ -28,6 +28,8 @@ import {
   Center,
   Divider,
   ScrollArea,
+  Table,
+  SimpleGrid,
 } from '@mantine/core'
 import {
   IconAlertTriangle,
@@ -57,6 +59,186 @@ import { logFrontendEvent } from '../../observability/frontendLogger'
 
 type ParamValue = number | string | boolean
 
+const PARAM_LABEL_OVERRIDES: Record<string, string> = {
+  remote_playback_file: 'FS16 .smu 文件',
+  verify_remote_file_exists: '加载前校验文件',
+  start_playback: '启动 FS16 playback',
+  stop_after_s: '自动停止秒数',
+  cleanup_on_finish: '结束时清理',
+  base_station_mode: '基站模式',
+  frequency_mhz: '频率 MHz',
+  bandwidth_mhz: '带宽 MHz',
+  scs_khz: 'SCS kHz',
+  band: '频段',
+  mimo_layers: 'MIMO 层数',
+  dl_power_dbm: 'DL 功率 dBm',
+  attach_timeout_s: 'Attach 超时秒数',
+  attach_poll_interval_s: 'Attach 轮询秒数',
+  throughput_windows: 'KPI 采样窗口数',
+  throughput_window_s: 'KPI 窗口秒数',
+}
+
+const PARAM_DESCRIPTION_OVERRIDES: Record<string, string> = {
+  remote_playback_file: 'FS16 内已有文件名，或完整 D:\\ 路径',
+  verify_remote_file_exists: '先查目录，确认文件可见',
+  start_playback: 'load 成功后自动播放',
+  stop_after_s: '0 表示不自动停止',
+  cleanup_on_finish: '结束时停止并释放状态',
+  base_station_mode: '今天用 mock，接真实基站再改 real',
+  frequency_mhz: '虚拟基站中心频点',
+  bandwidth_mhz: '虚拟小区带宽',
+  scs_khz: '子载波间隔',
+  band: 'NR 频段',
+  mimo_layers: '下行 MIMO 层数',
+  dl_power_dbm: 'mock 下行功率',
+  attach_timeout_s: '等待终端接入',
+  attach_poll_interval_s: '接入状态轮询间隔',
+  throughput_windows: 'KPI 采样次数',
+  throughput_window_s: '单次 KPI 窗口时长',
+}
+
+function getParamLabel(spec: DiagnosticSequenceMetadata['params_schema'][number]) {
+  return PARAM_LABEL_OVERRIDES[spec.name] || spec.label || spec.name
+}
+
+function getParamDescription(spec: DiagnosticSequenceMetadata['params_schema'][number]) {
+  return PARAM_DESCRIPTION_OVERRIDES[spec.name] || ''
+}
+
+const KPI_LABELS: Record<string, string> = {
+  dl_throughput_mbps: 'DL throughput',
+  ul_throughput_mbps: 'UL throughput',
+  dl_bler: 'DL BLER',
+  ul_bler: 'UL BLER',
+  cqi: 'CQI',
+  rank_indicator: 'Rank Indicator',
+  mcs_dl: 'MCS DL',
+  mcs_ul: 'MCS UL',
+  rsrp_dbm: 'RSRP',
+  sinr_db: 'SINR',
+}
+
+const KPI_UNITS: Record<string, string> = {
+  dl_throughput_mbps: 'Mbps',
+  ul_throughput_mbps: 'Mbps',
+  rsrp_dbm: 'dBm',
+  sinr_db: 'dB',
+}
+
+const KPI_ORDER = [
+  'dl_throughput_mbps',
+  'ul_throughput_mbps',
+  'dl_bler',
+  'ul_bler',
+  'cqi',
+  'rank_indicator',
+  'mcs_dl',
+  'mcs_ul',
+  'rsrp_dbm',
+  'sinr_db',
+]
+
+type KpiSummaryValue = {
+  mean?: number
+  min?: number
+  max?: number
+  std?: number
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function formatKpi(value: unknown, unit?: string): string {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '-'
+  const digits = Math.abs(value) < 10 && !Number.isInteger(value) ? 4 : 2
+  return `${value.toFixed(digits)}${unit ? ` ${unit}` : ''}`
+}
+
+function getKpiRows(extra: Record<string, unknown>) {
+  const raw = extra.kpi_summary
+  if (!isRecord(raw)) return []
+  const keys = [
+    ...KPI_ORDER.filter((key) => key in raw),
+    ...Object.keys(raw).filter((key) => !KPI_ORDER.includes(key)),
+  ]
+  return keys
+    .map((key) => {
+      const item = raw[key]
+      if (!isRecord(item)) return null
+      const value: KpiSummaryValue = {
+        mean: typeof item.mean === 'number' ? item.mean : undefined,
+        min: typeof item.min === 'number' ? item.min : undefined,
+        max: typeof item.max === 'number' ? item.max : undefined,
+        std: typeof item.std === 'number' ? item.std : undefined,
+      }
+      return {
+        key,
+        label: KPI_LABELS[key] || key,
+        unit: KPI_UNITS[key],
+        value,
+      }
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+}
+
+function getInstrumentModes(extra: Record<string, unknown>) {
+  const raw = extra.instrument_modes
+  return isRecord(raw) ? raw : null
+}
+
+function getFs16Playback(extra: Record<string, unknown>) {
+  const raw = extra.fs16_playback
+  return isRecord(raw) ? raw : null
+}
+
+function formatExtraValue(value: unknown): string {
+  if (value === undefined || value === null || value === '') return '-'
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(3)
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function getFs16PlaybackRows(playback: Record<string, unknown> | null) {
+  if (!playback) return []
+  const rows = [
+    ['SMU file', playback.remote_playback_file],
+    ['FS16 path', playback.remote_playback_path],
+    ['File visible', playback.visible],
+    ['Precheck', playback.checked],
+    ['Checked by', playback.checked_by],
+    ['Start playback', playback.start_playback],
+    ['Stop after', playback.stop_after_s],
+    ['Cleanup on finish', playback.cleanup_on_finish],
+    ['Playback left running', playback.playback_left_running],
+    ['BS signaling left running', playback.bs_signaling_left_running],
+  ] as const
+  return rows
+    .filter(([, value]) => value !== undefined && value !== null)
+    .map(([label, value]) => ({ label, value }))
+}
+
+function fs16BooleanColor(label: string, value: boolean): string {
+  const normalized = label.toLowerCase()
+  if (normalized.includes('left running')) return value ? 'red' : 'green'
+  if (normalized.includes('visible')) return value ? 'green' : 'red'
+  if (normalized.includes('precheck')) return value ? 'green' : 'gray'
+  if (normalized.includes('start') || normalized.includes('cleanup')) {
+    return value ? 'blue' : 'gray'
+  }
+  return value ? 'blue' : 'gray'
+}
+
+function getCleanupWarnings(extra: Record<string, unknown>) {
+  const raw = extra.cleanup_warnings
+  return Array.isArray(raw) ? raw.map(String).filter(Boolean) : []
+}
+
 export function SequenceRunnerPanel() {
   const [labs, setLabs] = useState<LabProfileSummary[]>([])
   const [labsLoading, setLabsLoading] = useState(true)
@@ -80,6 +262,34 @@ export function SequenceRunnerPanel() {
   const selectedSequence = useMemo(
     () => sequences.find((s) => s.key === selectedKey) || null,
     [sequences, selectedKey],
+  )
+  const selectedParamGroups = useMemo(() => {
+    const params = selectedSequence?.params_schema ?? []
+    return {
+      file: params.filter((p) => p.name === 'remote_playback_file'),
+      switches: params.filter((p) => p.type === 'boolean'),
+      other: params.filter((p) => p.name !== 'remote_playback_file' && p.type !== 'boolean'),
+    }
+  }, [selectedSequence])
+  const resultKpiRows = useMemo(
+    () => (lastResult ? getKpiRows(lastResult.extra) : []),
+    [lastResult],
+  )
+  const resultInstrumentModes = useMemo(
+    () => (lastResult ? getInstrumentModes(lastResult.extra) : null),
+    [lastResult],
+  )
+  const resultFs16Playback = useMemo(
+    () => (lastResult ? getFs16Playback(lastResult.extra) : null),
+    [lastResult],
+  )
+  const resultFs16PlaybackRows = useMemo(
+    () => getFs16PlaybackRows(resultFs16Playback),
+    [resultFs16Playback],
+  )
+  const resultCleanupWarnings = useMemo(
+    () => (lastResult ? getCleanupWarnings(lastResult.extra) : []),
+    [lastResult],
   )
 
   // Initial load: labs + sequences in parallel.
@@ -198,14 +408,44 @@ export function SequenceRunnerPanel() {
 
   const renderParamField = (spec: DiagnosticSequenceMetadata['params_schema'][number]) => {
     const value = paramValues[spec.name]
+    const label = getParamLabel(spec)
+    const description = getParamDescription(spec)
+    if (spec.options && spec.options.length > 0) {
+      return (
+        <Select
+          key={spec.name}
+          label={label}
+          description={description}
+          data={spec.options.map((option) => ({ value: option, label: option }))}
+          value={typeof value === 'string' ? value : String(spec.default ?? spec.options[0] ?? '')}
+          onChange={(v) =>
+            setParamValues((p) => ({
+              ...p,
+              [spec.name]: v || String(spec.default ?? spec.options?.[0] ?? ''),
+            }))
+          }
+          allowDeselect={false}
+          style={{ minWidth: 0 }}
+          styles={{
+            label: { lineHeight: 1.25 },
+            description: { lineHeight: 1.2 },
+          }}
+        />
+      )
+    }
     if (spec.type === 'number') {
       return (
         <NumberInput
           key={spec.name}
-          label={spec.label}
-          description={`参数: ${spec.name}`}
+          label={label}
+          description={description}
           value={typeof value === 'number' ? value : 0}
           onChange={(v) => setParamValues((p) => ({ ...p, [spec.name]: Number(v) }))}
+          style={{ minWidth: 0 }}
+          styles={{
+            label: { lineHeight: 1.25 },
+            description: { lineHeight: 1.2 },
+          }}
         />
       )
     }
@@ -213,24 +453,35 @@ export function SequenceRunnerPanel() {
       return (
         <Switch
           key={spec.name}
-          label={spec.label}
-          description={`参数: ${spec.name}`}
+          label={label}
+          description={description}
           checked={Boolean(value)}
           onChange={(e) =>
             setParamValues((p) => ({ ...p, [spec.name]: e.currentTarget.checked }))
           }
+          style={{ minWidth: 0 }}
+          styles={{
+            body: { alignItems: 'flex-start' },
+            label: { lineHeight: 1.25 },
+            description: { lineHeight: 1.2 },
+          }}
         />
       )
     }
     return (
       <TextInput
         key={spec.name}
-        label={spec.label}
-        description={`参数: ${spec.name}`}
+        label={label}
+        description={description}
         value={typeof value === 'string' ? value : ''}
         onChange={(e) =>
           setParamValues((p) => ({ ...p, [spec.name]: e.currentTarget.value }))
         }
+        style={{ minWidth: 0 }}
+        styles={{
+          label: { lineHeight: 1.25 },
+          description: { lineHeight: 1.2 },
+        }}
       />
     )
   }
@@ -312,9 +563,42 @@ export function SequenceRunnerPanel() {
           {selectedSequence && selectedSequence.params_schema.length > 0 && (
             <>
               <Divider label="参数" labelPosition="left" />
-              <Group grow align="flex-end" wrap="wrap">
-                {selectedSequence.params_schema.map(renderParamField)}
-              </Group>
+              <Stack gap="md">
+                {selectedParamGroups.file.length > 0 && (
+                  <Stack gap={6}>
+                    <Text size="xs" fw={700} c="dimmed">文件</Text>
+                    <SimpleGrid cols={1} spacing="md">
+                      {selectedParamGroups.file.map(renderParamField)}
+                    </SimpleGrid>
+                  </Stack>
+                )}
+
+                {selectedParamGroups.switches.length > 0 && (
+                  <Stack gap={6}>
+                    <Text size="xs" fw={700} c="dimmed">开关选项</Text>
+                    <SimpleGrid
+                      cols={{ base: 1, sm: 2, lg: 3 }}
+                      spacing="md"
+                      verticalSpacing="sm"
+                    >
+                      {selectedParamGroups.switches.map(renderParamField)}
+                    </SimpleGrid>
+                  </Stack>
+                )}
+
+                {selectedParamGroups.other.length > 0 && (
+                  <Stack gap={6}>
+                    <Text size="xs" fw={700} c="dimmed">运行参数</Text>
+                    <SimpleGrid
+                      cols={{ base: 1, sm: 2, lg: 3, xl: 4 }}
+                      spacing="md"
+                      verticalSpacing="sm"
+                    >
+                      {selectedParamGroups.other.map(renderParamField)}
+                    </SimpleGrid>
+                  </Stack>
+                )}
+              </Stack>
             </>
           )}
 
@@ -356,6 +640,118 @@ export function SequenceRunnerPanel() {
                 <Code>{lastResult.diagnostic_run_id.slice(0, 8)}...</Code>
               </Group>
               <Text size="sm">{lastResult.summary}</Text>
+              {resultInstrumentModes && (
+                <Group gap="xs" wrap="wrap">
+                  <Badge color="blue" variant="light">
+                    CE {String(resultInstrumentModes.channelEmulator || '-')}
+                  </Badge>
+                  <Badge color={resultInstrumentModes.baseStation === 'real' ? 'red' : 'gray'} variant="light">
+                    BS {String(resultInstrumentModes.baseStation || '-')}
+                  </Badge>
+                  <Badge color="gray" variant="light">
+                    DUT {String(resultInstrumentModes.DUT || '-')}
+                  </Badge>
+                  {Boolean(resultInstrumentModes.kpi_source) && (
+                    <Badge color="cyan" variant="outline">
+                      KPI: {String(resultInstrumentModes.kpi_source)}
+                    </Badge>
+                  )}
+                </Group>
+              )}
+              {resultFs16Playback && typeof resultFs16Playback.playback_left_running === 'boolean' && (
+                <Group gap="xs" wrap="wrap">
+                  <Badge
+                    color={resultFs16Playback.playback_left_running ? 'red' : 'green'}
+                    variant="light"
+                  >
+                    FS16 playback {resultFs16Playback.playback_left_running ? 'left running' : 'stopped'}
+                  </Badge>
+                  {typeof resultFs16Playback.bs_signaling_left_running === 'boolean' && (
+                    <Badge
+                      color={resultFs16Playback.bs_signaling_left_running ? 'orange' : 'green'}
+                      variant="light"
+                    >
+                      BS signaling {resultFs16Playback.bs_signaling_left_running ? 'left running' : 'stopped'}
+                    </Badge>
+                  )}
+                </Group>
+              )}
+              {resultFs16PlaybackRows.length > 0 && (
+                <>
+                  <Divider label="FS16 playback" labelPosition="left" />
+                  <Table.ScrollContainer minWidth={520}>
+                    <Table withTableBorder withColumnBorders striped>
+                      <Table.Tbody>
+                        {resultFs16PlaybackRows.map((row) => (
+                          <Table.Tr key={row.label}>
+                            <Table.Td w={180}>
+                              <Text size="sm" fw={500}>{row.label}</Text>
+                            </Table.Td>
+                            <Table.Td>
+                              {typeof row.value === 'boolean' ? (
+                                <Badge
+                                  size="sm"
+                                  color={fs16BooleanColor(row.label, row.value)}
+                                  variant="light"
+                                >
+                                  {formatExtraValue(row.value)}
+                                </Badge>
+                              ) : (
+                                <Text size="sm" style={{ wordBreak: 'break-all' }}>
+                                  {formatExtraValue(row.value)}
+                                </Text>
+                              )}
+                            </Table.Td>
+                          </Table.Tr>
+                        ))}
+                      </Table.Tbody>
+                    </Table>
+                  </Table.ScrollContainer>
+                </>
+              )}
+              {resultCleanupWarnings.length > 0 && (
+                <Alert color="orange" icon={<IconAlertTriangle size={18} />} title="Cleanup warnings">
+                  <Stack gap={2}>
+                    {resultCleanupWarnings.map((warning, index) => (
+                      <Text key={`${warning}-${index}`} size="xs">{warning}</Text>
+                    ))}
+                  </Stack>
+                </Alert>
+              )}
+              {resultKpiRows.length > 0 && (
+                <>
+                  <Divider label="KPI 摘要" labelPosition="left" />
+                  <Table.ScrollContainer minWidth={560}>
+                    <Table striped highlightOnHover withTableBorder withColumnBorders>
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th>指标</Table.Th>
+                          <Table.Th>Mean</Table.Th>
+                          <Table.Th>Min</Table.Th>
+                          <Table.Th>Max</Table.Th>
+                          <Table.Th>Std</Table.Th>
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {resultKpiRows.map((row) => (
+                          <Table.Tr key={row.key}>
+                            <Table.Td>
+                              <Text size="sm" fw={500}>{row.label}</Text>
+                            </Table.Td>
+                            <Table.Td>{formatKpi(row.value.mean, row.unit)}</Table.Td>
+                            <Table.Td>{formatKpi(row.value.min, row.unit)}</Table.Td>
+                            <Table.Td>{formatKpi(row.value.max, row.unit)}</Table.Td>
+                            <Table.Td>{formatKpi(row.value.std, row.unit)}</Table.Td>
+                          </Table.Tr>
+                        ))}
+                      </Table.Tbody>
+                    </Table>
+                  </Table.ScrollContainer>
+                  <Text size="xs" c="dimmed">
+                    当前 hybrid smoke 的终端通信性能指标来自 mock BS/DUT 或所选 BS driver 的 KPI surface；FS16 负责真实 .smu playback 控制链路。
+                  </Text>
+                </>
+              )}
               {lastResult.steps.length > 0 && (
                 <Stack gap={4}>
                   {lastResult.steps.map((s, i) => (

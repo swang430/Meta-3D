@@ -1840,6 +1840,19 @@ def _driver_supports_timeout_kwarg(driver) -> bool:
     return any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
+def _looks_like_scpi_query(command: str) -> bool:
+    """Return true for SCPI queries, including query commands with arguments.
+
+    ``MMEM:CAT? "D:\\User Playbacks"`` does not end with ``?``, but it is a
+    query and the SCPI console must wait for a response.
+    """
+    text = command.strip()
+    if not text:
+        return False
+    first_token = text.split(None, 1)[0].rstrip(",")
+    return "?" in first_token
+
+
 async def _run_command_via_hal(
     driver,
     command: str,
@@ -1863,7 +1876,7 @@ async def _run_command_via_hal(
     """
     import time
 
-    is_query = command.strip().endswith("?")
+    is_query = _looks_like_scpi_query(command)
     safe_command = redact_instrument_command_text(command)
     start = time.monotonic()
     pass_timeout = timeout_ms is not None and _driver_supports_timeout_kwarg(driver)
@@ -1989,7 +2002,7 @@ def _send_scpi_command(
     """通过已连接的 socket 发送单条 SCPI 命令并返回结果"""
     import time
 
-    is_query = command.strip().endswith("?")
+    is_query = _looks_like_scpi_query(command)
     safe_command = redact_instrument_command_text(command)
     start = time.monotonic()
 

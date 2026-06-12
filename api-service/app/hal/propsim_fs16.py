@@ -40,7 +40,7 @@ SCPI                          Note
 This first-cut driver therefore implements only what we can do safely
 without a loaded simulation:
 
-* connect / disconnect via raw TCP SOCKET on port 5025
+* connect / disconnect via VISA endpoint (HiSLIP or raw TCP SOCKET)
 * identity verification (``F8820`` in IDN, ``PROPSIM FS16`` in
   ``SYST:INFO?``)
 * channel-count extraction from ``SYST:INFO?``
@@ -151,13 +151,30 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
     # 2. Connect / disconnect lifecycle
     # ------------------------------------------------------------------
 
+    def _resource_string(self) -> str:
+        """Return the operator-configured VISA resource for FS16.
+
+        The original FS16 bring-up used raw SOCKET on 5025. Some site units
+        expose HiSLIP reliably while the raw socket accepts TCP but never
+        returns SCPI responses, so prefer an explicit endpoint from the GUI
+        when present.
+        """
+        endpoint = str(
+            self.config.get("endpoint")
+            or self.config.get("connection_endpoint")
+            or ""
+        ).strip()
+        if endpoint.upper().startswith("TCPIP") and "::" in endpoint:
+            return endpoint
+        return f"TCPIP0::{self.ip_address}::{self.port}::SOCKET"
+
     async def connect(self) -> bool:
-        """Open SOCKET, verify identity, cache SYST:INFO parse."""
+        """Open the VISA session, verify identity, cache SYST:INFO parse."""
         self._status = InstrumentStatus.CONNECTING
         try:
             import pyvisa
             self._rm = pyvisa.ResourceManager("@py")
-            resource_string = f"TCPIP0::{self.ip_address}::{self.port}::SOCKET"
+            resource_string = self._resource_string()
 
             self._visa_resource = await asyncio.to_thread(
                 self._rm.open_resource,
@@ -406,7 +423,7 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
             pass
         self._visa_resource = None
         try:
-            resource_string = f"TCPIP0::{self.ip_address}::{self.port}::SOCKET"
+            resource_string = self._resource_string()
             self._visa_resource = await asyncio.to_thread(
                 self._rm.open_resource,
                 resource_string,
