@@ -1603,17 +1603,17 @@ F1 native 谱映射 (CE #34) / F2 标注式 CDL schema (CE #35) / F3 geometric_n
 F4 时空跟踪 (CE #37) / F5 phase_continuous (CE #38) / F6 EngineMode+分流+能力门 (MF #166) /
 F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-First 路由/驱动层 (F6-F7)
 全部纯函数 / mock 可测，Codex review 逐 PR 过 (含 1 个 P1 + 多个 P2 当下修)。
-🚧 **现场验证待做** (V1.0 §9，进 on-site 队列)：`.tap` schema 字段顺序 / gaussian 谱关键字可用性 /
-`f_upd_max` / 运行时 env 切换抖动 + 端到端 RT→MPC 数据接入 (RT-Release 集成)。下次现场标定后回填。
-**Estimate**: 多 PR / 大型。
+⭐ **2026-06-21 续做 (PR-1a~4 + `.tap` 破解)**：B-1 经新架构**端到端打通** (PR-1a `cluster_subrays` 旁路 CE#39 / PR-1b `b1_annotated_baker` CE#40) + §6 路径判决 (PR-3 CE#41) + B-1 金标准软件对照 (PR-2 CE#42) + B-2 per-tap 参数表 (PR-4 CE#43)。下方"下一阶段" 1/2/3 已 ✅。
+🚧 **现场验证待做** (V1.0 §9)：`.tap` 是 **Channel Studio 专有格式**（2026-06-21 手册 §21 + `.ctap` 样本逆向：加密熵 7.864、手册无 `.tap` 子章节）→ B-2 `.tap` 字节必须**现场用 Channel Studio 从 per-tap 参数表 (PR-4) 生成**；+ gaussian 谱可用性 / `f_upd_max` / `.rtc` 切换抖动 + 端到端 RT→MPC 接入。**B-1 `.asc` 经手册 §21.1 验证可直接生成、零现场。**
+**Estimate**: B-2 现场 (Channel Studio + F64 加载)；B-1 已端到端完成。
 
 **🔜 下一阶段 / 未接线项**（本地算法 + schema 完成 ≠ 端到端可跑；现场验证通过后接）：
 
-1. **★ AnnotatedCDLProfile → 文件生成 的接线（B-1 / B-2 对称缺口）**：F1–F5 只【产出】`AnnotatedCDLProfile`，**没有任何【消费】它的烘焙器/导出器**（现有 `exporters.py` / `simulator.py` grep=0，不认识新标注结构）。两条路都没接：
-   - **B-2**：标注 → `.tap/.rtc` 生成（F6/F7 路由 + 加载就位，但生成端要 RT→MPC 数据 + ChannelEgine 出 `.tap`）。
-   - **B-1**：F5 `phase_continuous` 产 `subray_sum` 标注 → 烘 `.asc/.mat` 的**新烘焙器未建**。现有 B-1（`ASC_SYNTHESIS` / `MIMO_OTA_Simulator` 从旧 `CustomCDLProfile` 烘焙）**这轮未动、仍工作** —— 即"我们保留的 B-1"是既有路径；新架构的 B-1 生成端跟 B-2 一样目前是死胡同。
-2. **§6 路径判决代码（test_class → B-1/B-2/GCM 自动分流）**：设计 §6 是伪代码，未落成代码模块；F6 只做 engine_mode→strategy 映射（操作员手选引擎），自动判决未实现。
-3. **B-1 金标准验证（§8/§10）**：B-1 精确烘焙作为 B-2 native 拟合的离线金标准对照（标定 `rho_thresh`），未建。
+1. **✅ AnnotatedCDLProfile → 文件生成 接线**（2026-06-21 PR-1a~4）：
+   - **B-1 ✅ 端到端打通**：`b1_annotated_baker.bake_b1_annotated` (PR-1b CE#40) 消费 `subray_sum`/`baked` 标注 → `.asc`（`cluster_subrays` 旁路 PR-1a CE#39 + 复用 `PropsimASCIIExporter`）；`.asc` 格式经手册 §21.1 逐字段验证、零现场。
+   - **B-2 ✅ 参数完整 / `.tap` 字节现场**：`extract_tap_parameters` (PR-4 CE#43) 出 per-tap 参数表；`.tap` 字节是 Channel Studio 专有 (手册 §21 无、`.ctap` 加密) → 必须现场生成；MIMO-First 跨服务接线 (PR-5) 留现场一条龙 (用户 2026-06-21 选)。
+2. **✅ §6 路径判决代码**（PR-3 CE#41）：`select_path_and_clustering` test_class → B-1/B-2/GCM 自动分流 + ESCALATE fail-loud + GCM 门；MIMO-First `target_path→EngineMode` 薄映射待 (随 PR-5 现场)。
+3. **✅ B-1 金标准对照**（PR-2 CE#42，软件半）：新架构 baked 路 vs 现有直接路径逐位一致；QZ 处 PSD/相关/CDF 实测对照 (标定 `rho_thresh`) 属现场半 (§10.1)。
 4. **GUI 暴露（B-2 可执行后，做在本分支）**：① `ENGINE_OPTIONS` 加 `b2_parametric_tdl`（`gui/.../MIMOOTAConfigForm.tsx:126`）；② test_class 选择 → 驱动 B-1/B-2/GCM 分流；③（可选）`native_fit` 残差 / tap 预算占用 / 聚类质量 可见性；④ 加新字段走 4 步契约同步 + 浏览器实测。**现在不做**（B-2 未可执行，暴露 = 操作员选到不工作模式）。
 5. **conducted（传导）注入 = 独立条目（横切全栈，本轮 OTA-only）**：2026-06-21 用户确认本轮 B-1/B-2 只做 OTA。现有注入栈 5 策略（ASC/EXTERNAL_ASC/GCM/B2/base）+ ChannelEgine 导出层**全 OTA**（探头展开 + OTA 校准 + PAS 旋转）；conducted 仅在业务模型层（`TestMode.CONDUCTED` / `TopologyType.CONDUCTED`）声明、**注入层 0 实现**。语义与 OTA 根本不同（DUT 天线直连、线缆校准无 `probe_gain`、无探头展开/PAS、文件为天线对而非探头对），需独立设计（拓扑分流 + 线缆校准建模）+ 每引擎（ASC/GCM/B2/B1）加分支。边界 + OTA 校准注入契约见设计 V1.0 §8.1；本轮烘焙器拓扑参数默认 OTA、接口预留。
 
