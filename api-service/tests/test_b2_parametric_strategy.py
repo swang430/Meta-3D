@@ -75,6 +75,19 @@ def test_ce_failure_fails():
     assert ok is False
 
 
+def test_non_b2_decision_fails_loud_not_treated_as_b2():
+    """§6 判决返回 B1_baked/GCM_native (有效但非 B-2 参数化) → fail-loud, 不当 B-2 成功
+    (Codex P2 #169: 否则日志自相矛盾 + run 假成功)。动态跨路分流编排见 roadmap P2-14。"""
+    for path in ("B1_baked", "GCM_native"):
+        strat = _strategy(ce_result=B2ClusterResult(
+            success=True, target_path=path, clustering_algo="phase_continuous",
+            reason="非 native 可表示", tap_params=[], note="走烘焙/GCM 路"))
+        ok = asyncio.run(strat.generate_and_load(
+            {"frequency_hz": 3.5e9}, {"rt_rays": _RAYS, "test_class": "isac_sensing"}))
+        assert ok is False                                       # 不当 B-2 成功
+        strat.ce_client.cluster_b2_native.assert_called_once()   # 调了 CE 拿判决后才 fail
+
+
 # ───────────── caller 契约: measure 透传 (Codex P1 #169) ─────────────
 
 def test_measure_forwards_b2_inputs_from_config_extra():

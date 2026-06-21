@@ -87,7 +87,26 @@ class B2ParametricTdlStrategy(BaseChannelGenerator):
             logger.error("[B2ParametricTdl] CE B-2 聚类/判决失败: %s", result.message)
             return False
 
-        # ── 参数表就绪。.tap 字节 (Channel Studio 专有, 手册 §21) + F64 加载 → 现场 ──
+        # ── §6 判决分流 (Codex P2 #169): CE 返回 200 + 有效判决可能是 B1_baked /
+        # GCM_native (如 isac_sensing 低质心, 或 throughput 超 tap budget 退烘焙路),
+        # 此时 tap_params 为空、note 指向烘焙/GCM 路。这些是【有效的"不走 B-2"判决】,
+        # 不能当 B-2 参数化成功 (否则日志自相矛盾 "参数表就绪 target_path=B1_baked 0 taps")。
+        # 本 strategy 只负责 B-2 参数化路 → 非 B2_parametric 判决 fail-loud, 提示配置矛盾;
+        # 完整动态跨路分流编排 (B1_baked→ASC / GCM_native→GCM) 见 roadmap P2-14 backlog。──
+        if result.target_path != "B2_parametric":
+            _hint = {"B1_baked": "mimo_first_asc",
+                     "GCM_native": "keysight_gcm"}.get(result.target_path, "对应引擎")
+            logger.error(
+                "[B2ParametricTdl] §6 判决 target_path=%s (clustering=%s) 非 B2_parametric "
+                "—— 该场景应走 %s 路, 但 TestCase engine_mode=b2_parametric_tdl 配置矛盾。请改 "
+                "TestCase engine_mode=%s, 或等动态分流编排 (roadmap P2-14)。reason: %s",
+                result.target_path, result.clustering_algo, result.target_path, _hint,
+                result.reason,
+            )
+            return False
+
+        # ── B2_parametric: 参数表就绪。.tap 字节 (Channel Studio 专有, 手册 §21) +
+        # F64 加载 → 现场 ──
         logger.warning(
             "[B2ParametricTdl] B-2 参数表就绪: target_path=%s, %d taps (%s)。"
             ".tap 字节生成需现场 Channel Studio (手册 §21: .tap 专有格式无法离线生成) "
