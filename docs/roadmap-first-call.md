@@ -1611,7 +1611,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 1. **✅ AnnotatedCDLProfile → 文件生成 接线**（2026-06-21 PR-1a~4）：
    - **B-1 ✅ 端到端打通**：`b1_annotated_baker.bake_b1_annotated` (PR-1b CE#40) 消费 `subray_sum`/`baked` 标注 → `.asc`（`cluster_subrays` 旁路 PR-1a CE#39 + 复用 `PropsimASCIIExporter`）；`.asc` 格式经手册 §21.1 逐字段验证、零现场。
-   - **B-2 ✅ 参数完整 / `.tap` 字节现场**：`extract_tap_parameters` (PR-4 CE#43) 出 per-tap 参数表；`.tap` 字节是 Channel Studio 专有 (手册 §21 无、`.ctap` 加密) → 必须现场生成；MIMO-First 跨服务接线 (PR-5) 留现场一条龙 (用户 2026-06-21 选)。
+   - **B-2 ✅ 软件半完成 / `.tap` 字节现场**：`extract_tap_parameters` (PR-4 CE#43) 出 per-tap 参数表；**MIMO-First 接线 (PR-5, 5486413) ✅** — CE 微服务 (`channel-engine-service/`) `cluster_b2_native` 端点 (RT 射线 → `geometric_native_fit` 聚类 + §6 判决 → 参数表) + `channel_engine_client.cluster_b2_native` + `b2_parametric_strategy` (RT 射线 fail-loud + 调 CE + 参数表就绪)，16 测试。**现场剩余**：`.tap` 字节 Channel Studio 生成 (手册 §21 专有格式) + F64 加载 + 真实 RT 数据 RT-Release 接入。
 2. **✅ §6 路径判决代码**（PR-3 CE#41）：`select_path_and_clustering` test_class → B-1/B-2/GCM 自动分流 + ESCALATE fail-loud + GCM 门；MIMO-First `target_path→EngineMode` 薄映射待 (随 PR-5 现场)。
 3. **✅ B-1 金标准对照**（PR-2 CE#42，软件半）：新架构 baked 路 vs 现有直接路径逐位一致；QZ 处 PSD/相关/CDF 实测对照 (标定 `rho_thresh`) 属现场半 (§10.1)。
 4. **GUI 暴露（B-2 可执行后，做在本分支）**：① `ENGINE_OPTIONS` 加 `b2_parametric_tdl`（`gui/.../MIMOOTAConfigForm.tsx:126`）；② test_class 选择 → 驱动 B-1/B-2/GCM 分流；③（可选）`native_fit` 残差 / tap 预算占用 / 聚类质量 可见性；④ 加新字段走 4 步契约同步 + 浏览器实测。**现在不做**（B-2 未可执行，暴露 = 操作员选到不工作模式）。
