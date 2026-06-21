@@ -328,6 +328,16 @@ def select_path_and_clustering(test_class, scenario, f64_profile):
 - **GCM**：`.smu` 直出（需 license）。
 - **第三层探头独立衰落（strict_pfs）**：每探头 = 一个 logical channel（F64 ≤1024）+ **相关矩阵设单位阵**（手册证实可设独立）→ F64 逐探头独立生成衰落，几何权重 W_base 作 per-channel 静态复权重。**本文聚焦 Doppler/聚类轴；探头 PAS 映射消费 §5 分裂后的子簇角度**（angle↔Doppler 联合分裂的下游）。
 
+### 8.1 注入拓扑边界与校准注入契约（本轮 OTA / conducted 独立条目）
+
+> 2026-06-21 用户决策（开 B-1 烘焙前确认）：本轮 B-1/B-2 软件补全**只做 OTA**，conducted 列为独立条目。下方固化边界，免后续烘焙器漏维度。
+
+**本轮注入边界 = OTA**。现有 `channel_generation/` 全部 5 策略（ASC / EXTERNAL_ASC / GCM / B2 / base）+ ChannelEgine 导出层一律 OTA：信道按物理探头展开（per-(Tx, Probe) logical channel）+ 施加 OTA 校准 + PAS 旋转对齐探头。B-1/B-2 标注式烘焙本轮**沿用 OTA 拓扑**，与现有栈一致。
+
+**校准注入契约（OTA）**：B-1（`.asc`）/ B-2（`.tap`）烘焙在导出边界消费 `CalibrationConfig`（per-probe-port：`cable_loss_db` + `probe_gain_dbi` + `cable_phase_deg` → `get_correction_factor` 复预失真 `1/H_sys`），施加在 per-(Tx, Probe) logical channel 上（与 `PropsimASCIIExporter.apply_calibration` 同源）。**烘焙器必须显式接收校准 + 测试断言「校准已施加」，不得当黑盒默认「复用即自动对」。** UL 方向不施加（沿用现有 `direction != "ul"`）。
+
+**conducted（传导）= 独立 roadmap 条目，本轮不实现**。语义与 OTA 根本不同：DUT 天线直连仪器（**不展开 32 探头**，per-(Tx-antenna, Rx-antenna)）+ **线缆校准**（无 `probe_gain_dbi` / 无 PAS 旋转）+ 文件为天线对而非探头对。这是横切**全部**引擎（ASC/GCM/B2/B1）的维度，现有注入栈 0 实现（仅 `TestMode.CONDUCTED` / `TopologyType.CONDUCTED` 在业务模型层声明）。单独设计（拓扑分流 + 线缆校准建模）+ 单独 PR；本轮烘焙器**接口预留**（拓扑参数默认 OTA，conducted 分支后补）。
+
 ---
 
 ## 9. 现场验证依赖（按优先级）
