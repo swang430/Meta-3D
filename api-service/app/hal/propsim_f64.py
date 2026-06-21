@@ -64,6 +64,7 @@ class F64Pipeline(str, Enum):
     """信道加载管线类型"""
     GCM_NATIVE = "gcm"          # Pipeline A: F64 原生 GCM
     ASC_RUNTIME = "asc_runtime" # Pipeline B: 外部 ASC + Runtime Emulation
+    B2_PARAMETRIC_TDL = "b2_parametric_tdl"  # Pipeline C: P2-14 B-2 参数化 TDL (.tap/.rtc 硬件实时衰落)
 
 
 class F64BypassMode(int, Enum):
@@ -451,12 +452,20 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
     def get_supported_load_modes(self) -> List[ChannelLoadMode]:
         """
-        F64 支持两种信道加载模式。
+        F64 支持的信道加载模式。
 
         Returns:
-            [NATIVE_MODEL, EXTERNAL_WAVEFORM]
+            [NATIVE_MODEL, EXTERNAL_WAVEFORM, PARAMETRIC_TDL]
+
+        PARAMETRIC_TDL (P2-14 B-2): .tap/.rtc 参数化模型, 加载机制同 ASC Runtime
+        (FTP + CALC:FILT:FILE), F64 按文件内容判参数化实时衰落 vs 烘焙。具体 .tap
+        schema / gaussian 谱可用性现场标定 (V1.0 §9)。
         """
-        return [ChannelLoadMode.NATIVE_MODEL, ChannelLoadMode.EXTERNAL_WAVEFORM]
+        return [
+            ChannelLoadMode.NATIVE_MODEL,
+            ChannelLoadMode.EXTERNAL_WAVEFORM,
+            ChannelLoadMode.PARAMETRIC_TDL,
+        ]
 
     async def load_channel(
         self,
@@ -487,7 +496,33 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             self._active_pipeline = F64Pipeline.ASC_RUNTIME
             return await self.upload_asc_files(waveform_dir, model_name)
 
+        elif mode == ChannelLoadMode.PARAMETRIC_TDL:
+            # P2-14 B-2: 参数化 TDL (.tap/.rtc) 硬件实时衰落
+            if not waveform_dir:
+                raise ValueError("waveform_dir 是 B-2 PARAMETRIC_TDL 管线的必需参数 (.tap/.rtc 目录)")
+            return await self.load_parametric_tdl(waveform_dir, model_name)
+
         raise NotImplementedError(f"未知加载模式: {mode.value}")
+
+    async def load_parametric_tdl(self, waveform_dir: str, model_name: str) -> bool:
+        """P2-14 B-2: 加载参数化 TDL (.tap/.rtc) 模型, F64 硬件 FPGA 实时合成衰落。
+
+        加载机制与 ASC Runtime 相同 (FTP 上传 + CALC:FILT:FILE 编译/加载 + SYST:ERR? gate);
+        F64 按文件内容决定【参数化实时衰落 (.tap/.rtc)】vs【烘焙回放 (.asc)】, 加载 SCPI 一致。
+        运行时几何骨架更新走 CH:MOD:CONT:ENV / DIAG:SIMU:MOB:MAN (现有运行时原语)。
+
+        现场验证 (V1.0 §9, 待真机标定后回填): .tap schema 字段顺序 / gaussian 谱关键字
+        可用性 / 运行时 env 切换抖动 / f_upd_max。
+        """
+        ok = await self.upload_asc_files(waveform_dir, model_name)
+        if ok:
+            # upload_asc_files 内部把 pipeline 设成 ASC_RUNTIME; B-2 覆盖成专属标记。
+            self._active_pipeline = F64Pipeline.B2_PARAMETRIC_TDL
+            logger.info(
+                "[F64/B2] PARAMETRIC_TDL 加载完成 (model=%s); 硬件实时衰落, "
+                "运行时几何骨架走 CH:MOD:CONT:ENV", model_name,
+            )
+        return ok
 
     # ===================================================================
     # 1. 连接生命周期 (InstrumentDriver 第一层)
