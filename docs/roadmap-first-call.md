@@ -15,14 +15,16 @@ P2-13 SIMProfile 三阶段 (#140/#141/#142)、DUTProfile 四阶段 (#134-#137)�
 #155 Codex P2 (1) 的基础版)。`#2001(2)(3)` / `#2002` 经评估**保持现状不推进** (见
 [`architecture/multi-port-input-level-semantics.md`](architecture/multi-port-input-level-semantics.md) §5)。
 
-**当前 Current Focus = P2-14（B-2 信道注入理论层）**（2026-06-21 用户定向）。真 P0 (P0-3/4/5)
-仍现场 blocked；按治理「P0 全 blocked 时 Current Focus 可挪本地项」，本地候选耗尽后这次挪到
-**P2-14（纯理论层 / 本地开发，不依赖现场）**。设计定稿见
-[`design/RT-MPDB-CDL-F64-channel-injection-design_V1.0.md`](design/RT-MPDB-CDL-F64-channel-injection-design_V1.0.md)，
-开发分支 `feat/b2-channel-injection`。**原开发的现场验证部分已打 tag**
-`onsite-verification-baseline-2026-06-21`（留在 main）。**下次现场** (校准天线 / SGH / 真 DUT 到位)
-Current Focus **必须从该 tag 切回依赖链 P0-4 → P0-3 → P0-5**（P2-14 让位；见下方「🚧 Blocked on
-hardware」段 + [`guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md)），现场只调硬件、不写 driver 代码。
+**P2-14（B-2 信道注入）本地实现 ✅ 完成 (2026-06-21)** —— 设计 V1.0 (#165) + F1–F7 八 PR 全 merge
+(详见下方 P2-14 区 Status)。这是 P0 全现场 blocked 期间挪的本地理论层项；纯本地、不依赖现场。
+设计见 [`design/RT-MPDB-CDL-F64-channel-injection-design_V1.0.md`](design/RT-MPDB-CDL-F64-channel-injection-design_V1.0.md)。
+
+**本地实现完成后，又无活跃本地 in-progress 项** (回到 2026-06-07 的"本地队列空"状态)。真 P0 (P0-3/4/5)
+仍现场 blocked。P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max / RT→MPC 接入)
+已进 on-site 队列。**原开发的现场验证基线已打 tag** `onsite-verification-baseline-2026-06-21`（留在 main）。
+**下次现场** (校准天线 / SGH / 真 DUT 到位) Current Focus **必须从该 tag 切回依赖链 P0-4 → P0-3 → P0-5**
+（见下方「🚧 Blocked on hardware」段 + [`guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md)），
+现场只调硬件、不写 driver 代码；P2-14 现场验证可在 P0 链路间隙穿插。
 
 > **完整项目历程** (第一次现场 → 现在的全程 + 5 条主线) 见
 > [`project-retrospective.md`](project-retrospective.md)；**现场经验文档归类**见
@@ -1596,7 +1598,13 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 
 **现场验证依赖**: `gaussian_model_available` / `f_upd_max` / `tap_budget` / `rho_thresh` 需现场标定（V1.0 §9）。
 
-**Status**: 🔄 in-progress —— 设计 V1.0 定稿（本 PR）；实现按 Step 0→4 推进，Step 0-1 纯函数+schema 可单测先行。
+**Status**: ✅ **本地实现完成 (2026-06-21)** —— 设计 V1.0 (#165) + F1–F7 全 merge：
+F1 native 谱映射 (CE #34) / F2 标注式 CDL schema (CE #35) / F3 geometric_native_fit 聚类 (CE #36) /
+F4 时空跟踪 (CE #37) / F5 phase_continuous (CE #38) / F6 EngineMode+分流+能力门 (MF #166) /
+F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-First 路由/驱动层 (F6-F7)
+全部纯函数 / mock 可测，Codex review 逐 PR 过 (含 1 个 P1 + 多个 P2 当下修)。
+🚧 **现场验证待做** (V1.0 §9，进 on-site 队列)：`.tap` schema 字段顺序 / gaussian 谱关键字可用性 /
+`f_upd_max` / 运行时 env 切换抖动 + 端到端 RT→MPC 数据接入 (RT-Release 集成)。下次现场标定后回填。
 **Estimate**: 多 PR / 大型。
 
 ---
