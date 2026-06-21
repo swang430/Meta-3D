@@ -342,7 +342,12 @@ def select_path_and_clustering(test_class, scenario, f64_profile):
 
 ## 9. 现场验证依赖（按优先级）
 
-1. **`gaussian_model_available` + 写法**：现场 Channel Studio 是否有 `Gaussian` 双beam 谱、字段如何写入 `.tap/.smu`（**B-2 头号前提**）。
+> **2026-06-21 手册破解结论**（PROPSIM User Reference §21 FILE FORMATS + 真实 `.ctap` 样本逆向）：
+> `.tap`/`.ctap` 是 **Channel Studio 专有格式**（`.ctap` 实测加密 — 熵 7.864/8.0、4 种标准解压全败、无 magic number；手册 §21 只公开 `.ASC`/`.IR` 的 **CIR** 文本/二进制格式，**无 `.tap` 子章节**）→ **B-2 的 `.tap` 字节无法离线程序化生成**，必须现场用 Channel Studio 从 per-tap 参数表（PR-4 `extract_tap_parameters` 已备）生成。
+> 反之 **B-1 `.asc`（CIR 文本）格式 §21.1 完整公开且经手册逐字段验证（header `CIRs`/`Taps/CIR`(1-48)/`Carrier_Frequency`/`Route_Closed`/`Delay_Resolution`=5ns/`Sample_Density`/`CIR_Update_Rate` + `delay/Re/Im` triples）= `PropsimASCIIExporter` 输出 → 我们能直接生成、格式正确、不需现场**。
+> 故 B-2 现场依赖精确为「参数表 → Channel Studio → `.tap`」+ 下列硬件标定；B-1 端到端零现场。
+
+1. **`gaussian_model_available` + `.tap` 生成路径**（**B-2 头号前提**）：现场 Channel Studio 是否有 `Gaussian` 双beam 谱可选；用它把 per-tap 参数表（PR-4）落成 `.tap`（专有格式无法离线写，见上方破解结论）。
 2. **`f_upd_max`**：决 B-1 临界（仅影响 B-1 退路与确定性低频路）；手册无，假设 10kHz。
 3. **`tap_budget`(24/48) / `delay_resolution`(5/10/20ns)**：决聚类预算/分裂粒度。
 4. **`rho_thresh`**：用吞吐/BER 灵敏度标定（多大 native 残差不影响结论）。
