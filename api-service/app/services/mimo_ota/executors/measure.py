@@ -502,7 +502,7 @@ class MeasureExecutor(IStepExecutor):
                 # P2-14 B-2: 参数化 TDL + F64 硬件实时衰落 (F6 路由 + 能力门;
                 # .tap/.rtc 生成 + F64 加载在 F7 + 现场落地, V1.0 §9)。
                 generator = B2ParametricTdlStrategy(
-                    emulator, chamber, calibration_entries
+                    emulator, ce_client, chamber, calibration_entries
                 )
             else:
                 generator = ExternalWaveformStrategy(

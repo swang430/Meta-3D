@@ -173,6 +173,21 @@ class HardwarePipelineResult:
     pas_rotation: Optional[PASRotationResult] = None
 
 
+@dataclass
+class B2ClusterResult:
+    """B-2 native-fit 聚类 + per-tap 参数表结果 (PR-5)。tap_params 仅 B2_parametric 路非空;
+    .tap 字节生成需现场 Channel Studio (CE 端点到参数表层)。"""
+    success: bool = False
+    message: str = ""
+    target_path: str = ""           # B2_parametric / B1_baked / GCM_native
+    clustering_algo: str = ""
+    reason: str = ""
+    f_d_max_hz: float = 0.0
+    is_escalation: bool = False
+    tap_params: List[dict] = field(default_factory=list)
+    note: str = ""
+
+
 # ==================== 客户端 ====================
 
 class ChannelEngineClient:
@@ -384,6 +399,59 @@ class ChannelEngineClient:
             matrix_energy_scaling_factor=diag.get("matrix_energy_scaling_factor"),
             computation_time_ms=result_data.get("computation_time_ms", 0),
             pas_rotation=pas_result,
+        )
+
+    async def cluster_b2_native(
+        self,
+        rt_rays: List[dict],
+        ue_velocity_mps: tuple,
+        center_frequency_hz: float,
+        test_class: str = "throughput_psd",
+        f64_profile: Optional[dict] = None,
+    ) -> "B2ClusterResult":
+        """B-2 native-fit 聚类: RT 射线 → CE 微服务 geometric_native_fit + §6 路径判决 →
+        per-tap 参数表 (POST /api/v1/cluster_b2_native)。
+
+        rt_rays: [{delay_s, power_linear, aoa_deg, aod_deg, zoa_deg?, zod_deg?, phase_rad?}, ...]
+        返回 B2ClusterResult; .tap 字节生成需现场 Channel Studio (CE 端点产出到参数表层)。
+        ESCALATE / 未知 test_class / 确定性类缺 phase_rad → CE 返回 422 → success=False。
+        """
+        payload = {
+            "rt_rays": rt_rays,
+            "ue_velocity_mps": list(ue_velocity_mps),
+            "center_frequency_hz": center_frequency_hz,
+            "test_class": test_class,
+        }
+        if f64_profile:
+            payload["f64_profile"] = f64_profile
+        try:
+            async with httpx.AsyncClient(timeout=CE_TIMEOUT_SECONDS) as client:
+                response = await client.post(
+                    f"{CE_BASE_URL}/api/v1/cluster_b2_native",
+                    json=payload,
+                )
+                response.raise_for_status()
+                data = response.json()
+        except httpx.ConnectError:
+            logger.error(f"Cannot connect to Channel Engine at {CE_BASE_URL}")
+            return B2ClusterResult(success=False, message=f"Channel Engine unreachable at {CE_BASE_URL}")
+        except httpx.HTTPStatusError as e:
+            logger.error(f"CE B-2 cluster error: {e.response.status_code} {e.response.text}")
+            return B2ClusterResult(success=False, message=f"CE B-2 error ({e.response.status_code}): {e.response.text}")
+        except Exception as e:
+            logger.exception(f"CE B-2 cluster call failed: {e}")
+            return B2ClusterResult(success=False, message=str(e))
+
+        return B2ClusterResult(
+            success=True,
+            message=f"{data.get('target_path')} ({len(data.get('tap_params', []))} taps)",
+            target_path=data.get("target_path", ""),
+            clustering_algo=data.get("clustering_algo", ""),
+            reason=data.get("reason", ""),
+            f_d_max_hz=data.get("f_d_max_hz", 0.0),
+            is_escalation=data.get("is_escalation", False),
+            tap_params=data.get("tap_params", []),
+            note=data.get("note", ""),
         )
 
     # ==================== 内部方法 ====================
