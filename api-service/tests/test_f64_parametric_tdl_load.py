@@ -24,9 +24,15 @@ def _drv(transferred=None, captured=None):
 
     async def _write(cmd, timeout=None):
         captured.setdefault("writes", []).append(cmd)
+        # 模拟 F64: 坏 .rtc/.smu 时 CALC:FILT:FILE 后往 SYST:ERR? 压错误 (但 *OPC? 仍答 1)
+        if cmd.startswith("CALC:FILT:FILE") and captured.get("load_error"):
+            captured.setdefault("err_queue", []).append(captured["load_error"])
 
     async def _query(cmd, timeout=None):
-        return "1"
+        if "SYST:ERR" in cmd:                      # _drain_errors / _first_error 真实现走这里
+            q = captured.get("err_queue")
+            return q.pop(0) if q else '0,"No error"'
+        return "1"                                 # *OPC? 等
 
     async def _check_errors():
         return None
@@ -93,6 +99,20 @@ def test_ftp_failure_propagates():
     ok = asyncio.run(drv.load_parametric_tdl("/tmp/b2", "m"))
     assert ok is False
     assert drv._active_pipeline != F64Pipeline.B2_PARAMETRIC_TDL
+
+
+def test_load_fails_loud_on_syst_err_after_load():
+    """坏/不支持的 .rtc/.smu: F64 对 *OPC? 仍答 1 但 SYST:ERR? 报错 → fail-loud return
+    False, 不标 B2 active (Codex P1 #169: 否则 B-2 在无有效仿真下静默跑测量; 复刻 GCM
+    路 _first_error 门)。"""
+    drv, cap = _drv(transferred=["bad.rtc"],
+                    captured={"load_error": '-200,"No simulation opened"'})
+    ok = asyncio.run(drv.load_parametric_tdl("/tmp/b2", "m"))
+    assert ok is False
+    assert drv._active_pipeline != F64Pipeline.B2_PARAMETRIC_TDL
+    # 确认是【加载后 fail-loud gate】拦的: CALC:FILT:FILE 已发 (加载体选择/FTP 都通过)
+    assert _load_file(cap) is not None
+    assert drv._loaded_emulation_file is None      # 失败不记 _loaded_emulation_file
 
 
 def test_requires_waveform_dir():

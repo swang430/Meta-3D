@@ -542,10 +542,25 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
             await self._write("DIAG:SIMU:CLOSE")
             self._emulation_running = False
+            # 加载前清空遗留错误队列 (SYST:ERR? FIFO), 让下面 fail-loud gate 只评估本次
+            # CALC:FILT:FILE 产生的错误 (同 GCM 路 load_channel, Codex on PR #93)。
+            await self._drain_errors()
             await self._write(f"CALC:FILT:FILE {load_file}", timeout=VISA_TIMEOUT_FILE_LOAD)
             await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
+            # 加载后 fail-loud gate (Codex P1 #169): *OPC?=1 ≠ 加载成功 —— F64 对缺失/损坏/
+            # 不支持的 .rtc/.smu 仍答 OPC=1, 但 SYST:ERR? 报 -200 "No simulation opened" /
+            # -300。原 _check_errors (log-only, 不改控制流) 会让 B-2 在无有效仿真下静默标
+            # active 跑测量 (数据不可信)。复刻 GCM 路 _first_error 门: 有错立刻 return False、
+            # 不设 pipeline、不记 _loaded_emulation_file。
+            load_err = await self._first_error()
+            if load_err is not None:
+                self._last_error = f"B-2 PARAMETRIC_TDL load failed: {load_err}"
+                logger.error(
+                    "[F64/B2] 加载失败 — SYST:ERR? after load: %s (file=%s)",
+                    load_err, load_file,
+                )
+                return False
             self._loaded_emulation_file = load_file
-            await self._check_errors()
 
             self._active_pipeline = F64Pipeline.B2_PARAMETRIC_TDL
             logger.info("[F64/B2] PARAMETRIC_TDL 加载完成: %s; 硬件实时衰落, 运行时走 CH:MOD:CONT:ENV",
