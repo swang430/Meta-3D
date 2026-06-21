@@ -77,6 +77,67 @@ MPDB 不是单一聚类，而是**按 `test_class` 选聚类策略**：
 
 两者共享**时空跟踪基底**（§4.3）。聚类策略是 MPDB 的可插拔组件（策略模式），输出统一的标注式 CDL（§5）。
 
+### 3.3 MPDB 输出契约规范（落地 schema — PR-5 对齐）
+
+> §3.1/§3.2 是设计要求；本节固化 MPDB **输出**的落地契约。**澄清**：此处「MPDB 输出」指 MPDB 作为 RT 子径供给方交给下游聚类的 **RT 射线**（§2 架构图中 `Lauraycs RT → 子径(MPC) {τ,角,功率,相位}` 那一段产物），**非** MPDB 聚类后的标注式 CDL（那是 §5 的核心交付物）。本契约与 B-2 聚类端点 `POST /api/v1/cluster_b2_native`（`channel-engine-service/app/models/b2_cluster_models.py::MPCInput`）+ 下游消费（`b2_parametric_strategy._extract_rt_rays` 读 `cdl_model_data["rt_rays"]`）**逐字段对齐**，作为 RT→MPDB 接入的实现验收基线。
+
+**命名对齐**——物理真值多径在不同接口边界异名、**同物**：
+
+| 边界 | 名称 | 出处 |
+|---|---|---|
+| MPDB → ChannelEgine（设计论证侧） | `subrays` | §3.1 |
+| 聚类端点对外契约 | `rt_rays`（每条 `MPCInput`） | PR-5 |
+| ChannelEgine 聚类内部注入 | `cluster_subrays` | PR-1a `simulator.synthesize_ota` |
+| 下游 strategy 消费键 | `cdl_model_data["rt_rays"]` | PR-5 |
+
+**(1) 单条 RT 射线 schema（`MPCInput`）**
+
+| 字段 | 类型 | 单位 / 约定 | 约束 | 默认 | 必需性 |
+|---|---|---|---|---|---|
+| `delay_s` | float | 秒，**绝对**传播时延（非超额时延） | ≥ 0 | — | 必需 |
+| `power_linear` | float | **线性**功率（非 dB） | > 0 | — | 必需 |
+| `aoa_deg` | float | 度，到达方位角（38.901 GCS） | — | — | 必需 |
+| `aod_deg` | float | 度，离开方位角 | — | — | 必需 |
+| `zoa_deg` | float | 度，到达天顶角 | [0,180] 惯例 | `90.0`（水平） | 可选 |
+| `zod_deg` | float | 度，离开天顶角 | [0,180] 惯例 | `90.0`（水平） | 可选 |
+| `phase_rad` | float \| null | 弧度，确定性初相 | — | `null` | **条件必需**（见 (3)） |
+
+- `delay_s` 取**绝对时延**：下游按差值算抽头间隔须 ≥ `delay_resolution`（§4.1）；功率取**线性**以便按功率加权求多普勒质心 / 簇功率归一。
+- 天顶角默认 90°（水平面）兼容只给方位的 2D RT；3D RT 必须显式给 `zoa/zod`（仰角展宽 `as_zoa/as_zod` 由聚类下游导出，见 PR-4）。
+
+**(2) 一次聚类请求结构**（MPDB 一次喂给 ChannelEgine = 一组射线 + 场景元数据）
+
+```jsonc
+{
+  "rt_rays": [ MPCInput, ... ],          // ≥1 条（空 → 422；绝不臆造假子径）
+  "ue_velocity_mps": [vx, vy, vz],       // m/s；算 f_D,max = |v|·f_c/c
+  "center_frequency_hz": <float > 0>,
+  "test_class": "throughput_psd|consistency|isac_sensing|beam_tracking",
+  "f64_profile": F64ProfileInput | null  // 省略用默认能力档（§9 现场标定）
+}
+```
+端点 `POST {CHANNEL_ENGINE_URL}/api/v1/cluster_b2_native` → 返回 §6 判决 + per-tap 参数表（`B2ClusterResponse`）。
+
+**(3) `phase_rad` 必需性矩阵（按 `test_class`，§6 fail-loud 关键）**
+
+| `test_class` | 路径（§6） | `phase_rad` | 缺失行为 |
+|---|---|---|---|
+| `throughput_psd` / `consistency` | B-2 参数化（统计相位） | 不需要 | 忽略 |
+| `isac_sensing` / `beam_tracking` | B-1 / GCM（确定性相位） | **每条必需** | §6 fail-loud → **422**（不静默用随机相位顶替） |
+
+**(4) 动态场景：多快照轨迹**。静态 = 单快照一组 `rt_rays`；动态沿轨迹按相关距离 `Δd_geo` 采样多快照，**每快照一组 `rt_rays`**，快照间簇身份由时空跟踪（§4.3）关联、参数平滑演化。**本轮 PR-5 端点按单快照契约**（一次提交一组）；多快照轨迹批提交 = 动态用例延伸，依赖 `AnnotatedCDLProfile` 多快照支持（§5.1）+ 真实 RT 轨迹经 RT-Release 现场接入（§9）。
+
+**(5) fail-loud 语义**（MPDB 给不出合格输出时绝不臆造）
+
+| 触发 | 处理 |
+|---|---|
+| 空 `rt_rays`（standard CDL 无子径 / RT 未接入） | strategy 层 fail-loud 返回 `False` + 端点 `min_length=1` 拒 **422**；**不**用固定 38.901 扇假造子径（那正是 §3.1 要消除的信息丢失） |
+| 缺 `phase_rad` 且确定性类 | **422**（见 (3)） |
+| 未知 `test_class` | Pydantic `Literal` 拒 **422** |
+| 大质心 + 无 GCM | ESCALATE → **422**（§6，绝不静默回落 B-1） |
+
+**(6) 数据来源边界**。真实 RT 射线由 Lauraycs RT 产出、经 RT-Release 现场接入（§9）；当前 standard CDL 模型路**无**子径（只均值角 + 标量 AS），故 B-2 在本地 mock 数据下 fail-loud —— 这是**设计预期**（真实 RT native 子径是 B-2 的物理前提），不是 bug。
+
 ---
 
 ## 4. 聚类算法
