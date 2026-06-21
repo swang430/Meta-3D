@@ -138,6 +138,9 @@ class MeasureExecutor(IStepExecutor):
             ExternalWaveformStrategy,
         )
         from app.services.channel_generation.base_generator import EngineMode
+        from app.services.channel_generation.b2_parametric_strategy import (
+            B2ParametricTdlStrategy,
+        )
         from app.services.channel_generation.external_asc_strategy import (
             ExternalAscPathStrategy,
         )
@@ -494,6 +497,12 @@ class MeasureExecutor(IStepExecutor):
                     chamber,
                     calibration_entries,
                     asc_source_path=config.asc_source_path,
+                )
+            elif engine_mode == EngineMode.B2_PARAMETRIC_TDL:
+                # P2-14 B-2: 参数化 TDL + F64 硬件实时衰落 (F6 路由 + 能力门;
+                # .tap/.rtc 生成 + F64 加载在 F7 + 现场落地, V1.0 §9)。
+                generator = B2ParametricTdlStrategy(
+                    emulator, chamber, calibration_entries
                 )
             else:
                 generator = ExternalWaveformStrategy(

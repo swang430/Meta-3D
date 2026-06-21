@@ -17,6 +17,10 @@ class EngineMode(str, Enum):
     GCM_NATIVE = "keysight_gcm"       # Keysight native Channel Studio GCM
     ASC_SYNTHESIS = "mimo_first_asc"  # MIMO-First Custom ASC Synthesis Engine
     EXTERNAL_ASC = "external_asc"     # Operator-provided .asc bundle (debug-only path).
+    B2_PARAMETRIC_TDL = "b2_parametric_tdl"  # P2-14 B-2: 参数化 TDL + F64 硬件实时衰落
+    # 2026-06-21 P2-14: B-2 路 —— ChannelEgine geometric_native_fit/native_fit_trajectory
+    # 把 RT 射线聚成 native 可表示簇 → .tap/.rtc → F64 硬件实时衰落 (绕开 F64 无 custom PSD,
+    # 免奈奎斯特覆盖全 f_D,max)。本枚举 + 分流路由 = F6; .tap/.rtc 生成 + F64 加载 = F7 + 现场。
     # 2026-05-18 P0-7: EXTERNAL_ASC formalizes the previously-implicit "operator
     # ran ChannelEgine app.py/gui.py locally and hand-fed .asc to F64" workflow.
     # Skips channel-engine-service; api-service scans the operator-given local
