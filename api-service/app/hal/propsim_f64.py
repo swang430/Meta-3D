@@ -507,22 +507,54 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     async def load_parametric_tdl(self, waveform_dir: str, model_name: str) -> bool:
         """P2-14 B-2: 加载参数化 TDL (.tap/.rtc) 模型, F64 硬件 FPGA 实时合成衰落。
 
-        加载机制与 ASC Runtime 相同 (FTP 上传 + CALC:FILT:FILE 编译/加载 + SYST:ERR? gate);
-        F64 按文件内容决定【参数化实时衰落 (.tap/.rtc)】vs【烘焙回放 (.asc)】, 加载 SCPI 一致。
-        运行时几何骨架更新走 CH:MOD:CONT:ENV / DIAG:SIMU:MOB:MAN (现有运行时原语)。
+        加载 B-2 payload 里的【实际 .rtc/.smu】 —— **不走 ASC 的 runtime_emulation.smu
+        fallback** (Codex P1 #167): 优先编译好的 .smu, 否则 .rtc (运行时容器直接 CALC:FILT:FILE);
+        都没有 = payload 不含可加载参数化模型 → fail-loud。F64 按文件内容判参数化实时衰落 vs 烘焙。
+        运行时几何骨架更新走 set_runtime_environment (CH:MOD:CONT:ENV)。
 
-        现场验证 (V1.0 §9, 待真机标定后回填): .tap schema 字段顺序 / gaussian 谱关键字
-        可用性 / 运行时 env 切换抖动 / f_upd_max。
+        现场验证 (V1.0 §9, 待真机标定): .tap schema 字段顺序 / gaussian 谱关键字可用性 /
+        .rtc 直接加载 vs 需 .smu 包装 / 运行时切换抖动 / f_upd_max。
         """
-        ok = await self.upload_asc_files(waveform_dir, model_name)
-        if ok:
-            # upload_asc_files 内部把 pipeline 设成 ASC_RUNTIME; B-2 覆盖成专属标记。
+        if not self._visa_resource:
+            return False
+        try:
+            logger.info("[F64/B2] Uploading PARAMETRIC_TDL payload: %s model=%s",
+                        waveform_dir, model_name)
+            remote_dir = f"{self.waveform_dir}\\{model_name or 'b2_tdl'}"
+            transferred = await self._ftp_upload_directory(waveform_dir, remote_dir)
+            if not transferred:
+                logger.error("[F64/B2] FTP transfer failed - no files uploaded")
+                return False
+
+            # 选实际 B-2 加载体: 优先 .smu (编译好), 否则 .rtc (运行时容器); 都没有 → fail-loud
+            smu = [f for f in transferred if f.endswith(".smu")]
+            rtc = [f for f in transferred if f.endswith(".rtc")]
+            if smu:
+                load_file = f"{remote_dir}\\{smu[0]}"
+            elif rtc:
+                load_file = f"{remote_dir}\\{rtc[0]}"
+            else:
+                logger.error(
+                    "[F64/B2] PARAMETRIC_TDL payload 不含 .smu/.rtc 可加载体, 拒绝加载: %s",
+                    transferred,
+                )
+                return False
+
+            await self._write("DIAG:SIMU:CLOSE")
+            self._emulation_running = False
+            await self._write(f"CALC:FILT:FILE {load_file}", timeout=VISA_TIMEOUT_FILE_LOAD)
+            await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
+            self._loaded_emulation_file = load_file
+            await self._check_errors()
+
             self._active_pipeline = F64Pipeline.B2_PARAMETRIC_TDL
-            logger.info(
-                "[F64/B2] PARAMETRIC_TDL 加载完成 (model=%s); 硬件实时衰落, "
-                "运行时几何骨架走 CH:MOD:CONT:ENV", model_name,
-            )
-        return ok
+            logger.info("[F64/B2] PARAMETRIC_TDL 加载完成: %s; 硬件实时衰落, 运行时走 CH:MOD:CONT:ENV",
+                        load_file)
+            return True
+        except Exception as e:
+            logger.error("[F64/B2] load_parametric_tdl failed: %s", e)
+            self._last_error = str(e)
+            return False
 
     # ===================================================================
     # 1. 连接生命周期 (InstrumentDriver 第一层)
@@ -970,8 +1002,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 2: {"environment": "CDL_A_cluster2", "gain_db": -37.3, "delay_ns": 1740025, "doppler_hz": 0},
             })
         """
-        if not self._visa_resource or self._active_pipeline != F64Pipeline.ASC_RUNTIME:
-            logger.warning("[F64/ASC] set_runtime_environment requires active ASC pipeline")
+        # ASC Runtime 与 B-2 PARAMETRIC_TDL 都用 CH:MOD:CONT:ENV 做运行时几何骨架切换
+        # (Codex P1 #167: B-2 加载后 pipeline=B2_PARAMETRIC_TDL, 不放行会拒掉 B-2 的核心机制)。
+        if not self._visa_resource or self._active_pipeline not in (
+            F64Pipeline.ASC_RUNTIME, F64Pipeline.B2_PARAMETRIC_TDL,
+        ):
+            logger.warning("[F64] set_runtime_environment requires active ASC/B2 runtime pipeline")
             return False
 
         try:
