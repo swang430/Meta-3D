@@ -1607,6 +1607,17 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 `f_upd_max` / 运行时 env 切换抖动 + 端到端 RT→MPC 数据接入 (RT-Release 集成)。下次现场标定后回填。
 **Estimate**: 多 PR / 大型。
 
+**🔜 下一阶段 / 未接线项**（本地算法 + schema 完成 ≠ 端到端可跑；现场验证通过后接）：
+
+1. **★ AnnotatedCDLProfile → 文件生成 的接线（B-1 / B-2 对称缺口）**：F1–F5 只【产出】`AnnotatedCDLProfile`，**没有任何【消费】它的烘焙器/导出器**（现有 `exporters.py` / `simulator.py` grep=0，不认识新标注结构）。两条路都没接：
+   - **B-2**：标注 → `.tap/.rtc` 生成（F6/F7 路由 + 加载就位，但生成端要 RT→MPC 数据 + ChannelEgine 出 `.tap`）。
+   - **B-1**：F5 `phase_continuous` 产 `subray_sum` 标注 → 烘 `.asc/.mat` 的**新烘焙器未建**。现有 B-1（`ASC_SYNTHESIS` / `MIMO_OTA_Simulator` 从旧 `CustomCDLProfile` 烘焙）**这轮未动、仍工作** —— 即"我们保留的 B-1"是既有路径；新架构的 B-1 生成端跟 B-2 一样目前是死胡同。
+2. **§6 路径判决代码（test_class → B-1/B-2/GCM 自动分流）**：设计 §6 是伪代码，未落成代码模块；F6 只做 engine_mode→strategy 映射（操作员手选引擎），自动判决未实现。
+3. **B-1 金标准验证（§8/§10）**：B-1 精确烘焙作为 B-2 native 拟合的离线金标准对照（标定 `rho_thresh`），未建。
+4. **GUI 暴露（B-2 可执行后，做在本分支）**：① `ENGINE_OPTIONS` 加 `b2_parametric_tdl`（`gui/.../MIMOOTAConfigForm.tsx:126`）；② test_class 选择 → 驱动 B-1/B-2/GCM 分流；③（可选）`native_fit` 残差 / tap 预算占用 / 聚类质量 可见性；④ 加新字段走 4 步契约同步 + 浏览器实测。**现在不做**（B-2 未可执行，暴露 = 操作员选到不工作模式）。
+
+> 本轮（P2-14 本地实现）做的是**新架构的算法层 + schema + 路由/驱动骨架**（B-1 侧建了 schema F2 + 确定性聚类 F5；B-2 侧建了 F1/F3/F4 + F6/F7）。**未做** = 把新标注结构接到实际文件生成（B-1 烘 .asc / B-2 出 .tap）+ 自动判决 + 金标准 + GUI。这些挂在现场验证之后。
+
 ---
 
 ## 🟢 P3 — Polish / tooling
