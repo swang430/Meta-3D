@@ -285,11 +285,14 @@ class DopplerSubraySum(BaseModel):        # B-1/GCM，确定性子径求和
 ```python
 def select_path_and_clustering(test_class, scenario, f64_profile):
     if test_class in ('isac_sensing', 'beam_tracking'):
-        # 确定性相位：B-1 或 GCM(本轮 Q1 纠正)
-        path = 'GCM_native' if (need_large_centroid(scenario)      # >200kHz 质心
-                                or is_fr2_high_speed(scenario)) and f64_profile.has_gcm \
-               else 'B1_baked'
-        return path, 'phase_continuous'
+        # 确定性相位：B-1 或 GCM(本轮 Q1 纠正)。
+        # 大质心(>200kHz) / FR2 高速区 B-1 不可行(奈奎斯特 + 亚毫米地图，§9.5)，
+        # 该区必须 GCM；若无 GCM license 则 fail-loud ESCALATE，
+        # 【绝不静默回落 B1_baked】(否则会选到不可行路径 — Codex P2 #165)。
+        gcm_required = need_large_centroid(scenario) or is_fr2_high_speed(scenario)
+        if gcm_required:
+            return ('GCM_native' if f64_profile.has_gcm else 'ESCALATE'), 'phase_continuous'
+        return 'B1_baked', 'phase_continuous'        # 低 f_D,max 确定性 → B-1 可行
 
     # throughput/consistency：B-2 普及
     fit = geometric_native_fit(scenario, f64_profile)              # §4.1
