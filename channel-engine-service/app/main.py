@@ -10,7 +10,7 @@ import os
 from datetime import datetime
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.endpoints import health, ota, hardware_pipeline
+from app.api.endpoints import health, ota, hardware_pipeline, b2_cluster
 
 
 # ============================================================================
@@ -139,6 +139,13 @@ app.include_router(
     hardware_pipeline.router,
     prefix="/api/v1",
     tags=["硬件流水线"]
+)
+
+# B-2 native-fit 聚类 (P2-14 PR-5): RT 射线 → 聚类 + §6 判决 → per-tap 参数表
+app.include_router(
+    b2_cluster.router,
+    prefix="/api/v1",
+    tags=["B-2 聚类"]
 )
 
 # ============================================================================

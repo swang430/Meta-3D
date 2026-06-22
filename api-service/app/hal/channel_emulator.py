@@ -49,9 +49,16 @@ class ChannelLoadMode(str, Enum):
             外部 Channel Engine 计算探头权重/TDL 时序，生成 .asc 文件，
             上传到仪器后以 ARB/Runtime 模式播放。
             这是所有信道仿真器都必须支持的通用模式。
+
+        PARAMETRIC_TDL: P2-14 B-2 —— 参数化 TDL (.tap/.rtc) 由仪器硬件实时合成衰落。
+            外部引擎 (ChannelEgine geometric_native_fit) 只给每抽头参数 (native 谱/
+            质心/展宽/角度), 仪器 FPGA 实时生成多普勒衰落, 对外更新率仅几何骨架级。
+            并非所有仿真器都支持 (F64 需 Channel Studio TDL Tool + gaussian 谱可用性,
+            V1.0 §9 待真机验证)。
     """
     NATIVE_MODEL = "native_model"
     EXTERNAL_WAVEFORM = "external_waveform"
+    PARAMETRIC_TDL = "parametric_tdl"
 
 
 class CalibrationToneCapability(str, Enum):

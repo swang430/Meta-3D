@@ -218,10 +218,12 @@ class MIMOOTAConfiguration(BaseModel):
 
     # === Channel generation engine ===
     engine_mode: str = "mimo_first_asc"
-    # Allowed: "mimo_first_asc" | "keysight_gcm" | "external_asc"
-    #   - mimo_first_asc: api-service → channel-engine-service → ChannelEgine strict_pfs
-    #   - keysight_gcm:   Keysight F64 GCM Studio (vendor native, no microservice)
-    #   - external_asc:   operator-provided .asc directory (debug-only, see asc_source_path)
+    # Allowed: "mimo_first_asc" | "keysight_gcm" | "external_asc" | "b2_parametric_tdl"
+    #   - mimo_first_asc:    api-service → channel-engine-service → ChannelEgine strict_pfs
+    #   - keysight_gcm:      Keysight F64 GCM Studio (vendor native, no microservice)
+    #   - external_asc:      operator-provided .asc directory (debug-only, see asc_source_path)
+    #   - b2_parametric_tdl: P2-14 B-2 参数化 TDL + F64 硬件实时衰落 (RT 子径 → geometric_native_fit
+    #                        聚类 → .tap; 需 rt_rays/test_class/f64_profile 经 extra 透传, 见 V1.0 §3.3)
 
     # === External ASC source (only when engine_mode == "external_asc") ===
     asc_source_path: Optional[str] = None

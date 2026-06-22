@@ -65,6 +65,30 @@ _MOCK_WINDOW_FLOOR_S = 0.05
 _DUT_HEALTH_CHECK_EVERY_N_AZIMUTHS = 1
 
 
+def _extract_b2_cluster_inputs(config) -> Dict[str, Any]:
+    """B-2 (Codex P1 #169): 从 TestCase config 提取 geometric_native_fit 聚类输入。
+
+    `B2ParametricTdlStrategy.generate_and_load` 消费 ``cdl_model_data["rt_rays"]``
+    (真实 RT 子径) + ``test_class`` + ``f64_profile``; caller **不透传则 strategy 在调
+    CE 前永远 fail-loud → B-2 路死** (Codex P1 #169: 即便 test case 含 RT 射线也丢)。
+
+    真实 RT 子径经 RT-Release 现场写进 ``TestCase.configuration`` (MIMOOTAConfiguration
+    ``extra="allow"`` forward-compat, 见 config.py L160) —— 无则 ``rt_rays=None``,
+    strategy fail-loud = **设计预期** (standard CDL 路无子径, V1.0 §3.3 (5)(6))。
+
+    返回 ``{rt_rays, test_class, f64_profile, ue_velocity_mps}``: rt_rays / f64_profile /
+    velocity 缺省 ``None`` (strategy 各自 fail-loud / 降级), test_class 缺省
+    ``throughput_psd`` (与 strategy / CE 端点默认一致)。
+    """
+    extra = config.model_extra or {}
+    return {
+        "rt_rays": extra.get("rt_rays"),
+        "test_class": extra.get("test_class", "throughput_psd"),
+        "f64_profile": extra.get("f64_profile"),
+        "ue_velocity_mps": extra.get("ue_velocity_mps"),
+    }
+
+
 def _build_pcell_cell_config(
     config,
     *,
@@ -138,6 +162,9 @@ class MeasureExecutor(IStepExecutor):
             ExternalWaveformStrategy,
         )
         from app.services.channel_generation.base_generator import EngineMode
+        from app.services.channel_generation.b2_parametric_strategy import (
+            B2ParametricTdlStrategy,
+        )
         from app.services.channel_generation.external_asc_strategy import (
             ExternalAscPathStrategy,
         )
@@ -495,6 +522,12 @@ class MeasureExecutor(IStepExecutor):
                     calibration_entries,
                     asc_source_path=config.asc_source_path,
                 )
+            elif engine_mode == EngineMode.B2_PARAMETRIC_TDL:
+                # P2-14 B-2: 参数化 TDL + F64 硬件实时衰落 (F6 路由 + 能力门;
+                # .tap/.rtc 生成 + F64 加载在 F7 + 现场落地, V1.0 §9)。
+                generator = B2ParametricTdlStrategy(
+                    emulator, ce_client, chamber, calibration_entries
+                )
             else:
                 generator = ExternalWaveformStrategy(
                     emulator, ce_client, chamber, calibration_entries
@@ -516,6 +549,17 @@ class MeasureExecutor(IStepExecutor):
                 "model_name": config.cdl_model_name,
                 "session_id": str(context.test_execution.id),
             }
+            # P2-14 B-2 (Codex P1 #169): 把聚类输入透传进 cdl_model_data / sim_rules,
+            # 否则 B2ParametricTdlStrategy 永远拿不到 rt_rays → 调 CE 前 fail-loud, B-2 路
+            # 死 (即便 test case 含 RT 射线也丢)。来源 = TestCase.configuration extra
+            # (RT-Release 现场写入); 无则 rt_rays=None → strategy fail-loud = 设计预期。
+            if engine_mode == EngineMode.B2_PARAMETRIC_TDL:
+                _b2 = _extract_b2_cluster_inputs(config)
+                cdl_model_data["rt_rays"] = _b2["rt_rays"]
+                cdl_model_data["test_class"] = _b2["test_class"]
+                cdl_model_data["f64_profile"] = _b2["f64_profile"]
+                if _b2["ue_velocity_mps"] is not None:
+                    sim_rules["ue_velocity_mps"] = _b2["ue_velocity_mps"]
             gen_ok = await generator.generate_and_load(sim_rules, cdl_model_data)
             if not gen_ok:
                 return StepExecutionResult(

@@ -15,10 +15,16 @@ P2-13 SIMProfile 三阶段 (#140/#141/#142)、DUTProfile 四阶段 (#134-#137)�
 #155 Codex P2 (1) 的基础版)。`#2001(2)(3)` / `#2002` 经评估**保持现状不推进** (见
 [`architecture/multi-port-input-level-semantics.md`](architecture/multi-port-input-level-semantics.md) §5)。
 
-**没有活跃的本地 in-progress 项。** 真 P0 (P0-3/4/5) 仍现场 blocked；按治理「P0 全 blocked
-时 Current Focus 可挪本地项」，但本地候选已耗尽。**下次现场** (校准天线 / SGH / 真 DUT 到位)
-Current Focus **必须切回依赖链 P0-4 → P0-3 → P0-5** (见下方「🚧 Blocked on hardware」段 +
-[`guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md))，现场只调硬件、不写 driver 代码。
+**P2-14（B-2 信道注入）本地实现 ✅ 完成 (2026-06-21)** —— 设计 V1.0 (#165) + F1–F7 八 PR 全 merge
+(详见下方 P2-14 区 Status)。这是 P0 全现场 blocked 期间挪的本地理论层项；纯本地、不依赖现场。
+设计见 [`design/RT-MPDB-CDL-F64-channel-injection-design_V1.0.md`](design/RT-MPDB-CDL-F64-channel-injection-design_V1.0.md)。
+
+**本地实现完成后，又无活跃本地 in-progress 项** (回到 2026-06-07 的"本地队列空"状态)。真 P0 (P0-3/4/5)
+仍现场 blocked。P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max / RT→MPC 接入)
+已进 on-site 队列。**原开发的现场验证基线已打 tag** `onsite-verification-baseline-2026-06-21`（留在 main）。
+**下次现场** (校准天线 / SGH / 真 DUT 到位) Current Focus **必须从该 tag 切回依赖链 P0-4 → P0-3 → P0-5**
+（见下方「🚧 Blocked on hardware」段 + [`guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md)），
+现场只调硬件、不写 driver 代码；P2-14 现场验证可在 P0 链路间隙穿插。
 
 > **完整项目历程** (第一次现场 → 现在的全程 + 5 条主线) 见
 > [`project-retrospective.md`](project-retrospective.md)；**现场经验文档归类**见
@@ -1561,6 +1567,60 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 
 ---
 
+### P2-14 — 信道注入 B-2 生成层（参数化 TDL + 硬件实时衰落）✅ 本地实现完成 / 🚧 现场验证待做
+
+> **来源**: 2026-06-07 backlog 登记（docx V1.2）→ **2026-06-21 用户定向提升**。多轮设计讨论
+> （接入 NotebookLM PROPSIM 资料 + 本地 PROPSIM 手册深挖）收口为完整设计。属"理论层变动"，
+> 与现场验证（`onsite-verification-baseline-2026-06-21` tag）并行，纯本地、不依赖现场。
+
+**What**: RT 子径 → ChannelEgine 多聚类（`geometric_native_fit` / `phase_continuous`，时空跟踪）
+→ 标注式 CDL（`doppler_repr` 区分联合体）→ F64 B-1/B-2/GCM 分流。让吞吐/一致性类 MIMO OTA
+**普及 B-2**（绕开 F64 无 custom PSD、免奈奎斯特覆盖全 f_D,max）；ISAC/波束跟踪走 B-1/GCM 确定性相位。
+
+**Why**: F64 参数化衰落只有闭式谱集、**无任意 PSD 参数口**（手册证实），但聚类是我们的自由度 ——
+按角度 native-fit 聚类使每簇落 F64 原生谱即可普及 B-2，拿到 ~100Hz 几何骨架率（不必 SD=2 高 f_upd 烘焙）。
+
+**完整设计**: [`design/RT-MPDB-CDL-F64-channel-injection-design_V1.0.md`](design/RT-MPDB-CDL-F64-channel-injection-design_V1.0.md)
+（取代 `design/B1-B2-path-decision-design_V0.1.md`）。F64 硬约束见 memory `project_b2_universal_channel_injection_design`。
+
+**Scope（多 PR，主体在 ChannelEgine 仓）**:
+
+| Step | 内容 | 仓 |
+|------|------|-----|
+| 0 | native 谱映射纯函数（簇 AS+角度+速度 → F64 原生谱参数 `f_d_centroid=f_D,max·cosφ` / `f_d_max∝AS·sinφ` + 残差）+ 单测 | ChannelEgine |
+| 1 | `AnnotatedCDLProfile` schema（扩 `CustomCDLProfile`，向后兼容）+ §5.4 一致性校验 | ChannelEgine |
+| 2 | `geometric_native_fit` 聚类（时空跟踪 + native 可拟合 + ≤24 tap，双高斯/分裂内置） | ChannelEgine |
+| 3 | `EngineMode.B2_PARAMETRIC_TDL` + 合成分流 + F64 `.tap/.rtc` 加载 | MIMO-First |
+| 4 | `phase_continuous` 聚类（确定性，B-1/GCM 路） | ChannelEgine |
+
+**Acceptance**: B-1 金标准对照 B-2（QZ 处 Doppler PSD / 空间相关 / 衰落 CDF 容差内）；连续性用例
+（`cluster_id` 跨快照平滑、F64 插值无跳变）；fail-loud 一致性校验。完整见 V1.0 §10。
+
+**现场验证依赖**: `gaussian_model_available` / `f_upd_max` / `tap_budget` / `rho_thresh` 需现场标定（V1.0 §9）。
+
+**Status**: ✅ **本地实现完成 (2026-06-21)** —— 设计 V1.0 (#165) + F1–F7 全 merge：
+F1 native 谱映射 (CE #34) / F2 标注式 CDL schema (CE #35) / F3 geometric_native_fit 聚类 (CE #36) /
+F4 时空跟踪 (CE #37) / F5 phase_continuous (CE #38) / F6 EngineMode+分流+能力门 (MF #166) /
+F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-First 路由/驱动层 (F6-F7)
+全部纯函数 / mock 可测，Codex review 逐 PR 过 (含 1 个 P1 + 多个 P2 当下修)。
+⭐ **2026-06-21 续做 (PR-1a~4 + `.tap` 破解)**：B-1 经新架构**端到端打通** (PR-1a `cluster_subrays` 旁路 CE#39 / PR-1b `b1_annotated_baker` CE#40) + §6 路径判决 (PR-3 CE#41) + B-1 金标准软件对照 (PR-2 CE#42) + B-2 per-tap 参数表 (PR-4 CE#43)。下方"下一阶段" 1/2/3 已 ✅。
+🚧 **现场验证待做** (V1.0 §9)：`.tap` 是 **Channel Studio 专有格式**（2026-06-21 手册 §21 + `.ctap` 样本逆向：加密熵 7.864、手册无 `.tap` 子章节）→ B-2 `.tap` 字节必须**现场用 Channel Studio 从 per-tap 参数表 (PR-4) 生成**；+ gaussian 谱可用性 / `f_upd_max` / `.rtc` 切换抖动 + 端到端 RT→MPC 接入。**B-1 `.asc` 经手册 §21.1 验证可直接生成、零现场。**
+**Estimate**: B-2 现场 (Channel Studio + F64 加载)；B-1 已端到端完成。
+
+**🔜 下一阶段 / 未接线项**（本地算法 + schema 完成 ≠ 端到端可跑；现场验证通过后接）：
+
+1. **✅ AnnotatedCDLProfile → 文件生成 接线**（2026-06-21 PR-1a~4）：
+   - **B-1 ✅ 端到端打通**：`b1_annotated_baker.bake_b1_annotated` (PR-1b CE#40) 消费 `subray_sum`/`baked` 标注 → `.asc`（`cluster_subrays` 旁路 PR-1a CE#39 + 复用 `PropsimASCIIExporter`）；`.asc` 格式经手册 §21.1 逐字段验证、零现场。
+   - **B-2 ✅ 软件半完成 / `.tap` 字节现场**：`extract_tap_parameters` (PR-4 CE#43) 出 per-tap 参数表；**MIMO-First 接线 (PR-5, 5486413) ✅** — CE 微服务 (`channel-engine-service/`) `cluster_b2_native` 端点 (RT 射线 → `geometric_native_fit` 聚类 + §6 判决 → 参数表) + `channel_engine_client.cluster_b2_native` + `b2_parametric_strategy` (RT 射线 fail-loud + 调 CE + 参数表就绪)，16 测试。**现场剩余**：`.tap` 字节 Channel Studio 生成 (手册 §21 专有格式) + F64 加载 + 真实 RT 数据 RT-Release 接入。
+2. **✅ §6 路径判决代码**（PR-3 CE#41）：`select_path_and_clustering` test_class → B-1/B-2/GCM 自动分流 + ESCALATE fail-loud + GCM 门；MIMO-First `target_path→EngineMode` **动态分流待**（Codex P2 #169）：`b2_parametric_strategy` 现对非 `B2_parametric` 判决（`B1_baked`/`GCM_native`，如 isac 低质心 / 超 tap budget）**fail-loud 提示改 engine_mode**（防误当 B-2 成功）；完整动态分流（`B1_baked`→ASC 烘焙 / `GCM_native`→GCM，需 strategy 跨 engine_mode 编排 + B-1 路 RT→AnnotatedCDLProfile→`.asc` 链）属中等改动，随 PR-5 现场 / 后续。
+3. **✅ B-1 金标准对照**（PR-2 CE#42，软件半）：新架构 baked 路 vs 现有直接路径逐位一致；QZ 处 PSD/相关/CDF 实测对照 (标定 `rho_thresh`) 属现场半 (§10.1)。
+4. **GUI 暴露（B-2 可执行后，做在本分支）**：① `ENGINE_OPTIONS` 加 `b2_parametric_tdl`（`gui/.../MIMOOTAConfigForm.tsx:126`）；② test_class 选择 → 驱动 B-1/B-2/GCM 分流；③（可选）`native_fit` 残差 / tap 预算占用 / 聚类质量 可见性；④ 加新字段走 4 步契约同步 + 浏览器实测。**现在不做**（B-2 未可执行，暴露 = 操作员选到不工作模式）。
+5. **conducted（传导）注入 = 独立条目（横切全栈，本轮 OTA-only）**：2026-06-21 用户确认本轮 B-1/B-2 只做 OTA。现有注入栈 5 策略（ASC/EXTERNAL_ASC/GCM/B2/base）+ ChannelEgine 导出层**全 OTA**（探头展开 + OTA 校准 + PAS 旋转）；conducted 仅在业务模型层（`TestMode.CONDUCTED` / `TopologyType.CONDUCTED`）声明、**注入层 0 实现**。语义与 OTA 根本不同（DUT 天线直连、线缆校准无 `probe_gain`、无探头展开/PAS、文件为天线对而非探头对），需独立设计（拓扑分流 + 线缆校准建模）+ 每引擎（ASC/GCM/B2/B1）加分支。边界 + OTA 校准注入契约见设计 V1.0 §8.1；本轮烘焙器拓扑参数默认 OTA、接口预留。
+
+> 本轮（P2-14 本地实现）做的是**新架构的算法层 + schema + 路由/驱动骨架**（B-1 侧建了 schema F2 + 确定性聚类 F5；B-2 侧建了 F1/F3/F4 + F6/F7）。**未做** = 把新标注结构接到实际文件生成（B-1 烘 .asc / B-2 出 .tap）+ 自动判决 + 金标准 + GUI。这些挂在现场验证之后。
+
+---
+
 ## 🟢 P3 — Polish / tooling
 
 **全部 ✅ Done（13/13）。** 完整 What / Fix / Acceptance 详情已迁出 → [`roadmap-archive.md`](roadmap-archive.md)。速览：
@@ -1634,7 +1694,7 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 - `[discovered 2026-06-04, 用户审计暗室首测]` **暗室首测捷径被 Phase 6 cell_config 门破坏 + standalone 自检借鉴** — ✅ done (本 PR)。用户问"大量细节修复后暗室首测有没有被破坏"。**破坏**: P2-11 Phase 6 (#114/#124/#126) 的 `precheck_strict_cell_config` 门 (DL layers/调制/MCS) 没被暗室首测 lab-smoke bypass 覆盖 (GUI labSmoke + CreateSessionRequest + _request_overrides 三层全漏 + 测试也漏) → 真硬件 bring-up 撞它 (DUT 协商能力 < 默认请求 / MCS clamp) 挡住快速 first-call。`feedback_strict_gate_extend_bypass_toggle` 母题又踩 (Phase 1/2/3 当时覆盖了, Phase 6 在那之后加漏了)。**修**: 三层补 cell_config bypass + test_commissioning_strict_gate_overrides 钉死 (_P2_11_FLAGS 加 cell_config)。**借鉴**: 加暗室首测前逐设备快速自检 (`POST /commissioning/device-selfcheck` 主动探测各 driver 连接+响应 + GUI 暗室首测页"运行设备自检"按钮/结果) —— 借鉴转台 #132 / EMCenter standalone 验证理念, 把"首测中途撞设备细节"前移成"首测前先单独验设备"。+5 自检测试, commissioning 25 测全过, tsc 通过。
 - `[discovered 2026-06-05 during DUTProfile 收尾, 用户提出]` **SIMProfile (SIM/eSIM 身份 + 鉴权声明) + SIM↔UXM 一致性 fail-loud** — **→ 已排期 P2-13 (2026-06-05 用户排期, 设 Current Focus); 本条留作完整设计记录, 排期/验收/分阶段见 P2-13 正式条目**。用户提"做测试经常 SIM/eSIM 匹配问题, 最常踩鉴权 (Ki/OPc)"。现状: SIM 身份/PLMN/鉴权**完全没建模** —— UXM 驱动 SCPI 树 (`CONFig:NR5G:{cell}:...` + `CALL:NR5G:{cell}:...`) 一条 auth/IMSI/PLMN/Ki 都没有, attach 的 IMSI 是操作员手敲只当审计; SIM 匹配是 Test App 手配黑箱, 挂了只给泛泛"UE capability unavailable / attach 不上" → 正是 first-call 现场瞎调。**调研定论 (商用卡)**: 商用卡 Ki 不可提取/破解 (用户判断对, AKA 双向, emulator 没 Ki 既验不了 UE 也发不出 UE 认的 AUTN); 但"所以没法测"对 RF/吞吐测试是**错结论** —— 正解是**可编程测试卡** (自写 IMSI/Ki/OPc/Milenage, emulator HSS 配同值 → 完整真鉴权), 运营商网络特性配在 emulator 侧不在卡的秘钥里; Keysight 官方做法也是测试卡跟 UXM 默认 IMSI/PLMN 预匹配。要某运营商精确网络 → 运营商测试卡 (真 PLMN + 实验室已知 Ki)。**别折腾商用卡**, 痛点正解 = 系统管住测试卡 Ki/OPc/PLMN ↔ UXM 一致性 (跟 DUTProfile 同母题: 声明 + 下发前一致性 fail-loud)。**设计已定 (用户对齐 2026-06-05)**: ① **独立 `SIMProfile` 实体** (不内嵌 DUTProfile —— DUT↔SIM **多对多**卡池复用, 内嵌会逼 Ki 重复→stale; SIM 更像 LabProfile 那样的实验室基建), TestCase 引用 `sim_profile_id` (跟 lab/dut 并列, TestCase 单一真值源驱动)。② **字段**: `imsi`(15位)/`iccid`(选); `mcc`+`mnc`(显式, 校验=IMSI 前缀, 不解析因 MNC 2/3 位歧义); `ki`(32hex)/`opc`(32hex, 统一存 OPc)/`auth_algorithm`(MILENAGE 默认 / TUAK / XOR; **排除 COMP128** 2G); `card_kind`(test_sim/operator_test/commercial —— 当鉴权可行性门, commercial **不存 Ki** 标"不可鉴权用测试卡"); `sim_form`(usim/esim); `eid`/`esim_profile_id`(eSIM: **一个 profile=一行**, 同 `eid`=同芯片多 profile, 扁平化让交叉核对永远比一个 IMSI; SM-DP+ 下载不进系统); `extra_metadata`(TUAK 冷门参数等); **不要** `sqn`(emulator 运行时态)/manufacturer/model。`ki`/`opc` 凭据 → API/日志**脱敏**(只显后4位)+ 不进导出 + 仅 test/operator 卡存。③ **档 A/B provisioning** (UXM SCPI 能否配鉴权**待现场查 S8711A SCPI command reference**, 公开文档 403 拿不到; 强信号能 —— UXM 卖点就是 SCPI 驱动整套 signaling/固件级测试): 档 A 能配 → 从 SIMProfile **自动 provision UXM HSS** 消除手配 mismatch; 档 B 不能 → **cross-check + warn 保底** (本地可交付)。④ **交叉核对**: precheck 拿 SIMProfile vs UXM 小区 PLMN + HSS 比 (下发前); **attach 后拿实测认证 IMSI vs 声明比** (强化现"防对错设备"门, **替代操作员手敲 IMSI** 弱环节, 自动抓插错卡)。⑤ **鉴权 fail-loud 分根因** (对准痛点, SQN 不入字段但用于此): **MAC failure**(Ki/OPc/算法不符→改凭据) vs **sync failure**(SQN 去同步, 卡发 AUTS→resync, **非凭据问题**) vs **no subscriber**(HSS 没此卡→provision) —— 三类不同修法, 别把 SQN 去同步误当 Ki 配错瞎调。属 P2-11 同族 (跟 DUTProfile 平行: 能力层 vs 身份/接入层)。**WIP**: 设计完成未启动, 等正式排期 (DUTProfile 刚收尾, WIP=1); 档 A 待现场 UXM SCPI 确认, 档 B (声明+cross-check+warn) 本地可启动。
 - `[discovered 2026-06-06 during probe_number 局部化, Codex P2 on #155]` **跨暗室同号下: (1) 部分校准表缺 chamber 维度 + (2) NULL-chamber 复合唯一缺口**. probe_number 改按 chamber 局部 (复合唯一 uq_probes_chamber_probe_number) 后两个边界: **(1)** path-loss 校准**安全** (ProbePathLossCalibration 有 chamber_id, channel-engine measure 主路径按 chamber 取); 但 `probe_amplitude_calibrations` / `probe_phase_calibrations` 只有 `probe_id` 无 chamber_id, probe_calibration_service 按 probe_id 单独查 (line 457/819) → 多暗室同号会返回别暗室的 幅度/相位校准 (silent wrong data)。proper fix = 给这些 cal 表加 chamber_id + service 查找带 chamber (多表+迁移, 独立 PR)。**【2026-06-07 本 PR「校准 chamber-scoping foundation」✅ 完成基础版 (用户排期"#155 之后下一个 PR", scope=聚焦基础版)】**: 5 张 probe-keyed 校准表 (amplitude/phase/polarization/pattern/validity) 加 nullable+indexed `chamber_id` (迁移 `a1c3e5b7d9f2`, PG add-column / SQLite create_all no-op, down/up 已验可逆); **测量路径活跃消费方** `probe_pattern.consumer` (`get_probe_gain_at_azimuth` / `estimate_quiet_zone_ripple_db`) 改为按 chamber **prefer-exact → 回退 NULL/legacy → 绝不取其它暗室**, `measure`/`precheck` 传 `chamber.id`; service writer (`execute_*`) 持久化 chamber_id + getter (`get_latest_calibration`) 加可选 chamber 过滤; 7 新测 + 全套 1995 绿。**剩余 backlog (本 PR 故意收窄, 未做)**: ①REST/import 端点契约把 chamber_id 透传到 writer (现仍传 None); ②`ProbeCalibrationValidity` 改复合主键 `(probe_id, chamber_id)` + `check_validity`/`generate_validity_report` 的 chamber 作用域; ③报告层 chamber 作用域; ④legacy 单暗室 dummy 数据回填 chamber_id。patterns 表空 + 仅单暗室有 cal, 上述剩余项**仍未触发**, 多暗室真校准前需完成 ①②④。 **(2)** chamber_config_id nullable → 复合唯一不约束 NULL-chamber 探头 (chamber 删除 SET NULL 产生的 orphan / bulk 无 chamber 插入可重号); fix 需在 ondelete CASCADE / partial unique (NULL) / 强制 chamber 三选一 (有删除语义权衡), 需设计。 **小结**: (1) 主路径基础版本 PR 解决, 剩 ①②③④ + (2) 仍 backlog (均 Codex P2)。
-- `[discovered 2026-06-07 from PROPSIM F64 信道注入 docx V1.2, 用户确认登记]` **信道注入子系统三缺口 + B-2 战略缺口 (channel-injection)**. ⭐ **2026-06-21 更新: 设计 V1.0 + 本地实现 (F0–F7 八 PR) 已完成, 放在独立分支 `feat/b2-channel-injection` (未并入 main —— 用户决定 B-2 信道集成走独立分支, 待现场验证 V1.0 §9 后再决定是否并; ChannelEgine 算法层 F1–F5 已在 ChannelEgine main)。设计文档 + 全部 MIMO-First 侧代码 (EngineMode/strategy/F64 driver) 见该分支。** 以下为 2026-06-07 登记快照。源 `docs/hardware/PROPSIM_F64_信道注入工程文档_A-B路线_SCPI_V1.2.docx`。现状: `gcm_strategy`(路线 A) + `asc`/`external_asc`(路线 B-1) 已实现, F64 驱动已有 `CALC:FILT:*`/`CH:MOD:CONT:ENV`/`ROUT:PATH:CONN`/`DIAG:SIMU` + 播 `.smu`/`.asc`/`.rtc`。**(1) f_upd 采样纪律一致性门 (B-1)**: 确定性 CIR 回放须 `f_upd=2·SD·v/λ` (SD=2, CIRs≥1000, `Δd=λ/(2·SD)`) 自洽; 现仅 `channel_params.update_rate_hz` 软字段 (1-1000 Hz 默认 100, 连高速 1556 / 高铁 4537-6481 / FR2 51852 Hz 都表达不了), 驱动未设 `DIAG:SIM:FIRUPD:MAN:CH` → "默认 10000 Hz 陷阱"静默错配 playback 速度/多普勒。proper = TestCase 的 v/f_c/SD ↔ 注入文件 f_upd fail-loud 一致性门 (契合 TestCase 单一真值源)。**(2) 12/24 抽头 + ≤24 簇 + 1024 逻辑通道硬件上限硬门**: `channel_engine` 跟踪 `num_clusters` 但无 ≤24 硬上限校验; TestCase 超限应进现场前 fail-loud (capability↔hardware↔gate 三方一致母题)。**(3) GCM 必要性结论**: 多普勒质心 <200 kHz (地面→高铁) 运行时频偏即可、>200 kHz (NTN Ka) 需 GCM; §10 待验证"运行时 200 vs GCM 500 kHz 是否同一硬件引擎"决定 B 路能否免 GCM 覆盖 NTN → 决定是否采购 GCM 许可。**另 (战略, 非缺陷)**: 路线 B-2 (`.tdlx`/`.tap` 参数化 TDL 生成 IP) 生成层**未实现** (驱动已能播 `.rtc`), 文档主推 B-2 用于高多普勒 / 几何骨架率受限场景。现场验证清单见 [`guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md) §7。
+- `[discovered 2026-06-07 from PROPSIM F64 信道注入 docx V1.2, 用户确认登记]` **信道注入子系统三缺口 + B-2 战略缺口 (channel-injection)** —— ✅ **2026-06-21 提升为 P2-14** (见上方 P2-14 区)。完整设计以 [`design/RT-MPDB-CDL-F64-channel-injection-design_V1.0.md`](design/RT-MPDB-CDL-F64-channel-injection-design_V1.0.md) 为准，**已远超**此处基于 docx V1.2 的理解 (native-fit 聚类 → B-2 普及 / 标注式 CDL / 按 test_class 分 B-1·B-2·GCM)。以下为 2026-06-07 登记时快照，实施以 V1.0 为准。源 `docs/hardware/PROPSIM_F64_信道注入工程文档_A-B路线_SCPI_V1.2.docx` (已升 V1.4)。现状: `gcm_strategy`(路线 A) + `asc`/`external_asc`(路线 B-1) 已实现, F64 驱动已有 `CALC:FILT:*`/`CH:MOD:CONT:ENV`/`ROUT:PATH:CONN`/`DIAG:SIMU` + 播 `.smu`/`.asc`/`.rtc`。**(1) f_upd 采样纪律一致性门 (B-1)**: 确定性 CIR 回放须 `f_upd=2·SD·v/λ` (SD=2, CIRs≥1000, `Δd=λ/(2·SD)`) 自洽; 现仅 `channel_params.update_rate_hz` 软字段 (1-1000 Hz 默认 100, 连高速 1556 / 高铁 4537-6481 / FR2 51852 Hz 都表达不了), 驱动未设 `DIAG:SIM:FIRUPD:MAN:CH` → "默认 10000 Hz 陷阱"静默错配 playback 速度/多普勒。proper = TestCase 的 v/f_c/SD ↔ 注入文件 f_upd fail-loud 一致性门 (契合 TestCase 单一真值源)。**(2) 12/24 抽头 + ≤24 簇 + 1024 逻辑通道硬件上限硬门**: `channel_engine` 跟踪 `num_clusters` 但无 ≤24 硬上限校验; TestCase 超限应进现场前 fail-loud (capability↔hardware↔gate 三方一致母题)。**(3) GCM 必要性结论**: 多普勒质心 <200 kHz (地面→高铁) 运行时频偏即可、>200 kHz (NTN Ka) 需 GCM; §10 待验证"运行时 200 vs GCM 500 kHz 是否同一硬件引擎"决定 B 路能否免 GCM 覆盖 NTN → 决定是否采购 GCM 许可。**另 (战略, 非缺陷)**: 路线 B-2 (`.tdlx`/`.tap` 参数化 TDL 生成 IP) 生成层**未实现** (驱动已能播 `.rtc`), 文档主推 B-2 用于高多普勒 / 几何骨架率受限场景。现场验证清单见 [`guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md) §7。
 
 ---
 

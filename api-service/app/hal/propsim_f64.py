@@ -64,6 +64,7 @@ class F64Pipeline(str, Enum):
     """信道加载管线类型"""
     GCM_NATIVE = "gcm"          # Pipeline A: F64 原生 GCM
     ASC_RUNTIME = "asc_runtime" # Pipeline B: 外部 ASC + Runtime Emulation
+    B2_PARAMETRIC_TDL = "b2_parametric_tdl"  # Pipeline C: P2-14 B-2 参数化 TDL (.tap/.rtc 硬件实时衰落)
 
 
 class F64BypassMode(int, Enum):
@@ -451,12 +452,20 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
     def get_supported_load_modes(self) -> List[ChannelLoadMode]:
         """
-        F64 支持两种信道加载模式。
+        F64 支持的信道加载模式。
 
         Returns:
-            [NATIVE_MODEL, EXTERNAL_WAVEFORM]
+            [NATIVE_MODEL, EXTERNAL_WAVEFORM, PARAMETRIC_TDL]
+
+        PARAMETRIC_TDL (P2-14 B-2): .tap/.rtc 参数化模型, 加载机制同 ASC Runtime
+        (FTP + CALC:FILT:FILE), F64 按文件内容判参数化实时衰落 vs 烘焙。具体 .tap
+        schema / gaussian 谱可用性现场标定 (V1.0 §9)。
         """
-        return [ChannelLoadMode.NATIVE_MODEL, ChannelLoadMode.EXTERNAL_WAVEFORM]
+        return [
+            ChannelLoadMode.NATIVE_MODEL,
+            ChannelLoadMode.EXTERNAL_WAVEFORM,
+            ChannelLoadMode.PARAMETRIC_TDL,
+        ]
 
     async def load_channel(
         self,
@@ -487,7 +496,80 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             self._active_pipeline = F64Pipeline.ASC_RUNTIME
             return await self.upload_asc_files(waveform_dir, model_name)
 
+        elif mode == ChannelLoadMode.PARAMETRIC_TDL:
+            # P2-14 B-2: 参数化 TDL (.tap/.rtc) 硬件实时衰落
+            if not waveform_dir:
+                raise ValueError("waveform_dir 是 B-2 PARAMETRIC_TDL 管线的必需参数 (.tap/.rtc 目录)")
+            return await self.load_parametric_tdl(waveform_dir, model_name)
+
         raise NotImplementedError(f"未知加载模式: {mode.value}")
+
+    async def load_parametric_tdl(self, waveform_dir: str, model_name: str) -> bool:
+        """P2-14 B-2: 加载参数化 TDL (.tap/.rtc) 模型, F64 硬件 FPGA 实时合成衰落。
+
+        加载 B-2 payload 里的【实际 .rtc/.smu】 —— **不走 ASC 的 runtime_emulation.smu
+        fallback** (Codex P1 #167): 优先编译好的 .smu, 否则 .rtc (运行时容器直接 CALC:FILT:FILE);
+        都没有 = payload 不含可加载参数化模型 → fail-loud。F64 按文件内容判参数化实时衰落 vs 烘焙。
+        运行时几何骨架更新走 set_runtime_environment (CH:MOD:CONT:ENV)。
+
+        现场验证 (V1.0 §9, 待真机标定): .tap schema 字段顺序 / gaussian 谱关键字可用性 /
+        .rtc 直接加载 vs 需 .smu 包装 / 运行时切换抖动 / f_upd_max。
+        """
+        if not self._visa_resource:
+            return False
+        try:
+            logger.info("[F64/B2] Uploading PARAMETRIC_TDL payload: %s model=%s",
+                        waveform_dir, model_name)
+            remote_dir = f"{self.waveform_dir}\\{model_name or 'b2_tdl'}"
+            transferred = await self._ftp_upload_directory(waveform_dir, remote_dir)
+            if not transferred:
+                logger.error("[F64/B2] FTP transfer failed - no files uploaded")
+                return False
+
+            # 选实际 B-2 加载体: 优先 .smu (编译好), 否则 .rtc (运行时容器); 都没有 → fail-loud
+            smu = [f for f in transferred if f.endswith(".smu")]
+            rtc = [f for f in transferred if f.endswith(".rtc")]
+            if smu:
+                load_file = f"{remote_dir}\\{smu[0]}"
+            elif rtc:
+                load_file = f"{remote_dir}\\{rtc[0]}"
+            else:
+                logger.error(
+                    "[F64/B2] PARAMETRIC_TDL payload 不含 .smu/.rtc 可加载体, 拒绝加载: %s",
+                    transferred,
+                )
+                return False
+
+            await self._write("DIAG:SIMU:CLOSE")
+            self._emulation_running = False
+            # 加载前清空遗留错误队列 (SYST:ERR? FIFO), 让下面 fail-loud gate 只评估本次
+            # CALC:FILT:FILE 产生的错误 (同 GCM 路 load_channel, Codex on PR #93)。
+            await self._drain_errors()
+            await self._write(f"CALC:FILT:FILE {load_file}", timeout=VISA_TIMEOUT_FILE_LOAD)
+            await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
+            # 加载后 fail-loud gate (Codex P1 #169): *OPC?=1 ≠ 加载成功 —— F64 对缺失/损坏/
+            # 不支持的 .rtc/.smu 仍答 OPC=1, 但 SYST:ERR? 报 -200 "No simulation opened" /
+            # -300。原 _check_errors (log-only, 不改控制流) 会让 B-2 在无有效仿真下静默标
+            # active 跑测量 (数据不可信)。复刻 GCM 路 _first_error 门: 有错立刻 return False、
+            # 不设 pipeline、不记 _loaded_emulation_file。
+            load_err = await self._first_error()
+            if load_err is not None:
+                self._last_error = f"B-2 PARAMETRIC_TDL load failed: {load_err}"
+                logger.error(
+                    "[F64/B2] 加载失败 — SYST:ERR? after load: %s (file=%s)",
+                    load_err, load_file,
+                )
+                return False
+            self._loaded_emulation_file = load_file
+
+            self._active_pipeline = F64Pipeline.B2_PARAMETRIC_TDL
+            logger.info("[F64/B2] PARAMETRIC_TDL 加载完成: %s; 硬件实时衰落, 运行时走 CH:MOD:CONT:ENV",
+                        load_file)
+            return True
+        except Exception as e:
+            logger.error("[F64/B2] load_parametric_tdl failed: %s", e)
+            self._last_error = str(e)
+            return False
 
     # ===================================================================
     # 1. 连接生命周期 (InstrumentDriver 第一层)
@@ -935,8 +1017,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 2: {"environment": "CDL_A_cluster2", "gain_db": -37.3, "delay_ns": 1740025, "doppler_hz": 0},
             })
         """
-        if not self._visa_resource or self._active_pipeline != F64Pipeline.ASC_RUNTIME:
-            logger.warning("[F64/ASC] set_runtime_environment requires active ASC pipeline")
+        # ASC Runtime 与 B-2 PARAMETRIC_TDL 都用 CH:MOD:CONT:ENV 做运行时几何骨架切换
+        # (Codex P1 #167: B-2 加载后 pipeline=B2_PARAMETRIC_TDL, 不放行会拒掉 B-2 的核心机制)。
+        if not self._visa_resource or self._active_pipeline not in (
+            F64Pipeline.ASC_RUNTIME, F64Pipeline.B2_PARAMETRIC_TDL,
+        ):
+            logger.warning("[F64] set_runtime_environment requires active ASC/B2 runtime pipeline")
             return False
 
         try:
