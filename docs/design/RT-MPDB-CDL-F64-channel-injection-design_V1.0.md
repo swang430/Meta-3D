@@ -399,6 +399,21 @@ def select_path_and_clustering(test_class, scenario, f64_profile):
 
 **conducted（传导）= 独立 roadmap 条目，本轮不实现**。语义与 OTA 根本不同：DUT 天线直连仪器（**不展开 32 探头**，per-(Tx-antenna, Rx-antenna)）+ **线缆校准**（无 `probe_gain_dbi` / 无 PAS 旋转）+ 文件为天线对而非探头对。这是横切**全部**引擎（ASC/GCM/B2/B1）的维度，现有注入栈 0 实现（仅 `TestMode.CONDUCTED` / `TopologyType.CONDUCTED` 在业务模型层声明）。单独设计（拓扑分流 + 线缆校准建模）+ 单独 PR；本轮烘焙器**接口预留**（拓扑参数默认 OTA，conducted 分支后补）。
 
+### 8.2 探头几何对 `.asc` 的两层影响（基带空间合成 + 射频校准）
+
+> 关键设计澄清（2026-06-22 跨 ChannelEgine + MIMO-First 逐行查证）：OTA 探头布局/参数对 CDL→`.asc` 的影响**分两正交层，探头几何两层都消费** —— 常见误解是"探头只在射频侧加权"，实际 **`.asc` 基带波形本身就吃探头几何**。
+
+**第 1 层 — 基带空间合成**（探头几何**烘进** `.asc` 的 I/Q，ChannelEgine 侧）：
+- 探头方位/俯仰（`chamber_config.probe_positions`）→ 对每个 CDL 簇算各向异性高斯权重（探头角 vs 簇 AoA/ZoA）`w_map_ray`（`simulator.py::_calculate_weights_for_cluster`）。
+- 决定性：`W_base = pol_factor · √P · g_elem · (w_map_ray @ g_tx_ray)`（`simulator.py:961`）—— 探头权重进**复数**基带系数（带相位 + 空间结构，**非标量增益**）→ `impulse_response.coeff` → per-(Tx, Probe) `.asc` 的 I/Q（`exporters.py`）。
+- 改探头位置/数量/俯仰 → `W_base` 的相位与空间结构变 → `.asc` 的 I/Q 变（**不只幅度**）。这是 MPAC 复现 CDL 空间特性（PAS / 空间相关）的机制，**只能基带做**（每个 `.asc` 的 CIR 各不同）。
+- 反证：`tests/test_elevation_weights.py` —— 历史 azimuth-only bug 忽略仰角 → 立体布局（上下环）失真，修 3D（az + el）各向异性后"改探头仰角 → 权重 → CIR 变"。探头布局若不进基带，此 bug 不会影响波形 → 它影响了 = 进了。
+
+**第 2 层 — 射频幅相校准**（探头链路参数做后处理预失真，**乘在**已合成波形上）：
+- per-(probe, pol) `cable_loss_db` / `cable_phase_deg` / `probe_gain_dbi` → `1/H_sys = 1/(G_cable · e^{jφ} · G_probe)`（`get_correction_factor`）→ `cal_vector` → `exporters.py` `val *= cal_vector`（per-probe）。MIMO-First 侧由 `channel_engine_client.py::_query_calibration_entries` 按 per-(probe, pol) 查表注入。
+
+**两层职责正交**：基带 = 探头**几何** → 每探头 CIR（**构成** I/Q）；射频 = 探头**链路** → `1/H_sys`（**乘在** I/Q 上）。均 per-probe。**B-2 路**（`.tap`）探头几何不烘进文件，改由 F64 **运行时**按 `W_base` per-channel 静态复权重加权（即本节 §8 的第三层探头 PFS），`.tap` 本身只带 per-tap 谱参数 —— 但同样**不只在射频侧**。
+
 ---
 
 ## 9. 现场验证依赖（按优先级）
