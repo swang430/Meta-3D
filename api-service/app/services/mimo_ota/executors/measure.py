@@ -548,6 +548,8 @@ class MeasureExecutor(IStepExecutor):
             cdl_model_data = {
                 "model_name": config.cdl_model_name,
                 "session_id": str(context.test_execution.id),
+                # P2-15: custom CDL profile id (设了 → ASC strategy 走 input_mode=custom)
+                "cdl_profile_id": getattr(config, "cdl_profile_id", None),
             }
             # P2-14 B-2 (Codex P1 #169): 把聚类输入透传进 cdl_model_data / sim_rules,
             # 否则 B2ParametricTdlStrategy 永远拿不到 rt_rays → 调 CE 前 fail-loud, B-2 路
