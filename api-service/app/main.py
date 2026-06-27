@@ -17,6 +17,7 @@ from app.api import lab_profile, diagnostic_run, diagnostic_sequence
 from app.api import standard_channel
 from app.api import dut_profile
 from app.api import sim_profile
+from app.api import custom_cdl_profile
 from app.api.path_loss_calibration import router as path_loss_router, orchestrator_router, compensation_router, switch_router, e2e_router, phase_router, ce_router, baseline_router
 from app.api.commissioning import router as commissioning_router
 from app.api.system_logs import router as system_logs_router
@@ -212,6 +213,7 @@ app.include_router(lab_profile.router, prefix=settings.api_v1_prefix)
 app.include_router(standard_channel.router, prefix=settings.api_v1_prefix)
 app.include_router(dut_profile.router, prefix=settings.api_v1_prefix, tags=["DUT Profile"])
 app.include_router(sim_profile.router, prefix=settings.api_v1_prefix, tags=["SIM Profile"])
+app.include_router(custom_cdl_profile.router, prefix=settings.api_v1_prefix, tags=["Custom CDL Profile"])
 
 # Diagnostic runs (P3) — workshop-tier audit trail for SCPI / Commissioning
 app.include_router(diagnostic_run.router, prefix=settings.api_v1_prefix)
