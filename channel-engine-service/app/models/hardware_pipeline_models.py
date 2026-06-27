@@ -211,6 +211,9 @@ class CDLCluster(BaseModel):
             "起始相位. None → 随机. Phase 5+ 才会被读."
         ),
     )
+    # P2-15: 每簇子径数 (38.901 默认 20). custom CDL 编辑可调; 必须在【接收 schema】显式声明,
+    # 否则 client 传的 num_rays 被 Pydantic 当 extra key 丢, 真合成静默落默认 (Codex P2 #170).
+    num_rays: int = Field(20, gt=0, description="每簇子径数 (38.901 默认 20)")
 
 
 class CDLModelData(BaseModel):

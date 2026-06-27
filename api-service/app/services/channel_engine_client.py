@@ -150,6 +150,37 @@ class CDLCluster:
     xpr_db: float = 7.0
     # 2026-05-18 P0-7: ChannelEgine Phase 5 per-ray init phases [VV, VH, HV, HH], None=随机
     initial_phases_rad: Optional[List[float]] = None
+    # P2-15: 每簇子径数 (38.901 默认 20); custom CDL 编辑可调, 经 payload 透传 ChannelEgine
+    num_rays: int = 20
+
+
+def cdl_clusters_from_profile_dicts(cluster_dicts: List[dict]) -> List["CDLCluster"]:
+    """CustomCDLProfile.clusters (JSONB dict list) → List[CDLCluster] (S2, P2-15)。
+
+    字段映射: power_linear → power_relative_linear (client DTO 历史命名;
+    feedback_normalize_identifier_compare 的装配侧); xpr_db None → 38.901 默认 7.0
+    (CDLCluster 不接受 None); 其余直传 (含 num_rays)。供 executor 把 custom profile
+    喂 synthesize_hardware_pipeline(input_mode="custom")。
+    """
+    out: List["CDLCluster"] = []
+    for c in cluster_dicts:
+        xpr = c.get("xpr_db")
+        out.append(CDLCluster(
+            delay_s=c["delay_s"],
+            power_relative_linear=c["power_linear"],
+            aoa_deg=c["aoa_deg"],
+            aod_deg=c["aod_deg"],
+            zoa_deg=c.get("zoa_deg", 90.0),
+            zod_deg=c.get("zod_deg", 90.0),
+            as_aoa_deg=c.get("as_aoa_deg", 0.0),
+            as_aod_deg=c.get("as_aod_deg", 0.0),
+            as_zoa_deg=c.get("as_zoa_deg", 0.0),
+            as_zod_deg=c.get("as_zod_deg", 0.0),
+            xpr_db=xpr if xpr is not None else 7.0,
+            initial_phases_rad=c.get("initial_phases_rad"),
+            num_rays=c.get("num_rays", 20),
+        ))
+    return out
 
 
 @dataclass
@@ -660,6 +691,7 @@ class ChannelEngineClient:
                             "as_zod_deg": c.as_zod_deg,
                             "xpr_db": c.xpr_db,
                             "initial_phases_rad": c.initial_phases_rad,
+                            "num_rays": c.num_rays,
                         }
                         for c in clusters
                     ]

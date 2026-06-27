@@ -290,6 +290,9 @@ def _build_custom_cdl_profile(request: HardwarePipelineRequest):
             # ChannelEgine 的 initial_phases_rad 接受 None (内部随机); 显式传 None
             # 而不是 omit, 这样 schema validator 仍走 Optional 分支.
             "initial_phases_rad": c.initial_phases_rad,
+            # P2-15: 转发每簇子径数到 ChannelEgine CDLClusterSpec.num_rays (Codex P2 #170:
+            # 接收 model 声明 + adapter 转发缺一不可, 否则 num_rays 静默丢, 合成落默认).
+            "num_rays": c.num_rays,
         })
 
     return CustomCDLProfile.from_dict({
