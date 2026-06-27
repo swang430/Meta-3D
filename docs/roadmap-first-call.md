@@ -20,7 +20,11 @@ P2-13 SIMProfile 三阶段 (#140/#141/#142)、DUTProfile 四阶段 (#134-#137)�
 设计见 [`design/RT-MPDB-CDL-F64-channel-injection-design_V1.0.md`](design/RT-MPDB-CDL-F64-channel-injection-design_V1.0.md)。
 
 **本地实现完成后，又无活跃本地 in-progress 项** (回到 2026-06-07 的"本地队列空"状态)。真 P0 (P0-3/4/5)
-仍现场 blocked。P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max / RT→MPC 接入)
+仍现场 blocked。
+
+**▶ 2026-06-27 启动 P2-15（自定义 CDL 簇编辑）** —— P0 全现场 blocked + 本地队列空期间挪的本地软件功能项（同 P2-14 当初逻辑：P0 blocked 期间做本地项不违反 WIP=1）。补齐 GUI 编辑 CDL 簇参数的 gap（引擎侧 `input_mode=custom` 已通，缺 GUI 表单 + 后端 CRUD）；做在 `feat/b2-channel-injection`。详见下方 P2-15 区。
+
+P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max / RT→MPC 接入)
 已进 on-site 队列。**原开发的现场验证基线已打 tag** `onsite-verification-baseline-2026-06-21`（留在 main）。
 **下次现场** (校准天线 / SGH / 真 DUT 到位) Current Focus **必须从该 tag 切回依赖链 P0-4 → P0-3 → P0-5**
 （见下方「🚧 Blocked on hardware」段 + [`guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md)），
@@ -1618,6 +1622,22 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 5. **conducted（传导）注入 = 独立条目（横切全栈，本轮 OTA-only）**：2026-06-21 用户确认本轮 B-1/B-2 只做 OTA。现有注入栈 5 策略（ASC/EXTERNAL_ASC/GCM/B2/base）+ ChannelEgine 导出层**全 OTA**（探头展开 + OTA 校准 + PAS 旋转）；conducted 仅在业务模型层（`TestMode.CONDUCTED` / `TopologyType.CONDUCTED`）声明、**注入层 0 实现**。语义与 OTA 根本不同（DUT 天线直连、线缆校准无 `probe_gain`、无探头展开/PAS、文件为天线对而非探头对），需独立设计（拓扑分流 + 线缆校准建模）+ 每引擎（ASC/GCM/B2/B1）加分支。边界 + OTA 校准注入契约见设计 V1.0 §8.1；本轮烘焙器拓扑参数默认 OTA、接口预留。
 
 > 本轮（P2-14 本地实现）做的是**新架构的算法层 + schema + 路由/驱动骨架**（B-1 侧建了 schema F2 + 确定性聚类 F5；B-2 侧建了 F1/F3/F4 + F6/F7）。**未做** = 把新标注结构接到实际文件生成（B-1 烘 .asc / B-2 出 .tap）+ 自动判决 + 金标准 + GUI。这些挂在现场验证之后。
+
+---
+
+### P2-15 — 自定义 CDL 簇编辑（GUI 表单 + 后端 CRUD → 接 input_mode=custom）🔄 in-progress (2026-06-27)
+
+**What**: 操作员在 GUI 编辑自定义 CDL 的**簇级参数**（每簇 `delay_s` / `aoa_deg` / `aod_deg` / `zoa_deg` / `zod_deg` / `power_linear` / `as_*` / `xpr_db` / `initial_phases_rad`），持久化为可复用实体，测试时选它 → 后端 `input_mode="custom"` → ChannelEgine 合成反映自定义簇。补齐"软件定义信道"在 GUI 的最后一截。
+
+**现状 gap**（2026-06-27 两 agent 逐行查证）: GUI 对 CDL 只能 (a) 选硬编码标称名（`MIMOOTAConfigForm.tsx:104`，对应 38.901 内置表）、(b) 维护 `.smu/.asc` 文件清单（`ChannelModelsCard`）、(c) SCD 标准名→文件映射（`StandardChannelDefinitionCard`）。**簇级参数编辑零支持**（无 GUI 表单、无后端 CRUD）。但引擎侧已通大半: ChannelEgine `CustomCDLProfile` 全簇参数（`cdl_schema.py:82-153`）+ 后端 `channel_engine_client.py:584` 已支持 `input_mode="custom"` + `clusters` 透传 + `/synthesize_hardware_pipeline` 已收 custom。**缺** = MIMO-First 的 GUI 簇编辑表单 + 后端实体/CRUD（采集/校验/持久化）。同族 P2-11（TestCase 驱动）/ P2-12（SCD）/ P2-13（SIMProfile）/ DUTProfile——实体声明 + 单一真值源 + 一致性校验。
+
+**切片**: **S1** 后端 `CustomCDLProfile` 实体（PG: UUID + JSONB clusters）+ 迁移（add-table，方言无关 + column_exists 守门）+ CRUD（`/custom-cdl-profiles`）+ 契约 4 步 + 簇参数 Pydantic 校验（角度范围 / power>0 / delay≥0 / 非空簇）→ **S2** `channel_engine_client` profile→`clusters` 接 `input_mode="custom"`（已有路径，补装配 + 测试 `.asc` 反映自定义簇）→ **S3** GUI「自定义 CDL」卡片（建/编辑/删 + 簇编辑器，支持从标称 CDL「另存为」起步）→ **S4** 接 `MIMOOTAConfigForm`（`cdl_profile_id` 选 custom + 一致性校验）→ **S5** 浏览器实测闭环（claude-in-chrome 建→改簇→测试选→确认渲染+数据+回路）。
+
+**Acceptance**: ① GUI 建 custom CDL（改某簇 AoA/delay/power）→ 持久化 + 列表可见可再编辑；② 测试步骤选该 profile → 后端 `input_mode="custom"` → ChannelEgine 合成的 `.asc` 反映自定义簇（vs 标称 CDL 不同）；③ 簇边缘值（空簇列表 / 非法角度 / power≤0）fail-loud 422；④ 浏览器实测闭环通过。
+
+**分支**: 在 `feat/b2-channel-injection`（信道领域分支）做——custom CDL 是信道功能；做完独立 PR + Codex + merge 回 main。
+
+**关联**: 跟 P2-14（信道注入 B-2）衔接——custom CDL 簇是"自定义信道"入口，B-2 的 RT 子径（`MPCInput`）是更细一层。memory [[project_scd_frontend_consumption_gap]] / [[project_testcase_driven_instrument_arch]]。
 
 ---
 
