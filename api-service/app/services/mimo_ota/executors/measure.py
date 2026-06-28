@@ -548,6 +548,8 @@ class MeasureExecutor(IStepExecutor):
             cdl_model_data = {
                 "model_name": config.cdl_model_name,
                 "session_id": str(context.test_execution.id),
+                # P2-15: custom CDL profile id (设了 → ASC strategy 走 input_mode=custom)
+                "cdl_profile_id": getattr(config, "cdl_profile_id", None),
             }
             # P2-14 B-2 (Codex P1 #169): 把聚类输入透传进 cdl_model_data / sim_rules,
             # 否则 B2ParametricTdlStrategy 永远拿不到 rt_rays → 调 CE 前 fail-loud, B-2 路
@@ -560,6 +562,18 @@ class MeasureExecutor(IStepExecutor):
                 cdl_model_data["f64_profile"] = _b2["f64_profile"]
                 if _b2["ue_velocity_mps"] is not None:
                     sim_rules["ue_velocity_mps"] = _b2["ue_velocity_mps"]
+
+            # P2-15 (Codex P2 #171): cdl_profile_id (自定义 CDL) 只 ASC_SYNTHESIS 实现 custom
+            # 分支; GCM/external strategy 忽略它 → 静默跑标准信道。capability↔gate 一致, fail-fast。
+            if getattr(config, "cdl_profile_id", None) and engine_mode != EngineMode.ASC_SYNTHESIS:
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    error_message=(
+                        f"自定义 CDL (cdl_profile_id) 仅 engine_mode=mimo_first_asc 支持; 当前 "
+                        f"engine_mode={config.engine_mode} 的 strategy 会忽略它静默跑标准信道。"
+                        f"改用 MIMO-First ASC 引擎, 或清空自定义 CDL 选择。"
+                    ),
+                )
             gen_ok = await generator.generate_and_load(sim_rules, cdl_model_data)
             if not gen_ok:
                 return StepExecutionResult(

@@ -161,6 +161,9 @@ class MIMOOTAConfiguration(BaseModel):
 
     # === 3GPP TR 38.901 channel ===
     cdl_model_name: str = "UMa CDL-C NLOS"
+    # P2-15: 引用自定义 CDL 档案 (簇级参数)。设了 → ASC strategy 查 profile 装配簇走
+    # input_mode=custom (优先于标称 cdl_model_name); 留空=标称 38.901 CDL。
+    cdl_profile_id: Optional[str] = None
     frequency_hz: float = 3.5e9
     bandwidth_mhz: float = 100.0
 

@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { Tabs } from '@mantine/core'
-import { IconDeviceMobile, IconDeviceSim } from '@tabler/icons-react'
+import { IconDeviceMobile, IconDeviceSim, IconWaveSine } from '@tabler/icons-react'
 import { DUTProfileManager } from '../DUTProfile/DUTProfileManager'
 import { SIMProfileManager } from '../SIMProfile/SIMProfileManager'
+import { CustomCDLProfileManager } from '../CustomCDLProfile/CustomCDLProfileManager'
 
 /**
  * 被测对象声明面板：把 DUT 能力声明与 SIM 卡池统一进一个界面的两个 Tab。
@@ -22,12 +23,18 @@ export function AssetProfilesPanel() {
         <Tabs.Tab value="sim" leftSection={<IconDeviceSim size={16} />}>
           SIM 卡池
         </Tabs.Tab>
+        <Tabs.Tab value="cdl" leftSection={<IconWaveSine size={16} />}>
+          自定义 CDL
+        </Tabs.Tab>
       </Tabs.List>
       <Tabs.Panel value="dut" pt="md">
         <DUTProfileManager />
       </Tabs.Panel>
       <Tabs.Panel value="sim" pt="md">
         <SIMProfileManager />
+      </Tabs.Panel>
+      <Tabs.Panel value="cdl" pt="md">
+        <CustomCDLProfileManager />
       </Tabs.Panel>
     </Tabs>
   )

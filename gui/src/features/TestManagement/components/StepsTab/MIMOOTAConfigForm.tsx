@@ -32,6 +32,7 @@ import { useQuery } from '@tanstack/react-query'
 import { fetchChannelModels } from '../../../../api/service'
 import { fetchDUTProfiles } from '../../../../api/dutProfileService'
 import { fetchSIMProfiles } from '../../../../api/simProfileService'
+import { fetchCustomCDLProfiles } from '../../../../api/customCdlProfileService'
 
 // --- Local typings: mirror the backend MIMOOTAConfiguration shape ---
 
@@ -47,6 +48,9 @@ interface PassCriteria {
 
 export interface MIMOOTAConfiguration {
   cdl_model_name?: string
+  // P2-15: 引用一个自定义 CDL 档案 (簇级参数, 在「自定义 CDL」页建)。选了它 → 后端
+  // input_mode=custom 用 profile 簇合成 (优先于标称 cdl_model_name)。留空=用标称 CDL。
+  cdl_profile_id?: string
   // GCM (keysight_gcm) 模式下 F64 加载的 .smu 完整路径 (= available_channel_models
   // entry 的 filename = SCD associated_file_path)。ASC 模式无关 (.asc 按 frequency 生成)。
   emulation_file?: string
@@ -203,6 +207,17 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
       ? [...simOptions, { value: value.sim_profile_id, label: `${value.sim_profile_id} (清单外)` }]
       : simOptions
   const simStrict = value.precheck_strict_sim_identity !== false
+  // P2-15: 列自定义 CDL 档案供选 (选了 → 后端 input_mode=custom 用 profile 簇覆盖标称 CDL)。
+  const cdlProfilesQuery = useQuery({
+    queryKey: ['custom-cdl-profiles'],
+    queryFn: () => fetchCustomCDLProfiles(false),
+  })
+  const cdlProfiles = cdlProfilesQuery.data ?? []
+  const cdlOptions = cdlProfiles.map((c) => ({ value: c.id, label: c.name }))
+  const cdlSelectOptions =
+    value.cdl_profile_id && !cdlOptions.some((o) => o.value === value.cdl_profile_id)
+      ? [...cdlOptions, { value: value.cdl_profile_id, label: `${value.cdl_profile_id} (清单外)` }]
+      : cdlOptions
   // 实时一致性预览 — 跟后端 precheck section 2.3 / check_dut_capability 同口径, 表单里就给反馈,
   // 不用等真跑。声明项缺失 (null) 跳过该项。调制阶数用 MODULATION_OPTIONS 顺序 (= 后端 _MODULATIONS)。
   const dutPreviewViolations: string[] = []
@@ -247,6 +262,23 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
               disabled={readOnly}
               allowDeselect={false}
               searchable
+            />
+            <Select
+              label="自定义 CDL (可选)"
+              description={
+                isAscEngine
+                  ? '选「自定义 CDL」页建的簇档案 → input_mode=custom; 留空=用上面标称 CDL'
+                  : '仅 MIMO-First ASC 引擎支持; GCM 引擎用标称 CDL / .smu (Codex P2 #171)'
+              }
+              data={cdlSelectOptions}
+              value={value.cdl_profile_id ?? null}
+              onChange={(v) => update('cdl_profile_id', v ?? undefined)}
+              disabled={readOnly || !isAscEngine}
+              clearable
+              searchable
+              placeholder={
+                cdlSelectOptions.length === 0 ? '无自定义 CDL — 去「自定义 CDL」页建' : '(用标称 CDL)'
+              }
             />
             <Select
               label="子载波间隔"
@@ -797,7 +829,16 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
                 label="引擎模式"
                 data={ENGINE_OPTIONS}
                 value={value.engine_mode ?? null}
-                onChange={(v) => update('engine_mode', v ?? undefined)}
+                onChange={(v) => {
+                  const next = v ?? undefined
+                  // P2-15 (Codex P2 #171): 切离 ASC 引擎时清空 cdl_profile_id —— custom CDL 只
+                  // ASC 支持, 否则 disabled 的下拉留 stale 值 + 后端 gate 拒绝 → plan 卡死无法清。
+                  if (next !== 'mimo_first_asc' && value.cdl_profile_id) {
+                    onChange({ ...value, engine_mode: next, cdl_profile_id: undefined })
+                  } else {
+                    update('engine_mode', next)
+                  }
+                }}
                 disabled={readOnly}
                 allowDeselect={false}
               />
