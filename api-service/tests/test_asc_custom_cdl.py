@@ -48,6 +48,7 @@ def test_custom_cdl_branch_input_mode_custom():
     assert ok is True
     call = strat.ce_client.synthesize_hardware_pipeline.call_args.kwargs
     assert call["input_mode"] == "custom"
+    assert call["frequency_hz"] == 3.5e9       # 频率用 TestCase (profile==TestCase, 一致)
     assert call["cdl_model_name"] == "UMa-改"
     assert len(call["clusters"]) == 1
     assert call["clusters"][0].power_relative_linear == 0.5   # power_linear → power_relative_linear
@@ -65,3 +66,18 @@ def test_standard_branch_when_no_profile_id():
     call = strat.ce_client.synthesize_hardware_pipeline.call_args.kwargs
     assert call["input_mode"] == "standard"
     assert call.get("clusters") is None
+
+
+def test_custom_cdl_frequency_mismatch_fails_loud():
+    """profile.center_frequency_hz ≠ TestCase frequency_hz → fail-loud, 不合成 (Codex P1 #171:
+    防波形在 profile 频率合成+校准、系统按 TestCase 频率跑 → 测量污染)。"""
+    strat = _strategy()
+    p = _profile()
+    p.center_frequency_hz = 2.6e9          # ≠ TestCase 3.5e9
+    with patch("app.services.custom_cdl_profile_service.get_custom_cdl_profile",
+               return_value=p), patch("os.path.exists", return_value=True):
+        ok = asyncio.run(strat.generate_and_load(
+            {"frequency_hz": 3.5e9},
+            {"cdl_profile_id": "11111111-1111-1111-1111-111111111111"}))
+    assert ok is False
+    strat.ce_client.synthesize_hardware_pipeline.assert_not_called()  # raise 在 synthesize 前

@@ -157,7 +157,8 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
     async def _synthesize_custom_cdl(self, cdl_profile_id, simulation_rules, session_id):
         """P2-15: 查 CustomCDLProfile + 装配簇 → synthesize(input_mode=custom)。
 
-        profile 顶层物理 (频率/路损/LOS/K因子/速度) 优先, 缺省落 simulation_rules / 默认。
+        路损/LOS/K因子/速度 profile 优先, 缺省落 simulation_rules / 默认。**频率**用 TestCase
+        单一真值源 (profile 频率仅一致性校验, ≠ TestCase 频率 → fail-loud, Codex P1 #171)。
         簇 power_linear→power_relative_linear + num_rays 等由 cdl_clusters_from_profile_dicts
         装配 (S2)。db 从 ce_client.db 拿 (ChannelEngineClient 持有 Session)。
         """
@@ -167,16 +168,28 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
 
         profile = get_custom_cdl_profile(self.ce_client.db, UUID(str(cdl_profile_id)))
         clusters = cdl_clusters_from_profile_dicts(profile.clusters or [])
+
+        # 频率一致性门 (Codex P1 #171; project_testcase_driven_instrument_arch 单一真值源):
+        # TestCase frequency_hz 驱动 UXM 定频 / 校准 / 整个 measure path。若 custom CDL
+        # profile.center_frequency_hz 设了且 ≠ TestCase 频率, 波形会在 profile 频率合成+校准,
+        # 但系统其余按 TestCase 频率跑 → 测量污染。fail-loud mismatch (不静默用错频率);
+        # 合成一律用 TestCase 频率, profile 频率仅作一致性校验、不覆盖整条 measure path。
+        tc_freq = simulation_rules.get("frequency_hz", 3.5e9)
+        if (profile.center_frequency_hz is not None
+                and abs(profile.center_frequency_hz - tc_freq) > 1.0):
+            raise ValueError(
+                f"custom CDL '{profile.name}' center_frequency_hz="
+                f"{profile.center_frequency_hz:.0f} ≠ TestCase frequency_hz={tc_freq:.0f} — 波形会"
+                f"在 profile 频率合成+校准但系统按 TestCase 频率跑, 测量污染; 对齐两边频率, 或清空"
+                f" profile 频率用 TestCase。"
+            )
         logger.info(
-            "[ExternalWaveform Strategy] custom CDL '%s' (%d 簇) → input_mode=custom",
-            profile.name, len(clusters),
+            "[ExternalWaveform Strategy] custom CDL '%s' (%d 簇) → input_mode=custom @ %.0f Hz",
+            profile.name, len(clusters), tc_freq,
         )
         return await self.ce_client.synthesize_hardware_pipeline(
             chamber_id=self.chamber_config.id,
-            frequency_hz=(
-                profile.center_frequency_hz
-                or simulation_rules.get("frequency_hz", 3.5e9)
-            ),
+            frequency_hz=tc_freq,
             clusters=clusters,
             cdl_model_name=profile.name,
             pathloss_db=(
