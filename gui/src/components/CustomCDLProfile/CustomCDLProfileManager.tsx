@@ -11,7 +11,7 @@
 import { useMemo, useState } from 'react'
 import {
   ActionIcon, Badge, Button, Group, LoadingOverlay, Modal, NumberInput, Paper,
-  SimpleGrid, Stack, Switch, Table, Text, Textarea, TextInput, Title, Tooltip,
+  Select, SimpleGrid, Stack, Table, Text, Textarea, TextInput, Title, Tooltip,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { modals } from '@mantine/modals'
@@ -36,15 +36,18 @@ interface DraftState {
   description: string
   center_frequency_ghz: number | ''
   pathloss_db: number | ''
-  is_los: boolean
+  is_los: boolean | null           // null = 未声明 (保留原始 nullable, Codex P2 #171)
   k_factor_db: number | ''
   velocity_x_mps: number | ''
+  velocity_y_mps: number | ''      // 保全 3 分量, 不丢 y/z (Codex P2 #171)
+  velocity_z_mps: number | ''
   clusters: CDLClusterInput[]
 }
 
 const EMPTY_DRAFT: DraftState = {
   name: '', description: '', center_frequency_ghz: '', pathloss_db: '',
-  is_los: false, k_factor_db: '', velocity_x_mps: '', clusters: [],
+  is_los: null, k_factor_db: '', velocity_x_mps: '', velocity_y_mps: '',
+  velocity_z_mps: '', clusters: [],
 }
 
 function profileToDraft(p: CustomCDLProfile): DraftState {
@@ -53,9 +56,11 @@ function profileToDraft(p: CustomCDLProfile): DraftState {
     description: p.description ?? '',
     center_frequency_ghz: p.center_frequency_hz != null ? p.center_frequency_hz / 1e9 : '',
     pathloss_db: p.pathloss_db ?? '',
-    is_los: p.is_los ?? false,
+    is_los: p.is_los ?? null,                    // 保留 null (不 coerce false, Codex P2 #171)
     k_factor_db: p.k_factor_db ?? '',
     velocity_x_mps: p.ue_velocity_mps?.[0] ?? '',
+    velocity_y_mps: p.ue_velocity_mps?.[1] ?? '',
+    velocity_z_mps: p.ue_velocity_mps?.[2] ?? '',
     clusters: p.clusters ?? [],
   }
 }
@@ -70,7 +75,11 @@ function draftToPayload(d: DraftState): CustomCDLProfileCreatePayload {
     pathloss_db: num(d.pathloss_db),
     is_los: d.is_los,
     k_factor_db: num(d.k_factor_db),
-    ue_velocity_mps: d.velocity_x_mps === '' ? null : [d.velocity_x_mps, 0, 0],
+    // 保全 3 分量 (Codex P2 #171): 任一分量设了就发全 3 (空当 0); 全空 → null
+    ue_velocity_mps:
+      d.velocity_x_mps === '' && d.velocity_y_mps === '' && d.velocity_z_mps === ''
+        ? null
+        : [num(d.velocity_x_mps) ?? 0, num(d.velocity_y_mps) ?? 0, num(d.velocity_z_mps) ?? 0],
     clusters: d.clusters,
   }
 }
@@ -302,20 +311,28 @@ export function CustomCDLProfileManager() {
               onChange={(v) => setDraft({ ...draft, k_factor_db: typeof v === 'number' ? v : '' })}
             />
           </SimpleGrid>
-          <Group>
-            <Switch
-              label="LOS (视距)"
-              checked={draft.is_los}
-              onChange={(e) => setDraft({ ...draft, is_los: e.currentTarget.checked })}
+          <SimpleGrid cols={{ base: 1, sm: 2 }}>
+            <Select
+              label="视距 (LOS)"
+              description="留空=不声明 (保留 null)"
+              data={[{ value: 'true', label: 'LOS' }, { value: 'false', label: 'NLOS' }]}
+              value={draft.is_los === null ? null : String(draft.is_los)}
+              onChange={(v) => setDraft({ ...draft, is_los: v === null ? null : v === 'true' })}
+              clearable
+              placeholder="(未设)"
             />
-            <NumberInput
-              label="UE 速度 (m/s, 沿 x)"
-              w={180}
-              value={draft.velocity_x_mps}
-              onChange={(v) =>
-                setDraft({ ...draft, velocity_x_mps: typeof v === 'number' ? v : '' })}
-            />
-          </Group>
+            <Group gap="xs" grow>
+              <NumberInput label="UE 速度 vx (m/s)" value={draft.velocity_x_mps}
+                onChange={(v) =>
+                  setDraft({ ...draft, velocity_x_mps: typeof v === 'number' ? v : '' })} />
+              <NumberInput label="vy" value={draft.velocity_y_mps}
+                onChange={(v) =>
+                  setDraft({ ...draft, velocity_y_mps: typeof v === 'number' ? v : '' })} />
+              <NumberInput label="vz" value={draft.velocity_z_mps}
+                onChange={(v) =>
+                  setDraft({ ...draft, velocity_z_mps: typeof v === 'number' ? v : '' })} />
+            </Group>
+          </SimpleGrid>
 
           {/* 簇编辑器 */}
           <Group justify="space-between" mt="sm">
