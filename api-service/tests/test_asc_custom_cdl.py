@@ -81,3 +81,33 @@ def test_custom_cdl_frequency_mismatch_fails_loud():
             {"cdl_profile_id": "11111111-1111-1111-1111-111111111111"}))
     assert ok is False
     strat.ce_client.synthesize_hardware_pipeline.assert_not_called()  # raise 在 synthesize 前
+
+
+def test_is_los_null_with_kfactor_fails_loud():
+    """is_los 未声明 (null) + k_factor 设了 → 矛盾 fail-loud (Codex P2 #171: K-factor 仅 LOS 有意义)。"""
+    strat = _strategy()
+    p = _profile()
+    p.is_los = None
+    p.k_factor_db = 10.0
+    with patch("app.services.custom_cdl_profile_service.get_custom_cdl_profile",
+               return_value=p), patch("os.path.exists", return_value=True):
+        ok = asyncio.run(strat.generate_and_load(
+            {"frequency_hz": 3.5e9},
+            {"cdl_profile_id": "11111111-1111-1111-1111-111111111111"}))
+    assert ok is False
+    strat.ce_client.synthesize_hardware_pipeline.assert_not_called()
+
+
+def test_is_los_null_no_kfactor_defaults_nlos():
+    """is_los null + 无 k_factor → 默认 NLOS (is_los=False), 合成正常 (Codex P2 #171)。"""
+    strat = _strategy()
+    p = _profile()
+    p.is_los = None
+    p.k_factor_db = None
+    with patch("app.services.custom_cdl_profile_service.get_custom_cdl_profile",
+               return_value=p), patch("os.path.exists", return_value=True):
+        ok = asyncio.run(strat.generate_and_load(
+            {"frequency_hz": 3.5e9},
+            {"cdl_profile_id": "11111111-1111-1111-1111-111111111111"}))
+    assert ok is True
+    assert strat.ce_client.synthesize_hardware_pipeline.call_args.kwargs["is_los"] is False

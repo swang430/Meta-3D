@@ -183,6 +183,14 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
                 f"在 profile 频率合成+校准但系统按 TestCase 频率跑, 测量污染; 对齐两边频率, 或清空"
                 f" profile 频率用 TestCase。"
             )
+        # is_los gate (Codex P2 #171): profile.is_los null + k_factor_db 设了 → 矛盾 fail-loud
+        # (K-factor/Ricean 仅 LOS 有意义, 但 LOS 未声明); null + 无 k_factor → 默认 NLOS 合理。
+        if profile.is_los is None and profile.k_factor_db is not None:
+            raise ValueError(
+                f"custom CDL '{profile.name}' 设了 k_factor_db={profile.k_factor_db} 但 is_los 未"
+                f"声明 — K-factor (Ricean) 仅 LOS 有意义; 显式设 is_los=true 或清空 k_factor_db。"
+            )
+        is_los_resolved = bool(profile.is_los) if profile.is_los is not None else False
         logger.info(
             "[ExternalWaveform Strategy] custom CDL '%s' (%d 簇) → input_mode=custom @ %.0f Hz",
             profile.name, len(clusters), tc_freq,
@@ -196,7 +204,7 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
                 profile.pathloss_db if profile.pathloss_db is not None
                 else simulation_rules.get("pathloss_db", 100.0)
             ),
-            is_los=bool(profile.is_los) if profile.is_los is not None else False,
+            is_los=is_los_resolved,
             target_tx_power_dbm=simulation_rules.get("target_tx_power_dbm", 0.0),
             target_rsrp_dbm=simulation_rules.get("target_rsrp_dbm", -85.0),
             target_snr_db=simulation_rules.get("target_snr_db", 20.0),

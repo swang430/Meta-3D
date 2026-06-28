@@ -265,11 +265,15 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
             />
             <Select
               label="自定义 CDL (可选)"
-              description="选「自定义 CDL」页建的簇档案 → input_mode=custom; 留空=用上面标称 CDL"
+              description={
+                isAscEngine
+                  ? '选「自定义 CDL」页建的簇档案 → input_mode=custom; 留空=用上面标称 CDL'
+                  : '仅 MIMO-First ASC 引擎支持; GCM 引擎用标称 CDL / .smu (Codex P2 #171)'
+              }
               data={cdlSelectOptions}
               value={value.cdl_profile_id ?? null}
               onChange={(v) => update('cdl_profile_id', v ?? undefined)}
-              disabled={readOnly}
+              disabled={readOnly || !isAscEngine}
               clearable
               searchable
               placeholder={
