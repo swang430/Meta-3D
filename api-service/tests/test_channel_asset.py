@@ -236,6 +236,14 @@ class TestUpdateDeleteList:
         with pytest.raises(ChannelAssetError, match="source_type 不可变更"):
             update_channel_asset(db, a.id, source_type="rt_dynamic")
 
+    def test_update_name_explicit_null_rejected(self, db):
+        # 显式 PUT name=null → 400 不是 NOT NULL 500 (Codex #173 第四轮 P2;
+        # exclude_unset 不排除显式 null, feedback_endpoint_null_field_cartesian)
+        a = create_channel_asset(db, name="u-null", source_type="standard_3gpp",
+                                 payload=_STD_PAYLOAD)
+        with pytest.raises(ChannelAssetError, match="不能为空或 null"):
+            update_channel_asset(db, a.id, name=None)
+
     def test_update_payload_revalidated(self, db):
         a = create_channel_asset(db, name="u3", source_type="rt_dynamic", payload=_RT_PAYLOAD)
         with pytest.raises(ChannelAssetError, match="rays 须非空"):
@@ -326,10 +334,35 @@ class TestBadNumericType:
                                       "aod_deg": 1, "num_rays": 20.0}]}]})
         assert a.id is not None
 
+    def test_payload_nan_rejected(self, db):
+        # NaN 是合法 float 但非有限 → 拒 (Codex #173 第四轮 P2; JSON 允许 NaN literal)
+        bad = {"snapshots": [{"clusters": [
+            {"delay_s": 0.0, "power_linear": float("nan"), "aoa_deg": 1, "aod_deg": 1}]}]}
+        with pytest.raises(ChannelAssetError, match="有限数值"):
+            create_channel_asset(db, name="x", source_type="custom_static", payload=bad)
+
+    def test_payload_infinity_rejected(self, db):
+        bad = {"snapshots": [{"rays": [
+            {"delay_s": float("inf"), "power_linear": 1.0, "aoa_deg": 1, "aod_deg": 1}]}]}
+        with pytest.raises(ChannelAssetError, match="有限数值"):
+            create_channel_asset(db, name="x", source_type="rt_dynamic", payload=bad)
+
     def test_top_physical_bad_type(self, db):
         with pytest.raises(ChannelAssetError, match="center_frequency_hz 须是数值"):
             create_channel_asset(db, name="x", source_type="standard_3gpp",
                                  payload=_STD_PAYLOAD, center_frequency_hz="bad")
+
+    def test_k_factor_db_bad_type(self, db):
+        # 主动 audit 补齐: k_factor_db 也须类型校验 (之前 _validate_top_physical 漏)
+        with pytest.raises(ChannelAssetError, match="k_factor_db 须是数值"):
+            create_channel_asset(db, name="x", source_type="standard_3gpp",
+                                 payload=_STD_PAYLOAD, k_factor_db="bad")
+
+    def test_k_factor_db_negative_ok(self, db):
+        # k_factor_db 是 dB, 可负 (无 >0 约束)
+        a = create_channel_asset(db, name="kf", source_type="standard_3gpp",
+                                 payload=_STD_PAYLOAD, k_factor_db=-3.0)
+        assert a.k_factor_db == -3.0
 
     def test_velocity_bad_element_type(self, db):
         with pytest.raises(ChannelAssetError, match=r"ue_velocity_mps\[1\] 须是数值"):

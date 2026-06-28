@@ -9,6 +9,7 @@ S2 填充, S1 接受 operator 可选传入 + 唯一校验)。平行 CustomCDLPro
 """
 from __future__ import annotations
 
+import math
 from typing import Any, List, Optional
 from uuid import UUID
 
@@ -70,6 +71,8 @@ def _num_or_error(label: str, v: Any) -> Any:
         return None
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         raise ChannelAssetError(f"{label} 须是数值 (得 {type(v).__name__}: {v!r})")
+    if not math.isfinite(v):  # JSON 允许 NaN/Infinity literal, 但非有限值进 JSONB/合成是坏数据
+        raise ChannelAssetError(f"{label} 须有限数值 (NaN/Infinity 非法; 得 {v!r})")
     return v
 
 
@@ -178,6 +181,7 @@ def _validate_top_physical(fields: dict) -> None:
         v = _num_or_error(f, fields.get(f))
         if v is not None and v <= 0:
             raise ChannelAssetError(f"{f} 必须 > 0 (得 {v})")
+    _num_or_error("k_factor_db", fields.get("k_factor_db"))  # 类型+有限 (dB 可负, 无 >0 约束)
     vel = fields.get("ue_velocity_mps")
     if vel is not None:
         if not isinstance(vel, list) or len(vel) != 3:
@@ -261,10 +265,10 @@ def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
     new_src = fields.get("source_type")
     if new_src is not None and new_src != asset.source_type:
         raise ChannelAssetError("source_type 不可变更 (判别键; 改来源请建新资产)")
-    new_name = fields.get("name")
-    if new_name is not None:
-        if not new_name.strip():
-            raise ChannelAssetError("name 不能为空")
+    if "name" in fields:  # 显式传 (含 null); exclude_unset 不排除显式 null → 须区分"未传"
+        new_name = fields["name"]
+        if new_name is None or not str(new_name).strip():
+            raise ChannelAssetError("name 不能为空或 null")
         if new_name != asset.name and db.query(ChannelAsset).filter(
                 ChannelAsset.name == new_name).first() is not None:
             raise ChannelAssetError(f"ChannelAsset 名 {new_name!r} 已存在")
