@@ -22,7 +22,9 @@ P2-13 SIMProfile 三阶段 (#140/#141/#142)、DUTProfile 四阶段 (#134-#137)�
 **本地实现完成后，又无活跃本地 in-progress 项** (回到 2026-06-07 的"本地队列空"状态)。真 P0 (P0-3/4/5)
 仍现场 blocked。
 
-**▶ 2026-06-27 启动 P2-15（自定义 CDL 簇编辑）** —— P0 全现场 blocked + 本地队列空期间挪的本地软件功能项（同 P2-14 当初逻辑：P0 blocked 期间做本地项不违反 WIP=1）。补齐 GUI 编辑 CDL 簇参数的 gap（引擎侧 `input_mode=custom` 已通，缺 GUI 表单 + 后端 CRUD）；做在 `feat/b2-channel-injection`。详见下方 P2-15 区。
+**▶ 2026-06-27 P2-15（自定义 CDL 簇编辑）✅ 完成 (2026-06-28)** —— P0 全现场 blocked + 本地队列空期间挪的本地软件功能项（同 P2-14 逻辑：P0 blocked 期间做本地项不违反 WIP=1）。#170 后端 + #171 前端，Codex 1P1+5P2 全修，S5 浏览器闭环。详见下方 P2-15 区。
+
+**▶ 2026-06-28 启动 P2-16（信道资产多态化）** —— 同上逻辑（P0 现场 blocked 期间本地软件项，不违反 WIP=1）。P2-15 暴露「信道资产四分五裂」（GCM `.smu` / B-1 `.asc` / B-2 `.tap` / RT 动态 各自一套引用+耦合），本项收口为单一 `ChannelAsset` 多态实体 + 独立信道工作台 GUI；起步软件半 S1–S4，零现场依赖。设计 [`design/channel-asset-polymorphism-design_V0.1.md`](design/channel-asset-polymorphism-design_V0.1.md)，详见下方 P2-16 区。
 
 P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max / RT→MPC 接入)
 已进 on-site 队列。**原开发的现场验证基线已打 tag** `onsite-verification-baseline-2026-06-21`（留在 main）。
@@ -1625,7 +1627,9 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 ---
 
-### P2-15 — 自定义 CDL 簇编辑（GUI 表单 + 后端 CRUD → 接 input_mode=custom）🔄 in-progress (2026-06-27)
+### P2-15 — 自定义 CDL 簇编辑（GUI 表单 + 后端 CRUD → 接 input_mode=custom）✅ 完成 (2026-06-28，#170 后端 + #171 前端)
+
+**Status**: ✅ 全 5 切片完成（S1 实体/CRUD + S2 `input_mode=custom` 装配 + S3 GUI 簇编辑器 + S4 `cdl_profile_id` + S5 浏览器闭环）；Codex 1 P1（频率污染）+ 5 P2（num_rays fan-out / round-trip 保真 / engine gate / LOS-K / stale clear）全修。**衍生 → P2-16**（本项暴露信道资产四分五裂，触发多态化收口）。
 
 **What**: 操作员在 GUI 编辑自定义 CDL 的**簇级参数**（每簇 `delay_s` / `aoa_deg` / `aod_deg` / `zoa_deg` / `zod_deg` / `power_linear` / `as_*` / `xpr_db` / `initial_phases_rad`），持久化为可复用实体，测试时选它 → 后端 `input_mode="custom"` → ChannelEgine 合成反映自定义簇。补齐"软件定义信道"在 GUI 的最后一截。
 
@@ -1638,6 +1642,30 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 **分支**: 在 `feat/b2-channel-injection`（信道领域分支）做——custom CDL 是信道功能；做完独立 PR + Codex + merge 回 main。
 
 **关联**: 跟 P2-14（信道注入 B-2）衔接——custom CDL 簇是"自定义信道"入口，B-2 的 RT 子径（`MPCInput`）是更细一层。memory [[project_scd_frontend_consumption_gap]] / [[project_testcase_driven_instrument_arch]]。
+
+---
+
+### P2-16 — 信道资产多态化（统一 GCM/B-1/B-2/RT 四源 → ChannelAsset 多态实体 + 独立信道工作台）🔄 in-progress (2026-06-28)
+
+**What**: 把四分五裂的四种信道源——GCM `.smu` 文件指针 / B-1 ASC 瞬态合成 `.asc` / B-2 参数 TDL `.tap` / RT 动态——统一为单一多态 `ChannelAsset` 实体，对 TestCase 暴露单一 `channel_asset_id`（取代现在 `scd_id` / `cdl_profile_id` / `asc_source_path` / `config.extra` 裸 RT dict 四套并行引用）。GUI 终态独立「信道工作台」（非 DUT/SIM 同栏）。设计见 [`design/channel-asset-polymorphism-design_V0.1.md`](design/channel-asset-polymorphism-design_V0.1.md)（2026-06-28 三路代码考古 grounded）。
+
+**两个核心洞察**: ① **「来源」(参数从哪来：标准 / 自定义 / RT / 厂商文件) ⊥ 「路径」(怎么落硬件：.asc / .tap / .smu)** 两维被 `EngineMode` 揉成一维 → 解耦，路径由 §6 判决决定（"B-2 参数化"严格说是*路径*不是*来源*）；② **统一载体不新发明**——ChannelEgine 的 `AnnotatedCDLProfile`（snapshots + `doppler_repr` 联合体）已能装四源，`CustomCDLProfile` 是其单快照退化子集（`from_custom_profile` 已证），多态化 = 把它提升为 MIMO-First 持久实体（V1.0 §11 开放问题 #4）。
+
+**决策（2026-06-28 用户拍板）**: (1) GUI **独立信道工作台 + 渐进迁移**（G0 现状 → G1 后端统一 → G2 独立页收口 SCD（仪器抽屉）+ custom CDL（AssetProfiles）两处分裂 → G3 接 RT/判决可视化），对标 Channel Studio；(2) 起步 **软件半全做 S1–S4**，零现场依赖。
+
+**切片**:
+- **S1** `ChannelAsset` 实体 + migration（PG/SQLite 三路径 + `table_exists`/`column_exists` 守门）+ CRUD + 多态 payload schema（`source_type` 判别联合体：`standard_3gpp` / `custom_static` / `rt_dynamic` / `vendor_file`）+ 契约 4 步同步。
+- **S2** custom CDL + SCD 收口（数据迁移 clusters→`payload.snapshots[0]` / scd 配置→`payload.scd_config`；`cdl_profile_id`/`scd_id`→`channel_asset_id` backward-compat 映射保留一版）。统一频率一致性网（消除现「scd_id 进网、cdl_profile_id 不进」的不一致）。
+- **S3** 装配层 `payload→AnnotatedCDLProfile` + §6 判决路由（**接线悬空的 F4 时空跟踪 / F5 phase_continuous / b1_annotated_baker**；`target_path→strategy` 从"校验"升"路由"；合成 RT 测）。
+- **S4** 独立「信道工作台」GUI（G2）：`source_type` 切换 + 簇编辑器从 AssetProfiles 迁入 + SCD 卡片从仪器抽屉迁入 + 浏览器实测闭环。
+- **S5**（🚧 现场）`rt_dynamic` 真实 RT 数据接入（Lauraycs RT + RT-Release）+ 多快照。
+- **S6**（🚧 现场）`b2_parametric` `.tap` 落地 + F64 验证 + GUI engine 暴露（合 P2-14 第 4 项「GUI 暴露」）。
+
+**Acceptance**: ① `ChannelAsset` CRUD + 四 `source_type` 多态 payload 持久化/校验（边缘值 fail-loud）；② 旧 `cdl_profile_id`/`scd_id` 经映射零破坏跑通（PG / SQLite-brownfield / SQLite-greenfield 三路径测）；③ 一个 `custom_static` 资产经判决路由正确分流到 `asc_baked` 合成 `.asc`（与现直连结果一致）；④ 独立信道工作台 GUI 浏览器闭环（建 / 切 `source_type` / 编辑簇 / 选进 TestCase）；⑤ S5/S6 挂现场。
+
+**分支**: 新分支（信道领域）；按切片独立 PR + Codex + merge 回 main（沿用 P2-14/P2-15 模式）。
+
+**关联**: P2-15（custom CDL = 本实体 `custom_static` 特例）/ P2-12（SCD = `vendor_file` 特例）/ P2-14（B-2/RT 路径 + 现场半 S5/S6，第 4 项 GUI 暴露并入 S6）。memory [[project_b2_universal_channel_injection_design]] / [[project_testcase_driven_instrument_arch]] / [[project_scd_frontend_consumption_gap]] / [[project_ota_probe_baseband_rf_two_layer]]。
 
 ---
 
@@ -1715,6 +1743,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-06-05 during DUTProfile 收尾, 用户提出]` **SIMProfile (SIM/eSIM 身份 + 鉴权声明) + SIM↔UXM 一致性 fail-loud** — **→ 已排期 P2-13 (2026-06-05 用户排期, 设 Current Focus); 本条留作完整设计记录, 排期/验收/分阶段见 P2-13 正式条目**。用户提"做测试经常 SIM/eSIM 匹配问题, 最常踩鉴权 (Ki/OPc)"。现状: SIM 身份/PLMN/鉴权**完全没建模** —— UXM 驱动 SCPI 树 (`CONFig:NR5G:{cell}:...` + `CALL:NR5G:{cell}:...`) 一条 auth/IMSI/PLMN/Ki 都没有, attach 的 IMSI 是操作员手敲只当审计; SIM 匹配是 Test App 手配黑箱, 挂了只给泛泛"UE capability unavailable / attach 不上" → 正是 first-call 现场瞎调。**调研定论 (商用卡)**: 商用卡 Ki 不可提取/破解 (用户判断对, AKA 双向, emulator 没 Ki 既验不了 UE 也发不出 UE 认的 AUTN); 但"所以没法测"对 RF/吞吐测试是**错结论** —— 正解是**可编程测试卡** (自写 IMSI/Ki/OPc/Milenage, emulator HSS 配同值 → 完整真鉴权), 运营商网络特性配在 emulator 侧不在卡的秘钥里; Keysight 官方做法也是测试卡跟 UXM 默认 IMSI/PLMN 预匹配。要某运营商精确网络 → 运营商测试卡 (真 PLMN + 实验室已知 Ki)。**别折腾商用卡**, 痛点正解 = 系统管住测试卡 Ki/OPc/PLMN ↔ UXM 一致性 (跟 DUTProfile 同母题: 声明 + 下发前一致性 fail-loud)。**设计已定 (用户对齐 2026-06-05)**: ① **独立 `SIMProfile` 实体** (不内嵌 DUTProfile —— DUT↔SIM **多对多**卡池复用, 内嵌会逼 Ki 重复→stale; SIM 更像 LabProfile 那样的实验室基建), TestCase 引用 `sim_profile_id` (跟 lab/dut 并列, TestCase 单一真值源驱动)。② **字段**: `imsi`(15位)/`iccid`(选); `mcc`+`mnc`(显式, 校验=IMSI 前缀, 不解析因 MNC 2/3 位歧义); `ki`(32hex)/`opc`(32hex, 统一存 OPc)/`auth_algorithm`(MILENAGE 默认 / TUAK / XOR; **排除 COMP128** 2G); `card_kind`(test_sim/operator_test/commercial —— 当鉴权可行性门, commercial **不存 Ki** 标"不可鉴权用测试卡"); `sim_form`(usim/esim); `eid`/`esim_profile_id`(eSIM: **一个 profile=一行**, 同 `eid`=同芯片多 profile, 扁平化让交叉核对永远比一个 IMSI; SM-DP+ 下载不进系统); `extra_metadata`(TUAK 冷门参数等); **不要** `sqn`(emulator 运行时态)/manufacturer/model。`ki`/`opc` 凭据 → API/日志**脱敏**(只显后4位)+ 不进导出 + 仅 test/operator 卡存。③ **档 A/B provisioning** (UXM SCPI 能否配鉴权**待现场查 S8711A SCPI command reference**, 公开文档 403 拿不到; 强信号能 —— UXM 卖点就是 SCPI 驱动整套 signaling/固件级测试): 档 A 能配 → 从 SIMProfile **自动 provision UXM HSS** 消除手配 mismatch; 档 B 不能 → **cross-check + warn 保底** (本地可交付)。④ **交叉核对**: precheck 拿 SIMProfile vs UXM 小区 PLMN + HSS 比 (下发前); **attach 后拿实测认证 IMSI vs 声明比** (强化现"防对错设备"门, **替代操作员手敲 IMSI** 弱环节, 自动抓插错卡)。⑤ **鉴权 fail-loud 分根因** (对准痛点, SQN 不入字段但用于此): **MAC failure**(Ki/OPc/算法不符→改凭据) vs **sync failure**(SQN 去同步, 卡发 AUTS→resync, **非凭据问题**) vs **no subscriber**(HSS 没此卡→provision) —— 三类不同修法, 别把 SQN 去同步误当 Ki 配错瞎调。属 P2-11 同族 (跟 DUTProfile 平行: 能力层 vs 身份/接入层)。**WIP**: 设计完成未启动, 等正式排期 (DUTProfile 刚收尾, WIP=1); 档 A 待现场 UXM SCPI 确认, 档 B (声明+cross-check+warn) 本地可启动。
 - `[discovered 2026-06-06 during probe_number 局部化, Codex P2 on #155]` **跨暗室同号下: (1) 部分校准表缺 chamber 维度 + (2) NULL-chamber 复合唯一缺口**. probe_number 改按 chamber 局部 (复合唯一 uq_probes_chamber_probe_number) 后两个边界: **(1)** path-loss 校准**安全** (ProbePathLossCalibration 有 chamber_id, channel-engine measure 主路径按 chamber 取); 但 `probe_amplitude_calibrations` / `probe_phase_calibrations` 只有 `probe_id` 无 chamber_id, probe_calibration_service 按 probe_id 单独查 (line 457/819) → 多暗室同号会返回别暗室的 幅度/相位校准 (silent wrong data)。proper fix = 给这些 cal 表加 chamber_id + service 查找带 chamber (多表+迁移, 独立 PR)。**【2026-06-07 本 PR「校准 chamber-scoping foundation」✅ 完成基础版 (用户排期"#155 之后下一个 PR", scope=聚焦基础版)】**: 5 张 probe-keyed 校准表 (amplitude/phase/polarization/pattern/validity) 加 nullable+indexed `chamber_id` (迁移 `a1c3e5b7d9f2`, PG add-column / SQLite create_all no-op, down/up 已验可逆); **测量路径活跃消费方** `probe_pattern.consumer` (`get_probe_gain_at_azimuth` / `estimate_quiet_zone_ripple_db`) 改为按 chamber **prefer-exact → 回退 NULL/legacy → 绝不取其它暗室**, `measure`/`precheck` 传 `chamber.id`; service writer (`execute_*`) 持久化 chamber_id + getter (`get_latest_calibration`) 加可选 chamber 过滤; 7 新测 + 全套 1995 绿。**剩余 backlog (本 PR 故意收窄, 未做)**: ①REST/import 端点契约把 chamber_id 透传到 writer (现仍传 None); ②`ProbeCalibrationValidity` 改复合主键 `(probe_id, chamber_id)` + `check_validity`/`generate_validity_report` 的 chamber 作用域; ③报告层 chamber 作用域; ④legacy 单暗室 dummy 数据回填 chamber_id。patterns 表空 + 仅单暗室有 cal, 上述剩余项**仍未触发**, 多暗室真校准前需完成 ①②④。 **(2)** chamber_config_id nullable → 复合唯一不约束 NULL-chamber 探头 (chamber 删除 SET NULL 产生的 orphan / bulk 无 chamber 插入可重号); fix 需在 ondelete CASCADE / partial unique (NULL) / 强制 chamber 三选一 (有删除语义权衡), 需设计。 **小结**: (1) 主路径基础版本 PR 解决, 剩 ①②③④ + (2) 仍 backlog (均 Codex P2)。
 - `[discovered 2026-06-07 from PROPSIM F64 信道注入 docx V1.2, 用户确认登记]` **信道注入子系统三缺口 + B-2 战略缺口 (channel-injection)** —— ✅ **2026-06-21 提升为 P2-14** (见上方 P2-14 区)。完整设计以 [`design/RT-MPDB-CDL-F64-channel-injection-design_V1.0.md`](design/RT-MPDB-CDL-F64-channel-injection-design_V1.0.md) 为准，**已远超**此处基于 docx V1.2 的理解 (native-fit 聚类 → B-2 普及 / 标注式 CDL / 按 test_class 分 B-1·B-2·GCM)。以下为 2026-06-07 登记时快照，实施以 V1.0 为准。源 `docs/hardware/PROPSIM_F64_信道注入工程文档_A-B路线_SCPI_V1.2.docx` (已升 V1.4)。现状: `gcm_strategy`(路线 A) + `asc`/`external_asc`(路线 B-1) 已实现, F64 驱动已有 `CALC:FILT:*`/`CH:MOD:CONT:ENV`/`ROUT:PATH:CONN`/`DIAG:SIMU` + 播 `.smu`/`.asc`/`.rtc`。**(1) f_upd 采样纪律一致性门 (B-1)**: 确定性 CIR 回放须 `f_upd=2·SD·v/λ` (SD=2, CIRs≥1000, `Δd=λ/(2·SD)`) 自洽; 现仅 `channel_params.update_rate_hz` 软字段 (1-1000 Hz 默认 100, 连高速 1556 / 高铁 4537-6481 / FR2 51852 Hz 都表达不了), 驱动未设 `DIAG:SIM:FIRUPD:MAN:CH` → "默认 10000 Hz 陷阱"静默错配 playback 速度/多普勒。proper = TestCase 的 v/f_c/SD ↔ 注入文件 f_upd fail-loud 一致性门 (契合 TestCase 单一真值源)。**(2) 12/24 抽头 + ≤24 簇 + 1024 逻辑通道硬件上限硬门**: `channel_engine` 跟踪 `num_clusters` 但无 ≤24 硬上限校验; TestCase 超限应进现场前 fail-loud (capability↔hardware↔gate 三方一致母题)。**(3) GCM 必要性结论**: 多普勒质心 <200 kHz (地面→高铁) 运行时频偏即可、>200 kHz (NTN Ka) 需 GCM; §10 待验证"运行时 200 vs GCM 500 kHz 是否同一硬件引擎"决定 B 路能否免 GCM 覆盖 NTN → 决定是否采购 GCM 许可。**另 (战略, 非缺陷)**: 路线 B-2 (`.tdlx`/`.tap` 参数化 TDL 生成 IP) 生成层**未实现** (驱动已能播 `.rtc`), 文档主推 B-2 用于高多普勒 / 几何骨架率受限场景。现场验证清单见 [`guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md) §7。
+- `[discovered 2026-06-28 during P2-15 S5 浏览器闭环]` **LabProfileWizard.tsx:311 空值崩溃 (`Cannot read properties of null (reading 'value')`)** —— P2-15 S5 用 Playwright 点模板 + 填 LabProfile 名时触发；**初始渲染正常**，自动化交互序列才触发（疑某 onChange/ref 在中间态读 `null.value`）。当时 curl 直接建 lab 绕过（`App.tsx:491` `needsLabProfileWizard` 只查 lab-profiles 空数组，建好就跳过向导），未深究根因。中等，下次 GUI 批次定位修。
 
 ---
 
