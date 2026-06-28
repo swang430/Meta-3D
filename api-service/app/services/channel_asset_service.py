@@ -103,6 +103,10 @@ def _validate_custom_static_payload(payload: dict) -> None:
         # (Codex #173 复查 P2; except TypeError 兜底不可靠 —— 不被比较的字段不触发)
         for f in _CLUSTER_NUMERIC:
             _num_or_error(f"clusters[{i}].{f}", c.get(f))
+        # num_rays 是整数计数 (Dict payload 绕过 Pydantic int 约束 → 拒 1.5 这种 fractional)
+        nr = c.get("num_rays")
+        if nr is not None and float(nr) != int(nr):
+            raise ChannelAssetError(f"clusters[{i}].num_rays 须整数 (得 {nr!r})")
         ph = c.get("initial_phases_rad")
         if isinstance(ph, list):
             for j, x in enumerate(ph):

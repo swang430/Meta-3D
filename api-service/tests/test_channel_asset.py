@@ -311,6 +311,21 @@ class TestBadNumericType:
         with pytest.raises(ChannelAssetError, match="phase_rad 须是数值"):
             create_channel_asset(db, name="x", source_type="rt_dynamic", payload=bad)
 
+    def test_custom_num_rays_fractional(self, db):
+        # num_rays 整数计数, Dict payload 绕过 Pydantic int → 拒 1.5 (Codex #173 第三轮 P2)
+        bad = {"snapshots": [{"clusters": [
+            {"delay_s": 0.0, "power_linear": 1.0, "aoa_deg": 1, "aod_deg": 1, "num_rays": 1.5}]}]}
+        with pytest.raises(ChannelAssetError, match="num_rays 须整数"):
+            create_channel_asset(db, name="x", source_type="custom_static", payload=bad)
+
+    def test_custom_num_rays_integer_float_ok(self, db):
+        # 20.0 (整数值 float) 接受, 跟 Pydantic int lax 一致
+        a = create_channel_asset(db, name="nr", source_type="custom_static",
+                                 payload={"snapshots": [{"clusters": [
+                                     {"delay_s": 0.0, "power_linear": 1.0, "aoa_deg": 1,
+                                      "aod_deg": 1, "num_rays": 20.0}]}]})
+        assert a.id is not None
+
     def test_top_physical_bad_type(self, db):
         with pytest.raises(ChannelAssetError, match="center_frequency_hz 须是数值"):
             create_channel_asset(db, name="x", source_type="standard_3gpp",
