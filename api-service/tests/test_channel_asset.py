@@ -272,12 +272,27 @@ class TestBadNumericType:
         with pytest.raises(ChannelAssetError, match="power_linear 须是数值"):
             create_channel_asset(db, name="x", source_type="rt_dynamic", payload=bad)
 
-    def test_custom_cluster_bad_type(self, db):
-        # custom 簇复用 _validate_cluster (P2-15 假设数值), 坏类型 TypeError 被转 400
+    def test_custom_cluster_bad_compared_field(self, db):
+        # power_linear 被比较, 坏类型显式校验拦
         bad = {"snapshots": [{"clusters": [
             {"delay_s": 0.0, "power_linear": "x", "aoa_deg": 1, "aod_deg": 1}]}]}
-        with pytest.raises(ChannelAssetError, match="类型非法"):
+        with pytest.raises(ChannelAssetError, match="power_linear 须是数值"):
             create_channel_asset(db, name="x", source_type="custom_static", payload=bad)
+
+    def test_custom_cluster_unchecked_field_bad_type(self, db):
+        # aoa_deg 不被 _validate_cluster 比较 (只查存在) → 显式枚举校验才能拦坏类型静默持久化
+        # (Codex #173 复查 P2: except TypeError 兜底漏掉不被比较的字段)
+        bad = {"snapshots": [{"clusters": [
+            {"delay_s": 0.0, "power_linear": 1.0, "aoa_deg": "bad", "aod_deg": 10}]}]}
+        with pytest.raises(ChannelAssetError, match="aoa_deg 须是数值"):
+            create_channel_asset(db, name="x", source_type="custom_static", payload=bad)
+
+    def test_rt_ray_phase_rad_bad_type(self, db):
+        # phase_rad optional 不被比较 → 显式枚举校验才能拦
+        bad = {"snapshots": [{"rays": [
+            {"delay_s": 0.0, "power_linear": 1.0, "aoa_deg": 1, "aod_deg": 1, "phase_rad": "x"}]}]}
+        with pytest.raises(ChannelAssetError, match="phase_rad 须是数值"):
+            create_channel_asset(db, name="x", source_type="rt_dynamic", payload=bad)
 
     def test_top_physical_bad_type(self, db):
         with pytest.raises(ChannelAssetError, match="center_frequency_hz 须是数值"):

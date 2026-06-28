@@ -43,6 +43,13 @@ _MUTABLE_FIELDS = (
 
 # rt_dynamic 单条射线 (MPCInput) 必填几何 + 功率
 _RAY_REQUIRED = ("delay_s", "power_linear", "aoa_deg", "aod_deg")
+# ray / 簇 的全数值字段 (含 optional + 不被比较的); payload 未经 Pydantic, 须**显式枚举**校验
+# 类型 —— except TypeError 兜底不可靠 (不被比较的坏类型字段不触发 TypeError, 会静默持久化)。
+_RAY_NUMERIC = ("delay_s", "power_linear", "aoa_deg", "aod_deg", "zoa_deg", "zod_deg", "phase_rad")
+_CLUSTER_NUMERIC = (
+    "delay_s", "power_linear", "aoa_deg", "aod_deg", "zoa_deg", "zod_deg",
+    "as_aoa_deg", "as_aod_deg", "as_zoa_deg", "as_zod_deg", "xpr_db", "num_rays",
+)
 
 
 class ChannelAssetError(ValueError):
@@ -83,13 +90,21 @@ def _validate_custom_static_payload(payload: dict) -> None:
     if not isinstance(clusters, list) or len(clusters) == 0:
         raise ChannelAssetError("custom_static payload.snapshots[0].clusters 须非空列表 (≥1 簇)")
     for i, c in enumerate(clusters):
+        if not isinstance(c, dict):
+            raise ChannelAssetError(f"clusters[{i}] 须对象 (得 {type(c).__name__})")
+        # 显式枚举全数值字段校验类型: _validate_cluster 不比较 aoa/aod 等会漏坏类型静默持久化
+        # (Codex #173 复查 P2; except TypeError 兜底不可靠 —— 不被比较的字段不触发)
+        for f in _CLUSTER_NUMERIC:
+            _num_or_error(f"clusters[{i}].{f}", c.get(f))
+        ph = c.get("initial_phases_rad")
+        if isinstance(ph, list):
+            for j, x in enumerate(ph):
+                _num_or_error(f"clusters[{i}].initial_phases_rad[{j}]", x)
+        # 类型已保证, _validate_cluster 做必填 + 范围 + initial_phases_rad len 校验
         try:
             _validate_cluster(i, c)
         except CustomCDLProfileError as e:
             raise ChannelAssetError(str(e))
-        except TypeError as e:
-            # 簇数值字段坏类型 (payload 未经 Pydantic) → _validate_cluster 范围比较抛 TypeError, 转 400
-            raise ChannelAssetError(f"clusters[{i}] 数值字段类型非法: {e}")
 
 
 def _validate_ray(si: int, ri: int, r: Any) -> None:
@@ -99,17 +114,15 @@ def _validate_ray(si: int, ri: int, r: Any) -> None:
     for f in _RAY_REQUIRED:
         if r.get(f) is None:
             raise ChannelAssetError(f"{pfx}.{f} 必填")
-    # 数值字段先校验类型 (payload 是 Dict[str,Any], 防坏 JSON → TypeError → 500)
-    for f in ("aoa_deg", "aod_deg"):  # required, 仅校验类型 (无范围约束)
+    # 显式枚举全数值字段校验类型 (含 phase_rad 等不被比较的; payload 未经 Pydantic)
+    for f in _RAY_NUMERIC:
         _num_or_error(f"{pfx}.{f}", r.get(f))
-    d = _num_or_error(f"{pfx}.delay_s", r.get("delay_s"))  # required → 非 None 数值
-    if d < 0:
-        raise ChannelAssetError(f"{pfx}.delay_s 须 >= 0 (得 {d})")
-    p = _num_or_error(f"{pfx}.power_linear", r.get("power_linear"))
-    if p <= 0:
-        raise ChannelAssetError(f"{pfx}.power_linear 须 > 0 (得 {p})")
+    if r["delay_s"] < 0:
+        raise ChannelAssetError(f"{pfx}.delay_s 须 >= 0 (得 {r['delay_s']})")
+    if r["power_linear"] <= 0:
+        raise ChannelAssetError(f"{pfx}.power_linear 须 > 0 (得 {r['power_linear']})")
     for f in ("zoa_deg", "zod_deg"):
-        v = _num_or_error(f"{pfx}.{f}", r.get(f))
+        v = r.get(f)
         if v is not None and not (0.0 <= v <= 180.0):
             raise ChannelAssetError(f"{pfx}.{f} 须在 [0,180] (得 {v})")
 
