@@ -104,15 +104,17 @@ ChannelAsset (持久实体, 表 channel_assets)
 
 | source_type | `allowed_targets` | 说明 |
 |---|---|---|
-| `vendor_file` | `{gcm_native}` | `.smu` 为 F64 GCM 引擎编，焊死单选 |
-| `standard_3gpp` | `{asc_baked, gcm_native}` | 标称 CDL 可烘 `.asc` 或落 GCM |
+| `vendor_file` | `{gcm_native}` | 携带 `.smu` artifact，F64 GCM 引擎直接加载 |
+| `standard_3gpp` | `{asc_baked}` | 标称 CDL 烘 `.asc`；要走 GCM 改用 `vendor_file`（关联 F64 预置 scenario `.smu`） |
 | `custom_static` | `{asc_baked, b2_parametric}` | 手编簇可 B-1，native-fit 后可 B-2 |
-| `rt_dynamic` | `{asc_baked, b2_parametric, gcm_native}` | **全开**——唯一能驱动全部三路 |
+| `rt_dynamic` | `{asc_baked, b2_parametric}` | 原始射线烘 B-1 / 聚类 B-2；判决指向 GCM → ESCALATE（见下） |
+
+> **`gcm_native` 是 artifact-backed 路径**（Codex #172 P2）：F64 GCM 引擎只吃编译好的 `.smu` scenario，不吃 `cdl_model_name` / 原始射线。所以**只有携带 `.smu` artifact（`associated_file_path`）的资产才能路由到 `gcm_native`** —— 否则动态路由会 late-fail 或静默加载驱动默认 `.smu`（P2-12「默认 .smu 陷阱」）。推论:`vendor_file` 天然可走；`standard_3gpp` / `rt_dynamic` **不可走** —— 标称名 / 原始射线无 `.smu`，且 RT 射线 → GCM 几何参数的逆向拟合未建模，判决指向 GCM 时走 **ESCALATE**（与 §6 一致）。这正是 §1 洞察「GCM 内容 F64 黑盒，MIMO-First 不能从参数凭空生成 `.smu`」在路由层的落地约束。
 
 三条设计后果：
 
 1. **统一判决器**：所有来源过同一 §6 `select_path_and_clustering`，**只是约束不同**（在 `allowed_targets ∩ test_class 可行集` 内选）。`vendor_file` 退化成单选，`rt_dynamic` 判决空间最大。不给任何来源独立判决通道。
-2. **RT 的「之上」是信息包含，不是层叠**：RT 是唯一物理真值（真实射线）+ 唯一时变（多快照轨迹，需 F4）+ 唯一全路径覆盖。信息论上**其他来源是 RT 的有损投影**——有 RT 能聚出 standard-like / custom-like / B-2 native，反之不能从抽象模型还原原始射线。
+2. **RT 的「之上」是信息包含，不是层叠**：RT 是唯一物理真值（真实射线）+ 唯一时变（多快照轨迹，需 F4）+ 判决空间最广（B-1/B-2 可落地；判决指向 GCM 时因无 `.smu` artifact 走 ESCALATE）。信息论上**其他来源是 RT 的有损投影**——有 RT 能聚出 standard-like / custom-like / B-2 native，反之不能从抽象模型还原原始射线。
 3. **RT 作为资产工厂**：RT 某快照的聚类结果可**固化成 `custom_static` 资产**（`derived_from` = RT 场景 + 快照号），供无 RT 数据时复用。RT 与其他来源是**生成关系**而非并列。
 
 ### 3.2 命名契约：承袭 SCD，分三族（2026-06-28 厘清）
