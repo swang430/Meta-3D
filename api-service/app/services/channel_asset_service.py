@@ -15,6 +15,8 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.models.channel_asset import ChannelAsset
+# CDL 名校验单一真值在 cdl_model_parser (standard_3gpp 合法性: scenario/cluster/condition token)
+from app.services.cdl_model_parser import parse_cdl_model_name
 # 簇校验单一真值在 custom_cdl_profile_service (custom_static = CustomCDLProfile 退化, 复用避免 drift)
 from app.services.custom_cdl_profile_service import (
     CustomCDLProfileError,
@@ -77,6 +79,11 @@ def _validate_standard_payload(payload: dict) -> None:
     name = payload.get("cdl_model_name")
     if not isinstance(name, str) or not name.strip():
         raise ChannelAssetError("standard_3gpp payload.cdl_model_name 必填 (非空字符串)")
+    # 校验是合法 3GPP CDL 名 (复用 parser; 早 fail-loud, 别把 "not-a-model" 存到合成时才炸)
+    try:
+        parse_cdl_model_name(name)
+    except ValueError as e:
+        raise ChannelAssetError(f"standard_3gpp payload.cdl_model_name 非法 CDL 名: {e}")
 
 
 def _validate_custom_static_payload(payload: dict) -> None:
@@ -175,6 +182,18 @@ def _validate_top_physical(fields: dict) -> None:
             _num_or_error(f"ue_velocity_mps[{j}]", x)
 
 
+def _validate_source_fields(source_type: str, fields: dict) -> None:
+    """source_type 相关的 top-level 字段校验 (payload 之外)。"""
+    if source_type == "vendor_file":
+        afp = fields.get("associated_file_path")
+        # vendor_file 允许 declared_only (无 .smu, SCD 设计 association_source=declared_only);
+        # 给了文件则须 .smu 后缀 (防错误文件, 呼应 emulation_file_gate)。gcm_native 路由前查
+        # .smu 存在性的 fail-loud 在 S3 判决路由 (设计 §3.1 artifact-backed)。
+        if afp is not None and not str(afp).lower().endswith(".smu"):
+            raise ChannelAssetError(
+                f"vendor_file associated_file_path 须 .smu 后缀 (得 {afp!r}); 留空 = declared_only")
+
+
 # ---- CRUD ----
 
 def create_channel_asset(
@@ -196,6 +215,7 @@ def create_channel_asset(
         raise ChannelAssetError(f"canonical_name {canonical!r} 已存在")
     _validate_payload(source_type, payload)
     _validate_top_physical(fields)
+    _validate_source_fields(source_type, fields)
     asset = ChannelAsset(
         name=name,
         source_type=source_type,
@@ -253,6 +273,7 @@ def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
     if "payload" in fields:
         _validate_payload(asset.source_type, fields["payload"])
     _validate_top_physical(fields)
+    _validate_source_fields(asset.source_type, fields)
     for k, v in fields.items():
         if k in _MUTABLE_FIELDS:
             setattr(asset, k, v)

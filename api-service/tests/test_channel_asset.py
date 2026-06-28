@@ -171,6 +171,23 @@ class TestPolymorphicPayloadValidation:
             create_channel_asset(db, name="x", source_type="vendor_file",
                                  payload={"scd_config": {}})
 
+    def test_standard_invalid_cdl_name(self, db):
+        # 任意非空名不够, 须合法 3GPP CDL 名 (Codex #173 复查 P2; 复用 parse_cdl_model_name)
+        with pytest.raises(ChannelAssetError, match="非法 CDL 名"):
+            create_channel_asset(db, name="x", source_type="standard_3gpp",
+                                 payload={"cdl_model_name": "not-a-model"})
+
+    def test_vendor_non_smu_path(self, db):
+        # 给了 associated_file_path 须 .smu 后缀 (Codex #173 复查 P2)
+        with pytest.raises(ChannelAssetError, match="smu 后缀"):
+            create_channel_asset(db, name="x", source_type="vendor_file",
+                                 payload=_VENDOR_PAYLOAD, associated_file_path="/x/chan.asc")
+
+    def test_vendor_declared_only_ok(self, db):
+        # vendor_file 无 associated_file_path = declared_only (SCD 合法中间态), 允许建
+        a = create_channel_asset(db, name="vd", source_type="vendor_file", payload=_VENDOR_PAYLOAD)
+        assert a.associated_file_path is None and a.allowed_targets == ["gcm_native"]
+
 
 class TestTopPhysicalAndUniqueness:
     def test_center_freq_nonpos(self, db):
