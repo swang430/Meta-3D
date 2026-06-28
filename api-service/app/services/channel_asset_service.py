@@ -53,6 +53,17 @@ class ChannelAssetNotFound(ChannelAssetError):
     """按 id 找不到。是 ChannelAssetError 子类, caller 可映射 404。"""
 
 
+def _num_or_error(label: str, v: Any) -> Any:
+    """payload 是 Dict[str, Any] (Pydantic 不校验内部) → 数值比较前先校验类型, 否则坏 JSON
+    (如 "delay_s": "bad") 会让 < / <= 抛裸 TypeError 绕过 ChannelAssetError → 500。
+    None 透传 (optional); bool 或非 int/float → ChannelAssetError (400)。返回 v。"""
+    if v is None:
+        return None
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        raise ChannelAssetError(f"{label} 须是数值 (得 {type(v).__name__}: {v!r})")
+    return v
+
+
 # ---- 多态 payload 校验 (按 source_type dispatch) ----
 
 def _validate_standard_payload(payload: dict) -> None:
@@ -76,24 +87,31 @@ def _validate_custom_static_payload(payload: dict) -> None:
             _validate_cluster(i, c)
         except CustomCDLProfileError as e:
             raise ChannelAssetError(str(e))
+        except TypeError as e:
+            # 簇数值字段坏类型 (payload 未经 Pydantic) → _validate_cluster 范围比较抛 TypeError, 转 400
+            raise ChannelAssetError(f"clusters[{i}] 数值字段类型非法: {e}")
 
 
 def _validate_ray(si: int, ri: int, r: Any) -> None:
     if not isinstance(r, dict):
         raise ChannelAssetError(f"snapshots[{si}].rays[{ri}] 须对象 (得 {type(r).__name__})")
+    pfx = f"snapshots[{si}].rays[{ri}]"
     for f in _RAY_REQUIRED:
         if r.get(f) is None:
-            raise ChannelAssetError(f"snapshots[{si}].rays[{ri}].{f} 必填")
-    d = r.get("delay_s")
-    if d is not None and d < 0:
-        raise ChannelAssetError(f"snapshots[{si}].rays[{ri}].delay_s 须 >= 0 (得 {d})")
-    p = r.get("power_linear")
-    if p is not None and p <= 0:
-        raise ChannelAssetError(f"snapshots[{si}].rays[{ri}].power_linear 须 > 0 (得 {p})")
+            raise ChannelAssetError(f"{pfx}.{f} 必填")
+    # 数值字段先校验类型 (payload 是 Dict[str,Any], 防坏 JSON → TypeError → 500)
+    for f in ("aoa_deg", "aod_deg"):  # required, 仅校验类型 (无范围约束)
+        _num_or_error(f"{pfx}.{f}", r.get(f))
+    d = _num_or_error(f"{pfx}.delay_s", r.get("delay_s"))  # required → 非 None 数值
+    if d < 0:
+        raise ChannelAssetError(f"{pfx}.delay_s 须 >= 0 (得 {d})")
+    p = _num_or_error(f"{pfx}.power_linear", r.get("power_linear"))
+    if p <= 0:
+        raise ChannelAssetError(f"{pfx}.power_linear 须 > 0 (得 {p})")
     for f in ("zoa_deg", "zod_deg"):
-        v = r.get(f)
+        v = _num_or_error(f"{pfx}.{f}", r.get(f))
         if v is not None and not (0.0 <= v <= 180.0):
-            raise ChannelAssetError(f"snapshots[{si}].rays[{ri}].{f} 须在 [0,180] (得 {v})")
+            raise ChannelAssetError(f"{pfx}.{f} 须在 [0,180] (得 {v})")
 
 
 def _validate_rt_dynamic_payload(payload: dict) -> None:
@@ -133,12 +151,15 @@ def _validate_payload(source_type: str, payload: Any) -> None:
 
 def _validate_top_physical(fields: dict) -> None:
     for f in ("center_frequency_hz", "bandwidth_mhz"):
-        v = fields.get(f)
+        v = _num_or_error(f, fields.get(f))
         if v is not None and v <= 0:
             raise ChannelAssetError(f"{f} 必须 > 0 (得 {v})")
     vel = fields.get("ue_velocity_mps")
-    if vel is not None and (not isinstance(vel, list) or len(vel) != 3):
-        raise ChannelAssetError(f"ue_velocity_mps 须 3 元素 [x,y,z] (得 {vel!r})")
+    if vel is not None:
+        if not isinstance(vel, list) or len(vel) != 3:
+            raise ChannelAssetError(f"ue_velocity_mps 须 3 元素 [x,y,z] (得 {vel!r})")
+        for j, x in enumerate(vel):
+            _num_or_error(f"ue_velocity_mps[{j}]", x)
 
 
 # ---- CRUD ----

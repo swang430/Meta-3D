@@ -246,6 +246,50 @@ class TestUpdateDeleteList:
         assert len(rts) == 1 and rts[0].name == "r1"
 
 
+class TestBadNumericType:
+    """payload 数值字段坏类型 → ChannelAssetError (400), 不是裸 TypeError (500) (Codex #173 P2)。
+
+    payload 是 Dict[str, Any] (Pydantic 不校验内部), 坏 JSON 直达 service 数值比较。
+    """
+
+    def test_rt_ray_bad_delay_type(self, db):
+        bad = {"snapshots": [{"rays": [
+            {"delay_s": "bad", "power_linear": 1.0, "aoa_deg": 1, "aod_deg": 1}]}]}
+        with pytest.raises(ChannelAssetError, match="delay_s 须是数值"):
+            create_channel_asset(db, name="x", source_type="rt_dynamic", payload=bad)
+
+    def test_rt_ray_string_power(self, db):
+        # Codex 明确举例: "power_linear": "1" (字符串伪装数字)
+        bad = {"snapshots": [{"rays": [
+            {"delay_s": 0.0, "power_linear": "1", "aoa_deg": 1, "aod_deg": 1}]}]}
+        with pytest.raises(ChannelAssetError, match="power_linear 须是数值"):
+            create_channel_asset(db, name="x", source_type="rt_dynamic", payload=bad)
+
+    def test_rt_ray_bool_rejected(self, db):
+        # bool 是 int 子类但语义不对 → 拒
+        bad = {"snapshots": [{"rays": [
+            {"delay_s": 0.0, "power_linear": True, "aoa_deg": 1, "aod_deg": 1}]}]}
+        with pytest.raises(ChannelAssetError, match="power_linear 须是数值"):
+            create_channel_asset(db, name="x", source_type="rt_dynamic", payload=bad)
+
+    def test_custom_cluster_bad_type(self, db):
+        # custom 簇复用 _validate_cluster (P2-15 假设数值), 坏类型 TypeError 被转 400
+        bad = {"snapshots": [{"clusters": [
+            {"delay_s": 0.0, "power_linear": "x", "aoa_deg": 1, "aod_deg": 1}]}]}
+        with pytest.raises(ChannelAssetError, match="类型非法"):
+            create_channel_asset(db, name="x", source_type="custom_static", payload=bad)
+
+    def test_top_physical_bad_type(self, db):
+        with pytest.raises(ChannelAssetError, match="center_frequency_hz 须是数值"):
+            create_channel_asset(db, name="x", source_type="standard_3gpp",
+                                 payload=_STD_PAYLOAD, center_frequency_hz="bad")
+
+    def test_velocity_bad_element_type(self, db):
+        with pytest.raises(ChannelAssetError, match=r"ue_velocity_mps\[1\] 须是数值"):
+            create_channel_asset(db, name="x", source_type="standard_3gpp",
+                                 payload=_STD_PAYLOAD, ue_velocity_mps=[1.0, "y", 3.0])
+
+
 class TestAPI:
     """API 层 (TestClient): 路由 + Pydantic + HTTP 状态码。"""
 
@@ -294,3 +338,12 @@ class TestAPI:
 
     def test_get_404(self, client):
         assert client.get(f"/api/v1/channel-assets/{uuid.uuid4()}").status_code == 404
+
+    def test_bad_numeric_type_400_not_500(self, client):
+        # Codex #173 P2 核心: 坏类型 payload → 400 (client-fixable), 不是 500 (裸 TypeError)
+        r = client.post("/api/v1/channel-assets", json={
+            "name": "badtype", "source_type": "rt_dynamic",
+            "payload": {"snapshots": [{"rays": [
+                {"delay_s": "bad", "power_linear": 1.0, "aoa_deg": 1, "aod_deg": 1}]}]}})
+        assert r.status_code == 400, r.text
+        assert "数值" in r.json()["detail"]
