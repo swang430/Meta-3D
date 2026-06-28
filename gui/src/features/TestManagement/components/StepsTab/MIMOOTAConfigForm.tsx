@@ -829,7 +829,16 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
                 label="引擎模式"
                 data={ENGINE_OPTIONS}
                 value={value.engine_mode ?? null}
-                onChange={(v) => update('engine_mode', v ?? undefined)}
+                onChange={(v) => {
+                  const next = v ?? undefined
+                  // P2-15 (Codex P2 #171): 切离 ASC 引擎时清空 cdl_profile_id —— custom CDL 只
+                  // ASC 支持, 否则 disabled 的下拉留 stale 值 + 后端 gate 拒绝 → plan 卡死无法清。
+                  if (next !== 'mimo_first_asc' && value.cdl_profile_id) {
+                    onChange({ ...value, engine_mode: next, cdl_profile_id: undefined })
+                  } else {
+                    update('engine_mode', next)
+                  }
+                }}
                 disabled={readOnly}
                 allowDeselect={false}
               />
