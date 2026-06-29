@@ -195,6 +195,14 @@ def _validate_vendor_file_payload(payload: dict) -> None:
             raise ChannelAssetError(f"vendor_file scd_config.{f} 须有限数值 (得 {v!r})")
         if float(v) != int(v):
             raise ChannelAssetError(f"vendor_file scd_config.{f} 须整数 (得 {v!r})")
+    # arfcn 须落在 NR-ARFCN 定义域 (Codex P2 on 63646b9: 正整数但非 NR 域如 3279166 仍被
+    # format_standard_channel_filename 放行 → measure 时 nr_arfcn_to_freq_mhz 抛裸 ValueError;
+    # 入库前转 ChannelAssetError, 镜像 SCD service _validate_arfcn_domain 单一真值源)。
+    from app.hal.nr_arfcn import nr_arfcn_to_freq_mhz
+    try:
+        nr_arfcn_to_freq_mhz(int(scd["arfcn"]))
+    except ValueError as e:
+        raise ChannelAssetError(f"vendor_file scd_config.arfcn 超出 NR-ARFCN 域: {e}")
     # 复用命名契约校验 (alnum + arfcn/bw/version 正); 同时保证 canonical 可确定性派生
     try:
         _scd_to_standard_name(scd)
