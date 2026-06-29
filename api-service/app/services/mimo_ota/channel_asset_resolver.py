@@ -37,7 +37,7 @@ class ResolvedChannelAsset:
     engine_mode: str
     asset: Any
     cdl_model_name: Optional[str] = None      # standard_3gpp → config.cdl_model_name
-    scd_id: Optional[str] = None              # vendor_file → config.scd_id (复用 id 走老路)
+    emulation_file: Optional[str] = None      # vendor_file → config.emulation_file (不依赖 SCD twin)
     clusters_payload: Optional[List[dict]] = None  # custom_static → cdl_model_data["clusters"]
 
 
@@ -69,7 +69,11 @@ def resolve_channel_asset(db: Session, config: Any) -> Optional[ResolvedChannelA
             engine_mode=engine, asset=asset,
             cdl_model_name=(asset.payload or {}).get("cdl_model_name"))
     if st == "vendor_file":
-        # 复用 id: asset.id == 旧 scd_id, 旧 SCD 表保留 → 透传走老 resolve_emulation_for_measure
-        return ResolvedChannelAsset(engine_mode=engine, asset=asset, scd_id=str(asset.id))
+        # vendor_file 不依赖 SCD twin (Codex #174 P2: 新建的 vendor_file 经 ChannelAsset API
+        # 没有同 id 的 SCD 行, 不能透传 scd_id 走查 SCD 表的老路): 直接从 ChannelAsset 提供
+        # .smu (associated_file_path)。declared_only (None) → GCM 分支 emulation_file_gate
+        # strict fail-loud (没指定 .smu 不能真跑 GCM), 与现状 (裸 emulation_file 缺失) 一致。
+        return ResolvedChannelAsset(
+            engine_mode=engine, asset=asset, emulation_file=asset.associated_file_path)
     # rt_dynamic: S2 只路由到 B2 (现恒 fail-loud=现场半), 不装配 payload→ACP (S3/S5)
     return ResolvedChannelAsset(engine_mode=engine, asset=asset)

@@ -64,15 +64,26 @@ class TestResolver:
         r = resolve_channel_asset(db, _cfg(channel_asset_id=str(a.id)))
         assert r.engine_mode == "mimo_first_asc"
         assert r.clusters_payload[0]["aoa_deg"] == 33.0
-        assert r.cdl_model_name is None and r.scd_id is None
+        assert r.cdl_model_name is None and r.emulation_file is None
 
     def test_vendor_file(self, db):
+        # vendor_file 直接给 .smu (associated_file_path), 不依赖 SCD twin (Codex #174 P2:
+        # 新建的 vendor_file 没同 id SCD 行)
         a = create_channel_asset(db, name="v", source_type="vendor_file",
-                                 payload={"scd_config": _SCD})
+                                 payload={"scd_config": _SCD},
+                                 associated_file_path="/smu/x.smu")
         r = resolve_channel_asset(db, _cfg(channel_asset_id=str(a.id)))
         assert r.engine_mode == "keysight_gcm"
-        assert r.scd_id == str(a.id)  # 复用 id 透传走老 resolve_emulation_for_measure
+        assert r.emulation_file == "/smu/x.smu"
         assert r.clusters_payload is None
+
+    def test_vendor_declared_only_no_file(self, db):
+        # declared_only (无 associated_file_path) → emulation_file None (GCM gate fail-loud),
+        # 不查 SCD 表 (resolver 纯从 ChannelAsset)
+        a = create_channel_asset(db, name="vd", source_type="vendor_file",
+                                 payload={"scd_config": _SCD})
+        r = resolve_channel_asset(db, _cfg(channel_asset_id=str(a.id)))
+        assert r.engine_mode == "keysight_gcm" and r.emulation_file is None
 
     def test_standard_3gpp(self, db):
         a = create_channel_asset(db, name="s", source_type="standard_3gpp",
@@ -87,7 +98,7 @@ class TestResolver:
         r = resolve_channel_asset(db, _cfg(channel_asset_id=str(a.id)))
         # S2 只路由到 B2 (现恒 fail-loud=现场半), 不装配 payload
         assert r.engine_mode == "b2_parametric_tdl"
-        assert r.clusters_payload is None and r.scd_id is None
+        assert r.clusters_payload is None and r.emulation_file is None
 
     def test_invalid_id_fails_loud(self, db):
         with pytest.raises(ChannelAssetResolveError, match="无效/不存在"):

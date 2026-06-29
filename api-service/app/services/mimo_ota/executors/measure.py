@@ -465,10 +465,15 @@ class MeasureExecutor(IStepExecutor):
                     status=StepExecutionStatus.FAILED, error_message=str(e))
             if resolved_asset is not None:
                 config.engine_mode = resolved_asset.engine_mode  # source_type 派生 engine 覆盖
+                # ChannelAsset 是唯一信道源: 清残留 legacy 引用 (Codex #174 P2)。saved TestCase
+                # 里残留的 cdl_profile_id/scd_id 否则会让下游 asc custom 分支 / SCD 路误触发
+                # (568 门因 channel_asset 派生 engine=ASC 不拦 standard 残留的 cdl_profile_id)。
+                config.cdl_profile_id = None
+                config.scd_id = None
                 if resolved_asset.cdl_model_name:
                     config.cdl_model_name = resolved_asset.cdl_model_name
-                if resolved_asset.scd_id:
-                    config.scd_id = resolved_asset.scd_id
+                if resolved_asset.emulation_file:
+                    config.emulation_file = resolved_asset.emulation_file
 
             resolved_emulation_file = config.emulation_file
             scd_freq_identity = None
