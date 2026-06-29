@@ -253,6 +253,13 @@ def _validate_source_fields(source_type: str, fields: dict) -> None:
         if afp is not None and not str(afp).lower().endswith(".smu"):
             raise ChannelAssetError(
                 f"vendor_file associated_file_path 须 .smu 后缀 (得 {afp!r}); 留空 = declared_only")
+    if source_type in ("standard_3gpp", "rt_dynamic"):
+        # 声明 center_frequency_hz 须同时给 bandwidth_mhz (Codex 47074a1 P2: 否则 resolver 建不出
+        # scd_freq_identity, 频率一致性网静默跳过, 3.6GHz 资产配 3.5GHz TestCase 不报错)。
+        if fields.get("center_frequency_hz") is not None and fields.get("bandwidth_mhz") is None:
+            raise ChannelAssetError(
+                f"{source_type}: 声明 center_frequency_hz 须同时给 bandwidth_mhz "
+                "(否则频率一致性网静默跳过, 错频资产不报错)")
 
 
 # ---- CRUD ----
