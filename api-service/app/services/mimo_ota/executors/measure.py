@@ -452,6 +452,24 @@ class MeasureExecutor(IStepExecutor):
             # emulation_file (ASC strategy 忽略它) + 无 SCD 频率 (不进一致性网)。SCD 解析只在
             # 下方 GCM 分支做 —— Codex on #122: 在 GCM 选了 SCD 再切 ASC 时 config 残留 scd_id,
             # 不该让 ASC run 去 resolve (SCD 删了/非法会误 fail) 或撞 SCD 频率门 (ASC 不用 SCD)。
+            # P2-16 S2: ChannelAsset 前置解析 (方案 A: 仅 channel_asset_id 显式给时介入,
+            # 翻译成现有 config 字段, 下游 engine dispatch / strategy 不变)。
+            from app.services.mimo_ota.channel_asset_resolver import (
+                ChannelAssetResolveError,
+                resolve_channel_asset,
+            )
+            try:
+                resolved_asset = resolve_channel_asset(context.db, config)
+            except ChannelAssetResolveError as e:
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED, error_message=str(e))
+            if resolved_asset is not None:
+                config.engine_mode = resolved_asset.engine_mode  # source_type 派生 engine 覆盖
+                if resolved_asset.cdl_model_name:
+                    config.cdl_model_name = resolved_asset.cdl_model_name
+                if resolved_asset.scd_id:
+                    config.scd_id = resolved_asset.scd_id
+
             resolved_emulation_file = config.emulation_file
             scd_freq_identity = None
 
@@ -551,6 +569,10 @@ class MeasureExecutor(IStepExecutor):
                 # P2-15: custom CDL profile id (设了 → ASC strategy 走 input_mode=custom)
                 "cdl_profile_id": getattr(config, "cdl_profile_id", None),
             }
+            # P2-16 S2: ChannelAsset custom_static → 透传 payload clusters (不查 CustomCDLProfile 表)
+            if resolved_asset is not None and resolved_asset.clusters_payload is not None:
+                cdl_model_data["clusters"] = resolved_asset.clusters_payload
+                cdl_model_data["channel_asset"] = resolved_asset.asset
             # P2-14 B-2 (Codex P1 #169): 把聚类输入透传进 cdl_model_data / sim_rules,
             # 否则 B2ParametricTdlStrategy 永远拿不到 rt_rays → 调 CE 前 fail-loud, B-2 路
             # 死 (即便 test case 含 RT 射线也丢)。来源 = TestCase.configuration extra

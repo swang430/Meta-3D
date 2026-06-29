@@ -59,8 +59,15 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
         try:
             # P2-15: custom CDL profile (cdl_profile_id) 优先于标称 cdl_model_name —
             # 查 profile + 装配簇 → input_mode=custom; 否则走 standard 38.901 路。
+            # P2-16 S2: ChannelAsset custom_static 直传 clusters (优先于 cdl_profile_id 查表)
+            clusters_payload = cdl_model_data.get("clusters")
             cdl_profile_id = cdl_model_data.get("cdl_profile_id")
-            if cdl_profile_id:
+            if clusters_payload is not None:
+                pipeline_result = await self._synthesize_from_clusters(
+                    clusters_payload, cdl_model_data.get("channel_asset"),
+                    simulation_rules, session_id,
+                )
+            elif cdl_profile_id:
                 pipeline_result = await self._synthesize_custom_cdl(
                     str(cdl_profile_id), simulation_rules, session_id,
                 )
@@ -154,6 +161,22 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
             )
             return False
 
+    @staticmethod
+    def _check_custom_physical_gates(name, center_frequency_hz, is_los, k_factor_db, tc_freq):
+        """频率一致性门 (Codex P1 #171) + is_los 门 (Codex P2 #171)。返回 is_los_resolved。
+        custom CDL profile (_synthesize_custom_cdl) 和 ChannelAsset custom_static
+        (_synthesize_from_clusters, P2-16 S2) 共用, 避免门逻辑 drift。"""
+        if center_frequency_hz is not None and abs(center_frequency_hz - tc_freq) > 1.0:
+            raise ValueError(
+                f"custom CDL '{name}' center_frequency_hz={center_frequency_hz:.0f} ≠ TestCase "
+                f"frequency_hz={tc_freq:.0f} — 波形在 profile 频率合成+校准但系统按 TestCase 频率"
+                f"跑, 测量污染; 对齐两边频率, 或清空 profile 频率用 TestCase。")
+        if is_los is None and k_factor_db is not None:
+            raise ValueError(
+                f"custom CDL '{name}' 设了 k_factor_db={k_factor_db} 但 is_los 未声明 — K-factor "
+                f"(Ricean) 仅 LOS 有意义; 显式设 is_los=true 或清空 k_factor_db。")
+        return bool(is_los) if is_los is not None else False
+
     async def _synthesize_custom_cdl(self, cdl_profile_id, simulation_rules, session_id):
         """P2-15: 查 CustomCDLProfile + 装配簇 → synthesize(input_mode=custom)。
 
@@ -175,22 +198,9 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
         # 但系统其余按 TestCase 频率跑 → 测量污染。fail-loud mismatch (不静默用错频率);
         # 合成一律用 TestCase 频率, profile 频率仅作一致性校验、不覆盖整条 measure path。
         tc_freq = simulation_rules.get("frequency_hz", 3.5e9)
-        if (profile.center_frequency_hz is not None
-                and abs(profile.center_frequency_hz - tc_freq) > 1.0):
-            raise ValueError(
-                f"custom CDL '{profile.name}' center_frequency_hz="
-                f"{profile.center_frequency_hz:.0f} ≠ TestCase frequency_hz={tc_freq:.0f} — 波形会"
-                f"在 profile 频率合成+校准但系统按 TestCase 频率跑, 测量污染; 对齐两边频率, 或清空"
-                f" profile 频率用 TestCase。"
-            )
-        # is_los gate (Codex P2 #171): profile.is_los null + k_factor_db 设了 → 矛盾 fail-loud
-        # (K-factor/Ricean 仅 LOS 有意义, 但 LOS 未声明); null + 无 k_factor → 默认 NLOS 合理。
-        if profile.is_los is None and profile.k_factor_db is not None:
-            raise ValueError(
-                f"custom CDL '{profile.name}' 设了 k_factor_db={profile.k_factor_db} 但 is_los 未"
-                f"声明 — K-factor (Ricean) 仅 LOS 有意义; 显式设 is_los=true 或清空 k_factor_db。"
-            )
-        is_los_resolved = bool(profile.is_los) if profile.is_los is not None else False
+        is_los_resolved = self._check_custom_physical_gates(
+            profile.name, profile.center_frequency_hz, profile.is_los,
+            profile.k_factor_db, tc_freq)
         logger.info(
             "[ExternalWaveform Strategy] custom CDL '%s' (%d 簇) → input_mode=custom @ %.0f Hz",
             profile.name, len(clusters), tc_freq,
@@ -216,4 +226,50 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
                 profile.ue_velocity_mps or simulation_rules.get("ue_velocity_mps")
             ),
             k_factor_db=profile.k_factor_db,
+        )
+
+    async def _synthesize_from_clusters(
+        self, clusters_payload, channel_asset, simulation_rules, session_id,
+    ):
+        """P2-16 S2: ChannelAsset custom_static 直传 clusters 装配 → synthesize(input_mode=custom)。
+
+        跟 _synthesize_custom_cdl 同构, 簇/物理来自 ChannelAsset payload + 顶层字段 (不查
+        CustomCDLProfile 表)。频率/is_los 门共用 _check_custom_physical_gates 避免 drift。
+        pathloss_db 在 payload (ChannelAsset 顶层无此字段, 迁移搬进 payload)。
+        """
+        from app.services.channel_engine_client import cdl_clusters_from_profile_dicts
+
+        clusters = cdl_clusters_from_profile_dicts(clusters_payload or [])
+        name = getattr(channel_asset, "name", "channel_asset")
+        cfreq = getattr(channel_asset, "center_frequency_hz", None)
+        is_los = getattr(channel_asset, "is_los", None)
+        kfac = getattr(channel_asset, "k_factor_db", None)
+        velocity = getattr(channel_asset, "ue_velocity_mps", None)
+        pathloss = (getattr(channel_asset, "payload", None) or {}).get("pathloss_db")
+
+        tc_freq = simulation_rules.get("frequency_hz", 3.5e9)
+        is_los_resolved = self._check_custom_physical_gates(name, cfreq, is_los, kfac, tc_freq)
+        logger.info(
+            "[ExternalWaveform Strategy] ChannelAsset custom '%s' (%d 簇) → custom @ %.0f Hz",
+            name, len(clusters), tc_freq,
+        )
+        return await self.ce_client.synthesize_hardware_pipeline(
+            chamber_id=self.chamber_config.id,
+            frequency_hz=tc_freq,
+            clusters=clusters,
+            cdl_model_name=name,
+            pathloss_db=(
+                pathloss if pathloss is not None
+                else simulation_rules.get("pathloss_db", 100.0)
+            ),
+            is_los=is_los_resolved,
+            target_tx_power_dbm=simulation_rules.get("target_tx_power_dbm", 0.0),
+            target_rsrp_dbm=simulation_rules.get("target_rsrp_dbm", -85.0),
+            target_snr_db=simulation_rules.get("target_snr_db", 20.0),
+            ue_velocity_kph=simulation_rules.get("ue_velocity_kph", 15.0),
+            session_id=session_id,
+            input_mode="custom",
+            synthesis_method=simulation_rules.get("synthesis_method", "strict_pfs"),
+            ue_velocity_mps=velocity or simulation_rules.get("ue_velocity_mps"),
+            k_factor_db=kfac,
         )

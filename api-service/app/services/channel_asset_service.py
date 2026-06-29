@@ -18,6 +18,11 @@ from sqlalchemy.orm import Session
 from app.models.channel_asset import ChannelAsset
 # CDL 名校验单一真值在 cdl_model_parser (standard_3gpp 合法性: scenario/cluster/condition token)
 from app.services.cdl_model_parser import parse_cdl_model_name
+# vendor_file canonical_name MF_ 派生 + scd_config 命名契约校验 (§3.2 命名族 A, S2)
+from app.services.mimo_ota.channel_naming import (
+    StandardChannelName,
+    format_standard_channel_filename,
+)
 # 簇校验单一真值在 custom_cdl_profile_service (custom_static = CustomCDLProfile 退化, 复用避免 drift)
 from app.services.custom_cdl_profile_service import (
     CustomCDLProfileError,
@@ -156,10 +161,33 @@ def _validate_rt_dynamic_payload(payload: dict) -> None:
             _validate_ray(si, ri, r)
 
 
+# vendor_file scd_config 完整 SCD 规范字段 (mirror StandardChannelName; S2 Codex #173 第5轮)
+_SCD_CONFIG_REQUIRED = ("band", "arfcn", "bandwidth_mhz", "model",
+                        "scenario", "mimo", "polarization", "version")
+
+
+def _scd_to_standard_name(scd: dict) -> str:
+    """vendor_file scd_config → MF_ 标准名 (§3.2 族 A; raise ValueError on invalid)。"""
+    return format_standard_channel_filename(StandardChannelName(
+        band=scd["band"], arfcn=int(scd["arfcn"]),
+        bandwidth_mhz=int(scd["bandwidth_mhz"]), model=scd["model"],
+        scenario=scd["scenario"], mimo=scd["mimo"],
+        polarization=scd["polarization"], version=int(scd["version"]),
+    ))
+
+
 def _validate_vendor_file_payload(payload: dict) -> None:
     scd = payload.get("scd_config")
     if not isinstance(scd, dict) or not scd:
         raise ChannelAssetError("vendor_file payload.scd_config 须非空对象 (SCD 规范配置)")
+    for f in _SCD_CONFIG_REQUIRED:
+        if scd.get(f) is None:
+            raise ChannelAssetError(f"vendor_file scd_config.{f} 必填 (完整 SCD schema)")
+    # 复用命名契约校验 (alnum + arfcn/bw/version 正); 同时保证 canonical 可确定性派生
+    try:
+        _scd_to_standard_name(scd)
+    except (ValueError, KeyError, TypeError) as e:
+        raise ChannelAssetError(f"vendor_file scd_config 命名契约非法: {e}")
 
 
 _PAYLOAD_VALIDATORS = {
@@ -217,13 +245,18 @@ def create_channel_asset(
         raise ChannelAssetError("payload 必填")
     if db.query(ChannelAsset).filter(ChannelAsset.name == name).first() is not None:
         raise ChannelAssetError(f"ChannelAsset 名 {name!r} 已存在")
-    canonical = fields.get("canonical_name")
-    if canonical is not None and db.query(ChannelAsset).filter(
-            ChannelAsset.canonical_name == canonical).first() is not None:
-        raise ChannelAssetError(f"canonical_name {canonical!r} 已存在")
+    # 先校验 payload (含 vendor 命名契约), 再派生 canonical (依赖合法 scd_config)
     _validate_payload(source_type, payload)
     _validate_top_physical(fields)
     _validate_source_fields(source_type, fields)
+    # vendor_file: canonical_name 未传 → 从 scd_config 确定性派生 MF_ 名 (§3.2 族 A)
+    canonical = fields.get("canonical_name")
+    if canonical is None and source_type == "vendor_file":
+        canonical = _scd_to_standard_name(payload["scd_config"])
+        fields["canonical_name"] = canonical
+    if canonical is not None and db.query(ChannelAsset).filter(
+            ChannelAsset.canonical_name == canonical).first() is not None:
+        raise ChannelAssetError(f"canonical_name {canonical!r} 已存在")
     asset = ChannelAsset(
         name=name,
         source_type=source_type,
