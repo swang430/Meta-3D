@@ -183,6 +183,14 @@ def _validate_vendor_file_payload(payload: dict) -> None:
     for f in _SCD_CONFIG_REQUIRED:
         if scd.get(f) is None:
             raise ChannelAssetError(f"vendor_file scd_config.{f} 必填 (完整 SCD schema)")
+    # arfcn/bandwidth_mhz/version 是整数 (Dict payload 绕过 Pydantic int → 拒 fractional/bool,
+    # 否则 int() 静默 coerce 640000.7→640000; Codex #174 复查 P2, 同 S1 num_rays 母题)
+    for f in ("arfcn", "bandwidth_mhz", "version"):
+        v = scd.get(f)
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise ChannelAssetError(f"vendor_file scd_config.{f} 须数值 (得 {type(v).__name__})")
+        if float(v) != int(v):
+            raise ChannelAssetError(f"vendor_file scd_config.{f} 须整数 (得 {v!r})")
     # 复用命名契约校验 (alnum + arfcn/bw/version 正); 同时保证 canonical 可确定性派生
     try:
         _scd_to_standard_name(scd)

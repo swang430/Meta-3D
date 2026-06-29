@@ -40,6 +40,7 @@ class ResolvedChannelAsset:
     cdl_model_name: Optional[str] = None      # standard_3gpp → config.cdl_model_name
     emulation_file: Optional[str] = None      # vendor_file → config.emulation_file (不依赖 SCD twin)
     clusters_payload: Optional[List[dict]] = None  # custom_static → cdl_model_data["clusters"]
+    rt_rays_payload: Optional[List[dict]] = None  # rt_dynamic → cdl_model_data["rt_rays"] (单快照)
     scd_freq_identity: Any = None  # vendor_file: scd_config 声明频率 → 频率一致性网 (Codex #174 复查 P2)
 
 
@@ -85,5 +86,8 @@ def resolve_channel_asset(db: Session, config: Any) -> Optional[ResolvedChannelA
         return ResolvedChannelAsset(
             engine_mode=engine, asset=asset,
             emulation_file=asset.associated_file_path, scd_freq_identity=freq_id)
-    # rt_dynamic: S2 只路由到 B2 (现恒 fail-loud=现场半), 不装配 payload→ACP (S3/S5)
-    return ResolvedChannelAsset(engine_mode=engine, asset=asset)
+    # rt_dynamic: 透传单快照 rays 到 B2 (对称 custom clusters 透传; 多快照轨迹/ACP 装配是 S3)。
+    # Codex #174 复查 P2: 否则 rt_dynamic 资产路由到 B2 但 rays 没接, B2 误用 legacy rt_rays。
+    snapshots = (asset.payload or {}).get("snapshots") or []
+    rays = snapshots[0].get("rays") if snapshots and isinstance(snapshots[0], dict) else None
+    return ResolvedChannelAsset(engine_mode=engine, asset=asset, rt_rays_payload=rays)

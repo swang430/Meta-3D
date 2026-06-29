@@ -592,7 +592,12 @@ class MeasureExecutor(IStepExecutor):
             # (RT-Release 现场写入); 无则 rt_rays=None → strategy fail-loud = 设计预期。
             if engine_mode == EngineMode.B2_PARAMETRIC_TDL:
                 _b2 = _extract_b2_cluster_inputs(config)
-                cdl_model_data["rt_rays"] = _b2["rt_rays"]
+                # rt_dynamic ChannelAsset payload rays 优先于 legacy config.model_extra rt_rays
+                # (Codex #174 复查 P2: 否则选 rt_dynamic 资产却用 saved TestCase 残留 legacy rays)
+                if resolved_asset is not None and resolved_asset.rt_rays_payload is not None:
+                    cdl_model_data["rt_rays"] = resolved_asset.rt_rays_payload
+                else:
+                    cdl_model_data["rt_rays"] = _b2["rt_rays"]
                 cdl_model_data["test_class"] = _b2["test_class"]
                 cdl_model_data["f64_profile"] = _b2["f64_profile"]
                 if _b2["ue_velocity_mps"] is not None:

@@ -178,6 +178,14 @@ class TestPolymorphicPayloadValidation:
             create_channel_asset(db, name="x", source_type="vendor_file",
                                  payload={"scd_config": incomplete})
 
+    def test_vendor_scd_fractional_arfcn(self, db):
+        # arfcn 是整数 (Dict payload 绕过 Pydantic int → 拒 fractional, Codex #174 复查 P2; int()
+        # 否则静默 coerce 640000.7→640000)
+        bad_scd = dict(_SCD, arfcn=640000.7)
+        with pytest.raises(ChannelAssetError, match="arfcn 须整数"):
+            create_channel_asset(db, name="x", source_type="vendor_file",
+                                 payload={"scd_config": bad_scd})
+
     def test_vendor_invalid_scd_naming(self, db):
         # model 含连字符 → 命名契约 (alnum) 拒 (format_standard_channel_filename ValueError)
         bad_scd = dict(_SCD, model="CDL-C")

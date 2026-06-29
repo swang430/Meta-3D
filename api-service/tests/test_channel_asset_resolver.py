@@ -99,8 +99,9 @@ class TestResolver:
         a = create_channel_asset(db, name="r", source_type="rt_dynamic",
                                  payload={"snapshots": [{"rays": [_RAY]}]})
         r = resolve_channel_asset(db, _cfg(channel_asset_id=str(a.id)))
-        # S2 只路由到 B2 (现恒 fail-loud=现场半), 不装配 payload
         assert r.engine_mode == "b2_parametric_tdl"
+        # 透传单快照 rays 到 B2 (Codex #174 复查 P2; 多快照轨迹/ACP 装配是 S3)
+        assert r.rt_rays_payload[0]["aoa_deg"] == 1.0
         assert r.clusters_payload is None and r.emulation_file is None
 
     def test_invalid_id_fails_loud(self, db):
