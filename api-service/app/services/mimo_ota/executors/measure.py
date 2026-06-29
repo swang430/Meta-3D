@@ -640,6 +640,11 @@ class MeasureExecutor(IStepExecutor):
             from app.services.mimo_ota.frequency_consistency import (
                 check_frequency_consistency,
             )
+            # 资产声明频率统一兜底喂一致性网 (Codex 0ea6cca P2: standard_3gpp 走 ASC 路, GCM/B2
+            # 分支没设 scd_freq_identity; 补 standard 资产声明载频; GCM/B2 已设则 is None 跳过)
+            if (resolved_asset is not None and resolved_asset.scd_freq_identity is not None
+                    and scd_freq_identity is None):
+                scd_freq_identity = resolved_asset.scd_freq_identity
             freq_result = check_frequency_consistency(
                 FrequencyIdentity.from_center_freq_mhz(
                     pcell.frequency_hz / 1e6, pcell.bandwidth_mhz

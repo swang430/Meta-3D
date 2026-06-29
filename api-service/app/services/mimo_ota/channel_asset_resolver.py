@@ -69,9 +69,16 @@ def resolve_channel_asset(db: Session, config: Any) -> Optional[ResolvedChannelA
         clusters = snapshots[0].get("clusters") if isinstance(snapshots[0], dict) else None
         return ResolvedChannelAsset(engine_mode=engine, asset=asset, clusters_payload=clusters)
     if st == "standard_3gpp":
+        # 顶层声明频率 → 频率一致性网 (Codex 0ea6cca P2: 否则标准资产存一个 band 被别频率
+        # TestCase 引用不报错; 对称 rt/vendor 透传 scd_freq_identity)。
+        freq_id = None
+        if asset.center_frequency_hz is not None and asset.bandwidth_mhz is not None:
+            freq_id = FrequencyIdentity.from_center_freq_mhz(
+                asset.center_frequency_hz / 1e6, asset.bandwidth_mhz)
         return ResolvedChannelAsset(
             engine_mode=engine, asset=asset,
-            cdl_model_name=(asset.payload or {}).get("cdl_model_name"))
+            cdl_model_name=(asset.payload or {}).get("cdl_model_name"),
+            scd_freq_identity=freq_id)
     if st == "vendor_file":
         # vendor_file 不依赖 SCD twin (Codex #174 P2: 新建的 vendor_file 经 ChannelAsset API
         # 没有同 id 的 SCD 行, 不能透传 scd_id 走查 SCD 表的老路): 直接从 ChannelAsset 提供
