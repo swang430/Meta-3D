@@ -76,6 +76,9 @@ class TestResolver:
         assert r.engine_mode == "keysight_gcm"
         assert r.emulation_file == "/smu/x.smu"
         assert r.clusters_payload is None
+        # scd_config 声明频率喂一致性网 (Codex #174 复查 P2: 防选错频率 .smu)
+        assert r.scd_freq_identity is not None
+        assert r.scd_freq_identity.center_arfcn == 640000
 
     def test_vendor_declared_only_no_file(self, db):
         # declared_only (无 associated_file_path) → emulation_file None (GCM gate fail-loud),

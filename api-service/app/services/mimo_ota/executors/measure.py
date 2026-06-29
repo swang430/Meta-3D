@@ -472,7 +472,10 @@ class MeasureExecutor(IStepExecutor):
                 config.scd_id = None
                 if resolved_asset.cdl_model_name:
                     config.cdl_model_name = resolved_asset.cdl_model_name
-                if resolved_asset.emulation_file:
+                # vendor_file authoritative: **无条件**设 emulation_file (含 None) — declared_only
+                # (None) 必须清掉 saved TestCase 残留的 legacy .smu, 否则 GCM declared_only strict
+                # fail-loud 被旧 stale 文件绕过 (Codex #174 复查 P2)。
+                if resolved_asset.engine_mode == EngineMode.GCM_NATIVE.value:
                     config.emulation_file = resolved_asset.emulation_file
 
             resolved_emulation_file = config.emulation_file
@@ -508,6 +511,11 @@ class MeasureExecutor(IStepExecutor):
                         status=StepExecutionStatus.FAILED,
                         error_message=f"P2-12 slice 4: scd_id={config.scd_id} 无效/不存在: {e}",
                     )
+                # vendor_file ChannelAsset (清了 scd_id 不走 SCD 表): scd_config 声明频率从
+                # resolver 喂频率一致性网, 否则 .smu 文件名不可解析时选错频率文件也通过
+                # (Codex #174 复查 P2)。
+                if resolved_asset is not None and resolved_asset.scd_freq_identity is not None:
+                    scd_freq_identity = resolved_asset.scd_freq_identity
                 # P2-11 Phase 2: GCM 的 .smu 必须由 TestCase 驱动 (路径 B), 不能静默
                 # fallback 到 F64 驱动默认 .smu —— 默认频率可能跟 TestCase 错配。strict
                 # 默认 FAIL; opt-out (bring-up 路径 A) 降级 warning 用驱动默认。下面

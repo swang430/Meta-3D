@@ -20,6 +20,7 @@ from app.services.channel_asset_service import (
     ChannelAssetNotFound,
     get_channel_asset,
 )
+from app.hal.nr_arfcn import FrequencyIdentity
 from app.services.channel_generation.base_generator import EngineMode
 
 # source_type → engine_mode 静态查表 (一对一; 非 §6 判决, 那是 S3)
@@ -39,6 +40,7 @@ class ResolvedChannelAsset:
     cdl_model_name: Optional[str] = None      # standard_3gpp → config.cdl_model_name
     emulation_file: Optional[str] = None      # vendor_file → config.emulation_file (不依赖 SCD twin)
     clusters_payload: Optional[List[dict]] = None  # custom_static → cdl_model_data["clusters"]
+    scd_freq_identity: Any = None  # vendor_file: scd_config 声明频率 → 频率一致性网 (Codex #174 复查 P2)
 
 
 class ChannelAssetResolveError(ValueError):
@@ -73,7 +75,15 @@ def resolve_channel_asset(db: Session, config: Any) -> Optional[ResolvedChannelA
         # 没有同 id 的 SCD 行, 不能透传 scd_id 走查 SCD 表的老路): 直接从 ChannelAsset 提供
         # .smu (associated_file_path)。declared_only (None) → GCM 分支 emulation_file_gate
         # strict fail-loud (没指定 .smu 不能真跑 GCM), 与现状 (裸 emulation_file 缺失) 一致。
+        scd = (asset.payload or {}).get("scd_config") or {}
+        freq_id = None
+        if scd.get("arfcn") is not None and scd.get("bandwidth_mhz") is not None:
+            # scd_config 声明 ARFCN/带宽 → 频率一致性网 cross-check (Codex #174 复查 P2: 否则
+            # .smu 文件名不可解析时, TestCase 选个声明为别的频率的文件也能通过)。
+            freq_id = FrequencyIdentity(
+                center_arfcn=int(scd["arfcn"]), bandwidth_mhz=float(scd["bandwidth_mhz"]))
         return ResolvedChannelAsset(
-            engine_mode=engine, asset=asset, emulation_file=asset.associated_file_path)
+            engine_mode=engine, asset=asset,
+            emulation_file=asset.associated_file_path, scd_freq_identity=freq_id)
     # rt_dynamic: S2 只路由到 B2 (现恒 fail-loud=现场半), 不装配 payload→ACP (S3/S5)
     return ResolvedChannelAsset(engine_mode=engine, asset=asset)
