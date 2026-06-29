@@ -411,6 +411,11 @@ class MIMOOTAConfiguration(BaseModel):
         ExternalAscPathStrategy.generate_and_load 防御性检查并 surface
         actionable error。schema 这里只保证 mode-vs-path 配对完整。
         """
+        # channel_asset_id 设了 → measure resolver 会用资产派生 engine_mode 覆盖, stale
+        # external_asc (asc_source_path 已清) 不应在此 fail (Codex 0b913fe P2: 本 validator
+        # 在 resolver 覆盖 engine 之前跑; 资产路由交给 resolver)。
+        if getattr(self, "channel_asset_id", None):
+            return self
         if self.engine_mode == "external_asc":
             if not self.asc_source_path or not self.asc_source_path.strip():
                 raise ValueError(
