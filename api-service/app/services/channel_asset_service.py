@@ -244,6 +244,23 @@ def _validate_source_fields(source_type: str, fields: dict) -> None:
 
 # ---- CRUD ----
 
+def _check_vendor_filename_freq(scd_config: Any, associated_file_path: Any) -> None:
+    """vendor .smu 文件名 vs scd_config.arfcn 交叉校验 (Codex P2 accept 侧, 镜像 resolver load 侧)。
+
+    MF_ 可解析名 ARFCN 不一致 → fail-loud; vendor 自定义名 (解析不出) → 放行留给声明频率门。
+    create/update 接受文件时拦住"声明一个 ARFCN 却给别 ARFCN 的 MF_ 标准名 .smu", 防坏资产入库。
+    """
+    if not associated_file_path:
+        return
+    arfcn = (scd_config or {}).get("arfcn")
+    if arfcn is None:
+        return
+    from app.services.standard_channel_service import check_channel_filename_freq
+    chk = check_channel_filename_freq(str(associated_file_path), int(arfcn))
+    if not chk.consistent:
+        raise ChannelAssetError(chk.failure_reason())
+
+
 def create_channel_asset(
     db: Session, *, name: str, source_type: str, payload: Any,
     created_by: Optional[str] = None, **fields,
@@ -261,6 +278,8 @@ def create_channel_asset(
     _validate_payload(source_type, payload)
     _validate_top_physical(fields)
     _validate_source_fields(source_type, fields)
+    if source_type == "vendor_file":
+        _check_vendor_filename_freq(payload.get("scd_config"), fields.get("associated_file_path"))
     # vendor_file: canonical_name 未传 → 从 scd_config 确定性派生 MF_ 名 (§3.2 族 A)
     canonical = fields.get("canonical_name")
     if canonical is None and source_type == "vendor_file":
@@ -327,6 +346,21 @@ def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
         _validate_payload(asset.source_type, fields["payload"])
     _validate_top_physical(fields)
     _validate_source_fields(asset.source_type, fields)
+    if asset.source_type == "vendor_file":
+        # accept 侧 filename 校验 (Codex P2: 镜像 resolver load 侧) + payload 改变时重派生
+        # canonical (Codex P2: 否则改 scd_config 后 canonical 停留旧 ARFCN/version, dedup/audit
+        # 用 stale 值)。显式给 canonical_name 替换 → 不自动重派生 (尊重 operator 指定)。
+        _np = fields.get("payload", asset.payload) or {}
+        _scd = _np.get("scd_config") if isinstance(_np, dict) else None
+        _check_vendor_filename_freq(
+            _scd, fields.get("associated_file_path", asset.associated_file_path))
+        if "payload" in fields and "canonical_name" not in fields:
+            new_canon = _scd_to_standard_name(_scd)
+            if new_canon != asset.canonical_name and db.query(ChannelAsset).filter(
+                    ChannelAsset.canonical_name == new_canon,
+                    ChannelAsset.id != asset.id).first() is not None:
+                raise ChannelAssetError(f"canonical_name {new_canon!r} 已存在")
+            asset.canonical_name = new_canon
     for k, v in fields.items():
         if k in _MUTABLE_FIELDS:
             setattr(asset, k, v)
