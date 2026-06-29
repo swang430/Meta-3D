@@ -189,6 +189,10 @@ def _validate_vendor_file_payload(payload: dict) -> None:
         v = scd.get(f)
         if isinstance(v, bool) or not isinstance(v, (int, float)):
             raise ChannelAssetError(f"vendor_file scd_config.{f} 须数值 (得 {type(v).__name__})")
+        # NaN/Infinity: int(v) 抛 ValueError/OverflowError (≠ ChannelAssetError) → 500;
+        # 在 int() 前 fail-loud 成 400 (Codex #174 复查 P2, 同 _num_or_error isfinite 守门)。
+        if not math.isfinite(v):
+            raise ChannelAssetError(f"vendor_file scd_config.{f} 须有限数值 (得 {v!r})")
         if float(v) != int(v):
             raise ChannelAssetError(f"vendor_file scd_config.{f} 须整数 (得 {v!r})")
     # 复用命名契约校验 (alnum + arfcn/bw/version 正); 同时保证 canonical 可确定性派生

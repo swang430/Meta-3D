@@ -41,7 +41,7 @@ class ResolvedChannelAsset:
     emulation_file: Optional[str] = None      # vendor_file → config.emulation_file (不依赖 SCD twin)
     clusters_payload: Optional[List[dict]] = None  # custom_static → cdl_model_data["clusters"]
     rt_rays_payload: Optional[List[dict]] = None  # rt_dynamic → cdl_model_data["rt_rays"] (单快照)
-    scd_freq_identity: Any = None  # vendor_file: scd_config 声明频率 → 频率一致性网 (Codex #174 复查 P2)
+    scd_freq_identity: Any = None  # vendor_file/rt_dynamic 声明频率 → 频率一致性网 (Codex #174 复查 P2)
 
 
 class ChannelAssetResolveError(ValueError):
@@ -90,4 +90,11 @@ def resolve_channel_asset(db: Session, config: Any) -> Optional[ResolvedChannelA
     # Codex #174 复查 P2: 否则 rt_dynamic 资产路由到 B2 但 rays 没接, B2 误用 legacy rt_rays。
     snapshots = (asset.payload or {}).get("snapshots") or []
     rays = snapshots[0].get("rays") if snapshots and isinstance(snapshots[0], dict) else None
-    return ResolvedChannelAsset(engine_mode=engine, asset=asset, rt_rays_payload=rays)
+    # 顶层声明 center_frequency_hz/bandwidth_mhz → 频率一致性网 (Codex #174 复查 P2: 复用为别
+    # band 抓的 RT 射线会在错误载频聚类, 频率门无资产源可比对; 对称 vendor scd_freq_identity)。
+    freq_id = None
+    if asset.center_frequency_hz is not None and asset.bandwidth_mhz is not None:
+        freq_id = FrequencyIdentity.from_center_freq_mhz(
+            asset.center_frequency_hz / 1e6, asset.bandwidth_mhz)
+    return ResolvedChannelAsset(
+        engine_mode=engine, asset=asset, rt_rays_payload=rays, scd_freq_identity=freq_id)

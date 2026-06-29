@@ -598,6 +598,10 @@ class MeasureExecutor(IStepExecutor):
                     cdl_model_data["rt_rays"] = resolved_asset.rt_rays_payload
                 else:
                     cdl_model_data["rt_rays"] = _b2["rt_rays"]
+                # rt_dynamic 顶层声明频率 → 喂频率一致性网 (Codex #174 复查 P2: 否则复用别 band 的
+                # RT 射线在错误载频聚类, 频率门无资产源可比; 对称 vendor 的 GCM 517-518 注入)。
+                if resolved_asset is not None and resolved_asset.scd_freq_identity is not None:
+                    scd_freq_identity = resolved_asset.scd_freq_identity
                 cdl_model_data["test_class"] = _b2["test_class"]
                 cdl_model_data["f64_profile"] = _b2["f64_profile"]
                 if _b2["ue_velocity_mps"] is not None:
