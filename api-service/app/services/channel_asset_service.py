@@ -113,8 +113,10 @@ def _validate_custom_static_payload(payload: dict) -> None:
             _num_or_error(f"clusters[{i}].{f}", c.get(f))
         # num_rays 是整数计数 (Dict payload 绕过 Pydantic int 约束 → 拒 1.5 这种 fractional)
         nr = c.get("num_rays")
-        if nr is not None and float(nr) != int(nr):
-            raise ChannelAssetError(f"clusters[{i}].num_rays 须整数 (得 {nr!r})")
+        if nr is not None:
+            _num_or_error(f"clusters[{i}].num_rays", nr)  # 类型+有限守门 (否则 float("bad")/NaN → ValueError 500)
+            if float(nr) != int(nr):
+                raise ChannelAssetError(f"clusters[{i}].num_rays 须整数 (得 {nr!r})")
         ph = c.get("initial_phases_rad")
         if isinstance(ph, list):
             for j, x in enumerate(ph):
@@ -124,6 +126,9 @@ def _validate_custom_static_payload(payload: dict) -> None:
             _validate_cluster(i, c)
         except CustomCDLProfileError as e:
             raise ChannelAssetError(str(e))
+    # pathloss_db 顶层 optional 但若给则须有限数值 (Codex 1d47e85 P2: asc_strategy 直传给
+    # synthesize_hardware_pipeline, 不校验则 "bad"/NaN 到 CE 才炸而非入库时 400)
+    _num_or_error("custom_static pathloss_db", payload.get("pathloss_db"))
 
 
 def _validate_ray(si: int, ri: int, r: Any) -> None:
