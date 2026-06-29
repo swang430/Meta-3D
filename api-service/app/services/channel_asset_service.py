@@ -254,12 +254,21 @@ def _validate_source_fields(source_type: str, fields: dict) -> None:
             raise ChannelAssetError(
                 f"vendor_file associated_file_path 须 .smu 后缀 (得 {afp!r}); 留空 = declared_only")
     if source_type in ("standard_3gpp", "rt_dynamic"):
+        cf = fields.get("center_frequency_hz")
         # 声明 center_frequency_hz 须同时给 bandwidth_mhz (Codex 47074a1 P2: 否则 resolver 建不出
         # scd_freq_identity, 频率一致性网静默跳过, 3.6GHz 资产配 3.5GHz TestCase 不报错)。
-        if fields.get("center_frequency_hz") is not None and fields.get("bandwidth_mhz") is None:
+        if cf is not None and fields.get("bandwidth_mhz") is None:
             raise ChannelAssetError(
                 f"{source_type}: 声明 center_frequency_hz 须同时给 bandwidth_mhz "
                 "(否则频率一致性网静默跳过, 错频资产不报错)")
+        # center_frequency_hz 须落在 NR-ARFCN 频率域 0–100000 MHz (Codex 1571a71 P2: 仅查 >0 不够,
+        # 200GHz 等打错值到 resolver/measure 才 freq_mhz_to_nr_arfcn 抛裸 ValueError → 入库前转 400)。
+        if cf is not None:
+            from app.hal.nr_arfcn import freq_mhz_to_nr_arfcn
+            try:
+                freq_mhz_to_nr_arfcn(cf / 1e6)
+            except ValueError as e:
+                raise ChannelAssetError(f"{source_type}: center_frequency_hz 超出 NR 域: {e}")
 
 
 # ---- CRUD ----
@@ -365,7 +374,14 @@ def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
     if "payload" in fields:
         _validate_payload(asset.source_type, fields["payload"])
     _validate_top_physical(fields)
-    _validate_source_fields(asset.source_type, fields)
+    # update 只传改动字段 (exclude_unset), 但 center/bw 跨字段校验需最终状态 → 合并资产现值
+    # (Codex 1571a71 P2: 否则只改 center 不带 bw 会误拒有 bw 的资产, 或清 bw 漏判新洞)。
+    _vsf = {
+        "center_frequency_hz": fields.get("center_frequency_hz", asset.center_frequency_hz),
+        "bandwidth_mhz": fields.get("bandwidth_mhz", asset.bandwidth_mhz),
+        "associated_file_path": fields.get("associated_file_path", asset.associated_file_path),
+    }
+    _validate_source_fields(asset.source_type, _vsf)
     if asset.source_type == "vendor_file":
         # accept 侧 filename 校验 (Codex P2: 镜像 resolver load 侧) + payload 改变时重派生
         # canonical (Codex P2: 否则改 scd_config 后 canonical 停留旧 ARFCN/version, dedup/audit
