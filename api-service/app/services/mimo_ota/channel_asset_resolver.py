@@ -42,6 +42,7 @@ class ResolvedChannelAsset:
     clusters_payload: Optional[List[dict]] = None  # custom_static → cdl_model_data["clusters"]
     rt_rays_payload: Optional[List[dict]] = None  # rt_dynamic → cdl_model_data["rt_rays"] (单快照)
     scd_freq_identity: Any = None  # vendor_file/rt_dynamic 声明频率 → 频率一致性网 (Codex #174 复查 P2)
+    ue_velocity_mps: Any = None  # rt_dynamic 顶层速度 → B2 sim_rules 多普勒上下文 (Codex 9d4e758 P2)
 
 
 class ChannelAssetResolveError(ValueError):
@@ -107,4 +108,5 @@ def resolve_channel_asset(db: Session, config: Any) -> Optional[ResolvedChannelA
         freq_id = FrequencyIdentity.from_center_freq_mhz(
             asset.center_frequency_hz / 1e6, asset.bandwidth_mhz)
     return ResolvedChannelAsset(
-        engine_mode=engine, asset=asset, rt_rays_payload=rays, scd_freq_identity=freq_id)
+        engine_mode=engine, asset=asset, rt_rays_payload=rays, scd_freq_identity=freq_id,
+        ue_velocity_mps=asset.ue_velocity_mps)

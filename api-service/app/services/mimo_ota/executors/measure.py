@@ -604,8 +604,13 @@ class MeasureExecutor(IStepExecutor):
                     scd_freq_identity = resolved_asset.scd_freq_identity
                 cdl_model_data["test_class"] = _b2["test_class"]
                 cdl_model_data["f64_profile"] = _b2["f64_profile"]
-                if _b2["ue_velocity_mps"] is not None:
-                    sim_rules["ue_velocity_mps"] = _b2["ue_velocity_mps"]
+                # rt_dynamic 资产顶层速度优先于 legacy config.model_extra (Codex 9d4e758 P2:
+                # 否则选带速度的 RT 资产却用 legacy/零速度聚类, 丢多普勒上下文)
+                _vel = (resolved_asset.ue_velocity_mps
+                        if resolved_asset is not None and resolved_asset.ue_velocity_mps is not None
+                        else _b2["ue_velocity_mps"])
+                if _vel is not None:
+                    sim_rules["ue_velocity_mps"] = _vel
 
             # P2-15 (Codex P2 #171): cdl_profile_id (自定义 CDL) 只 ASC_SYNTHESIS 实现 custom
             # 分支; GCM/external strategy 忽略它 → 静默跑标准信道。capability↔gate 一致, fail-fast。
