@@ -1645,7 +1645,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 ---
 
-### P2-16 — 信道资产多态化（统一 GCM/B-1/B-2/RT 四源 → ChannelAsset 多态实体 + 独立信道工作台）🔄 in-progress (2026-06-28) — S1 ✅ (#173) / S2 ✅ (#174) / S3 next
+### P2-16 — 信道资产多态化（统一 GCM/B-1/B-2/RT 四源 → ChannelAsset 多态实体 + 独立信道工作台）🔄 in-progress (2026-06-28) — S1 ✅ (#173) / S2 ✅ (#174) / S3 ✅ (软件半全收口, #176–179) — 余 S4 GUI 闭环 + S5/S6 现场
 
 **What**: 把四分五裂的四种信道源——GCM `.smu` 文件指针 / B-1 ASC 瞬态合成 `.asc` / B-2 参数 TDL `.tap` / RT 动态——统一为单一多态 `ChannelAsset` 实体，对 TestCase 暴露单一 `channel_asset_id`（取代现在 `scd_id` / `cdl_profile_id` / `asc_source_path` / `config.extra` 裸 RT dict 四套并行引用）。GUI 终态独立「信道工作台」（非 DUT/SIM 同栏）。设计见 [`design/channel-asset-polymorphism-design_V0.1.md`](design/channel-asset-polymorphism-design_V0.1.md)（2026-06-28 三路代码考古 grounded）。
 
@@ -1656,13 +1656,18 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 **切片**:
 - **S1** ✅ 完成 (#173) — `ChannelAsset` 实体 + migration（PG/SQLite 三路径 + `table_exists`/`column_exists` 守门）+ CRUD + 多态 payload schema（`source_type` 判别联合体：`standard_3gpp` / `custom_static` / `rt_dynamic` / `vendor_file`）+ 契约 4 步同步。
 - **S2** ✅ 完成 (#174; 9 轮 Codex review / 11 个 P2 全修：filename load+accept / canonical 重派生 / arfcn NR域 / rt velocity / external_asc 旁路 / standard·rt 频率传播+center须配bw / custom pathloss·num_rays 守门 / 合并状态校验) — custom CDL + SCD 收口（数据迁移 clusters→`payload.snapshots[0]` / scd 配置→`payload.scd_config`；`cdl_profile_id`/`scd_id`→`channel_asset_id` backward-compat 复用 id）。统一频率一致性网（消除现「scd_id 进网、cdl_profile_id 不进」的不一致）。
-- **S3** 装配层 `payload→AnnotatedCDLProfile` + §6 判决路由（**接线悬空的 F4 时空跟踪 / F5 phase_continuous / b1_annotated_baker**；`target_path→strategy` 从"校验"升"路由"；合成 RT 测）。
+- **S3** ✅ 完成（软件半全收口）装配层 `payload→AnnotatedCDLProfile` + §6 判决路由（接线设计 §1.2 断层 C 的三个悬空函数进生产微服务 + api-service 升路由）。**关键纠正**：装配/判决/F4/F5/bake 全在**微服务侧**（ChannelEgine 经 `CHANNEL_ENGINE_PATH` import，MIMO-First↔微服务 wire 是扁平非 ACP）；§6 `select_path_and_clustering` 早被 `cluster_b2_native` 消费（非「全悬空」）。
+  - **S3-1** ✅ (#176) `bake_b1_annotated` 接线 — synthesize `routing_mode=annotated_b1`（custom→`from_custom_profile`→bake，与 legacy run() 逐位等价 golden 证）。
+  - **S3-2a** ✅ (#177) `native_fit_trajectory` F4 — 新端点 `cluster_b2_trajectory`（多快照 RT→逐快照 native-fit+跨快照生灭跟踪→per-snapshot tap；先过 §6 判决门非 B2_parametric→422）。
+  - **S3-2b** ✅ (#178) `phase_continuous` F5 — 新端点 `synthesize_deterministic_b1`（isac/beam 确定性相位→§6 确认 B1_baked（大质心→GCM/ESCALATE 422）→subray_sum ACP→bake→.asc；用户定 cal 烘进 .asc）。
+  - **S3-3** ✅ (#179) api-service `custom_static` 升路由到标注式 B-1 烘焙脊（`routing_mode=annotated_b1`，统一 ACP 烘焙脊）+ 验收③（#176 golden 传递性证）+ 修 #178 跨服务 import 漏网 bug。
+  - Codex 跨四 PR 共 2 P1（轨迹判决门绕过 §6 / 确定性 cal 丢失）+ 3 P2（annotated fail-fast / 文件名消毒 / cal parity）全修。**rt_dynamic 调 trajectory/deterministic 端点的 api 接线延 S5**（真实 rt 数据现场；合成 rt 算法测已在微服务侧做，用户 2026-06-30 定最小 scope）。
 - **S4** 独立「信道工作台」GUI（G2）：`source_type` 切换 + 簇编辑器从 AssetProfiles 迁入 + SCD 卡片从仪器抽屉迁入 + 浏览器实测闭环。
   - `[S4 follow-up, Codex #174 cebb394]` **legacy 编辑路径 vs ChannelAsset 副本同步**：① 旧 `/custom-cdl-profiles` 更新流只写 `custom_cdl_profiles`，迁移后改旧 profile → ChannelAsset 副本 stale（resolver 用迁移时冻结的 snapshot）；② declared_only SCD 迁移后旧 SCD 关联流更新 `standard_channel_definitions.associated_file_path` 不更新 ChannelAsset。是 S2「旧表保留至 S4 deprecate」设计取舍的已知后果 → S4 收口 GUI 时 deprecate/重定向 legacy 编辑路径（或加双写同步）。
 - **S5**（🚧 现场）`rt_dynamic` 真实 RT 数据接入（Lauraycs RT + RT-Release）+ 多快照。
 - **S6**（🚧 现场）`b2_parametric` `.tap` 落地 + F64 验证 + GUI engine 暴露（合 P2-14 第 4 项「GUI 暴露」）。
 
-**Acceptance**: ① `ChannelAsset` CRUD + 四 `source_type` 多态 payload 持久化/校验（边缘值 fail-loud）；② 旧 `cdl_profile_id`/`scd_id` 经映射零破坏跑通（PG / SQLite-brownfield / SQLite-greenfield 三路径测）；③ 一个 `custom_static` 资产经判决路由正确分流到 `asc_baked` 合成 `.asc`（与现直连结果一致）；④ 独立信道工作台 GUI 浏览器闭环（建 / 切 `source_type` / 编辑簇 / 选进 TestCase）；⑤ S5/S6 挂现场。
+**Acceptance**: ① ✅ `ChannelAsset` CRUD + 四 `source_type` 多态 payload 持久化/校验（边缘值 fail-loud）（S1 #173）；② ✅ 旧 `cdl_profile_id`/`scd_id` 经映射零破坏跑通（PG / SQLite-brownfield / SQLite-greenfield 三路径测）（S2 #174）；③ ✅ 一个 `custom_static` 资产经判决路由正确分流到 `asc_baked` 合成 `.asc`（与现直连结果一致）（S3 #176/#179：custom_static→annotated_b1 烘焙脊，#176 golden 证逐位等价）；④ ⏳ 独立信道工作台 GUI 浏览器闭环（建 / 切 `source_type` / 编辑簇 / 选进 TestCase）（S4 待）；⑤ ⏳ S5/S6 挂现场。
 
 **分支**: 新分支（信道领域）；按切片独立 PR + Codex + merge 回 main（沿用 P2-14/P2-15 模式）。
 
