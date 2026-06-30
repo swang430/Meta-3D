@@ -72,6 +72,7 @@ import { TopologyEditor } from './features/TopologyEditor/TopologyEditor'
 import { TopologyProfileEditor } from './features/TopologyProfileEditor'
 import { LabProfileWizard } from './components/LabProfile/LabProfileWizard'
 import { AssetProfilesPanel } from './components/AssetProfiles/AssetProfilesPanel'
+import { ChannelWorkbench } from './features/ChannelWorkbench/ChannelWorkbench'
 import { fetchLabProfiles } from './api/labProfileService'
 import { ExecutionMetricsCard } from './features/Monitoring'
 import ChartsDemoPage from './components/Charts/ChartsDemoPage'
@@ -155,7 +156,7 @@ const hexToRgba = (hex: string, alpha: number) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
-type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'topologyEditor' | 'assetProfiles' | 'testManagement' | 'results' | 'systemCalibration' | 'commissioning' | 'diagnostics' | 'chartsDemo'
+type SectionKey = 'dashboard' | 'equipment' | 'probeManager' | 'topologyEditor' | 'assetProfiles' | 'channelWorkbench' | 'testManagement' | 'results' | 'systemCalibration' | 'commissioning' | 'diagnostics' | 'chartsDemo'
 
 type ProbeFormState = Pick<ProbeType, 'ring' | 'polarization' | 'position' | 'is_active'>
 
@@ -297,6 +298,11 @@ const sections: Array<{
     key: 'assetProfiles',
     label: 'DUT 与 SIM 卡',
     description: '统一维护被测设备 (DUT) 能力声明与测试卡池 (SIM/eSIM 身份 + 鉴权)，分 Tab 管理，供测试例选用与防插错卡预检。',
+  },
+  {
+    key: 'channelWorkbench',
+    label: '信道工作台',
+    description: '统一管理多态信道资产 (ChannelAsset)：标准 3GPP / 自定义 CDL / RT 动态 / 厂商文件四源，供测试例按 source_type 引用注入。',
   },
   {
     key: 'testManagement',
@@ -1256,6 +1262,8 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
       return <TopologyEditor />
     case 'assetProfiles':
       return <AssetProfilesPanel />
+    case 'channelWorkbench':
+      return <ChannelWorkbench />
     case 'testManagement':
       return <TestManagement />
     case 'results':
