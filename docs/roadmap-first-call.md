@@ -26,6 +26,8 @@ P2-13 SIMProfile 三阶段 (#140/#141/#142)、DUTProfile 四阶段 (#134-#137)�
 
 **▶ 2026-06-28 启动 P2-16（信道资产多态化）** —— 同上逻辑（P0 现场 blocked 期间本地软件项，不违反 WIP=1）。P2-15 暴露「信道资产四分五裂」（GCM `.smu` / B-1 `.asc` / B-2 `.tap` / RT 动态 各自一套引用+耦合），本项收口为单一 `ChannelAsset` 多态实体 + 独立信道工作台 GUI；起步软件半 S1–S4，零现场依赖。设计 [`design/channel-asset-polymorphism-design_V0.1.md`](design/channel-asset-polymorphism-design_V0.1.md)，详见下方 P2-16 区。
 
+**▶ 2026-06-30 P2-16 软件半 (S1–S4) ✅ 完成** —— S1–S3 后端/微服务 (#173–179) + **S4 独立信道工作台 GUI 四 `source_type` 编辑器 + `channel_asset_id` 消费接通 (#181–185)**，让工作台真正驱动 test 执行（验收①②③④达成，各切片浏览器闭环）。**本地队列又回到空** —— P2-16 余项全是现场半 (S5/S6: rt 真实数据 + 多快照轨迹执行 + `.tap` 落地)。**唯一新增本地可选项 = deprecate legacy 编辑路径 + stale-copy dual-write（S4-5 消费接通后已解锁），但它是独立决策 → parked-backlog，不自动排期，待用户拍板**（旧 `cdl_profile_id`/`scd_id` 路仍 live 兼容，不做无功能损失）。真 P0 (P0-3/4/5) 仍现场 blocked。
+
 P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max / RT→MPC 接入)
 已进 on-site 队列。**原开发的现场验证基线已打 tag** `onsite-verification-baseline-2026-06-21`（留在 main）。
 **下次现场** (校准天线 / SGH / 真 DUT 到位) Current Focus **必须从该 tag 切回依赖链 P0-4 → P0-3 → P0-5**
@@ -1645,7 +1647,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 ---
 
-### P2-16 — 信道资产多态化（统一 GCM/B-1/B-2/RT 四源 → ChannelAsset 多态实体 + 独立信道工作台）🔄 in-progress (2026-06-28) — S1 ✅ (#173) / S2 ✅ (#174) / S3 ✅ (软件半全收口, #176–179) — 余 S4 GUI 闭环 + S5/S6 现场
+### P2-16 — 信道资产多态化（统一 GCM/B-1/B-2/RT 四源 → ChannelAsset 多态实体 + 独立信道工作台）🔄 in-progress (2026-06-28) — S1 ✅ (#173) / S2 ✅ (#174) / S3 ✅ (#176–179) / S4 ✅ (独立工作台四编辑器 + 消费接通, #181–185, 2026-06-30) — 余 deprecate legacy (已解锁→parked-backlog, 待拍板) + S5/S6 现场
 
 **What**: 把四分五裂的四种信道源——GCM `.smu` 文件指针 / B-1 ASC 瞬态合成 `.asc` / B-2 参数 TDL `.tap` / RT 动态——统一为单一多态 `ChannelAsset` 实体，对 TestCase 暴露单一 `channel_asset_id`（取代现在 `scd_id` / `cdl_profile_id` / `asc_source_path` / `config.extra` 裸 RT dict 四套并行引用）。GUI 终态独立「信道工作台」（非 DUT/SIM 同栏）。设计见 [`design/channel-asset-polymorphism-design_V0.1.md`](design/channel-asset-polymorphism-design_V0.1.md)（2026-06-28 三路代码考古 grounded）。
 
@@ -1662,12 +1664,17 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
   - **S3-2b** ✅ (#178) `phase_continuous` F5 — 新端点 `synthesize_deterministic_b1`（isac/beam 确定性相位→§6 确认 B1_baked（大质心→GCM/ESCALATE 422）→subray_sum ACP→bake→.asc；用户定 cal 烘进 .asc）。
   - **S3-3** ✅ (#179) api-service `custom_static` 升路由到标注式 B-1 烘焙脊（`routing_mode=annotated_b1`，统一 ACP 烘焙脊）+ 验收③（#176 golden 传递性证）+ 修 #178 跨服务 import 漏网 bug。
   - Codex 跨四 PR 共 2 P1（轨迹判决门绕过 §6 / 确定性 cal 丢失）+ 3 P2（annotated fail-fast / 文件名消毒 / cal parity）全修。**rt_dynamic 调 trajectory/deterministic 端点的 api 接线延 S5**（真实 rt 数据现场；合成 rt 算法测已在微服务侧做，用户 2026-06-30 定最小 scope）。
-- **S4** 独立「信道工作台」GUI（G2）：`source_type` 切换 + 簇编辑器从 AssetProfiles 迁入 + SCD 卡片从仪器抽屉迁入 + 浏览器实测闭环。
-  - `[S4 follow-up, Codex #174 cebb394]` **legacy 编辑路径 vs ChannelAsset 副本同步**：① 旧 `/custom-cdl-profiles` 更新流只写 `custom_cdl_profiles`，迁移后改旧 profile → ChannelAsset 副本 stale（resolver 用迁移时冻结的 snapshot）；② declared_only SCD 迁移后旧 SCD 关联流更新 `standard_channel_definitions.associated_file_path` 不更新 ChannelAsset。是 S2「旧表保留至 S4 deprecate」设计取舍的已知后果 → S4 收口 GUI 时 deprecate/重定向 legacy 编辑路径（或加双写同步）。
-- **S5**（🚧 现场）`rt_dynamic` 真实 RT 数据接入（Lauraycs RT + RT-Release）+ 多快照。
+- **S4** ✅ 完成（2026-06-30）— 独立「信道工作台」GUI（G2）四 `source_type` 编辑器（**新建于工作台**，旧 AssetProfiles 簇编辑 / 仪器抽屉 SCD 卡片暂留共存，未删）+ **消费侧接通**，各切片 claude-in-chrome 浏览器实测闭环：
+  - **S4-1** ✅ (#181) 工作台 shell — ChannelAsset 统一列表 / 查看详情（payload JSON）/ 软删 + source_type 分类过滤。
+  - **S4-2** ✅ (#182) `standard_3gpp` + `vendor_file` 建/编辑表单（CDL 名 / scd_config + .smu）。
+  - **S4-3** ✅ (#183) `custom_static` 簇编辑器（嵌套 modal 编辑 `CDLClusterPayload` 12 字段）。Codex P1 = 编辑保留 `payload.pathloss_db`（merge 既有 payload 不整体替换，类型-运行时盲区）。
+  - **S4-4** ✅ (#184) `rt_dynamic` 多快照射线编辑器（Accordion 快照数组 + 嵌套射线 modal）。Codex P1 = 多快照执行 fail-loud（`channel_asset_resolver` `snapshots>1` raise，轨迹执行待 S5）+ GUI Alert 警示；P2 = per-snapshot 元数据（time/position/velocity）编辑保留。
+  - **S4-5** ✅ (#185) 接消费侧 `channel_asset_id` 进 `MIMOOTAConfigForm`（统一信道资产 Select → 后端 resolver 派生 `engine_mode` + 覆盖传统字段；选了禁用下方传统选择器）。Codex P2 = 多快照 rt option 禁用 + 标注「执行待 S5」。**让信道工作台真正驱动 test 执行** —— 调研发现此前 ChannelAsset 是**孤立 authoring 层**（`channel_asset_id` 后端 resolver S2 已接，但 GUI 零处喂，测试步骤 100% 走 legacy `cdl_profile_id`/`scd_id`）；本切片补上 GUI 消费缺口（用户 2026-06-30 拍板「接消费侧」重定义原 S4-5）。
+  - `[S4 follow-up, Codex #174 cebb394 + 2026-06-30 调研, **已解锁**]` **deprecate legacy 编辑路径 + ChannelAsset 副本同步**：① 旧 `/custom-cdl-profiles` PUT 只写 `custom_cdl_profiles` → 改旧 profile 后 ChannelAsset 副本 stale（迁移复用源 id，sync 有干净锚点）；② SCD 关联流更新旧表不更新 ChannelAsset。**解锁前置已满足**（S4-5 消费接通后 stale-copy 才有实际执行影响，此前 dormant）；但旧 `cdl_profile_id`/`scd_id` 路仍 live 兼容（方案 A），且旧编辑器仍是 legacy 引用唯一创建点 → deprecate 是独立决策（删需先确认无未迁移能力），**排期后续切片**（dual-write 同步 + 旧编辑器加 deprecation 引导到工作台，不强做）。
+- **S5**（🚧 现场）`rt_dynamic` 真实 RT 数据接入（Lauraycs RT + RT-Release）+ 多快照 **轨迹执行装配**（时空跟踪逐快照合成；现 resolver 对多快照 fail-loud，待此接通后多快照 RT 资产方可执行 + GUI 解禁多快照 option）。
 - **S6**（🚧 现场）`b2_parametric` `.tap` 落地 + F64 验证 + GUI engine 暴露（合 P2-14 第 4 项「GUI 暴露」）。
 
-**Acceptance**: ① ✅ `ChannelAsset` CRUD + 四 `source_type` 多态 payload 持久化/校验（边缘值 fail-loud）（S1 #173）；② ✅ 旧 `cdl_profile_id`/`scd_id` 经映射零破坏跑通（PG / SQLite-brownfield / SQLite-greenfield 三路径测）（S2 #174）；③ ✅ 一个 `custom_static` 资产经判决路由正确分流到 `asc_baked` 合成 `.asc`（与现直连结果一致）（S3 #176/#179：custom_static→annotated_b1 烘焙脊，#176 golden 证逐位等价）；④ ⏳ 独立信道工作台 GUI 浏览器闭环（建 / 切 `source_type` / 编辑簇 / 选进 TestCase）（S4 待）；⑤ ⏳ S5/S6 挂现场。
+**Acceptance**: ① ✅ `ChannelAsset` CRUD + 四 `source_type` 多态 payload 持久化/校验（边缘值 fail-loud）（S1 #173）；② ✅ 旧 `cdl_profile_id`/`scd_id` 经映射零破坏跑通（PG / SQLite-brownfield / SQLite-greenfield 三路径测）（S2 #174）；③ ✅ 一个 `custom_static` 资产经判决路由正确分流到 `asc_baked` 合成 `.asc`（与现直连结果一致）（S3 #176/#179：custom_static→annotated_b1 烘焙脊，#176 golden 证逐位等价）；④ ✅ 独立信道工作台 GUI 浏览器闭环（建 / 切 `source_type` / 编辑簇·射线 / 选进 TestCase 驱动执行）（S4 #181–185，各切片 claude-in-chrome 闭环：建四类资产 + 测试步骤选 `channel_asset_id` → 后端 `step.parameters.channel_asset_id` 持久化指向正确资产）；⑤ ⏳ S5/S6 挂现场。
 
 **分支**: 新分支（信道领域）；按切片独立 PR + Codex + merge 回 main（沿用 P2-14/P2-15 模式）。
 
