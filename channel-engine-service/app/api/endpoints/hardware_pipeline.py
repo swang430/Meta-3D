@@ -28,6 +28,8 @@ from app.models.hardware_pipeline_models import (
     HardwareArtifacts,
     ControlInstructions,
     Diagnostics,
+    DeterministicB1Request,
+    DeterministicB1Response,
 )
 
 logger = logging.getLogger(__name__)
@@ -251,6 +253,60 @@ async def synthesize_hardware_pipeline(
             error_message=str(e),
             mock_mode=MOCK_ASC_MODE,
         )
+
+
+@router.post(
+    "/synthesize_deterministic_b1",
+    response_model=DeterministicB1Response,
+    summary="确定性相位 (ISAC/波束) RT 射线 → B-1 烘焙 .asc",
+    description="确定性相位 RT 射线 → §6 判决确认 B1_baked (大质心 → GCM/ESCALATE 422) → "
+                "phase_continuous_fit (subray_sum) → bake_b1_annotated → per-(Tx,Probe) .asc zip。",
+)
+async def synthesize_deterministic_b1(
+    request: DeterministicB1Request,
+) -> DeterministicB1Response:
+    """P2-16 S3-2b: 接线悬空的 F5 phase_continuous 进生产 (确定性相位 ISAC/波束 → B-1 .asc)。
+
+    与统计类 B-2 参数化路 (cluster_b2_native / cluster_b2_trajectory) 分流: 本端点走确定性
+    子径相干求和 (subray_sum), 出 OTA .asc; 大质心多普勒需 F64 GCM (.smu) → 422 fail-loud。
+    复用 S3-1 的 bake_b1_annotated + zip 基建 (统一 ACP 烘焙脊)。
+    """
+    if MOCK_ASC_MODE:
+        raise HTTPException(
+            status_code=503,
+            detail="确定性 B-1 端点不支持 MOCK_ASC_MODE (需真实 ChannelEgine 确定性烘焙)。",
+        )
+    # sys.path 注入 + ChannelEgine 可用性 fail-fast (同 synthesize 路)
+    try:
+        _import_simulator_class()
+    except ChannelEngineUnavailable as e:
+        raise HTTPException(status_code=503, detail=f"Channel Engine library unavailable: {e}")
+
+    try:
+        result = _run_deterministic_b1(request)
+    except ChannelEngineUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except ValueError as e:
+        # §6 判决拒绝 (ESCALATE / 非 B1_baked / phase_rad 缺) → 422 fail-loud
+        raise HTTPException(status_code=422, detail=str(e))
+
+    decision = result["decision"]
+    logger.info(
+        "确定性 B-1: test_class=%s → %s (%s), f_D,max=%.0fHz, %d subray 簇, %d files",
+        request.test_class, decision.target_path, decision.clustering_algo,
+        decision.f_d_max_hz, result["num_subray_clusters"], result["total_files"],
+    )
+    return DeterministicB1Response(
+        target_path=decision.target_path,
+        clustering_algo=decision.clustering_algo,
+        reason=decision.reason,
+        f_d_max_hz=decision.f_d_max_hz,
+        asc_zip_base64=result["zip_base64"],
+        total_files=result["total_files"],
+        num_subray_clusters=result["num_subray_clusters"],
+        note=("确定性相位 (subray_sum) B-1 烘焙 .asc, 子径用 RT phase_rad 相干求和。"
+              "OTA (探头展开 + 校准); 多快照动态轨迹 .asc 帧拼接进 backlog (S6 现场)。"),
+    )
 
 
 # ==================== 真实合成 ====================
@@ -579,6 +635,124 @@ def _run_annotated_bake_synthesis(request: HardwarePipelineRequest):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
     return zip_base64, len(asc_paths)
+
+
+def _run_deterministic_b1(request: DeterministicB1Request):
+    """P2-16 S3-2b: 确定性相位 RT 射线 → §6 判决确认 B1_baked → phase_continuous_fit
+    (subray_sum ACP) → bake_b1_annotated → .asc zip。接线悬空的 F5 phase_continuous。
+
+    §6 判决门 (同 cluster_b2_*): ESCALATE / 非 B1_baked (大质心需 F64 GCM .smu) → ValueError
+    (端点 422 fail-loud, 本端点只出 .asc)。phase_rad 缺 → select_path_and_clustering ValueError。
+
+    Returns: dict(decision, zip_base64, total_files, num_subray_clusters)。
+    ChannelEngineUnavailable (缺模块, 同 _run_annotated_bake_synthesis 的 fail-fast) →
+    端点 503; ValueError (判决/输入) → 端点 422。caller 先调 _import_simulator_class 注入 sys.path。
+    """
+    try:
+        from mimo_ota_simulator.geometric_native_fit import MPC, F64CapabilityProfile  # type: ignore
+        from mimo_ota_simulator.path_decision import select_path_and_clustering  # type: ignore
+        from mimo_ota_simulator.phase_continuous import phase_continuous_fit  # type: ignore
+        from mimo_ota_simulator.b1_annotated_baker import bake_b1_annotated  # type: ignore
+        from mimo_ota_simulator.data_models import (  # type: ignore
+            AntennaArrayConfig, TargetChannelConfig as CETargetChannelConfig,
+            PropsimExportConfig,
+            CalibrationConfig as CECalibrationConfig,
+            CalibrationEntry as CECalibrationEntry,
+        )
+    except ImportError as e:
+        raise ChannelEngineUnavailable(
+            f"routing=确定性 B-1 需要 ChannelEgine 模块 (path_decision / phase_continuous / "
+            f"b1_annotated_baker), 当前 CHANNEL_ENGINE_PATH clone 缺失 (可能旧版): {e}."
+        ) from e
+
+    sim_rules = request.simulation_rules
+    # velocity: 3-vec 优先, 否则 kph 派生 (同 _build_target_channel_config)
+    if sim_rules.ue_velocity_mps is not None:
+        velocity = list(sim_rules.ue_velocity_mps)
+    else:
+        velocity = [sim_rules.ue_velocity_kph / 3.6, 0.0, 0.0]
+
+    mpcs = [
+        MPC(delay_s=r.delay_s, power_linear=r.power_linear, aoa_deg=r.aoa_deg,
+            aod_deg=r.aod_deg, zoa_deg=r.zoa_deg, zod_deg=r.zod_deg, phase_rad=r.phase_rad)
+        for r in request.rt_rays
+    ]
+    f64 = F64CapabilityProfile(**request.f64_profile.model_dump())
+
+    # §6 判决门: 确认确定性类 → B1_baked。phase_rad 缺 → select_path_and_clustering ValueError;
+    # 大质心 + 无 GCM → ESCALATE; 大质心 + 有 GCM → GCM_native (需 F64 .smu, 本端点不出)。
+    decision = select_path_and_clustering(
+        request.test_class, mpcs, velocity, sim_rules.center_frequency_hz, f64)
+    if decision.is_escalation:
+        raise ValueError(
+            f"§6 判决 ESCALATE (大质心多普勒 + 无 GCM license, 需现场升级): {decision.reason}")
+    if decision.target_path != 'B1_baked':
+        raise ValueError(
+            f"§6 判决为 {decision.target_path} (非 B1_baked): 该确定性信道需 F64 GCM "
+            f"(.smu, 大质心多普勒实时衰落), 本端点只出 B-1 烘焙 .asc。{decision.reason}")
+
+    # F5: 确定性相位聚类 → subray_sum ACP (每子径带 phase_rad)
+    annotated = phase_continuous_fit(
+        mpcs, velocity, sim_rules.center_frequency_hz, f64,
+        target_path='B1_baked', test_class=request.test_class,
+        pathloss_db=request.pathloss_db, is_los=request.is_los,
+        k_factor_db=request.k_factor_db)
+
+    # chamber + channel config (bake 用)。channel_cfg.custom_profile=None: bake 不消费它
+    # (用 ACP 提供的簇 + cluster_subrays 旁路真实子径), 仅需 antenna/freq/velocity。
+    chamber_cfg = _build_chamber_config(request)
+
+    def _antenna(ant):
+        return AntennaArrayConfig(
+            array_type=ant.array_type, num_rows=ant.num_rows, num_cols=ant.num_cols,
+            spacing_h=ant.spacing_h, spacing_v=ant.spacing_v, polarization=ant.polarization)
+
+    channel_cfg = CETargetChannelConfig(
+        input_mode="custom", custom_profile=None,
+        center_frequency_hz=sim_rules.center_frequency_hz,
+        tx_antenna=_antenna(sim_rules.tx_antenna),
+        rx_antenna=_antenna(sim_rules.rx_antenna),
+        ue_velocity=velocity)
+
+    # Codex #178 P1: 把请求的 OTA 校准烘进 .asc。bake_b1_annotated 原生支持 OTA 校准预失真
+    # (per-probe cable loss/phase/gain → 改 .asc 幅度/相位)。本端点只出 .asc、不返
+    # control_instructions (跟 synthesize 走硬件补偿的路不同), 故校准必须进 .asc, 否则
+    # 标定与非标定请求驱动 F64 完全相同 → 污染实测。微服务 CalibrationEntry 字段与 CE 1:1。
+    # entries 空 (默认) → None (不施加, 同既有行为)。
+    cal_entries = request.calibration_data.entries
+    cal_cfg = None
+    if cal_entries:
+        cal_cfg = CECalibrationConfig(entries=[
+            CECalibrationEntry(
+                port_id=e.port_id, cable_loss_db=e.cable_loss_db,
+                cable_phase_deg=e.cable_phase_deg, probe_gain_dbi=e.probe_gain_dbi)
+            for e in cal_entries
+        ])
+
+    base_name = _safe_asc_base_name(request.model_name)
+    tmpdir = tempfile.mkdtemp(prefix="det_b1_")
+    try:
+        export_cfg = PropsimExportConfig(
+            filename=os.path.join(tmpdir, f"{base_name}.asc"),
+            mode="B", duration_s=0.1, sample_rate_hz=1000.0)
+        # synthesis_method='ray': subray_sum 簇用确定性 phase_rad 不受此项影响 (b1_annotated_baker
+        # 文档)。calibration_config=cal_cfg: OTA 校准烘进 .asc (Codex #178 P1)。
+        asc_paths = bake_b1_annotated(
+            annotated, chamber_cfg, channel_cfg, export_cfg,
+            calibration_config=cal_cfg, synthesis_method='ray', direction="dl")
+        zip_base64 = _zip_asc_files_base64(asc_paths)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    num_subray = sum(
+        1 for c in annotated.snapshots[0].clusters
+        if c.doppler_repr.kind == 'subray_sum')
+    return {
+        "decision": decision,
+        "zip_base64": zip_base64,
+        "total_files": len(asc_paths),
+        "num_subray_clusters": num_subray,
+    }
 
 
 # ==================== Mock 合成 ====================

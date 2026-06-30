@@ -30,6 +30,10 @@ CDL 模型命名规范
 from typing import List, Optional, Literal
 from pydantic import BaseModel, Field, model_validator
 
+# P2-16 S3-2b: 确定性相位 B-1 烘焙端点复用 b2_cluster 的 RT 射线 / F64 能力档输入模型
+# (b2_cluster_models 只依赖 typing+pydantic, 无循环 import)。
+from app.models.b2_cluster_models import MPCInput, F64ProfileInput
+
 
 # ==================== 请求体子模型 ====================
 
@@ -434,3 +438,40 @@ class HardwarePipelineResponse(BaseModel):
             "(占位 .asc, 非真实 PFS)。生产模式永远 False。"
         ),
     )
+
+
+# ==================== P2-16 S3-2b: 确定性相位 B-1 烘焙 ====================
+
+class DeterministicB1Request(BaseModel):
+    """确定性相位类 (ISAC/波束跟踪) RT 射线 → B-1 烘焙 .asc。
+
+    每射线须带 phase_rad (确定性子径相干求和)。经 §6 select_path_and_clustering 确认
+    isac/beam → B1_baked (大质心 → GCM_native / ESCALATE → 422 fail-loud, 需 F64 GCM
+    现场, 本端点只出 .asc 不出 .smu), 再 phase_continuous_fit → subray_sum AnnotatedCDLProfile
+    → bake_b1_annotated → per-(Tx,Probe) .asc zip。统计类 (throughput/consistency) 走
+    cluster_b2_native / cluster_b2_trajectory (B-2 参数化路), 非本端点。
+    """
+    chamber_config: ChamberConfig
+    calibration_data: CalibrationData = Field(default_factory=CalibrationData)
+    simulation_rules: SimulationRules
+    rt_rays: List[MPCInput] = Field(
+        ..., min_length=1, description="RT 射线 (MPC), 每条须带 phase_rad (缺则 §6 判决 422)")
+    test_class: Literal['isac_sensing', 'beam_tracking'] = Field(
+        'isac_sensing', description="确定性相位类; 统计类走 B-2 参数化端点")
+    f64_profile: F64ProfileInput = Field(default_factory=F64ProfileInput)
+    pathloss_db: float = Field(0.0, description="路损 (dB), 烘进 ACP")
+    is_los: bool = Field(False, description="LOS 标志")
+    k_factor_db: Optional[float] = Field(None, description="LOS K-factor (dB)")
+    model_name: str = Field("deterministic_b1", description=".asc 文件名基 (烘焙前消毒)")
+
+
+class DeterministicB1Response(BaseModel):
+    status: str = "success"
+    target_path: str = Field(..., description="§6 判决 (本端点恒 B1_baked; GCM/ESCALATE 已 422)")
+    clustering_algo: str = Field(..., description="恒 phase_continuous")
+    reason: str
+    f_d_max_hz: float
+    asc_zip_base64: str = Field(..., description="per-(Tx,Probe) .asc 文件 ZIP 的 Base64")
+    total_files: int
+    num_subray_clusters: int = Field(..., description="subray_sum 簇数 (确定性子径相干求和)")
+    note: str = ""
