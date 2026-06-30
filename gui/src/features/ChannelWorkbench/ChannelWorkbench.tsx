@@ -10,12 +10,12 @@
  */
 import { useState } from 'react'
 import {
-  ActionIcon, Badge, Box, Code, Group, LoadingOverlay, Modal, Paper,
+  ActionIcon, Badge, Box, Button, Code, Group, LoadingOverlay, Modal, Paper,
   ScrollArea, SegmentedControl, Stack, Switch, Table, Text, Title, Tooltip,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { modals } from '@mantine/modals'
-import { IconBroadcast, IconEye, IconTrash } from '@tabler/icons-react'
+import { IconBroadcast, IconEdit, IconEye, IconPlus, IconTrash } from '@tabler/icons-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import {
@@ -24,6 +24,7 @@ import {
   type ChannelAsset,
   type ChannelSourceType,
 } from '../../api/channelAssetService'
+import { ChannelAssetForm } from './ChannelAssetForm'
 
 const SOURCE_LABEL: Record<ChannelSourceType, string> = {
   standard_3gpp: '标准 3GPP',
@@ -50,6 +51,10 @@ export function ChannelWorkbench() {
   const [filter, setFilter] = useState<SourceFilter>('all')
   const [includeInactive, setIncludeInactive] = useState(false)
   const [viewing, setViewing] = useState<ChannelAsset | null>(null)
+  const [formOpen, setFormOpen] = useState(false)
+  const [editingAsset, setEditingAsset] = useState<ChannelAsset | null>(null)
+  const openCreate = () => { setEditingAsset(null); setFormOpen(true) }
+  const openEdit = (a: ChannelAsset) => { setEditingAsset(a); setFormOpen(true) }
 
   const assetsQuery = useQuery({
     queryKey: ['channel-assets', filter, includeInactive],
@@ -98,11 +103,14 @@ export function ChannelWorkbench() {
             四源统一，供测试例按 source_type 引用注入。
           </Text>
         </div>
-        <Switch
-          label="含非活动"
-          checked={includeInactive}
-          onChange={(e) => setIncludeInactive(e.currentTarget.checked)}
-        />
+        <Group gap="sm">
+          <Switch
+            label="含非活动"
+            checked={includeInactive}
+            onChange={(e) => setIncludeInactive(e.currentTarget.checked)}
+          />
+          <Button leftSection={<IconPlus size={16} />} onClick={openCreate}>新建</Button>
+        </Group>
       </Group>
 
       <SegmentedControl
@@ -125,7 +133,7 @@ export function ChannelWorkbench() {
               {filter === 'all'
                 ? '暂无信道资产'
                 : `暂无「${SOURCE_LABEL[filter as ChannelSourceType]}」资产`}
-              。建/编辑界面由 S4 后续切片接入；现有自定义 CDL / SCD 已由 S2 迁移为 ChannelAsset。
+              。点「新建」创建标准 3GPP / 厂商文件资产（自定义 CDL 簇 / RT 动态射线编辑器 S4-3/S4-4 接入）。
             </Text>
           </Box>
         ) : (
@@ -172,6 +180,11 @@ export function ChannelWorkbench() {
                   </Table.Td>
                   <Table.Td>
                     <Group gap={4} justify="flex-end">
+                      <Tooltip label="编辑">
+                        <ActionIcon variant="subtle" color="blue" onClick={() => openEdit(a)}>
+                          <IconEdit size={18} />
+                        </ActionIcon>
+                      </Tooltip>
                       <Tooltip label="查看详情">
                         <ActionIcon variant="subtle" onClick={() => setViewing(a)}>
                           <IconEye size={18} />
@@ -199,6 +212,8 @@ export function ChannelWorkbench() {
       <Modal opened={viewing != null} onClose={() => setViewing(null)} title={viewing?.name} size="lg">
         {viewing && <AssetDetail asset={viewing} />}
       </Modal>
+
+      <ChannelAssetForm opened={formOpen} asset={editingAsset} onClose={() => setFormOpen(false)} />
     </Stack>
   )
 }
