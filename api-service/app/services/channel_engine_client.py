@@ -258,6 +258,8 @@ class ChannelEngineClient:
         bs_position: Optional[List[float]] = None,
         ue_position: Optional[List[float]] = None,
         random_seed: Optional[int] = None,
+        # 2026-06-30 P2-16 S3-3: 合成路由 (annotated_b1 = 标注式 B-1 烘焙脊, S3-1)
+        routing_mode: Literal["legacy", "annotated_b1"] = "legacy",
     ) -> HardwarePipelineResult:
         """
         调用 Channel Engine 硬件流水线合成 API。
@@ -341,6 +343,7 @@ class ChannelEngineClient:
             ue_velocity_mps=ue_velocity_mps,
             k_factor_db=k_factor_db,
             input_mode=input_mode,
+            routing_mode=routing_mode,
             scenario_name=scenario_name,
             cluster_model_name=cluster_model_name,
             force_condition=force_condition,
@@ -619,6 +622,8 @@ class ChannelEngineClient:
         bs_position: Optional[List[float]] = None,
         ue_position: Optional[List[float]] = None,
         random_seed: Optional[int] = None,
+        # 2026-06-30 P2-16 S3-3: 合成路由 (annotated_b1 = 标注式 B-1 烘焙脊)
+        routing_mode: Literal["legacy", "annotated_b1"] = "legacy",
         # 2026-05-19 P1-10: 非 ring chamber 几何 (ChannelEgine Phase 8)
         probe_positions: Optional[List[Dict[str, float]]] = None,
     ) -> Dict[str, Any]:
@@ -700,6 +705,7 @@ class ChannelEngineClient:
                 ),
             },
             "input_mode": input_mode,
+            "routing_mode": routing_mode,
         }
 
         if input_mode == "standard":

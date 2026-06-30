@@ -59,6 +59,9 @@ def test_channel_asset_clusters_branch():
     assert ok is True
     call = strat.ce_client.synthesize_hardware_pipeline.call_args.kwargs
     assert call["input_mode"] == "custom"
+    # P2-16 S3-3: ChannelAsset custom_static 升路由到标注式 B-1 烘焙脊 (S3-1, #176 golden
+    # 证与 legacy 逐位等价)。legacy cdl_profile_id 路保持 legacy (见下个测试)。
+    assert call["routing_mode"] == "annotated_b1"
     assert call["cdl_model_name"] == "CA-custom"
     assert len(call["clusters"]) == 1
     assert call["clusters"][0].power_relative_linear == 0.7  # power_linear → power_relative_linear
@@ -93,6 +96,9 @@ def test_custom_cdl_branch_input_mode_custom():
     assert ok is True
     call = strat.ce_client.synthesize_hardware_pipeline.call_args.kwargs
     assert call["input_mode"] == "custom"
+    # P2-16 S3-3: legacy cdl_profile_id 路保持 legacy 路由 (不升 annotated_b1), 待 S4
+    # deprecate; 仅 ChannelAsset custom_static 路升脊。
+    assert call.get("routing_mode", "legacy") != "annotated_b1"
     assert call["frequency_hz"] == 3.5e9       # 频率用 TestCase (profile==TestCase, 一致)
     assert call["cdl_model_name"] == "UMa-改"
     assert len(call["clusters"]) == 1
