@@ -86,3 +86,21 @@ def test_trajectory_rejects_single_snapshot():
 def test_trajectory_rejects_deterministic_class():
     """确定性类 (isac_sensing) → schema 422 (走 F5 phase_continuous 烘焙路, 非本端点)。"""
     assert _post([_grp(30), _grp(32)], test_class="isac_sensing").status_code == 422
+
+
+def test_trajectory_gates_non_representable_snapshot():
+    """Codex #177 P1: 某快照 native 不可表示 (残差 > rho_thresh) → §6 判决门 422,
+    不当成功 B-2 资产返回 tap。镜像 ChannelEgine test_path_decision 的 throughput→B1_baked:
+    5 射线同时延 + aoa 0/45/90/135/180 (doppler 多模) + tap_budget=1 不分裂 → resid 大。"""
+    bad = [{"delay_s": 0.0, "power_linear": 1.0, "aoa_deg": float(a), "aod_deg": 0.0}
+           for a in (0, 45, 90, 135, 180)]
+    resp = client.post("/api/v1/cluster_b2_trajectory", json={
+        "snapshots": [_grp(30), bad],        # 快照0 可表示, 快照1 不可表示 → 门拦
+        "ue_velocity_mps": [40.0, 0.0, 0.0],
+        "center_frequency_hz": 3.5e9,
+        "test_class": "throughput_psd",
+        "f64_profile": {"tap_budget": 1, "rho_thresh": 0.01},
+        **TRAJ,
+    })
+    assert resp.status_code == 422, resp.text
+    assert "B1_baked" in resp.json()["detail"]    # 判决路由到 B-1 (非可表示 B-2) → fail-loud

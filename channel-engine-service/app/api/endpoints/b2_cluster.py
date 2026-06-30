@@ -42,7 +42,9 @@ def _import_trajectory_modules():
     from mimo_ota_simulator.geometric_native_fit import MPC, F64CapabilityProfile  # type: ignore
     from mimo_ota_simulator.spatiotemporal_tracking import native_fit_trajectory  # type: ignore
     from mimo_ota_simulator.b2_tap_params import extract_tap_parameters  # type: ignore
-    return MPC, F64CapabilityProfile, native_fit_trajectory, extract_tap_parameters
+    from mimo_ota_simulator.path_decision import select_path_and_clustering  # type: ignore
+    return (MPC, F64CapabilityProfile, native_fit_trajectory,
+            extract_tap_parameters, select_path_and_clustering)
 
 
 def _import_b2_modules():
@@ -146,8 +148,8 @@ async def cluster_b2_trajectory(request: B2TrajectoryRequest) -> B2TrajectoryRes
     非本端点 (schema test_class 已限 throughput/consistency)。
     """
     try:
-        (MPC, F64CapabilityProfile,
-         native_fit_trajectory, extract_tap_parameters) = _import_trajectory_modules()
+        (MPC, F64CapabilityProfile, native_fit_trajectory,
+         extract_tap_parameters, select_path_and_clustering) = _import_trajectory_modules()
     except Exception as e:
         logger.error("F4 轨迹模块不可用: %s", e)
         raise HTTPException(status_code=503, detail=f"ChannelEgine F4 轨迹算法不可用: {e}")
@@ -161,6 +163,28 @@ async def cluster_b2_trajectory(request: B2TrajectoryRequest) -> B2TrajectoryRes
         for snap in request.snapshots
     ]
     f64 = F64CapabilityProfile(**request.f64_profile.model_dump())
+
+    # Codex #177 P1: 先过 §6 判决门 (同 cluster_b2_native)。native_fit_trajectory 恒产
+    # B2_parametric ACP, 不先判决会把 native 不可表示的动态信道 (残差 > rho_thresh / 超
+    # tap_budget) 当成功 B-2 资产返回 tap, 污染实验设置。逐快照判决: 任一快照不落
+    # B2_parametric (转 B1_baked / ESCALATE) → 422 fail-loud, 不进 trajectory。
+    for i, snap_mpcs in enumerate(snapshots_mpcs):
+        try:
+            decision = select_path_and_clustering(
+                request.test_class, snap_mpcs, request.ue_velocity_mps,
+                request.center_frequency_hz, f64)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"快照 {i} 路径判决拒绝: {e}")
+        if decision.is_escalation:
+            raise HTTPException(
+                status_code=422,
+                detail=f"快照 {i} 路径判决 ESCALATE (需现场升级): {decision.reason}")
+        if decision.target_path != 'B2_parametric':
+            raise HTTPException(
+                status_code=422,
+                detail=(f"快照 {i} 判决为 {decision.target_path} (非 B2_parametric): 该动态信道 "
+                        f"native 不可表示 (残差 {decision.native_fit_residual} > rho_thresh / 超 "
+                        f"tap_budget), 不能走轨迹参数化路 ({decision.reason})。确定性相位类走 F5 烘焙路。"))
 
     # native_fit_trajectory: ValueError (空快照/未知 class) / IndexError → 422
     try:
