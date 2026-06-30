@@ -26,7 +26,7 @@ P2-13 SIMProfile 三阶段 (#140/#141/#142)、DUTProfile 四阶段 (#134-#137)�
 
 **▶ 2026-06-28 启动 P2-16（信道资产多态化）** —— 同上逻辑（P0 现场 blocked 期间本地软件项，不违反 WIP=1）。P2-15 暴露「信道资产四分五裂」（GCM `.smu` / B-1 `.asc` / B-2 `.tap` / RT 动态 各自一套引用+耦合），本项收口为单一 `ChannelAsset` 多态实体 + 独立信道工作台 GUI；起步软件半 S1–S4，零现场依赖。设计 [`design/channel-asset-polymorphism-design_V0.1.md`](design/channel-asset-polymorphism-design_V0.1.md)，详见下方 P2-16 区。
 
-**▶ 2026-06-30 P2-16 软件半 (S1–S4) ✅ 完成** —— S1–S3 后端/微服务 (#173–179) + **S4 独立信道工作台 GUI 四 `source_type` 编辑器 + `channel_asset_id` 消费接通 (#181–186)**，让工作台真正驱动 test 执行（验收①②③④达成，各切片浏览器闭环）。**本地队列又回到空** —— P2-16 余项全是现场半 (S5/S6: rt 真实数据 + 多快照轨迹执行 + `.tap` 落地)。**唯一新增本地可选项 = deprecate legacy 编辑路径 + stale-copy dual-write（S4-5 消费接通后已解锁），但它是独立决策 → parked-backlog，不自动排期，待用户拍板**（旧 `cdl_profile_id`/`scd_id` 路仍 live 兼容，不做无功能损失）。真 P0 (P0-3/4/5) 仍现场 blocked。
+**▶ 2026-06-30 P2-16 软件半 (S1–S4) ✅ 完成** —— S1–S3 后端/微服务 (#173–179) + **S4 独立信道工作台 GUI 四 `source_type` 编辑器 + `channel_asset_id` 消费接通 (#181–185)**，让工作台真正驱动 test 执行（验收①②③④达成，各切片浏览器闭环）。**本地队列又回到空** —— P2-16 余项全是现场半 (S5/S6: rt 真实数据 + 多快照轨迹执行 + `.tap` 落地)。**唯一新增本地可选项 = deprecate legacy 编辑路径 + stale-copy dual-write（S4-5 消费接通后已解锁），但它是独立决策 → parked-backlog，不自动排期，待用户拍板**（旧 `cdl_profile_id`/`scd_id` 路仍 live 兼容，不做无功能损失）。真 P0 (P0-3/4/5) 仍现场 blocked。
 
 P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max / RT→MPC 接入)
 已进 on-site 队列。**原开发的现场验证基线已打 tag** `onsite-verification-baseline-2026-06-21`（留在 main）。
