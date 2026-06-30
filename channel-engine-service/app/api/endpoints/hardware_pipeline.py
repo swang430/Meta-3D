@@ -12,9 +12,11 @@ import time
 import io
 import os
 import sys
+import shutil
 import zipfile
 import base64
 import logging
+import tempfile
 import numpy as np
 from typing import Dict, List, Any
 
@@ -180,7 +182,13 @@ async def synthesize_hardware_pipeline(
             )
         else:
             simulator_cls = _import_simulator_class()  # raises on failure
-            zip_base64, total_files = _run_real_synthesis(simulator_cls, request)
+            # P2-16 S3: routing_mode 选合成脊。'annotated_b1' 走标注式烘焙路
+            # (装配 AnnotatedCDLProfile + bake_b1_annotated, 接线悬空 baker);
+            # 'legacy' (默认) 走现 CustomCDLBuilder + run() 直路, 零行为变更。
+            if request.routing_mode == "annotated_b1":
+                zip_base64, total_files = _run_annotated_bake_synthesis(request)
+            else:
+                zip_base64, total_files = _run_real_synthesis(simulator_cls, request)
 
         # -----------------------------------------------------------
         # 计算硬件控制指令
@@ -468,6 +476,78 @@ def _run_real_synthesis(SimulatorClass, request: HardwarePipelineRequest):
     total_files = num_tx * num_ports
 
     return zip_base64, total_files
+
+
+# ==================== P2-16 S3: 标注式 B-1 烘焙路 ====================
+
+def _zip_asc_files_base64(asc_paths: List[str]) -> str:
+    """把 bake 写出的 .asc 文件列表打进内存 zip → base64。
+
+    bake_b1_annotated 经 PropsimASCIIExporter.export 写盘 (无内存变体), 这里收口为
+    不落盘的 base64, 与 legacy 路 export_to_zip_memory 同响应契约 (HardwareArtifacts
+    .f64_asc_files_zip_base64)。arcname 用 basename, 避免 tmpdir 绝对路径泄进 zip。
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for p in asc_paths:
+            zf.write(p, arcname=os.path.basename(p))
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _run_annotated_bake_synthesis(request: HardwarePipelineRequest):
+    """P2-16 S3: 经 AnnotatedCDLProfile + bake_b1_annotated 标注式 B-1 烘焙路合成 .asc。
+
+    接线设计 §1.2 断层 C 的悬空 baker (此前仅单测消费, 零生产端点): custom CDLCluster
+    → `from_custom_profile` 装单快照 AnnotatedCDLProfile (target_path=B1_baked, 全簇
+    DopplerBaked) → `bake_b1_annotated` → per-(Tx,Probe) .asc。
+
+    与 legacy `_run_real_synthesis` 逐位等价 (custom 全 baked 簇): run() 3GPP 路 =
+    [seed if random_seed] + create_builder(custom).build() + synthesize_ota; bake 复刻
+    同三步 (from_custom_profile round-trip 无损 + 同 builder + 同 synthesize_ota +
+    cluster_subrays={} 对全 baked 簇无效), golden test_b1_golden_vs_legacy 已证。custom
+    模式 channel_config.random_seed=None → 两路都不自播种, 同 ambient RNG。本路统一 ACP
+    烘焙脊, 解锁 subray_sum 确定性相位 (rt_dynamic, S3 后续切片)。
+
+    bake 经 exporter.export 写盘 → 这里 zip 进内存出 base64, tmpdir 用后即弃。
+    (sys.path 注入 + ChannelEgine 可用性 fail-fast 由 caller 先调 _import_simulator_class 保证。)
+
+    Returns: (zip_base64: str, total_files: int)
+    """
+    from mimo_ota_simulator.annotated_cdl_schema import AnnotatedCDLProfile  # type: ignore
+    from mimo_ota_simulator.b1_annotated_baker import bake_b1_annotated  # type: ignore
+    from mimo_ota_simulator.data_models import PropsimExportConfig  # type: ignore
+
+    # 装配: custom CDLCluster → CustomCDLProfile → 单快照 AnnotatedCDLProfile (B1_baked)
+    custom_profile = _build_custom_cdl_profile(request)
+    annotated = AnnotatedCDLProfile.from_custom_profile(custom_profile)
+    chamber_cfg = _build_chamber_config(request)
+    channel_cfg = _build_target_channel_config(request, custom_profile)
+
+    sim_rules = request.simulation_rules
+    synthesis_method = sim_rules.synthesis_method
+    # 与 _run_real_synthesis 同语义: cluster_legacy → 原生 'cluster' (Phase 3 改名)
+    ce_synthesis_method = (
+        "cluster" if synthesis_method == "cluster_legacy" else synthesis_method
+    )
+
+    base_name = request.cdl_model_data.model_name.replace(" ", "_") or "propsim_export"
+    tmpdir = tempfile.mkdtemp(prefix="b1_annotated_")
+    try:
+        export_cfg = PropsimExportConfig(
+            filename=os.path.join(tmpdir, f"{base_name}.asc"),
+            mode="B", duration_s=0.1, sample_rate_hz=1000.0,
+        )
+        # calibration_config 省略 (=None) → 与 legacy _run_real_synthesis 一致 (两路都
+        # 不在 exporter 施加 OTA 校准; 校准走 control_instructions 分支), 保 parity。
+        asc_paths = bake_b1_annotated(
+            annotated, chamber_cfg, channel_cfg, export_cfg,
+            synthesis_method=ce_synthesis_method, direction="dl",
+        )
+        zip_base64 = _zip_asc_files_base64(asc_paths)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    return zip_base64, len(asc_paths)
 
 
 # ==================== Mock 合成 ====================
