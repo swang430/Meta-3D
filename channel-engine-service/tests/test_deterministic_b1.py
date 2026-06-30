@@ -86,3 +86,24 @@ def test_deterministic_b1_gcm_rejected_422():
 def test_deterministic_b1_rejects_statistical_class():
     """统计类 (throughput_psd) → schema 422 (走 B-2 参数化端点 cluster_b2_*)。"""
     assert _post(test_class="throughput_psd").status_code == 422
+
+
+def test_deterministic_b1_calibration_changes_asc():
+    """Codex #178 P1: 非默认 OTA 校准烘进 .asc → 标定 vs 非标定 .asc 字节不同 (不丢校准,
+    否则标定/非标定请求驱动 F64 完全相同)。镜像 ChannelEgine test_calibration_actually_applied。"""
+    def _asc_contents(resp):
+        raw = base64.b64decode(resp.json()["asc_zip_base64"])
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            return sorted(zf.read(n) for n in zf.namelist() if n.endswith(".asc"))
+
+    f64 = {"large_centroid_thresh_hz": 1e6}
+    resp_nocal = _post(f64=f64)
+    # 8 探头 (dual_polarized=False) per-port 非默认 gain/phase
+    cal = [{"port_id": p, "probe_gain_dbi": float(((-1) ** p) * 5.0),
+            "cable_phase_deg": float(p * 10)} for p in range(1, 9)]
+    body = _body(f64=f64)
+    body["calibration_data"] = {"entries": cal}
+    resp_cal = client.post("/api/v1/synthesize_deterministic_b1", json=body)
+
+    assert resp_nocal.status_code == 200 and resp_cal.status_code == 200, resp_cal.text
+    assert _asc_contents(resp_nocal) != _asc_contents(resp_cal)    # 校准预失真改变 .asc

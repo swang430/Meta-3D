@@ -656,6 +656,8 @@ def _run_deterministic_b1(request: DeterministicB1Request):
         from mimo_ota_simulator.data_models import (  # type: ignore
             AntennaArrayConfig, TargetChannelConfig as CETargetChannelConfig,
             PropsimExportConfig,
+            CalibrationConfig as CECalibrationConfig,
+            CalibrationEntry as CECalibrationEntry,
         )
     except ImportError as e:
         raise ChannelEngineUnavailable(
@@ -712,6 +714,21 @@ def _run_deterministic_b1(request: DeterministicB1Request):
         rx_antenna=_antenna(sim_rules.rx_antenna),
         ue_velocity=velocity)
 
+    # Codex #178 P1: 把请求的 OTA 校准烘进 .asc。bake_b1_annotated 原生支持 OTA 校准预失真
+    # (per-probe cable loss/phase/gain → 改 .asc 幅度/相位)。本端点只出 .asc、不返
+    # control_instructions (跟 synthesize 走硬件补偿的路不同), 故校准必须进 .asc, 否则
+    # 标定与非标定请求驱动 F64 完全相同 → 污染实测。微服务 CalibrationEntry 字段与 CE 1:1。
+    # entries 空 (默认) → None (不施加, 同既有行为)。
+    cal_entries = request.calibration_data.entries
+    cal_cfg = None
+    if cal_entries:
+        cal_cfg = CECalibrationConfig(entries=[
+            CECalibrationEntry(
+                port_id=e.port_id, cable_loss_db=e.cable_loss_db,
+                cable_phase_deg=e.cable_phase_deg, probe_gain_dbi=e.probe_gain_dbi)
+            for e in cal_entries
+        ])
+
     base_name = _safe_asc_base_name(request.model_name)
     tmpdir = tempfile.mkdtemp(prefix="det_b1_")
     try:
@@ -719,10 +736,10 @@ def _run_deterministic_b1(request: DeterministicB1Request):
             filename=os.path.join(tmpdir, f"{base_name}.asc"),
             mode="B", duration_s=0.1, sample_rate_hz=1000.0)
         # synthesis_method='ray': subray_sum 簇用确定性 phase_rad 不受此项影响 (b1_annotated_baker
-        # 文档); calibration_config 省略 (=None) 同 annotated_b1 (校准走 control 分支, 这里保一致)。
+        # 文档)。calibration_config=cal_cfg: OTA 校准烘进 .asc (Codex #178 P1)。
         asc_paths = bake_b1_annotated(
             annotated, chamber_cfg, channel_cfg, export_cfg,
-            synthesis_method='ray', direction="dl")
+            calibration_config=cal_cfg, synthesis_method='ray', direction="dl")
         zip_base64 = _zip_asc_files_base64(asc_paths)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
