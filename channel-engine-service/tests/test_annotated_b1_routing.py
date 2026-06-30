@@ -24,10 +24,14 @@ if not os.environ.get("CHANNEL_ENGINE_PATH"):
         allow_module_level=True,
     )
 
+from fastapi.testclient import TestClient  # noqa: E402
+
 from app.api.endpoints import hardware_pipeline as hp  # noqa: E402
+from app.main import app  # noqa: E402
 from app.models.hardware_pipeline_models import HardwarePipelineRequest  # noqa: E402
 
 SEED = 42
+_client = TestClient(app)
 
 
 def _request(routing_mode="legacy", method="strict_pfs"):
@@ -126,3 +130,51 @@ def test_annotated_b1_missing_baker_module_fails_fast(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", _fake_import)
     with pytest.raises(hp.ChannelEngineUnavailable, match="annotated"):
         hp._run_annotated_bake_synthesis(_request(routing_mode="annotated_b1"))
+
+
+@pytest.mark.parametrize("raw,expect", [
+    ("../../../etc/passwd", "passwd"),       # 路径穿越 → basename 去段
+    ("/abs/evil", "evil"),                    # 绝对路径 → basename
+    ("dir/sub/name", "name"),                 # 多级 → 末段
+    ("UMa 改-双簇", "UMa_改-双簇"),            # 正常 (空格→_, 中文/连字符保留)
+    ("..", "propsim_export"),                 # basename('..')='..' → strip → 空 → fallback
+    ("", "propsim_export"),                   # 空 → fallback
+    ("...", "propsim_export"),                # 纯点 → strip → 空 → fallback
+])
+def test_safe_asc_base_name_blocks_traversal(raw, expect):
+    """Codex #176 P2: model_name 消毒为安全单文件名分量 (无 '/' / '..' / 绝对路径穿越)。"""
+    safe = hp._safe_asc_base_name(raw)
+    assert safe == expect
+    assert "/" not in safe and safe not in ("", ".", "..")
+
+
+def test_annotated_b1_endpoint_cal_via_control():
+    """Codex #176 P2: 非默认 cal 经 control_instructions 施加 (不丢, 非烘进 .asc)。
+    同一 annotated_b1 请求, 默认 cal vs 高 cable_loss/低 gain cal → control_instructions
+    不同 (cal 进 control 生效); .asc 不烘 cal 保 legacy parity (见 _run_annotated_bake_synthesis 注释)。"""
+    def _body(cal_entries=None):
+        b = {
+            "chamber_config": {"num_probes": 8, "radius_m": 1.0, "dual_polarized": False},
+            "simulation_rules": {"center_frequency_hz": 3.5e9, "ue_velocity_mps": [10.0, 0.0, 0.0]},
+            "cdl_model_data": {
+                "model_name": "S3 cal", "pathloss_db": 80.0, "is_los": False,
+                "clusters": [{"delay_s": 0.0, "power_relative_linear": 1.0,
+                              "aoa_deg": 30.0, "aod_deg": 10.0}],
+            },
+            "input_mode": "custom",
+            "routing_mode": "annotated_b1",
+        }
+        if cal_entries is not None:
+            b["calibration_data"] = {"entries": cal_entries}
+        return b
+
+    resp_default = _client.post("/api/v1/synthesize_hardware_pipeline", json=_body())
+    cal = [{"port_id": p, "cable_loss_db": 12.0, "probe_gain_dbi": 3.0} for p in range(1, 9)]
+    resp_cal = _client.post("/api/v1/synthesize_hardware_pipeline", json=_body(cal_entries=cal))
+
+    assert resp_default.status_code == 200, resp_default.text
+    assert resp_cal.status_code == 200, resp_cal.text
+    ctrl_default = resp_default.json()["control_instructions"]
+    ctrl_cal = resp_cal.json()["control_instructions"]
+    assert ctrl_default is not None and ctrl_cal is not None
+    assert ctrl_default != ctrl_cal   # cal 经 control_instructions 生效 → 未被丢弃
