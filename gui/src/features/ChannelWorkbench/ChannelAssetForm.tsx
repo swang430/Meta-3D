@@ -1,10 +1,11 @@
 /**
- * 信道资产建/编辑表单 (P2-16 S4-2): standard_3gpp + vendor_file 两 source_type。
+ * 信道资产建/编辑表单 (P2-16 S4): 四 source_type 全 payload 可编辑 —— standard_3gpp (CDL 名) /
+ * custom_static (簇编辑器 S4-3) / rt_dynamic (多快照射线编辑器 S4-4) / vendor_file (scd_config)。
  *
  * 用 channelAssetService.createChannelAsset / updateChannelAsset。source_type 建后不可改
- * (后端 update 不暴露), 故仅建时可选 source_type。custom_static 簇编辑器 (S4-3) /
- * rt_dynamic 射线编辑器 (S4-4) 后续接入: 本表单对这两类仅允许改档案字段 (name/desc/物理),
- * payload 不在此编辑 (Alert 提示)。
+ * (后端 update 不暴露), 故仅建时可选 source_type。custom_static / rt_dynamic 的 payload 含
+ * 表单 UI 未表示的字段 (pathloss_db / sampling_meta / scenario_meta) → 编辑时 merge 既有
+ * payload 仅覆盖 snapshots (见 buildSourcePayload)。
  */
 import { useEffect, useState } from 'react'
 import {
@@ -12,7 +13,6 @@ import {
   Text, Textarea, TextInput,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { IconInfoCircle } from '@tabler/icons-react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
 import {
@@ -24,16 +24,15 @@ import {
   type ChannelSourceType,
 } from '../../api/channelAssetService'
 import { CDLClusterEditor } from './CDLClusterEditor'
+import { RTRayEditor, type RtSnapshot } from './RTRayEditor'
 
-// 可【新建】的 source_type (rt_dynamic 射线编辑器 = S4-4)
+// 可【新建】的 source_type (四类全可建)
 const CREATABLE: { value: ChannelSourceType; label: string }[] = [
   { value: 'standard_3gpp', label: '标准 3GPP' },
   { value: 'custom_static', label: '自定义 CDL' },
+  { value: 'rt_dynamic', label: 'RT 动态' },
   { value: 'vendor_file', label: '厂商文件' },
 ]
-const PAYLOAD_EDITOR_PENDING: Record<string, string> = {
-  rt_dynamic: 'RT 动态射线编辑器将在 S4-4 接入；此处仅可改档案字段，射线 payload 保持不变。',
-}
 
 const numOrNull = (v: number | string): number | null =>
   v === '' || v == null ? null : Number(v)
@@ -67,6 +66,8 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
   const [filePath, setFilePath] = useState('')
   // custom_static: snapshots[0].clusters
   const [clusters, setClusters] = useState<CDLClusterPayload[]>([])
+  // rt_dynamic: snapshots[].rays (多快照, 每快照一组原始射线)
+  const [raySnapshots, setRaySnapshots] = useState<RtSnapshot[]>([])
   const [formError, setFormError] = useState<string | null>(null)
 
   // 打开时按 asset 回填 (或清空新建)
@@ -93,6 +94,8 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
       setFilePath(asset.associated_file_path ?? '')
       const snaps = (p.snapshots ?? []) as Array<{ clusters?: CDLClusterPayload[] }>
       setClusters(snaps[0]?.clusters ?? [])
+      const raySnaps = (p.snapshots ?? []) as RtSnapshot[]
+      setRaySnapshots(raySnaps.map((s) => ({ rays: s.rays ?? [] })))
     } else {
       setSourceType('standard_3gpp')
       setName(''); setDescription(''); setCenterGhz(''); setBandwidthMhz('')
@@ -100,6 +103,7 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
       setScd({ band: '', arfcn: '', bandwidth_mhz: '', model: '', scenario: '', mimo: '', polarization: '', version: 1 })
       setFilePath('')
       setClusters([])
+      setRaySnapshots([])
     }
   }, [opened, asset])
 
@@ -122,8 +126,6 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
     },
     onError: (e) => setFormError(extractDetail(e)),
   })
-
-  const payloadEditorPending = isEdit ? PAYLOAD_EDITOR_PENDING[sourceType] : undefined
 
   function commonFields() {
     const center = numOrNull(centerGhz)
@@ -164,7 +166,14 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
         | null
       return { ...existing, snapshots: [{ ...(firstSnap ?? {}), clusters }] }
     }
-    return null // rt_dynamic: 射线编辑器 S4-4
+    if (sourceType === 'rt_dynamic') {
+      // 同 custom_static: merge 既有 payload, 仅覆盖 snapshots —— rt_dynamic payload 还含表单
+      // 未表示的 sampling_meta / scenario_meta (RtDynamicPayload 声明), 整体替换会丢。建时
+      // asset==null → existing={} → 退化成 {snapshots: raySnapshots}。
+      const existing = (asset?.payload ?? {}) as Record<string, unknown>
+      return { ...existing, snapshots: raySnapshots }
+    }
+    return null
   }
 
   function handleSubmit() {
@@ -172,6 +181,12 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
     if (name.trim() === '') { setFormError('名称必填'); return }
     if (sourceType === 'custom_static' && clusters.length === 0) {
       setFormError('自定义 CDL 至少需 1 个簇'); return
+    }
+    if (sourceType === 'rt_dynamic') {
+      if (raySnapshots.length === 0) { setFormError('RT 动态至少需 1 个快照'); return }
+      if (raySnapshots.some((s) => s.rays.length === 0)) {
+        setFormError('每个快照至少需 1 条射线（MPDB 原始多径）'); return
+      }
     }
     // S2 校验前置: center 与 bandwidth 须同时给 (standard/rt 频率一致性网)
     if (numOrNull(centerGhz) != null && numOrNull(bandwidthMhz) == null
@@ -181,14 +196,15 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
     }
     const common = commonFields()
     if (isEdit && asset) {
-      // 编辑: 档案 + 物理字段; standard/vendor 连 payload 一并更新, custom/rt 省略 payload (保持不变)
+      // 编辑: 档案 + 物理字段 + payload (四 source_type 全可编辑 payload; custom/rt 的 merge
+      // 模式在 buildSourcePayload 内保留表单未表示的顶层字段)
       const upd: Record<string, unknown> = { ...common, associated_file_path: blankNull(filePath) }
       const sp = buildSourcePayload()
       if (sp != null) upd.payload = sp
       updateMutation.mutate({ id: asset.id, payload: upd })
     } else {
       const sp = buildSourcePayload()
-      if (sp == null) { setFormError('该 source_type 暂不支持新建 (簇/射线编辑器 S4-3/S4-4)'); return }
+      if (sp == null) { setFormError('该 source_type 暂不支持新建'); return }
       const create: ChannelAssetCreatePayload = {
         name: common.name, source_type: sourceType, payload: sp,
         description: common.description, center_frequency_hz: common.center_frequency_hz,
@@ -214,7 +230,7 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
         ) : (
           <Select
             label="来源 source_type"
-            description="custom_static (簇) / rt_dynamic (射线) 的新建在 S4-3/S4-4 接入"
+            description="四类全可建：标准 3GPP / 自定义 CDL（簇）/ RT 动态（多快照射线）/ 厂商文件"
             data={CREATABLE}
             value={sourceType}
             onChange={(v) => v && setSourceType(v as ChannelSourceType)}
@@ -226,13 +242,7 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
         <Textarea label="描述" autosize minRows={1} value={description}
           onChange={(e) => setDescription(e.currentTarget.value)} />
 
-        {payloadEditorPending && (
-          <Alert icon={<IconInfoCircle size={16} />} color="yellow" variant="light">
-            {payloadEditorPending}
-          </Alert>
-        )}
-
-        {!payloadEditorPending && sourceType === 'standard_3gpp' && (
+        {sourceType === 'standard_3gpp' && (
           <TextInput
             label="CDL 模型名 (cdl_model_name)" required
             placeholder="如 UMa CDL-C NLOS"
@@ -240,14 +250,21 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
           />
         )}
 
-        {!payloadEditorPending && sourceType === 'custom_static' && (
+        {sourceType === 'custom_static' && (
           <>
             <Divider label="自定义 CDL 簇 (clusters)" labelPosition="left" />
             <CDLClusterEditor clusters={clusters} onChange={setClusters} />
           </>
         )}
 
-        {!payloadEditorPending && sourceType === 'vendor_file' && (
+        {sourceType === 'rt_dynamic' && (
+          <>
+            <Divider label="RT 动态多快照射线 (snapshots[].rays)" labelPosition="left" />
+            <RTRayEditor snapshots={raySnapshots} onChange={setRaySnapshots} />
+          </>
+        )}
+
+        {sourceType === 'vendor_file' && (
           <>
             <Divider label="SCD 配置 (scd_config)" labelPosition="left" />
             <SimpleGrid cols={2}>
