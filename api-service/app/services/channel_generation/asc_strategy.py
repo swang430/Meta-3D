@@ -269,6 +269,11 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
             ue_velocity_kph=simulation_rules.get("ue_velocity_kph", 15.0),
             session_id=session_id,
             input_mode="custom",
+            # P2-16 S3-3: ChannelAsset custom_static 升路由到标注式 B-1 烘焙脊 (S3-1 bake_
+            # b1_annotated)。与 legacy input_mode=custom 直路逐位等价 (#176 golden 证), 把
+            # 生产 custom_static 统一到 ACP 烘焙脊 (设计 §5)。legacy cdl_profile_id 路 (S4
+            # deprecate) 不动, 仍走 legacy。
+            routing_mode="annotated_b1",
             synthesis_method=simulation_rules.get("synthesis_method", "strict_pfs"),
             ue_velocity_mps=velocity or simulation_rules.get("ue_velocity_mps"),
             k_factor_db=kfac,

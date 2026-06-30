@@ -279,6 +279,30 @@ class TestBuildPayloadChamberConfig:
         assert cc["distribution"] == "custom"
         assert cc["probe_positions"] == positions
 
+    def test_payload_carries_routing_mode(self, db):
+        """P2-16 S3-3: routing_mode 进 wire payload (默认 legacy; annotated_b1 透传给微服务)。
+        证 client→微服务契约带 routing_mode (S3-1 微服务 schema 已有该字段)。"""
+        from app.services.channel_engine_client import (
+            AntennaConfig, CDLCluster, ChannelEngineClient,
+        )
+        chamber = _make_chamber(db, distribution="ring", num_probes=8)
+        client = ChannelEngineClient(db=db)
+
+        def _payload(routing_mode):
+            kw = dict(
+                chamber=chamber, calibration_entries=[], frequency_hz=3.5e9,
+                clusters=[CDLCluster()], cdl_model_name="x", pathloss_db=85.0, is_los=False,
+                tx_antenna=AntennaConfig(), rx_antenna=AntennaConfig(),
+                target_tx_power_dbm=0.0, target_rsrp_dbm=-85.0, target_snr_db=20.0,
+                ue_velocity_kph=15.0, probe_positions=None,
+            )
+            if routing_mode is not None:
+                kw["routing_mode"] = routing_mode
+            return client._build_payload(**kw)
+
+        assert _payload(None)["routing_mode"] == "legacy"               # 默认零行为变更
+        assert _payload("annotated_b1")["routing_mode"] == "annotated_b1"  # 透传到 wire
+
     def test_distribution_value_reflects_db_column(self, db):
         """chamber.probe_distribution 列 == payload chamber_config.distribution.
         防止有人改一边忘改另一边。
@@ -309,12 +333,27 @@ class TestBuildPayloadChamberConfig:
 def _load_ce_service_schema():
     import importlib.util
     import os
+    import sys
 
-    schema_path = os.path.normpath(os.path.join(
+    models_dir = os.path.normpath(os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         "..", "..", "channel-engine-service", "app", "models",
-        "hardware_pipeline_models.py",
     ))
+    # P2-16 S3-2b (#178) follow-up: 微服务 hardware_pipeline_models 现 import
+    # `app.models.b2_cluster_models` (DeterministicB1Request 复用 MPCInput/F64ProfileInput)。
+    # 按路径加载时该绝对 import 解析到 api-service 的 `app.models` (无 b2_cluster_models)
+    # → ModuleNotFoundError。先按路径把微服务的 b2_cluster_models 注册进 sys.modules 的
+    # `app.models.b2_cluster_models`, 让 hardware_pipeline_models 的 import 解析到它。
+    # 不污染: api-service 无同名 module, 运行时永不 import 它 (纯微服务侧 schema)。
+    b2_name = "app.models.b2_cluster_models"
+    if b2_name not in sys.modules:
+        b2_spec = importlib.util.spec_from_file_location(
+            b2_name, os.path.join(models_dir, "b2_cluster_models.py"))
+        b2_mod = importlib.util.module_from_spec(b2_spec)
+        sys.modules[b2_name] = b2_mod
+        b2_spec.loader.exec_module(b2_mod)
+
+    schema_path = os.path.join(models_dir, "hardware_pipeline_models.py")
     spec = importlib.util.spec_from_file_location(
         "ce_service_hardware_pipeline_models", schema_path,
     )
