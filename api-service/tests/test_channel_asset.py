@@ -171,6 +171,34 @@ class TestPolymorphicPayloadValidation:
             create_channel_asset(db, name="x", source_type="vendor_file",
                                  payload={"scd_config": {}})
 
+    def test_vendor_incomplete_scd_config(self, db):
+        # S2: vendor scd_config 须完整 SCD schema (缺 mimo → 400, Codex #173 第5轮纳入 S2)
+        incomplete = {k: v for k, v in _SCD.items() if k != "mimo"}
+        with pytest.raises(ChannelAssetError, match=r"scd_config\.mimo 必填"):
+            create_channel_asset(db, name="x", source_type="vendor_file",
+                                 payload={"scd_config": incomplete})
+
+    def test_vendor_scd_fractional_arfcn(self, db):
+        # arfcn 是整数 (Dict payload 绕过 Pydantic int → 拒 fractional, Codex #174 复查 P2; int()
+        # 否则静默 coerce 640000.7→640000)
+        bad_scd = dict(_SCD, arfcn=640000.7)
+        with pytest.raises(ChannelAssetError, match="arfcn 须整数"):
+            create_channel_asset(db, name="x", source_type="vendor_file",
+                                 payload={"scd_config": bad_scd})
+
+    def test_vendor_invalid_scd_naming(self, db):
+        # model 含连字符 → 命名契约 (alnum) 拒 (format_standard_channel_filename ValueError)
+        bad_scd = dict(_SCD, model="CDL-C")
+        with pytest.raises(ChannelAssetError, match="命名契约非法"):
+            create_channel_asset(db, name="x", source_type="vendor_file",
+                                 payload={"scd_config": bad_scd})
+
+    def test_vendor_canonical_derived(self, db):
+        # S2: vendor 不传 canonical → 从 scd_config 确定性派生 MF_ 名 (§3.2 族 A)
+        a = create_channel_asset(db, name="vc", source_type="vendor_file",
+                                 payload=_VENDOR_PAYLOAD)
+        assert a.canonical_name == "MF_N78_640000_BW100_CDLC_UMa_4x4_DP_v1.smu"
+
     def test_standard_invalid_cdl_name(self, db):
         # 任意非空名不够, 须合法 3GPP CDL 名 (Codex #173 复查 P2; 复用 parse_cdl_model_name)
         with pytest.raises(ChannelAssetError, match="非法 CDL 名"):

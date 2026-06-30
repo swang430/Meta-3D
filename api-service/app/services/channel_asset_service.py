@@ -18,6 +18,11 @@ from sqlalchemy.orm import Session
 from app.models.channel_asset import ChannelAsset
 # CDL 名校验单一真值在 cdl_model_parser (standard_3gpp 合法性: scenario/cluster/condition token)
 from app.services.cdl_model_parser import parse_cdl_model_name
+# vendor_file canonical_name MF_ 派生 + scd_config 命名契约校验 (§3.2 命名族 A, S2)
+from app.services.mimo_ota.channel_naming import (
+    StandardChannelName,
+    format_standard_channel_filename,
+)
 # 簇校验单一真值在 custom_cdl_profile_service (custom_static = CustomCDLProfile 退化, 复用避免 drift)
 from app.services.custom_cdl_profile_service import (
     CustomCDLProfileError,
@@ -108,8 +113,10 @@ def _validate_custom_static_payload(payload: dict) -> None:
             _num_or_error(f"clusters[{i}].{f}", c.get(f))
         # num_rays 是整数计数 (Dict payload 绕过 Pydantic int 约束 → 拒 1.5 这种 fractional)
         nr = c.get("num_rays")
-        if nr is not None and float(nr) != int(nr):
-            raise ChannelAssetError(f"clusters[{i}].num_rays 须整数 (得 {nr!r})")
+        if nr is not None:
+            _num_or_error(f"clusters[{i}].num_rays", nr)  # 类型+有限守门 (否则 float("bad")/NaN → ValueError 500)
+            if float(nr) != int(nr):
+                raise ChannelAssetError(f"clusters[{i}].num_rays 须整数 (得 {nr!r})")
         ph = c.get("initial_phases_rad")
         if isinstance(ph, list):
             for j, x in enumerate(ph):
@@ -119,6 +126,9 @@ def _validate_custom_static_payload(payload: dict) -> None:
             _validate_cluster(i, c)
         except CustomCDLProfileError as e:
             raise ChannelAssetError(str(e))
+    # pathloss_db 顶层 optional 但若给则须有限数值 (Codex 1d47e85 P2: asc_strategy 直传给
+    # synthesize_hardware_pipeline, 不校验则 "bad"/NaN 到 CE 才炸而非入库时 400)
+    _num_or_error("custom_static pathloss_db", payload.get("pathloss_db"))
 
 
 def _validate_ray(si: int, ri: int, r: Any) -> None:
@@ -156,10 +166,53 @@ def _validate_rt_dynamic_payload(payload: dict) -> None:
             _validate_ray(si, ri, r)
 
 
+# vendor_file scd_config 完整 SCD 规范字段 (mirror StandardChannelName; S2 Codex #173 第5轮)
+_SCD_CONFIG_REQUIRED = ("band", "arfcn", "bandwidth_mhz", "model",
+                        "scenario", "mimo", "polarization", "version")
+
+
+def _scd_to_standard_name(scd: dict) -> str:
+    """vendor_file scd_config → MF_ 标准名 (§3.2 族 A; raise ValueError on invalid)。"""
+    return format_standard_channel_filename(StandardChannelName(
+        band=scd["band"], arfcn=int(scd["arfcn"]),
+        bandwidth_mhz=int(scd["bandwidth_mhz"]), model=scd["model"],
+        scenario=scd["scenario"], mimo=scd["mimo"],
+        polarization=scd["polarization"], version=int(scd["version"]),
+    ))
+
+
 def _validate_vendor_file_payload(payload: dict) -> None:
     scd = payload.get("scd_config")
     if not isinstance(scd, dict) or not scd:
         raise ChannelAssetError("vendor_file payload.scd_config 须非空对象 (SCD 规范配置)")
+    for f in _SCD_CONFIG_REQUIRED:
+        if scd.get(f) is None:
+            raise ChannelAssetError(f"vendor_file scd_config.{f} 必填 (完整 SCD schema)")
+    # arfcn/bandwidth_mhz/version 是整数 (Dict payload 绕过 Pydantic int → 拒 fractional/bool,
+    # 否则 int() 静默 coerce 640000.7→640000; Codex #174 复查 P2, 同 S1 num_rays 母题)
+    for f in ("arfcn", "bandwidth_mhz", "version"):
+        v = scd.get(f)
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise ChannelAssetError(f"vendor_file scd_config.{f} 须数值 (得 {type(v).__name__})")
+        # NaN/Infinity: int(v) 抛 ValueError/OverflowError (≠ ChannelAssetError) → 500;
+        # 在 int() 前 fail-loud 成 400 (Codex #174 复查 P2, 同 _num_or_error isfinite 守门)。
+        if not math.isfinite(v):
+            raise ChannelAssetError(f"vendor_file scd_config.{f} 须有限数值 (得 {v!r})")
+        if float(v) != int(v):
+            raise ChannelAssetError(f"vendor_file scd_config.{f} 须整数 (得 {v!r})")
+    # arfcn 须落在 NR-ARFCN 定义域 (Codex P2 on 63646b9: 正整数但非 NR 域如 3279166 仍被
+    # format_standard_channel_filename 放行 → measure 时 nr_arfcn_to_freq_mhz 抛裸 ValueError;
+    # 入库前转 ChannelAssetError, 镜像 SCD service _validate_arfcn_domain 单一真值源)。
+    from app.hal.nr_arfcn import nr_arfcn_to_freq_mhz
+    try:
+        nr_arfcn_to_freq_mhz(int(scd["arfcn"]))
+    except ValueError as e:
+        raise ChannelAssetError(f"vendor_file scd_config.arfcn 超出 NR-ARFCN 域: {e}")
+    # 复用命名契约校验 (alnum + arfcn/bw/version 正); 同时保证 canonical 可确定性派生
+    try:
+        _scd_to_standard_name(scd)
+    except (ValueError, KeyError, TypeError) as e:
+        raise ChannelAssetError(f"vendor_file scd_config 命名契约非法: {e}")
 
 
 _PAYLOAD_VALIDATORS = {
@@ -200,9 +253,42 @@ def _validate_source_fields(source_type: str, fields: dict) -> None:
         if afp is not None and not str(afp).lower().endswith(".smu"):
             raise ChannelAssetError(
                 f"vendor_file associated_file_path 须 .smu 后缀 (得 {afp!r}); 留空 = declared_only")
+    if source_type in ("standard_3gpp", "rt_dynamic"):
+        cf = fields.get("center_frequency_hz")
+        # 声明 center_frequency_hz 须同时给 bandwidth_mhz (Codex 47074a1 P2: 否则 resolver 建不出
+        # scd_freq_identity, 频率一致性网静默跳过, 3.6GHz 资产配 3.5GHz TestCase 不报错)。
+        if cf is not None and fields.get("bandwidth_mhz") is None:
+            raise ChannelAssetError(
+                f"{source_type}: 声明 center_frequency_hz 须同时给 bandwidth_mhz "
+                "(否则频率一致性网静默跳过, 错频资产不报错)")
+        # center_frequency_hz 须落在 NR-ARFCN 频率域 0–100000 MHz (Codex 1571a71 P2: 仅查 >0 不够,
+        # 200GHz 等打错值到 resolver/measure 才 freq_mhz_to_nr_arfcn 抛裸 ValueError → 入库前转 400)。
+        if cf is not None:
+            from app.hal.nr_arfcn import freq_mhz_to_nr_arfcn
+            try:
+                freq_mhz_to_nr_arfcn(cf / 1e6)
+            except ValueError as e:
+                raise ChannelAssetError(f"{source_type}: center_frequency_hz 超出 NR 域: {e}")
 
 
 # ---- CRUD ----
+
+def _check_vendor_filename_freq(scd_config: Any, associated_file_path: Any) -> None:
+    """vendor .smu 文件名 vs scd_config.arfcn 交叉校验 (Codex P2 accept 侧, 镜像 resolver load 侧)。
+
+    MF_ 可解析名 ARFCN 不一致 → fail-loud; vendor 自定义名 (解析不出) → 放行留给声明频率门。
+    create/update 接受文件时拦住"声明一个 ARFCN 却给别 ARFCN 的 MF_ 标准名 .smu", 防坏资产入库。
+    """
+    if not associated_file_path:
+        return
+    arfcn = (scd_config or {}).get("arfcn")
+    if arfcn is None:
+        return
+    from app.services.standard_channel_service import check_channel_filename_freq
+    chk = check_channel_filename_freq(str(associated_file_path), int(arfcn))
+    if not chk.consistent:
+        raise ChannelAssetError(chk.failure_reason())
+
 
 def create_channel_asset(
     db: Session, *, name: str, source_type: str, payload: Any,
@@ -217,13 +303,20 @@ def create_channel_asset(
         raise ChannelAssetError("payload 必填")
     if db.query(ChannelAsset).filter(ChannelAsset.name == name).first() is not None:
         raise ChannelAssetError(f"ChannelAsset 名 {name!r} 已存在")
-    canonical = fields.get("canonical_name")
-    if canonical is not None and db.query(ChannelAsset).filter(
-            ChannelAsset.canonical_name == canonical).first() is not None:
-        raise ChannelAssetError(f"canonical_name {canonical!r} 已存在")
+    # 先校验 payload (含 vendor 命名契约), 再派生 canonical (依赖合法 scd_config)
     _validate_payload(source_type, payload)
     _validate_top_physical(fields)
     _validate_source_fields(source_type, fields)
+    if source_type == "vendor_file":
+        _check_vendor_filename_freq(payload.get("scd_config"), fields.get("associated_file_path"))
+    # vendor_file: canonical_name 未传 → 从 scd_config 确定性派生 MF_ 名 (§3.2 族 A)
+    canonical = fields.get("canonical_name")
+    if canonical is None and source_type == "vendor_file":
+        canonical = _scd_to_standard_name(payload["scd_config"])
+        fields["canonical_name"] = canonical
+    if canonical is not None and db.query(ChannelAsset).filter(
+            ChannelAsset.canonical_name == canonical).first() is not None:
+        raise ChannelAssetError(f"canonical_name {canonical!r} 已存在")
     asset = ChannelAsset(
         name=name,
         source_type=source_type,
@@ -281,7 +374,29 @@ def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
     if "payload" in fields:
         _validate_payload(asset.source_type, fields["payload"])
     _validate_top_physical(fields)
-    _validate_source_fields(asset.source_type, fields)
+    # update 只传改动字段 (exclude_unset), 但 center/bw 跨字段校验需最终状态 → 合并资产现值
+    # (Codex 1571a71 P2: 否则只改 center 不带 bw 会误拒有 bw 的资产, 或清 bw 漏判新洞)。
+    _vsf = {
+        "center_frequency_hz": fields.get("center_frequency_hz", asset.center_frequency_hz),
+        "bandwidth_mhz": fields.get("bandwidth_mhz", asset.bandwidth_mhz),
+        "associated_file_path": fields.get("associated_file_path", asset.associated_file_path),
+    }
+    _validate_source_fields(asset.source_type, _vsf)
+    if asset.source_type == "vendor_file":
+        # accept 侧 filename 校验 (Codex P2: 镜像 resolver load 侧) + payload 改变时重派生
+        # canonical (Codex P2: 否则改 scd_config 后 canonical 停留旧 ARFCN/version, dedup/audit
+        # 用 stale 值)。显式给 canonical_name 替换 → 不自动重派生 (尊重 operator 指定)。
+        _np = fields.get("payload", asset.payload) or {}
+        _scd = _np.get("scd_config") if isinstance(_np, dict) else None
+        _check_vendor_filename_freq(
+            _scd, fields.get("associated_file_path", asset.associated_file_path))
+        if "payload" in fields and "canonical_name" not in fields:
+            new_canon = _scd_to_standard_name(_scd)
+            if new_canon != asset.canonical_name and db.query(ChannelAsset).filter(
+                    ChannelAsset.canonical_name == new_canon,
+                    ChannelAsset.id != asset.id).first() is not None:
+                raise ChannelAssetError(f"canonical_name {new_canon!r} 已存在")
+            asset.canonical_name = new_canon
     for k, v in fields.items():
         if k in _MUTABLE_FIELDS:
             setattr(asset, k, v)

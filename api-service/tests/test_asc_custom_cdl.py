@@ -37,6 +37,51 @@ def _profile():
     return p
 
 
+def _channel_asset():
+    a = MagicMock()
+    a.name = "CA-custom"
+    a.center_frequency_hz = 3.5e9
+    a.is_los = False
+    a.k_factor_db = None
+    a.ue_velocity_mps = [5.0, 0.0, 0.0]
+    a.payload = {"pathloss_db": 88.0}  # ChannelAsset 顶层无 pathloss_db, 在 payload
+    return a
+
+
+def test_channel_asset_clusters_branch():
+    """P2-16 S2: cdl_model_data['clusters'] → _synthesize_from_clusters (不查 CustomCDLProfile 表)。"""
+    strat = _strategy()
+    clusters = [{"delay_s": 0.0, "power_linear": 0.7, "aoa_deg": 45, "aod_deg": 12, "num_rays": 16}]
+    with patch("os.path.exists", return_value=True):
+        ok = asyncio.run(strat.generate_and_load(
+            {"frequency_hz": 3.5e9},
+            {"clusters": clusters, "channel_asset": _channel_asset()}))
+    assert ok is True
+    call = strat.ce_client.synthesize_hardware_pipeline.call_args.kwargs
+    assert call["input_mode"] == "custom"
+    assert call["cdl_model_name"] == "CA-custom"
+    assert len(call["clusters"]) == 1
+    assert call["clusters"][0].power_relative_linear == 0.7  # power_linear → power_relative_linear
+    assert call["clusters"][0].num_rays == 16
+    assert call["pathloss_db"] == 88.0          # 从 payload (ChannelAsset 顶层无此字段)
+    assert call["ue_velocity_mps"] == [5.0, 0.0, 0.0]
+    assert call["frequency_hz"] == 3.5e9        # 频率门: asset==TestCase, 一致
+
+
+def test_channel_asset_clusters_frequency_mismatch_fails():
+    """clusters 路也走共用频率门 (_check_custom_physical_gates): asset center_frequency ≠
+    TestCase → fail-loud。直接调 _synthesize_from_clusters (generate_and_load 的 try/except
+    会把 ValueError catch 成 return False, 测门本身须绕过)。"""
+    import pytest
+    strat = _strategy()
+    ca = _channel_asset()
+    ca.center_frequency_hz = 2.6e9  # ≠ TestCase 3.5e9
+    with pytest.raises(ValueError, match="测量污染"):
+        asyncio.run(strat._synthesize_from_clusters(
+            [{"delay_s": 0, "power_linear": 1, "aoa_deg": 1, "aod_deg": 1}],
+            ca, {"frequency_hz": 3.5e9}, "sess"))
+
+
 def test_custom_cdl_branch_input_mode_custom():
     """cdl_profile_id → 查 profile + 装配簇 → input_mode=custom + 簇映射透传。"""
     strat = _strategy()

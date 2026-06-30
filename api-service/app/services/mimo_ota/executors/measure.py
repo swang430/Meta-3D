@@ -452,6 +452,32 @@ class MeasureExecutor(IStepExecutor):
             # emulation_file (ASC strategy 忽略它) + 无 SCD 频率 (不进一致性网)。SCD 解析只在
             # 下方 GCM 分支做 —— Codex on #122: 在 GCM 选了 SCD 再切 ASC 时 config 残留 scd_id,
             # 不该让 ASC run 去 resolve (SCD 删了/非法会误 fail) 或撞 SCD 频率门 (ASC 不用 SCD)。
+            # P2-16 S2: ChannelAsset 前置解析 (方案 A: 仅 channel_asset_id 显式给时介入,
+            # 翻译成现有 config 字段, 下游 engine dispatch / strategy 不变)。
+            from app.services.mimo_ota.channel_asset_resolver import (
+                ChannelAssetResolveError,
+                resolve_channel_asset,
+            )
+            try:
+                resolved_asset = resolve_channel_asset(context.db, config)
+            except ChannelAssetResolveError as e:
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED, error_message=str(e))
+            if resolved_asset is not None:
+                config.engine_mode = resolved_asset.engine_mode  # source_type 派生 engine 覆盖
+                # ChannelAsset 是唯一信道源: 清残留 legacy 引用 (Codex #174 P2)。saved TestCase
+                # 里残留的 cdl_profile_id/scd_id 否则会让下游 asc custom 分支 / SCD 路误触发
+                # (568 门因 channel_asset 派生 engine=ASC 不拦 standard 残留的 cdl_profile_id)。
+                config.cdl_profile_id = None
+                config.scd_id = None
+                if resolved_asset.cdl_model_name:
+                    config.cdl_model_name = resolved_asset.cdl_model_name
+                # vendor_file authoritative: **无条件**设 emulation_file (含 None) — declared_only
+                # (None) 必须清掉 saved TestCase 残留的 legacy .smu, 否则 GCM declared_only strict
+                # fail-loud 被旧 stale 文件绕过 (Codex #174 复查 P2)。
+                if resolved_asset.engine_mode == EngineMode.GCM_NATIVE.value:
+                    config.emulation_file = resolved_asset.emulation_file
+
             resolved_emulation_file = config.emulation_file
             scd_freq_identity = None
 
@@ -485,6 +511,11 @@ class MeasureExecutor(IStepExecutor):
                         status=StepExecutionStatus.FAILED,
                         error_message=f"P2-12 slice 4: scd_id={config.scd_id} 无效/不存在: {e}",
                     )
+                # vendor_file ChannelAsset (清了 scd_id 不走 SCD 表): scd_config 声明频率从
+                # resolver 喂频率一致性网, 否则 .smu 文件名不可解析时选错频率文件也通过
+                # (Codex #174 复查 P2)。
+                if resolved_asset is not None and resolved_asset.scd_freq_identity is not None:
+                    scd_freq_identity = resolved_asset.scd_freq_identity
                 # P2-11 Phase 2: GCM 的 .smu 必须由 TestCase 驱动 (路径 B), 不能静默
                 # fallback 到 F64 驱动默认 .smu —— 默认频率可能跟 TestCase 错配。strict
                 # 默认 FAIL; opt-out (bring-up 路径 A) 降级 warning 用驱动默认。下面
@@ -551,17 +582,35 @@ class MeasureExecutor(IStepExecutor):
                 # P2-15: custom CDL profile id (设了 → ASC strategy 走 input_mode=custom)
                 "cdl_profile_id": getattr(config, "cdl_profile_id", None),
             }
+            # P2-16 S2: ChannelAsset custom_static → 透传 payload clusters (不查 CustomCDLProfile 表)
+            if resolved_asset is not None and resolved_asset.clusters_payload is not None:
+                cdl_model_data["clusters"] = resolved_asset.clusters_payload
+                cdl_model_data["channel_asset"] = resolved_asset.asset
             # P2-14 B-2 (Codex P1 #169): 把聚类输入透传进 cdl_model_data / sim_rules,
             # 否则 B2ParametricTdlStrategy 永远拿不到 rt_rays → 调 CE 前 fail-loud, B-2 路
             # 死 (即便 test case 含 RT 射线也丢)。来源 = TestCase.configuration extra
             # (RT-Release 现场写入); 无则 rt_rays=None → strategy fail-loud = 设计预期。
             if engine_mode == EngineMode.B2_PARAMETRIC_TDL:
                 _b2 = _extract_b2_cluster_inputs(config)
-                cdl_model_data["rt_rays"] = _b2["rt_rays"]
+                # rt_dynamic ChannelAsset payload rays 优先于 legacy config.model_extra rt_rays
+                # (Codex #174 复查 P2: 否则选 rt_dynamic 资产却用 saved TestCase 残留 legacy rays)
+                if resolved_asset is not None and resolved_asset.rt_rays_payload is not None:
+                    cdl_model_data["rt_rays"] = resolved_asset.rt_rays_payload
+                else:
+                    cdl_model_data["rt_rays"] = _b2["rt_rays"]
+                # rt_dynamic 顶层声明频率 → 喂频率一致性网 (Codex #174 复查 P2: 否则复用别 band 的
+                # RT 射线在错误载频聚类, 频率门无资产源可比; 对称 vendor 的 GCM 517-518 注入)。
+                if resolved_asset is not None and resolved_asset.scd_freq_identity is not None:
+                    scd_freq_identity = resolved_asset.scd_freq_identity
                 cdl_model_data["test_class"] = _b2["test_class"]
                 cdl_model_data["f64_profile"] = _b2["f64_profile"]
-                if _b2["ue_velocity_mps"] is not None:
-                    sim_rules["ue_velocity_mps"] = _b2["ue_velocity_mps"]
+                # rt_dynamic 资产顶层速度优先于 legacy config.model_extra (Codex 9d4e758 P2:
+                # 否则选带速度的 RT 资产却用 legacy/零速度聚类, 丢多普勒上下文)
+                _vel = (resolved_asset.ue_velocity_mps
+                        if resolved_asset is not None and resolved_asset.ue_velocity_mps is not None
+                        else _b2["ue_velocity_mps"])
+                if _vel is not None:
+                    sim_rules["ue_velocity_mps"] = _vel
 
             # P2-15 (Codex P2 #171): cdl_profile_id (自定义 CDL) 只 ASC_SYNTHESIS 实现 custom
             # 分支; GCM/external strategy 忽略它 → 静默跑标准信道。capability↔gate 一致, fail-fast。
@@ -591,6 +640,11 @@ class MeasureExecutor(IStepExecutor):
             from app.services.mimo_ota.frequency_consistency import (
                 check_frequency_consistency,
             )
+            # 资产声明频率统一兜底喂一致性网 (Codex 0ea6cca P2: standard_3gpp 走 ASC 路, GCM/B2
+            # 分支没设 scd_freq_identity; 补 standard 资产声明载频; GCM/B2 已设则 is None 跳过)
+            if (resolved_asset is not None and resolved_asset.scd_freq_identity is not None
+                    and scd_freq_identity is None):
+                scd_freq_identity = resolved_asset.scd_freq_identity
             freq_result = check_frequency_consistency(
                 FrequencyIdentity.from_center_freq_mhz(
                     pcell.frequency_hz / 1e6, pcell.bandwidth_mhz

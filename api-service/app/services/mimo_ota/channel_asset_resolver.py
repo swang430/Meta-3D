@@ -1,0 +1,119 @@
+"""P2-16 S2: ChannelAsset 前置解析层 — channel_asset_id → engine_mode + 现有信道字段。
+
+**方案 A 最小侵入**: 只在 `config.channel_asset_id` 显式给时介入; 旧 cdl_profile_id/scd_id
+走现状 (一行不改下游 engine dispatch / strategy)。`source_type → engine_mode` 是**静态查表**
+(S2: 一对一映射, 非智能判决 —— §6 判决路由 / ACP 装配 / F4/F5 接线全是 S3)。
+
+解析结果翻译成现有 config 字段 (cdl_model_name / scd_id) + cdl_model_data clusters, 让
+measure 下游 if/elif engine dispatch 和各 strategy **原封不动**跑。vendor_file 靠"复用 id"
+(asset.id == 旧 scd_id, 旧 SCD 表保留) 透传 scd_id 走老 resolve_emulation_for_measure。
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, List, Optional
+from uuid import UUID
+
+from sqlalchemy.orm import Session
+
+from app.services.channel_asset_service import (
+    ChannelAssetNotFound,
+    get_channel_asset,
+)
+from app.hal.nr_arfcn import FrequencyIdentity
+from app.services.channel_generation.base_generator import EngineMode
+
+# source_type → engine_mode 静态查表 (一对一; 非 §6 判决, 那是 S3)
+_SOURCE_TO_ENGINE = {
+    "standard_3gpp": EngineMode.ASC_SYNTHESIS.value,   # → mimo_first_asc
+    "custom_static": EngineMode.ASC_SYNTHESIS.value,   # → mimo_first_asc
+    "vendor_file": EngineMode.GCM_NATIVE.value,        # → keysight_gcm
+    "rt_dynamic": EngineMode.B2_PARAMETRIC_TDL.value,  # → b2 (现恒 fail-loud=现场半)
+}
+
+
+@dataclass(frozen=True)
+class ResolvedChannelAsset:
+    """解析结果: engine_mode 覆盖 + 翻译到现有 config/cdl_model_data 字段。"""
+    engine_mode: str
+    asset: Any
+    cdl_model_name: Optional[str] = None      # standard_3gpp → config.cdl_model_name
+    emulation_file: Optional[str] = None      # vendor_file → config.emulation_file (不依赖 SCD twin)
+    clusters_payload: Optional[List[dict]] = None  # custom_static → cdl_model_data["clusters"]
+    rt_rays_payload: Optional[List[dict]] = None  # rt_dynamic → cdl_model_data["rt_rays"] (单快照)
+    scd_freq_identity: Any = None  # vendor_file/rt_dynamic 声明频率 → 频率一致性网 (Codex #174 复查 P2)
+    ue_velocity_mps: Any = None  # rt_dynamic 顶层速度 → B2 sim_rules 多普勒上下文 (Codex 9d4e758 P2)
+
+
+class ChannelAssetResolveError(ValueError):
+    """解析失败 (资产不存在 / source_type 未知); caller 映射 FAILED。"""
+
+
+def resolve_channel_asset(db: Session, config: Any) -> Optional[ResolvedChannelAsset]:
+    """方案 A: 仅 config.channel_asset_id 显式给时解析; 否则 None (走旧字段路, 下游不变)。"""
+    aid = getattr(config, "channel_asset_id", None)
+    if not aid:
+        return None
+    try:
+        asset = get_channel_asset(db, UUID(str(aid)))
+    except (ChannelAssetNotFound, ValueError) as e:
+        raise ChannelAssetResolveError(f"channel_asset_id={aid} 无效/不存在: {e}")
+
+    st = asset.source_type
+    if st not in _SOURCE_TO_ENGINE:
+        raise ChannelAssetResolveError(f"未知 source_type: {st!r}")
+    engine = _SOURCE_TO_ENGINE[st]
+
+    if st == "custom_static":
+        snapshots = (asset.payload or {}).get("snapshots") or [{}]
+        clusters = snapshots[0].get("clusters") if isinstance(snapshots[0], dict) else None
+        return ResolvedChannelAsset(engine_mode=engine, asset=asset, clusters_payload=clusters)
+    if st == "standard_3gpp":
+        # 顶层声明频率 → 频率一致性网 (Codex 0ea6cca P2: 否则标准资产存一个 band 被别频率
+        # TestCase 引用不报错; 对称 rt/vendor 透传 scd_freq_identity)。
+        freq_id = None
+        if asset.center_frequency_hz is not None and asset.bandwidth_mhz is not None:
+            freq_id = FrequencyIdentity.from_center_freq_mhz(
+                asset.center_frequency_hz / 1e6, asset.bandwidth_mhz)
+        return ResolvedChannelAsset(
+            engine_mode=engine, asset=asset,
+            cdl_model_name=(asset.payload or {}).get("cdl_model_name"),
+            scd_freq_identity=freq_id)
+    if st == "vendor_file":
+        # vendor_file 不依赖 SCD twin (Codex #174 P2: 新建的 vendor_file 经 ChannelAsset API
+        # 没有同 id 的 SCD 行, 不能透传 scd_id 走查 SCD 表的老路): 直接从 ChannelAsset 提供
+        # .smu (associated_file_path)。declared_only (None) → GCM 分支 emulation_file_gate
+        # strict fail-loud (没指定 .smu 不能真跑 GCM), 与现状 (裸 emulation_file 缺失) 一致。
+        scd = (asset.payload or {}).get("scd_config") or {}
+        freq_id = None
+        if scd.get("arfcn") is not None and scd.get("bandwidth_mhz") is not None:
+            # scd_config 声明 ARFCN/带宽 → 频率一致性网 cross-check (Codex #174 复查 P2: 否则
+            # .smu 文件名不可解析时, TestCase 选个声明为别的频率的文件也能通过)。
+            freq_id = FrequencyIdentity(
+                center_arfcn=int(scd["arfcn"]), bandwidth_mhz=float(scd["bandwidth_mhz"]))
+        # 文件名 vs scd_config.arfcn 交叉校验 (Codex a0ef389: resolver 直接返回 associated_file_path
+        # 绕过老 SCD 关联路的 check_channel_filename_freq; 声明 ARFCN 跟 TestCase 一致但 .smu 实为别
+        # ARFCN 的 MF_ 标准名文件 → F64 fallback 不解析 MF 文件名, 错 .smu 静默加载且频率门不报)。
+        # MF_ 可解析名不一致 → fail-loud; vendor 自定义名 (解析不出) → 放行留给声明频率门。
+        afp = asset.associated_file_path
+        if afp and scd.get("arfcn") is not None:
+            from app.services.standard_channel_service import check_channel_filename_freq
+            chk = check_channel_filename_freq(afp, int(scd["arfcn"]))
+            if not chk.consistent:
+                raise ChannelAssetResolveError(chk.failure_reason())
+        return ResolvedChannelAsset(
+            engine_mode=engine, asset=asset,
+            emulation_file=asset.associated_file_path, scd_freq_identity=freq_id)
+    # rt_dynamic: 透传单快照 rays 到 B2 (对称 custom clusters 透传; 多快照轨迹/ACP 装配是 S3)。
+    # Codex #174 复查 P2: 否则 rt_dynamic 资产路由到 B2 但 rays 没接, B2 误用 legacy rt_rays。
+    snapshots = (asset.payload or {}).get("snapshots") or []
+    rays = snapshots[0].get("rays") if snapshots and isinstance(snapshots[0], dict) else None
+    # 顶层声明 center_frequency_hz/bandwidth_mhz → 频率一致性网 (Codex #174 复查 P2: 复用为别
+    # band 抓的 RT 射线会在错误载频聚类, 频率门无资产源可比对; 对称 vendor scd_freq_identity)。
+    freq_id = None
+    if asset.center_frequency_hz is not None and asset.bandwidth_mhz is not None:
+        freq_id = FrequencyIdentity.from_center_freq_mhz(
+            asset.center_frequency_hz / 1e6, asset.bandwidth_mhz)
+    return ResolvedChannelAsset(
+        engine_mode=engine, asset=asset, rt_rays_payload=rays, scd_freq_identity=freq_id,
+        ue_velocity_mps=asset.ue_velocity_mps)

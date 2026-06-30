@@ -164,6 +164,10 @@ class MIMOOTAConfiguration(BaseModel):
     # P2-15: 引用自定义 CDL 档案 (簇级参数)。设了 → ASC strategy 查 profile 装配簇走
     # input_mode=custom (优先于标称 cdl_model_name); 留空=标称 38.901 CDL。
     cdl_profile_id: Optional[str] = None
+    # P2-16 S2: 统一信道引用 (收敛 scd_id/cdl_profile_id/asc_source_path/裸 RT)。设了 → measure
+    # 前置解析读 ChannelAsset 按 source_type 推导 engine_mode + 信道字段。留空 = 走旧字段路
+    # (backward-compat 方案 A: 旧 cdl_profile_id/scd_id 一行不改, 解析层只在本字段显式给时介入)。
+    channel_asset_id: Optional[str] = None
     frequency_hz: float = 3.5e9
     bandwidth_mhz: float = 100.0
 
@@ -407,6 +411,11 @@ class MIMOOTAConfiguration(BaseModel):
         ExternalAscPathStrategy.generate_and_load 防御性检查并 surface
         actionable error。schema 这里只保证 mode-vs-path 配对完整。
         """
+        # channel_asset_id 设了 → measure resolver 会用资产派生 engine_mode 覆盖, stale
+        # external_asc (asc_source_path 已清) 不应在此 fail (Codex 0b913fe P2: 本 validator
+        # 在 resolver 覆盖 engine 之前跑; 资产路由交给 resolver)。
+        if getattr(self, "channel_asset_id", None):
+            return self
         if self.engine_mode == "external_asc":
             if not self.asc_source_path or not self.asc_source_path.strip():
                 raise ValueError(
