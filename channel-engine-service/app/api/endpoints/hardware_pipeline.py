@@ -8,13 +8,16 @@ POST /api/v1/synthesize_hardware_pipeline
 接收 MIMO-First 下发的完整仿真参数，返回 .asc 硬件驱动文件和控制指令。
 """
 
+import re
 import time
 import io
 import os
 import sys
+import shutil
 import zipfile
 import base64
 import logging
+import tempfile
 import numpy as np
 from typing import Dict, List, Any
 
@@ -180,7 +183,13 @@ async def synthesize_hardware_pipeline(
             )
         else:
             simulator_cls = _import_simulator_class()  # raises on failure
-            zip_base64, total_files = _run_real_synthesis(simulator_cls, request)
+            # P2-16 S3: routing_mode 选合成脊。'annotated_b1' 走标注式烘焙路
+            # (装配 AnnotatedCDLProfile + bake_b1_annotated, 接线悬空 baker);
+            # 'legacy' (默认) 走现 CustomCDLBuilder + run() 直路, 零行为变更。
+            if request.routing_mode == "annotated_b1":
+                zip_base64, total_files = _run_annotated_bake_synthesis(request)
+            else:
+                zip_base64, total_files = _run_real_synthesis(simulator_cls, request)
 
         # -----------------------------------------------------------
         # 计算硬件控制指令
@@ -468,6 +477,108 @@ def _run_real_synthesis(SimulatorClass, request: HardwarePipelineRequest):
     total_files = num_tx * num_ports
 
     return zip_base64, total_files
+
+
+# ==================== P2-16 S3: 标注式 B-1 烘焙路 ====================
+
+def _zip_asc_files_base64(asc_paths: List[str]) -> str:
+    """把 bake 写出的 .asc 文件列表打进内存 zip → base64。
+
+    bake_b1_annotated 经 PropsimASCIIExporter.export 写盘 (无内存变体), 这里收口为
+    不落盘的 base64, 与 legacy 路 export_to_zip_memory 同响应契约 (HardwareArtifacts
+    .f64_asc_files_zip_base64)。arcname 用 basename, 避免 tmpdir 绝对路径泄进 zip。
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for p in asc_paths:
+            zf.write(p, arcname=os.path.basename(p))
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _safe_asc_base_name(model_name: str) -> str:
+    """消毒 model_name 为安全的磁盘 .asc 文件名分量 (Codex #176 P2: 防路径穿越)。
+
+    annotated 路把 model_name 拼进 tmpdir 下的 export 路径 (legacy 用 export_to_zip_memory
+    写内存无此风险)。含 '/' / '..' / 绝对路径的 model_name 会让 os.path.join 写出 tmpdir
+    外。消毒: basename 去目录段 + 只留 [\\w.-] + 去首尾点/下划线 → 保证是单一文件名分量;
+    空 (如 '..' / 纯符号) 回落 'propsim_export'。
+    """
+    return re.sub(r"[^\w.-]", "_", os.path.basename(model_name)).strip("._") or "propsim_export"
+
+
+def _run_annotated_bake_synthesis(request: HardwarePipelineRequest):
+    """P2-16 S3: 经 AnnotatedCDLProfile + bake_b1_annotated 标注式 B-1 烘焙路合成 .asc。
+
+    接线设计 §1.2 断层 C 的悬空 baker (此前仅单测消费, 零生产端点): custom CDLCluster
+    → `from_custom_profile` 装单快照 AnnotatedCDLProfile (target_path=B1_baked, 全簇
+    DopplerBaked) → `bake_b1_annotated` → per-(Tx,Probe) .asc。
+
+    与 legacy `_run_real_synthesis` 逐位等价 (custom 全 baked 簇): run() 3GPP 路 =
+    [seed if random_seed] + create_builder(custom).build() + synthesize_ota; bake 复刻
+    同三步 (from_custom_profile round-trip 无损 + 同 builder + 同 synthesize_ota +
+    cluster_subrays={} 对全 baked 簇无效), golden test_b1_golden_vs_legacy 已证。custom
+    模式 channel_config.random_seed=None → 两路都不自播种, 同 ambient RNG。本路统一 ACP
+    烘焙脊, 解锁 subray_sum 确定性相位 (rt_dynamic, S3 后续切片)。
+
+    bake 经 exporter.export 写盘 → 这里 zip 进内存出 base64, tmpdir 用后即弃。
+    (sys.path 注入 + ChannelEgine 可用性 fail-fast 由 caller 先调 _import_simulator_class 保证。)
+
+    Returns: (zip_base64: str, total_files: int)
+    """
+    # Codex #176 P2: baker 模块比 simulator 新, _import_simulator_class() 只校验
+    # MIMO_OTA_Simulator → 旧 ChannelEgine clone (有 simulator 无 baker) 能过启动门,
+    # 这里裸 ImportError 会落 generic except → status='error' (200), 而非缺依赖应有的
+    # 503 fail-fast。包成 ChannelEngineUnavailable 走端点 503 分支, 跟 legacy 缺依赖
+    # 一致, 防新路静默带病上线。(legacy 路的 data_models/exporters import 安全 ——
+    # simulator 依赖它们, 缺则 _import_simulator_class 已先 fail。)
+    try:
+        from mimo_ota_simulator.annotated_cdl_schema import AnnotatedCDLProfile  # type: ignore
+        from mimo_ota_simulator.b1_annotated_baker import bake_b1_annotated  # type: ignore
+        from mimo_ota_simulator.data_models import PropsimExportConfig  # type: ignore
+    except ImportError as e:
+        raise ChannelEngineUnavailable(
+            f"routing_mode='annotated_b1' 需要 ChannelEgine 标注式烘焙模块 "
+            f"(annotated_cdl_schema / b1_annotated_baker), 当前 CHANNEL_ENGINE_PATH "
+            f"clone 缺失 (可能旧版): {e}. 升级 ChannelEgine clone 或改 routing_mode='legacy'."
+        ) from e
+
+    # 装配: custom CDLCluster → CustomCDLProfile → 单快照 AnnotatedCDLProfile (B1_baked)
+    custom_profile = _build_custom_cdl_profile(request)
+    annotated = AnnotatedCDLProfile.from_custom_profile(custom_profile)
+    chamber_cfg = _build_chamber_config(request)
+    channel_cfg = _build_target_channel_config(request, custom_profile)
+
+    sim_rules = request.simulation_rules
+    synthesis_method = sim_rules.synthesis_method
+    # 与 _run_real_synthesis 同语义: cluster_legacy → 原生 'cluster' (Phase 3 改名)
+    ce_synthesis_method = (
+        "cluster" if synthesis_method == "cluster_legacy" else synthesis_method
+    )
+
+    # Codex #176 P2: model_name 进磁盘路径前必须消毒防路径穿越 (见 _safe_asc_base_name)。
+    base_name = _safe_asc_base_name(request.cdl_model_data.model_name)
+    tmpdir = tempfile.mkdtemp(prefix="b1_annotated_")
+    try:
+        export_cfg = PropsimExportConfig(
+            filename=os.path.join(tmpdir, f"{base_name}.asc"),
+            mode="B", duration_s=0.1, sample_rate_hz=1000.0,
+        )
+        # Codex #176 P2 (calibration): calibration_config 省略 (=None) 是**有意保 parity**,
+        # 非丢校准。校准经 endpoint 在路由 if/else 之后无条件计算的 control_instructions
+        # 施加 (cal_entries → external_attenuators_db + baseband power, 见
+        # _compute_control_instructions), legacy 与 annotated 两路同一调用, cal 不丢。两路 exporter 都
+        # calibration_config=None → .asc 都 cal-free; 若这里烘 cal 进 .asc 会与 legacy
+        # 直路分叉, 破坏验收③逐位一致 (test_annotated_b1_endpoint_cal_via_control 证 cal
+        # 经 control 生效)。cal 烘进 .asc 是另一套校准模型, 属未来跨两路的设计决策, 非 S3-1。
+        asc_paths = bake_b1_annotated(
+            annotated, chamber_cfg, channel_cfg, export_cfg,
+            synthesis_method=ce_synthesis_method, direction="dl",
+        )
+        zip_base64 = _zip_asc_files_base64(asc_paths)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    return zip_base64, len(asc_paths)
 
 
 # ==================== Mock 合成 ====================

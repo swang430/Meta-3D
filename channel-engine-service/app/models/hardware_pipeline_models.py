@@ -339,6 +339,16 @@ class HardwarePipelineRequest(BaseModel):
         None,
         description="input_mode='standard' 时必填. ChannelEgine 38.901 输入参数.",
     )
+    # 2026-06-30 P2-16 S3: 信道注入路径路由 (装配 + §6 判决从"校验"升"路由")。
+    routing_mode: Literal["legacy", "annotated_b1"] = Field(
+        "legacy",
+        description=(
+            "合成路由. 'legacy' = 现 CustomCDLBuilder + run() 直路 (默认, 零行为变更). "
+            "'annotated_b1' = 经 AnnotatedCDLProfile + bake_b1_annotated 标注式 B-1 烘焙路 "
+            "(P2-16 S3 接线悬空 baker; custom 簇与 legacy 逐位等价, 解锁 subray_sum 确定性相位). "
+            "rt_dynamic 多快照装配 / §6 判决驱动选路是 S3 后续切片."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_input_mode_consistency(self) -> "HardwarePipelineRequest":
@@ -357,6 +367,13 @@ class HardwarePipelineRequest(BaseModel):
                     "(≥1 cluster). For 38.901 standard models use "
                     "input_mode='standard' + standard_3gpp."
                 )
+        # P2-16 S3: 标注式 B-1 烘焙从 CDLCluster 装配 AnnotatedCDLProfile, 故仅 custom
+        # 模式可走 (standard 模式无 clusters, ChannelEgine 内部生成; rt 多快照是后续切片)。
+        if self.routing_mode == "annotated_b1" and self.input_mode != "custom":
+            raise ValueError(
+                "routing_mode='annotated_b1' 目前仅支持 input_mode='custom' "
+                "(标注式 B-1 烘焙从 cdl_model_data.clusters 装配 AnnotatedCDLProfile)."
+            )
         return self
 
 
