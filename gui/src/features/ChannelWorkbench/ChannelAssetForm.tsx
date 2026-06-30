@@ -18,18 +18,20 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   createChannelAsset,
   updateChannelAsset,
+  type CDLClusterPayload,
   type ChannelAsset,
   type ChannelAssetCreatePayload,
   type ChannelSourceType,
 } from '../../api/channelAssetService'
+import { CDLClusterEditor } from './CDLClusterEditor'
 
-// S4-2 可【新建】的 source_type (custom_static 簇 / rt_dynamic 射线 = S4-3/S4-4)
+// 可【新建】的 source_type (rt_dynamic 射线编辑器 = S4-4)
 const CREATABLE: { value: ChannelSourceType; label: string }[] = [
   { value: 'standard_3gpp', label: '标准 3GPP' },
+  { value: 'custom_static', label: '自定义 CDL' },
   { value: 'vendor_file', label: '厂商文件' },
 ]
 const PAYLOAD_EDITOR_PENDING: Record<string, string> = {
-  custom_static: '自定义 CDL 簇编辑器将在 S4-3 接入；此处仅可改档案字段，簇 payload 保持不变。',
   rt_dynamic: 'RT 动态射线编辑器将在 S4-4 接入；此处仅可改档案字段，射线 payload 保持不变。',
 }
 
@@ -63,6 +65,8 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
     model: '', scenario: '', mimo: '', polarization: '', version: 1 as number | string,
   })
   const [filePath, setFilePath] = useState('')
+  // custom_static: snapshots[0].clusters
+  const [clusters, setClusters] = useState<CDLClusterPayload[]>([])
   const [formError, setFormError] = useState<string | null>(null)
 
   // 打开时按 asset 回填 (或清空新建)
@@ -87,12 +91,15 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
         polarization: String(sc.polarization ?? ''), version: (sc.version as number) ?? 1,
       })
       setFilePath(asset.associated_file_path ?? '')
+      const snaps = (p.snapshots ?? []) as Array<{ clusters?: CDLClusterPayload[] }>
+      setClusters(snaps[0]?.clusters ?? [])
     } else {
       setSourceType('standard_3gpp')
       setName(''); setDescription(''); setCenterGhz(''); setBandwidthMhz('')
       setIsLos('unset'); setKFactorDb(''); setCdlModelName('')
       setScd({ band: '', arfcn: '', bandwidth_mhz: '', model: '', scenario: '', mimo: '', polarization: '', version: 1 })
       setFilePath('')
+      setClusters([])
     }
   }, [opened, asset])
 
@@ -145,12 +152,27 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
         },
       }
     }
-    return null // custom_static / rt_dynamic: payload 不在此编辑
+    if (sourceType === 'custom_static') {
+      // 保留既有 payload 的非 snapshots 字段, 仅覆盖 snapshots: 迁移 (c8e1f5a2d4b7) 把
+      // CustomCDLProfile.pathloss_db 与 snapshots 平铺进 payload 同级, 后端 asc_strategy
+      // ._synthesize_from_clusters 从 payload.pathloss_db 读路损 (CustomStaticPayload 类型
+      // 未声明该字段, 但运行时存在)。整体替换会丢 pathloss_db, 合成 fallback 100 dB 改 OTA
+      // 结果 (Codex #183 P1)。建时 asset==null → existing={} → 退化成 {snapshots:[{clusters}]}。
+      const existing = (asset?.payload ?? {}) as Record<string, unknown>
+      const firstSnap = (Array.isArray(existing.snapshots) ? existing.snapshots[0] : null) as
+        | Record<string, unknown>
+        | null
+      return { ...existing, snapshots: [{ ...(firstSnap ?? {}), clusters }] }
+    }
+    return null // rt_dynamic: 射线编辑器 S4-4
   }
 
   function handleSubmit() {
     setFormError(null)
     if (name.trim() === '') { setFormError('名称必填'); return }
+    if (sourceType === 'custom_static' && clusters.length === 0) {
+      setFormError('自定义 CDL 至少需 1 个簇'); return
+    }
     // S2 校验前置: center 与 bandwidth 须同时给 (standard/rt 频率一致性网)
     if (numOrNull(centerGhz) != null && numOrNull(bandwidthMhz) == null
         && (sourceType === 'standard_3gpp')) {
@@ -216,6 +238,13 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
             placeholder="如 UMa CDL-C NLOS"
             value={cdlModelName} onChange={(e) => setCdlModelName(e.currentTarget.value)}
           />
+        )}
+
+        {!payloadEditorPending && sourceType === 'custom_static' && (
+          <>
+            <Divider label="自定义 CDL 簇 (clusters)" labelPosition="left" />
+            <CDLClusterEditor clusters={clusters} onChange={setClusters} />
+          </>
         )}
 
         {!payloadEditorPending && sourceType === 'vendor_file' && (
