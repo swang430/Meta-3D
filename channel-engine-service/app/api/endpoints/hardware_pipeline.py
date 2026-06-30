@@ -513,9 +513,22 @@ def _run_annotated_bake_synthesis(request: HardwarePipelineRequest):
 
     Returns: (zip_base64: str, total_files: int)
     """
-    from mimo_ota_simulator.annotated_cdl_schema import AnnotatedCDLProfile  # type: ignore
-    from mimo_ota_simulator.b1_annotated_baker import bake_b1_annotated  # type: ignore
-    from mimo_ota_simulator.data_models import PropsimExportConfig  # type: ignore
+    # Codex #176 P2: baker 模块比 simulator 新, _import_simulator_class() 只校验
+    # MIMO_OTA_Simulator → 旧 ChannelEgine clone (有 simulator 无 baker) 能过启动门,
+    # 这里裸 ImportError 会落 generic except → status='error' (200), 而非缺依赖应有的
+    # 503 fail-fast。包成 ChannelEngineUnavailable 走端点 503 分支, 跟 legacy 缺依赖
+    # 一致, 防新路静默带病上线。(legacy 路的 data_models/exporters import 安全 ——
+    # simulator 依赖它们, 缺则 _import_simulator_class 已先 fail。)
+    try:
+        from mimo_ota_simulator.annotated_cdl_schema import AnnotatedCDLProfile  # type: ignore
+        from mimo_ota_simulator.b1_annotated_baker import bake_b1_annotated  # type: ignore
+        from mimo_ota_simulator.data_models import PropsimExportConfig  # type: ignore
+    except ImportError as e:
+        raise ChannelEngineUnavailable(
+            f"routing_mode='annotated_b1' 需要 ChannelEgine 标注式烘焙模块 "
+            f"(annotated_cdl_schema / b1_annotated_baker), 当前 CHANNEL_ENGINE_PATH "
+            f"clone 缺失 (可能旧版): {e}. 升级 ChannelEgine clone 或改 routing_mode='legacy'."
+        ) from e
 
     # 装配: custom CDLCluster → CustomCDLProfile → 单快照 AnnotatedCDLProfile (B1_baked)
     custom_profile = _build_custom_cdl_profile(request)

@@ -110,3 +110,19 @@ def test_annotated_b1_rejects_standard_mode():
             "standard_3gpp": {"scenario_name": "UMa"},
             "routing_mode": "annotated_b1",
         })
+
+
+def test_annotated_b1_missing_baker_module_fails_fast(monkeypatch):
+    """Codex #176 P2: 旧 ChannelEgine clone (有 simulator 无 baker 模块) →
+    ChannelEngineUnavailable (端点 503 fail-fast), 不静默落 generic status='error'。"""
+    import builtins
+    real_import = builtins.__import__
+
+    def _fake_import(name, *a, **k):
+        if name == "mimo_ota_simulator.b1_annotated_baker":
+            raise ImportError("No module named 'mimo_ota_simulator.b1_annotated_baker'")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+    with pytest.raises(hp.ChannelEngineUnavailable, match="annotated"):
+        hp._run_annotated_bake_synthesis(_request(routing_mode="annotated_b1"))
