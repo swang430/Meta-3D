@@ -133,7 +133,7 @@ export function ChannelWorkbench() {
               {filter === 'all'
                 ? '暂无信道资产'
                 : `暂无「${SOURCE_LABEL[filter as ChannelSourceType]}」资产`}
-              。点「新建」创建标准 3GPP / 厂商文件资产（自定义 CDL 簇 / RT 动态射线编辑器 S4-3/S4-4 接入）。
+              。点「新建」创建：标准 3GPP / 自定义 CDL（簇）/ RT 动态（多快照射线）/ 厂商文件。
             </Text>
           </Box>
         ) : (

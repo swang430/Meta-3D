@@ -104,6 +104,14 @@ class TestResolver:
         assert r.rt_rays_payload[0]["aoa_deg"] == 1.0
         assert r.clusters_payload is None and r.emulation_file is None
 
+    def test_rt_dynamic_multi_snapshot_fails_loud(self, db):
+        # 多快照轨迹 RT 执行装配是 P2-16 S5; resolver 当前只透传单快照 → 多快照必须 fail-loud,
+        # 否则静默取 snapshots[0], 用户 (S4-4 编辑器) 建轨迹信道却只按首快照测量 (Codex #184 P1)。
+        a = create_channel_asset(db, name="rmulti", source_type="rt_dynamic",
+                                 payload={"snapshots": [{"rays": [_RAY]}, {"rays": [_RAY]}]})
+        with pytest.raises(ChannelAssetResolveError, match="多快照"):
+            resolve_channel_asset(db, _cfg(channel_asset_id=str(a.id)))
+
     def test_invalid_id_fails_loud(self, db):
         with pytest.raises(ChannelAssetResolveError, match="无效/不存在"):
             resolve_channel_asset(db, _cfg(channel_asset_id=str(uuid.uuid4())))
