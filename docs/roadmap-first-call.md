@@ -1645,7 +1645,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 ---
 
-### P2-16 — 信道资产多态化（统一 GCM/B-1/B-2/RT 四源 → ChannelAsset 多态实体 + 独立信道工作台）🔄 in-progress (2026-06-28)
+### P2-16 — 信道资产多态化（统一 GCM/B-1/B-2/RT 四源 → ChannelAsset 多态实体 + 独立信道工作台）🔄 in-progress (2026-06-28) — S1 ✅ (#173) / S2 ✅ (#174) / S3 next
 
 **What**: 把四分五裂的四种信道源——GCM `.smu` 文件指针 / B-1 ASC 瞬态合成 `.asc` / B-2 参数 TDL `.tap` / RT 动态——统一为单一多态 `ChannelAsset` 实体，对 TestCase 暴露单一 `channel_asset_id`（取代现在 `scd_id` / `cdl_profile_id` / `asc_source_path` / `config.extra` 裸 RT dict 四套并行引用）。GUI 终态独立「信道工作台」（非 DUT/SIM 同栏）。设计见 [`design/channel-asset-polymorphism-design_V0.1.md`](design/channel-asset-polymorphism-design_V0.1.md)（2026-06-28 三路代码考古 grounded）。
 
@@ -1654,10 +1654,11 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 **决策（2026-06-28 用户拍板）**: (1) GUI **独立信道工作台 + 渐进迁移**（G0 现状 → G1 后端统一 → G2 独立页收口 SCD（仪器抽屉）+ custom CDL（AssetProfiles）两处分裂 → G3 接 RT/判决可视化），对标 Channel Studio；(2) 起步 **软件半全做 S1–S4**，零现场依赖。
 
 **切片**:
-- **S1** `ChannelAsset` 实体 + migration（PG/SQLite 三路径 + `table_exists`/`column_exists` 守门）+ CRUD + 多态 payload schema（`source_type` 判别联合体：`standard_3gpp` / `custom_static` / `rt_dynamic` / `vendor_file`）+ 契约 4 步同步。
-- **S2** custom CDL + SCD 收口（数据迁移 clusters→`payload.snapshots[0]` / scd 配置→`payload.scd_config`；`cdl_profile_id`/`scd_id`→`channel_asset_id` backward-compat 映射保留一版）。统一频率一致性网（消除现「scd_id 进网、cdl_profile_id 不进」的不一致）。
+- **S1** ✅ 完成 (#173) — `ChannelAsset` 实体 + migration（PG/SQLite 三路径 + `table_exists`/`column_exists` 守门）+ CRUD + 多态 payload schema（`source_type` 判别联合体：`standard_3gpp` / `custom_static` / `rt_dynamic` / `vendor_file`）+ 契约 4 步同步。
+- **S2** ✅ 完成 (#174; 9 轮 Codex review / 11 个 P2 全修：filename load+accept / canonical 重派生 / arfcn NR域 / rt velocity / external_asc 旁路 / standard·rt 频率传播+center须配bw / custom pathloss·num_rays 守门 / 合并状态校验) — custom CDL + SCD 收口（数据迁移 clusters→`payload.snapshots[0]` / scd 配置→`payload.scd_config`；`cdl_profile_id`/`scd_id`→`channel_asset_id` backward-compat 复用 id）。统一频率一致性网（消除现「scd_id 进网、cdl_profile_id 不进」的不一致）。
 - **S3** 装配层 `payload→AnnotatedCDLProfile` + §6 判决路由（**接线悬空的 F4 时空跟踪 / F5 phase_continuous / b1_annotated_baker**；`target_path→strategy` 从"校验"升"路由"；合成 RT 测）。
 - **S4** 独立「信道工作台」GUI（G2）：`source_type` 切换 + 簇编辑器从 AssetProfiles 迁入 + SCD 卡片从仪器抽屉迁入 + 浏览器实测闭环。
+  - `[S4 follow-up, Codex #174 cebb394]` **legacy 编辑路径 vs ChannelAsset 副本同步**：① 旧 `/custom-cdl-profiles` 更新流只写 `custom_cdl_profiles`，迁移后改旧 profile → ChannelAsset 副本 stale（resolver 用迁移时冻结的 snapshot）；② declared_only SCD 迁移后旧 SCD 关联流更新 `standard_channel_definitions.associated_file_path` 不更新 ChannelAsset。是 S2「旧表保留至 S4 deprecate」设计取舍的已知后果 → S4 收口 GUI 时 deprecate/重定向 legacy 编辑路径（或加双写同步）。
 - **S5**（🚧 现场）`rt_dynamic` 真实 RT 数据接入（Lauraycs RT + RT-Release）+ 多快照。
 - **S6**（🚧 现场）`b2_parametric` `.tap` 落地 + F64 验证 + GUI engine 暴露（合 P2-14 第 4 项「GUI 暴露」）。
 
