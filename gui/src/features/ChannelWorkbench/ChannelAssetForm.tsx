@@ -153,7 +153,16 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
       }
     }
     if (sourceType === 'custom_static') {
-      return { snapshots: [{ clusters }] }
+      // 保留既有 payload 的非 snapshots 字段, 仅覆盖 snapshots: 迁移 (c8e1f5a2d4b7) 把
+      // CustomCDLProfile.pathloss_db 与 snapshots 平铺进 payload 同级, 后端 asc_strategy
+      // ._synthesize_from_clusters 从 payload.pathloss_db 读路损 (CustomStaticPayload 类型
+      // 未声明该字段, 但运行时存在)。整体替换会丢 pathloss_db, 合成 fallback 100 dB 改 OTA
+      // 结果 (Codex #183 P1)。建时 asset==null → existing={} → 退化成 {snapshots:[{clusters}]}。
+      const existing = (asset?.payload ?? {}) as Record<string, unknown>
+      const firstSnap = (Array.isArray(existing.snapshots) ? existing.snapshots[0] : null) as
+        | Record<string, unknown>
+        | null
+      return { ...existing, snapshots: [{ ...(firstSnap ?? {}), clusters }] }
     }
     return null // rt_dynamic: 射线编辑器 S4-4
   }
