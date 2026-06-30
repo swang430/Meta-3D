@@ -261,6 +261,12 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
           <>
             <Divider label="RT 动态多快照射线 (snapshots[].rays)" labelPosition="left" />
             <RTRayEditor snapshots={raySnapshots} onChange={setRaySnapshots} />
+            {raySnapshots.length > 1 && (
+              <Alert color="yellow" variant="light">
+                多快照（轨迹）RT 信道的执行装配（时空跟踪逐快照合成）尚未接线（P2-16 S5）；
+                当前执行仅消费快照 1，多快照执行会 fail-loud。多快照资产可现在保存，供 S5 接通后使用。
+              </Alert>
+            )}
           </>
         )}
 
