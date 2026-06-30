@@ -14,6 +14,7 @@
  */
 import {
   Accordion,
+  Alert,
   Code,
   Fieldset,
   Group,
@@ -33,6 +34,7 @@ import { fetchChannelModels } from '../../../../api/service'
 import { fetchDUTProfiles } from '../../../../api/dutProfileService'
 import { fetchSIMProfiles } from '../../../../api/simProfileService'
 import { fetchCustomCDLProfiles } from '../../../../api/customCdlProfileService'
+import { fetchChannelAssets } from '../../../../api/channelAssetService'
 
 // --- Local typings: mirror the backend MIMOOTAConfiguration shape ---
 
@@ -47,6 +49,10 @@ interface PassCriteria {
 }
 
 export interface MIMOOTAConfiguration {
+  // P2-16 S4-5: 统一信道资产引用 (信道工作台 ChannelAsset)。设了 → 后端 channel_asset_resolver
+  // 按 source_type 派生 engine_mode + 覆盖下方传统信道字段 (cdl_model_name/cdl_profile_id/
+  // scd_id/emulation_file)。留空=走传统字段 (方案 A 向后兼容)。
+  channel_asset_id?: string
   cdl_model_name?: string
   // P2-15: 引用一个自定义 CDL 档案 (簇级参数, 在「自定义 CDL」页建)。选了它 → 后端
   // input_mode=custom 用 profile 簇合成 (优先于标称 cdl_model_name)。留空=用标称 CDL。
@@ -119,6 +125,13 @@ const CDL_OPTIONS = [
 ]
 
 const MODULATION_OPTIONS = ['QPSK', '16QAM', '64QAM', '256QAM', '1024QAM']
+// P2-16 S4-5: ChannelAsset source_type → 中文标签 (供统一信道资产 Select 显示)
+const CHANNEL_ASSET_SOURCE_LABEL: Record<string, string> = {
+  standard_3gpp: '标准 3GPP',
+  custom_static: '自定义 CDL',
+  rt_dynamic: 'RT 动态',
+  vendor_file: '厂商文件',
+}
 
 const SCS_OPTIONS = [
   { value: '15', label: '15 kHz' },
@@ -218,6 +231,23 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
     value.cdl_profile_id && !cdlOptions.some((o) => o.value === value.cdl_profile_id)
       ? [...cdlOptions, { value: value.cdl_profile_id, label: `${value.cdl_profile_id} (清单外)` }]
       : cdlOptions
+  // P2-16 S4-5: 列信道工作台 ChannelAsset 供选 (选了 → 后端 channel_asset_resolver 按 source_type
+  // 派生 engine_mode + 覆盖下方传统信道字段; 方案 A: 留空走传统字段)。
+  const channelAssetsQuery = useQuery({
+    queryKey: ['channel-assets', 'active'],
+    queryFn: () => fetchChannelAssets({ includeInactive: false }),
+  })
+  const channelAssets = channelAssetsQuery.data ?? []
+  const channelAssetOptions = channelAssets.map((a) => ({
+    value: a.id,
+    label: `${a.name}（${CHANNEL_ASSET_SOURCE_LABEL[a.source_type] ?? a.source_type}）`,
+  }))
+  const channelAssetSelectOptions =
+    value.channel_asset_id && !channelAssetOptions.some((o) => o.value === value.channel_asset_id)
+      ? [...channelAssetOptions, { value: value.channel_asset_id, label: `${value.channel_asset_id} (清单外/已删)` }]
+      : channelAssetOptions
+  const selectedAsset = channelAssets.find((a) => a.id === value.channel_asset_id) ?? null
+  const hasChannelAsset = value.channel_asset_id != null && value.channel_asset_id !== ''
   // 实时一致性预览 — 跟后端 precheck section 2.3 / check_dut_capability 同口径, 表单里就给反馈,
   // 不用等真跑。声明项缺失 (null) 跳过该项。调制阶数用 MODULATION_OPTIONS 顺序 (= 后端 _MODULATIONS)。
   const dutPreviewViolations: string[] = []
@@ -252,6 +282,30 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
           <Text size="sm" fw={600}>
             3GPP 信道模型
           </Text>
+          {/* P2-16 S4-5: 统一信道资产引用 (信道工作台 ChannelAsset)。设了 → 后端按 source_type
+              派生 engine_mode + 覆盖下方传统信道字段 (方案 A)。 */}
+          <Select
+            label="统一信道资产 (ChannelAsset)"
+            description="选信道工作台的资产 → 按 source_type 派生引擎 + 覆盖下方传统信道源字段；留空=用下方传统字段"
+            data={channelAssetSelectOptions}
+            value={value.channel_asset_id ?? null}
+            onChange={(v) => update('channel_asset_id', v ?? undefined)}
+            disabled={readOnly}
+            clearable
+            searchable
+            placeholder={
+              channelAssetSelectOptions.length === 0
+                ? '无信道资产 — 去「信道工作台」建'
+                : '(用下方传统信道字段)'
+            }
+          />
+          {hasChannelAsset && (
+            <Alert color="blue" variant="light">
+              已选统一信道资产
+              {selectedAsset ? `「${selectedAsset.name}」（${CHANNEL_ASSET_SOURCE_LABEL[selectedAsset.source_type] ?? selectedAsset.source_type}）` : ''}
+              —— 后端按其 source_type 派生 engine_mode 并覆盖下方标称/自定义 CDL / .smu 字段（下方信道源已禁用）。
+            </Alert>
+          )}
           <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
             <Select
               label="CDL 信道模型"
@@ -259,7 +313,7 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
               data={CDL_OPTIONS}
               value={value.cdl_model_name ?? null}
               onChange={(v) => update('cdl_model_name', v ?? undefined)}
-              disabled={readOnly}
+              disabled={readOnly || hasChannelAsset}
               allowDeselect={false}
               searchable
             />
@@ -273,7 +327,7 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
               data={cdlSelectOptions}
               value={value.cdl_profile_id ?? null}
               onChange={(v) => update('cdl_profile_id', v ?? undefined)}
-              disabled={readOnly || !isAscEngine}
+              disabled={readOnly || !isAscEngine || hasChannelAsset}
               clearable
               searchable
               placeholder={
@@ -330,7 +384,7 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
                 if (scd) onChange({ ...value, scd_id: scd, emulation_file: undefined })
                 else onChange({ ...value, scd_id: undefined, emulation_file: v ?? undefined })
               }}
-              disabled={readOnly || isAscEngine}
+              disabled={readOnly || isAscEngine || hasChannelAsset}
               placeholder={
                 emulationFileOptions.length === 0
                   ? '无可选 .smu — 去信道仿真器抽屉或 SCD 管理添加'
