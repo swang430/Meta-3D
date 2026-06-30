@@ -14,9 +14,14 @@ import { DEFAULT_MPC_RAY, type MPCRayPayload } from '../../api/channelAssetServi
 
 const numOr0 = (v: number | string): number => (typeof v === 'number' ? v : Number(v) || 0)
 
-/** rt_dynamic 的一个快照 (一组原始射线)。 */
+/**
+ * rt_dynamic 的一个快照 (一组原始射线)。索引签名保留 per-snapshot 轨迹元数据
+ * (time/index/position/velocity 等 —— API 导入的轨迹资产带, 编辑器暂不编辑这些字段但
+ * 增删射线时必须透传, 否则 name-only 保存也会删元数据损坏轨迹资产, Codex #184 P2)。
+ */
 export interface RtSnapshot {
   rays: MPCRayPayload[]
+  [key: string]: unknown
 }
 
 interface Props {
@@ -37,8 +42,9 @@ export function RTRayEditor({ snapshots, onChange }: Props) {
 
   const openNewRay = (si: number) => { setDraft({ ...DEFAULT_MPC_RAY }); setEditing({ si, ri: snapshots[si].rays.length }) }
   const openEditRay = (si: number, ri: number) => { setDraft({ ...snapshots[si].rays[ri] }); setEditing({ si, ri }) }
+  // 增删射线时 spread ...s 保留 per-snapshot 元数据 (Codex #184 P2)
   const removeRay = (si: number, ri: number) =>
-    onChange(snapshots.map((s, j) => (j === si ? { rays: s.rays.filter((_, k) => k !== ri) } : s)))
+    onChange(snapshots.map((s, j) => (j === si ? { ...s, rays: s.rays.filter((_, k) => k !== ri) } : s)))
   const saveRay = () => {
     if (!editing) return
     const { si, ri } = editing
@@ -46,7 +52,7 @@ export function RTRayEditor({ snapshots, onChange }: Props) {
       if (j !== si) return s
       const rays = [...s.rays]
       rays[ri] = draft
-      return { rays }
+      return { ...s, rays }
     }))
     setEditing(null)
   }

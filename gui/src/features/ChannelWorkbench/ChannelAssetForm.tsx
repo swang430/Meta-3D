@@ -94,8 +94,9 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
       setFilePath(asset.associated_file_path ?? '')
       const snaps = (p.snapshots ?? []) as Array<{ clusters?: CDLClusterPayload[] }>
       setClusters(snaps[0]?.clusters ?? [])
+      // spread ...s 保留 per-snapshot 元数据 (time/index/position/velocity; Codex #184 P2)
       const raySnaps = (p.snapshots ?? []) as RtSnapshot[]
-      setRaySnapshots(raySnaps.map((s) => ({ rays: s.rays ?? [] })))
+      setRaySnapshots(raySnaps.map((s) => ({ ...s, rays: s.rays ?? [] })))
     } else {
       setSourceType('standard_3gpp')
       setName(''); setDescription(''); setCenterGhz(''); setBandwidthMhz('')
