@@ -238,13 +238,23 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
     queryFn: () => fetchChannelAssets({ includeInactive: false }),
   })
   const channelAssets = channelAssetsQuery.data ?? []
-  const channelAssetOptions = channelAssets.map((a) => ({
-    value: a.id,
-    label: `${a.name}（${CHANNEL_ASSET_SOURCE_LABEL[a.source_type] ?? a.source_type}）`,
-  }))
+  // 多快照 rt_dynamic 资产执行会 fail-loud (轨迹执行待 S5, channel_asset_resolver 对 snapshots>1
+  // raise), 故选择器禁用该 option + 标注, 别让用户选了到运行期才发现不能执行 (Codex #185 P2)。
+  const channelAssetOptions = channelAssets.map((a) => {
+    const snaps = (a.payload as { snapshots?: unknown[] })?.snapshots
+    const isMultiSnapshotRt =
+      a.source_type === 'rt_dynamic' && Array.isArray(snaps) && snaps.length > 1
+    return {
+      value: a.id,
+      label:
+        `${a.name}（${CHANNEL_ASSET_SOURCE_LABEL[a.source_type] ?? a.source_type}）` +
+        (isMultiSnapshotRt ? ' — 多快照·执行待 S5' : ''),
+      disabled: isMultiSnapshotRt,
+    }
+  })
   const channelAssetSelectOptions =
     value.channel_asset_id && !channelAssetOptions.some((o) => o.value === value.channel_asset_id)
-      ? [...channelAssetOptions, { value: value.channel_asset_id, label: `${value.channel_asset_id} (清单外/已删)` }]
+      ? [...channelAssetOptions, { value: value.channel_asset_id, label: `${value.channel_asset_id} (清单外/已删)`, disabled: false }]
       : channelAssetOptions
   const selectedAsset = channelAssets.find((a) => a.id === value.channel_asset_id) ?? null
   const hasChannelAsset = value.channel_asset_id != null && value.channel_asset_id !== ''
