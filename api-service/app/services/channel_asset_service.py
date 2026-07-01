@@ -363,6 +363,17 @@ def find_custom_static_asset(db: Session, asset_id: UUID) -> Optional[ChannelAss
     return None
 
 
+def find_vendor_file_asset(db: Session, asset_id: UUID) -> Optional[ChannelAsset]:
+    """P2-16 deprecate-legacy (消费收敛): 按 id 查 vendor_file ChannelAsset, 不存在 / 非
+    vendor_file 返回 None (不 raise)。供 scd_id 消费重定向 —— S2 迁移复用源 id, 故 scd_id
+    命中的 ChannelAsset 就是它收敛后的单一真值源 (工作台编辑 associated_file_path/scd_config
+    落这里); 未迁移的 legacy-only SCD 无对应 ChannelAsset → None → caller 落旧表。"""
+    asset = db.get(ChannelAsset, asset_id)
+    if asset is not None and asset.source_type == "vendor_file":
+        return asset
+    return None
+
+
 def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
     asset = get_channel_asset(db, asset_id)
     # source_type 是判别键, 建后不可改 (改了 payload 形态 + allowed_targets 全变)

@@ -191,6 +191,26 @@ def resolve_emulation_for_measure(
     """
     if not scd_id:
         return fallback_emulation_file, None
+    # P2-16 deprecate-legacy (消费收敛到 ChannelAsset): scd_id 若对应同 id 的 vendor_file
+    # ChannelAsset (S2 迁移复用源 id), 用 ChannelAsset 的 associated_file_path + scd_config
+    # 声明频率 —— ChannelAsset 是收敛后单一真值源, 消除「旧 standard_channel_definitions vs
+    # ChannelAsset 副本双向 stale」根因 (工作台编辑 .smu 关联 / scd_config 落 ChannelAsset)。
+    # 未迁移的 legacy-only SCD (无对应 ChannelAsset) 仍读旧表 (向后兼容)。
+    from app.services.channel_asset_service import find_vendor_file_asset
+    asset = None
+    try:
+        asset = find_vendor_file_asset(db, UUID(scd_id))
+    except (ValueError, TypeError):
+        asset = None  # 非法 UUID → 落 legacy 查表 (get_scd 会自然报错)
+    if asset is not None:
+        scd_cfg = (asset.payload or {}).get("scd_config") or {}
+        arfcn, bw = scd_cfg.get("arfcn"), scd_cfg.get("bandwidth_mhz")
+        # 声明频率一致性网身份 (同 channel_asset_resolver vendor 路; arfcn/bw 缺则 None 不拦)
+        freq = (
+            FrequencyIdentity(center_arfcn=int(arfcn), bandwidth_mhz=float(bw))
+            if arfcn is not None and bw is not None else None
+        )
+        return asset.associated_file_path, freq
     scd = get_scd(db, UUID(scd_id))
     freq = FrequencyIdentity(
         center_arfcn=scd.arfcn, bandwidth_mhz=float(scd.bandwidth_mhz)

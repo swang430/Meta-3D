@@ -340,6 +340,28 @@ class TestResolveEmulationForMeasure:
         assert path == "vendor_run_3600M.smu"
         assert freq.center_arfcn == 640000  # SCD 声明值, 不是文件名 3600M 解析
 
+    def test_scd_id_redirects_to_vendor_channel_asset(self, db, ce_binding):
+        """P2-16 deprecate-legacy (消费收敛): scd_id 命中同 id vendor_file ChannelAsset →
+        用 ChannelAsset 的 associated_file_path + scd_config 频率, **不读** legacy SCD 表。
+        证 ChannelAsset 是收敛后单一真值源 (工作台编辑 .smu 关联落这里, 消除双副本 stale)。"""
+        from app.models.channel_asset import ChannelAsset
+        scd = _create(db, ce_binding)  # arfcn=640000, bw=100
+        svc.associate_file(db, scd.id, file_path="legacy_old.smu",
+                           association_source="vendor_associated")
+        # 同 id vendor_file ChannelAsset (工作台编辑后的收敛真值源), 故意不同文件+频率
+        db.add(ChannelAsset(
+            id=scd.id, name="ca-vendor-收敛", source_type="vendor_file",
+            payload={"scd_config": {"arfcn": 620000, "bandwidth_mhz": 50}},
+            allowed_targets=["gcm_native"], associated_file_path="workbench_new.smu",
+            is_active=True,
+        ))
+        db.commit()
+        path, freq = svc.resolve_emulation_for_measure(
+            db, scd_id=str(scd.id), fallback_emulation_file=None)
+        assert path == "workbench_new.smu"       # ChannelAsset (非 legacy_old.smu)
+        assert freq.center_arfcn == 620000       # ChannelAsset scd_config (非 SCD 640000)
+        assert freq.bandwidth_mhz == 50
+
     def test_scd_not_found_raises(self, db):
         with pytest.raises(svc.StandardChannelNotFound):
             svc.resolve_emulation_for_measure(
