@@ -108,6 +108,50 @@ def test_custom_cdl_branch_input_mode_custom():
     assert call["ue_velocity_mps"] == [10.0, 0.0, 0.0]
 
 
+def test_cdl_profile_id_redirects_to_channel_asset():
+    """P2-16 deprecate-legacy (消费收敛): cdl_profile_id 命中同 id custom_static ChannelAsset →
+    走 ChannelAsset payload (annotated_b1 脊 + ChannelAsset 簇/name/pathloss), **不读** legacy
+    custom_cdl_profiles。证 ChannelAsset 是收敛后单一真值源 (工作台编辑落这里, 消除双副本 stale)。"""
+    strat = _strategy()
+    ca = _channel_asset()
+    ca.source_type = "custom_static"
+    ca.payload = {"snapshots": [{"clusters": [
+        {"delay_s": 0.0, "power_linear": 0.9, "aoa_deg": 77, "aod_deg": 5, "num_rays": 20},
+    ]}], "pathloss_db": 85.0}
+    legacy = _profile()          # 故意不同 (name/簇/pathloss) — 若误读 legacy 断言会失败
+    legacy.pathloss_db = 999.0
+    with patch("app.services.channel_asset_service.find_custom_static_asset", return_value=ca), \
+         patch("app.services.custom_cdl_profile_service.get_custom_cdl_profile", return_value=legacy), \
+         patch("os.path.exists", return_value=True):
+        ok = asyncio.run(strat.generate_and_load(
+            {"frequency_hz": 3.5e9},
+            {"cdl_profile_id": "11111111-1111-1111-1111-111111111111"}))
+    assert ok is True
+    call = strat.ce_client.synthesize_hardware_pipeline.call_args.kwargs
+    assert call["routing_mode"] == "annotated_b1"           # ChannelAsset 路 (非 legacy)
+    assert call["cdl_model_name"] == "CA-custom"            # ChannelAsset name (非 legacy "UMa-改")
+    assert len(call["clusters"]) == 1
+    assert call["clusters"][0].power_relative_linear == 0.9  # ChannelAsset 簇 (非 legacy 0.5)
+    assert call["pathloss_db"] == 85.0                      # ChannelAsset payload (非 legacy 999)
+
+
+def test_cdl_profile_id_no_channel_asset_falls_back_to_legacy():
+    """未迁移的 legacy-only profile (find_custom_static_asset→None) → 仍读旧表 custom_cdl_profiles
+    (向后兼容, legacy 路由不升 annotated_b1)。"""
+    strat = _strategy()
+    with patch("app.services.channel_asset_service.find_custom_static_asset", return_value=None), \
+         patch("app.services.custom_cdl_profile_service.get_custom_cdl_profile",
+               return_value=_profile()), patch("os.path.exists", return_value=True):
+        ok = asyncio.run(strat.generate_and_load(
+            {"frequency_hz": 3.5e9},
+            {"cdl_profile_id": "11111111-1111-1111-1111-111111111111"}))
+    assert ok is True
+    call = strat.ce_client.synthesize_hardware_pipeline.call_args.kwargs
+    assert call.get("routing_mode", "legacy") != "annotated_b1"   # legacy 路
+    assert call["cdl_model_name"] == "UMa-改"                     # legacy profile name
+    assert call["pathloss_db"] == 90.0                           # legacy profile pathloss
+
+
 def test_standard_branch_when_no_profile_id():
     """无 cdl_profile_id → standard 38.901 路 (input_mode=standard)。"""
     strat = _strategy()

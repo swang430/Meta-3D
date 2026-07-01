@@ -68,9 +68,27 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
                     simulation_rules, session_id,
                 )
             elif cdl_profile_id:
-                pipeline_result = await self._synthesize_custom_cdl(
-                    str(cdl_profile_id), simulation_rules, session_id,
-                )
+                # P2-16 deprecate-legacy (消费收敛到 ChannelAsset): cdl_profile_id 若对应一个
+                # 同 id 的 custom_static ChannelAsset (S2 迁移复用源 id), 走 ChannelAsset payload
+                # —— ChannelAsset 是收敛后的单一真值源, 消除「旧 custom_cdl_profiles vs
+                # ChannelAsset 副本双向 stale」根因 (S4-3 工作台编辑 + legacy 编辑并存)。未迁移的
+                # legacy-only profile (无对应 ChannelAsset) 仍读旧表 custom_cdl_profiles (向后兼容)。
+                from uuid import UUID as _UUID
+                from app.services.channel_asset_service import find_custom_static_asset
+                asset = None
+                try:
+                    asset = find_custom_static_asset(self.ce_client.db, _UUID(str(cdl_profile_id)))
+                except (ValueError, TypeError):
+                    asset = None  # cdl_profile_id 非合法 UUID → 落 legacy 查表 (自然报错)
+                if asset is not None:
+                    clusters = ((asset.payload or {}).get("snapshots") or [{}])[0].get("clusters")
+                    pipeline_result = await self._synthesize_from_clusters(
+                        clusters, asset, simulation_rules, session_id,
+                    )
+                else:
+                    pipeline_result = await self._synthesize_custom_cdl(
+                        str(cdl_profile_id), simulation_rules, session_id,
+                    )
             else:
                 # 2026-05-19 P1-7: 替换 P0-7 留下的 hardcoded mock cluster — 解析
                 # 操作员选的 cdl_model_name → (scenario, cluster_model, condition),
