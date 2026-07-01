@@ -10,12 +10,12 @@
  */
 import { useMemo, useState } from 'react'
 import {
-  ActionIcon, Badge, Button, Group, LoadingOverlay, Modal, NumberInput, Paper,
+  ActionIcon, Alert, Badge, Button, Group, LoadingOverlay, Modal, NumberInput, Paper,
   Select, SimpleGrid, Stack, Table, Text, Textarea, TextInput, Title, Tooltip,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { modals } from '@mantine/modals'
-import { IconEdit, IconPlus, IconTrash, IconWaveSine } from '@tabler/icons-react'
+import { IconAlertTriangle, IconEdit, IconPlus, IconTrash, IconWaveSine } from '@tabler/icons-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import {
@@ -197,6 +197,18 @@ export function CustomCDLProfileManager() {
           新建自定义 CDL
         </Button>
       </Group>
+      {/* P2-16 deprecate-legacy: 消费已收敛到 ChannelAsset (信道工作台)。此为 legacy 编辑器,
+          仅供存量档案兼容; 新建/编辑请去信道工作台建 custom_static ChannelAsset。 */}
+      <Alert
+        icon={<IconAlertTriangle size={18} />}
+        color="orange"
+        variant="light"
+        title="此为 legacy 编辑器 — 请改用「信道工作台」"
+      >
+        自定义 CDL 已统一为信道工作台的 <b>ChannelAsset（自定义 CDL / custom_static）</b>，测试执行
+        的消费也已收敛到 ChannelAsset。请去 <b>侧栏「信道工作台」</b> 新建 / 编辑 custom_static 资产，
+        并在测试步骤用「统一信道资产」引用。此处仅供存量档案兼容（尚未迁移的旧档案仍可在此编辑）。
+      </Alert>
       <Text size="sm" c="dimmed">
         编辑自定义 CDL 的簇级参数 (每簇时延/角度/功率/角度扩展/子径数), 持久化可复用。标称
         CDL-A~E 是 38.901 固定表; 测试例选自定义 CDL → 后端 input_mode=custom → ChannelEgine 合成。

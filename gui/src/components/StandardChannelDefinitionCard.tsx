@@ -199,6 +199,13 @@ export function StandardChannelDefinitionCard({ connectionId }: { connectionId: 
           </Button>
         </Group>
 
+        {/* P2-16 deprecate-legacy: SCD 已统一为 vendor_file ChannelAsset (信道工作台); 消费
+            (scd_id) 已收敛到 ChannelAsset。此处仅供存量兼容, 新建/编辑请去信道工作台。 */}
+        <Alert color="orange" variant="light" py="xs">
+          此为 legacy SCD 编辑器。SCD 已统一为信道工作台的 <b>ChannelAsset（厂商文件 / vendor_file）</b>，
+          测试执行的消费也已收敛到 ChannelAsset。新建 / 编辑请去 <b>侧栏「信道工作台」</b>；此处仅供存量兼容。
+        </Alert>
+
         {statusBanner}
         {opError && <Alert color="red" variant="light" onClose={() => setOpError(null)} withCloseButton>{opError}</Alert>}
 
