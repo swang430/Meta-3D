@@ -16,11 +16,13 @@ F64 真加载该信道模型 → UXM 对真 DUT 测下行吞吐 → **4 方位�
 沿用 protocol §2，**新增信道资产链路 3 项**（★ 是本次新增，其余见 protocol §2）：
 
 - [ ] mock-data first-call（P0-6）本地端到端跑通，PDF 出得来
-- [ ] ★ **信道模型链路本地走通**：信道工作台建 **① 一个 `vendor_file`（GCM `.smu`）+ ② 一个 `standard_3gpp`（ASC）** 资产 → 一个 TestCase 的 MIMO_OTA 步骤用「统一信道资产」引用它 → mock measure 跑通 → 确认 `resolve_channel_asset` 派生的 `engine_mode` 正确（vendor→`GCM_NATIVE` / standard→`ASC_SYNTHESIS`）。**这条今晚必须在本地点一遍**（S4-5/deprecate-legacy 刚落地，现场第一次真用）。
-- [ ] ★ **确认信道资产的频率与 TestCase 频率一致**：GCM `.smu` 频率编码在文件里，TestCase 频率 ≠ .smu 频率 → measure 频率一致性网 fail-loud（P2-11）。今晚把要用的 .smu 频率与 TestCase 频率对齐。
+- [x] ★ **信道模型链路本地走通** —— ✅ **2026-07-02 晚已预验证 PASS**（agent 走查，两次端到端）：F64 N78 `vendor_file` 资产 → 会话 TestCase 注入 `channel_asset_id` → mock run-all 全 5 相位 completed；measure 实际 `engine_mode=keysight_gcm`（覆盖 TestCase 存的 `mimo_first_asc`）+ `emulation_file=/smu/MF_N78_640000_BW100_CDLC_UMa_4x4_DP_v1.smu`（source=testcase）+ 4 方位吞吐 4 个不同值 + analysis pass。执行入口 = `./scripts/onsite-run-channel-throughput.sh`（见 Phase 5 展开 ③）。
+- [x] ★ **确认信道资产的频率与 TestCase 频率一致** —— ✅ 2026-07-02 已对齐并修了一处数据错：F64 N78 资产顶层 `center_frequency_hz` 曾是 **3.5 GHz**，与 payload 权威 `arfcn=640000`（= **3600 MHz**）矛盾（GUI 列表显示会误导）；已经信道工作台编辑表单改为 3.6 GHz + 顶层带宽补 100M（`scd_config` 八键完整保留）。⚠️ 现场规则：用此资产时 TestCase/会话频率一律 **3600 MHz**，一致性网比对的是 `payload.scd_config.arfcn`。另注意「4x4 MIMO 吞吐量 – CDL-C」序列模板默认 3.5 GHz——建步骤后要手改 3.6。
 - [ ] ★ **确认 F64 上有对应频率的 `.smu` 文件**：GCM 路 F64 从 `D:\User Emulations\` 加载真 .smu（默认 3600M 4x4）。首测频率若不是 3600M，现场要么有对应 .smu，要么改用 ASC 合成路。
 - [ ] driver 冻结 + `git tag onsite-baseline-20260702`
 - [ ] cockpit readiness 在 **mock 模式全绿**（驱动链 / 活动 Lab / 校准证书；DUT 灰 = 占位不算阻塞）
+  - 2026-07-02 晚状态：驱动链 ✅（7 mock 驱动重载 OK）/ 活动 Lab ✅ CAICT-Lab-1 / **校准证书 ❌ 剩余** —— 正式证书要 TRP+TIS+重复性三件套签发再绑 lab（系统校准页），随今晚 mock first-call（P0-6）一并完成。注意 mock 模式下 measure **不被**缺证书挡（strict=flag AND hardware_real），真硬件才 fail-loud。
+- [ ] ⚠️ **清执行队列僵尸产物**（2026-07-02 发现）：执行队列压着 **100 条 5 月自动化测试产物**（Priority/Queue/Stats Test Plan…，其中 1 条卡 running 曾挡 HAL 重载，已强制重载清掉）。出发前建议清空（GUI 逐条移出或批量 `DELETE /api/v1/test-plans/queue/{plan_id}`），否则现场队列视图不可用。
 - [ ] 仪表清单表：F64 `192.168.0.x:3334`（单 client SOCKET）/ UXM `192.168.1.x`（Test App 要起）/ SA `192.168.1.x` FSVA3000
 - [ ] LabProfile 配好（**今天修了 LabProfileWizard 崩溃 bug**，wizard 可用了）
 - [ ] plan-level preflight（P1-1）对目标 plan 通过
@@ -43,19 +45,26 @@ F64 真加载该信道模型 → UXM 对真 DUT 测下行吞吐 → **4 方位�
 
 1. **切 Real 驱动模式**：仪器资源配置页把 F64/UXM/SA 从「仿真模拟(Mock)」切 **Real**（见 §3 风险①，别忘）。
 2. **备/选信道资产**：信道工作台确认要用的资产在（首测建议 **GCM `.smu`（vendor_file）**，理由见 §4）。
-3. **TestCase 引用**：测试管理 → 步骤编排 → MIMO_OTA 步骤 →「统一信道资产」选它（会禁用下方传统信道字段并提示「按 source_type 派生引擎 + 覆盖」）。
-4. **跑 measure**：
+3. **执行（⭐ 用一键脚本，别走步骤编排）**：
+   ```bash
+   ./scripts/onsite-run-channel-throughput.sh          # 默认 F64 N78 资产 / 3600 MHz / 4 层
+   ```
+   **为什么不走「测试管理 → 步骤编排」**（2026-07-02 走查发现，已记 roadmap backlog）：
+   ① 计划步骤今天**没有执行 runner**（`POST /test-plans/{id}/start` 只转计划状态，步骤停 pending）；
+   ② 会话创建 API（`CreateSessionRequest`）**没有 `channel_asset_id` 字段**，「暗室首测」页也带不进统一信道资产。
+   脚本用现有公开 API 串通唯一可跑路：建会话 → PATCH 会话 TestCase 注入 `channel_asset_id`（合并不覆盖）→ run-all → 打印证据。2026-07-02 晚 mock 模式两次端到端实证 PASS。
+4. **measure 内部链**（脚本触发后自动走）：
    - resolve_channel_asset → engine_mode（vendor→GCM）
    - F64 `load_channel(NATIVE_MODEL)` → SCPI `CALC:FILT:FILE <.smu>` 真加载
    - UXM `set_cell_config`（显式 ARFCN，P2-11）→ `start_signaling` → `measure_throughput_window`（SCPI `MEAS:BTHROUGHPUT:DL:JSON?`）
    - 转台逐方位 `move_to(azimuth)` → 每方位读吞吐
-5. **验收 sanity**：4 方位吞吐值应**不同**（旋转改变空间信道实现）；若 4 个值全相同 → 疑 mock 未切 Real（见 §3 风险①）或信道未真加载。
+5. **验收 sanity**：4 方位吞吐值应**不同**（旋转改变空间信道实现）—— 这是**物理合理性**检查；⚠️ 但它**判不了 mock/Real**：mock 也输出 4 个不同值（带模拟抖动，2026-07-02 实测 402–438 Mbps）。判真伪唯一权威 = 仪器资源配置页驱动模式 = Real + F64/UXM 前面板真有动作（见 §3 风险①）。
 
 ## 3. 第一次真跑风险序列（按 likelihood × impact）
 
 | # | 风险 | 第一症状 | 排查（SCPI 探测 > GUI > RDP） | 修复 |
 |---|---|---|---|---|
-| **①** | **忘切 Real，跑的是 Mock 驱动** | 吞吐固定 ~200 Mbps、4 方位**全相同**、无视信道 | 仪器页看是否「仿真模拟」；cockpit 驱动标 mock | 切 Real 模式 + reload HAL；strict gate 打开会自动拦「无真校准就测」 |
+| **①** | **忘切 Real，跑的是 Mock 驱动** | ⚠️ 症状**不明显**：mock 吞吐量级"合理"（4 层 ~400+ Mbps）且 4 方位值**也各不相同**（模拟抖动，2026-07-02 实测 402–438 Mbps）——**不能靠数值分布判真伪** | **唯一权威**：仪器资源配置页驱动模式是否 Real + F64/UXM 前面板是否真有动作 + cockpit 驱动链标识 | 切 Real 模式 + reload HAL；strict gate 打开会自动拦「无真校准就测」 |
 | ② | UXM Test App 未起 | precheck 显示 UXM 在线但 SCPI 超时 | Phase 1 IDN 探测 | 重启 Test App（5G NR FR1） |
 | ③ | F64 端口 3334 被占/防火墙/单 client 被 GUI 占 | F64 connect timeout | `nc -vz 192.168.0.x 3334` + 确认无别的客户端占 F64 | 释放端口/关占用 GUI |
 | ④ | `.smu` 文件缺失或频率不符 | measure `CALC:FILT:FILE` 返回 -200/-300，或频率一致性网 fail-loud | 查 F64 `D:\User Emulations\` 有无对应频率 .smu | 上传 .smu / 改 TestCase 频率对齐 / 改走 ASC |
