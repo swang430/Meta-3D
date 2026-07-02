@@ -372,9 +372,13 @@ export function LabProfileWizard({ onComplete }: LabProfileWizardProps) {
                 label="Lab 名称"
                 placeholder="例如 CAICT-Lab-1"
                 value={state.labName}
-                onChange={(e) =>
-                  setState((s) => ({ ...s, labName: e.currentTarget.value }))
-                }
+                onChange={(e) => {
+                  // e.currentTarget 在事件 handler 返回后被 React 置 null; 若在 setState
+                  // 函数式 updater 内部读 .value, updater 异步/批处理执行时会崩 null.value
+                  // (自动化快速交互序列触发)。先把值读到 updater 外 const。
+                  const value = e.currentTarget.value
+                  setState((s) => ({ ...s, labName: value }))
+                }}
                 description="后续在测试报告与校准证书上展示"
                 required
               />
@@ -443,16 +447,18 @@ export function LabProfileWizard({ onComplete }: LabProfileWizardProps) {
                         label="连接地址"
                         placeholder="192.168.1.10:5025"
                         value={b.endpoint}
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          // 同上: .value 读到 updater 外, 防 currentTarget 异步置 null 崩溃
+                          const value = e.currentTarget.value
                           setState((s) => ({
                             ...s,
                             bindings: s.bindings.map((row) =>
                               row.categoryKey === b.categoryKey
-                                ? { ...row, endpoint: e.currentTarget.value }
+                                ? { ...row, endpoint: value }
                                 : row,
                             ),
                           }))
-                        }
+                        }}
                       />
                     </Group>
                   </Card>
