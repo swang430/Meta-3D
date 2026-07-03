@@ -76,7 +76,13 @@ discovered / 任务状态 / 数据登记,不进功能代码。
 
 **2026-07-03 现场决策记录**:① rfSwitch/EMCenter 免软件控制(通路已人工配置好,驱动 fail 不阻塞 —— precheck 实证 `critical_instruments_online: true`,rfSwitch 不在关键集);② bypass horn 参考天线静区测量(Phase 2 P0-4 TRP 基线不做),随之真路损校准(Phase 3)物理不可测一并跳过;③ Real 模式 4/7 驱动在线(F64/UXM/SA/转台),UXM 走 5125 TAF + LTE_NR_IRAT 方言。ad-hoc precheck 实测:**唯一剩余门 = DUT attach**。
 
+**✅ 2026-07-03 午间:无 DUT mimo_test 烟测成功(r4, diagnostic e70abe13)** —— ChannelAsset(UMa 3600M)→ resolver keysight_gcm → **F64 真机 `Model loaded` 成功** + connector 映射 + MIMO 拓扑 2x2→4x4 同步 + 32 路路损补偿应用(56.77 dB)+ 拓扑 CAICT AMS8947 V4.0 + 测量环无 DUT 有序中止(无假数据)。成功前提三纪律:**关主控台页 + 每次跑前重载 HAL + strict 三旁路**。剩余物理项:① UXM RF 输出→F64 输入链路不通(AUTOSET 5 轮无信号,查线缆/UXM 输出);② UXM ARFCN 仍 3550 未对齐;③ DUT attach。
+
 ## 当日 discovered(现场只记不修)
+
+- `[discovered on-site 2026-07-03 during 烟测 r4]` **UXM set_cell_config 崩 `'NoneType' object has no attribute 'upper'`**(bypass 组合下某缺省字段直接 .upper())→ 小区配置**实际没下发**(ARFCN 仍 3550);feedback_endpoint_null_field_cartesian 家族,回家修;现场绕法 = 单条 SCPI 直发 ARFCN 或 UXM 面板改。
+- `[discovered on-site 2026-07-03 during 烟测 r4]` **Aerotech 转台连接 ~2 分钟 idle 即被对端 reset**(connect 12:03:42 → move 12:05:59 时 TCPTransport closed);比 UXM 的 idle-close 更快;P2-4 keepalive 家族第三实例(UXM/F64/转台)。今日纪律:每次跑前重载 HAL = 全员重连。
+- `[discovered on-site 2026-07-03 during 烟测 r2-r4]` **测量序列 abort 会留 F64 会话残留应答/死句柄**(r2 闭环中断 → r3 "Invalid session handle")—— 失败后必须重载 HAL 再试;与监控轮询串线同根(会话无重同步机制)。
 
 - `[discovered on-site 2026-07-03 during 任务6/无DUT烟测]` ⭐ **P1 级根因:监控广播器与测量序列共用 F64 单会话无互斥 → 应答串线**。链条:主控台页开着 → websocket 订阅 → `monitoring_data_broadcaster` 每秒经 HAL 同一条 F64 socket 发 6 条 `INP/OUTP:MEAS:RES:GET?` → 与驱动加载序列(CLOSE/FILT:FILE/*OPC?/SYST:ERR?)交错 → **应答错位**:UMa 尝试 gate 读到 "1"(那是 *OPC? 的应答)、UMi 尝试读到 "-142.85267"(那是电平测量值)→ 驱动 fail-loud gate 误判"加载失败"(**文件实际都加载成功**,STOPPED 佐证);上午的"-200 会话僵死"同根因(scpi-command 与轮询争用)。**今日纪律:跑 measure/加载时关掉所有停在主控台的页签**(广播器订阅驱动,无订阅即静默)。proper fix(回家):HAL per-instrument 命令互斥锁,或 measure 期间暂停 broadcaster;5/27 没炸大概率因当时无人开主控台。:① `CALC:FILT:FILE` 路径**不能带引号**(驱动的无引号形式才对,带引号必失败);② 一次错误后**该 socket 会话可能 wedge**——此后一切命令(含 `SYST:ERR?`)持续回 `-200 Wrong device state`、`*OPC?` 回 `-100.00000`,唯一解 = 重连会话(hal/switch 重载后同一仪器立刻 `0,"No error"`)。**规矩:F64 复杂操作一律走驱动路径**(自带 drain+长超时+fail-loud gate),`scpi-command` 透传只用于单条只读 query。UMi 3600M 加载本身**成功**(CLOSED→STOPPED,新会话确认)。
 - `[discovered on-site 2026-07-03 during Phase4 前]` **UXM TAF 空闲断连实证(P2-4 母题)**:Real 重载后 ~15 分钟无命令,HAL 持有的 5125 socket 被对端掐(BrokenPipeError);修复 = hal/switch 重载。**操作纪律:闲置 >10 分钟后要跑 measure,先重载 HAL 再跑**;proper fix = 驱动周期 keepalive poke(P2-4)。
