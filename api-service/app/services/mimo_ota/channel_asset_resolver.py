@@ -94,12 +94,13 @@ def resolve_channel_asset(db: Session, config: Any) -> Optional[ResolvedChannelA
         # 文件名 vs scd_config.arfcn 交叉校验 (Codex a0ef389: resolver 直接返回 associated_file_path
         # 绕过老 SCD 关联路的 check_channel_filename_freq; 声明 ARFCN 跟 TestCase 一致但 .smu 实为别
         # ARFCN 的 MF_ 标准名文件 → F64 fallback 不解析 MF 文件名, 错 .smu 静默加载且频率门不报)。
-        # MF_ 可解析名不一致 → fail-loud; vendor 自定义名 (解析不出) → 放行留给声明频率门。
+        # MF_ 可解析名不一致 → fail-loud; 厂商名 (loose) / 解析不出 → 放行留给声明频率门
+        # (厂商文件名频率是标称会说谎, 2026-07-03 实证; 真值 = scd_config 声明的工程实测)。
         afp = asset.associated_file_path
         if afp and scd.get("arfcn") is not None:
             from app.services.standard_channel_service import check_channel_filename_freq
             chk = check_channel_filename_freq(afp, int(scd["arfcn"]))
-            if not chk.consistent:
+            if chk.must_fail:
                 raise ChannelAssetResolveError(chk.failure_reason())
         return ResolvedChannelAsset(
             engine_mode=engine, asset=asset,

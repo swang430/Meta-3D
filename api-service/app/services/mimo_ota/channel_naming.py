@@ -99,6 +99,14 @@ class ChannelNameFreqCheck:
             f"{self.declared_arfcn} (文件被重命名 / 重调 / 关联错; source={self.source})"
         )
 
+    @property
+    def must_fail(self) -> bool:
+        """只有**我们标准命名** (source=standard) 的不一致才值得 fail-loud —— 标准名与
+        SCD 强绑定, 不一致必是改名/错关联。厂商名 (source=loose) 的频率 token 只是场景族
+        标称, 2026-07-03 现场实证会说谎 (UMa_3600M 工程实为 3549.99 MHz), 不作拦截依据
+        (真值 = SCD 声明侧的工程实测频率)。caller 一律用本属性而非 `not consistent`。"""
+        return (not self.consistent) and self.source == "standard"
+
 
 def check_channel_filename_freq(
     actual_filename: Optional[str], declared_arfcn: int,

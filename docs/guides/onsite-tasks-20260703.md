@@ -1,0 +1,125 @@
+# 现场任务清单 — 2026-07-03 CAICT(信道模型下测吞吐)
+
+> 执行细节与 go/no-go gate 见 [onsite-plan-throughput-under-channel-2026-07-02.md](onsite-plan-throughput-under-channel-2026-07-02.md);
+> 铁律不重复:现场不写 driver 代码 / SCPI 探测 > GUI > RDP / 单 gate 卡 >半天就停。
+> 状态列现场随手改:`[ ]` 待办 / `[~]` 进行中 / `[x]` 完成 / `[!]` 卡住(记原因)。
+
+**基线**:tag `onsite-baseline-20260702` = main `f8f0dc9`;本分支 `onsite-20260703` 只收现场
+discovered / 任务状态 / 数据登记,不进功能代码。
+
+## 今日节奏规划(2026-07-03,按此执行;调整听 Simon 指令)
+
+| 时段 | 任务 | 备注 |
+|---|---|---|
+| 到场 ~30min | **0 开机自检** | 软件侧清零未知数,再碰仪器 |
+| 上午前段 | 1 Phase 0 网络 | 单网卡历史包袱:确认多网卡/adapter 方案,否则退回逐子网切换模式 |
+| 上午中段 | 2 Phase 1 SCPI 握手 + 设备自检 | **检查点 A:午前必须过**,过不了=物理/网络问题,按协议排查不动代码 |
+| 上午后段(间隙) | **6a 清点+选定信道文件** + 机动:队列清理拍板 | 6a 只需人在 F64 前,不依赖 DUT |
+| 午后早段 | 3 Phase 2 SA 入 HAL | TRP 基线 ±1dB |
+| 午后 | 4 Phase 3 真路损校准 | 机器自跑 ~32 链路,人闲 → 插机动项(仪器清单实化) |
+| 午后中段 | 5 Phase 4 DUT attach | **记真实 IMSI** |
+| 紧接 | **6b 合拍验证 + 6c 登记受控** | Phase 5 的入场券 |
+| 午后晚段 | 7 **Phase 5 ★核心** | 切 Real + 重载 HAL → 一键脚本;**检查点 B = 今日成功判据** |
+| 有余量才做 | 第二轮加严(机动):DUTProfile/SIMProfile 建档注入复跑 + 3.5GHz 反证频率网 | 非 go/no-go |
+| ~17:30 | 8 收工 review + discovered 回填 + 分支推送 | 15 min |
+
+**升级规则(贯穿全天)**:单 gate 卡 >半天且非纯硬件物理问题 → 停,整理 SCPI trace 远程协作;software 异常 = 记 discovered 不当场修。
+
+## 主线任务(按序,gate 不过不进下一)
+
+| # | 状态 | 任务 | 验收标准 | 落点 |
+|---|---|---|---|---|
+| 0 | [ ] | 开机自检 | 栈四绿(PG docker `meta3d_db` / :8000 / :5173 / :8001;重启过机先 `export CHANNEL_ENGINE_PATH=~/Tools/ChannelEgine` 再 `start_all_services.sh`)+ cockpit 驱动链/活动 Lab 绿(mock)+ 网络方案确认 | 控制 PC |
+| 1 | [ ] | Phase 0 网络三子网可达 | F64 `nc -vz 192.168.0.x 3334` + UXM/SA 子网通 | 控制 PC 静态 IP 切换 |
+| 2 | [ ] | Phase 1 SCPI 握手 | F64 `SYST:INFO?`(非 `*OPT?`)+ UXM Test App 起(5G NR FR1)+ SA IDN | 全 IDN ✓ |
+| 3 | [ ] | Phase 2 真 SA 入 HAL(P0-4) | measured TRP 在 horn datasheet ±1 dB | GUI 选 FSVA3000 |
+| 4 | [ ] | Phase 3 真路损校准(P0-3) | cert 32 链路 + overall_pass + 重复 ±0.5 dB,绑 lab 后 cockpit 校准格转绿 | CE+SA 路 |
+| 5 | [ ] | Phase 4 DUT attach(P0-5) | attach ✓ + 单方位非零吞吐;**记下真实 IMSI**(Phase 6 脚本要用) | UXM |
+| 6 | [ ] | ⭐ **确认与终端合拍的信道文件(我们能控制)** | 分三段插进节奏:**6a 清点+选定**(上午间隙,只需人在 F64 前)→ **6b 合拍验证**(Phase 4 后)→ **6c 登记受控**;展开见下 | F64 + 信道工作台 |
+| 7 | [ ] | Phase 5 信道模型下 4 方位吞吐(★核心) | `DUT_IMSI=<真IMSI> ./scripts/onsite-run-channel-throughput.sh` → 4 方位 4 值 + analysis + PDF | 先切 Real + 重载 HAL |
+| 8 | [ ] | 收工 review 三问 + discovered 行回填 | 当日 `[discovered on-site 2026-07-03 …]` 进本文档底部 | 15 min |
+
+### 任务 6 展开:确认与终端合拍的信道文件(我们能控制)
+
+**目标**:选定一个 F64 上真实存在、DUT 在其下能正常工作、且**参数我们完全掌握**的信道文件,
+作为可复现测试的受控基准 —— 不是"随便哪个能跑的黑盒文件"。
+
+- [x] **清点** —— ✅ 2026-07-03 上午 **SMB 突破**:F64 开匿名共享(`Scenario Packs`/`D`/`User Playbacks`/`CTIA MODEL`/`PROPSim`),Mac 直接 `mount_smbfs` 枚举,**不用人跑仪器前**。1.1 包实录:CDL-C × UMa/UMi × 9 频点(617/722/836.5/1575.42/1800/2132.5/2450/3600/4700 MHz)= 18 工程 + `4by32 cal.wiz`;`.cir` 文件名揭示拓扑 = **BS1→MS1 32x4 OTA DL**。共享根另见 `CAICT NR 4x4 OTA(SCC)`、`CTIA_Dynamic_OTA_UMa`、4 个 ENDC `.gcm`、LTE 包(现场可再挖)
+- [x] **选定** —— ✅ `3GPP_FR1_OTA_CDLC_UMa_3600M.wiz\...smu` **存在性已经 SMB 远程实证**(ChannelAsset 声明路径逐字节确认在 F64 上)
+- [ ] **合拍验证**:DUT 在该文件加载下 attach 稳定 + 吞吐非零(= 频段/带宽/层数与终端能力匹配)
+- [ ] **登记受控**(缺一不算"我们能控制"):
+  - [ ] ChannelAsset「F64 N78 场景文件」的关联文件路径 = 真实选定路径(出发前已预置为上述候选,若现场换文件在信道工作台改)
+  - [ ] `scd_config` 身份与文件实际参数一致(arfcn 640000 / BW100 / CDLC / UMa / 4x4 / DP)
+  - [x] 仪器抽屉 `available_channel_models` 清单更新为真实文件名 —— ✅ 2026-07-03 已换成 **18 条 SMB 实录**(demo 假名清除):label=SCD 命名规则 `MF_{band}_{arfcn}_BW100_CDLC_{UMa|UMi}_4x4_DP_v1`,filename=完整 `D:\` 路径(可直接喂 `CALC:FILT:FILE`),附 center_frequency_mhz + nr_arfcn(4700M 无整数 ARFCN 用标称槽)
+- [ ] **一致性网实证**:故意把一次会话频率设 3.5 GHz 跑一发,确认 P2-11 网真的拦(可选,30 秒,给"网在工作"留证据)
+
+**"我们能控制"两档(2026-07-03 晨读队友经验分享后升级)**:
+- **档 1(保底,Phase 5 主路)**:选定 F64 上已知参数的现成文件(Scenario Pack CDLC UMa 3600M)→ 上面四步登记。
+- **档 2(真·自控,时间富余才做)**:队友已备料 —— `docs/site-debug/现场经验共享/My model0702.json`(**23 簇自建模型**,含 ZoA/ZoD)+ `gcm_supported_cluster_import_{minimal,zoa_zod}.csv`(GCM 簇导入格式已验)。若现场 Channel Studio/GCM 可用:导入自建簇 → Generate Modeling Parameters(预览 PDP/角度)→ Generate Emulation → **必查 Level to DUT**(Min/Max/Range ≤ Max Level in HW)→ Save and Update → 得 .smu → F64 运行 + DUT 合拍。这才是完整的"我们能控制"闭环,也是 P2-16 自定义簇 → GCM 路的首次真机打通。
+
+**GCM/FS16 经验速查(来自三篇分享,现场直接用)**:
+- ⚠️ **工程文件整体保留,不要只拷 .smu**(.smu 引用外部信道数据,单拷会丢);
+- 加载前礼仪:`*CLS → DIAG:SIMU:CLOSE → CALC:FILT:FILE → *OPC? → SYST:ERR? → DIAG:SIMU:GO`;
+- 报 `-200 SMU file already open for editing` → 先 `DIAG:SIMU:CLOSE` 退编辑态再开;
+- 报 `Emulator is not available` → PROPSIM 设备级重启,确认日志 `Selftests completed successfully`;
+- 需要人在仪器 GUI 上操作(建模板/维护)→ 用软件的 **manual_local 控制权切换**(软件释放会话停轮询),做完再"软件接管" —— 别硬抢单 client SOCKET;
+- CIR Graph 随编号持续跳动 = 动态信道正常回放;Port RF Level 空载无曲线**不代表** CIR 错;
+- ⚠️ 三篇经验基于 **FS16**,F64 SCPI 已知有差异(MMEM/FTP/*OPT? 不可用,-100=命令不存在)—— `CALC:FILT:FILE`/`DIAG:SIMU:*` 在 F64 已实测可用,但 `CALC:FILT:EDIT` 编辑态流 F64 上未验,现场首次用时逐步 `SYST:ERR?` 确认。
+
+## 机动任务(非阻塞,有空隙才做)
+
+| 状态 | 任务 | 备注 |
+|---|---|---|
+| [ ] | 执行队列 ~99 条 5 月僵尸清理 | 需 Simon 拍板;`DELETE /api/v1/test-plans/queue/{plan_id}` 逐条 |
+| [ ] | DUTProfile + SIMProfile 建档(真 DUT/SIM 到手后) | 建好后脚本注入 `dut_profile_id`/`sim_profile_id` 可活验三层能力/防插错网;首测不阻塞 |
+| [ ] | 机器重启过则:`export CHANNEL_ENGINE_PATH=~/Tools/ChannelEgine` 再跑 `start_all_services.sh` | GCM 路不依赖 :8001,ASC 路要 |
+
+**2026-07-03 现场决策记录**:① rfSwitch/EMCenter 免软件控制(通路已人工配置好,驱动 fail 不阻塞 —— precheck 实证 `critical_instruments_online: true`,rfSwitch 不在关键集);② bypass horn 参考天线静区测量(Phase 2 P0-4 TRP 基线不做),随之真路损校准(Phase 3)物理不可测一并跳过;③ Real 模式 4/7 驱动在线(F64/UXM/SA/转台),UXM 走 5125 TAF + LTE_NR_IRAT 方言。ad-hoc precheck 实测:**唯一剩余门 = DUT attach**。
+
+**✅ 2026-07-03 午间:无 DUT mimo_test 烟测成功(r4, diagnostic e70abe13)** —— ChannelAsset(UMa 3600M)→ resolver keysight_gcm → **F64 真机 `Model loaded` 成功** + connector 映射 + MIMO 拓扑 2x2→4x4 同步 + 32 路路损补偿应用(56.77 dB)+ 拓扑 CAICT AMS8947 V4.0 + 测量环无 DUT 有序中止(无假数据)。成功前提三纪律:**关主控台页 + 每次跑前重载 HAL + strict 三旁路**。剩余物理项:① UXM RF 输出→F64 输入链路不通(AUTOSET 5 轮无信号,查线缆/UXM 输出);② UXM ARFCN 仍 3550 未对齐;③ DUT attach。
+
+## 收工总结(2026-07-03 晚,review 三问)
+
+**① 原计划 vs 实际**:原计划 = Phase 4 DUT attach + Phase 5 四方位吞吐(★核心)。实际 = 仪表重启后全链重建 ×2(下午重启 + EMQuest 多写方干扰)+ 控制面真相大规模挖掘(UXM/F64/EMCenter/转台四台全部量化)+ 信道资产治理(18 条真值化)。**attach 走到了最后一步**(DUT 已测到 -96 dBm RSRP,直通链路终验通过),正式注册与吞吐未跑。
+
+**② 偏移程度**:核心 gate(吞吐)未达 ≈ 70% 偏移;但当日用户主诉求("对 UXM/仪表控制不够清晰完整")完成度高 —— 下次现场 attach→吞吐已无已知障碍。
+
+**③ 偏移原因归类**:外部事件(仪表重启、EMQuest 并行操作)+ 既有 bug 的现场深挖(值得,全部转化为 discovered/热修)——不属于"顺手优化"跑偏。
+
+**次日/下次现场 15 分钟开跑清单**:
+1. `start_all_services.sh`(若重启)→ HAL real → 状态三查:UXM 小区(期望 636666/BW40/-46/ON)、F64(STATIC?/STATE?/工程)、F64 参考(-15/crest12,面板核);
+2. F64 直通默认态:加载 UMa 工程 → `STATIC 3`(稳态 = STOPPED+STATIC3);
+3. **DUT attach**(-96 RSRP 可用;慢则 UXM EPRE -46→-36 一条命令);记 IMSI;
+4. attach 后:`STATIC 0` + `GO`(衰落恢复)→ 满业务态 `INP:LEV:AUTOSET 0,3` 终定标 → onsite 脚本四方位吞吐(FREQ_HZ 默认已 3549990000;**方位 2 转台断连预警**,备选 = 4 次单方位 run);
+5. 待拍板:吞吐 BW 跟 EMQuest 基线 40 还是 100(资产/TestCase/UXM 三处一致)。
+
+**当日热修(现场分支,回家正修化)**:2c6f6b1 measure 频率桥接;122eeae 频率网 loose 软化。**回家修单汇总**:见各 discovered 条(驱动 CENT 缺省不写/UXM OFF-配-ON 编排+回读对账/HAL 命令互斥+超时排水轻量恢复/Aerotech keepalive ≤5s 或 move 前懒重连/EMCenter VXI-11 transport/prm band 查表进驱动/P1-8 cal provenance/CreateSessionRequest channel_asset_id/输出测量冻结语义注释)。
+
+## 当日 discovered(现场只记不修)
+
+- `[discovered on-site 2026-07-03 during F64 直通态建立]` **F64 STATIC 直通语义破解 + attach 默认态建立(待 DUT 终验)**。① **STATIC 模式与回放互斥**:STATIC≠0 时 `GO` 被拒(-200 by design);RUNNING 态切 `DIAG:SIMU:MODEL:STATIC 3` 成功且自动转 STOPPED → **直通稳态 = STOPPED + STATIC 3**(回读 mode=3,零错误);恢复衰落 = `STATIC 0` + `GO`。正确建立序列(实证):加载工程(STOPPED)→ STATIC 0 → GO(RUNNING)→ 运行态切 STATIC 3(自动 STOPPED)—— 或直接 STOPPED 态设 STATIC 3(两路径终态一致)。② **测量流语义**:直通稳态下输入测量(D=101)四路真活(σ1.2-1.5,含 E1),**输出测量(D=201)32 口全 -76.8/σ=0.00 = 显示冻结特征**(输出功率元件依赖回放引擎,STOPPED 不更新)—— 软件侧无法分辨"RF 在透传但显示冻结" vs "真无输出",**权威判据 = F64 面板输出口 / DUT 搜网**。③ 当日多写方第二实证:EMQuest 在拿截图时段把 F64 工程 CLOSE 了(+ UXM 重配),重建时纯净加载工程原生 3549.99 与 UXM/EMQuest 基线自然对齐(CENT 一个都不用写)。④ 会话又 wedge 一次(排水第 42 条撞超时→连锁错位,重载 HAL 恢复);⑤ **流程共识**:attach 默认态 = 直通稳态(终验通过后);跑吞吐 run-all 前**必须显式 STATIC 0**(加载是否复位 STATIC 未知,不赌)。回家单:set_bypass_mode 编排(运行态切换 + 状态机前置)+ 输出测量冻结语义进驱动注释。 **✅ UXM 控制延迟矩阵量化 + 发现小区被外部重配为 EMQuest 基线**。延迟:直连 5125 RTT **1 ms**(仪器本身极快);HAL 产品路径 8-14 ms(HTTP+HAL 开销 ~10ms);**写→回读生效 53 ms**(DL:POWer);HAL 重载全链 1.5 s;压力 20 连发查询 **0 错位**(RTT 恒 1ms,报告里 5 "fails" 是测试脚本期望值写错 BW100 的假阳性);**污染恢复成本 = 1 次超时(3s)+ 2 条 SYST:ERR? 排水即净**(比想象便宜,今天的"超时必重载"纪律可降级为"排水 2 条+功能查询验证,失败才重载");**TAF 5125 无 SYST:LOC/REM(-113)= 无 local lockout 概念,GUI/EMQuest/SCPI 三方天然并行** —— 真正的风险不是锁而是**多写方覆盖**(本轮实证:测试中读到 BW40/-46 ≠ 我们留下的 BW100/-39.15,系 EMQuest 拿截图期间下发了 SA n78 基线;上一轮"升功率拍打不生效"悬案的实验环境即被此污染,结论作废)。**参数分级**:ms 级即发即效 = ARFCN/POWer/BW(小区 OFF 态)/STATe 写;禁改(ON 态)= BW(-221);重活 = STATe 0→1(秒级);不支持查询(3s 超时代价)= PHY:DL:POWer?/SSB:POWer?。当前 UXM 态 = **EMQuest n78 基线(636666/BW40/-46/ON)已就位**,F64 参考 -15/crest12 恰与其满业务预算(-46+31.0=-15 dBm@口)对齐 —— attach 条件天然齐备。回家单:HAL 层加"超时后自动排水恢复"轻量策略(替代无差别重载);多写方(GUI/EMQuest/我们)约定 = 测试窗口内单一写方。
+- `[discovered on-site 2026-07-03 during EMQuest prm 解析]` **⭐⭐ EMQuest 参数全集破译(10/10)——"文件名≠工程频率"全案终局 + attach 三件套权威值**。用户提供 EMQuest 界面截图(7 张)+ U 盘 `.prm` 全集(10 个,二进制 MFC 序列化,已本地留档+解析脚本化)。**频率全集**(DL ARFCN/中心/PointA/OffsetDL/SSB ARFCN/双工):n1=428000/2140.00/FDD、n3=368500/1842.50/FDD、n5=176300/881.50/FDD、n7=531000/2655.00/FDD、n8=188500/942.50/FDD、n28=156100/780.50/FDD、n41=518598/2592.99/TDD、n77=650000/3750.00/TDD、n78=**636666/3549.99/TDD(SSB 635712, PointA 632946, Off 102)**、n79=713334/4700.01/TDD(注意 4700.000 不在 15k 栅格,EMQuest 上取 713334;资产已统一 713334/4700.01(4700010000 Hz)—— Codex #193 两轮 P2 收敛:一致性网是 exact ARFCN 比对无容差,arfcn 与 center_frequency_hz 必须同栅格点自洽;工程 CENT 实测 4700.000 记入 description,运行时 F64 由 TestCase 频率显式下发覆盖)。**四大洞察**:① prm 频点全部 = 各 band DL 中心 → 场景包 3 条"名实不符"文件(1842.5/2592.99/3549.99)+4700 的工程 CENT **恰是 4 个 TDD band 中心** = EMQuest 上次跑该 band 时运行时改写留下的态 —— "文件名≠工程值"根因闭环;② EMQuest 设备树含 Propsim(New Anite Propsim RCE)= **它运行时同时向 UXM+F64 下发目标频点** → 我们的热修(TestCase 频率桥接显式下发)与 EMQuest 架构同构,外部印证;③ **attach 前 UXM 核对/下发三件套有了权威值**(n78 上表);④ UMa 4x4 组含 FDD band(n1/n3/n7,UL offset 504)—— 将来测这些频点 UXM 须 FDD 配置(IRAT duplex 下发是已知坑),今日 n78 TDD 不涉及。**EMQuest 截图其余基线**(NR Cell/PHY/Sensitivity 页):BW40(DL/UL)、Power Method=RS EPRE、RS Power -46 dBm/SCS(灵敏度扫描初始 -51、步长 2/1/0.5)、DL MIMO 4x4、UXM 内部 Static Channel=Bypass、UL 1x1+Expected Auto(-20/BW)、MCS Table=64QAM、PUSCH DFT-S-OFDM Non-Coherent、PRACH idx 160、PDCCH AL4(1/4)、C-RNTI 32768、PCI 0、吞吐判定 95%/95%置信/10000子帧、TPC All Up Bits、报告口径 RS EPRE (dBm/30kHz)。**回家单**:prm 解析做成 band→(arfcn/ssb/pointA/offset/duplex) 查表进驱动/onsite 脚本;吞吐跑 BW 决策(EMQuest 基线 40 vs 我们 100)待用户拍板。 **✅✅ EMCenter 可控性打通 —— P2-9 现场半收口:老固件 LAN = VXI-11,不是 raw socket**。层级下探三步:① IP 通但 12 个 raw TCP 端口全拒;② 用户面板照片:**固件 2.5.1**,设置页只有 GPIB(addr 7)+ 网络 IP,**没有"远程 Enable"开关**(用户观察正确 —— 配好 IP 即用);③ 端口 111 通,rpcinfo 见 VXI-11 Core/Abort(395183/395184 @tcp 879)→ **pyvisa `TCPIP0::192.168.0.50::inst0::INSTR` + 裸命令 + CR 终止实测全通**:`*IDN?`→`ETS Lindgren EMCenter version 2.5.1`;逐槽认卡 Slot1 EMControl 7006-001/2.8.0、Slot2/3 EMSwitch 7001-002/B 4.2.0、Slot4 7001-002/B 4.3.2、Slot5 7001-003/B 4.2.0(SP6T,值域实证)、Slot8 Processor 7000-009(ARM+GPIB)。**当前人工通路数字化快照:Slot4 A/B/C = NO/NO/NO;Slot5 A/B = 1/1**(以后软件复现今日通路即恢复此态)。细节:响应尾带 `\n\x00`(NUL,解析须容错);`INTLK? SAFETYRELAY` 回 ERROR 3(此固件不支持)。**修正 6/4 结论**:命令格式(裸+CR)正确,但 2025-08 RevA 文档的 raw-socket 5025 只适用新固件,这台 2.5.1 走 VXI-11;5/27 无响应真因 = 传输层协议不对(raw vs VXI-11),与命令格式无关。**回家修单**:EtslSwitchDriver 加 VXI-11 transport(binding endpoint 本就是 inst0::INSTR 形式,与 raw 5025 默认矛盾的地方顺一遍)+ NUL 尾容错 + SP6T 值域 1-6;现场绑定不用动。今日决策不变:通路人工已配,软件不切继电器。
+- `[discovered on-site 2026-07-03 during 转台验证]` **✅ 转台 30° 步进 12/12 全到位(偏差 0.00°),但 Aerotech 断连窗口实测收紧到 <11s**。HOME + 30°→360° 每步 move 1.2s(整圈回转 6.3s)、间隔 10s:首步后 sleep 10s 再 move 即 `TCPTransport closed`(上午记录是 connect 后 ~2min idle;现在 move 完成后 ~10s 空闲即被对端掐,重启后更严/或"运动完成即短计时")。**现场绕行(已验证)= 每步 move 前重载 HAL**(~1s 开销,11/11 剩余点全过)。⚠️ **对完整吞吐 run 的预警**:measure 4 方位循环的方位间隔 = 测量时长(~1min)>> 断连窗口 → **方位 2 的 move 大概率失败**(r4 无 DUT 中止在方位 1 前,没暴露过);备选打法 = 4 次单方位 run(每次跑前重载),或热修 driver move 前懒重连(P2-4 keepalive 参数更新:周期须 ≤5s)。
+- `[discovered on-site 2026-07-03 during 18条资产修正]` **⭐ 厂商配套基线发现 + 频率网 loose 档热修**。① SMB 批量解析 18 个 .smu 工程真值(解析器用 UMa_3600M 面板实证 3550 做金标准):**3 条 UMa 文件名≠真值**(1800M→实 1842.50 / 2450M→实 2592.99 / 3600M→实 3549.99),其余 15 条(含全部 UMi)名实一致;**UMa_3600M 真值 3549.99 MHz = ARFCN 636666 = UXM Test App 自带默认** —— Scenario Pack 与 UXM 是配套基线,下午吞吐整链对齐 636666 则 UXM 免手工改频(onsite 脚本 FREQ_HZ 默认已改 3549990000);注意 **UMi_3600M 真值恰是 3600.00/640000,同名不同频**。② 修正落库:`scripts/onsite-fix-f64-scenario-assets.py`(幂等 upsert,验收 18/18 ✓,b328d53a 复活正名 MF_N78_636666_..._UMa_4x4)。③ **现场热修第二例**:P2-11 频率网对 `source=loose`(厂商文件名)不一致也 fail-loud,把真值登记当"SCD 错"拦(3 条被拦)—— 三处 caller(asset service / SCD associate / resolver)注释意图都写"只拦 MF_ 名"但实现漏了 loose 档;修 = `ChannelNameFreqCheck.must_fail` 只拦 standard(厂商名标称会说谎,真值在 SCD 声明侧);回家补单测。④ 操作坑:`PUT /instruments/{cat}` 对 connection_params 是**整体覆盖**且单类别无 GET(405,取参走 /instruments/catalog)—— 本轮误用空 params PUT 清过一次 acm(即刻重建无损);回家:PUT 改 merge 语义或加单类别 GET。
+- `[discovered on-site 2026-07-03 during 重启后重建, 经验 by 用户]` **⭐⭐ .smu 文件名频率 ≠ 工程真实 CENT —— SCD 登记必须以工程实测频率为准**。实证:重启后**纯净加载**(纯透传 `CALC:FILT:FILE`,全程未写 CENT)`3GPP_FR1_OTA_CDLC_UMa_3600M.smu`,面板显示 **3550 MHz** —— 文件名 3600M 是场景族标称,工程自带 CENT 实为 3550。**修正上午叙事半句**:"驱动写 3500 冲掉工程自带 3600"中"工程自带 3600"系文件名推断,真值 3550(驱动覆盖 bug 本身不变)。**连锁**:① P2-11 频率网的文件名 fallback(`parse_smu_center_freq_mhz`)对这类文件**系统性报错值**(报 3600 实 3550)——文件名 fallback 永远不可信,是"测真实生效端"母题在资产元数据维度的实例;② 今日已登记的 **18 条映射资产频率字段全部按厂商文件名填的,全部存疑待逐个实测**(UMa 3600M 已证伪,其余 17 条待验;可经纯净加载+面板,或 SMB 读工程文件解析)。**解决流程(用户定)**:(1) 对 F64 上每个 .smu 先实测工程真实频率;(2) SCD 登记把**准确频率写进 SCD 命名/频率字段**(不抄厂商文件名);(3) TestCase/资产声明频率=工程真值,配合热修 2c6f6b1(驱动显式下发 TestCase 频率)两边闭环。另两条同轮 discovered:③ macOS 手工 `ifconfig alias` 易失(链路事件/DHCP renew 会清),UXM 失联**先查本机 `ifconfig en14`** 再怀疑仪器(本轮 1.100 别名丢导致误判 UXM 死机);④ UXM 升功率疑似需小区 OFF→ON 拍打才生效(降功率随写生效,-49→-39.15 后突发顶停 -18.5;与 BW 禁改同族,验证被别名断联打断待闭环)。
+- `[discovered on-site 2026-07-03 during 参考修正]` **⭐ "-41 死值"全案告破:那是参考错位时的测量地板,不是死线**。参考从 +6 → **-15 dBm**(crest 12,burst,×4 输入,重载后 12 条写入全成功,错误队列今日首次全程 `0,"No error"`)后:未接口(RF1/RF17)地板变 **-80**;四输入稳态 ≈ **-51~-52**(SSB 占空比的窗口平均,显著高于地板=有信号),85s 窗内抓到突发顶 **E1 RF2 -22.0 / E2 RF4 -18.2 / E4 RF8 -26.6**(E3 未抓到顶属采样错相,稳态与三路同族=活)。**E1 死线判定撤销**(此前 -40.4 恰=当时的测量地板;上一轮 E3/E4 "-41 变死"同为地板假象);与用户面板"4 口都在 -20↔-40 跳"互证。**跳动的物理**=无 DUT 只有 SSB 突发(占空 ~1%),面板瞬时值在"突发顶↔窗口平均/地板"间摆,正常不是故障。**定标流程规则(设计文档 f64-input-level §2/§4 现场落地)**:① SSB 空闲态**只判连通**(稳态 -52 族=活 / -80=未接),**绝不 AUTOSET**(参考会钉在低态,DUT 满业务一来 digital clipping → all-NACK,0527 主嫌);② 参考**终定标只在满 RB 满 buffer 业务态**做 `INP:LEV:AUTOSET 0,3`(全输入同测保 MIMO 平衡)+ 无 clipping/cut-off 核验;③ 改 UXM 功率必重做 AUTOSET;④ 满业务预期输入 = DL/SCS + 35.2(BW100/30kHz, 273RB)− 线损,线损 L 在满业务态一次干净标定(SSB 态是混合信号标不干净);当前 -39 dBm/SCS → 满业务每口 ≈ **-3.8 dBm** @UXM 口。当前 -15/crest12 为过渡工作点(SSB 顶上留 ~5dB)。另:UDP 流此轮报出全部 64 口(输出口 -52..-80 分布)——输出侧监视同通道可用。
+- `[discovered on-site 2026-07-03 by 用户]` **⭐⭐⭐ 今日最重 bug:F64 被驱动写成 3500 MHz(UXM 3600)——"测不到输入信号"的真根因**。链条:GCM 策略 sim_rules **不带** `center_frequency_mhz` → 驱动 set_channel_model Step 4 在参数缺省时**仍无条件**对全部 64 通道写 `CALC:FILT:CENT:CH {ch},{默认 3500}` → **冲掉 .smu 工程自带的 3600**;每次 GCM 加载都复写。两个 100MHz 窗口(3450-3550 vs 3550-3650)几乎零重叠 → F64 输入测量/AUTOSET 视 3600 信号为无信号。**P2-11 频率网被骗过**:get_frequency_identity 在 `_center_freq_programmed=False` 时退回文件名解析报 3600("诚实上报"),但驱动明明写了 3500 —— 写了没置 programmed 标志 = 上报与下发脱节(测真实生效端母题最重实例,#107/#114/#131 同族)。**现场修**:GOS → `CALC:FILT:CENT:CH ch,3600` ×64 → GO(已下发,面板人工验证);输入参考同步修 `INP:LEV:AMP:CH i,-6` + `INP:CRE:SET i,12` ×4(此前参考疑 +20 dBm,同为测不到的叠加因素)。**回家修单(P1)**:① 驱动参数缺省时**不写** CENT(保留工程频率)或 strategy/measure 必传 config 频率;② 写了 CENT 就必须置 programmed 标志(上报=下发);③ 频率网加"下发后回读/真值比对"层;④ 配置类查询(INP:LEV:AMP/CENT 回读)在此 ATE 的正确形式待 Keysight 确认(现场 CH?/GET? 两形式均无应答)。
+- `[discovered on-site 2026-07-03 during 合格实验·终局]` **✅ F64 输入测量复活并通过逻辑判定**(中心频 3600 修正 + 参考对齐后):四路从冻结 -27 变活值(E2 -20.8 / E3 -24.4 / E4 -21.9 / E1 -40.4);UXM -10 dB 阶跃 → 三路响应 -3.4~-5.3 dB = **闲置小区 SSB 主导的正确物理**(恒定 SSB + 按 DL:POWer 缩放部分的混合;满 1:1 对账须 DUT attach 满业务态,届时做终局 AUTOSET —— 设计文档 §2 原话)。**两个待办**:① **E1 RF2(BEAM 1-V)死线 -40.4 不响应** —— 现场对调 E1/E2 线缆一插即判(值跟线走=线/UXM口,值跟 F64 口走=F64口);② 绝对偏移 ~-27 dB(UXM +6 → F64 -21)待确认 UXM 面板 +6 的口径(每口/总)与是否有衰减垫。测量窗滞后 ~1 分钟(中位窗跨沿),阶跃判读要等稳。
+- `[discovered on-site 2026-07-03 during 设置审计]` F64 输入测量设置审计(错位对齐读数):测量模式=3(burst,TDD 正确);输入参考 avg 疑 +20 dBm(两轮独立捞到 20.0);avg 限值 -32..+23。审计过程再证:**一次无应答查询即可让会话进入连锁错位**,任何配置读回都不可信,唯一可靠验证=仪器面板人眼。
+
+- `[discovered on-site 2026-07-03 during 烟测 r4→r5]` **UXM set_cell_config `None.upper()` 崩 → ARFCN 不下发 —— 根因已闭环**:单载波自动构造(`_resolve_component_carriers`)不填 band(`pcell.band=None`,schema 描述却写"留空时由频率推断")→ measure `_build_pcell_cell_config` 把 `band` **无条件**入 dict → 驱动 `if "band" in config` 看键在就**跳过频率推断** → `config["band"].upper()` 崩 → 整个 set_cell_config 中止(ARFCN 行未执行)。经典"**键在但值 None ≠ 键不在**"(feedback_endpoint_null_field_cartesian)。**零代码修法(r5 实证)**:config 显式带 `component_carriers:[{...band:"n78"}]` → `TX: BSE:CONFig:NR5G:CELL1:DL:ARFCN 640000` 真发出 + **回读 640000 确认真实生效**(3550→3600 对齐完成)。onsite 脚本已同步注入(BAND 环境变量,默认 n78)。回家正修:band 无条件入 dict 改 None-guard,或驱动侧 `config.get("band") is None` 视同缺失走推断;duplex/tdd_pattern/sched_algo 同型审计。
+- `[discovered on-site 2026-07-03 during 烟测 r4]` **Aerotech 转台连接 ~2 分钟 idle 即被对端 reset**(connect 12:03:42 → move 12:05:59 时 TCPTransport closed);比 UXM 的 idle-close 更快;P2-4 keepalive 家族第三实例(UXM/F64/转台)。今日纪律:每次跑前重载 HAL = 全员重连。
+- `[discovered on-site 2026-07-03 during 合格实验·修订]` **⭐⭐ 上一条"物理层不通"结论作废(归属 bug),真相三连**:① 用户 F64 面板见 ≈-27 dBm —— **信号一直在**,早前三个"迟到值"(-26.7/-27.2)就是真读数;Plan C 把别的通道/错位应答归给 INP2 才得出"本底"误判(延迟应答下 TX→next-RX 配对不可靠)。② 数学对账闭合:UXM 实际 **BW=40MHz**(非 100!),-35 dBm/SCS @BW40 → 总 ≈ -4.7 dBm = 用户面板 "-4 dBm/BW" ✓;F64 -27 dBm = -4 − 约 23 dB 固定损(线缆+疑似保护衰减垫,现场可确认垫值)。③ **BW 卡 40 的根因**:UXM 规则 = **小区 ACTive 时禁改带宽**(-221 Settings conflict,实证),measure 的 set_cell_config 在小区 ON 下写 BW 从来没成功过且静默(错误只进队列);另 TDD 下 UL:BW 不可单独设(跟随 DL)。**修正序列已实证**:STATe 0 → `DL:BW BW100`(令牌形式)→ STATe 1 → 回读 BW100 ✓。**回家驱动修单**:set_cell_config 需 OFF→配→ON 编排 + BW 值令牌形式("BW100" 非裸 int)+ TDD 跳过 UL:BW + **写后回读对账 fail-loud**(测真实生效端母题,#107/#114 同族)。实验(Plan C,监控轮询器当读数器 + 日志时间戳归属):UXM 小区 ON@3600 / 功率回读确认 -45→-35 dBm/SCS(总 -9.8→+0.2 dBm,阶跃 10 dB)→ **F64 INP2 中位数 -128.8→-128.9 dBm,Δ=0,纯本底噪声**。软件侧全链已排除(小区/频率/功率写读均实证);剩余候选全在物理层:① UXM RF 口→F64 输入口线缆对位(F64 Channel1 期望 connector RF-2/RF-1);② UXM TX 天线→物理口路由(IRAT 无 SCPI 查询,只能面板看);③ UXM RF 硬开关/外部衰减。**重测按钮已备好**:物理修正后重跑同一实验(轮询器读数法)即刻判定。
+- `[discovered on-site 2026-07-03 during 合格实验]` **F64 `INP:MEAS:RES:GET?` 是延迟应答语义**(结果就绪才回,>30s 固定读窗都等不到;三个迟到值 ≈-27 dBm 疑为 OUTP 侧串流误归属)→ 任何固定窗口读法必串线;**单会话只能有一个读者**(监控轮询器 or 测量序列,二选一);P1-16 的 timeout 透传对这类 deferred query 不够,驱动侧要按"结果就绪"语义读。回家修:HAL 命令互斥 + INP 读语义适配。
+- `[discovered on-site 2026-07-03 during RF体检]` **"F64 收不到信号"的分层真相**:① 体检发现小区 `ACTive:STATe=0` —— r5 收尾把小区**关了没开回**(measure 收尾语义:配置成功但 signaling 未走到/被清理)→ 体检时 UXM 根本没发射;已手动 `STATe 1` 开回(回读 1 + ARFCN 640000,3600 MHz 发射中)。② 开小区时 UXM 报 `510 "DL Power adjusted from -16 to -21.02 dBm/SCS due to HW port limitations"` —— DL 功率还停在 r2 闭环压下去的 -16,又被硬件口限再砍 → **闭环"AUTOSET 失败→降功率"的方向存疑**(收不到信号应升不应降,像是按"过载"假设写的),回家审 InputLevelController 策略;闭环每轮会重设起点,现场影响=下次跑自愈,但收敛策略要修。③ IRAT 方言下 `ROUTe:...TX:ANTenna{n}:PORT?` 与 BSE 前缀形式都不存在(-113/超时)—— TX 端口路由查询在 IRAT App 无对应命令,查路由只能 UXM 面板看;连续超时查询会污染会话(又一次),超时后必重载。
+- `[discovered on-site 2026-07-03 during 烟测 r2-r4]` **测量序列 abort 会留 F64 会话残留应答/死句柄**(r2 闭环中断 → r3 "Invalid session handle")—— 失败后必须重载 HAL 再试;与监控轮询串线同根(会话无重同步机制)。
+
+- `[discovered on-site 2026-07-03 during 任务6/无DUT烟测]` ⭐ **P1 级根因:监控广播器与测量序列共用 F64 单会话无互斥 → 应答串线**。链条:主控台页开着 → websocket 订阅 → `monitoring_data_broadcaster` 每秒经 HAL 同一条 F64 socket 发 6 条 `INP/OUTP:MEAS:RES:GET?` → 与驱动加载序列(CLOSE/FILT:FILE/*OPC?/SYST:ERR?)交错 → **应答错位**:UMa 尝试 gate 读到 "1"(那是 *OPC? 的应答)、UMi 尝试读到 "-142.85267"(那是电平测量值)→ 驱动 fail-loud gate 误判"加载失败"(**文件实际都加载成功**,STOPPED 佐证);上午的"-200 会话僵死"同根因(scpi-command 与轮询争用)。**今日纪律:跑 measure/加载时关掉所有停在主控台的页签**(广播器订阅驱动,无订阅即静默)。proper fix(回家):HAL per-instrument 命令互斥锁,或 measure 期间暂停 broadcaster;5/27 没炸大概率因当时无人开主控台。:① `CALC:FILT:FILE` 路径**不能带引号**(驱动的无引号形式才对,带引号必失败);② 一次错误后**该 socket 会话可能 wedge**——此后一切命令(含 `SYST:ERR?`)持续回 `-200 Wrong device state`、`*OPC?` 回 `-100.00000`,唯一解 = 重连会话(hal/switch 重载后同一仪器立刻 `0,"No error"`)。**规矩:F64 复杂操作一律走驱动路径**(自带 drain+长超时+fail-loud gate),`scpi-command` 透传只用于单条只读 query。UMi 3600M 加载本身**成功**(CLOSED→STOPPED,新会话确认)。
+- `[discovered on-site 2026-07-03 during Phase4 前]` **UXM TAF 空闲断连实证(P2-4 母题)**:Real 重载后 ~15 分钟无命令,HAL 持有的 5125 socket 被对端掐(BrokenPipeError);修复 = hal/switch 重载。**操作纪律:闲置 >10 分钟后要跑 measure,先重载 HAL 再跑**;proper fix = 驱动周期 keepalive poke(P2-4)。
+- `[discovered on-site 2026-07-03 during Phase4 前]` **UXM Test App 当前小区实配 DL ARFCN=636666(=3550 MHz)≠ 计划 3600**——Test App 启动自带态,非我们下发;等对齐决策(下发 640000 or UXM 面板手改)。
+- `[discovered on-site 2026-07-03 during precheck]` **P1-8 校准门不区分校准数据来源(mock/real)** —— 昨晚 pre-departure 的 **mock** 路损校准(32 链路@3600)在今天 **real** 模式 precheck 里 `cal_pass: true`("VALID, age 12.6h, cert@3600 matches")。门只查存在性+频率+时效,不查 provenance → 真测里会应用 mock 补偿值,RSRP/绝对功率被静默污染。今日可接受(吞吐 smoke 不信绝对值),但 proper fix = cal 记录带 `use_mock` 标记 + real 模式 strict 门拒 mock cert(feedback_runtime_gate_not_frozen_snapshot 同族:live source 还要 live **provenance**)。
+
+- `[discovered on-site 2026-07-03 during 任务6a]` **F64 SMB 匿名共享全开且可读** —— `Scenario Packs`/`D`/`User Playbacks` 等匿名可挂载;驱动注释预留的"走通 SMB 后动态发现 available_channel_models"路线**已实证可行**(今日已手动实录 18 条),后续可做成后端定期扫描/一键同步;顺带:匿名可写与否未测,若可写则 `.asc/.tap` 上传也可走 SMB 替代 FTP(P2-14/S6 相关)。
+- `[discovered on-site 2026-07-03 during Phase1]` **UXM 平台 fw 3.39.0.2 对 `SYSTem:APPLication:NAME?` 回 -113**(Test App 未启动时整个业务 SCPI 树不存在)—— 驱动 Test App 探测若依赖此命令需兼容 -113=未启动的语义(比"超时"更快更明确的判据)。
+- `[discovered on-site 2026-07-03 during Phase1]` **UXM 端点三层真相 + 驱动重定向条件漏 `inst0`** —— 实测:5025=平台(业务树 -113)/ **5125 raw socket = Test App Framework**(`C8700200A`,`SYSTem:APPLication:NAME?`→`LTE_NR_IRAT`,`BSE:CONFig:NR5G:CELL1:ACTive:STATe?`→1)。驱动的 Platform→hislip2 自动重定向只匹配 `SOCKET`/`hislip0` 资源串且显式配置时禁用,原绑定 `inst0::INSTR` 两条都不满足 → 真连会卡平台。**现场绕法(已做)**:绑定端点改 `TCPIP0::192.168.1.112::5125::SOCKET`,驱动 IDN 见非 Platform 不重定向、方言自动选 IRAT。**回家修法**:重定向条件补 `inst0`,或文档钉死"UXM 绑定一律写 TAF 端点"。今日运行 App=LTE_NR_IRAT(NSA/EN-DC),驱动 IRAT profile 覆盖,NR CELL1 已激活。
+- `[discovered on-site 2026-07-03 during Phase0]` 现场布线实况:F64(0.132)与 UXM(1.112)**同一物理段进 en14**,SA 实际 IP `192.168.0.134`(非 seed 的 100.23,绑定已现场更新);Mac 用 en14 三别名(0.3/1.100/100.100)覆盖。适配器枚举名会漂(en3/en4→en14),文档别硬编码接口名。

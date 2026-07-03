@@ -28,9 +28,16 @@
 set -euo pipefail
 
 API="${API:-http://localhost:8000/api/v1}"
-ASSET_ID="${ASSET_ID:-b328d53a-edfa-40a0-81e1-5efc759bcc5a}"  # F64 N78 场景文件 (vendor_file)
-FREQ_HZ="${FREQ_HZ:-3600000000}"
+ASSET_ID="${ASSET_ID:-b328d53a-edfa-40a0-81e1-5efc759bcc5a}"  # UMa 3600M 场景文件 (vendor_file, 4x4)
+# 2026-07-03 SMB 实测: UMa_3600M 工程真值 = 3549.99 MHz (ARFCN 636666, 恰是 UXM Test App
+# 自带默认 —— 厂商配套基线, UXM 免手工改频)。资产 scd 声明已按真值修正 (文件名 3600M 是
+# 标称, 会说谎), TestCase 频率必须同真值, 否则 P2-11 频率一致性网 fail-loud。
+FREQ_HZ="${FREQ_HZ:-3549990000}"
 BW_MHZ="${BW_MHZ:-100}"
+BAND="${BAND:-}"      # 2026-07-03 现场实证: 单载波自动构造 band=None → 驱动 set_cell_config
+                      # None.upper() 崩且 ARFCN 不下发; 显式给 band 是零代码修法 (r5 验证)。
+                      # 未显式传时从资产 scd_config.band 推导 (Codex #193 P2: 固定 n78 会让
+                      # 非 n78 资产覆盖跑时下发错 band); FR1 泛化视同无 band → n78 + 警告。
 LAYERS="${LAYERS:-4}"
 DURATION_S="${DURATION_S:-10}"
 RUN_TIMEOUT_S="${RUN_TIMEOUT_S:-1800}"
@@ -55,6 +62,24 @@ print({'vendor_file': 'keysight_gcm', 'standard_3gpp': 'mimo_first_asc',
 PY
 )
 echo "  期望 measure 引擎: $EXPECTED_ENGINE"
+
+# BAND 未显式传 → 从资产 scd_config.band 推导 (Codex #193 P2); FR1 泛化不是合法 NR band
+# 名 (722/836.5/1575.42/2450 等无准确 DL band 的登记值), 视同无 band。
+if [ -z "$BAND" ]; then
+  BAND=$(python3 - "$ASSET_JSON" <<'PY'
+import sys, json
+a = json.loads(sys.argv[1])
+b = str(((a.get('payload') or {}).get('scd_config') or {}).get('band') or '')
+print(b if b and b.upper() != 'FR1' else '')
+PY
+)
+  if [ -n "$BAND" ]; then
+    echo "  band 从资产推导: $BAND"
+  else
+    BAND=n78
+    echo "  ⚠ 资产无可用 band (缺失或 FR1 泛化), fallback n78 — 非 n78 资产请显式传 BAND=<nXX>"
+  fi
+fi
 
 say "2/6 快照现有 TestCase id 集 (用于精确绑定新会话的 case, Codex #192 P2)"
 BEFORE_IDS=$(curl -sf "$API/test-plans/cases?page_size=20&sort=-created_at" | python3 -c "
@@ -93,6 +118,9 @@ import sys, json
 c = json.load(sys.stdin)
 cfg = c.get('configuration') or {}
 cfg['channel_asset_id'] = '$ASSET_ID'
+# band 显式进单载波 (否则 pcell.band=None → UXM set_cell_config None.upper() 崩, ARFCN 不下发)
+cfg['component_carriers'] = [{'frequency_hz': float('$FREQ_HZ'), 'bandwidth_mhz': float('$BW_MHZ'),
+                              'band': '$BAND', 'role': 'pcell'}]
 json.dump({'configuration': cfg}, sys.stdout)" > /tmp/onsite_patch_$$.json
 curl -sf -X PATCH "$API/test-plans/cases/$TC_ID" -H "Content-Type: application/json" \
   -d @/tmp/onsite_patch_$$.json > /dev/null
