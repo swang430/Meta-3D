@@ -28,8 +28,11 @@
 set -euo pipefail
 
 API="${API:-http://localhost:8000/api/v1}"
-ASSET_ID="${ASSET_ID:-b328d53a-edfa-40a0-81e1-5efc759bcc5a}"  # F64 N78 场景文件 (vendor_file)
-FREQ_HZ="${FREQ_HZ:-3600000000}"
+ASSET_ID="${ASSET_ID:-b328d53a-edfa-40a0-81e1-5efc759bcc5a}"  # UMa 3600M 场景文件 (vendor_file, 4x4)
+# 2026-07-03 SMB 实测: UMa_3600M 工程真值 = 3549.99 MHz (ARFCN 636666, 恰是 UXM Test App
+# 自带默认 —— 厂商配套基线, UXM 免手工改频)。资产 scd 声明已按真值修正 (文件名 3600M 是
+# 标称, 会说谎), TestCase 频率必须同真值, 否则 P2-11 频率一致性网 fail-loud。
+FREQ_HZ="${FREQ_HZ:-3549990000}"
 BW_MHZ="${BW_MHZ:-100}"
 BAND="${BAND:-n78}"   # 2026-07-03 现场实证: 单载波自动构造 band=None → 驱动 set_cell_config
                       # None.upper() 崩且 ARFCN 不下发; 显式给 band 是零代码修法 (r5 验证)
