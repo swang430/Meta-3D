@@ -117,6 +117,9 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
         # PyVISA handles
         self._rm = None
         self._visa_resource = None
+        # P1-21 ①: per-driver SCPI 命令互斥 (同 F64 — async to_thread IO 无锁
+        # 并发会应答串线; FS16 同型预防, 排水/INP 语义是 F64 实证特有不扩)。
+        self._scpi_lock = asyncio.Lock()
 
         # Identification + capability cache (filled by connect())
         self._product_family: Optional[str] = None
@@ -421,6 +424,11 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
             return False
 
     async def _do_write(self, cmd: str, timeout: Optional[int] = None) -> None:
+        # P1-21 ①: SCPI IO 互斥 — 见 __init__ _scpi_lock 注释
+        async with self._scpi_lock:
+            await self._do_write_unlocked(cmd, timeout)
+
+    async def _do_write_unlocked(self, cmd: str, timeout: Optional[int] = None) -> None:
         for attempt in (0, 1):
             if not self._visa_resource:
                 raise RuntimeError("[FS16] No VISA resource")
@@ -441,6 +449,11 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
                 raise
 
     async def _do_query(self, cmd: str, timeout: Optional[int] = None) -> str:
+        # P1-21 ①: SCPI IO 互斥 — 见 __init__ _scpi_lock 注释
+        async with self._scpi_lock:
+            return await self._do_query_unlocked(cmd, timeout)
+
+    async def _do_query_unlocked(self, cmd: str, timeout: Optional[int] = None) -> str:
         for attempt in (0, 1):
             if not self._visa_resource:
                 raise RuntimeError("[FS16] No VISA resource")

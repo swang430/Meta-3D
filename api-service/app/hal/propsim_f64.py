@@ -423,6 +423,9 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self._available_channel_models: List[Any] = (
             config.get("available_channel_models") or []
         )
+        # P1-21 ①: per-driver SCPI 命令互斥 — 全部 _do_write/_do_query IO 串行化
+        # (broadcaster 与测量序列并发共用单 socket 会应答串线, 现场 P1 根因)。
+        self._scpi_lock = asyncio.Lock()
         self._center_freq_mhz: float = 3500.0
         # P2-11 (Codex on PR #109 P2): 是否**显式下发过**中心频 (CALC:FILT:CENT:CH)。
         # False 时 _center_freq_mhz 只是默认值 3500, 不能当真值上报 —— get_frequency_
@@ -1877,6 +1880,17 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             self._last_error = str(e)
             return False
 
+    @staticmethod
+    def _inp_meas_timeout_ms(measurement_time_s: float) -> int:
+        """INP 测量族 (INP:LEV:MEAS? / AUTOSET 及其 *OPC?) 的超时 (P1-21 ③)。
+
+        2026-07-03 实证: 这族命令是 **deferred-response** — 结果就绪才应答
+        (要等满 measurement_time + 器件内部整理), 不是固定延迟; 固定短超时
+        读法必错位 (超时后应答迟到, 下一条 query 读串, 现场会话连锁错位的
+        源头之一)。按测量时长给 5s 缓冲, 下限保持 VISA_TIMEOUT_AUTOSET。
+        """
+        return max(VISA_TIMEOUT_AUTOSET, int((measurement_time_s + 5) * 1000))
+
     async def autoset_input_level(self, input_num: int, measurement_time_s: float = 3.0) -> Optional[float]:
         """
         自动测量并设置输入电平和峰均比。
@@ -1890,10 +1904,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         if not self._visa_resource:
             return None
         try:
-            # 先测量
+            # 先测量 (deferred-response — 超时按测量时长, P1-21 ③)
             result = await self._query(
                 f"INP:LEV:MEAS? {input_num},{measurement_time_s}",
-                timeout=VISA_TIMEOUT_AUTOSET
+                timeout=self._inp_meas_timeout_ms(measurement_time_s)
             )
             # 响应格式: "<level_dBm>,<crest_factor_dB>"
             parts = result.strip().split(",")
@@ -1906,10 +1920,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             )
             # 用 IEEE 488.2 *OPC? 同步等待 autoset 完成 — 比硬 sleep 可靠:
             # *OPC? 阻塞直到所有挂起的 SCPI 操作完成, 立即返回 "1".
-            # timeout 给 (measurement_time + 2)s 缓冲, 防止 PROPSIM 内部
-            # autoset 略超额定时间.
-            opc_timeout_ms = int((measurement_time_s + 2) * 1000)
-            await self._query("*OPC?", timeout=opc_timeout_ms)
+            # 超时按测量时长动态 (deferred-response, P1-21 ③)。
+            await self._query(
+                "*OPC?", timeout=self._inp_meas_timeout_ms(measurement_time_s)
+            )
 
             logger.info(f"[F64] Input {input_num} autoset: {level_dbm} dBm, crest={crest_db} dB")
             return level_dbm
@@ -1956,7 +1970,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         try:
             resp = (await self._query(
                 f"INP:LEV:MEAS? {input_num},{measurement_time_s}",
-                timeout=VISA_TIMEOUT_AUTOSET,
+                timeout=self._inp_meas_timeout_ms(measurement_time_s),
             )).strip()
             parts = resp.split(",")
             avg = float(parts[0])
@@ -1981,10 +1995,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         try:
             # ① 清空遗留 stale 错误 (FIFO, 否则会被 ③ 误判成本次 AUTOSET 失败)
             await self._drain_errors()
-            # ② AUTOSET 全输入
+            # ② AUTOSET 全输入 (*OPC? 超时按测量时长动态, deferred-response P1-21 ③)
             await self._write(f"INP:LEV:AUTOSET 0,{measurement_time_s}")
-            opc_timeout_ms = int((measurement_time_s + 2) * 1000)
-            await self._query("*OPC?", timeout=opc_timeout_ms)
+            await self._query(
+                "*OPC?", timeout=self._inp_meas_timeout_ms(measurement_time_s)
+            )
             # ③ fail-loud: AUTOSET 失败 (无信号/过强) 报 device error (§20.4.4.7) →
             #    return False, 不能让 Phase 2 编排拿 stale/无效参考继续 (Codex on PR #95)
             autoset_err = await self._first_error()
@@ -2276,6 +2291,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
         刚启动仿真 / 改路损 / autoset 后, F64 内部测量缓冲尚未填满会返回
         'not ready' — retry 多次后仍 not-ready 才放弃.
+
+        ⚠ P1-21 ④ (2026-07-03 实证): 输出功率测量在仿真 **STOPPED 态冻结** —
+        32 口同值 σ=0 的"合理数字", 不是当前实际 (输入侧测量族独立仍活)。
+        停止态读数只可作最后运行时的快照参考; 消费方判 `_emulation_running`。
         """
         if not self._visa_resource:
             return None
@@ -2412,6 +2431,9 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     output_powers[out] = None
                     query_errors.append(f"output_{out}: {e}")
             metrics["output_powers_dbm"] = output_powers
+            # P1-21 ④: STOPPED 态输出测量冻结 (最后运行时快照, 非当前实际) —
+            # cockpit / 监控消费方据此标注"停止态读数不可信", 输入侧不受影响。
+            metrics["output_powers_frozen"] = not self._emulation_running
 
             if query_errors:
                 metrics["query_errors"] = query_errors
@@ -2607,10 +2629,65 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     async def _do_write(self, cmd: str, timeout: Optional[int] = None) -> None:
         """发送 SCPI 写命令（由基类 _write() 自动调用，SCPI 日志已由基类记录）。
 
-        Transparently retries once on ``VI_ERROR_CONN_LOST`` /
-        ``VI_ERROR_INV_OBJECT`` (PyVISA conn-lost shapes). Timeouts and
-        other VisaIOError codes propagate unchanged.
+        P1-21 ①: 全部 SCPI IO 过 per-driver `_scpi_lock` — monitoring
+        broadcaster (1s 循环 32+ 查询) 与测量序列共用单 socket, 无互斥并发
+        = 应答串线/错位/僵死 (2026-07-03 现场 P1 根因)。锁同时消掉
+        `_visa_resource.timeout` 属性覆盖/恢复的竞态。
+        P1-21 ②: 超时 (VI_ERROR_TMO) 后在锁内做轻量排水 (SYST:ERR? 循环,
+        会话恢复干净), 原异常照样上抛 — 调用方知道该命令失败, 但下一条
+        命令不再读到迟到应答; 排水失败才需要上层重载。
         """
+        async with self._scpi_lock:
+            try:
+                await self._do_write_unlocked(cmd, timeout)
+            except Exception as e:
+                if self._is_visa_timeout(e):
+                    await self._drain_after_timeout(cmd)
+                raise
+
+    async def _do_query(self, cmd: str, timeout: Optional[int] = None) -> str:
+        """发送 SCPI 查询命令并返回响应 — 互斥/排水语义同 `_do_write`。"""
+        async with self._scpi_lock:
+            try:
+                return await self._do_query_unlocked(cmd, timeout)
+            except Exception as e:
+                if self._is_visa_timeout(e):
+                    await self._drain_after_timeout(cmd)
+                raise
+
+    @staticmethod
+    def _is_visa_timeout(exc: BaseException) -> bool:
+        from app.hal._visa_reconnect import is_visa_timeout
+        return is_visa_timeout(exc)
+
+    async def _drain_after_timeout(self, timed_out_cmd: str) -> bool:
+        """超时后轻量恢复 (P1-21 ②, 替代"超时必重载 HAL"现场纪律)。
+
+        机制: 超时命令的应答会迟到, 留在会话里让下一条 query 读错位。连续
+        SYST:ERR? 短超时读 — 第一条会把迟到应答消费掉, 后续读到错误队列,
+        直到 "0,..." (队列空, 会话净) 或上限 4 条 (2026-07-03 实测 2 条即净)。
+        全程已持 _scpi_lock (由 _do_write/_do_query 调用)。失败只记日志 —
+        原始超时异常由调用方上抛, 这里不再抛。
+        """
+        try:
+            for i in range(4):
+                resp = (await self._do_query_unlocked("SYST:ERR?", timeout=2000)).strip()
+                if resp.startswith("0"):
+                    logger.warning(
+                        f"[F64] 超时排水完成 ({i + 1} 条) — 会话已净 "
+                        f"(超时命令: {timed_out_cmd[:40]!r})"
+                    )
+                    return True
+            logger.error("[F64] 超时排水 4 条仍未净 — 会话可能错位, 建议重载驱动")
+        except Exception as drain_e:  # noqa: BLE001
+            logger.error(
+                f"[F64] 超时排水失败 ({type(drain_e).__name__}: {drain_e}) — "
+                f"会话可能错位, 建议重载驱动"
+            )
+        return False
+
+    async def _do_write_unlocked(self, cmd: str, timeout: Optional[int] = None) -> None:
+        """实际写 IO (锁内)。conn-lost 一次静默重连重试; 其余异常原样上抛。"""
         for attempt in (0, 1):
             if timeout:
                 original_timeout = self._visa_resource.timeout
@@ -2635,10 +2712,8 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     except Exception:
                         pass
 
-    async def _do_query(self, cmd: str, timeout: Optional[int] = None) -> str:
-        """发送 SCPI 查询命令并返回响应（由基类 _query() 自动调用，SCPI 日志已由基类记录）。
-
-        Same retry semantics as ``_do_write``."""
+    async def _do_query_unlocked(self, cmd: str, timeout: Optional[int] = None) -> str:
+        """实际查询 IO (锁内) — retry 语义同 `_do_write_unlocked`。"""
         for attempt in (0, 1):
             if timeout:
                 original_timeout = self._visa_resource.timeout
