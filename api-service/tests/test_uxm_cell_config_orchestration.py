@@ -326,3 +326,45 @@ class TestInst0Redirect:
         ok = await d.connect()
         assert ok is True
         assert not any("hislip2" in r for r in opened), opened  # 保持锁定
+
+
+class TestTextualCellStates:
+    """Codex #195 复扫 P1: 5G 方言文本态 (IDLE/ATT/CONN) 也是活动态。"""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("state_text", ["IDLE", "ATT", "CONN", "ON"])
+    async def test_textual_active_states_trigger_wrapping(self, driver_5g, state_text):
+        _, written = wire_echo_visa(
+            driver_5g, overrides={"ACTive:STATe?": state_text})
+        ok = await driver_5g.set_cell_config({"band": "N78", "bandwidth_mhz": 100})
+        assert ok is True
+        # 5G profile 状态写是文本形式 (STATe OFF/ON), IRAT 是 0/1 — 兼容两形式
+        assert any(w.endswith(("ACTive:STATe 0", "ACTive:STATe OFF"))
+                   for w in written), (state_text, written)
+        assert any(w.endswith(("ACTive:STATe 1", "ACTive:STATe ON"))
+                   for w in written), (state_text, written)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("state_text", ["0", "OFF", ""])
+    async def test_inactive_states_skip_wrapping(self, driver_5g, state_text):
+        _, written = wire_echo_visa(
+            driver_5g, overrides={"ACTive:STATe?": state_text})
+        ok = await driver_5g.set_cell_config({"band": "N78", "bandwidth_mhz": 100})
+        assert ok is True
+        assert not any("ACTive:STATe 0" in w or "ACTive:STATe OFF" in w
+                       for w in written), (state_text, written)
+
+    @pytest.mark.asyncio
+    async def test_off_write_failure_returns_false_not_raise(self, driver_irat):
+        """Codex #195 复扫 P2: OFF 写失败走布尔契约, 不向 caller 裸抛。"""
+        sess, written = wire_echo_visa(driver_irat, cell_active=True)
+        orig = sess.write.side_effect
+
+        def _boom_on_off(cmd):
+            orig(cmd)
+            if cmd.strip().endswith("ACTive:STATe 0"):
+                raise RuntimeError("simulated session drop on deactivate")
+
+        sess.write.side_effect = _boom_on_off
+        ok = await driver_irat.set_cell_config({"band": "N78", "bandwidth_mhz": 100})
+        assert ok is False  # 布尔契约, 无裸异常

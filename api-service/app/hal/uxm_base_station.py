@@ -721,23 +721,32 @@ class RealUxmDriver(BaseStationDriver):
         # 查询异常) 时保持旧行为直写, 不猜。
         cell_was_on = False
         cell_restore_pending = False  # Codex #195 P1: 失败路径也必须恢复 ON
-        if "bandwidth_mhz" in config:
-            state_q = self._cmd("CELL_STATE_QUERY", cell=cell)
-            if state_q is not None:
-                try:
-                    state_resp = (self._query(state_q) or "").strip()
-                    cell_was_on = state_resp in ("1", "ON")
-                except Exception as e:  # noqa: BLE001
-                    logger.warning(
-                        f"[UXM] 小区状态探测失败 ({type(e).__name__}); 带宽按"
-                        f"直写处理 — ON 态下发会被 -221 拒 (队列可见)"
-                    )
-            if cell_was_on:
-                logger.info(f"[UXM] {cell} ACTive → OFF (带宽改动需要, 配置后恢复)")
-                self._write(self._cmds.CELL_STATE_OFF.format(cell=cell))
-                cell_restore_pending = True
 
         try:
+            # (Codex #195 P2: 探测与 OFF 写必须在 try 内 —— OFF 写失败也要走
+            # 布尔契约 return False, 不能向 HAL caller 裸抛。)
+            if "bandwidth_mhz" in config:
+                state_q = self._cmd("CELL_STATE_QUERY", cell=cell)
+                if state_q is not None:
+                    try:
+                        state_resp = (self._query(state_q) or "").strip().upper()
+                        # Codex #195 复扫 P1: 5G_NR_Test 方言回文本态 (IDLE/ATT/
+                        # CONN/ON/OFF, 见 get_cell_state 先例), IRAT 回 "0"/"1"。
+                        # 非活动 = "0"/空/含 OFF; 其余 (含未知文本) 保守视为活动
+                        # —— 漏判会 -221 配置失败, 多环绕只是多一次秒级 OFF/ON。
+                        cell_was_on = not (
+                            state_resp in ("0", "") or "OFF" in state_resp
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            f"[UXM] 小区状态探测失败 ({type(e).__name__}); 带宽按"
+                            f"直写处理 — ON 态下发会被 -221 拒 (队列可见)"
+                        )
+                if cell_was_on:
+                    logger.info(f"[UXM] {cell} ACTive → OFF (带宽改动需要, 配置后恢复)")
+                    self._write(self._cmds.CELL_STATE_OFF.format(cell=cell))
+                    cell_restore_pending = True
+
             # ---- 0. 频率 → 频段/双工 自动推断 ----
             if "frequency_mhz" in config:
                 self._frequency_mhz = config["frequency_mhz"]
