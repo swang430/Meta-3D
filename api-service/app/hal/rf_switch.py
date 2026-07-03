@@ -133,14 +133,20 @@ class EtslSwitchDriver(RfSwitchDriver):
     - 互锁: ``INTLK? SAFETYRELAY`` -> 0 正常 / 1 互锁 (Relay A 被硬件锁, 软件无法覆盖)。
     - 双槽卡 (SP6T) 用两槽中靠前的槽号寻址 (文档 p5)。
 
+    Transport (P2-9 现场收口, 2026-07-03 CAICT 实证):
+    - ``transport``: **"vxi11" (默认)** | "raw"。老固件 (现场机 2.5.1) LAN **只有
+      VXI-11** (rpcinfo 395183/395184@tcp879), raw socket 5025 仅新固件才有 ——
+      2026-05-27 现场 raw 无响应的最终真因。VXI-11 走 pyvisa
+      ``TCPIP0::{ip}::inst0::INSTR`` + 裸命令 + CR (全通实证); 响应尾带
+      ``\\n\\x00``, _parse_response 清洗。raw 路径保留 (新固件/串口桥)。
+
     现场未证实项 (做成 config 可调, 默认按权威文档; 现场只调配置不改代码, 同 P0-8 哲学):
-    - ``port``: 官方手册 (主手册 399342 + SCPI 命令文档) 均不写 LAN 端口 (ETS 系统性不文档化)。
-      默认用 SCPI 行业标准 raw-socket 端口 5025 (IANA/Keysight 标准, EMCenter 命令是裸 SCPI 风格,
-      有依据)。现场试序 5025 -> 5024 (SCPI-telnet) -> 23; 不通切串口 plan B (见调研文档)。真实值
-      查机箱触摸屏 Configuration Screen 后填 binding connection_params.port。
+    - ``port``: 仅 raw transport 用。官方手册不写 LAN 端口 (ETS 系统性不文档化), 默认
+      SCPI 行业标准 5025; 真实值查机箱触摸屏 Configuration Screen 后填 binding
+      connection_params.port。
     - ``command_style``: "raw" (默认, 裸命令, 符合文档) | "verbose" (回退 Write/Query 包装,
       仅当 raw 现场无响应时试; 无文档依据)。
-    - ``line_terminator``: "cr" (默认, 符合文档) | "lf" | "crlf"。
+    - ``line_terminator``: "cr" (默认, 符合文档 + VXI-11 实证) | "lf" | "crlf"。
     """
 
     # LAN socket 端口: 官方主手册 399342 + SCPI 命令文档均不写 (ETS 系统性不文档化)。默认用 SCPI
@@ -154,24 +160,41 @@ class EtslSwitchDriver(RfSwitchDriver):
         super().__init__(instrument_id, config)
         self._ip = config.get("ip_address", "127.0.0.1")
         self._port = int(config.get("port") or self._DEFAULT_PORT)
+        # P2-9: 默认 vxi11 — 现场机老固件 (2.5.1) 唯一实证 LAN 通路
+        self._transport = str(config.get("transport") or "vxi11").lower()
         self._command_style = str(config.get("command_style") or "raw").lower()
         self._line_terminator = self._TERMINATOR_MAP.get(
             str(config.get("line_terminator", "cr")).lower(), "\r"
         )
         self._reader: asyncio.StreamReader = None
         self._writer: asyncio.StreamWriter = None
+        self._visa_rm = None
+        self._visa_session = None
 
     async def connect(self) -> bool:
         try:
-            self._reader, self._writer = await asyncio.open_connection(self._ip, self._port)
-            
+            if self._transport == "vxi11":
+                import pyvisa
+                self._visa_rm = pyvisa.ResourceManager("@py")
+                resource = f"TCPIP0::{self._ip}::inst0::INSTR"
+                self._visa_session = await asyncio.to_thread(
+                    self._visa_rm.open_resource, resource
+                )
+                # 终止符交 pyvisa (裸命令 + CR 现场全通); 响应尾 \n\x00 由
+                # _parse_response 清洗, 不设 read_termination (避免吞 \x00 前内容)
+                self._visa_session.write_termination = self._line_terminator
+                self._visa_session.timeout = 5000
+                logger.info(f"[EtslSwitch] VXI-11 connected: {resource}")
+            else:
+                self._reader, self._writer = await asyncio.open_connection(self._ip, self._port)
+
             # Check safety interlock
             interlock_status = await self._send_command("INTLK? SAFETYRELAY")
             if interlock_status == "1":
                 logger.error(f"[EtslSwitch] Hardware Interlock Active. Cannot operate relays.")
                 self._set_status(InstrumentStatus.ERROR)
                 return False
-                
+
             self._set_status(InstrumentStatus.CONNECTED)
             return True
         except Exception as e:
@@ -180,6 +203,12 @@ class EtslSwitchDriver(RfSwitchDriver):
             return False
 
     async def disconnect(self) -> bool:
+        if self._visa_session is not None:
+            try:
+                await asyncio.to_thread(self._visa_session.close)
+            except BaseException:
+                pass
+            self._visa_session = None
         if self._writer:
             self._writer.close()
             try:
@@ -206,10 +235,13 @@ class EtslSwitchDriver(RfSwitchDriver):
 
     @staticmethod
     def _parse_response(raw: str) -> str:
-        """裸响应去终止符。容错: verbose/旧固件可能带 'Read ' 动作前缀, 一并剥。"""
-        return raw.replace("Read ", "").strip()
+        """裸响应去终止符。容错: verbose/旧固件可能带 'Read ' 动作前缀, 一并剥;
+        VXI-11 响应尾带 ``\\n\\x00`` (2026-07-03 实录), NUL 一并清洗。"""
+        return raw.replace("Read ", "").strip("\x00 \t\r\n")
 
     async def _send_command(self, cmd: str) -> Optional[str]:
+        if self._transport == "vxi11":
+            return await self._send_command_vxi11(cmd)
         if not self._writer:
             return None
         try:
@@ -222,6 +254,24 @@ class EtslSwitchDriver(RfSwitchDriver):
             return "OK"
         except Exception as e:
             logger.error(f"[EtslSwitch] Command {cmd} failed: {e}")
+            return None
+
+    async def _send_command_vxi11(self, cmd: str) -> Optional[str]:
+        """VXI-11 路径: 终止符由 pyvisa write_termination 加 (connect 时按
+        line_terminator 配), _frame 的 command_style 包装仍生效但不再自拼终止符。"""
+        if self._visa_session is None:
+            return None
+        body = self._frame(cmd)
+        if self._line_terminator and body.endswith(self._line_terminator):
+            body = body[: -len(self._line_terminator)]
+        try:
+            if "?" in cmd:
+                raw = await asyncio.to_thread(self._visa_session.query, body)
+                return self._parse_response(raw)
+            await asyncio.to_thread(self._visa_session.write, body)
+            return "OK"
+        except Exception as e:
+            logger.error(f"[EtslSwitch] VXI-11 command {cmd} failed: {e}")
             return None
 
     async def configure(self, config: Dict[str, Any]) -> bool:

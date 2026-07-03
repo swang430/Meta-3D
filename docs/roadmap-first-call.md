@@ -1106,7 +1106,12 @@ SYN, 于是每个 IP 都"alive"、每个子网都"可达"。实测连 RFC5737 TE
 
 ---
 
-### P1-21 — HAL 会话卫生 (命令互斥 + 超时排水恢复 + 延迟应答语义)
+### P1-21 — HAL 会话卫生 (命令互斥 + 超时排水恢复 + 延迟应答语义) ✅ Done (2026-07-04 #197)
+
+> 收口: ①-④ 全落地 — F64/FS16 `_scpi_lock` 互斥 (并发度探针=1) / 超时 SYST:ERR?
+> 排水 (读到 0 止, 上限 4, 原异常照抛) / `_inp_meas_timeout_ms` 动态超时 /
+> `output_powers_frozen` metrics 标注。8 用例; "measure 期间暂停 broadcaster"
+> 备选不再需要 (锁即互斥)。真机验收 (监控开着跑测量零串线) 待下次现场。
 
 **What**: ① per-instrument asyncio 命令锁 —— monitoring broadcaster 与测量序列共用 F64 单 socket 无互斥是当日 P1 级根因(应答串线/错位/僵死全家桶), 或 measure 期间暂停 broadcaster; ② F64 超时后**轻量恢复策略**: 自动排水 SYST:ERR? N 条 + 功能查询验证(实测 2 条即净), 失败才升级重载(替代今日"超时必重载 HAL"人肉纪律; UXM 丝滑度测试实证恢复成本极低); ③ INP 测量族 deferred-response 语义适配(结果就绪才回, 固定超时读法必错位); ④ F64 输出功率测量 STOPPED 态冻结语义(驱动注释 + cockpit 监控层"停止态读数不可信"标注)。
 
@@ -1528,7 +1533,7 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 
 **Status**: 🔄 本地半 done (本 PR) — ① 协议调研 ✅ + ② driver 协议修正 ✅; ③ 接入 TopologyEditor + 现场实测 🚧 blocked。**关键发现**: `EtslSwitchDriver` 早已存在但有协议 bug (Write/Query 前缀误读文档动作标签 + LF 终止符, 极可能是 5/27 现场 raw socket 无响应真因) + 零协议单测。**① 调研结论**: AMS8947-195-1 = ETS-Lindgren EMCenter + EMSwitch 插卡, 原生 SCPI over LAN/GPIB **不必经 EMQuest** (EMQuest 是可选上位软件; 系统图 "EMQuest NET Port" 只是物理接线盘标签); 命令裸 `<slot>:<cmd>` + CR 终止 (非 Write/Query 包装)。**② 修正**: driver 改默认裸命令 + CR + 可配置回退 (`command_style`/`line_terminator`, 现场只调配置不改代码, 同 P0-8) + SP6T reset 安全跳过 + 18 例协议单测; 完整调研 + 命令集 + 拓扑 + 现场 runbook 见 [docs/site-debug/2026-06-04-emcenter-switch-protocol.md](site-debug/2026-06-04-emcenter-switch-protocol.md)。**现场缺口**: TCP 端口 (官方手册都不写; SCPI 标准 5025 首选 + 串口 9600 plan B, web 调研已收敛, 详见调研文档) + 每槽卡型号 + SP6T↔天线映射 + SP6T 复位语义。
 **下一步**: ③ 现场按 runbook 定端口 (raw+CR 默认, 逃生开关试 verbose/lf) + `<slot>:*IDN?` 认卡 + 标定 SP6T 映射 → 接入 TopologyEditor 的 mapping/连线 (见 memory: TopologyEditor 核心价值是 mapping 不是设备选型)。
-**▶ 2026-07-03 现场半收口**: **老固件 2.5.1 的 LAN = VXI-11 (非 raw socket)** —— rpcinfo 见 Core/Abort 通道; pyvisa `TCPIP0::192.168.0.50::inst0::INSTR`(现有绑定本就是此形式)+ 裸命令 + CR **实测全通**: 机箱 IDN / 逐槽认卡 (Slot1 EMControl 7006-001, Slot2-4 EMSwitch 7001-002/B, Slot5 7001-003/B SP6T 值域实证, Slot8 Processor 7000-009) / 继电器读态; **当日人工通路快照 Slot4 A/B/C=NO/NO/NO + Slot5 A/B=1/1**; 响应尾带 `\n\x00` NUL; `INTLK? SAFETYRELAY` 回 ERROR 3 (此固件不支持)。2025-08 RevA 文档的 raw 5025 仅适用新固件。**剩余本地半②**: EtslSwitchDriver 加 VXI-11 transport (endpoint 形式自动选 / `connection_params.transport` 覆盖) + NUL 尾容错 + INTLK ERROR 容错 + SP6T 值域 1-6 + 单测 (~0.5 day); 之后接 TopologyEditor mapping。详见 [`guides/onsite-tasks-20260703.md`](guides/onsite-tasks-20260703.md) discovered "EMCenter 复盘"条。
+**▶ 2026-07-03 现场半收口**: **老固件 2.5.1 的 LAN = VXI-11 (非 raw socket)** —— rpcinfo 见 Core/Abort 通道; pyvisa `TCPIP0::192.168.0.50::inst0::INSTR`(现有绑定本就是此形式)+ 裸命令 + CR **实测全通**: 机箱 IDN / 逐槽认卡 (Slot1 EMControl 7006-001, Slot2-4 EMSwitch 7001-002/B, Slot5 7001-003/B SP6T 值域实证, Slot8 Processor 7000-009) / 继电器读态; **当日人工通路快照 Slot4 A/B/C=NO/NO/NO + Slot5 A/B=1/1**; 响应尾带 `\n\x00` NUL; `INTLK? SAFETYRELAY` 回 ERROR 3 (此固件不支持)。2025-08 RevA 文档的 raw 5025 仅适用新固件。**剩余本地半② ✅ Done (2026-07-04 #198)**: EtslSwitchDriver VXI-11 transport 落地 (`transport` 默认 vxi11 = 现场唯一实证形态, raw 保留给新固件/串口桥; pyvisa `TCPIP0::{ip}::inst0::INSTR` @py 后端 + 裸命令 + CR 交 write_termination) + NUL 尾清洗 + INTLK "ERROR 3" 容错放行 + 5 协议单测。SP6T 值域硬校验留到接 TopologyEditor mapping 时做 (需 mapping 携带 relay_type 卡型, 值域实证已录 docstring)。**剩余现场半③**: 按通路快照验证真机切换 + 接 TopologyEditor mapping。详见 [`guides/onsite-tasks-20260703.md`](guides/onsite-tasks-20260703.md) discovered "EMCenter 复盘"条。
 **来源**: 2026-05-27 现场, 见 [morning-log](site-debug/2026-05-27-morning-log.md) §10.1。文档: `Instrument_API_Doc/` 下 ETS-L EMCenter / EMSwitch + CAICT Chamber Switch (TMC AMS8947)。
 **Estimate**: offline 调研 0.5 day + 现场 0.5 day
 

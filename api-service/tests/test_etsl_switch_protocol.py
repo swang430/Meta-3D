@@ -27,8 +27,9 @@ def _resp(text):
 
 
 def _make_driver(config=None, responses=None):
-    """mock 驱动: responses 是 readline 依次返回的 bytes (查询响应)。"""
-    drv = EtslSwitchDriver("emcenter-test", config or {})
+    """mock 驱动 (raw transport 路径): responses 是 readline 依次返回的 bytes。
+    P2-9 现场收口后默认 transport=vxi11, raw 协议层用例显式钉 raw。"""
+    drv = EtslSwitchDriver("emcenter-test", {"transport": "raw", **(config or {})})
     writer = MagicMock()
     writer.write = MagicMock()
     writer.drain = AsyncMock()
@@ -165,3 +166,75 @@ class TestPortConfig:
         drv = EtslSwitchDriver("t", {})
         assert drv._port == 5025
         assert EtslSwitchDriver._DEFAULT_PORT == 5025
+
+
+class _FakeVisaSession:
+    """fake pyvisa session: 记录 write/query, query 响应带实录 \\n\\x00 尾。"""
+
+    def __init__(self, query_responses=None):
+        self.written: list[str] = []
+        self.queried: list[str] = []
+        self._responses = list(query_responses or [])
+        self.write_termination = None
+        self.timeout = None
+
+    def write(self, body):
+        self.written.append(body)
+
+    def query(self, body):
+        self.queried.append(body)
+        return (self._responses.pop(0) if self._responses else "0") + "\n\x00"
+
+    def close(self):
+        pass
+
+
+def _make_vxi11_driver(config=None, query_responses=None):
+    drv = EtslSwitchDriver("emcenter-vxi", config or {})
+    drv._visa_session = _FakeVisaSession(query_responses)
+    return drv, drv._visa_session
+
+
+class TestVxi11Transport:
+    """P2-9 现场收口 (2026-07-03): 老固件 2.5.1 LAN 只有 VXI-11 —— 裸命令 + CR
+    经 pyvisa TCPIP0::ip::inst0::INSTR 全通实证; 响应尾 \\n\\x00 清洗。"""
+
+    def test_default_transport_is_vxi11(self):
+        # 默认 = 现场唯一实证形态 (raw 5025 仅新固件; P0-8 哲学: 默认即可用)
+        assert EtslSwitchDriver("t", {})._transport == "vxi11"
+        assert EtslSwitchDriver("t", {"transport": "raw"})._transport == "raw"
+
+    async def test_connect_opens_inst0_resource(self, monkeypatch):
+        import pyvisa as _pv
+        opened: list[str] = []
+        session = _FakeVisaSession(query_responses=["0"])  # INTLK? -> 0
+
+        rm = MagicMock()
+        rm.open_resource = MagicMock(side_effect=lambda r, **kw: (opened.append(r), session)[1])
+        monkeypatch.setattr(_pv, "ResourceManager", MagicMock(return_value=rm))
+
+        drv = EtslSwitchDriver("emcenter-vxi", {"ip_address": "192.168.0.50"})
+        assert await drv.connect() is True
+        assert opened == ["TCPIP0::192.168.0.50::inst0::INSTR"]
+        assert session.write_termination == CR  # 裸命令 + CR (终止符交 pyvisa)
+
+    async def test_query_strips_trailing_nul(self):
+        drv, sess = _make_vxi11_driver(query_responses=["NO"])
+        assert await drv.get_path("4:INT_RELAY_A") == 1  # "NO\n\x00" -> "NO" -> 1
+        assert sess.queried == ["4:INT_RELAY_A?"]  # 裸命令体, 无终止符 (pyvisa 加)
+
+    async def test_switch_path_writes_without_terminator(self):
+        drv, sess = _make_vxi11_driver()
+        assert await drv.switch_path("5:INT_RELAY_A", 0, 3) is True
+        assert sess.written == ["5:INT_RELAY_A_3"]
+        assert sess.queried == []  # 写命令不 query
+
+    async def test_interlock_error3_does_not_block_connect(self, monkeypatch):
+        """现场实录 INTLK? 回 'ERROR 3' (interlock 未接线) — 不等于 '1', 放行。"""
+        import pyvisa as _pv
+        session = _FakeVisaSession(query_responses=["ERROR 3"])
+        rm = MagicMock()
+        rm.open_resource = MagicMock(return_value=session)
+        monkeypatch.setattr(_pv, "ResourceManager", MagicMock(return_value=rm))
+        drv = EtslSwitchDriver("emcenter-vxi", {"ip_address": "192.168.0.50"})
+        assert await drv.connect() is True
