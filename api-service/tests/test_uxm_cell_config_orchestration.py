@@ -1,0 +1,235 @@
+"""P1-19: UXM set_cell_config 编排正修的行为锁定。
+
+2026-07-03 CAICT 现场实证驱动的五组行为:
+  ① "键在但值 None" 视同缺失 (band=None 曾致 .upper() 崩, ARFCN 不下发);
+  ② 小区 ACTive 时禁改带宽 (-221) → ON 态改 BW 走 OFF→配→ON 环绕;
+  ③ IRAT 带宽值令牌形式 "BW100" + TDD 下 UL:BW 跟随 DL 跳过单独下发;
+  ④ SSB/PointA 基线自动补 (目标 ARFCN 命中 EMQuest 基线才补, 严格合拍);
+  ⑤ 写后回读对账 fail-loud (IRAT 默认开; 老 5G App 查询不支持默认关)。
+"""
+from unittest.mock import MagicMock
+
+import pytest
+
+from app.hal.uxm_base_station import RealUxmDriver
+
+
+@pytest.fixture
+def driver_irat():
+    return RealUxmDriver("uxm-irat", {"ip": "10.0.0.2", "uxm_profile": "irat"})
+
+
+@pytest.fixture
+def driver_5g():
+    return RealUxmDriver("uxm-5g", {"ip": "10.0.0.1"})
+
+
+def wire_echo_visa(driver, cell_active: bool = False, overrides: dict | None = None):
+    """回显式 fake visa session: 配置查询回显最近一次对应写入的值。
+
+    - ``*OPC?`` → "1"; ``...ACTive:STATe?`` → cell_active 初值 (写入 STATe 后跟随);
+    - 其他 ``X?`` → 找最近一次 ``X <value>`` 写入回显 value, 没有则 "0";
+    - overrides: {查询子串: 固定响应} 用于注入回读不一致。
+    """
+    sess = MagicMock()
+    written: list[str] = []
+    state = {"active": "1" if cell_active else "0"}
+
+    def _write(cmd):
+        written.append(cmd.strip())
+        c = cmd.strip()
+        if c.endswith("ACTive:STATe 1"):
+            state["active"] = "1"
+        elif c.endswith("ACTive:STATe 0"):
+            state["active"] = "0"
+
+    def _query(cmd):
+        c = cmd.strip()
+        for frag, resp in (overrides or {}).items():
+            if frag in c:
+                return resp
+        if c == "*OPC?":
+            return "1"
+        if c.endswith("ACTive:STATe?"):
+            return state["active"]
+        base = c.rstrip("?")
+        for w in reversed(written):
+            if w.startswith(base + " "):
+                return w[len(base) + 1:]
+        return "0"
+
+    sess.write = MagicMock(side_effect=_write)
+    sess.query = MagicMock(side_effect=_query)
+    sess.timeout = 5000
+    driver._visa_session = sess
+    return sess, written
+
+
+class TestNoneValueTolerance:
+    @pytest.mark.asyncio
+    async def test_band_none_falls_back_to_inference(self, driver_irat):
+        """今日根因回归: band=None 不再 .upper() 崩, 走频率推断且 ARFCN 下发。"""
+        _, written = wire_echo_visa(driver_irat)
+        ok = await driver_irat.set_cell_config({
+            "band": None,           # 显式 None — 曾致整个 set_cell_config 中止
+            "duplex": None,
+            "frequency_mhz": 3500.0,
+            "bandwidth_mhz": 100,
+        })
+        assert ok is True
+        assert any("DL:ARFCN" in w for w in written), written
+        # 推断出的 band 真下发了 (3500 → N78)
+        assert any("BAND N78" in w for w in written), written
+
+    @pytest.mark.asyncio
+    async def test_caller_config_not_mutated(self, driver_irat):
+        wire_echo_visa(driver_irat)
+        cfg = {"band": None, "frequency_mhz": 3500.0}
+        await driver_irat.set_cell_config(cfg)
+        assert cfg == {"band": None, "frequency_mhz": 3500.0}  # copy 语义
+
+
+class TestBwTokenAndTddUlSkip:
+    @pytest.mark.asyncio
+    async def test_irat_tdd_bw_token_and_no_ul_bw(self, driver_irat):
+        _, written = wire_echo_visa(driver_irat)
+        ok = await driver_irat.set_cell_config({
+            "band": "N78", "bandwidth_mhz": 100, "duplex": "TDD",
+        })
+        assert ok is True
+        assert any(w.endswith("DL:BW BW100") for w in written), written
+        assert not any("UL:BW" in w for w in written), written  # TDD 跟随, 不单发
+
+    @pytest.mark.asyncio
+    async def test_irat_fdd_band_writes_ul_bw(self, driver_irat):
+        _, written = wire_echo_visa(driver_irat)
+        ok = await driver_irat.set_cell_config({
+            "band": "N3", "arfcn": 368500, "bandwidth_mhz": 40, "duplex": "FDD",
+        })
+        assert ok is True
+        assert any(w.endswith("UL:BW BW40") for w in written), written
+
+    @pytest.mark.asyncio
+    async def test_irat_tdd_inferred_from_band_baseline(self, driver_irat):
+        """不显式给 duplex, 由 band 基线表 (N78=TDD) 推断跳 UL:BW。"""
+        _, written = wire_echo_visa(driver_irat)
+        ok = await driver_irat.set_cell_config({"band": "N78", "bandwidth_mhz": 100})
+        assert ok is True
+        assert not any("UL:BW" in w for w in written), written
+
+    @pytest.mark.asyncio
+    async def test_5g_profile_keeps_raw_bw_value(self, driver_5g):
+        _, written = wire_echo_visa(driver_5g)
+        ok = await driver_5g.set_cell_config({
+            "band": "N78", "bandwidth_mhz": 100, "duplex": "TDD",
+        })
+        assert ok is True
+        assert any(w.endswith("DL:BW 100") for w in written), written
+
+
+class TestCellOnOffOrchestration:
+    @pytest.mark.asyncio
+    async def test_active_cell_bw_change_wraps_off_then_on(self, driver_irat):
+        _, written = wire_echo_visa(driver_irat, cell_active=True)
+        ok = await driver_irat.set_cell_config({"band": "N78", "bandwidth_mhz": 100})
+        assert ok is True
+        off_idx = next(i for i, w in enumerate(written) if w.endswith("ACTive:STATe 0"))
+        bw_idx = next(i for i, w in enumerate(written) if "DL:BW" in w)
+        on_idx = next(i for i, w in enumerate(written) if w.endswith("ACTive:STATe 1"))
+        assert off_idx < bw_idx < on_idx, written  # OFF → 配 → ON 恢复原态
+
+    @pytest.mark.asyncio
+    async def test_inactive_cell_no_state_wrapping(self, driver_irat):
+        _, written = wire_echo_visa(driver_irat, cell_active=False)
+        ok = await driver_irat.set_cell_config({"band": "N78", "bandwidth_mhz": 100})
+        assert ok is True
+        assert not any("ACTive:STATe 0" in w or w.endswith("ACTive:STATe 1")
+                       for w in written), written
+
+    @pytest.mark.asyncio
+    async def test_no_bw_change_no_state_probe(self, driver_irat):
+        sess, written = wire_echo_visa(driver_irat, cell_active=True)
+        ok = await driver_irat.set_cell_config({"band": "N78", "arfcn": 636666})
+        assert ok is True
+        queried = [c.args[0] for c in sess.query.call_args_list]
+        assert not any("ACTive:STATe?" in q for q in queried), queried
+
+
+class TestSsbBaselineAutofill:
+    @pytest.mark.asyncio
+    async def test_5g_profile_autofills_ssb_on_baseline_hit(self, driver_5g):
+        """目标 ARFCN 命中 N78 EMQuest 基线 (636666) → 自动补 SSB/PointA。"""
+        _, written = wire_echo_visa(driver_5g)
+        ok = await driver_5g.set_cell_config({
+            "band": "N78", "arfcn": 636666, "bandwidth_mhz": 100, "duplex": "TDD",
+        })
+        assert ok is True
+        assert any("SSB:NCD:ARFCn 635712" in w for w in written), written
+        assert any("DL:POINta 632946" in w for w in written), written
+
+    @pytest.mark.asyncio
+    async def test_no_autofill_when_arfcn_off_baseline(self, driver_5g):
+        """自定义频率 (640000 ≠ 基线 636666) 不乱补 — SSB 是 GSCN 栅格产物。"""
+        _, written = wire_echo_visa(driver_5g)
+        ok = await driver_5g.set_cell_config({
+            "band": "N78", "arfcn": 640000, "bandwidth_mhz": 100, "duplex": "TDD",
+        })
+        assert ok is True
+        assert not any("SSB:NCD" in w or "POINta" in w for w in written), written
+
+    @pytest.mark.asyncio
+    async def test_irat_autofill_skips_gracefully(self, driver_irat):
+        """IRAT 的 SSB_ARFCN/CELL_DL_POINTA=None (-113 探明) → 命中基线也只跳过。"""
+        _, written = wire_echo_visa(driver_irat)
+        ok = await driver_irat.set_cell_config({
+            "band": "N78", "arfcn": 636666, "bandwidth_mhz": 100,
+        })
+        assert ok is True
+        assert not any("SSB" in w or "POINta" in w for w in written), written
+
+    @pytest.mark.asyncio
+    async def test_explicit_ssb_overrides_autofill(self, driver_5g):
+        _, written = wire_echo_visa(driver_5g)
+        ok = await driver_5g.set_cell_config({
+            "band": "N78", "arfcn": 636666, "ssb_arfcn": 635808,
+        })
+        assert ok is True
+        assert any("SSB:NCD:ARFCn 635808" in w for w in written), written
+        assert not any("635712" in w for w in written), written
+
+
+class TestReadbackVerify:
+    @pytest.mark.asyncio
+    async def test_irat_readback_mismatch_fails_loud(self, driver_irat):
+        """回读 ARFCN 与下发不一致 (echo≠生效的真形态) → False + 不静默。"""
+        wire_echo_visa(driver_irat, overrides={"DL:ARFCN?": "636666"})
+        ok = await driver_irat.set_cell_config({
+            "band": "N78", "arfcn": 640000, "bandwidth_mhz": 100,
+        })
+        assert ok is False
+
+    @pytest.mark.asyncio
+    async def test_irat_readback_consistent_passes(self, driver_irat):
+        wire_echo_visa(driver_irat)  # 回显式: 回读=下发
+        ok = await driver_irat.set_cell_config({
+            "band": "N78", "arfcn": 636666, "bandwidth_mhz": 100,
+            "dl_power_dbm": -46.0,
+        })
+        assert ok is True
+
+    @pytest.mark.asyncio
+    async def test_explicit_off_switch_skips_readback(self, driver_irat):
+        sess, _ = wire_echo_visa(driver_irat, overrides={"DL:ARFCN?": "999999"})
+        ok = await driver_irat.set_cell_config({
+            "band": "N78", "arfcn": 636666, "readback_verify": False,
+        })
+        assert ok is True  # 显式关闭 → 即使回读值错也不拦 (bring-up 逃生口)
+
+    @pytest.mark.asyncio
+    async def test_5g_profile_readback_off_by_default(self, driver_5g):
+        """老 App 配置查询不支持 (2026-05-27 实证) → 默认不回读不误伤。"""
+        sess, _ = wire_echo_visa(driver_5g, overrides={"DL:ARFCN?": "999999"})
+        ok = await driver_5g.set_cell_config({"band": "N78", "arfcn": 636666})
+        assert ok is True
+        queried = [c.args[0] for c in sess.query.call_args_list]
+        assert not any("ARFCN?" in q for q in queried), queried

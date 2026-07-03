@@ -36,6 +36,7 @@ from app.hal.base_station import (
     CellState,
     ThroughputMetrics,
 )
+from app.hal.nr_band_baselines import get_band_baseline
 from app.hal.uxm_command_profiles import (
     UxmTestApp,
     Uxm5GNRTestAppProfile,
@@ -223,6 +224,7 @@ class RealUxmDriver(BaseStationDriver):
         self._cell_id: str = self._cmds.PRIMARY_CELL
         self._bwp_id: str = self._cmds.PRIMARY_BWP
         self._band: str = "N78"
+        self._duplex: Optional[str] = None  # P1-19: 最近一次显式/推断的双工 (TDD 跳 UL:BW 判定用)
         self._frequency_mhz: float = 3500.0
         self._bandwidth_mhz: float = 100.0
         # P2-11: 实际下发的中心 ARFCN (set_cell_config 时存)。getter 用它而非
@@ -351,7 +353,11 @@ class RealUxmDriver(BaseStationDriver):
             # to hislip2 to find the running Test App.
             on_platform_endpoint = (
                 "E7515B Platform" in idn
-                and ("SOCKET" in resource_str or "hislip0" in resource_str)
+                # P1-19 ⑤ (2026-07-03 现场): 原条件漏 inst0 —— 绑定写
+                # TCPIP..::inst0::INSTR 时 IDN 同样是 Platform 却不重定向,
+                # 真连会卡在只有 IEEE 488.2 的平台端点。
+                and ("SOCKET" in resource_str or "hislip0" in resource_str
+                     or "inst0" in resource_str)
                 and not self.visa_resource  # don't override explicit config
             )
             if on_platform_endpoint:
@@ -597,6 +603,65 @@ class RealUxmDriver(BaseStationDriver):
     # 2. 小区配置
     # ===================================================================
 
+    def _format_bw_value(self, bw_mhz: float) -> str:
+        """带宽值按方言编码 (P1-19): IRAT 令牌形式 "BW100" (裸数字被拒,
+        2026-07-03 实证), 其余方言裸数字。"""
+        if getattr(self._cmds, "BW_VALUE_FORM", "raw") == "prefixed":
+            return f"BW{int(bw_mhz)}"
+        return str(int(bw_mhz))
+
+    def _readback_verify(self, cell: str, config: Dict[str, Any]) -> List[str]:
+        """写后回读对账 (P1-19): 对本次下发过的 ARFCN / BW / DL 功率逐项回读比对。
+
+        语义: 回读异常或空响应 → 单项跳过 (方言能力不齐放行, debug 记录);
+        回读成功但与下发值不一致 → 记入 mismatch (caller fail-loud)。
+        BW 回读归一化 "BW100"→100; 功率浮点容差 0.1 dB。
+        """
+        mismatches: List[str] = []
+
+        def _read(template_name: str) -> Optional[str]:
+            q = self._cmd(template_name, cell=cell)
+            if q is None:
+                return None
+            try:
+                resp = self._query(q.rstrip("?") + "?")
+                return resp.strip() if resp else None
+            except Exception as e:  # noqa: BLE001
+                logger.debug(f"[UXM] 回读 {template_name} 异常跳过: {type(e).__name__}")
+                return None
+
+        if self._arfcn is not None:
+            resp = _read("CELL_DL_ARFCN")
+            if resp is not None:
+                try:
+                    if int(float(resp)) != int(self._arfcn):
+                        mismatches.append(f"ARFCN 下发 {self._arfcn} 回读 {resp}")
+                except ValueError:
+                    mismatches.append(f"ARFCN 回读不可解析: {resp!r}")
+
+        if "bandwidth_mhz" in config:
+            resp = _read("CELL_DL_BW")
+            if resp is not None:
+                norm = resp.upper().lstrip("BW") if resp.upper().startswith("BW") else resp
+                try:
+                    if int(float(norm)) != int(config["bandwidth_mhz"]):
+                        mismatches.append(
+                            f"BW 下发 {int(config['bandwidth_mhz'])} 回读 {resp}")
+                except ValueError:
+                    mismatches.append(f"BW 回读不可解析: {resp!r}")
+
+        if "dl_power_dbm" in config:
+            resp = _read("DL_POWER")
+            if resp is not None:
+                try:
+                    if abs(float(resp) - float(config["dl_power_dbm"])) > 0.1:
+                        mismatches.append(
+                            f"DL 功率下发 {config['dl_power_dbm']} 回读 {resp}")
+                except ValueError:
+                    mismatches.append(f"DL 功率回读不可解析: {resp!r}")
+
+        return mismatches
+
     async def set_cell_config(self, config: Dict[str, Any]) -> bool:
         """
         配置 UXM NR5G 物理小区参数。
@@ -637,7 +702,33 @@ class RealUxmDriver(BaseStationDriver):
         if state_file:
             return await self.load_state_file(state_file)
 
+        # P1-19 ① (2026-07-03 现场根因): "键在但值 None" 必须视同缺失 ——
+        # measure 曾无条件放 band=None → 下方 .upper() 崩, 整个 set_cell_config
+        # 中止且 ARFCN 未下发 (feedback_endpoint_null_field_cartesian)。copy 同时
+        # 消除对 caller dict 的推断回写副作用。
+        config = {k: v for k, v in config.items() if v is not None}
+
         cell = config.get("cell_id", self._cell_id)
+
+        # P1-19 ② (2026-07-03 实证 -221): 小区 ACTive 时禁改带宽 —— 改 BW 前探测
+        # 当前态, ON 则 OFF→配→ON 环绕 (恢复原态)。探测不可用 (profile 无命令 /
+        # 查询异常) 时保持旧行为直写, 不猜。
+        cell_was_on = False
+        if "bandwidth_mhz" in config:
+            state_q = self._cmd("CELL_STATE_QUERY", cell=cell)
+            if state_q is not None:
+                try:
+                    state_resp = (self._query(state_q) or "").strip()
+                    cell_was_on = state_resp in ("1", "ON")
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        f"[UXM] 小区状态探测失败 ({type(e).__name__}); 带宽按"
+                        f"直写处理 — ON 态下发会被 -221 拒 (队列可见)"
+                    )
+            if cell_was_on:
+                logger.info(f"[UXM] {cell} ACTive → OFF (带宽改动需要, 配置后恢复)")
+                self._write(self._cmds.CELL_STATE_OFF.format(cell=cell))
+
         try:
             # ---- 0. 频率 → 频段/双工 自动推断 ----
             if "frequency_mhz" in config:
@@ -667,6 +758,7 @@ class RealUxmDriver(BaseStationDriver):
             # ---- 2. 双工模式 (必须紧跟 Band 之后) ----
             if "duplex" in config:
                 duplex_mode = config["duplex"].upper()
+                self._duplex = duplex_mode  # P1-19: TDD 跳 UL:BW 判定用
                 if (q := self._cmd("CELL_DUPLEX", cell=cell)) is not None:
                     self._write(f"{q} {duplex_mode}")
                     logger.info(f"[UXM] Duplex: {duplex_mode}")
@@ -675,14 +767,27 @@ class RealUxmDriver(BaseStationDriver):
             if "bandwidth_mhz" in config:
                 bw = config["bandwidth_mhz"]
                 self._bandwidth_mhz = bw
+                bw_value = self._format_bw_value(bw)  # P1-19: IRAT 令牌形式 "BW100"
                 self._write(
                     self._cmds.CELL_DL_BW.format(cell=cell)
-                    + f" {int(bw)}"
+                    + f" {bw_value}"
                 )
-                self._write(
-                    self._cmds.CELL_UL_BW.format(cell=cell)
-                    + f" {int(bw)}"
-                )
+                # P1-19 ③ (2026-07-03 实证): TDD 下 UL 带宽跟随 DL, 单独下发被拒;
+                # 双工判定顺序 = 本次 config > band 基线表 > 驱动状态; 全未知时
+                # 保守保持旧行为 (写 UL:BW)。
+                duplex_now = (
+                    config.get("duplex")
+                    or (get_band_baseline(config.get("band") or self._band) or {}).get("duplex")
+                    or self._duplex
+                    or ""
+                ).upper()
+                if duplex_now == "TDD":
+                    logger.info("[UXM] TDD: UL:BW 跟随 DL, 跳过单独下发")
+                else:
+                    self._write(
+                        self._cmds.CELL_UL_BW.format(cell=cell)
+                        + f" {bw_value}"
+                    )
 
             # ---- 4. 子载波间隔 ----
             if "scs_khz" in config:
@@ -701,6 +806,29 @@ class RealUxmDriver(BaseStationDriver):
                 self._cmds.CELL_DL_ARFCN.format(cell=cell)
                 + f" {arfcn}"
             )
+
+            # ---- 5b. SSB / PointA 频率身份 (P1-19 ④, EMQuest 基线) ----
+            # 显式给 ssb_arfcn / point_a_arfcn 则下发; 都没给且目标 ARFCN 与该
+            # band 的 EMQuest 运行基线一致时自动补齐 (合拍条件严格 —— 自定义
+            # 频率不乱补, SSB 是 GSCN 栅格产物不能按比例平移)。profile 无命令
+            # (IRAT SSB_ARFCN/CELL_DL_POINTA=None, -113 已探明) 由 _cmd 跳过。
+            if "ssb_arfcn" not in config and "point_a_arfcn" not in config:
+                _baseline = get_band_baseline(config.get("band") or self._band)
+                if _baseline and _baseline.get("dl_arfcn") == arfcn:
+                    config["ssb_arfcn"] = _baseline["ssb_arfcn"]
+                    config["point_a_arfcn"] = _baseline["point_a_arfcn"]
+                    logger.info(
+                        f"[UXM] ARFCN {arfcn} 命中 {self._band} EMQuest 基线, "
+                        f"自动补 SSB {_baseline['ssb_arfcn']} / "
+                        f"PointA {_baseline['point_a_arfcn']}"
+                    )
+            if "ssb_arfcn" in config:
+                bwp = config.get("bwp_id", self._bwp_id)
+                if (q := self._cmd("SSB_ARFCN", cell=cell, bwp=bwp)) is not None:
+                    self._write(f"{q} {config['ssb_arfcn']}")
+            if "point_a_arfcn" in config:
+                if (q := self._cmd("CELL_DL_POINTA", cell=cell)) is not None:
+                    self._write(f"{q} {config['point_a_arfcn']}")
 
             # ---- 6. MIMO 层数 ----
             if "mimo_layers" in config:
@@ -798,8 +926,33 @@ class RealUxmDriver(BaseStationDriver):
                 if (q := self._cmd("MEAS_TPUT_STAT_COUNT", cell=cell)) is not None:
                     self._write(f"{q} {config['stat_count']}")
 
+            # P1-19 ②: 恢复小区原 ON 态 (放 *OPC? 前 —— 小区 ON 是秒级重活,
+            # OPC 正好当同步点)
+            if cell_was_on:
+                logger.info(f"[UXM] 配置完成, {cell} 恢复 ACTive ON")
+                self._write(self._cmds.CELL_STATE_ON.format(cell=cell))
+
             # 同步等待
             self._query("*OPC?")
+
+            # P1-19 ⑤: 写后回读对账 (2026-07-03 母题 "回读=echo≠生效" 的反面:
+            # IRAT 上 ARFCN/BW/POWer 回读实证与面板一致, 有对账价值)。profile
+            # 声明不支持 (老 App 查询超时) 或 config 显式关闭时跳过; 回读异常
+            # 单项跳过 (能力不齐放行), 回读成功但不一致 → fail-loud。
+            readback_on = config.get(
+                "readback_verify",
+                getattr(self._cmds, "SUPPORTS_CONFIG_READBACK", False),
+            )
+            if readback_on:
+                mismatches = self._readback_verify(cell, config)
+                if mismatches:
+                    logger.error(
+                        f"[UXM] set_cell_config 回读对账失败 (下发≠生效): "
+                        f"{'; '.join(mismatches)}"
+                    )
+                    self._set_status(InstrumentStatus.ERROR)
+                    return False
+
             self._set_status(InstrumentStatus.READY)
 
             logger.info(
