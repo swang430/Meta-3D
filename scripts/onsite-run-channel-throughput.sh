@@ -31,6 +31,8 @@ API="${API:-http://localhost:8000/api/v1}"
 ASSET_ID="${ASSET_ID:-b328d53a-edfa-40a0-81e1-5efc759bcc5a}"  # F64 N78 场景文件 (vendor_file)
 FREQ_HZ="${FREQ_HZ:-3600000000}"
 BW_MHZ="${BW_MHZ:-100}"
+BAND="${BAND:-n78}"   # 2026-07-03 现场实证: 单载波自动构造 band=None → 驱动 set_cell_config
+                      # None.upper() 崩且 ARFCN 不下发; 显式给 band 是零代码修法 (r5 验证)
 LAYERS="${LAYERS:-4}"
 DURATION_S="${DURATION_S:-10}"
 RUN_TIMEOUT_S="${RUN_TIMEOUT_S:-1800}"
@@ -93,6 +95,9 @@ import sys, json
 c = json.load(sys.stdin)
 cfg = c.get('configuration') or {}
 cfg['channel_asset_id'] = '$ASSET_ID'
+# band 显式进单载波 (否则 pcell.band=None → UXM set_cell_config None.upper() 崩, ARFCN 不下发)
+cfg['component_carriers'] = [{'frequency_hz': float('$FREQ_HZ'), 'bandwidth_mhz': float('$BW_MHZ'),
+                              'band': '$BAND', 'role': 'pcell'}]
 json.dump({'configuration': cfg}, sys.stdout)" > /tmp/onsite_patch_$$.json
 curl -sf -X PATCH "$API/test-plans/cases/$TC_ID" -H "Content-Type: application/json" \
   -d @/tmp/onsite_patch_$$.json > /dev/null

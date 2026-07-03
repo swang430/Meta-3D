@@ -80,7 +80,7 @@ discovered / 任务状态 / 数据登记,不进功能代码。
 
 ## 当日 discovered(现场只记不修)
 
-- `[discovered on-site 2026-07-03 during 烟测 r4]` **UXM set_cell_config 崩 `'NoneType' object has no attribute 'upper'`**(bypass 组合下某缺省字段直接 .upper())→ 小区配置**实际没下发**(ARFCN 仍 3550);feedback_endpoint_null_field_cartesian 家族,回家修;现场绕法 = 单条 SCPI 直发 ARFCN 或 UXM 面板改。
+- `[discovered on-site 2026-07-03 during 烟测 r4→r5]` **UXM set_cell_config `None.upper()` 崩 → ARFCN 不下发 —— 根因已闭环**:单载波自动构造(`_resolve_component_carriers`)不填 band(`pcell.band=None`,schema 描述却写"留空时由频率推断")→ measure `_build_pcell_cell_config` 把 `band` **无条件**入 dict → 驱动 `if "band" in config` 看键在就**跳过频率推断** → `config["band"].upper()` 崩 → 整个 set_cell_config 中止(ARFCN 行未执行)。经典"**键在但值 None ≠ 键不在**"(feedback_endpoint_null_field_cartesian)。**零代码修法(r5 实证)**:config 显式带 `component_carriers:[{...band:"n78"}]` → `TX: BSE:CONFig:NR5G:CELL1:DL:ARFCN 640000` 真发出 + **回读 640000 确认真实生效**(3550→3600 对齐完成)。onsite 脚本已同步注入(BAND 环境变量,默认 n78)。回家正修:band 无条件入 dict 改 None-guard,或驱动侧 `config.get("band") is None` 视同缺失走推断;duplex/tdd_pattern/sched_algo 同型审计。
 - `[discovered on-site 2026-07-03 during 烟测 r4]` **Aerotech 转台连接 ~2 分钟 idle 即被对端 reset**(connect 12:03:42 → move 12:05:59 时 TCPTransport closed);比 UXM 的 idle-close 更快;P2-4 keepalive 家族第三实例(UXM/F64/转台)。今日纪律:每次跑前重载 HAL = 全员重连。
 - `[discovered on-site 2026-07-03 during 烟测 r2-r4]` **测量序列 abort 会留 F64 会话残留应答/死句柄**(r2 闭环中断 → r3 "Invalid session handle")—— 失败后必须重载 HAL 再试;与监控轮询串线同根(会话无重同步机制)。
 
