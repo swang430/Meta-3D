@@ -222,12 +222,25 @@ class TestAssociate:
         assert normalised[0]["center_frequency_mhz"] == 3600.0
         assert normalised[0]["nr_arfcn"] == 640000
 
-    def test_associate_freq_mismatch_fails(self, db, ce_binding):
-        # 厂商文件名解析出 3500M (ARFCN 633333) ≠ 声明 640000 → fail-loud
+    def test_associate_loose_freq_mismatch_passes(self, db, ce_binding):
+        # 2026-07-03 现场实证: 厂商文件名频率是场景族标称会说谎 (UMa_3600M 工程实为
+        # 3549.99 MHz) → source=loose 的不一致**放行** (真值=SCD 声明侧工程实测),
+        # 只作 cross-check 提示不作拦截 (ChannelNameFreqCheck.must_fail 单点语义)。
         scd = _create(db, ce_binding)
+        out = svc.associate_file(
+            db, scd.id, file_path="legacy_3500M.smu",
+            association_source="vendor_associated",
+        )
+        assert out.associated_file_path == "legacy_3500M.smu"
+
+    def test_associate_standard_name_freq_mismatch_still_fails(self, db, ce_binding):
+        # 软化后仍要守住的边界: MF_ 标准名 (source=standard) 与 SCD 强绑定,
+        # 频率段不一致必是改名/错关联 → 仍 fail-loud (即使 source=vendor_associated)。
+        scd = _create(db, ce_binding)
+        wrong_freq_std = "MF_N77_650000_BW100_CDLC_UMa_4x4_DP_v1.smu"  # 650000 ≠ 声明 640000
         with pytest.raises(svc.StandardChannelError):
             svc.associate_file(
-                db, scd.id, file_path="legacy_3500M.smu",
+                db, scd.id, file_path=wrong_freq_std,
                 association_source="vendor_associated",
             )
 
