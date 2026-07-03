@@ -406,3 +406,48 @@ class TestCommandTimeoutDoesNotReconnect:
             await d._send("PFBK(X)")
         # Exactly one call — _send did NOT retry after the timeout.
         assert call_count["n"] == 1
+
+
+# ---------------------------------------------------------------------------
+# P1-20: lazy reconnect when transport is ALREADY closed before the write
+# (2026-07-03 on-site: controller idle-closes ~10s after a move completes;
+# asyncio then raises RuntimeError("unable to perform operation on
+# <TCPTransport closed=...>") on write — NOT a ConnectionError — so the
+# retry-on-ConnectionError path never fired and moves failed in 0.0s.
+# Fix = is_closing() check before writing.)
+# ---------------------------------------------------------------------------
+
+class TestLazyReconnectOnClosedTransport:
+    @pytest.mark.asyncio
+    async def test_closed_transport_reconnects_before_write(self, monkeypatch):
+        old = _FakeServer("old")
+        new = _FakeServer("new")
+        new.queue_response("%")        # ACKNOWLEDGE_ALL
+        new.queue_response("%")        # ENABLE X
+        new.queue_response("%30.00")   # PFBK(X) after lazy reconnect
+
+        d = _make_driver_with_streams(old)
+        d._writer.close()  # transport already closed (idle-close landed)
+        _install_open_connection(monkeypatch, [new])
+
+        result = await d._send("PFBK(X)")
+
+        assert result == "30.00"
+        # 关键: 写前拦截 — 老连接一个字节都不该收到 (与 EOF 场景的区别;
+        # 现场故障形态正是"写打在死 transport 上")。
+        assert old.sent == []
+        assert new.sent == ["ACKNOWLEDGEALL", "ENABLE X", "PFBK(X)"]
+        assert d._writer is not None and not d._writer.is_closing()
+
+    @pytest.mark.asyncio
+    async def test_closed_transport_reconnect_failure_raises(self, monkeypatch):
+        old = _FakeServer("old")
+        d = _make_driver_with_streams(old)
+        d._writer.close()
+        # 无可用新连接 → open_connection OSError → _silent_reconnect False
+        _install_open_connection(monkeypatch, [])
+
+        with pytest.raises(AerotechError, match="Transport closed before"):
+            await d._send("MOVEABS X 60.0000")
+
+        assert old.sent == []  # 死 transport 上零写入

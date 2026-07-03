@@ -167,6 +167,22 @@ class RealAerotechDriver(PositionerDriver):
             raise AerotechError("Not connected to Aerotech controller")
 
         async with self._lock:
+            # P1-20 (2026-07-03 现场实测): 控制器在运动完成后 ~10s 空闲即关连接
+            # (比 5/13 的 ~30s 严得多)。对端关闭被事件循环感知后 transport 已标记
+            # closed, 此时 write 抛 RuntimeError("unable to perform operation on
+            # <TCPTransport closed=...>") 而非 ConnectionError 族 —— 下方重试路径
+            # 接不住 (当日 move 0.0s 即败真因)。写前 is_closing() 懒重连补上这条
+            # 进入路径; 检查与 write 之间无 await, 单线程事件循环保证无竞态窗口,
+            # "写中途被断" 仍由下方 ConnectionError 路径覆盖, 两路径合并即完备。
+            if self._writer.is_closing():
+                logger.warning(
+                    f"[Aerotech] transport already closed before '{cmd}' "
+                    f"— lazy reconnect"
+                )
+                if not await self._silent_reconnect():
+                    raise AerotechError(
+                        f"Transport closed before '{cmd}' and reconnect failed"
+                    )
             try:
                 return await self._tx_rx(cmd)
             except ConnectionError as e:
