@@ -118,6 +118,35 @@ class TestBwTokenAndTddUlSkip:
         assert not any("UL:BW" in w for w in written), written
 
     @pytest.mark.asyncio
+    async def test_stale_tdd_duplex_not_reused_across_bands(self, driver_irat):
+        """Codex #195 R3 P2: 前一调用的 TDD 缓存不得让换 band 后的未知 band 漏写 UL:BW。"""
+        _, written = wire_echo_visa(driver_irat)
+        ok = await driver_irat.set_cell_config({
+            "band": "N78", "bandwidth_mhz": 100, "duplex": "TDD",
+        })
+        assert ok is True
+        written.clear()
+        # N999 不在基线表且无显式 duplex → 全未知, 保守写 UL:BW (不复用 N78 的 TDD)
+        ok = await driver_irat.set_cell_config({"band": "N999", "bandwidth_mhz": 40})
+        assert ok is True
+        assert any(w.endswith("UL:BW BW40") for w in written), written
+
+    @pytest.mark.asyncio
+    async def test_cached_duplex_still_reused_for_same_band(self, driver_irat):
+        """同一 band 只改带宽时, 驱动状态级缓存仍生效 (TDD 继续跳 UL:BW)。"""
+        _, written = wire_echo_visa(driver_irat)
+        # N901 不在基线表 → 后续调用只能靠驱动状态级判定
+        ok = await driver_irat.set_cell_config({
+            "band": "N901", "bandwidth_mhz": 100, "duplex": "TDD",
+        })
+        assert ok is True
+        written.clear()
+        ok = await driver_irat.set_cell_config({"band": "N901", "bandwidth_mhz": 40})
+        assert ok is True
+        assert any(w.endswith("DL:BW BW40") for w in written), written
+        assert not any("UL:BW" in w for w in written), written
+
+    @pytest.mark.asyncio
     async def test_5g_profile_keeps_raw_bw_value(self, driver_5g):
         _, written = wire_echo_visa(driver_5g)
         ok = await driver_5g.set_cell_config({

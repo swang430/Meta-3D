@@ -225,6 +225,7 @@ class RealUxmDriver(BaseStationDriver):
         self._bwp_id: str = self._cmds.PRIMARY_BWP
         self._band: str = "N78"
         self._duplex: Optional[str] = None  # P1-19: 最近一次显式/推断的双工 (TDD 跳 UL:BW 判定用)
+        self._duplex_band: Optional[str] = None  # 缓存双工的归属 band — 换 band 后旧值不复用
         self._frequency_mhz: float = 3500.0
         self._bandwidth_mhz: float = 100.0
         # P2-11: 实际下发的中心 ARFCN (set_cell_config 时存)。getter 用它而非
@@ -776,6 +777,7 @@ class RealUxmDriver(BaseStationDriver):
             if "duplex" in config:
                 duplex_mode = config["duplex"].upper()
                 self._duplex = duplex_mode  # P1-19: TDD 跳 UL:BW 判定用
+                self._duplex_band = self._band  # band 段已先执行, 此处即生效 band
                 if (q := self._cmd("CELL_DUPLEX", cell=cell)) is not None:
                     self._write(f"{q} {duplex_mode}")
                     logger.info(f"[UXM] Duplex: {duplex_mode}")
@@ -790,12 +792,16 @@ class RealUxmDriver(BaseStationDriver):
                     + f" {bw_value}"
                 )
                 # P1-19 ③ (2026-07-03 实证): TDD 下 UL 带宽跟随 DL, 单独下发被拒;
-                # 双工判定顺序 = 本次 config > band 基线表 > 驱动状态; 全未知时
-                # 保守保持旧行为 (写 UL:BW)。
+                # 双工判定顺序 = 本次 config > band 基线表 > 驱动状态 (仅当缓存
+                # 归属 band 与本次生效 band 一致 — 换 band 后旧 TDD 不得漏写新
+                # band 的 UL:BW); 全未知时保守保持旧行为 (写 UL:BW)。
+                cached_duplex = (
+                    self._duplex if self._duplex_band == self._band else None
+                )
                 duplex_now = (
                     config.get("duplex")
                     or (get_band_baseline(config.get("band") or self._band) or {}).get("duplex")
-                    or self._duplex
+                    or cached_duplex
                     or ""
                 ).upper()
                 if duplex_now == "TDD":
