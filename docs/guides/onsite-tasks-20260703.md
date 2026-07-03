@@ -7,16 +7,35 @@
 **基线**:tag `onsite-baseline-20260702` = main `f8f0dc9`;本分支 `onsite-20260703` 只收现场
 discovered / 任务状态 / 数据登记,不进功能代码。
 
+## 今日节奏规划(2026-07-03,按此执行;调整听 Simon 指令)
+
+| 时段 | 任务 | 备注 |
+|---|---|---|
+| 到场 ~30min | **0 开机自检** | 软件侧清零未知数,再碰仪器 |
+| 上午前段 | 1 Phase 0 网络 | 单网卡历史包袱:确认多网卡/adapter 方案,否则退回逐子网切换模式 |
+| 上午中段 | 2 Phase 1 SCPI 握手 + 设备自检 | **检查点 A:午前必须过**,过不了=物理/网络问题,按协议排查不动代码 |
+| 上午后段(间隙) | **6a 清点+选定信道文件** + 机动:队列清理拍板 | 6a 只需人在 F64 前,不依赖 DUT |
+| 午后早段 | 3 Phase 2 SA 入 HAL | TRP 基线 ±1dB |
+| 午后 | 4 Phase 3 真路损校准 | 机器自跑 ~32 链路,人闲 → 插机动项(仪器清单实化) |
+| 午后中段 | 5 Phase 4 DUT attach | **记真实 IMSI** |
+| 紧接 | **6b 合拍验证 + 6c 登记受控** | Phase 5 的入场券 |
+| 午后晚段 | 7 **Phase 5 ★核心** | 切 Real + 重载 HAL → 一键脚本;**检查点 B = 今日成功判据** |
+| 有余量才做 | 第二轮加严(机动):DUTProfile/SIMProfile 建档注入复跑 + 3.5GHz 反证频率网 | 非 go/no-go |
+| ~17:30 | 8 收工 review + discovered 回填 + 分支推送 | 15 min |
+
+**升级规则(贯穿全天)**:单 gate 卡 >半天且非纯硬件物理问题 → 停,整理 SCPI trace 远程协作;software 异常 = 记 discovered 不当场修。
+
 ## 主线任务(按序,gate 不过不进下一)
 
 | # | 状态 | 任务 | 验收标准 | 落点 |
 |---|---|---|---|---|
+| 0 | [ ] | 开机自检 | 栈四绿(PG docker `meta3d_db` / :8000 / :5173 / :8001;重启过机先 `export CHANNEL_ENGINE_PATH=~/Tools/ChannelEgine` 再 `start_all_services.sh`)+ cockpit 驱动链/活动 Lab 绿(mock)+ 网络方案确认 | 控制 PC |
 | 1 | [ ] | Phase 0 网络三子网可达 | F64 `nc -vz 192.168.0.x 3334` + UXM/SA 子网通 | 控制 PC 静态 IP 切换 |
 | 2 | [ ] | Phase 1 SCPI 握手 | F64 `SYST:INFO?`(非 `*OPT?`)+ UXM Test App 起(5G NR FR1)+ SA IDN | 全 IDN ✓ |
 | 3 | [ ] | Phase 2 真 SA 入 HAL(P0-4) | measured TRP 在 horn datasheet ±1 dB | GUI 选 FSVA3000 |
 | 4 | [ ] | Phase 3 真路损校准(P0-3) | cert 32 链路 + overall_pass + 重复 ±0.5 dB,绑 lab 后 cockpit 校准格转绿 | CE+SA 路 |
 | 5 | [ ] | Phase 4 DUT attach(P0-5) | attach ✓ + 单方位非零吞吐;**记下真实 IMSI**(Phase 6 脚本要用) | UXM |
-| 6 | [ ] | ⭐ **确认与终端合拍的信道文件(我们能控制)** | 见下方展开 | F64 + 信道工作台 |
+| 6 | [ ] | ⭐ **确认与终端合拍的信道文件(我们能控制)** | 分三段插进节奏:**6a 清点+选定**(上午间隙,只需人在 F64 前)→ **6b 合拍验证**(Phase 4 后)→ **6c 登记受控**;展开见下 | F64 + 信道工作台 |
 | 7 | [ ] | Phase 5 信道模型下 4 方位吞吐(★核心) | `DUT_IMSI=<真IMSI> ./scripts/onsite-run-channel-throughput.sh` → 4 方位 4 值 + analysis + PDF | 先切 Real + 重载 HAL |
 | 8 | [ ] | 收工 review 三问 + discovered 行回填 | 当日 `[discovered on-site 2026-07-03 …]` 进本文档底部 | 15 min |
 
