@@ -78,6 +78,23 @@ discovered / 任务状态 / 数据登记,不进功能代码。
 
 **✅ 2026-07-03 午间:无 DUT mimo_test 烟测成功(r4, diagnostic e70abe13)** —— ChannelAsset(UMa 3600M)→ resolver keysight_gcm → **F64 真机 `Model loaded` 成功** + connector 映射 + MIMO 拓扑 2x2→4x4 同步 + 32 路路损补偿应用(56.77 dB)+ 拓扑 CAICT AMS8947 V4.0 + 测量环无 DUT 有序中止(无假数据)。成功前提三纪律:**关主控台页 + 每次跑前重载 HAL + strict 三旁路**。剩余物理项:① UXM RF 输出→F64 输入链路不通(AUTOSET 5 轮无信号,查线缆/UXM 输出);② UXM ARFCN 仍 3550 未对齐;③ DUT attach。
 
+## 收工总结(2026-07-03 晚,review 三问)
+
+**① 原计划 vs 实际**:原计划 = Phase 4 DUT attach + Phase 5 四方位吞吐(★核心)。实际 = 仪表重启后全链重建 ×2(下午重启 + EMQuest 多写方干扰)+ 控制面真相大规模挖掘(UXM/F64/EMCenter/转台四台全部量化)+ 信道资产治理(18 条真值化)。**attach 走到了最后一步**(DUT 已测到 -96 dBm RSRP,直通链路终验通过),正式注册与吞吐未跑。
+
+**② 偏移程度**:核心 gate(吞吐)未达 ≈ 70% 偏移;但当日用户主诉求("对 UXM/仪表控制不够清晰完整")完成度高 —— 下次现场 attach→吞吐已无已知障碍。
+
+**③ 偏移原因归类**:外部事件(仪表重启、EMQuest 并行操作)+ 既有 bug 的现场深挖(值得,全部转化为 discovered/热修)——不属于"顺手优化"跑偏。
+
+**次日/下次现场 15 分钟开跑清单**:
+1. `start_all_services.sh`(若重启)→ HAL real → 状态三查:UXM 小区(期望 636666/BW40/-46/ON)、F64(STATIC?/STATE?/工程)、F64 参考(-15/crest12,面板核);
+2. F64 直通默认态:加载 UMa 工程 → `STATIC 3`(稳态 = STOPPED+STATIC3);
+3. **DUT attach**(-96 RSRP 可用;慢则 UXM EPRE -46→-36 一条命令);记 IMSI;
+4. attach 后:`STATIC 0` + `GO`(衰落恢复)→ 满业务态 `INP:LEV:AUTOSET 0,3` 终定标 → onsite 脚本四方位吞吐(FREQ_HZ 默认已 3549990000;**方位 2 转台断连预警**,备选 = 4 次单方位 run);
+5. 待拍板:吞吐 BW 跟 EMQuest 基线 40 还是 100(资产/TestCase/UXM 三处一致)。
+
+**当日热修(现场分支,回家正修化)**:2c6f6b1 measure 频率桥接;122eeae 频率网 loose 软化。**回家修单汇总**:见各 discovered 条(驱动 CENT 缺省不写/UXM OFF-配-ON 编排+回读对账/HAL 命令互斥+超时排水轻量恢复/Aerotech keepalive ≤5s 或 move 前懒重连/EMCenter VXI-11 transport/prm band 查表进驱动/P1-8 cal provenance/CreateSessionRequest channel_asset_id/输出测量冻结语义注释)。
+
 ## 当日 discovered(现场只记不修)
 
 - `[discovered on-site 2026-07-03 during F64 直通态建立]` **F64 STATIC 直通语义破解 + attach 默认态建立(待 DUT 终验)**。① **STATIC 模式与回放互斥**:STATIC≠0 时 `GO` 被拒(-200 by design);RUNNING 态切 `DIAG:SIMU:MODEL:STATIC 3` 成功且自动转 STOPPED → **直通稳态 = STOPPED + STATIC 3**(回读 mode=3,零错误);恢复衰落 = `STATIC 0` + `GO`。正确建立序列(实证):加载工程(STOPPED)→ STATIC 0 → GO(RUNNING)→ 运行态切 STATIC 3(自动 STOPPED)—— 或直接 STOPPED 态设 STATIC 3(两路径终态一致)。② **测量流语义**:直通稳态下输入测量(D=101)四路真活(σ1.2-1.5,含 E1),**输出测量(D=201)32 口全 -76.8/σ=0.00 = 显示冻结特征**(输出功率元件依赖回放引擎,STOPPED 不更新)—— 软件侧无法分辨"RF 在透传但显示冻结" vs "真无输出",**权威判据 = F64 面板输出口 / DUT 搜网**。③ 当日多写方第二实证:EMQuest 在拿截图时段把 F64 工程 CLOSE 了(+ UXM 重配),重建时纯净加载工程原生 3549.99 与 UXM/EMQuest 基线自然对齐(CENT 一个都不用写)。④ 会话又 wedge 一次(排水第 42 条撞超时→连锁错位,重载 HAL 恢复);⑤ **流程共识**:attach 默认态 = 直通稳态(终验通过后);跑吞吐 run-all 前**必须显式 STATIC 0**(加载是否复位 STATIC 未知,不赌)。回家单:set_bypass_mode 编排(运行态切换 + 状态机前置)+ 输出测量冻结语义进驱动注释。 **✅ UXM 控制延迟矩阵量化 + 发现小区被外部重配为 EMQuest 基线**。延迟:直连 5125 RTT **1 ms**(仪器本身极快);HAL 产品路径 8-14 ms(HTTP+HAL 开销 ~10ms);**写→回读生效 53 ms**(DL:POWer);HAL 重载全链 1.5 s;压力 20 连发查询 **0 错位**(RTT 恒 1ms,报告里 5 "fails" 是测试脚本期望值写错 BW100 的假阳性);**污染恢复成本 = 1 次超时(3s)+ 2 条 SYST:ERR? 排水即净**(比想象便宜,今天的"超时必重载"纪律可降级为"排水 2 条+功能查询验证,失败才重载");**TAF 5125 无 SYST:LOC/REM(-113)= 无 local lockout 概念,GUI/EMQuest/SCPI 三方天然并行** —— 真正的风险不是锁而是**多写方覆盖**(本轮实证:测试中读到 BW40/-46 ≠ 我们留下的 BW100/-39.15,系 EMQuest 拿截图期间下发了 SA n78 基线;上一轮"升功率拍打不生效"悬案的实验环境即被此污染,结论作废)。**参数分级**:ms 级即发即效 = ARFCN/POWer/BW(小区 OFF 态)/STATe 写;禁改(ON 态)= BW(-221);重活 = STATe 0→1(秒级);不支持查询(3s 超时代价)= PHY:DL:POWer?/SSB:POWer?。当前 UXM 态 = **EMQuest n78 基线(636666/BW40/-46/ON)已就位**,F64 参考 -15/crest12 恰与其满业务预算(-46+31.0=-15 dBm@口)对齐 —— attach 条件天然齐备。回家单:HAL 层加"超时后自动排水恢复"轻量策略(替代无差别重载);多写方(GUI/EMQuest/我们)约定 = 测试窗口内单一写方。
