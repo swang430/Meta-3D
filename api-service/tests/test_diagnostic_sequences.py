@@ -295,6 +295,32 @@ class TestRunSequence:
         assert "start_signaling" in labels
         assert body["extra"]["ue_info"]["connected"] is True
 
+    def test_attach_check_aborts_when_set_cell_config_returns_false(
+        self, db, lab_with_bs, monkeypatch
+    ):
+        """Codex #195 R5 P1 同族: HAL 布尔契约 False 不得被记成 success 继续跑。"""
+        bs = MagicMock()
+        bs.connect = AsyncMock(return_value=True)
+        bs.set_cell_config = AsyncMock(return_value=False)
+        bs.start_signaling = AsyncMock(return_value=True)
+        _patched_hal(monkeypatch, drivers={"baseStation": bs})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/baseStation_attach_check/run",
+            json={
+                "lab_profile_id": str(lab_with_bs.id),
+                "params": {"attach_timeout_s": 1, "frequency_mhz": 3500},
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is False
+        assert "returned False" in body["summary"]
+        failed = [s for s in body["steps"] if not s["success"]]
+        assert any("set_cell_config" in s["label"] for s in failed), body["steps"]
+        # False 中止序列 — 后续 start_signaling 不应执行
+        bs.start_signaling.assert_not_awaited()
+
     def test_attach_check_marks_failure_on_no_attach(self, db, lab_with_bs, monkeypatch):
         """DUT never attaches within timeout → success=False, but HTTP 200."""
         bs = MagicMock()

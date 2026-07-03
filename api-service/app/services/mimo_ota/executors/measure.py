@@ -247,7 +247,18 @@ class MeasureExecutor(IStepExecutor):
                 scs_khz=pcell.subcarrier_spacing_khz,
                 band=pcell.band,
             )
-            await base_station.set_cell_config(cell_cfg)
+            # Codex #195 R5 P1: set_cell_config 布尔契约必须消费 — HAL 层回读对账
+            # mismatch / 下发被拒都只 return False (不裸抛), 这里不检查会带着错配
+            # 小区配置进测量, 正是回读门要拦的实验污染。
+            ok = await base_station.set_cell_config(cell_cfg)
+            if not ok:
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    error_message=(
+                        "PCell set_cell_config 失败 (下发被拒或回读对账 mismatch, "
+                        "明细见基站驱动日志) — 中止执行, 防止错配配置进测量。"
+                    ),
+                )
 
             # --- Phase 2g: SCell add + activate for CA scenarios ---
             scells_added: List[Dict[str, Any]] = []

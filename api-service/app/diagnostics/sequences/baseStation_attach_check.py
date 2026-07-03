@@ -79,6 +79,17 @@ async def run(
         started = time.monotonic()
         try:
             result = await coro
+            # Codex #195 R5 P1 同族: HAL 布尔契约 (connect/set_cell_config/
+            # start_signaling) False = 失败不抛 — 不拦会记成 success 继续跑。
+            if result is False:
+                steps.append(SequenceStepResult(
+                    label=label,
+                    success=False,
+                    detail="returned False (HAL 布尔契约失败, 明细见驱动日志)",
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                ))
+                log(f"  ✗ {label}: returned False")
+                raise RuntimeError(f"{label} returned False")
             steps.append(SequenceStepResult(
                 label=label,
                 success=True,
