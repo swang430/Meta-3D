@@ -577,10 +577,10 @@ class MeasureExecutor(IStepExecutor):
 
             sim_rules = {
                 "frequency_hz": config.frequency_hz,
-                # 现场热修 2026-07-03: F64 驱动 set_channel_model 只认 center_frequency_mhz
-                # (MHz), 缺省时对 64 通道无条件写默认 3500 冲掉 .smu 工程频率 (当日最重 bug)。
-                # 桥接 TestCase 频率 → 下发=配置, _center_freq_programmed 置位, 上报诚实。
-                # 回家正修 = 驱动参数缺省时不写 CENT (保留工程频率), 见 onsite-tasks 修单。
+                # 2026-07-03 现场热修 → P1-18 已正修: 驱动 Step 4 现在缺省不写 CENT
+                # (保留 .smu 工程频率)。此桥接仍保留 —— TestCase 显式驱动频率是路径 B
+                # 正路 (下发=配置, _center_freq_programmed 置位, 上报诚实), EMQuest
+                # 运行时同时向 UXM+F64 下发频点的行为与此同构。
                 # Codex #193 P2: 取归一化 PCell 频率 (与 UXM set_cell_config / 频率一致性网
                 # 同源), 不取顶层 legacy frequency_hz —— CA/编辑过的计划两者可能分叉,
                 # 用顶层会把 F64 写到过期载频。pcell 变量在上方 Phase 2g 已判空 fail-loud。
