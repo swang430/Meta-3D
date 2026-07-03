@@ -56,6 +56,19 @@ discovered / 任务状态 / 数据登记,不进功能代码。
   - [ ] 仪器抽屉 `available_channel_models` 清单更新为真实文件名(现在还是 3 个 demo 名,顺手清)
 - [ ] **一致性网实证**:故意把一次会话频率设 3.5 GHz 跑一发,确认 P2-11 网真的拦(可选,30 秒,给"网在工作"留证据)
 
+**"我们能控制"两档(2026-07-03 晨读队友经验分享后升级)**:
+- **档 1(保底,Phase 5 主路)**:选定 F64 上已知参数的现成文件(Scenario Pack CDLC UMa 3600M)→ 上面四步登记。
+- **档 2(真·自控,时间富余才做)**:队友已备料 —— `docs/site-debug/现场经验共享/My model0702.json`(**23 簇自建模型**,含 ZoA/ZoD)+ `gcm_supported_cluster_import_{minimal,zoa_zod}.csv`(GCM 簇导入格式已验)。若现场 Channel Studio/GCM 可用:导入自建簇 → Generate Modeling Parameters(预览 PDP/角度)→ Generate Emulation → **必查 Level to DUT**(Min/Max/Range ≤ Max Level in HW)→ Save and Update → 得 .smu → F64 运行 + DUT 合拍。这才是完整的"我们能控制"闭环,也是 P2-16 自定义簇 → GCM 路的首次真机打通。
+
+**GCM/FS16 经验速查(来自三篇分享,现场直接用)**:
+- ⚠️ **工程文件整体保留,不要只拷 .smu**(.smu 引用外部信道数据,单拷会丢);
+- 加载前礼仪:`*CLS → DIAG:SIMU:CLOSE → CALC:FILT:FILE → *OPC? → SYST:ERR? → DIAG:SIMU:GO`;
+- 报 `-200 SMU file already open for editing` → 先 `DIAG:SIMU:CLOSE` 退编辑态再开;
+- 报 `Emulator is not available` → PROPSIM 设备级重启,确认日志 `Selftests completed successfully`;
+- 需要人在仪器 GUI 上操作(建模板/维护)→ 用软件的 **manual_local 控制权切换**(软件释放会话停轮询),做完再"软件接管" —— 别硬抢单 client SOCKET;
+- CIR Graph 随编号持续跳动 = 动态信道正常回放;Port RF Level 空载无曲线**不代表** CIR 错;
+- ⚠️ 三篇经验基于 **FS16**,F64 SCPI 已知有差异(MMEM/FTP/*OPT? 不可用,-100=命令不存在)—— `CALC:FILT:FILE`/`DIAG:SIMU:*` 在 F64 已实测可用,但 `CALC:FILT:EDIT` 编辑态流 F64 上未验,现场首次用时逐步 `SYST:ERR?` 确认。
+
 ## 机动任务(非阻塞,有空隙才做)
 
 | 状态 | 任务 | 备注 |
