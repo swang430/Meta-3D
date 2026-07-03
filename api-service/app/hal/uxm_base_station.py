@@ -351,14 +351,20 @@ class RealUxmDriver(BaseStationDriver):
             # nor on raw SOCKET 5025. If we opened a Platform endpoint and
             # the operator didn't explicitly pick a profile, auto-reconnect
             # to hislip2 to find the running Test App.
+            # P1-19 ⑤ + Codex #195 P2: inst0 资源串只可能来自显式
+            # config["visa_resource"] (本方法自己只构造 SOCKET/hislipN), 而
+            # "显式配置不重定向"的豁免会让 inst0 分支永远不可达。语义上显式
+            # 配 inst0::INSTR 不可能是"故意锁定平台" (业务树不在平台) —— 是
+            # 常见误配, 照样重定向; 其余显式配置 (如 5125::SOCKET 直连 TAF)
+            # 仍然尊重不动。
+            explicit_non_inst0 = bool(self.visa_resource) and (
+                "inst0" not in (self.visa_resource or "")
+            )
             on_platform_endpoint = (
                 "E7515B Platform" in idn
-                # P1-19 ⑤ (2026-07-03 现场): 原条件漏 inst0 —— 绑定写
-                # TCPIP..::inst0::INSTR 时 IDN 同样是 Platform 却不重定向,
-                # 真连会卡在只有 IEEE 488.2 的平台端点。
                 and ("SOCKET" in resource_str or "hislip0" in resource_str
                      or "inst0" in resource_str)
-                and not self.visa_resource  # don't override explicit config
+                and not explicit_non_inst0
             )
             if on_platform_endpoint:
                 try:
@@ -714,6 +720,7 @@ class RealUxmDriver(BaseStationDriver):
         # 当前态, ON 则 OFF→配→ON 环绕 (恢复原态)。探测不可用 (profile 无命令 /
         # 查询异常) 时保持旧行为直写, 不猜。
         cell_was_on = False
+        cell_restore_pending = False  # Codex #195 P1: 失败路径也必须恢复 ON
         if "bandwidth_mhz" in config:
             state_q = self._cmd("CELL_STATE_QUERY", cell=cell)
             if state_q is not None:
@@ -728,6 +735,7 @@ class RealUxmDriver(BaseStationDriver):
             if cell_was_on:
                 logger.info(f"[UXM] {cell} ACTive → OFF (带宽改动需要, 配置后恢复)")
                 self._write(self._cmds.CELL_STATE_OFF.format(cell=cell))
+                cell_restore_pending = True
 
         try:
             # ---- 0. 频率 → 频段/双工 自动推断 ----
@@ -931,6 +939,7 @@ class RealUxmDriver(BaseStationDriver):
             if cell_was_on:
                 logger.info(f"[UXM] 配置完成, {cell} 恢复 ACTive ON")
                 self._write(self._cmds.CELL_STATE_ON.format(cell=cell))
+                cell_restore_pending = False
 
             # 同步等待
             self._query("*OPC?")
@@ -967,6 +976,22 @@ class RealUxmDriver(BaseStationDriver):
             logger.error(f"[UXM] set_cell_config failed: {e}")
             self._set_status(InstrumentStatus.ERROR, str(e))
             return False
+        finally:
+            # Codex #195 P1: OFF 之后任何失败路径 (写异常 / 会话超时) 都不能把
+            # 原本运行中的小区留在 OFF —— 活动测试会被静默打断。happy path 已
+            # 恢复过 (pending 置 False), 这里只兜失败路径; 恢复本身再失败只能
+            # 大声记录 (会话已死时无计可施, 操作员按日志人工恢复)。
+            if cell_restore_pending:
+                try:
+                    logger.warning(
+                        f"[UXM] set_cell_config 失败路径: 恢复 {cell} ACTive ON"
+                    )
+                    self._write(self._cmds.CELL_STATE_ON.format(cell=cell))
+                except Exception as restore_err:  # noqa: BLE001
+                    logger.error(
+                        f"[UXM] ⚠ 恢复小区 ON 失败 ({type(restore_err).__name__}) "
+                        f"— {cell} 可能停在 OFF, 需人工恢复!"
+                    )
 
     # ===================================================================
     # 2.5 MIMO 天线端口路由

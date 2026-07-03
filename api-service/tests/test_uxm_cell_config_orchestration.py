@@ -233,3 +233,96 @@ class TestReadbackVerify:
         assert ok is True
         queried = [c.args[0] for c in sess.query.call_args_list]
         assert not any("ARFCN?" in q for q in queried), queried
+
+
+class TestCellRestoreOnFailurePath:
+    """Codex #195 P1: OFF 之后的失败路径必须恢复原本 ON 的小区。"""
+
+    @pytest.mark.asyncio
+    async def test_write_exception_after_off_still_restores_on(self, driver_irat):
+        sess, written = wire_echo_visa(driver_irat, cell_active=True)
+        orig_side_effect = sess.write.side_effect
+
+        def _boom_on_arfcn(cmd):
+            orig_side_effect(cmd)
+            if "DL:ARFCN" in cmd:
+                raise RuntimeError("simulated VISA write failure")
+
+        sess.write.side_effect = _boom_on_arfcn
+        ok = await driver_irat.set_cell_config({"band": "N78", "bandwidth_mhz": 100})
+        assert ok is False
+        off_idx = next(i for i, w in enumerate(written) if w.endswith("ACTive:STATe 0"))
+        on_idx = next(i for i, w in enumerate(written) if w.endswith("ACTive:STATe 1"))
+        assert off_idx < on_idx, written  # finally 路径把小区恢复了
+
+    @pytest.mark.asyncio
+    async def test_readback_failure_after_off_still_restores_on(self, driver_irat):
+        _, written = wire_echo_visa(
+            driver_irat, cell_active=True, overrides={"DL:ARFCN?": "111111"})
+        ok = await driver_irat.set_cell_config({
+            "band": "N78", "arfcn": 636666, "bandwidth_mhz": 100,
+        })
+        assert ok is False  # 回读不一致 fail-loud
+        assert any(w.endswith("ACTive:STATe 1") for w in written), written
+
+
+class TestInst0Redirect:
+    """Codex #195 P2: 显式绑定 inst0::INSTR (平台端点误配) 也应重定向 hislip2。"""
+
+    @pytest.mark.asyncio
+    async def test_explicit_inst0_binding_redirects_to_framework(self, monkeypatch):
+        d = RealUxmDriver("uxm-inst0", {
+            "ip": "10.0.0.9",
+            "visa_resource": "TCPIP0::10.0.0.9::inst0::INSTR",
+        })
+        opened: list[str] = []
+
+        def _make_session(resource):
+            sess = MagicMock()
+            sess.timeout = 5000
+            if "inst0" in resource:
+                sess.query = MagicMock(side_effect=lambda c: {
+                    "*IDN?": "Keysight Technologies,E7515B Platform,MY123,1.0",
+                }.get(c.strip(), "0"))
+            else:
+                sess.query = MagicMock(side_effect=lambda c: {
+                    "*IDN?": "Keysight Technologies,E7515B TAF,MY123,1.0",
+                    "SYSTem:APPLication:NAME?": "LTE_NR_IRAT",
+                    "*OPC?": "1",
+                }.get(c.strip(), "0"))
+            sess.write = MagicMock()
+            sess.close = MagicMock()
+            return sess
+
+        rm = MagicMock()
+        rm.open_resource = MagicMock(side_effect=lambda r, **kw: (opened.append(r), _make_session(r))[1])
+        monkeypatch.setattr("pyvisa.ResourceManager", MagicMock(return_value=rm))
+
+        ok = await d.connect()
+        assert ok is True
+        # 第一开 inst0 (显式绑定), 识别 Platform 后第二开 hislip2
+        assert any("inst0" in r for r in opened), opened
+        assert any("hislip2" in r for r in opened), opened
+
+    @pytest.mark.asyncio
+    async def test_explicit_non_inst0_binding_stays_pinned(self, monkeypatch):
+        """显式非 inst0 绑定 (如直连 TAF 的 SOCKET) 仍然尊重, 不重定向。"""
+        d = RealUxmDriver("uxm-pinned", {
+            "ip": "10.0.0.9",
+            "visa_resource": "TCPIP0::10.0.0.9::5125::SOCKET",
+        })
+        opened: list[str] = []
+        sess = MagicMock()
+        sess.timeout = 5000
+        sess.query = MagicMock(side_effect=lambda c: {
+            "*IDN?": "Keysight Technologies,E7515B Platform,MY123,1.0",
+            "*OPC?": "1",
+        }.get(c.strip(), "0"))
+        sess.write = MagicMock()
+        rm = MagicMock()
+        rm.open_resource = MagicMock(side_effect=lambda r, **kw: (opened.append(r), sess)[1])
+        monkeypatch.setattr("pyvisa.ResourceManager", MagicMock(return_value=rm))
+
+        ok = await d.connect()
+        assert ok is True
+        assert not any("hislip2" in r for r in opened), opened  # 保持锁定
