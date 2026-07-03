@@ -23,7 +23,13 @@
 验收: vendor 资产恰 18 条 active 且频率=工程真值; channel-models 频率同步。
 """
 import sys
-import requests
+
+import httpx
+
+# repo 声明的 HTTP 客户端是 httpx (api-service/requirements.txt), 不引入未声明的
+# requests (Codex #193 P2: 干净环境 ModuleNotFoundError)。httpx 默认 timeout 5s
+# 偏紧, 统一 30s。
+http = httpx.Client(timeout=30.0)
 
 API = "http://localhost:8000/api/v1"
 PACK = r"D:\Scenario Packs\F9815064A TS 5G FR1 MIMO OTA\1.1"
@@ -77,7 +83,7 @@ def row_fields(row):
 
 
 def upsert_assets():
-    r = requests.get(f"{API}/channel-assets",
+    r = http.get(f"{API}/channel-assets",
                      params={"source_type": "vendor_file",
                              "include_inactive": "true", "page_size": 100})
     r.raise_for_status()
@@ -100,7 +106,7 @@ def upsert_assets():
         hit = existing.get(f["path"])
         if hit:
             body["is_active"] = True  # 软删条目一并复活修正
-            resp = requests.put(f"{API}/channel-assets/{hit['id']}", json=body)
+            resp = http.put(f"{API}/channel-assets/{hit['id']}", json=body)
             if resp.status_code >= 400:
                 print(f"  ✗ PUT {f['name']}: {resp.status_code} {resp.text[:200]}")
                 resp.raise_for_status()
@@ -108,7 +114,7 @@ def upsert_assets():
         else:
             body["source_type"] = "vendor_file"
             body["created_by"] = "onsite-fix-20260703"
-            resp = requests.post(f"{API}/channel-assets", json=body)
+            resp = http.post(f"{API}/channel-assets", json=body)
             if resp.status_code >= 400:
                 print(f"  ✗ POST {f['name']}: {resp.status_code} {resp.text[:200]}")
                 resp.raise_for_status()
@@ -119,7 +125,7 @@ def upsert_assets():
 def rebuild_channel_models():
     # 单类别无 GET 端点 (405) —— connection_params 从 catalog 列表取; PUT 是整体
     # 覆盖 connection_params, 必须先全量取回再改单键, 否则冲掉其他配置。
-    r = requests.get(f"{API}/instruments/catalog")
+    r = http.get(f"{API}/instruments/catalog")
     r.raise_for_status()
     cats = r.json()
     cats = cats if isinstance(cats, list) else cats.get("items") or cats.get("categories") or []
@@ -137,13 +143,13 @@ def rebuild_channel_models():
         })
     params["available_channel_models"] = entries
     body = {"connection": {"connection_params": params}}
-    resp = requests.put(f"{API}/instruments/channelEmulator", json=body)
+    resp = http.put(f"{API}/instruments/channelEmulator", json=body)
     resp.raise_for_status()
     print(f"  available_channel_models: 重建 {len(entries)} 条 (显式真值频率)")
 
 
 def acceptance():
-    r = requests.get(f"{API}/channel-assets",
+    r = http.get(f"{API}/channel-assets",
                      params={"source_type": "vendor_file", "page_size": 100})
     r.raise_for_status()
     data = r.json()
@@ -166,7 +172,7 @@ def acceptance():
     missing = set(truth) - {a.get("associated_file_path") for a in active}
     for p in missing:
         print(f"  ✗ 缺: {p}"); ok = False
-    rm = requests.get(f"{API}/instruments/channelEmulator/channel-models").json()
+    rm = http.get(f"{API}/instruments/channelEmulator/channel-models").json()
     freqs = {it["filename"]: it.get("center_frequency_mhz")
              for it in rm.get("items", [])}
     bad = [p for p, t in truth.items()
