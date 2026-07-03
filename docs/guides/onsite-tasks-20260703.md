@@ -74,7 +74,11 @@ discovered / 任务状态 / 数据登记,不进功能代码。
 | [ ] | DUTProfile + SIMProfile 建档(真 DUT/SIM 到手后) | 建好后脚本注入 `dut_profile_id`/`sim_profile_id` 可活验三层能力/防插错网;首测不阻塞 |
 | [ ] | 机器重启过则:`export CHANNEL_ENGINE_PATH=~/Tools/ChannelEgine` 再跑 `start_all_services.sh` | GCM 路不依赖 :8001,ASC 路要 |
 
+**2026-07-03 现场决策记录**:① rfSwitch/EMCenter 免软件控制(通路已人工配置好,驱动 fail 不阻塞 —— precheck 实证 `critical_instruments_online: true`,rfSwitch 不在关键集);② bypass horn 参考天线静区测量(Phase 2 P0-4 TRP 基线不做),随之真路损校准(Phase 3)物理不可测一并跳过;③ Real 模式 4/7 驱动在线(F64/UXM/SA/转台),UXM 走 5125 TAF + LTE_NR_IRAT 方言。ad-hoc precheck 实测:**唯一剩余门 = DUT attach**。
+
 ## 当日 discovered(现场只记不修)
+
+- `[discovered on-site 2026-07-03 during precheck]` **P1-8 校准门不区分校准数据来源(mock/real)** —— 昨晚 pre-departure 的 **mock** 路损校准(32 链路@3600)在今天 **real** 模式 precheck 里 `cal_pass: true`("VALID, age 12.6h, cert@3600 matches")。门只查存在性+频率+时效,不查 provenance → 真测里会应用 mock 补偿值,RSRP/绝对功率被静默污染。今日可接受(吞吐 smoke 不信绝对值),但 proper fix = cal 记录带 `use_mock` 标记 + real 模式 strict 门拒 mock cert(feedback_runtime_gate_not_frozen_snapshot 同族:live source 还要 live **provenance**)。
 
 - `[discovered on-site 2026-07-03 during 任务6a]` **F64 SMB 匿名共享全开且可读** —— `Scenario Packs`/`D`/`User Playbacks` 等匿名可挂载;驱动注释预留的"走通 SMB 后动态发现 available_channel_models"路线**已实证可行**(今日已手动实录 18 条),后续可做成后端定期扫描/一键同步;顺带:匿名可写与否未测,若可写则 `.asc/.tap` 上传也可走 SMB 替代 FTP(P2-14/S6 相关)。
 - `[discovered on-site 2026-07-03 during Phase1]` **UXM 平台 fw 3.39.0.2 对 `SYSTem:APPLication:NAME?` 回 -113**(Test App 未启动时整个业务 SCPI 树不存在)—— 驱动 Test App 探测若依赖此命令需兼容 -113=未启动的语义(比"超时"更快更明确的判据)。
