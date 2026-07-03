@@ -37,10 +37,11 @@ PACK = r"D:\Scenario Packs\F9815064A TS 5G FR1 MIMO OTA\1.1"
 # (原文件名主干, scenario, mimo, topo, 文件名标称MHz, 工程真值Hz, 真ARFCN, band)
 # 真值 = SMB 实录 2026-07-03; band 按真值频率落位 (722/836.5/1575.42/2450→
 # 无准确 NR DL band 的保留 FR1 泛化; 2592.99 落 n41 故 2450 文件标 N41)。
-# N79 特例 (Codex #193 P2): 工程 CENT 4700.000 MHz 不在 15 kHz 栅格上 (713333.33),
-# arfcn 取 EMQuest/UXM 运行基线 **713334** (4700.01 MHz, prm 实录) —— scd arfcn 是
-# 运行时下发与频率一致性网的源头, 必须落栅格且与基线一致; center_frequency_hz 保持
-# 工程实测 4700.000, 与 arfcn 的 10 kHz 差属栅格量化 (远小于一致性网 0.5 MHz 容差)。
+# N79 特例 (Codex #193 两轮 P2): 工程 CENT 4700.000 MHz 不在 15 kHz 栅格上
+# (713333.33)。频率一致性网是 **exact ARFCN 比对无容差** (FrequencyIdentity docstring),
+# 故 arfcn 与 center_frequency_hz 必须同一栅格点自洽: 统一取 EMQuest/UXM 运行基线
+# **713334 / 4700.01 MHz (4700010000 Hz)**。工程实测 CENT 4700.000 记入 description
+# (仅加载基底; 运行时 F64 CENT 由 TestCase 频率显式下发覆盖, 与 EMQuest 行为同构)。
 TRUTH = [
     ("3GPP_FR1_OTA_CDLC_UMa_617M",     "UMa", "4x4", "32x4",  617.0,   617000000, 123400, "N71"),
     ("3GPP_FR1_OTA_CDLC_UMa_722M",     "UMa", "4x4", "32x4",  722.0,   722000000, 144400, "FR1"),
@@ -50,7 +51,7 @@ TRUTH = [
     ("3GPP_FR1_OTA_CDLC_UMa_2132.5M",  "UMa", "4x4", "32x4", 2132.5,  2132500000, 426500, "N1"),
     ("3GPP_FR1_OTA_CDLC_UMa_2450M",    "UMa", "4x4", "32x4", 2450.0,  2592990000, 518598, "N41"),
     ("3GPP_FR1_OTA_CDLC_UMa_3600M",    "UMa", "4x4", "32x4", 3600.0,  3549990000, 636666, "N78"),
-    ("3GPP_FR1_OTA_CDLC_UMa_4700M",    "UMa", "4x4", "32x4", 4700.0,  4700000000, 713334, "N79"),
+    ("3GPP_FR1_OTA_CDLC_UMa_4700M",    "UMa", "4x4", "32x4", 4700.0,  4700010000, 713334, "N79"),
     ("3GPP_FR1_OTA_CDLC_UMi_617M",     "UMi", "2x2", "32x2",  617.0,   617000000, 123400, "N71"),
     ("3GPP_FR1_OTA_CDLC_UMi_722M",     "UMi", "2x2", "32x2",  722.0,   722000000, 144400, "FR1"),
     ("3GPP_FR1_OTA_CDLC_UMi_836.5M",   "UMi", "2x2", "32x2",  836.5,   836500000, 167300, "FR1"),
@@ -59,7 +60,7 @@ TRUTH = [
     ("3GPP_FR1_OTA_CDLC_UMi_2132.5M",  "UMi", "2x2", "32x2", 2132.5,  2132500000, 426500, "N1"),
     ("3GPP_FR1_OTA_CDLC_UMi_2450M",    "UMi", "2x2", "32x2", 2450.0,  2450000000, 490000, "FR1"),
     ("3GPP_FR1_OTA_CDLC_UMi_3600M",    "UMi", "2x2", "32x2", 3600.0,  3600000000, 640000, "N78"),
-    ("3GPP_FR1_OTA_CDLC_UMi_4700M",    "UMi", "2x2", "32x2", 4700.0,  4700000000, 713334, "N79"),
+    ("3GPP_FR1_OTA_CDLC_UMi_4700M",    "UMi", "2x2", "32x2", 4700.0,  4700010000, 713334, "N79"),
 ]
 
 
@@ -70,6 +71,11 @@ def row_fields(row):
     mhz = freq_hz / 1e6
     desc = (f"F64 Scenario Pack v1.1 {stem}.smu | 工程实测 {mhz:g}MHz / "
             f"ARFCN {arfcn} (SMB 实录 2026-07-03) | {topo} OTA DL")
+    if freq_hz == 4700010000:  # N79 栅格特例: 登记值=运行载波, 工程实测另注 (诚实)
+        desc = desc.replace(
+            f"工程实测 {mhz:g}MHz / ARFCN {arfcn}",
+            f"运行载波 {mhz:g}MHz / ARFCN {arfcn} (EMQuest 基线; 工程 CENT 实测 4700.000, "
+            f"非 15k 栅格, 取上栅格点)")
     if abs(nominal - mhz) > 0.5:
         desc += f" | ⚠ 文件名标称 {nominal:g}M ≠ 工程真值"
     return {
