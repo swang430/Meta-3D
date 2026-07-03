@@ -75,10 +75,28 @@ class TestSetCellConfigGracefulSkip:
 
     def _wire_fake_visa(self, driver):
         """Replace pyvisa session with a recording mock so SCPI writes are
-        captured without going over the network."""
+        captured without going over the network.
+
+        P1-19 后 query 必须回显式: IRAT profile 默认开写后回读对账, 恒返
+        "0" 会被判 "下发≠生效" fail-loud (这正是对账的职责); 回显最近一次
+        对应写入让 "配置已生效" 的 fake 语义成立。"""
         sess = MagicMock()
-        sess.write = MagicMock()
-        sess.query = MagicMock(return_value="0")
+        written: list[str] = []
+        sess.write = MagicMock(side_effect=lambda c: written.append(c.strip()))
+
+        def _echo_query(cmd):
+            c = cmd.strip()
+            if c == "*OPC?":
+                return "1"
+            if c.endswith("ACTive:STATe?"):
+                return "0"
+            base = c.rstrip("?")
+            for w in reversed(written):
+                if w.startswith(base + " "):
+                    return w[len(base) + 1:]
+            return "0"
+
+        sess.query = MagicMock(side_effect=_echo_query)
         sess.timeout = 5000
         driver._visa_session = sess
         return sess
@@ -108,7 +126,8 @@ class TestSetCellConfigGracefulSkip:
         # Mandatory commands DID go out (with BSE: prefix, CELL1 default).
         written = [call.args[0] for call in sess.write.call_args_list]
         assert any("BSE:CONFig:NR5G:CELL1:BAND N78" in w for w in written), written
-        assert any("BSE:CONFig:NR5G:CELL1:DL:BW 100" in w for w in written), written
+        # P1-19: IRAT 带宽值令牌形式 (2026-07-03 实证: 裸 "100" 被拒)
+        assert any("BSE:CONFig:NR5G:CELL1:DL:BW BW100" in w for w in written), written
         # ARFCN is the auto-filled value for N78 (632628).
         assert any("BSE:CONFig:NR5G:CELL1:DL:ARFCN 632628" in w for w in written), written
 

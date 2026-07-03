@@ -1,0 +1,21 @@
+{
+  "_meta": {
+    "source": "EMQuest .prm 全集二进制解析 (10/10), 2026-07-03 CAICT 现场实录",
+    "notes": [
+      "各 band 的 EMQuest/UXM 运行基线: DL 中心 ARFCN / SSB ARFCN / Point A ARFCN / OffsetToCarrier / 双工 / SCS。",
+      "prm 频点全部为 band DL 中心; 与 F64 Scenario Pack 精确配对的 4 个 TDD band: N3/N41/N78/N79。",
+      "N79: 4700.000 MHz 不在 15 kHz 栅格上, EMQuest 上取 713334 (4700.01 MHz)。",
+      "详录 docs/guides/onsite-tasks-20260703.md discovered 'EMQuest prm 解析' 条。"
+    ]
+  },
+  "N1":  {"dl_arfcn": 428000, "dl_mhz": 2140.00, "ssb_arfcn": 427490, "point_a_arfcn": 423392, "offset_to_carrier": 102, "duplex": "FDD", "scs_khz": 15},
+  "N3":  {"dl_arfcn": 368500, "dl_mhz": 1842.50, "ssb_arfcn": 367930, "point_a_arfcn": 363892, "offset_to_carrier": 102, "duplex": "FDD", "scs_khz": 15},
+  "N5":  {"dl_arfcn": 176300, "dl_mhz": 881.50,  "ssb_arfcn": 175730, "point_a_arfcn": 171692, "offset_to_carrier": 102, "duplex": "FDD", "scs_khz": 15},
+  "N7":  {"dl_arfcn": 531000, "dl_mhz": 2655.00, "ssb_arfcn": 530430, "point_a_arfcn": 526392, "offset_to_carrier": 102, "duplex": "FDD", "scs_khz": 15},
+  "N8":  {"dl_arfcn": 188500, "dl_mhz": 942.50,  "ssb_arfcn": 187930, "point_a_arfcn": 183892, "offset_to_carrier": 102, "duplex": "FDD", "scs_khz": 15},
+  "N28": {"dl_arfcn": 156100, "dl_mhz": 780.50,  "ssb_arfcn": 155530, "point_a_arfcn": 151492, "offset_to_carrier": 102, "duplex": "FDD", "scs_khz": 15},
+  "N41": {"dl_arfcn": 518598, "dl_mhz": 2592.99, "ssb_arfcn": 515550, "point_a_arfcn": 507438, "offset_to_carrier": 102, "duplex": "TDD", "scs_khz": 30},
+  "N77": {"dl_arfcn": 650000, "dl_mhz": 3750.00, "ssb_arfcn": 649056, "point_a_arfcn": 646280, "offset_to_carrier": 102, "duplex": "TDD", "scs_khz": 30},
+  "N78": {"dl_arfcn": 636666, "dl_mhz": 3549.99, "ssb_arfcn": 635712, "point_a_arfcn": 632946, "offset_to_carrier": 102, "duplex": "TDD", "scs_khz": 30},
+  "N79": {"dl_arfcn": 713334, "dl_mhz": 4700.01, "ssb_arfcn": 712608, "point_a_arfcn": 709614, "offset_to_carrier": 102, "duplex": "TDD", "scs_khz": 30}
+}

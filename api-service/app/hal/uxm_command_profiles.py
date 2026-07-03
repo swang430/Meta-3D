@@ -49,6 +49,15 @@ class UxmTestApp:
     PRIMARY_BWP: str = "BWP0"
     HISLIP_INDEX: int = 0                  # which hislip endpoint to connect
 
+    # --- P1-19 方言值编码 / 能力标志 (2026-07-03 现场实证) ---
+    # 带宽值形式: "raw" = 裸数字 "100"; "prefixed" = 令牌 "BW100" (IRAT 实证,
+    # 裸数字被拒)。
+    BW_VALUE_FORM: str = "raw"
+    # 配置回读对账: IRAT 实证 ARFCN/BW/POWer 回读可用 → True; 老 5G_NR_Test
+    # App 2026-05-27 实证配置查询不支持 (超时) → False, 开了只会拖慢并误伤。
+    # config["readback_verify"] 可显式双向覆盖。
+    SUPPORTS_CONFIG_READBACK: bool = False
+
     # --- IEEE 488.2 / platform-mandatory ---
     IDN = "*IDN?"
     RST = "*RST"
@@ -304,6 +313,11 @@ class UxmLteNrIratProfile(UxmTestApp):
     PRIMARY_CELL = "CELL1"
     PRIMARY_BWP = "BWP0"
     HISLIP_INDEX = 2   # Test Application Framework lives here
+
+    # P1-19 (2026-07-03 实证): BW 值必须令牌形式 "BW100" (裸 "100" 被拒);
+    # ARFCN/BW/POWer/STATe 回读可用且与面板一致 → 回读对账默认开。
+    BW_VALUE_FORM = "prefixed"
+    SUPPORTS_CONFIG_READBACK = True
 
     # Note: app selection on E7515B Test App Framework is GUI-driven —
     # SCPI write to change app isn't safe to send unprompted.
