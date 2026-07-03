@@ -228,6 +228,9 @@ def normalize_channel_model_entries(entries: Any) -> list[Dict[str, Any]]:
       entry 里 operator 显式给的 ``center_frequency_mhz``, 否则从文件名频率 token 解析
       (``_3600M.smu`` → 3600), 让 inventory 从"名字清单"变"带频率的资产盘点", 直接服务
       emulation_file 选择 (P2-11 Phase 2: .smu↔TestCase 频率匹配)。无频率 token → None。
+      ⚠ P1-18: 文件名频率是场景族标称, 会系统性说谎 (实录 UMa_3600M 工程实为
+      3549.99) —— fallback 值只作 loose 提示; 登记真值走显式字段 (工程解析
+      ``smu_project.parse_smu_project_primary_freq_mhz`` 或实测, 见 #193 资产修正)。
     """
     if not entries:
         return []

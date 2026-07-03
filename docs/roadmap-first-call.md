@@ -39,9 +39,9 @@ loose 软化）+ 18 条 F64 场景资产工程真值化 + 四台仪器控制面�
 
 **▶ 2026-07-03 晚 用户授权 triage（现场发现 → roadmap）**：修单条目化为 **P1-18/19/20/21**
 （下次现场 attach→吞吐的软件必要条件）+ **P2-17/18**（直通编排 / 资产真值自动化）+ P2-4/P2-9
-状态更新。**执行序（WIP=1，一次一项）**：① `onsite-20260703` 分支 PR 收口 → ② P1-20（转台断连，
-最小且最直接阻塞★核心）→ ③ P1-19（UXM 编排）→ ④ P1-18（F64 频率正修）→ ⑤ P1-21（会话卫生）
-→ P2-17/18 择机。
+状态更新。**执行序（WIP=1，一次一项）**：① `onsite-20260703` 分支 PR 收口 ✅（#193）→ ② P1-20
+✅（#194 转台懒重连）→ ③ P1-19 ✅（#195 UXM 编排，Codex 六轮 3P1+4P2 全修）→ **④ P1-18
+（F64 频率正修，进行中）** → ⑤ P1-21（会话卫生）→ P2-17/18 择机。
 
 P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max / RT→MPC 接入)
 已进 on-site 队列。**原开发的现场验证基线已打 tag** `onsite-verification-baseline-2026-06-21`（留在 main）。
@@ -1075,7 +1075,12 @@ SYN, 于是每个 IP 都"alive"、每个子网都"可达"。实测连 RFC5737 TE
 
 ---
 
-### P1-19 — UXM set_cell_config 编排正修 (OFF→配→ON + 回读对账 + SSB 三件套)
+### P1-19 — UXM set_cell_config 编排正修 (OFF→配→ON + 回读对账 + SSB 三件套) ✅ Done (2026-07-04 #195)
+
+> 收口: ①-⑤ 全落地 + EMQuest 10-band 基线表进 repo (`app/data/nr_band_baselines.json`)。
+> Codex 六轮 3P1+4P2 全修 (小区恢复 finally / inst0 重定向可达且 host 复用资源串 / 5G 文本态
+> 反向判定 / OFF 写布尔契约 / _duplex 缓存绑 band / **执行链消费布尔契约** — measure Phase 2
+> 与诊断序列 `_step` 对 False fail-loud)。mock 单测 43 用例; 真机验收待下次现场。
 
 **What**: ① BW 等 ON 态禁改参数的 **OFF→配→ON 编排**(-221 实证) + BW 值令牌形式(`BW100`) + TDD 下跳过 UL:BW(跟随 DL); ② `band` None-guard(键在值 None 视同缺失走推断, feedback_endpoint_null_field_cartesian)+ duplex/tdd_pattern/sched_algo 同型审计; ③ **写后回读对账 fail-loud**(回读=echo 设置值 ≠ 生效, 但 ARFCN/BW/POWer 回读今日实证可用, 对账仍有值); ④ **SSB 三件套下发/核对能力**(SSB ARFCN / PointA / OffsetToCarrier) —— EMQuest prm 破译出的 band→(dl_arfcn/ssb_arfcn/point_a/offset/duplex) 权威查表进 repo 数据文件(10 band 全集在 onsite 文档); ⑤ Platform→hislip2 重定向条件补 `inst0`(或绑定钉死 TAF 端点文档化)。
 

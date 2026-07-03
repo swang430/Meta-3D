@@ -118,7 +118,11 @@ def check_channel_filename_freq(
     都解析不出 (source=unparseable) → 无从核对 → 不强判不一致 (consistent=True 但 source
     标 unparseable, 跟 Phase 1 None-skip 一致; SCD 声明本就是真值)。
 
-    不一致 (文件名能解析出频率但 ≠ 声明) = 文件名说谎 → caller fail-loud。
+    不一致的处置分级 (122eeae 现场软化 + P1-18 定案, 见 `must_fail`):
+    - source=standard (我们自己的 MF_ 命名, 反解必然正确) 且 ≠ 声明 → fail-loud;
+    - source=loose (厂商文件名) 且 ≠ 声明 → 只警告不拦 —— 厂商文件名是场景族
+      标称, 系统性说谎 (实录 UMa_3600M 工程实为 3549.99), SCD 声明 (工程解析
+      `smu_project` / 实测) 才是真值, 不能让说谎的文件名否决正确的声明。
     """
     std = parse_standard_channel_filename(actual_filename)
     if std is not None:

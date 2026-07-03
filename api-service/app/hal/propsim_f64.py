@@ -727,7 +727,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         }
 
     def _parse_loaded_center_freq_mhz(self) -> Optional[float]:
-        """从 `_loaded_emulation_file` 文件名解析中心频率 (MHz)。
+        """已加载 .smu 的**文件名** loose 频率 (P1-18 ⚠: 只可作提示不可作真值 ——
+        文件名是场景族标称, 系统性说谎, 实录 UMa_3600M 工程实为 3549.99; 工程内
+        真值解析见 ``smu_project``, 但 ATE 无 MMEM/FTP 拿不到工程文件, 运行时
+        只能在未显式下发时以此作 get_frequency_identity 的降级参考)。
 
         复用 nr_arfcn.parse_smu_center_freq_mhz (P2-10 Step 1 抽共享) —— 跟 channel model
         inventory 盘点 .smu 频率元数据走同一套命名约定解析, 避免漂移成两套。
@@ -764,16 +767,24 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
           - channel_model: 信道模型名称 (触发 set_channel_model)
           - pipeline: "gcm" 或 "asc_runtime"
         """
-        if "center_frequency_mhz" in config:
+        if config.get("center_frequency_mhz") is not None:  # None 视同缺省 (P1-18)
             self._center_freq_mhz = config["center_frequency_mhz"]
             self._center_freq_programmed = True  # P2-11: 显式下发了中心频
         if "pipeline" in config:
             self._active_pipeline = F64Pipeline(config["pipeline"])
         if "channel_model" in config:
+            # P1-18: Step 4 改为"parameters 显式给才写 CENT"后, 顶层频率不再
+            # 靠"缺省写内存值"间接生效 — 显式并进 parameters 直通下发。
+            params = dict(config.get("parameters", {}))
+            if (
+                config.get("center_frequency_mhz") is not None
+                and params.get("center_frequency_mhz") is None
+            ):
+                params["center_frequency_mhz"] = config["center_frequency_mhz"]
             return await self.set_channel_model(
                 config["channel_model"],
                 config.get("scenario", "UMi"),
-                config.get("parameters", {})
+                params,
             )
         return True
 
@@ -891,17 +902,25 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                         old[0], old[1], new_tx, new_rx,
                     )
 
-            # Step 4: 设置中心频率
-            # P2-11: 只有 parameters 显式给了 center_frequency_mhz 才标记"已下发"
-            # (并更新真值); 否则沿用既有 _center_freq_mhz 程控但不当真值上报 (它可能
-            # 只是默认 3500, 此时 get_frequency_identity 退回 .smu 文件名)。
-            if "center_frequency_mhz" in parameters:
+            # Step 4: 设置中心频率 — 仅 parameters 显式给了才下发 (P1-18 正修)。
+            # 2026-07-03 现场 ⭐⭐⭐ bug: 原先缺省也无条件把 self._center_freq_mhz
+            # (默认 3500 或上次遗留) 写满全部通道, 冲掉 .smu 工程内频率 —— 3550
+            # 工程被写成 3500, 输入测量 / AUTOSET / 吞吐全链错位。缺省 = 不碰
+            # CENT, 尊重工程 CenterFrequency; 显式下发才更新真值 + programmed
+            # (P2-11 语义不变: programmed=False 时 get_frequency_identity 退回
+            # .smu 文件名 loose 解析)。None 视同缺省 (显式 null 不能变成字面
+            # "CALC:FILT:CENT:CH 1,None" 下发)。
+            if parameters.get("center_frequency_mhz") is not None:
                 self._center_freq_mhz = parameters["center_frequency_mhz"]
                 self._center_freq_programmed = True
-            freq_mhz = self._center_freq_mhz
-            # 为所有通道设置中心频率
-            for ch in range(1, self._channel_count + 1):
-                await self._write(f"CALC:FILT:CENT:CH {ch},{freq_mhz}")
+                freq_mhz = self._center_freq_mhz
+                for ch in range(1, self._channel_count + 1):
+                    await self._write(f"CALC:FILT:CENT:CH {ch},{freq_mhz}")
+            else:
+                # 缺省加载 → 频率回归新工程内声明, 之前的显式下发值不再代表
+                # 当前实际 — 复位 programmed, identity 退回文件名 loose 参考
+                # (上报=实际的闭环, 否则换工程后仍报旧显式值)。
+                self._center_freq_programmed = False
 
             # Step 5: 验证连接器映射
             # 查询第一个通道的物理连接, 确保路由正确
