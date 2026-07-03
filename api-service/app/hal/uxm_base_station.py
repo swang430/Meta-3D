@@ -369,7 +369,12 @@ class RealUxmDriver(BaseStationDriver):
             )
             if on_platform_endpoint:
                 try:
-                    framework_resource = f"TCPIP::{self.ip_address}::hislip2::INSTR"
+                    # Codex #195 R4 P2: host 复用刚验证过 IDN 的 resource_str —
+                    # 操作员可能只给 visa_resource (config 无 ip / ip=None), 此时
+                    # self.ip_address 是默认值/None, 会把重定向指到别的主机。
+                    _parts = resource_str.split("::")
+                    _host = _parts[1] if len(_parts) > 1 else self.ip_address
+                    framework_resource = f"TCPIP::{_host}::hislip2::INSTR"
                     logger.info(
                         f"[UXM] IDN says E7515B Platform; switching session "
                         f"to Test App Framework at {framework_resource}"

@@ -334,6 +334,40 @@ class TestInst0Redirect:
         assert any("hislip2" in r for r in opened), opened
 
     @pytest.mark.asyncio
+    async def test_redirect_reuses_host_from_resource_str(self, monkeypatch):
+        """Codex #195 R4 P2: 只给 visa_resource (无 ip) 时, 重定向 host 取自资源串。"""
+        d = RealUxmDriver("uxm-inst0-noip", {
+            "visa_resource": "TCPIP0::10.9.8.7::inst0::INSTR",
+        })
+        opened: list[str] = []
+
+        def _make_session(resource):
+            sess = MagicMock()
+            sess.timeout = 5000
+            if "inst0" in resource:
+                sess.query = MagicMock(side_effect=lambda c: {
+                    "*IDN?": "Keysight Technologies,E7515B Platform,MY123,1.0",
+                }.get(c.strip(), "0"))
+            else:
+                sess.query = MagicMock(side_effect=lambda c: {
+                    "*IDN?": "Keysight Technologies,E7515B TAF,MY123,1.0",
+                    "SYSTem:APPLication:NAME?": "LTE_NR_IRAT",
+                    "*OPC?": "1",
+                }.get(c.strip(), "0"))
+            sess.write = MagicMock()
+            sess.close = MagicMock()
+            return sess
+
+        rm = MagicMock()
+        rm.open_resource = MagicMock(side_effect=lambda r, **kw: (opened.append(r), _make_session(r))[1])
+        monkeypatch.setattr("pyvisa.ResourceManager", MagicMock(return_value=rm))
+
+        ok = await d.connect()
+        assert ok is True
+        redirects = [r for r in opened if "hislip2" in r]
+        assert redirects == ["TCPIP::10.9.8.7::hislip2::INSTR"], opened
+
+    @pytest.mark.asyncio
     async def test_explicit_non_inst0_binding_stays_pinned(self, monkeypatch):
         """显式非 inst0 绑定 (如直连 TAF 的 SOCKET) 仍然尊重, 不重定向。"""
         d = RealUxmDriver("uxm-pinned", {
