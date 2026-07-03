@@ -40,8 +40,8 @@ loose 软化）+ 18 条 F64 场景资产工程真值化 + 四台仪器控制面�
 **▶ 2026-07-03 晚 用户授权 triage（现场发现 → roadmap）**：修单条目化为 **P1-18/19/20/21**
 （下次现场 attach→吞吐的软件必要条件）+ **P2-17/18**（直通编排 / 资产真值自动化）+ P2-4/P2-9
 状态更新。**执行序（WIP=1，一次一项）**：① `onsite-20260703` 分支 PR 收口 ✅（#193）→ ② P1-20
-✅（#194 转台懒重连）→ ③ P1-19 ✅（#195 UXM 编排，Codex 六轮 3P1+4P2 全修）→ **④ P1-18
-（F64 频率正修，进行中）** → ⑤ P1-21（会话卫生）→ P2-17/18 择机。
+✅（#194 转台懒重连）→ ③ P1-19 ✅（#195 UXM 编排，Codex 六轮 3P1+4P2 全修）→ ④ P1-18 ✅
+（#196 缺省不写 CENT + smu_project 真值解析）→ **⑤ P1-21（会话卫生，进行中）** → P2-17/18 择机。
 
 P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max / RT→MPC 接入)
 已进 on-site 队列。**原开发的现场验证基线已打 tag** `onsite-verification-baseline-2026-06-21`（留在 main）。
@@ -1064,7 +1064,11 @@ SYN, 于是每个 IP 都"alive"、每个子网都"可达"。实测连 RFC5737 TE
 
 ---
 
-### P1-18 — F64 频率下发正修 (3500 覆盖 bug 驱动侧正解 + 真值比对层)
+### P1-18 — F64 频率下发正修 (3500 覆盖 bug 驱动侧正解 + 真值比对层) ✅ Done (2026-07-04 #196)
+
+> 收口: ①-④ 全落地 — Step 4 缺省不写 CENT (+None 边缘 + 缺省重载复位 programmed +
+> configure 直通); `smu_project` 工程 INI 真值解析器进 repo (P2-18 地基); 三 fallback
+> 调用点审计落款; 10 用例。measure 桥接保留 (TestCase 显式驱动是路径 B 正路)。
 
 **What**: ① 驱动 `set_channel_model` Step 4 参数缺省时**不写 CENT**(保留 .smu 工程频率), 写了必置 `_center_freq_programmed`(上报=下发); ② 现场热修 2c6f6b1(measure sim_rules 桥接 `center_frequency_mhz`)正规化 + 单测(TestCase 频率显式下发是正路, EMQuest 同构印证); ③ 现场热修 122eeae(频率一致性网 loose 档软化)正规化 + 加"下发后真值比对"层 —— CENT 回读在此 ATE 不可靠, 预期真值源 = .smu 工程解析值(`CenterFrequency` INI 键, 解析器已验证); ④ `parse_smu_center_freq_mhz` 文件名 fallback 全调用点审计(厂商文件名系统性说谎, 只可作 loose 提示不可作真值)。
 

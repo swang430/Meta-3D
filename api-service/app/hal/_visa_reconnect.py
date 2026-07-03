@@ -47,3 +47,19 @@ def is_visa_conn_lost(exc: BaseException) -> bool:
     # error_code on Windows can be the signed-32 form; normalise to
     # unsigned for comparison against the spec hex constants.
     return (code & 0xFFFFFFFF) in _CONN_LOST_CODES
+
+
+def is_visa_timeout(exc: BaseException) -> bool:
+    """VI_ERROR_TMO (0xBFFF0015) — device 没在窗口内应答。P1-21 ②: 这类
+    错误后会话可能残留迟到应答 (下一条 query 会读错位), 调用方应做轻量
+    排水 (SYST:ERR? 循环) 而不是直接重载。与 conn-lost 互斥分类。"""
+    try:
+        import pyvisa
+    except ImportError:
+        return False
+    if not isinstance(exc, pyvisa.errors.VisaIOError):
+        return False
+    code = getattr(exc, "error_code", None)
+    if code is None:
+        return False
+    return (code & 0xFFFFFFFF) == 0xBFFF0015  # VI_ERROR_TMO
