@@ -44,16 +44,13 @@ discovered / 任务状态 / 数据登记,不进功能代码。
 **目标**:选定一个 F64 上真实存在、DUT 在其下能正常工作、且**参数我们完全掌握**的信道文件,
 作为可复现测试的受控基准 —— 不是"随便哪个能跑的黑盒文件"。
 
-- [ ] **清点**:人在 F64 前核对 `D:\Scenario Packs\...` 与 `D:\User Emulations\` 下真实文件名
-      (SCPI 无 MMEM、FTP 未启,只能现场看)
-- [ ] **选定**:候选首选 `D:\Scenario Packs\F9815064A TS 5G FR1 MIMO OTA\1.1\`
-      `3GPP_FR1_OTA_CDLC_UMa_3600M.wiz\3GPP_FR1_OTA_CDLC_UMa_3600M.smu`
-      (2026-05-27 真机 load/run 100% 实测;CDL-C UMa 3600 MHz = n78/ARFCN 640000)
+- [x] **清点** —— ✅ 2026-07-03 上午 **SMB 突破**:F64 开匿名共享(`Scenario Packs`/`D`/`User Playbacks`/`CTIA MODEL`/`PROPSim`),Mac 直接 `mount_smbfs` 枚举,**不用人跑仪器前**。1.1 包实录:CDL-C × UMa/UMi × 9 频点(617/722/836.5/1575.42/1800/2132.5/2450/3600/4700 MHz)= 18 工程 + `4by32 cal.wiz`;`.cir` 文件名揭示拓扑 = **BS1→MS1 32x4 OTA DL**。共享根另见 `CAICT NR 4x4 OTA(SCC)`、`CTIA_Dynamic_OTA_UMa`、4 个 ENDC `.gcm`、LTE 包(现场可再挖)
+- [x] **选定** —— ✅ `3GPP_FR1_OTA_CDLC_UMa_3600M.wiz\...smu` **存在性已经 SMB 远程实证**(ChannelAsset 声明路径逐字节确认在 F64 上)
 - [ ] **合拍验证**:DUT 在该文件加载下 attach 稳定 + 吞吐非零(= 频段/带宽/层数与终端能力匹配)
 - [ ] **登记受控**(缺一不算"我们能控制"):
   - [ ] ChannelAsset「F64 N78 场景文件」的关联文件路径 = 真实选定路径(出发前已预置为上述候选,若现场换文件在信道工作台改)
   - [ ] `scd_config` 身份与文件实际参数一致(arfcn 640000 / BW100 / CDLC / UMa / 4x4 / DP)
-  - [ ] 仪器抽屉 `available_channel_models` 清单更新为真实文件名(现在还是 3 个 demo 名,顺手清)
+  - [x] 仪器抽屉 `available_channel_models` 清单更新为真实文件名 —— ✅ 2026-07-03 已换成 **18 条 SMB 实录**(demo 假名清除):label=SCD 命名规则 `MF_{band}_{arfcn}_BW100_CDLC_{UMa|UMi}_4x4_DP_v1`,filename=完整 `D:\` 路径(可直接喂 `CALC:FILT:FILE`),附 center_frequency_mhz + nr_arfcn(4700M 无整数 ARFCN 用标称槽)
 - [ ] **一致性网实证**:故意把一次会话频率设 3.5 GHz 跑一发,确认 P2-11 网真的拦(可选,30 秒,给"网在工作"留证据)
 
 **"我们能控制"两档(2026-07-03 晨读队友经验分享后升级)**:
@@ -79,4 +76,6 @@ discovered / 任务状态 / 数据登记,不进功能代码。
 
 ## 当日 discovered(现场只记不修)
 
-- (空 — 现场往下加行:`[discovered on-site 2026-07-03 during 任务N] 一句话`)
+- `[discovered on-site 2026-07-03 during 任务6a]` **F64 SMB 匿名共享全开且可读** —— `Scenario Packs`/`D`/`User Playbacks` 等匿名可挂载;驱动注释预留的"走通 SMB 后动态发现 available_channel_models"路线**已实证可行**(今日已手动实录 18 条),后续可做成后端定期扫描/一键同步;顺带:匿名可写与否未测,若可写则 `.asc/.tap` 上传也可走 SMB 替代 FTP(P2-14/S6 相关)。
+- `[discovered on-site 2026-07-03 during Phase1]` **UXM 平台 fw 3.39.0.2 对 `SYSTem:APPLication:NAME?` 回 -113**(Test App 未启动时整个业务 SCPI 树不存在)—— 驱动 Test App 探测若依赖此命令需兼容 -113=未启动的语义(比"超时"更快更明确的判据)。
+- `[discovered on-site 2026-07-03 during Phase0]` 现场布线实况:F64(0.132)与 UXM(1.112)**同一物理段进 en14**,SA 实际 IP `192.168.0.134`(非 seed 的 100.23,绑定已现场更新);Mac 用 en14 三别名(0.3/1.100/100.100)覆盖。适配器枚举名会漂(en3/en4→en14),文档别硬编码接口名。
