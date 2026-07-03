@@ -566,6 +566,11 @@ class MeasureExecutor(IStepExecutor):
 
             sim_rules = {
                 "frequency_hz": config.frequency_hz,
+                # 现场热修 2026-07-03: F64 驱动 set_channel_model 只认 center_frequency_mhz
+                # (MHz), 缺省时对 64 通道无条件写默认 3500 冲掉 .smu 工程频率 (当日最重 bug)。
+                # 桥接 TestCase 频率 → 下发=配置, _center_freq_programmed 置位, 上报诚实。
+                # 回家正修 = 驱动参数缺省时不写 CENT (保留工程频率), 见 onsite-tasks 修单。
+                "center_frequency_mhz": config.frequency_hz / 1e6,
                 "target_tx_power_dbm": config.target_tx_power_dbm,
                 "target_rsrp_dbm": config.target_rsrp_dbm,
                 "target_snr_db": config.target_snr_db,
