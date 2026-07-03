@@ -30,6 +30,19 @@ P2-13 SIMProfile 三阶段 (#140/#141/#142)、DUTProfile 四阶段 (#134-#137)�
 
 **▶ 2026-07-01 P2-16 deprecate-legacy ✅ 完成**（用户拍板做的本地切片）—— S4-5 消费接通后暴露的双向 stale-copy 根因（迁移实体两份副本 `custom_cdl_profiles`/`standard_channel_definitions` + `channel_assets` × 两条消费路径），用**消费收敛到 ChannelAsset** 根治：`cdl_profile_id`（#187）/ `scd_id`（#188）消费时若同 id 的 ChannelAsset 存在则读它 → ChannelAsset 成单一真值源，无需双写；旧 CDL/SCD 编辑器加 deprecation 引导到信道工作台（#189，保留功能不硬禁用，存量未迁移档案仍可编辑）。**本地队列又回到空** —— P2-16 余项全是现场半（S5/S6: rt 真实数据 + 多快照轨迹执行 + `.tap` 落地）；真 P0（P0-3/4/5）仍现场 blocked。
 
+**▶ 2026-07-03 CAICT 现场日（P0-5 推进至最后一步 + 控制面全量化）** —— DUT 已测到 -96 dBm RSRP
+（F64 直通链路终验通过），正式 attach 注册与 ★四方位吞吐未跑（仪表重启 + EMQuest 多写方干扰消耗窗口）。
+当日 12 commit 在分支 `onsite-20260703`：现场热修 ×2（2c6f6b1 measure 频率桥接 / 122eeae 频率网
+loose 软化）+ 18 条 F64 场景资产工程真值化 + 四台仪器控制面量化（UXM 延迟矩阵 / 转台 12/12 +
+断连 <11s / EMCenter VXI-11 打通 / F64 直通语义）+ EMQuest prm 10/10 破译。权威详录
+[`guides/onsite-tasks-20260703.md`](guides/onsite-tasks-20260703.md)（收工总结 + discovered 区）。
+
+**▶ 2026-07-03 晚 用户授权 triage（现场发现 → roadmap）**：修单条目化为 **P1-18/19/20/21**
+（下次现场 attach→吞吐的软件必要条件）+ **P2-17/18**（直通编排 / 资产真值自动化）+ P2-4/P2-9
+状态更新。**执行序（WIP=1，一次一项）**：① `onsite-20260703` 分支 PR 收口 → ② P1-20（转台断连，
+最小且最直接阻塞★核心）→ ③ P1-19（UXM 编排）→ ④ P1-18（F64 频率正修）→ ⑤ P1-21（会话卫生）
+→ P2-17/18 择机。
+
 P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max / RT→MPC 接入)
 已进 on-site 队列。**原开发的现场验证基线已打 tag** `onsite-verification-baseline-2026-06-21`（留在 main）。
 **下次现场** (校准天线 / SGH / 真 DUT 到位) Current Focus **必须从该 tag 切回依赖链 P0-4 → P0-3 → P0-5**
@@ -1051,6 +1064,50 @@ SYN, 于是每个 IP 都"alive"、每个子网都"可达"。实测连 RFC5737 TE
 
 ---
 
+### P1-18 — F64 频率下发正修 (3500 覆盖 bug 驱动侧正解 + 真值比对层)
+
+**What**: ① 驱动 `set_channel_model` Step 4 参数缺省时**不写 CENT**(保留 .smu 工程频率), 写了必置 `_center_freq_programmed`(上报=下发); ② 现场热修 2c6f6b1(measure sim_rules 桥接 `center_frequency_mhz`)正规化 + 单测(TestCase 频率显式下发是正路, EMQuest 同构印证); ③ 现场热修 122eeae(频率一致性网 loose 档软化)正规化 + 加"下发后真值比对"层 —— CENT 回读在此 ATE 不可靠, 预期真值源 = .smu 工程解析值(`CenterFrequency` INI 键, 解析器已验证); ④ `parse_smu_center_freq_mhz` 文件名 fallback 全调用点审计(厂商文件名系统性说谎, 只可作 loose 提示不可作真值)。
+
+**Why P1**: 当日最重 bug(⭐⭐⭐)的正修。不修则任何不带显式频率的加载路径仍写默认 3500 冲掉工程频率, 输入测量/AUTOSET/吞吐全链错位。
+
+**Acceptance**: 参数缺省加载后 CENT=工程值(mock 断言不发 CENT 写); 显式频率路径 programmed 标志置位且上报一致; 两热修有单测锁定; greenfield 全链 mock run 频率一致性网过。
+**来源**: [`guides/onsite-tasks-20260703.md`](guides/onsite-tasks-20260703.md) discovered ⭐⭐⭐ 条 + "文件名≠工程真值"条。**Estimate**: ~1 day。
+
+---
+
+### P1-19 — UXM set_cell_config 编排正修 (OFF→配→ON + 回读对账 + SSB 三件套)
+
+**What**: ① BW 等 ON 态禁改参数的 **OFF→配→ON 编排**(-221 实证) + BW 值令牌形式(`BW100`) + TDD 下跳过 UL:BW(跟随 DL); ② `band` None-guard(键在值 None 视同缺失走推断, feedback_endpoint_null_field_cartesian)+ duplex/tdd_pattern/sched_algo 同型审计; ③ **写后回读对账 fail-loud**(回读=echo 设置值 ≠ 生效, 但 ARFCN/BW/POWer 回读今日实证可用, 对账仍有值); ④ **SSB 三件套下发/核对能力**(SSB ARFCN / PointA / OffsetToCarrier) —— EMQuest prm 破译出的 band→(dl_arfcn/ssb_arfcn/point_a/offset/duplex) 权威查表进 repo 数据文件(10 band 全集在 onsite 文档); ⑤ Platform→hislip2 重定向条件补 `inst0`(或绑定钉死 TAF 端点文档化)。
+
+**Why P1**: attach 与吞吐的 UXM 配置全自动化前提; 今日全部序列已现场实证(3550→3600→基线 636666 三轮重配全人肉), 不落驱动则下次现场重复人肉。
+
+**Acceptance**: mock UXM 单测覆盖 OFF→配→ON / 令牌形式 / None-guard / 回读对账 fail-loud / SSB 查表下发; 真机验收(下次现场)= 一次 set_cell_config 从任意起始态收敛到目标基线并回读全绿。
+**来源**: onsite 文档 discovered "BW 卡 40 根因"/"None.upper 根因已闭环"/"EMQuest prm 全集"条。**Estimate**: ~1.5 day。
+
+---
+
+### P1-20 — Aerotech 转台断连韧性 (move 前懒重连) ⚡ 阻塞★核心最直接
+
+**What**: 驱动 `move_to`/`get_position`/`reset` 前检测 transport closed → 自动重连一次再执行(懒重连); 可选周期 keepalive poke(≤5s, 实测断连窗口 <11s); mock transport 单测(断连→自愈)。
+
+**Why P1**: 实测 move 完成后 ~10s 空闲连接即被控制器掐(比 5/27 记录的 ~2min 严得多); 4 方位吞吐的方位间隔(~1min 测量)必踩 → **方位 2 的 move 必失败 = ★核心 gate 直接阻塞**。今日 30° 步进 12/12 验证靠"每步前重载 HAL"人肉绕行。最小修(~半天), 收益最直接。
+
+**Acceptance**: mock 断连注入后 move 自愈成功; 集成层 4 方位序列(方位间 sleep 60s mock)全过; 现场验收 = 完整 4 方位 run 转台零人工干预。
+**来源**: onsite 文档 discovered "转台验证"条。**Estimate**: ~0.5 day。
+
+---
+
+### P1-21 — HAL 会话卫生 (命令互斥 + 超时排水恢复 + 延迟应答语义)
+
+**What**: ① per-instrument asyncio 命令锁 —— monitoring broadcaster 与测量序列共用 F64 单 socket 无互斥是当日 P1 级根因(应答串线/错位/僵死全家桶), 或 measure 期间暂停 broadcaster; ② F64 超时后**轻量恢复策略**: 自动排水 SYST:ERR? N 条 + 功能查询验证(实测 2 条即净), 失败才升级重载(替代今日"超时必重载 HAL"人肉纪律; UXM 丝滑度测试实证恢复成本极低); ③ INP 测量族 deferred-response 语义适配(结果就绪才回, 固定超时读法必错位); ④ F64 输出功率测量 STOPPED 态冻结语义(驱动注释 + cockpit 监控层"停止态读数不可信"标注)。
+
+**Why P1**: 今日全天串线/wedge 的系统性正解; 不修则下次现场仍靠"关主控台页 + 每次重载"人肉纪律, 且 cockpit 监控与测量互斥的产品矛盾未解。
+
+**Acceptance**: 并发 broadcaster+测量序列 mock 压测零串线; 超时注入后自动恢复(不重载)成功率量化; 单测锁定。
+**来源**: onsite 文档 discovered "监控广播器争用 P1"/"UXM 丝滑度"/"INP 延迟应答"/"输出测量冻结"条。**Estimate**: ~1.5 day。
+
+---
+
 ## 🟡 P2 — Abstraction debt
 
 ### P2-1 — UXM two-layer architecture: Test App + Topology Profile ✅ Done
@@ -1223,7 +1280,13 @@ commit (contract sync: openapi.yaml + regen TS types) both in main.
 CAICT's NAT/firewall drops idle TCP entries. Never verified. Run an
 idle-then-poke test to confirm.
 
-**Status**: `[ ]` not started
+**▶ 2026-07-03 现场实测数据点 (假设部分证实, 窗口按仪器分化)**: Aerotech **move 完成后 ~10s
+空闲即断** (比 5/27 记录的 ~2min 严得多, 重启后更严或"运动完成即短计时") → 转台切片提级为
+**P1-20** (懒重连); UXM TAF 5125 **~15min 空闲被掐** (BrokenPipeError); F64 ATE 会话
+wedge 是应答错位家族非纯 idle-drop (→ P1-21)。keepalive 周期设计须 per-instrument
+(转台 ≤5s / UXM ~5min)。
+
+**Status**: `[ ]` 假设验证部分完成 (2026-07-03 实测); 剩余 = per-instrument keepalive 落地 (转台半并入 P1-20)
 **Estimate**: 0.5 day
 
 ### P2-5 — HAL Reload behaviour audit ✅ Done (PR #35)
@@ -1456,6 +1519,7 @@ DUT-attach) 提前到首屏, 跟 fail-loud 哲学一脉相承。
 
 **Status**: 🔄 本地半 done (本 PR) — ① 协议调研 ✅ + ② driver 协议修正 ✅; ③ 接入 TopologyEditor + 现场实测 🚧 blocked。**关键发现**: `EtslSwitchDriver` 早已存在但有协议 bug (Write/Query 前缀误读文档动作标签 + LF 终止符, 极可能是 5/27 现场 raw socket 无响应真因) + 零协议单测。**① 调研结论**: AMS8947-195-1 = ETS-Lindgren EMCenter + EMSwitch 插卡, 原生 SCPI over LAN/GPIB **不必经 EMQuest** (EMQuest 是可选上位软件; 系统图 "EMQuest NET Port" 只是物理接线盘标签); 命令裸 `<slot>:<cmd>` + CR 终止 (非 Write/Query 包装)。**② 修正**: driver 改默认裸命令 + CR + 可配置回退 (`command_style`/`line_terminator`, 现场只调配置不改代码, 同 P0-8) + SP6T reset 安全跳过 + 18 例协议单测; 完整调研 + 命令集 + 拓扑 + 现场 runbook 见 [docs/site-debug/2026-06-04-emcenter-switch-protocol.md](site-debug/2026-06-04-emcenter-switch-protocol.md)。**现场缺口**: TCP 端口 (官方手册都不写; SCPI 标准 5025 首选 + 串口 9600 plan B, web 调研已收敛, 详见调研文档) + 每槽卡型号 + SP6T↔天线映射 + SP6T 复位语义。
 **下一步**: ③ 现场按 runbook 定端口 (raw+CR 默认, 逃生开关试 verbose/lf) + `<slot>:*IDN?` 认卡 + 标定 SP6T 映射 → 接入 TopologyEditor 的 mapping/连线 (见 memory: TopologyEditor 核心价值是 mapping 不是设备选型)。
+**▶ 2026-07-03 现场半收口**: **老固件 2.5.1 的 LAN = VXI-11 (非 raw socket)** —— rpcinfo 见 Core/Abort 通道; pyvisa `TCPIP0::192.168.0.50::inst0::INSTR`(现有绑定本就是此形式)+ 裸命令 + CR **实测全通**: 机箱 IDN / 逐槽认卡 (Slot1 EMControl 7006-001, Slot2-4 EMSwitch 7001-002/B, Slot5 7001-003/B SP6T 值域实证, Slot8 Processor 7000-009) / 继电器读态; **当日人工通路快照 Slot4 A/B/C=NO/NO/NO + Slot5 A/B=1/1**; 响应尾带 `\n\x00` NUL; `INTLK? SAFETYRELAY` 回 ERROR 3 (此固件不支持)。2025-08 RevA 文档的 raw 5025 仅适用新固件。**剩余本地半②**: EtslSwitchDriver 加 VXI-11 transport (endpoint 形式自动选 / `connection_params.transport` 覆盖) + NUL 尾容错 + INTLK ERROR 容错 + SP6T 值域 1-6 + 单测 (~0.5 day); 之后接 TopologyEditor mapping。详见 [`guides/onsite-tasks-20260703.md`](guides/onsite-tasks-20260703.md) discovered "EMCenter 复盘"条。
 **来源**: 2026-05-27 现场, 见 [morning-log](site-debug/2026-05-27-morning-log.md) §10.1。文档: `Instrument_API_Doc/` 下 ETS-L EMCenter / EMSwitch + CAICT Chamber Switch (TMC AMS8947)。
 **Estimate**: offline 调研 0.5 day + 现场 0.5 day
 
@@ -1688,6 +1752,26 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 ---
 
+### P2-17 — F64 直通/衰落模式编排 (attach 默认直通态 + 状态机)
+
+**What**: ① `set_bypass_mode` 状态机编排 —— 2026-07-03 破解的语义: STATIC(静态直通)与回放互斥, STATIC≠0 时 GO 被拒(-200 by design), 运行态切 STATIC 自动 STOPPED, **直通稳态 = STOPPED + STATIC 3**, 恢复衰落 = STATIC 0 + GO; ② commissioning 流程编排: attach 阶段默认建立直通态(DUT 好接入, -96 RSRP 实证可用), run/measure 前**显式 STATIC 0**(不赌加载复位); ③ cockpit/驱动: 输出功率测量 STOPPED 冻结语义标注(与 P1-21 ④共享)。
+
+**Why P2**: attach 流程质量项(直通态今日人肉建立成功); 非阻塞(现场可两条命令人肉), 但产品化后 attach 全自动。
+**Acceptance**: mock 单测状态机全路径(含 -200 拒绝分支); commissioning attach phase 自动直通、mimo_test phase 自动恢复衰落; 现场验收 = attach→吞吐全程零人肉模式切换。
+**来源**: [`guides/onsite-tasks-20260703.md`](guides/onsite-tasks-20260703.md) discovered "F64 直通态建立"条。**Estimate**: ~1 day。
+
+---
+
+### P2-18 — 信道资产真值自动化 (SMB 扫描 + EMQuest 权威表数据化)
+
+**What**: ① .smu 工程频率扫描器: SMB 只读挂载 → 解析 `[Channel Group 0] CenterFrequency`(解析器 2026-07-03 已验证, 金标准=面板实证)→ available_channel_models / ChannelAsset 自动真值化(今日 `scripts/onsite-fix-f64-scenario-assets.py` 手工流程的产品化: 后端周期扫描或一键同步端点); ② EMQuest prm 破译出的 band→(dl_arfcn/ssb_arfcn/point_a/offset_to_carrier/duplex) **10 band 权威查表**入 repo 数据文件(prm 二进制解析脚本一并入库), 供 P1-19 ④ SSB 下发与 onsite 脚本消费; ③ n79 栅格注意项(4700.000 非 15k 整栅格, EMQuest 用 713334)。
+
+**Why P2**: "SCD 频率以工程实测为准"(用户定流程)的自动化; 手工 18 条已就位, 自动化防 drift + 支持后续场景包扩展。
+**Acceptance**: 一键/周期扫描后 channel-models 与 vendor 资产频率=工程值(mock SMB fixture 单测); band 查表被 P1-19 消费有契约测试。
+**来源**: onsite 文档 discovered "文件名≠工程频率全案终局"/"EMQuest prm 全集破译"条 + memory [[project_f64_smu_filename_freq_mismatch]]。**Estimate**: ~1.5 day。
+
+---
+
 ## 🟢 P3 — Polish / tooling
 
 **全部 ✅ Done（13/13）。** 完整 What / Fix / Acceptance 详情已迁出 → [`roadmap-archive.md`](roadmap-archive.md)。速览：
@@ -1737,6 +1821,15 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 > **2026-05-27 — 用户直接 triage 4 个现场发现** (现场授权, 非 weekly review): F64 driver
 > 修法 → **P0-8** (升 Current Focus, 本地); backend scpi-command desync → **P1-16** (本地);
 > EMCenter switch → **P2-9** (调研+现场); 转台无结论 → **U-5** (Known-unknown)。
+>
+> **2026-07-03 — 用户授权 triage 全天现场发现** (收工整理): F64 频率正修 → **P1-18**; UXM
+> set_cell_config 编排 + SSB 三件套 → **P1-19**; 转台断连韧性 → **P1-20** (⚡阻塞★核心最直接);
+> HAL 会话卫生 (互斥/排水恢复/延迟应答) → **P1-21**; F64 直通编排 → **P2-17**; 资产真值自动化
+> → **P2-18**; EMCenter VXI-11 → 并入 **P2-9** 剩余本地半; keepalive 数据点 (转台 <11s/UXM
+> ~15min) → 并入 **P2-4**。全天权威详录 [`guides/onsite-tasks-20260703.md`](guides/onsite-tasks-20260703.md)。
+
+- `[discovered on-site 2026-07-03 during precheck]` **P1-8 校准门不区分数据来源 (mock/real)**: 昨晚 mock 路损校准 cert 在 real 模式 precheck 里 `cal_pass: true` (门只查存在/频率/时效, 不查 provenance) → 真测会静默应用 mock 补偿值。修法 = cal 记录带 `use_mock` 标记 + real 模式 strict 门拒 mock cert (feedback_runtime_gate_not_frozen_snapshot 同族: live source 还要 live provenance)。待 promote (建议 P1, 半天)。
+- `[discovered on-site 2026-07-03 during RF体检]` **InputLevelController 闭环方向存疑**: "AUTOSET 失败→降功率"像按过载假设写的 (收不到信号应升不应降), 且起点 -10 dBm/SCS 语义过热 (BW100 满业务 = +25 dBm); UXM 510 告警实证被 HW 口限二次钳制。修法 = 闭环失败分支按"无信号/过载"分诊 + 起点从 TestCase 功率推导。待 promote (建议 P2, 半天)。
 
 - ~~`[discovered 2026-05-15 during P2-2]` **Commissioning factory's "default lab" path is fragile**~~. ✅ Resolved 2026-05-16 — see D12 in [`roadmap-archive.md`](roadmap-archive.md).
 - ~~`[discovered 2026-05-14 during P0-1]` chamber preset Type-C `has_lna` test mismatch~~. → Promoted to **P3-6** (2026-05-17 triage).
