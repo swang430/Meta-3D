@@ -327,7 +327,7 @@ def associate_file(
         )
 
     check = check_channel_filename_freq(file_path, scd.arfcn)
-    if not check.consistent:
+    if check.must_fail:  # 只拦 MF_ 标准名不一致; 厂商名标称会说谎 (2026-07-03 实证)
         raise StandardChannelError(check.failure_reason())
 
     if association_source == _ASSOCIATION_SOURCE_STANDARD:

@@ -276,7 +276,8 @@ def _validate_source_fields(source_type: str, fields: dict) -> None:
 def _check_vendor_filename_freq(scd_config: Any, associated_file_path: Any) -> None:
     """vendor .smu 文件名 vs scd_config.arfcn 交叉校验 (Codex P2 accept 侧, 镜像 resolver load 侧)。
 
-    MF_ 可解析名 ARFCN 不一致 → fail-loud; vendor 自定义名 (解析不出) → 放行留给声明频率门。
+    MF_ 可解析名 ARFCN 不一致 → fail-loud; 厂商名 (loose) 与自定义名 (解析不出) → 放行 ——
+    厂商文件名频率是标称会说谎 (2026-07-03 现场实证), 真值以 SCD 声明 (工程实测) 为准。
     create/update 接受文件时拦住"声明一个 ARFCN 却给别 ARFCN 的 MF_ 标准名 .smu", 防坏资产入库。
     """
     if not associated_file_path:
@@ -286,7 +287,7 @@ def _check_vendor_filename_freq(scd_config: Any, associated_file_path: Any) -> N
         return
     from app.services.standard_channel_service import check_channel_filename_freq
     chk = check_channel_filename_freq(str(associated_file_path), int(arfcn))
-    if not chk.consistent:
+    if chk.must_fail:
         raise ChannelAssetError(chk.failure_reason())
 
 
