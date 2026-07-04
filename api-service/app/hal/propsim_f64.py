@@ -2701,38 +2701,43 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         return is_visa_timeout(exc)
 
     async def _drain_after_timeout(self, timed_out_cmd: str) -> bool:
-        """超时后轻量恢复 (P1-21 ②, 替代"超时必重载 HAL"现场纪律)。
+        """超时后轻量恢复 (P1-21 ②; #199/#202/#203 三轮收敛的两步式终态)。
 
-        机制: 超时命令的应答会迟到, 留在会话里让下一条 query 读错位。连续
-        SYST:ERR? 短超时读 — 第一条会把迟到应答消费掉, 后续读到错误队列,
-        直到 "0,..." (队列空, 会话净) 或上限 4 条 (2026-07-03 实测 2 条即净)。
+        两步重对齐:
+        1. **裸 read** (不发新查询) 短超时循环吃掉迟到应答 — query 是
+           write+read, 会话一旦错位每次读到的都是前一条的应答, "连续 N 条
+           clean"判定在错位链上不收敛 (每条都合法 clean, Codex #203 R2);
+           只有不 write 的裸 read 能消耗多余应答: 读到 = 吃掉一拍,
+           读超时 = 无残留、已对齐。
+        2. SYST:ERR? 清错误队列 (已对齐, 读到的就是本查询的应答), 读到
+           0,"No error" 即净 (#199: 只认可解析形态, 防 "0.0" 类杂音),
+           上限 4 条 (2026-07-03 实测 2 条即净)。
+
         全程已持 _scpi_lock (由 _do_write/_do_query 调用)。失败只记日志 —
         原始超时异常由调用方上抛, 这里不再抛。
         """
         try:
-            # Codex #202 R2 P2: 超时命令本身是 SYST:ERR? 族时, 它的迟到应答恰可能
-            # 是合法的 0,"No error" — 首条判净会把排水自己那条查询的应答留在队列
-            # (仍差一拍)。该场景要求**连续两条** no-error 才判净; 普通命令一条即可。
-            required_clean = (
-                2 if timed_out_cmd.strip().upper().startswith("SYST:ERR") else 1
-            )
-            clean_streak = 0
-            for i in range(4 + (required_clean - 1)):
+            for _ in range(4):
+                try:
+                    original = self._visa_resource.timeout
+                    self._visa_resource.timeout = 2000
+                    try:
+                        stale = await asyncio.to_thread(self._visa_resource.read)
+                    finally:
+                        self._visa_resource.timeout = original
+                    logger.info(
+                        f"[F64] 排水: 吃掉迟到应答 {str(stale).strip()[:60]!r}"
+                    )
+                except Exception:
+                    break  # 读超时 = 无更多残留应答, 会话已对齐
+            for i in range(4):
                 resp = (await self._do_query_unlocked("SYST:ERR?", timeout=2000)).strip()
-                # Codex #199 P1: 只认可解析的 SYST:ERR? 无错形态 (0,"No error") —
-                # 迟到应答本身可能以 0 开头 (输出功率 "0.0" / 测量元组 "0,...")
-                # , 宽判 startswith("0") 会把它当队列空提前停, 真正的 SYST:ERR?
-                # 应答仍排着, 会话照旧错位。
                 if re.match(r'^\+?0\s*,\s*"?no error', resp, re.IGNORECASE):
-                    clean_streak += 1
-                    if clean_streak >= required_clean:
-                        logger.warning(
-                            f"[F64] 超时排水完成 ({i + 1} 条) — 会话已净 "
-                            f"(超时命令: {timed_out_cmd[:40]!r})"
-                        )
-                        return True
-                else:
-                    clean_streak = 0
+                    logger.warning(
+                        f"[F64] 超时排水完成 (残留已清 + {i + 1} 条 ERR) — 会话已净 "
+                        f"(超时命令: {timed_out_cmd[:40]!r})"
+                    )
+                    return True
             logger.error("[F64] 超时排水仍未净 — 会话可能错位, 建议重载驱动")
         except Exception as drain_e:  # noqa: BLE001
             logger.error(
