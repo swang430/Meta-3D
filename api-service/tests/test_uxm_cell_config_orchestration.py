@@ -7,7 +7,7 @@
   ④ SSB/PointA 基线自动补 (目标 ARFCN 命中 EMQuest 基线才补, 严格合拍);
   ⑤ 写后回读对账 fail-loud (IRAT 默认开; 老 5G App 查询不支持默认关)。
 """
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -489,3 +489,93 @@ class TestTextualCellStates:
         sess.write.side_effect = _boom_on_off
         ok = await driver_irat.set_cell_config({"band": "N78", "bandwidth_mhz": 100})
         assert ok is False  # 布尔契约, 无裸异常
+
+
+class TestArfcnFallbackBaseline:
+    """agent R6 F3: band fallback 接 P1-19 EMQuest 基线表 — 632628 是 3GPP
+    例值非现场基线; custom 部署声明 (Phase 2h 旋钮, 原从未被消费) 压过基线。
+    """
+
+    @pytest.mark.asyncio
+    async def test_n78_fallback_uses_emquest_baseline(self, driver_5g):
+        """无显式 arfcn 的 N78 → 基线 636666 (非旧 632628), 且天然命中 5b
+        合拍条件 → SSB/PointA 三件套自动补。"""
+        _, written = wire_echo_visa(driver_5g)
+        ok = await driver_5g.set_cell_config({"band": "N78", "bandwidth_mhz": 40})
+        assert ok is True
+        assert any(w.endswith("DL:ARFCN 636666") for w in written), written
+        assert any("SSB:NCD:ARFCn 635712" in w for w in written), written
+
+    @pytest.mark.asyncio
+    async def test_fdd_band_fallback_from_baseline(self, driver_5g):
+        """基线表覆盖旧 4-band MAP 之外的 band (N3 → 368500, 非退化 632628)。"""
+        _, written = wire_echo_visa(driver_5g)
+        ok = await driver_5g.set_cell_config({"band": "N3", "bandwidth_mhz": 20})
+        assert ok is True
+        assert any(w.endswith("DL:ARFCN 368500") for w in written), written
+        assert not any("DL:ARFCN 632628" in w for w in written), written
+
+    @pytest.mark.asyncio
+    async def test_custom_arfcn_map_beats_baseline(self):
+        """部署级 nr_band_arfcn_map 显式声明 > 基线; 偏离基线不乱补 SSB。"""
+        drv = RealUxmDriver(
+            "uxm-custom", {"ip": "10.0.0.3", "nr_band_arfcn_map": {"N78": 640000}}
+        )
+        _, written = wire_echo_visa(drv)
+        ok = await drv.set_cell_config({"band": "N78", "bandwidth_mhz": 100})
+        assert ok is True
+        assert any(w.endswith("DL:ARFCN 640000") for w in written), written
+        assert not any("SSB:NCD" in w for w in written), written  # 不合拍不补
+
+    @pytest.mark.asyncio
+    async def test_unknown_band_degrades_with_warning(self, driver_5g, monkeypatch):
+        """全 miss (显式/custom/基线/粗值) → 632628 退化 + warning 提示错频。
+
+        warning 断言用 monkeypatch logger 而非 caplog — 全量跑时前序测试污染
+        logging 配置会让 caplog 捕空 (与 Discovered 登记的 2 个顺序耦合 flaky
+        同病), monkeypatch 不受影响。"""
+        from app.hal import uxm_base_station as uxm_mod
+
+        warned: list = []
+        monkeypatch.setattr(
+            uxm_mod.logger, "warning",
+            lambda msg, *a, **k: warned.append(str(msg)),
+        )
+        _, written = wire_echo_visa(driver_5g)
+        ok = await driver_5g.set_cell_config({"band": "N99", "bandwidth_mhz": 100})
+        assert ok is True
+        assert any(w.endswith("DL:ARFCN 632628") for w in written), written
+        assert any("无 ARFCN 来源" in m for m in warned), warned
+
+
+class TestApplyTopologyProfileConsumesCellConfig:
+    """agent R6 F1: apply_topology_profile 必须消费 set_cell_config 布尔契约
+    — 半生效配置不许报 applied=True。"""
+
+    def _any_profile(self):
+        from app.hal.uxm_test_profiles import UxmTopologyProfile
+
+        return UxmTopologyProfile(
+            profile_id="t-any", name="t", description="", category="siso",
+            band="N78", frequency_mhz=3549.99, bandwidth_mhz=40.0,
+            compatible_test_apps=[],  # 兼容任何 Test App
+        )
+
+    @pytest.mark.asyncio
+    async def test_apply_reports_false_when_cell_config_fails(
+        self, driver_5g, monkeypatch
+    ):
+        monkeypatch.setattr(
+            driver_5g, "set_cell_config", AsyncMock(return_value=False)
+        )
+        result = await driver_5g.apply_topology_profile(self._any_profile())
+        assert result["applied"] is False
+        assert result["reason"] == "cell_config_failed"
+
+    @pytest.mark.asyncio
+    async def test_apply_reports_true_on_success(self, driver_5g, monkeypatch):
+        monkeypatch.setattr(
+            driver_5g, "set_cell_config", AsyncMock(return_value=True)
+        )
+        result = await driver_5g.apply_topology_profile(self._any_profile())
+        assert result["applied"] is True

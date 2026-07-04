@@ -128,8 +128,8 @@ class TestSetCellConfigGracefulSkip:
         assert any("BSE:CONFig:NR5G:CELL1:BAND N78" in w for w in written), written
         # P1-19: IRAT 带宽值令牌形式 (2026-07-03 实证: 裸 "100" 被拒)
         assert any("BSE:CONFig:NR5G:CELL1:DL:BW BW100" in w for w in written), written
-        # ARFCN is the auto-filled value for N78 (632628).
-        assert any("BSE:CONFig:NR5G:CELL1:DL:ARFCN 632628" in w for w in written), written
+        # ARFCN auto-fill: agent R6 F3 起 N78 fallback = EMQuest 基线 636666。
+        assert any("BSE:CONFig:NR5G:CELL1:DL:ARFCN 636666" in w for w in written), written
 
         # None of the unsupported-in-IRAT fields produced a write.
         for forbidden in ("DUPLex", "SCS", "MIMO:LAYers", "TDD:PATTern",

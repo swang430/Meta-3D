@@ -374,6 +374,50 @@ class TestRunSequence:
         bs.query_ue_capability = AsyncMock(return_value={"max_layers": 4})
         return bs
 
+    def test_attach_check_defaults_dispatch_onsite_baseline(
+        self, db, lab_with_bs, monkeypatch
+    ):
+        """agent R6 F2: 默认参数必须下发 2026-07-03 现场实证 attach 基线 —
+        显式 arfcn 636666 (3549.99 MHz 换算, 与 measure 链同模式, 不靠 band
+        fallback) + BW40 + RS EPRE -46。此前无 arfcn 恒落 632628 错频且 SSB
+        永不自动补, 下次现场开跑主角会被误诊成 DUT/RF 问题。"""
+        bs = self._happy_bs()
+        _patched_hal(monkeypatch, drivers={"baseStation": bs})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/baseStation_attach_check/run",
+            json={
+                "lab_profile_id": str(lab_with_bs.id),
+                "params": {"attach_timeout_s": 1},  # 其余全默认
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        cfg = bs.set_cell_config.await_args.args[0]
+        assert cfg["arfcn"] == 636666
+        assert cfg["frequency_mhz"] == pytest.approx(3549.99)
+        assert cfg["bandwidth_mhz"] == 40
+        assert cfg["dl_power_dbm"] == -46
+        assert cfg["band"] == "n78"
+
+    def test_attach_check_custom_freq_converts_arfcn(
+        self, db, lab_with_bs, monkeypatch
+    ):
+        """自定义频率显式换算 ARFCN — 不落 band fallback 静默错频。"""
+        bs = self._happy_bs()
+        _patched_hal(monkeypatch, drivers={"baseStation": bs})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/baseStation_attach_check/run",
+            json={
+                "lab_profile_id": str(lab_with_bs.id),
+                "params": {"attach_timeout_s": 1, "frequency_mhz": 3600.0},
+            },
+        )
+        assert resp.status_code == 200
+        cfg = bs.set_cell_config.await_args.args[0]
+        assert cfg["arfcn"] == 640000  # 3600 MHz 全局栅格
+
     def test_attach_check_establishes_f64_passthrough(self, db, lab_with_bs_and_ce, monkeypatch):
         """P2-17 ②: 有 F64 直通能力的 CE 时 attach 前建立直通稳态 (STOPPED + STATIC 3)。"""
         bs = self._happy_bs()

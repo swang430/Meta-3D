@@ -69,10 +69,14 @@ async def run(
     if refusal:
         return SequenceRunResult(success=False, summary=refusal)
 
-    freq_mhz = float(params.get("frequency_mhz", 3500))
-    bw_mhz = float(params.get("bandwidth_mhz", 100))
+    # agent R6 F2: 默认对齐 2026-07-03 现场实证 attach 基线 (EMQuest n78:
+    # ARFCN 636666 = 3549.99 MHz / BW40 / RS EPRE -46) — 本序列的使命是复刻
+    # 已实证的 attach 直通编排, 不是任意频率探索
+    freq_mhz = float(params.get("frequency_mhz", 3549.99))
+    bw_mhz = float(params.get("bandwidth_mhz", 40))
     scs_khz = int(params.get("scs_khz", 30))
     band = str(params.get("band", "n78"))
+    dl_power_dbm = float(params.get("dl_power_dbm", -46))
     timeout_s = float(params.get("attach_timeout_s", 15))
 
     steps: list[SequenceStepResult] = []
@@ -163,15 +167,24 @@ async def run(
                 await _step("F64 stop_emulation (直通稳态前置)", ce.stop_emulation())
                 await _step("F64 passthrough (STATIC 3)", ce.set_passthrough_mode())
 
+        # agent R6 F2: 频率显式换算 ARFCN (与 measure 链同模式) — driver 的
+        # frequency_mhz 只用于 band 推断不换算频点, 不传 arfcn 会落到 band
+        # fallback (基线值), 用户自定义频率就静默错频; 默认 3549.99 → 636666
+        # 命中 n78 基线 → 5b 自动补 SSB/PointA 三件套
+        from app.hal.nr_arfcn import freq_mhz_to_nr_arfcn
+
+        arfcn = freq_mhz_to_nr_arfcn(freq_mhz)
         await _step(
-            f"set_cell_config {freq_mhz}MHz / {bw_mhz}MHz / {scs_khz}kHz / {band}",
+            f"set_cell_config {freq_mhz}MHz (ARFCN {arfcn}) / {bw_mhz}MHz / "
+            f"{scs_khz}kHz / {band} / {dl_power_dbm}dBm",
             bs.set_cell_config({
                 "frequency_mhz": freq_mhz,
+                "arfcn": arfcn,
                 "bandwidth_mhz": bw_mhz,
                 "scs_khz": scs_khz,
                 "band": band,
                 "mimo_layers": 2,
-                "dl_power_dbm": -50,
+                "dl_power_dbm": dl_power_dbm,
             }),
         )
         await _step("start_signaling", bs.start_signaling())
