@@ -1747,9 +1747,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         if not self._visa_resource:
             return False
         cal_id = self._cal_tone_id
-        tone_was_active = self._cal_tone_active
         try:
             async with self._scpi_lock:
+                # agent 门审 F2: 快照锁内读 — 锁外读在并发 set‖stop 交错时
+                # 会拿到 set 进锁前的旧值, 恰好绕过"活跃被拒不忽略"判定
+                tone_was_active = self._cal_tone_active
                 await self._drain_errors()  # 门只评估本次停止序列的错误
                 write_failed: Optional[str] = None
                 try:
