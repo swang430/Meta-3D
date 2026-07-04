@@ -172,6 +172,28 @@ class TestBwTokenAndTddUlSkip:
         assert not any(w.endswith("DUPLex TDD") for w in written), written
 
     @pytest.mark.asyncio
+    async def test_null_duplex_without_frequency_converges_from_baseline(self, driver_5g):
+        """Codex #202 R4: duplex=null 且无 frequency_mhz — 收敛不得只挂在频率
+        推断分支下, band 基线要照样补 (否则 DUPLex 不下发, 仪器停留上个
+        setup 的残留 TDD, 而 UL:BW 判定按 FDD, 判定与仪器实际不同源)。"""
+        _, written = wire_echo_visa(driver_5g)
+        ok = await driver_5g.set_cell_config({
+            "band": "N3", "duplex": None, "bandwidth_mhz": 40,
+        })
+        assert ok is True
+        assert any(w.endswith("DUPLex FDD") for w in written), written
+
+    @pytest.mark.asyncio
+    async def test_null_duplex_without_frequency_irat_writes_ulbw(self, driver_irat):
+        """同场景 IRAT 侧: 判定按收敛后 FDD 写 UL:BW。"""
+        _, written = wire_echo_visa(driver_irat)
+        ok = await driver_irat.set_cell_config({
+            "band": "N3", "duplex": None, "arfcn": 368500, "bandwidth_mhz": 40,
+        })
+        assert ok is True
+        assert any(w.endswith("UL:BW BW40") for w in written), written
+
+    @pytest.mark.asyncio
     async def test_explicit_user_duplex_still_first(self, driver_irat):
         """用户显式 duplex 仍是第一优先级 (高于基线表)。"""
         _, written = wire_echo_visa(driver_irat)
