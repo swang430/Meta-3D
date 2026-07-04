@@ -109,6 +109,30 @@ class TestStaticPlaybackMutex:
         assert await drv.start_emulation() is True  # stale 被前置排掉, GO 判成功
         assert drv._emulation_running is True
 
+    async def test_static_write_rejected_keeps_state(self):
+        """Codex #202 R5: STATIC 写被拒 (只经 SYST:ERR? 报) → False 且
+        _bypass_mode/_emulation_running 不动 (记了会与仪器实际漂移)。"""
+        drv, visa = _make_driver()
+        drv._emulation_running = True
+        visa.query.side_effect = lambda cmd: (
+            "1" if cmd == "*OPC?" else '-200,"Execution error"'
+        )
+        assert await drv.set_bypass_mode(F64BypassMode.CALIBRATION) is False
+        assert drv._bypass_mode == F64BypassMode.DISABLED  # 未更新
+        assert drv._emulation_running is True              # 未同步 STOPPED
+        assert "-200" in (drv._last_error or "")
+
+    async def test_stop_emulation_rejected_keeps_running(self):
+        """Codex #202 R5: GOS 被拒 → False 且 running 不清 (仪器实际仍在跑)。"""
+        drv, visa = _make_driver()
+        drv._emulation_running = True
+        visa.query.side_effect = lambda cmd: (
+            "1" if cmd == "*OPC?" else '-113,"Undefined header"'
+        )
+        assert await drv.stop_emulation() is False
+        assert drv._emulation_running is True
+        assert "-113" in (drv._last_error or "")
+
     async def test_go_sequence_atomic_vs_concurrent_poll(self):
         """Codex #203 R3 P2: GO 事务 (drain→STATIC→GO→OPC→错误门) 期间并发
         轮询不得插入 — 可重入 _scpi_lock 把整段收为一个临界区。"""

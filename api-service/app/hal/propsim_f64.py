@@ -1326,11 +1326,23 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
           DIAG:SIMU:GOS — 停止并倒回起点 (下次 GO 从头开始)
 
         本方法使用 GOS (Stop & Rewind), 确保下次启动从干净状态开始。
+
+        Codex #202 R5: GOS 失败只经 SYST:ERR? 报 — 写后错误门 fail-loud
+        (同 GO 门), 否则 attach 直通预备 (stop → STATIC 3) 假成功, 直通
+        没建立照样配小区, attach 失败又被误诊成 DUT/RF 问题。事务持锁
+        (drain → GOS → 错误门), 被拒时驱动状态不动 (仪器实际仍在跑)。
         """
         if not self._visa_resource:
             return False
         try:
-            await self._write("DIAG:SIMU:GOS")
+            async with self._scpi_lock:
+                await self._drain_errors()
+                await self._write("DIAG:SIMU:GOS")
+                stop_err = await self._first_error()
+            if stop_err is not None:
+                self._last_error = f"stop_emulation rejected: {stop_err}"
+                logger.error(f"[F64] GOS 被拒 (SYST:ERR?): {stop_err}")
+                return False
             self._emulation_running = False
             self._status = InstrumentStatus.READY
             logger.info("[F64] Emulation stopped and rewound")
@@ -1499,11 +1511,22 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         时 F64 自动转 STOPPED (直通稳态 = STOPPED + STATIC 3); STATIC≠0 下 GO
         被 -200 拒 (by design), 恢复衰落 = STATIC 0 + GO (start_emulation 已
         内建 GO 前清直通)。
+
+        Codex #202 R5: STATIC 写失败只经 SYST:ERR? 报 — 写后错误门 fail-loud
+        (同 GO/GOS 门), 被拒时 _bypass_mode/_emulation_running 不动 (仪器
+        实际状态未变, 记了会漂移)。事务持锁 (drain → STATIC → 错误门)。
         """
         if not self._visa_resource:
             return False
         try:
-            await self._write(f"DIAG:SIMU:MODEL:STATIC {mode.value}")
+            async with self._scpi_lock:
+                await self._drain_errors()
+                await self._write(f"DIAG:SIMU:MODEL:STATIC {mode.value}")
+                static_err = await self._first_error()
+            if static_err is not None:
+                self._last_error = f"set_bypass_mode({mode.name}) rejected: {static_err}"
+                logger.error(f"[F64] STATIC {mode.value} 被拒 (SYST:ERR?): {static_err}")
+                return False
             # 运行态切 STATIC≠0 → F64 自动 STOPPED; 驱动状态跟着同步, 否则
             # _emulation_running 漂移 (输出测量冻结标注 P1-21 ④ 也依赖它)。
             if mode != F64BypassMode.DISABLED and self._emulation_running:
