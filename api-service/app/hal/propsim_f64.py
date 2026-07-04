@@ -1283,6 +1283,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             return False
 
         try:
+            # Codex #203 P2: 先清 stale 错误 (同 autoset_all_inputs ① 模式) —
+            # 否则下面的 GO 错误门会把早先命令遗留的 FIFO 条目误判成"GO 被拒"
+            # (假阴性), GO 明明成功却报启动失败。
+            await self._drain_errors()
             # P2-17 ① + Codex #201 R2 P2: GO 前**无条件**写 STATIC 0 恢复衰落 —
             # 不依赖内存缓存 (HAL 重载后新实例 _bypass_mode 冷为 DISABLED 而
             # 硬件还停在 attach 直通的 STATIC 3 → GO 必 -200; attach 序列故意

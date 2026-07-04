@@ -89,6 +89,24 @@ class TestStaticPlaybackMutex:
         assert drv._emulation_running is False
         assert "-200" in (drv._last_error or "")
 
+    async def test_stale_error_before_go_not_misreported(self):
+        """Codex #203 P2: GO 前先清 stale FIFO — 早先命令遗留的错误不得把
+        成功的 GO 误判成被拒 (假阴性)。"""
+        drv, visa = _make_driver()
+        drv._loaded_emulation_file = "X.smu"
+        err_q = ['-113,"Undefined header (stale)"']  # 排水消费后队列即净
+
+        def _q(cmd):
+            if cmd == "*OPC?":
+                return "1"
+            if cmd == "SYST:ERR?":
+                return err_q.pop(0) if err_q else '0,"No error"'
+            return '0,"No error"'
+
+        visa.query.side_effect = _q
+        assert await drv.start_emulation() is True  # stale 被前置排掉, GO 判成功
+        assert drv._emulation_running is True
+
     async def test_passthrough_then_go_round_trip(self):
         """attach 默认态全回路: 直通稳态建立 → GO 自动恢复衰落。"""
         drv, visa = _make_driver()
