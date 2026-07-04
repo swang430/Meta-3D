@@ -323,6 +323,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         "ce.user_alignment",
     })
 
+    # P2-17 (Codex #201 P2): STATIC 直通能力标志 — set_passthrough_mode 定义在
+    # 基类, hasattr 判定会对 FS16 等误开 (高层方法 NotImplementedError)。attach
+    # 直通编排等消费方按此标志 gate, 而不是 hasattr / 类名。
+    SUPPORTS_STATIC_PASSTHROUGH: bool = True
+
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         # 连接参数

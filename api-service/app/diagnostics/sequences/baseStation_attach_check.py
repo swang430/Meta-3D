@@ -125,17 +125,37 @@ async def run(
         # CE 在场但直通失败 = fail-loud (衰落在跑 attach 大概率失败, 不硬闯)。
         if bool(params.get("establish_f64_passthrough", True)):
             ce = drivers.get("channelEmulator")
-            if (
-                ce is None
-                or mock_driver_refusal_summary("channelEmulator", ce)
-                or not hasattr(ce, "set_passthrough_mode")
-            ):
+            ce_configured = (
+                ctx.find_binding_by_category_key("channelEmulator") is not None
+            )
+            if ce is None:
+                if ce_configured:
+                    # Codex #201 P2: lab 配置了 CE 但驱动没加载 — 不是线缆直连,
+                    # F64 停在任意模式会让 attach 失败被误诊成 DUT/RF 问题。
+                    return SequenceRunResult(
+                        success=False,
+                        summary=driver_not_loaded_summary("channelEmulator"),
+                        steps=steps,
+                    )
                 steps.append(SequenceStepResult(
                     label="F64 passthrough (skipped)",
                     success=True,
-                    detail="无真实 channelEmulator 驱动 — 跳过 (线缆直连场景可继续)",
+                    detail="本 lab 未配置 channelEmulator — 线缆直连场景, 跳过",
                 ))
-                log("  · F64 passthrough skipped (no real CE driver)")
+                log("  · F64 passthrough skipped (no CE binding)")
+            elif not getattr(ce, "SUPPORTS_STATIC_PASSTHROUGH", False):
+                # Codex #201 P2: 能力标志 gate (hasattr 对 FS16/mock 误开 —
+                # set_passthrough_mode 在基类, FS16 高层 NotImplementedError);
+                # attach 探针不是 F64 专属, 非 F64 CE 跳过不硬闯。
+                steps.append(SequenceStepResult(
+                    label="F64 passthrough (skipped)",
+                    success=True,
+                    detail=(
+                        f"CE 驱动 {type(ce).__name__} 无 STATIC 直通能力标志 "
+                        f"(SUPPORTS_STATIC_PASSTHROUGH) — 跳过"
+                    ),
+                ))
+                log("  · F64 passthrough skipped (CE lacks static-passthrough capability)")
             else:
                 await _step("F64 stop_emulation (直通稳态前置)", ce.stop_emulation())
                 await _step("F64 passthrough (STATIC 3)", ce.set_passthrough_mode())
