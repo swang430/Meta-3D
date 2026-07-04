@@ -36,6 +36,7 @@ import logging
 import asyncio
 import os
 import re
+from app.hal.scpi_lock import ReentrantAsyncLock
 import ftplib
 from dataclasses import dataclass, field
 from enum import Enum
@@ -430,7 +431,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         )
         # P1-21 ①: per-driver SCPI 命令互斥 — 全部 _do_write/_do_query IO 串行化
         # (broadcaster 与测量序列并发共用单 socket 会应答串线, 现场 P1 根因)。
-        self._scpi_lock = asyncio.Lock()
+        self._scpi_lock = ReentrantAsyncLock()  # 可重入: 事务内 self._query 直通
         self._center_freq_mhz: float = 3500.0
         # P2-11 (Codex on PR #109 P2): 是否**显式下发过**中心频 (CALC:FILT:CENT:CH)。
         # False 时 _center_freq_mhz 只是默认值 3500, 不能当真值上报 —— get_frequency_
@@ -550,17 +551,17 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
             await self._write("DIAG:SIMU:CLOSE")
             self._emulation_running = False
-            # 加载前清空遗留错误队列 (SYST:ERR? FIFO), 让下面 fail-loud gate 只评估本次
-            # CALC:FILT:FILE 产生的错误 (同 GCM 路 load_channel, Codex on PR #93)。
-            await self._drain_errors()
-            await self._write(f"CALC:FILT:FILE {load_file}", timeout=VISA_TIMEOUT_FILE_LOAD)
-            await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
-            # 加载后 fail-loud gate (Codex P1 #169): *OPC?=1 ≠ 加载成功 —— F64 对缺失/损坏/
-            # 不支持的 .rtc/.smu 仍答 OPC=1, 但 SYST:ERR? 报 -200 "No simulation opened" /
-            # -300。原 _check_errors (log-only, 不改控制流) 会让 B-2 在无有效仿真下静默标
-            # active 跑测量 (数据不可信)。复刻 GCM 路 _first_error 门: 有错立刻 return False、
+            # 加载事务 (Codex #203 R3 同型: drain → FILT:FILE → *OPC? → 错误门
+            # 整体持锁, broadcaster 轮询不得污染/抢食队列; 锁可重入)。gate 只
+            # 评估本次 CALC:FILT:FILE 产生的错误 (Codex on PR #93/#169):
+            # *OPC?=1 ≠ 加载成功 — 缺失/损坏/不支持的 .rtc/.smu 仍答 1, 唯一
+            # 可靠失败信号是 SYST:ERR? (-200/-300); 有错立刻 return False、
             # 不设 pipeline、不记 _loaded_emulation_file。
-            load_err = await self._first_error()
+            async with self._scpi_lock:
+                await self._drain_errors()
+                await self._write(f"CALC:FILT:FILE {load_file}", timeout=VISA_TIMEOUT_FILE_LOAD)
+                await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
+                load_err = await self._first_error()
             if load_err is not None:
                 self._last_error = f"B-2 PARAMETRIC_TDL load failed: {load_err}"
                 logger.error(
@@ -865,24 +866,21 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     f"_{self._tx_antennas}x{self._rx_antennas}.smu"
                 )
 
-            # Step 3: 加载仿真文件 (需要延长 VISA 超时)
-            # 加载前先清空错误队列 (Codex on PR #93): SYST:ERR? 是 FIFO, 前序命令
-            # 遗留的 stale 错误会被下面的 fail-loud gate 误判成本次加载失败 → 即使
-            # 加载成功也返回 False、跳过设频。先 drain, 确保 gate 只评估本次
-            # CALC:FILT:FILE 产生的错误。
-            await self._drain_errors()
-            # ATE Practice §2.2.4: 大文件加载可能需要数十秒
-            await self._write(
-                f'CALC:FILT:FILE {emulation_file}',
-                timeout=VISA_TIMEOUT_FILE_LOAD
-            )
-            # 使用 *OPC? 确保加载完成 (ATE Practice §2.2.4)
-            await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
-            # P0-8 Step 3: 加载后 fail-loud gate。*OPC?=1 ≠ 加载成功 —— F64 对
-            # 文件缺失/损坏 (或早期错端口 5025) 仍答 OPC=1, 但 SYST:ERR? 报
-            # -200 "No simulation opened" / -300。2026-05-27 早上的 -200 洪水正
-            # 因这里没拦、继续设频 → 错误叠加而方法却返回 True。此处立刻拦。
-            load_err = await self._first_error()
+            # Step 3: 加载事务 (Codex #203 R3 同型) — drain → FILT:FILE →
+            # *OPC? → 错误门整体持锁 (锁可重入): 单命令锁下 broadcaster 轮询
+            # 会把自己的错误条目留给 gate (误判加载失败) 或抢先消费加载错误
+            # (漏判)。SYST:ERR? 是 FIFO (Codex on PR #93); *OPC?=1 ≠ 加载成功
+            # (P0-8 Step 3: 缺失/损坏仍答 1, 唯一可靠失败信号是 SYST:ERR? 的
+            # -200 "No simulation opened" / -300, 2026-05-27 的 -200 洪水正因
+            # 没拦)。大文件加载需要数十秒 (ATE Practice §2.2.4)。
+            async with self._scpi_lock:
+                await self._drain_errors()
+                await self._write(
+                    f'CALC:FILT:FILE {emulation_file}',
+                    timeout=VISA_TIMEOUT_FILE_LOAD
+                )
+                await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
+                load_err = await self._first_error()
             if load_err is not None:
                 self._last_error = f"channel model load failed: {load_err}"
                 logger.error(
@@ -1283,23 +1281,36 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             return False
 
         try:
-            # P2-17 ① + Codex #201 R2 P2: GO 前**无条件**写 STATIC 0 恢复衰落 —
-            # 不依赖内存缓存 (HAL 重载后新实例 _bypass_mode 冷为 DISABLED 而
-            # 硬件还停在 attach 直通的 STATIC 3 → GO 必 -200; attach 序列故意
-            # 不恢复, 重载是现场常态)。写 0 幂等, 一条命令成本。
-            if self._bypass_mode != F64BypassMode.DISABLED:
-                logger.info(
-                    f"[F64] GO 前清直通: STATIC {self._bypass_mode.name} → DISABLED (恢复衰落)"
-                )
-            await self._write("DIAG:SIMU:MODEL:STATIC 0")
-            self._bypass_mode = F64BypassMode.DISABLED
-            self._passthrough_active = False
-            await self._write("DIAG:SIMU:GO")
-            await self._query("*OPC?")
+            # Codex #203 R3 P2: 整个 GO 序列 (清 stale → STATIC 0 → GO → *OPC?
+            # → 错误门) 持锁为一个事务 — 单命令锁下 broadcaster 轮询会插进两步
+            # 之间, 留下自己的错误条目 (GO 误报被拒) 或抢先消费 GO 的错误
+            # (漏报)。_scpi_lock 可重入 (scpi_lock 模块), 事务内 self._write/
+            # _query 经 _do_* 重入直通。
+            async with self._scpi_lock:
+                # Codex #203 P2: 先清 stale — gate 只评估本次 GO 产生的错误
+                await self._drain_errors()
+                # P2-17 ① + Codex #201 R2 P2: GO 前**无条件**写 STATIC 0 恢复
+                # 衰落 — 不依赖内存缓存 (HAL 重载后冷缓存 DISABLED 而硬件还停
+                # 在 attach 直通的 STATIC 3 → GO 必 -200)。写 0 幂等。
+                if self._bypass_mode != F64BypassMode.DISABLED:
+                    logger.info(
+                        f"[F64] GO 前清直通: STATIC {self._bypass_mode.name} → DISABLED (恢复衰落)"
+                    )
+                await self._write("DIAG:SIMU:MODEL:STATIC 0")
+                self._bypass_mode = F64BypassMode.DISABLED
+                self._passthrough_active = False
+                await self._write("DIAG:SIMU:GO")
+                await self._query("*OPC?")
+                # Codex #202 R2 P2: GO 失败只经 SYST:ERR? 报 (*OPC? 照答 1) —
+                # 错误队列门 fail-loud, 不许带着"没在跑"的 F64 返回 True。
+                go_err = await self._first_error()
+            if go_err is not None:
+                self._last_error = f"start_emulation rejected: {go_err}"
+                logger.error(f"[F64] GO 被拒 (SYST:ERR?): {go_err} — 仿真未启动")
+                return False
             self._emulation_running = True
             self._status = InstrumentStatus.BUSY
             logger.info("[F64] Emulation started")
-            await self._check_errors()
             return True
         except Exception as e:
             logger.error(f"[F64] start_emulation failed: {e}")
@@ -2022,16 +2033,19 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         if not self._visa_resource:
             return False
         try:
-            # ① 清空遗留 stale 错误 (FIFO, 否则会被 ③ 误判成本次 AUTOSET 失败)
-            await self._drain_errors()
-            # ② AUTOSET 全输入 (*OPC? 超时按测量时长动态, deferred-response P1-21 ③)
-            await self._write(f"INP:LEV:AUTOSET 0,{measurement_time_s}")
-            await self._query(
-                "*OPC?", timeout=self._inp_meas_timeout_ms(measurement_time_s)
-            )
-            # ③ fail-loud: AUTOSET 失败 (无信号/过强) 报 device error (§20.4.4.7) →
-            #    return False, 不能让 Phase 2 编排拿 stale/无效参考继续 (Codex on PR #95)
-            autoset_err = await self._first_error()
+            # ①-③ 持锁为一个事务 (Codex #203 R3 同型: 单命令锁下 broadcaster
+            # 轮询会污染/抢食错误队列, gate 误报或漏报; 锁可重入)
+            async with self._scpi_lock:
+                # ① 清空遗留 stale 错误 (FIFO, 否则会被 ③ 误判成本次 AUTOSET 失败)
+                await self._drain_errors()
+                # ② AUTOSET 全输入 (*OPC? 超时按测量时长动态, deferred-response P1-21 ③)
+                await self._write(f"INP:LEV:AUTOSET 0,{measurement_time_s}")
+                await self._query(
+                    "*OPC?", timeout=self._inp_meas_timeout_ms(measurement_time_s)
+                )
+                # ③ fail-loud: AUTOSET 失败 (无信号/过强) 报 device error (§20.4.4.7) →
+                #    return False, 不能让 Phase 2 编排拿 stale/无效参考继续 (Codex on PR #95)
+                autoset_err = await self._first_error()
             if autoset_err is not None:
                 self._last_error = f"autoset failed: {autoset_err}"
                 logger.error(f"[F64] autoset_all_inputs 失败 (SYST:ERR?): {autoset_err}")
@@ -2062,13 +2076,16 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         if not inputs_list:
             return True  # no-op
         try:
-            # 清空遗留 stale 错误 (FIFO, 否则首个 per-input check 会误判)
-            await self._drain_errors()
             for in_num in inputs_list:
-                await self._write(f"INP:LEV:AUTOSET {in_num},{measurement_time_s}")
-                opc_timeout_ms = int((measurement_time_s + 2) * 1000)
-                await self._query("*OPC?", timeout=opc_timeout_ms)
-                err = await self._first_error()
+                # 每个 input 的 (清 stale → AUTOSET → *OPC? → 错误门) 是一个
+                # 判定单元, 整体持锁 (Codex #203 R3 同型; 逐 input 事务而非
+                # 全循环持锁, 避免 N×AUTOSET 时长挡监控; 锁可重入)
+                async with self._scpi_lock:
+                    await self._drain_errors()
+                    await self._write(f"INP:LEV:AUTOSET {in_num},{measurement_time_s}")
+                    opc_timeout_ms = int((measurement_time_s + 2) * 1000)
+                    await self._query("*OPC?", timeout=opc_timeout_ms)
+                    err = await self._first_error()
                 if err is not None:
                     self._last_error = f"autoset input {in_num} failed: {err}"
                     logger.error(
@@ -2690,28 +2707,44 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         return is_visa_timeout(exc)
 
     async def _drain_after_timeout(self, timed_out_cmd: str) -> bool:
-        """超时后轻量恢复 (P1-21 ②, 替代"超时必重载 HAL"现场纪律)。
+        """超时后轻量恢复 (P1-21 ②; #199/#202/#203 三轮收敛的两步式终态)。
 
-        机制: 超时命令的应答会迟到, 留在会话里让下一条 query 读错位。连续
-        SYST:ERR? 短超时读 — 第一条会把迟到应答消费掉, 后续读到错误队列,
-        直到 "0,..." (队列空, 会话净) 或上限 4 条 (2026-07-03 实测 2 条即净)。
+        两步重对齐:
+        1. **裸 read** (不发新查询) 短超时循环吃掉迟到应答 — query 是
+           write+read, 会话一旦错位每次读到的都是前一条的应答, "连续 N 条
+           clean"判定在错位链上不收敛 (每条都合法 clean, Codex #203 R2);
+           只有不 write 的裸 read 能消耗多余应答: 读到 = 吃掉一拍,
+           读超时 = 无残留、已对齐。
+        2. SYST:ERR? 清错误队列 (已对齐, 读到的就是本查询的应答), 读到
+           0,"No error" 即净 (#199: 只认可解析形态, 防 "0.0" 类杂音),
+           上限 4 条 (2026-07-03 实测 2 条即净)。
+
         全程已持 _scpi_lock (由 _do_write/_do_query 调用)。失败只记日志 —
         原始超时异常由调用方上抛, 这里不再抛。
         """
         try:
+            for _ in range(4):
+                try:
+                    original = self._visa_resource.timeout
+                    self._visa_resource.timeout = 2000
+                    try:
+                        stale = await asyncio.to_thread(self._visa_resource.read)
+                    finally:
+                        self._visa_resource.timeout = original
+                    logger.info(
+                        f"[F64] 排水: 吃掉迟到应答 {str(stale).strip()[:60]!r}"
+                    )
+                except Exception:
+                    break  # 读超时 = 无更多残留应答, 会话已对齐
             for i in range(4):
                 resp = (await self._do_query_unlocked("SYST:ERR?", timeout=2000)).strip()
-                # Codex #199 P1: 只认可解析的 SYST:ERR? 无错形态 (0,"No error") —
-                # 迟到应答本身可能以 0 开头 (输出功率 "0.0" / 测量元组 "0,...")
-                # , 宽判 startswith("0") 会把它当队列空提前停, 真正的 SYST:ERR?
-                # 应答仍排着, 会话照旧错位。
                 if re.match(r'^\+?0\s*,\s*"?no error', resp, re.IGNORECASE):
                     logger.warning(
-                        f"[F64] 超时排水完成 ({i + 1} 条) — 会话已净 "
+                        f"[F64] 超时排水完成 (残留已清 + {i + 1} 条 ERR) — 会话已净 "
                         f"(超时命令: {timed_out_cmd[:40]!r})"
                     )
                     return True
-            logger.error("[F64] 超时排水 4 条仍未净 — 会话可能错位, 建议重载驱动")
+            logger.error("[F64] 超时排水仍未净 — 会话可能错位, 建议重载驱动")
         except Exception as drain_e:  # noqa: BLE001
             logger.error(
                 f"[F64] 超时排水失败 ({type(drain_e).__name__}: {drain_e}) — "

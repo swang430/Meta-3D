@@ -88,12 +88,15 @@ class TestScpiMutex:
 
 
 class _TimeoutThenDrainVisa:
-    """fake: 首条命令超时 (TMO), 之后 SYST:ERR? 按脚本回放 (模拟排水)。"""
+    """fake: 首条命令超时 (TMO); 迟到应答走**裸 read** 通道 (late_replies),
+    SYST:ERR? 错误队列按 drain_script 回放 — 对齐两步式排水语义。"""
 
-    def __init__(self, drain_script: List[str]):
+    def __init__(self, drain_script: List[str], late_replies: Optional[List[str]] = None):
         self.timeout = 5000
         self.calls: List[str] = []
+        self.read_calls = 0
         self._drain = list(drain_script)
+        self._late = list(late_replies or [])
         self._timed_out = False
 
     def query(self, cmd: str) -> str:
@@ -105,6 +108,12 @@ class _TimeoutThenDrainVisa:
             return self._drain.pop(0)
         return "0,\"No error\""
 
+    def read(self) -> str:
+        self.read_calls += 1
+        if self._late:
+            return self._late.pop(0)
+        raise _tmo_error()  # 无残留 → 读超时 (对齐信号)
+
     def write(self, cmd: str) -> None:
         self.calls.append(cmd)
 
@@ -112,29 +121,30 @@ class _TimeoutThenDrainVisa:
 class TestTimeoutDrain:
     @pytest.mark.asyncio
     async def test_timeout_drains_and_reraises(self):
-        """超时 → 排水到 '0,...' 停 → 原 TMO 异常仍上抛 (调用方知道失败)。"""
+        """超时 → 裸 read 吃迟到应答 + SYST:ERR? 清队列 → 原 TMO 异常仍上抛。"""
         drv = RealPropsimF64Driver("f64-drain", {})
-        # 排水脚本: 第 1 条读到迟到应答 (垃圾), 第 2 条读到队列空
-        visa = _TimeoutThenDrainVisa(["-3.21", "0,\"No error\""])
+        visa = _TimeoutThenDrainVisa(['0,"No error"'], late_replies=["-3.21"])
         drv._visa_resource = visa
         with pytest.raises(pyvisa.errors.VisaIOError):
             await drv._query("OUTP:MEAS:RES:GET? 1")
-        # 原命令 1 + SYST:ERR? × 2 (读到 0 即停, 不多发)
         assert visa.calls[0] == "OUTP:MEAS:RES:GET? 1"
+        assert visa.read_calls >= 2  # 吃掉 1 条迟到 + 1 次超时确认对齐
         drains = [c for c in visa.calls[1:] if c == "SYST:ERR?"]
-        assert len(drains) == 2, visa.calls
+        assert len(drains) == 1, visa.calls  # 对齐后 1 条 no-error 即净
 
     @pytest.mark.asyncio
-    async def test_zero_prefixed_late_reply_does_not_end_drain(self):
-        """Codex #199 P1: 迟到应答以 0 开头 ("0.0" 功率 / "0,-3.2" 元组) 不得
-        被当成队列空提前停 — 只认 0,"No error" 形态。"""
+    async def test_zero_prefixed_late_reply_eaten_by_bare_read(self):
+        """Codex #199→#203 收敛: 以 0 开头的迟到应答 ("0.0") 由裸 read 根治;
+        ERR 队列通道的杂音仍只认 0,"No error" 可解析形态。"""
         drv = RealPropsimF64Driver("f64-drain-zero", {})
-        visa = _TimeoutThenDrainVisa(["0.0", "0,-3.2", '0,"No error"'])
+        visa = _TimeoutThenDrainVisa(
+            ['-200,"stale"', '0,"No error"'], late_replies=["0.0"]
+        )
         drv._visa_resource = visa
         with pytest.raises(pyvisa.errors.VisaIOError):
             await drv._query("OUTP:MEAS:RES:GET? 1")
         drains = [c for c in visa.calls if c == "SYST:ERR?"]
-        assert len(drains) == 3, visa.calls  # 排过两条迟到杂音, 到真 no-error 才停
+        assert len(drains) == 2, visa.calls  # ERR 队列 1 条真错误 + 1 条净
 
     @pytest.mark.asyncio
     async def test_drain_caps_at_four(self):
@@ -148,10 +158,24 @@ class TestTimeoutDrain:
         assert len(drains) == 4, visa.calls
 
     @pytest.mark.asyncio
+    async def test_syst_err_self_timeout_realigned_by_bare_read(self):
+        """Codex #202/#203: 超时命令本身是 SYST:ERR?、迟到应答恰是合法 no-error —
+        "连续 N 条 clean" 在错位链上不收敛 (每条都合法), 裸 read 吃残留才是
+        重对齐手段; 对齐后 1 条即净, 无需 streak 特判。"""
+        drv = RealPropsimF64Driver("f64-drain-self", {})
+        visa = _TimeoutThenDrainVisa([], late_replies=['0,"No error"'])
+        drv._visa_resource = visa
+        with pytest.raises(pyvisa.errors.VisaIOError):
+            await drv._query("SYST:ERR?")
+        assert visa.read_calls >= 2  # 吃掉自指迟到应答 + 超时确认对齐
+        drains = [c for c in visa.calls[1:] if c == "SYST:ERR?"]
+        assert len(drains) == 1, visa.calls
+
+    @pytest.mark.asyncio
     async def test_session_usable_after_drain(self):
         """排水成功后, 下一条命令读到的是自己的应答 (不再错位)。"""
         drv = RealPropsimF64Driver("f64-post-drain", {})
-        visa = _TimeoutThenDrainVisa(["0,\"No error\""])
+        visa = _TimeoutThenDrainVisa(["0,\"No error\""], late_replies=["late-junk"])
         drv._visa_resource = visa
         with pytest.raises(pyvisa.errors.VisaIOError):
             await drv._query("SLOW:CMD?")
