@@ -2672,7 +2672,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         try:
             for i in range(4):
                 resp = (await self._do_query_unlocked("SYST:ERR?", timeout=2000)).strip()
-                if resp.startswith("0"):
+                # Codex #199 P1: 只认可解析的 SYST:ERR? 无错形态 (0,"No error") —
+                # 迟到应答本身可能以 0 开头 (输出功率 "0.0" / 测量元组 "0,...")
+                # , 宽判 startswith("0") 会把它当队列空提前停, 真正的 SYST:ERR?
+                # 应答仍排着, 会话照旧错位。
+                if re.match(r'^\+?0\s*,\s*"?no error', resp, re.IGNORECASE):
                     logger.warning(
                         f"[F64] 超时排水完成 ({i + 1} 条) — 会话已净 "
                         f"(超时命令: {timed_out_cmd[:40]!r})"

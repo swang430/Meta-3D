@@ -75,6 +75,9 @@ async def run(
 
     steps: list[SequenceStepResult] = []
 
+    class _StepReturnedFalse(RuntimeError):
+        """哨兵: False 分支已记录失败 step, except 不得二次 append (Codex #199 P3)。"""
+
     async def _step(label: str, coro):
         started = time.monotonic()
         try:
@@ -89,7 +92,7 @@ async def run(
                     duration_ms=int((time.monotonic() - started) * 1000),
                 ))
                 log(f"  ✗ {label}: returned False")
-                raise RuntimeError(f"{label} returned False")
+                raise _StepReturnedFalse(f"{label} returned False")
             steps.append(SequenceStepResult(
                 label=label,
                 success=True,
@@ -98,6 +101,8 @@ async def run(
             ))
             log(f"  ✓ {label}")
             return result
+        except _StepReturnedFalse:
+            raise  # 已记录, 只中止序列 (外层 except 收敛成 success=False)
         except Exception as e:  # noqa: BLE001
             steps.append(SequenceStepResult(
                 label=label,
