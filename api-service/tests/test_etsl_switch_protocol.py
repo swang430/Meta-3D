@@ -218,6 +218,26 @@ class TestVxi11Transport:
         assert opened == ["TCPIP0::192.168.0.50::inst0::INSTR"]
         assert session.write_termination == CR  # 裸命令 + CR (终止符交 pyvisa)
 
+    def test_hal_standard_ip_key_accepted(self):
+        """Codex #202 R9 P2: HAL 标准路径注入 config['ip'] (=controller_ip,
+        与 F64/UXM 同惯例) — 只认 ip_address 会让标准绑定落 127.0.0.1,
+        VXI-11 永远连不上真开关。"""
+        assert EtslSwitchDriver("t", {"ip": "10.0.1.60"})._ip == "10.0.1.60"
+
+    def test_ip_beats_ip_address_when_both(self):
+        """两键并存时 'ip' (binding 结构化列, 权威) 赢 ip_address (兼容遗留)。"""
+        drv = EtslSwitchDriver(
+            "t", {"ip": "10.0.1.60", "ip_address": "192.168.0.50"}
+        )
+        assert drv._ip == "10.0.1.60"
+
+    def test_none_ip_falls_through_to_ip_address(self):
+        """HAL 注入 ip=None (binding 无 controller_ip) 不遮蔽 ip_address。"""
+        drv = EtslSwitchDriver(
+            "t", {"ip": None, "ip_address": "192.168.0.50"}
+        )
+        assert drv._ip == "192.168.0.50"
+
     async def test_query_strips_trailing_nul(self):
         drv, sess = _make_vxi11_driver(query_responses=["NO"])
         assert await drv.get_path("4:INT_RELAY_A") == 1  # "NO\n\x00" -> "NO" -> 1
