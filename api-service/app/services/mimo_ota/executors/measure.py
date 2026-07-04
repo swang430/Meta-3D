@@ -692,6 +692,21 @@ class MeasureExecutor(IStepExecutor):
                     context.test_execution.id, freq_result.failure_reason(),
                 )
 
+            # --- P2-17 (Codex #201 R3 P1): 信道加载后显式启动仿真播放 ---
+            # 执行链原本无人调 start_emulation (现场靠脚本手动 GO) — attach 默认
+            # 直通态落地后, 不启动 = 测量在 STOPPED+STATIC 3 下跑 (无衰落输出)。
+            # start_emulation 内建 GO 前无条件 STATIC 0 恢复衰落 (P2-17 ①), 此
+            # 调用同时完成"attach 直通 → 测量衰落"的闭环; 布尔契约 fail-loud。
+            started = await emulator.start_emulation()
+            if not started:
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    error_message=(
+                        "信道仿真启动失败 (start_emulation=False, 明细见仿真器"
+                        "驱动日志) — 中止, 不在 STOPPED/直通态下测量。"
+                    ),
+                )
+
             # --- P2-11 Phase 6: UXM cell config 下发后一致性 (吞吐链版频率校验) ---
             # set_cell_config + RRC reconfig 后, 拿 **UE 协商能力** (max_dl_layers /
             # max_modulation_dl) 跟 TestCase 请求比 —— 请求超 UE 能力 (4 层但 UE 只 2 /

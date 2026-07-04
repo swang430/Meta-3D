@@ -323,6 +323,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         "ce.user_alignment",
     })
 
+    # P2-17 (Codex #201 P2): STATIC 直通能力标志 — set_passthrough_mode 定义在
+    # 基类, hasattr 判定会对 FS16 等误开 (高层方法 NotImplementedError)。attach
+    # 直通编排等消费方按此标志 gate, 而不是 hasattr / 类名。
+    SUPPORTS_STATIC_PASSTHROUGH: bool = True
+
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         # 连接参数
@@ -1278,6 +1283,17 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             return False
 
         try:
+            # P2-17 ① + Codex #201 R2 P2: GO 前**无条件**写 STATIC 0 恢复衰落 —
+            # 不依赖内存缓存 (HAL 重载后新实例 _bypass_mode 冷为 DISABLED 而
+            # 硬件还停在 attach 直通的 STATIC 3 → GO 必 -200; attach 序列故意
+            # 不恢复, 重载是现场常态)。写 0 幂等, 一条命令成本。
+            if self._bypass_mode != F64BypassMode.DISABLED:
+                logger.info(
+                    f"[F64] GO 前清直通: STATIC {self._bypass_mode.name} → DISABLED (恢复衰落)"
+                )
+            await self._write("DIAG:SIMU:MODEL:STATIC 0")
+            self._bypass_mode = F64BypassMode.DISABLED
+            self._passthrough_active = False
             await self._write("DIAG:SIMU:GO")
             await self._query("*OPC?")
             self._emulation_running = True
@@ -1467,11 +1483,24 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
         校准旁路 (mode=3) 用于 RF 链路校准:
           所有通道等增益/等延迟/零相位, 信号直通。
+
+        P2-17 ① (2026-07-03 实证): STATIC 与回放**互斥** — 运行态切 STATIC≠0
+        时 F64 自动转 STOPPED (直通稳态 = STOPPED + STATIC 3); STATIC≠0 下 GO
+        被 -200 拒 (by design), 恢复衰落 = STATIC 0 + GO (start_emulation 已
+        内建 GO 前清直通)。
         """
         if not self._visa_resource:
             return False
         try:
             await self._write(f"DIAG:SIMU:MODEL:STATIC {mode.value}")
+            # 运行态切 STATIC≠0 → F64 自动 STOPPED; 驱动状态跟着同步, 否则
+            # _emulation_running 漂移 (输出测量冻结标注 P1-21 ④ 也依赖它)。
+            if mode != F64BypassMode.DISABLED and self._emulation_running:
+                self._emulation_running = False
+                self._status = InstrumentStatus.READY
+                logger.info(
+                    f"[F64] 运行态切 STATIC {mode.value} → F64 自动 STOPPED (驱动状态已同步)"
+                )
             self._bypass_mode = mode
             logger.info(f"[F64] Bypass mode: {mode.name}")
             return True

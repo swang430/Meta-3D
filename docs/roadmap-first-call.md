@@ -1766,7 +1766,13 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 ---
 
-### P2-17 — F64 直通/衰落模式编排 (attach 默认直通态 + 状态机)
+### P2-17 — F64 直通/衰落模式编排 (attach 默认直通态 + 状态机) ✅ Done (2026-07-04 #201)
+
+> 收口: ① 状态机进驱动 — `set_bypass_mode` 运行态切 STATIC≠0 同步 STOPPED 状态;
+> `start_emulation` 内建 GO 前清直通 (STATIC 0, 不赌加载复位); ② attach 默认直通
+> 编排落 `baseStation_attach_check` (param `establish_f64_passthrough` 默认开:
+> 真实 CE 在场 → stop+STATIC 3, 失败 fail-loud; 无 CE 线缆直连跳过); ③ 由 P1-21 ④
+> 覆盖。9 用例 (状态机 5 + 序列 4)。真机验收 = attach→吞吐零人肉模式切换, 下次现场。
 
 **What**: ① `set_bypass_mode` 状态机编排 —— 2026-07-03 破解的语义: STATIC(静态直通)与回放互斥, STATIC≠0 时 GO 被拒(-200 by design), 运行态切 STATIC 自动 STOPPED, **直通稳态 = STOPPED + STATIC 3**, 恢复衰落 = STATIC 0 + GO; ② commissioning 流程编排: attach 阶段默认建立直通态(DUT 好接入, -96 RSRP 实证可用), run/measure 前**显式 STATIC 0**(不赌加载复位); ③ cockpit/驱动: 输出功率测量 STOPPED 冻结语义标注(与 P1-21 ④共享)。
 

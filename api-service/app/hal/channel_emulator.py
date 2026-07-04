@@ -607,6 +607,10 @@ class MockChannelEmulator(ChannelEmulatorDriver):
         """Set channel propagation model"""
         self._channel_model = model_type
         self._scenario = scenario
+        # 对齐真驱动契约 (P2-17, Codex #201 R3): 加载成功 = 可启动 —
+        # connect 后仅 CONNECTED, 不置 READY 则 start_emulation 的
+        # status 门恒拒, measure 链的显式启动在 mock 下假失败。
+        self._set_status(InstrumentStatus.READY)
         return True
 
     async def set_mimo_config(
@@ -705,6 +709,10 @@ class MockChannelEmulator(ChannelEmulatorDriver):
         self._asc_loaded = True
         self._asc_file_count = len(asc_files)
         self._cdl_model_name = cdl_model_name
+        # 对齐真驱动契约 (Codex #201 R4 P2): ASC 路加载成功同样 = 可启动 —
+        # 只改 NATIVE_MODEL 路会让 mock 下 external_asc/mimo_first_asc 引擎
+        # 的显式启动假失败 (对称路径 fan-out, 同 set_channel_model)。
+        self._set_status(InstrumentStatus.READY)
 
         return True
 
