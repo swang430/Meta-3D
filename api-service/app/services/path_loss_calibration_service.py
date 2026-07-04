@@ -966,7 +966,13 @@ class ProbePathLossCalibrationService:
                     logger.warning("[PathLoss B] source.stop_tx failed (non-fatal): %s", e)
             if passthrough_set:
                 try:
-                    await ce.clear_passthrough_mode()
+                    # #206 后 False 带真实语义 (STATIC 0 被拒, CE 留直通) —
+                    # 有 start_emulation GO 前置清兜底, 但要留痕
+                    if not await ce.clear_passthrough_mode():
+                        logger.warning(
+                            "[PathLoss B] clear_passthrough_mode 被拒 (CE 可能留在"
+                            " STATIC 直通; 下次 GO 前置清会兜底)"
+                        )
                 except Exception as e:  # noqa: BLE001
                     logger.warning("[PathLoss B] clear_passthrough_mode failed (non-fatal): %s", e)
 

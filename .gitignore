@@ -15,8 +15,9 @@ dist/
 /.vscode/*
 !/.vscode/settings.json
 
-# Claude Code
-.claude/
+# Claude Code (本地会话/设置不进库; agents/ 是团队共享的项目级 agent 定义, 白名单)
+.claude/*
+!.claude/agents/
 
 # Environment variables
 .env
