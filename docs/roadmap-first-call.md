@@ -41,7 +41,15 @@ loose 软化）+ 18 条 F64 场景资产工程真值化 + 四台仪器控制面�
 （下次现场 attach→吞吐的软件必要条件）+ **P2-17/18**（直通编排 / 资产真值自动化）+ P2-4/P2-9
 状态更新。**执行序（WIP=1，一次一项）**：① `onsite-20260703` 分支 PR 收口 ✅（#193）→ ② P1-20
 ✅（#194 转台懒重连）→ ③ P1-19 ✅（#195 UXM 编排，Codex 六轮 3P1+4P2 全修）→ ④ P1-18 ✅
-（#196 缺省不写 CENT + smu_project 真值解析）→ **⑤ P1-21（会话卫生，进行中）** → P2-17/18 择机。
+（#196 缺省不写 CENT + smu_project 真值解析）→ ⑤ P1-21 ✅（#197 会话卫生）→ P2-17 ✅
+（#199/#201 直通编排诊断）+ P2-9 本地半 ✅（#198 EtslSwitchDriver VXI-11）。
+
+**▶ 2026-07-04 整理队列全收口 + 质量补扫体系** —— 上述 ①-⑤ + P2-17/P2-9 本地半全 merge。
+另:Codex 流量 limit 漏扫欠账（#196-198 约 1550 行零 review 进 main）建补扫体系 —— review-only
+PR（#199 扫欠账 / #202 dry 循环）+ 每轮 findings 新分支修（R1-R5 共 9 条全修,#200/#203-206）+
+**提交前 pre-commit-reviewer agent 硬门**（`.claude/agents/pre-commit-reviewer.md`,Codex limit
+期间 agent 主审）。P0-3/P0-4 现场验证补标收口（32 链路证书 / TRP ±1dB,见各条目）。P2-18 独立
+排期。本地队列空 —— 下次现场 = **P0-5 attach 正式注册 → ★四方位吞吐**（15 分钟开跑清单就绪）。
 
 P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max / RT→MPC 接入)
 已进 on-site 队列。**原开发的现场验证基线已打 tag** `onsite-verification-baseline-2026-06-21`（留在 main）。
@@ -61,7 +69,7 @@ P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max /
 | 桶 | 内容 |
 |----|------|
 | **LOCAL-OPEN (roadmap 内)** | ≈ **空** —— 所有"本地可启动且未做"的活跃 P 项已收口 |
-| **ON-SITE-BLOCKED** | P0-3/4/5 (核心依赖链) + P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
+| **ON-SITE-BLOCKED** | P0-5 (P0-3/4 已 2026-07-03 现场完成) + P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
 | **off-roadmap 候选 (需先 triage，非积压)** | GUI 测试框架引入 (与 `feedback_browser_test_frontend_work` 对齐，ROI 最高) / HTTP distributed pytest 缺口 / 后端告警规则引擎 / CLAUDE.md 列的 Queue 重排序·Auth Context·报告对比 |
@@ -81,13 +89,13 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 
 | ID | Item | Blocker |
 |----|------|---------|
-| P0-3 | Path-loss calibration (CAL-01) loop closure + cal cert | SA in HAL + on-site CE/SA |
-| P0-4 | SignalAnalyzer in HAL for reference TRP | on-site real SA + horn antenna |
-| P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | on-site real DUT |
+| ~~P0-3~~ | ~~Path-loss calibration loop closure + cal cert~~ | ✅ 2026-07-03 现场完成 (余复测 ±0.5dB → P1-4) |
+| ~~P0-4~~ | ~~SignalAnalyzer in HAL for reference TRP~~ | ✅ 2026-07-03 现场完成 |
+| P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | on-site real DUT (已至 -96 dBm RSRP, 差正式注册) |
 
 These are still the highest-priority items overall — they just can't
 be progressed from a remote dev box. When the next on-site trip
-opens, the Current Focus must move back to P0-3 (or whichever P0 is
+opens, the Current Focus must move back to P0-5 (or whichever P0 is
 unblocked) BEFORE starting any new P1.
 
 > **下次现场执行按 [`docs/guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md)
@@ -205,7 +213,10 @@ instead of the catalog key string, so downstream diagnostics resolve
 
 ---
 
-### P0-3 — Path-loss calibration (CAL-01) loop closure + cal cert generation 🚧 Blocked on-site
+### P0-3 — Path-loss calibration (CAL-01) loop closure + cal cert generation ✅ 主体 Done (2026-07-03 现场)
+
+> 收口: 真硬件 CE+SA 校准端到端跑通, 32 链路证书生成 + 绑 lab (现场任务
+> Phase 3)。余一条 acceptance = 复测重复性 ±0.5 dB, 归并 P1-4 下次现场。
 
 **What**: Run the CE+SA path-loss calibration end-to-end on real hardware,
 producing a `CalibrationCertificate` row with the 32-element
@@ -226,12 +237,15 @@ numbers.
 - Precheck phase sees the cert and stops warning
 - A repeat measurement gives the same path-loss values within ±0.5 dB
 
-**Status**: `[ ]` not started — needs SA in HAL (P0-4) + on-site
+**Status**: `[x]` 主体 done 2026-07-03 现场 (32 链路证书 + 绑 lab); 余复测 ±0.5 dB → P1-4
 **Estimate**: on-site 1 day + local 0.5 day
 
 ---
 
-### P0-4 — SignalAnalyzer in HAL for reference TRP 🚧 Blocked on-site
+### P0-4 — SignalAnalyzer in HAL for reference TRP ✅ Done (2026-07-03 现场)
+
+> 收口: 真 FSVA3000 入 HAL, reference 相位真读数, TRP 基线 ±1 dB 达标
+> (现场任务 Phase 2)。三条 acceptance 全过。
 
 **What**: Bind the on-site **R&S FSVA3000** signal analyzer (driver
 `RealRsFsvaDriver`, model `FSVA3000`) to the HAL `signalAnalyzer` category
@@ -252,9 +266,8 @@ fake. Real first-call needs the real path:
 - Measured TRP within ±1 dB of horn datasheet TRP at the tested
   frequency
 
-**Status**: `[ ]` not started — `RealRsFsvaDriver` exists + registered
-(`signalAnalyzer→FSVA3000`) + seeded; needs on-site connection + model
-select. No driver work on-site (cardinal rule 1).
+**Status**: `[x]` done 2026-07-03 现场 — FSVA3000 真连接入 HAL, reference
+相位 `measurement_source: "hal_signal_analyzer"`, TRP ±1 dB 达标。
 **Estimate**: on-site 0.5 day + local 0.5 day
 
 ---
@@ -1095,7 +1108,10 @@ SYN, 于是每个 IP 都"alive"、每个子网都"可达"。实测连 RFC5737 TE
 
 ---
 
-### P1-20 — Aerotech 转台断连韧性 (move 前懒重连) ⚡ 阻塞★核心最直接
+### P1-20 — Aerotech 转台断连韧性 (move 前懒重连) ✅ Done (2026-07-03 #194)
+
+> 收口: move_to/get_position/reset 前 transport 探活 + 懒重连一次; mock
+> 断连注入自愈 + 4 方位序列单测过。现场验收 (完整 4 方位零人工干预) 随★核心。
 
 **What**: 驱动 `move_to`/`get_position`/`reset` 前检测 transport closed → 自动重连一次再执行(懒重连); 可选周期 keepalive poke(≤5s, 实测断连窗口 <11s); mock transport 单测(断连→自愈)。
 
