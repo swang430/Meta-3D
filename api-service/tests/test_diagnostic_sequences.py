@@ -325,6 +325,83 @@ class TestRunSequence:
         # False 中止序列 — 后续 start_signaling 不应执行
         bs.start_signaling.assert_not_awaited()
 
+    def _happy_bs(self):
+        bs = MagicMock()
+        bs.connect = AsyncMock(return_value=True)
+        bs.set_cell_config = AsyncMock(return_value=True)
+        bs.start_signaling = AsyncMock(return_value=True)
+        bs.get_ue_info = AsyncMock(return_value={"connected": True, "imsi": "001010..."})
+        bs.query_ue_capability = AsyncMock(return_value={"max_layers": 4})
+        return bs
+
+    def test_attach_check_establishes_f64_passthrough(self, db, lab_with_bs, monkeypatch):
+        """P2-17 ②: 有真实 CE 时 attach 前建立直通稳态 (STOPPED + STATIC 3)。"""
+        bs = self._happy_bs()
+        ce = MagicMock()
+        ce.stop_emulation = AsyncMock(return_value=True)
+        ce.set_passthrough_mode = AsyncMock(return_value=True)
+        _patched_hal(monkeypatch, drivers={"baseStation": bs, "channelEmulator": ce})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/baseStation_attach_check/run",
+            json={
+                "lab_profile_id": str(lab_with_bs.id),
+                "params": {"attach_timeout_s": 2, "frequency_mhz": 3500},
+            },
+        )
+        body = resp.json()
+        assert body["success"] is True
+        labels = [s["label"] for s in body["steps"]]
+        assert any("stop_emulation" in lbl for lbl in labels), labels
+        assert any("passthrough" in lbl.lower() for lbl in labels), labels
+        ce.stop_emulation.assert_awaited_once()
+        ce.set_passthrough_mode.assert_awaited_once()
+
+    def test_attach_check_passthrough_skipped_without_ce(self, db, lab_with_bs, monkeypatch):
+        """无 CE (线缆直连场景) → 跳过 step 记录, 序列继续。"""
+        bs = self._happy_bs()
+        _patched_hal(monkeypatch, drivers={"baseStation": bs})
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/baseStation_attach_check/run",
+            json={"lab_profile_id": str(lab_with_bs.id), "params": {"attach_timeout_s": 2}},
+        )
+        body = resp.json()
+        assert body["success"] is True
+        skipped = [s for s in body["steps"] if "skipped" in s["label"]]
+        assert len(skipped) == 1 and skipped[0]["success"] is True, body["steps"]
+
+    def test_attach_check_passthrough_failure_aborts(self, db, lab_with_bs, monkeypatch):
+        """CE 在场但直通失败 → fail-loud (衰落在跑 attach 大概率失败, 不硬闯)。"""
+        bs = self._happy_bs()
+        ce = MagicMock()
+        ce.stop_emulation = AsyncMock(return_value=True)
+        ce.set_passthrough_mode = AsyncMock(return_value=False)
+        _patched_hal(monkeypatch, drivers={"baseStation": bs, "channelEmulator": ce})
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/baseStation_attach_check/run",
+            json={"lab_profile_id": str(lab_with_bs.id), "params": {"attach_timeout_s": 2}},
+        )
+        body = resp.json()
+        assert body["success"] is False
+        bs.set_cell_config.assert_not_awaited()  # 直通失败即中止, 不继续配小区
+
+    def test_attach_check_passthrough_opt_out(self, db, lab_with_bs, monkeypatch):
+        """explicit 关闭开关 → 不碰 CE。"""
+        bs = self._happy_bs()
+        ce = MagicMock()
+        ce.stop_emulation = AsyncMock(return_value=True)
+        ce.set_passthrough_mode = AsyncMock(return_value=True)
+        _patched_hal(monkeypatch, drivers={"baseStation": bs, "channelEmulator": ce})
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/baseStation_attach_check/run",
+            json={
+                "lab_profile_id": str(lab_with_bs.id),
+                "params": {"attach_timeout_s": 2, "establish_f64_passthrough": False},
+            },
+        )
+        assert resp.json()["success"] is True
+        ce.set_passthrough_mode.assert_not_awaited()
+
     def test_attach_check_marks_failure_on_no_attach(self, db, lab_with_bs, monkeypatch):
         """DUT never attaches within timeout → success=False, but HTTP 200."""
         bs = MagicMock()
