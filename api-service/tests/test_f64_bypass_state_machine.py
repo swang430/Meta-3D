@@ -77,6 +77,18 @@ class TestStaticPlaybackMutex:
         w = _writes(visa)
         assert w.index("DIAG:SIMU:MODEL:STATIC 0") < w.index("DIAG:SIMU:GO"), w
 
+    async def test_start_emulation_fails_when_go_rejected(self):
+        """Codex #202 R2 P2: GO 失败只经 SYST:ERR? 报 (*OPC? 照答 1) — 错误
+        队列门 fail-loud, 不许带着"没在跑"的 F64 返回 True。"""
+        drv, visa = _make_driver()
+        drv._loaded_emulation_file = "X.smu"
+        visa.query.side_effect = lambda cmd: (
+            "1" if cmd == "*OPC?" else '-200,"Execution error;GO rejected"'
+        )
+        assert await drv.start_emulation() is False
+        assert drv._emulation_running is False
+        assert "-200" in (drv._last_error or "")
+
     async def test_passthrough_then_go_round_trip(self):
         """attach 默认态全回路: 直通稳态建立 → GO 自动恢复衰落。"""
         drv, visa = _make_driver()

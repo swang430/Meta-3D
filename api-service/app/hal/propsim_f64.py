@@ -1296,10 +1296,17 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             self._passthrough_active = False
             await self._write("DIAG:SIMU:GO")
             await self._query("*OPC?")
+            # Codex #202 R2 P2: GO 的失败 F64 只经 SYST:ERR? 报 (*OPC? 照答 1) —
+            # _check_errors 只记日志会让 GO 被拒 (如 -200) 仍 return True, 调用
+            # 方 (measure 显式启动的 fail-loud) 形同虚设。错误队列门 fail-loud。
+            go_err = await self._first_error()
+            if go_err is not None:
+                self._last_error = f"start_emulation rejected: {go_err}"
+                logger.error(f"[F64] GO 被拒 (SYST:ERR?): {go_err} — 仿真未启动")
+                return False
             self._emulation_running = True
             self._status = InstrumentStatus.BUSY
             logger.info("[F64] Emulation started")
-            await self._check_errors()
             return True
         except Exception as e:
             logger.error(f"[F64] start_emulation failed: {e}")
@@ -2699,19 +2706,30 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         原始超时异常由调用方上抛, 这里不再抛。
         """
         try:
-            for i in range(4):
+            # Codex #202 R2 P2: 超时命令本身是 SYST:ERR? 族时, 它的迟到应答恰可能
+            # 是合法的 0,"No error" — 首条判净会把排水自己那条查询的应答留在队列
+            # (仍差一拍)。该场景要求**连续两条** no-error 才判净; 普通命令一条即可。
+            required_clean = (
+                2 if timed_out_cmd.strip().upper().startswith("SYST:ERR") else 1
+            )
+            clean_streak = 0
+            for i in range(4 + (required_clean - 1)):
                 resp = (await self._do_query_unlocked("SYST:ERR?", timeout=2000)).strip()
                 # Codex #199 P1: 只认可解析的 SYST:ERR? 无错形态 (0,"No error") —
                 # 迟到应答本身可能以 0 开头 (输出功率 "0.0" / 测量元组 "0,...")
                 # , 宽判 startswith("0") 会把它当队列空提前停, 真正的 SYST:ERR?
                 # 应答仍排着, 会话照旧错位。
                 if re.match(r'^\+?0\s*,\s*"?no error', resp, re.IGNORECASE):
-                    logger.warning(
-                        f"[F64] 超时排水完成 ({i + 1} 条) — 会话已净 "
-                        f"(超时命令: {timed_out_cmd[:40]!r})"
-                    )
-                    return True
-            logger.error("[F64] 超时排水 4 条仍未净 — 会话可能错位, 建议重载驱动")
+                    clean_streak += 1
+                    if clean_streak >= required_clean:
+                        logger.warning(
+                            f"[F64] 超时排水完成 ({i + 1} 条) — 会话已净 "
+                            f"(超时命令: {timed_out_cmd[:40]!r})"
+                        )
+                        return True
+                else:
+                    clean_streak = 0
+            logger.error("[F64] 超时排水仍未净 — 会话可能错位, 建议重载驱动")
         except Exception as drain_e:  # noqa: BLE001
             logger.error(
                 f"[F64] 超时排水失败 ({type(drain_e).__name__}: {drain_e}) — "

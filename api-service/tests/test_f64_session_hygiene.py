@@ -148,6 +148,18 @@ class TestTimeoutDrain:
         assert len(drains) == 4, visa.calls
 
     @pytest.mark.asyncio
+    async def test_syst_err_timeout_requires_two_clean_reads(self):
+        """Codex #202 R2 P2: 超时命令本身是 SYST:ERR? 时, 迟到应答恰可能是合法
+        no-error — 须连续两条才判净, 否则排水自己的应答留队列 (仍差一拍)。"""
+        drv = RealPropsimF64Driver("f64-drain-self", {})
+        visa = _TimeoutThenDrainVisa(['0,"No error"', '0,"No error"'])
+        drv._visa_resource = visa
+        with pytest.raises(pyvisa.errors.VisaIOError):
+            await drv._query("SYST:ERR?")
+        drains = [c for c in visa.calls[1:] if c == "SYST:ERR?"]
+        assert len(drains) == 2, visa.calls  # 首条 (迟到) 不作数, 连续第二条才净
+
+    @pytest.mark.asyncio
     async def test_session_usable_after_drain(self):
         """排水成功后, 下一条命令读到的是自己的应答 (不再错位)。"""
         drv = RealPropsimF64Driver("f64-post-drain", {})
