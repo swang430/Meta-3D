@@ -130,6 +130,17 @@ export function RFChainDiagramPanel() {
         color: 'green',
         icon: <IconCheck size={18} />,
       })
+      if (resp.warnings?.length) {
+        // 校准成功但有清理告警 (如 tone 停不掉 / CE 留直通) — 证书带隐患入库,
+        // 必须让操作员当场看到
+        notifications.show({
+          title: `校准告警 (${resp.warnings.length} 条)`,
+          message: resp.warnings.join('\n'),
+          color: 'yellow',
+          icon: <IconAlertCircle size={18} />,
+          autoClose: false,
+        })
+      }
       logFrontendEvent({
         action: 'path_loss_calibration.started',
         component: 'RFChainDiagramPanel',

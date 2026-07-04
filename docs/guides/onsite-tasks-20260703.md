@@ -87,6 +87,7 @@ discovered / 任务状态 / 数据登记,不进功能代码。
 **③ 偏移原因归类**:外部事件(仪表重启、EMQuest 并行操作)+ 既有 bug 的现场深挖(值得,全部转化为 discovered/热修)——不属于"顺手优化"跑偏。
 
 **次日/下次现场 15 分钟开跑清单**:
+0. **SCPI 冒烟(#206 GOS/STATIC 错误门的 benign 行为实证,agent F1)**:干净 3334 会话下依次验 ① STOPPED 态重复 `DIAG:SIMU:GOS` ② 无 sim open 态 `GOS` ③ 无 sim open 态 `STATIC 3`,各查 `SYST:ERR?` —— 若报 benign 错误码,记录进 discovered 并把该码在驱动错误门内放行(否则 attach 预备第一步会被假失败卡住;临时逃生 = attach 序列参数 `establish_f64_passthrough=false`);
 1. `start_all_services.sh`(若重启)→ HAL real → 状态三查:UXM 小区(期望 636666/BW40/-46/ON)、F64(STATIC?/STATE?/工程)、F64 参考(-15/crest12,面板核);
 2. F64 直通默认态:加载 UMa 工程 → `STATIC 3`(稳态 = STOPPED+STATIC3);
 3. **DUT attach**(-96 RSRP 可用;慢则 UXM EPRE -46→-36 一条命令);记 IMSI;

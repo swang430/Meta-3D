@@ -65,7 +65,15 @@ async def cleanup_chamber_instruments(hal: Any, execution_id: Any) -> List[str]:
     emulator = hal.drivers.get("channelEmulator")
     if emulator is not None and hasattr(emulator, "stop_emulation"):
         try:
-            await emulator.stop_emulation()
+            # #206 后 stop_emulation 的 False 带真实语义 (GOS 被拒, 仪器可能
+            # 仍在发射) — 尽力而为语境不 abort, 但要进 warnings 可见
+            if not await emulator.stop_emulation():
+                msg = (
+                    "channelEmulator.stop_emulation 被拒 (GOS SYST:ERR?, "
+                    "仪器可能仍在发射) — cleanup 继续但需人工确认"
+                )
+                warnings.append(msg)
+                logger.warning("[%s] %s", execution_id, msg)
         except Exception as e:  # noqa: BLE001
             msg = f"channelEmulator.stop_emulation failed during cleanup: {e}"
             warnings.append(msg)

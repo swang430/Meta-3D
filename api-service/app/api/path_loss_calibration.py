@@ -114,12 +114,18 @@ async def start_path_loss_calibration(
     )
 
     if not result.success:
-        raise HTTPException(status_code=500, detail=result.message)
+        # agent 复审 F2: 失败也带 warnings (与 for-lab 端点同构) — 测量失败
+        # 前 acquire 的清理失败 (tone 停不掉等) 不得在 wire 上丢失
+        raise HTTPException(status_code=500, detail={
+            "message": result.message,
+            "warnings": result.warnings,
+        })
 
     return CalibrationJobResponse(
         calibration_job_id=UUID(result.data["calibration_id"]),
         status=CalibrationJobStatus.COMPLETED,
-        message=result.message
+        message=result.message,
+        warnings=result.warnings,
     )
 
 
@@ -164,6 +170,7 @@ async def start_path_loss_calibration_for_lab(
         calibration_job_id=UUID(result.data["calibration_id"]),
         status=CalibrationJobStatus.COMPLETED,
         message=result.message,
+        warnings=result.warnings,
     )
 
 

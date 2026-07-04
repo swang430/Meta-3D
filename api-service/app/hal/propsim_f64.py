@@ -690,13 +690,23 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
           2. 关闭仿真文件
           3. 释放 VISA 资源
         """
+        stop_confirmed = True
         try:
             if self._emulation_running:
-                await self.stop_emulation()
+                # Codex #206 R2: GOS 被拒 (SYST:ERR-only 失败) 时不能报"干净
+                # 断开" — 断开照样继续 (重载场景必须能断), 但如实降返回值,
+                # 让 HAL 重载/关闭日志暴露 "F64 可能仍在发射"。
+                stop_confirmed = await self.stop_emulation()
+                if not stop_confirmed:
+                    logger.warning(
+                        "[F64] disconnect: stop_emulation 被拒 — 连接将断开, "
+                        "但 F64 可能仍在运行/发射, 需现场确认"
+                    )
             if self._loaded_emulation_file:
                 await self._write("DIAG:SIMU:CLOSE")
                 self._loaded_emulation_file = None
         except Exception as e:
+            stop_confirmed = False
             logger.warning(f"[F64] Cleanup during disconnect: {e}")
 
         if self._visa_resource:
@@ -715,7 +725,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self._status = InstrumentStatus.DISCONNECTED
         self._emulation_running = False
         self._active_pipeline = None
-        return True
+        return stop_confirmed
 
     def readiness_metadata(self) -> Dict[str, Any]:
         """P3-5: expose parsed SYST:INFO? fields to the HAL readiness
@@ -1303,13 +1313,14 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 await self._query("*OPC?")
                 # Codex #202 R2 P2: GO 失败只经 SYST:ERR? 报 (*OPC? 照答 1) —
                 # 错误队列门 fail-loud, 不许带着"没在跑"的 F64 返回 True。
+                # 门判定+状态更新在锁内 (agent F4, 三事务口径一致)。
                 go_err = await self._first_error()
-            if go_err is not None:
-                self._last_error = f"start_emulation rejected: {go_err}"
-                logger.error(f"[F64] GO 被拒 (SYST:ERR?): {go_err} — 仿真未启动")
-                return False
-            self._emulation_running = True
-            self._status = InstrumentStatus.BUSY
+                if go_err is not None:
+                    self._last_error = f"start_emulation rejected: {go_err}"
+                    logger.error(f"[F64] GO 被拒 (SYST:ERR?): {go_err} — 仿真未启动")
+                    return False
+                self._emulation_running = True
+                self._status = InstrumentStatus.BUSY
             logger.info("[F64] Emulation started")
             return True
         except Exception as e:
@@ -1326,13 +1337,32 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
           DIAG:SIMU:GOS — 停止并倒回起点 (下次 GO 从头开始)
 
         本方法使用 GOS (Stop & Rewind), 确保下次启动从干净状态开始。
+
+        Codex #202 R5: GOS 失败只经 SYST:ERR? 报 — 写后错误门 fail-loud
+        (同 GO 门), 否则 attach 直通预备 (stop → STATIC 3) 假成功, 直通
+        没建立照样配小区, attach 失败又被误诊成 DUT/RF 问题。事务持锁
+        (drain → GOS → 错误门), 被拒时驱动状态不动 (仪器实际仍在跑)。
         """
         if not self._visa_resource:
             return False
         try:
-            await self._write("DIAG:SIMU:GOS")
-            self._emulation_running = False
-            self._status = InstrumentStatus.READY
+            # 门判定+状态更新一并在锁内 (agent F4: 锁外 check-then-act 会与
+            # 并发 start_emulation 交错致驱动状态漂移一拍)。
+            # ⚠ agent F1 (未实证风险): "已 STOPPED 态重复 GOS" / "无 sim open
+            # 态 GOS" 的 SYST:ERR? 行为无 3334 干净会话实证 — 若 F64 报 benign
+            # 错, 本门会假失败卡 attach 预备第一步 (现场收工态恰是 STOPPED+
+            # STATIC3)。下次现场 SCPI 冒烟先验证 (onsite-tasks 清单有条目);
+            # 撞上时逃生门 = attach 序列 establish_f64_passthrough=False。
+            async with self._scpi_lock:
+                await self._drain_errors()
+                await self._write("DIAG:SIMU:GOS")
+                stop_err = await self._first_error()
+                if stop_err is not None:
+                    self._last_error = f"stop_emulation rejected: {stop_err}"
+                    logger.error(f"[F64] GOS 被拒 (SYST:ERR?): {stop_err}")
+                    return False
+                self._emulation_running = False
+                self._status = InstrumentStatus.READY
             logger.info("[F64] Emulation stopped and rewound")
             return True
         except Exception as e:
@@ -1499,20 +1529,37 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         时 F64 自动转 STOPPED (直通稳态 = STOPPED + STATIC 3); STATIC≠0 下 GO
         被 -200 拒 (by design), 恢复衰落 = STATIC 0 + GO (start_emulation 已
         内建 GO 前清直通)。
+
+        Codex #202 R5: STATIC 写失败只经 SYST:ERR? 报 — 写后错误门 fail-loud
+        (同 GO/GOS 门), 被拒时 _bypass_mode/_emulation_running 不动 (仪器
+        实际状态未变, 记了会漂移)。事务持锁 (drain → STATIC → 错误门)。
         """
         if not self._visa_resource:
             return False
         try:
-            await self._write(f"DIAG:SIMU:MODEL:STATIC {mode.value}")
-            # 运行态切 STATIC≠0 → F64 自动 STOPPED; 驱动状态跟着同步, 否则
-            # _emulation_running 漂移 (输出测量冻结标注 P1-21 ④ 也依赖它)。
-            if mode != F64BypassMode.DISABLED and self._emulation_running:
-                self._emulation_running = False
-                self._status = InstrumentStatus.READY
-                logger.info(
-                    f"[F64] 运行态切 STATIC {mode.value} → F64 自动 STOPPED (驱动状态已同步)"
-                )
-            self._bypass_mode = mode
+            # 门判定+状态更新一并在锁内 (agent F4: 锁外 check-then-act 的
+            # _emulation_running 读会与并发 start_emulation 交错致漂移)。
+            async with self._scpi_lock:
+                await self._drain_errors()
+                await self._write(f"DIAG:SIMU:MODEL:STATIC {mode.value}")
+                static_err = await self._first_error()
+                if static_err is not None:
+                    self._last_error = (
+                        f"set_bypass_mode({mode.name}) rejected: {static_err}"
+                    )
+                    logger.error(
+                        f"[F64] STATIC {mode.value} 被拒 (SYST:ERR?): {static_err}"
+                    )
+                    return False
+                # 运行态切 STATIC≠0 → F64 自动 STOPPED; 驱动状态跟着同步, 否则
+                # _emulation_running 漂移 (输出测量冻结标注 P1-21 ④ 也依赖它)。
+                if mode != F64BypassMode.DISABLED and self._emulation_running:
+                    self._emulation_running = False
+                    self._status = InstrumentStatus.READY
+                    logger.info(
+                        f"[F64] 运行态切 STATIC {mode.value} → F64 自动 STOPPED (驱动状态已同步)"
+                    )
+                self._bypass_mode = mode
             logger.info(f"[F64] Bypass mode: {mode.name}")
             return True
         except Exception as e:
@@ -2870,9 +2917,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     break
                 drained.append(err)
             if drained:
-                logger.info("[F64] 加载前清空 %d 条遗留错误: %s", len(drained), drained)
+                # agent F6: 本方法被 load×2/GO/GOS/STATIC 五个事务复用,
+                # 文案不再写"加载前"以免排障读日志时误导时序
+                logger.info("[F64] 事务前清空 %d 条遗留错误: %s", len(drained), drained)
         except Exception as e:
-            logger.warning("[F64] drain errors before load failed: %s", e)
+            logger.warning("[F64] drain errors failed: %s", e)
         return drained
 
     def _update_user_alignment_capability(self) -> None:

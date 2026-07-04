@@ -109,6 +109,80 @@ class TestStaticPlaybackMutex:
         assert await drv.start_emulation() is True  # stale 被前置排掉, GO 判成功
         assert drv._emulation_running is True
 
+    async def test_static_write_rejected_keeps_state(self):
+        """Codex #202 R5: STATIC 写被拒 (只经 SYST:ERR? 报) → False 且
+        _bypass_mode/_emulation_running/_status 全不动 (记了会与仪器实际漂移)。"""
+        drv, visa = _make_driver()
+        drv._emulation_running = True
+        drv._status = InstrumentStatus.BUSY  # agent F2: _status 也要锁定不动
+        visa.query.side_effect = lambda cmd: (
+            "1" if cmd == "*OPC?" else '-200,"Execution error"'
+        )
+        assert await drv.set_bypass_mode(F64BypassMode.CALIBRATION) is False
+        assert drv._bypass_mode == F64BypassMode.DISABLED  # 未更新
+        assert drv._emulation_running is True              # 未同步 STOPPED
+        assert drv._status == InstrumentStatus.BUSY        # 未被改写
+        assert "-200" in (drv._last_error or "")
+
+    async def test_stop_emulation_rejected_keeps_running(self):
+        """Codex #202 R5: GOS 被拒 → False 且 running/_status 不动。"""
+        drv, visa = _make_driver()
+        drv._emulation_running = True
+        drv._status = InstrumentStatus.BUSY
+        visa.query.side_effect = lambda cmd: (
+            "1" if cmd == "*OPC?" else '-113,"Undefined header"'
+        )
+        assert await drv.stop_emulation() is False
+        assert drv._emulation_running is True
+        assert drv._status == InstrumentStatus.BUSY
+        assert "-113" in (drv._last_error or "")
+
+    async def test_disconnect_propagates_stop_rejection(self):
+        """Codex #206 R2: GOS 被拒时 disconnect 不得报"干净断开" — 断开照样
+        完成 (重载必须能断) 但返回 False, 让重载日志暴露仪器可能仍在发射。"""
+        drv, visa = _make_driver()
+        drv._emulation_running = True
+        visa.query.side_effect = lambda cmd: (
+            "1" if cmd == "*OPC?" else '-113,"Undefined header"'
+        )
+        visa.close = lambda: None
+        assert await drv.disconnect() is False  # 如实降级
+        assert drv._visa_resource is None       # 断开本身仍完成
+        assert drv._status == InstrumentStatus.DISCONNECTED
+
+    async def test_stop_emulation_stale_error_not_misreported(self):
+        """agent F3: stale FIFO 条目被前置 drain 清掉, 成功的 GOS 不误报被拒。"""
+        drv, visa = _make_driver()
+        drv._emulation_running = True
+        err_q = ['-113,"Undefined header (stale)"']
+
+        def _q(cmd):
+            if cmd == "*OPC?":
+                return "1"
+            if cmd == "SYST:ERR?":
+                return err_q.pop(0) if err_q else '0,"No error"'
+            return '0,"No error"'
+
+        visa.query.side_effect = _q
+        assert await drv.stop_emulation() is True
+        assert drv._emulation_running is False
+
+    async def test_static_write_stale_error_not_misreported(self):
+        """agent F3: 同上, STATIC 门的 stale-then-clean 正向路径。"""
+        drv, visa = _make_driver()
+        err_q = ['-221,"Settings conflict (stale)"']
+
+        def _q(cmd):
+            if cmd == "*OPC?":
+                return "1"
+            if cmd == "SYST:ERR?":
+                return err_q.pop(0) if err_q else '0,"No error"'
+            return '0,"No error"'
+
+        visa.query.side_effect = _q
+        assert await drv.set_bypass_mode(F64BypassMode.CALIBRATION) is True
+        assert drv._bypass_mode == F64BypassMode.CALIBRATION
+
     async def test_go_sequence_atomic_vs_concurrent_poll(self):
         """Codex #203 R3 P2: GO 事务 (drain→STATIC→GO→OPC→错误门) 期间并发
         轮询不得插入 — 可重入 _scpi_lock 把整段收为一个临界区。"""

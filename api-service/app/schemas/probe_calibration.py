@@ -75,6 +75,9 @@ class CalibrationJobResponse(BaseModel):
     status: CalibrationJobStatus
     estimated_duration_minutes: Optional[float] = None
     message: Optional[str] = None
+    # agent 复审 F2: 校准 warnings (含 acquire 清理失败) 透出 wire — 两个
+    # start 端点都是同步 await, 响应时 warnings 已就绪
+    warnings: List[str] = Field(default_factory=list)
 
 
 class CalibrationProgress(BaseModel):
