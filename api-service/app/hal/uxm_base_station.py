@@ -753,29 +753,38 @@ class RealUxmDriver(BaseStationDriver):
                     self._write(self._cmds.CELL_STATE_OFF.format(cell=cell))
                     cell_restore_pending = True
 
-            # ---- 0. 频率 → 频段/双工 自动推断 ----
+            # ---- 0. 频率 → 频段 自动推断 ----
+            inferred_duplex: Optional[str] = None
             if "frequency_mhz" in config:
                 self._frequency_mhz = config["frequency_mhz"]
-                # 如果用户没有显式给 band 和 duplex，从频率自动推断
+                # 用户没显式给 band/duplex 时从频率推断 (duplex 推断值只作
+                # 0b 收敛的最低优先级候选, 不直接进 config)
                 if "band" not in config or "duplex" not in config:
                     inferred_band, inferred_duplex = _infer_band_from_freq(
                         self._frequency_mhz, self._freq_to_band_map
                     )
                     if "band" not in config:
                         config["band"] = inferred_band
-                    if "duplex" not in config:
-                        # Codex #204: duplex 在**源头收敛** — band 基线表优先于
-                        # 频率推断 fallback (map 未覆盖的 DL 段填 TDD)。否则
-                        # DUPLex 写 (段 2) 与 UL:BW 判定 (段 3) 会自相矛盾
-                        # (小区配成 TDD、带宽按 FDD 行为)。收敛后三处 (DUPLex
-                        # 写 / UL:BW 判定 / _duplex 缓存) 同源。
-                        baseline_duplex = (
-                            get_band_baseline(config.get("band")) or {}
-                        ).get("duplex")
-                        config["duplex"] = baseline_duplex or inferred_duplex
                     logger.info(
                         f"[UXM] Auto-inferred: {self._frequency_mhz} MHz "
-                        f"→ {config.get('band')}/{config.get('duplex')}"
+                        f"→ {config.get('band')}/{inferred_duplex}"
+                    )
+
+            # ---- 0b. duplex 单点收敛 (Codex #204 + #202 R4) ----
+            # 优先级: 用户显式 (键在, 进门 None 已剔) > band 基线表 > 频率推断
+            # fallback。**不限 frequency_mhz 分支**: band 在场 duplex 缺失/null
+            # 也要补 — 否则 DUPLex 不下发, 仪器停留在上个 setup 的残留双工
+            # (如 N78 的 TDD), 而段 3 判定按基线 FDD 写 UL:BW, 判定与仪器实际
+            # 不同源。收敛后 DUPLex 写 / UL:BW 判定 / _duplex 缓存三处同源。
+            if "duplex" not in config:
+                resolved_duplex = (
+                    (get_band_baseline(config.get("band")) or {}).get("duplex")
+                    or inferred_duplex
+                )
+                if resolved_duplex:
+                    config["duplex"] = resolved_duplex
+                    logger.info(
+                        f"[UXM] duplex 收敛: {config.get('band')} → {resolved_duplex}"
                     )
 
             # ---- 1. 频段 (Band) ----
