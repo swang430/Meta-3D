@@ -147,6 +147,29 @@ class TestBwTokenAndTddUlSkip:
         assert not any("UL:BW" in w for w in written), written
 
     @pytest.mark.asyncio
+    async def test_inferred_tdd_does_not_suppress_fdd_baseline(self, driver_irat):
+        """Codex #202 R3: N3 DL 1842.5 不在推断 map (只录了 UL 段) → fallback
+        填 TDD — 不得压制 FDD 基线表, UL:BW 必须照写。"""
+        _, written = wire_echo_visa(driver_irat)
+        ok = await driver_irat.set_cell_config({
+            "band": "N3", "frequency_mhz": 1842.5, "arfcn": 368500,
+            "bandwidth_mhz": 40,
+        })
+        assert ok is True
+        assert any(w.endswith("UL:BW BW40") for w in written), written
+
+    @pytest.mark.asyncio
+    async def test_explicit_user_duplex_still_first(self, driver_irat):
+        """用户显式 duplex 仍是第一优先级 (高于基线表)。"""
+        _, written = wire_echo_visa(driver_irat)
+        # N3 基线是 FDD, 用户显式 TDD (非常规但显式即王) → 跳 UL:BW
+        ok = await driver_irat.set_cell_config({
+            "band": "N3", "arfcn": 368500, "bandwidth_mhz": 40, "duplex": "TDD",
+        })
+        assert ok is True
+        assert not any("UL:BW" in w for w in written), written
+
+    @pytest.mark.asyncio
     async def test_5g_profile_keeps_raw_bw_value(self, driver_5g):
         _, written = wire_echo_visa(driver_5g)
         ok = await driver_5g.set_cell_config({

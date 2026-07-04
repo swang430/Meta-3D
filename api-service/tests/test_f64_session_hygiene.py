@@ -205,6 +205,30 @@ class TestInpDeferredTimeout:
         assert seen == [25000]
 
 
+class TestAutosetSubsetTimeout:
+    @pytest.mark.asyncio
+    async def test_autoset_inputs_subset_uses_dynamic_timeout(self):
+        """Codex #202 R3: 子集版 *OPC? 原 (t+2)s 在 3s 档只给 5s — 必须走
+        _inp_meas_timeout_ms (15s 下限, deferred-response 命令族)。"""
+        drv = RealPropsimF64Driver("f64-inp-subset", {})
+        drv._visa_resource = MagicMock()
+        seen: List[Optional[int]] = []
+
+        async def _fake_query(cmd, timeout=None):
+            if cmd == "*OPC?":
+                seen.append(timeout)
+                return "1"
+            return '0,"No error"'
+
+        async def _fake_write(cmd, timeout=None):
+            return None
+
+        drv._query = _fake_query  # type: ignore[assignment]
+        drv._write = _fake_write  # type: ignore[assignment]
+        assert await drv.autoset_inputs([1], measurement_time_s=3.0) is True
+        assert seen == [VISA_TIMEOUT_AUTOSET], seen  # 3s 档走 15s 下限 (原 bug 5s)
+
+
 class TestOutputFrozenAnnotation:
     @pytest.mark.asyncio
     async def test_metrics_flag_follows_emulation_state(self):

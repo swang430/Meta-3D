@@ -754,6 +754,10 @@ class RealUxmDriver(BaseStationDriver):
                     cell_restore_pending = True
 
             # ---- 0. 频率 → 频段/双工 自动推断 ----
+            # Codex #202 R3: 记住 duplex 是否用户显式给 — 推断 fallback (map 未
+            # 覆盖的 DL 段填 TDD) 不得在带宽段压制 FDD 基线表 (N3/N5/N28 会被
+            # 假 TDD 跳写 UL:BW)。
+            user_gave_duplex = "duplex" in config
             if "frequency_mhz" in config:
                 self._frequency_mhz = config["frequency_mhz"]
                 # 如果用户没有显式给 band 和 duplex，从频率自动推断
@@ -797,15 +801,18 @@ class RealUxmDriver(BaseStationDriver):
                     + f" {bw_value}"
                 )
                 # P1-19 ③ (2026-07-03 实证): TDD 下 UL 带宽跟随 DL, 单独下发被拒;
-                # 双工判定顺序 = 本次 config > band 基线表 > 驱动状态 (仅当缓存
-                # 归属 band 与本次生效 band 一致 — 换 band 后旧 TDD 不得漏写新
-                # band 的 UL:BW); 全未知时保守保持旧行为 (写 UL:BW)。
+                # 双工判定顺序 (Codex #202 R3 细化) = **用户显式** duplex >
+                # band 基线表 > 频率推断值 > 驱动状态缓存 (仅当缓存归属 band
+                # 与本次生效 band 一致)。推断 fallback (map 未覆盖填 TDD) 排在
+                # 基线表之后 — 不得压制 N3/N5/N28 等 FDD 基线的 UL:BW 写。
+                # 全未知时保守保持旧行为 (写 UL:BW)。
                 cached_duplex = (
                     self._duplex if self._duplex_band == self._band else None
                 )
                 duplex_now = (
-                    config.get("duplex")
+                    (config.get("duplex") if user_gave_duplex else None)
                     or (get_band_baseline(config.get("band") or self._band) or {}).get("duplex")
+                    or config.get("duplex")
                     or cached_duplex
                     or ""
                 ).upper()
