@@ -67,12 +67,15 @@ class TestStaticPlaybackMutex:
         assert drv._passthrough_active is False
         assert drv._emulation_running is True
 
-    async def test_start_emulation_no_static_write_when_disabled(self):
-        """STATIC 已是 0 → 不发多余 STATIC 写。"""
+    async def test_start_emulation_clears_static_even_on_cold_cache(self):
+        """Codex #201 R2 P2: 缓存 DISABLED (如 HAL 重载后冷实例) 也无条件写
+        STATIC 0 — 硬件可能还停在 attach 直通的 STATIC 3, 只信缓存 GO 必 -200。"""
         drv, visa = _make_driver()
         drv._loaded_emulation_file = "X.smu"
+        assert drv._bypass_mode == F64BypassMode.DISABLED  # 冷缓存
         assert await drv.start_emulation() is True
-        assert not any("STATIC" in w for w in _writes(visa)), _writes(visa)
+        w = _writes(visa)
+        assert w.index("DIAG:SIMU:MODEL:STATIC 0") < w.index("DIAG:SIMU:GO"), w
 
     async def test_passthrough_then_go_round_trip(self):
         """attach 默认态全回路: 直通稳态建立 → GO 自动恢复衰落。"""

@@ -374,7 +374,7 @@ class TestRunSequence:
         bs.query_ue_capability = AsyncMock(return_value={"max_layers": 4})
         return bs
 
-    def test_attach_check_establishes_f64_passthrough(self, db, lab_with_bs, monkeypatch):
+    def test_attach_check_establishes_f64_passthrough(self, db, lab_with_bs_and_ce, monkeypatch):
         """P2-17 ②: 有 F64 直通能力的 CE 时 attach 前建立直通稳态 (STOPPED + STATIC 3)。"""
         bs = self._happy_bs()
         ce = MagicMock()
@@ -386,7 +386,7 @@ class TestRunSequence:
         resp = client.post(
             "/api/v1/diagnostic-sequences/baseStation_attach_check/run",
             json={
-                "lab_profile_id": str(lab_with_bs.id),
+                "lab_profile_id": str(lab_with_bs_and_ce.id),
                 "params": {"attach_timeout_s": 2, "frequency_mhz": 3500},
             },
         )
@@ -411,7 +411,7 @@ class TestRunSequence:
         skipped = [s for s in body["steps"] if "skipped" in s["label"]]
         assert len(skipped) == 1 and skipped[0]["success"] is True, body["steps"]
 
-    def test_attach_check_passthrough_failure_aborts(self, db, lab_with_bs, monkeypatch):
+    def test_attach_check_passthrough_failure_aborts(self, db, lab_with_bs_and_ce, monkeypatch):
         """CE 在场但直通失败 → fail-loud (衰落在跑 attach 大概率失败, 不硬闯)。"""
         bs = self._happy_bs()
         ce = MagicMock()
@@ -421,13 +421,13 @@ class TestRunSequence:
         _patched_hal(monkeypatch, drivers={"baseStation": bs, "channelEmulator": ce})
         resp = client.post(
             "/api/v1/diagnostic-sequences/baseStation_attach_check/run",
-            json={"lab_profile_id": str(lab_with_bs.id), "params": {"attach_timeout_s": 2}},
+            json={"lab_profile_id": str(lab_with_bs_and_ce.id), "params": {"attach_timeout_s": 2}},
         )
         body = resp.json()
         assert body["success"] is False
         bs.set_cell_config.assert_not_awaited()  # 直通失败即中止, 不继续配小区
 
-    def test_attach_check_skips_non_f64_ce(self, db, lab_with_bs, monkeypatch):
+    def test_attach_check_skips_non_f64_ce(self, db, lab_with_bs_and_ce, monkeypatch):
         """Codex #201 P2: 无 STATIC 直通能力标志的 CE (FS16 等) → 跳过不硬闯。"""
         bs = self._happy_bs()
         ce = MagicMock()
@@ -436,13 +436,34 @@ class TestRunSequence:
         _patched_hal(monkeypatch, drivers={"baseStation": bs, "channelEmulator": ce})
         resp = client.post(
             "/api/v1/diagnostic-sequences/baseStation_attach_check/run",
-            json={"lab_profile_id": str(lab_with_bs.id), "params": {"attach_timeout_s": 2}},
+            json={"lab_profile_id": str(lab_with_bs_and_ce.id), "params": {"attach_timeout_s": 2}},
         )
         body = resp.json()
         assert body["success"] is True
         skipped = [s for s in body["steps"] if "skipped" in s["label"]]
         assert len(skipped) == 1, body["steps"]
         ce.set_passthrough_mode.assert_not_awaited()
+
+    def test_attach_check_ignores_stray_global_ce_when_lab_unbound(
+        self, db, lab_with_bs, monkeypatch
+    ):
+        """Codex #201 R2 P2: 本 lab 未绑 CE 时, 全局 HAL 残留的 F64 (别的 setup)
+        不得被停/切 — binding 是第一道门。"""
+        bs = self._happy_bs()
+        stray_ce = MagicMock()
+        stray_ce.SUPPORTS_STATIC_PASSTHROUGH = True
+        stray_ce.stop_emulation = AsyncMock(return_value=True)
+        stray_ce.set_passthrough_mode = AsyncMock(return_value=True)
+        _patched_hal(monkeypatch, drivers={"baseStation": bs, "channelEmulator": stray_ce})
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/baseStation_attach_check/run",
+            json={"lab_profile_id": str(lab_with_bs.id), "params": {"attach_timeout_s": 2}},
+        )
+        body = resp.json()
+        assert body["success"] is True
+        assert any("skipped" in s["label"] for s in body["steps"]), body["steps"]
+        stray_ce.stop_emulation.assert_not_awaited()
+        stray_ce.set_passthrough_mode.assert_not_awaited()
 
     def test_attach_check_fails_when_configured_ce_not_loaded(
         self, db, lab_with_bs_and_ce, monkeypatch

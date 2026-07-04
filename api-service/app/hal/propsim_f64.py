@@ -1283,15 +1283,17 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             return False
 
         try:
-            # P2-17 ①: STATIC≠0 与 GO 互斥 (-200 by design) — run 前显式清
-            # 直通恢复衰落, 不赌加载复位 (直通稳态是 attach 默认态)。
+            # P2-17 ① + Codex #201 R2 P2: GO 前**无条件**写 STATIC 0 恢复衰落 —
+            # 不依赖内存缓存 (HAL 重载后新实例 _bypass_mode 冷为 DISABLED 而
+            # 硬件还停在 attach 直通的 STATIC 3 → GO 必 -200; attach 序列故意
+            # 不恢复, 重载是现场常态)。写 0 幂等, 一条命令成本。
             if self._bypass_mode != F64BypassMode.DISABLED:
-                await self._write("DIAG:SIMU:MODEL:STATIC 0")
                 logger.info(
                     f"[F64] GO 前清直通: STATIC {self._bypass_mode.name} → DISABLED (恢复衰落)"
                 )
-                self._bypass_mode = F64BypassMode.DISABLED
-                self._passthrough_active = False
+            await self._write("DIAG:SIMU:MODEL:STATIC 0")
+            self._bypass_mode = F64BypassMode.DISABLED
+            self._passthrough_active = False
             await self._write("DIAG:SIMU:GO")
             await self._query("*OPC?")
             self._emulation_running = True

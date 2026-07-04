@@ -124,25 +124,28 @@ async def run(
         # CE 不在 required_categories: 无真实 CE (线缆直连场景) 跳过继续;
         # CE 在场但直通失败 = fail-loud (衰落在跑 attach 大概率失败, 不硬闯)。
         if bool(params.get("establish_f64_passthrough", True)):
-            ce = drivers.get("channelEmulator")
+            # Codex #201 R2 P2: lab binding 是第一道门 — HAL drivers 是全局的,
+            # 线缆直连 lab (无 CE binding) 撞上别的 setup 残留的 F64 驱动时,
+            # 不得去停/切不属于本 lab 的 CE。
             ce_configured = (
                 ctx.find_binding_by_category_key("channelEmulator") is not None
             )
-            if ce is None:
-                if ce_configured:
-                    # Codex #201 P2: lab 配置了 CE 但驱动没加载 — 不是线缆直连,
-                    # F64 停在任意模式会让 attach 失败被误诊成 DUT/RF 问题。
-                    return SequenceRunResult(
-                        success=False,
-                        summary=driver_not_loaded_summary("channelEmulator"),
-                        steps=steps,
-                    )
+            ce = drivers.get("channelEmulator") if ce_configured else None
+            if not ce_configured:
                 steps.append(SequenceStepResult(
                     label="F64 passthrough (skipped)",
                     success=True,
                     detail="本 lab 未配置 channelEmulator — 线缆直连场景, 跳过",
                 ))
                 log("  · F64 passthrough skipped (no CE binding)")
+            elif ce is None:
+                # Codex #201 P2: lab 配置了 CE 但驱动没加载 — 不是线缆直连,
+                # F64 停在任意模式会让 attach 失败被误诊成 DUT/RF 问题。
+                return SequenceRunResult(
+                    success=False,
+                    summary=driver_not_loaded_summary("channelEmulator"),
+                    steps=steps,
+                )
             elif not getattr(ce, "SUPPORTS_STATIC_PASSTHROUGH", False):
                 # Codex #201 P2: 能力标志 gate (hasattr 对 FS16/mock 误开 —
                 # set_passthrough_mode 在基类, FS16 高层 NotImplementedError);
