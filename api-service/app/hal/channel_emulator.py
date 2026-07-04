@@ -607,6 +607,10 @@ class MockChannelEmulator(ChannelEmulatorDriver):
         """Set channel propagation model"""
         self._channel_model = model_type
         self._scenario = scenario
+        # 对齐真驱动契约 (P2-17, Codex #201 R3): 加载成功 = 可启动 —
+        # connect 后仅 CONNECTED, 不置 READY 则 start_emulation 的
+        # status 门恒拒, measure 链的显式启动在 mock 下假失败。
+        self._set_status(InstrumentStatus.READY)
         return True
 
     async def set_mimo_config(
