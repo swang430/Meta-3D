@@ -214,6 +214,9 @@ class ProbePathLossCalibrationService:
         """
         self.db = db
         self.use_mock = use_mock
+        # Codex #206 R3: acquire 的清理失败警告收集器 (finally 无法经 3 元组
+        # 返回传播; 外层校准循环 extend 进 CalibrationResult.warnings 后清)
+        self._last_acquire_warnings: List[str] = []
 
     async def start_calibration(
         self,
@@ -549,6 +552,14 @@ class ProbePathLossCalibrationService:
                     f"uncertainty {measurement.uncertainty_db:.2f} dB exceeds threshold"
                 )
 
+            # Codex #206 R3: acquire 的清理失败 (tone 停不掉 / CE 留直通) 并入
+            # 证书 warnings — 操作员可见, 不再只沉驱动日志; extend 后清防跨链重复
+            if self._last_acquire_warnings:
+                warnings.extend(
+                    f"chain {chain.chain_id}: {w}" for w in self._last_acquire_warnings
+                )
+                self._last_acquire_warnings = []
+
         all_losses = [
             float(d["total_insertion_loss_db"]) for d in path_loss_db_by_rf_chain.values()
         ]
@@ -742,6 +753,12 @@ class ProbePathLossCalibrationService:
         前置: HAL 必须绑 channelEmulator + signalAnalyzer; CE driver 必须
         声明 ≥1 个 CalibrationToneCapability.
         """
+        # Codex #206 R3: 清理失败 (tone 停不掉 / CE 留直通) 不得只沉日志 —
+        # 本方法返回 3 元组无 warnings 通道 (改签名波及 QZ/XPD 共用方), 用
+        # 实例收集器传播: 每次 acquire 开头清空, finally 失败时 append,
+        # 外层校准循环 extend 进 CalibrationResult.warnings 后再清。
+        self._last_acquire_warnings = []
+
         # Lazy import — avoid circular and SQLite-test-killing pulls.
         from app.hal.channel_emulator import CalibrationToneCapability
         from app.services.instrument_hal_service import get_hal_service
@@ -963,18 +980,25 @@ class ProbePathLossCalibrationService:
                 try:
                     await source.stop_tx()
                 except Exception as e:  # noqa: BLE001
-                    logger.warning("[PathLoss B] source.stop_tx failed (non-fatal): %s", e)
+                    msg = f"[PathLoss B] source.stop_tx failed (残留 tone 影响后续测量): {e}"
+                    logger.warning(msg)
+                    self._last_acquire_warnings.append(msg)
             if passthrough_set:
                 try:
-                    # #206 后 False 带真实语义 (STATIC 0 被拒, CE 留直通) —
-                    # 有 start_emulation GO 前置清兜底, 但要留痕
+                    # Codex #206 R2/R3: False 带真实语义 (STATIC 0 被拒, CE 留
+                    # 直通) — 进 warnings 通道让证书可见, 不只沉日志
                     if not await ce.clear_passthrough_mode():
-                        logger.warning(
-                            "[PathLoss B] clear_passthrough_mode 被拒 (CE 可能留在"
-                            " STATIC 直通; 下次 GO 前置清会兜底)"
+                        msg = (
+                            "[PathLoss B] clear_passthrough_mode 被拒 — CE 可能留在"
+                            " STATIC 直通, 后续校准/测试或在非衰落路径上跑"
+                            " (下次 GO 前置清会兜底)"
                         )
+                        logger.warning(msg)
+                        self._last_acquire_warnings.append(msg)
                 except Exception as e:  # noqa: BLE001
-                    logger.warning("[PathLoss B] clear_passthrough_mode failed (non-fatal): %s", e)
+                    msg = f"[PathLoss B] clear_passthrough_mode failed: {e}"
+                    logger.warning(msg)
+                    self._last_acquire_warnings.append(msg)
 
         if not rx_powers_dbm:
             raise RuntimeError(
