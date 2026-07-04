@@ -4,8 +4,9 @@ set_output_path_loss / set_output_gain —— per-output 单通道精细控制, 
   - set_path_loss: batch 全输出统一 loss
   - set_external_attenuators: per-output map 但强制负增益 (只衰减)
 
-mock VISA (同 test_propsim_user_alignment), 验 SCPI 字符串; mock _check_errors no-op
-(聚焦 SCPI 写入验证, 错误检查副路径不干扰)。
+mock VISA (同 test_propsim_user_alignment), 验 SCPI 字符串; query 默认回
+'0,"No error"' 让 _gated_write_transaction 的 _first_error 门恒过
+(聚焦 SCPI 写入验证; 被拒 fail-loud 由 test_f64_check_errors_family 覆盖)。
 """
 from __future__ import annotations
 
@@ -29,12 +30,8 @@ def _make_driver():
     async def _async_query(cmd, timeout=None):
         return visa_mock.query(cmd)
 
-    async def _async_check_errors():
-        return None
-
     drv._write = _async_write  # type: ignore[assignment]
     drv._query = _async_query  # type: ignore[assignment]
-    drv._check_errors = _async_check_errors  # type: ignore[assignment]
     return drv, visa_mock
 
 

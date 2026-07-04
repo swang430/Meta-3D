@@ -119,6 +119,81 @@ class TestCentDispatchOnlyWhenExplicit:
         assert await drv.configure({"center_frequency_mhz": None}) is True
         assert drv._center_freq_programmed is False
 
+    async def test_configure_no_model_still_programs_cache(self):
+        """agent 门审 F2 边界: configure 无 channel_model → 只更内存缓存不发
+        SCPI, programmed 仍置 (缓存即真值, 无下发可拒; 旧语义保持)。"""
+        drv, _ = _make_driver()
+        assert await drv.configure({"center_frequency_mhz": 3600.0}) is True
+        assert drv._center_freq_mhz == 3600.0
+        assert drv._center_freq_programmed is True
+
+    async def test_configure_with_model_cent_rejected_no_programmed(self):
+        """agent 门审 F2: configure 有 model + CENT 被拒 → programmed 不残留
+        (原 configure 抢先置 True, CENT 门后被拒会留'标称已下发但没发')。"""
+        drv = RealPropsimF64Driver("propsim-cfg-rej", {})
+        drv._channel_count = 2
+        visa = MagicMock()
+        queue: list = []
+
+        async def _w(cmd, timeout=None):
+            visa.write(cmd)
+            if cmd.startswith("CALC:FILT:CENT:CH"):
+                queue.append('-222,"Data out of range"')
+
+        async def _q(cmd, timeout=None):
+            if cmd == "*OPC?":
+                return "1"
+            if cmd == "SYST:ERR?":
+                return queue.pop(0) if queue else '0,"No error"'
+            if cmd.startswith("ROUT:PATH:CONN?"):
+                return "B1.1"
+            return '0,"No error"'
+
+        drv._visa_resource = visa
+        drv._write = _w  # type: ignore[assignment]
+        drv._query = _q  # type: ignore[assignment]
+        ok = await drv.configure({
+            "channel_model": "CDL-C", "center_frequency_mhz": 9999.0,
+        })
+        assert ok is False
+        assert drv._center_freq_programmed is False  # 抢先置已移除
+
+    async def test_cent_write_rejected_fails_loud_no_programmed(self):
+        """R10 平行族: CENT 写序列被拒 (队列有 -222 越界) → set_channel_model
+        return False + programmed 不置 (R8 被拒状态不动) — 频率没设进去不许
+        假成功让下游按错频跑。"""
+        drv = RealPropsimF64Driver("propsim-cent-rej", {})
+        drv._channel_count = 2
+        visa = MagicMock()
+        # 写后注入模型 (比固定队列稳): CENT 写命令后往队列压 -222; drain 循环
+        # 读到 clean 才停, 所以只有"写序列产生"的错误留给门。
+        queue: list = []
+
+        async def _w(cmd, timeout=None):
+            visa.write(cmd)
+            if cmd.startswith("CALC:FILT:CENT:CH"):
+                queue.append('-222,"Data out of range"')
+
+        async def _q(cmd, timeout=None):
+            if cmd == "*OPC?":
+                return "1"
+            if cmd == "SYST:ERR?":
+                return queue.pop(0) if queue else '0,"No error"'
+            if cmd.startswith("ROUT:PATH:CONN?"):
+                return "B1.1"
+            return '0,"No error"'
+
+        drv._visa_resource = visa
+
+        drv._write = _w  # type: ignore[assignment]
+        drv._query = _q  # type: ignore[assignment]
+        ok = await drv.set_channel_model(
+            "CDL-C", "UMa", {"center_frequency_mhz": 9999.0}
+        )
+        assert ok is False
+        assert drv._center_freq_programmed is False  # 被拒不置
+        assert "-222" in (drv._last_error or "")
+
 
 class TestSmuProjectTruthParser:
     """P1-18 ③: .smu 工程 INI CenterFrequency 真值解析 (实录格式)。"""

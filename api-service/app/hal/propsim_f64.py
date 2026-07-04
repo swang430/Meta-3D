@@ -786,12 +786,19 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
           - channel_model: 信道模型名称 (触发 set_channel_model)
           - pipeline: "gcm" 或 "asc_runtime"
         """
+        has_model = "channel_model" in config
         if config.get("center_frequency_mhz") is not None:  # None 视同缺省 (P1-18)
             self._center_freq_mhz = config["center_frequency_mhz"]
-            self._center_freq_programmed = True  # P2-11: 显式下发了中心频
+            # agent 门审 F2: 有 channel_model 时 programmed 交给 set_channel_model
+            # 的 CENT 门后逻辑 (被拒不置) — 抢先置 True 会在 CENT 被拒 (set_channel
+            # _model return False) 后残留"标称已下发但实际没发", get_frequency_
+            # identity 报请求频率而非真实值 (test_real_dispatch 母题)。无 model
+            # 分支只更内存缓存不发 SCPI, 保持旧语义 (缓存即真值, 无下发可拒)。
+            if not has_model:
+                self._center_freq_programmed = True
         if "pipeline" in config:
             self._active_pipeline = F64Pipeline(config["pipeline"])
-        if "channel_model" in config:
+        if has_model:
             # P1-18: Step 4 改为"parameters 显式给才写 CENT"后, 顶层频率不再
             # 靠"缺省写内存值"间接生效 — 显式并进 parameters 直通下发。
             params = dict(config.get("parameters", {}))
@@ -927,11 +934,19 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             # .smu 文件名 loose 解析)。None 视同缺省 (显式 null 不能变成字面
             # "CALC:FILT:CENT:CH 1,None" 下发)。
             if parameters.get("center_frequency_mhz") is not None:
-                self._center_freq_mhz = parameters["center_frequency_mhz"]
+                freq_mhz = parameters["center_frequency_mhz"]
+                # R10 平行族: CENT 写序列过 _first_error 门 — 被拒 (超范围等)
+                # 不许假成功; 缓存/programmed 门过才更新 (R8 被拒状态不动)
+                if not await self._gated_write_transaction(
+                    "set_channel_model center-freq",
+                    [
+                        f"CALC:FILT:CENT:CH {ch},{freq_mhz}"
+                        for ch in range(1, self._channel_count + 1)
+                    ],
+                ):
+                    return False
+                self._center_freq_mhz = freq_mhz
                 self._center_freq_programmed = True
-                freq_mhz = self._center_freq_mhz
-                for ch in range(1, self._channel_count + 1):
-                    await self._write(f"CALC:FILT:CENT:CH {ch},{freq_mhz}")
             else:
                 # 缺省加载 → 频率回归新工程内声明, 之前的显式下发值不再代表
                 # 当前实际 — 复位 programmed, identity 退回文件名 loose 参考
@@ -948,7 +963,8 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             self._current_scenario = scenario
 
             logger.info(f"[F64/GCM] Model loaded: {emulation_file}")
-            await self._check_errors()
+            # R10 平行族: 尾部 _check_errors (只 log 无判定) 移除 — CENT 段
+            # 已有门, ROUT 是查询 (失败走异常), 残留条目由下一事务 drain 清
             return True
 
         except Exception as e:
@@ -997,10 +1013,6 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 return False
             logger.info(f"[F64/ASC] Transferred {len(transferred_files)} files to {remote_dir}")
 
-            # Step 2: 安全关闭当前仿真
-            await self._write("DIAG:SIMU:CLOSE")
-            self._emulation_running = False
-
             # Step 3: 加载 Runtime 基础仿真文件
             # 该 .smu 文件必须预先通过 Scenario Wizard 创建,
             # 内部 Link Properties 引用 .rtc 运行时信道模型
@@ -1011,15 +1023,31 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             if smu_files:
                 runtime_smu = f"{remote_dir}\\{smu_files[0]}"
 
-            await self._write(
-                f'CALC:FILT:FILE {runtime_smu}',
-                timeout=VISA_TIMEOUT_FILE_LOAD
-            )
-            await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
+            # Step 2+3 加载事务 (R10 平行族: 对齐 set_channel_model load 门,
+            # P0-8 母题 — *OPC? 对缺失/损坏文件照答 1, 唯一失败信号是
+            # SYST:ERR?; 原实现全程无门, Pipeline B 加载假成功)
+            async with self._scpi_lock:
+                await self._drain_errors()
+                await self._write("DIAG:SIMU:CLOSE")  # 安全关闭当前仿真
+                self._emulation_running = False
+                await self._write(
+                    f'CALC:FILT:FILE {runtime_smu}',
+                    timeout=VISA_TIMEOUT_FILE_LOAD
+                )
+                await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
+                load_err = await self._first_error()
+            if load_err is not None:
+                # 缓存不更新 (R8 被拒状态不动) — _loaded_emulation_file 保持
+                # 旧值, 上层 fail-loud 不会拿着未加载的文件名去 start
+                self._last_error = f"ASC runtime load failed: {load_err}"
+                logger.error(
+                    "[F64/ASC] 加载失败 — SYST:ERR? after load: %s (file=%s)",
+                    load_err, runtime_smu,
+                )
+                return False
             self._loaded_emulation_file = runtime_smu
 
             logger.info(f"[F64/ASC] Runtime emulation loaded: {runtime_smu}")
-            await self._check_errors()
             return True
 
         except Exception as e:
@@ -1225,11 +1253,15 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             # 获取输出数量 (通常 = 通道数 / 2 for MIMO, 取决于仿真拓扑)
             # 为所有输出通道设置统一的路损
             num_outputs = self._tx_antennas * self._rx_antennas
-            for out_ch in range(1, num_outputs + 1):
-                await self._write(f"OUTP:LOSS:SET {out_ch},{path_loss_db:.1f}")
-
+            if not await self._gated_write_transaction(
+                "set_path_loss",
+                [
+                    f"OUTP:LOSS:SET {out_ch},{path_loss_db:.1f}"
+                    for out_ch in range(1, num_outputs + 1)
+                ],
+            ):
+                return False
             logger.info(f"[F64] Path loss set: {path_loss_db:.1f} dB for {num_outputs} outputs")
-            await self._check_errors()
             return True
         except Exception as e:
             logger.error(f"[F64] set_path_loss failed: {e}")
@@ -1258,16 +1290,24 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
         try:
             # 优先使用 Hz 单位直接指定多普勒
+            cmds: List[str] = []
             if frequency_hz is not None:
-                for ch in range(1, self._channel_count + 1):
-                    await self._write(f"DIAG:SIMU:MOB:MAN:CH {ch},{frequency_hz} Hz")
-                logger.info(f"[F64] Doppler set: {frequency_hz} Hz (all channels)")
+                cmds = [
+                    f"DIAG:SIMU:MOB:MAN:CH {ch},{frequency_hz} Hz"
+                    for ch in range(1, self._channel_count + 1)
+                ]
+                desc = f"Doppler {frequency_hz} Hz"
             elif velocity_kmh is not None:
-                for ch in range(1, self._channel_count + 1):
-                    await self._write(f"DIAG:SIMU:MOB:MAN:CH {ch},{velocity_kmh}")
-                logger.info(f"[F64] Speed set: {velocity_kmh} km/h (all channels)")
-
-            await self._check_errors()
+                cmds = [
+                    f"DIAG:SIMU:MOB:MAN:CH {ch},{velocity_kmh}"
+                    for ch in range(1, self._channel_count + 1)
+                ]
+                desc = f"Speed {velocity_kmh} km/h"
+            else:
+                return True  # 两参皆空: 无事可做
+            if not await self._gated_write_transaction("set_doppler", cmds):
+                return False
+            logger.info(f"[F64] {desc} (all channels)")
             return True
         except Exception as e:
             logger.error(f"[F64] set_doppler failed: {e}")
@@ -1387,10 +1427,15 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             return False
         try:
             # 设置所有输入的电平
-            for inp in range(1, self._tx_antennas + 1):
-                await self._write(f"INP:LEV:AMP:CH {inp},{power_dbm:.1f}")
+            if not await self._gated_write_transaction(
+                "set_baseband_power",
+                [
+                    f"INP:LEV:AMP:CH {inp},{power_dbm:.1f}"
+                    for inp in range(1, self._tx_antennas + 1)
+                ],
+            ):
+                return False
             logger.info(f"[F64] Input level set: {power_dbm:.1f} dBm")
-            await self._check_errors()
             return True
         except Exception as e:
             logger.error(f"[F64] set_baseband_power failed: {e}")
@@ -1411,13 +1456,16 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         if not self._visa_resource:
             return False
         try:
-            for output_ch, atten_db in attenuation_map.items():
-                # 衰减用负增益表示
-                gain_db = -abs(atten_db)
-                await self._write(f"OUTP:GAIN:CH {output_ch},{gain_db:.2f}")
-
+            # 衰减用负增益表示
+            if not await self._gated_write_transaction(
+                "set_external_attenuators",
+                [
+                    f"OUTP:GAIN:CH {output_ch},{-abs(atten_db):.2f}"
+                    for output_ch, atten_db in attenuation_map.items()
+                ],
+            ):
+                return False
             logger.info(f"[F64] Attenuators set for {len(attenuation_map)} outputs")
-            await self._check_errors()
             return True
         except Exception as e:
             logger.error(f"[F64] set_external_attenuators failed: {e}")
@@ -1436,9 +1484,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         if not self._visa_resource:
             return False
         try:
-            await self._write(f"OUTP:LOSS:SET {output_num},{loss_db:.1f}")
+            if not await self._gated_write_transaction(
+                f"set_output_path_loss(out={output_num})",
+                [f"OUTP:LOSS:SET {output_num},{loss_db:.1f}"],
+            ):
+                return False
             logger.info(f"[F64] Output {output_num} path loss set: {loss_db:.1f} dB")
-            await self._check_errors()
             return True
         except Exception as e:  # noqa: BLE001
             logger.error(f"[F64] set_output_path_loss(out={output_num}) failed: {e}")
@@ -1456,9 +1507,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         if not self._visa_resource:
             return False
         try:
-            await self._write(f"OUTP:GAIN:CH {output_num},{gain_db:.2f}")
+            if not await self._gated_write_transaction(
+                f"set_output_gain(out={output_num})",
+                [f"OUTP:GAIN:CH {output_num},{gain_db:.2f}"],
+            ):
+                return False
             logger.info(f"[F64] Output {output_num} gain set: {gain_db:.2f} dB")
-            await self._check_errors()
             return True
         except Exception as e:  # noqa: BLE001
             logger.error(f"[F64] set_output_gain(out={output_num}) failed: {e}")
@@ -2233,9 +2287,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         if not self._visa_resource:
             return False
         try:
-            await self._write(f"INP:CRE:SET {input_num},{crest_db:.2f}")
-            await self._check_errors()
-            return True
+            return await self._gated_write_transaction(
+                f"set_crest_factor(in={input_num})",
+                [f"INP:CRE:SET {input_num},{crest_db:.2f}"],
+            )
         except Exception as e:
             logger.error(f"[F64] set_crest_factor({input_num}) failed: {e}")
             self._last_error = str(e)
@@ -2251,9 +2306,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         if not self._visa_resource:
             return False
         try:
-            await self._write(f"INP:MEAS:MODE:SET {input_num},{int(mode)}")
-            await self._check_errors()
-            return True
+            return await self._gated_write_transaction(
+                f"set_input_measurement_mode(in={input_num})",
+                [f"INP:MEAS:MODE:SET {input_num},{int(mode)}"],
+            )
         except Exception as e:
             logger.error(f"[F64] set_input_measurement_mode({input_num}) failed: {e}")
             self._last_error = str(e)
@@ -2280,9 +2336,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         if not self._visa_resource:
             return False
         try:
-            await self._write(f"INP:MEAS:BURST:TRIG:SET {input_num},{trigger_dbm:.2f}")
-            await self._check_errors()
-            return True
+            return await self._gated_write_transaction(
+                f"set_burst_trigger_level(in={input_num})",
+                [f"INP:MEAS:BURST:TRIG:SET {input_num},{trigger_dbm:.2f}"],
+            )
         except Exception as e:
             logger.error(f"[F64] set_burst_trigger_level({input_num}) failed: {e}")
             self._last_error = str(e)
@@ -2906,25 +2963,32 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         return ""
 
 
-    async def _check_errors(self) -> None:
-        """
-        检查并清空 F64 错误队列。
+    # _check_errors (drain + WARNING + 写 _last_error, 无判定无上界) 已退役
+    # (R10 平行族收口 2026-07-04): 它的"只 log 不改控制流"是 11 个方法假成功
+    # 的根源。查询→drain 用 _drain_errors (静默有界), 写→判定用 _first_error
+    # / _gated_write_transaction。不要恢复此函数。
 
-        User Reference §20.4.2.1:
-          SYST:ERR?
-          返回: <error_code>,\"<message>\"
-          "0,\"No error\"" 表示无错误
+    async def _gated_write_transaction(self, label: str, commands: List[str]) -> bool:
+        """锁事务: drain → 依序写 → _first_error 门。被拒 → False + 响亮日志。
+
+        Codex #202 R10 平行族正修: 9 个参数设置方法原是"写 → _check_errors
+        (只 log) → return True"— SCPI 拒绝 (-113/-222 等只进错误队列不抛异常)
+        时假成功, 参数没生效上层却继续跑。收敛到本 helper: 失败写 _last_error
+        + logger.error (经 JsonFormatter 落 logs/*.jsonl → /system-logs/tail
+        → GUI Dashboard 日志面板, 操作员可见), 调用方拿 False 自行 fail-loud。
         """
-        try:
-            while True:
-                err = await self._query("SYST:ERR?")
-                err = err.strip()
-                if err.startswith("0") or "No error" in err:
-                    break
-                logger.warning(f"[F64] Instrument error: {err}")
-                self._last_error = err
-        except Exception as e:
-            logger.error(f"[F64] Error queue check failed: {e}")
+        async with self._scpi_lock:
+            await self._drain_errors()  # 门只评估本次写序列的错误
+            for cmd in commands:
+                await self._write(cmd)
+            err = await self._first_error()
+            if err is not None:
+                self._last_error = f"{label} rejected: {err}"
+                logger.error(
+                    f"[F64] {label} 被拒 (SYST:ERR?): {err} — 参数未生效"
+                )
+                return False
+        return True
 
     async def _first_error(self) -> Optional[str]:
         """查询 SYST:ERR?, 返回第一条真错误字符串; 无错返回 None。
