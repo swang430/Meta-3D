@@ -2083,8 +2083,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 async with self._scpi_lock:
                     await self._drain_errors()
                     await self._write(f"INP:LEV:AUTOSET {in_num},{measurement_time_s}")
-                    opc_timeout_ms = int((measurement_time_s + 2) * 1000)
-                    await self._query("*OPC?", timeout=opc_timeout_ms)
+                    # Codex #202 R3: deferred-response 动态超时 (P1-21 ③) —
+                    # 原 (t+2)s 在 3s 档只给 5s, 低于该命令族 15s 下限
+                    await self._query(
+                        "*OPC?", timeout=self._inp_meas_timeout_ms(measurement_time_s)
+                    )
                     err = await self._first_error()
                 if err is not None:
                     self._last_error = f"autoset input {in_num} failed: {err}"
