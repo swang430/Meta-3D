@@ -219,10 +219,10 @@ class MeasureExecutor(IStepExecutor):
             scells = ccs[1:]
 
             # P2-11 (Codex on PR #109 P1): 从 TestCase 中心频推导规范 ARFCN 显式下发。
-            # 不传 arfcn 时 RealUxmDriver.set_cell_config fallback 到 NR_BAND_ARFCN_MAP
-            # [band] (N78→632628=3489.42 MHz), 让 UXM 实际下发频率 ≠ TestCase, 下面的
-            # 频率一致性校验会正确判失败 → 任何 TestCase 频率 ≠ band fallback 的真实
-            # run 都被误杀。ARFCN 是频率真值 (frequency_mhz 只是派生视图), 必须显式驱动。
+            # 不传 arfcn 时 RealUxmDriver.set_cell_config 走 band fallback (R6 起 =
+            # EMQuest 基线, N78→636666=3549.99 MHz), 让 UXM 实际下发频率 ≠ TestCase,
+            # 下面的频率一致性校验会正确判失败 → 任何 TestCase 频率 ≠ band fallback
+            # 的真实 run 都被误杀。ARFCN 是频率真值 (frequency_mhz 只是派生视图), 必须显式驱动。
             pcell_freq_mhz = pcell.frequency_hz / 1e6
             # P2-11 #1974 Codex P2 #127: mimo_port_preset typo 前置 fail-loud (set_cell_config
             # 对 unknown preset 只 log+return False 不 abort → 静默保留旧路由)。mock-aware。
@@ -653,8 +653,8 @@ class MeasureExecutor(IStepExecutor):
             # UXM (set_cell_config 后, _arfcn 已设) + F64 (信道加载后) 都已配置; 把各
             # 仪表归一到 (中心 ARFCN, 带宽) 跟 TestCase 精确比对。不一致 = 静默错配
             # (GCM 模式 F64 默认 .smu 3600 但 TestCase 3500, 或 UXM 没传 arfcn → 实际
-            # 下发 632628=3489 ≠ 标称), strict 模式 FAIL。频率错了下面 input level /
-            # RSRP / 吞吐都不可信, 所以放在 Phase 2b input level 之前。
+            # 下发 band fallback 基线值 ≠ 标称), strict 模式 FAIL。频率错了下面
+            # input level / RSRP / 吞吐都不可信, 所以放在 Phase 2b input level 之前。
             from app.hal.nr_arfcn import FrequencyIdentity
             from app.services.mimo_ota.frequency_consistency import (
                 check_frequency_consistency,

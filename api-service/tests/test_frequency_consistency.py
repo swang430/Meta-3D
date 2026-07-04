@@ -33,7 +33,8 @@ class TestConsistencyLogic:
         assert "F64" in (r.failure_reason() or "")
 
     def test_uxm_arfcn_fallback_mismatch(self):
-        # UXM 实际下发 ARFCN 632628 (3489, fallback) 但 TestCase 3500 → 不一致
+        # UXM 实际下发 ARFCN ≠ TestCase 标称 (632628=3489.42 只是任一偏离值,
+        # 一致性网只看整数相等) → 不一致
         tc = _fi(3500)  # ARFCN 633333
         uxm = FrequencyIdentity(center_arfcn=632628, bandwidth_mhz=100.0)  # 3489.42
         r = check_frequency_consistency(tc, {"UXM": uxm})
@@ -163,7 +164,9 @@ class TestUxmSetCellConfigArfcn:
         )
 
     async def test_missing_arfcn_falls_back_and_mismatches_testcase(self):
-        # 文档化旧 bug: 不传 arfcn → N78 fallback 632628 (3489.42) ≠ TestCase 3500。
+        # 文档化 fallback 语义: 不传 arfcn → band fallback (agent R6 F3 起接
+        # EMQuest 基线, N78=636666=3549.99 MHz), 依然 ≠ TestCase 3500 —
+        # 一致性网必须抓到"标称频率没变成下发 ARFCN"这类错配。
         drv = RealUxmDriver("test", {"ip": "10.0.0.1", "port": 5025})
         drv._write = lambda s: None
         drv._query = lambda *a, **k: "1"
@@ -175,7 +178,7 @@ class TestUxmSetCellConfigArfcn:
                 "scs_khz": 30,
             }
         )
-        assert drv._arfcn == 632628  # band fallback, 不是 3500 的 ARFCN
+        assert drv._arfcn == 636666  # band fallback → EMQuest 基线, 不是 3500 的 ARFCN
         assert drv.get_frequency_identity() != FrequencyIdentity.from_center_freq_mhz(
             3500.0, 100.0
         )

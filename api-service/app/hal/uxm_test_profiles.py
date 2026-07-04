@@ -403,9 +403,9 @@ PROFILE_4X4_N78_3600 = UxmTopologyProfile(
     band="N78",
     frequency_mhz=3600.0,
     # ⚠️ arfcn 必须显式设 (Codex on PR #107)! UXM 真正用 ARFCN 定频, 不是
-    # frequency_mhz。缺省 (None) 时 set_cell_config fallback 到
-    # NR_BAND_ARFCN_MAP["N78"]=632628 (= 3489.42 MHz, N78 默认), 让"对齐 F64
-    # 3600M"的本 profile 实际驱动 UXM 到 3489 → 根本没对齐。
+    # frequency_mhz。缺省 (None) 时 set_cell_config fallback 走 band 查表
+    # (agent R6 F3 起 = EMQuest 基线, N78→636666=3549.99 MHz), 让"对齐 F64
+    # 3600M"的本 profile 实际驱动 UXM 到 3549.99 → 依然没对齐。
     # 640000 = 3600.0 MHz 的精确 NR-ARFCN (FR1 range2: 600000+(F−3000)/0.015)。
     arfcn=640000,
     bandwidth_mhz=100.0,

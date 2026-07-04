@@ -230,7 +230,7 @@ class RealUxmDriver(BaseStationDriver):
         self._bandwidth_mhz: float = 100.0
         # P2-11: 实际下发的中心 ARFCN (set_cell_config 时存)。getter 用它而非
         # _frequency_mhz 标称 → 抓 ARFCN fallback 坑 (标称 3500 但没传 arfcn 时
-        # 实际下发 NR_BAND_ARFCN_MAP[N78]=632628=3489.42 MHz)。None=未配置。
+        # 实际下发 band 查表值, R6 起 = 基线 N78→636666=3549.99 MHz)。None=未配置。
         self._arfcn: Optional[int] = None
         self._scs_khz: int = 30
         self._dl_power_dbm: float = -50.0
@@ -245,7 +245,16 @@ class RealUxmDriver(BaseStationDriver):
             if custom_band_map else FREQ_TO_BAND_MAP
         )
         custom_arfcn = config.get("nr_band_arfcn_map")
-        self._nr_band_arfcn_map = dict(custom_arfcn) if custom_arfcn else NR_BAND_ARFCN_MAP
+        # agent R6 复核 F1/F2: custom 判定与 map 赋值同一 truthiness 收敛点
+        # (空 dict 不算部署声明, 否则粗值表被当 custom 压过基线) + 键大写归一
+        # (3GPP 惯用小写 "n78", self._band 恒大写, 不归一则声明静默失效)
+        self._nr_band_arfcn_map = (
+            {str(k).upper(): v for k, v in custom_arfcn.items()}
+            if custom_arfcn else NR_BAND_ARFCN_MAP
+        )
+        # agent R6 F3: 部署级 custom 声明要在 ARFCN fallback 里压过自动基线
+        # (原实现段 5 直接查模块常量, 本旋钮从未被消费过)
+        self._custom_arfcn_provided = bool(custom_arfcn)
 
     @staticmethod
     def _resolve_initial_profile(config: Dict[str, Any]):
@@ -502,8 +511,8 @@ class RealUxmDriver(BaseStationDriver):
         """P2-11: 当前配置的频率规范标识 (中心 ARFCN + 带宽), 供多方一致性校验。
 
         用**实际下发的 `_arfcn`** (不是 `_frequency_mhz` 标称) —— 抓 set_cell_config
-        没传 arfcn 时 fallback 到 `NR_BAND_ARFCN_MAP` 的坑 (标称 3500 但实际下发
-        632628=3489.42 MHz)。返回 None = 还没 set_cell_config (无频率可报)。
+        没传 arfcn 时 band fallback 的坑 (标称 3500 但实际下发基线 636666=
+        3549.99 MHz; agent R6 F3 前是 632628)。返回 None = 还没 set_cell_config。
         """
         if self._arfcn is None:
             return None
@@ -575,7 +584,9 @@ class RealUxmDriver(BaseStationDriver):
             ``{"applied": True, "profile_id": ..., "test_app": ...}`` 成功,
             或 ``{"applied": False, "reason": "incompatible_test_app",
             "profile_id": ..., "test_app": ..., "profile_compatible_with":
-            [...]}`` 拒绝.
+            [...]}`` 拒绝, 或 ``{"applied": False, "reason":
+            "cell_config_failed", ...}`` (set_cell_config 布尔契约 False —
+            回读对账 mismatch / 环绕写失败等, agent R6 F1).
 
             刻意返回 dict 而非 raise: 调用方 (HAL init / API endpoint) 想
             根据"被拒"还是"成功"分别 surface 给操作员, raise 会丢上下文
@@ -604,7 +615,15 @@ class RealUxmDriver(BaseStationDriver):
             f"(compat: {profile.compatible_test_apps or 'any'}) "
             f"to active Test App {active_test_app!r}"
         )
-        await self.set_cell_config(profile.to_config_dict())
+        # agent R6 F1: set_cell_config 布尔契约必须消费 (回读对账 mismatch /
+        # ON→OFF 环绕写失败都以 False 报) — 半生效配置不许报 applied
+        if not await self.set_cell_config(profile.to_config_dict()):
+            return {
+                "applied": False,
+                "reason": "cell_config_failed",
+                "profile_id": profile.profile_id,
+                "test_app": active_test_app,
+            }
         return {
             "applied": True,
             "profile_id": profile.profile_id,
@@ -684,7 +703,7 @@ class RealUxmDriver(BaseStationDriver):
           CONFig:NR5G:CELL0:DL:BW 100
           CONFig:NR5G:CELL0:UL:BW 100
           CONFig:NR5G:CELL0:SCS 30
-          CONFig:NR5G:CELL0:DL:ARFCN 632628
+          CONFig:NR5G:CELL0:DL:ARFCN 636666
           CONFig:NR5G:CELL0:PHY:DL:MIMO:LAYers 2
           CONFig:NR5G:CELL0:PHY:DL:POWer -50
           CONFig:NR5G:CELL0:SSB:POWer -50
@@ -846,7 +865,23 @@ class RealUxmDriver(BaseStationDriver):
             if "arfcn" in config:
                 arfcn = config["arfcn"]
             else:
-                arfcn = NR_BAND_ARFCN_MAP.get(self._band, 632628)
+                # agent R6 F3: fallback 接 P1-19 EMQuest 基线表 — 632628 是
+                # 3GPP 例值非现场基线 (N78 实证 attach 用 636666); 优先级:
+                # 部署级 custom 显式声明 > 运行基线 > 4-band 粗值。基线命中
+                # 时天然满足 5b 的合拍条件 → SSB 三件套自动补齐
+                _bl_arfcn = (get_band_baseline(self._band) or {}).get("dl_arfcn")
+                if self._custom_arfcn_provided and self._band in self._nr_band_arfcn_map:
+                    arfcn = self._nr_band_arfcn_map[self._band]
+                elif _bl_arfcn:
+                    arfcn = int(_bl_arfcn)
+                else:
+                    arfcn = self._nr_band_arfcn_map.get(self._band, 632628)
+                    if self._band not in self._nr_band_arfcn_map:
+                        logger.warning(
+                            f"[UXM] band {self._band!r} 无 ARFCN 来源 (显式/"
+                            f"custom/基线/粗值表全 miss) — 退化 632628 (N78 "
+                            f"例值), 大概率错频; 请显式传 arfcn"
+                        )
             self._arfcn = arfcn  # P2-11: 存实际下发的中心 ARFCN (getter / 一致性校验用)
             self._write(
                 self._cmds.CELL_DL_ARFCN.format(cell=cell)

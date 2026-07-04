@@ -4,7 +4,7 @@
 单一真值源; 各仪表 (UXM / F64 / SA) 配置后归一到 (中心 ARFCN, 带宽) 规范标识, 必须
 跟 TestCase **精确一致** (ARFCN 整数相等 + 带宽相等, 无浮点容差 —— ARFCN 是 3GPP
 标准整数)。不一致 = 静默错配 (e.g. GCM 模式 TestCase 3500 但 F64 用默认 .smu 3600,
-或 UXM 标称 3500 但实际下发 ARFCN 632628=3489), fail-loud 拦住。
+或 UXM 标称 3500 但没传 arfcn 实际下发 band fallback 基线值), fail-loud 拦住。
 
 这是 silent-failure 防护 (P1-8 cal / P1-9 DUT / P1-12 未验证标记 同族): 不管配置来自
 TestCase 还是默认 fallback, 最后都校验多方同频, 保护测试结果可信度。
