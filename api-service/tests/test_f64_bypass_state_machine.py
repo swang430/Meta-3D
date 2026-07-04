@@ -91,6 +91,23 @@ class TestStaticPlaybackMutex:
         assert drv._emulation_running is False
         assert "-200" in (drv._last_error or "")
 
+    async def test_start_rejected_from_passthrough_keeps_bypass_cache(self):
+        """Codex #202 R8 P2: 直通态 start 被拒 (STATIC/GO 单门分不清哪步) →
+        直通缓存不动 — 漂成"已退出直通"会让 cleanup/诊断漏查, 测量在无衰落
+        直通路径上跑假数据; 保守保持 CALIBRATION 是安全侧 (下次 start 无条件
+        STATIC 0 幂等)。R5 "被拒状态不动"的对称路径。"""
+        drv, visa = _make_driver()
+        drv._loaded_emulation_file = "X.smu"
+        drv._bypass_mode = F64BypassMode.CALIBRATION
+        drv._passthrough_active = True
+        visa.query.side_effect = lambda cmd: (
+            "1" if cmd == "*OPC?" else '-200,"Execution error"'
+        )
+        assert await drv.start_emulation() is False
+        assert drv._bypass_mode == F64BypassMode.CALIBRATION  # 未漂移
+        assert drv._passthrough_active is True
+        assert drv._emulation_running is False
+
     async def test_stale_error_before_go_not_misreported(self):
         """Codex #203 P2: GO 前先清 stale FIFO — 早先命令遗留的错误不得把
         成功的 GO 误判成被拒 (假阴性)。"""

@@ -1307,8 +1307,6 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                         f"[F64] GO 前清直通: STATIC {self._bypass_mode.name} → DISABLED (恢复衰落)"
                     )
                 await self._write("DIAG:SIMU:MODEL:STATIC 0")
-                self._bypass_mode = F64BypassMode.DISABLED
-                self._passthrough_active = False
                 await self._write("DIAG:SIMU:GO")
                 await self._query("*OPC?")
                 # Codex #202 R2 P2: GO 失败只经 SYST:ERR? 报 (*OPC? 照答 1) —
@@ -1316,9 +1314,16 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 # 门判定+状态更新在锁内 (agent F4, 三事务口径一致)。
                 go_err = await self._first_error()
                 if go_err is not None:
+                    # Codex #202 R8 P2: 被拒时直通缓存也不动 (R5 "被拒状态
+                    # 不动"的对称路径) — 单一错误门分不清 STATIC 还是 GO 被
+                    # 拒, 保守取安全侧: 保持"可能仍在直通"标记。漂成"已退出
+                    # 直通"会让 cleanup/诊断漏查, 测量在无衰落直通路径上跑
+                    # 假数据; 反向漂移无害 (下次 start 无条件 STATIC 0 幂等)。
                     self._last_error = f"start_emulation rejected: {go_err}"
                     logger.error(f"[F64] GO 被拒 (SYST:ERR?): {go_err} — 仿真未启动")
                     return False
+                self._bypass_mode = F64BypassMode.DISABLED
+                self._passthrough_active = False
                 self._emulation_running = True
                 self._status = InstrumentStatus.BUSY
             logger.info("[F64] Emulation started")
