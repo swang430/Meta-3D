@@ -63,6 +63,7 @@ we learn more FS16 SCPI.
 from __future__ import annotations
 
 import asyncio
+from app.hal.scpi_lock import ReentrantAsyncLock
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -119,7 +120,7 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
         self._visa_resource = None
         # P1-21 ①: per-driver SCPI 命令互斥 (同 F64 — async to_thread IO 无锁
         # 并发会应答串线; FS16 同型预防, 排水/INP 语义是 F64 实证特有不扩)。
-        self._scpi_lock = asyncio.Lock()
+        self._scpi_lock = ReentrantAsyncLock()  # 可重入 (同 F64, scpi_lock 模块)
 
         # Identification + capability cache (filled by connect())
         self._product_family: Optional[str] = None

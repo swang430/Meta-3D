@@ -115,9 +115,11 @@ class TestAutosetInputsSubset:
 
     async def test_per_input_fail_loud(self):
         # input 3 autoset 失败 → return False; _last_error 标该输入
+        # (Codex #203 R3 后每 input 是独立事务: drain → AUTOSET → OPC → check)
         drv, visa = _make_driver(syst_err_responses=[
-            '0,"No error"',                  # drain 终止 (无 stale)
+            '0,"No error"',                  # input 1 事务 drain 终止 (无 stale)
             '0,"No error"',                  # input 1 check ok
+            '0,"No error"',                  # input 3 事务 drain 终止
             '-300,"No input signal"',        # input 3 check fail
         ])
         ok = await drv.autoset_inputs([1, 3], 1.0)

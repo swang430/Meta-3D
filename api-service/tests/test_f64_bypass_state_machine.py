@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import asyncio
+import time
 from unittest.mock import MagicMock
 
 from app.hal.base import InstrumentStatus
@@ -106,6 +108,35 @@ class TestStaticPlaybackMutex:
         visa.query.side_effect = _q
         assert await drv.start_emulation() is True  # stale 被前置排掉, GO 判成功
         assert drv._emulation_running is True
+
+    async def test_go_sequence_atomic_vs_concurrent_poll(self):
+        """Codex #203 R3 P2: GO 事务 (drain→STATIC→GO→OPC→错误门) 期间并发
+        轮询不得插入 — 可重入 _scpi_lock 把整段收为一个临界区。"""
+        drv = RealPropsimF64Driver("f64-go-atomic", {})
+        drv._channel_count = 1
+        drv._loaded_emulation_file = "X.smu"
+        calls: list = []
+
+        class _V:
+            timeout = 5000
+
+            def write(self, cmd):
+                calls.append(cmd)
+                time.sleep(0.002)
+
+            def query(self, cmd):
+                calls.append(cmd)
+                time.sleep(0.002)
+                return "1" if cmd == "*OPC?" else '0,"No error"'
+
+        drv._visa_resource = _V()
+        ok, _ = await asyncio.gather(drv.start_emulation(), drv._query("POLL?"))
+        assert ok is True
+        # 事务区间 = 首条 SYST:ERR? (drain) .. GO 后错误门的 SYST:ERR? — POLL?
+        # 只能出现在区间之外 (之前或之后)
+        first_err = calls.index("SYST:ERR?")
+        last_err = len(calls) - 1 - calls[::-1].index("SYST:ERR?")
+        assert "POLL?" not in calls[first_err:last_err + 1], calls
 
     async def test_passthrough_then_go_round_trip(self):
         """attach 默认态全回路: 直通稳态建立 → GO 自动恢复衰落。"""
