@@ -224,6 +224,72 @@ class TestStopCalibrationTone:
         assert ok is True
 
 
+class TestCalibrationToneFailLoud:
+    """Codex #202 R10 P2: SCPI 拒绝只进错误队列不抛异常, 原 _check_errors
+    只 log → set/stop 恒 True 假成功 (set 假成功 = SA 读噪声本底路损全错;
+    stop 假成功 = 残留 tone 且证书 warnings 干净)。改 _first_error 门。"""
+
+    def _err_queue_after_drain(self, visa, errors):
+        """drain 先吃 stale 至 clean, 之后写序列产生 errors 队列。
+
+        实现: SYST:ERR? 应答序列 = [clean(drain 停止)] + errors + clean...
+        """
+        q = ['0,"No error"'] + list(errors)
+
+        def _q(cmd):
+            if cmd == "SYST:ERR?":
+                return q.pop(0) if q else '0,"No error"'
+            return '0,"No error"'
+
+        visa.query.side_effect = _q
+
+    @pytest.mark.asyncio
+    async def test_set_rejected_returns_false_and_cleans_up(self):
+        """写序列被拒 (-113 进队列) → False + REMove 清理 + active=False。"""
+        drv, visa = _make_driver(has_interference_generator=True)
+        self._err_queue_after_drain(visa, ['-113,"Undefined header"'])
+        ok = await drv.set_calibration_tone(3500e6, -20.0, ce_port="1")
+        assert ok is False
+        assert drv._cal_tone_active is False
+        assert "-113" in (drv._last_error or "")
+        # 失败清理: 门后又发了一次 REMove (开头幂等 REMove + 失败 REMove = 2)
+        removes = [s for s in _writes(visa) if "REMove" in s]
+        assert len(removes) == 2, _writes(visa)
+
+    @pytest.mark.asyncio
+    async def test_stop_rejected_while_active_returns_false_keeps_flag(self):
+        """tone 真活跃时停止被拒 → False 且 active 保持 (R8 被拒状态不动同族,
+        标'可能仍在发')。"""
+        drv, visa = _make_driver(has_interference_generator=True)
+        await drv.set_calibration_tone(3500e6, -20.0, ce_port="1")
+        assert drv._cal_tone_active is True
+        self._err_queue_after_drain(visa, ['-200,"Execution error"'])
+        ok = await drv.stop_calibration_tone()
+        assert ok is False
+        assert drv._cal_tone_active is True  # 未清 — F64 可能仍在发
+        assert "-200" in (drv._last_error or "")
+
+    @pytest.mark.asyncio
+    async def test_stop_inactive_with_expected_200_still_true(self):
+        """防御性清理 (从未启动) 场景 REMove 报 -200 是预期 — 不假警。"""
+        drv, visa = _make_driver(has_interference_generator=True)
+        assert drv._cal_tone_active is False
+        self._err_queue_after_drain(visa, ['-200,"Execution error;REMove no such id"'])
+        ok = await drv.stop_calibration_tone()
+        assert ok is True
+
+    @pytest.mark.asyncio
+    async def test_stop_write_exception_returns_false_keeps_flag(self):
+        """写异常 (仪器失联) → False 且 active 保持 (tone 状态未知)。"""
+        drv, visa = _make_driver(has_interference_generator=True)
+        await drv.set_calibration_tone(3500e6, -20.0, ce_port="1")
+        visa.write.side_effect = RuntimeError("VISA session dropped")
+        ok = await drv.stop_calibration_tone()
+        assert ok is False
+        assert drv._cal_tone_active is True
+        assert "write failed" in (drv._last_error or "")
+
+
 # ============================================================================
 # B path — passthrough via calibration bypass
 # ============================================================================
