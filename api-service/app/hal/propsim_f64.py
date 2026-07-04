@@ -1668,32 +1668,49 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         freq_mhz = frequency_hz / 1e6
 
         try:
-            # 1. 先清掉同 id 的旧 interferer (重复调用幂等)
-            try:
-                await self._write(f"OUTPut:INTERFerence:REMove {cal_id}")
-            except Exception:
-                pass  # 没有旧的就忽略
+            # Codex #202 R10 P2: SCPI 拒绝 (-113/-200) 只进错误队列不抛异常,
+            # 原 _check_errors 只 log → 假成功 (tone 没起来照测, SA 读噪声
+            # 本底路损全错)。改锁事务 + _first_error 门 (五事务同型):
+            # drain 吃防御 REMove 的预期 -200, 门只评估本次写序列的错误。
+            async with self._scpi_lock:
+                # 1. 先清掉同 id 的旧 interferer (重复调用幂等)
+                try:
+                    await self._write(f"OUTPut:INTERFerence:REMove {cal_id}")
+                except Exception:
+                    pass  # 没有旧的就忽略
+                await self._drain_errors()  # 吃掉上行预期 -200 + stale
 
-            # 2. 加 CW 干扰源到指定 output (type=2 = CW)
-            await self._write(
-                f"OUTPut:INTERFerence:ADD {out_num},{cal_id},2"
-            )
-            # 3. 恒定功率策略 (而非 C/I-ratio, 校准要绝对值)
-            await self._write(
-                f"OUTPut:INTERFerence:STRATegy:SET {cal_id},1"
-            )
-            # 4. 频率 (MHz) 和功率 (dBm)
-            await self._write(
-                f"OUTPut:INTERFerence:FREQuency:SET {cal_id},{freq_mhz:.6f}"
-            )
-            await self._write(
-                f"OUTPut:INTERFerence:POWer:SET {cal_id},{power_dbm:.2f}"
-            )
-            # 5. 启用
-            await self._write(f"OUTPut:INTERFerence:STatus {cal_id},1")
+                # 2. 加 CW 干扰源到指定 output (type=2 = CW)
+                await self._write(
+                    f"OUTPut:INTERFerence:ADD {out_num},{cal_id},2"
+                )
+                # 3. 恒定功率策略 (而非 C/I-ratio, 校准要绝对值)
+                await self._write(
+                    f"OUTPut:INTERFerence:STRATegy:SET {cal_id},1"
+                )
+                # 4. 频率 (MHz) 和功率 (dBm)
+                await self._write(
+                    f"OUTPut:INTERFerence:FREQuency:SET {cal_id},{freq_mhz:.6f}"
+                )
+                await self._write(
+                    f"OUTPut:INTERFerence:POWer:SET {cal_id},{power_dbm:.2f}"
+                )
+                # 5. 启用
+                await self._write(f"OUTPut:INTERFerence:STatus {cal_id},1")
 
-            await self._check_errors()
-            self._cal_tone_active = True
+                tone_err = await self._first_error()
+                if tone_err is not None:
+                    self._last_error = f"set_calibration_tone rejected: {tone_err}"
+                    logger.error(
+                        f"[F64] tone 写序列被拒 (SYST:ERR?): {tone_err} — tone 未启用"
+                    )
+                    try:
+                        await self._write(f"OUTPut:INTERFerence:REMove {cal_id}")
+                    except Exception:
+                        pass
+                    self._cal_tone_active = False
+                    return False
+                self._cal_tone_active = True
             logger.info(
                 "[F64] Calibration tone ON: out=%s freq=%.1fMHz power=%.1fdBm id=%s",
                 out_num, freq_mhz, power_dbm, cal_id,
@@ -1718,22 +1735,47 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             OUTPut:INTERFerence:REMove <id>      # 移除
 
         finally 块里调用避免 CE 长时间发射. 没启用过也安全 — REMove
-        不存在的 id 时报 -200, 我们捕获后忽略.
+        不存在的 id 报 -200, 该场景 (防御性清理) 不判失败。
+
+        Codex #202 R10 P2: 原实现吞写异常 + _check_errors 只 log → 恒 True,
+        服务层的 `if not stop_calibration_tone()` 门在真驱动上永不触发,
+        tone 停不掉时证书 warnings 仍然干净。改 fail-loud: 写异常 (仪器
+        失联, tone 状态未知) → False; tone 真活跃时错误队列有条目 → False
+        (真停失败); 均保持 _cal_tone_active 原值 (R8 "被拒状态不动" 同族,
+        标"可能仍在发")。仅防御性清理场景 (-200 预期) 照旧 True。
         """
         if not self._visa_resource:
             return False
         cal_id = self._cal_tone_id
+        tone_was_active = self._cal_tone_active
         try:
-            try:
-                await self._write(f"OUTPut:INTERFerence:STatus {cal_id},0")
-            except Exception:
-                pass
-            try:
-                await self._write(f"OUTPut:INTERFerence:REMove {cal_id}")
-            except Exception:
-                pass
-            await self._check_errors()
-            self._cal_tone_active = False
+            async with self._scpi_lock:
+                await self._drain_errors()  # 门只评估本次停止序列的错误
+                write_failed: Optional[str] = None
+                try:
+                    await self._write(f"OUTPut:INTERFerence:STatus {cal_id},0")
+                except Exception as e:  # noqa: BLE001
+                    write_failed = f"STatus 0 write failed: {e}"
+                try:
+                    await self._write(f"OUTPut:INTERFerence:REMove {cal_id}")
+                except Exception as e:  # noqa: BLE001
+                    write_failed = write_failed or f"REMove write failed: {e}"
+                if write_failed is not None:
+                    self._last_error = f"stop_calibration_tone: {write_failed}"
+                    logger.error(
+                        f"[F64] tone 停止写失败 (仪器失联?): {write_failed} — "
+                        f"tone 状态未知, 保持 active 标记"
+                    )
+                    return False
+                stop_err = await self._first_error()
+                if stop_err is not None and tone_was_active:
+                    self._last_error = f"stop_calibration_tone rejected: {stop_err}"
+                    logger.error(
+                        f"[F64] tone 停止被拒 (SYST:ERR?): {stop_err} — "
+                        f"F64 可能仍在发 tone"
+                    )
+                    return False
+                self._cal_tone_active = False
             logger.info(f"[F64] Calibration tone OFF (id={cal_id})")
             return True
         except Exception as e:
