@@ -245,10 +245,16 @@ class RealUxmDriver(BaseStationDriver):
             if custom_band_map else FREQ_TO_BAND_MAP
         )
         custom_arfcn = config.get("nr_band_arfcn_map")
-        self._nr_band_arfcn_map = dict(custom_arfcn) if custom_arfcn else NR_BAND_ARFCN_MAP
+        # agent R6 复核 F1/F2: custom 判定与 map 赋值同一 truthiness 收敛点
+        # (空 dict 不算部署声明, 否则粗值表被当 custom 压过基线) + 键大写归一
+        # (3GPP 惯用小写 "n78", self._band 恒大写, 不归一则声明静默失效)
+        self._nr_band_arfcn_map = (
+            {str(k).upper(): v for k, v in custom_arfcn.items()}
+            if custom_arfcn else NR_BAND_ARFCN_MAP
+        )
         # agent R6 F3: 部署级 custom 声明要在 ARFCN fallback 里压过自动基线
         # (原实现段 5 直接查模块常量, 本旋钮从未被消费过)
-        self._custom_arfcn_provided = custom_arfcn is not None
+        self._custom_arfcn_provided = bool(custom_arfcn)
 
     @staticmethod
     def _resolve_initial_profile(config: Dict[str, Any]):
@@ -578,7 +584,9 @@ class RealUxmDriver(BaseStationDriver):
             ``{"applied": True, "profile_id": ..., "test_app": ...}`` 成功,
             或 ``{"applied": False, "reason": "incompatible_test_app",
             "profile_id": ..., "test_app": ..., "profile_compatible_with":
-            [...]}`` 拒绝.
+            [...]}`` 拒绝, 或 ``{"applied": False, "reason":
+            "cell_config_failed", ...}`` (set_cell_config 布尔契约 False —
+            回读对账 mismatch / 环绕写失败等, agent R6 F1).
 
             刻意返回 dict 而非 raise: 调用方 (HAL init / API endpoint) 想
             根据"被拒"还是"成功"分别 surface 给操作员, raise 会丢上下文
@@ -695,7 +703,7 @@ class RealUxmDriver(BaseStationDriver):
           CONFig:NR5G:CELL0:DL:BW 100
           CONFig:NR5G:CELL0:UL:BW 100
           CONFig:NR5G:CELL0:SCS 30
-          CONFig:NR5G:CELL0:DL:ARFCN 632628
+          CONFig:NR5G:CELL0:DL:ARFCN 636666
           CONFig:NR5G:CELL0:PHY:DL:MIMO:LAYers 2
           CONFig:NR5G:CELL0:PHY:DL:POWer -50
           CONFig:NR5G:CELL0:SSB:POWer -50

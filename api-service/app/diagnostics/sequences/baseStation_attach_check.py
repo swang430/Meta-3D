@@ -34,11 +34,14 @@ metadata = SequenceMetadata(
         "sequence or stop the BS yourself when done."
     ),
     required_categories=["baseStation"],
+    # agent R6 复核 F3: schema default 与 run() 默认同源 — GUI 表单按 schema
+    # 预填并全量显式提交, 只改 run() 默认会被 GUI 主路径击穿
     params_schema=[
-        {"name": "frequency_mhz", "label": "频率 (MHz)", "type": "number", "default": 3500},
-        {"name": "bandwidth_mhz", "label": "带宽 (MHz)", "type": "number", "default": 100},
+        {"name": "frequency_mhz", "label": "频率 (MHz)", "type": "number", "default": 3549.99},
+        {"name": "bandwidth_mhz", "label": "带宽 (MHz)", "type": "number", "default": 40},
         {"name": "scs_khz", "label": "SCS (kHz)", "type": "number", "default": 30},
         {"name": "band", "label": "Band", "type": "string", "default": "n78"},
+        {"name": "dl_power_dbm", "label": "RS EPRE (dBm)", "type": "number", "default": -46},
         {"name": "attach_timeout_s", "label": "Attach 等待 (秒)", "type": "number", "default": 15},
         {"name": "establish_f64_passthrough", "label": "F64 直通预备 (attach 默认态)",
          "type": "boolean", "default": True},

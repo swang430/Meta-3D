@@ -528,6 +528,42 @@ class TestArfcnFallbackBaseline:
         assert not any("SSB:NCD" in w for w in written), written  # 不合拍不补
 
     @pytest.mark.asyncio
+    async def test_custom_map_lowercase_keys_normalized(self):
+        """agent R6 复核 F2: 3GPP 惯用小写键 ("n78") 归一大写后仍生效 —
+        self._band 恒大写, 不归一则部署声明静默失效落基线。"""
+        drv = RealUxmDriver(
+            "uxm-lc", {"ip": "10.0.0.4", "nr_band_arfcn_map": {"n78": 640000}}
+        )
+        _, written = wire_echo_visa(drv)
+        ok = await drv.set_cell_config({"band": "n78", "bandwidth_mhz": 100})
+        assert ok is True
+        assert any(w.endswith("DL:ARFCN 640000") for w in written), written
+
+    @pytest.mark.asyncio
+    async def test_custom_map_empty_dict_not_treated_as_declaration(self):
+        """agent R6 复核 F1: 空 dict (GUI 表单/JSONB 留空的现实形态) 不算
+        custom 声明 — 否则粗值表被当"用户声明"压过基线, 632628 静默回归。"""
+        drv = RealUxmDriver(
+            "uxm-empty", {"ip": "10.0.0.5", "nr_band_arfcn_map": {}}
+        )
+        _, written = wire_echo_visa(drv)
+        ok = await drv.set_cell_config({"band": "N78", "bandwidth_mhz": 40})
+        assert ok is True
+        assert any(w.endswith("DL:ARFCN 636666") for w in written), written  # 基线
+        assert not any("DL:ARFCN 632628" in w for w in written), written
+
+    @pytest.mark.asyncio
+    async def test_custom_map_missing_band_falls_to_baseline(self):
+        """agent R6 复核 F4: custom 提供但不含当前 band → 落基线, 不退化粗值。"""
+        drv = RealUxmDriver(
+            "uxm-miss", {"ip": "10.0.0.6", "nr_band_arfcn_map": {"N78": 640000}}
+        )
+        _, written = wire_echo_visa(drv)
+        ok = await drv.set_cell_config({"band": "N3", "bandwidth_mhz": 20})
+        assert ok is True
+        assert any(w.endswith("DL:ARFCN 368500") for w in written), written  # N3 基线
+
+    @pytest.mark.asyncio
     async def test_unknown_band_degrades_with_warning(self, driver_5g, monkeypatch):
         """全 miss (显式/custom/基线/粗值) → 632628 退化 + warning 提示错频。
 
