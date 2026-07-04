@@ -484,6 +484,30 @@ class TestPathLossCalibrationAPI:
         assert "typical_compensation" in data
         assert "calibration_status" in data
 
+    def test_api_start_response_carries_warnings_field(self):
+        """agent 复审 F2: POST /start 响应 wire 上必须有 warnings 字段 —
+        钉 schema 字段 + return 传参 + response_model 不滤三件事 (mock 模式
+        无告警 = 空列表; 非空内容由 service 级收割测试覆盖)。"""
+        response = client.post(
+            "/api/v1/chambers/from-preset", json={"preset_type": "type_c"}
+        )
+        chamber_id = response.json()["id"]
+
+        response = client.post(
+            "/api/v1/calibration/path-loss/start",
+            json={
+                "chamber_id": chamber_id,
+                "frequency_mhz": 3500.0,
+                "sgh_model": "SGH-01",
+                "sgh_gain_dbi": 10.0,
+                "calibrated_by": "wire-test",
+                "use_mock": True,
+            },
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["warnings"] == []
+
 
 class TestIntegration:
     """Integration tests for full calibration flow"""

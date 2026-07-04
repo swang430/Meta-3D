@@ -110,6 +110,8 @@ export interface CalibrationJobResponse {
   status: string
   message?: string
   estimated_duration_minutes?: number
+  /** 校准 warnings (含 acquire 清理失败, 如 tone 停不掉 / CE 留直通) */
+  warnings?: string[]
 }
 
 export async function startPathLossCalibrationForLab(

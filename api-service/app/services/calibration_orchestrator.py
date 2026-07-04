@@ -930,7 +930,10 @@ class CalibrationOrchestrator:
                 results[item.value] = {
                     "success": result.success,
                     "message": result.message,
-                    "data": result.data
+                    "data": result.data,
+                    # agent 复审 F2: 编排路径不丢校准 warnings; 动态 Result
+                    # 占位对象无该属性, getattr 兜底
+                    "warnings": list(getattr(result, "warnings", []) or []),
                 }
 
             except Exception as e:

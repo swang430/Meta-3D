@@ -225,9 +225,12 @@ class ProbePathLossCalibrationService:
         两个校准入口在每次测量后与失败返回前都调本方法收割, 保证成功 /
         异常任一出口都不丢 (agent #206 F1/F3)。
 
-        已知边界: quiet_zone_validation_service / probe_calibration_service
-        借用本服务的 acquire 但各自结果对象尚无 warnings 通道, 清理失败在
-        那两条流程里仍只沉日志 (roadmap Discovered 已登记, 需签名穿透另修)。
+        已知边界 (借用方清单, 均无 warnings 通道, 清理失败仍只沉日志;
+        roadmap Discovered 已登记, 需签名穿透另修):
+        - quiet_zone_validation_service (XPD ×2 + grid 扫描)
+        - probe_calibration_service (方向图扫描)
+        - 本文件 MultiFrequencyPathLossService.calibrate_frequency_sweep
+          (agent 复审 F3: 局部 pl_service 无人收割 + 下频点 acquire 开头清零)
         """
         if self._last_acquire_warnings:
             warnings.extend(f"{label}: {w}" for w in self._last_acquire_warnings)
@@ -1019,7 +1022,15 @@ class ProbePathLossCalibrationService:
         finally:
             if tx_started:
                 try:
-                    await source.stop_tx()
+                    # agent 复审 F1: 真驱动 (MXG/SMW) 把异常吞成 False — False
+                    # 是它们唯一失败形态, 只留 except 分支等于永不触发
+                    if not await source.stop_tx():
+                        msg = (
+                            f"[PathLoss B] {type(source).__name__}.stop_tx 被拒 —"
+                            " 上游源可能仍在发 CW, 影响后续测量"
+                        )
+                        logger.warning(msg)
+                        self._last_acquire_warnings.append(msg)
                 except Exception as e:  # noqa: BLE001
                     msg = f"[PathLoss B] source.stop_tx failed (残留 tone 影响后续测量): {e}"
                     logger.warning(msg)
