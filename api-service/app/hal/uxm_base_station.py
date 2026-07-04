@@ -754,10 +754,6 @@ class RealUxmDriver(BaseStationDriver):
                     cell_restore_pending = True
 
             # ---- 0. 频率 → 频段/双工 自动推断 ----
-            # Codex #202 R3: 记住 duplex 是否用户显式给 — 推断 fallback (map 未
-            # 覆盖的 DL 段填 TDD) 不得在带宽段压制 FDD 基线表 (N3/N5/N28 会被
-            # 假 TDD 跳写 UL:BW)。
-            user_gave_duplex = "duplex" in config
             if "frequency_mhz" in config:
                 self._frequency_mhz = config["frequency_mhz"]
                 # 如果用户没有显式给 band 和 duplex，从频率自动推断
@@ -768,7 +764,15 @@ class RealUxmDriver(BaseStationDriver):
                     if "band" not in config:
                         config["band"] = inferred_band
                     if "duplex" not in config:
-                        config["duplex"] = inferred_duplex
+                        # Codex #204: duplex 在**源头收敛** — band 基线表优先于
+                        # 频率推断 fallback (map 未覆盖的 DL 段填 TDD)。否则
+                        # DUPLex 写 (段 2) 与 UL:BW 判定 (段 3) 会自相矛盾
+                        # (小区配成 TDD、带宽按 FDD 行为)。收敛后三处 (DUPLex
+                        # 写 / UL:BW 判定 / _duplex 缓存) 同源。
+                        baseline_duplex = (
+                            get_band_baseline(config.get("band")) or {}
+                        ).get("duplex")
+                        config["duplex"] = baseline_duplex or inferred_duplex
                     logger.info(
                         f"[UXM] Auto-inferred: {self._frequency_mhz} MHz "
                         f"→ {config.get('band')}/{config.get('duplex')}"
@@ -801,18 +805,16 @@ class RealUxmDriver(BaseStationDriver):
                     + f" {bw_value}"
                 )
                 # P1-19 ③ (2026-07-03 实证): TDD 下 UL 带宽跟随 DL, 单独下发被拒;
-                # 双工判定顺序 (Codex #202 R3 细化) = **用户显式** duplex >
-                # band 基线表 > 频率推断值 > 驱动状态缓存 (仅当缓存归属 band
-                # 与本次生效 band 一致)。推断 fallback (map 未覆盖填 TDD) 排在
-                # 基线表之后 — 不得压制 N3/N5/N28 等 FDD 基线的 UL:BW 写。
-                # 全未知时保守保持旧行为 (写 UL:BW)。
+                # 双工判定顺序 = 本次 config (源头已收敛: 用户显式或"基线表
+                # 优先于推断 fallback", Codex #202 R3 + #204) > band 基线表
+                # (config 无 duplex 且未走推断的路径) > 驱动状态缓存 (仅当缓存
+                # 归属 band 与本次生效 band 一致)。全未知时保守写 UL:BW。
                 cached_duplex = (
                     self._duplex if self._duplex_band == self._band else None
                 )
                 duplex_now = (
-                    (config.get("duplex") if user_gave_duplex else None)
+                    config.get("duplex")
                     or (get_band_baseline(config.get("band") or self._band) or {}).get("duplex")
-                    or config.get("duplex")
                     or cached_duplex
                     or ""
                 ).upper()

@@ -159,6 +159,19 @@ class TestBwTokenAndTddUlSkip:
         assert any(w.endswith("UL:BW BW40") for w in written), written
 
     @pytest.mark.asyncio
+    async def test_duplex_write_and_ulbw_decision_same_source(self, driver_5g):
+        """Codex #204: 源头收敛 — DUPLex 写与 UL:BW 判定同源, N3 推断场景
+        下发 DUPLex FDD (不再是矛盾的 TDD 写 + FDD 带宽行为)。"""
+        _, written = wire_echo_visa(driver_5g)
+        ok = await driver_5g.set_cell_config({
+            "band": "N3", "frequency_mhz": 1842.5, "arfcn": 368500,
+            "bandwidth_mhz": 40,
+        })
+        assert ok is True
+        assert any(w.endswith("DUPLex FDD") for w in written), written
+        assert not any(w.endswith("DUPLex TDD") for w in written), written
+
+    @pytest.mark.asyncio
     async def test_explicit_user_duplex_still_first(self, driver_irat):
         """用户显式 duplex 仍是第一优先级 (高于基线表)。"""
         _, written = wire_echo_visa(driver_irat)
