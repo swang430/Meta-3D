@@ -218,6 +218,21 @@ class ProbePathLossCalibrationService:
         # 返回传播; 外层校准循环 extend 进 CalibrationResult.warnings 后清)
         self._last_acquire_warnings: List[str] = []
 
+    def _harvest_acquire_warnings(self, warnings: List[str], label: str) -> None:
+        """把 acquire 清理失败收集器排入证书 warnings (带来源标签), 排后清空。
+
+        acquire 的 finally 只 append 不上抛 (清理失败不应掩盖测量结果);
+        两个校准入口在每次测量后与失败返回前都调本方法收割, 保证成功 /
+        异常任一出口都不丢 (agent #206 F1/F3)。
+
+        已知边界: quiet_zone_validation_service / probe_calibration_service
+        借用本服务的 acquire 但各自结果对象尚无 warnings 通道, 清理失败在
+        那两条流程里仍只沉日志 (roadmap Discovered 已登记, 需签名穿透另修)。
+        """
+        if self._last_acquire_warnings:
+            warnings.extend(f"{label}: {w}" for w in self._last_acquire_warnings)
+            self._last_acquire_warnings = []
+
     async def start_calibration(
         self,
         chamber_id: UUID,
@@ -270,6 +285,9 @@ class ProbePathLossCalibrationService:
 
         warnings = []
         probe_path_losses = {}
+        # agent #206 F2: 服务实例可能被 orchestrator 复用, 入口清零防上一轮
+        # acquire 残留被本轮第一个探头错误吸收
+        self._last_acquire_warnings = []
 
         # 遍历每个探头
         for probe_id in probe_ids:
@@ -332,10 +350,22 @@ class ProbePathLossCalibrationService:
 
                 except Exception as e:
                     logger.error(f"Path loss measurement failed for probe {probe_id}: {e}")
+                    # agent #206 F3: 失败提前返回也收割清理警告 — acquire 的
+                    # finally 可能刚 append 了 stop_tx/clear_passthrough 失败
+                    self._harvest_acquire_warnings(
+                        warnings, f"probe {probe_id} pol {pol.value}"
+                    )
                     return CalibrationResult(
                         success=False,
-                        message=f"Measurement failed for probe {probe_id}: {str(e)}"
+                        message=f"Measurement failed for probe {probe_id}: {str(e)}",
+                        warnings=warnings,
                     )
+
+                # agent #206 F1: legacy 路径对称补收割 (同 for_lab_profile 的
+                # chain 版) — 清理失败进证书 warnings, 不再只沉驱动日志
+                self._harvest_acquire_warnings(
+                    warnings, f"probe {probe_id} pol {pol.value}"
+                )
 
             # 计算平均路损
             valid_losses = [v for v in [probe_data["pol_v_db"], probe_data["pol_h_db"]] if v is not None]
@@ -457,6 +487,8 @@ class ProbePathLossCalibrationService:
         warnings: List[str] = list(resolution.warnings)
         probe_path_losses: Dict[str, Dict[str, Any]] = {}
         path_loss_db_by_rf_chain: Dict[str, Dict[str, Any]] = {}
+        # agent #206 F2: 入口清零防跨轮残留 (同 start_calibration)
+        self._last_acquire_warnings = []
 
         for chain in resolution.chains:
             try:
@@ -503,9 +535,12 @@ class ProbePathLossCalibrationService:
                     "Path-loss measurement failed for chain %s probe %d %s: %s",
                     chain.chain_id, chain.probe_id, chain.polarization, e,
                 )
+                # agent #206 F3: 失败返回也收割 — 本 chain 的清理失败不丢
+                self._harvest_acquire_warnings(warnings, f"chain {chain.chain_id}")
                 return CalibrationResult(
                     success=False,
                     message=f"Measurement failed for chain {chain.chain_id}: {e}",
+                    warnings=warnings,
                 )
 
             # Per-probe aggregate (legacy structure — keeps get_path_loss_for_probe working).
@@ -553,12 +588,8 @@ class ProbePathLossCalibrationService:
                 )
 
             # Codex #206 R3: acquire 的清理失败 (tone 停不掉 / CE 留直通) 并入
-            # 证书 warnings — 操作员可见, 不再只沉驱动日志; extend 后清防跨链重复
-            if self._last_acquire_warnings:
-                warnings.extend(
-                    f"chain {chain.chain_id}: {w}" for w in self._last_acquire_warnings
-                )
-                self._last_acquire_warnings = []
+            # 证书 warnings — 操作员可见, 不再只沉驱动日志
+            self._harvest_acquire_warnings(warnings, f"chain {chain.chain_id}")
 
         all_losses = [
             float(d["total_insertion_loss_db"]) for d in path_loss_db_by_rf_chain.values()
@@ -914,10 +945,20 @@ class ProbePathLossCalibrationService:
                 if rx is not None:
                     rx_powers_dbm.append(rx)
         finally:
+            # agent #206 F1 域枚举顺带: D 路清理失败与 B 路对称进收集器 —
+            # tone 停不掉 (False/异常) 同样污染后续测量, 不许只沉日志
             try:
-                await ce.stop_calibration_tone()
+                if not await ce.stop_calibration_tone():
+                    msg = (
+                        "[PathLoss D] stop_calibration_tone 被拒 — CE 可能仍在发"
+                        " tone, 影响后续测量"
+                    )
+                    logger.warning(msg)
+                    self._last_acquire_warnings.append(msg)
             except Exception as e:  # noqa: BLE001
-                logger.warning("[PathLoss D] stop_calibration_tone failed (non-fatal): %s", e)
+                msg = f"[PathLoss D] stop_calibration_tone failed (残留 tone 影响后续测量): {e}"
+                logger.warning(msg)
+                self._last_acquire_warnings.append(msg)
 
         if not rx_powers_dbm:
             raise RuntimeError(
