@@ -690,13 +690,23 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
           2. 关闭仿真文件
           3. 释放 VISA 资源
         """
+        stop_confirmed = True
         try:
             if self._emulation_running:
-                await self.stop_emulation()
+                # Codex #206 R2: GOS 被拒 (SYST:ERR-only 失败) 时不能报"干净
+                # 断开" — 断开照样继续 (重载场景必须能断), 但如实降返回值,
+                # 让 HAL 重载/关闭日志暴露 "F64 可能仍在发射"。
+                stop_confirmed = await self.stop_emulation()
+                if not stop_confirmed:
+                    logger.warning(
+                        "[F64] disconnect: stop_emulation 被拒 — 连接将断开, "
+                        "但 F64 可能仍在运行/发射, 需现场确认"
+                    )
             if self._loaded_emulation_file:
                 await self._write("DIAG:SIMU:CLOSE")
                 self._loaded_emulation_file = None
         except Exception as e:
+            stop_confirmed = False
             logger.warning(f"[F64] Cleanup during disconnect: {e}")
 
         if self._visa_resource:
@@ -715,7 +725,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self._status = InstrumentStatus.DISCONNECTED
         self._emulation_running = False
         self._active_pipeline = None
-        return True
+        return stop_confirmed
 
     def readiness_metadata(self) -> Dict[str, Any]:
         """P3-5: expose parsed SYST:INFO? fields to the HAL readiness

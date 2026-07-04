@@ -137,6 +137,19 @@ class TestStaticPlaybackMutex:
         assert drv._status == InstrumentStatus.BUSY
         assert "-113" in (drv._last_error or "")
 
+    async def test_disconnect_propagates_stop_rejection(self):
+        """Codex #206 R2: GOS 被拒时 disconnect 不得报"干净断开" — 断开照样
+        完成 (重载必须能断) 但返回 False, 让重载日志暴露仪器可能仍在发射。"""
+        drv, visa = _make_driver()
+        drv._emulation_running = True
+        visa.query.side_effect = lambda cmd: (
+            "1" if cmd == "*OPC?" else '-113,"Undefined header"'
+        )
+        visa.close = lambda: None
+        assert await drv.disconnect() is False  # 如实降级
+        assert drv._visa_resource is None       # 断开本身仍完成
+        assert drv._status == InstrumentStatus.DISCONNECTED
+
     async def test_stop_emulation_stale_error_not_misreported(self):
         """agent F3: stale FIFO 条目被前置 drain 清掉, 成功的 GOS 不误报被拒。"""
         drv, visa = _make_driver()
