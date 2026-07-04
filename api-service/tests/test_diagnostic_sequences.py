@@ -318,6 +318,10 @@ class TestRunSequence:
         assert "returned False" in body["summary"]
         failed = [s for s in body["steps"] if not s["success"]]
         assert any("set_cell_config" in s["label"] for s in failed), body["steps"]
+        # Codex #199 P3: 同一失败 step 只记一条 (False 分支记录后哨兵异常
+        # 不得再被通用 except 二次 append)
+        cell_cfg_failures = [s for s in failed if "set_cell_config" in s["label"]]
+        assert len(cell_cfg_failures) == 1, body["steps"]
         # False 中止序列 — 后续 start_signaling 不应执行
         bs.start_signaling.assert_not_awaited()
 

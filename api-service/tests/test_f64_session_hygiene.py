@@ -125,6 +125,18 @@ class TestTimeoutDrain:
         assert len(drains) == 2, visa.calls
 
     @pytest.mark.asyncio
+    async def test_zero_prefixed_late_reply_does_not_end_drain(self):
+        """Codex #199 P1: 迟到应答以 0 开头 ("0.0" 功率 / "0,-3.2" 元组) 不得
+        被当成队列空提前停 — 只认 0,"No error" 形态。"""
+        drv = RealPropsimF64Driver("f64-drain-zero", {})
+        visa = _TimeoutThenDrainVisa(["0.0", "0,-3.2", '0,"No error"'])
+        drv._visa_resource = visa
+        with pytest.raises(pyvisa.errors.VisaIOError):
+            await drv._query("OUTP:MEAS:RES:GET? 1")
+        drains = [c for c in visa.calls if c == "SYST:ERR?"]
+        assert len(drains) == 3, visa.calls  # 排过两条迟到杂音, 到真 no-error 才停
+
+    @pytest.mark.asyncio
     async def test_drain_caps_at_four(self):
         """错误队列淹没时排水 4 条止损 (不无限循环), 原异常照抛。"""
         drv = RealPropsimF64Driver("f64-drain-cap", {})
