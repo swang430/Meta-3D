@@ -448,6 +448,42 @@ class TestInst0Redirect:
         assert ok is True
         assert not any("hislip2" in r for r in opened), opened  # 保持锁定
 
+    @pytest.mark.asyncio
+    async def test_uppercase_inst0_still_redirects(self, monkeypatch):
+        """Codex #202 兜底 P2: 大写 INST0 (VISA 大小写不敏感的常见形式) 必须
+        照样识别为 inst0 平台绑定并重定向 hislip2 —— 大小写敏感检查会误判成
+        '显式非 inst0' 不重定向, NR 命令打到平台错树。"""
+        d = RealUxmDriver("uxm-INST0", {
+            "ip": "10.0.0.9",
+            "visa_resource": "TCPIP0::10.0.0.9::INST0::INSTR",  # 大写
+        })
+        opened: list[str] = []
+
+        def _make_session(resource):
+            sess = MagicMock()
+            sess.timeout = 5000
+            if "INST0" in resource or "inst0" in resource:
+                sess.query = MagicMock(side_effect=lambda c: {
+                    "*IDN?": "Keysight Technologies,E7515B Platform,MY123,1.0",
+                }.get(c.strip(), "0"))
+            else:
+                sess.query = MagicMock(side_effect=lambda c: {
+                    "*IDN?": "Keysight Technologies,E7515B TAF,MY123,1.0",
+                    "SYSTem:APPLication:NAME?": "LTE_NR_IRAT",
+                    "*OPC?": "1",
+                }.get(c.strip(), "0"))
+            sess.write = MagicMock()
+            sess.close = MagicMock()
+            return sess
+
+        rm = MagicMock()
+        rm.open_resource = MagicMock(side_effect=lambda r, **kw: (opened.append(r), _make_session(r))[1])
+        monkeypatch.setattr("pyvisa.ResourceManager", MagicMock(return_value=rm))
+
+        ok = await d.connect()
+        assert ok is True
+        assert any("hislip2" in r for r in opened), opened  # 大写也重定向
+
 
 class TestTextualCellStates:
     """Codex #195 复扫 P1: 5G 方言文本态 (IDLE/ATT/CONN) 也是活动态。"""

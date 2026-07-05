@@ -367,13 +367,21 @@ class RealUxmDriver(BaseStationDriver):
             # 配 inst0::INSTR 不可能是"故意锁定平台" (业务树不在平台) —— 是
             # 常见误配, 照样重定向; 其余显式配置 (如 5125::SOCKET 直连 TAF)
             # 仍然尊重不动。
+            # Codex #202 兜底 P2: VISA resource 大小写不敏感 (`INST0`/`SOCKET`
+            # 是常见大写形式), token 检查前归一化小写 —— 否则 `TCPIP0::h::
+            # INST0::INSTR` 被误判成"显式非 inst0 binding", 平台端点不重定向,
+            # 后续 NR/IRAT 命令打到平台 SCPI 树 (错树)。归一化只用于**比较**,
+            # redirect 提取 host / 打开 resource 仍用原始 resource_str。
+            # (normalize-identifier-compare / grep-protocol-tokens-first 母题)
+            _res_lc = (resource_str or "").lower()
+            _visa_lc = (self.visa_resource or "").lower()
             explicit_non_inst0 = bool(self.visa_resource) and (
-                "inst0" not in (self.visa_resource or "")
+                "inst0" not in _visa_lc
             )
             on_platform_endpoint = (
                 "E7515B Platform" in idn
-                and ("SOCKET" in resource_str or "hislip0" in resource_str
-                     or "inst0" in resource_str)
+                and ("socket" in _res_lc or "hislip0" in _res_lc
+                     or "inst0" in _res_lc)
                 and not explicit_non_inst0
             )
             if on_platform_endpoint:
