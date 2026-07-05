@@ -899,6 +899,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
                 load_err = await self._first_error()
             if load_err is not None:
+                # Codex #211 follow-up (域枚举补 GCM 同型): Step 1 的 CLOSE 已
+                # 关掉旧仿真, 保留旧 _loaded_emulation_file = 谎报"还开着", 让
+                # 后续 start_emulation 的"file loaded"guard 假过后在 GO 才炸。
+                # 清空 → get_channel_state 如实报无加载文件。
+                self._loaded_emulation_file = None
                 self._last_error = f"channel model load failed: {load_err}"
                 logger.error(
                     "[F64/GCM] 加载失败 — SYST:ERR? after load: %s (file=%s)",
@@ -944,6 +949,13 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                         for ch in range(1, self._channel_count + 1)
                     ],
                 ):
+                    # Codex #211 follow-up: CENT 被拒时**复位** programmed (不只
+                    # 是"不置") — 上一个 model 若已置 True, 新文件此刻已 load
+                    # 成功 (第 908 行), 旧 programmed 频率彻底无效; 残留 True 会
+                    # 让 get_frequency_identity 谎报没真下发的旧频率。复位 False
+                    # → 退回**新**加载文件的文件名 loose 解析 (test_real_dispatch
+                    # 母题; F2 只修了 configure 入口, 漏了 set_channel_model 自身)。
+                    self._center_freq_programmed = False
                     return False
                 self._center_freq_mhz = freq_mhz
                 self._center_freq_programmed = True
@@ -1037,8 +1049,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
                 load_err = await self._first_error()
             if load_err is not None:
-                # 缓存不更新 (R8 被拒状态不动) — _loaded_emulation_file 保持
-                # 旧值, 上层 fail-loud 不会拿着未加载的文件名去 start
+                # Codex #211 follow-up (原判断错): DIAG:SIMU:CLOSE 已执行, 旧
+                # _loaded_emulation_file 不再代表打开的仿真, 保留 = 谎报"还开着"
+                # → get_channel_state 报 stale + 后续 start_emulation 的"file
+                # loaded"guard 假过后在 GO 才炸。**清空** (这不是 R8"被拒状态
+                # 不动" — CLOSE 已改变状态, 不动才是谎报)。
+                self._loaded_emulation_file = None
                 self._last_error = f"ASC runtime load failed: {load_err}"
                 logger.error(
                     "[F64/ASC] 加载失败 — SYST:ERR? after load: %s (file=%s)",

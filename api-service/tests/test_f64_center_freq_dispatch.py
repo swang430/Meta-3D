@@ -194,6 +194,85 @@ class TestCentDispatchOnlyWhenExplicit:
         assert drv._center_freq_programmed is False  # 被拒不置
         assert "-222" in (drv._last_error or "")
 
+    async def test_cent_rejected_resets_prior_programmed_true(self):
+        """Codex #211 follow-up: 上一个 model 已置 programmed=True, 新 .smu
+        load 成功但 CENT 被拒 → 复位 programmed=False (不残留旧频率谎报);
+        get_frequency_identity 退回**新**文件名解析而非旧显式频率。"""
+        drv = RealPropsimF64Driver("propsim-cent-dirty", {})
+        drv._channel_count = 2
+        # 脏态: 上一次成功 program 过 3600
+        drv._center_freq_mhz = 3600.0
+        drv._center_freq_programmed = True
+
+        visa = MagicMock()
+        queue: list = []
+
+        async def _w(cmd, timeout=None):
+            visa.write(cmd)
+            if cmd.startswith("CALC:FILT:CENT:CH"):
+                queue.append('-222,"Data out of range"')
+
+        async def _q(cmd, timeout=None):
+            if cmd == "*OPC?":
+                return "1"
+            if cmd == "SYST:ERR?":
+                return queue.pop(0) if queue else '0,"No error"'
+            if cmd.startswith("ROUT:PATH:CONN?"):
+                return "B1.1"
+            return '0,"No error"'
+
+        drv._visa_resource = visa
+        drv._write = _w  # type: ignore[assignment]
+        drv._query = _q  # type: ignore[assignment]
+        # 新加载文件名可解析出 3550 (区别于脏态旧显式 3600)
+        ok = await drv.set_channel_model(
+            "CDL-C", "UMa", {
+                "center_frequency_mhz": 9999.0,
+                "emulation_file": "D:\\Packs\\UMa_CDL-C_3550M.smu",
+            }
+        )
+        assert ok is False
+        assert drv._center_freq_programmed is False  # 从 True 复位
+        # agent 门审 F: 钉可观测契约 (上报频率) 而非只钉内部标志 —— 复位后
+        # identity 退回**新**文件名 3550, 不是脏态残留的旧显式 3600
+        # (test_real_dispatch 母题: 若回归让 programmed=False 仍读 _center_
+        # freq_mhz, field-only 断言会假绿, 本断言会红)。
+        ident = drv.get_frequency_identity()
+        assert ident is not None
+        assert "3550" in ident.describe(), ident.describe()
+        assert "3600" not in ident.describe(), ident.describe()
+
+    async def test_load_rejected_clears_prior_loaded_file(self):
+        """Codex #211 follow-up: 上一次成功 load 过文件, 新 load 被拒 (CLOSE
+        已发) → 清空 _loaded_emulation_file (不谎报'还开着')。"""
+        drv = RealPropsimF64Driver("propsim-load-dirty", {})
+        drv._channel_count = 2
+        drv._loaded_emulation_file = "D:\\old\\prev.smu"  # 脏态: 上次加载
+
+        visa = MagicMock()
+        queue: list = []
+
+        async def _w(cmd, timeout=None):
+            visa.write(cmd)
+            if cmd.startswith("CALC:FILT:FILE"):
+                queue.append('-200,"No simulation opened"')  # load 门被拒
+
+        async def _q(cmd, timeout=None):
+            if cmd == "*OPC?":
+                return "1"
+            if cmd == "SYST:ERR?":
+                return queue.pop(0) if queue else '0,"No error"'
+            if cmd.startswith("ROUT:PATH:CONN?"):
+                return "B1.1"
+            return '0,"No error"'
+
+        drv._visa_resource = visa
+        drv._write = _w  # type: ignore[assignment]
+        drv._query = _q  # type: ignore[assignment]
+        ok = await drv.set_channel_model("CDL-C", "UMa", {})
+        assert ok is False
+        assert drv._loaded_emulation_file is None  # 旧文件清空 (CLOSE 已关)
+
 
 class TestSmuProjectTruthParser:
     """P1-18 ③: .smu 工程 INI CenterFrequency 真值解析 (实录格式)。"""
