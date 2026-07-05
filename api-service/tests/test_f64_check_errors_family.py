@@ -155,15 +155,26 @@ class TestUploadAscFilesLoadGate:
         assert drv._loaded_emulation_file  # 缓存已更新
 
     @pytest.mark.asyncio
-    async def test_load_rejected_fails_loud_keeps_cache(self):
-        """加载被拒 (-200 No simulation opened) → False, 缓存不更新
-        (上层 fail-loud 不会拿未加载的文件名 start)。"""
+    async def test_load_rejected_fails_loud_no_stale_file(self):
+        """加载被拒 (-200 No simulation opened) → False + _loaded_emulation_file
+        清空 (从 None 起, 门后不误设)。"""
         drv, _ = self._make_asc_driver(load_error='-200,"No simulation opened"')
         assert drv._loaded_emulation_file is None
         ok = await drv.upload_asc_files("/tmp/asc", "UMa-CDL-C")
         assert ok is False
         assert "-200" in (drv._last_error or "")
-        assert drv._loaded_emulation_file is None  # 未污染
+        assert drv._loaded_emulation_file is None
+
+    @pytest.mark.asyncio
+    async def test_load_rejected_clears_prior_loaded_file(self):
+        """Codex #211 follow-up: 上次成功 load 过, 新 ASC load 被拒 (CLOSE 已
+        发) → 清空旧 _loaded_emulation_file, 不谎报'还开着' (原判'缓存不动'
+        是错的 — CLOSE 已改变状态)。"""
+        drv, _ = self._make_asc_driver(load_error='-200,"No simulation opened"')
+        drv._loaded_emulation_file = "D:\\old\\prev.smu"  # 脏态: 上次加载
+        ok = await drv.upload_asc_files("/tmp/asc", "UMa-CDL-C")
+        assert ok is False
+        assert drv._loaded_emulation_file is None  # 旧文件清空
 
 
 class TestErrorReachesGuiLogPanel:
