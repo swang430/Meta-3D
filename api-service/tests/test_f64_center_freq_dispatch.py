@@ -243,11 +243,17 @@ class TestCentDispatchOnlyWhenExplicit:
         assert "3600" not in ident.describe(), ident.describe()
 
     async def test_load_rejected_clears_prior_loaded_file(self):
-        """Codex #211 follow-up: 上一次成功 load 过文件, 新 load 被拒 (CLOSE
-        已发) → 清空 _loaded_emulation_file (不谎报'还开着')。"""
+        """Codex #211 follow-up + #202 兜底: 上一次成功 load 过文件且 program
+        过频率, 新 load 被拒 (CLOSE 已发) → 清空 _loaded_emulation_file **且**
+        复位 _center_freq_programmed → get_frequency_identity 报 None (不谎报
+        旧文件 / 旧 programmed 频率; #202 兜底: programmed 优先级 > 文件名,
+        只清 loaded_file 仍会谎报)。"""
         drv = RealPropsimF64Driver("propsim-load-dirty", {})
         drv._channel_count = 2
-        drv._loaded_emulation_file = "D:\\old\\prev.smu"  # 脏态: 上次加载
+        # 脏态: 上次成功加载 + 显式 program 过 3600
+        drv._loaded_emulation_file = "D:\\old\\prev_3600M.smu"
+        drv._center_freq_mhz = 3600.0
+        drv._center_freq_programmed = True
 
         visa = MagicMock()
         queue: list = []
@@ -272,6 +278,66 @@ class TestCentDispatchOnlyWhenExplicit:
         ok = await drv.set_channel_model("CDL-C", "UMa", {})
         assert ok is False
         assert drv._loaded_emulation_file is None  # 旧文件清空 (CLOSE 已关)
+        assert drv._center_freq_programmed is False  # 旧 programmed 复位
+        # 可观测契约: 两个 stale 源 (programmed + 文件名) 都清 → identity 报
+        # None (无加载), 不谎报旧 3600 (回归下若漏清 programmed 会报 3600)
+        assert drv.get_frequency_identity() is None
+
+    async def test_disconnect_resets_programmed_even_without_loaded_file(self):
+        """Codex #202 兜底门审 F1: configure(freq) 不带 model → programmed=True
+        + loaded_file=None; disconnect 无条件复位 programmed (原嵌 if loaded_
+        file 块内会跳过 → 断开后 identity 谎报 stale 频率)。"""
+        drv = RealPropsimF64Driver("propsim-disc", {})
+        drv._channel_count = 2
+        # freq-only-configure 态: programmed 但无加载文件
+        drv._center_freq_mhz = 3600.0
+        drv._center_freq_programmed = True
+        assert drv._loaded_emulation_file is None
+
+        visa = MagicMock()
+        visa.close = MagicMock()
+        visa.query = MagicMock(return_value='0,"No error"')
+
+        async def _w(cmd, timeout=None):
+            visa.write(cmd)
+
+        async def _q(cmd, timeout=None):
+            return "1" if cmd == "*OPC?" else '0,"No error"'
+
+        drv._visa_resource = visa
+        drv._write = _w  # type: ignore[assignment]
+        drv._query = _q  # type: ignore[assignment]
+        await drv.disconnect()
+        assert drv._center_freq_programmed is False  # 无条件复位 (不受 loaded_file 门控)
+        assert drv.get_frequency_identity() is None  # 断开后不谎报旧 3600
+
+    async def test_disconnect_resets_freq_even_when_close_raises(self):
+        """门审复核: DIAG:SIMU:CLOSE 抛异常 (VISA I/O 失败) 走 except 也不
+        残留 stale — 三态复位在 finally, failed-CLOSE→不重连→跑一致性网 窗口
+        彻底堵住。"""
+        drv = RealPropsimF64Driver("propsim-disc-raise", {})
+        drv._channel_count = 2
+        drv._loaded_emulation_file = "D:\\old\\prev_3600M.smu"  # 有加载 → 走 CLOSE
+        drv._center_freq_mhz = 3600.0
+        drv._center_freq_programmed = True
+
+        visa = MagicMock()
+        visa.close = MagicMock()
+
+        async def _w(cmd, timeout=None):
+            if cmd == "DIAG:SIMU:CLOSE":
+                raise RuntimeError("VISA session dropped on CLOSE")
+
+        async def _q(cmd, timeout=None):
+            return "1" if cmd == "*OPC?" else '0,"No error"'
+
+        drv._visa_resource = visa
+        drv._write = _w  # type: ignore[assignment]
+        drv._query = _q  # type: ignore[assignment]
+        await drv.disconnect()  # CLOSE 抛 → except → finally 仍复位
+        assert drv._loaded_emulation_file is None
+        assert drv._center_freq_programmed is False
+        assert drv.get_frequency_identity() is None
 
 
 class TestSmuProjectTruthParser:

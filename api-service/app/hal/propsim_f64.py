@@ -595,6 +595,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
           4. 查询 SYST:INFO? 获取硬件配置
         """
         self._status = InstrumentStatus.CONNECTING
+        # Codex #202 兜底 P2 门审 F1: 连接起始复位频率/加载三态 — 防
+        # disconnect→reconnect 后旧实例的 stale programmed/loaded 跨重连存活
+        # (disconnect 若走异常路径也可能漏复位; connect 是新会话的干净起点)。
+        self._center_freq_programmed = False
+        self._loaded_emulation_file = None
         try:
             import pyvisa
             self._rm = pyvisa.ResourceManager('@py')
@@ -704,10 +709,17 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     )
             if self._loaded_emulation_file:
                 await self._write("DIAG:SIMU:CLOSE")
-                self._loaded_emulation_file = None
         except Exception as e:
             stop_confirmed = False
             logger.warning(f"[F64] Cleanup during disconnect: {e}")
+        finally:
+            # Codex #202 兜底 P2 门审 F1 + 复核: 频率/加载三态复位放 finally —
+            # disconnect 是终态**无条件**复位, 即使 DIAG:SIMU:CLOSE 抛异常
+            # (VISA I/O 失败) 走 except 也不残留 stale (get_frequency_identity
+            # 优先读 programmed, 终态不复位 = 断开后仍报旧频率; connect 起始
+            # 复位是二道网, 但这里彻底堵住 failed-CLOSE→不重连→跑一致性网 窗口)。
+            self._loaded_emulation_file = None
+            self._center_freq_programmed = False
 
         if self._visa_resource:
             try:
@@ -904,6 +916,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 # 后续 start_emulation 的"file loaded"guard 假过后在 GO 才炸。
                 # 清空 → get_channel_state 如实报无加载文件。
                 self._loaded_emulation_file = None
+                # Codex #202 兜底 P2 (#212 的另一半): get_frequency_identity
+                # **优先**读 programmed freq (> 文件名 fallback), 只清 loaded_
+                # file 仍会谎报 stale 已下发频率 (旧 sim 已 CLOSE 无仿真在开)。
+                # 一并复位 → identity 报 None (无加载, 一致性网跳过)。
+                self._center_freq_programmed = False
                 self._last_error = f"channel model load failed: {load_err}"
                 logger.error(
                     "[F64/GCM] 加载失败 — SYST:ERR? after load: %s (file=%s)",
@@ -1055,6 +1072,9 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 # loaded"guard 假过后在 GO 才炸。**清空** (这不是 R8"被拒状态
                 # 不动" — CLOSE 已改变状态, 不动才是谎报)。
                 self._loaded_emulation_file = None
+                # Codex #202 兜底 P2 同型: 若之前 GCM 置过 programmed, 切 ASC
+                # load 失败后 identity 仍谎报旧 freq — 一并复位。
+                self._center_freq_programmed = False
                 self._last_error = f"ASC runtime load failed: {load_err}"
                 logger.error(
                     "[F64/ASC] 加载失败 — SYST:ERR? after load: %s (file=%s)",
