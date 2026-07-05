@@ -34,13 +34,9 @@ def _drv(transferred=None, captured=None):
             return q.pop(0) if q else '0,"No error"'
         return "1"                                 # *OPC? 等
 
-    async def _check_errors():
-        return None
-
     drv._ftp_upload_directory = _ftp
     drv._write = _write
     drv._query = _query
-    drv._check_errors = _check_errors
     return drv, captured
 
 
