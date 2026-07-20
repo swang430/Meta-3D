@@ -782,10 +782,40 @@ class RealUxmDriver(BaseStationDriver):
                 or (get_band_baseline(config.get("band")) or {}).get("duplex")
                 or ""
             ).upper()
+            # Codex #214 P2: 捷径还须"载波身份未变" —— 同 BW 但本次调用在换
+            # band/ARFCN (如 N78→N41 两资产恰同 BW) 时, 跳过环绕会让换载波写
+            # 在 ON 态执行 (可能被拒), 且 UXM 换 band 可能把 BW 复位——而 BW
+            # 写与对账都被剔掉, 错配置无人发现。判定用驱动上次下发记录
+            # (_band/_arfcn/_frequency_mhz): config 显式 band 且与记录一致,
+            # arfcn / frequency_mhz 带了也须一致; 记录冷 (None, 重载后首跑)
+            # 或 config 无 band → 保守走原环绕。注: BW 本身判定用 live 预读
+            # 非记录; 载波记录漂移 (外部写方改了仪器) 不受伤 —— ARFCN 写不受
+            # 剔键影响照常下发 + 对账 (ms 级即发即效, 07-03 延迟矩阵)。
+            _carrier_unchanged = (
+                self._band is not None
+                and str(config.get("band") or "").upper()
+                == str(self._band).upper()
+                and (
+                    "arfcn" not in config
+                    or (
+                        self._arfcn is not None
+                        and int(config["arfcn"]) == int(self._arfcn)
+                    )
+                )
+                and (
+                    "frequency_mhz" not in config
+                    or (
+                        self._frequency_mhz is not None
+                        and float(config["frequency_mhz"])
+                        == float(self._frequency_mhz)
+                    )
+                )
+            )
             if (
                 "bandwidth_mhz" in config
                 and _preread_on
                 and _duplex_for_preread == "TDD"
+                and _carrier_unchanged
             ):
                 bw_q = self._cmd("CELL_DL_BW", cell=cell)
                 if bw_q is not None:
