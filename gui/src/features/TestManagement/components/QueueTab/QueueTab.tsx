@@ -26,7 +26,10 @@ import {
   Progress,
   Loader,
   Center,
+  Pagination,
+  Switch,
 } from '@mantine/core'
+import { useEffect, useMemo, useState } from 'react'
 import { parseServerDateTime } from '../../../../utils/datetime'
 import {
   IconRefresh,
@@ -84,9 +87,49 @@ function getStatusLabel(status: string): string {
   return labelMap[status] || status
 }
 
+const QUEUE_PAGE_SIZE = 10
+
 export function QueueTab() {
   // Query hooks (auto-refreshes every 5 seconds)
   const { data: queueItems, isLoading, refetch } = useTestQueue()
+
+  // 2026-07-20 用户反馈: 队列无分页 + 只显示前 100 条 → 新排的条目在末尾
+  // 找不到。前端分页 (每页 10) + "最新优先"开关 (默认开, 新排的在第一页;
+  // 关闭 = 按排队执行顺序)。position 列仍显示真实执行顺位, 排序不改变语义。
+  const [page, setPage] = useState(1)
+  const [newestFirst, setNewestFirst] = useState(true)
+  const orderedItems = useMemo(() => {
+    const items = queueItems ? [...queueItems] : []
+    // Codex #218 P2: 服务端序是 priority.asc + position.asc, 整体倒排在混合
+    // 优先级时首页仍是"最低优先级桶的尾巴"而非最新排队的条目 — "最新优先"
+    // 必须按 queued_at 入队时间倒序 (同时刻并列用 position 倒序兜底)
+    if (newestFirst) {
+      items.sort((a, b) => {
+        const ta = parseServerDateTime(a.queue_item.queued_at).getTime() || 0
+        const tb = parseServerDateTime(b.queue_item.queued_at).getTime() || 0
+        if (tb !== ta) return tb - ta
+        return (b.queue_item.position ?? 0) - (a.queue_item.position ?? 0)
+      })
+    }
+    return items
+  }, [queueItems, newestFirst])
+  // 门审 #218 F2: 队首/队尾判定用服务端返回序的首/尾元素 (与执行语义同源),
+  // 不再用 position 全局 min/max (priority 参与排序时会漂)
+  const isFirstInQueue = (item: (typeof orderedItems)[number]) =>
+    !!queueItems?.length && item === queueItems[0]
+  const isLastInQueue = (item: (typeof orderedItems)[number]) =>
+    !!queueItems?.length && item === queueItems[queueItems.length - 1]
+  const totalPages = Math.max(1, Math.ceil(orderedItems.length / QUEUE_PAGE_SIZE))
+  const safePage = Math.min(page, totalPages)
+  // 门审 #218 F4: 页数缩水时把 page 状态真正回写 — 否则缩了又涨时旧页码
+  // "复活", 视图无操作自动跳页
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages)
+  }, [page, totalPages])
+  const pagedItems = orderedItems.slice(
+    (safePage - 1) * QUEUE_PAGE_SIZE,
+    safePage * QUEUE_PAGE_SIZE,
+  )
 
   // Mutation hooks
   const { mutate: removeFromQueue } = useRemoveFromQueue()
@@ -181,14 +224,25 @@ export function QueueTab() {
       {/* Header */}
       <Group justify="space-between">
         <Title order={2}>执行队列</Title>
-        <Button
-          leftSection={<IconRefresh size={16} />}
-          variant="light"
-          onClick={() => refetch()}
-          loading={isLoading}
-        >
-          刷新
-        </Button>
+        <Group gap="md">
+          <Switch
+            size="sm"
+            label="最新优先"
+            checked={newestFirst}
+            onChange={(e) => {
+              setNewestFirst(e.currentTarget.checked)
+              setPage(1)
+            }}
+          />
+          <Button
+            leftSection={<IconRefresh size={16} />}
+            variant="light"
+            onClick={() => refetch()}
+            loading={isLoading}
+          >
+            刷新
+          </Button>
+        </Group>
       </Group>
 
       {/* Queue Info */}
@@ -230,6 +284,7 @@ export function QueueTab() {
             <Loader size="md" />
           </Center>
         ) : (
+          <>
           <Table striped highlightOnHover>
             <Table.Thead>
               <Table.Tr>
@@ -243,7 +298,7 @@ export function QueueTab() {
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {!queueItems || queueItems.length === 0 ? (
+              {!pagedItems || pagedItems.length === 0 ? (
                 <Table.Tr>
                   <Table.Td colSpan={7}>
                     <Stack align="center" gap="xs" py="xl">
@@ -258,7 +313,7 @@ export function QueueTab() {
                   </Table.Td>
                 </Table.Tr>
               ) : (
-                queueItems.map((item, index) => {
+                pagedItems.map((item) => {
                   const plan = item.test_plan
                   const queueItem = item.queue_item
                   const progress =
@@ -334,8 +389,8 @@ export function QueueTab() {
                       {/* Actions */}
                       <Table.Td>
                         <Group gap="xs">
-                          {/* Start button (only for queued status) */}
-                          {plan.status === 'queued' && index === 0 && (
+                          {/* Start button — 只在真实队首显示 (渲染序无关) */}
+                          {plan.status === 'queued' && isFirstInQueue(item) && (
                             <Tooltip label="开始执行">
                               <ActionIcon
                                 variant="light"
@@ -401,8 +456,9 @@ export function QueueTab() {
                             </Tooltip>
                           )}
 
-                          {/* Move up/down buttons */}
-                          {index > 0 && plan.status === 'queued' && (
+                          {/* Move up/down buttons — 判定用真实排队顺位
+                              (分页+倒序后渲染 index ≠ position 序) */}
+                          {!isFirstInQueue(item) && plan.status === 'queued' && (
                             <Tooltip label="上移">
                               <ActionIcon
                                 variant="subtle"
@@ -413,7 +469,7 @@ export function QueueTab() {
                               </ActionIcon>
                             </Tooltip>
                           )}
-                          {queueItems && index < queueItems.length - 1 && plan.status === 'queued' && (
+                          {!isLastInQueue(item) && plan.status === 'queued' && (
                             <Tooltip label="下移">
                               <ActionIcon
                                 variant="subtle"
@@ -445,6 +501,17 @@ export function QueueTab() {
               )}
             </Table.Tbody>
           </Table>
+          {orderedItems.length > QUEUE_PAGE_SIZE && (
+            <Group justify="center" mt="md">
+              <Pagination
+                total={totalPages}
+                value={safePage}
+                onChange={setPage}
+                size="sm"
+              />
+            </Group>
+          )}
+          </>
         )}
       </Paper>
     </Stack>
