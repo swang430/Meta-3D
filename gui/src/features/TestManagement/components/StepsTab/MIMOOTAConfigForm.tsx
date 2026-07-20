@@ -99,6 +99,21 @@ export interface MIMOOTAConfiguration {
   csi_rs_ports?: number | null
   engine_mode?: string
   theoretical_peak_throughput_mbps?: number
+  // === 仪表使用参数 (开关 3 块 2, #217) — 全部留空 = 现行为不变 ===
+  // F64 直通模式 1-3: 非空 = 测量停在无衰落直通态 (STATIC <mode>, 不 GO);
+  // 2=Butler (保 MIMO 秩) / 3=校准 (-10dB 等增益) / 1=模型旁路。
+  f64_bypass_mode?: number
+  // 非空 = 手动定标 (直接写 F64 输入参考, 跳过 AUTOSET 闭环 + 读回存档)。
+  f64_input_ref_dbm?: number
+  // 手动定标的峰均比 — 随 f64_input_ref_dbm 一起生效, 单独填后端不消费。
+  f64_crest_db?: number
+  // 非空 = 信道加载后对全部活跃输出统一写 OUTP:GAIN。
+  f64_output_gain_db?: number
+  // AUTOSET 闭环的 UXM 起始功率 (留空 = controller 默认 -10 dBm)。
+  input_loop_initial_dl_power_dbm?: number
+  // 开关 1: UXM 小区参数来源 — "dispatch" (默认, 主动下发) / "inherit"
+  // (跳过小区下发, read_live 读回实际频率/带宽核对)。
+  uxm_config_mode?: string
   pass_criteria?: PassCriteria
   step_overrides?: Record<string, unknown> | null
   // Tolerate forward-compat extras
@@ -921,6 +936,112 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
                 disabled={readOnly}
               />
             </SimpleGrid>
+          </Accordion.Panel>
+        </Accordion.Item>
+
+        {/* 开关 3 块 2 (#217): 仪表使用参数 — 后端 measure 消费, 此前只能 API 改。
+            全部留空 = 现行为不变 (UXM 主动下发 + F64 自动定标闭环 + 衰落回放)。 */}
+        <Accordion.Item value="instrument">
+          <Accordion.Control>
+            <Text size="sm" fw={600}>
+              仪表使用参数 (现场调试旋钮)
+            </Text>
+          </Accordion.Control>
+          <Accordion.Panel>
+            <Stack gap="md">
+              <Text size="xs" c="dimmed">
+                全部留空 = 现行为不变：UXM 主动下发小区参数、F64 自动定标闭环、正常衰落回放。
+              </Text>
+              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+                <Select
+                  label="UXM 小区配置来源 (开关 1)"
+                  description="继承 = 跳过小区下发, 沿用仪器当前态 (如 EMQuest 基线), 但仍读回实际频率/带宽跟本配置核对"
+                  data={[
+                    { value: 'dispatch', label: '主动下发 (默认) — 下发全套小区参数并回读对账' },
+                    { value: 'inherit', label: '继承仪器当前态 — 跳过小区下发 + 读回核对' },
+                  ]}
+                  value={value.uxm_config_mode === 'inherit' ? 'inherit' : 'dispatch'}
+                  onChange={(v) =>
+                    update('uxm_config_mode', v === 'inherit' ? 'inherit' : undefined)
+                  }
+                  allowDeselect={false}
+                  disabled={readOnly}
+                />
+                <Select
+                  label="F64 直通模式 (开关 2)"
+                  description="设了 = 测量阶段停在无衰落直通态 (不播衰落, 输出功率显示会冻结)；留空 = 正常衰落回放"
+                  data={[
+                    { value: '2', label: 'STATIC 2 — Butler 直通 (保 MIMO 秩, 4×4 建链用)' },
+                    { value: '3', label: 'STATIC 3 — 校准直通 (统一 -10 dB, 单层/校准)' },
+                    { value: '1', label: 'STATIC 1 — 模型直通 (模型平均衰减)' },
+                  ]}
+                  value={value.f64_bypass_mode != null ? String(value.f64_bypass_mode) : null}
+                  onChange={(v) => update('f64_bypass_mode', v ? Number(v) : undefined)}
+                  clearable
+                  placeholder="(衰落回放)"
+                  disabled={readOnly}
+                />
+                <NumberInput
+                  label="F64 输入参考电平"
+                  suffix=" dBm"
+                  description="设了 = 手动定标, 跳过自动定标闭环并读回存档 (07-03 实证 -15)；留空 = 自动定标"
+                  value={value.f64_input_ref_dbm}
+                  onChange={(v) =>
+                    update('f64_input_ref_dbm', typeof v === 'number' ? v : undefined)
+                  }
+                  decimalScale={1}
+                  disabled={readOnly}
+                />
+                <NumberInput
+                  label="峰均比 (crest)"
+                  suffix=" dB"
+                  description="手动定标的一部分, 随「输入参考电平」一起生效 (07-03 实证 12)"
+                  value={value.f64_crest_db}
+                  onChange={(v) =>
+                    update('f64_crest_db', typeof v === 'number' ? v : undefined)
+                  }
+                  decimalScale={1}
+                  disabled={readOnly}
+                />
+                <NumberInput
+                  label="F64 输出增益"
+                  suffix=" dB"
+                  description="设了 = 信道加载后对全部活跃输出统一写增益；留空 = 不调整"
+                  value={value.f64_output_gain_db}
+                  onChange={(v) =>
+                    update('f64_output_gain_db', typeof v === 'number' ? v : undefined)
+                  }
+                  decimalScale={1}
+                  disabled={readOnly}
+                />
+                <NumberInput
+                  label="闭环起点功率 (UXM)"
+                  suffix=" dBm"
+                  description="自动定标闭环的 UXM 起始功率；留空 = 默认 -10 (比 -46 基线热 36 dB)。手动定标时不生效"
+                  value={value.input_loop_initial_dl_power_dbm}
+                  onChange={(v) =>
+                    update(
+                      'input_loop_initial_dl_power_dbm',
+                      typeof v === 'number' ? v : undefined,
+                    )
+                  }
+                  decimalScale={1}
+                  disabled={readOnly}
+                />
+              </SimpleGrid>
+              {value.f64_crest_db != null && value.f64_input_ref_dbm == null && (
+                <Alert color="yellow" variant="light">
+                  峰均比单独填不生效 —— 它是手动定标的一部分, 请把「F64 输入参考电平」也填上；
+                  只想用自动定标就把峰均比清空。
+                </Alert>
+              )}
+              {value.f64_input_ref_dbm != null &&
+                value.input_loop_initial_dl_power_dbm != null && (
+                  <Alert color="yellow" variant="light">
+                    已设「输入参考电平」= 手动定标, 「闭环起点功率」不会被消费 (它只属于自动定标闭环)。
+                  </Alert>
+                )}
+            </Stack>
           </Accordion.Panel>
         </Accordion.Item>
 
