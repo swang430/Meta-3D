@@ -942,6 +942,37 @@ async def start_test_plan(
     """
     service = TestExecutionService()
 
+    # 门审 #217 F8 + Codex #217 P2: 全局单飞 — 有任一计划在执行, 拒绝再
+    # start (双 5 相位链交错打同一套 HAL = 实验互相污染)。双重判据:
+    # ① 内存活跃 runner; ② DB 里存在其它 RUNNING 计划 — 堵住"置 RUNNING
+    # 后、runner 注册前"的 await 窗口 (topology apply 让出事件循环时, 并发
+    # start 只查 ① 会漏)。stale RUNNING 由启动复位清理, 正常运行时
+    # DB RUNNING ⇔ 真在执行。
+    from app.models.test_plan import TestPlanStatus as _TPS
+    from app.services.test_plan_runner import has_active_runner
+    _active = has_active_runner()
+    if _active is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"另一测试计划 ({_active}) 正在执行 — 等它结束或先取消它",
+        )
+    _running_row = (
+        db.query(TestPlan)
+        .filter(
+            TestPlan.status == _TPS.RUNNING,
+            TestPlan.id != test_plan_id,
+        )
+        .first()
+    )
+    if _running_row is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"另一测试计划 ({_running_row.id}) 状态为执行中 — "
+                "等它结束或先取消它"
+            ),
+        )
+
     try:
         test_plan = service.start_test_plan(
             db=db,
@@ -958,6 +989,12 @@ async def start_test_plan(
     # status endpoint; today the operator sees it in the readiness panel
     # after the apply landed.
     await service.apply_plan_topology_profile_if_set(db, test_plan)
+
+    # 开关 3 (2026-07-20): 计划 runner — 此前 start 只翻状态, 步骤永停
+    # pending; 现在后台真执行 (逐 MIMO_OTA 步骤跑 5 相位链, 状态实时推进,
+    # 收尾自动历史+报告)。立即返回, GUI 轮询步骤/计划状态看进度。
+    from app.services.test_plan_runner import launch_test_plan_runner
+    launch_test_plan_runner(test_plan_id)
     return test_plan
 
 
@@ -1070,19 +1107,56 @@ def pause_test_plan(
 
 
 @router.post("/{test_plan_id}/resume", response_model=TestPlanResponse)
-def resume_test_plan(
+async def resume_test_plan(
     test_plan_id: UUID,
     request: ResumeTestPlanRequest,
     db: Session = Depends(get_db)
 ):
-    """Resume a paused test plan"""
+    """Resume a paused test plan (开关 3: async — runner 触发需在事件循环内)"""
     service = TestExecutionService()
+
+    # 门审 #217 F8 + Codex #217 P2: 全局单飞 (同 start, 双重判据)
+    from app.models.test_plan import TestPlanStatus as _TPS
+    from app.services.test_plan_runner import (
+        has_active_runner,
+        launch_test_plan_runner,
+    )
+    _active = has_active_runner()
+    if _active is not None and _active != str(test_plan_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"另一测试计划 ({_active}) 正在执行 — 等它结束或先取消它",
+        )
+    _running_row = (
+        db.query(TestPlan)
+        .filter(
+            TestPlan.status == _TPS.RUNNING,
+            TestPlan.id != test_plan_id,
+        )
+        .first()
+    )
+    if _running_row is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"另一测试计划 ({_running_row.id}) 状态为执行中 — "
+                "等它结束或先取消它"
+            ),
+        )
 
     try:
         test_plan = service.resume_test_plan(db, test_plan_id)
-        return test_plan
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # 门审 #217 F10: 续跑段测量日志归档精度 — 与 start 路径同样绑定
+    # session 上下文 (contextvar 由 create_task 继承)
+    from app.core.logging_config import current_session_id
+    current_session_id.set(str(test_plan_id))
+
+    # 开关 3: 恢复后重新触发 runner — 续跑跳过非 pending 步骤
+    launch_test_plan_runner(test_plan_id)
+    return test_plan
 
 
 @router.post("/{test_plan_id}/cancel", response_model=TestPlanResponse)

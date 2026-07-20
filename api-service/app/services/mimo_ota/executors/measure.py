@@ -732,20 +732,100 @@ class MeasureExecutor(IStepExecutor):
                     context.test_execution.id, freq_result.failure_reason(),
                 )
 
+            # --- 仪表参数 (开关 3 块 2): F64 输出增益, 显式给才写 ---
+            if (config.f64_output_gain_db is not None
+                    and not hasattr(emulator, "set_output_gain")):
+                # 门审 #217 F1: 显式配了参数, CE 无能力不得静默无痕跳过
+                logger.warning(
+                    "[%s] f64_output_gain_db=%s 已配置但 CE 驱动无 "
+                    "set_output_gain 能力 (mock/非 F64) — 跳过, 真机不受此限",
+                    context.test_execution.id, config.f64_output_gain_db,
+                )
+            if (config.f64_output_gain_db is not None
+                    and hasattr(emulator, "set_output_gain")):
+                _gain = config.f64_output_gain_db
+                # 门审 #217 F1 (P1): "全部输出" = 本仿真活跃输出口 (tx*rx 截
+                # channel_count, 与 get_metrics/set_path_loss 同源) — 不是
+                # _channel_count=64 (硬件总口数; 遍历 17..64 会撞非法编号
+                # fail-loud 或污染不属于本仿真的输出口)
+                _tx = int(getattr(emulator, "_tx_antennas", 0) or 0)
+                _rx = int(getattr(emulator, "_rx_antennas", 0) or 0)
+                _cc = int(getattr(emulator, "_channel_count", 0) or 0)
+                _n_out = min(_tx * _rx, _cc) if (_tx and _rx and _cc) else 0
+                _gain_ok = _n_out > 0
+                _out = 0
+                for _out in range(1, _n_out + 1):
+                    if not await emulator.set_output_gain(_out, _gain):
+                        _gain_ok = False
+                        break
+                if not _gain_ok:
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            f"F64 输出增益下发失败 (f64_output_gain_db={_gain}, "
+                            f"output={_out}) — 明细见驱动日志。"
+                        ),
+                    )
+                logger.info(
+                    "[%s] F64 输出增益 %.1f dB × %d 输出 已下发",
+                    context.test_execution.id, _gain, _n_out,
+                )
+
             # --- P2-17 (Codex #201 R3 P1): 信道加载后显式启动仿真播放 ---
             # 执行链原本无人调 start_emulation (现场靠脚本手动 GO) — attach 默认
             # 直通态落地后, 不启动 = 测量在 STOPPED+STATIC 3 下跑 (无衰落输出)。
             # start_emulation 内建 GO 前无条件 STATIC 0 恢复衰落 (P2-17 ①), 此
             # 调用同时完成"attach 直通 → 测量衰落"的闭环; 布尔契约 fail-loud。
-            started = await emulator.start_emulation()
-            if not started:
-                return StepExecutionResult(
-                    status=StepExecutionStatus.FAILED,
-                    error_message=(
-                        "信道仿真启动失败 (start_emulation=False, 明细见仿真器"
-                        "驱动日志) — 中止, 不在 STOPPED/直通态下测量。"
-                    ),
+            #
+            # 开关 3 块 2: f64_bypass_mode 非 None = **直通态测量** (无衰落
+            # 基线, 官方用法: Butler(2) 保 MIMO 秩; Calibration(3) 统一 -10dB
+            # 但 4 层塌秩只适合单层) — 设直通、不 GO。注意直通稳态下 F64
+            # 输出功率显示冻结 (07-03 实证), 判据以 DUT 侧吞吐为准。
+            if config.f64_bypass_mode is not None:
+                if not hasattr(emulator, "set_passthrough_mode"):
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            "f64_bypass_mode 已配置但 CE 驱动无直通能力 "
+                            "(set_passthrough_mode) — 不静默降级为衰落测量。"
+                        ),
+                    )
+                if hasattr(emulator, "stop_emulation"):
+                    # 门审 #217 F5: 布尔契约必须消费 — GOS 被拒 (仍在播放)
+                    # 时继续写 STATIC 会把真因掩盖成"直通建立失败"
+                    if not await emulator.stop_emulation():
+                        return StepExecutionResult(
+                            status=StepExecutionStatus.FAILED,
+                            error_message=(
+                                "F64 停止播放被拒 (stop_emulation=False) — "
+                                "直通态测量前置失败, 明细见驱动日志。"
+                            ),
+                        )
+                _bp_ok = await emulator.set_passthrough_mode(
+                    mode=config.f64_bypass_mode
                 )
+                if not _bp_ok:
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            f"F64 直通建立失败 (f64_bypass_mode="
+                            f"{config.f64_bypass_mode}) — 明细见驱动日志。"
+                        ),
+                    )
+                logger.info(
+                    "[%s] 直通态测量: STATIC %s 已建立 (无衰落基线, 不 GO)",
+                    context.test_execution.id, config.f64_bypass_mode,
+                )
+            else:
+                started = await emulator.start_emulation()
+                if not started:
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            "信道仿真启动失败 (start_emulation=False, 明细见仿真器"
+                            "驱动日志) — 中止, 不在 STOPPED/直通态下测量。"
+                        ),
+                    )
 
             # --- P2-11 Phase 6: UXM cell config 下发后一致性 (吞吐链版频率校验) ---
             # set_cell_config + RRC reconfig 后, 拿 **UE 协商能力** (max_dl_layers /
@@ -781,19 +861,27 @@ class MeasureExecutor(IStepExecutor):
                         context.test_execution.id, cc_result.failure_reason(),
                     )
 
-            # --- P0-8 Step 2 Phase 2b: F64 输入操作点闭环 (CE↔BS) ---
-            # F64 fading 已经载入、UXM DL 已开 → 此时 F64 输入端信号即真实工作条件,
-            # 跑 §4 A-F 闭环锁住 avg+crest 在窗口内、clipping 不爆、无 cut-off。
-            # capability 检测 (hasattr) 跟项目 pattern 一致 (get_user_alignment_status /
-            # reconfigure_rrc / add_secondary_cell) — 任一方缺接口 (mock driver /
-            # 新 vendor 未实现) 自动跳, 不影响 mock dry-run。
+            # --- P0-8 Step 2 Phase 2b: F64 输入操作点 (CE↔BS) ---
+            # 开关 3 块 2: f64_input_ref_dbm 显式给定 = **手动定标** — 直接
+            # set 输入参考 (+crest), 跳过 AUTOSET 闭环 (调试灵活应变: 现场
+            # 已知工作点时不折腾; 07-03 实证工作点 -15/crest12)。读回反馈
+            # (measure_input) 进 payload。未给定 = 现行为 AUTOSET 闭环。
             # 设计依据: docs/architecture/f64-input-level-and-dynamic-range.md §4.
-            input_level_payload = await self._run_input_level_closed_loop(
-                emulator=emulator,
-                base_station=base_station,
-                config=config,
-                execution_id=context.test_execution.id,
-            )
+            if config.f64_input_ref_dbm is not None:
+                input_level_payload = await self._apply_manual_input_reference(
+                    emulator=emulator,
+                    config=config,
+                    execution_id=context.test_execution.id,
+                )
+            else:
+                # capability 检测 (hasattr) 跟项目 pattern 一致 — 任一方缺接口
+                # (mock driver / 新 vendor 未实现) 自动跳, 不影响 mock dry-run。
+                input_level_payload = await self._run_input_level_closed_loop(
+                    emulator=emulator,
+                    base_station=base_station,
+                    config=config,
+                    execution_id=context.test_execution.id,
+                )
             if (
                 not input_level_payload.get("skipped")
                 and not input_level_payload.get("success")
@@ -1112,6 +1200,80 @@ class MeasureExecutor(IStepExecutor):
         )
 
     # ---------------------------------------------------------------------
+    # 开关 3 块 2: 手动定标 — 显式输入参考 (+crest), 跳过 AUTOSET 闭环
+    # ---------------------------------------------------------------------
+    async def _apply_manual_input_reference(
+        self,
+        *,
+        emulator: Any,
+        config: Any,
+        execution_id: Any,
+    ) -> Dict[str, Any]:
+        """f64_input_ref_dbm 显式给定时的手动定标路径。
+
+        直接 set 输入参考 (INP:LEV:AMP × 全输入) + 可选 crest, 然后读回
+        (measure_input) 进 payload 作调试反馈; 不跑 AUTOSET 闭环。CE 缺
+        能力 (mock / 非 F64) → skipped=True (与闭环的 capability-skip 语义
+        一致, mock dry-run 不受影响; 真 F64 驱动必有这些方法)。下发被拒 →
+        success=False, 由上层 strict 门 fail-loud。
+        """
+        ref = float(config.f64_input_ref_dbm)
+        crest = (
+            float(config.f64_crest_db)
+            if config.f64_crest_db is not None else None
+        )
+        payload: Dict[str, Any] = {
+            "mode": "manual",
+            "requested_ref_dbm": ref,
+            "requested_crest_db": crest,
+            "skipped": False,
+            "success": False,
+            "readback": [],
+            "failure_reason": None,
+        }
+        if not hasattr(emulator, "set_baseband_power") or (
+            crest is not None and not hasattr(emulator, "set_crest_factor")
+        ):
+            payload["skipped"] = True
+            payload["failure_reason"] = (
+                "CE 驱动无输入参考/crest 设置能力 — 手动定标跳过 (mock/非 F64)"
+            )
+            logger.info(
+                "[%s] 手动定标跳过: CE 缺 set_baseband_power/set_crest_factor",
+                execution_id,
+            )
+            return payload
+        if not await emulator.set_baseband_power(ref):
+            payload["failure_reason"] = f"输入参考下发被拒 ({ref} dBm)"
+            logger.error("[%s] 手动定标: %s", execution_id, payload["failure_reason"])
+            return payload
+        n_in = int(getattr(emulator, "_tx_antennas", 0) or 0)
+        if crest is not None:
+            for i in range(1, n_in + 1):
+                if not await emulator.set_crest_factor(i, crest):
+                    payload["failure_reason"] = f"crest 下发被拒 (input {i}, {crest} dB)"
+                    logger.error(
+                        "[%s] 手动定标: %s", execution_id, payload["failure_reason"]
+                    )
+                    return payload
+        # 读回反馈 (只读; 单口读不到不判定标失败 — 无信号态 measure 会 None)
+        if hasattr(emulator, "measure_input"):
+            for i in range(1, n_in + 1):
+                m = await emulator.measure_input(i, 1.0)
+                payload["readback"].append({
+                    "input_num": i,
+                    "avg_dbm": m[0] if m else None,
+                    "crest_db": m[1] if m else None,
+                })
+        payload["success"] = True
+        logger.info(
+            "[%s] 手动定标完成: ref=%.1f dBm crest=%s × %d 输入 (readback=%s)",
+            execution_id, ref, crest, n_in,
+            [r["avg_dbm"] for r in payload["readback"]],
+        )
+        return payload
+
+    # ---------------------------------------------------------------------
     # P0-8 Step 2 Phase 2b: F64 输入操作点闭环 wiring
     # ---------------------------------------------------------------------
     async def _run_input_level_closed_loop(
@@ -1194,10 +1356,20 @@ class MeasureExecutor(IStepExecutor):
 
         from app.services.input_level_controller import InputLevelController
 
+        # 开关 3 块 2: 闭环起点功率参数化 — None 用 controller 默认 (-10 dBm,
+        # 比 EMQuest -46 基线热 36 dB, 门审 #216 F3 披露的雷); 现场可显式给
+        # 温和起点 (如 -46) 免大功率起步冲 F64 输入。
+        # getattr: 本方法被测试以迷你 config 对象直调 (duck-typed), 新字段
+        # 用 getattr 兜底 — 缺属性视同 None (用 controller 默认)
+        _ctrl_kwargs: Dict[str, Any] = {}
+        _initial = getattr(config, "input_loop_initial_dl_power_dbm", None)
+        if _initial is not None:
+            _ctrl_kwargs["initial_uxm_dl_power_dbm"] = _initial
         controller = InputLevelController(
             ce_driver=emulator,
             bs_driver=base_station,
             active_inputs=active_inputs,
+            **_ctrl_kwargs,
         )
         logger.info(
             "[%s] Phase 2b: input-level closed loop START — active_inputs=%s",

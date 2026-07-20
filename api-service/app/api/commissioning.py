@@ -339,32 +339,10 @@ def _build_context(
     test_case: TestCase,
     step: StepDescriptor,
 ) -> StepExecutionContext:
-    """Hydrate a StepExecutionContext: pull LabProfile + cert from FKs."""
-    lab_profile = None
-    if test_case.lab_profile_id is not None:
-        lab_profile = (
-            db.query(LabProfile)
-            .filter(LabProfile.id == test_case.lab_profile_id)
-            .first()
-        )
-    cert = None
-    cert_id = test_case.calibration_certificate_id or (
-        lab_profile.active_calibration_certificate_id if lab_profile else None
-    )
-    if cert_id is not None:
-        cert = (
-            db.query(CalibrationCertificate)
-            .filter(CalibrationCertificate.id == cert_id)
-            .first()
-        )
-    return StepExecutionContext(
-        db=db,
-        step=step,
-        test_execution=execution,
-        lab_profile=lab_profile,
-        calibration_certificate=cert,
-        parameters=dict(step.parameters or {}),
-    )
+    """开关 3: 提升到 services/test_execution/hydrate.py 与计划 runner 共用。"""
+    from app.services.test_execution.hydrate import build_step_context
+
+    return build_step_context(db, execution, test_case, step)
 
 
 # ==================== Endpoints ====================
@@ -436,9 +414,13 @@ async def list_sessions(
         .all()
     )
     if not include_ad_hoc:
+        # 门审 #217 F9: 计划 runner 的步骤执行 (config 带 test_step_id) 与
+        # diagnostic_ad_hoc 同理隐藏 — 反复调试计划会每步一行, 淹没 bring-up
+        # 会话列表; 计划执行明细走测试管理页/历史 Tab, 不占会话视图。
         rows = [
             (ex, tc) for ex, tc in rows
             if not (ex.config or {}).get("diagnostic_ad_hoc")
+            and not (ex.config or {}).get("test_step_id")
         ]
     return [_execution_to_session_response(ex, tc) for ex, tc in rows]
 

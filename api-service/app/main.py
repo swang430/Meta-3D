@@ -63,6 +63,15 @@ async def lifespan(app: FastAPI):
         logger.error(f"Database initialization failed: {e}")
         logger.warning("Continuing with degraded functionality")
 
+    # 门审 #217 F4: 复位上次进程留下的 stale RUNNING 计划 (runner 是 asyncio
+    # 后台任务, 重启即消失 — 不复位则计划永卡 RUNNING, start/resume 全拒且
+    # HAL reload 被 409 挡)。此刻必然没有任何 runner 在跑, 复位安全。
+    try:
+        from app.services.test_plan_runner import reset_stale_running_plans
+        reset_stale_running_plans()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"stale RUNNING 计划复位失败 (不阻塞启动): {e}")
+
     # P0-1: auto-seed factory-defaults DB on startup (idempotent — re-runs
     # are no-ops via bootstrap_history version pinning). Without this an
     # empty deploy strands the operator on "create your first chamber"

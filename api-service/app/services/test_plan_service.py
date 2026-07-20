@@ -1434,6 +1434,24 @@ class TestExecutionService:
         test_plan.completed_test_cases = 0
         test_plan.failed_test_cases = 0
 
+        # Codex #217 P1: fresh start 必须复位全部步骤 — 重跑 (跑过的计划重新
+        # mark READY 再 start) 时步骤残留 completed/failed, runner 会把非
+        # pending 步骤当续跑遗留全部跳过 → 零执行却照样收尾出历史+报告
+        # (假数据)。resume (续跑) 不走本函数, 续跑语义不受影响。
+        from app.models.test_plan import TestStep as _TestStep
+
+        _steps = (
+            db.query(_TestStep)
+            .filter(_TestStep.test_plan_id == test_plan_id)
+            .all()
+        )
+        for _s in _steps:
+            _s.status = "pending"
+            _s.started_at = None
+            _s.completed_at = None
+            _s.result = None
+            _s.error_message = None
+
         # BUG-1 FIX: Bind session context so measurement.log entries carry the plan ID
         try:
             from app.core.logging_config import current_session_id
@@ -1564,14 +1582,19 @@ class TestExecutionService:
     def complete_test_plan(
         self,
         db: Session,
-        test_plan_id: UUID
+        test_plan_id: UUID,
+        final_status: TestPlanStatus = TestPlanStatus.COMPLETED,
     ) -> TestPlan:
-        """Mark test plan as completed"""
+        """Mark test plan as finished (归档 + 历史行 + 自动报告).
+
+        开关 3 (runner): `final_status` 支持 FAILED — 失败收尾同样建历史行 /
+        归档 / 出报告, 状态如实 (此前只有手动"完成"路径, 硬编码 COMPLETED)。
+        """
         test_plan = db.query(TestPlan).filter(TestPlan.id == test_plan_id).first()
         if not test_plan:
             raise ValueError(f"Test plan {test_plan_id} not found")
 
-        test_plan.status = TestPlanStatus.COMPLETED
+        test_plan.status = final_status
         test_plan.completed_at = datetime.utcnow()
 
         if test_plan.started_at:
@@ -1583,7 +1606,13 @@ class TestExecutionService:
         # Create plan-level execution history record
         from app.models.test_plan import TestPlanExecution
         total_steps = test_plan.total_test_cases or 0
-        completed_steps = test_plan.completed_test_cases or total_steps
+        # 门审 #217 F3: `or total_steps` 兜底只适用手动完成 (COMPLETED, "能按
+        # 完成=都跑完"的旧假设); FAILED 收尾 (runner) 0 完成就是 0, 兜底会把
+        # 历史行伪造成"全完成 100% 成功率 + 状态 failed"自相矛盾
+        if final_status == TestPlanStatus.COMPLETED:
+            completed_steps = test_plan.completed_test_cases or total_steps
+        else:
+            completed_steps = test_plan.completed_test_cases or 0
         failed_steps = test_plan.failed_test_cases or 0
         skipped_steps = max(0, total_steps - completed_steps - failed_steps)
         success_rate = (completed_steps / total_steps) if total_steps > 0 else 1.0
@@ -1592,7 +1621,7 @@ class TestExecutionService:
             test_plan_id=test_plan_id,
             test_plan_name=test_plan.name,
             test_plan_version=test_plan.version or "1.0",
-            status="completed",
+            status=final_status.value,  # 开关 3: 历史行状态与真实终态一致
             total_steps=total_steps,
             completed_steps=completed_steps,
             failed_steps=failed_steps,
