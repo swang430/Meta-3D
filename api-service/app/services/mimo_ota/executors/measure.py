@@ -237,32 +237,52 @@ class MeasureExecutor(IStepExecutor):
                         f"P2-11 #1974: {_preset_err}。typo 会让 set_cell_config 静默保留旧路由。"
                     ),
                 )
+            # 开关 1 (uxm_config_mode): "inherit" 跳过小区参数下发, 沿用仪器当前
+            # 态 (如 EMQuest 基线); 频率核对改走下方一致性网的 live 读回 (知情
+            # 继承)。MAC 吞吐配置 / start_signaling / RRC reconfig 不属于小区
+            # 参数, 两种模式都执行。
+            uxm_inherit = config.uxm_config_mode == "inherit"
+            if uxm_inherit:
+                logger.info(
+                    "[%s] 开关1 uxm_config_mode=inherit: 跳过 UXM 小区级参数下发 "
+                    "(set_cell_config + SCell), 沿用仪器当前态; 频率核对走 live "
+                    "读回。仍会写: MAC 吞吐配置 / CELL ON / RRC 按 TestCase 推 "
+                    "%d 层 (层数未纳入 live 核对) / 输入闭环调 DL 功率",
+                    context.test_execution.id, config.mimo_layers,
+                )
             # path B 显式驱动端口路由/调度 (见 _build_pcell_cell_config); None 字段不传 →
             # 保持 HAL profile (backward-compat, 旧 case 不被默认值覆盖)。
-            cell_cfg = _build_pcell_cell_config(
-                config,
-                frequency_mhz=pcell_freq_mhz,
-                arfcn=freq_mhz_to_nr_arfcn(pcell_freq_mhz),
-                bandwidth_mhz=pcell.bandwidth_mhz,
-                scs_khz=pcell.subcarrier_spacing_khz,
-                band=pcell.band,
-            )
-            # Codex #195 R5 P1: set_cell_config 布尔契约必须消费 — HAL 层回读对账
-            # mismatch / 下发被拒都只 return False (不裸抛), 这里不检查会带着错配
-            # 小区配置进测量, 正是回读门要拦的实验污染。
-            ok = await base_station.set_cell_config(cell_cfg)
-            if not ok:
-                return StepExecutionResult(
-                    status=StepExecutionStatus.FAILED,
-                    error_message=(
-                        "PCell set_cell_config 失败 (下发被拒或回读对账 mismatch, "
-                        "明细见基站驱动日志) — 中止执行, 防止错配配置进测量。"
-                    ),
+            if not uxm_inherit:
+                cell_cfg = _build_pcell_cell_config(
+                    config,
+                    frequency_mhz=pcell_freq_mhz,
+                    arfcn=freq_mhz_to_nr_arfcn(pcell_freq_mhz),
+                    bandwidth_mhz=pcell.bandwidth_mhz,
+                    scs_khz=pcell.subcarrier_spacing_khz,
+                    band=pcell.band,
                 )
+                # Codex #195 R5 P1: set_cell_config 布尔契约必须消费 — HAL 层回读对账
+                # mismatch / 下发被拒都只 return False (不裸抛), 这里不检查会带着错配
+                # 小区配置进测量, 正是回读门要拦的实验污染。
+                ok = await base_station.set_cell_config(cell_cfg)
+                if not ok:
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            "PCell set_cell_config 失败 (下发被拒或回读对账 mismatch, "
+                            "明细见基站驱动日志) — 中止执行, 防止错配配置进测量。"
+                        ),
+                    )
 
             # --- Phase 2g: SCell add + activate for CA scenarios ---
             scells_added: List[Dict[str, Any]] = []
-            if scells and hasattr(base_station, "add_secondary_cell"):
+            if scells and uxm_inherit:
+                logger.warning(
+                    "[%s] 开关1 inherit: %d 个 SCell 声明被跳过 (继承模式不下发"
+                    "载波) — CA 场景请用 dispatch 模式",
+                    context.test_execution.id, len(scells),
+                )
+            elif scells and hasattr(base_station, "add_secondary_cell"):
                 for cc_idx, scell in enumerate(scells, start=1):
                     # SCell 走 SCELL_CONF_FREQ 直接按 frequency_mhz 程控 (无 ARFCN
                     # band fallback, 见 add_secondary_cell) → 没有 PCell 那个坑, 不需
@@ -664,13 +684,33 @@ class MeasureExecutor(IStepExecutor):
             if (resolved_asset is not None and resolved_asset.scd_freq_identity is not None
                     and scd_freq_identity is None):
                 scd_freq_identity = resolved_asset.scd_freq_identity
+            # 开关 1 inherit: UXM identity 换源 — 下发记录必 None (没下发过),
+            # 改从仪器 live 读回实际 ARFCN/BW (知情继承); 读不回 (mock / 老
+            # profile 无查询能力 / 查询失败) → None 走"未报告跳过"+ 显式告警,
+            # 操作员知道核对没发生 (不是静默盲信)。
+            if uxm_inherit:
+                uxm_identity = (
+                    await base_station.read_live_frequency_identity()
+                    if hasattr(base_station, "read_live_frequency_identity")
+                    else None
+                )
+                if uxm_identity is None:
+                    logger.warning(
+                        "[%s] 开关1 inherit: 仪器实际频率读不回 (mock/无查询"
+                        "能力/失败) — UXM 频率核对未发生, 继承态未经比对",
+                        context.test_execution.id,
+                    )
+            else:
+                uxm_identity = (
+                    base_station.get_frequency_identity()
+                    if hasattr(base_station, "get_frequency_identity") else None
+                )
             freq_result = check_frequency_consistency(
                 FrequencyIdentity.from_center_freq_mhz(
                     pcell.frequency_hz / 1e6, pcell.bandwidth_mhz
                 ),
                 {
-                    "UXM": base_station.get_frequency_identity()
-                    if hasattr(base_station, "get_frequency_identity") else None,
+                    "UXM": uxm_identity,
                     "F64": emulator.get_frequency_identity()
                     if hasattr(emulator, "get_frequency_identity") else None,
                     # slice 4: SCD 声明 ARFCN 进一致性网 (scd_id 给了才非 None; None 时忽略)

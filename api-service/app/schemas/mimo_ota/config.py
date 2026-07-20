@@ -273,6 +273,24 @@ class MIMOOTAConfiguration(BaseModel):
     # result_payload["dut_pass_reason"]. GUI commissioning workflow does not
     # expose this flag — same opt-in-only contract as precheck_strict_cal.
 
+    uxm_config_mode: Literal["dispatch", "inherit"] = "dispatch"
+    # 开关 1 (2026-07-21 现场): UXM **小区级参数**从哪来。
+    # - "dispatch" (默认, 现行为): measure 主动下发全套小区参数 (set_cell_config
+    #   含 ARFCN/BW/功率/层数) + 驱动回读对账; 频率一致性网用驱动下发记录。
+    # - "inherit": 跳过小区级参数下发 (set_cell_config + SCell), 沿用仪器当前态
+    #   (如 EMQuest 配好的基线)。**知情继承**: 频率一致性网改用
+    #   read_live_frequency_identity() 从仪器读回实际 ARFCN/BW 与 TestCase 声明
+    #   比对, 对不上仍按 precheck_strict_frequency 拦 — 不是盲信。
+    #   ⚠ inherit 仍会写 UXM 的 (门审 F2/F3 披露, 操作员须知):
+    #   ① MAC 吞吐配置 (FULLBUFFER/AMC/MCS/TDD pattern/HARQ/CSI-RS/统计窗);
+    #   ② start_signaling (CELL ON); ③ RRC reconfig 仍按 TestCase 推
+    #   mimo_layers/调制 (小区级层数继承但 RRC 请求层数是 TestCase 的 — 层数
+    #   **未纳入 live 核对**, 见 roadmap backlog); ④ 输入电平闭环会调 UXM DL
+    #   功率; ⑤ 跑完 cleanup 会 stop_signaling (CELL OFF) — 第二次 inherit
+    #   继承的是"上次跑完态"非原始 EMQuest 态。
+    #   用途: 复用现场已实证的仪器态; 也是"ON 态同值写触发意外重配"(#214 门审
+    #   F5 零实证雷) 的现场逃生通道。
+
     precheck_strict_input_level: bool = True
     # P0-8 Step 2 Phase 2b (2026-05-28): F64 输入操作点闭环 (InputLevelController)
     # 在 measure phase 内部、generator 载完 fading 后跑。CE+BS 同时具备 input-level

@@ -59,8 +59,21 @@ class TestDefault3600Profile:
 
 
 class TestDefaultConstant:
-    def test_default_const_points_to_3600_profile(self):
-        assert UXM_DEFAULT_TOPOLOGY_PROFILE_ID == "caict_n78_3600_4x4"
+    def test_default_const_points_to_baseline_profile(self):
+        # 门审 #216 F1 (2026-07-20): 默认切到 EMQuest 基线 profile — 旧
+        # caict_n78_3600_4x4 的 3600/640000/BW100/-50 是文件名标称推出的
+        # stale 值 (工程真值 3549.99 = 636666)
+        assert UXM_DEFAULT_TOPOLOGY_PROFILE_ID == "caict_n78_3550_4x4_baseline"
+
+    def test_baseline_profile_values_match_emquest(self):
+        """基线 profile 三方配套值钉死 (EMQuest prm 破译 + .smu 工程实测)。"""
+        p = _PROFILE_REGISTRY["caict_n78_3550_4x4_baseline"]
+        assert p.arfcn == 636666
+        assert p.frequency_mhz == 3549.99
+        assert p.bandwidth_mhz == 40.0
+        assert p.dl_power_dbm == -46.0
+        cfg = p.to_config_dict()
+        assert cfg.get("arfcn") == 636666
 
     def test_default_const_is_a_real_profile(self):
         # 常量必须指向 registry 里真实存在的 profile (防 typo / 删 profile 后常量悬空)
@@ -92,7 +105,7 @@ class TestFallbackSemantics:
         drv = RealUxmDriver("uxm-test", {})
         binding_id = None  # binding 没选 profile
         resolved = binding_id or getattr(drv, "_default_topology_profile_id", None)
-        assert resolved == "caict_n78_3600_4x4"
+        assert resolved == "caict_n78_3550_4x4_baseline"
 
     def test_binding_profile_takes_priority_over_default(self):
         drv = RealUxmDriver("uxm-test", {})
@@ -107,6 +120,7 @@ class TestExistingProfilesUnchanged:
         p = _PROFILE_REGISTRY["caict_n78_4x4"]
         assert p.frequency_mhz == 3500.0
 
-    def test_registry_has_8_profiles(self):
-        # 7 原有 + 1 新 (caict_n78_3600_4x4)
-        assert len(_PROFILE_REGISTRY) == 8
+    def test_registry_has_9_profiles(self):
+        # 7 原有 + caict_n78_3600_4x4 (P1-17, 历史保留) + caict_n78_3550_4x4_baseline
+        # (门审 #216 F1, 2026-07-20 起系统默认)
+        assert len(_PROFILE_REGISTRY) == 9

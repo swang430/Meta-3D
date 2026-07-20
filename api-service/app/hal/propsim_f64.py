@@ -1879,22 +1879,60 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self,
         ce_port: Optional[str] = None,
         ce_input_port: Optional[str] = None,
+        mode: Optional[int] = None,
     ) -> bool:
-        """[B 路径] 切到 calibration bypass — 全通道等增益等延迟零相位透传.
+        """[B 路径] 切到静态旁路透传. 默认 calibration bypass (STATIC 3).
 
-        实现复用 set_bypass_mode(F64BypassMode.CALIBRATION):
-            DIAG:SIMU:MODEL:STATIC 3   (User Reference §20.4.6.25)
+        实现复用 set_bypass_mode:
+            DIAG:SIMU:MODEL:STATIC <mode>   (User Reference §20.4.6.25)
 
-        在此模式下上游 SG/BSE 注入的 CW 经 CE 原样从所有 output 输出, 配合
-        switch 路由到指定 probe. ce_port / ce_input_port 在 CALIBRATION
-        bypass 下不需要 per-port 配置 (全局透传), 仅记录到状态用于 trace.
+        开关 2 (2026-07-21 现场): mode 可选 1/2/3 (F64BypassMode 非 DISABLED
+        档), 默认 None → CALIBRATION(3)。官方定位 (ATE 实践笔记 p12):
+        BUTLER(2) 相位按 Butler 矩阵排布 "improves diversity so that MIMO
+        links can be established" — attach 后 4 层配置起不来时切 2;
+        CALIBRATION(3) 统一 -10 dB 零相位, 官方给系统校准用 (attach 单层
+        信令两态均实证 CONN, 05-27)。注意 2/1 档电平跟模型平均走, 不是
+        固定 -10 dB。mode=0/非法值 → False (透传不能是"关闭", 走布尔契约)。
+
+        在此模式下上游 SG/BSE 注入的信号经 CE 静态透传输出, 配合 switch
+        路由到指定 probe. ce_port / ce_input_port 在静态旁路下不需要
+        per-port 配置 (全局透传), 仅记录到状态用于 trace.
         """
-        ok = await self.set_bypass_mode(F64BypassMode.CALIBRATION)
+        if mode is None:
+            resolved = F64BypassMode.CALIBRATION
+        else:
+            # 门审 #216 F5: bool 是 int 子类 — mode=True 会静默变 STATIC 1
+            # (模型旁路), API JSON true 同坑; 显式拒绝
+            if isinstance(mode, bool):
+                logger.error(
+                    f"[F64] set_passthrough_mode: mode={mode!r} 是布尔值 "
+                    "(合法 1/2/3 整数) — 拒绝"
+                )
+                self._last_error = f"invalid passthrough mode: {mode!r}"
+                return False
+            try:
+                resolved = F64BypassMode(int(mode))
+            except (ValueError, TypeError):
+                logger.error(
+                    f"[F64] set_passthrough_mode: 非法 mode={mode!r} "
+                    "(合法 1/2/3) — 拒绝"
+                )
+                self._last_error = f"invalid passthrough mode: {mode!r}"
+                return False
+            if resolved == F64BypassMode.DISABLED:
+                logger.error(
+                    "[F64] set_passthrough_mode: mode=0 (DISABLED) 不是透传 — "
+                    "退出透传请用 clear_passthrough_mode()"
+                )
+                self._last_error = "passthrough mode cannot be DISABLED"
+                return False
+        ok = await self.set_bypass_mode(resolved)
         if ok:
             self._passthrough_active = True
             logger.info(
-                "[F64] Passthrough mode ON (out=%s, in=%s, calibration bypass)",
+                "[F64] Passthrough mode ON (out=%s, in=%s, %s bypass STATIC %d)",
                 ce_port or "all", ce_input_port or "all",
+                resolved.name, resolved.value,
             )
         return ok
 

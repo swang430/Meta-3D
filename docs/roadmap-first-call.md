@@ -1860,6 +1860,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 > Items added mid-task. Reviewed weekly; promoted to P1/P2/P3 or dropped.
 
 - `[discovered 2026-07-20 during 出发前门审 F5]` **UXM 幂等捷径生效后剩余写全在小区 ON 态执行 — ON 态同值写 band/duplex 是否触发 UXM 内部重配 (掉 DUT) 真机零实证**。ARFCN/功率有回读对账兜底; band/duplex ON 态被拒 (-221 类) 只进错误队列无对账项即静默。现场若"BW 已同仍重启"按 onsite-plan-20260721 风险⑧②排查; 正修方向 = band/duplex 也纳入幂等预读 (值同跳写) 或对账。TDD 主线 (n78) 幂等已限定 (F3 保守化: 仅 TDD + readback 能力位开才走捷径)。
+- `[discovered 2026-07-20 during 三开关门审 #216]` **开关1 inherit 的"知情继承"只核对频率, 层数盲区**: 小区级层数继承仪器态但 RRC recon 仍按 TestCase 推层, CSI-RS 端口按 TestCase 层数算 — 三方可各不相同; Phase 6 读 UE 能力抓不到 cell 生效层数低于请求。正修方向 = read_live_frequency_identity 扩展读层数 (注意 #114 教训: 配置旋钮回读是 echo, 要找真生效读法) 或 inherit 下强制核对面板。当前缓解 = inherit 日志显式披露"层数未核对"。
+- `[discovered 2026-07-20 during 三开关门审 #216]` **configure_mac_throughput_test 返回值无人消费**: measure 调它不查布尔契约, ON 态写 TDD pattern 被拒 (-221 类) 即静默带旧配置测。正修 = 消费返回值 fail-loud (同 set_cell_config 处理, Codex #195 R5 母题)。
 
 > **Triage history**: 2026-05-17 — promoted 4 active entries to P3
 > slots (P3-6: chamber preset Type-C test reconciliation; P3-7: VSCode

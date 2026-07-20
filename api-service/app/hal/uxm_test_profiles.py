@@ -428,6 +428,56 @@ PROFILE_4X4_N78_3600 = UxmTopologyProfile(
     compatible_test_apps=["5G_NR_Test"],
     notes=(
         "fresh-start 系统默认 (P1-17), 对齐 F64 默认 3600M .smu (arfcn=640000)。\n"
+        "⚠ 2026-07-20 起不再是系统默认 (频率是文件名标称, 工程真值 3549.99 —\n"
+        "见 caict_n78_3550_4x4_baseline); 保留供历史引用。\n"
+        "需要满配 UXM (8 端口)\n"
+        "RF1~RF4 OUT→F64 CH1~CH4→探头\n"
+        "RF6 IN←暗室独立通信天线 (UL)"
+    ),
+)
+
+# ---- 4x4 MIMO @ 3549.99M (EMQuest n78 基线, 2026-07-20 起系统默认) ----
+# 门审 #216 F1: 旧默认 caict_n78_3600_4x4 的 3600/640000/BW100/-50 全是 stale —
+# "3600M" 是 .smu 文件名标称 (会说谎, 2026-07-03 SMB 实测工程真值 3549.99 MHz
+# = ARFCN 636666 = UXM Test App 自带默认 = EMQuest n78 基线, 厂商三方配套)。
+# BW40/-46 = EMQuest 灵敏度基线 (2026-07-20 拍板)。auto-apply 生效场景
+# (5G_NR_Test) 下, 重载驱动即对齐基线而非冲到错值; IRAT 现场不受影响
+# (compatible_test_apps 兼容门拒 apply, 重载不动 UXM 小区 — 07-03 实录佐证)。
+PROFILE_4X4_N78_3550_BASELINE = UxmTopologyProfile(
+    profile_id="caict_n78_3550_4x4_baseline",
+    name="CAICT 暗室 4x4 MIMO (N78 3549.99MHz, EMQuest 基线)",
+    description=(
+        "4x4 MIMO OTA @ 3549.99 MHz (ARFCN 636666) — F64 UMa_3600M 工程真值 / "
+        "UXM Test App 自带默认 / EMQuest n78 基线三方配套 (2026-07-03 实证)。"
+        "BW40 + RS EPRE -46 dBm/SCS = EMQuest 灵敏度基线 (2026-07-20 拍板)。"
+        "P1-17 fresh-start 系统默认。"
+    ),
+    category="mimo",
+    band="N78",
+    frequency_mhz=3549.99,
+    # 636666 = 3549.99 MHz 精确 NR-ARFCN (EMQuest prm 破译 + .smu 工程实测双源)
+    arfcn=636666,
+    bandwidth_mhz=40.0,
+    scs_khz=30,
+    duplex="TDD",
+    mimo_layers=4,
+    mimo_port_preset="4x4",
+    dl_power_dbm=-46.0,
+    ssb_power_dbm=-46.0,
+    modulation="256QAM",
+    target_mcs=28,
+    sched_algo="FULLBUFFER",
+    enable_amc=False,
+    tdd_pattern="DDDSU",
+    tdd_period="5MS",
+    harq_max_trans=4,
+    harq_processes=16,
+    csi_rs_ports=8,
+    stat_count=5000,
+    compatible_test_apps=["5G_NR_Test"],
+    notes=(
+        "系统默认 (P1-17, 2026-07-20 起替代 caict_n78_3600_4x4)。\n"
+        "频率/BW/功率对齐 EMQuest n78 基线 (636666/BW40/-46)。\n"
         "需要满配 UXM (8 端口)\n"
         "RF1~RF4 OUT→F64 CH1~CH4→探头\n"
         "RF6 IN←暗室独立通信天线 (UL)"
@@ -492,7 +542,8 @@ def _register_builtin_profiles() -> None:
         PROFILE_2X2_N78,
         PROFILE_2X2_N41,
         PROFILE_4X4_N78,
-        PROFILE_4X4_N78_3600,   # P1-17: fresh-start 系统默认 (对齐 F64 3600M)
+        PROFILE_4X4_N78_3600,   # 历史保留 (2026-07-20 起非默认, 3600 是文件名标称)
+        PROFILE_4X4_N78_3550_BASELINE,  # P1-17 系统默认 (EMQuest 基线 636666/BW40/-46)
         PROFILE_CAL_POWER,
         PROFILE_CAL_2X2_ALT,
     ]:

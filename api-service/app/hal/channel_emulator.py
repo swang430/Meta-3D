@@ -418,8 +418,12 @@ def normalize_channel_model_entries(entries: Any) -> list[Dict[str, Any]]:
         self,
         ce_port: Optional[str] = None,
         ce_input_port: Optional[str] = None,
+        mode: Optional[int] = None,
     ) -> bool:
         """[B 路径] 把 CE 切到透传模式 (需 PASSTHROUGH_ONLY 能力)。
+
+        mode (开关 2): 静态旁路档位, None=驱动默认 (F64 为 CALIBRATION/3);
+        F64 支持 1/2/3, 其它 CE 实现可忽略。
 
         透传模式下: 上游 SG/BSE 注入 CW → CE 不加 fading / 不加增益, 原样
         从指定 OTA 输出口出来。配合 SG.set_cw + SG.start_tx, 实现 CE+SA
@@ -777,6 +781,7 @@ class MockChannelEmulator(ChannelEmulatorDriver):
         self,
         ce_port: Optional[str] = None,
         ce_input_port: Optional[str] = None,
+        mode: Optional[int] = None,
     ) -> bool:
         """Mock B path — record passthrough state, return True."""
         self._passthrough_active = True
