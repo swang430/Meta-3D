@@ -100,9 +100,17 @@ export function QueueTab() {
   const [newestFirst, setNewestFirst] = useState(true)
   const orderedItems = useMemo(() => {
     const items = queueItems ? [...queueItems] : []
-    // 门审 #218 F2: 服务端排序是 priority.asc + position.asc (非纯 position),
-    // "最新优先" = 服务端序整体倒排 — 判定/显示/执行三方都以服务端序为准
-    if (newestFirst) items.reverse()
+    // Codex #218 P2: 服务端序是 priority.asc + position.asc, 整体倒排在混合
+    // 优先级时首页仍是"最低优先级桶的尾巴"而非最新排队的条目 — "最新优先"
+    // 必须按 queued_at 入队时间倒序 (同时刻并列用 position 倒序兜底)
+    if (newestFirst) {
+      items.sort((a, b) => {
+        const ta = parseServerDateTime(a.queue_item.queued_at).getTime() || 0
+        const tb = parseServerDateTime(b.queue_item.queued_at).getTime() || 0
+        if (tb !== ta) return tb - ta
+        return (b.queue_item.position ?? 0) - (a.queue_item.position ?? 0)
+      })
+    }
     return items
   }, [queueItems, newestFirst])
   // 门审 #218 F2: 队首/队尾判定用服务端返回序的首/尾元素 (与执行语义同源),
