@@ -41,7 +41,7 @@
 | 1 | [ ] | **SCPI 冒烟**(干净 3334 会话):① STOPPED 态重复 `DIAG:SIMU:GOS` ② 无 sim open 态 `GOS` ③ 无 sim open 态 `STATIC 3`,各查 `SYST:ERR?` | GOS/STATIC benign 错误码无干净会话实证([propsim_f64.py:1433](../../api-service/app/hal/propsim_f64.py) 注释)。若报 benign 码:记 discovered,临时逃生 = attach 序列参数 `establish_f64_passthrough=false` |
 | 2 | [ ] | HAL 切 Real + 重载 → 状态三查:UXM 小区(期望 **636666/BW40/-46/ON** = EMQuest 基线态)、F64(`STATIC?`/`STATE?`/工程)、F64 参考(-15/crest12,**面板核**) | UXM 若被外部改动:BW 幂等只对 BW 生效,ARFCN/功率由 run 下发对齐(ms 级即发即效) |
 | 3 | [ ] | F64 直通默认态:纯净加载 UMa 工程(**勿写 CENT**,工程自带 3549.99)→ 直通稳态 = **STOPPED + STATIC 3** | 07-03 实证语义;attach 默认态 |
-| 4 | [ ] | **DUT attach**(-96 RSRP 态续;慢则 UXM EPRE -46→-36 一条命令)→ **记真实 IMSI** | P0-5 gate;IMSI 供脚本 `DUT_IMSI` |
+| 4 | [ ] | **DUT attach**(-96 RSRP 态续;慢则 UXM EPRE -46→-36 一条命令)→ **记真实 IMSI** | P0-5 gate;IMSI 供脚本 `DUT_IMSI`。**F64 状态分支**:默认 STATIC 3(Calibration,-10 dB 等增益零相位,已两次实证);若 CONN 后 4 层配置/数据面起不来 → 切 `DIAG:SIMU:MODEL:STATIC 2`(Butler,官方为建 MIMO 链路设计——ATE AN p12 "improves diversity so that MIMO links can be established";注意电平会从 -10 dB 漂到模型平均)。attach 本身单层信令,两态均实证 CONN(05-27) |
 | 5 | [ ] | ★ 一键吞吐:`DUT_IMSI=<真IMSI> ./scripts/onsite-run-channel-throughput.sh`(默认已 3549990000/BW40/-46/4 方位) | run 内部自动:cell_config(BW 相同免重启,DUT 不掉线)→ F64 加载 + `STATIC 0`+GO(衰落恢复)→ 满业务闭环 AUTOSET → 4 方位吞吐。**判真伪唯一权威 = 驱动模式页 Real + 仪器面板动作**(mock 也出 4 个不同值) |
 | 6 | [ ] | 收工 review 三问 + discovered 回填本文档底部 | 15 min |
 
