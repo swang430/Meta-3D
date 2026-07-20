@@ -273,6 +273,31 @@ class MIMOOTAConfiguration(BaseModel):
     # result_payload["dut_pass_reason"]. GUI commissioning workflow does not
     # expose this flag — same opt-in-only contract as precheck_strict_cal.
 
+    # === 仪表使用参数 (开关 3 块 2, 2026-07-20) — 全部 None = 现行为不变 ===
+    f64_bypass_mode: Optional[int] = Field(default=None, ge=1, le=3)
+    # 非 None = **直通态测量** (无衰落基线): 信道加载后设 STATIC <mode>、不
+    # GO。2=Butler (官方为建 MIMO 链设计, 4x4 基线用它 — Calibration 零相位
+    # 塌秩); 3=Calibration (-10dB 等增益, 单层/校准); 1=模型旁路。None=正常
+    # 衰落回放 (现行为)。注意直通稳态下 F64 输出功率显示冻结 (07-03 实证)。
+
+    f64_input_ref_dbm: Optional[float] = None
+    # 非 None = **手动定标**: 直接 set F64 输入参考 (INP:LEV:AMP × 全输入),
+    # 跳过 AUTOSET 闭环; 读回 (measure_input) 进 input_level_calibration
+    # payload 作反馈。07-03 实证工作点 -15 (crest 12)。None = AUTOSET 闭环
+    # (现行为)。
+
+    f64_crest_db: Optional[float] = None
+    # 手动定标的峰均比 (随 f64_input_ref_dbm 使用; 单独给不生效 — crest 是
+    # 定标的一部分, 不做独立下发路径)。
+
+    f64_output_gain_db: Optional[float] = None
+    # 非 None = 信道加载后对全部输出写 OUTP:GAIN (统一值)。None = 不写。
+
+    input_loop_initial_dl_power_dbm: Optional[float] = None
+    # AUTOSET 闭环的 UXM 起点功率。None = controller 默认 -10 dBm (比 EMQuest
+    # -46 基线热 36 dB, #216 门审 F3 披露); 现场可给温和起点 (如 -46) 免大
+    # 功率起步冲 F64 输入。仅闭环模式消费 (手动定标不涉及)。
+
     uxm_config_mode: Literal["dispatch", "inherit"] = "dispatch"
     # 开关 1 (2026-07-21 现场): UXM **小区级参数**从哪来。
     # - "dispatch" (默认, 现行为): measure 主动下发全套小区参数 (set_cell_config
