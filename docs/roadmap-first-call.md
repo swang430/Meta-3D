@@ -51,6 +51,17 @@ PR（#199 扫欠账 / #202 dry 循环）+ 每轮 findings 新分支修（R1-R5 �
 期间 agent 主审）。P0-3/P0-4 现场验证补标收口（32 链路证书 / TRP ±1dB,见各条目）。P2-18 独立
 排期。本地队列空 —— 下次现场 = **P0-5 attach 正式注册 → ★四方位吞吐**（15 分钟开跑清单就绪）。
 
+**▶ 2026-07-20 出发前准备（次日 2026-07-21 现场）** —— 两 agent 全面核查（现场坑→修复状态
+逐行核实 9/11 已修 + 执行链路默认值三新雷）后收口:① **BW40 拍板**（用户,跟 EMQuest n78
+基线;资产 UMa_3600M 重登记 BW40 三处同步,其余 17 条留待实测）;② **UXM BW 幂等**
+（set_cell_config 预读相同免 OFF→ON 环绕 —— 堵"attach 后每次 run 必掉 DUT"序列雷,mock
+测不出）;③ 脚本对齐（BW_MHZ=40 / TX_POWER_DBM=-46 注入堵 schema 0.0 冲基线 / AZIMUTHS
+环境变量退化预案 / stale 注释）;④ mock 彩排端到端 PASS + 本地 DB 资产真值验证。执行计划
+[`guides/onsite-plan-20260721.md`](guides/onsite-plan-20260721.md)（15 分钟开跑序列 + 风险
+预案 + 机动项含 **★获取 F64 手册**——根因定性: 手头只有 FS16 手册,全部命令形式照 FS16 写,
+CENT/INP:LEV:AMP 回读盲区系手册源错配）。遗留知情项: P1-8 校准 provenance 未修（mock cert
+real 模式假过,吞吐 smoke 不信绝对值可接受）。
+
 P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max / RT→MPC 接入)
 已进 on-site 队列。**原开发的现场验证基线已打 tag** `onsite-verification-baseline-2026-06-21`（留在 main）。
 **下次现场** (校准天线 / SGH / 真 DUT 到位) Current Focus **必须从该 tag 切回依赖链 P0-4 → P0-3 → P0-5**
@@ -1847,6 +1858,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 ## 🗂️ Discovered during X — triage backlog
 
 > Items added mid-task. Reviewed weekly; promoted to P1/P2/P3 or dropped.
+
+- `[discovered 2026-07-20 during 出发前门审 F5]` **UXM 幂等捷径生效后剩余写全在小区 ON 态执行 — ON 态同值写 band/duplex 是否触发 UXM 内部重配 (掉 DUT) 真机零实证**。ARFCN/功率有回读对账兜底; band/duplex ON 态被拒 (-221 类) 只进错误队列无对账项即静默。现场若"BW 已同仍重启"按 onsite-plan-20260721 风险⑧②排查; 正修方向 = band/duplex 也纳入幂等预读 (值同跳写) 或对账。TDD 主线 (n78) 幂等已限定 (F3 保守化: 仅 TDD + readback 能力位开才走捷径)。
 
 > **Triage history**: 2026-05-17 — promoted 4 active entries to P3
 > slots (P3-6: chamber preset Type-C test reconciliation; P3-7: VSCode

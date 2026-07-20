@@ -242,6 +242,143 @@ class TestCellOnOffOrchestration:
         assert not any("ACTive:STATe?" in q for q in queried), queried
 
 
+class TestBwIdempotentSkip:
+    """出发前 2026-07-20: BW 幂等预读 — 当前 BW 已等于目标值则免写免环绕。
+
+    动机: measure 的 cell_cfg 必带 bandwidth_mhz, 无幂等检查则小区 ON 时每次
+    run 都 OFF→配→ON 重启, 已 attach 的 DUT 必掉线一次。
+    """
+
+    @pytest.mark.asyncio
+    async def test_same_bw_skips_wrap_and_write(self, driver_irat):
+        """当前 BW40 == 目标 40 → 不 OFF/ON、不写 BW, 其余参数照发。"""
+        sess, written = wire_echo_visa(
+            driver_irat, cell_active=True, overrides={"DL:BW?": "BW40"}
+        )
+        ok = await driver_irat.set_cell_config({
+            "band": "N78", "bandwidth_mhz": 40, "arfcn": 636666,
+        })
+        assert ok is True
+        # 小区没被环绕重启 (DUT 不掉线的可观测契约)
+        assert not any("ACTive:STATe 0" in w or w.endswith("ACTive:STATe 1")
+                       for w in written), written
+        # BW 写被剔除, 但 ARFCN 等其余参数照发
+        assert not any("DL:BW BW40" in w for w in written), written
+        assert any("DL:ARFCN 636666" in w for w in written), written
+        # 写分支被跳过时缓存仍对齐 (状态一致性)
+        assert driver_irat._bandwidth_mhz == 40
+
+    @pytest.mark.asyncio
+    async def test_different_bw_still_wraps(self, driver_irat):
+        """当前 BW40 ≠ 目标 100 → 原 OFF→配→ON 环绕路径不变。
+
+        仅首次 (幂等预读) 回旧值 BW40, 写后回读对账走正常回显 (读到新写入的
+        BW100) — 避免固定 override 连带触发 P1-19 对账 fail-loud。
+        """
+        sess, written = wire_echo_visa(driver_irat, cell_active=True)
+        orig = sess.query.side_effect
+        hits = {"n": 0}
+
+        def _old_bw_first_query(cmd):
+            if "DL:BW?" in cmd:
+                hits["n"] += 1
+                if hits["n"] == 1:
+                    return "BW40"
+            return orig(cmd)
+
+        sess.query.side_effect = _old_bw_first_query
+        ok = await driver_irat.set_cell_config({"band": "N78", "bandwidth_mhz": 100})
+        assert ok is True
+        off_idx = next(i for i, w in enumerate(written) if w.endswith("ACTive:STATe 0"))
+        bw_idx = next(i for i, w in enumerate(written) if "DL:BW BW100" in w)
+        on_idx = next(i for i, w in enumerate(written) if w.endswith("ACTive:STATe 1"))
+        assert off_idx < bw_idx < on_idx, written
+
+    @pytest.mark.asyncio
+    async def test_unparseable_preread_conservative_wrap(self, driver_irat):
+        """预读回不可解析文本 → 保守走原环绕路径 (不猜)。
+
+        仅首次 (幂等预读) 回 garbage, 写后回读对账走正常回显 — 隔离测预读
+        自身的容错, 不连带触发 P1-19 对账 fail-loud。
+        """
+        sess, written = wire_echo_visa(driver_irat, cell_active=True)
+        orig = sess.query.side_effect
+        hits = {"n": 0}
+
+        def _garbage_first_bw_query(cmd):
+            if "DL:BW?" in cmd:
+                hits["n"] += 1
+                if hits["n"] == 1:
+                    return "garbage"
+            return orig(cmd)
+
+        sess.query.side_effect = _garbage_first_bw_query
+        ok = await driver_irat.set_cell_config({"band": "N78", "bandwidth_mhz": 40})
+        assert ok is True
+        assert any(w.endswith("ACTive:STATe 0") for w in written), written
+        assert any("DL:BW BW40" in w for w in written), written
+
+    @pytest.mark.asyncio
+    async def test_empty_preread_conservative_wrap(self, driver_irat):
+        """预读回空响应 → 保守走原环绕路径。"""
+        _, written = wire_echo_visa(
+            driver_irat, cell_active=True, overrides={"DL:BW?": ""}
+        )
+        ok = await driver_irat.set_cell_config({"band": "N78", "bandwidth_mhz": 40})
+        assert ok is True
+        assert any(w.endswith("ACTive:STATe 0") for w in written), written
+        assert any("DL:BW BW40" in w for w in written), written
+
+    @pytest.mark.asyncio
+    async def test_preread_exception_conservative_wrap(self, driver_irat):
+        """预读抛异常 → 吞掉走原环绕路径, 不向 caller 裸抛。"""
+        sess, written = wire_echo_visa(driver_irat, cell_active=True)
+        orig = sess.query.side_effect
+
+        def _boom_on_bw_query(cmd):
+            if "DL:BW?" in cmd:
+                raise TimeoutError("preread timeout")
+            return orig(cmd)
+
+        sess.query.side_effect = _boom_on_bw_query
+        ok = await driver_irat.set_cell_config({"band": "N78", "bandwidth_mhz": 40})
+        assert ok is True
+        assert any(w.endswith("ACTive:STATe 0") for w in written), written
+        assert any("DL:BW BW40" in w for w in written), written
+
+    @pytest.mark.asyncio
+    async def test_readback_gate_off_skips_preread(self, driver_irat):
+        """门审 F1: readback_verify=False (等价 5G profile 无查询能力) →
+        完全不发预读查询, 直接走原环绕路径 (不白等实证会超时的查询)。"""
+        sess, written = wire_echo_visa(
+            driver_irat, cell_active=True, overrides={"DL:BW?": "BW40"}
+        )
+        ok = await driver_irat.set_cell_config({
+            "band": "N78", "bandwidth_mhz": 40, "readback_verify": False,
+        })
+        assert ok is True
+        queried = [c.args[0] for c in sess.query.call_args_list]
+        assert not any("DL:BW?" in q for q in queried), queried  # 预读没发
+        assert any(w.endswith("ACTive:STATe 0") for w in written), written
+        assert any("DL:BW BW40" in w for w in written), written
+
+    @pytest.mark.asyncio
+    async def test_fdd_band_never_takes_idempotent_shortcut(self, driver_irat):
+        """门审 F3: FDD band 不走幂等捷径 (剔键会连 UL:BW 写一起跳过, 预读只验
+        DL, 判定与下发不同源) — BW 相同也照走 OFF→配→ON, DL+UL 都写。"""
+        sess, written = wire_echo_visa(
+            driver_irat, cell_active=True, overrides={"DL:BW?": "BW40"}
+        )
+        ok = await driver_irat.set_cell_config({
+            "band": "N3", "arfcn": 368500, "bandwidth_mhz": 40, "duplex": "FDD",
+        })
+        assert ok is True  # override "BW40" 与下发 40 一致, 对账过
+        # 关键契约: 捷径没走 (环绕 + DL/UL 写都发生)
+        assert any(w.endswith("ACTive:STATe 0") for w in written), written
+        assert any("DL:BW BW40" in w for w in written), written
+        assert any("UL:BW BW40" in w for w in written), written
+
+
 class TestSsbBaselineAutofill:
     @pytest.mark.asyncio
     async def test_5g_profile_autofills_ssb_on_baseline_hit(self, driver_5g):

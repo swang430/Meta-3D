@@ -10,8 +10,8 @@
 # configuration.channel_asset_id (合并, 不整体覆盖) → run-all。
 #
 # 用法:
-#   ./scripts/onsite-run-channel-throughput.sh                 # 默认: F64 N78 资产 / 3.6GHz / 4 层
-#   ASSET_ID=<uuid> FREQ_HZ=3600000000 LAYERS=4 DURATION_S=10 \
+#   ./scripts/onsite-run-channel-throughput.sh                 # 默认: F64 N78 资产 / 3549.99MHz / BW40 / 4 层
+#   ASSET_ID=<uuid> FREQ_HZ=3549990000 LAYERS=4 DURATION_S=10 \
 #     ./scripts/onsite-run-channel-throughput.sh
 #
 # 真硬件 (Real) 相关环境变量 (Codex #192 P1: 新会话没有本会话的 attach 记录, P1-9 门会拦):
@@ -19,11 +19,18 @@
 #   DUT_MODEL="..."            # 可选, 随 attach 记录
 #   STRICT_DUT=false           # bring-up 旁路 P1-9 DUT 门 (等价暗室首测页 Lab-smoke 开关)
 #   STRICT_CAL=false           # bring-up 旁路 P1-8 校准门
+#   TX_POWER_DBM=-46           # DL 功率 (RS EPRE dBm/SCS), 默认 -46 = EMQuest 基线; 不设会
+#                              # 落 schema 默认 0.0 → measure 写 DL:POWer 0 冲掉现场基线 (热 46 dB)
+#   AZIMUTHS=0,90,180,270      # 方位角列表; 转台断连退化预案 = AZIMUTHS=0,0,0,0 (同方位 4 个
+#                              # 测量窗; 注意 AZIMUTHS=0 只测 1 次)
+#   BW_MHZ=<M>                 # 显式带宽; 缺省从资产 scd_config.bandwidth_mhz 推导 (保持与
+#                              # 资产声明一致), 推导不到 fallback 40
 #   mock 模式两门自动降级 (strict = flag AND hardware_real), 不需要以上任何变量。
 #
 # 前置 (现场):
 #   - 仪器资源配置页驱动模式已切 Real + 重新加载驱动 (mock 彩排则保持 Mock);
-#   - TestCase 频率必须与资产声明一致 (F64 N78 资产 = arfcn 640000 = 3600 MHz),
+#   - TestCase 频率必须与资产声明一致 (F64 N78 UMa 资产 = arfcn 636666 = 3549.99 MHz,
+#     2026-07-03 SMB 实测工程真值; 文件名 3600M 是标称会说谎),
 #     不一致 P2-11 频率一致性网在真硬件下 fail-loud。
 set -euo pipefail
 
@@ -33,7 +40,14 @@ ASSET_ID="${ASSET_ID:-b328d53a-edfa-40a0-81e1-5efc759bcc5a}"  # UMa 3600M 场景
 # 自带默认 —— 厂商配套基线, UXM 免手工改频)。资产 scd 声明已按真值修正 (文件名 3600M 是
 # 标称, 会说谎), TestCase 频率必须同真值, 否则 P2-11 频率一致性网 fail-loud。
 FREQ_HZ="${FREQ_HZ:-3549990000}"
-BW_MHZ="${BW_MHZ:-100}"
+# 2026-07-20 拍板: 吞吐 BW 跟 EMQuest 基线 40 (UXM 现场态即 BW40, 免改免小区重启;
+# 资产 UMa_3600M scd 声明同步改 40)。未显式传时从资产 scd_config.bandwidth_mhz
+# 推导 (门审 F2: 一致性网只比 TestCase vs 资产, UXM 下发侧无 BW 比对 — 换 ASSET_ID
+# 覆盖跑时靠推导保持与资产声明一致, 不靠人记得同步传 BW_MHZ), 推导不到 fallback 40。
+BW_MHZ="${BW_MHZ:-}"
+# EMQuest 基线 RS EPRE -46 dBm/SCS; schema 默认 0.0 会冲掉现场基线 (agent 核查 B 项)
+TX_POWER_DBM="${TX_POWER_DBM:--46}"
+AZIMUTHS="${AZIMUTHS:-0,90,180,270}"
 BAND="${BAND:-}"      # 2026-07-03 现场实证: 单载波自动构造 band=None → 驱动 set_cell_config
                       # None.upper() 崩且 ARFCN 不下发; 显式给 band 是零代码修法 (r5 验证)。
                       # 未显式传时从资产 scd_config.band 推导 (Codex #193 P2: 固定 n78 会让
@@ -63,6 +77,23 @@ PY
 )
 echo "  期望 measure 引擎: $EXPECTED_ENGINE"
 
+# BW 未显式传 → 从资产 scd_config.bandwidth_mhz 推导 (门审 F2, 与 BAND 推导同构)
+if [ -z "$BW_MHZ" ]; then
+  BW_MHZ=$(python3 - "$ASSET_JSON" <<'PY'
+import sys, json
+a = json.loads(sys.argv[1])
+bw = ((a.get('payload') or {}).get('scd_config') or {}).get('bandwidth_mhz')
+print(int(bw) if bw else '')
+PY
+)
+  if [ -n "$BW_MHZ" ]; then
+    echo "  BW 从资产推导: ${BW_MHZ}M"
+  else
+    BW_MHZ=40
+    echo "  ⚠ 资产无 scd bandwidth_mhz, fallback 40 — 请确认与 UXM/资产一致"
+  fi
+fi
+
 # BAND 未显式传 → 从资产 scd_config.band 推导 (Codex #193 P2); FR1 泛化不是合法 NR band
 # 名 (722/836.5/1575.42/2450 等无准确 DL band 的登记值), 视同无 band。
 if [ -z "$BAND" ]; then
@@ -87,7 +118,7 @@ import sys, json
 d = json.load(sys.stdin)
 print(','.join(c['id'] for c in (d.get('items') or [])))")
 
-say "3/6 创建 MIMO_OTA 会话 (freq=${FREQ_HZ}Hz bw=${BW_MHZ}M layers=${LAYERS})"
+say "3/6 创建 MIMO_OTA 会话 (freq=${FREQ_HZ}Hz bw=${BW_MHZ}M layers=${LAYERS} az=[${AZIMUTHS}])"
 EXTRA_FLAGS=""
 [ "${STRICT_DUT:-}" = "false" ] && EXTRA_FLAGS+=', "precheck_strict_dut": false' && echo "  ⚠ bring-up 旁路: precheck_strict_dut=false"
 [ "${STRICT_CAL:-}" = "false" ] && EXTRA_FLAGS+=', "precheck_strict_cal": false' && echo "  ⚠ bring-up 旁路: precheck_strict_cal=false"
@@ -95,7 +126,7 @@ SESSION_ID=$(curl -sf -X POST "$API/commissioning/sessions" -H "Content-Type: ap
   \"frequency_hz\": $FREQ_HZ,
   \"bandwidth_mhz\": $BW_MHZ,
   \"mimo_layers\": $LAYERS,
-  \"azimuths_deg\": [0, 90, 180, 270],
+  \"azimuths_deg\": [$AZIMUTHS],
   \"measurement_duration_s\": $DURATION_S$EXTRA_FLAGS
 }" | python3 -c "import sys,json; print(json.load(sys.stdin)['session_id'])")
 echo "  session_id = $SESSION_ID"
@@ -121,6 +152,9 @@ cfg['channel_asset_id'] = '$ASSET_ID'
 # band 显式进单载波 (否则 pcell.band=None → UXM set_cell_config None.upper() 崩, ARFCN 不下发)
 cfg['component_carriers'] = [{'frequency_hz': float('$FREQ_HZ'), 'bandwidth_mhz': float('$BW_MHZ'),
                               'band': '$BAND', 'role': 'pcell'}]
+# DL 功率 (RS EPRE): 不注入会落 schema 默认 0.0 → measure 无条件写 DL:POWer 0 冲掉
+# EMQuest -46 基线 (热 46 dB, F64 输入 clipping 风险) — 2026-07-20 agent 核查 B 项
+cfg['target_tx_power_dbm'] = float('$TX_POWER_DBM')
 json.dump({'configuration': cfg}, sys.stdout)" > /tmp/onsite_patch_$$.json
 curl -sf -X PATCH "$API/test-plans/cases/$TC_ID" -H "Content-Type: application/json" \
   -d @/tmp/onsite_patch_$$.json > /dev/null

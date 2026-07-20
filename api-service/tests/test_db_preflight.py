@@ -6,9 +6,28 @@ preflight_database 在 lifespan 里 init_db 之前跑: 连不上 DB 时打一条
 """
 import logging
 
+import pytest
 from sqlalchemy import create_engine
 
 from app.db.database import preflight_database, _mask_db_url
+
+
+@pytest.fixture(autouse=True)
+def _revive_db_logger():
+    """全量顺序护栏: in-process alembic (fileConfig disable_existing_loggers=True)
+    会永久禁用已导入的 logger → caplog 拿不到 emit, 本文件的 banner 断言在全量
+    顺序下 flaky (单跑绿)。复位 .disabled 并在测后还原。
+    (memory: feedback_test_logger_emit_alembic_pollution, #211 轮同修法)
+
+    注意复位对象 = 生产模块的 **logger 实例本身** (name 实为 "app.db", 非模块
+    路径推断的 "app.db.database" — 按名字猜复位对象曾漏, 清 stale 要钉真实
+    emit 端, memory: feedback_clear_stale_state_enumerate_all_sources)。"""
+    import app.db.database as dbmod
+    lg = dbmod.logger
+    prev = lg.disabled
+    lg.disabled = False
+    yield
+    lg.disabled = prev
 
 
 def _reachable_engine():

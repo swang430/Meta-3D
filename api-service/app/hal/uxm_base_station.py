@@ -758,6 +758,60 @@ class RealUxmDriver(BaseStationDriver):
         try:
             # (Codex #195 P2: 探测与 OFF 写必须在 try 内 —— OFF 写失败也要走
             # 布尔契约 return False, 不能向 HAL caller 裸抛。)
+
+            # 出发前 2026-07-20 (BW40 拍板配套): BW 幂等预读 —— 当前生效 BW 已
+            # 等于目标值则剔除 bandwidth_mhz 键 (免 BW 写 + 免下方 OFF→配→ON
+            # 环绕)。动机: measure 的 cell_cfg 必带 bandwidth_mhz, 无此检查则
+            # 小区 ON 时每次 run 都环绕重启, 已 attach 的 DUT 必掉线一次;
+            # 重连慢则输入电平闭环在无业务态定标 (07-03 "SSB 态 AUTOSET 钉低
+            # 参考 → 满业务 clipping" 大忌)。回读失败 / 无查询模板 / 空 /
+            # 不可解析 → 保守保留键走原环绕路径, 不猜。归一化与解析逻辑同
+            # _readback_verify 的 BW 段 ("BW40"→40)。
+            # 门审 F1 (P2): 预读同 _readback_verify 受 SUPPORTS_CONFIG_READBACK
+            # 守门 —— 5G_NR_Test profile 实证配置查询超时 (2026-05-27), 不 gate
+            # 会每次白等一次 timeout 且迟到应答会错位后续查询 (07-03 连锁教训)。
+            # 门审 F3 (P3 保守化): 仅 TDD 才走幂等捷径 —— FDD 下剔键会连 UL:BW
+            # 写一起跳过, 而预读只验了 DL (判定与下发不同源); duplex 判定不出
+            # (config 无 + band 基线无) 也不走捷径, 保持原环绕。
+            _preread_on = config.get(
+                "readback_verify",
+                getattr(self._cmds, "SUPPORTS_CONFIG_READBACK", False),
+            )
+            _duplex_for_preread = (
+                config.get("duplex")
+                or (get_band_baseline(config.get("band")) or {}).get("duplex")
+                or ""
+            ).upper()
+            if (
+                "bandwidth_mhz" in config
+                and _preread_on
+                and _duplex_for_preread == "TDD"
+            ):
+                bw_q = self._cmd("CELL_DL_BW", cell=cell)
+                if bw_q is not None:
+                    try:
+                        resp = (self._query(bw_q.rstrip("?") + "?") or "").strip()
+                        norm = (
+                            resp.upper().lstrip("BW")
+                            if resp.upper().startswith("BW") else resp
+                        )
+                        if norm and int(float(norm)) == int(config["bandwidth_mhz"]):
+                            # 写分支 (段 3) 被跳过, 其缓存赋值在此补齐
+                            self._bandwidth_mhz = config["bandwidth_mhz"]
+                            config = {
+                                k: v for k, v in config.items()
+                                if k != "bandwidth_mhz"
+                            }
+                            logger.info(
+                                f"[UXM] BW 已是 {int(self._bandwidth_mhz)} MHz"
+                                " — 幂等跳过 BW 写与 OFF/ON 环绕 (DUT 不掉线)"
+                            )
+                    except Exception as e:  # noqa: BLE001
+                        logger.debug(
+                            f"[UXM] BW 幂等预读异常 ({type(e).__name__}) — "
+                            "走原环绕路径"
+                        )
+
             if "bandwidth_mhz" in config:
                 state_q = self._cmd("CELL_STATE_QUERY", cell=cell)
                 if state_q is not None:
