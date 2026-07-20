@@ -172,8 +172,11 @@ export const duplicateTestStep = async (
  * Get the test execution queue
  */
 export const getTestQueue = async (): Promise<TestQueueSummary[]> => {
+  // 2026-07-20: 不传 limit 时后端默认只回 100 条 — 新排队条目在第 101+ 位
+  // 被静默截断 ("找不到最新排队条目"根因之一)。拉满后端上限, 分页在前端做。
   const response = await client.get<{ items: TestQueueSummary[] }>(
     '/test-plans/queue',
+    { params: { limit: 1000 } },
   )
   return response.data.items
 }
