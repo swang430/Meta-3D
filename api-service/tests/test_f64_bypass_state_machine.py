@@ -241,3 +241,66 @@ class TestStaticPlaybackMutex:
         assert await drv.start_emulation() is True        # 自动 STATIC 0 + GO
         w = _writes(visa)
         assert w[:2] == ["DIAG:SIMU:MODEL:STATIC 0", "DIAG:SIMU:GO"], w
+
+
+class TestPassthroughModeSwitch:
+    """开关 2 (2026-07-21 现场): set_passthrough_mode 的 mode 参数化。
+
+    3=CALIBRATION 默认 (07-03 -96 RSRP 实证) / 2=BUTLER (官方为建 MIMO 链
+    设计, ATE AN p12) / 1=CHANNEL_MODEL; 0/非法 → False (透传不能是"关闭")。
+    """
+
+    async def test_default_mode_is_calibration_static3(self):
+        drv, visa = _make_driver()
+        drv._loaded_emulation_file = "X.smu"
+        assert await drv.set_passthrough_mode() is True
+        assert "DIAG:SIMU:MODEL:STATIC 3" in _writes(visa)
+        assert drv._passthrough_active is True
+
+    async def test_butler_mode_writes_static2(self):
+        drv, visa = _make_driver()
+        drv._loaded_emulation_file = "X.smu"
+        assert await drv.set_passthrough_mode(mode=2) is True
+        w = _writes(visa)
+        assert "DIAG:SIMU:MODEL:STATIC 2" in w, w
+        assert not any("STATIC 3" in c for c in w), w
+        assert drv._passthrough_active is True
+
+    async def test_channel_model_mode_writes_static1(self):
+        drv, visa = _make_driver()
+        drv._loaded_emulation_file = "X.smu"
+        assert await drv.set_passthrough_mode(mode=1) is True
+        assert "DIAG:SIMU:MODEL:STATIC 1" in _writes(visa)
+
+    async def test_mode_zero_rejected_no_write(self):
+        """mode=0 (DISABLED) 不是透传 — 拒绝且不发任何 STATIC 写。"""
+        drv, visa = _make_driver()
+        drv._loaded_emulation_file = "X.smu"
+        assert await drv.set_passthrough_mode(mode=0) is False
+        assert not any("STATIC" in c for c in _writes(visa)), _writes(visa)
+        assert drv._passthrough_active is False
+
+    async def test_invalid_mode_rejected_no_write(self):
+        drv, visa = _make_driver()
+        drv._loaded_emulation_file = "X.smu"
+        assert await drv.set_passthrough_mode(mode="garbage") is False
+        assert not any("STATIC" in c for c in _writes(visa)), _writes(visa)
+
+    async def test_butler_then_go_clears_bypass(self):
+        """Butler 直通后 GO 同样自动清直通 (GO 前清逻辑对任意非 0 档生效)。"""
+        drv, visa = _make_driver()
+        drv._loaded_emulation_file = "X.smu"
+        drv._emulation_running = True
+        assert await drv.set_passthrough_mode(mode=2) is True
+        assert drv._emulation_running is False  # 运行态切静态自动 STOPPED
+        visa.write.reset_mock()
+        assert await drv.start_emulation() is True
+        w = _writes(visa)
+        assert w[:2] == ["DIAG:SIMU:MODEL:STATIC 0", "DIAG:SIMU:GO"], w
+
+    async def test_bool_mode_rejected(self):
+        """门审 #216 F5: bool 是 int 子类 — mode=True 不得静默变 STATIC 1。"""
+        drv, visa = _make_driver()
+        drv._loaded_emulation_file = "X.smu"
+        assert await drv.set_passthrough_mode(mode=True) is False
+        assert not any("STATIC" in c for c in _writes(visa)), _writes(visa)

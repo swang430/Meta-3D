@@ -835,3 +835,46 @@ class TestApplyTopologyProfileConsumesCellConfig:
         )
         result = await driver_5g.apply_topology_profile(self._any_profile())
         assert result["applied"] is True
+
+
+class TestReadLiveFrequencyIdentity:
+    """开关 1 (uxm_config_mode=inherit) 知情继承核对源: 从仪器读回实际
+    ARFCN/BW 构造频率标识 (非下发记录)。"""
+
+    @pytest.mark.asyncio
+    async def test_reads_back_live_identity(self, driver_irat):
+        """仪器当前态 (回显预写值) → 正确 identity, 与下发记录无关。"""
+        _, written = wire_echo_visa(driver_irat)
+        # 预写仪器态 (模拟 EMQuest 配的基线), 但不经 set_cell_config —
+        # 下发记录保持冷 (get_frequency_identity 为 None)
+        driver_irat._visa_session.write("BSE:CONFig:NR5G:CELL1:DL:ARFCN 636666")
+        driver_irat._visa_session.write("BSE:CONFig:NR5G:CELL1:DL:BW BW40")
+        assert driver_irat.get_frequency_identity() is None  # 下发记录冷
+        ident = await driver_irat.read_live_frequency_identity()
+        assert ident is not None
+        assert ident.center_arfcn == 636666
+        assert ident.bandwidth_mhz == 40.0
+
+    @pytest.mark.asyncio
+    async def test_readback_gate_off_returns_none(self, driver_5g):
+        """5G_NR_Test profile (SUPPORTS_CONFIG_READBACK=False, 查询实证超时)
+        → 不发查询直接 None。"""
+        sess, _ = wire_echo_visa(driver_5g)
+        assert await driver_5g.read_live_frequency_identity() is None
+        queried = [c.args[0] for c in sess.query.call_args_list]
+        assert not any("ARFCN" in q or "BW?" in q for q in queried), queried
+
+    @pytest.mark.asyncio
+    async def test_query_failure_returns_none(self, driver_irat):
+        """查询抛异常 → None, 不裸抛 (一致性网按未报告跳过)。"""
+        sess, _ = wire_echo_visa(driver_irat)
+        sess.query.side_effect = TimeoutError("dead")
+        assert await driver_irat.read_live_frequency_identity() is None
+
+    @pytest.mark.asyncio
+    async def test_empty_response_returns_none(self, driver_irat):
+        """仪器回空 (未配置态) → None。"""
+        _, _ = wire_echo_visa(
+            driver_irat, overrides={"DL:ARFCN?": "", "DL:BW?": ""}
+        )
+        assert await driver_irat.read_live_frequency_identity() is None

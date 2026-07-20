@@ -45,6 +45,10 @@ metadata = SequenceMetadata(
         {"name": "attach_timeout_s", "label": "Attach 等待 (秒)", "type": "number", "default": 15},
         {"name": "establish_f64_passthrough", "label": "F64 直通预备 (attach 默认态)",
          "type": "boolean", "default": True},
+        # 开关 2: 3=Calibration (默认, -10dB 零相位, 07-03 -96 RSRP 实证) /
+        # 2=Butler (官方为建 MIMO 链设计, 4 层配置起不来时切) / 1=模型旁路
+        {"name": "f64_bypass_mode", "label": "F64 直通模式 (3=校准/2=Butler/1=模型)",
+         "type": "number", "default": 3},
     ],
     safe_during_test=False,
 )
@@ -167,8 +171,13 @@ async def run(
                 ))
                 log("  · F64 passthrough skipped (CE lacks static-passthrough capability)")
             else:
+                # 开关 2: 直通模式参数化 (3=Calibration 默认 / 2=Butler / 1=模型)
+                bypass_mode = int(params.get("f64_bypass_mode", 3))
                 await _step("F64 stop_emulation (直通稳态前置)", ce.stop_emulation())
-                await _step("F64 passthrough (STATIC 3)", ce.set_passthrough_mode())
+                await _step(
+                    f"F64 passthrough (STATIC {bypass_mode})",
+                    ce.set_passthrough_mode(mode=bypass_mode),
+                )
 
         # agent R6 F2: 频率显式换算 ARFCN (与 measure 链同模式) — driver 的
         # frequency_mhz 只用于 band 推断不换算频点, 不传 arfcn 会落到 band

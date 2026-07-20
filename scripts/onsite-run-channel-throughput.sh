@@ -25,6 +25,8 @@
 #                              # 测量窗; 注意 AZIMUTHS=0 只测 1 次)
 #   BW_MHZ=<M>                 # 显式带宽; 缺省从资产 scd_config.bandwidth_mhz 推导 (保持与
 #                              # 资产声明一致), 推导不到 fallback 40
+#   UXM_CONFIG_MODE=inherit    # 开关1: UXM 小区参数不下发, 沿用仪器当前态 (如 EMQuest 基线),
+#                              # 频率核对改从仪器读回比对 (知情继承); 默认 dispatch=主动下发+对账
 #   mock 模式两门自动降级 (strict = flag AND hardware_real), 不需要以上任何变量。
 #
 # 前置 (现场):
@@ -155,6 +157,13 @@ cfg['component_carriers'] = [{'frequency_hz': float('$FREQ_HZ'), 'bandwidth_mhz'
 # DL 功率 (RS EPRE): 不注入会落 schema 默认 0.0 → measure 无条件写 DL:POWer 0 冲掉
 # EMQuest -46 基线 (热 46 dB, F64 输入 clipping 风险) — 2026-07-20 agent 核查 B 项
 cfg['target_tx_power_dbm'] = float('$TX_POWER_DBM')
+# 开关1: UXM 配置来源 (dispatch=下发+对账 / inherit=沿用仪器态+读回核对)
+mode = '${UXM_CONFIG_MODE:-}'.strip()
+if mode:
+    if mode not in ('dispatch', 'inherit'):
+        print(f'非法 UXM_CONFIG_MODE={mode!r} (合法 dispatch/inherit)', file=sys.stderr)
+        sys.exit(5)
+    cfg['uxm_config_mode'] = mode
 json.dump({'configuration': cfg}, sys.stdout)" > /tmp/onsite_patch_$$.json
 curl -sf -X PATCH "$API/test-plans/cases/$TC_ID" -H "Content-Type: application/json" \
   -d @/tmp/onsite_patch_$$.json > /dev/null

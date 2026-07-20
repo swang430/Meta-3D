@@ -106,8 +106,10 @@ def _seed(db: Session) -> SeedResult:
 
 topology_profiles_seeder = Seeder(
     name="topology_profiles",
-    version=2,  # P1-17: +caict_n78_3600_4x4 (fresh-start 默认, 对齐 F64 3600M)
-    description="8 canonical UXM topology profiles (SISO/MIMO/calibration + "
-                "3600M fresh-start default) marked is_system_preset=true",
+    version=3,  # 门审 #216 F1: +caict_n78_3550_4x4_baseline (EMQuest 基线新默认;
+                # 旧 3600 profile 保留历史; seeder 对已存在行 skip, 新 id 走 insert)
+    description="9 canonical UXM topology profiles (SISO/MIMO/calibration + "
+                "3549.99M EMQuest-baseline fresh-start default) marked "
+                "is_system_preset=true",
     run=_seed,
 )

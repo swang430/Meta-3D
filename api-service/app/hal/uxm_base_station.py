@@ -96,7 +96,11 @@ VISA_TIMEOUT_STATE_LOAD = 60000  # 配置文件加载可能需要较长时间
 # 对称 F64_DEFAULT_EMULATION_FILE。操作员可经
 # connection_params["default_topology_profile_id"] 覆盖。
 # ⚠️ 必须跟 F64 默认 .smu 同频 (3600M) — 否则 BS 发 3600 而 CE 在另一频 = 链路打架。
-UXM_DEFAULT_TOPOLOGY_PROFILE_ID = "caict_n78_3600_4x4"
+# 门审 #216 F1: 2026-07-20 起指向 EMQuest 基线 profile (636666/BW40/-46) —
+# 旧默认 caict_n78_3600_4x4 的 3600/640000/BW100/-50 是 .smu 文件名标称推出
+# 的 stale 值 (工程真值 3549.99)。auto-apply 生效场景 (5G_NR_Test) 重载即对
+# 齐基线; IRAT 被 profile 兼容门拒 apply, 重载不动 UXM 小区 (07-03 实录)。
+UXM_DEFAULT_TOPOLOGY_PROFILE_ID = "caict_n78_3550_4x4_baseline"
 
 # 默认 ARFCN 映射 (NR 频段 → ARFCN)
 NR_BAND_ARFCN_MAP = {
@@ -528,6 +532,44 @@ class RealUxmDriver(BaseStationDriver):
         return FrequencyIdentity(
             center_arfcn=self._arfcn, bandwidth_mhz=self._bandwidth_mhz
         )
+
+    async def read_live_frequency_identity(self):
+        """开关 1 (uxm_config_mode=inherit) 的知情继承核对源: 从仪器**读回**
+        当前实际 ARFCN + BW 构造频率标识 — 不是下发记录 (继承模式没下发,
+        get_frequency_identity 必 None), 是仪器真实生效态。
+
+        受 SUPPORTS_CONFIG_READBACK 守门 (5G_NR_Test 配置查询实证超时,
+        2026-05-27); 查询失败 / 空 / 不可解析 → None (一致性网按"未报告
+        跳过"处理, measure 侧对 inherit + None 另行告警)。归一化同
+        _readback_verify ("BW40"→40)。
+        """
+        if not getattr(self._cmds, "SUPPORTS_CONFIG_READBACK", False):
+            return None
+        cell = self._cell_id
+        try:
+            arfcn_q = self._cmd("CELL_DL_ARFCN", cell=cell)
+            bw_q = self._cmd("CELL_DL_BW", cell=cell)
+            if arfcn_q is None or bw_q is None:
+                return None
+            arfcn_resp = (self._query(arfcn_q.rstrip("?") + "?") or "").strip()
+            bw_resp = (self._query(bw_q.rstrip("?") + "?") or "").strip()
+            bw_norm = (
+                bw_resp.upper().lstrip("BW")
+                if bw_resp.upper().startswith("BW") else bw_resp
+            )
+            if not arfcn_resp or not bw_norm:
+                return None
+            from app.hal.nr_arfcn import FrequencyIdentity
+            return FrequencyIdentity(
+                center_arfcn=int(float(arfcn_resp)),
+                bandwidth_mhz=float(int(float(bw_norm))),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"[UXM] read_live_frequency_identity 失败 ({type(e).__name__})"
+                " — 继承模式无法核对仪器实际频率"
+            )
+            return None
 
     async def get_applied_cell_config(self) -> Optional[AppliedCellConfig]:
         """P2-11 Phase 6: 读 UXM/UE **实际能用**的 cell config, 供 measure 做下发后一致性

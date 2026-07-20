@@ -441,6 +441,33 @@ class TestRunSequence:
         assert any("passthrough" in lbl.lower() for lbl in labels), labels
         ce.stop_emulation.assert_awaited_once()
         ce.set_passthrough_mode.assert_awaited_once()
+        # 开关 2 默认档: 不传参数时 mode=3 (CALIBRATION) 透传到驱动
+        assert ce.set_passthrough_mode.await_args.kwargs.get("mode") == 3
+
+    def test_attach_check_bypass_mode_param_forwarded(
+        self, db, lab_with_bs_and_ce, monkeypatch
+    ):
+        """开关 2 (门审 #216 F6): f64_bypass_mode 参数经序列透传到驱动 —
+        拨 2 (Butler) 时驱动收到 mode=2, step label 显示实际档位。"""
+        bs = self._happy_bs()
+        ce = MagicMock()
+        ce.SUPPORTS_STATIC_PASSTHROUGH = True
+        ce.stop_emulation = AsyncMock(return_value=True)
+        ce.set_passthrough_mode = AsyncMock(return_value=True)
+        _patched_hal(monkeypatch, drivers={"baseStation": bs, "channelEmulator": ce})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/baseStation_attach_check/run",
+            json={
+                "lab_profile_id": str(lab_with_bs_and_ce.id),
+                "params": {"attach_timeout_s": 2, "f64_bypass_mode": 2},
+            },
+        )
+        body = resp.json()
+        assert body["success"] is True
+        assert ce.set_passthrough_mode.await_args.kwargs.get("mode") == 2
+        labels = [s["label"] for s in body["steps"]]
+        assert any("STATIC 2" in lbl for lbl in labels), labels
 
     def test_attach_check_passthrough_skipped_without_ce(self, db, lab_with_bs, monkeypatch):
         """无 CE (线缆直连场景) → 跳过 step 记录, 序列继续。"""
