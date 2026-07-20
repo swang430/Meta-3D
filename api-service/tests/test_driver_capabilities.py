@@ -15,6 +15,7 @@ contract that P1-1 will consume:
 """
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -27,6 +28,21 @@ from app.hal.capabilities import (
     POS_SINGLE_AXIS_AZ,
 )
 from app.hal.propsim_f64 import RealPropsimF64Driver
+
+
+@pytest.fixture(autouse=True)
+def _revive_hal_logger():
+    """全量顺序护栏: in-process alembic (fileConfig disable_existing_loggers=True)
+    会永久禁用已导入的 logger → caplog 拿不到 emit, non-canonical warning 断言
+    在全量顺序下 flaky (单跑绿)。复位 .disabled 并在测后还原。
+    钉生产模块的 logger **实例** (不按名字猜 — database.py 曾硬编码父级名让按名
+    复位落空; memory: feedback_test_logger_emit_alembic_pollution)。"""
+    import app.hal.base as halmod
+    lg = halmod.logger
+    prev = lg.disabled
+    lg.disabled = False
+    yield
+    lg.disabled = prev
 
 
 # ---------------------------------------------------------------------------

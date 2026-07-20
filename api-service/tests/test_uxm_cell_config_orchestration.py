@@ -242,6 +242,190 @@ class TestCellOnOffOrchestration:
         assert not any("ACTive:STATe?" in q for q in queried), queried
 
 
+class TestBwIdempotentSkip:
+    """出发前 2026-07-20: BW 同值免重启 — 当前 BW 已等于目标值且载波身份
+    未变 (Codex #214 P2) 则免 BW 写免 OFF→ON 环绕。
+
+    动机: measure 的 cell_cfg 必带 bandwidth_mhz, 无此检查则小区 ON 时每次
+    run 都 OFF→配→ON 重启, 已 attach 的 DUT 必掉线一次。
+    """
+
+    async def _warm_carrier(self, driver, written, band="N78", arfcn=636666,
+                            bw=40, duplex=None):
+        """预热载波记录 (Codex #214 P2: 捷径要求 band/ARFCN 与上次下发一致;
+        记录冷 = 重载后首跑, 保守走环绕)。预热调用自身走环绕 (记录冷)。
+        返回预热结束时 written 的长度 — 断言段用 written[idx:] 只看目标调用
+        的 wire 行为 (不能 clear: written 同时是回显 fake 的数据源, 清了
+        预读就读不到预热写入的 BW)。"""
+        cfg = {"band": band, "arfcn": arfcn, "bandwidth_mhz": bw}
+        if duplex:
+            cfg["duplex"] = duplex
+        assert await driver.set_cell_config(cfg) is True
+        return len(written)
+
+    @pytest.mark.asyncio
+    async def test_same_bw_same_carrier_skips_wrap_and_write(self, driver_irat):
+        """当前 BW40 == 目标 40 且载波未变 → 不 OFF/ON、不写 BW, 其余照发。"""
+        sess, written = wire_echo_visa(driver_irat, cell_active=True)
+        idx = await self._warm_carrier(driver_irat, written)  # 回显此后回 BW40
+        ok = await driver_irat.set_cell_config({
+            "band": "N78", "bandwidth_mhz": 40, "arfcn": 636666,
+        })
+        assert ok is True
+        tail = written[idx:]
+        # 小区没被环绕重启 (DUT 不掉线的可观测契约)
+        assert not any("ACTive:STATe 0" in w or w.endswith("ACTive:STATe 1")
+                       for w in tail), tail
+        # BW 写被剔除, 但 ARFCN 等其余参数照发
+        assert not any("DL:BW BW40" in w for w in tail), tail
+        assert any("DL:ARFCN 636666" in w for w in tail), tail
+        # 写分支被跳过时缓存仍对齐 (状态一致性)
+        assert driver_irat._bandwidth_mhz == 40
+
+    @pytest.mark.asyncio
+    async def test_cold_carrier_record_no_shortcut(self, driver_irat):
+        """载波记录冷 (重载后首跑, _band=None) → 即使 BW 相同也保守走环绕。"""
+        _, written = wire_echo_visa(
+            driver_irat, cell_active=True, overrides={"DL:BW?": "BW40"}
+        )
+        ok = await driver_irat.set_cell_config({
+            "band": "N78", "bandwidth_mhz": 40, "arfcn": 636666,
+        })
+        assert ok is True
+        assert any(w.endswith("ACTive:STATe 0") for w in written), written
+        assert any("DL:BW BW40" in w for w in written), written
+
+    @pytest.mark.asyncio
+    async def test_carrier_change_same_bw_still_wraps(self, driver_irat):
+        """Codex #214 P2: 同 BW 但换载波 (N78/636666 → N41/518598, 都 TDD
+        BW40) → 不走捷径, 环绕 + BW 写照常 (换 band 可能复位 BW, 必须重写)。"""
+        sess, written = wire_echo_visa(driver_irat, cell_active=True)
+        idx = await self._warm_carrier(driver_irat, written)
+        ok = await driver_irat.set_cell_config({
+            "band": "N41", "bandwidth_mhz": 40, "arfcn": 518598,
+        })
+        assert ok is True
+        tail = written[idx:]
+        assert any(w.endswith("ACTive:STATe 0") for w in tail), tail
+        assert any("DL:BW BW40" in w for w in tail), tail
+        assert any("DL:ARFCN 518598" in w for w in tail), tail
+
+    @pytest.mark.asyncio
+    async def test_different_bw_still_wraps(self, driver_irat):
+        """载波未变但 BW40 → 100 → 原 OFF→配→ON 环绕路径不变。"""
+        sess, written = wire_echo_visa(driver_irat, cell_active=True)
+        idx = await self._warm_carrier(driver_irat, written)  # 回显此后回 BW40
+        ok = await driver_irat.set_cell_config({
+            "band": "N78", "bandwidth_mhz": 100, "arfcn": 636666,
+        })
+        assert ok is True
+        tail = written[idx:]
+        off_idx = next(i for i, w in enumerate(tail) if w.endswith("ACTive:STATe 0"))
+        bw_idx = next(i for i, w in enumerate(tail) if "DL:BW BW100" in w)
+        on_idx = next(i for i, w in enumerate(tail) if w.endswith("ACTive:STATe 1"))
+        assert off_idx < bw_idx < on_idx, tail
+
+    @pytest.mark.asyncio
+    async def test_unparseable_preread_conservative_wrap(self, driver_irat):
+        """载波已热但预读回不可解析文本 → 保守走原环绕路径 (不猜)。
+
+        仅首次 (预读) 回 garbage, 写后回读对账走正常回显 — 隔离测预读自身
+        的容错, 不连带触发 P1-19 对账 fail-loud。"""
+        sess, written = wire_echo_visa(driver_irat, cell_active=True)
+        idx = await self._warm_carrier(driver_irat, written)
+        orig = sess.query.side_effect
+        hits = {"n": 0}
+
+        def _garbage_first_bw_query(cmd):
+            if "DL:BW?" in cmd:
+                hits["n"] += 1
+                if hits["n"] == 1:
+                    return "garbage"
+            return orig(cmd)
+
+        sess.query.side_effect = _garbage_first_bw_query
+        ok = await driver_irat.set_cell_config({
+            "band": "N78", "bandwidth_mhz": 40, "arfcn": 636666,
+        })
+        assert ok is True
+        tail = written[idx:]
+        assert any(w.endswith("ACTive:STATe 0") for w in tail), tail
+        assert any("DL:BW BW40" in w for w in tail), tail
+
+    @pytest.mark.asyncio
+    async def test_empty_preread_conservative_wrap(self, driver_irat):
+        """载波已热但预读回空响应 → 保守走原环绕路径。"""
+        sess, written = wire_echo_visa(
+            driver_irat, cell_active=True, overrides={"DL:BW?": ""}
+        )
+        idx = await self._warm_carrier(driver_irat, written)  # 预热预读也回空→环绕, ok
+        ok = await driver_irat.set_cell_config({
+            "band": "N78", "bandwidth_mhz": 40, "arfcn": 636666,
+        })
+        assert ok is True
+        tail = written[idx:]
+        assert any(w.endswith("ACTive:STATe 0") for w in tail), tail
+        assert any("DL:BW BW40" in w for w in tail), tail
+
+    @pytest.mark.asyncio
+    async def test_preread_exception_conservative_wrap(self, driver_irat):
+        """载波已热但预读抛异常 → 吞掉走原环绕路径, 不向 caller 裸抛。"""
+        sess, written = wire_echo_visa(driver_irat, cell_active=True)
+        idx = await self._warm_carrier(driver_irat, written)
+        orig = sess.query.side_effect
+
+        def _boom_on_bw_query(cmd):
+            if "DL:BW?" in cmd:
+                raise TimeoutError("preread timeout")
+            return orig(cmd)
+
+        sess.query.side_effect = _boom_on_bw_query
+        ok = await driver_irat.set_cell_config({
+            "band": "N78", "bandwidth_mhz": 40, "arfcn": 636666,
+        })
+        assert ok is True
+        tail = written[idx:]
+        assert any(w.endswith("ACTive:STATe 0") for w in tail), tail
+        assert any("DL:BW BW40" in w for w in tail), tail
+
+    @pytest.mark.asyncio
+    async def test_readback_gate_off_skips_preread(self, driver_irat):
+        """门审 F1: readback_verify=False (等价 5G profile 无查询能力) →
+        完全不发预读查询, 直接走原环绕路径 (不白等实证会超时的查询)。"""
+        sess, written = wire_echo_visa(driver_irat, cell_active=True)
+        idx = await self._warm_carrier(driver_irat, written)
+        sess.query.reset_mock()  # 只统计目标调用的查询
+        ok = await driver_irat.set_cell_config({
+            "band": "N78", "bandwidth_mhz": 40, "arfcn": 636666,
+            "readback_verify": False,
+        })
+        assert ok is True
+        queried = [c.args[0] for c in sess.query.call_args_list]
+        assert not any("DL:BW?" in q for q in queried), queried  # 预读没发
+        tail = written[idx:]
+        assert any(w.endswith("ACTive:STATe 0") for w in tail), tail
+        assert any("DL:BW BW40" in w for w in tail), tail
+
+    @pytest.mark.asyncio
+    async def test_fdd_band_never_takes_idempotent_shortcut(self, driver_irat):
+        """门审 F3: FDD band 不走捷径 (剔键会连 UL:BW 写一起跳过, 预读只验
+        DL, 判定与下发不同源) — 载波已热 + BW 相同也照走 OFF→配→ON,
+        DL+UL 都写。"""
+        sess, written = wire_echo_visa(driver_irat, cell_active=True)
+        idx = await self._warm_carrier(
+            driver_irat, written, band="N3", arfcn=368500, duplex="FDD"
+        )
+        ok = await driver_irat.set_cell_config({
+            "band": "N3", "arfcn": 368500, "bandwidth_mhz": 40, "duplex": "FDD",
+        })
+        assert ok is True
+        tail = written[idx:]
+        # 关键契约: 捷径没走 (环绕 + DL/UL 写都发生)
+        assert any(w.endswith("ACTive:STATe 0") for w in tail), tail
+        assert any("DL:BW BW40" in w for w in tail), tail
+        assert any("UL:BW BW40" in w for w in tail), tail
+
+
 class TestSsbBaselineAutofill:
     @pytest.mark.asyncio
     async def test_5g_profile_autofills_ssb_on_baseline_hit(self, driver_5g):

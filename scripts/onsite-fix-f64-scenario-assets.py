@@ -34,7 +34,7 @@ http = httpx.Client(timeout=30.0)
 API = "http://localhost:8000/api/v1"
 PACK = r"D:\Scenario Packs\F9815064A TS 5G FR1 MIMO OTA\1.1"
 
-# (原文件名主干, scenario, mimo, topo, 文件名标称MHz, 工程真值Hz, 真ARFCN, band)
+# (原文件名主干, scenario, mimo, topo, 文件名标称MHz, 工程真值Hz, 真ARFCN, band, 测试BW)
 # 真值 = SMB 实录 2026-07-03; band 按真值频率落位 (722/836.5/1575.42/2450→
 # 无准确 NR DL band 的保留 FR1 泛化; 2592.99 落 n41 故 2450 文件标 N41)。
 # N79 特例 (Codex #193 两轮 P2): 工程 CENT 4700.000 MHz 不在 15 kHz 栅格上
@@ -42,32 +42,34 @@ PACK = r"D:\Scenario Packs\F9815064A TS 5G FR1 MIMO OTA\1.1"
 # 故 arfcn 与 center_frequency_hz 必须同一栅格点自洽: 统一取 EMQuest/UXM 运行基线
 # **713334 / 4700.01 MHz (4700010000 Hz)**。工程实测 CENT 4700.000 记入 description
 # (仅加载基底; 运行时 F64 CENT 由 TestCase 频率显式下发覆盖, 与 EMQuest 行为同构)。
+# 测试BW (2026-07-20 拍板): UMa_3600M 跟 EMQuest n78 灵敏度基线 = **BW40** (吞吐测试
+# BW 决策, 名/scd/顶层三处同步); 其余 17 条保持 100 (各自 EMQuest 基线 BW 待现场实测)。
 TRUTH = [
-    ("3GPP_FR1_OTA_CDLC_UMa_617M",     "UMa", "4x4", "32x4",  617.0,   617000000, 123400, "N71"),
-    ("3GPP_FR1_OTA_CDLC_UMa_722M",     "UMa", "4x4", "32x4",  722.0,   722000000, 144400, "FR1"),
-    ("3GPP_FR1_OTA_CDLC_UMa_836.5M",   "UMa", "4x4", "32x4",  836.5,   836500000, 167300, "FR1"),
-    ("3GPP_FR1_OTA_CDLC_UMa_1575.42M", "UMa", "4x4", "32x4", 1575.42, 1575420000, 315084, "FR1"),
-    ("3GPP_FR1_OTA_CDLC_UMa_1800M",    "UMa", "4x4", "32x4", 1800.0,  1842500000, 368500, "N3"),
-    ("3GPP_FR1_OTA_CDLC_UMa_2132.5M",  "UMa", "4x4", "32x4", 2132.5,  2132500000, 426500, "N1"),
-    ("3GPP_FR1_OTA_CDLC_UMa_2450M",    "UMa", "4x4", "32x4", 2450.0,  2592990000, 518598, "N41"),
-    ("3GPP_FR1_OTA_CDLC_UMa_3600M",    "UMa", "4x4", "32x4", 3600.0,  3549990000, 636666, "N78"),
-    ("3GPP_FR1_OTA_CDLC_UMa_4700M",    "UMa", "4x4", "32x4", 4700.0,  4700010000, 713334, "N79"),
-    ("3GPP_FR1_OTA_CDLC_UMi_617M",     "UMi", "2x2", "32x2",  617.0,   617000000, 123400, "N71"),
-    ("3GPP_FR1_OTA_CDLC_UMi_722M",     "UMi", "2x2", "32x2",  722.0,   722000000, 144400, "FR1"),
-    ("3GPP_FR1_OTA_CDLC_UMi_836.5M",   "UMi", "2x2", "32x2",  836.5,   836500000, 167300, "FR1"),
-    ("3GPP_FR1_OTA_CDLC_UMi_1575.42M", "UMi", "2x2", "32x2", 1575.42, 1575420000, 315084, "FR1"),
-    ("3GPP_FR1_OTA_CDLC_UMi_1800M",    "UMi", "2x2", "32x2", 1800.0,  1800000000, 360000, "N3"),
-    ("3GPP_FR1_OTA_CDLC_UMi_2132.5M",  "UMi", "2x2", "32x2", 2132.5,  2132500000, 426500, "N1"),
-    ("3GPP_FR1_OTA_CDLC_UMi_2450M",    "UMi", "2x2", "32x2", 2450.0,  2450000000, 490000, "FR1"),
-    ("3GPP_FR1_OTA_CDLC_UMi_3600M",    "UMi", "2x2", "32x2", 3600.0,  3600000000, 640000, "N78"),
-    ("3GPP_FR1_OTA_CDLC_UMi_4700M",    "UMi", "2x2", "32x2", 4700.0,  4700010000, 713334, "N79"),
+    ("3GPP_FR1_OTA_CDLC_UMa_617M",     "UMa", "4x4", "32x4",  617.0,   617000000, 123400, "N71", 100),
+    ("3GPP_FR1_OTA_CDLC_UMa_722M",     "UMa", "4x4", "32x4",  722.0,   722000000, 144400, "FR1", 100),
+    ("3GPP_FR1_OTA_CDLC_UMa_836.5M",   "UMa", "4x4", "32x4",  836.5,   836500000, 167300, "FR1", 100),
+    ("3GPP_FR1_OTA_CDLC_UMa_1575.42M", "UMa", "4x4", "32x4", 1575.42, 1575420000, 315084, "FR1", 100),
+    ("3GPP_FR1_OTA_CDLC_UMa_1800M",    "UMa", "4x4", "32x4", 1800.0,  1842500000, 368500, "N3",  100),
+    ("3GPP_FR1_OTA_CDLC_UMa_2132.5M",  "UMa", "4x4", "32x4", 2132.5,  2132500000, 426500, "N1",  100),
+    ("3GPP_FR1_OTA_CDLC_UMa_2450M",    "UMa", "4x4", "32x4", 2450.0,  2592990000, 518598, "N41", 100),
+    ("3GPP_FR1_OTA_CDLC_UMa_3600M",    "UMa", "4x4", "32x4", 3600.0,  3549990000, 636666, "N78",  40),
+    ("3GPP_FR1_OTA_CDLC_UMa_4700M",    "UMa", "4x4", "32x4", 4700.0,  4700010000, 713334, "N79", 100),
+    ("3GPP_FR1_OTA_CDLC_UMi_617M",     "UMi", "2x2", "32x2",  617.0,   617000000, 123400, "N71", 100),
+    ("3GPP_FR1_OTA_CDLC_UMi_722M",     "UMi", "2x2", "32x2",  722.0,   722000000, 144400, "FR1", 100),
+    ("3GPP_FR1_OTA_CDLC_UMi_836.5M",   "UMi", "2x2", "32x2",  836.5,   836500000, 167300, "FR1", 100),
+    ("3GPP_FR1_OTA_CDLC_UMi_1575.42M", "UMi", "2x2", "32x2", 1575.42, 1575420000, 315084, "FR1", 100),
+    ("3GPP_FR1_OTA_CDLC_UMi_1800M",    "UMi", "2x2", "32x2", 1800.0,  1800000000, 360000, "N3",  100),
+    ("3GPP_FR1_OTA_CDLC_UMi_2132.5M",  "UMi", "2x2", "32x2", 2132.5,  2132500000, 426500, "N1",  100),
+    ("3GPP_FR1_OTA_CDLC_UMi_2450M",    "UMi", "2x2", "32x2", 2450.0,  2450000000, 490000, "FR1", 100),
+    ("3GPP_FR1_OTA_CDLC_UMi_3600M",    "UMi", "2x2", "32x2", 3600.0,  3600000000, 640000, "N78", 100),
+    ("3GPP_FR1_OTA_CDLC_UMi_4700M",    "UMi", "2x2", "32x2", 4700.0,  4700010000, 713334, "N79", 100),
 ]
 
 
 def row_fields(row):
-    stem, scenario, mimo, topo, nominal, freq_hz, arfcn, band = row
+    stem, scenario, mimo, topo, nominal, freq_hz, arfcn, band, bw = row
     path = f"{PACK}\\{stem}.wiz\\{stem}.smu"
-    name = f"MF_{band}_{arfcn}_BW100_CDLC_{scenario}_{mimo}_DP_v1"
+    name = f"MF_{band}_{arfcn}_BW{bw}_CDLC_{scenario}_{mimo}_DP_v1"
     mhz = freq_hz / 1e6
     desc = (f"F64 Scenario Pack v1.1 {stem}.smu | 工程实测 {mhz:g}MHz / "
             f"ARFCN {arfcn} (SMB 实录 2026-07-03) | {topo} OTA DL")
@@ -78,16 +80,19 @@ def row_fields(row):
             f"非 15k 栅格, 取上栅格点)")
     if abs(nominal - mhz) > 0.5:
         desc += f" | ⚠ 文件名标称 {nominal:g}M ≠ 工程真值"
+    if bw != 100:
+        desc += f" | 测试 BW{bw} = EMQuest n78 基线 (2026-07-20 拍板)"
     return {
         "name": name,
         "path": path,
         "freq_hz": float(freq_hz),
         "mhz": mhz,
+        "bw": float(bw),
         "desc": desc,
         "scd_config": {
             "band": band, "mimo": mimo, "arfcn": arfcn, "model": "CDLC",
             "version": 1, "scenario": scenario, "polarization": "DP",
-            "bandwidth_mhz": 100,
+            "bandwidth_mhz": bw,
         },
     }
 
@@ -109,7 +114,7 @@ def upsert_assets():
             "canonical_name": f["name"] + ".smu",
             "description": f["desc"],
             "center_frequency_hz": f["freq_hz"],
-            "bandwidth_mhz": 100.0,
+            "bandwidth_mhz": f["bw"],  # 顶层与 scd 同步 (顶层≠payload 权威曾误导 GUI, 07-02 走查)
             "associated_file_path": f["path"],
             "payload": {"scd_config": f["scd_config"]},
         }
@@ -175,10 +180,13 @@ def acceptance():
         good = (a["name"] == t["name"]
                 and abs((a.get("center_frequency_hz") or 0) - t["freq_hz"]) < 1
                 and (a.get("payload", {}).get("scd_config", {}).get("arfcn")
-                     == t["scd_config"]["arfcn"]))
+                     == t["scd_config"]["arfcn"])
+                and (a.get("payload", {}).get("scd_config", {}).get("bandwidth_mhz")
+                     == t["scd_config"]["bandwidth_mhz"])  # 2026-07-20 BW40 拍板落地校验
+                and a.get("bandwidth_mhz") == t["bw"])     # 顶层与 scd 同步
         mark = "✓" if good else "✗"
         if not good: ok = False
-        print(f"  {mark} {a['name']:<44} {t['mhz']:>9.2f}MHz arfcn={t['scd_config']['arfcn']}")
+        print(f"  {mark} {a['name']:<44} {t['mhz']:>9.2f}MHz arfcn={t['scd_config']['arfcn']} bw={t['scd_config']['bandwidth_mhz']}")
     missing = set(truth) - {a.get("associated_file_path") for a in active}
     for p in missing:
         print(f"  ✗ 缺: {p}"); ok = False
