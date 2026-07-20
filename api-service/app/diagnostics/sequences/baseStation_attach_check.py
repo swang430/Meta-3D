@@ -171,8 +171,11 @@ async def run(
                 ))
                 log("  · F64 passthrough skipped (CE lacks static-passthrough capability)")
             else:
-                # 开关 2: 直通模式参数化 (3=Calibration 默认 / 2=Butler / 1=模型)
-                bypass_mode = int(params.get("f64_bypass_mode", 3))
+                # 开关 2: 直通模式参数化 (3=Calibration 默认 / 2=Butler / 1=模型)。
+                # Codex #216 P2: 不在此层 int() 强转 — JSON true 会被转成 1 绕过
+                # 驱动的 bool 拒绝 (静默切到 STATIC 1)。原始值透传, 守门单点在
+                # 驱动 set_passthrough_mode (bool/0/非法 → False 布尔契约)。
+                bypass_mode = params.get("f64_bypass_mode", 3)
                 await _step("F64 stop_emulation (直通稳态前置)", ce.stop_emulation())
                 await _step(
                     f"F64 passthrough (STATIC {bypass_mode})",

@@ -469,6 +469,35 @@ class TestRunSequence:
         labels = [s["label"] for s in body["steps"]]
         assert any("STATIC 2" in lbl for lbl in labels), labels
 
+    def test_attach_check_bypass_mode_bool_not_coerced(
+        self, db, lab_with_bs_and_ce, monkeypatch
+    ):
+        """Codex #216 P2: 序列层不得 int() 强转 — JSON true 必须以原始 True
+        到达驱动 (由驱动的 isinstance(bool) 守门拒绝), 不能被强转成 1 绕过
+        (静默切 STATIC 1)。"""
+        bs = self._happy_bs()
+        ce = MagicMock()
+        ce.SUPPORTS_STATIC_PASSTHROUGH = True
+        ce.stop_emulation = AsyncMock(return_value=True)
+        # 模拟真驱动契约: bool → False (拒绝)
+        ce.set_passthrough_mode = AsyncMock(return_value=False)
+        _patched_hal(monkeypatch, drivers={"baseStation": bs, "channelEmulator": ce})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/baseStation_attach_check/run",
+            json={
+                "lab_profile_id": str(lab_with_bs_and_ce.id),
+                "params": {"attach_timeout_s": 2, "f64_bypass_mode": True},
+            },
+        )
+        body = resp.json()
+        # 关键契约 1: 驱动收到的是原始 True, 不是被强转的 1
+        got = ce.set_passthrough_mode.await_args.kwargs.get("mode")
+        assert got is True, f"mode 被上游强转: {got!r}"
+        # 关键契约 2: 驱动拒绝 (False) → 序列 fail-loud, 不带错误模式继续
+        assert body["success"] is False
+        bs.set_cell_config.assert_not_awaited()
+
     def test_attach_check_passthrough_skipped_without_ce(self, db, lab_with_bs, monkeypatch):
         """无 CE (线缆直连场景) → 跳过 step 记录, 序列继续。"""
         bs = self._happy_bs()
