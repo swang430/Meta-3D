@@ -607,3 +607,48 @@ class TestInstrumentParamBranches:
             )
         assert captured.get("initial_uxm_dl_power_dbm") == -46.0
         assert payload.get("success") is True
+
+
+class TestFreshStartAndSingleFlight:
+    def test_fresh_start_resets_stale_steps(self, db, lab):
+        """Codex #217 P1: 重跑 (跑过的计划重新 READY 再 start) 必须复位步骤 —
+        否则 runner 把 completed/failed 步骤全跳过, 零执行出假历史/报告。"""
+        from app.services.test_plan_service import TestExecutionService
+
+        plan = _make_plan(db, lab, case_names=("case-A", "case-B"))
+        steps = (
+            db.query(TestStep).filter(TestStep.test_plan_id == plan.id)
+            .order_by(TestStep.order).all()
+        )
+        steps[0].status = "completed"
+        steps[0].result = '{"execution_id": "old"}'
+        steps[1].status = "failed"
+        steps[1].error_message = "old failure"
+        plan.status = TestPlanStatus.READY  # 重新标 READY 重跑
+        db.commit()
+
+        TestExecutionService().start_test_plan(
+            db=db, test_plan_id=plan.id, started_by="tester"
+        )
+        db.expire_all()
+        steps = (
+            db.query(TestStep).filter(TestStep.test_plan_id == plan.id)
+            .order_by(TestStep.order).all()
+        )
+        assert all(s.status == "pending" for s in steps)
+        assert steps[0].result is None
+        assert steps[1].error_message is None
+
+    def test_start_rejected_when_other_plan_running_in_db(self, db, lab):
+        """Codex #217 P2: DB 里有其它 RUNNING 计划 → start 409 (堵 await 窗口)。"""
+        running_plan = _make_plan(db, lab, case_names=("case-A",))  # RUNNING 态
+        plan2 = _make_plan(db, lab, case_names=("case-B",))
+        plan2.status = TestPlanStatus.READY
+        db.commit()
+        client = TestClient(app)
+        resp = client.post(
+            f"/api/v1/test-plans/{plan2.id}/start",
+            json={"started_by": "tester"},
+        )
+        assert resp.status_code == 409, resp.text
+        assert str(running_plan.id) in resp.json()["detail"]

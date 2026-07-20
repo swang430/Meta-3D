@@ -1434,6 +1434,24 @@ class TestExecutionService:
         test_plan.completed_test_cases = 0
         test_plan.failed_test_cases = 0
 
+        # Codex #217 P1: fresh start 必须复位全部步骤 — 重跑 (跑过的计划重新
+        # mark READY 再 start) 时步骤残留 completed/failed, runner 会把非
+        # pending 步骤当续跑遗留全部跳过 → 零执行却照样收尾出历史+报告
+        # (假数据)。resume (续跑) 不走本函数, 续跑语义不受影响。
+        from app.models.test_plan import TestStep as _TestStep
+
+        _steps = (
+            db.query(_TestStep)
+            .filter(_TestStep.test_plan_id == test_plan_id)
+            .all()
+        )
+        for _s in _steps:
+            _s.status = "pending"
+            _s.started_at = None
+            _s.completed_at = None
+            _s.result = None
+            _s.error_message = None
+
         # BUG-1 FIX: Bind session context so measurement.log entries carry the plan ID
         try:
             from app.core.logging_config import current_session_id
