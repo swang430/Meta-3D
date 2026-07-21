@@ -540,11 +540,35 @@ class TestPlanService:
             duplicate_step = TestStep(
                 test_plan_id=duplicate.id,
                 sequence_library_id=original_step.sequence_library_id,
+                # 2026-07-21 现场: 整计划复制漏带 type → 副本步骤类型丢成
+                # Unknown, 前端退回通用键值编辑器 (MIMO_OTA 专用表单+资产下拉
+                # 框失效, channel_asset_id 显示成裸 UUID), 且 runner 只跑
+                # MIMO_OTA 步骤 → 副本执行被静默跳过。单步复制 duplicate_step
+                # 一直带 type, 唯独整计划复制漏了 —— 补齐对齐。
+                type=original_step.type,
+                name=original_step.name,
+                description=original_step.description,
                 order=original_step.order,
                 parameters=original_step.parameters.copy() if original_step.parameters else {},
                 timeout_seconds=original_step.timeout_seconds,
                 retry_count=original_step.retry_count,
                 continue_on_failure=original_step.continue_on_failure,
+                # capability tokens 也必须 carry — 否则副本步骤 needs 为空,
+                # HAL capability gate 认为它不声明任何硬件依赖 (feedback:
+                # new-field-fanout, 复制/克隆路径要带全该 carry 的字段)。
+                needs=original_step.needs.copy() if original_step.needs else [],
+                step_number=original_step.step_number,
+                expected_duration_minutes=original_step.expected_duration_minutes,
+                # agent 门 F1: validation_criteria/notes/tags 单步复制
+                # duplicate_step 都带, 整计划复制不带则副本报告里步骤校验准则
+                # 丢空 + 步骤级 tags 与计划级 tags (已 carry) 自相矛盾 —— 补齐,
+                # 取两复制函数业务字段并集。
+                validation_criteria=(
+                    original_step.validation_criteria.copy()
+                    if original_step.validation_criteria else None
+                ),
+                notes=original_step.notes,
+                tags=original_step.tags.copy() if original_step.tags else None,
                 # Reset execution fields
                 status='pending',
                 result=None,

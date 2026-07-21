@@ -506,3 +506,58 @@ class TestPlanFanOutPreservesTopologyOverride:
         imported = service.import_test_plans(db, legacy_export, created_by="tester")
         assert len(imported) == 1
         assert imported[0].topology_profile_id is None
+
+
+# ============================================================
+# 2026-07-21 现场回归: 整计划复制 (duplicate_test_plan) 曾漏带 step 的
+# type / name / needs → 副本步骤类型丢成 Unknown。后果: 前端 category
+# 不是 MIMO_OTA → 退回通用键值编辑器 (MIMO_OTA 专用表单 + 信道资产下拉框
+# 失效, channel_asset_id 显示成裸 UUID); 且 runner 只跑 MIMO_OTA 步骤 →
+# 副本执行被静默跳过 (什么都不测)。单步复制 duplicate_step 一直带 type,
+# 唯独整计划复制漏了 —— 与 topology fan-out (PR #39) 同母题。
+# ============================================================
+
+
+class TestDuplicatePreservesStepFields:
+    def _plan_with_mimo_step(self, db):
+        from app.models.test_plan import TestStep
+
+        plan = _make_ready_plan(db)
+        step = TestStep(
+            id=uuid.uuid4(),
+            test_plan_id=plan.id,
+            type="MIMO_OTA",
+            name="暗室首测基线",
+            description="现场调试",
+            order=0,
+            parameters={
+                "channel_asset_id": "b328d53a-edfa-40a0-81e1-5efc759bcc5a",
+                "frequency_hz": 3549990000,
+            },
+            needs=["base_station", "channel_emulator"],
+            timeout_seconds=600,
+        )
+        db.add(step)
+        db.commit()
+        return plan
+
+    def test_duplicate_preserves_step_type_name_needs(self, db):
+        from app.services.test_plan_service import TestPlanService, TestStepService
+
+        original = self._plan_with_mimo_step(db)
+        orig_step = TestStepService().get_steps(db, original.id)[0]
+        copy = TestPlanService().duplicate_test_plan(db, original.id)
+        steps = TestStepService().get_steps(db, copy.id)
+        assert len(steps) == 1
+        s = steps[0]
+        # bug: type 曾丢成 None → 前端 category='Unknown' → 通用编辑器 + runner 跳过
+        assert s.type == "MIMO_OTA"
+        # bug: name 曾丢成 None → 步骤在编辑器显示成 'Step 0'
+        assert s.name == "暗室首测基线"
+        # bug: capability tokens 曾丢成 [] → HAL capability gate 认为无硬件依赖
+        assert s.needs == ["base_station", "channel_emulator"]
+        # channel_asset_id 本就正确 (从来没坏), 类型丢失才导致它显示退化为裸 UUID
+        assert s.parameters["channel_asset_id"] == "b328d53a-edfa-40a0-81e1-5efc759bcc5a"
+        # 独立步骤行 (副本步骤 ≠ 源步骤) + 执行字段复位
+        assert s.id != orig_step.id
+        assert s.status == "pending"

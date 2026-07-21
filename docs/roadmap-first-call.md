@@ -1877,6 +1877,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-07-20 during 三开关门审 #216]` **configure_mac_throughput_test 返回值无人消费**: measure 调它不查布尔契约, ON 态写 TDD pattern 被拒 (-221 类) 即静默带旧配置测。正修 = 消费返回值 fail-loud (同 set_cell_config 处理, Codex #195 R5 母题)。
 - `[discovered 2026-07-21 during 队列僵尸复发排查]` **`test_feature_gaps.py` 无 DB 隔离, 每次全量测试往运行中的开发库塞 ~12 条队列条目 + 若干测试计划**(Priority Test Plan / Queue Down Test / Stats Test Plan / Auth Test Plan 等)—— 801 条僵尸的持续来源; #218 清完当晚 agent 门审跑全量即复发 13 条 (07-21 晨再清)。计划管理列表同样被污染。正修 = 该文件补项目标准 SQLite 隔离 fixture (其余测试文件已有惯例); 顺带清一次 dev 库存量测试计划。
 - `[discovered 2026-07-21 during 仪表参数表单验证]` **计划在执行队列中 (queued) 即锁死步骤编辑 (StepsTab 只读门)** —— 现场想调参数须先出队→改→重排队 (07-21 晨表单验证被迫走了这一圈)。runner 起跑时做 TestCase 快照, queued 态编辑理论安全; 设计题 = 只读门是否放宽到仅 running/paused 拦。
+- `[discovered 2026-07-21 during duplicate-step-type 门审 F2]` **export_test_plans / import_test_plans 是整计划复制丢步骤字段的对称路径, 同款 type-drop 未修** —— 两处序列化/重建步骤只带 order/sequence_library_id/parameters/timeout/retry/continue, 同样丢 type/name/needs → export 一个 MIMO_OTA 计划再 import, 副本步骤类型丢成 Unknown (前端通用编辑器 + runner 静默跳过), 与本次修的 duplicate bug 完全同一失效模式。另 export 用 `str(sequence_library_id)` 对 inline 步骤 (可空) 得 `"None"`, import 侧 `UUID("None")` 崩被宽 except+rollback 静默吞掉整计划。当前 export/import 无 API 端点 (只测试直调), 不可达; 一旦接 GUI 即复发。正修 = 补 export/import 步骤字段 (含 sequence_library_id None 不写 `"None"`)。
 
 > **Triage history**: 2026-05-17 — promoted 4 active entries to P3
 > slots (P3-6: chamber preset Type-C test reconciliation; P3-7: VSCode
