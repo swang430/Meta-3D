@@ -561,10 +561,15 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     # CLOSE 已真关旧工程而新工程没加载上 → 硬件无工程; 缓存留
                     # 旧值会谎报"加载着"(agent F4), 置 None 如实反映。
                     self._loaded_emulation_file = None
+                    self._center_freq_programmed = False  # Codex #221 P2: 同步复位
                 self._last_error = f"load_local_scenario failed: {load_err}"
                 logger.error("[F64] 加载本地场景失败 — SYST:ERR?: %s (file=%s)", load_err, file_path)
                 return False
             self._loaded_emulation_file = file_path
+            # Codex #221 P2: 新 .smu 频率由文件定, 旧显式 programmed 频率失效 —
+            # 不复位则 get_frequency_identity 优先报 stale programmed 频率, 让
+            # UXM/F64 一致性网拿旧频率对比 (镜像 set_channel_model @990 处理)。
+            self._center_freq_programmed = False
             self._active_pipeline = F64Pipeline.GCM_NATIVE
             logger.info(f"[F64] 本地场景已加载: {file_path}")
             return True
@@ -576,6 +581,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             # 坏, 保守标未加载亦安全, 下次 start 无条件处理)。
             if not close_rejected:
                 self._loaded_emulation_file = None
+                self._center_freq_programmed = False  # Codex #221 P2: 同步复位
             logger.error(f"[F64] load_local_scenario failed: {e}")
             self._last_error = str(e)
             return False

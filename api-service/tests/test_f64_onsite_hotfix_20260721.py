@@ -203,3 +203,20 @@ class TestLoadLocalScenario:
         drv._loaded_emulation_file = "old.smu"
         assert await drv.load_local_scenario("D:\\new.smu") is False
         assert drv._loaded_emulation_file is None
+
+    async def test_load_success_clears_programmed_freq(self):
+        """Codex #221 P2 (复审轮): 加载新 .smu → 清 _center_freq_programmed (旧显式
+        频率失效), 否则 get_frequency_identity 报 stale 频率、一致性网拿旧值对比。"""
+        drv, _ = _driver()
+        drv._center_freq_programmed = True  # 之前 configure 显式下发过
+        drv._center_freq_mhz = 3500.0
+        assert await drv.load_local_scenario("D:\\x.smu") is True
+        assert drv._center_freq_programmed is False
+
+    async def test_load_failure_clears_programmed_freq(self):
+        """加载失败清 file 时同样复位 programmed (identity 报 None, 一致性网跳过)。"""
+        fp = "D:\\bad.smu"
+        drv, _ = _driver({f"CALC:FILT:FILE {fp}": [STATIC_FAIL]})
+        drv._center_freq_programmed = True
+        assert await drv.load_local_scenario(fp) is False
+        assert drv._center_freq_programmed is False
