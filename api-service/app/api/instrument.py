@@ -2819,7 +2819,9 @@ async def get_output_calibration_endpoint(category_key: str, output_num: int):
 
 
 class InputReferenceRequest(BaseModel):
-    power_dbm: float          # 输入参考电平 (INP:LEV:AMP:CH, 所有输入口)
+    power_dbm: float                         # 输入参考电平 (INP:LEV:AMP:CH)
+    input_ports: Optional[List[int]] = None  # 物理输入口 (1-based, F64 最多 64);
+    #                                          None = 驱动按当前 MIMO 拓扑 1..N
 
 
 @router.post("/instruments/{category_key}/input-reference")
@@ -2829,6 +2831,11 @@ async def set_input_reference_endpoint(category_key: str, request: InputReferenc
     值是**派生量**, 不在此固化: input_ref = UXM DL 功率(dBm/BW 口径) − UXM→F64 线缆
     损耗, 由参数决议层计算或测试例显式覆盖 (P0-2/P2-3)。注意 load .smu 会带回工程内嵌
     默认输入参考、冲掉先前设置 → 每次加载后必须重新下发。
+
+    input_ports (Codex #221 R5 P2): 上层参数决议层按真实激活拓扑传的物理输入口列表;
+    不传则驱动按 _tx_antennas 推断 1..N —— 冷缓存 / 操作员手动加载 4x4 .smu 后
+    _tx_antennas 可能停在构造默认 2、只覆盖输入 1/2 致 MIMO 不平衡 (见驱动 docstring,
+    正解 GRO:IN:GET? 读真实激活口)。
     """
     driver = _get_loaded_hal_driver(category_key)
     if driver is None:
@@ -2836,8 +2843,9 @@ async def set_input_reference_endpoint(category_key: str, request: InputReferenc
     method = getattr(driver, "set_baseband_power", None)
     if method is None:
         raise HTTPException(400, f"{category_key} 驱动不支持 set_baseband_power")
-    ok = await _call_f64_method(method, request.power_dbm)
+    ok = await _call_f64_method(method, request.power_dbm, request.input_ports)
     return {"ok": bool(ok), "power_dbm": request.power_dbm,
+            "input_ports": request.input_ports,
             "last_error": None if ok else getattr(driver, "_last_error", None)}
 
 

@@ -55,8 +55,8 @@ class _FakeF64Driver:
         self.calls.append(("get_output_calibration", output_num))
         return self._calib
 
-    async def set_baseband_power(self, power_dbm: float) -> bool:
-        self.calls.append(("set_baseband_power", power_dbm))
+    async def set_baseband_power(self, power_dbm: float, input_ports=None) -> bool:
+        self.calls.append(("set_baseband_power", power_dbm, input_ports))
         return self._ok
 
     async def set_crest_factor(self, input_num: int, crest_db: float) -> bool:
@@ -214,7 +214,21 @@ def test_input_reference_ok(client, fake_driver):
     data = resp.json()
     assert data["ok"] is True
     assert data["power_dbm"] == -17.0
-    assert ("set_baseband_power", -17.0) in fake_driver.calls
+    assert data["input_ports"] is None  # 不传 → 驱动按当前拓扑推断 1..N
+    assert ("set_baseband_power", -17.0, None) in fake_driver.calls
+
+
+def test_input_reference_explicit_ports(client, fake_driver):
+    """Codex #221 R5 P2: 上层按真实激活拓扑显式传 input_ports → 透传给驱动
+    (解决冷缓存 _tx_antennas 漂移只设部分口的 MIMO 输入不平衡)。"""
+    resp = client.post(
+        BASE + "/input-reference",
+        json={"power_dbm": -17.0, "input_ports": [1, 2, 3, 4]},
+    )
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["input_ports"] == [1, 2, 3, 4]
+    assert ("set_baseband_power", -17.0, [1, 2, 3, 4]) in fake_driver.calls
 
 
 def test_input_reference_failure(client, monkeypatch):
@@ -268,7 +282,7 @@ class _FS16LikeDriver:
     async def start_emulation(self):
         raise NotImplementedError("FS16 不支持 start_emulation")
 
-    async def set_baseband_power(self, power_dbm):
+    async def set_baseband_power(self, power_dbm, input_ports=None):
         raise NotImplementedError("FS16 不支持 set_baseband_power")
 
 

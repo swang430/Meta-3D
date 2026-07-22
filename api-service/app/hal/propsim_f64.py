@@ -1511,27 +1511,34 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             self._last_error = str(e)
             return False
 
-    async def set_baseband_power(self, power_dbm: float) -> bool:
+    async def set_baseband_power(
+        self, power_dbm: float, input_ports: Optional[List[int]] = None
+    ) -> bool:
         """
         设置输入电平 (基带功率)。
 
         User Reference §20.4.4.3:
           INP:LEV:AMP:CH <input>,<amplitude_dBm>
           取值范围: INP:LEV:AMP:LIM? 查询 (典型: -23 ~ 0 dBm)
+
+        input_ports: 要下发的物理输入口 (1-based; F64 最多 64 口)。None/空列表 →
+        回退到当前 MIMO 拓扑推断的 1..N (N=_tx_antennas)。
+        ⚠ Codex #221 R5 P2 + PROPSIM 手册 20.4.7 (NotebookLM 查证): _tx_antennas 在
+        后端冷重启 / 操作员手动面板加载 4x4 .smu 后可能停在构造默认 2 → 只覆盖输入
+        1/2、输入 3/4 保留工程默认 → MIMO 输入参考不平衡 (端点仍回 ok=true 误导)。
+        正解是上层 (参数决议层 P0-2/P2-3) 按真实激活拓扑显式传 input_ports, 或未来用
+        GRO:IN:GET? <group> 读当前 MIMO 组激活的物理输入口 (手册推荐, 待真机验证)。
         """
         if not self._visa_resource:
             return False
         try:
-            # 设置所有输入的电平
+            ports = input_ports or list(range(1, self._tx_antennas + 1))
             if not await self._gated_write_transaction(
                 "set_baseband_power",
-                [
-                    f"INP:LEV:AMP:CH {inp},{power_dbm:.1f}"
-                    for inp in range(1, self._tx_antennas + 1)
-                ],
+                [f"INP:LEV:AMP:CH {inp},{power_dbm:.1f}" for inp in ports],
             ):
                 return False
-            logger.info(f"[F64] Input level set: {power_dbm:.1f} dBm")
+            logger.info(f"[F64] Input level set: {power_dbm:.1f} dBm (ports={ports})")
             return True
         except Exception as e:
             logger.error(f"[F64] set_baseband_power failed: {e}")
@@ -1712,25 +1719,36 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     # (与 start_emulation GO 前 0→0 drain 同处理), 不进重试。
                     if mode == F64BypassMode.DISABLED:
                         # DISABLED 复位值==目标值, 复位重试无意义 (三连 0→0 怪叫)。
-                        # 复验 agent P3 (2026-07-22): 只豁免已知"已在档"怪叫签名,
-                        # 与 F1/GOS 判签名对称 — 真 STATIC 故障仍 fail-loud, 否则
-                        # clear_passthrough 的真故障被吞成功、污染校准证书更糟。
-                        _benign_static = (
-                            "Setting of simulation static model failed" in static_err
-                            or "Wrong device state" in static_err
-                        )
-                        if _benign_static:
+                        # Codex #221 R5 P1 + PROPSIM 手册 20.5.2/20.6.1 (NotebookLM
+                        # 查证): 已在 0 档再设 0 的怪叫, 固件可能报 "Wrong device
+                        # state"(状态机层拒绝) 或 "Setting of simulation static model
+                        # failed"(底层执行失败) —— 两签名都可能, 靠字符串猜会把
+                        # session desync / 仍在 STATIC 3 故障态误吞成功。手册推荐回查
+                        # DIAG:SIMU:MODEL:STATIC? 确认真实档 (STOPPED/RUNNING 可靠回读,
+                        # 会话异常读不到)。与 start_emulation GO 豁免同一消歧: 只有
+                        # 确认 STATIC==0 (真禁用) 才豁免, 否则 (含读不到) fail-loud —
+                        # 免真故障被吞成功污染 clear_passthrough → 校准证书。
+                        static_now = None
+                        try:
+                            raw = await self._query("DIAG:SIMU:MODEL:STATIC?")
+                            static_now = raw.strip() if raw else None
+                        except Exception as e:  # noqa: BLE001
+                            logger.warning(
+                                f"[F64] DISABLED 豁免前回查 STATIC? 失败 ({e}) — 保守 fail-loud"
+                            )
+                        if static_now == "0":
                             logger.info(
-                                f"[F64] STATIC 0 首发被拒 ({static_err}) — 已在 0 档"
-                                "的幂等怪叫, 豁免为成功"
+                                f"[F64] STATIC 0 首发被拒 ({static_err}) 但回查 STATIC?=0 "
+                                "确认已在禁用档 — 幂等豁免为成功"
                             )
                         else:
                             self._last_error = (
-                                f"set_bypass_mode(DISABLED) rejected: {static_err}"
+                                f"set_bypass_mode(DISABLED) rejected: {static_err} "
+                                f"(回查 STATIC?={static_now}≠0 — 未真禁用/session desync)"
                             )
                             logger.error(
-                                f"[F64] STATIC 0 被拒且非已在档签名 ({static_err}) — "
-                                "真故障 fail-loud"
+                                f"[F64] STATIC 0 被拒且回查 STATIC?={static_now}≠0 — "
+                                "真故障/session desync, fail-loud"
                             )
                             return False
                     else:

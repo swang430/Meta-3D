@@ -3,8 +3,9 @@
 覆盖:
 - F1: start_emulation GO 对"已运行态"报 -200 Wrong device state → 与 GOS 对称豁免为
       成功 (否则冷缓存放行场景假失败, 且反复 GO 往 PropSim 死锁累积); 其他 -200 仍 False。
-- F2: set_bypass_mode(DISABLED=0) 首发被拒 → 直接幂等豁免 (不进复位重试, 否则三连
-      0→0 怪叫必假失败, 下游写进校准证书 warnings 误导); mode≠0 仍复位重试。
+- F2: set_bypass_mode(DISABLED=0) 首发被拒 → 回查 DIAG:SIMU:MODEL:STATIC? 消歧
+      (与 GO 豁免对称): ==0 才幂等豁免, ≠0/读不到 fail-loud (session desync 不误吞);
+      mode≠0 仍复位重试。
 """
 from __future__ import annotations
 
@@ -108,9 +109,10 @@ class TestGoWrongStateExempt:
 # ---------------------------------------------------------------------------
 
 class TestStaticDisabledExempt:
-    async def test_disabled_rejected_exempted_no_retry(self):
-        """DISABLED(0) 首发被拒 → 豁免为成功, 且**只写一次** STATIC 0 (无复位重试)。"""
-        drv, visa = _driver({"DIAG:SIMU:MODEL:STATIC 0": [STATIC_FAIL]})
+    async def test_disabled_rejected_static0_exempted_no_retry(self):
+        """DISABLED(0) 首发被拒 + 回查 STATIC?=0 (真在禁用档) → 豁免为成功, 且
+        **只写一次** STATIC 0 (无复位重试; 回查 STATIC? 是 query 不算 write)。"""
+        drv, visa = _driver({"DIAG:SIMU:MODEL:STATIC 0": [STATIC_FAIL]}, static_val="0")
         assert await drv.set_bypass_mode(F64BypassMode.DISABLED) is True
         assert drv._bypass_mode == F64BypassMode.DISABLED
         static0_writes = [w for w in _writes(visa) if w == "DIAG:SIMU:MODEL:STATIC 0"]
@@ -135,11 +137,16 @@ class TestStaticDisabledExempt:
         assert drv._bypass_mode == F64BypassMode.DISABLED  # 未更新
         assert "-200" in (drv._last_error or "")
 
-    async def test_disabled_genuine_failure_still_fails(self):
-        """复验 agent P3: DISABLED 首发被拒但**非**'已在档'签名 (真硬件故障) →
-        fail-loud False, 不被幂等豁免误吞 (否则污染下游校准证书)。"""
-        drv, _ = _driver(
-            {"DIAG:SIMU:MODEL:STATIC 0": ['-200,"Execution error;hardware fault"']}
-        )
+    async def test_disabled_rejected_static_nonzero_fails(self):
+        """Codex #221 R5 P1: DISABLED 首发被拒 + 回查 STATIC?≠0 (session desync /
+        仍在 STATIC 3 直通故障态) → fail-loud False, 不靠错误签名盲豁免 (否则真故障
+        被吞成功、污染 clear_passthrough → 校准证书)。"""
+        drv, _ = _driver({"DIAG:SIMU:MODEL:STATIC 0": [STATIC_FAIL]}, static_val="3")
         assert await drv.set_bypass_mode(F64BypassMode.DISABLED) is False
-        assert "hardware fault" in (drv._last_error or "")
+        assert "STATIC?=3" in (drv._last_error or "")
+
+    async def test_disabled_rejected_static_unreadable_fails(self):
+        """DISABLED 被拒 + STATIC? 读不到 (会话异常, 手册: -400/-360) → 保守
+        fail-loud, 不盲豁免。"""
+        drv, _ = _driver({"DIAG:SIMU:MODEL:STATIC 0": [STATIC_FAIL]}, static_val="")
+        assert await drv.set_bypass_mode(F64BypassMode.DISABLED) is False

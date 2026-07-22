@@ -738,7 +738,8 @@ class MockChannelEmulator(ChannelEmulatorDriver):
 
     async def set_baseband_power(
         self,
-        power_dbm: float
+        power_dbm: float,
+        input_ports=None,  # Codex #221 R5: 与 F64 real 签名对齐 (避免 real/mock 契约漂移)
     ) -> bool:
         """
         Mock set baseband power.
