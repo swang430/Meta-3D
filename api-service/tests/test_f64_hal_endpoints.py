@@ -1,7 +1,7 @@
 """P2-1 (onsite-20260721-todo): F64 现场编排端点路由级单测。
 
-2026-07-21 现场收口 — 6 个哑执行工具端点 (emulation-control / output-gain /
-output-calibration / load-scenario / input-reference / crest-factor)。
+2026-07-21 现场收口 — 5 个哑执行工具端点 (emulation-control / output-gain /
+output-calibration / input-reference / crest-factor)。
 
 按 feedback_fastapi_router_prefix_no_double 教训用 TestClient 打真路径 (函数级
 单测测不到路由 404); 按端点三分支矩阵覆盖: driver 未加载 404 / 驱动缺方法·非法
@@ -55,10 +55,6 @@ class _FakeF64Driver:
         self.calls.append(("get_output_calibration", output_num))
         return self._calib
 
-    async def load_local_scenario(self, file_path: str) -> bool:
-        self.calls.append(("load_local_scenario", file_path))
-        return self._ok
-
     async def set_baseband_power(self, power_dbm: float) -> bool:
         self.calls.append(("set_baseband_power", power_dbm))
         return self._ok
@@ -94,7 +90,6 @@ def no_driver(monkeypatch):
         ("post", "/emulation-control", {"action": "start"}),
         ("post", "/output-gain", {"ports": [1], "gain_db": 0.0}),
         ("get", "/output-calibration/1", None),
-        ("post", "/load-scenario", {"file_path": "D:\\x.smu"}),
         ("post", "/input-reference", {"power_dbm": -17.0}),
         ("post", "/crest-factor", {"input_ports": [1], "crest_db": 15.0}),
     ],
@@ -208,47 +203,6 @@ def test_output_calibration_null_readback(client, fake_driver):
     data = resp.json()
     assert data["ok"] is False
     assert data["calibration"] is None
-
-
-# ---------------------------------------------------------------------------
-# load-scenario
-# ---------------------------------------------------------------------------
-
-def test_load_scenario_ok_with_start(client, fake_driver):
-    resp = client.post(
-        BASE + "/load-scenario",
-        json={"file_path": "D:\\Scenario Packs\\x.smu", "start_after": True},
-    )
-    data = resp.json()
-    assert data["loaded"] is True
-    assert data["started"] is True
-    assert ("load_local_scenario", "D:\\Scenario Packs\\x.smu") in fake_driver.calls
-    assert ("start_emulation",) in fake_driver.calls
-
-
-def test_load_scenario_no_start_when_disabled(client, fake_driver):
-    resp = client.post(
-        BASE + "/load-scenario",
-        json={"file_path": "D:\\x.smu", "start_after": False},
-    )
-    data = resp.json()
-    assert data["loaded"] is True
-    assert "started" not in data
-    assert ("start_emulation",) not in fake_driver.calls
-
-
-def test_load_scenario_failure_skips_start(client, monkeypatch):
-    """加载失败 → 不 GO (避免对未加载态盲 GO 触发 -200 级联), last_error 透传。"""
-    driver = _FakeF64Driver(ok=False)
-    monkeypatch.setattr(instrument_api, "_get_loaded_hal_driver", lambda key: driver)
-    resp = client.post(
-        BASE + "/load-scenario", json={"file_path": "D:\\x.smu", "start_after": True}
-    )
-    data = resp.json()
-    assert data["loaded"] is False
-    assert data["last_error"] == "驱动失败(测试注入)"
-    assert "started" not in data
-    assert ("start_emulation",) not in driver.calls
 
 
 # ---------------------------------------------------------------------------

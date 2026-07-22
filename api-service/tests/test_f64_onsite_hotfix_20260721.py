@@ -1,13 +1,10 @@
-"""P2-1 收口审查 (agent F1/F2/F4) 的驱动层回归 — 钉住 2026-07-21 现场幂等豁免
-与 load_local_scenario 的正确失败语义。
+"""P2-1 收口审查 (agent F1/F2) 的驱动层回归 — 钉住 2026-07-21 现场幂等豁免语义。
 
 覆盖:
 - F1: start_emulation GO 对"已运行态"报 -200 Wrong device state → 与 GOS 对称豁免为
       成功 (否则冷缓存放行场景假失败, 且反复 GO 往 PropSim 死锁累积); 其他 -200 仍 False。
 - F2: set_bypass_mode(DISABLED=0) 首发被拒 → 直接幂等豁免 (不进复位重试, 否则三连
       0→0 怪叫必假失败, 下游写进校准证书 warnings 误导); mode≠0 仍复位重试。
-- F4: load_local_scenario 的 CLOSE 进锁 + 错误检查; CLOSE 被拒不乱置 _emulation_running;
-      CLOSE 成功但 CALC 失败 → _loaded_emulation_file 置 None (不谎报"加载着")。
 """
 from __future__ import annotations
 
@@ -146,97 +143,3 @@ class TestStaticDisabledExempt:
         )
         assert await drv.set_bypass_mode(F64BypassMode.DISABLED) is False
         assert "hardware fault" in (drv._last_error or "")
-
-
-# ---------------------------------------------------------------------------
-# F4 — load_local_scenario CLOSE 进锁 + 失败语义
-# ---------------------------------------------------------------------------
-
-class TestLoadLocalScenario:
-    async def test_empty_path_false_no_write(self):
-        drv, visa = _driver()
-        assert await drv.load_local_scenario("") is False
-        assert _writes(visa) == []
-        assert "空文件路径" in (drv._last_error or "")
-
-    async def test_load_success_sets_file_and_pipeline(self):
-        fp = "D:\\Scenario Packs\\test.smu"
-        drv, visa = _driver()
-        drv._emulation_running = True
-        assert await drv.load_local_scenario(fp) is True
-        assert drv._loaded_emulation_file == fp
-        assert drv._active_pipeline == F64Pipeline.GCM_NATIVE
-        assert drv._emulation_running is False  # CLOSE 成功 → 真停
-        w = _writes(visa)
-        assert w.index("DIAG:SIMU:CLOSE") < w.index(f"CALC:FILT:FILE {fp}"), w
-
-    async def test_close_rejected_keeps_running_cache_still_loads(self):
-        """CLOSE 被拒 (干净空态实证) → _emulation_running 不乱置 False, 仍尝试加载。"""
-        fp = "D:\\x.smu"
-        drv, _ = _driver({"DIAG:SIMU:CLOSE": [WRONG_STATE]})
-        drv._emulation_running = True
-        assert await drv.load_local_scenario(fp) is True
-        assert drv._emulation_running is True  # CLOSE 被拒 → 缓存不动 (仪器还在播)
-        assert drv._loaded_emulation_file == fp
-
-    async def test_calc_fails_after_close_clears_stale_file(self):
-        """CLOSE 成功但 CALC:FILT:FILE 失败 (错误门路径) → 硬件无工程,
-        _loaded_emulation_file 置 None (不留旧值谎报'加载着')。"""
-        fp = "D:\\new.smu"
-        drv, _ = _driver({f"CALC:FILT:FILE {fp}": [STATIC_FAIL]})
-        drv._loaded_emulation_file = "old.smu"
-        assert await drv.load_local_scenario(fp) is False
-        assert drv._loaded_emulation_file is None  # 不谎报
-        assert "load_local_scenario failed" in (drv._last_error or "")
-
-    async def test_calc_timeout_exception_clears_stale_file(self):
-        """Codex #221 P2: CLOSE 成功但 CALC:FILT:FILE **抛异常** (VI_ERROR_TMO —
-        现场实证的超时路径) → except 分支也清 _loaded_emulation_file (不留旧值谎报)。"""
-        drv, _ = _driver(raise_on_write="CALC:FILT:FILE")
-        drv._loaded_emulation_file = "old.smu"
-        assert await drv.load_local_scenario("D:\\new.smu") is False
-        assert drv._loaded_emulation_file is None  # 异常路径也清
-
-    async def test_close_exception_keeps_no_false_load(self):
-        """CLOSE 本身抛异常 (会话坏) → close_rejected 保持 False, 清 stale 亦保守安全。"""
-        drv, _ = _driver(raise_on_write="DIAG:SIMU:CLOSE")
-        drv._loaded_emulation_file = "old.smu"
-        assert await drv.load_local_scenario("D:\\new.smu") is False
-        assert drv._loaded_emulation_file is None
-
-    async def test_load_success_clears_programmed_freq(self):
-        """Codex #221 P2 (复审轮): 加载新 .smu → 清 _center_freq_programmed (旧显式
-        频率失效), 否则 get_frequency_identity 报 stale 频率、一致性网拿旧值对比。"""
-        drv, _ = _driver()
-        drv._center_freq_programmed = True  # 之前 configure 显式下发过
-        drv._center_freq_mhz = 3500.0
-        assert await drv.load_local_scenario("D:\\x.smu") is True
-        assert drv._center_freq_programmed is False
-
-    async def test_load_failure_clears_programmed_freq(self):
-        """加载失败清 file 时同样复位 programmed (identity 报 None, 一致性网跳过)。"""
-        fp = "D:\\bad.smu"
-        drv, _ = _driver({f"CALC:FILT:FILE {fp}": [STATIC_FAIL]})
-        drv._center_freq_programmed = True
-        assert await drv.load_local_scenario(fp) is False
-        assert drv._center_freq_programmed is False
-
-    async def test_load_default_file_syncs_topology(self):
-        """Codex #221 P1 (第3轮): 加载默认文件 → 同步 MIMO 拓扑 (2x2→4x4), 否则
-        下游按 2x2 配端口数、漏配实际 4x4 → RF 链路错配。"""
-        drv, _ = _driver()
-        drv._default_emulation_file = "D:\\default.smu"
-        drv._default_emulation_file_topology = (4, 4)
-        drv._tx_antennas, drv._rx_antennas = 2, 2  # 构造默认
-        assert await drv.load_local_scenario("D:\\default.smu") is True
-        assert (drv._tx_antennas, drv._rx_antennas) == (4, 4)
-        assert drv._current_scenario == "D:\\default.smu"
-
-    async def test_load_nondefault_file_keeps_topology(self):
-        """非默认文件不动拓扑 (operator 经 set_mimo_config 设, load 不擅改)。"""
-        drv, _ = _driver()
-        drv._default_emulation_file = "D:\\default.smu"
-        drv._default_emulation_file_topology = (4, 4)
-        drv._tx_antennas, drv._rx_antennas = 2, 2
-        assert await drv.load_local_scenario("D:\\other.smu") is True
-        assert (drv._tx_antennas, drv._rx_antennas) == (2, 2)  # 不变

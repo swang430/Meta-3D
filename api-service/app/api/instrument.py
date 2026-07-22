@@ -2818,40 +2818,6 @@ async def get_output_calibration_endpoint(category_key: str, output_num: int):
     return {"ok": calib is not None, "output_num": output_num, "calibration": calib}
 
 
-class LoadScenarioRequest(BaseModel):
-    file_path: str            # F64 本地 .smu/.wiz 路径 (D:\Scenario Packs\...\xxx.smu)
-    start_after: bool = True  # 加载后 GO 播放 (reset F64 = 加载配置文件 + 重新播放)
-
-
-@router.post("/instruments/{category_key}/load-scenario")
-async def load_scenario(category_key: str, request: LoadScenarioRequest):
-    """现场 reset F64: 加载本地 .smu 场景文件 (走驱动 load_local_scenario, 加载事务保护)。
-    reset F64 = 重新 load 工程配置文件; start_after=True 时加载后接 GO 播放。
-
-    ⚠ 2026-07-21 真机实测**失败**, 当前不保证可用: 前置 DIAG:SIMU:CLOSE 在部分状态被拒
-    (-200 wrong device state) → CALC:FILT:FILE 拿不到 *OPC? → VI_ERROR_TMO 超时。当天
-    加载全靠操作员在 F64 界面手动 load。待 P0-3 复合以往文件共享调用经验 + F64 手册重修
-    前置序列 (见 onsite-20260721-todo P0-3)。
-    """
-    driver = _get_loaded_hal_driver(category_key)
-    if driver is None:
-        raise HTTPException(404, f"{category_key} HAL driver 未加载")
-    method = getattr(driver, "load_local_scenario", None)
-    if method is None:
-        raise HTTPException(400, f"{category_key} 驱动不支持 load_local_scenario")
-    loaded = await _call_f64_method(method, request.file_path)
-    result: Dict[str, Any] = {
-        "loaded": loaded,
-        "file_path": request.file_path,
-        "last_error": None if loaded else getattr(driver, "_last_error", None),
-    }
-    if loaded and request.start_after:
-        started = await _call_f64_method(driver.start_emulation)
-        result["started"] = started
-        result["start_error"] = None if started else getattr(driver, "_last_error", None)
-    return result
-
-
 class InputReferenceRequest(BaseModel):
     power_dbm: float          # 输入参考电平 (INP:LEV:AMP:CH, 所有输入口)
 
