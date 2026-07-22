@@ -197,6 +197,20 @@ GUI 遵循 **API优先架构**，包含以下层次：
 数据在 `gui/src/api/mockDatabase.ts`; 启用后整个应用走 mock adapter 不连后端, TP-* 等演示
 数据跟真实后端会漂移。添加新端点的 mock / 契约同步见下方「添加新 API 端点」。
 
+### ⭐ UXM / F64 驱动 SCPI 开发必查 NotebookLM (2026-07-22 用户定标准 rule)
+
+凡改动涉及 **UXM 或 F64 驱动的 SCPI 部分**（命令形式 / 下发序列 / 状态机语义 /
+前置条件 / 回读），动手或定稿前**必须先查对应 NotebookLM notebook** 拿确认和建议
+（工具 `mcp__notebooklm-mcp__notebook_query`，传 notebook_id + 问题）：
+
+- **F64 / PROPSIM** → 「PROPSIM 资料」`982222b7-4953-46cd-9949-00fa97882353`
+- **UXM** → 「Keysight UXM5G 网络测试 SCPI 编程指南」`236d9621-e3ce-4ed1-a8e1-7819b674dbcd`
+
+厂商手册是可查证权威源；**F64 禁盲试**（未验证 SCPI query 会触发 3334 session
+desync）。纯移除 / 重命名 / 不引入新 SCPI 逻辑的重构不必查。第一个实打实应用点 =
+P0-3（重写 F64 load .smu 前置序列）。详见 memory
+`feedback_query_notebooklm_for_uxm_f64_driver`。
+
 ### 添加新 API 端点
 1. 在 `api/openapi.yaml` 中定义端点
 2. 运行 `npm run openapi:generate` 更新 TypeScript 类型
