@@ -570,6 +570,25 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             # 不复位则 get_frequency_identity 优先报 stale programmed 频率, 让
             # UXM/F64 一致性网拿旧频率对比 (镜像 set_channel_model @990 处理)。
             self._center_freq_programmed = False
+            # Codex #221 P1: 加载默认文件 → 同步 MIMO 拓扑 (镜像 set_channel_model
+            # @1010)。否则 _tx/_rx_antennas 留构造默认 2x2, 下游 input-reference /
+            # metrics / path-loss·gain loops 按 2x2 配端口数、漏配实际 4x4 (16 输出)
+            # → 只驱动子集、错配 RF 链路。非默认文件靠 operator set_mimo_config。
+            if (
+                file_path == self._default_emulation_file
+                and self._default_emulation_file_topology is not None
+            ):
+                new_tx, new_rx = self._default_emulation_file_topology
+                if (self._tx_antennas, self._rx_antennas) != (new_tx, new_rx):
+                    logger.info(
+                        "[F64] 默认文件加载 → 同步 MIMO 拓扑 %dx%d → %dx%d",
+                        self._tx_antennas, self._rx_antennas, new_tx, new_rx,
+                    )
+                    self._tx_antennas, self._rx_antennas = new_tx, new_rx
+            # 域枚举 (feedback_fix_quality_domain_enumeration_first): set_channel_model
+            # 加载成功还更新模型标识缓存 — 一并对齐, 免残留旧 model 名谎报当前场景。
+            self._current_model = "local_scenario"
+            self._current_scenario = file_path
             self._active_pipeline = F64Pipeline.GCM_NATIVE
             logger.info(f"[F64] 本地场景已加载: {file_path}")
             return True

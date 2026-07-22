@@ -220,3 +220,23 @@ class TestLoadLocalScenario:
         drv._center_freq_programmed = True
         assert await drv.load_local_scenario(fp) is False
         assert drv._center_freq_programmed is False
+
+    async def test_load_default_file_syncs_topology(self):
+        """Codex #221 P1 (第3轮): 加载默认文件 → 同步 MIMO 拓扑 (2x2→4x4), 否则
+        下游按 2x2 配端口数、漏配实际 4x4 → RF 链路错配。"""
+        drv, _ = _driver()
+        drv._default_emulation_file = "D:\\default.smu"
+        drv._default_emulation_file_topology = (4, 4)
+        drv._tx_antennas, drv._rx_antennas = 2, 2  # 构造默认
+        assert await drv.load_local_scenario("D:\\default.smu") is True
+        assert (drv._tx_antennas, drv._rx_antennas) == (4, 4)
+        assert drv._current_scenario == "D:\\default.smu"
+
+    async def test_load_nondefault_file_keeps_topology(self):
+        """非默认文件不动拓扑 (operator 经 set_mimo_config 设, load 不擅改)。"""
+        drv, _ = _driver()
+        drv._default_emulation_file = "D:\\default.smu"
+        drv._default_emulation_file_topology = (4, 4)
+        drv._tx_antennas, drv._rx_antennas = 2, 2
+        assert await drv.load_local_scenario("D:\\other.smu") is True
+        assert (drv._tx_antennas, drv._rx_antennas) == (2, 2)  # 不变
