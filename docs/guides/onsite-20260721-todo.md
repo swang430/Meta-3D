@@ -35,13 +35,17 @@
     仪表都要从**通用测试参数**主动取值并配置到位,来源 = **测试参数 / 手机配置 / SIM 卡配置**,
     **绝不靠仪表继承来的旧值**。这是"仪表配置单一真值源"原则,是本项的本质。
 
-- [ ] **P0-3 修 F64 软件加载 .smu 的前置序列(现在撞超时)**
-  - 事实:`load_local_scenario` 开头发的 `DIAG:SIMU:CLOSE` 在 F64 干净/某态被拒
-    (`wrong device state`)→ 后面 `CALC:FILT:FILE` 拿不到 `*OPC?` → `VI_ERROR_TMO` 超时。
-    软件 load .smu **从没成功过**,当天全靠操作员在 F64 界面手动 load。
+- [ ] **P0-3 重新实现 F64 软件加载 .smu 的前置序列(旧实现撞超时,已移除)**
+  - 事实:旧 `load_local_scenario`(**P2-1 已从代码移除**)开头发的 `DIAG:SIMU:CLOSE` 在
+    F64 干净/某态被拒(`wrong device state`)→ 后面 `CALC:FILT:FILE` 拿不到 `*OPC?` →
+    `VI_ERROR_TMO` 超时。软件 load .smu **从没成功过**,当天全靠操作员在 F64 界面手动 load。
   - 改:对照 F64 手册(库里已有 `Instrument_API_Doc/Keysight PromSim F64`)确认加载 .smu
-    的正确前置 SCPI 序列,修 `load_local_scenario`(CLOSE 容错 / 换正确前置 / 判是否需要
-    先进某模式)。
+    的正确前置 SCPI 序列,**从零重新实现** `load_local_scenario` + `/load-scenario` 端点
+    (CLOSE 容错 / 换正确前置 / 判是否需要先进某模式)。**重写 checklist**:加载成功后
+    必须同步 4 类缓存(Codex 在 P2-1 旧实现上逐条挑出过)——① `_loaded_emulation_file`
+    文件名、② `_center_freq_programmed` 复位(新 .smu 频率由文件定)、③ 默认文件同步
+    MIMO 拓扑 `_tx/_rx_antennas`、④ `_emulation_running`(未 GO 前不能谎报在播);
+    对照 `set_channel_model` 的加载副作用做域枚举,别再补一条漏一条。
   - **[用户 review]** 以往是通过**文件共享方式**调用这些配置文件的。修之前必须**复合以前的
     现场测试经验**(git log / 旧现场文档里 .smu 到底怎么被引用和加载)**+ F64 手册**一起确认
     调用方式对不对,不能只凭手册闭门造。
@@ -105,11 +109,15 @@
 
 ### P2 — 收尾 / 固化
 
-- [ ] **P2-1 把当天 6 个 HAL 控制端点 + 驱动改动整理成 PR**
+- [ ] **P2-1 把当天 HAL 控制端点 + 驱动改动整理成 PR**(PR #221)
   - 事实(工作树未提交):`instrument.py` 新增 `emulation-control / output-gain /
-    output-calibration / load-scenario / input-reference / crest-factor` 六个端点;
-    `propsim_f64.py` 新增 `load_local_scenario` + `start_emulation` 冷缓存放行修复;
+    output-calibration / input-reference / crest-factor` 五个端点;
+    `propsim_f64.py` 有 `start_emulation` 冷缓存放行 + GO/GOS/STATIC 幂等豁免修复;
     `uxm_base_station.py` 也有改动(OPC 超时热修)。
+  - **`load-scenario` 端点 + `load_local_scenario` 方法已从本 PR 移除**:真机实测失败
+    (CLOSE 撞 wrong device state → CALC:FILT:FILE 超时),Codex 连挑 4 轮「加载后漏同步
+    的缓存」(GO 无关豁免→stale 文件→stale 频率→拓扑→emulation_running),是半成品 ——
+    正确的 F64 load 前置序列留到 **P0-3** 专门重写(见下)。
   - 改:整理成 PR,**过 pre-commit-reviewer agent**(现场热修例外已用完,收工必补);端点
     遵循 scpi-command 先例(不进 openapi.yaml),在 HAL 端点清单登记。
 
