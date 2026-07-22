@@ -301,3 +301,38 @@ def test_input_reference_notimplemented_maps_400(client, monkeypatch):
     )
     resp = client.post(BASE + "/input-reference", json={"power_dbm": -17.0})
     assert resp.status_code == 400
+
+
+def test_fs16_real_driver_no_baseband_power_returns_400(client, monkeypatch):
+    """Codex #221 R6 P2 (误报) 实证 + 未来回归守门。
+
+    Codex 假设 channelEmulator 绑 RealPropsimFs16Driver 时会继承到"基类单参
+    set_baseband_power", 端点传 input_ports → TypeError → 500。运行时实测证伪:
+    RealPropsimFs16Driver 整条 MRO (FS16 → ChannelEmulatorDriver → InstrumentDriver
+    → ABC → object) **无** set_baseband_power —— Codex 所指的 channel_emulator.py:352
+    是模块函数内的闭包死代码, 非类方法; ChannelEmulatorDriver 本身也无此方法。
+    真实 FS16 绑 input-reference → getattr→None→HTTPException(400), 无 TypeError/500。
+
+    (上一个用例的 _FS16LikeDriver 测的是"有方法但 raise NotImplementedError"路径;
+    本用例测"整条 MRO 无该方法"路径 —— 真实 FS16 走的是后者。)
+
+    守门: 若将来给基类补单参 set_baseband_power, FS16 会继承到它 → 第一条断言变红,
+    暴露"端点双参调用该单参方法 → TypeError→500"的回归风险。
+    """
+    from app.hal.propsim_fs16 import RealPropsimFs16Driver
+
+    # 铁证: 真实 FS16 MRO 无 set_baseband_power (Codex 前提为假)
+    assert getattr(RealPropsimFs16Driver, "set_baseband_power", None) is None
+
+    class _NoBasebandDriver:  # 镜像真实 FS16: 无 set_baseband_power
+        _last_error = None
+
+    monkeypatch.setattr(
+        instrument_api, "_get_loaded_hal_driver", lambda key: _NoBasebandDriver()
+    )
+    resp = client.post(
+        BASE + "/input-reference",
+        json={"power_dbm": -17.0, "input_ports": [1, 2, 3, 4]},
+    )
+    assert resp.status_code == 400
+    assert "不支持" in resp.json()["detail"]
