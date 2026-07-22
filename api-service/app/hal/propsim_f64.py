@@ -569,6 +569,13 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             logger.info(f"[F64] 本地场景已加载: {file_path}")
             return True
         except Exception as e:
+            # Codex #221 P2: CLOSE 成功但 CALC:FILT:FILE/*OPC? raise (VI_ERROR_TMO —
+            # 本工作流实证的超时路径) 跳到这里, 旧工程已真关而新工程没加载上 →
+            # _loaded_emulation_file 留旧值谎报"加载着"。与错误门路径 (load_err)
+            # 对称: CLOSE 成功过就清 None (close_rejected=False 含 CLOSE 抛异常/会话
+            # 坏, 保守标未加载亦安全, 下次 start 无条件处理)。
+            if not close_rejected:
+                self._loaded_emulation_file = None
             logger.error(f"[F64] load_local_scenario failed: {e}")
             self._last_error = str(e)
             return False
@@ -1465,27 +1472,45 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 # 门判定+状态更新在锁内 (agent F4, 三事务口径一致)。
                 go_err = await self._first_error()
                 if go_err is not None:
-                    # agent F1 (2026-07-22, 收口审查): GO 对**已运行态**报
-                    #   -200,"Execution error;Wrong device state for command"
-                    # (2026-07-21 真机实证多次)。目标"确保在播放"已达成 → 与
-                    # GOS "已停即成功"对称豁免; 否则冷缓存放行场景 (后端重启、
-                    # F64 仍在播) 放行前后都假失败, 且每次重试真打 GO 往
-                    # PropSim 业务层卡死累积 (当天实证的死锁路径)。
-                    # 残余风险 (agent F6 同母题): 若"未加载工程"时 GO 也报同
-                    # 签名, 会被误吞为成功 — 该态无实证签名可分, 后续测量在
-                    # 无信道状态下电平核对会暴露; P1-2 状态机对齐时给此豁免
-                    # 补状态回查。其他错误文本仍 fail-loud。
+                    # GO 报 -200 "Wrong device state" 有**两种成因、签名相同**:
+                    #   (a) F64 已在衰落运行态 (幂等"已在跑") — 目标达成, 可豁免;
+                    #   (b) 前面清直通的 STATIC 0 没生效 (仍 STATIC≠0), GO 被
+                    #       by-design 拒 —— 实际没在播衰落, 豁免会让测量在直通
+                    #       (无衰落) 路径跑假数据。
+                    # Codex #221 P1: 原按签名盲豁免 (收口 agent F1 版) 会误吞 (b)
+                    # —— 正是 STATIC 3 直通 attach→衰落 转换里 STATIC 0 被拒 (新
+                    # 加的 drain 已把它吞掉) 后 GO 撞 STATIC≠0 的高频路径。改为
+                    # **回查 STATIC 档消歧**: 只有确认 STATIC==0 (衰落态) 才豁免,
+                    # 否则 (含读不到) fail-loud。
+                    _exempt = False
                     if "-200" in go_err and "Wrong device state" in go_err:
-                        logger.warning(
-                            f"[F64] GO 在疑似已运行态被拒 ({go_err}) — 按已在播放"
-                            "豁免为成功; 若实际未加载工程, 后续测量输出电平会暴露"
-                        )
-                    else:
-                        # Codex #202 R8 P2: 被拒时直通缓存也不动 (R5 "被拒状态
-                        # 不动"的对称路径) — 单一错误门分不清 STATIC 还是 GO 被
-                        # 拒, 保守取安全侧: 保持"可能仍在直通"标记。漂成"已退出
-                        # 直通"会让 cleanup/诊断漏查, 测量在无衰落直通路径上跑
-                        # 假数据; 反向漂移无害 (下次 start 无条件 STATIC 0 幂等)。
+                        static_now = None
+                        try:
+                            raw = await self._query("DIAG:SIMU:MODEL:STATIC?")
+                            static_now = raw.strip() if raw else None
+                        except Exception as e:  # noqa: BLE001
+                            logger.warning(
+                                f"[F64] GO 豁免前回查 STATIC? 失败 ({e}) — 保守 fail-loud"
+                            )
+                        if static_now == "0":
+                            _exempt = True
+                            logger.warning(
+                                f"[F64] GO 被拒 ({go_err}) 但 STATIC=0 衰落态 — "
+                                "判为已在播放, 豁免为成功"
+                            )
+                        else:
+                            self._last_error = (
+                                f"start_emulation rejected: {go_err} "
+                                f"(STATIC={static_now}, 非衰落态 — 仍在直通/未切成功)"
+                            )
+                            logger.error(
+                                f"[F64] GO 被拒且 STATIC={static_now}≠0 — 仿真未启动"
+                            )
+                            return False
+                    if not _exempt:
+                        # 其他错误文本 (含 STATIC 读不到时不进上面豁免分支): 被拒时
+                        # 直通缓存也不动 (Codex #202 R8/R5 "被拒状态不动"对称路径) —
+                        # 单一错误门分不清 STATIC/GO 哪步被拒, 保守保持"可能仍在直通"。
                         self._last_error = f"start_emulation rejected: {go_err}"
                         logger.error(f"[F64] GO 被拒 (SYST:ERR?): {go_err} — 仿真未启动")
                         return False

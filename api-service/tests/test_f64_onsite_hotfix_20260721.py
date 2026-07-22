@@ -21,8 +21,10 @@ STATIC_FAIL = '-200,"Execution error;Setting of simulation static model failed"'
 OTHER_200 = '-200,"Execution error;GO genuinely rejected"'
 
 
-def _driver(error_seq=None):
+def _driver(error_seq=None, static_val="0", raise_on_write=None):
     """error_seq: {写命令(精确): [该命令后依次返回的 SYST:ERR? 串]}, 用尽后 No error。
+    static_val: DIAG:SIMU:MODEL:STATIC? 回值 (GO 豁免消歧用, 默认 "0" 衰落态)。
+    raise_on_write: 命令子串, 命中的写命令抛 TimeoutError (模拟 VI_ERROR_TMO 异常路径)。
     *OPC? 恒答 1; 记录写序供断言。"""
     drv = RealPropsimF64Driver("f64-hotfix", {})
     drv._channel_count = 1
@@ -34,10 +36,14 @@ def _driver(error_seq=None):
     async def _w(cmd, timeout=None):
         last["cmd"] = cmd
         visa.write(cmd)
+        if raise_on_write and raise_on_write in cmd:
+            raise TimeoutError("VI_ERROR_TMO")
 
     async def _q(cmd, timeout=None):
         if cmd == "*OPC?":
             return "1"
+        if cmd == "DIAG:SIMU:MODEL:STATIC?":
+            return static_val
         if cmd == "SYST:ERR?":
             errs = seq.get(last["cmd"])
             if errs:
@@ -77,11 +83,27 @@ class TestGoWrongStateExempt:
 
     async def test_go_wrong_state_exempt_works_on_cold_cache(self):
         """agent F1 目标场景: 冷缓存 (_loaded_emulation_file=None, 后端重启后 F64
-        仍在播) 放行到 GO, GO 报 Wrong state → 豁免成功 (放行不再假失败)。"""
-        drv, _ = _driver({"DIAG:SIMU:GO": [WRONG_STATE]})
+        仍在播衰落 STATIC=0) 放行到 GO, GO 报 Wrong state → 豁免成功 (放行不再假失败)。"""
+        drv, _ = _driver({"DIAG:SIMU:GO": [WRONG_STATE]}, static_val="0")
         assert drv._loaded_emulation_file is None
         assert await drv.start_emulation() is True
         assert drv._emulation_running is True
+
+    async def test_go_wrong_state_but_static_nonzero_fails(self):
+        """Codex #221 P1: GO 报 Wrong device state 但 STATIC≠0 (清直通没生效, 仍在
+        STATIC 3 直通) → fail-loud, 不豁免 (否则测量在无衰落直通路径跑假数据)。"""
+        drv, _ = _driver({"DIAG:SIMU:GO": [WRONG_STATE]}, static_val="3")
+        drv._loaded_emulation_file = "X.smu"
+        assert await drv.start_emulation() is False
+        assert drv._emulation_running is False
+        assert "STATIC=3" in (drv._last_error or "")
+
+    async def test_go_wrong_state_static_unreadable_fails(self):
+        """STATIC? 读不到 (None) → 保守 fail-loud, 不盲豁免。"""
+        drv, _ = _driver({"DIAG:SIMU:GO": [WRONG_STATE]}, static_val="")
+        drv._loaded_emulation_file = "X.smu"
+        assert await drv.start_emulation() is False
+        assert drv._emulation_running is False
 
 
 # ---------------------------------------------------------------------------
@@ -158,11 +180,26 @@ class TestLoadLocalScenario:
         assert drv._loaded_emulation_file == fp
 
     async def test_calc_fails_after_close_clears_stale_file(self):
-        """CLOSE 成功但 CALC:FILT:FILE 失败 → 硬件无工程, _loaded_emulation_file
-        置 None (不留旧值谎报'加载着')。"""
+        """CLOSE 成功但 CALC:FILT:FILE 失败 (错误门路径) → 硬件无工程,
+        _loaded_emulation_file 置 None (不留旧值谎报'加载着')。"""
         fp = "D:\\new.smu"
         drv, _ = _driver({f"CALC:FILT:FILE {fp}": [STATIC_FAIL]})
         drv._loaded_emulation_file = "old.smu"
         assert await drv.load_local_scenario(fp) is False
         assert drv._loaded_emulation_file is None  # 不谎报
         assert "load_local_scenario failed" in (drv._last_error or "")
+
+    async def test_calc_timeout_exception_clears_stale_file(self):
+        """Codex #221 P2: CLOSE 成功但 CALC:FILT:FILE **抛异常** (VI_ERROR_TMO —
+        现场实证的超时路径) → except 分支也清 _loaded_emulation_file (不留旧值谎报)。"""
+        drv, _ = _driver(raise_on_write="CALC:FILT:FILE")
+        drv._loaded_emulation_file = "old.smu"
+        assert await drv.load_local_scenario("D:\\new.smu") is False
+        assert drv._loaded_emulation_file is None  # 异常路径也清
+
+    async def test_close_exception_keeps_no_false_load(self):
+        """CLOSE 本身抛异常 (会话坏) → close_rejected 保持 False, 清 stale 亦保守安全。"""
+        drv, _ = _driver(raise_on_write="DIAG:SIMU:CLOSE")
+        drv._loaded_emulation_file = "old.smu"
+        assert await drv.load_local_scenario("D:\\new.smu") is False
+        assert drv._loaded_emulation_file is None
