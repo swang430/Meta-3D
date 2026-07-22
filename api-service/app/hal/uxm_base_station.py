@@ -1148,8 +1148,16 @@ class RealUxmDriver(BaseStationDriver):
                 self._write(self._cmds.CELL_STATE_ON.format(cell=cell))
                 cell_restore_pending = False
 
-            # 同步等待
-            self._query("*OPC?")
+            # 同步等待 — 2026-07-21 现场实证: OFF→写参→ON 环绕后小区重启
+            # 需 10s+ 量级, 默认 5s VISA 超时必炸 (*OPC? TMO → 整个
+            # set_cell_config 假失败, 而参数其实已全部下发)。切 CELL 档
+            # 超时等完重启, 完了恢复原值 (与 start_signaling 同法)。
+            _t = self._visa_session.timeout
+            self._visa_session.timeout = VISA_TIMEOUT_CELL
+            try:
+                self._query("*OPC?")
+            finally:
+                self._visa_session.timeout = _t
 
             # P1-19 ⑤: 写后回读对账 (2026-07-03 母题 "回读=echo≠生效" 的反面:
             # IRAT 上 ARFCN/BW/POWer 回读实证与面板一致, 有对账价值)。profile

@@ -1,0 +1,168 @@
+"""P2-1 收口审查 (agent F1/F2/F4) 的驱动层回归 — 钉住 2026-07-21 现场幂等豁免
+与 load_local_scenario 的正确失败语义。
+
+覆盖:
+- F1: start_emulation GO 对"已运行态"报 -200 Wrong device state → 与 GOS 对称豁免为
+      成功 (否则冷缓存放行场景假失败, 且反复 GO 往 PropSim 死锁累积); 其他 -200 仍 False。
+- F2: set_bypass_mode(DISABLED=0) 首发被拒 → 直接幂等豁免 (不进复位重试, 否则三连
+      0→0 怪叫必假失败, 下游写进校准证书 warnings 误导); mode≠0 仍复位重试。
+- F4: load_local_scenario 的 CLOSE 进锁 + 错误检查; CLOSE 被拒不乱置 _emulation_running;
+      CLOSE 成功但 CALC 失败 → _loaded_emulation_file 置 None (不谎报"加载着")。
+"""
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
+from app.hal.base import InstrumentStatus
+from app.hal.propsim_f64 import F64BypassMode, F64Pipeline, RealPropsimF64Driver
+
+WRONG_STATE = '-200,"Execution error;Wrong device state for command"'
+STATIC_FAIL = '-200,"Execution error;Setting of simulation static model failed"'
+OTHER_200 = '-200,"Execution error;GO genuinely rejected"'
+
+
+def _driver(error_seq=None):
+    """error_seq: {写命令(精确): [该命令后依次返回的 SYST:ERR? 串]}, 用尽后 No error。
+    *OPC? 恒答 1; 记录写序供断言。"""
+    drv = RealPropsimF64Driver("f64-hotfix", {})
+    drv._channel_count = 1
+    visa = MagicMock()
+    drv._visa_resource = visa
+    seq = {k: list(v) for k, v in (error_seq or {}).items()}
+    last = {"cmd": None}
+
+    async def _w(cmd, timeout=None):
+        last["cmd"] = cmd
+        visa.write(cmd)
+
+    async def _q(cmd, timeout=None):
+        if cmd == "*OPC?":
+            return "1"
+        if cmd == "SYST:ERR?":
+            errs = seq.get(last["cmd"])
+            if errs:
+                return errs.pop(0)
+            return '0,"No error"'
+        return '0,"No error"'
+
+    drv._write = _w  # type: ignore[assignment]
+    drv._query = _q  # type: ignore[assignment]
+    return drv, visa
+
+
+def _writes(visa):
+    return [c.args[0] for c in visa.write.call_args_list]
+
+
+# ---------------------------------------------------------------------------
+# F1 — GO "已运行态" 豁免
+# ---------------------------------------------------------------------------
+
+class TestGoWrongStateExempt:
+    async def test_go_wrong_device_state_exempted_as_success(self):
+        """GO 报 -200 Wrong device state (已在播放) → 豁免为成功。"""
+        drv, _ = _driver({"DIAG:SIMU:GO": [WRONG_STATE]})
+        drv._loaded_emulation_file = "X.smu"
+        assert await drv.start_emulation() is True
+        assert drv._emulation_running is True
+        assert drv._last_error is None or "-200" not in drv._last_error
+
+    async def test_go_other_200_still_fails(self):
+        """非 Wrong-state 的 -200 (真 GO 失败) 仍 fail-loud False — 豁免不误吞。"""
+        drv, _ = _driver({"DIAG:SIMU:GO": [OTHER_200]})
+        drv._loaded_emulation_file = "X.smu"
+        assert await drv.start_emulation() is False
+        assert drv._emulation_running is False
+        assert "-200" in (drv._last_error or "")
+
+    async def test_go_wrong_state_exempt_works_on_cold_cache(self):
+        """agent F1 目标场景: 冷缓存 (_loaded_emulation_file=None, 后端重启后 F64
+        仍在播) 放行到 GO, GO 报 Wrong state → 豁免成功 (放行不再假失败)。"""
+        drv, _ = _driver({"DIAG:SIMU:GO": [WRONG_STATE]})
+        assert drv._loaded_emulation_file is None
+        assert await drv.start_emulation() is True
+        assert drv._emulation_running is True
+
+
+# ---------------------------------------------------------------------------
+# F2 — STATIC 0 首发被拒直接豁免, 不进复位重试
+# ---------------------------------------------------------------------------
+
+class TestStaticDisabledExempt:
+    async def test_disabled_rejected_exempted_no_retry(self):
+        """DISABLED(0) 首发被拒 → 豁免为成功, 且**只写一次** STATIC 0 (无复位重试)。"""
+        drv, visa = _driver({"DIAG:SIMU:MODEL:STATIC 0": [STATIC_FAIL]})
+        assert await drv.set_bypass_mode(F64BypassMode.DISABLED) is True
+        assert drv._bypass_mode == F64BypassMode.DISABLED
+        static0_writes = [w for w in _writes(visa) if w == "DIAG:SIMU:MODEL:STATIC 0"]
+        assert len(static0_writes) == 1, _writes(visa)  # 无重试的第二次
+
+    async def test_calibration_rejected_then_retry_succeeds(self):
+        """mode≠0: 首发被拒 → STATIC 0 复位 + drain + 重设目标档, 重试过 → True。"""
+        drv, visa = _driver({"DIAG:SIMU:MODEL:STATIC 3": [STATIC_FAIL]})  # 只错首发
+        assert await drv.set_bypass_mode(F64BypassMode.CALIBRATION) is True
+        assert drv._bypass_mode == F64BypassMode.CALIBRATION
+        w = _writes(visa)
+        # 写序: STATIC 3 (首发拒) → STATIC 0 (复位) → STATIC 3 (重试成功)
+        idx3 = [i for i, c in enumerate(w) if c == "DIAG:SIMU:MODEL:STATIC 3"]
+        idx0 = [i for i, c in enumerate(w) if c == "DIAG:SIMU:MODEL:STATIC 0"]
+        assert len(idx3) == 2 and len(idx0) == 1, w
+        assert idx3[0] < idx0[0] < idx3[1], w
+
+    async def test_calibration_retry_still_fails(self):
+        """mode≠0 重试仍被拒 → fail-loud False, _bypass_mode 不动。"""
+        drv, _ = _driver({"DIAG:SIMU:MODEL:STATIC 3": [STATIC_FAIL, STATIC_FAIL]})
+        assert await drv.set_bypass_mode(F64BypassMode.CALIBRATION) is False
+        assert drv._bypass_mode == F64BypassMode.DISABLED  # 未更新
+        assert "-200" in (drv._last_error or "")
+
+    async def test_disabled_genuine_failure_still_fails(self):
+        """复验 agent P3: DISABLED 首发被拒但**非**'已在档'签名 (真硬件故障) →
+        fail-loud False, 不被幂等豁免误吞 (否则污染下游校准证书)。"""
+        drv, _ = _driver(
+            {"DIAG:SIMU:MODEL:STATIC 0": ['-200,"Execution error;hardware fault"']}
+        )
+        assert await drv.set_bypass_mode(F64BypassMode.DISABLED) is False
+        assert "hardware fault" in (drv._last_error or "")
+
+
+# ---------------------------------------------------------------------------
+# F4 — load_local_scenario CLOSE 进锁 + 失败语义
+# ---------------------------------------------------------------------------
+
+class TestLoadLocalScenario:
+    async def test_empty_path_false_no_write(self):
+        drv, visa = _driver()
+        assert await drv.load_local_scenario("") is False
+        assert _writes(visa) == []
+        assert "空文件路径" in (drv._last_error or "")
+
+    async def test_load_success_sets_file_and_pipeline(self):
+        fp = "D:\\Scenario Packs\\test.smu"
+        drv, visa = _driver()
+        drv._emulation_running = True
+        assert await drv.load_local_scenario(fp) is True
+        assert drv._loaded_emulation_file == fp
+        assert drv._active_pipeline == F64Pipeline.GCM_NATIVE
+        assert drv._emulation_running is False  # CLOSE 成功 → 真停
+        w = _writes(visa)
+        assert w.index("DIAG:SIMU:CLOSE") < w.index(f"CALC:FILT:FILE {fp}"), w
+
+    async def test_close_rejected_keeps_running_cache_still_loads(self):
+        """CLOSE 被拒 (干净空态实证) → _emulation_running 不乱置 False, 仍尝试加载。"""
+        fp = "D:\\x.smu"
+        drv, _ = _driver({"DIAG:SIMU:CLOSE": [WRONG_STATE]})
+        drv._emulation_running = True
+        assert await drv.load_local_scenario(fp) is True
+        assert drv._emulation_running is True  # CLOSE 被拒 → 缓存不动 (仪器还在播)
+        assert drv._loaded_emulation_file == fp
+
+    async def test_calc_fails_after_close_clears_stale_file(self):
+        """CLOSE 成功但 CALC:FILT:FILE 失败 → 硬件无工程, _loaded_emulation_file
+        置 None (不留旧值谎报'加载着')。"""
+        fp = "D:\\new.smu"
+        drv, _ = _driver({f"CALC:FILT:FILE {fp}": [STATIC_FAIL]})
+        drv._loaded_emulation_file = "old.smu"
+        assert await drv.load_local_scenario(fp) is False
+        assert drv._loaded_emulation_file is None  # 不谎报
+        assert "load_local_scenario failed" in (drv._last_error or "")

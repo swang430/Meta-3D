@@ -10,7 +10,7 @@ from uuid import UUID
 import logging
 from typing import Optional, List, Dict, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.db.database import get_db
 from app.models.diagnostic_run import DiagnosticKind
@@ -2703,6 +2703,204 @@ def set_instrument_driver_mode(
         driverMode=request.mode,
         message=f"已将 {category.category_name} 设为 {label} 模式",
     )
+
+
+# ============================================================
+# F64 现场编排端点 (2026-07-21 现场收口, onsite-20260721-todo P2-1)
+#
+# F64 仿真启停 (start/stop_emulation)、输入定标 (set_baseband_power/set_crest_factor)、
+# 输出增益 (set_output_gain) 此前只被 cal/measure 服务内部调, 无 standalone HTTP 入口。
+# 现场编排 (reset+attach 可重复性 / 降功率找临界) 要经脚本驱动这些动作, 且**必须走驱动
+# 方法** —— F64 GO/GOS 有幂等怪癖 (已停态 GOS / STATIC 3→3 / GO 前 0→0 均报 -200) +
+# broadcaster 会插进多步命令之间, 驱动用 _scpi_lock 事务 + drain + 错误门保护; 裸发
+# scpi-command 无锁无 drain 会踩 -200 假失败。
+#
+# ⭐ 定位: 全部是**哑执行工具** —— 传什么设什么, 端点不做任何场景判断。参数值 (输入
+# 参考 / 峰均比 / 增益 …) 由上层"参数决议层"从通用测试参数 (测试例) + 实验室链路档案
+# (线损/路损标定) 计算得出, 或由测试例显式覆盖 (设计见 onsite-20260721-todo P0-2/P2-3);
+# 端点内不得固化任何经验值。
+#
+# 遵循 hal/reload·scpi-command·positioner 先例 (HAL 操作端点不进 checked-in
+# openapi.yaml, D19); 现场脚本经 curl 消费。
+# ============================================================
+
+async def _call_f64_method(method, *args):
+    """调 F64 驱动方法; 品类实际绑到不支持该操作的驱动 (agent F5: FS16 与
+    channelEmulator 共用 category key, getattr 命中 ChannelEmulatorDriver 基类
+    的 NotImplementedError) → 400 "不支持" 而非裸 500。"""
+    try:
+        return await method(*args)
+    except NotImplementedError as e:
+        raise HTTPException(400, f"当前驱动不支持该操作: {e}")
+
+
+class EmulationControlRequest(BaseModel):
+    action: str  # "start" (DIAG:SIMU:GO) | "stop" (DIAG:SIMU:GOS 停并倒回)
+
+
+class OutputGainRequest(BaseModel):
+    # agent F5: 空列表 → all({})=True 零下发却假成功; min_length=1 让空列表 422
+    ports: List[int] = Field(min_length=1)   # F64 输出口号 (1..16), 非空
+    gain_db: float     # 绝对增益 (OUTP:GAIN:CH), 支持正负 (负 = 衰减)
+
+
+@router.post("/instruments/{category_key}/emulation-control")
+async def emulation_control(category_key: str, request: EmulationControlRequest):
+    """F64 仿真启停 (走驱动 start/stop_emulation, 含幂等热修 + 锁事务 + 错误门)。
+
+    ⚠ 2026-07-21 真机实证的状态机风险 (P1-2 待对齐): 本固件下 GOS 在运行态未观察到
+    真停 (数据流不断); 对已运行态反复 GO 会持续 -200 累积, 极端情况把 PropSim 业务层
+    搞卡死 (仅剩 SYST:INFO? 应答, *RST 救不回, 只能重启 PropSim)。调用方应先查状态、
+    避免盲目重试 start。
+    """
+    driver = _get_loaded_hal_driver(category_key)
+    if driver is None:
+        raise HTTPException(404, f"{category_key} HAL driver 未加载 (需 Real 模式 + 已连接)")
+    action = request.action.strip().lower()
+    if action == "start":
+        method = getattr(driver, "start_emulation", None)
+    elif action == "stop":
+        method = getattr(driver, "stop_emulation", None)
+    else:
+        raise HTTPException(400, f"未知 action '{action}' (start|stop)")
+    if method is None:
+        raise HTTPException(400, f"{category_key} 驱动不支持 {action}_emulation")
+    ok = await _call_f64_method(method)
+    return {
+        "ok": bool(ok),
+        "action": action,
+        "emulation_running": getattr(driver, "_emulation_running", None),
+        "last_error": None if ok else getattr(driver, "_last_error", None),
+    }
+
+
+@router.post("/instruments/{category_key}/output-gain")
+async def set_output_gain_endpoint(category_key: str, request: OutputGainRequest):
+    """F64 输出增益批量下发 (走驱动 set_output_gain, OUTP:GAIN:CH + 错误门)。
+
+    ⚠ 定位: 逐口**小范围**校准补偿。2026-07-21 真机实证 per-port 有范围上限 (超限
+    -200 "Parameter exceeds set limits", 且各口上限可不同 → 批量下发部分口生效部分
+    被拒, 电平不一致)。大幅 / 整体输出功率调整不用此端点, 走 P0-4 归一化总功率方案。
+    """
+    driver = _get_loaded_hal_driver(category_key)
+    if driver is None:
+        raise HTTPException(404, f"{category_key} HAL driver 未加载")
+    method = getattr(driver, "set_output_gain", None)
+    if method is None:
+        raise HTTPException(400, f"{category_key} 驱动不支持 set_output_gain")
+    results: Dict[int, bool] = {}
+    for p in request.ports:
+        results[p] = bool(await _call_f64_method(method, p, request.gain_db))
+    all_ok = all(results.values())
+    return {
+        "ok": all_ok,
+        "gain_db": request.gain_db,
+        "ports": results,
+        "last_error": None if all_ok else getattr(driver, "_last_error", None),
+    }
+
+
+@router.get("/instruments/{category_key}/output-calibration/{output_num}")
+async def get_output_calibration_endpoint(category_key: str, output_num: int):
+    """读回 F64 输出口当前增益+相位 (走驱动 get_output_calibration, OUTP:CALIB:GET? + 重试)。
+
+    ⚠ 2026-07-21 真机实测: 本机固件对 OUTP:CALIB:GET? 不返回数据 (驱动重试后仍 None,
+    本端点回 ok=false/calibration=null)。读回路径保留, 待对照 F64 手册确认命令适用
+    条件 / 固件差异; 调用方不得依赖它拿"当前增益基准"。
+    """
+    driver = _get_loaded_hal_driver(category_key)
+    if driver is None:
+        raise HTTPException(404, f"{category_key} HAL driver 未加载")
+    method = getattr(driver, "get_output_calibration", None)
+    if method is None:
+        raise HTTPException(400, f"{category_key} 驱动不支持 get_output_calibration")
+    calib = await _call_f64_method(method, output_num)
+    return {"ok": calib is not None, "output_num": output_num, "calibration": calib}
+
+
+class LoadScenarioRequest(BaseModel):
+    file_path: str            # F64 本地 .smu/.wiz 路径 (D:\Scenario Packs\...\xxx.smu)
+    start_after: bool = True  # 加载后 GO 播放 (reset F64 = 加载配置文件 + 重新播放)
+
+
+@router.post("/instruments/{category_key}/load-scenario")
+async def load_scenario(category_key: str, request: LoadScenarioRequest):
+    """现场 reset F64: 加载本地 .smu 场景文件 (走驱动 load_local_scenario, 加载事务保护)。
+    reset F64 = 重新 load 工程配置文件; start_after=True 时加载后接 GO 播放。
+
+    ⚠ 2026-07-21 真机实测**失败**, 当前不保证可用: 前置 DIAG:SIMU:CLOSE 在部分状态被拒
+    (-200 wrong device state) → CALC:FILT:FILE 拿不到 *OPC? → VI_ERROR_TMO 超时。当天
+    加载全靠操作员在 F64 界面手动 load。待 P0-3 复合以往文件共享调用经验 + F64 手册重修
+    前置序列 (见 onsite-20260721-todo P0-3)。
+    """
+    driver = _get_loaded_hal_driver(category_key)
+    if driver is None:
+        raise HTTPException(404, f"{category_key} HAL driver 未加载")
+    method = getattr(driver, "load_local_scenario", None)
+    if method is None:
+        raise HTTPException(400, f"{category_key} 驱动不支持 load_local_scenario")
+    loaded = await _call_f64_method(method, request.file_path)
+    result: Dict[str, Any] = {
+        "loaded": loaded,
+        "file_path": request.file_path,
+        "last_error": None if loaded else getattr(driver, "_last_error", None),
+    }
+    if loaded and request.start_after:
+        started = await _call_f64_method(driver.start_emulation)
+        result["started"] = started
+        result["start_error"] = None if started else getattr(driver, "_last_error", None)
+    return result
+
+
+class InputReferenceRequest(BaseModel):
+    power_dbm: float          # 输入参考电平 (INP:LEV:AMP:CH, 所有输入口)
+
+
+@router.post("/instruments/{category_key}/input-reference")
+async def set_input_reference_endpoint(category_key: str, request: InputReferenceRequest):
+    """F64 输入参考电平 (走驱动 set_baseband_power, INP:LEV:AMP:CH + 错误门)。2026-07-21 验证 ✓。
+
+    值是**派生量**, 不在此固化: input_ref = UXM DL 功率(dBm/BW 口径) − UXM→F64 线缆
+    损耗, 由参数决议层计算或测试例显式覆盖 (P0-2/P2-3)。注意 load .smu 会带回工程内嵌
+    默认输入参考、冲掉先前设置 → 每次加载后必须重新下发。
+    """
+    driver = _get_loaded_hal_driver(category_key)
+    if driver is None:
+        raise HTTPException(404, f"{category_key} HAL driver 未加载")
+    method = getattr(driver, "set_baseband_power", None)
+    if method is None:
+        raise HTTPException(400, f"{category_key} 驱动不支持 set_baseband_power")
+    ok = await _call_f64_method(method, request.power_dbm)
+    return {"ok": bool(ok), "power_dbm": request.power_dbm,
+            "last_error": None if ok else getattr(driver, "_last_error", None)}
+
+
+class CrestFactorRequest(BaseModel):
+    # agent F5: min_length=1 让显式空列表 422 (默认 1-4 不受影响)
+    input_ports: List[int] = Field(default=[1, 2, 3, 4], min_length=1)
+    crest_db: float
+
+
+@router.post("/instruments/{category_key}/crest-factor")
+async def set_crest_factor_endpoint(category_key: str, request: CrestFactorRequest):
+    """F64 峰均比 (走驱动 set_crest_factor + 错误门)。2026-07-21 验证 ✓。
+
+    值是**波形属性**, 不在此固化: 峰均比由制式 × 带宽 × 业务形态决定 (由参数决议层
+    查波形表提供或测试例显式覆盖, P0-2/P2-3)。load .smu 会带回工程内嵌默认值、冲掉
+    先前设置 → 每次加载后必须重新下发。
+    """
+    driver = _get_loaded_hal_driver(category_key)
+    if driver is None:
+        raise HTTPException(404, f"{category_key} HAL driver 未加载")
+    method = getattr(driver, "set_crest_factor", None)
+    if method is None:
+        raise HTTPException(400, f"{category_key} 驱动不支持 set_crest_factor")
+    results: Dict[int, bool] = {}
+    for inp in request.input_ports:
+        results[inp] = bool(await _call_f64_method(method, inp, request.crest_db))
+    all_ok = all(results.values())
+    return {"ok": all_ok, "crest_db": request.crest_db, "ports": results,
+            "last_error": None if all_ok else getattr(driver, "_last_error", None)}
 
 
 # ============================================================

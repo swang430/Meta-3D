@@ -513,6 +513,66 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
         raise NotImplementedError(f"未知加载模式: {mode.value}")
 
+    async def load_local_scenario(self, file_path: str) -> bool:
+        """现场 reset F64: 直接加载 F64 本地 .smu/.wiz 场景文件 (CALC:FILT:FILE), 不经
+        FTP (文件已在 F64 D:盘)。复刻 load_parametric_tdl 的加载事务保护:
+        DIAG:SIMU:CLOSE (真关闭当前仿真, 非 GOS) → drain → CALC:FILT:FILE → *OPC?
+        → 错误门 (SYST:ERR? -200/-300; *OPC?=1 ≠ 加载成功)。加载成功后
+        _loaded_emulation_file 置真值 (解冷缓存), 调用方接 start_emulation GO 播放。
+
+        2026-07-21 现场: 用户定义 reset F64 = 重新 load .smu 配置文件 (工程文件即完整
+        配置)。CLOSE 是真停 (区别 GOS 在本固件下 benign 不真停), 从停态 GO 规避"已在
+        GO 态"的 -200。
+
+        ⚠ 2026-07-21 真机实测**失败**, 当前不保证可用: DIAG:SIMU:CLOSE 在部分状态
+        (如刚重启的干净空态) 被拒 -200 wrong device state → 后续 CALC:FILT:FILE 等不到
+        *OPC? → VI_ERROR_TMO。以往现场是经**文件共享方式**调用配置文件的 — 待 P0-3
+        复合旧现场经验 + F64 手册 (Instrument_API_Doc/Keysight PromSim F64) 重修前置
+        序列后再启用 (onsite-20260721-todo P0-3)。
+        """
+        if not self._visa_resource:
+            return False
+        if not file_path:
+            self._last_error = "load_local_scenario: 空文件路径"
+            return False
+        try:
+            # agent F4 (2026-07-22 收口审查): CLOSE 进锁 + 错误检查 — 原版锁外
+            # 盲发 CLOSE 且无条件置 _emulation_running=False, CLOSE 被拒 (2026-07-21
+            # 实证: 干净空态报 wrong device state) 时仪器还在播、缓存却说停
+            # (P1-21 ④ 测量冻结标注失真)。
+            close_rejected = False
+            async with self._scpi_lock:
+                await self._drain_errors()
+                await self._write("DIAG:SIMU:CLOSE")
+                close_err = await self._first_error()
+                if close_err is not None:
+                    close_rejected = True
+                    logger.warning(
+                        f"[F64] DIAG:SIMU:CLOSE 被拒 ({close_err}) — 仪器状态未变, "
+                        "缓存不动, 仍尝试加载 (错误门兜底)"
+                    )
+                else:
+                    self._emulation_running = False
+                await self._write(f"CALC:FILT:FILE {file_path}", timeout=VISA_TIMEOUT_FILE_LOAD)
+                await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
+                load_err = await self._first_error()
+            if load_err is not None:
+                if not close_rejected:
+                    # CLOSE 已真关旧工程而新工程没加载上 → 硬件无工程; 缓存留
+                    # 旧值会谎报"加载着"(agent F4), 置 None 如实反映。
+                    self._loaded_emulation_file = None
+                self._last_error = f"load_local_scenario failed: {load_err}"
+                logger.error("[F64] 加载本地场景失败 — SYST:ERR?: %s (file=%s)", load_err, file_path)
+                return False
+            self._loaded_emulation_file = file_path
+            self._active_pipeline = F64Pipeline.GCM_NATIVE
+            logger.info(f"[F64] 本地场景已加载: {file_path}")
+            return True
+        except Exception as e:
+            logger.error(f"[F64] load_local_scenario failed: {e}")
+            self._last_error = str(e)
+            return False
+
     async def load_parametric_tdl(self, waveform_dir: str, model_name: str) -> bool:
         """P2-14 B-2: 加载参数化 TDL (.tap/.rtc) 模型, F64 硬件 FPGA 实时合成衰落。
 
@@ -1362,9 +1422,16 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
           - GCM: 信道模型开始衰落播放
           - ASC Runtime: 开始 RTC 波形播放, 初始加载第一个环境
         """
-        if not self._visa_resource or not self._loaded_emulation_file:
-            logger.error("[F64] Cannot start: no emulation file loaded")
+        if not self._visa_resource:
+            logger.error("[F64] Cannot start: no VISA resource")
             return False
+        if not self._loaded_emulation_file:
+            # 2026-07-21 现场: 重启后端后驱动冷缓存 _loaded_emulation_file=None, 但 F64
+            # 硬件仍加载着信道在播放 → 原硬拒让 emulation-control/attach 重启假失败。
+            # 冷缓存不该做 gate (同 runtime-gate-not-frozen-snapshot 母题, 本方法对
+            # _bypass_mode 冷缓存已用无条件 STATIC 0 处理, 独漏 _loaded_emulation_file):
+            # 放行到 GO, 真没加载文件时 GO 自身 -200 由下面错误门 fail-loud 兜。
+            logger.warning("[F64] _loaded_emulation_file 冷缓存 None — 仍尝试 GO (错误门兜底)")
 
         try:
             # Codex #203 R3 P2: 整个 GO 序列 (清 stale → STATIC 0 → GO → *OPC?
@@ -1383,6 +1450,14 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                         f"[F64] GO 前清直通: STATIC {self._bypass_mode.name} → DISABLED (恢复衰落)"
                     )
                 await self._write("DIAG:SIMU:MODEL:STATIC 0")
+                # 2026-07-21 现场实证 (幂等怪癖第三处, 同 GOS / STATIC 3→3):
+                # 已在 STATIC 0 (如刚加载完新工程) 再写 0 → F64 报 -200
+                # "Setting of simulation static model failed"。原单一错误门在
+                # GO 后统读, 把这个无害的 0→0 拒绝误判成 GO 失败 → start 假
+                # 失败。清直通目标 (确保 STATIC 0) 已达成 → 此处先排干把它
+                # 吞掉, 让下面的错误门**只**反映 GO 本身 (真 STATIC 故障会让
+                # GO 也 -200, 门仍兜底)。
+                await self._drain_errors()
                 await self._write("DIAG:SIMU:GO")
                 await self._query("*OPC?")
                 # Codex #202 R2 P2: GO 失败只经 SYST:ERR? 报 (*OPC? 照答 1) —
@@ -1390,14 +1465,30 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 # 门判定+状态更新在锁内 (agent F4, 三事务口径一致)。
                 go_err = await self._first_error()
                 if go_err is not None:
-                    # Codex #202 R8 P2: 被拒时直通缓存也不动 (R5 "被拒状态
-                    # 不动"的对称路径) — 单一错误门分不清 STATIC 还是 GO 被
-                    # 拒, 保守取安全侧: 保持"可能仍在直通"标记。漂成"已退出
-                    # 直通"会让 cleanup/诊断漏查, 测量在无衰落直通路径上跑
-                    # 假数据; 反向漂移无害 (下次 start 无条件 STATIC 0 幂等)。
-                    self._last_error = f"start_emulation rejected: {go_err}"
-                    logger.error(f"[F64] GO 被拒 (SYST:ERR?): {go_err} — 仿真未启动")
-                    return False
+                    # agent F1 (2026-07-22, 收口审查): GO 对**已运行态**报
+                    #   -200,"Execution error;Wrong device state for command"
+                    # (2026-07-21 真机实证多次)。目标"确保在播放"已达成 → 与
+                    # GOS "已停即成功"对称豁免; 否则冷缓存放行场景 (后端重启、
+                    # F64 仍在播) 放行前后都假失败, 且每次重试真打 GO 往
+                    # PropSim 业务层卡死累积 (当天实证的死锁路径)。
+                    # 残余风险 (agent F6 同母题): 若"未加载工程"时 GO 也报同
+                    # 签名, 会被误吞为成功 — 该态无实证签名可分, 后续测量在
+                    # 无信道状态下电平核对会暴露; P1-2 状态机对齐时给此豁免
+                    # 补状态回查。其他错误文本仍 fail-loud。
+                    if "-200" in go_err and "Wrong device state" in go_err:
+                        logger.warning(
+                            f"[F64] GO 在疑似已运行态被拒 ({go_err}) — 按已在播放"
+                            "豁免为成功; 若实际未加载工程, 后续测量输出电平会暴露"
+                        )
+                    else:
+                        # Codex #202 R8 P2: 被拒时直通缓存也不动 (R5 "被拒状态
+                        # 不动"的对称路径) — 单一错误门分不清 STATIC 还是 GO 被
+                        # 拒, 保守取安全侧: 保持"可能仍在直通"标记。漂成"已退出
+                        # 直通"会让 cleanup/诊断漏查, 测量在无衰落直通路径上跑
+                        # 假数据; 反向漂移无害 (下次 start 无条件 STATIC 0 幂等)。
+                        self._last_error = f"start_emulation rejected: {go_err}"
+                        logger.error(f"[F64] GO 被拒 (SYST:ERR?): {go_err} — 仿真未启动")
+                        return False
                 self._bypass_mode = F64BypassMode.DISABLED
                 self._passthrough_active = False
                 self._emulation_running = True
@@ -1439,9 +1530,19 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 await self._write("DIAG:SIMU:GOS")
                 stop_err = await self._first_error()
                 if stop_err is not None:
-                    self._last_error = f"stop_emulation rejected: {stop_err}"
-                    logger.error(f"[F64] GOS 被拒 (SYST:ERR?): {stop_err}")
-                    return False
+                    # 2026-07-21 现场实证 (上面 agent F1 预言的场景): 已停态
+                    # (STOPPED, 工程开着未播) 下发 GOS, F64 报
+                    #   -200,"Execution error;Wrong device state for command"
+                    # —— 语义 = "本来就没在跑"。stop 的目标 (确保停止) 已达成,
+                    # 当成功; 仅此签名豁免, 其他错误仍 fail-loud。
+                    if "-200" in stop_err and "Wrong device state" in stop_err:
+                        logger.info(
+                            f"[F64] GOS 在已停态被拒 ({stop_err}) — 视为已停止, 继续"
+                        )
+                    else:
+                        self._last_error = f"stop_emulation rejected: {stop_err}"
+                        logger.error(f"[F64] GOS 被拒 (SYST:ERR?): {stop_err}")
+                        return False
                 self._emulation_running = False
                 self._status = InstrumentStatus.READY
             logger.info("[F64] Emulation stopped and rewound")
@@ -1639,13 +1740,58 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 await self._write(f"DIAG:SIMU:MODEL:STATIC {mode.value}")
                 static_err = await self._first_error()
                 if static_err is not None:
-                    self._last_error = (
-                        f"set_bypass_mode({mode.name}) rejected: {static_err}"
-                    )
-                    logger.error(
-                        f"[F64] STATIC {mode.value} 被拒 (SYST:ERR?): {static_err}"
-                    )
-                    return False
+                    # 2026-07-21 现场实证 (GOS 同族幂等怪癖): F64 已处于目标
+                    # STATIC 档时再设同档, 报 -200 "Setting of simulation
+                    # static model failed"。冷启动缓存不可信 (重启后不知仪器
+                    # 真实档位), 用"复位重试"消歧: 先 STATIC 0 清 (清一步的
+                    # 错误忽略并排干), 再重设目标档, 以重试的错误门为准 —
+                    # 真失败时重试仍会响亮 False。
+                    # agent F2 (2026-07-22 收口审查): mode=DISABLED(0) 时复位
+                    # 值==目标值, 复位重试是三连 0→0 怪叫必假失败 (下游
+                    # clear_passthrough_mode → path_loss cal 把假失败写进证书
+                    # warnings 误导排障) → 0 档首发被拒直接按幂等豁免成功
+                    # (与 start_emulation GO 前 0→0 drain 同处理), 不进重试。
+                    if mode == F64BypassMode.DISABLED:
+                        # DISABLED 复位值==目标值, 复位重试无意义 (三连 0→0 怪叫)。
+                        # 复验 agent P3 (2026-07-22): 只豁免已知"已在档"怪叫签名,
+                        # 与 F1/GOS 判签名对称 — 真 STATIC 故障仍 fail-loud, 否则
+                        # clear_passthrough 的真故障被吞成功、污染校准证书更糟。
+                        _benign_static = (
+                            "Setting of simulation static model failed" in static_err
+                            or "Wrong device state" in static_err
+                        )
+                        if _benign_static:
+                            logger.info(
+                                f"[F64] STATIC 0 首发被拒 ({static_err}) — 已在 0 档"
+                                "的幂等怪叫, 豁免为成功"
+                            )
+                        else:
+                            self._last_error = (
+                                f"set_bypass_mode(DISABLED) rejected: {static_err}"
+                            )
+                            logger.error(
+                                f"[F64] STATIC 0 被拒且非已在档签名 ({static_err}) — "
+                                "真故障 fail-loud"
+                            )
+                            return False
+                    else:
+                        logger.info(
+                            f"[F64] STATIC {mode.value} 首发被拒 ({static_err}) — "
+                            "按已在档/粘滞处理: STATIC 0 复位后重试一次"
+                        )
+                        await self._write("DIAG:SIMU:MODEL:STATIC 0")
+                        await self._drain_errors()  # 清位错误不计 (0→0 同样会怪叫)
+                        await self._write(f"DIAG:SIMU:MODEL:STATIC {mode.value}")
+                        retry_err = await self._first_error()
+                        if retry_err is not None:
+                            self._last_error = (
+                                f"set_bypass_mode({mode.name}) rejected: {retry_err}"
+                            )
+                            logger.error(
+                                f"[F64] STATIC {mode.value} 复位重试仍被拒 "
+                                f"(SYST:ERR?): {retry_err}"
+                            )
+                            return False
                 # 运行态切 STATIC≠0 → F64 自动 STOPPED; 驱动状态跟着同步, 否则
                 # _emulation_running 漂移 (输出测量冻结标注 P1-21 ④ 也依赖它)。
                 if mode != F64BypassMode.DISABLED and self._emulation_running:
