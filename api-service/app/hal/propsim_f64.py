@@ -652,8 +652,13 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     logger.error(f"[F64] {self._last_error}")
                     # Codex #223 复审: STATE?≠CLOSED (如 STOPPED) = 旧场景**仍加载**(只暂停),
                     # CLOSE 未卸载 → **保留 identity** (冷缓存 GO 还能起旧场景, 一致性网该核对旧
-                    # 频率, 别报 None 漏掉); 仅置 running=False (STOPPED=暂停非运行)。
-                    self._emulation_running = False
+                    # 频率, 别报 None 漏掉)。running 只在**确认非运行稳态**才清 —— STATE?=RUNNING
+                    # 说明 CLOSE 没停、仍在发射, None 说明读失败, 都不清 (否则 disconnect 清理跳过
+                    # stop_emulation, 现场可能仍发射)。
+                    if close_state == "RUNNING":
+                        self._emulation_running = True
+                    elif close_state is not None:
+                        self._emulation_running = False
                     return False
                 close_confirmed = True  # STATE?==CLOSED: 旧场景确认卸载 → 后续失败可清 identity
                 # ——加载 (大文件抬超时, 手册 §2.2.4 默认 2000ms 必 -400)——
@@ -766,7 +771,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                         f"CALC:FILT:FILE (旧场景仍加载; file={load_file})"
                     )
                     logger.error(f"[F64/B2] {self._last_error}")
-                    self._emulation_running = False  # STOPPED=暂停非运行
+                    # running 只在确认非运行稳态才清 (Codex #223: RUNNING=仍发射/None=读失败 不清)
+                    if close_state == "RUNNING":
+                        self._emulation_running = True
+                    elif close_state is not None:
+                        self._emulation_running = False
                     return False
                 close_confirmed = True
                 self._emulation_running = False
@@ -1033,7 +1042,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             # 分支只更内存缓存不发 SCPI, 保持旧语义 (缓存即真值, 无下发可拒)。
             if not has_model:
                 self._center_freq_programmed = True
-        if "pipeline" in config:
+        # pipeline 只在**无 channel_model**(纯 pipeline 配置)时应用: 有 model 时 pipeline 由
+        # set_channel_model 拥有 (成功置 GCM / 失败保留旧场景), 别在此乐观置 —— 否则 load 未确认
+        # 卸载失败 (旧场景仍加载) 后残留 config 的新 pipeline (Codex #223 复审, 同 load_channel)。
+        if "pipeline" in config and not has_model:
             self._active_pipeline = F64Pipeline(config["pipeline"])
         if has_model:
             # P1-18: Step 4 改为"parameters 显式给才写 CENT"后, 顶层频率不再
@@ -1274,7 +1286,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                         f"CALC:FILT:FILE (旧场景仍加载; file={runtime_smu})"
                     )
                     logger.error(f"[F64/ASC] {self._last_error}")
-                    self._emulation_running = False  # STOPPED=暂停非运行
+                    # running 只在确认非运行稳态才清 (Codex #223: RUNNING=仍发射/None=读失败 不清)
+                    if close_state == "RUNNING":
+                        self._emulation_running = True
+                    elif close_state is not None:
+                        self._emulation_running = False
                     return False
                 close_confirmed = True
                 self._emulation_running = False

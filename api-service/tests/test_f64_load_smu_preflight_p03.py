@@ -620,3 +620,53 @@ class TestStateResetMethods:
         assert not any(c.startswith("CALC:FILT:FILE") for c in _writes(visa))  # 没硬闯 FILE
         assert drv._loaded_emulation_file == "D:\\old_gcm.smu"
         assert drv._readback_center_freq_mhz == 3550.0
+
+    async def test_gcm_close_running_keeps_running(self):
+        """Codex #223 复审: helper CLOSE 后 STATE?=RUNNING (CLOSE 没停, 旧场景仍发射) →
+        running **保持 True** (别清让 disconnect 跳过 stop_emulation)。仅确认非运行才清。"""
+        drv, _ = _driver(state_seq=("STOPPED", "RUNNING"))  # 加载前 STOPPED, CLOSE 后仍 RUNNING
+        drv._loaded_emulation_file = "D:\\old.smu"
+        drv._emulation_running = True
+        assert await drv.load_local_scenario("D:\\x.smu") is False
+        assert drv._emulation_running is True  # RUNNING → 不清
+        assert drv._loaded_emulation_file == "D:\\old.smu"  # 旧场景保留
+
+    async def test_asc_close_running_keeps_running(self):
+        """Codex #223 复审 (ASC): CLOSE 后 STATE?=RUNNING → running 保持 True。"""
+        drv, _ = _driver(state_seq=("RUNNING",))
+        drv._loaded_emulation_file = "D:\\old.smu"
+        drv._emulation_running = True
+        with patch.object(
+            drv, "_ftp_upload_directory", return_value=["runtime_emulation.smu"]
+        ):
+            assert await drv.upload_asc_files("/local", "M") is False
+        assert drv._emulation_running is True
+
+    async def test_b2_close_running_keeps_running(self):
+        """Codex #223 复审 (B-2): CLOSE 后 STATE?=RUNNING → running 保持 True。"""
+        drv, _ = _driver(state_seq=("RUNNING",))
+        drv._loaded_emulation_file = "D:\\old.smu"
+        drv._emulation_running = True
+        with patch.object(
+            drv, "_ftp_upload_directory", return_value=["b2_model.rtc"]
+        ):
+            assert await drv.load_parametric_tdl("/local", "M") is False
+        assert drv._emulation_running is True
+
+    async def test_configure_with_model_load_failure_preserves_old_pipeline(self):
+        """Codex #223 复审: configure(pipeline + channel_model) 且 load 未确认卸载失败 →
+        config 的 pipeline **不**被乐观置 (has_model → 交给 set_channel_model); 旧场景仍加载,
+        pipeline 保留旧值。"""
+        drv, _ = _driver(state_seq=("STOPPED", "STOPPED"))  # CLOSE 后仍 STOPPED → helper fail
+        drv._default_emulation_file = "D:\\default.smu"
+        drv._active_pipeline = F64Pipeline.ASC_RUNTIME  # 旧场景 (ASC) 仍加载
+        drv._loaded_emulation_file = "old_asc.smu"
+        ok = await drv.configure({
+            "pipeline": "gcm",
+            "channel_model": "CDL-C",
+            "parameters": {"emulation_file": "D:\\default.smu"},
+        })
+        assert ok is False
+        # config 的 pipeline=gcm 不被乐观置; 旧 ASC 保留 (load 未确认卸载)
+        assert drv._active_pipeline == F64Pipeline.ASC_RUNTIME
+        assert drv._loaded_emulation_file == "old_asc.smu"
