@@ -345,3 +345,77 @@ class TestIdentityResetNetFanout:
         assert drv._loaded_emulation_file is None
         assert drv._readback_center_freq_mhz is None
         assert drv.get_frequency_identity() is None
+
+    async def test_asc_exception_after_close_clears_identity(self):
+        """Codex #223 P2: ASC 路 CLOSE 已发后 CALC:FILT:FILE 超时 (VI_ERROR_TMO, 正是现场
+        load 失败模式) → 异常跳到通用 except, 绕过成功/失败分支的 identity 清理。CLOSE 已停
+        旧 GCM 仿真, 必须在异常路径清 identity, 否则 get_frequency_identity 谎报旧真频。"""
+        drv, _ = _driver(raise_on="CALC:FILT:FILE")
+        drv._readback_center_freq_mhz = 3550.0  # 上一 GCM 残留
+        drv._loaded_emulation_file = "D:\\old_gcm.smu"
+        with patch.object(
+            drv, "_ftp_upload_directory", return_value=["runtime_emulation.smu"]
+        ):
+            ok = await drv.upload_asc_files("/local/asc", "UMa")
+        assert ok is False
+        assert drv._loaded_emulation_file is None
+        assert drv._readback_center_freq_mhz is None
+        assert drv.get_frequency_identity() is None
+
+    async def test_b2_exception_after_close_clears_identity(self):
+        """Codex #223 P2: B-2 路 CLOSE 已发后 CALC:FILT:FILE 超时 → 异常路径清 identity
+        (与 ASC 同构; close_issued 标志区分 CLOSE 前后)。"""
+        drv, _ = _driver(raise_on="CALC:FILT:FILE")
+        drv._readback_center_freq_mhz = 3550.0
+        drv._loaded_emulation_file = "D:\\old_gcm.smu"
+        with patch.object(
+            drv, "_ftp_upload_directory", return_value=["b2_model.rtc"]
+        ):
+            ok = await drv.load_parametric_tdl("/local/b2", "M")
+        assert ok is False
+        assert drv._loaded_emulation_file is None
+        assert drv._readback_center_freq_mhz is None
+        assert drv.get_frequency_identity() is None
+
+    async def test_exception_before_close_keeps_identity(self):
+        """close_issued 语义反向验证: 异常发生在 CLOSE **之前** (FTP 抛错) → 旧仿真仍开,
+        identity **不动** (不能谎报 None 让一致性网漏掉仍在跑的旧 GCM)。防"异常路径无脑清"
+        的过度修正。"""
+        drv, _ = _driver()
+        drv._readback_center_freq_mhz = 3550.0
+        drv._loaded_emulation_file = "D:\\old_gcm.smu"
+        with patch.object(
+            drv, "_ftp_upload_directory", side_effect=TimeoutError("FTP down")
+        ):
+            ok = await drv.upload_asc_files("/local/asc", "UMa")
+        assert ok is False
+        # CLOSE 未发 → 旧 GCM 仍开 → identity 保留 (未清)
+        assert drv._readback_center_freq_mhz == 3550.0
+        assert drv._loaded_emulation_file == "D:\\old_gcm.smu"
+
+    async def test_gcm_helper_exception_before_close_keeps_identity(self):
+        """Codex #223 第四条 (GCM helper 路, 与 ASC before_close 同构): 加载前 RUNNING →
+        DIAG:SIMU:STOP 超时 (STOP 是 pause 语义, 不卸载) → CLOSE 未发, 旧 GCM 仍加载 →
+        identity **保留旧频率** (清成 None 会让一致性网漏报仍在跑的旧 GCM)。验证清理已从
+        调用方移进 helper 且受 close_issued gate 保护 (调用方不再无条件清)。"""
+        drv, _ = _driver(state_seq=("RUNNING", "CLOSED"), raise_on="DIAG:SIMU:STOP")
+        drv._readback_center_freq_mhz = 3550.0  # 旧 GCM 已加载, 真频 3550
+        drv._loaded_emulation_file = "D:\\old_gcm.smu"
+        ok = await drv.load_local_scenario("D:\\new.smu")
+        assert ok is False
+        # STOP 就超时 → CLOSE 未发 → 旧 GCM 仍加载 → identity 全保留
+        assert drv._readback_center_freq_mhz == 3550.0
+        assert drv._loaded_emulation_file == "D:\\old_gcm.smu"
+        assert drv.get_frequency_identity() is not None  # 报旧 GCM 频率, 非 None
+
+    async def test_gcm_helper_exception_after_close_clears_identity(self):
+        """对照: 加载前 STOPPED (无 STOP), CLOSE 已发后 CALC:FILT:FILE 超时 → CLOSE 后
+        异常, 旧仿真已停 → identity 清 (close_issued=True 分支)。锁 helper except 两侧行为。"""
+        drv, _ = _driver(state_seq=("STOPPED", "CLOSED"), raise_on="CALC:FILT:FILE")
+        drv._readback_center_freq_mhz = 3550.0
+        drv._loaded_emulation_file = "D:\\old_gcm.smu"
+        ok = await drv.load_local_scenario("D:\\new.smu")
+        assert ok is False
+        assert drv._readback_center_freq_mhz is None
+        assert drv._loaded_emulation_file is None
+        assert drv.get_frequency_identity() is None

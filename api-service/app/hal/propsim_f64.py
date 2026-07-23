@@ -563,8 +563,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
           → *OPC? → SYST:ERR? 门 → ★CENT:CH? 1 回读真频 (identity, 治文件名说谎)。
 
         成功 True + 更新 _readback_center_freq_mhz(真频); 失败 fail-loud False + 置
-        _last_error。调用方 (load_local_scenario / set_channel_model) 负责设
-        _loaded_emulation_file 等身份缓存 + 失败清 stale。
+        _last_error。**失败时 helper 自己据 close_issued 精确清 identity** (CLOSE 后失败
+        → 旧仿真已停, 清 loaded/programmed/readback/emulation_running; CLOSE 前失败 →
+        STOP 是 pause 语义、旧 GCM 仍加载, 保留 identity 让一致性网仍能核对旧频率)。调用方
+        只负责成功时设 _loaded_emulation_file 等身份缓存, 不再无条件清 (Codex #223 第四条)。
 
         ⚠ 范围 (P0-3 缩范围, 用户 2026-07-23 拍板): 只做 **load 序列 + 频率回读**。
         **拓扑/端口不在此回读** —— MPAC OTA 里 MODEL:INFO? 的 outputs 是探头数(非 rx
@@ -572,6 +574,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         (改法牵动 set_path_loss/output_gain/get_metrics 一堆消费方), 留 F64R-2 一次做对。
         """
         freq: Optional[float] = None
+        # close_issued: CLOSE 已发标志。区分"CLOSE 前失败"(STOP/*OPC? 超时 → 旧 GCM 仍
+        # 加载, identity 保留旧频率) vs "CLOSE 后失败"(旧仿真已停 → identity stale 须清)。
+        # 与 ASC/B-2 的 close_issued 同构 (Codex #223: GCM helper 路是同一母题第四条)。
+        close_issued = False
         try:
             async with self._scpi_lock:
                 # ——加载前: 确保干净、非瞬态——
@@ -586,6 +592,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 # (§20.4.3.14 核心状态机指令, 不会 -100), 读到非 CLOSED/None 都是"没
                 # 确认关掉"(None=真通信异常, 也不该硬闯 FILE) → fail-loud。
                 await self._write("DIAG:SIMU:CLOSE")
+                close_issued = True  # 此后任何失败/异常都意味旧仿真已停 → identity stale
                 await self._query("*OPC?")
                 close_state = await self._query_simulation_state()
                 if close_state != "CLOSED":
@@ -594,6 +601,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                         f"不硬闯 CALC:FILT:FILE (file={file_path})"
                     )
                     logger.error(f"[F64] {self._last_error}")
+                    # CLOSE 已发 (旧仿真已停) → 清 stale identity
+                    self._loaded_emulation_file = None
+                    self._center_freq_programmed = False
+                    self._readback_center_freq_mhz = None
+                    self._emulation_running = False
                     return False
                 # ——加载 (大文件抬超时, 手册 §2.2.4 默认 2000ms 必 -400)——
                 await self._write(
@@ -604,15 +616,27 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 if load_err is not None:
                     self._last_error = f"load .smu failed: {load_err} (file={file_path})"
                     logger.error(f"[F64] {self._last_error}")
+                    # CLOSE 已发 (旧仿真已停) → 清 stale identity
+                    self._loaded_emulation_file = None
+                    self._center_freq_programmed = False
+                    self._readback_center_freq_mhz = None
+                    self._emulation_running = False
                     return False
                 # ——加载后回读真频 (母题③: 频率来自仪器, 不靠文件名。CENT:CH? 1 读
                 # 第一组的组中心频, 单值不越界; 拓扑/端口回读留 F64R-2)——
                 freq = await self._readback_center_freq(1)
         except Exception as e:  # noqa: BLE001
             # 会话坏 / VI_ERROR_TMO (现场实证的超时路径) → fail-loud, 不冒泡。
-            # 与 load_err 门对称: 调用方据 False 清 stale。
+            # ⚠ Codex #223 第四条: 只在 CLOSE 已发时清 identity。CLOSE **前**异常
+            # (RUNNING→STOP/*OPC? 超时; STOP 是 pause 语义不卸载) 旧 GCM 仍加载,
+            # identity 保留旧频率 (清成 None 会让一致性网漏报仍在跑的旧 GCM)。
             self._last_error = f"load .smu exception: {e} (file={file_path})"
             logger.error(f"[F64] load .smu 异常: {e} (file={file_path})")
+            if close_issued:
+                self._loaded_emulation_file = None
+                self._center_freq_programmed = False
+                self._readback_center_freq_mhz = None
+                self._emulation_running = False
             return False
         # 锁外更新频率缓存 (回读值已取, 无需再持锁)
         self._readback_center_freq_mhz = freq
@@ -636,12 +660,8 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             self._last_error = "load_local_scenario: 空文件路径"
             return False
         if not await self._load_smu_with_preflight(file_path):
-            # helper 已置 _last_error; 清身份缓存如实反映"没加载上" (F2: 含回读频率;
-            # F4: 复位 _emulation_running — helper 已发 CLOSE 物理停, 或保守标停)。
-            self._loaded_emulation_file = None
-            self._center_freq_programmed = False
-            self._readback_center_freq_mhz = None
-            self._emulation_running = False
+            # helper 已置 _last_error 且据 close_issued 精确清 identity (CLOSE 后失败清、
+            # CLOSE 前失败保留仍加载的旧 GCM) —— 调用方不再无条件清 (Codex #223 第四条)。
             return False
         self._loaded_emulation_file = file_path
         self._center_freq_programmed = False  # 频率由 .smu 定, 已回读真值
@@ -663,6 +683,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         """
         if not self._visa_resource:
             return False
+        close_issued = False  # CLOSE 已发标志 — 异常路径据此判 identity 是否 stale (Codex #223)
         try:
             logger.info("[F64/B2] Uploading PARAMETRIC_TDL payload: %s model=%s",
                         waveform_dir, model_name)
@@ -687,6 +708,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 return False
 
             await self._write("DIAG:SIMU:CLOSE")
+            close_issued = True  # CLOSE 已发, 之后任何异常都意味旧仿真已停 → identity stale
             self._emulation_running = False
             # 加载事务 (Codex #203 R3 同型: drain → FILT:FILE → *OPC? → 错误门
             # 整体持锁, broadcaster 轮询不得污染/抢食队列; 锁可重入)。gate 只
@@ -727,6 +749,15 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                         load_file)
             return True
         except Exception as e:
+            # P0-3 F1 (Codex #223 P2): CLOSE 已发后 FILE/*OPC? 超时等异常跳到此处, 会绕过
+            # 上面成功/失败分支的 identity 清理 → 旧 GCM 真频泄漏 (超时正是现场 load 场景)。
+            # CLOSE 已停旧仿真 → identity 字段全 stale, 清之; CLOSE 前异常 (如 FTP 失败) 旧
+            # 仿真仍开, 不动 identity。
+            if close_issued:
+                self._loaded_emulation_file = None
+                self._center_freq_programmed = False
+                self._readback_center_freq_mhz = None
+                self._emulation_running = False
             logger.error("[F64/B2] load_parametric_tdl failed: %s", e)
             self._last_error = str(e)
             return False
@@ -1055,11 +1086,8 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             # 回读真频。失败 fail-loud (helper 已置 _last_error)。
             # (拓扑/CENT-GROup 寻址回读留 F64R-2, 见 helper 注释)
             if not await self._load_smu_with_preflight(emulation_file):
-                # 旧 CLOSE 已关、新没加载上 → 清身份缓存如实反映 (identity 报 None)
-                self._loaded_emulation_file = None
-                self._center_freq_programmed = False
-                self._readback_center_freq_mhz = None  # F2: 清 stale 回读频率
-                self._emulation_running = False  # F4: 复位 (helper 已发 CLOSE 物理停)
+                # helper 据 close_issued 精确清 identity (CLOSE 后失败清、CLOSE 前失败保留
+                # 仍加载的旧 GCM) —— 调用方不再无条件清 (Codex #223 第四条)
                 return False
             self._loaded_emulation_file = emulation_file
             self._emulation_running = False  # CLOSE 已停, 未 GO
@@ -1169,6 +1197,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         """
         if not self._visa_resource:
             return False
+        close_issued = False  # CLOSE 已发标志 — 异常路径据此判 identity 是否 stale (Codex #223)
         try:
             self._active_pipeline = F64Pipeline.ASC_RUNTIME
             logger.info(f"[F64/ASC] Uploading ASC payload: {asc_files_dir} model={cdl_model_name}")
@@ -1198,6 +1227,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             async with self._scpi_lock:
                 await self._drain_errors()
                 await self._write("DIAG:SIMU:CLOSE")  # 安全关闭当前仿真
+                close_issued = True  # CLOSE 已发, 之后任何异常都意味旧仿真已停 → identity stale
                 self._emulation_running = False
                 await self._write(
                     f'CALC:FILT:FILE {runtime_smu}',
@@ -1233,6 +1263,15 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             return True
 
         except Exception as e:
+            # P0-3 F1 (Codex #223 P2): CLOSE 已发后 FILE/*OPC? 超时等异常跳到此处, 会绕过
+            # 上面成功/失败分支的 identity 清理 → 旧 GCM 真频泄漏 (超时正是现场 load 场景)。
+            # CLOSE 已停旧仿真 → identity 字段全 stale, 清之; CLOSE 前异常 (如 FTP 失败) 旧
+            # 仿真仍开, 不动 identity。
+            if close_issued:
+                self._loaded_emulation_file = None
+                self._center_freq_programmed = False
+                self._readback_center_freq_mhz = None
+                self._emulation_running = False
             logger.error(f"[F64/ASC] upload_asc_files failed: {e}")
             self._last_error = str(e)
             return False
