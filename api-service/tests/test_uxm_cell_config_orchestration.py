@@ -878,3 +878,33 @@ class TestReadLiveFrequencyIdentity:
             driver_irat, overrides={"DL:ARFCN?": "", "DL:BW?": ""}
         )
         assert await driver_irat.read_live_frequency_identity() is None
+
+
+class TestCellRestartOpcTimeout:
+    """P2-1 收口 (2026-07-21 现场实证): 小区激活态改带宽触发 OFF→改→ON 环绕,
+    ON 后 *OPC? 等小区重启需 10s+ → 切 VISA_TIMEOUT_CELL (30s), 默认 5s 必炸;
+    finally 恢复原值。"""
+
+    @pytest.mark.asyncio
+    async def test_cell_restart_opc_uses_cell_timeout_and_restores(self, driver_irat):
+        from app.hal.uxm_base_station import VISA_TIMEOUT_CELL
+
+        sess, written = wire_echo_visa(driver_irat, cell_active=True)
+        opc_timeouts: list[int] = []
+        base_query = sess.query.side_effect
+
+        def _q(cmd):
+            if cmd.strip() == "*OPC?":
+                opc_timeouts.append(sess.timeout)
+            return base_query(cmd)
+
+        sess.query = MagicMock(side_effect=_q)
+
+        # 小区 ON 态改带宽 → cell_was_on 触发 OFF → 改 → ON → *OPC?(CELL 超时)
+        ok = await driver_irat.set_cell_config({
+            "band": "N78", "bandwidth_mhz": 40, "duplex": "TDD",
+        })
+        assert ok is True
+        assert any(w.endswith("ACTive:STATe 0") for w in written), written  # 确有环绕
+        assert VISA_TIMEOUT_CELL in opc_timeouts, opc_timeouts  # *OPC? 用了 30s
+        assert sess.timeout == 5000  # finally 恢复原值
