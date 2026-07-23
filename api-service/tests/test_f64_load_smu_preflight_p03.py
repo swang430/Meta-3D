@@ -123,15 +123,24 @@ class TestLoadLocalScenario:
         assert await drv.load_local_scenario("D:\\x.smu") is True
         assert "DIAG:SIMU:CLOSE" in _writes(visa)
 
-    async def test_close_not_confirmed_fails_no_file(self):
-        """★核心: CLOSE 后 STATE?≠CLOSED (没真关掉) → fail-loud, **不发 CALC:FILT:FILE**
-        (现场'CLOSE 撞 wrong state → FILE 超时'的正解)。"""
-        drv, visa = _driver(state_seq=("STOPPED", "STOPPED"))  # CLOSE 后仍 STOPPED
+    async def test_close_not_confirmed_preserves_identity_no_file(self):
+        """★核心 + Codex #223 复审: CLOSE 后 STATE?≠CLOSED (STOPPED = 旧场景仍加载, 只暂停,
+        CLOSE 未卸载) → fail-loud + **不发 CALC:FILT:FILE** (现场'CLOSE 撞 wrong state → FILE
+        超时'正解) + **保留旧 identity** (旧场景冷缓存 GO 还能起, 一致性网该核对旧频率, 别报
+        None 漏掉) + 仅置 running=False (STOPPED=暂停非运行)。"""
+        drv, visa = _driver(state_seq=("STOPPED", "STOPPED"), center_freq="3550")
+        drv._loaded_emulation_file = "D:\\old.smu"  # 旧场景仍加载
+        drv._readback_center_freq_mhz = 3550.0
+        drv._emulation_running = True
         assert await drv.load_local_scenario("D:\\x.smu") is False
         w = _writes(visa)
         assert not any(c.startswith("CALC:FILT:FILE") for c in w)  # 没硬闯 FILE
         assert "STATE?=STOPPED≠CLOSED" in (drv._last_error or "")
-        assert drv._loaded_emulation_file is None
+        # 旧场景仍加载 (CLOSE 未卸载) → identity 保留、running 置 False
+        assert drv._loaded_emulation_file == "D:\\old.smu"
+        assert drv._readback_center_freq_mhz == 3550.0
+        assert drv._emulation_running is False
+        assert drv.get_frequency_identity() is not None  # 报旧频率, 非 None
 
     async def test_load_error_fails_clears_stale(self):
         """CLOSE 成功但 CALC:FILT:FILE 后 SYST:ERR? 有错 → fail-loud + 清 stale file。"""
@@ -152,25 +161,24 @@ class TestLoadLocalScenario:
         assert await drv.load_local_scenario("D:\\new.smu") is False
         assert drv._loaded_emulation_file is None
 
-    async def test_load_failure_clears_stale_readback_freq(self):
-        """F2 (pre-commit finding): 加载 A 成功回读真频(3550) → 加载 B 失败 → 清 stale
-        回读频率, get_frequency_identity() 返 None (不残留 A 的 3550, 治"上个文件的频
-        率被误报成当前")。"""
-        # state_seq: 加载 A (STOPPED→CLOSED 复查过) + 加载 B (STOPPED→STOPPED 复查
-        # 不过 → close-not-confirmed fail-loud)。
+    async def test_load_err_after_confirmed_close_clears_stale_readback(self):
+        """F2: 加载 A 成功回读真频(3550) → 加载 B **确认卸载后 FILE 失败** (STATE?=CLOSED
+        确认 CLOSE 真卸载了 A → FILE 报错) → 清 stale readback (A 已卸载、B 没加载上 →
+        identity None)。对比 close≠CLOSED 保留 (A 仍加载, 见 test_close_not_confirmed)。"""
         drv, _ = _driver(
-            state_seq=("STOPPED", "CLOSED", "STOPPED", "STOPPED"), center_freq="3550"
+            state_seq=("STOPPED", "CLOSED", "STOPPED", "CLOSED"), center_freq="3550",
+            err_seq={"CALC:FILT:FILE D:\\B.smu": [SYST_FAIL]},
         )
         assert await drv.load_local_scenario("D:\\A_3600M.smu") is True
         assert drv._readback_center_freq_mhz == 3550.0
         assert drv.get_frequency_identity() is not None  # A 加载后有真频身份
         assert await drv.load_local_scenario("D:\\B.smu") is False
-        assert drv._readback_center_freq_mhz is None  # F2: stale 回读频率已清
-        assert drv.get_frequency_identity() is None   # 不残留 A 的 3550
+        assert drv._readback_center_freq_mhz is None  # A 已确认卸载 + B 失败 → 清
+        assert drv.get_frequency_identity() is None
 
     async def test_load_failure_resets_emulation_running(self):
-        """F4 (pre-commit finding): 加载失败 → _emulation_running 复位 False。先置 True
-        (模拟上一场景在播) 再触发失败, 证明失败分支硬标停 (helper 已发 CLOSE 物理停)。"""
+        """F4: close≠CLOSED (STOPPED=暂停) 也置 _emulation_running=False。先置 True (模拟
+        上一场景在播) 再触发, 证明 STOPPED 态下 running 如实标停 (identity 另测保留)。"""
         drv, _ = _driver(state_seq=("STOPPED", "STOPPED"))  # CLOSE 后≠CLOSED → 失败
         drv._emulation_running = True
         assert await drv.load_local_scenario("D:\\x.smu") is False
@@ -284,7 +292,7 @@ class TestIdentityResetNetFanout:
         第 2 步切 ASC 成功。ASC 频率由 channel-engine 按 TestCase 生成、不在 F64 状态 →
         identity 契约应报 None 让一致性网跳过 F64。必须清 GCM 残留 readback + programmed,
         否则 measure 三方比对拿残留 3550 误判。"""
-        drv, _ = _driver()
+        drv, _ = _driver(state_seq=("CLOSED",))  # ASC 复查 CLOSE 已卸载 → CLOSED
         drv._readback_center_freq_mhz = 3550.0  # 上一 GCM 步残留
         drv._center_freq_programmed = False
         with patch.object(
@@ -315,7 +323,7 @@ class TestIdentityResetNetFanout:
         """★第 6 条"离开 GCM 加载态"路径 (pre-commit 复验补): B-2 参数化 TDL。计划第 1 步
         GCM 回读真频 3550 → 第 2 步切 B-2 (load_parametric_tdl 成功) → identity 契约报 None
         (B-2 载频不在 F64 GCM 状态)。清 GCM 残留 readback + programmed, 与 ASC 同构。"""
-        drv, _ = _driver()
+        drv, _ = _driver(state_seq=("CLOSED",))  # B-2 复查 CLOSE 已卸载 → CLOSED
         drv._readback_center_freq_mhz = 3550.0  # 上一 GCM 步残留
         drv._center_freq_programmed = False
         with patch.object(
@@ -332,6 +340,7 @@ class TestIdentityResetNetFanout:
         """B-2 加载失败 (SYST:ERR?) → 清 stale loaded/programmed/readback (CLOSE 已停旧
         仿真, 与 ASC/GCM 失败对称; 修前 B-2 失败分支连 loaded 都不清 = 谎报旧 GCM 还开着)。"""
         drv, _ = _driver(
+            state_seq=("CLOSED",),  # B-2 复查 CLOSE 已卸载 → 进 FILE
             err_seq={"CALC:FILT:FILE D:\\B2\\M\\b2_model.rtc": [SYST_FAIL]},
         )
         drv.waveform_dir = "D:\\B2"  # 令 remote 路径确定, 精确匹配 err_seq 键
@@ -350,7 +359,7 @@ class TestIdentityResetNetFanout:
         """Codex #223 P2: ASC 路 CLOSE 已发后 CALC:FILT:FILE 超时 (VI_ERROR_TMO, 正是现场
         load 失败模式) → 异常跳到通用 except, 绕过成功/失败分支的 identity 清理。CLOSE 已停
         旧 GCM 仿真, 必须在异常路径清 identity, 否则 get_frequency_identity 谎报旧真频。"""
-        drv, _ = _driver(raise_on="CALC:FILT:FILE")
+        drv, _ = _driver(state_seq=("CLOSED",), raise_on="CALC:FILT:FILE")
         drv._readback_center_freq_mhz = 3550.0  # 上一 GCM 残留
         drv._loaded_emulation_file = "D:\\old_gcm.smu"
         with patch.object(
@@ -365,7 +374,7 @@ class TestIdentityResetNetFanout:
     async def test_b2_exception_after_close_clears_identity(self):
         """Codex #223 P2: B-2 路 CLOSE 已发后 CALC:FILT:FILE 超时 → 异常路径清 identity
         (与 ASC 同构; close_issued 标志区分 CLOSE 前后)。"""
-        drv, _ = _driver(raise_on="CALC:FILT:FILE")
+        drv, _ = _driver(state_seq=("CLOSED",), raise_on="CALC:FILT:FILE")
         drv._readback_center_freq_mhz = 3550.0
         drv._loaded_emulation_file = "D:\\old_gcm.smu"
         with patch.object(
@@ -507,6 +516,7 @@ class TestStateResetMethods:
         """F1: ASC 加载失败 (CLOSE 后 load_err) → _apply_unload 清 pipeline, 别残留
         ASC_RUNTIME 让 set_runtime_environment gate 误放行"ASC 没加载成"。"""
         drv, _ = _driver(
+            state_seq=("CLOSED",),  # ASC 复查 CLOSE 已卸载 → 进 FILE
             err_seq={"CALC:FILT:FILE D:\\A\\M\\runtime_emulation.smu": [SYST_FAIL]}
         )
         drv.waveform_dir = "D:\\A"
@@ -580,3 +590,33 @@ class TestStateResetMethods:
         )
         assert ok is True
         assert drv._active_pipeline == F64Pipeline.GCM_NATIVE
+
+    async def test_asc_close_not_confirmed_preserves_identity(self):
+        """Codex #223 复审 (ASC 路同构): CLOSE 后 STATE?≠CLOSED (STOPPED=旧场景仍加载) →
+        保留 identity + **不硬闯 FILE** (旧盲发-CLOSE-硬闯-FILE 是现场 load 从没成功根因;
+        走共享 _close_and_read_state, 三路统一)。"""
+        drv, visa = _driver(state_seq=("STOPPED",))  # CLOSE 后仍 STOPPED
+        drv._loaded_emulation_file = "D:\\old_gcm.smu"
+        drv._readback_center_freq_mhz = 3550.0
+        with patch.object(
+            drv, "_ftp_upload_directory", return_value=["runtime_emulation.smu"]
+        ):
+            ok = await drv.upload_asc_files("/local", "M")
+        assert ok is False
+        assert not any(c.startswith("CALC:FILT:FILE") for c in _writes(visa))  # 没硬闯 FILE
+        assert drv._loaded_emulation_file == "D:\\old_gcm.smu"  # 旧场景保留
+        assert drv._readback_center_freq_mhz == 3550.0
+
+    async def test_b2_close_not_confirmed_preserves_identity(self):
+        """Codex #223 复审 (B-2 路同构): CLOSE 后 STATE?≠CLOSED → 保留 identity + 不硬闯 FILE。"""
+        drv, visa = _driver(state_seq=("STOPPED",))
+        drv._loaded_emulation_file = "D:\\old_gcm.smu"
+        drv._readback_center_freq_mhz = 3550.0
+        with patch.object(
+            drv, "_ftp_upload_directory", return_value=["b2_model.rtc"]
+        ):
+            ok = await drv.load_parametric_tdl("/local", "M")
+        assert ok is False
+        assert not any(c.startswith("CALC:FILT:FILE") for c in _writes(visa))  # 没硬闯 FILE
+        assert drv._loaded_emulation_file == "D:\\old_gcm.smu"
+        assert drv._readback_center_freq_mhz == 3550.0

@@ -32,6 +32,8 @@ def _drv(transferred=None, captured=None):
         if "SYST:ERR" in cmd:                      # _drain_errors / _first_error 真实现走这里
             q = captured.get("err_queue")
             return q.pop(0) if q else '0,"No error"'
+        if "STATE?" in cmd:                        # Codex #223: CLOSE 后确认卸载 → STATE?→CLOSED
+            return "CLOSED"
         return "1"                                 # *OPC? 等
 
     drv._ftp_upload_directory = _ftp
