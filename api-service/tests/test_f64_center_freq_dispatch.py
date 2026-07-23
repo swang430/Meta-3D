@@ -32,6 +32,14 @@ def _make_driver(config=None, channels=4):
             return "1"
         if cmd == "SYST:ERR?":
             return '0,"No error"'
+        # P0-3 缩范围: 加载走 _load_smu_with_preflight — STATE? 判态 + CLOSE 后
+        # 复查 ==CLOSED 才继续; CENT:CH? 回读真频。CENT 设频循环用驱动 _channel_count
+        # (=channels 参数), 不查 MODEL:INFO? (拓扑/端口回读留 F64R-2)。这些均不碰
+        # SYST:ERR?, 故"显式频→写全部通道"的数量断言不变。
+        if cmd == "DIAG:SIMU:STATE?":
+            return "CLOSED"
+        if cmd.startswith("CALC:FILT:CENT:CH?"):
+            return ""  # 回读真频不可用 → 非致命 (本文件不验 identity)
         if cmd.startswith("ROUT:PATH:CONN?"):
             return "B1.1"
         return '0,"No error"'
@@ -145,6 +153,13 @@ class TestCentDispatchOnlyWhenExplicit:
                 return "1"
             if cmd == "SYST:ERR?":
                 return queue.pop(0) if queue else '0,"No error"'
+            # P0-3 缩范围: 加载前置 STATE? 判态 + CLOSE 后复查 ==CLOSED; CENT:CH?
+            # 回读真频。CENT 设频循环用 _channel_count (=2), 不查 MODEL:INFO?。均**不碰**
+            # SYST:ERR? 注入队列 → CENT 被拒/加载失败判定语义不变。
+            if cmd == "DIAG:SIMU:STATE?":
+                return "CLOSED"
+            if cmd.startswith("CALC:FILT:CENT:CH?"):
+                return ""  # 回读 None → identity 走文件名兜底 (test_cent_rejected 需要)
             if cmd.startswith("ROUT:PATH:CONN?"):
                 return "B1.1"
             return '0,"No error"'
@@ -179,6 +194,13 @@ class TestCentDispatchOnlyWhenExplicit:
                 return "1"
             if cmd == "SYST:ERR?":
                 return queue.pop(0) if queue else '0,"No error"'
+            # P0-3 缩范围: 加载前置 STATE? 判态 + CLOSE 后复查 ==CLOSED; CENT:CH?
+            # 回读真频。CENT 设频循环用 _channel_count (=2), 不查 MODEL:INFO?。均**不碰**
+            # SYST:ERR? 注入队列 → CENT 被拒/加载失败判定语义不变。
+            if cmd == "DIAG:SIMU:STATE?":
+                return "CLOSED"
+            if cmd.startswith("CALC:FILT:CENT:CH?"):
+                return ""  # 回读 None → identity 走文件名兜底 (test_cent_rejected 需要)
             if cmd.startswith("ROUT:PATH:CONN?"):
                 return "B1.1"
             return '0,"No error"'
@@ -217,6 +239,13 @@ class TestCentDispatchOnlyWhenExplicit:
                 return "1"
             if cmd == "SYST:ERR?":
                 return queue.pop(0) if queue else '0,"No error"'
+            # P0-3 缩范围: 加载前置 STATE? 判态 + CLOSE 后复查 ==CLOSED; CENT:CH?
+            # 回读真频。CENT 设频循环用 _channel_count (=2), 不查 MODEL:INFO?。均**不碰**
+            # SYST:ERR? 注入队列 → CENT 被拒/加载失败判定语义不变。
+            if cmd == "DIAG:SIMU:STATE?":
+                return "CLOSED"
+            if cmd.startswith("CALC:FILT:CENT:CH?"):
+                return ""  # 回读 None → identity 走文件名兜底 (test_cent_rejected 需要)
             if cmd.startswith("ROUT:PATH:CONN?"):
                 return "B1.1"
             return '0,"No error"'
@@ -268,6 +297,13 @@ class TestCentDispatchOnlyWhenExplicit:
                 return "1"
             if cmd == "SYST:ERR?":
                 return queue.pop(0) if queue else '0,"No error"'
+            # P0-3 缩范围: 加载前置 STATE? 判态 + CLOSE 后复查 ==CLOSED; CENT:CH?
+            # 回读真频。CENT 设频循环用 _channel_count (=2), 不查 MODEL:INFO?。均**不碰**
+            # SYST:ERR? 注入队列 → CENT 被拒/加载失败判定语义不变。
+            if cmd == "DIAG:SIMU:STATE?":
+                return "CLOSED"
+            if cmd.startswith("CALC:FILT:CENT:CH?"):
+                return ""  # 回读 None → identity 走文件名兜底 (test_cent_rejected 需要)
             if cmd.startswith("ROUT:PATH:CONN?"):
                 return "B1.1"
             return '0,"No error"'

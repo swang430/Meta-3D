@@ -39,6 +39,13 @@ def _make_driver(syst_err_responses):
             return "1"
         if cmd == "SYST:ERR?":
             return queue.pop(0) if queue else '0,"No error"'
+        # P0-3 缩范围: 加载走 _load_smu_with_preflight — STATE? 判态 + CLOSE 后
+        # 复查 ==CLOSED 才继续; CENT:CH? 回读真频。均不查 MODEL:INFO? (拓扑回读留
+        # F64R-2), 也**不碰** SYST:ERR? 队列, 故 stale-drain / fail-loud gate 语义不变。
+        if cmd == "DIAG:SIMU:STATE?":
+            return "CLOSED"
+        if cmd.startswith("CALC:FILT:CENT:CH?"):
+            return ""  # 回读真频不可用 → 非致命, 加载仍成功
         if cmd.startswith("ROUT:PATH:CONN?"):
             return "B1.1"
         return '0,"No error"'

@@ -123,6 +123,8 @@ class TestUploadAscFilesLoadGate:
         def _q(cmd):
             if "SYST:ERR" in cmd:
                 return queue.pop(0) if queue else '0,"No error"'
+            if "STATE?" in cmd:                    # Codex #223: CLOSE 后确认卸载 → CLOSED
+                return "CLOSED"
             return "1"
 
         visa.query.side_effect = _q
