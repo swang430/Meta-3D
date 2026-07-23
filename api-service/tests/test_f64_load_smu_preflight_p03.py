@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from app.hal.propsim_f64 import F64Pipeline, RealPropsimF64Driver
+from app.hal.propsim_f64 import F64BypassMode, F64Pipeline, RealPropsimF64Driver
 
 SYST_FAIL = '-200,"Execution error;No simulation opened"'
 
@@ -419,3 +419,164 @@ class TestIdentityResetNetFanout:
         assert drv._readback_center_freq_mhz is None
         assert drv._loaded_emulation_file is None
         assert drv.get_frequency_identity() is None
+
+    async def test_gcm_stop_succeeds_close_fails_pauses_but_keeps_identity(self):
+        """Codex #223 复审 (running vs loaded 语义分离): RUNNING → STOP 成功 (暂停播放) →
+        CLOSE 写失败 (close_issued 前) → identity **保留** (旧 GCM 仍加载, 未卸载) 但
+        _emulation_running=**False** (STOP 已暂停, 不能报还在跑误导监控/拆卸)。"""
+        drv, _ = _driver(state_seq=("RUNNING", "CLOSED"), raise_on="DIAG:SIMU:CLOSE")
+        drv._readback_center_freq_mhz = 3550.0
+        drv._loaded_emulation_file = "D:\\old_gcm.smu"
+        drv._emulation_running = True
+        ok = await drv.load_local_scenario("D:\\new.smu")
+        assert ok is False
+        # STOP 成功暂停 → running False; CLOSE 未发 → 旧 GCM 仍加载, identity 保留
+        assert drv._emulation_running is False
+        assert drv._readback_center_freq_mhz == 3550.0
+        assert drv._loaded_emulation_file == "D:\\old_gcm.smu"
+        assert drv.get_frequency_identity() is not None
+
+    async def test_reset_opc_timeout_still_clears_identity(self):
+        """Codex #223 复审 (clear-on-issue 非 on-confirm): *RST 写成功但 *OPC? 超时 →
+        identity/state 仍清 (*RST 已关旧仿真, 清理已在 *OPC? 之前执行, except 不残留 stale)。"""
+        drv, _ = _driver()
+        drv._readback_center_freq_mhz = 3550.0
+        drv._loaded_emulation_file = "D:\\old_gcm.smu"
+        drv._center_freq_programmed = True
+        drv._emulation_running = True
+
+        async def _q_opc_timeout(cmd, timeout=None):
+            if cmd == "*OPC?":
+                raise TimeoutError("VI_ERROR_TMO")
+            return '0,"No error"'
+
+        drv._query = _q_opc_timeout  # *RST write 成功, 随后 *OPC? 超时
+        ok = await drv.reset()
+        assert ok is False
+        # *RST 已发 → 缓存在 *OPC? 之前已清
+        assert drv._loaded_emulation_file is None
+        assert drv._readback_center_freq_mhz is None
+        assert drv._center_freq_programmed is False
+        assert drv._emulation_running is False
+        assert drv.get_frequency_identity() is None
+
+
+# ---------------------------------------------------------------------------
+# 状态复位单一入口 (_apply_unload / _apply_session_reset) + 会话/pipeline 面
+# (2026-07-23 状态机重构收敛同一 fan-out 母题, 修 F1-F4)。
+# ---------------------------------------------------------------------------
+
+
+class TestStateResetMethods:
+    def test_apply_unload_clears_load_state_not_bypass(self):
+        """_apply_unload 清 5 个加载态字段 (running/loaded/programmed/readback/pipeline),
+        **不碰** _bypass_mode (bypass 是独立 config 旋钮, 仅会话边界复位)。"""
+        drv, _ = _driver()
+        drv._emulation_running = True
+        drv._loaded_emulation_file = "x.smu"
+        drv._center_freq_programmed = True
+        drv._readback_center_freq_mhz = 3550.0
+        drv._active_pipeline = F64Pipeline.GCM_NATIVE
+        drv._bypass_mode = F64BypassMode.CALIBRATION
+        drv._apply_unload()
+        assert drv._emulation_running is False
+        assert drv._loaded_emulation_file is None
+        assert drv._center_freq_programmed is False
+        assert drv._readback_center_freq_mhz is None
+        assert drv._active_pipeline is None
+        assert drv._bypass_mode == F64BypassMode.CALIBRATION  # unload 不动 bypass
+
+    def test_apply_session_reset_clears_all_six_incl_bypass(self):
+        """_apply_session_reset = _apply_unload + bypass 复位 → 会话边界全清 6 字段。"""
+        drv, _ = _driver()
+        drv._emulation_running = True
+        drv._loaded_emulation_file = "x.smu"
+        drv._center_freq_programmed = True
+        drv._readback_center_freq_mhz = 3550.0
+        drv._active_pipeline = F64Pipeline.ASC_RUNTIME
+        drv._bypass_mode = F64BypassMode.CALIBRATION
+        drv._apply_session_reset()
+        assert drv._emulation_running is False
+        assert drv._loaded_emulation_file is None
+        assert drv._center_freq_programmed is False
+        assert drv._readback_center_freq_mhz is None
+        assert drv._active_pipeline is None
+        assert drv._bypass_mode == F64BypassMode.DISABLED  # F2/F3: 会话边界清 bypass
+
+    async def test_asc_load_failure_clears_pipeline(self):
+        """F1: ASC 加载失败 (CLOSE 后 load_err) → _apply_unload 清 pipeline, 别残留
+        ASC_RUNTIME 让 set_runtime_environment gate 误放行"ASC 没加载成"。"""
+        drv, _ = _driver(
+            err_seq={"CALC:FILT:FILE D:\\A\\M\\runtime_emulation.smu": [SYST_FAIL]}
+        )
+        drv.waveform_dir = "D:\\A"
+        drv._active_pipeline = F64Pipeline.GCM_NATIVE  # 上一步残留
+        with patch.object(
+            drv, "_ftp_upload_directory", return_value=["runtime_emulation.smu"]
+        ):
+            ok = await drv.upload_asc_files("/local", "M")
+        assert ok is False
+        assert drv._active_pipeline is None
+        assert drv._loaded_emulation_file is None
+
+    async def test_asc_ftp_failure_preserves_old_pipeline(self):
+        """F1: ASC FTP 失败 (CLOSE 前) → pipeline **不**乐观置 ASC (成功才置), 保留旧值
+        (旧仿真仍加载, 别谎报切了 ASC)。"""
+        drv, _ = _driver()
+        drv._active_pipeline = F64Pipeline.GCM_NATIVE
+        drv._loaded_emulation_file = "old_gcm.smu"
+        with patch.object(drv, "_ftp_upload_directory", return_value=[]):  # FTP 无文件
+            ok = await drv.upload_asc_files("/local", "M")
+        assert ok is False
+        assert drv._active_pipeline == F64Pipeline.GCM_NATIVE  # 未被乐观置 ASC
+        assert drv._loaded_emulation_file == "old_gcm.smu"    # 旧 GCM 保留
+
+    async def test_disconnect_resets_bypass(self):
+        """F2: disconnect 终态清 _bypass_mode (它是唯一 disconnect+connect 都曾漏的字段)。"""
+        drv, _ = _driver()
+        drv._bypass_mode = F64BypassMode.CALIBRATION
+        drv._emulation_running = False  # 免走 stop_emulation
+        drv._loaded_emulation_file = "x.smu"
+        await drv.disconnect()
+        assert drv._bypass_mode == F64BypassMode.DISABLED
+
+    async def test_connect_resets_full_session_state(self):
+        """F3: connect 起始全清 6 字段 (running/pipeline/bypass 不止 3 个 identity)。"""
+        drv, _ = _driver()
+        drv._emulation_running = True
+        drv._active_pipeline = F64Pipeline.ASC_RUNTIME
+        drv._bypass_mode = F64BypassMode.BUTLER
+        drv._loaded_emulation_file = "x.smu"
+        with patch("pyvisa.ResourceManager", side_effect=RuntimeError("no instrument")):
+            assert await drv.connect() is False
+        assert drv._emulation_running is False
+        assert drv._active_pipeline is None
+        assert drv._bypass_mode == F64BypassMode.DISABLED
+        assert drv._loaded_emulation_file is None
+
+    async def test_gcm_helper_failure_does_not_set_pipeline(self):
+        """F1 对称 (GCM 路补齐): set_channel_model helper 失败 (RUNNING→STOP 前超时, CLOSE
+        前) → pipeline **不**乐观置 GCM, 保留旧值 (旧仿真是别的 pipeline, 仍加载)。修前
+        dispatcher/顶部乐观置会残留 GCM 而 loaded=旧 ASC 不一致。"""
+        drv, _ = _driver(state_seq=("RUNNING", "CLOSED"), raise_on="DIAG:SIMU:STOP")
+        drv._default_emulation_file = "D:\\default.smu"
+        drv._active_pipeline = F64Pipeline.ASC_RUNTIME  # 旧 ASC
+        drv._loaded_emulation_file = "old_asc.smu"
+        ok = await drv.set_channel_model(
+            "CDL-C", "UMa", {"emulation_file": "D:\\default.smu"}
+        )
+        assert ok is False
+        assert drv._active_pipeline == F64Pipeline.ASC_RUNTIME  # 未乐观置 GCM
+        assert drv._loaded_emulation_file == "old_asc.smu"
+
+    async def test_gcm_success_sets_pipeline(self):
+        """set_channel_model 成功 → pipeline 置 GCM_NATIVE (成功才置, 与 load_local/ASC/B-2
+        全路径对称 —— 完成"成功才置 pipeline"的决定性收敛)。"""
+        drv, _ = _driver(state_seq=("STOPPED", "CLOSED"))
+        drv._default_emulation_file = "D:\\default.smu"
+        drv._active_pipeline = None
+        ok = await drv.set_channel_model(
+            "CDL-C", "UMa", {"emulation_file": "D:\\default.smu"}
+        )
+        assert ok is True
+        assert drv._active_pipeline == F64Pipeline.GCM_NATIVE
