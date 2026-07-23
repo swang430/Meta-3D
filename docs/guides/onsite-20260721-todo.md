@@ -42,7 +42,16 @@
     仪表都要从**通用测试参数**主动取值并配置到位,来源 = **测试参数 / 手机配置 / SIM 卡配置**,
     **绝不靠仪表继承来的旧值**。这是"仪表配置单一真值源"原则,是本项的本质。
 
-- [ ] **P0-3 重新实现 F64 软件加载 .smu 的前置序列(旧实现撞超时,已移除)**
+- [x] **P0-3 ✅ 完成 (#223, 2026-07-23) — F64 软件加载 .smu 前置序列重写 + 状态机收敛**
+  - **实际落地**:从"缩范围 load 序列 + 频率回读"经 6 轮 Codex + 多轮 pre-commit 评审,滚成 F64
+    加载状态机大修(GCM/ASC/B-2 **三路**)。两大母题各收敛到**单一入口**:**CLOSE 确认卸载**
+    (`_close_and_read_state` = CLOSE+`*OPC?`+`STATE?` 回读,治盲发-CLOSE-硬闯-FILE 的现场超时)
+    + **状态复位**(`_apply_unload`/`_apply_session_reset`)。关键洞察:`STOPPED`=仍加载(暂停)
+    ≠ `CLOSED`=已卸载 → close≠CLOSED 保留 identity 不硬闯 FILE;`running` 按手册"RUNNING=发射,
+    其余不发射"语义置(NotebookLM 手册穷尽验证全 7 状态);频率从 `CALC:FILT:CENT:CH?` 回读
+    (治 `3600M.smu` 实为 3550);pipeline 全 load 路 success-only 对称。+40 回归,全量 2360 passed。
+  - **注**:P0-3 缩范围原本只切 GCM 路,评审中发现 ASC/B-2 有**同一个**"盲发 CLOSE + 硬闯 FILE"
+    bug(正是 P0-3 要治的根因),用户 2026-07-23 拍板本 PR 内三路全治。下面原实现要点保留作历史。
   - 事实:旧 `load_local_scenario`(**P2-1 已从代码移除**)开头发的 `DIAG:SIMU:CLOSE` 在
     F64 干净/某态被拒(`wrong device state`)→ 后面 `CALC:FILT:FILE` 拿不到 `*OPC?` →
     `VI_ERROR_TMO` 超时。软件 load .smu **从没成功过**,当天全靠操作员在 F64 界面手动 load。
@@ -78,10 +87,16 @@
 
 > NotebookLM 对照审完整 F64 驱动,29 问题 7 母题,主线「该问仪器的地方在猜」。权威详录:
 > [`architecture/f64-driver-scpi-review-20260723.md`](../architecture/f64-driver-scpi-review-20260723.md)。
-> **P0-3 的 load 序列、P0-4 的输出方案手册答案都在里面,直接可落。先开 P0-3。**
+> **P0-3 的 load 序列、P0-4 的输出方案手册答案都在里面,直接可落。P0-3 已完成(#223,见上,
+> 且顺带把状态复位 + CLOSE 确认卸载收敛到单一入口)。下一个 F64 大项 = F64R-2(端口从拓扑回读,
+> 最伤校准)。**
 
-- [ ] **F64R-1 F64 接入 `DIAG:SIMU:STATE?` 作运行状态真值源** (新 P0 大项)
-  - 全驱动**零调用** `DIAG:SIMU:STATE?`(手册唯一运行状态真值源),状态全靠本地布尔 + 猜 -200
+- [ ] **F64R-1 F64 接入 `DIAG:SIMU:STATE?` 作运行状态真值源** (新 P0 大项,**P0-3(#223)已部分落地**)
+  - **P0-3 部分落地**:加载路(GCM/ASC/B-2)已接 `DIAG:SIMU:STATE?` —— CLOSE 确认卸载
+    (`_close_and_read_state` 判 `==CLOSED`)+ close≠CLOSED 的 running 真值(按手册"RUNNING=发射"
+    语义置)。**剩余**:GO/GOS 前查 `STATE?` 消歧、`get_metrics` 读缓存谎报在跑、bypass 进出漂移、
+    超时挂死不自动恢复 —— 这些仍未接。
+  - 全驱动原**零调用** `DIAG:SIMU:STATE?`(手册唯一运行状态真值源),状态全靠本地布尔 + 猜 -200
     错误文字。**含 P2-1(#221) 刚 merge 的 GO 豁免——方向对(回读消歧)但信号选错**(用
     `STATIC?==0`,该 `STATE?==RUNNING`;STATIC? 只报旁路档不报运行态)。
   - 改:GO/GOS/CLOSE 前查 `STATE?` 消歧,一次解决 GO 假报启动 / get_metrics 读缓存谎报在跑 /
