@@ -23,7 +23,13 @@ from app.hal.propsim_f64 import (
 
 
 def _make_driver(config=None):
-    """mock 驱动: SYST:ERR? 恒 no-error → set_channel_model 走 happy path。"""
+    """mock 驱动: SYST:ERR? 恒 no-error → set_channel_model 走 happy path。
+
+    P0-3: 加载走 _load_smu_with_preflight —— 需 mock DIAG:SIMU:STATE?→"CLOSED"
+    (CLOSE 后复查 ==CLOSED 才继续下发 CALC:FILT:FILE) + CALC:FILT:CENT:CH?→回读真频
+    (加载后回读; 本文件不验 identity, 返 "" 即"不可用"非致命)。拓扑同步仍走硬编码
+    常量 _default_emulation_file_topology (P0-3 缩范围: MODEL:INFO? 仪器回读留 F64R-2)。
+    """
     drv = RealPropsimF64Driver("propsim-test", config or {})
     drv._channel_count = 1  # 收敛设频循环, 测试更干净
     visa = MagicMock()
@@ -33,6 +39,10 @@ def _make_driver(config=None):
             return "1"
         if cmd == "SYST:ERR?":
             return '0,"No error"'
+        if cmd == "DIAG:SIMU:STATE?":
+            return "CLOSED"
+        if cmd.startswith("CALC:FILT:CENT:CH?"):
+            return ""  # 回读真频不可用 → 非致命 (本文件不验 identity)
         if cmd.startswith("ROUT:PATH:CONN?"):
             return "B1.1"
         return '0,"No error"'
@@ -104,6 +114,9 @@ class TestF64DefaultTopologySync:
     否则 stale 2x2 缓存让下游 set_path_loss 等按 4 个输出配, 漏配实际 16 通道
     (4x4 = 3600M 的拓扑) → RF 失真。非默认文件由 operator 经 set_mimo_config
     预设拓扑 (现有惯例)。
+
+    ⚠ P0-3 缩范围 (用户 2026-07-23): 拓扑同步保持**硬编码常量**语义 (默认文件同步 /
+    非默认不同步)。从仪器 MODEL:INFO? 回读物理拓扑 + 消费方改用真实输出口留 F64R-2。
     """
 
     async def test_topology_constant_is_4x4(self):

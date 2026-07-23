@@ -116,14 +116,13 @@ F64_DEFAULT_EMULATION_FILE = (
     r"\3GPP_FR1_OTA_CDLC_UMa_3600M.smu"
 )
 
-# 3600M 默认文件的 (tx_antennas, rx_antennas) 拓扑元数据 (Codex on PR #97):
-# 加载默认文件后, 驱动据此同步 _tx_antennas/_rx_antennas 缓存; 否则下游
-# set_path_loss 等会按 stale 2x2 = 4 个输出配, 漏配 32 个 probe 输出的实际通道,
-# 导致 RF 数据失真。3600M = 4-input MIMO OTA model (MODEL:INFO? = 4,128,32),
-# F64 拓扑约定 4x4 (BS 4 TX × UE 4 RX layers)。
-# 操作员若 override default_emulation_file (per-binding connection_params), 也应
-# 同步 override default_emulation_file_topology, 否则缓存会 sync 到 (4,4) 但实际文件
-# 拓扑可能不同 —— 非默认文件由 operator 经 set_mimo_config 预设拓扑 (现有惯例)。
+# 3600M 默认文件的 (tx_antennas, rx_antennas) MIMO 天线维度 (Codex on PR #97):
+# 加载默认文件后, set_channel_model 据此同步 _tx/_rx 缓存; 否则 _tx/_rx 停构造默认
+# 2x2, 下游 set_path_loss 等按错通道数配 → RF 失真。
+# ⚠ 这是 MIMO 天线维度 (4x4 = BS 4 TX 层 × UE 4 RX 层), **不是物理口数** —— MPAC OTA
+# 里物理输出 = 探头 (3600M MODEL:INFO?='4,128,32', 32 探头), 从仪器回读真实物理拓扑
+# + 消费方改用探头数 = F64R-2「端口从拓扑回读」深水区 (P0-3 缩范围不碰)。非默认文件由
+# operator 经 set_mimo_config 预设拓扑 (现有惯例)。
 F64_DEFAULT_EMULATION_FILE_TOPOLOGY: Tuple[int, int] = (4, 4)
 
 # VISA 超时常量 (毫秒)
@@ -350,8 +349,8 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self._default_emulation_file: str = config.get(
             "default_emulation_file", F64_DEFAULT_EMULATION_FILE
         )
-        # P0-8 Step 4 (Codex on PR #97): 默认文件的已知拓扑, 加载后同步缓存,
-        # 避免下游 set_path_loss 等按 stale 2x2 缓存配错输出数 (见常量注释)。
+        # 默认文件的已知 MIMO 拓扑, 加载后 set_channel_model 同步缓存 (Codex on PR #97),
+        # 避免下游 set_path_loss 等按 stale 2x2 缓存配错通道数 (见常量注释)。
         self._default_emulation_file_topology: Optional[Tuple[int, int]] = config.get(
             "default_emulation_file_topology", F64_DEFAULT_EMULATION_FILE_TOPOLOGY
         )
@@ -442,6 +441,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self._channel_count: int = 64
         self._tx_antennas: int = 2
         self._rx_antennas: int = 2
+        # P0-3 (2026-07-23): 加载 .smu 后从仪器 CALC:FILT:CENT:CH? 回读的真中心频
+        # (get_frequency_identity 优先于文件名, 治 "3600M.smu 实为 3550")。None = 尚未
+        # 加载 / 回读失败。(拓扑/逻辑通道数回读留 F64R-2, 见 _load_smu_with_preflight)
+        self._readback_center_freq_mhz: Optional[float] = None
 
         # P3-4: structured SYST:INFO? metadata populated during connect().
         # Pre-P3-4 only ``_channel_count`` survived; these surface in the
@@ -513,6 +516,139 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
         raise NotImplementedError(f"未知加载模式: {mode.value}")
 
+    # ===================================================================
+    # P0-3 (2026-07-23): SCPI 状态/拓扑/频率回读原子 + 手册化 .smu 加载事务
+    # 治现场"load 从没成功"(F64 review 母题④) + "该问仪器的地方在猜"(母题②③)。
+    # 手册格式 (NotebookLM「PROPSIM 资料」查证 2026-07-23):
+    #   STATE?        → 全大写无引号 7 值 (§20.4.3.14)
+    #   MODEL:INFO?   → 'inputs,channels,outputs' 纯数字逗号无空格 (§20.4.3.6)
+    #   CENT:CH? <ch> → 单值 MHz 无单位 (§20.4.6.2)
+    # 全驱动推广 (GO 豁免 / path-loss / get_metrics 用这些回读) 留 F64R-1/F64R-2。
+    # ===================================================================
+
+    async def _query_simulation_state(self) -> Optional[str]:
+        """DIAG:SIMU:STATE? → 归一化大写状态。§20.4.3.14: 全大写无引号,7 值
+        CLOSED/OPENING/STOPPING/STOPPED/RUNNING/EDITING/CLOSING。读不到 → None。"""
+        try:
+            raw = await self._query("DIAG:SIMU:STATE?")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[F64] DIAG:SIMU:STATE? 查询失败: {e}")
+            return None
+        return raw.strip().upper() if raw and raw.strip() else None
+
+    async def _readback_center_freq(self, ch: int = 1) -> Optional[float]:
+        """CALC:FILT:CENT:CH? <ch> → 该通道组中心频 (MHz)。§20.4.6.2: 单值无单位,
+        如 '1800'。读不到 / 解析失败 → None。"""
+        try:
+            raw = await self._query(f"CALC:FILT:CENT:CH? {ch}")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[F64] CALC:FILT:CENT:CH? {ch} 查询失败: {e}")
+            return None
+        if not raw or not raw.strip():
+            return None
+        try:
+            return float(raw.strip())
+        except ValueError:
+            logger.warning(f"[F64] CENT:CH? 返回非数值: {raw.strip()!r}")
+            return None
+
+    async def _load_smu_with_preflight(self, file_path: str) -> bool:
+        """按 PROPSIM 手册教科书序列加载 .smu (P0-3, F64 review 母题④, 治现场
+        'load 从没成功')。整段持 _scpi_lock (broadcaster 轮询不插入 CLOSE/FILE 之间)。
+
+        序列 (ATE AN §5.3 + User Reference §20.4.3; STATE? 手册保证实现、必须硬依赖):
+          drain → STATE? 判态 →(RUNNING 则 STOP+*OPC?; OPENING/STOPPING/CLOSING 则
+          *OPC? 等稳)→ CLOSE → *OPC? → ★复查 STATE?==CLOSED (没真关就 fail-loud,不硬闯
+          FILE —— 旧盲发 CLOSE 吞错是现场 CALC:FILT:FILE 超时根因)→ 抬超时 CALC:FILT:FILE
+          → *OPC? → SYST:ERR? 门 → ★CENT:CH? 1 回读真频 (identity, 治文件名说谎)。
+
+        成功 True + 更新 _readback_center_freq_mhz(真频); 失败 fail-loud False + 置
+        _last_error。调用方 (load_local_scenario / set_channel_model) 负责设
+        _loaded_emulation_file 等身份缓存 + 失败清 stale。
+
+        ⚠ 范围 (P0-3 缩范围, 用户 2026-07-23 拍板): 只做 **load 序列 + 频率回读**。
+        **拓扑/端口不在此回读** —— MPAC OTA 里 MODEL:INFO? 的 outputs 是探头数(非 rx
+        天线维度)、CENT 频率下发要 GROup 寻址, 是 F64R-2「端口从拓扑回读」的完整深水区
+        (改法牵动 set_path_loss/output_gain/get_metrics 一堆消费方), 留 F64R-2 一次做对。
+        """
+        freq: Optional[float] = None
+        try:
+            async with self._scpi_lock:
+                # ——加载前: 确保干净、非瞬态——
+                await self._drain_errors()
+                state = await self._query_simulation_state()
+                if state == "RUNNING":
+                    await self._write("DIAG:SIMU:STOP")   # 手册: pause 语义
+                    await self._query("*OPC?")             # STOP 后必 *OPC? 同步
+                elif state in ("OPENING", "STOPPING", "CLOSING"):
+                    await self._query("*OPC?")             # 瞬态: 阻塞等稳 (别 while 轮询)
+                # CLOSE (手册: 任何稳态可安全下发) + 复查真关掉。STATE? 手册保证实现
+                # (§20.4.3.14 核心状态机指令, 不会 -100), 读到非 CLOSED/None 都是"没
+                # 确认关掉"(None=真通信异常, 也不该硬闯 FILE) → fail-loud。
+                await self._write("DIAG:SIMU:CLOSE")
+                await self._query("*OPC?")
+                close_state = await self._query_simulation_state()
+                if close_state != "CLOSED":
+                    self._last_error = (
+                        f"load .smu 前置 CLOSE 后 STATE?={close_state}≠CLOSED — 未真关掉, "
+                        f"不硬闯 CALC:FILT:FILE (file={file_path})"
+                    )
+                    logger.error(f"[F64] {self._last_error}")
+                    return False
+                # ——加载 (大文件抬超时, 手册 §2.2.4 默认 2000ms 必 -400)——
+                await self._write(
+                    f"CALC:FILT:FILE {file_path}", timeout=VISA_TIMEOUT_FILE_LOAD
+                )
+                await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
+                load_err = await self._first_error()
+                if load_err is not None:
+                    self._last_error = f"load .smu failed: {load_err} (file={file_path})"
+                    logger.error(f"[F64] {self._last_error}")
+                    return False
+                # ——加载后回读真频 (母题③: 频率来自仪器, 不靠文件名。CENT:CH? 1 读
+                # 第一组的组中心频, 单值不越界; 拓扑/端口回读留 F64R-2)——
+                freq = await self._readback_center_freq(1)
+        except Exception as e:  # noqa: BLE001
+            # 会话坏 / VI_ERROR_TMO (现场实证的超时路径) → fail-loud, 不冒泡。
+            # 与 load_err 门对称: 调用方据 False 清 stale。
+            self._last_error = f"load .smu exception: {e} (file={file_path})"
+            logger.error(f"[F64] load .smu 异常: {e} (file={file_path})")
+            return False
+        # 锁外更新频率缓存 (回读值已取, 无需再持锁)
+        self._readback_center_freq_mhz = freq
+        if freq is not None:
+            self._center_freq_mhz = freq
+        return True
+
+    async def load_local_scenario(self, file_path: str) -> bool:
+        """现场 reset F64: 加载 F64 本地 .smu 场景文件 (不经 FTP, 文件已在 F64 D:盘)。
+
+        2026-07-23 P0-3 按 PROPSIM 手册教科书序列**重写** (P2-1 移除的旧版盲发 CLOSE
+        真机撞超时, 见 F64 review 母题④): 走共享 _load_smu_with_preflight ——
+        STATE?判态 → STOP → CLOSE → 复查 CLOSED → FILE → *OPC? → SYST:ERR? →
+        CENT:CH? 回读真频。成功后设 _loaded_emulation_file, 调用方接 start_emulation
+        GO 播放。频率真值由 CENT:CH? 回读 (不靠文件名), 故 _center_freq_programmed=
+        False (get_frequency_identity 走回读真频优先级)。
+        """
+        if not self._visa_resource:
+            return False
+        if not file_path:
+            self._last_error = "load_local_scenario: 空文件路径"
+            return False
+        if not await self._load_smu_with_preflight(file_path):
+            # helper 已置 _last_error; 清身份缓存如实反映"没加载上" (F2: 含回读频率;
+            # F4: 复位 _emulation_running — helper 已发 CLOSE 物理停, 或保守标停)。
+            self._loaded_emulation_file = None
+            self._center_freq_programmed = False
+            self._readback_center_freq_mhz = None
+            self._emulation_running = False
+            return False
+        self._loaded_emulation_file = file_path
+        self._center_freq_programmed = False  # 频率由 .smu 定, 已回读真值
+        self._active_pipeline = F64Pipeline.GCM_NATIVE
+        self._emulation_running = False  # CLOSE 已停, 未 GO
+        logger.info(f"[F64] 本地场景已加载 (手册序列): {file_path}")
+        return True
 
     async def load_parametric_tdl(self, waveform_dir: str, model_name: str) -> bool:
         """P2-14 B-2: 加载参数化 TDL (.tap/.rtc) 模型, F64 硬件 FPGA 实时合成衰落。
@@ -564,6 +700,14 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
                 load_err = await self._first_error()
             if load_err is not None:
+                # P0-3 F1 (与 ASC/GCM 失败对称): 前面 DIAG:SIMU:CLOSE 已停旧仿真, 旧
+                # _loaded_emulation_file (可能是上一 GCM 步) 保留 = 谎报"还开着"; identity
+                # 链 (programmed/readback) 亦须清, 否则 GCM→B-2(失败) 后 identity 谎报上一
+                # GCM 步真频。_emulation_running 已在 CLOSE 后置 False, 显式重申保对称。
+                self._loaded_emulation_file = None
+                self._center_freq_programmed = False
+                self._readback_center_freq_mhz = None
+                self._emulation_running = False
                 self._last_error = f"B-2 PARAMETRIC_TDL load failed: {load_err}"
                 logger.error(
                     "[F64/B2] 加载失败 — SYST:ERR? after load: %s (file=%s)",
@@ -571,6 +715,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 )
                 return False
             self._loaded_emulation_file = load_file
+            # P0-3 F1: B-2 参数化 TDL 载频不在 F64 GCM identity 状态 (由 payload/SCD 同源
+            # 定, 非 CENT:CH? 回读) → identity 契约同 ASC: 报 None 让一致性网跳过 F64 (或落
+            # B-2 文件名解析)。清 GCM 步残留 programmed/readback, 否则 GCM→B-2 切换后
+            # identity 谎报上一 GCM 步真频。与 ASC 成功分支对称。
+            self._center_freq_programmed = False
+            self._readback_center_freq_mhz = None
 
             self._active_pipeline = F64Pipeline.B2_PARAMETRIC_TDL
             logger.info("[F64/B2] PARAMETRIC_TDL 加载完成: %s; 硬件实时衰落, 运行时走 CH:MOD:CONT:ENV",
@@ -601,6 +751,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         # (disconnect 若走异常路径也可能漏复位; connect 是新会话的干净起点)。
         self._center_freq_programmed = False
         self._loaded_emulation_file = None
+        self._readback_center_freq_mhz = None  # P0-3 F1: identity 链同族, 跨重连清 stale 回读频
         try:
             import pyvisa
             self._rm = pyvisa.ResourceManager('@py')
@@ -721,6 +872,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             # 复位是二道网, 但这里彻底堵住 failed-CLOSE→不重连→跑一致性网 窗口)。
             self._loaded_emulation_file = None
             self._center_freq_programmed = False
+            self._readback_center_freq_mhz = None  # P0-3 F1: identity 链同族, 断开清 stale 回读频
 
         if self._visa_resource:
             try:
@@ -777,14 +929,19 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         1. **显式下发过的中心频** (`_center_freq_programmed`): configure / set_channel_model
            收到 `center_frequency_mhz` 时驱动 `CALC:FILT:CENT:CH`, 此即 F64 实际工作频率。
            优先 —— 能抓 "复用 3600M.smu 但 configure 重调到 3500" 这种文件名已 stale 的坑。
-        2. **否则**解析 `_loaded_emulation_file` 文件名 (".._3600M.smu" → 3600 MHz): 没显式
-           下发中心频时 _center_freq_mhz 只是默认 3500, 不可信; .smu 文件名才是该信道频率。
+        2. **P0-3 母题③**: 否则用加载时 `CALC:FILT:CENT:CH?` 回读的真频
+           (`_readback_center_freq_mhz`) —— 从仪器读, 治 "3600M.smu 实为 3550" 文件名说谎。
+        3. **最后**才解析 `_loaded_emulation_file` 文件名 (回读失败 / ASC 路径无仿真时降级)。
         返回 None = 既没显式下发、文件名也无法解析 (e.g. ASC 路径 — 频率由 channel-engine
         按 TestCase 生成, 不在 F64 driver 状态; 校验跳过 F64, 由 ASC 同源保证)。
         带宽信道仿真器不强标识, 用 N78 标准 100M。
         """
         if self._center_freq_programmed:
             freq_mhz = self._center_freq_mhz
+        elif self._readback_center_freq_mhz is not None:
+            # P0-3 母题③: 没显式下发时优先 CENT:CH? 加载后回读的真频 (> 文件名 loose
+            # 解析) —— 治 "3600M.smu 实为 3550" 系统性说谎, 消 18 资产手工实测负担。
+            freq_mhz = self._readback_center_freq_mhz
         else:
             freq_mhz = self._parse_loaded_center_freq_mhz()
         if freq_mhz is None:
@@ -881,11 +1038,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             self._active_pipeline = F64Pipeline.GCM_NATIVE
             logger.info(f"[F64/GCM] Loading model: {model_type} scenario={scenario}")
 
-            # Step 1: 安全关闭当前仿真 (ATE Practice §2.2.2)
-            await self._write("DIAG:SIMU:CLOSE")
-            self._emulation_running = False
-
-            # Step 2: 构建仿真文件路径 (优先级见 F64_DEFAULT_EMULATION_FILE 注释, P0-8 Step 4)
+            # Step 1-2: 构建仿真文件路径 (优先级见 F64_DEFAULT_EMULATION_FILE 注释)
             # 1) per-call parameters["emulation_file"]; 2) 驱动默认 (config / 常量);
             # 3) 兜底 auto-name (仅当默认被显式清空)
             emulation_file = parameters.get("emulation_file") or self._default_emulation_file
@@ -896,45 +1049,26 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     f"_{self._tx_antennas}x{self._rx_antennas}.smu"
                 )
 
-            # Step 3: 加载事务 (Codex #203 R3 同型) — drain → FILT:FILE →
-            # *OPC? → 错误门整体持锁 (锁可重入): 单命令锁下 broadcaster 轮询
-            # 会把自己的错误条目留给 gate (误判加载失败) 或抢先消费加载错误
-            # (漏判)。SYST:ERR? 是 FIFO (Codex on PR #93); *OPC?=1 ≠ 加载成功
-            # (P0-8 Step 3: 缺失/损坏仍答 1, 唯一可靠失败信号是 SYST:ERR? 的
-            # -200 "No simulation opened" / -300, 2026-05-27 的 -200 洪水正因
-            # 没拦)。大文件加载需要数十秒 (ATE Practice §2.2.4)。
-            async with self._scpi_lock:
-                await self._drain_errors()
-                await self._write(
-                    f'CALC:FILT:FILE {emulation_file}',
-                    timeout=VISA_TIMEOUT_FILE_LOAD
-                )
-                await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
-                load_err = await self._first_error()
-            if load_err is not None:
-                # Codex #211 follow-up (域枚举补 GCM 同型): Step 1 的 CLOSE 已
-                # 关掉旧仿真, 保留旧 _loaded_emulation_file = 谎报"还开着", 让
-                # 后续 start_emulation 的"file loaded"guard 假过后在 GO 才炸。
-                # 清空 → get_channel_state 如实报无加载文件。
+            # Step 3: 手册化加载事务 (P0-3: 替旧"盲发 CLOSE + 无复查加载" — 现场
+            # CALC:FILT:FILE 超时根因)。_load_smu_with_preflight 内含 STATE?判态 →
+            # STOP → CLOSE → ★复查 CLOSED → FILE → *OPC? → SYST:ERR? 门 → CENT:CH?
+            # 回读真频。失败 fail-loud (helper 已置 _last_error)。
+            # (拓扑/CENT-GROup 寻址回读留 F64R-2, 见 helper 注释)
+            if not await self._load_smu_with_preflight(emulation_file):
+                # 旧 CLOSE 已关、新没加载上 → 清身份缓存如实反映 (identity 报 None)
                 self._loaded_emulation_file = None
-                # Codex #202 兜底 P2 (#212 的另一半): get_frequency_identity
-                # **优先**读 programmed freq (> 文件名 fallback), 只清 loaded_
-                # file 仍会谎报 stale 已下发频率 (旧 sim 已 CLOSE 无仿真在开)。
-                # 一并复位 → identity 报 None (无加载, 一致性网跳过)。
                 self._center_freq_programmed = False
-                self._last_error = f"channel model load failed: {load_err}"
-                logger.error(
-                    "[F64/GCM] 加载失败 — SYST:ERR? after load: %s (file=%s)",
-                    load_err, emulation_file,
-                )
+                self._readback_center_freq_mhz = None  # F2: 清 stale 回读频率
+                self._emulation_running = False  # F4: 复位 (helper 已发 CLOSE 物理停)
                 return False
             self._loaded_emulation_file = emulation_file
+            self._emulation_running = False  # CLOSE 已停, 未 GO
 
-            # 加载默认文件 → 同步 MIMO 拓扑缓存 (Codex on PR #97):
-            # 否则 _tx_antennas/_rx_antennas 仍是构造默认 2x2, 下游 set_path_loss 等
-            # 按 4 个输出配, 漏配实际 16 (4x4) 通道 → RF 失真。非默认文件由 operator
-            # 经 set_mimo_config 设拓扑 (现有惯例; set_mimo_config 在文件加载后会拒绝
-            # 与缓存不一致的请求, 故必须在 load 前设, 或加载默认时自动同步)。
+            # 加载默认文件 → 同步 MIMO 拓扑缓存 (Codex on PR #97): 否则 _tx/_rx 仍构造
+            # 默认 2x2, 下游按错通道数配 → RF 失真。⚠ 此为 MIMO 天线维度硬编码同步
+            # (P0-3 缩范围保留旧行为); 从仪器回读物理拓扑 (MPAC OTA outputs=探头≠rx) +
+            # 消费方改用真实输出口 = F64R-2 深水区, 留 F64R-2。非默认文件由 operator
+            # 经 set_mimo_config 设拓扑 (现有惯例)。
             if (
                 emulation_file == self._default_emulation_file
                 and self._default_emulation_file_topology is not None
@@ -954,12 +1088,17 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             # 工程被写成 3500, 输入测量 / AUTOSET / 吞吐全链错位。缺省 = 不碰
             # CENT, 尊重工程 CenterFrequency; 显式下发才更新真值 + programmed
             # (P2-11 语义不变: programmed=False 时 get_frequency_identity 退回
-            # .smu 文件名 loose 解析)。None 视同缺省 (显式 null 不能变成字面
-            # "CALC:FILT:CENT:CH 1,None" 下发)。
+            # CENT:CH? 回读真频 > .smu 文件名 loose 解析)。None 视同缺省 (显式 null
+            # 不能变成字面 "CALC:FILT:CENT:CH 1,None" 下发)。
             if parameters.get("center_frequency_mhz") is not None:
                 freq_mhz = parameters["center_frequency_mhz"]
-                # R10 平行族: CENT 写序列过 _first_error 门 — 被拒 (超范围等)
-                # 不许假成功; 缓存/programmed 门过才更新 (R8 被拒状态不动)
+                # R10 平行族: CENT 写序列过 _first_error 门 — 被拒 (超范围等) 不许假
+                # 成功; 缓存/programmed 门过才更新 (R8 被拒状态不动)。
+                # ⚠ 循环 1..64 (_channel_count) 是旧行为 (P0-3 缩范围保留): CENT 是
+                # per-group 命令, 正确该 GROup:GET?/GROup:CHannels:GET? 取每组代表下发
+                # (OTA 128 通道全在 1 组只发 1 次), 循环全通道对 <64 通道模型会 -200
+                # → per-group 寻址留 F64R-2。现场默认不给 center_frequency_mhz (尊重
+                # .smu 工程频率), 此路不触发。
                 if not await self._gated_write_transaction(
                     "set_channel_model center-freq",
                     [
@@ -1076,6 +1215,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 # Codex #202 兜底 P2 同型: 若之前 GCM 置过 programmed, 切 ASC
                 # load 失败后 identity 仍谎报旧 freq — 一并复位。
                 self._center_freq_programmed = False
+                self._readback_center_freq_mhz = None  # P0-3 F1: identity 链同族清 stale 回读频
                 self._last_error = f"ASC runtime load failed: {load_err}"
                 logger.error(
                     "[F64/ASC] 加载失败 — SYST:ERR? after load: %s (file=%s)",
@@ -1083,6 +1223,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 )
                 return False
             self._loaded_emulation_file = runtime_smu
+            # P0-3 F1: ASC 路频率由 channel-engine 按 TestCase 生成, 不在 F64 driver
+            # 状态 → identity 契约应报 None 让一致性网跳过 F64 (由 ASC 同源保证)。清
+            # 上一 GCM 步残留的 programmed/readback, 否则切 ASC 后 identity 谎报旧真频。
+            self._center_freq_programmed = False
+            self._readback_center_freq_mhz = None
 
             logger.info(f"[F64/ASC] Runtime emulation loaded: {runtime_smu}")
             return True
@@ -2940,6 +3085,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
             self._emulation_running = False
             self._loaded_emulation_file = None
+            # P0-3 F1: *RST 清整个 identity 链 (programmed 既有漏清 + readback 新增),
+            # 否则 reset 后 get_frequency_identity 仍报上次 load/下发的 stale 频率。
+            self._center_freq_programmed = False
+            self._readback_center_freq_mhz = None
             self._active_pipeline = None
             self._bypass_mode = F64BypassMode.DISABLED
             self._status = InstrumentStatus.READY
