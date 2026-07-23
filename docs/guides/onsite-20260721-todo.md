@@ -18,12 +18,19 @@
 
 ### P0 — 阻断下次现场,必须先修
 
-- [ ] **P0-1 F64/UXM 驱动加"断线自动重连"(懒重连)**
+- [x] **P0-1 F64/UXM 驱动加"断线自动重连"(懒重连)** ✅ 已完成(查实)
   - 事实:F64 PropSim 重启后,后端连不上(VISA 会话失效);长脚本被系统杀掉(SIGTERM)后
     VISA 会话被搞坏;每次都要人工调 `hal/switch` 重连。**这是当天最大的时间杀手**。
-  - 事实:转台驱动有懒重连(`_silent_reconnect`),F64/UXM 没有。
-  - 改:F64/UXM 驱动复刻转台的懒重连——命令失败时检测连接丢失(`VI_ERROR_CONN_LOST`/
-    连接超时),自动重开会话重试一次,对上层无感。
+  - ✅ **2026-07-23 查实早已完成**:commit `0a3df3f`(2026-05-14,比现场早两个月)把懒重连
+    推广到全 4 个 PyVISA 驱动(F64/FS16/UXM/ENA)且**下沉到底层 IO** —— F64
+    `_do_write_unlocked`/`_do_query_unlocked` + UXM `_do_write`/`_do_query` 对 conn-lost
+    (`VI_ERROR_CONN_LOST`/`INV_OBJECT`,共享分类器 `_visa_reconnect`)自动重连重试,全 SCPI
+    命令覆盖、对上层无感,正确区分 conn-lost(重连) vs 超时(排水不重连)。测试
+    `test_f64_visa_reconnect.py` + `test_fs16_uxm_ena_visa_reconnect.py`。
+  - **教训**:todo 原"F64/UXM 没有"是现场收工凭旧印象写的过时事实,没查 git/代码 → 现场白
+    手动重连。见 memory `feedback_check_verifiable_state_yourself`(2026-07-23 实例)。
+  - **⚠ 遗留缺口**(F64 review 发现,挪 F64R-1):懒重连只覆盖 socket 断,业务层挂死(反复 GO
+    搞卡)/进程重启不在覆盖内 —— 需 `DIAG:SIMU:STATE?` 检测 + 排水失败升级 reconnect。
 
 - [ ] **P0-2 测试流程必须显式下发 + 读回验证 UXM 完整配置(不假设保留)**
   - 事实:后端重启后,UXM 变成 `ARFCN 623334 / BW100 / DL:POWer -50`(错误默认),
@@ -35,7 +42,16 @@
     仪表都要从**通用测试参数**主动取值并配置到位,来源 = **测试参数 / 手机配置 / SIM 卡配置**,
     **绝不靠仪表继承来的旧值**。这是"仪表配置单一真值源"原则,是本项的本质。
 
-- [ ] **P0-3 重新实现 F64 软件加载 .smu 的前置序列(旧实现撞超时,已移除)**
+- [x] **P0-3 ✅ 完成 (#223, 2026-07-23) — F64 软件加载 .smu 前置序列重写 + 状态机收敛**
+  - **实际落地**:从"缩范围 load 序列 + 频率回读"经 6 轮 Codex + 多轮 pre-commit 评审,滚成 F64
+    加载状态机大修(GCM/ASC/B-2 **三路**)。两大母题各收敛到**单一入口**:**CLOSE 确认卸载**
+    (`_close_and_read_state` = CLOSE+`*OPC?`+`STATE?` 回读,治盲发-CLOSE-硬闯-FILE 的现场超时)
+    + **状态复位**(`_apply_unload`/`_apply_session_reset`)。关键洞察:`STOPPED`=仍加载(暂停)
+    ≠ `CLOSED`=已卸载 → close≠CLOSED 保留 identity 不硬闯 FILE;`running` 按手册"RUNNING=发射,
+    其余不发射"语义置(NotebookLM 手册穷尽验证全 7 状态);频率从 `CALC:FILT:CENT:CH?` 回读
+    (治 `3600M.smu` 实为 3550);pipeline 全 load 路 success-only 对称。+40 回归,全量 2360 passed。
+  - **注**:P0-3 缩范围原本只切 GCM 路,评审中发现 ASC/B-2 有**同一个**"盲发 CLOSE + 硬闯 FILE"
+    bug(正是 P0-3 要治的根因),用户 2026-07-23 拍板本 PR 内三路全治。下面原实现要点保留作历史。
   - 事实:旧 `load_local_scenario`(**P2-1 已从代码移除**)开头发的 `DIAG:SIMU:CLOSE` 在
     F64 干净/某态被拒(`wrong device state`)→ 后面 `CALC:FILT:FILE` 拿不到 `*OPC?` →
     `VI_ERROR_TMO` 超时。软件 load .smu **从没成功过**,当天全靠操作员在 F64 界面手动 load。
@@ -61,6 +77,52 @@
   - **[用户 review]** 功率调整要具备**三种方式**:①逐端口调整(per-port);②**归一化总功率
     调整**(总功率再分到各探头);③数字功率调整。**正常测试只调归一化总功率**,不直接管每个
     端口。今天逐端口抬 3/10dB **只是为了看到效果、不是精确测量**;正式测量走归一化功率。
+  - **★ 2026-07-23 F64 review 补充**:手册答案已成型(见 review 文档 P0-4 节)——绝对电平
+    `OUTP:LEV:AMP:CH <口>,<dBm>`(不受 -45~0 增益钳位)做主力 + `SYST:MAXOUTGain:SET` 抬顶;
+    归一化总功率 = 循环逐口绝对电平(口数用真实物理输出口,见 F64R-2,不是 tx×rx)。
+
+---
+
+### ⭐ 2026-07-23 F64 驱动全量 review 回填(用户同意)
+
+> NotebookLM 对照审完整 F64 驱动,29 问题 7 母题,主线「该问仪器的地方在猜」。权威详录:
+> [`architecture/f64-driver-scpi-review-20260723.md`](../architecture/f64-driver-scpi-review-20260723.md)。
+> **P0-3 的 load 序列、P0-4 的输出方案手册答案都在里面,直接可落。P0-3 已完成(#223,见上,
+> 且顺带把状态复位 + CLOSE 确认卸载收敛到单一入口)。下一个 F64 大项 = F64R-2(端口从拓扑回读,
+> 最伤校准)。**
+
+- [ ] **F64R-1 F64 接入 `DIAG:SIMU:STATE?` 作运行状态真值源** (新 P0 大项,**P0-3(#223)已部分落地**)
+  - **P0-3 部分落地**:加载路(GCM/ASC/B-2)已接 `DIAG:SIMU:STATE?` —— CLOSE 确认卸载
+    (`_close_and_read_state` 判 `==CLOSED`)+ close≠CLOSED 的 running 真值(按手册"RUNNING=发射"
+    语义置)。**剩余**:GO/GOS 前查 `STATE?` 消歧、`get_metrics` 读缓存谎报在跑、bypass 进出漂移、
+    超时挂死不自动恢复 —— 这些仍未接。
+  - 全驱动原**零调用** `DIAG:SIMU:STATE?`(手册唯一运行状态真值源),状态全靠本地布尔 + 猜 -200
+    错误文字。**含 P2-1(#221) 刚 merge 的 GO 豁免——方向对(回读消歧)但信号选错**(用
+    `STATIC?==0`,该 `STATE?==RUNNING`;STATIC? 只报旁路档不报运行态)。
+  - 改:GO/GOS/CLOSE 前查 `STATE?` 消歧,一次解决 GO 假报启动 / get_metrics 读缓存谎报在跑 /
+    bypass 进出 `_emulation_running` 漂移 / 超时挂死不自动恢复(排水失败升级
+    `_silent_reconnect_visa`,= P0-1 遗留的业务挂死盲区)。详见 review 母题①。跟 P1-2 合并考虑。
+
+- [ ] **F64R-2 F64 端口/通道数从拓扑回读,别用 tx×rx / 整机 64 猜** (新 P0 大项,最伤校准)
+  - `tx×rx` 是**逻辑衰落通道数,不是物理输出口数**(手册 3.1)。`set_path_loss`/`get_metrics`
+    输出口用 `tx×rx` → 默认 3600M 32 探头按 16 配、**路损只设一半 17-32 留工程默认**;
+    `set_baseband_power` 输入口 / CENT / doppler 循环全用错口径。
+  - 改:新增"从加载拓扑读真实激活输入/输出口"helper(`MODEL:INFO?` + `GRO:IN/OUT:GET?`),读写
+    共用,替掉所有 `_tx_antennas`/`tx×rx`/`_channel_count` 推断。详见 review 母题②。
+
+- [ ] **F64R-3 现场调试走正常 TestCase 流程,退役临时脚本** (2026-07-23 用户定,一个 PR)
+  - 现场临时脚本**不查源码**重复以前的错(懒重连早有却手动重连 / STATIC-STATE 混用 / 端口靠猜),
+    还长(SIGTERM 杀断 VISA)、缺单步验证。
+  - 改:一个 PR 两件事——① **能力保障**:TestCase 流程(runner + 仪表使用参数)覆盖现场 bring-up /
+    单步调试 / 参数即时调整; ② **规则固化**:现场禁临时脚本、走"建计划→调参→执行→报告"闭环,
+    写进 CLAUDE.md 操作规范。依赖 ARCH-1(测试管理简化) + P0-2(参数真值源)。见 memory
+    `feedback_onsite_testcase_flow_no_adhoc_scripts`。
+
+- [ ] **F64R-4 F64 驱动 P1 清理** (review 母题⑤⑥⑦)
+  - 禁盲试:connect 两条手册**不存在**的命令(`INTERFerence:LIST?`/`USER:LIST?` → `:GET?`);写
+    命令 fail-loud 收敛(input_phase / runtime_env / output_gain 静默钳位 / user_alignment 空
+    标定 / output_calib null 混淆);健康检查 `*OPT?` 必误报 BLOCKER + MMEM 能力误判(手册其实
+    完整支持)。
 
 ### P1 — 正确性(撤销错误诊断 + 状态机对齐)
 
