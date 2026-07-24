@@ -13,6 +13,7 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
 from app.db.database import get_db
+from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
 from app.models.diagnostic_run import DiagnosticKind
 from app.models.instrument import (
     InstrumentCategory as InstrumentCategoryModel,
@@ -2820,8 +2821,8 @@ async def get_output_calibration_endpoint(category_key: str, output_num: int):
 
 class InputReferenceRequest(BaseModel):
     power_dbm: float                         # 输入参考电平 (INP:LEV:AMP:CH)
-    input_ports: Optional[List[int]] = None  # 物理输入口 (1-based, F64 最多 64);
-    #                                          None = 驱动按当前 MIMO 拓扑 1..N
+    input_ports: Optional[List[int]] = None  # 物理输入口号 (1-based);
+    #   None = 驱动用**从仿真回读的真实输入口号** (GROUP:INPUTS:GET?), 回读不到则拒绝下发
 
 
 @router.post("/instruments/{category_key}/input-reference")
@@ -2832,10 +2833,11 @@ async def set_input_reference_endpoint(category_key: str, request: InputReferenc
     损耗, 由参数决议层计算或测试例显式覆盖 (P0-2/P2-3)。注意 load .smu 会带回工程内嵌
     默认输入参考、冲掉先前设置 → 每次加载后必须重新下发。
 
-    input_ports (Codex #221 R5 P2): 上层参数决议层按真实激活拓扑传的物理输入口列表;
-    不传则驱动按 _tx_antennas 推断 1..N —— 冷缓存 / 操作员手动加载 4x4 .smu 后
-    _tx_antennas 可能停在构造默认 2、只覆盖输入 1/2 致 MIMO 不平衡 (见驱动 docstring,
-    正解 GRO:IN:GET? 读真实激活口)。
+    input_ports (Codex #221 R5 P2 → F64R-2 已解): 上层参数决议层按真实激活拓扑传的
+    物理输入口号列表; **不传则驱动用加载后回读的真实输入口号** (`GROUP:INPUTS:GET?`
+    逐组并集, **不是** 1..N —— 口号不保证连续), 回读不到则 fail-loud 拒绝下发 ——
+    不再用 `_tx_antennas` 猜 (那个冷缓存在操作员手动加载 4x4 .smu 后会停在构造默认 2、
+    只覆盖输入 1/2 致 MIMO 不平衡, 端点还回 ok=true)。
     """
     driver = _get_loaded_hal_driver(category_key)
     if driver is None:
@@ -2843,15 +2845,32 @@ async def set_input_reference_endpoint(category_key: str, request: InputReferenc
     method = getattr(driver, "set_baseband_power", None)
     if method is None:
         raise HTTPException(400, f"{category_key} 驱动不支持 set_baseband_power")
+    # 没给 ports 时先让驱动补齐拓扑 —— 与 /crest-factor 同口径。
+    # ⚠ 不能指望"驱动在 set_baseband_power 内部会 ensure": 那是**它的**实现细节, 端点
+    # 的回显路径不该依赖; 一旦驱动改了内部顺序, 回显就静默变 None (测试当场抓到)。
+    if not request.input_ports:
+        _ensure = getattr(driver, "ensure_topology", None)
+        if callable(_ensure):
+            await _ensure()
     ok = await _call_f64_method(method, request.power_dbm, request.input_ports)
+    # F64R-2: 回显**实际下发的口号**。请求没给 ports 时驱动用回读的真实口号, 只回显
+    # request.input_ports (=None) 会让操作员无从确认到底写了哪几个口 —— 而这正是排
+    # "路损/电平只配了一半"这类问题最需要的证据。
+    _eff_ports = request.input_ports
+    if not _eff_ports:
+        _getter = getattr(driver, "get_active_input_ports", None)
+        _eff_ports = _getter() if callable(_getter) else None
     return {"ok": bool(ok), "power_dbm": request.power_dbm,
-            "input_ports": request.input_ports,
+            "input_ports": _eff_ports,
             "last_error": None if ok else getattr(driver, "_last_error", None)}
 
 
 class CrestFactorRequest(BaseModel):
-    # agent F5: min_length=1 让显式空列表 422 (默认 1-4 不受影响)
-    input_ports: List[int] = Field(default=[1, 2, 3, 4], min_length=1)
+    # agent F5: min_length=1 让显式空列表 422
+    # F64R-2: 默认从 [1,2,3,4] 改成 None —— 硬编码 1-4 在非连续口 (如仿真只占 {3,5})
+    # 下会配错口, 跟 input-reference 这个兄弟端点的口径也不一致 (它已改成回读真实口号)。
+    # None = 驱动用回读的真实输入口号, 读不到则 fail-loud。
+    input_ports: Optional[List[int]] = Field(default=None, min_length=1)
     crest_db: float
 
 
@@ -2862,6 +2881,10 @@ async def set_crest_factor_endpoint(category_key: str, request: CrestFactorReque
     值是**波形属性**, 不在此固化: 峰均比由制式 × 带宽 × 业务形态决定 (由参数决议层
     查波形表提供或测试例显式覆盖, P0-2/P2-3)。load .smu 会带回工程内嵌默认值、冲掉
     先前设置 → 每次加载后必须重新下发。
+
+    input_ports (F64R-2): 不传则用驱动**回读的真实输入口号** (与兄弟端点
+    /input-reference 同口径), 读不到则 400 —— 旧的硬编码默认 [1,2,3,4] 在非连续口
+    (如仿真只占 {3,5}) 下会配错口。
     """
     driver = _get_loaded_hal_driver(category_key)
     if driver is None:
@@ -2869,8 +2892,24 @@ async def set_crest_factor_endpoint(category_key: str, request: CrestFactorReque
     method = getattr(driver, "set_crest_factor", None)
     if method is None:
         raise HTTPException(400, f"{category_key} 驱动不支持 set_crest_factor")
+    ports = request.input_ports
+    if not ports:
+        # 先让驱动按需补回读 (后端重启后缓存空、但 F64 仍加载着仿真的真实场景);
+        # 不 await 这一步就会退化成 400, 反而不如改动前的硬编码默认。
+        _ensure = getattr(driver, "ensure_topology", None)
+        if callable(_ensure):
+            await _ensure()
+        _getter = getattr(driver, "get_active_input_ports", None)
+        ports = (_getter() if callable(_getter) else None) or []
+    if not ports:
+        raise HTTPException(
+            400,
+            f"{category_key} 物理输入口未知 (仿真未加载 / 拓扑回读失败) —"
+            f" 请显式传 input_ports, 或先加载仿真。不按猜测的端口号下发峰均比。"
+            f"{_TOPOLOGY_ESCAPE_HINT}",
+        )
     results: Dict[int, bool] = {}
-    for inp in request.input_ports:
+    for inp in ports:
         results[inp] = bool(await _call_f64_method(method, inp, request.crest_db))
     all_ok = all(results.values())
     return {"ok": all_ok, "crest_db": request.crest_db, "ports": results,

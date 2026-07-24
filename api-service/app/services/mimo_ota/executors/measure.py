@@ -29,6 +29,7 @@ csi_rs_ports) **P2-11 #1974 已补**: path B 经 _build_pcell_cell_config 从 Te
 边界总览见 docs/architecture/testcase-driven-instrument-config.md §2/§6/§6.1。
 """
 import asyncio
+import inspect
 import logging
 import math
 import random
@@ -48,6 +49,7 @@ from app.services.test_execution import (
     register_executor,
 )
 from app.schemas.mimo_ota.config import MIMOOTAStepType
+from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +65,67 @@ _MOCK_WINDOW_FLOOR_S = 0.05
 # 单 azimuth 内不检查 (统计窗口本身已 >= 50ms, 中途掉线被 measure_throughput_window
 # 内部 retry 兜底). azimuth 间隔检查能在转台移动期间发现, 是最佳折衷.
 _DUT_HEALTH_CHECK_EVERY_N_AZIMUTHS = 1
+
+
+def _call_topology_getter(emulator, getter_name: str):
+    """调 CE 驱动的拓扑 getter, 返回原始值; 拿不到 / 不可用返回 None。
+
+    这些 getter (`get_active_output_ports` / `get_active_input_count` …) 是**同步**的
+    —— 只读加载时回读进内存的拓扑, 不发 SCPI。这里不直接调用而绕一层, 是为了区分
+    三种"拿不到"并给出不同诊断:
+      · 驱动没这个方法 (非 F64 / mock) → None, 安静降级;
+      · 调用抛异常 → None, 不冒泡打断编排;
+      · **返回 coroutine** (有人把 getter 改成了 `async def`, 或测试替身用了 AsyncMock)
+        → None, 但记 **error 日志点名是代码问题**。不单独识别的话, 这个纯代码重构会
+        被下游报成"仿真未加载 / MODEL:INFO? 回读失败", 把改代码诬告成仪器故障。
+        同时 close() 掉那个 coroutine, 免得留下 never-awaited 警告。
+    """
+    getter = getattr(emulator, getter_name, None)
+    if not callable(getter):
+        return None
+    try:
+        val = getter()
+    except Exception:  # noqa: BLE001 — 读能力失败等同"未知", 不冒泡打断编排
+        return None
+    if inspect.iscoroutine(val):
+        val.close()
+        logger.error(
+            "CE 驱动的 %s 返回了 coroutine —— 拓扑 getter 约定是**同步**的。"
+            "这是代码问题(getter 被改成 async / 测试替身用了 AsyncMock), 不是仪器故障。",
+            getter_name,
+        )
+        return None
+    return val
+
+
+def _read_port_count(emulator, getter_name: str) -> Optional[int]:
+    """读**物理端口数** (F64R-2), 只认正整数, 其它一律当"未知"。
+
+    bool 是 int 的子类, 显式排除 (True 当成 1 个口是荒谬的)。0 / 负数同样当未知。
+    用于 sanity bound 之类只关心"几个口"的地方; 要**逐口下发**的用 `_read_port_list`
+    —— 端口号不保证是 1..N 连续。
+    """
+    val = _call_topology_getter(emulator, getter_name)
+    if isinstance(val, bool) or not isinstance(val, int):
+        return None
+    return val if val > 0 else None
+
+
+def _read_port_list(emulator, getter_name: str) -> Optional[List[int]]:
+    """读**物理端口号列表** (F64R-2)。逐口下发的调用方必须用这个而不是 `range(1, N+1)`
+    —— 仿真占用的端口号可能非连续 (如输出口 {2,4}), 照 1..N 发会误配一个、漏配一个。
+
+    只认"全是正整数的非空 list/tuple"; 任一元素不合格 → 整体当"未知"(不拿半个列表
+    去配硬件)。bool 同样排除。"""
+    val = _call_topology_getter(emulator, getter_name)
+    if not isinstance(val, (list, tuple)) or not val:
+        return None
+    out: List[int] = []
+    for p in val:
+        if isinstance(p, bool) or not isinstance(p, int) or p <= 0:
+            return None
+        out.append(p)
+    return out
 
 
 def _extract_b2_cluster_inputs(config) -> Dict[str, Any]:
@@ -743,33 +806,15 @@ class MeasureExecutor(IStepExecutor):
                 )
             if (config.f64_output_gain_db is not None
                     and hasattr(emulator, "set_output_gain")):
-                _gain = config.f64_output_gain_db
-                # 门审 #217 F1 (P1): "全部输出" = 本仿真活跃输出口 (tx*rx 截
-                # channel_count, 与 get_metrics/set_path_loss 同源) — 不是
-                # _channel_count=64 (硬件总口数; 遍历 17..64 会撞非法编号
-                # fail-loud 或污染不属于本仿真的输出口)
-                _tx = int(getattr(emulator, "_tx_antennas", 0) or 0)
-                _rx = int(getattr(emulator, "_rx_antennas", 0) or 0)
-                _cc = int(getattr(emulator, "_channel_count", 0) or 0)
-                _n_out = min(_tx * _rx, _cc) if (_tx and _rx and _cc) else 0
-                _gain_ok = _n_out > 0
-                _out = 0
-                for _out in range(1, _n_out + 1):
-                    if not await emulator.set_output_gain(_out, _gain):
-                        _gain_ok = False
-                        break
-                if not _gain_ok:
-                    return StepExecutionResult(
-                        status=StepExecutionStatus.FAILED,
-                        error_message=(
-                            f"F64 输出增益下发失败 (f64_output_gain_db={_gain}, "
-                            f"output={_out}) — 明细见驱动日志。"
-                        ),
-                    )
-                logger.info(
-                    "[%s] F64 输出增益 %.1f dB × %d 输出 已下发",
-                    context.test_execution.id, _gain, _n_out,
+                _gain_err = await self._apply_output_gain(
+                    emulator=emulator,
+                    gain_db=config.f64_output_gain_db,
+                    execution_id=str(context.test_execution.id),
                 )
+                if _gain_err is not None:
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED, error_message=_gain_err,
+                    )
 
             # --- P2-17 (Codex #201 R3 P1): 信道加载后显式启动仿真播放 ---
             # 执行链原本无人调 start_emulation (现场靠脚本手动 GO) — attach 默认
@@ -1202,6 +1247,51 @@ class MeasureExecutor(IStepExecutor):
     # ---------------------------------------------------------------------
     # 开关 3 块 2: 手动定标 — 显式输入参考 (+crest), 跳过 AUTOSET 闭环
     # ---------------------------------------------------------------------
+    async def _apply_output_gain(
+        self, *, emulator, gain_db: float, execution_id: str,
+    ) -> Optional[str]:
+        """把 `f64_output_gain_db` 下发到**当前仿真真实占用的每个物理输出口**。
+
+        返回 None = 成功; 返回字符串 = 失败原因 (调用方据此把步骤判 FAILED)。
+        抽成独立方法与 `_apply_manual_input_reference` 同族 —— 也是为了能直接测
+        "拓扑未知就拒发、且一条 SCPI 都不发"这个分支 (埋在 execute() 里测不到)。
+
+        F64R-2: 遍历的是驱动**回读**的输出口号列表 (`get_active_output_ports`), 不是
+        `min(tx*rx, channel_count)`:
+          · `tx×rx` 是**逻辑通道**口径 —— MPAC OTA 下 4 输入 × 32 探头 = 128 通道而输出
+            口只有 32, 拿 tx×rx(=16) 当上界会让 32 个探头**只配到前 16**, 17-32 留工程
+            默认 (门审 #217 F1 当时收敛到"活跃通道"方向对, 但口径仍是逻辑通道不是物理口);
+          · 端口号也不假定 1..N —— 仿真可能占用非连续口 (如 {2,4})。
+        读不到 → fail-loud, **不回退猜口数** (用户 2026-07-24 拍板: 配错口比不配更伤)。
+        """
+        # 先让驱动按需补回读 (正常步骤里 load 刚跑过是热的; 但操作员单点这一步、或后端
+        # 重启后接着跑时缓存是空的 —— 那时硬拒等于逼人重 load, 而 load 会打断跑着的仿真)
+        _ensure = getattr(emulator, "ensure_topology", None)
+        if callable(_ensure):
+            try:
+                await _ensure()
+            except Exception:  # noqa: BLE001 — 补读失败等同"读不到", 下面 fail-loud
+                pass
+        ports = _read_port_list(emulator, "get_active_output_ports")
+        if not ports:
+            return (
+                f"F64 输出增益下发拒绝 (f64_output_gain_db={gain_db}): 物理输出口未知 "
+                f"— 仿真未加载 / 拓扑回读失败 / 驱动无拓扑回读能力。不按猜测的端口号下发增益。"
+                f"(本参数**没有** per-step 端口选项 → override 是唯一解) "
+                f"{_TOPOLOGY_ESCAPE_HINT}"
+            )
+        for port in ports:
+            if not await emulator.set_output_gain(port, gain_db):
+                return (
+                    f"F64 输出增益下发失败 (f64_output_gain_db={gain_db}, "
+                    f"output={port}) — 明细见驱动日志。"
+                )
+        logger.info(
+            "[%s] F64 输出增益 %.1f dB 已下发到输出口 %s",
+            execution_id, gain_db, ports,
+        )
+        return None
+
     async def _apply_manual_input_reference(
         self,
         *,
@@ -1247,9 +1337,23 @@ class MeasureExecutor(IStepExecutor):
             payload["failure_reason"] = f"输入参考下发被拒 ({ref} dBm)"
             logger.error("[%s] 手动定标: %s", execution_id, payload["failure_reason"])
             return payload
-        n_in = int(getattr(emulator, "_tx_antennas", 0) or 0)
+        # F64R-2: crest 是**逐输入口**下发, 端口号问驱动回读的真实拓扑 (GROUP:INPUTS:GET?),
+        # 不再读 _tx_antennas 也不假定 1..N —— 前者冷重启/手动加载 4x4 .smu 后会停在构造
+        # 默认 2 只覆盖输入 1/2, 后者在非连续端口分配下会误配。
+        in_ports = _read_port_list(emulator, "get_active_input_ports") or []
+        if crest is not None and not in_ports:
+            # ⚠ 要下发 crest 却不知道发给谁 → **fail-loud, 不静默零下发报成功**。
+            # 旧代码用 _tx_antennas (实例默认 2, 永不为 0) 一定会发几条; 换成回读后
+            # 才可能"一条都没发", 此时若仍 success=True 就是本项目一直在抓的零下发
+            # 假成功 (操作员以为 crest 配上了)。
+            payload["failure_reason"] = (
+                f"crest 下发拒绝 ({crest} dB): 物理输入口未知 (仿真未加载 / 拓扑回读失败)"
+                f" — 不按猜测的端口号下发"
+            )
+            logger.error("[%s] 手动定标: %s", execution_id, payload["failure_reason"])
+            return payload
         if crest is not None:
-            for i in range(1, n_in + 1):
+            for i in in_ports:
                 if not await emulator.set_crest_factor(i, crest):
                     payload["failure_reason"] = f"crest 下发被拒 (input {i}, {crest} dB)"
                     logger.error(
@@ -1258,7 +1362,7 @@ class MeasureExecutor(IStepExecutor):
                     return payload
         # 读回反馈 (只读; 单口读不到不判定标失败 — 无信号态 measure 会 None)
         if hasattr(emulator, "measure_input"):
-            for i in range(1, n_in + 1):
+            for i in in_ports:
                 m = await emulator.measure_input(i, 1.0)
                 payload["readback"].append({
                     "input_num": i,
@@ -1268,7 +1372,7 @@ class MeasureExecutor(IStepExecutor):
         payload["success"] = True
         logger.info(
             "[%s] 手动定标完成: ref=%.1f dBm crest=%s × %d 输入 (readback=%s)",
-            execution_id, ref, crest, n_in,
+            execution_id, ref, crest, len(in_ports),
             [r["avg_dbm"] for r in payload["readback"]],
         )
         return payload
@@ -1326,13 +1430,28 @@ class MeasureExecutor(IStepExecutor):
         # config.mimo_layers), BS 只发 config.mimo_layers 路 → F64 也只有这几路
         # input 有信号; 多 autoset 一路 = 在 unconnected 端口上 autoset, no-signal
         # fail-loud, strict 模式把 measure phase 早死在 azimuth loop 之前。
-        # CE _tx_antennas (.smu 的 TX 端口数) 只用作 sanity bound: BS layers 超过
-        # 它 = 物理上跑不了 (e.g. 2x2 .smu 上 BS 想发 4 layer)。
+        # CE 的**物理输入口数** (.smu 实际暴露的输入端口) 只用作 sanity bound:
+        # BS layers 超过它 = 物理上跑不了 (e.g. 2 输入口的 .smu 上 BS 想发 4 layer)。
+        # F64R-2: 口数问驱动回读的真实拓扑 (MODEL:INFO? 的 inputs), 不再读
+        # _tx_antennas 缓存 —— 后者冷重启 / 操作员手动加载后会 stale 在构造默认 2,
+        # 把本来跑得了的 4 layer 误判成"物理上跑不了"。读不到 → 跳过这道 sanity 检查
+        # (与旧 ce_tx is None 的降级一致): 拓扑未知不该拦住测量, 真配错口时由下游
+        # 写操作的 fail-loud 兜底。
         n_layers = int(config.mimo_layers)
-        ce_tx = getattr(emulator, "_tx_antennas", None)
-        if ce_tx is not None and n_layers > ce_tx:
+        # ⚠ 补读必须在**读判定值之前** (F64R-2 复审 P2, 我上一轮把它放在门之后引入的 bug):
+        # 门读冷值 None → 直接跳过; 紧接着补读回 2 个口 → 下面的 `[:n_layers]` 把
+        # mimo_layers=4 静默截成 2 个口 → BS 发 4 层只定标 2 路、另 2 路留工程默认,
+        # 而闭环报 success=True。判定与下发必须同源, 否则门形同虚设。
+        _ensure = getattr(emulator, "ensure_topology", None)
+        if callable(_ensure):
+            try:
+                await _ensure()
+            except Exception:  # noqa: BLE001 — 补读失败等同读不到, 走下面的降级
+                pass
+        ce_inputs = _read_port_count(emulator, "get_active_input_count")
+        if ce_inputs is not None and n_layers > ce_inputs:
             msg = (
-                f"拓扑不匹配: config.mimo_layers={n_layers} > CE _tx_antennas={ce_tx} "
+                f"拓扑不匹配: config.mimo_layers={n_layers} > CE 物理输入口数={ce_inputs} "
                 f"(BS 想发的 layer 数超过当前 .smu 输入端口数, 物理上跑不了)。"
                 f" 操作员应调整 config.mimo_layers 或换 .smu "
                 f"(默认 3600M 是 4x4, set_mimo_config 可改)。"
@@ -1342,7 +1461,9 @@ class MeasureExecutor(IStepExecutor):
                 "success": False,
                 "failure_reason": msg,
                 "topology_mismatch": True,
-                "ce_tx_antennas": ce_tx,
+                # F64R-2 改名: 装的是**物理输入口数** (回读真值), 旧名 ce_tx_antennas
+                # 是 tx 天线口径 —— 名实不符正是本 PR 要治的病。
+                "ce_input_ports": ce_inputs,
                 "config_mimo_layers": n_layers,
                 "iterations": 0,
                 "uxm_dl_power_dbm": None,
@@ -1352,7 +1473,72 @@ class MeasureExecutor(IStepExecutor):
                 "active_inputs": list(range(1, n_layers + 1)),
                 "strict": bool(config.precheck_strict_input_level),
             }
-        active_inputs = tuple(range(1, n_layers + 1))
+        # F64R-2: 闭环要 autoset / measure 的是**物理输入口号**, 优先用驱动回读的真实
+        # 口号 (取前 n_layers 个 —— BS 只驱动这么多 layer, 多 autoset 一路 = 在无信号口
+        # 上 autoset 会 fail-loud)。回读不到才退回旧的 1..n_layers 推导。
+        # ⚠ 不修的话同一个 TestCase 换个开关就走两套口号: 给了 f64_input_ref_dbm 走
+        # 手动定标路 (已用回读口号), 不给走这条闭环 —— 非连续口 {3,5} 下闭环会打到
+        # 口 1、2 → 无信号 → measure phase 在 azimuth loop 之前早死。
+        # (补读已在上面的 sanity 门之前做过 —— 判定与下发同源, 别在这里再补)
+        _real_in = _read_port_list(emulator, "get_active_input_ports")
+        if _real_in:
+            if len(_real_in) < n_layers:
+                # 口号比 layer 少 → **不静默截断**。截断 = BS 发 n 层却只定标前几路,
+                # 剩下的留工程默认 (输入不平衡), 而闭环照报 success —— 正是本 PR 要杀的
+                # "还回 ok=true"。上面的 sanity 门已经拦了口数已知的情形, 这里兜住
+                # "口数读到了但口号列表更短"的不一致。
+                msg = (
+                    f"拓扑不匹配: config.mimo_layers={n_layers} > 回读到的物理输入口号"
+                    f" {_real_in} (共 {len(_real_in)} 个) — 不静默只定标前几路。"
+                )
+                logger.error("[%s] Phase 2b: %s", execution_id, msg)
+                return {
+                    "success": False,
+                    "failure_reason": msg,
+                    "topology_mismatch": True,
+                    "ce_input_ports": len(_real_in),
+                    "config_mimo_layers": n_layers,
+                    "iterations": 0,
+                    "uxm_dl_power_dbm": None,
+                    "clipping_per_mille": None,
+                    "system_warnings": [],
+                    "operating_point": [],
+                    "active_inputs": list(_real_in),
+                    "strict": bool(config.precheck_strict_input_level),
+                }
+            active_inputs = tuple(_real_in[:n_layers])
+        elif callable(getattr(emulator, "get_active_input_ports", None)):
+            # Codex #224 P1: 驱动**有**拓扑能力 (真 F64) 但补读后口号仍未知 (正是
+            # GROUP:*/MODEL:INFO? 真机不支持的形态) → **fail-loud, 不许退回猜 1..n**。
+            # 这里推出的口号会被 controller 当**显式端口**传给 autoset_inputs /
+            # set_input_measurement_mode / measure_input, 而显式端口按契约**绕过**
+            # 驱动侧的 fail-loud 门 (显式优先) —— 猜的口号畅通无阻, 在错误的输入口上
+            # 定标/读数。猜 1..n 只留给**无拓扑能力**的驱动 (下一分支)。
+            msg = (
+                f"拓扑不匹配: F64 物理输入口号未知 (仿真未加载 / 拓扑回读失败) — "
+                f"不按猜测的 1..{n_layers} 定标输入。"
+                f"(真机若不支持 GROUP:*/MODEL:INFO?, 可在仪器 connection_params 配 "
+                f"topology_override 声明口号)"
+            )
+            logger.error("[%s] Phase 2b: %s", execution_id, msg)
+            return {
+                "success": False,
+                "failure_reason": msg,
+                "topology_mismatch": True,
+                "ce_input_ports": None,
+                "config_mimo_layers": n_layers,
+                "iterations": 0,
+                "uxm_dl_power_dbm": None,
+                "clipping_per_mille": None,
+                "system_warnings": [],
+                "operating_point": [],
+                "active_inputs": [],
+                "strict": bool(config.precheck_strict_input_level),
+            }
+        else:
+            # 无拓扑能力的驱动 (mock / 非 F64, 连 getter 都没有): 保留旧的 1..n 推导,
+            # mock dry-run 不受影响 (capability-based 降级, 与全仓 hasattr 门同族)。
+            active_inputs = tuple(range(1, n_layers + 1))
 
         from app.services.input_level_controller import InputLevelController
 

@@ -36,6 +36,7 @@ import logging
 import asyncio
 import os
 import re
+import time
 from app.hal.scpi_lock import ReentrantAsyncLock
 import ftplib
 from dataclasses import dataclass, field
@@ -129,6 +130,32 @@ F64_DEFAULT_EMULATION_FILE_TOPOLOGY: Tuple[int, int] = (4, 4)
 VISA_TIMEOUT_DEFAULT = 5000
 VISA_TIMEOUT_FILE_LOAD = 30000  # 大文件加载需要更长超时
 VISA_TIMEOUT_AUTOSET = 15000    # 自动电平校准
+
+# F64R-2 拓扑回读的合理性上界 (口数 / 通道数 / 组数)。
+# F64 整机 64 个衰落通道、探头阵列几十路, 真实值远在此之下 —— 这道闸挡的是**回复错位**:
+# 3334 会话串线后 `MODEL:INFO?` 可能拿到别的查询的数字 (本项目有实证)。若恰好凑成三个
+# "正整数"(如 `4,1e20,1e20`), 下游 `range(1, 1e20)` 会把进程吃死, 而 broadcaster 每秒
+# 调一次 get_metrics → 持锁狂发 SCPI, 驱动永久卡死不可恢复。超界一律判"读不到"。
+_TOPOLOGY_SANITY_MAX = 1024
+
+# 信道组数的绝对硬上界。每组要发 3 条查询且全程持锁, 组数被畸形回复撑大 = 驱动锁死。
+# F64 整机 64 通道, 真实分组远小于此。
+# ⚠ 这是**唯一**用于硬拒的组数上界 (另一条 `≤ 逻辑通道数` 也是硬事实)。手册推导出的
+# `min(输入口数, 输出口数)` **只用于 WARNING 留痕**, 不参与硬拒 —— 推导 ≠ 仪器契约,
+# 详见组回读处的注释。
+_GROUP_COUNT_HARD_MAX = 64
+
+# 按需补读失败后的静默期 (秒)。broadcaster 1 Hz 调 get_metrics, 补读若持续失败又不节流
+# 就是每秒重跑整段回读并持锁 —— 真机不支持这几条命令时会把 SCPI 通道占死。
+_TOPOLOGY_RETRY_COOLDOWN_S = 30.0
+
+# 拓扑相关 fail-loud 文案统一附带的逃生门提示。现场高压时不该靠记忆去翻文档找绕过
+# 开关 —— 尤其 `f64_output_gain_db` 这条路**没有** per-step 端口参数, topology_override
+# 是唯一解, 报错里不写就等于没有。**引用本常量, 别手抄副本** (抄了改常量不会同步)。
+_TOPOLOGY_ESCAPE_HINT = (
+    "(真机若不支持 GROUP:*/MODEL:INFO?, 可在仪器 connection_params 配 "
+    "topology_override 声明口号)"
+)
 
 # FTP 凭据 (PROPSIM 出厂默认)
 F64_FTP_USER = "PROPSIM"
@@ -349,6 +376,19 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self._default_emulation_file: str = config.get(
             "default_emulation_file", F64_DEFAULT_EMULATION_FILE
         )
+        # ── F64R-2: 拓扑**人工声明**兜底 (bring-up 绕过开关) ──
+        # 回读永远优先; 只有**回读不到**时才用这里声明的值 (并打 WARNING)。
+        # 为什么必须有: `GROUP:*` / `MODEL:INFO?` 这几条**没在真机验过**, 而本项目实证
+        # 过"手册里有、这台机器回 -100 命令不存在"(MMEM/FTP/*OPT?)。若真机不支持, 路损/
+        # 增益/多普勒/CENT 会全线 fail-loud 且**现场无解** —— 输入侧还能用 input_ports
+        # 显式传, 输出侧一个口子都没有。这违反项目铁律「新增 fail-loud 门必须同步给
+        # bring-up 绕过开关」(memory strict-gate-extend-bypass-toggle)。
+        # 「不猜」不等于「不许操作员显式声明」: 猜是软件替人瞎填, 声明是人按实际接线负责。
+        # 形如 {"inputs": [1,2], "outputs": [1,2,3,4], "channels": [1,2,3,4,5,6,7,8]}
+        # (端口/通道**号**列表, 不是数量)。
+        self._topology_override: Optional[Dict[str, List[int]]] = self._parse_topology_override(
+            config.get("topology_override")
+        )
         # 默认文件的已知 MIMO 拓扑, 加载后 set_channel_model 同步缓存 (Codex on PR #97),
         # 避免下游 set_path_loss 等按 stale 2x2 缓存配错通道数 (见常量注释)。
         self._default_emulation_file_topology: Optional[Tuple[int, int]] = config.get(
@@ -443,8 +483,47 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self._rx_antennas: int = 2
         # P0-3 (2026-07-23): 加载 .smu 后从仪器 CALC:FILT:CENT:CH? 回读的真中心频
         # (get_frequency_identity 优先于文件名, 治 "3600M.smu 实为 3550")。None = 尚未
-        # 加载 / 回读失败。(拓扑/逻辑通道数回读留 F64R-2, 见 _load_smu_with_preflight)
+        # 加载 / 回读失败。
         self._readback_center_freq_mhz: Optional[float] = None
+
+        # ── F64R-2 (2026-07-24): 加载后从仿真回读的**真实拓扑** ──
+        # 治 review 母题②「端口靠 tx×rx 猜」。手册 §20.4.3.6 `MODEL:INFO?` 返回
+        # `<inputs>,<channels>,<outputs>`: inputs=物理**输入**口 (BS 天线口),
+        # outputs=物理**输出**口 (探头), channels=**逻辑衰落通道** (=inputs×outputs)。
+        # ⚠ `tx×rx` 是逻辑通道口径, 在 MPAC OTA 里**不等于探头数** (4 输入 × 32 探头
+        # = 128 通道, 而输出口只有 32)。拿 tx×rx 当输出口上界循环 → 32 探头只配到前 16,
+        # 17-32 留工程默认 = 现场「路损只设一半」根因。
+        # None = 尚未加载 / 回读失败 → **写**操作 fail-loud 拒绝, 不回退猜口数
+        # (用户 2026-07-24 拍板); **读**操作 (get_metrics) 跳过该项并标注, 不整体失败。
+        self._active_inputs: Optional[int] = None
+        self._active_outputs: Optional[int] = None
+        self._active_channels: Optional[int] = None
+        # 端口**号**列表 (GROUP:INPUTS/OUTPUTS:GET? 逐组取并集)。⚠ 只有"口数"是不够的:
+        # 数量 N 不等于端口号就是 1..N —— Scenario Wizard 可以把仿真分配到非连续的物理口
+        # (例如实际占用输出口 {2,4}, 数量=2)。照 1..N 下发会**误配口 1、漏配口 4**, 跟
+        # "17-32 号探头没配"是同一个病换个形态。所以端口号也问仪器, 不推算。
+        # 当前端口号是否来自**人工声明**而非仪器回读 —— 上报出去让操作员一眼看出
+        # "这些口号是人填的, 不是仪器说的"(否则诊断面会给一个错误的声明值背书)。
+        self._topology_from_override: bool = False
+        # 按需补读的**失败负缓存**时间戳 (monotonic 秒)。broadcaster 每秒调 get_metrics,
+        # 若补读持续失败 (真机不支持 GROUP:* / 交叉校验不符) 而不节流, 就会每秒重跑整段
+        # 回读 (5+3N 条) 并全程持锁 —— 不支持时每条还要吃 VISA 超时 + 排水, SCPI 通道
+        # 直接被占死: 现场"打开 GUI 仪表盘 = 测试步骤发不出命令"。
+        self._topology_retry_after: float = 0.0
+        self._active_input_ports: Optional[List[int]] = None
+        self._active_output_ports: Optional[List[int]] = None
+        # 逻辑通道**号**列表 (GROUP:CHANNELS:GET? 逐组取并集)。同"端口号不保证 1..N"的
+        # 道理: 通道号也可能非连续/有偏移, 逐通道命令 (MOB:MAN:CH) 得按真实号发。
+        self._active_channel_numbers: Optional[List[int]] = None
+        # CENT 是 **per-group** 生效 (手册 §20.4.6.1: "Frequency is set for given channel
+        # and for all the other channels belonging to the same group")。
+        # 组的判定 (§20.4.6.4/20.4.6.6): 两个通道满足**任一**条件即同组 —— **输入相同**,
+        # **或输出相同**。注意是"或"不是"仅按输出": 全交叉拓扑 (每个输入都连每个输出) 下
+        # 通道会经输入/输出两个维度互相连通, 可能整个仿真**只有 1 组**; 非全交叉才分多组。
+        # ⚠ 所以**组数不可推算, 必须回读** (GROUP:GET?) —— 存每组代表通道号 (该组
+        # GROUP:CHANNELS:GET? 的首通道), CENT 按实际组数逐组发一次。
+        # None = 组信息未回读 → CENT 下发 fail-loud。
+        self._group_repr_channels: Optional[List[int]] = None
 
         # P3-4: structured SYST:INFO? metadata populated during connect().
         # Pre-P3-4 only ``_channel_count`` survived; these surface in the
@@ -570,12 +649,37 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     def _apply_unload(self) -> None:
         """卸载 / 加载失败后复位"已加载场景"状态 (调用点需自证 CLOSE/*RST 已发 →
         旧仿真已停+卸载)。清运行态 + 加载文件 + freq identity (programmed/readback) +
-        pipeline。**不含 _bypass_mode** (bypass 是独立 config 旋钮, 仅会话边界复位)。"""
+        pipeline + **拓扑真值** (F64R-2)。**不含 _bypass_mode** (bypass 是独立 config
+        旋钮, 仅会话边界复位)。
+
+        ⚠ 拓扑 (inputs/outputs/channels/组代表通道) 跟 freq identity 同属"由**已加载
+        文件**决定"的一类 —— 卸载后必须一并清成 None, 否则下一个文件加载失败时会拿
+        **上一个仿真**的口数去配端口 (stale 拓扑比没有拓扑更危险: 口数看着有效, 实际
+        配到别的仿真的口上)。加新的"由文件决定"字段一律加在本方法, 别再内联复位。"""
         self._emulation_running = False
         self._loaded_emulation_file = None
         self._center_freq_programmed = False
         self._readback_center_freq_mhz = None
         self._active_pipeline = None
+        self._clear_topology()
+
+    def _clear_topology(self) -> None:
+        """清空"由已加载文件决定"的拓扑真值 —— **拓扑字段的唯一复位入口**。
+
+        被两处共用: `_apply_unload()`(卸载/加载失败) 与 `_readback_topology()` 入口
+        (回读前先清, 见那里的说明)。加新的拓扑字段只改这一处 —— 散落内联复位正是
+        P0-3 里同一个母题反复逃逸 7 轮的根因 (memory clear-stale-state-enumerate-all-sources)。"""
+        self._active_inputs = None
+        self._active_outputs = None
+        self._active_channels = None
+        self._active_input_ports = None
+        self._active_output_ports = None
+        self._active_channel_numbers = None
+        self._group_repr_channels = None
+        self._topology_from_override = False
+        # 失败静默期也是"由已加载文件决定"的一类: 换仿真 / 会话边界都该立刻重试,
+        # 不能继承上一轮的冷却 (放这里才被 _apply_session_reset 等所有复位路径覆盖)。
+        self._topology_retry_after = 0.0
 
     def _apply_session_reset(self) -> None:
         """会话边界 (connect 起始 / disconnect 终态 / reset) 无条件全清 6 字段 =
@@ -597,6 +701,389 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         await self._query("*OPC?")
         return await self._query_simulation_state()
 
+    @staticmethod
+    def _parse_topology_override(raw: Any) -> Optional[Dict[str, List[int]]]:
+        """解析操作员声明的拓扑兜底 (见 `_topology_override` 字段注释)。
+
+        要求 inputs / outputs / channels **三者齐全**且都是正整数号码列表 —— 缺一不可,
+        因为消费方分别依赖它们 (路损用 outputs / 输入电平用 inputs / 多普勒用 channels),
+        只声明一半会让另一半照样 fail-loud, 反而更难排查。任一项不合格 → 整体判无效 +
+        ERROR 日志 (配错了要当场知道, 不能静默当没声明)。"""
+        if not raw:
+            return None
+        if not isinstance(raw, dict):
+            logger.error(f"[F64] topology_override 必须是对象, 实得 {type(raw).__name__} — 忽略")
+            return None
+        out: Dict[str, List[int]] = {}
+        for key in ("inputs", "outputs", "channels"):
+            vals = raw.get(key)
+            if not isinstance(vals, (list, tuple)) or not vals:
+                logger.error(f"[F64] topology_override.{key} 缺失或非非空列表 — 整体忽略")
+                return None
+            nums: List[int] = []
+            for v in vals:
+                if isinstance(v, bool) or not isinstance(v, int) or v <= 0:
+                    logger.error(f"[F64] topology_override.{key} 含非正整数 {v!r} — 整体忽略")
+                    return None
+                nums.append(v)
+            out[key] = sorted(set(nums))
+        logger.warning(
+            f"[F64] 已启用拓扑人工声明兜底 (仅在回读失败时生效): 输入口={out['inputs']} "
+            f"输出口={out['outputs']} 通道={len(out['channels'])} 个"
+        )
+        return out
+
+    def _apply_topology_override(self) -> bool:
+        """回读不到时套用人工声明的拓扑。返回是否套用了。
+
+        ⚠ 只在**回读确实失败**后调用 —— 回读到的真值永远优先于人工声明 (人可能填错、
+        或换了 .smu 忘了改)。套用时打 WARNING, 让操作员知道当前用的是声明值不是真值。
+
+        ⚠⚠ **绝不覆盖已经读到的口数** (复审 P2, 逃生门差点把本 PR 治的病放回来):
+        最常见的启用形态是"`MODEL:INFO?` 正常、只有 `GROUP:*` 不支持" —— 此时仪器已经
+        明说输出口有 32 个, 若拿操作员照旧设备抄的 `outputs:[1,2,3,4]` 无条件覆盖, 就又
+        变成"32 个探头只配 4 个"且返回 True, 连 get_metrics 都会报 `active_outputs=4`
+        **反过来给错误背书**。两个值同时在手且打架时, 唯一正确的动作是 **ERROR + 拒绝
+        套用**, 让人去查为什么对不上 —— 不是静默采信人。
+        """
+        ov = self._topology_override
+        if not ov:
+            return False
+        # 与已回读到的口数交叉核对: 对不上 = 声明写错了 / 换了 .smu 没改声明 → 拒绝。
+        for label, declared, readback in (
+            ("inputs", len(ov["inputs"]), self._active_inputs),
+            ("outputs", len(ov["outputs"]), self._active_outputs),
+            ("channels", len(ov["channels"]), self._active_channels),
+        ):
+            if readback and readback != declared:
+                logger.error(
+                    "[F64] topology_override.%s 声明 %d 个, 但仪器 MODEL:INFO? 回读到 "
+                    "%d 个 —— 两者矛盾, **拒绝套用声明值** (照声明配会漏配/错配)。"
+                    "请核对声明与当前 .smu 是否为同一套接线。",
+                    label, declared, readback,
+                )
+                return False
+        self._active_input_ports = list(ov["inputs"])
+        self._active_output_ports = list(ov["outputs"])
+        self._active_channel_numbers = list(ov["channels"])
+        # 口数: 回读到就保留仪器真值 (只有端口**号**是声明补的); 没读到才用声明数量。
+        self._active_inputs = self._active_inputs or len(ov["inputs"])
+        self._active_outputs = self._active_outputs or len(ov["outputs"])
+        self._active_channels = self._active_channels or len(ov["channels"])
+        # CENT 代表通道: 声明模式下无法知道真实分组, 保守起见**逐通道**下发 (CENT 对
+        # 同组其余通道重复写是幂等的, 只是多几条命令; 漏发才是真问题)。
+        self._group_repr_channels = list(ov["channels"])
+        self._topology_from_override = True
+        logger.warning(
+            "[F64] 拓扑回读失败 → **套用人工声明值** (非仪器真值): 输入口=%s 输出口=%s; "
+            "若与实际接线不符会配错口, 请尽快确认 GROUP:*/MODEL:INFO? 为何读不到",
+            self._active_input_ports, self._active_output_ports,
+        )
+        return True
+
+    @staticmethod
+    def _parse_csv_ints(raw: Optional[str]) -> List[int]:
+        """解析 F64 的 CSV 整数回复 ("1,2,3,4" → [1,2,3,4])。
+
+        **任一段非法 → 返回 []**(整体判定"读不到"), 不返回残缺列表 —— 端口号是拿来
+        寻址硬件的, 半信半疑的列表比没有更危险 (会配到错的口)。容 "1.0" 这类浮点写法,
+        但拒 "1.9" (非整数不可能是端口号, 说明回复串线了)。"""
+        if not raw:
+            return []
+        out: List[int] = []
+        for seg in raw.strip().split(","):
+            seg = seg.strip()
+            if not seg:
+                return []
+            try:
+                val = float(seg)
+            except (TypeError, ValueError):
+                return []
+            if not val.is_integer():
+                return []
+            out.append(int(val))
+        return out
+
+    async def _readback_topology(self) -> None:
+        """加载成功后回读**真实拓扑** (F64R-2, 治 review 母题②「该问仪器的地方在猜」)。
+
+        序列 (手册 §20.4.3.6 + §20.4.7, NotebookLM + 本地 PDF 双查证):
+          `DIAG:SIMU:MODEL:INFO?`      → `<inputs>,<channels>,<outputs>` (三个**数量**)
+              inputs=物理输入口(BS 天线口) / channels=逻辑衰落通道 / outputs=物理输出口(探头)
+          `GROUP:GET?`                 → 信道组**数量**(纯数字, 非组编号列表)
+          `GROUP:CHANNELS:GET? <g>`    → 该组通道 CSV → 取**首通道**作该组 CENT 代表
+          `GROUP:INPUTS:GET? <g>`      → 该组物理**输入口号** CSV  ┐逐组取并集 =
+          `GROUP:OUTPUTS:GET? <g>`     → 该组物理**输出口号** CSV  ┘真实端口号集合
+
+        ⚠ 为什么口数不够、还要端口**号**: 数量 N **不保证**端口号就是 1..N —— Scenario
+        Wizard 可把仿真分配到非连续物理口 (如实际占用输出 {2,4}, 数量=2)。照 1..N 下发会
+        误配口 1、漏配口 4。所以端口号也回读, 并与 MODEL:INFO? 的数量交叉校验, 不符 =
+        判"读不到"(宁可 fail-loud, 不拿半信半疑的端口号配硬件)。
+
+        ⚠ 前置条件: 仿真**已加载**。手册 §20.4.3.6 只定义了"currently run emulation"的
+        返回, 未加载 (CLOSED) 时行为**手册未涵盖** → 只在 FILE 加载成功后调用, 不盲试。
+        三条加载路 (GCM/ASC/B-2) 成功后都必须调本方法, 见各自成功分支。
+
+        ⚠ **入口先无条件清空旧拓扑**: 否则"加载新文件成功、但回读失败"会残留**上一个
+        仿真**的口数 —— 日志喊着 fail-loud、实际却照旧口数写满端口 (日志说谎), 甚至出现
+        三个字段来自新仿真、一个来自旧仿真的**混代**状态。清了之后失败 = 干净的"未知"。
+
+        ⚠ **不让 load 失败**: 加载本身已经成功 (FILE + *OPC? + SYST:ERR? 都过了), 拓扑
+        读不到不该回滚它。失败 → 字段留 None + WARNING, 后果由消费方承担: **写**操作
+        (set_path_loss / CENT / baseband_power) fail-loud 拒绝, **读**操作 (get_metrics)
+        跳过该项并标注。调用方负责持 _scpi_lock。
+
+        ⚠ 回读失败后, 若操作员配了 `topology_override` 则**套用人工声明值**兜底 (回读
+        真值永远优先)。这是 bring-up 绕过开关 —— 见 `_topology_override` 字段注释。
+        """
+        # (失败静默期由 _clear_topology 统一清零 —— 它在下面的实现体入口被调用)
+        await self._readback_topology_from_instrument()
+        if not (self._active_output_ports and self._active_input_ports):
+            # 回读的**任一环**失败都会落到这里 (共 9 个失败出口) —— 兜底只判一次终态,
+            # 不在每个出口内联, 免得加新出口时漏掉 (本项目反复踩的 fan-out 母题)。
+            self._apply_topology_override()
+
+    async def _readback_topology_from_instrument(self) -> None:
+        """`_readback_topology` 的实现体: 纯粹向仪器回读, 不含人工声明兜底。"""
+        # 入口无条件清 —— "不写 = 继承上一个仿真的值"是本项目反复踩的母题。
+        self._clear_topology()
+
+        # ——拓扑三值 (inputs/channels/outputs)——
+        try:
+            dims = self._parse_csv_ints(await self._query("DIAG:SIMU:MODEL:INFO?"))
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[F64] 拓扑回读失败 (MODEL:INFO? 异常: {e}) — 端口配置将 fail-loud")
+            return
+        if len(dims) != 3 or any(d <= 0 for d in dims):
+            logger.warning(
+                f"[F64] 拓扑回读无效 (MODEL:INFO? 期望 3 个正整数, 实得 {dims}) — "
+                f"端口配置将 fail-loud"
+            )
+            return
+        # ⚠ 上界**不能**用 `_channel_count`(SYST:INFO? 的整机衰落通道数, 如 64): 那是
+        # 硬件资源数, 而 MODEL:INFO? 的 channels 是**逻辑**通道数 (inputs×outputs), OTA
+        # 全交叉下 4×32=128 **本来就超过** 64 —— 拿它当闸会把完全正常的 OTA 仿真判成
+        # "回复错位"。两个量单位不同, 不可互相约束。故用独立常数。
+        sanity_max = _TOPOLOGY_SANITY_MAX
+        if any(d > sanity_max for d in dims):
+            # 上界闸: 3334 会话错位后回复偏移是本项目的实证失败模式, 若恰好凑成三个
+            # "正整数"(如 4,1e20,1e20), 下游 range(1, 1e20) 会把进程吃死 —— broadcaster
+            # 每秒调 get_metrics, 会持锁狂发 SCPI 直到整机不可恢复。宁可判读不到。
+            logger.warning(
+                f"[F64] 拓扑回读值超出合理上界 {sanity_max} (实得 {dims}, "
+                f"疑似回复错位) — 端口配置将 fail-loud"
+            )
+            return
+        self._active_inputs, self._active_channels, self._active_outputs = dims
+        if self._active_inputs * self._active_outputs != self._active_channels:
+            # 非全交叉拓扑是合法的 (不是所有输入都连所有输出), 只记录不拦 —— 但值得留痕:
+            # MPAC OTA 全交叉场景下不相等往往意味着加载的不是预期的仿真。
+            logger.info(
+                f"[F64] 拓扑非全交叉: inputs={self._active_inputs} × "
+                f"outputs={self._active_outputs} ≠ channels={self._active_channels}"
+            )
+        logger.info(
+            f"[F64] 拓扑回读: 输入口={self._active_inputs} 输出口(探头)="
+            f"{self._active_outputs} 逻辑通道={self._active_channels}"
+        )
+
+        # ——逐组回读: CENT 代表通道 + 真实端口号——
+        # 独立于拓扑三值: 组信息读不到只让 CENT / 端口下发 fail-loud, 不影响已落库的
+        # 三值 (get_metrics 仍能上报口数供人排查)。
+        try:
+            group_count_raw = self._parse_csv_ints(await self._query("GROUP:GET?"))
+            if len(group_count_raw) != 1 or group_count_raw[0] <= 0:
+                logger.warning(
+                    f"[F64] 组数回读无效 (GROUP:GET? 期望单个正整数, 实得 "
+                    f"{group_count_raw}) — CENT / 端口下发将 fail-loud"
+                )
+                return
+            group_count = group_count_raw[0]
+            # 组循环每组要发 3 条查询、全程持锁, 所以组数必须有硬上界: 畸形回复
+            # (如 "1000,1024,1000") 三值都能过 _TOPOLOGY_SANITY_MAX, 若不再收紧,
+            # 组数可达上千 → 3000+ 条 SCPI 串行, VISA 每条最长 5 s → 驱动被锁死数
+            # 小时、broadcaster 全堵。
+            # ——组数合理性: 硬拒 vs 只留痕, 分清两类依据——
+            # 【硬拒】只用**不可能更宽**的两条: 组是通道的划分 (≤ 通道数) + 绝对常数
+            # (挡"每组 3 条查询 × 上千组"的锁死)。这两条挡的是回复错位, 不会误伤真机。
+            _group_ceiling = min(self._active_channels, _GROUP_COUNT_HARD_MAX)
+            # 【只留痕】min(输入口数, 输出口数) 是手册 §20.4.6.1 的**推导**结论 (NotebookLM
+            # 复核): "同输入**或**同输出即同组"定义连通分量且有传递性 → 组间输入集/输出集
+            # 都不相交 → 每组至少各独占 1 输入 + 1 输出。实例: 4in×32out 全交叉 = 1 组;
+            # 4 输入各独占 8 输出 = 4 组 (正好触 min(4,32)=4)。
+            # ⚠ 但**推导不等于仪器契约**: .smu 工程里的 "[Channel Group N]" 可能是频率组
+            # 等别的口径, 与路由连通分量不重合。拿推导做硬拒 → 真机一旦不符, 现场表现是
+            # "命令全支持却什么都配不上", 日志还说"疑似回复错位", 排障方向被带偏。
+            # 抗锁死的收益 HARD_MAX 已经拿到了, 这里再拒是重复收益 + 新增误拒风险 →
+            # 超出只 WARNING 留痕, 照常继续。
+            _physical_expect = min(self._active_inputs, self._active_outputs)
+            if group_count > _physical_expect:
+                logger.warning(
+                    f"[F64] 组数 {group_count} 超出手册推导的物理预期 {_physical_expect} "
+                    f"(输入 {self._active_inputs} / 输出 {self._active_outputs}) —— 仍按仪器"
+                    f"回读值继续。若后续端口配置异常, 先怀疑组语义与路由连通分量不一致。"
+                )
+            if group_count > _group_ceiling:
+                # 组是通道的划分, 组数不可能超通道数 —— 超了说明回复串线/解析错位,
+                # 宁可判定读不到, 也不照着荒谬的组数循环几百条命令。
+                logger.warning(
+                    f"[F64] 组数 {group_count} 超出硬上限 {_group_ceiling} "
+                    f"(= min(逻辑通道数 {self._active_channels}, 常数 "
+                    f"{_GROUP_COUNT_HARD_MAX})) — 疑似回复错位, CENT / 端口下发将 fail-loud"
+                )
+                return
+            reprs: List[int] = []
+            in_ports: set[int] = set()
+            out_ports: set[int] = set()
+            all_chans: set[int] = set()
+            # ⚠ 组**号**这里只能假定 1..N: 手册 (§20.4.7) 只给了 `GROup:GET?`(数量),
+            # **没有** `GROup:LIST?` 这样的编号列举查询 —— 跟端口/通道号能回读不同, 组号
+            # 无从问起。若真机组号非 1 起连续, `GROUP:CHANNELS:GET? 2` 会空/报错 → 下面
+            # 的交叉校验兜底判"读不到" → 全线 fail-loud (降级是安全的, 但现象会是"命令
+            # 都支持却什么都配不上", 排障时先怀疑这里)。
+            for g in range(1, group_count + 1):
+                chans = self._parse_csv_ints(await self._query(f"GROUP:CHANNELS:GET? {g}"))
+                if not chans or any(c <= 0 for c in chans):
+                    logger.warning(f"[F64] 组 {g} 通道列表回读无效 ({chans}) — CENT / 端口下发将 fail-loud")
+                    return
+                reprs.append(chans[0])   # 首通道即可: CENT 对同组其余通道一并生效
+                all_chans.update(chans)  # 逐通道命令 (MOB:MAN:CH) 要按真实通道号发
+                g_in = self._parse_csv_ints(await self._query(f"GROUP:INPUTS:GET? {g}"))
+                g_out = self._parse_csv_ints(await self._query(f"GROUP:OUTPUTS:GET? {g}"))
+                # 端口号必须是**正整数** —— 负数/0 是解析错位的信号 (回复串线), 照发会
+                # 变成 `OUTP:LOSS:SET -1,...` 只能靠仪器拒绝兜底。
+                if (not g_in or not g_out
+                        or any(p <= 0 for p in g_in) or any(p <= 0 for p in g_out)):
+                    logger.warning(
+                        f"[F64] 组 {g} 端口号回读无效 (in={g_in} out={g_out}) — 端口下发将 fail-loud"
+                    )
+                    return
+                in_ports.update(g_in)
+                out_ports.update(g_out)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[F64] 组信息回读失败 ({e}) — CENT / 端口下发将 fail-loud")
+            return
+
+        # 交叉校验: 端口号集合大小必须等于 MODEL:INFO? 报的口数。不符 = 两个来源打架,
+        # 判"读不到" —— 拿对不上的端口号配硬件比不配更危险。
+        if (len(in_ports) != self._active_inputs
+                or len(out_ports) != self._active_outputs
+                or len(all_chans) != self._active_channels):
+            logger.warning(
+                f"[F64] 回读的号码集合与 MODEL:INFO? 的数量不符: 输入口 {sorted(in_ports)}"
+                f"(期望 {self._active_inputs} 个) / 输出口 {sorted(out_ports)}"
+                f"(期望 {self._active_outputs} 个) / 通道 {len(all_chans)} 个"
+                f"(期望 {self._active_channels} 个) — 端口下发将 fail-loud"
+            )
+            return
+
+        self._group_repr_channels = reprs
+        self._active_input_ports = sorted(in_ports)
+        self._active_output_ports = sorted(out_ports)
+        self._active_channel_numbers = sorted(all_chans)
+        logger.info(
+            f"[F64] 信道组回读: {len(reprs)} 组, 代表通道={reprs}; "
+            f"真实输入口={self._active_input_ports} 输出口={self._active_output_ports}; "
+            f"通道号 {len(self._active_channel_numbers)} 个"
+        )
+
+    def _topology_source(self) -> str:
+        """端口号的来源, 上报给操作员判断"这些口号能不能信"。
+
+        readback = 仪器回读的真值 / declared = 回读失败后套用的**人工声明**兜底值 /
+        unknown = 都没有。⚠ 只此一处定义 —— get_metrics 与 get_channel_state 两条上报
+        路都引用它 (手抄副本会在加第四态时漏改一处, 本文件已有 _TOPOLOGY_ESCAPE_HINT
+        的同类教训)。"""
+        if self._topology_from_override:
+            return "declared"
+        return "readback" if self._active_output_ports else "unknown"
+
+    async def _ensure_topology(self, *, throttle: bool = False) -> bool:
+        """端口写操作前确保拓扑可用; 冷缓存时**按需补回读一次**。返回是否可用。
+
+        ⚠ 为什么必须有这个 (F64R-2 复审 P1, 差点造成现场事故):
+        `_readback_topology()` 只在三条 **load 成功**分支跑。但驱动的内存状态和 F64 的
+        硬件状态是**两回事** —— 2026-07-21 现场实证: 重启后端后驱动缓存全空, 而 F64
+        硬件**仍加载着信道在播放、UE 还 attach 着**。此时若拿"缓存是空的"当硬门, 所有
+        端口写 (路损/增益/输入电平/CENT) 全被拒, 而唯一的恢复途径是重新 load —— load
+        第一步就是 CLOSE, **会打断正在跑的仿真和 UE attach**。这就把"驱动忘了"升级成
+        "现场重来"。同文件 `start_emulation` 早就写过同一条教训 (冷缓存不做 gate)。
+
+        解法不是回退去猜, 而是**去问仪器**: 缓存空时先查 `STATE?`, 只要不是 CLOSED
+        (说明硬件确实加载着仿真, `MODEL:INFO?` 的前置条件此刻满足) 就补跑一次回读。
+        真读不到才 fail-loud —— 保住"不猜"的底线, 同时不误伤活着的仿真。
+        """
+        if self._active_output_ports and self._active_input_ports:
+            return True
+        if not self._visa_resource:
+            return False
+        # ⚠ 失败节流**只对高频轮询路生效** (throttle=True, 目前只有 get_metrics):
+        # broadcaster 每秒调一次, 补读若持续失败 (真机不支持 GROUP:* / 交叉校验不符)
+        # 不节流就是每秒重跑 5+3N 条查询且全程持锁; 命令不存在若表现为无应答, 每次还要
+        # 吃 VISA 超时 + 排水 —— SCPI 通道被占死。
+        # ⚠⚠ 但**人发起的写操作绝不节流** (throttle=False, 默认): 操作员完全可能在冷却
+        # 期内从**前面板**加载 .smu (本项目现场的真实工作方式) —— 那时驱动无从知情, 若
+        # 照样早退, 后续 set_path_loss / 输入参考 / crest 会在最长 N 秒里全线误拒, 报错
+        # 还说"仿真未加载"并引人去配 topology_override (**错误的解药**), 而仪器上仿真
+        # 明明在跑。人点一次就该真去问一次仪器。
+        if throttle and time.monotonic() < self._topology_retry_after:
+            return False
+        async with self._scpi_lock:
+            # 双重检查: 等锁期间别的协程可能已经补回读完了
+            if self._active_output_ports and self._active_input_ports:
+                return True
+            state = await self._query_simulation_state()
+            if state is None or state == "CLOSED":
+                # 真没加载仿真 (或状态读不到) → 不盲试 MODEL:INFO? (手册未定义未加载时
+                # 的行为), 让调用方 fail-loud。
+                logger.warning(
+                    f"[F64] 拓扑缓存为空且 STATE?={state} — 不补回读, 端口操作将 fail-loud"
+                )
+                self._topology_retry_after = time.monotonic() + _TOPOLOGY_RETRY_COOLDOWN_S
+                return False
+            logger.info(f"[F64] 拓扑缓存为空但仿真在 {state} 态 (疑似后端重启) — 按需补回读")
+            await self._readback_topology()
+        ok = bool(self._active_output_ports and self._active_input_ports)
+        if not ok:
+            self._topology_retry_after = time.monotonic() + _TOPOLOGY_RETRY_COOLDOWN_S
+        return ok
+
+    async def ensure_topology(self) -> bool:
+        """公开版 `_ensure_topology` —— 供 **HTTP 端点 / 编排层**在读端口 getter 前调用。
+
+        端口 getter (`get_active_output_ports` 等) 是同步的、只读内存缓存, 冷缓存时会
+        返回 None。调用方若直接读它就 fail-loud, 会在"后端重启但 F64 仍在播"这个真实
+        场景下误拒 (F64R-2 复审: /crest-factor 就这么退化成 400, 反而不如改动前)。
+        先 await 本方法即可让驱动按需向仪器补读一次。"""
+        return await self._ensure_topology()
+
+    # ——公开能力查询 (给编排层用, 免得上层再读私有字段自己推 F64R-2)——
+
+    def get_active_output_count(self) -> Optional[int]:
+        """当前加载仿真的**物理输出口数** (= MPAC 探头数), 由 `MODEL:INFO?` 回读。
+
+        None = 仿真未加载 / 回读失败。调用方此时应 **fail-loud**, 不要回退到
+        `tx×rx` 或整机通道数去猜 —— 那正是 review 母题② 的错法: `tx×rx` 是**逻辑
+        通道**口径, MPAC OTA 下 4 输入×32 探头 = 128 通道而输出口只有 32, 拿 tx×rx
+        (=16) 当输出口上界会让 32 探头**只配到前 16**。"""
+        return self._active_outputs
+
+    def get_active_input_count(self) -> Optional[int]:
+        """当前加载仿真的**物理输入口数** (= 基站天线口), 由 `MODEL:INFO?` 回读。
+        None = 未加载 / 回读失败 → 调用方 fail-loud。"""
+        return self._active_inputs
+
+    def get_active_output_ports(self) -> Optional[List[int]]:
+        """当前加载仿真占用的**物理输出口号列表** (探头), 由 `GROUP:OUTPUTS:GET?` 逐组
+        取并集回读。要**逐口下发**的调用方用这个, 别用 count 去 `range(1, N+1)` ——
+        端口号不保证连续 (仿真可能占用 {2,4}, 数量=2)。None = 未加载 / 回读失败。"""
+        return list(self._active_output_ports) if self._active_output_ports else None
+
+    def get_active_input_ports(self) -> Optional[List[int]]:
+        """当前加载仿真占用的**物理输入口号列表** (基站天线口), 同上由 `GROUP:INPUTS:GET?`
+        逐组取并集回读。None = 未加载 / 回读失败。"""
+        return list(self._active_input_ports) if self._active_input_ports else None
+
     async def _load_smu_with_preflight(self, file_path: str) -> bool:
         """按 PROPSIM 手册教科书序列加载 .smu (P0-3, F64 review 母题④, 治现场
         'load 从没成功')。整段持 _scpi_lock (broadcaster 轮询不插入 CLOSE/FILE 之间)。
@@ -613,10 +1100,9 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         / CLOSE 前失败 → 旧场景仍加载, 保留 identity 让一致性网仍能核对旧频率)。调用方
         只负责成功时设 _loaded_emulation_file 等身份缓存, 不再无条件清 (Codex #223 第四条)。
 
-        ⚠ 范围 (P0-3 缩范围, 用户 2026-07-23 拍板): 只做 **load 序列 + 频率回读**。
-        **拓扑/端口不在此回读** —— MPAC OTA 里 MODEL:INFO? 的 outputs 是探头数(非 rx
-        天线维度)、CENT 频率下发要 GROup 寻址, 是 F64R-2「端口从拓扑回读」的完整深水区
-        (改法牵动 set_path_loss/output_gain/get_metrics 一堆消费方), 留 F64R-2 一次做对。
+        ⚠ 拓扑回读 (F64R-2, 2026-07-24 补): 加载成功后接 `_readback_topology()` 落
+        真实 inputs/outputs/channels + 组代表通道。**读不到不回滚加载** (加载本身已过
+        错误门), 只留 None 让端口消费方 fail-loud —— 见 `_readback_topology` docstring。
         """
         freq: Optional[float] = None
         # close_confirmed: CLOSE 已**确认卸载** (STATE?==CLOSED) 才 True —— 只有此时旧场景
@@ -673,8 +1159,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     self._apply_unload()  # CLOSE 已发 (旧仿真已停+卸载) → 清加载态
                     return False
                 # ——加载后回读真频 (母题③: 频率来自仪器, 不靠文件名。CENT:CH? 1 读
-                # 第一组的组中心频, 单值不越界; 拓扑/端口回读留 F64R-2)——
+                # 第一组的组中心频, 单值不越界)——
                 freq = await self._readback_center_freq(1)
+                # ——加载后回读真拓扑 (F64R-2 母题②: 端口数问仪器, 不靠 tx×rx 猜)。
+                # 前置条件"仿真已加载"此刻才满足 (FILE + *OPC? + 错误门都过了)。
+                # 内部不抛异常、失败只留 None + WARNING —— 加载已成功不因拓扑读不到回滚。
+                await self._readback_topology()
         except Exception as e:  # noqa: BLE001
             # 会话坏 / VI_ERROR_TMO (现场实证的超时路径) → fail-loud, 不冒泡。
             # ⚠ 只在 CLOSE **已确认卸载** (close_confirmed) 时清 identity。CLOSE 前异常
@@ -782,6 +1272,26 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 await self._write(f"CALC:FILT:FILE {load_file}", timeout=VISA_TIMEOUT_FILE_LOAD)
                 await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
                 load_err = await self._first_error()
+                if load_err is None:
+                    # ——成功分支整段在锁内 (与 GCM 路对称)——
+                    # ⚠ 必须持锁: 拓扑回读是"先清空再逐条填满"的多命令序列 (5+3N 条),
+                    # 放锁外的话这段窗口里并发的**端口写** (如 /input-reference 端点) 会
+                    # 读到清空后的 None → **加载明明成功却被拒**。
+                    # (注: get_metrics 是不持锁直接读字段的, 锁保护不到它 —— 但字段级
+                    #  赋值原子, 它最坏读到"跳过查询", 无害。别据此以为读路径被锁保护了。)
+                    self._loaded_emulation_file = load_file
+                    # P0-3 F1: B-2 参数化 TDL 载频不在 F64 GCM identity 状态 (由 payload/SCD
+                    # 同源定, 非 CENT:CH? 回读) → identity 契约同 ASC: 报 None 让一致性网跳过
+                    # F64 (或落 B-2 文件名解析)。清 GCM 步残留 programmed/readback, 否则
+                    # GCM→B-2 切换后 identity 谎报上一 GCM 步真频。与 ASC 成功分支对称。
+                    self._center_freq_programmed = False
+                    self._readback_center_freq_mhz = None
+                    # pipeline 在回读**之前**置 (与 ASC 路对称): 否则 metrics 可能读到
+                    # "旧 pipeline + 新拓扑"的错配快照。
+                    self._active_pipeline = F64Pipeline.B2_PARAMETRIC_TDL
+                    # F64R-2: B-2 路同样落本仿真拓扑 (三路对称) —— 否则残留上一步的口数
+                    # 去配这个模型。手册确认 .rtc/.tap 也须编译成 .smu 下发, 回读通用。
+                    await self._readback_topology()
             if load_err is not None:
                 # CLOSE 已确认卸载 → 清加载态 (loaded/identity/pipeline);
                 # 否则 GCM→B-2(失败) 后 identity 谎报上一 GCM 步真频。
@@ -792,15 +1302,6 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     load_err, load_file,
                 )
                 return False
-            self._loaded_emulation_file = load_file
-            # P0-3 F1: B-2 参数化 TDL 载频不在 F64 GCM identity 状态 (由 payload/SCD 同源
-            # 定, 非 CENT:CH? 回读) → identity 契约同 ASC: 报 None 让一致性网跳过 F64 (或落
-            # B-2 文件名解析)。清 GCM 步残留 programmed/readback, 否则 GCM→B-2 切换后
-            # identity 谎报上一 GCM 步真频。与 ASC 成功分支对称。
-            self._center_freq_programmed = False
-            self._readback_center_freq_mhz = None
-
-            self._active_pipeline = F64Pipeline.B2_PARAMETRIC_TDL
             logger.info("[F64/B2] PARAMETRIC_TDL 加载完成: %s; 硬件实时衰落, 运行时走 CH:MOD:CONT:ENV",
                         load_file)
             return True
@@ -1132,7 +1633,8 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             # CALC:FILT:FILE 超时根因)。_load_smu_with_preflight 内含 STATE?判态 →
             # STOP → CLOSE → ★复查 CLOSED → FILE → *OPC? → SYST:ERR? 门 → CENT:CH?
             # 回读真频。失败 fail-loud (helper 已置 _last_error)。
-            # (拓扑/CENT-GROup 寻址回读留 F64R-2, 见 helper 注释)
+            # (F64R-2: helper 内还接了拓扑回读 —— 落真实输入/输出**端口号** + 组代表
+            #  通道, 供下面 Step 4 的 CENT per-group 下发和后续端口配置使用)
             if not await self._load_smu_with_preflight(emulation_file):
                 # helper 据 close_confirmed 精确清 identity (确认卸载后失败清、未确认卸载/
                 # CLOSE 前失败保留仍加载的旧 GCM) —— 调用方不再无条件清 (Codex #223)
@@ -1141,11 +1643,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             self._active_pipeline = F64Pipeline.GCM_NATIVE  # 成功才置 (F1 对称, 参照 load_local)
             self._emulation_running = False  # CLOSE 已停, 未 GO
 
-            # 加载默认文件 → 同步 MIMO 拓扑缓存 (Codex on PR #97): 否则 _tx/_rx 仍构造
-            # 默认 2x2, 下游按错通道数配 → RF 失真。⚠ 此为 MIMO 天线维度硬编码同步
-            # (P0-3 缩范围保留旧行为); 从仪器回读物理拓扑 (MPAC OTA outputs=探头≠rx) +
-            # 消费方改用真实输出口 = F64R-2 深水区, 留 F64R-2。非默认文件由 operator
-            # 经 set_mimo_config 设拓扑 (现有惯例)。
+            # 加载默认文件 → 同步 MIMO 拓扑缓存 (Codex on PR #97)。
+            # ⚠ F64R-2 后这里同步的 _tx/_rx 只是**声明式 MIMO 元数据** (给上报 /
+            # set_mimo_config 一致性用), **不再驱动任何端口寻址** —— 端口一律走
+            # _readback_topology() 从仪器回读的 inputs/outputs/channels。保留同步是为了
+            # 让 set_mimo_config 的一致性拒绝和 metrics 上报不停在构造默认 2x2。
+            # 非默认文件由 operator 经 set_mimo_config 设拓扑 (现有惯例)。
             if (
                 emulation_file == self._default_emulation_file
                 and self._default_emulation_file_topology is not None
@@ -1171,18 +1674,39 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 freq_mhz = parameters["center_frequency_mhz"]
                 # R10 平行族: CENT 写序列过 _first_error 门 — 被拒 (超范围等) 不许假
                 # 成功; 缓存/programmed 门过才更新 (R8 被拒状态不动)。
-                # ⚠ 循环 1..64 (_channel_count) 是旧行为 (P0-3 缩范围保留): CENT 是
-                # per-group 命令, 正确该 GROup:GET?/GROup:CHannels:GET? 取每组代表下发
-                # (OTA 128 通道全在 1 组只发 1 次), 循环全通道对 <64 通道模型会 -200
-                # → per-group 寻址留 F64R-2。现场默认不给 center_frequency_mhz (尊重
-                # .smu 工程频率), 此路不触发。
-                if not await self._gated_write_transaction(
-                    "set_channel_model center-freq",
-                    [
-                        f"CALC:FILT:CENT:CH {ch},{freq_mhz}"
-                        for ch in range(1, self._channel_count + 1)
-                    ],
-                ):
+                # F64R-2: CENT 是 **per-group** 生效 (手册 §20.4.6.1: "Frequency is set
+                # for given channel and for all the other channels belonging to the same
+                # group"); 同组判定 = **输入相同或输出相同**(§20.4.6.4/6, 满足其一即可)。
+                # 组数**不可推算, 必须回读**(GROUP:GET?): 全交叉拓扑下通道经输入/输出
+                # 两个维度连通, 可能整个仿真只有 1 组。正确下发 = 按**实际组数**逐组发
+                # 一次, 每次用该组代表通道号。旧的循环 1..64(_channel_count) 两头都错:
+                # 同组通道被重复写(浪费+无谓抖动), 且 <64 通道的模型会撞不存在的通道 -200。
+                # 整段持锁 (与 set_path_loss/doppler/baseband 四个消费方一致): 加载事务
+                # 已释放锁, 若"读组代表通道"和"下发"之间另一协程换了仿真, CENT 就会打在
+                # **上一个仿真**的组号上 (号在新仿真里存在 = 静默配错组)。
+                async with self._scpi_lock:
+                    repr_channels = self._group_repr_channels
+                    if not repr_channels:
+                        # 拓扑/组信息未知 → fail-loud, 不按猜测的通道循环下发。
+                        # ⚠ 与下面被拒分支同样要**复位** programmed (Codex #211 母题): 新
+                        # 文件此刻已 load 成功, 上一个 model 若置过 True, 那个频率已彻底
+                        # 无效 —— 残留 True 会让 get_frequency_identity 谎报没真下发的旧频。
+                        self._center_freq_programmed = False
+                        self._last_error = (
+                            "set_channel_model 中心频下发拒绝: 信道组信息未知 (GROUP:GET? / "
+                            "GROUP:CHANNELS:GET? 回读失败) — 不按猜测的通道号下发 CENT。"
+                            f"{_TOPOLOGY_ESCAPE_HINT}"
+                        )
+                        logger.error(f"[F64] {self._last_error}")
+                        return False
+                    _cent_ok = await self._gated_write_transaction(
+                        "set_channel_model center-freq",
+                        [
+                            f"CALC:FILT:CENT:CH {ch},{freq_mhz}"
+                            for ch in repr_channels
+                        ],
+                    )
+                if not _cent_ok:
                     # Codex #211 follow-up: CENT 被拒时**复位** programmed (不只
                     # 是"不置") — 上一个 model 若已置 True, 新文件此刻已 load
                     # 成功 (第 908 行), 旧 programmed 频率彻底无效; 残留 True 会
@@ -1300,6 +1824,23 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 )
                 await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
                 load_err = await self._first_error()
+                if load_err is None:
+                    # ——成功分支整段在锁内 (与 GCM 路对称)——
+                    # ⚠ 必须持锁: 拓扑回读是"先清空再逐条填满"的多命令序列, 放锁外的话
+                    # 这段窗口里并发的**端口写**会读到清空后的 None → 加载成功却被拒。
+                    # (get_metrics 不持锁, 锁保护不到它; 详见 B-2 路同位置注释。)
+                    self._loaded_emulation_file = runtime_smu
+                    self._active_pipeline = F64Pipeline.ASC_RUNTIME  # 成功才置 (F1)
+                    # P0-3 F1: ASC 路频率由 channel-engine 按 TestCase 生成, 不在 F64 driver
+                    # 状态 → identity 契约应报 None 让一致性网跳过 F64 (由 ASC 同源保证)。清
+                    # 上一 GCM 步残留的 programmed/readback, 否则切 ASC 后 identity 谎报旧真频。
+                    self._center_freq_programmed = False
+                    self._readback_center_freq_mhz = None
+                    # F64R-2: ASC 路同样落**本仿真**的拓扑 —— 不接的话会留着上一个仿真(如
+                    # GCM 步的 32 探头)的口数去配这个 runtime_emulation.smu (可能只有 2 口),
+                    # 按 32 口狂发 = stale 拓扑比没有更危险。手册确认 .asc/.rtc 都要编译成
+                    # .smu 才能下发, MODEL:INFO?/GROUP:* 读的是这层 .smu 壳子, 回读通用。
+                    await self._readback_topology()
             if load_err is not None:
                 # CLOSE 已确认卸载 → 清加载态 (loaded/identity/pipeline)。保留旧 loaded =
                 # 谎报"还开着", 后续 start_emulation guard 假过 GO 才炸。
@@ -1310,13 +1851,6 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     load_err, runtime_smu,
                 )
                 return False
-            self._loaded_emulation_file = runtime_smu
-            self._active_pipeline = F64Pipeline.ASC_RUNTIME  # 成功才置 (F1)
-            # P0-3 F1: ASC 路频率由 channel-engine 按 TestCase 生成, 不在 F64 driver
-            # 状态 → identity 契约应报 None 让一致性网跳过 F64 (由 ASC 同源保证)。清
-            # 上一 GCM 步残留的 programmed/readback, 否则切 ASC 后 identity 谎报旧真频。
-            self._center_freq_programmed = False
-            self._readback_center_freq_mhz = None
 
             logger.info(f"[F64/ASC] Runtime emulation loaded: {runtime_smu}")
             return True
@@ -1454,12 +1988,18 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
         F64 的 MIMO 端口拓扑通过 Scenario Wizard 烘到仿真文件中, SCPI 不能
         动态改路径数. 本方法做两件事:
-          1. 校验请求的 tx×rx 是否超出本机通道数 (connect 时探测)
-          2. 缓存 (tx, rx) 给上层服务 (set_path_loss 等) 计算输出数
+          1. 校验请求的 tx×rx 是否超出本机通道数 (connect 时探测的硬件容量)
+          2. 缓存 (tx, rx) 作**声明式 MIMO 元数据**
+
+        ⚠ F64R-2 起缓存的 (tx, rx) **不再用于任何端口寻址**。端口/通道数一律走
+        `_readback_topology()` 从仪器回读的 inputs/outputs/channels (`MODEL:INFO?`) ——
+        `tx×rx` 是**逻辑通道**口径, 在 MPAC OTA 里不等于物理输出口 (探头) 数, 拿它配
+        端口正是 review 母题② 的错法。本缓存现在只服务于: 上报 (get_metrics /
+        get_channel_state) 与本方法自身的一致性拒绝。
 
         若已有仿真文件加载, 拓扑已固定, 此时调用本方法 ≠ 缓存值就 **拒绝并
-        返回 False** —— 否则 set_path_loss 等下游计算会用错误的输出数. 真要
-        改拓扑必须 reload 不同的 .smu/.rtc.
+        返回 False** (避免上报的声明拓扑跟已加载文件打架). 真要改拓扑必须
+        reload 不同的 .smu/.rtc.
 
         connector 重映射 (INP:CON:SET / OUTP:CON:SET) 是另一回事 (物理路由,
         不是逻辑路径数), 不在本方法范围.
@@ -1502,9 +2042,14 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         distance_m: Optional[float] = None
     ) -> bool:
         """
-        设置通道输出损耗。
+        设置通道输出损耗 —— **给所有物理输出口写同一个值**。
 
-        使用 OUTP:LOSS:SET 为每个输出通道设置路径损耗补偿。
+        ⚠ 这不是 per-probe 校准值下发。真实暗室每个探头路损不同, 校准也确实按
+        probe 逐个出值 (`path_loss_calibration_service`), 但那条通路目前**没有接到
+        F64** (逐口版 `set_output_path_loss` 生产零调用方) —— 见 backlog F64R-5
+        (需先定"补偿在基带 .asc 还是射频 OUTP:LOSS 做", 否则会补两遍)。
+
+        使用 OUTP:LOSS:SET 为每个输出口设置路径损耗补偿。
         User Reference §20.4.5.19:
           OUTP:LOSS:SET <output>,<loss_db>
           取值范围: OUTP:LOSS:LIM? 查询 (典型: -30 ~ 80 dB)
@@ -1526,18 +2071,36 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     - 147.55
                 )
 
-            # 获取输出数量 (通常 = 通道数 / 2 for MIMO, 取决于仿真拓扑)
-            # 为所有输出通道设置统一的路损
-            num_outputs = self._tx_antennas * self._rx_antennas
-            if not await self._gated_write_transaction(
-                "set_path_loss",
-                [
-                    f"OUTP:LOSS:SET {out_ch},{path_loss_db:.1f}"
-                    for out_ch in range(1, num_outputs + 1)
-                ],
-            ):
-                return False
-            logger.info(f"[F64] Path loss set: {path_loss_db:.1f} dB for {num_outputs} outputs")
+            # F64R-2: 输出口数**问仪器** (加载后 MODEL:INFO? 回读的物理输出口 = 探头数),
+            # 不再用 tx×rx 猜 —— tx×rx 是**逻辑通道**口径, MPAC OTA 下 4 输入 × 32 探头
+            # = 128 通道而输出口只有 32, 拿 tx×rx(=16) 当上界会让 32 探头**只配到前 16**,
+            # 17-32 留工程默认 = 现场「路损只设一半」根因 (review 母题②)。
+            # ⚠ 整段持锁 (锁可重入, 内层 _gated_write_transaction 直接嵌套): 若只在下发
+            # 时取锁, "读出口号"和"发出去"之间会有窗口 —— 另一个协程正在换仿真时, 本次
+            # 就会拿**上一个仿真**的口号写到新仿真上 (号码若在新仿真里也存在 = 静默配错口)。
+            async with self._scpi_lock:
+                await self._ensure_topology()   # 冷缓存 (后端重启) 时按需补回读
+                out_ports = self._active_output_ports
+                if not out_ports:
+                    # 用户 2026-07-24 拍板: 拓扑未知时 fail-loud, **不回退猜口数** ——
+                    # 配错口比不配更伤 (操作员以为全配上了)。
+                    self._last_error = (
+                        "set_path_loss 拒绝: 物理输出口未知 (仿真未加载, 或拓扑/端口号"
+                        "回读失败) — 不按猜测的端口号下发路损。" + _TOPOLOGY_ESCAPE_HINT
+                    )
+                    logger.error(f"[F64] {self._last_error}")
+                    return False
+                if not await self._gated_write_transaction(
+                    "set_path_loss",
+                    [
+                        f"OUTP:LOSS:SET {out_ch},{path_loss_db:.1f}"
+                        for out_ch in out_ports      # 真实端口号, 不是 1..N
+                    ],
+                ):
+                    return False
+            logger.info(
+                f"[F64] Path loss set: {path_loss_db:.1f} dB on outputs {out_ports}"
+            )
             return True
         except Exception as e:
             logger.error(f"[F64] set_path_loss failed: {e}")
@@ -1565,25 +2128,44 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             return False
 
         try:
-            # 优先使用 Hz 单位直接指定多普勒
-            cmds: List[str] = []
-            if frequency_hz is not None:
-                cmds = [
-                    f"DIAG:SIMU:MOB:MAN:CH {ch},{frequency_hz} Hz"
-                    for ch in range(1, self._channel_count + 1)
-                ]
-                desc = f"Doppler {frequency_hz} Hz"
-            elif velocity_kmh is not None:
-                cmds = [
-                    f"DIAG:SIMU:MOB:MAN:CH {ch},{velocity_kmh}"
-                    for ch in range(1, self._channel_count + 1)
-                ]
-                desc = f"Speed {velocity_kmh} km/h"
-            else:
-                return True  # 两参皆空: 无事可做
-            if not await self._gated_write_transaction("set_doppler", cmds):
-                return False
-            logger.info(f"[F64] {desc} (all channels)")
+            # F64R-2: 遍历**回读的真实通道号**, 不是 `range(1, N+1)`。手册 §20.4.6.13
+            # `MOB:MAN:CH` 是**逐通道**生效 ("sets the mobile speed of the specific
+            # channel"; 另有组版本 `:CHG`), 故逐通道循环本身正确 —— 错的是**编号来源**:
+            # 旧代码用 _channel_count(=整机 64 硬件容量) 当上界, 128 通道的仿真漏配一半、
+            # 4 通道的模型撞不存在的通道 -200 (§20.5.2)。而且跟端口同理, 通道号也不保证
+            # 是 1..N 连续 —— 既然 GROUP:CHANNELS:GET? 已经把真实号读回来了, 就按它发。
+            # 两参皆空 = 无事可做, **先于**拓扑门判定 —— 一次不下发任何命令的调用不该
+            # 因为"拓扑未知"变成失败 (拓扑门是为"要下发却不知道发给谁"设的)。
+            if frequency_hz is None and velocity_kmh is None:
+                return True
+            # 整段持锁 (同 set_path_loss): 判定用的通道号必须跟下发是同一个仿真的
+            async with self._scpi_lock:
+                await self._ensure_topology()   # 冷缓存时按需补回读 (写路**不节流**)
+                channels = self._active_channel_numbers
+                if not channels:
+                    self._last_error = (
+                        "set_doppler 拒绝: 逻辑通道号未知 (仿真未加载, 或拓扑回读失败) "
+                        "— 不按猜测的通道号下发多普勒。" + _TOPOLOGY_ESCAPE_HINT
+                    )
+                    logger.error(f"[F64] {self._last_error}")
+                    return False
+                # 优先使用 Hz 单位直接指定多普勒
+                cmds: List[str] = []
+                if frequency_hz is not None:
+                    cmds = [
+                        f"DIAG:SIMU:MOB:MAN:CH {ch},{frequency_hz} Hz"
+                        for ch in channels
+                    ]
+                    desc = f"Doppler {frequency_hz} Hz"
+                else:
+                    cmds = [
+                        f"DIAG:SIMU:MOB:MAN:CH {ch},{velocity_kmh}"
+                        for ch in channels
+                    ]
+                    desc = f"Speed {velocity_kmh} km/h"
+                if not await self._gated_write_transaction("set_doppler", cmds):
+                    return False
+            logger.info(f"[F64] {desc} ({len(channels)} 个通道)")
             return True
         except Exception as e:
             logger.error(f"[F64] set_doppler failed: {e}")
@@ -1760,23 +2342,38 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
           INP:LEV:AMP:CH <input>,<amplitude_dBm>
           取值范围: INP:LEV:AMP:LIM? 查询 (典型: -23 ~ 0 dBm)
 
-        input_ports: 要下发的物理输入口 (1-based; F64 最多 64 口)。None/空列表 →
-        回退到当前 MIMO 拓扑推断的 1..N (N=_tx_antennas)。
-        ⚠ Codex #221 R5 P2 + PROPSIM 手册 20.4.7 (NotebookLM 查证): _tx_antennas 在
-        后端冷重启 / 操作员手动面板加载 4x4 .smu 后可能停在构造默认 2 → 只覆盖输入
-        1/2、输入 3/4 保留工程默认 → MIMO 输入参考不平衡 (端点仍回 ok=true 误导)。
-        正解是上层 (参数决议层 P0-2/P2-3) 按真实激活拓扑显式传 input_ports, 或未来用
-        GRO:IN:GET? <group> 读当前 MIMO 组激活的物理输入口 (手册推荐, 待真机验证)。
+        input_ports: 要下发的物理输入口号 (1-based)。None/空列表 → 用**从仿真回读的真实
+        输入口号列表** (`_active_input_ports`, 由 `GROUP:INPUTS:GET?` 逐组取并集), 而
+        **不是** 1..N —— 口号不保证连续 (仿真可能只占 {3,5})。
+        ✅ Codex #221 R5 P2 已解 (F64R-2, 2026-07-24): 旧回退用 `_tx_antennas`, 它在后端
+        冷重启 / 操作员手动面板加载 4x4 .smu 后会停在构造默认 2 → 只覆盖输入 1/2、输入
+        3/4 保留工程默认 → MIMO 输入参考不平衡 (端点还回 ok=true 误导)。现改为回读真实
+        口号; 缓存空时 `_ensure_topology()` 按需补读一次, 仍读不到才 fail-loud。
         """
         if not self._visa_resource:
             return False
         try:
-            ports = input_ports or list(range(1, self._tx_antennas + 1))
-            if not await self._gated_write_transaction(
-                "set_baseband_power",
-                [f"INP:LEV:AMP:CH {inp},{power_dbm:.1f}" for inp in ports],
-            ):
-                return False
+            # F64R-2: 显式给的口优先 (上层参数决议层可精确指定); 没给才用回读的真实口数。
+            # 整段持锁 (同 set_path_loss): 判定用的口号必须跟下发是同一个仿真的
+            async with self._scpi_lock:
+                if not input_ports:
+                    await self._ensure_topology()   # 冷缓存时按需补回读 (写路**不节流**)
+                ports = list(input_ports) if input_ports else (
+                    list(self._active_input_ports) if self._active_input_ports else []
+                )
+                if not ports:
+                    self._last_error = (
+                        "set_baseband_power 拒绝: 未显式指定 input_ports, 且物理输入口未知"
+                        " (仿真未加载, 或拓扑/端口号回读失败) — 不按猜测的端口号下发输入电平。"
+                        + _TOPOLOGY_ESCAPE_HINT
+                    )
+                    logger.error(f"[F64] {self._last_error}")
+                    return False
+                if not await self._gated_write_transaction(
+                    "set_baseband_power",
+                    [f"INP:LEV:AMP:CH {inp},{power_dbm:.1f}" for inp in ports],
+                ):
+                    return False
             logger.info(f"[F64] Input level set: {power_dbm:.1f} dBm (ports={ports})")
             return True
         except Exception as e:
@@ -1886,7 +2483,17 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             "model": self._current_model,
             "scenario": self._current_scenario,
             "center_freq_mhz": self._center_freq_mhz,
+            # ⚠ 声明式元数据 (F64R-2 起不再用于端口寻址), 排障时别拿它解释端口行为
             "mimo_config": f"{self._tx_antennas}x{self._rx_antennas}",
+            # F64R-2: 真实拓扑 —— 操作员排"为什么 set_path_loss 被拒 / 某个探头没配上"
+            # 时看这几个 (None = 未加载或回读失败, 正是被拒的原因)。
+            "active_inputs": self._active_inputs,
+            "active_outputs": self._active_outputs,
+            "active_channels": self._active_channels,
+            "active_input_ports": self._active_input_ports,
+            "active_output_ports": self._active_output_ports,
+            # 与 get_metrics 同步: declared = 口号是人填的兜底值, 不是仪器真值
+            "topology_source": self._topology_source(),
         }
         query_errors: List[str] = []
 
@@ -3012,11 +3619,17 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     async def get_metrics(self) -> InstrumentMetrics:
         """获取 F64 运行状态指标 (含逐通道功率)。
 
-        输入电平按 _tx_antennas 数量逐路查 INP:MEAS:RES:GET? <i>;
-        输出电平按 _tx_antennas × _rx_antennas (仿真路径数) 逐路查
-        OUTP:MEAS:RES:GET? <i>. 单路查询失败 (含 'not ready') 不影响其他
-        路 — 该路记 None, 用 query_errors 累计错误以便 dashboard 区分
+        F64R-2: 逐**真实输入口号** (`_active_input_ports`, 由 GROUP:INPUTS:GET? 回读)
+        查 INP:MEAS:RES:GET? <i>; 逐**真实输出口号** (`_active_output_ports` = 探头)
+        查 OUTP:MEAS:RES:GET? <i>。**不再用 _tx_antennas / tx×rx 猜**(tx×rx 是逻辑
+        通道口径, OTA 下 ≠ 探头数), 也**不假定口号是 1..N**(可能非连续)。
+        单路查询失败 (含 'not ready') 不影响
+        其他路 — 该路记 None, 用 query_errors 累计错误以便 dashboard 区分
         "通道未就绪" 与 "整机故障".
+
+        拓扑未知 (未加载 / 回读失败) 时**不猜口号去查**: 该组电平留空 dict 并在
+        query_errors 里显式标注"跳过查询" —— 读操作降级但可见, 区别于 set_* 写操作的
+        fail-loud (拿错口号写会真的配错硬件, 读只是没数)。
         """
         if not self._visa_resource:
             return InstrumentMetrics(
@@ -3025,39 +3638,71 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 status="error"
             )
         try:
+            # F64R-2: **读路也要按需补回读**。写路 5 个消费方都会自愈, 而 broadcaster 每秒
+            # 调的正是本方法 —— 后端重启后 (F64 仍加载着仿真在播) 若不补读, 逐口电平会恒
+            # 为空 dict + "跳过查询", 直到操作员碰一次写端点才恢复。**监控面失明**比口数
+            # 不全更糟: 现场判断输入参考/crest 生效与否就靠这块。
+            # 热缓存零成本 (快路径直接 return); 真没加载时每秒多一条 STATE?。
+            await self._ensure_topology(throttle=True)   # 唯一的高频轮询路
             metrics: Dict[str, Any] = {
                 "channel_count": self._channel_count,
                 "emulation_running": self._emulation_running,
                 "pipeline": self._active_pipeline.value if self._active_pipeline else "none",
                 "bypass_mode": self._bypass_mode.name,
                 "loaded_file": self._loaded_emulation_file,
+                # 声明式 MIMO 元数据 (上层 set_mimo_config 缓存的 tx/rx), F64R-2 起
+                # **不再用于任何端口寻址** —— 端口一律用下面回读的真实拓扑。
                 "tx_antennas": self._tx_antennas,
                 "rx_antennas": self._rx_antennas,
+                # F64R-2: 从**当前加载仿真**回读的真实拓扑 (MODEL:INFO?)。
+                # None = 未加载 / 回读失败 (此时端口相关写操作会 fail-loud)。
+                "active_inputs": self._active_inputs,
+                "active_outputs": self._active_outputs,
+                "active_channels": self._active_channels,
+                # 真实端口**号**(可能非连续) —— 排"为什么某个探头没配上"时看这个
+                "active_input_ports": self._active_input_ports,
+                "active_output_ports": self._active_output_ports,
+                # 口号来源: readback=仪器回读的真值 / declared=人工声明兜底(GROUP:* 读
+                # 不到时) / unknown=都没有。**declared 时上面的口号是人填的, 不是仪器
+                # 说的** —— 排障时别拿它当真值背书。
+                "topology_source": self._topology_source(),
             }
             query_errors: List[str] = []
 
-            # 输入电平: 1..tx_antennas
+            # 输入电平: 逐**真实输入口号**查 (F64R-2, 不再用 _tx_antennas 猜, 也不假定 1..N)
             input_powers: Dict[int, Optional[float]] = {}
-            for inp in range(1, self._tx_antennas + 1):
-                try:
-                    raw = await self._query(f"INP:MEAS:RES:GET? {inp}")
-                    raw_l = raw.strip().lower()
-                    if not raw_l or "not ready" in raw_l:
+            # 先捕获成局部变量 (与下面输出侧同形态): get_metrics **不持锁**, 若在
+            # `if` 与 `for` 之间另一协程走 load → _clear_topology() 置 None →
+            # `for inp in None` TypeError, 被外层 except 吞成整块 metrics 消失、仪表盘闪断。
+            in_ports_m = self._active_input_ports or []
+            if in_ports_m:
+                for inp in in_ports_m:
+                    try:
+                        raw = await self._query(f"INP:MEAS:RES:GET? {inp}")
+                        raw_l = raw.strip().lower()
+                        if not raw_l or "not ready" in raw_l:
+                            input_powers[inp] = None
+                        else:
+                            input_powers[inp] = float(raw.strip())
+                    except Exception as e:
                         input_powers[inp] = None
-                    else:
-                        input_powers[inp] = float(raw.strip())
-                except Exception as e:
-                    input_powers[inp] = None
-                    query_errors.append(f"input_{inp}: {e}")
+                        query_errors.append(f"input_{inp}: {e}")
+            else:
+                # 读操作**降级不 fail-loud** (区别于 set_* 写操作): 拓扑未知就不猜口号去查,
+                # 但必须显式标注 —— 否则空 dict 会被读成"查了、没有电平", 而不是"没查"。
+                query_errors.append(
+                    "input_powers: 物理输入口未知 (仿真未加载 / 拓扑回读失败) — 跳过查询"
+                )
             metrics["input_powers_dbm"] = input_powers
 
-            # 输出电平: 1..(tx_antennas × rx_antennas), 但不超本机通道数
-            num_outputs = min(
-                self._tx_antennas * self._rx_antennas,
-                self._channel_count,
-            )
+            # 输出电平: 逐**真实输出口号**(探头)查 (F64R-2, 不再用 tx×rx 猜)
+            out_ports_m = self._active_output_ports or []
+            if not out_ports_m:
+                query_errors.append(
+                    "output_powers: 物理输出口未知 (仿真未加载 / 拓扑回读失败) — 跳过查询"
+                )
             output_powers: Dict[int, Optional[float]] = {}
-            for out in range(1, num_outputs + 1):
+            for out in out_ports_m:
                 try:
                     raw = await self._query(f"OUTP:MEAS:RES:GET? {out}")
                     raw_l = raw.strip().lower()

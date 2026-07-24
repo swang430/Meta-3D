@@ -2,7 +2,8 @@
 
 Pin the behavioral contracts we just established:
   - set_mimo_config validates against channel_count + protects loaded files
-  - get_metrics queries all inputs/outputs by tx×rx, partial failures don't crash
+  - get_metrics queries all inputs/outputs by **回读的物理口数** (F64R-2; 旧行为按
+    tx×rx 推, 那是逻辑通道口径), partial failures don't crash
   - get_channel_state preserves static fields when SCPI queries fail mid-call
   - autoset_input_level uses *OPC? polling (not hardcoded sleep)
   - query_runtime_environment skips malformed groups instead of dropping all
@@ -32,7 +33,12 @@ def _make_driver(
     rx_antennas: int = 2,
     channel_count: int = 64,
     loaded_file: Optional[str] = None,
+    active_inputs: Optional[int] = None,
+    active_outputs: Optional[int] = None,
 ):
+    """active_inputs / active_outputs: F64R-2 起端口寻址用**从仿真回读的物理口数**
+    (`MODEL:INFO?`), 不再从 tx×rx 推。给了就预置成"已加载"等效态; 不给 = 拓扑未知
+    (驱动会 fail-loud / 读操作降级)。tx_antennas/rx_antennas 只剩声明式元数据语义。"""
     cfg: dict = {}
     if has_interference_generator is not _SENTINEL:
         cfg["has_interference_generator"] = has_interference_generator
@@ -46,6 +52,17 @@ def _make_driver(
     drv._rx_antennas = rx_antennas
     drv._channel_count = channel_count
     drv._loaded_emulation_file = loaded_file
+    drv._active_inputs = active_inputs
+    drv._active_outputs = active_outputs
+    if active_inputs and active_outputs:
+        drv._active_channels = active_inputs * active_outputs
+        # 全交叉拓扑按手册恒为 **1 组** (同输入或同输出即同组, 有传递性) —— 别按
+        # outputs 造 N 组, 那是物理上不可能的形态 (组数 ≤ min(inputs, outputs))。
+        drv._group_repr_channels = [1]
+        # 端口**号**列表 —— 逐口查询/下发用这个 (这里造连续口, 非连续形态由
+        # test_f64_topology_readback_f64r2.py 覆盖)
+        drv._active_input_ports = list(range(1, active_inputs + 1))
+        drv._active_output_ports = list(range(1, active_outputs + 1))
 
     async def _async_write(cmd, timeout=None):
         visa_mock.write(cmd)
@@ -127,8 +144,10 @@ class TestGetMetrics:
 
     @pytest.mark.asyncio
     async def test_queries_all_inputs_and_outputs_per_topology(self):
-        drv, visa = _make_driver(tx_antennas=4, rx_antennas=2, channel_count=64)
-        # 4 inputs + 4*2=8 outputs = 12 query channels.
+        # F64R-2: 口数来自回读的拓扑 (4 输入 / 8 输出), tx×rx 只是声明式元数据。
+        drv, visa = _make_driver(tx_antennas=4, rx_antennas=2, channel_count=64,
+                                 active_inputs=4, active_outputs=8)
+        # 4 inputs + 8 outputs = 12 query channels.
         # SYST:INFO?, SYST:VERS?, *IDN? could also be queried elsewhere; stub
         # all queries to return a numeric power so per-channel parses succeed.
         visa.query.return_value = "-12.5"
@@ -142,7 +161,8 @@ class TestGetMetrics:
 
     @pytest.mark.asyncio
     async def test_not_ready_response_yields_none_for_that_channel(self):
-        drv, visa = _make_driver(tx_antennas=2, rx_antennas=1)
+        drv, visa = _make_driver(tx_antennas=2, rx_antennas=1,
+                                 active_inputs=2, active_outputs=2)
 
         def _query(cmd):
             if "OUTP:MEAS:RES:GET? 1" in cmd:
@@ -159,7 +179,8 @@ class TestGetMetrics:
 
     @pytest.mark.asyncio
     async def test_per_channel_exception_recorded_in_query_errors(self):
-        drv, visa = _make_driver(tx_antennas=2, rx_antennas=1)
+        drv, visa = _make_driver(tx_antennas=2, rx_antennas=1,
+                                 active_inputs=2, active_outputs=2)
 
         def _query(cmd):
             if "INP:MEAS:RES:GET? 2" in cmd:
@@ -176,12 +197,19 @@ class TestGetMetrics:
         assert metrics.status in ("normal", "idle")
 
     @pytest.mark.asyncio
-    async def test_output_count_capped_by_channel_count(self):
-        # 9x8 = 72 paths but device only has 16; metrics caps at 16
-        drv, visa = _make_driver(tx_antennas=9, rx_antennas=8, channel_count=16)
+    async def test_output_count_comes_from_topology_not_tx_times_rx(self):
+        """F64R-2: 输出口数 = **回读的物理输出口**, 跟 tx×rx 和 channel_count 都无关。
+
+        旧行为 min(tx×rx, channel_count) 的问题: tx×rx 是**逻辑通道**口径 —— MPAC OTA
+        下 4 输入×32 探头 = 128 通道而输出口只有 32, 按 tx×rx 会把 32 个探头算成 16
+        (只查/只配一半)。这里 tx×rx=72、channel_count=16 都是干扰项, 唯一依据是回读的
+        32 个物理输出口。"""
+        drv, visa = _make_driver(tx_antennas=9, rx_antennas=8, channel_count=16,
+                                 active_inputs=4, active_outputs=32)
         visa.query.return_value = "-5.0"
         metrics = await drv.get_metrics()
-        assert max(metrics.metrics["output_powers_dbm"].keys()) == 16
+        assert max(metrics.metrics["output_powers_dbm"].keys()) == 32
+        assert len(metrics.metrics["output_powers_dbm"]) == 32
 
 
 # ============================================================================

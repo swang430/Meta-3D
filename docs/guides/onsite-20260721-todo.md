@@ -87,9 +87,9 @@
 
 > NotebookLM 对照审完整 F64 驱动,29 问题 7 母题,主线「该问仪器的地方在猜」。权威详录:
 > [`architecture/f64-driver-scpi-review-20260723.md`](../architecture/f64-driver-scpi-review-20260723.md)。
-> **P0-3 的 load 序列、P0-4 的输出方案手册答案都在里面,直接可落。P0-3 已完成(#223,见上,
-> 且顺带把状态复位 + CLOSE 确认卸载收敛到单一入口)。下一个 F64 大项 = F64R-2(端口从拓扑回读,
-> 最伤校准)。**
+> **P0-3 的 load 序列、P0-4 的输出方案手册答案都在里面,直接可落。P0-3 已完成(#223,
+> 且顺带把状态复位 + CLOSE 确认卸载收敛到单一入口);F64R-2 已完成(端口/通道从拓扑回读)。
+> 下一个 F64 大项 = F64R-1(`STATE?` 全接入,P0-3 已落地加载路,余 GO/GOS/get_metrics/bypass)。**
 
 - [ ] **F64R-1 F64 接入 `DIAG:SIMU:STATE?` 作运行状态真值源** (新 P0 大项,**P0-3(#223)已部分落地**)
   - **P0-3 部分落地**:加载路(GCM/ASC/B-2)已接 `DIAG:SIMU:STATE?` —— CLOSE 确认卸载
@@ -103,12 +103,107 @@
     bypass 进出 `_emulation_running` 漂移 / 超时挂死不自动恢复(排水失败升级
     `_silent_reconnect_visa`,= P0-1 遗留的业务挂死盲区)。详见 review 母题①。跟 P1-2 合并考虑。
 
-- [ ] **F64R-2 F64 端口/通道数从拓扑回读,别用 tx×rx / 整机 64 猜** (新 P0 大项,最伤校准)
+- [x] **F64R-2 F64 端口/通道数从拓扑回读,别用 tx×rx / 整机 64 猜** ✅ **已完成**(本项 PR)
   - `tx×rx` 是**逻辑衰落通道数,不是物理输出口数**(手册 3.1)。`set_path_loss`/`get_metrics`
     输出口用 `tx×rx` → 默认 3600M 32 探头按 16 配、**路损只设一半 17-32 留工程默认**;
     `set_baseband_power` 输入口 / CENT / doppler 循环全用错口径。
-  - 改:新增"从加载拓扑读真实激活输入/输出口"helper(`MODEL:INFO?` + `GRO:IN/OUT:GET?`),读写
-    共用,替掉所有 `_tx_antennas`/`tx×rx`/`_channel_count` 推断。详见 review 母题②。
+  - **已落地**:`_readback_topology()` 在三条加载路(GCM/ASC/B-2)成功后回读
+    `MODEL:INFO?`(口数)+ `GROUP:GET?`/`GROUP:CHANNELS:GET?`(组与代表通道)+
+    **`GROUP:INPUTS:GET?`/`GROUP:OUTPUTS:GET?`(真实端口号)**,读写共用,替掉所有
+    `_tx_antennas`/`tx×rx`/`_channel_count` 推断。详见 review 母题②。
+  - **口数不够、还要端口号**:数量 N 不保证端口号是 1..N(仿真可能占非连续口如 {2,4}),
+    照 1..N 发会误配一个漏配一个 —— 端口号也回读,并与口数交叉校验。
+  - **CENT 改 per-group**:同组判定是"输入相同**或**输出相同"(§20.4.6.4/6),组数
+    **不可推算**(全交叉拓扑可能只有 1 组),按 `GROUP:GET?` 回读值逐组发。
+  - 拓扑未知(未加载/回读失败)时:**写**操作 fail-loud 拒绝(不回退猜),**读**
+    (`get_metrics`)降级跳过并在 `query_errors` 标注。
+  - **冷缓存不做硬门**:后端重启后驱动缓存空、但 F64 硬件仍加载着仿真在播(2026-07-21
+    实证)。此时**先查 `STATE?`,非 CLOSED 就按需补回读一次**,仍读不到才拒 —— 否则唯一
+    恢复途径是重新 load,而 load 第一步 CLOSE **会打断正在跑的仿真和 UE attach**。
+  - **⚠ 现场兜底开关 `topology_override`**:`GROUP:*` / `MODEL:INFO?` 这几条**尚未在真机
+    验证**,而本项目实证过"手册里有、这台机器回 -100"(MMEM/FTP/`*OPT?`)。若真机不支持,
+    在仪器 `connection_params` 里配:
+    ```json
+    {"topology_override": {"inputs": [1,2], "outputs": [1,2,3,4],
+                           "channels": [1,2,3,4,5,6,7,8]}}
+    ```
+    (端口/通道**号**列表,不是数量;三者必须齐全,否则整体作废并打 ERROR)。
+    **回读到的真值永远优先**,声明值只在回读失败时生效并打 WARNING。
+    → **下次现场第一件事**:确认这 5 条命令在真机上是否可用,可用就别配这个开关。
+  - **范围界定(2026-07-24 用户拍板 A)**:本项**只解决"配几个口"(口数从拓扑回读),不解决
+    "配什么值"**。修完的真实效果 = 现有那个**手填的统一**增益/损耗从"只落到前 16 个探头"
+    变成"落到全部真实输出口"。**逐探头校准值的下发是独立一件事,单列 F64R-5**(本项是它
+    的前提:先有真实口数,才谈得上把 N 个校准值对到 N 个口)。
+
+- [ ] **F64R-5 校准值下发通路缺失 —— per-probe 路损从没进过 F64** (2026-07-24 用户 review
+      F64R-2 设计时发现;**先查补偿层次再设计**,依赖 F64R-2)
+  - 事实:**校准数据是有的** —— `path_loss_calibration_service.py:296-378` 按 `probe_id × 极化`
+    逐个实测,存 `probe_path_losses`。
+  - 事实:**F64 驱动也有逐口下发能力** —— `propsim_f64.py:1817 set_output_path_loss(output_num,
+    loss_db)`(P2-10 建的"HAL 能力先行"),注释自己写着"真实暗室每个 probe 路损不同(校准
+    per-probe 出值)"。
+  - 事实:**两者从没接上** —— `set_output_path_loss` 与 batch 版 `set_path_loss` 在生产代码里
+    **零调用方**(全仓 grep 只有定义/注释/单测)。唯一真往 F64 输出口写值的是
+    `measure.py:745-770` 的 `f64_output_gain_db`:操作员**手填的一个标量**,给所有口写同一个值。
+  - **⚠ 先决问题(动手前必须查清,否则会补两遍)**:射频校准按既有结论是走 **1/H_sys 后处理
+    预失真、乘在 I/Q 上、烘进 .asc**(memory `project_ota_probe_baseband_rf_two_layer`)。若
+    校准已在 .asc 里补过,再在 F64 `OUTP:LOSS` 补一次 = **重复补偿**。要先查 ChannelEgine 侧
+    烘焙到底补没补,定死"补偿在哪一层做",再谈接线。
+  - **待定维度**:校准是 32 探头 × 双极化 = 64 个值,F64 是 32 个物理输出口,映射关系待定。
+  - 另需定:校准证书选取口径(哪个 lab / 哪个频点 / 有效期)。
+
+- [ ] **F64R-6 F64R-2 代码收敛残余**(纯代码,不依赖真机;2026-07-24 F64R-2 收口时转出)
+  > F64R-2 经 7 轮 pre-commit 复审收敛(11/10/11/8/9/10/9 条),P1 已清零、P2 已全修。
+  > 以下是**明确判定不阻塞合并**的残余,统一在后续 PR 里收:
+  - **推导做硬拒的另一处**:`min(inputs,outputs)` 已从硬拒降级为 WARNING(推导≠仪器契约),
+    但紧接着的 **union-size 交叉校验**(`len(in_ports)==_active_inputs` 等)依赖**同一条推导**,
+    仍是硬拒。真机若组语义非路由连通分量,症状还是"命令全支持却什么都配不上",只是换了道门。
+    → 保留硬拒但文案写明"可用 topology_override 兜底";真机验证后再定是否降级。
+  - **合理性上界口径不齐**:`_TOPOLOGY_SANITY_MAX` 只约束三个**口数**,端口号/通道号本身不受约束
+    (会话错位回 `"1e20"` 且恰好口数=1 时,能下发 `OUTP:LOSS:SET 1e20,...`;后果有界——仪器拒 →
+    gated write fail-loud,不挂死)。
+  - **`_topology_fields()` AST 抽取的盲区**:只处理 `ast.Assign`,漏 `AnnAssign` / 元组解包 /
+    委托式实现;且清单从 `_clear_topology` **自身**派生 → "新字段写进了回读却忘了加进 clear"
+    仍然全绿(正是它要防的母题)。→ 改成抽 `_readback_topology_from_instrument` +
+    `_apply_topology_override` 的写入字段,断言 ⊆ `_clear_topology`。
+  - **`topology_source` 覆盖不全**:`unknown` 态与 `get_channel_state` 侧零断言;
+    该字段把"口数来源"和"口号来源"混成一个(回读到口数、只有口号是声明值时报 `declared`)
+    → 考虑拆 counts/ports 两个来源字段。
+  - **端点入参校验与回读侧不对称**:回读侧严格拦非正整数端口号,而 `InputReferenceRequest` /
+    `OutputGainRequest` / `CrestFactorRequest` 接受 `[0]` / `[-3]` 照发(只能靠仪器拒)。
+    → 加 `Field(ge=1)`。⚠ 注意 `set_input_measurement_mode` 语义里 `<in>=0` 是"全部输入",
+    所以 `ge=1` 不是纯风格问题,改前先确认各端点语义。
+  - **`/input-reference` 缺 `min_length=1`**:显式 `[]` 被当成"没给"→ 用回读口号写全部口,
+    与"我明确说了一个口都不写"相反;两个兄弟端点(`/crest-factor`、`/output-gain`)都会 422。
+  - `OutputGainRequest.ports` 注释仍写 "(1..16)",与 32 探头矛盾。
+
+- [ ] **F64R-7 ⭐ 三层兜底机制的**真机验证与存废**(必须现场做,不要在本地凭空改)**
+      (2026-07-24 F64R-2 收口时转出)
+  > F64R-2 为"拓扑读不到"叠了**三层**兜底。它们都是在**没有真机验证**的前提下设计的 ——
+  > `GROUP:*` / `MODEL:INFO?` 这 5 条命令**从未在本项目的 F64 上跑过**,而本项目实证过
+  > "手册里有、这台机器回 -100"(MMEM / FTP / `*OPT?`)。**下次现场第一件事就是验它们**,
+  > 结果决定这三层留哪几层 —— 不验就改是在猜上面再猜。
+  - **① 先验命令是否可用**(仿真已加载状态下逐条跑):
+    `DIAG:SIMU:MODEL:INFO?` / `GROUP:GET?` / `GROUP:CHANNELS:GET? 1` /
+    `GROUP:INPUTS:GET? 1` / `GROUP:OUTPUTS:GET? 1`。device-selfcheck 页已收录这 5 条
+    (is_critical=True),跑一次自检即可。
+  - **② 顺带验推导**:逐组 `GROUP:OUTPUTS:GET?` 的并集是否等于 `MODEL:INFO?` 的 outputs?
+    组数是否 ≤ min(inputs, outputs)?默认 3600M .smu 是几组?(这决定 F64R-6 第一条怎么收。)
+  - **③ 三层机制的存废**——全都取决于 ①②:
+    - **按需补读**(`_ensure_topology`:缓存空 → 查 `STATE?` 非 CLOSED 就补读一次)。
+      同一母题的**另一面**是"操作员从前面板换 .smu 后驱动缓存永久 stale"(原第四轮 F4):
+      驱动无从知情,只能靠人点写操作时补读。**两者一起做更省** —— 现场确认前面板换图的
+      实际频率后,再定要不要加"手动刷新拓扑"端点 / 在 `_ensure_topology` 快路径顺带比对
+      `STATE?` 或 loaded-file 变化。
+    - **失败节流**(`_TOPOLOGY_RETRY_COOLDOWN_S=30`,只作用于 `get_metrics` 轮询路)。
+      若 ① 全部可用,这层几乎不会触发,可考虑简化;若不可用,要现场量一次"每秒重试"
+      对 SCPI 通道的实际影响再定数值。
+    - **人工声明兜底**(`connection_params.topology_override`)。若 ① 全部可用 → **不要配**,
+      并考虑是否保留这个口子;若不可用 → 它是唯一解(`f64_output_gain_db` 没有 per-step
+      端口参数),那时再补"口数对但口号偏移抓不到"这个已知缺口的说明。
+  - **④ 顺带量一次性能**(原第四轮 F9):`get_metrics` 每轮 SCPI 往返从旧口径 20 条涨到
+    36 条(4 输入 + 32 探头),broadcaster 1 Hz。**没人量过真机上 36 条 `OUTP:MEAS:RES:GET?`
+    一轮要多久** —— 跑不完会持续堵锁。现场量一次,必要时给"逐口电平查询"加降频/开关。
 
 - [ ] **F64R-3 现场调试走正常 TestCase 流程,退役临时脚本** (2026-07-23 用户定,一个 PR)
   - 现场临时脚本**不查源码**重复以前的错(懒重连早有却手动重连 / STATIC-STATE 混用 / 端口靠猜),

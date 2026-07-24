@@ -35,6 +35,17 @@ class _FakeF64Driver:
         self._emulation_running = False
         self._last_error: Optional[str] = None if ok else "驱动失败(测试注入)"
         self.calls: List[tuple] = []
+        # F64R-2: 冷缓存 (后端重启后驱动忘了拓扑, 但 F64 仍加载着仿真)。端点必须先
+        # await ensure_topology() 补读, 才读得到口号 —— 不 await 就退化成 400。
+        self._input_ports: Optional[List[int]] = None
+
+    async def ensure_topology(self) -> bool:
+        self.calls.append(("ensure_topology",))
+        self._input_ports = [3, 5]        # 补读回来的真实口号 (非连续)
+        return True
+
+    def get_active_input_ports(self) -> Optional[List[int]]:
+        return list(self._input_ports) if self._input_ports else None
 
     async def start_emulation(self) -> bool:
         self.calls.append(("start_emulation",))
@@ -214,8 +225,19 @@ def test_input_reference_ok(client, fake_driver):
     data = resp.json()
     assert data["ok"] is True
     assert data["power_dbm"] == -17.0
-    assert data["input_ports"] is None  # 不传 → 驱动按当前拓扑推断 1..N
+    # 不传 ports → **透传 None 给驱动**(由驱动用回读的真实口号下发, F64R-2;
+    # 旧注释写的"推断 1..N"正是本 PR 在治的错口径), 响应则回显实际生效的口号。
     assert ("set_baseband_power", -17.0, None) in fake_driver.calls
+    assert data["input_ports"] == [3, 5]
+
+
+def test_input_reference_echoes_readback_ports(client, fake_driver):
+    """F64R-2: 没传 ports 时响应回显**实际生效的口号** —— 操作员排"是不是只配了
+    一半"时,需要从响应就能看出到底写了哪几个口。"""
+    resp = client.post(BASE + "/input-reference", json={"power_dbm": -17.0})
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["input_ports"] == [3, 5]
 
 
 def test_input_reference_explicit_ports(client, fake_driver):
@@ -240,12 +262,27 @@ def test_input_reference_failure(client, monkeypatch):
     assert data["last_error"] == "驱动失败(测试注入)"
 
 
-def test_crest_factor_default_ports(client, fake_driver):
-    """未显式给 input_ports → 默认 1-4 全下发。"""
+def test_crest_factor_uses_readback_ports_when_not_given(client, fake_driver):
+    """F64R-2: 不给 input_ports → 用驱动**回读的真实输入口号**, 不是硬编码 1-4。
+
+    取代原 `test_crest_factor_default_ports`(钉旧的 `default=[1,2,3,4]`)—— 那个默认值
+    在非连续口下会配错口, 且跟兄弟端点 /input-reference 的口径不一致。这里用非连续
+    口 {3,5} 钉住"口号来自回读"。"""
     resp = client.post(BASE + "/crest-factor", json={"crest_db": 15.0})
     data = resp.json()
     assert data["ok"] is True
-    assert data["ports"] == {"1": True, "2": True, "3": True, "4": True}
+    assert data["ports"] == {"3": True, "5": True}
+
+
+def test_crest_factor_refuses_when_topology_unknown(client, fake_driver):
+    """F64R-2: 不给 ports 且拓扑读不到 → 400 fail-loud, 不猜 1-4 也不静默零下发。"""
+    async def _ensure_fails():                      # 补读了也没读到 (真机不支持 GROUP:*)
+        fake_driver.calls.append(("ensure_topology",))
+        return False
+    fake_driver.ensure_topology = _ensure_fails
+    resp = client.post(BASE + "/crest-factor", json={"crest_db": 15.0})
+    assert resp.status_code == 400
+    assert "物理输入口未知" in resp.json()["detail"]
 
 
 def test_crest_factor_partial_reject(client, monkeypatch):

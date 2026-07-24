@@ -22,9 +22,18 @@ from app.hal.smu_project import (
 )
 
 
-def _make_driver(config=None, channels=4):
+def _make_driver(config=None, channels=4, *, groups=None):
+    """groups: {组号: [该组通道...]}。F64R-2 后 CENT 按**组**下发 (每组一条, 用该组
+    代表通道), 故 fake 要能应答 GROUP:*。
+
+    默认 = **全部通道同 1 组**: 本 fake 造的是 1 输入 × N 输出, 所有通道共用那 1 个
+    输入口, 按手册 §20.4.6.1 (同输入或同输出即同组) **必然同组** —— 所以 CENT 只发
+    1 条。多组形态见 test_f64_topology_readback_f64r2.py 的互不重叠拓扑用例。"""
     drv = RealPropsimF64Driver("propsim-test", config or {})
     drv._channel_count = channels
+    # ⚠ 手册 §20.4.6.1: 同输入**或**同输出即同组 (有传递性)。本 fake 是 1 输入 × N 输出,
+    # 所有通道共用那 1 个输入 ⇒ **必然同属 1 组**。旧的"每通道自成一组"物理上不可能。
+    group_map = groups if groups is not None else {1: list(range(1, channels + 1))}
     visa = MagicMock()
 
     def _router(cmd):
@@ -32,14 +41,27 @@ def _make_driver(config=None, channels=4):
             return "1"
         if cmd == "SYST:ERR?":
             return '0,"No error"'
-        # P0-3 缩范围: 加载走 _load_smu_with_preflight — STATE? 判态 + CLOSE 后
-        # 复查 ==CLOSED 才继续; CENT:CH? 回读真频。CENT 设频循环用驱动 _channel_count
-        # (=channels 参数), 不查 MODEL:INFO? (拓扑/端口回读留 F64R-2)。这些均不碰
-        # SYST:ERR?, 故"显式频→写全部通道"的数量断言不变。
+        # 加载走 _load_smu_with_preflight — STATE? 判态 + CLOSE 后复查 ==CLOSED 才继续;
+        # CENT:CH? 回读真频; F64R-2 起再回读拓扑 (MODEL:INFO? + GROUP:*)。CENT 设频
+        # 循环按**回读的组**走, 不再看 _channel_count。这些查询均不碰 SYST:ERR?, 故
+        # CENT 被拒 / 加载失败的判定语义不变。
         if cmd == "DIAG:SIMU:STATE?":
             return "CLOSED"
         if cmd.startswith("CALC:FILT:CENT:CH?"):
             return ""  # 回读真频不可用 → 非致命 (本文件不验 identity)
+        if cmd == "DIAG:SIMU:MODEL:INFO?":
+            # <inputs>,<channels>,<outputs> — 取 1 输入 × N 输出 使 1×N=N 自洽
+            return f"1,{channels},{channels}"
+        if cmd == "GROUP:GET?":
+            return str(len(group_map))
+        if cmd.startswith("GROUP:CHANNELS:GET?"):
+            g = int(cmd.split("?", 1)[1].strip())
+            return ",".join(str(c) for c in group_map[g])
+        if cmd.startswith("GROUP:INPUTS:GET?"):
+            return "1"                                # 1 个输入口 (与 INFO? 的 inputs=1 一致)
+        if cmd.startswith("GROUP:OUTPUTS:GET?"):
+            # 与"全部通道 1 组"自洽: 该组占用全部输出口
+            return ",".join(str(o) for o in range(1, channels + 1))
         if cmd.startswith("ROUT:PATH:CONN?"):
             return "B1.1"
         return '0,"No error"'
@@ -74,14 +96,16 @@ class TestCentDispatchOnlyWhenExplicit:
         assert _cent_writes(visa) == []
         assert drv._center_freq_programmed is False
 
-    async def test_explicit_freq_writes_all_channels_and_marks_programmed(self):
+    async def test_explicit_freq_dispatched_per_group_and_marks_programmed(self):
+        """显式给频 → 按**组**下发 (F64R-2)。本 fake 是 1 输入 × 4 输出, 4 条通道共用
+        那个输入 ⇒ 同 1 组 ⇒ 只发 1 条 (旧行为是写满 4 条通道)。"""
         drv, visa = _make_driver(channels=4)
         ok = await drv.set_channel_model(
             "CDL-C", "UMa", {"center_frequency_mhz": 3549.99}
         )
         assert ok is True
         writes = _cent_writes(visa)
-        assert len(writes) == 4
+        assert len(writes) == 1
         assert all(w.endswith(",3549.99") for w in writes), writes
         assert drv._center_freq_programmed is True
         assert drv._center_freq_mhz == 3549.99
@@ -117,7 +141,7 @@ class TestCentDispatchOnlyWhenExplicit:
         })
         assert ok is True
         writes = _cent_writes(visa)
-        assert len(writes) == 2
+        assert len(writes) == 1          # 2 通道共用 1 输入 ⇒ 同组 ⇒ 1 条
         assert all(w.endswith(",3600.0") for w in writes), writes
         assert drv._center_freq_programmed is True
 
@@ -153,13 +177,25 @@ class TestCentDispatchOnlyWhenExplicit:
                 return "1"
             if cmd == "SYST:ERR?":
                 return queue.pop(0) if queue else '0,"No error"'
-            # P0-3 缩范围: 加载前置 STATE? 判态 + CLOSE 后复查 ==CLOSED; CENT:CH?
-            # 回读真频。CENT 设频循环用 _channel_count (=2), 不查 MODEL:INFO?。均**不碰**
-            # SYST:ERR? 注入队列 → CENT 被拒/加载失败判定语义不变。
+            # 加载前置 STATE? 判态 + CLOSE 后复查 ==CLOSED; CENT:CH? 回读真频;
+            # F64R-2 起再回读拓扑 (MODEL:INFO? + GROUP:*) —— CENT 改按**组**下发,
+            # 1 输入 × 2 输出 = 2 通道, 共用那 1 个输入 ⇒ 按手册 §20.4.6.1 **同 1 组**
+            # (同输入或同输出即同组) → CENT 只发 1 条。
+            # 均**不碰** SYST:ERR? 注入队列 → CENT 被拒 / 加载失败判定语义不变。
             if cmd == "DIAG:SIMU:STATE?":
                 return "CLOSED"
             if cmd.startswith("CALC:FILT:CENT:CH?"):
                 return ""  # 回读 None → identity 走文件名兜底 (test_cent_rejected 需要)
+            if cmd == "DIAG:SIMU:MODEL:INFO?":
+                return "1,2,2"
+            if cmd == "GROUP:GET?":
+                return "1"                            # 2 通道共用 1 输入 ⇒ 同 1 组
+            if cmd.startswith("GROUP:CHANNELS:GET?"):
+                return "1,2"
+            if cmd.startswith("GROUP:INPUTS:GET?"):
+                return "1"
+            if cmd.startswith("GROUP:OUTPUTS:GET?"):
+                return "1,2"
             if cmd.startswith("ROUT:PATH:CONN?"):
                 return "B1.1"
             return '0,"No error"'
@@ -194,13 +230,25 @@ class TestCentDispatchOnlyWhenExplicit:
                 return "1"
             if cmd == "SYST:ERR?":
                 return queue.pop(0) if queue else '0,"No error"'
-            # P0-3 缩范围: 加载前置 STATE? 判态 + CLOSE 后复查 ==CLOSED; CENT:CH?
-            # 回读真频。CENT 设频循环用 _channel_count (=2), 不查 MODEL:INFO?。均**不碰**
-            # SYST:ERR? 注入队列 → CENT 被拒/加载失败判定语义不变。
+            # 加载前置 STATE? 判态 + CLOSE 后复查 ==CLOSED; CENT:CH? 回读真频;
+            # F64R-2 起再回读拓扑 (MODEL:INFO? + GROUP:*) —— CENT 改按**组**下发,
+            # 1 输入 × 2 输出 = 2 通道, 共用那 1 个输入 ⇒ 按手册 §20.4.6.1 **同 1 组**
+            # (同输入或同输出即同组) → CENT 只发 1 条。
+            # 均**不碰** SYST:ERR? 注入队列 → CENT 被拒 / 加载失败判定语义不变。
             if cmd == "DIAG:SIMU:STATE?":
                 return "CLOSED"
             if cmd.startswith("CALC:FILT:CENT:CH?"):
                 return ""  # 回读 None → identity 走文件名兜底 (test_cent_rejected 需要)
+            if cmd == "DIAG:SIMU:MODEL:INFO?":
+                return "1,2,2"
+            if cmd == "GROUP:GET?":
+                return "1"                            # 2 通道共用 1 输入 ⇒ 同 1 组
+            if cmd.startswith("GROUP:CHANNELS:GET?"):
+                return "1,2"
+            if cmd.startswith("GROUP:INPUTS:GET?"):
+                return "1"
+            if cmd.startswith("GROUP:OUTPUTS:GET?"):
+                return "1,2"
             if cmd.startswith("ROUT:PATH:CONN?"):
                 return "B1.1"
             return '0,"No error"'
@@ -239,13 +287,25 @@ class TestCentDispatchOnlyWhenExplicit:
                 return "1"
             if cmd == "SYST:ERR?":
                 return queue.pop(0) if queue else '0,"No error"'
-            # P0-3 缩范围: 加载前置 STATE? 判态 + CLOSE 后复查 ==CLOSED; CENT:CH?
-            # 回读真频。CENT 设频循环用 _channel_count (=2), 不查 MODEL:INFO?。均**不碰**
-            # SYST:ERR? 注入队列 → CENT 被拒/加载失败判定语义不变。
+            # 加载前置 STATE? 判态 + CLOSE 后复查 ==CLOSED; CENT:CH? 回读真频;
+            # F64R-2 起再回读拓扑 (MODEL:INFO? + GROUP:*) —— CENT 改按**组**下发,
+            # 1 输入 × 2 输出 = 2 通道, 共用那 1 个输入 ⇒ 按手册 §20.4.6.1 **同 1 组**
+            # (同输入或同输出即同组) → CENT 只发 1 条。
+            # 均**不碰** SYST:ERR? 注入队列 → CENT 被拒 / 加载失败判定语义不变。
             if cmd == "DIAG:SIMU:STATE?":
                 return "CLOSED"
             if cmd.startswith("CALC:FILT:CENT:CH?"):
                 return ""  # 回读 None → identity 走文件名兜底 (test_cent_rejected 需要)
+            if cmd == "DIAG:SIMU:MODEL:INFO?":
+                return "1,2,2"
+            if cmd == "GROUP:GET?":
+                return "1"                            # 2 通道共用 1 输入 ⇒ 同 1 组
+            if cmd.startswith("GROUP:CHANNELS:GET?"):
+                return "1,2"
+            if cmd.startswith("GROUP:INPUTS:GET?"):
+                return "1"
+            if cmd.startswith("GROUP:OUTPUTS:GET?"):
+                return "1,2"
             if cmd.startswith("ROUT:PATH:CONN?"):
                 return "B1.1"
             return '0,"No error"'
@@ -297,13 +357,25 @@ class TestCentDispatchOnlyWhenExplicit:
                 return "1"
             if cmd == "SYST:ERR?":
                 return queue.pop(0) if queue else '0,"No error"'
-            # P0-3 缩范围: 加载前置 STATE? 判态 + CLOSE 后复查 ==CLOSED; CENT:CH?
-            # 回读真频。CENT 设频循环用 _channel_count (=2), 不查 MODEL:INFO?。均**不碰**
-            # SYST:ERR? 注入队列 → CENT 被拒/加载失败判定语义不变。
+            # 加载前置 STATE? 判态 + CLOSE 后复查 ==CLOSED; CENT:CH? 回读真频;
+            # F64R-2 起再回读拓扑 (MODEL:INFO? + GROUP:*) —— CENT 改按**组**下发,
+            # 1 输入 × 2 输出 = 2 通道, 共用那 1 个输入 ⇒ 按手册 §20.4.6.1 **同 1 组**
+            # (同输入或同输出即同组) → CENT 只发 1 条。
+            # 均**不碰** SYST:ERR? 注入队列 → CENT 被拒 / 加载失败判定语义不变。
             if cmd == "DIAG:SIMU:STATE?":
                 return "CLOSED"
             if cmd.startswith("CALC:FILT:CENT:CH?"):
                 return ""  # 回读 None → identity 走文件名兜底 (test_cent_rejected 需要)
+            if cmd == "DIAG:SIMU:MODEL:INFO?":
+                return "1,2,2"
+            if cmd == "GROUP:GET?":
+                return "1"                            # 2 通道共用 1 输入 ⇒ 同 1 组
+            if cmd.startswith("GROUP:CHANNELS:GET?"):
+                return "1,2"
+            if cmd.startswith("GROUP:INPUTS:GET?"):
+                return "1"
+            if cmd.startswith("GROUP:OUTPUTS:GET?"):
+                return "1,2"
             if cmd.startswith("ROUT:PATH:CONN?"):
                 return "B1.1"
             return '0,"No error"'
