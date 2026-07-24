@@ -47,6 +47,20 @@ class _FakeRealCE:
         self._avg = avg_dbm
         self.calls: Dict[str, int] = {}
 
+    def get_active_input_ports(self):
+        """F64R-2: 真实输入口**号**列表。默认造连续口 1..tx_antennas, 测试可覆写成
+        非连续 (如 [3,5]) 钉住"闭环用回读口号而不是 range(1,n+1)"。
+        ⚠ 真驱动里口数和口号是同一处赋值 (全有或全无), fake 也保持一致。"""
+        n = getattr(self, "_tx_antennas", None)
+        return list(range(1, n + 1)) if n else None
+
+    def get_active_input_count(self):
+        """F64R-2: 驱动改用**从仿真回读的物理输入口数** (MODEL:INFO? 的 inputs) 而不再
+        读 _tx_antennas 缓存。本 fake 让该 getter 承载 tx_antennas 构造参数;
+        **不设该属性的子类 → 返回 None** = 模拟"拓扑未回读到", sanity bound 应跳过
+        (与旧的 `_tx_antennas` 缺失降级语义一致)。"""
+        return getattr(self, "_tx_antennas", None)
+
     def _tick(self, name: str) -> None:
         self.calls[name] = self.calls.get(name, 0) + 1
 
@@ -215,10 +229,78 @@ class TestActiveInputsDerivation:
         assert payload.get("topology_mismatch") is None
         assert payload.get("success") is True
 
+    async def test_uses_readback_port_numbers_not_one_to_n(self):
+        """★ F64R-2: 闭环 autoset/measure 的是**回读的真实口号**, 不是 range(1,n+1)。
+
+        仿真只占输入口 {3,5} 时, 按 1..n 会打到口 1、2 → 无信号 → measure phase 在
+        azimuth loop 之前早死。而同一个 TestCase 只要给了 f64_input_ref_dbm 就走手动
+        定标路 (已用回读口号) —— 不修这里, 同一配置换个开关走两套口号。"""
+        executor = MeasureExecutor()
+        ce = _FakeRealCE(tx_antennas=2)
+        ce.get_active_input_ports = lambda: [3, 5]        # 非连续口
+        bs = _FakeRealBS()
+        payload = await executor._run_input_level_closed_loop(
+            emulator=ce, base_station=bs, config=_MiniConfig(mimo_layers=2), execution_id="t1",
+        )
+        assert payload["active_inputs"] == [3, 5], "按 1..n 推了, 没用回读口号"
+
+    async def test_sanity_gate_sees_post_ensure_topology_not_cold_value(self):
+        """★ 补读必须在 sanity 门**之前** (变异: 把 ensure 挪到门之后这条会红)。
+
+        冷缓存时门读到 None → 跳过; 随后补读回 2 个口 → `[:n_layers]` 把 mimo_layers=4
+        静默截成 2 个口 → BS 发 4 层只定标 2 路、另 2 路留工程默认, 闭环却报 success。
+        判定与下发必须同源。"""
+        executor = MeasureExecutor()
+        ce = _FakeRealCE(tx_antennas=2)
+        ce._cold = True
+
+        async def _ensure():
+            ce._cold = False                       # 补读后才知道只有 2 个口
+            return True
+
+        ce.ensure_topology = _ensure
+        ce.get_active_input_count = lambda: None if ce._cold else 2
+        ce.get_active_input_ports = lambda: None if ce._cold else [3, 5]
+        bs = _FakeRealBS()
+        payload = await executor._run_input_level_closed_loop(
+            emulator=ce, base_station=bs,
+            config=_MiniConfig(mimo_layers=4),      # 4 层 > 实际 2 个输入口
+            execution_id="t1",
+        )
+        assert payload["success"] is False, "门读了补读前的冷值 → 少配的层被静默判成功"
+        assert payload["topology_mismatch"] is True
+        assert ce.calls == {}, "早期短路: controller 不该被调"
+
+    async def test_port_list_shorter_than_layers_fails_loud(self):
+        """口数门放行但口**号**列表更短 → 也不许静默只定标前几路。"""
+        executor = MeasureExecutor()
+        ce = _FakeRealCE(tx_antennas=4)
+        ce.get_active_input_count = lambda: 4       # 口数说有 4 个
+        ce.get_active_input_ports = lambda: [3, 5]  # 口号只回读到 2 个 (不一致)
+        bs = _FakeRealBS()
+        payload = await executor._run_input_level_closed_loop(
+            emulator=ce, base_station=bs, config=_MiniConfig(mimo_layers=4), execution_id="t1",
+        )
+        assert payload["success"] is False
+        assert payload["topology_mismatch"] is True
+
+    async def test_falls_back_to_one_to_n_when_port_numbers_unavailable(self):
+        """口号读不到 (非 F64 驱动 / 冷缓存) → 退回旧的 1..n_layers 推导, 不硬拒 ——
+        闭环是尽力而为的定标路径, 这里 fail-loud 会让 mock/其它 CE 直接跑不了。"""
+        executor = MeasureExecutor()
+        ce = _FakeRealCE(tx_antennas=4)
+        ce.get_active_input_ports = lambda: None
+        bs = _FakeRealBS()
+        payload = await executor._run_input_level_closed_loop(
+            emulator=ce, base_station=bs, config=_MiniConfig(mimo_layers=2), execution_id="t1",
+        )
+        assert payload["active_inputs"] == [1, 2]
+
 
 class TestTopologyMismatch:
-    """BS 想发的 layer 数 > CE _tx_antennas (.smu 输入端口数) = 物理上跑不了,
-    早期 fail with audit fields, 不调 controller。Codex on PR #98。"""
+    """BS 想发的 layer 数 > CE **物理输入口数** (.smu 输入端口数) = 物理上跑不了,
+    早期 fail with audit fields, 不调 controller。Codex on PR #98;
+    F64R-2 起口数来自驱动 get_active_input_count() 回读真值, 不再读 _tx_antennas。"""
 
     async def test_layers_exceeding_ce_tx_fails_loud(self):
         executor = MeasureExecutor()
@@ -231,7 +313,7 @@ class TestTopologyMismatch:
         )
         assert payload["success"] is False
         assert payload["topology_mismatch"] is True
-        assert payload["ce_tx_antennas"] == 4
+        assert payload["ce_input_ports"] == 4   # F64R-2 改名: 装的是物理输入口数
         assert payload["config_mimo_layers"] == 8
         assert "拓扑不匹配" in payload["failure_reason"]
         # 早期 short-circuit: controller 没被调

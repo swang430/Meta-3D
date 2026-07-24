@@ -30,7 +30,9 @@ def _make_driver(syst_err_responses):
     drain 会一直 pop 到遇到一个 no-error 为止, 之后 gate 的 _first_error 再 pop 一次。
     """
     drv = RealPropsimF64Driver("propsim-test", {})
-    drv._channel_count = 2  # 收敛设频循环, 保持测试精简
+    # F64R-2 后设频循环按**回读的组数**走 (见 _router 的 GROUP:* 应答), 不再看
+    # _channel_count —— 后者只剩硬件容量语义。
+    drv._channel_count = 2
     visa = MagicMock()
     queue = list(syst_err_responses)
 
@@ -39,13 +41,29 @@ def _make_driver(syst_err_responses):
             return "1"
         if cmd == "SYST:ERR?":
             return queue.pop(0) if queue else '0,"No error"'
-        # P0-3 缩范围: 加载走 _load_smu_with_preflight — STATE? 判态 + CLOSE 后
-        # 复查 ==CLOSED 才继续; CENT:CH? 回读真频。均不查 MODEL:INFO? (拓扑回读留
-        # F64R-2), 也**不碰** SYST:ERR? 队列, 故 stale-drain / fail-loud gate 语义不变。
+        # 加载走 _load_smu_with_preflight — STATE? 判态 + CLOSE 后复查 ==CLOSED 才
+        # 继续; CENT:CH? 回读真频; F64R-2 起再回读拓扑 (下面的 MODEL:INFO? + GROUP:*)。
         if cmd == "DIAG:SIMU:STATE?":
             return "CLOSED"
         if cmd.startswith("CALC:FILT:CENT:CH?"):
             return ""  # 回读真频不可用 → 非致命, 加载仍成功
+        # F64R-2: 加载成功后回读真实拓扑 —— 2 输入 × 2 输出 = 4 逻辑通道。
+        # 分组按手册 §20.4.6.1「同输入**或**同输出即同组」(有传递性): 这里造**互不重叠**
+        # 的 2 组 —— 组 1 = 输入 1 × 输出 1, 组 2 = 输入 2 × 输出 2。
+        # ⚠ 别造"两组共用同一个输入口"那种拓扑, 按手册它们必然是同一组 (物理不可能)。
+        # 这些查询**不碰** SYST:ERR? 队列, 故 stale-drain / fail-loud gate 语义不变。
+        if cmd == "DIAG:SIMU:MODEL:INFO?":
+            return "2,4,2"
+        if cmd == "GROUP:GET?":
+            return "2"
+        if cmd.startswith("GROUP:CHANNELS:GET?"):
+            g = int(cmd.split("?", 1)[1].strip())
+            return "1,2" if g == 1 else "3,4"
+        if cmd.startswith("GROUP:INPUTS:GET?"):
+            return cmd.split("?", 1)[1].strip()      # 组 g → 输入口 g (互不重叠)
+        if cmd.startswith("GROUP:OUTPUTS:GET?"):
+            g = int(cmd.split("?", 1)[1].strip())
+            return str(g)                     # 组 g 占输出口 g (共 2 个, 与 INFO? 对得上)
         if cmd.startswith("ROUT:PATH:CONN?"):
             return "B1.1"
         return '0,"No error"'

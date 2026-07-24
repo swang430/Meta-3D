@@ -28,6 +28,18 @@ def _make_driver(*, err_after_writes=None):
     drv._channel_count = 2
     drv._tx_antennas = 2
     drv._rx_antennas = 2
+    # F64R-2: 端口寻址改用**从仿真回读的真实拓扑**, 不再从 tx×rx 推 —— 这些方法现在
+    # 要求拓扑已知 (= 仿真已加载), 否则 fail-loud 拒绝下发。本 fake 直接预置成"已加载
+    # 2 输入 × 2 输出 (4 逻辑通道)"的等效态; 回读本身 (MODEL:INFO? / GROUP:*) 的解析
+    # 与 fail-loud 由 test_f64_topology_readback_f64r2.py 专门覆盖。
+    drv._active_inputs = 2
+    drv._active_outputs = 2
+    drv._active_channels = 4
+    drv._group_repr_channels = [1, 2]
+    # F64R-2 复审: 端口/通道**号**也回读 (不假定 1..N), 消费方遍历的是这些列表
+    drv._active_input_ports = [1, 2]
+    drv._active_output_ports = [1, 2]
+    drv._active_channel_numbers = [1, 2, 3, 4]
     visa = MagicMock()
     queue: list = []
 

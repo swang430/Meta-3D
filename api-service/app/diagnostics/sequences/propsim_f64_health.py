@@ -112,6 +112,18 @@ PROPSIM_SCPI: List[Tuple[str, str, bool, str]] = [
     ("SYS_VERS",           "SYST:VERS?",                       False, "SCPI version"),
     # Simulation engine — DIAG:SIMU namespace is F64-specific.
     ("SIMU_MODEL_STATIC",  "DIAG:SIMU:MODEL:STATIC?",          True,  "static bypass mode"),
+    # F64R-2 拓扑回读五条 —— 现在是**所有端口写操作的硬前置**(路损/增益/输入电平/CENT/
+    # 多普勒 拿不到真实端口号就一律 fail-loud)。这台机器上万一不支持(手册有、固件回
+    # -100 的情况本项目实证过: MMEM/FTP/*OPT?), 不探就只能等测试步骤炸掉才发现。
+    # **is_critical=True**: 未加载仿真时回 -200, `_categorize_status` 归
+    # SUPPORTED_BUT_STATE → step_ok=True, **不会**因"自检时没加载仿真"误报; 真正被
+    # critical 抓住的只有 -100/-113 = 固件里根本没这条命令, 那正是必须当场亮红的情况。
+    # (同文件 DIAG:SIMU:MODEL:STATIC? / OUTP:CALIB:GET? 同样依赖已加载仿真且都是 True。)
+    ("SIMU_MODEL_INFO",    "DIAG:SIMU:MODEL:INFO?",            True,  "topology inputs,channels,outputs (needs OPEN simulation)"),
+    ("GROUP_COUNT",        "GROUP:GET?",                       True,  "channel group count (needs OPEN simulation)"),
+    ("GROUP_CHANNELS",     "GROUP:CHANNELS:GET? 1",            True,  "group 1 channel list (needs OPEN simulation)"),
+    ("GROUP_OUTPUTS",      "GROUP:OUTPUTS:GET? 1",             True,  "group 1 physical output ports (needs OPEN simulation)"),
+    ("GROUP_INPUTS",       "GROUP:INPUTS:GET? 1",              True,  "group 1 physical input ports (needs OPEN simulation)"),
     # Channel filter / routing — required for set_channel_model + frequency.
     ("CALC_FILT_CENT",     "CALC:FILT:CENT:CH? 1",             True,  "ch1 center frequency"),
     ("ROUT_PATH",          "ROUT:PATH:CONN? 1",                True,  "ch1 physical connector mapping"),

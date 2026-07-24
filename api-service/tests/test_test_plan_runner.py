@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -381,6 +381,11 @@ class TestManualInputReference:
         )
         emu = AsyncMock()
         emu._tx_antennas = 4
+        # F64R-2: 逐输入口下发用驱动回读的**端口号列表** (同步 getter)。必须显式给
+        # MagicMock —— AsyncMock 自动生成的同名属性返回 coroutine, 会被 _read_port_list
+        # 判成"不是端口号"→ 未知 (这正是它该做的防御)。
+        emu.get_active_input_ports = MagicMock(return_value=[1, 2, 3, 4])
+        emu.get_active_input_count = MagicMock(return_value=4)
         emu.set_baseband_power = AsyncMock(return_value=True)
         emu.set_crest_factor = AsyncMock(return_value=True)
         emu.measure_input = AsyncMock(return_value=(-15.2, 11.8))
@@ -425,6 +430,11 @@ class TestManualInputReference:
         )
         emu = AsyncMock()
         emu._tx_antennas = 4
+        # F64R-2: 逐输入口下发用驱动回读的**端口号列表** (同步 getter)。必须显式给
+        # MagicMock —— AsyncMock 自动生成的同名属性返回 coroutine, 会被 _read_port_list
+        # 判成"不是端口号"→ 未知 (这正是它该做的防御)。
+        emu.get_active_input_ports = MagicMock(return_value=[1, 2, 3, 4])
+        emu.get_active_input_count = MagicMock(return_value=4)
         emu.set_baseband_power = AsyncMock(return_value=True)
         emu.set_crest_factor = AsyncMock(side_effect=[True, False])  # input2 被拒
         payload = await ex._apply_manual_input_reference(
@@ -540,28 +550,67 @@ class TestInstrumentParamBranches:
 
         return MeasureExecutor(), MIMOOTAConfiguration(**cfg)
 
-    def test_output_gain_loop_bound_is_active_outputs(self):
-        """门审 #217 F1 (P1): 输出增益遍历上限 = min(tx*rx, channel_count)
-        (与 get_metrics 同源), 不是硬件总口数 64。"""
-        import asyncio as _a
+    @pytest.mark.asyncio
+    async def test_output_gain_dispatched_to_real_ports_not_tx_times_rx(self):
+        """F64R-2: 输出增益下发到**驱动回读的真实输出口号**, 与 tx×rx / channel_count 无关。
 
-        emu = AsyncMock()
-        emu._tx_antennas = 4
-        emu._rx_antennas = 4
-        emu._channel_count = 64
-        emu.set_output_gain = AsyncMock(return_value=True)
+        取代原 `test_output_gain_loop_bound_is_active_outputs` —— 那个测试造了 emu 和
+        side_effect 却一次都不调被测代码, 最后只断言自己算的 `min(4*4,64)==16`(自证式,
+        永远绿), 而且钉的正是本 PR 证明错了的口径: tx×rx 是**逻辑通道**数, OTA 下
+        4 输入×32 探头 = 128 通道而输出口只有 32, 按 16 配会漏掉 17-32 号探头。
 
-        calls = []
+        这里用**非连续端口** {2,4,6,8,10}: tx×rx 这类算法无论怎么算都推不出这个集合,
+        所以它同时钉住"口数对"和"口号对"。"""
+        from app.services.mimo_ota.executors.measure import MeasureExecutor
+
+        calls: list = []
 
         async def _gain(out, g):
-            calls.append(out)
+            calls.append((out, g))
             return True
 
+        emu = AsyncMock()
+        emu._tx_antennas, emu._rx_antennas, emu._channel_count = 4, 4, 64  # 旧公式会说 16
+        emu.get_active_output_ports = MagicMock(return_value=[2, 4, 6, 8, 10])
         emu.set_output_gain = AsyncMock(side_effect=_gain)
-        # 直接复算 measure 里的域逻辑 (同源断言)
-        tx, rx, cc = 4, 4, 64
-        n_out = min(tx * rx, cc)
-        assert n_out == 16  # 4x4 → 16 活跃输出, 不是 64
+
+        err = await MeasureExecutor()._apply_output_gain(
+            emulator=emu, gain_db=-3.0, execution_id="t",
+        )
+        assert err is None
+        assert [c[0] for c in calls] == [2, 4, 6, 8, 10]   # 真实口号, 非 1..N 也非 1..16
+        assert all(c[1] == -3.0 for c in calls)
+
+    @pytest.mark.asyncio
+    async def test_output_gain_refuses_when_topology_unknown(self):
+        """拓扑未知 → 判 FAILED 且**一条 SCPI 都不发** (不回退猜口数)。"""
+        from app.services.mimo_ota.executors.measure import MeasureExecutor
+
+        emu = AsyncMock()
+        emu._tx_antennas, emu._rx_antennas, emu._channel_count = 4, 4, 64  # 有得猜也不许猜
+        emu.get_active_output_ports = MagicMock(return_value=None)
+        emu.set_output_gain = AsyncMock(return_value=True)
+
+        err = await MeasureExecutor()._apply_output_gain(
+            emulator=emu, gain_db=-3.0, execution_id="t",
+        )
+        assert err is not None and "物理输出口未知" in err
+        emu.set_output_gain.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_output_gain_reports_failing_port(self):
+        """某个口被拒 → 立即停并在错误里点名是哪个口 (别让操作员猜)。"""
+        from app.services.mimo_ota.executors.measure import MeasureExecutor
+
+        emu = AsyncMock()
+        emu.get_active_output_ports = MagicMock(return_value=[1, 2, 3])
+        emu.set_output_gain = AsyncMock(side_effect=[True, False])
+
+        err = await MeasureExecutor()._apply_output_gain(
+            emulator=emu, gain_db=-3.0, execution_id="t",
+        )
+        assert err is not None and "output=2" in err
+        assert emu.set_output_gain.await_count == 2   # 撞墙即停, 不继续发第 3 个
 
     @pytest.mark.asyncio
     async def test_bypass_mode_zero_rejected_by_schema(self):
