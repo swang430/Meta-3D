@@ -804,8 +804,17 @@ class TestPublicEnsureTopology:
             assert await drv.ensure_topology() is False       # 默认 throttle=False
         assert probes["n"] == 5, f"人点一次就该真问一次仪器, 实际只探测了 {probes['n']} 次"
 
-    async def test_write_path_recovers_immediately_after_front_panel_load(self):
-        """★ 前面板换 .smu 的完整闭环: 轮询失败置了冷却 → 人点写操作 → 立刻重探成功。"""
+    # ★ 三个写方法**逐个**钉住 (Codex #224 P2: 参数化 throttle 时 set_doppler /
+    # set_baseband_power 两处被误传 throttle=True, 而已有测试没先置冷却抓不到 ——
+    # 无冷却时 throttle=True 也能补读, 只有"冷却激活"才暴露差别)。
+    @pytest.mark.parametrize("call,prefix", [
+        (lambda d: d.set_path_loss(path_loss_db=3.0), "OUTP:LOSS:SET"),
+        (lambda d: d.set_baseband_power(-15.0), "INP:LEV:AMP:CH"),
+        (lambda d: d.set_doppler(frequency_hz=0.0), "DIAG:SIMU:MOB:MAN:CH"),
+    ])
+    async def test_write_path_recovers_immediately_after_front_panel_load(self, call, prefix):
+        """★ 前面板换 .smu 的完整闭环: 轮询失败置了**激活的冷却** → 人点写操作 →
+        必须立刻重探成功 (写路传了 throttle=True 这条就红)。"""
         drv, writes = _driver(info="4,128,32")
         drv._clear_topology()
         alive = {"v": False}
@@ -819,8 +828,8 @@ class TestPublicEnsureTopology:
         drv._query = _q  # type: ignore[assignment]
         assert await drv._ensure_topology(throttle=True) is False   # 轮询: CLOSED → 置冷却
         alive["v"] = True                                           # 操作员从前面板加载了
-        assert await drv.set_path_loss(path_loss_db=3.0) is True, "被上一轮的冷却挡住了"
-        assert _loss_ports(writes) == list(range(1, 33))
+        assert await call(drv) is True, "被上一轮的冷却挡住了 (写路被节流)"
+        assert [w for w in writes if w.startswith(prefix)]
 
     async def test_session_reset_clears_retry_cooldown(self):
         """冷却也是"由已加载文件决定"的一类 → 会话边界必须一起清 (它曾漏在

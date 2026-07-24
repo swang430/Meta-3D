@@ -2140,7 +2140,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 return True
             # 整段持锁 (同 set_path_loss): 判定用的通道号必须跟下发是同一个仿真的
             async with self._scpi_lock:
-                await self._ensure_topology(throttle=True)   # 冷缓存 (后端重启) 时按需补回读
+                await self._ensure_topology()   # 冷缓存时按需补回读 (写路**不节流**)
                 channels = self._active_channel_numbers
                 if not channels:
                     self._last_error = (
@@ -2357,7 +2357,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             # 整段持锁 (同 set_path_loss): 判定用的口号必须跟下发是同一个仿真的
             async with self._scpi_lock:
                 if not input_ports:
-                    await self._ensure_topology(throttle=True)   # 冷缓存时按需补回读
+                    await self._ensure_topology()   # 冷缓存时按需补回读 (写路**不节流**)
                 ports = list(input_ports) if input_ports else (
                     list(self._active_input_ports) if self._active_input_ports else []
                 )
