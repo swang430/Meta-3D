@@ -214,6 +214,12 @@ class TestActiveInputsDerivation:
         executor = MeasureExecutor()
 
         class _CEWithoutTxAttr(_FakeRealCE):
+            # 本意 = "**无拓扑能力**的 CE" (mock/非 F64)。显式摘掉继承的 getter ——
+            # Codex #224 P1 后语义收紧: getter **存在**但返回 None = 拓扑感知驱动读不到
+            # → fail-loud; 只有连 getter 都没有才允许退回 1..n 推导。
+            get_active_input_ports = None
+            get_active_input_count = None
+
             def __init__(self):
                 self._avg = -30.0
                 self.calls = {}
@@ -284,17 +290,41 @@ class TestActiveInputsDerivation:
         assert payload["success"] is False
         assert payload["topology_mismatch"] is True
 
-    async def test_falls_back_to_one_to_n_when_port_numbers_unavailable(self):
-        """口号读不到 (非 F64 驱动 / 冷缓存) → 退回旧的 1..n_layers 推导, 不硬拒 ——
-        闭环是尽力而为的定标路径, 这里 fail-loud 会让 mock/其它 CE 直接跑不了。"""
+    async def test_topology_aware_driver_with_unknown_ports_fails_loud(self):
+        """★ Codex #224 P1: 驱动**有** getter 但补读后仍 None (真机不支持 GROUP:* 的
+        形态) → fail-loud, **不许**退回猜 1..n —— 猜出的口号会被 controller 当显式端口
+        传下去, 而显式端口按契约绕过驱动侧 fail-loud 门, 在错误的输入口上定标/读数。"""
         executor = MeasureExecutor()
         ce = _FakeRealCE(tx_antennas=4)
-        ce.get_active_input_ports = lambda: None
+        ce.get_active_input_ports = lambda: None       # 有能力、读不到
+        bs = _FakeRealBS()
+        payload = await executor._run_input_level_closed_loop(
+            emulator=ce, base_station=bs, config=_MiniConfig(mimo_layers=2), execution_id="t1",
+        )
+        assert payload["success"] is False
+        assert payload["topology_mismatch"] is True
+        assert ce.calls == {}, "早期短路: controller 不该被调"
+
+    async def test_falls_back_to_one_to_n_only_without_topology_capability(self):
+        """无拓扑能力的驱动 (连 getter 都没有, mock/非 F64) → 才允许退回 1..n 推导。"""
+        executor = MeasureExecutor()
+
+        class _NoTopoCE(_FakeRealCE):
+            get_active_input_ports = None
+            get_active_input_count = None
+
+            def __init__(self):
+                self._tx_antennas = 4
+                self._avg = -30.0
+                self.calls = {}
+
+        ce = _NoTopoCE()
         bs = _FakeRealBS()
         payload = await executor._run_input_level_closed_loop(
             emulator=ce, base_station=bs, config=_MiniConfig(mimo_layers=2), execution_id="t1",
         )
         assert payload["active_inputs"] == [1, 2]
+        assert payload.get("success") is True
 
 
 class TestTopologyMismatch:

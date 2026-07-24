@@ -642,6 +642,12 @@ class TestInstrumentParamBranches:
         emu = AsyncMock()
         bs = AsyncMock()
         emu._tx_antennas = 4  # active_inputs 推导比较用, 不能留 AsyncMock
+        # F64R-2 (Codex #224 P1 后): AsyncMock 自动生成的拓扑 getter 返回 coroutine →
+        # 被判"拓扑感知但读不到" → fail-loud。本用例测的是 initial_dl_power 透传,
+        # 给同步 getter 返回真实口号让闭环正常起来。
+        emu.get_active_input_count = lambda: 4
+        emu.get_active_input_ports = lambda: [1, 2, 3, 4]
+        emu.ensure_topology = AsyncMock(return_value=True)
         for m in ("autoset_inputs", "measure_input", "get_input_level_limits",
                   "set_input_measurement_mode", "set_burst_trigger_level",
                   "get_group_clipping", "get_system_status"):

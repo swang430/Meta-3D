@@ -1507,7 +1507,37 @@ class MeasureExecutor(IStepExecutor):
                     "strict": bool(config.precheck_strict_input_level),
                 }
             active_inputs = tuple(_real_in[:n_layers])
+        elif callable(getattr(emulator, "get_active_input_ports", None)):
+            # Codex #224 P1: 驱动**有**拓扑能力 (真 F64) 但补读后口号仍未知 (正是
+            # GROUP:*/MODEL:INFO? 真机不支持的形态) → **fail-loud, 不许退回猜 1..n**。
+            # 这里推出的口号会被 controller 当**显式端口**传给 autoset_inputs /
+            # set_input_measurement_mode / measure_input, 而显式端口按契约**绕过**
+            # 驱动侧的 fail-loud 门 (显式优先) —— 猜的口号畅通无阻, 在错误的输入口上
+            # 定标/读数。猜 1..n 只留给**无拓扑能力**的驱动 (下一分支)。
+            msg = (
+                f"拓扑不匹配: F64 物理输入口号未知 (仿真未加载 / 拓扑回读失败) — "
+                f"不按猜测的 1..{n_layers} 定标输入。"
+                f"(真机若不支持 GROUP:*/MODEL:INFO?, 可在仪器 connection_params 配 "
+                f"topology_override 声明口号)"
+            )
+            logger.error("[%s] Phase 2b: %s", execution_id, msg)
+            return {
+                "success": False,
+                "failure_reason": msg,
+                "topology_mismatch": True,
+                "ce_input_ports": None,
+                "config_mimo_layers": n_layers,
+                "iterations": 0,
+                "uxm_dl_power_dbm": None,
+                "clipping_per_mille": None,
+                "system_warnings": [],
+                "operating_point": [],
+                "active_inputs": [],
+                "strict": bool(config.precheck_strict_input_level),
+            }
         else:
+            # 无拓扑能力的驱动 (mock / 非 F64, 连 getter 都没有): 保留旧的 1..n 推导,
+            # mock dry-run 不受影响 (capability-based 降级, 与全仓 hasattr 门同族)。
             active_inputs = tuple(range(1, n_layers + 1))
 
         from app.services.input_level_controller import InputLevelController
