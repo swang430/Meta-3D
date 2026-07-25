@@ -689,3 +689,47 @@ class TestDisconnectUsesConfirmedState(TestJudgementUsesConfirmedState):
         await d.disconnect()
         assert "DIAG:SIMU:GOS" not in writes
         assert "DIAG:SIMU:CLOSE" not in writes
+
+
+class TestColdCacheStillConfirmsClosed(TestJudgementUsesConfirmedState):
+    """★ Codex P1: **别拿本地缓存决定要不要验证一个安全攸关的终态**。
+
+    复查最初只为"别误清加载态"而设, 所以用 `_has_load_state()` 当闸。但判定也吃这个
+    结果之后, 这个闸就成了洞: **驱动刚重启 → 加载态缓存空 → 早退不复查** → 错位来的
+    过期 `CLOSED` 直接生效 → `stop_emulation()` 当"已停"报成功、`disconnect()` 同时跳过
+    GOS 和 CLOSE, 而仪器**仍在 RUNNING**。
+
+    "冷缓存但硬件在播"正是本 PR 要支持的那个现场场景 (2026-07-21 实证), 判据绝不能
+    建立在"我这边记不记得加载过"上。以下三条都**不设**任何加载态缓存。"""
+
+    async def test_stop_confirms_closed_even_with_cold_cache(self):
+        d, _ = _drv(state=["CLOSED", "RUNNING"])
+        d._loaded_emulation_file = None          # 冷缓存: 后端刚重启
+        assert d._has_load_state() is False, "前提: 本用例要的就是空缓存"
+        assert await d.stop_emulation() is False, "冷缓存下把过期 CLOSED 当'已停'了"
+        assert d._emulation_running is True       # 真值: 还在跑
+
+    async def test_disconnect_confirms_closed_even_with_cold_cache(self):
+        d, writes = _drv(state=["CLOSED", "RUNNING", "STOPPED"])
+        d._loaded_emulation_file = None
+        d._visa_resource = MagicMock()
+        await d.disconnect()
+        assert "DIAG:SIMU:GOS" in writes, "冷缓存 + 过期 CLOSED → 没停就释放了连接"
+        assert "DIAG:SIMU:CLOSE" in writes
+
+    async def test_start_confirms_closed_even_with_cold_cache(self):
+        """GO 后首读 CLOSED 被复查否决成 RUNNING → 目标其实达成了。"""
+        d, _ = _drv(state=["CLOSED", "RUNNING"])
+        d._loaded_emulation_file = None
+        assert await d.start_emulation() is True
+        assert d._emulation_running is True
+
+    async def test_monitoring_path_keeps_cache_gate(self):
+        """反向: 监控路 (1 Hz) **保持**按缓存早退 —— 那里多一条 STATE? 是每秒成本,
+        而误信一拍 CLOSED 只影响这一秒的上报 (下一拍自愈), 卸载另有守门。"""
+        # 队列按调用顺序: ①`_ensure_topology` 冷缓存时先探一次 (既有行为) ②监控自己读
+        # ③若发生复查才会取到的值。报 CLOSED = 没走 ③ = 监控路仍按缓存早退。
+        d, _ = _drv(state=["CLOSED", "CLOSED", "RUNNING"])
+        d._loaded_emulation_file = None
+        m = await d.get_metrics()
+        assert m.metrics["simulation_state"] == "CLOSED", "监控路不该为 CLOSED 多发一条复查"

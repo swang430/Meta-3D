@@ -790,10 +790,9 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         return running
 
     async def _apply_state_truth_confirmed(
-        self, state: Optional[str]
+        self, state: Optional[str], *, always_confirm: bool = False
     ) -> Tuple[bool, Optional[str]]:
-        """监控读路 (get_metrics / get_channel_state) 专用: 落真值, 但**破坏性的
-        CLOSED 卸载要先锁内复查一次**才作数。
+        """落真值, 但读到 `CLOSED` 时**先锁内复查一次**才作数。
 
         为什么复查 (两个都会误清一个**活着**的仿真):
           · **会话错位**: 白名单挡得住 `0,"No error"` 这类非法串, 挡不住"上一条命令的
@@ -809,8 +808,18 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         首读 CLOSED 被复查否决后, 若还照着首读值上报 `simulation_state="CLOSED"`, 而
         加载态又(正确地)保留着, 快照就成了"CLOSED 却报着文件名"—— 恰恰是本 PR 定义为
         缺陷的那个自相矛盾组合, 只是从另一头产生。
+
+        ⚠⚠ **`always_confirm=True`: 判定路 (GO / GOS / disconnect) 必传** (Codex P1)。
+        复查最初只为"别误清加载态"而设, 于是用 `_has_load_state()` 当闸 —— 但 U1 之后
+        **判定也吃这个结果**了, 拿本地缓存决定要不要验证一个安全攸关的终态就成了洞:
+        驱动刚重启 → 加载态缓存**空** → 早退不复查 → 错位来的过期 `CLOSED` 直接生效
+        → `stop_emulation()` 当"已停"返回成功、`disconnect()` 同时跳过 GOS 和 CLOSE,
+        而仪器**可能仍在 RUNNING**。"冷缓存但硬件在播"正是本 PR 要支持的那个现场场景
+        (2026-07-21 实证), 判据绝不能建立在"我这边记不记得加载过"上。
+        监控读路 (1 Hz) 保持默认 `False`: 那里多一条 STATE? 是每秒成本, 而误信一拍
+        CLOSED 只影响这一秒的上报 (下一拍自愈), 且卸载本身另有 `_has_load_state()` 守门。
         """
-        if state != "CLOSED" or not self._has_load_state():
+        if state != "CLOSED" or not (always_confirm or self._has_load_state()):
             return self._apply_state_truth(state), state   # 非破坏性 → 直接落
         async with self._scpi_lock:
             confirmed = await self._query_simulation_state()
@@ -1721,7 +1730,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 # "干净断开"并释放连接 —— 而仪器还在发射。复查存在的意义就是别信那一下。
                 _tr: Dict[str, bool] = {}
                 _live = await self._query_simulation_state(transport=_tr)
-                _, _eff = await self._apply_state_truth_confirmed(_live)
+                _, _eff = await self._apply_state_truth_confirmed(_live, always_confirm=True)
                 if _tr.get("failed"):
                     # ⚠ 跳过命令是对的, 但**返回值必须如实降级** (agent R3): 链路断的时候
                     # 我们比"GOS 被拒"更没资格说"已确认停止" —— 命令根本没发出去。报 True
@@ -2568,7 +2577,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 # 复查否决成 RUNNING 时, 两边结论相反 (GOS 那边更严重: 按首读 CLOSED 判
                 # "已停"返回 True, 而缓存记着 RUNNING, 于是**仿真还在播**就去建直通)。
                 # 复查只在"首读 CLOSED 且驱动记着加载态"时才真发查询, 其余 eff == state。
-                _, eff = await self._apply_state_truth_confirmed(state)
+                _, eff = await self._apply_state_truth_confirmed(state, always_confirm=True)
                 if eff != "RUNNING":
                     # 被拒时不猜直通缓存 (分不清 STATIC/GO 哪步被拒); running 已由上面的
                     # 真值单一入口落好 (读不到就保留旧缓存, 不猜)。
@@ -2635,7 +2644,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 # 读到的 RUNNING 又落进缓存 —— 下游 measure 的布尔门放行, 于是在**仿真
                 # 仍在播**的状态下写 STATIC 建直通, 正是这道门存在的理由。
                 # agent F7: 失败分支同样要落真值 (瞬态 STOPPING/CLOSING 读到了也得记)。
-                _, eff = await self._apply_state_truth_confirmed(state)
+                _, eff = await self._apply_state_truth_confirmed(state, always_confirm=True)
                 if eff not in ("STOPPED", "CLOSED"):
                     self._last_error = (
                         f"stop_emulation 未确认停止: STATE?={eff} (期望 STOPPED/CLOSED)"
