@@ -43,7 +43,7 @@ def _make_driver(*, err_after_writes=None):
     visa = MagicMock()
     queue: list = []
 
-    def _q(cmd):
+    def _q(cmd, **_kw):
         if "SYST:ERR" in cmd:
             return queue.pop(0) if queue else '0,"No error"'
         return "1"  # *OPC? 等
@@ -57,7 +57,7 @@ def _make_driver(*, err_after_writes=None):
         if err_after_writes and "SYST:ERR" not in cmd:
             queue.append(err_after_writes)
 
-    async def _query(cmd, timeout=None):
+    async def _query(cmd, timeout=None, **_kw):
         return visa.query(cmd)
 
     drv._write = _w  # type: ignore[assignment]
@@ -132,7 +132,7 @@ class TestUploadAscFilesLoadGate:
         visa = MagicMock()
         queue: list = []
 
-        def _q(cmd):
+        def _q(cmd, **_kw):
             if "SYST:ERR" in cmd:
                 return queue.pop(0) if queue else '0,"No error"'
             if "STATE?" in cmd:                    # Codex #223: CLOSE 后确认卸载 → CLOSED
@@ -149,7 +149,7 @@ class TestUploadAscFilesLoadGate:
             if load_error and cmd.startswith("CALC:FILT:FILE"):
                 queue.append(load_error)  # 载入后 F64 压错误 (但 *OPC? 仍答 1)
 
-        async def _query(cmd, timeout=None):
+        async def _query(cmd, timeout=None, **_kw):
             return visa.query(cmd)
 
         async def _ftp(local, remote):

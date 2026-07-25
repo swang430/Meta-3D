@@ -58,7 +58,7 @@ def _make_driver(*, has_interference_generator=_SENTINEL):
     async def _async_write(cmd, timeout=None):
         visa_mock.write(cmd)
 
-    async def _async_query(cmd, timeout=None):
+    async def _async_query(cmd, timeout=None, **_kw):
         return visa_mock.query(cmd)
 
     drv._write = _async_write  # type: ignore[assignment]
@@ -236,7 +236,7 @@ class TestCalibrationToneFailLoud:
         """
         q = ['0,"No error"'] + list(errors)
 
-        def _q(cmd):
+        def _q(cmd, **_kw):
             if cmd == "SYST:ERR?":
                 return q.pop(0) if q else '0,"No error"'
             return '0,"No error"'
@@ -393,7 +393,7 @@ class TestOptionsProbe:
         break connect."""
         drv, visa = _make_driver()
 
-        async def _query_raises(cmd, timeout=None):
+        async def _query_raises(cmd, timeout=None, **_kw):
             raise RuntimeError("simulated NAK")
 
         drv._query = _query_raises  # type: ignore[assignment]

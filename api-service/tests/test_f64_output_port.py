@@ -27,7 +27,7 @@ def _make_driver():
     async def _async_write(cmd, timeout=None):
         visa_mock.write(cmd)
 
-    async def _async_query(cmd, timeout=None):
+    async def _async_query(cmd, timeout=None, **_kw):
         return visa_mock.query(cmd)
 
     drv._write = _async_write  # type: ignore[assignment]

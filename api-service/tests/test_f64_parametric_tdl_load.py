@@ -28,7 +28,7 @@ def _drv(transferred=None, captured=None):
         if cmd.startswith("CALC:FILT:FILE") and captured.get("load_error"):
             captured.setdefault("err_queue", []).append(captured["load_error"])
 
-    async def _query(cmd, timeout=None):
+    async def _query(cmd, timeout=None, **_kw):
         if "SYST:ERR" in cmd:                      # _drain_errors / _first_error 真实现走这里
             q = captured.get("err_queue")
             return q.pop(0) if q else '0,"No error"'

@@ -38,7 +38,7 @@ def _driver(error_seq=None, static_val="0", raise_on_write=None, state_val=None)
         if raise_on_write and raise_on_write in cmd:
             raise TimeoutError("VI_ERROR_TMO")
 
-    async def _q(cmd, timeout=None):
+    async def _q(cmd, timeout=None, **_kw):
         if cmd == "*OPC?":
             return "1"
         if cmd == "DIAG:SIMU:STATE?":

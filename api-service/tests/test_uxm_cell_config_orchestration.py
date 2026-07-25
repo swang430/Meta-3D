@@ -43,7 +43,7 @@ def wire_echo_visa(driver, cell_active: bool = False, overrides: dict | None = N
         elif c.endswith("ACTive:STATe 0"):
             state["active"] = "0"
 
-    def _query(cmd):
+    def _query(cmd, **_kw):
         c = cmd.strip()
         for frag, resp in (overrides or {}).items():
             if frag in c:
@@ -893,7 +893,7 @@ class TestCellRestartOpcTimeout:
         opc_timeouts: list[int] = []
         base_query = sess.query.side_effect
 
-        def _q(cmd):
+        def _q(cmd, **_kw):
             if cmd.strip() == "*OPC?":
                 opc_timeouts.append(sess.timeout)
             return base_query(cmd)

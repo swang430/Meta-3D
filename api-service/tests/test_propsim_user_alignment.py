@@ -34,7 +34,7 @@ def _make_driver(*, alignment_name: str | None = None):
     async def _async_write(cmd, timeout=None):
         visa_mock.write(cmd)
 
-    async def _async_query(cmd, timeout=None):
+    async def _async_query(cmd, timeout=None, **_kw):
         return visa_mock.query(cmd)
 
     drv._write = _async_write  # type: ignore[assignment]
@@ -99,7 +99,7 @@ class TestGetUserAlignmentStatus:
     async def test_query_failure_returns_none(self):
         drv, _ = _make_driver()
 
-        async def _query_raises(cmd, timeout=None):
+        async def _query_raises(cmd, timeout=None, **_kw):
             raise RuntimeError("instrument does not support SYST:CALIB:USER:GET?")
 
         drv._query = _query_raises  # type: ignore[assignment]
@@ -113,7 +113,7 @@ class TestGetUserAlignmentStatus:
         drv, _ = _make_driver()
         call_n = {"i": 0}
 
-        async def _query(cmd, timeout=None):
+        async def _query(cmd, timeout=None, **_kw):
             call_n["i"] += 1
             if "INFO" in cmd:
                 raise RuntimeError("INFO? not supported")
@@ -241,7 +241,7 @@ class TestListExternalUnits:
     async def test_query_failure_returns_empty_list(self):
         drv, _ = _make_driver()
 
-        async def _query_raises(cmd, timeout=None):
+        async def _query_raises(cmd, timeout=None, **_kw):
             raise RuntimeError("SYST:EXT:UNIT:LIST? not supported")
         drv._query = _query_raises  # type: ignore[assignment]
 

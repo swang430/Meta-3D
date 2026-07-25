@@ -190,13 +190,23 @@
   - 修法候选:各驱动持有自己的 RM 实例并只 `close()` 自己的 resource(不调 `rm.close()`);
     或全局共享一个 RM、由 HAL 生命周期统一管。**要一起改四个驱动,单独开 PR。**
 
-- [ ] **F64R-9 `_drain_errors` 也会解冻重连冷却(小口子)** (2026-07-25 F64R-1 复审转出)
+- [x] **F64R-9 `_drain_errors` 也会解冻重连冷却** (2026-07-25 F64R-1 复审转出, 当日修完)
   > `_do_query_unlocked` 已加 `note_success=False` 堵住 `_drain_after_timeout`,但
   > `_drain_errors` 走外层 `self._query`(note_success 默认 True)——会话错位时它读到
-  > stale 应答也算"成功"→ 解冻。影响有限:1 Hz 轮询路(`get_metrics` / `_ensure_topology`
-  > / `_readback_topology`)**不调** `_drain_errors`,只有人发起的事务(GO/GOS/STATIC/load)
-  > 会调,频率低,不成风暴。彻底解法 = 把判据从"读到了"升级为"读到了**可解析的 clean
-  > 应答**"。
+  > stale 应答也算"成功"→ 解冻。
+  > **⚠ 本条最初写的影响面评估是错的**("只有人发起的事务会调,频率低,不成风暴"):
+  > 动手时逐个数了 13 个调用点,其中 `_gated_write_transaction` 被 **10 个参数设置方法**
+  > 共用,而路损校准是 `for probe_id in probe_ids` **逐探头循环**(32 探头 × 2 极化)、
+  > 每轮起/停 tone 各调一次 —— 会话坏掉时**一轮校准可解冻 60+ 次**,限流形同虚设。
+  > 教训①: backlog 里的"影响有限"是立项当下的估计,**动手前要重新量一遍**。
+  > 修法: `_drain_errors` **与 `_first_error`** 都传 `note_success=False`(经
+  > `_do_query` 透传到 IO 原语),与 `_drain_after_timeout` 完全同源。
+  > 教训②(审查 P1): 我第一版在 `_drain_errors` **外层**做"快照 + `max` 还原" —— **治不了**。
+  > 真正的风暴是**排水自己的第一条查询就撞上死 socket**: conn-lost → 重连(设冷却)→
+  > 重试成功 → `_note_io_success` 清零 → 下一圈再来。外层快照拿到的是**进来之前**的值
+  > (通常 0),`max` 救不回来;而"进来前有冷却"往往恰恰意味着这次排水里没发生重连。
+  > 实测: 外层快照写法下**单次** `_drain_errors` 内 socket 重建 **64 次**(循环上界)、
+  > 全程持锁;改到 IO 原语后 **1 次**。**抑制点要落在被复用的那一层, 不是包一层外壳**。
 
 - [ ] **F64R-7 ⭐⭐ `STATE?` 语义真机验证(F64R-1 转出,**开机第一件事**,2026-07-25)**
   > F64R-1 把 `DIAG:SIMU:STATE?` 接成了运行状态的**唯一判据** ——

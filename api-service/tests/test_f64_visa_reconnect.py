@@ -453,7 +453,7 @@ class TestStateQueryNegativeCache:
         d._visa_resource = MagicMock()
         calls: list[str] = []
 
-        async def _q(cmd, timeout=None):
+        async def _q(cmd, timeout=None, **_kw):
             calls.append(cmd)
             if cmd == "DIAG:SIMU:STATE?":
                 raise RuntimeError("instrument hung")
@@ -478,7 +478,7 @@ class TestStateQueryNegativeCache:
         d._state_query_retry_after = time.monotonic() + 999   # 静默期正当中
         calls: list[str] = []
 
-        async def _q(cmd, timeout=None):
+        async def _q(cmd, timeout=None, **_kw):
             calls.append(cmd)
             return "RUNNING" if cmd == "DIAG:SIMU:STATE?" else '0,"No error"'
 
@@ -678,7 +678,7 @@ class TestTearingDownCoversWholeTeardown:
 
         primary.close = _close_probe  # type: ignore[assignment]
 
-        async def _noop(cmd, timeout=None):
+        async def _noop(cmd, timeout=None, **_kw):
             return '0,"No error"' if "?" in cmd else None
 
         d._query = _noop  # type: ignore[assignment]
@@ -689,3 +689,91 @@ class TestTearingDownCoversWholeTeardown:
         # socket), 那次标志已复位 —— 属于预期, 所以只钉第一次。
         assert seen and seen[0] is True, f"尾段释放资源时保护窗口已提前关闭: {seen}"
         assert d._tearing_down is False, "拆卸结束后标志没复位"
+
+
+class TestDrainErrorsDoesNotThawCooldown:
+    """★ F64R-9: **清错误队列的读不算"会话恢复了"**。
+
+    `_note_io_success` 挂在底层 IO 上, 任何一次读成功都解冻重连冷却。但清队列的读不能当
+    业务恢复的证据 —— 会话错位时 `SYST:ERR?` 恰恰是**读得回来**且不 clean 的 (那正是要清
+    它的原因), 于是每清一次就把限流门打开一次。
+
+    影响面 (立项时低估过): `_drain_errors` 有 13 个调用点, 其中 `_gated_write_transaction`
+    被 **10 个参数设置方法**共用; 路损校准是 `for probe_id in probe_ids` 逐探头循环
+    (32 探头 × 2 极化), 每轮起/停 tone 各调一次。
+
+    ⚠ 抑制必须落在 **IO 原语** (`note_success=False`), 不能在 `_drain_errors` 外层
+    "快照 + 还原" —— 见 `test_reconnect_inside_drain_is_rate_limited` 的说明。
+    """
+
+    @pytest.mark.asyncio
+    async def test_reconnect_inside_drain_is_rate_limited(self):
+        """★★ **本条是 P1 的直接回归** (外层快照写法在这里必红)。
+
+        真实风暴场景不是"进排水前有冷却", 而是**排水自己的第一条查询就撞上死 socket**:
+        conn-lost → 重连 (设冷却) → 重试成功 → `_note_io_success` 清零 → 下一圈再来一遍。
+        外层快照拿到的是**进来之前**的值 (通常 0), `max` 救不回来 —— 实测那种写法下单次
+        `_drain_errors` 内 socket 重建达 **64 次** (循环上界) 且全程持锁。
+        断言钉**真实生效端** (socket 重建次数), 比断言冷却数值更抗重构。"""
+        def _dies_after_one_answer(name: str) -> _FakeVisaResource:
+            """⚠ **风暴的形状很讲究, 试了三版才对** (每版都用变异验过):
+              ✗ 只让 primary 失败 → 重连一次拿到好句柄, 之后再不重连, 变异全绿;
+              ✗ 每个句柄都立刻失败 → 重连后的**重试**也失败 → 异常冲出 `_drain_errors`
+                的 try, 循环**整个中止**, 照样只重连一次, 变异还是全绿;
+              ✓ **重连后那一条重试成功 (答一条非 clean 错误), 下一圈再断** —— 循环得以
+                继续, 于是"每圈一次重连"才成立。这才是闲置 socket 被反复回收的真实形态。
+            `query_fail_with=[None, err]`: 第一次 (重试) 放行, 第二次 (下一圈) 断。"""
+            r = _FakeVisaResource(name)
+            r.query_fail_with = [None, _mk_visa_error(0xBFFF00B5)]
+            r.query_response = '-200,"Execution error"'   # 读得回来但不 clean → 继续清
+            return r
+
+        primary = _FakeVisaResource("primary")
+        primary.query_fail_with = [_mk_visa_error(0xBFFF00B5)]
+        # 备足 (远超 drain 的 64 圈上界), 让"重建几次"由**限流**决定, 而不是被耗尽卡住
+        spares = [_dies_after_one_answer(f"spare-{i}") for i in range(200)]
+        d = _build_driver_with_fake_session(primary, post_reconnect=spares)
+
+        await d._drain_errors()          # 内部吞异常, 我们只看它重建了几次 socket
+        assert d._rm.open_calls <= 1, (
+            f"单次排水重建了 {d._rm.open_calls} 次 socket —— 限流在排水路上失效 "
+            "(抑制没落在 IO 原语上?)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_drain_keeps_reconnect_cooldown(self):
+        primary = _FakeVisaResource("primary")
+        # 会话错位形态: SYST:ERR? 读得回来, 但永远不 clean
+        primary.query_response = '-200,"Execution error;Wrong device state"'
+        d = _build_driver_with_fake_session(primary, post_reconnect=[])
+
+        frozen = time.monotonic() + 999
+        d._reconnect_retry_after = frozen
+        await d._drain_errors()
+        assert primary.queries, "排水根本没发出查询 —— 断言会因为错误的理由通过"
+        assert d._reconnect_retry_after == frozen, (
+            "清队列把重连冷却解冻了 —— 一轮 32 探头校准可解冻 60+ 次, 限流形同虚设"
+        )
+
+    @pytest.mark.asyncio
+    async def test_first_error_also_does_not_thaw(self):
+        """`_first_error` 是**同一个 `SYST:ERR?` 读**、同一类证据, 而且就在同一批事务里
+        紧挨着 (`_gated_write_transaction` = drain → 写 → _first_error)。只堵 drain 不堵
+        它, 事务净效果照样解冻。"""
+        primary = _FakeVisaResource("primary")
+        primary.query_response = '-200,"Execution error"'
+        d = _build_driver_with_fake_session(primary, post_reconnect=[])
+        frozen = time.monotonic() + 999
+        d._reconnect_retry_after = frozen
+        assert await d._first_error() is not None
+        assert d._reconnect_retry_after == frozen, "_first_error 把冷却解冻了"
+
+    @pytest.mark.asyncio
+    async def test_business_io_still_thaws(self):
+        """反向: 业务命令成功仍然解冻 (别把 F64R-1 的"真恢复即解冻"一起堵死)。"""
+        primary = _FakeVisaResource("primary")
+        primary.query_response = "PROPSIM,F64\n"
+        d = _build_driver_with_fake_session(primary, post_reconnect=[])
+        d._reconnect_retry_after = time.monotonic() + 999
+        await d._do_query("*IDN?")
+        assert d._reconnect_retry_after == 0.0

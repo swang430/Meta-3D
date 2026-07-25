@@ -37,7 +37,7 @@ def _make_driver(query_map=None, syst_err_responses=None):
     async def _async_write(cmd, timeout=None):
         visa.write(cmd)
 
-    async def _async_query(cmd, timeout=None):
+    async def _async_query(cmd, timeout=None, **_kw):
         return visa.query(cmd)
 
     drv._write = _async_write  # type: ignore[assignment]
