@@ -29,6 +29,43 @@ PyVISA-level equivalent (F64R-1, 2026-07-25 实测 pyvisa 1.16.2):
 
 Adding new conn-lost codes/类型 here is a one-line change that automatically
 covers every driver using ``is_visa_conn_lost``.
+
+===================================================================
+ResourceManager 所有权 (F64R-8, 2026-07-25) —— **本节是权威说明, 别在驱动里另写一版**
+===================================================================
+**驱动绝不能调 ``rm.close()``。** 只关自己的 resource/session, RM 引用置 None 即可。
+
+原因 (全部实测, pyvisa 1.16.2):
+  · ``ResourceManager`` 是**按后端缓存的单例** —— 同一后端下反复取到**同一个对象**。
+    ⚠ **"共用一个 RM"是环境相关的, 别记成全仓只有一个** (2026-07-25 审查纠正):
+    ``highlevel.py::_get_default_wrapper()`` 的逻辑是"**先探 IVI 二进制, 找到就返回
+    ivi**, 否则 py"(还可被环境变量 ``PYVISA_LIBRARY`` 覆盖), 于是 ——
+      - **开发机**(无 IVI): 默认解析成 ``py``, ``ResourceManager()`` 与
+        ``ResourceManager('@py')`` 是同一个对象 → 13 个驱动全落在**一个** RM 上;
+      - **装了 NI-VISA / Keysight IO Libraries 的机器**(跑 UXM 的现场机很可能属此类):
+        写 ``ResourceManager()`` 的 8 个 (UXM / CMW500 / FSW / SMW200A / MXG / ENA /
+        X-Series SA / ETS) 落在 **ivi** RM; 写 ``'@py'`` 的 5 个 (F64 / FS16 / ZNA /
+        FSVA / RF switch) 落在 **py** RM → **分成两组**。
+    ⇒ 禁令对**每一组各自成立**, 所以下面的规则不受环境影响。但**别据此推出"那就在 HAL
+    shutdown 统一 close 一次"** —— 在 IVI 环境下那只关掉一半, 另一半照样被连带关闭。
+  · ``ResourceManager.close()`` 的源码是 ``for resource in self._created_resources:
+    resource.close()`` —— 官方 docstring 原文明写 "this will also terminate connections
+    obtained from other ResourceManager instances"。
+  ⇒ 任何**一个**仪表 disconnect 时调 ``rm.close()``, 就把**其余全部仪表**的会话一起关了。
+    现场表现: HAL 重载 / 单仪表重连之后, 别的仪表"莫名其妙断了"。
+
+为什么"只关自己的 resource"就够: socket 是挂在 resource 上的, 关 resource 即释放
+(F64 的 3334 端口只容一条远程连接, 这条已实证)。RM 本身是进程级基础设施 ——
+**没有任何驱动有资格代表整个进程关掉它**。
+
+进程退出时 RM 会被 pyvisa 自己收尾: ``ResourceManager.__new__`` 里
+``atexit.register(call_close)`` + ``obj._atexit_handler = call_close``
+(highlevel.py:3008-3025, 源码注释原文 "Register an atexit handler to ensure the
+Resource Manager is properly closed"); ``close()`` 自己会 ``atexit.unregister``。
+注: 注册的是 ``WeakMethod`` 包装 —— RM 若已被 GC 就什么都不做, 这是对的。
+(2026-07-25 Codex 曾判"pyvisa 没有 atexit 处理器"要求删掉这句, 经查源码**该断言不成立**,
+依据留在此处以免下轮重提; 退一步说, 就算没有 atexit, 进程退出时 OS 也会回收 socket,
+本节的驱动级禁令不依赖这一条。)
 """
 from __future__ import annotations
 

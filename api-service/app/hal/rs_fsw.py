@@ -68,9 +68,10 @@ class RealRsFswDriver(SignalAnalyzerDriver):
             if self._visa_session:
                 self._visa_session.close()
                 self._visa_session = None
-            if self._visa_rm:
-                self._visa_rm.close()
-                self._visa_rm = None
+            # ⚠ **不调** `self._visa_rm.close()`: RM 是**进程级共享单例**, 关它会连带
+            # 关掉其它仪表的会话 (权威说明见 `app/hal/_visa_reconnect.py` 的
+            # 「ResourceManager 所有权」一节)。自己的 session 上面已经关了, 这里只丢引用。
+            self._visa_rm = None
             self._set_status(InstrumentStatus.DISCONNECTED)
             return True
         except Exception:

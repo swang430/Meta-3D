@@ -1878,11 +1878,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     await asyncio.to_thread(self._visa_resource.close)
                 except Exception as e:
                     logger.warning(f"[F64] VISA resource close error: {e}")
-            if self._rm:
-                try:
-                    self._rm.close()
-                except Exception:
-                    pass
+            # ⚠ **不调** `self._rm.close()` (F64R-8): RM 是**跨驱动共享的单例**, 关它会
+            # 连带关掉**同一后端下其它仪表**的会话 (本驱动写 '@py', 同组的有 FS16 / ZNA /
+            # FSVA / 射频开关; 具体分组随机器是否装 IVI 而变 —— 权威说明见
+            # `_visa_reconnect.py` 的「ResourceManager 所有权」一节)。
+            # 自己的 resource 上面已经关了 (含 finally 里的兜底), RM 引用在 finally 丢掉即可。
         finally:
             # 最外层 finally: 被取消 (CancelledError) 也走到这里, 不留半死实例。
             #
@@ -1905,9 +1905,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     _leaked.close()
                 except Exception:
                     pass                     # 已关 / 会话已死都无所谓, 目的是别泄漏
-            # ⚠ 这里**不调** `self._rm.close()`: RM 是 pyvisa 单例, 关它会连带关闭
-            # FS16 / 频谱仪 / 射频开关的会话 (F64R-8 记录的既有地雷)。关掉本驱动自己的
-            # resource 就已经释放了 3334 那条 socket, 足够解本 P1。
+            # (RM 为何不关: 见上面那段 / `_visa_reconnect.py` 的「ResourceManager 所有权」)
         # running/pipeline/identity/bypass 已在内层 finally 的 _apply_session_reset 全清
         return stop_confirmed
 
