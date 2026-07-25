@@ -26,6 +26,7 @@ We don't talk to a real F64; PyVISA is monkey-patched at the
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any, List
 from unittest.mock import MagicMock
@@ -634,6 +635,28 @@ class TestTearingDownFlagLifecycle:
         d._write = _boom  # type: ignore[assignment]
         await d.disconnect()
         assert d._tearing_down is False, "断开异常后拆卸标志卡住了, 懒重连被静默关闭"
+
+    @pytest.mark.asyncio
+    async def test_flag_cleared_when_teardown_cancelled(self):
+        """★ Codex P1/P2 指出的真正危险路径: `CancelledError` 是 **BaseException**,
+        内层的 `except Exception` 挡不住它 —— 上一版只把释放资源那一小段包进 try/finally,
+        取消发生在**前面**的 STATE?/GOS/CLOSE await 上时会整段跳过, 实例永久停在
+        `_tearing_down=True` + 句柄还挂着, 此后静默拒绝一切重连。
+
+        ⚠ 我原来那条用例只抛 `RuntimeError`(被 `except Exception` 接住), **根本走不到
+        这条路** —— Codex 点名的正是这个假覆盖。"""
+        primary = _FakeVisaResource("primary")
+        d = _build_driver_with_fake_session(primary, post_reconnect=[])
+
+        async def _cancel(cmd, timeout=None):
+            raise asyncio.CancelledError()
+
+        d._query = _cancel  # type: ignore[assignment]
+        d._write = _cancel  # type: ignore[assignment]
+        with pytest.raises(asyncio.CancelledError):
+            await d.disconnect()
+        assert d._tearing_down is False, "被取消后拆卸标志卡住 — 实例永久失去自愈能力"
+        assert d._visa_resource is None, "被取消后还挂着 VISA 句柄"
 
 
 class TestTearingDownCoversWholeTeardown:

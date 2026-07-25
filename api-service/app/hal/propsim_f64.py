@@ -1671,69 +1671,79 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         """
         stop_confirmed = True
         self._tearing_down = True   # 断开路撞超时不再升级重建会话 (agent R8)
+        # ⚠ **整个函数体**包在最外层 try/finally 里 (Codex P2): `CancelledError` 是
+        # BaseException, 内层的 `except Exception` 挡不住它 —— 若在初始的 STATE? / 停止 /
+        # CLOSE 这几个 await 上被取消 (操作员点 /hal/reload 卡死后关标签页 → Starlette
+        # 取消任务), 它会**跳过下面释放资源的整段**直接向上抛, `_tearing_down` 永久停在
+        # True + VISA 句柄还挂着 → 该实例此后静默拒绝一切重连, 只能等显式 connect()。
         try:
-            # F64R-1 (agent F4): **不拿 `_emulation_running` 冷缓存当门**。断开前"要不要
-            # 停"必须问仪器: 2026-07-21 现场实证形态 —— 后端重启后驱动缓存 False 而 F64
-            # 硬件仍加载着信道在播, 旧代码于是一条停止命令都不发、还返回 True 报"干净
-            # 断开", 而 F64 **继续发射**(暗室里没人知道)。这正是 start_emulation /
-            # _ensure_topology 早就写过的同一条教训 (冷缓存不做 gate) 在断开路的漏网。
-            # 判据换成 STATE?: RUNNING → 必停; 值读不到 → 也停 (无法确认就按最坏情况
-            # 处理, GOS 幂等, 多发一条的代价远小于让仪器带着功率跑); STOPPED/CLOSED →
-            # 已停, 跳过 (省一次 GOS, 也避免在 CLOSED 上制造无谓错误条目)。
-            #
-            # ⚠ 但**传输层失败要单独摘出来**(agent F2): "值读不到就保守发停止"只在链路
-            # 通的时候成立。链路根本不通时 (掉线 / ATE 服务挂死 —— 恰恰是最常按断开的
-            # 场景), GOS 和 CLOSE 压根到不了仪器, 只是让 disconnect 白等 4 条命令
-            # × (VISA 超时 + 排水 + 可能一次重连 TCP connect)。而 `POST /hal/reload`
-            # 持 HAL 生命周期锁串行调各驱动 disconnect —— 那就是现场"F64 掉线后点重载,
-            # 界面卡死"。链路已断时直接跳到清理。
-            _tr: Dict[str, bool] = {}
-            _live = await self._query_simulation_state(transport=_tr)
-            await self._apply_state_truth_confirmed(_live)
-            if _tr.get("failed"):
-                # ⚠ 跳过命令是对的, 但**返回值必须如实降级** (agent R3): 链路断的时候
-                # 我们比"GOS 被拒"更没资格说"已确认停止" —— 命令根本没发出去。报 True
-                # 会让 disconnect_all 的结果表 / HAL 重载日志显示"F64 已干净断开",
-                # 而它可能还在发射。这条契约在本函数下面那段注释里 (Codex #206 R2)。
-                stop_confirmed = False
-                logger.warning(
-                    "[F64] disconnect: STATE? 传输层失败 (链路已断/仪器无应答) — "
-                    "跳过 GOS/CLOSE (发了也到不了仪器) 并如实报未确认停止, "
-                    "F64 可能仍在运行/发射"
-                )
-            elif _live is None or _live not in ("STOPPED", "CLOSED"):
-                # Codex #206 R2: GOS 被拒 (SYST:ERR-only 失败) 时不能报"干净
-                # 断开" — 断开照样继续 (重载场景必须能断), 但如实降返回值,
-                # 让 HAL 重载/关闭日志暴露 "F64 可能仍在发射"。
-                logger.info(
-                    f"[F64] disconnect: STATE?={_live} — 断开前先停止播放"
-                )
-                stop_confirmed = await self.stop_emulation()
-                if not stop_confirmed:
+            try:
+                # F64R-1 (agent F4): **不拿 `_emulation_running` 冷缓存当门**。断开前"要不要
+                # 停"必须问仪器: 2026-07-21 现场实证形态 —— 后端重启后驱动缓存 False 而 F64
+                # 硬件仍加载着信道在播, 旧代码于是一条停止命令都不发、还返回 True 报"干净
+                # 断开", 而 F64 **继续发射**(暗室里没人知道)。这正是 start_emulation /
+                # _ensure_topology 早就写过的同一条教训 (冷缓存不做 gate) 在断开路的漏网。
+                # 判据换成 STATE?: RUNNING → 必停; 值读不到 → 也停 (无法确认就按最坏情况
+                # 处理, GOS 幂等, 多发一条的代价远小于让仪器带着功率跑); STOPPED/CLOSED →
+                # 已停, 跳过 (省一次 GOS, 也避免在 CLOSED 上制造无谓错误条目)。
+                #
+                # ⚠ 但**传输层失败要单独摘出来**(agent F2): "值读不到就保守发停止"只在链路
+                # 通的时候成立。链路根本不通时 (掉线 / ATE 服务挂死 —— 恰恰是最常按断开的
+                # 场景), GOS 和 CLOSE 压根到不了仪器, 只是让 disconnect 白等 4 条命令
+                # × (VISA 超时 + 排水 + 可能一次重连 TCP connect)。而 `POST /hal/reload`
+                # 持 HAL 生命周期锁串行调各驱动 disconnect —— 那就是现场"F64 掉线后点重载,
+                # 界面卡死"。链路已断时直接跳到清理。
+                #
+                # ⚠⚠ 门判定一律用**复查后的生效状态** `_eff`, 不是首读 `_live` (Codex P1,
+                # 与 start/stop 同一母题 —— 那两处已修, 这里当时漏了)。首读是错位假象 CLOSED
+                # 而锁内复查读到 RUNNING 时, 照首读判会**同时跳过 GOS 和 CLOSE**, 然后报
+                # "干净断开"并释放连接 —— 而仪器还在发射。复查存在的意义就是别信那一下。
+                _tr: Dict[str, bool] = {}
+                _live = await self._query_simulation_state(transport=_tr)
+                _, _eff = await self._apply_state_truth_confirmed(_live)
+                if _tr.get("failed"):
+                    # ⚠ 跳过命令是对的, 但**返回值必须如实降级** (agent R3): 链路断的时候
+                    # 我们比"GOS 被拒"更没资格说"已确认停止" —— 命令根本没发出去。报 True
+                    # 会让 disconnect_all 的结果表 / HAL 重载日志显示"F64 已干净断开",
+                    # 而它可能还在发射。这条契约在本函数下面那段注释里 (Codex #206 R2)。
+                    stop_confirmed = False
                     logger.warning(
-                        "[F64] disconnect: stop_emulation 被拒 — 连接将断开, "
-                        "但 F64 可能仍在运行/发射, 需现场确认"
+                        "[F64] disconnect: STATE? 传输层失败 (链路已断/仪器无应答) — "
+                        "跳过 GOS/CLOSE (发了也到不了仪器) 并如实报未确认停止, "
+                        "F64 可能仍在运行/发射"
                     )
-            # 卸载同理不看冷缓存 (同一门的另一半): 缓存 None 而仪器加载着时旧代码不发
-            # CLOSE, 仿真留在仪器里。STATE? 已能分辨 —— 只有明确 CLOSED (=未加载) 才跳过;
-            # 值读不到时也发 (CLOSE 幂等, 未加载时至多进一条错误条目, 而漏关会留残留
-            # 状态)。传输层已断时同上不发 (到不了仪器, 只是白等一轮超时)。
-            if not _tr.get("failed") and _live != "CLOSED":
-                await self._write("DIAG:SIMU:CLOSE")
-        except Exception as e:
-            stop_confirmed = False
-            logger.warning(f"[F64] Cleanup during disconnect: {e}")
-        finally:
-            # disconnect 终态**无条件**全清 6 字段放 finally (F2: 含 _bypass_mode —— 它是
-            # 唯一 disconnect+connect 都曾漏清的字段, 跨会话残留)。即使 DIAG:SIMU:CLOSE 抛
-            # 异常走 except 也不残留 stale (堵 failed-CLOSE→不重连→跑一致性网 窗口)。
-            self._apply_session_reset()
+                elif _eff is None or _eff not in ("STOPPED", "CLOSED"):
+                    # Codex #206 R2: GOS 被拒 (SYST:ERR-only 失败) 时不能报"干净
+                    # 断开" — 断开照样继续 (重载场景必须能断), 但如实降返回值,
+                    # 让 HAL 重载/关闭日志暴露 "F64 可能仍在发射"。
+                    logger.info(
+                        f"[F64] disconnect: STATE?={_eff} — 断开前先停止播放"
+                    )
+                    stop_confirmed = await self.stop_emulation()
+                    if not stop_confirmed:
+                        logger.warning(
+                            "[F64] disconnect: stop_emulation 被拒 — 连接将断开, "
+                            "但 F64 可能仍在运行/发射, 需现场确认"
+                        )
+                # 卸载同理不看冷缓存 (同一门的另一半): 缓存 None 而仪器加载着时旧代码不发
+                # CLOSE, 仿真留在仪器里。STATE? 已能分辨 —— 只有明确 CLOSED (=未加载) 才跳过;
+                # 值读不到时也发 (CLOSE 幂等, 未加载时至多进一条错误条目, 而漏关会留残留
+                # 状态)。传输层已断时同上不发 (到不了仪器, 只是白等一轮超时)。
+                if not _tr.get("failed") and _eff != "CLOSED":
+                    await self._write("DIAG:SIMU:CLOSE")
+            except Exception as e:
+                stop_confirmed = False
+                logger.warning(f"[F64] Cleanup during disconnect: {e}")
+            finally:
+                # disconnect 终态**无条件**全清 6 字段放 finally (F2: 含 _bypass_mode ——
+                # 它是唯一 disconnect+connect 都曾漏清的字段, 跨会话残留)。即使
+                # DIAG:SIMU:CLOSE 抛异常走 except 也不残留 stale (堵 failed-CLOSE→不重连
+                # →跑一致性网 窗口)。
+                self._apply_session_reset()
 
-        # 释放本地资源。⚠ 整段仍在 `_tearing_down` 保护内 (agent U2): 这里的 await 同样
-        # 可能撞超时 → 排水失败 → 给一个**正在关闭**的连接重开 socket (TCP 握手在黑洞 IP
-        # 下能阻塞数十秒, 而 /hal/reload 串行调各驱动 disconnect)。复位放在本段的 finally,
-        # 保护窗口才覆盖整个拆卸过程。
-        try:
+            # 释放本地资源。⚠ 仍在 `_tearing_down` 保护内 (agent U2): 这里的 await 同样
+            # 可能撞超时 → 排水失败 → 给一个**正在关闭**的连接重开 socket (TCP 握手在
+            # 黑洞 IP 下能阻塞数十秒, 而 /hal/reload 串行调各驱动 disconnect)。
             if self._visa_resource:
                 try:
                     await asyncio.to_thread(self._visa_resource.close)
@@ -1745,11 +1755,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 except Exception:
                     pass
         finally:
+            # 最外层 finally: 被取消 (CancelledError) 也走到这里, 不留半死实例。
             self._visa_resource = None
             self._rm = None
             self._tearing_down = False      # 拆卸结束 (含被取消/抛异常的路径)
             self._status = InstrumentStatus.DISCONNECTED
-        # running/pipeline/identity/bypass 已在上面 finally 的 _apply_session_reset 全清
+        # running/pipeline/identity/bypass 已在内层 finally 的 _apply_session_reset 全清
         return stop_confirmed
 
     def readiness_metadata(self) -> Dict[str, Any]:

@@ -626,3 +626,31 @@ class TestJudgementUsesConfirmedState:
         d._active_output_ports = [1, 2]
         assert await d.stop_emulation() is True
         assert d._loaded_emulation_file is None     # 顺带确认卸载已落
+
+
+class TestDisconnectUsesConfirmedState(TestJudgementUsesConfirmedState):
+    """★ Codex P1: disconnect 的两道门 (发不发 GOS / 发不发 CLOSE) 当时还在用**首读值**
+    —— start/stop 那两处已经改成用复查后的生效状态, 唯独这里漏了 (同一母题第三个站点)。
+
+    后果最直接: 首读是错位假象 CLOSED、锁内复查读到 RUNNING 时, 照首读判会**同时跳过
+    GOS 和 CLOSE**, 然后报"干净断开"并释放连接 —— 而 F64 还在发射。"""
+
+    async def test_disconnect_stops_when_confirm_reveals_running(self):
+        d, writes = _drv(state=["CLOSED", "RUNNING", "STOPPED"])
+        d._active_input_ports = [1, 2]
+        d._active_output_ports = [1, 2]
+        d._visa_resource = MagicMock()
+        ok = await d.disconnect()
+        assert "DIAG:SIMU:GOS" in writes, "按被否决的首读 CLOSED 跳过了停止 — F64 仍在发射"
+        assert "DIAG:SIMU:CLOSE" in writes, "同理跳过了卸载"
+        assert ok is True   # GOS 后 fake 报 STOPPED → 确认停住
+
+    async def test_disconnect_skips_when_confirmed_closed(self):
+        """反向: 复查也是 CLOSED → 确实没加载, 两道门都该跳过 (别白发命令)。"""
+        d, writes = _drv(state=["CLOSED", "CLOSED"])
+        d._active_input_ports = [1, 2]
+        d._active_output_ports = [1, 2]
+        d._visa_resource = MagicMock()
+        await d.disconnect()
+        assert "DIAG:SIMU:GOS" not in writes
+        assert "DIAG:SIMU:CLOSE" not in writes
