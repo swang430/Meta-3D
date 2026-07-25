@@ -657,6 +657,10 @@ class TestTearingDownFlagLifecycle:
             await d.disconnect()
         assert d._tearing_down is False, "被取消后拆卸标志卡住 — 实例永久失去自愈能力"
         assert d._visa_resource is None, "被取消后还挂着 VISA 句柄"
+        # ★ Codex P1: **置 None ≠ 关掉 socket**。取消跳过了真正 close 的那段, 只丢引用
+        # 就是把关闭时机交给 GC —— 而 3334 同一时刻只容一条远程 socket (手册 §1.1.2.3),
+        # 泄漏一条就挡死下一次 connect / HAL 重载。原断言只查引用, 抓不到这个。
+        assert primary.closed is True, "被取消后 socket 没关 — 会挡住下次连接"
 
 
 class TestTearingDownCoversWholeTeardown:
@@ -680,5 +684,8 @@ class TestTearingDownCoversWholeTeardown:
         d._query = _noop  # type: ignore[assignment]
         d._write = _noop  # type: ignore[assignment]
         await d.disconnect()
-        assert seen == [True], f"尾段释放资源时保护窗口已提前关闭: {seen}"
+        # **第一次** close (正常路径的尾段释放) 必须发生在保护窗口内。
+        # 之后 finally 还会幂等补关一次 (Codex P1 的兜底: 取消跳过尾段时也不能泄漏
+        # socket), 那次标志已复位 —— 属于预期, 所以只钉第一次。
+        assert seen and seen[0] is True, f"尾段释放资源时保护窗口已提前关闭: {seen}"
         assert d._tearing_down is False, "拆卸结束后标志没复位"

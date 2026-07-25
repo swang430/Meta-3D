@@ -1756,10 +1756,28 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     pass
         finally:
             # 最外层 finally: 被取消 (CancelledError) 也走到这里, 不留半死实例。
+            #
+            # ⚠ **置 None 不等于关掉 socket** (Codex P1): 取消若发生在前面的 STATE?/GOS/
+            # CLOSE await 上, 上面那段真正 close 的代码整个被跳过, 这里只丢引用 = 让
+            # Python 的 GC 去决定何时(甚至是否)关闭底层会话。而 F64 的 3334 端口
+            # **同一时刻只容一条远程 socket**, 手册 §1.1.2.3 原文 "The socket will stay
+            # open until closed; error situations might leave the socket open thus
+            # preventing further communication" —— 泄漏一条就挡死下一次 connect / 重载。
+            # 所以先在本地留住句柄、**同步**关一次(幂等: 正常路径已关过, 再关抛异常吞掉),
+            # 再清字段。取消展开期间不 await (新 await 会立刻再抛 CancelledError)。
+            _leaked = self._visa_resource
             self._visa_resource = None
             self._rm = None
             self._tearing_down = False      # 拆卸结束 (含被取消/抛异常的路径)
             self._status = InstrumentStatus.DISCONNECTED
+            if _leaked is not None:
+                try:
+                    _leaked.close()
+                except Exception:
+                    pass                     # 已关 / 会话已死都无所谓, 目的是别泄漏
+            # ⚠ 这里**不调** `self._rm.close()`: RM 是 pyvisa 单例, 关它会连带关闭
+            # FS16 / 频谱仪 / 射频开关的会话 (F64R-8 记录的既有地雷)。关掉本驱动自己的
+            # resource 就已经释放了 3334 那条 socket, 足够解本 P1。
         # running/pipeline/identity/bypass 已在内层 finally 的 _apply_session_reset 全清
         return stop_confirmed
 
