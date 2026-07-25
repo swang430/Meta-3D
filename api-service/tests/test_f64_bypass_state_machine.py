@@ -52,7 +52,7 @@ def _make_driver(*, initial_state="STOPPED"):
             _sim["state"] = "STOPPED"     # 手册 §20.4.6.25: 进旁路 → 仿真暂停
         visa.write(cmd)
 
-    async def _q(cmd, timeout=None):
+    async def _q(cmd, timeout=None, **_kw):
         return visa.query(cmd)
 
     drv._write = _w  # type: ignore[assignment]
@@ -169,7 +169,7 @@ class TestStaticPlaybackMutex:
         drv._loaded_emulation_file = "X.smu"
         err_q = ['-113,"Undefined header (stale)"']  # 排水消费后队列即净
 
-        def _q(cmd):
+        def _q(cmd, **_kw):
             if cmd == "*OPC?":
                 return "1"
             if cmd == "DIAG:SIMU:STATE?":
@@ -229,7 +229,7 @@ class TestStaticPlaybackMutex:
         drv._emulation_running = True
         err_q = ['-113,"Undefined header (stale)"']
 
-        def _q(cmd):
+        def _q(cmd, **_kw):
             if cmd == "*OPC?":
                 return "1"
             if cmd == "DIAG:SIMU:STATE?":
@@ -247,7 +247,7 @@ class TestStaticPlaybackMutex:
         drv, visa = _make_driver()
         err_q = ['-221,"Settings conflict (stale)"']
 
-        def _q(cmd):
+        def _q(cmd, **_kw):
             if cmd == "*OPC?":
                 return "1"
             if cmd == "SYST:ERR?":

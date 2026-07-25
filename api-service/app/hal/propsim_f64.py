@@ -4479,11 +4479,18 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     await self._drain_after_timeout(cmd)
                 raise
 
-    async def _do_query(self, cmd: str, timeout: Optional[int] = None) -> str:
-        """发送 SCPI 查询命令并返回响应 — 互斥/排水语义同 `_do_write`。"""
+    async def _do_query(
+        self, cmd: str, timeout: Optional[int] = None, *, note_success: bool = True
+    ) -> str:
+        """发送 SCPI 查询命令并返回响应 — 互斥/排水语义同 `_do_write`。
+
+        `note_success=False` 透传给底层 (基类 `_query(cmd, **kwargs)` 本就转发 kwargs),
+        供**清错误队列**这类"不算业务恢复"的读使用 —— 见 `_note_io_success`。"""
         async with self._scpi_lock:
             try:
-                return await self._do_query_unlocked(cmd, timeout)
+                return await self._do_query_unlocked(
+                    cmd, timeout, note_success=note_success
+                )
             except Exception as e:
                 if self._is_visa_timeout(e):
                     await self._drain_after_timeout(cmd)
@@ -4669,7 +4676,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         False)。F64 即便文件缺失/损坏 (或早期错端口) 也会对 *OPC? 答 "1", 唯一
         可靠的失败信号是 SYST:ERR? (-200 "No simulation opened" / -300)。
         """
-        err = (await self._query("SYST:ERR?")).strip()
+        # `note_success=False` 同 `_drain_errors` (F64R-9 + 审查 F2): 这是**同一个
+        # `SYST:ERR?` 读**、同一类证据, 而且就在同一批事务里紧挨着 (
+        # `_gated_write_transaction` = drain → 写 → _first_error)。只堵 drain 不堵这里,
+        # 事务的净效果照样解冻 —— 实测: drain 刚保住的冷却, 被本方法一条查询抹成 0。
+        err = (await self._query("SYST:ERR?", note_success=False)).strip()
         code_str = err.split(",", 1)[0].strip()
         try:
             if int(code_str) == 0:
@@ -4687,11 +4698,26 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         确保之后的 gate 只评估本次操作产生的错误 (Codex on PR #93)。与 _check_errors
         (drain + WARNING + 写 _last_error) 的区别: 本方法静默清队列、不污染 _last_error。
         有界 (防 misbehaving 仪器死循环)。
+
+        ⚠ **本方法的查询不算"会话恢复了"** (F64R-9, 故传 `note_success=False`)。
+        `_note_io_success` 挂在底层 IO 上, 任何一次读成功都会解冻重连冷却 —— 但**清队列
+        的读不能当作业务恢复的证据**: 会话错位时 `SYST:ERR?` 恰恰是**读得回来**且不 clean
+        的 (那正是要清它的原因), 于是每清一次就把限流门打开一次。
+        影响面 (立项时低估过): 本方法有 13 个调用点, 其中 `_gated_write_transaction` 被
+        **10 个参数设置方法**共用, 而路损校准是 `for probe_id in probe_ids` **逐探头循环**
+        (32 探头 × 2 极化) 且每轮起/停 tone 各调一次。
+
+        ⚠⚠ **抑制必须落在 IO 原语上, 不能在本方法外层"快照 + 还原"** (审查 P1, 实测):
+        真正的风暴场景是**排水的第一条查询就撞上死 socket** → conn-lost → 重连 (设冷却)
+        → 重试成功 → `_note_io_success` 清零。外层快照拿到的是**进来之前**的值 (通常是 0),
+        `max` 救不回来 —— 而"进来前有冷却"往往恰恰意味着这次排水里没发生重连。
+        实测: 外层快照写法下, **单次** `_drain_errors` 内 socket 重建 **64 次** (循环上界),
+        且全程持 `_scpi_lock`; 改传 `note_success=False` 后降到 **1 次**。
         """
         drained: List[str] = []
         try:
             for _ in range(64):  # 正常队列 0-数条; 上界防御
-                err = (await self._query("SYST:ERR?")).strip()
+                err = (await self._query("SYST:ERR?", note_success=False)).strip()
                 code_str = err.split(",", 1)[0].strip()
                 try:
                     is_clean = int(code_str) == 0

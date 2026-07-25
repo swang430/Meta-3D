@@ -57,7 +57,7 @@ def _driver(
         if raise_on and raise_on in cmd:
             raise TimeoutError("VI_ERROR_TMO")
 
-    async def _q(cmd, timeout=None):
+    async def _q(cmd, timeout=None, **_kw):
         if cmd == "*OPC?":
             return "1"
         if cmd == "DIAG:SIMU:STATE?":
@@ -454,7 +454,7 @@ class TestIdentityResetNetFanout:
         drv._center_freq_programmed = True
         drv._emulation_running = True
 
-        async def _q_opc_timeout(cmd, timeout=None):
+        async def _q_opc_timeout(cmd, timeout=None, **_kw):
             if cmd == "*OPC?":
                 raise TimeoutError("VI_ERROR_TMO")
             return '0,"No error"'

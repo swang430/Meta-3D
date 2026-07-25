@@ -44,7 +44,7 @@ def _drv(*, state="RUNNING", err_on=None):
         last["cmd"] = cmd
         writes.append(cmd)
 
-    async def _q(cmd, timeout=None):
+    async def _q(cmd, timeout=None, **_kw):
         if cmd == "*OPC?":
             return "1"
         if cmd == "DIAG:SIMU:STATE?":
@@ -189,7 +189,7 @@ class TestConfirmClosedLoop:
         seen: list[str] = []
         _orig = d._query
 
-        async def _q(cmd, timeout=None):
+        async def _q(cmd, timeout=None, **_kw):
             seen.append(cmd)
             return await _orig(cmd, timeout)
 
@@ -451,7 +451,7 @@ class TestDisconnectTransportFailure:
         d, writes = _drv(state="STOPPED")
         d._visa_resource = MagicMock()
 
-        async def _q(cmd, timeout=None):
+        async def _q(cmd, timeout=None, **_kw):
             raise pyvisa.errors.VisaIOError(0xBFFF00B5)   # VI_ERROR_CONN_LOST
 
         d._query = _q  # type: ignore[assignment]
@@ -593,7 +593,7 @@ class TestTransportFailureShapes:
         d, writes = _drv(state="STOPPED")
         d._visa_resource = MagicMock()
 
-        async def _q(cmd, timeout=None):
+        async def _q(cmd, timeout=None, **_kw):
             raise exc_factory()
 
         d._query = _q  # type: ignore[assignment]
@@ -622,7 +622,7 @@ class TestTransportFailureShapes:
         d, writes = _drv(state="STOPPED")
         d._visa_resource = MagicMock()
 
-        async def _q(cmd, timeout=None):
+        async def _q(cmd, timeout=None, **_kw):
             raise exc_factory()
 
         d._query = _q  # type: ignore[assignment]
@@ -894,7 +894,7 @@ class TestUnconfirmedTeardownKeepsWarning:
         d, _ = _drv(state="RUNNING")
         d._visa_resource = MagicMock()
 
-        async def _q(cmd, timeout=None):
+        async def _q(cmd, timeout=None, **_kw):
             raise pyvisa.errors.VisaIOError(0xBFFF00B5)   # CONN_LOST
 
         d._query = _q  # type: ignore[assignment]

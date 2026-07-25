@@ -106,7 +106,7 @@ def _driver(*, info="4,128,32", groups=None, err_on=None,
         elif cmd.startswith("CALC:FILT:FILE"):
             sim_state[0] = "STOPPED"
 
-    async def _query(cmd, timeout=None):
+    async def _query(cmd, timeout=None, **_kw):
         if err_on and err_on in cmd:
             raise RuntimeError(f"boom on {cmd}")
         if "SYST:ERR" in cmd:
@@ -399,7 +399,7 @@ class TestTopologyClearedOnUnload:
         await drv._readback_topology()
         assert drv._active_outputs == 32
 
-        async def _query_err(cmd, timeout=None):
+        async def _query_err(cmd, timeout=None, **_kw):
             if "SYST:ERR" in cmd:
                 return '-200,"No simulation opened"'
             if cmd == "DIAG:SIMU:STATE?":
@@ -420,7 +420,7 @@ class TestTopologyClearedOnUnload:
         await drv._readback_topology()
         assert drv._active_outputs == 32
 
-        async def _q_no_info(cmd, timeout=None):
+        async def _q_no_info(cmd, timeout=None, **_kw):
             if "MODEL:INFO?" in cmd:
                 raise RuntimeError("回读超时")
             if "SYST:ERR" in cmd:
@@ -446,7 +446,7 @@ class TestTopologyClearedOnUnload:
         old_reprs = list(drv._group_repr_channels or [])
         assert old_reprs
 
-        async def _q_no_group(cmd, timeout=None):
+        async def _q_no_group(cmd, timeout=None, **_kw):
             if cmd == "DIAG:SIMU:MODEL:INFO?":
                 return "1,2,2"           # 新仿真的三值
             if cmd == "GROUP:GET?":
@@ -589,7 +589,7 @@ class TestGroupLoopFailureModes:
         """GROUP:GET? 该回单个数字; 回成列表 = 回复串线 → 判读不到。"""
         drv, _ = _driver(info="1,1,1")
 
-        async def _q(cmd, timeout=None):
+        async def _q(cmd, timeout=None, **_kw):
             if cmd == "GROUP:GET?":
                 return "1,2,3"                 # 列表形态, 不是单个组数
             if cmd == "DIAG:SIMU:MODEL:INFO?":
@@ -658,7 +658,7 @@ class TestColdCacheOnDemandReadback:
         # 模拟后端重启: 缓存全空, 但仪器仍在 STOPPED (加载着仿真)
         drv._clear_topology()
 
-        async def _q(cmd, timeout=None):
+        async def _q(cmd, timeout=None, **_kw):
             if cmd == "DIAG:SIMU:STATE?":
                 return "STOPPED"                  # 仿真还在, 只是驱动忘了
             return await _orig_q(cmd, timeout)
@@ -776,7 +776,7 @@ class TestPublicEnsureTopology:
         drv._clear_topology()                         # 冷缓存
         _orig_q = drv._query
 
-        async def _q(cmd, timeout=None):
+        async def _q(cmd, timeout=None, **_kw):
             if cmd == "DIAG:SIMU:STATE?":
                 return "RUNNING"                      # 硬件仍加载着仿真在播
             if "MEAS:RES:GET?" in cmd:
@@ -795,7 +795,7 @@ class TestPublicEnsureTopology:
         drv._clear_topology()
         probes = {"n": 0}
 
-        async def _q(cmd, timeout=None):
+        async def _q(cmd, timeout=None, **_kw):
             if cmd == "DIAG:SIMU:STATE?":
                 probes["n"] += 1
                 return "RUNNING"
@@ -841,7 +841,7 @@ class TestPublicEnsureTopology:
         alive = {"v": False}
         _orig_q = drv._query
 
-        async def _q(cmd, timeout=None):
+        async def _q(cmd, timeout=None, **_kw):
             if cmd == "DIAG:SIMU:STATE?":
                 return "RUNNING" if alive["v"] else "CLOSED"
             return await _orig_q(cmd, timeout)
@@ -874,7 +874,7 @@ class TestPublicEnsureTopology:
 
         _orig_q = drv._query
 
-        async def _q(cmd, timeout=None):
+        async def _q(cmd, timeout=None, **_kw):
             if cmd == "DIAG:SIMU:STATE?":
                 return "RUNNING"                    # 仿真还在跑
             return await _orig_q(cmd, timeout)

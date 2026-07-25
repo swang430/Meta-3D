@@ -73,7 +73,7 @@ def _make_driver(config=None, channels=4, *, groups=None):
     async def _async_write(cmd, timeout=None):
         visa.write(cmd)
 
-    async def _async_query(cmd, timeout=None):
+    async def _async_query(cmd, timeout=None, **_kw):
         return visa.query(cmd)
 
     drv._write = _async_write  # type: ignore[assignment]
@@ -172,7 +172,7 @@ class TestCentDispatchOnlyWhenExplicit:
             if cmd.startswith("CALC:FILT:CENT:CH"):
                 queue.append('-222,"Data out of range"')
 
-        async def _q(cmd, timeout=None):
+        async def _q(cmd, timeout=None, **_kw):
             if cmd == "*OPC?":
                 return "1"
             if cmd == "SYST:ERR?":
@@ -225,7 +225,7 @@ class TestCentDispatchOnlyWhenExplicit:
             if cmd.startswith("CALC:FILT:CENT:CH"):
                 queue.append('-222,"Data out of range"')
 
-        async def _q(cmd, timeout=None):
+        async def _q(cmd, timeout=None, **_kw):
             if cmd == "*OPC?":
                 return "1"
             if cmd == "SYST:ERR?":
@@ -282,7 +282,7 @@ class TestCentDispatchOnlyWhenExplicit:
             if cmd.startswith("CALC:FILT:CENT:CH"):
                 queue.append('-222,"Data out of range"')
 
-        async def _q(cmd, timeout=None):
+        async def _q(cmd, timeout=None, **_kw):
             if cmd == "*OPC?":
                 return "1"
             if cmd == "SYST:ERR?":
@@ -352,7 +352,7 @@ class TestCentDispatchOnlyWhenExplicit:
             if cmd.startswith("CALC:FILT:FILE"):
                 queue.append('-200,"No simulation opened"')  # load 门被拒
 
-        async def _q(cmd, timeout=None):
+        async def _q(cmd, timeout=None, **_kw):
             if cmd == "*OPC?":
                 return "1"
             if cmd == "SYST:ERR?":
@@ -409,7 +409,7 @@ class TestCentDispatchOnlyWhenExplicit:
         async def _w(cmd, timeout=None):
             visa.write(cmd)
 
-        async def _q(cmd, timeout=None):
+        async def _q(cmd, timeout=None, **_kw):
             return "1" if cmd == "*OPC?" else '0,"No error"'
 
         drv._visa_resource = visa
@@ -436,7 +436,7 @@ class TestCentDispatchOnlyWhenExplicit:
             if cmd == "DIAG:SIMU:CLOSE":
                 raise RuntimeError("VISA session dropped on CLOSE")
 
-        async def _q(cmd, timeout=None):
+        async def _q(cmd, timeout=None, **_kw):
             return "1" if cmd == "*OPC?" else '0,"No error"'
 
         drv._visa_resource = visa

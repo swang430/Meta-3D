@@ -67,7 +67,7 @@ def _make_driver(
     async def _async_write(cmd, timeout=None):
         visa_mock.write(cmd)
 
-    async def _async_query(cmd, timeout=None):
+    async def _async_query(cmd, timeout=None, **_kw):
         return visa_mock.query(cmd)
 
     drv._write = _async_write  # type: ignore[assignment]
@@ -164,7 +164,7 @@ class TestGetMetrics:
         drv, visa = _make_driver(tx_antennas=2, rx_antennas=1,
                                  active_inputs=2, active_outputs=2)
 
-        def _query(cmd):
+        def _query(cmd, **_kw):
             if "OUTP:MEAS:RES:GET? 1" in cmd:
                 return "not ready"
             return "-15.0"
@@ -182,7 +182,7 @@ class TestGetMetrics:
         drv, visa = _make_driver(tx_antennas=2, rx_antennas=1,
                                  active_inputs=2, active_outputs=2)
 
-        def _query(cmd):
+        def _query(cmd, **_kw):
             if "INP:MEAS:RES:GET? 2" in cmd:
                 raise RuntimeError("input 2 down")
             return "-10.0"
@@ -222,7 +222,7 @@ class TestGetChannelState:
     async def test_static_fields_always_returned(self):
         drv, visa = _make_driver(tx_antennas=2, rx_antennas=2)
         # Force one of the SCPI queries to fail
-        def _query(cmd):
+        def _query(cmd, **_kw):
             if "DIAG:SIMU:MODEL:STATIC?" in cmd:
                 raise RuntimeError("scpi timeout")
             return "1.2.3"
@@ -240,7 +240,7 @@ class TestGetChannelState:
     @pytest.mark.asyncio
     async def test_no_query_errors_key_when_all_succeed(self):
         drv, visa = _make_driver()
-        def _query(cmd):
+        def _query(cmd, **_kw):
             if "STATIC?" in cmd:
                 return "0"
             # F64R-1: STATE? 必须答**合法七态**之一 —— 本 fake 原先对它也返回
@@ -278,7 +278,7 @@ class TestAutosetInputLevel:
         # First query: INP:LEV:MEAS? response. Second query: *OPC?.
         responses = iter(["-15.0,8.5", "1"])
 
-        async def _async_query(cmd, timeout=None):
+        async def _async_query(cmd, timeout=None, **_kw):
             visa.query(cmd, timeout=timeout)
             return next(responses)
 
@@ -352,7 +352,7 @@ class TestNotReadyRetry:
         drv, visa = _make_driver()
         responses = iter(["not ready", "not ready", "-12.5"])
 
-        async def _async_query(cmd, timeout=None):
+        async def _async_query(cmd, timeout=None, **_kw):
             visa.query(cmd)
             return next(responses)
 
@@ -376,7 +376,7 @@ class TestNotReadyRetry:
         drv, visa = _make_driver()
         responses = iter(["not ready", "1.5,30.0"])
 
-        async def _async_query(cmd, timeout=None):
+        async def _async_query(cmd, timeout=None, **_kw):
             visa.query(cmd)
             return next(responses)
 
@@ -390,7 +390,7 @@ class TestNotReadyRetry:
         drv, visa = _make_driver()
         call_count = {"i": 0}
 
-        async def _async_query(cmd, timeout=None):
+        async def _async_query(cmd, timeout=None, **_kw):
             call_count["i"] += 1
             if call_count["i"] == 1:
                 raise RuntimeError("transient timeout")

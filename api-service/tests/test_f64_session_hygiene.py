@@ -196,7 +196,7 @@ class TestInpDeferredTimeout:
         drv._visa_resource = MagicMock()
         seen: List[Optional[int]] = []
 
-        async def _fake_query(cmd, timeout=None):
+        async def _fake_query(cmd, timeout=None, **_kw):
             seen.append(timeout)
             return "-10.5,8.2"
 
@@ -214,7 +214,7 @@ class TestAutosetSubsetTimeout:
         drv._visa_resource = MagicMock()
         seen: List[Optional[int]] = []
 
-        async def _fake_query(cmd, timeout=None):
+        async def _fake_query(cmd, timeout=None, **_kw):
             if cmd == "*OPC?":
                 seen.append(timeout)
                 return "1"
@@ -240,7 +240,7 @@ class TestOutputFrozenAnnotation:
         # fake 要按命令分流, 由 `_state` 驱动本用例想造的运行态。
         _state = {"v": "STOPPED"}
 
-        async def _fake_query(cmd, timeout=None):
+        async def _fake_query(cmd, timeout=None, **_kw):
             if cmd == "DIAG:SIMU:STATE?":
                 return _state["v"]
             return "-20.0"
