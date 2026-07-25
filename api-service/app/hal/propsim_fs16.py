@@ -220,11 +220,9 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
                 await asyncio.to_thread(self._visa_resource.close)
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"[FS16] VISA close error: {e}")
-        if self._rm:
-            try:
-                self._rm.close()
-            except Exception:  # noqa: BLE001
-                pass
+        # ⚠ **不调** `self._rm.close()`: RM 是**进程级共享单例**, 关它会连带关掉其它仪表
+        # 的会话 (权威说明见 `app/hal/_visa_reconnect.py` 的「ResourceManager 所有权」一节)。
+        # 自己的 resource 上面已经关了, 下面只丢引用。
         self._visa_resource = None
         self._rm = None
         self._status = InstrumentStatus.DISCONNECTED
