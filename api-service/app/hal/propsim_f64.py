@@ -809,24 +809,34 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         加载态又(正确地)保留着, 快照就成了"CLOSED 却报着文件名"—— 恰恰是本 PR 定义为
         缺陷的那个自相矛盾组合, 只是从另一头产生。
 
-        ⚠⚠ **`always_confirm=True`: 判定路 (GO / GOS / disconnect) 必传** (Codex P1)。
-        复查最初只为"别误清加载态"而设, 于是用 `_has_load_state()` 当闸 —— 但 U1 之后
-        **判定也吃这个结果**了, 拿本地缓存决定要不要验证一个安全攸关的终态就成了洞:
-        驱动刚重启 → 加载态缓存**空** → 早退不复查 → 错位来的过期 `CLOSED` 直接生效
-        → `stop_emulation()` 当"已停"返回成功、`disconnect()` 同时跳过 GOS 和 CLOSE,
-        而仪器**可能仍在 RUNNING**。"冷缓存但硬件在播"正是本 PR 要支持的那个现场场景
-        (2026-07-21 实证), 判据绝不能建立在"我这边记不记得加载过"上。
-        监控读路 (1 Hz) 保持默认 `False`: 那里多一条 STATE? 是每秒成本, 而误信一拍
-        CLOSED 只影响这一秒的上报 (下一拍自愈), 且卸载本身另有 `_has_load_state()` 守门。
+        ⚠⚠ **`always_confirm=True`: 判定路 (GO / GOS / disconnect) 必传** —— 且它的含义是
+        **复查每一个用来判定的状态**, 不只 CLOSED (Codex P1, 连着两轮收敛到这):
+          · 第一轮: 复查最初只为"别误清加载态"而设, 于是用 `_has_load_state()` 当闸。
+            判定开始吃这个结果之后, 拿本地缓存决定要不要验证一个安全攸关的终态就成了洞
+            —— 驱动刚重启 → 缓存**空** → 不复查 → 过期 `CLOSED` 直接生效 →
+            `stop_emulation()` 报"已停"、`disconnect()` 跳过 GOS/CLOSE, 而仪器仍在跑。
+            "冷缓存但硬件在播"正是本 PR 要支持的现场场景 (2026-07-21 实证)。
+          · 第二轮 (本条): 只复查 CLOSED 还是不够 —— **会话错位送来的过期值不一定是
+            CLOSED**。七态白名单挡得住垃圾串, 挡不住"上一条命令的合法应答": 错位一拍
+            读到过期 `RUNNING` → GO 明明失败却判成功, 测量在**没有衰落**下跑; 读到过期
+            `STOPPED` → GOS 没停住却判成功, 下游直通序列在**仿真仍在播**时继续。既然
+            承认错位能造出假 CLOSED, 就没有理由认为它造不出假 RUNNING/STOPPED。
+        代价: GO/GOS/disconnect 各多**一条** STATE?(锁内, 低频、人/编排发起), 可忽略。
+        监控读路 (1 Hz) 保持默认 `False`: 那里多一条是每秒成本, 而误信一拍只影响这一秒
+        的上报 (下一拍自愈), 且卸载本身另有 `_has_load_state()` 守门。
+        `state is None` 不复查: 没读到就没什么可验证的, 判定侧本来就保守 fail-loud。
         """
-        if state != "CLOSED" or not (always_confirm or self._has_load_state()):
-            return self._apply_state_truth(state), state   # 非破坏性 → 直接落
+        _needs_confirm = state is not None and (
+            always_confirm or (state == "CLOSED" and self._has_load_state())
+        )
+        if not _needs_confirm:
+            return self._apply_state_truth(state), state
         async with self._scpi_lock:
             confirmed = await self._query_simulation_state()
-            if confirmed != "CLOSED":
+            if confirmed != state:
                 logger.warning(
-                    f"[F64] STATE?=CLOSED 未通过锁内复查 (复查={confirmed}) — "
-                    "判为会话错位/竞态假象, 不清加载态"
+                    f"[F64] STATE?={state} 未通过锁内复查 (复查={confirmed}) — "
+                    f"判为会话错位/竞态假象, 以复查值为准"
                 )
             return self._apply_state_truth(confirmed), confirmed
 

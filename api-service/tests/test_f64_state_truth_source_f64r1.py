@@ -196,8 +196,12 @@ class TestConfirmClosedLoop:
         d._query = _q  # type: ignore[assignment]
         await d.start_emulation()
         tail = [c for c in seen if c in ("*OPC?", "SYST:ERR?", "DIAG:SIMU:STATE?")]
-        # GO 之后的三步 (前面 drain 也发 SYST:ERR?, 取末尾三条)
-        assert tail[-3:] == ["*OPC?", "SYST:ERR?", "DIAG:SIMU:STATE?"], seen
+        # GO 之后: 闭环三步 (*OPC? → SYST:ERR? → STATE?) + 判定路强制的**锁内复查**
+        # 再读一次 STATE? (Codex P1: 错位送来的过期值不一定是 CLOSED, 每个用于判定的
+        # 状态都要复查)。取末尾四条。
+        assert tail[-4:] == [
+            "*OPC?", "SYST:ERR?", "DIAG:SIMU:STATE?", "DIAG:SIMU:STATE?"
+        ], seen
 
 
 # ───────────── 6. STATE? 七态白名单 (提交前审查 F2) ─────────────
@@ -733,3 +737,37 @@ class TestColdCacheStillConfirmsClosed(TestJudgementUsesConfirmedState):
         d._loaded_emulation_file = None
         m = await d.get_metrics()
         assert m.metrics["simulation_state"] == "CLOSED", "监控路不该为 CLOSED 多发一条复查"
+
+
+class TestStaleNonClosedAlsoConfirmed(TestJudgementUsesConfirmedState):
+    """★ Codex P1 (复查规则的最后一块): **会话错位送来的过期值不一定是 CLOSED**。
+
+    七态白名单挡得住垃圾串, 挡不住"上一条命令的**合法**应答"。错位一拍:
+      · GO 后读到过期 `RUNNING` → 明明没启动却判成功 → 测量在**没有衰落**下跑;
+      · GOS 后读到过期 `STOPPED` → 没停住却判成功 → 下游直通序列在**仿真仍在播**时继续。
+    既然承认错位能造出假 CLOSED (上一条), 就没有理由认为它造不出假 RUNNING/STOPPED ——
+    判定路的每一个状态都要复查。"""
+
+    async def test_start_rejects_stale_running(self):
+        d, _ = _drv(state=["RUNNING", "STOPPED"])   # 首读是过期的 RUNNING
+        assert await d.start_emulation() is False, "过期 RUNNING 被当成启动成功了"
+        assert d._emulation_running is False
+        assert "STOPPED" in (d._last_error or ""), d._last_error
+
+    async def test_stop_rejects_stale_stopped(self):
+        d, _ = _drv(state=["STOPPED", "RUNNING"])   # 首读是过期的 STOPPED
+        assert await d.stop_emulation() is False, "过期 STOPPED 被当成停住了 — 仍在播放"
+        assert d._emulation_running is True
+
+    async def test_disconnect_rejects_stale_stopped(self):
+        """过期 STOPPED → 若信了就跳过 GOS, 而仪器还在播。"""
+        d, writes = _drv(state=["STOPPED", "RUNNING", "STOPPED"])
+        d._visa_resource = MagicMock()
+        await d.disconnect()
+        assert "DIAG:SIMU:GOS" in writes, "信了过期 STOPPED — 没停就释放了连接"
+
+    async def test_consistent_reads_pass_through(self):
+        """两次读一致 (正常情况) → 照常判定, 不因复查改变结论。"""
+        d, _ = _drv(state="RUNNING")                 # 单值 fake: 两次都 RUNNING
+        assert await d.start_emulation() is True
+        assert d._emulation_running is True
