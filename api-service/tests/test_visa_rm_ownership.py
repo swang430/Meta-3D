@@ -19,6 +19,7 @@ resource 一起关掉 ⇒ 任何一个仪表 disconnect 调 `rm.close()`, 就把
 """
 from __future__ import annotations
 
+import ast
 import pathlib
 import re
 
@@ -95,6 +96,44 @@ _RM_CLOSE_CALL = re.compile(r"^\s*(?!#)[^#\n]*\b(?:_visa_rm|_rm)\.close\s*\(")
 
 def _hal_sources():
     return sorted(p for p in _HAL_DIR.glob("*.py") if p.name != "__init__.py")
+
+
+def _rm_owning_classes():
+    """AST 扫描全 HAL 目录, 返回 `({(module, 类名)}, {类外创建的 module})`。
+
+    "创建了 RM"= 调用了名为 `ResourceManager` 的东西 —— **属性调用**
+    (`pyvisa.ResourceManager(...)`) 与**裸调用** (`from pyvisa import ResourceManager`
+    之后的 `ResourceManager(...)`) 都认, 所以换 import 写法逃不掉。
+
+    ⚠ 已知边界: ① 嵌套类里的创建会同时算到外层类头上 (`ast.walk` 不区分层级) ——
+    宁可多报不漏报; ② 若 RM 由**模块级工厂函数**创建、类里只调工厂, 按类归属就看不见
+    —— 这种情况单独报出来让调用方 fail-loud, 而不是默默漏掉。"""
+    owners: set[tuple[str, str]] = set()
+    module_level: set[str] = set()
+
+    def _is_rm_call(node) -> bool:
+        if not isinstance(node, ast.Call):
+            return False
+        f = node.func
+        if isinstance(f, ast.Attribute):
+            return f.attr == "ResourceManager"
+        if isinstance(f, ast.Name):
+            return f.id == "ResourceManager"
+        return False
+
+    for path in _hal_sources():
+        tree = ast.parse(path.read_text())
+        in_class: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                for sub in ast.walk(node):
+                    if _is_rm_call(sub):
+                        owners.add((path.stem, node.name))
+                        in_class.add(id(sub))
+        for node in ast.walk(tree):
+            if _is_rm_call(node) and id(node) not in in_class:
+                module_level.add(path.stem)
+    return owners, module_level
 
 
 def _strip_comments(lines):
@@ -228,15 +267,27 @@ class TestDisconnectDoesNotKillPeers:
 
     def test_driver_table_covers_every_rm_owner(self):
         """★ 表本身**不能漏** —— 新加 VISA 驱动却忘了进表, 上面那条就默默少跑一个,
-        而"少跑"和"跑过且通过"在结果里长得一模一样。所以扫源码反查完备性。"""
-        listed = {m for m, _, _, _ in _RM_OWNING_DRIVERS}
-        actual = {
-            p.stem for p in _hal_sources()
-            if "pyvisa.ResourceManager(" in p.read_text()
-        }
-        assert actual == listed, (
-            "RM 持有者与行为测试表不一致 —— 新驱动请加进 `_RM_OWNING_DRIVERS`:\n"
-            f"  漏在表外: {sorted(actual - listed)}\n"
-            f"  表里多余: {sorted(listed - actual)}"
+        而"少跑"和"跑过且通过"在结果里长得一模一样。
+
+        ⚠ 判据按**类**核对, 不按模块名 (Codex 第三轮): 按模块名 + 字面量
+        `"pyvisa.ResourceManager(" in src` 有两个假绿洞 ——
+          · 已在表里的模块**新增第二个 RM 持有类** → 模块名集合仍相等, 新类不进参数化;
+          · 新驱动写 `from pyvisa import ResourceManager` / 起别名 → 字面量匹配不到,
+            模块压根不出现在 `actual` 里, 两边仍然相等。
+        改用 AST 找"**哪个类里创建了 ResourceManager**"(`pyvisa.ResourceManager(...)`
+        的属性调用和 `ResourceManager(...)` 的裸调用都认)。"""
+        listed = {(m, c) for m, c, _, _ in _RM_OWNING_DRIVERS}
+        owners, module_level = _rm_owning_classes()
+
+        assert not module_level, (
+            "有模块在**类之外**创建 ResourceManager (工厂函数 / 模块级单例) —— 本检查按类\n"
+            "归属, 覆盖不到这种写法, 会造成'新驱动未被行为测试覆盖但套件全绿'。\n"
+            "请把创建挪进驱动类, 或在此显式登记并说明如何保证覆盖:\n"
+            f"  {sorted(module_level)}"
+        )
+        assert owners == listed, (
+            "RM 持有类与行为测试表不一致 —— 新驱动请加进 `_RM_OWNING_DRIVERS`:\n"
+            f"  漏在表外: {sorted(owners - listed)}\n"
+            f"  表里多余: {sorted(listed - owners)}"
         )
 
