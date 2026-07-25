@@ -149,6 +149,28 @@ _GROUP_COUNT_HARD_MAX = 64
 # 就是每秒重跑整段回读并持锁 —— 真机不支持这几条命令时会把 SCPI 通道占死。
 _TOPOLOGY_RETRY_COOLDOWN_S = 30.0
 
+# F64R-1 (agent F1): VISA 会话重建的冷却窗口 (秒)。get_metrics 在 1 Hz broadcaster
+# 路上, 一轮 poll 有 STATE? + 逐输入口 + 逐输出口 + 拓扑读多条查询; 仪器慢/挂死时每条
+# 都超时, 每条超时都会经 _drain_after_timeout 走到升级重连 —— 无冷却则**一轮最多重建
+# N 次 socket** (实测 open_calls=7)。30s 内至多重建一次, 与拓扑读路同规格。
+_RECONNECT_COOLDOWN_S = 30.0
+
+# F64R-1 (agent F1): STATE? 查询的失败负缓存窗口 (秒)。STATE? 也在 1 Hz 路上, 挂死
+# 仪器每轮超时 → 排水 (最坏十几秒) 全程持锁。同拓扑读路: 上轮读失败则 30s 内不再查,
+# 退回缓存 + 标注降级 (读到真值 / 会话重建成功即清零, 允许立即恢复)。
+_STATE_QUERY_RETRY_COOLDOWN_S = 30.0
+
+# DIAG:SIMU:STATE? 的**全部**合法返回值 (User Reference §20.4.3.14 原文枚举):
+#   CLOSED   仿真未加载          OPENING  仿真加载中 (ATE+GUI 并发时可见)
+#   STOPPING 仿真停止中 (同上)    STOPPED  已加载未播放
+#   RUNNING  播放中              EDITING  编辑态 (CALC:FILT:EDIT 进入)
+#   CLOSING  卸载中
+# 白名单存在的理由见 `_query_simulation_state` —— STATE? 是运行态**唯一真值源**,
+# 会话错位时的迟到应答 (如 `0,"NO ERROR"`) 绝不能被当成一个"状态"写进缓存。
+_SIMULATION_STATES = frozenset({
+    "CLOSED", "OPENING", "STOPPING", "STOPPED", "RUNNING", "EDITING", "CLOSING",
+})
+
 # 拓扑相关 fail-loud 文案统一附带的逃生门提示。现场高压时不该靠记忆去翻文档找绕过
 # 开关 —— 尤其 `f64_output_gain_db` 这条路**没有** per-step 端口参数, topology_override
 # 是唯一解, 报错里不写就等于没有。**引用本常量, 别手抄副本** (抄了改常量不会同步)。
@@ -510,6 +532,17 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         # 回读 (5+3N 条) 并全程持锁 —— 不支持时每条还要吃 VISA 超时 + 排水, SCPI 通道
         # 直接被占死: 现场"打开 GUI 仪表盘 = 测试步骤发不出命令"。
         self._topology_retry_after: float = 0.0
+        # F64R-1 (agent F1): VISA 会话重建冷却时间戳 (monotonic 秒) —— 防高频轮询路上
+        # 每条超时都重建 socket。STATE? 查询失败负缓存时间戳 —— 防挂死仪器上每轮重跑
+        # 昂贵的 STATE?+排水。两者都在**连接健康度**维度, 与"由加载文件决定"的拓扑真值
+        # 无关, 故不进 _clear_topology / _apply_unload (会话重建成功时单独清零)。
+        self._reconnect_retry_after: float = 0.0
+        self._state_query_retry_after: float = 0.0
+        # 正在断开 (teardown) 标志: 断开路上撞超时不该再升级重建会话 —— 给一个马上要
+        # 关掉的连接重开 socket 没有意义, 而 `rm.open_resource` 在黑洞 IP 下的 TCP
+        # connect 能阻塞数十秒且全程持锁, 而 `POST /hal/reload` 是**串行**调各驱动
+        # disconnect 的 (agent R8: 现场"F64 掉线后点重载, 界面卡死")。
+        self._tearing_down: bool = False
         self._active_input_ports: Optional[List[int]] = None
         self._active_output_ports: Optional[List[int]] = None
         # 逻辑通道**号**列表 (GROUP:CHANNELS:GET? 逐组取并集)。同"端口号不保证 1..N"的
@@ -607,15 +640,240 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     # 全驱动推广 (GO 豁免 / path-loss / get_metrics 用这些回读) 留 F64R-1/F64R-2。
     # ===================================================================
 
-    async def _query_simulation_state(self) -> Optional[str]:
+    async def _query_simulation_state(
+        self, *, throttle: bool = False, transport: Optional[Dict[str, bool]] = None
+    ) -> Optional[str]:
         """DIAG:SIMU:STATE? → 归一化大写状态。§20.4.3.14: 全大写无引号,7 值
-        CLOSED/OPENING/STOPPING/STOPPED/RUNNING/EDITING/CLOSING。读不到 → None。"""
+        CLOSED/OPENING/STOPPING/STOPPED/RUNNING/EDITING/CLOSING。读不到 → None。
+
+        F64R-1 (agent F2) **白名单**: 只认这 7 个值, 其余一律 None + WARNING。
+        原先"strip+upper 即当状态"在**会话错位**下会出事: 3334 串线时这条 query 读到的
+        可能是上一条命令的迟到应答 (典型 `0,"NO ERROR"`), 归一化后成了一个非法"状态",
+        而本驱动**拿 STATE? 当运行态唯一真值源** —— 非法值会被 `!= "RUNNING"` 判成
+        "没在跑"并**写进缓存当真值**, 于是 GO/GOS 假失败、监控面谎报。白名单让错位
+        噪声退化成"没读到"(None), 走已有的保守分支 (fail-loud / 退回缓存 + 标注)。
+
+        F64R-1 (agent F1) **失败负缓存** (`throttle=True`, 只给 1 Hz 的 get_metrics 用):
+        仪器挂死时每次查询都要吃满 VISA 超时再走排水 (最坏十几秒, 全程持锁), 每秒重来
+        一次会把 SCPI 通道占死 —— 与拓扑读路同一母题、同一规格 (30s 静默期)。
+        人发起的路径 (GO/GOS 确认、load、旁路刷新) **一律不节流**: 它们本就低频, 且此刻
+        正需要真值。读到合法值 / 会话重建成功 → 立刻清零静默期。
+
+        `transport`: 传入一个 dict, 本方法会在**传输层失败**(VISA 超时 / 连接断) 时把
+        `transport["failed"]` 置 True。调用方据此区分两种"读不到" —— "链路通但值不可用"
+        (还能继续发命令) vs "链路根本不通"(再发什么都是白等一轮超时+排水, 见 disconnect)。
+        """
+        if throttle and time.monotonic() < self._state_query_retry_after:
+            return None
         try:
             raw = await self._query("DIAG:SIMU:STATE?")
         except Exception as e:  # noqa: BLE001
+            # ⚠ **超时不算"链路不通"** (Codex P1): `VI_ERROR_TMO` 的含义是"**设备太慢**",
+            # 不是"连接断了" —— 这条区分本来就写在 `_visa_reconnect.py` 的模块注释里
+            # (Codex #14 的教训), 我在加 transport 判定时违反了它。后果很实在: F64 只是
+            # 一时反应慢 (忙着加载 / 长操作) 而 STATE? 超时, 就被判成"链路已断" →
+            # disconnect **同时跳过 GOS 和 CLOSE** → 仿真继续跑, 而我们把连接释放走人,
+            # 仪器在暗室里还发着射。超时该走保守路 (照发停止/卸载, 顶多白等一轮)。
+            #
+            # 归入"链路不通"的只有**会话确实没了**的形态:
+            #   · VISA conn-lost 族 (VI_ERROR_CONN_LOST / INV_OBJECT / InvalidSession);
+            #   · `ConnectionError` 族 (Reset / Aborted / Refused / BrokenPipe) ——
+            #     Python 里这一支的语义就是"**对端没了**", 正好是我们要的边界。
+            #
+            # ⚠ 判据从 `OSError` 收窄到 `ConnectionError` (Codex P1 第二次收窄):
+            # `OSError` 太宽 —— `InterruptedError`(EINTR) / `BlockingIOError`(EAGAIN) /
+            # 各种本地资源错误都是它的子类, 却完全不代表对端断了; 判成断链就会跳过
+            # GOS/CLOSE 把**还在发射**的 F64 丢下。(`TimeoutError` 也是 `OSError` 子类,
+            # 收窄后自然被排除, 不必再单列。)
+            # 主机不可达 / 网络不可达 这类**裸 `OSError`(errno)** 是**故意不收**的:
+            # 它们确实多半意味着链路没了, 但漏判的代价只是这次断开多花几秒去发 GOS/CLOSE,
+            # 而误判的代价是仪器带着功率没人管 —— **保守方向只能偏向"多发命令"**。
+            if transport is not None and (
+                self._is_visa_conn_lost(e) or isinstance(e, ConnectionError)
+            ):
+                transport["failed"] = True
             logger.warning(f"[F64] DIAG:SIMU:STATE? 查询失败: {e}")
+            self._state_query_retry_after = (
+                time.monotonic() + _STATE_QUERY_RETRY_COOLDOWN_S
+            )
             return None
-        return raw.strip().upper() if raw and raw.strip() else None
+        state = raw.strip().upper() if raw and raw.strip() else None
+        if state not in _SIMULATION_STATES:
+            # 非法值不是"仪器有个我们不认识的状态", 而是"这条应答不是 STATE? 的"
+            # (会话错位 / 半截响应)。当作没读到, 别拿它当真值写缓存。
+            logger.warning(
+                f"[F64] DIAG:SIMU:STATE? 返回非法状态 {state!r} "
+                f"(合法: {'/'.join(sorted(_SIMULATION_STATES))}) — 当作读不到, 疑似会话错位"
+            )
+            self._state_query_retry_after = (
+                time.monotonic() + _STATE_QUERY_RETRY_COOLDOWN_S
+            )
+            return None
+        self._state_query_retry_after = 0.0   # 读到真值 → 解除静默期
+        return state
+
+    def _has_load_state(self) -> bool:
+        """驱动当前还记着"**仪器上有个仿真加载着**"的任何痕迹吗 —— CLOSED 判定要不要
+        触发破坏性卸载 (以及要不要为此多发一条复查) 的准入判据。
+
+        只看 `_loaded_emulation_file or _active_output_ports` 两个字段不够: 部分回读态
+        (`GROUP:OUTPUTS:GET?` 失败但 `GROUP:INPUTS:GET?` 成功) 下输出口是空的, 判据会说
+        "没有加载态"→ CLOSED 既不复查也不清 → `_active_input_ports` / `_active_channels`
+        等永久 stale, 而 get_metrics 会照着 stale 输入口去查电平。
+
+        ⚠ **边界 (agent T2, 实测踩过)**: 只收"**由已加载文件决定**"的字段, 不收
+        `configure()` 能在未加载时写入的**配置来源**字段 ——
+          · `_active_pipeline`: `configure({"pipeline": ...})` 不加载也能设。收了它,
+            纯配置状态下跑一轮 `get_metrics` 就会被判成"有加载态"→ 走破坏性卸载 →
+            **一次只读的监控把 configure 写的配置清掉了**, 日志还打出"驱动仍记着已加载
+            (None) — 疑似前面板关闭", 现场照这条去查"谁关了仿真"纯属误导。
+          · `_center_freq_programmed`: 同理是"我们下发过没有"的标志, 不是"仪器上有什么"。
+            (`_apply_unload` 清它是对的 —— 卸载后确实不再成立; 但它**不能**反过来当
+            "有东西可清"的证据。清理集合 ⊋ 判据集合, 两者不必对称。)
+        判据收的是**仪器侧事实**: 加载的文件名 + 回读来的拓扑/中心频。加新字段时按这条
+        边界归类, 别照着 `_apply_unload` 的清单无脑复制。"""
+        return bool(
+            self._loaded_emulation_file
+            or self._active_input_ports
+            or self._active_output_ports
+            or self._active_channel_numbers
+            or self._active_inputs
+            or self._active_outputs
+            or self._active_channels
+            or self._group_repr_channels
+            or self._readback_center_freq_mhz
+        )
+
+    def _apply_state_truth(self, state: Optional[str], *, allow_unload: bool = True) -> bool:
+        """把一次 `STATE?` 回读落到驱动缓存 —— **播放控制 / 监控 / 旁路三路**的运行态
+        写入口 (F64R-1)。加载路的 running 由自证的命令序列推 (CLOSE/FILE 已发即成立),
+        不经本方法, 见 `_apply_unload` 一族。
+
+        返回归一化后的"在不在跑"(state 为 None 时返回旧缓存值, 即"不知道就别改")。
+
+        为什么要收敛成一个方法 (memory clear-stale-state-enumerate-all-sources):
+        本方法有**两件**必须同时做的事, 分散内联必然漏其中一件 ——
+          ① 写 `_emulation_running` = (state == RUNNING);
+          ② state == CLOSED 时 `_apply_unload()` —— CLOSED 的手册定义是"仿真**未加载**"
+             (§20.4.3.14), 而 F64 支持本地 GUI 与远程 ATE 并发 (ATE AN §1.1), 所以
+             "我加载过、现在读到 CLOSED" = **别人把它卸载了**(前面板关闭 / 另一连接
+             CLOSE/*RST)。这是驱动能拿到的唯一"文件没了"信号; 只更新 running 而不清
+             加载态, 驱动就会带着**上一个仿真**的拓扑继续配端口 —— stale 拓扑比没有
+             拓扑更危险 (口数看着有效, 实际配到别的仿真的口上)。
+
+        ⚠ `allow_unload=False` 用于**语义未定义**的调用路: 旁路进出 (STATIC≠0) 时
+        STATE? 字面报什么手册没写 (七态里没有 BYPASS 态), 真机若在旁路下报 CLOSED,
+        一次校准往返就会把 `_loaded_emulation_file` 清掉且**无法自动重建**(只能重新
+        load)。在 F64R-7 真机验证之前, 那条路只取 running、不做破坏性清理。
+
+        ⚠ 卸载是**破坏性**的 (清 identity → 频率一致性网把 F64 记成"未报告", 而
+        `frequency_consistency` 对 None 是**跳过不算不一致** → strict 频率门静默失效)。
+        所以只在**确实有东西可清**时才动手: 已经空了还调 `_apply_unload()` 不仅白做,
+        还会经 `_clear_topology()` 把拓扑读路的 30 s 失败静默期重置成 0 —— CLOSED 稳态
+        (连着但没加载, bring-up 期间完全正常) 下冷却就永远失效, 变成每秒重跑补读 +
+        每秒一条 WARNING 灌日志面板。高频轮询路调用前还要**锁内复查一次**, 见
+        `_apply_state_truth_confirmed`。
+        """
+        if state is None:
+            return self._emulation_running       # 读不到 → 不猜, 保留旧缓存
+        running = (state == "RUNNING")
+        self._emulation_running = running
+        if state == "CLOSED" and allow_unload:
+            # 只有"驱动还记着加载态"才是真的状态**变化**, 否则 no-op (见 docstring)
+            if self._has_load_state():
+                logger.warning(
+                    f"[F64] STATE?=CLOSED 但驱动仍记着已加载 "
+                    f"({self._loaded_emulation_file!r}) — 仿真已被卸载 "
+                    "(F64 支持本地+远程并发, 疑似前面板/另一连接关闭), 清加载态+拓扑"
+                )
+                self._apply_unload()             # 内含 _emulation_running=False
+        return running
+
+    async def _apply_state_truth_confirmed(
+        self, state: Optional[str], *, always_confirm: bool = False
+    ) -> Tuple[bool, Optional[str]]:
+        """落真值, 但读到 `CLOSED` 时**先锁内复查一次**才作数。
+
+        为什么复查 (两个都会误清一个**活着**的仿真):
+          · **会话错位**: 白名单挡得住 `0,"No error"` 这类非法串, 挡不住"上一条命令的
+            合法应答"—— 加载序列 `_close_and_read_state` 每次都会产生一个 CLOSED 应答,
+            错位一拍读到的就是个合法 CLOSED;
+          · **竞态 (TOCTOU)**: 监控路**不持锁**, 读到 CLOSED 后可能在 await 边界被调度
+            走, 期间 load 事务整段跑完并填好加载态/拓扑, 回来再清 —— 加载明明成功了,
+            端口写却全线报"仿真未加载"。
+        复查放在 `_scpi_lock` 内: 加载事务整段持锁, 所以锁内读到的 CLOSED 不可能是
+        "加载正跑到一半", 错位噪声也极难连续两次都装成同一个合法值。
+
+        返回 `(running, 生效状态)` —— 调用方**必须上报生效状态**, 不是首读值 (agent R4):
+        首读 CLOSED 被复查否决后, 若还照着首读值上报 `simulation_state="CLOSED"`, 而
+        加载态又(正确地)保留着, 快照就成了"CLOSED 却报着文件名"—— 恰恰是本 PR 定义为
+        缺陷的那个自相矛盾组合, 只是从另一头产生。
+
+        ⚠⚠ **`always_confirm=True`: 判定路 (GO / GOS / disconnect) 必传** —— 且它的含义是
+        **复查每一个用来判定的状态**, 不只 CLOSED (Codex P1, 连着两轮收敛到这):
+          · 第一轮: 复查最初只为"别误清加载态"而设, 于是用 `_has_load_state()` 当闸。
+            判定开始吃这个结果之后, 拿本地缓存决定要不要验证一个安全攸关的终态就成了洞
+            —— 驱动刚重启 → 缓存**空** → 不复查 → 过期 `CLOSED` 直接生效 →
+            `stop_emulation()` 报"已停"、`disconnect()` 跳过 GOS/CLOSE, 而仪器仍在跑。
+            "冷缓存但硬件在播"正是本 PR 要支持的现场场景 (2026-07-21 实证)。
+          · 第二轮 (本条): 只复查 CLOSED 还是不够 —— **会话错位送来的过期值不一定是
+            CLOSED**。七态白名单挡得住垃圾串, 挡不住"上一条命令的合法应答": 错位一拍
+            读到过期 `RUNNING` → GO 明明失败却判成功, 测量在**没有衰落**下跑; 读到过期
+            `STOPPED` → GOS 没停住却判成功, 下游直通序列在**仿真仍在播**时继续。既然
+            承认错位能造出假 CLOSED, 就没有理由认为它造不出假 RUNNING/STOPPED。
+        代价: GO/GOS/disconnect 各多**一条** STATE?(锁内, 低频、人/编排发起), 可忽略。
+        监控读路 (1 Hz) 保持默认 `False`: 那里多一条是每秒成本, 而误信一拍只影响这一秒
+        的上报 (下一拍自愈), 且卸载本身另有 `_has_load_state()` 守门。
+        `state is None` 不复查: 没读到就没什么可验证的, 判定侧本来就保守 fail-loud。
+        """
+        _needs_confirm = state is not None and (
+            always_confirm or (state == "CLOSED" and self._has_load_state())
+        )
+        if not _needs_confirm:
+            return self._apply_state_truth(state), state
+        async with self._scpi_lock:
+            confirmed = await self._query_simulation_state()
+            if confirmed != state:
+                logger.warning(
+                    f"[F64] STATE?={state} 未通过锁内复查 (复查={confirmed}) — "
+                    f"判为会话错位/竞态假象, 以复查值为准"
+                )
+            return self._apply_state_truth(confirmed), confirmed
+
+    async def _confirm_state_after(self, action: str) -> Tuple[Optional[str], Optional[str]]:
+        """播放控制命令**已发出后**的手册确认闭环 (F64R-1)。返回 (STATE?, 错误文本)。
+
+        序列 = `*OPC?` → `SYST:ERR?` → `DIAG:SIMU:STATE?`, 三步都来自手册 §20.6.1:
+          · `*OPC?` 阻塞等命令执行完 (§20.6.1.2: ATE 顺序执行, 用 *OPC? 同步即可,
+            不必轮询 STATE? 等瞬态稳定);
+          · **`*OPC?`=1 会骗人** —— 手册原文警告它"只表示先前操作已执行完毕, **不表示
+            执行过程中没有发生错误**"(§20.6.1.2), 所以要读 `SYST:ERR?`;
+          · 但错误文本**也不能单独当判据** —— 同一个 `-200 "Wrong device state"` 既可能
+            是"本来就已达成目标"(幂等重复), 也可能是"前置没生效所以被拒"。手册 §20.6.1.1
+            给的解法是**用查询命令复核真实状态**, 对播放控制就是 `STATE?`。
+
+        ⚠ 判定原则 (F64R-1 的一句话): **成没成看 STATE? 终态, 不看错误文字像不像 benign**。
+        错误文本只回给调用方记日志 / 拼 `_last_error` 参考。这是 P0-3「CLOSE 后复查
+        ==CLOSED」同一方法论在播放控制路的延伸 —— 也是 #221 的直接教训: 那次用
+        `STATIC?==0` 给 GO 做豁免, 而 STATIC? 只报**旁路档**、根本不报运行态, 于是
+        "停着且非旁路"会被误判成"已在播放"。信号源选错, 加多少层豁免都是错的。
+
+        调用方负责持 `_scpi_lock` (确认闭环必须与命令在同一事务内, 否则并发轮询会
+        插进来消费掉本次的错误条目 / 读到别人改后的状态)。
+        """
+        err: Optional[str] = None
+        try:
+            await self._query("*OPC?")
+        except Exception as e:  # noqa: BLE001
+            # *OPC? 本身超时 = 会话可能已坏; 仍继续读 STATE? 判定 (读得到就以它为准)
+            logger.warning(f"[F64] {action} 后 *OPC? 失败: {e}")
+        try:
+            err = await self._first_error()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[F64] {action} 后 SYST:ERR? 失败: {e}")
+        state = await self._query_simulation_state()
+        logger.info(f"[F64] {action} 确认: STATE?={state} (SYST:ERR?={err or 'clean'})")
+        return state, err
 
     async def _readback_center_freq(self, ch: int = 1) -> Optional[float]:
         """CALC:FILT:CENT:CH? <ch> → 该通道组中心频 (MHz)。§20.4.6.2: 单值无单位,
@@ -683,9 +941,22 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
     def _apply_session_reset(self) -> None:
         """会话边界 (connect 起始 / disconnect 终态 / reset) 无条件全清 6 字段 =
-        _apply_unload() + _bypass_mode 复位 (会话切换必须清 bypass, 否则跨会话残留)。"""
+        _apply_unload() + _bypass_mode 复位 (会话切换必须清 bypass, 否则跨会话残留)。
+
+        F64R-1 (agent F5): **连接健康度的两个静默期也在这里清**。会话边界 = 人显式
+        重建了连接, 此前"仪器没反应"的负缓存全部作废 —— 否则操作员点了"重连驱动"
+        (disconnect→connect 同一实例), 新 socket 明明好了, 监控面还要在最长 30 s 里
+        继续上报 "STATE? 查询失败 / emulation_running 为缓存值", 硬件真在播时谎报
+        "没在跑" —— 正是本 PR 要治的病换了个触发路径。"""
         self._apply_unload()
         self._bypass_mode = F64BypassMode.DISABLED
+        self._state_query_retry_after = 0.0
+        self._reconnect_retry_after = 0.0
+        # ⚠ **不在这里**复位 `_tearing_down` (agent U2): 本方法在 disconnect 的**中途**
+        # (SCPI 段的 finally) 就被调到, 而后面还有释放 VISA 资源的尾段, 那里的 await 同样
+        # 可能撞超时 → 给一个正在关闭的连接重开 socket。保护窗口必须覆盖**整个**拆卸,
+        # 所以复位放在 disconnect 最外层 finally + connect() 起始兜底 (防 CancelledError
+        # 把最外层 finally 也跳过的极端情况)。
 
     async def _close_and_read_state(self) -> Optional[str]:
         """DIAG:SIMU:CLOSE + *OPC? + 回读 STATE? —— 三路加载 (GCM/ASC/B-2) 共用的"关闭并
@@ -1141,10 +1412,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     # 频率, 别报 None 漏掉)。running 只在**确认非运行稳态**才清 —— STATE?=RUNNING
                     # 说明 CLOSE 没停、仍在发射, None 说明读失败, 都不清 (否则 disconnect 清理跳过
                     # stop_emulation, 现场可能仍发射)。
-                    if close_state == "RUNNING":
-                        self._emulation_running = True
-                    elif close_state is not None:
-                        self._emulation_running = False
+                    # 真值走单一入口 (逐字等价于原内联: RUNNING→True / 其余非 None→
+                    # False / None→不动)。allow_unload=False: 这里恰恰是"CLOSE 没确认
+                    # 卸载"分支, 旧场景仍加载, 绝不能清 identity (Codex #223 的教训)。
+                    self._apply_state_truth(close_state, allow_unload=False)
                     return False
                 close_confirmed = True  # STATE?==CLOSED: 旧场景确认卸载 → 后续失败可清 identity
                 # ——加载 (大文件抬超时, 手册 §2.2.4 默认 2000ms 必 -400)——
@@ -1262,10 +1533,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     )
                     logger.error(f"[F64/B2] {self._last_error}")
                     # running 只在确认非运行稳态才清 (Codex #223: RUNNING=仍发射/None=读失败 不清)
-                    if close_state == "RUNNING":
-                        self._emulation_running = True
-                    elif close_state is not None:
-                        self._emulation_running = False
+                    # 真值走单一入口 (逐字等价于原内联: RUNNING→True / 其余非 None→
+                    # False / None→不动)。allow_unload=False: 这里恰恰是"CLOSE 没确认
+                    # 卸载"分支, 旧场景仍加载, 绝不能清 identity (Codex #223 的教训)。
+                    self._apply_state_truth(close_state, allow_unload=False)
                     return False
                 close_confirmed = True
                 self._emulation_running = False
@@ -1334,6 +1605,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         # 连接起始复位网 (F3): connect 是新会话干净起点 → 全清 6 字段 (含 running/pipeline/
         # bypass), 防 disconnect→reconnect 或 socket 掉直连的 reconnect 后旧实例 stale 残留。
         self._apply_session_reset()
+        # 拆卸标志兜底 (agent T3/U2): 正常路径由 disconnect 的 finally 复位; 这里再清一次
+        # 防极端情况 (CancelledError 把那个 finally 也跳过) 让实例永久失去懒重连能力 ——
+        # 走到 connect 就说明**要活过来了**, 标志没有理由还留着。
+        self._tearing_down = False
         try:
             import pyvisa
             self._rm = pyvisa.ResourceManager('@py')
@@ -1430,43 +1705,120 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
           3. 释放 VISA 资源
         """
         stop_confirmed = True
+        self._tearing_down = True   # 断开路撞超时不再升级重建会话 (agent R8)
+        # ⚠ **整个函数体**包在最外层 try/finally 里 (Codex P2): `CancelledError` 是
+        # BaseException, 内层的 `except Exception` 挡不住它 —— 若在初始的 STATE? / 停止 /
+        # CLOSE 这几个 await 上被取消 (操作员点 /hal/reload 卡死后关标签页 → Starlette
+        # 取消任务), 它会**跳过下面释放资源的整段**直接向上抛, `_tearing_down` 永久停在
+        # True + VISA 句柄还挂着 → 该实例此后静默拒绝一切重连, 只能等显式 connect()。
         try:
-            if self._emulation_running:
-                # Codex #206 R2: GOS 被拒 (SYST:ERR-only 失败) 时不能报"干净
-                # 断开" — 断开照样继续 (重载场景必须能断), 但如实降返回值,
-                # 让 HAL 重载/关闭日志暴露 "F64 可能仍在发射"。
-                stop_confirmed = await self.stop_emulation()
-                if not stop_confirmed:
+            try:
+                # F64R-1 (agent F4): **不拿 `_emulation_running` 冷缓存当门**。断开前"要不要
+                # 停"必须问仪器: 2026-07-21 现场实证形态 —— 后端重启后驱动缓存 False 而 F64
+                # 硬件仍加载着信道在播, 旧代码于是一条停止命令都不发、还返回 True 报"干净
+                # 断开", 而 F64 **继续发射**(暗室里没人知道)。这正是 start_emulation /
+                # _ensure_topology 早就写过的同一条教训 (冷缓存不做 gate) 在断开路的漏网。
+                # 判据换成 STATE?: RUNNING → 必停; 值读不到 → 也停 (无法确认就按最坏情况
+                # 处理, GOS 幂等, 多发一条的代价远小于让仪器带着功率跑); STOPPED/CLOSED →
+                # 已停, 跳过 (省一次 GOS, 也避免在 CLOSED 上制造无谓错误条目)。
+                #
+                # ⚠ 但**传输层失败要单独摘出来**(agent F2): "值读不到就保守发停止"只在链路
+                # 通的时候成立。链路根本不通时 (掉线 / ATE 服务挂死 —— 恰恰是最常按断开的
+                # 场景), GOS 和 CLOSE 压根到不了仪器, 只是让 disconnect 白等 4 条命令
+                # × (VISA 超时 + 排水 + 可能一次重连 TCP connect)。而 `POST /hal/reload`
+                # 持 HAL 生命周期锁串行调各驱动 disconnect —— 那就是现场"F64 掉线后点重载,
+                # 界面卡死"。链路已断时直接跳到清理。
+                #
+                # ⚠⚠ "链路已断"的判据**不含超时** (Codex P1, 见 `_query_simulation_state`):
+                # 超时只说明仪器慢, 会话可能还活着 —— 拿它当断链会让一台**只是反应慢**的
+                # F64 被跳过停止/卸载, 仿真继续跑而我们把连接释放走人。慢仪器走下面的
+                # 保守路 (照发 GOS/CLOSE), 代价只是这一次断开慢一点。
+                #
+                # ⚠⚠ 门判定一律用**复查后的生效状态** `_eff`, 不是首读 `_live` (Codex P1,
+                # 与 start/stop 同一母题 —— 那两处已修, 这里当时漏了)。首读是错位假象 CLOSED
+                # 而锁内复查读到 RUNNING 时, 照首读判会**同时跳过 GOS 和 CLOSE**, 然后报
+                # "干净断开"并释放连接 —— 而仪器还在发射。复查存在的意义就是别信那一下。
+                _tr: Dict[str, bool] = {}
+                _live = await self._query_simulation_state(transport=_tr)
+                _, _eff = await self._apply_state_truth_confirmed(_live, always_confirm=True)
+                if _tr.get("failed"):
+                    # ⚠ 跳过命令是对的, 但**返回值必须如实降级** (agent R3): 链路断的时候
+                    # 我们比"GOS 被拒"更没资格说"已确认停止" —— 命令根本没发出去。报 True
+                    # 会让 disconnect_all 的结果表 / HAL 重载日志显示"F64 已干净断开",
+                    # 而它可能还在发射。这条契约在本函数下面那段注释里 (Codex #206 R2)。
+                    stop_confirmed = False
                     logger.warning(
-                        "[F64] disconnect: stop_emulation 被拒 — 连接将断开, "
-                        "但 F64 可能仍在运行/发射, 需现场确认"
+                        "[F64] disconnect: STATE? 传输层失败 (链路已断/仪器无应答) — "
+                        "跳过 GOS/CLOSE (发了也到不了仪器) 并如实报未确认停止, "
+                        "F64 可能仍在运行/发射"
                     )
-            if self._loaded_emulation_file:
-                await self._write("DIAG:SIMU:CLOSE")
-        except Exception as e:
-            stop_confirmed = False
-            logger.warning(f"[F64] Cleanup during disconnect: {e}")
-        finally:
-            # disconnect 终态**无条件**全清 6 字段放 finally (F2: 含 _bypass_mode —— 它是
-            # 唯一 disconnect+connect 都曾漏清的字段, 跨会话残留)。即使 DIAG:SIMU:CLOSE 抛
-            # 异常走 except 也不残留 stale (堵 failed-CLOSE→不重连→跑一致性网 窗口)。
-            self._apply_session_reset()
-
-        if self._visa_resource:
-            try:
-                await asyncio.to_thread(self._visa_resource.close)
+                elif _eff is None or _eff not in ("STOPPED", "CLOSED"):
+                    # Codex #206 R2: GOS 被拒 (SYST:ERR-only 失败) 时不能报"干净
+                    # 断开" — 断开照样继续 (重载场景必须能断), 但如实降返回值,
+                    # 让 HAL 重载/关闭日志暴露 "F64 可能仍在发射"。
+                    logger.info(
+                        f"[F64] disconnect: STATE?={_eff} — 断开前先停止播放"
+                    )
+                    stop_confirmed = await self.stop_emulation()
+                    if not stop_confirmed:
+                        logger.warning(
+                            "[F64] disconnect: stop_emulation 被拒 — 连接将断开, "
+                            "但 F64 可能仍在运行/发射, 需现场确认"
+                        )
+                # 卸载同理不看冷缓存 (同一门的另一半): 缓存 None 而仪器加载着时旧代码不发
+                # CLOSE, 仿真留在仪器里。STATE? 已能分辨 —— 只有明确 CLOSED (=未加载) 才跳过;
+                # 值读不到时也发 (CLOSE 幂等, 未加载时至多进一条错误条目, 而漏关会留残留
+                # 状态)。传输层已断时同上不发 (到不了仪器, 只是白等一轮超时)。
+                if not _tr.get("failed") and _eff != "CLOSED":
+                    await self._write("DIAG:SIMU:CLOSE")
             except Exception as e:
-                logger.warning(f"[F64] VISA resource close error: {e}")
-        if self._rm:
-            try:
-                self._rm.close()
-            except Exception:
-                pass
+                stop_confirmed = False
+                logger.warning(f"[F64] Cleanup during disconnect: {e}")
+            finally:
+                # disconnect 终态**无条件**全清 6 字段放 finally (F2: 含 _bypass_mode ——
+                # 它是唯一 disconnect+connect 都曾漏清的字段, 跨会话残留)。即使
+                # DIAG:SIMU:CLOSE 抛异常走 except 也不残留 stale (堵 failed-CLOSE→不重连
+                # →跑一致性网 窗口)。
+                self._apply_session_reset()
 
-        self._visa_resource = None
-        self._rm = None
-        self._status = InstrumentStatus.DISCONNECTED
-        # running/pipeline/identity/bypass 已在 finally 的 _apply_session_reset 全清
+            # 释放本地资源。⚠ 仍在 `_tearing_down` 保护内 (agent U2): 这里的 await 同样
+            # 可能撞超时 → 排水失败 → 给一个**正在关闭**的连接重开 socket (TCP 握手在
+            # 黑洞 IP 下能阻塞数十秒, 而 /hal/reload 串行调各驱动 disconnect)。
+            if self._visa_resource:
+                try:
+                    await asyncio.to_thread(self._visa_resource.close)
+                except Exception as e:
+                    logger.warning(f"[F64] VISA resource close error: {e}")
+            if self._rm:
+                try:
+                    self._rm.close()
+                except Exception:
+                    pass
+        finally:
+            # 最外层 finally: 被取消 (CancelledError) 也走到这里, 不留半死实例。
+            #
+            # ⚠ **置 None 不等于关掉 socket** (Codex P1): 取消若发生在前面的 STATE?/GOS/
+            # CLOSE await 上, 上面那段真正 close 的代码整个被跳过, 这里只丢引用 = 让
+            # Python 的 GC 去决定何时(甚至是否)关闭底层会话。而 F64 的 3334 端口
+            # **同一时刻只容一条远程 socket**, 手册 §1.1.2.3 原文 "The socket will stay
+            # open until closed; error situations might leave the socket open thus
+            # preventing further communication" —— 泄漏一条就挡死下一次 connect / 重载。
+            # 所以先在本地留住句柄、**同步**关一次(幂等: 正常路径已关过, 再关抛异常吞掉),
+            # 再清字段。取消展开期间不 await (新 await 会立刻再抛 CancelledError)。
+            _leaked = self._visa_resource
+            self._visa_resource = None
+            self._rm = None
+            self._tearing_down = False      # 拆卸结束 (含被取消/抛异常的路径)
+            self._status = InstrumentStatus.DISCONNECTED
+            if _leaked is not None:
+                try:
+                    _leaked.close()
+                except Exception:
+                    pass                     # 已关 / 会话已死都无所谓, 目的是别泄漏
+            # ⚠ 这里**不调** `self._rm.close()`: RM 是 pyvisa 单例, 关它会连带关闭
+            # FS16 / 频谱仪 / 射频开关的会话 (F64R-8 记录的既有地雷)。关掉本驱动自己的
+            # resource 就已经释放了 3334 那条 socket, 足够解本 P1。
+        # running/pipeline/identity/bypass 已在内层 finally 的 _apply_session_reset 全清
         return stop_confirmed
 
     def readiness_metadata(self) -> Dict[str, Any]:
@@ -1811,10 +2163,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     )
                     logger.error(f"[F64/ASC] {self._last_error}")
                     # running 只在确认非运行稳态才清 (Codex #223: RUNNING=仍发射/None=读失败 不清)
-                    if close_state == "RUNNING":
-                        self._emulation_running = True
-                    elif close_state is not None:
-                        self._emulation_running = False
+                    # 真值走单一入口 (逐字等价于原内联: RUNNING→True / 其余非 None→
+                    # False / None→不动)。allow_unload=False: 这里恰恰是"CLOSE 没确认
+                    # 卸载"分支, 旧场景仍加载, 绝不能清 identity (Codex #223 的教训)。
+                    self._apply_state_truth(close_state, allow_unload=False)
                     return False
                 close_confirmed = True
                 self._emulation_running = False
@@ -2221,57 +2573,36 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 # GO 也 -200, 门仍兜底)。
                 await self._drain_errors()
                 await self._write("DIAG:SIMU:GO")
-                await self._query("*OPC?")
-                # Codex #202 R2 P2: GO 失败只经 SYST:ERR? 报 (*OPC? 照答 1) —
-                # 错误队列门 fail-loud, 不许带着"没在跑"的 F64 返回 True。
-                # 门判定+状态更新在锁内 (agent F4, 三事务口径一致)。
-                go_err = await self._first_error()
+                # F64R-1: 判定看 **STATE? 终态**, 不看错误文字 (见 _confirm_state_after)。
+                # 取代原先的"-200 签名 + 回查 STATIC?==0"豁免 —— STATIC? 只报**旁路档**,
+                # 根本不报运行态: "STATIC=0 且 STOPPED"(非旁路但停着) 会被误判成"已在
+                # 播放", 测量于是在**没有衰落播放**的状态下跑假数据 (#221 信号选错)。
+                # 现在唯一的成功判据 = STATE? 到达 RUNNING:
+                #   · 有 -200 但 STATE?==RUNNING → 幂等"已在跑", 目标达成, 成功;
+                #   · 无错误但 STATE?≠RUNNING   → *OPC? 骗了人, 假启动 → fail-loud;
+                #   · STATE? 读不到 (None)      → 无法确认 → 保守 fail-loud。
+                state, go_err = await self._confirm_state_after("GO")
+                # ⚠ **判定 / 落值 / 文案三者同源**(agent U1): 一律用锁内复查后的
+                # **生效状态** `eff`。曾经判定读首读值、落值用复查值 —— 首读 CLOSED 被
+                # 复查否决成 RUNNING 时, 两边结论相反 (GOS 那边更严重: 按首读 CLOSED 判
+                # "已停"返回 True, 而缓存记着 RUNNING, 于是**仿真还在播**就去建直通)。
+                # 复查只在"首读 CLOSED 且驱动记着加载态"时才真发查询, 其余 eff == state。
+                _, eff = await self._apply_state_truth_confirmed(state, always_confirm=True)
+                if eff != "RUNNING":
+                    # 被拒时不猜直通缓存 (分不清 STATIC/GO 哪步被拒); running 已由上面的
+                    # 真值单一入口落好 (读不到就保留旧缓存, 不猜)。
+                    self._last_error = (
+                        f"start_emulation 未确认启动: STATE?={eff} (期望 RUNNING)"
+                        + (f"; SYST:ERR?={go_err}" if go_err else "")
+                    )
+                    logger.error(f"[F64] {self._last_error}")
+                    return False
                 if go_err is not None:
-                    # GO 报 -200 "Wrong device state" 有**两种成因、签名相同**:
-                    #   (a) F64 已在衰落运行态 (幂等"已在跑") — 目标达成, 可豁免;
-                    #   (b) 前面清直通的 STATIC 0 没生效 (仍 STATIC≠0), GO 被
-                    #       by-design 拒 —— 实际没在播衰落, 豁免会让测量在直通
-                    #       (无衰落) 路径跑假数据。
-                    # Codex #221 P1: 原按签名盲豁免 (收口 agent F1 版) 会误吞 (b)
-                    # —— 正是 STATIC 3 直通 attach→衰落 转换里 STATIC 0 被拒 (新
-                    # 加的 drain 已把它吞掉) 后 GO 撞 STATIC≠0 的高频路径。改为
-                    # **回查 STATIC 档消歧**: 只有确认 STATIC==0 (衰落态) 才豁免,
-                    # 否则 (含读不到) fail-loud。
-                    _exempt = False
-                    if "-200" in go_err and "Wrong device state" in go_err:
-                        static_now = None
-                        try:
-                            raw = await self._query("DIAG:SIMU:MODEL:STATIC?")
-                            static_now = raw.strip() if raw else None
-                        except Exception as e:  # noqa: BLE001
-                            logger.warning(
-                                f"[F64] GO 豁免前回查 STATIC? 失败 ({e}) — 保守 fail-loud"
-                            )
-                        if static_now == "0":
-                            _exempt = True
-                            logger.warning(
-                                f"[F64] GO 被拒 ({go_err}) 但 STATIC=0 衰落态 — "
-                                "判为已在播放, 豁免为成功"
-                            )
-                        else:
-                            self._last_error = (
-                                f"start_emulation rejected: {go_err} "
-                                f"(STATIC={static_now}, 非衰落态 — 仍在直通/未切成功)"
-                            )
-                            logger.error(
-                                f"[F64] GO 被拒且 STATIC={static_now}≠0 — 仿真未启动"
-                            )
-                            return False
-                    if not _exempt:
-                        # 其他错误文本 (含 STATIC 读不到时不进上面豁免分支): 被拒时
-                        # 直通缓存也不动 (Codex #202 R8/R5 "被拒状态不动"对称路径) —
-                        # 单一错误门分不清 STATIC/GO 哪步被拒, 保守保持"可能仍在直通"。
-                        self._last_error = f"start_emulation rejected: {go_err}"
-                        logger.error(f"[F64] GO 被拒 (SYST:ERR?): {go_err} — 仿真未启动")
-                        return False
+                    logger.info(
+                        f"[F64] GO 报错但 STATE?=RUNNING (幂等/无害): {go_err} — 判为已在播放"
+                    )
                 self._bypass_mode = F64BypassMode.DISABLED
                 self._passthrough_active = False
-                self._emulation_running = True
                 self._status = InstrumentStatus.BUSY
             logger.info("[F64] Emulation started")
             return True
@@ -2308,22 +2639,33 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             async with self._scpi_lock:
                 await self._drain_errors()
                 await self._write("DIAG:SIMU:GOS")
-                stop_err = await self._first_error()
+                # F64R-1: 判定看 **STATE? 终态**, 不看错误文字。
+                # GOS 语义 = 停止并倒回起点 (§20.4.3.11 原文 "stops the emulation and
+                # rewinds to the start ... performs stop operation"), 期望终态 STOPPED。
+                # 取代原先"-200 Wrong device state 一律当本来就没在跑"的盲信 —— 同一签名
+                # 也可能是别的成因, 真没停住时 attach 直通预备会假成功。
+                #   · STOPPED → 停住了 (含"本来就停着"的幂等被拒), 成功;
+                #   · CLOSED  → 没加载仿真, "确保停止"的目标同样达成, 成功;
+                #   · RUNNING → **真没停住**, fail-loud (原豁免会在这里骗人);
+                #   · 瞬态 / None → 无法确认 → 保守 fail-loud。
+                state, stop_err = await self._confirm_state_after("GOS")
+                # ⚠ 判定 / 落值 / 文案同源 (agent U1, 见 start_emulation 的详述)。这条路
+                # 的脱节最危险: 首读 CLOSED (错位假象) 会被判成"已停"返回 True, 而复查
+                # 读到的 RUNNING 又落进缓存 —— 下游 measure 的布尔门放行, 于是在**仿真
+                # 仍在播**的状态下写 STATIC 建直通, 正是这道门存在的理由。
+                # agent F7: 失败分支同样要落真值 (瞬态 STOPPING/CLOSING 读到了也得记)。
+                _, eff = await self._apply_state_truth_confirmed(state, always_confirm=True)
+                if eff not in ("STOPPED", "CLOSED"):
+                    self._last_error = (
+                        f"stop_emulation 未确认停止: STATE?={eff} (期望 STOPPED/CLOSED)"
+                        + (f"; SYST:ERR?={stop_err}" if stop_err else "")
+                    )
+                    logger.error(f"[F64] {self._last_error}")
+                    return False
                 if stop_err is not None:
-                    # 2026-07-21 现场实证 (上面 agent F1 预言的场景): 已停态
-                    # (STOPPED, 工程开着未播) 下发 GOS, F64 报
-                    #   -200,"Execution error;Wrong device state for command"
-                    # —— 语义 = "本来就没在跑"。stop 的目标 (确保停止) 已达成,
-                    # 当成功; 仅此签名豁免, 其他错误仍 fail-loud。
-                    if "-200" in stop_err and "Wrong device state" in stop_err:
-                        logger.info(
-                            f"[F64] GOS 在已停态被拒 ({stop_err}) — 视为已停止, 继续"
-                        )
-                    else:
-                        self._last_error = f"stop_emulation rejected: {stop_err}"
-                        logger.error(f"[F64] GOS 被拒 (SYST:ERR?): {stop_err}")
-                        return False
-                self._emulation_running = False
+                    logger.info(
+                        f"[F64] GOS 报错但 STATE?={eff} (幂等/无害): {stop_err} — 判为已停止"
+                    )
                 self._status = InstrumentStatus.READY
             logger.info("[F64] Emulation stopped and rewound")
             return True
@@ -2475,9 +2817,25 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         if not self._visa_resource:
             return {"status": "disconnected"}
 
+        query_errors: List[str] = []
+        # F64R-1: 运行态问仪器 (与 get_metrics 同口径)。**必须在下面的静态字段之前**查并
+        # 落缓存 —— STATE?==CLOSED 会经 `_apply_state_truth` 清掉加载态+拓扑, 若先建 dict
+        # 就会出现 "simulation_state=CLOSED 但 loaded_file 还是旧文件名" 的自相矛盾快照。
+        # 读 + 落值整体持锁 (同 get_metrics, agent F9: 分开会与并发播放控制事务交错)
+        async with self._scpi_lock:
+            _read_state = await self._query_simulation_state()
+            _, _live_state = await self._apply_state_truth_confirmed(_read_state)
+        if _live_state is None:
+            # 契约: 失败的动态查询**不出现在 state 里**, 只进 query_errors (见 docstring)。
+            # 硬塞 simulation_state=None 会被读成"仪器说它没状态", 而不是"这次没查到"。
+            query_errors.append(
+                "simulation_state: DIAG:SIMU:STATE? 查询失败 — emulation_running 为缓存值"
+            )
+
         # 静态字段 (内存缓存, 不会失败)
         state: Dict[str, Any] = {
             "pipeline": self._active_pipeline.value if self._active_pipeline else None,
+            # 上面已按 STATE? 真值对齐 (读不到则为缓存值 + query_errors 已标注)
             "emulation_running": self._emulation_running,
             "loaded_file": self._loaded_emulation_file,
             "model": self._current_model,
@@ -2495,7 +2853,8 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             # 与 get_metrics 同步: declared = 口号是人填的兜底值, 不是仪器真值
             "topology_source": self._topology_source(),
         }
-        query_errors: List[str] = []
+        if _live_state is not None:
+            state["simulation_state"] = _live_state
 
         # 查询旁路状态
         try:
@@ -2615,15 +2974,24 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                                 f"(SYST:ERR?): {retry_err}"
                             )
                             return False
-                # 运行态切 STATIC≠0 → F64 自动 STOPPED; 驱动状态跟着同步, 否则
-                # _emulation_running 漂移 (输出测量冻结标注 P1-21 ④ 也依赖它)。
-                if mode != F64BypassMode.DISABLED and self._emulation_running:
-                    self._emulation_running = False
-                    self._status = InstrumentStatus.READY
-                    logger.info(
-                        f"[F64] 运行态切 STATIC {mode.value} → F64 自动 STOPPED (驱动状态已同步)"
-                    )
+                # F64R-1: 运行态切 STATIC≠0 后 F64 会自动暂停 (手册 §20.4.6.25 "启用
+                # 静态模型时**仿真被暂停**"), 但**具体停没停以仪器为准, 不在这里猜** ——
+                # 旧代码内联置 False, 而手册同时又说"退出旁路时若之前在跑则继续运行"
+                # (ATE AN §2.4.5), 方向取决于进旁路前的状态, 驱动自己推必然漂。
+                # 改为**在本方法内**按 STATE? 真值刷新 (读不到就保留缓存, 不猜)。
+                # ⚠ agent F7: 刷新必须放在 set_bypass_mode 里, 不能只放在
+                # set_passthrough_mode / clear_passthrough_mode 两个包装里 —— 校准路
+                # (路损 tone B 路径) 等调用方**直接**调本方法, 那些路径下 running 缓存
+                # 就会停留在旁路前的值。同"复位散落多处必漏一处"的母题, 收在唯一改
+                # STATIC 的地方。仍在锁内 (可重入), 与写 STATIC 同一事务。
+                # ⚠ 旁路态下 STATE? 字面报 STOPPED 还是 RUNNING **手册未定义** (七态里
+                # 没有 BYPASS), 真机实际返回值列在 F64R-7 现场验证清单。
                 self._bypass_mode = mode
+                await self._refresh_running_from_state(
+                    "退直通" if mode == F64BypassMode.DISABLED else f"进直通(STATIC {mode.value})"
+                )
+                if mode != F64BypassMode.DISABLED and not self._emulation_running:
+                    self._status = InstrumentStatus.READY
             logger.info(f"[F64] Bypass mode: {mode.name}")
             return True
         except Exception as e:
@@ -2898,6 +3266,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         ok = await self.set_bypass_mode(resolved)
         if ok:
             self._passthrough_active = True
+            # running 已由 set_bypass_mode 内按 STATE? 真值刷新 (agent F7 收敛到那一处)
             logger.info(
                 "[F64] Passthrough mode ON (out=%s, in=%s, %s bypass STATIC %d)",
                 ce_port or "all", ce_input_port or "all",
@@ -2910,8 +3279,31 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         ok = await self.set_bypass_mode(F64BypassMode.DISABLED)
         if ok:
             self._passthrough_active = False
+            # running 已由 set_bypass_mode 内按 STATE? 真值刷新 (agent F7 收敛到那一处)
             logger.info("[F64] Passthrough mode OFF (bypass disabled)")
         return ok
+
+    async def _refresh_running_from_state(self, action: str) -> None:
+        """旁路进出后按 `STATE?` 真值刷新 `_emulation_running` (F64R-1)。
+
+        为什么不能内联猜: 手册 §20.4.6.25 说启用静态模型时**仿真被暂停**, ATE AN §2.4.5
+        又说**退出旁路时若之前在跑则继续运行** —— 也就是说旁路操作会**隐式改变播放状态**,
+        且方向取决于进旁路之前的状态。驱动自己推必然漂, 问仪器才准。
+
+        ⚠ 旁路态下 `STATE?` 字面报什么 (STOPPED 还是 RUNNING) **手册未定义** —— 七态枚举
+        里没有 BYPASS 态。所以这里不做任何映射假设: **仪器报什么就记什么**。真机实际返回值
+        列在 F64R-7 现场验证清单里; 读不到就保留旧缓存 (不猜)。
+        旁路**档位**本身另有 `MODEL:STATIC?` 权威回读, 与本方法无关。
+        """
+        state = await self._query_simulation_state()
+        if state is None:
+            logger.warning(f"[F64] {action}后 STATE? 读不到 — 保留 running 缓存 (不猜)")
+            return
+        # allow_unload=False: 旁路态下 STATE? 报什么**手册未定义** (七态无 BYPASS)。
+        # 真机若在旁路下报 CLOSED, 破坏性清理会把加载态清掉且无法自动重建 —— 在
+        # F64R-7 真机验证前, 这条路只取 running (agent F8)。
+        running = self._apply_state_truth(state, allow_unload=False)
+        logger.info(f"[F64] {action}后 STATE?={state} → emulation_running={running}")
 
     # ===================================================================
     # User alignment (Integrated Setup Calibration, optional license)
@@ -3644,9 +4036,28 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             # 不全更糟: 现场判断输入参考/crest 生效与否就靠这块。
             # 热缓存零成本 (快路径直接 return); 真没加载时每秒多一条 STATE?。
             await self._ensure_topology(throttle=True)   # 唯一的高频轮询路
+            # F64R-1: **运行状态问仪器**, 不上报内存缓存 —— 后端重启后缓存 False 而硬件
+            # 仍在播 (2026-07-21 实证形态) 会让仪表盘谎报"没在跑"; 反向漂移同理。
+            # 读不到 → 退回缓存并在 query_errors 标注 (降级可见, 同拓扑读路口径)。
+            # throttle=True: 唯一的 1 Hz 轮询路 —— 挂死仪器上每轮吃满超时+排水会占死
+            # SCPI 通道 (agent F1), 与上面拓扑读路同规格 30s 静默期。
+            # 真值落缓存走单一入口 (含 CLOSED=被别人卸载 → 清加载态+拓扑, agent F10);
+            # 破坏性的 CLOSED 分支锁内复查一次再作数 (会话错位 / 与 load 事务竞态)。
+            # ⚠ "读 + 落值"整体持锁 (agent F9): 分开做的话, 读到 STOPPED 后让出 →
+            # 并发 start_emulation 事务置 running=True → 回来把 False 写回去, 覆盖掉
+            # 更新的真值 (窗口内 emulation-control 端点和直通冻结判断都会报反)。锁可
+            # 重入, 且只包这一小段 —— 下面逐口电平的长循环仍在锁外。
+            async with self._scpi_lock:
+                _read = await self._query_simulation_state(throttle=True)
+                # 上报**生效状态** (复查否决首读时是复查值), 否则 simulation_state 会跟
+                # 保留下来的 loaded_file 自相矛盾 (agent R4)
+                _running, _state = await self._apply_state_truth_confirmed(_read)
             metrics: Dict[str, Any] = {
                 "channel_count": self._channel_count,
-                "emulation_running": self._emulation_running,
+                "emulation_running": _running,
+                # STATE? 原始七态 (CLOSED/OPENING/STOPPING/STOPPED/RUNNING/EDITING/
+                # CLOSING), 排障时比布尔更有信息量; None = 本轮没读到
+                "simulation_state": _state,
                 "pipeline": self._active_pipeline.value if self._active_pipeline else "none",
                 "bypass_mode": self._bypass_mode.name,
                 "loaded_file": self._loaded_emulation_file,
@@ -3668,6 +4079,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 "topology_source": self._topology_source(),
             }
             query_errors: List[str] = []
+            if _state is None:
+                # 降级可见: 不标注的话, 上报的 emulation_running 是缓存值却看着像真值
+                query_errors.append(
+                    "simulation_state: DIAG:SIMU:STATE? 查询失败 — emulation_running 为缓存值"
+                )
 
             # 输入电平: 逐**真实输入口号**查 (F64R-2, 不再用 _tx_antennas 猜, 也不假定 1..N)
             input_powers: Dict[int, Optional[float]] = {}
@@ -3872,23 +4288,59 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     async def _silent_reconnect_visa(self) -> bool:
         """Reopen the VISA resource after a connection drop.
 
-        Returns True on success. Best-effort closes the half-dead
-        resource, then ``rm.open_resource`` again with the same string
-        and timeout. We do NOT re-run ``connect()`` (which would issue
-        ``*IDN?`` + ``SYST:INFO?`` + alignment reload — heavy + state-
-        mutating); SCPI device state survives a TCP reconnect, so the
-        bare resource is enough for the in-flight command to succeed.
+        Returns True on success. We do NOT re-run ``connect()`` (which would
+        issue ``*IDN?`` + ``SYST:INFO?`` + alignment reload — heavy + state-
+        mutating); per PROPSIM ATE AN §1.1 the F64 keeps its running
+        emulation / loaded .smu / active alignment across a bare TCP
+        reconnect (state lives in the controller, not the socket), so a fresh
+        resource is enough for the in-flight command's *next* retry — and we
+        must NOT clear the driver's topology / load caches here (design §3.4:
+        socket 重连 ≠ 会话复位)。
+
+        ⚠ **顺序必须是"先关旧、再开新"** (ATE AN §1.1.2.3 + §1.1.2.4, NotebookLM 查证):
+        手册原文 "The socket will stay open until closed; **error situations might
+        leave the socket open thus preventing further communication**", 并直接建议驱动
+        实现"a method that **closes the VISA session on reopen condition e.g. in crash
+        recovery**"。而 3334 端口**同一时刻只接受一条远程 socket** (§1.1.2.4 前提条件
+        "The socket specified is not locked or in use by other software"; §1.1 那条
+        "并发"说的是**本地 GUI + 远程 ATE**, 不是两条远程)。所以旧句柄不先关掉, 新的
+        `open_resource` 会被卡死的旧连接挡住 → 每次重连都失败 → 反而永远不自愈。
+
+        F64R-1 (agent F1) 两处硬化:
+        · **冷却窗口**: 本方法被两条路径调 (conn-lost 重试 _do_*_unlocked + 超时
+          升级 _drain_after_timeout)。get_metrics 一轮 poll 多条查询, 挂死仪器上
+          每条超时都会走到这里 → 无冷却则一轮最多重建 N 次 socket (实测 7)。
+        · **失败不留死态**: 开新失败时**绝不置 _visa_resource=None** —— None 是
+          connect() 前"从未连接"的语义, 拿它表示"重连失败"会让所有入口的
+          `if not self._visa_resource: return` 把驱动短路成永久死态 (不发命令→不撞
+          超时/conn-lost→不再触发重连→网络恢复也不自愈)。保留那个**已 close** 的旧
+          句柄: 后续命令在它上面抛 `pyvisa.errors.InvalidSession`(⚠ 不是
+          `VI_ERROR_INV_OBJECT` —— pyvisa 的 `Resource.session` property 在 Python 层
+          就先抛了, 走不到 VISA C 库; 实测 pyvisa 1.16.2), 该类型已归入
+          `_is_visa_conn_lost` → 冷却窗口过后再次重连, 网络一恢复即自愈。
         """
         if self._rm is None or not self.ip_address:
             return False
-        # Tear down the broken resource. ``close()`` on a dead session
-        # can itself raise — swallow, the underlying socket is gone.
-        try:
-            if self._visa_resource is not None:
-                await asyncio.to_thread(self._visa_resource.close)
-        except Exception:
-            pass
-        self._visa_resource = None
+        if self._tearing_down:
+            logger.info("[F64] 正在断开 — 跳过会话重建 (给要关掉的连接重开 socket 无意义)")
+            return False
+        now = time.monotonic()
+        if now < self._reconnect_retry_after:
+            logger.warning(
+                f"[F64] 距上次会话重建不足 {_RECONNECT_COOLDOWN_S:.0f}s — 跳过本次重建 "
+                "(避免高频轮询路上每条超时都重建 socket)"
+            )
+            return False
+        self._reconnect_retry_after = now + _RECONNECT_COOLDOWN_S
+
+        # 先关旧 (手册要求, 见 docstring)。close 半死 session 自身可能抛 —— 吞掉,
+        # 我们只是要让服务端那条 socket 释放。
+        old_resource = self._visa_resource
+        if old_resource is not None:
+            try:
+                await asyncio.to_thread(old_resource.close)
+            except Exception:
+                pass
 
         try:
             resource_string = f"TCPIP0::{self.ip_address}::{self.port}::SOCKET"
@@ -3899,15 +4351,26 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 write_termination='\n',
                 timeout=VISA_TIMEOUT_DEFAULT,
             )
-            logger.info(
-                f"[F64] silent reconnect succeeded — resource reopened "
-                f"({resource_string})"
-            )
-            return True
         except Exception as e:
-            logger.error(f"[F64] silent reconnect failed: {e}")
-            self._visa_resource = None
+            # ⚠ 保留已关闭的旧句柄, **不置 None** (见 docstring): 后续命令抛
+            # INV_OBJECT → 走 conn-lost 白名单 → 冷却后重连 → 可自愈。
+            self._visa_resource = old_resource
+            logger.error(
+                f"[F64] silent reconnect failed: {e} — 保留旧句柄 (后续命令将报 "
+                f"InvalidSession, 已归入 conn-lost 触发重连), "
+                f"冷却 {_RECONNECT_COOLDOWN_S:.0f}s 后重试"
+            )
             return False
+        # 会话重建成功 → 允许 STATE? 立即重试 (清连接健康度负缓存; 不碰拓扑/加载态)。
+        # ⚠ 这里**不清** `_reconnect_retry_after`: 挂死仪器上"socket 开得成、命令仍超时"
+        # 是常态 (F1 实测形态), 拿"开成功"解冻等于放回每轮重建 N 次的老毛病。解冻改挂在
+        # **新会话上第一条命令真的跑通**时 (见 `_note_io_success`) —— 那才是真恢复。
+        self._state_query_retry_after = 0.0
+        logger.info(
+            f"[F64] silent reconnect succeeded — resource reopened "
+            f"({resource_string})"
+        )
+        return True
 
     async def _do_write(self, cmd: str, timeout: Optional[int] = None) -> None:
         """发送 SCPI 写命令（由基类 _write() 自动调用，SCPI 日志已由基类记录）。
@@ -3943,6 +4406,17 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         from app.hal._visa_reconnect import is_visa_timeout
         return is_visa_timeout(exc)
 
+    def _note_io_success(self) -> None:
+        """一条 SCPI IO **真的成功**了 → 解除重连冷却 (agent 复审建议的判据)。
+
+        为什么解冻要挂在"命令成功"而不是"socket 开成功": 挂死的仪器上 socket 照样能
+        开 (F1 实测形态就是这样), 拿"开成功"解冻等于放回"一轮 poll 重建 N 次"的老毛病。
+        而**新会话上第一条命令跑通**才是"真恢复"的证据 —— 此时该允许下一次掉线立刻重连,
+        否则"断→恢复→30 s 内又断"的第二次会被冷却挡掉, 测量步骤白白 fail-loud。
+        """
+        if self._reconnect_retry_after:
+            self._reconnect_retry_after = 0.0
+
     async def _drain_after_timeout(self, timed_out_cmd: str) -> bool:
         """超时后轻量恢复 (P1-21 ②; #199/#202/#203 三轮收敛的两步式终态)。
 
@@ -3974,19 +4448,42 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 except Exception:
                     break  # 读超时 = 无更多残留应答, 会话已对齐
             for i in range(4):
-                resp = (await self._do_query_unlocked("SYST:ERR?", timeout=2000)).strip()
+                # ⚠ note_success=False: 排水自己的查询**不算"会话恢复了"**。它复用底层
+                # 查询原语, 若也去解冻重连冷却, 就正好在**最主要的升级路径**上把限流门
+                # 打开 —— 会话错位形态下 SYST:ERR? 恰恰是**读得回来**且永远不 clean 的
+                # (这正是排水存在的理由), 于是每条业务命令超时都重建一次 socket
+                # (复审实测 5 条命令 = 5 次重建, 修好后 = 1 次)。解冻只认业务 IO。
+                resp = (await self._do_query_unlocked(
+                    "SYST:ERR?", timeout=2000, note_success=False
+                )).strip()
                 if re.match(r'^\+?0\s*,\s*"?no error', resp, re.IGNORECASE):
                     logger.warning(
                         f"[F64] 超时排水完成 (残留已清 + {i + 1} 条 ERR) — 会话已净 "
                         f"(超时命令: {timed_out_cmd[:40]!r})"
                     )
                     return True
-            logger.error("[F64] 超时排水仍未净 — 会话可能错位, 建议重载驱动")
+            logger.error("[F64] 超时排水仍未净 — 会话已错位, 升级重建会话")
         except Exception as drain_e:  # noqa: BLE001
             logger.error(
                 f"[F64] 超时排水失败 ({type(drain_e).__name__}: {drain_e}) — "
-                f"会话可能错位, 建议重载驱动"
+                f"会话已错位, 升级重建会话"
             )
+        # F64R-1: 排水**也失败** = 会话确实坏了 → 升级重建 (P0-1 遗留的"业务挂死不自动
+        # 恢复"盲区: 原先只记一句"建议重载驱动", 现场就得人工重启后端, 而懒重连基建
+        # (_silent_reconnect_visa) 早就在, 只差这根线)。
+        # ⚠ **不重放**当次命令: 超时命令是否已到达仪器无从确认, 重放可能造成双写
+        # (对 GO/STATIC/FILE 这类有副作用的命令是危险的)。当次仍返回 False 让调用方
+        # fail-loud, 修好的会话给**下一条**命令用。
+        try:
+            if await self._silent_reconnect_visa():
+                logger.warning(
+                    f"[F64] 会话已重建 (超时命令 {timed_out_cmd[:40]!r} 不重放) — "
+                    f"本次仍报失败, 下一条命令可用"
+                )
+            else:
+                logger.error("[F64] 会话重建也失败 — 需人工介入 (检查网络 / F64 ATE 服务)")
+        except Exception as re_e:  # noqa: BLE001
+            logger.error(f"[F64] 会话重建异常 ({type(re_e).__name__}: {re_e}) — 需人工介入")
         return False
 
     async def _do_write_unlocked(self, cmd: str, timeout: Optional[int] = None) -> None:
@@ -3997,6 +4494,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 self._visa_resource.timeout = timeout
             try:
                 await asyncio.to_thread(self._visa_resource.write, cmd)
+                self._note_io_success()
                 return
             except Exception as e:
                 if attempt == 0 and self._is_visa_conn_lost(e):
@@ -4015,7 +4513,9 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     except Exception:
                         pass
 
-    async def _do_query_unlocked(self, cmd: str, timeout: Optional[int] = None) -> str:
+    async def _do_query_unlocked(
+        self, cmd: str, timeout: Optional[int] = None, *, note_success: bool = True
+    ) -> str:
         """实际查询 IO (锁内) — retry 语义同 `_do_write_unlocked`。"""
         for attempt in (0, 1):
             if timeout:
@@ -4023,6 +4523,8 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 self._visa_resource.timeout = timeout
             try:
                 response = await asyncio.to_thread(self._visa_resource.query, cmd)
+                if note_success:
+                    self._note_io_success()
                 return response
             except Exception as e:
                 if attempt == 0 and self._is_visa_conn_lost(e):

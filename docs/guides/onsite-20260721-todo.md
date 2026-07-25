@@ -177,6 +177,50 @@
     与"我明确说了一个口都不写"相反;两个兄弟端点(`/crest-factor`、`/output-gain`)都会 422。
   - `OutputGainRequest.ports` 注释仍写 "(1..16)",与 32 探头矛盾。
 
+- [ ] **F64R-8 ⚠ `pyvisa.ResourceManager('@py')` 是单例 —— 一个驱动 disconnect 会关掉
+      其它驱动的会话** (2026-07-25 F64R-1 复审实测发现的**既有**地雷,非本次引入)
+  > 实测: `ResourceManager('@py')` 两次取到同一个对象;其 `close()` 源码是
+  > `for resource in self._created_resources: resource.close()`,官方 docstring 明写
+  > "will also terminate connections obtained from other ResourceManager instances"。
+  > 而 `propsim_f64.py` / `propsim_fs16.py` / `rs_fsva.py` / `rf_switch.py` **四个驱动
+  > 都用 `'@py'`** → **F64 断开会把 FS16 / 频谱仪 / 射频开关的会话一并关掉**。
+  - 现场表现推测:HAL 重载或单个仪表重连后,别的仪表"莫名其妙断了"。F64R-1 之后这些
+    被误关的驱动至少**能自愈**了(已关句柄抛 `InvalidSession` → 归入 conn-lost → 懒重连),
+    但根因还在。
+  - 修法候选:各驱动持有自己的 RM 实例并只 `close()` 自己的 resource(不调 `rm.close()`);
+    或全局共享一个 RM、由 HAL 生命周期统一管。**要一起改四个驱动,单独开 PR。**
+
+- [ ] **F64R-9 `_drain_errors` 也会解冻重连冷却(小口子)** (2026-07-25 F64R-1 复审转出)
+  > `_do_query_unlocked` 已加 `note_success=False` 堵住 `_drain_after_timeout`,但
+  > `_drain_errors` 走外层 `self._query`(note_success 默认 True)——会话错位时它读到
+  > stale 应答也算"成功"→ 解冻。影响有限:1 Hz 轮询路(`get_metrics` / `_ensure_topology`
+  > / `_readback_topology`)**不调** `_drain_errors`,只有人发起的事务(GO/GOS/STATIC/load)
+  > 会调,频率低,不成风暴。彻底解法 = 把判据从"读到了"升级为"读到了**可解析的 clean
+  > 应答**"。
+
+- [ ] **F64R-7 ⭐⭐ `STATE?` 语义真机验证(F64R-1 转出,**开机第一件事**,2026-07-25)**
+  > F64R-1 把 `DIAG:SIMU:STATE?` 接成了运行状态的**唯一判据** ——
+  > GO 成不成看它、GOS 停没停看它、监控面报不报"在跑"也看它。手册对这几点写得很死
+  > (§20.4.3.14 七态 + GOS 后必 STOPPED),但**有两处手册管不到、且我们有相反的现场实证**,
+  > 不验就上等于拿现场时间赌:
+  - **① ⭐ GOS 之后 STATE? 到底报什么**(风险最高,先做):
+    `emulation-control` 端点的注释白纸黑字记着 2026-07-21 实证 ——「本固件下 GOS 在运行态
+    **未观察到真停**(数据流不断)」。若属实,`stop_emulation()` 会**恒返回 False**(如实
+    fail-loud,不是 bug),连带:直通态测量步骤直接 FAILED(`measure.py` 已消费布尔)、
+    `disconnect()` 恒报 False。**验法**:GO 起播 → `DIAG:SIMU:GOS` → `*OPC?` →
+    `DIAG:SIMU:STATE?` 看是 STOPPED 还是 RUNNING,同时看功率/数据流是否真停。
+    - 若报 STOPPED 且真停 → 判定正确,收工。
+    - 若报 RUNNING(或报 STOPPED 但仍在发) → **当场记下**,回来定对策(候选:改用
+      `DIAG:SIMU:STOP` 暂停语义 / 加一次重试 / 给直通预备一条明确的逃生路径)。
+      ⚠ 不要在现场临时把判据放宽成"当作停住了"—— 那正是本 PR 删掉的假成功。
+  - **② 旁路(STATIC 1/2/3)下 STATE? 报什么**:手册七态里**没有 BYPASS 态**,进旁路
+    "仿真被暂停"、退旁路"若之前在跑则恢复"。当前代码在旁路路**只取 running、不做
+    破坏性清理**(`allow_unload=False`),就是为了防"旁路下报 CLOSED → 误清加载态"。
+    验法:STATIC 3 建直通后查一次 STATE?,记下字面值。
+  - **③ 顺带**:RUNNING 态重复 GO 的实际行为(手册未涵盖;当前设计不依赖它,但
+    `emulation-control` 注释记着"反复 GO 会 -200 累积、极端会把业务层搞卡死",
+    验一次好定端点要不要加前置查状态)。
+
 - [ ] **F64R-7 ⭐ 三层兜底机制的**真机验证与存废**(必须现场做,不要在本地凭空改)**
       (2026-07-24 F64R-2 收口时转出)
   > F64R-2 为"拓扑读不到"叠了**三层**兜底。它们都是在**没有真机验证**的前提下设计的 ——

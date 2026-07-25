@@ -15,15 +15,41 @@ from app.hal.base import InstrumentStatus
 from app.hal.propsim_f64 import F64BypassMode, RealPropsimF64Driver
 
 
-def _make_driver():
+def _make_driver(*, initial_state="STOPPED"):
     drv = RealPropsimF64Driver("f64-bypass", {})
     drv._channel_count = 1
     visa = MagicMock()
-    visa.query.side_effect = lambda cmd: "1" if cmd == "*OPC?" else '0,"No error"'
     visa.write.return_value = None
     drv._visa_resource = visa
+    # F64R-1: GO/GOS 判定改看 STATE? 终态 (不看错误文字), fake 要给出合理终态 ——
+    # 按最后一条播放命令推: GO→RUNNING, GOS/STOP→STOPPED, CLOSE→CLOSED。
+    # 手册 §20.4.6.25: 切 STATIC≠0 时仿真被暂停 → STOPPED。
+    #
+    # ⚠ agent F9: 仪器态**必须由 fake 自己持有**, 绝不能回读 `drv._emulation_running`
+    # 推导。那样等于让被测对象自己出考题 —— 驱动缓存漂了 (正是本 PR 要治的病:
+    # 后端重启后缓存 False 而硬件在播), fake 会跟着一起漂, "缓存 vs 真值不一致"的
+    # 场景在测试里根本构造不出来, 相关断言全成空转。
+    _sim = {"state": initial_state}
+
+    def _router(cmd):
+        if cmd == "*OPC?":
+            return "1"
+        if cmd == "DIAG:SIMU:STATE?":
+            return _sim["state"]
+        return '0,"No error"'
+
+    visa.query.side_effect = _router
 
     async def _w(cmd, timeout=None):
+        # 命令 → 仪器态迁移 (fake 自持, 与驱动缓存无关)
+        if cmd == "DIAG:SIMU:GO":
+            _sim["state"] = "RUNNING"
+        elif cmd in ("DIAG:SIMU:GOS", "DIAG:SIMU:STOP"):
+            _sim["state"] = "STOPPED"
+        elif cmd == "DIAG:SIMU:CLOSE":
+            _sim["state"] = "CLOSED"
+        elif cmd.startswith("DIAG:SIMU:MODEL:STATIC") and not cmd.endswith(" 0"):
+            _sim["state"] = "STOPPED"     # 手册 §20.4.6.25: 进旁路 → 仿真暂停
         visa.write(cmd)
 
     async def _q(cmd, timeout=None):
@@ -40,21 +66,49 @@ def _writes(visa):
 
 class TestStaticPlaybackMutex:
     async def test_running_switch_to_static_syncs_stopped(self):
-        """运行态切 STATIC 3 → F64 自动 STOPPED, 驱动状态必须同步。"""
+        """运行态切 STATIC 3 → F64 自动暂停, 驱动状态必须同步。
+
+        F64R-1 分工调整: `set_bypass_mode` 只管**档位**, 不再内联猜 running (手册说
+        进旁路暂停、退旁路可能恢复, 方向取决于进旁路前的状态, 驱动自己推必然漂);
+        running 由 `set_passthrough_mode` / `clear_passthrough_mode` 在旁路操作后按
+        **STATE? 真值**刷新。所以这条从"内部方法置 False"改成钉**对外行为**。"""
         drv, _ = _make_driver()
         drv._emulation_running = True
         drv._status = InstrumentStatus.BUSY
-        assert await drv.set_bypass_mode(F64BypassMode.CALIBRATION) is True
-        assert drv._emulation_running is False  # 不同步会漂移 (冻结标注也依赖)
+        assert await drv.set_passthrough_mode(mode=3) is True
+        assert drv._emulation_running is False  # 来自 fake 的 STATE?=STOPPED (进旁路暂停)
         assert drv._status == InstrumentStatus.READY
         assert drv._bypass_mode == F64BypassMode.CALIBRATION
 
-    async def test_static_disable_keeps_running_state(self):
-        """切回 STATIC 0 不影响运行态推断 (0 与回放不互斥)。"""
-        drv, _ = _make_driver()
+    async def test_static_disable_resumes_running_when_instrument_says_so(self):
+        """退旁路 (STATIC 0) 后仪器报 RUNNING → running=True。
+
+        手册 ATE AN §2.4.5: 退出旁路时**若之前在跑则继续运行** —— 方向取决于进旁路
+        前的状态, 所以驱动不推、只问 STATE?。"""
+        drv, _ = _make_driver(initial_state="RUNNING")
+        drv._emulation_running = False          # 缓存还没跟上
+        assert await drv.set_bypass_mode(F64BypassMode.DISABLED) is True
+        assert drv._emulation_running is True   # 以仪器为准
+
+    async def test_static_disable_corrects_lying_cache(self):
+        """★ 反向: 缓存说"在跑"而仪器报 STOPPED → 按真值纠正成 False。
+
+        这正是 F64R-1 要治的漂移形态 (后端重启 / 前面板并发操作后缓存与硬件不一致)。
+        旧实现在这里"保持缓存不变", 于是谎报一路传到仪表盘和测量前置检查。"""
+        drv, _ = _make_driver(initial_state="STOPPED")
         drv._emulation_running = True
         assert await drv.set_bypass_mode(F64BypassMode.DISABLED) is True
-        assert drv._emulation_running is True
+        assert drv._emulation_running is False
+
+    async def test_bypass_refresh_covers_direct_callers_not_only_passthrough(self):
+        """agent F7: 真值刷新在 `set_bypass_mode` 内, 所以**直接调它**的路径 (校准
+        tone B 路径等) 也能纠正缓存 —— 不是只有 set_passthrough_mode 包装里才刷。"""
+        drv, _ = _make_driver(initial_state="RUNNING")
+        drv._emulation_running = False
+        assert await drv.set_bypass_mode(F64BypassMode.BUTLER) is True
+        # 进旁路会把仪器打到 STOPPED (fake 按手册 §20.4.6.25 迁移), 驱动据此记 False
+        assert drv._emulation_running is False
+        assert drv._bypass_mode == F64BypassMode.BUTLER
 
     async def test_start_emulation_clears_static_before_go(self):
         """直通稳态下 GO — 必须先 STATIC 0 再 GO (不清必 -200)。"""
@@ -118,6 +172,8 @@ class TestStaticPlaybackMutex:
         def _q(cmd):
             if cmd == "*OPC?":
                 return "1"
+            if cmd == "DIAG:SIMU:STATE?":
+                return "RUNNING"          # F64R-1: GO 成败看 STATE? 终态
             if cmd == "SYST:ERR?":
                 return err_q.pop(0) if err_q else '0,"No error"'
             return '0,"No error"'
@@ -176,6 +232,8 @@ class TestStaticPlaybackMutex:
         def _q(cmd):
             if cmd == "*OPC?":
                 return "1"
+            if cmd == "DIAG:SIMU:STATE?":
+                return "STOPPED"          # F64R-1: GOS 成败看 STATE? 终态
             if cmd == "SYST:ERR?":
                 return err_q.pop(0) if err_q else '0,"No error"'
             return '0,"No error"'
@@ -218,16 +276,22 @@ class TestStaticPlaybackMutex:
             def query(self, cmd):
                 calls.append(cmd)
                 time.sleep(0.002)
-                return "1" if cmd == "*OPC?" else '0,"No error"'
+                if cmd == "*OPC?":
+                    return "1"
+                if cmd == "DIAG:SIMU:STATE?":
+                    return "RUNNING"      # F64R-1: GO 成败看 STATE? 终态
+                return '0,"No error"'
 
         drv._visa_resource = _V()
         ok, _ = await asyncio.gather(drv.start_emulation(), drv._query("POLL?"))
         assert ok is True
-        # 事务区间 = 首条 SYST:ERR? (drain) .. GO 后错误门的 SYST:ERR? — POLL?
-        # 只能出现在区间之外 (之前或之后)
+        # 事务区间 = 首条 SYST:ERR? (drain) .. 确认闭环末尾的 STATE? — POLL? 只能
+        # 出现在区间之外。F64R-1 后确认闭环 (*OPC?→SYST:ERR?→STATE?) 也在事务内,
+        # 所以区间右端从"最后一条 SYST:ERR?"延到 STATE? (判定读到的状态必须与 GO
+        # 同属一个临界区, 否则并发换状态会让判定读到别人的结果)。
         first_err = calls.index("SYST:ERR?")
-        last_err = len(calls) - 1 - calls[::-1].index("SYST:ERR?")
-        assert "POLL?" not in calls[first_err:last_err + 1], calls
+        last_confirm = len(calls) - 1 - calls[::-1].index("DIAG:SIMU:STATE?")
+        assert "POLL?" not in calls[first_err:last_confirm + 1], calls
 
     async def test_passthrough_then_go_round_trip(self):
         """attach 默认态全回路: 直通稳态建立 → GO 自动恢复衰落。"""

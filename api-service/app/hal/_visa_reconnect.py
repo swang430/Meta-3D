@@ -16,7 +16,18 @@ The same Codex P2 lesson from #14 applies here:
   - ``VI_ERROR_TMO`` (0xBFFF0015) → device too slow, NOT a socket drop;
     must propagate so the caller can decide.
 
-Adding new conn-lost codes here is a one-line change that automatically
+PyVISA-level equivalent (F64R-1, 2026-07-25 实测 pyvisa 1.16.2):
+  - ``pyvisa.errors.InvalidSession`` → 在**已 close 的 Resource** 上再发命令时抛。
+    它**不是** ``VisaIOError`` 的子类 (MRO: InvalidSession → Error → Exception),
+    因为 ``Resource.session`` 这个 property 在 ``_session is None`` 时就抛了, 根本
+    走不到 VISA C 库那层去返回 INV_OBJECT。语义上跟 INV_OBJECT 完全一致 ——
+    "这个会话已经没了, 重建才有救" —— 所以归进 conn-lost。
+    ⚠ 漏了它的后果是**驱动永久死态**: 崩溃恢复路会故意保留已关闭的句柄 (见
+    ``propsim_f64._silent_reconnect_visa``: 置 None 会让 ``if not self._visa_resource``
+    把驱动短路成"从未连接"), 若这类异常既不算 conn-lost 也不算 timeout, 后续命令
+    就既不排水也不触发重连, 网络恢复了也再也不会自愈。
+
+Adding new conn-lost codes/类型 here is a one-line change that automatically
 covers every driver using ``is_visa_conn_lost``.
 """
 from __future__ import annotations
@@ -39,6 +50,10 @@ def is_visa_conn_lost(exc: BaseException) -> bool:
         import pyvisa
     except ImportError:
         return False
+    # 已 close 的 Resource 上再发命令 → InvalidSession (非 VisaIOError 子类, 见模块
+    # docstring)。语义等同 INV_OBJECT: 会话没了, 重建才有救。
+    if isinstance(exc, pyvisa.errors.InvalidSession):
+        return True
     if not isinstance(exc, pyvisa.errors.VisaIOError):
         return False
     code = getattr(exc, "error_code", None)
