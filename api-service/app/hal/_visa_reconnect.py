@@ -55,8 +55,17 @@ ResourceManager 所有权 (F64R-8, 2026-07-25) —— **本节是权威说明, �
     现场表现: HAL 重载 / 单仪表重连之后, 别的仪表"莫名其妙断了"。
 
 为什么"只关自己的 resource"就够: socket 是挂在 resource 上的, 关 resource 即释放
-(F64 的 3334 端口只容一条远程连接, 这条已实证)。RM 本身是进程级基础设施, pyvisa 自己
-注册了 ``atexit`` 处理器, 进程退出时清理 —— **没有任何驱动有资格代表整个进程关掉它**。
+(F64 的 3334 端口只容一条远程连接, 这条已实证)。RM 本身是进程级基础设施 ——
+**没有任何驱动有资格代表整个进程关掉它**。
+
+进程退出时 RM 会被 pyvisa 自己收尾: ``ResourceManager.__new__`` 里
+``atexit.register(call_close)`` + ``obj._atexit_handler = call_close``
+(highlevel.py:3008-3025, 源码注释原文 "Register an atexit handler to ensure the
+Resource Manager is properly closed"); ``close()`` 自己会 ``atexit.unregister``。
+注: 注册的是 ``WeakMethod`` 包装 —— RM 若已被 GC 就什么都不做, 这是对的。
+(2026-07-25 Codex 曾判"pyvisa 没有 atexit 处理器"要求删掉这句, 经查源码**该断言不成立**,
+依据留在此处以免下轮重提; 退一步说, 就算没有 atexit, 进程退出时 OS 也会回收 socket,
+本节的驱动级禁令不依赖这一条。)
 """
 from __future__ import annotations
 

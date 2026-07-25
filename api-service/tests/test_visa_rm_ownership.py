@@ -1,16 +1,12 @@
 """F64R-8: 驱动**不得**调用 `ResourceManager.close()` —— 它会连带关掉其它仪表的会话。
 
-背景 (2026-07-25 实测, pyvisa 1.16.2):
-  · `ResourceManager` 是**按后端缓存的单例**: `ResourceManager('@py')` 两次取到同一个
-    对象; 本机默认后端解析成 `py`, 所以 `ResourceManager()` 与 `ResourceManager('@py')`
-    **也是同一个对象** —— 本仓 13 个 VISA 驱动不分写法**共用一个 RM**;
-  · `ResourceManager.close()` 源码 = `for resource in self._created_resources:
-    resource.close()`, 官方 docstring 原文 "this will also terminate connections
-    obtained from other ResourceManager instances"。
-  ⇒ 任何一个仪表 disconnect 调 `rm.close()`, 就把其余全部仪表的会话一起关了。
-    现场表现: HAL 重载 / 单仪表重连后, 别的仪表"莫名其妙断了"。
+一句话背景: `ResourceManager` 是按后端缓存的单例, 而 `close()` 会把**它发出去的所有**
+resource 一起关掉 ⇒ 任何一个仪表 disconnect 调 `rm.close()`, 就把同后端下其余仪表的
+会话也关了 (现场表现: HAL 重载 / 单仪表重连后, 别的仪表"莫名其妙断了")。
 
-权威说明在 `app/hal/_visa_reconnect.py` 的「ResourceManager 所有权」一节。
+**完整原因、环境差异 (装了 IVI 的机器会分成两组)、以及"为什么不关也不泄漏", 全部只在
+`app/hal/_visa_reconnect.py` 的「ResourceManager 所有权」一节维护一份** —— 这里不复述,
+免得两份说明各自漂移 (本系列刚吃过"同一规则存两份、只改了副本"的亏)。
 
 本文件两层:
   · **行为测试** (`TestDisconnectDoesNotKillPeers`) —— 真契约: 两个驱动共用一个 RM 时,
@@ -32,6 +28,26 @@ _HAL_DIR = pathlib.Path(__file__).resolve().parent.parent / "app" / "hal"
 
 
 # ───────── 行为层: 真契约 (对写法形态免疫) ─────────
+
+# 全部**持有 RM** 的真驱动 (module, 类名, RM 字段, session/resource 字段)。
+# ⚠ 加新 VISA 驱动必须进表 —— `test_driver_table_covers_every_rm_owner` 扫源码反查,
+# 漏了会红。字段名两种流派 (`_visa_rm`/`_visa_session` 与 `_rm`/`_visa_resource`) 都在。
+_RM_OWNING_DRIVERS = [
+    ("cmw500_base_station",  "RealCmw500Driver",            "_visa_rm", "_visa_session"),
+    ("ets_positioner",       "RealEtsEmcenterDriver",       "_visa_rm", "_visa_session"),
+    ("keysight_mxg",         "RealKeysightMxgDriver",       "_visa_rm", "_visa_session"),
+    ("keysight_ena",         "RealKeysightEnaDriver",       "_visa_rm", "_visa_session"),
+    ("keysight_x_series_sa", "RealKeysightXSeriesSaDriver", "_visa_rm", "_visa_session"),
+    ("propsim_fs16",         "RealPropsimFs16Driver",       "_rm",      "_visa_resource"),
+    ("rs_smw200a",           "RealRsSmw200aDriver",         "_visa_rm", "_visa_session"),
+    ("rs_fsva",              "RealRsFsvaDriver",            "_visa_rm", "_visa_session"),
+    ("propsim_f64",          "RealPropsimF64Driver",        "_rm",      "_visa_resource"),
+    ("rf_switch",            "EtslSwitchDriver",            "_visa_rm", "_visa_session"),
+    ("rs_fsw",               "RealRsFswDriver",             "_visa_rm", "_visa_session"),
+    ("rs_zna",               "RealRsZnaDriver",             "_visa_rm", "_visa_session"),
+    ("uxm_base_station",     "RealUxmDriver",               "_visa_rm", "_visa_session"),
+]
+
 
 class _FakeSession:
     """假 VISA resource/session。只关心"被关了没有"。"""
@@ -178,38 +194,49 @@ class TestDisconnectDoesNotKillPeers:
     """
 
     @pytest.mark.asyncio
-    async def test_fs16_disconnect_leaves_peer_session_open(self):
-        from app.hal.propsim_fs16 import RealPropsimFs16Driver
+    @pytest.mark.parametrize("module,cls_name,rm_attr,session_attr", _RM_OWNING_DRIVERS)
+    async def test_disconnect_leaves_peer_session_open(
+        self, module, cls_name, rm_attr, session_attr
+    ):
+        """★ **逐个驱动**跑一遍, 不是抽两个当代表 (Codex P2)。
+
+        只测两个的话, 其余 11 个里将来有谁用了静态扫描抓不到的写法 (局部变量 / 别名
+        字段 / 经 resource 反查), **两层都不会响** —— 套件全绿而 disconnect 照样杀掉
+        同伴会话。契约是全仓的, 覆盖也得是全仓的。"""
+        import importlib
+
+        mod = importlib.import_module(f"app.hal.{module}")
+        cls = getattr(mod, cls_name)
 
         shared_rm = _SharedFakeRM()
         peer = shared_rm.open_resource("TCPIP0::192.0.2.9::INSTR")   # 别的仪表
 
-        d = RealPropsimFs16Driver("fs16-t", {"ip": "192.0.2.1"})
-        d._rm = shared_rm
-        d._visa_resource = shared_rm.open_resource("TCPIP0::192.0.2.1::5025::SOCKET")
+        d = cls(f"{module}-t", {"ip": "192.0.2.1", "port": 5025})
+        setattr(d, rm_attr, shared_rm)
+        own = shared_rm.open_resource("TCPIP0::192.0.2.1::5025::SOCKET")
+        setattr(d, session_attr, own)
 
-        assert await d.disconnect() is True
-        assert d._visa_resource is None
-        assert shared_rm.close_calls == 0, "驱动关了共享 RM"
+        await d.disconnect()
+
+        assert shared_rm.close_calls == 0, f"{module} 关了共享 RM"
         assert peer.closed is False, (
-            "FS16 断开把**别的仪表**的会话也关了 —— 现场表现: 重载后别的仪表莫名断线"
+            f"{module} 断开把**别的仪表**的会话也关了 —— 现场表现: 重载后别的仪表莫名断线"
         )
-        assert shared_rm._created[1].closed is True, "自己的会话没关 (别矫枉过正成什么都不关)"
+        assert own.closed is True, (
+            f"{module} 没关自己的会话 (别矫枉过正成什么都不关 —— socket 会泄漏)"
+        )
 
-    @pytest.mark.asyncio
-    async def test_fsw_disconnect_leaves_peer_session_open(self):
-        """换一个**另一种 disconnect 形态**的驱动 (同步 close + `_set_status`),
-        证明契约不是只对某一种写法成立。"""
-        from app.hal.rs_fsw import RealRsFswDriver
+    def test_driver_table_covers_every_rm_owner(self):
+        """★ 表本身**不能漏** —— 新加 VISA 驱动却忘了进表, 上面那条就默默少跑一个,
+        而"少跑"和"跑过且通过"在结果里长得一模一样。所以扫源码反查完备性。"""
+        listed = {m for m, _, _, _ in _RM_OWNING_DRIVERS}
+        actual = {
+            p.stem for p in _hal_sources()
+            if "pyvisa.ResourceManager(" in p.read_text()
+        }
+        assert actual == listed, (
+            "RM 持有者与行为测试表不一致 —— 新驱动请加进 `_RM_OWNING_DRIVERS`:\n"
+            f"  漏在表外: {sorted(actual - listed)}\n"
+            f"  表里多余: {sorted(listed - actual)}"
+        )
 
-        shared_rm = _SharedFakeRM()
-        peer = shared_rm.open_resource("TCPIP0::192.0.2.9::INSTR")
-
-        d = RealRsFswDriver("fsw-t", {"ip": "192.0.2.2"})
-        d._visa_rm = shared_rm
-        d._visa_session = shared_rm.open_resource("TCPIP0::192.0.2.2::INSTR")
-
-        assert await d.disconnect() is True
-        assert shared_rm.close_calls == 0
-        assert peer.closed is False, "FSW 断开把别的仪表的会话也关了"
-        assert shared_rm._created[1].closed is True
