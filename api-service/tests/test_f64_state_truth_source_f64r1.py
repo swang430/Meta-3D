@@ -438,13 +438,17 @@ class TestDisconnectTransportFailure:
     "F64 掉线后点重载, 界面卡死"。"""
 
     def _dead_link_driver(self):
-        """STATE? 抛 VISA 超时 = 链路不通 (值读不到 ≠ 链路不通, 见下一个类)。"""
+        """STATE? 抛 **conn-lost** = 会话确实没了。
+
+        ⚠ 本用例原先用 `VI_ERROR_TMO` 造"链路不通"—— 那是错的模型 (Codex P1):
+        超时只说明**设备慢**, 会话可能还活着, 拿它当断链会让一台反应慢的 F64 带着
+        还在跑的仿真被释放连接。超时的正确行为见 `test_timeout_is_not_dead_link`。"""
         import pyvisa
         d, writes = _drv(state="STOPPED")
         d._visa_resource = MagicMock()
 
         async def _q(cmd, timeout=None):
-            raise pyvisa.errors.VisaIOError(0xBFFF0015)   # VI_ERROR_TMO
+            raise pyvisa.errors.VisaIOError(0xBFFF00B5)   # VI_ERROR_CONN_LOST
 
         d._query = _q  # type: ignore[assignment]
         return d, writes
@@ -571,14 +575,15 @@ class TestConfirmedStateIsReported:
 # ───────────── 14. 传输层异常族 (复审 T4-M7) ─────────────
 
 class TestTransportFailureShapes:
-    """"链路不通"不止 VISA 超时一种: 已关闭句柄抛 `InvalidSession`, pyvisa-py 某些
-    路径直接冒泡裸 socket 异常。漏判的后果是退回"白等一轮超时+排水"。"""
+    """"链路不通"= **会话确实没了**: 已关闭句柄的 `InvalidSession` / VISA conn-lost 族 /
+    裸 socket 断连。漏判的后果是退回"白等一轮超时+排水"。"""
 
     @pytest.mark.parametrize("exc_factory", [
         lambda: __import__("pyvisa").errors.InvalidSession(),
+        lambda: __import__("pyvisa").errors.VisaIOError(0xBFFF00B5),  # CONN_LOST
         lambda: ConnectionResetError("peer reset"),
         lambda: BrokenPipeError("broken pipe"),
-        lambda: TimeoutError("socket timeout"),
+        lambda: OSError("host unreachable"),
     ])
     async def test_transport_failure_detected(self, exc_factory):
         d, writes = _drv(state="STOPPED")
@@ -590,6 +595,31 @@ class TestTransportFailureShapes:
         d._query = _q  # type: ignore[assignment]
         assert await d.disconnect() is False
         assert writes == [], f"链路已断还在发命令: {writes}"
+
+    @pytest.mark.parametrize("exc_factory", [
+        lambda: __import__("pyvisa").errors.VisaIOError(0xBFFF0015),  # VI_ERROR_TMO
+        lambda: TimeoutError("socket timeout"),                        # OSError 子类!
+    ])
+    async def test_timeout_is_not_dead_link(self, exc_factory):
+        """★ Codex P1: **超时 ≠ 链路断**。`VI_ERROR_TMO` 的含义是"设备太慢"(这条区分
+        本来就写在 `_visa_reconnect.py` 里, 是 Codex #14 的教训), 会话很可能还活着。
+
+        拿超时当断链 → disconnect 同时跳过 GOS 和 CLOSE → 一台**只是反应慢**的 F64
+        (忙着加载 / 长操作) 会带着**还在跑的仿真**被释放连接, 在暗室里继续发射。
+        慢仪器必须走保守路: 照发停止/卸载, 代价只是这次断开慢一点。
+
+        ⚠ `TimeoutError` 是 `OSError` 的子类 —— 不显式排除的话, 会被"裸 socket 异常"
+        那条 `isinstance(e, OSError)` 顺手捎进断链组。"""
+        d, writes = _drv(state="STOPPED")
+        d._visa_resource = MagicMock()
+
+        async def _q(cmd, timeout=None):
+            raise exc_factory()
+
+        d._query = _q  # type: ignore[assignment]
+        await d.disconnect()
+        assert "DIAG:SIMU:GOS" in writes, "慢仪器被当成断链 — 仿真没停就释放了连接"
+        assert "DIAG:SIMU:CLOSE" in writes
 
 
 # ───────────── 15. 判定/落值/文案同源 (复审 U1) ─────────────

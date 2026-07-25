@@ -668,12 +668,21 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         try:
             raw = await self._query("DIAG:SIMU:STATE?")
         except Exception as e:  # noqa: BLE001
-            # agent R7: 除 VISA 超时 / conn-lost (含已关闭句柄的 InvalidSession) 外,
-            # pyvisa-py 某些路径会直接冒泡裸 socket 异常 —— 都算"链路不通"。
+            # ⚠ **超时不算"链路不通"** (Codex P1): `VI_ERROR_TMO` 的含义是"**设备太慢**",
+            # 不是"连接断了" —— 这条区分本来就写在 `_visa_reconnect.py` 的模块注释里
+            # (Codex #14 的教训), 我在加 transport 判定时违反了它。后果很实在: F64 只是
+            # 一时反应慢 (忙着加载 / 长操作) 而 STATE? 超时, 就被判成"链路已断" →
+            # disconnect **同时跳过 GOS 和 CLOSE** → 仿真继续跑, 而我们把连接释放走人,
+            # 仪器在暗室里还发着射。超时该走保守路 (照发停止/卸载, 顶多白等一轮)。
+            #
+            # 归入"链路不通"的只有**会话确实没了**的形态:
+            #   · VISA conn-lost 族 (VI_ERROR_CONN_LOST / INV_OBJECT / InvalidSession);
+            #   · 裸 socket 断连 (ConnectionResetError / BrokenPipeError / 拒绝 / 主机
+            #     不可达 …) —— 但**排除 `TimeoutError`**: 它是 `OSError` 子类, 语义同
+            #     VI_ERROR_TMO, 不能靠 `isinstance(e, OSError)` 顺手把它捎进来。
             if transport is not None and (
-                self._is_visa_timeout(e)
-                or self._is_visa_conn_lost(e)
-                or isinstance(e, (ConnectionError, TimeoutError, OSError))
+                self._is_visa_conn_lost(e)
+                or (isinstance(e, OSError) and not isinstance(e, TimeoutError))
             ):
                 transport["failed"] = True
             logger.warning(f"[F64] DIAG:SIMU:STATE? 查询失败: {e}")
@@ -1693,6 +1702,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 # × (VISA 超时 + 排水 + 可能一次重连 TCP connect)。而 `POST /hal/reload`
                 # 持 HAL 生命周期锁串行调各驱动 disconnect —— 那就是现场"F64 掉线后点重载,
                 # 界面卡死"。链路已断时直接跳到清理。
+                #
+                # ⚠⚠ "链路已断"的判据**不含超时** (Codex P1, 见 `_query_simulation_state`):
+                # 超时只说明仪器慢, 会话可能还活着 —— 拿它当断链会让一台**只是反应慢**的
+                # F64 被跳过停止/卸载, 仿真继续跑而我们把连接释放走人。慢仪器走下面的
+                # 保守路 (照发 GOS/CLOSE), 代价只是这一次断开慢一点。
                 #
                 # ⚠⚠ 门判定一律用**复查后的生效状态** `_eff`, 不是首读 `_live` (Codex P1,
                 # 与 start/stop 同一母题 —— 那两处已修, 这里当时漏了)。首读是错位假象 CLOSED
