@@ -51,12 +51,20 @@ _RM_OWNING_DRIVERS = [
 
 
 class _FakeSession:
-    """假 VISA resource/session。只关心"被关了没有"。"""
+    """假 VISA resource/session。只关心"被关了没有"。
 
-    def __init__(self, name: str) -> None:
+    ⚠ `_resource_manager` **必须有** (Codex 第四轮): 真 pyvisa `Resource.__init__` 里就有
+    `self._resource_manager = resource_manager` 这个**反向引用**, 所以
+    `session._resource_manager.close()` 在真机上**真的能摸到共享 RM 并关掉同伴**。
+    fake 少了它, 那种写法只会抛 `AttributeError` —— 同步驱动把异常吞掉返回 False, 于是
+    "变异变红"是因为**报错**而不是因为同伴被关, 换个 try/except 包一下就彻底假绿。
+    (这是"fake 教了个跟真机不一样的模型"的又一例, 跟本系列此前踩的是同一个坑。)"""
+
+    def __init__(self, name: str, rm: "_SharedFakeRM | None" = None) -> None:
         self.name = name
         self.closed = False
         self.timeout = 5000
+        self._resource_manager = rm      # ← 真 Resource 有这个反向引用
 
     def close(self) -> None:
         self.closed = True
@@ -81,7 +89,7 @@ class _SharedFakeRM:
         self.close_calls = 0
 
     def open_resource(self, name: str, **_kw) -> _FakeSession:
-        s = _FakeSession(name)
+        s = _FakeSession(name, rm=self)   # 反向引用: 真 pyvisa 也是这么挂的
         self._created.append(s)
         return s
 
@@ -111,18 +119,45 @@ def _rm_owning_classes():
     owners: set[tuple[str, str]] = set()
     module_level: set[str] = set()
 
-    def _is_rm_call(node) -> bool:
-        if not isinstance(node, ast.Call):
+    def _local_rm_names(tree) -> set[str]:
+        """本模块里**绑到 ResourceManager 的所有名字** (Codex 第四轮)。
+
+        只认字面量 `ResourceManager` 是不够的 —— `from pyvisa import ResourceManager
+        as VisaRM` 之后调 `VisaRM()`, 名字对不上就整个类漏掉、而"表里也没有"两边照样相等
+        = 假绿。这里把 import 别名和简单赋值别名 (`RM = pyvisa.ResourceManager`) 都收进来。"""
+        names = {"ResourceManager"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for a in node.names:
+                    if a.name == "ResourceManager":
+                        names.add(a.asname or a.name)
+            elif isinstance(node, ast.Assign):
+                v = node.value
+                bound = (
+                    (isinstance(v, ast.Attribute) and v.attr == "ResourceManager")
+                    or (isinstance(v, ast.Name) and v.id in names)
+                )
+                if bound:
+                    for t in node.targets:
+                        if isinstance(t, ast.Name):
+                            names.add(t.id)
+        return names
+
+    def _make_is_rm_call(local_names: set[str]):
+        def _is_rm_call(node) -> bool:
+            if not isinstance(node, ast.Call):
+                return False
+            f = node.func
+            if isinstance(f, ast.Attribute):
+                return f.attr == "ResourceManager"     # `<任意>.ResourceManager(...)`
+            if isinstance(f, ast.Name):
+                return f.id in local_names             # 含 import / 赋值别名
             return False
-        f = node.func
-        if isinstance(f, ast.Attribute):
-            return f.attr == "ResourceManager"
-        if isinstance(f, ast.Name):
-            return f.id == "ResourceManager"
-        return False
+        return _is_rm_call
 
     for path in _hal_sources():
         tree = ast.parse(path.read_text())
+        _is_rm_call = _make_is_rm_call(_local_rm_names(tree))
         in_class: set[int] = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
