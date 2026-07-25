@@ -583,7 +583,7 @@ class TestTransportFailureShapes:
         lambda: __import__("pyvisa").errors.VisaIOError(0xBFFF00B5),  # CONN_LOST
         lambda: ConnectionResetError("peer reset"),
         lambda: BrokenPipeError("broken pipe"),
-        lambda: OSError("host unreachable"),
+        lambda: ConnectionAbortedError("aborted"),
     ])
     async def test_transport_failure_detected(self, exc_factory):
         d, writes = _drv(state="STOPPED")
@@ -598,18 +598,23 @@ class TestTransportFailureShapes:
 
     @pytest.mark.parametrize("exc_factory", [
         lambda: __import__("pyvisa").errors.VisaIOError(0xBFFF0015),  # VI_ERROR_TMO
-        lambda: TimeoutError("socket timeout"),                        # OSError 子类!
+        lambda: TimeoutError("socket timeout"),        # OSError 子类, 但只是"慢"
+        lambda: InterruptedError("EINTR"),             # OSError 子类, 对端没事
+        lambda: BlockingIOError("EAGAIN"),             # 同上
+        lambda: OSError("host unreachable"),           # 故意保守: 宁可多发命令
     ])
     async def test_timeout_is_not_dead_link(self, exc_factory):
-        """★ Codex P1: **超时 ≠ 链路断**。`VI_ERROR_TMO` 的含义是"设备太慢"(这条区分
-        本来就写在 `_visa_reconnect.py` 里, 是 Codex #14 的教训), 会话很可能还活着。
+        """★ Codex P1 (连着两轮收窄): **只有"对端确实没了"才算断链**。
 
-        拿超时当断链 → disconnect 同时跳过 GOS 和 CLOSE → 一台**只是反应慢**的 F64
-        (忙着加载 / 长操作) 会带着**还在跑的仿真**被释放连接, 在暗室里继续发射。
-        慢仪器必须走保守路: 照发停止/卸载, 代价只是这次断开慢一点。
-
-        ⚠ `TimeoutError` 是 `OSError` 的子类 —— 不显式排除的话, 会被"裸 socket 异常"
-        那条 `isinstance(e, OSError)` 顺手捎进断链组。"""
+        判成断链 → disconnect 同时跳过 GOS 和 CLOSE → F64 带着**还在跑的仿真**被释放
+        连接, 在暗室里继续发射。所以判据宁可窄:
+          · `VI_ERROR_TMO` / `TimeoutError` —— "设备太慢"不是"连接断"(这条区分本来就
+            写在 `_visa_reconnect.py` 里, 是 Codex #14 的教训, 我加判定时违反了);
+          · `InterruptedError`(EINTR) / `BlockingIOError`(EAGAIN) —— 都是 `OSError`
+            子类却跟对端无关, 用 `isinstance(e, OSError)` 当判据会把它们一起收进去;
+          · 裸 `OSError`(主机/网络不可达) —— 多半真是链路没了, 但**故意保守不收**:
+            漏判只是多花几秒发命令, 误判是把带功率的仪器丢下, 两者代价不对称。
+        这些一律走保守路: 照发 GOS/CLOSE。"""
         d, writes = _drv(state="STOPPED")
         d._visa_resource = MagicMock()
 

@@ -677,12 +677,19 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             #
             # 归入"链路不通"的只有**会话确实没了**的形态:
             #   · VISA conn-lost 族 (VI_ERROR_CONN_LOST / INV_OBJECT / InvalidSession);
-            #   · 裸 socket 断连 (ConnectionResetError / BrokenPipeError / 拒绝 / 主机
-            #     不可达 …) —— 但**排除 `TimeoutError`**: 它是 `OSError` 子类, 语义同
-            #     VI_ERROR_TMO, 不能靠 `isinstance(e, OSError)` 顺手把它捎进来。
+            #   · `ConnectionError` 族 (Reset / Aborted / Refused / BrokenPipe) ——
+            #     Python 里这一支的语义就是"**对端没了**", 正好是我们要的边界。
+            #
+            # ⚠ 判据从 `OSError` 收窄到 `ConnectionError` (Codex P1 第二次收窄):
+            # `OSError` 太宽 —— `InterruptedError`(EINTR) / `BlockingIOError`(EAGAIN) /
+            # 各种本地资源错误都是它的子类, 却完全不代表对端断了; 判成断链就会跳过
+            # GOS/CLOSE 把**还在发射**的 F64 丢下。(`TimeoutError` 也是 `OSError` 子类,
+            # 收窄后自然被排除, 不必再单列。)
+            # 主机不可达 / 网络不可达 这类**裸 `OSError`(errno)** 是**故意不收**的:
+            # 它们确实多半意味着链路没了, 但漏判的代价只是这次断开多花几秒去发 GOS/CLOSE,
+            # 而误判的代价是仪器带着功率没人管 —— **保守方向只能偏向"多发命令"**。
             if transport is not None and (
-                self._is_visa_conn_lost(e)
-                or (isinstance(e, OSError) and not isinstance(e, TimeoutError))
+                self._is_visa_conn_lost(e) or isinstance(e, ConnectionError)
             ):
                 transport["failed"] = True
             logger.warning(f"[F64] DIAG:SIMU:STATE? 查询失败: {e}")
