@@ -764,7 +764,15 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         ⚠ `allow_unload=False` 用于**语义未定义**的调用路: 旁路进出 (STATIC≠0) 时
         STATE? 字面报什么手册没写 (七态里没有 BYPASS 态), 真机若在旁路下报 CLOSED,
         一次校准往返就会把 `_loaded_emulation_file` 清掉且**无法自动重建**(只能重新
-        load)。在 F64R-7 真机验证之前, 那条路只取 running、不做破坏性清理。
+        load, 而重新 load 第一步 CLOSE 会打断在跑的仿真和 UE attach)。在 F64R-7 真机
+        验证之前, 那条路只取 running、不做破坏性清理。
+
+        ⚠⚠ **别把这个参数当冗余删掉**: 它共 4 个传 False 的站点, 其中三条加载路
+        (`_load_smu_with_preflight` / ASC / B-2) 都在 `close_state != "CLOSED"` 分支内,
+        而本方法只在 `state == "CLOSED"` 时才卸载 —— 那三处**恒为空转**(防御性,
+        把它们改成 True 测试全绿, 属预期)。**唯一真正生效的是旁路刷新那一处**
+        (`_refresh_running_from_state`), 由 `test_bypass_refresh_never_unloads` 钉住。
+        看到"四处参数都一样、简化掉"的念头时, 先看那条用例。
 
         ⚠ 卸载是**破坏性**的 (清 identity → 频率一致性网把 F64 记成"未报告", 而
         `frequency_consistency` 对 None 是**跳过不算不一致** → strict 频率门静默失效)。
@@ -919,6 +927,24 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self._center_freq_programmed = False
         self._readback_center_freq_mhz = None
         self._active_pipeline = None
+        # 信道模型 / 场景名同属"由已加载文件决定" (写于 set_channel_model, 读于
+        # get_channel_state)。漏清的后果跟 loaded_file 漏清一模一样: 仿真被前面板
+        # 关掉后, 快照报 `simulation_state=CLOSED` 却仍带着 `model=CDL-C, scenario=UMa`
+        # —— 本 PR 把"CLOSED 却报着文件名"定义成自相矛盾, 这两个字段同一标准。
+        # ⚠ 但**不进** `_has_load_state()`, 理由是这两条 (别抄错的版本):
+        #   (a) **归类**: 那个判据收的是"**仪器侧回读事实**"(回读的拓扑/中心频/加载的
+        #       文件名), 而 model/scenario 是我们**传进去的入参回显**, 不是仪器说的;
+        #   (b) **冗余**: `set_channel_model` 先置 `_loaded_emulation_file` 再置 model,
+        #       且本方法两者同清 → "model 有值而 loaded_file 为 None"生产不可达, 加进
+        #       `or` 链是恒等 no-op。
+        # ⚠⚠ 不是因为"某些路为 None 会让判据不收敛" —— 那个说法**是错的**且危险:
+        # `_has_load_state()` 是纯 `or` 链, 加恒 None 字段数学上不可能改变结果
+        # (`None or X == X`, 2026-07-25 实测加进去只有钉子用例变红)。按那个错规则**反向
+        # 操作**会去删 `_readback_center_freq_mhz` / `_active_input_ports` 之类"ASC 路常
+        # 为 None"的字段来"修收敛" —— 而那个判据正是**破坏性卸载的准入门**, 删字段就会
+        # 让部分回读态下 CLOSED 既不复查也不清, stale 拓扑照着上一个仿真的口号配端口。
+        self._current_model = None
+        self._current_scenario = None
         self._clear_topology()
 
     def _clear_topology(self) -> None:
@@ -1739,9 +1765,34 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 # 而锁内复查读到 RUNNING 时, 照首读判会**同时跳过 GOS 和 CLOSE**, 然后报
                 # "干净断开"并释放连接 —— 而仪器还在发射。复查存在的意义就是别信那一下。
                 _tr: Dict[str, bool] = {}
-                _live = await self._query_simulation_state(transport=_tr)
-                _, _eff = await self._apply_state_truth_confirmed(_live, always_confirm=True)
-                if _tr.get("failed"):
+                _live = _eff = None
+                if not self._visa_resource:
+                    # **从没连上 / 已断开**的实例也会被断开: connect 失败 (IP 不对 / 仪器
+                    # 没开) 后操作员点 `/hal/reload`, 或后端 shutdown —— `disconnect_all`
+                    # 是**无条件遍历所有驱动**的。本驱动其它方法都有这道守门
+                    # (get_metrics / get_channel_state / start / stop / set_bypass_mode),
+                    # 唯独这里没有, 于是 `None.query` 的 AttributeError 一路漏成现场级
+                    # 告警"F64 可能仍在运行/发射"(agent F2 实测)。
+                    # ⚠ 这不是"文案不好看": 那句告警是 Codex #206 R2 专门造出来的信号,
+                    # 意思是"它可能带着功率在跑, 去暗室确认"。让一台**根本没连上**的仪器
+                    # 也天天喊这句, 信号就被稀释了 —— 现场看第 N 次就不去确认了。
+                    _tr["failed"] = True          # 复用"发不出命令"分支跳过 GOS/CLOSE
+                    _tr["never_connected"] = True # 但走**独立文案**, 见下
+                else:
+                    _live = await self._query_simulation_state(transport=_tr)
+                    _, _eff = await self._apply_state_truth_confirmed(
+                        _live, always_confirm=True
+                    )
+                if _tr.get("never_connected"):
+                    # 返回值仍是 False: 没有 socket 就**无从确认**它在不在发射, 按本 PR
+                    # 的契约"命令没发出去就没资格说已确认停止"(2026-07-25 用户拍板保持
+                    # False)。但文案如实说明是"没连上", 不冒充"链路刚断、可能还在发射"。
+                    stop_confirmed = False
+                    logger.info(
+                        "[F64] disconnect: 未建立 VISA 会话 (从未连接 / 已断开) — "
+                        "无 SCPI 可发, 直接释放本地资源; 仪器实际状态未确认"
+                    )
+                elif _tr.get("failed"):
                     # ⚠ 跳过命令是对的, 但**返回值必须如实降级** (agent R3): 链路断的时候
                     # 我们比"GOS 被拒"更没资格说"已确认停止" —— 命令根本没发出去。报 True
                     # 会让 disconnect_all 的结果表 / HAL 重载日志显示"F64 已干净断开",

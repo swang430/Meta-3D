@@ -771,3 +771,91 @@ class TestStaleNonClosedAlsoConfirmed(TestJudgementUsesConfirmedState):
         d, _ = _drv(state="RUNNING")                 # 单值 fake: 两次都 RUNNING
         assert await d.start_emulation() is True
         assert d._emulation_running is True
+
+
+# ───────────── 16. F64R-1 收尾 P3 (2026-07-25 复审 F1/F2/F3) ─────────────
+
+class TestUnloadClearsModelIdentity:
+    """★ F1: `model` / `scenario` 也是"由已加载文件决定"的字段 —— 漏清的后果跟
+    `loaded_file` 漏清一模一样: 仿真被前面板关掉后, 快照报 `simulation_state=CLOSED`
+    却仍带着 `model=CDL-C, scenario=UMa`。本 PR 把"CLOSED 却报着文件名"定义成自相矛盾,
+    这两个字段同一标准。"""
+
+    async def test_closed_clears_model_and_scenario(self):
+        d, _ = _drv(state="CLOSED")
+        d._current_model = "CDL-C"
+        d._current_scenario = "UMa"
+        d._active_input_ports = [1, 2]
+        d._active_output_ports = [1, 2]
+        st = await d.get_channel_state()
+        assert st["simulation_state"] == "CLOSED"
+        assert st["loaded_file"] is None
+        assert st["model"] is None, "快照自相矛盾: CLOSED 却报着信道模型"
+        assert st["scenario"] is None, "快照自相矛盾: CLOSED 却报着场景"
+
+    async def test_model_fields_not_in_load_state_predicate(self):
+        """⚠ 本条钉的是**边界归类**, 不是行为差异 —— `_has_load_state()` 是纯 `or` 链,
+        把这两个字段加进去在数学上是 no-op (`None or X == X`), 不会改变任何判定结果。
+
+        不进那个判据的真实理由: (a) 判据收"仪器侧回读事实", 而 model/scenario 是**入参
+        回显**; (b) `set_channel_model` 先置 `_loaded_emulation_file`, 且 `_apply_unload`
+        两者同清 → "model 有值而 loaded_file 为 None"生产不可达, 属恒等冗余。
+        **别把本用例读成"加进去会破坏收敛"** —— 那个说法是错的, 按它反向操作会去删判据
+        里"某些路为 None"的字段 (如 `_readback_center_freq_mhz`), 而那是破坏性卸载的准入门。
+        """
+        d, _ = _drv(state="CLOSED")
+        d._loaded_emulation_file = None
+        d._current_model = "CDL-C"
+        d._current_scenario = "UMa"
+        assert d._has_load_state() is False
+
+
+class TestDisconnectWithoutSession:
+    """★ F2: **从没连上**的实例也会被断开 —— connect 失败 (IP 不对/仪器没开) 后点
+    `/hal/reload`, 或后端 shutdown, `disconnect_all` 无条件遍历所有驱动。
+
+    那句"F64 可能仍在运行/发射"是 Codex #206 R2 专门造的信号 (意思是"它可能带着功率
+    在跑, 去暗室确认")。让一台根本没连上的仪器也天天喊, 信号就被稀释了。"""
+
+    async def test_no_session_sends_nothing_and_says_so(self):
+        d, writes = _drv(state="STOPPED")
+        d._visa_resource = None            # 从未连接
+        assert await d.disconnect() is False   # 无从确认 → 保持 False (用户拍板)
+        assert writes == [], f"没有 socket 还在发命令: {writes}"
+
+    async def test_no_session_does_not_cry_still_transmitting(self, caplog):
+        import logging
+        d, _ = _drv(state="STOPPED")
+        d._visa_resource = None
+        with caplog.at_level(logging.WARNING, logger="app.hal.propsim_f64"):
+            await d.disconnect()
+        assert not any("仍在运行/发射" in r.message for r in caplog.records), (
+            "对一台根本没连上的仪器喊'可能仍在发射' — 稀释了真信号"
+        )
+
+    async def test_no_session_still_releases_local_state(self):
+        d, _ = _drv(state="STOPPED")
+        d._visa_resource = None
+        d._tearing_down = True
+        await d.disconnect()
+        assert d._tearing_down is False and d._rm is None
+        assert d._status.value == "disconnected"
+
+
+class TestBypassRefreshNeverUnloads:
+    """★ F3: `allow_unload=False` **唯一真正生效**的站点 (旁路刷新)。另外三个加载路站点
+    都在 `close_state != "CLOSED"` 分支内, 恒为空转。
+
+    守的是 F64R-7 未验证项: 旁路态下 STATE? 报什么手册没写 (七态无 BYPASS)。真机若在
+    STATIC≠0 下报 CLOSED, 一次路损校准往返就会清掉加载记录+拓扑, 且**无法自动重建**
+    (只能重 load, 而重 load 第一步 CLOSE 会打断在跑的仿真和 UE attach)。"""
+
+    async def test_bypass_refresh_never_unloads(self):
+        d, _ = _drv(state="CLOSED")        # 旁路后仪器报 CLOSED (真机可能如此)
+        d._emulation_running = True
+        d._active_input_ports = [1, 2]
+        d._active_output_ports = [1, 2]
+        assert await d.set_bypass_mode(F64BypassMode.CALIBRATION) is True
+        assert d._loaded_emulation_file == "X.smu", "旁路刷新把加载记录清了 — 无法自动重建"
+        assert d._active_output_ports == [1, 2], "旁路刷新把拓扑清了"
+        assert d._emulation_running is False, "running 仍按 STATE? 真值走"
