@@ -794,14 +794,18 @@ class TestUnloadClearsModelIdentity:
         assert st["scenario"] is None, "快照自相矛盾: CLOSED 却报着场景"
 
     async def test_model_fields_not_in_load_state_predicate(self):
-        """⚠ 本条钉的是**边界归类**, 不是行为差异 —— `_has_load_state()` 是纯 `or` 链,
-        把这两个字段加进去在数学上是 no-op (`None or X == X`), 不会改变任何判定结果。
+        """⚠ 本条钉的是**边界归类**, 不是行为差异。
 
-        不进那个判据的真实理由: (a) 判据收"仪器侧回读事实", 而 model/scenario 是**入参
-        回显**; (b) `set_channel_model` 先置 `_loaded_emulation_file`, 且 `_apply_unload`
-        两者同清 → "model 有值而 loaded_file 为 None"生产不可达, 属恒等冗余。
-        **别把本用例读成"加进去会破坏收敛"** —— 那个说法是错的, 按它反向操作会去删判据
-        里"某些路为 None"的字段 (如 `_readback_center_freq_mhz`), 而那是破坏性卸载的准入门。
+        不进 `_has_load_state()` 的理由是**支配关系**: `set_channel_model` 先置
+        `_loaded_emulation_file` 再置 model/scenario, `_apply_unload` 三者同清 → **生产
+        可达**状态里 model/scenario 非空时 loaded_file 必非空, 后者在 `or` 链里已经支配
+        了它们。加新字段时问的就是这个: 它是否被判据里已有的字段支配。
+
+        ⚠ 本用例**故意构造生产不可达的状态**(`loaded_file=None` 而 model 有值) —— 正因如此
+        它才能钉住归类: 真把 model 加进判据, 这里就会翻转成 True。所以**不要**把它读成
+        "加进去是 no-op"(只在生产可达状态成立), 更不要读成"加进去会破坏收敛"(纯 `or` 链
+        没有收敛问题) —— 这两个说法都曾写在代码注释里, 都是错的。按后者反向操作会去删
+        判据里"某些路常为 None"的字段, 而那是**破坏性卸载的准入门**。
         """
         d, _ = _drv(state="CLOSED")
         d._loaded_emulation_file = None
@@ -823,7 +827,7 @@ class TestDisconnectWithoutSession:
         assert await d.disconnect() is False   # 无从确认 → 保持 False (用户拍板)
         assert writes == [], f"没有 socket 还在发命令: {writes}"
 
-    async def test_no_session_does_not_cry_still_transmitting(self, caplog):
+    async def test_no_session_does_not_cry_still_transmitting(self, caplog, _revive_f64_logger):
         import logging
         d, _ = _drv(state="STOPPED")
         d._visa_resource = None
@@ -859,3 +863,88 @@ class TestBypassRefreshNeverUnloads:
         assert d._loaded_emulation_file == "X.smu", "旁路刷新把加载记录清了 — 无法自动重建"
         assert d._active_output_ports == [1, 2], "旁路刷新把拓扑清了"
         assert d._emulation_running is False, "running 仍按 STATE? 真值走"
+
+
+@pytest.fixture
+def _revive_f64_logger():
+    """全量顺序护栏: in-process alembic (`fileConfig(disable_existing_loggers=True)`)
+    会**永久禁用**已导入的 logger → caplog 拿不到 emit, 断言 logger 输出的用例就在全量
+    顺序下 flaky (单跑绿 — 本轮实测: 单文件 107 passed, 全量 1 failed)。
+    复位 `.disabled` 并在测后还原。(memory: feedback_test_logger_emit_alembic_pollution)
+
+    ⚠ 复位对象 = 生产模块的 **logger 实例本身**, 别按模块路径猜名字。
+    ⚠ 尤其注意: 断言"**没有**某条 WARNING"的用例在 logger 被禁时会**假绿** —— 那种用例
+    同样必须挂这个 fixture, 否则它证明不了任何事。"""
+    import app.hal.propsim_f64 as f64mod
+    lg = f64mod.logger
+    prev = lg.disabled
+    lg.disabled = False
+    yield
+    lg.disabled = prev
+
+
+class TestUnconfirmedTeardownKeepsWarning:
+    """★ Codex P2: "没有 socket"有**两种**来路 —— 真·从未连接, 和**上一次断开没停住**。
+    后者的外层 finally 照样把 `_visa_resource` 置了 None, 而仪器**可能还在发射**。
+
+    若一律降级成 INFO, 恰恰是在操作员**重试那一次**(他正盯着新日志看) 把真信号吞掉。
+    现有字段区分不了 (`_visa_resource` / `_rm` / `_status` 断开后跟"从未连接"完全一样),
+    所以记一个 `_teardown_unconfirmed`。"""
+
+    async def test_unconfirmed_teardown_is_recorded(self):
+        """链路已断 → 跳过 GOS/CLOSE → 记账"未确认"。"""
+        import pyvisa
+        d, _ = _drv(state="RUNNING")
+        d._visa_resource = MagicMock()
+
+        async def _q(cmd, timeout=None):
+            raise pyvisa.errors.VisaIOError(0xBFFF00B5)   # CONN_LOST
+
+        d._query = _q  # type: ignore[assignment]
+        assert await d.disconnect() is False
+        assert d._teardown_unconfirmed is True
+
+    async def test_second_disconnect_still_warns(self, caplog, _revive_f64_logger):
+        """★ 第二次断开 (已无 socket) 必须**仍然**喊"可能仍在发射", 不能降 INFO。"""
+        import logging
+        d, _ = _drv(state="RUNNING")
+        d._visa_resource = None
+        d._teardown_unconfirmed = True          # 上次没停住
+        with caplog.at_level(logging.WARNING, logger="app.hal.propsim_f64"):
+            assert await d.disconnect() is False
+        assert any("仍在运行/发射" in r.message for r in caplog.records), (
+            "上次没停住 + 本次无 socket → 真信号被降级成 INFO 吞掉了"
+        )
+        assert d._teardown_unconfirmed is True, "担忧要一直留着, 直到成功连上"
+
+    async def test_never_connected_stays_info(self, caplog, _revive_f64_logger):
+        """反向: 真·从未连接不该被这条改动带成 WARNING (否则又回到稀释信号)。"""
+        import logging
+        d, _ = _drv(state="STOPPED")
+        d._visa_resource = None
+        d._teardown_unconfirmed = False
+        with caplog.at_level(logging.WARNING, logger="app.hal.propsim_f64"):
+            await d.disconnect()
+        assert not any("仍在运行/发射" in r.message for r in caplog.records)
+        assert d._teardown_unconfirmed is False, "没连过就没让它发射过, 别凭空记账"
+
+    async def test_clean_teardown_clears_flag(self):
+        d, _ = _drv(state="STOPPED")
+        d._teardown_unconfirmed = True
+        assert await d.disconnect() is True
+        assert d._teardown_unconfirmed is False
+
+    async def test_cancelled_teardown_records_unconfirmed(self):
+        """被取消 = 没走到任何明确结论 → 悲观记"未确认"(GOS 可能压根没发出去)。"""
+        import asyncio
+        d, _ = _drv(state="RUNNING")
+        d._visa_resource = MagicMock()
+
+        async def _cancel(cmd, timeout=None):
+            raise asyncio.CancelledError()
+
+        d._query = _cancel  # type: ignore[assignment]
+        d._write = _cancel  # type: ignore[assignment]
+        with pytest.raises(asyncio.CancelledError):
+            await d.disconnect()
+        assert d._teardown_unconfirmed is True
