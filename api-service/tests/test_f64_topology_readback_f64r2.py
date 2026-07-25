@@ -34,10 +34,13 @@ from app.hal.propsim_f64 import RealPropsimF64Driver
 
 
 def _driver(*, info="4,128,32", groups=None, err_on=None,
-            in_ports=None, out_ports=None):
+            in_ports=None, out_ports=None, state="STOPPED"):
     """mock 驱动。
 
     info: MODEL:INFO? 的原始回复 (None = 该查询抛异常, 模拟通信失败)。
+    state: DIAG:SIMU:STATE? 的回复。默认 `STOPPED` = **已加载、没在播** ——
+           这是唯一与"本 fake 会照常回答 MODEL:INFO? / GROUP:* 拓扑"自洽的默认值
+           (见下方 ⚠⚠ 第 2 条)。要测"真没加载"请显式传 `state="CLOSED"`。
     groups / in_ports / out_ports: 显式指定分组与端口分配 (造非连续口、多组等形态)。
             **不给则默认造"全交叉 = 1 组"** —— 见下方分组规则说明。
     err_on: 命令子串 → 该查询抛异常。
@@ -53,6 +56,14 @@ def _driver(*, info="4,128,32", groups=None, err_on=None,
     **物理上不可能**。当时据此把驱动里的组数上界从 min 放宽成 max, 等于让 fake 教出来的
     错误模型改写了生产代码 (查手册才发现)。**测试失败不一定是代码错了, 也可能是 fake
     在教错的仪器模型 —— 拿不准就查手册, 别改代码迁就 fake。**
+
+    ⚠⚠ **同一条规则的第 2 个实例: STATE? 也不能跟拓扑打架** (2026-07-24 F64R-1):
+    本 fake 原先把 `DIAG:SIMU:STATE?` 硬答 `CLOSED`, 却同时照常回答 `MODEL:INFO?`
+    的 "4,128,32" 和整套 `GROUP:*` —— 手册 §20.4.3.14 里 CLOSED 的定义就是
+    **"Emulation has not been loaded"**, 没加载就没有模型可报口数, 驱动自己也拒绝在
+    CLOSED 下试 MODEL:INFO?。F64R-2 时无人消费 STATE? 所以没暴露; F64R-1 把 STATE?
+    接成运行态真值源后, 这个矛盾组合会让"仿真已被别人卸载 → 清加载态"的正确逻辑
+    看起来像 bug。默认值因此改为 STOPPED (已加载未播放)。
     """
     drv = RealPropsimF64Driver("propsim-test", {})
     visa = MagicMock()
@@ -82,8 +93,18 @@ def _driver(*, info="4,128,32", groups=None, err_on=None,
         g: list(range(1, n_out + 1)) for g in groups
     }
 
+    # 仪器侧的仿真状态随命令迁移 (静态 fake 会自相矛盾: 发完 CLOSE 还报 STOPPED,
+    # 加载路复查 "==CLOSED 才算真卸载" 就永远过不去)。只建模真机确定会变的两步:
+    #   DIAG:SIMU:CLOSE  → CLOSED  (卸载)
+    #   CALC:FILT:FILE   → STOPPED (打开, 已加载未播放)
+    sim_state = [state]
+
     async def _write(cmd, timeout=None):
         writes.append(cmd)
+        if cmd == "DIAG:SIMU:CLOSE":
+            sim_state[0] = "CLOSED"
+        elif cmd.startswith("CALC:FILT:FILE"):
+            sim_state[0] = "STOPPED"
 
     async def _query(cmd, timeout=None):
         if err_on and err_on in cmd:
@@ -106,7 +127,7 @@ def _driver(*, info="4,128,32", groups=None, err_on=None,
             g = int(cmd.split("?", 1)[1].strip())
             return ",".join(str(p) for p in group_out_ports.get(g, []))
         if cmd == "DIAG:SIMU:STATE?":
-            return "CLOSED"
+            return sim_state[0]
         if cmd.startswith("CALC:FILT:CENT:CH?"):
             return "3550.0"
         return "1"  # *OPC? 等
@@ -649,8 +670,8 @@ class TestColdCacheOnDemandReadback:
 
     async def test_cold_cache_with_closed_simulation_still_fails_loud(self):
         """真的没加载仿真 (CLOSED) → 不盲试 MODEL:INFO?, 照常 fail-loud。"""
-        drv, writes = _driver(info="4,128,32")
-        drv._clear_topology()                     # STATE? 默认返回 CLOSED
+        drv, writes = _driver(info="4,128,32", state="CLOSED")
+        drv._clear_topology()                     # 缓存空 + CLOSED = 自洽的"没加载"
         assert await drv.set_path_loss(path_loss_db=5.0) is False
         assert writes == []
 

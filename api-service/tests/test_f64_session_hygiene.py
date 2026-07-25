@@ -236,13 +236,20 @@ class TestOutputFrozenAnnotation:
         drv._visa_resource = MagicMock()
         drv._tx_antennas, drv._rx_antennas = 1, 1
 
+        # F64R-1: get_metrics 的 emulation_running 改问仪器 (STATE?), 不再读缓存 —
+        # fake 要按命令分流, 由 `_state` 驱动本用例想造的运行态。
+        _state = {"v": "STOPPED"}
+
         async def _fake_query(cmd, timeout=None):
+            if cmd == "DIAG:SIMU:STATE?":
+                return _state["v"]
             return "-20.0"
 
         drv._query = _fake_query  # type: ignore[assignment]
-        drv._emulation_running = False
         m = await drv.get_metrics()
+        assert m.metrics["emulation_running"] is False
         assert m.metrics["output_powers_frozen"] is True  # STOPPED: 读数不可信
-        drv._emulation_running = True
+        _state["v"] = "RUNNING"
         m = await drv.get_metrics()
+        assert m.metrics["emulation_running"] is True
         assert m.metrics["output_powers_frozen"] is False

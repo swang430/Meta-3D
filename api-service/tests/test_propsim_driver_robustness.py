@@ -243,12 +243,18 @@ class TestGetChannelState:
         def _query(cmd):
             if "STATIC?" in cmd:
                 return "0"
+            # F64R-1: STATE? 必须答**合法七态**之一 —— 本 fake 原先对它也返回
+            # "1.2.3"(SYST:VERS? 的答案), 而真机绝不会这么答。旧驱动无白名单会把
+            # 这串垃圾当状态收下, 正是 STATE? 白名单要治的病; fake 不能教这个模型。
+            if "DIAG:SIMU:STATE?" in cmd:
+                return "STOPPED"
             return "1.2.3"
         visa.query.side_effect = _query
 
         state = await drv.get_channel_state()
         assert state["bypass_mode"] == 0
         assert state["scpi_version"] == "1.2.3"
+        assert state["simulation_state"] == "STOPPED"
         assert "query_errors" not in state
 
     @pytest.mark.asyncio

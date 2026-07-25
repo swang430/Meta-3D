@@ -19,9 +19,10 @@ STATIC_FAIL = '-200,"Execution error;Setting of simulation static model failed"'
 OTHER_200 = '-200,"Execution error;GO genuinely rejected"'
 
 
-def _driver(error_seq=None, static_val="0", raise_on_write=None):
+def _driver(error_seq=None, static_val="0", raise_on_write=None, state_val=None):
     """error_seq: {写命令(精确): [该命令后依次返回的 SYST:ERR? 串]}, 用尽后 No error。
-    static_val: DIAG:SIMU:MODEL:STATIC? 回值 (GO 豁免消歧用, 默认 "0" 衰落态)。
+    static_val: DIAG:SIMU:MODEL:STATIC? 回值 (旁路档回读, 默认 "0" 衰落态)。
+    state_val: DIAG:SIMU:STATE? 回值; None → 按最后一条播放命令推终态 (F64R-1 判据)。
     raise_on_write: 命令子串, 命中的写命令抛 TimeoutError (模拟 VI_ERROR_TMO 异常路径)。
     *OPC? 恒答 1; 记录写序供断言。"""
     drv = RealPropsimF64Driver("f64-hotfix", {})
@@ -40,6 +41,17 @@ def _driver(error_seq=None, static_val="0", raise_on_write=None):
     async def _q(cmd, timeout=None):
         if cmd == "*OPC?":
             return "1"
+        if cmd == "DIAG:SIMU:STATE?":
+            # F64R-1: GO/GOS 判定改看 STATE?。默认按"最后一条播放命令"推终态;
+            # state_val 显式给则以它为准 (用例造"GO 被拒且没在跑"等场景)。
+            if state_val is not None:
+                return state_val
+            lp = last["cmd"] or ""
+            if lp == "DIAG:SIMU:GO":
+                return "RUNNING"
+            if lp in ("DIAG:SIMU:GOS", "DIAG:SIMU:STOP"):
+                return "STOPPED"
+            return "STOPPED"
         if cmd == "DIAG:SIMU:MODEL:STATIC?":
             return static_val
         if cmd == "SYST:ERR?":
@@ -63,45 +75,61 @@ def _writes(visa):
 # ---------------------------------------------------------------------------
 
 class TestGoWrongStateExempt:
-    async def test_go_wrong_device_state_exempted_as_success(self):
-        """GO 报 -200 Wrong device state (已在播放) → 豁免为成功。"""
-        drv, _ = _driver({"DIAG:SIMU:GO": [WRONG_STATE]})
+    """GO 的成败判据 (F64R-1 起): **看 `STATE?` 终态到没到 RUNNING**, 不看 SYST:ERR?
+    的文字像不像 benign。
+
+    历史: #221 曾用"回查 `STATIC?==0`"给 GO 的 -200 做豁免消歧 —— 但 STATIC? 只报
+    **旁路档**, 根本不报运行态, 于是"STATIC=0 且 STOPPED"(非旁路但停着) 会被误判成
+    "已在播放", 测量在**没有衰落播放**的状态下跑假数据。信号源选错, 豁免逻辑再精细
+    也是错的。本类现在钉的是换掉信号源之后的行为。"""
+
+    async def test_go_rejected_but_running_is_success(self):
+        """GO 报 -200 但 STATE?=RUNNING (幂等"已在跑") → 目标达成, 成功。"""
+        drv, _ = _driver({"DIAG:SIMU:GO": [WRONG_STATE]}, state_val="RUNNING")
         drv._loaded_emulation_file = "X.smu"
         assert await drv.start_emulation() is True
         assert drv._emulation_running is True
         assert drv._last_error is None or "-200" not in drv._last_error
 
+    async def test_go_rejected_and_stopped_fails_loud(self):
+        """★ #221 误豁免场景的直接回归: GO 被拒且 STATE?=STOPPED (**没在跑**) →
+        fail-loud。旧判据在这里会因 STATIC=0 判成"已在播放"放行, 让测量跑假数据。"""
+        drv, _ = _driver({"DIAG:SIMU:GO": [WRONG_STATE]},
+                         static_val="0", state_val="STOPPED")
+        drv._loaded_emulation_file = "X.smu"
+        assert await drv.start_emulation() is False
+        assert drv._emulation_running is False
+        assert "STOPPED" in (drv._last_error or "")
+
+    async def test_go_clean_but_not_running_fails_loud(self):
+        """★ `*OPC?`=1 骗人场景 (手册 §20.6.1.2 原文警告): 没有任何错误、但 STATE?
+        没到 RUNNING → 假启动, 必须 fail-loud。旧的"只看错误队列"判据这里会放行。"""
+        drv, _ = _driver(state_val="STOPPED")          # SYST:ERR? 全 clean
+        drv._loaded_emulation_file = "X.smu"
+        assert await drv.start_emulation() is False
+        assert drv._emulation_running is False
+
+    async def test_go_running_on_cold_cache(self):
+        """冷缓存 (_loaded_emulation_file=None, 后端重启后 F64 仍在播) 放行到 GO,
+        STATE?=RUNNING → 成功 (冷缓存不做 gate 的既有语义不变)。"""
+        drv, _ = _driver({"DIAG:SIMU:GO": [WRONG_STATE]}, state_val="RUNNING")
+        assert drv._loaded_emulation_file is None
+        assert await drv.start_emulation() is True
+        assert drv._emulation_running is True
+
     async def test_go_other_200_still_fails(self):
-        """非 Wrong-state 的 -200 (真 GO 失败) 仍 fail-loud False — 豁免不误吞。"""
-        drv, _ = _driver({"DIAG:SIMU:GO": [OTHER_200]})
+        """非 Wrong-state 的 -200 且没到 RUNNING → fail-loud (错误文本进 _last_error 供排障)。"""
+        drv, _ = _driver({"DIAG:SIMU:GO": [OTHER_200]}, state_val="STOPPED")
         drv._loaded_emulation_file = "X.smu"
         assert await drv.start_emulation() is False
         assert drv._emulation_running is False
         assert "-200" in (drv._last_error or "")
 
-    async def test_go_wrong_state_exempt_works_on_cold_cache(self):
-        """agent F1 目标场景: 冷缓存 (_loaded_emulation_file=None, 后端重启后 F64
-        仍在播衰落 STATIC=0) 放行到 GO, GO 报 Wrong state → 豁免成功 (放行不再假失败)。"""
-        drv, _ = _driver({"DIAG:SIMU:GO": [WRONG_STATE]}, static_val="0")
-        assert drv._loaded_emulation_file is None
-        assert await drv.start_emulation() is True
-        assert drv._emulation_running is True
-
-    async def test_go_wrong_state_but_static_nonzero_fails(self):
-        """Codex #221 P1: GO 报 Wrong device state 但 STATIC≠0 (清直通没生效, 仍在
-        STATIC 3 直通) → fail-loud, 不豁免 (否则测量在无衰落直通路径跑假数据)。"""
-        drv, _ = _driver({"DIAG:SIMU:GO": [WRONG_STATE]}, static_val="3")
+    async def test_go_state_unreadable_fails_loud(self):
+        """STATE? 读不到 (None) → 无法确认 → 保守 fail-loud, 不盲信。"""
+        drv, _ = _driver({"DIAG:SIMU:GO": [WRONG_STATE]}, state_val="")
         drv._loaded_emulation_file = "X.smu"
         assert await drv.start_emulation() is False
-        assert drv._emulation_running is False
-        assert "STATIC=3" in (drv._last_error or "")
-
-    async def test_go_wrong_state_static_unreadable_fails(self):
-        """STATIC? 读不到 (None) → 保守 fail-loud, 不盲豁免。"""
-        drv, _ = _driver({"DIAG:SIMU:GO": [WRONG_STATE]}, static_val="")
-        drv._loaded_emulation_file = "X.smu"
-        assert await drv.start_emulation() is False
-        assert drv._emulation_running is False
 
 
 # ---------------------------------------------------------------------------

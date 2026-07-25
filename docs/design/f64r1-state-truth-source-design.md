@@ -26,6 +26,17 @@ P0-3 只把**加载路**接上(CLOSE 后确认卸载)。剩余四个坑:
 - **GOS = 停止并倒回起点**,即"回到起点**并停住**",之后需要 GO 才播放
   (§20.4.3.11 + ATE AN §2.5 原文)。期望终态 = STOPPED。
 - **STATE? 在 CLOSED 下正常返回 "CLOSED" 不报错**(§20.4.3.14;P0-3 已实用)。
+- **STATE? 只有 7 个合法返回值**(§20.4.3.14 原文枚举):CLOSED / OPENING /
+  STOPPING / STOPPED / RUNNING / EDITING / CLOSING。→ 驱动按白名单收,非法值
+  (典型是会话错位读到的迟到应答 `0,"NO ERROR"`)当"没读到",不能写进真值缓存。
+- **CLOSED 铁定 = 仿真已卸载**(§20.4.3.14 "Emulation has not been loaded" +
+  ATE AN §2.1);而 F64 **支持本地 GUI 与远程 ATE 并发**(ATE AN §1.1),所以
+  "我加载过、现在读到 CLOSED" = 别人(前面板 / 另一连接)把它关了 → 驱动应据此
+  清加载态,不能继续拿旧拓扑配端口。
+- **GOS + `*OPC?` 之后 STATE? 必然是 STOPPED**:GOS 不碰文件,状态机轨迹不经过
+  EDITING(只能 `CALC:FILT:EDIT` 进)/ OPENING / CLOSING;STOPPING 瞬态被 `*OPC?`
+  同步吃掉。→ 停止判定收严到 {STOPPED, CLOSED} 是手册支持的,**不应**为"并发瞬态"
+  放宽(放宽反而会把别人正在加载的 OPENING 误判成"停住了")。
 - **瞬态可持续数分钟**(OPENING "couple of minutes"),但 ATE 接口**顺序执行**,
   `*OPC?` 阻塞同步即可,不必轮询 STATE? 等稳(§20.6.1.2)。
 - **`*OPC?`=1 会骗人**:只表示"执行完",不表示"没出错"(§20.6.1.2 原文警告)。
@@ -85,8 +96,31 @@ async def _confirm_state_after(self, action: str) -> Optional[str]:
 既有的 `_silent_reconnect_visa()` 重建会话(懒重连基建已在,P0-1 只差这根线):
 - 重连成功 → 当次命令仍返回失败(不重放命令,避免双写),但**下一条**命令可用;
 - 重连失败 → 维持现状(fail-loud),日志写明"会话重建也失败,需人工介入"。
-- 会话重建走 `_apply_session_reset()`(P0-3 单一入口,含拓扑清空)—— 新会话
-  不继承旧会话的任何状态快照。
+- **重建后不清任何状态快照**(⚠ 本条为 2026-07-24 提交前审查后按手册**改正**,
+  评审稿原写"走 `_apply_session_reset()` 清空"是**错的**):经 NotebookLM 查证
+  ATE AN §1.1 —— F64 的仿真状态住在**控制器**里不在 socket 上,只要不发 `*RST`
+  (§20.4.1.8 才会 "closes the emulation"),TCP 断开重连后**运行中的仿真、已加载
+  的 .smu、激活的 alignment 全部原样保留**,STATE? 照旧返回 RUNNING。按原设计清空,
+  驱动会在仿真活着的时候误判"什么都没加载",端口写全线 fail-loud、拓扑白清一遍
+  —— 正是 `_ensure_topology` 拼命要避免的那种误伤。socket 重连 ≠ 会话复位。
+- 重建**成功**时只清一样东西:STATE? 查询的失败静默期(见 3.6),让下一拍立刻
+  能读真值。这是连接健康度,不是仿真状态快照。
+
+### 3.6 高频轮询路的两道限流(提交前审查 F1 追加)
+
+`get_metrics` 挂在 broadcaster 的 1 Hz 轮询上,一轮要发十几条查询。仪器慢/挂死
+时**每条**都会超时 → 排水 → 升级重连,于是一轮 poll 最多重建 7 次 socket(实测)。
+两道限流按同一规格(30 s 静默期,与 F64R-2 拓扑读路一致):
+
+- **会话重建冷却** `_reconnect_retry_after`:30 s 内至多重建一次。
+- **STATE? 失败负缓存** `_state_query_retry_after`:上一次读失败(含读到非法值)
+  后 30 s 内不再查,直接退回缓存 + `query_errors` 标注降级;**只对 `throttle=True`
+  的 get_metrics 生效**,人发起的路径(GO/GOS 确认、load、旁路)一律不节流。
+
+配套铁律:重连失败**绝不置 `_visa_resource=None`**。那是 connect() 前"从未连接"
+的语义,拿它表示"重连失败"会让所有入口的 `if not self._visa_resource: return` 把
+驱动短路成**永久死态**(不发命令 → 不撞超时 → 不再触发重连 → 网络恢复也不自愈)。
+保留旧的半死引用,后续命令继续撞错 → 冷却窗口后再重连 → 网络一好即自愈。
 
 ### 3.5 明确不做(范围外)
 
