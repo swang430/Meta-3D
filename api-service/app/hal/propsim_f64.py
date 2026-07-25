@@ -728,17 +728,29 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         "没有加载态"→ CLOSED 既不复查也不清 → `_active_input_ports` / `_active_channels`
         等永久 stale, 而 get_metrics 会照着 stale 输入口去查电平。
 
-        ⚠ **边界 (agent T2, 实测踩过)**: 只收"**由已加载文件决定**"的字段, 不收
-        `configure()` 能在未加载时写入的**配置来源**字段 ——
+        ⚠⚠ **加新字段的判据 (本方法是权威说明, 唯一一份, 别在别处另写一版)**
+        ——问两个问题, 顺序固定:
+
+        **① 它能不能在"仪器上没有仿真"时非空?** 能 → **不收**。
           · `_active_pipeline`: `configure({"pipeline": ...})` 不加载也能设。收了它,
             纯配置状态下跑一轮 `get_metrics` 就会被判成"有加载态"→ 走破坏性卸载 →
             **一次只读的监控把 configure 写的配置清掉了**, 日志还打出"驱动仍记着已加载
-            (None) — 疑似前面板关闭", 现场照这条去查"谁关了仿真"纯属误导。
-          · `_center_freq_programmed`: 同理是"我们下发过没有"的标志, 不是"仪器上有什么"。
-            (`_apply_unload` 清它是对的 —— 卸载后确实不再成立; 但它**不能**反过来当
-            "有东西可清"的证据。清理集合 ⊋ 判据集合, 两者不必对称。)
-        判据收的是**仪器侧事实**: 加载的文件名 + 回读来的拓扑/中心频。加新字段时按这条
-        边界归类, 别照着 `_apply_unload` 的清单无脑复制。"""
+            (None) — 疑似前面板关闭", 现场照这条去查"谁关了仿真"纯属误导 (agent T2 实测)。
+          · `_center_freq_programmed`: 同理是"我们下发过没有"的标志。(`_apply_unload`
+            清它是对的 —— 卸载后确实不再成立; 但它**不能**反过来当"有东西可清"的证据。
+            **清理集合 ⊋ 判据集合, 两者不必对称**。)
+
+        **② 它是不是被判据里已有的字段"支配"?** 是 → **不收**(收了也是恒等冗余)。
+          · 支配 = 生产可达状态里, 它非空时那个已有字段必非空。例: `_current_model` /
+            `_current_scenario` 被 `_loaded_emulation_file` 支配 —— `set_channel_model`
+            **先**置 loaded_file **再**置 model, `_apply_unload` 三者**同清**。
+
+        ⚠ **不要**用"是不是仪器回读值"当边界 —— 那个分法**是错的**(2026-07-25 Codex 纠正,
+        我在 `_apply_unload` 的注释里写错过两版): `_loaded_emulation_file` 自己就是**入参
+        回显**(我们请求的路径, 非回读), 判据里本来就不全是回读值。按错边界归类会在这个
+        **破坏性卸载准入门**上做错取舍 —— 例如反过来把"某些路常为 None"的回读字段
+        (`_readback_center_freq_mhz` / `_active_input_ports`) 删掉"修收敛", 那会让部分
+        回读态下 CLOSED 既不复查也不清, stale 拓扑照上一个仿真的口号配端口。"""
         return bool(
             self._loaded_emulation_file
             or self._active_input_ports
@@ -938,24 +950,13 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         # get_channel_state)。漏清的后果跟 loaded_file 漏清一模一样: 仿真被前面板
         # 关掉后, 快照报 `simulation_state=CLOSED` 却仍带着 `model=CDL-C, scenario=UMa`
         # —— 本 PR 把"CLOSED 却报着文件名"定义成自相矛盾, 这两个字段同一标准。
-        # ⚠ 但**不进** `_has_load_state()`, 唯一站得住的理由是**支配关系**:
-        # `set_channel_model` **先**置 `_loaded_emulation_file`(2045) **再**置 model/
-        # scenario(2125-2126), 而本方法三者**同清** → 生产可达状态里, model/scenario 非空
-        # 时 `_loaded_emulation_file` 必非空, 后者在 `or` 链里已经支配了它们, 加进去改不了
-        # 任何判定结果。加新字段时问的是这个: **它是否被判据里已有的某个字段支配**。
-        #
-        # ⚠⚠ 两个**曾经写在这里、后来证明是错的**理由, 别再抄 (2026-07-25 两轮审查):
-        #   ✗ "ASC/B-2 路本来就是 None, 加进去会让那两条路判据不收敛" —— 纯 `or` 链不存在
-        #     "不收敛"; 且 GCM 置过 model 后走 ASC 成功路并不清它, "本来就是 None"也不成立。
-        #     按这条**反向操作**会去删判据里"某些路常为 None"的字段 (如
-        #     `_readback_center_freq_mhz`) 来"修收敛" —— 而那是**破坏性卸载的准入门**,
-        #     删字段会让部分回读态下 CLOSED 既不复查也不清, stale 拓扑照上一个仿真配端口。
-        #   ✗ "判据只收仪器侧**回读**事实, model/scenario 是入参回显" —— 边界划错了:
-        #     `_loaded_emulation_file` 自己也是入参回显 (1500/1579/2045/2235 全是我们请求的
-        #     路径), 判据里本来就不全是回读值。
-        #   ✗ "加进去是 no-op" 不能无条件说 —— 只在**生产可达**状态成立 (靠上面的支配关系)。
-        #     钉子测试 `test_model_fields_not_in_load_state_predicate` 恰恰构造了
-        #     `loaded_file=None` + model 有值的**生产不可达**状态, 那里加进去会翻转结果。
+        # ⚠ 但**不进** `_has_load_state()` —— 理由(以及"该不该收某个字段"的完整判据)只在
+        # **`_has_load_state()` 自己的 docstring** 里维护一份, 这里不复述。本条命中它的
+        # 第②问"被已有字段支配": `set_channel_model` 先置 `_loaded_emulation_file` 再置
+        # model/scenario, 本方法三者同清。
+        # ⚠⚠ 这条规则**曾在本处被写错两版**(2026-07-25 Codex 连纠两轮), 而修的时候只改了
+        # 这份副本、漏了判据自己的权威说明 —— 加字段的人查的恰恰是后者。所以规则**单点
+        # 维护**: 想改边界就去改 `_has_load_state()` 的 docstring, 别在调用点另写一版。
         self._current_model = None
         self._current_scenario = None
         self._clear_topology()

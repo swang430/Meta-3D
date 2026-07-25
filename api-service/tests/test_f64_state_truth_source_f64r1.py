@@ -796,16 +796,13 @@ class TestUnloadClearsModelIdentity:
     async def test_model_fields_not_in_load_state_predicate(self):
         """⚠ 本条钉的是**边界归类**, 不是行为差异。
 
-        不进 `_has_load_state()` 的理由是**支配关系**: `set_channel_model` 先置
-        `_loaded_emulation_file` 再置 model/scenario, `_apply_unload` 三者同清 → **生产
-        可达**状态里 model/scenario 非空时 loaded_file 必非空, 后者在 `or` 链里已经支配
-        了它们。加新字段时问的就是这个: 它是否被判据里已有的字段支配。
+        "该不该收某个字段"的完整判据在 `_has_load_state()` 的 docstring (权威, 单点维护)。
+        本条命中它的第②问「被已有字段支配」: `set_channel_model` 先置
+        `_loaded_emulation_file` 再置 model/scenario, `_apply_unload` 三者同清。
 
         ⚠ 本用例**故意构造生产不可达的状态**(`loaded_file=None` 而 model 有值) —— 正因如此
-        它才能钉住归类: 真把 model 加进判据, 这里就会翻转成 True。所以**不要**把它读成
-        "加进去是 no-op"(只在生产可达状态成立), 更不要读成"加进去会破坏收敛"(纯 `or` 链
-        没有收敛问题) —— 这两个说法都曾写在代码注释里, 都是错的。按后者反向操作会去删
-        判据里"某些路常为 None"的字段, 而那是**破坏性卸载的准入门**。
+        它才能钉住归类: 真把 model 加进判据, 这里就会翻转成 True。所以别把它读成"加进去是
+        no-op"(那只在生产可达状态成立)。
         """
         d, _ = _drv(state="CLOSED")
         d._loaded_emulation_file = None
