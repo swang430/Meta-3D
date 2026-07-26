@@ -179,15 +179,19 @@ def test_g3_gui_labsmoke_covers_all_flags():
     text = _strip_ts_comments(api_ts.read_text(encoding="utf-8"))
 
     expected = _authority_strict_flags() - _STRICT_FLAG_EXCEPTIONS
-    # ⚠ 词边界匹配, 不用子串: "precheck_strict_cal" 是 "precheck_strict_calX"
-    #   的子串, `in` 判会假绿 (本门首轮变异实跑抓出的洞)。
+    # ⚠ 两轮变异/审查逐步收紧到"赋值形态":
+    #   ① 裸 token `in` 判 → 被子串 (calX) 假绿 (首轮变异抓出);
+    #   ② `\bbody\.<flag>\b` → 被"删赋值、别处留读取/插值"假绿 (#232 R2 P2);
+    #   ③ 现钉 `body.<flag> = false` 赋值本身 — labSmoke 分支的真实写法
+    #     (api.ts:82-89)。若将来合法改写成别的赋值形态, 门会红一次, 改这条
+    #     正则时请保持"钉赋值不钉出现"的原则。
     missing = {
         f
         for f in expected
-        if not re.search(rf"\bbody\.{re.escape(f)}\b", text)
+        if not re.search(rf"\bbody\.{re.escape(f)}\s*=\s*false\b", text)
     }
     assert not missing, (
-        f"GUI labSmoke (Commissioning/api.ts) 缺 `body.<flag>` 赋值: {missing} — "
+        f"GUI labSmoke (Commissioning/api.ts) 缺 `body.<flag> = false` 赋值: {missing} — "
         f"真硬件 bring-up 在 GUI 上将无法跳过该门 (#112/#133 母题)"
     )
 
@@ -208,63 +212,101 @@ def test_g3_override_test_table_covers_all_flags():
 # G4 HAL 静默吞异常棘轮
 # ─────────────────────────────────────────────────────────────────────
 
-# 2026-07-26 基线 (F64R-12, #231 Codex 独立统计一致)。
+# 2026-07-26 基线 (F64R-12; 总数 38 与 #231 Codex 独立统计一致)。
 # 谓词: ExceptHandler 函数体恰为单条 `pass` — 纯静默吞。
 # `except: return None` 等非 pass 形态的静默吞不在此谓词内 (扩谓词先改这里
 # 的注释与函数, 再整体重扫, 别在旧清单上手工加减)。
-# 修复存量 (F64R-12) 时把对应文件的数字**下调** — 棘轮只进不退。
+# ⚠ 按「文件 × 所在函数」锁, 不按净计数 (#232 R2 P2): 净计数会放过
+#   "删一处旧的、同文件别处加一处新的"的换位; 按函数锁能抓跨函数换位。
+#   **同一函数内**的换位仍不可见 — 行号做键会在任何无关编辑上误红, 不值;
+#   这是本门的已知边界, F64R-12 修存量时会自然消解。
+# 修复存量时把对应条目**下调/删除** — 棘轮只进不退。
 _SILENT_SWALLOW_BASELINE = {
-    "propsim_f64.py": 12,
-    "uxm_base_station.py": 9,
-    "cmw500_base_station.py": 8,
-    "aerotech_positioner.py": 3,
-    "propsim_fs16.py": 3,
-    "rf_switch.py": 2,
-    "keysight_ena.py": 1,
+    "aerotech_positioner.py": {"_silent_reconnect": 2, "disconnect": 1},
+    "cmw500_base_station.py": {
+        "get_throughput_metrics": 6, "get_ue_info": 1, "start_signaling": 1,
+    },
+    "keysight_ena.py": {"_silent_reconnect_visa": 1},
+    "propsim_f64.py": {
+        "_clear_error_queue": 1, "_do_ftp": 1, "_do_query_unlocked": 1,
+        "_do_write_unlocked": 1, "_first_error": 1, "_silent_reconnect_visa": 1,
+        "disconnect": 1, "parse_f64_sys_info": 2, "set_calibration_tone": 3,
+    },
+    "propsim_fs16.py": {"_parse_sys_info": 2, "_silent_reconnect_visa": 1},
+    "rf_switch.py": {"disconnect": 2},
+    "uxm_base_station.py": {
+        "_silent_reconnect_visa": 1, "get_throughput_metrics": 8,
+    },
 }
 
 
-def _count_bare_pass_handlers(source: str) -> int:
+def _bare_pass_sites_by_function(source: str) -> dict:
+    """{所在函数名: 裸 pass handler 数}; 模块级记 '<module>', 嵌套取最内层函数。"""
     tree = ast.parse(source)
-    return sum(
-        1
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ExceptHandler)
-        and len(node.body) == 1
-        and isinstance(node.body[0], ast.Pass)
-    )
+    counts: dict = {}
+
+    def _walk(node, func):
+        for child in ast.iter_child_nodes(node):
+            child_func = (
+                child.name
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                else func
+            )
+            if (
+                isinstance(child, ast.ExceptHandler)
+                and len(child.body) == 1
+                and isinstance(child.body[0], ast.Pass)
+            ):
+                counts[func] = counts.get(func, 0) + 1
+            _walk(child, child_func)
+
+    _walk(tree, "<module>")
+    return counts
 
 
 def test_g4_counter_behavior():
-    """G4 的行为自测: 计数器必须数得对 (防谓词空转)。"""
+    """G4 的行为自测: 计数器按函数归属数得对 (含嵌套/async/模块级),
+    带日志的和 except-return 的都不算 (防谓词空转)。"""
     src = (
-        "try:\n    a()\nexcept Exception:\n    pass\n"
-        "try:\n    b()\nexcept Exception:\n    logger.warning('x')\n"
-        "try:\n    c()\nexcept Exception:\n    pass\n"
-        "try:\n    d()\nexcept Exception:\n    return None\n"
+        "def outer():\n"
+        "    try:\n        a()\n    except Exception:\n        pass\n"
+        "    def inner():\n"
+        "        try:\n            b()\n        except Exception:\n            pass\n"
+        "    try:\n        c()\n    except Exception:\n        logger.warning('x')\n"
+        "async def aio():\n"
+        "    try:\n        d()\n    except Exception:\n        pass\n"
+        "def ret():\n"
+        "    try:\n        e()\n    except Exception:\n        return None\n"
+        "try:\n    f()\nexcept Exception:\n    pass\n"
     )
-    # 两处裸 pass; 带日志的和 except-return 的都不算
-    assert _count_bare_pass_handlers(f"def f():\n{_indent(src)}") == 2
-
-
-def _indent(block: str) -> str:
-    return "".join(f"    {line}\n" for line in block.splitlines())
+    assert _bare_pass_sites_by_function(src) == {
+        "outer": 1, "inner": 1, "aio": 1, "<module>": 1,
+    }
 
 
 def test_g4_silent_swallow_ratchet():
-    """app/hal 逐文件裸 pass 计数必须精确等于基线 — 新增即红 (吞异常不等于
-    吞信息, 见 F64R-12); 修掉存量后下调基线, 把进度锁死。"""
+    """app/hal 逐「文件 × 函数」裸 pass 计数必须精确等于基线 — 新增即红,
+    跨函数换位也红 (吞异常不等于吞信息, 见 F64R-12); 修掉存量后同步下调
+    基线, 把进度锁死。"""
     actual = {}
     for py in sorted(_HAL_DIR.glob("*.py")):
-        n = _count_bare_pass_handlers(py.read_text(encoding="utf-8"))
-        if n:
-            actual[py.name] = n
+        sites = _bare_pass_sites_by_function(py.read_text(encoding="utf-8"))
+        if sites:
+            actual[py.name] = sites
 
-    assert actual == _SILENT_SWALLOW_BASELINE, (
-        "HAL 静默吞异常计数偏离基线。\n"
-        f"  新增/上升: { {k: v for k, v in actual.items() if v > _SILENT_SWALLOW_BASELINE.get(k, 0)} }\n"
-        f"  下降(好事, 请同步下调基线): { {k: v for k, v in actual.items() if v < _SILENT_SWALLOW_BASELINE.get(k, 999)} }\n"
-        f"  基线中已消失的文件: { set(_SILENT_SWALLOW_BASELINE) - set(actual) }\n"
-        "新增吞异常时: 要么记一句 logger.debug/warning 再吞 (吞异常不吞信息), "
-        "要么给出手册/协议依据后调整基线。"
-    )
+    if actual != _SILENT_SWALLOW_BASELINE:
+        diff_lines = []
+        for fname in sorted(set(actual) | set(_SILENT_SWALLOW_BASELINE)):
+            a = actual.get(fname, {})
+            b = _SILENT_SWALLOW_BASELINE.get(fname, {})
+            for func in sorted(set(a) | set(b)):
+                if a.get(func, 0) != b.get(func, 0):
+                    diff_lines.append(
+                        f"  {fname}::{func}: 基线 {b.get(func, 0)} → 现在 {a.get(func, 0)}"
+                    )
+        raise AssertionError(
+            "HAL 静默吞异常分布偏离基线 (逐文件×函数):\n"
+            + "\n".join(diff_lines)
+            + "\n新增吞异常时: 要么记一句 logger.debug/warning 再吞 (吞异常不吞信息), "
+            "要么给出手册/协议依据后调整基线; 修掉存量则下调基线锁进度。"
+        )
