@@ -950,3 +950,52 @@ class TestUxmProbeCodex229B:
         assert "CELL_STATUS" in result.extra["critical_unsupported"]
         cell_step = [s for s in result.steps if s.label.startswith("CELL_STATUS")][0]
         assert cell_step.raw == "   ", "判定归一化了, raw 仍要存原样"
+
+
+class TestCodexRound229C:
+    """Codex 第三轮 3 条。P1-1 正是我上一轮**主动请它裁决**的那个判断 —— 我以为
+    "排空循环的终止条件"跟"判队列干净"语义不同可以留 None, 它判我错: 那是两件事,
+    我把它们混成了同一个分支。"""
+
+    def test_p1_indeterminate_drain_reply_is_failure(self):
+        """`SYST:ERR?` 读不出错误码 ≠ 队列干净。会话没验证过就去发 GO/STATIC/GOS,
+        而且后面步骤的判据会把迟到的错误算到自己头上。"""
+        class _GarbledDrain(_FakeF64):
+            async def _query(self, cmd):
+                if cmd == "SYST:ERR?":
+                    return "???"          # 畸形回复, _parse_err 给 None
+                return await super()._query(cmd)
+
+        ce = _GarbledDrain(state="STOPPED")
+        result, _ = _run(ce, {"restore_initial_state": False})
+        assert result.success is False
+        assert "清错误队列失败" in result.summary
+        assert "DIAG:SIMU:GO" not in ce.writes, "队列状态未知就不该动手"
+
+    def test_p1_bypass_precondition_before_observation(self):
+        """先建立前提, 再采集依赖该前提的观测。若 STATIC 写入队列干净但档位没真变,
+        旧顺序会先把一个"根本不在旁路里测到的"值记成 F64R-7② 的答案 —— 整轮虽然
+        最终失败, 但归档里已经躺着一个**贴错标签的观测值**。"""
+        class _BypassSilentlyIgnored(_FakeF64):
+            async def _write(self, cmd):
+                if cmd.startswith("DIAG:SIMU:MODEL:STATIC ") and cmd.endswith(" 3"):
+                    self.writes.append(cmd)   # 收下, 队列干净, 但档位不变
+                    return
+                return await super()._write(cmd)
+
+        ce = _BypassSilentlyIgnored(state="RUNNING", state_in_bypass="STOPPED")
+        result, _ = _run(ce, {"probe_gos": False, "restore_initial_state": False})
+        assert result.success is False
+        assert "state_in_bypass" not in result.extra, (
+            "前提没建立就不该记观测值, 否则归档里是贴错标签的数据"
+        )
+        assert _step(result, "旁路下 STATE? (跳过)").success is False
+
+    def test_p2_unrecognised_literal_still_reaches_summary(self):
+        """⭐ 七态之外的字面值(比如固件自有的 `BYPASS`)恰恰是本剧本**最想收集**的东西。
+        按归一化值真假判会把它从摘要里漏掉, 而步骤列表超 2048 字节会被截掉。"""
+        ce = _FakeF64(state="RUNNING", state_in_bypass="BYPASS", state_after_gos="RUNNING")
+        result, _ = _run(ce, {"restore_initial_state": False})
+        assert "'BYPASS'" in result.summary, f"意料之外的字面值丢了: {result.summary}"
+        assert "七态之外" in result.summary, "要标出来这是个未识别值"
+        assert result.extra["state_in_bypass_raw"] == "BYPASS"

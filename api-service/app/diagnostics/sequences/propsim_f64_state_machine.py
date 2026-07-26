@@ -244,8 +244,19 @@ class _Probe:
             for _ in range(100):
                 raw = await self._q("SYST:ERR?")
                 code, _text = _parse_err(raw or "")
-                if code in (0, None):
+                if code == 0:
                     break
+                if code is None:
+                    # ⚠ 读不出错误码 ≠ 队列干净。空/畸形/会话错位的迟到应答都会走到
+                    # 这里 —— 那说明这条 SCPI 会话本身没验证过, 却要拿它去发 GO/
+                    # STATIC/GOS, 而且后面步骤的判据会把迟到的错误算到自己头上。
+                    # 判据必须跟 `write_and_check` 同源: 只认 0 (Codex #229 第三轮 P1;
+                    # 我上一轮以为"排空循环的终止条件语义不同"可以留 None, 请它裁决,
+                    # 它判我错 —— 终止和"判干净"是两件事, 我把它们混成了一个分支)。
+                    self.add(label, False,
+                             f"SYST:ERR? 读不出错误码 ({raw!r}) — 队列状态未知, 不能当干净",
+                             raw, started)
+                    return False
                 drained.append((raw or "").strip())
             await _maybe_await(self._ce._write("*CLS"))  # noqa: SLF001
         except Exception as e:  # noqa: BLE001
@@ -446,11 +457,21 @@ async def run(
                 f"进旁路 MODEL:STATIC {bypass_mode}",
                 f"DIAG:SIMU:MODEL:STATIC {bypass_mode}",
             ):
-                # ⭐ F64R-7② 的答案就是这两条的 raw
-                findings["state_in_bypass"] = await p.read_state("旁路下 STATE?  ⭐F64R-7②")
-                findings["state_in_bypass_raw"] = p.last_raw
+                # ⚠ 顺序: **先确认旁路真的切过去了, 再采集待测量**。
+                # 反过来的话, 若 STATIC 写入队列干净但档位其实没变, 我们会先把一个
+                # "根本不在旁路里测到的" STATE? 值记成 F64R-7② 的答案 —— 整轮虽然
+                # 最终会失败, 但 extra 和摘要里已经躺着一个**贴错标签的观测值**,
+                # 而归档正是下次现场拿来对照的东西 (Codex #229 第三轮 P1)。
+                # 一般原则: 先建立前提, 再采集依赖该前提的观测。
                 findings["bypass_in_bypass"] = await p.read_bypass(
                     "旁路下 MODEL:STATIC?", expect=str(bypass_mode))
+                if findings["bypass_in_bypass"] == str(bypass_mode):
+                    findings["state_in_bypass"] = await p.read_state("旁路下 STATE?  ⭐F64R-7②")
+                    findings["state_in_bypass_raw"] = p.last_raw
+                else:
+                    p.add("旁路下 STATE? (跳过)", False,
+                          "旁路档没真切过去 — 此时读到的状态不是'旁路下'的观测, 不记",
+                          None, time.monotonic())
 
             if await p.write_and_check("退旁路 MODEL:STATIC 0", "DIAG:SIMU:MODEL:STATIC 0"):
                 # 手册承诺"进旁路前在跑 → 退旁路后继续跑"; 这里验它在本固件上成不成立。
@@ -559,11 +580,17 @@ async def run(
         # 下次现场要做的是**字面比对**, 归一化值做不了这件事; 而完整步骤排在摘要与
         # 日志之后, 超 2048 字节就被截掉, 于是归档里只剩归一化结果 (Codex #229 P2)。
         # 用 repr 保住空白与引号, 跟归档那边同一套形状。
+        # ⚠ 判据用 **raw 在不在**, 不用归一化值的真假。若真机回了个七态之外的
+        # 字面值(比如固件自有的 `BYPASS`), `read_state` 会如实留下 raw 但返回 None
+        # —— 按归一化值判就会把它从摘要里漏掉, 而**那恰恰是本剧本最想收集的东西**
+        # (意料之外的字面值), 且步骤列表超 2048 字节会被截掉 (Codex #229 第三轮 P2)。
         answers = []
-        if findings.get("state_after_gos"):
-            answers.append(f"GOS后={findings.get('state_after_gos_raw')!r}")
-        if findings.get("state_in_bypass"):
-            answers.append(f"旁路下={findings.get('state_in_bypass_raw')!r}")
+        if findings.get("state_after_gos_raw") is not None:
+            unk = "" if findings.get("state_after_gos") else " (七态之外!)"
+            answers.append(f"GOS后={findings['state_after_gos_raw']!r}{unk}")
+        if findings.get("state_in_bypass_raw") is not None:
+            unk = "" if findings.get("state_in_bypass") else " (七态之外!)"
+            answers.append(f"旁路下={findings['state_in_bypass_raw']!r}{unk}")
         # 中止原因排在最前 —— 归档保头部, 操作员先看到"为什么没跑完"。
         head = f"⚠ {aborted_reason} | " if aborted_reason else ""
         return SequenceRunResult(
