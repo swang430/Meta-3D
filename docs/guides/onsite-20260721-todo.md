@@ -378,9 +378,10 @@
   - ⚠ 动手时同问 F64R-10 §8 的教训: FTP 会话跟 3334 SCPI socket 是两条独立连接,
     先确认关 FTP 不影响 SCPI 会话 (按 ATE AN 架构应该无关, 写测试时别造反物理的 fake)。
 
-- [ ] **C-1 [待拍板] precheck_strict_input_level 要不要补 session 旁路** (2026-07-26
+- [ ] **C-1 [backlog] precheck_strict_input_level 要不要补 session 旁路** (2026-07-26
       C 组建门时发现: 9 个 strict flag 里唯独它四站点全缺 — CreateSessionRequest /
-      _request_overrides / GUI labSmoke / 覆盖测试表都没有)
+      _request_overrides / GUI labSmoke / 覆盖测试表都没有。**用户 2026-07-26 拍板:
+      记 backlog 不现在定** — 现场撞到"闭环不收敛需要会话级跳过"时再补, 没撞到维持现状)
   - **现状可解释**: 它不是 precheck 门, 是 measure 内输入电平闭环的严格性开关,
     自带 opt-out 语义 (False=不收敛降级 warning) + CE/BS 缺 capability 自动跳过,
     opt-in 走 TestCase 配置; 且早于 #112 规则确立, #112 用户审计时亦未纳入。
