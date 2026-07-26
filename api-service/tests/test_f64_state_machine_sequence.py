@@ -418,9 +418,11 @@ class TestMutationGapsFromReview:
         跟接手时不一样的状态**, 这必须让操作员看见, 不能算成功收工。"""
         ce = _FakeF64(state="RUNNING", state_after_gos="EDITING")
         result, _ = _run(ce, {"restore_initial_state": True})
-        give_up = _step(result, "恢复运行态 (放弃)")
+        give_up = _step(result, "恢复 (放弃)")
         assert give_up.success is False
         assert result.success is False
+        # 放弃时必须把"接手时是什么 / 现在是什么"都写清楚, 否则人没法手动收拾
+        assert "接手时" in give_up.detail and "EDITING" in give_up.detail
 
 
 class TestOnSiteSteadyState:
@@ -490,8 +492,17 @@ class TestSummaryCarriesAnswers:
         必须放进 summary(永远排最前), 否则下次现场拿归档对照时答案已经被切掉了。"""
         ce = _FakeF64(state="RUNNING", state_in_bypass="STOPPED", state_after_gos="RUNNING")
         result, _ = _run(ce, {"restore_initial_state": False})
-        assert "GOS后=RUNNING" in result.summary
-        assert "旁路下=STOPPED" in result.summary
+        assert "GOS后='RUNNING'" in result.summary
+        assert "旁路下='STOPPED'" in result.summary
+
+    def test_summary_keeps_raw_not_normalised(self):
+        """⭐ 摘要里必须是**仪器原样**, 不是归一化值 —— 下次现场做的是字面比对,
+        `RUNNING` 和 `  "RunNing"  ` 对这件事是两回事 (Codex #229 P2)。"""
+        ce = _FakeF64(state="RUNNING", state_raw_override='  "RunNing"  ')
+        result, _ = _run(ce, {"restore_initial_state": False})
+        assert '  "RunNing"  ' in result.summary, (
+            f"摘要丢了原始字面值: {result.summary}"
+        )
 
 
 class TestBypassModeTypeStrictness:
@@ -754,3 +765,100 @@ class TestUxmProbeRound2:
         assert "APPLY_HEADER" not in names
         assert _CRITICAL == {"CELL_STATUS"}
         assert not any("APPLY" in c[1] for c in _CANDIDATES)
+
+
+class TestCodexRound229:
+    """PR #229 Codex 的 6 条 (3×P1 + 3×P2)。其中 3 条**又是我上一轮修复引入的** ——
+    同一块恢复逻辑连续三轮出问题, 所以这轮把它从"打补丁"改成"对着目标态收敛"。"""
+
+    def test_p1_restores_bypass_zero_when_exit_failed(self):
+        """P1: 初始就是 STATIC 0 → 进探测旁路 → **退旁路那步失败** → 旧写法的恢复段
+        只在 `initial_bypass != "0"` 时才动, 于是仪器被留在 1/2/3 档没人管。
+        根因是"假设主流程已经成功退过旁路"。"""
+        # ⚠ 退旁路只失败**一次**(瞬时被拒), 否则谁也救不回来 —— 造一个"永远拒绝"的
+        # 仪表去逼生产代码, 属于 memory feedback_test_failure_may_mean_wrong_fake
+        # 说的那种造不出的场景。这里要验的是"恢复段会不会去管初始档为 0 的情况"。
+        class _RejectExitOnce(_FakeF64):
+            _rejected = False
+
+            async def _write(self, cmd):
+                if cmd == "DIAG:SIMU:MODEL:STATIC 0" and not self._rejected:
+                    self._rejected = True
+                    self.writes.append(cmd)
+                    self.errors.append('-200,"Execution error;Wrong device state for command"')
+                    return
+                return await super()._write(cmd)
+
+        ce = _RejectExitOnce(state="RUNNING", bypass="0")
+        result, _ = _run(ce, {"probe_gos": False, "restore_initial_state": True})
+        assert ce.bypass == "0", "初始档是 0 也必须恢复到 0"
+        assert result.success is False, "中间那步失败要如实报出来"
+        assert any("恢复旁路档" in s.label for s in result.steps)
+
+    def test_p1_unstable_state_touches_nothing_but_reports_both(self):
+        """P1: 恢复前状态不稳(瞬态/读不到)时, 旧写法仍会去写 `MODEL:STATIC` ——
+        而那条命令按本剧本采用的手册约束只在 RUNNING/STOPPED 下有定义。
+        现在两样都不动, 但要把"接手时 vs 现在"都报出来让人手动收拾。"""
+        ce = _FakeF64(state="RUNNING", bypass="3", state_after_gos="OPENING")
+        result, _ = _run(ce, {"restore_initial_state": True})
+        step = _step(result, "恢复 (放弃)")
+        assert step.success is False
+        assert "接手时" in step.detail and "旁路档=3" in step.detail
+        # 关键: 状态不稳时不许**再**发旁路写命令。探测段自己那一次 STATIC 3 是它的
+        # 本职工作, 算进来就把断言写歪了 —— 要数的是"恢复阶段有没有多发一次"。
+        assert ce.writes.count("DIAG:SIMU:MODEL:STATIC 3") == 1, (
+            f"探测写 1 次是正常的, 恢复阶段不该再写; 实际 writes={ce.writes}"
+        )
+
+    def test_p1_unparseable_error_reply_is_failure(self):
+        """P1: `SYST:ERR?` 回空串/畸形 → `_parse_err` 给 code=None, 旧写法跟"明确的 0"
+        一样判成功 → 这条写命令**根本没经过错误队列确认**就往下走了。"""
+        class _GarbledErr(_FakeF64):
+            async def _query(self, cmd):
+                if cmd == "SYST:ERR?" and self.writes.count("DIAG:SIMU:GO"):
+                    return ""      # 超时后的空回复
+                return await super()._query(cmd)
+
+        ce = _GarbledErr(state="STOPPED")
+        result, _ = _run(ce, {"probe_gos": False, "restore_initial_state": False})
+        assert _step(result, "GO (STOPPED").success is False
+        assert result.success is False
+
+    def test_p2_go_must_actually_reach_running(self):
+        """P2: 错误队列干净 ≠ 真起来了。若 GO 后状态仍是 STOPPED, 后面记的
+        "旁路下/GOS 之后"就不是运行态语义, 结论作废还不自知。"""
+        class _GoDoesNothing(_FakeF64):
+            async def _write(self, cmd):
+                if cmd == "DIAG:SIMU:GO":
+                    self.writes.append(cmd)   # 收下但状态不变, 也不报错
+                    return
+                return await super()._write(cmd)
+
+        ce = _GoDoesNothing(state="STOPPED")
+        result, _ = _run(ce, {"restore_initial_state": False})
+        assert result.success is False
+        assert "而不是 RUNNING" in result.summary
+        assert "DIAG:SIMU:GOS" not in ce.writes, "没真起来就不该继续探测"
+
+
+class TestUxmProbeCodex229:
+    def test_p2_no_reply_with_clean_queue_is_not_supported(self):
+        """P2: 查询没回话 + 错误队列却干净 = 两头都没结论(典型是瞬时 VISA 超时,
+        命令可能压根没送到)。判成 SUPPORTED 的后果特别坏 —— 关键的 CELL_STATUS
+        会让整轮报成功, 而我们**从没拿到过一个能当状态真值源的值**。"""
+        class _SilentButClean(TestUxmManualSpellingProbe._FakeUxm):
+            async def _query(self, cmd):
+                if cmd == "SYST:ERR?":
+                    return '0,"No error"'      # 队列永远干净
+                self.queries.append(cmd)
+                raise TimeoutError("VI_ERROR_TMO")   # 查询永远不回话
+
+        from app.diagnostics.sequences.uxm_manual_spelling_probe import run as run_probe
+        logs: List[str] = []
+        result = asyncio.run(
+            run_probe(ctx=object(), hal=_FakeHal2(_SilentButClean()),
+                      params={}, log=logs.append)
+        )
+        assert result.success is False, "关键项没拿到回复不能报成功"
+        assert "CELL_STATUS" in result.extra["critical_unsupported"]
+        assert result.extra["supported"] == []

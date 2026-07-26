@@ -246,6 +246,13 @@ async def run(
 
         code, text = _parse_err(raw_err or "")
         status = _categorize_status(code)
+        # ⚠ "查询没回话" + "错误队列却是干净的" = **两头都没结论**, 不能算支持。
+        # 典型成因是一次瞬时 VISA 超时: 命令可能压根没送到, 队列自然也没有 -113。
+        # 判成 SUPPORTED 的后果特别坏 —— 对关键的 CELL_STATUS 而言, 整轮会报成功,
+        # 而我们**从没拿到过一个可以当状态真值源的值**(raw 是 None)。
+        # 这正是本序列要产出的东西: "能用"的第一步是"它真回了话"。(Codex #229 P2)
+        if reply is None and code == 0:
+            status = "UNKNOWN"
         counts[status] = counts.get(status, 0) + 1
         ok = status in ("SUPPORTED", "SUPPORTED_BUT_STATE")
         if ok:

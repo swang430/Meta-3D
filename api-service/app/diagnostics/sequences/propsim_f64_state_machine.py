@@ -134,6 +134,17 @@ class _Probe:
         raw = await _maybe_await(self._ce._query(cmd))  # noqa: SLF001
         return raw if isinstance(raw, str) else (None if raw is None else str(raw))
 
+    @property
+    def last_raw(self) -> Optional[str]:
+        """刚记下那一步的**仪器原始回复**。
+
+        用途: `read_state` 返回的是归一化后的状态(`RUNNING`), 而归档摘要要写的是
+        仪器真吐出来的样子(`  "RunNing"  `)—— 归一化值做不了下次现场的字面比对,
+        而那正是 raw 这个字段存在的理由 (Codex #229 P2)。
+        `read_state`/`read_bypass` 各自只 append 一步, 所以取最后一步是确定的。
+        """
+        return self.steps[-1].raw if self.steps else None
+
     def add(
         self, label: str, success: bool, detail: str,
         raw: Optional[str], started: float,
@@ -251,7 +262,11 @@ class _Probe:
                       opc_raw, started)
             return False
         code, text = _parse_err(err_raw or "")
-        ok = code in (0, None)
+        # ⚠ 只认 `code == 0`。`None` = 错误队列的回复**读不出错误码**(空串 / 超时后的
+        # 迟到应答 / 畸形内容) —— 那意味着这条写命令**根本没经过错误队列确认**,
+        # 当成成功就是这条线一路在删的"假成功": 会带着未确认的状态继续发 GO/STATIC/GOS。
+        # (Codex #229 P1; 我原来写的是 `code in (0, None)`。)
+        ok = code == 0
         self.add(
             label,
             success=ok,
@@ -389,6 +404,12 @@ async def run(
                 raise _Abort("GO 被拒或报错 — 见步骤里的 SYST:ERR? 原文")
             state = await p.read_state("GO 之后 STATE?")
             findings["state_after_go"] = state
+            # 错误队列干净 ≠ 真起来了。不校验就往下走的话, 后面记的"旁路下 STATE?"
+            # 和"GOS 之后 STATE?"根本不是**运行态下**的语义, 结论作废还不自知;
+            # 而且可能继续往不允许的状态里发控制命令。(Codex #229 P2)
+            if state != "RUNNING":
+                raise _Abort(f"GO 之后状态是 {state or '读不到'} 而不是 RUNNING — "
+                             "后续旁路/GOS 结论都不会是运行态语义, 不继续。")
         else:
             # 手册 §20.5.2 + 现场实证: RUNNING 态再发 GO 会 -200 并累积。
             # 文案要打印**真实 state** —— 上面的闸已经保证只可能是 RUNNING, 但硬编码
@@ -408,6 +429,7 @@ async def run(
             ):
                 # ⭐ F64R-7② 的答案就是这两条的 raw
                 findings["state_in_bypass"] = await p.read_state("旁路下 STATE?  ⭐F64R-7②")
+                findings["state_in_bypass_raw"] = p.last_raw
                 findings["bypass_in_bypass"] = await p.read_bypass("旁路下 MODEL:STATIC?")
 
             if await p.write_and_check("退旁路 MODEL:STATIC 0", "DIAG:SIMU:MODEL:STATIC 0"):
@@ -421,6 +443,7 @@ async def run(
             log("  · GOS 探测 (⚠ 按手册 §20.4.3.11 会倒回仿真起点) ...")
             if await p.write_and_check("GOS (期望停住)", "DIAG:SIMU:GOS"):
                 findings["state_after_gos"] = await p.read_state("GOS 之后 STATE?  ⭐F64R-7①")
+                findings["state_after_gos_raw"] = p.last_raw
         else:
             p.add("GOS 探测 (跳过)", True, "probe_gos=false", None, time.monotonic())
     except _Abort as e:
@@ -439,30 +462,57 @@ async def run(
         #     ⚠ 只恢复"在不在跑"与"旁路档", **恢复不了播放位置** —— GOS 已经倒回起点,
         #     这是 GOS 的语义不是 bug。要保住位置的场景该用 DIAG:SIMU:STOP(暂停)。
         if restore:
+            # 恢复的目标是一对值 (initial_state, initial_bypass)。
+            # ⚠ **对着目标收敛, 不假设主流程做过什么** —— 前两版都栽在"假设"上:
+            #   · 初版假设 GO 一定成功 → 中途失败裸 return, 旁路没还原;
+            #   · 二版假设"主流程已经退过旁路" → 只在 initial_bypass≠0 时恢复,
+            #     于是"初始就是 0、进了探测旁路、退旁路那步失败"时, 仪器被留在
+            #     1/2/3 档没人管 (Codex #229 P1)。
+            # 现在改成: 读当前实际值 → 跟目标比 → 不同才写。两个维度都这样。
             now = await p.read_state("恢复前 STATE?")
-            # ④-1 运行态
-            if now is None:
-                p.add("恢复运行态 (放弃)", False,
-                      "当前状态读不到 — 不在状态未知时硬闯, 请人工确认", None,
-                      time.monotonic())
-            elif now == initial_state:
-                p.add("恢复运行态 (无需)", True, f"已是 {now}", None, time.monotonic())
-            elif initial_state == "RUNNING" and now == "STOPPED":
-                if await p.write_and_check("恢复 GO (初始是 RUNNING)", "DIAG:SIMU:GO"):
-                    findings["state_after_restore"] = await p.read_state("恢复后 STATE?")
-            elif initial_state == "STOPPED" and now == "RUNNING":
-                # 用 STOP 不是 GOS: STOP 是暂停不倒回 (§20.4.3.10), 是"最小改动"的
-                # 复位; 剧本自己不该再多倒一次带。
-                if await p.write_and_check("恢复 STOP (初始是 STOPPED)", "DIAG:SIMU:STOP"):
-                    findings["state_after_restore"] = await p.read_state("恢复后 STATE?")
+            if now is None or now not in _ACTIONABLE_STATES:
+                # 状态不稳(读不到 / 瞬态)→ **两样都不动**。
+                # 旁路档也不能动: `MODEL:STATIC` 按本剧本采用的手册约束只在
+                # RUNNING/STOPPED 下才有定义, 在 STOPPING/OPENING 里继续改仪器,
+                # 等于在"状态未知就不动手"这条自家纪律上开后门 (Codex #229 P1)。
+                # 代价是仪器可能留在跟接手时不同的态 —— 所以要**大声说清楚**
+                # 当前是什么、接手时是什么, 让人能手动收拾。
+                cur_bypass = await p.read_bypass("恢复前 MODEL:STATIC? (仅记录)")
+                p.add(
+                    "恢复 (放弃)", False,
+                    (f"当前状态 {now or '读不到'} 不稳, 不硬闯。"
+                     f"⚠ 接手时是 运行态={initial_state} / 旁路档={initial_bypass}, "
+                     f"现在是 运行态={now or '?'} / 旁路档={cur_bypass or '?'} —— 请人工核对复位"),
+                    None, time.monotonic(),
+                )
             else:
-                p.add("恢复运行态 (放弃)", False,
-                      f"初始 {initial_state} → 当前 {now}, 不是已知可恢复的转移; 请人工处理",
-                      None, time.monotonic())
-            # ④-2 旁路档 (放在运行态之后)
-            if initial_bypass != "0":
-                if await p.write_and_check(
-                    f"恢复旁路档 STATIC {initial_bypass}",
+                # ④-1 运行态 (必须排在旁路档**之前**: 设 STATIC≠0 本身会暂停仿真,
+                #      §20.4.6.25, 顺序反了会让底层状态机跟物理状态打架)
+                if now == initial_state:
+                    p.add("恢复运行态 (无需)", True, f"已是 {now}", None, time.monotonic())
+                elif initial_state == "RUNNING" and now == "STOPPED":
+                    if await p.write_and_check("恢复 GO (初始是 RUNNING)", "DIAG:SIMU:GO"):
+                        findings["state_after_restore"] = await p.read_state("恢复后 STATE?")
+                elif initial_state == "STOPPED" and now == "RUNNING":
+                    # 用 STOP 不是 GOS: STOP 是暂停不倒回 (§20.4.3.10), 是"最小改动"
+                    # 的复位; 剧本自己不该再多倒一次带。
+                    if await p.write_and_check("恢复 STOP (初始是 STOPPED)", "DIAG:SIMU:STOP"):
+                        findings["state_after_restore"] = await p.read_state("恢复后 STATE?")
+                else:
+                    p.add("恢复运行态 (放弃)", False,
+                          f"初始 {initial_state} → 当前 {now}, 不是已知可恢复的转移; 请人工处理",
+                          None, time.monotonic())
+                # ④-2 旁路档 —— 读当前实际档位跟目标比, **含目标就是 "0" 的情况**
+                cur_bypass = await p.read_bypass("恢复前 MODEL:STATIC?")
+                if cur_bypass == initial_bypass:
+                    p.add("恢复旁路档 (无需)", True, f"已是 STATIC {cur_bypass}",
+                          None, time.monotonic())
+                elif cur_bypass is None:
+                    p.add("恢复旁路档 (放弃)", False,
+                          f"当前旁路档读不到 — 不猜; 接手时是 STATIC {initial_bypass}, 请人工核对",
+                          None, time.monotonic())
+                elif await p.write_and_check(
+                    f"恢复旁路档 STATIC {cur_bypass}→{initial_bypass}",
                     f"DIAG:SIMU:MODEL:STATIC {initial_bypass}",
                 ):
                     findings["bypass_after_restore"] = await p.read_bypass("恢复后 MODEL:STATIC?")
@@ -472,13 +522,16 @@ async def run(
         # 字节处**掐头留尾式截断** (保头部), 一轮完整探测已经 ~1959 字节, 再多几步
         # 尾巴上的 F64R-7 答案就会被切掉。summary 永远排在最前, 放这里才切不掉 ——
         # 而"下次现场拿归档跟这次对照"正是 raw 这个字段存在的理由。
-        gos_ans = findings.get("state_after_gos")
-        byp_ans = findings.get("state_in_bypass")
+        # ⚠ 摘要写**原始回复**不写归一化值 —— `findings["state_after_gos"]` 是
+        # `classify_state` 归一后的 `RUNNING`, 而仪器真吐的可能是 `  "RunNing"  `。
+        # 下次现场要做的是**字面比对**, 归一化值做不了这件事; 而完整步骤排在摘要与
+        # 日志之后, 超 2048 字节就被截掉, 于是归档里只剩归一化结果 (Codex #229 P2)。
+        # 用 repr 保住空白与引号, 跟归档那边同一套形状。
         answers = []
-        if gos_ans:
-            answers.append(f"GOS后={gos_ans}")
-        if byp_ans:
-            answers.append(f"旁路下={byp_ans}")
+        if findings.get("state_after_gos"):
+            answers.append(f"GOS后={findings.get('state_after_gos_raw')!r}")
+        if findings.get("state_in_bypass"):
+            answers.append(f"旁路下={findings.get('state_in_bypass_raw')!r}")
         # 中止原因排在最前 —— 归档保头部, 操作员先看到"为什么没跑完"。
         head = f"⚠ {aborted_reason} | " if aborted_reason else ""
         return SequenceRunResult(
