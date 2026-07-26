@@ -1081,3 +1081,59 @@ class TestUxmProbeCodex229D:
                 f"{mod.__name__} 的**代码里**还有 `in (0, None)` —— "
                 "读不出错误码不能当队列干净"
             )
+
+
+class TestCodexRound229E:
+    """Codex 第五轮 1×P1 + 1×P2。P1 是"前提没建立就采观测"这个母题的**第三个站点**
+    —— 第三轮我给"进旁路"补了核对, 没给"退旁路→GOS"补。"""
+
+    def test_p1_exit_bypass_rejected_aborts_before_gos(self):
+        """退旁路被拒时旧写法整块跳过, 直接落到破坏性的 GOS —— 而 F64 可能还在旁路里。
+        那样记下的"GOS 之后 STATE?"不是从正常 RUNNING 出发的观测, 结论作废。"""
+        ce = _FakeF64(state="RUNNING", state_in_bypass="STOPPED",
+                      reject_cmds={"DIAG:SIMU:MODEL:STATIC 0"})
+        result, _ = _run(ce, {"probe_gos": True, "restore_initial_state": False})
+        assert "DIAG:SIMU:GOS" not in ce.writes, (
+            f"退旁路没成功就发了 GOS; writes={ce.writes}"
+        )
+        assert "state_after_gos" not in result.extra
+        assert "仍在旁路" in result.summary or "退旁路被拒" in result.summary
+        assert result.success is False
+
+    def test_p1_exit_bypass_readback_nonzero_aborts_before_gos(self):
+        """写成功、队列干净, 但回读旁路档仍非 0 —— 同样不能发 GOS。
+        旧写法只核了运行态那一条, 漏了旁路档这条。"""
+        class _ExitAcceptedButStuck(_FakeF64):
+            async def _write(self, cmd):
+                if cmd == "DIAG:SIMU:MODEL:STATIC 0":
+                    self.writes.append(cmd)      # 收下, 队列干净, 但档位不变
+                    self.state = "RUNNING"       # 运行态那条能核过
+                    return
+                return await super()._write(cmd)
+
+        # state_in_bypass=None → 旁路下 STATE? 仍报 RUNNING。手册**没定义**旁路下
+        # STATE? 报什么(七态里没有 BYPASS), 所以"照样报 RUNNING"是真机可能的形态
+        # —— 正是这种固件下, 只核运行态那一条会漏掉"其实还在旁路里"。
+        ce = _ExitAcceptedButStuck(state="RUNNING", state_in_bypass=None)
+        result, _ = _run(ce, {"probe_gos": True, "restore_initial_state": False})
+        assert "DIAG:SIMU:GOS" not in ce.writes
+        assert "旁路档是 3" in result.summary, f"没走到旁路档那道闸: {result.summary}"
+        assert result.success is False
+
+    @pytest.mark.parametrize("flag", ["probe_gos", "restore_initial_state"])
+    @pytest.mark.parametrize("bad", ["false", "true", 0, 1, "no"])
+    def test_p2_non_boolean_flags_rejected(self, flag, bad):
+        """`bool("false")` 是 True —— 直接调 API 的人传字符串 "false" 想关掉 GOS,
+        真值强转反而把破坏性动作打开了。破坏性开关不做强转。"""
+        ce = _FakeF64(state="RUNNING")
+        result, _ = _run(ce, {flag: bad})
+        assert result.success is False
+        assert "必须是 JSON 布尔" in result.summary
+        assert ce.writes == [], "参数非法时一条命令都不该发"
+
+    def test_p2_real_booleans_still_work(self):
+        """反向: 真布尔要照常工作, 别把闸修成谁都过不去。"""
+        ce = _FakeF64(state="RUNNING")
+        result, _ = _run(ce, {"probe_gos": False, "restore_initial_state": False})
+        assert result.success is True
+        assert "DIAG:SIMU:GOS" not in ce.writes

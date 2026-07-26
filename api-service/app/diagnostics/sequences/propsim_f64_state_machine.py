@@ -332,8 +332,22 @@ async def run(
         )
 
     bypass_mode = params.get("bypass_mode", 3)
-    probe_gos = bool(params.get("probe_gos", True))
-    restore = bool(params.get("restore_initial_state", True))
+    # ⚠ 两个开关必须是**真正的 JSON 布尔**, 不做真值强转。`params` 是端点里未经
+    # 校验的 dict, 直接调 API 的人传 `{"probe_gos": "false"}` 时 `bool("false")`
+    # 是 **True** —— 于是"我明确关掉了 GOS"变成"照样跑 GOS 把仿真倒回起点",
+    # `restore_initial_state="false"` 同理反向。破坏性动作的开关尤其不能靠强转
+    # (Codex #229 第五轮 P2)。判据跟上面 bypass_mode 的严格类型检查同源 ——
+    # 之前这里松那里严, 本身就是不一致。
+    for _flag in ("probe_gos", "restore_initial_state"):
+        if _flag in params and not isinstance(params[_flag], bool):
+            return SequenceRunResult(
+                success=False,
+                summary=(f"{_flag}={params[_flag]!r} 类型非法 —— 必须是 JSON 布尔 "
+                         "(true/false)。字符串 \"false\" 会被真值强转成 True, "
+                         "反而把破坏性动作打开, 故这里不做强转。"),
+            )
+    probe_gos = params.get("probe_gos", True)
+    restore = params.get("restore_initial_state", True)
 
     # 旁路档只接受手册枚举的 1/2/3 (0 是"退旁路", 由剧本自己发, 不该当探测档传进来)。
     # 必须用 `type(...) is not int` 而不是 `not in (1,2,3)`:
@@ -473,20 +487,31 @@ async def run(
                           "旁路档没真切过去 — 此时读到的状态不是'旁路下'的观测, 不记",
                           None, time.monotonic())
 
-            if await p.write_and_check("退旁路 MODEL:STATIC 0", "DIAG:SIMU:MODEL:STATIC 0"):
-                # 手册承诺"进旁路前在跑 → 退旁路后继续跑"; 这里验它在本固件上成不成立。
-                # 手册承诺"进旁路前在跑 → 退旁路后继续跑"(ATE AN §2.4.5), 这是**已知
-                # 目标**不是待测量 → 该核。核不上就不能继续发 GOS: 后面那条 GOS 观测
-                # 的前提是"从 RUNNING 出发", 前提不成立结论就作废, 而且可能在过渡态
-                # 里继续发控制命令 (Codex #229 第二轮 P1)。
-                findings["state_after_bypass_exit"] = await p.read_state(
-                    "退旁路后 STATE? (手册承诺应恢复 RUNNING)", expect="RUNNING")
-                findings["bypass_after_exit"] = await p.read_bypass(
-                    "退旁路后 MODEL:STATIC?", expect="0")
-                if findings["state_after_bypass_exit"] != "RUNNING":
-                    raise _Abort(
-                        f"退旁路后状态是 {findings['state_after_bypass_exit'] or '读不到'} "
-                        "而不是手册承诺的 RUNNING — GOS 观测的前提不成立, 不继续。")
+            # ⚠ 退旁路这一步**写失败也必须中止**, 不能只是跳过后面的回读。
+            # 旧写法是 `if write_and_check(...):` —— `MODEL:STATIC 0` 被拒时整块被
+            # 跳过, 然后**直接落到破坏性的 GOS 探测**, 而此时 F64 可能还在旁路里。
+            # 那样记下来的 "GOS 之后 STATE?" 就不是"从正常 RUNNING 出发"的观测,
+            # 而是从一个本剧本自己声明为语义未定义的态出发 —— 结论作废, 还可能在
+            # 那个态里发控制命令 (Codex #229 第五轮 P1)。
+            if not await p.write_and_check(
+                "退旁路 MODEL:STATIC 0", "DIAG:SIMU:MODEL:STATIC 0"
+            ):
+                raise _Abort("退旁路被拒 — F64 可能仍在旁路中, 不能在此态下发 GOS。")
+            # 手册承诺"进旁路前在跑 → 退旁路后继续跑"(ATE AN §2.4.5), 这是**已知
+            # 目标**不是待测量 → 该核。两条回读**都要**核: 运行态回到 RUNNING,
+            # 且旁路档真回到 0。少核任何一条, GOS 观测的前提都可能不成立。
+            findings["state_after_bypass_exit"] = await p.read_state(
+                "退旁路后 STATE? (手册承诺应恢复 RUNNING)", expect="RUNNING")
+            findings["bypass_after_exit"] = await p.read_bypass(
+                "退旁路后 MODEL:STATIC?", expect="0")
+            if findings["state_after_bypass_exit"] != "RUNNING":
+                raise _Abort(
+                    f"退旁路后状态是 {findings['state_after_bypass_exit'] or '读不到'} "
+                    "而不是手册承诺的 RUNNING — GOS 观测的前提不成立, 不继续。")
+            if findings["bypass_after_exit"] != "0":
+                raise _Abort(
+                    f"退旁路后旁路档是 {findings['bypass_after_exit'] or '读不到'} 而不是 0 "
+                    "— 仍在旁路里, GOS 观测的前提不成立, 不继续。")
 
         # ── ③ GOS 探测 (F64R-7①) —— 最关键, 也是唯一破坏性的一步, 放最后。
         if probe_gos:
