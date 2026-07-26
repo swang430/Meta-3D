@@ -201,16 +201,33 @@ F64 失败后 `/hal/reload` / F64 冷却窗口内 stop —— 改后全部 `sent
 然后把结论**原样抄进 9 个没有这个机制的驱动**(grep 证实:那 9 个文件里
 `_silent_reconnect` 只出现在抄进去的注释里)。
 
-**③ 真正有害的泄漏是无人认领的孤儿连接,唯一实证入口在 connect 的覆盖点。**
-成功 re-connect 时 `self._visa_resource = open_resource(...)` **直接覆盖旧值不关旧会话**,
-上一条活 session 从此无人指着 —— `measure.py` 每个测量步骤 connect 一次,F64 上
-一条就够堵死 3334。这才是"连不上,重启 PropSim 才好"的机理,而它恰恰是
-"在 connect **失败**点关句柄"修不了的(失败路根本没走到覆盖那一步)。
-> ⚠ 本判决初稿曾把"HAL reload 换对象"也列为入口 —— **#230 Codex P2 纠正,复核成立**:
-> `reload_hal_service_atomic` 在一把锁里先 `shutdown()` 再建新,shutdown 对每个驱动
-> 逐个 `await disconnect()` 且单驱动异常不中断循环(`instrument_hal_service.py`
-> shutdown 循环 + `reload_hal_service_atomic`);F64 的 disconnect 外层 finally
-> 连被取消都同步关句柄。**reload 主路径不造孤儿,别再朝"对象交接/登记"设计。**
+**③ 真正有害的泄漏是无人认领的孤儿连接 —— 但给 F64 找的两个入口先后被证伪。**
+(本节经 #230 两轮 Codex 纠正后第三版,每一条都附刚核过的调用链,不再有推断。)
+
+- **reload 不是入口**(#230 Codex P2,复核成立):`reload_hal_service_atomic` 锁内先
+  `shutdown()`,对每个驱动逐个 `await disconnect()` 且单驱动异常不中断循环;F64 的
+  disconnect 外层 finally 连被取消都同步关句柄。
+- **"measure.py 每步重连 F64"也不是**(#230 merge 后迟到 P1,复核成立):measure.py
+  每步连的是**转台 + 基站**(`measure.py:262-263`),真 F64 从 `hal.drivers` **复用
+  不重连**,`:438` 的 `emulator.connect()` 只在 Mock 兜底分支;其余生产调用点只有
+  HAL init(新对象,`instrument_hal_service.py:677`)和 `reconnect_driver`
+  (`:1201` **先 disconnect**)。F64 的 connect 覆盖点(`propsim_f64.py:1657` 直接
+  覆盖不关旧)机制上存在,**但当前生产代码里没有可达调用链**。
+- **可达的覆盖入口在 UXM,但只孤儿化"启动会话"一条,不逐步累积**(#231 Codex P2
+  纠正后的完整生命周期,三段均已核):HAL init 开出 UXM 会话 → **首个**测量步
+  `base_station.connect()`(`measure.py:263`)在入口不关旧的情况下直接覆盖它
+  (`uxm_base_station.py:335` 起新 RM + 开新,连接区内唯一 close 在 hislip 重定向里)
+  → 启动会话孤儿化;该步收尾 `finally → cleanup_chamber_instruments →
+  base_station.disconnect()`(`measure.py:1220` / `cleanup.py`)关掉当前会话并置
+  `_visa_session=None`(`uxm_base_station.py:478-480`),**后续步骤从 None 连、
+  用完即断,不再覆盖**。测量路净后果 = 每次"HAL init/reload → 首次测量"孤儿一条,温和。
+  **但还有第二个入口会累积**(#231 R2 P2):诊断序列 `baseStation_attach_check`
+  每次运行都 `bs.connect()`(`baseStation_attach_check.py:130`)且**全序列无
+  disconnect** —— 操作员反复跑(现场排 attach 正是反复跑的场景)就逐次覆盖、逐次
+  孤儿化。修复设计必须覆盖这条可重复触发的入口,不能只按"首测一次"造形。
+  转台同型入口(`measure.py:262`,非 VISA 传输 → 归 F64R-14)。
+- **F64 现场"连不上要重启 PropSim"的机理:至今没有已证软件入口。** 别再按未证机理
+  设计修复 —— 下次现场用诊断序列复现(跟 F64R-7 同场做),拿到入口再谈修。
 
 ### 判决
 
@@ -224,22 +241,36 @@ F64 失败后 `/hal/reload` / F64 冷却窗口内 stop —— 改后全部 `sent
   这个耦合理由随泄漏语义重定义而消失,F64R-11 可独立做。
   §7 待决①(F64 拒连 / 其余 WARNING + 白名单可配)仍有效。
 
-### 问题重定义(转 backlog,见 todo F64R-10 条目)
+### 问题重定义(转 backlog,见 todo F64R-10 条目;第三版,按事实③的可达性矩阵改派)
 
-要修的不是"connect 失败泄漏句柄",是 **"成功 re-connect 在覆盖点把上一条活
-session 丢掉不关"**(唯一实证入口,见事实③;reload 入口已被 #230 Codex P2 排除)。
-解法空间收窄到 connect 覆盖点本身,两个候选形状:
-- **关旧再开新**:connect 入口若字段已指着句柄,先收尾再开
-  (ATE AN §1.1.2.3;`_silent_reconnect_visa` 已是这个形状,不是新机制);
+拆成两件事,别再混成一件:
+
+**(a) UXM 会话在 connect 覆盖点被孤儿化,两条已证入口**:
+① 测量路 —— 启动会话被首个测量步覆盖,一次 HAL init 一条(后续步骤
+connect-from-None + finally disconnect 收尾,不累积);
+② 诊断路 —— `baseStation_attach_check` 每次运行 connect 且无 disconnect,
+**反复跑就累积**(#231 R2 P2)。修复设计必须两条都覆盖。
+解法在 UXM connect 入口,两个候选形状:
+- **关旧再开新**:入口若字段已指着句柄,先收尾再开
+  (`_silent_reconnect_visa` 已是这个形状,不是新机制);
 - **活句柄复用**:已连着且句柄活的就不重开(要定义"活"的判据,别拿 `!= None` 充数)。
 
-⚠ 两个形状都必须**正面回答"关旧成功 + 开新失败"窗口** —— 字段既不许置 None
-("失败不留死态",F64R-1)也不该假装旧句柄还在;`_silent_reconnect_visa` 对这个
-窗口的现有处理(字段留在死句柄上 + 懒重连自愈)只在**有懒重连的 4 个驱动**成立,
-9 个没有的怎么办是设计必答题,不是脚注。
+⚠ 两个形状都必须**正面回答"关旧成功 + 开新失败"窗口**,且 **UXM 的懒重连帮不上
+这个窗口**(#231 R2 P2 复核成立):`_silent_reconnect_visa` 开新失败时置
+`_visa_session=None` 收场(`uxm_base_station.py:2273-2275`),而 `_do_write` 见
+None **直接抛 ConnectionError、不触发重连**(`:2279-2282`)—— 字段一旦 None,
+驱动停在无会话态直到外部显式 `connect()`。所以这个窗口在 UXM 上就是设计必答题,
+对 9 个无懒重连驱动更是。顺带记录:UXM 自家 reconnect 的置-None 写法跟 F64
+"失败不留死态、绝不置 None"纪律相反 —— 既有行为差异,归本条 backlog 一并设计,
+不单独"顺手修"。
+
+**(b) F64 现场"重启才好"** —— 无已证软件入口,**先复现再修**(诊断序列,F64R-7 同场)。
+在拿到可达入口之前,任何"给 F64 connect 加会话治理"的改动都是在修一条不可达路径,
+还要动安全敏感的连接生命周期 —— 不做。
 
 任何后续方案的硬约束:
-1. 动手前先回答:**那条句柄死的还是活的?谁还指着它?**
+1. 动手前先回答:**那条句柄死的还是活的?谁还指着它?有没有可达调用链?**(第三问
+   是 #230 迟到 P1 加的 —— 机制存在 ≠ 路径可达。)
 2. 行为覆盖铺满 13 个驱动 —— 9 个无懒重连驱动零覆盖,正是本次 P1 藏了两轮的直接原因。
 
 ### 实证收获(留给下一个碰这块的人)
