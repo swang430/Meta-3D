@@ -266,18 +266,38 @@
     36 条(4 输入 + 32 探头),broadcaster 1 Hz。**没人量过真机上 36 条 `OUTP:MEAS:RES:GET?`
     一轮要多久** —— 跑不完会持续堵锁。现场量一次,必要时给"逐口电平查询"加降频/开关。
 
+- [ ] **F64R-14 非 VISA 传输的 connect 失败也不关连接** (2026-07-26 F64R-10 审查枚举出)
+  - `rf_switch.py` 的 `transport: socket` 分支、`aerotech_positioner.py` 用
+    `asyncio.open_connection` 开的 writer —— connect 中途失败(互锁报警 / 轴不识别 /
+    ENABLE 失败)时 writer 不关。**aerotech 自己的 `_silent_reconnect` 已经在握手失败时
+    关 writer** —— 规则在这个驱动里早就成立, 只有 connect 漏了(又一个"改一个方向不改镜像")。
+  - ⚠ aerotech 是现场真转台, 且 `measure.py:262` **每个测量步骤都 connect 一次**。
+  - ⛔ **动手前必答 F64R-10 §8 那两个问题**: 那条 writer 死的还是活的? 谁还指着它?
+    VISA 侧"在失败点关句柄反而砍断安全停止路"的教训**可能同样适用**(转台的
+    stop/move-abort 靠不靠这条 writer 下发) —— 先答再改, 别照原文直接堵。
+
+- [ ] **F64R-15 rf_switch connect 假成功 + 驱动连接语义行为覆盖缺口**
+      (2026-07-26 F64R-10 审查顺带发现; 原文所指"泛化 4 条行为用例"已随撤销失去载体)
+  - **rf_switch connect 是假成功**: 互锁查询异常被 `_send_command_vxi11` 吞成 `None`,
+    `None != "1"` → 一条 SCPI 都没通也 `_set_status(CONNECTED); return True`。改它要动
+    "互锁状态未知时该不该放行"的**安全语义**, 独立判断。
+  - "行为覆盖铺满 13 驱动"已升级为 F64R-10 重定义条目的**硬约束②**(不再是独立改进项):
+    第三轮审查证实, 9 个无懒重连驱动零覆盖正是 P1 藏了两轮的直接原因 —— 覆盖缺口
+    在这块不是洁癖, 是缺陷放大器。
+
 - [ ] **F64R-12 HAL 里 44 处静默吞异常 —— 出事日志无痕** (2026-07-26 用户问"这些提示
       有没有抛给 log 并在 GUI 显示"时枚举出来)
   > 链路本身是通的: 驱动 `logger.*` → 根 logger → `app.log` → `GET /system-logs/tail`
   > → 主控台左侧「日志」区 (3 秒轮询, INFO/WARN/ERROR 多选) + 报告页系统日志查看器。
   > 所以这周加的 fail-loud 文案操作员**看得见**。
-  - **但**: AST 扫 `app/hal` 出 **44 处 `except: pass` 且不记日志** ——
+  - **但**: AST 扫 `app/hal` 出 **43 处 `except: pass` 且不记日志** ——
     `propsim_f64` 15 / `uxm_base_station` 11 / `cmw500_base_station` 8 /
-    `aerotech_positioner` 3 / `propsim_fs16` 3 / `rf_switch` 2 / `keysight_ena` 1 /
-    `_visa_reconnect` 1(已在 F64R-10 修掉)。这些地方出问题, 日志里**一个字都没有**。
+    `aerotech_positioner` 3 / `propsim_fs16` 3 / `rf_switch` 2 / `keysight_ena` 1
+    (原记 44 含 F64R-10 初版新增的 1 处, 该代码已随撤销移除)。
+    这些地方出问题, 日志里**一个字都没有**。
   - **不是全都该改**: 有些吞得对 (排空错误队列时的读失败、`*CLS` 失败等)。要**逐处判**:
     判据是"这条信息对排障有没有用" —— 有用就 `logger.debug/warning` 一句再吞,
-    **吞异常不等于吞信息**(F64R-10 的 `close_visa_quietly` 就是这么改的: 不抛但记)。
+    **吞异常不等于吞信息**。
   - ⚠ 别一刀切加日志: 高频路 (1 Hz 轮询) 上加 WARNING 会灌满日志面板, 把真信号淹掉
     —— 那是另一种形式的看不见。高频路用 debug 或加限流。
 
@@ -301,27 +321,30 @@
     写进 CLAUDE.md 操作规范。依赖 ARCH-1(测试管理简化) + P0-2(参数真值源)。见 memory
     `feedback_onsite_testcase_flow_no_adhoc_scripts`。
 
-- [ ] **F64R-10 ⚠ 四个 VISA 驱动 connect 失败都泄漏句柄** (2026-07-26 Codex 单独 review
-      propsim_f64.py 后, 按规则全仓枚举发现 —— **比单文件结论严重**)
-  > Codex 只审了 propsim_f64.py, 所以只能报"F64 一处"。把它抽象成规则「打开资源后
-  > 任何失败路径都必须关掉它」再用 AST 全仓扫, 结论是 **F64 / FS16 / UXM / rs_fsva
-  > 四个 connect 全都不关**: socket 已 open_resource, 中途 `SYST:INFO?` / 选件探测 /
-  > alignment 初始化抛异常 → `except` 只设错误状态就 `return False`, 句柄留着。
-  - **F64 最危险**: 端口只容**一条**远程 socket (ATE AN §1.1.2.3) —— 泄漏一次,
-    下次重连被自己上次的僵尸连接挡住, 现场表现为"连不上, 重启 PropSim 才好"。
-    2026-07-21 现场"每次都要人工重连"疑似与此有关(未证实, 但机理吻合)。
-  - ⚠ **这正是我在 `disconnect()` 里已经修过的同一个洞** —— 修了断开路, 没修连接路。
-    又一次"改一个方向不改它的镜像"(本周第 N 次, 见 memory
-    feedback_fix_quality_domain_enumeration_first 2026-07-26 复发记录)。
-  - 修法: connect 的失败路径统一关句柄 (跟 disconnect 那套 `_leaked` + 同步 close
-    同源), 四个驱动一起改, 加结构性断言钉住"connect 有 open 就必须有清理"。
+- [ ] **F64R-10 ⛔已撤销重定义: 旧驱动对象的活连接被替换时无人认领** (2026-07-26 晚,
+      三轮审查后用户拍板撤销原修法, 判决全文见
+      [`design/f64r10-connect-leak-design.md`](../design/f64r10-connect-leak-design.md) §8)
+  > 原问题定义「connect 失败泄漏句柄」**前提错了**: 失败后字段指着一条**活**句柄,
+  > 安全停止命令 (`CELL:STATe OFF`/`GOS`/`CLOSE`) 正是靠它下发; 在失败点关它,
+  > 最坏后果从"漏一条 socket"恶化成"仪器带功率没人管" (Y > X, 审查四条场景实跑证实)。
+  > 两版实施 (摘字段置 None / 只关不摘) 都撞在这上面, 全部恢复 main。
+  - **重定义**: 真正有害的是**孤儿连接** —— ① HAL reload 换驱动对象, 旧对象那条
+    socket 无人认领占着 F64 3334; ② 成功 re-connect 把上一条 session 丢掉不关
+    (`measure.py` 每个测量步骤 connect 一次, 审查证实)。解法方向在**对象交接/登记**
+    (替换前对旧对象走 disconnect), 不在 connect 失败路径。
+  - 动手前先核实: reload 现在对旧对象走不走 disconnect。
+  - 硬约束: ① 先回答"那条句柄死的还是活的? 谁还指着它?" ② 行为覆盖铺满 13 驱动
+    (9 个无懒重连驱动零覆盖 = 本次 P1 藏了两轮的直接原因)。
 
-- [ ] **F64R-11 连接后不确认对方是谁** (同上, 2026-07-26)
+- [ ] **F64R-11 连接后不确认对方是谁** (2026-07-26; 原与 F64R-10 同 PR 的顺序耦合
+      已随其撤销**解除**, 可独立做)
   - `*IDN?` 只 `logger.info`, 不校验对方确实是 PROPSIM F64 → IP 填错时驱动会继续
     朝别的仪器发 F64 专用命令。**枚举: F64 / UXM / rs_fsva 三个都只记日志, 只有
     FS16 有校验** —— 判据存在于一处、另三处没有, 又是同一个母题。
   - 现成参照: `propsim_f64_health` 探针里的 `_IDN_MODEL_TAGS = ("PROPSIM","F8800")`
     已经在做这件事 —— 把它下沉到驱动 connect 即可, 不用新造。
+  - 设计稿 §7 待决①仍有效: F64 对不上拒连, 其余先 WARNING; 白名单必须可配
+    (`connection_params` 能覆盖), 现场撞措辞偏差要有逃生门。
 
 - [ ] **F64R-4 F64 驱动 P1 清理** (review 母题⑤⑥⑦)
   - **⚠ 2026-07-26 补充: 本项比原文写的大。** 按规则「写命令后必须查错误队列」
