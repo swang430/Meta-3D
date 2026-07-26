@@ -274,7 +274,38 @@
     写进 CLAUDE.md 操作规范。依赖 ARCH-1(测试管理简化) + P0-2(参数真值源)。见 memory
     `feedback_onsite_testcase_flow_no_adhoc_scripts`。
 
+- [ ] **F64R-10 ⚠ 四个 VISA 驱动 connect 失败都泄漏句柄** (2026-07-26 Codex 单独 review
+      propsim_f64.py 后, 按规则全仓枚举发现 —— **比单文件结论严重**)
+  > Codex 只审了 propsim_f64.py, 所以只能报"F64 一处"。把它抽象成规则「打开资源后
+  > 任何失败路径都必须关掉它」再用 AST 全仓扫, 结论是 **F64 / FS16 / UXM / rs_fsva
+  > 四个 connect 全都不关**: socket 已 open_resource, 中途 `SYST:INFO?` / 选件探测 /
+  > alignment 初始化抛异常 → `except` 只设错误状态就 `return False`, 句柄留着。
+  - **F64 最危险**: 端口只容**一条**远程 socket (ATE AN §1.1.2.3) —— 泄漏一次,
+    下次重连被自己上次的僵尸连接挡住, 现场表现为"连不上, 重启 PropSim 才好"。
+    2026-07-21 现场"每次都要人工重连"疑似与此有关(未证实, 但机理吻合)。
+  - ⚠ **这正是我在 `disconnect()` 里已经修过的同一个洞** —— 修了断开路, 没修连接路。
+    又一次"改一个方向不改它的镜像"(本周第 N 次, 见 memory
+    feedback_fix_quality_domain_enumeration_first 2026-07-26 复发记录)。
+  - 修法: connect 的失败路径统一关句柄 (跟 disconnect 那套 `_leaked` + 同步 close
+    同源), 四个驱动一起改, 加结构性断言钉住"connect 有 open 就必须有清理"。
+
+- [ ] **F64R-11 连接后不确认对方是谁** (同上, 2026-07-26)
+  - `*IDN?` 只 `logger.info`, 不校验对方确实是 PROPSIM F64 → IP 填错时驱动会继续
+    朝别的仪器发 F64 专用命令。**枚举: F64 / UXM / rs_fsva 三个都只记日志, 只有
+    FS16 有校验** —— 判据存在于一处、另三处没有, 又是同一个母题。
+  - 现成参照: `propsim_f64_health` 探针里的 `_IDN_MODEL_TAGS = ("PROPSIM","F8800")`
+    已经在做这件事 —— 把它下沉到驱动 connect 即可, 不用新造。
+
 - [ ] **F64R-4 F64 驱动 P1 清理** (review 母题⑤⑥⑦)
+  - **⚠ 2026-07-26 补充: 本项比原文写的大。** 按规则「写命令后必须查错误队列」
+    AST 全仓枚举 `propsim_f64.py`: **10 个方法写完不查**(原文只点了 input_phase /
+    runtime_env / user_alignment 三个)。其中约 7 个是真缺口
+    (`set_center_frequency` / `autoset_input_level` / `enable_measurement_data_stream`
+    / `enable_user_alignment` / `set_input_phase` / `set_output_phase` /
+    `set_runtime_environment`), 另 3 个 (`disconnect` / `reset` / `_close_and_read_state`)
+    有各自站得住的理由(卸载路 / `*RST` 本就清队列 / 用 `STATE?` 回读做更强确认),
+    **动手前要逐个判**, 别一刀切全包 `_gated_write_transaction`。
+  - 对照: 同文件已有 10 个方法**是**查的 —— 所以这不是"没这个机制", 是"机制没铺满"。
   - 禁盲试:connect 两条手册**不存在**的命令(`INTERFerence:LIST?`/`USER:LIST?` → `:GET?`);写
     命令 fail-loud 收敛(input_phase / runtime_env / output_gain 静默钳位 / user_alignment 空
     标定 / output_calib null 混淆);健康检查 `*OPT?` 必误报 BLOCKER + MMEM 能力误判(手册其实
