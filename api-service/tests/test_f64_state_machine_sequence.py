@@ -1137,3 +1137,87 @@ class TestCodexRound229E:
         result, _ = _run(ce, {"probe_gos": False, "restore_initial_state": False})
         assert result.success is True
         assert "DIAG:SIMU:GOS" not in ce.writes
+
+
+class TestBypassWriteVerificationIsStructural:
+    """⭐ 把「写完旁路必须核回读」钉成**规则**, 而不是逐个站点的用例。
+
+    本 PR 六轮审查里, 「前提没建立就采集依赖它的观测」这个母题在**四个不同站点**
+    各被抓一次 (进旁路观测 / 恢复段旁路写 / GOS 前提 / 开跑前退旁路)。每次我都只
+    修被点到的那一处 —— 逐点修永远慢审查一步。这条测试改成扫**结构**: 只要有人
+    再加一个写旁路的站点却忘了核回读, 它直接红。
+
+    判据用 AST 不用文本: 注释里写着命令字面量, 扫原文会被自己的注释污染
+    (#227 守门测试被自己注释骗绿、本文件反回归断言被注释骗红, 已经踩过两次)。
+    """
+
+    @staticmethod
+    def _run_fn_ast():
+        import ast
+        import inspect
+        from app.diagnostics.sequences import propsim_f64_state_machine as mod
+        tree = ast.parse(inspect.getsource(mod))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "run":
+                return node
+        raise AssertionError("找不到 run()")
+
+    @staticmethod
+    def _is_static_write(call) -> bool:
+        """`p.write_and_check(label, "DIAG:SIMU:MODEL:STATIC ...")` —— 认第二个实参。"""
+        import ast
+        if not (isinstance(call.func, ast.Attribute) and call.func.attr == "write_and_check"):
+            return False
+        if len(call.args) < 2:
+            return False
+        cmd = call.args[1]
+        if isinstance(cmd, ast.Constant) and isinstance(cmd.value, str):
+            return cmd.value.startswith("DIAG:SIMU:MODEL:STATIC")
+        if isinstance(cmd, ast.JoinedStr):          # f-string
+            head = cmd.values[0]
+            return (isinstance(head, ast.Constant)
+                    and str(head.value).startswith("DIAG:SIMU:MODEL:STATIC"))
+        return False
+
+    def test_every_bypass_write_is_verified(self):
+        import ast
+        run_fn = self._run_fn_ast()
+        writes, verified_reads = 0, 0
+        for node in ast.walk(run_fn):
+            if not isinstance(node, ast.Call):
+                continue
+            if self._is_static_write(node):
+                writes += 1
+            if (isinstance(node.func, ast.Attribute) and node.func.attr == "read_bypass"
+                    and any(kw.arg == "expect" for kw in node.keywords)):
+                verified_reads += 1
+
+        assert writes == 4, (
+            f"写旁路的站点数变了 ({writes} 个) —— 本测试是按'每个写站点都要有一次带 "
+            "expect 的 read_bypass'来钉的。加/删站点时请一并更新本断言, 并确认新站点"
+            "确实核了回读。"
+        )
+        assert verified_reads >= writes, (
+            f"写旁路 {writes} 次, 但带 expect= 的 read_bypass 只有 {verified_reads} 次 —— "
+            "有写站点没核回读。错误队列干净**不代表**档位真切过去了: 固件可能照样报一个"
+            "'可操作'的 STOPPED/RUNNING(手册七态里没有 BYPASS), 于是后续的 GO/GOS 就"
+            "发在了语义未定义的旁路态里, 记下来的观测作废。"
+        )
+
+    def test_initial_bypass_exit_verified_before_any_control(self):
+        """行为侧对照: 开跑前退旁路'队列干净但档位没变'时, 一条控制命令都不许发。"""
+        class _ExitIgnoredAtStart(_FakeF64):
+            async def _write(self, cmd):
+                if cmd == "DIAG:SIMU:MODEL:STATIC 0":
+                    self.writes.append(cmd)      # 收下, 队列干净, 档位不变
+                    return
+                return await super()._write(cmd)
+
+        ce = _ExitIgnoredAtStart(state="STOPPED", bypass="3", state_in_bypass=None)
+        result, _ = _run(ce, {"restore_initial_state": False})
+        assert result.success is False
+        assert "仍在旁路中" in result.summary
+        for forbidden in ("DIAG:SIMU:GO", "DIAG:SIMU:GOS"):
+            assert forbidden not in ce.writes, (
+                f"旁路没真退出就发了 {forbidden}; writes={ce.writes}"
+            )
