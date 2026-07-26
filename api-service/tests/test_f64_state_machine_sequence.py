@@ -1221,3 +1221,91 @@ class TestBypassWriteVerificationIsStructural:
             assert forbidden not in ce.writes, (
                 f"旁路没真退出就发了 {forbidden}; writes={ce.writes}"
             )
+
+
+class TestMutationSweepGaps:
+    """系统性变异扫描 (45 个 if 逐个改成 False) 暴露的 6 处空转。
+
+    ⚠ 这批用例的来历值得记: 它们**不是** Codex 或 agent 指出来的, 是把"全量绿"换成
+    "逐个分支变异"之后自己掉出来的。其中 L454 那道闸是前几轮**为了满足审查意见加的**
+    —— 加完从来没被测过, 拿掉照样全绿。**加闸不写用例 = 加了个装饰。**
+    """
+
+    def test_driver_not_loaded(self):
+        """L316: 没有 channelEmulator 驱动 —— 整条分支此前零覆盖。"""
+        logs: List[str] = []
+        result = asyncio.run(run_state_machine(
+            ctx=object(), hal=_FakeHal(None), params={}, log=logs.append))
+        assert result.success is False
+        assert "channelEmulator" in result.summary
+        assert result.steps == []
+
+    def test_unreadable_initial_state_message_is_specific(self):
+        """L378: 初始状态读不到, 要给**它自己**的指引(先跑健康探针查通道), 不是
+        瞬态那句"等它稳定"。此前被下面更宽的 `not in _ACTIONABLE_STATES` 闸短路成
+        空转 —— 跟 CLOSED 那条同一个坑: 被更晚的闸兜住的分支最容易假绿。"""
+        ce = _FakeF64(state_raw_override='0,"NO ERROR"')
+        result, _ = _run(ce)
+        assert result.success is False
+        assert "健康探针" in result.summary, f"指引不对: {result.summary}"
+        assert "瞬态" not in result.summary
+
+    def test_empty_state_reply_note_is_specific(self):
+        """L114: 空回复要说"空回复", 不是笼统的"白名单外"。判不了的**原因**不同,
+        现场排查方向就不同 (通道哑了 vs 固件报了个没见过的值)。"""
+        state, note = classify_state("")
+        assert state is None
+        assert "空回复" in note, f"空回复被归成了别的原因: {note}"
+
+    def test_transient_after_initial_bypass_exit_aborts(self):
+        """L454: 开跑前退旁路后状态变成瞬态 —— 这道闸是前几轮应审查意见加的,
+        **从没被测过**。退旁路本身会触发状态迁移, 落到 STOPPING/OPENING 完全可能。"""
+        class _ExitLandsInTransient(_FakeF64):
+            async def _write(self, cmd):
+                await super()._write(cmd)
+                if cmd == "DIAG:SIMU:MODEL:STATIC 0" and self.bypass == "0":
+                    self.state = "STOPPING"
+
+        ce = _ExitLandsInTransient(state="STOPPED", bypass="3", state_in_bypass=None)
+        result, _ = _run(ce, {"restore_initial_state": False})
+        assert result.success is False
+        # ⚠ 断言必须钉住**这道闸独有的后果**。初版我断言的是 success=False /
+        # summary 含 STOPPING / 没发 GO —— 这三条在闸拿掉后**依然成立**(后面退旁路
+        # 那道 expect=RUNNING 的闸会兜住), 于是变异空转。这是今天第三次踩"被更晚的
+        # 闸短路"(CLOSED 分支 / 初始状态读不到 / 本条)。
+        # 本闸独有的后果 = **一步旁路探测都不许开始**, 且给出它自己的措辞。
+        assert "退旁路后状态变成" in result.summary, f"不是本闸的措辞: {result.summary}"
+        assert "DIAG:SIMU:MODEL:STATIC 3" not in ce.writes, (
+            f"瞬态下不该开始旁路探测; writes={ce.writes}")
+        assert "DIAG:SIMU:GO" not in ce.writes, "瞬态下不许发控制命令"
+
+    def test_restore_noop_when_state_already_matches(self):
+        """L583: 恢复时运行态已经等于初始态 → 记"无需"而不是走"放弃"报红。
+        探测把状态原样还回来时(旁路进出自动恢复), 走的正是这条。"""
+        ce = _FakeF64(state="RUNNING", bypass="0")
+        result, _ = _run(ce, {"probe_gos": False, "restore_initial_state": True})
+        step = _step(result, "恢复运行态 (无需)")
+        assert step.success is True
+        assert "RUNNING" in step.detail
+        assert result.success is True
+
+    def test_restore_bypass_readback_unreadable_gives_up_loudly(self):
+        """L622: 恢复阶段旁路档读不到 —— 不猜, 但要把接手时的值报出来让人工核对。"""
+        class _BypassUnreadableAtRestore(_FakeF64):
+            _probe_done = False
+
+            async def _query(self, cmd):
+                if cmd == "DIAG:SIMU:MODEL:STATIC?" and self._probe_done:
+                    return '0,"NO ERROR"'      # 会话错位, 读回非法值
+                return await super()._query(cmd)
+
+            async def _write(self, cmd):
+                await super()._write(cmd)
+                if cmd == "DIAG:SIMU:GOS":
+                    self._probe_done = True
+
+        ce = _BypassUnreadableAtRestore(state="RUNNING", bypass="0")
+        result, _ = _run(ce, {"probe_gos": True, "restore_initial_state": True})
+        step = _step(result, "恢复旁路档 (放弃)")
+        assert step.success is False
+        assert "接手时是 STATIC 0" in step.detail
