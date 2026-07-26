@@ -359,18 +359,30 @@ export function SequenceRunnerPanel() {
               {lastResult.steps.length > 0 && (
                 <Stack gap={4}>
                   {lastResult.steps.map((s, i) => (
-                    <Group key={i} gap="xs" wrap="nowrap" align="flex-start">
-                      <Badge color={s.success ? 'green' : 'red'} size="sm" variant="filled">
-                        {s.success ? '✓' : '✗'}
-                      </Badge>
-                      <Text size="xs" fw={500} style={{ flexShrink: 0 }}>{s.label}</Text>
-                      <Text size="xs" c="dimmed" style={{ wordBreak: 'break-all' }}>
-                        {s.detail}
-                      </Text>
-                      {s.duration_ms !== undefined && s.duration_ms !== null && (
-                        <Text size="xs" c="dimmed" ml="auto">{s.duration_ms} ms</Text>
+                    <Stack key={i} gap={2}>
+                      <Group gap="xs" wrap="nowrap" align="flex-start">
+                        <Badge color={s.success ? 'green' : 'red'} size="sm" variant="filled">
+                          {s.success ? '✓' : '✗'}
+                        </Badge>
+                        <Text size="xs" fw={500} style={{ flexShrink: 0 }}>{s.label}</Text>
+                        <Text size="xs" c="dimmed" style={{ wordBreak: 'break-all' }}>
+                          {s.detail}
+                        </Text>
+                        {s.duration_ms !== undefined && s.duration_ms !== null && (
+                          <Text size="xs" c="dimmed" ml="auto">{s.duration_ms} ms</Text>
+                        )}
+                      </Group>
+                      {/* 仪器原始回复单独一行 —— 现场"它到底返回什么字面值"是
+                          一整类待验问题的问法, 混进 detail 就抄不准。空串回复
+                          也要显示 (是一条结论), 故判 null/undefined 而非真值。 */}
+                      {s.raw !== undefined && s.raw !== null && (
+                        <Code
+                          style={{ fontSize: 11, marginLeft: 34, wordBreak: 'break-all' }}
+                        >
+                          {JSON.stringify(s.raw)}
+                        </Code>
                       )}
-                    </Group>
+                    </Stack>
                   ))}
                 </Stack>
               )}

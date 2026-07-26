@@ -1547,3 +1547,73 @@ class TestRealPropsimFs16Driver:
         assert d._product_family == "not-a-valid-info-string"
         # Bandwidth label absent → stays default
         assert d._bandwidth_mhz == 100.0
+
+
+class TestStepRawFieldPlumbing:
+    """`SequenceStepResult.raw` —— 仪器原始回复必须一路通到响应与**归档**。
+
+    动机 (2026-07-26): 现场验证问题分两类, "通不通" 和 "返回什么字面值"。后者是
+    F64R-7 一整类问题的问法, 回复混在自由文本 ``detail`` 里就不可比对、不可归档
+    —— 而归档 (``DiagnosticRun.output_excerpt``) 正是下次现场用来跟本次对照的东西。
+    """
+
+    def _run_with_steps(self, db, lab, monkeypatch, steps):
+        """借 idn_sweep 的路由跑一个返回指定 steps 的假序列。"""
+        from app.diagnostics import loader
+        from app.diagnostics.protocol import SequenceMetadata, SequenceRunResult
+
+        class _StubSequence:
+            metadata = SequenceMetadata(
+                name="raw-plumbing-stub", description="test only",
+            )
+
+            @staticmethod
+            async def run(ctx, hal, params, *, log):
+                log("stub ran")
+                return SequenceRunResult(success=True, summary="ok", steps=steps)
+
+        monkeypatch.setattr(loader, "get_sequence", lambda key: _StubSequence)
+        _patched_hal(monkeypatch, drivers={})
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/raw_stub/run",
+            json={"lab_profile_id": str(lab.id), "run_by": "pytest"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        audit = db.query(DiagnosticRun).filter(
+            DiagnosticRun.id == uuid.UUID(body["diagnostic_run_id"])
+        ).first()
+        return body, audit
+
+    def test_raw_reaches_response_and_archive_verbatim(self, db, lab_with_bs, monkeypatch):
+        from app.diagnostics.protocol import SequenceStepResult
+
+        body, audit = self._run_with_steps(db, lab_with_bs, monkeypatch, [
+            SequenceStepResult(label="STATE?", success=True, detail="RUNNING",
+                               raw='  "RunNing"  '),
+        ])
+        assert body["steps"][0]["raw"] == '  "RunNing"  ', "响应里必须原样"
+        # 归档用 repr 存 —— 前后空白与引号本身就是结论的一部分, 不能被行首行尾吃掉。
+        assert '\'  "RunNing"  \'' in (audit.output_excerpt or ""), (
+            f"归档缺原始回复: {audit.output_excerpt!r}"
+        )
+
+    def test_empty_string_reply_is_archived_not_dropped(self, db, lab_with_bs, monkeypatch):
+        """空串回复**是一条结论**("仪器回了个空"), 不能被真值判断当成"没有回复"丢掉。"""
+        from app.diagnostics.protocol import SequenceStepResult
+
+        body, audit = self._run_with_steps(db, lab_with_bs, monkeypatch, [
+            SequenceStepResult(label="STATE?", success=False, detail="空回复", raw=""),
+        ])
+        assert body["steps"][0]["raw"] == ""
+        assert "raw: ''" in (audit.output_excerpt or "")
+
+    def test_steps_without_reply_stay_none(self, db, lab_with_bs, monkeypatch):
+        """纯写命令 / 驱动 API 调用没有仪器回复 → None, 归档不应凭空多一行 raw。"""
+        from app.diagnostics.protocol import SequenceStepResult
+
+        body, audit = self._run_with_steps(db, lab_with_bs, monkeypatch, [
+            SequenceStepResult(label="connect", success=True, detail="ok"),
+        ])
+        assert body["steps"][0]["raw"] is None
+        assert "raw:" not in (audit.output_excerpt or "")

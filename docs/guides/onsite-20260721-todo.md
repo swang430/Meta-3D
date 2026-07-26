@@ -91,11 +91,14 @@
 > 且顺带把状态复位 + CLOSE 确认卸载收敛到单一入口);F64R-2 已完成(端口/通道从拓扑回读)。
 > 下一个 F64 大项 = F64R-1(`STATE?` 全接入,P0-3 已落地加载路,余 GO/GOS/get_metrics/bypass)。**
 
-- [ ] **F64R-1 F64 接入 `DIAG:SIMU:STATE?` 作运行状态真值源** (新 P0 大项,**P0-3(#223)已部分落地**)
-  - **P0-3 部分落地**:加载路(GCM/ASC/B-2)已接 `DIAG:SIMU:STATE?` —— CLOSE 确认卸载
+- [x] **F64R-1 F64 接入 `DIAG:SIMU:STATE?` 作运行状态真值源** ✅ **已完成**(#225, 2026-07-25)
+  - **P0-3(#223)先落地加载路**:GCM/ASC/B-2 三路已接 `DIAG:SIMU:STATE?` —— CLOSE 确认卸载
     (`_close_and_read_state` 判 `==CLOSED`)+ close≠CLOSED 的 running 真值(按手册"RUNNING=发射"
-    语义置)。**剩余**:GO/GOS 前查 `STATE?` 消歧、`get_metrics` 读缓存谎报在跑、bypass 进出漂移、
-    超时挂死不自动恢复 —— 这些仍未接。
+    语义置)。
+  - **#225 收口余下全部**:GO/GOS 前后查 `STATE?` 消歧、`get_metrics` 不再读缓存谎报在跑、
+    bypass 进出不漂移、超时挂死升级重连;七态白名单拒掉会话错位噪声;破坏性卸载前二次确认。
+    运行状态的写入收敛到 `_apply_state_truth*` 单一入口。经 10 轮 pre-commit + Codex 复审。
+  - **转出**:真机语义验证 → F64R-7;复审途中挖出的两个**既有**地雷 → F64R-8 / F64R-9。
   - 全驱动原**零调用** `DIAG:SIMU:STATE?`(手册唯一运行状态真值源),状态全靠本地布尔 + 猜 -200
     错误文字。**含 P2-1(#221) 刚 merge 的 GO 豁免——方向对(回读消歧)但信号选错**(用
     `STATIC?==0`,该 `STATE?==RUNNING`;STATIC? 只报旁路档不报运行态)。
@@ -177,8 +180,8 @@
     与"我明确说了一个口都不写"相反;两个兄弟端点(`/crest-factor`、`/output-gain`)都会 422。
   - `OutputGainRequest.ports` 注释仍写 "(1..16)",与 32 探头矛盾。
 
-- [ ] **F64R-8 ⚠ `pyvisa.ResourceManager('@py')` 是单例 —— 一个驱动 disconnect 会关掉
-      其它驱动的会话** (2026-07-25 F64R-1 复审实测发现的**既有**地雷,非本次引入)
+- [x] **F64R-8 ⚠ `pyvisa.ResourceManager('@py')` 是单例 —— 一个驱动 disconnect 会关掉
+      其它驱动的会话** ✅ **已完成**(#227, 2026-07-25;F64R-1 复审实测发现的**既有**地雷,非本次引入)
   > 实测: `ResourceManager('@py')` 两次取到同一个对象;其 `close()` 源码是
   > `for resource in self._created_resources: resource.close()`,官方 docstring 明写
   > "will also terminate connections obtained from other ResourceManager instances"。
@@ -187,8 +190,12 @@
   - 现场表现推测:HAL 重载或单个仪表重连后,别的仪表"莫名其妙断了"。F64R-1 之后这些
     被误关的驱动至少**能自愈**了(已关句柄抛 `InvalidSession` → 归入 conn-lost → 懒重连),
     但根因还在。
-  - 修法候选:各驱动持有自己的 RM 实例并只 `close()` 自己的 resource(不调 `rm.close()`);
-    或全局共享一个 RM、由 HAL 生命周期统一管。**要一起改四个驱动,单独开 PR。**
+  - **实际修法(#227)**:驱动一律不调 `rm.close()`,只关自己那条 resource;RM 归 pyvisa
+    按后端做单例 + `atexit` 统一收尾(所有权边界写进 `_visa_reconnect.py` 的权威说明段)。
+  - **⚠ 波及面比立项时估的大**:backlog 写"四个驱动"是按 `'@py'` 字面 grep 的,动手时改按
+    "谁持有 RM"重数 —— **实际 13 个**。守门测试三层:静态扫描禁 `rm.close()`(带注释剥离,
+    否则会被自己写的注释文本骗绿)+ AST 发现所有持 RM 的类(防新驱动漏网)+ 13 个驱动逐个跑
+    "断开不连累同伴"。
 
 - [x] **F64R-9 `_drain_errors` 也会解冻重连冷却** (2026-07-25 F64R-1 复审转出, 当日修完)
   > `_do_query_unlocked` 已加 `note_success=False` 堵住 `_drain_after_timeout`,但
@@ -267,11 +274,69 @@
     写进 CLAUDE.md 操作规范。依赖 ARCH-1(测试管理简化) + P0-2(参数真值源)。见 memory
     `feedback_onsite_testcase_flow_no_adhoc_scripts`。
 
+- [ ] **F64R-10 ⚠ 四个 VISA 驱动 connect 失败都泄漏句柄** (2026-07-26 Codex 单独 review
+      propsim_f64.py 后, 按规则全仓枚举发现 —— **比单文件结论严重**)
+  > Codex 只审了 propsim_f64.py, 所以只能报"F64 一处"。把它抽象成规则「打开资源后
+  > 任何失败路径都必须关掉它」再用 AST 全仓扫, 结论是 **F64 / FS16 / UXM / rs_fsva
+  > 四个 connect 全都不关**: socket 已 open_resource, 中途 `SYST:INFO?` / 选件探测 /
+  > alignment 初始化抛异常 → `except` 只设错误状态就 `return False`, 句柄留着。
+  - **F64 最危险**: 端口只容**一条**远程 socket (ATE AN §1.1.2.3) —— 泄漏一次,
+    下次重连被自己上次的僵尸连接挡住, 现场表现为"连不上, 重启 PropSim 才好"。
+    2026-07-21 现场"每次都要人工重连"疑似与此有关(未证实, 但机理吻合)。
+  - ⚠ **这正是我在 `disconnect()` 里已经修过的同一个洞** —— 修了断开路, 没修连接路。
+    又一次"改一个方向不改它的镜像"(本周第 N 次, 见 memory
+    feedback_fix_quality_domain_enumeration_first 2026-07-26 复发记录)。
+  - 修法: connect 的失败路径统一关句柄 (跟 disconnect 那套 `_leaked` + 同步 close
+    同源), 四个驱动一起改, 加结构性断言钉住"connect 有 open 就必须有清理"。
+
+- [ ] **F64R-11 连接后不确认对方是谁** (同上, 2026-07-26)
+  - `*IDN?` 只 `logger.info`, 不校验对方确实是 PROPSIM F64 → IP 填错时驱动会继续
+    朝别的仪器发 F64 专用命令。**枚举: F64 / UXM / rs_fsva 三个都只记日志, 只有
+    FS16 有校验** —— 判据存在于一处、另三处没有, 又是同一个母题。
+  - 现成参照: `propsim_f64_health` 探针里的 `_IDN_MODEL_TAGS = ("PROPSIM","F8800")`
+    已经在做这件事 —— 把它下沉到驱动 connect 即可, 不用新造。
+
 - [ ] **F64R-4 F64 驱动 P1 清理** (review 母题⑤⑥⑦)
+  - **⚠ 2026-07-26 补充: 本项比原文写的大。** 按规则「写命令后必须查错误队列」
+    AST 全仓枚举 `propsim_f64.py`: **10 个方法写完不查**(原文只点了 input_phase /
+    runtime_env / user_alignment 三个)。其中约 7 个是真缺口
+    (`set_center_frequency` / `autoset_input_level` / `enable_measurement_data_stream`
+    / `enable_user_alignment` / `set_input_phase` / `set_output_phase` /
+    `set_runtime_environment`), 另 3 个 (`disconnect` / `reset` / `_close_and_read_state`)
+    有各自站得住的理由(卸载路 / `*RST` 本就清队列 / 用 `STATE?` 回读做更强确认),
+    **动手前要逐个判**, 别一刀切全包 `_gated_write_transaction`。
+  - 对照: 同文件已有 10 个方法**是**查的 —— 所以这不是"没这个机制", 是"机制没铺满"。
   - 禁盲试:connect 两条手册**不存在**的命令(`INTERFerence:LIST?`/`USER:LIST?` → `:GET?`);写
     命令 fail-loud 收敛(input_phase / runtime_env / output_gain 静默钳位 / user_alignment 空
     标定 / output_calib null 混淆);健康检查 `*OPT?` 必误报 BLOCKER + MMEM 能力误判(手册其实
     完整支持)。
+
+### 诊断序列 backlog(2026-07-26 提交前审查转出, 不在本 PR 修)
+
+> 上下文: 「仪表驱动 debug 走 checked-in 诊断序列」定为标准操作那个 PR。
+> 审查两轮 9 条 findings, P1+P2 共 8 条当轮修完; 以下是**明确判定不阻塞合并**的残余。
+> ⚠ 按 `feedback_review_loop_scope_discipline` 轮次上限 2 —— 这批修复**本身没再过审查门**,
+> 下一个动这几个文件的 PR 顺手复核。
+
+- [ ] **D-1 [P3] 诊断序列在协程里直接调同步驱动, 会把事件循环卡住几十秒**
+  - `uxm_manual_spelling_probe.py` 的 `_q` 直接 `await _maybe_await(bs._query(cmd))`,
+    而 UXM 的 `_query` 是**同步** pyvisa(`app/hal/base.py:159`)。12 条候选里不支持的
+    会一路等到 VISA 超时, 每条还要再等一次 `SYST:ERR?` —— 期间 1 Hz 广播和其它 HTTP
+    一起卡住。
+  - ⚠ **不能照抄兄弟序列**: `uxm_scpi_compatibility.py:354-358` 那个 `_q` 看着是
+    `run_in_executor`, 实际**先同步调用 `query_fn(cmd)` 再把已算出的结果丢进 executor**
+    —— 等于没包。**兄弟序列自己也有这个问题**, 要修一起修。
+  - 缓解现状: 两者都 `safe_during_test=False`, 是操作员手动触发的诊断; 且兄弟序列
+    76 条命令一直这么跑着, 不是本次引入的回归。
+  - 修完记得把 fake 的 `_query` 改成**同步**(现在是 `async def`, 与真驱动契约不符,
+    所以这条永远测不出来 —— 同 `feedback_test_failure_may_mean_wrong_fake`)。
+
+- [ ] **D-2 [P3] `clear_error_queue()` 的返回值无人消费** —— 清队列失败也照常往下发 GO。
+      后续步骤本来就会失败并被记红, 危害有限。
+- [ ] **D-3 [P3] `read_state`/`read_bypass` 之后不读错误队列** —— 查询自身产生的错误会
+      留在 FIFO 里被记到下一条写命令头上。需要查询先出错才触发, 且那时该步已经标红。
+- [ ] **D-4 [P3] `propsim_f64_health` 的 docstring/metadata 还写着 "~24 commands"**,
+      实际 29 条(本次加了 P0-4 的 5 条)。纯文案漂移。
 
 ### P1 — 正确性(撤销错误诊断 + 状态机对齐)
 
@@ -320,7 +385,7 @@
 
 ### P2 — 收尾 / 固化
 
-- [ ] **P2-1 把当天 HAL 控制端点 + 驱动改动整理成 PR**(PR #221)
+- [x] **P2-1 把当天 HAL 控制端点 + 驱动改动整理成 PR** ✅ **已完成**(#221, 2026-07-23)
   - 事实(工作树未提交):`instrument.py` 新增 `emulation-control / output-gain /
     output-calibration / input-reference / crest-factor` 五个端点;
     `propsim_f64.py` 有 `start_emulation` 冷缓存放行 + GO/GOS/STATIC 幂等豁免修复;

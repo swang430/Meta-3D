@@ -29,6 +29,8 @@ export interface SequenceStepResult {
   success: boolean
   detail: string
   duration_ms?: number | null
+  /** 仪器原始回复, 与人读的 detail 分开。null/undefined = 该步无仪器回复。 */
+  raw?: string | null
 }
 
 export interface SequenceRunResponse {
