@@ -220,8 +220,12 @@ F64 失败后 `/hal/reload` / F64 冷却窗口内 stop —— 改后全部 `sent
   → 启动会话孤儿化;该步收尾 `finally → cleanup_chamber_instruments →
   base_station.disconnect()`(`measure.py:1220` / `cleanup.py`)关掉当前会话并置
   `_visa_session=None`(`uxm_base_station.py:478-480`),**后续步骤从 None 连、
-  用完即断,不再覆盖**。净后果 = 每次"HAL init/reload → 首次测量"孤儿一条活
-  HiSLIP 会话,温和。转台同型入口(`measure.py:262`,非 VISA 传输 → 归 F64R-14)。
+  用完即断,不再覆盖**。测量路净后果 = 每次"HAL init/reload → 首次测量"孤儿一条,温和。
+  **但还有第二个入口会累积**(#231 R2 P2):诊断序列 `baseStation_attach_check`
+  每次运行都 `bs.connect()`(`baseStation_attach_check.py:130`)且**全序列无
+  disconnect** —— 操作员反复跑(现场排 attach 正是反复跑的场景)就逐次覆盖、逐次
+  孤儿化。修复设计必须覆盖这条可重复触发的入口,不能只按"首测一次"造形。
+  转台同型入口(`measure.py:262`,非 VISA 传输 → 归 F64R-14)。
 - **F64 现场"连不上要重启 PropSim"的机理:至今没有已证软件入口。** 别再按未证机理
   设计修复 —— 下次现场用诊断序列复现(跟 F64R-7 同场做),拿到入口再谈修。
 
@@ -241,16 +245,24 @@ F64 失败后 `/hal/reload` / F64 冷却窗口内 stop —— 改后全部 `sent
 
 拆成两件事,别再混成一件:
 
-**(a) UXM 启动会话在首次测量步被覆盖孤儿化**(可达、已证;一次 HAL init 孤儿一条,
-**不逐步累积** —— #231 P2 纠正:后续步骤 connect-from-None + finally disconnect 收尾)。
+**(a) UXM 会话在 connect 覆盖点被孤儿化,两条已证入口**:
+① 测量路 —— 启动会话被首个测量步覆盖,一次 HAL init 一条(后续步骤
+connect-from-None + finally disconnect 收尾,不累积);
+② 诊断路 —— `baseStation_attach_check` 每次运行 connect 且无 disconnect,
+**反复跑就累积**(#231 R2 P2)。修复设计必须两条都覆盖。
 解法在 UXM connect 入口,两个候选形状:
 - **关旧再开新**:入口若字段已指着句柄,先收尾再开
   (`_silent_reconnect_visa` 已是这个形状,不是新机制);
 - **活句柄复用**:已连着且句柄活的就不重开(要定义"活"的判据,别拿 `!= None` 充数)。
 
-⚠ 两个形状都必须**正面回答"关旧成功 + 开新失败"窗口** —— 字段既不许置 None
-("失败不留死态",F64R-1)也不该假装旧句柄还在。UXM 有懒重连,窗口可自愈;
-若将来把同一形状铺到**没有懒重连的 9 个驱动**,这个窗口是设计必答题,不是脚注。
+⚠ 两个形状都必须**正面回答"关旧成功 + 开新失败"窗口**,且 **UXM 的懒重连帮不上
+这个窗口**(#231 R2 P2 复核成立):`_silent_reconnect_visa` 开新失败时置
+`_visa_session=None` 收场(`uxm_base_station.py:2273-2275`),而 `_do_write` 见
+None **直接抛 ConnectionError、不触发重连**(`:2279-2282`)—— 字段一旦 None,
+驱动停在无会话态直到外部显式 `connect()`。所以这个窗口在 UXM 上就是设计必答题,
+对 9 个无懒重连驱动更是。顺带记录:UXM 自家 reconnect 的置-None 写法跟 F64
+"失败不留死态、绝不置 None"纪律相反 —— 既有行为差异,归本条 backlog 一并设计,
+不单独"顺手修"。
 
 **(b) F64 现场"重启才好"** —— 无已证软件入口,**先复现再修**(诊断序列,F64R-7 同场)。
 在拿到可达入口之前,任何"给 F64 connect 加会话治理"的改动都是在修一条不可达路径,

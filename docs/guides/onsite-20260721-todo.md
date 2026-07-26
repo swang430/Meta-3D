@@ -336,13 +336,17 @@
     `measure.py:262-263`, 真 F64 从 hal.drivers 复用不重连, `:438` 只在 Mock 兜底
     分支; 其余调用点只有 HAL init 新对象 + `reconnect_driver:1201` 先 disconnect)。
     **F64 的覆盖点机制存在但无可达调用链。**
-  - **可达的覆盖入口在 UXM, 只孤儿化启动会话一条, 不逐步累积** (#231 P2 纠正, 已核):
-    HAL init 开的会话被**首个**测量步 `base_station.connect()` 覆盖 (`measure.py:263`,
-    入口不关旧 `uxm_base_station.py:335`); 该步 `finally → cleanup_chamber_instruments
-    → disconnect()` 关当前会话置 None (`measure.py:1220` / `uxm_base_station.py:478-480`),
-    后续步骤从 None 连、用完即断。净后果 = 每次 HAL init→首测孤儿一条, 温和。
-    解法仍在 UXM connect 入口 (关旧再开新 / 活句柄复用, "关旧成功+开新失败"窗口必答,
-    见设计稿 §8); 转台同型走 F64R-14 (非 VISA)。
+  - **可达的覆盖入口在 UXM, 两条** (#231 两轮 P2 纠正后口径, 均已核):
+    ① 测量路 — HAL init 开的会话被**首个**测量步 `base_station.connect()` 覆盖
+    (`measure.py:263`, 入口不关旧 `uxm_base_station.py:335`); 该步 finally →
+    cleanup → disconnect 关当前会话置 None, 后续步骤从 None 连用完即断,
+    **一次 init 一条不累积**; ② 诊断路 — `baseStation_attach_check` 每次运行
+    `bs.connect()` (`:130`) 且全序列无 disconnect, **操作员反复跑就逐次累积**。
+    解法在 UXM connect 入口 (关旧再开新 / 活句柄复用), 且 **"关旧成功+开新失败"
+    窗口 UXM 懒重连帮不上** — `_silent_reconnect_visa` 失败置 None 收场而
+    `_do_write` 见 None 直接抛不触发重连 (`uxm_base_station.py:2273-2282`),
+    该窗口是设计必答题; UXM 置-None 写法与 F64 "绝不置 None" 纪律相反的既有差异
+    一并进设计, 不顺手修。转台同型走 F64R-14 (非 VISA)。
   - **F64 现场"重启才好": 无已证软件入口, 先复现再修** (诊断序列, F64R-7 同场);
     拿到入口前不给 F64 connect 加会话治理 —— 那是修不可达路径还动安全敏感生命周期。
   - 硬约束: ① 先回答"那条句柄死的还是活的? 谁还指着它? **有没有可达调用链?**"
