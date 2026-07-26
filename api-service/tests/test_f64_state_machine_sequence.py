@@ -999,3 +999,85 @@ class TestCodexRound229C:
         assert "'BYPASS'" in result.summary, f"意料之外的字面值丢了: {result.summary}"
         assert "七态之外" in result.summary, "要标出来这是个未识别值"
         assert result.extra["state_in_bypass_raw"] == "BYPASS"
+
+
+class TestCodexRound229D:
+    """Codex 第四轮 2×P1。第二条是"同一条规则存两份、只改一份" —— 上一轮我在 F64
+    剧本改了排空判据, **没 grep 同族站点**, UXM 探针那份原封不动 (memory
+    feedback_clear_stale_state_enumerate_all_sources 说的正是这个坑)。"""
+
+    def test_p1_bypass_restore_gated_on_post_state_recheck(self):
+        """④-1 写完 GO/STOP 后, 错误队列干净不代表真到了目标态。若复核读到瞬态/
+        读不到, ④-2 继续写 MODEL:STATIC 就是在自己声明"不可操作"的态里改仪器 ——
+        把一次恢复失败升级成可能的卡死。"""
+        class _RestoreLandsInTransient(_FakeF64):
+            async def _write(self, cmd):
+                await super()._write(cmd)
+                if cmd == "DIAG:SIMU:GO" and self.state == "RUNNING":
+                    self.state = "OPENING"   # 队列干净, 但落在瞬态
+
+        ce = _RestoreLandsInTransient(state="RUNNING", bypass="3")
+        result, _ = _run(ce, {"restore_initial_state": True})
+        step = _step(result, "恢复旁路档 (放弃)")
+        assert step.success is False
+        assert "不是可操作的稳态" in step.detail
+        assert "接手时旁路档=3" in step.detail
+        # 关键: 复核不过就不许再写旁路 —— 探测段那一次不算
+        assert ce.writes.count("DIAG:SIMU:MODEL:STATIC 3") == 1, (
+            f"复核未通过仍写了旁路; writes={ce.writes}"
+        )
+        assert result.success is False
+
+
+class TestUxmProbeCodex229D:
+    def test_p1_indeterminate_drain_aborts(self):
+        """UXM 探针开跑前排空: `None` 是"读不出错误码"不是"队列干净"。带着未验证
+        的会话跑 12 条探测, 旧错误/迟到应答会跟首条关键的 CELL_STATUS 回复错配 →
+        把可用命令误判成不支持, 而本序列的产出正是"哪个拼法可用"。"""
+        class _GarbledDrain(TestUxmManualSpellingProbe._FakeUxm):
+            async def _query(self, cmd):
+                if cmd == "SYST:ERR?":
+                    return "???"
+                return await super()._query(cmd)
+
+        from app.diagnostics.sequences.uxm_manual_spelling_probe import run as run_probe
+        logs: List[str] = []
+        result = asyncio.run(
+            run_probe(ctx=object(), hal=_FakeHal2(_GarbledDrain()),
+                      params={}, log=logs.append)
+        )
+        assert result.success is False
+        assert "排空错误队列失败" in result.summary
+        assert "结论不可信" in result.summary
+
+    def test_drain_judgement_is_same_across_sequences(self):
+        """⭐ 反回归: 两个序列的"判队列干净"判据必须同源。这条钉的是**规则本身**,
+        不是某一处实现 —— 上一轮就是只改了一处才漏的。"""
+        import ast
+        import inspect
+        from app.diagnostics.sequences import (
+            propsim_f64_state_machine as f64,
+            uxm_manual_spelling_probe as uxm,
+        )
+
+        # ⚠ 必须**剥掉注释和 docstring** 再扫。两个模块的注释里都写着"我原来写的是
+        # `code in (0, None)`"这句解释 —— 直接扫原文会匹配到自己的注释而误报。
+        # 这跟 #227 那个守门测试被自己刚写的注释文本骗**绿**是同一个坑, 只是这次
+        # 方向反过来是骗**红**: 判据一旦包含自然语言, 就会被文档本身污染。
+        def _code_only(mod) -> str:
+            tree = ast.parse(inspect.getsource(mod))
+            for node in ast.walk(tree):          # 去 docstring
+                if isinstance(node, (ast.Module, ast.ClassDef,
+                                     ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if (node.body and isinstance(node.body[0], ast.Expr)
+                            and isinstance(node.body[0].value, ast.Constant)
+                            and isinstance(node.body[0].value.value, str)):
+                        node.body.pop(0)
+            return ast.unparse(tree)             # unparse 天然丢掉 # 注释
+
+        for mod in (f64, uxm):
+            src = _code_only(mod)
+            assert "in (0, None)" not in src, (
+                f"{mod.__name__} 的**代码里**还有 `in (0, None)` —— "
+                "读不出错误码不能当队列干净"
+            )

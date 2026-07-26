@@ -199,7 +199,26 @@ async def run(
         for _ in range(100):
             raw_e = await _q("SYST:ERR?")
             code_e, _t = _parse_err(raw_e or "")
-            if code_e in (0, None):
+            # ⚠ `None` = 读不出错误码(空/畸形/会话错位), **不是**"队列干净"。
+            # 带着未验证的会话开始 12 条探测, 旧错误或迟到应答会跟首条关键的
+            # CELL_STATUS 回复错配 → 把可用命令误判成不支持, 或归档错误的字面值,
+            # 而本序列的产出正是"哪个拼法可用 + 它返回什么"。判据与 F64 剧本同源
+            # (Codex #229 第四轮 P1: F64 那边上一轮已改, 这里是**漏掉的同族站点** ——
+            # 同一条规则存两份, 改的时候只改了一份, 正是 memory
+            # feedback_clear_stale_state_enumerate_all_sources 说的那个坑)。
+            if code_e is None:
+                return SequenceRunResult(
+                    success=False,
+                    steps=[SequenceStepResult(
+                        label="开跑前排空错误队列", success=False,
+                        detail=f"SYST:ERR? 读不出错误码 ({raw_e!r}) — 队列状态未知, 不能当干净",
+                        raw=raw_e,
+                    )],
+                    summary=("开跑前排空错误队列失败: SYST:ERR? 回复读不出错误码 — "
+                             "SCPI 会话未经验证, 此时探测出的'支持/不支持'结论不可信。"
+                             "先确认通道正常再跑。"),
+                )
+            if code_e == 0:
                 break
             stale.append((raw_e or "").strip())
         wfn = getattr(bs, "_write", None)

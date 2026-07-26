@@ -555,20 +555,38 @@ async def run(
                           f"初始 {initial_state} → 当前 {now}, 不是已知可恢复的转移; 请人工处理",
                           None, time.monotonic())
                 # ④-2 旁路档 —— 读当前实际档位跟目标比, **含目标就是 "0" 的情况**
-                cur_bypass = await p.read_bypass("恢复前 MODEL:STATIC?")
-                if cur_bypass == initial_bypass:
-                    p.add("恢复旁路档 (无需)", True, f"已是 STATIC {cur_bypass}",
-                          None, time.monotonic())
-                elif cur_bypass is None:
-                    p.add("恢复旁路档 (放弃)", False,
-                          f"当前旁路档读不到 — 不猜; 接手时是 STATIC {initial_bypass}, 请人工核对",
-                          None, time.monotonic())
-                elif await p.write_and_check(
-                    f"恢复旁路档 STATIC {cur_bypass}→{initial_bypass}",
-                    f"DIAG:SIMU:MODEL:STATIC {initial_bypass}",
-                ):
-                    findings["bypass_after_restore"] = await p.read_bypass(
-                        "恢复后 MODEL:STATIC?", expect=initial_bypass)
+                #
+                # ⚠ 先**重新读一次运行态**再决定动不动旁路。④-1 可能刚写过 GO/STOP:
+                # 错误队列干净不代表真到了目标态, 回读可能是 OPENING/STOPPING/读不到。
+                # 那种情况下继续写 `MODEL:STATIC`, 就是在自己声明"不可操作"的态里改
+                # 仪器 —— 等于把一次恢复失败升级成可能的卡死 (Codex #229 第四轮 P1)。
+                # 不用分支变量记"④-1 走了哪条路", 而是**重新读一次**: 判据来自当前
+                # 实际值, 不来自"我前面做过什么"的假设 —— 跟本段的收敛模型同源。
+                post = await p.read_state("恢复旁路档前 复核 STATE?")
+                if post is None or post not in _ACTIONABLE_STATES:
+                    cur_bypass = await p.read_bypass("恢复前 MODEL:STATIC? (仅记录)")
+                    p.add(
+                        "恢复旁路档 (放弃)", False,
+                        (f"运行态复核为 {post or '读不到'}, 不是可操作的稳态 —— 不在这种态下写 "
+                         f"MODEL:STATIC。⚠ 接手时旁路档={initial_bypass}, 现在={cur_bypass or '?'} "
+                         "—— 请人工核对复位"),
+                        None, time.monotonic(),
+                    )
+                else:
+                    cur_bypass = await p.read_bypass("恢复前 MODEL:STATIC?")
+                    if cur_bypass == initial_bypass:
+                        p.add("恢复旁路档 (无需)", True, f"已是 STATIC {cur_bypass}",
+                              None, time.monotonic())
+                    elif cur_bypass is None:
+                        p.add("恢复旁路档 (放弃)", False,
+                              f"当前旁路档读不到 — 不猜; 接手时是 STATIC {initial_bypass}, 请人工核对",
+                              None, time.monotonic())
+                    elif await p.write_and_check(
+                        f"恢复旁路档 STATIC {cur_bypass}→{initial_bypass}",
+                        f"DIAG:SIMU:MODEL:STATIC {initial_bypass}",
+                    ):
+                        findings["bypass_after_restore"] = await p.read_bypass(
+                            "恢复后 MODEL:STATIC?", expect=initial_bypass)
 
         ok = all(s.success for s in p.steps) and aborted_reason is None
         # ⚠ 关键字面值写进 summary —— 归档 (`DiagnosticRun.output_excerpt`) 在 2048
