@@ -42,6 +42,20 @@ class SequenceStepResult:
     success: bool
     detail: str = ""
     duration_ms: Optional[int] = None
+    raw: Optional[str] = None
+    """仪器**原始回复**, 与人读的 ``detail`` 分开存 (2026-07-26)。
+
+    动机: 现场验证问题分两类 —— "这条命令**通不通**"(靠 ``success`` + ``detail``
+    的 SUPPORTED/UNSUPPORTED 分类就够) 和 "它到底**返回什么字面值**"。后者是
+    F64R-7 一整类待验问题的问法 (``STATE?`` 在 GOS 之后 / 旁路下报什么),
+    把回复拼进 ``detail`` 自由文本会让它不可比对、不可归档 —— 下次现场没法
+    跟这次的记录对照。
+
+    约定: **原样存**, 不做归一化 / 大小写转换 / 去引号 —— 归一化是驱动的事,
+    本字段的价值恰恰在于保留仪器真正吐出来的样子 (含空白与引号)。
+    无回复的步骤 (纯写命令 / 驱动 API 调用) 留 ``None``, 不要填 ``""``
+    —— None = "这步没有仪器回复", "" = "仪器回了个空串", 两者含义不同。
+    """
 
 
 @dataclass

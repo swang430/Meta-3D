@@ -71,6 +71,8 @@ class SequenceStepResponse(BaseModel):
     success: bool
     detail: str = ""
     duration_ms: Optional[int] = None
+    raw: Optional[str] = None
+    """仪器原始回复 (见 SequenceStepResult.raw)。None = 该步无仪器回复。"""
 
 
 class SequenceRunResponse(BaseModel):
@@ -178,6 +180,12 @@ async def run_diagnostic_sequence(
         for s in step_results:
             ok = "✓" if s["success"] else "✗"
             output_text.write(f"  {ok} {s['label']}: {s.get('detail') or ''}\n")
+            # 仪器原始回复必须进归档 —— 归档就是下次现场用来跟本次对照的东西,
+            # 只存人读的 detail 等于把"它返回什么字面值"这类结论丢了 (本字段的
+            # 存在理由)。`is not None` 而非真值判断: 空串回复本身就是一条结论。
+            raw = s.get("raw")
+            if raw is not None:
+                output_text.write(f"      raw: {raw!r}\n")
 
     run = ctx.record_run(
         db,

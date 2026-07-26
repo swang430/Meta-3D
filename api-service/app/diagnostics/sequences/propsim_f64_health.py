@@ -134,6 +134,24 @@ PROPSIM_SCPI: List[Tuple[str, str, bool, str]] = [
     ("OUTP_GAIN",          "OUTP:GAIN:CH? 1",                  False, "output gain ch1"),
     ("INP_PHASE",          "INP:PHA:DEG:CH? 1",                False, "input phase ch1"),
     ("OUTP_PHASE",         "OUTP:PHA:DEG:CH? 1",               False, "output phase ch1"),
+    # ── P0-4 输出功率调整方案 (2026-07-26 加) ──
+    # 现场实证: 逐口 `OUTP:LOSS:SET` / `OUTP:GAIN:CH` 有 per-port 范围上限, 同一个
+    # loss=-40 口 3/4 生效、口 1/2 报 "-200 Parameter exceeds set limits" —— 想把
+    # 衰落态输出从本底 -105 提到工作电平 -35 (差 ~70dB) 根本补不动。手册答案是改用
+    # **绝对电平** `OUTP:LEV:AMP:CH`(不受 -45~0 增益钳位) + `SYST:MAXOUTGain` 抬顶。
+    # 这几条在这台机器上到底认不认, 现场必须先确认再谈实现 —— 所以先进探针。
+    #
+    # ⚠ 两条命令的查询写法**规律互相矛盾**, 手册逐字核对过 (2026-07-26 NotebookLM):
+    #   - `OUTPut:LEVel:AMPlitude:CH? <口>`  → `CH` 后**直接加 ?**, 绝不能带 GET (§20.4.5.4)
+    #   - `SYSTem:MAXOUTGain:GET?`           → **必须带 GET?**, 且不带参数 (§20.4.2.8)
+    # 拼错就回 -113, 会被本探针误判成"这台机器不支持" —— 而"把自己拼错当成机器不支持"
+    # 正是 UXM 那边已经踩过的坑, 别在 F64 上再踩一次。
+    ("OUTP_LEV_AMP",       "OUTP:LEV:AMP:CH? 1",               True,  "P0-4 主力: ch1 绝对输出电平 (dBm, 不受增益钳位)"),
+    ("OUTP_LEV_LIMITS",    "OUTP:LEV:AMP:LIM? 1",              False, "P0-4: ch1 绝对电平可设范围 (下限,上限)"),
+    ("MAXOUTGAIN",         "SYST:MAXOUTGain:GET?",             True,  "P0-4 抬顶: 全局最大输出增益上限 (整机级, 无需已加载仿真)"),
+    ("MAXOUTGAIN_LIMITS",  "SYST:MAXOUTGain:LIMits?",          False, "P0-4: 全局最大输出增益本身的可设范围"),
+    ("HIGHGAIN",           "DIAG:SIMU:HIGHGAIN:GET?",          False, "P0-4 备选: 高增益模式 (数字域全局 +5dB, 有削波风险)"),
+
     # Calibration measurement — required for path-loss readback.
     ("OUTP_CALIB",         "OUTP:CALIB:GET? 1",                True,  "ch1 calibration readback"),
     ("OUTP_MEAS",          "OUTP:MEAS:RES:GET? 1",             False, "ch1 output measurement"),
