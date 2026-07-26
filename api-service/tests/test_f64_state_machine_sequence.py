@@ -1309,3 +1309,66 @@ class TestMutationSweepGaps:
         step = _step(result, "恢复旁路档 (放弃)")
         assert step.success is False
         assert "接手时是 STATIC 0" in step.detail
+
+
+class TestUxmProbeCodex229F:
+    """第七轮 P1: 关键项必须拿到**非空回复**才算通过, 与错误码无关。
+
+    ⚠ 上一轮我只堵了审查举例的那一种 (`code == 0`), 没堵规则本身 —— 这次按规则改。
+    """
+
+    @pytest.mark.parametrize("err", ['-113,"Undefined header"', '-108,"Parameter not allowed"',
+                                     '-221,"Settings conflict"', '0,"No error"'])
+    def test_critical_without_reply_never_passes(self, err):
+        """CELL_STATUS 没回话时, 无论错误队列报什么, 都不许算可用。
+        -108 / -221 这两档旧写法会归 SUPPORTED / SUPPORTED_BUT_STATE 而放行。"""
+        class _CriticalSilent(TestUxmManualSpellingProbe._FakeUxm):
+            def __init__(self):
+                super().__init__()
+                self._n = 0
+
+            async def _query(self, cmd):
+                if cmd == "SYST:ERR?":
+                    self._n += 1
+                    return '0,"No error"' if self._n <= 1 else err
+                if "BSE:STATus:NR5G" in cmd:
+                    self.queries.append(cmd)
+                    return ""              # 认得命令但不给值
+                return await super()._query(cmd)
+
+        from app.diagnostics.sequences.uxm_manual_spelling_probe import run as run_probe
+        logs: List[str] = []
+        result = asyncio.run(run_probe(ctx=object(), hal=_FakeHal2(_CriticalSilent()),
+                                       params={}, log=logs.append))
+        assert "CELL_STATUS" not in result.extra["supported"], (
+            f"错误码 {err} 下关键项没拿到值却被判可用")
+        assert result.success is False
+
+    def test_non_critical_state_rejection_still_counts_as_valid(self):
+        """⭐ 反向: 这道闸**只**收紧 _CRITICAL。非关键项"命令头存在但当前状态不给值"
+        是**有效结论**(那正是 SUPPORTED_BUT_STATE 的意义), 不该被误伤成不可用。
+        没有这条, 我可能把闸修成"谁都过不去"还自以为更严格了。"""
+        # ⚠ 关键项要真给出值 —— 基类 fake 默认"什么都不支持", 直接用它的话前提就
+        # 不成立(测的是另一件事)。head = 去掉 "?" 的部分。
+        crit_head = "BSE:STATus:NR5G:CELL1"
+
+        class _NonCriticalStateBusy(TestUxmManualSpellingProbe._FakeUxm):
+            def __init__(self):
+                super().__init__(supported={crit_head})
+
+            async def _query(self, cmd):
+                # 非关键项 SCS_COMMON: 认得命令头, 但当前状态拒绝给值 (-221)
+                if "SUBCarrier:SPACing:COMMon" in cmd:
+                    self.queries.append(cmd)
+                    self._pending_err = '-221,"Settings conflict"'
+                    return ""
+                return await super()._query(cmd)
+
+        from app.diagnostics.sequences.uxm_manual_spelling_probe import run as run_probe
+        logs: List[str] = []
+        result = asyncio.run(run_probe(ctx=object(), hal=_FakeHal2(_NonCriticalStateBusy()),
+                                       params={}, log=logs.append))
+        assert "CELL_STATUS" in result.extra["supported"], (
+            f"关键项拿到值了却被误伤; supported={result.extra['supported']}")
+        # 非关键项被归成"命令头在、状态不给值", 这是有效结论 —— 不该进 critical_unsupported
+        assert "SCS_COMMON" not in result.extra["critical_unsupported"]

@@ -275,6 +275,19 @@ async def run(
         # `raw` 仍存原样 —— 那是本序列的产出, 不能被判定逻辑顺手抹掉。
         if (reply is None or not reply.strip()) and code == 0:
             status = "UNKNOWN"
+        # ⚠ 上面那条只堵了"队列干净"这一种。⚠⚠ 判据要按**规则**不按上一条 finding
+        # 举的**例子** —— 同样没拿到值的情形还有: 错误码是 -100..-112 / -200..-299
+        # (固件认得命令头, 却拒绝当前查询形态或当前状态), 那几种 `_categorize_status`
+        # 会给 SUPPORTED / SUPPORTED_BUT_STATE, 于是关键项被列为可用、整轮报成功,
+        # 而 raw 里**根本没有一个能当小区状态真值源的值** → 现场据此假绿去做状态换源。
+        # 本序列的产出是"哪个拼法可用 **且它返回什么**": 对 _CRITICAL 项,
+        # "拿到非空回复"是通过的**必要条件**, 与错误码无关 (Codex #229 第七轮 P1)。
+        #
+        # 只对 _CRITICAL 收紧 —— 非关键项"命令头存在但当前状态不给值"是**有效结论**,
+        # 不该判红。兄弟序列 propsim_f64_health 的 is_critical 语义不同 (问的是"这条
+        # 命令在不在固件里", 空回复也可能是合法答案) → 不做同样收紧, 这是判断不是遗漏。
+        if name in _CRITICAL and not (reply or "").strip():
+            status = "UNKNOWN"
         counts[status] = counts.get(status, 0) + 1
         ok = status in ("SUPPORTED", "SUPPORTED_BUT_STATE")
         if ok:
