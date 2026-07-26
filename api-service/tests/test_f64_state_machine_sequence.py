@@ -862,3 +862,91 @@ class TestUxmProbeCodex229:
         assert result.success is False, "关键项没拿到回复不能报成功"
         assert "CELL_STATUS" in result.extra["critical_unsupported"]
         assert result.extra["supported"] == []
+
+
+class TestCodexRound229B:
+    """Codex 第二轮 4 条。两条 P1 跟第一轮是**同一个母题的不同站点** ——
+    "错误队列干净 ≠ 命令真生效"。我第一轮只在 GO 后加了校验, 没加到对称的
+    退旁路后 / 三个恢复写。这轮把校验折进回读本身 (`expect=`), 不再逐点补。
+
+    ⚠ 关键设计: 传 `expect` = 目标已知(该核); 不传 = **待测未知量**(旁路下 /
+    GOS 之后报什么)。给待测量传期望值 = 预设答案, 本剧本就白写了。
+    """
+
+    def test_p1_bypass_exit_must_reach_running(self):
+        """退旁路后手册承诺应恢复 RUNNING —— 那是**已知目标**。核不上就不能继续发
+        GOS: GOS 观测的前提是"从 RUNNING 出发", 前提不成立结论作废。"""
+        class _ExitLeavesStopped(_FakeF64):
+            async def _write(self, cmd):
+                await super()._write(cmd)
+                if cmd == "DIAG:SIMU:MODEL:STATIC 0":
+                    self.state = "STOPPED"      # 没按手册恢复播放
+
+        ce = _ExitLeavesStopped(state="RUNNING")
+        result, _ = _run(ce, {"restore_initial_state": False})
+        assert result.success is False
+        assert "DIAG:SIMU:GOS" not in ce.writes, "前提不成立就不该继续观测 GOS"
+        assert "而不是手册承诺的 RUNNING" in result.summary
+
+    def test_p1_recovery_writes_are_verified(self):
+        """恢复的 GO/STOP/旁路档 若"错误队列干净但状态没变", 旧写法照样记绿,
+        整轮报成功而仪器还停在错的态。"""
+        class _RestoreGoDoesNothing(_FakeF64):
+            async def _write(self, cmd):
+                if cmd == "DIAG:SIMU:GO" and self.writes.count("DIAG:SIMU:GOS"):
+                    self.writes.append(cmd)     # 恢复阶段那次 GO: 收下但不生效
+                    return
+                return await super()._write(cmd)
+
+        ce = _RestoreGoDoesNothing(state="RUNNING", state_after_gos="STOPPED")
+        result, _ = _run(ce, {"restore_initial_state": True})
+        assert result.success is False, "恢复没真生效不能报成功"
+        assert any("期望 RUNNING" in s.detail for s in result.steps)
+
+    def test_probe_values_must_not_be_gated_on_expectation(self):
+        """⭐ 反向保护: 两个**待测量**绝不能被拿期望值卡掉。
+        真机若真的在旁路下报 STOPPED、GOS 之后报 RUNNING(正是我们怀疑的那个固件
+        行为), 剧本必须**如实记录**而不是判失败 —— 否则等于预设了答案。"""
+        ce = _FakeF64(state="RUNNING", state_in_bypass="STOPPED", state_after_gos="RUNNING")
+        result, _ = _run(ce, {"restore_initial_state": False})
+        assert _step(result, "F64R-7②").success is True, "旁路下报什么都该记, 不判错"
+        assert _step(result, "F64R-7①").success is True, "GOS 后报什么都该记, 不判错"
+        assert result.extra["state_in_bypass"] == "STOPPED"
+        assert result.extra["state_after_gos"] == "RUNNING"
+
+    def test_p2_clear_queue_failure_aborts(self):
+        """清队列失败却继续发 GO/STATIC = 带着没清干净的队列跑, 后面每步的
+        SYST:ERR? 判据都可能读到别人的旧错误。"""
+        class _DrainBoom(_FakeF64):
+            async def _query(self, cmd):
+                if cmd == "SYST:ERR?":
+                    raise TimeoutError("VI_ERROR_TMO")
+                return await super()._query(cmd)
+
+        ce = _DrainBoom(state="STOPPED")
+        result, _ = _run(ce, {"restore_initial_state": False})
+        assert result.success is False
+        assert "清错误队列失败" in result.summary
+        assert "DIAG:SIMU:GO" not in ce.writes
+
+
+class TestUxmProbeCodex229B:
+    def test_p2_blank_reply_is_unknown(self):
+        """空串/纯空白回复跟"没回复"是同一件事 —— 只判 is None 会漏掉固件回空行。
+        ⚠ 归一化只用于判定, raw 仍要存原样(那是本序列的产出)。"""
+        class _BlankReply(TestUxmManualSpellingProbe._FakeUxm):
+            async def _query(self, cmd):
+                if cmd == "SYST:ERR?":
+                    return '0,"No error"'
+                self.queries.append(cmd)
+                return "   "          # 回了空白
+
+        from app.diagnostics.sequences.uxm_manual_spelling_probe import run as run_probe
+        logs: List[str] = []
+        result = asyncio.run(
+            run_probe(ctx=object(), hal=_FakeHal2(_BlankReply()), params={}, log=logs.append)
+        )
+        assert result.success is False
+        assert "CELL_STATUS" in result.extra["critical_unsupported"]
+        cell_step = [s for s in result.steps if s.label.startswith("CELL_STATUS")][0]
+        assert cell_step.raw == "   ", "判定归一化了, raw 仍要存原样"

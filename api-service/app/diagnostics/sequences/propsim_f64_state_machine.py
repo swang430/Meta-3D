@@ -161,8 +161,21 @@ class _Probe:
                   + (f"  raw={raw!r}" if raw is not None else ""))
         return step
 
-    async def read_state(self, label: str) -> Optional[str]:
-        """问一次 `STATE?`, 原样记录, 返回归一化状态(白名单外 → None)。"""
+    async def read_state(self, label: str, *, expect: Optional[str] = None) -> Optional[str]:
+        """问一次 `STATE?`, 原样记录, 返回归一化状态(白名单外 → None)。
+
+        `expect` —— 这个参数是本剧本的**核心区分**, 传不传决定了这一步的性质:
+
+        - **传** = 这个站点的目标**已知**(我们刚写进去的档位 / 手册承诺的转移 /
+          恢复的目标态)。写完不比对就等于"错误队列干净就当成功", 而错误队列干净
+          **不代表命令真生效** —— 这条线一路在删的就是这种假成功 (Codex #229 两轮
+          在 GO 后、退旁路后、三个恢复写各抓了一次, 全是同一个母题的不同站点)。
+        - **不传** = 这个站点的值是**待测未知量**(旁路下报什么 / GOS 之后报什么,
+          即 F64R-7 的两问)。这些**绝不能**传 expect —— 拿期望值去比等于预设答案,
+          本剧本存在的理由就没了。
+
+        判据折在**同一步**里(不另记一条), 免得"写-读-比"散成三处又各自漂。
+        """
         started = time.monotonic()
         try:
             raw = await self._q("DIAG:SIMU:STATE?")
@@ -170,16 +183,14 @@ class _Probe:
             self.add(label, False, f"查询异常 {type(e).__name__}: {e}", None, started)
             return None
         state, note = classify_state(raw)
-        self.add(
-            label,
-            success=state is not None,
-            detail=state or note,
-            raw=raw,
-            started=started,
-        )
+        ok = state is not None if expect is None else state == expect
+        detail = state or note
+        if expect is not None and state != expect:
+            detail = f"期望 {expect}, 实际 {state or note} — 命令收下了但没真生效"
+        self.add(label, success=ok, detail=detail, raw=raw, started=started)
         return state
 
-    async def read_bypass(self, label: str) -> Optional[str]:
+    async def read_bypass(self, label: str, *, expect: Optional[str] = None) -> Optional[str]:
         """问一次 `MODEL:STATIC?` —— 旁路档的**唯一**权威来源(§20.4.6.26);
         `STATE?` 七态里没有 BYPASS, 判旁路只能问这条。
 
@@ -203,7 +214,11 @@ class _Probe:
                 raw, started,
             )
             return None
-        self.add(label, success=True, detail=norm, raw=raw, started=started)
+        # `expect` 语义同 read_state: 传了就是"这个档位是我们自己写进去的, 该核";
+        # 不传就是"只记录当前档位"。
+        ok = True if expect is None else norm == expect
+        detail = norm if ok else f"期望 STATIC {expect}, 实际 {norm} — 命令收下了但没真生效"
+        self.add(label, success=ok, detail=detail, raw=raw, started=started)
         return norm
 
     async def clear_error_queue(self, label: str = "*CLS + 排空错误队列") -> bool:
@@ -372,7 +387,11 @@ async def run(
     try:
         # ── ⓪ 清队列。别人留下的旧错误会被算到本次头上 (审查实测: 一条 stale -200
         #     让一次成功的 GO 被判失败)。手册确认 *CLS 不碰仿真状态机。
-        await p.clear_error_queue()
+        # 返回值必须消费: 清队列失败(排空查询抛异常 / *CLS 抛异常)却继续往下发
+        # GO/STATIC, 等于带着一个没清干净的队列跑, 后面每一步的 SYST:ERR? 判据都
+        # 可能读到别人的旧错误 —— 正是本剧本开头加清队列要治的那个病 (Codex #229)。
+        if not await p.clear_error_queue():
+            raise _Abort("开跑前清错误队列失败 — 带着未清的队列往下跑, 后续判据都不可信")
 
         # ── ① 若开跑时就在旁路里, 先退出来。
         #     现场收工稳态恰恰是「STOPPED + STATIC 3」—— 下次开机第一件事就是在这个
@@ -430,13 +449,23 @@ async def run(
                 # ⭐ F64R-7② 的答案就是这两条的 raw
                 findings["state_in_bypass"] = await p.read_state("旁路下 STATE?  ⭐F64R-7②")
                 findings["state_in_bypass_raw"] = p.last_raw
-                findings["bypass_in_bypass"] = await p.read_bypass("旁路下 MODEL:STATIC?")
+                findings["bypass_in_bypass"] = await p.read_bypass(
+                    "旁路下 MODEL:STATIC?", expect=str(bypass_mode))
 
             if await p.write_and_check("退旁路 MODEL:STATIC 0", "DIAG:SIMU:MODEL:STATIC 0"):
                 # 手册承诺"进旁路前在跑 → 退旁路后继续跑"; 这里验它在本固件上成不成立。
+                # 手册承诺"进旁路前在跑 → 退旁路后继续跑"(ATE AN §2.4.5), 这是**已知
+                # 目标**不是待测量 → 该核。核不上就不能继续发 GOS: 后面那条 GOS 观测
+                # 的前提是"从 RUNNING 出发", 前提不成立结论就作废, 而且可能在过渡态
+                # 里继续发控制命令 (Codex #229 第二轮 P1)。
                 findings["state_after_bypass_exit"] = await p.read_state(
-                    "退旁路后 STATE? (手册承诺应恢复 RUNNING)")
-                findings["bypass_after_exit"] = await p.read_bypass("退旁路后 MODEL:STATIC?")
+                    "退旁路后 STATE? (手册承诺应恢复 RUNNING)", expect="RUNNING")
+                findings["bypass_after_exit"] = await p.read_bypass(
+                    "退旁路后 MODEL:STATIC?", expect="0")
+                if findings["state_after_bypass_exit"] != "RUNNING":
+                    raise _Abort(
+                        f"退旁路后状态是 {findings['state_after_bypass_exit'] or '读不到'} "
+                        "而不是手册承诺的 RUNNING — GOS 观测的前提不成立, 不继续。")
 
         # ── ③ GOS 探测 (F64R-7①) —— 最关键, 也是唯一破坏性的一步, 放最后。
         if probe_gos:
@@ -492,12 +521,14 @@ async def run(
                     p.add("恢复运行态 (无需)", True, f"已是 {now}", None, time.monotonic())
                 elif initial_state == "RUNNING" and now == "STOPPED":
                     if await p.write_and_check("恢复 GO (初始是 RUNNING)", "DIAG:SIMU:GO"):
-                        findings["state_after_restore"] = await p.read_state("恢复后 STATE?")
+                        findings["state_after_restore"] = await p.read_state(
+                            "恢复后 STATE?", expect="RUNNING")
                 elif initial_state == "STOPPED" and now == "RUNNING":
                     # 用 STOP 不是 GOS: STOP 是暂停不倒回 (§20.4.3.10), 是"最小改动"
                     # 的复位; 剧本自己不该再多倒一次带。
                     if await p.write_and_check("恢复 STOP (初始是 STOPPED)", "DIAG:SIMU:STOP"):
-                        findings["state_after_restore"] = await p.read_state("恢复后 STATE?")
+                        findings["state_after_restore"] = await p.read_state(
+                            "恢复后 STATE?", expect="STOPPED")
                 else:
                     p.add("恢复运行态 (放弃)", False,
                           f"初始 {initial_state} → 当前 {now}, 不是已知可恢复的转移; 请人工处理",
@@ -515,7 +546,8 @@ async def run(
                     f"恢复旁路档 STATIC {cur_bypass}→{initial_bypass}",
                     f"DIAG:SIMU:MODEL:STATIC {initial_bypass}",
                 ):
-                    findings["bypass_after_restore"] = await p.read_bypass("恢复后 MODEL:STATIC?")
+                    findings["bypass_after_restore"] = await p.read_bypass(
+                        "恢复后 MODEL:STATIC?", expect=initial_bypass)
 
         ok = all(s.success for s in p.steps) and aborted_reason is None
         # ⚠ 关键字面值写进 summary —— 归档 (`DiagnosticRun.output_excerpt`) 在 2048

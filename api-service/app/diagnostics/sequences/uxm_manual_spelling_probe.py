@@ -251,7 +251,10 @@ async def run(
         # 判成 SUPPORTED 的后果特别坏 —— 对关键的 CELL_STATUS 而言, 整轮会报成功,
         # 而我们**从没拿到过一个可以当状态真值源的值**(raw 是 None)。
         # 这正是本序列要产出的东西: "能用"的第一步是"它真回了话"。(Codex #229 P2)
-        if reply is None and code == 0:
+        # 空串 / 纯空白跟"没回复"是同一件事: 都没拿到能用的值。只判 `is None` 会漏掉
+        # 固件回了个空行的情形 (Codex #229 第二轮)。⚠ 归一化只用于**判定**,
+        # `raw` 仍存原样 —— 那是本序列的产出, 不能被判定逻辑顺手抹掉。
+        if (reply is None or not reply.strip()) and code == 0:
             status = "UNKNOWN"
         counts[status] = counts.get(status, 0) + 1
         ok = status in ("SUPPORTED", "SUPPORTED_BUT_STATE")
