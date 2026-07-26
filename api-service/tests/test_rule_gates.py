@@ -167,8 +167,13 @@ def _strip_ts_comments(src: str) -> str:
 
 
 def test_g3_gui_labsmoke_covers_all_flags():
-    """站点③(存在性粗筛): GUI 主控台 labSmoke 请求体必须含每个 (非豁免) flag。
-    只判 token 在不在 (剥注释防假绿) — 真行为由后端两站点的门兜底。"""
+    """站点③: GUI 主控台 labSmoke 必须对每个 (非豁免) flag 有 `body.<flag>` **赋值**。
+
+    ⚠ 查的是赋值不是裸 token (#232 Codex P2): flag 在类型声明 (`precheck_strict_x?:
+    boolean`) 和赋值 (`body.precheck_strict_x = false`) 各出现一次 —— 只查裸 token
+    会被"删了赋值、类型声明还在"绕过, 而那正是 #112 的原始形态 (GUI 没接线)。
+    `body.` 前缀把检查钉在生效端; 类型声明那一侧删漏由 `npm run build` (tsc) 兜底。
+    """
     api_ts = _REPO_ROOT / "gui" / "src" / "components" / "Commissioning" / "api.ts"
     assert api_ts.is_file(), f"GUI labSmoke 文件不在预期路径: {api_ts}"
     text = _strip_ts_comments(api_ts.read_text(encoding="utf-8"))
@@ -177,10 +182,12 @@ def test_g3_gui_labsmoke_covers_all_flags():
     # ⚠ 词边界匹配, 不用子串: "precheck_strict_cal" 是 "precheck_strict_calX"
     #   的子串, `in` 判会假绿 (本门首轮变异实跑抓出的洞)。
     missing = {
-        f for f in expected if not re.search(rf"\b{re.escape(f)}\b", text)
+        f
+        for f in expected
+        if not re.search(rf"\bbody\.{re.escape(f)}\b", text)
     }
     assert not missing, (
-        f"GUI labSmoke (Commissioning/api.ts) 缺 strict 旁路字段: {missing} — "
+        f"GUI labSmoke (Commissioning/api.ts) 缺 `body.<flag>` 赋值: {missing} — "
         f"真硬件 bring-up 在 GUI 上将无法跳过该门 (#112/#133 母题)"
     )
 
