@@ -213,11 +213,15 @@ F64 失败后 `/hal/reload` / F64 冷却窗口内 stop —— 改后全部 `sent
   HAL init(新对象,`instrument_hal_service.py:677`)和 `reconnect_driver`
   (`:1201` **先 disconnect**)。F64 的 connect 覆盖点(`propsim_f64.py:1657` 直接
   覆盖不关旧)机制上存在,**但当前生产代码里没有可达调用链**。
-- **可达的覆盖入口在 UXM**:`base_station.connect()` 每测量步一次(`measure.py:263`),
-  UXM connect 入口**不关旧 `_visa_session`**(`uxm_base_station.py:335` 起直接
-  新 RM + 开新,连接区内唯一的 close 在 hislip 重定向里)→ 每步丢一条活 HiSLIP 会话。
-  后果是**会话/资源堆积**,不是 F64 3334 那种单 socket 锁死。转台同型
-  (`measure.py:262`,非 VISA 传输 → 归 F64R-14)。
+- **可达的覆盖入口在 UXM,但只孤儿化"启动会话"一条,不逐步累积**(#231 Codex P2
+  纠正后的完整生命周期,三段均已核):HAL init 开出 UXM 会话 → **首个**测量步
+  `base_station.connect()`(`measure.py:263`)在入口不关旧的情况下直接覆盖它
+  (`uxm_base_station.py:335` 起新 RM + 开新,连接区内唯一 close 在 hislip 重定向里)
+  → 启动会话孤儿化;该步收尾 `finally → cleanup_chamber_instruments →
+  base_station.disconnect()`(`measure.py:1220` / `cleanup.py`)关掉当前会话并置
+  `_visa_session=None`(`uxm_base_station.py:478-480`),**后续步骤从 None 连、
+  用完即断,不再覆盖**。净后果 = 每次"HAL init/reload → 首次测量"孤儿一条活
+  HiSLIP 会话,温和。转台同型入口(`measure.py:262`,非 VISA 传输 → 归 F64R-14)。
 - **F64 现场"连不上要重启 PropSim"的机理:至今没有已证软件入口。** 别再按未证机理
   设计修复 —— 下次现场用诊断序列复现(跟 F64R-7 同场做),拿到入口再谈修。
 
@@ -237,7 +241,8 @@ F64 失败后 `/hal/reload` / F64 冷却窗口内 stop —— 改后全部 `sent
 
 拆成两件事,别再混成一件:
 
-**(a) UXM 每测量步重连丢一条活会话**(可达、已证、后果温和 —— 会话堆积非锁死)。
+**(a) UXM 启动会话在首次测量步被覆盖孤儿化**(可达、已证;一次 HAL init 孤儿一条,
+**不逐步累积** —— #231 P2 纠正:后续步骤 connect-from-None + finally disconnect 收尾)。
 解法在 UXM connect 入口,两个候选形状:
 - **关旧再开新**:入口若字段已指着句柄,先收尾再开
   (`_silent_reconnect_visa` 已是这个形状,不是新机制);
