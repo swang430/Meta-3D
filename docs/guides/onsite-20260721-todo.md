@@ -328,11 +328,13 @@
   > 安全停止命令 (`CELL:STATe OFF`/`GOS`/`CLOSE`) 正是靠它下发; 在失败点关它,
   > 最坏后果从"漏一条 socket"恶化成"仪器带功率没人管" (Y > X, 审查四条场景实跑证实)。
   > 两版实施 (摘字段置 None / 只关不摘) 都撞在这上面, 全部恢复 main。
-  - **重定义**: 真正有害的是**孤儿连接** —— ① HAL reload 换驱动对象, 旧对象那条
-    socket 无人认领占着 F64 3334; ② 成功 re-connect 把上一条 session 丢掉不关
-    (`measure.py` 每个测量步骤 connect 一次, 审查证实)。解法方向在**对象交接/登记**
-    (替换前对旧对象走 disconnect), 不在 connect 失败路径。
-  - 动手前先核实: reload 现在对旧对象走不走 disconnect。
+  - **重定义**: 真正有害的是**孤儿连接**, 唯一实证入口 = 成功 re-connect 在覆盖点
+    (`self._visa_x = open_resource(...)`) 把上一条**活** session 丢掉不关
+    (`measure.py` 每个测量步骤 connect 一次, 审查证实; F64 上一条就够堵死 3334)。
+  - ⛔ **reload 不是入口** (#230 Codex P2 纠正, 复核成立): `reload_hal_service_atomic`
+    锁内先 shutdown, shutdown 对每个驱动逐个 `await disconnect()` 单驱动异常不中断
+    —— 别朝"对象交接/登记"设计, 解法在 connect 覆盖点本身 (关旧再开新 / 活句柄复用,
+    两者都必须正面回答"关旧成功+开新失败"窗口, 尤其 9 个无懒重连驱动, 见设计稿 §8)。
   - 硬约束: ① 先回答"那条句柄死的还是活的? 谁还指着它?" ② 行为覆盖铺满 13 驱动
     (9 个无懒重连驱动零覆盖 = 本次 P1 藏了两轮的直接原因)。
 

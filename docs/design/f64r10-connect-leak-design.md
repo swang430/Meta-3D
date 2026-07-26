@@ -201,11 +201,16 @@ F64 失败后 `/hal/reload` / F64 冷却窗口内 stop —— 改后全部 `sent
 然后把结论**原样抄进 9 个没有这个机制的驱动**(grep 证实:那 9 个文件里
 `_silent_reconnect` 只出现在抄进去的注释里)。
 
-**③ 真正有害的泄漏只有一种:无人认领的孤儿连接。** 重载 HAL 造了新驱动对象,
-旧对象那条 socket 无人认领,占着 F64 3334 —— 这才是"连不上,重启 PropSim 才好"的
-机理。而它恰恰是"在 connect 失败点关句柄"**修不了**的(新对象拿不到旧对象的句柄)。
-审查建议的"下次 open 前先关旧"同样修不了它,且有自己的失败模式
-(关旧成功 + 开新失败 → 字段指死句柄,正是 F64R-1"失败不留死态"禁的局面)。
+**③ 真正有害的泄漏是无人认领的孤儿连接,唯一实证入口在 connect 的覆盖点。**
+成功 re-connect 时 `self._visa_resource = open_resource(...)` **直接覆盖旧值不关旧会话**,
+上一条活 session 从此无人指着 —— `measure.py` 每个测量步骤 connect 一次,F64 上
+一条就够堵死 3334。这才是"连不上,重启 PropSim 才好"的机理,而它恰恰是
+"在 connect **失败**点关句柄"修不了的(失败路根本没走到覆盖那一步)。
+> ⚠ 本判决初稿曾把"HAL reload 换对象"也列为入口 —— **#230 Codex P2 纠正,复核成立**:
+> `reload_hal_service_atomic` 在一把锁里先 `shutdown()` 再建新,shutdown 对每个驱动
+> 逐个 `await disconnect()` 且单驱动异常不中断循环(`instrument_hal_service.py`
+> shutdown 循环 + `reload_hal_service_atomic`);F64 的 disconnect 外层 finally
+> 连被取消都同步关句柄。**reload 主路径不造孤儿,别再朝"对象交接/登记"设计。**
 
 ### 判决
 
@@ -221,11 +226,17 @@ F64 失败后 `/hal/reload` / F64 冷却窗口内 stop —— 改后全部 `sent
 
 ### 问题重定义(转 backlog,见 todo F64R-10 条目)
 
-要修的不是"connect 失败泄漏句柄",是 **"旧驱动对象的活连接在被替换时无人认领"**。
-两个已知入口:HAL reload 换对象;成功 re-connect 把上一条 session 丢掉不关
-(审查证实 `measure.py` 每个测量步骤 connect 一次)。解法方向在**对象交接/登记**
-(替换前对旧对象走 disconnect),不在 connect 失败路径。动手前先核实:
-reload 现在对旧对象走不走 disconnect。
+要修的不是"connect 失败泄漏句柄",是 **"成功 re-connect 在覆盖点把上一条活
+session 丢掉不关"**(唯一实证入口,见事实③;reload 入口已被 #230 Codex P2 排除)。
+解法空间收窄到 connect 覆盖点本身,两个候选形状:
+- **关旧再开新**:connect 入口若字段已指着句柄,先收尾再开
+  (ATE AN §1.1.2.3;`_silent_reconnect_visa` 已是这个形状,不是新机制);
+- **活句柄复用**:已连着且句柄活的就不重开(要定义"活"的判据,别拿 `!= None` 充数)。
+
+⚠ 两个形状都必须**正面回答"关旧成功 + 开新失败"窗口** —— 字段既不许置 None
+("失败不留死态",F64R-1)也不该假装旧句柄还在;`_silent_reconnect_visa` 对这个
+窗口的现有处理(字段留在死句柄上 + 懒重连自愈)只在**有懒重连的 4 个驱动**成立,
+9 个没有的怎么办是设计必答题,不是脚注。
 
 任何后续方案的硬约束:
 1. 动手前先回答:**那条句柄死的还是活的?谁还指着它?**
