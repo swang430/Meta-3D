@@ -92,10 +92,11 @@ export function TestManagement() {
 
           {/* Test Case Library Tab — Foundation */}
           <Tabs.Panel value="caseLibrary" pt="md">
-            <TestCaseLibrary 
+            <TestCaseLibrary
               selectionMode={true}
               selectedIds={selectedTestCaseIds}
               onSelectionChange={setSelectedTestCaseIds}
+              enableExecute={true}
             />
           </Tabs.Panel>
 
