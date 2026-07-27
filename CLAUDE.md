@@ -52,6 +52,40 @@
 > 用户给的任何规则增强，当场存进 memory；能下沉成 lint / 结构断言 / 本文件硬规则的，
 > **从 memory 挪走** —— 少依赖记忆，多依赖会红的门。
 
+### ⓪⁺ 每个 todo 功能的标准生命周期（2026-07-26 用户定，六步不跳步）
+
+> 复盘实证：出过的问题几乎都落在**两个实证缺位**上 —— 该查 memory 没查、
+> 该查 NotebookLM 没查，靠猜。所以第 1 步是硬前置，不是建议。
+
+**① 双实证前置** —— 动手前两个证据源都要过：
+- **memory 查询**：带着具体问题查 `MEMORY.md` 索引（它是查询用的参考，不指望自己浮现）；
+- **NotebookLM**：涉 UXM / F64 驱动 SCPI 必查对应 notebook（见「必查 NotebookLM」一节）；
+  仪器语义的裁决权在手册，不在代码注释也不在审查意见。
+
+**② 先 review plan，后写代码**：出设计稿（`docs/design/` 或 todo 条目内嵌方案）
+供用户 review，**用户过目后才动代码**。
+
+**③ 实现**：⓪ 六条照做（四行契约 / grep 禁令 / 枚举进 backlog / 门配变异 /
+一轮只删不加 / 看输出再说已跑）。
+
+**④ 内审 = pre-commit-reviewer agent 硬门**：代码 push 前必过；agent 不可用
+（额度 / 故障）时**如实声明"审查未发生"**，不得当"审过无问题"，并在 PR body
+标注由外审独挑。
+
+**⑤ 外审 = Codex**：PR 开出 / 修复推送即触发；**270s 定时器**从触发时刻起算，
+到点主动查**三通道**（reviews / inline / issue comments，"usage limits" 提示 =
+review 未发生 ≠ clean）；**Codex 无问题或 5 分钟无 comment 即 squash merge**
+（持久授权）；审查-修复循环**轮次上限 = 2**，第二轮 findings 主要由上轮修复
+引入即收口。
+
+**⑥ merge 后迟到回查**：squash 后挂回查定时器再扫一轮三通道；迟到真 finding
+走新分支（原分支只读）。
+
+> 细则备查：memory `feedback_merge_workflow_codex_clean`（外审全细节）/
+> `feedback_precommit_test_agent_gate`（内审）/
+> `feedback_review_loop_scope_discipline`（轮次纪律）/
+> `feedback_query_notebooklm_for_uxm_f64_driver`（实证①）。
+
 ### 1. 先读路线图
 
 任何非琐碎改动开始前，**先读 [`docs/roadmap-first-call.md`](docs/roadmap-first-call.md)**，
