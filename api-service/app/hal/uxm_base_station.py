@@ -1206,18 +1206,54 @@ class RealUxmDriver(BaseStationDriver):
                         "[UXM] BSE:CONFig:NR5G:APPLY 已发 — ON 态直写的配置"
                         "刷进协议栈 (P0-2 D2; 此前从不发 = 静默不生效)"
                     )
-                    # D3 二层生效核对 (#236 Codex P1: 只记日志不接闸, 会把
-                    # "开关 ON 但协议栈 OFF" — 现场 07-21 的原始故障形态 —
-                    # 放行成 return True → applied:true → 就绪照绿)。
-                    # 闸: APPLY 后状态必须是手册枚举里的**非 OFF** 态;
-                    # OFF / 枚举外 / 读不到 → 隔 1s 重读一次 (防瞬态, 手册无
-                    # 过渡态描述故只留一次余量) → 仍如此 = 配置没进协议栈,
-                    # fail-loud (通用契约: 读不到如实报, 不当成一致)。
+                    # #236 R2 P1a: APPLY 被拒时 VISA write 照常返回, 错误只进
+                    # SYST:ERR? — 旧栈继续跑**旧**配置 (状态非 OFF) + 回读回显
+                    # 缓存**新**值 → 状态闸和回读对账双双假绿。写后必查错误
+                    # 队列 (F64R-4 同母题: 写完不查队列 = 假成功), 最多排 5 条。
+                    _apply_errs: List[str] = []
+                    for _ in range(5):
+                        try:
+                            _raw_err = (self._query("SYST:ERR?") or "").strip()
+                        except Exception as e:  # noqa: BLE001
+                            logger.warning(
+                                f"[UXM] APPLY 后 SYST:ERR? 读取失败 "
+                                f"({type(e).__name__}) — 队列状态未知, 按失败处理"
+                            )
+                            _apply_errs.append(f"<读取失败 {type(e).__name__}>")
+                            break
+                        try:
+                            _err_code: Optional[int] = int(
+                                _raw_err.split(",", 1)[0])
+                        except ValueError:
+                            _err_code = None
+                        if _err_code == 0:
+                            break
+                        _apply_errs.append(
+                            _raw_err if _err_code is not None
+                            else f"<不可解析: {_raw_err!r}>")
+                        if _err_code is None:
+                            break
+                    if _apply_errs:
+                        logger.error(
+                            f"[UXM] APPLY 被仪器拒绝/错误队列异常: "
+                            f"{_apply_errs} — 配置未进协议栈, 判失败"
+                        )
+                        self._set_status(InstrumentStatus.ERROR)
+                        return False
+
+                    # D3 二层生效核对 (#236 R1 P1: 只记日志不接闸会放行现场
+                    # 07-21 的原始故障形态"开关 ON 但协议栈 OFF")。
+                    # #236 R2 P1b: 窗口 15s 逐秒轮询 — APPLY 重配活动小区可能
+                    # 异步重启, 本方法已实证重启 10s+ 量级, 单次 1s 重试会把
+                    # 合法过渡态误判失败; 首个非 OFF 枚举态即放行, 窗口内始终
+                    # OFF/枚举外/读不到 → 配置没进协议栈, fail-loud
+                    # (通用契约: 读不到如实报, 不当成一致)。
                     sq = self._cmd("CELL_STATUS_QUERY", cell=cell)
                     if sq is not None:
                         _status_after: Optional[str] = None
                         _parsed_after: Optional[CellState] = None
-                        for _attempt in (0, 1):
+                        _waited = 0.0
+                        while True:
                             try:
                                 _status_after = (self._query(sq) or "").strip()
                             except Exception as e:  # noqa: BLE001
@@ -1233,13 +1269,16 @@ class RealUxmDriver(BaseStationDriver):
                             if (_parsed_after is not None
                                     and _parsed_after != CellState.OFF):
                                 break
-                            if _attempt == 0:
-                                await asyncio.sleep(1.0)
+                            if _waited >= 15.0:
+                                break
+                            await asyncio.sleep(1.0)
+                            _waited += 1.0
                         if (_parsed_after is None
                                 or _parsed_after == CellState.OFF):
                             logger.error(
-                                f"[UXM] APPLY 后协议栈状态 = "
-                                f"{_status_after!r} (开关 ON) — 配置未进"
+                                f"[UXM] APPLY 后 {_waited:.0f}s 内协议栈状态"
+                                f"未离开 OFF/不可读 (最后读到 "
+                                f"{_status_after!r}, 开关 ON) — 配置未进"
                                 f"协议栈, 判失败 (P0-2 二层生效核对; "
                                 f"'ACTive=1 但 STATus OFF' 正是现场故障形态)"
                             )

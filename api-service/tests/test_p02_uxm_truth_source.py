@@ -198,22 +198,31 @@ _APPLY = "BSE:CONFig:NR5G:APPLY"
 
 
 def _echo_session_for_config(
-    active_state: str, status_reply: str = "ON",
+    active_state: str,
+    status_reply: str = "ON",
+    syst_err: str = "0,No error",
+    status_sequence: Optional[List[str]] = None,
 ) -> _FakeUxmSession:
     """set_cell_config 用的回显 fake: 回读=最近写入值 (P1-19 对账语义),
     ACTive 开关与 STATus 协议栈状态各自可参数化 — 两者独立正是 R2 的实况
-    (开关是回声, 状态是真话)。"""
+    (开关是回声, 状态是真话)。status_sequence 给"过渡态"场景: 逐次弹出,
+    弹尽后停在最后一个 (真机重启期先 OFF 后 ON 的形态)。"""
     sess = _FakeUxmSession({})
     written = sess.written
+    seq = list(status_sequence) if status_sequence else None
 
     def _query(cmd: str) -> str:
         c = cmd.strip()
         sess.queried.append(c)
         if c == "*OPC?":
             return "1"
+        if c == "SYST:ERR?":
+            return syst_err
         if c.endswith("ACTive:STATe?"):
             return active_state
         if c.startswith("BSE:STATus:NR5G"):
+            if seq is not None:
+                return seq.pop(0) if len(seq) > 1 else seq[0]
             return status_reply
         base = c.rstrip("?")
         for w in reversed(written):
@@ -266,6 +275,30 @@ class TestApplyContract:
             active_state="1", status_reply="")
         ok = await d.set_cell_config({"dl_power_dbm": -46.0})
         assert ok is False
+
+    @pytest.mark.asyncio
+    async def test_apply_rejected_via_error_queue_fails(self):
+        """#236 R2 P1a: APPLY 被拒时 write 照常返回、错误只进 SYST:ERR? —
+        旧栈跑旧配置 (状态非 OFF) + 回读回显缓存新值, 双检查全过。错误队列
+        检查必须把它拦下 (删该检查 → 本测试红)。"""
+        d = RealUxmDriver("uxm-irat", {"ip": "10.0.0.2", "uxm_profile": "irat"})
+        d._visa_session = _echo_session_for_config(
+            active_state="1", status_reply="ON",
+            syst_err="-200,Execution error")
+        ok = await d.set_cell_config({"dl_power_dbm": -46.0})
+        assert ok is False, "APPLY 进错误队列却报成功 — F64R-4 同母题假成功"
+
+    @pytest.mark.asyncio
+    async def test_apply_transitional_off_recovers_within_window(self):
+        """#236 R2 P1b: APPLY 重配活动小区会异步重启 (实证 10s+ 量级),
+        过渡期 STATus 合法地停 OFF — 窗口必须等它回来, 不许 1 次重试就
+        误判失败 (窗口砍短 → 本测试红)。"""
+        d = RealUxmDriver("uxm-irat", {"ip": "10.0.0.2", "uxm_profile": "irat"})
+        d._visa_session = _echo_session_for_config(
+            active_state="1",
+            status_sequence=["OFF", "OFF", "OFF", "OFF", "ON"])
+        ok = await d.set_cell_config({"dl_power_dbm": -46.0})
+        assert ok is True, "重启过渡态被误判成配置失败 — 窗口太短"
 
 
 # ─────────────────────────────────────────────────────────────────────
