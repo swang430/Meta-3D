@@ -259,20 +259,31 @@ async def run(
         if wrote_test_value:
             try:
                 await _w(f"{arfcn_t.format(cell=cell)} {orig_arfcn}")
-                await _err_after("R5a 写回原 ARFCN")
+                code_wb = await _err_after("R5a 写回原 ARFCN")
                 await _w(apply_cmd)
-                await _err_after("R5b APPLY (清挂起, 恢复干净态)")
+                code_ap = await _err_after("R5b APPLY (清挂起, 恢复干净态)")
                 raw_final = await _q(arfcn_t.format(cell=cell) + "?")
                 try:
-                    restored_ok = int(float((raw_final or "").strip())) == orig_arfcn
+                    final_matches = (
+                        int(float((raw_final or "").strip())) == orig_arfcn
+                    )
                 except ValueError:
-                    restored_ok = False
+                    final_matches = False
+                # #236 Codex P2: 终读一致**不够** — R4 本身证明回读可能是
+                # 缓存回声, 写回/APPLY 被拒时回读照样回显原值。恢复确认必须
+                # 三条同时成立: 终读=原值 且 两次 SYST:ERR? 都干净 (0)。
+                restored_ok = (
+                    final_matches and code_wb == 0 and code_ap == 0
+                )
                 _step(
                     "R5c 恢复终读确认",
                     restored_ok,
-                    f"期望 {orig_arfcn}" + ("" if restored_ok else
-                        f" — ⚠ 未恢复! 人工执行: {arfcn_t.format(cell=cell)} "
-                        f"{orig_arfcn} 然后 {apply_cmd}"),
+                    (f"终读={raw_final!r} 期望 {orig_arfcn}; 写回错误码={code_wb} "
+                     f"APPLY 错误码={code_ap}")
+                    + ("" if restored_ok else
+                        f" — ⚠ 恢复未确认! 人工执行: "
+                        f"{arfcn_t.format(cell=cell)} {orig_arfcn} 然后 "
+                        f"{apply_cmd}, 再回读核对"),
                     raw=raw_final,
                 )
             except Exception as e:  # noqa: BLE001

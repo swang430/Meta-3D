@@ -1206,20 +1206,47 @@ class RealUxmDriver(BaseStationDriver):
                         "[UXM] BSE:CONFig:NR5G:APPLY 已发 — ON 态直写的配置"
                         "刷进协议栈 (P0-2 D2; 此前从不发 = 静默不生效)"
                     )
-                    # D3 二层生效核对 (骨架): APPLY 后读一次小区状态入日志。
-                    # 完整判绿仍归频率一致性网 + precheck 门, 这里只留现场
-                    # 可对照的证据行。
-                    try:
-                        sq = self._cmd("CELL_STATUS_QUERY", cell=cell)
-                        if sq is not None:
-                            _status_after = (self._query(sq) or "").strip()
-                            logger.info(
-                                f"[UXM] APPLY 后小区状态: {_status_after!r}"
+                    # D3 二层生效核对 (#236 Codex P1: 只记日志不接闸, 会把
+                    # "开关 ON 但协议栈 OFF" — 现场 07-21 的原始故障形态 —
+                    # 放行成 return True → applied:true → 就绪照绿)。
+                    # 闸: APPLY 后状态必须是手册枚举里的**非 OFF** 态;
+                    # OFF / 枚举外 / 读不到 → 隔 1s 重读一次 (防瞬态, 手册无
+                    # 过渡态描述故只留一次余量) → 仍如此 = 配置没进协议栈,
+                    # fail-loud (通用契约: 读不到如实报, 不当成一致)。
+                    sq = self._cmd("CELL_STATUS_QUERY", cell=cell)
+                    if sq is not None:
+                        _status_after: Optional[str] = None
+                        _parsed_after: Optional[CellState] = None
+                        for _attempt in (0, 1):
+                            try:
+                                _status_after = (self._query(sq) or "").strip()
+                            except Exception as e:  # noqa: BLE001
+                                logger.warning(
+                                    f"[UXM] APPLY 后状态读取失败 "
+                                    f"({type(e).__name__})"
+                                )
+                                _status_after = None
+                            _parsed_after = (
+                                self._parse_cell_status(_status_after)
+                                if _status_after is not None else None
                             )
-                    except Exception as e:  # noqa: BLE001
-                        logger.debug(
-                            f"[UXM] APPLY 后状态读取失败 ({type(e).__name__}) — "
-                            f"不影响批次结果, 生效核对由回读/一致性网兜底"
+                            if (_parsed_after is not None
+                                    and _parsed_after != CellState.OFF):
+                                break
+                            if _attempt == 0:
+                                await asyncio.sleep(1.0)
+                        if (_parsed_after is None
+                                or _parsed_after == CellState.OFF):
+                            logger.error(
+                                f"[UXM] APPLY 后协议栈状态 = "
+                                f"{_status_after!r} (开关 ON) — 配置未进"
+                                f"协议栈, 判失败 (P0-2 二层生效核对; "
+                                f"'ACTive=1 但 STATus OFF' 正是现场故障形态)"
+                            )
+                            self._set_status(InstrumentStatus.ERROR)
+                            return False
+                        logger.info(
+                            f"[UXM] APPLY 后小区状态: {_status_after!r} ✓"
                         )
 
             # P1-19 ⑤: 写后回读对账 (2026-07-03 母题 "回读=echo≠生效" 的反面:

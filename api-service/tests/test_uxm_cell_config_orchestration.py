@@ -52,6 +52,12 @@ def wire_echo_visa(driver, cell_active: bool = False, overrides: dict | None = N
             return "1"
         if c.endswith("ACTive:STATe?"):
             return state["active"]
+        # P0-2 D3 二层闸: APPLY 后驱动会查协议栈状态 (BSE:STATus:NR5G:...?),
+        # OFF/读不到会被如实判失败。fake 按真机健康形态回: 开关 ON → 协议栈
+        # ON, 开关 OFF → OFF (跟随 state, 与 R2 "两者独立"的故障形态相反 —
+        # 故障形态由 test_p02 的专门用例覆盖, 这里的测试对象是编排不是闸)。
+        if c.startswith("BSE:STATus:NR5G"):
+            return "ON" if state["active"] == "1" else "OFF"
         base = c.rstrip("?")
         for w in reversed(written):
             if w.startswith(base + " "):

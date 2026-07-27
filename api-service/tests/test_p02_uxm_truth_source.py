@@ -197,9 +197,12 @@ class TestGetCellState:
 _APPLY = "BSE:CONFig:NR5G:APPLY"
 
 
-def _echo_session_for_config(active_state: str) -> _FakeUxmSession:
+def _echo_session_for_config(
+    active_state: str, status_reply: str = "ON",
+) -> _FakeUxmSession:
     """set_cell_config 用的回显 fake: 回读=最近写入值 (P1-19 对账语义),
-    ACTive 回读可参数化 (ON="1"/OFF="0")。"""
+    ACTive 开关与 STATus 协议栈状态各自可参数化 — 两者独立正是 R2 的实况
+    (开关是回声, 状态是真话)。"""
     sess = _FakeUxmSession({})
     written = sess.written
 
@@ -211,7 +214,7 @@ def _echo_session_for_config(active_state: str) -> _FakeUxmSession:
         if c.endswith("ACTive:STATe?"):
             return active_state
         if c.startswith("BSE:STATus:NR5G"):
-            return "ON"
+            return status_reply
         base = c.rstrip("?")
         for w in reversed(written):
             if w.startswith(base + " "):
@@ -241,6 +244,28 @@ class TestApplyContract:
         ok = await d.set_cell_config({"dl_power_dbm": -46.0})
         assert ok is True
         assert _APPLY not in d._visa_session.written
+
+    @pytest.mark.asyncio
+    async def test_apply_with_stack_off_fails_loud(self):
+        """#236 Codex P1: 开关 ON 但 APPLY 后协议栈 STATus=OFF — 现场 07-21
+        的原始故障形态 ("ACTive=1 但 STATus 持续 OFF") — 必须 return False,
+        不许靠缓存回读判绿 (改回只记日志 → 本测试红)。"""
+        d = RealUxmDriver("uxm-irat", {"ip": "10.0.0.2", "uxm_profile": "irat"})
+        d._visa_session = _echo_session_for_config(
+            active_state="1", status_reply="OFF")
+        ok = await d.set_cell_config({"dl_power_dbm": -46.0})
+        assert ok is False, "协议栈 OFF 却报成功 — 二层生效核对没接闸"
+        assert _APPLY in d._visa_session.written  # APPLY 发了, 是生效被拒
+
+    @pytest.mark.asyncio
+    async def test_apply_with_unreadable_status_fails_loud(self):
+        """APPLY 后状态读不出 (空/枚举外) → 同样失败 — 通用契约: 读不到
+        如实报, 不当成一致。"""
+        d = RealUxmDriver("uxm-irat", {"ip": "10.0.0.2", "uxm_profile": "irat"})
+        d._visa_session = _echo_session_for_config(
+            active_state="1", status_reply="")
+        ok = await d.set_cell_config({"dl_power_dbm": -46.0})
+        assert ok is False
 
 
 # ─────────────────────────────────────────────────────────────────────
