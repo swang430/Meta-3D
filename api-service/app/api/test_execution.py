@@ -25,13 +25,21 @@ def _to_history_item(execution: TestExecution, case_name: Optional[str]) -> Exec
     commissioning / plan-runner 行没有这个键 → phases_* 保持 None
     (三态语义, GUI 显示 "—", 不伪造 0/N)。
     """
-    cfg = execution.config or {}
-    descriptors = cfg.get("step_descriptors") or []
+    cfg = execution.config if isinstance(execution.config, dict) else {}
+    descriptors = cfg.get("step_descriptors")
+    # 畸形收窄 (内审 F1): config 形状不对不许毒整页列表 — 非 list 按
+    # "没有"处理 (None 三态), 元素非 dict 跳过, 不进外层 except
+    if not isinstance(descriptors, list):
+        descriptors = []
     progress = cfg.get("phase_progress")
     phases_done = phases_failed = None
-    if progress is not None:
-        phases_done = sum(1 for p in progress if p.get("status") == "completed")
-        phases_failed = sum(1 for p in progress if p.get("status") == "failed")
+    if isinstance(progress, list):
+        phases_done = sum(
+            1 for p in progress
+            if isinstance(p, dict) and p.get("status") == "completed")
+        phases_failed = sum(
+            1 for p in progress
+            if isinstance(p, dict) and p.get("status") == "failed")
     return ExecutionHistoryItem(
         id=execution.id,
         case_name=case_name,

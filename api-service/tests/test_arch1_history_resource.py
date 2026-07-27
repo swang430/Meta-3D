@@ -163,6 +163,36 @@ def test_ga_case_run_row_visible_with_snapshot_name(db, lab):
     assert row["executed_by"] == "test_case_runner"
 
 
+def test_ga_malformed_config_row_does_not_poison_list(db, lab):
+    """内审 F1: 一行畸形 config (phase_progress 非 list / 元素非 dict /
+    step_descriptors 非 list) 不许把整页列表毒成空 — 正常行照常返回,
+    畸形行按三态 None 处理。变异 = 去掉 isinstance 收窄 → 畸形行抛
+    AttributeError 被外层 except 吞成空表 → total 断言红。"""
+    snapshot = _make_case(db, lab, name="正常行")
+    _case_runner_execution(db, snapshot)
+    poison = TestExecution(
+        test_case_id=snapshot.id,
+        status="completed",
+        config={
+            "step_descriptors": "abc",           # 非 list
+            "phase_progress": ["oops", {"status": "completed"}],  # 元素混杂
+        },
+        executed_by="test_case_runner",
+    )
+    db.add(poison)
+    db.commit()
+
+    client = TestClient(app)
+    body = client.get("/api/v1/test-executions").json()
+    assert body["total"] == 2  # 正常行没被毒掉
+    rows = {r["id"]: r for r in body["items"]}
+    bad = rows[str(poison.id)]
+    assert bad["phases_total"] is None      # "abc" 不许数出 3
+    assert bad["phases_done"] == 1          # 非 dict 元素跳过
+    good = [r for r in body["items"] if r["id"] != str(poison.id)][0]
+    assert good["case_name"] == "正常行"
+
+
 def test_ga_no_phase_progress_stays_none(db, lab):
     """暗室首测形状的行 (无 phase_progress 键) → phases_done/failed 是
     None 不是 0 — 三态语义, 不伪造进度。"""

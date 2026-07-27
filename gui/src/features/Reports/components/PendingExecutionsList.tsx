@@ -52,10 +52,10 @@ interface PendingExecutionsResponse {
   items: PendingExecutionItem[]
 }
 
-// Fetch completed test executions
+// Fetch completed test executions (limit 顶到后端上限, 内审 F2 同源)
 async function fetchCompletedExecutions(): Promise<PendingExecutionItem[]> {
   const response = await client.get<PendingExecutionsResponse>('/test-executions', {
-    params: { status: 'completed' },
+    params: { status: 'completed', limit: 1000 },
   })
   return response.data.items
 }

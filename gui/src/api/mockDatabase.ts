@@ -1414,9 +1414,13 @@ export const mockDatabase = {
   getReadiness(): HALReadinessResponse {
     return clone({ ...readinessSnapshot, generated_at_iso: new Date().toISOString() })
   },
-  getTestExecutions(limit?: number): TestExecutionListResponse {
-    const items = typeof limit === 'number' ? testExecutions.items.slice(0, limit) : testExecutions.items
-    return clone({ total: testExecutions.total, items })
+  getTestExecutions(limit?: number, status?: string): TestExecutionListResponse {
+    // 内审 F5: mock 也认 status 过滤 — 否则 mock 开发下 ?status=running
+    // 拿到 completed 行, 用例库会恢复出假的执行中徽标
+    let rows = testExecutions.items
+    if (status) rows = rows.filter((r) => r.status === status)
+    const items = typeof limit === 'number' ? rows.slice(0, limit) : rows
+    return clone({ total: rows.length, items })
   },
   getSystemLogsTail(filename?: string, level?: string, keyword?: string): SystemLogTailResponse {
     let entries = systemLogTail.entries

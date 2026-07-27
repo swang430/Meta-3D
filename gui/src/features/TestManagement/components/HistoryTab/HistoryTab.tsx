@@ -101,10 +101,13 @@ export function HistoryTab() {
   const [selectedRecord, setSelectedRecord] = useState<TestExecutionRecord | null>(null)
   const itemsPerPage = 10
 
-  // Query hooks
-  const { data: historyRecords, isLoading, refetch } = useTestHistory({
+  // Query hooks (内审 F2: data 是 {total, items} — total 来自后端,
+  // "拿到的行数"不再冒充"总执行数")
+  const { data: historyPage, isLoading, refetch } = useTestHistory({
     status: statusFilter as 'running' | 'completed' | 'failed' | 'cancelled' | undefined,
   })
+  const historyRecords = historyPage?.items
+  const backendTotal = historyPage?.total ?? 0
 
   // Report generation hook (unified with PendingExecutionsList)
   const { generateExecutionReport, isGenerating } = useReportGeneration()
@@ -181,8 +184,13 @@ export function HistoryTab() {
               总执行次数
             </Text>
             <Text size="lg" fw={600}>
-              {filteredRecords.length}
+              {backendTotal}
             </Text>
+            {backendTotal > filteredRecords.length && !searchQuery && (
+              <Text size="xs" c="dimmed">
+                (显示最近 {filteredRecords.length} 条)
+              </Text>
+            )}
           </div>
           <div>
             <Text size="xs" c="dimmed">

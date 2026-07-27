@@ -312,14 +312,21 @@ export const completeExecution = async (
  * 报告的 test_execution_ids)。单条查询与删除随换源退场:
  * 删除会毁掉报告引用并留下孤儿快照 (待决① 拍板去掉), 清理走脚本。
  */
+export interface ExecutionHistoryPage {
+  total: number
+  items: TestExecutionRecord[]
+}
+
 export const getExecutionHistory = async (
   filters?: HistoryFilters,
-): Promise<TestExecutionRecord[]> => {
-  const response = await client.get<{ items: TestExecutionRecord[] }>(
+): Promise<ExecutionHistoryPage> => {
+  // 内审 F2: 不再丢弃后端 total — 换源后行基数放大 (每次执行一行),
+  // "拿到的行数"≠"总执行数"; limit 顶到后端上限, 完整分页后端化留 backlog
+  const response = await client.get<ExecutionHistoryPage>(
     '/test-executions',
-    { params: filters },
+    { params: { limit: 1000, ...filters } },
   )
-  return response.data.items
+  return response.data
 }
 
 // ==================== Sequence Library ====================

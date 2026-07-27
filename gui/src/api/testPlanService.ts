@@ -443,9 +443,12 @@ export interface RunningExecutionRow {
 }
 
 export async function fetchRunningExecution(): Promise<RunningExecutionRow | null> {
+  // 内审 F4: limit 放宽 + 取第一个带 source_test_case_id 的行 —
+  // commissioning/plan-runner 的 running 行 (source 为 null) 不许把
+  // case 执行的恢复名额占掉
   const response = await testPlanClient.get<{ items: RunningExecutionRow[] }>(
     '/test-executions',
-    { params: { status: 'running', limit: 1 } }
+    { params: { status: 'running', limit: 5 } }
   )
-  return response.data.items[0] ?? null
+  return response.data.items.find((r) => r.source_test_case_id) ?? null
 }
