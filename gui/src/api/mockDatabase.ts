@@ -142,65 +142,55 @@ const readinessSnapshot: HALReadinessResponse = {
   generated_at_iso: new Date().toISOString(),
 }
 
+// ARCH-1 S2: 形状对齐后端 ExecutionHistoryItem (test_executions 本表行)
 const testExecutions: TestExecutionListResponse = {
   total: 3,
   items: [
     {
       id: 'exec-3001',
-      test_plan_id: 'plan-001',
-      test_plan_name: 'NR FR1 城市 UMi 吞吐回放',
-      test_plan_version: '1.2',
+      case_name: 'NR FR1 城市 UMi 吞吐回放 [执行 20260520-091000]',
+      source_test_case_id: 'case-001',
       status: 'completed',
-      total_steps: 12,
-      completed_steps: 12,
-      failed_steps: 0,
-      skipped_steps: 0,
-      success_rate: 1.0, // 0–1 fraction (matches backend completed/total); GUI ×100 for display
+      phases_total: 5,
+      phases_done: 5,
+      phases_failed: 0,
+      duration_sec: 2280,
       started_at: '2026-05-20T09:10:00',
       completed_at: '2026-05-20T09:48:00',
-      duration_minutes: 38,
-      error_summary: null,
-      notes: null,
-      started_by: 'operator',
-      created_at: '2026-05-20T09:10:00',
+      executed_by: 'test_case_runner',
+      error_message: null,
+      validation_pass: true,
     },
     {
       id: 'exec-3000',
-      test_plan_id: 'plan-002',
-      test_plan_name: '静区均匀度扫描',
-      test_plan_version: '2.0',
+      case_name: '静区均匀度扫描 [执行 20260519-150200]',
+      source_test_case_id: 'case-002',
       status: 'failed',
-      total_steps: 8,
-      completed_steps: 5,
-      failed_steps: 1,
-      skipped_steps: 2,
-      success_rate: 0.625,
+      phases_total: 5,
+      phases_done: 2,
+      phases_failed: 1,
+      duration_sec: 1140,
       started_at: '2026-05-19T15:02:00',
       completed_at: '2026-05-19T15:21:00',
-      duration_minutes: 19,
-      error_summary: 'probe #17 反馈延迟超阈值，阶段 6 中止',
-      notes: null,
-      started_by: 'operator',
-      created_at: '2026-05-19T15:02:00',
+      executed_by: 'test_case_runner',
+      error_message: 'probe #17 反馈延迟超阈值，measure 相位中止',
+      validation_pass: false,
     },
     {
+      // 暗室首测链的行: 不记相位进度 (phases_* = null → GUI 显示 "—")
       id: 'exec-2999',
-      test_plan_id: 'plan-001',
-      test_plan_name: 'NR FR1 城市 UMi 吞吐回放',
-      test_plan_version: '1.1',
+      case_name: 'Commissioning Throughput 20260519-110000',
+      source_test_case_id: null,
       status: 'cancelled',
-      total_steps: 12,
-      completed_steps: 3,
-      failed_steps: 0,
-      skipped_steps: 0,
-      success_rate: 0.25,
+      phases_total: null,
+      phases_done: null,
+      phases_failed: null,
+      duration_sec: 540,
       started_at: '2026-05-19T11:00:00',
       completed_at: '2026-05-19T11:09:00',
-      duration_minutes: 9,
-      error_summary: null,
-      notes: '操作员手动取消',
-      started_by: 'operator',
-      created_at: '2026-05-19T11:00:00',
+      executed_by: 'commissioning_api',
+      error_message: null,
+      validation_pass: null,
     },
   ],
 }
@@ -1424,9 +1414,13 @@ export const mockDatabase = {
   getReadiness(): HALReadinessResponse {
     return clone({ ...readinessSnapshot, generated_at_iso: new Date().toISOString() })
   },
-  getTestExecutions(limit?: number): TestExecutionListResponse {
-    const items = typeof limit === 'number' ? testExecutions.items.slice(0, limit) : testExecutions.items
-    return clone({ total: testExecutions.total, items })
+  getTestExecutions(limit?: number, status?: string): TestExecutionListResponse {
+    // 内审 F5: mock 也认 status 过滤 — 否则 mock 开发下 ?status=running
+    // 拿到 completed 行, 用例库会恢复出假的执行中徽标
+    let rows = testExecutions.items
+    if (status) rows = rows.filter((r) => r.status === status)
+    const items = typeof limit === 'number' ? rows.slice(0, limit) : rows
+    return clone({ total: rows.length, items })
   },
   getSystemLogsTail(filename?: string, level?: string, keyword?: string): SystemLogTailResponse {
     let entries = systemLogTail.entries

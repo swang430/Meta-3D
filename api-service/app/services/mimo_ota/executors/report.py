@@ -45,22 +45,15 @@ class ReportExecutor(IStepExecutor):
         report_db_id: Optional[str] = None
         report_file_path: Optional[str] = None
 
+        case_name = _lookup_case_name(context, execution)
         try:
-            content_data = _build_mimo_ota_content_data(execution, now)
+            content_data = _build_mimo_ota_content_data(execution, now, case_name)
             svc = ReportService()
-            # MIMO_OTA executions come from a TestCase, not a TestPlan, so
-            # test_plan_id is typically None and `execution.test_plan` is
-            # always None. The relationship itself is commented out in the
-            # TestExecution model (see app/models/test_plan.py L249), so
-            # accessing it as an attribute would raise AttributeError —
-            # use getattr() to keep the null-guard semantics working.
-            test_plan_for_title = getattr(execution, "test_plan", None)
             report = svc.create_report(
                 db=context.db,
-                title=(
-                    f"MIMO OTA Test Report — "
-                    f"{test_plan_for_title.name if test_plan_for_title else 'Unknown Plan'}"
-                ),
+                # ARCH-1 S2: MIMO_OTA 执行来自 TestCase 不挂 TestPlan, 标题
+                # 用快照用例名 (执行时的名字), 不再写死 "Unknown Plan"
+                title=f"MIMO OTA Test Report — {case_name}",
                 report_type=ReportType.SINGLE_EXECUTION.value,
                 format=ReportFormat.PDF.value,
                 generated_by="mimo_ota.executors.report",
@@ -118,7 +111,31 @@ class ReportExecutor(IStepExecutor):
         )
 
 
-def _build_mimo_ota_content_data(execution: Any, now: datetime) -> Dict[str, Any]:
+def _lookup_case_name(context: StepExecutionContext, execution: Any) -> str:
+    """快照 TestCase 名 (ARCH-1 S2)。
+
+    模型上的 test_case relationship 是注释掉的 (models/test_plan.py), 不能
+    走属性 — 显式按 test_case_id 查一行。查不到 (孤立执行 / 快照被删) 时
+    兜底"未命名用例", 不再是 "Unknown Plan"。
+    """
+    try:
+        if execution.test_case_id is not None:
+            from app.models.test_plan import TestCase
+            case = (
+                context.db.query(TestCase)
+                .filter(TestCase.id == execution.test_case_id)
+                .first()
+            )
+            if case is not None and case.name:
+                return case.name
+    except Exception:  # noqa: BLE001 — 名字查询失败不该影响报告生成
+        logger.warning("[%s] Phase 5: case name lookup failed", execution.id)
+    return "未命名用例"
+
+
+def _build_mimo_ota_content_data(
+    execution: Any, now: datetime, case_name: Optional[str] = None
+) -> Dict[str, Any]:
     """Pack the 4 prior phase results into the dict shape PDFGenerator expects.
 
     PDFGenerator._auto_generate_sections inspects keys (test_plan,
@@ -133,15 +150,15 @@ def _build_mimo_ota_content_data(execution: Any, now: datetime) -> Dict[str, Any
     measure = phases.get("measure", {}) or {}
     analysis = phases.get("analysis", {}) or {}
 
-    # See report.execute(): `execution.test_plan` may be unset (commented-
-    # out relationship) or None (MIMO_OTA sessions are TestCase-based, not
-    # Plan-based). getattr keeps both branches safe.
-    test_plan = getattr(execution, "test_plan", None)
+    # ARCH-1 S2: MIMO_OTA 执行是 TestCase 制不挂 TestPlan, 报告首段的
+    # "名字"就是快照用例名 (caller 经 _lookup_case_name 查好传入;
+    # 旧二参调用 / 查不到时兜底"未命名用例", 不再是 "Unknown Plan")
+    display_name = case_name or "未命名用例"
     plan_info = {
-        "name": test_plan.name if test_plan else "Unknown Plan",
-        "description": (test_plan.description if test_plan else None) or "—",
+        "name": display_name,
+        "description": "—",
         "status": execution.status,
-        "created_by": (test_plan.created_by if test_plan else None) or "system",
+        "created_by": "system",
     }
 
     overall_pass = bool(analysis.get("overall_pass", False))

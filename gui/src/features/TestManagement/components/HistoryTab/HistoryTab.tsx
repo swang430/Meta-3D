@@ -1,15 +1,16 @@
 /**
  * History Tab - Test Execution History
  *
- * Displays the history of executed test plans with filtering and search.
- * Features:
- * - View completed/failed/cancelled test plans
- * - Search and filter by status
- * - Pagination
- * - View execution details
- * - Delete history records
+ * ARCH-1 S2: 数据源换到 test_executions 本表 — 每次执行一行
+ * (用例直接执行 / 计划链每步 / 暗室首测 / 单相位诊断), VRT 除外。
+ * 行 id 就是 TestExecution.id, 「生成报告」直接引用它 (换源前递的是
+ * 计划摘要表主键, 报告收集器查不到任何行 — 设计稿 §1.4 的断线)。
  *
- * @version 2.0.0
+ * - 历史里会出现 running 行 (进行中样式, 不是"坏记录")
+ * - phases_* 为 null = 该执行链不记相位进度, 显示 "—"
+ * - 删除按钮已退场 (删执行行会毁报告引用, 清理走脚本 — 待决① 拍板)
+ *
+ * @version 3.0.0 (ARCH-1 S2)
  */
 
 import { useState, useMemo } from 'react'
@@ -35,30 +36,61 @@ import {
   IconSearch,
   IconFileText,
   IconRefresh,
-  IconTrash,
   IconChartBar,
   IconFileReport,
 } from '@tabler/icons-react'
-import { useTestHistory, useDeleteExecutionRecord } from '../../hooks'
+import { useTestHistory } from '../../hooks'
 import { useReportGeneration } from '../../../Reports/hooks'
+import type { TestExecutionRecord } from '../../types'
 
 // Helper functions for status display
 function getStatusColor(status: string): string {
   const colorMap: Record<string, string> = {
+    running: 'blue',
     completed: 'green',
     failed: 'red',
     cancelled: 'orange',
+    pending: 'gray',
   }
   return colorMap[status] || 'gray'
 }
 
 function getStatusLabel(status: string): string {
   const labelMap: Record<string, string> = {
+    running: '进行中',
     completed: '已完成',
     failed: '失败',
     cancelled: '已取消',
+    pending: '待执行',
   }
   return labelMap[status] || status
+}
+
+// 来源链显示名 (executed_by 列)
+function getSourceLabel(executedBy: string | null): string {
+  const sourceMap: Record<string, string> = {
+    test_case_runner: '用例执行',
+    test_plan_runner: '计划链(旧)',
+    commissioning_api: '暗室首测',
+    commissioning_adhoc: '单相位诊断',
+  }
+  return (executedBy && sourceMap[executedBy]) || executedBy || '—'
+}
+
+// 相位进度: null = 该执行链不记相位进度 (显示 "—", 不伪造 0/N)
+function formatPhases(record: TestExecutionRecord): string {
+  if (record.phases_done === null || record.phases_total === null) return '—'
+  return `${record.phases_done}/${record.phases_total}`
+}
+
+function formatDurationSec(seconds: number | null): string {
+  if (seconds === null) return '—'
+  if (seconds < 60) return `${Math.round(seconds)} 秒`
+  const minutes = seconds / 60
+  if (minutes < 60) return `${Math.round(minutes)} 分钟`
+  const hours = Math.floor(minutes / 60)
+  const mins = Math.round(minutes % 60)
+  return `${hours} 小时 ${mins} 分钟`
 }
 
 export function HistoryTab() {
@@ -66,19 +98,19 @@ export function HistoryTab() {
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined)
   const [currentPage, setCurrentPage] = useState(1)
   const [detailModalOpened, setDetailModalOpened] = useState(false)
-  const [selectedRecord, setSelectedRecord] = useState<any>(null)
+  const [selectedRecord, setSelectedRecord] = useState<TestExecutionRecord | null>(null)
   const itemsPerPage = 10
 
-  // Query hooks
-  const { data: historyRecords, isLoading, refetch } = useTestHistory({
-    status: statusFilter as any,
+  // Query hooks (内审 F2: data 是 {total, items} — total 来自后端,
+  // "拿到的行数"不再冒充"总执行数")
+  const { data: historyPage, isLoading, refetch } = useTestHistory({
+    status: statusFilter as 'running' | 'completed' | 'failed' | 'cancelled' | undefined,
   })
-
-  // Mutation hooks
-  const { mutate: deleteRecord } = useDeleteExecutionRecord()
+  const historyRecords = historyPage?.items
+  const backendTotal = historyPage?.total ?? 0
 
   // Report generation hook (unified with PendingExecutionsList)
-  const { generateTestPlanReport, isGenerating } = useReportGeneration()
+  const { generateExecutionReport, isGenerating } = useReportGeneration()
 
   // Filter and paginate records
   const filteredRecords = useMemo(() => {
@@ -86,13 +118,13 @@ export function HistoryTab() {
 
     let filtered = [...historyRecords]
 
-    // Apply search filter
+    // Apply search filter (用例名 + 来源链)
     if (searchQuery) {
       const query = searchQuery.toLowerCase()
       filtered = filtered.filter(
         (record) =>
-          record.test_plan_name.toLowerCase().includes(query) ||
-          record.started_by.toLowerCase().includes(query),
+          (record.case_name ?? '').toLowerCase().includes(query) ||
+          (record.executed_by ?? '').toLowerCase().includes(query),
       )
     }
 
@@ -106,43 +138,20 @@ export function HistoryTab() {
 
   const totalPages = Math.ceil(filteredRecords.length / itemsPerPage)
 
-  const handleViewDetails = (record: any) => {
+  const handleViewDetails = (record: TestExecutionRecord) => {
     setSelectedRecord(record)
     setDetailModalOpened(true)
   }
 
-  const handleDelete = (recordId: string) => {
-    if (confirm('确定要删除此执行记录吗？此操作无法撤销。')) {
-      deleteRecord(recordId)
-    }
+  const handleGenerateReport = (record: TestExecutionRecord) => {
+    // record.id 就是 TestExecution.id — 报告收集器按它真查得到执行行
+    generateExecutionReport(record)
   }
 
-  const handleGenerateReport = (record: any) => {
-    // Use unified report generation hook
-    // This ensures consistent behavior and cache invalidation with PendingExecutionsList
-    generateTestPlanReport({
-      id: record.id,
-      test_plan_id: record.test_plan_id,
-      test_plan_name: record.test_plan_name,
-      test_plan_version: record.test_plan_version,
-      status: record.status,
-      success_rate: record.success_rate,
-      total_steps: record.total_steps,
-      completed_steps: record.completed_steps,
-      failed_steps: record.failed_steps,
-      duration_minutes: record.duration_minutes,
-      started_by: record.started_by,
-      completed_at: record.completed_at,
-    })
-  }
-
-  const formatDuration = (minutes: number): string => {
-    if (minutes < 60) {
-      return `${Math.round(minutes)} 分钟`
-    }
-    const hours = Math.floor(minutes / 60)
-    const mins = Math.round(minutes % 60)
-    return `${hours} 小时 ${mins} 分钟`
+  const formatCompletedAt = (iso: string | null): { date: string; full: string } => {
+    if (!iso) return { date: '—', full: '未完成' }
+    const d = parseServerDateTime(iso)
+    return { date: d.toLocaleDateString(), full: d.toLocaleString() }
   }
 
   return (
@@ -154,7 +163,7 @@ export function HistoryTab() {
             执行历史
           </Text>
           <Text size="sm" c="dimmed">
-            查看已完成、失败或取消的测试计划执行记录
+            每次执行一行（用例执行 / 暗室首测 / 诊断），进行中的执行也在列
           </Text>
         </div>
         <Button
@@ -175,7 +184,20 @@ export function HistoryTab() {
               总执行次数
             </Text>
             <Text size="lg" fw={600}>
-              {filteredRecords.length}
+              {backendTotal}
+            </Text>
+            {backendTotal > filteredRecords.length && !searchQuery && (
+              <Text size="xs" c="dimmed">
+                (显示最近 {filteredRecords.length} 条)
+              </Text>
+            )}
+          </div>
+          <div>
+            <Text size="xs" c="dimmed">
+              进行中
+            </Text>
+            <Text size="lg" fw={600} c="blue">
+              {filteredRecords.filter((r) => r.status === 'running').length}
             </Text>
           </div>
           <div>
@@ -202,20 +224,6 @@ export function HistoryTab() {
               {filteredRecords.filter((r) => r.status === 'cancelled').length}
             </Text>
           </div>
-          <div>
-            <Text size="xs" c="dimmed">
-              平均成功率
-            </Text>
-            <Text size="lg" fw={600} c="blue">
-              {filteredRecords.length > 0
-                ? `${Math.round(
-                    (filteredRecords.reduce((sum, r) => sum + r.success_rate, 0) /
-                      filteredRecords.length) *
-                      100,
-                  )}%`
-                : '0%'}
-            </Text>
-          </div>
         </Group>
       </Paper>
 
@@ -223,7 +231,7 @@ export function HistoryTab() {
       <Paper p="md" withBorder>
         <Group>
           <TextInput
-            placeholder="搜索测试计划或执行者..."
+            placeholder="搜索用例名或来源..."
             leftSection={<IconSearch size={16} />}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -235,6 +243,7 @@ export function HistoryTab() {
             value={statusFilter}
             onChange={(value) => setStatusFilter(value || undefined)}
             data={[
+              { value: 'running', label: '进行中' },
               { value: 'completed', label: '已完成' },
               { value: 'failed', label: '失败' },
               { value: 'cancelled', label: '已取消' },
@@ -255,12 +264,11 @@ export function HistoryTab() {
             <Table striped highlightOnHover>
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th>测试计划</Table.Th>
+                  <Table.Th>测试用例</Table.Th>
                   <Table.Th>状态</Table.Th>
-                  <Table.Th>成功率</Table.Th>
-                  <Table.Th>步骤统计</Table.Th>
+                  <Table.Th>相位</Table.Th>
                   <Table.Th>执行时长</Table.Th>
-                  <Table.Th>执行者</Table.Th>
+                  <Table.Th>来源</Table.Th>
                   <Table.Th>完成时间</Table.Th>
                   <Table.Th>操作</Table.Th>
                 </Table.Tr>
@@ -268,7 +276,7 @@ export function HistoryTab() {
               <Table.Tbody>
                 {paginatedRecords.length === 0 ? (
                   <Table.Tr>
-                    <Table.Td colSpan={8}>
+                    <Table.Td colSpan={7}>
                       <Stack align="center" gap="xs" py="xl">
                         <IconChartBar size={48} stroke={1.5} color="gray" />
                         <Text c="dimmed" ta="center">
@@ -277,125 +285,101 @@ export function HistoryTab() {
                             : '暂无执行历史'}
                         </Text>
                         <Text size="xs" c="dimmed" ta="center">
-                          执行测试计划后，记录将显示在此处
+                          在测试用例库执行用例后，记录将显示在此处
                         </Text>
                       </Stack>
                     </Table.Td>
                   </Table.Tr>
                 ) : (
-                  paginatedRecords.map((record) => (
-                    <Table.Tr key={record.id}>
-                      {/* Plan Name */}
-                      <Table.Td>
-                        <Stack gap={2}>
+                  paginatedRecords.map((record) => {
+                    const completedAt = formatCompletedAt(record.completed_at)
+                    return (
+                      <Table.Tr key={record.id}>
+                        {/* Case Name */}
+                        <Table.Td>
                           <Text size="sm" fw={500}>
-                            {record.test_plan_name}
+                            {record.case_name ?? '未命名用例'}
                           </Text>
-                          <Text size="xs" c="dimmed">
-                            版本: {record.test_plan_version}
+                        </Table.Td>
+
+                        {/* Status */}
+                        <Table.Td>
+                          <Badge
+                            color={getStatusColor(record.status)}
+                            variant="light"
+                          >
+                            {getStatusLabel(record.status)}
+                          </Badge>
+                        </Table.Td>
+
+                        {/* Phase progress */}
+                        <Table.Td>
+                          <Text size="sm">
+                            {formatPhases(record)}
+                            {record.phases_failed !== null &&
+                              record.phases_failed > 0 && (
+                                <Text span size="xs" c="red" ml={4}>
+                                  ({record.phases_failed} 失败)
+                                </Text>
+                              )}
                           </Text>
-                        </Stack>
-                      </Table.Td>
+                        </Table.Td>
 
-                      {/* Status */}
-                      <Table.Td>
-                        <Badge
-                          color={getStatusColor(record.status)}
-                          variant="light"
-                        >
-                          {getStatusLabel(record.status)}
-                        </Badge>
-                      </Table.Td>
+                        {/* Duration */}
+                        <Table.Td>
+                          <Text size="sm">
+                            {formatDurationSec(record.duration_sec)}
+                          </Text>
+                        </Table.Td>
 
-                      {/* Success Rate */}
-                      <Table.Td>
-                        <Text
-                          size="sm"
-                          fw={600}
-                          c={record.success_rate > 0.8 ? 'green' : 'orange'}
-                        >
-                          {Math.round(record.success_rate * 100)}%
-                        </Text>
-                      </Table.Td>
+                        {/* Source chain */}
+                        <Table.Td>
+                          <Text size="sm">{getSourceLabel(record.executed_by)}</Text>
+                        </Table.Td>
 
-                      {/* Step Statistics */}
-                      <Table.Td>
-                        <Stack gap={2}>
-                          <Text size="xs">
-                            <Text span c="green">
-                              {record.completed_steps}
-                            </Text>{' '}
-                            /{' '}
-                            <Text span c="dimmed">
-                              {record.total_steps}
+                        {/* Completed At */}
+                        <Table.Td>
+                          <Tooltip label={completedAt.full}>
+                            <Text size="sm" c="dimmed">
+                              {completedAt.date}
                             </Text>
-                          </Text>
-                          {record.failed_steps > 0 && (
-                            <Text size="xs" c="red">
-                              {record.failed_steps} 失败
-                            </Text>
-                          )}
-                        </Stack>
-                      </Table.Td>
-
-                      {/* Duration */}
-                      <Table.Td>
-                        <Text size="sm">
-                          {formatDuration(record.duration_minutes)}
-                        </Text>
-                      </Table.Td>
-
-                      {/* Started By */}
-                      <Table.Td>
-                        <Text size="sm">{record.started_by}</Text>
-                      </Table.Td>
-
-                      {/* Completed At */}
-                      <Table.Td>
-                        <Tooltip
-                          label={parseServerDateTime(record.completed_at).toLocaleString()}
-                        >
-                          <Text size="sm" c="dimmed">
-                            {parseServerDateTime(record.completed_at).toLocaleDateString()}
-                          </Text>
-                        </Tooltip>
-                      </Table.Td>
-
-                      {/* Actions */}
-                      <Table.Td>
-                        <Group gap="xs">
-                          <Tooltip label="查看详情">
-                            <ActionIcon
-                              variant="light"
-                              color="blue"
-                              onClick={() => handleViewDetails(record)}
-                            >
-                              <IconFileText size={16} />
-                            </ActionIcon>
                           </Tooltip>
-                          <Tooltip label="生成报告">
-                            <ActionIcon
-                              variant="light"
-                              color="green"
-                              onClick={() => handleGenerateReport(record)}
-                              loading={isGenerating(record.id)}
+                        </Table.Td>
+
+                        {/* Actions */}
+                        <Table.Td>
+                          <Group gap="xs">
+                            <Tooltip label="查看详情">
+                              <ActionIcon
+                                variant="light"
+                                color="blue"
+                                onClick={() => handleViewDetails(record)}
+                              >
+                                <IconFileText size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                            <Tooltip
+                              label={
+                                record.status === 'running'
+                                  ? '执行中，完成后可生成报告'
+                                  : '生成报告'
+                              }
                             >
-                              <IconFileReport size={16} />
-                            </ActionIcon>
-                          </Tooltip>
-                          <Tooltip label="删除记录">
-                            <ActionIcon
-                              variant="light"
-                              color="red"
-                              onClick={() => handleDelete(record.id)}
-                            >
-                              <IconTrash size={16} />
-                            </ActionIcon>
-                          </Tooltip>
-                        </Group>
-                      </Table.Td>
-                    </Table.Tr>
-                  ))
+                              <ActionIcon
+                                variant="light"
+                                color="green"
+                                disabled={record.status === 'running'}
+                                onClick={() => handleGenerateReport(record)}
+                                loading={isGenerating(record.id)}
+                              >
+                                <IconFileReport size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                          </Group>
+                        </Table.Td>
+                      </Table.Tr>
+                    )
+                  })
                 )}
               </Table.Tbody>
             </Table>
@@ -430,15 +414,15 @@ export function HistoryTab() {
               <Stack gap="xs">
                 <Group justify="space-between">
                   <Text size="sm" c="dimmed">
-                    测试计划:
+                    测试用例:
                   </Text>
-                  <Text size="sm">{selectedRecord.test_plan_name}</Text>
+                  <Text size="sm">{selectedRecord.case_name ?? '未命名用例'}</Text>
                 </Group>
                 <Group justify="space-between">
                   <Text size="sm" c="dimmed">
-                    版本:
+                    来源:
                   </Text>
-                  <Text size="sm">{selectedRecord.test_plan_version}</Text>
+                  <Text size="sm">{getSourceLabel(selectedRecord.executed_by)}</Text>
                 </Group>
                 <Group justify="space-between">
                   <Text size="sm" c="dimmed">
@@ -451,6 +435,18 @@ export function HistoryTab() {
                     {getStatusLabel(selectedRecord.status)}
                   </Badge>
                 </Group>
+                <Group justify="space-between">
+                  <Text size="sm" c="dimmed">
+                    判定:
+                  </Text>
+                  <Text size="sm">
+                    {selectedRecord.validation_pass === null
+                      ? '未判定'
+                      : selectedRecord.validation_pass
+                        ? '通过'
+                        : '不通过'}
+                  </Text>
+                </Group>
               </Stack>
             </Paper>
 
@@ -461,71 +457,48 @@ export function HistoryTab() {
               <Stack gap="xs">
                 <Group justify="space-between">
                   <Text size="sm" c="dimmed">
-                    成功率:
+                    相位进度:
                   </Text>
-                  <Text size="sm" fw={600} c="green">
-                    {Math.round(selectedRecord.success_rate * 100)}%
-                  </Text>
-                </Group>
-                <Group justify="space-between">
-                  <Text size="sm" c="dimmed">
-                    总步骤数:
-                  </Text>
-                  <Text size="sm">{selectedRecord.total_steps}</Text>
-                </Group>
-                <Group justify="space-between">
-                  <Text size="sm" c="dimmed">
-                    完成步骤:
-                  </Text>
-                  <Text size="sm" c="green">
-                    {selectedRecord.completed_steps}
-                  </Text>
-                </Group>
-                <Group justify="space-between">
-                  <Text size="sm" c="dimmed">
-                    失败步骤:
-                  </Text>
-                  <Text size="sm" c="red">
-                    {selectedRecord.failed_steps}
-                  </Text>
-                </Group>
-                <Group justify="space-between">
-                  <Text size="sm" c="dimmed">
-                    跳过步骤:
-                  </Text>
-                  <Text size="sm" c="yellow">
-                    {selectedRecord.skipped_steps}
-                  </Text>
+                  <Text size="sm">{formatPhases(selectedRecord)}</Text>
                 </Group>
                 <Group justify="space-between">
                   <Text size="sm" c="dimmed">
                     执行时长:
                   </Text>
                   <Text size="sm">
-                    {formatDuration(selectedRecord.duration_minutes)}
+                    {formatDurationSec(selectedRecord.duration_sec)}
+                  </Text>
+                </Group>
+                <Group justify="space-between">
+                  <Text size="sm" c="dimmed">
+                    开始时间:
+                  </Text>
+                  <Text size="sm">
+                    {selectedRecord.started_at
+                      ? parseServerDateTime(selectedRecord.started_at).toLocaleString()
+                      : '—'}
+                  </Text>
+                </Group>
+                <Group justify="space-between">
+                  <Text size="sm" c="dimmed">
+                    完成时间:
+                  </Text>
+                  <Text size="sm">
+                    {selectedRecord.completed_at
+                      ? parseServerDateTime(selectedRecord.completed_at).toLocaleString()
+                      : '—'}
                   </Text>
                 </Group>
               </Stack>
             </Paper>
 
-            {selectedRecord.error_summary && (
+            {selectedRecord.error_message && (
               <Paper p="md" withBorder>
                 <Text size="sm" fw={600} mb="xs" c="red">
-                  错误摘要
+                  错误信息
                 </Text>
                 <Text size="sm" c="dimmed">
-                  {selectedRecord.error_summary}
-                </Text>
-              </Paper>
-            )}
-
-            {selectedRecord.notes && (
-              <Paper p="md" withBorder>
-                <Text size="sm" fw={600} mb="xs">
-                  备注
-                </Text>
-                <Text size="sm" c="dimmed">
-                  {selectedRecord.notes}
+                  {selectedRecord.error_message}
                 </Text>
               </Paper>
             )}

@@ -298,7 +298,8 @@ export function setupMockServer() {
 
   mock.onGet('/test-executions').reply((config) => {
     const limit = config.params?.limit ? Number(config.params.limit) : undefined
-    return [200, mockDatabase.getTestExecutions(limit)]
+    const status = config.params?.status ? String(config.params.status) : undefined
+    return [200, mockDatabase.getTestExecutions(limit, status)]
   })
 
   mock.onGet('/system-logs/tail').reply((config) => {

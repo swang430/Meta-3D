@@ -297,11 +297,14 @@ paths:
                 $ref: '#/components/schemas/HALReadinessResponse'
   /api/v1/test-executions:
     get:
-      summary: List test plan execution history (P2-8 cockpit run zone)
+      summary: List execution history (ARCH-1 S2, sourced from test_executions)
       description: |
-        Terminal-state execution rows (completed / failed / cancelled),
-        newest first by completed_at. This is HISTORY — not a live-running
-        stream. The cockpit "最近执行" zone polls this with limit=5.
+        One row per execution from the test_executions table itself
+        (case-runner / commissioning / diagnostics; VRT rows excluded),
+        newest first by executed_at. Includes RUNNING rows — the test case
+        library uses status=running to restore the active-run badge after
+        navigation (Codex #237 C3). Row id is TestExecution.id and can be
+        passed directly as a report's test_execution_ids.
       parameters:
         - name: limit
           in: query
@@ -320,7 +323,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [completed, failed, cancelled]
+            enum: [running, completed, failed, cancelled]
       responses:
         '200':
           description: Execution history page
@@ -745,62 +748,53 @@ components:
     TestExecutionItem:
       type: object
       description: |
-        P2-8: one terminal-state execution row. Mirrors api-service
-        TestPlanExecutionResponse.
+        ARCH-1 S2: one execution row from the test_executions table itself
+        (case-runner / plan-runner step / commissioning / ad-hoc diagnostic;
+        VRT rows excluded via mode IS NULL). Includes running rows. Mirrors
+        api-service ExecutionHistoryItem. phases_* null = that execution
+        chain does not record phase progress; validation_pass null = not
+        judged.
       properties:
         id:
           type: string
-        test_plan_id:
+        case_name:
           type: string
-        test_plan_name:
+          nullable: true
+        source_test_case_id:
           type: string
-        test_plan_version:
-          type: string
+          nullable: true
         status:
           type: string
-          enum: [completed, failed, cancelled]
-        total_steps:
+        phases_total:
           type: integer
-        completed_steps:
+          nullable: true
+        phases_done:
           type: integer
-        failed_steps:
+          nullable: true
+        phases_failed:
           type: integer
-        skipped_steps:
-          type: integer
-        success_rate:
+          nullable: true
+        duration_sec:
           type: number
+          nullable: true
         started_at:
           type: string
+          nullable: true
         completed_at:
           type: string
-        duration_minutes:
-          type: number
-        error_summary:
+          nullable: true
+        executed_by:
           type: string
           nullable: true
-        notes:
+        error_message:
           type: string
           nullable: true
-        started_by:
-          type: string
-        created_at:
-          type: string
+        validation_pass:
+          type: boolean
+          nullable: true
       required:
         - id
-        - test_plan_id
-        - test_plan_name
-        - test_plan_version
         - status
-        - total_steps
-        - completed_steps
-        - failed_steps
-        - skipped_steps
-        - success_rate
-        - started_at
-        - completed_at
-        - duration_minutes
-        - started_by
-        - created_at
     TestExecutionListResponse:
       type: object
       properties:

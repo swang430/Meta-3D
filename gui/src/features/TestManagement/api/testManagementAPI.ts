@@ -308,35 +308,25 @@ export const completeExecution = async (
 // ==================== Execution History ====================
 
 /**
- * Get execution history with filters
+ * 执行历史 (ARCH-1 S2: 行 = test_executions 本表, 行 id 可直接作
+ * 报告的 test_execution_ids)。单条查询与删除随换源退场:
+ * 删除会毁掉报告引用并留下孤儿快照 (待决① 拍板去掉), 清理走脚本。
  */
+export interface ExecutionHistoryPage {
+  total: number
+  items: TestExecutionRecord[]
+}
+
 export const getExecutionHistory = async (
   filters?: HistoryFilters,
-): Promise<TestExecutionRecord[]> => {
-  const response = await client.get<{ items: TestExecutionRecord[] }>(
+): Promise<ExecutionHistoryPage> => {
+  // 内审 F2: 不再丢弃后端 total — 换源后行基数放大 (每次执行一行),
+  // "拿到的行数"≠"总执行数"; limit 顶到后端上限, 完整分页后端化留 backlog
+  const response = await client.get<ExecutionHistoryPage>(
     '/test-executions',
-    { params: filters },
-  )
-  return response.data.items
-}
-
-/**
- * Get a single execution record by ID
- */
-export const getExecutionRecord = async (
-  recordId: string,
-): Promise<TestExecutionRecord> => {
-  const response = await client.get<TestExecutionRecord>(
-    `/test-executions/${recordId}`,
+    { params: { limit: 1000, ...filters } },
   )
   return response.data
-}
-
-/**
- * Delete an execution record
- */
-export const deleteExecutionRecord = async (recordId: string): Promise<void> => {
-  await client.delete(`/test-executions/${recordId}`)
 }
 
 // ==================== Sequence Library ====================

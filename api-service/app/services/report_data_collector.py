@@ -244,6 +244,10 @@ class ReportDataCollector:
             # 8. Build step results
             if report.test_plan_id:
                 report_data.step_results = self._get_step_results(db, report.test_plan_id)
+            else:
+                # ARCH-1 S2: 无 plan 的执行 (用例直接执行) 没有 TestStep 行,
+                # 步骤结果段改从执行行的相位进度派生, 不再整段空缺
+                report_data.step_results = self._get_phase_results(executions)
 
             # 9. Build table data for PDF
             report_data.table_data = self._build_table_data(report_data)
@@ -464,6 +468,36 @@ class ReportDataCollector:
                 "completed_at": step.completed_at.isoformat() if step.completed_at else None,
             })
 
+        return results
+
+    def _get_phase_results(self, executions: List[TestExecution]) -> List[Dict[str, Any]]:
+        """ARCH-1 S2: 无 plan 执行的"步骤结果"= 相位进度。
+
+        数据源是 case-runner 写进 config.phase_progress 的
+        {"type": 相位名, "status": completed/failed} 逐条记录
+        (test_case_runner.py); 没有该键的执行链 (commissioning 等)
+        返回空列表 — PDF 生成器对空 step_results 段安全。
+        字段名对齐 _get_step_results 的形状 (order/name/status), 模板不用分叉。
+        """
+        results = []
+        for execution in executions:
+            progress = (execution.config or {}).get("phase_progress") or []
+            for i, phase in enumerate(progress):
+                results.append({
+                    "order": i + 1,
+                    "name": phase.get("type", "unknown"),
+                    "status": phase.get("status"),
+                    "result": None,
+                    "duration_minutes": None,
+                    "error_message": (
+                        execution.error_message
+                        if phase.get("status") == "failed" else None
+                    ),
+                    "parameters": {},
+                    "validation_criteria": {},
+                    "started_at": None,
+                    "completed_at": None,
+                })
         return results
 
     def _build_table_data(self, report_data: ReportData) -> List[Dict[str, Any]]:

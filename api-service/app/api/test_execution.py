@@ -8,12 +8,65 @@ from datetime import datetime, timezone
 
 from app.db.database import get_db
 from app.schemas.test_plan import (
+    ExecutionHistoryItem,
+    ExecutionHistoryListResponse,
     TestPlanExecutionResponse,
-    TestPlanExecutionListResponse,
 )
-from app.models.test_plan import TestPlanExecution, TestExecution
+from app.models.test_plan import TestCase, TestPlanExecution, TestExecution
 
 router = APIRouter(prefix="/test-executions", tags=["Test Execution History"])
+
+
+def _to_history_item(execution: TestExecution, case_name: Optional[str]) -> ExecutionHistoryItem:
+    """执行行 → 历史列表项。
+
+    相位进度只有 case-runner 在 config.phase_progress 里记
+    ({"type": 相位名, "status": completed/failed}, test_case_runner.py);
+    commissioning / plan-runner 行没有这个键 → phases_* 保持 None
+    (三态语义, GUI 显示 "—", 不伪造 0/N)。
+    """
+    cfg = execution.config if isinstance(execution.config, dict) else {}
+    descriptors = cfg.get("step_descriptors")
+    # 畸形收窄 (内审 F1): config 形状不对不许毒整页列表 — 非 list 按
+    # "没有"处理 (None 三态), 元素非 dict 跳过, 不进外层 except
+    if not isinstance(descriptors, list):
+        descriptors = []
+    progress = cfg.get("phase_progress")
+    phases_done = phases_failed = None
+    if isinstance(progress, list):
+        phases_done = sum(
+            1 for p in progress
+            if isinstance(p, dict) and p.get("status") == "completed")
+        phases_failed = sum(
+            1 for p in progress
+            if isinstance(p, dict) and p.get("status") == "failed")
+    return ExecutionHistoryItem(
+        id=execution.id,
+        case_name=case_name,
+        source_test_case_id=cfg.get("source_test_case_id"),
+        status=execution.status or "unknown",
+        phases_total=len(descriptors) if descriptors else None,
+        phases_done=phases_done,
+        phases_failed=phases_failed,
+        duration_sec=execution.duration_sec,
+        started_at=execution.started_at,
+        completed_at=execution.completed_at,
+        executed_by=execution.executed_by,
+        error_message=execution.error_message,
+        validation_pass=execution.validation_pass,
+    )
+
+
+def _history_query(db: Session):
+    """历史行基查询: test_executions 本表, mode IS NULL 排除 VRT 行
+    (镜像 VRT 自己列表的 mode IS NOT NULL 谓词, vrt_execution_service.py:118),
+    显式 outerjoin 快照 TestCase 取执行时的名字 (模型上的 relationship 是
+    注释掉的, 不能走属性)。"""
+    return (
+        db.query(TestExecution, TestCase.name)
+        .outerjoin(TestCase, TestExecution.test_case_id == TestCase.id)
+        .filter(TestExecution.mode.is_(None))
+    )
 
 
 # Schema for recent tests (matches frontend RecentTest type)
@@ -38,21 +91,25 @@ def get_recent_tests(
     limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db)
 ):
-    """
-    Get recent test executions for dashboard display
+    """仪表盘「最近测试」卡片 (ARCH-1 S2 换源到 test_executions 本表)。
 
-    Returns a simplified list of recent test executions.
+    wire 形状 (id/name/dut/result/date) 不变, 前端零改动;
+    name 取快照 TestCase 名 (待决③ 拍板: 与主列表同源, 避免两个"最近"
+    来自两张表互相矛盾)。
     """
     try:
-        executions = db.query(TestPlanExecution).order_by(
-            TestPlanExecution.completed_at.desc()
-        ).limit(limit).all()
+        rows = (
+            _history_query(db)
+            .order_by(TestExecution.executed_at.desc())
+            .limit(limit)
+            .all()
+        )
 
         recent_tests = []
-        for exe in executions:
+        for exe, case_name in rows:
             recent_tests.append(RecentTestItem(
                 id=str(exe.id),
-                name=exe.test_plan_name or "Unknown Plan",
+                name=case_name or "未命名用例",
                 dut="DUT-001",  # Placeholder - could be extended to include actual DUT info
                 result=exe.status or "unknown",
                 date=exe.completed_at.strftime("%Y-%m-%d %H:%M") if exe.completed_at else "N/A"
@@ -66,56 +123,56 @@ def get_recent_tests(
         return RecentTestsResponse(recentTests=[])
 
 
-@router.get("", response_model=TestPlanExecutionListResponse)
+@router.get("", response_model=ExecutionHistoryListResponse)
 def get_execution_history(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    test_plan_id: Optional[UUID] = None,
     status: Optional[str] = None,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     db: Session = Depends(get_db)
 ):
-    """
-    Get test plan execution history with filters
+    """执行历史 (ARCH-1 S2: 数据源 = test_executions 本表, 不再是计划级摘要表)。
 
-    Filters:
-    - test_plan_id: Filter by test plan ID
-    - status: Filter by execution status (completed, failed, cancelled)
-    - start_date: Filter executions after this date
-    - end_date: Filter executions before this date
+    - 每次执行一行 (case-runner / plan-runner 每步 / 暗室首测 / 单相位诊断),
+      VRT 行除外 (mode IS NULL 谓词, VRT 有自己的面板与列表)。
+    - status 也接受 running — 历史里会出现进行中的行, 用例库靠
+      `?status=running` 恢复导航后丢失的执行中徽标 (Codex #237 C3)。
+    - 返回行的 id 就是 TestExecution.id, 报告 test_execution_ids 直接引用
+      (旧摘要表主键跨表引用查不到任何行, 设计稿 §1.4 的断线)。
     """
     try:
-        query = db.query(TestPlanExecution)
+        query = _history_query(db)
 
-        # Apply filters
-        if test_plan_id:
-            query = query.filter(TestPlanExecution.test_plan_id == test_plan_id)
         if status:
-            query = query.filter(TestPlanExecution.status == status)
+            query = query.filter(TestExecution.status == status)
         if start_date:
-            query = query.filter(TestPlanExecution.completed_at >= start_date)
+            query = query.filter(TestExecution.executed_at >= start_date)
         if end_date:
-            query = query.filter(TestPlanExecution.completed_at <= end_date)
+            query = query.filter(TestExecution.executed_at <= end_date)
 
         # Get total count before pagination
         total = query.count()
 
-        # Apply pagination and order
-        executions = query.order_by(
-            TestPlanExecution.completed_at.desc()
-        ).offset(skip).limit(limit).all()
+        # executed_at (行创建时间, NOT NULL) 排序 — completed_at 对 running
+        # 行是 NULL, 各方言 NULL 排序位置不同
+        rows = (
+            query.order_by(TestExecution.executed_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
 
-        return TestPlanExecutionListResponse(
+        return ExecutionHistoryListResponse(
             total=total,
-            items=[TestPlanExecutionResponse.model_validate(exe) for exe in executions]
+            items=[_to_history_item(exe, case_name) for exe, case_name in rows],
         )
     except Exception as e:
         # Database unavailable - return empty list
         import logging
         logger = logging.getLogger(__name__)
         logger.warning(f"Database unavailable for execution history: {e}")
-        return TestPlanExecutionListResponse(
+        return ExecutionHistoryListResponse(
             total=0,
             items=[]
         )

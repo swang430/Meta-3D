@@ -274,38 +274,36 @@ export interface TestQueueSummary {
 // ==================== Execution History ====================
 
 /**
- * Test Execution Record - Historical execution data
+ * 执行历史行 (ARCH-1 S2) — 数据源是 test_executions 本表, 与后端
+ * ExecutionHistoryItem 逐字段对齐。id 就是 TestExecution.id, 报告的
+ * test_execution_ids 直接引用它。
+ *
+ * 三态注意 (别把 null 渲染成"失败"):
+ * - phases_*: null = 该执行链不记相位进度 (暗室首测 / 计划链的行), 显示 "—"
+ * - validation_pass: null = 未判定
  */
 export interface TestExecutionRecord {
   id: string
-  test_plan_id: string
-  test_plan_name: string
-  test_plan_version: string
+  case_name: string | null             // 快照用例名 (执行时的名字)
+  source_test_case_id: string | null   // case-runner 行才有
+  status: 'running' | 'completed' | 'failed' | 'cancelled' | string
 
-  status: 'completed' | 'failed' | 'cancelled'
-
-  // 执行统计
-  total_steps: number
-  completed_steps: number
-  failed_steps: number
-  skipped_steps: number
+  // 相位进度 (用例执行的"进度"单位是相位, 不是步骤)
+  phases_total: number | null
+  phases_done: number | null
+  phases_failed: number | null
 
   // 时间统计
-  started_at: string
-  completed_at: string
-  duration_minutes: number
+  started_at: string | null
+  completed_at: string | null
+  duration_sec: number | null
 
-  // 执行者
-  started_by: string
+  // 来源链: test_case_runner / test_plan_runner / commissioning_api / commissioning_adhoc
+  executed_by: string | null
 
   // 结果
-  success_rate: number                 // 成功率 (0-1)
-  error_summary?: string               // 错误摘要
-  artifacts?: string[]                 // 产出物URL数组 (报告、日志等)
-
-  // 元数据
-  notes?: string
-  tags?: string[]
+  error_message: string | null
+  validation_pass: boolean | null
 }
 
 // ==================== API Request/Response Types ====================
@@ -439,16 +437,15 @@ export interface CancelExecutionRequest {
 // ==================== Query Filters ====================
 
 /**
- * History Filters
+ * History Filters (ARCH-1 S2: 数据源换到 test_executions 本表 —
+ * status 接受 running, 计划维度的 test_plan_id/started_by 过滤退场)
  */
 export interface HistoryFilters {
   skip?: number
   limit?: number
-  status?: 'completed' | 'failed' | 'cancelled'
+  status?: 'running' | 'completed' | 'failed' | 'cancelled'
   start_date?: string
   end_date?: string
-  test_plan_id?: string
-  started_by?: string
 }
 
 /**
