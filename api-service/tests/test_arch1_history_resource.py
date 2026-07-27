@@ -331,6 +331,68 @@ def test_gd_running_row_with_source_id(db, lab):
     assert row["phases_done"] == 2
 
 
+def test_gd_error_message_falls_back_to_config(db, lab):
+    """Codex #238 迟到 C-1: case-runner 把失败文本写 config["error_message"]
+    不写列 (test_case_runner.py 五处全是) — 列表和报告都要能读到。
+    fake 按真实 runner 形状造行 (列留空)。变异 = 去掉 fallback → 红。"""
+    snapshot = _make_case(db, lab, name="失败的用例")
+    execution = TestExecution(
+        test_case_id=snapshot.id,
+        status="failed",
+        started_at=datetime(2026, 7, 27, 10, 0, 0),
+        completed_at=datetime(2026, 7, 27, 10, 5, 0),
+        config={
+            "step_descriptors": [
+                {"id": "p0", "type": "measure", "parameters": {}}],
+            "source_test_case_id": str(snapshot.id),
+            "phase_progress": [{"type": "measure", "status": "failed"}],
+            "failed_phase": "measure",
+            "error_message": "执行器异常: 探头 17 无响应",  # 真实 runner 只写这里
+        },
+        executed_by="test_case_runner",
+        error_message=None,  # 列是空的 — 这就是真实形状
+    )
+    db.add(execution)
+    db.commit()
+
+    client = TestClient(app)
+    row = client.get("/api/v1/test-executions").json()["items"][0]
+    assert row["error_message"] == "执行器异常: 探头 17 无响应"
+
+    # 报告的相位结果段同样要拿到
+    from app.services.report_data_collector import ReportDataCollector
+    phase_rows = ReportDataCollector()._get_phase_results([execution])
+    assert phase_rows[0]["error_message"] == "执行器异常: 探头 17 无响应"
+
+
+def test_gd_recovery_not_crowded_out_by_stale_plan_rows(db, lab):
+    """Codex #238 迟到 C-3: plan-runner 的 stale running 行没人复位,
+    堆多了不许把 case 执行挤出恢复窗口 — 服务端按 executed_by 收窄。
+    变异 = 砍 executed_by 过滤 → total 断言红。"""
+    source = _make_case(db, lab, name="被挤的用例")
+    snapshot = _make_case(db, lab, name="被挤的用例 [执行]")
+    _case_runner_execution(
+        db, snapshot, status="running", phases_done=1, source_id=source.id)
+    # 5 个更新的 plan-runner 僵尸 running 行 (executed_at 由 server_default
+    # 按插入序递增, 这些行都比 case 行新 → 无过滤时排在前面占满 limit)
+    for i in range(5):
+        db.add(TestExecution(
+            status="running",
+            executed_by="test_plan_runner",
+            config={"step_descriptors": [], "test_step_id": f"step-{i}"},
+        ))
+    db.commit()
+
+    client = TestClient(app)
+    body = client.get(
+        "/api/v1/test-executions",
+        params={"status": "running", "executed_by": "test_case_runner",
+                "limit": 5},
+    ).json()
+    assert body["total"] == 1  # 只剩 case 链的行
+    assert body["items"][0]["source_test_case_id"] == str(source.id)
+
+
 # ── G-e 契约不变量 ─────────────────────────────────────────────────
 
 

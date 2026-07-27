@@ -582,6 +582,13 @@ export interface paths {
                     limit?: number;
                     skip?: number;
                     status?: "running" | "completed" | "failed" | "cancelled";
+                    /**
+                     * @description Filter by execution chain (test_case_runner / test_plan_runner /
+                     *     commissioning_api / commissioning_adhoc). The case library's
+                     *     active-run recovery passes test_case_runner so stale plan-runner
+                     *     running rows cannot crowd out the case execution.
+                     */
+                    executed_by?: string;
                 };
                 header?: never;
                 path?: never;

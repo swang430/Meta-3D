@@ -586,6 +586,18 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
     duration_ms = int((time.monotonic() - started) * 1000)
 
     db.refresh(execution)
+
+    # Codex #238 迟到 C-2: 单相位诊断行也要收尾 — 建行时是 pending,
+    # 不回写的话执行历史/仪表盘里它永远显示"待执行" (实际早跑完了)。
+    # REPORT executor 会把成功链置 completed, 但 adhoc 多数相位不含
+    # REPORT, 这里统一按实际结果落终态。
+    execution.status = "completed" if status_value == "success" else "failed"
+    execution.completed_at = datetime.utcnow()
+    execution.duration_sec = duration_ms / 1000.0
+    if error_message:
+        execution.error_message = error_message
+    db.commit()
+
     phases_key = _STEP_TYPE_TO_PHASES_KEY[target_step_type]
     phase_payload = (execution.measurements or {}).get("phases", {}).get(phases_key) or {}
 

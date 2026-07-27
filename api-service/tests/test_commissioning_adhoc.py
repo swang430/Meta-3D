@@ -137,6 +137,12 @@ class TestAdhocPhaseEndpoint:
         assert (execution.config or {}).get("phase_overrides") == {
             "skip_calibration_age_check": True
         }
+        # Codex #238 迟到 C-2: 行必须收尾 — 不许永久停在建行时的
+        # pending (执行历史/仪表盘里会显示"待执行"僵尸行)。
+        # 变异 = 砍 handler 的收尾回写块 → 这三条红。
+        assert execution.status in ("completed", "failed")
+        assert execution.completed_at is not None
+        assert execution.duration_sec is not None
 
     def test_diagnostic_run_recorded_with_correct_kind(self, lab, db):
         resp = client.post(

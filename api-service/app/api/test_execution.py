@@ -52,7 +52,10 @@ def _to_history_item(execution: TestExecution, case_name: Optional[str]) -> Exec
         started_at=execution.started_at,
         completed_at=execution.completed_at,
         executed_by=execution.executed_by,
-        error_message=execution.error_message,
+        # Codex #238 迟到 C-1: case-runner 把失败文本写在
+        # config["error_message"] 不写列 (test_case_runner.py 五处全是)
+        # — 只读列会让 failed 用例行在历史里失去诊断信息
+        error_message=execution.error_message or cfg.get("error_message"),
         validation_pass=execution.validation_pass,
     )
 
@@ -128,6 +131,7 @@ def get_execution_history(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     status: Optional[str] = None,
+    executed_by: Optional[str] = None,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     db: Session = Depends(get_db)
@@ -146,6 +150,10 @@ def get_execution_history(
 
         if status:
             query = query.filter(TestExecution.status == status)
+        if executed_by:
+            # Codex #238 迟到 C-3: 恢复查询按来源链收窄 — plan-runner 的
+            # stale running 行没人复位, 堆多了会把 case 执行挤出 limit 窗口
+            query = query.filter(TestExecution.executed_by == executed_by)
         if start_date:
             query = query.filter(TestExecution.executed_at >= start_date)
         if end_date:

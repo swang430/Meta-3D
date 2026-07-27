@@ -324,6 +324,15 @@ paths:
           schema:
             type: string
             enum: [running, completed, failed, cancelled]
+        - name: executed_by
+          in: query
+          description: |
+            Filter by execution chain (test_case_runner / test_plan_runner /
+            commissioning_api / commissioning_adhoc). The case library's
+            active-run recovery passes test_case_runner so stale plan-runner
+            running rows cannot crowd out the case execution.
+          schema:
+            type: string
       responses:
         '200':
           description: Execution history page
