@@ -156,6 +156,40 @@ def delete_execution_record(
     return None
 
 
+# ==================== ARCH-1 S1: 用例执行 cancel ====================
+
+
+class CancelExecutionResponse(BaseModel):
+    execution_id: UUID
+    status: str
+
+
+@router.post("/{execution_id}/cancel", response_model=CancelExecutionResponse)
+def cancel_case_execution(
+    execution_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """协作式取消用例执行 (ARCH-1 S1): 置 cancelled, runner 在相位间尊重。
+
+    只对 case-runner 的执行行有意义; 404 = 行不存在, 409 = 行不在 running
+    (已完成/已失败/已取消的执行没有可取消的东西)。挂在本前缀是因为它操作
+    的是 TestExecution 行 — 与楼上的 attach-dut 同一张表 (本文件的
+    GET/{record_id} 查的是计划级历史表, S2 统一收口)。
+    """
+    from app.services.test_case_runner import request_cancel
+
+    try:
+        cancelled = request_cancel(db, execution_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    if not cancelled:
+        raise HTTPException(
+            status_code=409,
+            detail="执行不在 running 状态, 无可取消",
+        )
+    return CancelExecutionResponse(execution_id=execution_id, status="cancelled")
+
+
 # ==================== Phase 2l: DUT Attach 显式入口 ====================
 
 

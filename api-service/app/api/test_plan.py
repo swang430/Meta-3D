@@ -490,6 +490,102 @@ def delete_test_case(
     return None
 
 
+# ==================== ARCH-1 S1: TestCase 直接执行 ====================
+# 正式测试执行正门 (设计稿 docs/design/arch-1-testcase-first-simplification.md
+# §2.3): 用例库点执行 → case-runner (5 相位链, 与暗室首测同一套 executors)。
+# 路径挂在现有 /test-plans/cases 组下 — URL 前缀重构是另一件事 (设计稿 §4)。
+
+
+class CaseExecuteResponse(BaseModel):
+    execution_id: UUID
+    snapshot_test_case_id: UUID
+    source_test_case_id: UUID
+    status: str
+
+
+class CaseExecutionStatusResponse(BaseModel):
+    execution_id: UUID
+    status: str
+    source_test_case_id: Optional[str] = None
+    phase_progress: List[dict] = []
+    failed_phase: Optional[str] = None
+    error_message: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+
+@router.post(
+    "/cases/{test_case_id}/execute",
+    response_model=CaseExecuteResponse,
+    status_code=202,
+)
+async def execute_test_case(
+    test_case_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """TestCase 直接执行: 快照参数 → 后台 5 相位链。
+
+    409 = 已有执行在跑 (全局单飞, 含与计划 runner 互斥);
+    422 = 用例类型不支持 / 参数无法构成有效配置; 404 = 用例不存在。
+    进度轮询 GET /test-plans/cases/executions/{execution_id}。
+    """
+    from app.services.test_case_runner import (
+        CaseNotExecutable,
+        CaseRunBusy,
+        launch_test_case_execution,
+    )
+
+    try:
+        execution = launch_test_case_execution(db, test_case_id)
+    except CaseRunBusy as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except CaseNotExecutable as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return CaseExecuteResponse(
+        execution_id=execution.id,
+        snapshot_test_case_id=execution.test_case_id,
+        source_test_case_id=test_case_id,
+        status=execution.status,
+    )
+
+
+@router.get(
+    "/cases/executions/{execution_id}",
+    response_model=CaseExecutionStatusResponse,
+)
+def get_case_execution_status(
+    execution_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """执行状态轮询 (GUI 用)。
+
+    注: 不挂 /test-executions/{id} — 那条现有路由查的是计划级历史表
+    (TestPlanExecution), S2 统一历史数据源时一并收口。
+    """
+    from app.models.test_plan import TestExecution
+
+    execution = (
+        db.query(TestExecution).filter(TestExecution.id == execution_id).first()
+    )
+    if execution is None:
+        raise HTTPException(status_code=404, detail="Execution not found")
+    cfg = execution.config or {}
+    return CaseExecutionStatusResponse(
+        execution_id=execution.id,
+        status=execution.status or "unknown",
+        source_test_case_id=cfg.get("source_test_case_id"),
+        phase_progress=list(cfg.get("phase_progress") or []),
+        failed_phase=cfg.get("failed_phase"),
+        error_message=cfg.get("error_message"),
+        started_at=execution.started_at.isoformat() if execution.started_at else None,
+        completed_at=(
+            execution.completed_at.isoformat() if execution.completed_at else None
+        ),
+    )
+
+
 # ==================== Test Plan Instance Endpoints ====================
 
 @router.get("/{test_plan_id}", response_model=TestPlanResponse)
@@ -956,6 +1052,32 @@ async def start_test_plan(
             status_code=409,
             detail=f"另一测试计划 ({_active}) 正在执行 — 等它结束或先取消它",
         )
+    # ARCH-1 S1 (agent F1): 互斥要双向 — 用例执行在跑时计划同样拒绝,
+    # 否则双 5 相位链并发打同一套 HAL (case-runner 只挡了 case→plan 半边)。
+    # Codex #237 C2: 内存判据之外补 DB 行判据 (镜像 case-runner 自己的
+    # dangling 检查) — 跨进程可见, 也堵"重启后复位没跑到"的残留窗口。
+    from app.models.test_plan import TestExecution as _TE
+    from app.services.test_case_runner import (
+        RUNNER_MARKER as _CASE_MARKER,
+        has_active_case_run,
+    )
+    _active_case = has_active_case_run()
+    if _active_case is None:
+        _case_row = (
+            db.query(_TE)
+            .filter(_TE.status == "running")
+            .filter(_TE.executed_by == _CASE_MARKER)
+            .first()
+        )
+        _active_case = str(_case_row.id) if _case_row is not None else None
+    if _active_case is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"已有用例执行在跑 (execution {_active_case}) — "
+                "等它结束或先取消它"
+            ),
+        )
     _running_row = (
         db.query(TestPlan)
         .filter(
@@ -1126,6 +1248,30 @@ async def resume_test_plan(
         raise HTTPException(
             status_code=409,
             detail=f"另一测试计划 ({_active}) 正在执行 — 等它结束或先取消它",
+        )
+    # ARCH-1 S1 (agent F1): 与 start 同 — 用例执行在跑时 resume 也拒绝
+    # (Codex #237 C2: 同样内存 + DB 双判据)
+    from app.models.test_plan import TestExecution as _TE
+    from app.services.test_case_runner import (
+        RUNNER_MARKER as _CASE_MARKER,
+        has_active_case_run,
+    )
+    _active_case = has_active_case_run()
+    if _active_case is None:
+        _case_row = (
+            db.query(_TE)
+            .filter(_TE.status == "running")
+            .filter(_TE.executed_by == _CASE_MARKER)
+            .first()
+        )
+        _active_case = str(_case_row.id) if _case_row is not None else None
+    if _active_case is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"已有用例执行在跑 (execution {_active_case}) — "
+                "等它结束或先取消它"
+            ),
         )
     _running_row = (
         db.query(TestPlan)

@@ -72,6 +72,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning(f"stale RUNNING 计划复位失败 (不阻塞启动): {e}")
 
+    # ARCH-1 S1: 同理复位 case-runner 的 stale running 执行行 (谓词收窄到
+    # executed_by=test_case_runner, 不碰暗室首测/VRT/计划链的执行行)。
+    try:
+        from app.services.test_case_runner import (
+            reset_stale_running_case_executions,
+        )
+        reset_stale_running_case_executions()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"stale 用例执行复位失败 (不阻塞启动): {e}")
+
     # P0-1: auto-seed factory-defaults DB on startup (idempotent — re-runs
     # are no-ops via bootstrap_history version pinning). Without this an
     # empty deploy strands the operator on "create your first chamber"

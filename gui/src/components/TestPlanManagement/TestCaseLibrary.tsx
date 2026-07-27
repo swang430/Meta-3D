@@ -42,10 +42,14 @@ import {
 import { notifications } from '@mantine/notifications';
 import {
   listTestCases,
+  executeTestCase,
+  getCaseExecutionStatus,
+  cancelCaseExecution,
   type TestCaseSummary,
   type TestCaseType,
   getTestTypeLabel,
 } from '../../api/testPlanService';
+import { IconPlayerPlay, IconPlayerStop } from '@tabler/icons-react';
 import { TestCaseEditModal } from './TestCaseEditModal';
 
 // Category icon mapping
@@ -78,6 +82,12 @@ interface TestCaseLibraryProps {
   onSelectionChange?: (ids: string[]) => void;
   /** Callback to open create test case dialog */
   onCreateNew?: () => void;
+  /** ARCH-1 S1: 是否显示"直接执行"按钮。只有正门用例库 Tab 传 true —
+      本组件也被创建计划向导弹窗复用, 那个上下文里绿色 ▶ 会被当成"勾选"
+      误点, 且弹窗关闭即丢 activeRun (取消入口跟着丢)。显隐不从
+      selectionMode 反推 (正门 Tab 也以 selectionMode 渲染, 已被实测证伪),
+      用显式 prop。 */
+  enableExecute?: boolean;
 }
 
 export function TestCaseLibrary({
@@ -85,6 +95,7 @@ export function TestCaseLibrary({
   selectedIds = [],
   onSelectionChange,
   onCreateNew,
+  enableExecute = false,
 }: TestCaseLibraryProps) {
   const [testCases, setTestCases] = useState<TestCaseSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -92,6 +103,100 @@ export function TestCaseLibrary({
   const [filterType, setFilterType] = useState<string | null>(null);
   // Phase 3b: edit dialog state
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  // ── ARCH-1 S1: 用例直接执行 (正式测试正门) ──
+  // activeRun 非空 = 有执行在跑; 单飞由后端 409 保证, 前端只是把按钮禁掉。
+  const [activeRun, setActiveRun] = useState<{
+    executionId: string;
+    sourceId: string;
+    status: string;
+    phaseDone: number;
+  } | null>(null);
+
+  useEffect(() => {
+    // 轮询执行状态 (2s); 终态 → 通知 + 清 activeRun。interval 随
+    // executionId 变化重建, 卸载时清理。
+    if (!activeRun?.executionId) return;
+    const executionId = activeRun.executionId;
+    const timer = setInterval(async () => {
+      try {
+        const st = await getCaseExecutionStatus(executionId);
+        if (st.status === 'running') {
+          setActiveRun((prev) =>
+            prev && prev.executionId === executionId
+              ? { ...prev, status: st.status, phaseDone: st.phase_progress.length }
+              : prev
+          );
+          return;
+        }
+        clearInterval(timer);
+        setActiveRun(null);
+        if (st.status === 'completed') {
+          notifications.show({
+            title: '用例执行完成',
+            message: `5 相位全部通过 (execution ${executionId.slice(0, 8)}…)`,
+            color: 'green',
+          });
+        } else if (st.status === 'cancelled') {
+          notifications.show({
+            title: '用例执行已取消',
+            message: '已在相位间停止',
+            color: 'yellow',
+          });
+        } else {
+          notifications.show({
+            title: '用例执行失败',
+            message: st.failed_phase
+              ? `相位 ${st.failed_phase} 失败: ${st.error_message ?? '明细见执行记录'}`
+              : st.error_message ?? '明细见执行记录',
+            color: 'red',
+          });
+        }
+      } catch {
+        // 单次轮询失败不终止 (后端短暂不可达时继续轮)
+      }
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [activeRun?.executionId]);
+
+  const handleExecute = async (tc: TestCaseSummary) => {
+    try {
+      const res = await executeTestCase(tc.id);
+      setActiveRun({
+        executionId: res.execution_id,
+        sourceId: tc.id,
+        status: res.status,
+        phaseDone: 0,
+      });
+      notifications.show({
+        title: '执行已启动',
+        message: `${tc.name} — 5 相位链后台执行中`,
+        color: 'blue',
+      });
+    } catch (error: any) {
+      const detail = error?.response?.data?.detail;
+      notifications.show({
+        title: '无法启动执行',
+        message: typeof detail === 'string' ? detail : '启动失败, 明细见后端日志',
+        color: 'red',
+      });
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!activeRun) return;
+    try {
+      await cancelCaseExecution(activeRun.executionId);
+      // 状态推进交给轮询 (cancel 是协作式, 相位间生效)
+    } catch (error: any) {
+      const detail = error?.response?.data?.detail;
+      notifications.show({
+        title: '取消失败',
+        message: typeof detail === 'string' ? detail : '取消请求失败',
+        color: 'red',
+      });
+    }
+  };
 
   const loadTestCases = useCallback(async () => {
     setLoading(true);
@@ -348,6 +453,49 @@ export function TestCaseLibrary({
                                   <IconEdit size={14} />
                                 </ActionIcon>
                               </Tooltip>
+                            )}
+                            {/* ARCH-1 S1: 用例直接执行 (只挂 MIMO_OTA — 其它
+                                类型后端 422, 不摆一个必失败的按钮)。
+                                显隐走显式 enableExecute prop (见 props 注释):
+                                selectionMode 反推被实测证伪, 无条件渲染又会
+                                泄漏进创建计划向导弹窗 (agent F3)。 */}
+                            {enableExecute && tc.test_type === 'MIMO_OTA' && (
+                              activeRun?.sourceId === tc.id ? (
+                                <Tooltip
+                                  label={`执行中 (相位 ${activeRun.phaseDone}/5) — 点击取消`}
+                                  withArrow
+                                >
+                                  <ActionIcon
+                                    size="xs"
+                                    variant="filled"
+                                    color="yellow"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleCancel()
+                                    }}
+                                  >
+                                    <IconPlayerStop size={14} />
+                                  </ActionIcon>
+                                </Tooltip>
+                              ) : (
+                                <Tooltip
+                                  label={activeRun ? '已有执行在跑 (单飞)' : '直接执行 (5 相位链)'}
+                                  withArrow
+                                >
+                                  <ActionIcon
+                                    size="xs"
+                                    variant="subtle"
+                                    color="green"
+                                    disabled={!!activeRun}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleExecute(tc)
+                                    }}
+                                  >
+                                    <IconPlayerPlay size={14} />
+                                  </ActionIcon>
+                                </Tooltip>
+                              )
                             )}
                           </Group>
                         </Group>

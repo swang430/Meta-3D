@@ -18,7 +18,9 @@ const testPlanClient = axios.create({
 // ==================== Type Definitions ====================
 
 export type TestPlanStatus = 'draft' | 'ready' | 'queued' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
-export type TestCaseType = 'TRP' | 'TIS' | 'Throughput' | 'Handover' | 'MIMO' | 'ChannelModel' | 'Custom';
+// ARCH-1 S1: 补齐后端 TestCaseType 枚举缺的两个值 (models/test_plan.py L34-44
+// 有 9 个, 此前这里只有 7 — MIMO_OTA 种子模板在运行时真实存在, 类型是 stale 的)
+export type TestCaseType = 'TRP' | 'TIS' | 'Throughput' | 'Handover' | 'MIMO' | 'MIMO_OTA' | 'ChannelModel' | 'VirtualRoadTest' | 'Custom';
 
 export interface TestPlan {
   id: string;
@@ -371,7 +373,9 @@ export function getTestTypeLabel(type: TestCaseType): string {
     Throughput: '吞吐量测试',
     Handover: '切换测试',
     MIMO: 'MIMO 性能',
+    MIMO_OTA: 'MIMO OTA 吞吐',
     ChannelModel: '信道模型',
+    VirtualRoadTest: '虚拟路测',
     Custom: '自定义测试',
   };
   return labels[type] || type;
@@ -387,4 +391,44 @@ export function formatDuration(minutes?: number): string {
 export function calculateProgress(plan: TestPlan): number {
   if (plan.total_test_cases === 0) return 0;
   return Math.round((plan.completed_test_cases / plan.total_test_cases) * 100);
+}
+
+// ==================== ARCH-1 S1: TestCase 直接执行 ====================
+// 正式测试执行正门 (设计稿 arch-1-testcase-first-simplification.md §2.3):
+// 用例库点执行 → 后端 case-runner 5 相位链 (与暗室首测同一套 executors)。
+
+export interface CaseExecuteResponse {
+  execution_id: string
+  snapshot_test_case_id: string
+  source_test_case_id: string
+  status: string
+}
+
+export interface CaseExecutionStatus {
+  execution_id: string
+  status: string
+  source_test_case_id?: string | null
+  phase_progress: { type: string; status: string }[]
+  failed_phase?: string | null
+  error_message?: string | null
+  started_at?: string | null
+  completed_at?: string | null
+}
+
+export async function executeTestCase(caseId: string): Promise<CaseExecuteResponse> {
+  const response = await testPlanClient.post(`/test-plans/cases/${caseId}/execute`)
+  return response.data
+}
+
+export async function getCaseExecutionStatus(
+  executionId: string
+): Promise<CaseExecutionStatus> {
+  const response = await testPlanClient.get(
+    `/test-plans/cases/executions/${executionId}`
+  )
+  return response.data
+}
+
+export async function cancelCaseExecution(executionId: string): Promise<void> {
+  await testPlanClient.post(`/test-executions/${executionId}/cancel`)
 }
