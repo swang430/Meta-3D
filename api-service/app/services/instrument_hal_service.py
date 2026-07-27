@@ -750,6 +750,13 @@ class InstrumentHALService:
                                     f"[HAL] {cat.category_key}: binding 未选 topology "
                                     f"profile, fallback 到系统默认 {topology_id!r} (P1-17)"
                                 )
+                        # P0-2 D5: 默认配置没落上就不许报 ok — 此前 applied=False
+                        # 只打 WARNING 就绪照绿, 现场"重启后 UXM 变了配置"其实是
+                        # 这里下发失败/被 binding 旧选择压住, 但面板全绿没人知道。
+                        # warn 不挡路 (默认配置属 bring-up 捷径, 路径 B 有 measure
+                        # precheck 门兜底), 但操作员必须看得见 (用户 2026-07-26
+                        # 采纳 warn 方案)。
+                        topo_apply_issue: Optional[str] = None
                         if topology_id and hasattr(driver, "apply_topology_profile"):
                             # P2-1 Phase 2.1: driver consumes the dataclass;
                             # lookup happens here so HAL stays DB-free.
@@ -778,7 +785,9 @@ class InstrumentHALService:
                                         f"clearing won't happen automatically, fix via PUT "
                                         f"/instruments/{cat.category_key}/topology-profile."
                                     )
-                                    profile_dc = None
+                                    topo_apply_issue = (
+                                        f"topology 选择已失效 ({topology_id!r} 不存在)"
+                                    )
                             if profile_dc is not None:
                                 try:
                                     result = await driver.apply_topology_profile(profile_dc)
@@ -788,6 +797,10 @@ class InstrumentHALService:
                                             f"topology profile {topology_id!r} NOT applied — "
                                             f"reason={result.get('reason')}"
                                         )
+                                        topo_apply_issue = (
+                                            f"默认配置 {topology_id!r} 未应用: "
+                                            f"{result.get('reason')}"
+                                        )
                                 except Exception as e:
                                     logger.warning(
                                         f"[HAL] {cat.category_key}: "
@@ -795,13 +808,21 @@ class InstrumentHALService:
                                         f"{type(e).__name__}: {e} — driver loaded but "
                                         f"binding's topology not applied"
                                     )
+                                    topo_apply_issue = (
+                                        f"默认配置 {topology_id!r} 下发抛 "
+                                        f"{type(e).__name__}: {e}"
+                                    )
 
                         report_rows.append(DriverReadinessRow(
                             category=cat.category_key,
                             model=f"{model.vendor} {model.model}",
                             endpoint=endpoint_str,
-                            status="ok",
-                            detail=f"{DriverClass.__name__}",
+                            status="warn" if topo_apply_issue else "ok",
+                            detail=(
+                                f"{DriverClass.__name__} — ⚠ {topo_apply_issue}; "
+                                f"仪表当前配置未知, 正式测试前必须走一次下发"
+                                if topo_apply_issue else f"{DriverClass.__name__}"
+                            ),
                             extras=extras,
                             network_reachable=host_reachable,
                         ))
@@ -966,12 +987,16 @@ class InstrumentHALService:
         lines.append("═" * len(header_label))
         # Driver tallies (unchanged from pre-P3-5).
         if rows:
-            ok = sum(1 for r in rows if r.status == "ok")
+            # P0-2 D5: "warn" (驱动已加载, 默认配置没落上) 也算 loaded ——
+            # 否则头行报 "0/1 loaded" 跟表格自相矛盾; warn 单列不并进 fail。
+            ok = sum(1 for r in rows if r.status in ("ok", "warn"))
+            warn = sum(1 for r in rows if r.status == "warn")
             fail = sum(1 for r in rows if r.status == "fail")
             skipped = sum(1 for r in rows if r.status == "skipped")
             lines.append(
                 f"{ok}/{len(rows)} categories loaded · "
                 f"{fail} failed · {skipped} skipped"
+                + (f" · {warn} warn(配置未落)" if warn else "")
             )
 
         for line in lines:

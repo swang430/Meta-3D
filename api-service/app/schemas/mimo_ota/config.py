@@ -312,6 +312,8 @@ class MIMOOTAConfiguration(BaseModel):
     #   mimo_layers/调制 (小区级层数继承但 RRC 请求层数是 TestCase 的 — 层数
     #   **未纳入 live 核对**, 见 roadmap backlog); ④ 输入电平闭环会调 UXM DL
     #   功率; ⑤ 跑完 cleanup 会 stop_signaling (CELL OFF) — 第二次 inherit
+    #   (P0-2 S5 补: inherit 还会**读**小区状态 BSE:STATus + live 频率做知情
+    #   继承核对 — 只读不写, OFF 不拦 [CELL ON 时缓存配置自动应用], 读不到才告警)
     #   继承的是"上次跑完态"非原始 EMQuest 态。
     #   用途: 复用现场已实证的仪器态; 也是"ON 态同值写触发意外重配"(#214 门审
     #   F5 零实证雷) 的现场逃生通道。

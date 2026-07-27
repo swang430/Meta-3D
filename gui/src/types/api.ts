@@ -194,7 +194,9 @@ export type RecentTestsResponse = {
 // api.generated.ts). Re-declared here as hand-written types to match the
 // service.ts convention (service consumes ../types/api, not generated).
 
-export type ReadinessDriverStatus = 'ok' | 'fail' | 'skipped'
+// P0-2 D5: 'warn' = 驱动可用但默认配置没落上 (apply 失败 / binding 选择已失效)
+// — 仪表当前配置未知, 正式测试前必须走一次下发。不挡路但必须可见 (黄灯)。
+export type ReadinessDriverStatus = 'ok' | 'warn' | 'fail' | 'skipped'
 
 // P1-11: when status === 'fail', why. 'network' = TCP preflight couldn't
 // reach the host (most likely wrong /24 subnet); 'scpi' = TCP reached but

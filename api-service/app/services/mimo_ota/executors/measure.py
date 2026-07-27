@@ -763,6 +763,25 @@ class MeasureExecutor(IStepExecutor):
                         "能力/失败) — UXM 频率核对未发生, 继承态未经比对",
                         context.test_execution.id,
                     )
+                # P0-2 D6 (S5): inherit 此前只核对频率身份, 不核对小区状态。
+                # 补一次真值源读取 (get_cell_state 已换 BSE:STATus:NR5G, D1)
+                # 当现场证据行: OFF **不算错** (手册: OFF 态缓存的配置在
+                # CELL ON 时自动应用, 后续 start_signaling 会拉起); 但读不到
+                # (ERROR) 要大声 — 那说明"继承了什么"完全不可知。
+                if hasattr(base_station, "get_cell_state"):
+                    _inherit_cs = await base_station.get_cell_state()
+                    _cs_txt = getattr(_inherit_cs, "value", str(_inherit_cs))
+                    if _cs_txt == "ERROR":
+                        logger.warning(
+                            "[%s] 开关1 inherit: 小区状态读不到 (ERROR) — "
+                            "继承态不可知, 频率核对结果是唯一依据",
+                            context.test_execution.id,
+                        )
+                    else:
+                        logger.info(
+                            "[%s] 开关1 inherit: 小区状态核对 = %s",
+                            context.test_execution.id, _cs_txt,
+                        )
             else:
                 uxm_identity = (
                     base_station.get_frequency_identity()

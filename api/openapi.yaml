@@ -631,7 +631,8 @@ components:
           type: string
         status:
           type: string
-          enum: [ok, fail, skipped]
+          # P0-2 D5: warn = 驱动可用但默认配置没落上 (apply 失败/binding 选择失效)
+          enum: [ok, warn, fail, skipped]
         detail:
           type: string
         fail_kind:

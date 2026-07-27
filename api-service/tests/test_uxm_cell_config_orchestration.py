@@ -234,12 +234,19 @@ class TestCellOnOffOrchestration:
                        for w in written), written
 
     @pytest.mark.asyncio
-    async def test_no_bw_change_no_state_probe(self, driver_irat):
+    async def test_no_bw_change_no_state_wrap(self, driver_irat):
+        """无 BW 改动 → 不做 OFF→ON 环绕 (DUT 不掉线)。
+
+        P0-2 D2 后断言改钉**真实后果** (没有 ACTive:STATe 0/1 写入), 不再钉
+        "零次开关探测"这个代理量 — 批次收尾的 APPLY 决策现在合法地探一次开关
+        (只读, 不影响 DUT), 旧断言会把它误伤。"""
         sess, written = wire_echo_visa(driver_irat, cell_active=True)
         ok = await driver_irat.set_cell_config({"band": "N78", "arfcn": 636666})
         assert ok is True
-        queried = [c.args[0] for c in sess.query.call_args_list]
-        assert not any("ACTive:STATe?" in q for q in queried), queried
+        assert not any(
+            "ACTive:STATe 0" in w or w.endswith("ACTive:STATe 1")
+            for w in written
+        ), written
 
 
 class TestBwIdempotentSkip:

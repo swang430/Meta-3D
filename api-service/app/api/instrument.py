@@ -2393,7 +2393,7 @@ class DriverReadinessRowResponse(BaseModel):
     category: str
     model: str
     endpoint: str
-    status: str  # "ok" | "fail" | "skipped"
+    status: str  # "ok" | "warn" | "fail" | "skipped" — warn: 驱动可用但默认配置没落上 (P0-2 D5)
     detail: str
     extras: Dict[str, Any] = {}
     # P1-11: when status=="fail", "network" (TCP unreachable — likely
