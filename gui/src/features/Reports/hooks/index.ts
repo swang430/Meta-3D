@@ -6,7 +6,7 @@
 
 export { useReportGeneration } from './useReportGeneration'
 export type {
-  TestPlanExecutionRecord,
+  ExecutionRecord,
   RoadTestExecutionRecord,
   ReportGenerationOptions,
 } from './useReportGeneration'

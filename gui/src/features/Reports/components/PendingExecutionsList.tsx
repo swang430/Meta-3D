@@ -33,18 +33,28 @@ import { useQuery } from '@tanstack/react-query'
 import client from '../../../api/client'
 import {
   useReportGeneration,
-  type TestPlanExecutionRecord,
   type RoadTestExecutionRecord,
 } from '../hooks'
 
-interface TestPlanExecutionsResponse {
-  total: number
-  items: TestPlanExecutionRecord[]
+// ARCH-1 S2: 待归档行来自 test_executions 本表 (与执行历史同源同形状),
+// id 就是 TestExecution.id — 报告 test_execution_ids 直接引用。
+interface PendingExecutionItem {
+  id: string
+  case_name: string | null
+  status: string
+  duration_sec: number | null
+  completed_at: string | null
+  executed_by: string | null
 }
 
-// Fetch completed test plan executions
-async function fetchTestPlanExecutions(): Promise<TestPlanExecutionRecord[]> {
-  const response = await client.get<TestPlanExecutionsResponse>('/test-executions', {
+interface PendingExecutionsResponse {
+  total: number
+  items: PendingExecutionItem[]
+}
+
+// Fetch completed test executions
+async function fetchCompletedExecutions(): Promise<PendingExecutionItem[]> {
+  const response = await client.get<PendingExecutionsResponse>('/test-executions', {
     params: { status: 'completed' },
   })
   return response.data.items
@@ -76,12 +86,13 @@ export function PendingExecutionsList() {
   const [activeTab, setActiveTab] = useState<string | null>('test-plans')
 
   // Report generation hook (unified with HistoryTab)
-  const { generateTestPlanReport, generateVRTReport, isGenerating } = useReportGeneration()
+  const { generateExecutionReport, generateVRTReport, isGenerating } = useReportGeneration()
 
-  // Fetch test plan executions
-  const { data: testPlanExecutions, isLoading: loadingTestPlans, refetch: refetchTestPlans } = useQuery({
-    queryKey: ['pending-test-plan-executions'],
-    queryFn: fetchTestPlanExecutions,
+  // Fetch completed test executions
+  // (ARCH-1 S2: key 换代 — 数据形状变了必须换 queryKey, 旧缓存是计划摘要形状)
+  const { data: completedExecutions, isLoading: loadingTestPlans, refetch: refetchTestPlans } = useQuery({
+    queryKey: ['pending-executions', 'v2'],
+    queryFn: fetchCompletedExecutions,
   })
 
   // Fetch road test executions
@@ -97,7 +108,7 @@ export function PendingExecutionsList() {
   })
 
   // Filter to get only pending (unarchived) executions
-  const pendingTestPlans = testPlanExecutions?.filter(
+  const pendingTestPlans = completedExecutions?.filter(
     (exec) => !archivedIds?.testPlan.has(exec.id)
   ) || []
 
@@ -106,8 +117,8 @@ export function PendingExecutionsList() {
   ) || []
 
   // Use unified report generation hook
-  const handleGenerateTestPlanReport = (record: TestPlanExecutionRecord) => {
-    generateTestPlanReport(record)
+  const handleGenerateExecutionReport = (record: PendingExecutionItem) => {
+    generateExecutionReport(record)
   }
 
   // Use unified report generation hook with VRT content_data fetching
@@ -122,13 +133,26 @@ export function PendingExecutionsList() {
 
   const isLoading = loadingTestPlans || loadingRoadTests || loadingReports
 
-  const formatDuration = (minutes: number): string => {
-    if (minutes < 60) {
-      return `${Math.round(minutes)} 分钟`
-    }
+  // ARCH-1 S2: 执行行的时长是秒 (duration_sec), null 显示 "—"
+  const formatDurationSec = (seconds: number | null): string => {
+    if (seconds === null) return '—'
+    if (seconds < 60) return `${Math.round(seconds)} 秒`
+    const minutes = seconds / 60
+    if (minutes < 60) return `${Math.round(minutes)} 分钟`
     const hours = Math.floor(minutes / 60)
     const mins = Math.round(minutes % 60)
     return `${hours} 小时 ${mins} 分钟`
+  }
+
+  // 来源链显示名 (与 HistoryTab 同映射)
+  const sourceLabel = (executedBy: string | null): string => {
+    const sourceMap: Record<string, string> = {
+      test_case_runner: '用例执行',
+      test_plan_runner: '计划链(旧)',
+      commissioning_api: '暗室首测',
+      commissioning_adhoc: '单相位诊断',
+    }
+    return (executedBy && sourceMap[executedBy]) || executedBy || '—'
   }
 
   const formatSeconds = (seconds: number): string => {
@@ -162,7 +186,7 @@ export function PendingExecutionsList() {
       {/* Header */}
       <Group justify="space-between">
         <Text size="sm" c="dimmed">
-          共 {totalPending} 个待归档的执行记录 (测试计划: {pendingTestPlans.length}, 虚拟路测: {pendingRoadTests.length})
+          共 {totalPending} 个待归档的执行记录 (测试执行: {pendingTestPlans.length}, 虚拟路测: {pendingRoadTests.length})
         </Text>
         <Button
           variant="light"
@@ -181,7 +205,7 @@ export function PendingExecutionsList() {
             leftSection={<IconTestPipe size={16} />}
             rightSection={pendingTestPlans.length > 0 ? <Badge size="sm">{pendingTestPlans.length}</Badge> : null}
           >
-            测试计划
+            测试执行
           </Tabs.Tab>
           <Tabs.Tab
             value="road-tests"
@@ -192,22 +216,21 @@ export function PendingExecutionsList() {
           </Tabs.Tab>
         </Tabs.List>
 
-        {/* Test Plans Tab */}
+        {/* Test Executions Tab (ARCH-1 S2: 行来自 test_executions 本表) */}
         <Tabs.Panel value="test-plans" pt="md">
           {pendingTestPlans.length === 0 ? (
             <Alert icon={<IconAlertCircle size={16} />} color="gray">
-              没有待归档的测试计划执行记录
+              没有待归档的测试执行记录
             </Alert>
           ) : (
             <Card withBorder>
               <Table highlightOnHover>
                 <Table.Thead>
                   <Table.Tr>
-                    <Table.Th>测试计划</Table.Th>
-                    <Table.Th>成功率</Table.Th>
+                    <Table.Th>测试用例</Table.Th>
                     <Table.Th>执行时长</Table.Th>
                     <Table.Th>完成时间</Table.Th>
-                    <Table.Th>执行者</Table.Th>
+                    <Table.Th>来源</Table.Th>
                     <Table.Th>操作</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
@@ -215,41 +238,29 @@ export function PendingExecutionsList() {
                   {pendingTestPlans.map((record) => (
                     <Table.Tr key={record.id}>
                       <Table.Td>
-                        <Stack gap={2}>
-                          <Text size="sm" fw={500}>
-                            {record.test_plan_name}
-                          </Text>
-                          <Text size="xs" c="dimmed">
-                            版本: {record.test_plan_version}
-                          </Text>
-                        </Stack>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text
-                          size="sm"
-                          fw={600}
-                          c={record.success_rate > 0.8 ? 'green' : 'orange'}
-                        >
-                          {Math.round(record.success_rate * 100)}%
+                        <Text size="sm" fw={500}>
+                          {record.case_name ?? '未命名用例'}
                         </Text>
                       </Table.Td>
                       <Table.Td>
-                        <Text size="sm">{formatDuration(record.duration_minutes)}</Text>
+                        <Text size="sm">{formatDurationSec(record.duration_sec)}</Text>
                       </Table.Td>
                       <Table.Td>
                         <Text size="sm" c="dimmed">
-                          {parseServerDateTime(record.completed_at).toLocaleDateString()}
+                          {record.completed_at
+                            ? parseServerDateTime(record.completed_at).toLocaleDateString()
+                            : '—'}
                         </Text>
                       </Table.Td>
                       <Table.Td>
-                        <Text size="sm">{record.started_by}</Text>
+                        <Text size="sm">{sourceLabel(record.executed_by)}</Text>
                       </Table.Td>
                       <Table.Td>
                         <Tooltip label="生成报告并归档">
                           <ActionIcon
                             variant="light"
                             color="green"
-                            onClick={() => handleGenerateTestPlanReport(record)}
+                            onClick={() => handleGenerateExecutionReport(record)}
                             loading={isGenerating(record.id)}
                           >
                             <IconFileReport size={16} />

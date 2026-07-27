@@ -266,29 +266,32 @@ export type HALReadinessResponse = {
 }
 
 // ── ② 运行态 — GET /test-executions?limit=N ──
-// These are TERMINAL-STATE history rows (completed/failed/cancelled), NOT
-// a live-running stream. The cockpit zone is titled "最近执行" accordingly.
+// ARCH-1 S2: 数据源是 test_executions 本表 — 每次执行一行 (用例执行 /
+// 暗室首测 / 诊断), 含 running 行。名字终于说真话: 行真的是执行行了。
+// 三态: phases_* 为 null = 该执行链不记相位进度 (显示 "—");
+// validation_pass 为 null = 未判定。
 
-export type TestExecutionStatus = 'completed' | 'failed' | 'cancelled' | string
+export type TestExecutionStatus =
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | string
 
 export type TestExecutionItem = {
   id: string
-  test_plan_id: string
-  test_plan_name: string
-  test_plan_version: string
+  case_name: string | null
+  source_test_case_id: string | null
   status: TestExecutionStatus
-  total_steps: number
-  completed_steps: number
-  failed_steps: number
-  skipped_steps: number
-  success_rate: number // 0–1 fraction (backend completed/total); ×100 for display
-  started_at: string
-  completed_at: string
-  duration_minutes: number
-  error_summary?: string | null
-  notes?: string | null
-  started_by: string
-  created_at: string
+  phases_total: number | null
+  phases_done: number | null
+  phases_failed: number | null
+  duration_sec: number | null
+  started_at: string | null
+  completed_at: string | null
+  executed_by: string | null
+  error_message: string | null
+  validation_pass: boolean | null
 }
 
 export type TestExecutionListResponse = {

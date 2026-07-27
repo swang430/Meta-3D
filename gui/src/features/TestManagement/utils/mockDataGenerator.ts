@@ -10,7 +10,6 @@ import type {
   UnifiedTestPlan,
   TestStep,
   TestQueueSummary,
-  TestExecutionRecord,
   SequenceLibraryItem,
   TestPlanStatus,
   StepParameter,
@@ -207,52 +206,8 @@ export function generateMockQueue(plans: UnifiedTestPlan[]): TestQueueSummary[] 
   }))
 }
 
-/**
- * Generate mock execution history
- */
-export function generateMockHistory(count: number = 20): TestExecutionRecord[] {
-  const records: TestExecutionRecord[] = []
-  const statuses: ('completed' | 'failed' | 'cancelled')[] = [
-    'completed',
-    'completed',
-    'completed',
-    'failed',
-    'cancelled',
-  ]
-
-  for (let i = 0; i < count; i++) {
-    const status = statuses[Math.floor(Math.random() * statuses.length)]
-    const totalSteps = Math.floor(Math.random() * 10) + 5
-    const completedSteps =
-      status === 'completed' ? totalSteps : Math.floor(totalSteps * 0.7)
-    const failedSteps = status === 'failed' ? Math.floor(Math.random() * 3) + 1 : 0
-    const skippedSteps = totalSteps - completedSteps - failedSteps
-
-    records.push({
-      id: generateId(),
-      test_plan_id: generateId(),
-      test_plan_name: `MIMO OTA 测试计划 ${i + 1}`,
-      test_plan_version: '1.0.0',
-      status,
-      total_steps: totalSteps,
-      completed_steps: completedSteps,
-      failed_steps: failedSteps,
-      skipped_steps: skippedSteps,
-      started_at: randomPastDate(30),
-      completed_at: randomPastDate(25),
-      duration_minutes: 60 + Math.random() * 120,
-      started_by: 'TestUser',
-      success_rate: completedSteps / totalSteps,
-      error_summary:
-        status === 'failed' ? '部分测试步骤执行失败，详见错误日志' : undefined,
-      notes: i % 3 === 0 ? '执行备注信息' : undefined,
-    })
-  }
-
-  return records.sort(
-    (a, b) => new Date(b.completed_at).getTime() - new Date(a.completed_at).getTime(),
-  )
-}
+// (ARCH-1 S2: generateMockHistory 已删 — 历史行换形到 test_executions 本表,
+//  这个零消费方的旧计划摘要形状 mock 随之退场)
 
 /**
  * Generate mock sequence library
@@ -304,14 +259,12 @@ export function generateMockSequenceLibrary(count: number = 30): SequenceLibrary
 export class MockDataStore {
   private plans: UnifiedTestPlan[]
   private steps: Map<string, TestStep[]>
-  private history: TestExecutionRecord[]
   private sequenceLibrary: SequenceLibraryItem[]
 
   constructor() {
     // Initialize with mock data
     this.plans = generateMockTestPlans(15)
     this.steps = new Map()
-    this.history = generateMockHistory(25)
     this.sequenceLibrary = generateMockSequenceLibrary(30)
 
     // Generate steps for each plan
@@ -393,11 +346,6 @@ export class MockDataStore {
   // Queue
   getQueue() {
     return generateMockQueue(this.plans)
-  }
-
-  // History
-  getHistory() {
-    return this.history
   }
 
   // Sequence Library

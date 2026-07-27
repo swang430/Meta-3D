@@ -54,11 +54,9 @@ export {
   useCompleteExecution,
 } from './useTestExecution'
 
-// Test History
+// Test History (ARCH-1 S2: 单条/删除 hook 随换源退场)
 export {
   useTestHistory,
-  useExecutionRecord,
-  useDeleteExecutionRecord,
   testHistoryKeys,
 } from './useTestHistory'
 

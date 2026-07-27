@@ -568,17 +568,20 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List test plan execution history (P2-8 cockpit run zone)
-         * @description Terminal-state execution rows (completed / failed / cancelled),
-         *     newest first by completed_at. This is HISTORY — not a live-running
-         *     stream. The cockpit "最近执行" zone polls this with limit=5.
+         * List execution history (ARCH-1 S2, sourced from test_executions)
+         * @description One row per execution from the test_executions table itself
+         *     (case-runner / commissioning / diagnostics; VRT rows excluded),
+         *     newest first by executed_at. Includes RUNNING rows — the test case
+         *     library uses status=running to restore the active-run badge after
+         *     navigation (Codex #237 C3). Row id is TestExecution.id and can be
+         *     passed directly as a report's test_execution_ids.
          */
         get: {
             parameters: {
                 query?: {
                     limit?: number;
                     skip?: number;
-                    status?: "completed" | "failed" | "cancelled";
+                    status?: "running" | "completed" | "failed" | "cancelled";
                 };
                 header?: never;
                 path?: never;
@@ -931,28 +934,27 @@ export interface components {
             probed: boolean;
         };
         /**
-         * @description P2-8: one terminal-state execution row. Mirrors api-service
-         *     TestPlanExecutionResponse.
+         * @description ARCH-1 S2: one execution row from the test_executions table itself
+         *     (case-runner / plan-runner step / commissioning / ad-hoc diagnostic;
+         *     VRT rows excluded via mode IS NULL). Includes running rows. Mirrors
+         *     api-service ExecutionHistoryItem. phases_* null = that execution
+         *     chain does not record phase progress; validation_pass null = not
+         *     judged.
          */
         TestExecutionItem: {
             id: string;
-            test_plan_id: string;
-            test_plan_name: string;
-            test_plan_version: string;
-            /** @enum {string} */
-            status: "completed" | "failed" | "cancelled";
-            total_steps: number;
-            completed_steps: number;
-            failed_steps: number;
-            skipped_steps: number;
-            success_rate: number;
-            started_at: string;
-            completed_at: string;
-            duration_minutes: number;
-            error_summary?: string | null;
-            notes?: string | null;
-            started_by: string;
-            created_at: string;
+            case_name?: string | null;
+            source_test_case_id?: string | null;
+            status: string;
+            phases_total?: number | null;
+            phases_done?: number | null;
+            phases_failed?: number | null;
+            duration_sec?: number | null;
+            started_at?: string | null;
+            completed_at?: string | null;
+            executed_by?: string | null;
+            error_message?: string | null;
+            validation_pass?: boolean | null;
         };
         TestExecutionListResponse: {
             total: number;

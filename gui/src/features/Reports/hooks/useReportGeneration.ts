@@ -12,20 +12,13 @@ import * as ReportsAPI from '../api/reportsAPI'
 import * as RoadTestAPI from '../../../api/roadTestService'
 import type { CreateReportRequest } from '../types'
 
-// Test Plan Execution Record interface
-export interface TestPlanExecutionRecord {
+// 执行记录 (ARCH-1 S2: 行来自 test_executions 本表, id 就是
+// TestExecution.id — 报告的 test_execution_ids 直接引用它,
+// 收集器真查得到行。旧计划摘要形状的 TestPlanExecutionRecord 已退场。)
+export interface ExecutionRecord {
   id: string
-  test_plan_id: string
-  test_plan_name: string
-  test_plan_version: string
+  case_name: string | null
   status: string
-  success_rate: number
-  total_steps: number
-  completed_steps: number
-  failed_steps: number
-  duration_minutes: number
-  started_by: string
-  completed_at: string
 }
 
 // Virtual Road Test Execution Record interface
@@ -69,32 +62,35 @@ export function useReportGeneration() {
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set())
 
   // Invalidate all relevant caches after report generation
+  // (ARCH-1 S2: pending / history 两个 key 随换源换代 — 返回形状变了
+  // 必须换 key, 前缀 invalidate 对新 key 仍命中)
   const invalidateCaches = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['reports'] })
     queryClient.invalidateQueries({ queryKey: ['archived-execution-ids'] })
-    queryClient.invalidateQueries({ queryKey: ['pending-test-plan-executions'] })
+    queryClient.invalidateQueries({ queryKey: ['pending-executions', 'v2'] })
     queryClient.invalidateQueries({ queryKey: ['pending-road-test-executions'] })
-    queryClient.invalidateQueries({ queryKey: ['test-management', 'history'] })
+    queryClient.invalidateQueries({ queryKey: ['test-management', 'history', 'v2'] })
   }, [queryClient])
 
-  // Mutation for test plan report generation
-  const testPlanMutation = useMutation({
+  // 执行报告 (ARCH-1 S2: record.id = TestExecution.id, 收集器按它查执行行;
+  // 不再传 test_plan_id — 用例执行不挂计划, 收集器无 plan 路径已体面化)
+  const executionMutation = useMutation({
     mutationFn: async ({
       record,
       options = {},
     }: {
-      record: TestPlanExecutionRecord
+      record: ExecutionRecord
       options?: ReportGenerationOptions
     }) => {
       const opts = { ...defaultOptions, ...options }
+      const displayName = record.case_name ?? '未命名用例'
 
       const reportRequest: CreateReportRequest = {
-        title: `${record.test_plan_name} - 执行报告`,
+        title: `${displayName} - 执行报告`,
         report_type: 'single_execution',
         format: opts.format,
         generated_by: 'user',
-        description: `测试计划 "${record.test_plan_name}" (版本 ${record.test_plan_version}) 的执行报告`,
-        test_plan_id: record.test_plan_id,
+        description: `测试用例 "${displayName}" 的执行报告`,
         test_execution_ids: [record.id],
         include_raw_data: opts.includeRawData,
         include_charts: opts.includeCharts,
@@ -190,12 +186,12 @@ export function useReportGeneration() {
     },
   })
 
-  // Generate report for test plan execution
-  const generateTestPlanReport = useCallback(
-    async (record: TestPlanExecutionRecord, options?: ReportGenerationOptions) => {
+  // Generate report for a test execution (ARCH-1 S2)
+  const generateExecutionReport = useCallback(
+    async (record: ExecutionRecord, options?: ReportGenerationOptions) => {
       setGeneratingIds((prev) => new Set(prev).add(record.id))
       try {
-        await testPlanMutation.mutateAsync({ record, options })
+        await executionMutation.mutateAsync({ record, options })
       } finally {
         setGeneratingIds((prev) => {
           const next = new Set(prev)
@@ -204,7 +200,7 @@ export function useReportGeneration() {
         })
       }
     },
-    [testPlanMutation]
+    [executionMutation]
   )
 
   // Generate report for VRT execution
@@ -231,10 +227,10 @@ export function useReportGeneration() {
   )
 
   return {
-    generateTestPlanReport,
+    generateExecutionReport,
     generateVRTReport,
     isGenerating,
-    isTestPlanGenerating: testPlanMutation.isPending,
+    isExecutionGenerating: executionMutation.isPending,
     isVRTGenerating: vrtMutation.isPending,
   }
 }

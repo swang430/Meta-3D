@@ -275,6 +275,42 @@ class TestPlanExecutionListResponse(BaseModel):
     items: List[TestPlanExecutionResponse]
 
 
+# ==================== Execution History Schemas (ARCH-1 S2) ====================
+
+
+class ExecutionHistoryItem(BaseModel):
+    """执行历史行 — 数据源是 test_executions 本表 (mode IS NULL 排除 VRT)。
+
+    专为历史列表新建, 不复用 TestExecutionResponse: 那个 schema 把
+    test_plan_id / test_case_id / execution_order 声明成必填, 而用例执行
+    这三个字段是 NULL, 直接复用会 500 (设计稿 §5.3)。
+
+    三态字段语义 (别把 None 渲染成 False):
+    - phases_*: None = 该执行链不记相位进度 (commissioning / plan-runner 行),
+      GUI 显示 "—"; 只有 case-runner 行有数值。
+    - validation_pass: None = 未判定 (执行中 / 未做判定), 不是"失败"。
+    """
+    id: UUID
+    case_name: Optional[str] = None  # 快照 TestCase 名; join 不到 (快照被删) 时 None
+    source_test_case_id: Optional[str] = None  # case-runner 行才有, 徽标挂回原用例用
+    status: str
+    phases_total: Optional[int] = None
+    phases_done: Optional[int] = None
+    phases_failed: Optional[int] = None
+    duration_sec: Optional[float] = None
+    started_at: Optional[UTCDateTime] = None
+    completed_at: Optional[UTCDateTime] = None
+    executed_by: Optional[str] = None  # 来源列: test_case_runner / test_plan_runner / commissioning_*
+    error_message: Optional[str] = None
+    validation_pass: Optional[bool] = None
+
+
+class ExecutionHistoryListResponse(BaseModel):
+    """执行历史列表响应 (ARCH-1 S2)"""
+    total: int
+    items: List[ExecutionHistoryItem]
+
+
 # ==================== Test Queue Schemas ====================
 
 class QueueTestPlanRequest(BaseModel):

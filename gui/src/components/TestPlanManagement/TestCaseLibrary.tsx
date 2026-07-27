@@ -45,6 +45,7 @@ import {
   executeTestCase,
   getCaseExecutionStatus,
   cancelCaseExecution,
+  fetchRunningExecution,
   type TestCaseSummary,
   type TestCaseType,
   getTestTypeLabel,
@@ -112,6 +113,34 @@ export function TestCaseLibrary({
     status: string;
     phaseDone: number;
   } | null>(null);
+
+  useEffect(() => {
+    // ARCH-1 S2 (Codex #237 C3): 挂载时查一次"在跑的执行", 把导航切走
+    // 再切回来丢掉的 activeRun (含取消入口) 恢复出来。判据在 DB 不在
+    // 进程内存 — 跨进程可见, 与后端单飞 409 是两层 (409 保证不双跑,
+    // 这条只是把入口找回来)。用现成的 status=running 参数, 零新增端点。
+    let cancelled = false;
+    (async () => {
+      try {
+        const running = await fetchRunningExecution();
+        if (!cancelled && running && running.source_test_case_id) {
+          setActiveRun((prev) =>
+            prev ?? {
+              executionId: running.id,
+              sourceId: running.source_test_case_id!,
+              status: running.status,
+              phaseDone: running.phases_done ?? 0,
+            }
+          );
+        }
+      } catch {
+        // 恢复失败不打扰 (后端不可达时按钮照常, 单飞仍由后端 409 兜底)
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     // 轮询执行状态 (2s); 终态 → 通知 + 清 activeRun。interval 随

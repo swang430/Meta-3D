@@ -432,3 +432,20 @@ export async function getCaseExecutionStatus(
 export async function cancelCaseExecution(executionId: string): Promise<void> {
   await testPlanClient.post(`/test-executions/${executionId}/cancel`)
 }
+
+// ARCH-1 S2 (Codex #237 C3): 查"在跑的执行"用于导航后恢复 activeRun。
+// 走执行历史的现成 status=running 参数, 零新增端点。
+export interface RunningExecutionRow {
+  id: string
+  source_test_case_id: string | null
+  status: string
+  phases_done: number | null
+}
+
+export async function fetchRunningExecution(): Promise<RunningExecutionRow | null> {
+  const response = await testPlanClient.get<{ items: RunningExecutionRow[] }>(
+    '/test-executions',
+    { params: { status: 'running', limit: 1 } }
+  )
+  return response.data.items[0] ?? null
+}
