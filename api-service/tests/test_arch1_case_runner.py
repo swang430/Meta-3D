@@ -258,6 +258,24 @@ class TestSingleFlight:
         assert r2.status_code == 409
         assert "用例执行" in r2.json()["detail"]
 
+    def test_plan_start_rejected_by_db_case_row(self, db, lab):
+        """Codex #237 C2: 内存判据空但 DB 有本 runner 的 running 行 (残留 /
+        跨进程) → 计划 start 仍 409 (变异: 砍 DB 判据 → 红)。"""
+        source = _make_case(db, lab, name="DB判据")
+        db.add(TestExecution(
+            test_case_id=source.id, status="running",
+            started_at=datetime.utcnow(), executed_by=tcr.RUNNER_MARKER,
+            config={},
+        ))
+        db.commit()
+        client = TestClient(app)
+        r = client.post(
+            f"/api/v1/test-plans/{uuid.uuid4()}/start",
+            json={"started_by": "tester"},
+        )
+        assert r.status_code == 409
+        assert "用例执行" in r.json()["detail"]
+
     @pytest.mark.asyncio
     async def test_db_dangling_running_row_blocks(self, db, lab):
         """DB 双判据: 进程标志空但 DB 有本 runner 的 running 行 → 拒。"""
@@ -302,27 +320,37 @@ class TestCancel:
 
     @pytest.mark.asyncio
     async def test_cancel_during_final_phase_respected(self, db, lab):
-        """cancel 落在最后一个相位执行期间 → 收尾不把 cancelled 覆盖成
-        completed (agent F4③: 锁住收尾"只改 config 不整行赋值"的行为,
-        将来改成整行覆盖会在这红)。"""
+        """cancel 落在最后一个相位 (REPORT) 执行期间 → 终态必须是 cancelled
+        (agent F4③ + Codex #237 C5)。fake 复刻真 REPORT executor 的关键行为:
+        它会把 execution.status 直接写 "completed" 并 commit (report.py
+        "Mark execution lifecycle complete"), 把 cancel 端点刚写的 cancelled
+        覆盖掉 — 收尾必须凭 config.cancel_requested 痕迹救回。
+        变异: 砍收尾的 cancel_requested 检查 → 本测试红 (终态错成 completed)。"""
         source = _make_case(db, lab, name="末相位取消")
         calls = {"n": 0}
 
         async def _dispatch(ctx):
             calls["n"] += 1
             if calls["n"] == 5:
+                # 先到 cancel (独立 session, 模拟 API)
                 s2 = TestingSessionLocal()
                 try:
                     tcr.request_cancel(s2, ctx.test_execution.id)
                 finally:
                     s2.close()
+                # 再复刻真 REPORT executor: 同 runner session 直接覆盖 status
+                from datetime import datetime as _dt
+                ctx.test_execution.status = "completed"
+                ctx.test_execution.completed_at = _dt.utcnow()
+                ctx.db.commit()
             return _ok()
 
         with patch.object(tcr, "dispatch_step", new=_dispatch):
             ex = await _launch_and_wait(db, source.id)
         assert calls["n"] == 5
         assert ex.status == "cancelled", (
-            "收尾把外部 cancelled 覆盖掉了 — 外部终态必须被尊重"
+            "REPORT executor 把 cancelled 覆盖成 completed 后收尾没救回 — "
+            "取消不许被相位收尾吃掉"
         )
         assert len((ex.config or {}).get("phase_progress") or []) == 5
 

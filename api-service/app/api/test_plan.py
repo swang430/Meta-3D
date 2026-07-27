@@ -1054,8 +1054,22 @@ async def start_test_plan(
         )
     # ARCH-1 S1 (agent F1): 互斥要双向 — 用例执行在跑时计划同样拒绝,
     # 否则双 5 相位链并发打同一套 HAL (case-runner 只挡了 case→plan 半边)。
-    from app.services.test_case_runner import has_active_case_run
+    # Codex #237 C2: 内存判据之外补 DB 行判据 (镜像 case-runner 自己的
+    # dangling 检查) — 跨进程可见, 也堵"重启后复位没跑到"的残留窗口。
+    from app.models.test_plan import TestExecution as _TE
+    from app.services.test_case_runner import (
+        RUNNER_MARKER as _CASE_MARKER,
+        has_active_case_run,
+    )
     _active_case = has_active_case_run()
+    if _active_case is None:
+        _case_row = (
+            db.query(_TE)
+            .filter(_TE.status == "running")
+            .filter(_TE.executed_by == _CASE_MARKER)
+            .first()
+        )
+        _active_case = str(_case_row.id) if _case_row is not None else None
     if _active_case is not None:
         raise HTTPException(
             status_code=409,
@@ -1236,8 +1250,21 @@ async def resume_test_plan(
             detail=f"另一测试计划 ({_active}) 正在执行 — 等它结束或先取消它",
         )
     # ARCH-1 S1 (agent F1): 与 start 同 — 用例执行在跑时 resume 也拒绝
-    from app.services.test_case_runner import has_active_case_run
+    # (Codex #237 C2: 同样内存 + DB 双判据)
+    from app.models.test_plan import TestExecution as _TE
+    from app.services.test_case_runner import (
+        RUNNER_MARKER as _CASE_MARKER,
+        has_active_case_run,
+    )
     _active_case = has_active_case_run()
+    if _active_case is None:
+        _case_row = (
+            db.query(_TE)
+            .filter(_TE.status == "running")
+            .filter(_TE.executed_by == _CASE_MARKER)
+            .first()
+        )
+        _active_case = str(_case_row.id) if _case_row is not None else None
     if _active_case is not None:
         raise HTTPException(
             status_code=409,

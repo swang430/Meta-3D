@@ -189,6 +189,14 @@ def request_cancel(db, execution_id: UUID) -> bool:
         return False
     execution.status = "cancelled"
     execution.completed_at = datetime.utcnow()
+    # Codex #237 C5: cancel 落在 REPORT 相位执行中时, report executor 会把
+    # status 直接写回 "completed" 并 commit (report.py "Mark execution
+    # lifecycle complete", 暗室首测链依赖它, 不能改) — 在 config 里留一个
+    # executor 不碰的痕迹, 收尾据此把终态救回 cancelled。
+    cfg = dict(execution.config or {})
+    cfg["cancel_requested"] = True
+    execution.config = cfg
+    flag_modified(execution, "config")
     db.commit()
     logger.info("[case-runner] execution %s 被请求取消 (相位间生效)", execution_id)
     return True
@@ -291,6 +299,11 @@ async def _run_case_loop(db, execution_id: UUID) -> None:
         ctx = build_step_context(db, execution, test_case, d)
         result = await dispatch_step(ctx)
         phase_status = result.status.value
+        # 相位执行期间外部可能写过 config (cancel 的 cancel_requested) —
+        # 先刷最新再 append, 否则用相位前的 stale 快照整字段覆盖会把
+        # 外部写入抹掉 (Codex #237 C5 的伴生修)。
+        db.expire(execution)
+        db.refresh(execution)
         cfg = dict(execution.config or {})
         cfg.setdefault("phase_progress", []).append(
             {"type": d.type, "status": phase_status}
@@ -309,6 +322,18 @@ async def _run_case_loop(db, execution_id: UUID) -> None:
 
     db.expire(execution)
     db.refresh(execution)
+    if (execution.config or {}).get("cancel_requested"):
+        # Codex #237 C5: cancel 的 status 可能已被 REPORT executor 覆盖成
+        # completed — 痕迹在就强制回 cancelled, 取消不许被相位收尾吃掉。
+        if execution.status != "cancelled":
+            execution.status = "cancelled"
+            execution.completed_at = datetime.utcnow()
+            db.commit()
+            logger.info(
+                "[case-runner] execution %s 末相位覆盖了 cancelled, 已救回",
+                execution_id,
+            )
+        return
     if execution.status != "running":
         return  # cancel 在最后一个相位后到达 — 尊重外部终态
     if failed_phase is not None:
