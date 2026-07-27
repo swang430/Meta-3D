@@ -52,6 +52,12 @@ def wire_echo_visa(driver, cell_active: bool = False, overrides: dict | None = N
             return "1"
         if c.endswith("ACTive:STATe?"):
             return state["active"]
+        # P0-2 D3 二层闸: APPLY 后驱动会查协议栈状态 (BSE:STATus:NR5G:...?),
+        # OFF/读不到会被如实判失败。fake 按真机健康形态回: 开关 ON → 协议栈
+        # ON, 开关 OFF → OFF (跟随 state, 与 R2 "两者独立"的故障形态相反 —
+        # 故障形态由 test_p02 的专门用例覆盖, 这里的测试对象是编排不是闸)。
+        if c.startswith("BSE:STATus:NR5G"):
+            return "ON" if state["active"] == "1" else "OFF"
         base = c.rstrip("?")
         for w in reversed(written):
             if w.startswith(base + " "):
@@ -234,12 +240,19 @@ class TestCellOnOffOrchestration:
                        for w in written), written
 
     @pytest.mark.asyncio
-    async def test_no_bw_change_no_state_probe(self, driver_irat):
+    async def test_no_bw_change_no_state_wrap(self, driver_irat):
+        """无 BW 改动 → 不做 OFF→ON 环绕 (DUT 不掉线)。
+
+        P0-2 D2 后断言改钉**真实后果** (没有 ACTive:STATe 0/1 写入), 不再钉
+        "零次开关探测"这个代理量 — 批次收尾的 APPLY 决策现在合法地探一次开关
+        (只读, 不影响 DUT), 旧断言会把它误伤。"""
         sess, written = wire_echo_visa(driver_irat, cell_active=True)
         ok = await driver_irat.set_cell_config({"band": "N78", "arfcn": 636666})
         assert ok is True
-        queried = [c.args[0] for c in sess.query.call_args_list]
-        assert not any("ACTive:STATe?" in q for q in queried), queried
+        assert not any(
+            "ACTive:STATe 0" in w or w.endswith("ACTive:STATe 1")
+            for w in written
+        ), written
 
 
 class TestBwIdempotentSkip:

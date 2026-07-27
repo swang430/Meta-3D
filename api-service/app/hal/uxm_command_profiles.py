@@ -106,6 +106,14 @@ class UxmTestApp:
     CELL_STATE_ON: Optional[str] = None
     CELL_STATE_OFF: Optional[str] = None
     CELL_STATE_QUERY: Optional[str] = None
+    # P0-2 D1: **小区状态**查询 (协议栈真实状态, 手册枚举 OFF|ON|CONNected|IDLE|
+    # AGGRegated|ACTivated)。与 CELL_STATE_QUERY 严格区分 —— 后者在 IRAT 方言上
+    # 是 ACTive:STATe 开关位置回读 (回 "0"/"1", 自己写进去的值的回声), 不是状态。
+    # R1 教训: attach 轮询曾用开关查询判 "CONN" ∈ "1", 任何情况都不可能成立。
+    CELL_STATUS_QUERY: Optional[str] = None
+    # P0-2 D2: 小区 ON 态写配置后让其进协议栈的应用命令 (手册: "most configuration
+    # changes won't be applied until this command"; OFF 态写会在开小区时自动应用)。
+    CONFIG_APPLY: Optional[str] = None
 
     # --- Throughput measurement ---
     MEAS_BTHROUGHPUT_DL_START: Optional[str] = None
@@ -227,6 +235,11 @@ class Uxm5GNRTestAppProfile(UxmTestApp):
 
     CELL_STATE_ON = "CONFig:NR5G:{cell}:ACTive:STATe ON"
     CELL_STATE_OFF = "CONFig:NR5G:{cell}:ACTive:STATe OFF"
+    # 旧代码注释宣称本方言回文本态 (IDLE/ATT/CONN/ON/OFF) — **出处不可考**
+    # (git log 无实证 commit; 2026-05 现场那台确认是 IRAT), 待现场核, 别当已证
+    # 事实引用 (agent 门 F5)。与 IRAT 回 "0"/"1" 不同。CELL_STATUS_QUERY 在本
+    # 方言**手册查不到**故留 None (不照抄 IRAT 写法去猜), 状态轮询 fallback
+    # 用本条的文本回复 + 白名单解析 (枚举外不判, 超时带字面值可现场定位)。
     CELL_STATE_QUERY = "CONFig:NR5G:{cell}:ACTive:STATe?"
 
     MEAS_BTHROUGHPUT_DL_START = "MEASure:NR5G:{cell}:BTHRoughput:DL:TSTatistics:STARt"
@@ -331,7 +344,21 @@ class UxmLteNrIratProfile(UxmTestApp):
     CELL_ACTIVE = "BSE:CONFig:NR5G:{cell}:ACTive:STATe"
     CELL_STATE_ON = "BSE:CONFig:NR5G:{cell}:ACTive:STATe 1"
     CELL_STATE_OFF = "BSE:CONFig:NR5G:{cell}:ACTive:STATe 0"
+    # ⚠ 开关位置回读 (回 "0"/"1" — 自己写进去的值的回声), **不是小区状态**。
+    # 合法用途只有一种: 判"要不要 OFF→写→ON 环绕"(set_cell_config BW 段)。
+    # attach / 状态判定一律用下面的 CELL_STATUS_QUERY (P0-2 R1/R2)。
     CELL_STATE_QUERY = "BSE:CONFig:NR5G:{cell}:ACTive:STATe?"
+    # P0-2 D1 (手册 NR Cell > Config "NR Connection Status"):
+    #   Range: OFF | ON | CONNected | IDLE | AGGRegated | ACTivated
+    # 这才是协议栈的真话 — 现场 07-21 "ACTive=1 但 STATus 持续 OFF" 里,
+    # 前者是回声, 后者是仪器实况。
+    CELL_STATUS_QUERY = "BSE:STATus:NR5G:{cell}?"
+    # P0-2 D2 (手册 General > Miscellaneous "Apply Configured Changes"):
+    # ON 态写的配置进缓存, 发本命令才进协议栈; OFF 态写会在开小区时自动应用。
+    # 技术层全局动作 (刷**所有** NR 小区的挂起配置; 带小区的 ...:CELLn:APPLY
+    # 手册标 deprecated 且行为相同, 不用)。Imm Action / No query — 无完成查询,
+    # 不跟 *OPC?, 生效确认靠 CELL_STATUS_QUERY 轮询。
+    CONFIG_APPLY = "BSE:CONFig:NR5G:APPLY"
 
     MEAS_BTHROUGHPUT_DL_JSON = "BSE:MEASure:NR5G:{cell}:BTHRoughput:DL:TSTatistics:JSON?"
 

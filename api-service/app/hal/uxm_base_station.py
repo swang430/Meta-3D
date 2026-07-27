@@ -472,8 +472,12 @@ class RealUxmDriver(BaseStationDriver):
     async def disconnect(self) -> bool:
         """断开 VISA 连接"""
         try:
-            if self._cell_state != CellState.OFF:
-                await self.stop_signaling()
+            # P0-2 F1 (agent 门 P1): **无条件**发 stop_signaling, 不看缓存门。
+            # D1 之后 _cell_state 只从状态查询解析来 — 轮询零次成功 (会话错位/
+            # 未知形态) 时它停在 OFF, 旧门 `!= OFF` 会跳过 stop → 小区带着下行
+            # 功率没人关。代价不对称: 对 OFF 小区多发一次 stop 是无害冗余
+            # (stop_signaling 自 catch 异常), 漏发是仪器带功率没人管。
+            await self.stop_signaling()
 
             if self._visa_session:
                 self._visa_session.close()
@@ -694,6 +698,12 @@ class RealUxmDriver(BaseStationDriver):
 
     def _readback_verify(self, cell: str, config: Dict[str, Any]) -> List[str]:
         """写后回读对账 (P1-19): 对本次下发过的 ARFCN / BW / DL 功率逐项回读比对。
+
+        ⚠ P0-2 D3 定位: 本方法是**一层·配置回读** —— 读 `BSE:CONFig:...?`,
+        只证明"命令被接受、值没被拒/钳", **不证明协议栈在用它** (R4: APPLY 前
+        这些查询可能返回缓存值 → 假绿闭环)。二层·生效核对 = APPLY 后的
+        `BSE:STATus:NR5G:<cell>?` + P2-11 频率一致性网, **判绿只能靠二层**。
+        R4 (回读到底是缓存还是生效) 待现场用 uxm_config_truth_probe 序列验一次。
 
         语义: 回读异常或空响应 → 单项跳过 (方言能力不齐放行, debug 记录);
         回读成功但与下发值不一致 → 记入 mismatch (caller fail-loud)。
@@ -1160,6 +1170,124 @@ class RealUxmDriver(BaseStationDriver):
             finally:
                 self._visa_session.timeout = _t
 
+            # ---- P0-2 D2: ON 态直写批次收尾必须 APPLY ----
+            # 手册 (General > Misc "Apply Configured Changes"): 小区 ON 时写的
+            # 配置只进缓存, "most configuration changes won't be applied until
+            # this command"; OFF 态写会在开小区时自动应用 (不需要发)。
+            # 写入契约:
+            #   OFF 态写配置 → 不发 APPLY (下次 ON 自动应用)
+            #   ON  态写配置 → 批次收尾发**一次** BSE:CONFig:NR5G:APPLY
+            # 判据 = 此刻开关位置 (BW 环绕路刚恢复 ON, 多发一次 APPLY 是无害
+            # no-op — 挂起清单已被重开小区清掉; 换简单判据不值得为省一条命令
+            # 追踪每笔写入时的开关态)。
+            # ⚠ APPLY 是技术层全局动作, 刷**所有** NR 小区挂起配置 — 当前只用
+            # CELL1, 上 SCell 时重审。无完成查询 (Imm Action/No query), 不跟
+            # *OPC?; 生效确认 = 下面的回读对账 + 小区状态。
+            apply_cmd = self._cmd("CONFIG_APPLY")
+            if apply_cmd is not None and config:
+                on_now = False
+                switch_q = self._cmd("CELL_STATE_QUERY", cell=cell)
+                if switch_q is not None:
+                    try:
+                        # 判据与 BW 环绕探测同源 (agent 门 F3): 未知形态**保守
+                        # 视为 ON** — 漏 APPLY = R3"静默不生效"复活 (代价大),
+                        # 多 APPLY 手册明示无害。IRAT 实证回裸 "0"/"1"。
+                        _resp = (self._query(switch_q) or "").strip().upper()
+                        on_now = not (_resp in ("0", "") or "OFF" in _resp)
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            f"[UXM] APPLY 前开关探测失败 ({type(e).__name__}) — "
+                            f"保守发 APPLY (OFF 态误发无害, 手册明示)"
+                        )
+                        on_now = True
+                if on_now:
+                    self._write(apply_cmd)
+                    logger.info(
+                        "[UXM] BSE:CONFig:NR5G:APPLY 已发 — ON 态直写的配置"
+                        "刷进协议栈 (P0-2 D2; 此前从不发 = 静默不生效)"
+                    )
+                    # #236 R2 P1a: APPLY 被拒时 VISA write 照常返回, 错误只进
+                    # SYST:ERR? — 旧栈继续跑**旧**配置 (状态非 OFF) + 回读回显
+                    # 缓存**新**值 → 状态闸和回读对账双双假绿。写后必查错误
+                    # 队列 (F64R-4 同母题: 写完不查队列 = 假成功), 最多排 5 条。
+                    _apply_errs: List[str] = []
+                    for _ in range(5):
+                        try:
+                            _raw_err = (self._query("SYST:ERR?") or "").strip()
+                        except Exception as e:  # noqa: BLE001
+                            logger.warning(
+                                f"[UXM] APPLY 后 SYST:ERR? 读取失败 "
+                                f"({type(e).__name__}) — 队列状态未知, 按失败处理"
+                            )
+                            _apply_errs.append(f"<读取失败 {type(e).__name__}>")
+                            break
+                        try:
+                            _err_code: Optional[int] = int(
+                                _raw_err.split(",", 1)[0])
+                        except ValueError:
+                            _err_code = None
+                        if _err_code == 0:
+                            break
+                        _apply_errs.append(
+                            _raw_err if _err_code is not None
+                            else f"<不可解析: {_raw_err!r}>")
+                        if _err_code is None:
+                            break
+                    if _apply_errs:
+                        logger.error(
+                            f"[UXM] APPLY 被仪器拒绝/错误队列异常: "
+                            f"{_apply_errs} — 配置未进协议栈, 判失败"
+                        )
+                        self._set_status(InstrumentStatus.ERROR)
+                        return False
+
+                    # D3 二层生效核对 (#236 R1 P1: 只记日志不接闸会放行现场
+                    # 07-21 的原始故障形态"开关 ON 但协议栈 OFF")。
+                    # #236 R2 P1b: 窗口 15s 逐秒轮询 — APPLY 重配活动小区可能
+                    # 异步重启, 本方法已实证重启 10s+ 量级, 单次 1s 重试会把
+                    # 合法过渡态误判失败; 首个非 OFF 枚举态即放行, 窗口内始终
+                    # OFF/枚举外/读不到 → 配置没进协议栈, fail-loud
+                    # (通用契约: 读不到如实报, 不当成一致)。
+                    sq = self._cmd("CELL_STATUS_QUERY", cell=cell)
+                    if sq is not None:
+                        _status_after: Optional[str] = None
+                        _parsed_after: Optional[CellState] = None
+                        _waited = 0.0
+                        while True:
+                            try:
+                                _status_after = (self._query(sq) or "").strip()
+                            except Exception as e:  # noqa: BLE001
+                                logger.warning(
+                                    f"[UXM] APPLY 后状态读取失败 "
+                                    f"({type(e).__name__})"
+                                )
+                                _status_after = None
+                            _parsed_after = (
+                                self._parse_cell_status(_status_after)
+                                if _status_after is not None else None
+                            )
+                            if (_parsed_after is not None
+                                    and _parsed_after != CellState.OFF):
+                                break
+                            if _waited >= 15.0:
+                                break
+                            await asyncio.sleep(1.0)
+                            _waited += 1.0
+                        if (_parsed_after is None
+                                or _parsed_after == CellState.OFF):
+                            logger.error(
+                                f"[UXM] APPLY 后 {_waited:.0f}s 内协议栈状态"
+                                f"未离开 OFF/不可读 (最后读到 "
+                                f"{_status_after!r}, 开关 ON) — 配置未进"
+                                f"协议栈, 判失败 (P0-2 二层生效核对; "
+                                f"'ACTive=1 但 STATus OFF' 正是现场故障形态)"
+                            )
+                            self._set_status(InstrumentStatus.ERROR)
+                            return False
+                        logger.info(
+                            f"[UXM] APPLY 后小区状态: {_status_after!r} ✓"
+                        )
+
             # P1-19 ⑤: 写后回读对账 (2026-07-03 母题 "回读=echo≠生效" 的反面:
             # IRAT 上 ARFCN/BW/POWer 回读实证与面板一致, 有对账价值)。profile
             # 声明不支持 (老 App 查询超时) 或 config 显式关闭时跳过; 回读异常
@@ -1585,44 +1713,65 @@ class RealUxmDriver(BaseStationDriver):
             old_timeout = self._visa_session.timeout
             self._visa_session.timeout = VISA_TIMEOUT_CELL
 
-            # 激活小区
+            # 激活小区。⚠ P0-2 D1: 这里**不再**写 `self._cell_state = ON` ——
+            # 那是"我发了命令"的缓存断言, 不是仪器的话 (F64 `_emulation_running`
+            # 同款毛病)。状态只从下面的轮询解析来。
             self._write(self._cmds.CELL_STATE_ON.format(cell=cell))
             self._query("*OPC?")
-            self._cell_state = CellState.ON
 
             # 恢复超时并等待 UE Attach
             self._visa_session.timeout = VISA_TIMEOUT_ATTACH
 
+            # P0-2 R1 正修: 轮询**小区状态** (BSE:STATus:NR5G:<cell>?, 手册枚举
+            # OFF|ON|CONNected|IDLE|AGGRegated|ACTivated), 不是 ACTive:STATe?
+            # 开关回读 —— 后者在 IRAT 上回 "0"/"1", 旧判据 `"CONN" in "1"`
+            # 任何情况都不可能成立, attach 永远只能跑满超时。
+            # 5G_NR_Test 方言无 STATUS 命令 (手册查不到) → fallback 旧文本查询
+            # (旧注释宣称回 IDLE/ATT/CONN 文本 — 出处不可考待现场核, 白名单收
+            #  其长短双形; 枚举外不判, 超时带字面值)。
+            status_q = self._cmd("CELL_STATUS_QUERY", cell=cell)
+            poll_q = status_q or self._cmds.CELL_STATE_QUERY.format(cell=cell)
+            if status_q is None:
+                logger.info(
+                    "[UXM] 本方言无 CELL_STATUS_QUERY — attach 轮询 fallback "
+                    "旧文本状态查询 (仅 5G_NR_Test 实证形态)"
+                )
+
+            attached = False
+            last_raw = "<未读到>"
             elapsed = 0.0
             poll_interval = 2.0
             while elapsed < timeout_s:
                 await asyncio.sleep(poll_interval)
                 elapsed += poll_interval
 
-                # 查询连接状态
-                # UXM 返回: "IDLE" / "ATT" / "CONN" / "OFF"
-                state_str = self._query(
-                    self._cmds.CELL_STATE_QUERY.format(cell=cell)
-                ).strip().upper()
-
-                if "CONN" in state_str or "ATT" in state_str:
-                    self._cell_state = CellState.CONNECTED
-                    logger.info(
-                        f"[UXM] UE attached after {elapsed:.1f}s"
+                last_raw = (self._query(poll_q) or "").strip()
+                parsed = self._parse_cell_status(last_raw)
+                if parsed is None:
+                    # 白名单外 (含 IRAT 开关回读误接线时的 "0"/"1") — 不猜,
+                    # 记录后继续轮询; 超时报错会带上这个字面值。
+                    logger.warning(
+                        f"[UXM] 小区状态回复不在手册枚举内: {last_raw!r} — 不判定"
                     )
+                    continue
+                self._cell_state = parsed
+                if parsed == CellState.CONNECTED:
+                    attached = True
+                    logger.info(f"[UXM] UE attached after {elapsed:.1f}s")
                     break
 
             # 恢复默认超时
             self._visa_session.timeout = old_timeout
 
-            if self._cell_state == CellState.CONNECTED:
+            if attached:
                 return True
-            else:
-                logger.warning(
-                    f"[UXM] UE attach timeout after {timeout_s}s"
-                )
-                self._cell_state = CellState.IDLE
-                return False
+            # 如实报失败, 带上最后读到的字面值 —— 下次现场排查靠它区分
+            # "真没连上" vs "查询/解析不对" (P0-2 验收项)。
+            logger.warning(
+                f"[UXM] UE attach timeout after {timeout_s}s — "
+                f"最后一次状态回复: {last_raw!r} (查询: {poll_q})"
+            )
+            return False
 
         except Exception as e:
             logger.error(f"[UXM] start_signaling failed: {e}")
@@ -1644,19 +1793,48 @@ class RealUxmDriver(BaseStationDriver):
             logger.error(f"[UXM] stop_signaling failed: {e}")
             return False
 
+    # P0-2 D1: 手册枚举白名单 (照搬 F64R-1 七态白名单的打法 — 它当时正是靠
+    # 白名单挡住了会话错位读回的噪声)。**精确 token 匹配**, 不做子串包含 ——
+    # 旧代码 `"CONN" in state` 在 IRAT 的 "0"/"1" 回读上永假, 而 `"ON" in
+    # "CONNECTED"` 这类子串误中则会反向骗绿。长短形态都收 (SCPI 惯例)。
+    _CELL_STATUS_TOKENS = {
+        "OFF": CellState.OFF,
+        "ON": CellState.IDLE,           # 小区已起, 无 UE — 映射现有 IDLE 语义
+        "IDLE": CellState.IDLE,
+        "CONN": CellState.CONNECTED,
+        "CONNECTED": CellState.CONNECTED,
+        # ATT/ATTACHED: 旧代码注释宣称 5G_NR_Test 回此形态 (出处不可考, 无真机
+        # 记录 — 2026-05 现场那台是 IRAT), 长短双形都收, 待现场核 (agent 门 F5)
+        "ATT": CellState.CONNECTED,
+        "ATTACHED": CellState.CONNECTED,
+        "AGGR": CellState.CONNECTED,    # AGGRegated: CA 聚合态 (UE 已连)
+        "AGGREGATED": CellState.CONNECTED,
+        "ACT": CellState.CONNECTED,     # ACTivated: SCell 激活态 (UE 已连)
+        "ACTIVATED": CellState.CONNECTED,
+    }
+
+    def _parse_cell_status(self, raw: str) -> Optional[CellState]:
+        """手册枚举 → CellState; 枚举外返回 None (不猜)。"""
+        token = (raw or "").strip().strip('"').upper()
+        return self._CELL_STATUS_TOKENS.get(token)
+
     async def get_cell_state(self) -> CellState:
-        """查询小区当前状态"""
+        """查询小区当前状态 (P0-2 D1: 问协议栈真实状态, 不问开关回读)。"""
         try:
-            state = self._query(
-                self._cmds.CELL_STATE_QUERY.format(cell=self._cell_id)
-            ).strip().upper()
-            if "OFF" in state:
-                return CellState.OFF
-            elif "CONN" in state or "ATT" in state:
-                return CellState.CONNECTED
-            elif "ON" in state or "IDLE" in state:
-                return CellState.IDLE
-            return CellState.ERROR
+            q = self._cmd("CELL_STATUS_QUERY", cell=self._cell_id)
+            if q is None:
+                # 5G_NR_Test fallback: 旧文本查询 (实证回 IDLE/ATT/CONN/ON/OFF)
+                q = self._cmds.CELL_STATE_QUERY.format(cell=self._cell_id)
+            raw = (self._query(q) or "").strip()
+            parsed = self._parse_cell_status(raw)
+            if parsed is None:
+                # 枚举外 (含误接开关回读的 "0"/"1") → 如实报"读不到", 不猜。
+                logger.warning(
+                    f"[UXM] get_cell_state: 回复不在手册枚举内: {raw!r} (查询: {q})"
+                )
+                return CellState.ERROR
+            self._cell_state = parsed
+            return parsed
         except Exception:
             return CellState.ERROR
 
@@ -1692,9 +1870,9 @@ class RealUxmDriver(BaseStationDriver):
             logger.info(f"[UXM] Loading state file: {filepath}")
             self._set_status(InstrumentStatus.BUSY)
 
-            # 加载前先安全关闭小区
-            if self._cell_state != CellState.OFF:
-                await self.stop_signaling()
+            # 加载前先安全关闭小区 — P0-2 F1: 无条件, 不看缓存门 (同 disconnect:
+            # 缓存 OFF 可能是"读不到"而非真 OFF, 漏关比多关贵)。
+            await self.stop_signaling()
 
             # 设置长超时（配置文件包含大量参数，加载需要时间）
             old_timeout = self._visa_session.timeout

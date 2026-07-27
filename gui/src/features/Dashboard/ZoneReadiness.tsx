@@ -55,11 +55,13 @@ function LightIcon({ light, size = 18 }: { light: Light; size?: number }) {
   }
 }
 
-// 聚合 drivers: 有 fail → 红 / 有 skipped → 黄 / 全 ok → 绿 / 空 → 灰
+// 聚合 drivers: 有 fail → 红 / 有 warn 或 skipped → 黄 / 全 ok → 绿 / 空 → 灰
+// P0-2 D5: 'warn' (默认配置没落上, 仪表配置未知) 必须黄 — 不加这行它会
+// 落进"全 ok"分支聚合成绿, 假绿换个地方复活。
 function aggregateDriverLight(statuses: ReadinessDriverStatus[]): Light {
   if (statuses.length === 0) return 'gray'
   if (statuses.some((s) => s === 'fail')) return 'red'
-  if (statuses.some((s) => s === 'skipped')) return 'yellow'
+  if (statuses.some((s) => s === 'warn' || s === 'skipped')) return 'yellow'
   return 'green'
 }
 
@@ -114,15 +116,21 @@ function buildCells(report: HALReadinessResponse): Cell[] {
   const driverLight = aggregateDriverLight(report.drivers.map((d) => d.status))
   const failCount = report.drivers.filter((d) => d.status === 'fail').length
   const skipCount = report.drivers.filter((d) => d.status === 'skipped').length
+  const warnCount = report.drivers.filter((d) => d.status === 'warn').length
   const okCount = report.drivers.filter((d) => d.status === 'ok').length
+  // P0-2 D5 (agent 门 F4): warn 必须进主文案 — 否则单 warn 驱动会显示
+  // "全部 0 个 ok" 自相矛盾, warn 在主文案里被吞。措辞与后端头行
+  // "N warn(配置未落)" 对齐。
   const driverValue =
     report.drivers.length === 0
       ? '无驱动'
       : failCount > 0
         ? `${failCount} 个失败`
-        : skipCount > 0
-          ? `${okCount} ok / ${skipCount} 跳过`
-          : `全部 ${okCount} 个 ok`
+        : warnCount > 0
+          ? `${okCount} ok / ${warnCount} 个配置未落`
+          : skipCount > 0
+            ? `${okCount} ok / ${skipCount} 跳过`
+            : `全部 ${okCount} 个 ok`
 
   const cal = report.calibration
   const calValue =

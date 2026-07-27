@@ -849,7 +849,7 @@ export interface components {
             model: string;
             endpoint: string;
             /** @enum {string} */
-            status: "ok" | "fail" | "skipped";
+            status: "ok" | "warn" | "fail" | "skipped";
             detail: string;
             /**
              * @description P1-11: when `status == fail`, why. `network` = TCP preflight
