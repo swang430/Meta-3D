@@ -17,6 +17,11 @@ from app.models.test_plan import TestCase, TestPlanExecution, TestExecution
 router = APIRouter(prefix="/test-executions", tags=["Test Execution History"])
 
 
+def _str_or_none(value) -> Optional[str]:
+    """config 里读出来的值只有是字符串才用 (内审 F1 的收窄)。"""
+    return value if isinstance(value, str) else None
+
+
 def _to_history_item(execution: TestExecution, case_name: Optional[str]) -> ExecutionHistoryItem:
     """执行行 → 历史列表项。
 
@@ -52,10 +57,13 @@ def _to_history_item(execution: TestExecution, case_name: Optional[str]) -> Exec
         started_at=execution.started_at,
         completed_at=execution.completed_at,
         executed_by=execution.executed_by,
-        # Codex #238 迟到 C-1: case-runner 把失败文本写在
-        # config["error_message"] 不写列 (test_case_runner.py 五处全是)
-        # — 只读列会让 failed 用例行在历史里失去诊断信息
-        error_message=execution.error_message or cfg.get("error_message"),
+        # Codex #238 迟到 C-1: case-runner 的失败文本写在
+        # config["error_message"] 不写列 (三处写 config; 五个终态写入点
+        # 没有一处写列) — 只读列会让 failed 用例行在历史里失去诊断信息。
+        # 兜底读同样要 isinstance 收窄 (内审 F1): 非串会让 Pydantic 拒绝
+        # 整行 → 被外层 except 吞成空表, 正是本文件毒行不变量禁的事
+        error_message=execution.error_message or _str_or_none(
+            cfg.get("error_message")),
         validation_pass=execution.validation_pass,
     )
 

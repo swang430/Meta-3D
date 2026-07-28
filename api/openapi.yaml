@@ -321,9 +321,13 @@ paths:
             minimum: 0
         - name: status
           in: query
+          description: |
+            Row status. Covers every value test_executions.status can hold
+            for non-VRT rows: pending (session row not yet run), running,
+            completed, failed, cancelled, skipped (ad-hoc phase skipped).
           schema:
             type: string
-            enum: [running, completed, failed, cancelled]
+            enum: [pending, running, completed, failed, cancelled, skipped]
         - name: executed_by
           in: query
           description: |

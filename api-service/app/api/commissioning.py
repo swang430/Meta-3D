@@ -591,7 +591,11 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
     # 不回写的话执行历史/仪表盘里它永远显示"待执行" (实际早跑完了)。
     # REPORT executor 会把成功链置 completed, 但 adhoc 多数相位不含
     # REPORT, 这里统一按实际结果落终态。
-    execution.status = "completed" if status_value == "success" else "failed"
+    # 相位状态有四种 (StepExecutionStatus: success/failed/skipped/running),
+    # 二分成 completed/failed 会把"跳过"记成"失败" — skipped 是
+    # TestExecution.status 的合法值, 原样保留 (自查发现, 见提交说明)。
+    _PHASE_TO_ROW_STATUS = {"success": "completed", "skipped": "skipped"}
+    execution.status = _PHASE_TO_ROW_STATUS.get(status_value, "failed")
     execution.completed_at = datetime.utcnow()
     execution.duration_sec = duration_ms / 1000.0
     if error_message:

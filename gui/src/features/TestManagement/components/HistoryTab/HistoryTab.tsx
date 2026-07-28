@@ -44,12 +44,16 @@ import { useReportGeneration } from '../../../Reports/hooks'
 import type { TestExecutionRecord } from '../../types'
 
 // Helper functions for status display
+// 状态表要覆盖 test_executions.status 的全部合法值 (内审 F5): 换源后
+// pending (会话建行未跑) 与 skipped (单相位诊断跳过) 都会出现在历史里,
+// 漏了会 fallback 成原始英文
 function getStatusColor(status: string): string {
   const colorMap: Record<string, string> = {
     running: 'blue',
     completed: 'green',
     failed: 'red',
     cancelled: 'orange',
+    skipped: 'yellow',
     pending: 'gray',
   }
   return colorMap[status] || 'gray'
@@ -61,6 +65,7 @@ function getStatusLabel(status: string): string {
     completed: '已完成',
     failed: '失败',
     cancelled: '已取消',
+    skipped: '已跳过',
     pending: '待执行',
   }
   return labelMap[status] || status

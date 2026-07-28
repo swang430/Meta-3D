@@ -176,6 +176,8 @@ def test_ga_malformed_config_row_does_not_poison_list(db, lab):
         config={
             "step_descriptors": "abc",           # 非 list
             "phase_progress": ["oops", {"status": "completed"}],  # 元素混杂
+            "error_message": {"code": 500},      # 非串 (内审 F1: 会让
+            # Pydantic 拒绝整行 → 外层 except 吞成空表)
         },
         executed_by="test_case_runner",
     )
@@ -333,7 +335,8 @@ def test_gd_running_row_with_source_id(db, lab):
 
 def test_gd_error_message_falls_back_to_config(db, lab):
     """Codex #238 迟到 C-1: case-runner 把失败文本写 config["error_message"]
-    不写列 (test_case_runner.py 五处全是) — 列表和报告都要能读到。
+    不写列 (三处写 config: 复位/异常/收尾; 五个终态写入点没有一处写列,
+    另两处什么消息都不写) — 列表和报告都要能读到。
     fake 按真实 runner 形状造行 (列留空)。变异 = 去掉 fallback → 红。"""
     snapshot = _make_case(db, lab, name="失败的用例")
     execution = TestExecution(

@@ -581,7 +581,12 @@ export interface paths {
                 query?: {
                     limit?: number;
                     skip?: number;
-                    status?: "running" | "completed" | "failed" | "cancelled";
+                    /**
+                     * @description Row status. Covers every value test_executions.status can hold
+                     *     for non-VRT rows: pending (session row not yet run), running,
+                     *     completed, failed, cancelled, skipped (ad-hoc phase skipped).
+                     */
+                    status?: "pending" | "running" | "completed" | "failed" | "cancelled" | "skipped";
                     /**
                      * @description Filter by execution chain (test_case_runner / test_plan_runner /
                      *     commissioning_api / commissioning_adhoc). The case library's

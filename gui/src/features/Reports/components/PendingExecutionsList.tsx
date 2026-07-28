@@ -108,8 +108,13 @@ export function PendingExecutionsList() {
   })
 
   // Filter to get only pending (unarchived) executions
+  // 内审 F2: 单相位诊断行收尾后也是 completed, 但它不是"可归档的正式
+  // 执行" (没有相位进度, 出的报告近乎空) — 与 commissioning 列表隐藏
+  // diagnostic_ad_hoc 的既定约定同源, 这里按来源链排除
   const pendingTestPlans = completedExecutions?.filter(
-    (exec) => !archivedIds?.testPlan.has(exec.id)
+    (exec) =>
+      !archivedIds?.testPlan.has(exec.id) &&
+      exec.executed_by !== 'commissioning_adhoc'
   ) || []
 
   const pendingRoadTests = roadTestExecutions?.filter(
