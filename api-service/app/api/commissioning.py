@@ -56,6 +56,16 @@ def reset_stale_running_commissioning_executions() -> None:
     谓词收窄到本链两个 marker —— 各链自管各的复位语义
     (``test_case_runner.reset_stale_running_case_executions`` 的既定约定),
     不碰用例执行 / 计划链 / VRT 的行。
+
+    ⚠️ **单 worker 前提**（Codex #242 C1）: "启动时刻的 running 行必是僵尸"
+    只在单进程下成立。多 worker 时新 worker 启动会误杀**别的 worker 正在
+    跑的硬件执行** —— 行被标 failed 后 HAL 闸门随之停止保护那条仍在跑的
+    链，比不复位更危险。部署契约见 ``README.md`` 的 Deployment 一节
+    （已钉死 ``--workers 1`` 并写明理由）；容器入口
+    ``docker-entrypoint.sh`` 也是单进程 uvicorn。
+    本仓另两处复位（case-runner / plan-runner）依赖同一前提。
+    多 worker 化需要把判据换成 owner/lease 或进程代次 —— 架构级改动，
+    在 ARCH-1 backlog（"runner 体系整体 multi-worker 化"，#238 裁定）。
     """
     db = SessionLocal()
     try:
@@ -111,6 +121,19 @@ def _execution_marked_running(db: Session, execution: TestExecution):
     抽成 contextmanager 而不是在三处各写一遍：第四个入口将来接进来时
     照抄这一行即可，漏一个 = 那条链继续裸奔，而且是静默的。
     """
+    if execution.status == "running":
+        # 拒绝并发 (Codex #242 C2): 两个相位请求打同一 session 时, 第一个
+        # 退出会把行恢复成它进来时的 pending —— 而第二个还在用 HAL,
+        # reload 保护就此提前失效。而且这两个请求本来就在并发操作同一套
+        # 驱动, 本身是错误用法。用 DB 状态当判据 (跨 worker 可见), 不引
+        # 进程内锁。
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"会话 {execution.id} 已有相位在执行中 —— "
+                f"等它结束再跑下一个 (并发操作同一套驱动会互相踩)"
+            ),
+        )
     prior_status = execution.status
     execution.status = "running"
     if execution.started_at is None:
@@ -512,6 +535,11 @@ async def list_sessions(
         db.query(TestExecution, TestCase)
         .join(TestCase, TestExecution.test_case_id == TestCase.id)
         .filter(TestCase.test_type == MIMO_OTA_TEST_TYPE)
+        # Codex #242 C3: 与 _resolve_execution 同一条链谓词 —— 否则
+        # case-runner 的行 (快照用例同为 MIMO_OTA, 且不带
+        # diagnostic_ad_hoc / test_step_id 标记) 会列在这里, 用户点进去
+        # 却拿 404: "列得出、点不动"。列表与详情/执行路由必须同源。
+        .filter(TestExecution.executed_by.in_(COMMISSIONING_CHAINS))
         .order_by(TestExecution.executed_at.desc())
         .limit(200)
         .all()

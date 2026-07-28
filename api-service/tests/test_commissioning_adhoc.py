@@ -529,3 +529,57 @@ class TestExecutionStatusVisibleToReloadGate:
             )
         db.refresh(foreign)
         assert foreign.status == "running", "别的链的行被改写了"
+
+    def test_concurrent_phase_on_same_session_rejected(self, lab, db):
+        """Codex #242 C2: 并发相位打同一 session 会让第一个退出时把行恢复
+        成 pending, 而第二个还在用 HAL → reload 保护提前失效。用 DB 状态
+        当判据拒绝并发 (跨 worker 可见, 不引进程内锁)。
+        变异 = 砍掉进入时的 running 检查 → 本条红。
+        """
+        sess = client.post(
+            "/api/v1/commissioning/sessions",
+            json={"lab_profile_id": str(lab.id), "precheck_strict_cal": False,
+                  "precheck_strict_dut": False},
+        )
+        sid = sess.json()["session_id"]
+        # 模拟"已有相位在跑": 行处于 running
+        row = db.query(TestExecution).filter(
+            TestExecution.id == uuid.UUID(sid)).first()
+        row.status = "running"
+        db.commit()
+
+        for path in ("/run-all", "/phase/precheck"):
+            resp = client.post(f"/api/v1/commissioning/sessions/{sid}{path}")
+            assert resp.status_code == 409, (
+                f"{path} 放行了并发相位: {resp.status_code}"
+            )
+            assert "已有相位在执行中" in resp.json()["detail"]
+
+    def test_list_sessions_matches_addressable_routes(self, lab, db):
+        """Codex #242 C3: 列表与详情/执行路由必须同源 —— 否则 case-runner
+        的行列得出来、点进去却 404 ("列得出、点不动")。
+        变异 = 砍 list_sessions 的链谓词 → 本条红。
+        """
+        from app.services.mimo_ota.factory import build_mimo_ota_test_case
+
+        snapshot, _ = build_mimo_ota_test_case(
+            db, name="用例执行快照", lab_profile_id=lab.id,
+            config_overrides={}, created_by="test",
+        )
+        foreign = TestExecution(
+            id=uuid.uuid4(), test_case_id=snapshot.id, status="completed",
+            executed_by="test_case_runner",
+            config={"source_test_case_id": str(snapshot.id)},  # 无 ad_hoc/step 标记
+        )
+        db.add(foreign)
+        db.commit()
+
+        listed = client.get("/api/v1/commissioning/sessions").json()
+        listed_ids = {s["session_id"] for s in listed}
+        assert str(foreign.id) not in listed_ids, (
+            "别的链的执行被列进会话列表 — 点进去会 404"
+        )
+        # 生效端交叉验证: 列出来的每一个都必须真能取到详情
+        for sid in listed_ids:
+            r = client.get(f"/api/v1/commissioning/sessions/{sid}")
+            assert r.status_code == 200, f"列表里的 {sid} 取详情 {r.status_code}"
