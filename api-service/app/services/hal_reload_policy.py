@@ -56,7 +56,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List
 
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.models.test_plan import TestCase, TestExecution, TestPlan, TestPlanStatus
@@ -127,15 +127,36 @@ def find_execution_blockers(db: Session) -> List[ReloadBlocker]:
 
     覆盖所有走 ``dispatch_step`` 的链 —— 用例直接执行 (case-runner)、
     计划链每步、暗室首测 run-all、单相位 run_phase、诊断 adhoc ——
-    它们的共同点是执行期间行处于 ``running``。
+    它们执行期间行处于 ``running``。
+
+    **另加硬件 VRT 的 ``paused``**: VRT 的 pause 只改 DB 状态不释放任何
+    东西, resume 直接回 running, 所以暂停期间驱动照样被占 (与本模块给
+    TestPlan PAUSED 的理由一致)。``paused`` 是 TestExecution 里的
+    VRT-specific 状态, 该支要求 ``mode`` 非空。
 
     唯一排除的是 ``digital_twin``: 纯数字仿真不碰驱动, 拦它等于让一次
-    软件回放堵住整个机台。conducted / ota 是真硬件 VRT, 照拦。
+    软件回放堵住整个机台。conducted / ota 是真硬件 VRT, running 与
+    paused 都照拦。
     """
     rows = (
         db.query(TestExecution, TestCase.name)
         .outerjoin(TestCase, TestExecution.test_case_id == TestCase.id)
-        .filter(TestExecution.status == "running")
+        .filter(
+            or_(
+                TestExecution.status == "running",
+                # 硬件 VRT 的 paused 也占着驱动 (Codex #242 第二轮):
+                # VRTExecutionService.pause() 只改 DB 状态, **什么都不释放**,
+                # resume() 直接回 running —— 暂停期间 reload 会拆掉它期望
+                # resume 时还在的硬件配置。这跟本模块给 TestPlan PAUSED 写的
+                # 理由逐字一致 (见 BLOCKING_TEST_PLAN_STATUSES 注释)。
+                # paused 是 TestExecution 里的 VRT-specific 状态, 所以这支
+                # 要求 mode 非空 —— 非 VRT 行不会有 paused。
+                and_(
+                    TestExecution.status == "paused",
+                    TestExecution.mode.isnot(None),
+                ),
+            )
+        )
         .filter(
             or_(
                 TestExecution.mode.is_(None),

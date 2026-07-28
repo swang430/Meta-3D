@@ -521,3 +521,38 @@ def test_he_force_still_bypasses_execution_blockers(db):
 
     assert resp.status_code == 200, resp.text
     assert resp.json().get("forced") is True
+
+
+def test_hh_paused_hardware_vrt_blocks(db):
+    """Codex #242 第二轮: 硬件 VRT 的 **paused** 也占着驱动。
+
+    VRTExecutionService.pause() 只做 _transition(PAUSED) —— 什么都不释放,
+    resume() 直接回 running。暂停期间 reload 会拆掉它期望 resume 时还在的
+    硬件配置。这跟本模块给 TestPlan PAUSED 写的理由逐字一致。
+
+    内在一致性: 本 PR 已承认 conducted/ota 占真硬件 (据此让 running 的
+    它们拦 reload), 就不能说 paused 时不占。
+    变异 = 谓词只留 status == "running" → 本条红。
+    """
+    for hw_mode in ("conducted", "ota"):
+        ex = _make_execution(db, status="paused", mode=hw_mode,
+                             executed_by="vrt-user")
+        blockers = find_execution_blockers(db)
+        assert len(blockers) == 1, f"paused 的硬件 VRT ({hw_mode}) 没被拦住"
+        db.delete(ex)
+        db.commit()
+
+
+def test_hh_paused_digital_twin_does_not_block(db):
+    """反方向: 纯仿真的 paused 照样不拦 (它本来就不占驱动)。"""
+    _make_execution(db, status="paused", mode=NON_HAL_EXECUTION_MODE,
+                    executed_by="vrt-user")
+    assert find_execution_blockers(db) == []
+
+
+def test_hh_paused_non_vrt_row_does_not_block(db):
+    """反方向: paused 是 TestExecution 里的 VRT-specific 状态 —— 非 VRT
+    行不该因为这个新分支被误拦 (谓词那支要求 mode 非空)。"""
+    _make_execution(db, status="paused", mode=None,
+                    executed_by="test_case_runner")
+    assert find_execution_blockers(db) == []
