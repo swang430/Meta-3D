@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -349,3 +350,236 @@ class TestHALTraceTail:
         # No logs/ directory at all
         resp = client.get("/api/v1/commissioning/diagnostic/hal-trace-tail")
         assert resp.status_code == 404
+
+
+class TestExecutionStatusVisibleToReloadGate:
+    """ARCH-1 S3: 三个 commissioning 入口在跑相位期间必须把行标 running,
+    否则 HAL reload 闸门看不见它们 (现场最常用的链会裸奔)。
+
+    变异: 砍 _execution_marked_running / 砍 adhoc 的 running 写入 → 各红。
+    """
+
+    def test_adhoc_marks_running_during_dispatch(self, lab, db, monkeypatch):
+        """生效端断言: 在 dispatch 那一刻去查库, 行必须是 running
+        (不是查跑完之后的终态 —— 那证明不了闸门期间看得见)。"""
+        seen = {}
+
+        async def _fake_dispatch(ctx):
+            probe = TestingSessionLocal()
+            try:
+                row = (
+                    probe.query(TestExecution)
+                    .filter(TestExecution.id == ctx.test_execution.id)
+                    .first()
+                )
+                seen["status"] = row.status if row else None
+            finally:
+                probe.close()
+            from app.services.test_execution.executor_base import (
+                StepExecutionResult,
+                StepExecutionStatus,
+            )
+            return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
+
+        monkeypatch.setattr(
+            "app.api.commissioning.dispatch_step", _fake_dispatch)
+
+        resp = client.post(
+            "/api/v1/commissioning/diagnostic/run-phase",
+            json={"lab_profile_id": str(lab.id), "phase_name": "precheck",
+                  "run_by": "pytest"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert seen.get("status") == "running", (
+            "相位执行期间行不是 running — HAL reload 闸门看不见这条链"
+        )
+
+    def test_stale_running_commissioning_rows_are_reset(self, lab, db, monkeypatch):
+        """闸门变严的配套: 进程重启留下的僵尸 running 行必须被复位,
+        否则会**永久拦死** reload (比原来的空窗更难受)。"""
+        import app.api.commissioning as comm
+        from app.api.commissioning import (
+            reset_stale_running_commissioning_executions,
+        )
+
+        # 复位函数自建 session — 指到测试库 (与 case-runner 测试同法)
+        monkeypatch.setattr(comm, "SessionLocal", TestingSessionLocal)
+
+        rows = []
+        for marker in ("commissioning_api", "commissioning_adhoc"):
+            ex = TestExecution(
+                id=uuid.uuid4(), status="running", executed_by=marker,
+                started_at=datetime.utcnow(),
+            )
+            db.add(ex)
+            rows.append(ex)
+        # 不该被这条复位碰的: 别人家的链 (各链自管各的复位语义)
+        other = TestExecution(
+            id=uuid.uuid4(), status="running", executed_by="test_case_runner",
+            started_at=datetime.utcnow(),
+        )
+        db.add(other)
+        db.commit()
+
+        reset_stale_running_commissioning_executions()
+
+        for ex in rows:
+            db.refresh(ex)
+            assert ex.status == "failed", f"{ex.executed_by} 的僵尸行没被复位"
+            assert ex.completed_at is not None
+        db.refresh(other)
+        assert other.status == "running", "越界复位了别的链的行"
+
+    def test_run_all_marks_running_and_gate_sees_it(self, lab, db, monkeypatch):
+        """内审 F2: 本 PR 的主机制 (run-all 期间标 running) 此前无门 ——
+        把 _execution_marked_running 整段 no-op 掉, 41 个测试照样全绿。
+        生效端断言: 相位跑到一半时**闸门真看得见** (不是查行状态字符串)。
+        """
+        from app.services.hal_reload_policy import find_execution_blockers
+
+        seen = {}
+
+        async def _fake_dispatch(ctx):
+            probe = TestingSessionLocal()
+            try:
+                seen["blockers"] = len(find_execution_blockers(probe))
+            finally:
+                probe.close()
+            from app.services.test_execution.executor_base import (
+                StepExecutionResult, StepExecutionStatus,
+            )
+            return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
+
+        monkeypatch.setattr("app.api.commissioning.dispatch_step", _fake_dispatch)
+        sess = client.post(
+            "/api/v1/commissioning/sessions",
+            json={"lab_profile_id": str(lab.id), "precheck_strict_cal": False,
+                  "precheck_strict_dut": False},
+        )
+        assert sess.status_code in (200, 201), sess.text
+        sid = sess.json()["session_id"]
+
+        resp = client.post(f"/api/v1/commissioning/sessions/{sid}/run-all")
+        assert resp.status_code == 200, resp.text
+        assert seen.get("blockers", 0) >= 1, (
+            "run-all 相位期间 HAL reload 闸门看不见这条链 — 暗室首测裸奔"
+        )
+
+    def test_run_all_aborted_chain_is_failed_not_completed(
+        self, lab, db, monkeypatch
+    ):
+        """内审 F1: 中途 failed 会 break 而**不抛异常** (dispatch_step 从不
+        上抛), 拿"没异常"当成功判据会把中止的会话记成 completed —— 它会
+        混进待归档报告列表、被算进成功率。
+        变异 = 把终态交回 contextmanager 的"无异常即 completed" → 本条红。
+        """
+        calls = {"n": 0}
+
+        async def _fake_dispatch(ctx):
+            from app.services.test_execution.executor_base import (
+                StepExecutionResult, StepExecutionStatus,
+            )
+            calls["n"] += 1
+            if calls["n"] == 2:  # 第二个相位失败 → 链中止
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    error_message="参考功率偏差超限",
+                )
+            return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
+
+        monkeypatch.setattr("app.api.commissioning.dispatch_step", _fake_dispatch)
+        sess = client.post(
+            "/api/v1/commissioning/sessions",
+            json={"lab_profile_id": str(lab.id), "precheck_strict_cal": False,
+                  "precheck_strict_dut": False},
+        )
+        sid = sess.json()["session_id"]
+        client.post(f"/api/v1/commissioning/sessions/{sid}/run-all")
+
+        row = (
+            db.query(TestExecution)
+            .filter(TestExecution.id == uuid.UUID(sid))
+            .first()
+        )
+        db.refresh(row)
+        assert row.status == "failed", (
+            f"中止的链被记成 {row.status!r} — 会混进待归档报告并算进成功率"
+        )
+        assert "中止" in (row.error_message or "")
+
+    def test_commissioning_endpoints_reject_other_chains_rows(self, lab, db):
+        """内审 F5: 用例执行的快照用例同样是 MIMO_OTA, 拿它的 execution id
+        打 run-all 会并发同一套 HAL 且改写它的终态 (case-runner 下个相位
+        边界看到非 running 就静默 return, 正式测试无声中断)。
+        变异 = 砍 _resolve_execution 的 executed_by 收窄 → 本条红。
+        """
+        foreign = TestExecution(
+            id=uuid.uuid4(), status="running",
+            executed_by="test_case_runner",  # 别的链
+            config={"step_descriptors": []},
+        )
+        db.add(foreign)
+        db.commit()
+
+        for path in ("/run-all", "/phase/precheck"):
+            resp = client.post(
+                f"/api/v1/commissioning/sessions/{foreign.id}{path}")
+            assert resp.status_code == 404, (
+                f"{path} 放行了别的链的执行行: {resp.status_code}"
+            )
+        db.refresh(foreign)
+        assert foreign.status == "running", "别的链的行被改写了"
+
+    def test_concurrent_phase_on_same_session_rejected(self, lab, db):
+        """Codex #242 C2: 并发相位打同一 session 会让第一个退出时把行恢复
+        成 pending, 而第二个还在用 HAL → reload 保护提前失效。用 DB 状态
+        当判据拒绝并发 (跨 worker 可见, 不引进程内锁)。
+        变异 = 砍掉进入时的 running 检查 → 本条红。
+        """
+        sess = client.post(
+            "/api/v1/commissioning/sessions",
+            json={"lab_profile_id": str(lab.id), "precheck_strict_cal": False,
+                  "precheck_strict_dut": False},
+        )
+        sid = sess.json()["session_id"]
+        # 模拟"已有相位在跑": 行处于 running
+        row = db.query(TestExecution).filter(
+            TestExecution.id == uuid.UUID(sid)).first()
+        row.status = "running"
+        db.commit()
+
+        for path in ("/run-all", "/phase/precheck"):
+            resp = client.post(f"/api/v1/commissioning/sessions/{sid}{path}")
+            assert resp.status_code == 409, (
+                f"{path} 放行了并发相位: {resp.status_code}"
+            )
+            assert "已有相位在执行中" in resp.json()["detail"]
+
+    def test_list_sessions_matches_addressable_routes(self, lab, db):
+        """Codex #242 C3: 列表与详情/执行路由必须同源 —— 否则 case-runner
+        的行列得出来、点进去却 404 ("列得出、点不动")。
+        变异 = 砍 list_sessions 的链谓词 → 本条红。
+        """
+        from app.services.mimo_ota.factory import build_mimo_ota_test_case
+
+        snapshot, _ = build_mimo_ota_test_case(
+            db, name="用例执行快照", lab_profile_id=lab.id,
+            config_overrides={}, created_by="test",
+        )
+        foreign = TestExecution(
+            id=uuid.uuid4(), test_case_id=snapshot.id, status="completed",
+            executed_by="test_case_runner",
+            config={"source_test_case_id": str(snapshot.id)},  # 无 ad_hoc/step 标记
+        )
+        db.add(foreign)
+        db.commit()
+
+        listed = client.get("/api/v1/commissioning/sessions").json()
+        listed_ids = {s["session_id"] for s in listed}
+        assert str(foreign.id) not in listed_ids, (
+            "别的链的执行被列进会话列表 — 点进去会 404"
+        )
+        # 生效端交叉验证: 列出来的每一个都必须真能取到详情
+        for sid in listed_ids:
+            r = client.get(f"/api/v1/commissioning/sessions/{sid}")
+            assert r.status_code == 200, f"列表里的 {sid} 取详情 {r.status_code}"

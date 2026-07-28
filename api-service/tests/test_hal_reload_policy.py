@@ -387,3 +387,172 @@ class TestLifecycleLock:
 
         asyncio.run(runner())
         assert order == ["shutdown", "init"]
+
+
+# ============================================================
+# ARCH-1 S3 — 闸门换源: 占 HAL 的活跃执行行也要拦 reload
+#
+# 背景: P2-5 写这个闸门时"正式测试"就等于 TestPlan。ARCH-1 S1 之后
+# 正式测试是 TestCase 直接执行 (case-runner), 它不写 TestPlan ——
+# 从 S1 上线 (124d7e5) 起, 跑着用例点重载会静默拆掉驱动。
+#
+# 变异自验对应表:
+# - 砍 find_execution_blockers (只留 plan 判据) → H-a/H-c 红 (今天的实况)
+# - 并集改成只查 TestExecution (删 plan 半截) → H-b 红 (paused 保护退化)
+# - 谓词写成 mode IS NULL (排除全部 VRT) → H-g 红 (硬件 VRT 被放过,
+#   这正是 Codex #241 D1 抓到的、我第一版设计稿的错版)
+# - 谓词写成 status != completed → H-d 红 (历史 pending 僵尸行拦死 reload)
+# ============================================================
+
+from app.models.test_plan import TestCase, TestExecution  # noqa: E402
+from app.services.hal_reload_policy import (  # noqa: E402
+    NON_HAL_EXECUTION_MODE,
+    find_execution_blockers,
+)
+
+
+def _make_execution(
+    db,
+    *,
+    status: str = "running",
+    executed_by: str = "test_case_runner",
+    mode: str | None = None,
+    case_name: str | None = None,
+) -> TestExecution:
+    case_id = None
+    if case_name is not None:
+        case = TestCase(
+            id=uuid.uuid4(),
+            name=case_name,
+            test_type="MIMO_OTA",
+            configuration={},
+            created_by="pytest",
+        )
+        db.add(case)
+        db.commit()
+        case_id = case.id
+    ex = TestExecution(
+        id=uuid.uuid4(),
+        test_case_id=case_id,
+        status=status,
+        mode=mode,
+        executed_by=executed_by,
+    )
+    db.add(ex)
+    db.commit()
+    return ex
+
+
+def test_ha_running_case_execution_blocks_reload(db):
+    """H-a: 用例直接执行 (S1 正门) 跑着时必须拦住 reload。
+    这条就是 S1 上线以来的生产空窗 —— 变异 (砍执行行判据) 会让它红。"""
+    _make_execution(db, executed_by="test_case_runner", case_name="吞吐用例")
+
+    blockers = find_reload_blockers(db)
+    assert len(blockers) == 1
+    assert blockers[0].kind == "test_execution"
+    assert "吞吐用例" in blockers[0].name
+    # 拒绝文案要说清去哪取消 (设计稿 §5.1 风险点)
+    assert "取消" in blockers[0].detail
+
+
+def test_hb_paused_plan_still_blocks_after_resource_switch(db):
+    """H-b: 并集不是替换 —— 计划 PAUSED 时步骤间没有 running 执行行,
+    但驱动状态仍被持有, 保护不许退化。"""
+    _make_plan(db, name="暂停的计划", status=TestPlanStatus.PAUSED.value)
+
+    blockers = find_reload_blockers(db)
+    assert len(blockers) == 1
+    assert blockers[0].kind == "test_plan"
+
+
+def test_hc_commissioning_chains_block_reload(db):
+    """H-c: 暗室首测 / 单相位诊断 (现场最常用的链) 也要拦。"""
+    for marker in ("commissioning_api", "commissioning_adhoc"):
+        ex = _make_execution(db, executed_by=marker, case_name=f"{marker} 用例")
+        blockers = find_execution_blockers(db)
+        assert len(blockers) == 1, f"{marker} 没被拦住"
+        assert blockers[0].kind == "test_execution"
+        db.delete(ex)
+        db.commit()
+
+
+def test_hd_historical_pending_rows_do_not_block(db):
+    """H-d 不变量: 历史 pending 僵尸行不许成为 blocker —— 谓词写宽
+    (如 status != completed) 会让 reload 被永久拦死。"""
+    for i in range(50):
+        _make_execution(db, status="pending", executed_by="commissioning_api")
+
+    assert find_execution_blockers(db) == []
+
+
+def test_hf_digital_twin_does_not_block(db):
+    """H-f: 纯数字仿真不持驱动, 不该拦 reload。"""
+    _make_execution(db, mode=NON_HAL_EXECUTION_MODE, executed_by="vrt-user")
+
+    assert find_execution_blockers(db) == []
+
+
+def test_hg_hardware_vrt_still_blocks(db):
+    """H-g: conducted / ota 是**真硬件** VRT, 必须照拦。
+
+    Codex #241 D1: 我第一版设计稿写的是 `mode IS NULL`(排除全部 VRT),
+    那会把这两种硬件模式一起放过 —— 硬件路测跑着时 reload 照样拆驱动。
+    变异 = 把谓词还原成 mode IS NULL → 本条红。
+    """
+    for hw_mode in ("conducted", "ota"):
+        ex = _make_execution(db, mode=hw_mode, executed_by="vrt-user")
+        blockers = find_execution_blockers(db)
+        assert len(blockers) == 1, f"硬件 VRT ({hw_mode}) 没被拦住"
+        db.delete(ex)
+        db.commit()
+
+
+def test_he_force_still_bypasses_execution_blockers(db):
+    """H-e: force=true 的既有语义不许因换源而变 —— 现场有时明知测试
+    卡在坏驱动上, reload 才是逃生口。"""
+    _make_execution(db, executed_by="test_case_runner", case_name="卡住的用例")
+
+    with patch(
+        "app.services.instrument_hal_service.reload_hal_service_atomic",
+        new=AsyncMock(return_value=(True, "reloaded", ["channelEmulator"])),
+    ):
+        resp = client.post("/api/v1/instruments/hal/reload?force=true")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json().get("forced") is True
+
+
+def test_hh_paused_hardware_vrt_blocks(db):
+    """Codex #242 第二轮: 硬件 VRT 的 **paused** 也占着驱动。
+
+    VRTExecutionService.pause() 只做 _transition(PAUSED) —— 什么都不释放,
+    resume() 直接回 running。暂停期间 reload 会拆掉它期望 resume 时还在的
+    硬件配置。这跟本模块给 TestPlan PAUSED 写的理由逐字一致。
+
+    内在一致性: 本 PR 已承认 conducted/ota 占真硬件 (据此让 running 的
+    它们拦 reload), 就不能说 paused 时不占。
+    变异 = 谓词只留 status == "running" → 本条红。
+    """
+    for hw_mode in ("conducted", "ota"):
+        ex = _make_execution(db, status="paused", mode=hw_mode,
+                             executed_by="vrt-user")
+        blockers = find_execution_blockers(db)
+        assert len(blockers) == 1, f"paused 的硬件 VRT ({hw_mode}) 没被拦住"
+        db.delete(ex)
+        db.commit()
+
+
+def test_hh_paused_digital_twin_does_not_block(db):
+    """反方向: 纯仿真的 paused 照样不拦 (它本来就不占驱动)。"""
+    _make_execution(db, status="paused", mode=NON_HAL_EXECUTION_MODE,
+                    executed_by="vrt-user")
+    assert find_execution_blockers(db) == []
+
+
+def test_hh_paused_non_vrt_row_does_not_block(db):
+    """反方向: paused 是 TestExecution 里的 VRT-specific 状态 —— 非 VRT
+    行不该因为这个新分支被误拦 (谓词那支要求 mode 非空)。"""
+    _make_execution(db, status="paused", mode=None,
+                    executed_by="test_case_runner")
+    assert find_execution_blockers(db) == []

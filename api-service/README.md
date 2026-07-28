@@ -360,12 +360,28 @@ flake8 app/
 # Install gunicorn
 pip install gunicorn
 
-# Run with gunicorn
+# Run with gunicorn — NOTE: --workers 1 (see below)
 gunicorn app.main:app \
-  --workers 4 \
+  --workers 1 \
   --worker-class uvicorn.workers.UvicornWorker \
   --bind 0.0.0.0:8000
 ```
+
+> ⚠️ **单 worker 是当前的部署契约，不是随手写的示例值。**
+> 容器入口 (`docker-entrypoint.sh`) 也是单进程 uvicorn。三处机制都假设
+> "本进程是唯一的执行者"：
+> - **启动残留复位** (`main.py` lifespan 调三个 reset)：把 `running` 的
+>   执行行判成僵尸并置 failed。多 worker 下，新 worker 启动会误杀**别的
+>   worker 正在跑的硬件执行** —— 行被标 failed 后，HAL reload 闸门随之
+>   停止保护那条仍在跑的链（Codex #242 C1）。
+> - **进程内单飞标志** (`test_case_runner` / `test_plan_runner`)：内存态，
+>   跨 worker 不可见（已配 DB 行判据兜底，但复位没有）。
+> - **相位执行**：commissioning 的相位同步跑在请求线程上，没有跨进程锁。
+>
+> 要上多 worker，得先把复位从"启动即判僵尸"改成 owner/lease 或进程代次
+> 判据 —— 那是架构级改动，记在 ARCH-1 backlog（"runner 体系整体
+> multi-worker 化"，见 #238 裁定）。**在那之前，改这个数字会损坏在跑的
+> 硬件测试。**
 
 ### Docker Deployment
 

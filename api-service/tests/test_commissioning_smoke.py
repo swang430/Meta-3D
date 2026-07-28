@@ -265,7 +265,11 @@ class TestFivePhaseCommissioningSmoke:
                     for d in descriptors
                 ]
             },
-            executed_by="pytest-smoke",
+            # ARCH-1 S3: 必须用真实 create_session 写的 marker —— 端点现在
+            # 按 executed_by 收窄到本链 (内审 F5: 否则能拿别的链的执行行
+            # 打 run-all, 并发同一套 HAL 且改写它的终态)。
+            # fake 用 "pytest-smoke" 这种不存在的 marker = fake 不忠实。
+            executed_by="commissioning_api",
         )
         db.add(execution)
         db.commit()
