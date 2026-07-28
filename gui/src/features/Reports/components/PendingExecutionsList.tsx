@@ -52,10 +52,35 @@ interface PendingExecutionsResponse {
   items: PendingExecutionItem[]
 }
 
-// Fetch completed test executions (limit 顶到后端上限, 内审 F2 同源)
+// 可归档的"正式执行"来源链 — 单相位诊断 (commissioning_adhoc) 不在其中:
+// 它没有相位进度, 出的报告近乎空 (与 commissioning 列表隐藏
+// diagnostic_ad_hoc 同源约定)。
+// 这个排除必须在服务端做 (Codex #239 迟到): 客户端过滤是在 limit 窗口
+// 之后才跑, 诊断行一多就把正式执行挤出窗口 → 待归档列表空、报告选不到
+// 执行结果。与 C-3 同一母题, 判据统一留在服务端。
+// ⚠️ 这是白名单 = 默认隐藏: 不在表里的链 (含 executed_by 为空的老行)
+// 在待归档里不出现, 用户点不到归档入口 (内审 F2)。新增执行链时必须同步
+// 这里 —— 后端写 executed_by 的四个点:
+//   commissioning.py (create_session / run_adhoc_phase)
+//   test_plan_runner.py (每步建行)
+//   test_case_runner.py (用例执行建行)
+const FORMAL_EXECUTION_CHAINS = [
+  'test_case_runner',
+  'test_plan_runner',
+  'commissioning_api',
+]
+
 async function fetchCompletedExecutions(): Promise<PendingExecutionItem[]> {
   const response = await client.get<PendingExecutionsResponse>('/test-executions', {
-    params: { status: 'completed', limit: 1000 },
+    params: {
+      status: 'completed',
+      limit: 1000,
+      executed_by: FORMAL_EXECUTION_CHAINS,
+    },
+    // axios 默认把数组序列化成 executed_by[]=a&executed_by[]=b, FastAPI
+    // 的可重复参数收不到 (静默返回全部行 —— 浏览器实测抓到, 光看代码
+    // 会以为收窄生效了)。repeat 模式 = executed_by=a&executed_by=b
+    paramsSerializer: { indexes: null },
   })
   return response.data.items
 }
@@ -108,13 +133,9 @@ export function PendingExecutionsList() {
   })
 
   // Filter to get only pending (unarchived) executions
-  // 内审 F2: 单相位诊断行收尾后也是 completed, 但它不是"可归档的正式
-  // 执行" (没有相位进度, 出的报告近乎空) — 与 commissioning 列表隐藏
-  // diagnostic_ad_hoc 的既定约定同源, 这里按来源链排除
+  // (来源链的排除已在服务端做掉, 见 FORMAL_EXECUTION_CHAINS)
   const pendingTestPlans = completedExecutions?.filter(
-    (exec) =>
-      !archivedIds?.testPlan.has(exec.id) &&
-      exec.executed_by !== 'commissioning_adhoc'
+    (exec) => !archivedIds?.testPlan.has(exec.id)
   ) || []
 
   const pendingRoadTests = roadTestExecutions?.filter(

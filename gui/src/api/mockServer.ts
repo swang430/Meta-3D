@@ -299,7 +299,12 @@ export function setupMockServer() {
   mock.onGet('/test-executions').reply((config) => {
     const limit = config.params?.limit ? Number(config.params.limit) : undefined
     const status = config.params?.status ? String(config.params.status) : undefined
-    return [200, mockDatabase.getTestExecutions(limit, status)]
+    // executed_by 是可重复参数 (数组); 单值也归一成数组
+    const rawChains = config.params?.executed_by
+    const executedBy = rawChains === undefined || rawChains === null
+      ? undefined
+      : (Array.isArray(rawChains) ? rawChains.map(String) : [String(rawChains)])
+    return [200, mockDatabase.getTestExecutions(limit, status, executedBy)]
   })
 
   mock.onGet('/system-logs/tail').reply((config) => {

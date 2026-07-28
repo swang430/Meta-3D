@@ -1414,11 +1414,20 @@ export const mockDatabase = {
   getReadiness(): HALReadinessResponse {
     return clone({ ...readinessSnapshot, generated_at_iso: new Date().toISOString() })
   },
-  getTestExecutions(limit?: number, status?: string): TestExecutionListResponse {
+  getTestExecutions(
+    limit?: number,
+    status?: string,
+    executedBy?: string[],
+  ): TestExecutionListResponse {
     // 内审 F5: mock 也认 status 过滤 — 否则 mock 开发下 ?status=running
-    // 拿到 completed 行, 用例库会恢复出假的执行中徽标
+    // 拿到 completed 行, 用例库会恢复出假的执行中徽标。
+    // 内审 F4 (二轮): executed_by 同理 — 待归档列表的诊断行排除已挪到
+    // 服务端, mock 不认这个参数的话开 mock 时诊断行照样冒出来
     let rows = testExecutions.items
     if (status) rows = rows.filter((r) => r.status === status)
+    if (executedBy && executedBy.length > 0) {
+      rows = rows.filter((r) => r.executed_by && executedBy.includes(r.executed_by))
+    }
     const items = typeof limit === 'number' ? rows.slice(0, limit) : rows
     return clone({ total: rows.length, items })
   },

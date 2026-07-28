@@ -374,14 +374,19 @@ def test_gd_recovery_not_crowded_out_by_stale_plan_rows(db, lab):
     变异 = 砍 executed_by 过滤 → total 断言红。"""
     source = _make_case(db, lab, name="被挤的用例")
     snapshot = _make_case(db, lab, name="被挤的用例 [执行]")
-    _case_runner_execution(
+    case_run = _case_runner_execution(
         db, snapshot, status="running", phases_done=1, source_id=source.id)
-    # 5 个更新的 plan-runner 僵尸 running 行 (executed_at 由 server_default
-    # 按插入序递增, 这些行都比 case 行新 → 无过滤时排在前面占满 limit)
+    # executed_at 必须显式写 (内审 F1): server_default 的 CURRENT_TIMESTAMP
+    # 在 SQLite 是秒分辨率, 同秒插入全部相等 → 平局按插入序返回, case 行
+    # 反而排最前, "被挤出"根本不会发生, 招牌断言就成了恒真
+    case_run.executed_at = datetime(2026, 7, 27, 10, 0, 0)
+    db.commit()
+    # 5 个明确更新的 plan-runner 僵尸 running 行 → 无收窄时占满 limit 窗口
     for i in range(5):
         db.add(TestExecution(
             status="running",
             executed_by="test_plan_runner",
+            executed_at=datetime(2026, 7, 27, 11, i, 0),
             config={"step_descriptors": [], "test_step_id": f"step-{i}"},
         ))
     db.commit()
@@ -394,6 +399,46 @@ def test_gd_recovery_not_crowded_out_by_stale_plan_rows(db, lab):
     ).json()
     assert body["total"] == 1  # 只剩 case 链的行
     assert body["items"][0]["source_test_case_id"] == str(source.id)
+
+
+def test_gd_formal_chains_not_crowded_out_by_adhoc(db, lab):
+    """Codex #239 迟到: 待归档列表要的是"正式执行", 而单相位诊断行收尾后
+    也是 completed —— 诊断行一多就把正式执行挤出 limit 窗口 (客户端过滤
+    在窗口之后跑, 救不回来)。多值 executed_by 让收窄回到服务端。
+    变异 = 不传 executed_by (等价于旧的客户端过滤) → 正式行不在返回里。"""
+    snapshot = _make_case(db, lab, name="正式执行用例")
+    formal = _case_runner_execution(db, snapshot)
+    # executed_at 显式写死 (内审 F1): 靠 server_default 在 SQLite 上是同秒
+    # 平局, 平局按插入序返回反而让 formal 排最前 → "被挤出"不成立, 招牌
+    # 断言恒真 (变异实证: 只留该断言 + 去收窄, 修复前不红修复后红)
+    formal.executed_at = datetime(2026, 7, 27, 10, 0, 0)  # 最老
+    db.commit()
+    for i in range(6):  # 6 条明确更新的诊断行, 数量 > limit
+        db.add(TestExecution(
+            test_case_id=snapshot.id,
+            status="completed",
+            executed_by="commissioning_adhoc",
+            executed_at=datetime(2026, 7, 27, 12, i, 0),
+            config={"diagnostic_ad_hoc": True,
+                    "step_descriptors": [{"id": f"d{i}", "type": "precheck",
+                                          "parameters": {}}]},
+        ))
+    db.commit()
+
+    client = TestClient(app)
+    body = client.get(
+        "/api/v1/test-executions",
+        params={
+            "status": "completed",
+            "limit": 5,  # 小于诊断行数 — 不收窄的话正式行必被挤出
+            "executed_by": ["test_case_runner", "test_plan_runner",
+                            "commissioning_api"],
+        },
+    ).json()
+    ids = [r["id"] for r in body["items"]]
+    assert str(formal.id) in ids, "正式执行被诊断行挤出了 limit 窗口"
+    assert body["total"] == 1
+    assert all(r["executed_by"] != "commissioning_adhoc" for r in body["items"])
 
 
 # ── G-e 契约不变量 ─────────────────────────────────────────────────
