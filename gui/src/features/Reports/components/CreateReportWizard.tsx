@@ -136,9 +136,22 @@ export function CreateReportWizard({
       }
     }
 
-    // ARCH-1 S4a: 这里原先以 test_plan_id 为放行判据。删掉「选择测试计划」
-    // 那一步后它再无写方, 恒为 undefined —— 留着会把向导永久卡在第 2 步。
-    // 执行记录本身是可选的 (不选=用全部), 所以本步无需闸门。
+    // ARCH-1 S4a: 判据从 test_plan_id **换源**到 test_execution_ids。
+    // 原判据在删掉「选择测试计划」那一步后再无写方 (恒 undefined), 会把向导
+    // 永久卡死; 但"干脆不要判据"同样错 (Codex #244 C-1) ——
+    // report_data_collector._get_executions 在两个字段都缺时是 `return []`,
+    // 会产出一份 status=completed 的**空报告**。空档案比被拦住危险:
+    // 拦住看得见, 空档案要打开 PDF 才发现。
+    if (active === 1) {
+      if (!form.values.test_execution_ids?.length) {
+        notifications.show({
+          title: '请选择执行记录',
+          message: '报告至少要包含一条执行记录 —— 不选会生成一份没有数据的空报告',
+          color: 'yellow',
+        })
+        return
+      }
+    }
 
     setActive((current) => Math.min(current + 1, 3))
   }
@@ -262,7 +275,7 @@ export function CreateReportWizard({
                   选择执行记录
                 </Text>
                 <Text size="sm" c="dimmed" mb="md">
-                  选择要包含在报告中的执行记录。不选择则使用所有记录。
+                  选择要包含在报告中的执行记录（至少一条）。
                 </Text>
                 {/*
                   ARCH-1 S4a: 原先这里是两步 —— 先选测试计划, 再在计划下选执行。
@@ -377,9 +390,7 @@ export function CreateReportWizard({
                       数据来源
                     </Text>
                     <Text size="sm">
-                      {form.values.test_execution_ids?.length
-                        ? `已选择 ${form.values.test_execution_ids.length} 条执行记录`
-                        : '未指定（将使用全部执行记录）'}
+                      {`已选择 ${form.values.test_execution_ids?.length ?? 0} 条执行记录`}
                     </Text>
                   </Group>
 
@@ -422,10 +433,10 @@ export function CreateReportWizard({
               {!form.values.test_execution_ids?.length && (
                 <Alert
                   icon={<IconAlertCircle size={16} />}
-                  title="未指定执行记录"
-                  color="blue"
+                  title="未选择执行记录"
+                  color="red"
                 >
-                  未勾选任何执行记录，报告将使用全部可用的执行记录。
+                  报告里不会有任何测试数据。请返回「选择数据」步骤勾选至少一条执行记录。
                 </Alert>
               )}
 
