@@ -139,7 +139,7 @@ def get_execution_history(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     status: Optional[str] = None,
-    executed_by: Optional[str] = None,
+    executed_by: Optional[List[str]] = Query(None),
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     db: Session = Depends(get_db)
@@ -159,9 +159,15 @@ def get_execution_history(
         if status:
             query = query.filter(TestExecution.status == status)
         if executed_by:
-            # Codex #238 迟到 C-3: 恢复查询按来源链收窄 — plan-runner 的
-            # stale running 行没人复位, 堆多了会把 case 执行挤出 limit 窗口
-            query = query.filter(TestExecution.executed_by == executed_by)
+            # 按来源链收窄, 可传多个 (?executed_by=a&executed_by=b)。
+            # 收窄必须在服务端 (limit 之前) — 客户端过滤是在拿到 limit
+            # 窗口之后才跑, 某条链的行一多就把想要的行挤没了:
+            #   Codex #238 C-3: plan-runner 的 stale running 行挤掉
+            #     case 执行 → 用例库恢复不出取消入口;
+            #   Codex #239 迟到: adhoc 诊断行挤掉正式执行 → 待归档列表
+            #     空, 报告选不到执行结果 (AGENTS.md §2.3.5)。
+            # 两次同一母题, 所以判据一律留在这里, 消费方显式列出要哪几条链。
+            query = query.filter(TestExecution.executed_by.in_(executed_by))
         if start_date:
             query = query.filter(TestExecution.executed_at >= start_date)
         if end_date:

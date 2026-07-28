@@ -332,11 +332,20 @@ paths:
           in: query
           description: |
             Filter by execution chain (test_case_runner / test_plan_runner /
-            commissioning_api / commissioning_adhoc). The case library's
-            active-run recovery passes test_case_runner so stale plan-runner
-            running rows cannot crowd out the case execution.
+            commissioning_api / commissioning_adhoc). Repeatable — pass the
+            parameter once per chain to match any of them.
+
+            Narrowing MUST happen here rather than client-side: client-side
+            filtering runs after the limit window, so a chain with many rows
+            crowds out the wanted ones. Two instances so far — the case
+            library's active-run recovery passes test_case_runner (stale
+            plan-runner running rows would crowd it out), and the
+            pending-report list passes the three formal chains (ad-hoc
+            diagnostics would crowd out archivable executions).
           schema:
-            type: string
+            type: array
+            items:
+              type: string
       responses:
         '200':
           description: Execution history page
