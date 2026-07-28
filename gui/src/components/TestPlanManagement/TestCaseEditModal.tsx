@@ -6,7 +6,13 @@
  * 再走 StepsTab 间接编辑。
  *
  * v1: configuration 是 raw JSON 文本编辑(对所有 test_type 通用)。
- * 将来可针对 MIMO_OTA 类复用 MIMOOTAConfigForm, 其它类继续 raw JSON。
+ * v2 (ARCH-1 S4a): MIMO_OTA 类改用 MIMOOTAConfigForm 类型化表单, 其它类继续
+ * raw JSON —— 兑现 v1 注释里写的"将来"。
+ *
+ * ⚠️ 这不是新功能, 是**换挂载点**: 该表单原先只能从「步骤编排」Tab 进去
+ * (StepsTab → StepEditor), 而那条路要先选一个 TestPlan。计划链拆掉后
+ * 若不搬家, 操作员配 MIMO_OTA 仪表参数就只剩裸 JSON 文本框 —— 那是实打实的
+ * 能力倒退。搬完这里, StepsTab 才可以删。
  */
 import { useEffect, useState } from 'react'
 import {
@@ -29,7 +35,14 @@ import {
   updateTestCase,
   type TestCase,
 } from '../../api/testPlanService'
+import {
+  MIMOOTAConfigForm,
+  type MIMOOTAConfiguration,
+} from '../TestCaseConfig/MIMOOTAConfigForm'
 import { logFrontendEvent } from '../../observability/frontendLogger'
+
+/** 有类型化配置表单的用例类型。其余走 raw JSON。 */
+const TYPED_CONFIG_CASE_TYPE = 'MIMO_OTA'
 
 interface TestCaseEditModalProps {
   opened: boolean
@@ -51,7 +64,11 @@ export function TestCaseEditModal({
   const [description, setDescription] = useState('')
   const [tags, setTags] = useState<string[]>([])
   const [configText, setConfigText] = useState('{}')
+  const [mimoConfig, setMimoConfig] = useState<MIMOOTAConfiguration>({})
   const [jsonError, setJsonError] = useState<string | null>(null)
+
+  // 类型化表单只对 MIMO_OTA 生效; 其余 test_type 仍是 raw JSON。
+  const useTypedForm = tc?.test_type === TYPED_CONFIG_CASE_TYPE
 
   useEffect(() => {
     if (!opened || !testCaseId) return
@@ -64,6 +81,14 @@ export function TestCaseEditModal({
         setDescription(data.description || '')
         setTags((data as unknown as { tags?: string[] }).tags || [])
         setConfigText(JSON.stringify(data.configuration ?? {}, null, 2))
+        // 两路都填: test_type 决定保存时取哪一路 (见 handleSave)。
+        // configuration 可能是 null / 非对象 (旧数据), 表单要的是对象。
+        const cfg = data.configuration
+        setMimoConfig(
+          cfg && typeof cfg === 'object' && !Array.isArray(cfg)
+            ? (cfg as MIMOOTAConfiguration)
+            : {},
+        )
       })
       .catch((e) => {
         notifications.show({
@@ -74,7 +99,12 @@ export function TestCaseEditModal({
         onClose()
       })
       .finally(() => setLoading(false))
-  }, [opened, testCaseId, onClose])
+    // ⚠️ deps 只放"开了 + 换用例"。onClose 只在 catch 分支用, 而调用点
+    // (TestCaseLibrary) 传的是内联箭头 —— 每次父组件重渲染都换引用。
+    // 父组件有 2 秒执行轮询, 把 onClose 放进 deps 会让本 effect 每 2 秒重跑一次,
+    // 用服务端旧值覆盖用户正在编辑的 60+ 项仪表参数 (内审 F3)。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opened, testCaseId])
 
   const handleConfigChange = (text: string) => {
     setConfigText(text)
@@ -91,10 +121,11 @@ export function TestCaseEditModal({
   }
 
   const handleSave = async () => {
-    if (!testCaseId || jsonError) return
+    // 类型化表单没有 JSON 解析这一步, jsonError 只约束 raw JSON 那一路。
+    if (!testCaseId || (!useTypedForm && jsonError)) return
     setSaving(true)
     try {
-      const config = JSON.parse(configText)
+      const config = useTypedForm ? mimoConfig : JSON.parse(configText)
       const updated = await updateTestCase(testCaseId, {
         name,
         description: description || null,
@@ -178,21 +209,27 @@ export function TestCaseEditModal({
             placeholder="按回车添加..."
           />
 
-          <Textarea
-            label="Configuration (JSON)"
-            description={`原始 JSON 编辑; 字段含义见 ${tc.test_type} schema 文档`}
-            value={configText}
-            onChange={(e) => handleConfigChange(e.currentTarget.value)}
-            minRows={12}
-            autosize
-            styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
-            error={jsonError || undefined}
-          />
+          {useTypedForm ? (
+            <MIMOOTAConfigForm value={mimoConfig} onChange={setMimoConfig} />
+          ) : (
+            <>
+              <Textarea
+                label="Configuration (JSON)"
+                description={`原始 JSON 编辑; 字段含义见 ${tc.test_type} schema 文档`}
+                value={configText}
+                onChange={(e) => handleConfigChange(e.currentTarget.value)}
+                minRows={12}
+                autosize
+                styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+                error={jsonError || undefined}
+              />
 
-          {jsonError && (
-            <Alert color="red" variant="light" icon={<IconAlertCircle size={18} />}>
-              {jsonError}
-            </Alert>
+              {jsonError && (
+                <Alert color="red" variant="light" icon={<IconAlertCircle size={18} />}>
+                  {jsonError}
+                </Alert>
+              )}
+            </>
           )}
 
           <Group justify="flex-end">

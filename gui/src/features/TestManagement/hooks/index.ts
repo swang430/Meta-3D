@@ -1,77 +1,20 @@
 /**
  * Unified Test Management Hooks
  *
- * This module exports all TanStack Query hooks for the unified test management system.
- * Import hooks from this index file for convenience.
+ * ARCH-1 S4a: 计划链拆除后这里只剩执行历史一个 hook。
+ * 原有的 useTestPlans / useTestSteps / useTestQueue / useTestExecution /
+ * useSequenceLibrary / useStatistics 六组随计划链一并删除 —— 它们只服务于
+ * PlansTab / StepsTab / QueueTab, 那三个 Tab 已不存在。
+ * (其中后三组在删除前就已经只被本文件引用, 是既有死代码。)
+ *
+ * 用例的执行入口在 TestCaseLibrary (ARCH-1 S1), 不走这里。
  *
  * @example
- * import { useTestPlans, useCreateTestPlan } from '@/features/TestManagement/hooks'
+ * import { useTestHistory } from '@/features/TestManagement/hooks'
  */
 
-// Test Plans
-export {
-  useTestPlans,
-  useTestPlan,
-  useTestPlanStatistics as useTestPlanStats,
-  useCreateTestPlan,
-  useUpdateTestPlan,
-  useDeleteTestPlan,
-  useDuplicateTestPlan,
-  useBatchDeleteTestPlans,
-  useExportTestPlans,
-  useImportTestPlans,
-  testPlansKeys,
-} from './useTestPlans'
-
-// Test Steps
-export {
-  useTestSteps,
-  useAddTestStep,
-  useUpdateTestStep,
-  useDeleteTestStep,
-  useReorderTestSteps,
-  useDuplicateTestStep,
-  testStepsKeys,
-} from './useTestSteps'
-
-// Test Queue
-export {
-  useTestQueue,
-  useQueueTestPlan,
-  useRemoveFromQueue,
-  useReorderQueue,
-  useMoveQueueItem,
-  useUpdateQueuePriority,
-  testQueueKeys,
-} from './useTestQueue'
-
-// Test Execution
-export {
-  useStartExecution,
-  usePauseExecution,
-  useResumeExecution,
-  useCancelExecution,
-  useCompleteExecution,
-} from './useTestExecution'
-
-// Test History (ARCH-1 S2: 单条/删除 hook 随换源退场)
+// Test History (ARCH-1 S2 换源到 test_executions 本表)
 export {
   useTestHistory,
   testHistoryKeys,
 } from './useTestHistory'
-
-// Sequence Library
-export {
-  useSequenceLibrary,
-  useSequenceLibraryItem,
-  useSequenceCategories,
-  usePopularSequences,
-  sequenceLibraryKeys,
-} from './useSequenceLibrary'
-
-// Statistics
-export {
-  useTestPlanStatistics,
-  useExecutionStatistics,
-  statisticsKeys,
-} from './useStatistics'

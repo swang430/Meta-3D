@@ -52,15 +52,6 @@ import {
 } from '@mantine/core'
 import { modals } from '@mantine/modals'
 import './App.css'
-import { appEventBus, type ExecutionStartEvent } from './lib/eventBus'
-import {
-  getTestQueue,
-  startExecution as apiStartExecution,
-  pauseExecution as apiPauseExecution,
-  resumeExecution as apiResumeExecution,
-  cancelExecution as apiCancelExecution,
-  completeExecution as apiCompleteExecution,
-} from './features/TestManagement/api/testManagementAPI'
 import ProbeLayoutView from './components/ProbeLayoutView'
 import { SystemCalibration } from './components/SystemCalibration'
 import { TestManagement } from './features/TestManagement/TestManagement'
@@ -79,10 +70,7 @@ import ChartsDemoPage from './components/Charts/ChartsDemoPage'
 import { ChamberConfigCard } from './components/ChamberConfigCard'
 import { StandardChannelDefinitionCard } from './components/StandardChannelDefinitionCard'
 import {
-  appendPlanStep,
   createProbe,
-  createTestPlan,
-  createTestCaseFromPlan,
   createTestCase,
   deleteProbe,
   fetchDashboard,
@@ -91,8 +79,6 @@ import {
   fetchProbes,
   fetchChamber,
   fetchActiveChamber,
-  fetchRecentTests,
-  fetchReportTemplates,
   fetchTestCaseDetail,
   fetchInstrumentCatalog,
   fetchChannelModels,
@@ -105,16 +91,9 @@ import {
   type TopologyProfileDetail,
   fetchSequenceLibrary,
   fetchTestCases,
-  fetchTestPlan,
-  fetchTestPlans,
   deleteTestCase,
-  updateTestPlan,
   updateInstrumentCategory,
   replaceProbes,
-  reorderPlanStep,
-  reorderTestPlans,
-  removePlanStep,
-  deleteTestPlan,
   updateProbe,
 } from './api/service'
 import client from './api/client'
@@ -129,16 +108,9 @@ import type {
   Probe as ProbeType,
   SequenceStep as SequenceStepType,
   TestCase,
-  TestPlanDetail,
-  TestPlanListResponse,
-  TestPlanSummary,
-  RecentTest,
   TestCasesResponse,
-  UpdatePlanPayload,
   UpdateProbePayload,
   UpdateInstrumentPayload,
-  ReorderSequencePayload,
-  ReorderPlanQueuePayload,
 } from './types/api'
 
 const hexToRgba = (hex: string, alpha: number) => {
@@ -224,16 +196,6 @@ type RunMetadata = {
   caseName?: string
 }
 
-type LiveHistoryEntry = RecentTest & {
-  mode: 'mock' | 'real'
-  source: 'live' | 'api'
-  runName: string
-  artifactPrefix: string
-  reportName: string
-  caseName: string
-}
-
-type RunEntry = LiveHistoryEntry & { statusLabel: string }
 
 type EquipmentDraft = {
   modelId: string
@@ -307,7 +269,7 @@ const sections: Array<{
   {
     key: 'testManagement',
     label: '测试管理',
-    description: '统一的测试计划管理与步骤编排系统，包含计划管理、步骤编排、执行队列和执行历史。',
+    description: '以测试用例为基础的测试管理：用例库（配仪表参数 / 直接执行）、执行历史、虚拟路测。',
   },
   {
     key: 'results',
@@ -428,49 +390,14 @@ function App() {
   const [demoMetrics, setDemoMetrics] = useState<MetricItem[] | null>(null)
   const [demoResultCard, setDemoResultCard] = useState<DemoRunResult | null>(null)
   const [preferMockExecution, setPreferMockExecution] = useState<boolean>(true)
-  const [executingPlanInfo, setExecutingPlanInfo] = useState<{ id: string; name: string } | null>(null)
-  const [autoChainExecution, setAutoChainExecution] = useState<boolean>(false)
-  const [executingPlanDetail, setExecutingPlanDetail] = useState<TestPlanDetail | null>(null)
-  const [liveHistory, setLiveHistory] = useState<LiveHistoryEntry[]>([])
-  const lastRecordedRunRef = useRef<number | null>(null)
-  const executingModeRef = useRef<'mock' | 'real'>('mock')
+  // ARCH-1 S4a: executingPlanInfo / executingPlanDetail / autoChainExecution /
+  // liveHistory / syncPlanSummary / _mutatePlanStatus 六组随计划链删除。
+  // 演示回放的直接入口(调试维护→监控)不依赖计划, 不受影响; 由 QueueTab 点
+  // "执行"触发的那条计划链演示随 QueueTab 一并消失(有意)。
+  // liveHistory 是演示时代的客户端内存历史, 它原本跟 apiEntries 合并渲染 ——
+  // 去掉后历史视图只读 test_executions 权威源(ARCH-1 S2 换源), 不是损失。
   const [executingRunMeta, setExecutingRunMeta] = useState<RunMetadata | null>(null)
   const [lastRunMeta, setLastRunMeta] = useState<RunMetadata | null>(null)
-  const syncPlanSummary = useCallback(
-    (plan: TestPlanDetail) => {
-      queryClient.setQueryData(['tests', 'plans', plan.id], { plan })
-      queryClient.setQueryData(['tests', 'plans'], (previous: TestPlanListResponse | undefined) => {
-        const summary = {
-          id: plan.id,
-          name: plan.name,
-          caseId: plan.caseId,
-          caseName: plan.caseName,
-          status: plan.status,
-          updatedAt: plan.updatedAt,
-          owner: 'AutoLab',
-        }
-        if (!previous) {
-          return { plans: [summary] }
-        }
-        const exists = previous.plans.some((item) => item.id === plan.id)
-        const nextPlans = exists
-          ? previous.plans.map((item) => (item.id === plan.id ? summary : item))
-          : [summary, ...previous.plans]
-        return { plans: nextPlans }
-      })
-    },
-    [queryClient],
-  )
-
-  const { mutate: _mutatePlanStatus } = useMutation({
-    mutationFn: ({ planId, status }: { planId: string; status: string }) =>
-      updateTestPlan(planId, { status }),
-    onSuccess: (result) => {
-      if (!result?.plan) return
-      syncPlanSummary(result.plan)
-    },
-  })
-
   const sectionDescriptor = useMemo(
     () => sections.find((item) => item.key === activeSection),
     [activeSection],
@@ -589,8 +516,7 @@ function App() {
     scheduleNextEvent()
   }, [demoRunPlanData, scheduleNextEvent])
 
-  // fromEvent: if true, skip backend call and event emission (already done by caller)
-  const handleDemoPause = useCallback((fromEvent = false) => {
+  const handleDemoPause = useCallback(() => {
     // Stop the timer
     if (timelineTimerRef.current !== null) {
       window.clearTimeout(timelineTimerRef.current)
@@ -599,26 +525,9 @@ function App() {
     demoRunStatusRef.current = 'paused'
     setDemoRunProgress((prev) => ({ ...prev, status: 'paused' }))
 
-    // Update backend if there's an executing plan (skip if called from event handler)
-    if (executingPlanInfo && !fromEvent) {
-      // Use proper pause API
-      apiPauseExecution(executingPlanInfo.id, { paused_by: '当前用户' })
-        .then(() => {
-          // Invalidate queries to sync UI
-          queryClient.invalidateQueries({ queryKey: ['test-management', 'queue'] })
-          queryClient.invalidateQueries({ queryKey: ['test-management', 'plans'] })
-        })
-        .catch(() => {
-          // Revert on error
-          demoRunStatusRef.current = 'running'
-          setDemoRunProgress((prev) => ({ ...prev, status: 'running' }))
-        })
-      appEventBus.emit({ type: 'execution:pause', payload: { planId: executingPlanInfo.id } })
-    }
-  }, [executingPlanInfo, queryClient])
+  }, [])
 
-  // fromEvent: if true, skip backend call and event emission (already done by caller)
-  const handleDemoStop = useCallback((fromEvent = false) => {
+  const handleDemoStop = useCallback(() => {
     // Stop the timer
     if (timelineTimerRef.current !== null) {
       window.clearTimeout(timelineTimerRef.current)
@@ -633,237 +542,46 @@ function App() {
       finishedAt: Date.now(),
     })
 
-    // Update backend if there's an executing plan (skip if called from event handler)
-    if (executingPlanInfo && !fromEvent) {
-      // Use proper cancel API
-      apiCancelExecution(executingPlanInfo.id, { cancelled_by: '当前用户' })
-        .then(() => {
-          // Invalidate queries to sync UI
-          queryClient.invalidateQueries({ queryKey: ['test-management', 'queue'] })
-          queryClient.invalidateQueries({ queryKey: ['test-management', 'plans'] })
-        })
-        .catch(() => {
-          // Error handling - plan was already stopped, UI is correct
-        })
-      appEventBus.emit({ type: 'execution:stop', payload: { planId: executingPlanInfo.id } })
-    }
-    // Always clear local state
-    if (fromEvent || executingPlanInfo) {
-      setExecutingPlanInfo(null)
-      setExecutingPlanDetail(null)
-      setExecutingRunMeta(null)
-    }
-  }, [executingPlanInfo, queryClient])
+    setExecutingRunMeta(null)
+  }, [])
 
   // Resume a paused execution
-  const handleDemoResume = useCallback((fromEvent = false) => {
+  const handleDemoResume = useCallback(() => {
     demoRunStatusRef.current = 'running'
     setDemoRunProgress((prev) => ({ ...prev, status: 'running' }))
 
-    // Update backend if there's an executing plan (skip if called from event handler)
-    if (executingPlanInfo && !fromEvent) {
-      apiResumeExecution(executingPlanInfo.id, { resumed_by: '当前用户' })
-        .then(() => {
-          queryClient.invalidateQueries({ queryKey: ['test-management', 'queue'] })
-          queryClient.invalidateQueries({ queryKey: ['test-management', 'plans'] })
-        })
-        .catch(() => {
-          // Revert on error
-          demoRunStatusRef.current = 'paused'
-          setDemoRunProgress((prev) => ({ ...prev, status: 'paused' }))
-        })
-      appEventBus.emit({ type: 'execution:start', payload: { planId: executingPlanInfo.id, planName: executingPlanInfo.name } })
-    }
-  }, [executingPlanInfo, queryClient])
+  }, [])
 
   const handleExecutionPreferenceChange = useCallback((preferMock: boolean) => {
     setPreferMockExecution(preferMock)
   }, [])
 
-  // fromEvent: if true, skip backend call (already done by QueueTab)
-  const startPlanExecution = useCallback(
-    (plan: TestPlanDetail, metadata: RunMetadata, fromEvent = false) => {
-      executingModeRef.current = executionMode
-      const snapshot: TestPlanDetail = { ...plan, status: 'running' }
+  // ARCH-1 S4a: startPlanExecution 与 execution:start 监听器随计划链删除。
+  // 该事件的**唯一** emitter 是 QueueTab (本片已删); resume handler 里那处
+  // emit 由 executingPlanInfo 守着, 而它只由本监听器写 —— 自环, QueueTab
+  // 一删就永远进不去。演示回放的直接入口(调试维护→监控)不经过这条链。
 
-      // Only call API if not triggered from event (to avoid duplicate calls)
-      if (!fromEvent) {
-        apiStartExecution(plan.id, { started_by: '当前用户' })
-          .then(() => {
-            // Invalidate queries to sync UI
-            queryClient.invalidateQueries({ queryKey: ['test-management', 'queue'] })
-            queryClient.invalidateQueries({ queryKey: ['test-management', 'plans'] })
-          })
-          .catch(() => {
-            // Error handling
-          })
-      }
-
-      syncPlanSummary(snapshot)
-      setExecutingPlanInfo({ id: snapshot.id, name: metadata.runName || snapshot.name })
-      setExecutingPlanDetail(snapshot)
-      setExecutingRunMeta(metadata)
-      setActiveSection('dashboard')
-
-      // Set running status directly (handleDemoRunStart may return early if no demo plan)
-      demoRunStatusRef.current = 'running'
-      setDemoRunProgress({
-        status: 'running',
-        currentStepIndex: 0,
-        eventIndex: -1,
-        startedAt: Date.now(),
-        finishedAt: null,
-      })
-
-      // Try to start demo run if data is available
-      handleDemoRunStart()
-    },
-    [handleDemoRunStart, syncPlanSummary, executionMode, queryClient],
-  )
-
-  // Listen for execution:start events from TestManagement module
-  useEffect(() => {
-    const handleExecutionStart = (event: ExecutionStartEvent) => {
-      const { planId, planName } = event.payload
-
-      // Fetch plan detail and start execution
-      queryClient
-        .fetchQuery({
-          queryKey: ['tests', 'plans', planId],
-          queryFn: () => fetchTestPlan(planId),
-        })
-        .then((result) => {
-          // Handle both { plan: ... } wrapper and direct plan object
-          const plan = result?.plan ?? result
-          if (plan && plan.id) {
-            const metadata = {
-              runName: `${planName}-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}`,
-              artifactPrefix: planName.replace(/[^A-Za-z0-9-_]+/g, '-'),
-              caseName: (plan as TestPlanDetail).caseName ?? plan.name,
-            }
-            // fromEvent=true: QueueTab already called the backend API
-            startPlanExecution(plan as TestPlanDetail, metadata, true)
-          }
-        })
-        .catch(() => {
-          // Silently fail - user will see the plan didn't start
-        })
-    }
-
-    const unsubscribe = appEventBus.on('execution:start', handleExecutionStart)
-    return unsubscribe
-  }, [queryClient, startPlanExecution])
-
-  // Listen for pause/stop events from TestManagement module
-  useEffect(() => {
-    const handlePauseEvent = () => {
-      // fromEvent=true: backend already updated by QueueTab, just update local state
-      handleDemoPause(true)
-    }
-    const handleStopEvent = () => {
-      // fromEvent=true: backend already updated by QueueTab, just update local state
-      handleDemoStop(true)
-    }
-
-    const unsubPause = appEventBus.on('execution:pause', handlePauseEvent)
-    const unsubStop = appEventBus.on('execution:stop', handleStopEvent)
-
-    return () => {
-      unsubPause()
-      unsubStop()
-    }
-  }, [handleDemoPause, handleDemoStop])
+  // ARCH-1 S4a: execution:pause / execution:stop 两个监听器同理删除 ——
+  // emitter 只有 QueueTab (已删) 和 App 自己的计划分支 (已删)。
 
   useEffect(() => {
     if (lastProgressStatusRef.current === demoRunProgress.status) return
     lastProgressStatusRef.current = demoRunProgress.status
-    if (demoRunProgress.status === 'completed' && executingPlanInfo) {
-      const finishedPlanId = executingPlanInfo.id
-      // Use proper complete API
-      apiCompleteExecution(finishedPlanId)
-        .then(() => {
-          queryClient.invalidateQueries({ queryKey: ['test-management', 'queue'] })
-          queryClient.invalidateQueries({ queryKey: ['test-management', 'plans'] })
-        })
-        .catch(() => {
-          // Error handling
-        })
-      if (executingPlanDetail && executingPlanDetail.id === finishedPlanId) {
-        syncPlanSummary({ ...executingPlanDetail, status: 'completed' })
-      }
-      setExecutingPlanDetail(null)
-      if (
-        demoRunProgress.finishedAt &&
-        lastRecordedRunRef.current !== demoRunProgress.finishedAt &&
-        executingPlanDetail &&
-        executingRunMeta
-      ) {
-        lastRecordedRunRef.current = demoRunProgress.finishedAt
-        const entry: LiveHistoryEntry = {
-          id: `RUN-${demoRunProgress.finishedAt}`,
-          name: executingRunMeta.runName,
-          dut: executingPlanDetail.caseName ?? '未指定',
-          result: demoResultCard?.verdict ?? '通过',
-          date: new Date().toLocaleDateString('zh-CN'),
-          mode: executingModeRef.current,
-          source: 'live',
-          runName: executingRunMeta.runName,
-          artifactPrefix: executingRunMeta.artifactPrefix,
-          reportName: `${executingRunMeta.artifactPrefix}-report.pdf`,
-          caseName: executingPlanDetail.caseName ?? executingPlanDetail.name,
-        }
-        setLiveHistory((prev) => [entry, ...prev].slice(0, 20))
-      }
+    if (demoRunProgress.status === 'completed') {
+      // ARCH-1 S4a: 原先这里给计划打 complete、写 liveHistory、按
+      // autoChainExecution 自动串下一个计划 —— 三件事都依赖 TestPlan, 随
+      // 计划链删除。演示回放本身(进度/指标/结果卡)不受影响。
       if (executingRunMeta) {
         setLastRunMeta(executingRunMeta)
         setExecutingRunMeta(null)
       }
-      if (autoChainExecution) {
-        const planList = queryClient.getQueryData(['tests', 'plans']) as TestPlanListResponse | undefined
-        const nextSummary = planList?.plans.find(
-          (plan) => plan.id !== finishedPlanId && plan.status === '待执行',
-        )
-        if (nextSummary) {
-          queryClient
-            .fetchQuery({
-              queryKey: ['tests', 'plans', nextSummary.id],
-              queryFn: () => fetchTestPlan(nextSummary.id),
-            })
-            .then((result) => {
-              if (result?.plan) {
-                startPlanExecution(
-                  result.plan,
-                  createDefaultRunMetadata(result.plan.name, result.plan.caseName ?? result.plan.name),
-                )
-              } else {
-                setExecutingPlanInfo(null)
-              }
-            })
-            .catch(() => {
-              setExecutingPlanInfo(null)
-            })
-          return
-        }
-      }
-      setExecutingPlanInfo(null)
     }
     if (demoRunProgress.status === 'idle') {
-      setExecutingPlanInfo(null)
-      setExecutingPlanDetail(null)
       setExecutingRunMeta(null)
     }
   }, [
     demoRunProgress.status,
-    executingPlanInfo,
-    autoChainExecution,
-    queryClient,
-    startPlanExecution,
-    fetchTestPlan,
-    executingPlanDetail,
-    syncPlanSummary,
     demoRunProgress.finishedAt,
-    demoResultCard,
-    executionMode,
     executingRunMeta,
   ])
 
@@ -875,31 +593,9 @@ function App() {
     }
   }, [])
 
-  // Restore execution state from backend on app load
-  useEffect(() => {
-    const restoreExecutionState = async () => {
-      try {
-        const queueItems = await getTestQueue()
-        // Find running or paused plan
-        const activePlan = queueItems.find(
-          (item) => item.test_plan.status === 'running' || item.test_plan.status === 'paused'
-        )
-        if (activePlan) {
-          setExecutingPlanInfo({
-            id: activePlan.test_plan.id,
-            name: activePlan.test_plan.name,
-          })
-          // Set the demo run status based on plan status
-          const status = activePlan.test_plan.status === 'running' ? 'running' : 'paused'
-          demoRunStatusRef.current = status
-          setDemoRunProgress((prev) => ({ ...prev, status }))
-        }
-      } catch {
-        // Silently fail - not critical if we can't restore state
-      }
-    }
-    restoreExecutionState()
-  }, [])
+  // ARCH-1 S4a: 这里原有一个"刷新后从执行队列回填正在跑的计划"的 effect,
+  // 随计划链删除 —— 它读 /test-plans/queue, 唯一产出是 executingPlanInfo。
+  // 用例执行的"正在跑"由 TestCaseLibrary 自己查 (fetchRunningExecution)。
 
   const sidebarBackground = isDark
     ? `linear-gradient(180deg, ${theme.colors.dark[7]} 0%, ${theme.colors.dark[8]} 100%)`
@@ -935,12 +631,6 @@ function App() {
         hardwareOnline,
         systemStatus,
         onExecutionModeChange: handleExecutionPreferenceChange,
-        onPlanExecute: startPlanExecution,
-        executingPlan: executingPlanInfo,
-        autoChainExecution,
-        onAutoChainExecutionChange: setAutoChainExecution,
-        executingPlanDetail,
-        liveHistory,
         executingRunMeta,
         recentRunMeta: executingRunMeta ?? lastRunMeta,
       }),
@@ -962,11 +652,6 @@ function App() {
       hardwareOnline,
       systemStatus,
       handleExecutionPreferenceChange,
-      startPlanExecution,
-      executingPlanInfo,
-      autoChainExecution,
-      executingPlanDetail,
-      liveHistory,
       executingRunMeta,
       lastRunMeta,
     ],
@@ -1236,12 +921,6 @@ type RenderPayload = {
   hardwareOnline: boolean
   systemStatus: SystemStatusItem[]
   onExecutionModeChange: (preferMock: boolean) => void
-  onPlanExecute: (plan: TestPlanDetail, metadata: RunMetadata) => void
-  executingPlan: { id: string; name: string } | null
-  autoChainExecution: boolean
-  onAutoChainExecutionChange: (value: boolean) => void
-  executingPlanDetail: TestPlanDetail | null
-  liveHistory: LiveHistoryEntry[]
   executingRunMeta: RunMetadata | null
   recentRunMeta: RunMetadata | null
 }
@@ -1285,15 +964,11 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
               scenarioStatus={payload.demoProgress.status}
               progress={payload.demoProgress}
               executionMode={payload.executionMode}
-              executingPlan={payload.executingPlan}
-              planDetail={payload.executingPlanDetail}
               demoPlan={payload.demoPlan}
               onRestart={payload.onDemoStart}
               onPause={payload.onDemoPause}
               onResume={payload.onDemoResume}
               onStop={payload.onDemoStop}
-              onPlanExecute={payload.onPlanExecute}
-              autoChainExecution={payload.autoChainExecution}
             />
           }
         />
@@ -3703,17 +3378,6 @@ function createWaveSamples(length: number): number[] {
   })
 }
 
-const sanitizeArtifactPrefix = (value: string) => value.replace(/[^A-Za-z0-9-_]+/g, '-')
-
-const createDefaultRunMetadata = (planName: string, caseName?: string): RunMetadata => {
-  const now = new Date()
-  const pad = (num: number) => String(num).padStart(2, '0')
-  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
-  const runName = `${planName}-${stamp}`
-  const artifactPrefix = sanitizeArtifactPrefix(runName)
-  return { runName, artifactPrefix, caseName: caseName ?? planName }
-}
-
 
 type MonitoringProps = {
   logs: LogEntry[]
@@ -3722,15 +3386,11 @@ type MonitoringProps = {
   scenarioStatus: DemoRunStatus
   progress: DemoRunProgress
   executionMode: 'real' | 'mock'
-  executingPlan: { id: string; name: string } | null
-  planDetail: TestPlanDetail | null
   demoPlan?: DemoRunPlan
   onRestart: () => void
   onPause: () => void
   onResume: () => void
   onStop: () => void
-  onPlanExecute: (plan: TestPlanDetail, metadata: RunMetadata) => void
-  autoChainExecution: boolean
 }
 
 function Monitoring({
@@ -3740,15 +3400,11 @@ function Monitoring({
   scenarioStatus,
   progress,
   executionMode,
-  executingPlan,
-  planDetail,
   demoPlan,
   onRestart,
   onPause,
   onResume,
   onStop,
-  onPlanExecute,
-  autoChainExecution,
 }: MonitoringProps) {
   const theme = useMantineTheme()
   const { data: feedsData } = useQuery({
@@ -3775,7 +3431,9 @@ function Monitoring({
   const socketRef = useRef<WebSocket | null>(null)
   const scenarioMetricsRef = useRef<MetricItem[] | null>(null)
   const controlsDisabled = scenarioStatus === 'running'
-  const hasPlanLoaded = Boolean(planDetail || demoPlan)
+  // ARCH-1 S4a: 时间线原先优先用 TestPlan 的步骤, 无计划才回落到演示夹具。
+  // 计划链拆除后只剩演示夹具这一路。
+  const hasPlanLoaded = Boolean(demoPlan)
   type TimelineRenderItem = {
     id: string
     title: string
@@ -3784,15 +3442,6 @@ function Monitoring({
     checkpoint?: { summary?: string }
   }
   const timelineItems = useMemo<TimelineRenderItem[]>(() => {
-    if (planDetail && planDetail.steps && planDetail.steps.length > 0) {
-      return planDetail.steps.map((step, index) => ({
-        id: step.id ?? `plan-step-${index}`,
-        title: `${index + 1}. ${step.title}`,
-        message: step.description || step.meta || '执行该测试步骤',
-        offsetMs: index * 6000,
-        checkpoint: undefined,
-      }))
-    }
     if (demoPlan) {
       return demoPlan.timeline.map((event, index) => {
         const linkedStep =
@@ -3809,16 +3458,13 @@ function Monitoring({
       })
     }
     return []
-  }, [planDetail, demoPlan])
+  }, [demoPlan])
   const timelineActiveIndex = useMemo(() => {
     if (timelineItems.length === 0) return 0
-    if (planDetail) {
-      const index = progress.currentStepIndex < 0 ? 0 : Math.min(progress.currentStepIndex, timelineItems.length - 1)
-      return index
-    }
+    // ARCH-1 S4a: 计划来源的时间线没了, 进度只按演示夹具的事件序号走。
     const index = progress.eventIndex < 0 ? 0 : Math.min(progress.eventIndex, timelineItems.length - 1)
     return index
-  }, [timelineItems.length, planDetail, progress.currentStepIndex, progress.eventIndex])
+  }, [timelineItems.length, progress.eventIndex])
   const startedAtText = progress.startedAt
     ? new Date(progress.startedAt).toLocaleTimeString('zh-CN', { hour12: false })
     : null
@@ -3988,19 +3634,8 @@ function Monitoring({
       return
     }
 
-    // If there's a real plan loaded and not yet started, use onPlanExecute
-    if (planDetail) {
-      const runName = `${planDetail.name}-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}`
-      const metadata: RunMetadata = {
-        runName,
-        artifactPrefix: planDetail.name.replace(/[^A-Za-z0-9-_]+/g, '-'),
-        caseName: planDetail.caseName ?? planDetail.name,
-      }
-      onPlanExecute(planDetail, metadata)
-      return
-    }
-
-    // Otherwise use demo run
+    // ARCH-1 S4a: 原先若有计划则走 onPlanExecute 真执行, 否则演示回放。
+    // 计划链拆除后这里只做演示回放; 真执行的正门在测试用例库 (S1)。
     setExecStatus('running')
     setIsStreaming(true)
     onRestart()
@@ -4029,17 +3664,9 @@ function Monitoring({
   return (
     <Stack gap="xl">
       {/* Phase 2.7: 差异化的测试执行监控 - 始终显示 */}
+      {/* ARCH-1 S4a: 计划名与"第几步/共几步"来自 TestPlan, 随计划链删除。
+          这个卡片本身(实时指标)不依赖计划, 保留。 */}
       <ExecutionMetricsCard
-        testPlanName={executingPlan?.name}
-        currentStep={
-          executingPlan && planDetail && planDetail.steps && planDetail.steps.length > 0
-            ? {
-              index: progress.currentStepIndex >= 0 ? progress.currentStepIndex : 0,
-              total: planDetail.steps.length,
-              title: planDetail.steps[Math.max(0, progress.currentStepIndex)]?.title,
-            }
-            : undefined
-        }
         expectedRanges={{
           throughput: { min: 140, max: 160 },
           snr: { min: 23, max: 27 },
@@ -4066,15 +3693,10 @@ function Monitoring({
                     >
                       {execStatus === 'running' ? '运行中' : execStatus === 'paused' ? '已暂停' : '待命'}
                     </Badge>
-                    <Badge variant="light" color={autoChainExecution ? 'brand' : 'gray'}>
-                      {autoChainExecution ? '自动执行已开' : '自动执行关闭'}
-                    </Badge>
                   </Group>
                 </Group>
                 <Text size="sm" c="gray.6">
-                  {executingPlan
-                    ? `当前计划：${executingPlan.name}（${executingPlan.id}）`
-                    : '尚未选择执行计划，请在“测试计划与编排”中触发执行。'}
+                  演示回放 —— 真实测试请到「测试管理 → 测试用例库」执行用例。
                 </Text>
                 {startedAtText || finishedAtText ? (
                   <Group gap="sm" wrap="wrap">
@@ -4334,467 +3956,8 @@ function Monitoring({
   )
 }
 
-type ResultsProps = {
-  selected: string[]
-  onToggle: (id: string) => void
-  demoResult: DemoRunResult | null
-  liveHistory: LiveHistoryEntry[]
-  currentRunMeta: RunMetadata | null
-  executingRunMeta: RunMetadata | null
-  executingPlanDetail: TestPlanDetail | null
-  currentExecutionMode: 'real' | 'mock'
-}
-
-function _Results({
-  selected,
-  onToggle,
-  demoResult,
-  liveHistory,
-  currentRunMeta,
-  executingRunMeta,
-  executingPlanDetail,
-  currentExecutionMode,
-}: ResultsProps) {
-  const { data: recentTestsData, isLoading: isRecentLoading } = useQuery({
-    queryKey: ['tests', 'recent'],
-    queryFn: fetchRecentTests,
-  })
-  const { data: reportTemplatesData, isLoading: isReportLoading } = useQuery({
-    queryKey: ['reports', 'templates'],
-    queryFn: fetchReportTemplates,
-    enabled: false, // TEMP: Disabled - endpoint not implemented yet
-    retry: false,
-  })
-
-  const recentTestsList = useMemo(
-    () => recentTestsData?.recentTests ?? [],
-    [recentTestsData],
-  )
-  const reportTemplates = useMemo(
-    () => reportTemplatesData?.reportTemplates ?? [],
-    [reportTemplatesData],
-  )
-
-  const templateOptions = useMemo(
-    () => reportTemplates.map((item) => ({ label: `${item.name} (${item.format})`, value: item.id })),
-    [reportTemplates],
-  )
-
-  const combinedHistory = useMemo(() => {
-    const apiEntries: LiveHistoryEntry[] = recentTestsList.map((item) => ({
-      ...item,
-      mode: 'real',
-      source: 'api',
-      runName: item.name,
-      artifactPrefix: sanitizeArtifactPrefix(item.name),
-      reportName: `${sanitizeArtifactPrefix(item.name)}-report.pdf`,
-      caseName: item.name,
-    }))
-    const seen = new Set<string>()
-    const result: LiveHistoryEntry[] = []
-      ;[...liveHistory, ...apiEntries].forEach((entry) => {
-        if (seen.has(entry.id)) return
-        seen.add(entry.id)
-        result.push(entry)
-      })
-    return result
-  }, [recentTestsList, liveHistory])
-
-  const [showMock, setShowMock] = useState<boolean>(true)
-  const [reportSelection, setReportSelection] = useState<Record<string, string>>({})
-
-  const liveEntries = useMemo(
-    () => combinedHistory.filter((item) => item.source === 'live'),
-    [combinedHistory],
-  )
-
-  const filteredHistory = useMemo(
-    () => combinedHistory.filter((item) => showMock || item.mode !== 'mock'),
-    [combinedHistory, showMock],
-  )
-
-  const selectedDetails = useMemo(
-    () => combinedHistory.filter((item) => selected.includes(item.id)),
-    [selected, combinedHistory],
-  )
-
-  const currentAttachments = useMemo(() => {
-    if (!demoResult) return []
-    if (currentRunMeta) {
-      return [
-        { name: `${currentRunMeta.artifactPrefix}-report.pdf`, type: 'PDF', size: '—' },
-        { name: `${currentRunMeta.artifactPrefix}-attachments.zip`, type: 'ZIP', size: '—' },
-      ]
-    }
-    return demoResult.attachments
-  }, [demoResult, currentRunMeta])
-
-  const runEntries = useMemo<RunEntry[]>(() => {
-    const entries: RunEntry[] = liveEntries.map((entry) => ({
-      ...entry,
-      statusLabel: entry.result ?? '完成',
-    }))
-    if (executingRunMeta && executingPlanDetail) {
-      entries.unshift({
-        id: `active-${executingRunMeta.runName}`,
-        name: executingRunMeta.runName,
-        dut: executingPlanDetail.caseName ?? executingPlanDetail.name,
-        result: '执行中',
-        date: new Date().toLocaleDateString('zh-CN'),
-        mode: currentExecutionMode,
-        source: 'live',
-        runName: executingRunMeta.runName,
-        artifactPrefix: executingRunMeta.artifactPrefix,
-        reportName: `${executingRunMeta.artifactPrefix}-report.pdf`,
-        caseName: executingRunMeta.caseName ?? executingPlanDetail.caseName ?? executingPlanDetail.name,
-        statusLabel: '执行中',
-      })
-    }
-    return entries
-  }, [liveEntries, executingRunMeta, executingPlanDetail, currentExecutionMode])
-
-  const handleReportGenerate = (testId: string) => {
-    const templateId = reportSelection[testId]
-    if (!templateId) return
-    console.info(`生成报告：result=${testId}, template=${templateId}`)
-  }
-
-  return (
-    <Stack gap="xl">
-      {demoResult ? (
-        <Card withBorder radius="md" padding="xl">
-          <Stack gap="md">
-            <Group justify="space-between" align="flex-start">
-              <Stack gap={4}>
-                <Title order={3}>当前测试结果</Title>
-                <Text size="sm" c="gray.6">
-                  {demoResult.summary}
-                </Text>
-                {currentRunMeta ? (
-                  <Group gap="sm">
-                    <Badge variant="light" color="brand">
-                      执行：{currentRunMeta.runName}
-                    </Badge>
-                    <Badge variant="light" color="gray">
-                      归档前缀：{currentRunMeta.artifactPrefix}
-                    </Badge>
-                  </Group>
-                ) : null}
-              </Stack>
-              <Badge
-                color={
-                  demoResult.verdict === '通过'
-                    ? 'green'
-                    : demoResult.verdict === '失败'
-                      ? 'red'
-                      : 'yellow'
-                }
-                variant="filled"
-              >
-                {demoResult.verdict}
-              </Badge>
-            </Group>
-            <SimpleGrid cols={{ base: 1, md: 2 }} spacing="lg">
-              <Stack gap="sm">
-                <Text fw={600} size="sm">
-                  关键指标概览
-                </Text>
-                <Stack gap="sm">
-                  {demoResult.metrics.map((metric) => (
-                    <Paper key={metric.label} withBorder radius="md" p="sm">
-                      <Group justify="space-between" align="center">
-                        <Text fw={600} size="sm">
-                          {metric.label}
-                        </Text>
-                        <Badge
-                          size="xs"
-                          color={
-                            metric.status === 'ok'
-                              ? 'green'
-                              : metric.status === 'warn'
-                                ? 'yellow'
-                                : 'red'
-                          }
-                          variant="light"
-                        >
-                          {metric.status === 'ok'
-                            ? '符合'
-                            : metric.status === 'warn'
-                              ? '关注'
-                              : '警告'}
-                        </Badge>
-                      </Group>
-                      <Text size="xs" c="gray.6">
-                        基线：{metric.baseline}
-                      </Text>
-                      <Text size="xs" c="gray.6">
-                        实测：{metric.measured}
-                      </Text>
-                    </Paper>
-                  ))}
-                </Stack>
-              </Stack>
-              <Stack gap="sm">
-                <Text fw={600} size="sm">
-                  附件与建议
-                </Text>
-                <Stack gap="xs">
-                  {currentAttachments.map((file) => (
-                    <Badge key={file.name} variant="outline" color="brand">
-                      {file.name} · {file.type} · {file.size}
-                    </Badge>
-                  ))}
-                </Stack>
-                <Stack gap="xs">
-                  {demoResult.recommendations.map((item, index) => (
-                    <Text key={index} size="sm" c="gray.6">
-                      · {item}
-                    </Text>
-                  ))}
-                </Stack>
-                <Stack gap="sm">
-                  <Text fw={600} size="sm">
-                    运行测试例
-                  </Text>
-                  {runEntries.length === 0 ? (
-                    <Text size="sm" c="gray.6">
-                      暂无执行记录。
-                    </Text>
-                  ) : (
-                    <Stack gap="xs">
-                      {runEntries.map((entry) => (
-                        <Paper key={entry.id} withBorder radius="md" p="sm">
-                          <Group justify="space-between" align="center">
-                            <Stack gap={2}>
-                              <Text fw={600} size="sm">
-                                {entry.runName}
-                              </Text>
-                              <Text size="xs" c="gray.6">
-                                测试例：{entry.caseName}
-                              </Text>
-                            </Stack>
-                            <Group gap="xs">
-                              <Badge color={entry.mode === 'real' ? 'green' : 'gray'} variant="light">
-                                {entry.mode === 'real' ? '真实' : '模拟'}
-                              </Badge>
-                              <Badge
-                                color={
-                                  entry.statusLabel === '执行中'
-                                    ? 'yellow'
-                                    : entry.statusLabel === '失败'
-                                      ? 'red'
-                                      : 'green'
-                                }
-                                variant="light"
-                              >
-                                {entry.statusLabel}
-                              </Badge>
-                            </Group>
-                          </Group>
-                          <Group gap="xs">
-                            <Text size="xs" c="gray.6">
-                              归档前缀：{entry.artifactPrefix}
-                            </Text>
-                            <Text size="xs" c="gray.6">
-                              报告：{entry.reportName}
-                            </Text>
-                          </Group>
-                        </Paper>
-                      ))}
-                    </Stack>
-                  )}
-                </Stack>
-              </Stack>
-            </SimpleGrid>
-          </Stack>
-        </Card>
-      ) : null}
-
-      <Card withBorder radius="md" padding="xl">
-        <Stack gap="md">
-          <Group justify="space-between" align="center">
-            <Title order={3}>历史测试浏览</Title>
-            <Group gap="md" align="center">
-              <Switch
-                label="显示模拟测试"
-                checked={showMock}
-                onChange={(event) => setShowMock(event.currentTarget.checked)}
-              />
-              <Text size="sm" c="gray.6">
-                勾选记录以加入对比分析
-              </Text>
-            </Group>
-          </Group>
-          <ScrollArea h={360} type="auto">
-            <Table highlightOnHover withTableBorder>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th w={42} />
-                  <Table.Th>编号</Table.Th>
-                  <Table.Th>测试名称</Table.Th>
-                  <Table.Th>DUT</Table.Th>
-                  <Table.Th>状态</Table.Th>
-                  <Table.Th>日期</Table.Th>
-                  <Table.Th>模式</Table.Th>
-                  <Table.Th>归档前缀</Table.Th>
-                  <Table.Th>报告模板</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {isRecentLoading
-                  ? Array.from({ length: 3 }).map((_, index) => (
-                    <Table.Tr key={index}>
-                      <Table.Td colSpan={9}>
-                        <Text size="sm" c="gray.6">
-                          加载历史记录…
-                        </Text>
-                      </Table.Td>
-                    </Table.Tr>
-                  ))
-                  : filteredHistory.map((item) => (
-                    <Table.Tr key={item.id}>
-                      <Table.Td>
-                        <Checkbox
-                          aria-label={`选择 ${item.name}`}
-                          checked={selected.includes(item.id)}
-                          onChange={() => onToggle(item.id)}
-                        />
-                      </Table.Td>
-                      <Table.Td>{item.runName ?? item.name}</Table.Td>
-                      <Table.Td>{item.caseName ?? item.name}</Table.Td>
-                      <Table.Td>{item.dut}</Table.Td>
-                      <Table.Td>{item.result}</Table.Td>
-                      <Table.Td>{item.date}</Table.Td>
-                      <Table.Td>
-                        <Badge color={item.mode === 'real' ? 'green' : 'gray'} variant="light">
-                          {item.mode === 'real' ? '真实' : '模拟'}
-                        </Badge>
-                      </Table.Td>
-                      <Table.Td>
-                        <Badge variant="outline" color="gray">
-                          {item.artifactPrefix ?? item.name}
-                        </Badge>
-                      </Table.Td>
-                      <Table.Td>
-                        {templateOptions.length === 0 ? (
-                          <Text size="xs" c="gray.5">
-                            暂无模板
-                          </Text>
-                        ) : (
-                          <Group gap="xs">
-                            <Select
-                              data={templateOptions}
-                              placeholder="选择模板"
-                              size="xs"
-                              w={160}
-                              value={reportSelection[item.id] ?? null}
-                              onChange={(value) =>
-                                setReportSelection((prev) => ({
-                                  ...prev,
-                                  [item.id]: value ?? '',
-                                }))
-                              }
-                            />
-                            <Button
-                              size="compact-xs"
-                              variant="light"
-                              disabled={!reportSelection[item.id]}
-                              onClick={() => handleReportGenerate(item.id)}
-                            >
-                              生成
-                            </Button>
-                          </Group>
-                        )}
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
-        </Stack>
-      </Card>
-
-      <Grid gutter="xl">
-        <Grid.Col span={{ base: 12, xl: 6 }}>
-          <Card withBorder radius="md" padding="xl">
-            <Stack gap="md">
-              <Title order={3}>报告模板</Title>
-              {isReportLoading ? (
-                <Text size="sm" c="gray.6">
-                  正在加载模板…
-                </Text>
-              ) : (
-                <Stack gap="sm">
-                  {reportTemplates.map((template) => (
-                    <Paper key={template.id} withBorder radius="md" p="md">
-                      <Group justify="space-between" align="flex-start">
-                        <Stack gap={4}>
-                          <Text fw={600}>{template.name}</Text>
-                          <Text size="xs" c="gray.6">
-                            #{template.id} · {template.format} · 更新于 {template.lastUpdated}
-                          </Text>
-                        </Stack>
-                        <Button variant="subtle" size="compact-sm">
-                          生成
-                        </Button>
-                      </Group>
-                    </Paper>
-                  ))}
-                  {reportTemplates.length === 0 ? (
-                    <Paper withBorder radius="md" p="md" c="gray.6">
-                      暂无模板，请稍后添加。
-                    </Paper>
-                  ) : null}
-                </Stack>
-              )}
-            </Stack>
-          </Card>
-        </Grid.Col>
-
-        <Grid.Col span={{ base: 12, xl: 6 }}>
-          <Card withBorder radius="md" padding="xl">
-            <Stack gap="md">
-              <Group justify="space-between" align="center">
-                <Title order={3}>对比分析</Title>
-                <Badge color="brand" variant="light">
-                  已选 {selectedDetails.length}
-                </Badge>
-              </Group>
-              {selectedDetails.length === 0 ? (
-                <Paper withBorder radius="md" p="md" c="gray.6">
-                  在左侧表格中至少选择两条记录以生成对比概要。
-                </Paper>
-              ) : (
-                <Stack gap="sm">
-                  {selectedDetails.map((item) => (
-                    <Paper key={item.id} withBorder radius="md" p="sm">
-                      <Stack gap={2}>
-                        <Text fw={600}>{item.name}</Text>
-                        <Group gap="sm">
-                          <Badge variant="light">{item.dut}</Badge>
-                          <Text size="xs" c="gray.6">
-                            结果：{item.result}
-                          </Text>
-                        </Group>
-                      </Stack>
-                    </Paper>
-                  ))}
-                  <Group justify="flex-end" gap="sm">
-                    <Button color="brand" disabled={selectedDetails.length < 2}>
-                      生成对比图
-                    </Button>
-                    <Button variant="outline" color="gray" disabled={selectedDetails.length === 0}>
-                      导出差异
-                    </Button>
-                  </Group>
-                </Stack>
-              )}
-            </Stack>
-          </Card>
-        </Grid.Col>
-      </Grid>
-    </Stack>
-  )
-}
+// ARCH-1 S4a: 这里原有一个 `_Results` 组件 (零渲染死代码, 与 CLAUDE.md 记的
+// `_TestConfig` 同类)。它引用 TestPlanDetail, 随计划链一并删除 —— 真正在用的
+// 结果视图是 features/Reports/。
 
 export default App

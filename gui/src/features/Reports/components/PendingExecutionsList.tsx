@@ -6,6 +6,7 @@
  */
 
 import { useState } from 'react'
+import { FORMAL_EXECUTION_CHAINS } from '../types'
 import {
   Card,
   Table,
@@ -64,12 +65,7 @@ interface PendingExecutionsResponse {
 //   commissioning.py (create_session / run_adhoc_phase)
 //   test_plan_runner.py (每步建行)
 //   test_case_runner.py (用例执行建行)
-const FORMAL_EXECUTION_CHAINS = [
-  'test_case_runner',
-  'test_plan_runner',
-  'commissioning_api',
-]
-
+// 白名单定义在 ../types (组件文件里 export 非组件会让 Fast Refresh 失效)
 async function fetchCompletedExecutions(): Promise<PendingExecutionItem[]> {
   const response = await client.get<PendingExecutionsResponse>('/test-executions', {
     params: {
