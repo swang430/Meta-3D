@@ -1,8 +1,16 @@
 # ARCH-1 S4 设计稿 — 拆除计划链
 
-> **状态**：设计稿 **v2**（外审一轮后修订），三条待决已拍板，**尚未动代码**。
-> **修订记录**：v1 → v2 由 Codex #243 两条 P1 打回 —— 我的枚举漏了 GUI 第二棵组件树
-> （含一个**可达**的建计划入口）和后端 `test_plan_runner` 的两处活引用。详见 §1.3 / §1.4。
+> **状态**：设计稿 **v3**（外审两轮后定稿），三条待决已拍板，**尚未动代码**。
+> **修订记录**：
+> - v1 → v2（Codex #243 round 1，2×P1）：漏了 GUI 第二棵组件树（含一个**可达**的建计划
+>   入口）和后端 `test_plan_runner` 的两处活引用。§1.3 / §1.4。
+> - v2 → v3（round 2，2×P1 + 1×P2）：漏了**报告向导**两个读计划的选择器（§2.6）；
+>   僵尸行复位漏了 TestPlan / TestStep 两类（§1.4、D-i）；D-g 挡不住 `main.py`
+>   被 try/except 吞掉的 import（D-g 升结构断言）。
+> - **v3 换了方法**：三轮都栽在"手列消费方清单"，改成 §1.5 的**机械推导**。
+>   推导时自己又发现一颗雷：`/test-plans/cases*` 是要留的，判据写宽会误杀 S1 执行正门。
+> **外审收口**：轮次上限 = 2，本轮到顶。v3 的改动**不再送审**，
+> 由 S4a / S4b / S4c 各自的 PR 承接外审。
 > **上游**：[`arch-1-testcase-first-simplification.md`](arch-1-testcase-first-simplification.md) §2.4 / §3 的 S4 行。
 > **前置**：S1（`124d7e5`）/ S2（`3f66474` + 两轮迟到修复）/ S3a（`c4502dd`，HAL 闸门换源）全部 merged。
 > **实证前置**：
@@ -18,15 +26,19 @@
 
 S4 是 ARCH-1 唯一的**纯删除**片：把计划链（路由 / runner / Service / GUI 两棵组件树）整个摘掉。
 
-盘点纠正了上游设计稿**三处数字/事实错误**，其中一条会**直接搞崩 VRT 场景库**（§1.5）；
-外审又打回**两处我自己的漏枚举**，都是"删了承载物、活引用还在"（§1.3 / §1.4）。
+盘点纠正了上游设计稿**三处数字/事实错误**，其中一条会**直接搞崩 VRT 场景库**（§1.6）；
+外审两轮又打回**四处我自己的漏枚举**，全是同一形态："删了承载物，活引用还在"。
 
-**三次踩的是同一个坑**：拿"我列的清单"当"全部影响集"。所以 v2 的每条删除都带一个
-**集合断言**（D-b / D-h）或**行为断言**（D-g / D-i），不靠清单本身正确。
+**四次踩同一个坑**：拿"我列的清单"当"全部影响集"。清单每次都少一点，而少的那一点
+每次都能让线上功能坏掉。所以 v3 做了两件事：
+
+1. **换方法** —— 消费方集合改由一条 grep **机械推导**（§1.5），清单降级成它的快照；
+2. **换门的形态** —— 每条删除都挂**集合断言**（D-b / D-g② / D-h）或**行为断言**
+   （D-c / D-i / D-j），不再依赖"清单本身是对的"这个前提。
 
 ---
 
-## 1. 盘点：上游三处错误 + 外审打回的两处漏枚举
+## 1. 盘点：上游三处错误 + 外审两轮打回的四处漏枚举
 
 ### 1.1 路由是 28 条不是 27 条，且分类不同
 
@@ -131,7 +143,51 @@ S1 建的用例执行正门**当场就依赖它**：
 status='running'` 置 `failed`，要么在 case-runner 的启动复位里把这个 marker 一并纳入。
 **倾向后者**（不加迁移文件，复位函数本来就在做这件事，只是扩一个 marker）。配门 D-i。
 
-### 1.5 ⚠️ 上游的致命错误：companion 过滤器**不能**跟着删
+### 1.5 🔧 换方法：消费方集合改成**机械推导**，不再手列（v3）
+
+**三轮外审、三次"你又漏了一个消费方"**（v1 漏 GUI 第二棵树 + 后端活引用，v2 漏报告向导）。
+三次不是运气差 —— 是**手列清单这个方法本身**不可靠。v3 起改成一条命令推出全集，
+清单只是它的快照：
+
+```bash
+# GUI 侧：每一处打到计划前缀的调用（含行号）
+grep -rn "'/test-plans\|\`/test-plans\|\"/test-plans" gui/src --include="*.ts" --include="*.tsx"
+# 后端侧：每一处 test_plan_runner 引用
+grep -rn "test_plan_runner" api-service --include="*.py"
+```
+
+2026-07-28 推导结果 **72 处命中 / 7 个文件**，按去留分三类：
+
+| 文件 | 命中 | S4 处置 |
+|---|---|---|
+| `features/TestManagement/api/testManagementAPI.ts` | 29 | ❌ 删计划部分 |
+| `api/testPlanService.ts` | 23（**含 5 处 `/cases`**） | ⚠️ 拆分，见下 |
+| `api/service.ts` | 16（**含 7 处 `/cases`**） | ⚠️ 拆分，见下 |
+| `features/Reports/components/TestPlanSelector.tsx` | 1 | ❌ **换源**（§2.6） |
+| `features/Reports/components/ExecutionSelector.tsx` | 1 | ❌ **换源**（§2.6） |
+| `api/preflightService.ts` | 1 | ❌ 删（待决① 已定） |
+| `components/TestPlanManagement/CreateTestPlanWizard.tsx` | 经 `createTestPlan` | ❌ 删（§1.3） |
+
+#### ⚠️⚠️ 最大的一颗雷：`/test-plans/cases*` 是**要留的**
+
+计划链和用例链**共用 `/test-plans` 这一个前缀**。要留的有：
+
+- `/test-plans/cases`（增删改查 TestCase）—— 用例库的命根子
+- `/test-plans/cases/{id}/execute` —— **S1 刚建的执行正门**（`testPlanService.ts:419`）
+- `/test-plans/cases/executions/{id}` —— 执行状态查询（`:427`）
+
+所以门 D-h 的判据**绝不能**写成"全 GUI 无 `/test-plans` 调用" —— 那会把用例链一起判死，
+是一道**会误杀的门**。正确判据：
+
+```
+无 `/test-plans` 调用，除 `/test-plans/cases` 开头的以外
+```
+
+> 顺带：拆完之后留一个叫 `test_plan` 的路由文件专门服务 cases，名不副实。
+> 改前缀到 `/test-cases` 是**独立工单**（要动契约四步 + GUI 全量改调用），
+> 记 backlog，**不进 S4** —— S4 是纯删除片，不夹带重命名。
+
+### 1.6 ⚠️ 上游的致命错误：companion 过滤器**不能**跟着删
 
 上游 §2.4 写："连带作废 `_create_road_test_steps` + companion-TestCase 过滤器
 （P3-8 那套补丁整个消失）"。
@@ -234,14 +290,33 @@ handler 里的计划分支。
 
 ---
 
+### 2.6 报告向导 —— 第 6 项，v3 补（外审 #243 round 2 P1）
+
+「创建新报告」向导是**可达的**（`ReportsPage.tsx:76` → `CreateReportWizard.tsx:282/300`），
+它的"选择数据"步骤有两个选择器打计划路由：
+
+| 组件 | 现在读 | S4b 删路由后 | 换源到 |
+|---|---|---|---|
+| `TestPlanSelector.tsx:48` | `GET /test-plans?status=completed` | 404，选不出东西 | 删掉这一步 —— 报告直接选执行 |
+| `ExecutionSelector.tsx:50` | `GET /test-plans/{id}/executions` | 404 | `GET /test-executions`（S2 已建，`PendingExecutionsList` 就在用） |
+
+**为什么 v1/v2 的门挡不住**：`npm run build` 语法层过；用例库的否定式检查看的是另一个页面；
+D-h 只查 `createTestPlan`（**写**入口），而这两个是**读**（GET）。
+—— 又一次"验证打在看起来的那一端"：我防的是建计划，漏的是查计划。
+
+**S4a 处置**：把向导的两步合成一步 —— 直接列 `test_executions`（跟
+`PendingExecutionsList` 同源，那里 S2 已经证明这条路走得通）。配行为门 D-j。
+
+---
+
 ## 3. 顺序与切分
 
 S4 体量大（后端 ~2430 行 + GUI ~4500 行），**切三个 PR**，每个都能独立编译+测试通过：
 
 | 片 | 内容 | 为什么这个顺序 |
 |---|---|---|
-| **S4a** | GUI 全清：树 A（PlansTab / QueueTab / useSequenceLibrary）**+ 树 B 的 6 个文件**（§1.3）**+ `TestManagement.tsx` 的「新建测试计划」按钮 / wizard / `'plans'` 跳转** + `App.tsx` 143 处 Plan 面（含 §2.4 列的演示回放计划分支 + `liveHistory`），StepsTab 改造为「用例配置」 | 前端不再调用 → 后端路由变成真死路由，后续删除零风险 |
-| **S4b** | 后端：**先解耦**（§1.4 两处 + 僵尸行复位扩 marker），**再**删 34 条路由、6 个 Service 类、`test_plan_runner.py`、scenario 桥、test_sequence 组 | 此时前端无调用方；解耦必须排在删模块之前 |
+| **S4a** | GUI 全清：树 A（PlansTab / QueueTab / useSequenceLibrary）**+ 树 B 的 6 个文件**（§1.3）**+ `TestManagement.tsx` 的「新建测试计划」按钮 / wizard / `'plans'` 跳转** + `App.tsx` 143 处 Plan 面（含 §2.4 列的演示回放计划分支 + `liveHistory`）**+ 报告向导两个选择器换源（§2.6）**，StepsTab 改造为「用例配置」 | 前端不再调用 → 后端路由变成真死路由，后续删除零风险 |
+| **S4b** | 后端：**先解耦**（§1.4 两处 + 僵尸行复位**三类行**全接管），**再**删 34 条路由、6 个 Service 类、`test_plan_runner.py`、scenario 桥、test_sequence 组 | 此时前端无调用方；解耦必须排在删模块之前 |
 | **S4c** | 收尾：模型标 deprecated、闸门删 TestPlan 半截、sequences_seeder 删、S2/S3 backlog 清理 | 依赖前两片 |
 
 **S4a 必须先做**：反过来（先删后端）会让 GUI 在中间态白屏。
@@ -256,15 +331,16 @@ S4 体量大（后端 ~2430 行 + GUI ~4500 行），**切三个 PR**，每个�
 
 | 门 | 档 | 断言 | 变异 |
 |---|---|---|---|
-| **D-a** | 行为 | **VRT 场景库仍能列出且不含 companion**（造 3 条 companion 行 → `GET /road-test/scenarios` 200 且不含它们） | 删 companion 过滤器 → Pydantic ValidationError → 红（**§1.5 的致命错误专门防线**） |
+| **D-a** | 行为 | **VRT 场景库仍能列出且不含 companion**（造 3 条 companion 行 → `GET /road-test/scenarios` 200 且不含它们） | 删 companion 过滤器 → Pydantic ValidationError → 红（**§1.6 的致命错误专门防线**） |
 | **D-b** | 不变量 | 全仓 grep：`TestPlan` 只出现在封存模型 + 历史查询，无活跃业务引用 | 漏删任一 Service/路由 → 红 |
 | **D-c** | 行为 | 用例执行全链仍通（execute → 5 相位 → 历史 → 报告） | 误删 `TestCaseService` / cases 路由 → 红 |
 | **D-d** | 行为 | HAL 闸门在拆掉 TestPlan 半截后仍拦住活跃执行 | 连带删错 `find_execution_blockers` → 红 |
 | **D-e** | 结构 | G2 路由门（已有）自动验无双前缀残留 | — |
 | **D-f** | 行为 | 删除的 34 条路由全部 404（逐条断言，防"删了 Service 忘删路由"） | 任一路由残留 → 红 |
-| **D-g** | 行为 | **`test_case_runner` 不 import `test_plan_runner` 也能跑完一次执行**（S4b 解耦后跑真实 execute，断言 200 + 执行行落库） | 保留 `_active_conflict` 的计划分支 → `ModuleNotFoundError` → 红（**§1.4 Codex P1 专防**） |
-| **D-h** | 不变量 | **全 GUI grep：无任何组件调 `createTestPlan` / `POST /test-plans`**（源码级集合断言，不是浏览器点击） | 漏删 `CreateTestPlanWizard` 或 `TestManagement.tsx` 的按钮 → 红（**§1.3 最危险漏项专防**） |
-| **D-i** | 行为 | **legacy 僵尸行不卡 HAL 重载**：造一条 `executed_by='test_plan_runner', status='running'` 的行 → 跑启动复位 → HAL 重载不被 409 拦 | 复位函数不扩 marker → 409 → 红（**§1.4 brownfield 后果专防**） |
+| **D-g** | 行为**+结构** | ① 跑真实 execute，断言 200 + 执行行落库；② **结构断言：全后端源码零 `test_plan_runner` 引用**（不只 `_active_conflict`） | 保留 `_active_conflict` 的计划分支 → `ModuleNotFoundError` → 红；保留 `main.py:70` → ②红（**round-2 P2 专防**：那处 import 在 `try/except` 里，异常被吞成 warning，真实 execute 照样成功，光靠行为门是**假绿**） |
+| **D-h** | 不变量 | **全 GUI grep：无 `/test-plans` 调用，`/test-plans/cases*` 除外**（§1.5 推导式，覆盖读和写两个方向） | 漏删 `CreateTestPlanWizard`（写）或报告向导两个选择器（读）→ 红。⚠️ 判据写成"无 `/test-plans`"会**误杀** S1 的执行正门（§1.5） |
+| **D-i** | 行为 | **legacy 僵尸行三类全清**：造 ① `TestPlan.status=RUNNING` ② 它下面 `TestStep.status='running'` ③ `TestExecution(executed_by='test_plan_runner', status='running')`，跑启动复位 → 三类都进终态、HAL 重载不被 409 拦、dashboard 的 `active_test_plans` 回零 | 复位只扩 execution marker（v2 的方案）→ ①②仍卡 running → 红（**round-2 P1 专防**：`reset_stale_running_plans` 原本复位**三种**行，v2 只想着第三种） |
+| **D-j** | 行为 | **报告向导选得出数据**：`ReportsPage` → 创建报告 → 选择数据步骤能列出已完成执行并建出报告 | 向导仍读 `/test-plans` → 404 → 红（**§2.6 专防**） |
 
 外加 GUI 两道门：`npm run build` + 浏览器闭环。
 
@@ -279,7 +355,7 @@ S4 体量大（后端 ~2430 行 + GUI ~4500 行），**切三个 PR**，每个�
 1. ~~**外审当前不可用**~~ **→ 已解除**。初稿写 Codex 回 "create an environment"（= review
    未发生）。**本 PR 自己就是反证**：Codex 2026-07-28 12:15:52Z 正常出了 review，抓到
    2 条 P1（§1.3 / §1.4 两处漏枚举，均已坐实并改稿）。外审通道恢复，三片都按正常流程走。
-2. **companion 存量 275 行**：§1.5，过滤器必须留。
+2. **companion 存量 275 行**：§1.6，过滤器必须留。
 3. **`App.tsx` 的计划面是 143 行不是 6 个 import**：初稿严重低估（§1.3）。这是 S4a 的主要
    工作量 —— 三个 execution handler 各有 `executingPlanInfo` 分支、demo-run 报告快照读
    `executingPlanDetail.caseName`、队列恢复找 `activePlan`。
@@ -288,7 +364,13 @@ S4 体量大（后端 ~2430 行 + GUI ~4500 行），**切三个 PR**，每个�
    `test_executions` 权威源，无损失。
 4. **历史数据只读不删**：TestPlan / TestStep / TestQueue / TestPlanExecution 表原地封存
    （brownfield 两台机器的历史行），只标 deprecated docstring。
-5. **brownfield 僵尸行卡死 HAL 重载**：§1.4 末尾，门 D-i 专防。
+5. **brownfield 僵尸行卡死 HAL 重载**：§1.4 末尾。⚠️ 是**三类行**（TestPlan / TestStep /
+   TestExecution），v2 只想到第三类。前两类还会被 `dashboard.py:44-46` / `184-186` 计进
+   `active_test_plans`，而 S4b 之后**已经没有 cancel/complete 端点能改回来** ——
+   操作员看着一个永远"有计划在跑"的仪表盘且无法清除。门 D-i 三类全覆盖。
+6. **`/test-plans` 前缀是计划链和用例链共用的**（§1.5）：一条写成"全 GUI 无 `/test-plans`
+   调用"的门会误杀 S1 的执行正门。这类"判据过宽把要留的一起判死"的门比漏判更难查 ——
+   它会红在正确的代码上，逼人把对的东西改错。
 
 ---
 
