@@ -162,7 +162,8 @@ TestCase 总数: 538
 
 ## 2. 挂在计划上的功能：逐个决定去留
 
-拆掉承载物之前，先问"这上面挂着的功能怎么办"。共 4 项：
+拆掉承载物之前，先问"这上面挂着的功能怎么办"。共 **5 项**（第 5 项 §2.4 是 v2 补查出来的 ——
+初稿只列了 4 项，又是同一个漏枚举的毛病）：
 
 ### 2.1 preflight（S3 外审 Codex #241 C2 移交）
 
@@ -198,7 +199,33 @@ case 级 preflight **今天做不了**：能力需求只活在 `TestStep.needs`�
 这是 S1 设计稿 §2.3 明确写的取舍（"不做 pause/resume（拍板：状态机简化）"），
 用户 2026-07-21 现场拍板。S4 只是让它成为既成事实。**本设计稿显式声明，不列为待决。**
 
-### 2.4 队列 —— 零损失
+### 2.4 演示回放（demo-run）—— 第 5 项，v2 补查，**无功能损失**
+
+初稿 §2 只列了 4 项。写 v2 时按 §5.3 自己留的话（"拆之前要先确认 demo-run 这条链改读什么"）
+去查，发现 **App.tsx 的演示回放跟计划链缠在一起**，构成第 5 项。查清后的结论是可以放心删。
+
+演示回放有**两个入口**，只有一个挂在计划上：
+
+| 入口 | 链路 | S4a 之后 |
+|---|---|---|
+| **直接播放**（调试维护 → 监控 tab） | `handleDemoRunStart()` 读 `fetchDemoRunPlan` 的演示夹具（**不是 TestPlan 行**） | ✅ **活着**，零改动 |
+| **计划触发**（QueueTab 点执行 → 仪表盘看进度） | `QueueTab.tsx:153/194` emit `execution:start` → `App.tsx:726` 监听 → `startPlanExecution(plan)` 调 `apiStartExecution(plan.id)` | ❌ 随 QueueTab 一起死（**有意**） |
+
+播放器本体仍内联在 `App.tsx`，通过 `monitoringSlot` 渲染进 `DiagnosticsPage`（P2-8 搬的），
+这部分不受影响。
+
+**S4a 之后变成不可达、要一并删的**：`execution:start` 的**唯一** emitter 是 QueueTab
+（`App.tsx:675` 那处 emit 被 `executingPlanInfo` 守着，而它只由监听器自己写 —— 自环，
+QueueTab 一删就永远进不去）。连带死掉：`executingPlanInfo` / `executingPlanDetail` /
+`startPlanExecution` / `syncPlanSummary` / `_mutatePlanStatus` / pause·stop·resume 三个
+handler 里的计划分支。
+
+**`liveHistory` 会永久空 —— 但这不是损失**：它在 `App.tsx:4395` 跟 `apiEntries` 合并成
+历史视图。S4a 后没人再写 `liveHistory`，视图退化为只读 `apiEntries` ——
+而 S2 之后 `apiEntries` 正是 `test_executions` 这个**权威源**。等于把一个演示时代的
+客户端内存补充列表去掉，留下真数据。**S4a 顺手删 `liveHistory` state 及其合并逻辑。**
+
+### 2.5 队列 —— 零损失
 
 `TestQueue.status` 全仓只写 `"queued"` 一个值，`dependencies`/`blocked_by` 零读取方，
 没有后台 dispatcher（上游 §1.2 已查证）。删掉不损失任何在用功能。
@@ -213,7 +240,7 @@ S4 体量大（后端 ~2430 行 + GUI ~4500 行），**切三个 PR**，每个�
 
 | 片 | 内容 | 为什么这个顺序 |
 |---|---|---|
-| **S4a** | GUI 全清：树 A（PlansTab / QueueTab / useSequenceLibrary）**+ 树 B 的 6 个文件**（§1.3）**+ `TestManagement.tsx` 的「新建测试计划」按钮 / wizard / `'plans'` 跳转** + `App.tsx` 143 处 Plan 面，StepsTab 改造为「用例配置」 | 前端不再调用 → 后端路由变成真死路由，后续删除零风险 |
+| **S4a** | GUI 全清：树 A（PlansTab / QueueTab / useSequenceLibrary）**+ 树 B 的 6 个文件**（§1.3）**+ `TestManagement.tsx` 的「新建测试计划」按钮 / wizard / `'plans'` 跳转** + `App.tsx` 143 处 Plan 面（含 §2.4 列的演示回放计划分支 + `liveHistory`），StepsTab 改造为「用例配置」 | 前端不再调用 → 后端路由变成真死路由，后续删除零风险 |
 | **S4b** | 后端：**先解耦**（§1.4 两处 + 僵尸行复位扩 marker），**再**删 34 条路由、6 个 Service 类、`test_plan_runner.py`、scenario 桥、test_sequence 组 | 此时前端无调用方；解耦必须排在删模块之前 |
 | **S4c** | 收尾：模型标 deprecated、闸门删 TestPlan 半截、sequences_seeder 删、S2/S3 backlog 清理 | 依赖前两片 |
 
@@ -255,8 +282,10 @@ S4 体量大（后端 ~2430 行 + GUI ~4500 行），**切三个 PR**，每个�
 2. **companion 存量 275 行**：§1.5，过滤器必须留。
 3. **`App.tsx` 的计划面是 143 行不是 6 个 import**：初稿严重低估（§1.3）。这是 S4a 的主要
    工作量 —— 三个 execution handler 各有 `executingPlanInfo` 分支、demo-run 报告快照读
-   `executingPlanDetail.caseName`、队列恢复找 `activePlan`。**拆之前要先确认 demo-run
-   这条链改读什么**（它跟计划链共用了 `executingPlanDetail`），否则演示模式会一起坏。
+   `executingPlanDetail.caseName`、队列恢复找 `activePlan`。
+   ~~拆之前要先确认 demo-run 这条链改读什么~~ **→ 已查清，见 §2.4**：演示回放的直接入口
+   不依赖计划，活着；计划触发那条随 QueueTab 死掉是有意的；`liveHistory` 退回只读
+   `test_executions` 权威源，无损失。
 4. **历史数据只读不删**：TestPlan / TestStep / TestQueue / TestPlanExecution 表原地封存
    （brownfield 两台机器的历史行），只标 deprecated docstring。
 5. **brownfield 僵尸行卡死 HAL 重载**：§1.4 末尾，门 D-i 专防。
