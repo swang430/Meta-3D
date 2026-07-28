@@ -37,14 +37,23 @@ plans = db.query(TestPlan).filter(TestPlan.status.in_(BLOCKING_TEST_PLAN_STATUSE
 
 **谁在保护圈外**：
 
-| 执行链 | 跑起来时行的 `status` | 写 TestPlan？ | 闸门看得见？ |
-|---|---|---|---|
-| case-runner（S1 正门） | `running`（`test_case_runner.py:142`） | **否** | **✗ 空窗** |
-| plan-runner 每步 | `running`（`test_plan_runner.py:287`） | 是 | ✓（靠 plan 那条） |
-| **commissioning run-all（暗室首测）** | **`pending`**（建行 `commissioning.py:374`，run-all 全程不改） | 否 | **✗ 空窗** |
-| commissioning adhoc（单相位诊断） | `pending` → 终态（S2 #239 补的收尾） | 否 | **✗ 空窗** |
+**枚举维度要选对**（Codex #241 C1/C3 纠正）：第一版我枚举的是"**建 TestExecution 行**的地方"
+（4 处建行），但闸门要的是"**占着 HAL 驱动**的地方"—— 两个集合不一样。按后者重新枚举
+（= `dispatch_step` 的调用方 + VRT 的硬件模式）：
 
-后两行是**现场真正在用的链**（07-03 / 07-21 两次现场都走它），一样裸奔。
+| 执行入口 | 跑起来时行的 `status` | 占 HAL？ | 写 TestPlan？ | 闸门看得见？ |
+|---|---|---|---|---|
+| case-runner（S1 正门） | `running`（`test_case_runner.py:142`） | 是 | **否** | **✗ 空窗** |
+| plan-runner 每步 | `running`（`test_plan_runner.py:287`） | 是 | 是 | ✓（靠 plan 那条） |
+| **commissioning run-all（暗室首测）** | **`pending`**（建行 `commissioning.py:374`，全程不改） | 是 | 否 | **✗ 空窗** |
+| **commissioning run_phase（单相位，GUI 有入口）** | **`pending`**（`commissioning.py` run_phase 段**无任何 status 写入**） | 是 | 否 | **✗ 空窗** |
+| commissioning adhoc（诊断单相位） | `pending` → 终态（S2 #239 补的收尾） | 是 | 否 | **✗ 空窗** |
+| **VRT digital_twin** | `running`（`vrt_execution_service.py:154-160`） | **否（纯仿真）** | 否 | **⚠ 会被误拦** |
+
+- 中间三行是**现场真正在用的链**（07-03 / 07-21 两次现场都走它），一样裸奔。
+- 最后一行是反方向的错：`status == "running"` 裸判据会让一个纯数字仿真把无关的 HAL
+  reload 拦住一整段时间。**S2 给历史列表加过 `mode IS NULL` 排除 VRT，这里是同一个母题
+  第二次出现** —— 判据必须带 `mode IS NULL`。
 
 ### 1.2 dashboard 的两个数字都只数计划
 
@@ -70,8 +79,14 @@ plans = db.query(TestPlan).filter(TestPlan.status.in_(BLOCKING_TEST_PLAN_STATUSE
 ### 2.1 闸门：并集，不是替换（零空窗的关键）
 
 ```
-blockers = 活跃 TestExecution 行  ∪  TestPlan ∈ (RUNNING, PAUSED)
+blockers = 占 HAL 的活跃执行行  ∪  TestPlan ∈ (RUNNING, PAUSED)
+
+占 HAL 的活跃执行行 = TestExecution.status == "running"
+                     AND TestExecution.mode IS NULL     ← 排除 VRT 仿真 (C3)
 ```
+
+`mode IS NULL` 与 S2 历史列表用的是同一个谓词（镜像 `vrt_execution_service.py:118`）。
+纯数字仿真不持有驱动，不该拦 reload。
 
 **为什么是并集而不是"改查 TestExecution"**（上游设计稿原话是"改查"，这里要修正）：
 计划在 **PAUSED** 时步骤间没有任何 running 的执行行，但驱动状态仍被持有
@@ -93,7 +108,11 @@ plan 那半截等 S4 拆掉计划链时随之删除，那时它自然变成纯 T
 | 改动 | 位置 | 说明 |
 |---|---|---|
 | run-all 开跑置 `running`，收尾落终态 | `commissioning.py` run_all_phases | 顺带清掉 S2 backlog F6 的一半（run-all 僵尸 pending 行） |
+| **run_phase 开跑置 `running`，收尾落终态** | `commissioning.py` run_phase | **Codex #241 C1 抓的漏网**：GUI 有入口、跑真硬件相位、全段无 status 写入 |
 | adhoc 开跑置 `running` | `commissioning.py` run_adhoc_phase | 收尾已在 S2 #239 补过，只差开跑这一下 |
+
+三处是同一个形状（开跑置 running / 收尾落终态），实现时抽一个 helper，避免第四条链
+将来又漏 —— 漏一条 = 那条链继续裸奔，而且是静默的。
 
 这**超出了上游设计稿写的 S3 范围**（它只说"闸门改查活跃 TestExecution"），但不做的话
 闸门对现场真用的那条链依然是空的 —— 等于修了一半。**待决①请拍板。**
@@ -108,17 +127,27 @@ plan 那半截等 S4 拆掉计划链时随之删除，那时它自然变成纯 T
 
 两处重复代码（`:44` 与 `:184`）合并成一个 helper —— 属于本次换源的直接连带，不是顺手清理。
 
-### 2.4 preflight：改收 TestCase + 新入口
+### 2.4 preflight：**本片不做，整体推到 S4**（第一版方案是错的）
 
-- `validate_plan(plan, ...)` → `validate_case(case, ...)`：needs 从
-  `TestCase.configuration` 派生（不再迭代 TestStep）；
-- 新端点 `POST /test-plans/cases/{id}/preflight`（挂现有 cases 路由组，与 S1 的
-  execute/status 同前缀，**不换前缀**）；
-- GUI：`PreflightModal` 从 PlansTab 挪到**用例库行内**（执行按钮旁加一个「预检」），
-  这样 S4 砍掉 PlansTab 时它不会一起消失。
+第一版我写的是"needs 从 `TestCase.configuration` 派生"。**这个数据源不存在**
+（Codex #241 C2，已核实）：
 
-旧的 plan 版 `validate_plan` + 端点**留到 S4 一起删**（S3 只加不删，避免计划链在
-S4 之前失去预检）。
+- 能力需求只活在 `TestStep.needs`（顶层列），模型注释白纸黑字写着它是
+  **step-template 契约、不是用户可配的执行参数**，"混进 parameters 会搅乱 schema"
+  （`test_plan.py:391-401`）；
+- `MIMOOTAConfiguration`（即 `TestCase.configuration` 的内容）里**没有任何能力 token
+  字段** —— 只有 `precheck_strict_dut_capability` 这类开关，那是门的开关不是需求集；
+- 所以照第一版实现出来会得到**空需求集 → 永远 ready** —— H-g 门变成恒真断言，
+  比不做还危险（给操作员一个假的"已就绪"）。
+
+要真做 case 级 preflight，得先**建一个今天不存在的东西**：或者定义并持久化
+"相位/模板 → 能力 token"的映射，或者给 TestCase 加一个需求快照字段。两条路都是
+**加机制**，按修法优先级（去掉 > 换源 > 收窄 > 加机制）不该塞进一个换源片里。
+
+**处置**：S3 完全不碰 preflight，plan 版 `validate_plan` + 端点 + PlansTab 里的
+`PreflightModal` 原样留着。它们跟 PlansTab 一起活到 S4 —— 那时计划链拆除，preflight
+必须重新安家，**连同"能力需求从哪来"一起单独设计**（届时是新增功能，配得上一个
+自己的设计稿）。
 
 ---
 
@@ -126,10 +155,12 @@ S4 之前失去预检）。
 
 | 片 | 内容 | 为什么单独 |
 |---|---|---|
-| **S3a（急）** | 闸门并集 + 活跃判据 + commissioning 如实写 running | 这是**在修生产空窗**，越快 merge 越好；改动面小、门清晰 |
-| **S3b** | dashboard 换源 + preflight 改 case 级 + GUI 入口挪家 | 显示准确性 + 为 S4 铺路，不带紧急性；含 GUI 改动，要走浏览器门 |
+| **S3a（急）** | 闸门并集（含 `mode IS NULL`）+ commissioning 三个入口如实写 running + 启动复位 | 这是**在修生产空窗**，越快 merge 越好；纯后端、门清晰 |
+| **S3b** | dashboard 三处数字换源 | 显示准确性，不带紧急性；纯后端小改 |
+| ~~preflight~~ | — | **移出 S3**，随 PlansTab 活到 S4，届时连同"能力需求从哪来"单独设计（§2.4） |
 
-若你希望一个 PR 收，我按 S3a+S3b 合并做，但 S3a 的门会被 S3b 的 GUI 验证拖慢。
+preflight 移出后，S3 变成一片纯后端工作，**没有 GUI 改动** —— 浏览器门只需要验证
+"跑着用例时点重载被拒"这一个闭环。若你希望一个 PR 收，S3a+S3b 合并也可以（都是后端）。
 
 ---
 
@@ -139,13 +170,18 @@ S4 之前失去预检）。
 |---|---|---|---|
 | **H-a** | 行为 | 有 case-runner 的 running 行时 `POST /instruments/hal/reload` 返回拒绝 + blocker.kind == "test_execution" | 砍执行行判据 → 放行 → 红（**这条就是今天的实况**，钉死空窗存在过） |
 | **H-b** | 行为 | 计划 PAUSED（无 running 执行行）仍被拒 | 把并集改成"只查 TestExecution" → 放行 → 红（防退化） |
-| **H-c** | 行为 | commissioning run-all 跑到一半时被拒 | 砍 run-all 的 running 写入 → 放行 → 红 |
+| **H-c** | 行为 | commissioning **三个入口各自**跑到一半时被拒（run-all / run_phase / adhoc 参数化同一条门） | 逐个砍其 running 写入 → 放行 → 各红（C1 抓的 run_phase 在内） |
 | **H-d** | 不变量 | 历史 pending 僵尸行**不**成为 blocker（造 50 条 pending → reload 放行） | 闸门谓词误写成 `status != completed` → 红 |
 | **H-e** | 行为 | `force=true` 仍能绕过（既有语义不许变） | — |
-| **H-f** | 行为 | dashboard 活跃数 = 活跃执行数（造 1 条 running case 行 → 数字为 1） | 换回 TestPlan 查询 → 红 |
-| **H-g** | 行为 | case 级 preflight 对无驱动 lab 报 gap；对齐后 ready | 需求集空转 → 红 |
+| **H-f** | 行为 | **VRT digital_twin 的 running 行不拦 reload**（C3） | 砍 `mode IS NULL` → 纯仿真把 reload 拦住 → 红 |
+| **H-g** | 不变量 | 闸门谓词与 S2 历史列表的"非 VRT"谓词**同源**（两处都 `mode IS NULL`，集合断言） | 任一处漂移 → 红 |
+| **H-h** | 行为 | dashboard 活跃数 = 活跃执行数（造 1 条 running case 行 → 数字为 1） | 换回 TestPlan 查询 → 红 |
 
-外加 GUI 两道门（`npm run build` + 浏览器实测预检入口在用例库可点、能出 gap 列表）。
+外加 `npm run build`（GUI 无改动，仅回归）+ 浏览器实测一个闭环：**跑着用例点「重载驱动」→
+被拒 + 拒绝文案指出是哪条执行**。
+
+~~原 H-g（case 级 preflight）~~ 随 §2.4 一并移出 S3 —— 它在错误前提上写的门，
+留着只会给出假的"已就绪"。
 
 ---
 
@@ -162,7 +198,8 @@ S4 之前失去预检）。
 
 ## 6. 待决（需要点头）
 
-**① commissioning 两条链要不要在本片改成如实写 `running` —— 建议：要。**
+**① commissioning **三个**入口要不要在本片改成如实写 `running` —— 建议：要。**
+（第一版写的是"两条链"，Codex C1 抓出还有 `run_phase` 这条 GUI 可点的硬件入口，已补齐。）
 不改的话闸门对现场真用的链依然是空的（等于修一半），且它顺带清掉 S2 backlog 里
 run-all 的僵尸 pending 行。代价：超出上游设计稿给 S3 划的范围，动 commissioning 文件。
 备选：只修 case-runner 那条空窗，commissioning 的记 backlog 留 S4 —— 但那意味着
@@ -174,5 +211,20 @@ run-all 的僵尸 pending 行。代价：超出上游设计稿给 S3 划的范�
 备选：只补 commissioning（因为它是本片新写 running 的），plan-runner 的 stale 行
 留到 S4 随链退场 —— 风险是 S3 到 S4 之间那段时间里，一次后端崩溃就可能留下永久拦门的行。
 
-**③ 切成 S3a/S3b 两个 PR，还是一个 PR 收 —— 建议：拆两片。**
-S3a 在修生产空窗，应该快进快出；S3b 带 GUI 改动，验证周期长。
+**③ 切成 S3a/S3b 两个 PR，还是一个 PR 收 —— 建议：拆两片，但都很小。**
+preflight 移出后两片都是纯后端：S3a（闸门，修生产空窗，快进快出）/ S3b（dashboard 三处数字）。
+一个 PR 合并收也可以，我按你说的来。
+
+---
+
+## 7. 外审改动记录（Codex #241，3 条全属实全采纳）
+
+| # | 级 | Codex 指出 | 核实 | 设计稿改动 |
+|---|---|---|---|---|
+| C1 | P1 | 漏了 `POST /commissioning/sessions/{id}/phase/{phase}` —— 跑真硬件相位、行留 pending、GUI 有入口 | 属实（该段无任何 status 写入） | §1.1 表加一行、§2.2 加第三处改动 + helper、H-c 参数化到三入口 |
+| C2 | P1 | `TestCase.configuration` 里没有能力需求，needs 是 TestStep 的 template 契约 → case 级 preflight 会空转报 ready，H-g 形同虚设 | 属实（模型注释明写 + config schema 无需求字段 + 全仓无 `needs=` 写入点） | **§2.4 整片移出 S3**，随 PlansTab 活到 S4 单独设计；原 H-g 删除 |
+| C3 | P2 | 裸 `status == "running"` 会匹配 VRT 行，digital_twin 纯仿真不占 HAL 却拦 reload | 属实（`vrt_execution_service.start()` 置 RUNNING） | 谓词加 `mode IS NULL`（与 S2 同源）、新增 H-f 行为门 + H-g 同源不变量门 |
+
+**我自己的复盘**：C1 和 C3 是同一个毛病 —— 枚举维度选错了。我枚举的是"**建执行行**的地方"
+（4 处建行），而闸门要的是"**占着 HAL** 的地方"（= `dispatch_step` 调用方 ∖ 纯仿真）。
+C3 更是 S2 刚处理过 `mode IS NULL`、S3 又忘了同一件事。**"枚举影响集"要先问清枚举的是哪个集合。**
