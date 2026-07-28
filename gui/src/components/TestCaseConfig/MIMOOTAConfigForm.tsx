@@ -30,11 +30,11 @@ import {
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 
-import { fetchChannelModels } from '../../../../api/service'
-import { fetchDUTProfiles } from '../../../../api/dutProfileService'
-import { fetchSIMProfiles } from '../../../../api/simProfileService'
-import { fetchCustomCDLProfiles } from '../../../../api/customCdlProfileService'
-import { fetchChannelAssets } from '../../../../api/channelAssetService'
+import { fetchChannelModels } from '../../api/service'
+import { fetchDUTProfiles } from '../../api/dutProfileService'
+import { fetchSIMProfiles } from '../../api/simProfileService'
+import { fetchCustomCDLProfiles } from '../../api/customCdlProfileService'
+import { fetchChannelAssets } from '../../api/channelAssetService'
 
 // --- Local typings: mirror the backend MIMOOTAConfiguration shape ---
 

@@ -276,3 +276,23 @@ export interface TemplateListFilters {
   skip?: number
   limit?: number
 }
+
+// ==================== 执行来源链白名单 (ARCH-1 S2/S4a) ====================
+
+/**
+ * 可归档 / 可进报告的"正式执行"来源链。
+ *
+ * 单相位诊断 (`commissioning_adhoc`) **不在其中**: 它没有相位进度, 出的报告
+ * 近乎空 (与 commissioning 列表隐藏 diagnostic_ad_hoc 同源约定)。
+ *
+ * ⚠️ 这是**白名单 = 默认隐藏**: 不在表里的链 (含 executed_by 为空的老行) 在
+ * 待归档 / 报告选择器里都不出现。后端写 executed_by 的点新增时必须同步这里。
+ *
+ * `test_plan_runner` 保留: ARCH-1 S4 拆掉计划链后它不再产生新行, 但**历史行
+ * 留在库里**(表原地封存), 去掉会让老执行在报告里选不到。
+ */
+export const FORMAL_EXECUTION_CHAINS = [
+  'test_case_runner',
+  'test_plan_runner',
+  'commissioning_api',
+] as const

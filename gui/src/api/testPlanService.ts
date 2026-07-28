@@ -182,46 +182,6 @@ export interface QueueTestPlanRequest {
 // ==================== API Functions ====================
 
 // Test Plan CRUD
-export async function createTestPlan(request: CreateTestPlanRequest): Promise<TestPlan> {
-  const response = await testPlanClient.post<TestPlan>('/test-plans', request);
-  return response.data;
-}
-
-export async function listTestPlans(
-  skip = 0,
-  limit = 100,
-  status?: TestPlanStatus,
-  created_by?: string
-): Promise<{ total: number; items: TestPlanSummary[] }> {
-  const params = new URLSearchParams();
-  params.append('skip', skip.toString());
-  params.append('limit', limit.toString());
-  if (status) params.append('status', status);
-  if (created_by) params.append('created_by', created_by);
-
-  const response = await testPlanClient.get(`/test-plans?${params.toString()}`);
-  return response.data;
-}
-
-export async function getTestPlan(id: string): Promise<TestPlan> {
-  const response = await testPlanClient.get<TestPlan>(`/test-plans/${id}`);
-  return response.data;
-}
-
-export async function updateTestPlan(id: string, request: UpdateTestPlanRequest): Promise<TestPlan> {
-  const response = await testPlanClient.patch<TestPlan>(`/test-plans/${id}`, request);
-  return response.data;
-}
-
-export async function deleteTestPlan(id: string): Promise<void> {
-  await testPlanClient.delete(`/test-plans/${id}`);
-}
-
-export async function markTestPlanReady(id: string): Promise<TestPlan> {
-  const response = await testPlanClient.post<TestPlan>(`/test-plans/${id}/mark-ready`);
-  return response.data;
-}
-
 // Test Case CRUD
 export async function createTestCase(request: CreateTestCaseRequest): Promise<TestCase> {
   const response = await testPlanClient.post<TestCase>('/test-plans/cases', request);
@@ -268,103 +228,8 @@ export async function updateTestCase(
 }
 
 // Queue Management
-export async function queueTestPlan(request: QueueTestPlanRequest): Promise<TestQueueItem> {
-  const response = await testPlanClient.post<TestQueueItem>('/test-plans/queue', request);
-  return response.data;
-}
-
-export async function getTestQueue(
-  skip = 0,
-  limit = 100
-): Promise<{ total: number; items: TestQueueSummary[] }> {
-  const params = new URLSearchParams();
-  params.append('skip', skip.toString());
-  params.append('limit', limit.toString());
-
-  const response = await testPlanClient.get(`/test-plans/queue?${params.toString()}`);
-  return response.data;
-}
-
-export async function removeFromQueue(test_plan_id: string): Promise<void> {
-  await testPlanClient.delete(`/test-plans/queue/${test_plan_id}`);
-}
-
-export async function reorderQueue(test_plan_id: string, new_position: number): Promise<TestQueueItem> {
-  const response = await testPlanClient.patch<TestQueueItem>(`/test-plans/queue/${test_plan_id}/reorder`, {
-    new_position,
-  });
-  return response.data;
-}
-
 // Execution Control
-export async function startTestPlan(test_plan_id: string, started_by: string): Promise<TestPlan> {
-  const response = await testPlanClient.post<TestPlan>(`/test-plans/${test_plan_id}/start`, {
-    test_plan_id,
-    started_by,
-  });
-  return response.data;
-}
-
-export async function pauseTestPlan(test_plan_id: string, paused_by: string, reason?: string): Promise<TestPlan> {
-  const response = await testPlanClient.post<TestPlan>(`/test-plans/${test_plan_id}/pause`, {
-    test_plan_id,
-    paused_by,
-    reason,
-  });
-  return response.data;
-}
-
-export async function resumeTestPlan(test_plan_id: string, resumed_by: string): Promise<TestPlan> {
-  const response = await testPlanClient.post<TestPlan>(`/test-plans/${test_plan_id}/resume`, {
-    test_plan_id,
-    resumed_by,
-  });
-  return response.data;
-}
-
-export async function cancelTestPlan(test_plan_id: string, cancelled_by: string, reason?: string): Promise<TestPlan> {
-  const response = await testPlanClient.post<TestPlan>(`/test-plans/${test_plan_id}/cancel`, {
-    test_plan_id,
-    cancelled_by,
-    reason,
-  });
-  return response.data;
-}
-
-export async function completeTestPlan(test_plan_id: string): Promise<TestPlan> {
-  const response = await testPlanClient.post<TestPlan>(`/test-plans/${test_plan_id}/complete`);
-  return response.data;
-}
-
 // ==================== Utility Functions ====================
-
-export function getStatusColor(status: TestPlanStatus): string {
-  const colors: Record<TestPlanStatus, string> = {
-    draft: 'gray',
-    ready: 'blue',
-    queued: 'cyan',
-    running: 'yellow',
-    paused: 'orange',
-    completed: 'green',
-    failed: 'red',
-    cancelled: 'gray',
-  };
-  return colors[status] || 'gray';
-}
-
-export function getStatusLabel(status: TestPlanStatus): string {
-  const labels: Record<TestPlanStatus, string> = {
-    draft: '草稿',
-    ready: '就绪',
-    queued: '已排队',
-    running: '执行中',
-    paused: '已暂停',
-    completed: '已完成',
-    failed: '失败',
-    cancelled: '已取消',
-  };
-  return labels[status] || status;
-}
 
 export function getTestTypeLabel(type: TestCaseType): string {
   const labels: Record<TestCaseType, string> = {
@@ -379,18 +244,6 @@ export function getTestTypeLabel(type: TestCaseType): string {
     Custom: '自定义测试',
   };
   return labels[type] || type;
-}
-
-export function formatDuration(minutes?: number): string {
-  if (!minutes) return '-';
-  const hours = Math.floor(minutes / 60);
-  const mins = Math.floor(minutes % 60);
-  return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
-}
-
-export function calculateProgress(plan: TestPlan): number {
-  if (plan.total_test_cases === 0) return 0;
-  return Math.round((plan.completed_test_cases / plan.total_test_cases) * 100);
 }
 
 // ==================== ARCH-1 S1: TestCase 直接执行 ====================

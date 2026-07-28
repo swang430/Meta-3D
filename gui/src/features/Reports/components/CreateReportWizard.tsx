@@ -42,7 +42,6 @@ import {
   IconBulb,
 } from '@tabler/icons-react'
 import { ReportsAPI } from '../index'
-import { TestPlanSelector } from './TestPlanSelector'
 import { ExecutionSelector } from './ExecutionSelector'
 import type { CreateReportRequest } from '../types'
 
@@ -69,7 +68,6 @@ export function CreateReportWizard({
       format: 'pdf',
       generated_by: 'user',
       description: '',
-      test_plan_id: undefined,
       test_execution_ids: [],
       comparison_plan_ids: [],
       template_id: undefined,
@@ -87,12 +85,6 @@ export function CreateReportWizard({
       title: (value) => (!value ? '请输入报告标题' : null),
       report_type: (value) => (!value ? '请选择报告类型' : null),
       format: (value) => (!value ? '请选择报告格式' : null),
-      test_plan_id: (value, values) => {
-        if (active >= 1 && !value && values.report_type !== 'comparison') {
-          return '请选择测试计划'
-        }
-        return null
-      },
     },
   })
 
@@ -144,16 +136,9 @@ export function CreateReportWizard({
       }
     }
 
-    if (active === 1) {
-      if (!form.values.test_plan_id && form.values.report_type !== 'comparison') {
-        notifications.show({
-          title: '请选择数据源',
-          message: '请选择一个测试计划作为报告数据来源',
-          color: 'yellow',
-        })
-        return
-      }
-    }
+    // ARCH-1 S4a: 这里原先以 test_plan_id 为放行判据。删掉「选择测试计划」
+    // 那一步后它再无写方, 恒为 undefined —— 留着会把向导永久卡在第 2 步。
+    // 执行记录本身是可选的 (不选=用全部), 所以本步无需闸门。
 
     setActive((current) => Math.min(current + 1, 3))
   }
@@ -267,38 +252,24 @@ export function CreateReportWizard({
         {/* Step 2: Data Source */}
         <Stepper.Step
           label="选择数据"
-          description="测试计划和执行记录"
+          description="执行记录"
           icon={<IconTable size={18} />}
         >
           <Paper p="md" withBorder mt="md">
             <Stack gap="lg">
               <div>
                 <Text fw={500} mb="xs">
-                  选择测试计划
-                </Text>
-                <Text size="sm" c="dimmed" mb="md">
-                  选择一个已完成的测试计划作为报告数据来源
-                </Text>
-                <TestPlanSelector
-                  value={form.values.test_plan_id}
-                  onChange={(id) => {
-                    form.setFieldValue('test_plan_id', id)
-                    form.setFieldValue('test_execution_ids', [])
-                  }}
-                />
-              </div>
-
-              <Divider />
-
-              <div>
-                <Text fw={500} mb="xs">
-                  选择执行记录（可选）
+                  选择执行记录
                 </Text>
                 <Text size="sm" c="dimmed" mb="md">
                   选择要包含在报告中的执行记录。不选择则使用所有记录。
                 </Text>
+                {/*
+                  ARCH-1 S4a: 原先这里是两步 —— 先选测试计划, 再在计划下选执行。
+                  计划链拆除后执行记录不再挂在计划下, 直接从 test_executions
+                  选即可 (与「待归档执行」列表同源)。
+                */}
                 <ExecutionSelector
-                  testPlanId={form.values.test_plan_id}
                   value={form.values.test_execution_ids || []}
                   onChange={(ids) =>
                     form.setFieldValue('test_execution_ids', ids)
@@ -406,9 +377,9 @@ export function CreateReportWizard({
                       数据来源
                     </Text>
                     <Text size="sm">
-                      {form.values.test_plan_id
-                        ? '已选择测试计划'
-                        : '未选择'}
+                      {form.values.test_execution_ids?.length
+                        ? `已选择 ${form.values.test_execution_ids.length} 条执行记录`
+                        : '未指定（将使用全部执行记录）'}
                     </Text>
                   </Group>
 
@@ -448,13 +419,13 @@ export function CreateReportWizard({
                 </Stack>
               </Card>
 
-              {!form.values.test_plan_id && (
+              {!form.values.test_execution_ids?.length && (
                 <Alert
                   icon={<IconAlertCircle size={16} />}
-                  title="未选择数据源"
-                  color="yellow"
+                  title="未指定执行记录"
+                  color="blue"
                 >
-                  您没有选择测试计划，报告将不包含测试数据。
+                  未勾选任何执行记录，报告将使用全部可用的执行记录。
                 </Alert>
               )}
 

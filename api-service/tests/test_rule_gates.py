@@ -310,3 +310,93 @@ def test_g4_silent_swallow_ratchet():
             + "\n新增吞异常时: 要么记一句 logger.debug/warning 再吞 (吞异常不吞信息), "
             "要么给出手册/协议依据后调整基线; 修掉存量则下调基线锁进度。"
         )
+
+
+# ============================================================================
+# G5 GUI 不再调用计划路由 (ARCH-1 S4a, 设计稿 §4 门 D-h)
+# ============================================================================
+
+# `/test-plans` 这个前缀下**同时**挂着两条链:
+#   ① 计划链 (S4 拆除): /test-plans, /test-plans/{id}, /queue, /steps, /start …
+#   ② 用例链 (**保留**): /test-plans/cases* —— 用例库 CRUD + ARCH-1 S1 的执行正门
+# 所以判据必须带 /cases 例外。写成"全 GUI 不许出现 /test-plans"会**误杀**
+# 用例链 —— 那种门红在正确的代码上, 比漏判更难查 (设计稿 §5.6)。
+_PLAN_ROUTE_KEEP_PREFIX = "/test-plans/cases"
+
+# axios 调用里 URL 的三种字面量写法 (单引号 / 反引号模板 / 双引号)。
+_PLAN_ROUTE_CALL = re.compile(r"""["'`](/test-plans[^"'`]*)["'`]""")
+
+
+def _gui_ts_sources():
+    gui_src = _REPO_ROOT / "gui" / "src"
+    if not gui_src.is_dir():
+        return []
+    return [
+        p
+        for p in gui_src.rglob("*")
+        if p.suffix in {".ts", ".tsx"} and "node_modules" not in p.parts
+    ]
+
+
+def _gui_plan_route_calls(sources=None):
+    """返回 [(相对路径, URL)] —— GUI 里打到**计划链**路由的调用点。
+
+    剥注释后再匹配: 注释里提"原先读 /test-plans/{id}/executions"是文档不是调用,
+    不该让门红 (换源后的 ExecutionSelector 就有这么一句)。
+    """
+    hits = []
+    for path in sources if sources is not None else _gui_ts_sources():
+        text = _strip_ts_comments(path.read_text(encoding="utf-8", errors="ignore"))
+        for url in _PLAN_ROUTE_CALL.findall(text):
+            if url.startswith(_PLAN_ROUTE_KEEP_PREFIX):
+                continue
+            try:
+                shown = str(path.relative_to(_REPO_ROOT))
+            except ValueError:  # 自覆盖测试喂的是 tmp_path, 不在仓库下
+                shown = str(path)
+            hits.append((shown, url))
+    return hits
+
+
+def test_g5_gui_has_no_test_plan_route_calls():
+    """站点⑤: GUI 里不得再有打到计划链路由的调用 (用例链 /test-plans/cases* 除外)。
+
+    替代的规则: 设计稿 §4 的 D-h —— 此前只是作者手跑一次 grep。不落成门的代价:
+    S4b 删后端路由时, 若 GUI 还剩一处调用, **什么都不会红** —— 编译门是语法层,
+    happy-path 浏览器走查不会去点一个"本来就该没有的按钮"。#243 round-2 外审
+    抓到的报告向导两个选择器 (读方向) 正是这么漏的: 当时的判据只查了 createTestPlan
+    这个**写**入口。
+
+    变异实跑 (CLAUDE.md ⓪-④):
+      ① 给 gui/src/api/service.ts 插一行 `client.get('/test-plans')` → 本门红 ✓
+      ② 插一行 `client.get('/test-plans/cases')` → 本门**保持绿** ✓ (防误杀,
+         由 test_g5_keep_prefix_not_flagged 常驻覆盖)
+    """
+    hits = _gui_plan_route_calls()
+    assert not hits, (
+        "GUI 仍在调用计划链路由 (ARCH-1 S4 已拆除, S4b 删掉后端后这些调用会 404):\n"
+        + "\n".join(f"  {p} → {u}" for p, u in hits)
+    )
+
+
+def test_g5_checker_catches_plan_call_and_spares_cases(tmp_path):
+    """G5 判定器自身的行为覆盖 — 两个方向都要对。
+
+    这是 G5 的"变异常驻化": 光有上面那条空集断言, 判定器写错 (比如例外前缀写成
+    `/test-plans` 把全部放行) 也一样绿。
+    """
+    f = tmp_path / "probe.ts"
+
+    f.write_text("const r = await client.get('/test-plans')\n", encoding="utf-8")
+    assert _gui_plan_route_calls([f]), "判定器漏判: 计划链调用没被抓出"
+
+    f.write_text("const r = await client.get(`/test-plans/${id}/steps`)\n", encoding="utf-8")
+    assert _gui_plan_route_calls([f]), "判定器漏判: 模板字面量形式的计划链调用"
+
+    f.write_text("const r = await client.get('/test-plans/cases/x/execute')\n", encoding="utf-8")
+    assert not _gui_plan_route_calls([f]), (
+        "判定器误杀: /test-plans/cases* 是保留集 (S1 执行正门), 不得被判违例"
+    )
+
+    f.write_text("// 原先读 '/test-plans/{id}/executions', 已换源\n", encoding="utf-8")
+    assert not _gui_plan_route_calls([f]), "判定器误杀: 注释里提到的旧路由不是调用"
