@@ -119,7 +119,26 @@ def reset_stale_running_plans() -> None:
                 "(含 %d 个 running 步骤)",
                 plan.id, plan.name, len(running_steps),
             )
-        if stale:
+        # ARCH-1 S3: 本 runner 自己的执行行也要复位 —— 此前只复位
+        # plan + step, 执行行留在 running。ARCH-1 S3 之后 HAL reload
+        # 闸门认的正是"running 的执行行", 不复位 = 一次进程重启就留下
+        # 永久拦死 reload 的僵尸行 (比原来的空窗更难受)。
+        # 独立于 plan 状态判定: 即使 plan 已被别处置成终态, 它的执行行
+        # 也可能卡在 running。
+        stale_executions = (
+            db.query(TestExecution)
+            .filter(TestExecution.status == "running")
+            .filter(TestExecution.executed_by == "test_plan_runner")
+            .all()
+        )
+        for ex in stale_executions:
+            ex.status = "failed"
+            ex.completed_at = datetime.utcnow()
+            ex.error_message = "执行被进程重启中断 (runner 丢失) — 可重跑"
+            logger.warning(
+                "[runner] 启动复位 stale running 执行行 %s → failed", ex.id
+            )
+        if stale or stale_executions:
             db.commit()
     except Exception:  # noqa: BLE001
         logger.exception("[runner] stale RUNNING 复位失败 (不阻塞启动)")

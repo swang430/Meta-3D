@@ -15,6 +15,7 @@ Phase name compatibility map (old string -> step.type):
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -23,7 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.db.database import get_db
+from app.db.database import SessionLocal, get_db
 from app.models.calibration import CalibrationCertificate
 from app.models.lab_profile import LabProfile
 from app.models.test_plan import TestCase, TestExecution
@@ -35,6 +36,96 @@ from app.services.test_execution import (
     StepExecutionContext,
     dispatch_step,
 )
+
+
+COMMISSIONING_CHAINS = ("commissioning_api", "commissioning_adhoc")
+
+# 本模块建行时写的 marker (create_session / run_adhoc_phase) —— 与
+# COMMISSIONING_CHAINS 同源, 单列是为了让 _resolve_execution 的收窄谓词
+# 有名字可读。
+
+
+def reset_stale_running_commissioning_executions() -> None:
+    """启动复位 (lifespan 调用): 本链的 stale running 行 → failed。
+
+    ARCH-1 S3 的配套 —— 本模块现在会把跑相位的行标 ``running`` 让 HAL
+    reload 闸门看得见, 那么进程重启留下的僵尸 running 行就会**永久拦死
+    reload**。相位是同步跑在请求线程上的, 进程一没它必然中断, 所以启动
+    时刻的 running 行一定是僵尸。
+
+    谓词收窄到本链两个 marker —— 各链自管各的复位语义
+    (``test_case_runner.reset_stale_running_case_executions`` 的既定约定),
+    不碰用例执行 / 计划链 / VRT 的行。
+    """
+    db = SessionLocal()
+    try:
+        stale = (
+            db.query(TestExecution)
+            .filter(TestExecution.status == "running")
+            .filter(TestExecution.executed_by.in_(COMMISSIONING_CHAINS))
+            .all()
+        )
+        for ex in stale:
+            ex.status = "failed"
+            ex.completed_at = datetime.utcnow()
+            ex.error_message = "相位执行被进程重启中断 — 可重跑"
+            logger.warning(
+                "[commissioning] 启动复位 stale running 执行 %s → failed", ex.id
+            )
+        if stale:
+            db.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("[commissioning] stale running 复位失败 (不阻塞启动)")
+        db.rollback()
+    finally:
+        db.close()
+
+
+@contextmanager
+def _execution_marked_running(db: Session, execution: TestExecution):
+    """ARCH-1 S3: 相位跑起来期间把行标成 ``running``，结束落终态。
+
+    **为什么必须有**：HAL reload 闸门认的是"占着驱动的活跃执行行"
+    （``hal_reload_policy.find_execution_blockers``）。commissioning 的三个
+    入口原来建行 ``pending`` 后全程不改（只有 report executor 顺手置
+    completed），闸门看不见它们 —— 暗室首测跑着时点重载会静默拆掉驱动，
+    而这正是现场最常用的链。
+
+    **本 contextmanager 只拥有 running 这一半，不发明终态**（内审 F1）：
+    退出时把行**恢复成进入前的状态**。理由：
+
+    - ``dispatch_step`` 把 executor 异常统一转成 FAILED result **从不上抛**
+      （``registry.py``），所以"有没有抛异常"根本不是成败信号 —— 拿它当
+      判据会把中止的链记成 completed，进而混进待归档报告列表、被算进
+      成功率统计；
+    - 跑完**一个**相位不等于会话结束，run_phase 更没有资格写终态。
+
+    终态归"谁知道结果谁写"：全成功由 REPORT executor 写 completed
+    （``executors/report.py``），中止由 run_all 自己按相位结果写
+    （与 ``test_plan_runner`` / ``test_case_runner`` / adhoc 三处同构）。
+
+    退出用 ``finally`` 而不是 ``except Exception``：``CancelledError`` 是
+    BaseException（uvicorn 优雅停机会 cancel 在飞请求），走 finally 才能
+    把行从 running 摘下来 —— 否则留下的僵尸行**永久拦死 reload**。
+
+    抽成 contextmanager 而不是在三处各写一遍：第四个入口将来接进来时
+    照抄这一行即可，漏一个 = 那条链继续裸奔，而且是静默的。
+    """
+    prior_status = execution.status
+    execution.status = "running"
+    if execution.started_at is None:
+        execution.started_at = datetime.utcnow()
+    db.commit()
+    try:
+        yield
+    finally:
+        # 执行器可能已把行推到终态 (report executor 写 completed) —— 那是
+        # 有依据的判决, 不许踩。只有还停在 running 的才由这里摘下来,
+        # 恢复进入前的状态 (不发明终态)。
+        db.refresh(execution)
+        if execution.status == "running":
+            execution.status = prior_status
+            db.commit()
 
 
 def _lab_resolution_to_422(err: LabResolutionError) -> HTTPException:
@@ -301,6 +392,18 @@ def _resolve_execution(
     execution = db.query(TestExecution).filter(TestExecution.id == exec_uuid).first()
     if execution is None:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    if execution.executed_by not in COMMISSIONING_CHAINS:
+        # 收窄到本链 (内审 F5): 用例执行的快照用例同样是 MIMO_OTA, 拿它的
+        # execution id 打 run-all 会两条链并发同一套 HAL, 且退出时改写它的
+        # 状态 → case-runner 下个相位边界看到非 running 就静默 return,
+        # 正式测试无声中断。各链自管各的行 (与复位 / cancel 同一刀)。
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Session {session_id} 不属于暗室首测链 "
+                f"(executed_by={execution.executed_by!r})"
+            ),
+        )
     if execution.test_case_id is None:
         raise HTTPException(
             status_code=500,
@@ -457,8 +560,11 @@ async def run_phase(
             detail=f"Session {session_id} has no step descriptor for {target_step_type}",
         )
 
+    # ARCH-1 S3: 相位期间行标 running, 让 HAL reload 闸门看得见 (这条
+    # 链 GUI 可点、跑真硬件, 之前全程 pending 所以闸门看不见它)
     ctx = _build_context(db, execution, test_case, step)
-    result = await dispatch_step(ctx)
+    with _execution_marked_running(db, execution):
+        result = await dispatch_step(ctx)
 
     db.refresh(execution)  # pick up measurements written by executor
     phases_key = _STEP_TYPE_TO_PHASES_KEY[target_step_type]
@@ -571,6 +677,12 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
     db.add(execution)
     db.commit()
     db.refresh(execution)
+
+    # ARCH-1 S3: 开跑置 running, 让 HAL reload 闸门看得见这条链。
+    # 不套 _execution_marked_running: 本入口下面已有更精细的收尾
+    # (四态映射, skipped 不记成 failed), 两套收尾会打架。
+    execution.status = "running"
+    db.commit()
 
     started = time.monotonic()
     error_message: Optional[str] = None
@@ -702,17 +814,40 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
     """Sequentially dispatch all 5 phases. Aborts early if a phase fails."""
     execution, test_case, descriptors = _resolve_execution(db, session_id)
 
-    for step in descriptors:
-        ctx = _build_context(db, execution, test_case, step)
-        result = await dispatch_step(ctx)
-        if result.status.value == "failed":
-            logger.warning(
-                "[%s] run-all aborted at %s: %s",
-                session_id,
-                step.type,
-                result.error_message,
-            )
-            break
+    # ARCH-1 S3: 整条链期间行标 running (闸门要看得见暗室首测 —— 现场
+    # 最常用的链)。终态由本函数按相位结果写, 不交给 contextmanager:
+    # dispatch_step 从不上抛, "没异常"≠"成功" (内审 F1)。
+    aborted_at: Optional[str] = None
+    abort_message: Optional[str] = None
+    started_at = datetime.utcnow()
+    with _execution_marked_running(db, execution):
+        for step in descriptors:
+            ctx = _build_context(db, execution, test_case, step)
+            result = await dispatch_step(ctx)
+            if result.status.value == "failed":
+                aborted_at = step.type
+                abort_message = result.error_message
+                logger.warning(
+                    "[%s] run-all aborted at %s: %s",
+                    session_id,
+                    step.type,
+                    result.error_message,
+                )
+                break
+
+    if aborted_at is not None:
+        # 中止的链是 failed —— 记成 completed 会让它混进待归档报告列表
+        # 并被算进成功率 (内审 F1 实证)
+        db.refresh(execution)
+        execution.status = "failed"
+        execution.completed_at = datetime.utcnow()
+        execution.duration_sec = (
+            execution.completed_at - started_at
+        ).total_seconds()
+        execution.error_message = (
+            f"链在相位 {aborted_at} 中止: {abort_message or '明细见相位结果'}"
+        )
+        db.commit()
 
     db.refresh(execution)
     db.refresh(test_case)

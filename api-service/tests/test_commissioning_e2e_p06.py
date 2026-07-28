@@ -246,7 +246,9 @@ def _create_fast_session(lab: LabProfile, db, *, set_strict_false: bool = True) 
                 for d in descriptors
             ]
         },
-        executed_by="pytest-p06",
+        # ARCH-1 S3 内审 F5: 端点按 executed_by 收窄到本链, fake 必须用
+        # 真实 create_session 写的 marker (不存在的 marker = fake 不忠实)
+        executed_by="commissioning_api",
     )
     db.add(execution)
     db.commit()

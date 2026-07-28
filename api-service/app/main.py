@@ -82,6 +82,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning(f"stale 用例执行复位失败 (不阻塞启动): {e}")
 
+    # ARCH-1 S3: 暗室首测 / 单相位诊断的行现在也标 running (让 HAL reload
+    # 闸门看得见), 所以它们的僵尸行同样要复位 —— 否则一次重启就留下永久
+    # 拦死 reload 的行。相位同步跑在请求线程上, 启动时刻的 running 必是僵尸。
+    try:
+        from app.api.commissioning import (
+            reset_stale_running_commissioning_executions,
+        )
+        reset_stale_running_commissioning_executions()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"stale 暗室首测执行复位失败 (不阻塞启动): {e}")
+
     # P0-1: auto-seed factory-defaults DB on startup (idempotent — re-runs
     # are no-ops via bootstrap_history version pinning). Without this an
     # empty deploy strands the operator on "create your first chamber"
