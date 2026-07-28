@@ -578,7 +578,12 @@ def get_case_execution_status(
         source_test_case_id=cfg.get("source_test_case_id"),
         phase_progress=list(cfg.get("phase_progress") or []),
         failed_phase=cfg.get("failed_phase"),
-        error_message=cfg.get("error_message"),
+        # 内审 F4: error_message 三个读方同一规则 (列优先 config 兜底,
+        # 兜底非串当没有) — 此前本处只读 config, 拿 adhoc 行 (列有值
+        # config 无键) 查会返回 null
+        error_message=execution.error_message or (
+            cfg.get("error_message")
+            if isinstance(cfg.get("error_message"), str) else None),
         started_at=execution.started_at.isoformat() if execution.started_at else None,
         completed_at=(
             execution.completed_at.isoformat() if execution.completed_at else None

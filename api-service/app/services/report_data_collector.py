@@ -481,7 +481,13 @@ class ReportDataCollector:
         """
         results = []
         for execution in executions:
-            progress = (execution.config or {}).get("phase_progress") or []
+            cfg = execution.config or {}
+            progress = cfg.get("phase_progress") or []
+            # Codex #238 迟到 C-1: case-runner 的失败文本在 config 不在列;
+            # 兜底读做 isinstance 收窄 (内审 F1), 非串一律当没有
+            cfg_err = cfg.get("error_message")
+            err = execution.error_message or (
+                cfg_err if isinstance(cfg_err, str) else None)
             for i, phase in enumerate(progress):
                 results.append({
                     "order": i + 1,
@@ -490,8 +496,7 @@ class ReportDataCollector:
                     "result": None,
                     "duration_minutes": None,
                     "error_message": (
-                        execution.error_message
-                        if phase.get("status") == "failed" else None
+                        err if phase.get("status") == "failed" else None
                     ),
                     "parameters": {},
                     "validation_criteria": {},

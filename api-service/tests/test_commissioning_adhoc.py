@@ -137,6 +137,105 @@ class TestAdhocPhaseEndpoint:
         assert (execution.config or {}).get("phase_overrides") == {
             "skip_calibration_age_check": True
         }
+        # Codex #238 迟到 C-2: 行必须收尾 — 不许永久停在建行时的
+        # pending (执行历史/仪表盘里会显示"待执行"僵尸行)。
+        # 变异 = 砍 handler 的收尾回写块 → 这三条红。
+        assert execution.status in ("completed", "failed")
+        assert execution.completed_at is not None
+        assert execution.duration_sec is not None
+
+    def test_skipped_phase_row_is_not_marked_failed(self, lab, db, monkeypatch):
+        """收尾映射按相位状态四态走: skipped 不许被记成 failed
+        (StepExecutionStatus 有 success/failed/skipped/running, 二分映射
+        会把"跳过"栽赃成"失败" — 自查发现)。
+        变异 = 把映射改回二分 → 本条红。"""
+        from app.services.test_execution.executor_base import (
+            StepExecutionResult,
+            StepExecutionStatus,
+        )
+
+        async def _fake_dispatch(ctx):
+            return StepExecutionResult(status=StepExecutionStatus.SKIPPED)
+
+        monkeypatch.setattr(
+            "app.api.commissioning.dispatch_step", _fake_dispatch)
+
+        resp = client.post(
+            "/api/v1/commissioning/diagnostic/run-phase",
+            json={
+                "lab_profile_id": str(lab.id),
+                "phase_name": "precheck",
+                "run_by": "pytest",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        execution = (
+            db.query(TestExecution)
+            .filter(TestExecution.id == uuid.UUID(resp.json()["test_execution_id"]))
+            .first()
+        )
+        assert execution.status == "skipped"
+        assert execution.completed_at is not None
+
+    def test_failed_phase_row_records_failure_and_message(self, lab, db, monkeypatch):
+        """收尾映射的两个方向都要有门 (内审 F3): 失败相位必须落 failed
+        且错误文本进列 —— 记成 completed 是假绿, 且会经"待归档"通道
+        变成可归档报告候选。
+        变异 = 默认值改成 completed / 砍 error_message 回写 → 本条红。"""
+        from app.services.test_execution.executor_base import (
+            StepExecutionResult,
+            StepExecutionStatus,
+        )
+
+        async def _fake_dispatch(ctx):
+            return StepExecutionResult(
+                status=StepExecutionStatus.FAILED,
+                error_message="precheck 失败: 静区未验证",
+            )
+
+        monkeypatch.setattr(
+            "app.api.commissioning.dispatch_step", _fake_dispatch)
+
+        resp = client.post(
+            "/api/v1/commissioning/diagnostic/run-phase",
+            json={"lab_profile_id": str(lab.id), "phase_name": "precheck",
+                  "run_by": "pytest"},
+        )
+        assert resp.status_code == 200, resp.text
+        execution = (
+            db.query(TestExecution)
+            .filter(TestExecution.id == uuid.UUID(resp.json()["test_execution_id"]))
+            .first()
+        )
+        assert execution.status == "failed"
+        assert execution.error_message == "precheck 失败: 静区未验证"
+
+    def test_success_phase_row_marked_completed(self, lab, db, monkeypatch):
+        """成功方向同样钉死 (内审 F3): success → completed。"""
+        from app.services.test_execution.executor_base import (
+            StepExecutionResult,
+            StepExecutionStatus,
+        )
+
+        async def _fake_dispatch(ctx):
+            return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
+
+        monkeypatch.setattr(
+            "app.api.commissioning.dispatch_step", _fake_dispatch)
+
+        resp = client.post(
+            "/api/v1/commissioning/diagnostic/run-phase",
+            json={"lab_profile_id": str(lab.id), "phase_name": "precheck",
+                  "run_by": "pytest"},
+        )
+        assert resp.status_code == 200, resp.text
+        execution = (
+            db.query(TestExecution)
+            .filter(TestExecution.id == uuid.UUID(resp.json()["test_execution_id"]))
+            .first()
+        )
+        assert execution.status == "completed"
+        assert execution.duration_sec is not None
 
     def test_diagnostic_run_recorded_with_correct_kind(self, lab, db):
         resp = client.post(

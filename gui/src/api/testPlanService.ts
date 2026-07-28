@@ -443,12 +443,12 @@ export interface RunningExecutionRow {
 }
 
 export async function fetchRunningExecution(): Promise<RunningExecutionRow | null> {
-  // 内审 F4: limit 放宽 + 取第一个带 source_test_case_id 的行 —
-  // commissioning/plan-runner 的 running 行 (source 为 null) 不许把
-  // case 执行的恢复名额占掉
+  // 内审 F4 + Codex #238 迟到 C-3: 服务端按来源链收窄 (plan-runner 的
+  // stale running 行没人复位, 堆多了会把 case 执行挤出任何 limit 窗口),
+  // 前端 find 只是最后一道保险
   const response = await testPlanClient.get<{ items: RunningExecutionRow[] }>(
     '/test-executions',
-    { params: { status: 'running', limit: 5 } }
+    { params: { status: 'running', executed_by: 'test_case_runner', limit: 5 } }
   )
   return response.data.items.find((r) => r.source_test_case_id) ?? null
 }
