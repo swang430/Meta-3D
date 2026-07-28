@@ -82,11 +82,24 @@ plans = db.query(TestPlan).filter(TestPlan.status.in_(BLOCKING_TEST_PLAN_STATUSE
 blockers = 占 HAL 的活跃执行行  ∪  TestPlan ∈ (RUNNING, PAUSED)
 
 占 HAL 的活跃执行行 = TestExecution.status == "running"
-                     AND TestExecution.mode IS NULL     ← 排除 VRT 仿真 (C3)
+                     AND TestExecution.mode IS DISTINCT FROM "digital_twin"
+                         ← 只排"纯仿真"这一种, 不排整个 VRT (D1)
 ```
 
-`mode IS NULL` 与 S2 历史列表用的是同一个谓词（镜像 `vrt_execution_service.py:118`）。
-纯数字仿真不持有驱动，不该拦 reload。
+**判据是"占不占 HAL"，不是"是不是 VRT"**（Codex #241 D1 纠正我上一轮修过头）：
+
+| mode | 含义 | 占 HAL？ | 该拦 reload？ |
+|---|---|---|---|
+| `NULL` | 非 VRT（用例 / 计划 / 暗室首测 / 诊断） | 是 | ✓ |
+| `digital_twin` | 纯数字仿真 | **否** | ✗ 排除 |
+| `conducted` | 传导，**需要拓扑**（`road_test.py:546,556-559` 强制 topology_id） | **是** | ✓ |
+| `ota` | 走 MPAC 暗室 | **是** | ✓ |
+
+上一轮我照搬 S2 历史列表的 `mode IS NULL`，等于把 conducted / ota 这两种**真硬件 VRT**
+也放过 —— 硬件路测跑着时 reload 照样拆驱动。**同一个谓词不能跨语义复制**：
+历史列表要的是"非 VRT"（VRT 有独立面板），闸门要的是"占 HAL"，两者只是碰巧在
+`digital_twin` 上重合。SQLite 无 `IS DISTINCT FROM`，实现用
+`or_(mode.is_(None), mode != "digital_twin")`。
 
 **为什么是并集而不是"改查 TestExecution"**（上游设计稿原话是"改查"，这里要修正）：
 计划在 **PAUSED** 时步骤间没有任何 running 的执行行，但驱动状态仍被持有
@@ -121,11 +134,25 @@ plan 那半截等 S4 拆掉计划链时随之删除，那时它自然变成纯 T
 
 | 字段 | 现在 | 换成 |
 |---|---|---|
-| `active_test_plans` | 计划 RUNNING/QUEUED 数 | 活跃执行数（与闸门同一谓词，单一真值源） |
-| `total_executions` | `TestPlanExecution.count()` | `TestExecution` 非 VRT 计数（与 S2 历史列表同谓词） |
-| `recent_executions` | `TestPlanExecution` 排序 | 复用 S2 的 `_history_query` |
+| `active_test_plans` | 计划 RUNNING/QUEUED 数 | 活跃执行数（与闸门同谓词） |
+| `total_executions` | `TestPlanExecution.count()` **+ VRT 计数**（`:49-53` 显式加上） | `TestExecution` **全表**计数（VRT 含在内，见下） |
+| `recent_executions` | `TestPlanExecution` 排序 **+ VRT 合并**（`:90-95`） | `TestExecution` **全表**排序（VRT 天然在内） |
 
-两处重复代码（`:44` 与 `:184`）合并成一个 helper —— 属于本次换源的直接连带，不是顺手清理。
+**dashboard 不能套 S2 的"非 VRT"谓词**（Codex #241 D2 纠正）：dashboard 今天是
+**明确合并展示两类**的 —— `:49-53` 把 `vrt_execution_service.list()` 加进 `total_executions`，
+`:90-95` 把 VRT 行并进 `recent_tests`。照搬 `mode IS NULL` 会让 VRT 执行**从总览里消失**，
+是功能退化。总览查全表反而更简单：换源后 VRT 行本来就在同一张表里，**那两段"额外加 VRT"
+的代码可以一并删掉**（去掉 > 换源）。
+
+三个场景三种谓词，别再互相复制：
+
+| 场景 | 谓词 | 理由 |
+|---|---|---|
+| 执行历史列表（S2） | `mode IS NULL` | VRT 有独立面板，避免重复展示 |
+| HAL reload 闸门（S3a） | `mode != "digital_twin"` | 判据是"占不占 HAL" |
+| dashboard 总览（S3b） | **无 mode 过滤** | 总览本来就合并展示 |
+
+两处重复代码（`:44` 与 `:184`）合并成一个 helper —— 属于本次换源的直接连带。
 
 ### 2.4 preflight：**本片不做，整体推到 S4**（第一版方案是错的）
 
@@ -173,9 +200,10 @@ preflight 移出后，S3 变成一片纯后端工作，**没有 GUI 改动** —
 | **H-c** | 行为 | commissioning **三个入口各自**跑到一半时被拒（run-all / run_phase / adhoc 参数化同一条门） | 逐个砍其 running 写入 → 放行 → 各红（C1 抓的 run_phase 在内） |
 | **H-d** | 不变量 | 历史 pending 僵尸行**不**成为 blocker（造 50 条 pending → reload 放行） | 闸门谓词误写成 `status != completed` → 红 |
 | **H-e** | 行为 | `force=true` 仍能绕过（既有语义不许变） | — |
-| **H-f** | 行为 | **VRT digital_twin 的 running 行不拦 reload**（C3） | 砍 `mode IS NULL` → 纯仿真把 reload 拦住 → 红 |
-| **H-g** | 不变量 | 闸门谓词与 S2 历史列表的"非 VRT"谓词**同源**（两处都 `mode IS NULL`，集合断言） | 任一处漂移 → 红 |
+| **H-f** | 行为 | **VRT digital_twin 的 running 行不拦** reload（C3） | 谓词写成"排除全部 VRT"以外的任何形态 → 纯仿真拦住 → 红 |
+| **H-g** | 行为 | **VRT conducted / ota 的 running 行照样拦** reload（D1，两种模式各一条） | 砍成 `mode IS NULL` → 硬件路测跑着时放行 → 红（**这就是我上一轮的错版**） |
 | **H-h** | 行为 | dashboard 活跃数 = 活跃执行数（造 1 条 running case 行 → 数字为 1） | 换回 TestPlan 查询 → 红 |
+| **H-i** | 行为 | **dashboard 总数/最近列表里仍有 VRT 行**（D2，防换源丢功能） | 给 dashboard 套上 `mode IS NULL` → VRT 消失 → 红 |
 
 外加 `npm run build`（GUI 无改动，仅回归）+ 浏览器实测一个闭环：**跑着用例点「重载驱动」→
 被拒 + 拒绝文案指出是哪条执行**。
@@ -225,6 +253,20 @@ preflight 移出后两片都是纯后端：S3a（闸门，修生产空窗，快�
 | C2 | P1 | `TestCase.configuration` 里没有能力需求，needs 是 TestStep 的 template 契约 → case 级 preflight 会空转报 ready，H-g 形同虚设 | 属实（模型注释明写 + config schema 无需求字段 + 全仓无 `needs=` 写入点） | **§2.4 整片移出 S3**，随 PlansTab 活到 S4 单独设计；原 H-g 删除 |
 | C3 | P2 | 裸 `status == "running"` 会匹配 VRT 行，digital_twin 纯仿真不占 HAL 却拦 reload | 属实（`vrt_execution_service.start()` 置 RUNNING） | 谓词加 `mode IS NULL`（与 S2 同源）、新增 H-f 行为门 + H-g 同源不变量门 |
 
-**我自己的复盘**：C1 和 C3 是同一个毛病 —— 枚举维度选错了。我枚举的是"**建执行行**的地方"
-（4 处建行），而闸门要的是"**占着 HAL** 的地方"（= `dispatch_step` 调用方 ∖ 纯仿真）。
-C3 更是 S2 刚处理过 `mode IS NULL`、S3 又忘了同一件事。**"枚举影响集"要先问清枚举的是哪个集合。**
+### 第二轮（显式 `@codex review` 触发后）
+
+| # | 级 | Codex 指出 | 核实 | 设计稿改动 |
+|---|---|---|---|---|
+| D1 | P1 | **我上一轮把 C3 修过头了** —— `mode IS NULL` 排除的是全部 VRT，而 `conducted`（强制 topology_id）与 `ota`（走 MPAC）都占真硬件，被一起放过 | 属实（`road_test.py:546,556-559`） | 谓词改成只排 `digital_twin`；§2.1 加"占 HAL？"四行表；H-f 重写 + 新增 H-g（conducted/ota 各一条拦门） |
+| D2 | P2 | dashboard 今天**明确合并展示** VRT（`:49-53` 加计数、`:90-95` 并列表），套 S2 的"非 VRT"谓词会让 VRT 从总览消失 | 属实 | §2.3 改成查全表 + 顺手删掉那两段"额外加 VRT"的代码；新增 H-i 防退化门 |
+
+**我自己的复盘（两轮合起来看）**：
+
+1. **C1/C3：枚举维度选错。** 我枚举的是"**建执行行**的地方"（4 处建行），而闸门要的是
+   "**占着 HAL** 的地方"（`dispatch_step` 调用方 ∖ 纯仿真）—— 两个集合不一样。
+2. **D1/D2：同一个谓词跨语义复制。** C3 之后我顺手把 S2 历史列表的 `mode IS NULL` 搬到了
+   闸门和 dashboard，但**三个场景要的根本不是同一件事**：历史列表要"非 VRT"（避免与
+   VRT 面板重复），闸门要"占 HAL"，dashboard 总览**什么都不该排**。它们只是碰巧在
+   `digital_twin` 上重合，我把重合当成了等同。
+3. 合起来一句：**"枚举影响集"之前先问清枚举的是哪个集合；复用谓词之前先问清两处要的是不是
+   同一个语义。** 第 2 条是第 1 条的镜像 —— 一个是漏掉该进的，一个是带进不该进的。
