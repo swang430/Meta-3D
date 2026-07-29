@@ -268,7 +268,8 @@ class HalReloadBlocker(BaseModel):
     Mirrors ``app.services.hal_reload_policy.ReloadBlocker`` for the
     wire surface. ``kind`` lets the GUI branch on blocker type when
     additional sources (in-flight diagnostics, calibration sessions)
-    get wired in later — today only ``"test_plan"`` is emitted."""
+    get wired in later — today only ``"test_execution"`` is emitted
+    (ARCH-1 S4c 之前是 ``"test_plan"``, 那半截随计划链拆除删掉了)。"""
     kind: str
     id: str
     name: str
@@ -280,9 +281,12 @@ class HalReloadRefusedResult(BaseModel):
     """Response body for HTTP 409 from POST /instruments/hal/reload
     when ``force=false`` and active blockers exist.
 
-    GUI uses ``blockers`` to render a precise message ("3 test plans
-    are running: …") and offers a "Force reload anyway" button that
-    re-POSTs with ``?force=true``."""
+    GUI uses ``blockers`` to render a precise message ("2 executions
+    are holding the drivers: …") and offers a "Force reload anyway"
+    button that re-POSTs with ``?force=true``.
+
+    ⚠️ ARCH-1 S4c: blockers 是**执行行**不是测试计划 —— 用例执行 / 暗室
+    首测 / 单相位诊断的 running 行, 外加硬件 VRT 的 paused 行。"""
     refused: bool = True
     reason: str
     blockers: List[HalReloadBlocker]
@@ -329,9 +333,13 @@ async def reload_hal_service(
         False,
         description=(
             "Override the refuse-while-in-flight check (P2-5). When "
-            "True, reload proceeds even with running TestPlans — the "
-            "in-flight work will fail with closed-VISA-session errors. "
-            "Default False = safe behaviour."
+            "True, reload proceeds even with **executions actively "
+            "holding the drivers** (用例执行 / 暗室首测 / 单相位诊断的 "
+            "running 行, 以及硬件 VRT 的 paused 行) — that in-flight "
+            "work will fail with closed-VISA-session errors. "
+            "Default False = safe behaviour. "
+            "(ARCH-1 S4c 之前这里写的是 running TestPlans —— 计划链已拆除, "
+            "照那个描述判断会误以为 force 只影响计划, 而实际会打断真在跑的测试。)"
         ),
     ),
     db: Session = Depends(get_db),
