@@ -297,14 +297,21 @@ ListResponse/GroupedResponse` + `TestStepCreateFromTestCase`）保留，其余�
 
 ## 5. 待决
 
-**① `/dashboard` 端点怎么办？**（§1.5，S3b 遗留）
+**① `/dashboard` 端点怎么办？→ ✅ 已拍板（2026-07-29 用户）：只删计划字段，端点留着**
 
-- **建议：只删计划字段，端点留着** —— `active_test_plans` / `total_executions` /
-  `recent_tests` 三个字段连同它们对封存表的读取一起删，`probe_count` 等保留。
-  理由：整个端点删掉是"改契约"（要动 openapi 四步 + 前端类型），而本片是纯删除片；
-  但把对封存表的读取留着，等于让一个死端点持续查两张要封存的表。
-- 备选 A：整个端点下线（更彻底，但跨了契约同步，且前端 `fetchDashboard` 调用点要一起清）。
-- 备选 B：换源到 `test_executions`（**不建议** —— 给一个零消费方的端点换源是纯浪费）。
+删掉的：`active_test_plans`（读 `TestPlan`）、`total_executions` ×2 与
+`recent_executions`（读 `TestPlanExecution`）—— 连同它们对**封存表**的读取。
+保留的：`probe_count` 等不碰计划链的字段，端点本身继续在。
+
+理由：整个端点下线是"改契约"（openapi 四步 + 前端类型 + `fetchDashboard` 调用点），
+而本片是纯删除片；但把对封存表的读取留着，等于让一个零消费方的端点持续查两张要封存的表。
+
+⚠️ 实施注意：前端 `DashboardResponse` 类型声明的是另一套驼峰字段（§1.5），
+删这几个下划线字段**不会让前端红** —— 它本来就没在读。所以这一处**没有编译门兜底**，
+靠 D-b（全仓 grep 无 TestPlan/TestPlanExecution 活跃业务引用）守。
+
+> 记 S4c：`fetchDashboard` 这个调用点本身要不要留（它拿回来的东西一个都没人用），
+> 连同前端 `DashboardResponse` 类型的对齐，一起在收尾片里判。
 
 **② ~~`TestPlanExecutionResponse` 若仍有真消费方？~~ → 已查掉，无需拍板**
 
