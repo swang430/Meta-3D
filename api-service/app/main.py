@@ -63,14 +63,18 @@ async def lifespan(app: FastAPI):
         logger.error(f"Database initialization failed: {e}")
         logger.warning("Continuing with degraded functionality")
 
-    # 门审 #217 F4: 复位上次进程留下的 stale RUNNING 计划 (runner 是 asyncio
-    # 后台任务, 重启即消失 — 不复位则计划永卡 RUNNING, start/resume 全拒且
-    # HAL reload 被 409 挡)。此刻必然没有任何 runner 在跑, 复位安全。
+    # 门审 #217 F4 的后继: 复位计划链遗留的僵尸行。ARCH-1 S4b 删掉了
+    # test_plan_runner, 该职责由 test_case_runner 接管 (三类行: TestPlan /
+    # TestStep / TestExecution)。S4b 后不再产生新的这类行, 但**存量还在两台
+    # 现场机器的库里** —— ①② 会被 dashboard 计进 active_test_plans 且已无
+    # cancel/complete 端点可清, ③ 会永久 409 拦住 HAL reload。
     try:
-        from app.services.test_plan_runner import reset_stale_running_plans
-        reset_stale_running_plans()
+        from app.services.test_case_runner import (
+            reset_orphaned_plan_chain_rows,
+        )
+        reset_orphaned_plan_chain_rows()
     except Exception as e:  # noqa: BLE001
-        logger.warning(f"stale RUNNING 计划复位失败 (不阻塞启动): {e}")
+        logger.warning(f"计划链僵尸行复位失败 (不阻塞启动): {e}")
 
     # ARCH-1 S1: 同理复位 case-runner 的 stale running 执行行 (谓词收窄到
     # executed_by=test_case_runner, 不碰暗室首测/VRT/计划链的执行行)。

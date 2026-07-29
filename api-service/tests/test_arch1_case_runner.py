@@ -12,7 +12,7 @@
 
 变异自验对应表 (⓪-④):
 - 砍相位间 cancel 检查 → test_cancel_between_phases 红
-- 砍 _active_conflict (单飞) → test_second_launch_busy / test_plan_runner_mutex 红
+- 砍 _active_conflict (单飞) → test_second_launch_busy 红
 - 砍谓词收窄 (复位全部 running) → test_stale_reset_scoped 红
 - 砍计划 start/resume 的 case 互斥 (agent F1) → test_plan_start_resume_rejected_while_case_running 红
 - 砍 cancel 的 executed_by 收窄 (agent F2) → test_cancel_other_chains_rows_rejected 红
@@ -228,14 +228,10 @@ class TestSingleFlight:
             gate.set()
             await tcr._RUNNING_TASKS[str(first.id)]
 
-    @pytest.mark.asyncio
-    async def test_plan_runner_mutex(self, db, lab, monkeypatch):
-        """过渡期与计划 runner 互斥 — 双 5 相位链交错打 HAL 会互相污染。"""
-        source = _make_case(db, lab, name="互斥")
-        import app.services.test_plan_runner as tpr
-        monkeypatch.setattr(tpr, "has_active_runner", lambda: "plan-xyz")
-        with pytest.raises(tcr.CaseRunBusy):
-            tcr.launch_test_case_execution(db, source.id)
+    # ARCH-1 S4b: test_plan_runner_mutex 随计划链删除 —— 它断言的是
+    # _active_conflict 里"计划 runner 在跑就拒"那个分支, 而计划 runner 已不存在。
+    # 反方向那条 (test_plan_start_resume_rejected_while_case_running) 测的是
+    # 计划 start/resume 端点, 随 B2 删路由时一并删。
 
     def test_plan_start_resume_rejected_while_case_running(
         self, db, lab, monkeypatch
@@ -419,6 +415,113 @@ class TestStaleReset:
         assert db.query(TestExecution).get(mine_id).status == "failed"
         assert db.query(TestExecution).get(theirs_id).status == "running", (
             "暗室首测的执行行被误复位 — 谓词收窄失效"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 门 D-i (ARCH-1 S4b): 计划链遗留僵尸行 —— 三类全清
+# ─────────────────────────────────────────────────────────────────────
+
+class TestOrphanedPlanChainReset:
+    """S4b 删掉 test_plan_runner 后, 它的启动复位职责由本模块接管。
+
+    ⚠️ 是**三类**行不是一类 —— 原 reset_stale_running_plans 复位 TestPlan /
+    TestStep / TestExecution 三种, 设计稿 v1 只想到第三种。
+    后果不对称, 前两类更难受: 第三类卡 HAL reload 闸门 (409, 但 blocker
+    列表里看得见); 前两类被 dashboard 计进 active_test_plans, 而 S4b 之后
+    **已经没有 cancel/complete 端点能改回来** → 永久残留无法自愈。
+
+    变异实跑 (⓪-④):
+      - 只复位 execution 行 (设计稿 v1 的方案) → 本测试 ①② 断言红
+      - 谓词写成"所有 running 执行行"(不按 executed_by 收窄) → 隔离断言红
+    """
+
+    def test_three_row_types_all_reset(self, db, lab):
+        from app.models.test_plan import (
+            TestPlan, TestPlanStatus, TestStep, TestExecution,
+        )
+
+        source = _make_case(db, lab, name="僵尸行清理")
+
+        # ① 卡 RUNNING 的计划
+        plan = TestPlan(
+            name="进程重启遗留的计划",
+            test_case_ids=[str(source.id)],
+            status=TestPlanStatus.RUNNING,
+            created_by="test_plan_runner",
+        )
+        db.add(plan)
+        db.commit()
+        db.refresh(plan)
+
+        # ② 该计划下卡 running 的步骤
+        step = TestStep(
+            test_plan_id=plan.id,
+            name="遗留步骤",
+            type="MIMO_OTA",
+            parameters={},
+            order=0,
+            status="running",
+        )
+        # ③ 计划 runner 写的、卡 running 的执行行
+        legacy_exec = TestExecution(
+            test_case_id=source.id, status="running",
+            started_at=datetime.utcnow(),
+            executed_by=tcr.LEGACY_PLAN_RUNNER_MARKER,
+            config={},
+        )
+        # 隔离对照: 暗室首测的 running 行不该被这个函数碰
+        commissioning_exec = TestExecution(
+            test_case_id=source.id, status="running",
+            started_at=datetime.utcnow(), executed_by="commissioning_api",
+            config={},
+        )
+        db.add_all([step, legacy_exec, commissioning_exec])
+        db.commit()
+        plan_id, step_id = plan.id, step.id
+        legacy_id, commissioning_id = legacy_exec.id, commissioning_exec.id
+
+        tcr.reset_orphaned_plan_chain_rows()
+
+        db.expire_all()
+        assert db.query(TestPlan).get(plan_id).status == TestPlanStatus.FAILED, (
+            "① RUNNING 计划没被复位 —— 它会被 dashboard 计进 active_test_plans, "
+            "而 S4b 之后没有任何端点能把它改回来"
+        )
+        assert db.query(TestStep).get(step_id).status == "failed", (
+            "② running 步骤没被复位 (同① 无端点可自愈)"
+        )
+        assert db.query(TestExecution).get(legacy_id).status == "failed", (
+            "③ 计划 runner 的 running 执行行没被复位 —— 会永久 409 拦住 HAL reload"
+        )
+        assert (
+            db.query(TestExecution).get(commissioning_id).status == "running"
+        ), "暗室首测的执行行被误复位 —— 谓词收窄失效"
+
+    def test_hal_reload_unblocked_after_reset(self, db, lab):
+        """打在**生效端**: 复位的目的不是"字段变了", 是 HAL reload 不再被拦。"""
+        from app.models.test_plan import TestExecution
+        from app.services.hal_reload_policy import find_reload_blockers
+
+        source = _make_case(db, lab, name="闸门")
+        zombie = TestExecution(
+            test_case_id=source.id, status="running",
+            started_at=datetime.utcnow(),
+            executed_by=tcr.LEGACY_PLAN_RUNNER_MARKER,
+            config={},
+        )
+        db.add(zombie)
+        db.commit()
+
+        assert find_reload_blockers(db), (
+            "前提不成立: 僵尸行本应拦住 HAL reload (S3a 闸门), 这条测试才有意义"
+        )
+
+        tcr.reset_orphaned_plan_chain_rows()
+        db.expire_all()
+
+        assert not find_reload_blockers(db), (
+            "复位后 HAL reload 仍被拦 —— 复位打在了标称端没打在生效端"
         )
 
 
