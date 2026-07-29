@@ -251,6 +251,16 @@ def reset_stale_running_case_executions() -> None:
 # 而 ARCH-1 S4b 把那个模块整个删了 —— 下面这个函数接管它遗留的清理职责。
 LEGACY_PLAN_RUNNER_MARKER = "test_plan_runner"
 
+# 遗留计划行里"该在启动时清掉"的状态。
+# ARCH-1 S4c 之前这份列表住在 hal_reload_policy (语义是"会拦住 HAL 重载"),
+# 复位这边 import 过来用以保持同源 (内审 F1)。S4c 删掉了闸门的计划半截 ——
+# 计划 runner 都不存在了, 拦谁呢 —— 于是这份列表的语义只剩一个:
+# **哪些状态属于"进程重启遗留的僵尸"**, 归属自然落到复位这边。
+LEGACY_ZOMBIE_PLAN_STATUSES = (
+    TestPlanStatus.RUNNING,
+    TestPlanStatus.PAUSED,
+)
+
 
 def reset_orphaned_plan_chain_rows() -> None:
     """启动复位 **计划链遗留的僵尸行**（ARCH-1 S4b 接管）。
@@ -267,29 +277,35 @@ def reset_orphaned_plan_chain_rows() -> None:
     ② 其下 ``TestStep.status == 'running'`` → failed
     ③ ``TestExecution(executed_by='test_plan_runner', status='running')`` → failed
 
-    后果不对称, **前两类更难受**:
-      - ③ 卡住的是 HAL 重载闸门 (S3a 的 find_execution_blockers 看所有 running
-        执行行) → 409 拦死, 但操作员至少在 blocker 列表里看得见它。
-      - ①② 会被 dashboard 计进 active_test_plans, 而 S4b 之后**已经没有
-        cancel/complete 端点能把它们改回来** → 永久残留, 无法自愈。
+    ⚠️ **为什么必须做 —— 理由变过两次, 现在成立的是第三条**。写全是为了让
+    下一个人别再顺着已作废的理由去改判据 (那两条都还散落在别处过):
+
+      ✗ (S4b 原写) "①② 会被 dashboard 计进 active_test_plans" —— **错归因**:
+        dashboard 数的是 RUNNING+QUEUED, 且该字段 S4b 自己已删。顺着它枚举
+        就漏掉了 PAUSED 这一态 (S4b 内审 F1 抓到)。
+      ✗ (S4b 修正后) "①② 卡住 HAL 重载闸门" —— S4c 删掉了闸门的计划半截,
+        **计划行不再拦任何东西**。
+      ✓ **现在成立的**:
+        (a) 让封存表的数据**如实** —— 一行永远写着 "running"/"paused" 的
+            计划是个谎, 而这几张表是现场机器唯一的历史可追溯来源;
+        (b) 它是 **S4c 敢删闸门计划半截的前提** (见
+            ``hal_reload_policy.find_reload_blockers`` 的 docstring);
+        (c) ③ 那类**执行行**仍会永久 409 拦住 HAL reload —— 这条一直成立,
+            与 ①② 不同, 因为闸门的执行行半截没删。
 
     S4b 之后不再产生新的 ①②③ 行 (产生方全删了), 但**存量还在两台现场机器的库里**,
     所以这是每次启动都要跑的清理, 不是一次性迁移 —— 迁移只跑一次, 复位是持续的。
     """
     db = SessionLocal()
     try:
-        # ⚠️ 谓词**换源**到 HAL 闸门的同一个常量, 不自己写一份 (内审 F1)。
-        # 闸门认 (RUNNING, PAUSED) 两态, 而这里原先只认 RUNNING ——
-        # 一行 brownfield 的 paused 计划就会成为**永久** 409 blocker:
-        # S4b 删光了 cancel/complete/resume/PATCH, 应用内再无端点能清它,
-        # 操作员只剩 ?force=true (会连真在跑的用例执行一起绕过) 或手改 DB。
-        # 代价不对称: 误清 = 多丢一条本来就没人能 resume 的僵尸记录;
-        # 漏清 = 现场改完仪器配置重载不了 HAL, 还把 force 训练成常规操作。
-        from app.services.hal_reload_policy import BLOCKING_TEST_PLAN_STATUSES
-
+        # RUNNING 与 PAUSED 都算僵尸 (LEGACY_ZOMBIE_PLAN_STATUSES)。
+        # 只清 RUNNING 是 S4b 内审 F1 抓到的洞: 当时 HAL 闸门还认 paused,
+        # 一行 brownfield 的 paused 计划就是永久 409 blocker。S4c 删掉闸门的
+        # 计划半截后那个后果没了, 但**这里仍然两态都清** —— 让封存表的数据
+        # 如实 (一行永远写着 "paused" 的计划是个谎), 且不依赖闸门还认不认它。
         stale_plans: List[TestPlan] = (
             db.query(TestPlan)
-            .filter(TestPlan.status.in_(BLOCKING_TEST_PLAN_STATUSES))
+            .filter(TestPlan.status.in_(LEGACY_ZOMBIE_PLAN_STATUSES))
             .all()
         )
         for plan in stale_plans:

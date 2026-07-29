@@ -345,11 +345,18 @@ async def reload_hal_service(
     Returns a summary of what's now loaded. The full readiness report
     is also logged to stdout/log file with the formatted table.
 
-    **P2-5 refuse-while-in-flight policy**: when a ``TestPlan`` is in
-    ``running`` or ``paused`` state, the default reload returns HTTP
-    409 with the blocker list instead of tearing down the drivers.
-    Operator can re-POST with ``?force=true`` to override (they take
-    responsibility for the aborted test).
+    **P2-5 refuse-while-in-flight policy**: when a **TestExecution is
+    actively holding the drivers** — any ``running`` row (用例执行 /
+    暗室首测 / 单相位诊断), plus hardware VRT rows that are ``paused``
+    (pause releases nothing) — the default reload returns HTTP 409 with
+    the blocker list instead of tearing down the drivers. Operator can
+    re-POST with ``?force=true`` to override (they take responsibility
+    for the aborted test).
+
+    ⚠️ ARCH-1 S4c: the criterion used to be ``TestPlan ∈ (running,
+    paused)``. 计划链已整个拆除 —— 计划行**永远不会**再产生 409。
+    这份文档进 OpenAPI, 操作员被拦时按它去找"在跑的测试计划"会一无所获,
+    然后直接上 force=true —— 而 force 会把真在跑的用例执行一起绕过。
 
     **P2-5 concurrency**: shutdown + reinit run inside the HAL
     lifecycle lock (``reload_hal_service_atomic``) so two concurrent

@@ -45,10 +45,25 @@ class TestCaseType(str, enum.Enum):
 
 
 class TestPlan(Base):
-    """
+    """⚠️ ARCH-1 S4 起**封存 (deprecated)** —— 无业务写入方 (仅启动复位)。
+
     Test Plan - 测试计划
 
     测试计划是测试用例的集合，定义了一组要执行的测试及其执行顺序。
+
+    测试计划链在 ARCH-1 S4 整个拆除 (S4a GUI #244 / S4b 后端 #246 /
+    S4c 收尾): 路由、Service、runner 全删, 本表不再有产生新行的路径。
+    **表原地保留不迁移不删除** —— 两台现场机器的库里有历史行,
+    删表会毁掉可追溯性。
+
+    唯一还会写它的是 ``test_case_runner.reset_orphaned_plan_chain_rows``:
+    启动时把遗留的 running/paused 行清成终态, 让封存数据如实
+    (一行永远写着"在跑"的计划是个谎)。
+
+    ⚠️ ``app/models/report.py`` 有 FK 指向本链的表 (report.test_plan_id /
+    baseline_plan_id) —— 将来评估"能不能真删表"时那是硬约束。
+
+    新代码**不要**引用本表。正式测试的真值源是 TestCase + TestExecution。
     """
     __tablename__ = "test_plans"
 
@@ -275,10 +290,25 @@ class TestExecution(Base):
 
 
 class TestPlanExecution(Base):
-    """
+    """⚠️ ARCH-1 S4 起**封存 (deprecated)** —— 只读历史, 无任何写入方。
+
     Test Plan Execution History - 测试计划执行历史
 
     记录每次测试计划执行的摘要信息（计划级别）。
+
+    测试计划链在 ARCH-1 S4 整个拆除 (S4a GUI #244 / S4b 后端 #246 /
+    S4c 收尾): 路由、Service、runner 全删, 本表不再有产生新行的路径。
+    **表原地保留不迁移不删除** —— 两台现场机器的库里有历史行,
+    删表会毁掉可追溯性。
+
+    **没有任何写入方** —— 连启动复位都不碰它
+    (``reset_orphaned_plan_chain_rows`` 只清 TestPlan / TestStep /
+    TestExecution 三张表)。
+
+    ⚠️ ``app/models/report.py`` 有 FK 指向本链的表 (report.test_plan_id /
+    baseline_plan_id) —— 将来评估"能不能真删表"时那是硬约束。
+
+    新代码**不要**引用本表。正式测试的真值源是 TestCase + TestExecution (test_executions 表)。
     """
     __tablename__ = "test_plan_executions"
 
@@ -328,10 +358,25 @@ class TestPlanExecution(Base):
 
 
 class TestSequence(Base):
-    """
+    """⚠️ ARCH-1 S4 起**封存 (deprecated)** —— 只读历史, 无任何写入方。
+
     Test Sequence - 测试序列
 
     可重用的测试步骤序列，用于构建复杂的测试用例。
+
+    测试计划链在 ARCH-1 S4 整个拆除 (S4a GUI #244 / S4b 后端 #246 /
+    S4c 收尾): 路由、Service、runner 全删, 本表不再有产生新行的路径。
+    **表原地保留不迁移不删除** —— 两台现场机器的库里有历史行,
+    删表会毁掉可追溯性。
+
+    **没有任何写入方** —— 连启动复位都不碰它
+    (``reset_orphaned_plan_chain_rows`` 只清 TestPlan / TestStep /
+    TestExecution 三张表)。
+
+    ⚠️ ``app/models/report.py`` 有 FK 指向本链的表 (report.test_plan_id /
+    baseline_plan_id) —— 将来评估"能不能真删表"时那是硬约束。
+
+    新代码**不要**引用本表。正式测试的真值源是 TestCase + TestCase.configuration。
     """
     __tablename__ = "test_sequences"
 
@@ -366,10 +411,25 @@ class TestSequence(Base):
 
 
 class TestStep(Base):
-    """
+    """⚠️ ARCH-1 S4 起**封存 (deprecated)** —— 无业务写入方 (仅启动复位)。
+
     Test Step - 测试步骤
 
     测试计划中的单个步骤，支持灵活的参数配置。
+
+    测试计划链在 ARCH-1 S4 整个拆除 (S4a GUI #244 / S4b 后端 #246 /
+    S4c 收尾): 路由、Service、runner 全删, 本表不再有产生新行的路径。
+    **表原地保留不迁移不删除** —— 两台现场机器的库里有历史行,
+    删表会毁掉可追溯性。
+
+    唯一还会写它的是 ``test_case_runner.reset_orphaned_plan_chain_rows``:
+    启动时把遗留的 running/paused 行清成终态, 让封存数据如实
+    (一行永远写着"在跑"的计划是个谎)。
+
+    ⚠️ ``app/models/report.py`` 有 FK 指向本链的表 (report.test_plan_id /
+    baseline_plan_id) —— 将来评估"能不能真删表"时那是硬约束。
+
+    新代码**不要**引用本表。正式测试的真值源是 TestCase + TestCase.configuration。
     """
     __tablename__ = "test_steps"
 
@@ -440,10 +500,25 @@ class TestStep(Base):
 
 
 class TestQueue(Base):
-    """
+    """⚠️ ARCH-1 S4 起**封存 (deprecated)** —— 只读历史, 无任何写入方。
+
     Test Queue - 测试队列
 
     管理测试计划的执行队列，支持优先级调度。
+
+    测试计划链在 ARCH-1 S4 整个拆除 (S4a GUI #244 / S4b 后端 #246 /
+    S4c 收尾): 路由、Service、runner 全删, 本表不再有产生新行的路径。
+    **表原地保留不迁移不删除** —— 两台现场机器的库里有历史行,
+    删表会毁掉可追溯性。
+
+    **没有任何写入方** —— 连启动复位都不碰它
+    (``reset_orphaned_plan_chain_rows`` 只清 TestPlan / TestStep /
+    TestExecution 三张表)。
+
+    ⚠️ ``app/models/report.py`` 有 FK 指向本链的表 (report.test_plan_id /
+    baseline_plan_id) —— 将来评估"能不能真删表"时那是硬约束。
+
+    新代码**不要**引用本表。正式测试的真值源是 TestCase + TestCase 直接执行 (无队列)。
     """
     __tablename__ = "test_queue"
 

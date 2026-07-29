@@ -119,13 +119,14 @@ class TestLifespanColdStart:
         finally:
             db.close()
         names = {h.seeder_name for h in history}
-        # All seven registered seeders must appear in bootstrap_history.
-        # ``topology_profiles`` added by PR #38 (P2-1 Phase 2.1).
+        # 每个注册的 seeder 都要在 bootstrap_history 里出现。
+        # ``topology_profiles`` 由 PR #38 (P2-1 Phase 2.1) 加入。
+        # ARCH-1 S4c: ``sequences`` **移除** —— 它给 TestSequence 播种, 而
+        # /test-sequences 四条路由 S4b 已删, 播出来的行无人可读。
         assert names == {
             "chamber_presets",
             "probes",
             "instruments",
-            "sequences",
             "report_templates",
             "test_case_templates",
             "topology_profiles",
@@ -172,11 +173,12 @@ class TestLifespanWarmRestart:
         finally:
             db.close()
         assert chambers == 4
-        # bootstrap_history has one row per seeder name (PK enforced).
-        # 7 seeders: chamber_presets / probes / instruments / sequences /
-        # report_templates / test_case_templates / topology_profiles
-        # (last added by PR #38, P2-1 Phase 2.1).
-        assert history_rows == 7
+        # bootstrap_history 每个 seeder 名一行 (PK 保证)。
+        # 6 seeders: chamber_presets / probes / instruments /
+        # report_templates / test_case_templates / topology_profiles。
+        # (topology_profiles 由 PR #38 加入; sequences 由 ARCH-1 S4c 移除 ——
+        #  它播种的 TestSequence 表在 S4b 删掉路由后已无读方。)
+        assert history_rows == 6
 
 
 # ---------------------------------------------------------------------------

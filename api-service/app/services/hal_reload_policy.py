@@ -20,11 +20,17 @@ are running: …") instead of a generic "busy".
 从 S1 上线（``124d7e5``）起就对正门失效了，跑着用例点重载会静默拆掉
 驱动。现在的判据是**并集**：
 
-    占 HAL 的活跃 TestExecution  ∪  TestPlan ∈ (running, paused)
+    占 HAL 的活跃 TestExecution  ∪  TestPlan ∈ (running, paused)   ← S4c 后只剩左边
 
-计划那半截保留到 ARCH-1 S4 拆计划链时再删 —— 现在删会让 **paused**
-的计划失去保护（暂停期间步骤间没有 running 的执行行，但驱动状态仍被
-持有，见 ``BLOCKING_TEST_PLAN_STATUSES`` 的注释）。
+**ARCH-1 S4c（2026-07-29）**: 计划那半截**已删**，判据收敛成单源 ——
+
+    占 HAL 的活跃 TestExecution（含硬件 VRT 的 paused）
+
+删得掉是因为 S4b 拆掉了计划 runner: 原先"暂停的计划仍持有驱动状态"这个
+理由的前提是有东西在驱动，而现在没有了。留着反倒是害 —— 一行 brownfield
+的 paused 计划会成为**永久** 409 blocker（cancel/complete/resume/PATCH
+全随 S4b 删了），逼操作员用 force=true，而 force 会连真在跑的用例执行
+一起绕过。
 
 "占 HAL"不等于"非 VRT"（Codex #241 D1）：VRT 的 ``conducted``（强制
 拓扑）与 ``ota``（走 MPAC）都占真硬件，只有 ``digital_twin`` 是纯数字
@@ -47,9 +53,10 @@ the test is hung on a bad driver and reload is the right escape hatch.
 
 A future P3 item could add an in-process active-operations registry
 on the HAL service for the diagnostic / SCPI paths to opt-in to. For
-P2-5 the TestPlan check covers the most consequential case (a multi-
-minute formal test) and the warning log on shutdown (with the active
-driver list) gives post-mortem context for the unguarded cases.
+P2-5 the execution-row check covers the most consequential case (a
+multi-minute formal test) and the warning log on shutdown (with the
+active driver list) gives post-mortem context for the unguarded cases.
+(P2-5 原文写的是 TestPlan check —— S4c 拆完计划链后判据换成执行行。)
 """
 from __future__ import annotations
 
@@ -59,7 +66,7 @@ from typing import List
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
-from app.models.test_plan import TestCase, TestExecution, TestPlan, TestPlanStatus
+from app.models.test_plan import TestCase, TestExecution
 
 # VRT 里唯一不持有 HAL 驱动的模式 —— 纯数字仿真。conducted 需要拓扑、
 # ota 走 MPAC 暗室, 两者都占真硬件, 必须照拦 (Codex #241 D1)。
@@ -70,56 +77,25 @@ NON_HAL_EXECUTION_MODE = "digital_twin"
 class ReloadBlocker:
     """One reason a HAL reload should be refused (without ``force=true``).
 
-    ``kind`` lets future blocker types coexist — today only ``"test_plan"``
-    is emitted, but the registry / GUI rendering can branch on this when
-    additional check sources (in-flight diagnostics, calibration session,
-    etc.) get wired in later.
+    ``kind`` lets future blocker types coexist — today only
+    ``"test_execution"`` is emitted, but the registry / GUI rendering can
+    branch on this when additional check sources (in-flight diagnostics,
+    calibration session, etc.) get wired in later.
+    (ARCH-1 S4c 之前这里发的是 ``"test_plan"`` —— 那半截已删,
+    ``test_plan`` 自此是**唯一不可能**出现的值。)
     """
 
-    kind: str  # "test_plan" today; future: "diagnostic_run", "calibration"
+    kind: str  # "test_execution" today; future: "diagnostic_run", "calibration"
     id: str
     name: str
     status: str
     detail: str
 
 
-# TestPlan statuses that mean "a test session is actively bound to the
-# drivers — tearing the HAL down will corrupt it". 'paused' is included
-# because a paused test plan typically still holds driver state (a
-# resume is expected); reload between pause + resume would surface the
-# corruption on resume rather than failing visibly during the reload.
-BLOCKING_TEST_PLAN_STATUSES = (
-    TestPlanStatus.RUNNING.value,
-    TestPlanStatus.PAUSED.value,
-)
-
-
-def find_test_plan_blockers(db: Session) -> List[ReloadBlocker]:
-    """Return one ``ReloadBlocker`` per ``TestPlan`` row whose status
-    would be invalidated by a HAL teardown.
-
-    Pure SQL — no HAL coupling. The reload endpoint composes this with
-    future check helpers when they're added.
-    """
-    plans = (
-        db.query(TestPlan)
-        .filter(TestPlan.status.in_(BLOCKING_TEST_PLAN_STATUSES))
-        .order_by(TestPlan.started_at.desc().nullslast())
-        .all()
-    )
-    return [
-        ReloadBlocker(
-            kind="test_plan",
-            id=str(plan.id),
-            name=plan.name or "(unnamed)",
-            status=plan.status,
-            detail=(
-                f"test plan {plan.name!r} is {plan.status} — "
-                "tearing down HAL will abort its in-flight driver work"
-            ),
-        )
-        for plan in plans
-    ]
+# ARCH-1 S4c: BLOCKING_TEST_PLAN_STATUSES 与 find_test_plan_blockers 已删,
+# 见下方 find_reload_blockers 的注释。那份状态列表搬到了
+# ``test_case_runner.LEGACY_ZOMBIE_PLAN_STATUSES`` —— 它在那边的语义不再是
+# "会拦住重载", 而是"启动时该清掉的遗留状态"。
 
 
 def find_execution_blockers(db: Session) -> List[ReloadBlocker]:
@@ -131,7 +107,8 @@ def find_execution_blockers(db: Session) -> List[ReloadBlocker]:
 
     **另加硬件 VRT 的 ``paused``**: VRT 的 pause 只改 DB 状态不释放任何
     东西, resume 直接回 running, 所以暂停期间驱动照样被占 (与本模块给
-    TestPlan PAUSED 的理由一致)。``paused`` 是 TestExecution 里的
+    TestPlan PAUSED 曾用的理由一致 —— 那半截 S4c 已删)。``paused`` 是
+    TestExecution 里的
     VRT-specific 状态, 该支要求 ``mode`` 非空。
 
     唯一排除的是 ``digital_twin``: 纯数字仿真不碰驱动, 拦它等于让一次
@@ -147,8 +124,9 @@ def find_execution_blockers(db: Session) -> List[ReloadBlocker]:
                 # 硬件 VRT 的 paused 也占着驱动 (Codex #242 第二轮):
                 # VRTExecutionService.pause() 只改 DB 状态, **什么都不释放**,
                 # resume() 直接回 running —— 暂停期间 reload 会拆掉它期望
-                # resume 时还在的硬件配置。这跟本模块给 TestPlan PAUSED 写的
-                # 理由逐字一致 (见 BLOCKING_TEST_PLAN_STATUSES 注释)。
+                # resume 时还在的硬件配置。这跟本模块曾给 TestPlan PAUSED 写的
+                # 理由逐字一致 —— 那半截连同它的常量已随 S4c 删除, 理由本身
+                # 在这里仍然成立 (因为 VRT 真的有东西在驱动)。
                 # paused 是 TestExecution 里的 VRT-specific 状态, 所以这支
                 # 要求 mode 非空 —— 非 VRT 行不会有 paused。
                 and_(
@@ -186,7 +164,18 @@ def find_execution_blockers(db: Session) -> List[ReloadBlocker]:
 def find_reload_blockers(db: Session) -> List[ReloadBlocker]:
     """Composite of every blocker source.
 
-    ARCH-1 S3: **并集** —— 活跃执行行 + 计划状态。计划那半截等 S4 拆
-    计划链时删除; 现在删会让 paused 的计划失去保护 (模块 docstring)。
+    ARCH-1 S4c: 计划那半截**已删** —— S3 的注释写的就是"等 S4 拆计划链时
+    删除"。删得掉的理由: 那半截防的是"暂停的计划还占着驱动状态, 等着
+    resume", 而 S4b 之后 **计划 runner 不存在了** —— 没有任何东西在驱动,
+    保护恒空。
+
+    留着反而有害: 一行 brownfield 的 paused 计划会成为**永久** 409 blocker
+    (S4b 删光了 cancel/complete/resume/PATCH, 应用内无端点能清它),
+    操作员只剩 force=true —— 而那会连真在跑的用例执行一起绕过, 正是本模块
+    要防的事。删掉这半截, 这个风险从根上消失。
+
+    遗留的 running/paused 计划行由 ``test_case_runner.
+    reset_orphaned_plan_chain_rows`` 在启动时清成终态 (让封存表的数据如实,
+    不再是"永远在跑"的谎)。
     """
-    return find_execution_blockers(db) + find_test_plan_blockers(db)
+    return find_execution_blockers(db)

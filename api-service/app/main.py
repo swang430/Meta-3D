@@ -66,8 +66,11 @@ async def lifespan(app: FastAPI):
     # 门审 #217 F4 的后继: 复位计划链遗留的僵尸行。ARCH-1 S4b 删掉了
     # test_plan_runner, 该职责由 test_case_runner 接管 (三类行: TestPlan /
     # TestStep / TestExecution)。S4b 后不再产生新的这类行, 但**存量还在两台
-    # 现场机器的库里** —— ①② 会被 dashboard 计进 active_test_plans 且已无
-    # cancel/complete 端点可清, ③ 会永久 409 拦住 HAL reload。
+    # 现场机器的库里**。
+    # 为什么必须做 (S4c 订正 —— 早先写的两条理由都已作废, 见该函数 docstring):
+    #   (a) 让封存表的数据如实 (一行永远写着"在跑"的计划是个谎);
+    #   (b) ③ 那类执行行仍会永久 409 拦住 HAL reload;
+    #   (c) 它是 S4c 敢删掉闸门计划半截的前提。
     try:
         from app.services.test_case_runner import (
             reset_orphaned_plan_chain_rows,

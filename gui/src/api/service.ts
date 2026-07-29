@@ -87,7 +87,9 @@ export const fetchTestCases = async (): Promise<TestCasesResponse> => {
 }
 
 export const fetchRecentTests = async (): Promise<RecentTestsResponse> => {
-  // TODO: 后端需要实现 /test-executions/recent 端点
+  // ARCH-1 S4c: 这里原本挂着一句 "TODO: 后端需要实现 /test-executions/recent"
+  // —— 那是 **stale 注释**: 该端点 S2 已实现 (api/test_execution.py 的
+  // @router.get("/recent")), 且声明在 /{record_id} 之前, 路由匹配顺序正确。
   const response = await client.get<RecentTestsResponse>('/test-executions/recent')
   return response.data
 }
