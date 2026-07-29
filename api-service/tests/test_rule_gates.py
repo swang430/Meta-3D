@@ -400,3 +400,131 @@ def test_g5_checker_catches_plan_call_and_spares_cases(tmp_path):
 
     f.write_text("// 原先读 '/test-plans/{id}/executions', 已换源\n", encoding="utf-8")
     assert not _gui_plan_route_calls([f]), "判定器误杀: 注释里提到的旧路由不是调用"
+
+
+# ============================================================================
+# G6 计划链路由全部消失 (ARCH-1 S4b, 设计稿 §3 门 D-f)
+# ============================================================================
+
+# 逐条列, 不写 "少了几条" —— 设计稿 v1 的 D-f 写的是 34 条, 漏了后来查出的两条
+# 读旧表的孤儿路由 (§1.7), 那两条本可以完好幸存而所有门全绿 (Codex #245 C-2)。
+# 教训: 数字型断言必须跟删除集同源, 否则集合一变门就悄悄失效。
+_DELETED_PLAN_ROUTES = [
+    # ── plan CRUD (7) ──
+    ("POST",   "/api/v1/test-plans"),
+    ("GET",    "/api/v1/test-plans"),
+    ("GET",    "/api/v1/test-plans/{id}"),
+    ("PATCH",  "/api/v1/test-plans/{id}"),
+    ("DELETE", "/api/v1/test-plans/{id}"),
+    ("POST",   "/api/v1/test-plans/{id}/duplicate"),
+    ("POST",   "/api/v1/test-plans/{id}/mark-ready"),
+    # ── queue (7) ──
+    ("POST",   "/api/v1/test-plans/queue"),
+    ("GET",    "/api/v1/test-plans/queue"),
+    ("POST",   "/api/v1/test-plans/queue/reorder"),
+    ("DELETE", "/api/v1/test-plans/queue/{id}"),
+    ("POST",   "/api/v1/test-plans/queue/{id}/move-up"),
+    ("POST",   "/api/v1/test-plans/queue/{id}/move-down"),
+    ("PATCH",  "/api/v1/test-plans/queue/{id}"),
+    # ── steps (6) ──
+    ("GET",    "/api/v1/test-plans/{id}/steps"),
+    ("POST",   "/api/v1/test-plans/{id}/steps"),
+    ("PATCH",  "/api/v1/test-plans/{id}/steps/{sid}"),
+    ("DELETE", "/api/v1/test-plans/{id}/steps/{sid}"),
+    ("POST",   "/api/v1/test-plans/{id}/steps/reorder"),
+    ("POST",   "/api/v1/test-plans/{id}/steps/{sid}/duplicate"),
+    # ── 生命周期 (5) ──
+    ("POST",   "/api/v1/test-plans/{id}/start"),
+    ("POST",   "/api/v1/test-plans/{id}/pause"),
+    ("POST",   "/api/v1/test-plans/{id}/resume"),
+    ("POST",   "/api/v1/test-plans/{id}/cancel"),
+    ("POST",   "/api/v1/test-plans/{id}/complete"),
+    # ── 单挂 (3) ──
+    ("POST",   "/api/v1/test-plans/{id}/preflight"),
+    ("PUT",    "/api/v1/test-plans/{id}/topology-profile"),
+    ("GET",    "/api/v1/test-plans/{id}/executions"),
+    # ── scenario→计划桥 (2) ──
+    ("POST",   "/api/v1/scenarios/{id}/create-test-plan"),
+    ("GET",    "/api/v1/scenarios/{id}/test-plans"),
+    # ── test_sequence 组 (4) ──
+    ("GET",    "/api/v1/test-sequences"),
+    ("GET",    "/api/v1/test-sequences/categories"),
+    ("GET",    "/api/v1/test-sequences/popular"),
+    ("GET",    "/api/v1/test-sequences/{id}"),
+    # ── §1.7 读旧表 test_plan_executions 的孤儿 (2) ──
+    ("GET",    "/api/v1/test-executions/{id}"),
+    ("DELETE", "/api/v1/test-executions/{id}"),
+]
+
+# ARCH-1 S1 的执行正门 + 用例库 CRUD —— **必须活着**。
+# 这一半跟上面同等重要: 判据只查"计划路由没了"而不查"用例路由还在",
+# 会让一次误删悄悄通过 (G5 那条的 /cases 例外是同一个道理)。
+# ⚠️ 带 method —— 与 _DELETED_PLAN_ROUTES 同构 (内审 F2)。
+# 只比路径会让"误删 POST /cases 但 GET /cases 还在"这类形态全绿:
+# 路径形状仍命中, 而建用例/改用例/删用例三条在后端**零 HTTP 测试覆盖**,
+# 被误删时没有任何别的门会红。
+_SURVIVING_CASE_ROUTES = [
+    ("POST",   "/api/v1/test-plans/cases"),
+    ("GET",    "/api/v1/test-plans/cases"),
+    ("GET",    "/api/v1/test-plans/cases/grouped"),
+    ("GET",    "/api/v1/test-plans/cases/{test_case_id}"),
+    ("PATCH",  "/api/v1/test-plans/cases/{test_case_id}"),
+    ("DELETE", "/api/v1/test-plans/cases/{test_case_id}"),
+    ("POST",   "/api/v1/test-plans/cases/{test_case_id}/execute"),
+    ("GET",    "/api/v1/test-plans/cases/executions/{execution_id}"),
+]
+
+
+def _live_route_table():
+    """(method, path) 集合 —— 从真实 app 读, 不 grep 源码。"""
+    from app.main import app
+    table = set()
+    for r in app.routes:
+        for m in getattr(r, "methods", None) or ():
+            table.add((m, r.path))
+    return table
+
+
+def test_g6_deleted_plan_routes_are_gone():
+    """站点⑥: 36 条计划链路由逐条不在路由表里 (设计稿 §3 D-f)。
+
+    判据打在**真实 app 的路由表**上, 不 grep 源码 —— 源码里删干净了但 router
+    没摘掉注册(或反之)都会被这条抓住。
+
+    变异实跑 (⓪-④):
+      - 把 api/test_plan.py 的 `POST ""` 恢复回去 → 红
+      - 把 scenario.router 的注册加回 main.py → 红
+    """
+    live = _live_route_table()
+    # 路径参数名不参与比较 —— 只比结构 (段数 + 字面段)。
+    def shape(path):
+        return tuple("{}" if s.startswith("{") else s for s in path.split("/"))
+
+    live_shapes = {(m, shape(p)) for m, p in live}
+    survivors = [
+        f"{m} {p}" for m, p in _DELETED_PLAN_ROUTES
+        if (m, shape(p)) in live_shapes
+    ]
+    assert not survivors, (
+        "计划链路由仍在路由表里 (ARCH-1 S4b 应已全删):\n  "
+        + "\n  ".join(survivors)
+    )
+
+
+def test_g6_case_routes_survive():
+    """站点⑥的另一半: 用例链必须**还在** —— 防"删过头"。
+
+    S4 反复踩的坑是判据过宽 (设计稿 §5.6): 一条只查"计划路由没了"的门,
+    在有人把 /cases 一起删掉时照样绿。
+    """
+    def shape(path):
+        return tuple("{}" if seg.startswith("{") else seg for seg in path.split("/"))
+    live_shapes = {(m, shape(p)) for m, p in _live_route_table()}
+    missing = [
+        f"{m} {p}" for m, p in _SURVIVING_CASE_ROUTES
+        if (m, shape(p)) not in live_shapes
+    ]
+    assert not missing, (
+        "用例链路由被误删 (S1 的执行正门 / 用例库 CRUD 必须活着):\n  "
+        + "\n  ".join(missing)
+    )

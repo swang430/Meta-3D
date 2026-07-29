@@ -390,11 +390,14 @@ class TestStep(Base):
 
     # P1-1: capability tokens this step requires the bound lab's drivers
     # to expose (e.g. ["ce.interference_generator"] for a calibration-tone
-    # step). Plan-level pre-flight (`validate_plan` in
-    # `app/services/preflight.py`) reads this against each driver's
-    # `driver.capabilities` set (P2-2) and returns a gap list before
-    # the operator hits Run. Default empty: existing seeded steps stay
-    # permissive; we add `needs` only where it carries real meaning.
+    # step).
+    #
+    # ⚠️ ARCH-1 S4b: 这一列**已无任何读方**。原来的唯一消费者是计划级
+    # pre-flight (`validate_plan`, 在 `app/services/preflight.py`), 它会拿
+    # 这里的 token 比对各驱动的 `driver.capabilities` (P2-2), 在操作员点
+    # Run 之前给出缺口清单 —— 该模块随计划链一并删除。列本身保留 (TestStep
+    # 表原地封存)。用例级 preflight 需要另建"相位/模板 → 能力"数据源,
+    # 是独立立项, 届时再决定要不要复用这一列。
     # Kept as a top-level column (not nested in `parameters`) because
     # `needs` is a step-template contract, not user-configurable per
     # execution — mixing them would muddle the schema.

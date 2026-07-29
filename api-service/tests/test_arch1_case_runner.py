@@ -4,7 +4,7 @@
   ① 执行 = 快照 TestCase + TestExecution(记 source_test_case_id) + 5 相位链
      (相位 dispatch mock, 执行链本体由 commissioning/P0-2 测试覆盖);
   ② 快照独立: 执行后改原用例不影响快照;
-  ③ 全局单飞: case-runner 自身互斥 + 与计划 runner 互斥 + DB 双判据 → 409;
+  ③ 全局单飞: case-runner 自身互斥 + DB 双判据 → 409 (S4b: 与计划 runner 互斥那半边随计划链删);
   ④ 协作式 cancel: 相位间生效, 反向判定;
   ⑤ 相位失败 → failed + failed_phase/error_message 落 config;
   ⑥ 启动复位: 只复位本 runner 的 stale running 行 (谓词收窄, 不碰暗室首测);
@@ -14,7 +14,6 @@
 - 砍相位间 cancel 检查 → test_cancel_between_phases 红
 - 砍 _active_conflict (单飞) → test_second_launch_busy 红
 - 砍谓词收窄 (复位全部 running) → test_stale_reset_scoped 红
-- 砍计划 start/resume 的 case 互斥 (agent F1) → test_plan_start_resume_rejected_while_case_running 红
 - 砍 cancel 的 executed_by 收窄 (agent F2) → test_cancel_other_chains_rows_rejected 红
 """
 from __future__ import annotations
@@ -233,44 +232,11 @@ class TestSingleFlight:
     # 反方向那条 (test_plan_start_resume_rejected_while_case_running) 测的是
     # 计划 start/resume 端点, 随 B2 删路由时一并删。
 
-    def test_plan_start_resume_rejected_while_case_running(
-        self, db, lab, monkeypatch
-    ):
-        """互斥的反方向 (agent F1): 用例执行在跑时, 计划 start/resume 都
-        409 — 否则双 5 相位链并发打同一套 HAL (变异: 砍掉端点里的
-        has_active_case_run 检查 → 红, 会落到 400/其它)。"""
-        monkeypatch.setattr(tcr, "has_active_case_run", lambda: "exec-xyz")
-        client = TestClient(app)
-        r = client.post(
-            f"/api/v1/test-plans/{uuid.uuid4()}/start",
-            json={"started_by": "tester"},
-        )
-        assert r.status_code == 409
-        assert "用例执行" in r.json()["detail"]
-        r2 = client.post(
-            f"/api/v1/test-plans/{uuid.uuid4()}/resume",
-            json={"resumed_by": "tester"},
-        )
-        assert r2.status_code == 409
-        assert "用例执行" in r2.json()["detail"]
+    # ARCH-1 S4b: test_plan_start_resume_rejected_while_case_running 随计划
+    # start/resume 端点一并删除 (互斥的反方向 —— 计划端点已不存在)。
 
-    def test_plan_start_rejected_by_db_case_row(self, db, lab):
-        """Codex #237 C2: 内存判据空但 DB 有本 runner 的 running 行 (残留 /
-        跨进程) → 计划 start 仍 409 (变异: 砍 DB 判据 → 红)。"""
-        source = _make_case(db, lab, name="DB判据")
-        db.add(TestExecution(
-            test_case_id=source.id, status="running",
-            started_at=datetime.utcnow(), executed_by=tcr.RUNNER_MARKER,
-            config={},
-        ))
-        db.commit()
-        client = TestClient(app)
-        r = client.post(
-            f"/api/v1/test-plans/{uuid.uuid4()}/start",
-            json={"started_by": "tester"},
-        )
-        assert r.status_code == 409
-        assert "用例执行" in r.json()["detail"]
+    # ARCH-1 S4b: test_plan_start_rejected_by_db_case_row 随计划
+    # start/resume 端点一并删除 (互斥的反方向 —— 计划端点已不存在)。
 
     @pytest.mark.asyncio
     async def test_db_dangling_running_row_blocks(self, db, lab):
@@ -450,9 +416,20 @@ class TestOrphanedPlanChainReset:
             status=TestPlanStatus.RUNNING,
             created_by="test_plan_runner",
         )
-        db.add(plan)
+        # ①b **PAUSED 也算** (内审 F1): HAL 闸门的 BLOCKING_TEST_PLAN_STATUSES
+        # 认 (RUNNING, PAUSED) 两态。只清 RUNNING 的话, 一行 brownfield 的
+        # paused 计划就是永久 409 blocker —— S4b 删光了 cancel/complete/
+        # resume/PATCH, 应用内无解。
+        paused_plan = TestPlan(
+            name="brownfield 暂停计划",
+            test_case_ids=[str(source.id)],
+            status=TestPlanStatus.PAUSED,
+            created_by="test_plan_runner",
+        )
+        db.add_all([plan, paused_plan])
         db.commit()
         db.refresh(plan)
+        db.refresh(paused_plan)
 
         # ② 该计划下卡 running 的步骤
         step = TestStep(
@@ -478,7 +455,7 @@ class TestOrphanedPlanChainReset:
         )
         db.add_all([step, legacy_exec, commissioning_exec])
         db.commit()
-        plan_id, step_id = plan.id, step.id
+        plan_id, step_id, paused_id = plan.id, step.id, paused_plan.id
         legacy_id, commissioning_id = legacy_exec.id, commissioning_exec.id
 
         tcr.reset_orphaned_plan_chain_rows()
@@ -487,6 +464,10 @@ class TestOrphanedPlanChainReset:
         assert db.query(TestPlan).get(plan_id).status == TestPlanStatus.FAILED, (
             "① RUNNING 计划没被复位 —— 它会被 dashboard 计进 active_test_plans, "
             "而 S4b 之后没有任何端点能把它改回来"
+        )
+        assert db.query(TestPlan).get(paused_id).status == TestPlanStatus.FAILED, (
+            "①b PAUSED 计划没被复位 —— HAL 闸门认 (RUNNING, PAUSED) 两态, "
+            "复位谓词必须跟闸门同源 (内审 F1)"
         )
         assert db.query(TestStep).get(step_id).status == "failed", (
             "② running 步骤没被复位 (同① 无端点可自愈)"
@@ -498,30 +479,43 @@ class TestOrphanedPlanChainReset:
             db.query(TestExecution).get(commissioning_id).status == "running"
         ), "暗室首测的执行行被误复位 —— 谓词收窄失效"
 
-    def test_hal_reload_unblocked_after_reset(self, db, lab):
-        """打在**生效端**: 复位的目的不是"字段变了", 是 HAL reload 不再被拦。"""
+    def test_lifespan_wiring_clears_blockers(self, db, lab):
+        """打在**生效端**, 而且走**真实 lifespan** (内审 F5)。
+
+        为什么不直调 helper: main.py 里那个调用包在 try/except 里 —— 函数改名 /
+        移模块 / import 打错, 启动只打一句 warning, 僵尸行永不复位、HAL reload
+        永久 409, 而直调 helper 的断言**全绿**。设计稿 §4 风险 2 点名的正是
+        这一处"删错了但一切照跑"。所以断言必须穿过 with TestClient(app)。
+        """
         from app.models.test_plan import TestExecution
         from app.services.hal_reload_policy import find_reload_blockers
 
         source = _make_case(db, lab, name="闸门")
-        zombie = TestExecution(
-            test_case_id=source.id, status="running",
-            started_at=datetime.utcnow(),
-            executed_by=tcr.LEGACY_PLAN_RUNNER_MARKER,
-            config={},
-        )
-        db.add(zombie)
+        from app.models.test_plan import TestPlan, TestPlanStatus
+        db.add_all([
+            TestExecution(
+                test_case_id=source.id, status="running",
+                started_at=datetime.utcnow(),
+                executed_by=tcr.LEGACY_PLAN_RUNNER_MARKER, config={},
+            ),
+            TestPlan(
+                name="暂停的僵尸计划", test_case_ids=[str(source.id)],
+                status=TestPlanStatus.PAUSED, created_by="test_plan_runner",
+            ),
+        ])
         db.commit()
 
         assert find_reload_blockers(db), (
             "前提不成立: 僵尸行本应拦住 HAL reload (S3a 闸门), 这条测试才有意义"
         )
 
-        tcr.reset_orphaned_plan_chain_rows()
+        with TestClient(app):   # 走真实启动流程 (lifespan 里那串复位)
+            pass
         db.expire_all()
 
         assert not find_reload_blockers(db), (
-            "复位后 HAL reload 仍被拦 —— 复位打在了标称端没打在生效端"
+            "过完真实 lifespan 后 HAL reload 仍被拦 —— 要么复位没接进 lifespan "
+            "(main.py 的 try/except 把接线错误吞成 warning), 要么谓词跟闸门不同源"
         )
 
 

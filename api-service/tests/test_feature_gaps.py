@@ -20,76 +20,8 @@ from app.main import app
 client = TestClient(app)
 
 
-class TestQueueReordering:
-    """Tests for queue reordering functionality (QueueTab.tsx:115,319)"""
-
-    def _create_and_queue_test_plan(self, name: str, queued_by: str = "test") -> str:
-        """Helper to create a test plan and add it to queue"""
-        # Create test plan
-        create_response = client.post(
-            "/api/v1/test-plans",
-            json={"name": name, "created_by": queued_by}
-        )
-        assert create_response.status_code == 201
-        plan_id = create_response.json()["id"]
-
-        # Set to ready status
-        client.patch(f"/api/v1/test-plans/{plan_id}", json={"status": "ready"})
-
-        # Add to queue
-        queue_response = client.post(
-            "/api/v1/test-plans/queue",
-            json={"test_plan_id": plan_id, "queued_by": queued_by}
-        )
-        assert queue_response.status_code == 201
-        return plan_id
-
-    def test_move_queue_item_up(self):
-        """Test moving a test plan up in the queue"""
-        # Create and queue two items
-        plan1_id = self._create_and_queue_test_plan("Queue Test Plan 1")
-        plan2_id = self._create_and_queue_test_plan("Queue Test Plan 2")
-
-        # Get initial positions
-        queue_response = client.get("/api/v1/test-plans/queue")
-        items = queue_response.json()["items"]
-
-        # Move plan2 up (should swap with plan1)
-        response = client.post(f"/api/v1/test-plans/queue/{plan2_id}/move-up")
-        assert response.status_code == 200
-
-        # Verify position changed
-        data = response.json()
-        assert data["test_plan_id"] == plan2_id
-
-    def test_move_queue_item_down(self):
-        """Test moving a test plan down in the queue"""
-        # Create and queue two items
-        plan1_id = self._create_and_queue_test_plan("Queue Down Test 1")
-        plan2_id = self._create_and_queue_test_plan("Queue Down Test 2")
-
-        # Move plan1 down (should swap with plan2)
-        response = client.post(f"/api/v1/test-plans/queue/{plan1_id}/move-down")
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data["test_plan_id"] == plan1_id
-
-    def test_reorder_queue_by_priority(self):
-        """Test reordering queue by setting explicit priority"""
-        # Create and queue an item
-        plan_id = self._create_and_queue_test_plan("Priority Test Plan")
-
-        # Update priority
-        response = client.patch(
-            f"/api/v1/test-plans/queue/{plan_id}",
-            json={"priority": 1}  # Highest priority
-        )
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data["priority"] == 1
-
+# ARCH-1 S4b: TestQueueReordering 随计划链删除 —— 它测的是已删掉的
+# 执行队列路由 (/test-plans/queue/*)。
 
 class TestAlertSystem:
     """Tests for dashboard alert system (dashboard.py:44)"""
@@ -146,34 +78,9 @@ class TestStatisticsRealData:
         assert isinstance(data, dict)
         assert "summary" in data
 
-    def test_statistics_reflects_actual_execution_count(self):
-        """Test that statistics reflects actual database execution count"""
-        # Get current stats
-        response = client.get("/api/v1/dashboard")
-        initial_count = response.json().get("summary", {}).get("total_executions", 0)
-
-        # Create and complete a test execution
-        plan_response = client.post(
-            "/api/v1/test-plans",
-            json={
-                "name": "Stats Test Plan",
-                "created_by": "test_suite"
-            }
-        )
-        plan_id = plan_response.json()["id"]
-
-        # Complete execution flow
-        client.patch(f"/api/v1/test-plans/{plan_id}", json={"status": "ready"})
-        client.post("/api/v1/test-plans/queue", json={"test_plan_id": plan_id, "queued_by": "test"})
-        client.post(f"/api/v1/test-plans/{plan_id}/start", json={"started_by": "test"})
-        client.post(f"/api/v1/test-plans/{plan_id}/complete")
-
-        # Get updated stats - should reflect the new execution
-        response = client.get("/api/v1/dashboard")
-        new_count = response.json().get("summary", {}).get("total_executions", 0)
-
-        assert new_count > initial_count, "Statistics should reflect real execution data"
-
+    # ARCH-1 S4b: test_statistics_reflects_actual_execution_count 删除 ——
+    # 它的做法是 POST /test-plans 建计划再看 dashboard 计数变化, 而计划链已拆除,
+    # 且 dashboard 的 total_executions 不再查封存表 (设计稿 §1.5 待决①)。
 
 class TestReportComparison:
     """Tests for report comparison functionality (report_service.py:401)"""
@@ -279,59 +186,11 @@ class TestDashboardComparisonTracking:
         assert isinstance(data["comparisons_selected"], int)
 
 
-class TestAuthContext:
-    """Tests related to authentication context (multiple TODO locations)"""
+# ARCH-1 S4b: TestAuthContext 随计划链删除 —— 它测的是已删掉的
+# 计划创建路由的鉴权 (POST /test-plans)。
 
-    def test_endpoints_accept_user_param(self):
-        """Test that endpoints accept user identification"""
-        # Create a test plan with created_by
-        response = client.post(
-            "/api/v1/test-plans",
-            json={
-                "name": "Auth Test Plan",
-                "created_by": "authenticated_user@example.com"
-            }
-        )
-        assert response.status_code == 201
-        data = response.json()
-        assert data["created_by"] == "authenticated_user@example.com"
-
-    def test_endpoints_require_authentication(self):
-        """Test that endpoints require authentication headers when created_by not provided"""
-        # Without auth header and no created_by, should return 401
-        response = client.post(
-            "/api/v1/test-plans",
-            json={"name": "No Auth Plan"}
-        )
-        assert response.status_code == 401
-
-
-class TestScenarioNavigation:
-    """Tests for scenario to test management navigation (ScenarioCard.tsx:106)"""
-
-    def test_navigate_from_scenario_to_test_plan(self):
-        """Test creating a test plan from a scenario"""
-        scenario_id = str(uuid4())
-        response = client.post(
-            f"/api/v1/scenarios/{scenario_id}/create-test-plan",
-            json={
-                "name": "Test Plan from Scenario",
-                "created_by": "test_suite"
-            }
-        )
-        assert response.status_code == 201
-        data = response.json()
-        assert "id" in data
-        assert data["scenario_id"] == scenario_id
-
-    def test_get_test_plans_by_scenario(self):
-        """Test getting all test plans associated with a scenario"""
-        scenario_id = str(uuid4())
-        response = client.get(f"/api/v1/scenarios/{scenario_id}/test-plans")
-        assert response.status_code == 200
-        data = response.json()
-        assert isinstance(data, list)
-
+# ARCH-1 S4b: TestScenarioNavigation 随计划链删除 —— 它测的是已删掉的
+# scenario→计划桥 (create-test-plan / {id}/test-plans)。
 
 # Run configuration for pytest
 if __name__ == "__main__":

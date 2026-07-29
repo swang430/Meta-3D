@@ -9,7 +9,7 @@ import logging
 
 from app.db.database import get_db
 from app.models.probe import Probe
-from app.models.test_plan import TestPlan, TestPlanStatus, TestExecution, TestPlanExecution
+
 from app.schemas.dashboard import (
     DashboardResponse,
     DashboardSummary,
@@ -41,24 +41,13 @@ def get_dashboard(db: Session = Depends(get_db)):
     try:
         # Summary statistics
         probe_count = db.query(Probe).filter(Probe.is_active == True).count()
-        active_test_plans = db.query(TestPlan).filter(
-            TestPlan.status.in_([TestPlanStatus.RUNNING, TestPlanStatus.QUEUED])
-        ).count()
-        total_executions = db.query(TestPlanExecution).count()
+        # ARCH-1 S4b: active_test_plans / total_executions 随计划链删除 (见 schema)。
 
-        # Add VRT count (DB-backed via test_executions filtered by mode IS NOT NULL)
-        try:
-            from app.services.road_test.vrt_execution_service import vrt_execution_service
-            total_executions += len(vrt_execution_service.list(db, limit=10_000))
-        except Exception as e:
-            logger.warning(f"Failed to count VRT executions: {e}")
 
         summary = DashboardSummary(
             probe_count=probe_count,
-            active_test_plans=active_test_plans,
             active_alerts=0,  # TODO: Implement alert system
-            comparisons_selected=len(_comparison_selections),
-            total_executions=total_executions
+            comparisons_selected=len(_comparison_selections)
         )
 
         # Live metrics (mock data for now)
@@ -71,21 +60,12 @@ def get_dashboard(db: Session = Depends(get_db)):
         # Active alerts (empty for now, TODO: implement alert system)
         active_alerts = []
 
-        # Recent tests (last 10 plan executions from DB)
-        recent_executions = db.query(TestPlanExecution).order_by(
-            TestPlanExecution.completed_at.desc()
-        ).limit(10).all()
-
-        recent_tests = [
-            RecentTest(
-                id=str(execution.id),
-                plan_name=execution.test_plan_name,
-                status=execution.status,
-                executed_at=execution.completed_at,
-                duration_minutes=execution.duration_minutes
-            )
-            for execution in recent_executions
-        ]
+        # ARCH-1 S4b: 原先这里读 TestPlanExecution (封存表) 取最近 10 条计划执行。
+        # 计划链拆除后该表不再有写入方, 列表从 VRT 执行 (test_executions) 起头。
+        # ⚠️ 用例执行 (executed_by=test_case_runner) 目前**不进这个列表** ——
+        # 但主控台真正显示的「最近执行」走的是 /test-executions (S2 换源),
+        # 不是这里; 本端点整条链的消费方是零 (设计稿 §1.5), 故不换源。
+        recent_tests = []
 
         # Integrate Virtual Road Test executions (DB-backed via test_executions)
         try:
@@ -131,10 +111,8 @@ def get_dashboard(db: Session = Depends(get_db)):
         return DashboardResponse(
             summary=DashboardSummary(
                 probe_count=0,
-                active_test_plans=0,
                 active_alerts=0,
-                comparisons_selected=0,
-                total_executions=0
+                comparisons_selected=0
             ),
             live_metrics=[],
             active_alerts=[],
@@ -181,33 +159,20 @@ def get_dashboard_summary(db: Session = Depends(get_db)):
     """
     try:
         probe_count = db.query(Probe).filter(Probe.is_active == True).count()
-        active_test_plans = db.query(TestPlan).filter(
-            TestPlan.status.in_([TestPlanStatus.RUNNING, TestPlanStatus.QUEUED])
-        ).count()
-        total_executions = db.query(TestPlanExecution).count()
+        # ARCH-1 S4b: 同上 —— 字段已删。
         
-        # Add VRT count (DB-backed via test_executions filtered by mode IS NOT NULL)
-        try:
-            from app.services.road_test.vrt_execution_service import vrt_execution_service
-            total_executions += len(vrt_execution_service.list(db, limit=10_000))
-        except Exception as e:
-            logger.warning(f"Failed to count VRT executions: {e}")
 
         return DashboardSummary(
             probe_count=probe_count,
-            active_test_plans=active_test_plans,
             active_alerts=0,
             comparisons_selected=len(_comparison_selections),
-            total_executions=total_executions,
         )
     except Exception as e:
         logger.error(f"Error fetching dashboard summary: {e}")
         return DashboardSummary(
             probe_count=0,
-            active_test_plans=0,
             active_alerts=0,
             comparisons_selected=0,
-            total_executions=0,
         )
 
 

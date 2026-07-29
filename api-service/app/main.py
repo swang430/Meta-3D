@@ -10,8 +10,8 @@ import logging
 
 from app.config import settings
 from app.db.database import init_db
-from app.api import health, calibration, test_plan, test_execution, test_sequence
-from app.api import dashboard, probe, instrument, monitoring, report, road_test, alert, sync, topology, scenario, switch_topology
+from app.api import health, calibration, test_plan, test_execution
+from app.api import dashboard, probe, instrument, monitoring, report, road_test, alert, sync, topology, switch_topology
 from app.api import probe_calibration, channel_calibration, workflow, calibration_report, chamber
 from app.api import lab_profile, diagnostic_run, diagnostic_sequence
 from app.api import standard_channel
@@ -207,7 +207,6 @@ app.include_router(probe_calibration.router, prefix=settings.api_v1_prefix)
 app.include_router(channel_calibration.router, prefix=settings.api_v1_prefix)
 app.include_router(test_plan.router, prefix=settings.api_v1_prefix)
 app.include_router(test_execution.router, prefix=settings.api_v1_prefix)
-app.include_router(test_sequence.router, prefix=settings.api_v1_prefix)
 
 # Phase 1: New routers for dashboard, probes, instruments, monitoring
 app.include_router(dashboard.router, prefix=settings.api_v1_prefix, tags=["Dashboard"])
@@ -232,7 +231,6 @@ app.include_router(topology.router, prefix=settings.api_v1_prefix, tags=["Topolo
 app.include_router(switch_topology.router, prefix=settings.api_v1_prefix, tags=["Switch Topologies"])
 
 # Scenario navigation
-app.include_router(scenario.router, prefix=settings.api_v1_prefix, tags=["Scenario Navigation"])
 
 # Calibration workflow engine
 app.include_router(workflow.router, prefix=settings.api_v1_prefix, tags=["Calibration Workflows"])

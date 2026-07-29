@@ -10,9 +10,8 @@ from app.db.database import get_db
 from app.schemas.test_plan import (
     ExecutionHistoryItem,
     ExecutionHistoryListResponse,
-    TestPlanExecutionResponse,
 )
-from app.models.test_plan import TestCase, TestPlanExecution, TestExecution
+from app.models.test_plan import TestCase, TestExecution
 
 router = APIRouter(prefix="/test-executions", tags=["Test Execution History"])
 
@@ -200,43 +199,12 @@ def get_execution_history(
         )
 
 
-@router.get("/{record_id}", response_model=TestPlanExecutionResponse)
-def get_execution_record(
-    record_id: UUID,
-    db: Session = Depends(get_db)
-):
-    """Get a single test plan execution record by ID"""
-    execution = db.query(TestPlanExecution).filter(
-        TestPlanExecution.id == record_id
-    ).first()
-
-    if not execution:
-        raise HTTPException(status_code=404, detail="Execution record not found")
-
-    return execution
-
-
-@router.delete("/{record_id}", status_code=204)
-def delete_execution_record(
-    record_id: UUID,
-    db: Session = Depends(get_db)
-):
-    """Delete a test plan execution record"""
-    execution = db.query(TestPlanExecution).filter(
-        TestPlanExecution.id == record_id
-    ).first()
-
-    if not execution:
-        raise HTTPException(status_code=404, detail="Execution record not found")
-
-    db.delete(execution)
-    db.commit()
-
-    return None
-
-
-# ==================== ARCH-1 S1: 用例执行 cancel ====================
-
+# ARCH-1 S4b (设计稿 §1.7): 这里原有 GET / DELETE /{record_id} 两条, 读的是
+# **旧表** test_plan_executions —— 而本路由器的列表与 /recent 读的是
+# test_executions。两表 id 空间不相交, 所以"列表列出来的每一行, 拿它的 id 去查
+# 详情都会 404"。至今没炸是因为**零调用方** (全 GUI 只调 /recent、/{id}/cancel、
+# /{id}/attach-dut)。它是一颗埋着的雷: 谁将来给执行历史加个"点开看详情"就撞上。
+# 处置 = 删 (去掉档修法; 给零调用方的路由换源是纯浪费)。
 
 class CancelExecutionResponse(BaseModel):
     execution_id: UUID
@@ -252,8 +220,9 @@ def cancel_case_execution(
 
     只对 case-runner 的执行行有意义; 404 = 行不存在, 409 = 行不在 running
     (已完成/已失败/已取消的执行没有可取消的东西)。挂在本前缀是因为它操作
-    的是 TestExecution 行 — 与楼上的 attach-dut 同一张表 (本文件的
-    GET/{record_id} 查的是计划级历史表, S2 统一收口)。
+    的是 TestExecution 行 — 与楼上的 attach-dut 同一张表。
+    (本文件原有的 GET/DELETE {record_id} 查的是**另一张**表
+    test_plan_executions, 已随 ARCH-1 S4b 删除。)
     """
     from app.services.test_case_runner import request_cancel
 

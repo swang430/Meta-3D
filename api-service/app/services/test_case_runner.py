@@ -278,9 +278,18 @@ def reset_orphaned_plan_chain_rows() -> None:
     """
     db = SessionLocal()
     try:
+        # ⚠️ 谓词**换源**到 HAL 闸门的同一个常量, 不自己写一份 (内审 F1)。
+        # 闸门认 (RUNNING, PAUSED) 两态, 而这里原先只认 RUNNING ——
+        # 一行 brownfield 的 paused 计划就会成为**永久** 409 blocker:
+        # S4b 删光了 cancel/complete/resume/PATCH, 应用内再无端点能清它,
+        # 操作员只剩 ?force=true (会连真在跑的用例执行一起绕过) 或手改 DB。
+        # 代价不对称: 误清 = 多丢一条本来就没人能 resume 的僵尸记录;
+        # 漏清 = 现场改完仪器配置重载不了 HAL, 还把 force 训练成常规操作。
+        from app.services.hal_reload_policy import BLOCKING_TEST_PLAN_STATUSES
+
         stale_plans: List[TestPlan] = (
             db.query(TestPlan)
-            .filter(TestPlan.status == TestPlanStatus.RUNNING)
+            .filter(TestPlan.status.in_(BLOCKING_TEST_PLAN_STATUSES))
             .all()
         )
         for plan in stale_plans:

@@ -6,12 +6,17 @@ from uuid import UUID
 
 
 class DashboardSummary(BaseModel):
-    """Dashboard summary statistics"""
+    """Dashboard summary statistics.
+
+    ARCH-1 S4b: 删掉 active_test_plans / total_executions —— 计划链已拆除,
+    这两个字段只能永远是 0, 留着就是在假装。checked-in 契约
+    (api/openapi.yaml 的 DashboardResponse) 只声明 systemStatus /
+    activeAlerts / liveMetrics, **不含**这两个字段, 所以删它们不触发
+    契约同步四步。
+    """
     probe_count: int
-    active_test_plans: int
     active_alerts: int
     comparisons_selected: int
-    total_executions: int
 
 
 class LiveMetric(BaseModel):
