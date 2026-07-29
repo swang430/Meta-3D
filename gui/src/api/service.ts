@@ -71,10 +71,10 @@ export const replaceProbes = async (
   return response.data
 }
 
-export const fetchSequenceLibrary = async (): Promise<SequenceLibraryResponse> => {
-  const response = await client.get<SequenceLibraryResponse>('/test-sequences')
-  return response.data
-}
+// ARCH-1 S4b: fetchSequenceLibrary 删除 —— 后端 /test-sequences 四条路由随
+// 计划链拆除。它此前只被 App.tsx import 未调用 (noUnusedLocals:false 不报),
+// 谁把它接回组件就是运行时 404。⚠️ G5 门只守 /test-plans 前缀, 覆盖不到
+// /test-sequences —— 这一处靠人删, 不靠门。
 
 export const fetchTestTemplates = async (): Promise<TestTemplatesResponse> => {
   const response = await client.get<TestTemplatesResponse>('/test-plans/cases?is_template=true')

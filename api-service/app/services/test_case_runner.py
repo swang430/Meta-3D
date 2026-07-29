@@ -12,15 +12,19 @@
   → 相位间协作式 cancel
 
 设计要点 (对应设计稿 §2.3):
-- **全局单飞**: 双 5 相位链交错打同一套 HAL 会互相污染 (test_plan_runner
-  的既有论证)。本模块与计划 runner **互斥**: 任一在跑, 另一个的启动都拒
-  (计划链 S4 拆除前的过渡期同样受保护)。
+- **全局单飞**: 双 5 相位链交错打同一套 HAL 会互相污染。判据两条 ——
+  进程内任务表 + DB 里的 running 行 (防重启后标志丢失的窗口)。
+  ARCH-1 S4b 拆掉计划链后, 原先"与计划 runner 互斥"那一条随之删除
+  (计划 runner 不存在了, 该分支恒 None)。
 - **协作式 cancel**: cancel 端点把 execution.status 置 "cancelled", task
   在相位间 refresh 检查 — 反向判定 (非 running 一律停, 不枚举终态)。
   不做 pause/resume (拍板: 状态机简化)。
 - **启动残留复位**: 后端重启时把本 runner 的 stale "running" 执行行置
   failed (谓词收窄到 executed_by == RUNNER_MARKER 的行 — 不碰暗室首测 /
   VRT 的执行行)。cancel 同样按这个谓词收窄。
+  ARCH-1 S4b 起本模块**另有**一个 ``reset_orphaned_plan_chain_rows``,
+  接管已删除的 test_plan_runner 遗留的三类僵尸行 —— 单独一个函数,
+  不并进上面那个, 免得 "case_executions" 名不副实。
 - 进度写进 execution.config["phase_progress"] (JSON, flag_modified),
   GUI 轮询状态端点展示。
 """
@@ -35,7 +39,13 @@ from uuid import UUID
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.db.database import SessionLocal
-from app.models.test_plan import TestCase, TestExecution
+from app.models.test_plan import (
+    TestCase,
+    TestExecution,
+    TestPlan,
+    TestPlanStatus,
+    TestStep,
+)
 from app.services.mimo_ota.factory import build_mimo_ota_test_case
 from app.services.test_execution.hydrate import build_step_context
 from app.services.test_execution.registry import dispatch_step
@@ -58,19 +68,21 @@ def has_active_case_run() -> Optional[str]:
 
 
 def _active_conflict() -> Optional[str]:
-    """全局单飞: 本 runner 或计划 runner 任一在跑 → 返回冲突描述。
+    """全局单飞: 本 runner 在跑 → 返回冲突描述。
 
-    过渡期 (S4 拆计划链前) 两条链都能打 HAL, 必须互斥 —— 双 5 相位链
-    交错会让实验互相污染 (test_plan_runner.has_active_runner 的既有论证)。
+    ARCH-1 S4b: 原先这里还查一次 ``test_plan_runner.has_active_runner`` ——
+    过渡期两条链都能打 HAL, 必须互斥。计划链拆除后计划 runner 不存在了,
+    那个分支恒 None, 连同 import 一并删除 (留着 = 模块删掉后每次执行都
+    ModuleNotFoundError)。
+
+    ⚠️ 真正在防重入的两条判据**都还在**, 没被这次删除削弱:
+      ① 进程内任务表 (``has_active_case_run``, 本函数);
+      ② DB 里的 running 行 (``launch_test_case_execution`` 的 dangling 双判据)。
+    双 5 相位链交错污染实验的论证依然成立, 只是现在只剩一条链会产生它。
     """
     active_case = has_active_case_run()
     if active_case is not None:
         return f"已有用例执行在跑 (execution {active_case})"
-    from app.services.test_plan_runner import has_active_runner
-
-    active_plan = has_active_runner()
-    if active_plan is not None:
-        return f"已有测试计划 runner 在跑 (plan {active_plan})"
     return None
 
 
@@ -230,6 +242,102 @@ def reset_stale_running_case_executions() -> None:
             db.commit()
     except Exception:  # noqa: BLE001
         logger.exception("[case-runner] stale 复位失败 (不阻塞启动)")
+        db.rollback()
+    finally:
+        db.close()
+
+
+# 计划链自己的启动复位归 test_plan_runner.reset_stale_running_plans 管,
+# 而 ARCH-1 S4b 把那个模块整个删了 —— 下面这个函数接管它遗留的清理职责。
+LEGACY_PLAN_RUNNER_MARKER = "test_plan_runner"
+
+
+def reset_orphaned_plan_chain_rows() -> None:
+    """启动复位 **计划链遗留的僵尸行**（ARCH-1 S4b 接管）。
+
+    为什么单独一个函数, 不并进 ``reset_stale_running_case_executions``:
+    那个函数的 docstring 明写"谓词收窄到 RUNNER_MARKER — 各链自管各的复位语义",
+    把计划行塞进一个叫 ``case_executions`` 的函数里是名不副实。这里保持
+    "一个函数管一条链"的既有约定, 只是这条链的管理者换成了本模块 ——
+    因为 ``test_plan_runner`` 已经不存在了, 而复位职责必须有人接。
+
+    **三类行, 缺一不可** (原 ``reset_stale_running_plans`` 就是复位这三种):
+
+    ① ``TestPlan.status == RUNNING``   → FAILED
+    ② 其下 ``TestStep.status == 'running'`` → failed
+    ③ ``TestExecution(executed_by='test_plan_runner', status='running')`` → failed
+
+    后果不对称, **前两类更难受**:
+      - ③ 卡住的是 HAL 重载闸门 (S3a 的 find_execution_blockers 看所有 running
+        执行行) → 409 拦死, 但操作员至少在 blocker 列表里看得见它。
+      - ①② 会被 dashboard 计进 active_test_plans, 而 S4b 之后**已经没有
+        cancel/complete 端点能把它们改回来** → 永久残留, 无法自愈。
+
+    S4b 之后不再产生新的 ①②③ 行 (产生方全删了), 但**存量还在两台现场机器的库里**,
+    所以这是每次启动都要跑的清理, 不是一次性迁移 —— 迁移只跑一次, 复位是持续的。
+    """
+    db = SessionLocal()
+    try:
+        # ⚠️ 谓词**换源**到 HAL 闸门的同一个常量, 不自己写一份 (内审 F1)。
+        # 闸门认 (RUNNING, PAUSED) 两态, 而这里原先只认 RUNNING ——
+        # 一行 brownfield 的 paused 计划就会成为**永久** 409 blocker:
+        # S4b 删光了 cancel/complete/resume/PATCH, 应用内再无端点能清它,
+        # 操作员只剩 ?force=true (会连真在跑的用例执行一起绕过) 或手改 DB。
+        # 代价不对称: 误清 = 多丢一条本来就没人能 resume 的僵尸记录;
+        # 漏清 = 现场改完仪器配置重载不了 HAL, 还把 force 训练成常规操作。
+        from app.services.hal_reload_policy import BLOCKING_TEST_PLAN_STATUSES
+
+        stale_plans: List[TestPlan] = (
+            db.query(TestPlan)
+            .filter(TestPlan.status.in_(BLOCKING_TEST_PLAN_STATUSES))
+            .all()
+        )
+        for plan in stale_plans:
+            plan.status = TestPlanStatus.FAILED
+            plan.completed_at = datetime.utcnow()
+            running_steps: List[TestStep] = (
+                db.query(TestStep)
+                .filter(
+                    TestStep.test_plan_id == plan.id,
+                    TestStep.status == "running",
+                )
+                .all()
+            )
+            for step in running_steps:
+                step.status = "failed"
+                step.error_message = (
+                    "计划链已于 ARCH-1 S4b 拆除 — 该步骤是进程重启遗留的僵尸行"
+                )
+                step.completed_at = datetime.utcnow()
+            logger.warning(
+                "[s4b-cleanup] 复位遗留 RUNNING 计划 %s (%s) → FAILED (含 %d 个 running 步骤)",
+                plan.id, plan.name, len(running_steps),
+            )
+
+        # ③ 独立于 plan 状态判定: plan 可能已被别处置成终态, 执行行仍卡 running。
+        stale_execs: List[TestExecution] = (
+            db.query(TestExecution)
+            .filter(TestExecution.status == "running")
+            .filter(TestExecution.executed_by == LEGACY_PLAN_RUNNER_MARKER)
+            .all()
+        )
+        for ex in stale_execs:
+            ex.status = "failed"
+            ex.completed_at = datetime.utcnow()
+            cfg = dict(ex.config or {})
+            cfg["error_message"] = (
+                "计划链已于 ARCH-1 S4b 拆除 — 该执行是进程重启遗留的僵尸行"
+            )
+            ex.config = cfg
+            flag_modified(ex, "config")
+            logger.warning(
+                "[s4b-cleanup] 复位遗留 running 计划执行行 %s → failed", ex.id
+            )
+
+        if stale_plans or stale_execs:
+            db.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("[s4b-cleanup] 计划链僵尸行复位失败 (不阻塞启动)")
         db.rollback()
     finally:
         db.close()

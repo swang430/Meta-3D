@@ -10,8 +10,8 @@ import logging
 
 from app.config import settings
 from app.db.database import init_db
-from app.api import health, calibration, test_plan, test_execution, test_sequence
-from app.api import dashboard, probe, instrument, monitoring, report, road_test, alert, sync, topology, scenario, switch_topology
+from app.api import health, calibration, test_plan, test_execution
+from app.api import dashboard, probe, instrument, monitoring, report, road_test, alert, sync, topology, switch_topology
 from app.api import probe_calibration, channel_calibration, workflow, calibration_report, chamber
 from app.api import lab_profile, diagnostic_run, diagnostic_sequence
 from app.api import standard_channel
@@ -63,14 +63,18 @@ async def lifespan(app: FastAPI):
         logger.error(f"Database initialization failed: {e}")
         logger.warning("Continuing with degraded functionality")
 
-    # 门审 #217 F4: 复位上次进程留下的 stale RUNNING 计划 (runner 是 asyncio
-    # 后台任务, 重启即消失 — 不复位则计划永卡 RUNNING, start/resume 全拒且
-    # HAL reload 被 409 挡)。此刻必然没有任何 runner 在跑, 复位安全。
+    # 门审 #217 F4 的后继: 复位计划链遗留的僵尸行。ARCH-1 S4b 删掉了
+    # test_plan_runner, 该职责由 test_case_runner 接管 (三类行: TestPlan /
+    # TestStep / TestExecution)。S4b 后不再产生新的这类行, 但**存量还在两台
+    # 现场机器的库里** —— ①② 会被 dashboard 计进 active_test_plans 且已无
+    # cancel/complete 端点可清, ③ 会永久 409 拦住 HAL reload。
     try:
-        from app.services.test_plan_runner import reset_stale_running_plans
-        reset_stale_running_plans()
+        from app.services.test_case_runner import (
+            reset_orphaned_plan_chain_rows,
+        )
+        reset_orphaned_plan_chain_rows()
     except Exception as e:  # noqa: BLE001
-        logger.warning(f"stale RUNNING 计划复位失败 (不阻塞启动): {e}")
+        logger.warning(f"计划链僵尸行复位失败 (不阻塞启动): {e}")
 
     # ARCH-1 S1: 同理复位 case-runner 的 stale running 执行行 (谓词收窄到
     # executed_by=test_case_runner, 不碰暗室首测/VRT/计划链的执行行)。
@@ -203,7 +207,6 @@ app.include_router(probe_calibration.router, prefix=settings.api_v1_prefix)
 app.include_router(channel_calibration.router, prefix=settings.api_v1_prefix)
 app.include_router(test_plan.router, prefix=settings.api_v1_prefix)
 app.include_router(test_execution.router, prefix=settings.api_v1_prefix)
-app.include_router(test_sequence.router, prefix=settings.api_v1_prefix)
 
 # Phase 1: New routers for dashboard, probes, instruments, monitoring
 app.include_router(dashboard.router, prefix=settings.api_v1_prefix, tags=["Dashboard"])
@@ -228,7 +231,6 @@ app.include_router(topology.router, prefix=settings.api_v1_prefix, tags=["Topolo
 app.include_router(switch_topology.router, prefix=settings.api_v1_prefix, tags=["Switch Topologies"])
 
 # Scenario navigation
-app.include_router(scenario.router, prefix=settings.api_v1_prefix, tags=["Scenario Navigation"])
 
 # Calibration workflow engine
 app.include_router(workflow.router, prefix=settings.api_v1_prefix, tags=["Calibration Workflows"])

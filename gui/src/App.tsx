@@ -89,7 +89,6 @@ import {
   deleteTopologyProfile,
   duplicateTopologyProfile,
   type TopologyProfileDetail,
-  fetchSequenceLibrary,
   fetchTestCases,
   deleteTestCase,
   updateInstrumentCategory,
