@@ -1,10 +1,14 @@
 # ARCH-1 S4b 设计稿 — 后端计划链拆除
 
-> **状态**：设计稿 **v2**（外审一轮后修订），**尚未动代码**。
-> **修订记录**：v1 → v2 由 Codex #245 打回（1×P1 + 1×P2）——
-> ① B2 只写了搬字段，漏了**搬应用路径**：apply 的唯一生产调用方就在要删的计划
->   start 里，只搬字段会让测量静默跑在**上一次的射频拓扑**上（§1.8，新增门 D-h2）；
-> ② D-f 还写着 34 条，而删除集已是 36 条 —— 那两条孤儿路由可以完好幸存而所有门全绿。
+> **状态**：设计稿 **v3**（外审两轮后定稿），**尚未动代码**。
+> **修订记录**：
+> - v1 → v2（Codex #245 round 1，1×P1+1×P2）：B2 只写"搬字段"漏了搬应用路径；D-f 还写着 34 条。
+> - v2 → v3（round 2，2×P1）：apply 是 **best-effort**（失败照跑）+ profile 与
+>   `mimo_port_preset`/`mimo_layers` **优先级未定义**（两套机制拧同一个硬件旋钮）。
+>   三条 P1 加起来说明 B2 **不是搬家、是改仪表配置真值源语义** →
+>   **topology-profile 整个移出 S4b**（§1.8），本片自此是纯删除，零行为变更。
+> **外审收口**：轮次上限 = 2，本轮到顶。v3 的改动是**缩范围**（去掉一整批），
+> 不再送审；用例级拓扑覆盖单独立项，届时带自己的设计与门。
 > **上游**：[`arch-1-s4-demolition.md`](arch-1-s4-demolition.md)（#243 定稿 v3）的 S4b 行。
 > **前置**：S4a（`211bec3`）已 merge —— GUI 侧零调用计划路由，G5 门常驻守着不回潮。
 > **实证前置**：
@@ -182,41 +186,58 @@ ListResponse/GroupedResponse` + `TestStepCreateFromTestCase`）保留，其余�
 > `// TODO: 后端需要实现 /test-executions/recent 端点` 是 **stale 注释** ——
 > 该端点 S2 已实现（`:100`），且声明在 `/{record_id}` 之前，路由匹配顺序正确。
 
-### 1.8 🔴 topology-profile 搬家：**搬字段不够，得搬应用路径**（Codex #245 C-1）
+### 1.8 🔴 topology-profile：**移出 S4b**（外审两轮共 3 条 P1 逼出来的结论）
 
-伞稿待决②定的是"搬进 `TestCase.configuration`"。**只搬字段会留下一个静默错误**。
+伞稿待决②定的是"搬进 `TestCase.configuration`"，v1 我照抄成 B2 一行。
+外审两轮把它拆穿了 —— 这**不是搬家，是改仪表配置真值源的语义**，属 P0-2 地盘。
 
-实测：`apply_plan_topology_profile_if_set`（`test_plan_service.py:1480`）的
-**生产调用方只有一处** —— `api/test_plan.py:1118`，就在**要删的**计划 start 端点里。
-而 `test_case_runner.py` 里 **零** topology 调用（grep 无命中）。
+**round-1 C-1**：apply 的**生产调用方只有一处**（`test_plan_service.py:1480`
+← `api/test_plan.py:1118`），就在要删的计划 start 里；`test_case_runner.py` 零 topology 调用。
+只搬字段 → 用例写着 `topology_profile_id=X`，五相位全跑完，**没有任何一步把 X 下发给 UXM**
+→ 测量在上一次的射频通路上完成，`status=completed`。
 
-所以按"只搬字段"的写法：
+**round-2 C-1a（fail-loud）**：该函数 docstring 明写 **"Best-effort semantics"**，
+失败只返回 `{"applied": False, "reason": ...}`（`no_live_driver` /
+`driver_does_not_support_topology_profiles` / 回读失败 …），**计划照样启动**。
+把这套语义原样搬进用例执行 = 显式请求的 profile 应用失败也照跑，还是在旧拓扑上。
+用例级要不要改成 fail-loud，**是行为变更，不是搬家**。
+
+**round-2 C-1b（优先级冲突）** —— 最关键的一条：
+`MIMOOTAConfiguration` 已经有 `mimo_layers: int = 2`（`:182`）和
+`mimo_port_preset: Optional[str]`（`:222`，取值 siso/2x2/4x4/2x2_alt）。
+而 `:214` 的注释白纸黑字写着：
+
+> *"path B (正式测试) measure 显式驱动这些, **避免残留 HAL-init 默认 topology profile 的**…"*
+
+**现有设计是在主动对抗残留的 topology profile。** 往同一个 configuration 里再塞一个
+`topology_profile_id`，等于让**两套机制拧同一个硬件旋钮**。Codex 给的具体反例：
 
 ```
-用例配置里写着 topology_profile_id=X
-  → case-runner 启动 → 走 factory → 跑 5 相位
-  → 没有任何一步把 X 下发给 UXM
-  → 仪器保持**上一次**的拓扑不变
-  → 测量在错误的射频通路上完成, status=completed
+用例: topology_profile_id=caict_n78_4x4 + mimo_layers=2 + mimo_port_preset=None
+→ profile 先把端口设成 4x4
+→ measure 的 TestCase 下发把层数设成 2, 但 preset 是 None 所以不重写端口
+→ 最终 2 层跑在 4x4 路由上 (混合配置)
+→ 而 D-h2 照样绿, 因为 profile "确实下发过"
 ```
 
-**这是仪器场景里最坏的一类错误**：不报错、不缺数据、报告齐全，但**数是错的**，
-而且要到有人对着两次结果发现对不上才会怀疑。
+**结论：topology-profile 移出 S4b。**
 
-**D-c 抓不到它** —— D-c 只断言"5 相位跑完"，上面那条路径 5 相位全过。
-这正是「验证打在生效端」那条: 存进 DB 是**标称端**, 下发到 UXM 才是**生效端**。
+| 对象 | S4b 处置 |
+|---|---|
+| `PUT /{plan_id}/topology-profile` 路由 | ❌ **删**（与其余 27 条同批。GUI 入口 S4a 已随 `EditTestPlanWizard` 删除，现无调用方） |
+| `apply_plan_topology_profile_if_set` + `test_plan_topology_override.py` | ❌ 随 `TestPlanService` 同批删 |
+| **用例级拓扑覆盖能力** | ⏸ **显式申报为能力缺口**，单独立项 |
 
-**B2 的正确范围**（三件事，缺一不可）：
+**为什么这样是对的**：S4b 自称"纯删除片"。上面三条 P1 表明 B2 根本不是删除，
+是要新定义"profile 与 configuration 重叠字段谁优先""失败要不要 fail-loud"——
+两条都得先出方案、跟 P0-2 的单一真值源对齐。硬塞进拆除片里，就是拿一个静默测错
+通路的风险换一次少开 PR。**去掉 > 换源 > 收窄 > 加机制**：这里选"收窄本片范围"。
 
-1. `TestCase.configuration` 加字段（`MIMOOTAConfiguration` 里加 `topology_profile_id`）；
-2. **把 apply 调用搬进 case 执行路径** —— `launch_test_case_execution` 或 5 相位链的
-   起点，位置要在**任何 SCPI 下发之前**；
-3. 配门 **D-h2**（新增，见 §3）：断言**请求的 profile 真被应用了**，
-   不是"字段存进去了"。
-
-> 顺带：`tests/test_plan_topology_override.py` 整个文件是围绕计划级写的（三层测试）。
-> 搬家后它要么改写成 case 级、要么删。改写更省 —— 那三层断言（端点/service/apply 语义）
-> 本身是对的，只是主语从 plan 换成 case。
+> 新立项要回答的三问（不在本片）：
+> ① profile 与 `mimo_port_preset` / `mimo_layers` 重叠时谁优先？（或：把 profile
+>   **展开进执行快照**形成单一配置后一次性下发 —— Codex 建议的方向，跟 P0-2 一致）
+> ② 显式请求的 profile 应用失败，要不要 fail-loud 中止执行？
+> ③ 门要打在**下发端**且覆盖每种 `applied=False` 分支，不是"字段存进去了"。
 
 ---
 
@@ -227,8 +248,10 @@ ListResponse/GroupedResponse` + `TestStepCreateFromTestCase`）保留，其余�
 | 批 | 内容 | 为什么在这个位置 |
 |---|---|---|
 | **B1 解耦** | `_active_conflict` 去计划分支 + 删 `test_plan_runner_mutex` 测试；`main.py` 去复位调用；case-runner 复位扩三类谓词 | 之后任何一步删模块都不会炸执行正门 |
-| **B2 搬家** | `topology-profile` **搬字段 + 搬应用路径**（见 §1.8） | 必须在删路由**之前**，否则中间态功能真空 |
-| **B3 删除** | 28+2+4+2 = **36 条**路由 / 6 个 Service 类 / `test_plan_runner.py` / scenario 桥 / test_sequence 组 / schemas 计划系 | 此时零调用方 |
+| **B2 删除** | 28+2+4+2 = **36 条**路由 / 6 个 Service 类 / `test_plan_runner.py` / scenario 桥 / test_sequence 组 / schemas 计划系 | 此时零调用方 |
+
+> v1 的「B2 搬家」批**已取消** —— topology-profile 移出本片（§1.8）。
+> 本片自此是**纯删除**，没有任何行为新增或语义变更。
 
 **B1 单独可跑全量测试并通过** —— 这是"顺序对不对"的自检点：如果 B1 之后全量绿，
 说明解耦干净；如果红，说明还有没找到的耦合，此时**停下来**，别往 B3 走。
@@ -244,7 +267,6 @@ ListResponse/GroupedResponse` + `TestStepCreateFromTestCase`）保留，其余�
 | **D-d** | 行为 | HAL 闸门拆掉 TestPlan 半截后仍拦住活跃执行行 | 连带删错 `find_execution_blockers` → 红 |
 | **D-f** | 行为 | 删掉的 **36 条路由逐条断言 404**（不是"少了几条"，是逐条；**含 §1.7 那两条孤儿**） | 任一路由残留 → 红。⚠️ 上一版写的是 34 —— 漏掉 §1.7 新查出的两条, 那两条可以完好幸存而所有门全绿（Codex #245 C-2） |
 | **D-g** | 行为**+结构** | ① 跑真实 execute 断言 200 + 执行行落库；② **结构断言：全后端源码零 `test_plan_runner` import** | ②专防 `main.py:70` —— 那处 import 在 `try/except` 里被吞成 warning，**纯行为门是假绿** |
-| **D-h2** | 行为 | **拓扑 profile 真被应用了**：建一个 `configuration.topology_profile_id=X` 的用例 → 执行 → 断言 baseStation 驱动**收到了** X 的拓扑下发（观察驱动侧调用/HAL trace，不是查 DB 字段） | 只搬字段不搬 apply 路径 → 红（**§1.8 专防**）。⚠️ 断言必须打在**下发端**：断言"DB 里存着 X"是标称端，那个门恒绿 |
 | **D-i** | 行为 | **三类僵尸行全清**：造 ① `TestPlan.status=RUNNING` ② 其下 `TestStep.status='running'` ③ `TestExecution(executed_by='test_plan_runner', status='running')` → 跑启动复位 → 三类都进终态 + HAL 重载不被 409 拦 | 复位只扩执行行谓词 → ①②仍 running → 红 |
 | **G5**（已有） | 不变量 | GUI 无计划链路由调用（`/cases*` 除外） | S4a 已建，本片自动守着前端不回潮 |
 
@@ -266,8 +288,8 @@ ListResponse/GroupedResponse` + `TestStepCreateFromTestCase`）保留，其余�
 4. **companion 过滤器**（§1.2 更正了路径）—— 产生方删、防护方留，275/538 存量行靠它隐身。
 5. **`/test-executions` 路由器上挂着两张表**（§1.7）—— 详情/删除两条读旧表且零调用方，
    是一颗埋着的雷（将来谁加"点开看详情"就会每行 404）。本片一并删。
-6. **只搬字段不搬应用路径**（§1.8）—— 静默测错通路，是本片最坏的失败模式：
-   不报错、不缺数据、报告齐全，但数是错的。靠 D-h2 打在下发端兜住。
+6. **~~只搬字段不搬应用路径~~ → 已移出本片**（§1.8）。该风险连同 topology-profile
+   一起转到新立项；本片删掉计划级路由后，**用例级拓扑覆盖是一个显式申报的能力缺口**。
 7. **表原地封存**：`TestPlan` / `TestStep` / `TestQueue` / `TestPlanExecution` 四张表
    不迁移不删除（两台现场机器的历史行），S4c 标 deprecated docstring。
 
@@ -290,10 +312,16 @@ ListResponse/GroupedResponse` + `TestStepCreateFromTestCase`）保留，其余�
 但那条路由读的是**旧表** `test_plan_executions`，且**零调用方**。
 处置 = 与 `DELETE /{record_id}` 一并删掉（"去掉"档修法）。已并入 §1.7，不再是待决。
 
-**③ B2（topology-profile 搬家）要不要拆成独立 PR？**
+**③ ~~B2（topology-profile 搬家）要不要拆成独立 PR？~~ → 已改为「移出本片」，
+无需拍板，但需知会**
 
-- **建议：留在本 PR 的 B2 批** —— 它是"删之前先搬"，拆出去会制造一个功能真空窗口。
-- 备选：先单独 merge B2，再做 B1+B3。代价是多一轮外审往返。
+v1 建议"留在本 PR"。外审两轮 3 条 P1 后**推翻**（§1.8）：那不是搬家，是要新定义
+"profile 与 configuration 重叠字段谁优先""应用失败要不要 fail-loud"——都得先跟
+P0-2 的单一真值源对齐。硬塞进拆除片 = 拿静默测错通路的风险换少开一次 PR。
+
+**代价（显式申报）**：S4b 之后，**用例级拓扑覆盖这个能力暂时不存在**。
+计划级的入口 S4a 已经删了（`EditTestPlanWizard`），所以不是"从有到无"，
+是"本来就已经点不到了，现在后端也一并清掉"。新立项补回。
 
 ---
 
