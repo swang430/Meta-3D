@@ -8,9 +8,17 @@
 > 计划链已随 ARCH-1 S4a（#244）删除**，队列端点随 S4b（#246）删除 —— 这套同步机制
 > 没有两端可同步了。
 >
-> **今天的实况**：执行状态只有一个源 —— `TestExecution.status`，
-> 由 `api-service/app/services/test_case_runner.py` 写，监控组件直接读，不存在
-> "两个 UI 各持一份状态需要对齐"的问题。ARCH-1 顺手消掉的就是这类同步负担。
+> **今天的实况**：执行状态的**写方只有一个** —— `TestExecution.status`，由
+> `api-service/app/services/test_case_runner.py` 写。前端不再需要「两个 UI 各持一份
+> 状态互相对齐」，因为大家都从后端取。
+>
+> ⚠️ **别按老印象去找「监控组件」** —— 正式用例这条链上：
+> - `components/TestPlanManagement/TestCaseLibrary.tsx` 轮询 `getCaseExecutionStatus`，
+>   结果存在它自己的 `activeRun` 局部状态里（执行按钮禁用与取消入口都靠它）；
+> - `features/Monitoring/components/ExecutionMetricsCard.tsx` **不读这个状态**，
+>   它只消费 `useMonitoringWebSocket` 推来的实时指标。
+>
+> 所以「状态」和「指标」是两条独立的前端通道，不是一个监控组件全包。
 >
 > 留着是决策记录：双向同步的坑（谁是权威、什么时候轮询、乐观更新怎么回滚）
 > 那套分析仍有参考价值。

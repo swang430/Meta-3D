@@ -6,8 +6,11 @@
 > ⚠️ **ARCH-1 S4（2026-07-29）**: 本文的核心决策是「Option B: 让路测场景转换成
 > 测试计划」。**测试计划链已整体拆除**（S4a GUI #244 / S4b 后端 #246 / S4c #247），
 > 所以 §1.3、§2.2 Integration Point 2、§3 Workflow 3、§5 Phase 4.1-4.5 全部作废，
-> 各自段头有单独说明。**其余部分（虚拟路测场景层 §1.1、OTA Mapper §1.2、
-> ChannelEngine 集成）仍然有效。**
+> 各自段头有单独说明。
+> **其余部分（§1.1 虚拟路测场景层、§1.2 OTA Mapper、ChannelEngine 集成）本次未逐行复核**
+> —— 没有断言它们准确，只是它们不在计划链的拆除面上。
+> （原文写的是「仍然有效」，被外审当场打脸：§1.1 的 User Actions 里就还挂着一条已删的
+> `Convert to Test Plan`。**给自己没审过的整节背书，是本片反复犯的错。**）
 > 今天正式测试的真值源是 TestCase，执行走 ARCH-1 S1 的执行正门。
 
 ---
@@ -56,7 +59,8 @@ class RoadTestScenario:
 - Create custom scenarios
 - Run test (opens TestExecutionModal)
 - View details (opens ScenarioDetailModal)
-- **[NEW]** Convert to Test Plan
+- ~~**[NEW]** Convert to Test Plan~~ ⚠️ **ARCH-1 S4 已删除**：场景→计划桥的两条路由、
+  `scenarioToTestPlan.ts`、`_create_road_test_steps` 全没了，这个动作在 UI 上不存在。
 
 **Output**: `RoadTestScenario` object
 
