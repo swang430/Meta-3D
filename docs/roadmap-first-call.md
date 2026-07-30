@@ -125,9 +125,10 @@ TestCase（自带 `configuration`，单一真值源）→ TestExecution（每次
 > 本条目只说两件确定的事：
 > ① P0-3 / P0-4 **已 2026-07-03 现场完成**（见「Blocked on hardware」表里那两条删除线行）；
 > ② 下次现场的**主线**是 P0-5（DUT attach → bearer → PDSCH）。
-> **"只剩 P0-5"是错的** —— `ON-SITE-BLOCKED` 行里还有 **P0-8 的现场半**
-> （见 `### P0-8` 条目：real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真），
-> 它跟 attach 是同一段窗口的活，排现场计划时必须一起算。
+> **"只剩 P0-5"是错的** —— 还有 **P0-8 的现场半**（real F64 上 load→run→改参全 0
+> error + 输入口变绿 + DL 不失真，见 `### P0-8` 条目），跟 attach 是同一台 F64、
+> 同一段窗口的活。⚠️ 「Blocked on hardware」表**此前漏列 P0-8**，本 PR 一并补上 ——
+> 否则"权威表"和 `ON-SITE-BLOCKED` 行会各说各话（Codex #249 抓到）。
 > ⚠️ 本文上方 2026-06-21 那段写的"切回依赖链 P0-4 → P0-3 → P0-5"**写于 P0-3/4 完成之前，
 > 已 stale**，别照它安排现场（清理它属 07-03 现场记录的收口，不在本条目范围）。
 
@@ -173,11 +174,16 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | ~~P0-3~~ | ~~Path-loss calibration loop closure + cal cert~~ | ✅ 2026-07-03 现场完成 (余复测 ±0.5dB → P1-4) |
 | ~~P0-4~~ | ~~SignalAnalyzer in HAL for reference TRP~~ | ✅ 2026-07-03 现场完成 |
 | P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | on-site real DUT (已至 -96 dBm RSRP, 差正式注册) |
+| P0-8 **现场半** | F64 driver 现场修复落地 —— real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真 | on-site real F64 (本地半已 Done, 见 `### P0-8`；跟 P0-5 attach 同一段窗口) |
 
 These are still the highest-priority items overall — they just can't
 be progressed from a remote dev box. When the next on-site trip
 opens, the Current Focus must move back to P0-5 (or whichever P0 is
 unblocked) BEFORE starting any new P1.
+
+> ⚠️ **P0-5 是主线，但不是当天唯一的 P0 活** —— P0-8 的现场半（上表最后一行）
+> 需要同一台 real F64，排窗口时一起算。两者都在「📋 可规划工作 audit」的
+> `ON-SITE-BLOCKED` 行里；本表此前漏列 P0-8，2026-07-30 补上。
 
 > **下次现场执行按 [`docs/guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md)
 > 走**（现场首测调试协议）。该协议把这些 P0 排成依赖链 **P0-4 → P0-3 → P0-5** 的
