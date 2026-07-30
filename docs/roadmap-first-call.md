@@ -184,6 +184,13 @@ unblocked) BEFORE starting any new P1.
 > ⚠️ **P0-5 是主线，但不是当天唯一的 P0 活** —— P0-8 的现场半（上表最后一行）
 > 需要同一台 real F64，排窗口时一起算。两者都在「📋 可规划工作 audit」的
 > `ON-SITE-BLOCKED` 行里；本表此前漏列 P0-8，2026-07-30 补上。
+>
+> ⚠️⚠️ **下面那份现场协议目前不覆盖 P0-8** —— [`on-site-debug-protocol.md`](guides/on-site-debug-protocol.md)
+> 开篇写的是「配套 P0 队列（**P0-3/4/5**）使用」，五个 Phase 里没有 P0-8 的 gate。
+> **照那份 checklist 逐条走完，F64 的 load→run→改参与输入参考验证会整个漏掉。**
+> 出发前**手动把 P0-8 排进当天计划**（它跟 Phase 1 逐仪表 SCPI 握手同段，F64 已在场）。
+> 给协议正式加一道 P0-8 gate 是独立立项（要定它进哪个 Phase / gate 判据怎么写），
+> 不在本条目范围 —— 见 backlog。
 
 > **下次现场执行按 [`docs/guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md)
 > 走**（现场首测调试协议）。该协议把这些 P0 排成依赖链 **P0-4 → P0-3 → P0-5** 的
