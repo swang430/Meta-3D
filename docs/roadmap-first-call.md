@@ -190,7 +190,8 @@ unblocked) BEFORE starting any new P1.
 > **照那份 checklist 逐条走完，F64 的 load→run→改参与输入参考验证会整个漏掉。**
 > 出发前**手动把 P0-8 排进当天计划**（它跟 Phase 1 逐仪表 SCPI 握手同段，F64 已在场）。
 > 给协议正式加一道 P0-8 gate 是独立立项（要定它进哪个 Phase / gate 判据怎么写），
-> 不在本条目范围 —— 见 backlog。
+> 不在本条目范围 —— 已记进本文末尾「🗂️ Discovered during X」区
+> （`[discovered 2026-07-30 during ARCH-1 roadmap 补记]` 那条），周度 triage 会扫到。
 
 > **下次现场执行按 [`docs/guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md)
 > 走**（现场首测调试协议）。该协议把这些 P0 排成依赖链 **P0-4 → P0-3 → P0-5** 的
@@ -1946,6 +1947,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 > Items added mid-task. Reviewed weekly; promoted to P1/P2/P3 or dropped.
 
+- `[discovered 2026-07-30 during ARCH-1 roadmap 补记]` **现场协议不覆盖 P0-8，照 checklist 走完会漏掉 F64 验证** —— [`guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md) 开篇写「配套 P0 队列（**P0-3/4/5**）使用」，五个 Phase（网络 / 逐仪表 SCPI 握手 / SA 入 HAL / 路损校准 / DUT attach）**没有 P0-8 的 gate**。而上方「Blocked on hardware」表强制要求按该协议走 —— 结果是「走完了」却漏掉 P0-8 现场半（real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真），**比没有 checklist 更危险**（给人已覆盖的错觉）。当前缓解：P0 队列表已补 P0-8 行 + 表下注解写明出发前手动排进当天计划。**正修要定两件事**：① P0-8 塞进哪个 Phase（比 Phase 1 SCPI 握手重，要 load→run→改参→读电平，可能单独一段或作 Phase 1 的 F64 子门）；② gate 判据怎么拆 —— P0-8 验收最后一条「DL 不失真（DUT attach 后非 0% ACK）」**依赖 DUT attach**，有一半得等 Phase 4，gate 可能要拆两半挂两个 Phase。**顺带**：该协议里「Current Focus 按依赖链 P0-4 → P0-3 → P0-5 推进」那句同样已 stale（P0-3/4 已 2026-07-03 现场完成），跟 roadmap 里那句同源，一并清。⚠️ 动之前按标题/条目名定位，**别在文档里写行号** —— 本次 PR 实证：行号会被自己的编辑挤跑。
 - `[discovered 2026-07-29 during ARCH-1 S4a]` **GUI 没有「新建测试用例」入口** —— `TestCaseLibrary` 的新建按钮由 `onCreateNew` prop 守着，**全仓无人传**（`TestManagement.tsx` 只传 `enableExecute`）；入口原本挂在 StepsTab 上，随 S4a 一并删除。现状：**直接执行路径上的** MIMO_OTA 用例只能来自 bootstrap 种子，可改可执行不可新建。（GUI 并非完全建不了 TestCase —— 虚拟路测的「创建场景」会落一行 VRT 型 TestCase，但那条不走 S6 要验的直接执行路径。）S4a 已显式申报为能力缺口。⚠️ **这是 ARCH-1 S6（浏览器闭环总验）的前置** —— S6 验收第一步就是「建用例」，开工前先决定：补入口（GUI 新功能，需设计稿），还是把 S6 验收改成「改现有用例」。
 - `[discovered 2026-07-20 during 出发前门审 F5]` **UXM 幂等捷径生效后剩余写全在小区 ON 态执行 — ON 态同值写 band/duplex 是否触发 UXM 内部重配 (掉 DUT) 真机零实证**。ARFCN/功率有回读对账兜底; band/duplex ON 态被拒 (-221 类) 只进错误队列无对账项即静默。现场若"BW 已同仍重启"按 onsite-plan-20260721 风险⑧②排查; 正修方向 = band/duplex 也纳入幂等预读 (值同跳写) 或对账。TDD 主线 (n78) 幂等已限定 (F3 保守化: 仅 TDD + readback 能力位开才走捷径)。
 - `[discovered 2026-07-20 during 三开关门审 #216]` **开关1 inherit 的"知情继承"只核对频率, 层数盲区**: 小区级层数继承仪器态但 RRC recon 仍按 TestCase 推层, CSI-RS 端口按 TestCase 层数算 — 三方可各不相同; Phase 6 读 UE 能力抓不到 cell 生效层数低于请求。正修方向 = read_live_frequency_identity 扩展读层数 (注意 #114 教训: 配置旋钮回读是 echo, 要找真生效读法) 或 inherit 下强制核对面板。当前缓解 = inherit 日志显式披露"层数未核对"。
