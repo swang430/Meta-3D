@@ -10,8 +10,15 @@
 > 下面几乎每段代码都拿 `TestPlan` / `TestStep` / `TestSequence` 举例。
 > **这三张表连同 `TestQueue` / `TestPlanExecution` 已随 ARCH-1 S4 封存**：
 > 只读历史、无业务写入方，计划链的路由 / runner / Service 全部删除
-> （S4a #244 / S4b #246 / S4c #247）。类还在（所以下面的代码片段仍然能跑），
-> 但**不要照着给新功能建模到这条链上**，也不要新增指向它们的外键。
+> （S4a #244 / S4b #246 / S4c #247）。
+>
+> ⚠️ **五个 ORM 类还在，但下面的示例并非都能跑。** 分清两类：
+> - **ORM / schema 定义片段** —— 类还在，照着读没问题；
+> - **端点与 Service 片段是历史伪码，跑不起来** —— 例如 §6.3 `from app.dto.test_step
+>   import TestStepDTO` 引的模块 **`app/dto/` 目录根本不存在**，`TestStepService`
+>   也已随 S4b 删除，照抄会 ImportError。
+>
+> 更别**照着给新功能建模到这条链上**，也不要新增指向它们的外键。
 >
 > **本文教的三层架构（DB 模型 / DTO / API Schema）本身仍然是我们的做法** ——
 > 要找活着的范例，看 `app/models/chamber.py` + `app/schemas/chamber.py`，
