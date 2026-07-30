@@ -5,6 +5,36 @@
 
 ---
 
+> ⚠️ **ARCH-1 S5（2026-07-30）读前须知 —— 本文的贯穿示例用的是已封存的表。**
+>
+> 下面几乎每段代码都拿 `TestPlan` / `TestStep` / `TestSequence` 举例。
+> **这三张表连同 `TestQueue` / `TestPlanExecution` 已随 ARCH-1 S4 封存**：
+> 只读历史、无业务写入方，计划链的路由 / runner / Service 全部删除
+> （S4a #244 / S4b #246 / S4c #247）。
+>
+> ⚠️ **五个 ORM 类还在，但下面的示例并非都能跑。** 分清两类：
+> - **ORM / schema 定义片段** —— 类还在，照着读没问题；
+> - **端点与 Service 片段是历史伪码，跑不起来** —— 例如 §6.3 `from app.dto.test_step
+>   import TestStepDTO` 引的模块 **`app/dto/` 目录根本不存在**，`TestStepService`
+>   也已随 S4b 删除，照抄会 ImportError。
+>
+> 更别**照着给新功能建模到这条链上**，也不要新增指向它们的外键。
+>
+> ⚠️ **本文教的是三层（DB 模型 / DTO / API Schema），但仓库今天只做两层。**
+> `api-service/app/dto/` **目录不存在**，没有任何 DTO 层；活着的写法是
+> **ORM 模型 → Pydantic request/response schema 直连**（`app/api/chamber.py`
+> 直接操作 `ChamberConfiguration` 行，配 `app/schemas/chamber.py` 的 schema）。
+> **照本文引入 DTO 层 = 引入一套本仓库不实践的架构。**
+> 要找活着的范例看 `app/models/chamber.py` + `app/schemas/chamber.py`；
+> 正式测试的真值源是 `TestCase` / `TestExecution`（同在 `app/models/test_plan.py`，
+> 那两个类**没有**封存 banner，其余五个有）。
+> 三层要不要做是**未决问题**，不是现状。
+>
+> 没有就地把示例换成活模型，是因为那要重写全文 500+ 行，超出「封存与文档」这一片的
+> 范围；这段 banner 解决的是"读者照它建模到封存链上"这个实际危害。
+
+---
+
 ## 1. 概述
 
 本文档定义了 MIMO OTA 测试系统的数据模型设计规范，包括数据库模型、API Schema、前端类型定义的统一标准。

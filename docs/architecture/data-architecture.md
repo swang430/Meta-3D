@@ -155,12 +155,16 @@ python scripts/init_sequences.py
 
 | 端点 | 方法 | 描述 |
 |------|------|------|
-| `/api/v1/test-sequences` | GET | 获取测试序列列表 |
-| `/api/v1/test-sequences/categories` | GET | 获取序列分类 |
-| `/api/v1/test-sequences/popular` | GET | 获取热门序列 |
-| `/api/v1/test-sequences/{id}` | GET | 获取单个序列详情 |
-| `/api/v1/test-plans` | GET/POST | 测试计划 CRUD |
+| `/api/v1/test-plans/cases` | GET/POST | 测试用例 CRUD（正式测试的真值源） |
+| `/api/v1/test-plans/cases/{test_case_id}/execute` | POST | 执行用例（ARCH-1 S1 的执行正门） |
+| `/api/v1/test-executions` | GET | 执行历史 |
 | `/api/v1/health` | GET | 健康检查 |
+
+> ⚠️ **ARCH-1 S4（2026-07-29）**：本表原先列的是序列库四条 + 计划 CRUD 一条，
+> 那五条路由连同整条计划链已在 S4b 删除，上表已换成还活着的用例链。
+> 上一节讲的 `init_sequences.py` 与那 14 个内置序列同样随 S4c 删除（seeder 已下线），
+> `test_sequences` 表原地封存、只读历史 —— 详见
+> [`api-service/app/models/test_plan.py`](../../api-service/app/models/test_plan.py) 的封存 banner。
 
 ### 数据库位置
 

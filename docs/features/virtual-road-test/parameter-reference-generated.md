@@ -1,6 +1,6 @@
 # Parameter Reference (Auto-Generated)
 
-> Generated at: 2025-12-31 15:23:53
+> Generated at: 2026-07-30 16:02:09
 > Source: `api-service/app/schemas/`
 
 This document is auto-generated from Pydantic schema definitions.
@@ -77,6 +77,19 @@ Vehicle route
 | `total_distance_m` | float | Yes | - | Total distance in meters |
 | `description` | str | No | - | Route description |
 
+### ChannelSnapshot
+
+Channel environment snapshot at specific time for Digital Twins
+
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `timestamp_s` | float | Yes | - | Snapshot trigger time relative to start (s) |
+| `duration_s` | float | Yes | - | Duration this channel state is maintained (s) |
+| `channel_type` | Literal['3GPP', 'Custom' | Yes | - | Channel data type source |
+| `standard_model` | ChannelModel | No | - | Standard 3GPP channel model (e.g., CDL-C) |
+| `custom_matrix_config` | Dict | No | - | Custom multi-path rays matrix or definitions |
+
 ### Environment
 
 Environment configuration
@@ -85,7 +98,7 @@ Environment configuration
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `type` | EnvironmentType | Yes | - | Environment type |
-| `channel_model` | ChannelModel | Yes | - | 3GPP channel model |
+| `channel_snapshots` | list[ChannelSnapshot | Yes | - | Sequence of channel snapshots over time |
 | `weather` | WeatherCondition | No | - | - |
 | `traffic_density` | TrafficDensity | No | - | - |
 | `obstructions` | list[Dict | No | - | Buildings, trees, etc. |
@@ -255,8 +268,8 @@ Complete road test scenario
 | `events` | list[Union[HandoverEvent, BeamSwitchEvent, RFImpairmentEvent, TrafficBurstEvent | Yes | - | Scenario events |
 | `kpi_definitions` | list[KPIDefinition | Yes | - | KPI definitions |
 | `step_configuration` | StepConfiguration | No | - | Pre-configured test step parameters |
-| `created_at` | datetime | No | - | Creation timestamp |
-| `updated_at` | datetime | No | - | Last update timestamp |
+| `created_at` | UTCDateTime | No | - | Creation timestamp |
+| `updated_at` | UTCDateTime | No | - | Last update timestamp |
 | `author` | str | No | - | Author |
 | `version` | str | No | 1.0 | Scenario version |
 
@@ -278,6 +291,7 @@ Create scenario request
 | `traffic` | TrafficConfig | Yes | - | - |
 | `events` | list[Union[HandoverEvent, BeamSwitchEvent, RFImpairmentEvent, TrafficBurstEvent | Yes | - | - |
 | `kpi_definitions` | list[KPIDefinition | Yes | - | - |
+| `step_configuration` | StepConfiguration | No | - | - |
 
 ### ScenarioUpdate
 
@@ -297,6 +311,7 @@ Update scenario request
 | `traffic` | TrafficConfig | No | - | - |
 | `events` | list[Union[HandoverEvent, BeamSwitchEvent, RFImpairmentEvent, TrafficBurstEvent | No | - | - |
 | `kpi_definitions` | list[KPIDefinition | No | - | - |
+| `step_configuration` | StepConfiguration | No | - | - |
 
 ### KPIThresholds
 
@@ -316,43 +331,6 @@ KPI threshold values
 
 Source: `test_plan.py`
 
-### TestPlanCreate
-
-Request to create a test plan
-
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `name` | str | Yes | - | Test plan name |
-| `description` | str | No | - | Detailed description |
-| `version` | str | No | 1.0 | Version number |
-| `dut_info` | dict[str, Any | No | - | Device Under Test info |
-| `test_environment` | dict[str, Any | No | - | Test environment info |
-| `scenario_id` | str | No | - | Linked road test scenario ID |
-| `test_case_ids` | list[str | Yes | - | Array of test case UUIDs |
-| `priority` | int | No | 5 | Priority (1=highest, 10=lowest) |
-| `created_by` | str | No | - | User who created the plan (derived from auth if not provided) |
-| `notes` | str | No | - | - |
-| `tags` | list[str | No | - | Tags for categorization |
-
-### TestPlanUpdate
-
-Request to update a test plan
-
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `name` | str | No | - | - |
-| `description` | str | No | - | - |
-| `status` | str | No | - | Test plan status (draft, ready, queued, running, etc.) |
-| `dut_info` | dict[str, Any | No | - | - |
-| `test_environment` | dict[str, Any | No | - | - |
-| `scenario_id` | str | No | - | Linked road test scenario ID |
-| `test_case_ids` | list[str | No | - | - |
-| `priority` | int | No | - | - |
-| `notes` | str | No | - | - |
-| `tags` | list[str | No | - | - |
-
 ### TestCaseCreate
 
 Request to create a test case
@@ -362,7 +340,7 @@ Request to create a test case
 |-----------|------|----------|---------|-------------|
 | `name` | str | Yes | - | Test case name |
 | `description` | str | No | - | - |
-| `test_type` | str | Yes | - | TRP | TIS | Throughput | Handover | MIMO | ChannelModel | Custom |
+| `test_type` | str | Yes | - | TRP | TIS | Throughput | Handover | MIMO | ChannelModel | VirtualRoadTest | Custom |
 | `configuration` | dict[str, Any | Yes | - | Test-specific configuration |
 | `pass_criteria` | dict[str, Any | No | - | - |
 | `expected_results` | dict[str, Any | No | - | - |
@@ -401,175 +379,35 @@ Request to update a test case
 | `test_duration_sec` | float | No | - | - |
 | `tags` | list[str | No | - | - |
 
-### TestExecutionCreate
+### ExecutionHistoryItem
 
-Request to create a test execution record
+执行历史行 — 数据源是 test_executions 本表 (mode IS NULL 排除 VRT)。
 
+专为历史列表新建, 不复用 TestExecutionResponse: 那个 schema 把
+test_plan_id / test_case_id / execution_order 声明成必填, 而用例执行
+这三个字段是 NULL, 直接复用会 500 (设计稿 §5.3)。
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `test_plan_id` | UUID | Yes | - | - |
-| `test_case_id` | UUID | Yes | - | - |
-| `execution_order` | int | Yes | - | - |
-| `executed_by` | str | Yes | - | - |
-
-### TestExecutionUpdate
-
-Request to update a test execution record
+三态字段语义 (别把 None 渲染成 False):
+- phases_*: None = 该执行链不记相位进度 (commissioning / plan-runner 行),
+  GUI 显示 "—"; 只有 case-runner 行有数值。
+- validation_pass: None = 未判定 (执行中 / 未做判定), 不是"失败"。
 
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `status` | str | No | - | - |
-| `test_results` | dict[str, Any | No | - | - |
-| `measurements` | dict[str, Any | No | - | - |
-| `validation_pass` | bool | No | - | - |
-| `validation_details` | dict[str, Any | No | - | - |
+| `id` | UUID | Yes | - | - |
+| `case_name` | str | No | - | - |
+| `source_test_case_id` | str | No | - | - |
+| `status` | str | Yes | - | - |
+| `phases_total` | int | No | - | - |
+| `phases_done` | int | No | - | - |
+| `phases_failed` | int | No | - | - |
+| `duration_sec` | float | No | - | - |
+| `started_at` | UTCDateTime | No | - | - |
+| `completed_at` | UTCDateTime | No | - | - |
+| `executed_by` | str | No | - | - |
 | `error_message` | str | No | - | - |
-| `error_details` | dict[str, Any | No | - | - |
-
-### QueueTestPlanRequest
-
-Request to queue a test plan
-
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `test_plan_id` | UUID | Yes | - | - |
-| `priority` | int | No | 5 | - |
-| `scheduled_start_time` | datetime | No | - | - |
-| `dependencies` | list[UUID | No | - | - |
-| `queued_by` | str | Yes | - | - |
-| `notes` | str | No | - | - |
-
-### QueueItemUpdateRequest
-
-Request to update a queue item (priority, position, etc.)
-
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `priority` | int | No | - | New priority (1=highest) |
-| `position` | int | No | - | New position in queue |
-
-### StartTestPlanRequest
-
-Request to start executing a test plan
-
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `started_by` | str | Yes | - | - |
-| `override_config` | dict[str, Any | No | - | - |
-
-### PauseTestPlanRequest
-
-Request to pause a running test plan
-
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `paused_by` | str | Yes | - | - |
-| `reason` | str | No | - | - |
-
-### ResumeTestPlanRequest
-
-Request to resume a paused test plan
-
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `resumed_by` | str | Yes | - | - |
-
-### CancelTestPlanRequest
-
-Request to cancel a test plan
-
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `cancelled_by` | str | Yes | - | - |
-| `reason` | str | No | - | - |
-
-### TestStepCreate
-
-Request to create a test step
-
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `test_plan_id` | UUID | Yes | - | - |
-| `step_number` | int | Yes | - | Step number in sequence |
-| `name` | str | Yes | - | Step name |
-| `description` | str | No | - | - |
-| `type` | str | Yes | - | Step type: configure_instrument, run_measurement, etc. |
-| `parameters` | dict[str, Any | Yes | - | Step parameters |
-| `order` | int | Yes | - | Execution order |
-| `expected_duration_minutes` | float | No | - | - |
-| `validation_criteria` | dict[str, Any | No | - | - |
-| `notes` | str | No | - | - |
-| `tags` | list[str | No | - | - |
-
-### TestStepCreateFromSequence
-
-Request to create a test step from sequence library
-
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `sequence_library_id` | UUID | Yes | - | ID of sequence from library |
-| `order` | int | Yes | - | Execution order |
-| `parameters` | dict[str, Any | No | - | Override parameters |
-| `timeout_seconds` | int | No | 300 | Step timeout |
-| `retry_count` | int | No | 0 | Number of retries |
-| `continue_on_failure` | bool | No | False | Continue if step fails |
-
-### TestStepUpdate
-
-Request to update a test step
-
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `name` | str | No | - | - |
-| `description` | str | No | - | - |
-| `type` | str | No | - | - |
-| `parameters` | dict[str, Any | No | - | - |
-| `order` | int | No | - | - |
-| `expected_duration_minutes` | float | No | - | - |
-| `validation_criteria` | dict[str, Any | No | - | - |
-| `notes` | str | No | - | - |
-| `tags` | list[str | No | - | - |
-| `timeout_seconds` | int | No | - | Step timeout in seconds |
-| `retry_count` | int | No | - | Number of retries on failure |
-| `continue_on_failure` | bool | No | - | Whether to continue execution if this step fails |
-
-### ReorderStepsRequest
-
-Request to reorder steps
-
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `step_ids` | list[UUID | Yes | - | Ordered list of step IDs |
-
-### TestSequenceCreate
-
-Request to create a test sequence
-
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `name` | str | Yes | - | - |
-| `description` | str | No | - | - |
-| `category` | str | No | - | - |
-| `steps` | list[dict[str, Any | Yes | - | Array of step objects |
-| `parameters` | dict[str, Any | No | - | - |
-| `default_values` | dict[str, Any | No | - | - |
-| `validation_rules` | dict[str, Any | No | - | - |
-| `is_public` | bool | No | True | - |
-| `created_by` | str | Yes | - | - |
-| `tags` | list[str | No | - | - |
+| `validation_pass` | bool | No | - | - |
 
 ---
 
@@ -666,8 +504,8 @@ Detailed certificate information
 | `lab_name` | str | No | - | - |
 | `lab_address` | str | No | - | - |
 | `lab_accreditation` | str | No | - | - |
-| `calibration_date` | datetime | Yes | - | - |
-| `valid_until` | datetime | Yes | - | - |
+| `calibration_date` | UTCDateTime | Yes | - | - |
+| `valid_until` | UTCDateTime | Yes | - | - |
 | `standards` | list[str | No | - | - |
 | `trp_error_db` | float | No | - | - |
 | `trp_pass` | bool | No | - | - |
@@ -679,7 +517,7 @@ Detailed certificate information
 | `calibrated_by` | str | No | - | - |
 | `reviewed_by` | str | No | - | - |
 | `digital_signature` | str | No | - | - |
-| `issued_at` | datetime | Yes | - | - |
+| `issued_at` | UTCDateTime | Yes | - | - |
 
 ### ComparabilityTestRequest
 
@@ -840,15 +678,30 @@ Single item in the instrument catalog
 | `selected_model` | InstrumentModelResponse | No | - | - |
 | `connection` | InstrumentConnectionResponse | No | - | - |
 
-### UpdateInstrumentCategoryRequest
+### FEConnectionUpdate
 
-Request to update an instrument category's selection and connection
+前端发送的连接配置更新（字段名对齐前端 InstrumentConnection 类型）
 
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `selected_model_id` | UUID | No | - | 选择的仪器型号ID |
-| `connection` | InstrumentConnectionUpdate | No | - | 连接配置 |
+| `endpoint` | str | No | - | - |
+| `controller` | str | No | - | - |
+| `notes` | str | No | - | - |
+| `connection_params` | dict[str, Any | No | - | - |
+
+### UpdateInstrumentCategoryRequest
+
+Request to update an instrument category's selection and connection
+
+前端发送 { modelId, connection: { endpoint, controller, notes } }
+
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `modelId` | str | No | - | 选择的仪器型号ID (前端字段名) |
+| `selected_model_id` | UUID | No | - | 选择的仪器型号ID (后端字段名，兼容) |
+| `connection` | FEConnectionUpdate | No | - | 连接配置 |
 
 ### InstrumentLogCreate
 
@@ -960,7 +813,7 @@ Status of parameter synchronization subsystem
 |-----------|------|----------|---------|-------------|
 | `is_running` | bool | No | False | - |
 | `is_connected` | bool | No | False | - |
-| `last_update_time` | datetime | No | - | - |
+| `last_update_time` | UTCDateTime | No | - | - |
 | `update_count` | int | No | 0 | - |
 | `error_count` | int | No | 0 | - |
 | `dropped_count` | int | No | 0 | - |
@@ -1016,12 +869,13 @@ Request to create a new probe
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `probe_number` | int | Yes | - | 探头编号 1-32 |
+| `probe_number` | int | Yes | - | 探头编号 |
 | `name` | str | No | - | - |
 | `ring` | int | Yes | - | 环编号 1-5 (基于仰角: 1=顶层>60°, 2=上层30-60°, 3=中层±30°, 4=下层-60~-30°, 5=底层<-60°) |
-| `polarization` | str | Yes | - | 极化: V | H |
+| `polarization` | str | Yes | - | 极化: V | H | V/H | RHCP | LHCP |
 | `position` | ProbePosition | Yes | - | - |
 | `is_active` | bool | No | True | 是否启用 |
+| `chamber_config_id` | UUID | No | - | 所属暗室配置 ID |
 | `hardware_id` | str | No | - | - |
 | `channel_port` | int | No | - | - |
 | `frequency_range_mhz` | dict[str, float | No | - | 频率范围 {min, max} |
@@ -1046,7 +900,8 @@ Request to update a probe
 | `status` | str | No | - | - |
 | `hardware_id` | str | No | - | - |
 | `channel_port` | int | No | - | - |
-| `last_calibration_date` | datetime | No | - | - |
+| `chamber_config_id` | UUID | No | - | 所属暗室配置 ID |
+| `last_calibration_date` | UTCDateTime | No | - | - |
 | `calibration_status` | str | No | - | - |
 | `calibration_data` | dict[str, Any | No | - | - |
 | `frequency_range_mhz` | dict[str, float | No | - | - |
@@ -1056,12 +911,13 @@ Request to update a probe
 
 ### BulkProbeRequest
 
-Request to replace all probes in bulk
+Request to replace probes for a SINGLE chamber (scoped).
 
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `probes` | list[ProbeCreateRequest | Yes | - | - |
+| `chamber_config_id` | UUID | Yes | - | 目标暗室配置 ID (必填; 批量替换按此暗室作用域) |
 
 ### ProbeConfigurationCreate
 
@@ -1132,7 +988,7 @@ Individual instrument clock status
 | `instrument_id` | str | Yes | - | - |
 | `instrument_name` | str | Yes | - | - |
 | `status` | ClockStatusResponse | Yes | - | - |
-| `last_updated` | datetime | Yes | - | - |
+| `last_updated` | UTCDateTime | Yes | - | - |
 
 ### TriggerConfig
 
@@ -1201,7 +1057,7 @@ Individual instrument sync state
 | `instrument_name` | str | Yes | - | - |
 | `clock_locked` | bool | Yes | - | - |
 | `trigger_armed` | bool | Yes | - | - |
-| `last_trigger_time` | datetime | No | - | - |
+| `last_trigger_time` | UTCDateTime | No | - | - |
 | `status` | str | Yes | - | - |
 
 ### SystemSyncStatus
@@ -1221,7 +1077,7 @@ Complete system synchronization status
 | `parameter_sync_active` | bool | No | False | Parameter synchronization active |
 | `metrics` | SyncMetrics | Yes | - | - |
 | `instruments` | list[InstrumentSyncState | Yes | - | - |
-| `last_sync_check` | datetime | No | - | - |
+| `last_sync_check` | UTCDateTime | No | - | - |
 | `uptime_seconds` | float | No | 0.0 | - |
 
 ### SyncInitRequest

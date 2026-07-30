@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ast
 import re
+import subprocess
 from pathlib import Path
 
 _API_SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -527,4 +528,424 @@ def test_g6_case_routes_survive():
     assert not missing, (
         "用例链路由被误删 (S1 的执行正门 / 用例库 CRUD 必须活着):\n  "
         + "\n  ".join(missing)
+    )
+
+
+# ============================================================================
+# G7 / G8 文档与实况一致 (ARCH-1 S5, 设计稿 §3 门 D-1 / D-2)
+# ============================================================================
+#
+# 为什么需要门, 而不是改一遍文档了事:
+#   CLAUDE.md 写着「4个主要 Tab: 计划管理、步骤编排、执行队列、执行历史」,
+#   而 S4a 是把 **6** 个 Tab 砍成 3 个 —— 也就是说这行在 S4 动手**之前**就已经错了。
+#   文档和代码之间没有任何东西把它们绑在一起, 手改一次, 下次照样漂, 而且可能
+#   几个月后才被发现。这两道门是那根绳子。
+#
+# 分档 (CLAUDE.md ⓪-④, 至少要到"不变量"档):
+#   G7 = 集合相等 (文档声明的 Tab 标签集 == 从 JSX 派生的标签集), **不变量档**
+#   G8 = 集合成员 (文档提到的计划链路径 ⊆ 真实路由表), **不变量档**
+#   设计稿原列的 D-3「禁词存在性门」**已撤销**, 理由见 G7 docstring 末尾。
+
+# §1.1 的路径规则: 这些位置是**历史留档**, 记的是当时的事实, 门不该管它们。
+# 改历史记录不是修文档, 是伪造 —— 一份 2026-05-13 的现场日志写着"跑了测试计划",
+# 那天确实跑了。
+_DOC_ARCHIVE_DIRS = ("docs/archive/", "docs/site-debug/", "docs/design/")
+# 以"完成记录"为主体的文件 —— 见 _live_doc_paths() 的 roadmap 说明。
+_DOC_ARCHIVE_FILES = (
+    "docs/roadmap-archive.md",
+    "docs/roadmap-first-call.md",
+    "docs/project-retrospective.md",
+)
+# 文件名里带日期的 = 某天的记录 (onsite-20260721-todo.md / caict-2026-05-13.md …)
+_DOC_DATED_NAME = re.compile(r"\d{4}-?\d{2}-?\d{2}")
+# 厂商手册, 不是我们的文档
+_DOC_FOREIGN_DIRS = ("Instrument_API_Doc/",)
+
+
+def _live_doc_paths():
+    """仓库里**描述当下实况**的 markdown —— 历史留档按 §1.1 路径规则排除。
+
+    判定全靠路径, 不读内容: 新增文档自动进网, 不需要维护一张 A 类清单
+    (手工清单正是 S4 反复漏枚举的那个失败形态)。
+
+    ⚠️ **只认 git 跟踪的文件** (内审 F13): 原先用 ``rglob("*.md")``, 结果把
+    ``api-service/.venv`` / ``channel-engine-service/.venv`` 里 site-packages 的
+    40+ 个 markdown (playwright 的 skill 文档、各 LICENSE.md) 和 ``.pytest_cache``
+    一起扫进了网 —— 门的结论会取决于**本机装了哪些 pip 包**、工作树里有什么草稿,
+    换台机器装个新包就可能红在一个不在版本控制里的文件上。那不是门, 是骰子。
+
+    ⚠️ **``docs/roadmap-first-call.md`` 在网外** (内审 F9): 它虽然是活路线图,
+    但正文主体是 "✅ Done" 完成记录与 ``[discovered YYYY-MM-DD]`` 当日 backlog ——
+    内审把 G8 跑在 main 上, 该文件 5 条命中**真阳性率 0/5**, 全落在历史记录里。
+    这跟已经在网外的 ``docs/roadmap-archive.md`` 是同一种文本, 同事同待遇。
+    (撤销 D-3 禁词门的理由 —— "门红在正确的文字上比漏判更难查" —— 对这里一字不改
+    地成立: 漏判一条 stale path = 读者一次 404; 误红在正确记录上 = 有人去改记录,
+    而那已经发生过 4 次, 其中一次还在代码块里造了个不存在的符号。)
+    """
+    proc = subprocess.run(
+        ["git", "ls-files", "-z", "*.md"],
+        cwd=_REPO_ROOT, capture_output=True, text=True, check=True,
+    )
+    out = []
+    for rel in proc.stdout.split("\0"):
+        if not rel:
+            continue
+        if any(rel.startswith(d) for d in _DOC_FOREIGN_DIRS):
+            continue
+        if any(rel.startswith(d) for d in _DOC_ARCHIVE_DIRS):
+            continue
+        if rel in _DOC_ARCHIVE_FILES:
+            continue
+        path = _REPO_ROOT / rel
+        if _DOC_DATED_NAME.search(path.name) or not path.is_file():
+            continue
+        out.append(path)
+    return out
+
+
+def test_g7_g8_doc_net_is_deterministic():
+    """网必须只含 git 跟踪的仓库文档 —— 不含 .venv / 缓存 / 未跟踪草稿。
+
+    内审 F13 的常驻化: 光有下面两道门, 网悄悄扩到 site-packages 也一样绿
+    (只是结论开始取决于本机 pip 状态)。
+    """
+    rels = [p.relative_to(_REPO_ROOT).as_posix() for p in _live_doc_paths()]
+    assert rels, "文档网为空 —— 两道门被架空了"
+    bad = [r for r in rels if ".venv" in r or "node_modules" in r or "cache" in r]
+    assert not bad, f"网里混进了非仓库文档: {bad[:5]}"
+
+
+# ── G7: Tab 标签集合 ────────────────────────────────────────────────────
+#
+# marker 形态 (与散文写在**同一行**, 渲染后不可见):
+#     - 3 个主要 Tab: 测试用例库、执行历史、虚拟路测 <!-- gate:tabs=测试用例库,执行历史,虚拟路测 -->
+#
+# 看着冗余, 是**故意**的: 散文的分隔符 / 措辞 / 语言随时会变, 让门去散文里抠标签
+# 就是把门建在流沙上。marker 把契约外化成机器可读的一行, 门再额外断言"同一行的
+# 散文里逐字含这几个标签" —— 这样"改了散文没改 marker"和"改了 marker 没改散文"
+# 两个方向都会红。
+_TAB_MARKER = re.compile(r"<!--\s*gate:tabs=([^>]*?)\s*-->")
+# 必须带 marker 的文件 —— 少一个就红 (内审 F2)。CLAUDE.md 是 agent 必读的那份,
+# GUI README 是模块现状说明; 两处都漂回去过的风险最高。
+_TAB_MARKER_REQUIRED_FILES = (
+    "CLAUDE.md",
+    "gui/src/features/TestManagement/README.md",
+)
+_TAB_SOURCE = "gui/src/features/TestManagement/TestManagement.tsx"
+_TAB_OPEN = re.compile(r"<Tabs\.Tab\b")
+
+
+def _parse_tab_entries(src: str):
+    """扫 `<Tabs.Tab>` 开标签, 逐个抽 (value, label)。label=None 表示**抽不出来**。
+
+    ⚠️ **不用单条正则** (内审 F1)。原先写的是
+    ``<Tabs\.Tab\b.*?>\s*(?P<label>[^<>{}]+?)\s*</Tabs\.Tab>`` 配 ``re.S``,
+    内审实跑用三种**常规** JSX 写法把它绕过去了, 每种都让门保持绿:
+
+      | 变异 | 为什么绿 |
+      |---|---|
+      | 标签写 `{t('reports')}` | 标签字符类排除 `{}`, 该 Tab 抽不出来 |
+      | 标签包 `<Text>报告中心</Text>` | 排除 `<>`, 同上 |
+      | 自闭合 `<Tabs.Tab value="x" />` | 没有 `</Tabs.Tab>` 可配对 |
+
+    根因是 ``.*?`` + ``re.S`` **允许跨越 ``</Tabs.Tab>``**: 遇到抽不出的标签就回溯到
+    **下一个** Tab 的开标签, 那个 Tab 于是凭空消失 —— 真值集从 3 变不成 4,
+    ``declared == truth`` 照样成立。这就是"门看起来是不变量档, 其实是某一种写法的
+    存在性门"。
+
+    现在改成: 逐个开标签手扫, 抽不出来就记 ``None`` 让上层**喊出来**, 且开标签总数
+    与抽出条数必须相等 —— 静默漏抽变成显式失败。
+    """
+    entries = []
+    for m in _TAB_OPEN.finditer(src):
+        # 找开标签的收尾 `>` —— 必须跳过 `{...}` 里的 `>`
+        # (`leftSection={<IconChecklist size={16} />}` 里就有一个)
+        depth, i, end = 0, m.end(), None
+        while i < len(src):
+            c = src[i]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+            elif c == ">" and depth == 0:
+                end = i
+                break
+            i += 1
+        if end is None:
+            entries.append((None, None))
+            continue
+        head = src[m.start():end]
+        vm = re.search(r'value="([^"]*)"', head)
+        value = vm.group(1) if vm else None
+        if src[end - 1] == "/":          # 自闭合 → 没有标签文本
+            entries.append((value, None))
+            continue
+        nxt = src.find("<Tabs.Tab", end)
+        close = src.find("</Tabs.Tab>", end)
+        if close == -1 or (nxt != -1 and nxt < close):
+            entries.append((value, None))   # 闭合标签缺失或错配
+            continue
+        body = src[end + 1:close].strip()
+        # 纯文本才算抽到; 含 `<`(嵌套组件) 或 `{`(i18n / 表达式) 一律记 None
+        label = body if body and "<" not in body and "{" not in body else None
+        entries.append((value, label))
+    return entries
+
+
+def _live_tab_labels():
+    """真值: Tab 的中文标签, **按渲染顺序**。抽不干净就抛 —— 不静默降级。"""
+    src = _strip_ts_comments((_REPO_ROOT / _TAB_SOURCE).read_text(encoding="utf-8"))
+    entries = _parse_tab_entries(src)
+    unresolved = [v for v, lbl in entries if lbl is None]
+    assert not unresolved, (
+        f"{_TAB_SOURCE} 里有 {len(unresolved)} 个 Tab 抽不出纯文本标签"
+        f" (value={unresolved}) —— 可能改成了 i18n / 嵌套组件 / 自闭合。\n"
+        "G7 门无法在这种形态下判定, 请要么让标签保持纯文本, 要么改本判定器"
+        "(不要放任它静默漏抽, 那会让门恒绿 —— 内审 F1)。"
+    )
+    return [lbl for _, lbl in entries]
+
+
+def test_g7_checker_parses_every_tab():
+    """判定器自身的行为覆盖: **开标签数 == 抽出标签数**, 且顺序稳定。
+
+    内审 F1 的常驻化。原来这条只断言 ``len(labels) >= 2``, 而真实失效形态是
+    "**新增一个** Tab 用了别的写法" —— 那时还剩 3 个标签, `>= 2` 照样过。
+    现在把"抽不出来"钉成硬失败。
+    """
+    src = _strip_ts_comments((_REPO_ROOT / _TAB_SOURCE).read_text(encoding="utf-8"))
+    opens = len(_TAB_OPEN.findall(src))
+    labels = _live_tab_labels()      # 抽不干净会在这里就炸
+    assert opens == len(labels), f"开标签 {opens} 个, 抽出标签 {len(labels)} 个"
+    assert opens >= 2, f"只找到 {opens} 个 <Tabs.Tab> —— 判定器跟 JSX 漂了"
+
+
+def test_g7_checker_catches_evasive_jsx():
+    """判定器对三种绕过写法必须**喊出来**, 不许静默漏抽 (内审 F1 实跑的那三种)。"""
+    base = (
+        '<Tabs.Tab value="a" leftSection={<Icon size={16} />}>\n  甲\n</Tabs.Tab>\n'
+        '<Tabs.Tab value="b">\n  乙\n</Tabs.Tab>\n'
+    )
+    assert [lbl for _, lbl in _parse_tab_entries(base)] == ["甲", "乙"]
+    for name, extra in [
+        ("i18n",      '<Tabs.Tab value="c">{t(\'rep\')}</Tabs.Tab>\n'),
+        ("嵌套组件",  '<Tabs.Tab value="c"><Text>报告</Text></Tabs.Tab>\n'),
+        ("自闭合",    '<Tabs.Tab value="c" />\n'),
+    ]:
+        entries = _parse_tab_entries(base + extra)
+        assert len(entries) == 3, (name, entries)
+        assert entries[2][1] is None, f"{name} 应被记为抽不出来, 实得 {entries[2]!r}"
+
+
+def test_g7_docs_declare_actual_tab_labels():
+    """站点⑦: 文档声明的 Tab 标签集 == 代码里的 Tab 标签集 (设计稿 §3 D-1)。
+
+    替代的规则: 无 —— 此前没有任何东西守着"文档说的 Tab 和代码里的 Tab 一致"。
+    不落成门的代价有实证: CLAUDE.md 那行在 S4 **之前**就已经错了 (写 4 个,
+    当时实际 6 个), 一直到 ARCH-1 S5 才被发现。
+
+    三条断言, 缺一个都能被绕过:
+      ① marker 至少存在一处 —— 否则"把 marker 删掉"就能让门永远绿;
+      ② 每处 marker 声明的标签**列表**(有序) == 从 JSX 派生的列表 —— 增删改序全红;
+      ③ marker 所在行的散文里逐字含每个标签 —— 堵住"只改 marker 不改散文"。
+
+    变异实跑 (CLAUDE.md ⓪-④, 双向):
+      - 代码侧: 给 TestManagement.tsx 加第 4 个 <Tabs.Tab> 不改文档 → 红 (②)
+      - 文档侧: 把 CLAUDE.md 的 marker 改成旧的四个名字 → 红 (②)
+      - 散文侧: 只把散文改成"计划管理、步骤编排、执行队列"留 marker 不动 → 红 (③)
+      - 删除侧: 把所有 marker 删光 → 红 (①)
+
+    ⚠️ 设计稿原本还列了一道 D-3「禁词存在性门」(整仓文档不许出现 计划管理 /
+    步骤编排 / 执行队列)。**实现时撤销**: 本片要往文档里加的封存 banner 本身就写着
+    "计划管理 / 步骤编排 / 执行队列三个 Tab 已随 ARCH-1 S4a 删除" —— 那是**正确**
+    的文字, 却会让那道门红。门红在正确的文字上比漏判更难查 (G5 的注释同此教训)。
+    它要防的东西已被本门断言③ 精确覆盖: 旧 Tab 名若出现在"当前 Tab 列表"那一行,
+    ③ 就会红; 出现在别处则本来就合法。
+    """
+    truth = _live_tab_labels()
+    found = []
+    for path in _live_doc_paths():
+        rel = path.relative_to(_REPO_ROOT).as_posix()
+        for lineno, line in enumerate(
+            path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1
+        ):
+            m = _TAB_MARKER.search(line)
+            if not m:
+                continue
+            declared = [s.strip() for s in m.group(1).split(",") if s.strip()]
+            prose = line[: m.start()]
+            found.append((rel, lineno, declared, prose))
+
+    # ⚠️ 不能只断言 "found 非空" (内审 F2): 那样单独删掉 CLAUDE.md 那一行门照样绿,
+    # 而 CLAUDE.md 正是原始 bug 的发生地、也是 agent 唯一必读的那份文档 —— 断言②③
+    # 会对它彻底失效, 那行可以自由漂回去。所以锚定到具体文件。
+    carriers = {rel for rel, _, _, _ in found}
+    missing_carriers = [f for f in _TAB_MARKER_REQUIRED_FILES if f not in carriers]
+    assert not missing_carriers, (
+        f"这些文件必须带 <!-- gate:tabs=... --> marker, 现在没带: {missing_carriers}\n"
+        f"当前真值: {truth}。没有 marker 的文件, 本门的另两条断言对它完全失效。"
+    )
+
+    problems = []
+    for rel, lineno, declared, prose in found:
+        if declared != truth:
+            problems.append(
+                f"  {rel}:{lineno} marker 声明 {declared} ≠ 代码实况 {truth}"
+            )
+            continue
+        missing = [lbl for lbl in truth if lbl not in prose]
+        if missing:
+            problems.append(
+                f"  {rel}:{lineno} marker 对, 但同一行散文里缺 {missing}"
+                f" —— 散文: {prose.strip()!r}"
+            )
+    assert not problems, (
+        "文档声明的 Tab 与代码不一致 (ARCH-1 S5 D-1):\n" + "\n".join(problems)
+    )
+
+
+# ── G8: 文档提到的计划链路径必须真实存在 ────────────────────────────────
+#
+# 比设计稿 v1 的"不许出现那 36 条已删路由"强一档: 判据换成**集合成员** ——
+# 文档里提到的每一条计划链路径, 都必须在真实路由表里。这样:
+#   ① 36 条已删的 → 抓住;
+#   ② **从来没实现过的**也抓住 (文档里躺着 /test-plans/batch、/{id}/versions、
+#      /{id}/validate 这类从没建过的端点 —— v1 的清单式判据对它们完全无感);
+#   ③ 共享前缀陷阱**结构性消失**: /test-plans/cases 在路由表里, 天然绿,
+#      不需要像 G5 那样特判例外前缀 (S4a 踩过: 判据写成"不许出现 /test-plans"
+#      会误杀保留下来的用例链)。
+_DOC_PLAN_PATH = re.compile(
+    r"(?:/api/v\d+)?(/(?:test-plans|test-sequences)(?:/[A-Za-z0-9_{}-]+)*)"
+)
+
+
+def _path_shape(path: str):
+    """段序列, 路径参数名归一 —— 文档写 {id} 代码写 {test_case_id} 不算差异。"""
+    return tuple("{}" if s.startswith("{") else s for s in path.split("/"))
+
+
+# 自家地址 —— 这些 host 下的路径是我们的路由, 不享受外链豁免 (内审 F3)。
+_OWN_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "::", "host.docker.internal"}
+
+
+def _is_absolute_url(line: str, start: int) -> bool:
+    """匹配点是不是某个 http(s):// 绝对地址的一部分?
+
+    实跑本门时抓到的自身 bug: README 里 `https://api.ctia.org/test-plans`
+    (CTIA 行业标准的外链) 被当成了我们的路由。**门红在正确的文字上比漏判更难查**
+    (G5 注释同此教训), 所以这里往回扫到最近的分隔符, 看那个 token 里有没有 `://`。
+    """
+    token_start = start
+    while token_start > 0 and line[token_start - 1] not in " \t`([|<\"'":
+        token_start -= 1
+    prefix = line[token_start:start]
+    if "://" not in prefix:
+        return False
+    # ⚠️ 只豁免**外部站点** (内审 F3)。原先"token 里有 `://` 就豁免"太宽:
+    # `curl -X POST http://localhost:8000/api/v1/test-plans/{id}/start` 会被整条放过,
+    # 而仓库里 quickstart.md / implementation-roadmap.md / data-architecture.md 全是
+    # 这个写法 —— 下一份文档照着写就漏判。自家地址一律照查。
+    authority = prefix.split("://", 1)[1].split("/")[0].split("@")[-1]
+    # IPv6 字面量是 `[::1]:8000` —— 直接按 `:` 切会得到 `[` (Codex #248 C3)。
+    if authority.startswith("["):
+        host = authority[1:].split("]")[0]
+    else:
+        host = authority.split(":")[0]
+    return host.lower() not in _OWN_HOSTS
+
+
+# 文档里路径前面那个动词 —— `POST /api/v1/test-plans/cases/{id}/execute` 里的 POST。
+# 允许中间夹反引号 / 空白: "**POST** `/api/v1/...`" 也认。
+_DOC_VERB = re.compile(r"\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b[\s`*]*$")
+
+
+def _live_path_shapes():
+    return {_path_shape(p.replace("/api/v1", "", 1)) for _, p in _live_route_table()}
+
+
+def _live_method_shapes():
+    """(method, shape) 集合 —— 与 G6 同构 (Codex #248 C2)。
+
+    只比路径会放过"对路径错动词": 文档把执行正门写成
+    ``GET /api/v1/test-plans/cases/{id}/execute`` 时路径形状仍命中, 门绿,
+    而照它调的人拿到 **405** —— 跟 404 一样是死引用, 只是死法不同。
+    """
+    return {(m, _path_shape(p.replace("/api/v1", "", 1))) for m, p in _live_route_table()}
+
+
+def _doc_verb_before(line: str, start: int):
+    """路径前面紧挨着的 HTTP 动词; 没有就返回 None (那时只比路径)。"""
+    m = _DOC_VERB.search(line[:start])
+    return m.group(1) if m else None
+
+
+def test_g8_checker_normalises_paths():
+    """判定器行为覆盖: 归一 + 前缀边界两件事都要对。"""
+    assert _path_shape("/test-plans/{id}") == _path_shape("/test-plans/{plan_id}")
+    assert _path_shape("/test-plans") != _path_shape("/test-plans/cases")
+    hits = _DOC_PLAN_PATH.findall("见 `/api/v1/test-plans/cases/{id}/execute` 与 /test-plans")
+    assert hits == ["/test-plans/cases/{id}/execute", "/test-plans"], hits
+    # 外链豁免 —— 实跑抓到的自身 bug (README 的 CTIA 链接)
+    ext = "- [CTIA Test Plan](https://api.ctia.org/test-plans) - 行业标准"
+    assert _is_absolute_url(ext, ext.index("/test-plans", ext.index("://")))
+    ours = "调 `/api/v1/test-plans` 建计划"
+    assert not _is_absolute_url(ours, ours.index("/api/v1"))
+    # 自家 localhost 不豁免 (内审 F3 实跑抓到的绕过)
+    lh = "curl -X POST http://localhost:8000/api/v1/test-plans/{id}/start"
+    assert not _is_absolute_url(lh, lh.index("/api/v1"))
+    # IPv6 方括号 loopback 同样不豁免 (Codex #248 C3)
+    v6 = "curl http://[::1]:8000/api/v1/test-plans/{id}/start"
+    assert not _is_absolute_url(v6, v6.index("/api/v1"))
+    # 动词抽取 (Codex #248 C2)
+    for line, want in [
+        ("执行走 `POST /api/v1/test-plans/cases/{id}/execute`", "POST"),
+        ("**DELETE** `/test-plans/queue/{id}`", "DELETE"),
+        ("见 /test-plans/cases 列表", None),
+    ]:
+        i = line.index("/test-plans") if "/api/v1" not in line else line.index("/api/v1")
+        assert _doc_verb_before(line, i) == want, (line, _doc_verb_before(line, i))
+
+
+def test_g8_docs_only_cite_live_plan_routes():
+    """站点⑧: 现状文档里提到的计划链路径, 必须在真实路由表里 (设计稿 §3 D-2)。
+
+    替代的规则: 无。S4b 删了 36 条路由, 文档里对它们的引用**一条都不会红** ——
+    编译门管不到 markdown, G5 只扫 GUI 的 .ts/.tsx, G6 只查路由表自身。
+    照文档去调一条已删路由的人 (或 agent) 拿到的是 404。
+
+    历史留档不在网内 (§1.1): archive / site-debug / 设计稿 / 文件名带日期的现场记录
+    —— 那些记的是当时的事实, 改它们是伪造。
+
+    变异实跑 (⓪-④):
+      - 往 CLAUDE.md 插一行 `POST /api/v1/test-plans/{id}/start` → 红
+      - 往 CLAUDE.md 插一行 `POST /api/v1/test-plans/cases/{id}/execute` → **保持绿**
+        (防误杀, 由 test_g8_checker_normalises_paths + 本门在真库上的绿共同覆盖)
+    """
+    live = _live_path_shapes()
+    live_methods = _live_method_shapes()
+    dead = []
+    for path in _live_doc_paths():
+        rel = path.relative_to(_REPO_ROOT).as_posix()
+        for lineno, line in enumerate(
+            path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1
+        ):
+            for m in _DOC_PLAN_PATH.finditer(line):
+                if _is_absolute_url(line, m.start()):
+                    continue  # 外部站点的 URL, 不是我们的路由
+                cited = m.group(1)
+                shape = _path_shape(cited)
+                if shape not in live:
+                    dead.append(f"  {rel}:{lineno} → {cited}")
+                    continue
+                # 路径在, 再看动词 —— 写错动词是 405, 跟 404 一样是死引用
+                verb = _doc_verb_before(line, m.start())
+                if verb and (verb, shape) not in live_methods:
+                    allowed = sorted(v for v, sh in live_methods if sh == shape)
+                    dead.append(
+                        f"  {rel}:{lineno} → {verb} {cited} (路径在, 但该动词不存在;"
+                        f" 实际支持 {allowed} —— 照文档调会拿 405)"
+                    )
+    assert not dead, (
+        "现状文档引用了**不存在**的计划链路由 (ARCH-1 S4 已拆除, 或从未实现):\n"
+        + "\n".join(sorted(set(dead)))
     )

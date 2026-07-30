@@ -15,8 +15,14 @@ if TYPE_CHECKING:
 class StepLike(Protocol):
     """Minimal contract a step object must satisfy to be dispatchable.
 
-    Both the ORM `TestStep` row and the lightweight `StepDescriptor` dataclass
-    fit this protocol — the framework doesn't care which one you pass in.
+    ARCH-1 S5（2026-07-30）更正: 原文写「ORM ``TestStep`` 行和轻量
+    ``StepDescriptor`` 都满足本协议」—— **ORM 那一支现在没有生产者了**。
+    ``build_step_context`` 只有两个调用方（``api/commissioning.py`` 与
+    ``services/test_case_runner.py``），两个传的都是 ``StepDescriptor``；
+    唯一会materialize ORM ``TestStep`` 行的计划 runner 已随 ARCH-1 S4b 删除。
+
+    协议本身保持宽松（不收窄成 ``StepDescriptor``）—— 那是行为改动，且宽松
+    没有坏处。这里只是把注释改回真话: 今天走到这儿的 **只有** ``StepDescriptor``。
     """
 
     id: Any
@@ -51,7 +57,7 @@ class StepExecutionContext:
     """
 
     db: "Session"
-    step: StepLike  # ORM TestStep row OR lightweight StepDescriptor
+    step: StepLike  # 实际只会是 StepDescriptor (ARCH-1 S4b 后 ORM TestStep 无生产者)
     test_execution: "TestExecution"
 
     # Resolved per-execution environment

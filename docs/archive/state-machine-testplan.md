@@ -1,3 +1,21 @@
+> ⚠️ **已归档（2026-07-30, ARCH-1 S5）—— 本文描述的两台状态机都不存在了。**
+>
+> 本文写的是 `TestPlan`（draft → ready → queued → running → paused → completed）
+> 与 `TestStep` 的状态机。**计划链已整体拆除**（S4a GUI #244 / S4b 后端 #246 /
+> S4c #247）：8 种计划状态、执行队列、start/pause/resume/cancel 生命周期端点、
+> 以及下面表格里那些 API Endpoint **全部删除**，两张表原地封存、无业务写入方。
+>
+> 移到 `docs/archive/` 而不是就地改写，是因为这里没有"改几句话"的余地 ——
+> 整篇的主语没了。留着是决策记录：状态机该怎么文档化（谁能转到谁、UI 按钮怎么对应、
+> 后端 schema 要什么）这套方法本身仍有参考价值。
+>
+> **今天的真值源**：正式测试的状态在 `TestExecution.status`，取值见该列的注释
+> （`api-service/app/models/test_plan.py`）—— 别在别处抄一份清单。
+> 由 `api-service/app/services/test_case_runner.py` 驱动。
+> 没有队列，没有 draft / ready / queued 三态。
+
+---
+
 # 状态机文档
 
 本文档详细描述系统中所有实体的状态转换逻辑，确保前后端实现的一致性。
@@ -235,8 +253,8 @@ class TestPlanUpdate(BaseModel):
 ## 相关文档
 
 - [BUGFIX-LOG.md](BUGFIX-LOG.md) - BUG-002记录了缺少状态转换功能的问题
-- [IMPLEMENTATION-CHECKLIST.md](IMPLEMENTATION-CHECKLIST.md) - 实现检查清单
-- [TestManagement-Unified-Architecture.md](docs/design/TestManagement-Unified-Architecture.md) - 测试管理架构
+- [IMPLEMENTATION-CHECKLIST.md](../guides/implementation-checklist.md) - 实现检查清单
+- [TestManagement-Unified-Architecture.md](test-management-unified-architecture.md) - 测试管理架构
 
 ---
 

@@ -2,6 +2,25 @@
 
 ## 概述
 
+> ⚠️ **ARCH-1 S5（2026-07-30）读前须知**：本文里的 `source: 'test_plan'` 一支
+> **已无写入方** —— 计划链随 ARCH-1 S4 拆除。
+> ⚠️ **别按单一字段过滤报告** —— `TestReport` 的关联字段有三种落法：
+> ① **自动归档 · 正式测试**（TestCase 执行）→ `test_execution_ids`；
+> ② **自动归档 · 虚拟路测** → `road_test_execution_id`（`_archive_execution_report()`
+>    在 VRT 停止/完成时建或更新，**`test_execution_ids` 是空的**，见
+>    `app/api/road_test.py:789-814`）；
+> ③ **通用创建** `POST /api/v1/reports` → `ReportCreate` 的 `test_execution_ids`
+>    与 `road_test_execution_id` **都可以为空**（`app/schemas/report.py:27/62`），
+>    所以 custom / summary / 甚至 single_execution 型报告可能**两个关联字段都没有**。
+>
+> 按 `test_execution_ids` 过滤会同时漏掉 ② 和 ③。要全量就别加关联字段条件。
+> `TestReport.test_plan_id` 字段与报告采集器的读取分支**保留**，因为 ARCH-1 之前
+> 生成的老报告那个字段有值，重新生成时还要读（只读历史，见
+> `app/services/report_data_collector.py`）。
+> 报告架构本身（单次执行 / 汇总 / 对比三类、统一组件）不受影响。
+
+---
+
 本文档定义统一的测试报告架构，整合测试计划模块和虚拟路测模块的报告功能。
 
 ## 设计原则

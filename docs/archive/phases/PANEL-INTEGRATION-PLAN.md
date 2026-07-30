@@ -459,7 +459,7 @@ gui/src/
 
 - [API 设计指南](../../api/design-guide.md)
 - [数据模型指南](../../api/data-model.md)
-- [测试管理统一架构](../../features/test-management/unified-architecture.md)
+- [测试管理统一架构](../test-management-unified-architecture.md)（⚠️ 已随 ARCH-1 S4 归档）
 - [AGENTS.md](../../../AGENTS.md) - 系统架构和设计文档
 
 ---

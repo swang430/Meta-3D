@@ -1,3 +1,18 @@
+> ⚠️ **已归档（2026-07-30, ARCH-1 S5）—— 本文的整个机制已删除。**
+>
+> 本文讲的是"场景预配置步骤参数 → 转换成测试计划时自动继承"。这条链上的每一环
+> 都已随 ARCH-1 S4 删除：`gui/src/utils/scenarioToTestPlan.ts`、
+> `TestPlanService._create_road_test_steps`、两条场景→计划桥路由，以及计划本身。
+>
+> **今天虚拟路测怎么走**：VRT 直接产生 `TestExecution`（带 `mode` =
+> `digital_twin` / `conducted` / `ota`），步骤是内存里的 `StepDescriptor`，
+> 不生成计划、不落 `test_steps` 表。
+>
+> 留着是决策记录：参数继承的优先级设计（场景默认 → 步骤覆盖 → 执行时覆盖）
+> 这个思路，将来做用例级参数覆盖时还用得着。
+
+---
+
 # Virtual Road Test - Step Configuration Guide
 
 **实现日期**: 2025-12-04

@@ -244,7 +244,13 @@ class TestExecution(Base):
         String(50),
         nullable=False,
         default="pending",
-        comment="pending | running | completed | failed | skipped | "
+        # ⚠️ 本注释是**唯一真值源** (ARCH-1 S5 起 CLAUDE.md / GUI README 都指向这里,
+        # 不再各抄一份)。改这一行前先 grep 全仓 `status = "` 与 `status="` 的赋值点,
+        # 别漏枚举 —— #248 Codex C4 抓到过一次: 上一版这里漏了 `cancelled`,
+        # 而 `test_case_runner.request_cancel()` (:202) 与 finally 兜底 (:453) 都在写它,
+        # `POST /test-executions/{id}/cancel` 也返回它。把一份漏项的清单声明成真值源,
+        # 比没有真值源更坏 —— 照它写校验的人会把成功取消判成非法状态。
+        comment="pending | running | completed | failed | cancelled | skipped | "
                 "idle | initializing | configured | paused | stopped (VRT-specific)"
     )
 

@@ -374,7 +374,7 @@ gunicorn app.main:app \
 >   执行行判成僵尸并置 failed。多 worker 下，新 worker 启动会误杀**别的
 >   worker 正在跑的硬件执行** —— 行被标 failed 后，HAL reload 闸门随之
 >   停止保护那条仍在跑的链（Codex #242 C1）。
-> - **进程内单飞标志** (`test_case_runner` / `test_plan_runner`)：内存态，
+> - **进程内单飞标志** (`test_case_runner`；ARCH-1 S4b 前还有一个 `test_plan_runner`，已删)：内存态，
 >   跨 worker 不可见（已配 DB 行判据兜底，但复位没有）。
 > - **相位执行**：commissioning 的相位同步跑在请求线程上，没有跨进程锁。
 >
@@ -432,16 +432,20 @@ pip install -r requirements.txt
 
 ## 数据初始化
 
-首次运行或重置数据库后，需要初始化测试序列数据：
+首次运行或重置数据库后，跑 bootstrap 播种：
 
 ```bash
 source .venv/bin/activate
-python scripts/init_sequences.py
+python -m scripts.bootstrap
 ```
 
-这将创建：
-- 6 个通用测试序列 (Instrument Setup, Measurement, etc.)
-- 8 个虚拟路测序列 (Road Test - Step 0 到 Step 7)
+详细说明见 [`docs/Database-Operations-Guide.md`](../docs/Database-Operations-Guide.md)。
+
+> ⚠️ **ARCH-1 S5（2026-07-30）更正**：本节原先写的是
+> `python scripts/init_sequences.py`，会创建"6 个通用测试序列 + 8 个虚拟路测序列"。
+> **那个脚本不存在**（早已并入 bootstrap），照着跑得到 `No such file or directory`；
+> 那 14 条序列的 seeder 也随 ARCH-1 S4c 删除 —— 序列库整体拆除，`test_sequences`
+> 表原地封存、只读历史。
 
 ## Support
 

@@ -1,3 +1,25 @@
+> ⚠️ **已归档（2026-07-30, ARCH-1 S5）—— 本文的主语（测试计划链）已整体拆除。**
+>
+> 这份 1494 行的文档从头到尾以 `TestPlan` + `TestStep` 为中心：六个 Tab 的设计、
+> 计划/步骤/队列/执行控制/序列库五组 API、计划状态机、三条计划工作流、
+> `scenario.step_config` 自动生成步骤。**这些今天一个都不存在了**
+> （S4a GUI #244 / S4b 后端 #246 / S4c #247，共删约 16000 行）。
+>
+> 为什么归档而不是就地改：不是"有几处过时"，是**整篇的主语没了** —— 逐句改会变成
+> 重写，而重写等于凭空造一份新架构文档，超出"封存与文档"这一片的范围。
+>
+> **今天到哪儿看现状**：
+> - 代码：`gui/src/features/TestManagement/`（Tab 清单见 `CLAUDE.md`，那行有 G7 门守着）
+> - 模块说明：[`gui/src/features/TestManagement/README.md`](../../gui/src/features/TestManagement/README.md)
+> - 拆除的推理过程：`docs/design/arch-1-testcase-first-simplification.md` 与
+>   `docs/design/arch-1-s4*.md`
+> - 数据模型：`api-service/app/models/test_plan.py` —— 五张表原地封存，各带封存 banner
+>
+> 留着本文是决策记录：当年为什么要把 TestConfig 与 TestPlanManagement 合并、
+> 步骤编排为什么被当成核心创新 —— 这些判断错在哪里，是 ARCH-1 的起点。
+
+---
+
 # 测试管理统一架构设计
 
 > **版本**: 3.0
@@ -164,8 +186,8 @@ scenario.step_configuration > test_environment > 默认值
 ### 参数速查
 
 完整的参数列表请参考:
-- [参数速查表 (手动维护)](../virtual-road-test/parameter-reference.md)
-- [参数速查表 (自动生成)](../virtual-road-test/parameter-reference-generated.md)
+- [参数速查表 (手动维护)](../features/virtual-road-test/parameter-reference.md)
+- [参数速查表 (自动生成)](../features/virtual-road-test/parameter-reference-generated.md)
 
 ---
 
@@ -1483,9 +1505,9 @@ const USE_NEW_TEST_MANAGEMENT =
 
 ## 相关文档
 
-- [参数速查表 (手动维护)](../virtual-road-test/parameter-reference.md) - 所有参数一览
-- [参数速查表 (自动生成)](../virtual-road-test/parameter-reference-generated.md) - 从 Schema 自动生成
-- [步骤配置指南](../virtual-road-test/step-configuration.md) - 虚拟路测步骤配置详解
+- [参数速查表 (手动维护)](../features/virtual-road-test/parameter-reference.md) - 所有参数一览
+- [参数速查表 (自动生成)](../features/virtual-road-test/parameter-reference-generated.md) - 从 Schema 自动生成
+- [步骤配置指南](vrt-step-configuration.md) - 虚拟路测步骤配置详解（⚠️ 已随 ARCH-1 S4 归档）
 
 ---
 

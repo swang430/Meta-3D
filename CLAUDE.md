@@ -207,18 +207,31 @@ GUI 遵循 **API优先架构**，包含以下层次：
 
 ### 核心领域概念
 
-**测试层级**:
-- **测试计划（Test Plans）**: 测试例的集合，带有执行队列和步骤编排
-- **测试步骤（Test Steps）**: 计划中的可配置执行单元，每个步骤有独立参数 ⭐ NEW
-- **测试例（Test Cases）**: 可保存、预览和重用的单个测试配置
-- **序列库（Sequence Library）**: 测试步骤的可重用构建块模板
-- 测试计划可以从头创建，也可以通过保存测试例创建
+**测试层级**（ARCH-1 2026-07 拆平，只剩两层）:
+- **测试例（Test Cases）**: **正式测试的单一真值源**。一个 TestCase 自带它的
+  `configuration`（仪表参数、信道资产、相位描述符），可保存、复用、直接执行。
+- **执行记录（Test Executions）**: 每次执行产生一行 `TestExecution`，由
+  `api-service/app/services/test_case_runner.py` 驱动。历史与报告都从这里取数。
+  状态取值以 `TestExecution.status` 的列注释为唯一真值源（`api-service/app/models/test_plan.py`）—— 今天是 `pending`（**默认值，建出来就是它**）/ `running` / `completed` / `failed` / `cancelled` / `skipped`，另有 VRT 专用的 `idle` / `initializing` / `configured` / `paused` / `stopped`。
+  ⚠️ **别在别处抄这个清单** —— 上一版这里就漏了 `pending`（`api/commissioning.py` 两个活端点建行时用的就是它），而漏枚举正是 ARCH-1 反复踩的坑。
+- 执行正门是 `POST /api/v1/test-plans/cases/{test_case_id}/execute`
+  （URL 里的 `test-plans` 前缀是历史包袱，改前缀是契约破坏面大、收益纯美观的 P3）。
 
-**测试管理统一架构** (v2.0):
-- 项目已整合原有的 TestConfig 和 TestPlanManagement 两个模块
-- 新的统一模块位于 `gui/src/features/TestManagement/`
-- 详细设计文档: `TestManagement-Unified-Architecture.md`
-- 4个主要 Tab: 计划管理、步骤编排、执行队列、执行历史
+> ⚠️ **计划链已整体拆除**（ARCH-1 S4a #244 / S4b #246 / S4c #247，共删约 16000 行）。
+> 曾经的「测试计划 → 执行队列 → 步骤编排 → 序列库」四层**全部不存在**：
+> 28+ 条路由、计划 runner、六个 Service、两个 GUI Tab 均已删除，
+> `TestPlan` / `TestStep` / `TestQueue` / `TestPlanExecution` / `TestSequence`
+> 五张表原地封存（只读历史、无业务写入方，见
+> [`api-service/app/models/test_plan.py`](api-service/app/models/test_plan.py) 的封存 banner）。
+> **新代码不要引用这五张表。** 批量执行是后续增量，目前零实现。
+
+**测试管理模块**:
+- 位于 `gui/src/features/TestManagement/`，说明见
+  [该目录的 README](gui/src/features/TestManagement/README.md)
+- 3 个主要 Tab: 测试用例库、执行历史、虚拟路测 <!-- gate:tabs=测试用例库,执行历史,虚拟路测 -->
+  （这一行由 `api-service/tests/test_rule_gates.py` 的 G7 门守着：
+  行尾 marker 声明的标签集必须等于 `TestManagement.tsx` 里 JSX 的标签集，
+  且散文里要逐字含这几个标签 —— 改 Tab 不改这行会红）
 
 **硬件组件**:
 - **探头（Probes）**: MPAC 阵列中的天线单元（32个双极化探头）
@@ -229,7 +242,7 @@ GUI 遵循 **API优先架构**，包含以下层次：
 - 实时监控数据流和告警
 - 仪器目录，支持型号选择和连接管理
 - 探头配置和可视化
-- 测试计划生命周期：创建 → 编辑 → 排队 → 执行 → 报告
+- 测试例生命周期：建用例 → 配参数 → 执行 → 看历史 → 出报告
 
 ## 技术栈
 
@@ -272,7 +285,7 @@ GUI 遵循 **API优先架构**，包含以下层次：
 | 关注点 | ✅ 真实生效路径 |
 |--------|----------------|
 | 测试管理 UI | `gui/src/features/TestManagement/` (`<TestManagement/>`) |
-| 测试例 / 序列库 seed | 后端 `api-service/app/services/bootstrap/{test_case_templates,sequences}.py` |
+| 测试例 / 序列库 seed | 后端 `api-service/app/services/bootstrap/test_case_templates.py` |
 | 信道模型 .smu 清单 | 仪器抽屉 `ChannelModelsCard` (只读, 读 `/instruments/{cat}/channel-models`) |
 
 > 旧 mock 时代的 `App.tsx::_TestConfig` + `stepTemplateDefinitions` (lib-* 模板) 死代码已删
@@ -365,12 +378,12 @@ P0-3（重写 F64 load .smu 前置序列）。详见 memory
 - [AGENTS.md](AGENTS.md) - 系统架构和设计文档（35K+ tokens）
 - [系统集成](docs/architecture/system-integration.md) - 系统集成设计
 - [硬件同步](docs/architecture/hardware-sync.md) - ⭐ L0-L3 分层同步
-- [测试管理统一架构](docs/features/test-management/unified-architecture.md)
+- 测试管理：现状看 [`gui/src/features/TestManagement/README.md`](gui/src/features/TestManagement/README.md)；原「统一架构」文档以计划链为主语，已随 ARCH-1 S4 归档至 [`docs/archive/test-management-unified-architecture.md`](docs/archive/test-management-unified-architecture.md)
 - [虚拟路测概览](docs/features/virtual-road-test/overview.md)
 
 **开发指南**:
 - [快速上手](docs/guides/quickstart.md)
-- [状态机](docs/guides/state-machine.md)
+- 状态机：正式测试的状态在 `TestExecution.status`，由 `api-service/app/services/test_case_runner.py` 驱动（原 TestPlan 状态机文档已随 ARCH-1 S4 归档至 [`docs/archive/state-machine-testplan.md`](docs/archive/state-machine-testplan.md)）
 - [实现检查清单](docs/guides/implementation-checklist.md)
 
 ## 设计指南（来自 AGENTS.md）
@@ -395,8 +408,9 @@ P0-3（重写 F64 load .smu 前置序列）。详见 memory
 
 **已完成功能**:
 - ✅ 前后端完整架构 (React + FastAPI + SQLite)
-- ✅ 测试计划管理：创建、编辑、执行队列、状态机
-- ✅ 测试步骤编排：序列库、参数配置
+- ✅ 测试例管理：编辑、直接执行、执行历史（ARCH-1 起以 TestCase 为根）
+- ⚠️ **GUI 无新建用例入口** —— `TestCaseLibrary` 的新建按钮由 `onCreateNew` prop 守着，全仓无人传它；用例来自 bootstrap 种子。S4a 显式申报的能力缺口，在 backlog。
+- ⚠️ ~~测试计划管理 / 步骤编排 / 执行队列~~ —— 已随 ARCH-1 S4 整体拆除，不再是功能
 - ✅ 虚拟路测：场景库、ChannelEngine 集成
 - ✅ 报告系统：PDF 生成、模板管理、执行历史
 - ✅ Mock 服务器已禁用，Vite 代理配置完成

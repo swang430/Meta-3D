@@ -2,6 +2,19 @@
 
 ## 文档信息
 
+> ⚠️ **ARCH-1 S5（2026-07-30）读前须知 —— 本文描述的引擎不是现在这台。**
+>
+> 本文设计的是一台 TypeScript 的 `executeTestPlan(planId)`：加载测试计划 → 队列调度
+> → 逐 `TestStep` 执行。**这台引擎从未按此实现，且它的输入（TestPlan/TestStep/队列）
+> 已随 ARCH-1 S4 拆除。**
+>
+> **真实的执行引擎**：`api-service/app/services/test_case_runner.py`（Python），
+> 输入是 `TestCase.configuration.steps`（内存里的 `StepDescriptor`，不落 `test_steps` 表），
+> 派发走 `services/test_execution/`，状态写 `TestExecution`。没有队列调度 —— 同一时刻
+> 只允许一个执行（进程内单飞标志 + DB 判据双保险）。
+
+---
+
 - **文档版本**: 1.0.0
 - **创建日期**: 2025-11-16
 - **所属子系统**: Test Orchestration Subsystem
