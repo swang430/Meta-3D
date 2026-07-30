@@ -3,7 +3,11 @@
 ## 概述
 
 > ⚠️ **ARCH-1 S5（2026-07-30）读前须知**：本文里的 `source: 'test_plan'` 一支
-> **已无写入方** —— 计划链随 ARCH-1 S4 拆除，新报告全部来自 `test_execution_ids`。
+> **已无写入方** —— 计划链随 ARCH-1 S4 拆除。今天新报告有**两条**来源，别只记住前一条：
+> ① **正式测试**（TestCase 执行）走 `test_execution_ids`；
+> ② **虚拟路测归档**走 `road_test_execution_id` —— `_archive_execution_report()`
+>    在 VRT 停止/完成时建或更新 `TestReport`，**`test_execution_ids` 是空的**
+>    （`app/api/road_test.py:789-814`）。按 `test_execution_ids` 过滤会漏掉全部 VRT 报告。
 > `TestReport.test_plan_id` 字段与报告采集器的读取分支**保留**，因为 ARCH-1 之前
 > 生成的老报告那个字段有值，重新生成时还要读（只读历史，见
 > `app/services/report_data_collector.py`）。
