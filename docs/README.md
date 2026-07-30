@@ -53,7 +53,7 @@
 | [parameter-reference-generated](features/virtual-road-test/parameter-reference-generated.md) | Auto-generated from schemas |
 | [overview](features/virtual-road-test/overview.md) | Virtual road test overview |
 | [scenario-design](features/virtual-road-test/scenario-design.md) | Scenario design guide |
-| [step-configuration](features/virtual-road-test/step-configuration.md) | Test step configuration |
+| [vrt-step-configuration](archive/vrt-step-configuration.md) | ⚠️ 已归档 — 场景→计划步骤继承（ARCH-1 S4 拆除） |
 | [scenario-library](features/virtual-road-test/scenario-library.md) | Standard scenario library |
 
 ### Calibration
@@ -68,7 +68,7 @@
 
 | Document | Description |
 |----------|-------------|
-| [unified-architecture](features/test-management/unified-architecture.md) | Unified test management |
+| [test-management-unified-architecture](archive/test-management-unified-architecture.md) | ⚠️ 已归档 — 计划链架构（ARCH-1 S4 拆除）；现状见 `gui/src/features/TestManagement/README.md` |
 | [execution-engine](features/test-management/execution-engine.md) | Test execution engine |
 | [monitoring](features/test-management/monitoring.md) | Test monitoring |
 | [workflow-templates](features/test-management/workflow-templates.md) | Workflow templates |
@@ -104,8 +104,8 @@
 | Document | Description |
 |----------|-------------|
 | [quickstart](guides/quickstart.md) | Quick start guide |
-| [state-machine](guides/state-machine.md) | State machine design |
-| [execution-sync](guides/execution-sync.md) | Execution synchronization |
+| [state-machine-testplan](archive/state-machine-testplan.md) | ⚠️ 已归档 — TestPlan 状态机（ARCH-1 S4 拆除） |
+| [execution-sync-queuetab](archive/execution-sync-queuetab.md) | ⚠️ 已归档 — QueueTab↔监控同步（ARCH-1 S4 拆除） |
 | [monitoring-components](guides/monitoring-components.md) | Monitoring components |
 | [implementation-checklist](guides/implementation-checklist.md) | Implementation checklist |
 | [implementation-roadmap](guides/implementation-roadmap.md) | Implementation roadmap |

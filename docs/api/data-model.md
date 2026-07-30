@@ -5,6 +5,24 @@
 
 ---
 
+> ⚠️ **ARCH-1 S5（2026-07-30）读前须知 —— 本文的贯穿示例用的是已封存的表。**
+>
+> 下面几乎每段代码都拿 `TestPlan` / `TestStep` / `TestSequence` 举例。
+> **这三张表连同 `TestQueue` / `TestPlanExecution` 已随 ARCH-1 S4 封存**：
+> 只读历史、无业务写入方，计划链的路由 / runner / Service 全部删除
+> （S4a #244 / S4b #246 / S4c #247）。类还在（所以下面的代码片段仍然能跑），
+> 但**不要照着给新功能建模到这条链上**，也不要新增指向它们的外键。
+>
+> **本文教的三层架构（DB 模型 / DTO / API Schema）本身仍然是我们的做法** ——
+> 要找活着的范例，看 `app/models/chamber.py` + `app/schemas/chamber.py`，
+> 或者正式测试的真值源 `TestCase` / `TestExecution`
+> （同在 `app/models/test_plan.py`，那两个类**没有**封存 banner，其余五个有）。
+>
+> 没有就地把示例换成活模型，是因为那要重写全文 500+ 行，超出「封存与文档」这一片的
+> 范围；这段 banner 解决的是"读者照它建模到封存链上"这个实际危害。
+
+---
+
 ## 1. 概述
 
 本文档定义了 MIMO OTA 测试系统的数据模型设计规范，包括数据库模型、API Schema、前端类型定义的统一标准。

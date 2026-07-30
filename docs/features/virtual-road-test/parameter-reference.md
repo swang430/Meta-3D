@@ -2,6 +2,16 @@
 
 All configurable parameters at a glance.
 
+> ⚠️ **ARCH-1 S5（2026-07-30）读前须知**：本文第 3 节「Test Plan Parameters」
+> 与「Scenario → TestPlan 参数解析顺序」描述的是**已删除的场景→计划桥**
+> （两条桥路由 + `scenarioToTestPlan.ts` + `_create_road_test_steps` 均随 ARCH-1 S4 删除）。
+>
+> 场景参数今天落到哪里：虚拟路测走 `TestExecution` + `mode`
+> （`digital_twin` / `conducted` / `ota`），不再生成计划。
+> 其余各节（场景 / 路由 / 环境 / KPI 参数）**不受影响，仍然准确**。
+
+---
+
 ---
 
 ## Step Sources Overview
@@ -37,7 +47,7 @@ All configurable parameters at a glance.
 | Section | Description |
 |---------|-------------|
 | [1. Scenario Parameters](#1-scenario-parameters) | 场景配置参数 |
-| [2. Step Configuration (Virtual Road Test)](#2-step-configuration-virtual-road-test) | 虚拟路测步骤参数 |
+| [2. Step Configuration (Virtual Road Test)](#2-step-configuration-virtual-road-test) | 虚拟路测步骤参数（详解已归档至 [`archive/vrt-step-configuration.md`](../../archive/vrt-step-configuration.md)） |
 | [2B. Test Step (Generic)](#2b-test-step-generic) | 通用测试步骤参数 |
 | [3. Test Plan Parameters](#3-test-plan-parameters) | 测试计划参数 |
 | [4. Priority Rules](#4-priority-rules) | 参数优先级 |

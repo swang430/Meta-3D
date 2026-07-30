@@ -374,7 +374,7 @@ gunicorn app.main:app \
 >   执行行判成僵尸并置 failed。多 worker 下，新 worker 启动会误杀**别的
 >   worker 正在跑的硬件执行** —— 行被标 failed 后，HAL reload 闸门随之
 >   停止保护那条仍在跑的链（Codex #242 C1）。
-> - **进程内单飞标志** (`test_case_runner` / `test_plan_runner`)：内存态，
+> - **进程内单飞标志** (`test_case_runner`；ARCH-1 S4b 前还有一个 `test_plan_runner`，已删)：内存态，
 >   跨 worker 不可见（已配 DB 行判据兜底，但复位没有）。
 > - **相位执行**：commissioning 的相位同步跑在请求线程上，没有跨进程锁。
 >

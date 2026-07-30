@@ -2,6 +2,16 @@
 
 ## 为什么需要这个文档？
 
+> ⚠️ **ARCH-1 S5（2026-07-30）读前须知**：本文的 BUG 清单与代码示例围绕
+> `TestPlanCreate` / `TestPlanUpdate` / `TestStepUpdate` 这几个 schema，
+> **它们已随 ARCH-1 S4b（#246）删除**，那两条 BUG 也就不存在了。
+>
+> **本文教的方法仍然有效** —— "每个实体都要检查 Create/Update/Response 三个 schema
+> 字段是否齐"这套检查清单，换成活着的实体（`TestCase` / `TestExecution` /
+> `ChamberConfiguration`）照样用。看例子时把 `TestPlan` 换成 `TestCase` 读。
+
+---
+
 在开发过程中，我们连续发现了两个相同模式的bug：
 - **BUG-001**: `TestStepUpdate` schema 缺少执行配置字段
 - **BUG-002**: `TestPlanUpdate` schema 缺少 `status` 字段

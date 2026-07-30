@@ -1,7 +1,14 @@
 # MIMO-First System Integration Design
 **Version**: 1.0
 **Date**: 2025-12-03
-**Status**: APPROVED - Phase 4 Implementation Plan
+**Status**: ⚠️ **部分作废** — 见下方 ARCH-1 S4 说明
+
+> ⚠️ **ARCH-1 S4（2026-07-29）**: 本文的核心决策是「Option B: 让路测场景转换成
+> 测试计划」。**测试计划链已整体拆除**（S4a GUI #244 / S4b 后端 #246 / S4c #247），
+> 所以 §1.3、§2.2 Integration Point 2、§3 Workflow 3、§5 Phase 4.1-4.5 全部作废，
+> 各自段头有单独说明。**其余部分（虚拟路测场景层 §1.1、OTA Mapper §1.2、
+> ChannelEngine 集成）仍然有效。**
+> 今天正式测试的真值源是 TestCase，执行走 ARCH-1 S1 的执行正门。
 
 ---
 
@@ -109,7 +116,13 @@ def _calculate_probe_weights(self, scenario, probe_array, mimo_config):
 
 ---
 
-### 1.3 Test Management (Execution Orchestration Layer)
+### 1.3 Test Management (Execution Orchestration Layer) ⚠️ 已作废
+
+> ⚠️ **ARCH-1 S4 作废**: 下面写的 Plans / Steps / Queue / History **四个 Tab**
+> 与 `TestPlan` / `TestStep` 两个模型, 在今天的代码里是这样的 ——
+> 测试管理只剩 **三个 Tab**（测试用例库 / 执行历史 / 虚拟路测），
+> 两个模型原地封存、无业务写入方（见 `api-service/app/models/test_plan.py` 的封存 banner）。
+> 正式测试的编排单位是 **TestCase + 它的 `configuration.steps`**，不再是计划+步骤行。
 
 **Purpose**: Orchestrate **how to test**
 
@@ -302,7 +315,18 @@ Response: {
 
 ---
 
-#### **Integration Point 2: Scenario → Test Plan** (NEW - Phase 4)
+#### **Integration Point 2: Scenario → Test Plan** (⚠️ 已作废 — 见下)
+
+> ⚠️ **ARCH-1 S4（2026-07-29）作废。** 本节设计的是"场景 → 测试计划"的桥，
+> 而**桥的两端和桥本身现在都不存在了**：两条桥路由（`create-test-plan` /
+> 按场景查计划）随 S4b 删除，`TestPlan` 链整体拆除、五张表原地封存。
+>
+> 下面的代码与 UI 片段**照抄不能运行**（`TestPlanService` / `CreateTestPlanRequest`
+> 等已随 S4b 删除）。保留本节是留决策记录 —— 场景要怎么落到可执行的东西上，
+> 这些取舍将来重做"场景 → TestCase"时还用得着。
+>
+> 今天的等价物：TestCase 是正式测试的真值源，执行走
+> `POST /api/v1/test-plans/cases/{test_case_id}/execute`（ARCH-1 S1 的执行正门）。
 
 **When**: User clicks "Convert to Test Plan" in ScenarioCard
 
@@ -509,7 +533,8 @@ function getSequenceId(sequence_name: string): UUID {
 ```python
 # api-service/app/api/test_plan.py
 
-@router.post("/test-plans", response_model=TestPlan, status_code=201)
+# ⚠️ 该路由随 ARCH-1 S4b 删除, 这里刻意不印它的字面路径 (会让 G8 门误红)
+@router.post(_DELETED_PLAN_CREATE_ROUTE, response_model=TestPlan, status_code=201)
 async def create_test_plan(plan_data: CreateTestPlanRequest):
     """Create test plan, optionally linked to a scenario"""
 
@@ -677,7 +702,10 @@ Components: VirtualRoadTest, OTAMapper, ChannelEngine integration
 
 ---
 
-### Workflow 3: Scenario-to-TestPlan Integration (Phase 4 - PLANNED)
+### Workflow 3: Scenario-to-TestPlan Integration (⚠️ ARCH-1 S4 作废)
+
+> 同 Integration Point 2 —— 计划链已整体拆除, 本 workflow 描述的按钮与页面都不存在了。
+> 保留作决策记录。
 
 ```
 User Journey:
@@ -873,7 +901,12 @@ class ScenarioUsageInfo(BaseModel):
 
 ---
 
-## 5. Implementation Roadmap
+## 5. Implementation Roadmap (⚠️ Phase 4.1-4.5 已作废)
+
+> ⚠️ **ARCH-1 S4（2026-07-29）**: 下面 Phase 4.1-4.5 全部以
+> "给 `test_plans` 表加列 / 建 scenario→plan 转换" 为前提, 而计划链已整体拆除。
+> 这些 checkbox **不是待办**, 是一份没做成的计划的记录。当前真实路线图见
+> [`docs/roadmap-first-call.md`](../roadmap-first-call.md)。
 
 ### Phase 4.1: Basic Scenario-to-Plan Conversion (2 weeks)
 

@@ -39,16 +39,16 @@
 格式: /v{version}/{resource-collection}/{resource-id}/{sub-resource}
 
 示例:
-  /v1/test-plans                    # 资源集合
-  /v1/test-plans/{id}               # 单个资源
-  /v1/test-plans/{id}/steps         # 子资源集合
-  /v1/test-plans/{id}/steps/{step_id}  # 单个子资源
+  /v1/chambers                    # 资源集合
+  /v1/chambers/{id}               # 单个资源
+  /v1/chambers/{id}/probes         # 子资源集合
+  /v1/chambers/{id}/probes/{probe_id}  # 单个子资源
 ```
 
 **规则**:
 1. 使用小写字母
 2. 单词之间用连字符（-）分隔，不用下划线（_）
-3. 资源名称用复数形式（`test-plans` 而非 `test-plan`）
+3. 资源名称用复数形式（`chambers` 而非 `chamber`）
 4. 避免在 URL 中使用动词（`GET /users` 而非 `GET /getUsers`）
 
 ### 2.2 查询参数规范
@@ -87,14 +87,14 @@
 
 ```
 # 创建资源
-POST /v1/test-plans
+POST /v1/chambers
 {
-  "name": "新测试计划",
+  "name": "3D-MPAC 暗室 A",
   ...
 }
 
 # 完全替换（所有字段必填）
-PUT /v1/test-plans/{id}
+PUT /v1/chambers/{id}
 {
   "name": "更新的名称",
   "description": "...",
@@ -102,13 +102,13 @@ PUT /v1/test-plans/{id}
 }
 
 # 部分更新（只更新提供的字段）✅ 推荐
-PATCH /v1/test-plans/{id}
+PATCH /v1/chambers/{id}
 {
   "name": "只更新名称"
 }
 
 # 删除资源
-DELETE /v1/test-plans/{id}
+DELETE /v1/chambers/{id}
 ```
 
 ---
@@ -158,10 +158,10 @@ Accept-Language: zh-CN        # 国际化
 #### 单一资源
 
 ```json
-// GET /v1/test-plans/{id}
+// GET /v1/chambers/{id}
 {
   "id": "123e4567-e89b-12d3-a456-426614174000",
-  "name": "测试计划名称",
+  "name": "3D-MPAC 暗室 A",
   "status": "ready",
   "created_at": "2025-11-23T10:30:00Z",
   ...
@@ -171,7 +171,7 @@ Accept-Language: zh-CN        # 国际化
 #### 资源集合（带分页）
 
 ```json
-// GET /v1/test-plans?skip=0&limit=20
+// GET /v1/chambers?skip=0&limit=20
 {
   "total": 100,              // 总数
   "items": [                 // 资源数组
@@ -189,7 +189,7 @@ Accept-Language: zh-CN        # 国际化
 #### 资源集合（不带分页）
 
 ```json
-// GET /v1/test-sequences/categories
+// GET /v1/chambers/presets
 {
   "items": ["Calibration", "Measurement", "5G NR"]
 }
@@ -198,7 +198,7 @@ Accept-Language: zh-CN        # 国际化
 #### 创建/更新成功
 
 ```json
-// POST /v1/test-plans
+// POST /v1/chambers
 // 返回创建的资源
 {
   "id": "...",
@@ -206,7 +206,7 @@ Accept-Language: zh-CN        # 国际化
   ...
 }
 
-// PATCH /v1/test-plans/{id}
+// PATCH /v1/chambers/{id}
 // 返回更新后的资源
 {
   "id": "...",
@@ -219,13 +219,13 @@ Accept-Language: zh-CN        # 国际化
 
 ```
 // 选项 1: 返回 204 No Content（无响应体）
-DELETE /v1/test-plans/{id}
+DELETE /v1/chambers/{id}
 204 No Content
 
 // 选项 2: 返回 200 + 确认消息
 200 OK
 {
-  "message": "Test plan deleted successfully"
+  "message": "Chamber deleted successfully"
 }
 ```
 
@@ -271,13 +271,13 @@ DELETE /v1/test-plans/{id}
 // 404 Not Found - 资源不存在
 {
   "message": "Resource not found",
-  "detail": "Test plan with id '123' does not exist"
+  "detail": "Chamber with id '123' does not exist"
 }
 
 // 409 Conflict - 冲突
 {
-  "message": "Cannot delete running test plan",
-  "detail": "Please stop the test plan before deleting"
+  "message": "Cannot delete running chamber",
+  "detail": "Please stop the chamber before deleting"
 }
 
 // 422 Unprocessable Entity - 验证失败
@@ -335,7 +335,7 @@ DELETE /v1/test-plans/{id}
 
 **请求**:
 ```
-GET /v1/test-plans?skip=20&limit=10
+GET /v1/chambers?skip=20&limit=10
 ```
 
 **响应**:
@@ -357,7 +357,7 @@ GET /v1/test-plans?skip=20&limit=10
 
 **请求**:
 ```
-GET /v1/test-plans?cursor=eyJpZCI6MTIzfQ&limit=10
+GET /v1/chambers?cursor=eyJpZCI6MTIzfQ&limit=10
 ```
 
 **响应**:
@@ -381,39 +381,47 @@ GET /v1/test-plans?cursor=eyJpZCI6MTIzfQ&limit=10
 ### 8.1 简单过滤
 
 ```
-GET /v1/test-plans?status=ready&created_by=admin
+GET /v1/chambers?status=ready&created_by=admin
 ```
 
 ### 8.2 高级过滤（可选）
 
 ```
-GET /v1/test-plans?filter=status:eq:ready,priority:gte:5
+GET /v1/chambers?filter=status:eq:ready,priority:gte:5
 ```
 
 ### 8.3 全文搜索
 
 ```
-GET /v1/test-plans?search=MIMO测试
+GET /v1/chambers?search=MIMO测试
 ```
 
 ### 8.4 排序
 
 ```
-GET /v1/test-plans?sort_by=created_at&sort_order=desc
+GET /v1/chambers?sort_by=created_at&sort_order=desc
 ```
 
 ---
 
 ## 9. 批量操作
 
+> ⚠️ **本节是约定，不是现状描述。** 仓库里目前**没有任何** `/batch` / `/batch-delete`
+> 端点 —— 下面写的是"将来要做批量时按这个形状做"，别照着去调。
+> （2026-07-30 ARCH-1 S5 补注：本节原本拿计划链的批量端点举例 —— 那条路由既已随
+> S4b 删除、此前也从未实现过。换成 `/v1/chambers` 只是换了个还活着的资源当范例，
+> **批量端点本身仍然不存在**，这句话就是防止换源把假话洗白。
+> 注意这里**不印**那条已删路径的字面量：G8 门查的是"文档引用的计划链路径必须在
+> 真实路由表里"，印出来会让门红在一句正确的说明上。）
+
 ### 9.1 批量创建
 
 ```http
-POST /v1/test-plans/batch
+POST /v1/chambers/batch
 {
   "items": [
-    { "name": "计划1", ... },
-    { "name": "计划2", ... }
+    { "name": "暗室1", ... },
+    { "name": "暗室2", ... }
   ]
 }
 
@@ -421,8 +429,8 @@ Response:
 {
   "created": 2,
   "items": [
-    { "id": "...", "name": "计划1", ... },
-    { "id": "...", "name": "计划2", ... }
+    { "id": "...", "name": "暗室1", ... },
+    { "id": "...", "name": "暗室2", ... }
   ]
 }
 ```
@@ -430,7 +438,7 @@ Response:
 ### 9.2 批量更新
 
 ```http
-PATCH /v1/test-plans/batch
+PATCH /v1/chambers/batch
 {
   "ids": ["id1", "id2", "id3"],
   "updates": {
@@ -441,14 +449,14 @@ PATCH /v1/test-plans/batch
 Response:
 {
   "updated": 3,
-  "message": "3 test plans updated successfully"
+  "message": "3 chambers updated successfully"
 }
 ```
 
 ### 9.3 批量删除
 
 ```http
-POST /v1/test-plans/batch-delete
+POST /v1/chambers/batch-delete
 {
   "ids": ["id1", "id2", "id3"]
 }
@@ -456,7 +464,7 @@ POST /v1/test-plans/batch-delete
 Response:
 {
   "deleted": 3,
-  "message": "3 test plans deleted successfully"
+  "message": "3 chambers deleted successfully"
 }
 ```
 
@@ -467,8 +475,8 @@ Response:
 ### 10.1 URL 版本控制（推荐）
 
 ```
-/v1/test-plans    # 版本 1
-/v2/test-plans    # 版本 2
+/v1/chambers    # 版本 1
+/v2/chambers    # 版本 2
 ```
 
 ### 10.2 版本升级策略
@@ -547,16 +555,24 @@ X-RateLimit-Reset: 1700000000
 
 ## 13. 示例：完整 API 端点
 
+> ⚠️ **示范代码，不是 `app/api/chamber.py` 的抄本。** 这里演示的是本指南推荐的
+> 分层写法（路由 → Service → 模型），真实的暗室路由目前**没有** Service 层、
+> 直接操作模型，`ChamberService` 这个类并不存在。
+> （2026-07-30 ARCH-1 S5 补注：本节原本示范的是 `TestPlanService`，那个类已随
+> S4b 删除 —— 照抄会 ImportError。Schema 名 `ChamberConfigurationResponse` /
+> `ChamberListResponse` / `ChamberConfigurationCreate` / `ChamberConfigurationUpdate`
+> 是真的，可以照着看。）
+
 ```python
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
 
-router = APIRouter(prefix="/v1/test-plans", tags=["Test Plans"])
+router = APIRouter(prefix="/v1/chambers", tags=["Chambers"])
 
-@router.get("", response_model=TestPlanListResponse)
-def list_test_plans(
+@router.get("", response_model=ChamberListResponse)
+def list_chambers(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(20, ge=1, le=100, description="Maximum records to return"),
     status: Optional[str] = Query(None, description="Filter by status"),
@@ -566,7 +582,7 @@ def list_test_plans(
     db: Session = Depends(get_db)
 ):
     """
-    List test plans with filtering, searching, and pagination.
+    List chambers with filtering, searching, and pagination.
 
     - **skip**: Number of records to skip (for pagination)
     - **limit**: Maximum number of records to return
@@ -575,8 +591,8 @@ def list_test_plans(
     - **sort_by**: Field to sort by
     - **sort_order**: Sort order (asc or desc)
     """
-    service = TestPlanService()
-    plans, total = service.list_plans(
+    service = ChamberService()
+    chambers, total = service.list_chambers(
         db=db,
         skip=skip,
         limit=limit,
@@ -588,85 +604,85 @@ def list_test_plans(
 
     return {
         "total": total,
-        "items": plans,
+        "items": chambers,
         "skip": skip,
         "limit": limit
     }
 
-@router.post("", response_model=TestPlanResponse, status_code=201)
-def create_test_plan(
-    request: CreateTestPlanRequest,
+@router.post("", response_model=ChamberConfigurationResponse, status_code=201)
+def create_chamber(
+    request: ChamberConfigurationCreate,
     db: Session = Depends(get_db)
 ):
-    """Create a new test plan."""
-    service = TestPlanService()
+    """Create a new chamber."""
+    service = ChamberService()
 
     try:
-        plan = service.create_plan(db, request)
-        return plan
+        chamber = service.create_chamber(db, request)
+        return chamber
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-@router.get("/{plan_id}", response_model=TestPlanResponse)
-def get_test_plan(
-    plan_id: UUID,
+@router.get("/{chamber_id}", response_model=ChamberConfigurationResponse)
+def get_chamber(
+    chamber_id: UUID,
     db: Session = Depends(get_db)
 ):
-    """Get a test plan by ID."""
-    service = TestPlanService()
-    plan = service.get_plan(db, plan_id)
+    """Get a chamber by ID."""
+    service = ChamberService()
+    chamber = service.get_chamber(db, chamber_id)
 
-    if not plan:
+    if not chamber:
         raise HTTPException(
             status_code=404,
-            detail=f"Test plan {plan_id} not found"
+            detail=f"Chamber {chamber_id} not found"
         )
 
-    return plan
+    return chamber
 
-@router.patch("/{plan_id}", response_model=TestPlanResponse)
-def update_test_plan(
-    plan_id: UUID,
-    request: UpdateTestPlanRequest,
+@router.patch("/{chamber_id}", response_model=ChamberConfigurationResponse)
+def update_chamber(
+    chamber_id: UUID,
+    request: ChamberConfigurationUpdate,
     db: Session = Depends(get_db)
 ):
-    """Partially update a test plan."""
-    service = TestPlanService()
+    """Partially update a chamber."""
+    service = ChamberService()
 
-    plan = service.get_plan(db, plan_id)
-    if not plan:
-        raise HTTPException(status_code=404, detail="Test plan not found")
+    chamber = service.get_chamber(db, chamber_id)
+    if not chamber:
+        raise HTTPException(status_code=404, detail="Chamber not found")
 
-    # Check if plan can be updated
-    if plan.status in ["running", "completed"]:
+    # Check if chamber can be updated
+    if chamber.status in ["running", "completed"]:
         raise HTTPException(
             status_code=409,
-            detail=f"Cannot update test plan in '{plan.status}' status"
+            detail=f"Cannot update chamber in '{chamber.status}' status"
         )
 
-    updated_plan = service.update_plan(db, plan_id, request)
-    return updated_plan
+    updated_chamber = service.update_chamber(db, chamber_id, request)
+    return updated_chamber
 
-@router.delete("/{plan_id}", status_code=204)
-def delete_test_plan(
-    plan_id: UUID,
+@router.delete("/{chamber_id}", status_code=204)
+def delete_chamber(
+    chamber_id: UUID,
     db: Session = Depends(get_db)
 ):
-    """Delete a test plan."""
-    service = TestPlanService()
+    """Delete a chamber."""
+    service = ChamberService()
 
-    plan = service.get_plan(db, plan_id)
-    if not plan:
-        raise HTTPException(status_code=404, detail="Test plan not found")
+    chamber = service.get_chamber(db, chamber_id)
+    if not chamber:
+        raise HTTPException(status_code=404, detail="Chamber not found")
 
-    # Check if plan can be deleted
-    if plan.status == "running":
+    # Check if chamber can be deleted
+    if chamber.status == "running":
         raise HTTPException(
             status_code=409,
-            detail="Cannot delete running test plan"
+            detail="Cannot delete running chamber"
         )
 
-    service.delete_plan(db, plan_id)
+    service.delete_chamber(db, chamber_id)
     # 204 No Content - no response body
 ```
 
@@ -676,7 +692,7 @@ def delete_test_plan(
 
 在实现新 API 端点时，检查以下项目：
 
-- [ ] URL 使用 kebab-case（`test-plans` 而非 `test_plans`）
+- [ ] URL 使用 kebab-case（`chambers` 而非 `chamber_configs`）
 - [ ] 使用合适的 HTTP 方法（GET, POST, PATCH, DELETE）
 - [ ] 响应格式统一（`{ total, items }` 或 `{ items }` 或单一资源）
 - [ ] 字段名使用 snake_case（后端）

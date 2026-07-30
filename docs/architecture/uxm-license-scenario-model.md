@@ -361,8 +361,8 @@ License / 拓扑 / SCPI / 报告统一。
 | L0 Instrument abstraction | [api-service/app/hal/base.py](../../api-service/app/hal/base.py) + 各 `Real*Driver` 类 | ✅ 有 |
 | L1 Application driver | `UxmCommandProfile` 子类 (5G_NR_Test / IRAT) — P2-1 Phase 1 (PR #36) 新建 | ✅ 部分 (仅 UXM Test App 层) |
 | L2 Network scenario | **无 first-class**, 跟 topology 混在 [api-service/app/hal/uxm_test_profiles.py](../../api-service/app/hal/uxm_test_profiles.py) | ⚠️ 缺 |
-| L3 Test case | [api-service/app/models/test_plan.py](../../api-service/app/models/test_plan.py) `TestPlan` + `TestStep` | ✅ 有 |
-| L4 Campaign / regression | TestPlan 队列 + queue position | ✅ 有 |
+| L3 Test case | [api-service/app/models/test_plan.py](../../api-service/app/models/test_plan.py) `TestCase` + `TestCase.configuration.steps` | ✅ 有（ARCH-1 前是 `TestPlan` + `TestStep`，两者已封存） |
+| L4 Campaign / regression | ❌ **没有** —— 批量/队列随 ARCH-1 S4 拆除，是后续增量 |
 
 ### 3 轴 topology
 
@@ -438,7 +438,7 @@ scenario, MIMO OTA throughput 一个 test purpose), 但**作为多 lab
   IRAT-specific 的 topology profile (今天 7 个 built-in 都是
   5G_NR_Test 的), 需要先把 `UxmTestProfile` 拆 Scenario / Topology
   / Config 才能干净加 IRAT 模板
-- **测试用例库膨胀**: 当 TestPlan / TestCase 数量超过 50, 没有
+- **测试用例库膨胀**: 当 TestCase 数量超过 50, 没有
   统一编码 (`[RAT]-[MODE]-[RF]-[PURPOSE]-[CASE]`) 检索不动 → 启动
   L3 test case 编码规范化
 

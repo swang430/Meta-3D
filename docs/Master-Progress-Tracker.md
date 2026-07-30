@@ -5,6 +5,14 @@
 **当前阶段**: Phase 4 - 系统集成阶段
 **整体进度**: ~40% (Phase 1-3 已完成，Phase 4 进行中)
 
+> ⚠️ **ARCH-1 S5（2026-07-30）读前须知**：本表里所有"测试计划管理 / TestPlan CRUD /
+> Queue Reordering"条目**已作废** —— 不是"待开始"，是 ARCH-1 S4 把整条计划链拆掉了
+> （#244 / #246 / #247，共删约 16000 行）。测试管理以 **TestCase** 为根，
+> 队列重排这个需求随队列本身一起消失。当前真实进度看
+> [`docs/roadmap-first-call.md`](roadmap-first-call.md)。
+
+---
+
 **相关文档**:
 - 📐 [系统架构总览](./System-Architecture-Overview.md) - 完整的7子系统架构设计
 - 📊 [ChannelEngine集成进度](./Project-Progress-Tracker.md) - Phase 1-3详细进度

@@ -1,43 +1,47 @@
-# Unified Test Management Feature
+# 测试管理模块
 
-> Version 2.0.0 - 统一的测试计划管理与步骤编排系统
+> v4.0.0 —— ARCH-1 之后：**以测试用例（TestCase）为根**的测试管理。
+> 本文是这个模块的现状说明。原来那份 1494 行的《测试管理统一架构》以计划链为主语，
+> 已随 ARCH-1 S4 归档至
+> [`docs/archive/test-management-unified-architecture.md`](../../../../docs/archive/test-management-unified-architecture.md)。
 
-## 概述
+## 这个模块是什么
 
-本模块整合了原有的 **TestConfig** 和 **TestPlanManagement** 两个功能模块，提供统一的测试管理体验。
+三个 Tab 的容器。它自己几乎不含业务逻辑 —— 三个 Tab 的内容分别由三个外部组件提供。
 
-## 目录结构
+3 个主要 Tab: 测试用例库、执行历史、虚拟路测 <!-- gate:tabs=测试用例库,执行历史,虚拟路测 -->
+
+> 上面这行由 `api-service/tests/test_rule_gates.py` 的 **G7 门**守着：行尾 marker
+> 声明的标签集必须等于 `TestManagement.tsx` 里 JSX 的标签集，且散文里要逐字含这几个
+> 标签。**加/删/改名 Tab 而不改这行，测试会红。**
+
+| Tab | value | 内容由谁提供 |
+|-----|-------|-------------|
+| 测试用例库 | `caseLibrary` | `components/TestPlanManagement/TestCaseLibrary`（`enableExecute` 开着 —— 执行按钮在这里） |
+| 执行历史 | `history` | `./components/HistoryTab` |
+| 虚拟路测 | `virtualRoadTest` | `components/VirtualRoadTest` |
+
+## 目录结构（实况）
 
 ```
 TestManagement/
-├── TestManagement.tsx          # 主容器组件 (4个Tab)
-├── index.ts                    # 模块导出
-├── README.md                   # 本文档
-├── api/
-│   └── testManagementAPI.ts   # 统一 API 客户端
+├── TestManagement.tsx              # 主容器 —— 三个 Tab 的壳
+├── index.ts                        # 模块导出
+├── README.md                       # 本文档
+├── api/testManagementAPI.ts        # API 客户端
 ├── hooks/
-│   ├── index.ts               # Hooks 统一导出
-│   ├── useTestPlans.ts        # 测试计划 hooks
-│   ├── useTestSteps.ts        # 测试步骤 hooks
-│   ├── useTestQueue.ts        # 执行队列 hooks
-│   ├── useTestExecution.ts    # 执行控制 hooks
-│   ├── useTestHistory.ts      # 执行历史 hooks
-│   ├── useSequenceLibrary.ts  # 序列库 hooks
-│   └── useStatistics.ts       # 统计分析 hooks
-├── types/
-│   └── index.ts               # 类型定义 (600+ lines)
-├── components/
-│   ├── PlansTab/              # Phase 2: 计划管理 Tab
-│   ├── StepsTab/              # Phase 3: 步骤编排 Tab
-│   ├── QueueTab/              # Phase 4: 执行队列 Tab
-│   ├── HistoryTab/            # Phase 4: 执行历史 Tab
-│   └── shared/                # 共享组件
-└── utils/                     # 工具函数
+│   ├── index.ts
+│   └── useTestHistory.ts           # 仅剩这一个 hook
+├── types/index.ts
+├── components/HistoryTab/          # 仅剩这一个自有 Tab 组件
+└── utils/                          # helpers / normalizeStepParameters / mockDataGenerator
 ```
 
-## 使用方法
+`hooks/` 曾有七组 hook（计划 / 步骤 / 队列 / 执行控制 / 历史 / 序列库 / 统计），
+`components/` 曾有四个 Tab 目录（Plans / Steps / Queue / History）。
+**除历史外全部随 ARCH-1 S4a 删除** —— 它们服务的三个 Tab 已不存在。
 
-### 导入主组件
+## 用法
 
 ```typescript
 import { TestManagement } from '@/features/TestManagement'
@@ -47,147 +51,50 @@ function App() {
 }
 ```
 
-### 使用 Hooks
+执行历史：
 
 ```typescript
-import {
-  useTestPlans,
-  useCreateTestPlan,
-  useTestSteps,
-  useAddTestStep,
-} from '@/features/TestManagement'
-
-function MyComponent() {
-  // 获取测试计划列表
-  const { data: plans, isLoading } = useTestPlans({ status: 'draft' })
-
-  // 创建测试计划
-  const { mutate: createPlan } = useCreateTestPlan()
-
-  // 获取测试步骤
-  const { data: steps } = useTestSteps(planId)
-
-  // 添加测试步骤
-  const { mutate: addStep } = useAddTestStep()
-
-  // ...
-}
+import { useTestHistory } from '@/features/TestManagement'
 ```
 
-### 使用类型
-
-```typescript
-import type {
-  UnifiedTestPlan,
-  TestStep,
-  TestPlanStatus,
-  StepParameter,
-} from '@/features/TestManagement'
-
-const plan: UnifiedTestPlan = {
-  id: 'plan-001',
-  name: 'MIMO OTA Test',
-  status: 'draft',
-  // ...
-}
-```
-
-### 直接调用 API
-
-```typescript
-import { testManagementAPI } from '@/features/TestManagement'
-
-// 获取测试计划
-const plan = await testManagementAPI.getTestPlan('plan-001')
-
-// 创建测试计划
-const newPlan = await testManagementAPI.createTestPlan({
-  name: 'New Plan',
-  // ...
-})
-```
+⚠️ **用例的创建 / 编辑 / 执行入口不在本模块** —— 在
+`components/TestPlanManagement/TestCaseLibrary` 与 `TestCaseEditModal`
+（MIMO_OTA 类型的仪表参数表单是 `components/TestCaseConfig/MIMOOTAConfigForm`，
+ARCH-1 S4a 从已删的 StepsTab 搬过来的）。
 
 ## 核心概念
 
-### 1. UnifiedTestPlan
+### TestCase —— 正式测试的单一真值源
 
-统一的测试计划数据模型，整合了两个原有模块的概念：
+一个 TestCase 自带 `configuration`：仪表参数、信道资产引用、相位描述符。
+执行时后端把 `configuration.steps` 读成内存里的 `StepDescriptor` 派发，
+**不往 `test_steps` 表落行**。
 
-- **基础信息**: id, name, description, version, status
-- **DUT 信息**: 被测设备型号、序列号
-- **测试环境**: 暗室ID、温度、湿度
-- **步骤配置**: TestStep[] (关键集成点)
-- **队列信息**: 队列位置、优先级
-- **执行统计**: 总数、完成数、失败数
-- **时间追踪**: 预估时长、实际时长
+### TestExecution —— 每次执行一行
 
-### 2. TestStep
+状态 `running` / `paused` / `completed` / `failed` / `cancelled`
+（`paused` 是虚拟路测专用）。历史 Tab 和报告都从这张表取数。
+执行正门：`POST /api/v1/test-plans/cases/{test_case_id}/execute`
+（URL 里的 `test-plans` 前缀是历史包袱，改前缀契约破坏面大、收益纯美观，记 P3）。
 
-测试步骤是测试计划的执行单元：
+### ⚠️ 不再存在的概念
 
-- 关联序列库模板 (sequence_library_id)
-- 动态参数配置 (ParametersMap)
-- 执行配置 (timeout, retry, continue_on_failure)
-- 运行时状态 (status, result, error_message)
-
-### 3. StepParameter
-
-步骤参数支持多种类型和验证：
-
-- **类型**: text, number, select, textarea, boolean, json
-- **验证**: min/max, pattern, options, required
-- **UI配置**: placeholder, unit, helpText
-
-### 4. 状态管理
-
-- **8种测试计划状态**: draft → ready → queued → running → paused → completed/failed/cancelled
-- **5种步骤状态**: pending → running → completed/failed/skipped
-
-## 实现进度
-
-- [x] **Phase 1**: 基础架构 (Week 1)
-  - [x] 类型定义 (600+ lines)
-  - [x] API 客户端 (30+ endpoints)
-  - [x] TanStack Query hooks (7个文件)
-  - [x] 主容器组件
-- [ ] **Phase 2**: PlansTab 迁移 (Week 2)
-- [ ] **Phase 3**: StepsTab 实现 (Week 3-4)
-- [ ] **Phase 4**: QueueTab & HistoryTab 迁移 (Week 5)
-- [ ] **Phase 5**: 数据流集成 (Week 6)
-- [ ] **Phase 6**: UI/UX 优化 (Week 7)
-- [ ] **Phase 7**: 测试与部署 (Week 8)
-
-## 技术栈
-
-- **React 18** + TypeScript
-- **Mantine UI** - 组件库
-- **TanStack Query** - 服务端状态管理
-- **Axios** - HTTP 客户端
+计划（TestPlan）、执行队列、步骤编排、序列库、8 种计划状态、5 种步骤状态 ——
+**ARCH-1 S4 整体拆除**。`TestPlan` / `TestStep` / `TestQueue` / `TestPlanExecution` /
+`TestSequence` 五张表原地封存，只读历史、无业务写入方，
+见 [`api-service/app/models/test_plan.py`](../../../../api-service/app/models/test_plan.py)
+每张表顶上的封存 banner。**新代码不要引用它们。**
 
 ## 相关文档
 
-- [架构设计文档](../../../../TestManagement-Unified-Architecture.md) - 完整的设计规范
-- [数据架构指南](../../../../docs/Data-Architecture-Guide.md) - Mock Server vs 后端 API 说明
-- [CLAUDE.md](../../../../CLAUDE.md) - 项目整体文档
-
-## 开发指南
-
-### 添加新的 API 端点
-
-1. 在 `types/index.ts` 中添加请求/响应类型
-2. 在 `api/testManagementAPI.ts` 中添加 API 函数
-3. 在对应的 hooks 文件中添加 Query/Mutation hook
-4. 在 `hooks/index.ts` 中导出新的 hook
-
-### 创建新的 Tab 组件
-
-1. 在 `components/` 下创建新的 Tab 目录
-2. 实现主组件和子组件
-3. 在 `TestManagement.tsx` 中导入并使用
-4. 更新此 README
+- [CLAUDE.md](../../../../CLAUDE.md) —— 项目整体文档，「测试层级」一节是本模块的上位说明
+- [ARCH-1 总纲](../../../../docs/design/arch-1-testcase-first-simplification.md) —— 为什么拆
+- [ARCH-1 S4 拆除设计](../../../../docs/design/arch-1-s4-demolition.md) —— 怎么拆的
+- [数据源真相](../../../../CLAUDE.md) —— CLAUDE.md 的「⭐ 数据源真相」一节：默认连真实后端，mock 已禁用
 
 ## 注意事项
 
-- ⚠️ API 端点基于设计文档，实际后端实现可能需要调整
-- ⚠️ **当前使用后端 API**，Mock Server 已禁用。详见 [数据架构指南](../../../../docs/Data-Architecture-Guide.md)
-- ⚠️ 组件尚未完全实现，当前为 Phase 1 基础架构
+- **默认连真实后端**，mock 已在 `main.tsx` 注释掉，Vite 代理转发 `/api`。
+  读 `gui/src/api/mockDatabase.ts` 里的演示数据判断"功能怎么工作"会被误导。
+- GUI 侧**没有测试框架** —— 本模块改动的门只有 `npm run build`（`tsc -b`）
+  加浏览器实测，没有单测兜底。

@@ -996,6 +996,8 @@ describe('Scenario Library Integration', () => {
     expect(loaded).toMatchObject(scenario)
 
     // 3. 应用到测试
+    // ⚠️ ARCH-1 S4b 删除: testPlanService 与计划创建端点均已不存在。
+    //    今天的等价做法是建 TestCase 后直接执行 (S1 执行正门)。
     const testPlan = await testPlanService.createTestPlan({
       scenario: loaded.configuration
     })

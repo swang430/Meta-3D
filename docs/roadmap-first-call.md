@@ -475,7 +475,9 @@ F64 license not installed → diagnose 30 minutes".
 - `validate_plan(plan, lab, db, hal)` returns a typed `PreflightResult`
   with `gaps: List[Gap]` where each Gap names step + missing token +
   category. Empty `gaps` == plan is runnable for that lab.
-- `POST /api/v1/test-plans/{plan_id}/preflight` returns the result.
+- 计划级 preflight 端点返回该结果。⚠️ **ARCH-1 S4b 已删除该端点**（连同整条计划链）；
+  用例级 preflight 需先建"相位/模板 → 能力"数据源，是独立立项（task #100）。
+  这里刻意不印那条已删路径的字面量 —— G8 门查"文档引用的计划链路径必须真实存在"。
 - ≥1 seeded step template ships with a real `needs` declaration as
   dogfood proof (F64 calibration-tone → `ce.interference_generator`).
 - GUI plan row gains a "预检" button calling the endpoint and
@@ -1247,8 +1249,9 @@ across UXM / CMW500 / CMP200"). Investigation found:
 - **Phase 2.3 ✅ Done — Per-test topology override** (PR #39, D22).
   New `test_plans.topology_profile_id` nullable string column
   (Alembic `d8b412ca9f15`); `TestExecutionService.apply_plan_topology_profile_if_set`
-  best-effort apply on `POST /test-plans/{id}/start`; dedicated
-  `PUT /test-plans/{id}/topology-profile` endpoint for set/clear.
+  best-effort apply 挂在计划启动端点上；另有专用的 set/clear 端点。
+  ⚠️ **ARCH-1 S4b 已删除这两条端点**（`topology_profile_id` 列随 `test_plans`
+  表原地封存）。用例级拓扑覆盖要先定语义，是独立立项（task #99）。
   Codex P2 follow-up: `topology_profile_id` carry-through across
   duplicate / export / import fan-out paths.
 - **Phase 2.2 ✅ Done — Topology editor GUI + per-plan picker**
@@ -1923,8 +1926,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-06-07 from PROPSIM F64 信道注入 docx V1.2, 用户确认登记]` **信道注入子系统三缺口 + B-2 战略缺口 (channel-injection)** —— ✅ **2026-06-21 提升为 P2-14** (见上方 P2-14 区)。完整设计以 [`design/RT-MPDB-CDL-F64-channel-injection-design_V1.0.md`](design/RT-MPDB-CDL-F64-channel-injection-design_V1.0.md) 为准，**已远超**此处基于 docx V1.2 的理解 (native-fit 聚类 → B-2 普及 / 标注式 CDL / 按 test_class 分 B-1·B-2·GCM)。以下为 2026-06-07 登记时快照，实施以 V1.0 为准。源 `docs/hardware/PROPSIM_F64_信道注入工程文档_A-B路线_SCPI_V1.2.docx` (已升 V1.4)。现状: `gcm_strategy`(路线 A) + `asc`/`external_asc`(路线 B-1) 已实现, F64 驱动已有 `CALC:FILT:*`/`CH:MOD:CONT:ENV`/`ROUT:PATH:CONN`/`DIAG:SIMU` + 播 `.smu`/`.asc`/`.rtc`。**(1) f_upd 采样纪律一致性门 (B-1)**: 确定性 CIR 回放须 `f_upd=2·SD·v/λ` (SD=2, CIRs≥1000, `Δd=λ/(2·SD)`) 自洽; 现仅 `channel_params.update_rate_hz` 软字段 (1-1000 Hz 默认 100, 连高速 1556 / 高铁 4537-6481 / FR2 51852 Hz 都表达不了), 驱动未设 `DIAG:SIM:FIRUPD:MAN:CH` → "默认 10000 Hz 陷阱"静默错配 playback 速度/多普勒。proper = TestCase 的 v/f_c/SD ↔ 注入文件 f_upd fail-loud 一致性门 (契合 TestCase 单一真值源)。**(2) 12/24 抽头 + ≤24 簇 + 1024 逻辑通道硬件上限硬门**: `channel_engine` 跟踪 `num_clusters` 但无 ≤24 硬上限校验; TestCase 超限应进现场前 fail-loud (capability↔hardware↔gate 三方一致母题)。**(3) GCM 必要性结论**: 多普勒质心 <200 kHz (地面→高铁) 运行时频偏即可、>200 kHz (NTN Ka) 需 GCM; §10 待验证"运行时 200 vs GCM 500 kHz 是否同一硬件引擎"决定 B 路能否免 GCM 覆盖 NTN → 决定是否采购 GCM 许可。**另 (战略, 非缺陷)**: 路线 B-2 (`.tdlx`/`.tap` 参数化 TDL 生成 IP) 生成层**未实现** (驱动已能播 `.rtc`), 文档主推 B-2 用于高多普勒 / 几何骨架率受限场景。现场验证清单见 [`guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md) §7。
 - `[discovered 2026-06-28 during P2-15 S5 浏览器闭环]` **LabProfileWizard.tsx:311 空值崩溃 (`Cannot read properties of null (reading 'value')`)** —— P2-15 S5 用 Playwright 点模板 + 填 LabProfile 名时触发；**初始渲染正常**，自动化交互序列才触发（疑某 onChange/ref 在中间态读 `null.value`）。当时 curl 直接建 lab 绕过（`App.tsx:491` `needsLabProfileWizard` 只查 lab-profiles 空数组，建好就跳过向导），未深究根因。中等，下次 GUI 批次定位修。**✅ done 2026-07-02 (#191)**：根因 = React 合成事件 `e.currentTarget` 在 handler 返回后被置 null，而 onChange 在 setState **函数式 updater 内部**读 `.value`（updater 批处理异步执行时崩）；修法 = 把值先读到 updater 外的 const（labName + endpoint 两处 onChange 同 hoist）。
 - `[discovered 2026-07-02 during pre-departure 走查]` **CreateSessionRequest 缺 `channel_asset_id` → 统一信道资产进不了会话创建 API（P2-16 S5 前置）** —— 会话执行是 measure 唯一消费路，但 `CreateSessionRequest`/`_request_overrides` 没有该字段，「暗室首测」页同样带不进。临时可跑路 = 建会话后 `PATCH /test-plans/cases/{id}` 把 `channel_asset_id` 合进 configuration（已固化为 [`scripts/onsite-run-channel-throughput.sh`](../scripts/onsite-run-channel-throughput.sh)，2026-07-02 mock 两次端到端 PASS：engine_mode 覆盖 `keysight_gcm` + `.smu` source=testcase + 4 方位吞吐 + analysis pass）。proper fix = CreateSessionRequest + `_request_overrides` + 暗室首测 GUI 加 channel_asset_id（归 P2-16 S5）。
-- `[discovered 2026-07-02 during pre-departure 走查]` **TestManagement 计划步骤无执行 runner** —— `POST /test-plans/{id}/start` 只转计划状态，步骤停 pending；`dispatch_step` 仅 commissioning 三端点调用（run_phase / diagnostic / run-all，作用于会话自身 5 相位描述符），计划步骤编排层与会话执行层没有接线。S4-5 在 MIMOOTAConfigForm 配好的 `channel_asset_id` 经计划路无法被消费（只能经会话 TestCase）。步骤编排↔会话执行的接线设计属 TestCase-driven（P2-11/P2-16）同族，需要排期。
-- `[discovered 2026-07-02 during pre-departure 走查]` **执行队列 100 条 5 月自动化测试产物僵尸** —— Priority/Queue/Stats Test Plan 等占满队列（90 等待 + 1 条卡 `running` 曾拒绝 HAL 重载，已强制重载清掉活跃态；队列条目还在）。两件事：① 一次性清理（`DELETE /api/v1/test-plans/queue/{plan_id}` 逐条，需操作员确认）；② 防护 —— 自动化测试不应把队列产物留进 dev PG（测试隔离 SQLite 或 teardown 清理）。
+- `[discovered 2026-07-02 during pre-departure 走查]` **TestManagement 计划步骤无执行 runner**（✅ **ARCH-1 S4 以"删除"结案**：整条计划链已拆，正式测试改走 TestCase 直接执行）—— 当时的症状是计划启动端点只转状态、步骤停 pending；`dispatch_step` 仅 commissioning 三端点调用（run_phase / diagnostic / run-all，作用于会话自身 5 相位描述符），计划步骤编排层与会话执行层没有接线。S4-5 在 MIMOOTAConfigForm 配好的 `channel_asset_id` 经计划路无法被消费（只能经会话 TestCase）。步骤编排↔会话执行的接线设计属 TestCase-driven（P2-11/P2-16）同族，需要排期。
+- `[discovered 2026-07-02 during pre-departure 走查]` **执行队列 100 条 5 月自动化测试产物僵尸** —— Priority/Queue/Stats Test Plan 等占满队列（90 等待 + 1 条卡 `running` 曾拒绝 HAL 重载，已强制重载清掉活跃态；队列条目还在）。两件事：① 一次性清理（✅ **ARCH-1 S4b 起不需要了**：执行队列连同它的全部端点已删除，遗留 running/paused 计划行由 `test_case_runner.reset_orphaned_plan_chain_rows` 启动时清成终态）；② 防护 —— 自动化测试不应把队列产物留进 dev PG（测试隔离 SQLite 或 teardown 清理）。
 - `[discovered 2026-07-02 during pre-departure 走查]` **vendor_file 资产顶层 `center_frequency_hz` 与 payload.scd_config.arfcn 可漂移** —— seed 数据曾是顶层 3.5 GHz vs `arfcn=640000`（=3600 MHz）矛盾：GUI 列表/表单显示读顶层，P2-11 频率一致性网读 payload arfcn → 显示误导现场。数据已修（2026-07-02 经工作台表单 3.5→3.6 + 顶层带宽补 100M，scd_config 完整保留）；proper = 表单/服务端加"顶层物理声明 vs scd_config 一致性"校验（vendor_file 两处都有值时必须一致或只留一处）。
 - `[discovered 2026-07-02 during pre-departure 走查]` **StepsTab 保存 toast 步骤名显示 "null"**（「步骤 "null" 已更新」）—— 纯外观，取名逻辑拿错字段。琐碎，GUI 批次顺带。
 - `[discovered 2026-07-04 during #206 补扫]` **全量测试 2 个顺序耦合 flaky（日志/输出捕获为空型）** —— `test_db_preflight.py::test_unreachable_emits_actionable_banner`（`'数据库不可达' in ''`）与 `test_driver_capabilities.py::test_non_canonical_token_warns_but_adds`（caplog 空）只在全量跑挂、单文件跑全过；stash 干净 HEAD 同样复现 → pre-existing，疑前序测试污染全局 logging（handler/propagate）。测试基建问题：定位污染源 + 隔离。
