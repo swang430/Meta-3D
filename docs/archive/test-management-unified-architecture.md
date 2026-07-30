@@ -9,7 +9,7 @@
 > 重写，而重写等于凭空造一份新架构文档，超出"封存与文档"这一片的范围。
 >
 > **今天到哪儿看现状**：
-> - 代码：`gui/src/features/TestManagement/`（三个 Tab：测试用例库 / 执行历史 / 虚拟路测）
+> - 代码：`gui/src/features/TestManagement/`（Tab 清单见 `CLAUDE.md`，那行有 G7 门守着）
 > - 模块说明：[`gui/src/features/TestManagement/README.md`](../../gui/src/features/TestManagement/README.md)
 > - 拆除的推理过程：`docs/design/arch-1-testcase-first-simplification.md` 与
 >   `docs/design/arch-1-s4*.md`

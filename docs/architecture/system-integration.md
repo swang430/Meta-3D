@@ -120,7 +120,7 @@ def _calculate_probe_weights(self, scenario, probe_array, mimo_config):
 
 > ⚠️ **ARCH-1 S4 作废**: 下面写的 Plans / Steps / Queue / History **四个 Tab**
 > 与 `TestPlan` / `TestStep` 两个模型, 在今天的代码里是这样的 ——
-> 测试管理只剩 **三个 Tab**（测试用例库 / 执行历史 / 虚拟路测），
+> 测试管理只剩 **三个 Tab**（是哪三个见 `CLAUDE.md`，那行有 G7 门守着，这里不抄），
 > 两个模型原地封存、无业务写入方（见 `api-service/app/models/test_plan.py` 的封存 banner）。
 > 正式测试的编排单位是 **TestCase + 它的 `configuration.steps`**，不再是计划+步骤行。
 

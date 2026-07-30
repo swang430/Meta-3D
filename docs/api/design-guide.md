@@ -42,7 +42,7 @@
   /v1/chambers                    # 资源集合
   /v1/chambers/{id}               # 单个资源
   /v1/chambers/{id}/probes         # 子资源集合
-  /v1/chambers/{id}/probes/{probe_id}  # 单个子资源
+  （单个子资源形如 /v1/{coll}/{id}/{sub}/{sub-id}；暗室的探头子资源目前只做了集合级读取）
 ```
 
 **规则**:
@@ -102,6 +102,8 @@ PUT /v1/chambers/{id}
 }
 
 # 部分更新（只更新提供的字段）✅ 推荐
+# ⚠️ 这是本规范推荐的**语义**。暗室路由今天只注册了 PUT（没有 PATCH handler），
+#    照这里发 PATCH 会拿 405；PUT 的 schema 用 exclude_unset 已支持部分更新。
 PATCH /v1/chambers/{id}
 {
   "name": "只更新名称"
@@ -208,7 +210,7 @@ Accept-Language: zh-CN        # 国际化
   ...
 }
 
-// PATCH /v1/chambers/{id}
+// PATCH /v1/chambers/{id}  ← 语义示范；暗室今天只有 PUT，见 §3.2 的说明
 // 返回更新后的资源
 {
   "id": "...",
