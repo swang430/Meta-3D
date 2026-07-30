@@ -162,7 +162,8 @@ Accept-Language: zh-CN        # 国际化
 {
   "id": "123e4567-e89b-12d3-a456-426614174000",
   "name": "3D-MPAC 暗室 A",
-  "status": "ready",
+  "chamber_type": "custom",
+  "is_active": true,
   "created_at": "2025-11-23T10:30:00Z",
   ...
 }
@@ -189,9 +190,10 @@ Accept-Language: zh-CN        # 国际化
 #### 资源集合（不带分页）
 
 ```json
-// GET /v1/chambers/presets
+// GET /v1/chambers/presets —— 注意本端点的键名是 `presets` 而非 `items`,
+//   属既有不一致 (本规范建议统一用 `items`, 存量端点未改)
 {
-  "items": ["Calibration", "Measurement", "5G NR"]
+  "presets": [{ "key": "caict_fs", "name": "CAICT-FS", ... }]
 }
 ```
 
@@ -274,10 +276,10 @@ DELETE /v1/chambers/{id}
   "detail": "Chamber with id '123' does not exist"
 }
 
-// 409 Conflict - 冲突
+// 409 Conflict - 冲突 (暗室的真实 409 场景: 被活跃 lab profile 引用, 或系统预设不可改删)
 {
-  "message": "Cannot delete running chamber",
-  "detail": "Please stop the chamber before deleting"
+  "message": "Cannot delete chamber in use",
+  "detail": "Chamber is referenced by the active lab profile"
 }
 
 // 422 Unprocessable Entity - 验证失败
@@ -381,19 +383,19 @@ GET /v1/chambers?cursor=eyJpZCI6MTIzfQ&limit=10
 ### 8.1 简单过滤
 
 ```
-GET /v1/chambers?status=ready&created_by=admin
+GET /v1/chambers?chamber_type=custom&created_by=admin
 ```
 
 ### 8.2 高级过滤（可选）
 
 ```
-GET /v1/chambers?filter=status:eq:ready,priority:gte:5
+GET /v1/chambers?filter=chamber_type:eq:custom,num_probes:gte:16
 ```
 
 ### 8.3 全文搜索
 
 ```
-GET /v1/chambers?search=MIMO测试
+GET /v1/chambers?search=MPAC
 ```
 
 ### 8.4 排序
@@ -410,9 +412,7 @@ GET /v1/chambers?sort_by=created_at&sort_order=desc
 > 端点 —— 下面写的是"将来要做批量时按这个形状做"，别照着去调。
 > （2026-07-30 ARCH-1 S5 补注：本节原本拿计划链的批量端点举例 —— 那条路由既已随
 > S4b 删除、此前也从未实现过。换成 `/v1/chambers` 只是换了个还活着的资源当范例，
-> **批量端点本身仍然不存在**，这句话就是防止换源把假话洗白。
-> 注意这里**不印**那条已删路径的字面量：G8 门查的是"文档引用的计划链路径必须在
-> 真实路由表里"，印出来会让门红在一句正确的说明上。）
+> **批量端点本身仍然不存在** —— 这句话就是防止换源把假话洗白。）
 
 ### 9.1 批量创建
 
@@ -442,7 +442,7 @@ PATCH /v1/chambers/batch
 {
   "ids": ["id1", "id2", "id3"],
   "updates": {
-    "status": "ready"
+    "chamber_type": "caict_fs"
   }
 }
 
@@ -575,7 +575,7 @@ router = APIRouter(prefix="/v1/chambers", tags=["Chambers"])
 def list_chambers(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(20, ge=1, le=100, description="Maximum records to return"),
-    status: Optional[str] = Query(None, description="Filter by status"),
+    chamber_type: Optional[str] = Query(None, description="Filter by chamber type"),
     search: Optional[str] = Query(None, description="Search in name/description"),
     sort_by: str = Query("created_at", description="Sort field"),
     sort_order: str = Query("desc", regex="^(asc|desc)$"),
@@ -586,7 +586,7 @@ def list_chambers(
 
     - **skip**: Number of records to skip (for pagination)
     - **limit**: Maximum number of records to return
-    - **status**: Filter by status (draft, ready, running, etc.)
+    - **chamber_type**: Filter by chamber type (caict_fs, custom, …)
     - **search**: Search keyword in name and description
     - **sort_by**: Field to sort by
     - **sort_order**: Sort order (asc or desc)
@@ -596,7 +596,7 @@ def list_chambers(
         db=db,
         skip=skip,
         limit=limit,
-        status=status,
+        chamber_type=chamber_type,
         search=search,
         sort_by=sort_by,
         sort_order=sort_order
@@ -653,11 +653,11 @@ def update_chamber(
     if not chamber:
         raise HTTPException(status_code=404, detail="Chamber not found")
 
-    # Check if chamber can be updated
-    if chamber.status in ["running", "completed"]:
+    # Check if chamber can be updated (暗室的真实约束: 系统预设只读)
+    if chamber.is_system_preset:
         raise HTTPException(
             status_code=409,
-            detail=f"Cannot update chamber in '{chamber.status}' status"
+            detail="Cannot modify a system preset; duplicate it first"
         )
 
     updated_chamber = service.update_chamber(db, chamber_id, request)
@@ -675,11 +675,11 @@ def delete_chamber(
     if not chamber:
         raise HTTPException(status_code=404, detail="Chamber not found")
 
-    # Check if chamber can be deleted
-    if chamber.status == "running":
+    # Check if chamber can be deleted (暗室的真实约束: 被活跃 lab profile 引用)
+    if service.is_referenced_by_active_lab(db, chamber_id):
         raise HTTPException(
             status_code=409,
-            detail="Cannot delete running chamber"
+            detail="Chamber is referenced by the active lab profile"
         )
 
     service.delete_chamber(db, chamber_id)

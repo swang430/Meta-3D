@@ -57,8 +57,11 @@ function App() {
 import { useTestHistory } from '@/features/TestManagement'
 ```
 
-⚠️ **用例的创建 / 编辑 / 执行入口不在本模块** —— 在
-`components/TestPlanManagement/TestCaseLibrary` 与 `TestCaseEditModal`
+⚠️ **用例的编辑 / 执行入口不在本模块** —— 在
+`components/TestPlanManagement/TestCaseLibrary` 与 `TestCaseEditModal`。
+**新建入口今天不可达**：`TestCaseLibrary` 的「新建用例」按钮由 `onCreateNew` prop 守着，
+而 `TestManagement.tsx` 只传了 `enableExecute` —— 全仓无人传 `onCreateNew`，
+所以用例只能来自 bootstrap 种子（S4a 显式申报的缺口，在 backlog）
 （MIMO_OTA 类型的仪表参数表单是 `components/TestCaseConfig/MIMOOTAConfigForm`，
 ARCH-1 S4a 从已删的 StepsTab 搬过来的）。
 
@@ -72,8 +75,9 @@ ARCH-1 S4a 从已删的 StepsTab 搬过来的）。
 
 ### TestExecution —— 每次执行一行
 
-状态 `running` / `paused` / `completed` / `failed` / `cancelled`
-（`paused` 是虚拟路测专用）。历史 Tab 和报告都从这张表取数。
+状态取值以 `TestExecution.status` 的列注释为唯一真值源（`api-service/app/models/test_plan.py`）—— 今天是 `pending`（**默认值，建出来就是它**）/ `running` / `completed` / `failed` / `skipped`，另有 VRT 专用的 `idle` / `initializing` / `configured` / `paused` / `stopped`。
+**别在别处抄** —— 抄一份就会漂（上一版这里漏了 `pending`）。
+历史 Tab 和报告都从这张表取数。
 执行正门：`POST /api/v1/test-plans/cases/{test_case_id}/execute`
 （URL 里的 `test-plans` 前缀是历史包袱，改前缀契约破坏面大、收益纯美观，记 P3）。
 

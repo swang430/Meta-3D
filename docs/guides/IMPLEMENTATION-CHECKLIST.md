@@ -233,4 +233,4 @@ def check_update_schema_completeness(entity_name):
 
 **创建时间**: 2025-11-23
 **维护者**: 开发团队
-**相关**: [BUGFIX-LOG.md](BUGFIX-LOG.md), [STATE-MACHINE.md](STATE-MACHINE.md)
+**相关**: [BUGFIX-LOG.md](BUGFIX-LOG.md), [STATE-MACHINE.md](../archive/state-machine-testplan.md)

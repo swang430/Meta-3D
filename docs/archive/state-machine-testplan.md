@@ -9,9 +9,9 @@
 > 整篇的主语没了。留着是决策记录：状态机该怎么文档化（谁能转到谁、UI 按钮怎么对应、
 > 后端 schema 要什么）这套方法本身仍有参考价值。
 >
-> **今天的真值源**：正式测试的状态在 `TestExecution.status`
-> （`running` / `paused` / `completed` / `failed` / `cancelled`），由
-> `api-service/app/services/test_case_runner.py` 驱动，`paused` 是虚拟路测专用。
+> **今天的真值源**：正式测试的状态在 `TestExecution.status`，取值见该列的注释
+> （`api-service/app/models/test_plan.py`）—— 别在别处抄一份清单。
+> 由 `api-service/app/services/test_case_runner.py` 驱动。
 > 没有队列，没有 draft / ready / queued 三态。
 
 ---
@@ -253,8 +253,8 @@ class TestPlanUpdate(BaseModel):
 ## 相关文档
 
 - [BUGFIX-LOG.md](BUGFIX-LOG.md) - BUG-002记录了缺少状态转换功能的问题
-- [IMPLEMENTATION-CHECKLIST.md](IMPLEMENTATION-CHECKLIST.md) - 实现检查清单
-- [TestManagement-Unified-Architecture.md](docs/design/TestManagement-Unified-Architecture.md) - 测试管理架构
+- [IMPLEMENTATION-CHECKLIST.md](../guides/implementation-checklist.md) - 实现检查清单
+- [TestManagement-Unified-Architecture.md](test-management-unified-architecture.md) - 测试管理架构
 
 ---
 

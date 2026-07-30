@@ -432,16 +432,20 @@ pip install -r requirements.txt
 
 ## 数据初始化
 
-首次运行或重置数据库后，需要初始化测试序列数据：
+首次运行或重置数据库后，跑 bootstrap 播种：
 
 ```bash
 source .venv/bin/activate
-python scripts/init_sequences.py
+python -m scripts.bootstrap
 ```
 
-这将创建：
-- 6 个通用测试序列 (Instrument Setup, Measurement, etc.)
-- 8 个虚拟路测序列 (Road Test - Step 0 到 Step 7)
+详细说明见 [`docs/Database-Operations-Guide.md`](../docs/Database-Operations-Guide.md)。
+
+> ⚠️ **ARCH-1 S5（2026-07-30）更正**：本节原先写的是
+> `python scripts/init_sequences.py`，会创建"6 个通用测试序列 + 8 个虚拟路测序列"。
+> **那个脚本不存在**（早已并入 bootstrap），照着跑得到 `No such file or directory`；
+> 那 14 条序列的 seeder 也随 ARCH-1 S4c 删除 —— 序列库整体拆除，`test_sequences`
+> 表原地封存、只读历史。
 
 ## Support
 

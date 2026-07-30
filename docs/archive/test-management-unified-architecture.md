@@ -186,8 +186,8 @@ scenario.step_configuration > test_environment > 默认值
 ### 参数速查
 
 完整的参数列表请参考:
-- [参数速查表 (手动维护)](../virtual-road-test/parameter-reference.md)
-- [参数速查表 (自动生成)](../virtual-road-test/parameter-reference-generated.md)
+- [参数速查表 (手动维护)](../features/virtual-road-test/parameter-reference.md)
+- [参数速查表 (自动生成)](../features/virtual-road-test/parameter-reference-generated.md)
 
 ---
 
@@ -1505,8 +1505,8 @@ const USE_NEW_TEST_MANAGEMENT =
 
 ## 相关文档
 
-- [参数速查表 (手动维护)](../virtual-road-test/parameter-reference.md) - 所有参数一览
-- [参数速查表 (自动生成)](../virtual-road-test/parameter-reference-generated.md) - 从 Schema 自动生成
+- [参数速查表 (手动维护)](../features/virtual-road-test/parameter-reference.md) - 所有参数一览
+- [参数速查表 (自动生成)](../features/virtual-road-test/parameter-reference-generated.md) - 从 Schema 自动生成
 - [步骤配置指南](vrt-step-configuration.md) - 虚拟路测步骤配置详解（⚠️ 已随 ARCH-1 S4 归档）
 
 ---

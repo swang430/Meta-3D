@@ -210,9 +210,10 @@ GUI 遵循 **API优先架构**，包含以下层次：
 **测试层级**（ARCH-1 2026-07 拆平，只剩两层）:
 - **测试例（Test Cases）**: **正式测试的单一真值源**。一个 TestCase 自带它的
   `configuration`（仪表参数、信道资产、相位描述符），可保存、复用、直接执行。
-- **执行记录（Test Executions）**: 每次执行产生一行 `TestExecution`，
-  状态 `running` / `paused` / `completed` / `failed` / `cancelled`，
-  由 `api-service/app/services/test_case_runner.py` 驱动。历史与报告都从这里取数。
+- **执行记录（Test Executions）**: 每次执行产生一行 `TestExecution`，由
+  `api-service/app/services/test_case_runner.py` 驱动。历史与报告都从这里取数。
+  状态取值以 `TestExecution.status` 的列注释为唯一真值源（`api-service/app/models/test_plan.py`）—— 今天是 `pending`（**默认值，建出来就是它**）/ `running` / `completed` / `failed` / `skipped`，另有 VRT 专用的 `idle` / `initializing` / `configured` / `paused` / `stopped`。
+  ⚠️ **别在别处抄这个清单** —— 上一版这里就漏了 `pending`（`api/commissioning.py` 两个活端点建行时用的就是它），而漏枚举正是 ARCH-1 反复踩的坑。
 - 执行正门是 `POST /api/v1/test-plans/cases/{test_case_id}/execute`
   （URL 里的 `test-plans` 前缀是历史包袱，改前缀是契约破坏面大、收益纯美观的 P3）。
 
@@ -284,7 +285,7 @@ GUI 遵循 **API优先架构**，包含以下层次：
 | 关注点 | ✅ 真实生效路径 |
 |--------|----------------|
 | 测试管理 UI | `gui/src/features/TestManagement/` (`<TestManagement/>`) |
-| 测试例 / 序列库 seed | 后端 `api-service/app/services/bootstrap/{test_case_templates,sequences}.py` |
+| 测试例 / 序列库 seed | 后端 `api-service/app/services/bootstrap/test_case_templates.py` |
 | 信道模型 .smu 清单 | 仪器抽屉 `ChannelModelsCard` (只读, 读 `/instruments/{cat}/channel-models`) |
 
 > 旧 mock 时代的 `App.tsx::_TestConfig` + `stepTemplateDefinitions` (lib-* 模板) 死代码已删
@@ -407,7 +408,8 @@ P0-3（重写 F64 load .smu 前置序列）。详见 memory
 
 **已完成功能**:
 - ✅ 前后端完整架构 (React + FastAPI + SQLite)
-- ✅ 测试例管理：创建、编辑、直接执行、执行历史（ARCH-1 起以 TestCase 为根）
+- ✅ 测试例管理：编辑、直接执行、执行历史（ARCH-1 起以 TestCase 为根）
+- ⚠️ **GUI 无新建用例入口** —— `TestCaseLibrary` 的新建按钮由 `onCreateNew` prop 守着，全仓无人传它；用例来自 bootstrap 种子。S4a 显式申报的能力缺口，在 backlog。
 - ⚠️ ~~测试计划管理 / 步骤编排 / 执行队列~~ —— 已随 ARCH-1 S4 整体拆除，不再是功能
 - ✅ 虚拟路测：场景库、ChannelEngine 集成
 - ✅ 报告系统：PDF 生成、模板管理、执行历史

@@ -529,30 +529,8 @@ function getSequenceId(sequence_name: string): UUID {
 }
 ```
 
-**Backend API**:
-```python
-# api-service/app/api/test_plan.py
-
-# ⚠️ 该路由随 ARCH-1 S4b 删除, 这里刻意不印它的字面路径 (会让 G8 门误红)
-@router.post(_DELETED_PLAN_CREATE_ROUTE, response_model=TestPlan, status_code=201)
-async def create_test_plan(plan_data: CreateTestPlanRequest):
-    """Create test plan, optionally linked to a scenario"""
-
-    # Validate scenario_id if provided
-    if plan_data.scenario_id:
-        scenario = get_scenario_by_id(plan_data.scenario_id)
-        if not scenario:
-            raise HTTPException(404, f"Scenario {plan_data.scenario_id} not found")
-
-    # Create test plan
-    plan = TestPlanService.create(plan_data)
-
-    # Create steps
-    for step_data in plan_data.steps:
-        TestStepService.create(plan.id, step_data)
-
-    return plan
-```
+**Backend API**: 当年这里贴的是 `api/test_plan.py` 里那个"建计划并可选挂场景"的端点实现（`TestPlanService.create` + 逐步 `TestStepService.create`）。
+**整段随 ARCH-1 S4b 删除**，这里不再复制那段代码 —— 上面的 banner 已经说明本节作废，贴一段跑不起来的实现只会让人以为它还在。要看当年长什么样，翻 `0ff692e` 之前的 git 历史。
 
 **Database Schema Update**:
 ```sql

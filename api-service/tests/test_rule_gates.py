@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ast
 import re
+import subprocess
 from pathlib import Path
 
 _API_SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -549,11 +550,16 @@ def test_g6_case_routes_survive():
 # 改历史记录不是修文档, 是伪造 —— 一份 2026-05-13 的现场日志写着"跑了测试计划",
 # 那天确实跑了。
 _DOC_ARCHIVE_DIRS = ("docs/archive/", "docs/site-debug/", "docs/design/")
-_DOC_ARCHIVE_FILES = ("docs/roadmap-archive.md", "docs/project-retrospective.md")
+# 以"完成记录"为主体的文件 —— 见 _live_doc_paths() 的 roadmap 说明。
+_DOC_ARCHIVE_FILES = (
+    "docs/roadmap-archive.md",
+    "docs/roadmap-first-call.md",
+    "docs/project-retrospective.md",
+)
 # 文件名里带日期的 = 某天的记录 (onsite-20260721-todo.md / caict-2026-05-13.md …)
 _DOC_DATED_NAME = re.compile(r"\d{4}-?\d{2}-?\d{2}")
 # 厂商手册, 不是我们的文档
-_DOC_FOREIGN_DIRS = ("Instrument_API_Doc/", "node_modules/", "gui/node_modules/")
+_DOC_FOREIGN_DIRS = ("Instrument_API_Doc/",)
 
 
 def _live_doc_paths():
@@ -561,20 +567,52 @@ def _live_doc_paths():
 
     判定全靠路径, 不读内容: 新增文档自动进网, 不需要维护一张 A 类清单
     (手工清单正是 S4 反复漏枚举的那个失败形态)。
+
+    ⚠️ **只认 git 跟踪的文件** (内审 F13): 原先用 ``rglob("*.md")``, 结果把
+    ``api-service/.venv`` / ``channel-engine-service/.venv`` 里 site-packages 的
+    40+ 个 markdown (playwright 的 skill 文档、各 LICENSE.md) 和 ``.pytest_cache``
+    一起扫进了网 —— 门的结论会取决于**本机装了哪些 pip 包**、工作树里有什么草稿,
+    换台机器装个新包就可能红在一个不在版本控制里的文件上。那不是门, 是骰子。
+
+    ⚠️ **``docs/roadmap-first-call.md`` 在网外** (内审 F9): 它虽然是活路线图,
+    但正文主体是 "✅ Done" 完成记录与 ``[discovered YYYY-MM-DD]`` 当日 backlog ——
+    内审把 G8 跑在 main 上, 该文件 5 条命中**真阳性率 0/5**, 全落在历史记录里。
+    这跟已经在网外的 ``docs/roadmap-archive.md`` 是同一种文本, 同事同待遇。
+    (撤销 D-3 禁词门的理由 —— "门红在正确的文字上比漏判更难查" —— 对这里一字不改
+    地成立: 漏判一条 stale path = 读者一次 404; 误红在正确记录上 = 有人去改记录,
+    而那已经发生过 4 次, 其中一次还在代码块里造了个不存在的符号。)
     """
+    proc = subprocess.run(
+        ["git", "ls-files", "-z", "*.md"],
+        cwd=_REPO_ROOT, capture_output=True, text=True, check=True,
+    )
     out = []
-    for path in _REPO_ROOT.rglob("*.md"):
-        rel = path.relative_to(_REPO_ROOT).as_posix()
+    for rel in proc.stdout.split("\0"):
+        if not rel:
+            continue
         if any(rel.startswith(d) for d in _DOC_FOREIGN_DIRS):
             continue
         if any(rel.startswith(d) for d in _DOC_ARCHIVE_DIRS):
             continue
         if rel in _DOC_ARCHIVE_FILES:
             continue
-        if _DOC_DATED_NAME.search(path.name):
+        path = _REPO_ROOT / rel
+        if _DOC_DATED_NAME.search(path.name) or not path.is_file():
             continue
         out.append(path)
     return out
+
+
+def test_g7_g8_doc_net_is_deterministic():
+    """网必须只含 git 跟踪的仓库文档 —— 不含 .venv / 缓存 / 未跟踪草稿。
+
+    内审 F13 的常驻化: 光有下面两道门, 网悄悄扩到 site-packages 也一样绿
+    (只是结论开始取决于本机 pip 状态)。
+    """
+    rels = [p.relative_to(_REPO_ROOT).as_posix() for p in _live_doc_paths()]
+    assert rels, "文档网为空 —— 两道门被架空了"
+    bad = [r for r in rels if ".venv" in r or "node_modules" in r or "cache" in r]
+    assert not bad, f"网里混进了非仓库文档: {bad[:5]}"
 
 
 # ── G7: Tab 标签集合 ────────────────────────────────────────────────────
@@ -587,30 +625,116 @@ def _live_doc_paths():
 # 散文里逐字含这几个标签" —— 这样"改了散文没改 marker"和"改了 marker 没改散文"
 # 两个方向都会红。
 _TAB_MARKER = re.compile(r"<!--\s*gate:tabs=([^>]*?)\s*-->")
-# ⚠️ 属性段不能写成 `[^>]*` —— `leftSection={<IconChecklist size={16} />}` 里**有 `>`**,
-# 那样会在 `/>` 处提前收尾, 把 `}>\n  测试用例库` 整段当成标签 (写这道门时实际踩到)。
-# 用非贪婪 `.*?` + 标签字符类排除 `<>{}`: 第一次尝试停在 IconChecklist 的 `>` 上时,
-# 后面紧跟的 `}` 不在标签字符类里 → 回溯到真正的开标签 `>`。
-_TAB_JSX = re.compile(
-    r"<Tabs\.Tab\b.*?>\s*(?P<label>[^<>{}]+?)\s*</Tabs\.Tab>",
-    re.S,
+# 必须带 marker 的文件 —— 少一个就红 (内审 F2)。CLAUDE.md 是 agent 必读的那份,
+# GUI README 是模块现状说明; 两处都漂回去过的风险最高。
+_TAB_MARKER_REQUIRED_FILES = (
+    "CLAUDE.md",
+    "gui/src/features/TestManagement/README.md",
 )
 _TAB_SOURCE = "gui/src/features/TestManagement/TestManagement.tsx"
+_TAB_OPEN = re.compile(r"<Tabs\.Tab\b")
+
+
+def _parse_tab_entries(src: str):
+    """扫 `<Tabs.Tab>` 开标签, 逐个抽 (value, label)。label=None 表示**抽不出来**。
+
+    ⚠️ **不用单条正则** (内审 F1)。原先写的是
+    ``<Tabs\.Tab\b.*?>\s*(?P<label>[^<>{}]+?)\s*</Tabs\.Tab>`` 配 ``re.S``,
+    内审实跑用三种**常规** JSX 写法把它绕过去了, 每种都让门保持绿:
+
+      | 变异 | 为什么绿 |
+      |---|---|
+      | 标签写 `{t('reports')}` | 标签字符类排除 `{}`, 该 Tab 抽不出来 |
+      | 标签包 `<Text>报告中心</Text>` | 排除 `<>`, 同上 |
+      | 自闭合 `<Tabs.Tab value="x" />` | 没有 `</Tabs.Tab>` 可配对 |
+
+    根因是 ``.*?`` + ``re.S`` **允许跨越 ``</Tabs.Tab>``**: 遇到抽不出的标签就回溯到
+    **下一个** Tab 的开标签, 那个 Tab 于是凭空消失 —— 真值集从 3 变不成 4,
+    ``declared == truth`` 照样成立。这就是"门看起来是不变量档, 其实是某一种写法的
+    存在性门"。
+
+    现在改成: 逐个开标签手扫, 抽不出来就记 ``None`` 让上层**喊出来**, 且开标签总数
+    与抽出条数必须相等 —— 静默漏抽变成显式失败。
+    """
+    entries = []
+    for m in _TAB_OPEN.finditer(src):
+        # 找开标签的收尾 `>` —— 必须跳过 `{...}` 里的 `>`
+        # (`leftSection={<IconChecklist size={16} />}` 里就有一个)
+        depth, i, end = 0, m.end(), None
+        while i < len(src):
+            c = src[i]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+            elif c == ">" and depth == 0:
+                end = i
+                break
+            i += 1
+        if end is None:
+            entries.append((None, None))
+            continue
+        head = src[m.start():end]
+        vm = re.search(r'value="([^"]*)"', head)
+        value = vm.group(1) if vm else None
+        if src[end - 1] == "/":          # 自闭合 → 没有标签文本
+            entries.append((value, None))
+            continue
+        nxt = src.find("<Tabs.Tab", end)
+        close = src.find("</Tabs.Tab>", end)
+        if close == -1 or (nxt != -1 and nxt < close):
+            entries.append((value, None))   # 闭合标签缺失或错配
+            continue
+        body = src[end + 1:close].strip()
+        # 纯文本才算抽到; 含 `<`(嵌套组件) 或 `{`(i18n / 表达式) 一律记 None
+        label = body if body and "<" not in body and "{" not in body else None
+        entries.append((value, label))
+    return entries
 
 
 def _live_tab_labels():
-    """真值: 从 TestManagement.tsx 的 JSX 派生的 Tab 中文标签, **按渲染顺序**。"""
-    src = (_REPO_ROOT / _TAB_SOURCE).read_text(encoding="utf-8")
-    return [m.group("label") for m in _TAB_JSX.finditer(src)]
+    """真值: Tab 的中文标签, **按渲染顺序**。抽不干净就抛 —— 不静默降级。"""
+    src = _strip_ts_comments((_REPO_ROOT / _TAB_SOURCE).read_text(encoding="utf-8"))
+    entries = _parse_tab_entries(src)
+    unresolved = [v for v, lbl in entries if lbl is None]
+    assert not unresolved, (
+        f"{_TAB_SOURCE} 里有 {len(unresolved)} 个 Tab 抽不出纯文本标签"
+        f" (value={unresolved}) —— 可能改成了 i18n / 嵌套组件 / 自闭合。\n"
+        "G7 门无法在这种形态下判定, 请要么让标签保持纯文本, 要么改本判定器"
+        "(不要放任它静默漏抽, 那会让门恒绿 —— 内审 F1)。"
+    )
+    return [lbl for _, lbl in entries]
 
 
-def test_g7_checker_parses_tab_labels():
-    """判定器自身的行为覆盖 —— 光有下面那条集合断言, 正则写错(比如永远返回空)
-    也一样绿 (空集 == 空集)。这条钉住真值抽取本身。
+def test_g7_checker_parses_every_tab():
+    """判定器自身的行为覆盖: **开标签数 == 抽出标签数**, 且顺序稳定。
+
+    内审 F1 的常驻化。原来这条只断言 ``len(labels) >= 2``, 而真实失效形态是
+    "**新增一个** Tab 用了别的写法" —— 那时还剩 3 个标签, `>= 2` 照样过。
+    现在把"抽不出来"钉成硬失败。
     """
-    labels = _live_tab_labels()
-    assert len(labels) >= 2, f"Tab 标签抽取失败, 只拿到 {labels!r} —— 正则跟 JSX 漂了"
-    assert all(lbl.strip() and "<" not in lbl for lbl in labels), labels
+    src = _strip_ts_comments((_REPO_ROOT / _TAB_SOURCE).read_text(encoding="utf-8"))
+    opens = len(_TAB_OPEN.findall(src))
+    labels = _live_tab_labels()      # 抽不干净会在这里就炸
+    assert opens == len(labels), f"开标签 {opens} 个, 抽出标签 {len(labels)} 个"
+    assert opens >= 2, f"只找到 {opens} 个 <Tabs.Tab> —— 判定器跟 JSX 漂了"
+
+
+def test_g7_checker_catches_evasive_jsx():
+    """判定器对三种绕过写法必须**喊出来**, 不许静默漏抽 (内审 F1 实跑的那三种)。"""
+    base = (
+        '<Tabs.Tab value="a" leftSection={<Icon size={16} />}>\n  甲\n</Tabs.Tab>\n'
+        '<Tabs.Tab value="b">\n  乙\n</Tabs.Tab>\n'
+    )
+    assert [lbl for _, lbl in _parse_tab_entries(base)] == ["甲", "乙"]
+    for name, extra in [
+        ("i18n",      '<Tabs.Tab value="c">{t(\'rep\')}</Tabs.Tab>\n'),
+        ("嵌套组件",  '<Tabs.Tab value="c"><Text>报告</Text></Tabs.Tab>\n'),
+        ("自闭合",    '<Tabs.Tab value="c" />\n'),
+    ]:
+        entries = _parse_tab_entries(base + extra)
+        assert len(entries) == 3, (name, entries)
+        assert entries[2][1] is None, f"{name} 应被记为抽不出来, 实得 {entries[2]!r}"
 
 
 def test_g7_docs_declare_actual_tab_labels():
@@ -652,9 +776,14 @@ def test_g7_docs_declare_actual_tab_labels():
             prose = line[: m.start()]
             found.append((rel, lineno, declared, prose))
 
-    assert found, (
-        f"没有任何文档带 <!-- gate:tabs=... --> marker —— 本门被架空了。\n"
-        f"当前真值: {truth}。至少 CLAUDE.md 的「主要 Tab」那行要带上 marker。"
+    # ⚠️ 不能只断言 "found 非空" (内审 F2): 那样单独删掉 CLAUDE.md 那一行门照样绿,
+    # 而 CLAUDE.md 正是原始 bug 的发生地、也是 agent 唯一必读的那份文档 —— 断言②③
+    # 会对它彻底失效, 那行可以自由漂回去。所以锚定到具体文件。
+    carriers = {rel for rel, _, _, _ in found}
+    missing_carriers = [f for f in _TAB_MARKER_REQUIRED_FILES if f not in carriers]
+    assert not missing_carriers, (
+        f"这些文件必须带 <!-- gate:tabs=... --> marker, 现在没带: {missing_carriers}\n"
+        f"当前真值: {truth}。没有 marker 的文件, 本门的另两条断言对它完全失效。"
     )
 
     problems = []
@@ -695,6 +824,10 @@ def _path_shape(path: str):
     return tuple("{}" if s.startswith("{") else s for s in path.split("/"))
 
 
+# 自家地址 —— 这些 host 下的路径是我们的路由, 不享受外链豁免 (内审 F3)。
+_OWN_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.internal"}
+
+
 def _is_absolute_url(line: str, start: int) -> bool:
     """匹配点是不是某个 http(s):// 绝对地址的一部分?
 
@@ -705,7 +838,15 @@ def _is_absolute_url(line: str, start: int) -> bool:
     token_start = start
     while token_start > 0 and line[token_start - 1] not in " \t`([|<\"'":
         token_start -= 1
-    return "://" in line[token_start:start]
+    prefix = line[token_start:start]
+    if "://" not in prefix:
+        return False
+    # ⚠️ 只豁免**外部站点** (内审 F3)。原先"token 里有 `://` 就豁免"太宽:
+    # `curl -X POST http://localhost:8000/api/v1/test-plans/{id}/start` 会被整条放过,
+    # 而仓库里 quickstart.md / implementation-roadmap.md / data-architecture.md 全是
+    # 这个写法 —— 下一份文档照着写就漏判。自家地址一律照查。
+    host = prefix.split("://", 1)[1].split("/")[0].split("@")[-1].split(":")[0].lower()
+    return host not in _OWN_HOSTS
 
 
 def _live_path_shapes():
@@ -723,6 +864,9 @@ def test_g8_checker_normalises_paths():
     assert _is_absolute_url(ext, ext.index("/test-plans", ext.index("://")))
     ours = "调 `/api/v1/test-plans` 建计划"
     assert not _is_absolute_url(ours, ours.index("/api/v1"))
+    # 自家 localhost 不豁免 (内审 F3 实跑抓到的绕过)
+    lh = "curl -X POST http://localhost:8000/api/v1/test-plans/{id}/start"
+    assert not _is_absolute_url(lh, lh.index("/api/v1"))
 
 
 def test_g8_docs_only_cite_live_plan_routes():
