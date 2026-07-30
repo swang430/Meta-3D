@@ -153,7 +153,6 @@ from app.services.bootstrap.chamber_presets import chamber_presets_seeder
 from app.services.bootstrap.instruments import instruments_seeder
 from app.services.bootstrap.probes import probes_seeder
 from app.services.bootstrap.report_templates import report_templates_seeder
-from app.services.bootstrap.sequences import sequences_seeder
 from app.services.bootstrap.test_case_templates import test_case_templates_seeder
 from app.services.bootstrap.topology_profiles import topology_profiles_seeder
 
@@ -161,7 +160,6 @@ ALL_SEEDERS: List[Seeder] = [
     chamber_presets_seeder,
     probes_seeder,
     instruments_seeder,
-    sequences_seeder,
     report_templates_seeder,
     test_case_templates_seeder,
     topology_profiles_seeder,
@@ -274,7 +272,7 @@ def _log_bootstrap_report(
         ✓ chamber_presets        v1   ran                    +4 new / =0 kept
         ○ probes                 v1   skipped (up-to-date)
         ✓ instruments            v2   ran                    +12 new / =0 kept
-        ✗ sequences              v1   failed: ...
+        ✗ report_templates       v1   failed: ...
         ═════════════════════════════════
         6 seeders · +16 new · =0 kept · 1 failed
     """

@@ -3,12 +3,14 @@
 Pins both layers:
 
 - ``app/services/hal_reload_policy.find_reload_blockers``: pure SQL
-  over ``TestPlan``. Returns one ``ReloadBlocker`` per running /
-  paused row. Empty list when nothing's in flight.
+  over ``TestExecution`` —— 占 HAL 的活跃执行行 (任意 ``running`` 行 +
+  硬件 VRT 的 ``paused``, 排除 ``digital_twin``)。空列表 = 无事在飞。
+  ⚠️ ARCH-1 S4c 之前还并上 ``TestPlan ∈ (running, paused)``, 那半截
+  随计划链拆除删掉了 (见 H-b)。
 - ``POST /api/v1/instruments/hal/reload``: thin wrapper around the
   finder + the atomic shutdown/reinit helper.
   - default (``force=false``) returns HTTP 409 with the blocker
-    payload when any TestPlan is running / paused.
+    payload when any execution row is holding the drivers.
   - ``?force=true`` proceeds despite blockers, marks the success
     response ``forced=true`` so audit trails can distinguish.
 - ``reload_hal_service_atomic``: shutdown + reinit under a single
@@ -42,10 +44,8 @@ from app.db.database import Base, get_db
 from app.main import app
 from app.models.test_plan import TestPlan, TestPlanStatus
 from app.services.hal_reload_policy import (
-    BLOCKING_TEST_PLAN_STATUSES,
     ReloadBlocker,
     find_reload_blockers,
-    find_test_plan_blockers,
 )
 
 
@@ -117,83 +117,10 @@ def _make_plan(
 # ============================================================
 
 
-class TestFindTestPlanBlockers:
-    """Pin the per-status filter semantics — these directly drive the
-    refuse decision, so the boundary between "blocks" and "doesn't
-    block" needs explicit pins per status value."""
-
-    def test_no_plans_at_all_returns_empty(self, db):
-        assert find_test_plan_blockers(db) == []
-
-    def test_draft_plan_does_not_block(self, db):
-        _make_plan(db, name="Draft Plan", status=TestPlanStatus.DRAFT.value)
-        assert find_test_plan_blockers(db) == []
-
-    def test_running_plan_blocks(self, db):
-        plan = _make_plan(db, name="Running Plan", status=TestPlanStatus.RUNNING.value)
-        blockers = find_test_plan_blockers(db)
-        assert len(blockers) == 1
-        b = blockers[0]
-        assert b.kind == "test_plan"
-        assert b.id == str(plan.id)
-        assert b.name == "Running Plan"
-        assert b.status == "running"
-        assert "running" in b.detail.lower()
-
-    def test_paused_plan_blocks(self, db):
-        """Paused is included intentionally — a paused test plan still
-        owns driver state (a resume is expected), so HAL teardown
-        between pause + resume corrupts the state silently. Documenting
-        the choice here so a future "make paused not block" PR has to
-        revisit the reasoning."""
-        _make_plan(db, name="Paused Plan", status=TestPlanStatus.PAUSED.value)
-        blockers = find_test_plan_blockers(db)
-        assert len(blockers) == 1
-        assert blockers[0].status == "paused"
-
-    def test_completed_failed_cancelled_do_not_block(self, db):
-        for status in (
-            TestPlanStatus.COMPLETED.value,
-            TestPlanStatus.FAILED.value,
-            TestPlanStatus.CANCELLED.value,
-        ):
-            _make_plan(db, name=f"{status} plan", status=status)
-        assert find_test_plan_blockers(db) == []
-
-    def test_queued_does_not_block(self, db):
-        """Queued = enqueued for execution, not yet acquired drivers.
-        Reload during queue is fine — the runner will pick up the
-        post-reload HAL state when it dequeues."""
-        _make_plan(db, name="Queued Plan", status=TestPlanStatus.QUEUED.value)
-        assert find_test_plan_blockers(db) == []
-
-    def test_multiple_running_plans_each_become_a_blocker(self, db):
-        _make_plan(db, name="Plan A", status=TestPlanStatus.RUNNING.value)
-        _make_plan(db, name="Plan B", status=TestPlanStatus.PAUSED.value)
-        _make_plan(db, name="Plan C", status=TestPlanStatus.RUNNING.value)
-        blockers = find_test_plan_blockers(db)
-        assert len(blockers) == 3
-        names = sorted(b.name for b in blockers)
-        assert names == ["Plan A", "Plan B", "Plan C"]
-
-    def test_blocking_statuses_constant_matches_finder_behaviour(self, db):
-        """Guard rail: ``BLOCKING_TEST_PLAN_STATUSES`` is the
-        documentation source for which statuses block. Pin that adding
-        a new TestPlanStatus value DOESN'T silently start blocking —
-        the constant has to be edited explicitly. Catches a future
-        refactor that uses the enum directly."""
-        assert set(BLOCKING_TEST_PLAN_STATUSES) == {"running", "paused"}
-
-    def test_find_reload_blockers_composes_test_plan_source(self, db):
-        """``find_reload_blockers`` is the public surface used by the
-        endpoint — it should delegate to (and stay equivalent to) the
-        TestPlan finder while only TestPlan is wired in."""
-        _make_plan(db, name="Running Plan", status=TestPlanStatus.RUNNING.value)
-        composite = find_reload_blockers(db)
-        tp_only = find_test_plan_blockers(db)
-        assert [b.kind for b in composite] == [b.kind for b in tp_only]
-        assert [b.id for b in composite] == [b.id for b in tp_only]
-
+# ARCH-1 S4c: TestFindTestPlanBlockers (8 条) 随 find_test_plan_blockers 删除。
+# 那半截防的是"暂停的计划还占着驱动状态等 resume", 而 S4b 拆掉计划 runner 后
+# 没有任何东西在驱动, 保护恒空; 留着反倒让 brownfield 的 paused 计划成为永久
+# 409 blocker (应用内已无端点能清)。判据自此单源: 占 HAL 的活跃 TestExecution。
 
 # ============================================================
 # Layer 2: HTTP endpoint refuse / force behaviour
@@ -205,8 +132,10 @@ class TestReloadEndpointRefuse:
     with a structured blocker payload when blockers exist and
     ``force=true`` was NOT passed."""
 
-    def test_refuses_with_409_and_payload_when_running_plan_present(self, db):
-        _make_plan(db, name="Calibration sweep", status=TestPlanStatus.RUNNING.value)
+    def test_refuses_with_409_and_payload_when_running_execution_present(self, db):
+        # ARCH-1 S4c 换源: 原先造一行 running **计划**当 blocker, 而计划半截已删。
+        # 换成 running **执行行** —— 判据自此单源, 端点行为(409 + 结构化 payload)不变。
+        _make_execution(db, executed_by="test_case_runner", case_name="Calibration sweep")
         # Patch reload helpers so the test stays pure-API (doesn't
         # actually go through HAL shutdown/init on a real DB-less
         # service instance).
@@ -228,13 +157,13 @@ class TestReloadEndpointRefuse:
         assert "?force=true" in payload["reason"]
         assert len(payload["blockers"]) == 1
         b = payload["blockers"][0]
-        assert b["kind"] == "test_plan"
+        assert b["kind"] == "test_execution"
         assert b["name"] == "Calibration sweep"
         assert b["status"] == "running"
         assert payload["force_hint"]  # non-empty UX hint
 
     def test_force_true_proceeds_despite_blockers(self, db):
-        _make_plan(db, name="Sweep", status=TestPlanStatus.RUNNING.value)
+        _make_execution(db, executed_by="test_case_runner", case_name="Sweep")
 
         async def _fake_reload(mode):
             return None
@@ -283,8 +212,10 @@ class TestReloadEndpointRefuse:
         assert body["drivers"] == ["channelEmulator"]
 
     def test_refused_response_lists_multiple_blockers(self, db):
-        _make_plan(db, name="Plan A", status=TestPlanStatus.RUNNING.value)
-        _make_plan(db, name="Plan B", status=TestPlanStatus.PAUSED.value)
+        _make_execution(db, executed_by="test_case_runner", case_name="用例 A")
+        # 硬件 VRT 的 paused 也占驱动 (pause 不释放任何东西) —— 两种形态各一条。
+        _make_execution(db, status="paused", mode="ota",
+                        executed_by="vrt-user", case_name="VRT B")
         with patch(
             "app.services.instrument_hal_service.reload_hal_service_atomic",
             new=AsyncMock(),
@@ -298,9 +229,9 @@ class TestReloadEndpointRefuse:
         kinds = {b["kind"] for b in payload["blockers"]}
         statuses = {b["status"] for b in payload["blockers"]}
         names = {b["name"] for b in payload["blockers"]}
-        assert kinds == {"test_plan"}
+        assert kinds == {"test_execution"}
         assert statuses == {"running", "paused"}
-        assert names == {"Plan A", "Plan B"}
+        assert names == {"用例 A", "VRT B"}
 
 
 # ============================================================
@@ -396,9 +327,13 @@ class TestLifecycleLock:
 # 正式测试是 TestCase 直接执行 (case-runner), 它不写 TestPlan ——
 # 从 S1 上线 (124d7e5) 起, 跑着用例点重载会静默拆掉驱动。
 #
-# 变异自验对应表:
-# - 砍 find_execution_blockers (只留 plan 判据) → H-a/H-c 红 (今天的实况)
-# - 并集改成只查 TestExecution (删 plan 半截) → H-b 红 (paused 保护退化)
+# 变异自验对应表 (⚠️ ARCH-1 S4c 重写 —— 计划半截删除后, 原表两行与实况
+# 相反/已不存在: "砍 find_execution_blockers 只留 plan 判据"物理上做不到了,
+# "删 plan 半截 → H-b 红"正好说反 —— S4c 删的就是它, H-b 现在**绿**):
+# - 把 plan 半截加回去 (find_reload_blockers 再并上计划查询) → H-b 第一段红
+#   (``find_reload_blockers(db) == []`` 不再成立)
+# - 砍 find_execution_blockers → H-a/H-c/H-b 第二段全红 (判据自此单源, 砍了
+#   就什么都拦不住)
 # - 谓词写成 mode IS NULL (排除全部 VRT) → H-g 红 (硬件 VRT 被放过,
 #   这正是 Codex #241 D1 抓到的、我第一版设计稿的错版)
 # - 谓词写成 status != completed → H-d 红 (历史 pending 僵尸行拦死 reload)
@@ -456,14 +391,35 @@ def test_ha_running_case_execution_blocks_reload(db):
     assert "取消" in blockers[0].detail
 
 
-def test_hb_paused_plan_still_blocks_after_resource_switch(db):
-    """H-b: 并集不是替换 —— 计划 PAUSED 时步骤间没有 running 执行行,
-    但驱动状态仍被持有, 保护不许退化。"""
-    _make_plan(db, name="暂停的计划", status=TestPlanStatus.PAUSED.value)
+def test_hb_legacy_plan_rows_no_longer_block(db):
+    """H-b **契约已变** (ARCH-1 S4c) —— 这条从"并集不是替换"翻面成
+    "计划半截已删"。**不是回归, 是有意的**:
 
+    S3 写这条时的理由是"计划 PAUSED 期间步骤间没有 running 执行行, 但驱动
+    状态仍被持有" —— 那个理由的前提是**有东西在驱动**。S4b 拆掉了计划
+    runner, 计划再也不会被执行, 前提消失, 保护恒空。
+
+    留着反而有害: 一行 brownfield 的 paused 计划会成为**永久** 409 blocker
+    (cancel/complete/resume/PATCH 全随 S4b 删了, 应用内无端点能清它),
+    逼操作员用 force=true —— 而 force 会连真在跑的用例执行一起绕过,
+    正是本模块要防的事。
+
+    遗留行由 test_case_runner.reset_orphaned_plan_chain_rows 启动时清成终态
+    (见 test_arch1_case_runner.TestOrphanedPlanChainReset)。
+    """
+    _make_plan(db, name="暂停的遗留计划", status=TestPlanStatus.PAUSED.value)
+    _make_plan(db, name="在跑的遗留计划", status=TestPlanStatus.RUNNING.value)
+
+    assert find_reload_blockers(db) == [], (
+        "计划行不该再拦 HAL 重载 —— S4c 已把闸门的计划半截删掉"
+    )
+
+    # 反向: 判据换成执行行之后, 保护本身没弱
+    _make_execution(db, executed_by="test_case_runner", case_name="真在跑的用例")
     blockers = find_reload_blockers(db)
-    assert len(blockers) == 1
-    assert blockers[0].kind == "test_plan"
+    assert len(blockers) == 1 and blockers[0].kind == "test_execution", (
+        "换源后活跃执行行必须仍然拦得住 —— 否则这次删除削弱了保护"
+    )
 
 
 def test_hc_commissioning_chains_block_reload(db):
@@ -528,7 +484,8 @@ def test_hh_paused_hardware_vrt_blocks(db):
 
     VRTExecutionService.pause() 只做 _transition(PAUSED) —— 什么都不释放,
     resume() 直接回 running。暂停期间 reload 会拆掉它期望 resume 时还在的
-    硬件配置。这跟本模块给 TestPlan PAUSED 写的理由逐字一致。
+    硬件配置。这跟本模块**曾**给 TestPlan PAUSED 写的理由逐字一致 ——
+    那半截 S4c 已删 (计划不再被执行), 但 VRT 这支理由仍成立 (真有东西在驱动)。
 
     内在一致性: 本 PR 已承认 conducted/ota 占真硬件 (据此让 running 的
     它们拦 reload), 就不能说 paused 时不占。

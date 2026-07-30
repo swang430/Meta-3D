@@ -416,10 +416,10 @@ class TestOrphanedPlanChainReset:
             status=TestPlanStatus.RUNNING,
             created_by="test_plan_runner",
         )
-        # ①b **PAUSED 也算** (内审 F1): HAL 闸门的 BLOCKING_TEST_PLAN_STATUSES
-        # 认 (RUNNING, PAUSED) 两态。只清 RUNNING 的话, 一行 brownfield 的
-        # paused 计划就是永久 409 blocker —— S4b 删光了 cancel/complete/
-        # resume/PATCH, 应用内无解。
+        # ①b **PAUSED 也算**。S4b 内审 F1 抓到时的理由是"HAL 闸门认两态",
+        # 而 S4c 已把闸门的计划半截删掉 —— **理由换了, 结论没换**:
+        # 现在两态都清是为了让封存表的数据如实 (一行永远写着 paused 的计划
+        # 是个谎), 且这正是 S4c 敢删闸门计划半截的前提。
         paused_plan = TestPlan(
             name="brownfield 暂停计划",
             test_case_ids=[str(source.id)],
@@ -466,8 +466,8 @@ class TestOrphanedPlanChainReset:
             "而 S4b 之后没有任何端点能把它改回来"
         )
         assert db.query(TestPlan).get(paused_id).status == TestPlanStatus.FAILED, (
-            "①b PAUSED 计划没被复位 —— HAL 闸门认 (RUNNING, PAUSED) 两态, "
-            "复位谓词必须跟闸门同源 (内审 F1)"
+            "①b PAUSED 计划没被复位 —— 封存表里留下一行永远写着 paused 的"
+            "计划是个谎; 且这条复位是 S4c 敢删掉闸门计划半截的前提"
         )
         assert db.query(TestStep).get(step_id).status == "failed", (
             "② running 步骤没被复位 (同① 无端点可自愈)"

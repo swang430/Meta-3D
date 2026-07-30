@@ -2010,8 +2010,15 @@ function EquipmentManager() {
           <Text size="sm">
             将会断开并重新初始化所有仪器驱动，过程通常需要 10 秒以上。
           </Text>
+          {/* 判据的真值源是 hal_reload_policy.find_reload_blockers (端点调的
+              就是这个复合入口, 将来加第二个 blocker 源也加在那儿) — 改判据
+              必须同步改这句。ARCH-1 S4c 拆掉计划那半截后只剩执行行。
+              ⚠️ 别把独立跑的「诊断序列」写进这句: 它跑在请求线程上、不建行,
+              闸门探测不到 (hal_reload_policy 模块 docstring 已明确) */}
           <Text size="sm" c="gray.7">
-            如果当前有测试计划正在运行，后端会拒绝并提示是否强制覆盖。
+            如果有执行正占着驱动 —— 在跑的测试用例 / 暗室首测 / 单相位诊断，或
+            <strong>暂停中的</strong>传导 / OTA 虚拟路测（暂停不释放硬件）——
+            后端会拒绝并提示是否强制覆盖。
           </Text>
         </Stack>
       ),

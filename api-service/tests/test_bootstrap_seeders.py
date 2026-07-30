@@ -29,13 +29,12 @@ from app.models.instrument import (
 )
 from app.models.probe import Probe
 from app.models.report import ReportTemplate
-from app.models.test_plan import TestCase, TestSequence
+from app.models.test_plan import TestCase
 from app.services.bootstrap import run_all
 from app.services.bootstrap.chamber_presets import chamber_presets_seeder
 from app.services.bootstrap.instruments import instruments_seeder
 from app.services.bootstrap.probes import probes_seeder
 from app.services.bootstrap.report_templates import report_templates_seeder
-from app.services.bootstrap.sequences import sequences_seeder
 from app.services.bootstrap.test_case_templates import test_case_templates_seeder
 
 
@@ -152,24 +151,10 @@ class TestInstrumentsSeeder:
 # Sequences seeder
 # ============================================================================
 
-class TestSequencesSeeder:
-
-    def test_seeds_canonical_sequences(self, db_session):
-        run_all(db_session, [sequences_seeder])
-        seqs = db_session.query(TestSequence).filter(
-            TestSequence.created_by == "system"
-        ).all()
-        assert len(seqs) >= 14  # 6 standard + 8 VRT
-        names = {s.name for s in seqs}
-        assert "TRP测量序列" in names
-        assert "Execute Route Test" in names
-
-    def test_idempotent(self, db_session):
-        run_all(db_session, [sequences_seeder])
-        n1 = db_session.query(TestSequence).count()
-        run_all(db_session, [sequences_seeder], force=True)
-        assert db_session.query(TestSequence).count() == n1
-
+# ARCH-1 S4c: TestSequencesSeeder 随 sequences_seeder 删除 ——
+# 它给 TestSequence 表播种, 而 /test-sequences 四条路由 S4b 已删,
+# TestStep.sequence_library_id 那条引用链也随计划链封存, 播出来的行
+# 无人可读。
 
 # ============================================================================
 # Report templates seeder

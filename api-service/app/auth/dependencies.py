@@ -61,6 +61,12 @@ async def get_current_user_optional(
     return get_user_from_token(credentials.credentials)
 
 
+# ⚠️ ARCH-1 S4c (2026-07-29): ``require_auth`` 自此在整个 API 层**零使用点**。
+# 唯一的使用者是 ``POST /test-plans`` (建计划), 随 S4b 计划链拆除而删。
+# 后果: ``AUTH_MODE=required`` 这个配置项**不再保护任何端点** —— 其余端点本来
+# 就没挂鉴权, 不是本片新开的洞, 但本片让这个事实彻底裸露。
+# 显式记在这里而不是悄悄留着: 谁下次配 AUTH_MODE 时该一眼看见它现在是空转的。
+# 真做鉴权是独立立项 (定哪些端点要保护 + 怎么发/验 token)。
 def require_auth():
     """
     Dependency that enforces authentication based on AUTH_MODE.

@@ -23,6 +23,12 @@ export function setupMockServer() {
 
   mock = new MockAdapter(client, { delayResponse: DELAY_MS })
 
+  mock.onGet('/tests/cases').reply(200, mockDatabase.getTestCases())
+  // ⚠️ 上面这条是**用例**端点 (保留集)。S4c 清计划处理器时曾被一个过宽的判据
+  // ("往后 8 行出现 savePlanAsTestCase") 连坐误删 —— 而编译门抓不到, mock
+  // 处理器是运行时注册的。POST /tests/cases 走的是 savePlanAsTestCase
+  // (从计划存为用例), 随计划链删除是对的。
+
   mock.onGet('/dashboard').reply(200, mockDatabase.getDashboard())
 
   mock.onGet('/probes').reply(200, mockDatabase.getProbes())
@@ -164,19 +170,6 @@ export function setupMockServer() {
 
   mock.onGet('/tests/templates').reply(200, mockDatabase.getTestTemplates())
 
-  mock.onGet('/tests/cases').reply(200, mockDatabase.getTestCases())
-
-  mock.onPost('/tests/cases').reply((config) => {
-    try {
-      const payload = JSON.parse(config.data) as CreateTestCaseFromPlanPayload
-      const created = mockDatabase.savePlanAsTestCase(payload)
-      if (!created) return [404, { message: '未找到源计划' }]
-      return [201, created]
-    } catch {
-      return [400, { message: '创建测试例失败' }]
-    }
-  })
-
   mock.onPost('/tests/cases/new').reply((config) => {
     try {
       const payload = JSON.parse(config.data) as CreateTestCasePayload
@@ -195,93 +188,11 @@ export function setupMockServer() {
     return [200, result]
   })
 
-  mock.onGet('/tests/plans').reply(200, mockDatabase.getTestPlans())
-  mock.onPost('/tests/plans/reorder').reply((config) => {
-    try {
-      const payload = JSON.parse(config.data) as { planId: string; direction: 'up' | 'down' | 'top' | 'bottom' }
-      const result = mockDatabase.reorderPlanQueue(payload.planId, payload.direction)
-      return [200, result]
-    } catch {
-      return [400, { message: '排序计划失败' }]
-    }
-  })
 
   mock.onGet(/\/tests\/cases\/[^/]+$/).reply((config) => {
     const caseId = config.url?.split('/').pop() ?? ''
     const result = mockDatabase.getTestCaseDetail(caseId)
     if (!result) return [404, { message: '未找到测试例' }]
-    return [200, result]
-  })
-
-  mock.onGet(/\/tests\/plans\/[^/]+$/).reply((config) => {
-    const planId = config.url?.split('/').pop() ?? ''
-    const result = mockDatabase.getTestPlan(planId)
-    if (!result) return [404, { message: '未找到测试计划' }]
-    return [200, result]
-  })
-
-  mock.onPost('/tests/plans').reply((config) => {
-    try {
-      const payload = JSON.parse(config.data) as CreatePlanPayload
-      const created = mockDatabase.createTestPlan(payload)
-      if (!created) return [404, { message: '未找到测试例' }]
-      return [201, created]
-    } catch {
-      return [400, { message: '创建计划失败' }]
-    }
-  })
-
-  mock.onPut(/\/tests\/plans\/[^/]+$/).reply((config) => {
-    try {
-      const planId = config.url?.split('/').pop() ?? ''
-      const payload = config.data ? (JSON.parse(config.data) as UpdatePlanPayload) : {}
-      const updated = mockDatabase.updateTestPlan(planId, payload)
-      if (!updated) return [404, { message: '未找到测试计划' }]
-      return [200, updated]
-    } catch {
-      return [400, { message: '更新计划失败' }]
-    }
-  })
-
-  mock.onPost(/\/tests\/plans\/[^/]+\/steps\/append$/).reply((config) => {
-    try {
-      const parts = config.url?.split('/') ?? []
-      const planId = parts[3]
-      const { libraryId } = JSON.parse(config.data)
-      const result = mockDatabase.appendPlanStep(planId, libraryId)
-      if (!result) return [404, { message: '未找到计划或步骤模板' }]
-      return [200, result]
-    } catch {
-      return [400, { message: '追加步骤失败' }]
-    }
-  })
-
-  mock.onPost(/\/tests\/plans\/[^/]+\/steps\/reorder$/).reply((config) => {
-    try {
-      const parts = config.url?.split('/') ?? []
-      const planId = parts[3]
-      const { fromId, toId } = JSON.parse(config.data)
-      const result = mockDatabase.reorderPlanStep(planId, fromId, toId)
-      if (!result) return [400, { message: '重排步骤失败' }]
-      return [200, result]
-    } catch {
-      return [400, { message: '重排步骤失败' }]
-    }
-  })
-
-  mock.onDelete(/\/tests\/plans\/[^/]+\/steps\/[^/]+$/).reply((config) => {
-    const parts = config.url?.split('/') ?? []
-    const planId = parts[3]
-    const stepId = parts[5]
-    const result = mockDatabase.removePlanStep(planId, stepId)
-    if (!result) return [404, { message: '未找到测试计划' }]
-    return [200, result]
-  })
-
-  mock.onDelete(/\/tests\/plans\/[^/]+$/).reply((config) => {
-    const planId = config.url?.split('/').pop() ?? ''
-    const result = mockDatabase.deleteTestPlan(planId)
-    if (!result.success) return [404, { message: '未找到测试计划' }]
     return [200, result]
   })
 

@@ -268,7 +268,8 @@ class HalReloadBlocker(BaseModel):
     Mirrors ``app.services.hal_reload_policy.ReloadBlocker`` for the
     wire surface. ``kind`` lets the GUI branch on blocker type when
     additional sources (in-flight diagnostics, calibration sessions)
-    get wired in later — today only ``"test_plan"`` is emitted."""
+    get wired in later — today only ``"test_execution"`` is emitted
+    (ARCH-1 S4c 之前是 ``"test_plan"``, 那半截随计划链拆除删掉了)。"""
     kind: str
     id: str
     name: str
@@ -280,9 +281,12 @@ class HalReloadRefusedResult(BaseModel):
     """Response body for HTTP 409 from POST /instruments/hal/reload
     when ``force=false`` and active blockers exist.
 
-    GUI uses ``blockers`` to render a precise message ("3 test plans
-    are running: …") and offers a "Force reload anyway" button that
-    re-POSTs with ``?force=true``."""
+    GUI uses ``blockers`` to render a precise message ("2 executions
+    are holding the drivers: …") and offers a "Force reload anyway"
+    button that re-POSTs with ``?force=true``.
+
+    ⚠️ ARCH-1 S4c: blockers 是**执行行**不是测试计划 —— 用例执行 / 暗室
+    首测 / 单相位诊断的 running 行, 外加硬件 VRT 的 paused 行。"""
     refused: bool = True
     reason: str
     blockers: List[HalReloadBlocker]
@@ -329,9 +333,13 @@ async def reload_hal_service(
         False,
         description=(
             "Override the refuse-while-in-flight check (P2-5). When "
-            "True, reload proceeds even with running TestPlans — the "
-            "in-flight work will fail with closed-VISA-session errors. "
-            "Default False = safe behaviour."
+            "True, reload proceeds even with **executions actively "
+            "holding the drivers** (用例执行 / 暗室首测 / 单相位诊断的 "
+            "running 行, 以及硬件 VRT 的 paused 行) — that in-flight "
+            "work will fail with closed-VISA-session errors. "
+            "Default False = safe behaviour. "
+            "(ARCH-1 S4c 之前这里写的是 running TestPlans —— 计划链已拆除, "
+            "照那个描述判断会误以为 force 只影响计划, 而实际会打断真在跑的测试。)"
         ),
     ),
     db: Session = Depends(get_db),
@@ -345,11 +353,18 @@ async def reload_hal_service(
     Returns a summary of what's now loaded. The full readiness report
     is also logged to stdout/log file with the formatted table.
 
-    **P2-5 refuse-while-in-flight policy**: when a ``TestPlan`` is in
-    ``running`` or ``paused`` state, the default reload returns HTTP
-    409 with the blocker list instead of tearing down the drivers.
-    Operator can re-POST with ``?force=true`` to override (they take
-    responsibility for the aborted test).
+    **P2-5 refuse-while-in-flight policy**: when a **TestExecution is
+    actively holding the drivers** — any ``running`` row (用例执行 /
+    暗室首测 / 单相位诊断), plus hardware VRT rows that are ``paused``
+    (pause releases nothing) — the default reload returns HTTP 409 with
+    the blocker list instead of tearing down the drivers. Operator can
+    re-POST with ``?force=true`` to override (they take responsibility
+    for the aborted test).
+
+    ⚠️ ARCH-1 S4c: the criterion used to be ``TestPlan ∈ (running,
+    paused)``. 计划链已整个拆除 —— 计划行**永远不会**再产生 409。
+    这份文档进 OpenAPI, 操作员被拦时按它去找"在跑的测试计划"会一无所获,
+    然后直接上 force=true —— 而 force 会把真在跑的用例执行一起绕过。
 
     **P2-5 concurrency**: shutdown + reinit run inside the HAL
     lifecycle lock (``reload_hal_service_atomic``) so two concurrent
