@@ -7,8 +7,12 @@
 > **它们已随 ARCH-1 S4b（#246）删除**，那两条 BUG 也就不存在了。
 >
 > **本文教的方法仍然有效** —— "每个实体都要检查 Create/Update/Response 三个 schema
-> 字段是否齐"这套检查清单，换成活着的实体（`TestCase` / `TestExecution` /
-> `ChamberConfiguration`）照样用。看例子时把 `TestPlan` 换成 `TestCase` 读。
+> 字段是否齐"这套检查清单，换成**确实有这三件套的**活实体照样用：
+> `TestCase`（`TestCaseCreate/Update/Response`）、
+> `ChamberConfiguration`（`ChamberConfigurationCreate/Update/Response`）。
+> ⚠️ **别拿 `TestExecution` 套** —— 它没有 Create/Update/Response 三件套
+> （执行行由 runner 建，不走用户提交的 create/update 请求）。
+> 看例子时把 `TestPlan` 换成 `TestCase` 读。
 
 ---
 

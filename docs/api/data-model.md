@@ -20,10 +20,15 @@
 >
 > 更别**照着给新功能建模到这条链上**，也不要新增指向它们的外键。
 >
-> **本文教的三层架构（DB 模型 / DTO / API Schema）本身仍然是我们的做法** ——
-> 要找活着的范例，看 `app/models/chamber.py` + `app/schemas/chamber.py`，
-> 或者正式测试的真值源 `TestCase` / `TestExecution`
-> （同在 `app/models/test_plan.py`，那两个类**没有**封存 banner，其余五个有）。
+> ⚠️ **本文教的是三层（DB 模型 / DTO / API Schema），但仓库今天只做两层。**
+> `api-service/app/dto/` **目录不存在**，没有任何 DTO 层；活着的写法是
+> **ORM 模型 → Pydantic request/response schema 直连**（`app/api/chamber.py`
+> 直接操作 `ChamberConfiguration` 行，配 `app/schemas/chamber.py` 的 schema）。
+> **照本文引入 DTO 层 = 引入一套本仓库不实践的架构。**
+> 要找活着的范例看 `app/models/chamber.py` + `app/schemas/chamber.py`；
+> 正式测试的真值源是 `TestCase` / `TestExecution`（同在 `app/models/test_plan.py`，
+> 那两个类**没有**封存 banner，其余五个有）。
+> 三层要不要做是**未决问题**，不是现状。
 >
 > 没有就地把示例换成活模型，是因为那要重写全文 500+ 行，超出「封存与文档」这一片的
 > 范围；这段 banner 解决的是"读者照它建模到封存链上"这个实际危害。

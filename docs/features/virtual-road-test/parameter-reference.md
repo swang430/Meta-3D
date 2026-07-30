@@ -8,7 +8,8 @@ All configurable parameters at a glance.
 >
 > 场景参数今天落到哪里：虚拟路测走 `TestExecution` + `mode`
 > （`digital_twin` / `conducted` / `ota`），不再生成计划。
-> 其余各节（场景 / 路由 / 环境 / KPI 参数）**不受影响，仍然准确**。
+> 其余各节（场景 / 路由 / 环境 / KPI 参数）**本次未逐节复核** —— ARCH-1 S5 只处理了
+> 场景→计划桥那部分，没有断言它们准确，也没有发现它们不准。
 
 ---
 
