@@ -75,7 +75,7 @@ ARCH-1 S4a 从已删的 StepsTab 搬过来的）。
 
 ### TestExecution —— 每次执行一行
 
-状态取值以 `TestExecution.status` 的列注释为唯一真值源（`api-service/app/models/test_plan.py`）—— 今天是 `pending`（**默认值，建出来就是它**）/ `running` / `completed` / `failed` / `skipped`，另有 VRT 专用的 `idle` / `initializing` / `configured` / `paused` / `stopped`。
+状态取值以 `TestExecution.status` 的列注释为唯一真值源（`api-service/app/models/test_plan.py`）—— 今天是 `pending`（**默认值，建出来就是它**）/ `running` / `completed` / `failed` / `cancelled` / `skipped`，另有 VRT 专用的 `idle` / `initializing` / `configured` / `paused` / `stopped`。
 **别在别处抄** —— 抄一份就会漂（上一版这里漏了 `pending`）。
 历史 Tab 和报告都从这张表取数。
 执行正门：`POST /api/v1/test-plans/cases/{test_case_id}/execute`

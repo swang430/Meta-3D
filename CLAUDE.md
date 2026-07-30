@@ -212,7 +212,7 @@ GUI 遵循 **API优先架构**，包含以下层次：
   `configuration`（仪表参数、信道资产、相位描述符），可保存、复用、直接执行。
 - **执行记录（Test Executions）**: 每次执行产生一行 `TestExecution`，由
   `api-service/app/services/test_case_runner.py` 驱动。历史与报告都从这里取数。
-  状态取值以 `TestExecution.status` 的列注释为唯一真值源（`api-service/app/models/test_plan.py`）—— 今天是 `pending`（**默认值，建出来就是它**）/ `running` / `completed` / `failed` / `skipped`，另有 VRT 专用的 `idle` / `initializing` / `configured` / `paused` / `stopped`。
+  状态取值以 `TestExecution.status` 的列注释为唯一真值源（`api-service/app/models/test_plan.py`）—— 今天是 `pending`（**默认值，建出来就是它**）/ `running` / `completed` / `failed` / `cancelled` / `skipped`，另有 VRT 专用的 `idle` / `initializing` / `configured` / `paused` / `stopped`。
   ⚠️ **别在别处抄这个清单** —— 上一版这里就漏了 `pending`（`api/commissioning.py` 两个活端点建行时用的就是它），而漏枚举正是 ARCH-1 反复踩的坑。
 - 执行正门是 `POST /api/v1/test-plans/cases/{test_case_id}/execute`
   （URL 里的 `test-plans` 前缀是历史包袱，改前缀是契约破坏面大、收益纯美观的 P3）。
