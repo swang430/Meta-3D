@@ -93,9 +93,12 @@ TestCase（自带 `configuration`，单一真值源）→ TestExecution（每次
 > ⚠️ **S3 只完成了 S3a 这一半**：另两半分别是 dashboard 统计换源（随 S4b 做掉）与
 > 用例级 preflight（**随计划链删除并转独立立项**，见本文 P1-1 条目下的 ARCH-1 注）。
 >
-> ⚠️ **S6 有前置缺口**：验收第一步「建用例」**今天的 GUI 做不到** —— `TestCaseLibrary`
-> 的新建按钮由 `onCreateNew` prop 守着，全仓无人传（随 S4a 删 StepsTab 一并带走），
-> 用例只能来自 bootstrap 种子。S6 开工前先决定：补入口，还是把验收改成"改现有用例"。
+> ⚠️ **S6 有前置缺口（范围要说准）**：GUI **能**建 TestCase 行 —— 虚拟路测 Tab 的
+> `ScenarioLibrary`「创建场景」→ `POST /road-test/scenarios`，其 docstring 原话就是
+> "persisted as a VRT TestCase row"。**缺的是"可直接执行的 MIMO_OTA 用例"那条**：
+> `TestCaseLibrary` 的新建按钮由 `onCreateNew` prop 守着、全仓无人传（入口原挂 StepsTab，
+> 随 S4a 一并删除），所以直接执行路径上的用例只能来自 bootstrap 种子。
+> S6 开工前先决定：补入口，还是把验收改成"改现有 MIMO_OTA 用例"。
 
 设计与拆除推理：[`design/arch-1-testcase-first-simplification.md`](design/arch-1-testcase-first-simplification.md)（总纲）/
 [`design/arch-1-s2-execution-history-resource.md`](design/arch-1-s2-execution-history-resource.md) /
@@ -114,9 +117,15 @@ TestCase（自带 `configuration`，单一真值源）→ TestExecution（每次
 「多个 TestCase 排队执行」重新设计，**不要复活 `TestQueue` 表**。
 
 > **WIP=1 说明**：ARCH-1 是 2026-07-21 现场后用户拍板的架构简化，跑在 P0 现场 blocked
-> 期间（同 P2-14/P2-15/P2-16 的逻辑）。**P0 现状以本文「Status 一览」与「Blocked on
-> hardware」两处为准：P0-3 / P0-4 已 2026-07-03 现场完成，只剩 P0-5 blocked** ——
-> 下次现场 Current Focus 切回 **P0-5**（或任一已解锁的 P0）。
+> 期间（同 P2-14/P2-15/P2-16 的逻辑）。
+>
+> ⚠️ **P0 现状别在这儿抄一份** —— 唯一真值源是本文「Status 一览」（`:122` 的
+> `ON-SITE-BLOCKED` 行）与「🚧 Blocked on hardware」段。本条目只说两件确定的事：
+> ① P0-3 / P0-4 **已 2026-07-03 现场完成**（`:142-143`）；
+> ② 下次现场的**主线**是 P0-5（DUT attach → bearer → PDSCH）。
+> **"只剩 P0-5"是错的** —— `ON-SITE-BLOCKED` 行里还有 **P0-8 的现场半**
+> （real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真，`:490` 附近），
+> 它跟 attach 是同一段窗口的活，排现场计划时必须一起算。
 > ⚠️ 本文上方 2026-06-21 那段写的"切回依赖链 P0-4 → P0-3 → P0-5"**写于 P0-3/4 完成之前，
 > 已 stale**，别照它安排现场（清理它属 07-03 现场记录的收口，不在本条目范围）。
 
@@ -1922,7 +1931,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 > Items added mid-task. Reviewed weekly; promoted to P1/P2/P3 or dropped.
 
-- `[discovered 2026-07-29 during ARCH-1 S4a]` **GUI 没有「新建测试用例」入口** —— `TestCaseLibrary` 的新建按钮由 `onCreateNew` prop 守着，**全仓无人传**（`TestManagement.tsx` 只传 `enableExecute`）；入口原本挂在 StepsTab 上，随 S4a 一并删除。现状：用例只能来自 bootstrap 种子，**可改可执行不可新建**。S4a 已显式申报为能力缺口。⚠️ **这是 ARCH-1 S6（浏览器闭环总验）的前置** —— S6 验收第一步就是「建用例」，开工前先决定：补入口（GUI 新功能，需设计稿），还是把 S6 验收改成「改现有用例」。
+- `[discovered 2026-07-29 during ARCH-1 S4a]` **GUI 没有「新建测试用例」入口** —— `TestCaseLibrary` 的新建按钮由 `onCreateNew` prop 守着，**全仓无人传**（`TestManagement.tsx` 只传 `enableExecute`）；入口原本挂在 StepsTab 上，随 S4a 一并删除。现状：**直接执行路径上的** MIMO_OTA 用例只能来自 bootstrap 种子，可改可执行不可新建。（GUI 并非完全建不了 TestCase —— 虚拟路测的「创建场景」会落一行 VRT 型 TestCase，但那条不走 S6 要验的直接执行路径。）S4a 已显式申报为能力缺口。⚠️ **这是 ARCH-1 S6（浏览器闭环总验）的前置** —— S6 验收第一步就是「建用例」，开工前先决定：补入口（GUI 新功能，需设计稿），还是把 S6 验收改成「改现有用例」。
 - `[discovered 2026-07-20 during 出发前门审 F5]` **UXM 幂等捷径生效后剩余写全在小区 ON 态执行 — ON 态同值写 band/duplex 是否触发 UXM 内部重配 (掉 DUT) 真机零实证**。ARFCN/功率有回读对账兜底; band/duplex ON 态被拒 (-221 类) 只进错误队列无对账项即静默。现场若"BW 已同仍重启"按 onsite-plan-20260721 风险⑧②排查; 正修方向 = band/duplex 也纳入幂等预读 (值同跳写) 或对账。TDD 主线 (n78) 幂等已限定 (F3 保守化: 仅 TDD + readback 能力位开才走捷径)。
 - `[discovered 2026-07-20 during 三开关门审 #216]` **开关1 inherit 的"知情继承"只核对频率, 层数盲区**: 小区级层数继承仪器态但 RRC recon 仍按 TestCase 推层, CSI-RS 端口按 TestCase 层数算 — 三方可各不相同; Phase 6 读 UE 能力抓不到 cell 生效层数低于请求。正修方向 = read_live_frequency_identity 扩展读层数 (注意 #114 教训: 配置旋钮回读是 echo, 要找真生效读法) 或 inherit 下强制核对面板。当前缓解 = inherit 日志显式披露"层数未核对"。
 - `[discovered 2026-07-20 during 三开关门审 #216]` **configure_mac_throughput_test 返回值无人消费**: measure 调它不查布尔契约, ON 态写 TDD pattern 被拒 (-221 类) 即静默带旧配置测。正修 = 消费返回值 fail-loud (同 set_cell_config 处理, Codex #195 R5 母题)。
