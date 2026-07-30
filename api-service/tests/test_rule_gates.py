@@ -825,7 +825,7 @@ def _path_shape(path: str):
 
 
 # 自家地址 —— 这些 host 下的路径是我们的路由, 不享受外链豁免 (内审 F3)。
-_OWN_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.internal"}
+_OWN_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "::", "host.docker.internal"}
 
 
 def _is_absolute_url(line: str, start: int) -> bool:
@@ -845,12 +845,38 @@ def _is_absolute_url(line: str, start: int) -> bool:
     # `curl -X POST http://localhost:8000/api/v1/test-plans/{id}/start` 会被整条放过,
     # 而仓库里 quickstart.md / implementation-roadmap.md / data-architecture.md 全是
     # 这个写法 —— 下一份文档照着写就漏判。自家地址一律照查。
-    host = prefix.split("://", 1)[1].split("/")[0].split("@")[-1].split(":")[0].lower()
-    return host not in _OWN_HOSTS
+    authority = prefix.split("://", 1)[1].split("/")[0].split("@")[-1]
+    # IPv6 字面量是 `[::1]:8000` —— 直接按 `:` 切会得到 `[` (Codex #248 C3)。
+    if authority.startswith("["):
+        host = authority[1:].split("]")[0]
+    else:
+        host = authority.split(":")[0]
+    return host.lower() not in _OWN_HOSTS
+
+
+# 文档里路径前面那个动词 —— `POST /api/v1/test-plans/cases/{id}/execute` 里的 POST。
+# 允许中间夹反引号 / 空白: "**POST** `/api/v1/...`" 也认。
+_DOC_VERB = re.compile(r"\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b[\s`*]*$")
 
 
 def _live_path_shapes():
     return {_path_shape(p.replace("/api/v1", "", 1)) for _, p in _live_route_table()}
+
+
+def _live_method_shapes():
+    """(method, shape) 集合 —— 与 G6 同构 (Codex #248 C2)。
+
+    只比路径会放过"对路径错动词": 文档把执行正门写成
+    ``GET /api/v1/test-plans/cases/{id}/execute`` 时路径形状仍命中, 门绿,
+    而照它调的人拿到 **405** —— 跟 404 一样是死引用, 只是死法不同。
+    """
+    return {(m, _path_shape(p.replace("/api/v1", "", 1))) for m, p in _live_route_table()}
+
+
+def _doc_verb_before(line: str, start: int):
+    """路径前面紧挨着的 HTTP 动词; 没有就返回 None (那时只比路径)。"""
+    m = _DOC_VERB.search(line[:start])
+    return m.group(1) if m else None
 
 
 def test_g8_checker_normalises_paths():
@@ -867,6 +893,17 @@ def test_g8_checker_normalises_paths():
     # 自家 localhost 不豁免 (内审 F3 实跑抓到的绕过)
     lh = "curl -X POST http://localhost:8000/api/v1/test-plans/{id}/start"
     assert not _is_absolute_url(lh, lh.index("/api/v1"))
+    # IPv6 方括号 loopback 同样不豁免 (Codex #248 C3)
+    v6 = "curl http://[::1]:8000/api/v1/test-plans/{id}/start"
+    assert not _is_absolute_url(v6, v6.index("/api/v1"))
+    # 动词抽取 (Codex #248 C2)
+    for line, want in [
+        ("执行走 `POST /api/v1/test-plans/cases/{id}/execute`", "POST"),
+        ("**DELETE** `/test-plans/queue/{id}`", "DELETE"),
+        ("见 /test-plans/cases 列表", None),
+    ]:
+        i = line.index("/test-plans") if "/api/v1" not in line else line.index("/api/v1")
+        assert _doc_verb_before(line, i) == want, (line, _doc_verb_before(line, i))
 
 
 def test_g8_docs_only_cite_live_plan_routes():
@@ -885,6 +922,7 @@ def test_g8_docs_only_cite_live_plan_routes():
         (防误杀, 由 test_g8_checker_normalises_paths + 本门在真库上的绿共同覆盖)
     """
     live = _live_path_shapes()
+    live_methods = _live_method_shapes()
     dead = []
     for path in _live_doc_paths():
         rel = path.relative_to(_REPO_ROOT).as_posix()
@@ -895,8 +933,18 @@ def test_g8_docs_only_cite_live_plan_routes():
                 if _is_absolute_url(line, m.start()):
                     continue  # 外部站点的 URL, 不是我们的路由
                 cited = m.group(1)
-                if _path_shape(cited) not in live:
+                shape = _path_shape(cited)
+                if shape not in live:
                     dead.append(f"  {rel}:{lineno} → {cited}")
+                    continue
+                # 路径在, 再看动词 —— 写错动词是 405, 跟 404 一样是死引用
+                verb = _doc_verb_before(line, m.start())
+                if verb and (verb, shape) not in live_methods:
+                    allowed = sorted(v for v, sh in live_methods if sh == shape)
+                    dead.append(
+                        f"  {rel}:{lineno} → {verb} {cited} (路径在, 但该动词不存在;"
+                        f" 实际支持 {allowed} —— 照文档调会拿 405)"
+                    )
     assert not dead, (
         "现状文档引用了**不存在**的计划链路由 (ARCH-1 S4 已拆除, 或从未实现):\n"
         + "\n".join(sorted(set(dead)))
