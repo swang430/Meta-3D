@@ -75,6 +75,32 @@ PASS（含拨挡）。**"正常测试流程蜕变"的传动轴落地** — 明�
 CENT/INP:LEV:AMP 回读盲区系手册源错配）。遗留知情项: P1-8 校准 provenance 未修（mock cert
 real 模式假过,吞吐 smoke 不信绝对值可接受）。
 
+**▶ 2026-07-26 ~ 07-30 ARCH-1 测试管理拆平（S1–S5 ✅ 完成，S6 待做）** —— 2026-07-21 现场
+拍板的「砍掉计划 + 队列，只留 TestCase」落地。**正式测试的层级从四层拍成两层**：
+TestCase（自带 `configuration`，单一真值源）→ TestExecution（每次执行一行）。
+共 **7 个 PR、删约 16000 行**：
+
+| 片 | PR / commit | 内容 |
+|---|---|---|
+| **S1** ✅ | #237 `124d7e5` | 用例直接执行正门 — case-runner + 双向单飞 + 协作取消 + GUI 按钮 |
+| **S2** ✅ | #238 `3f66474` / 迟到回查 #239 `31bf648` | 执行历史与报告换源到 `test_executions` 本表 |
+| **S3a** ✅ | #242 `c4502dd` | HAL reload 闸门换源 —— 堵上 S1 以来的生产空窗（判据只查 TestPlan，跑着用例点重载会静默拆驱动） |
+| **S4** ✅ | 设计 #243 `a5543a4` / #245 `e55fa28`；**S4a** #244 `211bec3`、**S4b** #246 `0ff692e`、**S4c** #247 `754e7a9` | 拆除计划链：36 路由 / 6 Service / 计划 runner / 两个 GUI Tab / mock 层 |
+| **S5** ✅ | #248 `f6bec91` | 封存与文档：G7/G8 两道会红的门 + 4 篇归档 + 27 文件换源 + 两处真值源修正 |
+| **S6** ⬜ | 待做 | 浏览器闭环总验：建用例 → 配参数 → 执行 → 看历史 → 出报告 |
+
+**五张表原地封存**（`TestPlan` / `TestStep` / `TestQueue` / `TestPlanExecution` /
+`TestSequence`）—— 只读历史、无业务写入方，各带封存 banner。**新代码不要引用它们。**
+
+⬜ **批量执行 = 后续增量，目前零实现**（S1 设计稿 §4 明确划走）。原计划链的"执行队列"
+随 S4b 删除，队列重排（原 Master-Progress-Tracker 的待实现项）随之作废。要做批量时按
+「多个 TestCase 排队执行」重新设计，不要复活 `TestQueue` 表。
+
+> ⚠️ **WIP=1 说明**：ARCH-1 是 2026-07-21 现场后用户拍板的架构简化，跑在 P0 现场
+> blocked 期间（同 P2-14/P2-15/P2-16 的逻辑）。真 P0（P0-3/4/5）仍现场 blocked，
+> 下次现场 Current Focus 按下方规则切回 P0-4 → P0-3 → P0-5。
+
+
 P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max / RT→MPC 接入)
 已进 on-site 队列。**原开发的现场验证基线已打 tag** `onsite-verification-baseline-2026-06-21`（留在 main）。
 **下次现场** (校准天线 / SGH / 真 DUT 到位) Current Focus **必须从该 tag 切回依赖链 P0-4 → P0-3 → P0-5**
