@@ -15,6 +15,8 @@
 - 砍 _active_conflict (单飞) → test_second_launch_busy 红
 - 砍谓词收窄 (复位全部 running) → test_stale_reset_scoped 红
 - 砍 cancel 的 executed_by 收窄 (agent F2) → test_cancel_other_chains_rows_rejected 红
+- 建例 payload 的 is_template 改 false → test_gui_create_visible_and_executable
+  的可见性断言红 (堵"建完即隐形"的洞, GUI 新建入口设计稿 D-1)
 """
 from __future__ import annotations
 
@@ -556,6 +558,53 @@ class TestEndpoints:
             .count()
         )
         assert leftovers == 0
+
+    @pytest.mark.asyncio
+    async def test_gui_create_visible_and_executable(self, db, lab):
+        """D-1 行为门 (GUI 新建入口, docs/design/gui-create-test-case-entry.md §4):
+        建 → 库里可见 → 能执行, 三腿都打在真实生效端。
+
+        - 建/可见两腿走 HTTP, payload 与查询形状 = GUI 的真实调用
+          (TestCaseCreateModal 的 payload / TestCaseLibrary 的
+          listTestCases(0,500,type,true) → GET /cases?is_template=true)。
+        - 可见腿堵设计稿 §0.3 的洞: 后端 is_template 默认 false + 库只看
+          is_template=true → 照默认建出来的用例"建完即隐形"。
+          变异: payload 的 is_template 改 false → 本腿必须红。
+        - 执行腿走 runner 直调 (与端点同一入口 launch_test_case_execution;
+          202 会把后台 task 挂在 TestClient 自己的 loop 上, 跨 loop 无法
+          await — 端点对 CaseNotExecutable→422 的映射已由本类 422 用例锁定):
+          空 configuration 必须能构出可执行配置并跑完 5 相位。
+        """
+        client = TestClient(app)
+        payload = {
+            "name": "GUI-新建-冒烟",
+            "test_type": "MIMO_OTA",
+            "configuration": {},
+            "is_template": True,
+            "template_category": "我的用例",
+            "created_by": "gui",
+        }
+        r = client.post("/api/v1/test-plans/cases", json=payload)
+        assert r.status_code == 201
+        created = r.json()
+        case_id = created["id"]
+        # payload 语义落库 (分组 / 来源标记; is_template 不在这里断 —
+        # 它由下面更强的"库里可见"腿覆盖, 回读断言先红会让变异死错地方)
+        assert created["template_category"] == "我的用例"
+        assert created["created_by"] == "gui"
+
+        # 库的真实查询形状: 新行必须在默认视图里
+        r2 = client.get("/api/v1/test-plans/cases?skip=0&limit=500&is_template=true")
+        assert r2.status_code == 200
+        listed_ids = [it["id"] for it in r2.json()["items"]]
+        assert case_id in listed_ids, "建完即隐形 — is_template 语义被破坏 (§0.3)"
+
+        # 空配置能执行: 工厂从全默认构出配置, 5 相位跑完
+        with patch.object(tcr, "dispatch_step",
+                          new=AsyncMock(return_value=_ok())) as mocked:
+            ex = await _launch_and_wait(db, uuid.UUID(case_id))
+        assert ex.status == "completed"
+        assert mocked.await_count == 5
 
     def test_cancel_endpoint_contract(self, db, lab):
         source = _make_case(db, lab, name="cancel端点")
