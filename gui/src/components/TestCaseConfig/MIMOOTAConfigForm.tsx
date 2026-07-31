@@ -371,17 +371,20 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
               disabled={readOnly}
               allowDeselect={false}
             />
+            {/* P2-11 一致性按 ARFCN 整数比对 (nr_arfcn.py), 输入粒度必须细过 NR 栅格
+                (5/15/60 kHz): MHz 3 位小数 = 1 kHz, 全档覆盖 (此前 GHz 3 位 = 1 MHz,
+                3549.99 写不进, 门永挂)。Math.round 消 ×1e6 浮点尘埃 (栅格频率是整 Hz)。 */}
             <NumberInput
-              label="中心频率 (GHz)"
-              description="后端存储为 frequency_hz"
-              value={value.frequency_hz != null ? value.frequency_hz / 1e9 : undefined}
+              label="中心频率 (MHz)"
+              description="后端存储为 frequency_hz; MHz 口径跟 ARFCN/资产/报错文案一致 (例 3549.99)"
+              value={value.frequency_hz != null ? value.frequency_hz / 1e6 : undefined}
               onChange={(v) =>
-                update('frequency_hz', typeof v === 'number' ? v * 1e9 : undefined)
+                update('frequency_hz', typeof v === 'number' ? Math.round(v * 1e6) : undefined)
               }
               decimalScale={3}
-              step={0.1}
-              min={0.4}
-              max={71}
+              step={1}
+              min={400}
+              max={71000}
               disabled={readOnly}
             />
             <NumberInput
