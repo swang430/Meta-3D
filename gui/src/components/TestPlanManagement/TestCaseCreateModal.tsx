@@ -160,6 +160,7 @@ export function TestCaseCreateModal({
           required
           value={name}
           onChange={(e) => setName(e.target.value)}
+          maxLength={255}
           data-autofocus
         />
         <Select
