@@ -95,6 +95,13 @@ export function TestCaseCreateModal({
           configuration = cfg
         }
       }
+      // lab_profile_id 不传 (Codex #250 P1 核实后判「不改」, 依据):
+      // ① create/update 契约本就没有该字段, GUI 想传也传不了;
+      // ② 不绑 = bootstrap 种子模板的明文设计 (deployment-agnostic,
+      //    执行时由 resolve_lab_profile 解析当前 active lab);
+      // ③ 多 active lab 部署下执行会 422 结构化 fail-loud, 不是静默错配 —
+      //    该形态今天不存在, 正修(契约加可选字段+GUI 绑定口)已记 roadmap
+      //    Discovered 2026-07-31 条, 多 lab 真出现时再做。
       const created = await createTestCase({
         name: trimmed,
         test_type: 'MIMO_OTA',
