@@ -75,6 +75,64 @@ PASS（含拨挡）。**"正常测试流程蜕变"的传动轴落地** — 明�
 CENT/INP:LEV:AMP 回读盲区系手册源错配）。遗留知情项: P1-8 校准 provenance 未修（mock cert
 real 模式假过,吞吐 smoke 不信绝对值可接受）。
 
+**▶ 2026-07-27 ~ 07-30 ARCH-1 测试管理拆平（S1–S5 ✅ 完成，S6 待做）** —— 2026-07-21 现场
+拍板的「砍掉计划 + 队列，只留 TestCase」落地。**正式测试的层级从四层拍成两层**：
+TestCase（自带 `configuration`，单一真值源）→ TestExecution（每次执行一行）。
+**11 个 PR merged**（7 个切片 + 2 篇设计稿 + 2 条迟到修复），
+**净删约 1.1 万行**（`git diff --shortstat 124d7e5^ f6bec91` = 123 files / +7113 / −18155）：
+
+| 片 | PR / commit | 内容 |
+|---|---|---|
+| **S1** ✅ | #237 `124d7e5` | 用例直接执行正门 — case-runner + 双向单飞 + 协作取消 + GUI 按钮 |
+| **S2** ✅ | #238 `3f66474`；迟到修复 #239 `31bf648`、#240 `806b2b9` | 执行历史与报告换源到 `test_executions` 本表 |
+| **S3a** ✅ | #242 `c4502dd` | HAL reload 闸门换源 —— 堵上 S1 以来的生产空窗（判据只查 TestPlan，跑着用例点重载会静默拆驱动） |
+| **S4** ✅ | 设计 #243 `a5543a4`、#245 `e55fa28`；**S4a** #244 `211bec3`、**S4b** #246 `0ff692e`、**S4c** #247 `754e7a9` | 拆除计划链：36 路由 / 6 Service / 计划 runner / **三个 GUI Tab**（Plans / Steps / Queue，6 Tab → 3 Tab）/ mock 层 |
+| **S5** ✅ | #248 `f6bec91` | 封存与文档：G7/G8 两道会红的门 + 4 篇归档 + 27 文件换源 + 两处真值源修正 |
+| **S6** ⬜ | 待做 | 浏览器闭环总验：建用例 → 配参数 → 执行 → 看历史 → 出报告 |
+
+> ⚠️ **S3 只完成了 S3a 这一半**：另两半分别是 dashboard 统计换源（随 S4b 做掉）与
+> 用例级 preflight（**随计划链删除并转独立立项**，见本文 P1-1 条目下的 ARCH-1 注）。
+>
+> ⚠️ **S6 有前置缺口（范围要说准）**：GUI **能**建 TestCase 行 —— 虚拟路测 Tab 的
+> `ScenarioLibrary`「创建场景」→ `POST /road-test/scenarios`，其 docstring 原话就是
+> "persisted as a VRT TestCase row"。**缺的是"可直接执行的 MIMO_OTA 用例"那条**：
+> `TestCaseLibrary` 的新建按钮由 `onCreateNew` prop 守着、全仓无人传（入口原挂 StepsTab，
+> 随 S4a 一并删除），所以直接执行路径上的用例只能来自 bootstrap 种子。
+> S6 开工前先决定：补入口，还是把验收改成"改现有 MIMO_OTA 用例"。
+
+设计与拆除推理：[`design/arch-1-testcase-first-simplification.md`](design/arch-1-testcase-first-simplification.md)（总纲）/
+[`design/arch-1-s2-execution-history-resource.md`](design/arch-1-s2-execution-history-resource.md) /
+[`design/arch-1-s4-demolition.md`](design/arch-1-s4-demolition.md) /
+[`design/arch-1-s4b-backend-demolition.md`](design/arch-1-s4b-backend-demolition.md) /
+[`design/arch-1-s5-archival-and-docs.md`](design/arch-1-s5-archival-and-docs.md)。
+归档的旧文档在 [`archive/`](archive/)（计划链架构 / TestPlan 状态机 / QueueTab 同步 / 场景→计划步骤继承）。
+
+**五张表原地封存**（`TestPlan` / `TestStep` / `TestQueue` / `TestPlanExecution` /
+`TestSequence`）—— **无业务写入方**（`TestPlan` / `TestStep` 仅启动时被
+`reset_orphaned_plan_chain_rows` 复位成终态，其余三张无任何写入方），各带封存 banner。
+**新代码不要引用它们。**
+
+⬜ **批量执行 = 后续增量，目前零实现**（总纲 §4 明确划走）。原计划链的"执行队列"随 S4b
+删除，队列重排（`Master-Progress-Tracker.md` 的待实现项）随之作废。要做批量时按
+「多个 TestCase 排队执行」重新设计，**不要复活 `TestQueue` 表**。
+
+> **WIP=1 说明**：ARCH-1 是 2026-07-21 现场后用户拍板的架构简化，跑在 P0 现场 blocked
+> 期间（同 P2-14/P2-15/P2-16 的逻辑）。
+>
+> ⚠️ **P0 现状别在这儿抄一份** —— 唯一真值源是本文这两处（**按标题找，别记行号**）：
+> 「📋 可规划工作 audit」分桶表的 **`ON-SITE-BLOCKED` 行**，以及
+> 「🚧 Blocked on hardware (P0 queue for next on-site)」段的表。
+> 本条目只说两件确定的事：
+> ① P0-3 / P0-4 **已 2026-07-03 现场完成**（见「Blocked on hardware」表里那两条删除线行）；
+> ② 下次现场的**主线**是 P0-5（DUT attach → bearer → PDSCH）。
+> **"只剩 P0-5"是错的** —— 还有 **P0-8 的现场半**（real F64 上 load→run→改参全 0
+> error + 输入口变绿 + DL 不失真，见 `### P0-8` 条目），跟 attach 是同一台 F64、
+> 同一段窗口的活。⚠️ 「Blocked on hardware」表**此前漏列 P0-8**，本 PR 一并补上 ——
+> 否则"权威表"和 `ON-SITE-BLOCKED` 行会各说各话（Codex #249 抓到）。
+> ⚠️ 本文上方 2026-06-21 那段写的"切回依赖链 P0-4 → P0-3 → P0-5"**写于 P0-3/4 完成之前，
+> 已 stale**，别照它安排现场（清理它属 07-03 现场记录的收口，不在本条目范围）。
+
+
 P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max / RT→MPC 接入)
 已进 on-site 队列。**原开发的现场验证基线已打 tag** `onsite-verification-baseline-2026-06-21`（留在 main）。
 **下次现场** (校准天线 / SGH / 真 DUT 到位) Current Focus **必须从该 tag 切回依赖链 P0-4 → P0-3 → P0-5**
@@ -116,11 +174,24 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | ~~P0-3~~ | ~~Path-loss calibration loop closure + cal cert~~ | ✅ 2026-07-03 现场完成 (余复测 ±0.5dB → P1-4) |
 | ~~P0-4~~ | ~~SignalAnalyzer in HAL for reference TRP~~ | ✅ 2026-07-03 现场完成 |
 | P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | on-site real DUT (已至 -96 dBm RSRP, 差正式注册) |
+| P0-8 **现场半** | F64 driver 现场修复落地 —— real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真 | on-site real F64 (本地半已 Done, 见 `### P0-8`；跟 P0-5 attach 同一段窗口) |
 
 These are still the highest-priority items overall — they just can't
 be progressed from a remote dev box. When the next on-site trip
 opens, the Current Focus must move back to P0-5 (or whichever P0 is
 unblocked) BEFORE starting any new P1.
+
+> ⚠️ **P0-5 是主线，但不是当天唯一的 P0 活** —— P0-8 的现场半（上表最后一行）
+> 需要同一台 real F64，排窗口时一起算。两者都在「📋 可规划工作 audit」的
+> `ON-SITE-BLOCKED` 行里；本表此前漏列 P0-8，2026-07-30 补上。
+>
+> ⚠️⚠️ **下面那份现场协议目前不覆盖 P0-8** —— [`on-site-debug-protocol.md`](guides/on-site-debug-protocol.md)
+> 开篇写的是「配套 P0 队列（**P0-3/4/5**）使用」，五个 Phase 里没有 P0-8 的 gate。
+> **照那份 checklist 逐条走完，F64 的 load→run→改参与输入参考验证会整个漏掉。**
+> 出发前**手动把 P0-8 排进当天计划**（它跟 Phase 1 逐仪表 SCPI 握手同段，F64 已在场）。
+> 给协议正式加一道 P0-8 gate 是独立立项（要定它进哪个 Phase / gate 判据怎么写），
+> 不在本条目范围 —— 已记进本文末尾「🗂️ Discovered during X」区
+> （`[discovered 2026-07-30 during ARCH-1 roadmap 补记]` 那条），周度 triage 会扫到。
 
 > **下次现场执行按 [`docs/guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md)
 > 走**（现场首测调试协议）。该协议把这些 P0 排成依赖链 **P0-4 → P0-3 → P0-5** 的
@@ -1876,6 +1947,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 > Items added mid-task. Reviewed weekly; promoted to P1/P2/P3 or dropped.
 
+- `[discovered 2026-07-30 during ARCH-1 roadmap 补记]` **现场协议不覆盖 P0-8，照 checklist 走完会漏掉 F64 验证** —— [`guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md) 开篇写「配套 P0 队列（**P0-3/4/5**）使用」，五个 Phase（网络 / 逐仪表 SCPI 握手 / SA 入 HAL / 路损校准 / DUT attach）**没有 P0-8 的 gate**。而上方「Blocked on hardware」表强制要求按该协议走 —— 结果是「走完了」却漏掉 P0-8 现场半（real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真），**比没有 checklist 更危险**（给人已覆盖的错觉）。当前缓解：P0 队列表已补 P0-8 行 + 表下注解写明出发前手动排进当天计划。**正修要定两件事**：① P0-8 塞进哪个 Phase（比 Phase 1 SCPI 握手重，要 load→run→改参→读电平，可能单独一段或作 Phase 1 的 F64 子门）；② gate 判据怎么拆 —— P0-8 验收最后一条「DL 不失真（DUT attach 后非 0% ACK）」**依赖 DUT attach**，有一半得等 Phase 4，gate 可能要拆两半挂两个 Phase。**顺带**：该协议里「Current Focus 按依赖链 P0-4 → P0-3 → P0-5 推进」那句同样已 stale（P0-3/4 已 2026-07-03 现场完成），跟 roadmap 里那句同源，一并清。⚠️ 动之前按标题/条目名定位，**别在文档里写行号** —— 本次 PR 实证：行号会被自己的编辑挤跑。
+- `[discovered 2026-07-29 during ARCH-1 S4a]` **GUI 没有「新建测试用例」入口** —— `TestCaseLibrary` 的新建按钮由 `onCreateNew` prop 守着，**全仓无人传**（`TestManagement.tsx` 只传 `enableExecute`）；入口原本挂在 StepsTab 上，随 S4a 一并删除。现状：**直接执行路径上的** MIMO_OTA 用例只能来自 bootstrap 种子，可改可执行不可新建。（GUI 并非完全建不了 TestCase —— 虚拟路测的「创建场景」会落一行 VRT 型 TestCase，但那条不走 S6 要验的直接执行路径。）S4a 已显式申报为能力缺口。⚠️ **这是 ARCH-1 S6（浏览器闭环总验）的前置** —— S6 验收第一步就是「建用例」，开工前先决定：补入口（GUI 新功能，需设计稿），还是把 S6 验收改成「改现有用例」。
 - `[discovered 2026-07-20 during 出发前门审 F5]` **UXM 幂等捷径生效后剩余写全在小区 ON 态执行 — ON 态同值写 band/duplex 是否触发 UXM 内部重配 (掉 DUT) 真机零实证**。ARFCN/功率有回读对账兜底; band/duplex ON 态被拒 (-221 类) 只进错误队列无对账项即静默。现场若"BW 已同仍重启"按 onsite-plan-20260721 风险⑧②排查; 正修方向 = band/duplex 也纳入幂等预读 (值同跳写) 或对账。TDD 主线 (n78) 幂等已限定 (F3 保守化: 仅 TDD + readback 能力位开才走捷径)。
 - `[discovered 2026-07-20 during 三开关门审 #216]` **开关1 inherit 的"知情继承"只核对频率, 层数盲区**: 小区级层数继承仪器态但 RRC recon 仍按 TestCase 推层, CSI-RS 端口按 TestCase 层数算 — 三方可各不相同; Phase 6 读 UE 能力抓不到 cell 生效层数低于请求。正修方向 = read_live_frequency_identity 扩展读层数 (注意 #114 教训: 配置旋钮回读是 echo, 要找真生效读法) 或 inherit 下强制核对面板。当前缓解 = inherit 日志显式披露"层数未核对"。
 - `[discovered 2026-07-20 during 三开关门审 #216]` **configure_mac_throughput_test 返回值无人消费**: measure 调它不查布尔契约, ON 态写 TDD pattern 被拒 (-221 类) 即静默带旧配置测。正修 = 消费返回值 fail-loud (同 set_cell_config 处理, Codex #195 R5 母题)。
