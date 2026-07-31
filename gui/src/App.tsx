@@ -71,7 +71,6 @@ import { ChamberConfigCard } from './components/ChamberConfigCard'
 import { StandardChannelDefinitionCard } from './components/StandardChannelDefinitionCard'
 import {
   createProbe,
-  createTestCase,
   deleteProbe,
   fetchDashboard,
   fetchDemoRunPlan,
