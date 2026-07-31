@@ -17,6 +17,8 @@
 - 砍 cancel 的 executed_by 收窄 (agent F2) → test_cancel_other_chains_rows_rejected 红
 - 建例 payload 的 is_template 改 false → test_gui_create_visible_and_executable
   的可见性断言红 (堵"建完即隐形"的洞, GUI 新建入口设计稿 D-1)
+- 相位失败日志降回 warning → test_phase_failure_logged_as_error 红
+  (P2-11: 失败行必须能被面板 ERROR 过滤捞到)
 """
 from __future__ import annotations
 
@@ -205,6 +207,28 @@ class TestExecuteHappyPath:
         cfg = ex.config or {}
         assert cfg.get("failed_phase") is not None
         assert "REFERENCE 炸了" in (cfg.get("error_message") or "")
+
+    @pytest.mark.asyncio
+    async def test_phase_failure_logged_as_error(self, db, lab, caplog):
+        """相位失败的日志必须是 ERROR 级 — 主控台面板按 ERROR 过滤排障
+        (2026-07-31 P2-11: warning 级失败行被轮询 INFO 冲出面板不可见)。"""
+        import logging as _logging
+        # in-process alembic 的 fileConfig 会永久禁用已导入 logger, 全量
+        # 顺序下 caplog 会静默拿不到记录 — 显式复位 (memory: logger emit 断言)
+        _logging.getLogger(tcr.__name__).disabled = False
+        source = _make_case(db, lab, name="失败日志级别")
+        with patch.object(tcr, "dispatch_step",
+                          new=AsyncMock(side_effect=[_failed("频率一致性失败")])):
+            with caplog.at_level(_logging.ERROR, logger=tcr.__name__):
+                ex = await _launch_and_wait(db, source.id)
+        assert ex.status == "failed"
+        failure_records = [
+            r for r in caplog.records
+            if r.name == tcr.__name__
+            and r.levelno == _logging.ERROR
+            and "相位" in r.getMessage()
+        ]
+        assert failure_records, "相位失败必须以 ERROR 级落日志 (warning 会被面板过滤漏掉)"
 
 
 # ─────────────────────────────────────────────────────────────────────

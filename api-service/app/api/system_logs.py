@@ -15,7 +15,7 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
@@ -103,47 +103,86 @@ def _human_size(size_bytes: int) -> str:
     return f"{size_bytes:.1f} TB"
 
 
-def _tail_file(filepath: Path, max_lines: int = 200) -> List[str]:
-    """
-    高效地从文件末尾读取最后 N 行。
+# 反向扫描的行数上限 — /tail 被面板 3s 轮询高频调用, 不允许整文件扫
+# (app.log 按天轮转, 峰值 ~250 行/分 → 2 万行 ≈ 80 分钟窗口)。
+_TAIL_SCAN_LIMIT = 20_000
 
-    使用反向读取策略，避免将整个大文件加载到内存中。
+
+def _entry_matches(
+    entry: LogEntry,
+    level: Optional[str],
+    keyword: Optional[str],
+    session_id: Optional[str],
+) -> bool:
+    """tail 过滤谓词: level 精确 + keyword 模糊 (msg/logger) + session_id 精确"""
+    if level and entry.level.upper() != level.upper():
+        return False
+    if keyword:
+        kw_lower = keyword.lower()
+        if kw_lower not in entry.msg.lower() and kw_lower not in entry.logger.lower():
+            return False
+    if session_id and entry.session_id != session_id:
+        return False
+    return True
+
+
+def _scan_tail_entries(
+    filepath: Path,
+    max_entries: int,
+    predicate,
+) -> Tuple[List[LogEntry], int]:
     """
-    lines = []
+    从文件末尾反向扫描, 边读边过滤, 凑满 max_entries 条匹配行为止。
+
+    过滤必须发生在扫描过程中而非截尾之后 — 否则低频 WARNING/ERROR 会被
+    高频 INFO 冲出固定行数的原始窗口 (2026-07-31 P2-11 相位失败三次落盘
+    但面板不可见的根因)。扫描行数以 _TAIL_SCAN_LIMIT 封顶 — 3s 轮询下的
+    最坏开销按行数有界 (字节数不设上限: 无换行的损坏/巨行文件仍会整读,
+    与旧实现同病, 字节上限在 backlog)。
+
+    返回 (匹配条目按时间正序, 实际扫描的非空行数)。
+    """
+    matched: List[LogEntry] = []
+    scanned = 0
     chunk_size = 8192
 
     with open(filepath, 'rb') as f:
         # 移动到文件末尾
         f.seek(0, 2)
-        file_size = f.tell()
-        remaining = file_size
+        remaining = f.tell()
         buffer = b''
 
-        while remaining > 0 and len(lines) < max_lines:
+        while remaining > 0 and len(matched) < max_entries and scanned < _TAIL_SCAN_LIMIT:
             read_size = min(chunk_size, remaining)
             remaining -= read_size
             f.seek(remaining)
-            chunk = f.read(read_size)
-            buffer = chunk + buffer
+            buffer = f.read(read_size) + buffer
 
-            # 按行拆分
+            # 按行拆分; 第一个片段可能被 chunk 边界截断, 留给下一轮拼接
             split_lines = buffer.split(b'\n')
-
-            # 除了第一个不完整的片段外，其余都是完整行
             buffer = split_lines[0]
             for line in reversed(split_lines[1:]):
                 stripped = line.strip()
-                if stripped:
-                    lines.append(stripped.decode('utf-8', errors='replace'))
-                    if len(lines) >= max_lines:
+                if not stripped:
+                    continue
+                scanned += 1
+                entry = _parse_log_line(stripped.decode('utf-8', errors='replace'))
+                if entry is not None and predicate(entry):
+                    matched.append(entry)
+                    if len(matched) >= max_entries:
                         break
+                if scanned >= _TAIL_SCAN_LIMIT:
+                    break
 
-        # 处理剩余 buffer
-        if buffer.strip() and len(lines) < max_lines:
-            lines.append(buffer.strip().decode('utf-8', errors='replace'))
+        # 文件开头剩余的半行
+        if buffer.strip() and len(matched) < max_entries and scanned < _TAIL_SCAN_LIMIT:
+            scanned += 1
+            entry = _parse_log_line(buffer.strip().decode('utf-8', errors='replace'))
+            if entry is not None and predicate(entry):
+                matched.append(entry)
 
-    lines.reverse()  # 恢复时间顺序
-    return lines
+    matched.reverse()  # 恢复时间顺序
+    return matched, scanned
 
 
 def _parse_log_line(line: str) -> Optional[LogEntry]:
@@ -208,48 +247,30 @@ def list_log_files():
 @router.get("/tail", response_model=LogTailResponse)
 def tail_log_file(
     filename: str = Query(default="app.log", description="日志文件名"),
-    lines: int = Query(default=200, ge=1, le=2000, description="读取的最大行数"),
+    lines: int = Query(default=200, ge=1, le=2000, description="返回的最大匹配条数"),
     level: Optional[str] = Query(default=None, description="按日志级别过滤 (DEBUG/INFO/WARNING/ERROR)"),
     keyword: Optional[str] = Query(default=None, description="按关键词过滤（模糊匹配 msg 和 logger 字段）"),
     session_id: Optional[str] = Query(default=None, description="按 session_id 精确过滤"),
 ):
     """
-    读取指定日志文件的最后 N 行，支持多维度过滤。
+    读取指定日志文件中最新的 N 条匹配日志，支持多维度过滤。
 
-    使用反向文件读取避免大文件内存问题。
-    过滤在读取之后进行，所以实际返回条目数可能少于 lines。
+    过滤发生在反向扫描过程中: 从文件末尾往回读, 直到凑满 lines 条匹配行、
+    扫到文件开头或达到 _TAIL_SCAN_LIMIT 行上限。带过滤条件时窗口是
+    "最新 N 条匹配行"而非"最新 N 行原始行" — 低频 WARNING/ERROR 不会被
+    高频 INFO 冲出窗口。total_lines_read 为实际扫描的行数。
     """
     filepath = _safe_filename(filename)
 
-    # 读取原始行
-    raw_lines = _tail_file(filepath, max_lines=lines)
-
-    # 解析为结构化条目
-    entries = []
-    for line in raw_lines:
-        entry = _parse_log_line(line)
-        if entry is None:
-            continue
-
-        # 级别过滤
-        if level and entry.level.upper() != level.upper():
-            continue
-
-        # 关键词过滤（搜索 msg 和 logger）
-        if keyword:
-            kw_lower = keyword.lower()
-            if kw_lower not in entry.msg.lower() and kw_lower not in entry.logger.lower():
-                continue
-
-        # session_id 过滤
-        if session_id and entry.session_id != session_id:
-            continue
-
-        entries.append(entry)
+    entries, scanned = _scan_tail_entries(
+        filepath,
+        max_entries=lines,
+        predicate=lambda e: _entry_matches(e, level, keyword, session_id),
+    )
 
     return LogTailResponse(
         filename=filename,
-        total_lines_read=len(raw_lines),
+        total_lines_read=scanned,
         filtered_count=len(entries),
         entries=entries,
     )

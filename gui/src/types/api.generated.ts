@@ -636,9 +636,12 @@ export interface paths {
         };
         /**
          * Tail a structured log file (P2-8 cockpit log zone)
-         * @description Reverse-reads the last N lines of a JSON-lines log file and parses
-         *     each into a structured entry, with optional level / keyword /
-         *     session filtering applied after read.
+         * @description Reverse-scans a JSON-lines log file from the end, applying the
+         *     optional level / keyword / session filters during the scan, until
+         *     N matching entries are collected (or a bounded scan limit is hit).
+         *     With filters active the window is therefore "newest N matching
+         *     lines", so sparse WARNING/ERROR entries are not flushed out by
+         *     high-frequency INFO noise.
          */
         get: {
             parameters: {

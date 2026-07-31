@@ -438,7 +438,10 @@ async def _run_case_loop(db, execution_id: UUID) -> None:
         if phase_status == "failed":
             failed_phase = d.type
             failed_message = result.error_message
-            logger.warning(
+            # ERROR 级 — 执行终态失败对操作员是 error 事件, 主控台面板按
+            # ERROR 过滤排障 (2026-07-31 P2-11: warning 级失败行被轮询 INFO
+            # 冲出面板不可见); 本函数其余终态 (execution/快照不存在) 同为 error。
+            logger.error(
                 "[case-runner] execution %s 相位 %s 失败: %s",
                 execution_id, d.type, result.error_message,
             )
