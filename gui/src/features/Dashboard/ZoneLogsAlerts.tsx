@@ -34,6 +34,7 @@ import {
   IconSearch,
 } from '@tabler/icons-react'
 import { fetchSystemLogsTail, fetchAlerts, fetchAlertSummary } from '../../api/service'
+import type { SystemLogTailResponse } from '../../types/api'
 import type {
   SystemLogEntry,
   SystemLogLevel,
@@ -105,7 +106,8 @@ function LogPanel() {
         keyword: keyword || undefined,
       })
       const boosts = ['WARNING', 'ERROR'].filter((l) => enabledLevels.includes(l))
-      const extra = await Promise.all(
+      // 补充流失败不连坐主流 (内审 F5): 单路 500 降级为无补充
+      const settled = await Promise.allSettled(
         boosts.map((l) =>
           fetchSystemLogsTail({
             filename,
@@ -115,16 +117,21 @@ function LogPanel() {
           }),
         ),
       )
+      const extra = settled
+        .filter((r): r is PromiseFulfilledResult<SystemLogTailResponse> => r.status === 'fulfilled')
+        .map((r) => r.value)
       const key = (e: SystemLogEntry) => `${e.ts}|${e.logger}|${e.msg}`
+      // 只做跨流去重 (内审 F4): boost 两流按 level 天然不相交, 流内重复必是
+      // 真实重复行, 不互相吞
       const seen = new Set(main.entries.map(key))
+      const mainOldestTs = main.entries[0]?.ts ?? ''
       const older: SystemLogEntry[] = []
       for (const r of extra) {
         for (const e of r.entries) {
-          const k = key(e)
-          if (!seen.has(k)) {
-            seen.add(k)
-            older.push(e)
-          }
+          // 两次请求间隙新落盘的行只在补充流出现 (内审 F3): ts 不早于主流
+          // 最旧行的丢弃, 下一轮主流必含它, 不错位到面板顶端
+          if (mainOldestTs && e.ts >= mainOldestTs) continue
+          if (!seen.has(key(e))) older.push(e)
         }
       }
       // 补充的旧行按时间升序放在主流前面 (老→新, 滚动方向一致)

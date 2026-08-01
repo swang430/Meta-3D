@@ -474,7 +474,7 @@ class ReportDataCollector:
         """ARCH-1 S2: 无 plan 执行的"步骤结果"= 相位进度。
 
         数据源是 case-runner 写进 config.phase_progress 的
-        {"type": 相位名, "status": completed/failed} 逐条记录
+        {"type": 相位名, "status": StepExecutionStatus.value ∈ success/failed/skipped/running} 逐条记录
         (test_case_runner.py); 没有该键的执行链 (commissioning 等)
         返回空列表 — PDF 生成器对空 step_results 段安全。
         字段名对齐 _get_step_results 的形状 (order/name/status), 模板不用分叉。
