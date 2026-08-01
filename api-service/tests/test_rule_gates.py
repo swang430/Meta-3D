@@ -1004,7 +1004,10 @@ def test_g9_schema_description_superset_of_enum():
 # 真值源提取 = live import 列对象 comment (不 grep 源文本)。
 # 变异实跑: test_case_runner 临时加 execution.status = "exploded" → 红。
 
-_G10_EXEC_VAR_NAMES = {"execution", "ex", "test_execution"}
+# "row" 为 VRT 服务惯例 (vrt_execution_service, Codex #264 R1 — 该域经
+# TestExecutionORM 别名构造 + row.status 赋值, 原判据两头都漏)。
+# 全仓 `row.status = "字面量"` 现存零命中 → 加入零误伤。
+_G10_EXEC_VAR_NAMES = {"execution", "ex", "test_execution", "row"}
 
 
 def _g10_collect_status_literals(tree: "ast.AST"):
@@ -1022,7 +1025,8 @@ def _g10_collect_status_literals(tree: "ast.AST"):
             fn = node.func
             fn_name = fn.attr if isinstance(fn, ast.Attribute) else (
                 fn.id if isinstance(fn, ast.Name) else "")
-            if fn_name == "TestExecution":
+            # startswith: 覆盖 import 别名 (TestExecutionORM, Codex #264 R1)
+            if fn_name.startswith("TestExecution"):
                 for kw in node.keywords:
                     if (kw.arg == "status" and isinstance(kw.value, ast.Constant)
                             and isinstance(kw.value.value, str)):
@@ -1043,6 +1047,13 @@ def test_g10_checker_detects_bad_literal():
     assert "exploded" in vals          # execution 域写点抓到
     assert "connected" not in vals     # 别的 status 域不误伤
     assert "pending" in vals           # 构造调用抓到
+    src2 = (
+        "def g(row):\n"
+        "    row.status = 'kaboom'\n"
+        "    x = TestExecutionORM(status='boom')\n"
+    )
+    vals2 = {v for _, _, v in _g10_collect_status_literals(ast.parse(src2))}
+    assert {"kaboom", "boom"} <= vals2  # VRT 惯例: row 变量 + ORM 别名 (Codex #264 R1)
 
 
 def test_g10_status_comment_superset_of_write_sites():
@@ -1067,5 +1078,21 @@ def test_g10_status_comment_superset_of_write_sites():
         "TestExecution.status 写点用了列注释 (唯一真值源) 没列的状态字面量 —\n"
         "要么是拼错, 要么先把注释真值源更新了再写代码:\n" + "\n".join(offenders)
         + f"\n当前真值源: {sorted(truth)}"
+    )
+
+
+def test_g10_vrt_enum_subset_of_comment():
+    """VRT 域写点全走 ExecutionStatus 枚举 (动态值, 字面量门看不见) — 源头锁:
+    枚举成员值 ⊆ 列注释。枚举加成员、注释不更新 → 红 (Codex #264 R1 顺藤补强:
+    字面量判据扩到 VRT 别名/row 只堵将来的字面量写法, 现存动态面在这条锁)。"""
+    from app.models.test_plan import TestExecution
+    from app.schemas.road_test.execution import ExecutionStatus
+
+    comment = TestExecution.__table__.columns["status"].comment or ""
+    truth = {t.strip().split(" ")[0] for t in comment.split("|") if t.strip()}
+    extra = {m.value for m in ExecutionStatus} - truth
+    assert not extra, (
+        f"ExecutionStatus 枚举成员 {sorted(extra)} 不在 TestExecution.status "
+        f"列注释 (唯一真值源) 里 — 先更新注释再加枚举。当前真值源: {sorted(truth)}"
     )
 
