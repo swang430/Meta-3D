@@ -12,7 +12,7 @@
 blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 用户拍板本地队列：
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
-**当前片 = P2-21**（P1-22 ✅ #256 / P1-23 ✅ #257 / P2-19 ✅ #258 / P2-20 ✅ #259 / P1-24 ✅ done 本 PR），顺序 **P1-22 → P1-23 → P2-19 → P2-20 → P1-24 → P2-21 → P3-14 → P3-15 → P3-16 → P3-17**
+**当前片 = P3-14**（P1-22 ✅ #256 / P1-23 ✅ #257 / P2-19 ✅ #258 / P2-20 ✅ #259 / P1-24 ✅ #260 / P2-21 ✅ done 本 PR），顺序 **P1-22 → P1-23 → P2-19 → P2-20 → P1-24 → P2-21 → P3-14 → P3-15 → P3-16 → P3-17**
 （逐片 WIP=1；P1-24/P2-21 为 2026-08-01 用户二次拍板从 Discovered 提升，插在 P3 批前）。一句话索引（详情见各 P 区条目）：
 - **P1-22** 报告可信化：`overall_pass` 死键 + PDF CJK 字体 + `Test Plan: N/A` 残留（设计稿 [`design/p1-22-report-trustworthy-fix.md`](design/p1-22-report-trustworthy-fix.md)）
 - **P1-23** 现场协议补 P0-8 gate（纯文档，行前必办）
@@ -1971,10 +1971,11 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 **来源**: Discovered 区 #253 三条（[→ P2-20] 已标）。**Estimate**: ~0.5 day。
 **收口 (2026-08-01)**: ①`_list_custom_scenarios` 逐行降级（单行坏配置跳行 + ERROR 报数，不再 500 全列表，跳行是响的不是静默）；②标准库 5 处 `channel_model=` 死 kwarg 转正为 `channel_snapshots` 单快照（5 场景 UMa/UMi/RMa/UMa/UMi 对位，兑现 #253 测试注释"修好后改为期待具体模型值"）；③报告读方 `EnvironmentInfo` 换源快照；④`ota_scenario_mapper` 5 处死字段读换源 + 零调用方状态头注申报；⑤GUI 写侧 Create/Edit 对话框把表单所选模型写进快照真值位置（此前恒发 `[]`，模型只进 tags）。运行门：Playwright 无头闭环 —— 建场景选 RMa → POST 201 payload/response 快照带 RMa → 列表卡片可见。
 
-### P2-21 — P1-12 可信化标志渲染可达化 + 证书 CJK
+### P2-21 — P1-12 可信化标志渲染可达化 + 证书 CJK ✅ Done（本 PR）
 
 **What**: ①`executors/report.py` 的 `quiet_zone_verified` / `trp_verified` / `path_loss_verified` 三标志挪 `parameters` 下（渲染器只读 name/step_name/parameters，顶层键进不了 PDF —— 修法与 P1-22 的 analysis 站点同构）；②`pdf_certificate.py`（校准证书）注册 CJK 字体（与 P1-22 的 pdf_generator 同构，证书中文今天全豆腐块）。
-**Why P2**: P1-12"报告必须标注 未验证(兜底值)"的意图从未生效 —— mock TRP / 无路损校准的报告零提示，现场拿着假干净报告做判断。**来源**: Discovered 区 P1-22 内审 F3 补欠条（[→ P2-21] 已标）。**Estimate**: ~0.5 day。
+**Why P2**: P1-12"报告必须标注 未验证(兜底值)"的意图从未生效 —— mock TRP / 无路损校准的报告零提示，现场拿着假干净报告做判断。**来源**: Discovered 区 P1-22 内审 F3 补欠条（[→ P2-21] 已标）。
+**落地（本 PR）**: ①三 step 渲染载荷整体进 parameters（中文键 + 三值可读标注"已验证 (…)/未验证 (…)/未知 (历史数据未区分)"，顶层死键删净），行为门打在渲染器实际产出（步骤区 elements 里断言标注文本可见）；②pdf_certificate 三族收敛 CJK_FONT（import 自 pdf_generator 单一真值源）+ 证书 PDF 字节含 STSong 行为门；backcompat 推导测试断言迁到新生效端。4 变异实跑全红。
 
 ---
 
@@ -2025,6 +2026,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-01 during P1-23, Codex #257]` **[→ 提升 P1-24 (2026-08-01)]** **写 `propsim_f64_p08_gate` 诊断序列（P0-8a 唯一合法载体，已列协议 §2 出发前硬门槛）** —— 现有 `propsim_f64_state_machine`（前提 .smu 已载、只做 GO/STATIC/GOS）与 `propsim_f64_health`（只读探测、`get_metrics` 恒判成功）都覆盖不了 P0-8a。序列要求：①手册有据 + 生产驱动在用的命令（涉 F64 SCPI，动手前查 NotebookLM PROPSIM notebook）②**前置激活 UXM 满 RB DL**（CE↔BS 协调，无信号 `INP:LEV:MEAS?` 返 -300）③每步后读错误队列 ④电平按合法范围真判定（不是恒成功）⑤**含 bypass 态电平窗口复验**（架构文档 P0-8 硬约束）⑥**含输入参考 AUTOSET 闭环**（`INP:LEV:AUTOSET` 设 avg+crest → 读回 clipping/cut-off 迭代收敛，只读判范围会假绿，Codex #257 R3）⑦mock 跑通列入出发前门槛。代码活，独立小片。⚠️ 本行是第二次登记 —— 前两次 python replace 因 #255 提升标记改变锚文本**静默未命中**（我未 assert 命中数，#256/#257 的 PR body 里"已留痕"陈述当时为假，本次补欠并如实更正）。⚠ 要求②的"返 -300"后经手册查证为哨兵语义不实（-300 是队列里的设备错误码非查询返回值，P1-24 落地时纠错，见正式条目）。
 - `[discovered 2026-08-01 during P1-24 内审 F4]` **p08 门序列 8 个零残留站点仅 3 个有会红的行为测试**（衰落态测量后 / 中止后 / 旁路态首站间接）—— 变异删其余任一 residue 调用（加载后/AUTOSET 后/GO 后/改参后/进旁路后/退旁路后），泄漏错误被下一个生产原子的 drain 吞掉、19 测全绿。完善形态 = fake 泄漏注入点参数化逐站点打；本片按「枚举进 backlog」只收窄了已有测试的断言锚定。
 - `[discovered 2026-08-01 during P1-24, Codex #260 R2]` **带动作的诊断序列整体无串行化（run endpoint 层）** —— 两个客户端并发跑同一序列（或与其它 F64 操作并行）时只有单个驱动原子持 `_scpi_lock`，序列整体可交错（load-A → load-B → AUTOSET-A → GO-B），互相污染归档、甚至把对方的增益/旁路态"还原"掉。基建共性（`propsim_f64_state_machine`/`baseStation_attach_check` 同型），非 p08 序列独有；整段持锁会饿死 broadcaster 监控（state_machine 当年显式取舍过），正解大概率在 run endpoint 加序列级互斥。范围外基建债，独立小片。
+- `[discovered 2026-08-01 during P2-21 内审]` **PDF 渲染管道其余自由文本入口无 XML 转义**（pre-existing，非 P2-21 引入）—— ①封面 `Paragraph(title)` 含 case_name，`<字母` 命名会炸整份报告；②共享步骤区渲染器 `_generate_step_details_section` 的 `val_str` 侧统一转义能让 VRT `step_configs` 管线同受益（P2-21 只修了 report.py 组装侧自己的面）。修法 = 渲染器入口统一 `xml.sax.saxutils.escape`，共享文件独立小片。
 - `[discovered 2026-08-01 during P1-22 内审 F3，本行补欠登记]` **[→ 提升 P2-21 (2026-08-01)]** **precheck/reference/measure 的 P1-12 可信化标志渲染不可达 — 报告对兜底数据沉默（P3）** —— `executors/report.py` step_results 里 `quiet_zone_verified` / `trp_verified` / `path_loss_verified` 是顶层键，渲染器只读 `name`/`step_name` 与 `parameters` → PDF 步骤区零显示，P1-12"标注 未验证(兜底值)"意图从未生效。修法同 P1-22 的 analysis 站点（标志挪 `parameters` 下）。顺带同域：`pdf_certificate.py`（校准证书）无 CJK 字体，证书中文同样豆腐块。
 
 - `[discovered 2026-08-01 during ARCH-1 S6 总验, 内审定案]` **[→ 提升 P1-22 (2026-08-01)]** **自动执行报告恒报 failed/0.0% — REPORT 相位读一个从没人写的键（P2）** —— `mimo_ota/executors/report.py` 的 `overall_pass = bool(analysis.get("overall_pass", False))`：analysis 执行器写的是 `verdict`（canonical 字段是 `validation_pass`），全仓**无人写 `overall_pass` 键**（`pass_criteria_summary` 同样无人写）→ 恒 False → 自动报告 `overall_result` 恒 "failed"、`pass_rate` 恒 0.0 —— `.get` 默认值静默吞断层的教科书形态。修法=换判据来源，**精确谓词**（Codex #254 R1 校正）：首选读 `context.test_execution.validation_pass`（TestExecution **列**，analysis 执行器按 `verdict in ("PASS","MARGINAL")` 写入的 canonical 布尔 —— 注意它不在 analysis payload 里，`analysis.get("validation_pass")` 还是恒 None）；若只拿得到 payload 则用 `analysis.get("verdict") in ("PASS", "MARGINAL")`（verdict 取值就这三个字面量）。**绝不 `bool(verdict)`** —— 非空字符串恒 True，"FAIL" 也会判成通过，反向翻车。⚠️ **修法红线**：不得用 `status=='completed'` 当通过谓词 —— 相位机械成功与 KPI 通过是两层（analysis 相位对 KPI FAIL 也返回 SUCCESS），completed 判通过会让失败的测试谎报通过，代价不对称。手动路径（HistoryTab 生成的那份）走 `report_data_collector` 的 `validation_pass` 谓词，**现状正确**——它显示 0.0% 可能是如实报告 mock 环境 KPI FAIL，修自动路径前先分辨两份 PDF。⚠️ `report_service.py` 建 summary 的 `overall_result`/`.get('pass_rate', 0)` 段**不许当残留清理**（Codex #254 R2）：VRT 归档路径（`road_test.py::_archive_execution_report` 传 `ExecutionReport.model_dump()`，该 schema 无 `execution_summary` 键）**仍在消费它** —— 它只是不在用例执行路径上，对 VRT 是活代码。可同 PR 清理的只有报告模板 `Test Plan: N/A` 计划链残留字段。
