@@ -383,6 +383,26 @@ class TestParamGates:
             assert not result.success, bad
         assert fake.writes == []
 
+    async def test_tiny_delta_within_tolerance_refused(self):
+        """Codex #260 R1: Δ≤回读容差 (0.05) 时, 写被忽略也能过回读断言 —— 门空转。
+        参数门必须拒绝 |Δ| 小于容差+命令分辨率的下界。"""
+        drv, fake = _make()
+        for bad in (0.04, -0.05, 0.01):
+            result, _ = await _run(drv, {**_OK_PARAMS, "gain_delta_db": bad})
+            assert not result.success, bad
+            assert "gain_delta_db" in result.summary, bad
+        assert fake.writes == []
+
+    async def test_negative_delta_at_lower_limit_flips_direction(self):
+        """Codex #260 R1: orig 贴下限 + 负 Δ → 首选方向越下界, 反方向合法 ——
+        双界检查后应翻到 +Δ 方向, 不该直接中止。"""
+        drv, fake = _make()
+        fake.gains[1] = -45.0  # 原值贴下限 (limits -45..0)
+        result, _ = await _run(drv, {**_OK_PARAMS, "gain_delta_db": -1.0})
+        assert result.success, [f"{s.label}: {s.detail}" for s in result.steps if not s.success]
+        assert result.extra["gain_target_db"] == -44.0
+        assert fake.gains[1] == -45.0  # 还原到原值
+
     async def test_mock_driver_refused(self):
         class MockChannelEmulator:  # 名字就是判据 (protocol.mock_driver_refusal_summary)
             pass

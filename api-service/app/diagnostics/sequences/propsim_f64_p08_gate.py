@@ -104,6 +104,11 @@ _GAIN_TOL_DB = 0.05
 # 链路电平, 影响在测的 UXM DL。
 _GAIN_DELTA_MAX_DB = 3.0
 
+# Δ 下限 (dB, Codex #260 R1): |Δ| ≤ 回读容差 (0.05) 时, 写被忽略也能过回读断言
+# (|orig-target| ≤ 容差恒真); Δ < 命令两位小数分辨率 (0.01) 时写串还会四舍五入回
+# 原值 —— 两种情况写路径门都在空转。0.1 = 容差与分辨率之上留一档余量。
+_GAIN_DELTA_MIN_DB = 0.1
+
 # 剧本要求的生产原子 —— 缺任何一个说明 ce 不是 PROPSIM 驱动 (或版本不符), 拒跑。
 _REQUIRED_METHODS = (
     "load_local_scenario", "autoset_inputs", "start_emulation", "stop_emulation",
@@ -323,10 +328,12 @@ async def run(
                 f"{name}={val!r} 非法 —— 必须是 ≥1 的 JSON 整数 (端口号)。"
             )
     delta = params.get("gain_delta_db", 1.0)
-    if type(delta) not in (int, float) or not (0 < abs(delta) <= _GAIN_DELTA_MAX_DB):
+    if (type(delta) not in (int, float)
+            or not (_GAIN_DELTA_MIN_DB <= abs(delta) <= _GAIN_DELTA_MAX_DB)):
         return _reject(
-            f"gain_delta_db={delta!r} 非法 —— 必须是 0<|Δ|≤{_GAIN_DELTA_MAX_DB} 的数字。"
-            "门只做最小扰动验证写路径, 大 Δ 会真动在测链路的电平。"
+            f"gain_delta_db={delta!r} 非法 —— 必须是 {_GAIN_DELTA_MIN_DB}≤|Δ|≤"
+            f"{_GAIN_DELTA_MAX_DB} 的数字。上限防手滑真动在测链路电平; 下限防门空转: "
+            f"|Δ|≤回读容差 ({_GAIN_TOL_DB}) 时写被忽略也能过回读断言 (Codex #260 R1)。"
         )
     delta = float(delta)
 
@@ -396,8 +403,15 @@ async def run(
         if gain_orig is None:
             raise _Abort("增益原值读不到 — 不知道该还原到哪, 不动")
         findings["gain_orig_db"] = gain_orig
-        target = gain_orig + delta if gain_orig + delta <= hi + 1e-9 else gain_orig - delta
-        if target < lo - 1e-9 or target > hi + 1e-9:
+        # 方向选择: 首选 orig+Δ, 越界则翻到 orig-Δ —— 两个候选都做**双界**检查
+        # (Codex #260 R1: 原写法首选只查上界, 负 Δ 在 orig 贴下限时选出越下界的
+        # 候选直接中止, 而反方向明明合法)。
+        cand_fwd, cand_rev = gain_orig + delta, gain_orig - delta
+        if lo - 1e-9 <= cand_fwd <= hi + 1e-9:
+            target = cand_fwd
+        elif lo - 1e-9 <= cand_rev <= hi + 1e-9:
+            target = cand_rev
+        else:
             raise _Abort(
                 f"增益窗口 [{lo},{hi}] 放不下原值 {gain_orig}±{delta} 的往返 — 不硬写"
             )
