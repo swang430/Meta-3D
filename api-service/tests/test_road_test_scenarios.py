@@ -369,11 +369,16 @@ class TestScenarioSummaryIntegrity:
 
         sid = self._create_snapshot_scenario(client, sample_scenario_data)
 
-        # alembic fileConfig 可能已把该 logger 置 disabled，先复位，
-        # 否则"零 ERROR"断言会假绿（见 memory: 断言 logger emit 需复位 .disabled）
-        _logging.getLogger("app.api.road_test").disabled = False
-        with caplog.at_level(_logging.ERROR, logger="app.api.road_test"):
-            resp = client.get("/api/v1/road-test/scenarios")
+        # alembic fileConfig 可能已把该 logger 置 disabled，先复位，否则
+        # "零 ERROR"断言会假绿；测完复原原值，别让复位泄漏成全局副作用
+        _rt_logger = _logging.getLogger("app.api.road_test")
+        _was_disabled = _rt_logger.disabled
+        _rt_logger.disabled = False
+        try:
+            with caplog.at_level(_logging.ERROR, logger="app.api.road_test"):
+                resp = client.get("/api/v1/road-test/scenarios")
+        finally:
+            _rt_logger.disabled = _was_disabled
 
         assert resp.status_code == 200
         rows = resp.json()
