@@ -4,7 +4,10 @@
 条目 (#218 清过 801 条, 复发累计至 1201 条)。来源已断 (P3-15 给该文件补了
 SQLite 隔离 fixture), 本脚本只清存量。
 
-作用域 = 8 个已知测试产物名的**精确匹配** (绝不按模糊模式全局删 —— memory
+作用域 = **三重谓词** (Codex #263 R1 P1: 名字不唯一, 单按名删会误伤将来恰好
+同名的真实计划): ① 8 个已知测试产物名精确匹配 ② created_by 限
+test_feature_gaps 硬编码的三个测试身份 ③ created_at < 2026-08-01 (存量固化日,
+之后新建的任何行不可达)。绝不按模糊模式全局删 (memory
 feedback_bulk_mutation_scope_and_restrict_fk):
 指向 test_plans 的外键共 **6 条边**, 全部 NO ACTION。本脚本删其中 4 条边的
 子行 (顺序 三级 report_comparisons.report_id → 二级 test_reports /
@@ -34,7 +37,11 @@ ZOMBIE_NAMES = (
     "Priority Test Plan", "Queue Test Plan 1",
 )
 
-_IN_PLANS = "(SELECT id FROM test_plans WHERE name IN :n)"
+ZOMBIE_CREATORS = ("test", "test_suite", "authenticated_user@example.com")
+ZOMBIE_CUTOFF = "2026-08-01"  # 存量固化日 — 之后的行一律不可达
+
+_PLAN_PRED = ("name IN :n AND created_by IN :c AND created_at < :cut")
+_IN_PLANS = f"(SELECT id FROM test_plans WHERE {_PLAN_PRED})"
 STEPS = [
     ("report_comparisons",
      f"DELETE FROM report_comparisons WHERE report_id IN "
@@ -44,8 +51,11 @@ STEPS = [
      f"DELETE FROM test_plan_executions WHERE test_plan_id IN {_IN_PLANS}"),
     ("test_queue", f"DELETE FROM test_queue WHERE test_plan_id IN {_IN_PLANS}"),
     ("test_steps", f"DELETE FROM test_steps WHERE test_plan_id IN {_IN_PLANS}"),
-    ("test_plans", "DELETE FROM test_plans WHERE name IN :n"),
+    ("test_plans", f"DELETE FROM test_plans WHERE {_PLAN_PRED}"),
 ]
+
+
+_BIND = {"n": ZOMBIE_NAMES, "c": ZOMBIE_CREATORS, "cut": ZOMBIE_CUTOFF}
 
 
 def main() -> None:
@@ -54,7 +64,7 @@ def main() -> None:
     try:
         print("僵尸存量 (精确名匹配, 逐表):")
         counts = [
-            ("test_plans", "SELECT COUNT(*) FROM test_plans WHERE name IN :n"),
+            ("test_plans", f"SELECT COUNT(*) FROM test_plans WHERE {_PLAN_PRED}"),
             ("test_queue", f"SELECT COUNT(*) FROM test_queue WHERE test_plan_id IN {_IN_PLANS}"),
             ("test_steps", f"SELECT COUNT(*) FROM test_steps WHERE test_plan_id IN {_IN_PLANS}"),
             ("test_plan_executions",
@@ -65,7 +75,7 @@ def main() -> None:
              f"(SELECT id FROM test_reports WHERE test_plan_id IN {_IN_PLANS})"),
         ]
         for tab, sql in counts:
-            print(f"  {tab}: {db.execute(text(sql), {'n': ZOMBIE_NAMES}).scalar()}")
+            print(f"  {tab}: {db.execute(text(sql), _BIND).scalar()}")
         blockers = [
             ("test_executions.test_plan_id (不删, 活表)",
              f"SELECT COUNT(*) FROM test_executions WHERE test_plan_id IN {_IN_PLANS}"),
@@ -74,22 +84,28 @@ def main() -> None:
         ]
         blocked = False
         for tab, sql in blockers:
-            nb = db.execute(text(sql), {"n": ZOMBIE_NAMES}).scalar()
+            nb = db.execute(text(sql), _BIND).scalar()
             print(f"  ⚠ {tab}: {nb}")
             blocked = blocked or nb > 0
         if blocked and execute:
             print("被引用边非零 — 先人工裁决, 本次不执行 (父行 DELETE 会 IntegrityError)。")
             return
         keep = db.execute(
-            text("SELECT COUNT(*), MIN(name) FROM test_plans WHERE name NOT IN :n"),
-            {"n": ZOMBIE_NAMES},
+            text(f"SELECT COUNT(*), MIN(name) FROM test_plans WHERE NOT ({_PLAN_PRED})"),
+            _BIND,
         ).fetchone()
-        print(f"  保留 (非僵尸): {keep[0]} 条, 例: {keep[1]}")
+        print(f"  保留 (谓词外): {keep[0]} 条, 例: {keep[1]}")
+        # 逐 created_by 分布 — 人工核对"全是测试身份"再 --execute
+        dist = db.execute(text(
+            f"SELECT created_by, COUNT(*) FROM test_plans WHERE {_PLAN_PRED} "
+            "GROUP BY created_by"), _BIND).fetchall()
+        for cb, cnt in dist:
+            print(f"  命中分布 created_by={cb!r}: {cnt}")
         if not execute:
             print("\ndry-run — 加 --execute 才真删 (单事务, 三级→二级→父行)。")
             return
         for name, sql in STEPS:
-            n = db.execute(text(sql), {"n": ZOMBIE_NAMES}).rowcount
+            n = db.execute(text(sql), _BIND).rowcount
             print(f"  已删 {name}: {n}")
         db.commit()
         print("完成 (已提交)。")

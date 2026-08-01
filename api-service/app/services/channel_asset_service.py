@@ -291,17 +291,21 @@ def _check_vendor_declared_freq(
     # 调用序 — 存量行缺键/域外时无关 PATCH 不该 500 (内审 F3)。
     arfcn = scd_config.get("arfcn")
     if center_frequency_hz is not None and arfcn is not None:
+        scd_mhz = None
         try:
             scd_mhz = nr_arfcn_to_freq_mhz(int(arfcn))
         except (ValueError, TypeError):
-            return  # 域外/坏形态: 归 payload 校验管, 本函数只判一致性
-        top_mhz = float(center_frequency_hz) / 1e6
-        if abs(top_mhz - scd_mhz) > 1e-3:
-            raise ChannelAssetError(
-                f"vendor_file 顶层 center_frequency_hz ({top_mhz:g} MHz) 与 "
-                f"scd_config.arfcn={scd_config['arfcn']} ({scd_mhz:g} MHz) 不一致 — "
-                "两处只能留一处 (顶层留空以 SCD 为准) 或必须相等"
-            )
+            # 域外/坏形态: 归 payload 校验管, 只跳过**频率**比对 — 不 return,
+            # 带宽比对照走 (Codex #263 R1 P2: 早退把带宽漂移也放过了)。
+            pass
+        if scd_mhz is not None:
+            top_mhz = float(center_frequency_hz) / 1e6
+            if abs(top_mhz - scd_mhz) > 1e-3:
+                raise ChannelAssetError(
+                    f"vendor_file 顶层 center_frequency_hz ({top_mhz:g} MHz) 与 "
+                    f"scd_config.arfcn={arfcn} ({scd_mhz:g} MHz) 不一致 — "
+                    "两处只能留一处 (顶层留空以 SCD 为准) 或必须相等"
+                )
     scd_bw_raw = scd_config.get("bandwidth_mhz")
     if bandwidth_mhz is not None and isinstance(scd_bw_raw, (int, float)) \
             and not isinstance(scd_bw_raw, bool):
