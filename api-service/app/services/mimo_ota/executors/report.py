@@ -161,7 +161,16 @@ def _build_mimo_ota_content_data(
         "created_by": "system",
     }
 
-    overall_pass = bool(analysis.get("overall_pass", False))
+    # P1-22: 通过谓词换 canonical 源 — analysis 执行器写的是
+    # TestExecution.validation_pass 列 (= verdict in ("PASS","MARGINAL")),
+    # 从不写 payload 的 "overall_pass" 键 (旧读法恒 False → 报告恒 failed/0.0%)。
+    # 列缺失 (老执行 / analysis 未跑到 / 测试 stub) 时兜 payload 的 verdict
+    # 三值字面量; 都没有 → 保守 False (与旧行为同向, 绝不把未知判成通过)。
+    _validation_pass = getattr(execution, "validation_pass", None)
+    if _validation_pass is not None:
+        overall_pass = bool(_validation_pass)
+    else:
+        overall_pass = analysis.get("verdict") in ("PASS", "MARGINAL")
     duration_sec = float(execution.duration_sec or 0.0)
 
     summary = {
@@ -258,12 +267,18 @@ def _build_mimo_ota_content_data(
          "path_loss_verified": _pl_verified,
          "azimuths_tested": len(azimuth_results)},
         {"phase": "analysis",
-         "overall_pass": analysis.get("overall_pass"),
-         "pass_criteria_summary": analysis.get("pass_criteria_summary")},
+         # P1-22: verdict 三值放渲染器可达位置 (PDFGenerator 步骤区只渲染
+         # name/step_name 与 parameters 下的键, 顶层键进不了 PDF); 旧
+         # overall_pass / pass_criteria_summary 是全仓无写方的死键, 删站点。
+         "name": "analysis",
+         "parameters": {"verdict": analysis.get("verdict")}},
     ]
 
     return {
         "title": f"MIMO OTA Test Report — {plan_info['name']}",
+        # P1-22 (Codex #256): 报告类型进 content_data — PDFGenerator 靠它分流
+        # 计划口径/用例口径的字段标签 (名字有无判不了型: 本路径恒有名字)。
+        "report_type": "single_execution",
         "generated_by": "MIMO OTA System",
         "generated_at": now.isoformat(),
         "overall_result": "passed" if overall_pass else "failed",

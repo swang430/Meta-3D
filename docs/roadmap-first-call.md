@@ -12,7 +12,7 @@
 blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 用户拍板本地队列：
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
-**当前片 = P1-22**，顺序 **P1-22 → P1-23 → P2-19 → P2-20 → P3-14 → P3-15 → P3-16 → P3-17**
+**当前片 = P1-23**（P1-22 ✅ done 本 PR），顺序 **P1-22 → P1-23 → P2-19 → P2-20 → P3-14 → P3-15 → P3-16 → P3-17**
 （逐片 WIP=1）。一句话索引（详情见各 P 区条目）：
 - **P1-22** 报告可信化：`overall_pass` 死键 + PDF CJK 字体 + `Test Plan: N/A` 残留（设计稿 [`design/p1-22-report-trustworthy-fix.md`](design/p1-22-report-trustworthy-fix.md)）
 - **P1-23** 现场协议补 P0-8 gate（纯文档，行前必办）
@@ -1255,7 +1255,7 @@ SYN, 于是每个 IP 都"alive"、每个子网都"可达"。实测连 RFC5737 TE
 
 ---
 
-### P1-22 — 报告可信化（死键谓词 + CJK 字体 + 模板残留）
+### P1-22 — 报告可信化（死键谓词 + CJK 字体 + 模板残留）✅ Done (2026-08-01)
 
 **What**: `executors/report.py` 死键母题三站点一次收口（`overall_pass` 恒 False 致自动报告
 恒 failed/0.0%、透传/`pass_criteria_summary` 死站点；precheck 站点经内审核实写方健康不动）+
@@ -1263,6 +1263,7 @@ SYN, 于是每个 IP 都"alive"、每个子网都"可达"。实测连 RFC5737 TE
 **Why P1**: 报告是测试系统最终交付物，当前对成功的测试说谎（恒报 failed）。
 **设计稿**: [`design/p1-22-report-trustworthy-fix.md`](design/p1-22-report-trustworthy-fix.md)（含修法红线四条）。
 **来源**: Discovered 区 `[discovered 2026-08-01 during ARCH-1 S6 总验]` 报告条 + CJK 条（详细根因在彼处，[→ P1-22] 已标）。**Estimate**: ~1 day。
+**收口 (2026-08-01)**: 谓词换 `validation_pass` 列（缺列兜 verdict 三值，未知保守 failed；两红线变异实跑：死键回退 2 红（含列优先判别用例）/ completed 谓词 4 红含 KPI-FAIL 谎报通过卫兵（初报 4 红系 FAILED 计数未锚定 short summary 行双计，内审 F2 纠正））；CJK 三族收敛单一 `CJK_FONT` 常量（样式表遍历 + Table FONTNAME + 显式位点，源码零 Helvetica 由存在性门守）；封面 Test Plan 行按报告类型分流（计划类保留真名，execution 类显示「来源」）。S6 真执行重生报告实证：中文标题可读 + pass 口径为真值（mock KPI FAIL 如实报 failed）。新文件 12 单测（+既有回归 4）+ 全量 2775 过。
 
 ### P1-23 — 现场协议补 P0-8 gate（纯文档，行前必办）
 

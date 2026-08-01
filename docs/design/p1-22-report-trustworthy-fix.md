@@ -1,6 +1,7 @@
 # P1-22 设计稿 — 报告可信化（死键谓词 + CJK 字体 + 模板残留）
 
-> 状态：**待 review**（v1）
+> 状态：**已拍板，已实现**（v1.3 — 2026-08-01 用户拍板两待决全甲案：
+> ①字体走 reportlab 内置 STSong-Light ②Test Plan 字段按报告类型分流显示「来源」）
 > Roadmap：**P1-22**（2026-08-01 拍板从 Discovered 区提升；原临时代号 T1 已废 ——
 > triage 出口只有 promoted to P1/P2/P3 or dropped，不另造编号体系）
 > 双实证：memory ✅（修法红线已在 roadmap Discovered 条被内审 F1 + Codex #254 两轮
