@@ -15,6 +15,9 @@ import os
 from typing import Optional
 
 from app.models.calibration import CalibrationCertificate
+# P2-21: CJK 字体常量与注册收敛到 pdf_generator (P1-22 建立的单一真值源) ——
+# import 副作用即完成 UnicodeCIDFont 注册, 本模块不再自带西文字面量。
+from app.services.pdf_generator import CJK_FONT
 
 
 class PDFCertificateGenerator:
@@ -35,7 +38,7 @@ class PDFCertificateGenerator:
             textColor=colors.HexColor('#1864ab'),
             spaceAfter=30,
             alignment=TA_CENTER,
-            fontName='Helvetica-Bold'
+            fontName=CJK_FONT
         )
         self.heading_style = ParagraphStyle(
             'CustomHeading',
@@ -44,14 +47,21 @@ class PDFCertificateGenerator:
             textColor=colors.HexColor('#1864ab'),
             spaceAfter=12,
             spaceBefore=20,
-            fontName='Helvetica-Bold'
+            fontName=CJK_FONT
         )
         self.body_style = ParagraphStyle(
             'CustomBody',
             parent=self.styles['Normal'],
             fontSize=10,
             spaceAfter=6,
+            fontName=CJK_FONT,
         )
+        # P2-21 字体收敛第三族 (同 pdf_generator P1-22): sample stylesheet 的
+        # 默认样式全部换 CJK — 证书标题/编号/正文里的中文最常落在这些样式上,
+        # 只换显式位点会漏。
+        for style in self.styles.byName.values():
+            if hasattr(style, 'fontName'):
+                style.fontName = CJK_FONT
 
     def generate_certificate(self, certificate: CalibrationCertificate) -> str:
         """
@@ -113,7 +123,7 @@ class PDFCertificateGenerator:
             ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
             ('ALIGN', (0, 0), (0, -1), 'LEFT'),
             ('ALIGN', (1, 0), (1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+            ('FONTNAME', (0, 0), (-1, -1), CJK_FONT),
             ('FONTSIZE', (0, 0), (-1, -1), 9),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
             ('TOPPADDING', (0, 0), (-1, -1), 8),
@@ -138,7 +148,7 @@ class PDFCertificateGenerator:
             ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
             ('ALIGN', (0, 0), (0, -1), 'LEFT'),
             ('ALIGN', (1, 0), (1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+            ('FONTNAME', (0, 0), (-1, -1), CJK_FONT),
             ('FONTSIZE', (0, 0), (-1, -1), 9),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
             ('TOPPADDING', (0, 0), (-1, -1), 8),
@@ -161,7 +171,7 @@ class PDFCertificateGenerator:
             ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
             ('ALIGN', (0, 0), (0, -1), 'LEFT'),
             ('ALIGN', (1, 0), (1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+            ('FONTNAME', (0, 0), (-1, -1), CJK_FONT),
             ('FONTSIZE', (0, 0), (-1, -1), 9),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
             ('TOPPADDING', (0, 0), (-1, -1), 8),
@@ -206,9 +216,9 @@ class PDFCertificateGenerator:
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1864ab')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTNAME', (0, 0), (-1, 0), CJK_FONT),
             ('FONTSIZE', (0, 0), (-1, 0), 10),
-            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTNAME', (0, 1), (-1, -1), CJK_FONT),
             ('FONTSIZE', (0, 1), (-1, -1), 9),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
             ('TOPPADDING', (0, 0), (-1, -1), 10),
@@ -232,7 +242,7 @@ class PDFCertificateGenerator:
             ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
             ('ALIGN', (0, 0), (0, 0), 'LEFT'),
             ('ALIGN', (1, 0), (1, 0), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+            ('FONTNAME', (0, 0), (-1, -1), CJK_FONT),
             ('FONTSIZE', (0, 0), (-1, -1), 11),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
             ('TOPPADDING', (0, 0), (-1, -1), 10),
@@ -266,7 +276,7 @@ class PDFCertificateGenerator:
             ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
             ('ALIGN', (0, 0), (0, -1), 'LEFT'),
             ('ALIGN', (1, 0), (1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+            ('FONTNAME', (0, 0), (-1, -1), CJK_FONT),
             ('FONTSIZE', (0, 0), (-1, -1), 9),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
             ('TOPPADDING', (0, 0), (-1, -1), 8),

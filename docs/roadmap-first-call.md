@@ -12,7 +12,7 @@
 blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 用户拍板本地队列：
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
-**当前片 = P2-21**（P1-22 ✅ #256 / P1-23 ✅ #257 / P2-19 ✅ #258 / P2-20 ✅ #259 / P1-24 ✅ done 本 PR），顺序 **P1-22 → P1-23 → P2-19 → P2-20 → P1-24 → P2-21 → P3-14 → P3-15 → P3-16 → P3-17**
+**当前片 = P3-14**（P1-22 ✅ #256 / P1-23 ✅ #257 / P2-19 ✅ #258 / P2-20 ✅ #259 / P1-24 ✅ #260 / P2-21 ✅ done 本 PR），顺序 **P1-22 → P1-23 → P2-19 → P2-20 → P1-24 → P2-21 → P3-14 → P3-15 → P3-16 → P3-17**
 （逐片 WIP=1；P1-24/P2-21 为 2026-08-01 用户二次拍板从 Discovered 提升，插在 P3 批前）。一句话索引（详情见各 P 区条目）：
 - **P1-22** 报告可信化：`overall_pass` 死键 + PDF CJK 字体 + `Test Plan: N/A` 残留（设计稿 [`design/p1-22-report-trustworthy-fix.md`](design/p1-22-report-trustworthy-fix.md)）
 - **P1-23** 现场协议补 P0-8 gate（纯文档，行前必办）
@@ -1971,10 +1971,11 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 **来源**: Discovered 区 #253 三条（[→ P2-20] 已标）。**Estimate**: ~0.5 day。
 **收口 (2026-08-01)**: ①`_list_custom_scenarios` 逐行降级（单行坏配置跳行 + ERROR 报数，不再 500 全列表，跳行是响的不是静默）；②标准库 5 处 `channel_model=` 死 kwarg 转正为 `channel_snapshots` 单快照（5 场景 UMa/UMi/RMa/UMa/UMi 对位，兑现 #253 测试注释"修好后改为期待具体模型值"）；③报告读方 `EnvironmentInfo` 换源快照；④`ota_scenario_mapper` 5 处死字段读换源 + 零调用方状态头注申报；⑤GUI 写侧 Create/Edit 对话框把表单所选模型写进快照真值位置（此前恒发 `[]`，模型只进 tags）。运行门：Playwright 无头闭环 —— 建场景选 RMa → POST 201 payload/response 快照带 RMa → 列表卡片可见。
 
-### P2-21 — P1-12 可信化标志渲染可达化 + 证书 CJK
+### P2-21 — P1-12 可信化标志渲染可达化 + 证书 CJK ✅ Done（本 PR）
 
 **What**: ①`executors/report.py` 的 `quiet_zone_verified` / `trp_verified` / `path_loss_verified` 三标志挪 `parameters` 下（渲染器只读 name/step_name/parameters，顶层键进不了 PDF —— 修法与 P1-22 的 analysis 站点同构）；②`pdf_certificate.py`（校准证书）注册 CJK 字体（与 P1-22 的 pdf_generator 同构，证书中文今天全豆腐块）。
-**Why P2**: P1-12"报告必须标注 未验证(兜底值)"的意图从未生效 —— mock TRP / 无路损校准的报告零提示，现场拿着假干净报告做判断。**来源**: Discovered 区 P1-22 内审 F3 补欠条（[→ P2-21] 已标）。**Estimate**: ~0.5 day。
+**Why P2**: P1-12"报告必须标注 未验证(兜底值)"的意图从未生效 —— mock TRP / 无路损校准的报告零提示，现场拿着假干净报告做判断。**来源**: Discovered 区 P1-22 内审 F3 补欠条（[→ P2-21] 已标）。
+**落地（本 PR）**: ①三 step 渲染载荷整体进 parameters（中文键 + 三值可读标注"已验证 (…)/未验证 (…)/未知 (历史数据未区分)"，顶层死键删净），行为门打在渲染器实际产出（步骤区 elements 里断言标注文本可见）；②pdf_certificate 三族收敛 CJK_FONT（import 自 pdf_generator 单一真值源）+ 证书 PDF 字节含 STSong 行为门；backcompat 推导测试断言迁到新生效端。4 变异实跑全红。
 
 ---
 

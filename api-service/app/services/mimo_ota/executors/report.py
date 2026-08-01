@@ -240,36 +240,72 @@ def _build_mimo_ota_content_data(
         # cert is the provenance that recovers "verified" without the flag.
         _pl_verified = measure.get("path_loss_certificate_id") is not None
 
+    def _verified_label(flag, verified_note: str, unverified_note: str) -> str:
+        """P1-12 三值标志 → 报告可读标注。None (历史数据判不了) 也要显式说出来,
+        不能沉默 —— 沉默正是 P2-21 要修的病。"""
+        if flag is True:
+            return f"已验证 ({verified_note})"
+        if flag is False:
+            return f"未验证 ({unverified_note})"
+        return "未知 (历史数据未区分真实/兜底)"
+
+    def _cell(v):
+        """parameters 单元格值卫生 (内审 F1/F3):
+        - 字符串过 XML 转义 — 渲染器把值喂 Paragraph(paraparser), `<字母` 形态
+          的自由文本 (操作员命名 "TDL-A <30ns" / DUT 名) 会被当未闭合 tag,
+          **整份报告 PDF 生成失败**; 完整 `<tag>` 形态更阴险 — 内容被静默吞掉。
+          旧顶层键时代这些值从不进 Paragraph, 本次接入渲染管道必须带转义。
+        - None → "—" (中文报告里英文字面 "None" 含义模糊; .get 默认值只兜键
+          缺失, 兜不住显式 null — 值形态三态)。
+        - 列表逐条同处理 (messages; 渲染器 json.dumps 保留原字符)。"""
+        from xml.sax.saxutils import escape
+        if v is None:
+            return "—"
+        if isinstance(v, str):
+            return escape(v)
+        if isinstance(v, list):
+            return [_cell(x) for x in v]
+        return v
+
+    # P2-21: 渲染载荷整体放 parameters 下 (PDFGenerator 步骤区只渲染 name/
+    # step_name 与 parameters 的键值表, 顶层键进不了 PDF) —— P1-12 的三个可信化
+    # 标志因此从未生效过, 现场拿假干净报告做判断。同一修法 P1-22 已在 analysis
+    # 站点验证 (verdict 进 parameters); 本次把 precheck/reference/measure 三站点
+    # 收敛到同构, 顶层渲染键删干净 (step_results 唯一消费方是 PDFGenerator,
+    # 留顶层就是死载荷双写)。
     step_results = [
-        {"phase": "precheck", "status": "PASS" if precheck.get("overall_pass") else "FAIL",
-         "messages": precheck.get("messages", []),
-         # P1-12 audit: surface QZ qualification provenance structurally (not
-         # just buried in messages) so the report can显著 flag a fallback. When
-         # not True the ±dB ripple is a legacy default, NOT a measured QZ — the
-         # run "passed" precheck but the quiet zone was never actually verified.
-         "quiet_zone_ripple_db": precheck.get("quiet_zone_ripple_db"),
-         "quiet_zone_verified": _qz_verified},
-        {"phase": "reference",
-         "trp_dbm": reference.get("measured_trp_dbm"),
-         "compensation_db": reference.get("compensation_factor_db"),
-         # P1-12 audit: mock/fallback TRP → not verified. The TRP + compensation
-         # are then NOT measured; report must flag 未验证(兜底值) rather than
-         # present them as real reference data.
-         "measurement_source": reference.get("measurement_source"),
-         "trp_verified": _trp_verified},
-        {"phase": "measure",
-         "frequency_ghz": measure.get("frequency_ghz"),
-         "mimo_config": measure.get("mimo_config"),
-         "cdl_model": measure.get("cdl_model_name"),
-         "path_loss_compensation_db": measure.get("path_loss_compensation_db"),
-         # P1-12 audit: no path-loss cert → RSRP uncompensated → results not
-         # calibrated. Flag so the report marks 未验证(无路损校准).
-         "path_loss_verified": _pl_verified,
-         "azimuths_tested": len(azimuth_results)},
+        {"phase": "precheck", "name": "precheck (预检)",
+         "parameters": {
+             "结果": "PASS" if precheck.get("overall_pass") else "FAIL",
+             "静区波纹 (±dB)": _cell(precheck.get("quiet_zone_ripple_db")),
+             # P1-12: 非 True 时波纹是遗留默认值, 静区从未实测 —— 必须标注。
+             "静区验证": _verified_label(
+                 _qz_verified, "探头方向图实测", "兜底默认值, 非实测静区"),
+             "提示": _cell(precheck.get("messages") or []),
+         }},
+        {"phase": "reference", "name": "reference (参考测量)",
+         "parameters": {
+             "参考 TRP (dBm)": _cell(reference.get("measured_trp_dbm")),
+             "补偿 (dB)": _cell(reference.get("compensation_factor_db")),
+             "TRP 来源": _cell(reference.get("measurement_source")),
+             # P1-12: mock/兜底 TRP → 参考数据不是实测, 必须标注。
+             "TRP 验证": _verified_label(
+                 _trp_verified, "真实信号分析仪", "mock/兜底值"),
+         }},
+        {"phase": "measure", "name": "measure (吞吐测量)",
+         "parameters": {
+             "频率 (GHz)": _cell(measure.get("frequency_ghz")),
+             "MIMO 配置": _cell(measure.get("mimo_config")),
+             "CDL 模型": _cell(measure.get("cdl_model_name")),
+             "路损补偿 (dB)": _cell(measure.get("path_loss_compensation_db")),
+             # P1-12: 无路损证书 → RSRP 未补偿 → 结果未校准, 必须标注。
+             "路损验证": _verified_label(
+                 _pl_verified, "路损校准证书", "无路损校准, RSRP 未补偿"),
+             "已测方位数": len(azimuth_results),
+         }},
         {"phase": "analysis",
-         # P1-22: verdict 三值放渲染器可达位置 (PDFGenerator 步骤区只渲染
-         # name/step_name 与 parameters 下的键, 顶层键进不了 PDF); 旧
-         # overall_pass / pass_criteria_summary 是全仓无写方的死键, 删站点。
+         # P1-22: verdict 三值放渲染器可达位置; 旧 overall_pass /
+         # pass_criteria_summary 是全仓无写方的死键, 删站点。
          "name": "analysis",
          "parameters": {"verdict": analysis.get("verdict")}},
     ]
