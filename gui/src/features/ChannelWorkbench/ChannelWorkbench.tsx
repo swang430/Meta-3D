@@ -169,7 +169,7 @@ export function ChannelWorkbench() {
                   <Table.Td>
                     <Text size="sm">
                       {a.center_frequency_hz != null
-                        ? `${(a.center_frequency_hz / 1e9).toFixed(3)} GHz`
+                        ? `${(a.center_frequency_hz / 1e6).toFixed(3)} MHz`
                         : '—'}
                     </Text>
                   </Table.Td>
@@ -224,7 +224,7 @@ function AssetDetail({ asset }: { asset: ChannelAsset }) {
     ['规范名 canonical_name', asset.canonical_name ?? '—'],
     ['派生自 derived_from', asset.derived_from ?? '—'],
     ['注入路径 allowed_targets', asset.allowed_targets.map((t) => TARGET_LABEL[t] ?? t).join(' / ')],
-    ['中心频率', asset.center_frequency_hz != null ? `${(asset.center_frequency_hz / 1e9).toFixed(4)} GHz` : '—'],
+    ['中心频率', asset.center_frequency_hz != null ? `${(asset.center_frequency_hz / 1e6).toFixed(3)} MHz` : '—'],
     ['带宽', asset.bandwidth_mhz != null ? `${asset.bandwidth_mhz} MHz` : '—'],
     ['LOS', asset.is_los == null ? '未声明' : asset.is_los ? '是' : '否'],
     ['K 因子', asset.k_factor_db != null ? `${asset.k_factor_db} dB` : '—'],

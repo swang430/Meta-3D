@@ -1,5 +1,5 @@
 """Test Plan and Test Case Pydantic schemas"""
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Dict, Any
 from ._datetime import UTCDateTime
 from uuid import UUID
@@ -9,11 +9,27 @@ from uuid import UUID
 
 # ==================== Test Case Schemas ====================
 
+def _freq_bw_from_configuration(cfg, cur_freq, cur_bw):
+    """P3-14 换源单一实现: 行级 frequency_mhz / bandwidth_mhz 是保存链不回写的
+    stale 派生列 (GUI 只 PATCH configuration) — 显示/响应值从 configuration 派生,
+    行列只当无 configuration 值时的历史兜底。bool/非正数/字符串形态不接管。"""
+    if isinstance(cfg, dict):
+        fh = cfg.get("frequency_hz")
+        if isinstance(fh, (int, float)) and not isinstance(fh, bool) and fh > 0:
+            cur_freq = round(fh / 1e6, 3)
+        bw = cfg.get("bandwidth_mhz")
+        if isinstance(bw, (int, float)) and not isinstance(bw, bool) and bw > 0:
+            cur_bw = float(bw)
+    return cur_freq, cur_bw
+
+
 class TestCaseCreate(BaseModel):
     """Request to create a test case"""
     name: str = Field(..., min_length=1, max_length=255, description="Test case name")
     description: Optional[str] = None
-    test_type: str = Field(..., description="TRP | TIS | Throughput | Handover | MIMO | ChannelModel | VirtualRoadTest | Custom")
+    # P3-14: 描述与 TestCaseType 枚举对齐 (曾漏 MIMO_OTA — 这段进 OpenAPI, 是
+    # 外部调用方唯一会读的契约文本); 门 G-A (test_rule_gates) 断言描述 ⊇ 枚举全员。
+    test_type: str = Field(..., description="TRP | TIS | Throughput | Handover | MIMO | MIMO_OTA | ChannelModel | VirtualRoadTest | Custom")
     configuration: Dict[str, Any] = Field(..., description="Test-specific configuration")
     pass_criteria: Optional[Dict[str, Any]] = None
     expected_results: Optional[Dict[str, Any]] = None
@@ -26,7 +42,7 @@ class TestCaseCreate(BaseModel):
     bandwidth_mhz: Optional[float] = None
     test_duration_sec: Optional[float] = None
     is_template: Optional[bool] = False
-    template_category: Optional[str] = None
+    template_category: Optional[str] = Field(None, max_length=100)  # 列 String(100), 超长 PG 500 (P3-14)
     created_by: str = Field(..., description="User who created the test case")
     tags: Optional[List[str]] = Field(default_factory=list)
 
@@ -78,6 +94,15 @@ class TestCaseResponse(BaseModel):
     class Config:
         from_attributes = True
 
+    @model_validator(mode="after")
+    def _derive_freq_from_configuration(self):
+        """P3-14 (内审 F1): 换源母题的 detail 半 — 列表侧已换源, detail 响应
+        (POST/GET/PATCH 三端点) 不同源会让两个端点对同一用例报两个频率。
+        响应自带 configuration, validator 派生, 未来新构造点自动覆盖。"""
+        self.frequency_mhz, self.bandwidth_mhz = _freq_bw_from_configuration(
+            self.configuration, self.frequency_mhz, self.bandwidth_mhz)
+        return self
+
 
 class TestCaseSummary(BaseModel):
     """Simplified test case summary for lists"""
@@ -98,6 +123,17 @@ class TestCaseSummary(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @classmethod
+    def from_case_row(cls, tc: Any) -> "TestCaseSummary":
+        """P3-14 换源: 行级 frequency_mhz / bandwidth_mhz 是保存链不回写的
+        stale 派生列 (GUI 只 PATCH configuration, 改频后卡片显示旧频率) ——
+        显示值从 configuration 派生, 行列只当无 configuration 值时的历史兜底。
+        修法是换源不是加同步机制 (P2-11 内审 F1 定的方向)。"""
+        obj = cls.model_validate(tc)
+        obj.frequency_mhz, obj.bandwidth_mhz = _freq_bw_from_configuration(
+            getattr(tc, "configuration", None), obj.frequency_mhz, obj.bandwidth_mhz)
+        return obj
 
 
 # ==================== Test Execution Schemas ====================

@@ -52,7 +52,9 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
   const [sourceType, setSourceType] = useState<ChannelSourceType>('standard_3gpp')
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  const [centerGhz, setCenterGhz] = useState<number | string>('')
+  // P3-14: MHz 口径 + 1 kHz 粒度 — GHz 4 位小数是 100 kHz 粒度, ARFCN 栅格点
+  // (如 636666 = 3549.99 MHz) 资产登记自己都够不着 (MIMOOTAConfigForm 同款先例)
+  const [centerMhz, setCenterMhz] = useState<number | string>('')
   const [bandwidthMhz, setBandwidthMhz] = useState<number | string>('')
   const [isLos, setIsLos] = useState<'unset' | 'los' | 'nlos'>('unset')
   const [kFactorDb, setKFactorDb] = useState<number | string>('')
@@ -78,7 +80,7 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
       setSourceType(asset.source_type)
       setName(asset.name)
       setDescription(asset.description ?? '')
-      setCenterGhz(asset.center_frequency_hz != null ? asset.center_frequency_hz / 1e9 : '')
+      setCenterMhz(asset.center_frequency_hz != null ? asset.center_frequency_hz / 1e6 : '')
       setBandwidthMhz(asset.bandwidth_mhz ?? '')
       setIsLos(asset.is_los == null ? 'unset' : asset.is_los ? 'los' : 'nlos')
       setKFactorDb(asset.k_factor_db ?? '')
@@ -99,7 +101,7 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
       setRaySnapshots(raySnaps.map((s) => ({ ...s, rays: s.rays ?? [] })))
     } else {
       setSourceType('standard_3gpp')
-      setName(''); setDescription(''); setCenterGhz(''); setBandwidthMhz('')
+      setName(''); setDescription(''); setCenterMhz(''); setBandwidthMhz('')
       setIsLos('unset'); setKFactorDb(''); setCdlModelName('')
       setScd({ band: '', arfcn: '', bandwidth_mhz: '', model: '', scenario: '', mimo: '', polarization: '', version: 1 })
       setFilePath('')
@@ -129,12 +131,12 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
   })
 
   function commonFields() {
-    const center = numOrNull(centerGhz)
+    const center = numOrNull(centerMhz)
     const isLosVal = isLos === 'unset' ? null : isLos === 'los'
     return {
       name: name.trim(),
       description: blankNull(description),
-      center_frequency_hz: center == null ? null : center * 1e9,
+      center_frequency_hz: center == null ? null : Math.round(center * 1e6),
       bandwidth_mhz: numOrNull(bandwidthMhz),
       is_los: isLosVal,
       k_factor_db: numOrNull(kFactorDb),
@@ -190,7 +192,7 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
       }
     }
     // S2 校验前置: center 与 bandwidth 须同时给 (standard/rt 频率一致性网)
-    if (numOrNull(centerGhz) != null && numOrNull(bandwidthMhz) == null
+    if (numOrNull(centerMhz) != null && numOrNull(bandwidthMhz) == null
         && (sourceType === 'standard_3gpp')) {
       setFormError('标准 3GPP 设了中心频率须同时给带宽 (否则频率一致性网静默跳过)')
       return
@@ -303,8 +305,9 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
 
         <Divider label="物理声明 (频率一致性网)" labelPosition="left" />
         <SimpleGrid cols={2}>
-          <NumberInput label="中心频率 (GHz)" value={centerGhz} decimalScale={4} step={0.1}
-            onChange={(v) => setCenterGhz(v)} />
+          <NumberInput label="中心频率 (MHz)" value={centerMhz} decimalScale={3} step={1}
+            description="MHz 口径跟 ARFCN/报错文案一致 (例 3549.99)"
+            onChange={(v) => setCenterMhz(v)} />
           <NumberInput label="带宽 (MHz)" value={bandwidthMhz}
             onChange={(v) => setBandwidthMhz(v)} />
           <Select label="LOS" data={[

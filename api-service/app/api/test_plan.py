@@ -92,7 +92,7 @@ def list_test_cases(
 
         return TestCaseListResponse(
             total=len(test_cases),
-            items=[TestCaseSummary.from_orm(tc) for tc in test_cases]
+            items=[TestCaseSummary.from_case_row(tc) for tc in test_cases]
         )
     except Exception as e:
         import logging
@@ -125,7 +125,7 @@ def list_test_cases_grouped(
             cat = tc.template_category or "未分类"
             if cat not in groups:
                 groups[cat] = []
-            groups[cat].append(TestCaseSummary.from_orm(tc))
+            groups[cat].append(TestCaseSummary.from_case_row(tc))
 
         return TestCaseGroupedResponse(
             categories=list(groups.keys()),

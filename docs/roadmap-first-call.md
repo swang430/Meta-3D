@@ -12,7 +12,7 @@
 blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 用户拍板本地队列：
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
-**当前片 = P3-14**（P1-22 ✅ #256 / P1-23 ✅ #257 / P2-19 ✅ #258 / P2-20 ✅ #259 / P1-24 ✅ #260 / P2-21 ✅ done 本 PR），顺序 **P1-22 → P1-23 → P2-19 → P2-20 → P1-24 → P2-21 → P3-14 → P3-15 → P3-16 → P3-17**
+**当前片 = P3-15**（P1-22 ✅ #256 / P1-23 ✅ #257 / P2-19 ✅ #258 / P2-20 ✅ #259 / P1-24 ✅ #260 / P2-21 ✅ #261 / P3-14 ✅ done 本 PR），顺序 **P1-22 → P1-23 → P2-19 → P2-20 → P1-24 → P2-21 → P3-14 → P3-15 → P3-16 → P3-17**
 （逐片 WIP=1；P1-24/P2-21 为 2026-08-01 用户二次拍板从 Discovered 提升，插在 P3 批前）。一句话索引（详情见各 P 区条目）：
 - **P1-22** 报告可信化：`overall_pass` 死键 + PDF CJK 字体 + `Test Plan: N/A` 残留（设计稿 [`design/p1-22-report-trustworthy-fix.md`](design/p1-22-report-trustworthy-fix.md)）
 - **P1-23** 现场协议补 P0-8 gate（纯文档，行前必办）
@@ -1998,7 +1998,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 | P3-11 | `bootstrap_lifespan` seeder set drift | ✅ |
 | P3-12 | `driver_capabilities` test-isolation pollution | ✅ |
 | P3-13 | `probe_calibration_service` invalid-probe sentinel drift | ✅ |
-| P3-14 | 契约收尾（`test_type` 描述 / `template_category` max_length / `CreateSessionRequest` 缺 `channel_asset_id` / 频率粒度余站点）+ 门 G-A（schema 描述⊇枚举） | ⬜ |
+| P3-14 | 契约收尾（`test_type` 描述 / `template_category` max_length / `CreateSessionRequest` 缺 `channel_asset_id` / 频率粒度余站点）+ 门 G-A（schema 描述⊇枚举，落地为 test_rule_gates **G9**） | ✅ 本 PR |
 | P3-15 | 数据/测试卫生批（`test_feature_gaps` DB 隔离 / 2 顺序耦合 flaky / vendor_file 频率漂移 fail-loud / 队列僵尸 triage——表已封存倾向 drop） | ⬜ |
 | P3-16 | 门 G-B：状态列注释 ⊇ 全仓状态字面量（前会话初判可行，repo 内无佐证，实施时重验） | ⬜ |
 | P3-17 | 门 G-C：文档 (动词,路径,参数,响应键) ⊇ 真实实现（G8 加强版） | ⬜ |

@@ -949,3 +949,42 @@ def test_g8_docs_only_cite_live_plan_routes():
         "现状文档引用了**不存在**的计划链路由 (ARCH-1 S4 已拆除, 或从未实现):\n"
         + "\n".join(sorted(set(dead)))
     )
+
+# ─────────────────────────────────────────────────────────────────────
+# G9 schema 描述 ⊇ 枚举 (P3-14 拍板的门 G-A)
+# ─────────────────────────────────────────────────────────────────────
+# TestCaseCreate.test_type 的 description 是外部调用方唯一会读的契约文本 (进
+# OpenAPI), 曾漏 MIMO_OTA。字段类型是 str 不是 Enum (历史决定), 描述与枚举的
+# 对齐没有任何结构强制 —— 站点表锁死: 枚举加成员、描述漏更新 → 红。
+# 判定是**集合包含**不是子串 (不变量档): desc 按 "|" 切 token 集, 枚举成员
+# value 必须逐个是 token —— 子串匹配会被 "MIMO" ⊂ "MIMO_OTA" 这种前缀骗过。
+# 变异实跑: 描述里删 " MIMO_OTA |" → 红。
+
+_G9_ENUM_DESCRIPTION_SITES = [
+    # (schema 模块, schema 类, 字段, 枚举模块, 枚举类)
+    ("app.schemas.test_plan", "TestCaseCreate", "test_type",
+     "app.models.test_plan", "TestCaseType"),
+]
+
+
+def test_g9_schema_description_superset_of_enum():
+    import importlib
+
+    problems = []
+    for schema_mod, schema_cls, field_name, enum_mod, enum_cls in _G9_ENUM_DESCRIPTION_SITES:
+        schema = getattr(importlib.import_module(schema_mod), schema_cls)
+        enum = getattr(importlib.import_module(enum_mod), enum_cls)
+        desc = schema.model_fields[field_name].description or ""
+        tokens = {t.strip() for t in desc.split("|")}
+        missing = [f"{enum_cls}.{m.name} ({m.value!r})" for m in enum
+                   if m.value not in tokens]
+        if missing:
+            problems.append(
+                f"{schema_cls}.{field_name} 的 description 漏列: {', '.join(missing)}\n"
+                f"  当前描述: {desc!r}"
+            )
+    assert not problems, (
+        "schema 描述与权威枚举脱节 (外部调用方只读描述, 漏列 = 契约说谎):\n"
+        + "\n".join(problems)
+    )
+

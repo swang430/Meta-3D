@@ -227,6 +227,10 @@ class CreateSessionRequest(BaseModel):
     max_rsrp_variance_db: float = 3.0
     # New optional field — pin a specific lab; falls back to the unique active one.
     lab_profile_id: Optional[UUID] = None
+    # P3-14: 统一信道资产 (P2-16) 进会话创建 — 此前只能建完会话再 PATCH
+    # configuration 绕道 (scripts/onsite-run-channel-throughput.sh 固化的临时路)。
+    # None = 不带资产, 走 cdl_model_name 等显式参数 (兼容不变)。
+    channel_asset_id: Optional[UUID] = None
     # Lab-smoke opt-outs for the strict precheck gates (P1-8 cal / P1-9 DUT).
     # Default None = don't override → config schema default (True, strict) applies,
     # so on-site real first-call keeps the fail-loud protection. The GUI's
@@ -294,6 +298,10 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
             "max_rsrp_variance_db": req.max_rsrp_variance_db,
         },
     }
+    # P3-14: 资产引用透传 (MIMOOTAConfiguration.channel_asset_id 已存在, S3 起
+    # measure resolver 按它派生 engine_mode / .smu 源)。None 不发 — 不覆盖默认。
+    if req.channel_asset_id is not None:
+        overrides["channel_asset_id"] = str(req.channel_asset_id)
     # Only emit the strict-gate flags when the caller set them explicitly.
     # Omitting them keeps the config schema default (True / strict). The
     # mock/real auto-skip is NOT applied here — it's evaluated live at precheck
@@ -477,6 +485,18 @@ def _build_context(
 @router.post("/sessions", response_model=SessionResponse, status_code=201)
 async def create_session(req: CreateSessionRequest, db: Session = Depends(get_db)):
     """Create a new MIMO_OTA session (TestCase + TestExecution + 5 step descriptors)."""
+    # P3-14 (内审 F2): 资产悬空引用在创建期就 422 — 否则 precheck/reference 两个
+    # 阶段 (真仪器时间) 跑完才在 measure 撞 ChannelAssetResolveError, 现场时间贵。
+    # 对称先例: 同函数里 lab_profile_id 创建期解析失败即 422。
+    if req.channel_asset_id is not None:
+        from app.services.channel_asset_service import (
+            ChannelAssetNotFound,
+            get_channel_asset,
+        )
+        try:
+            get_channel_asset(db, req.channel_asset_id)
+        except ChannelAssetNotFound as err:
+            raise HTTPException(status_code=422, detail=str(err)) from err
     overrides = _request_overrides(req)
     try:
         test_case, descriptors = build_mimo_ota_test_case(
