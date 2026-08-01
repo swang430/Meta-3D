@@ -56,7 +56,11 @@ canonical 真值源（`analysis.py:120-131`）：`verdict ∈ {"PASS","MARGINAL"
 
 - `:164` → 读 `execution.validation_pass`（首选，canonical 列；该函数签名必传 execution）；
   兜底形态 `analysis.get("verdict") in ("PASS", "MARGINAL")`
-- `:261` → 透传改 `verdict` 本值（报告里显示 PASS/MARGINAL/FAIL 三态，比布尔信息多）
+- `:261` → 透传改 `verdict` 本值，且必须放进**渲染器可达位置**（Codex #255 校正：
+  `PDFGenerator._generate_step_details_section` 只渲染 `name`/`step_name` 与
+  `parameters` 下的键 —— 顶层键进不了 PDF）：verdict 挂到该 step dict 的
+  `parameters` 下（或同 PR 给渲染器加顶层 verdict 读取，二选一在实现时定，
+  验收以 PDF 里真出现三态文本为准）
 - `:262` → `pass_criteria_summary` 死键**删站点**（无写方无消费真值，去掉 > 加机制；
   实施前 grep step_results 下游确认无硬索引该键）
 

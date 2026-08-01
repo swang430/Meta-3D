@@ -170,7 +170,7 @@ P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max /
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | ≈ **空** —— 所有"本地可启动且未做"的活跃 P 项已收口 |
+| **LOCAL-OPEN (roadmap 内)** | **P1-22 → P1-23 → P2-19 → P2-20 → P3-14~17**（2026-08-01 拍板队列，顺序与当前片见 Current Focus）|
 | **ON-SITE-BLOCKED** | P0-5 (P0-3/4 已 2026-07-03 现场完成) + P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -1964,7 +1964,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 ## 🟢 P3 — Polish / tooling
 
-**全部 ✅ Done（13/13）。** 完整 What / Fix / Acceptance 详情已迁出 → [`roadmap-archive.md`](roadmap-archive.md)。速览：
+**13/17 ✅ Done，P3-14~17 ⬜ open（2026-08-01 队列，见表尾与 Current Focus 顺序）。** 已完成项的完整 What / Fix / Acceptance 详情已迁出 → [`roadmap-archive.md`](roadmap-archive.md)。速览：
 
 | ID | Item | Done |
 |----|------|------|
