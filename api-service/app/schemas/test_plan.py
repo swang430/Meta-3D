@@ -12,12 +12,22 @@ from uuid import UUID
 def _freq_bw_from_configuration(cfg, cur_freq, cur_bw):
     """P3-14 换源单一实现: 行级 frequency_mhz / bandwidth_mhz 是保存链不回写的
     stale 派生列 (GUI 只 PATCH configuration) — 显示/响应值从 configuration 派生,
-    行列只当无 configuration 值时的历史兜底。bool/非正数/字符串形态不接管。"""
+    行列只当无 configuration 值时的历史兜底。bool/非正数/字符串形态不接管。
+
+    取值顺序 = **与执行同源** (Codex #262 R1 P1): 执行侧权威 PCell 是
+    component_carriers[0] (measure Phase 2g; factory model_dump 落库自带 CC,
+    且 MIMOOTAConfiguration 的 validator 在 CC 非空时**忽略顶层频率**) ——
+    GUI 只改顶层时若显示跟着顶层, 就是宣称新频率而硬件跑旧 PCell, 把实验级
+    错配藏起来。故 CC[0] > 顶层 > 行列。"""
     if isinstance(cfg, dict):
-        fh = cfg.get("frequency_hz")
+        source = cfg
+        ccs = cfg.get("component_carriers")
+        if isinstance(ccs, list) and ccs and isinstance(ccs[0], dict):
+            source = ccs[0]
+        fh = source.get("frequency_hz")
         if isinstance(fh, (int, float)) and not isinstance(fh, bool) and fh > 0:
             cur_freq = round(fh / 1e6, 3)
-        bw = cfg.get("bandwidth_mhz")
+        bw = source.get("bandwidth_mhz")
         if isinstance(bw, (int, float)) and not isinstance(bw, bool) and bw > 0:
             cur_bw = float(bw)
     return cur_freq, cur_bw

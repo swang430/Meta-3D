@@ -41,6 +41,40 @@ class TestSummaryFrequencySource:
         assert s.frequency_mhz == 3549.99
         assert s.bandwidth_mhz == 40.0
 
+    def test_component_carrier_pcell_wins_over_top_level(self):
+        """Codex #262 R1 P1: 执行侧权威 PCell = component_carriers[0] (measure
+        Phase 2g, factory model_dump 落库带 CC) — GUI 只改顶层时, 显示若报顶层
+        新频率而硬件按 CC[0] 旧频率跑, 就是把实验级错配藏起来。显示必须与执行
+        同源: CC[0] > 顶层 > 行列。"""
+        row = _row(configuration={
+            "frequency_hz": 3_600_000_000,          # GUI 顶层改的"新"频率
+            "bandwidth_mhz": 100,
+            "component_carriers": [                  # 执行真正用的 PCell (stale)
+                {"frequency_hz": 3_549_990_000, "bandwidth_mhz": 40, "role": "pcell"},
+            ],
+        })
+        s = TestCaseSummary.from_case_row(row)
+        assert s.frequency_mhz == 3549.99   # 跟执行同源, 不跟顶层
+        assert s.bandwidth_mhz == 40.0
+
+    def test_malformed_component_carriers_fall_back_to_top_level(self):
+        """CC 形态卫兵: 列表空/成员非 dict → source 回落顶层, 不炸。"""
+        for bad_cc in ([], [None], ["x"], "notalist"):
+            row = _row(configuration={"frequency_hz": 3_549_990_000,
+                                      "component_carriers": bad_cc})
+            s = TestCaseSummary.from_case_row(row)
+            assert s.frequency_mhz == 3549.99, bad_cc
+
+    def test_cc_dict_with_bad_values_keeps_row_fallback(self):
+        """CC[0] 是 dict 但值坏 → source 已选定 CC, 坏值不接管、行列兜底 ——
+        不做"freq 取顶层、bw 取 CC"的逐字段混源 (混代显示比保守显示更骗人;
+        这种 configuration 执行时会在 schema 校验就炸, 显示保守是诚实形态)。"""
+        for bad_cc0 in ({"frequency_hz": True}, {}):
+            row = _row(configuration={"frequency_hz": 3_549_990_000,
+                                      "component_carriers": [bad_cc0]})
+            s = TestCaseSummary.from_case_row(row)
+            assert s.frequency_mhz == 3500.0, bad_cc0
+
     def test_row_column_is_fallback_when_config_lacks_frequency(self):
         """VRT / 旧用例 configuration 里没有 frequency_hz → 行列兜底, 不清零。"""
         row = _row(configuration={"channel_snapshots": []})
