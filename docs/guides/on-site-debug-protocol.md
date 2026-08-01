@@ -129,12 +129,15 @@ GO/STATIC/GOS、`propsim_f64_health` 只读探测恒判成功，都干不了这�
    依赖仪表残留状态则不可复现，Codex #257 R2）
 1. load 场景包（`.smu`，用 SCD 登记的实测频率对齐 TestCase）→ run → 读错误队列
 2. 运行中改参（归一化功率）→ 再读错误队列
-3. 读输入口电平状态并按合法范围判定（前提 = 步骤 0 的满 RB DL 在场）
+3. **执行输入参考 AUTOSET 闭环**（不是只读一次判范围 —— `INP:LEV:AUTOSET`
+   设 avg+crest → 读回 clipping/cut-off → 迭代收敛，见架构文档操作点流程；
+   干净启动或残留参考值错误时"读数在限内"≠"输入参考配置正确"，Codex #257 R3）
 4. **bypass 态复验**：切 bypass → 输入参考/电平窗口仍正确（架构文档把它列为
    P0-8 硬约束 —— 现场观测 B 证明 bypass 也会失败，只验衰落态会漏已知失败模式）
 **Gate（= P0-8a，P0-8 验收中不依赖 DUT 的前两条 + bypass 硬约束）**：
 - load → run → 改参全程 **0 error**（错误队列每步清零）
-- F64 **输入口变绿**（满 RB DL 在场时输入电平在合法范围）
+- F64 **输入口变绿**（满 RB DL 在场 + AUTOSET 闭环收敛后：avg/crest 已设、
+  clipping/cut-off 读回无告警）
 - **bypass 态下电平窗口同样正确**（控制路径验证，架构文档 P0-8 硬约束）
 - ⚠️ P0-8 验收第三条「DL 不失真（非 0% ACK）」**依赖 DUT attach，挂在 Phase 4
   的 gate 里（P0-8b），本段不验** —— gate 拆两半是设计决策，别在这里等 DUT。
