@@ -273,6 +273,47 @@ def _validate_source_fields(source_type: str, fields: dict) -> None:
 
 # ---- CRUD ----
 
+def _check_vendor_declared_freq(
+    scd_config: Any, center_frequency_hz: Any, bandwidth_mhz: Any,
+) -> None:
+    """vendor_file 顶层物理声明 vs scd_config 一致性 (P3-15 fail-loud)。
+
+    2026-07-02 现场形态: seed 顶层 3.5 GHz vs scd arfcn=640000 (=3600 MHz) 矛盾 ——
+    GUI 列表/表单显示读顶层, P2-11 频率一致性网读 payload arfcn, 显示误导现场。
+    规则: 顶层给了值就必须与 scd 声明一致 (容差 1 kHz — 同栅格应精确相等,
+    只吸浮点尘埃); 顶层留空合法 (scd 是唯一真值源, 显示走 resolver 派生)。
+    调用方保证 scd_config 已过 _validate_vendor_file_payload (arfcn 域合法)。"""
+    if not isinstance(scd_config, dict):
+        return
+    from app.hal.nr_arfcn import nr_arfcn_to_freq_mhz
+    # scd 取值防御与姊妹函数 _check_vendor_filename_freq 同姿态 (.get + 早退):
+    # update 不带 payload 时 scd 来自资产现值, "已过 payload 校验"是数据史不是
+    # 调用序 — 存量行缺键/域外时无关 PATCH 不该 500 (内审 F3)。
+    arfcn = scd_config.get("arfcn")
+    if center_frequency_hz is not None and arfcn is not None:
+        try:
+            scd_mhz = nr_arfcn_to_freq_mhz(int(arfcn))
+        except (ValueError, TypeError):
+            return  # 域外/坏形态: 归 payload 校验管, 本函数只判一致性
+        top_mhz = float(center_frequency_hz) / 1e6
+        if abs(top_mhz - scd_mhz) > 1e-3:
+            raise ChannelAssetError(
+                f"vendor_file 顶层 center_frequency_hz ({top_mhz:g} MHz) 与 "
+                f"scd_config.arfcn={scd_config['arfcn']} ({scd_mhz:g} MHz) 不一致 — "
+                "两处只能留一处 (顶层留空以 SCD 为准) 或必须相等"
+            )
+    scd_bw_raw = scd_config.get("bandwidth_mhz")
+    if bandwidth_mhz is not None and isinstance(scd_bw_raw, (int, float)) \
+            and not isinstance(scd_bw_raw, bool):
+        scd_bw = float(scd_bw_raw)
+        if abs(float(bandwidth_mhz) - scd_bw) > 1e-9:
+            raise ChannelAssetError(
+                f"vendor_file 顶层 bandwidth_mhz ({bandwidth_mhz!r}) 与 "
+                f"scd_config.bandwidth_mhz ({scd_bw:g}) 不一致 — "
+                "两处只能留一处 (顶层留空以 SCD 为准) 或必须相等"
+            )
+
+
 def _check_vendor_filename_freq(scd_config: Any, associated_file_path: Any) -> None:
     """vendor .smu 文件名 vs scd_config.arfcn 交叉校验 (Codex P2 accept 侧, 镜像 resolver load 侧)。
 
@@ -310,6 +351,9 @@ def create_channel_asset(
     _validate_source_fields(source_type, fields)
     if source_type == "vendor_file":
         _check_vendor_filename_freq(payload.get("scd_config"), fields.get("associated_file_path"))
+        _check_vendor_declared_freq(
+            payload.get("scd_config"),
+            fields.get("center_frequency_hz"), fields.get("bandwidth_mhz"))
     # vendor_file: canonical_name 未传 → 从 scd_config 确定性派生 MF_ 名 (§3.2 族 A)
     canonical = fields.get("canonical_name")
     if canonical is None and source_type == "vendor_file":
@@ -413,6 +457,10 @@ def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
         _scd = _np.get("scd_config") if isinstance(_np, dict) else None
         _check_vendor_filename_freq(
             _scd, fields.get("associated_file_path", asset.associated_file_path))
+        # P3-15: 顶层声明 vs scd 一致性用**最终状态**判 (同 _vsf 合并逻辑 —
+        # 只改一边也要撞另一边的现值, 不然"只 PATCH 顶层频率"绕过校验)
+        _check_vendor_declared_freq(
+            _scd, _vsf["center_frequency_hz"], _vsf["bandwidth_mhz"])
         if "payload" in fields and "canonical_name" not in fields:
             new_canon = _scd_to_standard_name(_scd)
             if new_canon != asset.canonical_name and db.query(ChannelAsset).filter(
