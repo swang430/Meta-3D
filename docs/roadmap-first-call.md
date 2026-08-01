@@ -12,7 +12,7 @@
 blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 用户拍板本地队列：
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
-**当前片 = P3-14**（P1-22 ✅ #256 / P1-23 ✅ #257 / P2-19 ✅ #258 / P2-20 ✅ #259 / P1-24 ✅ #260 / P2-21 ✅ done 本 PR），顺序 **P1-22 → P1-23 → P2-19 → P2-20 → P1-24 → P2-21 → P3-14 → P3-15 → P3-16 → P3-17**
+**当前片 = P3-15**（P1-22 ✅ #256 / P1-23 ✅ #257 / P2-19 ✅ #258 / P2-20 ✅ #259 / P1-24 ✅ #260 / P2-21 ✅ #261 / P3-14 ✅ done 本 PR），顺序 **P1-22 → P1-23 → P2-19 → P2-20 → P1-24 → P2-21 → P3-14 → P3-15 → P3-16 → P3-17**
 （逐片 WIP=1；P1-24/P2-21 为 2026-08-01 用户二次拍板从 Discovered 提升，插在 P3 批前）。一句话索引（详情见各 P 区条目）：
 - **P1-22** 报告可信化：`overall_pass` 死键 + PDF CJK 字体 + `Test Plan: N/A` 残留（设计稿 [`design/p1-22-report-trustworthy-fix.md`](design/p1-22-report-trustworthy-fix.md)）
 - **P1-23** 现场协议补 P0-8 gate（纯文档，行前必办）
@@ -1998,7 +1998,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 | P3-11 | `bootstrap_lifespan` seeder set drift | ✅ |
 | P3-12 | `driver_capabilities` test-isolation pollution | ✅ |
 | P3-13 | `probe_calibration_service` invalid-probe sentinel drift | ✅ |
-| P3-14 | 契约收尾（`test_type` 描述 / `template_category` max_length / `CreateSessionRequest` 缺 `channel_asset_id` / 频率粒度余站点）+ 门 G-A（schema 描述⊇枚举） | ⬜ |
+| P3-14 | 契约收尾（`test_type` 描述 / `template_category` max_length / `CreateSessionRequest` 缺 `channel_asset_id` / 频率粒度余站点）+ 门 G-A（schema 描述⊇枚举，落地为 test_rule_gates **G9**） | ✅ 本 PR |
 | P3-15 | 数据/测试卫生批（`test_feature_gaps` DB 隔离 / 2 顺序耦合 flaky / vendor_file 频率漂移 fail-loud / 队列僵尸 triage——表已封存倾向 drop） | ⬜ |
 | P3-16 | 门 G-B：状态列注释 ⊇ 全仓状态字面量（前会话初判可行，repo 内无佐证，实施时重验） | ⬜ |
 | P3-17 | 门 G-C：文档 (动词,路径,参数,响应键) ⊇ 真实实现（G8 加强版） | ⬜ |
@@ -2027,6 +2027,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-01 during P1-24 内审 F4]` **p08 门序列 8 个零残留站点仅 3 个有会红的行为测试**（衰落态测量后 / 中止后 / 旁路态首站间接）—— 变异删其余任一 residue 调用（加载后/AUTOSET 后/GO 后/改参后/进旁路后/退旁路后），泄漏错误被下一个生产原子的 drain 吞掉、19 测全绿。完善形态 = fake 泄漏注入点参数化逐站点打；本片按「枚举进 backlog」只收窄了已有测试的断言锚定。
 - `[discovered 2026-08-01 during P1-24, Codex #260 R2]` **带动作的诊断序列整体无串行化（run endpoint 层）** —— 两个客户端并发跑同一序列（或与其它 F64 操作并行）时只有单个驱动原子持 `_scpi_lock`，序列整体可交错（load-A → load-B → AUTOSET-A → GO-B），互相污染归档、甚至把对方的增益/旁路态"还原"掉。基建共性（`propsim_f64_state_machine`/`baseStation_attach_check` 同型），非 p08 序列独有；整段持锁会饿死 broadcaster 监控（state_machine 当年显式取舍过），正解大概率在 run endpoint 加序列级互斥。范围外基建债，独立小片。
 - `[discovered 2026-08-01 during P2-21 内审]` **PDF 渲染管道其余自由文本入口无 XML 转义**（pre-existing，非 P2-21 引入）—— ①封面 `Paragraph(title)` 含 case_name，`<字母` 命名会炸整份报告；②共享步骤区渲染器 `_generate_step_details_section` 的 `val_str` 侧统一转义能让 VRT `step_configs` 管线同受益（P2-21 只修了 report.py 组装侧自己的面）。修法 = 渲染器入口统一 `xml.sax.saxutils.escape`，共享文件独立小片。
+- `[discovered 2026-08-01 during P3-14, Codex #262 R1]` **GUI 改频只写顶层 frequency_hz，带 component_carriers 的持久化用例执行仍按 CC[0] 旧频率跑**（pre-existing，非 P3-14 引入）—— factory `model_dump` 落库自带 CC，而 `MIMOOTAConfiguration` 的 validator 在 CC 非空时忽略顶层频率（measure Phase 2g 权威 = CC[0]）；GUI `MIMOOTAConfigForm` 不写 CC → 顶层与 CC[0] 漂移时**执行侧**错频（P2-11 一致性门只兜"CC[0] vs SCD 不符"的形态，兜不住"用户以为改了新频、CC[0] 旧频恰与 SCD 一致"）。P3-14 已让**显示**与执行同源（CC[0] 优先），执行侧正修 = GUI 写侧同步 CC[0] 或 PATCH 时 drop CC 重构造，独立小片。
+- `[discovered 2026-08-01 during P3-14, Codex #262 R2]` **会话创建的资产预检只查存在不查 `is_active`** —— 软删（退役）的 ChannelAsset 仍能通过 `POST /commissioning/sessions` 的 422 预检建会话执行退役信道配置；对称先例 = active-only 列表与 lab-profile resolver 都拦 inactive。修法一行（预检处判 `asset.is_active`，消息说明"已退役"）+ 顺带查 measure resolver 对 inactive 的行为是否同病。
 - `[discovered 2026-08-01 during P1-22 内审 F3，本行补欠登记]` **[→ 提升 P2-21 (2026-08-01)]** **precheck/reference/measure 的 P1-12 可信化标志渲染不可达 — 报告对兜底数据沉默（P3）** —— `executors/report.py` step_results 里 `quiet_zone_verified` / `trp_verified` / `path_loss_verified` 是顶层键，渲染器只读 `name`/`step_name` 与 `parameters` → PDF 步骤区零显示，P1-12"标注 未验证(兜底值)"意图从未生效。修法同 P1-22 的 analysis 站点（标志挪 `parameters` 下）。顺带同域：`pdf_certificate.py`（校准证书）无 CJK 字体，证书中文同样豆腐块。
 
 - `[discovered 2026-08-01 during ARCH-1 S6 总验, 内审定案]` **[→ 提升 P1-22 (2026-08-01)]** **自动执行报告恒报 failed/0.0% — REPORT 相位读一个从没人写的键（P2）** —— `mimo_ota/executors/report.py` 的 `overall_pass = bool(analysis.get("overall_pass", False))`：analysis 执行器写的是 `verdict`（canonical 字段是 `validation_pass`），全仓**无人写 `overall_pass` 键**（`pass_criteria_summary` 同样无人写）→ 恒 False → 自动报告 `overall_result` 恒 "failed"、`pass_rate` 恒 0.0 —— `.get` 默认值静默吞断层的教科书形态。修法=换判据来源，**精确谓词**（Codex #254 R1 校正）：首选读 `context.test_execution.validation_pass`（TestExecution **列**，analysis 执行器按 `verdict in ("PASS","MARGINAL")` 写入的 canonical 布尔 —— 注意它不在 analysis payload 里，`analysis.get("validation_pass")` 还是恒 None）；若只拿得到 payload 则用 `analysis.get("verdict") in ("PASS", "MARGINAL")`（verdict 取值就这三个字面量）。**绝不 `bool(verdict)`** —— 非空字符串恒 True，"FAIL" 也会判成通过，反向翻车。⚠️ **修法红线**：不得用 `status=='completed'` 当通过谓词 —— 相位机械成功与 KPI 通过是两层（analysis 相位对 KPI FAIL 也返回 SUCCESS），completed 判通过会让失败的测试谎报通过，代价不对称。手动路径（HistoryTab 生成的那份）走 `report_data_collector` 的 `validation_pass` 谓词，**现状正确**——它显示 0.0% 可能是如实报告 mock 环境 KPI FAIL，修自动路径前先分辨两份 PDF。⚠️ `report_service.py` 建 summary 的 `overall_result`/`.get('pass_rate', 0)` 段**不许当残留清理**（Codex #254 R2）：VRT 归档路径（`road_test.py::_archive_execution_report` 传 `ExecutionReport.model_dump()`，该 schema 无 `execution_summary` 键）**仍在消费它** —— 它只是不在用例执行路径上，对 VRT 是活代码。可同 PR 清理的只有报告模板 `Test Plan: N/A` 计划链残留字段。

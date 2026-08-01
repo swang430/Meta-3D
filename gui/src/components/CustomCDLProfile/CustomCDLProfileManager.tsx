@@ -34,7 +34,7 @@ const KEY = ['custom-cdl-profiles'] as const
 interface DraftState {
   name: string
   description: string
-  center_frequency_ghz: number | ''
+  center_frequency_mhz: number | ''
   pathloss_db: number | ''
   is_los: boolean | null           // null = 未声明 (保留原始 nullable, Codex P2 #171)
   k_factor_db: number | ''
@@ -45,7 +45,7 @@ interface DraftState {
 }
 
 const EMPTY_DRAFT: DraftState = {
-  name: '', description: '', center_frequency_ghz: '', pathloss_db: '',
+  name: '', description: '', center_frequency_mhz: '', pathloss_db: '',
   is_los: null, k_factor_db: '', velocity_x_mps: '', velocity_y_mps: '',
   velocity_z_mps: '', clusters: [],
 }
@@ -54,7 +54,7 @@ function profileToDraft(p: CustomCDLProfile): DraftState {
   return {
     name: p.name,
     description: p.description ?? '',
-    center_frequency_ghz: p.center_frequency_hz != null ? p.center_frequency_hz / 1e9 : '',
+    center_frequency_mhz: p.center_frequency_hz != null ? p.center_frequency_hz / 1e6 : '',
     pathloss_db: p.pathloss_db ?? '',
     is_los: p.is_los ?? null,                    // 保留 null (不 coerce false, Codex P2 #171)
     k_factor_db: p.k_factor_db ?? '',
@@ -71,7 +71,7 @@ function draftToPayload(d: DraftState): CustomCDLProfileCreatePayload {
   return {
     name: d.name.trim(),
     description: blank(d.description),
-    center_frequency_hz: d.center_frequency_ghz === '' ? null : d.center_frequency_ghz * 1e9,
+    center_frequency_hz: d.center_frequency_mhz === '' ? null : Math.round(d.center_frequency_mhz * 1e6),
     pathloss_db: num(d.pathloss_db),
     is_los: d.is_los,
     k_factor_db: num(d.k_factor_db),
@@ -243,7 +243,7 @@ export function CustomCDLProfileManager() {
                   <Table.Td><Badge variant="light">{p.clusters?.length ?? 0} 簇</Badge></Table.Td>
                   <Table.Td>
                     {p.center_frequency_hz != null
-                      ? `${(p.center_frequency_hz / 1e9).toFixed(3)} GHz`
+                      ? `${(p.center_frequency_hz / 1e6).toFixed(3)} MHz`
                       : '—'}
                   </Table.Td>
                   <Table.Td>
@@ -304,12 +304,12 @@ export function CustomCDLProfileManager() {
           />
           <SimpleGrid cols={{ base: 1, sm: 3 }}>
             <NumberInput
-              label="中心频率 (GHz)"
+              label="中心频率 (MHz)"
               description="留空=测试时绑"
               decimalScale={3}
-              value={draft.center_frequency_ghz}
+              value={draft.center_frequency_mhz}
               onChange={(v) =>
-                setDraft({ ...draft, center_frequency_ghz: typeof v === 'number' ? v : '' })}
+                setDraft({ ...draft, center_frequency_mhz: typeof v === 'number' ? v : '' })}
             />
             <NumberInput
               label="路损 (dB)"
