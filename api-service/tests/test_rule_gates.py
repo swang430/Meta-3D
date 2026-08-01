@@ -1063,6 +1063,13 @@ def test_g10_status_comment_superset_of_write_sites():
     truth = {t.strip().split(" ")[0] for t in comment.split("|") if t.strip()}
     assert truth, "TestExecution.status 列注释为空 — 真值源没了"
 
+    # 列自身的 default 也是一个写点 (Codex #264 R2): default 改成注释没列的值,
+    # 所有缺省构造都写野值而 AST 判据看不见 — live 断言直接锁列对象。
+    col_default = TestExecution.__table__.columns["status"].default
+    if col_default is not None and isinstance(getattr(col_default, "arg", None), str):
+        assert col_default.arg in truth, (
+            f"TestExecution.status 列 default={col_default.arg!r} 不在列注释真值源里")
+
     offenders = []
     for py in sorted((_API_SERVICE_ROOT / "app").rglob("*.py")):
         try:
