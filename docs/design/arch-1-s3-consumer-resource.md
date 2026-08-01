@@ -2,8 +2,10 @@
 
 > ⚠️ **实施状态注（2026-08-01 归档时补，本文其余部分保持设计时原貌）**：
 > 本稿是**历史推理记录**，不是现行方案。三个消费方的实际去向：
-> ① HAL reload 闸门换源 → **S3a 已落地**（#242 `c4502dd`，含本稿两轮 Codex 修订的
-> `mode IS NULL` 谓词与三入口 commissioning 覆盖）；② dashboard 统计换源 →
+> ① HAL reload 闸门换源 → **S3a 已落地**（#242 `c4502dd`，最终谓词为本稿第二轮
+> 修订的「仅排除 `digital_twin`」—— `mode IS NULL OR mode != "digital_twin"`，
+> `conducted`/`ota` VRT 占真硬件仍算 blocker，见正文 §2.1/§7；另含三入口
+> commissioning 覆盖。已对照 main 落地代码 `hal_reload_policy.py` 核实）；② dashboard 统计换源 →
 > **随 S4b（#246）做掉**（计划链整体拆除，统计源头直接消失）；③ 用例级 preflight →
 > 本稿第二轮已撤回整片，**转独立立项**（见 roadmap P1-1 条目下的 ARCH-1 注）。
 > 现状真值源：`docs/roadmap-first-call.md` 的 ARCH-1 表。
