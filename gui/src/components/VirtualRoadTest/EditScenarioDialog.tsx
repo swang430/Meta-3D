@@ -90,7 +90,9 @@ export function EditScenarioDialog({ opened, onClose, scenario, testMode }: Prop
         networkType: scenario.network_type || '5G_NR',
         band: scenario.band || 'n78',
         bandwidth: scenario.bandwidth_mhz || 100,
-        channelModel: scenario.channel_model || 'UMa',
+        // Codex #259: 无模型场景预填空占位 — 预填 'UMa' 会让"用户主动选 UMa"
+        // 与"没动 UI 缺省"不可区分, 主动选择被上一轮收窄丢弃
+        channelModel: scenario.channel_model || '',
         speed: scenario.avg_speed_kmh || 50,
         duration: scenario.duration_s || 60,
         stepConfiguration: scenario.step_configuration,
@@ -106,7 +108,7 @@ export function EditScenarioDialog({ opened, onClose, scenario, testMode }: Prop
         name: formData.name,
         description: formData.description,
         category: formData.category as any,
-        tags: [formData.category, formData.channelModel],
+        tags: [formData.category, formData.channelModel].filter(Boolean),
         network: {
           type: formData.networkType as any,
           band: formData.band,
@@ -126,7 +128,9 @@ export function EditScenarioDialog({ opened, onClose, scenario, testMode }: Prop
           // 内审 F5 收窄: 源场景摘要无模型 (无快照 / Custom 矩阵) 时保持发 []
           // — 预填的 'UMa' 只是 UI 缺省, 写回去会把 Custom 场景静默升成
           // 看似合法的 3GPP/UMa 错值, 比空值更难发现
-          channel_snapshots: scenario.channel_model
+          // Codex #259: 判据 = 表单当前值非空 (用户显式选择或源场景真值),
+          // 空占位 (无模型场景未选) 才保持 [] — 主动选择要落快照, UI 缺省不
+          channel_snapshots: formData.channelModel
             ? [
                 {
                   timestamp_s: 0,
@@ -299,7 +303,7 @@ export function EditScenarioDialog({ opened, onClose, scenario, testMode }: Prop
                   onChange={(value) =>
                     setFormData({
                       ...formData,
-                      channelModel: value || 'UMa',
+                      channelModel: value || '',
                     })
                   }
                   data={CHANNEL_MODELS}
