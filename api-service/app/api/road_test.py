@@ -212,6 +212,18 @@ async def list_scenarios(
     # Convert to summaries with extended fields for editing
     summaries = []
     for s in scenarios:
+        # 衍生字段算不出来只让这组字段缺省（缺谁补默认谁），行本身必须
+        # 出现在列表里 —— 场景不允许因摘要构造失败而静默消失
+        base = dict(
+            id=s.id,
+            name=s.name,
+            category=s.category,
+            source=s.source,
+            tags=s.tags or [],
+            description=s.description,
+            created_at=s.created_at,
+            author=s.author,
+        )
         try:
             # Calculate average speed from route
             avg_speed = None
@@ -225,40 +237,33 @@ async def list_scenarios(
                 if hasattr(step_config, 'model_dump'):
                     step_config = step_config.model_dump()
 
+            # 信道模型真值在 channel_snapshots（Environment 已无 channel_model
+            # 字段）；摘要取首个快照的 standard_model 作代表值，Custom 快照
+            # 或无快照时为 None
+            first_snapshot = (
+                s.environment.channel_snapshots[0]
+                if s.environment and s.environment.channel_snapshots
+                else None
+            )
             summaries.append(ScenarioSummary(
-                id=s.id,
-                name=s.name,
-                category=s.category,
-                source=s.source,
-                tags=s.tags,
-                description=s.description,
+                **base,
                 duration_s=s.route.duration_s if s.route else 0,
                 distance_m=s.route.total_distance_m if s.route else 0,
-                created_at=s.created_at,
-                author=s.author,
                 step_configuration=step_config,
                 # Extended fields
                 network_type=s.network.type.value if s.network else None,
                 band=s.network.band if s.network else None,
                 bandwidth_mhz=s.network.bandwidth_mhz if s.network else None,
-                channel_model=s.environment.channel_model.value if s.environment else None,
+                channel_model=(
+                    first_snapshot.standard_model.value
+                    if first_snapshot and first_snapshot.standard_model
+                    else None
+                ),
                 avg_speed_kmh=avg_speed,
             ))
         except Exception as e:
-            logger.error(f"Error creating summary for scenario {s.id}: {e}")
-            # Create a minimal summary to avoid breaking the list
-            summaries.append(ScenarioSummary(
-                id=s.id,
-                name=s.name,
-                category=s.category,
-                source=s.source,
-                tags=s.tags or [],
-                description=s.description,
-                duration_s=0,
-                distance_m=0,
-                created_at=s.created_at,
-                author=s.author,
-            ))
+            logger.error(f"Error computing summary fields for scenario {s.id}: {e}")
+            summaries.append(ScenarioSummary(**base, duration_s=0, distance_m=0))
 
     return summaries
 
