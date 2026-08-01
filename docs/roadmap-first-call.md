@@ -12,7 +12,7 @@
 blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 用户拍板本地队列：
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
-**当前片 = P1-24**（P1-22 ✅ #256 / P1-23 ✅ #257 / P2-19 ✅ #258 / P2-20 ✅ done 本 PR），顺序 **P1-22 → P1-23 → P2-19 → P2-20 → P1-24 → P2-21 → P3-14 → P3-15 → P3-16 → P3-17**
+**当前片 = P2-21**（P1-22 ✅ #256 / P1-23 ✅ #257 / P2-19 ✅ #258 / P2-20 ✅ #259 / P1-24 ✅ done 本 PR），顺序 **P1-22 → P1-23 → P2-19 → P2-20 → P1-24 → P2-21 → P3-14 → P3-15 → P3-16 → P3-17**
 （逐片 WIP=1；P1-24/P2-21 为 2026-08-01 用户二次拍板从 Discovered 提升，插在 P3 批前）。一句话索引（详情见各 P 区条目）：
 - **P1-22** 报告可信化：`overall_pass` 死键 + PDF CJK 字体 + `Test Plan: N/A` 残留（设计稿 [`design/p1-22-report-trustworthy-fix.md`](design/p1-22-report-trustworthy-fix.md)）
 - **P1-23** 现场协议补 P0-8 gate（纯文档，行前必办）
@@ -1274,10 +1274,11 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 **收口 (2026-08-01)**: 两个设计决策落定 —— ①P0-8 独立成 **Phase 1.5**（比握手重、不依赖 SA/校准，排 Phase 1 后即验；与 §7 能力探测清单显式区分"验已知 vs 探未知"）；②gate 拆两半 —— **P0-8a**（load→run→改参 0 error + 输入口变绿）挂 Phase 1.5，**P0-8b**（DL 非 0% ACK，依赖 DUT）挂 Phase 4 gate 清单。stale 句根治：开篇配套句与铁律 2 的硬编码 P0 队列**换源指向 Blocked on hardware 表**（硬编码已两次 stale，队列永远查表）。
 
 
-### P1-24 — `propsim_f64_p08_gate` 诊断序列（P0-8a 唯一合法载体，出发前硬门槛）
+### P1-24 — `propsim_f64_p08_gate` 诊断序列（P0-8a 唯一合法载体，出发前硬门槛）✅ Done（本 PR）
 
-**What**: 覆盖 load→run→改参→电平判据的 checked-in 诊断序列。七点要求（Discovered 原条 [→ P1-24] 已标）：①手册有据 + 生产驱动在用命令（涉 F64 SCPI，**动手前查 NotebookLM PROPSIM notebook**）②前置激活 UXM 满 RB DL（CE↔BS 协调，无信号 `INP:LEV:MEAS?` 返 -300）③每步后读错误队列 ④电平按合法范围真判定 ⑤bypass 态电平窗口复验 ⑥输入参考 AUTOSET 闭环（设 avg+crest → 读回 clipping/cut-off 收敛）⑦mock 跑通列入出发前门槛。
-**Why P1**: 现有两序列干不了这三步，现场又禁临时脚本 —— 没有它下次现场做不了 P0-8a。**Estimate**: ~1 day。
+**What**: 覆盖 load→AUTOSET→run→改参→两态电平判据的 checked-in 诊断序列。七点要求（Discovered 原条 [→ P1-24] 已标）：①手册有据 + 生产驱动在用命令（涉 F64 SCPI，**动手前查 NotebookLM PROPSIM notebook**）②前置激活 UXM 满 RB DL（CE↔BS 协调；⚠ 原文"无信号 `INP:LEV:MEAS?` 返 -300"经手册查证为**哨兵语义不实** —— -300 是错误队列里的设备错误码（2026-05-27 现场实证），不是查询返回值，判据 = 队列出现测量失败错误，NotebookLM 2026-08-01）③每步后读错误队列零残留 ④电平按合法范围真判定 ⑤bypass 态电平窗口复验（同窗口）⑥输入参考 AUTOSET 闭环 —— **stopped 态命令排 GO 前**（§20.4.4.7，同为本片对协议的时序纠错），收敛判定 = `SYST:STAT?`（clipping/cut-off 正确读法）⑦mock 跑通列入出发前门槛。
+**Why P1**: 现有两序列干不了这活，现场又禁临时脚本 —— 没有它下次现场做不了 P0-8a。
+**落地（本 PR）**: 设计稿 [`design/p1-24-f64-p08-gate-sequence.md`](design/p1-24-f64-p08-gate-sequence.md)（§0 手册实证表 + §0.4 实现期修正）；序列复用生产原子（`load_local_scenario`/`autoset_inputs`/`start_emulation`/`set_bypass_mode`/`set_output_gain`/`measure_input`），新增 SCPI 仅 `OUTP:GAIN:CH?`/`OUTP:GAIN:LIM?`（§20.4.5.7/8，NotebookLM 过手册）；退 bypass **不假设自动续跑**（手册说续、2026-07-03 实证不续，两种固件行为都兜并如实归档）；收尾 GOS 留驻不发 CLOSE（绕驱动直发会让身份缓存 stale）。D-1 = 真驱动+假 SCPI 层行为门 18 测 + 5 变异实跑全红（AUTOSET 时序 / 不带病 GO / 增益回读 / 显式 GO 恢复 / 零残留）。真机行为（AUTOSET 收敛、bypass 电平窗口）只能现场验 —— 序列是载体不是替身。
 
 ---
 
@@ -2021,7 +2022,9 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 > Items added mid-task. Reviewed weekly; promoted to P1/P2/P3 or dropped.
 
-- `[discovered 2026-08-01 during P1-23, Codex #257]` **[→ 提升 P1-24 (2026-08-01)]** **写 `propsim_f64_p08_gate` 诊断序列（P0-8a 唯一合法载体，已列协议 §2 出发前硬门槛）** —— 现有 `propsim_f64_state_machine`（前提 .smu 已载、只做 GO/STATIC/GOS）与 `propsim_f64_health`（只读探测、`get_metrics` 恒判成功）都覆盖不了 P0-8a。序列要求：①手册有据 + 生产驱动在用的命令（涉 F64 SCPI，动手前查 NotebookLM PROPSIM notebook）②**前置激活 UXM 满 RB DL**（CE↔BS 协调，无信号 `INP:LEV:MEAS?` 返 -300）③每步后读错误队列 ④电平按合法范围真判定（不是恒成功）⑤**含 bypass 态电平窗口复验**（架构文档 P0-8 硬约束）⑥**含输入参考 AUTOSET 闭环**（`INP:LEV:AUTOSET` 设 avg+crest → 读回 clipping/cut-off 迭代收敛，只读判范围会假绿，Codex #257 R3）⑦mock 跑通列入出发前门槛。代码活，独立小片。⚠️ 本行是第二次登记 —— 前两次 python replace 因 #255 提升标记改变锚文本**静默未命中**（我未 assert 命中数，#256/#257 的 PR body 里"已留痕"陈述当时为假，本次补欠并如实更正）。
+- `[discovered 2026-08-01 during P1-23, Codex #257]` **[→ 提升 P1-24 (2026-08-01)]** **写 `propsim_f64_p08_gate` 诊断序列（P0-8a 唯一合法载体，已列协议 §2 出发前硬门槛）** —— 现有 `propsim_f64_state_machine`（前提 .smu 已载、只做 GO/STATIC/GOS）与 `propsim_f64_health`（只读探测、`get_metrics` 恒判成功）都覆盖不了 P0-8a。序列要求：①手册有据 + 生产驱动在用的命令（涉 F64 SCPI，动手前查 NotebookLM PROPSIM notebook）②**前置激活 UXM 满 RB DL**（CE↔BS 协调，无信号 `INP:LEV:MEAS?` 返 -300）③每步后读错误队列 ④电平按合法范围真判定（不是恒成功）⑤**含 bypass 态电平窗口复验**（架构文档 P0-8 硬约束）⑥**含输入参考 AUTOSET 闭环**（`INP:LEV:AUTOSET` 设 avg+crest → 读回 clipping/cut-off 迭代收敛，只读判范围会假绿，Codex #257 R3）⑦mock 跑通列入出发前门槛。代码活，独立小片。⚠️ 本行是第二次登记 —— 前两次 python replace 因 #255 提升标记改变锚文本**静默未命中**（我未 assert 命中数，#256/#257 的 PR body 里"已留痕"陈述当时为假，本次补欠并如实更正）。⚠ 要求②的"返 -300"后经手册查证为哨兵语义不实（-300 是队列里的设备错误码非查询返回值，P1-24 落地时纠错，见正式条目）。
+- `[discovered 2026-08-01 during P1-24 内审 F4]` **p08 门序列 8 个零残留站点仅 3 个有会红的行为测试**（衰落态测量后 / 中止后 / 旁路态首站间接）—— 变异删其余任一 residue 调用（加载后/AUTOSET 后/GO 后/改参后/进旁路后/退旁路后），泄漏错误被下一个生产原子的 drain 吞掉、19 测全绿。完善形态 = fake 泄漏注入点参数化逐站点打；本片按「枚举进 backlog」只收窄了已有测试的断言锚定。
+- `[discovered 2026-08-01 during P1-24, Codex #260 R2]` **带动作的诊断序列整体无串行化（run endpoint 层）** —— 两个客户端并发跑同一序列（或与其它 F64 操作并行）时只有单个驱动原子持 `_scpi_lock`，序列整体可交错（load-A → load-B → AUTOSET-A → GO-B），互相污染归档、甚至把对方的增益/旁路态"还原"掉。基建共性（`propsim_f64_state_machine`/`baseStation_attach_check` 同型），非 p08 序列独有；整段持锁会饿死 broadcaster 监控（state_machine 当年显式取舍过），正解大概率在 run endpoint 加序列级互斥。范围外基建债，独立小片。
 - `[discovered 2026-08-01 during P1-22 内审 F3，本行补欠登记]` **[→ 提升 P2-21 (2026-08-01)]** **precheck/reference/measure 的 P1-12 可信化标志渲染不可达 — 报告对兜底数据沉默（P3）** —— `executors/report.py` step_results 里 `quiet_zone_verified` / `trp_verified` / `path_loss_verified` 是顶层键，渲染器只读 `name`/`step_name` 与 `parameters` → PDF 步骤区零显示，P1-12"标注 未验证(兜底值)"意图从未生效。修法同 P1-22 的 analysis 站点（标志挪 `parameters` 下）。顺带同域：`pdf_certificate.py`（校准证书）无 CJK 字体，证书中文同样豆腐块。
 
 - `[discovered 2026-08-01 during ARCH-1 S6 总验, 内审定案]` **[→ 提升 P1-22 (2026-08-01)]** **自动执行报告恒报 failed/0.0% — REPORT 相位读一个从没人写的键（P2）** —— `mimo_ota/executors/report.py` 的 `overall_pass = bool(analysis.get("overall_pass", False))`：analysis 执行器写的是 `verdict`（canonical 字段是 `validation_pass`），全仓**无人写 `overall_pass` 键**（`pass_criteria_summary` 同样无人写）→ 恒 False → 自动报告 `overall_result` 恒 "failed"、`pass_rate` 恒 0.0 —— `.get` 默认值静默吞断层的教科书形态。修法=换判据来源，**精确谓词**（Codex #254 R1 校正）：首选读 `context.test_execution.validation_pass`（TestExecution **列**，analysis 执行器按 `verdict in ("PASS","MARGINAL")` 写入的 canonical 布尔 —— 注意它不在 analysis payload 里，`analysis.get("validation_pass")` 还是恒 None）；若只拿得到 payload 则用 `analysis.get("verdict") in ("PASS", "MARGINAL")`（verdict 取值就这三个字面量）。**绝不 `bool(verdict)`** —— 非空字符串恒 True，"FAIL" 也会判成通过，反向翻车。⚠️ **修法红线**：不得用 `status=='completed'` 当通过谓词 —— 相位机械成功与 KPI 通过是两层（analysis 相位对 KPI FAIL 也返回 SUCCESS），completed 判通过会让失败的测试谎报通过，代价不对称。手动路径（HistoryTab 生成的那份）走 `report_data_collector` 的 `validation_pass` 谓词，**现状正确**——它显示 0.0% 可能是如实报告 mock 环境 KPI FAIL，修自动路径前先分辨两份 PDF。⚠️ `report_service.py` 建 summary 的 `overall_result`/`.get('pass_rate', 0)` 段**不许当残留清理**（Codex #254 R2）：VRT 归档路径（`road_test.py::_archive_execution_report` 传 `ExecutionReport.model_dump()`，该 schema 无 `execution_summary` 键）**仍在消费它** —— 它只是不在用例执行路径上，对 VRT 是活代码。可同 PR 清理的只有报告模板 `Test Plan: N/A` 计划链残留字段。
