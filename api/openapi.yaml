@@ -52,46 +52,17 @@ paths:
               $ref: '#/components/schemas/UpdateInstrumentPayload'
       responses:
         '200':
-          description: Updated category
+          description: Updated category (平铺 — live 实现不包 category 层, P3-17 G11)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/InstrumentCategoryResponse'
-  /api/v1/instruments/{categoryKey}/topology-profiles:
-    get:
-      summary: List operator-selectable topology profiles for a binding (P2-1)
-      description: |
-        Two-layer UXM architecture (P2-1 Phase 1):
-        - Test App layer = SCPI command vocabulary, AUTO-DETECTED at
-          connect via `SYSTem:APPLication:NAME?`. Operator does not pick.
-        - Topology profile layer = cell/MIMO/power/FRC configuration
-          within the running Test App. Operator-picked, persisted in
-          `InstrumentConnection.connection_params['topology_profile_id']`,
-          auto-applied on HAL reload.
-        The `compatible_with_current_test_app` flag per item reflects
-        the live HAL driver's detected_test_app — GUI greys out
-        incompatible options. Empty `compatible_test_apps` on a profile
-        means "compatible with any Test App" (no constraint).
-        Only `baseStation` category exposes profiles today (UXM
-        specific); other categories return empty + `reason="not_a_uxm"`.
-      parameters:
-        - name: categoryKey
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Topology profile list + live compat status
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TopologyProfilesListResult'
-        '404':
-          description: Category not found
+                $ref: '#/components/schemas/InstrumentCategory'
+  /api/v1/instruments/{categoryKey}/topology-profile:
     put:
       summary: Operator selects (or clears) the topology profile for a binding (P2-1)
       description: |
+        P3-17 G11: 本操作曾错挂在复数集合路径 /topology-profiles 上 — live
+        实现的选择端点是单数 /topology-profile (集合路径只有 GET/POST)。
         - `profile_id=null` clears the selection.
         - `profile_id="known_id"` with no live driver: persists; takes
           effect on next HAL reload.
@@ -125,6 +96,38 @@ paths:
           description: Category, connection, or profile_id not found
         '409':
           description: Topology incompatible with detected Test App
+  /api/v1/instruments/{categoryKey}/topology-profiles:
+    get:
+      summary: List operator-selectable topology profiles for a binding (P2-1)
+      description: |
+        Two-layer UXM architecture (P2-1 Phase 1):
+        - Test App layer = SCPI command vocabulary, AUTO-DETECTED at
+          connect via `SYSTem:APPLication:NAME?`. Operator does not pick.
+        - Topology profile layer = cell/MIMO/power/FRC configuration
+          within the running Test App. Operator-picked, persisted in
+          `InstrumentConnection.connection_params['topology_profile_id']`,
+          auto-applied on HAL reload.
+        The `compatible_with_current_test_app` flag per item reflects
+        the live HAL driver's detected_test_app — GUI greys out
+        incompatible options. Empty `compatible_test_apps` on a profile
+        means "compatible with any Test App" (no constraint).
+        Only `baseStation` category exposes profiles today (UXM
+        specific); other categories return empty + `reason="not_a_uxm"`.
+      parameters:
+        - name: categoryKey
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Topology profile list + live compat status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopologyProfilesListResult'
+        '404':
+          description: Category not found
     post:
       summary: Create a new operator-owned topology profile (P2-1 Phase 2.1)
       description: |
@@ -444,21 +447,25 @@ paths:
 components:
   schemas:
     DashboardResponse:
+      # P3-17 G11: 顶层键对齐 live 实现 (曾是 camelCase 三键 — yaml 是 GUI 类型
+      # 生成源, 声明实现没有的键 = 生成的类型说谎)。
       type: object
       properties:
-        systemStatus:
+        summary:
+          type: object
+        recent_tests:
           type: array
           items:
-            $ref: '#/components/schemas/SystemStatusItem'
-        activeAlerts:
+            type: object
+        active_alerts:
           type: array
           items:
             $ref: '#/components/schemas/AlertItem'
-        liveMetrics:
+        live_metrics:
           type: array
           items:
             $ref: '#/components/schemas/MetricItem'
-      required: [systemStatus, activeAlerts, liveMetrics]
+      required: [summary, live_metrics, active_alerts, recent_tests]
     MonitoringFeedsResponse:
       type: object
       properties:
@@ -475,12 +482,6 @@ components:
           items:
             $ref: '#/components/schemas/InstrumentCategory'
       required: [categories]
-    InstrumentCategoryResponse:
-      type: object
-      properties:
-        category:
-          $ref: '#/components/schemas/InstrumentCategory'
-      required: [category]
     UpdateInstrumentPayload:
       type: object
       properties:

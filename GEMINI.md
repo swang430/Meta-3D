@@ -206,7 +206,7 @@ logger.info("page_nav", { page: "/calibration" });
 
 // API 请求
 logger.info("api_request", {
-    url: "/api/v1/instruments",
+    url: "/api/v1/instruments/catalog",
     status_code: 200,
     elapsed_ms: 45,
 });

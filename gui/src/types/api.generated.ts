@@ -136,14 +136,84 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description Updated category */
+                /** @description Updated category (平铺 — live 实现不包 category 层, P3-17 G11) */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["InstrumentCategoryResponse"];
+                        "application/json": components["schemas"]["InstrumentCategory"];
                     };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/instruments/{categoryKey}/topology-profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Operator selects (or clears) the topology profile for a binding (P2-1)
+         * @description P3-17 G11: 本操作曾错挂在复数集合路径 /topology-profiles 上 — live
+         *     实现的选择端点是单数 /topology-profile (集合路径只有 GET/POST)。
+         *     - `profile_id=null` clears the selection.
+         *     - `profile_id="known_id"` with no live driver: persists; takes
+         *       effect on next HAL reload.
+         *     - `profile_id="known_id"` + live driver + compatible: persists
+         *       AND immediately applies on the driver. Response carries
+         *       `applied_now=true`.
+         *     - `profile_id="known_id"` + live driver + INCOMPATIBLE: returns
+         *       409 with `refused: true` + structured reason. Binding is NOT
+         *       persisted (refuses bail before DB write so operator can't
+         *       save a doomed selection). Matches the P2-5 refuse pattern.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    categoryKey: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SelectTopologyProfileRequest"];
+                };
+            };
+            responses: {
+                /** @description Selection persisted (and optionally applied) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SelectTopologyProfileResult"];
+                    };
+                };
+                /** @description Category, connection, or profile_id not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Topology incompatible with detected Test App */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
                 };
             };
         };
@@ -206,59 +276,7 @@ export interface paths {
                 };
             };
         };
-        /**
-         * Operator selects (or clears) the topology profile for a binding (P2-1)
-         * @description - `profile_id=null` clears the selection.
-         *     - `profile_id="known_id"` with no live driver: persists; takes
-         *       effect on next HAL reload.
-         *     - `profile_id="known_id"` + live driver + compatible: persists
-         *       AND immediately applies on the driver. Response carries
-         *       `applied_now=true`.
-         *     - `profile_id="known_id"` + live driver + INCOMPATIBLE: returns
-         *       409 with `refused: true` + structured reason. Binding is NOT
-         *       persisted (refuses bail before DB write so operator can't
-         *       save a doomed selection). Matches the P2-5 refuse pattern.
-         */
-        put: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    categoryKey: string;
-                };
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["SelectTopologyProfileRequest"];
-                };
-            };
-            responses: {
-                /** @description Selection persisted (and optionally applied) */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["SelectTopologyProfileResult"];
-                    };
-                };
-                /** @description Category, connection, or profile_id not found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Topology incompatible with detected Test App */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
+        put?: never;
         /**
          * Create a new operator-owned topology profile (P2-1 Phase 2.1)
          * @description `profile_id` is auto-allocated (`custom_<slug>`) — operators
@@ -762,18 +780,16 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         DashboardResponse: {
-            systemStatus: components["schemas"]["SystemStatusItem"][];
-            activeAlerts: components["schemas"]["AlertItem"][];
-            liveMetrics: components["schemas"]["MetricItem"][];
+            summary: Record<string, never>;
+            recent_tests: Record<string, never>[];
+            active_alerts: components["schemas"]["AlertItem"][];
+            live_metrics: components["schemas"]["MetricItem"][];
         };
         MonitoringFeedsResponse: {
             feeds: components["schemas"]["MetricItem"][];
         };
         InstrumentsResponse: {
             categories: components["schemas"]["InstrumentCategory"][];
-        };
-        InstrumentCategoryResponse: {
-            category: components["schemas"]["InstrumentCategory"];
         };
         UpdateInstrumentPayload: {
             modelId?: string | null;
