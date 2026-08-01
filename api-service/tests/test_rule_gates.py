@@ -988,3 +988,84 @@ def test_g9_schema_description_superset_of_enum():
         + "\n".join(problems)
     )
 
+# ─────────────────────────────────────────────────────────────────────
+# G10 状态列注释 ⊇ TestExecution 状态字面量写点 (P3-16 拍板的门 G-B)
+# ─────────────────────────────────────────────────────────────────────
+# TestExecution.status 的列注释是状态取值的**唯一真值源** (CLAUDE.md 指向它,
+# ARCH-1 曾漏 `pending`、#248 C4 曾漏 `cancelled` — 漏枚举是这条线反复踩的坑)。
+# 本门反向锁: 全仓写进 TestExecution.status 的**字面量**必须都在注释里 ——
+# 新代码写一个注释没列的状态 → 红, 逼着同步真值源。
+# 写点识别 (2026-08-01 全仓 AST 普查定的双判据):
+#   ① 构造调用 TestExecution(status="...")
+#   ② 属性赋值 <var>.status = "...", var ∈ {execution, ex, test_execution}
+#      (test_case_runner / commissioning / executors 的既有命名惯例;
+#      conn/session/sequence/step 等别的 status 域不进判定 — 宁漏报不误伤,
+#      动态值写点本来就不归字面量门管)
+# 真值源提取 = live import 列对象 comment (不 grep 源文本)。
+# 变异实跑: test_case_runner 临时加 execution.status = "exploded" → 红。
+
+_G10_EXEC_VAR_NAMES = {"execution", "ex", "test_execution"}
+
+
+def _g10_collect_status_literals(tree: "ast.AST"):
+    lits = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if (isinstance(t, ast.Attribute) and t.attr == "status"
+                        and isinstance(t.value, ast.Name)
+                        and t.value.id in _G10_EXEC_VAR_NAMES
+                        and isinstance(node.value, ast.Constant)
+                        and isinstance(node.value.value, str)):
+                    lits.append((t.value.id, node.lineno, node.value.value))
+        if isinstance(node, ast.Call):
+            fn = node.func
+            fn_name = fn.attr if isinstance(fn, ast.Attribute) else (
+                fn.id if isinstance(fn, ast.Name) else "")
+            if fn_name == "TestExecution":
+                for kw in node.keywords:
+                    if (kw.arg == "status" and isinstance(kw.value, ast.Constant)
+                            and isinstance(kw.value.value, str)):
+                        lits.append(("TestExecution()", node.lineno, kw.value.value))
+    return lits
+
+
+def test_g10_checker_detects_bad_literal():
+    """G10 判定器行为自测 — 两个方向都要对 (防 checker 空转)。"""
+    src = (
+        "def f(execution, conn):\n"
+        "    execution.status = 'exploded'\n"
+        "    conn.status = 'connected'\n"
+        "    row = TestExecution(status='pending')\n"
+    )
+    lits = _g10_collect_status_literals(ast.parse(src))
+    vals = {v for _, _, v in lits}
+    assert "exploded" in vals          # execution 域写点抓到
+    assert "connected" not in vals     # 别的 status 域不误伤
+    assert "pending" in vals           # 构造调用抓到
+
+
+def test_g10_status_comment_superset_of_write_sites():
+    from app.models.test_plan import TestExecution
+
+    comment = TestExecution.__table__.columns["status"].comment or ""
+    truth = {t.strip().split(" ")[0] for t in comment.split("|") if t.strip()}
+    assert truth, "TestExecution.status 列注释为空 — 真值源没了"
+
+    offenders = []
+    for py in sorted((_API_SERVICE_ROOT / "app").rglob("*.py")):
+        try:
+            tree = ast.parse(py.read_text())
+        except SyntaxError:
+            continue
+        for base, lineno, lit in _g10_collect_status_literals(tree):
+            if lit not in truth:
+                offenders.append(
+                    f"{py.relative_to(_API_SERVICE_ROOT)}:{lineno} "
+                    f"{base}.status = {lit!r}")
+    assert not offenders, (
+        "TestExecution.status 写点用了列注释 (唯一真值源) 没列的状态字面量 —\n"
+        "要么是拼错, 要么先把注释真值源更新了再写代码:\n" + "\n".join(offenders)
+        + f"\n当前真值源: {sorted(truth)}"
+    )
+
