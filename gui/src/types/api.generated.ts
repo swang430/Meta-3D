@@ -780,10 +780,22 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         DashboardResponse: {
-            summary: Record<string, never>;
-            recent_tests: Record<string, never>[];
+            summary: components["schemas"]["DashboardSummary"];
+            recent_tests: components["schemas"]["RecentTestItem"][];
             active_alerts: components["schemas"]["AlertItem"][];
             live_metrics: components["schemas"]["MetricItem"][];
+        };
+        DashboardSummary: {
+            probe_count: number;
+            active_alerts: number;
+            comparisons_selected: number;
+        };
+        RecentTestItem: {
+            id?: string;
+            plan_name?: string;
+            status?: string;
+            executed_at?: string;
+            duration_minutes?: number | null;
         };
         MonitoringFeedsResponse: {
             feeds: components["schemas"]["MetricItem"][];

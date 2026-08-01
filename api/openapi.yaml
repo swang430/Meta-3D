@@ -452,11 +452,11 @@ components:
       type: object
       properties:
         summary:
-          type: object
+          $ref: '#/components/schemas/DashboardSummary'
         recent_tests:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/RecentTestItem'
         active_alerts:
           type: array
           items:
@@ -466,6 +466,32 @@ components:
           items:
             $ref: '#/components/schemas/MetricItem'
       required: [summary, live_metrics, active_alerts, recent_tests]
+    DashboardSummary:
+      # Codex #265 R1: 宽形态 (type: object 无属性) 生成 Record<string, never>
+      # — 类型不可用; 按 live 实现写实。
+      type: object
+      properties:
+        probe_count:
+          type: integer
+        active_alerts:
+          type: integer
+        comparisons_selected:
+          type: integer
+      required: [probe_count, active_alerts, comparisons_selected]
+    RecentTestItem:
+      type: object
+      properties:
+        id:
+          type: string
+        plan_name:
+          type: string
+        status:
+          type: string
+        executed_at:
+          type: string
+        duration_minutes:
+          type: number
+          nullable: true
     MonitoringFeedsResponse:
       type: object
       properties:

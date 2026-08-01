@@ -1265,7 +1265,13 @@ def test_g11_openapi_yaml_subset_of_live_schema():
                     continue
                 y_schema = _resolve(spec, ((resp.get("content") or {})
                                            .get("application/json") or {}).get("schema") or {})
-                l_resp = (lop.get("responses") or {}).get(str(code)) or {}
+                l_resp = (lop.get("responses") or {}).get(str(code))
+                if l_resp is None:
+                    # Codex #265 R1: 声明的响应码 live 根本没有 — 这是 mismatch,
+                    # 静默跳过会让 "改 200 成 201 + 编键" 照绿。
+                    problems.append(
+                        f"yaml 声明的响应码不在实现: {m.upper()} {p} {code}")
+                    continue
                 l_schema = _resolve(live, ((l_resp.get("content") or {})
                                            .get("application/json") or {}).get("schema") or {})
                 y_props = set((y_schema.get("properties") or {}).keys())
@@ -1275,6 +1281,8 @@ def test_g11_openapi_yaml_subset_of_live_schema():
                     if missing:
                         problems.append(
                             f"yaml 响应键不在实现: {m.upper()} {p} {code} → {sorted(missing)}")
+                # y_props 有而 l_props 空 = live 响应无 schema (未声明
+                # response_model) — 契约弱侧, 跳过 (已在 docstring 申报)
     assert not problems, (
         "openapi.yaml (GUI 类型生成源) 声明了实现没有的契约元素:\n  "
         + "\n  ".join(problems))
