@@ -1,8 +1,9 @@
 # 现场首测调试协议 (On-Site First-Call Protocol)
 
 > **Governance 文档**：规范下一次现场调试流程，把 CAICT 2026-05-12/13 的教训固化成
-> 可执行纪律。配套 [`docs/roadmap-first-call.md`](../roadmap-first-call.md) 的 on-site
-> P0 队列（P0-3/4/5）使用。
+> 可执行纪律。配套 [`docs/roadmap-first-call.md`](../roadmap-first-call.md) 的
+> **「🚧 Blocked on hardware」表**使用 —— 当天的 P0 队列以那张表为准
+> （本文不硬编码队列内容，P1-23 起：此前硬编码 P0-3/4/5 已两次 stale）。
 >
 > 一句话目标：**现场只调硬件，不写 driver 代码。**
 
@@ -25,8 +26,12 @@ P1-11 多子网 runbook）的全部设计目标，就是把"写软件"挪到出�
 
 1. **现场不写 driver 代码。** driver 是出发前本地 mock 跑通的产物。现场冒出 driver
    bug = 本地验证有洞：记 backlog、能绕则绕，**不当场重写**。
-2. **WIP = 1 on P0。** Current Focus 按依赖链 **P0-4 → P0-3 → P0-5** 推进，一次一个，
-   一个 gate 过了再进下一个。
+2. **WIP = 1 on P0。** Current Focus 按 roadmap **「Blocked on hardware」表**的当前
+   排队推进（写作本版时 = P0-5 主线 + P0-8 现场半同窗），一次一个，一个 gate 过了再进
+   下一个。（此前这里硬编码"P0-4 → P0-3 → P0-5"，P0-3/4 完成后即 stale —— 队列内容
+   永远查表，不抄进本文。）**例外（P1-23 定）**：P0-8 的两个子门（P0-8a@Phase 1.5 /
+   P0-8b@Phase 4）是 P0-5 主线窗口内的**伴随验证**，按 Phase 顺序走、不占独立 WIP 槽 ——
+   否则"P0-8 未完不能进 P0-5、P0-5 未开做不了 P0-8b"会互锁（Codex #257）。
 3. **Timebox 救火。** 单仪表 / 单问题 bring-up 超 **30 min** 未通 → 标 blocked，转向
    能推进的，收工 review 再定。别让一个仪表吃掉一天。
 4. **区分两类问题：**
@@ -46,6 +51,8 @@ P1-11 多子网 runbook）的全部设计目标，就是把"写软件"挪到出�
 > 这一关是整个协议的杠杆点。出发前在本地把软件链路彻底走通，现场才可能"只调硬件"。
 
 - [ ] **mock-data first-call (P0-6) 本地端到端跑通**，PDF 报告出得来
+- [ ] **`propsim_f64_p08_gate` 诊断序列已写好并 mock 跑通**（Phase 1.5 / P0-8a 的
+  唯一合法载体：load→run→改参→电平判据；没有它现场做不了 P0-8a —— P1-23 遗留行动项）
 - [ ] **driver 代码冻结**：打 git tag 作为出发基线（如 `onsite-baseline-YYYYMMDD`）
 - [ ] **cockpit readiness 在 mock 模式全绿**（驱动链 / 活动 Lab / 校准证书；DUT 灰色
       = 已知占位，不算阻塞）
@@ -107,6 +114,36 @@ roadmap 对应 P0 项的 acceptance criteria。
 
 **Gate**：所有目标仪表 IDN ✓、capabilities 符合、HAL readiness 对应行 `ok`。
 
+### Phase 1.5 — F64 信道链验证（P0-8a gate，P1-23 新增）
+**目标**：验证 P0-8 本地半修好的 F64 驱动在 real F64 上真落地 —— 这是 2026-07-21
+现场问题的正修回归，**不做会让上次现场的修复停留在"本地绿"**。
+**为什么单独成段**：比 Phase 1 的握手级检查重（要 load→run→改参→读电平），又不依赖
+Phase 2/3 的 SA 与校准 —— 排在握手后立即做，问题越早暴露越好。
+**步骤**（禁临时脚本；载体 = checked-in 诊断序列 **`propsim_f64_p08_gate`**，
+覆盖 load→run→改参→电平四步判据 —— **该序列尚未写，已列入 §2 出发前硬门槛**，
+Codex #257 核实：现有 `propsim_f64_state_machine` 前提 .smu 已加载且只做
+GO/STATIC/GOS、`propsim_f64_health` 只读探测恒判成功，都干不了这三步）：
+0. **前置：激活 UXM 满 RB 下行信号**（CE↔BS 协调，见
+   [`../architecture/f64-input-level-and-dynamic-range.md`](../architecture/f64-input-level-and-dynamic-range.md)
+   操作点流程 —— **无信号时 `INP:LEV:MEAS?` 返 -300**，干净启动的现场必卡，
+   依赖仪表残留状态则不可复现，Codex #257 R2）
+1. load 场景包（`.smu`，用 SCD 登记的实测频率对齐 TestCase）→ run → 读错误队列
+2. 运行中改参（归一化功率）→ 再读错误队列
+3. **执行输入参考 AUTOSET 闭环**（不是只读一次判范围 —— `INP:LEV:AUTOSET`
+   设 avg+crest → 读回 clipping/cut-off → 迭代收敛，见架构文档操作点流程；
+   干净启动或残留参考值错误时"读数在限内"≠"输入参考配置正确"，Codex #257 R3）
+4. **bypass 态复验**：切 bypass → 输入参考/电平窗口仍正确（架构文档把它列为
+   P0-8 硬约束 —— 现场观测 B 证明 bypass 也会失败，只验衰落态会漏已知失败模式）
+**Gate（= P0-8a，P0-8 验收中不依赖 DUT 的前两条 + bypass 硬约束）**：
+- load → run → 改参全程 **0 error**（错误队列每步清零）
+- F64 **输入口变绿**（满 RB DL 在场 + AUTOSET 闭环收敛后：avg/crest 已设、
+  clipping/cut-off 读回无告警）
+- **bypass 态下电平窗口同样正确**（控制路径验证，架构文档 P0-8 硬约束）
+- ⚠️ P0-8 验收第三条「DL 不失真（非 0% ACK）」**依赖 DUT attach，挂在 Phase 4
+  的 gate 里（P0-8b），本段不验** —— gate 拆两半是设计决策，别在这里等 DUT。
+**与 §7 的关系**：§7 是 F64 **能力探测**清单（探未知，结论回填文档）；本段是
+**修复验证** gate（验已知，过/不过）。同一台仪器同一段窗口，性质不同别混记。
+
 ### Phase 2 — SA 入 HAL（P0-4）
 **目标**：真 SA 读参考 TRP，替掉 `_MOCK_TRP_DBM` 假值。
 **步骤**：在 GUI 把 `signalAnalyzer` 的 model 选成 `FSVA3000`（HAL 自动绑 `RealRsFsvaDriver`）；
@@ -133,11 +170,14 @@ cert **停止 warning**（P1-8 gate）。
 capability 查询 → 单方位扫吞吐 → 4 方位扫。
 **故障树**：attach 失败 → 先看 **P1-9 DUT-attach fail-loud gate** 报的原因
 （RRC 未连 / IMSI 缺失），按提示修配置，**不是 driver**。
-**Gate（= P0-5 acceptance）**：
+**Gate（= P0-5 acceptance + P0-8b）**：
 - attach 成功，记录 IMSI + RRC 状态
 - UE Capability 查询 `max_dl_layers >= 配置层数`
 - 单方位扫产生**非零**吞吐读数（来自 UXM）
 - 4 方位扫给出 **4 个不同**吞吐值（旋转 sanity check）
+- **P0-8b（P0-8 验收第三条，依赖 DUT 故挂本段）**：DL 经 F64 **衰落态与
+  bypass 态各测一次**，均**非 0% ACK**（现场观测 B：bypass 也会 0% ACK，
+  只验衰落态会把已知失败模式误报为收口）—— 与 P0-8a 合起来才算 P0-8 现场半收口
 
 ### Phase 5 — 完整真 first-call
 **目标**：端到端真 first-call，出 PDF。

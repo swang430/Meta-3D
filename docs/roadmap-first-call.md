@@ -12,7 +12,7 @@
 blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 用户拍板本地队列：
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
-**当前片 = P1-23**（P1-22 ✅ done 本 PR），顺序 **P1-22 → P1-23 → P2-19 → P2-20 → P3-14 → P3-15 → P3-16 → P3-17**
+**当前片 = P2-19**（P1-22 ✅ #256 / P1-23 ✅ done 本 PR），顺序 **P1-22 → P1-23 → P2-19 → P2-20 → P3-14 → P3-15 → P3-16 → P3-17**
 （逐片 WIP=1）。一句话索引（详情见各 P 区条目）：
 - **P1-22** 报告可信化：`overall_pass` 死键 + PDF CJK 字体 + `Test Plan: N/A` 残留（设计稿 [`design/p1-22-report-trustworthy-fix.md`](design/p1-22-report-trustworthy-fix.md)）
 - **P1-23** 现场协议补 P0-8 gate（纯文档，行前必办）
@@ -205,19 +205,17 @@ unblocked) BEFORE starting any new P1.
 > 需要同一台 real F64，排窗口时一起算。两者都在「📋 可规划工作 audit」的
 > `ON-SITE-BLOCKED` 行里；本表此前漏列 P0-8，2026-07-30 补上。
 >
-> ⚠️⚠️ **下面那份现场协议目前不覆盖 P0-8** —— [`on-site-debug-protocol.md`](guides/on-site-debug-protocol.md)
-> 开篇写的是「配套 P0 队列（**P0-3/4/5**）使用」，五个 Phase 里没有 P0-8 的 gate。
-> **照那份 checklist 逐条走完，F64 的 load→run→改参与输入参考验证会整个漏掉。**
-> 出发前**手动把 P0-8 排进当天计划**（它跟 Phase 1 逐仪表 SCPI 握手同段，F64 已在场）。
-> 给协议正式加一道 P0-8 gate 是独立立项（要定它进哪个 Phase / gate 判据怎么写），
-> 不在本条目范围 —— 已记进本文末尾「🗂️ Discovered during X」区
-> （`[discovered 2026-07-30 during ARCH-1 roadmap 补记]` 那条），周度 triage 会扫到。
+> ✅ **协议已覆盖 P0-8（P1-23，2026-08-01）**：Phase 1.5 = P0-8a gate
+> （load→run→改参 + 输入口电平，载体 `propsim_f64_p08_gate` 序列 —— **序列本身
+> 待写，已列入协议 §2 出发前硬门槛**），Phase 4 gate 清单含 P0-8b（DL 非 0% ACK）。
+> 此前"协议不覆盖 P0-8、需手动排入"的告警随 P1-23 作废。
 
 > **下次现场执行按 [`docs/guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md)
-> 走**（现场首测调试协议）。该协议把这些 P0 排成依赖链 **P0-4 → P0-3 → P0-5** 的
-> 5 阶段 go/no-go gate（gate 标准 = 上面各 P0 的 acceptance），并固化 CAICT 教训:
-> 出发前硬门槛 (mock first-call 跑通 + driver 冻结) + 铁律「现场不写 driver 代码」+
-> timebox 救火 + 收工 review + retro 喂回本 roadmap。
+> 走**（现场首测调试协议）。当天 P0 队列以上方「Blocked on hardware」表为准
+> （协议自 P1-23 起不再硬编码队列），Phase 结构 = 网络 → 握手 → **F64 信道链
+> (P0-8a)** → SA → 校准 → DUT attach(P0-5+P0-8b) → 真 first-call，gate 标准 =
+> 各 P0 的 acceptance；并固化 CAICT 教训: 出发前硬门槛 + 铁律「现场不写 driver
+> 代码」+ timebox 救火 + 收工 review + retro 喂回本 roadmap。
 
 ---
 
@@ -1265,12 +1263,13 @@ SYN, 于是每个 IP 都"alive"、每个子网都"可达"。实测连 RFC5737 TE
 **来源**: Discovered 区 `[discovered 2026-08-01 during ARCH-1 S6 总验]` 报告条 + CJK 条（详细根因在彼处，[→ P1-22] 已标）。**Estimate**: ~1 day。
 **收口 (2026-08-01)**: 谓词换 `validation_pass` 列（缺列兜 verdict 三值，未知保守 failed；两红线变异实跑：死键回退 2 红（含列优先判别用例）/ completed 谓词 4 红含 KPI-FAIL 谎报通过卫兵（初报 4 红系 FAILED 计数未锚定 short summary 行双计，内审 F2 纠正））；CJK 三族收敛单一 `CJK_FONT` 常量（样式表遍历 + Table FONTNAME + 显式位点，源码零 Helvetica 由存在性门守）；封面 Test Plan 行按报告类型分流（计划类保留真名，execution 类显示「来源」）。S6 真执行重生报告实证：中文标题可读 + pass 口径为真值（mock KPI FAIL 如实报 failed）。新文件 12 单测（+既有回归 4）+ 全量 2775 过。
 
-### P1-23 — 现场协议补 P0-8 gate（纯文档，行前必办）
+### P1-23 — 现场协议补 P0-8 gate（纯文档，行前必办）✅ Done (2026-08-01)
 
 **What**: `guides/on-site-debug-protocol.md` 补 P0-8 执行 gate（两个设计决策：塞哪个 Phase /
 gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→P0-5 推进"已过时）。
 **Why P1**: 当前 checklist 走完会漏 F64 验证 —— 比没有 checklist 更危险，不能带到下次出发。
 **来源**: Discovered 区 `[discovered 2026-07-30 during ARCH-1 roadmap 补记]` 条（[→ P1-23] 已标）。**Estimate**: ~0.5 day。
+**收口 (2026-08-01)**: 两个设计决策落定 —— ①P0-8 独立成 **Phase 1.5**（比握手重、不依赖 SA/校准，排 Phase 1 后即验；与 §7 能力探测清单显式区分"验已知 vs 探未知"）；②gate 拆两半 —— **P0-8a**（load→run→改参 0 error + 输入口变绿）挂 Phase 1.5，**P0-8b**（DL 非 0% ACK，依赖 DUT）挂 Phase 4 gate 清单。stale 句根治：开篇配套句与铁律 2 的硬编码 P0 队列**换源指向 Blocked on hardware 表**（硬编码已两次 stale，队列永远查表）。
 
 ---
 
@@ -2006,6 +2005,9 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 ## 🗂️ Discovered during X — triage backlog
 
 > Items added mid-task. Reviewed weekly; promoted to P1/P2/P3 or dropped.
+
+- `[discovered 2026-08-01 during P1-23, Codex #257]` **写 `propsim_f64_p08_gate` 诊断序列（P0-8a 唯一合法载体，已列协议 §2 出发前硬门槛）** —— 现有 `propsim_f64_state_machine`（前提 .smu 已载、只做 GO/STATIC/GOS）与 `propsim_f64_health`（只读探测、`get_metrics` 恒判成功）都覆盖不了 P0-8a。序列要求：①手册有据 + 生产驱动在用的命令（涉 F64 SCPI，动手前查 NotebookLM PROPSIM notebook）②**前置激活 UXM 满 RB DL**（CE↔BS 协调，无信号 `INP:LEV:MEAS?` 返 -300）③每步后读错误队列 ④电平按合法范围真判定（不是恒成功）⑤**含 bypass 态电平窗口复验**（架构文档 P0-8 硬约束）⑥**含输入参考 AUTOSET 闭环**（`INP:LEV:AUTOSET` 设 avg+crest → 读回 clipping/cut-off 迭代收敛，只读判范围会假绿，Codex #257 R3）⑦mock 跑通列入出发前门槛。代码活，独立小片。⚠️ 本行是第二次登记 —— 前两次 python replace 因 #255 提升标记改变锚文本**静默未命中**（我未 assert 命中数，#256/#257 的 PR body 里"已留痕"陈述当时为假，本次补欠并如实更正）。
+- `[discovered 2026-08-01 during P1-22 内审 F3，本行补欠登记]` **precheck/reference/measure 的 P1-12 可信化标志渲染不可达 — 报告对兜底数据沉默（P3）** —— `executors/report.py` step_results 里 `quiet_zone_verified` / `trp_verified` / `path_loss_verified` 是顶层键，渲染器只读 `name`/`step_name` 与 `parameters` → PDF 步骤区零显示，P1-12"标注 未验证(兜底值)"意图从未生效。修法同 P1-22 的 analysis 站点（标志挪 `parameters` 下）。顺带同域：`pdf_certificate.py`（校准证书）无 CJK 字体，证书中文同样豆腐块。
 
 - `[discovered 2026-08-01 during ARCH-1 S6 总验, 内审定案]` **[→ 提升 P1-22 (2026-08-01)]** **自动执行报告恒报 failed/0.0% — REPORT 相位读一个从没人写的键（P2）** —— `mimo_ota/executors/report.py` 的 `overall_pass = bool(analysis.get("overall_pass", False))`：analysis 执行器写的是 `verdict`（canonical 字段是 `validation_pass`），全仓**无人写 `overall_pass` 键**（`pass_criteria_summary` 同样无人写）→ 恒 False → 自动报告 `overall_result` 恒 "failed"、`pass_rate` 恒 0.0 —— `.get` 默认值静默吞断层的教科书形态。修法=换判据来源，**精确谓词**（Codex #254 R1 校正）：首选读 `context.test_execution.validation_pass`（TestExecution **列**，analysis 执行器按 `verdict in ("PASS","MARGINAL")` 写入的 canonical 布尔 —— 注意它不在 analysis payload 里，`analysis.get("validation_pass")` 还是恒 None）；若只拿得到 payload 则用 `analysis.get("verdict") in ("PASS", "MARGINAL")`（verdict 取值就这三个字面量）。**绝不 `bool(verdict)`** —— 非空字符串恒 True，"FAIL" 也会判成通过，反向翻车。⚠️ **修法红线**：不得用 `status=='completed'` 当通过谓词 —— 相位机械成功与 KPI 通过是两层（analysis 相位对 KPI FAIL 也返回 SUCCESS），completed 判通过会让失败的测试谎报通过，代价不对称。手动路径（HistoryTab 生成的那份）走 `report_data_collector` 的 `validation_pass` 谓词，**现状正确**——它显示 0.0% 可能是如实报告 mock 环境 KPI FAIL，修自动路径前先分辨两份 PDF。⚠️ `report_service.py` 建 summary 的 `overall_result`/`.get('pass_rate', 0)` 段**不许当残留清理**（Codex #254 R2）：VRT 归档路径（`road_test.py::_archive_execution_report` 传 `ExecutionReport.model_dump()`，该 schema 无 `execution_summary` 键）**仍在消费它** —— 它只是不在用例执行路径上，对 VRT 是活代码。可同 PR 清理的只有报告模板 `Test Plan: N/A` 计划链残留字段。
 - `[discovered 2026-08-01 during ARCH-1 S6 总验]` **[→ 提升 P1-22 (2026-08-01)]** **PDF 生成器缺 CJK 字体 — 中文全渲染成豆腐块（P3）** —— 报告标题/正文里所有汉字显示为 ■，中文用例名的报告不可读。`pdf_generator.py`（reportlab）需显式注册中文字体（内置 `STSong-Light` CID 字体或捆绑开源 Noto Sans CJK），并全模板换用（已核实全 `app/` 无 registerFont/TTFont/CID 调用）。
