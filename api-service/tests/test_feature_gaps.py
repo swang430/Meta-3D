@@ -12,12 +12,48 @@ from fastapi.testclient import TestClient
 from uuid import uuid4
 from datetime import datetime
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
 # Import the app
 import sys
 sys.path.insert(0, '/Users/Simon/Tools/MIMO-First/api-service')
 from app.main import app
+from app.db.database import Base, get_db
 
 client = TestClient(app)
+
+# P3-15: 项目标准 SQLite 隔离 (test_arch1_case_runner 同款惯例) — 本文件此前
+# 直连开发库, 每次全量测试往里塞队列条目/测试计划 (801 条僵尸的持续来源,
+# #218 清完当晚 agent 门审跑全量即复发 13 条)。
+_engine = create_engine(
+    "sqlite://",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+_TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_db():
+    Base.metadata.create_all(bind=_engine)
+    prev = app.dependency_overrides.get(get_db)
+
+    def _override():
+        s = _TestingSessionLocal()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = _override
+    yield
+    if prev is None:
+        app.dependency_overrides.pop(get_db, None)
+    else:
+        app.dependency_overrides[get_db] = prev
+    Base.metadata.drop_all(bind=_engine)
 
 
 # ARCH-1 S4b: TestQueueReordering 随计划链删除 —— 它测的是已删掉的

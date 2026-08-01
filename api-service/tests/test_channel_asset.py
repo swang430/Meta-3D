@@ -171,6 +171,40 @@ class TestPolymorphicPayloadValidation:
             create_channel_asset(db, name="x", source_type="vendor_file",
                                  payload={"scd_config": {}})
 
+    def test_vendor_top_freq_mismatch_rejected(self, db):
+        """P3-15: 顶层声明 vs scd_config 漂移 fail-loud — 2026-07-02 现场形态
+        (顶层 3.5 GHz vs arfcn=640000=3600 MHz): 显示读顶层、一致性网读 arfcn,
+        两边不同 = 显示误导现场。顶层给了就必须与 SCD 一致。"""
+        from app.services.channel_asset_service import update_channel_asset
+        with pytest.raises(ChannelAssetError, match="center_frequency_hz.*不一致"):
+            create_channel_asset(db, name="ven-drift", source_type="vendor_file",
+                                 payload=_VENDOR_PAYLOAD,
+                                 center_frequency_hz=3.5e9, bandwidth_mhz=100)
+        with pytest.raises(ChannelAssetError, match="bandwidth_mhz.*不一致"):
+            create_channel_asset(db, name="ven-drift2", source_type="vendor_file",
+                                 payload=_VENDOR_PAYLOAD,
+                                 center_frequency_hz=3600.0e6, bandwidth_mhz=40)
+        # 一致 / 顶层留空 → 放行
+        ok = create_channel_asset(db, name="ven-ok", source_type="vendor_file",
+                                  payload=_VENDOR_PAYLOAD,
+                                  center_frequency_hz=3600.0e6, bandwidth_mhz=100)
+        create_channel_asset(db, name="ven-blank", source_type="vendor_file",
+                             payload={"scd_config": {**_SCD, "version": 2}})
+        # update 只改顶层也撞 scd 现值 (最终状态判, 不然 PATCH 绕过)
+        with pytest.raises(ChannelAssetError, match="center_frequency_hz.*不一致"):
+            update_channel_asset(db, ok.id, center_frequency_hz=3.5e9)
+
+    def test_vendor_bad_arfcn_still_checks_bandwidth(self):
+        # Codex #263 R1 P2: 存量行 ARFCN 坏 -> 只跳频率比对, 带宽比对照走 --
+        # 早退会把带宽漂移也放过。直接打单元 (坏 arfcn 行进不了 create 正门)。
+        from app.services.channel_asset_service import (
+            ChannelAssetError as CAE,
+            _check_vendor_declared_freq,
+        )
+        bad_scd = {**_SCD, "arfcn": 99999999}  # NR 域外
+        with pytest.raises(CAE, match="bandwidth_mhz.*不一致"):
+            _check_vendor_declared_freq(bad_scd, 3.6e9, 40)  # bw 40 vs scd 100
+
     def test_vendor_incomplete_scd_config(self, db):
         # S2: vendor scd_config 须完整 SCD schema (缺 mimo → 400, Codex #173 第5轮纳入 S2)
         incomplete = {k: v for k, v in _SCD.items() if k != "mimo"}
