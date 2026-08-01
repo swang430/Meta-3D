@@ -231,6 +231,15 @@ class ReportService:
                     report_data_dict['generated_by'] = report.generated_by
                 if 'generated_at' not in report_data_dict:
                     report_data_dict['generated_at'] = datetime.now(timezone.utc).isoformat()
+                # P1-22 (Codex #256 R2): 封面按 report_type 分流用例/计划口径,
+                # VRT 归档 override (ExecutionReport.model_dump) 没有该键 — 从
+                # TestReport 行补齐, 与上面三个缺失补齐同构。
+                if 'report_type' not in report_data_dict and report.report_type:
+                    report_data_dict['report_type'] = (
+                        report.report_type.value
+                        if hasattr(report.report_type, 'value')
+                        else str(report.report_type)
+                    )
 
                 # Transform VRT data structure to PDF Generator expected structure
                 # Debug logging
