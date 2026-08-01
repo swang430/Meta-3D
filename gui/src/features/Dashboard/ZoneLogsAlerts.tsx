@@ -124,7 +124,9 @@ function LogPanel() {
       // 只做跨流去重 (内审 F4): boost 两流按 level 天然不相交, 流内重复必是
       // 真实重复行, 不互相吞
       const seen = new Set(main.entries.map(key))
-      const mainOldestTs = main.entries[0]?.ts ?? ''
+      // cutoff 取主流首条带 ts 的行 (Codex #258: 窗口首行可能是 RAW 连续行
+      // ts 为空, 会让间隙护栏失效)
+      const mainOldestTs = main.entries.find((e) => e.ts)?.ts ?? ''
       const older: SystemLogEntry[] = []
       for (const r of extra) {
         for (const e of r.entries) {
