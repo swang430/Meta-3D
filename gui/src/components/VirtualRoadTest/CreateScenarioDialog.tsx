@@ -29,7 +29,7 @@ import {
   IconSettings,
 } from '@tabler/icons-react'
 import { createScenario } from '../../api/roadTestService'
-import type { RoadTestScenario, StepConfiguration, TestMode } from '../../types/roadTest'
+import type { ChannelModel, RoadTestScenario, StepConfiguration, TestMode } from '../../types/roadTest'
 import { StepConfigurationEditor } from './StepConfigurationEditor'
 
 interface Props {
@@ -117,7 +117,16 @@ export function CreateScenarioDialog({ opened, onClose, testMode }: Props) {
         },
         environment: {
           type: 'urban_street',
-          channel_snapshots: [],
+          // P2-20: 表单选的信道模型写进快照真值位置 (此前恒发 [] — 模型只进
+          // tags, 摘要/执行永远读不到; 单快照全程有效, duration 取场景时长)
+          channel_snapshots: [
+            {
+              timestamp_s: 0,
+              duration_s: formData.duration,
+              channel_type: '3GPP',
+              standard_model: formData.channelModel as ChannelModel,
+            },
+          ],
           weather: 'clear',
           traffic_density: 'medium',
         },

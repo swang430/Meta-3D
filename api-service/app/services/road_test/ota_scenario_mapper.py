@@ -1,6 +1,11 @@
 """
 OTA Scenario Mapper
 
+⚠️ P2-20 (2026-08-01) 状态申报: 本模块目前**全仓零调用方** (仅 road_test/__init__
+re-export, 无人消费) — 保留待未来接线。本次把 5 处 `environment.channel_model`
+死字段读取换源到 `channel_snapshots[0].standard_model` (Environment 自 2026-04-12
+起无 channel_model 字段, 原读法接线即 AttributeError), 接线前请先补测试。
+
 Maps virtual road test scenarios to OTA test configuration.
 Converts scenario parameters (route, environment, velocity) into:
 - Positioner movements (azimuth, elevation)
@@ -33,6 +38,15 @@ from app.services.channel_engine_client import (
 
 logger = logging.getLogger(__name__)
 
+
+
+def _snapshot_channel_model(environment) -> "ChannelModel":
+    """P2-20 换源: 信道模型真值在 channel_snapshots[0].standard_model (Environment
+    已无 channel_model 字段)。无快照 / Custom 快照时回落 UMa (与旧字段缺省一致)。"""
+    snaps = getattr(environment, "channel_snapshots", None) or []
+    if snaps and getattr(snaps[0], "standard_model", None):
+        return snaps[0].standard_model
+    return ChannelModel.UMA
 
 class OTAConfig:
     """OTA configuration for MPAC chamber"""
@@ -102,7 +116,7 @@ class OTAScenarioMapper:
         config = OTAConfig()
 
         # 1. Map environment to channel model
-        config.channel_model = self._map_channel_model(scenario.environment.channel_model)
+        config.channel_model = self._map_channel_model(_snapshot_channel_model(scenario.environment))
         config.fading_enabled = True
 
         # 2. Calculate max Doppler from route
@@ -331,7 +345,7 @@ class OTAScenarioMapper:
         clusters = self._extract_clusters_from_scenario(scenario)
 
         # 构造 CDL 模型名称
-        model = scenario.environment.channel_model
+        model = _snapshot_channel_model(scenario.environment)
         is_los = model in (ChannelModel.CDL_D, ChannelModel.CDL_E)
         cdl_model_name = self._build_cdl_name(model, is_los)
 
@@ -405,7 +419,7 @@ class OTAScenarioMapper:
             {"delay_s": 430e-9, "power": 0.0500, "aoa": 78.2,  "aod": -42.1, "as_aoa": 10.0},
         ]
 
-        model = scenario.environment.channel_model
+        model = _snapshot_channel_model(scenario.environment)
 
         # 当前阶段：所有模型都使用 CDL-C 的簇参数
         # TODO: 为不同 CDL/TDL 模型提供专用参数表
@@ -569,8 +583,8 @@ class OTAScenarioMapper:
 
         # Check channel model support
         supported_models = {ChannelModel.UMA, ChannelModel.UMI, ChannelModel.RMA}
-        if scenario.environment.channel_model not in supported_models:
-            warnings.append(f"Channel model {scenario.environment.channel_model} may have limited OTA support.")
+        if _snapshot_channel_model(scenario.environment) not in supported_models:
+            warnings.append(f"Channel model {_snapshot_channel_model(scenario.environment)} may have limited OTA support.")
 
         return {
             "is_valid": len(errors) == 0,

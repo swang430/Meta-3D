@@ -354,12 +354,19 @@ class TestScenarioSummaryIntegrity:
         """行为门：标准库场景（未填快照）channel_model=None，且行不退化（时长>0）"""
         rows = client.get("/api/v1/road-test/scenarios?source=standard").json()
         assert len(rows) == 5
+        # P2-20: 标准库死 kwarg 已转正为 channel_snapshots — 按 id 对位断言
+        # 具体模型值 (兑现 #253 时留下的"修好后应改为期待具体模型值"注释)
+        expected_models = {
+            "3gpp-uma-handover-001": "UMa",
+            "3gpp-umi-beam-tracking-001": "UMi",
+            "highway-high-speed-001": "RMa",
+            "tunnel-entry-exit-001": "UMa",
+            "urban-canyon-001": "UMi",
+        }
         for row in rows:
             assert row["duration_s"] > 0, f"{row['id']} 摘要被降级成零时长行"
-            # None 是现状不是契约：标准库 channel_model= 死 kwarg 被 Pydantic
-            # 静默吞掉、channel_snapshots 恒空（roadmap backlog 2026-08-01 P3 条）；
-            # 修好标准库后此断言应改为期待具体模型值
-            assert row["channel_model"] is None
+            assert row["channel_model"] == expected_models[row["id"]], (
+                f"{row['id']} 摘要 channel_model 与快照真值不符")
 
     def test_summary_count_equals_scenario_count_and_no_error_logs(
         self, client: TestClient, sample_scenario_data, caplog
