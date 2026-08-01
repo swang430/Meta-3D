@@ -34,6 +34,7 @@ import {
   IconSearch,
 } from '@tabler/icons-react'
 import { fetchSystemLogsTail, fetchAlerts, fetchAlertSummary } from '../../api/service'
+import type { SystemLogTailResponse } from '../../types/api'
 import type {
   SystemLogEntry,
   SystemLogLevel,
@@ -90,18 +91,60 @@ function LogPanel() {
   const [autoRefresh, setAutoRefresh] = useState(true)
   const viewportRef = useRef<HTMLDivElement>(null)
 
-  // 单 level 才下推后端 (后端 tail 只接受单个 level)；多选时拉全量本地过滤。
-  const serverLevel = enabledLevels.length === 1 ? enabledLevels[0] : undefined
-
+  // P2-19: 主流 (无过滤 200 行, 保 RAW/traceback 与最新行邻接) + WARN/ERROR
+  // 各一路下推补充流 — 低频失败行有独立的 200 条窗口, 不再被 INFO 刷屏
+  // ~48s 冲出 (P2-11 失效模式的收尾)。INFO 是刷屏主体不补; RAW 行无 ts 且
+  // 后端 level 精确匹配会丢它, 只在主流里保邻接, 补充流的旧行无 traceback
+  // 可接受 (行本身可见已达排障目的)。
+  const levelsKey = [...enabledLevels].sort().join(',')
   const { data, isLoading, error, refetch, isFetching } = useQuery({
-    queryKey: ['cockpit', 'logs', filename, serverLevel, keyword],
-    queryFn: () =>
-      fetchSystemLogsTail({
+    queryKey: ['cockpit', 'logs', filename, levelsKey, keyword],
+    queryFn: async () => {
+      const main = await fetchSystemLogsTail({
         filename,
         lines: 200,
-        level: serverLevel,
         keyword: keyword || undefined,
-      }),
+      })
+      const boosts = ['WARNING', 'ERROR'].filter((l) => enabledLevels.includes(l))
+      // 补充流失败不连坐主流 (内审 F5): 单路 500 降级为无补充
+      const settled = await Promise.allSettled(
+        boosts.map((l) =>
+          fetchSystemLogsTail({
+            filename,
+            lines: 200,
+            level: l,
+            keyword: keyword || undefined,
+          }),
+        ),
+      )
+      const extra = settled
+        .filter((r): r is PromiseFulfilledResult<SystemLogTailResponse> => r.status === 'fulfilled')
+        .map((r) => r.value)
+      const key = (e: SystemLogEntry) => `${e.ts}|${e.logger}|${e.msg}`
+      // 只做跨流去重 (内审 F4): boost 两流按 level 天然不相交, 流内重复必是
+      // 真实重复行, 不互相吞
+      const seen = new Set(main.entries.map(key))
+      // cutoff 取主流首条带 ts 的行 (Codex #258: 窗口首行可能是 RAW 连续行
+      // ts 为空, 会让间隙护栏失效)
+      const mainOldestTs = main.entries.find((e) => e.ts)?.ts ?? ''
+      const older: SystemLogEntry[] = []
+      for (const r of extra) {
+        for (const e of r.entries) {
+          // 两次请求间隙新落盘的行只在补充流出现 (内审 F3): ts 不早于主流
+          // 最旧行的丢弃, 下一轮主流必含它, 不错位到面板顶端
+          if (mainOldestTs && e.ts >= mainOldestTs) continue
+          if (!seen.has(key(e))) older.push(e)
+        }
+      }
+      // 补充的旧行按时间升序放在主流前面 (老→新, 滚动方向一致)
+      older.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
+      const totalScanned = Math.max(
+        main.total_lines_read || 0,
+        ...extra.map((r) => r.total_lines_read || 0),
+        0,
+      )
+      return { entries: [...older, ...main.entries], total_scanned: totalScanned }
+    },
     refetchInterval: autoRefresh ? 3_000 : false,
   })
 
@@ -133,7 +176,7 @@ function LogPanel() {
             <Text fw={700}>实时日志</Text>
             {data && (
               <Badge size="sm" variant="light" color="gray">
-                {entries.length} 条
+                {entries.length} 条 · 最深已扫 {data.total_scanned} 行
               </Badge>
             )}
           </Group>

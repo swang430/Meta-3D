@@ -25,7 +25,10 @@ def _to_history_item(execution: TestExecution, case_name: Optional[str]) -> Exec
     """执行行 → 历史列表项。
 
     相位进度只有 case-runner 在 config.phase_progress 里记
-    ({"type": 相位名, "status": completed/failed}, test_case_runner.py);
+    ({"type": 相位名, "status": StepExecutionStatus.value ∈
+    success/failed/skipped/running}, test_case_runner.py 相位循环 append 唯一写方 —
+    P2-19: 此处 docstring 原写 completed/failed 是错误 token, 它当过计数
+    谓词与测试 fixture 的种子, 三处同错自洽致 phases_done 恒 0);
     commissioning / plan-runner 行没有这个键 → phases_* 保持 None
     (三态语义, GUI 显示 "—", 不伪造 0/N)。
     """
@@ -40,7 +43,7 @@ def _to_history_item(execution: TestExecution, case_name: Optional[str]) -> Exec
     if isinstance(progress, list):
         phases_done = sum(
             1 for p in progress
-            if isinstance(p, dict) and p.get("status") == "completed")
+            if isinstance(p, dict) and p.get("status") == "success")
         phases_failed = sum(
             1 for p in progress
             if isinstance(p, dict) and p.get("status") == "failed")

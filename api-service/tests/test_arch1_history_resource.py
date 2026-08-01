@@ -111,7 +111,9 @@ def _case_runner_execution(
 ):
     """按 case-runner 的真实写入形状造执行行 (test_case_runner.py:140)。"""
     progress = (
-        [{"type": f"phase{i}", "status": "completed"} for i in range(phases_done)]
+        # P2-19: token 对齐唯一写方 runner (StepExecutionStatus.SUCCESS.value =
+        # "success") — fixture 原用 "completed" 与实现同错自洽, 门验了个寂寞
+        [{"type": f"phase{i}", "status": "success"} for i in range(phases_done)]
         + [{"type": "measure", "status": "failed"}] * phases_failed
     )
     execution = TestExecution(
@@ -158,7 +160,7 @@ def test_ga_case_run_row_visible_with_snapshot_name(db, lab):
     # phases_done 与 config.phase_progress 逐条一致 (不变量)
     progress = execution.config["phase_progress"]
     assert row["phases_done"] == sum(
-        1 for p in progress if p["status"] == "completed")
+        1 for p in progress if p["status"] == "success")
     assert row["phases_total"] == 5
     assert row["executed_by"] == "test_case_runner"
 
@@ -175,7 +177,7 @@ def test_ga_malformed_config_row_does_not_poison_list(db, lab):
         status="completed",
         config={
             "step_descriptors": "abc",           # 非 list
-            "phase_progress": ["oops", {"status": "completed"}],  # 元素混杂
+            "phase_progress": ["oops", {"status": "success"}],  # 元素混杂
             "error_message": {"code": 500},      # 非串 (内审 F1: 会让
             # Pydantic 拒绝整行 → 外层 except 吞成空表)
         },

@@ -12,7 +12,7 @@
 blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 用户拍板本地队列：
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
-**当前片 = P2-19**（P1-22 ✅ #256 / P1-23 ✅ done 本 PR），顺序 **P1-22 → P1-23 → P2-19 → P2-20 → P3-14 → P3-15 → P3-16 → P3-17**
+**当前片 = P2-20**（P1-22 ✅ #256 / P1-23 ✅ #257 / P2-19 ✅ done 本 PR），顺序 **P1-22 → P1-23 → P2-19 → P2-20 → P3-14 → P3-15 → P3-16 → P3-17**
 （逐片 WIP=1）。一句话索引（详情见各 P 区条目）：
 - **P1-22** 报告可信化：`overall_pass` 死键 + PDF CJK 字体 + `Test Plan: N/A` 残留（设计稿 [`design/p1-22-report-trustworthy-fix.md`](design/p1-22-report-trustworthy-fix.md)）
 - **P1-23** 现场协议补 P0-8 gate（纯文档，行前必办）
@@ -1945,13 +1945,14 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 ---
 
-### P2-19 — 执行观测一致性（相位计数 token 错配 + 日志面板收尾）
+### P2-19 — 执行观测一致性（相位计数 token 错配 + 日志面板收尾）✅ Done (2026-08-01)
 
 **What**: ① `api/test_execution.py::_to_history_item` 相位计数谓词 `"completed"` vs runner 写
 `"success"` token 错配 → `phases_done` 对所有行恒 0（后端一处修，历史表/主控台卡/库进度三处
 全好，含错误 docstring 种子清理）；② 主控台日志面板多选/默认态仍是 P2-11 失效模式的 GUI 收尾。
 **Why P2**: 现场排障靠这些面板，观测层失真直接烧现场时间（7-21 教训）。
 **来源**: Discovered 区 S6 相位计数条 + P2-8 日志面板条（[→ P2-19] 已标）。**Estimate**: ~0.5 day。
+**收口 (2026-08-01)**: ①计数谓词 token 对齐唯一写方（`"success"`，"completed" 从来不是合法 token —— StepExecutionStatus 四值枚举核定）；连环挖出**四处同错自洽站点**（实现谓词/docstring/测试 fixture/断言内联谓词 —— docstring 是种子，fixture 与断言照抄后门验了个寂寞），四处一次收口 + 变异实跑 3 红。②日志面板改"主流保 RAW 邻接 + WARN/ERROR 各一路下推补充流"（RAW 无 ts 且 level 精确匹配会丢，不能纯逐 level 合并）+ badge 显示"最深已扫 N 行"。浏览器三消费方实证：主控台卡 5/5 满条 / 历史表 5/5 / 面板 360 条·已扫 20000 行（补充流捞回 160 条被冲出的低频行）。
 
 ### P2-20 — VRT 场景库健壮化
 
