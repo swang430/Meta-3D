@@ -162,9 +162,21 @@ class TestCoverPlanRow:
                 rows.extend([tuple(r) for r in cells])
         return rows
 
-    def test_execution_report_shows_source_not_na(self):
+    def test_execution_report_without_plan_shows_source(self):
+        """手动路径 (collector 无 test_plan) → 用例口径兜底文案。"""
         rows = self._cover_rows({"title": "t", "report_type": "single_execution"})
-        assert ("来源:", "用例执行") in rows
+        assert ("测试用例:", "用例执行") in rows
+        assert not any(r[0] == "Test Plan:" for r in rows)
+
+    def test_execution_report_with_case_name_not_mislabeled(self):
+        """Codex #256 P1: MIMO_OTA 自动路径恒带 test_plan dict (装的是用例名) —
+        判据必须按 report_type 分型, 名字有无判不了 (恒真会把用例错标成
+        Test Plan)。"""
+        rows = self._cover_rows({
+            "title": "t", "report_type": "single_execution",
+            "test_plan": {"name": "S6-验收-五步闭环"},
+        })
+        assert ("测试用例:", "S6-验收-五步闭环") in rows
         assert not any(r[0] == "Test Plan:" for r in rows)
 
     def test_plan_report_keeps_test_plan_row(self):

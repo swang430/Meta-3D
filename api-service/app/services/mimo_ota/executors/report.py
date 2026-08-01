@@ -276,6 +276,9 @@ def _build_mimo_ota_content_data(
 
     return {
         "title": f"MIMO OTA Test Report — {plan_info['name']}",
+        # P1-22 (Codex #256): 报告类型进 content_data — PDFGenerator 靠它分流
+        # 计划口径/用例口径的字段标签 (名字有无判不了型: 本路径恒有名字)。
+        "report_type": "single_execution",
         "generated_by": "MIMO OTA System",
         "generated_at": now.isoformat(),
         "overall_result": "passed" if overall_pass else "failed",

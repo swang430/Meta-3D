@@ -261,13 +261,17 @@ class PDFGenerator:
         })
         order += 1
 
-        # Add test plan info if available
+        # Add test plan / test case info if available (P1-22 Codex #256:
+        # single_execution 的 test_plan dict 装的是 TestCase 信息, 标题与
+        # 字段标签按 report_type 换用例口径, 不错标成计划)
         if data.get('test_plan'):
+            _is_exec = data.get('report_type') == 'single_execution'
             sections.append({
                 'type': 'text',
                 'order': order,
-                'title': 'Test Plan Information',
-                'content_template': self._get_test_plan_template()
+                'title': 'Test Case Information' if _is_exec else 'Test Plan Information',
+                'content_template': self._get_test_case_template() if _is_exec
+                else self._get_test_plan_template()
             })
             order += 1
 
@@ -334,6 +338,19 @@ class PDFGenerator:
 
         return sections
 
+    def _get_test_case_template(self) -> str:
+        """single_execution 报告: test_plan dict 装的是 TestCase 信息 (ARCH-1
+        后 MIMO_OTA 执行不挂计划), 字段标签用用例口径。"""
+        return """
+<b>Test Case:</b> {{ test_plan.name }}
+
+<b>Description:</b> {{ test_plan.description or 'N/A' }}
+
+<b>Status:</b> {{ test_plan.status }}
+
+<b>Created By:</b> {{ test_plan.created_by }}
+"""
+
     def _get_test_plan_template(self) -> str:
         """Get template for test plan information"""
         return """
@@ -382,15 +399,15 @@ class PDFGenerator:
                 else:
                     dut_info = str(dut_info_dict)
 
-        # P1-22: Test Plan 行按报告类型分流 — execution 类报告 (collector 无
-        # test_plan_id → test_plan=None → 'N/A') 显示「来源」而不是恒 N/A 的
-        # 计划名; 计划类标准报告仍受支持, 保留原字段 (Codex #255 R2 scope)。
-        if test_plan_name != 'N/A':
-            plan_row = ['Test Plan:', test_plan_name]
+        # P1-22: Test Plan 行按 report_type 分流 (Codex #256: 不能按名字有无判
+        # — MIMO_OTA 自动路径恒带名字, 但那是 TestCase 名不是计划名, 恒真分支
+        # 会把用例错标成 Test Plan)。execution 类 → 「测试用例」口径; 计划类
+        # 标准报告保留 Test Plan 真名 (Codex #255 R2 scope)。
+        if data.get('report_type') == 'single_execution':
+            plan_row = ['测试用例:',
+                        test_plan_name if test_plan_name != 'N/A' else '用例执行']
         else:
-            _sources = {'single_execution': '用例执行'}
-            plan_row = ['来源:', _sources.get(
-                data.get('report_type'), '执行报告 (无关联测试计划)')]
+            plan_row = ['Test Plan:', test_plan_name]
 
         # Metadata table
         metadata = [
