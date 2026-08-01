@@ -51,8 +51,9 @@ P1-11 多子网 runbook）的全部设计目标，就是把"写软件"挪到出�
 > 这一关是整个协议的杠杆点。出发前在本地把软件链路彻底走通，现场才可能"只调硬件"。
 
 - [ ] **mock-data first-call (P0-6) 本地端到端跑通**，PDF 报告出得来
-- [ ] **`propsim_f64_p08_gate` 诊断序列已写好并 mock 跑通**（Phase 1.5 / P0-8a 的
-  唯一合法载体：load→run→改参→电平判据；没有它现场做不了 P0-8a —— P1-23 遗留行动项）
+- [x] **`propsim_f64_p08_gate` 诊断序列已写好并 mock 跑通**（Phase 1.5 / P0-8a 的
+  唯一合法载体：load→AUTOSET→run→改参→两态电平判据；P1-24 落地，D-1 行为门 =
+  真驱动 + 按手册建模的假 SCPI 层，18 测 + 5 变异实跑）
 - [ ] **driver 代码冻结**：打 git tag 作为出发基线（如 `onsite-baseline-YYYYMMDD`）
 - [ ] **cockpit readiness 在 mock 模式全绿**（驱动链 / 活动 Lab / 校准证书；DUT 灰色
       = 已知占位，不算阻塞）
@@ -120,25 +121,42 @@ roadmap 对应 P0 项的 acceptance criteria。
 **为什么单独成段**：比 Phase 1 的握手级检查重（要 load→run→改参→读电平），又不依赖
 Phase 2/3 的 SA 与校准 —— 排在握手后立即做，问题越早暴露越好。
 **步骤**（禁临时脚本；载体 = checked-in 诊断序列 **`propsim_f64_p08_gate`**，
-覆盖 load→run→改参→电平四步判据 —— **该序列尚未写，已列入 §2 出发前硬门槛**，
-Codex #257 核实：现有 `propsim_f64_state_machine` 前提 .smu 已加载且只做
-GO/STATIC/GOS、`propsim_f64_health` 只读探测恒判成功，都干不了这三步）：
+P1-24 已落地：复用生产原子编排 + D-1 行为门（真驱动+按手册建模的假 SCPI 层）——
+Codex #257 核实过现有 `propsim_f64_state_machine` 前提 .smu 已加载且只做
+GO/STATIC/GOS、`propsim_f64_health` 只读探测恒判成功，都干不了这活）：
 0. **前置：激活 UXM 满 RB 下行信号**（CE↔BS 协调，见
    [`../architecture/f64-input-level-and-dynamic-range.md`](../architecture/f64-input-level-and-dynamic-range.md)
-   操作点流程 —— **无信号时 `INP:LEV:MEAS?` 返 -300**，干净启动的现场必卡，
-   依赖仪表残留状态则不可复现，Codex #257 R2）
-1. load 场景包（`.smu`，用 SCD 登记的实测频率对齐 TestCase）→ run → 读错误队列
-2. 运行中改参（归一化功率）→ 再读错误队列
-3. **执行输入参考 AUTOSET 闭环**（不是只读一次判范围 —— `INP:LEV:AUTOSET`
-   设 avg+crest → 读回 clipping/cut-off → 迭代收敛，见架构文档操作点流程；
-   干净启动或残留参考值错误时"读数在限内"≠"输入参考配置正确"，Codex #257 R3）
-4. **bypass 态复验**：切 bypass → 输入参考/电平窗口仍正确（架构文档把它列为
-   P0-8 硬约束 —— 现场观测 B 证明 bypass 也会失败，只验衰落态会漏已知失败模式）
+   操作点流程；序列参数 `uxm_dl_confirmed` 必须显式确认，不隐式假设。
+   无信号时 `INP:LEV:MEAS?`/`AUTOSET` = **设备错误进 SYST:ERR? 队列**，判据 =
+   队列出现测量失败错误（2026-05-27 现场实证错误码在 -300 段）。⚠ 本段原文
+   "返 -300"把它写成了查询的**哨兵返回值** —— 手册无任何哨兵返回值语义
+   （NotebookLM 2026-08-01 查证，P1-24 纠错），别拿"返回值==-300"当判据。
+   干净启动的现场必卡，依赖仪表残留状态则不可复现（Codex #257 R2 方向对，
+   语义细节以手册为裁决）
+1. load 场景包（`.smu`，用 SCD 登记的实测频率对齐 TestCase；生产加载事务
+   CLOSE→复查→FILE→`*OPC?`→错误门，加载后断言 STATE?==STOPPED）
+2. **AUTOSET 输入参考闭环 —— 在 GO 之前**（`INP:LEV:AUTOSET` 是 **stopped 态
+   命令**，User Reference §20.4.4.7；⚠ 本段原文把本步排在 run 之后，NotebookLM
+   2026-08-01 查证纠错）：AUTOSET 设 avg+crest → **`SYST:STAT?` 判收敛**（这是
+   clipping/cut-off 的正确读法：返回 `1`=干净，否则列出 `Input cut-off` /
+   `Digital Clipping`）；干净启动或残留参考值错误时"读数在限内"≠"输入参考
+   配置正确"（Codex #257 R3）
+3. run（GO → 断言 STATE?==RUNNING）→ 读错误队列
+4. 运行中改参（±1 dB 增益往返：`OUTP:GAIN:CH` 写后 **`OUTP:GAIN:CH?` 回读比对**
+   —— 超范围会被静默钳到最近合法值 §20.4.5.8，回读断言让钳位/未生效现形）→
+   再读错误队列
+5. **两态电平 + bypass 复验**：衰落态 `INP:LEV:MEAS?` → 切 bypass（STATIC 3）→
+   **同窗口**再读 → 退 bypass。⚠ 退 bypass **不假设自动续跑**：手册 ATE AN
+   §2.4.5 说续跑，2026-07-03 现场实证不续（恢复衰落 = STATIC 0 + 显式 GO）——
+   序列如实记录并兜两种固件行为（架构文档把 bypass 复验列为 P0-8 硬约束 ——
+   现场观测 B 证明 bypass 也会失败，只验衰落态会漏已知失败模式）
 **Gate（= P0-8a，P0-8 验收中不依赖 DUT 的前两条 + bypass 硬约束）**：
-- load → run → 改参全程 **0 error**（错误队列每步清零）
+- load → AUTOSET → run → 改参全程 **错误队列零残留**（每步核）
 - F64 **输入口变绿**（满 RB DL 在场 + AUTOSET 闭环收敛后：avg/crest 已设、
-  clipping/cut-off 读回无告警）
-- **bypass 态下电平窗口同样正确**（控制路径验证，架构文档 P0-8 硬约束）
+  `SYST:STAT?`=1 无活跃告警）
+- RUNNING 断言两次过（GO 后 + 退 bypass 恢复后）
+- **bypass 态电平窗口同样读得出**（与衰落态同窗口；控制路径验证，架构文档
+  P0-8 硬约束）
 - ⚠️ P0-8 验收第三条「DL 不失真（非 0% ACK）」**依赖 DUT attach，挂在 Phase 4
   的 gate 里（P0-8b），本段不验** —— gate 拆两半是设计决策，别在这里等 DUT。
 **与 §7 的关系**：§7 是 F64 **能力探测**清单（探未知，结论回填文档）；本段是
