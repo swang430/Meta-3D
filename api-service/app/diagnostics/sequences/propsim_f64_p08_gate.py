@@ -354,12 +354,16 @@ async def run(
                                 lambda: ce.load_local_scenario(smu_path),
                                 f"已加载 {smu_path} (真频以 CENT:CH? 回读为准)"):
             raise _Abort("场景包加载失败 — 后续全部无从谈起")
-        if not await g.residue("加载后错误队列"):
-            raise _Abort("加载后错误队列有残留/未知")
 
         # ── ② 加载后必须是 STOPPED (已驻留未启动) —— AUTOSET 的 stopped 态前提。
+        #     residue 排在 STATE? **之后** (Codex #260 R2): 排在前面的话, STATE?
+        #     直查若压了错, 会被下一个原子 (AUTOSET) 事务开头的 drain 静默吞掉 ——
+        #     零残留判据对这个窗口就是空转。residue 必须紧贴"下一个会 drain 的
+        #     原子"之前, 兜住它前面所有直查。后同。
         if await g.read_state("加载后 STATE?", expect="STOPPED") != "STOPPED":
             raise _Abort("加载后不在 STOPPED — AUTOSET 的 stopped 态前提不成立")
+        if not await g.residue("加载与读态后错误队列"):
+            raise _Abort("加载与读态后错误队列有残留/未知")
 
         # ── ③ AUTOSET 输入参考闭环 (stopped 态命令, §20.4.4.7) —— 排在 GO 之前,
         #     这正是本片对已 merge 协议的时序纠错。用 fail-loud 的 autoset_inputs
@@ -370,14 +374,14 @@ async def run(
             raise _Abort(
                 "AUTOSET 失败 (设备错误: 无信号/过强) — 先查 UXM 满 RB DL 是否真在发"
             )
-        if not await g.residue("AUTOSET 后错误队列"):
-            raise _Abort("AUTOSET 后错误队列有残留/未知")
-
         # ── ④ 收敛判定: SYST:STAT? 必须干净 (无 Input cut-off / Digital Clipping)。
         stat = await g.read_syst_stat("AUTOSET 后 SYST:STAT?")
         findings["syst_stat_after_autoset"] = g.steps[-1].raw
         if stat is not True:
             raise _Abort("AUTOSET 后 SYST:STAT? 不干净 — 输入参考没收敛, 不带病 GO")
+        # residue 贴在 GO (下一个会 drain 的原子) 之前, 同时兜 AUTOSET 与 STAT? 直查。
+        if not await g.residue("AUTOSET 与收敛判定后错误队列"):
+            raise _Abort("AUTOSET 与收敛判定后错误队列有残留/未知")
 
         # ── ⑤ GO —— 生产事务 (drain→STATIC 0→GO→*OPC?→错误门→STATE? 终态确认)。
         if not await g.run_atom("GO (start_emulation)", lambda: ce.start_emulation(),
@@ -387,8 +391,6 @@ async def run(
         if await g.read_state("GO 后 STATE?", expect="RUNNING") != "RUNNING":
             raise _Abort("GO 后不在 RUNNING")
         findings["state_after_go"] = g.steps[-1].raw
-        if not await g.residue("GO 后错误队列"):
-            raise _Abort("GO 后错误队列有残留/未知")
 
         # ── ⑥ 运行中改参: ±Δ 增益往返。先读范围与原值 (§20.4.5.7/8, 新增 SCPI
         #     已过手册), 超上限就往下走 —— 超范围写会被**静默钳位**, 回读断言负责现形。
@@ -403,6 +405,9 @@ async def run(
         if gain_orig is None:
             raise _Abort("增益原值读不到 — 不知道该还原到哪, 不动")
         findings["gain_orig_db"] = gain_orig
+        # residue 贴在写增益 (下一个会 drain 的原子) 之前 — 兜 GO 后 STATE?/LIM?/原值三条直查。
+        if not await g.residue("GO 与增益读后错误队列"):
+            raise _Abort("GO 与增益读后错误队列有残留/未知")
         # 方向选择: 首选 orig+Δ, 越界则翻到 orig-Δ —— 两个候选都做**双界**检查
         # (Codex #260 R1: 原写法首选只查上界, 负 Δ 在 orig 贴下限时选出越下界的
         # 候选直接中止, 而反方向明明合法)。
@@ -487,6 +492,9 @@ async def run(
         after_exit = await g.read_state("退旁路后 STATE? (只记录: 续不续跑是待验语义)")
         findings["state_after_bypass_exit"] = g.steps[-1].raw
         if after_exit != "RUNNING":
+            # 显式 GO 会 drain — 先兜住上面那条 STATE? 直查可能压的错。
+            if not await g.residue("退旁路读态后错误队列"):
+                raise _Abort("退旁路读态后错误队列有残留/未知")
             if not await g.run_atom("显式 GO 恢复 (固件未自动续跑)",
                                     lambda: ce.start_emulation(), "已恢复运行"):
                 raise _Abort("退旁路后显式 GO 恢复失败")
