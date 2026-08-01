@@ -71,8 +71,11 @@ canonical 真值源（`analysis.py:120-131`）：`verdict ∈ {"PASS","MARGINAL"
 不逐点替换（逐点必漏）。
 乙案（捆绑 Noto Sans CJK .ttf）字形更可控但要进 repo ~16MB 字体文件 —— 不取。
 
-### 2.3 模板残留：3 处 `Test Plan` 字段改「来源」（执行来源：用例执行/暗室首测），
-取 `executed_by` 语义映射，不再显示恒 N/A 的计划名。
+### 2.3 模板残留：`Test Plan` 字段**按报告类型分流**（Codex #255 R2 校正：不能三处全改 ——
+`POST /reports` 带 `test_plan_id` 的标准报告仍受支持，`ReportDataCollector.collect`
+会加载真实计划名，全改会把它们误标）：execution 类报告（`test_plan` 数据缺失/为 N/A 的
+形态）显示「来源」（取 `executed_by` 语义映射：用例执行/暗室首测）；计划类报告保留
+`Test Plan` 原字段。实现形态 = 模板按数据存在性分支，不动 collector。
 
 ## 3. 待决
 

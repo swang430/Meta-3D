@@ -2089,10 +2089,11 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 ## 📊 Summary
 
-> **现状速览（2026-06-06）**：本地工作队列已基本清空；详细分桶（LOCAL-OPEN / on-site / hold /
-> 已决策不做 / off-roadmap 候选）见顶部「📋 可规划工作 audit」段。下方计数表口径 = roadmap P 项
-> （P2-7 已 promote 到 P1-10，计入非 open）；天数见各 section Estimate；full-sweep flaky count = 0。
-> 两次现场 + 各 P 项收口的历史复盘见 [`project-retrospective.md`](project-retrospective.md)。
+> ⚠️ **本块是 2026-06-06 的历史快照，不再随后续变动维护**（Codex #255 R2 降级：
+> 快照后 P1-19~21/P2-15~17/ARCH-1 等已完成、2026-08-01 又提升 8 个 open 项，逐点追数字
+> 必漏 —— 现势唯一真值源 = 顶部 Current Focus（本地队列与当前片）+ 各 P 区条目/表状态，
+> 别读下表判断现状）。快照当时口径：本地队列已基本清空；P2-7 promote 到 P1-10 计非 open；
+> 历史复盘见 [`project-retrospective.md`](project-retrospective.md)。
 
 | Priority | Count | Total estimate | On-site share |
 |----------|-------|---------------|---------------|
