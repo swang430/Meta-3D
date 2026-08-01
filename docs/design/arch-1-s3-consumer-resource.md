@@ -1,6 +1,14 @@
 # ARCH-1 S3 设计稿 — 消费方换源（HAL reload 闸门 / dashboard / preflight）
 
-> **状态**：设计稿，待 review，**尚未动代码**。
+> ⚠️ **实施状态注（2026-08-01 归档时补，本文其余部分保持设计时原貌）**：
+> 本稿是**历史推理记录**，不是现行方案。三个消费方的实际去向：
+> ① HAL reload 闸门换源 → **S3a 已落地**（#242 `c4502dd`，含本稿两轮 Codex 修订的
+> `mode IS NULL` 谓词与三入口 commissioning 覆盖）；② dashboard 统计换源 →
+> **随 S4b（#246）做掉**（计划链整体拆除，统计源头直接消失）；③ 用例级 preflight →
+> 本稿第二轮已撤回整片，**转独立立项**（见 roadmap P1-1 条目下的 ARCH-1 注）。
+> 现状真值源：`docs/roadmap-first-call.md` 的 ARCH-1 表。
+>
+> **状态**：设计稿，待 review，**尚未动代码**。（← 设计时原文）
 > **上游**：[`arch-1-testcase-first-simplification.md`](arch-1-testcase-first-simplification.md) §3 的 S3 行 + §5.1 顺序纪律。
 > **实证前置**：
 > - memory 查询（恒适用）**命中 3 条**：`feedback_whole_not_local`（枚举影响集）/
