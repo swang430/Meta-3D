@@ -123,12 +123,19 @@ Phase 2/3 的 SA 与校准 —— 排在握手后立即做，问题越早暴露�
 覆盖 load→run→改参→电平四步判据 —— **该序列尚未写，已列入 §2 出发前硬门槛**，
 Codex #257 核实：现有 `propsim_f64_state_machine` 前提 .smu 已加载且只做
 GO/STATIC/GOS、`propsim_f64_health` 只读探测恒判成功，都干不了这三步）：
+0. **前置：激活 UXM 满 RB 下行信号**（CE↔BS 协调，见
+   [`../architecture/f64-input-level-and-dynamic-range.md`](../architecture/f64-input-level-and-dynamic-range.md)
+   操作点流程 —— **无信号时 `INP:LEV:MEAS?` 返 -300**，干净启动的现场必卡，
+   依赖仪表残留状态则不可复现，Codex #257 R2）
 1. load 场景包（`.smu`，用 SCD 登记的实测频率对齐 TestCase）→ run → 读错误队列
 2. 运行中改参（归一化功率）→ 再读错误队列
-3. 读输入口电平状态并按合法范围判定
-**Gate（= P0-8a，P0-8 验收中不依赖 DUT 的前两条）**：
+3. 读输入口电平状态并按合法范围判定（前提 = 步骤 0 的满 RB DL 在场）
+4. **bypass 态复验**：切 bypass → 输入参考/电平窗口仍正确（架构文档把它列为
+   P0-8 硬约束 —— 现场观测 B 证明 bypass 也会失败，只验衰落态会漏已知失败模式）
+**Gate（= P0-8a，P0-8 验收中不依赖 DUT 的前两条 + bypass 硬约束）**：
 - load → run → 改参全程 **0 error**（错误队列每步清零）
-- F64 **输入口变绿**（输入电平在合法范围）
+- F64 **输入口变绿**（满 RB DL 在场时输入电平在合法范围）
+- **bypass 态下电平窗口同样正确**（控制路径验证，架构文档 P0-8 硬约束）
 - ⚠️ P0-8 验收第三条「DL 不失真（非 0% ACK）」**依赖 DUT attach，挂在 Phase 4
   的 gate 里（P0-8b），本段不验** —— gate 拆两半是设计决策，别在这里等 DUT。
 **与 §7 的关系**：§7 是 F64 **能力探测**清单（探未知，结论回填文档）；本段是
@@ -165,8 +172,9 @@ capability 查询 → 单方位扫吞吐 → 4 方位扫。
 - UE Capability 查询 `max_dl_layers >= 配置层数`
 - 单方位扫产生**非零**吞吐读数（来自 UXM）
 - 4 方位扫给出 **4 个不同**吞吐值（旋转 sanity check）
-- **P0-8b（P0-8 验收第三条，依赖 DUT 故挂本段）**：DL 经 F64 衰落链路
-  **非 0% ACK**（DL 不失真）—— 与 Phase 1.5 的 P0-8a 合起来才算 P0-8 现场半收口
+- **P0-8b（P0-8 验收第三条，依赖 DUT 故挂本段）**：DL 经 F64 **衰落态与
+  bypass 态各测一次**，均**非 0% ACK**（现场观测 B：bypass 也会 0% ACK，
+  只验衰落态会把已知失败模式误报为收口）—— 与 P0-8a 合起来才算 P0-8 现场半收口
 
 ### Phase 5 — 完整真 first-call
 **目标**：端到端真 first-call，出 PDF。
