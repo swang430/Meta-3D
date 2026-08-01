@@ -29,7 +29,9 @@ P1-11 多子网 runbook）的全部设计目标，就是把"写软件"挪到出�
 2. **WIP = 1 on P0。** Current Focus 按 roadmap **「Blocked on hardware」表**的当前
    排队推进（写作本版时 = P0-5 主线 + P0-8 现场半同窗），一次一个，一个 gate 过了再进
    下一个。（此前这里硬编码"P0-4 → P0-3 → P0-5"，P0-3/4 完成后即 stale —— 队列内容
-   永远查表，不抄进本文。）
+   永远查表，不抄进本文。）**例外（P1-23 定）**：P0-8 的两个子门（P0-8a@Phase 1.5 /
+   P0-8b@Phase 4）是 P0-5 主线窗口内的**伴随验证**，按 Phase 顺序走、不占独立 WIP 槽 ——
+   否则"P0-8 未完不能进 P0-5、P0-5 未开做不了 P0-8b"会互锁（Codex #257）。
 3. **Timebox 救火。** 单仪表 / 单问题 bring-up 超 **30 min** 未通 → 标 blocked，转向
    能推进的，收工 review 再定。别让一个仪表吃掉一天。
 4. **区分两类问题：**
@@ -49,6 +51,8 @@ P1-11 多子网 runbook）的全部设计目标，就是把"写软件"挪到出�
 > 这一关是整个协议的杠杆点。出发前在本地把软件链路彻底走通，现场才可能"只调硬件"。
 
 - [ ] **mock-data first-call (P0-6) 本地端到端跑通**，PDF 报告出得来
+- [ ] **`propsim_f64_p08_gate` 诊断序列已写好并 mock 跑通**（Phase 1.5 / P0-8a 的
+  唯一合法载体：load→run→改参→电平判据；没有它现场做不了 P0-8a —— P1-23 遗留行动项）
 - [ ] **driver 代码冻结**：打 git tag 作为出发基线（如 `onsite-baseline-YYYYMMDD`）
 - [ ] **cockpit readiness 在 mock 模式全绿**（驱动链 / 活动 Lab / 校准证书；DUT 灰色
       = 已知占位，不算阻塞）
@@ -115,10 +119,13 @@ roadmap 对应 P0 项的 acceptance criteria。
 现场问题的正修回归，**不做会让上次现场的修复停留在"本地绿"**。
 **为什么单独成段**：比 Phase 1 的握手级检查重（要 load→run→改参→读电平），又不依赖
 Phase 2/3 的 SA 与校准 —— 排在握手后立即做，问题越早暴露越好。
-**步骤**（走诊断序列 `propsim_f64_health` / `propsim_f64_state_machine`，禁临时脚本）：
+**步骤**（禁临时脚本；载体 = checked-in 诊断序列 **`propsim_f64_p08_gate`**，
+覆盖 load→run→改参→电平四步判据 —— **该序列尚未写，已列入 §2 出发前硬门槛**，
+Codex #257 核实：现有 `propsim_f64_state_machine` 前提 .smu 已加载且只做
+GO/STATIC/GOS、`propsim_f64_health` 只读探测恒判成功，都干不了这三步）：
 1. load 场景包（`.smu`，用 SCD 登记的实测频率对齐 TestCase）→ run → 读错误队列
 2. 运行中改参（归一化功率）→ 再读错误队列
-3. 读输入口电平状态
+3. 读输入口电平状态并按合法范围判定
 **Gate（= P0-8a，P0-8 验收中不依赖 DUT 的前两条）**：
 - load → run → 改参全程 **0 error**（错误队列每步清零）
 - F64 **输入口变绿**（输入电平在合法范围）

@@ -205,19 +205,17 @@ unblocked) BEFORE starting any new P1.
 > 需要同一台 real F64，排窗口时一起算。两者都在「📋 可规划工作 audit」的
 > `ON-SITE-BLOCKED` 行里；本表此前漏列 P0-8，2026-07-30 补上。
 >
-> ⚠️⚠️ **下面那份现场协议目前不覆盖 P0-8** —— [`on-site-debug-protocol.md`](guides/on-site-debug-protocol.md)
-> 开篇写的是「配套 P0 队列（**P0-3/4/5**）使用」，五个 Phase 里没有 P0-8 的 gate。
-> **照那份 checklist 逐条走完，F64 的 load→run→改参与输入参考验证会整个漏掉。**
-> 出发前**手动把 P0-8 排进当天计划**（它跟 Phase 1 逐仪表 SCPI 握手同段，F64 已在场）。
-> 给协议正式加一道 P0-8 gate 是独立立项（要定它进哪个 Phase / gate 判据怎么写），
-> 不在本条目范围 —— 已记进本文末尾「🗂️ Discovered during X」区
-> （`[discovered 2026-07-30 during ARCH-1 roadmap 补记]` 那条），周度 triage 会扫到。
+> ✅ **协议已覆盖 P0-8（P1-23，2026-08-01）**：Phase 1.5 = P0-8a gate
+> （load→run→改参 + 输入口电平，载体 `propsim_f64_p08_gate` 序列 —— **序列本身
+> 待写，已列入协议 §2 出发前硬门槛**），Phase 4 gate 清单含 P0-8b（DL 非 0% ACK）。
+> 此前"协议不覆盖 P0-8、需手动排入"的告警随 P1-23 作废。
 
 > **下次现场执行按 [`docs/guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md)
-> 走**（现场首测调试协议）。该协议把这些 P0 排成依赖链 **P0-4 → P0-3 → P0-5** 的
-> 5 阶段 go/no-go gate（gate 标准 = 上面各 P0 的 acceptance），并固化 CAICT 教训:
-> 出发前硬门槛 (mock first-call 跑通 + driver 冻结) + 铁律「现场不写 driver 代码」+
-> timebox 救火 + 收工 review + retro 喂回本 roadmap。
+> 走**（现场首测调试协议）。当天 P0 队列以上方「Blocked on hardware」表为准
+> （协议自 P1-23 起不再硬编码队列），Phase 结构 = 网络 → 握手 → **F64 信道链
+> (P0-8a)** → SA → 校准 → DUT attach(P0-5+P0-8b) → 真 first-call，gate 标准 =
+> 各 P0 的 acceptance；并固化 CAICT 教训: 出发前硬门槛 + 铁律「现场不写 driver
+> 代码」+ timebox 救火 + 收工 review + retro 喂回本 roadmap。
 
 ---
 
