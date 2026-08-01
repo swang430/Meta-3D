@@ -75,7 +75,7 @@ PASS（含拨挡）。**"正常测试流程蜕变"的传动轴落地** — 明�
 CENT/INP:LEV:AMP 回读盲区系手册源错配）。遗留知情项: P1-8 校准 provenance 未修（mock cert
 real 模式假过,吞吐 smoke 不信绝对值可接受）。
 
-**▶ 2026-07-27 ~ 07-30 ARCH-1 测试管理拆平（S1–S5 ✅ 完成，S6 待做）** —— 2026-07-21 现场
+**▶ 2026-07-27 ~ 08-01 ARCH-1 测试管理拆平（S1–S6 全部 ✅，整案收官）** —— 2026-07-21 现场
 拍板的「砍掉计划 + 队列，只留 TestCase」落地。**正式测试的层级从四层拍成两层**：
 TestCase（自带 `configuration`，单一真值源）→ TestExecution（每次执行一行）。
 **11 个 PR merged**（7 个切片 + 2 篇设计稿 + 2 条迟到修复），
@@ -88,17 +88,16 @@ TestCase（自带 `configuration`，单一真值源）→ TestExecution（每次
 | **S3a** ✅ | #242 `c4502dd` | HAL reload 闸门换源 —— 堵上 S1 以来的生产空窗（判据只查 TestPlan，跑着用例点重载会静默拆驱动） |
 | **S4** ✅ | 设计 #243 `a5543a4`、#245 `e55fa28`；**S4a** #244 `211bec3`、**S4b** #246 `0ff692e`、**S4c** #247 `754e7a9` | 拆除计划链：36 路由 / 6 Service / 计划 runner / **三个 GUI Tab**（Plans / Steps / Queue，6 Tab → 3 Tab）/ mock 层 |
 | **S5** ✅ | #248 `f6bec91` | 封存与文档：G7/G8 两道会红的门 + 4 篇归档 + 27 文件换源 + 两处真值源修正 |
-| **S6** ⬜ | 待做 | 浏览器闭环总验：建用例 → 配参数 → 执行 → 看历史 → 出报告 |
+| **S6** ✅ | 2026-08-01 总验通过 | 浏览器闭环总验：建用例 → 配参数 → 执行 → 看历史 → 出报告。**五步全部在 GUI 真实走通**（用例「S6-验收-五步闭环」：新建入口建壳 → MHz 口径输 3549.99/带宽 40/绑 vendor_file 资产（DB 核实精确落库）→ 执行 5 相位全 success → 历史行「已完成」→ 报告 201/generate 200/PDF 落盘）。**报告腿抓出 2 个内容缺陷**（机制通、产物有伤，记 Discovered 区不挡收口）：① 成功执行的报告显示 Pass Rate 0.0%（S2 换源余留：汇总谓词还是 VRT/KPI 口径，用例行缺字段被 `.get(_, 0)` 静默兜 0）② PDF 中文全豆腐块（生成器缺 CJK 字体）。顺带观察：历史表相位列 completed 行显示 0/5（显示口径，P3）。 |
 
 > ⚠️ **S3 只完成了 S3a 这一半**：另两半分别是 dashboard 统计换源（随 S4b 做掉）与
 > 用例级 preflight（**随计划链删除并转独立立项**，见本文 P1-1 条目下的 ARCH-1 注）。
 >
-> ⚠️ **S6 有前置缺口（范围要说准）**：GUI **能**建 TestCase 行 —— 虚拟路测 Tab 的
-> `ScenarioLibrary`「创建场景」→ `POST /road-test/scenarios`，其 docstring 原话就是
-> "persisted as a VRT TestCase row"。**缺的是"可直接执行的 MIMO_OTA 用例"那条**：
-> `TestCaseLibrary` 的新建按钮由 `onCreateNew` prop 守着、全仓无人传（入口原挂 StepsTab，
-> 随 S4a 一并删除），所以直接执行路径上的用例只能来自 bootstrap 种子。
-> S6 开工前先决定：补入口，还是把验收改成"改现有 MIMO_OTA 用例"。
+> ~~⚠️ S6 有前置缺口~~ **前置已解除（2026-07-31，#250 GUI 新建入口）**：当时的缺口是
+> "可直接执行的 MIMO_OTA 用例无法从 GUI 新建"（新建按钮被可选 prop 守着、全仓无人传，
+> 入口随 S4a 删 StepsTab 一并消失），拍板走了「补入口」路 ——
+> 设计稿 [`design/gui-create-test-case-entry.md`](design/gui-create-test-case-entry.md)。
+> S6 总验（2026-08-01）即用该入口从零建例走完五步。
 
 设计与拆除推理：[`design/arch-1-testcase-first-simplification.md`](design/arch-1-testcase-first-simplification.md)（总纲）/
 [`design/arch-1-s2-execution-history-resource.md`](design/arch-1-s2-execution-history-resource.md) /
@@ -1947,6 +1946,9 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 > Items added mid-task. Reviewed weekly; promoted to P1/P2/P3 or dropped.
 
+- `[discovered 2026-08-01 during ARCH-1 S6 总验]` **报告汇总谓词没随 S2 换源 — 成功执行的报告显示 Pass Rate 0.0%（P2）** —— `report_service.py` 建 summary 时判通过用 `overall_result == 'passed'` + `.get('pass_rate', 0)`，这是 VRT/KPI 口径的字段；用例执行行（`status='completed'` + `config.phase_progress`）**没有这些字段**，默认值把断层静默吞成 0 —— 正是"绝不静默兜底"要防的形态。S2 换源只换了取数源、没换汇总谓词。修法=换源：按执行行形态分流，用例行的通过谓词 = `status=='completed'`（可加 5 相位全 success）。顺带：报告模板 `Test Plan: N/A` 是计划链口径残留字段，一并清。S6 总验实证：`S6-验收-五步闭环` 执行 5 相位全 success，PDF 却报 0.0%。
+- `[discovered 2026-08-01 during ARCH-1 S6 总验]` **PDF 生成器缺 CJK 字体 — 中文全渲染成豆腐块（P3）** —— 报告标题/正文里所有汉字显示为 ■，中文用例名的报告不可读。`pdf_generator.py`（reportlab）需显式注册中文字体（内置 `STSong-Light` CID 字体或捆绑开源 Noto Sans CJK），并全模板换用。
+- `[discovered 2026-08-01 during ARCH-1 S6 总验]` **执行历史相位列对 completed 行显示 0/5（P3 显示口径）** —— DB 里 `config.phase_progress` 明明有 5 项 success（S6/D-3 两例实证），历史表和主控台最近执行卡都显示 0/5；进行中/失败行显示正常。前端相位计数读的字段与 runner 落库字段疑似只在终态断开，查 `HistoryTab`/最近执行卡的取数路径。
 - `[discovered 2026-07-31 during GUI 新建入口片]` **`TestCaseCreate.test_type` 的 schema 描述漏 `MIMO_OTA`** —— 枚举 `TestCaseType` 里有，但请求 schema description 只列 `TRP | TIS | Throughput | Handover | MIMO | ChannelModel | VirtualRoadTest | Custom`。这段进 OpenAPI，是外部调用方唯一会读的东西。改它要走契约四步；顺带候选：「描述 ⊇ 枚举」可做成会红的门（同 G7/G8 思路，属**加机制**，待拍板）。同片顺带：`template_category` 的 schema 无 `max_length` 而列是 `String(100)`，超长在 PG 直接 500（GUI 侧本片已 `maxLength={100}` 收窄，schema 约束走契约四步一并做）。
 - `[discovered 2026-07-31 during GUI 新建入口片, Codex #250 P1]` **测试用例 REST 契约无 `lab_profile_id` 字段 — 多 active lab 部署下 GUI 建的用例不可执行且无处补绑** —— `TestCase.lab_profile_id` 是列（runner 执行时传 `source.lab_profile_id` 给工厂），但 `TestCaseCreate`/`TestCaseUpdate` 两个 schema 都没有该字段，GUI 两个弹窗结构性设不了。单 active lab（当前所有部署形态）下 `resolve_lab_profile(db, None)` 兜底完美工作；多 active lab 下执行 422 结构化 fail-loud（ambiguous 拒绝，非静默错配）。不绑 = bootstrap 种子模板明文设计（deployment-agnostic），GUI 建例同派；6 个 factory 产 MIMO_OTA 模板带绑定是快照语义的特例。**正修**（多 lab 部署真出现时）：契约加可选 `lab_profile_id` 走四步同步 + 创建/编辑弹窗加绑定口（起点=模板时顺带复制其绑定）。
 - `[discovered 2026-07-31 during GUI 新建入口片]` **`created_by="gui"` 是硬编码占位** —— GUI 无认证上下文（`require_auth` 全仓零使用点，S4c 申报过），`TestCaseCreateModal` 建例统一落 `created_by="gui"`。接上认证上下文（roadmap 既有 Auth Context 待实现项）后换成真实用户名。
