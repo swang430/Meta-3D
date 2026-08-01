@@ -122,16 +122,20 @@ export function EditScenarioDialog({ opened, onClose, scenario, testMode }: Prop
         },
         environment: {
           type: 'urban_street',
-          // P2-20: 表单选的信道模型写进快照真值位置 (此前恒发 [] — 模型只进
-          // tags, 摘要/执行永远读不到; 单快照全程有效, duration 取场景时长)
-          channel_snapshots: [
-            {
-              timestamp_s: 0,
-              duration_s: formData.duration,
-              channel_type: '3GPP',
-              standard_model: formData.channelModel as ChannelModel,
-            },
-          ],
+          // P2-20: 表单选的信道模型写进快照真值位置 (此前恒发 [])。
+          // 内审 F5 收窄: 源场景摘要无模型 (无快照 / Custom 矩阵) 时保持发 []
+          // — 预填的 'UMa' 只是 UI 缺省, 写回去会把 Custom 场景静默升成
+          // 看似合法的 3GPP/UMa 错值, 比空值更难发现
+          channel_snapshots: scenario.channel_model
+            ? [
+                {
+                  timestamp_s: 0,
+                  duration_s: formData.duration,
+                  channel_type: '3GPP' as const,
+                  standard_model: formData.channelModel as ChannelModel,
+                },
+              ]
+            : [],
           weather: 'clear',
           traffic_density: 'medium',
         },

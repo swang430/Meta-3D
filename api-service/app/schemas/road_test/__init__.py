@@ -112,6 +112,7 @@ from .execution import (
 )
 
 __all__ = [
+    "ChannelSnapshot",
     # Scenario enums
     "NetworkType",
     "ScenarioCategory",

@@ -81,6 +81,19 @@ router = APIRouter(prefix="/road-test", tags=["Virtual Road Test"])
 # VRT-into-TestCase consolidation (Phase 2).
 # ──────────────────────────────────────────────────────────────────────────
 
+def _env_channel_model_str(env) -> str:
+    """P2-20 (内审 F2): 信道模型摘要串 — 快照真值, 双形态兼容 (pydantic 对象 /
+    model_dump dict 都走 get_attr_or_item, 与本函数族其余字段同契约)。
+    无快照 / Custom 快照 → 空串 (报告显示空, 不编造模型名)。"""
+    snaps = get_attr_or_item(env, 'channel_snapshots', []) or []
+    if not snaps:
+        return ''
+    model = get_attr_or_item(snaps[0], 'standard_model', None)
+    if model is None:
+        return ''
+    return model.value if hasattr(model, 'value') else str(model)
+
+
 def _list_custom_scenarios(db: Session) -> List[RoadTestScenario]:
     """Read all VRT TestCases from the DB and project them as RoadTestScenarios.
 
@@ -941,7 +954,7 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
             if env:
                 environment_info = EnvironmentInfo(
                     type=str(get_attr_or_item(env, 'type', '')),
-                    channel_model=str((lambda _sn: (_sn[0].standard_model.value if getattr(_sn[0], 'standard_model', None) else '') if _sn else '')(get_attr_or_item(env, 'channel_snapshots', []) or [])),
+                    channel_model=str(_env_channel_model_str(env)),
                     weather=str(get_attr_or_item(env, 'weather', '')),
                     traffic_density=str(get_attr_or_item(env, 'traffic_density', ''))
                 )

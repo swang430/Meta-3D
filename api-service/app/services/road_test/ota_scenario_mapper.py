@@ -42,7 +42,10 @@ logger = logging.getLogger(__name__)
 
 def _snapshot_channel_model(environment) -> "ChannelModel":
     """P2-20 换源: 信道模型真值在 channel_snapshots[0].standard_model (Environment
-    已无 channel_model 字段)。无快照 / Custom 快照时回落 UMa (与旧字段缺省一致)。"""
+    已无 channel_model 字段)。⚠️ 无快照 / Custom 快照时回落 UMa 是**本次新定的
+    缺省** (旧 channel_model 字段是必填无缺省, git 50e3024~1 实证) — 只用于
+    映射类调用点兜底; 验证类调用点 (validate_scenario_for_ota) 不许用本回落
+    判 supported, 无快照/Custom 要显式 warning (内审 F3)。"""
     snaps = getattr(environment, "channel_snapshots", None) or []
     if snaps and getattr(snaps[0], "standard_model", None):
         return snaps[0].standard_model
@@ -583,8 +586,15 @@ class OTAScenarioMapper:
 
         # Check channel model support
         supported_models = {ChannelModel.UMA, ChannelModel.UMI, ChannelModel.RMA}
-        if _snapshot_channel_model(scenario.environment) not in supported_models:
-            warnings.append(f"Channel model {_snapshot_channel_model(scenario.environment)} may have limited OTA support.")
+        _snaps = getattr(scenario.environment, "channel_snapshots", None) or []
+        _std = getattr(_snaps[0], "standard_model", None) if _snaps else None
+        if _std is None:
+            # 内审 F3: 无快照 / Custom 快照不许回落 UMa 混进 supported —
+            # Custom 矩阵恰是最需要提示 OTA 支持受限的形态
+            warnings.append("Scenario has no standard 3GPP channel snapshot "
+                            "(none or Custom) — OTA support must be reviewed manually.")
+        elif _std not in supported_models:
+            warnings.append(f"Channel model {_std} may have limited OTA support.")
 
         return {
             "is_valid": len(errors) == 0,
