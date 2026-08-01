@@ -304,3 +304,116 @@ class TestScenarioDelete:
 
             # Standard scenarios cannot be deleted - should return 404, 400, or 403
             assert response.status_code in [404, 400, 403]
+
+
+@pytest.mark.integration
+@pytest.mark.road_test
+@pytest.mark.api
+class TestScenarioSummaryIntegrity:
+    """摘要构造回归门：不丢行、不刷 ERROR、channel_model 从 channel_snapshots 取值。
+
+    背景：Environment 重构后没有 channel_model 字段（真值挪进
+    channel_snapshots[].standard_model），摘要构造曾继续读旧字段，导致每个
+    带 environment 的场景抛 AttributeError → 整行退化成零时长摘要并每次
+    列表加载刷一条 ERROR。
+    """
+
+    def _create_snapshot_scenario(self, client: TestClient, sample_scenario_data) -> str:
+        data = {**sample_scenario_data}
+        data["name"] = "Snapshot Channel Scenario"
+        data["environment"] = {
+            "type": "urban_street",
+            "channel_snapshots": [
+                {
+                    "timestamp_s": 0.0,
+                    "duration_s": 30.0,
+                    "channel_type": "3GPP",
+                    "standard_model": "CDL-C",
+                }
+            ],
+        }
+        resp = client.post("/api/v1/road-test/scenarios", json=data)
+        assert resp.status_code in (200, 201), resp.text
+        return resp.json()["id"]
+
+    def test_channel_model_sourced_from_first_snapshot(
+        self, client: TestClient, sample_scenario_data
+    ):
+        """行为门：带标准模型快照的场景，摘要 channel_model = 快照 standard_model，行不退化"""
+        sid = self._create_snapshot_scenario(client, sample_scenario_data)
+
+        rows = client.get("/api/v1/road-test/scenarios").json()
+        row = next(x for x in rows if x["id"] == sid)
+        assert row["channel_model"] == "CDL-C"
+        # 行保真：时长/距离/网络字段不因摘要构造问题被清零
+        assert row["duration_s"] == pytest.approx(33.0)
+        assert row["distance_m"] == pytest.approx(1111.0)
+        assert row["network_type"] == "5G_NR"
+
+    def test_standard_scenarios_not_degraded(self, client: TestClient):
+        """行为门：标准库场景（未填快照）channel_model=None，且行不退化（时长>0）"""
+        rows = client.get("/api/v1/road-test/scenarios?source=standard").json()
+        assert len(rows) == 5
+        for row in rows:
+            assert row["duration_s"] > 0, f"{row['id']} 摘要被降级成零时长行"
+            # None 是现状不是契约：标准库 channel_model= 死 kwarg 被 Pydantic
+            # 静默吞掉、channel_snapshots 恒空（roadmap backlog 2026-08-01 P3 条）；
+            # 修好标准库后此断言应改为期待具体模型值
+            assert row["channel_model"] is None
+
+    def test_summary_count_equals_scenario_count_and_no_error_logs(
+        self, client: TestClient, sample_scenario_data, caplog
+    ):
+        """不变量门：场景数 == 摘要数（不许静默消失），且列表构造零 ERROR 日志"""
+        import logging as _logging
+
+        sid = self._create_snapshot_scenario(client, sample_scenario_data)
+
+        # alembic fileConfig 可能已把该 logger 置 disabled，先复位，
+        # 否则"零 ERROR"断言会假绿（见 memory: 断言 logger emit 需复位 .disabled）
+        _logging.getLogger("app.api.road_test").disabled = False
+        with caplog.at_level(_logging.ERROR, logger="app.api.road_test"):
+            resp = client.get("/api/v1/road-test/scenarios")
+
+        assert resp.status_code == 200
+        rows = resp.json()
+        assert len(rows) == 6  # 5 standard + 1 custom
+        assert sid in {x["id"] for x in rows}
+        errors = [r.getMessage() for r in caplog.records if r.levelno >= _logging.ERROR]
+        assert errors == []
+
+    def test_broken_scenario_still_listed_degraded(
+        self, client: TestClient, monkeypatch
+    ):
+        """降级出行门：单行衍生字段计算爆炸 → 该行带基础字段出行，不消失、不 500"""
+        from app.api import road_test as rt
+        from app.schemas.road_test import ScenarioCategory, ScenarioSource
+
+        class _BoomScenario:
+            """基础字段齐全、route 一碰就爆的坏数据行替身"""
+            id = "boom-1"
+            name = "Broken Scenario"
+            category = ScenarioCategory.FUNCTIONAL
+            source = ScenarioSource.STANDARD
+            tags = ["boom"]
+            description = None
+            created_at = None
+            author = None
+
+            @property
+            def route(self):
+                raise RuntimeError("boom: derived-field computation exploded")
+
+        real_get_all = rt.get_all_scenarios
+        monkeypatch.setattr(
+            rt, "get_all_scenarios", lambda: real_get_all() + [_BoomScenario()]
+        )
+
+        resp = client.get("/api/v1/road-test/scenarios")
+        assert resp.status_code == 200
+        rows = resp.json()
+        assert len(rows) == 6  # 5 standard + 1 boom：坏行降级出行，不消失
+        boom = next(x for x in rows if x["id"] == "boom-1")
+        assert boom["name"] == "Broken Scenario"
+        assert boom["duration_s"] == 0
+        assert boom["channel_model"] is None
