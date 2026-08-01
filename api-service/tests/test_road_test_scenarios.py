@@ -454,6 +454,10 @@ class TestScenarioSummaryIntegrity:
         db.commit()
         db.close()
 
+        # memory feedback_test_logger_emit_alembic_pollution: 全量序列里先跑的
+        # alembic fileConfig(disable_existing_loggers=True) 会永久禁用已导入
+        # logger → caplog 收不到 emit → 只在全量红。断言 emit 前复位 .disabled
+        _logging.getLogger("app.api.road_test").disabled = False
         with caplog.at_level(_logging.ERROR):
             resp = client.get("/api/v1/road-test/scenarios")
         assert resp.status_code == 200  # 不再 500 全列表
