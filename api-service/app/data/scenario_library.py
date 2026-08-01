@@ -6,6 +6,7 @@ Pre-defined road test scenarios based on 3GPP, CTIA, and 5GAA standards
 
 from app.schemas.road_test import (
     RoadTestScenario,
+    ChannelSnapshot,
     NetworkConfig,
     BaseStationConfig,
     Route,
@@ -136,7 +137,11 @@ def create_3gpp_uma_handover_scenario() -> RoadTestScenario:
 
         environment=Environment(
             type=EnvironmentType.URBAN_STREET,
-            channel_model=ChannelModel.UMA,
+            # P2-20: 死 kwarg 转正 — Environment 无 channel_model 字段, pydantic 静默丢弃;
+            # 信道真值位置是 channel_snapshots (单快照全程有效, duration 取覆盖上限).
+            channel_snapshots=[ChannelSnapshot(
+                timestamp_s=0.0, duration_s=3600.0,
+                channel_type="3GPP", standard_model=ChannelModel.UMA)],
             weather=WeatherCondition.CLEAR,
             traffic_density=TrafficDensity.MEDIUM
         ),
@@ -231,7 +236,11 @@ def create_3gpp_umi_beam_tracking_scenario() -> RoadTestScenario:
 
         environment=Environment(
             type=EnvironmentType.URBAN_STREET,
-            channel_model=ChannelModel.UMI,
+            # P2-20: 死 kwarg 转正 — Environment 无 channel_model 字段, pydantic 静默丢弃;
+            # 信道真值位置是 channel_snapshots (单快照全程有效, duration 取覆盖上限).
+            channel_snapshots=[ChannelSnapshot(
+                timestamp_s=0.0, duration_s=3600.0,
+                channel_type="3GPP", standard_model=ChannelModel.UMI)],
             weather=WeatherCondition.CLEAR,
             traffic_density=TrafficDensity.HIGH
         ),
@@ -335,7 +344,11 @@ def create_highway_high_speed_scenario() -> RoadTestScenario:
 
         environment=Environment(
             type=EnvironmentType.HIGHWAY,
-            channel_model=ChannelModel.RMA,  # Rural Macro
+            # P2-20: 死 kwarg 转正 — Environment 无 channel_model 字段, pydantic 静默丢弃;
+            # 信道真值位置是 channel_snapshots (单快照全程有效, duration 取覆盖上限). 原注: Rural Macro
+            channel_snapshots=[ChannelSnapshot(
+                timestamp_s=0.0, duration_s=3600.0,
+                channel_type="3GPP", standard_model=ChannelModel.RMA)],
             weather=WeatherCondition.CLEAR,
             traffic_density=TrafficDensity.LOW
         ),
@@ -455,7 +468,11 @@ def create_tunnel_scenario() -> RoadTestScenario:
 
         environment=Environment(
             type=EnvironmentType.TUNNEL,
-            channel_model=ChannelModel.UMA,  # Custom tunnel model in practice
+            # P2-20: 死 kwarg 转正 — Environment 无 channel_model 字段, pydantic 静默丢弃;
+            # 信道真值位置是 channel_snapshots (单快照全程有效, duration 取覆盖上限). 原注: Custom tunnel model in practice
+            channel_snapshots=[ChannelSnapshot(
+                timestamp_s=0.0, duration_s=3600.0,
+                channel_type="3GPP", standard_model=ChannelModel.UMA)],
             weather=WeatherCondition.CLEAR,
             traffic_density=TrafficDensity.MEDIUM
         ),
@@ -544,7 +561,11 @@ def create_urban_canyon_scenario() -> RoadTestScenario:
 
         environment=Environment(
             type=EnvironmentType.URBAN_CANYON,
-            channel_model=ChannelModel.UMI,
+            # P2-20: 死 kwarg 转正 — Environment 无 channel_model 字段, pydantic 静默丢弃;
+            # 信道真值位置是 channel_snapshots (单快照全程有效, duration 取覆盖上限).
+            channel_snapshots=[ChannelSnapshot(
+                timestamp_s=0.0, duration_s=3600.0,
+                channel_type="3GPP", standard_model=ChannelModel.UMI)],
             weather=WeatherCondition.CLEAR,
             traffic_density=TrafficDensity.HIGH,
             obstructions=[

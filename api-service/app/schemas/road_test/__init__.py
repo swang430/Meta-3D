@@ -5,6 +5,7 @@ Pydantic models for request/response validation
 """
 
 from .scenario import (
+    ChannelSnapshot,
     # Enums
     NetworkType,
     ScenarioCategory,
@@ -111,6 +112,7 @@ from .execution import (
 )
 
 __all__ = [
+    "ChannelSnapshot",
     # Scenario enums
     "NetworkType",
     "ScenarioCategory",

@@ -81,12 +81,41 @@ router = APIRouter(prefix="/road-test", tags=["Virtual Road Test"])
 # VRT-into-TestCase consolidation (Phase 2).
 # ──────────────────────────────────────────────────────────────────────────
 
+def _env_channel_model_str(env) -> str:
+    """P2-20 (内审 F2): 信道模型摘要串 — 快照真值, 双形态兼容 (pydantic 对象 /
+    model_dump dict 都走 get_attr_or_item, 与本函数族其余字段同契约)。
+    无快照 / Custom 快照 → 空串 (报告显示空, 不编造模型名)。"""
+    snaps = get_attr_or_item(env, 'channel_snapshots', []) or []
+    if not snaps:
+        return ''
+    model = get_attr_or_item(snaps[0], 'standard_model', None)
+    if model is None:
+        return ''
+    return model.value if hasattr(model, 'value') else str(model)
+
+
 def _list_custom_scenarios(db: Session) -> List[RoadTestScenario]:
-    """Read all VRT TestCases from the DB and project them as RoadTestScenarios."""
-    return [
-        vrt_service.vrt_test_case_to_scenario(tc)
-        for tc in vrt_service.list_vrt_test_cases(db, limit=10_000)
-    ]
+    """Read all VRT TestCases from the DB and project them as RoadTestScenarios.
+
+    P2-20: 逐行投影 + 降级 — 单行坏 configuration (旧 schema 遗留 / 手改脏数据)
+    过不了 model_validate 时跳过该行并 logger.error 报数, 不再让 ValidationError
+    冒泡把整个 /road-test/scenarios 打成 500 (单行坏数据不许有全库爆炸半径)。
+    跳行是**响的** (ERROR 级 + 计数), 不是静默丢。
+    """
+    out: List[RoadTestScenario] = []
+    bad = 0
+    for tc in vrt_service.list_vrt_test_cases(db, limit=10_000):
+        try:
+            out.append(vrt_service.vrt_test_case_to_scenario(tc))
+        except Exception as e:  # noqa: BLE001 — 单行降级, 不吞聚合错误
+            bad += 1
+            logger.error(
+                "[vrt] TestCase %s 投影场景失败, 跳过该行 (P2-20 单行降级): %s",
+                tc.id, e,
+            )
+    if bad:
+        logger.error("[vrt] 场景列表本次跳过 %d 行坏配置 — 请排查上方逐行日志", bad)
+    return out
 
 
 def _get_custom_scenario(db: Session, scenario_id: str) -> Optional[RoadTestScenario]:
@@ -925,7 +954,7 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
             if env:
                 environment_info = EnvironmentInfo(
                     type=str(get_attr_or_item(env, 'type', '')),
-                    channel_model=str(get_attr_or_item(env, 'channel_model', '')),
+                    channel_model=str(_env_channel_model_str(env)),
                     weather=str(get_attr_or_item(env, 'weather', '')),
                     traffic_density=str(get_attr_or_item(env, 'traffic_density', ''))
                 )

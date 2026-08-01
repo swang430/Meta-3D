@@ -351,15 +351,22 @@ class TestScenarioSummaryIntegrity:
         assert row["network_type"] == "5G_NR"
 
     def test_standard_scenarios_not_degraded(self, client: TestClient):
-        """行为门：标准库场景（未填快照）channel_model=None，且行不退化（时长>0）"""
+        """行为门：标准库 5 场景快照模型按 id 对位 (P2-20 转正后)，且行不退化（时长>0）"""
         rows = client.get("/api/v1/road-test/scenarios?source=standard").json()
         assert len(rows) == 5
+        # P2-20: 标准库死 kwarg 已转正为 channel_snapshots — 按 id 对位断言
+        # 具体模型值 (兑现 #253 时留下的"修好后应改为期待具体模型值"注释)
+        expected_models = {
+            "3gpp-uma-handover-001": "UMa",
+            "3gpp-umi-beam-tracking-001": "UMi",
+            "highway-high-speed-001": "RMa",
+            "tunnel-entry-exit-001": "UMa",
+            "urban-canyon-001": "UMi",
+        }
         for row in rows:
             assert row["duration_s"] > 0, f"{row['id']} 摘要被降级成零时长行"
-            # None 是现状不是契约：标准库 channel_model= 死 kwarg 被 Pydantic
-            # 静默吞掉、channel_snapshots 恒空（roadmap backlog 2026-08-01 P3 条）；
-            # 修好标准库后此断言应改为期待具体模型值
-            assert row["channel_model"] is None
+            assert row["channel_model"] == expected_models[row["id"]], (
+                f"{row['id']} 摘要 channel_model 与快照真值不符")
 
     def test_summary_count_equals_scenario_count_and_no_error_logs(
         self, client: TestClient, sample_scenario_data, caplog
@@ -422,3 +429,41 @@ class TestScenarioSummaryIntegrity:
         assert boom["name"] == "Broken Scenario"
         assert boom["duration_s"] == 0
         assert boom["channel_model"] is None
+
+    def test_bad_custom_row_skipped_loudly_others_survive(
+        self, client: TestClient, sample_scenario_data, caplog
+    ):
+        """P2-20 投影层降级门 (内审 F1): 单行坏 configuration 过不了投影 →
+        跳该行 + ERROR 报数, 好行与标准行照常出行, 不再 500 全列表。
+        变异: _list_custom_scenarios 撤回列表推导 → 本用例 500 红。"""
+        import logging as _logging
+        from app.api.road_test import router  # noqa: F401 — 确保模块已载
+
+        good_id = self._create_snapshot_scenario(client, sample_scenario_data)
+
+        # 直接把一行 VRT TestCase 的 configuration 改坏 (route 缺失 —
+        # VirtualRoadTestConfig.model_validate 必炸), 模拟旧 schema 遗留行
+        data = {**sample_scenario_data}
+        data["name"] = "即将变坏的行"
+        bad_id = client.post("/api/v1/road-test/scenarios", json=data).json()["id"]
+        from app.models.test_plan import TestCase
+        db = _TestingSessionLocal()  # 用本文件的隔离测试库, 不碰生产 SessionLocal
+        row = db.get(TestCase, __import__("uuid").UUID(bad_id))
+        assert row is not None, "坏行没建成"
+        row.configuration = {"vrt": "totally-broken-shape"}
+        db.commit()
+        db.close()
+
+        # memory feedback_test_logger_emit_alembic_pollution: 全量序列里先跑的
+        # alembic fileConfig(disable_existing_loggers=True) 会永久禁用已导入
+        # logger → caplog 收不到 emit → 只在全量红。断言 emit 前复位 .disabled
+        _logging.getLogger("app.api.road_test").disabled = False
+        with caplog.at_level(_logging.ERROR):
+            resp = client.get("/api/v1/road-test/scenarios")
+        assert resp.status_code == 200  # 不再 500 全列表
+        ids = [x["id"] for x in resp.json()]
+        assert good_id in ids, "好行被连坐"
+        assert bad_id not in ids, "坏行不该出行 (投影不了, 降级=跳行)"
+        # 跳行是响的: 逐行 ERROR + 汇总报数
+        assert any("投影场景失败" in r.message for r in caplog.records)
+        assert any("跳过 1 行坏配置" in r.message for r in caplog.records)
