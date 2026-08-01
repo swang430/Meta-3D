@@ -46,8 +46,10 @@ def _content(phases, **kw):
 
 class TestPassPredicate:
     def test_pass_predicate_validation_pass_column_wins(self):
-        """canonical 列为 True → passed / 100%, 不再被死键拖成 failed。"""
-        c = _content({"analysis": {"verdict": "PASS"}}, validation_pass=True)
+        """canonical 列优先 — 判别形态: 列与 verdict **反向** (列 True /
+        verdict FAIL), 列必须赢 (内审 F1: 同向用例区分不出列读取整个失效
+        恒走 fallback 的形态, 属性名拼错也全绿)。"""
+        c = _content({"analysis": {"verdict": "FAIL"}}, validation_pass=True)
         assert c["overall_result"] == "passed"
         assert c["execution_summary"]["pass_rate"] == 100.0
         assert c["execution_summary"]["passed"] == 1

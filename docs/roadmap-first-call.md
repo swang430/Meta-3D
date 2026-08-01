@@ -1263,7 +1263,7 @@ SYN, 于是每个 IP 都"alive"、每个子网都"可达"。实测连 RFC5737 TE
 **Why P1**: 报告是测试系统最终交付物，当前对成功的测试说谎（恒报 failed）。
 **设计稿**: [`design/p1-22-report-trustworthy-fix.md`](design/p1-22-report-trustworthy-fix.md)（含修法红线四条）。
 **来源**: Discovered 区 `[discovered 2026-08-01 during ARCH-1 S6 总验]` 报告条 + CJK 条（详细根因在彼处，[→ P1-22] 已标）。**Estimate**: ~1 day。
-**收口 (2026-08-01)**: 谓词换 `validation_pass` 列（缺列兜 verdict 三值，未知保守 failed；两红线变异实跑：死键回退 4 红 / completed 谓词 4 红含 KPI-FAIL 谎报通过卫兵）；CJK 三族收敛单一 `CJK_FONT` 常量（样式表遍历 + Table FONTNAME + 显式位点，源码零 Helvetica 由存在性门守）；封面 Test Plan 行按报告类型分流（计划类保留真名，execution 类显示「来源」）。S6 真执行重生报告实证：中文标题可读 + pass 口径为真值（mock KPI FAIL 如实报 failed）。16 单测 + 全量 2775 过。
+**收口 (2026-08-01)**: 谓词换 `validation_pass` 列（缺列兜 verdict 三值，未知保守 failed；两红线变异实跑：死键回退 2 红（含列优先判别用例）/ completed 谓词 4 红含 KPI-FAIL 谎报通过卫兵（初报 4 红系 FAILED 计数未锚定 short summary 行双计，内审 F2 纠正））；CJK 三族收敛单一 `CJK_FONT` 常量（样式表遍历 + Table FONTNAME + 显式位点，源码零 Helvetica 由存在性门守）；封面 Test Plan 行按报告类型分流（计划类保留真名，execution 类显示「来源」）。S6 真执行重生报告实证：中文标题可读 + pass 口径为真值（mock KPI FAIL 如实报 failed）。新文件 12 单测（+既有回归 4）+ 全量 2775 过。
 
 ### P1-23 — 现场协议补 P0-8 gate（纯文档，行前必办）
 
