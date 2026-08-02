@@ -95,7 +95,7 @@ docker exec meta3d_db psql -U meta3d -d meta3d_ota -c \
   "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';"
 ```
 
-切换后 `restart: unless-stopped` 生效 → host/Docker 重启自动拉起。若第 5 步表数不符,`docker compose down` 后用上面「恢复」章节从 dump 重建。
+切换后 `restart: unless-stopped` 生效 → host/Docker 重启自动拉起。若第 5 步表数不符,`docker compose --profile full down` 后用上面「恢复」章节从 dump 重建(带 `--profile full` 才会把挂了 profile 的 `api` 容器一起停,不带的话它会留在跑着的状态、network 也删不掉)。
 
 ## 已知 deferred(本轮不做)
 

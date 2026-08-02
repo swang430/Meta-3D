@@ -86,9 +86,14 @@ python -m scripts.bootstrap
 python scripts/dev-fixtures/seed_dummy_calibration.py
 ```
 
-> **全自动**:`docker compose up -d`(不带 service 名)会连 api 容器一起起,其
+> **全自动**:`docker compose --profile full up -d` 会连 api 容器一起起,其
 > `docker-entrypoint.sh` 自动按 `alembic upgrade head → bootstrap → uvicorn`
 > 跑完,步骤 2-3 无需手动执行。
+>
+> ⚠️ api 容器在 compose 里挂了 `profiles: ["full"]`,**不带 `--profile full` 的
+> `docker compose up -d` 不会起它** —— 它跟 host 开发流程 (`npm run dev:api`)
+> 抢同一个 8000,二选一。默认不起是有意的,详见 `docker-compose.yml` 里 api
+> 服务上方的注释。
 >
 > ⚠️ **host 开发**(host 直接跑 uvicorn)时,全新空库**必须先 `alembic upgrade
 > head`** 再启动 app —— 否则 lifespan 的 `init_db()` 会 fallback 用

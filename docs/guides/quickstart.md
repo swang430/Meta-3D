@@ -30,8 +30,8 @@ npm run dev:all
 ```
 
 这将自动启动：
-- **ChannelEngine 服务** (http://localhost:8000) - 探头权重计算
-- **API 服务** (http://localhost:8001) - 系统校准后端 (仅 dev:all)
+- **ChannelEngine 服务** (http://localhost:8001) - 探头权重计算
+- **API 服务** (http://localhost:8000) - 系统校准后端 (仅 dev:all)
 - **前端 GUI** (http://localhost:5173) - React 应用
 
 **注意**：如果端口被占用，启动会失败。需要先运行 `npm run cleanup`。
@@ -62,17 +62,27 @@ npm run kill-ports
 ```
 
 这将强制终止占用以下端口的进程：
-- 8000 (ChannelEngine)
-- 8001 (API Service)
+- 8000 (API Service)
+- 8001 (ChannelEngine)
 - 5173 (Frontend GUI)
+
+> ⚠️ **端口若是 Docker 容器发布的，脚本会跳过而不是 kill**。原因：在 macOS host
+> 一侧监听容器端口的不是容器，而是 Docker Desktop 的转发进程
+> `com.docker.backend` —— 也就是 Docker 引擎本体，`kill -9` 打上去整个 daemon
+> 当场死亡。这时按脚本提示跑 `docker stop <容器名>` 腾端口。
 
 #### 手动清理特定端口
 
 ```bash
+# ⚠️ 手敲 kill 前先确认这个端口不是容器发布的, 否则杀掉的是容器转发进程
+#    (macOS: com.docker.backend / Linux: docker-proxy) = 整个 Docker daemon:
+#    docker ps --filter publish=8000 --format '{{.Names}}'   # 有输出 = 不要 kill
 # macOS/Linux
-lsof -ti:8000 | xargs kill -9  # 清理 ChannelEngine 端口
-lsof -ti:8001 | xargs kill -9  # 清理 API Service 端口
-lsof -ti:5173 | xargs kill -9  # 清理 Frontend 端口
+# -t -iTCP -sTCP:LISTEN: 只杀**监听者**。裸 `lsof -ti:8000` 会连"连到"该端口的
+# 客户端 (浏览器 tab) 和同号 UDP 一起选中, 那些进程跟端口占用毫无关系。
+lsof -t -iTCP:8000 -sTCP:LISTEN | xargs kill -9  # 清理 API Service 端口
+lsof -t -iTCP:8001 -sTCP:LISTEN | xargs kill -9  # 清理 ChannelEngine 端口
+lsof -t -iTCP:5173 -sTCP:LISTEN | xargs kill -9  # 清理 Frontend 端口
 ```
 
 ## 初次设置 🔧
@@ -103,20 +113,23 @@ npm run dev
 
 ## 服务端口
 
+> 端口↔服务以实现为准：`api-service/app/main.py` 用 8000，
+> `channel-engine-service/app/main.py` 用 8001。（这张表原先把两者标反了。）
+
 | 服务 | 端口 | 用途 |
 |------|------|------|
-| ChannelEngine | 8000 | 探头权重计算 API |
-| API Service | 8001 | 系统校准 API |
+| API Service | 8000 | 系统校准 API |
+| ChannelEngine | 8001 | 探头权重计算 API |
 | Frontend GUI | 5173 | React 前端应用 |
 
 ## 服务状态检查
 
-### ChannelEngine 健康检查
+### API 服务健康检查
 ```bash
 curl http://localhost:8000/api/v1/health
 ```
 
-### API 服务健康检查
+### ChannelEngine 健康检查
 ```bash
 curl http://localhost:8001/api/v1/health
 ```
@@ -126,10 +139,10 @@ curl http://localhost:8001/api/v1/health
 
 ## API 文档
 
-### ChannelEngine Swagger UI
+### API Service Swagger UI
 http://localhost:8000/api/docs
 
-### API Service Swagger UI
+### ChannelEngine Swagger UI
 http://localhost:8001/api/docs
 
 ## 日志输出
@@ -168,10 +181,15 @@ OSError: [Errno 48] Address already in use
 
 **解决方案**：
 ```bash
-# 查找并终止占用端口的进程
-lsof -ti:8000 | xargs kill -9  # ChannelEngine
-lsof -ti:8001 | xargs kill -9  # API Service
-lsof -ti:5173 | xargs kill -9  # Frontend
+# ⚠️ 先确认该端口不是 Docker 容器发布的 —— 有输出就**别** kill, 那个 PID 是容器
+#    转发进程 (com.docker.backend / docker-proxy), 杀它 = 杀整个 daemon;
+#    改用 docker stop <容器名>
+docker ps --filter publish=8000 --format '{{.Names}}'
+
+# 查找并终止占用端口的进程 (-t -iTCP -sTCP:LISTEN = 只要监听者)
+lsof -t -iTCP:8000 -sTCP:LISTEN | xargs kill -9  # API Service
+lsof -t -iTCP:8001 -sTCP:LISTEN | xargs kill -9  # ChannelEngine
+lsof -t -iTCP:5173 -sTCP:LISTEN | xargs kill -9  # Frontend
 ```
 
 ### 问题：Python 依赖缺失

@@ -74,10 +74,13 @@ bash scripts/db-up.sh
 
 ## 端口分配
 
+> 端口↔服务以实现为准：`api-service/app/main.py` 用 8000，
+> `channel-engine-service/app/main.py` 用 8001。（这张表原先把两者标反了。）
+
 | 端口 | 服务 | 用途 |
 |------|------|------|
-| 8000 | ChannelEngine | 探头权重计算 API |
-| 8001 | API Service | 系统校准 API |
+| 8000 | API Service | 系统校准 API |
+| 8001 | ChannelEngine | 探头权重计算 API |
 | 5173 | Frontend GUI | React 前端应用 |
 
 ## 故障排查
@@ -119,10 +122,15 @@ Operation not permitted
 
 **解决方案**:
 ```bash
-# 查看进程信息
-lsof -i:8000
+# 只看**监听者**（-iTCP + -sTCP:LISTEN）—— 裸 lsof -i:8000 会把连到该端口的客户端
+# 和同号 UDP 一起列出来，照着它 kill 会误杀浏览器之类的无关进程
+lsof -nP -iTCP:8000 -sTCP:LISTEN
 
-# 使用 sudo 强制终止
+# ⚠️ 若上面列出的是 com.docker.backend / docker-proxy / rootlesskit，**别 kill** ——
+#    那是容器的端口转发进程，杀它 = 杀整个 Docker daemon。改为停容器：
+#    docker ps --filter publish=8000 --format '{{.Names}}'   → docker stop <容器名>
+
+# 确认是自家 dev 进程后再强制终止
 sudo kill -9 <PID>
 ```
 
@@ -153,7 +161,12 @@ npm run cleanup
 npm run dev
 
 # 方法3：直接清理特定端口
-lsof -ti:8000 | xargs kill -9
+# ⚠️ 先确认该端口不是 Docker 容器发布的 —— 有输出就别 kill (那 PID 是容器转发
+#    进程 com.docker.backend / docker-proxy, 杀它 = 杀整个 daemon),
+#    改用 docker stop <容器名>
+docker ps --filter publish=8000 --format '{{.Names}}'
+# -t -iTCP -sTCP:LISTEN: 只杀监听者, 不误杀连着该端口的客户端和同号 UDP 进程
+lsof -t -iTCP:8000 -sTCP:LISTEN | xargs kill -9
 ```
 
 ### IDE 崩溃后恢复
@@ -175,9 +188,10 @@ npm run dev:safe
 
 4. **监控端口**: 如果不确定端口状态，可以运行：
    ```bash
-   lsof -i:8000  # 查看 8000 端口占用情况
-   lsof -i:8001  # 查看 8001 端口占用情况
-   lsof -i:5173  # 查看 5173 端口占用情况
+   # -iTCP + -sTCP:LISTEN 只列监听者，不把客户端连接和 UDP 混进来
+   lsof -nP -iTCP:8000 -sTCP:LISTEN  # API Service
+   lsof -nP -iTCP:8001 -sTCP:LISTEN  # ChannelEngine
+   lsof -nP -iTCP:5173 -sTCP:LISTEN  # Frontend GUI
    ```
 
 5. **避免冲突**: 不要在不同终端窗口重复启动同一服务
