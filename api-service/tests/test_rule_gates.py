@@ -1211,7 +1211,14 @@ def test_g11_openapi_yaml_subset_of_live_schema():
     契约文本自身 + 未来消费方; 同一谎言的**生效端副本** (gui/src/types/api.ts
     手写 camel 三键 → App.tsx 系统状态面板恒空态) 已记 roadmap Discovered。
     required 维度不比对 (实扫 6 处差异全为 "live 字段有默认值故不 required 但
-    序列化恒出现" 的良性形态, 硬比误报)。"""
+    序列化恒出现" 的良性形态, 硬比误报)。
+
+    已知收窄面 (Codex #265 R2 枚举, 转 backlog 独立精化 — 声明与覆盖对齐):
+    ① 参数比对只按名不分 in= location (query 重名 path 参数会穿透);
+    ② 散文半动词抽取不识别 curl 形态 (`curl -X POST http://host/api/v1/...`
+       动词与路径隔着 host, 抽不出 → 只比路径);
+    ③ 响应比对只在双侧都是 object properties 时进行 (yaml 改成 type: array
+       等不兼容形态时 y_props 空 → 跳过)。"""
     import yaml as _yaml
 
     from app.main import app
