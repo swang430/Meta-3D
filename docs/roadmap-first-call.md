@@ -36,7 +36,8 @@ blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 �
 - **P3-16** 门 G-B：状态列注释 ⊇ 全仓状态字面量
 - **P3-17** 门 G-C：文档 (动词,路径,参数,响应键) ⊇ 真实实现
 
-**明确 defer**（拍板记录，防翻旧账）：`lab_profile_id` 契约字段（多 lab 形态不存在）/
+**明确 defer**（拍板记录，防翻旧账）：~~`lab_profile_id` 契约字段~~（2026-08-02 拍板提升
+**P2-24** 覆盖此 defer —— 排期与禁令不能并存，以后者拍板为准）/
 `created_by` 占位（等 Auth Context）/ UXM 幂等·inherit 层数·InputLevelController（半现场，
 等仪器窗口）/ B-2 战略缺口·校准表 chamber 维度（大项另立项）。
 
@@ -183,7 +184,7 @@ P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max /
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **P1-22 → P1-23 → P2-19 → P2-20 → P3-14~17**（2026-08-01 拍板队列，顺序与当前片见 Current Focus）|
+| **LOCAL-OPEN (roadmap 内)** | **P1-25 → P1-26 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列，**待开工指令**；一批 10 片已全收 #256–#265）|
 | **ON-SITE-BLOCKED** | P0-5 (P0-3/4 已 2026-07-03 现场完成) + P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -1290,6 +1291,8 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 **What**: 覆盖 load→AUTOSET→run→改参→两态电平判据的 checked-in 诊断序列。七点要求（Discovered 原条 [→ P1-24] 已标）：①手册有据 + 生产驱动在用命令（涉 F64 SCPI，**动手前查 NotebookLM PROPSIM notebook**）②前置激活 UXM 满 RB DL（CE↔BS 协调；⚠ 原文"无信号 `INP:LEV:MEAS?` 返 -300"经手册查证为**哨兵语义不实** —— -300 是错误队列里的设备错误码（2026-05-27 现场实证），不是查询返回值，判据 = 队列出现测量失败错误，NotebookLM 2026-08-01）③每步后读错误队列零残留 ④电平按合法范围真判定 ⑤bypass 态电平窗口复验（同窗口）⑥输入参考 AUTOSET 闭环 —— **stopped 态命令排 GO 前**（§20.4.4.7，同为本片对协议的时序纠错），收敛判定 = `SYST:STAT?`（clipping/cut-off 正确读法）⑦mock 跑通列入出发前门槛。
 **Why P1**: 现有两序列干不了这活，现场又禁临时脚本 —— 没有它下次现场做不了 P0-8a。
 
+**落地（本 PR）**: 设计稿 [`design/p1-24-f64-p08-gate-sequence.md`](design/p1-24-f64-p08-gate-sequence.md)（§0 手册实证表 + §0.4 实现期修正）；序列复用生产原子（`load_local_scenario`/`autoset_inputs`/`start_emulation`/`set_bypass_mode`/`set_output_gain`/`measure_input`），新增 SCPI 仅 `OUTP:GAIN:CH?`/`OUTP:GAIN:LIM?`（§20.4.5.7/8，NotebookLM 过手册）；退 bypass **不假设自动续跑**（手册说续、2026-07-03 实证不续，两种固件行为都兜并如实归档）；收尾 GOS 留驻不发 CLOSE（绕驱动直发会让身份缓存 stale）。D-1 = 真驱动+假 SCPI 层行为门 18 测 + 5 变异实跑全红（AUTOSET 时序 / 不带病 GO / 增益回读 / 显式 GO 恢复 / 零残留）。真机行为（AUTOSET 收敛、bypass 电平窗口）只能现场验 —— 序列是载体不是替身。
+
 ### P1-25 — GUI 主控台"系统状态"面板恒空修复 + api.ts 手写镜像审计 ⬜（2026-08-02 拍板，待开工）
 
 **What**: `App.tsx` 读 `dashboardData?.systemStatus`（手写 camel 三键，`gui/src/types/api.ts`）而 live `/api/v1/dashboard` 返回 snake 四键 → 面板恒 undefined 走空态。修 = App.tsx/api.ts 换 live 键形态；同一把尺子过 api.ts 其余手写镜像类型 + 清理死导出 `InstrumentCategoryResponse`。**来源**: P3-17 内审 F2（[→ P1-25] 已标）。
@@ -1304,7 +1307,6 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 
 **What**: cal 记录带 `use_mock` provenance 标记；real 模式 precheck strict 门拒 mock cert（门现在只查存在/频率/时效）。**来源**: 2026-07-03 现场实证（[→ P1-27] 已标）—— mock 路损 cert 在 real 模式 `cal_pass: true`，真测静默应用 mock 补偿值。
 **Why P1**: 现场实证穿透，下次现场前必修（runtime-gate-not-frozen-snapshot 同母题）。
-**落地（本 PR）**: 设计稿 [`design/p1-24-f64-p08-gate-sequence.md`](design/p1-24-f64-p08-gate-sequence.md)（§0 手册实证表 + §0.4 实现期修正）；序列复用生产原子（`load_local_scenario`/`autoset_inputs`/`start_emulation`/`set_bypass_mode`/`set_output_gain`/`measure_input`），新增 SCPI 仅 `OUTP:GAIN:CH?`/`OUTP:GAIN:LIM?`（§20.4.5.7/8，NotebookLM 过手册）；退 bypass **不假设自动续跑**（手册说续、2026-07-03 实证不续，两种固件行为都兜并如实归档）；收尾 GOS 留驻不发 CLOSE（绕驱动直发会让身份缓存 stale）。D-1 = 真驱动+假 SCPI 层行为门 18 测 + 5 变异实跑全红（AUTOSET 时序 / 不带病 GO / 增益回读 / 显式 GO 恢复 / 零残留）。真机行为（AUTOSET 收敛、bypass 电平窗口）只能现场验 —— 序列是载体不是替身。
 
 ---
 
@@ -2019,7 +2021,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 ## 🟢 P3 — Polish / tooling
 
-**13/17 ✅ Done，P3-14~17 ⬜ open（2026-08-01 队列，见表尾与 Current Focus 顺序）。** 已完成项的完整 What / Fix / Acceptance 详情已迁出 → [`roadmap-archive.md`](roadmap-archive.md)。速览：
+**17/19 ✅ Done，P3-18~19 ⬜ open（2026-08-02 二批队列，待开工）。** 已完成项的完整 What / Fix / Acceptance 详情已迁出 → [`roadmap-archive.md`](roadmap-archive.md)。速览：
 
 | ID | Item | Done |
 |----|------|------|
