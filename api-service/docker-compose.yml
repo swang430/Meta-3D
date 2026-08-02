@@ -31,6 +31,17 @@ services:
       retries: 5
 
   api:
+    # ⚠️ 默认**不起** —— 它跟 host 开发流程 (`npm run dev` / `dev:api`) 抢同一个
+    #    8000, 二选一。放进 profile 前它会随 `docker compose up -d` 自启, 于是:
+    #    容器占住 host 8000 → safe-start.sh 的端口清理 kill -9 打在 host 那一侧的
+    #    监听者上 → 而那个监听者是 Docker Desktop 的转发进程 com.docker.backend,
+    #    即 **Docker 引擎本体** → daemon 当场死亡 → 下一步 db-up.sh 报
+    #    "Cannot connect to the Docker daemon", 启动失败 (2026-08-02 实测)。
+    #    safe-start.sh / cleanup-ports.sh 那侧已加"容器发布的端口不 kill"守门,
+    #    这里则从源头拆掉 8000 的争抢。
+    #    要跑容器版全栈:  docker compose --profile full up -d
+    #    (`docker compose up -d postgres` 显式点名, 不受 profile 影响, db-up.sh 照常)
+    profiles: ["full"]
     build: .
     container_name: meta3d-api
     ports:
