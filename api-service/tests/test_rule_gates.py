@@ -1103,3 +1103,194 @@ def test_g10_vrt_enum_subset_of_comment():
         f"列注释 (唯一真值源) 里 — 先更新注释再加枚举。当前真值源: {sorted(truth)}"
     )
 
+# ─────────────────────────────────────────────────────────────────────
+# G11 文档 (动词,路径,参数,响应键) ⊇ 真实实现 (P3-17 拍板的门 G-C, G8 加强版)
+# ─────────────────────────────────────────────────────────────────────
+# 两半:
+#   ①散文半 — 现状文档引用的**任何** /api/v1 路径 (G8 只锁计划链域) 必须是
+#     活路由, 动词也要对。设计愿景类文档 (docs/features / docs/hardware /
+#     docs/architecture / AGENTS.md / implementation-roadmap) 记录的是设计意图
+#     不是现状声明, 豁免 (同 G8 对历史留档的理由); 跨服务路由 (/ota =
+#     channel-engine, /ws = websocket 不进 REST 路由表) 豁免并申报。
+#     实值段通配: 文档常写 `/instruments/baseStation/...` 实值示例, 与 live 的
+#     `{category_key}` 参数位按段通配匹配, 否则示例全误杀。
+#   ②契约半 — checked-in api/openapi.yaml 声明的 (路径,动词,参数名,2xx 响应键)
+#     ⊆ live app.openapi()。参数/响应键维度的机械落点在这里 (散文书写形态
+#     不可机械解析, P3-17 实施时定的收窄); 路径参数名形态差异 ({categoryKey}
+#     vs {category_key}) 按 shape 归一。
+# 变异实跑: CLAUDE.md 插死路径 → ①红; yaml 加不存在参数 → ②红。
+
+_G11_DESIGN_DOCS = ("docs/features/", "docs/hardware/", "docs/architecture/",
+                    "AGENTS.md", "IMPLEMENTATION-PLAN",
+                    "docs/guides/implementation-roadmap.md")
+# /ota = channel-engine 服务路由, 本地路由表无从验证 — 唯一剩余豁免。
+# (websocket 路由不豁免: 其 shape 并进 live_shapes, 见散文半 — 内审 F3)
+_G11_CROSS_SERVICE_PREFIXES = ("/ota",)
+_G11_API_PATH = re.compile(r"/api/v1(/[A-Za-z0-9_{}\-./]+)")
+
+
+def _g11_shape_segs(path: str):
+    return tuple("{}" if seg.startswith("{") else seg
+                 for seg in path.strip("/").split("/"))
+
+
+def _g11_matches(cited: str, live_shapes) -> bool:
+    # 通配只有一个方向: 文档实值段 ↔ live 参数位 (s == "{}")。反向
+    # (文档参数段配 live 实值段) 是内审 F1 删掉的宽松洞: 它让
+    # `/instruments/{category_key}/status` 这种参数化书写的死路径匹配上
+    # live 的 `/instruments/hal/status` 而穿透 — 全语料实测零引用依赖它。
+    segs = tuple(cited.strip("/").split("/"))
+    for shape in live_shapes:
+        if len(shape) == len(segs) and all(
+                s == "{}" or s == c
+                for s, c in zip(shape, segs)):
+            return True
+    return False
+
+
+def test_g11_matcher_behavior():
+    """通配匹配器行为自测 — 实值段命中参数位 / 段数不齐不命中。"""
+    shapes = [("instruments", "{}", "topology-profiles"), ("dashboard",)]
+    assert _g11_matches("/instruments/baseStation/topology-profiles", shapes)
+    assert _g11_matches("/instruments/{cat}/topology-profiles", shapes)
+    assert not _g11_matches("/instruments/topology-profiles", shapes)
+    assert not _g11_matches("/dashboard/extra", shapes)
+    # 内审 F1 锁死: 文档参数段**不许**匹配 live 实值段 — 参数化书写的死路径
+    # 曾经此洞穿透 (变异实证: /instruments/{x}/status 配上 hal 实值段)。
+    assert not _g11_matches("/instruments/{x}/status",
+                            [("instruments", "hal", "status")])
+
+
+def test_g11_docs_cite_live_api_routes_full_domain():
+    """散文半: 现状文档全 API 面 (动词,路径) ⊆ 路由表 — G8 域扩展。
+    2026-08-02 落地时基线: 116 条死引用全部来自设计愿景文档 (豁免类),
+    豁免后真死引用 2 条已修 (GEMINI 示例值 / implementation-roadmap 入豁免)。"""
+    live_routes = [(m, p.replace("/api/v1", "", 1)) for m, p in _live_route_table()]
+    live_shapes = [_g11_shape_segs(p) for _, p in live_routes]
+    # websocket 路由无 methods 不进 _live_route_table — shape 并入 (无动词),
+    # 免得文档如实引用 /ws/monitoring 或 road-test 流端点反而红 (内审 F3)。
+    from app.main import app as _app
+    for r in _app.routes:
+        if type(r).__name__ == "APIWebSocketRoute":
+            live_shapes.append(_g11_shape_segs(r.path.replace("/api/v1", "", 1)))
+    live_verb_shapes = {(m, _g11_shape_segs(p)) for m, p in live_routes}
+    dead = []
+    for path in _live_doc_paths():
+        rel = path.relative_to(_REPO_ROOT).as_posix()
+        if any(d in rel for d in _G11_DESIGN_DOCS):
+            continue
+        for lineno, line in enumerate(
+                path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
+            for m in _G11_API_PATH.finditer(line):
+                if _is_absolute_url(line, m.start()):
+                    continue
+                cited = m.group(1).rstrip(".,;:/")
+                if any(cited == c or cited.startswith(c + "/")
+                       for c in _G11_CROSS_SERVICE_PREFIXES):
+                    continue
+                if not _g11_matches(cited, live_shapes):
+                    dead.append(f"  {rel}:{lineno} → /api/v1{cited}")
+                    continue
+                verb = _doc_verb_before(line, m.start())
+                if verb:
+                    segs = tuple(cited.strip("/").split("/"))
+                    ok = any(v == verb and len(sh) == len(segs) and all(
+                        s == "{}" or s == c
+                        for s, c in zip(sh, segs)) for v, sh in live_verb_shapes)
+                    if not ok:
+                        dead.append(f"  {rel}:{lineno} → {verb} /api/v1{cited} (动词不存在, 405)")
+    assert not dead, (
+        "现状文档引用了不存在的 API 路由/动词 (照文档调会 404/405):\n"
+        + "\n".join(sorted(set(dead))))
+
+
+def test_g11_openapi_yaml_subset_of_live_schema():
+    """契约半: checked-in openapi.yaml (路径,动词,参数名,2xx 响应键) ⊆ live。
+    yaml 是 checked-in 契约与类型生成源 (api.generated.ts) — 如实申报 (内审 F2):
+    当前 GUI 零 import generated 类型 (api.ts:195 自记录消费约定), 本门锁的是
+    契约文本自身 + 未来消费方; 同一谎言的**生效端副本** (gui/src/types/api.ts
+    手写 camel 三键 → App.tsx 系统状态面板恒空态) 已记 roadmap Discovered。
+    required 维度不比对 (实扫 6 处差异全为 "live 字段有默认值故不 required 但
+    序列化恒出现" 的良性形态, 硬比误报)。
+
+    已知收窄面 (Codex #265 R2 枚举, 转 backlog 独立精化 — 声明与覆盖对齐):
+    ① 参数比对只按名不分 in= location (query 重名 path 参数会穿透);
+    ② 散文半动词抽取不识别 curl 形态 (`curl -X POST http://host/api/v1/...`
+       动词与路径隔着 host, 抽不出 → 只比路径);
+    ③ 响应比对只在双侧都是 object properties 时进行 (yaml 改成 type: array
+       等不兼容形态时 y_props 空 → 跳过)。"""
+    import yaml as _yaml
+
+    from app.main import app
+
+    spec = _yaml.safe_load((_REPO_ROOT / "api" / "openapi.yaml").read_text())
+    live = app.openapi()
+    live_paths = live.get("paths", {})
+    live_by_shape = {}
+    for p, ops in live_paths.items():
+        live_by_shape.setdefault(_g11_shape_segs(p), {}).update(ops)
+
+    def _resolve(doc, node):
+        # hop 上限: 循环 $ref (A→B→A) 该红不该挂死 (内审 F4)。
+        # 已知漏比 (申报): allOf/anyOf 组合形态解出的 properties 为空 → 跳过
+        # 比对 — 漏报方向, 当前 yaml 无此形态 (grep 证实), 出现时再精化。
+        for _ in range(20):
+            if not (isinstance(node, dict) and "$ref" in node):
+                return node
+            ref = node["$ref"]
+            assert ref.startswith("#/"), ref
+            cur = doc
+            for part in ref[2:].split("/"):
+                cur = cur[part]
+            node = cur
+        raise AssertionError(f"$ref 链过深/成环: {node}")
+
+    problems = []
+    for p, methods in (spec.get("paths") or {}).items():
+        shape = _g11_shape_segs(p)
+        lp = live_by_shape.get(shape)
+        if lp is None:
+            problems.append(f"yaml 声明的路径不在实现: {p}")
+            continue
+        for m, op in methods.items():
+            if m in ("parameters", "description", "summary"):
+                continue
+            lop = lp.get(m)
+            if lop is None:
+                problems.append(f"yaml 声明的动词不在实现: {m.upper()} {p}")
+                continue
+            want = {pr["name"] for pr in (op.get("parameters") or [])
+                    if isinstance(pr, dict) and "name" in pr and pr.get("in") != "path"}
+            have = {pr["name"] for pr in (lop.get("parameters") or [])}
+            extra = want - have
+            if extra:
+                problems.append(f"yaml 参数不在实现: {m.upper()} {p} → {sorted(extra)}")
+            # 2xx 响应键: yaml 声明的顶层 properties ⊆ live (双侧都解 $ref;
+            # live 未声明 response_model 时无 schema — 跳过, 契约弱侧不硬比)
+            for code, resp in (op.get("responses") or {}).items():
+                if not str(code).startswith("2"):
+                    continue
+                y_schema = _resolve(spec, ((resp.get("content") or {})
+                                           .get("application/json") or {}).get("schema") or {})
+                l_resp = (lop.get("responses") or {}).get(str(code))
+                if l_resp is None:
+                    # Codex #265 R1: 声明的响应码 live 根本没有 — 这是 mismatch,
+                    # 静默跳过会让 "改 200 成 201 + 编键" 照绿。
+                    problems.append(
+                        f"yaml 声明的响应码不在实现: {m.upper()} {p} {code}")
+                    continue
+                l_schema = _resolve(live, ((l_resp.get("content") or {})
+                                           .get("application/json") or {}).get("schema") or {})
+                y_props = set((y_schema.get("properties") or {}).keys())
+                l_props = set((l_schema.get("properties") or {}).keys())
+                if y_props and l_props:
+                    missing = y_props - l_props
+                    if missing:
+                        problems.append(
+                            f"yaml 响应键不在实现: {m.upper()} {p} {code} → {sorted(missing)}")
+                # y_props 有而 l_props 空 = live 响应无 schema (未声明
+                # response_model) — 契约弱侧, 跳过 (已在 docstring 申报)
+    assert not problems, (
+        "openapi.yaml (GUI 类型生成源) 声明了实现没有的契约元素:\n  "
+        + "\n  ".join(problems))
+
