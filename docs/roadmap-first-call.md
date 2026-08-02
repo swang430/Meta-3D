@@ -13,10 +13,11 @@ blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 �
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-02 二批本地队列已拍板排序（用户明示"只排好优先级，先不忙开工"——待开工指令）**：
-**P1-25 → P1-26 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧）。一句话索引：
+**P1-25 → P1-26 → P1-27 → P1-28 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧；P1-28 为 2026-08-02 用户新增 backlog 当日拍板插入）。一句话索引：
 - **P1-25** GUI 主控台"系统状态"面板恒空修复 + api.ts 手写镜像同尺审计
 - **P1-26** GUI 改频同步 component_carriers（执行侧错频收口）
 - **P1-27** P1-8 校准门拒 mock cert（provenance + real 模式 strict 拒）
+- **P1-28** 「当前暗室」双真值源收口（active chamber vs active lab 绑定暗室）
 - **P2-22** F64 disconnect 冷缓存判 GOS 换真值源（涉 SCPI 查 NotebookLM）
 - **P2-23** 会话资产 is_active 预检 + measure resolver 同病排查
 - **P2-24** 测试用例契约补 lab_profile_id（契约四步）
@@ -184,7 +185,7 @@ P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max /
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **P1-25 → P1-26 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列，**待开工指令**；一批 10 片已全收 #256–#265）|
+| **LOCAL-OPEN (roadmap 内)** | **P1-25 → P1-26 → P1-27 → P1-28 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列，**待开工指令**；一批 10 片已全收 #256–#265）|
 | **ON-SITE-BLOCKED** | P0-5 (P0-3/4 已 2026-07-03 现场完成) + P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -1308,6 +1309,12 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 **What**: cal 记录带 `use_mock` provenance 标记；real 模式 precheck strict 门拒 mock cert（门现在只查存在/频率/时效）。**来源**: 2026-07-03 现场实证（[→ P1-27] 已标）—— mock 路损 cert 在 real 模式 `cal_pass: true`，真测静默应用 mock 补偿值。
 **Why P1**: 现场实证穿透，下次现场前必修（runtime-gate-not-frozen-snapshot 同母题）。
 
+### P1-28 — 「当前暗室」双真值源收口 ⬜（2026-08-02 拍板，待开工）
+
+**What**: `ChamberConfiguration.is_active`（activate 端点强制唯一的"当前工作暗室"单选器）与 `LabProfile.chamber_config_id`（lab 绑定）是两个同名不同义的真值源，之间**零约束零同步**；消费方分两派（`commissioning`/`mimo_ota.factory`/`trp.factory` 走 `resolve_lab_profile` → lab 绑定暗室；`chamber.py` 列表默认过滤 + `workflow_engine` 的 `probe_ids="auto"` 走 `chamber.is_active`），同一时刻拿到不同 chamber 行。修法按 **去掉 > 换源 > 收窄 > 加机制**：推荐**去掉**双源之一（「当前暗室」:= active lab 所绑暗室，`chamber.is_active` 退役或降为派生只读显示），两派消费方换源统一走单一 resolver；最次才是 activate 端点双写同步（双写自身会再漂）。配套门 = 不变量门（全仓解析"当前暗室"的代码路径 ⊆ 单一真值源，`test_rule_gates.py` G 门同款结构断言）+ 诊断序列加 DB 两值一致性 fail-loud。
+**Why P1（2026-08-02 实证抬档，原记 P2）**: 校准数据按 `chamber_id` 键控，dev 库实测已在失配：① `chamber.is_active` 指的「3GPP 16 Probe Dual」(`1b531e5c`) 在**所有校准表里零行** —— 按 active chamber 查校准今天就查不到；② 校准行分散在 `59c73fbe`（active lab 绑的 CAICT-16-Probe-Dual：rf_chain 6 / channel_phase 6 / probe_path_loss 7）与 `b7cd8de0`（calibration_baselines 1 / probe_path_loss 2 / rf_chain 1）；③ **`b7cd8de0` 这个 chamber 行已不存在** = 孤儿引用，根因是**校准类表全无指向 `chamber_configurations` 的外键约束**（现有 FK 仅 `probes` / `probe_configurations` / `switch_topologies` / `lab_profiles` 四条），DB 层拦不住（非 active lab 绑的 `06ca91a2` 同为孤儿）。下次现场要跑路损校准复测，带着双真值源进现场 = 把静默失配带进真测。
+**同批收口候选**（实施时定，别扩成大改）：校准类表补 chamber FK 或显式 orphan 巡检；存量孤儿行 triage（保留/迁移/清理，走 dry-run 脚本模式）。
+
 ---
 
 ## 🟡 P2 — Abstraction debt
@@ -2153,6 +2160,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-01 during VRT 摘要 channel_model 换源修复]` **[→ 提升 P2-20 (2026-08-01)]** **标准场景库 5 处 `channel_model=` 死 kwarg（P3）** —— `app/data/scenario_library.py` 给 Environment 传的 `channel_model=ChannelModel.*` 被 Pydantic `extra='ignore'` 静默吞掉,标准场景 `channel_snapshots` 恒空 → 场景库列表里标准场景的信道模型列恒 None。修法=把这 5 处改成 `channel_snapshots=[ChannelSnapshot(channel_type="3GPP", standard_model=..., ...)]`;`tests/test_data.py` 的 environment 也还在用旧 `channel_model` key,同批一起换。
 - `[discovered 2026-08-01 during VRT 摘要 channel_model 换源修复]` **[→ 提升 P2-20 (2026-08-01)]** **channel_model 死字段其余读/写方 3 站点（同母题清单, P3）** —— 内审全量扫出摘要行之外还有: ① `road_test.py::_generate_execution_report` 的 `EnvironmentInfo` 构造用 `get_attr_or_item(env, 'channel_model', '')`,tolerant 默认让它不崩但**恒空串**(live 路径: 列表显示 CDL-C、同场景报告显示空,两读方不同源),修法同款换源 `channel_snapshots[0].standard_model`;② `ota_scenario_mapper.py` 5 处读 `scenario.environment.channel_model`(当前全仓零调用方的死代码,任何人接线即 100% AttributeError);③ GUI 写侧 `CreateScenarioDialog`/`EditScenarioDialog` 恒发 `channel_snapshots: []`,表单选的 channelModel 只进 tags → GUI 建/编场景摘要 channel_model 恒 null、Edit 预填恒回落 'UMa',快照真值今天只有 API 直发能写。三处与标准库死 kwarg(上条)同母题,宜同批收口。
 - `[discovered 2026-08-01 during VRT 摘要 channel_model 换源修复]` **[→ 提升 P2-20 (2026-08-01)]** **`_list_custom_scenarios` 单行坏配置会 500 全列表（P2）** —— `road_test.py` 列表推导逐行 `vrt_test_case_to_scenario`,任何一行 DB configuration 过不了 `VirtualRoadTestConfig.model_validate`(如旧 schema 遗留行)就 ValidationError 冒泡,整个 `/road-test/scenarios` 500,全部场景消失。比摘要降级更烈的全灭模式,与"场景数==摘要数"不变量门同母题;修法待设计(逐行 try + 降级出行 or 显式隔离坏行报表),注意别静默丢行。
+- `[discovered 2026-08-02 during P1-28 triage 前置验证]` ~~**依赖静默升级打瞎规则门取数, G6/G8/G11 三门同时假红且归因错误**~~ ✅ **已修 (同批, 本 PR)**: `requirements.txt` 写 `fastapi>=0.115.0` 开放上界, 2026-08-02 19:45 一次安装拉到 **0.141.1 + starlette 1.3.1**; 新版 `include_router` 改懒加载 (`_IncludedRouter`, 子路由不再展平进 `app.routes`) → `_live_route_table()` 当场只拿到 **9 条** (真实 320) → G6 喊"用例链路由被误删"、G11 把 **44 条活引用**判成死 —— **假红且归因指向错误方向**(业务代码零问题, `app.openapi()` 251 paths 全在)。修法按 换源 > 加机制: ①取数换递归展开 `_expand_app_routes` (保真且含 WebSocket, 320 条 vs openapi 251) ②加 openapi 交叉自检 —— **取数源坏掉要自己喊出来**, 不能交残表让上层门瞎判 (变异实证: 展开器失效时门喊"取数源失效"而非"路由被误删") ③G11 里第二个会瞎的 WS 取数点删除 (取数统一到一处) ④requirements 钉 `<0.142.0` 上界 + 注释写明再放版前先跑规则门。全量 2867 passed / 0 failed。
+- `[discovered 2026-08-02 during 环境恢复/暗室激活溯源]` **[→ 提升 P1-28 (2026-08-02)]** **「当前暗室」双真值源漂移: active chamber ≠ active lab 绑定暗室（~~P2~~ → **P1**, 见行尾实证补录）** —— 实测 DB: `ChamberConfiguration.is_active` 指「3GPP 16 Probe Dual」(2026-06-08 事故善后手动激活), 而唯一 active lab `CAICT-Lab-1.chamber_config_id` 指「CAICT-16-Probe-Dual」(2026-05-13 现场创建时绑定, 此后无人回头更新)。根因: 两个字段同名不同义 (`chamber.is_active` = activate 端点强制唯一的"当前工作暗室"单选器; `lab_profile.is_active` = 软删除标志, 默认 True), 且 lab 绑定与暗室激活之间**零约束零同步**。消费方分两派: `commissioning` / `mimo_ota/factory` / `trp/factory` 走 `resolve_lab_profile` → lab 绑定暗室 (解析出 CAICT 行); `chamber.py` 列表默认过滤 + `workflow_engine` `probe_ids="auto"` 走 `chamber.is_active` (解析出 3GPP 行) —— 同一时刻两派拿到不同 chamber 行。今天两行几何相同故无可观察故障, 但**校准数据按 chamber_id 键控** (`path_loss_calibration` 写入/`GET /latest/{chamber_id}`) → 校准存在 A 行、执行链按 B 行查 = 校准查不到或查到错的, 是静默失配。修法按 去掉>换源>收窄>加机制: 推荐**去掉**双真值源之一 (「当前暗室」:= active lab 所绑暗室, `chamber.is_active` 退役或降为派生只读显示), 两派消费方换源统一走单一 resolver; 最次才是 activate 端点双写同步 (双写自身会再漂)。配套门: 不变量门 (全仓解析"当前暗室"的代码路径 ⊆ 单一真值源, `test_rule_gates.py` G 门同款结构断言) + 诊断序列里加 DB 两值一致性校验 fail-loud。 **⭐ 2026-08-02 dev 库实证补录 (提升 P1-28 时抬档 P2→P1 的依据, 修的时候不必重查)**: ① 失配**已经发生**而非将来时 —— `chamber.is_active` 指的「3GPP 16 Probe Dual」(`1b531e5c`) 在**所有校准表里零行**, 按 active chamber 查校准今天就查不到; ② 校准行实际分散在两个 id: `59c73fbe` (active lab 绑的 CAICT-16-Probe-Dual — rf_chain 6 / channel_phase 6 / probe_path_loss 7) 与 `b7cd8de0` (calibration_baselines 1 / probe_path_loss 2 / rf_chain 1); ③ **`b7cd8de0` 这个 chamber 行已不存在** = 孤儿引用, 根因是**校准类表全都没有指向 `chamber_configurations` 的外键约束** (现存 FK 仅 `probes` / `probe_configurations` / `switch_topologies` / `lab_profiles` 四条), DB 层拦不住; 三个非 active lab 绑的 `06ca91a2` 同为孤儿。故正式条目把校准表 FK / orphan 巡检列为同批收口候选。
 
 ---
 
