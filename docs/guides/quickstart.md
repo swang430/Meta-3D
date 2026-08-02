@@ -124,12 +124,12 @@ npm run dev
 
 ## 服务状态检查
 
-### ChannelEngine 健康检查
+### API 服务健康检查
 ```bash
 curl http://localhost:8000/api/v1/health
 ```
 
-### API 服务健康检查
+### ChannelEngine 健康检查
 ```bash
 curl http://localhost:8001/api/v1/health
 ```
@@ -139,10 +139,10 @@ curl http://localhost:8001/api/v1/health
 
 ## API 文档
 
-### ChannelEngine Swagger UI
+### API Service Swagger UI
 http://localhost:8000/api/docs
 
-### API Service Swagger UI
+### ChannelEngine Swagger UI
 http://localhost:8001/api/docs
 
 ## 日志输出

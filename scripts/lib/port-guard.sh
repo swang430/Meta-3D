@@ -34,10 +34,19 @@ listening_pids() {
 #
 # ⚠️ 这是 **denylist**, 判据是进程名, 默认动作是"杀"。所以新形态一旦没被列进来,
 #    失效是**静默**的 (直接回到"杀") —— 加新形态时务必带上实证, 别照着印象写。
-#    已覆盖 (前两条本机实测, 后两条按各自实现的进程名):
-#      com.docker.backend  macOS Docker Desktop 的转发进程 (本次事故的死因)
-#      docker-proxy        Linux 原生 docker 的 per-port 转发进程
-#      rootlesskit         rootless docker 的网络栈 (杀它整套端口转发一起死)
+#    已覆盖三条, **各自的实证强度不同, 别当成一样硬**:
+#      com.docker.backend  macOS Docker Desktop 的转发进程 —— 本条**本机实测**:
+#                          lsof 显示它监听 5432/8000/8501, ps -o comm= 给出完整
+#                          路径, 且它就是本次事故的死因。
+#      docker-proxy        Linux 原生 docker 的 per-port 转发进程 —— **二进制实证**
+#                          (Docker Desktop 的 Linux VM 里 /usr/bin/docker-proxy
+#                          确实存在), 但**没见过它的活进程**: Desktop 关了
+#                          userland-proxy, 转发走 macOS 侧的 gvisor。native Linux
+#                          默认 userland-proxy=true 时它才是发布端口的监听者;
+#                          设成 false 时是纯 iptables DNAT, **没有任何进程监听** ——
+#                          那种情况下 listening_pids 本来就取不到东西, 不会误杀。
+#      rootlesskit         rootless docker 的网络栈 —— ⚠️ **未实证**, 按该项目的
+#                          组件名写的, 手上没有 rootless 环境可验。
 #    **未覆盖, 如实申报**: colima/lima 用 host 上的 `ssh -L` master 做转发, 进程名
 #    就是 ssh —— 拿 ssh 当判据会误杀用户自己的 ssh, 宁可漏判也不加; OrbStack /
 #    Rancher Desktop 的 helper 进程名我没有环境实证, 不猜。这些环境下本守门等于

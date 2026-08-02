@@ -56,11 +56,8 @@ for i in "${!PORTS[@]}"; do
     fi
 done
 
-# 注意: 这里**不 exit** —— "不杀容器转发进程"跟"不许启动"是两件事, 别绑一起。
-# 容器占 IPv6、host 占 IPv4 可以在同一端口共存 (实测 8000 正是如此), 所以端口上
-# 有容器并不必然挡住 host 服务; 而且 PORTS 是固定三个, `npm run dev` (不带 all)
-# 压根不 bind 8000, 为它硬退等于拿一个本次用不到的端口拦死整次启动。
-# 真撞上 EADDRINUSE 时, 上面已经把该跑的排查命令打出来了。
+# 注意: 这里**不 exit** —— "不杀容器转发进程"跟"不许启动"是两件事, 别绑一起,
+# 先把能清的 host 残留清掉。真正的放行判定挪到清理**之后**(见下方"收尾判定")。
 
 # 如果有端口被占用，询问是否清理
 if [ ${#OCCUPIED_PORTS[@]} -gt 0 ]; then
@@ -108,11 +105,42 @@ if [ ${#OCCUPIED_PORTS[@]} -gt 0 ]; then
     fi
 fi
 
-if [ ${#DOCKER_HELD_PORTS[@]} -gt 0 ]; then
-    echo "ℹ️  端口 ${DOCKER_HELD_PORTS[*]} 上有容器转发进程，已跳过（未 kill）。"
-    echo "   host 服务通常照样能起（容器占 IPv6 / host 占 IPv4 可共存）；"
-    echo "   若稍后真撞上 EADDRINUSE，按上面的 docker ps 查出容器再 docker stop。"
+# ── 收尾判定: 清理完之后, 端口到底还能不能用 ──────────────────────────────
+#
+# 判据放在清理**之后**, 且只问一件事: **还有没有人在听**。不猜是谁占的、不猜地址族。
+#
+# 为什么不排在清理之前 (内审 F1): 上一版把"这端口上有容器"当硬退条件排在清理前,
+#   结果同端口的 host 残留一次都清不掉 —— 按端口整体拒杀, 连该杀的一起放过。
+# 为什么不能只打印提示就放行 (Codex #268 P1): 容器**先**拿到端口时, Docker 发布的
+#   是**双栈** socket。实测 (空闲端口 45222): `lsof` 只显示一条 `IPv6 *:45222
+#   (LISTEN)`, 但 host 侧 bind `0.0.0.0` 和 `::` **双双 Address already in use**。
+#   我先前"容器占 IPv6 / host 占 IPv4 可共存"的观察是**特例**: 那次是 host 进程
+#   抢先占了 IPv4, Docker 才退化成 IPv6-only。真实事故顺序恰好相反 —— Docker
+#   Desktop 先自启容器、用户后跑本脚本 —— 这时 host 服务是真起不来的。
+# 所以: 让它在这里带着修复命令停下, 而不是放行后由 uvicorn/vite 抛 EADDRINUSE、
+#   埋在 concurrently 的交错日志里。**故障现象离原因十万八千里正是本脚本要治的病。**
+STILL_HELD=()
+for i in "${!PORTS[@]}"; do
+    [ -n "$(listening_pids "${PORTS[$i]}")" ] && STILL_HELD+=("${PORTS[$i]} (${SERVICE_NAMES[$i]})")
+done
+
+if [ ${#STILL_HELD[@]} -gt 0 ]; then
     echo ""
+    echo "❌ 清理后这些端口仍有人监听，本次启动会撞 EADDRINUSE，先停下："
+    for HELD in "${STILL_HELD[@]}"; do echo "     - $HELD"; done
+    echo ""
+    if [ ${#DOCKER_HELD_PORTS[@]} -gt 0 ]; then
+        echo "   其中 ${DOCKER_HELD_PORTS[*]} 是容器发布的（本脚本故意不 kill —— 杀它 = 杀 Docker 引擎）。"
+        echo "   查出容器并停掉："
+        for P in "${DOCKER_HELD_PORTS[@]}"; do
+            echo "     docker ps --filter publish=$P --format '{{.Names}}'   # → docker stop <容器名>"
+        done
+        echo "   注：compose 的 api 服务已挪进 'full' profile，默认不再随 up 自启；"
+        echo "       若它还在跑：cd api-service && docker compose stop api"
+    else
+        echo "   非容器占用 —— kill 可能因权限不足失败，试 sudo，或手动停掉占用进程。"
+    fi
+    exit 1
 fi
 
 echo "✨ 端口检查完成，开始检查数据库状态..."
