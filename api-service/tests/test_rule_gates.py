@@ -86,7 +86,12 @@ def test_g2_no_doubled_route_segments():
     端点路径只写 prefix 之后的部分。"""
     from app.main import app
 
-    bad = _doubled_segments(getattr(r, "path", "") for r in app.routes)
+    # ⚠️ 取数走 _live_route_table (内审 F2): 原先直接遍历 `app.routes` 取 path,
+    # 在 FastAPI 0.141 懒加载下 `_IncludedRouter` 没有 `.path`, getattr 兜成 ""
+    # → 本门只看到 5 条非空路径 (真实 320), **已空转**。而它的失效方向是
+    # "失败开"(不会红), 所以那次三门假红的排查没暴露它 —— 这正是"按红了哪几个门
+    # 做域枚举"的漏洞: 同一个取数源的读点必须一起换, 不管它红不红。
+    bad = _doubled_segments(p for _, p in _live_route_table())
     assert not bad, (
         f"路由出现连续重复段 (router prefix 又写进了端点路径?): {bad}"
     )
@@ -476,14 +481,113 @@ _SURVIVING_CASE_ROUTES = [
 ]
 
 
+def _expand_app_routes(routes, prefix=""):
+    """递归展开路由树 → [(method, full_path)]。
+
+    FastAPI 0.141 起 `include_router` **不再**把子路由展平进 `app.routes`,
+    而是留一个 `_IncludedRouter` 懒加载对象 (子路由在 `.original_router.routes`,
+    前缀在 `.include_context.prefix`), 可嵌套多层。WebSocket 路由无 `methods`,
+    单列成 "WS" 动词 (openapi 里没有它们, 但文档会如实引用 —— G11 散文半要用)。
+    """
+    out = []
+    for r in routes:
+        if type(r).__name__ == "_IncludedRouter":
+            sub = getattr(r, "original_router", None)
+            ctx = getattr(r, "include_context", None)
+            sub_prefix = getattr(ctx, "prefix", "") or "" if ctx is not None else ""
+            if sub is not None:
+                out += _expand_app_routes(sub.routes, prefix + sub_prefix)
+            continue
+        methods = getattr(r, "methods", None)
+        if methods:
+            out += [(m, prefix + r.path) for m in methods]
+        elif type(r).__name__ == "APIWebSocketRoute":
+            out.append(("WS", prefix + r.path))
+    return out
+
+
 def _live_route_table():
-    """(method, path) 集合 —— 从真实 app 读, 不 grep 源码。"""
+    """(method, path) 集合 —— 从真实 app 读, 不 grep 源码。
+
+    ⚠️ 2026-08-02 事故教训 (本函数为什么带自检): FastAPI 从 0.141 起改懒加载
+    路由 (见 `_expand_app_routes`), 旧实现"遍历 app.routes 找 methods"当场只
+    拿到 **9 条** (真实 320 条) —— 而三个消费门 (G6/G8/G11) 收到空表后喊的是
+    **"用例链路由被误删" / "文档引用了 44 条死路由"**, 全是假红且**归因完全
+    错误**。取数源坏掉必须**自己喊出来**, 不能静默交一张残表让上层门瞎判。
+    所以下面这道自检不是冗余: 它把"我瞎了"和"路由真丢了"分开。
+    判据 = `app.openapi()` 的 **(动词, shape) 集合 ⊆ 展开结果**的同款集合。
+    openapi 是公开 API, 独立于路由树内部结构, 拿它当交叉源。
+    ⚠️ **必须是集合包含, 不能是数量比较** (内审 F1 实证): 计数判据下
+    ① 丢掉整个 `test-plans` router 仍有 252 ≥ 251 → 自检放行, G6 照样喊
+    "用例链路由被误删"(与本次事故一字不差的错误归因); 37 个顶层 router 里
+    **25 个**整丢都不到余量。② `include_context.prefix` 拿不到时路径全退化成
+    `/health`, 数量一条不少 —— 而**路径内容错正是展开器唯一的风险面**。
+    ⚠️ 比 shape 不比原串: live 的 `{report_path:path}` (Starlette converter 语法)
+    与 openapi 的 `{report_path}` 字面不等, 归一后才可比。
+    """
     from app.main import app
-    table = set()
-    for r in app.routes:
-        for m in getattr(r, "methods", None) or ():
-            table.add((m, r.path))
+
+    table = set(_expand_app_routes(app.routes))
+
+    def _shape(path):
+        return tuple("{}" if seg.startswith("{") else seg
+                     for seg in path.strip("/").split("/"))
+
+    live_pairs = {(m, _shape(p)) for m, p in table}
+    spec_pairs = {
+        (m.upper(), _shape(p))
+        for p, ops in app.openapi().get("paths", {}).items()
+        for m in ops
+        if m.lower() in ("get", "post", "put", "patch", "delete", "head", "options")
+    }
+    missing = spec_pairs - live_pairs
+    assert not missing, (
+        f"路由取数源失效: openapi 声明的 {len(missing)} 个 (动词,路径) 展开不出来, 例如 "
+        + ", ".join(f"{m} /{'/'.join(sh)}" for m, sh in sorted(missing)[:5])
+        + "。这**不是**路由被删 —— 是 _expand_app_routes 跟不上 FastAPI 的路由树结构了 "
+        "(0.141 那次改懒加载就是先例)。先修展开器, 别改被它喂假数据的门。"
+    )
     return table
+
+
+def test_expand_app_routes_behavior():
+    """展开器自测 (内审 F3) —— 同文件每个判定器都配的那种"防自己空转"的门。
+
+    为什么非要独立自测: 展开器的 6 个分支此前全靠 G6/G8/G11 的整体绿"借"覆盖,
+    而 F1 已证明整体绿对**部分失效**是瞎的; WS 分支更是只被
+    `docs/guides/monitoring-components.md` 的一行散文覆盖 —— 删掉那行文档,
+    分支就零覆盖且 G11 照绿。借来的覆盖随时会被别人的编辑拿走。
+
+    合成 app 覆盖两种前缀来源混用 + 多层嵌套 + websocket。
+    """
+    from fastapi import APIRouter, FastAPI
+
+    inner = APIRouter(prefix="/inner")          # ① router 自带 prefix
+
+    @inner.get("/leaf")
+    def _leaf():  # pragma: no cover - 仅供路由表
+        return {}
+
+    @inner.websocket("/stream")
+    async def _stream(ws):  # pragma: no cover - 仅供路由表
+        ...
+
+    mid = APIRouter()
+    mid.include_router(inner, prefix="/i")      # ② include_router 的 prefix
+    outer = APIRouter(prefix="/m")
+    outer.include_router(mid, prefix="/mid")    # ③ 三层嵌套
+
+    tmp = FastAPI()
+    tmp.include_router(outer, prefix="/api/v1")
+
+    table = set(_expand_app_routes(tmp.routes))
+    assert ("GET", "/api/v1/m/mid/i/inner/leaf") in table, table
+    # WS 单列伪动词 —— 删掉展开器的 websocket 分支这条就红 (不再依赖某行文档)
+    assert ("WS", "/api/v1/m/mid/i/inner/stream") in table, table
+    # 与 openapi 交叉: 声明的 (动词,路径) 一条不能少 (前缀漏拼/双拼都会破这条)
+    spec = {(m.upper(), p) for p, ops in tmp.openapi().get("paths", {}).items()
+            for m in ops}
+    assert spec <= {(m, p) for m, p in table}, spec - {(m, p) for m, p in table}
 
 
 def test_g6_deleted_plan_routes_are_gone():
@@ -1166,13 +1270,11 @@ def test_g11_docs_cite_live_api_routes_full_domain():
     2026-08-02 落地时基线: 116 条死引用全部来自设计愿景文档 (豁免类),
     豁免后真死引用 2 条已修 (GEMINI 示例值 / implementation-roadmap 入豁免)。"""
     live_routes = [(m, p.replace("/api/v1", "", 1)) for m, p in _live_route_table()]
+    # websocket 路由已由 _expand_app_routes 以 "WS" 动词并进表 (内审 F3 的
+    # 两向洞在取数层一次消掉) —— 这里不再单独兜一遍: 原先那段从 app.routes
+    # 找 APIWebSocketRoute, 在 FastAPI 0.141 懒加载下**同样失效**, 留着就是
+    # 第二个会瞎的取数点 (2026-08-02)。
     live_shapes = [_g11_shape_segs(p) for _, p in live_routes]
-    # websocket 路由无 methods 不进 _live_route_table — shape 并入 (无动词),
-    # 免得文档如实引用 /ws/monitoring 或 road-test 流端点反而红 (内审 F3)。
-    from app.main import app as _app
-    for r in _app.routes:
-        if type(r).__name__ == "APIWebSocketRoute":
-            live_shapes.append(_g11_shape_segs(r.path.replace("/api/v1", "", 1)))
     live_verb_shapes = {(m, _g11_shape_segs(p)) for m, p in live_routes}
     dead = []
     for path in _live_doc_paths():

@@ -1,5 +1,13 @@
 # FastAPI and server
-fastapi>=0.115.0
+# 上界钉死 (2026-08-02): 0.141 起 include_router 改懒加载 (_IncludedRouter),
+# app.routes 不再展平 —— 一次静默升级当场打瞎 test_rule_gates 的路由取数,
+# G6/G8/G11 三门同时假红且归因错误。取数器已换成递归展开 + openapi 交叉自检
+# (见 _live_route_table), 0.141.1 实测全绿; 再放次版本前先跑规则门。
+# ⚠️ starlette 是传递依赖**未钉** (fastapi 0.141.1 只声明 starlette>=0.46.0,
+# 无上界), 而 Route/methods 这些路由模型字段在 starlette 里 —— 本行上界
+# **挡不住** starlette 单独跳版重演同类结构变更。那一侧的保护靠
+# _live_route_table 的集合包含自检 (会红并指出取数源失效), 不靠版本号。
+fastapi>=0.115.0,<0.142.0
 uvicorn[standard]>=0.34.0
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
