@@ -22,7 +22,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/port-guard.sh"
 # 检查端口占用
 OCCUPIED_PORTS=()
 OCCUPIED_SERVICES=()
-DOCKER_HELD_PORTS=()
 
 for i in "${!PORTS[@]}"; do
     PORT=${PORTS[$i]}
@@ -46,7 +45,7 @@ for i in "${!PORTS[@]}"; do
         echo "   杀它 = 杀整个 Docker daemon（见 scripts/lib/port-guard.sh）。"
         echo "   要腾出这个端口，先查是哪个容器再停它："
         echo "     docker ps --filter publish=$PORT --format '{{.Names}}'"
-        DOCKER_HELD_PORTS+=($PORT)
+        # 这里**不记标记** —— 最终提示的分类在收尾判定处当场重算 (原因见那里)
     fi
 
     if [ -n "$KILLABLE" ]; then
@@ -85,15 +84,23 @@ if [ ${#OCCUPIED_PORTS[@]} -gt 0 ]; then
             # 属于别的用户/root 时它会 EPERM 失败。不复验就报 ✅ 是假成功: 脚本
             # 一路往下走, 最后 npm run dev 撞 EADDRINUSE 才炸, 且看不出跟这里有关。
             sleep 0.5
-            REMAIN_OTHER=""
+            REMAIN_OTHER=""; REMAIN_DOCKER=""
             for R in $(listening_pids "$PORT"); do
-                is_docker_pid "$R" || REMAIN_OTHER="$REMAIN_OTHER $R"
+                if is_docker_pid "$R"; then
+                    REMAIN_DOCKER="$REMAIN_DOCKER $R"
+                else
+                    REMAIN_OTHER="$REMAIN_OTHER $R"
+                fi
             done
-            if [ -z "$REMAIN_OTHER" ]; then
-                echo "  ✅ 端口 $PORT 已清理"
-            else
+            # 三态, 别把"只剩容器"混进"已清理" —— 只剩容器时端口照样用不了
+            # (Docker 是双栈 socket), 报"已清理"是谎报, 下面收尾判定会立刻打脸。
+            if [ -n "$REMAIN_OTHER" ]; then
                 echo "  ❌ 端口 $PORT 清理失败，仍有监听者:$REMAIN_OTHER"
                 echo "     (kill 可能因权限不足失败; 试 sudo kill -9$REMAIN_OTHER)"
+            elif [ -n "$REMAIN_DOCKER" ]; then
+                echo "  ↳ 端口 $PORT 的 host 进程已清，但容器转发进程仍占着（需 docker stop）"
+            else
+                echo "  ✅ 端口 $PORT 已清理"
             fi
         done
         echo ""
@@ -119,9 +126,24 @@ fi
 #   Desktop 先自启容器、用户后跑本脚本 —— 这时 host 服务是真起不来的。
 # 所以: 让它在这里带着修复命令停下, 而不是放行后由 uvicorn/vite 抛 EADDRINUSE、
 #   埋在 concurrently 的交错日志里。**故障现象离原因十万八千里正是本脚本要治的病。**
+# ⚠️ 提示分类**在这里当场重新算**，不读初次扫描留下的标记 (Codex #268 R2)。
+#   竞态复现: 初次扫描时端口上只有普通进程 → 标记为空 → 用户答 y 的那几秒里
+#   Docker 接管了端口 → 清理循环认出并跳过它 → 但若最终提示读的是那个**旧标记**,
+#   就会走进"非容器占用……试 sudo"分支, **叫用户 sudo kill -9 掉 Docker 引擎的
+#   PID** —— 手动重演本 PR 要修的事故。判据必须跟被判定的对象同一时刻取。
 STILL_HELD=()
+STILL_DOCKER_PORTS=()
 for i in "${!PORTS[@]}"; do
-    [ -n "$(listening_pids "${PORTS[$i]}")" ] && STILL_HELD+=("${PORTS[$i]} (${SERVICE_NAMES[$i]})")
+    PORT=${PORTS[$i]}
+    PIDS=$(listening_pids "$PORT")
+    [ -n "$PIDS" ] || continue
+    STILL_HELD+=("$PORT (${SERVICE_NAMES[$i]})")
+    for P in $PIDS; do
+        if is_docker_pid "$P"; then
+            STILL_DOCKER_PORTS+=($PORT)
+            break            # 一个端口只登记一次
+        fi
+    done
 done
 
 if [ ${#STILL_HELD[@]} -gt 0 ]; then
@@ -129,16 +151,17 @@ if [ ${#STILL_HELD[@]} -gt 0 ]; then
     echo "❌ 清理后这些端口仍有人监听，本次启动会撞 EADDRINUSE，先停下："
     for HELD in "${STILL_HELD[@]}"; do echo "     - $HELD"; done
     echo ""
-    if [ ${#DOCKER_HELD_PORTS[@]} -gt 0 ]; then
-        echo "   其中 ${DOCKER_HELD_PORTS[*]} 是容器发布的（本脚本故意不 kill —— 杀它 = 杀 Docker 引擎）。"
+    if [ ${#STILL_DOCKER_PORTS[@]} -gt 0 ]; then
+        echo "   其中 ${STILL_DOCKER_PORTS[*]} 是容器发布的（本脚本故意不 kill —— 杀它 = 杀 Docker 引擎）。"
         echo "   查出容器并停掉："
-        for P in "${DOCKER_HELD_PORTS[@]}"; do
+        for P in "${STILL_DOCKER_PORTS[@]}"; do
             echo "     docker ps --filter publish=$P --format '{{.Names}}'   # → docker stop <容器名>"
         done
         echo "   注：compose 的 api 服务已挪进 'full' profile，默认不再随 up 自启；"
         echo "       若它还在跑：cd api-service && docker compose stop api"
-    else
-        echo "   非容器占用 —— kill 可能因权限不足失败，试 sudo，或手动停掉占用进程。"
+    fi
+    if [ ${#STILL_DOCKER_PORTS[@]} -lt ${#STILL_HELD[@]} ]; then
+        echo "   非容器占用的那些：kill 可能因权限不足失败，试 sudo，或手动停掉占用进程。"
     fi
     exit 1
 fi
