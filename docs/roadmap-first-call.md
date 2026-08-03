@@ -13,7 +13,7 @@ blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 �
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-02 二批本地队列已拍板排序（用户明示"只排好优先级，先不忙开工"——待开工指令）**：
-**~~P1-25~~ ✅ → P1-26 → P1-27 → P1-28 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧；P1-28 为 2026-08-02 用户新增 backlog 当日拍板插入）。**当前队首 = P1-26**（P1-25 已于 2026-08-02 收口）。一句话索引：
+**~~P1-25~~ ✅ → P1-26 → P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧；P1-28 为 2026-08-02 用户新增 backlog 当日拍板插入）。**当前队首 = P1-26**（P1-25 已于 2026-08-02 收口）。一句话索引：
 - **P1-25** GUI 主控台"系统状态"面板恒空修复 + api.ts 手写镜像同尺审计
 - **P1-26** GUI 改频同步 component_carriers（执行侧错频收口）
 - **P1-27** P1-8 校准门拒 mock cert（provenance + real 模式 strict 拒）
@@ -21,8 +21,9 @@ blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 �
 - **P2-22** F64 disconnect 冷缓存判 GOS 换真值源（涉 SCPI 查 NotebookLM）
 - **P2-23** 会话资产 is_active 预检 + measure resolver 同病排查
 - **P2-24** 测试用例契约补 lab_profile_id（契约四步）
-- **P3-18** 门/测试精化批（G11 三覆盖面 / p08 零残留站点 / PDF 转义收口 / 诊断序列串行化）
-- **P3-19** 日志/告警/留痕卫生批（tail 上限 / app.log 噪声 / 校准 warnings 持久化+清理警告可见 / UXM 两组 P3）
+- **P1-29** `/dashboard/alerts/summary` 被 `/alerts/{alert_id}` 遮蔽 → 驾驶舱告警计数条恒坏（一行声明顺序 + 配遮蔽门）
+- **P3-18** 门/测试精化批（G11 三覆盖面 / p08 零残留站点 / PDF 转义收口 / 诊断序列串行化 / **手写类型审计尺子改逐层递归**）
+- **P3-19** 日志/告警/留痕卫生批（tail 上限 / app.log 噪声 / 校准 warnings 持久化+清理警告可见 / UXM 两组 P3 / **四个说谎死类型删死链** / **`is_docker_pid` 改 allowlist**）
 
 **2026-08-01 拍板的本地队列 10/10 全部收口**（P1-22 ✅ #256 / P1-23 ✅ #257 / P2-19 ✅ #258 / P2-20 ✅ #259 / P1-24 ✅ #260 / P2-21 ✅ #261 / P3-14 ✅ #262 / P3-15 ✅ #263 / P3-16 ✅ #264 / P3-17 ✅ done 本 PR）。**当前无本地 in-progress 片；P0 队列全部 on-site-blocked（见 Blocked on hardware 表），下次现场即回队首。** 原顺序备查 **P1-22 → P1-23 → P2-19 → P2-20 → P1-24 → P2-21 → P3-14 → P3-15 → P3-16 → P3-17**
 （逐片 WIP=1；P1-24/P2-21 为 2026-08-01 用户二次拍板从 Discovered 提升，插在 P3 批前）。一句话索引（详情见各 P 区条目）：
@@ -185,7 +186,7 @@ P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max /
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → P1-26 → P1-27 → P1-28 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列；**队首现为 P1-26**，P1-25 已收口；一批 10 片已全收 #256–#265）|
+| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → P1-26 → P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列；**队首现为 P1-26**，P1-25 已收口；一批 10 片已全收 #256–#265）|
 | **ON-SITE-BLOCKED** | P0-5 (P0-3/4 已 2026-07-03 现场完成) + P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -1327,6 +1328,14 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 
 ---
 
+### P1-29 — `/dashboard/alerts/summary` 被路由遮蔽（驾驶舱告警计数条恒坏）⬜（2026-08-03 拍板，待开工）
+
+**What**: `api-service/app/api/alert.py` 里 `@router.get("/alerts/{alert_id}")` 声明在 `@router.get("/alerts/summary")` **之前**，FastAPI 按声明顺序匹配 → `summary` 被当成 `alert_id` 解析 → `uuid_parsing` **422，该端点不可达**。
+**Why P1**: 有**活消费者**且用户可见 —— 驾驶舱 `gui/src/features/Dashboard/ZoneLogsAlerts.tsx` 每 **10 秒**轮询 `fetchAlertSummary`，所以「按 severity 的告警计数条」恒坏；同时每 10 秒往 app.log 灌一条 422 + 一条 DB rollback（app.log 已 16MB，与 P3-19 的噪声治理同源但那是卫生批、这是功能坏了）。修法是**挪一行声明顺序**。
+**实证（两份独立）**: ① `curl -s localhost:8000/api/v1/dashboard/alerts/summary` → `{"detail":[{"type":"uuid_parsing","loc":["path","alert_id"],"input":"summary"}]}`；② GUI 实时日志面板每几秒刷一条 `GET /api/v1/dashboard/alerts/summary → 422`，栈里明写 `alert.py line 102, in get_alert`。
+**旁证**: `gui/src/api/mockServer.ts` 自己有注释「summary registered before /alerts so the exact-string summary route isn't shadowed by the list route」—— **mock 侧作者意识到了这个坑并规避了，真后端没有**。
+**配门**: 字面量段不得被同级 path 参数遮蔽（可做成 G12 不变量门：对每个含 `{param}` 的路由，检查同前缀下是否存在声明在其**之后**的字面量兄弟路由）。**来源**: P1-25 全量审计。
+
 ## 🟡 P2 — Abstraction debt
 
 ### P2-1 — UXM two-layer architecture: Test App + Topology Profile ✅ Done
@@ -2059,8 +2068,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 | P3-15 | 数据/测试卫生批 | ✅ 本 PR — ①`test_feature_gaps` SQLite 隔离（实证跑前后 dev 库计划数不变）②2 flaky triage=**已被 #211 护栏修好**（受害测试自带 `.disabled` 复位 fixture，恶意排序复现失败，Discovered 行系 stale）③vendor_file 顶层声明 vs scd_config 一致性 fail-loud（create/update 双侧、最终状态判、2 变异红）④僵尸 triage：来源已断 + 存量 1201 计划/~2700 子行走 `scripts/cleanup_zombie_test_plans.py`（dry-run 默认，删除须操作员 `--execute`——批量删库不自动执行）|
 | P3-16 | 门 G-B：状态列注释 ⊇ 全仓状态字面量 | ✅ 本 PR — 落地为 test_rule_gates **G10**：真值源 = live import `TestExecution.__table__.columns['status'].comment`；写点识别双判据（`TestExecution(status=…)` 构造 + `execution/ex/test_execution` 变量属性赋值，2026-08-01 全仓 AST 普查定的；conn/session 等别的 status 域不误伤、动态值写点不归字面量门管——宁漏报不误伤）；checker 行为自测 + 变异实跑红（写入 'exploded' → 红） |
 | P3-17 | 门 G-C：文档 (动词,路径,参数,响应键) ⊇ 真实实现 | ✅ 本 PR — 落地为 test_rule_gates **G11** 双半：①散文半 = 现状文档**全 API 面** (动词,路径) ⊆ 路由表（G8 只锁计划链域；实值段通配匹配器防误杀示例；设计愿景文档/跨服务路由显式豁免并申报）②契约半 = checked-in openapi.yaml (路径,动词,参数名,2xx 响应键) ⊆ live schema —— 参数/响应键维度的机械落点（散文书写形态不可机械解析，实施时定的收窄）。首跑即抓 3 条 yaml 说谎（dashboard camelCase 三键 / category 包层 / 选择 profile 的 PUT 挂错路径）+ 2 条散文死引用，全修；openapi:generate 重生成 + GUI build 绿；双变异实跑红 |
-| P3-18 | 门/测试精化批（G11 三覆盖面 in=location/curl 动词/schema 类型 + p08 零残留站点参数化 + PDF 渲染管道其余转义入口 + 诊断序列 run endpoint 串行化）——2026-08-02 拍板，各配变异 | ⬜ |
-| P3-19 | 日志/告警/留痕卫生批（tail 反向扫描字节上限 + app.log 噪声治理/执行失败告警通道 + 校准 warnings DB 持久化 + 借用 acquire 的清理失败警告可见 + UXM 终止符大小写 + UXM ARFCN 三条加固）——2026-08-02 拍板 | ⬜ |
+| P3-18 | 门/测试精化批（G11 三覆盖面 in=location/curl 动词/schema 类型 + p08 零残留站点参数化 + PDF 渲染管道其余转义入口 + 诊断序列 run endpoint 串行化 + 手写类型审计尺子改逐层递归比对）——2026-08-02 拍板，各配变异 | ⬜ |
+| P3-19 | 日志/告警/留痕卫生批（tail 反向扫描字节上限 + app.log 噪声治理/执行失败告警通道 + 校准 warnings DB 持久化 + 借用 acquire 的清理失败警告可见 + UXM 终止符大小写 + UXM ARFCN 三条加固 + 四个说谎死类型删死链 + `is_docker_pid` 改 allowlist）——2026-08-02 拍板 | ⬜ |
 
 ---
 
@@ -2082,9 +2091,9 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 > Items added mid-task. Reviewed weekly; promoted to P1/P2/P3 or dropped.
 
-- `[discovered 2026-08-02 during P1-25 全量审计]` **`/api/v1/dashboard/alerts/summary` 被 `/alerts/{alert_id}` 抢先匹配 → 该端点不可达 (恒 422)** —— `api-service/app/api/alert.py` 里 `@router.get("/alerts/{alert_id}")` 声明在 `@router.get("/alerts/summary")` **之前**，FastAPI 按声明顺序匹配，`summary` 被当成 `alert_id` 解析 → `uuid_parsing` 422。**两份独立实证**：① curl 直打返回 `{"detail":[{"type":"uuid_parsing","loc":["path","alert_id"],"input":"summary"}]}`；② GUI 实时日志面板每几秒刷一条 `GET /api/v1/dashboard/alerts/summary → 422`，栈里明写 `alert.py line 102, in get_alert`。修法 = 把字面量路由挪到参数化路由**之前**（FastAPI 惯例），并配一条"字面量段不得被同级 path 参数遮蔽"的门。前端 `DashboardAlertSummary` 类型没错，是端点从来没通过。
-- `[discovered 2026-08-02 during P1-25 全量审计]` **四个手写 *Response 形态错，但对应 fetch 函数零消费** —— `TestCasesResponse` 声明 `cases` / `TestTemplatesResponse` 声明 `templates` / `ReportTemplatesResponse` 声明 `reportTemplates` / `DashboardResponse` 声明 camelCase 三键 `systemStatus`+`activeAlerts`+`liveMetrics`；而 live `/test-plans/cases` 返回 `{items,total}`、`/reports/templates` 返回 `{templates,total,page,page_size}`、`/dashboard` 返回 snake 四键 `{summary,live_metrics,active_alerts,recent_tests}`。**当前不炸**是因为四个 fetch 全仓零调用点（`fetchTestCases` 只有一行 import 未调用；`fetchDashboard` 随 P1-25 删掉面板后也悬空）—— 即四个死函数配四个说谎类型。⚠️ **修的时候注意嵌套层**：P1-25 曾试着改 `DashboardResponse`，把 `recent_tests` 声明成 `RecentTest{id,name,dut,result,date}`（那是 `/test-executions/recent` 的形状），而 live 元素其实是 `{id,plan_name,status,executed_at,duration_minutes}`（= `api.generated.ts` 的 `RecentTestItem`）—— **修一层谎又造一层谎**，已撤回。正解优先 = 删死链（函数+类型+mock handler），其次才是逐层对齐 live。
-- `[discovered 2026-08-02 during P1-25 内审 F5]` **手写类型审计的尺子只看一层，"12 组 OK"不可信** —— P1-25 用"手写类型顶层键 ⊆ live 响应顶层键"过了 18 组，判 12 组 OK。内审实证至少一组是假绿：`MonitoringFeedsResponse` 顶层 `feeds` 对得上所以判 OK，但元素 live 是 `{name,value:number,unit,timestamp}` 而手写 `MetricItem` 是 `{label,value:string,trend?,id?}` —— **键名不同、值类型不同**；今天不炸只因消费点 `App.tsx` 的 `metricFeeds` 只写不读（eslint 有 unused 告警为旁证）。尺子的盲区：① 嵌套元素形态 ② 值类型 ③ 可选/null 语义 ④ 数组 vs 分页信封 ⑤ 只过了响应没过请求体 ⑥ 单向 ⊆ 只抓缺不抓多。正解 = 逐层键集合 + 值类型对 live JSON 递归比对（一次性脚本即可，不必进仓）。
+- `[discovered 2026-08-02 during P1-25 全量审计]` **[→ 提升 P1-29 (2026-08-03)]** **`/api/v1/dashboard/alerts/summary` 被 `/alerts/{alert_id}` 抢先匹配 → 该端点不可达 (恒 422)** —— `api-service/app/api/alert.py` 里 `@router.get("/alerts/{alert_id}")` 声明在 `@router.get("/alerts/summary")` **之前**，FastAPI 按声明顺序匹配，`summary` 被当成 `alert_id` 解析 → `uuid_parsing` 422。**两份独立实证**：① curl 直打返回 `{"detail":[{"type":"uuid_parsing","loc":["path","alert_id"],"input":"summary"}]}`；② GUI 实时日志面板每几秒刷一条 `GET /api/v1/dashboard/alerts/summary → 422`，栈里明写 `alert.py line 102, in get_alert`。修法 = 把字面量路由挪到参数化路由**之前**（FastAPI 惯例），并配一条"字面量段不得被同级 path 参数遮蔽"的门。前端 `DashboardAlertSummary` 类型没错，是端点从来没通过。
+- `[discovered 2026-08-02 during P1-25 全量审计]` **[→ 提升 P3-19 (2026-08-03)]** **四个手写 *Response 形态错，但对应 fetch 函数零消费** —— `TestCasesResponse` 声明 `cases` / `TestTemplatesResponse` 声明 `templates` / `ReportTemplatesResponse` 声明 `reportTemplates` / `DashboardResponse` 声明 camelCase 三键 `systemStatus`+`activeAlerts`+`liveMetrics`；而 live `/test-plans/cases` 返回 `{items,total}`、`/reports/templates` 返回 `{templates,total,page,page_size}`、`/dashboard` 返回 snake 四键 `{summary,live_metrics,active_alerts,recent_tests}`。**当前不炸**是因为四个 fetch 全仓零调用点（`fetchTestCases` 只有一行 import 未调用；`fetchDashboard` 随 P1-25 删掉面板后也悬空）—— 即四个死函数配四个说谎类型。⚠️ **修的时候注意嵌套层**：P1-25 曾试着改 `DashboardResponse`，把 `recent_tests` 声明成 `RecentTest{id,name,dut,result,date}`（那是 `/test-executions/recent` 的形状），而 live 元素其实是 `{id,plan_name,status,executed_at,duration_minutes}`（= `api.generated.ts` 的 `RecentTestItem`）—— **修一层谎又造一层谎**，已撤回。正解优先 = 删死链（函数+类型+mock handler），其次才是逐层对齐 live。
+- `[discovered 2026-08-02 during P1-25 内审 F5]` **[→ 提升 P3-18 (2026-08-03)]** **手写类型审计的尺子只看一层，"12 组 OK"不可信** —— P1-25 用"手写类型顶层键 ⊆ live 响应顶层键"过了 18 组，判 12 组 OK。内审实证至少一组是假绿：`MonitoringFeedsResponse` 顶层 `feeds` 对得上所以判 OK，但元素 live 是 `{name,value:number,unit,timestamp}` 而手写 `MetricItem` 是 `{label,value:string,trend?,id?}` —— **键名不同、值类型不同**；今天不炸只因消费点 `App.tsx` 的 `metricFeeds` 只写不读（eslint 有 unused 告警为旁证）。尺子的盲区：① 嵌套元素形态 ② 值类型 ③ 可选/null 语义 ④ 数组 vs 分页信封 ⑤ 只过了响应没过请求体 ⑥ 单向 ⊆ 只抓缺不抓多。正解 = 逐层键集合 + 值类型对 live JSON 递归比对（一次性脚本即可，不必进仓）。
 - `[discovered 2026-08-02 during P1-25 内审 F2]` **前端若要判"真驱动还是 mock"，权威源是 `is_mock_driver()` 不是名字前缀** —— `/instruments/hal/readiness` 每行的 `status` 对 mock 驱动同样是 `ok`（实测 5/5 全 ok），能区分的只有自由文本 `detail`（实际驱动类名）。而后端权威判据是 `app/services/instrument_hal_service.py` 的 `is_mock_driver()` → `isinstance(driver, _MOCK_DRIVER_CLASSES)`（**类 allowlist**）；`api/instrument.py` 里那个 `type(driver).__name__.startswith("Mock")` 是**副本不是真值源**。前端按 `detail` 前缀嗅探在 `detail` 缺省/空串/类改名时会**静默倒向 real**（代价高的那侧），跟 #268 的 `is_docker_pid` denylist 同一形态。真要在前端区分，正解 = 后端在 readiness 行上显式暴露 `is_mock: bool`（由 `is_mock_driver()` 产出），前端换源；在此之前**不要**用名字前缀猜。
 - `[discovered 2026-08-02 during P1-25]` **"操作员手选真/模拟执行"开关从未接线** —— `handleExecutionPreferenceChange` 塞进了 payload（`onExecutionModeChange`），但 `<Monitoring/>` 的 props 里**根本没接**，且 `preferMockExecution` 初值 `true` → `executionMode` 恒 `'mock'`，`hardwareOnline` 取什么值都观察不到（P1-25 实证：对它做变异连红都红不了）。**P1-25 后的现状（接手前先读这句）**：整条死机器（`hardwareOnline` / `preferMockExecution` / 强制回落 useEffect / `handleExecutionPreferenceChange`）已按"去掉>换源"删除，`executionMode` 现在是**字面常量 `'mock'`**（`gui/src/App.tsx`），行为与删除前逐位一致 —— 演示回放那两个徽章恒显示「模拟执行」。
 
@@ -2093,7 +2102,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 要恢复手选能力是**独立功能**：得先把开关控件真正接到 `<Monitoring/>`（当前 props 里没有这个口），再决定"硬件不在线时禁止选 real"的策略，以及这个徽章到底该描述"演示回放模式"还是"全系统执行模式"—— 措辞和位置一起定。
 
 - `[discovered 2026-08-02 during dev:safe:all 启动失败排查]` **[✅ 已修，本片]** **`safe-start.sh` / `cleanup-ports.sh` 的端口清理会把 Docker 引擎自己 `kill -9`** —— macOS 上容器发布端口在 host 一侧的监听者是 `com.docker.backend`（引擎本体），不是容器；`meta3d-api` 容器（compose 默认自启）占住 8000 → 脚本杀 8000 → 引擎当场死（`com.docker.backend.log` "monitor exited: signal: killed"）→ 下一步 `db-up.sh` 报 "Cannot connect to the Docker daemon"，而那时端口上已经没人了，**现象跟端口看起来毫无关系**。修法：守门判据下沉 `scripts/lib/port-guard.sh`（两脚本同源）+ compose 的 `api` 挪进 `full` profile 拆掉 8000 争抢。顺带修掉两个 pre-existing 过杀：取数没限 `-iTCP -sTCP:LISTEN` 会把**连到**该端口的客户端（实测：开着 GUI 的 Chrome tab）和同号 UDP 进程一起 `kill -9`；端口↔服务标签 6 处全把 8000/8001 标反了。
-- `[discovered 2026-08-02 during 上条内审 F4]` **`is_docker_pid` 是 denylist，默认动作是"杀"，只覆盖 macOS/Linux 三种形态** —— 判据 = `ps -o comm=` 含 `com.docker` / `docker-proxy` / `rootlesskit`。**未覆盖且失效是静默的**（直接回到"杀"）：colima/lima 用 host 上的 `ssh -L` 做转发（拿 ssh 当判据会误杀用户自己的 ssh，宁可漏判也没加）、OrbStack / Rancher Desktop 的 helper 进程名无环境实证（不猜）。彻底解法 = 反过来做 **allowlist**：只杀 comm 命中 `python|node|uvicorn|vite` 这类自家 dev 进程，其余一律不杀 —— 让"没见过的进程"落到**不杀**（代价 = 端口没腾出来 + 一条提示）而不是**杀**（代价 = 别人的引擎/网络栈全死）那一侧，且不必逐个厂商枚举。独立小片。
+- `[discovered 2026-08-02 during 上条内审 F4]` **[→ 提升 P3-19 (2026-08-03)]** **`is_docker_pid` 是 denylist，默认动作是"杀"，只覆盖 macOS/Linux 三种形态** —— 判据 = `ps -o comm=` 含 `com.docker` / `docker-proxy` / `rootlesskit`。**未覆盖且失效是静默的**（直接回到"杀"）：colima/lima 用 host 上的 `ssh -L` 做转发（拿 ssh 当判据会误杀用户自己的 ssh，宁可漏判也没加）、OrbStack / Rancher Desktop 的 helper 进程名无环境实证（不猜）。彻底解法 = 反过来做 **allowlist**：只杀 comm 命中 `python|node|uvicorn|vite` 这类自家 dev 进程，其余一律不杀 —— 让"没见过的进程"落到**不杀**（代价 = 端口没腾出来 + 一条提示）而不是**杀**（代价 = 别人的引擎/网络栈全死）那一侧，且不必逐个厂商枚举。独立小片。
 
 - `[discovered 2026-08-01 during P1-23, Codex #257]` **[→ 提升 P1-24 (2026-08-01)]** **写 `propsim_f64_p08_gate` 诊断序列（P0-8a 唯一合法载体，已列协议 §2 出发前硬门槛）** —— 现有 `propsim_f64_state_machine`（前提 .smu 已载、只做 GO/STATIC/GOS）与 `propsim_f64_health`（只读探测、`get_metrics` 恒判成功）都覆盖不了 P0-8a。序列要求：①手册有据 + 生产驱动在用的命令（涉 F64 SCPI，动手前查 NotebookLM PROPSIM notebook）②**前置激活 UXM 满 RB DL**（CE↔BS 协调，无信号 `INP:LEV:MEAS?` 返 -300）③每步后读错误队列 ④电平按合法范围真判定（不是恒成功）⑤**含 bypass 态电平窗口复验**（架构文档 P0-8 硬约束）⑥**含输入参考 AUTOSET 闭环**（`INP:LEV:AUTOSET` 设 avg+crest → 读回 clipping/cut-off 迭代收敛，只读判范围会假绿，Codex #257 R3）⑦mock 跑通列入出发前门槛。代码活，独立小片。⚠️ 本行是第二次登记 —— 前两次 python replace 因 #255 提升标记改变锚文本**静默未命中**（我未 assert 命中数，#256/#257 的 PR body 里"已留痕"陈述当时为假，本次补欠并如实更正）。⚠ 要求②的"返 -300"后经手册查证为哨兵语义不实（-300 是队列里的设备错误码非查询返回值，P1-24 落地时纠错，见正式条目）。
 - `[discovered 2026-08-01 during P1-24 内审 F4]` **[→ 提升 P3-18 (2026-08-02)]** **p08 门序列 8 个零残留站点仅 3 个有会红的行为测试**（衰落态测量后 / 中止后 / 旁路态首站间接）—— 变异删其余任一 residue 调用（加载后/AUTOSET 后/GO 后/改参后/进旁路后/退旁路后），泄漏错误被下一个生产原子的 drain 吞掉、19 测全绿。完善形态 = fake 泄漏注入点参数化逐站点打；本片按「枚举进 backlog」只收窄了已有测试的断言锚定。
