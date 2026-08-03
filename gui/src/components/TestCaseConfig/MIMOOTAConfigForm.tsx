@@ -214,10 +214,15 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
    *   3.5e9，而 CC[0] 还是旧值 → UXM/F64 按 CC[0] 跑，而 `.asc` 波形合成、路损校准查表、
    *   探头方向图增益、reference 全按顶层跑，且一致性网的参考就是 CC[0] → **四方分叉零告警**。
    *
-   * 改频时**顺带删掉 CC[0].band**：band 是"没人维护的残留"，而频率是操作员刚显式改的。
-   *   留着旧 band 会让驱动收到「N78 + 带外 ARFCN」这种自相矛盾的载波
-   *   (`uxm_base_station.py` 只在 `"band" not in config` 时才按频率推断，显式 band 会
-   *   压过推断)。删掉后驱动按新频重推，与 bootstrap 种子的 `band=null` 形态一致。
+   * **`band` 一律不动**（本片一度改成"改频顺带删 band"，被 Codex #271 P1 否掉并撤回）：
+   *   删 band 是想让驱动按新频重推，但**前端没有资格做这个判断** ——
+   *   `FREQ_TO_BAND_MAP`（`uxm_base_station.py`）只覆盖 7 个区间，**未命中就硬回落
+   *   `("N78","TDD")`**，而且这张表 per-lab 可被 `InstrumentCategory.config` 覆盖。
+   *   实例：N3 载波（下行 1805–1880，表里那条 1710–1785 是 N3 **上行**）改个频率 →
+   *   band 被删 → 推断回落 N78/TDD → **频段与双工模式一起错，且静默**。
+   *   保留 band 时，跨频段改频会得到「旧 band + 新 ARFCN」，由仪器拒绝——响亮好过静默。
+   *   代价不对称，所以选保留。把这张表复制进 GUI 只会多一个会漂的镜像站点。
+   *   正解（已记 backlog）：后端在 validator 层校 band↔frequency，或表单暴露 band 选择。
    */
   const updateCarrierField = (
     key: 'frequency_hz' | 'bandwidth_mhz' | 'subcarrier_spacing_khz',
@@ -231,12 +236,10 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
       return
     }
     const [pcell, ...scells] = ccs
-    const nextPcell: Record<string, unknown> = { ...pcell, [key]: next }
-    if (key === 'frequency_hz') delete nextPcell.band
     onChange({
       ...value,
       [key]: next,
-      component_carriers: [nextPcell, ...scells] as typeof ccs,
+      component_carriers: [{ ...pcell, [key]: next }, ...scells],
     })
   }
 

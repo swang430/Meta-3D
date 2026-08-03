@@ -1312,19 +1312,23 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 
 ### P1-26 — GUI 改频同步 component_carriers（**GUI 写侧**收口）✅（2026-08-03 完成）
 
-**What**: factory `model_dump` 落库自带 CC，validator 在 CC 非空时忽略顶层频率（measure 权威 = CC[0]），而 GUI `MIMOOTAConfigForm` 只写顶层 → 顶层与 CC[0] 漂移时执行按旧 PCell 跑。P3-14 已让显示与执行同源（CC[0] 优先），本片修执行侧写路径：GUI 写侧同步 CC[0] 或 PATCH 时 drop CC 重构造（实现期定）。**来源**: Codex #262 R1（[→ P1-26] 已标）。
+**What**: factory `model_dump` 落库自带 CC，validator 在 CC 非空时忽略顶层频率（measure 权威 = CC[0]），而 GUI `MIMOOTAConfigForm` 只写顶层 → 顶层与 CC[0] 漂移时执行按旧 PCell 跑。P3-14 已让显示与执行同源（CC[0] 优先），本片修 **GUI 写侧**（二选一里选了「写侧同步 CC[0]」，未选「PATCH 时 drop CC 重构造」—— 后者会静默抹掉真 CA 用例的 SCell）。**来源**: Codex #262 R1（[→ P1-26] 已标）。
 **Why P1**: "用户以为改了新频、硬件跑旧频"是现场误导级；P2-11 一致性门兜不住"CC[0] 旧频恰与 SCD 一致"的形态。
 
 **链条实证（全部打在真实生效端，非推断）**：GUI `TestCaseEditModal` 把 `configuration` **整包**读进来（含 CC）→ `MIMOOTAConfigForm` 的频率框绑的是**顶层** `frequency_hz`，CC 不在编辑器中暴露 → 提交整包回传（CC 原样带旧频）→ 服务层 `setattr(test_case, 'configuration', value)` **整体替换**不合并 → schema `_resolve_component_carriers()` 在 CC 非空时**只归一化 role，从不拿顶层校 CC[0]** → `measure.py` 取 `component_carriers[0]` 当 PCell 下发。
 
 **可达性（我数错过两次，最终判据是机制不是计数）**：① 初次抽查 8 个用例得"8/8 已落库" —— 那批全是执行快照，错；② 改按"名字含执行/Session"分类得"可编辑 17 个中 14 个" —— **仍错**，那 14 个是 `created_by='test_case_runner'` 的执行快照，GUI 根本打不开（内审 F1 纠正）。③ **正确判据**：GUI 用例库硬编码只列模板（`TestCaseLibrary.tsx` 的 `listTestCases(0, 500, filterType, true)`），本机 **28 个模板 / 12 个 MIMO，带 CC 的 0 个** —— 所以**本机当前 GUI 路径不可达**。但缺陷本身可达且会随新部署出现：bootstrap 种子经 `legacy_to_mimo_ota_config` → `MIMOOTAConfiguration(...).model_dump()` 落库，**新部署的模板自带 CC**；本机模板是 Phase 2g 之前种下的存量（种子按名幂等跳过、不回补）。
 
-**落地**：新增 `updateCarrierField(key, next)`，频率 / 带宽 / 子载波间隔三个框写顶层的**同时**同步 PCell = `component_carriers[0]`。值形态四种分别处理：`undefined`/`null`/`[]` → **不凭空造 CC**，只写顶层交给后端 validator 构造；`[pcell]` → 两者一起改；`[pcell, ...scells]` → **只改 pcell**（SCell 是独立载波）。`next` 非有效数字（清空输入框）时**不动 CC**（CC 那三个字段后端必填，写 undefined 会 422）。
+**落地**：新增 `updateCarrierField(key, next)`，频率 / 带宽 / 子载波间隔三个框写顶层的**同时**同步 PCell = `component_carriers[0]`。值形态四种分别处理：`undefined`/`null`/`[]` → **不凭空造 CC**，只写顶层交给后端 validator 构造；`[pcell]` → 两者一起改；`[pcell, ...scells]` → **只改 pcell**（SCell 是独立载波）。`next` 非有效数字（清空输入框）时**两边都不写、模型保持原值**（内审 F2 纠正：早先写的「会 422」是**假的** —— `TestCaseUpdate.configuration` 是 `Dict[str, Any]`、`update_test_case` 是 `setattr` 整体替换，**全链零校验**，实测掉键返回 **200**；顶层键一丢就落到 schema 默认 3.5e9 与 CC[0] 分叉，而 `.asc` 合成 / 路损查表 / 方向图增益 / reference 按顶层、UXM·F64 按 CC[0]、一致性网参考又正是 CC[0] → **四方分叉零告警**）。
+
+**`band` 一律不动**：本片一度改成「改频顺带删 band」让驱动按新频重推，**被 Codex #271 P1 否掉并撤回** —— `FREQ_TO_BAND_MAP` 只覆盖 7 个区间且**未命中硬回落 `("N78","TDD")`**，且该表 per-lab 可被 `InstrumentCategory.config` 覆盖，**前端没有资格判断推断能不能成功**。详见 Discovered 同日条。
 
 **验证**：编译门 `npm run build` ✓。**运行门 = 用户在真实 GUI 里操作**，完整步骤（**第 1 步是承重的，早先漏写导致按原文不可复现**，内审 F1 纠正）：
 1. **先用 API 给模板 `one shot` (cad57d35) 注入 CC**（本机模板原本 `CC=null`，不注入的话点了也只会走"CC 为空"的早退分支，读库根本没有 CC[0] 这一项）：`PATCH configuration` 设 `frequency_hz=3.5e9` + `component_carriers=[{frequency_hz:3.5e9, bandwidth_mhz:100, subcarrier_spacing_khz:30, role:'pcell'}]`；
 2. GUI：测试管理 → 用例库 → `one shot` → 编辑 → 中心频率 3500 → **3600** → 保存；
 3. 读库：`顶层=3600000000 / CC[0]=3600000000` **同步** ✅。
+
+用户第二次点击（`CC[0]` 带 `band:"n78"`，3500→3400）同样确认同步、且 `role`/`scs`/`bw` 未被误动 ✅。⚠️ 那一轮跑的是**撤回前**的代码（当时会删 band，实测 band 确实消失）；`band` 删除已被 Codex #271 P1 否掉撤回，**现版本保持 band 不变、未重跑**，如实申报。另：`next` 无效时的早退分支（纯 `return`，不触发 `onChange`）也只过了编译门与代码审阅。
 
 **对照**：用旧代码实际产生的 payload 形态（`{...value, frequency_hz: next}`，CC 一字不动）复现 → `顶层=3700000000 / CC[0]=3600000000`，**漂移 100 MHz** 🔴。实验用例事后逐字段还原（`逐字段一致=True`）。
 
@@ -2103,6 +2107,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 ## 🗂️ Discovered during X — triage backlog
 
 > Items added mid-task. Reviewed weekly; promoted to P1/P2/P3 or dropped.
+
+- `[discovered 2026-08-03 during P1-26, Codex #271 P1]` **跨频段改频后 `CC[0].band` 与新频不符 —— 但 GUI 不该自己删 band** —— P1-26 让频率框同步 `CC[0].frequency_hz`；操作员若跨频段改频，`CC[0].band` 会留成旧值（`uxm_base_station.py` 只在 `"band" not in config` 时才按频率推断，显式 band 压过推断）。本片一度改成「改频顺带删 band」让驱动重推，**被 Codex P1 否掉并撤回**：`FREQ_TO_BAND_MAP` 只有 7 个区间且**未命中硬回落 `("N78","TDD")`**，而这张表 per-lab 可被 `InstrumentCategory.config` 覆盖 —— **前端没有资格判断「推断能不能成功」**。实例：N3 载波（下行 1805–1880；表里那条 1710–1785 是 N3 **上行**）改个频率 → 删 band → 回落 N78/TDD → **频段与双工一起错且静默**；保留 band 时跨频段改频得到「旧 band + 新 ARFCN」，由仪器拒绝 —— **响亮好过静默**，代价不对称。正解 = 后端在 validator 层校 `band ↔ frequency`（表在后端、可被 lab 覆盖，判断也该在那里），或表单暴露 band 选择让操作员显式改。⚠️ **不要把 `FREQ_TO_BAND_MAP` 复制进 GUI** —— 那是又一个会漂的镜像站点。
 
 - `[discovered 2026-08-03 during P1-26 内审 F4]` **顶层 `frequency_hz` 与 `component_carriers[0]` 分叉时执行侧零告警 —— 权威收敛点仍允许写入分叉** —— P1-26 只收了 **GUI 写侧**一条路；裸 `PATCH /test-plans/cases/{id}` 的 `configuration` 是 `Dict[str, Any]`、`update_test_case` 是 `setattr` 整体替换，**全链零校验**（内审实跑：写入 `顶层=3.6e9 / CC[0]=3.5e9` 返回 **200**）。而两边**都是活跃消费源**：UXM 小区 / SCell / F64 中心频 / 一致性网参考取 **CC[0]**，而 `.asc` 波形合成（`measure.py` 的 `sim_rules["frequency_hz"]=config.frequency_hz`）、路损校准查表、探头方向图增益、`reference.py` 取**顶层** → 分叉时四方各按各的跑，且一致性网的参考就是 CC[0]，**一句告警都没有**。同一个 dict 里 `center_frequency_mhz` 已被 Codex #193 换源到 pcell 并写了注释，**`frequency_hz` 那行是漏掉的孪生行**。修法 = 顶层取数统一换源到 `pcell.frequency_hz`（`measure.py` 四处 + `reference.py` 两处同批评估），或在 validator/PATCH 层拒绝分叉 fail-loud。**独立小片**（P1-26 的后续）。
 - `[discovered 2026-08-03 during P1-26 内审 F5]` **`MIMOOTAConfigForm` 显示端读顶层，与执行/列表（CC[0]）不同源** —— 频率/带宽/SCS 三个输入框的 `value=` 都取顶层。任何由上一条路径造出的 `top≠CC[0]` 行，操作员打开编辑器看到顶层值、列表与硬件是 CC[0] 值，**不做任何编辑动作**就得到 P1-26 要治的同一种误导。修法 = 显示端按 `CC[0] > 顶层`，与 `schemas/test_plan.py` 的 `_freq_bw_from_configuration` 同一取值顺序。与上一条同批（一个写侧收敛、一个读侧同源）。
