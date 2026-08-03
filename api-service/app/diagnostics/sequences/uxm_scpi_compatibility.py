@@ -118,6 +118,12 @@ _ACTION_NEIGHBOR_QUERY: Dict[str, Optional[str]] = {
     "RST":  "IDN",
     "MEAS_BTHROUGHPUT_DL_START": "MEAS_BTHROUGHPUT_DL_JSON",
     "MEAS_BTHROUGHPUT_DL_STOP":  "MEAS_BTHROUGHPUT_DL_JSON",
+    # ⚠ 手册标 "Immediate Action / No query: True" —— 不列在这里的话
+    #   _to_probe_command 会给它补 `?` 发出 `...:CLEar?`, 必然 undefined
+    #   header + 烧一次 VISA 超时 + 记成假 UNSUPPORTED（禁盲试违例）。
+    "MEAS_BTHROUGHPUT_CLEAR":     "MEAS_TPUT_DL_OTA",
+    "MEAS_BTHROUGHPUT_STATE":     "MEAS_TPUT_DL_OTA",
+    "MEAS_UE_REPORT_STATE":       "MEAS_UE_REPORT_JSON",
     "MEAS_CSI_START":            "MEAS_CSI_CQI",
     "MEAS_CSI_STOP":             "MEAS_CSI_CQI",
     "MEAS_EVM_START":            "MEAS_BTHROUGHPUT_DL_JSON",
@@ -136,7 +142,18 @@ _CRITICAL_NAMES = frozenset({
     "PDSCH_MCS", "PDSCH_SCHED_ALGO", "PDSCH_AMC_ENABLE",
     "TDD_PATTERN", "TDD_PERIOD",
     "HARQ_MAX_TRANS", "HARQ_PROCESSES",
-    "MEAS_BTHROUGHPUT_DL_JSON", "MEAS_BTHROUGHPUT_DL_BLER",
+    "MEAS_BTHROUGHPUT_DL_JSON",
+    # 2026-08-03: KPI 回读整批换命令后, critical 清单同步。
+    # ⚠ 移除 MEAS_BTHROUGHPUT_DL_BLER —— 它在 IRAT profile 上已置 None
+    #   (那条是 Early Pass/Fail 状态机不是 BLER), 留在清单里会被
+    #   _collect_commands 的 isinstance(value, str) 静默过滤掉,
+    #   而总结仍按 len(_CRITICAL_NAMES) 报 "All N critical commands
+    #   supported" —— 报一个**从没探测过**的命令为已支持。
+    # 新增下面这批 = 吞吐量/BLER/CSI/UE 报告的真值源, 现场必须逐条对账。
+    "MEAS_TPUT_DL_OTA", "MEAS_TPUT_UL_OTA",
+    "MEAS_BLER_DL", "MEAS_BLER_UL",
+    "MEAS_CSI_CQI", "MEAS_CSI_RI",
+    "MEAS_UE_REPORT_JSON",
 })
 
 
@@ -495,14 +512,33 @@ async def run(
     if critical_unsupported:
         log(f"  ✗ CRITICAL UNSUPPORTED: {sorted(critical_unsupported)}")
 
-    success = (not critical_unsupported) and (not aborted_early)
+    # ⚠ Codex #275 P2: critical 清单里的命令若在**本方言上是 None**,
+    # _all_commands() 会按"这个 Test App 不暴露该命令"的契约把它过滤掉 ——
+    # 于是它既没被探测、也不算 critical_unsupported, 总结却报 success。
+    # 那是**假的全绿**: 报一个从没探过的命令为已支持。
+    # 未定义 ≠ 已验证不支持, 必须单独报出来并让整轮不成功。
+    critical_undefined = sorted(
+        name for name in _CRITICAL_NAMES
+        if not isinstance(getattr(profile, name, None), str)
+    )
+    if critical_undefined:
+        log(
+            f"  ✗ CRITICAL 未在方言 {profile.PROFILE_NAME} 中定义 "
+            f"(既没探测也没结论): {critical_undefined}"
+        )
+
+    success = (
+        (not critical_unsupported)
+        and (not critical_undefined)
+        and (not aborted_early)
+    )
     if aborted_early:
         summary = (
             f"ABORTED: {_MAX_CONSECUTIVE_TIMEOUTS} consecutive VISA timeouts on "
             f"profile {profile.PROFILE_NAME}. Last probed: {last_probed}. "
             f"SCPI session is stuck — POST /api/v1/instruments/hal/reload and retry."
         )
-    elif not critical_unsupported:
+    elif not critical_unsupported and not critical_undefined:
         summary = (
             f"All {len(_CRITICAL_NAMES)} critical SCPI commands supported on "
             f"profile {profile.PROFILE_NAME} "
@@ -510,11 +546,25 @@ async def run(
             f"{counts.get('SUPPORTED_BUT_STATE', 0)} state errors — both OK)"
         )
     else:
-        summary = (
-            f"BLOCKER: {len(critical_unsupported)} critical SCPI command(s) "
-            f"unsupported on profile {profile.PROFILE_NAME}. Driver needs vendor "
-            f"aliases for: {sorted(critical_unsupported)}"
-        )
+        # ⚠ Codex #275 R2 P2: 上一轮我只把 critical_undefined 接进了 success,
+        # 忘了 summary —— success=False 而总结仍写 "All N critical supported",
+        # **自相矛盾**; 报告体里两个字段互相打架比单纯报错更难查。
+        # ⚠ 两种情况**可以同时成立**(5G 方言上就是), 所以一起报而不是二选一 ——
+        #   分支排他会让先命中的那种把另一种从总结里挤掉。
+        parts = []
+        if critical_unsupported:
+            parts.append(
+                f"{len(critical_unsupported)} 条 critical 命令在方言 "
+                f"{profile.PROFILE_NAME} 上**实测不支持**, 需要厂商别名: "
+                f"{sorted(critical_unsupported)}"
+            )
+        if critical_undefined:
+            parts.append(
+                f"{len(critical_undefined)} 条 critical 命令**未在方言 "
+                f"{profile.PROFILE_NAME} 中定义** —— 既没探测也没结论, "
+                f"不能当作已支持: {critical_undefined}"
+            )
+        summary = "BLOCKER: " + "; ".join(parts)
 
     return SequenceRunResult(
         success=success,

@@ -116,10 +116,39 @@ class UxmTestApp:
     CONFIG_APPLY: Optional[str] = None
 
     # --- Throughput measurement ---
+    # ⚠ MEAS_BTHROUGHPUT_DL_START / _STOP: 手册的 SCPI 命令树里**没有**
+    #   `BTHRoughput:DL:TSTatistics:STARt|STOP` 这两条 (2026-08-03 NotebookLM
+    #   查证)。累积由全局 MEAS_BTHROUGHPUT_STATE 控制、MEAS_BTHROUGHPUT_CLEAR
+    #   清零。新方言**不要**再填这两个字段。
     MEAS_BTHROUGHPUT_DL_START: Optional[str] = None
     MEAS_BTHROUGHPUT_DL_STOP: Optional[str] = None
+    # ⚠ MEAS_BTHROUGHPUT_DL_JSON 是 **DL 重传统计 (HARQ ACK/NACK/StatDTX 按
+    #   传输次序)**, 手册名 "DL Retransmission Stats Query (JSON)" ——
+    #   **不是吞吐量**。命令路径里的 BTHRoughput 只是命令树分支名。
+    #   读吞吐量一律用 MEAS_TPUT_DL_OTA。(2026-08-03: 我们曾拿它当吞吐量解析,
+    #   真机 22,787 条回复全被读成 0.0)
     MEAS_BTHROUGHPUT_DL_JSON: Optional[str] = None
+    # ⚠ MEAS_BTHROUGHPUT_DL_BLER 指的是 `BLER:STATistical` = **Early Pass/Fail
+    #   算法状态机** (返回 state,result,errors,samples 四元组, 真机实测
+    #   "IDLE,UNKN,0,0"), **不是 BLER 数值**。读 BLER 用 MEAS_BLER_DL。
     MEAS_BTHROUGHPUT_DL_BLER: Optional[str] = None
+
+    # --- Throughput / BLER 真值回读 (2026-08-03 按手册补齐) ---
+    # 全局累积开关 + 清零 (不带 cell —— 手册明确是技术层全局设置)
+    MEAS_BTHROUGHPUT_STATE: Optional[str] = None
+    MEAS_BTHROUGHPUT_CLEAR: Optional[str] = None
+    # OTA 吞吐量: 6 doubles
+    #   {progress-count, current, min, max, average, current-scheduled}, 单位 bps
+    MEAS_TPUT_DL_OTA: Optional[str] = None
+    MEAS_TPUT_UL_OTA: Optional[str] = None
+    # DL BLER: 10 doubles {progress, ack-count, ack-ratio, nack-count, nack-ratio,
+    #   statdtx-count, statdtx-ratio, pdschBlerCount, pdschBlerRatio, pdschTputRatio}
+    MEAS_BLER_DL: Optional[str] = None
+    # UL BLER: 6 doubles {progress, ack-count, ack-ratio, nack-count, nack-ratio}
+    MEAS_BLER_UL: Optional[str] = None
+    # UE L3 测量报告 (RSRP / RSRQ / SINR 的真值源) —— 需先开 REPORT_STATE
+    MEAS_UE_REPORT_STATE: Optional[str] = None
+    MEAS_UE_REPORT_JSON: Optional[str] = None
 
     # --- UE capability / RRC reconfig ---
     UE_CAPABILITY_QUERY: Optional[str] = None
@@ -149,6 +178,10 @@ class UxmTestApp:
     MEAS_CSI_RI: Optional[str] = None
 
     # --- UE Measurement Report (RSRP / SINR) ---
+    # ⚠ `UEReport:RSRP|SINR:STATistics?` **手册里没有这两条命令** (2026-08-03
+    #   NotebookLM 查证)。真机上各发过 1 次、零回音, 之后再没发过。
+    #   UE 上报的 RSRP/RSRQ/SINR 真值源是 MEAS_UE_REPORT_JSON (L3 RRC 测量报告)。
+    #   这两个字段保留只为不破坏既有方言, **新代码不要读它们**。
     MEAS_UE_RSRP: Optional[str] = None
     MEAS_UE_SINR: Optional[str] = None
 
@@ -360,7 +393,52 @@ class UxmLteNrIratProfile(UxmTestApp):
     # 不跟 *OPC?, 生效确认靠 CELL_STATUS_QUERY 轮询。
     CONFIG_APPLY = "BSE:CONFig:NR5G:APPLY"
 
+    # === KPI 回读 (2026-08-03 全部按手册重写; 之前 8 个字段没一个是真的) ===
+    #
+    # 背景: 本 profile 原来只覆盖了下面这条 DL JSON, CQI/RI/RSRP/SINR/UL 全部
+    # 继承基类的**无前缀**形式。而 IRAT Test App 的命令**全部根在 BSE: 下** ——
+    # 所以那几条一发就是 undefined header, 真机日志里各发 1 次、零回音, 而
+    # get_throughput_metrics() 每个字段都是 except: pass, 一句话都不报。
+    #
+    # ⚠ 这条是 **DL 重传统计**, 不是吞吐量 —— 保留是因为重传统计本身有用
+    # (HARQ 质量), 但**不再当吞吐量读**。真机 22,787 条回复形如
+    # `{"CellIndex":0,"ProgressCount":1000,"Tx1Info":{"Counts":{"Ack":1240,...`
     MEAS_BTHROUGHPUT_DL_JSON = "BSE:MEASure:NR5G:{cell}:BTHRoughput:DL:TSTatistics:JSON?"
+    # ⚠ 手册无此命令 —— 显式置 None, 让驱动跳过而不是盲发。
+    MEAS_BTHROUGHPUT_DL_START = None
+    MEAS_BTHROUGHPUT_DL_STOP = None
+    # ⚠ `BLER:STATistical` 是 Early Pass/Fail 状态机 (真机实测 "IDLE,UNKN,0,0"),
+    #   不是 BLER 数值。置 None, BLER 走 MEAS_BLER_DL。
+    MEAS_BTHROUGHPUT_DL_BLER = None
+    MEAS_TPUT_UL_JSON = None      # 手册无 UL:TSTatistics; UL 吞吐量走 MEAS_TPUT_UL_OTA
+    MEAS_TPUT_UL_BLER = None
+    MEAS_UE_RSRP = None           # 手册无 UEReport:*:STATistics
+    MEAS_UE_SINR = None
+
+    # 全局累积开关 / 清零 (手册: 技术层全局, 不带 cell)
+    MEAS_BTHROUGHPUT_STATE = "BSE:MEASure:NR5G:BTHRoughput:STATe"
+    MEAS_BTHROUGHPUT_CLEAR = "BSE:MEASure:NR5G:BTHRoughput:CLEar"
+    # OTA 吞吐量 — 6 doubles {progress, current, min, max, average, current-scheduled}
+    # 单位 **bps** (GUI 显示 Mbps, SCPI 层是 bps)
+    MEAS_TPUT_DL_OTA = "BSE:MEASure:NR5G:BTHRoughput:DL:THRoughput:OTA:{cell}?"
+    MEAS_TPUT_UL_OTA = "BSE:MEASure:NR5G:BTHRoughput:UL:THRoughput:OTA:{cell}?"
+    # DL BLER — 10 doubles, 取 idx8 = pdschBlerRatio
+    MEAS_BLER_DL = "BSE:MEASure:NR5G:BTHRoughput:DL:BLER:{cell}?"
+    # UL BLER — 6 doubles, 取 idx4 = nack-ratio
+    MEAS_BLER_UL = "BSE:MEASure:NR5G:BTHRoughput:UL:BLER:{cell}?"
+    # CSI (CQI/RI) — 命令本身原来就对, 缺的是 BSE: 前缀与 STARt 前置
+    MEAS_CSI_START = "BSE:MEASure:NR5G:{cell}:CSI:STARt"
+    MEAS_CSI_STOP = "BSE:MEASure:NR5G:{cell}:CSI:STOP"
+    # 6 doubles {count, min, max, average, median, ...} — 取 idx3 = average
+    # ⚠ idx0 是**样本数**不是 CQI。真机回过 7.92E+04 (79200 个样本),
+    #   我们曾把它当 CQI 值上报。
+    MEAS_CSI_CQI = "BSE:MEASure:NR5G:{cell}:CSI:CQI:STATistics?"
+    # 8 doubles = RI **0..7** 各自的累计次数 (直方图)
+    # ⚠ 下标即 RI 值, 加权时权重用 i 不是 (i+1)。
+    MEAS_CSI_RI = "BSE:MEASure:NR5G:{cell}:CSI:RI:HISTogram?"
+    # UE L3 测量报告 (RSRP/RSRQ/SINR 真值源) — 需先把队列开关打开
+    MEAS_UE_REPORT_STATE = "BSE:CONFig:MEASurement:REPort"
+    MEAS_UE_REPORT_JSON = "BSE:CONFig:NR5G:{cell}:MEASurement:JSON:REPort:FETCh?"
 
     # === IRAT-extras (not in 5G_NR_Test app) ===
     # PROPSIM channel emulator integration commands

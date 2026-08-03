@@ -241,7 +241,12 @@ _SILENT_SWALLOW_BASELINE = {
     "propsim_fs16.py": {"_parse_sys_info": 2, "_silent_reconnect_visa": 1},
     "rf_switch.py": {"disconnect": 2},
     "uxm_base_station.py": {
-        "_silent_reconnect_visa": 1, "get_throughput_metrics": 8,
+        # get_throughput_metrics 原有 8 处裸 pass —— 每个 KPI 字段一处
+        # "解析失败就静默用默认值"。2026-08-03 那批解析全部按手册重写
+        # (命令、下标、单位、NaN 哨兵都是错的), 8 处静默吞异常一并消除:
+        # 现在读不到就记 warning + 在 measurement.log 里标 kpi_valid=false,
+        # 不再让"没读到"冒充"测出来是 0"。基线 8 → 0 锁住进度。
+        "_silent_reconnect_visa": 1,
     },
 }
 

@@ -678,11 +678,49 @@ class TestUxmScpiCompatibilitySequence:
         )
         assert resp.status_code == 200
         body = resp.json()
-        assert body["success"] is True
-        assert "critical" in body["summary"]
+        # 固件对**已定义**的命令全部回 clean → 零 UNSUPPORTED
+        assert body["extra"]["counts"]["UNSUPPORTED"] == 0
         # With include_supported=False and zero unsupported, steps stay empty.
         assert body["steps"] == []
-        assert body["extra"]["counts"]["UNSUPPORTED"] == 0
+        # ⚠ 2026-08-03 (Codex #275 P2): 本用例跑在 **5G_NR_Test 方言**上
+        # (探测命令是 `CONFig:NR5G:CELL0:BAND?` —— 无前缀 + CELL0)。
+        # KPI 回读整批换命令后, MEAS_TPUT_* / MEAS_BLER_* / MEAS_UE_REPORT_JSON
+        # 这批 critical 命令在该方言里**尚未定义**(手册只给了 BSE: 变体,
+        # 无前缀形式没有依据, 按禁盲试不猜)。
+        # 未定义 ≠ 已验证支持 —— 以前它们被 _all_commands() 静默过滤掉、
+        # 总结照报 success, 那是**假的全绿**。现在必须报不成功。
+        assert body["success"] is False
+        assert "未定义" in body["summary"] or "critical" in body["summary"]
+
+    def test_critical_undefined_in_profile_is_not_reported_green(
+        self, lab_with_bs, monkeypatch
+    ):
+        """⭐ critical 清单里在本方言为 None 的命令必须**报出来并致不成功**。
+
+        `_all_commands()` 按"该 Test App 不暴露此命令"的契约过滤掉 None ——
+        于是这类命令既没被探测、也不算 critical_unsupported，而总结却按
+        `len(_CRITICAL_NAMES)` 报"全部 critical 已支持"：**报一个从没探过的
+        命令为已支持**。现场拿它当验收就会得到假绿。
+
+        变异：把 success 的 `and (not critical_undefined)` 去掉 → 红。
+        """
+        from app.diagnostics.sequences import uxm_scpi_compatibility as seq
+        from app.hal.uxm_command_profiles import Uxm5GNRTestAppProfile
+
+        undefined = [n for n in seq._CRITICAL_NAMES
+                     if not isinstance(getattr(Uxm5GNRTestAppProfile, n, None), str)]
+        assert undefined, "本用例前提：5G 方言里确实有 critical 命令未定义"
+
+        bs = self._build_bs(lambda cmd: '0,"No error"')
+        _patched_hal(monkeypatch, drivers={"baseStation": bs})
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/uxm_scpi_compatibility/run",
+            json={"lab_profile_id": str(lab_with_bs.id)},
+        )
+        body = resp.json()
+        assert body["success"] is False, (
+            f"{len(undefined)} 条 critical 命令在方言里未定义却报了 success"
+        )
 
     def test_critical_unsupported_fails_with_blocker(self, lab_with_bs, monkeypatch):
         broken = "CONFig:NR5G:CELL0:BAND?"  # _to_probe_command(CELL_BAND)
@@ -719,8 +757,12 @@ class TestUxmScpiCompatibilitySequence:
             json={"lab_profile_id": str(lab_with_bs.id)},
         )
         body = resp.json()
-        assert body["success"] is True
+        # 本用例的题眼：-220 归到 SUPPORTED_BUT_STATE，不算 blocker
         assert body["extra"]["counts"]["SUPPORTED_BUT_STATE"] > 0
+        assert body["extra"]["counts"]["UNSUPPORTED"] == 0
+        # ⚠ success 在 5G 方言上恒 False（critical KPI 命令未定义），
+        # 与本用例要验的"-220 不是 blocker"无关 —— 见
+        # test_critical_undefined_in_profile_is_not_reported_green。
         assert body["extra"]["counts"]["UNSUPPORTED"] == 0
 
     def test_fails_clean_when_no_driver_loaded(self, lab_with_bs, monkeypatch):
