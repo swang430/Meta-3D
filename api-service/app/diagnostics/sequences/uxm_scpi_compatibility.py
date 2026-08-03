@@ -512,7 +512,26 @@ async def run(
     if critical_unsupported:
         log(f"  ✗ CRITICAL UNSUPPORTED: {sorted(critical_unsupported)}")
 
-    success = (not critical_unsupported) and (not aborted_early)
+    # ⚠ Codex #275 P2: critical 清单里的命令若在**本方言上是 None**,
+    # _all_commands() 会按"这个 Test App 不暴露该命令"的契约把它过滤掉 ——
+    # 于是它既没被探测、也不算 critical_unsupported, 总结却报 success。
+    # 那是**假的全绿**: 报一个从没探过的命令为已支持。
+    # 未定义 ≠ 已验证不支持, 必须单独报出来并让整轮不成功。
+    critical_undefined = sorted(
+        name for name in _CRITICAL_NAMES
+        if not isinstance(getattr(profile, name, None), str)
+    )
+    if critical_undefined:
+        log(
+            f"  ✗ CRITICAL 未在方言 {profile.PROFILE_NAME} 中定义 "
+            f"(既没探测也没结论): {critical_undefined}"
+        )
+
+    success = (
+        (not critical_unsupported)
+        and (not critical_undefined)
+        and (not aborted_early)
+    )
     if aborted_early:
         summary = (
             f"ABORTED: {_MAX_CONSECUTIVE_TIMEOUTS} consecutive VISA timeouts on "

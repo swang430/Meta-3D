@@ -1562,6 +1562,42 @@ class RealUxmDriver(BaseStationDriver):
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"[UXM] 打开{what}失败: {e} — 该组 KPI 可能读不到")
 
+    #: 本方言必须定义、否则 KPI 整组读不到的命令名
+    _KPI_COMMAND_NAMES = (
+        "MEAS_TPUT_DL_OTA", "MEAS_TPUT_UL_OTA",
+        "MEAS_BLER_DL", "MEAS_BLER_UL",
+        "MEAS_CSI_CQI", "MEAS_CSI_RI", "MEAS_UE_REPORT_JSON",
+    )
+
+    def _warn_once_if_profile_has_no_kpi_commands(self) -> None:
+        """方言没定义 KPI 命令时**响亮地**说一次, 而不是静默读出一堆默认值。
+
+        ⚠ 2026-08-03 Codex #275 P1: KPI 回读整批换命令后, 只给现场在用的
+        `UxmLteNrIratProfile` 填了新命令名; `Uxm5GNRTestAppProfile`
+        (connect 时按 live app 名自动选中, 没有配置兜底) 继承的是基类的
+        `None` → 新 reader **逐条跳过 → 整组 KPI 读不到**。
+
+        **不擅自给它编命令形式**(禁盲试): 手册给的两个变体都带 `BSE:` 前缀,
+        5G_NR_Test 方言的无前缀形式没有手册依据, 猜一个填进去就是盲试。
+        所以这里只保证**它是响的不是哑的** —— 真值待现场用
+        `uxm_scpi_compatibility` 普查后按实测补。
+        """
+        if getattr(self, "_kpi_cmd_warned", False):
+            return
+        self._kpi_cmd_warned = True
+        missing = [n for n in self._KPI_COMMAND_NAMES
+                   if not getattr(self._cmds, n, None)]
+        if not missing:
+            return
+        logger.warning(
+            "[UXM] 方言 %s 未定义 %d/%d 条 KPI 命令 %s —— 这几组 KPI 本轮"
+            "**读不到**(会填默认值并在 measurement.log 标 kpi_valid=false)。"
+            "补齐前请先跑 uxm_scpi_compatibility 普查确认真机支持的形式, "
+            "不要凭猜填 (禁盲试)。",
+            getattr(self._cmds, "PROFILE_NAME", "?"),
+            len(missing), len(self._KPI_COMMAND_NAMES), missing,
+        )
+
     @staticmethod
     def _parse_ue_measurement_report(raw: str):
         """从 L3 RRC 测量报告 JSON 里取 (RSRP, SINR)。
@@ -2148,6 +2184,7 @@ class RealUxmDriver(BaseStationDriver):
         """
         cell = self._cell_id
         metrics = ThroughputMetrics()
+        self._warn_once_if_profile_has_no_kpi_commands()
         # 哪些字段这一轮真的拿到了数 —— 进 measurement.log, 让读日志的人
         # 能分辨"测出来是 0"和"根本没测到"(P1-30 同一个母题)。
         valid: Dict[str, bool] = {}
