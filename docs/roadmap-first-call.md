@@ -13,9 +13,10 @@ blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 �
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-02 二批本地队列已拍板排序（用户明示"只排好优先级，先不忙开工"——待开工指令）**：
-**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧；P1-28 为 2026-08-02 用户新增 backlog 当日拍板插入）。**当前队首 = P1-27**（P1-25 / P1-26 已分别于 2026-08-02 / 08-03 收口）。一句话索引：
+**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧；P1-28 为 2026-08-02 用户新增 backlog 当日拍板插入；**P1-30 为 2026-08-03 用户指定插队"把日志提上来先完成"**）。**当前队首 = P1-27**（P1-25 / P1-26 / P1-30 已分别于 2026-08-02 / 08-03 / 08-03 收口）。一句话索引：
 - **P1-25** GUI 主控台"系统状态"面板恒空修复 + api.ts 手写镜像同尺审计
 - **P1-26** GUI 改频同步 component_carriers（**GUI 写侧**收口；后端收敛点与显示端同源另立片）
+- **P1-30** SCPI 往返日志的证据能力（截断显式化 + OK/ERR 配对 + `instrument_id` 收窄）
 - **P1-27** P1-8 校准门拒 mock cert（provenance + real 模式 strict 拒）
 - **P1-28** 「当前暗室」双真值源收口（active chamber vs active lab 绑定暗室）
 - **P2-22** F64 disconnect 冷缓存判 GOS 换真值源（涉 SCPI 查 NotebookLM）
@@ -186,7 +187,7 @@ P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max /
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列；**队首现为 P1-27**，P1-25 / P1-26 已收口；一批 10 片已全收 #256–#265）|
+| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列 + 08-03 用户指定 P1-30 插队；**队首现为 P1-27**，P1-25 / P1-26 / P1-30 已收口；一批 10 片已全收 #256–#265）|
 | **ON-SITE-BLOCKED** | P0-5 (P0-3/4 已 2026-07-03 现场完成) + P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -1353,6 +1354,37 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 **旁证**: `gui/src/api/mockServer.ts` 自己有注释「summary registered before /alerts so the exact-string summary route isn't shadowed by the list route」—— **mock 侧作者意识到了这个坑并规避了，真后端没有**。
 **配门**: 字面量段不得被同级 path 参数遮蔽（可做成 G12 不变量门：对每个含 `{param}` 的路由，检查同前缀下是否存在声明在其**之后**的字面量兄弟路由）。**来源**: P1-25 全量审计。
 
+---
+
+### P1-30 — SCPI 往返日志的证据能力（log 撑不起调试复现）✅（2026-08-03 完成）
+
+**What**: 现场调试人员打开 `scpi.log`，看不出一次仪器往返实际发生了什么。三处收口，动 3 个生产文件（`app/hal/base.py` + `app/core/logging_config.py` + `app/config.py`）：
+- **截断显式化** —— `[:200]` 静默截断 → 上限放宽到 **2000**（`app/config.py` 的 Settings 项 `log_scpi_resp_max`，`.env` 里写 `LOG_SCPI_RESP_MAX=200` 可调回），超限时消息体附 `…[truncated 2000/3412]`，且 `resp_len` **永远记截断前的真实长度**。⚠️ 旋钮**刻意不用 `os.getenv`** —— 本项目的 `.env` 由 pydantic-settings 直接读进 Settings 对象、**不注入 `os.environ`**（实证：import `app.config` 前后 `os.environ` 里都没有 `DATABASE_URL`），用 `os.getenv` 会让 `.env` 里配的值被静默忽略、旋钮形同虚设。这条由变异 M9 守着。
+- **往返配对** —— TX 行只表示"打算发"；新增 `OK`（写命令完成 + 耗时）/ `ERR`（异常类型 + 耗时，**异常原样重抛，控制流零变化**）。sync 与 async 两条路径都覆盖（异常在 `await` 时刻才抛，外层 try 拦不住 —— 这是最易漏的一半）。RX 行补 `duration_ms`。
+- **`instrument_id` 收窄** —— `ContextFilter` 的 contextvar 只做兜底，不再覆盖调用方 `extra=` 显式给出的值。
+
+**Why P1（实测，口径写在括号里）**: 全部 31 个 `scpi.log*` 里 `hal_mode=real` 的 RX 共 **171,170** 条 ——
+| 现象 | 条数 | 占 real RX |
+|---|---|---|
+| 长度**恰好 200**（= 被截断） | **22,914** | 13.4% |
+| 长度 0（`RX:` 后空白） | **60,565** | 35.4% |
+
+**RX 的最大长度就是 200** → 日志里**从未出现过任何一条长响应的全貌**。被砍最多的是 `BSE:MEASure:NR5G:CELL1:BTHRoughput:DL:TSTatistics:JSON?`（**22,608** 条，= 下行吞吐量统计，**项目的核心测量数据**），另有 `SYST:INFO?` 140 / `BSE:STATus?` 136 / `SYSTem:ERRor?` 1（**错误队列自己被砍了**）。
+
+**查询发出后日志里没有下文**：**90,585** 条（口径：`hal_mode=real` 的含 `?` 的 TX 共 261,755，RX 共 171,170，差值即无下文）。
+
+⚠️ **谓词一（别归因）**：只能说"有去无回" —— 是超时、异常、还是 coroutine 从未 await，**日志本身没记所以判断不了**；**不得**把这个数说成"失败了 9 万次"。
+⚠️ **谓词二（别按相邻行数）**：早先按"TX 之后紧接着不是 RX"数得 110,185，**偏高 21.6%，已作废** —— TX 记在 `_scpi_lock` **之外**，并发（broadcaster 1 Hz × 32+ 查询与测量序列并行）与嵌套（F64 超时后在同一命令窗口内排水，每条 `SYST:ERR?` 各产生一对 TX/RX）都会打断相邻性。**配对要按 `query` 字段，不能按行序**。内审 F3 抓出。
+⚠️ **谓词三（别说本片修好了）**：本片让"仪器回了空串"（有 RX 行 + `resp_len:0` + 耗时）与"有去无回"（没有 RX 行）分开了，但**"被上层取消"与"coroutine 从未 await"仍是同一种签名** —— `CancelledError` 继承 `BaseException`，`except Exception` 抓不到（内审 F4 实跑：`asyncio.wait_for(driver._query(...), 0.05)` 超时后 scpi.log 里**只有 TX、没有 ERR**）。要覆盖须改 `except BaseException` + 裸 raise，**已进 backlog，本片没做**。
+
+**`instrument_id` 在全部 759,894 行 SCPI 日志里恒为 `-`（100%）**：驱动传了 `extra={"instrument_id": ...}`，`ContextFilter.filter()` 随后**无条件重写**成 contextvar 默认值（SCPI 路径上无人 set 过它）。仪器身份只在 logger 名里侥幸留存 —— 标称端 vs 生效端同母题。
+
+**门与实证**: 数字与口径以设计稿 [§5](design/P1-30-scpi-log-evidence.md) 为准，**本条不重复列**（P1-25/#268/#269 连栽四次的就是"两处各记一份、改一处漏一处"）。要点：门在 `api-service/tests/test_scpi_log_evidence.py`，配套变异脚本逐条实跑过；**其中 4 条变异是内审 agent 自己造出来、我原来的门没兜住的**（上限常量写死成字面量 → 旋钮当场死掉；8 处耗时全换成 `0.0` → 恒真断言测不出），已补门。
+
+**明确不做，已进 backlog**: 约 **160–175 处** `except` 吞异常不记日志（**这个数不要当精确值用** —— 三个略有差异的粗筛口径分别得 162 / 165 / 175，`pass` 计数 38–51 不等；要用它定范围就先跑 Discovered 条里那段脚本，内审 F11 抓出）；`app.log` 78.4% 是 `Cache updated`/`Cache expired` 一对 DEBUG 心跳（各 52,650 次 / 共 134,362 行）→ P3-19；`logs/` 3.5 GB / 253 文件 → P3-19；驱动层"空回复 vs not-ready"语义判定（`propsim_f64.py` 把两者合并成 `None` 且不进 `query_errors`，实测 60,565 条空回复）→ 需查 NotebookLM 的独立片。
+
+**设计稿**: [`docs/design/P1-30-scpi-log-evidence.md`](design/P1-30-scpi-log-evidence.md)
+
 ## 🟡 P2 — Abstraction debt
 
 ### P2-1 — UXM two-layer architecture: Test App + Topology Profile ✅ Done
@@ -2114,20 +2146,46 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-03 during P1-26 内审 F5]` **`MIMOOTAConfigForm` 显示端读顶层，与执行/列表（CC[0]）不同源** —— 频率/带宽/SCS 三个输入框的 `value=` 都取顶层。任何由上一条路径造出的 `top≠CC[0]` 行，操作员打开编辑器看到顶层值、列表与硬件是 CC[0] 值，**不做任何编辑动作**就得到 P1-26 要治的同一种误导。修法 = 显示端按 `CC[0] > 顶层`，与 `schemas/test_plan.py` 的 `_freq_bw_from_configuration` 同一取值顺序。与上一条同批（一个写侧收敛、一个读侧同源）。
 - `[discovered 2026-08-03 during P1-26 内审 F6]` **P1-26 的三个同步站点无会红的门** —— 频率/带宽/SCS 三个 `onChange` 全靠人肉挂 `updateCarrierField`，把其中一行改回 `update(` → `npm run build` 绿、后端全量绿、**无人发现**。GUI 无单测基建（无 vitest/jest、`src` 下零 `*.test.*`），但**Python 侧已有扫这个文件的先例**：`api-service/tests/test_rule_gates.py` 的 G5/G7 就在读 `gui/src/**.tsx`，`tests/test_cdl_model_parser.py` 把本表单的 `CDL_OPTIONS` 钉住 —— 所以**不必引入新依赖**。修法 = 不变量档断言"频率/带宽/SCS 三个 onChange 站点必须走 `updateCarrierField`"，并配"改回 `update(` 会红"的变异实跑。归 P3-18（门/测试精化批）。
 
-- `[discovered 2026-08-03 用户提出]` **日志能力复查 —— 现在的 log 大量是"示意式"的，撑不起调试复现** —— 用户原话：「从 log 层面能够复现，或者说给测试调试人员提供你自己在调试时的线索；而现在 log 中大量的内容是示意式的（**并不清楚是不是事实，也不清楚是不是完整，还有可能有些内容没有打印到 log**）」。
+- `[discovered 2026-08-03 用户提出]` **[→ 提升 P1-30，SCPI 往返部分已 ✅ 完成；其余仍 open]** **日志能力复查 —— 现在的 log 大量是"示意式"的，撑不起调试复现** —— 用户原话：「从 log 层面能够复现，或者说给测试调试人员提供你自己在调试时的线索；而现在 log 中大量的内容是示意式的（**并不清楚是不是事实，也不清楚是不是完整，还有可能有些内容没有打印到 log**）」。
 
   **要治的三个病（用户的三分法，逐条给已查证的实例）**：
   1. **不知是不是事实** —— log 写的是"意图/描述"而非"实际发生了什么 + 实际值"。`_log_scpi_write()`（`app/hal/base.py`）只记 `TX: {cmd}`，**没有配对的"这条写成功了吗 / 耗时多少 / 仪器错误队列干净吗"**；读者看到 TX 只能推断"程序打算发这条"，推断不出"仪器收到并接受了"。同类形态见 memory `feedback_effective_end_not_nominal`（标称端 vs 生效端）。
   2. **不知是不是完整** —— `_log_scpi_response()` 硬截断 `response.strip()[:200]` 且**不加任何截断标记**。200 字符以内和被砍掉一半在 log 里长得一模一样，读者无从判断。`SYST:INFO?` / 多通道回读这类长响应正是最需要看全的。
   3. **有内容根本没打** —— 需要逐条排查哪些关键分支静默（异常被吞、early return、fallback 走了没记）。
 
-  **体量已经在淹没线索**（同一目录实测）：`app.log` **31 MB**、`db.log` 21 MB、`measurement.log` 9 MB、`audit.log` 4.7 MB，而真正的仪器往返 `scpi.log` 只有 307 KB。信噪比倒挂。
+  **体量已经在淹没线索**（同一目录实测）：`app.log` **31 MB**、`db.log` 21 MB、`measurement.log` 9 MB、`audit.log` 4.7 MB，而真正的仪器往返 `scpi.log` **当日文件**只有 307 KB。信噪比倒挂。
+  （⚠️ 2026-08-03 P1-30 复核补正：307 KB 是**当日单文件**；31 个轮转文件**合计 179 MB**，
+  别把这两个数当同一口径比 —— 上面那几个 MB 数也都是单文件。）
 
   **今晚的反面实证**：排查 `dev:safe:all` 启动失败时，真正定位靠的是 **Docker 自己的** `com.docker.backend.log`（"monitor exited: signal: killed" + 时间戳对齐），项目 log 零线索；而本轮所有关键验证（`lsof` 命中集、IPv4/IPv6 双栈 bind 冲突、`component_carriers` 漂移）**都无法从 log 复现**，全靠临时 curl / python 探针 —— 这些正是"调试人员需要而 log 给不出"的东西。
 
   **正面标杆（照它的样子改）**：GUI 实时日志面板打出的 `GET /api/v1/dashboard/alerts/summary → 422`，并在紧邻行给出 `File "api-service/app/api/alert.py", line 102, in get_alert` + 完整校验错误体 —— **可定位、带事实、能独立复现**。P1-29 那个缺陷就是这样被抓到的。
 
   **复查范围建议**：① SCPI 层 TX/RX 配对 + 耗时 + 截断显式标记 ② 执行相位每步的输入参数与实际生效值（不是"开始/完成"）③ 静默分支普查 ④ 分级与体量治理（跟 P3-19 的 app.log 噪声治理合并考虑，但那条只管噪声、本条管**证据能力**）。**建议提升为独立片**，工作量明显超 30 分钟。
+
+  **2026-08-03 处置（用户"把日志提上来先完成"）**：① 已由 **P1-30 ✅ 完成**（截断显式化 + OK/ERR 配对 + 耗时 + `instrument_id` 收窄）。②③④ **未做，仍 open** —— 见紧随其后的三条子项。
+
+- `[discovered 2026-08-03 during P1-30 内审 F4]` **取消 / `wait_for` 超时路径在 scpi.log 里零证据** —— `app/hal/base.py` 四处用的是 `except Exception`，而 `CancelledError` 在 Python 3.8+ **继承 `BaseException`**，抓不到。内审实跑探针：`asyncio.wait_for(driver._query("SLOW?"), 0.05)` 超时 → scpi 记录只有 `[('TX','TX: SLOW?')]`，**无 ERR**；`task.cancel()` 同样只有 TX。后果：P1-30 之后「被上层取消」与「coroutine 从未被 await」**仍是同一种签名**，分不开 —— 而现场超时恰恰是最常见的那一类。修法是**加机制**（`except BaseException: log; raise` —— 裸 `raise`，控制流零变化，取消展开期不 await，代价仅多一行日志），因「审查一轮里想加机制 = 停下来报告」（⓪⑤）**P1-30 只改了文档断言、机制没做**。代价不对称偏向补记：漏记 = 证据缺口延续，补记 = 一行。**小片，可与下一条同批。**
+
+- `[discovered 2026-08-03 during P1-30 内审 F3]` **`OK` 行没有 `query` 字段，配对只能靠 msg 文本** —— `TX` / `OK` 两类记录都不带 `query`（`RX` / `ERR` 带）。而 TX 记在 `_scpi_lock` **之外**，并发与嵌套下 TX 与结果行**不相邻**（F64 超时排水时每条 `SYST:ERR?` 上界 64 次，各产生一对 TX/RX，才写外层 ERR）—— 所以"按行序配对"是错的读法，"按 `query` 配对"又对 TX/OK 不可用。给 `OK` 与 `TX` 补 `query` 字段属**加机制**，P1-30 未做（文档已改成"按 query 配对 + 说明何时不相邻"）。**小片。**
+
+- `[discovered 2026-08-03 during P1-30 内审域枚举]` **两条 SCPI 日志旁路不经 base 模板，拿不到 P1-30 的任何改进** —— ① `app/hal/aerotech_positioner.py` 两处**自己直写 `_scpi_logger`**（不走 `_do_*`，因此无 OK/ERR/`resp_len`/`duration_ms`/截断标记）；② `app/api/instrument.py` 的 SCPI 控制台族 12 处，`instrument_id` 填的是 `category_key`、`direction` 用的是另一套 `CONNECT/WRITE/READ/ERROR` 值。P1-30 **刻意不碰**（aerotech 根本不用 `_do_*`，硬套模板是改驱动而非改日志），但 `GEMINI.md` 的四类记录表已补上这两条例外说明。要统一得逐条判「该不该走模板」。**中等，独立片。**
+
+- `[discovered 2026-08-03 during P1-30 内审域枚举]` **`/system-logs/tail|search` 没有 `instrument_id` 过滤参数** —— P1-30 让 `instrument_id` 从恒 `-` 变成真值，但 `app/api/system_logs.py` 的过滤参数只有 `level` / `keyword` / `session_id` / `hal_mode`，GUI `SystemLogViewer.tsx` 也只在详情展开里显示它。所以现在是"**能看见、不能筛**" —— 设计稿写的收益"调试人员没法按 instrument_id 过滤"只兑现了一半。加过滤参数是**新能力**、不在 P1-30 那句话的字面里。**小片。**
+
+- `[discovered 2026-08-03 during P1-30]` **`.env.example` 完全没有 log 段** —— `LOG_DIR` / `LOG_RETENTION_DAYS` / `LOG_SCPI_ENABLED` / `LOG_DB_ENABLED` 四个既有 Settings 项在 `.env.example` 里**一个都没有**（P1-30 新加的 `LOG_SCPI_RESP_MAX` 同理）。P1-30 判为**越界不做** —— 只补自己那一个反而更不一致，而这是先于本片存在的缺口，不改它「看不出往返发生了什么」照样修好了。要补就四个（五个）一起补。**琐碎，可 chore。**
+
+- `[discovered 2026-08-03 during P1-30]` **165 处 `except` 吞掉异常且不记日志不重抛（③ 静默分支普查）** —— ⚠️ **这个数没有唯一值，别引用具体数字去定范围** —— 口径稍变结果就变：全块扫描得 **162 / 43**，12 行窗口得 **165 / 51**，10 行窗口得 **185 / 42**（内审 F11 独立复算得 175 / 38）。量级是 **160–185 处**，其中整块只有 `pass` 的 **40–50 处**。真要动这片，先把口径钉死成一条能跑的命令：
+
+  ```bash
+  cd api-service && python3 -c "import re,pathlib;n=p_=0\nfor p in sorted(pathlib.Path('app').rglob('*.py')):\n  src=p.read_text(encoding='utf-8',errors='replace').split(chr(10))\n  for i,l in enumerate(src):\n    m=re.match(r'^(\\s*)except\\b.*:\\s*(\\S.*)?$',l)\n    if not m: continue\n    inline=(m.group(2) or '').strip()\n    if inline:\n      if inline=='pass': n+=1;p_+=1\n      continue\n    ind=len(m.group(1));body=[]\n    for j in range(i+1,len(src)):\n      s=src[j]\n      if not s.strip(): continue\n      if len(s)-len(s.lstrip())<=ind: break\n      body.append(s)\n    if not re.search(r'logger|log\\.|_log|raise|logging',chr(10).join(body)):\n      n+=1\n      if [b.strip() for b in body]==['pass']: p_+=1\nprint(n,p_)"
+  ```
+
+  分布集中在 `app/hal/*`（`rs_fsw.py` / `aerotech_positioner.py` / `ets_positioner.py` 等驱动）。分布集中在 `app/hal/*`（`rs_fsw.py` / `aerotech_positioner.py` / `ets_positioner.py` 等驱动）。**P1-30 刻意不碰** —— 每一处都要单独判"该记日志、该重抛、还是这个 fallback 本来就对"，是逐处的语义判断而非机械改写，塞进日志片必然超范围。**建议独立片**，可能还要拆成"驱动层"与"服务层"两批。
+
+- `[discovered 2026-08-03 during P1-30]` **驱动层把"空回复"和"not ready"合并成同一个 `None` 且不进 `query_errors`** —— `api-service/app/hal/propsim_f64.py` 的 `get_metrics()`：`if not raw_l or "not ready" in raw_l: input_powers[inp] = None`，两种**语义可能完全不同**的情况被折叠成同一个空值，且 `query_errors` 只在**抛异常**时才追加 —— 所以这两种情况在日志与 API 响应里都**零痕迹**。实测：real 模式 RX 里空回复 **60,565 条（占 35.4%）**，TOP 全是 `INP:MEAS:RES:GET? <n>` / `OUTP:MEAS:RES:GET? <n>`（各约 1 万条）。P1-30 让**日志侧**可辨识了（RX 行有 `resp_len:0` + `duration_ms`，与"有去无回"从此不同形），但**驱动侧的语义判定没做** —— "F64 回空串"和"回 not ready"到底是不是一回事，**属于仪器语义，必须先查 NotebookLM（PROPSIM 资料 `982222b7`）**，不是日志片该裁决的。**独立片**。
+
+- `[discovered 2026-08-03 during P1-30]` **执行相位每步只记"开始/完成"，不记输入参数与实际生效值（② 未做）** —— 用户三分法里的"不知是不是事实"在**执行层**的形态：日志能告诉你"配置相位开始了/完成了"，但告诉不了你**这一步拿到的是什么参数、实际写进仪器的是什么值、回读是多少**。P1-30 只收了 SCPI 往返这一层（现在能看到每条命令与响应），但"这一步为什么发这些命令"仍缺。与 P1-26 的分叉问题同源（顶层 vs `CC[0]` 分叉时日志同样看不出用了哪个）。**独立片**，需先定"每步该记哪些字段"的清单。
 
 - `[discovered 2026-08-02 during P1-25 全量审计]` **[→ 提升 P1-29 (2026-08-03)]** **`/api/v1/dashboard/alerts/summary` 被 `/alerts/{alert_id}` 抢先匹配 → 该端点不可达 (恒 422)** —— `api-service/app/api/alert.py` 里 `@router.get("/alerts/{alert_id}")` 声明在 `@router.get("/alerts/summary")` **之前**，FastAPI 按声明顺序匹配，`summary` 被当成 `alert_id` 解析 → `uuid_parsing` 422。**两份独立实证**：① curl 直打返回 `{"detail":[{"type":"uuid_parsing","loc":["path","alert_id"],"input":"summary"}]}`；② GUI 实时日志面板每几秒刷一条 `GET /api/v1/dashboard/alerts/summary → 422`，栈里明写 `alert.py line 102, in get_alert`。修法 = 把字面量路由挪到参数化路由**之前**（FastAPI 惯例），并配一条"字面量段不得被同级 path 参数遮蔽"的门。前端 `DashboardAlertSummary` 类型没错，是端点从来没通过。
 - `[discovered 2026-08-02 during P1-25 全量审计]` **[→ 提升 P3-19 (2026-08-03)]** **四个手写 *Response 形态错，但对应 fetch 函数零消费** —— `TestCasesResponse` 声明 `cases` / `TestTemplatesResponse` 声明 `templates` / `ReportTemplatesResponse` 声明 `reportTemplates` / `DashboardResponse` 声明 camelCase 三键 `systemStatus`+`activeAlerts`+`liveMetrics`；而 live `/test-plans/cases` 返回 `{items,total}`、`/reports/templates` 返回 `{templates,total,page,page_size}`、`/dashboard` 返回 snake 四键 `{summary,live_metrics,active_alerts,recent_tests}`。**当前不炸**是因为四个 fetch 全仓零调用点（`fetchTestCases` 只有一行 import 未调用；`fetchDashboard` 随 P1-25 删掉面板后也悬空）—— 即四个死函数配四个说谎类型。⚠️ **修的时候注意嵌套层**：P1-25 曾试着改 `DashboardResponse`，把 `recent_tests` 声明成 `RecentTest{id,name,dut,result,date}`（那是 `/test-executions/recent` 的形状），而 live 元素其实是 `{id,plan_name,status,executed_at,duration_minutes}`（= `api.generated.ts` 的 `RecentTestItem`）—— **修一层谎又造一层谎**，已撤回。正解优先 = 删死链（函数+类型+mock handler），其次才是逐层对齐 live。

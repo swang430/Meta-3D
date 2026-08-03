@@ -109,7 +109,7 @@
 |:--|:-----|:---------|:-----|:----------|:-----|
 | 1 | Console | root | INFO+ | — | 彩色人类可读摘要 |
 | 2 | `app.log` | root | DEBUG+ | — | 全量 JSON 结构化日志 |
-| 3 | `scpi.log` | `app.hal.scpi.*` | DEBUG | ✅ | 每条 SCPI TX/RX 原文 |
+| 3 | `scpi.log` | `app.hal.scpi.*` | DEBUG | ✅ | 每次 SCPI 往返的 TX / OK / RX / ERR 四类记录 |
 | 4 | `db.log` | `sqlalchemy.*` | INFO+ | ❌ | SQL 语句+连接池 |
 | 5 | `calibration.log` | `app.calibration.*` | DEBUG | ✅ | 校准事件+中间数据 |
 | 6 | `measurement.log` | `app.measurement.*` | DEBUG | ✅ | KPI 数据点快照 |
@@ -117,6 +117,44 @@
 | 8 | `audit.log` | `app.audit` | INFO+ | ✅ | 用户操作审计 (保留 60 天) |
 | 9 | `alert.log` | `app.alert` | WARNING+ | ✅ | 告警/异常事件 |
 | 10 | `frontend.log` | `app.frontend` | DEBUG | ❌ | 浏览器行为日志 (POST 上报) |
+
+**`scpi.log` 的四类记录（P1-30）** —— 每次往返产出一条 TX + 一条结果记录，
+由 `app/hal/base.py` 的 `_write()` / `_query()` 模板方法产出：
+
+| direction | 何时写 | 带的字段 |
+|:--|:--|:--|
+| `TX` | `_do_write` / `_do_query` **执行之前** | — |
+| `OK` | 写命令执行完成 | `duration_ms` |
+| `RX` | 查询拿到响应 | `duration_ms`、`resp_len`（**截断前的真实长度**） |
+| `ERR` | 往返中抛异常（随后**原样重抛**） | `duration_ms`、`error_type` |
+
+⚠️ **`TX` 只表示"程序打算发这条"，不表示仪器收到了** —— 判断走没走完看配对的
+`OK` / `RX` / `ERR`。
+
+⚠️ **配对要按 `query` 字段，不能按"相邻行"** —— TX 记在 `_scpi_lock` **之外**，
+并发（多协程共用一台仪器）与嵌套（F64 超时后在同一命令窗口内排水，每条
+`SYST:ERR?` 各产生一对 TX/RX）都会打断相邻性。（`OK` 行目前只在 msg 文本里带
+命令、没有 `query` 字段，backlog 已记。）
+
+⚠️ **只有 `TX` 没有后续是个多义签名**，至少覆盖：被 `asyncio.wait_for` 超时 /
+被 `task.cancel()` 取消 / coroutine 从未被 await / 进程中断。前两种走
+`CancelledError`（继承 `BaseException`），`base.py` 的 `except Exception`
+**抓不到**，所以不会留下 ERR 行 —— 这是**已知的证据缺口**，backlog 已记。
+
+⚠️ **`duration_ms` 含排队等锁的时间** —— async 驱动（F64/FS16）的 t0 取在
+coroutine **创建**时刻，而 `_scpi_lock` 在 coroutine **内部**才拿；ERR 的读数
+还额外含排水时间。它答的是"这次调用从发起到落定花了多久"，**不是**"仪器响应
+花了多久" —— 看到 8000ms 别直接判仪器慢。
+
+⚠️ 本表只覆盖走 `_do_write()` / `_do_query()` 模板方法的驱动。**两条旁路不在内**：
+`aerotech_positioner.py` 两处自己直写 `_scpi_logger`（拿不到 OK/ERR/`resp_len`/
+`duration_ms`/截断），`api/instrument.py` 的 SCPI 控制台族用的是另一套
+`CONNECT/WRITE/READ/ERROR` 方向值。
+
+响应体超过 `log_scpi_resp_max`（`app/config.py` 的 Settings 项，默认 **2000**
+字符；`.env` 里写 `LOG_SCPI_RESP_MAX=200` 可调回）时截断并附
+`…[truncated 2000/3412]` 标记，`resp_len` 始终记真实长度 —— 不会再出现
+"短响应"与"被砍的长响应"在日志里无法区分的情况。
 
 ### 4.3 Logger 命名规则
 
