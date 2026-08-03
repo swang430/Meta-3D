@@ -244,6 +244,45 @@ unblocked) BEFORE starting any new P1.
 
 ---
 
+## ⚠️ 已合并但未过外审的批次（只增不减，周度回扫）
+
+> **为什么要有这张表**（2026-08-03 用户提出）：审查-修复循环上限 = 2，
+> 第二轮 findings 若由上轮修复引入即收口 —— **收口意味着最后那批修复
+> 没有外审盖章就合进去了**。这件事我每次都在 commit message 和 PR 评论里
+> 如实申报，但**仓库里没有任何一处能让人一眼看出"哪些已合并内容没被审过"**，
+> 要查得一条条翻 commit message。下次谁基于这些改动开工，不会知道最后一版
+> 没人审过。
+>
+> **用法**：一行一条，**只增不减**（处置完在「处置」列标结果，不删行）。
+> 进[周度短 review](#governance-rules) 的固定检查项：下次动到「未审内容」
+> 那几个文件时，**优先给它补一轮外审**，别等到出事。
+
+| 日期 | PR | 未审 commit | 未审内容 | 为什么没派 | R1 findings | 处置 |
+|---|---|---|---|---|---|---|
+| 2026-08-03 | [#274](https://github.com/swang430/Meta-3D/pull/274) | `1c5d960` | 内审 agent 时间预算的 R2 两条修复（全量输出必须绑当前版本 / 脏工作区先还原再跑基线） | 轮次上限=2，R2 findings 由 R1 修复引入 | 1 | ⬜ 未处置 —— 下次动 `.claude/agents/pre-commit-reviewer.md` 或 `CLAUDE.md` ⓪⁺④ 时补审 |
+| 2026-08-03 | [#275](https://github.com/swang430/Meta-3D/pull/275) | `b1dc9df` `dea10ea` | UXM KPI 的 R2 两条修复（未知口径不写进 `_dbm` 字段 / 两种 blocker 一起报）+ 现场核验 10 项清单 | 同上 | 2 | ⬜ 未处置 —— 下次动 `uxm_base_station.py` KPI 段或 `uxm_scpi_compatibility.py` 时补审 |
+
+**已核查、不构成缺口的**（记在这里免得下次重查）：
+- [#273](https://github.com/swang430/Meta-3D/pull/273) — Codex R2 审的 `8d0781f` **就是合并时的 HEAD**，全覆盖 ✅
+- [#271](https://github.com/swang430/Meta-3D/pull/271) — R2 后多了个合并 commit `42a1202`，但其净变化是 #272 **已审过**的那 15 行文档，无新内容 ✅
+- [#272](https://github.com/swang430/Meta-3D/pull/272) — 首轮即 clean ✅
+
+### 📉 更值得看的信号：第一轮 findings 数
+
+上表最后一列不是装饰。**收口本身不是问题，反复需要收口才是** ——
+连着三个 PR 走到「我修完但外审没盖章」这一步，说明的不是审查太严，
+而是**第一轮交出去的东西每次都要靠外审来发现自相矛盾**。
+
+2026-08-03 当晚：#272 首轮 clean（0）→ #271 (1) → #273 (2) → #274 (1)
+→ #275 (2) → **#276 (4)**。#276 那四条**全是条目内部自己打架**
+（写「只读」又列了三条写命令 / 拆出本地半却不排进队列 / 改了表行没改
+紧邻的注 / 依赖设反）—— **这些不需要外审也该自己看出来**。
+
+这一列是**可观察的质量信号**，比「我会注意」有用。周度 review 时看趋势：
+持续走高 = 第一轮质量在退，该收紧动手前的自查而不是加审查轮次。
+
+---
+
 ## Governance rules
 
 These rules exist because at CAICT 2026-05-12/13 a 2-day on-site that was
@@ -266,10 +305,14 @@ didn't get. Mechanisms below are designed to prevent that pattern.
 5. **Codex / review fixes that are not on the critical path** get their
    own commit on the next P0 branch, not a separate detour PR — unless
    they block merge.
-6. **Periodic review (weekly).** Three questions:
+6. **Periodic review (weekly).** Four questions:
    - Last week's focus was X — what did we actually do?
    - How much did we drift (0% / 30% / 100%)?
    - If we drifted, which of rules 1-5 broke?
+   - **扫一遍[「已合并但未过外审的批次」表](#️-已合并但未过外审的批次只增不减周度回扫)**
+     （2026-08-03 用户加）：① 本周动过的文件里，有没有落在某行「未审内容」上的？
+     有就**先给那批补一轮外审**再动。② 看「R1 findings」列的趋势 ——
+     持续走高 = 第一轮质量在退，该收紧动手前的自查，**而不是加审查轮次**。
 
 ---
 
