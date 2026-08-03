@@ -184,22 +184,30 @@ class InstrumentDriver(ABC):
     ) -> None:
         """记录 SCPI 查询及其响应到 scpi.log。
 
-        resp_len 记**截断前的真实长度**; 截断时消息体尾部附
-        `…[truncated <上限>/<真实长度>]`, 让"短响应"和"被砍的长响应"
-        在日志里长得不一样 (P1-30 之前两者完全无法区分)。
+        两个长度，别混：
+          · ``resp_len`` = **原始响应的字符数, 未 strip 未截断** —— "从线上
+            收到了多少"。这是给读者判断证据完整性用的唯一权威数。
+          · truncated 标记的分母 = **strip 后**准备显示的字符数。
+
+        两者可能差几个 (换行 / 前后空格)。刻意分开是因为 **whitespace-only
+        响应必须与真空响应可区分** (Codex #273 P2): 仪器回 ``"   \\n"`` 与
+        什么都没回, 是两件事 —— 前者 ``resp_len=4`` 且消息体为空, 后者
+        ``resp_len=0``。早先版本先 strip 再量长度, 两者都成 0, 而本片正是
+        拿"空回复 60,565 条"当立项证据的, 量错了长度等于把证据量废。
         """
+        raw_len = len(response)
         body = response.strip()
-        full_len = len(body)
-        if full_len > _SCPI_LOG_RESP_MAX:
+        shown_len = len(body)
+        if shown_len > _SCPI_LOG_RESP_MAX:
             body = (
                 f"{body[:_SCPI_LOG_RESP_MAX]}"
-                f"…[truncated {_SCPI_LOG_RESP_MAX}/{full_len}]"
+                f"…[truncated {_SCPI_LOG_RESP_MAX}/{shown_len}]"
             )
         extra: Dict[str, Any] = {
             "instrument_id": self.instrument_id,
             "direction": "RX",
             "query": cmd,
-            "resp_len": full_len,
+            "resp_len": raw_len,
         }
         if duration_ms is not None:
             extra["duration_ms"] = round(duration_ms, 3)

@@ -273,6 +273,32 @@ class TestTruncationIsExplicit:
         assert rx[0].resp_len == 0
         assert rx[0].duration_ms >= 0
 
+    def test_whitespace_only_response_not_conflated_with_empty(self, scpi_capture):
+        """⭐ 仪器回 `"   \\n"` 与什么都没回，是两件事（Codex #273 P2）。
+
+        `resp_len` 量的必须是**原始响应**，不是 strip 之后的 —— 否则
+        whitespace-only 与真空都成 0，而本片正是拿"空回复 60,565 条"
+        当立项证据的，量错长度等于把证据量废。
+
+        变异：把 `raw_len = len(response)` 改回 `len(response.strip())` → 红。
+        """
+        _StubDriver("ws", response="   \n")._query("INP:MEAS:RES:GET? 1")
+        _StubDriver("nil", response="")._query("INP:MEAS:RES:GET? 2")
+
+        ws, nil = _by_direction(scpi_capture, "RX")
+        assert ws.resp_len == 4, "whitespace-only 响应被当成了空响应"
+        assert nil.resp_len == 0
+        assert ws.resp_len != nil.resp_len
+        # 显示体仍然 strip（日志里不留一行看不见的空白）
+        assert ws.getMessage() == "RX: "
+
+    def test_resp_len_counts_raw_not_stripped(self, scpi_capture):
+        """正常响应带尾部换行时，resp_len 记的是线上收到的字符数。"""
+        _StubDriver("nl", response="3550000000\r\n")._query("FREQ?")
+        rx = _by_direction(scpi_capture, "RX")[0]
+        assert rx.resp_len == 12, "resp_len 应为原始 12 字符，不是 strip 后的 10"
+        assert rx.getMessage() == "RX: 3550000000"
+
     def test_default_limit_is_2000(self):
         """默认上限从 200 放宽到 2000。
 
@@ -295,9 +321,20 @@ class TestTruncationIsExplicit:
         19 条门**全绿**，旋钮当场死掉而无人察觉。
 
         变异：把该行改成 `_SCPI_LOG_RESP_MAX = 200` → 本条红。
+
+        ⚠ 期望值**从 settings 现算**，不写死 2000（Codex #273 P2）——
+        初版把 `[truncated 2000/2001]` 硬写进断言，等于**又一次**把
+        "文档承诺可调的旋钮"钉成测试契约：`.env` 配 `LOG_SCPI_RESP_MAX=200`
+        的合法部署上，本条会红。这跟内审 F2 抓的是同一个错，我在**修 F2
+        的那一次**顺手在替代门里重犯了一遍。
         """
-        # 重新走一遍模块初始化那条链，拿到"生效端此刻用的是多少"
-        driver = _StubDriver("eff", response="Y" * 2001)
+        expected = hal_base._resolve_resp_max()   # 从 settings 现算，不写死
+        assert hal_base._SCPI_LOG_RESP_MAX == expected, (
+            f"模块常量 ({hal_base._SCPI_LOG_RESP_MAX}) 与 settings 现算值 "
+            f"({expected}) 不一致 —— 它八成被写成了字面量，旋钮已失效"
+        )
+        # 生效端：造一条刚好比上限长 1 的响应，从实际输出反推用的是哪个上限
+        driver = _StubDriver("eff", response="Y" * (expected + 1))
         capture = _RecordingHandler()
         logger = logging.getLogger("app.hal.scpi")
         prev_disabled = logger.disabled
@@ -312,10 +349,10 @@ class TestTruncationIsExplicit:
 
         rx = [r for r in capture.records
               if getattr(r, "direction", None) == "RX"][0]
-        assert rx.resp_len == 2001
-        assert "[truncated 2000/2001]" in rx.getMessage(), (
-            "生效端用的上限不是 2000 —— 模块常量可能被写成了字面量，"
-            "或没有走 settings"
+        assert rx.resp_len == expected + 1
+        assert f"[truncated {expected}/{expected + 1}]" in rx.getMessage(), (
+            f"生效端用的上限不是 settings 的 {expected} —— 模块常量可能被"
+            f"写成了字面量，或没有走 settings"
         )
 
     def test_reads_from_settings_not_os_environ(self, monkeypatch):
