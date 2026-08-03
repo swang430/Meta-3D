@@ -541,9 +541,6 @@ export type UpdateInstrumentPayload = {
   connection?: InstrumentConnection
 }
 
-export type InstrumentCategoryResponse = {
-  category: InstrumentCategory
-}
 
 // ============================================================
 // Chamber Configuration Types (暗室配置类型)

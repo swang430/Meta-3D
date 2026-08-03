@@ -13,7 +13,7 @@ blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 �
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-02 二批本地队列已拍板排序（用户明示"只排好优先级，先不忙开工"——待开工指令）**：
-**P1-25 → P1-26 → P1-27 → P1-28 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧；P1-28 为 2026-08-02 用户新增 backlog 当日拍板插入）。一句话索引：
+**~~P1-25~~ ✅ → P1-26 → P1-27 → P1-28 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧；P1-28 为 2026-08-02 用户新增 backlog 当日拍板插入）。**当前队首 = P1-26**（P1-25 已于 2026-08-02 收口）。一句话索引：
 - **P1-25** GUI 主控台"系统状态"面板恒空修复 + api.ts 手写镜像同尺审计
 - **P1-26** GUI 改频同步 component_carriers（执行侧错频收口）
 - **P1-27** P1-8 校准门拒 mock cert（provenance + real 模式 strict 拒）
@@ -185,7 +185,7 @@ P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max /
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **P1-25 → P1-26 → P1-27 → P1-28 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列，**待开工指令**；一批 10 片已全收 #256–#265）|
+| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → P1-26 → P1-27 → P1-28 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列；**队首现为 P1-26**，P1-25 已收口；一批 10 片已全收 #256–#265）|
 | **ON-SITE-BLOCKED** | P0-5 (P0-3/4 已 2026-07-03 现场完成) + P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -1294,10 +1294,20 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 
 **落地（本 PR）**: 设计稿 [`design/p1-24-f64-p08-gate-sequence.md`](design/p1-24-f64-p08-gate-sequence.md)（§0 手册实证表 + §0.4 实现期修正）；序列复用生产原子（`load_local_scenario`/`autoset_inputs`/`start_emulation`/`set_bypass_mode`/`set_output_gain`/`measure_input`），新增 SCPI 仅 `OUTP:GAIN:CH?`/`OUTP:GAIN:LIM?`（§20.4.5.7/8，NotebookLM 过手册）；退 bypass **不假设自动续跑**（手册说续、2026-07-03 实证不续，两种固件行为都兜并如实归档）；收尾 GOS 留驻不发 CLOSE（绕驱动直发会让身份缓存 stale）。D-1 = 真驱动+假 SCPI 层行为门 18 测 + 5 变异实跑全红（AUTOSET 时序 / 不带病 GO / 增益回读 / 显式 GO 恢复 / 零残留）。真机行为（AUTOSET 收敛、bypass 电平窗口）只能现场验 —— 序列是载体不是替身。
 
-### P1-25 — GUI 主控台"系统状态"面板恒空修复 + api.ts 手写镜像审计 ⬜（2026-08-02 拍板，待开工）
+### P1-25 — GUI 主控台"系统状态"面板恒空修复 + api.ts 手写镜像审计 ✅（2026-08-02 完成）
 
-**What**: `App.tsx` 读 `dashboardData?.systemStatus`（手写 camel 三键，`gui/src/types/api.ts`）而 live `/api/v1/dashboard` 返回 snake 四键 → 面板恒 undefined 走空态。修 = App.tsx/api.ts 换 live 键形态；同一把尺子过 api.ts 其余手写镜像类型 + 清理死导出 `InstrumentCategoryResponse`。**来源**: P3-17 内审 F2（[→ P1-25] 已标）。
+**What（原定）**: `App.tsx` 读 `dashboardData?.systemStatus`（手写 camel 三键，`gui/src/types/api.ts`）而 live `/api/v1/dashboard` 返回 snake 四键 → 面板恒 undefined 走空态。修 = App.tsx/api.ts 换 live 键形态；同一把尺子过 api.ts 其余手写镜像类型 + 清理死导出 `InstrumentCategoryResponse`。**来源**: P3-17 内审 F2（[→ P1-25] 已标）。
 **Why P1**: 用户天天看的主控台面板对真后端是坏的 —— 可见度最高的存量缺陷。
+
+**⚠️ 开工后推翻的前提**：条目写的"换 live 键形态"**这条路不存在** —— 后端真值源 `app/schemas/dashboard.py` 的 `DashboardResponse` **从来没有 `system_status` 字段**（只有 summary / live_metrics / active_alerts / recent_tests），openapi 里的 `SystemStatusItem` 是零响应引用的孤儿 schema。也就是说那个面板在 live API 里**没有数据源**可换。
+
+**实际落地（只做目的那件事）**：① 删掉主控台「系统快照」面板 —— 它是 P2-8 之前的遗留，驾驶舱 `ZoneReadiness` 早已用正确数据源 `/instruments/hal/readiness` 做了同一件事且更全；② 删掉随之悬空的 `/dashboard` 查询、以及 `hardwareOnline` / `preferMockExecution` / 强制回落 useEffect / `handleExecutionPreferenceChange` 这条**死机器**（`onExecutionModeChange` 从未传给 `Monitoring`，`preferMockExecution` 初值 true ⇒ `executionMode` 恒 `'mock'`，`hardwareOnline` 取什么值都观察不到 —— 对它做变异连红都红不了），`executionMode` 按常量 `'mock'` 固定，**与改动前逐位同行为**；③ 删死导出 `InstrumentCategoryResponse`。
+
+**⚠️ 内审否掉的越界（本片一度做了，已全部撤回）**：曾把 `executionMode` 换源到 readiness 判"真仪表 vs mock"。内审 F1 指出那两个徽章挂在**演示回放播放器**上（同卡片副标题：「演示回放 —— 真实测试请到「测试管理 → 测试用例库」执行用例」，数据源 `/tests/demo-run` 实测 404 且 query `enabled:false`）——按 HAL 真假去判，现场全真部署会把演示脚本标成绿色「真实执行」，比恒 `'mock'` 更糟；F2 进一步指出该判据在 `detail` 缺省/类改名时一律倒向 `real`（代价高的那侧），且后端权威判据是 `instrument_hal_service.py` 的 `is_mock_driver()`（`isinstance` + `_MOCK_DRIVER_CLASSES` allowlist），不是我引的 `api/instrument.py` 里那份 `startswith("Mock")` **副本**。同时撤回的还有 `DashboardResponse` 的形态修正 —— 那次修正自己引入了新谎（`recent_tests` 声明成 `RecentTest{id,name,dut,result,date}`，而 live 元素是 `{id,plan_name,status,executed_at,duration_minutes}`，即 `/test-executions/recent` 的形状），与本片正在消灭的母题一模一样。该类型现与另外三个"说谎但无人消费"的同类一起进 Discovered，同等处置。
+
+**审计结果（18 组 手写类型 × live 端点）**：6 组有问题 —— 4 组形态错但 fetch 零消费（含 `DashboardResponse`，全进 Discovered）、1 组是后端路由顺序 bug（`/dashboard/alerts/summary` 恒 422，进 Discovered）、1 组端点 404 但查询已带 `enabled:false` 并注释申明（不动）。⚠️ **"其余 12 组 OK"这个结论不可信** —— 尺子是"手写类型顶层键 ⊆ live 顶层键"，只看一层：内审 F5 实证 `/monitoring/feeds` 被判 OK 但元素形态全错（`name` vs `label`、number vs string），已单列 Discovered。
+
+**验证**：编译门 `npm run build` ✓；运行门浏览器实测 —— 面板与"暂无数据"空态消失、主控台其余内容完好；`executionMode` 为常量故无行为可变异（行为与改前逐位一致，这正是收敛的目的）。内审全量 2830 passed / 4 skipped、eslint 改动行零命中。
 
 ### P1-26 — GUI 改频同步 component_carriers（执行侧错频收口）⬜（2026-08-02 拍板，待开工）
 
@@ -2071,6 +2081,12 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 ## 🗂️ Discovered during X — triage backlog
 
 > Items added mid-task. Reviewed weekly; promoted to P1/P2/P3 or dropped.
+
+- `[discovered 2026-08-02 during P1-25 全量审计]` **`/api/v1/dashboard/alerts/summary` 被 `/alerts/{alert_id}` 抢先匹配 → 该端点不可达 (恒 422)** —— `api-service/app/api/alert.py` 里 `@router.get("/alerts/{alert_id}")` 声明在 `@router.get("/alerts/summary")` **之前**，FastAPI 按声明顺序匹配，`summary` 被当成 `alert_id` 解析 → `uuid_parsing` 422。**两份独立实证**：① curl 直打返回 `{"detail":[{"type":"uuid_parsing","loc":["path","alert_id"],"input":"summary"}]}`；② GUI 实时日志面板每几秒刷一条 `GET /api/v1/dashboard/alerts/summary → 422`，栈里明写 `alert.py line 102, in get_alert`。修法 = 把字面量路由挪到参数化路由**之前**（FastAPI 惯例），并配一条"字面量段不得被同级 path 参数遮蔽"的门。前端 `DashboardAlertSummary` 类型没错，是端点从来没通过。
+- `[discovered 2026-08-02 during P1-25 全量审计]` **四个手写 *Response 形态错，但对应 fetch 函数零消费** —— `TestCasesResponse` 声明 `cases` / `TestTemplatesResponse` 声明 `templates` / `ReportTemplatesResponse` 声明 `reportTemplates` / `DashboardResponse` 声明 camelCase 三键 `systemStatus`+`activeAlerts`+`liveMetrics`；而 live `/test-plans/cases` 返回 `{items,total}`、`/reports/templates` 返回 `{templates,total,page,page_size}`、`/dashboard` 返回 snake 四键 `{summary,live_metrics,active_alerts,recent_tests}`。**当前不炸**是因为四个 fetch 全仓零调用点（`fetchTestCases` 只有一行 import 未调用；`fetchDashboard` 随 P1-25 删掉面板后也悬空）—— 即四个死函数配四个说谎类型。⚠️ **修的时候注意嵌套层**：P1-25 曾试着改 `DashboardResponse`，把 `recent_tests` 声明成 `RecentTest{id,name,dut,result,date}`（那是 `/test-executions/recent` 的形状），而 live 元素其实是 `{id,plan_name,status,executed_at,duration_minutes}`（= `api.generated.ts` 的 `RecentTestItem`）—— **修一层谎又造一层谎**，已撤回。正解优先 = 删死链（函数+类型+mock handler），其次才是逐层对齐 live。
+- `[discovered 2026-08-02 during P1-25 内审 F5]` **手写类型审计的尺子只看一层，"12 组 OK"不可信** —— P1-25 用"手写类型顶层键 ⊆ live 响应顶层键"过了 18 组，判 12 组 OK。内审实证至少一组是假绿：`MonitoringFeedsResponse` 顶层 `feeds` 对得上所以判 OK，但元素 live 是 `{name,value:number,unit,timestamp}` 而手写 `MetricItem` 是 `{label,value:string,trend?,id?}` —— **键名不同、值类型不同**；今天不炸只因消费点 `App.tsx` 的 `metricFeeds` 只写不读（eslint 有 unused 告警为旁证）。尺子的盲区：① 嵌套元素形态 ② 值类型 ③ 可选/null 语义 ④ 数组 vs 分页信封 ⑤ 只过了响应没过请求体 ⑥ 单向 ⊆ 只抓缺不抓多。正解 = 逐层键集合 + 值类型对 live JSON 递归比对（一次性脚本即可，不必进仓）。
+- `[discovered 2026-08-02 during P1-25 内审 F2]` **前端若要判"真驱动还是 mock"，权威源是 `is_mock_driver()` 不是名字前缀** —— `/instruments/hal/readiness` 每行的 `status` 对 mock 驱动同样是 `ok`（实测 5/5 全 ok），能区分的只有自由文本 `detail`（实际驱动类名）。而后端权威判据是 `app/services/instrument_hal_service.py` 的 `is_mock_driver()` → `isinstance(driver, _MOCK_DRIVER_CLASSES)`（**类 allowlist**）；`api/instrument.py` 里那个 `type(driver).__name__.startswith("Mock")` 是**副本不是真值源**。前端按 `detail` 前缀嗅探在 `detail` 缺省/空串/类改名时会**静默倒向 real**（代价高的那侧），跟 #268 的 `is_docker_pid` denylist 同一形态。真要在前端区分，正解 = 后端在 readiness 行上显式暴露 `is_mock: bool`（由 `is_mock_driver()` 产出），前端换源；在此之前**不要**用名字前缀猜。
+- `[discovered 2026-08-02 during P1-25]` **"操作员手选真/模拟执行"开关从未接线** —— `handleExecutionPreferenceChange` 塞进了 payload（`onExecutionModeChange`），但 `<Monitoring/>` 的 props 里**根本没接**，且 `preferMockExecution` 初值 `true` → `executionMode` 恒 `'mock'`，`hardwareOnline` 取什么值都观察不到（P1-25 实证：对它做变异连红都红不了）。本片按"去掉>换源"删除整条死机器，徽章改为直接从 readiness 派生（真实且可变异验证）。要恢复手选能力是**独立功能**：得先把开关控件接到 Monitoring，再决定"硬件不在线时禁止选 real"的策略。
 
 - `[discovered 2026-08-02 during dev:safe:all 启动失败排查]` **[✅ 已修，本片]** **`safe-start.sh` / `cleanup-ports.sh` 的端口清理会把 Docker 引擎自己 `kill -9`** —— macOS 上容器发布端口在 host 一侧的监听者是 `com.docker.backend`（引擎本体），不是容器；`meta3d-api` 容器（compose 默认自启）占住 8000 → 脚本杀 8000 → 引擎当场死（`com.docker.backend.log` "monitor exited: signal: killed"）→ 下一步 `db-up.sh` 报 "Cannot connect to the Docker daemon"，而那时端口上已经没人了，**现象跟端口看起来毫无关系**。修法：守门判据下沉 `scripts/lib/port-guard.sh`（两脚本同源）+ compose 的 `api` 挪进 `full` profile 拆掉 8000 争抢。顺带修掉两个 pre-existing 过杀：取数没限 `-iTCP -sTCP:LISTEN` 会把**连到**该端口的客户端（实测：开着 GUI 的 Chrome tab）和同号 UDP 进程一起 `kill -9`；端口↔服务标签 6 处全把 8000/8001 标反了。
 - `[discovered 2026-08-02 during 上条内审 F4]` **`is_docker_pid` 是 denylist，默认动作是"杀"，只覆盖 macOS/Linux 三种形态** —— 判据 = `ps -o comm=` 含 `com.docker` / `docker-proxy` / `rootlesskit`。**未覆盖且失效是静默的**（直接回到"杀"）：colima/lima 用 host 上的 `ssh -L` 做转发（拿 ssh 当判据会误杀用户自己的 ssh，宁可漏判也没加）、OrbStack / Rancher Desktop 的 helper 进程名无环境实证（不猜）。彻底解法 = 反过来做 **allowlist**：只杀 comm 命中 `python|node|uvicorn|vite` 这类自家 dev 进程，其余一律不杀 —— 让"没见过的进程"落到**不杀**（代价 = 端口没腾出来 + 一条提示）而不是**杀**（代价 = 别人的引擎/网络栈全死）那一侧，且不必逐个厂商枚举。独立小片。
