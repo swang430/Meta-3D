@@ -72,7 +72,6 @@ import { StandardChannelDefinitionCard } from './components/StandardChannelDefin
 import {
   createProbe,
   deleteProbe,
-  fetchDashboard,
   fetchDemoRunPlan,
   fetchMonitoringFeeds,
   fetchProbes,
@@ -102,7 +101,6 @@ import type {
   InstrumentsResponse,
   InstrumentStatus,
   MetricItem,
-  SystemStatusItem,
   Probe as ProbeType,
   SequenceStep as SequenceStepType,
   TestCase,
@@ -387,7 +385,6 @@ function App() {
   })
   const [demoMetrics, setDemoMetrics] = useState<MetricItem[] | null>(null)
   const [demoResultCard, setDemoResultCard] = useState<DemoRunResult | null>(null)
-  const [preferMockExecution, setPreferMockExecution] = useState<boolean>(true)
   // ARCH-1 S4a: executingPlanInfo / executingPlanDetail / autoChainExecution /
   // liveHistory / syncPlanSummary / _mutatePlanStatus 六组随计划链删除。
   // 演示回放的直接入口(调试维护→监控)不依赖计划, 不受影响; 由 QueueTab 点
@@ -402,11 +399,6 @@ function App() {
   )
 
   const lastProgressStatusRef = useRef<DemoRunStatus>(demoRunProgress.status)
-
-  const { data: dashboardData, isLoading: isDashboardLoading } = useQuery({
-    queryKey: ['dashboard'],
-    queryFn: fetchDashboard,
-  })
 
   // P0-2: first-run gate. If the DB has zero active LabProfiles the
   // operator can't do anything in the main UI (no lab → calibration /
@@ -479,18 +471,22 @@ function App() {
     }, delay)
   }, [demoRunPlanData, setLogEntries])
 
-  const systemStatus = dashboardData?.systemStatus ?? []
-  const hardwareOnline = useMemo(
-    () => systemStatus.length > 0 && systemStatus.every((item) => !/离线|错误|断开/i.test(item.value)),
-    [systemStatus],
-  )
-  const executionMode = hardwareOnline && !preferMockExecution ? 'real' : 'mock'
-
-  useEffect(() => {
-    if (!hardwareOnline && !preferMockExecution) {
-      setPreferMockExecution(true)
-    }
-  }, [hardwareOnline, preferMockExecution])
+  // 常量 'mock' —— **与改动前逐位同行为**, 不是新判断。
+  //
+  // 原来是 `hardwareOnline && !preferMockExecution ? 'real' : 'mock'`, 而那条链
+  // 整条是死的: `preferMockExecution` 初值 true, 唯一能改它的
+  // `onExecutionModeChange` 只塞进了 payload、`<Monitoring/>` 的 props 从未接过它
+  // ⇒ 表达式恒 false ⇒ 徽章恒 'mock'。`hardwareOnline` 取什么值都观察不到。
+  // 本片删掉那条死链后按常量固定, 行为不变、不引入任何新失效面。
+  //
+  // ⚠️ **别顺手把它接到 readiness 上判"真仪表还是 mock"** —— 本片试过, 内审 F1
+  //    否掉了: 这两个徽章挂在**演示回放播放器**上 (同卡片副标题原话:「演示回放 ——
+  //    真实测试请到「测试管理 → 测试用例库」执行用例」), 它的数据源
+  //    `/api/v1/tests/demo-run` 实测 404 且 query 带 `enabled:false`。按 HAL 真假
+  //    去判, 现场全真部署时会把**演示脚本**标成绿色「真实执行」, 比恒 'mock' 更糟。
+  //    要显示"系统当前跑真仪表还是 mock", 驾驶舱 `ZoneReadiness` 已在做。
+  //    要恢复"操作员手选真/模拟"是独立功能 (先把开关接到 Monitoring), 已记 backlog。
+  const executionMode: 'real' | 'mock' = 'mock'
 
   const handleDemoRunStart = useCallback(() => {
     if (!demoRunPlanData?.plan) return
@@ -548,10 +544,6 @@ function App() {
     demoRunStatusRef.current = 'running'
     setDemoRunProgress((prev) => ({ ...prev, status: 'running' }))
 
-  }, [])
-
-  const handleExecutionPreferenceChange = useCallback((preferMock: boolean) => {
-    setPreferMockExecution(preferMock)
   }, [])
 
   // ARCH-1 S4a: startPlanExecution 与 execution:start 监听器随计划链删除。
@@ -626,9 +618,6 @@ function App() {
         demoMetrics,
         demoResult: demoResultCard,
         executionMode,
-        hardwareOnline,
-        systemStatus,
-        onExecutionModeChange: handleExecutionPreferenceChange,
         executingRunMeta,
         recentRunMeta: executingRunMeta ?? lastRunMeta,
       }),
@@ -647,9 +636,6 @@ function App() {
       demoMetrics,
       demoResultCard,
       executionMode,
-      hardwareOnline,
-      systemStatus,
-      handleExecutionPreferenceChange,
       executingRunMeta,
       lastRunMeta,
     ],
@@ -797,59 +783,6 @@ function App() {
             </ScrollArea>
           </Stack>
 
-          <Paper
-            withBorder
-            radius="lg"
-            p="md"
-            style={{
-              background: isDark ? hexToRgba(theme.white, 0.035) : hexToRgba(theme.white, 0.88),
-              borderColor: isDark ? theme.colors.dark[4] : hexToRgba(theme.colors.brand[4], 0.35),
-              boxShadow: theme.shadows.md,
-            }}
-          >
-            <Stack gap="sm">
-              <Text fw={600} size="sm" c={isDark ? theme.colors.gray[2] : theme.colors.brand[7]}>
-                系统快照
-              </Text>
-              <Divider color={isDark ? theme.colors.dark[4] : hexToRgba(theme.colors.brand[4], 0.4)} />
-              <Stack gap={8}>
-                {isDashboardLoading ? (
-                  <Text size="xs" c={isDark ? theme.colors.gray[4] : theme.colors.gray[6]}>
-                    数据加载中……
-                  </Text>
-                ) : systemStatus.length === 0 ? (
-                  <Text size="xs" c={isDark ? theme.colors.gray[4] : theme.colors.gray[6]}>
-                    暂无数据
-                  </Text>
-                ) : (
-                  systemStatus.map((item) => (
-                    <Paper
-                      key={item.label}
-                      withBorder
-                      radius="md"
-                      p="sm"
-                      style={{
-                        background: isDark
-                          ? hexToRgba(theme.colors.dark[6], 0.65)
-                          : hexToRgba(theme.colors.brand[0], 0.75),
-                        borderColor: isDark ? theme.colors.dark[4] : hexToRgba(theme.colors.brand[3], 0.5),
-                      }}
-                    >
-                      <Text size="xs" c={isDark ? theme.colors.gray[4] : theme.colors.gray[6]}>
-                        {item.label}
-                      </Text>
-                      <Text fw={600} size="sm" c={isDark ? theme.white : theme.colors.brand[8]}>
-                        {item.value}
-                      </Text>
-                      <Text size="xs" c={isDark ? theme.colors.gray[5] : theme.colors.gray[6]}>
-                        {item.detail}
-                      </Text>
-                    </Paper>
-                  ))
-                )}
-              </Stack>
-            </Stack>
-          </Paper>
         </Stack>
       </AppShell.Navbar>
 
@@ -916,9 +849,6 @@ type RenderPayload = {
   demoMetrics: MetricItem[] | null
   demoResult: DemoRunResult | null
   executionMode: 'real' | 'mock'
-  hardwareOnline: boolean
-  systemStatus: SystemStatusItem[]
-  onExecutionModeChange: (preferMock: boolean) => void
   executingRunMeta: RunMetadata | null
   recentRunMeta: RunMetadata | null
 }
