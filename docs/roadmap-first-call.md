@@ -215,7 +215,7 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | ~~P0-4~~ | ~~SignalAnalyzer in HAL for reference TRP~~ | ✅ 2026-07-03 现场完成 |
 | P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | on-site real DUT (已至 -96 dBm RSRP, 差正式注册) |
 | P0-8 **现场半** | F64 driver 现场修复落地 —— real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真 | on-site real F64 (本地半已 Done, 见 `### P0-8`；跟 P0-5 attach 同一段窗口) |
-| P1-33 **现场半** | 验证按手册重写的 MAC 配置命令在真机上被接受（本地半可先做，见 `### P1-33`） | on-site real UXM。⚠️ **不再 gate 在 P1-31 上**（Codex #276 P2 抓出错误依赖）：P1-31 只跑那 10 项 KPI 对账、且限定「手册有依据 + 驱动已在用」的命令，**产不出 MAC 配置命令的形式**；而 2026-08-03 查手册发现**这 8 组命令 `BSE:` 形式手册里全都有** —— 卡点不是「不知道命令」，是「没在真机上验过」 |
+| P1-33 **现场半** | 验证按手册重写的 MAC 配置命令在真机上被接受（本地半可先做，见 `### P1-33`） | on-site real UXM。⚠️ **不再 gate 在 P1-31 上**（Codex #276 P2 抓出错误依赖）：P1-31 只跑那 9 项 KPI 对账、且限定「手册有依据 + 驱动已在用」的命令，**产不出 MAC 配置命令的形式**；而 2026-08-03 查手册发现**这 8 组命令 `BSE:` 形式手册里全都有** —— 卡点不是「不知道命令」，是「没在真机上验过」 |
 
 ⚠️ 表里 **P1-33 现场半不是 P0**，不抢 P0-5 / P0-8 的窗口，排在 P0 之后。
 **不依赖 P1-31** —— 命令形式手册里有，本地半已进 LOCAL-OPEN 队列；
@@ -257,15 +257,19 @@ unblocked) BEFORE starting any new P1.
 > 进[周度短 review](#governance-rules) 的固定检查项：下次动到「未审内容」
 > 那几个文件时，**优先给它补一轮外审**，别等到出事。
 
-| 日期 | PR | 未审 commit | 未审内容 | 为什么没派 | R1 findings | 处置 |
-|---|---|---|---|---|---|---|
-| 2026-08-03 | [#274](https://github.com/swang430/Meta-3D/pull/274) | `1c5d960` | 内审 agent 时间预算的 R2 两条修复（全量输出必须绑当前版本 / 脏工作区先还原再跑基线） | 轮次上限=2，R2 findings 由 R1 修复引入 | 1 | ⬜ 未处置 —— 下次动 `.claude/agents/pre-commit-reviewer.md` 或 `CLAUDE.md` ⓪⁺④ 时补审 |
-| 2026-08-03 | [#275](https://github.com/swang430/Meta-3D/pull/275) | `b1dc9df` `dea10ea` | UXM KPI 的 R2 两条修复（未知口径不写进 `_dbm` 字段 / 两种 blocker 一起报）+ 现场核验 10 项清单 | 同上 | 2 | ⬜ 未处置 —— 下次动 `uxm_base_station.py` KPI 段或 `uxm_scpi_compatibility.py` 时补审 |
+> ⚠️ **每个 PR 都记一行，不只记有缺口的**（Codex #276 R3）——
+> 只记「有缺口」的话，最右那列**做不了趋势**：它的取样条件本身就是「已经出了
+> 审查缺口」，clean 的、全覆盖的、以及本 PR 都会被排除，数字升降可能只是
+> **哪些 PR 有资格进表**变了。要当质量信号，样本必须是全集。
 
-**已核查、不构成缺口的**（记在这里免得下次重查）：
-- [#273](https://github.com/swang430/Meta-3D/pull/273) — Codex R2 审的 `8d0781f` **就是合并时的 HEAD**，全覆盖 ✅
-- [#271](https://github.com/swang430/Meta-3D/pull/271) — R2 后多了个合并 commit `42a1202`，但其净变化是 #272 **已审过**的那 15 行文档，无新内容 ✅
-- [#272](https://github.com/swang430/Meta-3D/pull/272) — 首轮即 clean ✅
+| 日期 | PR | 外审覆盖 | 未审内容 | 为什么没派 | R1 findings | 处置 |
+|---|---|---|---|---|---|---|
+| 2026-08-03 | [#271](https://github.com/swang430/Meta-3D/pull/271) | ✅ 全覆盖 | —（R2 后的合并 commit `42a1202` 净变化 = #272 已审过的 15 行文档） | — | 1 | ✅ 无需处置 |
+| 2026-08-03 | [#272](https://github.com/swang430/Meta-3D/pull/272) | ✅ 全覆盖 | —（首轮即 clean） | — | 0 | ✅ 无需处置 |
+| 2026-08-03 | [#273](https://github.com/swang430/Meta-3D/pull/273) | ✅ 全覆盖 | —（R2 审的 `8d0781f` 就是合并时的 HEAD） | — | 2 | ✅ 无需处置 |
+| 2026-08-03 | [#274](https://github.com/swang430/Meta-3D/pull/274) | ⚠️ 有缺口 | `1c5d960` —— 内审 agent 时间预算的 R2 两条修复（全量输出必须绑当前版本 / 脏工作区先还原再跑基线） | 轮次上限=2，R2 findings 由 R1 修复引入 | 1 | ⬜ 未处置 —— 下次动 `.claude/agents/pre-commit-reviewer.md` 或 `CLAUDE.md` ⓪⁺④ 时补审 |
+| 2026-08-03 | [#275](https://github.com/swang430/Meta-3D/pull/275) | ⚠️ 有缺口 | `b1dc9df` `dea10ea` —— UXM KPI 的 R2 两条修复（未知口径不写进 `_dbm` 字段 / 两种 blocker 一起报）+ 现场核验 9 项清单 | 同上 | 2 | ⬜ 未处置 —— 下次动 `uxm_base_station.py` KPI 段或 `uxm_scpi_compatibility.py` 时补审 |
+| 2026-08-03 | [#276](https://github.com/swang430/Meta-3D/pull/276) | ⚠️ 有缺口 | R3 四条修复（本 commit）—— 用户指示补审后 Codex 仍出 1 P1 + 3 P2，修完未再派第四轮 | 用户已额外授权一轮（R3）；R3 findings 仍主要是同文档内部镜像 | **4** | ⬜ 未处置 —— 下次动本文件 P1-31/32/33 段时补审 |
 
 ### 📉 更值得看的信号：第一轮 findings 数
 
@@ -277,6 +281,14 @@ unblocked) BEFORE starting any new P1.
 → #275 (2) → **#276 (4)**。#276 那四条**全是条目内部自己打架**
 （写「只读」又列了三条写命令 / 拆出本地半却不排进队列 / 改了表行没改
 紧邻的注 / 依赖设反）—— **这些不需要外审也该自己看出来**。
+
+⚠️ 更难看的是 #276 的后续：用户额外授权补审（R3）后，Codex **又出了
+1 P1 + 3 P2**，其中 **3 条仍是同一份文档里的镜像**（What 段还写着「只读」
+而下面列着三条写命令 / Discovered 清单还留着已删的第 ⑩ 项 / 这张表自己
+的取样有偏还宣称能看趋势）。**同一份文档、连审三轮、每轮都还能挖出
+自相矛盾** —— 这不是审查太严，是我改一处不扫镜像的老毛病在一份纯文档上
+被放大到极致。唯一那条 P1（`DDDSU` 翻六参数信息不够）是真的规划缺口，
+不是镜像 —— 也说明**方案里真的有需要外审才看得出的东西**，两类要分开看。
 
 这一列是**可观察的质量信号**，比「我会注意」有用。周度 review 时看趋势：
 持续走高 = 第一轮质量在退，该收紧动手前的自查而不是加审查轮次。
@@ -1444,7 +1456,7 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 
 **Why 队首**: #275 已合并，但**本地零真机验证** —— 命令形式 / 元素下标 / 单位 / 前置条件全部来自手册与真机历史日志。现有 `uxm_scpi_compatibility` 只能回答"通不通"（命令存不存在），**回答不了"回了几个元素、第几个是什么、单位是什么"** —— 而 #275 的正确性恰恰全押在这上面。现场日期不由我们定，**没有它，下次现场这批改动就白跑一趟**。
 
-**要打印/回答的 10 项**（判据见 Discovered 同日「#275 整批必须现场核验」条）：
+**要打印/回答的 9 项**（判据见 Discovered 同日「#275 整批必须现场核验」条）：
 ① OTA 吞吐量回不回 6 个 double ② 单位 bps 还是 Mbps（跟面板比，差 10⁶）③ `idx4=average`/`idx1=current` ④ BLER DL 10 个 / UL 6 个、`idx8`/`idx4` ⑤ CQI `result[4]=average`（idx3 是 maximum，取错一位系统性乐观）⑥ RI 8 个 bin 是码点（rank=码点+1）⑦ RSRP/SINR 口径（**差 156 = 码点，相等 = dBm**）⑧ 三条前置真被接受 ⑨ `BTHRoughput:CLEar` 真能圈窗口
 
 ⚠️ **原第 ⑩ 项「现场探出 `Uxm5GNRTestAppProfile` 的无前缀形式」已删**（Codex #276 R2）——
@@ -1490,7 +1502,22 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 | CSI-RS ports | `CSIRS:PORTs <n>` | `...:CSI:RESource:CONFig:NZP:<cri>:RM:NPORts`（带 `<cri>` 维度） | 多一个资源索引维度 |
 | 统计窗口 | `BTHRoughput:DL:TSTatistics:COUNt` | **手册确认不存在** → `BSE:MEASure:NR5G:BTHRoughput:LENGth[:ALL]`（全局） | **原命令是编的** |
 
-**本地半**: 按上表重写 profile + 驱动里的值形态转换（`"DDDSU"` → 六条计数、`"5MS"` → `MS5`、`16` → `N16`、`"ALL"` → `FIXed`+`RBSTart`+`RBNumber`）。⚠️ TDD 那条要把 `DDDSU` 翻成 slot/symbol 计数，**是语义转换不是字符串替换**，得单独设计并配门。
+**本地半**: 按上表重写 profile + 驱动里的值形态转换（`"5MS"` → `MS5`、`16` → `N16`、`"ALL"` → `FIXed`+`RBSTart`+`RBNumber`）。
+
+⛔ **TDD 那条是本片的前置阻塞点，不能直接排期**（Codex #276 R3 P1）——
+`"DDDSU"` 翻成手册的六条参数**信息不够**：`D`/`U` 的整槽数能从字符串数出来，
+但 **`S`（special）槽不编码它含几个 DL 符号、几个 UL 符号**，而手册要的正是
+`DLSYmbols` / `ULSYmbols` 两个数。我们的 schema 目前只有 `tdd_pattern` +
+`tdd_period` 两个字段，**拿不出这个信息** —— 硬转就是替操作员**猜一个真实的
+TDD 配置**，猜错会让整批吞吐量结果失效（比现在"一条都没下发"更糟：
+现在是没配置，那样是**配错了还看起来配上了**）。
+
+**动手前必须先定这一件事**（二选一，属设计决策不是实现细节）：
+① TestCase schema 增加显式的 special-slot 符号参数（`tdd_special_dl_symbols` /
+   `tdd_special_ul_symbols`），由测试例声明 —— 符合「TestCase 是单一真值源」；
+② 或在 LabProfile 里放一个**有文档依据的**实验室默认值，并在下发时显式记进
+   `measurement.log`（让报告能看出这个数从哪来）。
+**在这条定下来之前，本片的 TDD 部分不排期**；其余 7 组不受影响，可先做。
 **现场半**: 真机验证被接受（见 Blocked on hardware 表）。
 
 **依赖**: P1-32 先做（不崩 + 不假成功 + 调用方消费），否则改完也看不出对错。
@@ -2253,7 +2280,10 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-03 during 立项 review, Codex #276 R2]` **`Uxm5GNRTestAppProfile`（非 IRAT 方言）的命令形式是独立问题 —— 出路是查手册，不是现场探** —— #275 把 KPI reader 换成新命令字段，只给 IRAT 填了 `BSE:` 形式；5G_NR_Test 方言继承基类的 `None`，那批 KPI 现在整组读不到（有 warn-once 兜着，不静默）。⚠️ **不能靠现场探**：该方言用的是**无前缀**形式，而手册给的两个变体（`BSE:MEASure:NR5G:...` / `BSE:NR5G:MEASure:...`）**都带 `BSE:`** —— 现场去试无前缀拼写就是猜，正是 #275 整片在治的病。**正解**：像 2026-08-03 查 IRAT 那样，直接查手册 / NotebookLM 问 5G_NR_Test 方言（Test Application 名 `5G_NR_Test`）下这批命令的根前缀与完整形式；查得到就本地补齐，查不到就如实标"该方言 KPI 不可用"并让 warn-once 继续响。**本地片，不需要现场**。
 
 
-- `[discovered 2026-08-03 during UXM KPI 修复, 用户明确要求记号]` **[→ 载体 = P1-31]** **⚠️ #275 的 KPI 回读改动 —— 本地零真机验证，整批必须现场核验** —— 命令形式 / 元素下标 / 单位 / 前置条件全部来自**手册与真机历史日志**，**没有一条在真机上跑过**。合并 #275 是"按手册应该对"的版本，不是"验过是对的"版本。**下次现场必须逐条对账**（走诊断序列，禁临时脚本）：
+- `[discovered 2026-08-03 during UXM KPI 修复, 用户明确要求记号]` **[→ 载体 = P1-31]** **⚠️ #275 的 KPI 回读改动 —— 本地零真机验证，整批必须现场核验** —— 命令形式 / 元素下标 / 单位 / 前置条件全部来自**手册与真机历史日志**，**没有一条在真机上跑过**。合并 #275 是"按手册应该对"的版本，不是"验过是对的"版本。**下次现场必须逐条对账**（走诊断序列，禁临时脚本）。⚠️ 原第 ⑩ 项「探出 5G 方言的无前缀形式」**已删**（Codex #276）——
+  它与「只探手册有依据的命令、禁猜」自相矛盾（无前缀形式手册里没有，现场探只能猜拼写）；
+  该方言的命令形式**查手册解决、不需要现场**，已另立 Discovered。
+
 
   | # | 要验什么 | 怎么判 |
   |---|---|---|
@@ -2266,7 +2296,6 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
   | 7 | **RSRP/SINR 口径**（见下一条：码点 vs dBm，差 156） | 当前刻意不填结论字段，确认后才接线 |
   | 8 | 三条前置真被接受：`BTHRoughput:STATe ON` / `CSI:STARt` / `CONFig:MEASurement:REPort ON` | 不接受则所有 KPI 恒 `9.91E+37` |
   | 9 | `BTHRoughput:CLEar` 真能圈窗口（清零后重新累积） | 连读两次窗口值应不同；相同 = 没清 |
-  | 10 | `Uxm5GNRTestAppProfile`（**非 IRAT**）这批命令的**无前缀形式**到底是什么 | 本片刻意没填（手册只给 `BSE:` 变体，猜=盲试）→ 该方言 KPI 现在全读不到，只有一条 warning |
 
   **载体**：`uxm_kpi_readback` 诊断序列 = **P1-31**（2026-08-03 已立项、现为队首）。现有 `uxm_scpi_compatibility` 已把这批命令加进 critical 清单、且未定义不再报假绿，可先用它做第一轮"通不通"普查；但**返回值的元素个数与下标语义它验不了**，那要专门的序列打印原始回复。
   ⚠️ **在核验之前，不要把 #275 产出的 KPI 数字当作可交付结果。**
