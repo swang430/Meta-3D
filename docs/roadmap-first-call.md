@@ -160,7 +160,7 @@ TestCase（自带 `configuration`，单一真值源）→ TestExecution（每次
 >
 > ⚠️ **P0 现状别在这儿抄一份** —— 唯一真值源是本文这两处（**按标题找，别记行号**）：
 > 「📋 可规划工作 audit」分桶表的 **`ON-SITE-BLOCKED` 行**，以及
-> 「🚧 Blocked on hardware (P0 queue for next on-site)」段的表。
+> 「🚧 Blocked on hardware (on-site queue —— **P0 优先**)」段的表。
 > 本条目只说两件确定的事：
 > ① P0-3 / P0-4 **已 2026-07-03 现场完成**（见「Blocked on hardware」表里那两条删除线行）；
 > ② 下次现场的**主线**是 P0-5（DUT attach → bearer → PDSCH）。
@@ -190,7 +190,7 @@ P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max /
 | 桶 | 内容 |
 |----|------|
 | **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → P1-31 → P1-32 → P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列 + 08-03 用户指定 P1-30 / P1-31 / P1-32 插队；**队首现为 P1-31**，P1-25 / P1-26 / P1-30 已收口；一批 10 片已全收 #256–#265）|
-| **ON-SITE-BLOCKED** | P0-5 (P0-3/4 已 2026-07-03 现场完成) + P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
+| **ON-SITE-BLOCKED** | P0-5 (P0-3/4 已 2026-07-03 现场完成) + P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
 | **off-roadmap 候选 (需先 triage，非积压)** | GUI 测试框架引入 (与 `feedback_browser_test_frontend_work` 对齐，ROI 最高) / HTTP distributed pytest 缺口 / 后端告警规则引擎 / CLAUDE.md 列的 Queue 重排序·Auth Context·报告对比 |
@@ -214,7 +214,7 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | ~~P0-4~~ | ~~SignalAnalyzer in HAL for reference TRP~~ | ✅ 2026-07-03 现场完成 |
 | P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | on-site real DUT (已至 -96 dBm RSRP, 差正式注册) |
 | P0-8 **现场半** | F64 driver 现场修复落地 —— real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真 | on-site real F64 (本地半已 Done, 见 `### P0-8`；跟 P0-5 attach 同一段窗口) |
-| P1-33 | 补齐 `UxmLteNrIratProfile` 的 MAC 配置命令正确形式（`PDSCH_*` / `TDD_*` / `HARQ_*` / `CSIRS_PORTS` / `MEAS_TPUT_STAT_COUNT` 共 11 条，现全为 `None`） | on-site real UXM —— **等 P1-31 的普查产出**。凭猜填命令形式 = 盲试，正是 #275 整片在治的病；必须先知道真机接受什么形式 |
+| P1-33 **现场半** | 验证按手册重写的 MAC 配置命令在真机上被接受（本地半可先做，见 `### P1-33`） | on-site real UXM。⚠️ **不再 gate 在 P1-31 上**（Codex #276 P2 抓出错误依赖）：P1-31 只跑那 10 项 KPI 对账、且限定「手册有依据 + 驱动已在用」的命令，**产不出 MAC 配置命令的形式**；而 2026-08-03 查手册发现**这 8 组命令 `BSE:` 形式手册里全都有** —— 卡点不是「不知道命令」，是「没在真机上验过」 |
 
 ⚠️ 表里 **P1-33 不是 P0**，不抢 P0-5 / P0-8 的窗口 —— 它排在 P0 之后，
 且依赖 P1-31 的普查产出（同一趟现场，先跑序列再补命令形式）。
@@ -1402,17 +1402,48 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 **要打印/回答的 10 项**（判据见 Discovered 同日「#275 整批必须现场核验」条）：
 ① OTA 吞吐量回不回 6 个 double ② 单位 bps 还是 Mbps（跟面板比，差 10⁶）③ `idx4=average`/`idx1=current` ④ BLER DL 10 个 / UL 6 个、`idx8`/`idx4` ⑤ CQI `result[4]=average`（idx3 是 maximum，取错一位系统性乐观）⑥ RI 8 个 bin 是码点（rank=码点+1）⑦ RSRP/SINR 口径（**差 156 = 码点，相等 = dBm**）⑧ 三条前置真被接受 ⑨ `BTHRoughput:CLEar` 真能圈窗口 ⑩ `Uxm5GNRTestAppProfile` 的无前缀形式是什么（#275 刻意没填，猜=盲试）
 
-**约束**: 只放**手册有依据 + 生产驱动已在用**的命令（禁盲试）；只读、`safe_during_test`；出发前用 mock 跑一遍**只证序列本身不崩，不算验收**。产出同时喂 P1-33（IRAT 的 MAC 配置命令形式）。
+**约束**: 只放**手册有依据 + 生产驱动已在用**的命令（禁盲试）；出发前用 mock 跑一遍**只证序列本身不崩，不算验收**。
+
+⚠️ **`safe_during_test=False`**（Codex #276 P1 抓出我方案自相矛盾）—— 本序列**不是只读**：
+第 ⑧ 项要发 `BTHRoughput:STATe ON` / `CSI:STARt` / `CONFig:MEASurement:REPort ON`，
+第 ⑨ 项要发 **`BTHRoughput:CLEar`**（**会把正在跑的测量窗口清零**）。
+标 `safe_during_test=True` 会让 `SequenceRunnerPanel.tsx` 告诉操作员「测试中可跑」——
+**跑一下就把正在测的 KPI 毁了**。要么整条标不安全（当前选择），要么把 ⑧⑨ 拆成
+独立的不安全序列 —— 拆分留给实现期定，但**不许标成安全**。
 
 ### P1-32 — `configure_mac_throughput_test()` 在 IRAT 上 11/11 命令为 `None`（本地半）⬜（2026-08-03 拍板）
 
-**What（只做本地半）**: ① 走仓库已有的 `RealUxmDriver._cmd()` graceful-skip，不再在第一条 `.format()` 上抛 `AttributeError`；② **跳过了哪些必须显式返回给调用方** —— 跳光了还报 `True` 就是假成功，比现在的 fail-loud 更糟。补齐正确命令形式那半是 **P1-33**（现场 blocked）。
+**What（只做本地半）**: ① 走仓库已有的 `RealUxmDriver._cmd()` graceful-skip，不再在第一条 `.format()` 上抛 `AttributeError`；② **跳过了哪些必须显式返回给调用方**；③ **调用方必须消费它** —— 光返回不够（Codex #276 P1）：`app/services/mimo_ota/executors/measure.py:390-401` **丢弃** `configure_mac_throughput_test()` 的返回值、然后无条件往下 `start_signaling`。不改调用方，加了返回值也只是换个姿势**继续在没配置过的链路上跑测试**。必修的两半：驱动返回「跳过了哪些」+ 消费方在必要命令被跳过时**中止或显式标 degraded**。补齐正确命令形式那半是 **P1-33**。
 
 **Why P1**: `UxmLteNrIratProfile` 继承的是 `UxmTestApp` **基类**（不是 `Uxm5GNRTestAppProfile`），`PDSCH_SCHED_ALGO` / `PDSCH_AMC_ENABLE` / `PUSCH_AMC_ENABLE` / `PDSCH_MCS` / `PDSCH_RB_ALLOC` / `TDD_PATTERN` / `TDD_PERIOD` / `HARQ_MAX_TRANS` / `HARQ_PROCESSES` / `CSIRS_PORTS` / `MEAS_TPUT_STAT_COUNT` **11 条全没覆盖** → 函数第一行就抛、整段 `except` 捕获、`return False`。**即 3GPP MIMO OTA MAC 层吞吐量测试的全部配置（Full Buffer / AMC 关 / 固定 MCS / 全 RB / TDD 格式 / HARQ / CSI-RS 端口 / 统计窗口）在现场那台仪器上从来没生效过。** #275 把 KPI 读对了，但**测的仍是没配置过的链路** —— 严重度高于本项之后的队列各片。
 
 **注意**: #275 已把 KPI 前置（`_enable_kpi_measurements`）挪到该函数第 **0** 步、排在崩点之前，所以 KPI 前置目前是发得出去的；本片不要把它挪回去（有 `M10b` 变异守着）。
 
 **来源**: #275 的生效端门 `test_configure_actually_sends_them` 一加上就红，才暴露出来。
+
+### P1-33 — 按手册重写 IRAT 的 MAC 配置命令（本地半 + 现场半）⬜（2026-08-03 立项）
+
+**背景**: P1-32 让 `configure_mac_throughput_test()` 不再崩、不再假成功，但那 11 条命令在 IRAT 上仍是 `None` —— **实际配置一条也没下发**。本片补齐它们。
+
+**⚠️ 2026-08-03 查手册（NotebookLM）后，本片形态变了** —— 原以为"命令形式不知道、必须现场探"，**实际手册里 8 组全都有 `BSE:` 形式**。所以卡点不是「不知道命令」，是「没在真机上验过」，**本地半现在就能做**（Codex #276 P2 抓出原来 gate 在 P1-31 上是错误依赖）。
+
+**而且不是加前缀那么简单 —— 值形态与机制都变了**（这正是"照抄旧形式改前缀"会踩的坑）：
+
+| 项 | 现用（无前缀，IRAT 上为 `None`） | 手册的 `BSE:` 形式 | 差异性质 |
+|---|---|---|---|
+| Full Buffer | `PDSCH:SchedAlgoritm ... FULLBUFFER` | `BSE:CONFig:NR5G:SCHeduling:QCONFig:SCENario` 枚举含 `Full Throughput` | **完全不同的机制**（Quick Config 场景，不是逐 BWP 设调度算法） |
+| AMC 开关 | `PDSCH\|PUSCH:AMC:ENABle ON/OFF` | `...:SCHeduling:CRNti:DL:IMCS:FIXed`（Bool） | **语义反过来**：ON = 固定 MCS = **关** AMC |
+| 固定 MCS | `PDSCH:MCS <n>` | `...:SCHeduling:CRNti:DL:IMCS`（0..28） | 路径不同 |
+| 全 RB | 一个值 `"ALL"` | **三条**：`RBALlocation:FIXed` + `RBSTart` + `RBNumber`（0..275） | **一条拆三条** |
+| TDD | `TDD:PATTern "DDDSU"` + `TDD:PERiod "5MS"` | **六条**：`TDDPATtern:STATE` / `PERiod`（枚举 **`MS5`**）/ `DLSLots` / `DLSYmbols` / `ULSLots` / `ULSYmbols` | **pattern 字符串→slot/symbol 计数**；周期是 `MS5` 不是 `5MS` |
+| HARQ | `HARQ:MaxTrans 4` / `HARQ:PROCesses 16` | `PHY:DL:HARQ:MAXTrans`（枚举 **`N4`**）/ `PHY:DL:HARQ:PROCesses`（枚举 **`N16`**）；UL 另有一套且 PROCesses 是 **Integer** 不是枚举 | **裸整数→枚举**；DL/UL 分开且类型不同 |
+| CSI-RS ports | `CSIRS:PORTs <n>` | `...:CSI:RESource:CONFig:NZP:<cri>:RM:NPORts`（带 `<cri>` 维度） | 多一个资源索引维度 |
+| 统计窗口 | `BTHRoughput:DL:TSTatistics:COUNt` | **手册确认不存在** → `BSE:MEASure:NR5G:BTHRoughput:LENGth[:ALL]`（全局） | **原命令是编的** |
+
+**本地半**: 按上表重写 profile + 驱动里的值形态转换（`"DDDSU"` → 六条计数、`"5MS"` → `MS5`、`16` → `N16`、`"ALL"` → `FIXed`+`RBSTart`+`RBNumber`）。⚠️ TDD 那条要把 `DDDSU` 翻成 slot/symbol 计数，**是语义转换不是字符串替换**，得单独设计并配门。
+**现场半**: 真机验证被接受（见 Blocked on hardware 表）。
+
+**依赖**: P1-32 先做（不崩 + 不假成功 + 调用方消费），否则改完也看不出对错。
 
 ## 🟡 P2 — Abstraction debt
 
