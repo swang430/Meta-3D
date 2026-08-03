@@ -2140,6 +2140,25 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 > Items added mid-task. Reviewed weekly; promoted to P1/P2/P3 or dropped.
 
+- `[discovered 2026-08-03 during UXM KPI 修复, 用户明确要求记号]` **⚠️ #275 的 KPI 回读改动 —— 本地零真机验证，整批必须现场核验** —— 命令形式 / 元素下标 / 单位 / 前置条件全部来自**手册与真机历史日志**，**没有一条在真机上跑过**。合并 #275 是"按手册应该对"的版本，不是"验过是对的"版本。**下次现场必须逐条对账**（走诊断序列，禁临时脚本）：
+
+  | # | 要验什么 | 怎么判 |
+  |---|---|---|
+  | 1 | `BSE:MEASure:NR5G:BTHRoughput:DL\|UL:THRoughput:OTA:{cell}?` 真机接受且回 **6 个 double** | 元素个数 ≠ 6 → 下标全错位，`_pick` 会静默取错 |
+  | 2 | 该返回值的**单位是 bps 还是 Mbps** | 手册只有**旁证**（兄弟条目 `DL OTA LTE + NR Result` 标 `Unit: bps`），本条目自身没有 `Unit` 字段。跟面板显示比：差 10⁶ 就是 bps |
+  | 3 | `idx4 = average` / `idx1 = current` 对不对 | 跑一段稳定吞吐，面板平均值 vs idx4 |
+  | 4 | `BLER:{cell}?` DL 回 **10 个**、UL 回 **6 个**；`idx8 = pdschBlerRatio` / `idx4 = nack-ratio` | 个数不对即下标错位 |
+  | 5 | `CSI:CQI:STATistics?` 的 `result[4] = cqi_average`（idx3 是 maximum） | 面板 CQI 均值 vs idx4；**取错一位会系统性乐观** |
+  | 6 | `CSI:RI:HISTogram?` 的 8 个 bin 是**码点 0..7**（rank = 码点+1） | 单层场景下应全落 bin0 → rank 报 1。若面板显示 rank 1 而我们算出 0，说明权重又反了 |
+  | 7 | **RSRP/SINR 口径**（见下一条：码点 vs dBm，差 156） | 当前刻意不填结论字段，确认后才接线 |
+  | 8 | 三条前置真被接受：`BTHRoughput:STATe ON` / `CSI:STARt` / `CONFig:MEASurement:REPort ON` | 不接受则所有 KPI 恒 `9.91E+37` |
+  | 9 | `BTHRoughput:CLEar` 真能圈窗口（清零后重新累积） | 连读两次窗口值应不同；相同 = 没清 |
+  | 10 | `Uxm5GNRTestAppProfile`（**非 IRAT**）这批命令的**无前缀形式**到底是什么 | 本片刻意没填（手册只给 `BSE:` 变体，猜=盲试）→ 该方言 KPI 现在全读不到，只有一条 warning |
+
+  **载体**：`uxm_kpi_readback` 诊断序列（**还没写，出发前必须补**）。现有 `uxm_scpi_compatibility` 已把这批命令加进 critical 清单、且未定义不再报假绿，可先用它做第一轮"通不通"普查；但**返回值的元素个数与下标语义它验不了**，那要专门的序列打印原始回复。
+  ⚠️ **在核验之前，不要把 #275 产出的 KPI 数字当作可交付结果。**
+
+
 - `[discovered 2026-08-03 during UXM KPI 修复, Codex #275 R2]` **UE L3 测量报告里 RSRP/RSRQ/SINR 的口径手册未说明 —— 现场必须对着面板比对一次** —— `BSE:CONFig:NR5G:<cell>:MEASurement:JSON:REPort:FETCh?` 返回的这几个值，究竟是 **3GPP RRC 上报的原始码点**（`rsrp-Result` 0..127，需 `value − 156` 换算成 dBm）还是**仪表已换算好的 dBm/dB**，手册对 JSON 与 legacy 两种 FETCh **都只给了示例**（示例里全是 `"NaN"`），没有单位、取值范围、换算公式（NotebookLM 三次明确回"手册未说明"，未做推断）。⚠️ 按 3GPP 通式自己换算 = **盲试**；原样写进名为 `rsrp_dbm` 的字段 = **假数据冒充真数据**。所以当前实现**只把原样值留进证据**（`scpi.log` 有完整响应，`measurement.log` 记 `kpi_raw_unverified`），`rsrp_dbm` / `sinr_db` 保持"未读到"、`kpi_valid` 标 false。**现场做法**：让 UE 驻留后同时看 UXM 面板上的 RSRP 读数与本查询返回值，差 156 就是码点、相等就是 dBm，确认后接线。落在 `uxm_kpi_readback` 序列里（那片还没开）。
 
 
