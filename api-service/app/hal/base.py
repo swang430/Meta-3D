@@ -6,9 +6,39 @@ Defines abstract interfaces that all instrument drivers must implement.
 SCPI 日志架构:
   base 类提供 _write() / _query() 模板方法，自动记录到 scpi.log。
   子类只需覆盖 _do_write() / _do_query() 实现具体的 I/O 操作。
+
+  每次往返产出一条 TX + 一条结果记录 (P1-30)：
+    TX  → 即将下发 (只表示"程序打算发", 不表示仪器收到了)
+    OK  → 写命令下发完成 (带 duration_ms)
+    RX  → 查询拿到响应 (带 duration_ms + resp_len 真实长度)
+    ERR → 下发/读取过程中抛异常 (带 duration_ms + error_type), 异常随后原样重抛
+
+  ⚠ **配对要按 `query` 字段, 不能按"相邻行"** —— TX 记在 `_scpi_lock` **之外**
+  且在 `_do_*` 之前, 所以两种情况下 TX 与结果行不相邻:
+    · **并发** —— 多协程共用一台仪器时 (broadcaster 1 Hz × 32+ 查询与测量
+      序列并行), 连续几条 TX 会先落盘, 结果行随后交错回来;
+    · **嵌套** —— F64 `_do_query` 超时后在同一条命令的窗口内调
+      `_drain_after_timeout` / `_drain_errors`, 那里每条 `SYST:ERR?` 各产生
+      一对 TX/RX, 排完才写外层的 ERR。
+  (`OK` 行目前只在 msg 文本里带命令、没有 `query` 字段 —— 给它补上属于加
+   机制, 已进 backlog。)
+
+  ⚠ **只有 TX 没有后续 ≠ 一定失败**, 它是个**多义签名**, 至少覆盖:
+  被上层 `asyncio.wait_for` 超时 / 被 `task.cancel()` 取消 / coroutine 从未
+  被 await / 进程中断。前两种走 `CancelledError`, 它继承 `BaseException`,
+  **本文件的 `except Exception` 抓不到**, 所以不会留下 ERR 行 —— 这是当前
+  已知的证据缺口, 不是本片修好了的东西 (要覆盖须改成 `except BaseException`
+  + 裸 raise, 已进 backlog)。
+
+  ⚠ **`duration_ms` 的口径包含排队等锁的时间** —— 对 async 驱动 (F64/FS16),
+  t0 取在 coroutine **创建**时刻, 而 `_scpi_lock` 在 coroutine **内部**才拿;
+  ERR 的 duration_ms 还额外含 `_drain_after_timeout` 的排水时间 (上界 64 次
+  `SYST:ERR?`)。所以它答的是"这次调用从发起到落定花了多久", **不是**"仪器
+  响应花了多久" —— 看到 8000ms 别直接判仪器慢。
 """
 
 import asyncio
+import time
 from abc import ABC, abstractmethod
 from enum import Enum
 import logging
@@ -17,6 +47,38 @@ from datetime import datetime
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_resp_max() -> int:
+    """响应体写进日志的最大字符数 (超出截断并显式标记)。
+
+    P1-30 之前是硬编码 200 且**无任何标记** —— 实测 31 个 scpi.log* 里
+    hal_mode=real 的 RX 共 171,170 条, 其中 **22,914 条恰好 200 字符**(13.4%)
+    即被截断, 且 RX 的最大长度就是 200 → 日志里**从未出现过任何一条长响应
+    的全貌**。被砍最多的是 BSE:...BTHRoughput:DL:TSTatistics:JSON? (22,608 条,
+    下行吞吐量统计 = 项目核心测量数据), 还砍过 SYST:INFO? / SYSTem:ERRor?。
+
+    默认放宽到 2000；现场磁盘吃紧可用 `LOG_SCPI_RESP_MAX` 调回。
+    无论是否截断, resp_len 都记**真实长度**, 读者永远知道被砍了多少。
+
+    ⚠ 走 `app.config.settings` 而不是 `os.getenv` —— 本项目的 `.env` 由
+    pydantic-settings 直接读进 Settings 对象, **不会注入 os.environ**
+    (实证: import app.config 前后 os.environ 里都没有 DATABASE_URL)。
+    用 os.getenv 会让 .env 里配的值被静默忽略, 旋钮形同虚设。
+    """
+    from app.config import settings
+
+    try:
+        return max(0, int(settings.log_scpi_resp_max))
+    except (TypeError, ValueError):
+        logger.warning(
+            f"log_scpi_resp_max={settings.log_scpi_resp_max!r} 不是整数, "
+            f"回落默认 2000"
+        )
+        return 2000
+
+
+_SCPI_LOG_RESP_MAX = _resolve_resp_max()
 
 
 class InstrumentStatus(str, Enum):
@@ -107,20 +169,86 @@ class InstrumentDriver(ABC):
     # ── SCPI 日志记录 (内部使用) ───────────────────────────────
 
     def _log_scpi_write(self, cmd: str) -> None:
-        """记录 SCPI 写命令到 scpi.log"""
+        """记录"即将下发"到 scpi.log。
+
+        ⚠ 这行**不代表仪器收到了** —— 它记在 _do_write / _do_query 执行之前,
+        语义是"程序打算发这条"。是否走完看配对的 OK / RX / ERR 行。
+        """
         self._scpi_logger.debug(
             f"TX: {cmd}",
             extra={"instrument_id": self.instrument_id, "direction": "TX"},
         )
 
-    def _log_scpi_response(self, cmd: str, response: str) -> None:
-        """记录 SCPI 查询及其响应到 scpi.log"""
+    def _log_scpi_response(
+        self, cmd: str, response: str, duration_ms: Optional[float] = None
+    ) -> None:
+        """记录 SCPI 查询及其响应到 scpi.log。
+
+        resp_len 记**截断前的真实长度**; 截断时消息体尾部附
+        `…[truncated <上限>/<真实长度>]`, 让"短响应"和"被砍的长响应"
+        在日志里长得不一样 (P1-30 之前两者完全无法区分)。
+        """
+        body = response.strip()
+        full_len = len(body)
+        if full_len > _SCPI_LOG_RESP_MAX:
+            body = (
+                f"{body[:_SCPI_LOG_RESP_MAX]}"
+                f"…[truncated {_SCPI_LOG_RESP_MAX}/{full_len}]"
+            )
+        extra: Dict[str, Any] = {
+            "instrument_id": self.instrument_id,
+            "direction": "RX",
+            "query": cmd,
+            "resp_len": full_len,
+        }
+        if duration_ms is not None:
+            extra["duration_ms"] = round(duration_ms, 3)
+        self._scpi_logger.debug(f"RX: {body}", extra=extra)
+
+    def _log_scpi_done(self, cmd: str, duration_ms: float) -> None:
+        """记录写命令下发完成 (无响应体) 到 scpi.log。
+
+        写命令在 real 模式下只占 SCPI 流量的 ~1% (实测 2,293 条写 vs
+        261,755 条查询), 所以给每条写补一条完成行的体量代价可忽略,
+        换来的是"发了就一定有配对记录", 不必靠"没看到报错"去推断成功。
+        """
         self._scpi_logger.debug(
-            f"RX: {response.strip()[:200]}",
+            f"OK: {cmd}",
             extra={
                 "instrument_id": self.instrument_id,
-                "direction": "RX",
+                "direction": "OK",
+                "duration_ms": round(duration_ms, 3),
+            },
+        )
+
+    def _log_scpi_error(
+        self, cmd: str, exc: BaseException, duration_ms: float
+    ) -> None:
+        """记录往返过程中抛出的异常到 scpi.log。
+
+        ⚠ 级别刻意用 DEBUG 而非 WARNING: app.hal.scpi.* propagate 到 root
+        (console + app.log)。app.log 已经被 DEBUG 心跳刷到 78% 噪声, 再把
+        SCPI 异常按 WARNING 灌进去只会让它更难读。异常的**告警**归驱动层
+        决定, 本行只负责在 scpi.log 里留下可 grep 的证据 (direction=ERR)。
+
+        ⚠ 异常消息体复用 RX 的同一上限 —— 驱动里 `ValueError(f"...{raw}...")`
+        这类写法会把整段响应嵌进异常, 不设限的话被 RX 挡住的 3412 字符会从
+        ERR 行原样漏出去, 与本片"给日志加边界"正相反。
+        """
+        detail = str(exc)
+        if len(detail) > _SCPI_LOG_RESP_MAX:
+            detail = (
+                f"{detail[:_SCPI_LOG_RESP_MAX]}"
+                f"…[truncated {_SCPI_LOG_RESP_MAX}/{len(detail)}]"
+            )
+        self._scpi_logger.debug(
+            f"ERR: {cmd} -> {type(exc).__name__}: {detail}",
+            extra={
+                "instrument_id": self.instrument_id,
+                "direction": "ERR",
                 "query": cmd,
+                "error_type": type(exc).__name__,
+                "duration_ms": round(duration_ms, 3),
             },
         )
 
@@ -151,9 +279,28 @@ class InstrumentDriver(ABC):
         子类应覆盖 _do_write() 而非本方法。
         """
         self._log_scpi_write(cmd)
-        result = self._do_write(cmd, **kwargs)
+        t0 = time.perf_counter()
+        try:
+            result = self._do_write(cmd, **kwargs)
+        except Exception as exc:
+            # 只记日志, 异常**原样重抛** —— 控制流零变化。
+            self._log_scpi_error(cmd, exc, (time.perf_counter() - t0) * 1000)
+            raise
         # _do_write 可能是同步或异步实现 — 异步时返回 coroutine,
-        # 直接交给调用方 await。
+        # 包一层让 OK / ERR 行在真正执行完之后才写 (与 _query 同形态)。
+        if asyncio.iscoroutine(result):
+            return self._log_write_done_after_await(cmd, result, t0)
+        self._log_scpi_done(cmd, (time.perf_counter() - t0) * 1000)
+        return result
+
+    async def _log_write_done_after_await(self, cmd: str, coro, t0: float):
+        """Helper: await 异步 _do_write, 写 OK / ERR 行, 返回原结果。"""
+        try:
+            result = await coro
+        except Exception as exc:
+            self._log_scpi_error(cmd, exc, (time.perf_counter() - t0) * 1000)
+            raise
+        self._log_scpi_done(cmd, (time.perf_counter() - t0) * 1000)
         return result
 
     def _query(self, cmd: str, **kwargs):
@@ -166,20 +313,34 @@ class InstrumentDriver(ABC):
         子类应覆盖 _do_query() 而非本方法。
         """
         self._log_scpi_write(cmd)
-        result = self._do_query(cmd, **kwargs)
+        t0 = time.perf_counter()
+        try:
+            result = self._do_query(cmd, **kwargs)
+        except Exception as exc:
+            # 只记日志, 异常**原样重抛** —— 控制流零变化。
+            self._log_scpi_error(cmd, exc, (time.perf_counter() - t0) * 1000)
+            raise
         if asyncio.iscoroutine(result):
             # 异步路径：包装一层 coroutine，让 RX 日志在真正拿到字符串
             # 之后再写。直接 ``return result`` 会让 _log_scpi_response
             # 永远拿不到 RX，scpi.log 里只有 TX 没有 RX。
-            return self._log_response_after_await(cmd, result)
+            return self._log_response_after_await(cmd, result, t0)
         # 同步路径：直接写日志 + 返回。
-        self._log_scpi_response(cmd, result)
+        self._log_scpi_response(cmd, result, (time.perf_counter() - t0) * 1000)
         return result
 
-    async def _log_response_after_await(self, cmd: str, coro):
+    async def _log_response_after_await(
+        self, cmd: str, coro, t0: Optional[float] = None
+    ):
         """Helper: await an async _do_query result, log RX, return string."""
-        response = await coro
-        self._log_scpi_response(cmd, response)
+        if t0 is None:
+            t0 = time.perf_counter()
+        try:
+            response = await coro
+        except Exception as exc:
+            self._log_scpi_error(cmd, exc, (time.perf_counter() - t0) * 1000)
+            raise
+        self._log_scpi_response(cmd, response, (time.perf_counter() - t0) * 1000)
         return response
 
     def _do_write(self, cmd: str, **kwargs) -> None:

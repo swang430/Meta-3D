@@ -47,7 +47,18 @@ class ContextFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.session_id = current_session_id.get("-")  # type: ignore[attr-defined]
-        record.instrument_id = current_instrument_id.get("-")  # type: ignore[attr-defined]
+        # P1-30 收窄：contextvar 只做**兜底**，不得覆盖调用方通过 extra= 显式
+        # 给出的值。原实现无条件覆盖 —— HAL 层 _log_scpi_* 明明传了
+        # extra={"instrument_id": self.instrument_id}，却在这里被重写成
+        # contextvar 默认值 "-"（SCPI 路径上没有任何地方 set 过它）。
+        # **P1-30 修复前**实测：当时归档的全部 759,894 行 SCPI 日志里
+        # instrument_id 恒为 "-"（100%），仪器身份只在 logger 名
+        # (app.hal.scpi.<id>) 里侥幸留存。修复后新写入的行带真实 id ——
+        # 这句话描述的是历史观测，不是现在时的不变量。
+        # ⚠ session_id 保持原样：全仓无任何 extra= 传 session_id，没有冲突，
+        #   不顺手改（改了也观察不到差别）。
+        if not hasattr(record, "instrument_id"):
+            record.instrument_id = current_instrument_id.get("-")  # type: ignore[attr-defined]
         # 注入当前 HAL 全局模式 (mock/real)
         try:
             from app.services.instrument_hal_service import get_hal_service

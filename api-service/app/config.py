@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     log_retention_days: int = 30         # 日志文件保留天数
     log_scpi_enabled: bool = True        # 是否启用 SCPI 仪器通信专用日志
     log_db_enabled: bool = True          # 是否启用数据库 SQL 查询日志
+    # SCPI 响应体写进 scpi.log 的最大字符数, 超出截断并显式标记
+    # (P1-30; 原为硬编码 200 且无标记 —— 实测 22,914 条 real 模式 RX 恰好
+    #  200 字符, 长响应从未在日志里露过全貌)。现场磁盘吃紧可调回 200。
+    log_scpi_resp_max: int = 2000
 
     class Config:
         env_file = ".env"
