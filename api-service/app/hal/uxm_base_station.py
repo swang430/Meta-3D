@@ -1535,6 +1535,75 @@ class RealUxmDriver(BaseStationDriver):
             logger.error(f"[UXM] set_frc_config failed: {e}")
             return False
 
+    async def _enable_kpi_measurements(self, cell: str) -> None:
+        """打开 KPI 累积 —— 吞吐量/BLER + CSI + UE 测量报告队列。
+
+        手册 (2026-08-03 NotebookLM 查证) 三条独立前置:
+          · `BTHRoughput:STATe ON` —— **全局**开关 (不带 cell), 默认 OFF;
+            不开则 OTA 吞吐量与 BLER 查询恒返 9.91E+37。
+          · `CSI:STARt` —— per-cell; 不发则 CQI/RI 查询恒返 NaN / 全 0。
+          · `CONFig:MEASurement:REPort ON` —— UE 测量报告队列, 不开则
+            L3 报告 FETCh 拿不到 RSRP/RSRQ/SINR。
+
+        每条都**先判方言里有没有**再发 (禁盲试); 单条失败只 warning 不中断 ——
+        它们互相独立, 一条挂了不该让另外两条也读不到。
+        """
+        for cmd_tmpl, arg, what in (
+            (self._cmds.MEAS_BTHROUGHPUT_STATE, "ON", "吞吐量/BLER 累积"),
+            (self._cmds.MEAS_CSI_START, None, "CSI (CQI/RI) 累积"),
+            (self._cmds.MEAS_UE_REPORT_STATE, "ON", "UE 测量报告队列"),
+        ):
+            if not cmd_tmpl:
+                logger.debug(f"[UXM] {what}: 本方言未定义该命令, 跳过")
+                continue
+            try:
+                cmd = cmd_tmpl.format(cell=cell)
+                self._write(f"{cmd} {arg}" if arg else cmd)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[UXM] 打开{what}失败: {e} — 该组 KPI 可能读不到")
+
+    @staticmethod
+    def _parse_ue_measurement_report(raw: str):
+        """从 L3 RRC 测量报告 JSON 里取 (RSRP, SINR)。
+
+        手册给的结构: {"NumberOfReportsExtracted": N, "MeasurementReports":
+        [{"CellReports": [{"RSRP": .., "RSRQ": .., "SINR": .., ...}]}]}
+        —— 取**最后一份**报告的**第一个** CellReport (最新的服务小区)。
+        字段值可能是字符串 "NaN"; 那是没数据, 不是 0。
+        返回 (None, None) 表示这一轮没读到。
+        """
+        import json as _json
+
+        if not raw or not raw.strip():
+            return None, None
+        text = raw.strip()
+        # SCPI 字符串常被整体加引号 + 内部引号双写 (手册明说会转义)
+        if text.startswith('"') and text.endswith('"') and len(text) >= 2:
+            text = text[1:-1].replace('""', '"')
+        try:
+            data = _json.loads(text)
+        except (ValueError, TypeError):
+            return None, None
+        reports = (data or {}).get("MeasurementReports") or []
+        if not reports:
+            return None, None
+        cells = (reports[-1] or {}).get("CellReports") or []
+        if not cells:
+            return None, None
+        cell_rep = cells[0] or {}
+
+        def _num(key):
+            v = cell_rep.get(key)
+            if v is None:
+                return None
+            try:
+                f = float(v)          # 字符串 "NaN" 会变成 float nan
+            except (ValueError, TypeError):
+                return None
+            return None if f != f else f     # NaN → None
+
+        return _num("RSRP"), _num("SINR")
+
     async def configure_mac_throughput_test(
         self,
         mimo_layers: int = 2,
@@ -1593,6 +1662,18 @@ class RealUxmDriver(BaseStationDriver):
                 f"MIMO={mimo_layers}L, MCS={mcs}, AMC={'ON' if enable_amc else 'OFF'}, "
                 f"TDD={tdd_pattern}, stat_count={stat_count}"
             )
+
+            # 0. 打开测量累积 —— **必须最先发**。
+            #    ① 没有这一步, 后面所有 KPI 查询恒返 9.91E+37 (SCPI 的 NaN);
+            #       手册明确: 吞吐量/BLER 由全局 BTHRoughput:STATe 控制,
+            #       CSI (CQI/RI) 由 per-cell CSI:STARt 控制, UE 测量报告
+            #       要先把队列开关打开。2026-08-03 之前这三条一条都没发过。
+            #    ② 放在最前而不是最后, 是因为下面 1-8 步在 **IRAT 方言上
+            #       11/11 条命令都是 None** —— 第一条 .format() 就抛
+            #       AttributeError, 整个函数 return False。那是**先于本片
+            #       存在的独立缺陷**(见 roadmap Discovered 同日条), 本片不修;
+            #       但前置若排在它后面, 本片的修复就是死的。
+            await self._enable_kpi_measurements(cell)
 
             # 1. Full Buffer 调度
             self._write(
@@ -1998,165 +2079,205 @@ class RealUxmDriver(BaseStationDriver):
     # 4. 吞吐量与 CSI 测量
     # ===================================================================
 
+    # SCPI 的 NaN 表示 —— 手册反复强调: 测量没开 / 刚 reset / 还没收到样本时,
+    # 所有 float 型计数与比率都返回 9.91E+37。当成真值算会得到荒谬的数。
+    _SCPI_NAN_THRESHOLD = 9.9e37
+
+    @classmethod
+    def _is_scpi_nan(cls, v: float) -> bool:
+        return v != v or abs(v) >= cls._SCPI_NAN_THRESHOLD
+
+    @classmethod
+    def _parse_doubles(cls, raw: str) -> List[Optional[float]]:
+        """把逗号分隔的 double 列表解析成 list, SCPI NaN → None。
+
+        返回 list 长度 = 实际收到的元素个数 (**不补齐**) —— 调用方必须自己
+        检查下标存在, 否则固件版本差异会静默取到错位的值。
+        """
+        out: List[Optional[float]] = []
+        for tok in (raw or "").split(","):
+            tok = tok.strip()
+            if not tok:
+                # ⚠ 空元素也**占位** —— 丢弃会让后面所有下标左移一位,
+                #   正好是本 docstring 要防的"静默取到错位的值"。
+                out.append(None)
+                continue
+            try:
+                v = float(tok)
+            except ValueError:
+                out.append(None)
+                continue
+            out.append(None if cls._is_scpi_nan(v) else v)
+        return out
+
+    @staticmethod
+    def _pick(vals: List[Optional[float]], idx: int) -> Optional[float]:
+        """按下标取值; 越界或 NaN → None (而不是 0.0)。"""
+        return vals[idx] if 0 <= idx < len(vals) else None
+
     async def get_throughput_metrics(self) -> ThroughputMetrics:
         """
-        轮询读取 MAC 层 DL+UL 吞吐量指标。
+        读取仪表与终端上报的 KPI。
 
-        包含:
-          - DL 吞吐量 / BLER      (PDSCH MAC 层统计)
-          - UL 吞吐量 / BLER      (PUSCH MAC 层统计)
-          - CQI / RI             (CSI 反馈统计)
+        **口径 (2026-08-03 用户定)**: 记录的是**仪表和终端上报的真实参数**,
+        不是我们自己去统计传输了多少数据 —— 吞吐量的"实际结果"由仪表的
+        OTA 吞吐量计数器给出。
 
-        调用时机:
-          UE 连接后，在 configure_mac_throughput_test() 设定的统计窗口
-          (stat_count 子帧) 完成后读取，确保统计稳定。
+        每项的命令形式 / 返回元素含义 / 单位 / 前置条件均以 UXM 手册为准
+        (2026-08-03 NotebookLM 查证, 见 docs/design/uxm-kpi-readback-fix.md):
+
+          DL/UL 吞吐量  BTHRoughput:<dir>:THRoughput:OTA:<cell>?
+                        → 6 doubles {progress, current, min, max, average,
+                          current-scheduled}, **单位 bps**
+                        → average 进 *_throughput_mbps (测试例结论),
+                          current 进 *_throughput_current_mbps (实时值)
+          DL BLER       BTHRoughput:DL:BLER:<cell>?   → 10 doubles, idx8 = pdschBlerRatio
+          UL BLER       BTHRoughput:UL:BLER:<cell>?   → 6 doubles,  idx4 = nack-ratio
+          CQI           CSI:CQI:STATistics?           → 6 doubles, idx3 = average
+                        (⚠ idx0 是**样本数**不是 CQI)
+          RI            CSI:RI:HISTogram?             → 8 doubles = RI **0..7** 计数
+                        (⚠ 下标即 RI 值, 加权权重用 i 不是 i+1)
+          RSRP/RSRQ/SINR  CONFig:NR5G:<cell>:MEASurement:JSON:REPort:FETCh?
+                        → L3 RRC 测量报告 JSON
+
+        **前置条件由 configure_mac_throughput_test() 负责**
+        (BTHRoughput:STATe ON + CSI:STARt + UE 测量报告队列 ON);
+        没开时仪表一律回 9.91E+37, 本方法会把它们记成"无数据"而不是 0。
+
+        调用时机: UE 连接后, 统计窗口 (stat_count 子帧) 完成后读取。
         """
-        import json as _json
         cell = self._cell_id
         metrics = ThroughputMetrics()
+        # 哪些字段这一轮真的拿到了数 —— 进 measurement.log, 让读日志的人
+        # 能分辨"测出来是 0"和"根本没测到"(P1-30 同一个母题)。
+        valid: Dict[str, bool] = {}
 
-        try:
-            # ── DL 吞吐量 (JSON 格式，包含 Mbps / 子帧数 / 传输块统计) ──
-            tput_json = self._query(
-                self._cmds.MEAS_BTHROUGHPUT_DL_JSON.format(cell=cell)
-            )
-            if tput_json and tput_json.strip():
-                try:
-                    tput_data = _json.loads(tput_json)
-                    # UXM JSON 键名可能为 "DL_Throughput_Mbps" 或 "throughput"
-                    metrics.dl_throughput_mbps = (
-                        tput_data.get("DL_Throughput_Mbps")
-                        or tput_data.get("throughput", 0.0)
-                    )
-                    # 顺带取 MCS (如果 JSON 有)
-                    if "DL_MCS" in tput_data:
-                        metrics.mcs_dl = int(tput_data["DL_MCS"])
-                except _json.JSONDecodeError:
-                    # fallback: 直接数值解析
-                    try:
-                        metrics.dl_throughput_mbps = float(
-                            tput_json.strip().split()[0]
-                        )
-                    except (ValueError, IndexError):
-                        pass
+        def _read_doubles(cmd_tmpl: Optional[str], what: str
+                                ) -> List[Optional[float]]:
+            """发一条返回 double 列表的查询; 命令未定义 / 失败 → 空 list。"""
+            if not cmd_tmpl:
+                # 方言没有这条命令 —— 显式跳过, 不盲发 (F64 禁盲试同源纪律)
+                logger.debug(f"[UXM] {what}: 本方言未定义该命令, 跳过")
+                return []
+            try:
+                raw = self._query(cmd_tmpl.format(cell=cell))
+            except Exception as e:
+                logger.warning(f"[UXM] {what} 查询失败: {e}")
+                return []
+            return self._parse_doubles(raw)
 
-            # ── DL BLER (格式: "mean,min,max" 或单值) ──
-            bler_str = self._query(
-                self._cmds.MEAS_BTHROUGHPUT_DL_BLER.format(cell=cell)
-            )
-            if bler_str and bler_str.strip():
-                try:
-                    metrics.dl_bler = float(bler_str.split(",")[0])
-                except (ValueError, IndexError):
-                    pass
+        # ── DL 吞吐量 (bps → Mbps) ──────────────────────────────
+        dl = _read_doubles(self._cmds.MEAS_TPUT_DL_OTA, "DL OTA throughput")
+        dl_avg, dl_cur = self._pick(dl, 4), self._pick(dl, 1)
+        if dl_avg is not None:
+            metrics.dl_throughput_mbps = dl_avg / 1e6
+        if dl_cur is not None:
+            metrics.dl_throughput_current_mbps = dl_cur / 1e6
+        valid["dl_throughput"] = dl_avg is not None
 
-            # ── UL 吞吐量 ──
-            ul_json = self._query(
-                self._cmds.MEAS_TPUT_UL_JSON.format(cell=cell)
-            )
-            if ul_json and ul_json.strip():
-                try:
-                    ul_data = _json.loads(ul_json)
-                    metrics.ul_throughput_mbps = (
-                        ul_data.get("UL_Throughput_Mbps")
-                        or ul_data.get("throughput", 0.0)
-                    )
-                    if "UL_MCS" in ul_data:
-                        metrics.mcs_ul = int(ul_data["UL_MCS"])
-                except _json.JSONDecodeError:
-                    try:
-                        metrics.ul_throughput_mbps = float(
-                            ul_json.strip().split()[0]
-                        )
-                    except (ValueError, IndexError):
-                        pass
+        # ── UL 吞吐量 (bps → Mbps) ──────────────────────────────
+        ul = _read_doubles(self._cmds.MEAS_TPUT_UL_OTA, "UL OTA throughput")
+        ul_avg, ul_cur = self._pick(ul, 4), self._pick(ul, 1)
+        if ul_avg is not None:
+            metrics.ul_throughput_mbps = ul_avg / 1e6
+        if ul_cur is not None:
+            metrics.ul_throughput_current_mbps = ul_cur / 1e6
+        valid["ul_throughput"] = ul_avg is not None
 
-            # ── UL BLER ──
-            ul_bler_str = self._query(
-                self._cmds.MEAS_TPUT_UL_BLER.format(cell=cell)
-            )
-            if ul_bler_str and ul_bler_str.strip():
-                try:
-                    metrics.ul_bler = float(ul_bler_str.split(",")[0])
-                except (ValueError, IndexError):
-                    pass
+        # ── DL BLER (idx8 = pdschBlerRatio) ────────────────────
+        dl_bler = _read_doubles(self._cmds.MEAS_BLER_DL, "DL BLER")
+        v = self._pick(dl_bler, 8)
+        if v is not None:
+            metrics.dl_bler = v
+        valid["dl_bler"] = v is not None
 
-            # ── CQI (均值, 格式: "mean,std,min,max,...") ──
-            cqi_str = self._query(
-                self._cmds.MEAS_CSI_CQI.format(cell=cell)
-            )
-            if cqi_str and cqi_str.strip():
-                try:
-                    metrics.cqi = int(float(cqi_str.split(",")[0]))
-                except (ValueError, IndexError):
-                    pass
+        # ── UL BLER (idx4 = nack-ratio) ────────────────────────
+        ul_bler = _read_doubles(self._cmds.MEAS_BLER_UL, "UL BLER")
+        v = self._pick(ul_bler, 4)
+        if v is not None:
+            metrics.ul_bler = v
+        valid["ul_bler"] = v is not None
 
-            # ── RI (均值, 直方图第一个值) ──
-            ri_str = self._query(
-                self._cmds.MEAS_CSI_RI.format(cell=cell)
-            )
-            if ri_str and ri_str.strip():
-                try:
-                    # RI 直方图: "count_ri1, count_ri2, count_ri3, count_ri4"
-                    # 计算加权均值
-                    ri_counts = [
-                        float(x) for x in ri_str.split(",") if x.strip()
-                    ]
-                    total = sum(ri_counts)
-                    if total > 0:
-                        metrics.rank_indicator = int(
-                            sum((i + 1) * c for i, c in enumerate(ri_counts))
-                            / total
-                        )
-                    else:
-                        metrics.rank_indicator = int(
-                            float(ri_str.split(",")[0])
-                        )
-                except (ValueError, IndexError):
-                    pass
+        # ── CQI ────────────────────────────────────────────────
+        # 厂商 SCPI Reference 原文 (UXM5G_SCPI_02_NR_PHY_Measurements.md):
+        #   result[0]=abs_nr_subframe_number   result[1]=cqi_total_count
+        #   result[2]=cqi_minimum   result[3]=cqi_maximum
+        #   result[4]=cqi_average   result[5]=cqi_median
+        # ⚠ 取 **idx4 = average**。idx3 是 maximum（取它会系统性乐观）;
+        #   idx0 是**首个 CSI 样本的绝对子帧号**——真机那个 7.92E+04 就是它,
+        #   既不是 CQI 也不是样本数（样本数在 idx1）。
+        cqi_vals = _read_doubles(self._cmds.MEAS_CSI_CQI, "CQI statistics")
+        v = self._pick(cqi_vals, 4)
+        if v is not None:
+            metrics.cqi = int(round(v))
+        valid["cqi"] = v is not None
 
-            # ── RSRP (UE 测量上报, 格式: "mean,min,max") ──
-            rsrp_str = self._query(
-                self._cmds.MEAS_UE_RSRP.format(cell=cell)
-            )
-            if rsrp_str and rsrp_str.strip():
-                try:
-                    metrics.rsrp_dbm = float(rsrp_str.split(",")[0])
-                except (ValueError, IndexError):
-                    pass
+        # ── RI (直方图) ────────────────────────────────────────
+        # 8 个 bin = 手册的 "RI value [0..7]" —— 那是 **3GPP 上报码点**不是层数:
+        # 手册同处把它与 "CQI value (0..15)" 并列, CQI 0..15 同样是码点。
+        # rank = 码点 + 1（rank 0 物理上不存在, 而 rank_indicator 全仓契约是
+        # **层数** —— 默认 1、mock 产 1..2、analysis.py 拿它跟
+        # min_avg_rank_indicator（默认 1.8）比）。
+        # ⚠ 2026-08-03: 我一度把权重从 (i+1) 改成 i，**那是回归** ——
+        #   会让真跑 rank 2 的 DUT 报 1.0 而必然 FAIL。已改回。
+        ri_hist = _read_doubles(self._cmds.MEAS_CSI_RI, "RI histogram")
+        counts = [c for c in ri_hist if c is not None]
+        total = sum(counts)
+        if counts and total > 0:
+            weighted = sum((i + 1) * c for i, c in enumerate(ri_hist) if c is not None)
+            metrics.rank_indicator = int(round(weighted / total))
+            valid["rank_indicator"] = True
+        else:
+            valid["rank_indicator"] = False
 
-            # ── SINR (UE 测量上报, 格式: "mean,min,max") ──
-            sinr_str = self._query(
-                self._cmds.MEAS_UE_SINR.format(cell=cell)
-            )
-            if sinr_str and sinr_str.strip():
-                try:
-                    metrics.sinr_db = float(sinr_str.split(",")[0])
-                except (ValueError, IndexError):
-                    pass
-
-        except Exception as e:
-            logger.warning(f"[UXM] get_throughput_metrics partial fail: {e}")
+        # ── UE 上报的 RSRP / RSRQ / SINR (L3 测量报告 JSON) ─────
+        valid["rsrp"] = valid["sinr"] = False
+        if self._cmds.MEAS_UE_REPORT_JSON:
+            try:
+                rep_raw = self._query(
+                    self._cmds.MEAS_UE_REPORT_JSON.format(cell=cell)
+                )
+                rsrp, sinr = self._parse_ue_measurement_report(rep_raw)
+                if rsrp is not None:
+                    metrics.rsrp_dbm = rsrp
+                    valid["rsrp"] = True
+                if sinr is not None:
+                    metrics.sinr_db = sinr
+                    valid["sinr"] = True
+            except Exception as e:
+                logger.warning(f"[UXM] UE 测量报告读取失败: {e}")
+        else:
+            logger.debug("[UXM] UE 测量报告: 本方言未定义该命令, 跳过")
 
         # ── 测量数据归档 → measurement.log ──
         # 每次 KPI 快照独立记录，供报告生成和数据分析使用
         meas_logger = logging.getLogger("app.measurement.throughput")
+        # ⚠ 每个 KPI 都带一个 *_valid 标志 —— 没有它, "DL=0.0Mbps" 与
+        # "这一项根本没读到" 在日志里长得一模一样 (P1-30 同一个母题)。
+        missing = [k for k, ok in valid.items() if not ok]
         meas_logger.info(
-            f"[KPI] DL={metrics.dl_throughput_mbps:.1f}Mbps "
+            f"[KPI] DL={metrics.dl_throughput_mbps:.1f}Mbps"
+            f"(cur {metrics.dl_throughput_current_mbps:.1f}) "
+            f"UL={metrics.ul_throughput_mbps:.1f}Mbps "
             f"BLER={metrics.dl_bler:.4f} CQI={metrics.cqi} RI={metrics.rank_indicator} "
-            f"RSRP={metrics.rsrp_dbm:.1f}dBm SINR={metrics.sinr_db:.1f}dB",
+            f"RSRP={metrics.rsrp_dbm:.1f}dBm SINR={metrics.sinr_db:.1f}dB"
+            + (f"  ⚠未读到: {','.join(missing)}" if missing else ""),
             extra={
                 "instrument_id": self.instrument_id,
                 "dl_throughput_mbps": metrics.dl_throughput_mbps,
+                "dl_throughput_current_mbps": metrics.dl_throughput_current_mbps,
+                "ul_throughput_mbps": metrics.ul_throughput_mbps,
+                "ul_throughput_current_mbps": metrics.ul_throughput_current_mbps,
                 "dl_bler": metrics.dl_bler,
-                "ul_throughput_mbps": getattr(metrics, "ul_throughput_mbps", 0.0),
-                "ul_bler": getattr(metrics, "ul_bler", 0.0),
+                "ul_bler": metrics.ul_bler,
                 "cqi": metrics.cqi,
                 "rank_indicator": metrics.rank_indicator,
                 "mcs_dl": getattr(metrics, "mcs_dl", None),
                 "mcs_ul": getattr(metrics, "mcs_ul", None),
                 "rsrp_dbm": metrics.rsrp_dbm,
                 "sinr_db": metrics.sinr_db,
+                "kpi_valid": valid,
+                "kpi_missing": missing,
                 "band": self._band,
                 "bandwidth_mhz": self._bandwidth_mhz,
                 "dl_power_dbm": self._dl_power_dbm,
@@ -2166,31 +2287,36 @@ class RealUxmDriver(BaseStationDriver):
         return metrics
 
     async def measure_throughput_window(self, window_s: float) -> ThroughputMetrics:
-        """Phase 2d: drive START → wait → query → STOP for an i.i.d. sample.
+        """Phase 2d: 清零 → 等一个窗口 → 读, 取一个 i.i.d. 样本。
 
-        UXM exposes BTHRoughput:DL:TSTatistics:STARt/STOP which gates a
-        statistics window cleanly — without this, multiple back-to-back
-        get_throughput_metrics() calls inside one stat_count window read the
-        same accumulated value, making per-sample std/mean meaningless.
+        不这么做的话, 同一个 stat_count 窗口里连着调 get_throughput_metrics()
+        读到的是同一份累积值, per-sample std/mean 没有意义。
 
-        STOP failures are swallowed; the next START will overwrite anyway.
+        ⚠ 2026-08-03 改写: 原实现用 `BTHRoughput:DL:TSTatistics:STARt|STOP`
+        圈窗口 —— **手册的 SCPI 命令树里没有这两条命令** (NotebookLM 查证),
+        真机上一直在失败, 只是那句 warning 没人看。手册给的做法是发
+        `BTHRoughput:CLEar`: 它清空当前累积, **测量在跑时会自动重新开始** ——
+        正好就是"重新起一个窗口"的语义, 且只需一条命令。
         """
-        cell = self._cell_id
-        try:
-            self._write(self._cmds.MEAS_BTHROUGHPUT_DL_START.format(cell=cell))
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[UXM] BTHR:DL:START failed (%s) — falling back to plain query", e)
+        clear_cmd = self._cmds.MEAS_BTHROUGHPUT_CLEAR
+        if not clear_cmd:
+            # 方言没有清零命令 —— 退化成直接读累积值, 并**明说**这一点,
+            # 否则调用方会把"整段累积"当成"这个窗口的样本"。
+            logger.warning(
+                "[UXM] 本方言无 BTHRoughput:CLEar — 无法圈窗口, "
+                "读到的是自测量开始以来的累积值, 不是 %.1fs 窗口样本", window_s
+            )
+            await asyncio.sleep(max(window_s, 0.0))
             return await self.get_throughput_metrics()
 
         try:
-            await asyncio.sleep(max(window_s, 0.0))
-            metrics = await self.get_throughput_metrics()
-        finally:
-            try:
-                self._write(self._cmds.MEAS_BTHROUGHPUT_DL_STOP.format(cell=cell))
-            except Exception as e:  # noqa: BLE001
-                logger.debug("[UXM] BTHR:DL:STOP failed (%s); ignored", e)
-        return metrics
+            self._write(clear_cmd)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "[UXM] BTHRoughput:CLEar 失败 (%s) — 本次读到的是累积值不是窗口样本", e
+            )
+        await asyncio.sleep(max(window_s, 0.0))
+        return await self.get_throughput_metrics()
 
     async def get_ue_info(self) -> Dict[str, Any]:
         """获取 UE 信息 (TODO: 从 UXM 查询)"""

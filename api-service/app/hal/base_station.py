@@ -45,7 +45,16 @@ class CellState(str, Enum):
 
 
 class ThroughputMetrics:
-    """吞吐量测量结果"""
+    """吞吐量测量结果。
+
+    **口径 (2026-08-03 用户定)**: 这里存的是**仪表与终端上报的参数**,
+    不是我们自己统计的传输数据量。
+
+    ``*_throughput_mbps`` = 统计窗口内的**平均**吞吐量 (测试例的结论值);
+    ``*_throughput_current_mbps`` = 查询时刻的**瞬时**吞吐量 (会随调度抖动,
+    适合实时曲线, 不适合当结论)。两者都存, 因为一个回答"这次测出来多少",
+    另一个回答"现在跑到多少"。
+    """
     def __init__(
         self,
         dl_throughput_mbps: float = 0.0,
@@ -58,6 +67,8 @@ class ThroughputMetrics:
         mcs_ul: int = 0,
         rsrp_dbm: float = -999.0,
         sinr_db: float = -999.0,
+        dl_throughput_current_mbps: float = 0.0,
+        ul_throughput_current_mbps: float = 0.0,
     ):
         self.dl_throughput_mbps = dl_throughput_mbps
         self.ul_throughput_mbps = ul_throughput_mbps
@@ -69,11 +80,15 @@ class ThroughputMetrics:
         self.mcs_ul = mcs_ul
         self.rsrp_dbm = rsrp_dbm
         self.sinr_db = sinr_db
+        self.dl_throughput_current_mbps = dl_throughput_current_mbps
+        self.ul_throughput_current_mbps = ul_throughput_current_mbps
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "dl_throughput_mbps": self.dl_throughput_mbps,
             "ul_throughput_mbps": self.ul_throughput_mbps,
+            "dl_throughput_current_mbps": self.dl_throughput_current_mbps,
+            "ul_throughput_current_mbps": self.ul_throughput_current_mbps,
             "dl_bler": self.dl_bler,
             "ul_bler": self.ul_bler,
             "cqi": self.cqi,

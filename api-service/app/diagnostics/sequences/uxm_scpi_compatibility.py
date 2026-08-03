@@ -118,6 +118,12 @@ _ACTION_NEIGHBOR_QUERY: Dict[str, Optional[str]] = {
     "RST":  "IDN",
     "MEAS_BTHROUGHPUT_DL_START": "MEAS_BTHROUGHPUT_DL_JSON",
     "MEAS_BTHROUGHPUT_DL_STOP":  "MEAS_BTHROUGHPUT_DL_JSON",
+    # ⚠ 手册标 "Immediate Action / No query: True" —— 不列在这里的话
+    #   _to_probe_command 会给它补 `?` 发出 `...:CLEar?`, 必然 undefined
+    #   header + 烧一次 VISA 超时 + 记成假 UNSUPPORTED（禁盲试违例）。
+    "MEAS_BTHROUGHPUT_CLEAR":     "MEAS_TPUT_DL_OTA",
+    "MEAS_BTHROUGHPUT_STATE":     "MEAS_TPUT_DL_OTA",
+    "MEAS_UE_REPORT_STATE":       "MEAS_UE_REPORT_JSON",
     "MEAS_CSI_START":            "MEAS_CSI_CQI",
     "MEAS_CSI_STOP":             "MEAS_CSI_CQI",
     "MEAS_EVM_START":            "MEAS_BTHROUGHPUT_DL_JSON",
@@ -136,7 +142,18 @@ _CRITICAL_NAMES = frozenset({
     "PDSCH_MCS", "PDSCH_SCHED_ALGO", "PDSCH_AMC_ENABLE",
     "TDD_PATTERN", "TDD_PERIOD",
     "HARQ_MAX_TRANS", "HARQ_PROCESSES",
-    "MEAS_BTHROUGHPUT_DL_JSON", "MEAS_BTHROUGHPUT_DL_BLER",
+    "MEAS_BTHROUGHPUT_DL_JSON",
+    # 2026-08-03: KPI 回读整批换命令后, critical 清单同步。
+    # ⚠ 移除 MEAS_BTHROUGHPUT_DL_BLER —— 它在 IRAT profile 上已置 None
+    #   (那条是 Early Pass/Fail 状态机不是 BLER), 留在清单里会被
+    #   _collect_commands 的 isinstance(value, str) 静默过滤掉,
+    #   而总结仍按 len(_CRITICAL_NAMES) 报 "All N critical commands
+    #   supported" —— 报一个**从没探测过**的命令为已支持。
+    # 新增下面这批 = 吞吐量/BLER/CSI/UE 报告的真值源, 现场必须逐条对账。
+    "MEAS_TPUT_DL_OTA", "MEAS_TPUT_UL_OTA",
+    "MEAS_BLER_DL", "MEAS_BLER_UL",
+    "MEAS_CSI_CQI", "MEAS_CSI_RI",
+    "MEAS_UE_REPORT_JSON",
 })
 
 
