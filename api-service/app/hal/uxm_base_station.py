@@ -2188,6 +2188,8 @@ class RealUxmDriver(BaseStationDriver):
         # 哪些字段这一轮真的拿到了数 —— 进 measurement.log, 让读日志的人
         # 能分辨"测出来是 0"和"根本没测到"(P1-30 同一个母题)。
         valid: Dict[str, bool] = {}
+        # 读到了、但**口径未经确认**的原始值 —— 只进证据不进结论字段。
+        raw_unverified: Dict[str, float] = {}
 
         def _read_doubles(cmd_tmpl: Optional[str], what: str
                                 ) -> List[Optional[float]]:
@@ -2275,12 +2277,22 @@ class RealUxmDriver(BaseStationDriver):
                     self._cmds.MEAS_UE_REPORT_JSON.format(cell=cell)
                 )
                 rsrp, sinr = self._parse_ue_measurement_report(rep_raw)
+                # ⚠ **不往 rsrp_dbm / sinr_db 里写**（Codex #275 R2 P2）——
+                # 手册**没有说明**这两个值的口径: 是 3GPP RRC 上报的原始码点
+                # （rsrp-Result 0..127，需 value-156 换算）还是仪表已换算好的
+                # dBm/dB，手册对 JSON 与 legacy 两种 FETCh 都只给了示例
+                # （示例里全是 "NaN"），没有单位、范围、换算公式
+                # （NotebookLM 三次明确回"手册未说明"，未做推断）。
+                #
+                # 按 3GPP 通式自己换算 = 盲试，**正是本片要治的病**;
+                # 原样写进名为 `_dbm` 的字段 = 假数据冒充真数据，同病。
+                # 所以只把**原样值**留进证据（scpi.log 有完整响应，
+                # measurement.log 记 *_raw_unverified），字段保持"未读到"。
+                # 口径待现场用诊断序列对着面板读数比对后再接线。
                 if rsrp is not None:
-                    metrics.rsrp_dbm = rsrp
-                    valid["rsrp"] = True
+                    raw_unverified["rsrp_raw"] = rsrp
                 if sinr is not None:
-                    metrics.sinr_db = sinr
-                    valid["sinr"] = True
+                    raw_unverified["sinr_raw"] = sinr
             except Exception as e:
                 logger.warning(f"[UXM] UE 测量报告读取失败: {e}")
         else:
@@ -2315,6 +2327,9 @@ class RealUxmDriver(BaseStationDriver):
                 "sinr_db": metrics.sinr_db,
                 "kpi_valid": valid,
                 "kpi_missing": missing,
+                # 口径未确认的原始上报值（手册未说明单位）——
+                # 只作证据，**不要**当 dBm/dB 用。
+                "kpi_raw_unverified": raw_unverified,
                 "band": self._band,
                 "bandwidth_mhz": self._bandwidth_mhz,
                 "dl_power_dbm": self._dl_power_dbm,

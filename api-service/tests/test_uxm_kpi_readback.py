@@ -412,6 +412,37 @@ class TestUeMeasurementReportParsing:
         assert rsrp == pytest.approx(-80.0), "应取最新那份报告"
 
 
+class TestUnverifiedUnitsNotClaimedAsEngineering:
+    """⭐ 手册**没说明** L3 报告里 RSRP/SINR 的口径（原始码点还是 dBm/dB）——
+    NotebookLM 三次明确回"手册未说明"，未做推断。
+
+    所以既不能按 3GPP 通式自己换算（盲试），也不能原样写进名为 `_dbm` /
+    `_db` 的字段（假数据冒充真数据，正是本片要治的病）。只把原样值留进
+    证据（`measurement.log` 的 `kpi_raw_unverified`），结论字段保持"未读到"。
+
+    变异：把 `raw_unverified["rsrp_raw"]` 改回 `metrics.rsrp_dbm = rsrp` → 红。
+    """
+
+    def test_rsrp_goes_to_raw_bucket_not_dbm_field(self, drv, caplog):
+        import logging
+        payload = ('{"MeasurementReports":[{"CellReports":'
+                   '[{"RSRP":72.0,"SINR":31.0}]}]}')
+        _stub_io(drv, {"MEASurement:JSON:REPort:FETCh": payload})
+        with caplog.at_level(logging.INFO, logger="app.measurement.throughput"):
+            m = asyncio.run(drv.get_throughput_metrics())
+
+        assert m.rsrp_dbm == -999.0, (
+            "72.0 口径未知（3GPP rsrp-Result 码点 72 = -84 dBm；也可能已是 dBm）"
+            "—— 不能当 dBm 写进结论字段"
+        )
+        assert m.sinr_db == -999.0
+        rec = [r for r in caplog.records
+               if r.name == "app.measurement.throughput"][0]
+        assert rec.kpi_raw_unverified["rsrp_raw"] == 72.0, "原样值必须留进证据"
+        assert rec.kpi_raw_unverified["sinr_raw"] == 31.0
+        assert rec.kpi_valid["rsrp"] is False, "口径未确认 = 没读到，不是读到了"
+
+
 class TestUndefinedCommandsAreSkippedNotSent:
     """方言里为 None 的命令必须跳过，不能盲发（F64 禁盲试同源纪律）。"""
 

@@ -2140,6 +2140,9 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 > Items added mid-task. Reviewed weekly; promoted to P1/P2/P3 or dropped.
 
+- `[discovered 2026-08-03 during UXM KPI 修复, Codex #275 R2]` **UE L3 测量报告里 RSRP/RSRQ/SINR 的口径手册未说明 —— 现场必须对着面板比对一次** —— `BSE:CONFig:NR5G:<cell>:MEASurement:JSON:REPort:FETCh?` 返回的这几个值，究竟是 **3GPP RRC 上报的原始码点**（`rsrp-Result` 0..127，需 `value − 156` 换算成 dBm）还是**仪表已换算好的 dBm/dB**，手册对 JSON 与 legacy 两种 FETCh **都只给了示例**（示例里全是 `"NaN"`），没有单位、取值范围、换算公式（NotebookLM 三次明确回"手册未说明"，未做推断）。⚠️ 按 3GPP 通式自己换算 = **盲试**；原样写进名为 `rsrp_dbm` 的字段 = **假数据冒充真数据**。所以当前实现**只把原样值留进证据**（`scpi.log` 有完整响应，`measurement.log` 记 `kpi_raw_unverified`），`rsrp_dbm` / `sinr_db` 保持"未读到"、`kpi_valid` 标 false。**现场做法**：让 UE 驻留后同时看 UXM 面板上的 RSRP 读数与本查询返回值，差 156 就是码点、相等就是 dBm，确认后接线。落在 `uxm_kpi_readback` 序列里（那片还没开）。
+
+
 - `[discovered 2026-08-03 during UXM KPI 修复内审 F6]` **UE L3 测量报告 `FETCh?` 不带 `<Integer>` = 每轮取回整个队列，且全程没人清队列** —— 手册：「Number of requested reports. **If not specified all the available reports are returned.**」队列由 `BSE:CONFig:MEASurement:REPort ON` 持续排队，另有**独立**的 `:CLEAr` 才清 —— 代码只写 ON，`:CLEAr` 一条没定义。后果：监控路 `get_metrics()` 每轮把开测以来的**全部** L3 报告拉一遍，响应无界增长 → VISA 越读越慢/超时、`scpi.log` 被截断成没用的片段、`json.loads` 开销 O(n)，而代码只用其中**一份**。另：取 `reports[-1]` 假设"最新在末尾"，**手册没写返回顺序**，这个假设未经核验。修法 = 查询带 `? 1`（先确认取的是最新那份）。
 
 - `[discovered 2026-08-03 during UXM KPI 修复内审 F7]` **CA/多小区下 `BTHRoughput:CLEar` 清全部小区，而吞吐量只读 PCell** —— `CLEar` 不带 cell（技术层全局），而 `MEAS_TPUT_DL_OTA` 读的是 `OTA:{cell}?` = PCell。SCell 是活跃配置（`executors/measure.py` 会 `add_secondary_cell` + `activate_secondary_cells`）→ CA 下报出的"吞吐量"只有 PCell 一份，**系统性低估交付 KPI**，并被 `analysis.py` 的 `throughput_pass` 直接消费。手册有 `...:DL:THRoughput:OTA:ALL?`，注明「return **sum of all NR cells** results」。修法 = 有 SCell 时换 `OTA:ALL?`，或至少在 `measurement.log` 标 `pcell_only=true`。

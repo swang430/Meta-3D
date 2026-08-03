@@ -538,7 +538,7 @@ async def run(
             f"profile {profile.PROFILE_NAME}. Last probed: {last_probed}. "
             f"SCPI session is stuck — POST /api/v1/instruments/hal/reload and retry."
         )
-    elif not critical_unsupported:
+    elif not critical_unsupported and not critical_undefined:
         summary = (
             f"All {len(_CRITICAL_NAMES)} critical SCPI commands supported on "
             f"profile {profile.PROFILE_NAME} "
@@ -546,11 +546,25 @@ async def run(
             f"{counts.get('SUPPORTED_BUT_STATE', 0)} state errors — both OK)"
         )
     else:
-        summary = (
-            f"BLOCKER: {len(critical_unsupported)} critical SCPI command(s) "
-            f"unsupported on profile {profile.PROFILE_NAME}. Driver needs vendor "
-            f"aliases for: {sorted(critical_unsupported)}"
-        )
+        # ⚠ Codex #275 R2 P2: 上一轮我只把 critical_undefined 接进了 success,
+        # 忘了 summary —— success=False 而总结仍写 "All N critical supported",
+        # **自相矛盾**; 报告体里两个字段互相打架比单纯报错更难查。
+        # ⚠ 两种情况**可以同时成立**(5G 方言上就是), 所以一起报而不是二选一 ——
+        #   分支排他会让先命中的那种把另一种从总结里挤掉。
+        parts = []
+        if critical_unsupported:
+            parts.append(
+                f"{len(critical_unsupported)} 条 critical 命令在方言 "
+                f"{profile.PROFILE_NAME} 上**实测不支持**, 需要厂商别名: "
+                f"{sorted(critical_unsupported)}"
+            )
+        if critical_undefined:
+            parts.append(
+                f"{len(critical_undefined)} 条 critical 命令**未在方言 "
+                f"{profile.PROFILE_NAME} 中定义** —— 既没探测也没结论, "
+                f"不能当作已支持: {critical_undefined}"
+            )
+        summary = "BLOCKER: " + "; ".join(parts)
 
     return SequenceRunResult(
         success=success,
