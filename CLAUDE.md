@@ -117,6 +117,15 @@
 （额度 / 故障）时**如实声明"审查未发生"**，不得当"审过无问题"，并在 PR body
 标注由外审独挑。
 
+> **调用时必须在 prompt 里给三样东西**（2026-08-03 定，缺了 agent 的时间预算
+> 就落空）：① `git diff --cached` 原文，别让它自己摸索改动范围；② **你已经跑过
+> 的命令与其输出原文**（全量测试、变异清单、构建），并明写"**这些别重跑**"；
+> ③ 你**已经造过的变异清单**，让它去造你没想到的那几条。
+> 实证：P1-30 那轮内审跑了 30 分钟，8–10 分钟耗在把全量重跑 3–4 遍上，
+> 而最值钱的三条 finding 全来自它自己造的变异（单条 0.1 秒）——
+> 我 prompt 里那句"不要只采信我的说法"直接招来了这笔浪费。
+> 细则在 [`.claude/agents/pre-commit-reviewer.md`](.claude/agents/pre-commit-reviewer.md) 的 ⓿ 节。
+
 **⑤ 外审 = Codex**：PR 开出 / 修复推送即触发；**270s 定时器**从触发时刻起算，
 到点主动查**三通道**（reviews / inline / issue comments，"usage limits" 提示 =
 review 未发生 ≠ clean）；**Codex 无问题或 5 分钟无 comment 即 squash merge**
