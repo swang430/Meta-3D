@@ -1328,6 +1328,14 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 
 ---
 
+### P1-29 — `/dashboard/alerts/summary` 被路由遮蔽（驾驶舱告警计数条恒坏）⬜（2026-08-03 拍板，待开工）
+
+**What**: `api-service/app/api/alert.py` 里 `@router.get("/alerts/{alert_id}")` 声明在 `@router.get("/alerts/summary")` **之前**，FastAPI 按声明顺序匹配 → `summary` 被当成 `alert_id` 解析 → `uuid_parsing` **422，该端点不可达**。
+**Why P1**: 有**活消费者**且用户可见 —— 驾驶舱 `gui/src/features/Dashboard/ZoneLogsAlerts.tsx` 每 **10 秒**轮询 `fetchAlertSummary`，所以「按 severity 的告警计数条」恒坏；同时每 10 秒往 app.log 灌一条 422 + 一条 DB rollback（app.log 已 16MB，与 P3-19 的噪声治理同源但那是卫生批、这是功能坏了）。修法是**挪一行声明顺序**。
+**实证（两份独立）**: ① `curl -s localhost:8000/api/v1/dashboard/alerts/summary` → `{"detail":[{"type":"uuid_parsing","loc":["path","alert_id"],"input":"summary"}]}`；② GUI 实时日志面板每几秒刷一条 `GET /api/v1/dashboard/alerts/summary → 422`，栈里明写 `alert.py line 102, in get_alert`。
+**旁证**: `gui/src/api/mockServer.ts` 自己有注释「summary registered before /alerts so the exact-string summary route isn't shadowed by the list route」—— **mock 侧作者意识到了这个坑并规避了，真后端没有**。
+**配门**: 字面量段不得被同级 path 参数遮蔽（可做成 G12 不变量门：对每个含 `{param}` 的路由，检查同前缀下是否存在声明在其**之后**的字面量兄弟路由）。**来源**: P1-25 全量审计。
+
 ## 🟡 P2 — Abstraction debt
 
 ### P2-1 — UXM two-layer architecture: Test App + Topology Profile ✅ Done
@@ -2022,14 +2030,6 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 **What**: ①`executors/report.py` 的 `quiet_zone_verified` / `trp_verified` / `path_loss_verified` 三标志挪 `parameters` 下（渲染器只读 name/step_name/parameters，顶层键进不了 PDF —— 修法与 P1-22 的 analysis 站点同构）；②`pdf_certificate.py`（校准证书）注册 CJK 字体（与 P1-22 的 pdf_generator 同构，证书中文今天全豆腐块）。
 **Why P2**: P1-12"报告必须标注 未验证(兜底值)"的意图从未生效 —— mock TRP / 无路损校准的报告零提示，现场拿着假干净报告做判断。**来源**: Discovered 区 P1-22 内审 F3 补欠条（[→ P2-21] 已标）。
 **落地（本 PR）**: ①三 step 渲染载荷整体进 parameters（中文键 + 三值可读标注"已验证 (…)/未验证 (…)/未知 (历史数据未区分)"，顶层死键删净），行为门打在渲染器实际产出（步骤区 elements 里断言标注文本可见）；②pdf_certificate 三族收敛 CJK_FONT（import 自 pdf_generator 单一真值源）+ 证书 PDF 字节含 STSong 行为门；backcompat 推导测试断言迁到新生效端。4 变异实跑全红。
-
-### P1-29 — `/dashboard/alerts/summary` 被路由遮蔽（驾驶舱告警计数条恒坏）⬜（2026-08-03 拍板，待开工）
-
-**What**: `api-service/app/api/alert.py` 里 `@router.get("/alerts/{alert_id}")` 声明在 `@router.get("/alerts/summary")` **之前**，FastAPI 按声明顺序匹配 → `summary` 被当成 `alert_id` 解析 → `uuid_parsing` **422，该端点不可达**。
-**Why P1**: 有**活消费者**且用户可见 —— 驾驶舱 `gui/src/features/Dashboard/ZoneLogsAlerts.tsx` 每 **10 秒**轮询 `fetchAlertSummary`，所以「按 severity 的告警计数条」恒坏；同时每 10 秒往 app.log 灌一条 422 + 一条 DB rollback（app.log 已 16MB，与 P3-19 的噪声治理同源但那是卫生批、这是功能坏了）。修法是**挪一行声明顺序**。
-**实证（两份独立）**: ① `curl -s localhost:8000/api/v1/dashboard/alerts/summary` → `{"detail":[{"type":"uuid_parsing","loc":["path","alert_id"],"input":"summary"}]}`；② GUI 实时日志面板每几秒刷一条 `GET /api/v1/dashboard/alerts/summary → 422`，栈里明写 `alert.py line 102, in get_alert`。
-**旁证**: `gui/src/api/mockServer.ts` 自己有注释「summary registered before /alerts so the exact-string summary route isn't shadowed by the list route」—— **mock 侧作者意识到了这个坑并规避了，真后端没有**。
-**配门**: 字面量段不得被同级 path 参数遮蔽（可做成 G12 不变量门：对每个含 `{param}` 的路由，检查同前缀下是否存在声明在其**之后**的字面量兄弟路由）。**来源**: P1-25 全量审计。
 
 ### P2-22 — F64 disconnect 冷缓存判 GOS 换真值源 ⬜（2026-08-02 拍板，待开工）
 
