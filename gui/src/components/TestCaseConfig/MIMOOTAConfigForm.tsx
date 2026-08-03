@@ -64,6 +64,16 @@ export interface MIMOOTAConfiguration {
   scd_id?: string
   frequency_hz?: number
   bandwidth_mhz?: number
+  /** Phase 2g 载波聚合。表单**不编辑**它 (CA 场景请直接编辑 configuration JSON),
+   *  但频率/带宽/SCS 三个框会同步 PCell = component_carriers[0] ——
+   *  执行侧 (measure.py) 的权威是 CC[0] 而非顶层, 见 updateCarrierField。 */
+  component_carriers?: Array<{
+    frequency_hz?: number
+    bandwidth_mhz?: number
+    subcarrier_spacing_khz?: number
+    band?: string | null
+    role?: string
+  }>
   mimo_layers?: number
   modulation?: string
   subcarrier_spacing_khz?: number
@@ -174,6 +184,63 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
     next: MIMOOTAConfiguration[K],
   ): void => {
     onChange({ ...value, [key]: next })
+  }
+
+  /**
+   * 频率 / 带宽 / 子载波间隔专用 —— 写顶层的**同时**把 PCell (component_carriers[0])
+   * 一起改掉。
+   *
+   * 为什么必须同步：**执行侧的权威是 CC[0]，不是顶层**。
+   * `measure.py` 取 `config.component_carriers[0]` 当 PCell 下发；而 schema 的
+   * `_resolve_component_carriers()` 只在 CC 为空时才从顶层构造，CC 非空时**只归一化
+   * role，从不拿顶层去校 CC[0]**。本表单又是整包读进 configuration、整包回传
+   * (`onChange({...value})`)，服务层 `setattr(test_case, 'configuration', value)` 是
+   * 整体替换 —— 所以只改顶层的话，CC[0] 原样带着旧频落库，编辑器显示新值、
+   * 列表显示旧值 (P3-14 起读 CC[0])、**硬件也跑旧值**。属现场误导级。
+   *
+   * （这里**不写库里有多少用例带 CC** —— 那种计数会过期，而且我数错过两次。
+   *   可达性的稳定判据是机制：bootstrap 种子经 `MIMOOTAConfiguration.model_dump()`
+   *   落库，**新部署的模板自带 CC**。库计数留 roadmap 条目。）
+   *
+   * 值形态：
+   *   undefined / null / []  → **不凭空造 CC**，只写顶层，交给后端 validator 从顶层构造
+   *   [pcell]                → 顶层 + pcell 一起改
+   *   [pcell, ...scells]     → 只改 pcell；SCell 是独立载波，不该被单频率框改掉
+   *
+   * `next` 不是有效数字（用户清空输入框）→ **两边都不写，模型保持原值**。
+   *   不能只清顶层：`TestCaseUpdate.configuration` 是 `Dict[str, Any]`、`update_test_case`
+   *   是 `setattr` 整体替换，**全链零校验**（实测 PATCH 掉键返回 200，不是 422 ——
+   *   早先注释里"会 422"是错的）。顶层键一丢，执行时 `frequency_hz` 落到 schema 硬默认
+   *   3.5e9，而 CC[0] 还是旧值 → UXM/F64 按 CC[0] 跑，而 `.asc` 波形合成、路损校准查表、
+   *   探头方向图增益、reference 全按顶层跑，且一致性网的参考就是 CC[0] → **四方分叉零告警**。
+   *
+   * **`band` 一律不动**（本片一度改成"改频顺带删 band"，被 Codex #271 P1 否掉并撤回）：
+   *   删 band 是想让驱动按新频重推，但**前端没有资格做这个判断** ——
+   *   `FREQ_TO_BAND_MAP`（`uxm_base_station.py`）只覆盖 7 个区间，**未命中就硬回落
+   *   `("N78","TDD")`**，而且这张表 per-lab 可被 `InstrumentCategory.config` 覆盖。
+   *   实例：N3 载波（下行 1805–1880，表里那条 1710–1785 是 N3 **上行**）改个频率 →
+   *   band 被删 → 推断回落 N78/TDD → **频段与双工模式一起错，且静默**。
+   *   保留 band 时，跨频段改频会得到「旧 band + 新 ARFCN」，由仪器拒绝——响亮好过静默。
+   *   代价不对称，所以选保留。把这张表复制进 GUI 只会多一个会漂的镜像站点。
+   *   正解（已记 backlog）：后端在 validator 层校 band↔frequency，或表单暴露 band 选择。
+   */
+  const updateCarrierField = (
+    key: 'frequency_hz' | 'bandwidth_mhz' | 'subcarrier_spacing_khz',
+    next: number | undefined,
+  ): void => {
+    if (typeof next !== 'number' || !Number.isFinite(next)) return
+
+    const ccs = value.component_carriers
+    if (!Array.isArray(ccs) || ccs.length === 0) {
+      onChange({ ...value, [key]: next })
+      return
+    }
+    const [pcell, ...scells] = ccs
+    onChange({
+      ...value,
+      [key]: next,
+      component_carriers: [{ ...pcell, [key]: next }, ...scells],
+    })
   }
 
   const updatePass = <K extends keyof PassCriteria>(key: K, next: PassCriteria[K]): void => {
@@ -367,7 +434,7 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
                   ? String(value.subcarrier_spacing_khz)
                   : null
               }
-              onChange={(v) => update('subcarrier_spacing_khz', v ? Number(v) : undefined)}
+              onChange={(v) => updateCarrierField('subcarrier_spacing_khz', v ? Number(v) : undefined)}
               disabled={readOnly}
               allowDeselect={false}
             />
@@ -379,7 +446,10 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
               description="后端存储为 frequency_hz; MHz 口径跟 ARFCN/资产/报错文案一致 (例 3549.99)"
               value={value.frequency_hz != null ? value.frequency_hz / 1e6 : undefined}
               onChange={(v) =>
-                update('frequency_hz', typeof v === 'number' ? Math.round(v * 1e6) : undefined)
+                updateCarrierField(
+                  'frequency_hz',
+                  typeof v === 'number' ? Math.round(v * 1e6) : undefined,
+                )
               }
               decimalScale={3}
               step={1}
@@ -391,7 +461,7 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
               label="带宽"
               suffix=" MHz"
               value={value.bandwidth_mhz}
-              onChange={(v) => update('bandwidth_mhz', typeof v === 'number' ? v : undefined)}
+              onChange={(v) => updateCarrierField('bandwidth_mhz', typeof v === 'number' ? v : undefined)}
               min={1}
               max={400}
               disabled={readOnly}
