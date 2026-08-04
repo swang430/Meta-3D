@@ -109,8 +109,14 @@ class TestNoExpectAnywhere:
     """
 
     def test_element_count_mismatch_still_succeeds_and_is_flagged(self):
-        """个数不符是**最要紧的发现**，必须跑完并标注，不能当失败中止。"""
-        bs = _FakeBs({"DL:THRoughput:OTA": "1,2,3"}, profile=_irat_profile())
+        """个数不符是**最要紧的发现**，必须跑完并标注，不能当失败中止。
+
+        ⚠ 必须把 `SYSTem:ERRor?` 也桩上 —— 探针的 success 现在取自错误队列
+        （Codex #277 P1），不桩就成了"队列读不出来"那条路径，
+        这门测的就不再是"个数不符"了。真仪器一定会回 `0,"No error"`。
+        """
+        bs = _FakeBs({"DL:THRoughput:OTA": "1,2,3",
+                      "SYSTem:ERRor?": '0,"No error"'}, profile=_irat_profile())
         res = _run(bs)
         dl = [s for s in res.steps if s.label.startswith("①")][0]
         assert dl.success is True, "个数不符不该判失败 —— 那会让后面几项都不跑"
@@ -160,8 +166,11 @@ class TestStateRestoredInFinally:
     """⭐ 序列开了测量累积就必须关回去 —— 绝不把仪器留在被本序列改过的状态。"""
 
     def test_state_restored_to_original(self):
+        # ⚠ 必须桩 `SYSTem:ERRor?` —— 原值可不可信现在取自错误队列（内审 F1），
+        #   不桩就成了"队列读不出来"→ 不写回，测的就不是本门要测的东西了。
         bs = _FakeBs({"BTHRoughput:STATe?": "0",
-                      "MEASurement:REPort?": "0"}, profile=_irat_profile())
+                      "MEASurement:REPort?": "0",
+                      "SYSTem:ERRor?": '0,"No error"'}, profile=_irat_profile())
         _run(bs)
         joined = " | ".join(bs.writes)
         assert "BTHRoughput:STATe ON" in joined, "没开累积则所有 KPI 恒返 NaN"
@@ -179,7 +188,8 @@ class TestStateRestoredInFinally:
         # ⚠ 触发点选**没被 try 包住**的那条写命令。⑧ 的 CLEar 现在包了 try
         #   （内审 F8：不能让最后一步的异常带走前 7 步的证据），拿它当触发器
         #   就试不到 finally 了 —— 换成 P3 的 `MEASurement:REPort ON`。
-        bs = _FakeBs({"BTHRoughput:STATe?": "0"}, profile=_irat_profile(),
+        bs = _FakeBs({"BTHRoughput:STATe?": "0",
+                      "SYSTem:ERRor?": '0,"No error"'}, profile=_irat_profile(),
                      raise_on_write="MEASurement:REPort ON")
         with pytest.raises(OSError):
             _run(bs)
@@ -269,6 +279,318 @@ class TestErrorQueueHygiene:
         assert "||" in p1.detail, "只 pop 了一条 —— 剩下的会串到下一步"
 
 
+class _DirtyAfter(_FakeBs):
+    """在指定命令之后，让**下一次**读错误队列吐一条错误。
+
+    这才是真 SCPI 仪器的样子：命令被拒时 `_write` / `_query` 本身**不一定报错**
+    （write 返回只代表传输成功），拒绝是从 `SYSTem:ERRor?` 回来的。
+    `_FakeBs` 的 `raise_on` 造不出这种形态，所以 Codex #277 那两条 P1
+    在原来的门下全绿。
+    """
+
+    def __init__(self, responses, *, dirty_after, err='-113,"Undefined header"',
+                 **kw):
+        super().__init__(responses, **kw)
+        self._dirty_after = dirty_after
+        self._err = err
+        self._pending: list[str] = []
+
+    def _arm(self, cmd):
+        # 先 arm 再交给 super —— super 可能抛异常（命令头不认识时读超时），
+        # 而那正是最要紧的一格：**异常抛了，错误还留在队列里**。
+        if self._dirty_after in cmd:
+            self._pending.append(self._err)
+
+    def _query(self, cmd, **kw):
+        if "SYSTem:ERRor" in cmd:
+            self.queries.append(cmd)
+            return self._pending.pop(0) if self._pending else '0,"No error"'
+        self._arm(cmd)
+        return super()._query(cmd, **kw)
+
+    def _write(self, cmd, **kw):
+        self._arm(cmd)
+        return super()._write(cmd, **kw)
+
+
+def _nested_source(name: str) -> str:
+    """抠出 `run()` 里某个嵌套函数的源码 —— 不变量门要按**函数**数排空次数，
+    按「行窗口」数会被『同一站点另一条路径排空了』蒙混过去（M24 实证）。"""
+    import inspect
+
+    lines = inspect.getsource(seq).splitlines()
+    start = next(i for i, l in enumerate(lines)
+                 if l.strip().startswith((f"async def {name}(", f"def {name}(")))
+    indent = len(lines[start]) - len(lines[start].lstrip())
+    body = [lines[start]]
+    for line in lines[start + 1:]:
+        if line.strip() and (len(line) - len(line.lstrip())) <= indent:
+            break
+        body.append(line)
+    return "\n".join(body)
+
+
+class TestErrorAttributionBoundary:
+    """⭐ Codex #277 P1：**每条命令的错误必须记在它自己名下**。
+
+    不排空 → 错误漂到下一条命令头上 → 把**对的**命令记成"手册写法也不支持"，
+    现场据此把它从驱动里删掉。这正是本文件 docstring 点名要防的病，
+    内审 F3 只修了「跑前 *CLS」和「排空不是只 pop 一条」两处，
+    **没扫命令与命令之间的边界**。
+    """
+
+    def test_speculative_state_query_error_does_not_condemn_the_ON_write(self):
+        """`BTHRoughput:STATe?` 是**手册未说明**的投机形式，最可能被拒 →
+        `-113` 留在队列 → 紧跟着**受支持**的 `... ON` 读到它、被报成"被拒"。
+        变异：把 `_read_orig` 里的排空删掉 → 红。"""
+        bs = _DirtyAfter({}, profile=_irat_profile(),
+                         dirty_after="BTHRoughput:STATe?",
+                         raise_on="BTHRoughput:STATe?")
+        res = _run(bs)
+        p0 = [s for s in res.steps if "读 BTHRoughput:STATe 原值" in s.label][0]
+        p1 = [s for s in res.steps if s.label.startswith("P1")][0]
+        assert "-113" in p0.detail, "错误没记在产生它的那条投机查询名下"
+        assert "-113" not in p1.detail, (
+            "投机查询的 -113 漂到了受支持的 `... ON` 头上")
+        assert p1.success is True, (
+            "`... ON` 没被拒却报成被拒 —— 现场会据此判定该命令不可用")
+
+    def test_probe_error_does_not_drift_to_the_clear_step(self):
+        """①-⑦ 任一条被拒，错误一路攒到 ⑧b，把 `CLEar` 记成"不支持"。
+        变异：把 `_probe` 两条路径的排空删掉 → 红。"""
+        bs = _DirtyAfter({"BTHRoughput:STATe?": "0"}, profile=_irat_profile(),
+                         dirty_after="DL:BLER", raise_on="DL:BLER")
+        res = _run(bs)
+        bler = [s for s in res.steps if s.label.startswith("③")][0]
+        clear = [s for s in res.steps if s.label.startswith("⑧b")][0]
+        assert "-113" in bler.detail, "错误没记在产生它的那条查询名下"
+        assert "-113" not in clear.detail, "错误漂到了 CLEar 头上"
+        assert clear.success is True, "CLEar 没被拒却被记成被拒"
+
+    def test_csi_state_readback_errors_are_kept_off_the_start_command(self):
+        """`CSI:STATe?` 一前一后夹着 `CSI:STARt`：前一次不排空错误算到
+        STARt 头上，后一次不排空则漂到 P3 的 `REPort ON` 头上。"""
+        bs = _DirtyAfter({"BTHRoughput:STATe?": "0"}, profile=_irat_profile(),
+                         dirty_after="CSI:STATe?", raise_on="CSI:STATe?")
+        res = _run(bs)
+        p2 = [s for s in res.steps if s.label.startswith("P2")][0]
+        p3 = [s for s in res.steps if s.label.startswith("P3")][0]
+        assert "-113" not in p3.detail, "回读的错误漂到了 P3 的 `REPort ON` 头上"
+        assert p3.success is True
+        # STARt 自己的队列干净 —— detail 要把三段分开记，不能糊成一坨
+        assert "STARt 自己的" in p2.detail
+
+    def test_probe_that_answers_but_queues_an_error_is_red(self):
+        """⭐ 查询**回了值**、仪器却同时把它记进错误队列 —— 真机上会发生
+        （设置冲突 -221、`-420 Query UNTERMINATED` 之类，照样吐数据）。
+        这条读法不成立，必须报红；错误也不能漂到下一条探针。
+
+        上面几条走的都是**查询抛异常**那条路径，覆盖不到这里 ——
+        变异 M24（成功路径假装队列干净）就是从这个缝钻过去的。
+        """
+        bs = _DirtyAfter({"DL:BLER": "1,2,3,4,5,6,7,8,9,10"},
+                         profile=_irat_profile(), dirty_after="DL:BLER")
+        res = _run(bs)
+        dl = [s for s in res.steps if s.label.startswith("③")][0]
+        ul = [s for s in res.steps if s.label.startswith("④")][0]
+        assert dl.success is False, "回了值但被记进错误队列，这条读法不成立"
+        assert "-113" in dl.detail
+        assert dl.raw == "1,2,3,4,5,6,7,8,9,10", "报红也必须照常呈现原始回复"
+        assert ul.success is True and "-113" not in ul.detail, "错误漂到了下一条探针"
+
+    def test_probe_drains_on_both_of_its_exits(self):
+        """⭐ **不变量门（数量对等）** —— `_probe` 有两条出口（查询成功 /
+        查询抛异常），**每条都要排空**。
+
+        ⚠️ 这条是补 `test_every_command_site_drains_its_own_error_queue` 的洞：
+        那条按「`await _q(` 往下 7 行内有没有 `_err()`」判，而 `_probe` 的
+        异常路径那次排空正好落在窗口里 —— **成功路径丢了排空它照样绿**
+        （M24 实证）。判定器长得像不变量门，实际强度只到"这个站点至少有
+        一条路径排空过"。
+        """
+        body = _nested_source("_probe")
+        n = body.count("await _err()")
+        assert n == 2, (
+            f"`_probe` 两条出口各要排空一次，实际 {n} 次 —— "
+            "少一条时那条路径的错误会漂到下一条探针名下")
+
+    def test_read_orig_drains_on_all_of_its_exits(self):
+        """同上，`_read_orig` 三条出口（抛异常 / 回空串 / 读到值）——
+        异常那条自己排，另两条共用 try 之后那一次，共 2 次。"""
+        body = _nested_source("_read_orig")
+        n = body.count("await _err()")
+        assert n == 2, f"`_read_orig` 排空 {n} 次，应为 2"
+
+    def test_dirty_queue_makes_the_original_value_untrusted_and_unwritten(self):
+        """⭐ 内审 F1 —— 读**回了值**不等于这个值可信，而它是要**写回仪器**的。
+
+        队列脏时若照写，可能把本来 ON 的悄悄关掉，且全程报绿 ——
+        操作员不会再手动确认。同一个 docstring 上面就写着"读不到就不能猜一个
+        值写回去"，拿不可信的值写回是同一件事的变体，而且更糟。
+        变异：这条判据换回常量 True → 红。
+        """
+        bs = _DirtyAfter({"BTHRoughput:STATe?": "1"}, profile=_irat_profile(),
+                         dirty_after="BTHRoughput:STATe?")
+        res = _run(bs)
+        p0 = [s for s in res.steps if "读 BTHRoughput:STATe 原值" in s.label][0]
+        assert p0.success is False, "队列脏却把原值当真值用"
+        assert "不可信" in p0.detail and "手动确认" in p0.detail
+        assert p0.raw == "1", "报红也要照常呈现读到的值"
+        # ⭐ 关键在生效端：**真的没写回**，不是只报了一句
+        assert "BTHRoughput:STATe 1" not in " | ".join(bs.writes), (
+            "拿不可信的值写回了仪器 —— 可能把本来 ON 的悄悄关掉")
+        r = [s for s in res.steps
+             if s.label.startswith("R 写回 BTHRoughput:STATe")][0]
+        assert r.success is False and "没有写回" in r.detail
+
+    def test_ue_report_that_answers_but_queues_an_error_is_red(self):
+        """⑦ 是唯一手写的查询站点，母题 B 在这里也得有门（内审 F3）——
+        上一版只有"抛异常"那条路径的门，success 换回常量 True 照样全绿。"""
+        bs = _DirtyAfter({"JSON:REPort:FETCh": '{"rsrp": 60}'},
+                         profile=_irat_profile(),
+                         dirty_after="JSON:REPort:FETCh")
+        rep = [s for s in _run(bs).steps if s.label.startswith("⑦")][0]
+        assert rep.success is False, "回了值但被记进错误队列，这条读法不成立"
+        assert rep.raw == '{"rsrp": 60}', "报红也要照常呈现原始 JSON"
+
+    def test_clear_exception_error_does_not_drift_to_the_next_read(self):
+        """⑧b 写 `CLEar` 抛异常那条路径不排空 → 错误漂到 ⑧c，
+        把**对的** DL 吞吐量查询记成红（内审 F2）。"""
+        bs = _DirtyAfter({"BTHRoughput:STATe?": "0"}, profile=_irat_profile(),
+                         dirty_after="BTHRoughput:CLEar",
+                         raise_on_write="BTHRoughput:CLEar")
+        res = _run(bs)
+        b = [s for s in res.steps if s.label.startswith("⑧b")][0]
+        c = [s for s in res.steps if s.label.startswith("⑧c")][0]
+        assert "-113" in b.detail, "CLEar 自己的错误没记在自己名下"
+        assert "-113" not in c.detail, "漂到了 ⑧c，会把对的查询判成不支持"
+        assert c.success is True
+
+    def test_undrained_queue_is_announced_not_silently_truncated(self):
+        """`_err()` 撞满 16 条上界 = 队列**没排空**，剩下的会漂到下一条命令
+        名下 —— 必须说出来并判红，不能悄悄返回一串看着挺全的错误（内审 F5）。"""
+        class _Flood(_FakeBs):
+            def _query(self, cmd, **kw):
+                if "SYSTem:ERRor?" in cmd:
+                    return '-113,"Undefined header"'      # 永远吐，不见 No error
+                return super()._query(cmd, **kw)
+
+        res = _run(_Flood({}, profile=_irat_profile()))
+        p1 = [s for s in res.steps if s.label.startswith("P1")][0]
+        assert "队列未排空" in p1.detail, "撞上界了却不声张"
+        assert p1.success is False
+
+    def test_csi_state_helper_drains_its_single_exit(self):
+        body = _nested_source("_csi_state")
+        n = body.count("await _err()")
+        assert n == 1, f"`_csi_state` 唯一出口要排空一次，实际 {n} 次"
+
+    def test_ue_report_query_failure_does_not_drift_to_the_next_step(self):
+        """⑦ 是唯一**手写**的查询站点（不走 `_probe`），两条路径都得自己排空。
+        它抛异常那条没门守时，错误会漂到 ⑧a 头上（变异 M32）。"""
+        bs = _DirtyAfter({"BTHRoughput:STATe?": "0"}, profile=_irat_profile(),
+                         dirty_after="JSON:REPort:FETCh",
+                         raise_on="JSON:REPort:FETCh")
+        res = _run(bs)
+        rep = [s for s in res.steps if s.label.startswith("⑦")][0]
+        nxt = [s for s in res.steps if s.label.startswith("⑧a")][0]
+        assert "-113" in rep.detail, "错误没记在 ⑦ 自己名下"
+        assert "-113" not in nxt.detail, "⑦ 的错误漂到了 ⑧a 头上"
+        assert nxt.success is True
+
+    def test_every_command_site_drains_its_own_error_queue(self):
+        """⭐ **不变量门** —— 从代码派生的恒成立关系，防「新站点漏做」。
+
+        上面三条是行为门，只钉住今天存在的那几条命令；这条钉住的是
+        「以后再加一条 `_q` / `_w` 也得排空」。Codex 这两条 P1 就是
+        新站点漏做的形态 —— 母题早在内审 F3 修过，只是没扫到别的站点。
+        """
+        import inspect
+        import re as _re
+
+        lines = inspect.getsource(seq).splitlines()
+        offenders = []
+        for i, line in enumerate(lines):
+            if not _re.search(r"await _q\(|await _w\(", line):
+                continue
+            if "SYSTem:ERRor" in line:          # `_err` 自己那条，排除
+                continue
+            if "await _err()" not in "\n".join(lines[i:i + 7]):
+                offenders.append((i + 1, line.strip()))
+        assert not offenders, (
+            "这些命令站点发完没排空错误队列，错误会漂到下一条命令名下:\n"
+            + "\n".join(f"  L{n} {s}" for n, s in offenders))
+
+
+class TestWriteAcceptanceIsVerified:
+    """⭐ Codex #277 P1：SCPI 里 `_write` 返回**只代表传输成功**。
+
+    命令被不被接受是从 `SYSTem:ERRor?` 回来的 —— 步骤 success 写死 True
+    就等于替仪器宣布"接受了"。内审 F4 修了 P1/P3 两处，
+    **恢复段的两处镜像我没扫到**，报"已恢复"而实际没恢复比不恢复更糟：
+    操作员不会再去手动确认，累积开着直接污染下一次测试。
+    """
+
+    # (弄脏哪条写命令, 该由哪一步背, 需要的额外回值)
+    # ⚠ `*CLS` **必须在表里**（内审 F4）—— 上一版把它从不变量门里排除掉，
+    #   而它恰好就是唯一没人验证接受与否的那条写命令：洞正开在缺口上。
+    _WRITES = [
+        ("*CLS", "P0 清空错误队列", {}),
+        ("BTHRoughput:STATe ON", "P1", {}),
+        ("CSI:STARt", "P2", {"CSI:STATe?": "MEAS"}),
+        ("MEASurement:REPort ON", "P3", {}),
+        ("BTHRoughput:CLEar", "⑧b", {}),
+        ("BTHRoughput:STATe 0", "R 写回 BTHRoughput:STATe",
+         {"BTHRoughput:STATe?": "0"}),
+        ("MEASurement:REPort 0", "R 写回 MEASurement:REPort",
+         {"MEASurement:REPort?": "0"}),
+        ("CSI:STOP", "R 关回 CSI 累积", {"CSI:STATe?": "STOP"}),
+    ]
+
+    @pytest.mark.parametrize("frag,prefix,extra", _WRITES,
+                             ids=[w[1] for w in _WRITES])
+    def test_rejected_write_is_reported_red(self, frag, prefix, extra):
+        bs = _DirtyAfter(dict(extra), profile=_irat_profile(), dirty_after=frag)
+        res = _run(bs)
+        step = [s for s in res.steps if s.label.startswith(prefix)][0]
+        assert step.success is False, (
+            f"`{frag}` 被仪器拒了，`{prefix}` 却报成功 —— "
+            "write 返回只代表传输成功")
+        assert "-113" in step.detail, "拒绝理由没进 detail，操作员看不到"
+
+    def test_failed_restore_tells_the_operator_to_fix_it_by_hand(self):
+        """报红还不够 —— 累积被留在 ON 会污染**下一次**测试，
+        必须明说要手动关。变异：去掉这句提示 → 红。"""
+        bs = _DirtyAfter({"BTHRoughput:STATe?": "0"}, profile=_irat_profile(),
+                         dirty_after="BTHRoughput:STATe 0")
+        res = _run(bs)
+        r = [s for s in res.steps
+             if s.label.startswith("R 写回 BTHRoughput:STATe")][0]
+        assert "手动" in r.detail and "污染" in r.detail
+        assert res.success is False, "恢复没生效，整轮却报 success=True"
+
+    def test_write_count_matches_the_number_of_verifiable_steps(self):
+        """⭐ **不变量门（数量对等）** —— 序列发出去的写命令，每一条都必须
+        有一步能因它被拒而变红。少一条 = 那条命令的接受与否无人验证。"""
+        bs = _FakeBs({"BTHRoughput:STATe?": "0", "MEASurement:REPort?": "0",
+                      "CSI:STATe?": "STOP"}, profile=_irat_profile())
+        _run(bs)
+        covered = {frag for frag, _, _ in self._WRITES}
+        uncovered = [w for w in bs.writes
+                     if not any(f in w for f in covered)]
+        assert not uncovered, (
+            f"这些写命令没有任何一步验证它被没被接受: {uncovered}")
+
+    def test_cls_failure_is_not_reported_as_a_clean_sweep(self):
+        """`*CLS` 没发出去时，此后所有错误归属都不可信 —— 记录必须说出来，
+        不能写"已发 `*CLS` 并排空"还报绿（内审 F4）。"""
+        bs = _FakeBs({}, profile=_irat_profile(), raise_on_write="*CLS")
+        res = _run(bs)
+        p0 = [s for s in res.steps if s.label.startswith("P0 清空")][0]
+        assert p0.success is False
+        assert "没发出去" in p0.detail and "不可信" in p0.detail
+
+
 class TestMissingCommandsAreLoud:
     """⭐ 方言缺命令时步骤**静默消失**，summary 仍"无失败步"，
     操作员按 roadmap 九项对应表以为都问过了（内审 F7）。"""
@@ -310,6 +632,19 @@ class TestClearWindowVerdict:
         bs = _Dropping({}, profile=_irat_profile())
         v = [x for x in _run(bs).steps if "结论" in x.label][0]
         assert "变小了" in v.detail
+        # ⭐ 反向配对上面那条"判不了必须红"（内审 F6）—— 少了这句，
+        #   那条门用一个恒红的实现就能糊过去，而恒红不算门。
+        assert v.success is True, "真判出来了却报红"
+
+    def test_verdict_step_is_red_when_it_could_not_decide(self):
+        """⭐ 内审 F6 —— verdict 自己写着"本次无法判定"，步骤却报绿、
+        summary 还说"无失败步"。一个自称判不了的结论不能算通过。"""
+        bs = _FakeBs({"DL:THRoughput:OTA": "0,0,0,0,0,0",
+                      "SYSTem:ERRor?": '0,"No error"'}, profile=_irat_profile())
+        res = _run(bs)
+        v = [s for s in res.steps if s.label.startswith("⑧ CLEar")][0]
+        assert "无法判定" in v.detail
+        assert v.success is False, "自称无法判定却报绿"
 
     def test_each_read_has_its_own_raw(self):
         """`protocol.py` 约定 raw 原样存 —— 合成串违反它（内审 F9）。"""

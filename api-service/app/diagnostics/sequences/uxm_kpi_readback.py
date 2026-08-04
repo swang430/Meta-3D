@@ -53,7 +53,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.services.diagnostic_context import DiagnosticContext
 from app.diagnostics.protocol import (
@@ -263,11 +263,33 @@ async def run(
             out.append(r)
             if r.startswith("0,") or "no error" in r.lower():
                 break
+        else:
+            # ⚠ 跑满 16 次没见 `No error` = **队列没排空**（内审 F5）。
+            #   剩下的会漂到下一条命令名下 —— 正是本轮在治的那个病，
+            #   只是发生在上界这一格。**必须说出来并把该步判红**，
+            #   不能悄悄返回一串看着挺全的错误。
+            #   （单纯调大 16 只是把边界挪远，不解决"撞上了没人知道"。）
+            out.append("<队列未排空: 已读 16 条仍未见 No error —— "
+                       "此后各步的错误归属不可信>")
         return " || ".join(out) if out else "<空>"
 
     def _err_clean(err: str) -> bool:
-        """错误队列这一轮是不是干净的（用来给步骤定 success，见内审 F4）。"""
-        return bool(err) and ("no error" in err.lower() or err.startswith("0,"))
+        """错误队列这一轮是不是干净的（用来给步骤定 success，见内审 F4）。
+
+        ⚠ 判据必须**逐条**看，不能拿整串去找 `no error`：
+        `_err()` 是**排空到 `0,"No error"` 才停**的，所以脏队列长这样
+        `-113,"Undefined header" || 0,"No error"` —— 用「整串含 no error」判
+        **恒为真**，这道门在真机上等于不存在。
+
+        上一版就是这么写的，内审 F4 那批 `_err_clean(err)` 因此**从没红过**；
+        我的门当时绿，是因为假仪器**永远回 -113、从不回 `No error`**，
+        `_err()` 撞满 16 次上界才返回 —— 那不是真机的样子。
+        （Codex #277 P1 补门时实跑撞出来的。）
+        """
+        if not err:
+            return False
+        return all(p.strip().lower().startswith("0,") or "no error" in p.lower()
+                   for p in err.split("||"))
 
     async def _probe(label: str, cmd: str, expect_n: Optional[int],
                      interpret) -> Optional[List[Optional[float]]]:
@@ -275,15 +297,24 @@ async def run(
 
         `expect_n` 只用来**报告元素个数对不对**，不作为通过条件 ——
         个数不符恰恰是最要紧的发现（下标会整体错位）。
+
+        ⚠ **查完立刻排空错误队列**（Codex #277 P1）—— 两条路径都要：
+          · 查询抛异常那条**最要紧**：命令头不认识时仪器把 `-113` 塞进队列、
+            读超时抛异常，错误**留在队列里**漂到下一条命令名下；
+          · ①-⑦ 全不排空时，这些错误一路攒到 ⑧b，把 `CLEar` 记成"不支持" ——
+            现场据此把**对的**命令从驱动里删掉，正是本文件 docstring 要防的病。
         """
         t0 = time.perf_counter()
         try:
             raw = await _q(cmd)
         except Exception as e:  # noqa: BLE001
             ms = int((time.perf_counter() - t0) * 1000)
-            _step(label, False, f"查询抛异常: {type(e).__name__}: {e}", ms=ms)
+            err = await _err()
+            _step(label, False,
+                  f"查询抛异常: {type(e).__name__}: {e}；错误队列: {err}", ms=ms)
             return None
         ms = int((time.perf_counter() - t0) * 1000)
+        err = await _err()
         vals = _parse_doubles(raw)
         toks = _tokens(raw)
         n = len(vals)
@@ -291,8 +322,8 @@ async def run(
         if expect_n is not None:
             head += (" ✓ 与手册一致" if n == expect_n
                      else f" ⚠ **手册说 {expect_n} 个 —— 个数不符则所有下标错位**")
-        detail = f"{head}；{interpret(vals, toks)}"
-        _step(label, True, detail, raw=raw, ms=ms)
+        detail = f"{head}；{interpret(vals, toks)}；错误队列: {err}"
+        _step(label, _err_clean(err), detail, raw=raw, ms=ms)
         return vals
 
     # ── 方言完整性：九条命令逐个查，缺的**显式记 SKIPPED**（内审 F7）──
@@ -331,32 +362,63 @@ async def run(
         未标 `Query only`、命令总表里也是不带 `?` 的）。所以这里读**失败是正常情况**，
         不是仪器坏了 —— 但读不到就**不能猜一个值写回去**（原值可能本来就是 ON，
         猜 OFF 写回比留着更糟），只能如实报出来让人手动确认。
+
+        ⚠ 正因为它是**投机查询**，三条路径都必须自己排空错误队列
+        （Codex #277 P1）：手册未说明的命令头最可能被拒 → `-113` 留在队列里 →
+        紧跟着的 `... ON` 是**受支持**的写入，却因为读到这条 stale 错误被记成"被拒"。
         """
         try:
             v = (await _q(f"{cmd}?")).strip()
         except Exception as e:  # noqa: BLE001
+            err = await _err()
             _step(f"P0 读 {what} 原值", False,
                   f"读不到原值（{type(e).__name__}: {e}）。⚠ 该 `?` 形式**手册未说明**，"
                   f"读不到属预期之内；但本序列**不会写回** {what}，"
-                  f"跑完请手动确认仪表状态。", raw=None)
+                  f"跑完请手动确认仪表状态。本条自己的错误队列: {err}", raw=None)
             return None
+        err = await _err()
         if not v:
             _step(f"P0 读 {what} 原值", False,
                   f"回了空串 —— 视为读不到（该 `?` 形式手册未说明）。"
-                  f"本序列**不会写回** {what}，跑完请手动确认。", raw="")
+                  f"本序列**不会写回** {what}，跑完请手动确认。"
+                  f"本条自己的错误队列: {err}", raw="")
             return None
-        _step(f"P0 读 {what} 原值", True, f"原值 {v!r}，跑完会写回", raw=v)
+        # ⚠ 读回了值 **不等于** 这个值可信（内审 F1）：队列脏说明这条查询本身
+        #   出了问题，而这个值是要**写回仪器**的。同一个 docstring 上面就写着
+        #   "读不到就不能猜一个值写回去" —— 拿不可信的值写回是同一件事的变体，
+        #   而且更糟：全程报绿，操作员不会再去手动确认，可能把本来 ON 的悄悄关掉。
+        #   代价不对称：判脏而实净 = 多花人力确认；判净而实脏 = 静默改仪器状态。
+        if not _err_clean(err):
+            _step(f"P0 读 {what} 原值", False,
+                  f"读回了 {v!r}，但仪器**同时把这条查询记进了错误队列**: {err}。"
+                  f"这个值不可信，**不拿它写回**。⚠ {what} 会被本序列留在 ON，"
+                  f"跑完请手动确认。", raw=v)
+            return None
+        _step(f"P0 读 {what} 原值", True,
+              f"原值 {v!r}，跑完会写回；本条自己的错误队列: {err}", raw=v)
         return v
 
     try:
         # 跑前排空错误队列 —— 否则 stale 错误会被记到本序列的命令头上（内审 F3）
+        # ⚠ `*CLS` 是本序列发的**第一条写命令**，也曾是唯一没人验证接受与否的一条
+        #   （内审 F4）——它失败时只进 `log()` 文本，而操作员看的是 steps，
+        #   于是记录写着"已发 `*CLS` 并排空"、success 还是绿的。
+        #   更糟的是我那道"每条写命令都要有一步能红"的不变量门，
+        #   **恰好把 `*CLS` 排除在外** —— 洞正开在唯一没覆盖的那条上。
+        cls_ok = True
         try:
             await _w("*CLS")
         except Exception as e:  # noqa: BLE001
+            cls_ok = False
             log(f"  · *CLS 失败（{e}）—— 下面的错误队列读数可能含历史残留")
         pre_err = await _err()
-        _step("P0 清空错误队列", True,
-              f"已发 `*CLS` 并排空；残留: {pre_err}", raw=None)
+        # `*CLS` 清错误队列 —— 发完还脏，说明它没生效（或错误是发完才到的），
+        # 两种都让"哪条命令产生了哪个错误"的归属不再可信，要报出来。
+        _step("P0 清空错误队列", cls_ok and _err_clean(pre_err),
+              (f"已发 `*CLS` 并排空；残留: {pre_err}") if cls_ok else
+              (f"⚠ **`*CLS` 没发出去** —— 此后每一步的错误队列读数都可能含历史"
+               f"残留，本序列对「哪条命令产生了哪个错误」的归属**不可信**，"
+               f"别据此判定命令支不支持。排空到的残留: {pre_err}"), raw=None)
 
         for name, label in missing_cmds:
             _step(f"{label} —— SKIPPED", False,
@@ -381,20 +443,26 @@ async def run(
             #   所以**只发不回读分不清「开成功」和「被静默忽略」** —— 而 CQI/RI
             #   全 NaN 时操作员会误判成"命令形式不对"，把整片结论建在错前提上。
             #   `CSI:STATe?` 手册标 **Query only: True**，返回 STOP|WAIT|MEAS。
-            if csi_state_cmd:
+            async def _csi_state() -> Tuple[Optional[str], str]:
+                """读一次 CSI 状态，**自己排空自己的错误队列**（Codex #277 P1）。
+
+                两次调用一前一后夹着 `CSI:STARt`：前一次不排空，错误会被记到
+                STARt 头上；后一次不排空，错误会漂到 P3 的 `REPort ON` 头上。
+                """
+                if not csi_state_cmd:
+                    return None, "<未查>"
                 try:
-                    orig_csi = (await _q(csi_state_cmd.format(cell=cell))).strip()
+                    v: Optional[str] = (
+                        await _q(csi_state_cmd.format(cell=cell))).strip()
                 except Exception:  # noqa: BLE001
-                    orig_csi = None
+                    v = None
+                return v, await _err()
+
+            orig_csi, err_pre = await _csi_state()
             touched_csi = True
             await _w(csi_start.format(cell=cell))
             err = await _err()
-            after_csi = None
-            if csi_state_cmd:
-                try:
-                    after_csi = (await _q(csi_state_cmd.format(cell=cell))).strip()
-                except Exception:  # noqa: BLE001
-                    after_csi = None
+            after_csi, err_post = await _csi_state()
             running = bool(after_csi) and after_csi.upper().startswith(("MEAS", "WAIT"))
             _step("P2 开 CSI (CQI/RI) 累积", running and _err_clean(err),
                   f"已发 `{csi_start.format(cell=cell)}`；"
@@ -402,7 +470,9 @@ async def run(
                   f"手册：STOP=未运行 / WAIT=已启动等开始时刻 / MEAS=正在采集；"
                   f"**不是 MEAS/WAIT 就说明 STARt 被静默忽略**（小区关着，或已在跑），"
                   f"那样 ⑤⑥ 的 NaN 是前置没生效、不是命令形式不对。"
-                  f"错误队列: {err}", raw=after_csi)
+                  f"错误队列 —— STARt 自己的: {err}"
+                  f"（两次 STATe? 各自的: {err_pre} / {err_post}，"
+                  f"**分开记，别把它们算到 STARt 头上**）", raw=after_csi)
 
         if report_cmd:
             orig_report = await _read_orig(report_cmd, "MEASurement:REPort")
@@ -494,18 +564,22 @@ async def run(
             try:
                 rep_raw = await _q(rep_cmd.format(cell=cell))
                 ms = int((time.perf_counter() - t0) * 1000)
+                err = await _err()          # 排空归本条（Codex #277 P1）
                 _step(
-                    "⑦ UE L3 测量报告 (RSRP/RSRQ/SINR 口径)", True,
+                    "⑦ UE L3 测量报告 (RSRP/RSRQ/SINR 口径)", _err_clean(err),
                     "⚠️ **手册未说明**这些值是 3GPP 上报码点还是已换算的 dBm/dB —— "
                     "驱动当前**刻意不填** `rsrp_dbm`/`sinr_db`，只把原样值留进证据。"
                     "**现场判法：跟面板的 RSRP 读数比 —— 3GPP 的 rsrp-Result 码点 "
                     "0..127，dBm = 值 − 156；差 156 就是码点，相等就是 dBm。**"
-                    "原始 JSON 见 raw（P1-30 后 scpi.log 也留了完整响应）。",
+                    "原始 JSON 见 raw（P1-30 后 scpi.log 也留了完整响应）。"
+                    f"错误队列: {err}",
                     raw=rep_raw, ms=ms)
             except Exception as e:  # noqa: BLE001
+                ms = int((time.perf_counter() - t0) * 1000)
+                err = await _err()
                 _step("⑦ UE L3 测量报告", False,
-                      f"查询抛异常: {type(e).__name__}: {e}",
-                      ms=int((time.perf_counter() - t0) * 1000))
+                      f"查询抛异常: {type(e).__name__}: {e}；错误队列: {err}",
+                      ms=ms)
 
         # ⑦ CLEar 真能圈窗口吗（清单 ⑨）
         # ⚠ 两次读各自成步、各带自己的 raw（内审 F9）——
@@ -522,27 +596,37 @@ async def run(
                 _step("⑧b 发 BTHRoughput:CLEar", _err_clean(err),
                       f"已发 `{clear_cmd}`；错误队列: {err}", raw=None)
             except Exception as e:  # noqa: BLE001
+                # 12 个命令站点里最后一条漏排空的异常出口（内审 F2）——
+                # 不排空则这条 CLEar 的错误漂到 ⑧c，把**对的** DL 吞吐量查询
+                # 记成红，现场据此判它不支持。写超时后命令仍到达是常见形态。
+                err = await _err()
                 _step("⑧b 发 BTHRoughput:CLEar", False,
-                      f"抛异常: {type(e).__name__}: {e}", raw=None)
+                      f"抛异常: {type(e).__name__}: {e}；错误队列: {err}", raw=None)
             await asyncio.sleep(window_s)
             after_v = await _probe("⑧c 清零后读一次吞吐量", tcmd, 6,
                                    lambda v, t: "progress=" + _at(v, t, 0))
             b0 = before_v[0] if before_v else None
             a0 = after_v[0] if after_v else None
+            # `decided` = 这一步**真的判定了**吗（内审 F6）。以前恒 True ——
+            # 于是 verdict 自己写着"本次无法判定"，步骤却报绿、summary 报"无失败步"。
             if b0 is None or b0 <= 0:
+                decided = False
                 verdict = ("⚠ **本次无法判定** —— 清零前 progress 本来就是 "
                            f"{_fmt(b0)}，没有可归零的累积。先让 UE attach + "
                            "起数据业务，等 progress 涨上去再跑本序列。")
             elif a0 is None:
+                decided = False
                 verdict = "⚠ 清零后读不到 progress，无法判定"
             elif a0 < b0:
+                decided = True
                 verdict = (f"清零前 {_fmt(b0)} → 清零后 {_fmt(a0)}，**变小了** —— "
                            "与 CLEar 生效一致（仍请跟面板确认）")
             else:
+                decided = True
                 verdict = (f"清零前 {_fmt(b0)} → 清零后 {_fmt(a0)}，**没变小** —— "
                            "可能 CLEar 没生效，也可能窗口内涨回去了；"
                            f"把 window_s 调小再跑一次可区分")
-            _step("⑧ CLEar 能否圈窗口（结论）", True, verdict, raw=None)
+            _step("⑧ CLEar 能否圈窗口（结论）", decided, verdict, raw=None)
 
     finally:
         # ── 恢复：写过就必须写回（同 uxm_config_truth_probe 的纪律）──
@@ -562,12 +646,24 @@ async def run(
                 return
             try:
                 await _w(f"{cmd} {orig}")
-                _step(f"R 写回 {what}", True,
-                      f"已恢复为 {orig!r}；错误队列: {await _err()}", raw=None)
             except Exception as e:  # noqa: BLE001
+                err = await _err()
                 _step(f"R 写回 {what}", False,
                       f"**恢复失败**（{type(e).__name__}: {e}）—— "
-                      f"仪表可能仍开着 {what}，请手动确认", raw=None)
+                      f"仪表可能仍开着 {what}，请手动确认。错误队列: {err}", raw=None)
+                return
+            # ⚠ SCPI 里 `_write` 返回**只代表传输成功**，命令被不被接受是从
+            #   `SYSTem:ERRor?` 回来的（Codex #277 P1）。这一步以前写死 True ——
+            #   跟内审 F4 修掉的 P1/P3 是同一个母题，我当时没扫到恢复段这个镜像。
+            #   报"已恢复"而实际没恢复，比不恢复更糟：操作员不会再去手动确认，
+            #   累积开着直接污染下一次测试。
+            err = await _err()
+            ok = _err_clean(err)
+            _step(f"R 写回 {what}", ok,
+                  (f"已恢复为 {orig!r}；错误队列: {err}") if ok else
+                  (f"**恢复没生效** —— `{cmd} {orig}` 发出去了，但仪器把它记进了"
+                   f"错误队列: {err}。⚠ {what} 可能仍被本序列留在 ON，"
+                   f"会污染下一次测试的统计，**请手动关掉**。"), raw=None)
 
         await _restore(touched_state, state_cmd, orig_state, "BTHRoughput:STATe")
         await _restore(touched_report, report_cmd, orig_report, "MEASurement:REPort")
@@ -579,11 +675,22 @@ async def run(
             if orig_csi and orig_csi.upper().startswith("STOP"):
                 try:
                     await _w(csi_stop_cmd.format(cell=cell))
-                    _step("R 关回 CSI 累积", True,
-                          f"本序列开之前是 {orig_csi!r}，已发 CSI:STOP 恢复", raw=None)
                 except Exception as e:  # noqa: BLE001
+                    err = await _err()
                     _step("R 关回 CSI 累积", False,
-                          f"**恢复失败**（{type(e).__name__}: {e}）", raw=None)
+                          f"**恢复失败**（{type(e).__name__}: {e}）。错误队列: {err}",
+                          raw=None)
+                else:
+                    # 同上：write 返回 ≠ 命令被接受（Codex #277 P1 的同母题镜像）
+                    err = await _err()
+                    ok = _err_clean(err)
+                    _step("R 关回 CSI 累积", ok,
+                          (f"本序列开之前是 {orig_csi!r}，已发 CSI:STOP 恢复；"
+                           f"错误队列: {err}") if ok else
+                          (f"**关回没生效** —— CSI:STOP 发出去了但进了错误队列: "
+                           f"{err}。⚠ CSI 累积可能仍开着，下次真实测试的 "
+                           f"`CSI:STARt` 会被仪器**忽略**，CQI/RI 会掺进本序列的"
+                           f"样本、被稀释。**请手动 STOP**。"), raw=None)
             else:
                 _step("R 关回 CSI 累积", True,
                       f"**不关** —— 本序列开之前 CSI 状态是 {orig_csi!r}"
