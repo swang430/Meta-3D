@@ -13,12 +13,12 @@ blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 �
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-02 二批本地队列已拍板排序（用户明示"只排好优先级，先不忙开工"——待开工指令）**：
-**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → P1-32 → P1-33（本地半）→ P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧；P1-28 为 2026-08-02 用户新增 backlog 当日拍板插入；**P1-30 为 2026-08-03 用户指定插队"把日志提上来先完成"**；**P1-31 / P1-32 为 2026-08-03 UXM KPI 修复（#275）带出、用户当日拍板插到队首**）。**当前队首 = P1-32**（P1-25 / P1-26 / P1-30 已分别于 2026-08-02 / 08-03 / 08-03 收口）。一句话索引：
+**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → P1-33（本地半）→ P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧；P1-28 为 2026-08-02 用户新增 backlog 当日拍板插入；**P1-30 为 2026-08-03 用户指定插队"把日志提上来先完成"**；**P1-31 / P1-32 为 2026-08-03 UXM KPI 修复（#275）带出、用户当日拍板插到队首**）。**当前队首 = P1-33（本地半）**（P1-25 / P1-26 / P1-30 / P1-31 / P1-32 已收口，最后两片于 2026-08-04）。一句话索引：
 - **P1-25** GUI 主控台"系统状态"面板恒空修复 + api.ts 手写镜像同尺审计
 - **P1-26** GUI 改频同步 component_carriers（**GUI 写侧**收口；后端收敛点与显示端同源另立片）
 - **P1-30** SCPI 往返日志的证据能力（截断显式化 + OK/ERR 配对 + `instrument_id` 收窄）
 - **P1-31** `uxm_kpi_readback` 诊断序列（#275 那批 KPI 命令的现场对账载体）✅
-- **P1-32** `configure_mac_throughput_test()` 在 IRAT 上 11/11 命令为 `None`（不崩 + 不假成功 + 调用方消费）
+- **P1-32** `configure_mac_throughput_test()` 在 IRAT 上 11/11 命令为 `None`（不崩 + 不假成功 + 调用方消费）✅
 - **P1-33（本地半）** 按手册重写 IRAT 的 8 组 MAC 配置命令（含值形态转换；现场半在 Blocked 表）
 - **P1-27** P1-8 校准门拒 mock cert（provenance + real 模式 strict 拒）
 - **P1-28** 「当前暗室」双真值源收口（active chamber vs active lab 绑定暗室）
@@ -190,7 +190,7 @@ P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max /
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → P1-32 → P1-33（本地半）→ P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列 + 08-03 用户指定 P1-30 / P1-31 / P1-32 插队；**队首现为 P1-32**，P1-25 / P1-26 / P1-30 已收口；一批 10 片已全收 #256–#265）|
+| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → P1-33（本地半）→ P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列 + 08-03 用户指定 P1-30 / P1-31 / P1-32 插队；**队首现为 P1-33（本地半）**，P1-25 / P1-26 / P1-30 / P1-31 / P1-32 已收口；一批 10 片已全收 #256–#265）|
 | **ON-SITE-BLOCKED** | P0-5 (P0-3/4 已 2026-07-03 现场完成) + P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -272,6 +272,8 @@ unblocked) BEFORE starting any new P1.
 | 2026-08-03 | [#276](https://github.com/swang430/Meta-3D/pull/276) | ⚠️ 有缺口 | R3 四条修复（本 commit）—— 用户指示补审后 Codex 仍出 1 P1 + 3 P2，修完未再派第四轮 | 用户已额外授权一轮（R3）；R3 findings 仍主要是同文档内部镜像 | **4** | ⬜ 未处置 —— 下次动本文件 P1-31/32/33 段时补审 |
 | 2026-08-04 | [#277](https://github.com/swang430/Meta-3D/pull/277) | ⚠️ 有缺口 | `b985cbc` —— **R4 两条 P2 的修复**（⑦ 接 P3b 的结果 / 「没变小」那格不算通过）及配套的 4 门 3 变异 | 用户拍板走完 **R1–R4** 后 merge，未再派 R5；**内审也已跑满两轮**，内审 R2 六条的修复同样无覆盖。四轮走势 **2 P1 → 3 P2 → 1 P1+1 P2 → 2 P2**（严重度递减；R4 两条已被新增的不变量门 `test_no_green_verdict_branch_hedges_in_its_text` 覆盖）| 2 | ⬜ 未处置 —— 下次动 `uxm_kpi_readback` 时补审 |
 | 2026-08-04 | [#278](https://github.com/swang430/Meta-3D/pull/278) | <!--278-coverage-->⚠️ 有缺口 | <!--278-gap-->**回填本行这两格的 commit 自己**（docs 一行）—— R1 `8caaba1` / R2 `889db34` 都过了审，回填 commit 没有 | docs-only 一行登记；R1 两条 P2 均**当下修**（`R1 findings` 列被我塞了四轮合计 / 漏了本 PR 自己）。R2 唯一一条 P2 = 「合并前把这两格填掉」—— 而**回填 commit 自己**要么每次都得再派一轮（无穷递归），要么就此收口。选收口并如实标注：这行说的话在合并那一刻就是真的，此后也一直是真的| 2 | ⬜ 未处置 |
+| 2026-08-04 | [#279](https://github.com/swang430/Meta-3D/pull/279) | ✅ 全覆盖 | —（R1 唯一一条 P2 修完后 R2 在 `7f49414` 上 clean，而 `7f49414` 就是合并时的 HEAD）| — | 1 | ✅ 无需处置 |
+| 2026-08-04 | [#280](https://github.com/swang430/Meta-3D/pull/280) | ⚠️ 有缺口 | **修 R3 那条 P2 的 commit 自己**（docs 一段）—— R1 `1d3e762` / R2 `7c28ddb` / R3 `a5a6bab` 都过了审，这次修复没有 | 用户授权破例走到 R3（超轮次上限）；R1/R2/R3 三轮各 1 条 P2，**全是同一母题的不同镜像站点**（表漏本 PR → Discovered 源条目 stale → P1-32 条目本体 stale）。R3 后按母题全量扫，确认无第四处 | 1 | ✅ 无需处置 —— ⚠️ 与 [#278](https://github.com/swang430/Meta-3D/pull/278) R1 **同一条**：「每个 PR 都记一行、含本 PR」我一个 PR 之后又漏了 |
 
 ### 📉 更值得看的信号：第一轮 findings 数
 
@@ -1489,7 +1491,26 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 **跑一下就把正在测的 KPI 毁了**。要么整条标不安全（当前选择），要么把 ⑧⑨ 拆成
 独立的不安全序列 —— 拆分留给实现期定，但**不许标成安全**。
 
-### P1-32 — `configure_mac_throughput_test()` 在 IRAT 上 11/11 命令为 `None`（本地半）⬜（2026-08-03 拍板）
+### P1-32 — `configure_mac_throughput_test()` 在 IRAT 上 11/11 命令为 `None`（本地半）✅（2026-08-04 完成，#279）
+
+> **✅ 收口（#279 / `2d3796e`）—— 下面 What / Why 两段描述的是**修之前**的状态，留作背景，别当现状读。**
+>
+> **已落地**：8 组写入改走 `_cmd()` graceful-skip（不再抛 `AttributeError`）；返回
+> `bool` → `MacThroughputConfigResult(applied / skipped / missing_mandatory / error)`；
+> 必要 8 / 可选 3 分级只放驱动一处；**调用方 `measure.py` 真消费** ——
+> 必要项缺失或下发出错即 `StepExecutionStatus.FAILED`，且**在 `start_signaling()` 之前返回**
+> （判定收窄成 `MeasureExecutor._mac_config_blocker`，才打得了行为门）。
+> 门 27 条 / 变异 16 条全红。
+>
+> **⚠️ 仍未解决、留给 P1-33**：
+> ① 补正确命令形式（见本文件 P1-33 段的手册裁决表）；
+> ② **`BSE:CONFig:<celltype>:APPLY` 前置** —— 手册明写小区 ON 时多数配置改动要发 APPLY
+> 才进协议栈，而上游 `set_cell_config` 收尾恰好把小区恢复 ON，所以现在只保证"命令发出去了"，
+> 日志措辞是 `commands sent (**not** confirmed applied)`。**不补的话，P1-33 一填命令就从
+> 「报错」变成「配错了还看起来配上了」**；
+> ③ 「IRAT 到底支不支持这 11 条」**未经查证** —— 手册的 `Application Mode` 字段答不了
+> （我们已定义、现场在用的 `CELL_BAND`/`DL:ARFCN`/`DL:BW` 同样标 `NSA | SA`），
+> 且这批命令从未被真机普查过（`uxm_scpi_compatibility` 跳过 `None` 模板）。
 
 **What（只做本地半）**: ① 走仓库已有的 `RealUxmDriver._cmd()` graceful-skip，不再在第一条 `.format()` 上抛 `AttributeError`；② **跳过了哪些必须显式返回给调用方**；③ **调用方必须消费它** —— 光返回不够（Codex #276 P1）：`app/services/mimo_ota/executors/measure.py:390-401` **丢弃** `configure_mac_throughput_test()` 的返回值、然后无条件往下 `start_signaling`。不改调用方，加了返回值也只是换个姿势**继续在没配置过的链路上跑测试**。必修的两半：驱动返回「跳过了哪些」+ 消费方在必要命令被跳过时**中止或显式标 degraded**。补齐正确命令形式那半是 **P1-33**。
 
@@ -2367,7 +2388,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-03 during UXM KPI 修复内审 F9/F10]` **`kpi_valid` 只进日志不进 `to_dict()`，调用方仍分不清「测到 0」和「没测到」** —— `executors/measure.py` 的 `samples_tput.append(metrics.dl_throughput_mbps)` 把"没读到"的 0.0 当真样本平均进交付 KPI。**本片让这个失效模式从罕见变常态**：以前 START/STOP 一直失败、计数器从不归零；现在 CLEar 真生效了，每个窗口归零后若样本还没到就是 NaN → 0.0。同批：新加的 `dl/ul_throughput_current_mbps` 在 mock 与 CMW500 两条路上恒 0.0（`to_dict()` 一律吐 0.0，跟真值并排出现），一旦 GUI 画实时吞吐曲线就是一条 0 线。修法 = `Optional[float]` 一路推到 schema/DB/报告（契约破坏面大，独立片）。
 
 
-- `[discovered 2026-08-03 during UXM KPI 修复]` **[→ 提升 P1-32（本地半）+ P1-33（现场半，blocked）]** **⛔ `configure_mac_throughput_test()` 在现场用的 IRAT 方言上 11/11 条命令都是 `None`，第一行就抛 AttributeError** —— `PDSCH_SCHED_ALGO` / `PDSCH_AMC_ENABLE` / `PUSCH_AMC_ENABLE` / `PDSCH_MCS` / `PDSCH_RB_ALLOC` / `TDD_PATTERN` / `TDD_PERIOD` / `HARQ_MAX_TRANS` / `HARQ_PROCESSES` / `CSIRS_PORTS` / `MEAS_TPUT_STAT_COUNT` —— `UxmLteNrIratProfile` 继承的是 `UxmTestApp` **基类**（不是 `Uxm5GNRTestAppProfile`），这 11 条全没覆盖。函数在第一条 `.format()` 上 `'NoneType' object has no attribute 'format'`，整段 `except` 捕获 → `return False`。**也就是说 3GPP MIMO OTA MAC 层吞吐量测试的全部配置（Full Buffer / AMC 关 / 固定 MCS / 全 RB / TDD 格式 / HARQ / CSI-RS 端口 / 统计窗口）在现场那台仪器上从来没有生效过。** 仓库已有 `RealUxmDriver._cmd()` graceful-skip helper 专治这个形态（见 `tests/test_uxm_driver_profile.py` 的 docstring），正解是全部换成它 —— 但**必须同时解决"跳过全部还报 True 就是假成功"**：跳过多少、跳了哪些要显式返回给调用方，否则比现在的 fail-loud 更糟。⚠️ **优先级高**：这是测试配置层的整体失效，比 KPI 读错更靠前 —— KPI 修好了，但测的是没配置过的链路。本次 KPI 片刻意不碰它（范围纪律），只把 KPI 前置序列挪到第 0 步、排在崩点之前，否则 KPI 修复在真正用的那个方言上是死的。
+- `[discovered 2026-08-03 during UXM KPI 修复]` **[→ P1-32 ✅ 已修（#279, 2026-08-04）／余 P1-33]** ~~**⛔ `configure_mac_throughput_test()` 在现场用的 IRAT 方言上 11/11 条命令都是 `None`，第一行就抛 AttributeError**~~ **⚠️ 崩溃与静默继续那半已由 P1-32 修掉**：8 组写入改走 `_cmd()` graceful-skip、返回 `MacThroughputConfigResult`、调用方必要项缺失即 `FAILED`（不再无条件 `start_signaling`）。**下面这段描述的是修之前的状态，留作背景，别当现状读。****仍未解决的是 P1-33**：补正确命令形式（含 `APPLY` 前置），且「IRAT 到底支不支持」**未经查证**（详见 P1-33 段的手册裁决）。原文如下 ——  —— `PDSCH_SCHED_ALGO` / `PDSCH_AMC_ENABLE` / `PUSCH_AMC_ENABLE` / `PDSCH_MCS` / `PDSCH_RB_ALLOC` / `TDD_PATTERN` / `TDD_PERIOD` / `HARQ_MAX_TRANS` / `HARQ_PROCESSES` / `CSIRS_PORTS` / `MEAS_TPUT_STAT_COUNT` —— `UxmLteNrIratProfile` 继承的是 `UxmTestApp` **基类**（不是 `Uxm5GNRTestAppProfile`），这 11 条全没覆盖。函数在第一条 `.format()` 上 `'NoneType' object has no attribute 'format'`，整段 `except` 捕获 → `return False`。**也就是说 3GPP MIMO OTA MAC 层吞吐量测试的全部配置（Full Buffer / AMC 关 / 固定 MCS / 全 RB / TDD 格式 / HARQ / CSI-RS 端口 / 统计窗口）在现场那台仪器上从来没有生效过。** 仓库已有 `RealUxmDriver._cmd()` graceful-skip helper 专治这个形态（见 `tests/test_uxm_driver_profile.py` 的 docstring），正解是全部换成它 —— 但**必须同时解决"跳过全部还报 True 就是假成功"**：跳过多少、跳了哪些要显式返回给调用方，否则比现在的 fail-loud 更糟。⚠️ **优先级高**：这是测试配置层的整体失效，比 KPI 读错更靠前 —— KPI 修好了，但测的是没配置过的链路。本次 KPI 片刻意不碰它（范围纪律），只把 KPI 前置序列挪到第 0 步、排在崩点之前，否则 KPI 修复在真正用的那个方言上是死的。
 
 - `[discovered 2026-08-03 during UXM KPI 修复]` **现场 2026-05-27 已经查明的结论，两个多月没喂回驱动** —— `docs/site-debug/2026-05-27-morning-log.md` §9.2/§9.3 白纸黑字记着：`TSTatistics:STARt` **-113 不支持**；`UEReport:* / UL 吞吐` **-113 本 App 不支持**；`BLER:STATistical:ALL?` 停在 `IDLE,UNKN,0,0`「统计未被 enable」；`CSI:CQI:STATistics?` 返回 `7.92E+04,0,NaN...`「**字段义待查手册**」；backlog 明写「**需查手册找 IRAT 下重置/enable 统计的正确命令**」。这些正是 2026-08-03 这次查手册得到的答案 —— **情报早就有了，缺的是把它落回代码的那一步**。§9.5 还解释了为什么没人发现：未定义**查询**→客户端超时、未定义**写**→`resp=None/err=None` **静默像成功**。**该建立的机制**：现场笔记里的「命令不支持 / 字段义待查」条目要有出口，能落进 `uxm_command_profiles.py` 的注释或 backlog，而不是停在 site-debug 文档里。
 
