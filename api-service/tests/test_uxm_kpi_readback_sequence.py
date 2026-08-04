@@ -706,6 +706,81 @@ class TestUeReportWindowIsBounded:
         assert "无法确定" in rep_step.detail and "未说明" in rep_step.detail
 
 
+class TestClaimsMustBeBackedByWhatWasVerified:
+    """⭐ 四轮外审收敛出来的**母题**（Codex #277 R4）：
+
+    **一个步骤声称的事，必须由它自己验证过的东西支撑。**
+    声称「某前提成立」就得把那个前提的实际结果接进来；
+    detail 自己说「区分不了」就不能报绿。
+
+    R1–R4 的 findings 几乎全是它的实例，只是落在不同站点：
+    P1/P3 的 success（内审 F4）→ 恢复段（Codex R1）→ `*CLS`（内审 F4）→
+    ⑧ 结论（内审 F6）→ CSI 可信度（Codex R2）→ ⑦ 的来源（Codex R4）。
+    """
+
+    def test_report_evidence_is_red_when_the_clear_failed(self):
+        """P3b 清队列被拒 → ⑦ 取回的可能是历史报告，**拿去跟当下面板比会得出
+        错的 RSRP 口径**，那比读不到更糟。不能照样报绿、照样说"已清过队列"。"""
+        bs = _DirtyAfter({"JSON:REPort:FETCh": '{"NumberOfReportsExtracted": 2}'},
+                         profile=_irat_profile(),
+                         dirty_after="MEASurement:REPort:CLEAr")
+        res = _run(bs)
+        p3b = [x for x in res.steps if x.label.startswith("P3b")][0]
+        rep_step = [x for x in res.steps if x.label.startswith("⑦")][0]
+        assert p3b.success is False
+        assert rep_step.success is False, "清队列失败了，⑦ 却报绿"
+        assert "来源不可信" in rep_step.detail
+        assert "已确认" not in rep_step.detail, "替 P3b 宣布了它没做到的事"
+
+    def test_report_evidence_states_confirmed_provenance_when_clear_worked(self):
+        """反向 —— 清成功时要说"已确认"，否则上一条门用恒红实现就能糊过去。"""
+        bs = _FakeBs({"JSON:REPort:FETCh": '{"NumberOfReportsExtracted": 1}',
+                      "SYSTem:ERRor?": '0,"No error"'}, profile=_irat_profile())
+        rep_step = [x for x in _run(bs).steps if x.label.startswith("⑦")][0]
+        assert rep_step.success is True
+        assert "已确认" in rep_step.detail
+
+    def test_no_drop_verdict_is_not_a_pass(self):
+        """⑧ 问的是「CLEar 能不能圈窗口」。"没变小"这格 detail 自己写着
+        两种情形**区分不了** —— 区分不了就是**没答上**，不能报绿。"""
+        bs = _FakeBs({"DL:THRoughput:OTA": "500,1,1,1,1,1",
+                      "SYSTem:ERRor?": '0,"No error"'}, profile=_irat_profile())
+        v = [x for x in _run(bs).steps if "结论" in x.label][0]
+        assert "没变小" in v.detail
+        assert v.success is False, "自己说区分不了，却报绿"
+        assert "没能验证" in v.detail
+
+    def test_no_green_verdict_branch_hedges_in_its_text(self):
+        """⭐ **不变量门** —— 把这个母题变成机械可查的：
+        任何 `decided = True` 的分支，它的 verdict 文本里都不得出现
+        「可能 / 无法 / 不确定 / 区分不了」这类措辞。
+
+        内审 F6 与 Codex R4 是同一条规则的两次遗漏（三格改了两格），
+        这道门让第三格、第四格不必再靠人眼发现。
+        """
+        import inspect
+        import re as _re
+
+        lines = inspect.getsource(seq).splitlines()
+        HEDGE = _re.compile(r"可能|无法|不确定|分不清|区分不了|未说明")
+        offenders = []
+        for i, line in enumerate(lines):
+            if not _re.match(r"\s*decided = True\s*$", line):
+                continue
+            indent = len(line) - len(line.lstrip())
+            branch = []
+            for nxt in lines[i + 1:]:
+                if nxt.strip() and (len(nxt) - len(nxt.lstrip())) < indent:
+                    break          # 到了下一个 elif/else，本分支结束
+                branch.append(nxt)
+            found = sorted(set(HEDGE.findall("\n".join(branch))))
+            if found:
+                offenders.append((i + 1, found))
+        assert not offenders, (
+            "这些分支判了「通过」，措辞却自认不确定 —— 说不清就不算答上:\n"
+            + "\n".join(f"  L{n} 含 {w}" for n, w in offenders))
+
+
 class TestMissingCommandsAreLoud:
     """⭐ 方言缺命令时步骤**静默消失**，summary 仍"无失败步"，
     操作员按 roadmap 九项对应表以为都问过了（内审 F7）。"""

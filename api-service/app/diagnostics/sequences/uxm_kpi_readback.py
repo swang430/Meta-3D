@@ -365,6 +365,9 @@ async def run(
     csi_pre_trusted = False
     touched_state = False
     touched_report = False
+    # ⑦ 的来源可信度取决于 P3b 到底清没清成 —— 不接进来就等于
+    #   替 P3b 宣布成功（Codex #277 R4）。
+    report_queue_cleared = False
     touched_csi = False
 
     async def _read_orig(cmd: str, what: str) -> Optional[str]:
@@ -530,7 +533,8 @@ async def run(
             if rep_clear_cmd:
                 await _w(rep_clear_cmd)
                 err = await _err()
-                _step("P3b 清空 UE 报告队列", _err_clean(err),
+                report_queue_cleared = _err_clean(err)
+                _step("P3b 清空 UE 报告队列", report_queue_cleared,
                       f"已发 `{rep_clear_cmd}` —— 让 ⑦ 只看到**本轮窗口**产生的报告"
                       f"（不清则取回开测以来全部，跟当下面板配不上）；"
                       f"错误队列: {err}", raw=None)
@@ -627,9 +631,16 @@ async def run(
                 # 份数摆出来，**别自己解析挑一份**（顺序手册未说明，挑就是猜）。
                 m = re.search(r'"NumberOfReportsExtracted"\s*:\s*(\d+)', rep_raw or "")
                 n_rep = m.group(1) if m else "<读不到该字段>"
+                prov = ("（P3b **已确认**清空队列，正常应是本轮窗口内产生的）"
+                        if report_queue_cleared else
+                        "⚠ **来源不可信** —— P3b **没能**清空队列（被拒，或方言"
+                        "没定义 `:CLEAr`），这些报告**可能是开测以来的历史**；"
+                        "拿它跟当下的面板读数比，会得出**错的** RSRP 口径 ——"
+                        "那比读不到更糟。先解决清队列再重跑本序列。")
                 _step(
-                    "⑦ UE L3 测量报告 (RSRP/RSRQ/SINR 口径)", _err_clean(err),
-                    f"**本次取回 {n_rep} 份报告**（P3b 已清过队列，正常应是本轮窗口内的）。"
+                    "⑦ UE L3 测量报告 (RSRP/RSRQ/SINR 口径)",
+                    _err_clean(err) and report_queue_cleared,
+                    f"**本次取回 {n_rep} 份报告**{prov}。"
                     "⚠️ 若多于 1 份：**哪一份对应当下的面板读数无法确定** —— "
                     "手册对「带 <Integer> 取的是最新还是最旧」「多份的排列顺序」"
                     "**都未说明**（NotebookLM 2026-08-04 三问确认），别按下标猜。"
@@ -697,10 +708,15 @@ async def run(
                 verdict = (f"清零前 {_fmt(b0)} → 清零后 {_fmt(a0)}，**变小了** —— "
                            "与 CLEar 生效一致（仍请跟面板确认）")
             else:
-                decided = True
+                # ⚠ 这一格 detail 自己写着"两种情形本轮区分不了"，却曾报绿
+                #   （Codex #277 R4）—— 跟内审 F6 治的是同一件事，我那轮
+                #   改了三格里的两格，漏了这格。⑧ 的问题是"CLEar 到底能不能
+                #   圈窗口"，区分不了就是**没答上**。
+                decided = False
                 verdict = (f"清零前 {_fmt(b0)} → 清零后 {_fmt(a0)}，**没变小** —— "
-                           "可能 CLEar 没生效，也可能窗口内涨回去了；"
-                           f"把 window_s 调小再跑一次可区分")
+                           "**本轮没能验证 CLEar 是否生效**：可能它没生效，"
+                           "也可能窗口内又涨回去了，这两种本轮**区分不了**。"
+                           f"把 window_s 调小再跑一次可区分。")
             _step("⑧ CLEar 能否圈窗口（结论）", decided, verdict, raw=None)
 
     finally:
