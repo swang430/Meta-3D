@@ -273,7 +273,7 @@ unblocked) BEFORE starting any new P1.
 | 2026-08-04 | [#277](https://github.com/swang430/Meta-3D/pull/277) | ⚠️ 有缺口 | `b985cbc` —— **R4 两条 P2 的修复**（⑦ 接 P3b 的结果 / 「没变小」那格不算通过）及配套的 4 门 3 变异 | 用户拍板走完 **R1–R4** 后 merge，未再派 R5；**内审也已跑满两轮**，内审 R2 六条的修复同样无覆盖。四轮走势 **2 P1 → 3 P2 → 1 P1+1 P2 → 2 P2**（严重度递减；R4 两条已被新增的不变量门 `test_no_green_verdict_branch_hedges_in_its_text` 覆盖）| 2 | ⬜ 未处置 —— 下次动 `uxm_kpi_readback` 时补审 |
 | 2026-08-04 | [#278](https://github.com/swang430/Meta-3D/pull/278) | <!--278-coverage-->⚠️ 有缺口 | <!--278-gap-->**回填本行这两格的 commit 自己**（docs 一行）—— R1 `8caaba1` / R2 `889db34` 都过了审，回填 commit 没有 | docs-only 一行登记；R1 两条 P2 均**当下修**（`R1 findings` 列被我塞了四轮合计 / 漏了本 PR 自己）。R2 唯一一条 P2 = 「合并前把这两格填掉」—— 而**回填 commit 自己**要么每次都得再派一轮（无穷递归），要么就此收口。选收口并如实标注：这行说的话在合并那一刻就是真的，此后也一直是真的| 2 | ⬜ 未处置 |
 | 2026-08-04 | [#279](https://github.com/swang430/Meta-3D/pull/279) | ✅ 全覆盖 | —（R1 唯一一条 P2 修完后 R2 在 `7f49414` 上 clean，而 `7f49414` 就是合并时的 HEAD）| — | 1 | ✅ 无需处置 |
-| 2026-08-04 | [#280](https://github.com/swang430/Meta-3D/pull/280) | ⚠️ 有缺口 | **修 R2 那条 P2 的 commit 自己**（docs 一行）—— R1 `1d3e762` / R2 `7c28ddb` 都过了审，这次修复没有。⚠️ 上一版这格写「✅ 全覆盖」，依据是「R2 非 clean 就不合」—— **R2 不 clean，所以按我自己写的判据翻成有缺口** | 轮次上限=2，R2 findings 非上轮修复引入但已到上限，修完不再派 R3 | 1 | ✅ 无需处置 —— ⚠️ 与 [#278](https://github.com/swang430/Meta-3D/pull/278) R1 **同一条**：「每个 PR 都记一行、含本 PR」我一个 PR 之后又漏了 |
+| 2026-08-04 | [#280](https://github.com/swang430/Meta-3D/pull/280) | ⚠️ 有缺口 | **修 R3 那条 P2 的 commit 自己**（docs 一段）—— R1 `1d3e762` / R2 `7c28ddb` / R3 `a5a6bab` 都过了审，这次修复没有 | 用户授权破例走到 R3（超轮次上限）；R1/R2/R3 三轮各 1 条 P2，**全是同一母题的不同镜像站点**（表漏本 PR → Discovered 源条目 stale → P1-32 条目本体 stale）。R3 后按母题全量扫，确认无第四处 | 1 | ✅ 无需处置 —— ⚠️ 与 [#278](https://github.com/swang430/Meta-3D/pull/278) R1 **同一条**：「每个 PR 都记一行、含本 PR」我一个 PR 之后又漏了 |
 
 ### 📉 更值得看的信号：第一轮 findings 数
 
@@ -1492,6 +1492,25 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 独立的不安全序列 —— 拆分留给实现期定，但**不许标成安全**。
 
 ### P1-32 — `configure_mac_throughput_test()` 在 IRAT 上 11/11 命令为 `None`（本地半）✅（2026-08-04 完成，#279）
+
+> **✅ 收口（#279 / `2d3796e`）—— 下面 What / Why 两段描述的是**修之前**的状态，留作背景，别当现状读。**
+>
+> **已落地**：8 组写入改走 `_cmd()` graceful-skip（不再抛 `AttributeError`）；返回
+> `bool` → `MacThroughputConfigResult(applied / skipped / missing_mandatory / error)`；
+> 必要 8 / 可选 3 分级只放驱动一处；**调用方 `measure.py` 真消费** ——
+> 必要项缺失或下发出错即 `StepExecutionStatus.FAILED`，且**在 `start_signaling()` 之前返回**
+> （判定收窄成 `MeasureExecutor._mac_config_blocker`，才打得了行为门）。
+> 门 27 条 / 变异 16 条全红。
+>
+> **⚠️ 仍未解决、留给 P1-33**：
+> ① 补正确命令形式（见本文件 P1-33 段的手册裁决表）；
+> ② **`BSE:CONFig:<celltype>:APPLY` 前置** —— 手册明写小区 ON 时多数配置改动要发 APPLY
+> 才进协议栈，而上游 `set_cell_config` 收尾恰好把小区恢复 ON，所以现在只保证"命令发出去了"，
+> 日志措辞是 `commands sent (**not** confirmed applied)`。**不补的话，P1-33 一填命令就从
+> 「报错」变成「配错了还看起来配上了」**；
+> ③ 「IRAT 到底支不支持这 11 条」**未经查证** —— 手册的 `Application Mode` 字段答不了
+> （我们已定义、现场在用的 `CELL_BAND`/`DL:ARFCN`/`DL:BW` 同样标 `NSA | SA`），
+> 且这批命令从未被真机普查过（`uxm_scpi_compatibility` 跳过 `None` 模板）。
 
 **What（只做本地半）**: ① 走仓库已有的 `RealUxmDriver._cmd()` graceful-skip，不再在第一条 `.format()` 上抛 `AttributeError`；② **跳过了哪些必须显式返回给调用方**；③ **调用方必须消费它** —— 光返回不够（Codex #276 P1）：`app/services/mimo_ota/executors/measure.py:390-401` **丢弃** `configure_mac_throughput_test()` 的返回值、然后无条件往下 `start_signaling`。不改调用方，加了返回值也只是换个姿势**继续在没配置过的链路上跑测试**。必修的两半：驱动返回「跳过了哪些」+ 消费方在必要命令被跳过时**中止或显式标 degraded**。补齐正确命令形式那半是 **P1-33**。
 
