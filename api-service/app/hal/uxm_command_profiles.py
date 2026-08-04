@@ -211,6 +211,7 @@ class UxmTestApp:
     #   （`DDDSU` 数得出 D/U 整槽数，数不出 S 槽里的符号数 —— 那两个由
     #   TestCase 的 tdd_dl_symbols / tdd_ul_symbols 给，默认取手册默认 6/4）。
     TDD_PATTERN_STATE: Optional[str] = None
+    TDD_SCS: Optional[str] = None
     TDD_DL_SLOTS: Optional[str] = None
     TDD_DL_SYMBOLS: Optional[str] = None
     TDD_UL_SLOTS: Optional[str] = None
@@ -506,6 +507,11 @@ class UxmLteNrIratProfile(UxmTestApp):
     # TDD：手册没有 pattern 字符串，是**六个数**
     TDD_PATTERN_STATE = "BSE:CONFig:NR5G:{cell}:SCHeduling:TDDPATtern:STATE"
     TDD_PERIOD = "BSE:CONFig:NR5G:{cell}:SCHeduling:TDDPATtern:PERiod"   # Enum MS0P5..MS10
+    # ⭐ TDD pattern **就是按这个 SCS 评估的** —— 校验必须打在它上面，
+    #   不能用 TestCase 的请求值（那是标称端；IRAT 上 CELL_SCS 未定义、
+    #   inherit 模式还整段跳过下发，仪器实际可能在别的 SCS 上）。
+    #   Enum MU0|MU1|MU2|MU3 → 15/30/60/120 kHz。
+    TDD_SCS = "BSE:CONFig:NR5G:{cell}:SCHeduling:TDDPATtern:SUBCarrier:SPACing"
     TDD_DL_SLOTS = "BSE:CONFig:NR5G:{cell}:SCHeduling:TDDPATtern:DLSLots"    # Int 0..160
     TDD_DL_SYMBOLS = "BSE:CONFig:NR5G:{cell}:SCHeduling:TDDPATtern:DLSYmbols"  # Int 0..14
     TDD_UL_SLOTS = "BSE:CONFig:NR5G:{cell}:SCHeduling:TDDPATtern:ULSLots"    # Int 0..160

@@ -46,7 +46,9 @@ def _drv(profile=UxmLteNrIratProfile, responses=None):
     resp = {"*OPC?": "1", "NUM:PRBS": "273", "SYSTem:ERRor": '0,"No error"',
             "SYST:ERR": '0,"No error"',
             # TDD STATE 回读 —— 不桩则走「回读失败」分支（Codex #281 P1）
-            "TDDPATtern:STATE": "1"}
+            "TDDPATtern:STATE": "1",
+            # 生效端 SCS（MU0=15kHz）—— 校验打在它上面，不是 TestCase 请求值
+            "TDDPATtern:SUBCarrier:SPACing": "MU0"}
     resp.update(responses or {})
     return d, _stub_io(d, resp)
 
@@ -419,17 +421,24 @@ class TestScsConsistency:
         assert res.ok is False
 
     def test_consistent_combination_is_sent(self):
-        """反向 —— 自洽就得发，否则上一条门用恒不发也能过。"""
-        res, writes = _run(mimo_layers=2, tdd_pattern="DDDSU",
+        """反向 —— 自洽就得发，否则上一条门用恒不发也能过。
+        生效端 MU1=30kHz，`DDDSU`(5 slot)×0.5ms=2.5ms 与 `2.5MS` 对得上。"""
+        res, writes = _run(responses={"TDDPATtern:SUBCarrier:SPACing": "MU1"},
+                           mimo_layers=2, tdd_pattern="DDDSU",
                            tdd_period="2.5MS", scs_khz=30)
         assert "TDD_DL_SLOTS" not in res.missing_mandatory
         assert any("TDDPATtern:DLSLots" in w for w in writes)
 
-    def test_missing_scs_refuses_to_send(self):
-        """SCS 不知道就**不校验、也不发** —— 不猜。"""
+    def test_request_scs_absent_still_validated_against_live(self):
+        """⭐ TestCase 没给 SCS **不等于**没法校验 —— 生效端读得到就按它校验。
+
+        （Codex #281 R2 之前这里是"请求值缺省就不发"；现在权威源是仪器，
+        请求值只当**交叉校验**用。真正该拒的是"生效端读不到"，
+        由 `test_unreadable_live_scs_refuses_to_send` 守。）
+        """
         res, writes = _run(mimo_layers=2, scs_khz=None)
-        assert "TDD_PERIOD" in res.missing_mandatory
-        assert not any("TDDPATtern" in w for w in writes)
+        assert "TDD_DL_SLOTS" not in res.missing_mandatory
+        assert any("TDDPATtern:DLSLots" in w for w in writes)
 
 
 class TestStateReadbackFailureIsNotSilentlyAccepted:
@@ -442,3 +451,79 @@ class TestStateReadbackFailureIsNotSilentlyAccepted:
         assert any("回读失败" in r for r in res.rejected), (
             "STATE 读不到却静默放过 —— ok 会保持 True，调用方照常往下测")
         assert res.ok is False
+
+
+# ── 门⑧ Codex #281 R2 三条 P1 ────────────────────────────────
+
+class TestScsMustComeFromTheInstrument:
+    """⭐ 入参 `scs_khz` 只是 TestCase 的**请求值** —— IRAT 上 `CELL_SCS`
+    未定义（只进缓存不下发）、inherit 模式整段跳过，仪器可能在别的 SCS 上。
+    拿请求值算 slot 时长，会把错的组合判成"自洽"（Codex #281 R2 P1）。"""
+
+    def test_live_scs_disagreeing_with_request_fails_loud(self):
+        """请求 15kHz、仪器生效 30kHz（MU1）→ **不拿任一方去校验**。"""
+        res, writes = _run(responses={"TDDPATtern:SUBCarrier:SPACing": "MU1"},
+                           mimo_layers=2, scs_khz=15)
+        assert "TDD_DL_SLOTS" in res.missing_mandatory
+        assert not any("TDDPATtern:DLSLots" in w for w in writes)
+
+    def test_unreadable_live_scs_refuses_to_send(self):
+        res, writes = _run(responses={"TDDPATtern:SUBCarrier:SPACing": ""},
+                           mimo_layers=2, scs_khz=15)
+        assert "TDD_PERIOD" in res.missing_mandatory
+        assert not any("TDDPATtern:DLSLots" in w for w in writes)
+
+    def test_validation_uses_the_live_value(self):
+        """⭐ 生效端是 15kHz（MU0）时，`DDDSU`+`5MS` 自洽 → 照发。
+        反向配对上面两条，防它们用"恒不发"实现糊过去。"""
+        res, writes = _run(responses={"TDDPATtern:SUBCarrier:SPACing": "MU0"},
+                           mimo_layers=2, scs_khz=15)
+        assert "TDD_DL_SLOTS" not in res.missing_mandatory
+        assert any("TDDPATtern:DLSLots" in w for w in writes)
+
+
+class TestPatternOrderingMustBeEncodable:
+    """⭐ 六个数只能表达 `D…D [S] U…U`。只数个数会把 `DUS` 放过 ——
+    翻出来等于 `DSU`，仪器接受、STATE 保持 ON，**静默跑了另一个 pattern**。"""
+
+    @pytest.mark.parametrize("pat,ok", [
+        ("DDDSU", True), ("DDDDDDDSUU", True), ("DU", True), ("DDD", True),
+        ("DUS", False), ("UDDS", False), ("SDU", False), ("DSUD", False),
+    ])
+    def test_only_canonical_order_is_accepted(self, pat, ok):
+        assert (_tdd_slots_from_pattern(pat) is not None) is ok, (
+            f"{pat!r} 的排布六个数{'能' if ok else '**不能**'}复现")
+
+    def test_non_canonical_pattern_is_not_sent(self):
+        res, writes = _run(mimo_layers=2, tdd_pattern="DUS", tdd_period="1.5MS")
+        assert "TDD_DL_SLOTS" in res.missing_mandatory
+        assert not any("TDDPATtern:DLSLots" in w for w in writes)
+
+
+class TestExplicitCsiRsPortsWins:
+    """⭐ 端口数可以**故意**大于层数。按层数推会把显式 8 端口静默降成 P4
+    —— 我删 `set_cell_config` 那段时把这个覆盖丢了（Codex #281 R2 P1）。"""
+
+    def test_explicit_value_overrides_the_layer_derivation(self):
+        _, writes = _run(mimo_layers=2, csi_rs_ports=8)
+        P, C = UxmLteNrIratProfile, _cell_of()
+        assert f"{P.CSIRS_PORTS.format(cell=C)} P8" in writes, (
+            "显式 8 端口被按层数推成 P4 —— 静默改了测试条件")
+
+    def test_falls_back_to_layer_derivation_when_absent(self):
+        _, writes = _run(mimo_layers=2)
+        P, C = UxmLteNrIratProfile, _cell_of()
+        assert f"{P.CSIRS_PORTS.format(cell=C)} P4" in writes
+
+    def test_caller_passes_the_explicit_value(self):
+        """不变量门：调用点必须把 `csi_rs_ports` 传下去，否则驱动侧支持等于零。"""
+        import ast
+        import inspect
+
+        from app.services.mimo_ota.executors import measure
+
+        tree = ast.parse(inspect.getsource(measure))
+        assert any(
+            isinstance(n, ast.keyword) and n.arg == "csi_rs_ports"
+            for n in ast.walk(tree)), (
+            "调用点没传 csi_rs_ports —— TestCase 的显式覆盖到不了驱动")

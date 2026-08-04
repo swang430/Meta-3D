@@ -466,6 +466,8 @@ class MeasureExecutor(IStepExecutor):
                     # ⭐ SCS 必须传 —— TDD pattern 的含义依赖它（手册把 SCS
                     #   列为 TDDPATtern:STATE 的 Dependencies）。不传则拒发 TDD 组。
                     scs_khz=pcell.subcarrier_spacing_khz,
+                    # TestCase 的**显式** CSI-RS 端口数优先（可故意 > 层数）
+                    csi_rs_ports=getattr(config, 'csi_rs_ports', None),
                 )
                 # ⚠ 判定收窄进 `_mac_config_blocker`（内审 F3）—— 内嵌时
                 #   只能靠源码文本判，`or`→`and` 那种变异在 138 个用例下全绿。

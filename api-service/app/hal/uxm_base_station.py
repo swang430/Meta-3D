@@ -20,6 +20,7 @@ SCPI 子系统参考:
 
 import logging
 import asyncio
+import re
 from enum import Enum
 from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
@@ -93,6 +94,12 @@ def _tdd_slots_from_pattern(pattern):
     """
     p = (pattern or "").strip().upper()
     if not p or set(p) - set("DSU"):
+        return None
+    # ⚠ 六个数只能表达 **D…D [S] U…U** 这一种排布（手册：DLSLots 从周期窗口
+    #   左侧起算、ULSLots 从右侧起算）。只数个数会把 `DUS` 也放过 ——
+    #   翻出来等于 `DSU`，**仪器会接受、STATE 保持 ON，于是静默跑了另一个
+    #   pattern**（Codex #281 R2 P1）。所以排布不合规范式就拒。
+    if not re.fullmatch(r"D*S?U*", p):
         return None
     return p.count("D"), p.count("U")
 
@@ -1749,6 +1756,26 @@ class RealUxmDriver(BaseStationDriver):
             "**普通 NR 小区没有这条命令** → 统计窗口不受控，stat_count 参数无处下发。",
     }
 
+    def _read_tdd_scs(self, cell):
+        """读**仪器生效**的 TDD SCS（kHz）；读不到返回 None（不猜）。
+
+        手册：`…:SCHeduling:TDDPATtern:SUBCarrier:SPACing`，Enum `MU0..MU3`
+        —— μ 与 SCS 的关系是 15×2^μ。**TDD pattern 正是按这个 SCS 评估的**，
+        所以校验要打在它上面，而不是 TestCase 的请求值（标称端）。
+        """
+        q = self._cmd("TDD_SCS", cell=cell)
+        if not q:
+            return None
+        try:
+            raw = str(self._query(q + "?")).strip().upper()
+        except Exception as e:  # noqa: BLE001
+            logger.info(f"[UXM] 读生效 TDD SCS 失败（{e}）—— 不猜")
+            return None
+        m = re.fullmatch(r"MU([0-4])", raw)
+        if m:
+            return 15 * (2 ** int(m.group(1)))
+        return int(raw) if raw.isdigit() else None
+
     def _resolve_dl_prb_count(self, rb_alloc, cell, bwp):
         """`rb_alloc` → 手册要的**整数 PRB 数**；解析不了返回 None（不猜）。
 
@@ -1789,6 +1816,7 @@ class RealUxmDriver(BaseStationDriver):
         tdd_dl_symbols: int = 6,
         tdd_ul_symbols: int = 4,
         scs_khz: Optional[int] = None,
+        csi_rs_ports: Optional[int] = None,
     ) -> MacThroughputConfigResult:
         """
         配置 3GPP MIMO OTA MAC 层吞吐量测试所需的完整参数集。
@@ -1937,18 +1965,35 @@ class RealUxmDriver(BaseStationDriver):
             #   于是变成「3 DL + 1 UL + **6 个 flexible**」：
             #   **不会被拒，但测的是另一个配置**（DL 占比远低于操作员想要的）。
             #   静默测错的量 > 显式失败，所以对不上就**不发**。
-            slot_ms = _slot_ms(scs_khz)
+            # ⭐ SCS 必须读**生效端**（Codex #281 R2 P1）——
+            #   入参 `scs_khz` 只是 TestCase 的**请求值**：IRAT 上 `CELL_SCS`
+            #   未定义（`set_cell_config` 只进缓存不下发），inherit 模式更是
+            #   整段跳过。仪器真在别的 SCS 上时，拿请求值算出的 slot 时长
+            #   会把错的组合判成"自洽"。
+            live_scs = self._read_tdd_scs(cell)
+            if live_scs is None:
+                eff_scs = None
+                scs_note = ("读不到仪器**生效**的 TDD SCS")
+            elif scs_khz is not None and int(scs_khz) != live_scs:
+                eff_scs = None
+                scs_note = (f"TestCase 请求 SCS={scs_khz}kHz，仪器**生效** "
+                            f"SCS={live_scs}kHz —— **两方不一致**，"
+                            f"不拿任一方去校验（多方一致性 fail-loud）")
+            else:
+                eff_scs = live_scs
+                scs_note = ""
+            slot_ms = _slot_ms(eff_scs)
             n_slot = len(str(tdd_pattern or "").strip())
             period_ms = _TDD_PERIOD_MS.get(period_tok or "")
             tdd_mismatch = None
             if slots is not None and period_tok is not None:
                 if slot_ms is None:
-                    tdd_mismatch = (f"未提供/无法识别 SCS（scs_khz={scs_khz!r}）——"
-                                    f" pattern 的含义依赖 SCS，**不校验就不发**")
+                    tdd_mismatch = (f"{scs_note or f'无法识别 SCS（{eff_scs!r}）'}"
+                                    f" —— pattern 的含义依赖 SCS，**不校验就不发**")
                 elif abs(n_slot * slot_ms - period_ms) > 1e-9:
                     tdd_mismatch = (
                         f"pattern `{tdd_pattern}`（{n_slot} slot × {slot_ms}ms "
-                        f"@ {scs_khz}kHz = **{n_slot * slot_ms}ms**）与 period "
+                        f"@ {eff_scs}kHz(生效值) = **{n_slot * slot_ms}ms**）与 period "
                         f"`{tdd_period}`（{period_ms}ms）**对不上** —— 照发不会被拒，"
                         f"但 DL/UL 比例变成另一个配置，测的不是那个量")
             if tdd_mismatch:
@@ -2017,7 +2062,11 @@ class RealUxmDriver(BaseStationDriver):
             _group("HARQ")
 
             # 7. CSI-RS 端口数 —— 手册是 P1|P2|P4|... token（1L→2, 2L→4, 4L→8）
-            csi_rs_ports = max(2, mimo_layers * 2)
+            # ⚠ TestCase 的**显式** csi_rs_ports 优先 —— 端口数可以**故意**
+            #   大于层数，按层数推会把显式 8 端口静默降成 P4
+            #   （Codex #281 R2 P1：我删 set_cell_config 那段时把这个覆盖丢了）。
+            csi_rs_ports = (int(csi_rs_ports) if csi_rs_ports
+                            else max(2, mimo_layers * 2))
             port_tok = _enum_token("P", csi_rs_ports, _CSIRS_NPORTS_VALUES)
             if port_tok is None:
                 skipped.append("CSIRS_PORTS")

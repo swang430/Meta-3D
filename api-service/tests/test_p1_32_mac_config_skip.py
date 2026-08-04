@@ -71,7 +71,9 @@ def _run(profile, responses=None, **kw):
     resp = {"*OPC?": "1", "NUM:PRBS": "273", "SYSTem:ERRor": '0,"No error"',
             "SYST:ERR": '0,"No error"',
             # TDD STATE 回读 —— 不桩则走「回读失败」分支（Codex #281 P1）
-            "TDDPATtern:STATE": "1"}
+            "TDDPATtern:STATE": "1",
+            # 生效端 SCS（MU0=15kHz）—— 校验打在它上面，不是 TestCase 请求值
+            "TDDPATtern:SUBCarrier:SPACing": "MU0"}
     resp.update(responses or {})
     # ⚠ TDD 现在要校验 SCS 一致性（Codex #281 P1）——
     #   `DDDSU`(5 slot) + `5MS` 只在 **15kHz** 下自洽（5×1.0ms=5ms）。
