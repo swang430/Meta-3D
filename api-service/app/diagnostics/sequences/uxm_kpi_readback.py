@@ -323,8 +323,14 @@ async def run(
             head += (" ✓ 与手册一致" if n == expect_n
                      else f" ⚠ **手册说 {expect_n} 个 —— 个数不符则所有下标错位**")
         detail = f"{head}；{interpret(vals, toks)}；错误队列: {err}"
-        _step(label, _err_clean(err), detail, raw=raw, ms=ms)
-        return vals
+        ok = _err_clean(err)
+        _step(label, ok, detail, raw=raw, ms=ms)
+        # ⚠ 队列脏 = 这次读**不可信**，返回值是给**下判定**用的（只有 ⑧ 用），
+        #   所以不可信就交回 None（Codex #277 R3 P2）。呈现不受影响 ——
+        #   raw 与候选读法照常进步骤，那是给人看的。
+        #   上一版把值照样返回：脏的 100 当基线 + 干净的 10 当结果 →
+        #   ⑧ 给出绿色的"CLEar 生效一致"，而基线自己已经被标成失败了。
+        return vals if ok else None
 
     # ── 方言完整性：九条命令逐个查，缺的**显式记 SKIPPED**（内审 F7）──
     # 早先只用 MEAS_TPUT_DL_OTA 一个字段代表九条 —— 那是**代理判据不是真判据**：
@@ -345,6 +351,7 @@ async def run(
     # ── 前置：记原值，供 finally 写回 ────────────────────────────
     state_cmd = getattr(profile, "MEAS_BTHROUGHPUT_STATE", None)
     report_cmd = getattr(profile, "MEAS_UE_REPORT_STATE", None)
+    rep_clear_cmd = getattr(profile, "MEAS_UE_REPORT_CLEAR", None)
     csi_state_cmd = getattr(profile, "MEAS_CSI_STATE", None)
     csi_stop_cmd = getattr(profile, "MEAS_CSI_STOP", None)
     orig_state: Optional[str] = None
@@ -512,6 +519,26 @@ async def run(
             err = await _err()
             _step("P3 开 UE 测量报告队列", _err_clean(err),
                   f"已发 `{report_cmd} ON`；错误队列: {err}", raw=None)
+            # ⚠ 开完**必须清一次**（Codex #277 R3 P1）。手册原文：`FETCh?` 不带
+            #   <Integer> 时「If not specified **all the available reports are
+            #   returned**」—— 队列若本来就开着（`REPort?` 手册未说明，我们读不到），
+            #   ⑦ 会把开测以来的**历史报告**一起取回。而 ⑦ 的全部意义是
+            #   **拿这份报告跟当下的面板读数比**定 RSRP 口径 —— 配上历史报告，
+            #   它给出的就是个**错答案**，不是慢一点的对答案。
+            #   `:CLEAr` 手册有据（Imm Action / 无 <cell> 绑定 = 全局），非盲试。
+            #   ⚠ 不可逆 —— 与 `BTHRoughput:CLEar` 同属 safe_during_test=False 的硬理由。
+            if rep_clear_cmd:
+                await _w(rep_clear_cmd)
+                err = await _err()
+                _step("P3b 清空 UE 报告队列", _err_clean(err),
+                      f"已发 `{rep_clear_cmd}` —— 让 ⑦ 只看到**本轮窗口**产生的报告"
+                      f"（不清则取回开测以来全部，跟当下面板配不上）；"
+                      f"错误队列: {err}", raw=None)
+            else:
+                _step("P3b 清空 UE 报告队列 —— SKIPPED", False,
+                      f"方言 {profile_name} 未定义 `MEAS_UE_REPORT_CLEAR` —— "
+                      f"⑦ 取回的可能含**历史报告**，跟当下面板比对的结论**不成立**。",
+                      raw=None)
 
         log(f"  · 前置已下发，等 {window_s:g}s 让统计累积")
         await asyncio.sleep(window_s)
@@ -596,8 +623,16 @@ async def run(
                 rep_raw = await _q(rep_cmd.format(cell=cell))
                 ms = int((time.perf_counter() - t0) * 1000)
                 err = await _err()          # 排空归本条（Codex #277 P1）
+                # 手册的 JSON 示例里顶层有 `NumberOfReportsExtracted` —— 直接把
+                # 份数摆出来，**别自己解析挑一份**（顺序手册未说明，挑就是猜）。
+                m = re.search(r'"NumberOfReportsExtracted"\s*:\s*(\d+)', rep_raw or "")
+                n_rep = m.group(1) if m else "<读不到该字段>"
                 _step(
                     "⑦ UE L3 测量报告 (RSRP/RSRQ/SINR 口径)", _err_clean(err),
+                    f"**本次取回 {n_rep} 份报告**（P3b 已清过队列，正常应是本轮窗口内的）。"
+                    "⚠️ 若多于 1 份：**哪一份对应当下的面板读数无法确定** —— "
+                    "手册对「带 <Integer> 取的是最新还是最旧」「多份的排列顺序」"
+                    "**都未说明**（NotebookLM 2026-08-04 三问确认），别按下标猜。"
                     "⚠️ **手册未说明**这些值是 3GPP 上报码点还是已换算的 dBm/dB —— "
                     "驱动当前**刻意不填** `rsrp_dbm`/`sinr_db`，只把原样值留进证据。"
                     "**现场判法：跟面板的 RSRP 读数比 —— 3GPP 的 rsrp-Result 码点 "
@@ -640,11 +675,20 @@ async def run(
             a0 = after_v[0] if after_v else None
             # `decided` = 这一步**真的判定了**吗（内审 F6）。以前恒 True ——
             # 于是 verdict 自己写着"本次无法判定"，步骤却报绿、summary 报"无失败步"。
-            if b0 is None or b0 <= 0:
+            if before_v is None:
+                decided = False
+                verdict = ("⚠ **本次无法判定** —— ⑧a 那次读**不可信**"
+                           "（它自己的错误队列脏，或查询抛了异常），"
+                           "拿它当基线会得出看着像结论的假结论。")
+            elif b0 is None or b0 <= 0:
                 decided = False
                 verdict = ("⚠ **本次无法判定** —— 清零前 progress 本来就是 "
                            f"{_fmt(b0)}，没有可归零的累积。先让 UE attach + "
                            "起数据业务，等 progress 涨上去再跑本序列。")
+            elif after_v is None:
+                decided = False
+                verdict = ("⚠ **本次无法判定** —— ⑧c 那次读**不可信**"
+                           "（错误队列脏或抛异常）。")
             elif a0 is None:
                 decided = False
                 verdict = "⚠ 清零后读不到 progress，无法判定"

@@ -148,6 +148,7 @@ class UxmTestApp:
     MEAS_BLER_UL: Optional[str] = None
     # UE L3 测量报告 (RSRP / RSRQ / SINR 的真值源) —— 需先开 REPORT_STATE
     MEAS_UE_REPORT_STATE: Optional[str] = None
+    MEAS_UE_REPORT_CLEAR: Optional[str] = None
     MEAS_UE_REPORT_JSON: Optional[str] = None
 
     # --- UE capability / RRC reconfig ---
@@ -444,6 +445,15 @@ class UxmLteNrIratProfile(UxmTestApp):
     MEAS_CSI_RI = "BSE:MEASure:NR5G:{cell}:CSI:RI:HISTogram?"
     # UE L3 测量报告 (RSRP/RSRQ/SINR 真值源) — 需先把队列开关打开
     MEAS_UE_REPORT_STATE = "BSE:CONFig:MEASurement:REPort"
+    # ⚠ 队列**必须能清**：`FETCh?` 不带 <Integer> 时手册原文「If not specified
+    #   **all the available reports are returned**」—— 不清就把开测以来的历史
+    #   报告一起取回，而拿历史报告去跟**当下**的面板读数比对，结论无效。
+    #   手册（NotebookLM 2026-08-04 三问）：Imm Action / No query，**无 <cell> 绑定**
+    #   = 全局。另两问手册**未说明**：① 带 <Integer> 取的是最新还是最旧、
+    #   多份时的排列顺序；② FETCh 是不是消费式（取完即移除）——
+    #   旁证：手册对 RAR / UAI 报告都明写 "Querying the results will remove
+    #   items from storage"，唯独 UE 测量报告只字未提。所以**不能假设取完就空**。
+    MEAS_UE_REPORT_CLEAR = "BSE:CONFig:MEASurement:REPort:CLEAr"
     MEAS_UE_REPORT_JSON = "BSE:CONFig:NR5G:{cell}:MEASurement:JSON:REPort:FETCh?"
 
     # === IRAT-extras (not in 5G_NR_Test app) ===

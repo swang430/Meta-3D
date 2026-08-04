@@ -32,11 +32,15 @@ class _FakeBs:
         self._raise_on_write = raise_on_write
         self.writes: list[str] = []
         self.queries: list[str] = []
+        # ⚠ 写和查分在两个列表里，**跨类型的先后顺序就断言不了** ——
+        #   而"清队列在取报告之前"恰恰只有顺序才是判据（清在取之后 = 没清）。
+        self.ops: list[tuple[str, str]] = []
         # _profile_for_driver 认这个属性
         self._cmds = profile
 
     def _query(self, cmd, **kw):          # sync —— 与真 UXM 契约一致
         self.queries.append(cmd)
+        self.ops.append(("Q", cmd))
         if self._raise_on and self._raise_on in cmd:
             raise TimeoutError("probe boom")
         for frag, resp in self._responses.items():
@@ -46,6 +50,7 @@ class _FakeBs:
 
     def _write(self, cmd, **kw):
         self.writes.append(cmd)
+        self.ops.append(("W", cmd))
         if self._raise_on_write and self._raise_on_write in cmd:
             raise OSError("write boom")
         return None
@@ -312,6 +317,7 @@ class _DirtyAfter(_FakeBs):
     def _query(self, cmd, **kw):
         if "SYSTem:ERRor" in cmd:
             self.queries.append(cmd)
+            self.ops.append(("Q", cmd))
             return self._pending.pop(0) if self._pending else '0,"No error"'
         self._arm(cmd)
         return super()._query(cmd, **kw)
@@ -591,6 +597,7 @@ class TestWriteAcceptanceIsVerified:
         ("BTHRoughput:STATe ON", "P1", {}),
         ("CSI:STARt", "P2", {"CSI:STATe?": "MEAS"}),
         ("MEASurement:REPort ON", "P3", {}),
+        ("MEASurement:REPort:CLEAr", "P3b", {}),
         ("BTHRoughput:CLEar", "⑧b", {}),
         ("BTHRoughput:STATe 0", "R 写回 BTHRoughput:STATe",
          {"BTHRoughput:STATe?": "0"}),
@@ -650,6 +657,55 @@ class TestWriteAcceptanceIsVerified:
         assert "没发出去" in p0.detail and "不可信" in p0.detail
 
 
+class TestUeReportWindowIsBounded:
+    """⭐ Codex #277 R3 P1 —— `FETCh?` 不带 <Integer> 时手册原文
+    「If not specified **all the available reports are returned**」。
+
+    队列若本来就开着（`REPort?` 手册未说明、我们读不到原值），⑦ 会把开测以来的
+    **历史报告**一起取回 —— 而 ⑦ 的全部意义是**拿它跟当下面板读数比**定 RSRP 口径。
+    配上历史报告，它给的是**错答案**，不是慢一点的对答案。
+    """
+
+    def test_queue_cleared_before_the_observation_window(self):
+        bs = _FakeBs({"SYSTem:ERRor?": '0,"No error"'}, profile=_irat_profile())
+        _run(bs)
+        assert any("MEASurement:REPort:CLEAr" in w for w in bs.writes), (
+            "没清队列 —— ⑦ 会取回历史报告，跟当下面板配不上")
+
+    def test_clear_happens_before_the_fetch_not_after(self):
+        """⭐ **顺序才是判据** —— 清在取之后等于没清，而上面那条存在性门
+        对"顺序反了"完全无感（CLAUDE.md：存在性门旁边必须配行为门）。"""
+        bs = _FakeBs({"SYSTem:ERRor?": '0,"No error"'}, profile=_irat_profile())
+        _run(bs)
+        clear_i = [i for i, (k, c) in enumerate(bs.ops)
+                   if k == "W" and "MEASurement:REPort:CLEAr" in c][0]
+        fetch_i = [i for i, (k, c) in enumerate(bs.ops)
+                   if k == "Q" and "JSON:REPort:FETCh" in c][0]
+        assert clear_i < fetch_i, (
+            f"清队列发生在取报告**之后**（清@{clear_i} / 取@{fetch_i}）—— 等于没清")
+
+    def test_missing_clear_command_is_a_loud_skip(self):
+        """方言没有 `:CLEAr` 时**不能静默跑过去** —— 那样 ⑦ 的结论不成立
+        却看不出来。"""
+        class _NoClear(_irat_profile()):
+            MEAS_UE_REPORT_CLEAR = None
+
+        bs = _FakeBs({"SYSTem:ERRor?": '0,"No error"'}, profile=_NoClear)
+        res = _run(bs)
+        skip = [s for s in res.steps if s.label.startswith("P3b")][0]
+        assert skip.success is False
+        assert "历史报告" in skip.detail and "不成立" in skip.detail
+
+    def test_report_count_and_ordering_caveat_are_surfaced(self):
+        """⭐ 取回几份要摆出来；多于一份时**哪份对应当下面板无法确定**
+        （手册对取最新/最旧、排列顺序都未说明）—— 别按下标猜。"""
+        bs = _FakeBs({"JSON:REPort:FETCh": '{"NumberOfReportsExtracted": 3, "x": 1}',
+                      "SYSTem:ERRor?": '0,"No error"'}, profile=_irat_profile())
+        rep_step = [s for s in _run(bs).steps if s.label.startswith("⑦")][0]
+        assert "取回 3 份" in rep_step.detail, "没把份数摆出来"
+        assert "无法确定" in rep_step.detail and "未说明" in rep_step.detail
+
+
 class TestMissingCommandsAreLoud:
     """⭐ 方言缺命令时步骤**静默消失**，summary 仍"无失败步"，
     操作员按 roadmap 九项对应表以为都问过了（内审 F7）。"""
@@ -688,7 +744,9 @@ class TestClearWindowVerdict:
                             else "10,1,1,1,1,1")
                 return super()._query(cmd, **kw)
 
-        bs = _Dropping({}, profile=_irat_profile())
+        # ⚠ 必须桩错误队列 —— `_probe` 现在对**不可信**的读交回 None
+        #   （Codex #277 R3 P2），不桩就走进"⑧a 不可信"分支，测不到本门的事。
+        bs = _Dropping({"SYSTem:ERRor?": '0,"No error"'}, profile=_irat_profile())
         v = [x for x in _run(bs).steps if "结论" in x.label][0]
         assert "变小了" in v.detail
         # ⭐ 反向配对上面那条"判不了必须红"（内审 F6）—— 少了这句，
@@ -704,6 +762,35 @@ class TestClearWindowVerdict:
         v = [s for s in res.steps if s.label.startswith("⑧ CLEar")][0]
         assert "无法判定" in v.detail
         assert v.success is False, "自称无法判定却报绿"
+
+    def test_untrusted_baseline_cannot_produce_a_green_conclusion(self):
+        """⭐ Codex #277 R3 P2 —— ⑧a 被判失败的那次读，它的**值**也不能拿去下判定。
+
+        脏的 100 当基线 + 干净的 10 当结果 → 绿色的"CLEar 生效一致"，
+        而基线自己已经被标成失败了。变异：`_probe` 照旧无条件返回 vals → 红。
+        """
+        # 只弄脏 ⑧a 那次读（DL:THRoughput:OTA 的第 2 次命中：① 是第 1 次）
+        calls = {"n": 0}
+
+        class _Baseline(_DirtyAfter):
+            def _query(self, cmd, **kw):
+                if "DL:THRoughput:OTA" in cmd:
+                    calls["n"] += 1
+                    # ⚠ 别绕过 `_DirtyAfter._query` 的 arm —— 直接 return 会让
+                    #   "弄脏这条命令"整个失效，门就假绿了（我第一版就这么写的）。
+                    self._arm(cmd)
+                    self.queries.append(cmd)
+                    self.ops.append(("Q", cmd))
+                    return ("100,1,1,1,1,1" if calls["n"] <= 2 else "10,1,1,1,1,1")
+                return super()._query(cmd, **kw)
+
+        bs = _Baseline({}, profile=_irat_profile(),
+                       dirty_after="DL:THRoughput:OTA", nth=2)
+        res = _run(bs)
+        v = [x for x in res.steps if "结论" in x.label][0]
+        assert v.success is False, "基线不可信却给出绿色结论"
+        assert "不可信" in v.detail and "假结论" in v.detail
+        assert "变小了" not in v.detail
 
     def test_each_read_has_its_own_raw(self):
         """`protocol.py` 约定 raw 原样存 —— 合成串违反它（内审 F9）。"""
