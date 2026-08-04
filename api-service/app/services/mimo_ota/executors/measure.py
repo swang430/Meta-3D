@@ -216,6 +216,56 @@ def _validate_port_preset(
 class MeasureExecutor(IStepExecutor):
     """Drive the chamber + base station through the azimuth grid, collect KPIs."""
 
+    @staticmethod
+    def _mac_config_blocker(mac_cfg: Any) -> Optional[str]:
+        """MAC 吞吐量配置的结果够不够格**继续测**；不够就返回给操作员的原因。
+
+        `None` = 可以继续。抽成独立方法是为了**能打行为门** —— 内嵌在
+        `execute()` 里时只能靠源码文本判，而把 `or` 改成 `and` 那种变异
+        在 138 个用例下**全绿**（内审 F3 实证）。
+
+        形态空间（内审 F2）：
+          · 结构体 → `__bool__` 即 `ok`（必要项齐 **且** 无异常）；
+          · 旧布尔契约 `True` → 放行、`False` → 拦；
+          · `None`（驱动啥都没做）→ 拦。
+        """
+        if mac_cfg is True:                 # 旧布尔契约：全好
+            return None
+        if mac_cfg:                         # 结构体 ok
+            return None
+        missing = tuple(getattr(mac_cfg, "missing_mandatory", ()) or ())
+        err = getattr(mac_cfg, "error", None)
+        # ⚠ **`error` 优先于 `missing`**（Codex #279 P2）—— 传输层炸了却报
+        #   "profile 未定义"，会把操作员指向 P1-33 补命令，而真正要修的是
+        #   VISA 连接。两者可以同时成立，所以两段都要说，但**先说真凶**。
+        if err:
+            return (
+                f"P1-32: 3GPP MAC 吞吐量配置未生效 —— **下发过程中出错**: {err}。"
+                f"已发出 {len(getattr(mac_cfg, 'applied', ()) or ())} 条、"
+                f"跳过 {len(getattr(mac_cfg, 'skipped', ()) or ())} 条；"
+                f"其余命令**未及下发**。"
+                + (f"（另：本 profile 未定义 {len(missing)} 条必要命令 "
+                   f"{', '.join(missing)}，见 P1-33 —— 但**先查上面那个错误**）"
+                   if missing else "")
+                + "**先排查仪器连接/超时，不要据此改 profile。**"
+                "配置未受控时测得的吞吐量不是 3GPP MAC 层吞吐量结果，**不能继续测**。"
+            )
+        return (
+            "P1-32: 3GPP MAC 吞吐量配置未生效 —— "
+            + (f"**本驱动的 profile 未定义** {len(missing)} 条必要命令: "
+               f"{', '.join(missing)}。⚠ 该 Test App 到底支不支持这些命令"
+               f"**未经查证** —— 手册的 `Application Mode` 字段答不了这个问题"
+               f"（我们 profile 里已定义、现场在用的 `BAND`/`DL:ARFCN`/`DL:BW` "
+               f"同样标 `NSA | SA` 不含 `IRAT`），且这批命令从未被真机普查过。"
+               f"**别据此下结论** —— 出发前用 `uxm_scpi_compatibility` 普查确认"
+               f"（⚠ 该序列跳过 None 模板，要先临时补进去才探得到）。见 P1-33。"
+               if missing else
+               f"驱动报告配置失败: {err or '（无详情，返回值 %r）' % (mac_cfg,)}。")
+            + "AMC / 固定 MCS / 全 RB / TDD 格式 / CSI-RS 端口未受控时，"
+            "测得的吞吐量反映的是**基站调度器行为**而非 DUT 的 MIMO 能力，"
+            "不是 3GPP MAC 层吞吐量结果，**不能继续测**。"
+        )
+
     async def execute(self, context: StepExecutionContext) -> StepExecutionResult:
         lab = context.require_lab_profile()
         config = load_mimo_ota_config(context.test_execution)
@@ -386,8 +436,13 @@ class MeasureExecutor(IStepExecutor):
                 )
 
             # --- 3GPP MAC throughput config (was hard-coded; now from TestCase) ---
+            # P1-32: 返回值**必须消费**。上一版丢弃它、然后无条件 start_signaling
+            # —— 于是「一条都没配上」与「全配好了」在这里长得一模一样，测试照常
+            # 在**没配置过的链路**上跑完，数却当 3GPP 合规结果用。
+            # 同构先例见本文件 mimo_port_preset 前置门（driver 静默不生效 →
+            # 调用方 fail-loud）；memory: 路径 B 绝不用默认 fallback 静默兜底。
             if hasattr(base_station, "configure_mac_throughput_test"):
-                await base_station.configure_mac_throughput_test(
+                mac_cfg = await base_station.configure_mac_throughput_test(
                     mimo_layers=config.mimo_layers,
                     mcs=config.mcs,
                     enable_amc=config.enable_amc,
@@ -397,6 +452,14 @@ class MeasureExecutor(IStepExecutor):
                     harq_processes=config.harq_processes,
                     stat_count=config.stat_count,
                 )
+                # ⚠ 判定收窄进 `_mac_config_blocker`（内审 F3）—— 内嵌时
+                #   只能靠源码文本判，`or`→`and` 那种变异在 138 个用例下全绿。
+                _blocker = self._mac_config_blocker(mac_cfg)
+                if _blocker:
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=_blocker,
+                    )
 
             await base_station.start_signaling()
 

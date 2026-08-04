@@ -1501,6 +1501,42 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 
 ### P1-33 — 按手册重写 IRAT 的 MAC 配置命令（本地半 + 现场半）⬜（2026-08-03 立项）
 
+> **⭐ 2026-08-04（P1-32 期间）—— 用**手册原件**裁掉了下表的三处错，并纠正一个前提**
+>
+> 单点问题以仓库里的厂商手册原件为准（`Instrument_API_Doc/Keysight UXM NR SCPI/*.md`）——
+> NotebookLM 更全面但**会把推断说成结论**（本轮它先断言「LTE_NR_IRAT 就是 NSA」，
+> 追问后自己撤回「在手册原文里完全没有依据」）。以下均为 **grep 手册原件**所得：
+>
+> **① 前提纠正：`Application Mode` 字段答不了「这条命令在 IRAT TAP 下能不能用」。**
+> 手册确实把 `IRAT` 当独立取值用（`IRAT` 20 处 / `NSA | SA | IRAT` 38 / `SA | IRAT` 16 /
+> `NSA | IRAT` 15 / `NSA | SA | IRAT | NREL1` 14 / `IRAT-SA` 13），而这 11 条标 `NSA | SA`
+> 不含 IRAT ——**但对照组证伪了这个推论**：我们 IRAT profile 里**已定义、现场在用**的
+> `CELL_BAND` / `CELL_DL_ARFCN` / `CELL_DL_BW` **同样标 `NSA | SA`**。
+> 所以这个标注**既不证明支持也不证明不支持**。
+> **两个方向都没有证据 = 未经查证。**
+>
+> ⚠️ 而且这批命令**从未被真机普查过** —— `uxm_scpi_compatibility` 的模板遍历
+> **显式跳过 `None` 属性**，2026-05-13 那次现场普查探的是"已定义的"。
+> **P1-33 第一步 = 先探，再决定补什么**（要先把候选命令临时写进 profile 才探得到）。
+>
+> **② 下表三处错，已用手册裁定：**
+>
+> | 下表哪一格 | 手册原件实况 |
+> |---|---|
+> | AMC 开关 `SCHeduling:CRNti:DL:IMCS:FIXed` | ❌ **手册 0 命中，这条不存在**。存在的是 `...:SCHeduling[:<BWP>]:<fc>:<sc>:DL:RRESource:APOLicy`（枚举 `FIXed`/`BLER`/`CQI`/…，`FIXed` = 关 AMC）；UL 侧是 `...:UL[:<ultype>]:IMCS:FIXed` |
+> | 统计窗口「手册确认不存在」 | ✅ 下表对：`BTHRoughput:DL:TSTatistics:COUNt` **未命中**；`BSE:MEASure:NR5G:BTHRoughput:LENGth[:ALL]` **命中**。（我 08-04 一度写成「手册未说明」，是 NotebookLM 漏了 —— 已撤回） |
+> | TDD 六条含 `DLSYmbols`/`ULSYmbols` | ✅ 下表对，`TDDPATtern:DLSYmbols` / `ULSYmbols` 手册均命中。**「`DDDSU` → 六参数欠定」那个卡点因此可解**：DL/UL 用 `DLSLots`/`ULSLots`，特殊时隙用 `DLSYmbols`/`ULSYmbols` |
+>
+> **③ 新增前置（内审 F7）：`BSE:CONFig:<celltype>:APPLY`。**
+> 手册原文：「Update the stack with the changes … **This is not needed if the Cell if Off**」，
+> 且「**most configuration changes won't be applied until this command** … is used」。
+> 而 `measure.py` 的顺序是 `set_cell_config`（收尾把小区恢复 **ON**）→
+> `configure_mac_throughput_test` → 所以这批写入**只进缓存**。
+> P1-32 只保证"发出去了"（日志措辞已改成 `commands sent (**not** confirmed applied)`），
+> **补 APPLY + 发后查 `SYST:ERR?` 是 P1-33 的显式前置**（`set_cell_config` 已有成型逻辑可复用）。
+> ⚠️ 不补的话，P1-33 一把命令填进 profile，就从"报错"变成"**配错了还看起来配上了**"。
+
+
 **背景**: P1-32 让 `configure_mac_throughput_test()` 不再崩、不再假成功，但那 11 条命令在 IRAT 上仍是 `None` —— **实际配置一条也没下发**。本片补齐它们。
 
 **⚠️ 2026-08-03 查手册（NotebookLM）后，本片形态变了** —— 原以为"命令形式不知道、必须现场探"，**实际手册里 8 组全都有 `BSE:` 形式**。所以卡点不是「不知道命令」，是「没在真机上验过」，**本地半现在就能做**（Codex #276 P2 抓出原来 gate 在 P1-31 上是错误依赖）。

@@ -312,13 +312,13 @@ class TestMeasurementPrerequisites:
 
         变异：删掉调用点、或把它挪回函数末尾 → 本条红。
 
-        ⚠ 断言的是「前置**发出去了**」，不是「函数返回 True」——
-        `configure_mac_throughput_test()` 在 IRAT 方言上**必定返回 False**：
-        它要用的 11 条命令（PDSCH_*/TDD_*/HARQ_*/CSIRS_PORTS/
-        MEAS_TPUT_STAT_COUNT）**11/11 都是 None**，第一条 `.format()` 就抛
-        AttributeError。那是**先于本片存在的独立缺陷**，本片不修（见 roadmap
-        同日 Discovered 条）—— 但正因为它存在，前置必须排在它**之前**，
-        否则本片的修复在真正用的那个方言上是死的。
+        ⚠ 断言的是「前置**发出去了**」，不是「函数返回成功」——
+        `configure_mac_throughput_test()` 在 IRAT 方言上那 11 条命令
+        （PDSCH_*/TDD_*/HARQ_*/CSIRS_PORTS/MEAS_TPUT_STAT_COUNT）
+        **11/11 都是 None**。
+        **P1-32 已把它们改成 `_cmd()` graceful-skip**（不再抛 AttributeError，
+        改为返回 `MacThroughputConfigResult` 并由调用方中止），
+        但前置仍必须排在它们**之前** —— 否则本片的修复在真正用的那个方言上是死的。
         """
         writes = _stub_io(drv, {"*OPC?": "1"})
         asyncio.run(drv.configure_mac_throughput_test(mimo_layers=2))
