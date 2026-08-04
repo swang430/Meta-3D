@@ -270,7 +270,8 @@ unblocked) BEFORE starting any new P1.
 | 2026-08-03 | [#274](https://github.com/swang430/Meta-3D/pull/274) | ⚠️ 有缺口 | `1c5d960` —— 内审 agent 时间预算的 R2 两条修复（全量输出必须绑当前版本 / 脏工作区先还原再跑基线） | 轮次上限=2，R2 findings 由 R1 修复引入 | 1 | ⬜ 未处置 —— 下次动 `.claude/agents/pre-commit-reviewer.md` 或 `CLAUDE.md` ⓪⁺④ 时补审 |
 | 2026-08-03 | [#275](https://github.com/swang430/Meta-3D/pull/275) | ⚠️ 有缺口 | `b1dc9df` `dea10ea` —— UXM KPI 的 R2 两条修复（未知口径不写进 `_dbm` 字段 / 两种 blocker 一起报）+ 现场核验 9 项清单 | 同上 | 2 | ⬜ 未处置 —— 下次动 `uxm_base_station.py` KPI 段或 `uxm_scpi_compatibility.py` 时补审 |
 | 2026-08-03 | [#276](https://github.com/swang430/Meta-3D/pull/276) | ⚠️ 有缺口 | R3 四条修复（本 commit）—— 用户指示补审后 Codex 仍出 1 P1 + 3 P2，修完未再派第四轮 | 用户已额外授权一轮（R3）；R3 findings 仍主要是同文档内部镜像 | **4** | ⬜ 未处置 —— 下次动本文件 P1-31/32/33 段时补审 |
-| 2026-08-04 | [#277](https://github.com/swang430/Meta-3D/pull/277) | ⚠️ 有缺口 | `b985cbc` —— **R4 两条 P2 的修复**（⑦ 接 P3b 的结果 / 「没变小」那格不算通过）及配套的 4 门 3 变异 | 用户拍板走完 R1–R4 后 merge，未再派 R5；**内审也已跑满两轮**，内审 R2 六条的修复同样无覆盖 | **2 P1 + 3 P2 + 2 P2 + 2 P2**（四轮，严重度递减；R4 两条已被新增的不变量门 `test_no_green_verdict_branch_hedges_in_its_text` 覆盖）| ⬜ 未处置 —— 下次动 `uxm_kpi_readback` 时补审 |
+| 2026-08-04 | [#277](https://github.com/swang430/Meta-3D/pull/277) | ⚠️ 有缺口 | `b985cbc` —— **R4 两条 P2 的修复**（⑦ 接 P3b 的结果 / 「没变小」那格不算通过）及配套的 4 门 3 变异 | 用户拍板走完 **R1–R4** 后 merge，未再派 R5；**内审也已跑满两轮**，内审 R2 六条的修复同样无覆盖。四轮走势 **2 P1 → 3 P2 → 1 P1+1 P2 → 2 P2**（严重度递减；R4 两条已被新增的不变量门 `test_no_green_verdict_branch_hedges_in_its_text` 覆盖）| 2 | ⬜ 未处置 —— 下次动 `uxm_kpi_readback` 时补审 |
+| 2026-08-04 | [#278](https://github.com/swang430/Meta-3D/pull/278) | <!--278-coverage-->待定（R2 结果出来前不填） | <!--278-gap-->待定 | docs-only 一行登记；R1 两条 P2 均**当下修**（`R1 findings` 列被我塞了四轮合计 / 漏了本 PR 自己）| 2 | ⬜ 未处置 |
 
 ### 📉 更值得看的信号：第一轮 findings 数
 
