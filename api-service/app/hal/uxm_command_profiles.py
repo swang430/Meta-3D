@@ -489,7 +489,21 @@ class UxmLteNrIratProfile(UxmTestApp):
     SCELL_ADD = "BSE:CONFig:LTE:{cell}:CAGGregation:ACTivate:SCC:LIST"
     SCELL_LIST_QUERY = "BSE:CONFig:LTE:{cell}:CAGGregation:AGGRegate:SCC:LIST?"
 
-    # === Verified unsupported in this app (left as None per base) ===
+    # === 本 profile 未定义（留 None）—— ⚠️ **不是「已验证不支持」** ===
+    #
+    # ⚠️ 这行原文写的是 "Verified unsupported in this app"，**那个断言没有依据**
+    #    （P1-32 / 2026-08-04 查证后改）：
+    #    · 手册原件实查：这些命令标 `Application Mode : NSA | SA`（不含 `IRAT`），
+    #      **但本 profile 已定义、现场在用的 `CELL_BAND` / `CELL_DL_ARFCN` /
+    #      `CELL_DL_BW` 同样标 `NSA | SA`** —— 该字段答不了 TAP 可用性；
+    #    · 真机普查也没覆盖过它们 —— `uxm_scpi_compatibility` 的模板遍历
+    #      **显式跳过 `None` 属性**，所以 2026-05-13 那次现场普查探的是"已定义的"，
+    #      这批从头到尾没被问过。
+    #    结论：**未经查证**，两个方向都不下。出发前普查确认（要先临时补进去才探得到）。
+    #
+    # ⚠️ 下面这份清单**本身也会 stale** —— 例如 `MEAS_CSI_*` 已由 #275/P1-31
+    #    补进本 profile（`MEAS_CSI_CQI/RI/START/STOP/STATE`），却仍列在这里。
+    #    **以类里的实际赋值为准，别信这份清单。**
     # CELL_SCS, CELL_DUPLEX, CELL_DL_POINTA, SSB_ARFCN,
     # MIMO_DL_LAYERS, MIMO_DL_CODEBOOK, MIMO_TX/RX_ANT_PORT*,
     # PDSCH_MCS / RB_ALLOC, PUSCH_MCS / RB_ALLOC,

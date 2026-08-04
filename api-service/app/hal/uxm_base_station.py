@@ -21,7 +21,7 @@ SCPI 子系统参考:
 import logging
 import asyncio
 from enum import Enum
-from typing import Dict, Any, List, Optional, TYPE_CHECKING
+from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -51,6 +51,33 @@ if TYPE_CHECKING:
     from app.hal.uxm_test_profiles import UxmTopologyProfile  # noqa: F401
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class MacThroughputConfigResult:
+    """`configure_mac_throughput_test()` 的结果 —— **不是 bool**（P1-32）。
+
+    上一版返回 `bool` 且调用方**丢弃**它，于是「一条都没配上」与「全配好了」
+    在调用点长得一模一样，测试照常在没配置过的链路上跑完。
+
+    ⚠ `applied` 只列**真发出去**的命令 —— 同本文件 `set_cell_config` 的禁令
+    「半生效配置不许报 applied」。
+    """
+
+    applied: Tuple[str, ...] = ()
+    skipped: Tuple[str, ...] = ()
+    missing_mandatory: Tuple[str, ...] = ()
+    error: Optional[str] = None
+
+    @property
+    def ok(self) -> bool:
+        """全部**必要**命令都发了、且没出异常。可选命令缺席不影响 ok。"""
+        return not self.missing_mandatory and self.error is None
+
+    def __bool__(self) -> bool:
+        # 兼容旧的 `if await configure(...)` 布尔用法；但调用方**应当**看
+        # `missing_mandatory`（它能说出到底哪几条没下去）。
+        return self.ok
 
 
 # ===========================================================================
@@ -277,11 +304,18 @@ class RealUxmDriver(BaseStationDriver):
         """Resolve a profile command template, returning ``None`` if the
         active Test App doesn't expose it.
 
-        Background: ``UxmLteNrIratProfile`` deliberately sets many command
-        templates to ``None`` for commands that exist in pure 5G_NR_Test
-        but aren't surfaced by LTE_NR_IRAT (e.g. ``CELL_SCS``,
-        ``MIMO_DL_LAYERS``, ``TDD_PATTERN`` — the IRAT app routes those
-        through different paths or hard-codes them). Driver methods that
+        Background: ``UxmLteNrIratProfile`` leaves many command templates
+        as ``None`` (e.g. ``CELL_SCS``, ``MIMO_DL_LAYERS``, ``TDD_PATTERN``).
+
+        ⚠️ **``None`` 只说明「本 profile 没定义」，不是「仪器不支持」** ——
+        反过来也不能读成「仪器支持」。手册原件实查（P1-32, 2026-08-04）：
+        MAC 吞吐量那 11 条标 ``Application Mode : NSA | SA``（不含 ``IRAT``），
+        **但本 profile 已定义、现场在用的 ``CELL_BAND`` / ``CELL_DL_ARFCN`` /
+        ``CELL_DL_BW`` 同样标 ``NSA | SA``** —— 该字段**答不了** TAP 可用性。
+        且这批命令**从未被真机普查过**（``uxm_scpi_compatibility`` 的模板遍历
+        跳过 ``None`` 属性）。**两个方向都没有证据 = 未经查证。**
+        把"我们没写"说成"机器不支持"正是 ``uxm_manual_spelling_probe``
+        要治的病；反向过冲成"机器支持"会把现场带去补错东西。补齐见 P1-33。 Driver methods that
         used to do ``self._cmds.X.format(...)`` will crash with
         ``AttributeError: 'NoneType' object has no attribute 'format'``
         when X is None.
@@ -300,7 +334,11 @@ class RealUxmDriver(BaseStationDriver):
         their lab profile wasn't applied.
         """
         template = getattr(self._cmds, name, None)
-        if template is None:
+        # ⚠ 用 falsy 判不是 `is None` —— 与同文件 `_enable_kpi_measurements`
+        #   / `_warn_once_if_profile_has_no_kpi_commands` 同源（内审 F8）。
+        #   profile 写成空串时 `"".format()` 返回 ""，会把 ` DDDSU` 这种
+        #   残缺串真发出去、还报 ok。
+        if not template:
             logger.info(
                 f"[UXM/{self._cmds.PROFILE_NAME}] {name} not exposed by this "
                 f"Test App; skipping (set it in the profile if your firmware "
@@ -1640,6 +1678,26 @@ class RealUxmDriver(BaseStationDriver):
 
         return _num("RSRP"), _num("SINR")
 
+    # ── P1-32：MAC 吞吐量配置的必要/可选分级 ────────────────────────
+    #   **只此一处**。调用方只看 `missing_mandatory`，不自己维护第二份清单
+    #   —— 两份清单必然漂移，那是本仓库反复踩过的坑。
+    #
+    #   必要 = 缺了它，测出来的**就不是那个量**：
+    #     · SCHED_ALGO(Full Buffer) 没开 → 测的是打流能力
+    #     · AMC 没关 / MCS 不固定     → 测的是 UXM 调度器（见本函数 docstring）
+    #     · RB 不满                   → 吞吐随分配缩放
+    #     · TDD 比例变                → 绝对值不可比
+    #     · CSI-RS 端口不匹配         → 根本跑不到目标层数
+    #   可选 = 影响精度/置信区间，**不改量纲**。
+    MAC_CFG_MANDATORY: Tuple[str, ...] = (
+        "PDSCH_SCHED_ALGO", "PDSCH_AMC_ENABLE", "PUSCH_AMC_ENABLE",
+        "PDSCH_MCS", "PDSCH_RB_ALLOC", "TDD_PATTERN", "TDD_PERIOD",
+        "CSIRS_PORTS",
+    )
+    MAC_CFG_OPTIONAL: Tuple[str, ...] = (
+        "HARQ_MAX_TRANS", "HARQ_PROCESSES", "MEAS_TPUT_STAT_COUNT",
+    )
+
     async def configure_mac_throughput_test(
         self,
         mimo_layers: int = 2,
@@ -1652,7 +1710,7 @@ class RealUxmDriver(BaseStationDriver):
         harq_processes: int = 16,
         stat_count: int = 5000,
         cell: Optional[str] = None,
-    ) -> bool:
+    ) -> MacThroughputConfigResult:
         """
         配置 3GPP MIMO OTA MAC 层吞吐量测试所需的完整参数集。
 
@@ -1686,11 +1744,28 @@ class RealUxmDriver(BaseStationDriver):
             cell:           小区 ID (默认 CELL0)
 
         Returns:
-            True if all parameters configured successfully
+            `MacThroughputConfigResult` —— **不是 bool**（P1-32）。
+            `applied` / `skipped` / `missing_mandatory` 三份清单；
+            `ok` = 全部**必要**命令都发了且无异常。
+
+            ⚠ 方言没定义的命令走 `self._cmd()` **graceful-skip**，不再在第一条
+            `.format()` 上抛 `AttributeError`。`UxmLteNrIratProfile` 上这 11 条
+            **全是 None**，上一版因此第一行就崩、`except` 吞成 `return False`，
+            而调用方丢弃返回值继续跑 —— **整套 MAC 配置从未生效过**。
         """
         cell = cell or self._cell_id
         bwp = self._bwp_id
-        success = True
+        applied: List[str] = []
+        skipped: List[str] = []
+
+        def _emit(name: str, suffix: str, **fmt) -> None:
+            """发一条配置命令；方言没定义就记进 `skipped`，**不抛**。"""
+            tpl = self._cmd(name, **fmt)      # None → 已在 _cmd 里 INFO 记账
+            if tpl is None:
+                skipped.append(name)
+                return
+            self._write(tpl + suffix)
+            applied.append(name)
 
         try:
             logger.info(
@@ -1705,90 +1780,94 @@ class RealUxmDriver(BaseStationDriver):
             #       CSI (CQI/RI) 由 per-cell CSI:STARt 控制, UE 测量报告
             #       要先把队列开关打开。2026-08-03 之前这三条一条都没发过。
             #    ② 放在最前而不是最后, 是因为下面 1-8 步在 **IRAT 方言上
-            #       11/11 条命令都是 None** —— 第一条 .format() 就抛
-            #       AttributeError, 整个函数 return False。那是**先于本片
-            #       存在的独立缺陷**(见 roadmap Discovered 同日条), 本片不修;
-            #       但前置若排在它后面, 本片的修复就是死的。
+            #       11/11 条命令都是 None**。**P1-32 已把它们改成 _cmd()
+            #       graceful-skip**(不再抛 AttributeError), 但跳过后 KPI 前置
+            #       仍必须先发 —— 前置若排在它后面, #275 的修复就是死的。
+            #       有 M10b 变异守着这个顺序, 别挪回末尾。
             await self._enable_kpi_measurements(cell)
 
             # 1. Full Buffer 调度
-            self._write(
-                self._cmds.PDSCH_SCHED_ALGO.format(cell=cell, bwp=bwp)
-                + " FULLBUFFER"
-            )
+            _emit("PDSCH_SCHED_ALGO", " FULLBUFFER", cell=cell, bwp=bwp)
 
             # 2. AMC 开关
             amc_val = "ON" if enable_amc else "OFF"
-            self._write(
-                self._cmds.PDSCH_AMC_ENABLE.format(cell=cell, bwp=bwp)
-                + f" {amc_val}"
-            )
-            self._write(
-                self._cmds.PUSCH_AMC_ENABLE.format(cell=cell, bwp=bwp)
-                + f" {amc_val}"
-            )
+            _emit("PDSCH_AMC_ENABLE", f" {amc_val}", cell=cell, bwp=bwp)
+            _emit("PUSCH_AMC_ENABLE", f" {amc_val}", cell=cell, bwp=bwp)
 
             # 3. 固定 MCS (当 AMC=OFF 时生效)
-            self._write(
-                self._cmds.PDSCH_MCS.format(cell=cell, bwp=bwp)
-                + f" {mcs}"
-            )
+            _emit("PDSCH_MCS", f" {mcs}", cell=cell, bwp=bwp)
 
             # 4. 全 RB 分配
-            self._write(
-                self._cmds.PDSCH_RB_ALLOC.format(cell=cell, bwp=bwp)
-                + f" {rb_alloc}"
-            )
+            _emit("PDSCH_RB_ALLOC", f" {rb_alloc}", cell=cell, bwp=bwp)
 
             # 5. TDD 时隙格式
-            self._write(
-                self._cmds.TDD_PATTERN.format(cell=cell)
-                + f" {tdd_pattern}"
-            )
-            self._write(
-                self._cmds.TDD_PERIOD.format(cell=cell)
-                + f" {tdd_period}"
-            )
+            _emit("TDD_PATTERN", f" {tdd_pattern}", cell=cell)
+            _emit("TDD_PERIOD", f" {tdd_period}", cell=cell)
 
             # 6. HARQ
-            self._write(
-                self._cmds.HARQ_MAX_TRANS.format(cell=cell)
-                + f" {harq_max_trans}"
-            )
-            self._write(
-                self._cmds.HARQ_PROCESSES.format(cell=cell)
-                + f" {harq_processes}"
-            )
+            _emit("HARQ_MAX_TRANS", f" {harq_max_trans}", cell=cell)
+            _emit("HARQ_PROCESSES", f" {harq_processes}", cell=cell)
 
             # 7. CSI-RS 端口数 (1L→2ports, 2L→4ports, 4L→8ports)
             csi_rs_ports = max(2, mimo_layers * 2)
-            self._write(
-                self._cmds.CSIRS_PORTS.format(cell=cell)
-                + f" {csi_rs_ports}"
-            )
+            _emit("CSIRS_PORTS", f" {csi_rs_ports}", cell=cell)
 
             # 8. 统计窗口
-            self._write(
-                self._cmds.MEAS_TPUT_STAT_COUNT.format(cell=cell)
-                + f" {stat_count}"
-            )
+            _emit("MEAS_TPUT_STAT_COUNT", f" {stat_count}", cell=cell)
 
-            # 同步等待所有配置生效
-            self._query("*OPC?")
+            # 同步等待所有配置生效 —— 一条都没发出去时没必要等
+            if applied:
+                self._query("*OPC?")
 
-            logger.info(
-                f"[UXM] MAC throughput test configured: "
-                f"Full Buffer ON, AMC {amc_val}, MCS={mcs}, RB={rb_alloc}, "
-                f"TDD={tdd_pattern}/{tdd_period}, "
-                f"HARQ={harq_max_trans}x/{harq_processes}proc, "
-                f"CSI-RS={csi_rs_ports}ports, stat={stat_count}subframes"
+            missing = tuple(n for n in self.MAC_CFG_MANDATORY if n in skipped)
+            result = MacThroughputConfigResult(
+                applied=tuple(applied), skipped=tuple(skipped),
+                missing_mandatory=missing,
             )
-            return True
+            if missing:
+                # ⚠ **不静默** —— 缺任一必要命令，测出来的就不是那个量。
+                #   调用方据 `missing_mandatory` 中止（memory:
+                #   「路径 B 绝不用默认 fallback 静默兜底」）。
+                #
+                # ⚠⚠ 措辞两个方向都不许下结论：唯一的事实是**本 profile 没定义**；
+                #    该 Test App 支不支持**未经查证**（详见 `_cmd` docstring）。
+                logger.error(
+                    f"[UXM/{self._cmds.PROFILE_NAME}] MAC throughput config "
+                    f"INCOMPLETE — **本 profile 未定义** {len(missing)} 条必要"
+                    f"命令: {', '.join(missing)}。已发出 {len(applied)} 条、"
+                    f"跳过 {len(skipped)} 条。**此时测得的吞吐量不是 3GPP MAC 层"
+                    f"吞吐量结果**（AMC/MCS/RB/TDD 未受控）。"
+                    f"⚠ 该 Test App 是否支持这些命令**未经查证** —— "
+                    f"出发前用 `uxm_scpi_compatibility` 普查，见 roadmap P1-33。"
+                )
+            else:
+                # ⚠ 只说"已发出"，**不说"已生效"**（内审 F7）——
+                #   手册：小区 ON 时多数配置改动要发 `BSE:CONFig:<celltype>:APPLY`
+                #   才进协议栈（"This is not needed if the Cell if Off"），
+                #   而本函数**不发 APPLY**、且调用链上游 `set_cell_config`
+                #   收尾会把小区恢复 ON。补 APPLY 是 P1-33 的显式前置，本片不做。
+                logger.info(
+                    f"[UXM] MAC throughput commands sent (**not** confirmed applied): "
+                    f"Full Buffer ON, AMC {amc_val}, MCS={mcs}, RB={rb_alloc}, "
+                    f"TDD={tdd_pattern}/{tdd_period}, "
+                    f"HARQ={harq_max_trans}x/{harq_processes}proc, "
+                    f"CSI-RS={csi_rs_ports}ports, stat={stat_count}subframes"
+                    + (f"（可选命令跳过 {len(skipped)} 条: "
+                       f"{', '.join(skipped)}）" if skipped else "")
+                )
+            return result
 
         except Exception as e:
             logger.error(f"[UXM] configure_mac_throughput_test failed: {e}")
             self._set_status(InstrumentStatus.ERROR, str(e))
-            return False
+            # 仍不裸抛（本文件既有布尔契约禁令）——但**也不谎报成功**：
+            # 异常时把已发/已跳如实带回，并让 `ok` 为 False。
+            return MacThroughputConfigResult(
+                applied=tuple(applied), skipped=tuple(skipped),
+                missing_mandatory=tuple(
+                    n for n in self.MAC_CFG_MANDATORY if n not in applied),
+                error=f"{type(e).__name__}: {e}",
+            )
 
     async def set_downlink_power(self, power_dbm: float) -> bool:
         """
