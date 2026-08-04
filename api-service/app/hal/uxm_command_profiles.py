@@ -207,6 +207,19 @@ class UxmTestApp:
     # --- TDD ---
     TDD_PATTERN: Optional[str] = None
     TDD_PERIOD: Optional[str] = None
+    # P1-33：手册没有"pattern 字符串"这种命令，TDD 是**六个数**下发的
+    #   （`DDDSU` 数得出 D/U 整槽数，数不出 S 槽里的符号数 —— 那两个由
+    #   TestCase 的 tdd_dl_symbols / tdd_ul_symbols 给，默认取手册默认 6/4）。
+    TDD_PATTERN_STATE: Optional[str] = None
+    TDD_DL_SLOTS: Optional[str] = None
+    TDD_DL_SYMBOLS: Optional[str] = None
+    TDD_UL_SLOTS: Optional[str] = None
+    TDD_UL_SYMBOLS: Optional[str] = None
+    # 手册：小区 ON 时多数配置改动**不发 APPLY 就不进协议栈**
+    #   （"This is not needed if the Cell if Off"）。
+    CONFIG_APPLY_NR: Optional[str] = None
+    # 查本 BWP 配了多少 PRB —— "ALL" 时问仪器，不敲 38.104 表
+    PHY_DL_BWP_NUM_PRBS: Optional[str] = None
 
     # --- PDSCH scheduling / AMC ---
     PDSCH_SCHED_ALGO: Optional[str] = None
@@ -259,8 +272,8 @@ class Uxm5GNRTestAppProfile(UxmTestApp):
     PDSCH_POWER = "CONFig:NR5G:{cell}:{bwp}:PDSCH:POWer"
     SSB_POWER = "CONFig:NR5G:{cell}:SSB:POWer"
 
-    PDSCH_MCS = "CONFig:NR5G:{cell}:{bwp}:PDSCH:MCS"
-    PDSCH_RB_ALLOC = "CONFig:NR5G:{cell}:{bwp}:PDSCH:RB:ALLocation"
+    PDSCH_MCS = None          # 原 ...{bwp}:PDSCH:MCS（手册 0 命中，见下方 ⛔ 段）
+    PDSCH_RB_ALLOC = None     # 原 ...{bwp}:PDSCH:RB:ALLocation（手册 0 命中）
     PUSCH_MCS = "CONFig:NR5G:{cell}:{bwp}:PUSCH:MCS"
     PUSCH_RB_ALLOC = "CONFig:NR5G:{cell}:{bwp}:PUSCH:RB:ALLocation"
 
@@ -323,19 +336,32 @@ class Uxm5GNRTestAppProfile(UxmTestApp):
     RF_PORT_DL = "CONFig:NR5G:{cell}:RFSettings:DL:PORT"
     RF_PORT_UL = "CONFig:NR5G:{cell}:RFSettings:UL:PORT"
 
-    TDD_PATTERN = "CONFig:NR5G:{cell}:TDD:PATTern"
-    TDD_PERIOD = "CONFig:NR5G:{cell}:TDD:PERiod"
+    TDD_PATTERN = None        # 原 CONFig:NR5G:{cell}:TDD:PATTern（手册 0 命中）
+    TDD_PERIOD = None         # 原 CONFig:NR5G:{cell}:TDD:PERiod（手册 0 命中）
 
-    PDSCH_SCHED_ALGO = "CONFig:NR5G:{cell}:{bwp}:PDSCH:SchedAlgoritm"
-    PDSCH_AMC_ENABLE = "CONFig:NR5G:{cell}:{bwp}:PDSCH:AMC:ENABle"
-    PUSCH_AMC_ENABLE = "CONFig:NR5G:{cell}:{bwp}:PUSCH:AMC:ENABle"
+    # ⛔ P1-33（2026-08-04）：下面这批**曾经是编出来的** —— 逐条 grep 厂商手册
+    #    原件（`Instrument_API_Doc/Keysight UXM NR SCPI/*.md`），**9 条 0 命中**，
+    #    连 `SchedAlgoritm` 的拼写都是错的。它们从来没在任何真机上工作过：
+    #    IRAT 上是 `None` 直接崩（P1-32 前），这里则是发出去等 -113。
+    #
+    #    按「禁盲试」置 `None` —— **不留编的，也不拿未经查证的形式去替**。
+    #    手册里那批 `BSE:` 形式已补在 `UxmLteNrIratProfile`（现场在用的方言，
+    #    本来就是 BSE: 根）；本 Test App 用无前缀 `CONFig:` 根，
+    #    **它认不认 `BSE:` 形式未经查证**，所以不在这里猜。
+    #    要用这个 TAP 跑 MAC 吞吐量测试，先用 `uxm_scpi_compatibility` 普查。
+    PDSCH_SCHED_ALGO = None   # 原 CONFig:NR5G:{cell}:{bwp}:PDSCH:SchedAlgoritm（手册 0 命中）
+    PDSCH_AMC_ENABLE = None   # 原 ...PDSCH:AMC:ENABle（手册 0 命中）
+    PUSCH_AMC_ENABLE = None   # 原 ...PUSCH:AMC:ENABle（手册 0 命中）
 
-    HARQ_MAX_TRANS = "CONFig:NR5G:{cell}:HARQ:MaxTrans"
-    HARQ_PROCESSES = "CONFig:NR5G:{cell}:HARQ:PROCesses"
+    HARQ_MAX_TRANS = None     # 原 CONFig:NR5G:{cell}:HARQ:MaxTrans（手册 0 命中）
+    HARQ_PROCESSES = None     # 原 CONFig:NR5G:{cell}:HARQ:PROCesses（手册 0 命中）
 
-    CSIRS_PORTS = "CONFig:NR5G:{cell}:CSIRS:PORTs"
+    CSIRS_PORTS = None        # 原 CONFig:NR5G:{cell}:CSIRS:PORTs（手册 0 命中）
 
-    MEAS_TPUT_STAT_COUNT = "MEASure:NR5G:{cell}:BTHRoughput:DL:TSTatistics:COUNt"
+    # ⛔ 统计窗口：手册里带 `BTHRoughput:...:LENGth` 的只有 `LTE:<cell>:` /
+    #    `NBIot:<cell>:` / `NR5G:SLINk:`（V2X 边链路）三种 ——
+    #    **普通 NR 小区根本没有这条命令**。原值同样是编的（0 命中）。
+    MEAS_TPUT_STAT_COUNT = None
     MEAS_TPUT_UL_JSON = "MEASure:NR5G:{cell}:BTHRoughput:UL:TSTatistics:JSON?"
     MEAS_TPUT_UL_BLER = "MEASure:NR5G:{cell}:BTHRoughput:UL:BLER:STATistical:ALL?"
 
@@ -454,6 +480,51 @@ class UxmLteNrIratProfile(UxmTestApp):
     #   旁证：手册对 RAR / UAI 报告都明写 "Querying the results will remove
     #   items from storage"，唯独 UE 测量报告只字未提。所以**不能假设取完就空**。
     MEAS_UE_REPORT_CLEAR = "BSE:CONFig:MEASurement:REPort:CLEAr"
+
+    # ── P1-33（2026-08-04）：MAC 吞吐量配置命令，**逐条取自厂商手册原件**
+    #    `Instrument_API_Doc/Keysight UXM NR SCPI/*.md`（块内精确抽取 SCPI/Type/
+    #    Range/Default）。禁盲试：没有一条是编的。
+    #
+    #    ⚠️ 唯一的未知量是「LTE_NR_IRAT 这个 TAP 认不认」——
+    #    手册的 `Application Mode` 字段**答不了**（本 profile 已定义、现场在用的
+    #    `CELL_BAND`/`CELL_DL_ARFCN`/`CELL_DL_BW` 同样标 `NSA | SA` 不含 IRAT）。
+    #    所以下发后**逐组查 `SYST:ERR?`**，被拒的记名 —— 现场一跑即知，不靠推断。
+    #
+    #    值形态跟旧的无前缀写法**完全不同**，转换在驱动里做：
+    #      FULLBUFFER → FULL_TPUT ｜ AMC ON/OFF → APOLicy CQI/FIXed
+    #      "ALL" → PRB 整数 ｜ "5MS" → MS5 ｜ 4/16 → N4/N16 ｜ 4 → P4
+    # Enum: BASIc | FULL_TPUT | DL_RMC | UL_RMC | APC_RMC | EVM_RMC（默认 BASIc）
+    PDSCH_SCHED_ALGO = "BSE:CONFig:NR5G:SCHeduling:QCONFig:SCENario"
+    # Enum: FIXed | BLER | DYNamic | CQI | ...（默认 FIXed）—— **不是开关**
+    PDSCH_AMC_ENABLE = (
+        "BSE:CONFig:NR5G:{cell}:SCHeduling:{bwp}:FC0:SC0:DL:RRESource:APOLicy")
+    PUSCH_AMC_ENABLE = (
+        "BSE:CONFig:NR5G:{cell}:SCHeduling:{bwp}:FC0:SC0:UL:IMCS:FIXed")
+    PDSCH_MCS = "BSE:CONFig:NR5G:SCHeduling:QCONFig:DL:MCS"        # Integer 0..28
+    PDSCH_RB_ALLOC = "BSE:CONFig:NR5G:SCHeduling:QCONFig:DL:NUM:PRBs"  # Integer 1..273
+
+    # TDD：手册没有 pattern 字符串，是**六个数**
+    TDD_PATTERN_STATE = "BSE:CONFig:NR5G:{cell}:SCHeduling:TDDPATtern:STATE"
+    TDD_PERIOD = "BSE:CONFig:NR5G:{cell}:SCHeduling:TDDPATtern:PERiod"   # Enum MS0P5..MS10
+    TDD_DL_SLOTS = "BSE:CONFig:NR5G:{cell}:SCHeduling:TDDPATtern:DLSLots"    # Int 0..160
+    TDD_DL_SYMBOLS = "BSE:CONFig:NR5G:{cell}:SCHeduling:TDDPATtern:DLSYmbols"  # Int 0..14
+    TDD_UL_SLOTS = "BSE:CONFig:NR5G:{cell}:SCHeduling:TDDPATtern:ULSLots"    # Int 0..160
+    TDD_UL_SYMBOLS = "BSE:CONFig:NR5G:{cell}:SCHeduling:TDDPATtern:ULSYmbols"  # Int 0..14
+    # ⚠️ TDD_PATTERN（pattern 字符串）**手册里不存在**，保持 None ——
+    #    驱动把 TestCase 的 "DDDSU" 展开成上面六条。
+    TDD_PATTERN = None
+
+    HARQ_MAX_TRANS = "BSE:CONFig:NR5G:{cell}:PHY:DL:HARQ:MAXTrans"   # Enum N1..N28
+    HARQ_PROCESSES = "BSE:CONFig:NR5G:{cell}:PHY:DL:HARQ:PROCesses"  # Enum N1..N32
+    # Enum P1|P2|P4|P8|P12|P16|P24|P32（默认 P1），带 <cri> 资源索引维度
+    CSIRS_PORTS = (
+        "BSE:CONFig:NR5G:{cell}:CSI:RESource:CONFig:NZP:CRI0:RM:NPORts")
+    # 小区 ON 时不发它，上面这些改动**不进协议栈**（手册原文）
+    CONFIG_APPLY_NR = "BSE:CONFig:NR5G:APPLY"
+    PHY_DL_BWP_NUM_PRBS = "BSE:CONFig:NR5G:{cell}:PHY:DL:{bwp}:NUM:PRBS"
+    # ⛔ 统计窗口：普通 NR 小区手册里**没有**这条命令（只有 LTE / NBIot /
+    #    NR5G:SLINk 三种）。保持 None，由驱动归入「已知无对应命令」显式清单。
+    MEAS_TPUT_STAT_COUNT = None
     MEAS_UE_REPORT_JSON = "BSE:CONFig:NR5G:{cell}:MEASurement:JSON:REPort:FETCh?"
 
     # === IRAT-extras (not in 5G_NR_Test app) ===
