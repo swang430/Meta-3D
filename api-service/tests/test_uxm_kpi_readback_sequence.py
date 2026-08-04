@@ -289,17 +289,25 @@ class _DirtyAfter(_FakeBs):
     """
 
     def __init__(self, responses, *, dirty_after, err='-113,"Undefined header"',
-                 **kw):
+                 nth=None, **kw):
         super().__init__(responses, **kw)
         self._dirty_after = dirty_after
         self._err = err
+        # ⚠ `nth` 不是可有可无的花样（内审 F2）：同一条命令被发两次时
+        #   （`CSI:STATe?` 一前一后夹着 `CSI:STARt`），不区分第几次就只能
+        #   证明"某处接了错误队列"，**证明不了接的是自己那条** ——
+        #   而"错误归属"恰恰是本 PR 的主语。把两条线接反照样全绿。
+        self._nth = nth
+        self._hits = 0
         self._pending: list[str] = []
 
     def _arm(self, cmd):
         # 先 arm 再交给 super —— super 可能抛异常（命令头不认识时读超时），
         # 而那正是最要紧的一格：**异常抛了，错误还留在队列里**。
         if self._dirty_after in cmd:
-            self._pending.append(self._err)
+            self._hits += 1
+            if self._nth is None or self._hits == self._nth:
+                self._pending.append(self._err)
 
     def _query(self, cmd, **kw):
         if "SYSTem:ERRor" in cmd:
@@ -480,6 +488,50 @@ class TestErrorAttributionBoundary:
         assert "队列未排空" in p1.detail, "撞上界了却不声张"
         assert p1.success is False
 
+    def test_dirty_csi_state_read_never_triggers_a_stop(self):
+        """⭐ Codex #277 R2 —— 队列脏时读回的 `STOP` **不可信**，
+        照它发 `CSI:STOP` 会**打断本来就在跑的测量**。
+
+        代价不对称：误当 STOP → 打断别人；误当"在跑" → 只是不关，
+        而"不关"那条本序列已明写请手动 STOP。所以脏就按读不到处理。
+        变异：去掉这条判据 → 红（会看到 CSI:STOP 被发出去）。
+        """
+        # `nth=1` = 只弄脏**开跑前**那次回读（err_pre）—— 不加它，两条线接反
+        #   照样全绿（内审 F2）。真机上错误异步入队、晚到一拍是常态。
+        bs = _DirtyAfter({"CSI:STATe?": "STOP", "BTHRoughput:STATe?": "0"},
+                         profile=_irat_profile(), dirty_after="CSI:STATe?",
+                         nth=1)
+        res = _run(bs)
+        assert not any("CSI:STOP" in w for w in bs.writes), (
+            "拿脏队列下读到的 STOP 去关 CSI —— 可能打断别人正在跑的测量")
+        r = [s for s in res.steps if s.label.startswith("R 关回 CSI")][0]
+        # ⭐ 内审 F1：**证据不能删** —— 仪器答的是 STOP，记录里就得留着 STOP，
+        #    不能因为"不可信"就写成 None（同文件 `_read_orig` 就是保住值的）。
+        # ⚠ 断言必须钉在**被回显的那个 token** 上（`repr` 带引号）——
+        #   写成 `"STOP" in r.detail` 是**恒真**的：detail 里还有"不敢发 STOP"、
+        #   "请手动 STOP"，招牌断言被旁边的文字替着绿（变异 M42 实证）。
+        assert repr("STOP") in r.detail, "把仪器真答过的 STOP 从记录里删掉了"
+        assert "不可信" in r.detail
+        # ⭐ 内审 F3：这一格里仪器很可能本来就是 STOP、被本序列开着走了，
+        #    报绿会让下面那句"请手动 STOP"挂在 ✅ 上，没人会去做。
+        assert r.success is False, "没关也不确定该不该关，却报绿"
+        assert "手动 STOP" in r.detail
+
+    def test_dirty_csi_readback_cannot_declare_start_effective(self):
+        """回读自己的队列脏 = 这个 MEAS 不可信，不能据此宣布 `CSI:STARt` 生效
+        —— 而"证明前置真生效"正是这一步存在的意义。"""
+        # `nth=2` = 只弄脏**开跑后**那次回读（err_post）
+        bs = _DirtyAfter({"CSI:STATe?": "MEAS", "BTHRoughput:STATe?": "0"},
+                         profile=_irat_profile(), dirty_after="CSI:STATe?",
+                         nth=2)
+        p2 = [s for s in _run(bs).steps if s.label.startswith("P2")][0]
+        assert p2.success is False, "回读不可信却宣布 STARt 生效了"
+        # ⭐ 内审 F6：红了要给**对得上**的理由 —— 回读明明是 MEAS，
+        #    却写"不是 MEAS/WAIT 才会被忽略"，现场拿不到"为什么红"。
+        assert "回读自己的队列脏" in p2.detail
+        assert "不是 MEAS/WAIT 就说明" not in p2.detail, (
+            "回读是 MEAS 却说「不是 MEAS/WAIT」—— 解释当场自相矛盾")
+
     def test_csi_state_helper_drains_its_single_exit(self):
         body = _nested_source("_csi_state")
         n = body.count("await _err()")
@@ -572,9 +624,16 @@ class TestWriteAcceptanceIsVerified:
     def test_write_count_matches_the_number_of_verifiable_steps(self):
         """⭐ **不变量门（数量对等）** —— 序列发出去的写命令，每一条都必须
         有一步能因它被拒而变红。少一条 = 那条命令的接受与否无人验证。"""
+        # ⚠ 必须桩错误队列（内审 F5）—— 不桩则三条恢复写命令根本不发出去，
+        #   这道"每条写命令都要有人验"的门只能看到 5/8 个站点，
+        #   以后在恢复段加写命令它看不见。
         bs = _FakeBs({"BTHRoughput:STATe?": "0", "MEASurement:REPort?": "0",
-                      "CSI:STATe?": "STOP"}, profile=_irat_profile())
+                      "CSI:STATe?": "STOP", "SYSTem:ERRor?": '0,"No error"'},
+                     profile=_irat_profile())
         _run(bs)
+        assert len(bs.writes) >= 8, (
+            f"夹具只走到 {len(bs.writes)} 条写命令，覆盖不到申报的 "
+            f"{len(self._WRITES)} 个站点：{bs.writes}")
         covered = {frag for frag, _, _ in self._WRITES}
         uncovered = [w for w in bs.writes
                      if not any(f in w for f in covered)]
@@ -686,12 +745,19 @@ class TestCsiRestoredOnlyWhenItWasStopped:
     `CSI:STARt` 被仪器**忽略**，CQI/RI 掺进本序列的样本（内审 F5）。"""
 
     def test_stops_when_originally_stopped(self):
-        bs = _FakeBs({"CSI:STATe?": "STOP"}, profile=_irat_profile())
+        # ⚠ 必须桩 `SYSTem:ERRor?` —— 这个 STOP 可不可信现在取自它自己的错误
+        #   队列（Codex #277 R2），不桩就走进"读不到"分支，测的就不是本门的事了。
+        bs = _FakeBs({"CSI:STATe?": "STOP", "SYSTem:ERRor?": '0,"No error"'},
+                     profile=_irat_profile())
         _run(bs)
         assert any("CSI:STOP" in w for w in bs.writes)
 
     def test_does_not_stop_when_already_running(self):
-        bs = _FakeBs({"CSI:STATe?": "MEAS"}, profile=_irat_profile())
+        # ⚠ 跟上面那条一起补桩（内审 F4）—— 只补一条时本门走的是
+        #   "队列读不出来→按读不到处理"分支，**根本到不了"已在跑所以不关"**，
+        #   任何回读值都绿（实测 STOP/MEAS/空串全绿）= 恒真门。
+        bs = _FakeBs({"CSI:STATe?": "MEAS", "SYSTem:ERRor?": '0,"No error"'},
+                     profile=_irat_profile())
         res = _run(bs)
         assert not any("CSI:STOP" in w for w in bs.writes), "打断了本来在跑的 CSI"
         r = [x for x in res.steps if "关回 CSI" in x.label][0]

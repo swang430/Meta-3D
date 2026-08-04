@@ -350,6 +350,12 @@ async def run(
     orig_state: Optional[str] = None
     orig_report: Optional[str] = None
     orig_csi: Optional[str] = None
+    # ⚠ **判定值与呈现值分家**（内审 F1）：`orig_csi` 恒等于仪器原样答的
+    #   token，可不可信单独用这个旗标记。上一版直接把 orig_csi 置 None，
+    #   于是仪器明明答了 STOP、现场记录却写"读不到" —— 证据被删掉，
+    #   而这份记录的全部价值就在证据。同文件 `_read_orig` 在同一母题下
+    #   是对的（保住值、只标不可信），CSI 曾是三条恢复路径里唯一删证据的。
+    csi_pre_trusted = False
     touched_state = False
     touched_report = False
     touched_csi = False
@@ -459,20 +465,45 @@ async def run(
                 return v, await _err()
 
             orig_csi, err_pre = await _csi_state()
+            # ⚠ 读到 token ≠ 这个 token 可信 —— 内审 F1 的母题在 CSI 上的镜像
+            #   （Codex #277 R2：R1 把 err_pre/err_post 捕获出来了，却没接进判定）。
+            #   这里错边的**代价不对称**：
+            #     · 误当成 STOP → `finally` 真去发 `CSI:STOP`，**打断本来就在跑的测量**；
+            #     · 误当成"在跑" → 只是不关，下次 `CSI:STARt` 被忽略、CQI/RI 掺进
+            #       本序列样本 —— 这是**静默错数**，本来比"打断"更重；
+            #       它之所以仍是较轻那侧，**唯一理由是那条分支留了显式告警**，
+            #       所以那条告警必须挂在**红**上（内审 F3），挂在绿上这个论证就塌了。
+            #   判定用旗标，**不动 orig_csi 本身**（内审 F1）。
+            csi_pre_trusted = _err_clean(err_pre)
             touched_csi = True
             await _w(csi_start.format(cell=cell))
             err = await _err()
             after_csi, err_post = await _csi_state()
-            running = bool(after_csi) and after_csi.upper().startswith(("MEAS", "WAIT"))
+            # 回读自己的队列脏 = 这个 STOP/WAIT/MEAS 不可信 →
+            # 不能据此宣布 `CSI:STARt` 生效了（那正是本步存在的意义）。
+            running = (_err_clean(err_post) and bool(after_csi)
+                       and after_csi.upper().startswith(("MEAS", "WAIT")))
+            # ⚠ 红了要给**对得上的**理由（内审 F6）——「不是 MEAS/WAIT 才会被忽略」
+            #   这句在"回读是 MEAS 但队列脏"那一格当场自相矛盾。
+            if not _err_clean(err_post):
+                why = (f"⚠ **本步红是因为回读自己的队列脏** —— 回读值 "
+                       f"{after_csi!r} 不可信，不能据它宣布 STARt 生效；"
+                       f"**不是**「状态不对」。")
+            elif not running:
+                why = ("**不是 MEAS/WAIT 就说明 STARt 被静默忽略**（小区关着，"
+                       "或已在跑），那样 ⑤⑥ 的 NaN 是前置没生效、"
+                       "不是命令形式不对。")
+            else:
+                why = ""
             _step("P2 开 CSI (CQI/RI) 累积", running and _err_clean(err),
                   f"已发 `{csi_start.format(cell=cell)}`；"
                   f"**回读 CSI:STATe? = {after_csi!r}**（发之前 {orig_csi!r}）—— "
-                  f"手册：STOP=未运行 / WAIT=已启动等开始时刻 / MEAS=正在采集；"
-                  f"**不是 MEAS/WAIT 就说明 STARt 被静默忽略**（小区关着，或已在跑），"
-                  f"那样 ⑤⑥ 的 NaN 是前置没生效、不是命令形式不对。"
+                  f"手册：STOP=未运行 / WAIT=已启动等开始时刻 / MEAS=正在采集。{why}"
                   f"错误队列 —— STARt 自己的: {err}"
                   f"（两次 STATe? 各自的: {err_pre} / {err_post}，"
-                  f"**分开记，别把它们算到 STARt 头上**）", raw=after_csi)
+                  f"**分开记，别把它们算到 STARt 头上**；"
+                  f"任一次的队列脏，对应的那个状态值就按**读不到**处理 —— "
+                  f"不拿不可信的值去决定要不要 STOP）", raw=after_csi)
 
         if report_cmd:
             orig_report = await _read_orig(report_cmd, "MEASurement:REPort")
@@ -672,7 +703,7 @@ async def run(
         # 无脑发 STOP 会打断本来就在跑的 CSI；不关则下次真实测试的 `CSI:STARt`
         # 会被仪器**忽略**（手册原文），测出来的 CQI/RI 含本序列窗口的样本、被稀释。
         if touched_csi and csi_stop_cmd:
-            if orig_csi and orig_csi.upper().startswith("STOP"):
+            if csi_pre_trusted and orig_csi and orig_csi.upper().startswith("STOP"):
                 try:
                     await _w(csi_stop_cmd.format(cell=cell))
                 except Exception as e:  # noqa: BLE001
@@ -691,12 +722,21 @@ async def run(
                            f"{err}。⚠ CSI 累积可能仍开着，下次真实测试的 "
                            f"`CSI:STARt` 会被仪器**忽略**，CQI/RI 会掺进本序列的"
                            f"样本、被稀释。**请手动 STOP**。"), raw=None)
-            else:
+            elif csi_pre_trusted and orig_csi:
+                # 可信地读到「本来就在跑」—— 不关就是**正确的恢复**，判绿。
                 _step("R 关回 CSI 累积", True,
-                      f"**不关** —— 本序列开之前 CSI 状态是 {orig_csi!r}"
-                      f"（非 STOP 或读不到），发 STOP 会打断本来就在跑的测量。"
-                      f"⚠ 若确认之前没在跑，请手动 STOP，否则下次 `CSI:STARt` "
-                      f"会被仪器忽略、CQI/RI 会掺进本序列的样本。", raw=None)
+                      f"**不关** —— 本序列开之前 CSI 状态是 {orig_csi!r}（可信读数，"
+                      f"非 STOP），发 STOP 会打断本来就在跑的测量。", raw=None)
+            else:
+                # ⚠ 内审 F3：这一格里仪器**很可能本来是 STOP**，被本序列开着走了 ——
+                #   报绿的话下面那句告警就挂在 ✅ 上，操作员不会去做。
+                _step("R 关回 CSI 累积", False,
+                      f"**没关，也不确定该不该关** —— 开之前读到的是 {orig_csi!r}，"
+                      f"而这次读数{'的错误队列是脏的' if orig_csi else '没读到'}，"
+                      f"**不可信**，所以不敢发 STOP（万一它本来在跑就被打断了）。"
+                      f"⚠ 若确认之前没在跑，**请手动 STOP** —— 否则下次 "
+                      f"`CSI:STARt` 会被仪器忽略、CQI/RI 会掺进本序列的样本"
+                      f"（那是**静默错数**，比报错更难发现）。", raw=None)
 
     failed = [s.label for s in steps if not s.success]
     return SequenceRunResult(

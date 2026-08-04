@@ -2294,6 +2294,10 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-03 during 立项 review, Codex #276 R2]` **`Uxm5GNRTestAppProfile`（非 IRAT 方言）的命令形式是独立问题 —— 出路是查手册，不是现场探** —— #275 把 KPI reader 换成新命令字段，只给 IRAT 填了 `BSE:` 形式；5G_NR_Test 方言继承基类的 `None`，那批 KPI 现在整组读不到（有 warn-once 兜着，不静默）。⚠️ **不能靠现场探**：该方言用的是**无前缀**形式，而手册给的两个变体（`BSE:MEASure:NR5G:...` / `BSE:NR5G:MEASure:...`）**都带 `BSE:`** —— 现场去试无前缀拼写就是猜，正是 #275 整片在治的病。**正解**：像 2026-08-03 查 IRAT 那样，直接查手册 / NotebookLM 问 5G_NR_Test 方言（Test Application 名 `5G_NR_Test`）下这批命令的根前缀与完整形式；查得到就本地补齐，查不到就如实标"该方言 KPI 不可用"并让 warn-once 继续响。**本地片，不需要现场**。
 
 
+- `[discovered 2026-08-04 during P1-31, Codex #277 R2 P2 —— 判定为越界, 本 PR 未做]` **`uxm_kpi_readback` 的三条前置写没包 `try`，transport 抛异常会带走全部已收证据** —— `BTHRoughput:STATe ON` / `CSI:STARt` / `MEASurement:REPort ON` 直接裸调 `_w`，异常逃出 `run()` 后 API 只记一次 aborted run、**拿不到 `SequenceRunResult`**，于是 P0 的证据与恢复步骤全丢 —— 而硬件真出故障时那些证据恰恰最值钱。⑧ 的 `CLEar` 已经包了 `try` 正是为防这个（内审 F8）。⚠️ **不在 #277 做的理由**：① 既有缺口，不改它 #277 那个「错误漂到下一条命令头上」的故障照样不在；② 改它会**推翻现有门 `test_restored_even_when_an_exception_escapes` 的前提** —— 那条门正是靠 `MEASurement:REPort ON` 的异常逃出来验证 `finally` 恢复的，要一起重设计。做的时候连门一起改。
+
+- `[discovered 2026-08-04 during P1-31, Codex #277 R2 P2 —— 判定为越界, 本 PR 未做]` **`_read_orig` / `_csi_state` 的 `.strip()` 让 `raw` 不再逐字，违反 `protocol.py:54` 的「原样存」约定** —— 该约定原文：「**原样存**, 不做归一化 / 大小写转换 / 去引号 …… 本字段的价值恰恰在于保留仪器真正吐出来的样子 (含空白与引号)」。⚠️ **不在 #277 做的理由**：既有写法（非本 PR 引入），且**高保真那站已经是对的** —— `_probe`（逐元素跟面板比对、下标错位是本序列的核心问题）的 `raw` 逐字保留且有变异 M10 守着；这两处只是 `ON`/`0`/`STOP`/`MEAS` 这种单 token，`.strip()` 掉的是 VISA 终止符，实际证据损失接近零。**做的时候连带收窄测试文件顶部那句「`raw` 逐字保留仪器回复」** —— 现状下那句是以偏概全。
+
 - `[discovered 2026-08-03 during UXM KPI 修复, 用户明确要求记号]` **[→ 载体 = P1-31]** **⚠️ #275 的 KPI 回读改动 —— 本地零真机验证，整批必须现场核验** —— 命令形式 / 元素下标 / 单位 / 前置条件全部来自**手册与真机历史日志**，**没有一条在真机上跑过**。合并 #275 是"按手册应该对"的版本，不是"验过是对的"版本。**下次现场必须逐条对账**（走诊断序列，禁临时脚本）。⚠️ 原第 ⑩ 项「探出 5G 方言的无前缀形式」**已删**（Codex #276）——
   它与「只探手册有依据的命令、禁猜」自相矛盾（无前缀形式手册里没有，现场探只能猜拼写）；
   该方言的命令形式**查手册解决、不需要现场**，已另立 Discovered。
