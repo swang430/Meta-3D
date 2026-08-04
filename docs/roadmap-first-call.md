@@ -13,11 +13,11 @@ blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 �
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-02 二批本地队列已拍板排序（用户明示"只排好优先级，先不忙开工"——待开工指令）**：
-**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → P1-31 → P1-32 → P1-33（本地半）→ P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧；P1-28 为 2026-08-02 用户新增 backlog 当日拍板插入；**P1-30 为 2026-08-03 用户指定插队"把日志提上来先完成"**；**P1-31 / P1-32 为 2026-08-03 UXM KPI 修复（#275）带出、用户当日拍板插到队首**）。**当前队首 = P1-31**（P1-25 / P1-26 / P1-30 已分别于 2026-08-02 / 08-03 / 08-03 收口）。一句话索引：
+**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → P1-32 → P1-33（本地半）→ P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧；P1-28 为 2026-08-02 用户新增 backlog 当日拍板插入；**P1-30 为 2026-08-03 用户指定插队"把日志提上来先完成"**；**P1-31 / P1-32 为 2026-08-03 UXM KPI 修复（#275）带出、用户当日拍板插到队首**）。**当前队首 = P1-32**（P1-25 / P1-26 / P1-30 已分别于 2026-08-02 / 08-03 / 08-03 收口）。一句话索引：
 - **P1-25** GUI 主控台"系统状态"面板恒空修复 + api.ts 手写镜像同尺审计
 - **P1-26** GUI 改频同步 component_carriers（**GUI 写侧**收口；后端收敛点与显示端同源另立片）
 - **P1-30** SCPI 往返日志的证据能力（截断显式化 + OK/ERR 配对 + `instrument_id` 收窄）
-- **P1-31** `uxm_kpi_readback` 诊断序列（#275 那批 KPI 命令的现场对账载体）
+- **P1-31** `uxm_kpi_readback` 诊断序列（#275 那批 KPI 命令的现场对账载体）✅
 - **P1-32** `configure_mac_throughput_test()` 在 IRAT 上 11/11 命令为 `None`（不崩 + 不假成功 + 调用方消费）
 - **P1-33（本地半）** 按手册重写 IRAT 的 8 组 MAC 配置命令（含值形态转换；现场半在 Blocked 表）
 - **P1-27** P1-8 校准门拒 mock cert（provenance + real 模式 strict 拒）
@@ -190,7 +190,7 @@ P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max /
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → P1-31 → P1-32 → P1-33（本地半）→ P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列 + 08-03 用户指定 P1-30 / P1-31 / P1-32 插队；**队首现为 P1-31**，P1-25 / P1-26 / P1-30 已收口；一批 10 片已全收 #256–#265）|
+| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → P1-32 → P1-33（本地半）→ P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列 + 08-03 用户指定 P1-30 / P1-31 / P1-32 插队；**队首现为 P1-32**，P1-25 / P1-26 / P1-30 已收口；一批 10 片已全收 #256–#265）|
 | **ON-SITE-BLOCKED** | P0-5 (P0-3/4 已 2026-07-03 现场完成) + P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -1450,7 +1450,7 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 
 ---
 
-### P1-31 — `uxm_kpi_readback` 诊断序列（#275 那批 KPI 命令的现场对账载体）⬜（2026-08-03 拍板，队首）
+### P1-31 — `uxm_kpi_readback` 诊断序列（#275 那批 KPI 命令的现场对账载体）✅（2026-08-04 完成）
 
 **What**: 一个只读诊断序列，把 #275 换上的那批 KPI 命令**逐条发出并打印原始回复**，供现场对着 UXM 面板核验。不做任何解析判定 —— 它的产出就是"真机回了什么"。
 
@@ -1463,6 +1463,20 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 与本条目的约束**自相矛盾**：约束是「只探手册有依据的命令、禁猜」，而无前缀形式
 恰恰**手册里没有**，现场探它只能靠猜拼写。该方言的命令形式是**独立问题**，
 出路是**查手册**（像 2026-08-03 查 IRAT 那样）而不是现场试 —— 已进 Discovered。
+
+**9 项 ↔ 序列步骤的对应**（2026-08-04 落地，可逐条核）：
+①②③ → `① DL OTA 吞吐量` / `② UL OTA 吞吐量`（元素个数 + idx1/idx4 + bps/Mbps 两种候选读数并排）；
+④ → `③ DL BLER` / `④ UL BLER`（10/6 个元素 + idx8/idx4 并排）；
+⑤ → `⑤ CQI 统计`（idx4 与 idx3 并排，取错一位一眼看出）；
+⑥ → `⑥ RI 直方图`（**码点+1 与 bin 即 rank 两种加权都算出来**）；
+⑦ → `⑦ UE L3 测量报告`（步骤里直接写判法：差 156 = 码点，相等 = dBm）；
+⑧ → 前置步骤 `P1/P2/P3`（三条各记错误队列回复）；
+⑨ → `⑧ BTHRoughput:CLEar 能否圈窗口`（清零前后 progress 并排）。
+
+**⚠️ 实现期两处修正**（内审 12 条 + NotebookLM 复核，见 PR）：
+① **不是只读序列** —— 第 ⑧ 项要发 `BTHRoughput:STATe ON` / `CSI:STARt` / `REPort ON`，第 ⑨ 项要发 **`CLEar`（清零正在跑的窗口）**。`safe_during_test=False`，写过的在 `finally` 写回。
+② **前置不能只发不回读** —— 手册原文：`CSI:STARt` 在「已在跑」或「小区关闭」时**被忽略**。所以序列回读 `CSI:STATe?`（手册 Query only，返回 STOP|WAIT|MEAS），**不是 MEAS/WAIT 就说明前置没生效** —— 那样 ⑤⑥ 的 NaN 是前置问题、不是命令形式问题，两者分不开会让整片结论建在错前提上。
+⚠️ 而 `BTHRoughput:STATe?` / `REPort?` 的 **`?` 形式手册未说明**（NotebookLM 明确回「未说明」）—— 序列把「读不到原值」当**预期内**处理：不猜一个值写回去，但必留一条步骤说明「没有写回、请手动确认」。
 
 **约束**: 只放**手册有依据 + 生产驱动已在用**的命令（禁盲试）；出发前用 mock 跑一遍**只证序列本身不崩，不算验收**。
 
@@ -2280,6 +2294,10 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-03 during 立项 review, Codex #276 R2]` **`Uxm5GNRTestAppProfile`（非 IRAT 方言）的命令形式是独立问题 —— 出路是查手册，不是现场探** —— #275 把 KPI reader 换成新命令字段，只给 IRAT 填了 `BSE:` 形式；5G_NR_Test 方言继承基类的 `None`，那批 KPI 现在整组读不到（有 warn-once 兜着，不静默）。⚠️ **不能靠现场探**：该方言用的是**无前缀**形式，而手册给的两个变体（`BSE:MEASure:NR5G:...` / `BSE:NR5G:MEASure:...`）**都带 `BSE:`** —— 现场去试无前缀拼写就是猜，正是 #275 整片在治的病。**正解**：像 2026-08-03 查 IRAT 那样，直接查手册 / NotebookLM 问 5G_NR_Test 方言（Test Application 名 `5G_NR_Test`）下这批命令的根前缀与完整形式；查得到就本地补齐，查不到就如实标"该方言 KPI 不可用"并让 warn-once 继续响。**本地片，不需要现场**。
 
 
+- `[discovered 2026-08-04 during P1-31, Codex #277 R2 P2 —— 判定为越界, 本 PR 未做]` **`uxm_kpi_readback` 的三条前置写没包 `try`，transport 抛异常会带走全部已收证据** —— `BTHRoughput:STATe ON` / `CSI:STARt` / `MEASurement:REPort ON` 直接裸调 `_w`，异常逃出 `run()` 后 API 只记一次 aborted run、**拿不到 `SequenceRunResult`**，于是 P0 的证据与恢复步骤全丢 —— 而硬件真出故障时那些证据恰恰最值钱。⑧ 的 `CLEar` 已经包了 `try` 正是为防这个（内审 F8）。⚠️ **不在 #277 做的理由**：① 既有缺口，不改它 #277 那个「错误漂到下一条命令头上」的故障照样不在；② 改它会**推翻现有门 `test_restored_even_when_an_exception_escapes` 的前提** —— 那条门正是靠 `MEASurement:REPort ON` 的异常逃出来验证 `finally` 恢复的，要一起重设计。做的时候连门一起改。
+
+- `[discovered 2026-08-04 during P1-31, Codex #277 R2 P2 —— 判定为越界, 本 PR 未做]` **`_read_orig` / `_csi_state` 的 `.strip()` 让 `raw` 不再逐字，违反 `protocol.py:54` 的「原样存」约定** —— 该约定原文：「**原样存**, 不做归一化 / 大小写转换 / 去引号 …… 本字段的价值恰恰在于保留仪器真正吐出来的样子 (含空白与引号)」。⚠️ **不在 #277 做的理由**：既有写法（非本 PR 引入），且**高保真那站已经是对的** —— `_probe`（逐元素跟面板比对、下标错位是本序列的核心问题）的 `raw` 逐字保留且有变异 M10 守着；这两处只是 `ON`/`0`/`STOP`/`MEAS` 这种单 token，`.strip()` 掉的是 VISA 终止符，实际证据损失接近零。**做的时候连带收窄测试文件顶部那句「`raw` 逐字保留仪器回复」** —— 现状下那句是以偏概全。
+
 - `[discovered 2026-08-03 during UXM KPI 修复, 用户明确要求记号]` **[→ 载体 = P1-31]** **⚠️ #275 的 KPI 回读改动 —— 本地零真机验证，整批必须现场核验** —— 命令形式 / 元素下标 / 单位 / 前置条件全部来自**手册与真机历史日志**，**没有一条在真机上跑过**。合并 #275 是"按手册应该对"的版本，不是"验过是对的"版本。**下次现场必须逐条对账**（走诊断序列，禁临时脚本）。⚠️ 原第 ⑩ 项「探出 5G 方言的无前缀形式」**已删**（Codex #276）——
   它与「只探手册有依据的命令、禁猜」自相矛盾（无前缀形式手册里没有，现场探只能猜拼写）；
   该方言的命令形式**查手册解决、不需要现场**，已另立 Discovered。
@@ -2304,7 +2322,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-03 during UXM KPI 修复, Codex #275 R2]` **UE L3 测量报告里 RSRP/RSRQ/SINR 的口径手册未说明 —— 现场必须对着面板比对一次** —— `BSE:CONFig:NR5G:<cell>:MEASurement:JSON:REPort:FETCh?` 返回的这几个值，究竟是 **3GPP RRC 上报的原始码点**（`rsrp-Result` 0..127，需 `value − 156` 换算成 dBm）还是**仪表已换算好的 dBm/dB**，手册对 JSON 与 legacy 两种 FETCh **都只给了示例**（示例里全是 `"NaN"`），没有单位、取值范围、换算公式（NotebookLM 三次明确回"手册未说明"，未做推断）。⚠️ 按 3GPP 通式自己换算 = **盲试**；原样写进名为 `rsrp_dbm` 的字段 = **假数据冒充真数据**。所以当前实现**只把原样值留进证据**（`scpi.log` 有完整响应，`measurement.log` 记 `kpi_raw_unverified`），`rsrp_dbm` / `sinr_db` 保持"未读到"、`kpi_valid` 标 false。**现场做法**：让 UE 驻留后同时看 UXM 面板上的 RSRP 读数与本查询返回值，差 156 就是码点、相等就是 dBm，确认后接线。落在 `uxm_kpi_readback` 序列里（**= P1-31**，2026-08-03 已立项、现为队首）。
 
 
-- `[discovered 2026-08-03 during UXM KPI 修复内审 F6]` **UE L3 测量报告 `FETCh?` 不带 `<Integer>` = 每轮取回整个队列，且全程没人清队列** —— 手册：「Number of requested reports. **If not specified all the available reports are returned.**」队列由 `BSE:CONFig:MEASurement:REPort ON` 持续排队，另有**独立**的 `:CLEAr` 才清 —— 代码只写 ON，`:CLEAr` 一条没定义。后果：监控路 `get_metrics()` 每轮把开测以来的**全部** L3 报告拉一遍，响应无界增长 → VISA 越读越慢/超时、`scpi.log` 被截断成没用的片段、`json.loads` 开销 O(n)，而代码只用其中**一份**。另：取 `reports[-1]` 假设"最新在末尾"，**手册没写返回顺序**，这个假设未经核验。修法 = 查询带 `? 1`（先确认取的是最新那份）。
+- `[discovered 2026-08-03 during UXM KPI 修复内审 F6]` **UE L3 测量报告 `FETCh?` 不带 `<Integer>` = 每轮取回整个队列，且全程没人清队列** —— 手册：「Number of requested reports. **If not specified all the available reports are returned.**」队列由 `BSE:CONFig:MEASurement:REPort ON` 持续排队，另有**独立**的 `:CLEAr` 才清 —— 代码只写 ON。**⚠️ 2026-08-04 更新（#277 R3）**：`MEAS_UE_REPORT_CLEAR = "BSE:CONFig:MEASurement:REPort:CLEAr"` 已加进 `UxmLteNrIratProfile`（手册有据：Imm Action / 无 `<cell>` 绑定 = 全局），且 `uxm_kpi_readback` 序列已在观测窗口**之前**清一次；**但监控路 `get_metrics()` 仍未清、仍不带 `<Integer>`，本条对它依然成立**。后果：监控路 `get_metrics()` 每轮把开测以来的**全部** L3 报告拉一遍，响应无界增长 → VISA 越读越慢/超时、`scpi.log` 被截断成没用的片段、`json.loads` 开销 O(n)，而代码只用其中**一份**。另：取 `reports[-1]` 假设"最新在末尾"，**手册没写返回顺序**，这个假设未经核验 —— **NotebookLM 2026-08-04 三问确认**：带 `<Integer>` 取最新还是最旧、多份的排列顺序、以及 FETCh 是不是消费式（取完即移除），**手册三项全未说明**；旁证是手册对 **RAR 报告**与 **UAI 报告**都明写 "Querying the results will remove items from storage"，唯独 UE 测量报告只字未提。修法 = **先清队列再取**（`:CLEAr` 现已定义，`uxm_kpi_readback` 已这么做），`? 1` 仍需先在真机上确认它取的是哪一份。
 
 - `[discovered 2026-08-03 during UXM KPI 修复内审 F7]` **CA/多小区下 `BTHRoughput:CLEar` 清全部小区，而吞吐量只读 PCell** —— `CLEar` 不带 cell（技术层全局），而 `MEAS_TPUT_DL_OTA` 读的是 `OTA:{cell}?` = PCell。SCell 是活跃配置（`executors/measure.py` 会 `add_secondary_cell` + `activate_secondary_cells`）→ CA 下报出的"吞吐量"只有 PCell 一份，**系统性低估交付 KPI**，并被 `analysis.py` 的 `throughput_pass` 直接消费。手册有 `...:DL:THRoughput:OTA:ALL?`，注明「return **sum of all NR cells** results」。修法 = 有 SCell 时换 `OTA:ALL?`，或至少在 `measurement.log` 标 `pcell_only=true`。
 

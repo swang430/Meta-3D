@@ -148,6 +148,7 @@ class UxmTestApp:
     MEAS_BLER_UL: Optional[str] = None
     # UE L3 测量报告 (RSRP / RSRQ / SINR 的真值源) —— 需先开 REPORT_STATE
     MEAS_UE_REPORT_STATE: Optional[str] = None
+    MEAS_UE_REPORT_CLEAR: Optional[str] = None
     MEAS_UE_REPORT_JSON: Optional[str] = None
 
     # --- UE capability / RRC reconfig ---
@@ -174,6 +175,11 @@ class UxmTestApp:
     # --- CSI measurements ---
     MEAS_CSI_START: Optional[str] = None
     MEAS_CSI_STOP: Optional[str] = None
+    # CSI 测量状态查询 —— 手册 **Query only: True**, 返回 STOP | WAIT | MEAS
+    # (STOP=未运行 / WAIT=已启动等开始时刻 / MEAS=正在采集)。
+    # ⚠ 必需: `CSI:STARt` 是 Imm Action, 手册明写「已在跑 → 忽略」「小区关闭 → 忽略」——
+    #   不回读状态就分不清「开成功了」和「被静默忽略」。
+    MEAS_CSI_STATE: Optional[str] = None
     MEAS_CSI_CQI: Optional[str] = None
     MEAS_CSI_RI: Optional[str] = None
 
@@ -429,6 +435,7 @@ class UxmLteNrIratProfile(UxmTestApp):
     # CSI (CQI/RI) — 命令本身原来就对, 缺的是 BSE: 前缀与 STARt 前置
     MEAS_CSI_START = "BSE:MEASure:NR5G:{cell}:CSI:STARt"
     MEAS_CSI_STOP = "BSE:MEASure:NR5G:{cell}:CSI:STOP"
+    MEAS_CSI_STATE = "BSE:MEASure:NR5G:{cell}:CSI:STATe?"
     # 6 doubles {count, min, max, average, median, ...} — 取 idx3 = average
     # ⚠ idx0 是**样本数**不是 CQI。真机回过 7.92E+04 (79200 个样本),
     #   我们曾把它当 CQI 值上报。
@@ -438,6 +445,15 @@ class UxmLteNrIratProfile(UxmTestApp):
     MEAS_CSI_RI = "BSE:MEASure:NR5G:{cell}:CSI:RI:HISTogram?"
     # UE L3 测量报告 (RSRP/RSRQ/SINR 真值源) — 需先把队列开关打开
     MEAS_UE_REPORT_STATE = "BSE:CONFig:MEASurement:REPort"
+    # ⚠ 队列**必须能清**：`FETCh?` 不带 <Integer> 时手册原文「If not specified
+    #   **all the available reports are returned**」—— 不清就把开测以来的历史
+    #   报告一起取回，而拿历史报告去跟**当下**的面板读数比对，结论无效。
+    #   手册（NotebookLM 2026-08-04 三问）：Imm Action / No query，**无 <cell> 绑定**
+    #   = 全局。另两问手册**未说明**：① 带 <Integer> 取的是最新还是最旧、
+    #   多份时的排列顺序；② FETCh 是不是消费式（取完即移除）——
+    #   旁证：手册对 RAR / UAI 报告都明写 "Querying the results will remove
+    #   items from storage"，唯独 UE 测量报告只字未提。所以**不能假设取完就空**。
+    MEAS_UE_REPORT_CLEAR = "BSE:CONFig:MEASurement:REPort:CLEAr"
     MEAS_UE_REPORT_JSON = "BSE:CONFig:NR5G:{cell}:MEASurement:JSON:REPort:FETCh?"
 
     # === IRAT-extras (not in 5G_NR_Test app) ===
