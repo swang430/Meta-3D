@@ -392,7 +392,16 @@ class RealUxmDriver(BaseStationDriver):
                 f"supports a vendor alias)"
             )
             return None
-        return template.format(**fmt) if fmt else template
+        out = template.format(**fmt) if fmt else template
+        # ⚠ 零 fmt 时旧实现直接返回模板 —— 模板若含 `{cell}` 就把花括号
+        #   **原样发到线上**，还计进 applied、报 ok（内审 F8）。
+        #   跟 P1-32 刚堵上的空模板裂缝是同一条缝的另一半：视同未定义。
+        if "{" in out:
+            logger.info(
+                f"[UXM/{self._cmds.PROFILE_NAME}] {name} 模板仍含占位符 "
+                f"{out!r} —— 视同未定义，不发。")
+            return None
+        return out
 
     # ===================================================================
     # 1. 连接生命周期
@@ -1187,65 +1196,21 @@ class RealUxmDriver(BaseStationDriver):
                 if (q := self._cmd("RF_PORT_UL", cell=cell)) is not None:
                     self._write(f"{q} {config['rf_port_ul']}")
 
-            # ---- 12. TDD 时隙格式 ----
-            if "tdd_pattern" in config:
-                if (q := self._cmd("TDD_PATTERN", cell=cell)) is not None:
-                    self._write(f"{q} {config['tdd_pattern'].upper()}")
-            if "tdd_period" in config:
-                if (q := self._cmd("TDD_PERIOD", cell=cell)) is not None:
-                    self._write(f"{q} {config['tdd_period']}")
-
-            # ---- 13. PDSCH 调度算法 (Full Buffer) ----
-            if "sched_algo" in config:
-                bwp = config.get("bwp_id", self._bwp_id)
-                if (q := self._cmd("PDSCH_SCHED_ALGO", cell=cell, bwp=bwp)) is not None:
-                    self._write(f"{q} {config['sched_algo'].upper()}")
-
-            # ---- 14. AMC 开关 (关闭以固定 MCS) ----
-            if "enable_amc" in config:
-                bwp = config.get("bwp_id", self._bwp_id)
-                amc_val = "ON" if config["enable_amc"] else "OFF"
-                dl_amc = self._cmd("PDSCH_AMC_ENABLE", cell=cell, bwp=bwp)
-                ul_amc = self._cmd("PUSCH_AMC_ENABLE", cell=cell, bwp=bwp)
-                if dl_amc is not None:
-                    self._write(f"{dl_amc} {amc_val}")
-                if ul_amc is not None:
-                    self._write(f"{ul_amc} {amc_val}")
-                if dl_amc is not None or ul_amc is not None:
-                    logger.info(f"[UXM] AMC: {amc_val}")
-
-            # ---- 15. HARQ 配置 ----
-            # ⚠ P1-33：手册要的是**枚举 token**（`N4` / `N16`），不是裸整数。
-            #   这两条命令原来在 IRAT 上是 `None`，本处从没真发过；P1-33 把它们
-            #   按手册补进 profile 后，**这个调用点立刻开始发错值形态** ——
-            #   全量测试抓到的（`test_irat_skips_unsupported_optional_fields`）。
-            #   转换与 `configure_mac_throughput_test` **同源**，别各写一份。
-            for _key, _name, _allowed in (
-                ("harq_max_trans", "HARQ_MAX_TRANS", _HARQ_MAXTRANS_VALUES),
-                ("harq_processes", "HARQ_PROCESSES", _HARQ_PROCESSES_VALUES),
-            ):
-                if _key not in config:
-                    continue
-                q = self._cmd(_name, cell=cell)
-                if q is None:
-                    continue
-                tok = _enum_token("N", config[_key], _allowed)
-                if tok is None:
-                    logger.warning(
-                        f"[UXM] {_name} 未下发 —— {config[_key]} 不在手册枚举 "
-                        f"{_allowed} 里。**不就近取一个**（那是静默改测试条件）。")
-                    continue
-                self._write(f"{q} {tok}")
-
-            # ---- 16. CSI-RS 端口数 (与 MIMO 层数对齐) ----
-            if "csi_rs_ports" in config:
-                if (q := self._cmd("CSIRS_PORTS", cell=cell)) is not None:
-                    self._write(f"{q} {config['csi_rs_ports']}")
-            elif "mimo_layers" in config:
-                # 自动推断: 1L→2ports, 2L→4ports, 4L→8ports
-                auto_ports = max(2, config["mimo_layers"] * 2)
-                if (q := self._cmd("CSIRS_PORTS", cell=cell)) is not None:
-                    self._write(f"{q} {auto_ports}")
+            # ---- 12-16. TDD / 调度 / AMC / HARQ / CSI-RS ----
+            # ⛔ P1-33（2026-08-05）：**整段删除**。这些参数的正门是
+            #    `configure_mac_throughput_test()` —— `schemas/mimo_ota/config.py`
+            #    自己就写着「tdd_pattern/tdd_period 不在这里，已由
+            #    configure_mac_throughput_test 驱动」。这里是**重复路径**。
+            #
+            #    ⚠️ 删它是因为 P1-33 差点造成一个**比原 bug 更糟**的回归：
+            #    这批命令在 IRAT 上原本是 `None`（一条不发，仪器用自洽默认）；
+            #    P1-33 按手册把它们补进 profile 后，**这条旧路径立刻开始用
+            #    旧的裸值形态发出去**（`FULLBUFFER` / `OFF` / `5MS` / `4`），
+            #    条条被拒或误配 —— 从"不发"变成"发错"。
+            #    爆炸半径 Y > X，违反 CLAUDE.md ⓪① 的契约。
+            #
+            #    值形态转换只留在 `configure_mac_throughput_test` 一处，
+            #    不在这里复制第二份（两份必然漂移）。
 
             # ---- 17. 统计窗口 (子帧数) ----
             if "stat_count" in config:
@@ -1759,7 +1724,7 @@ class RealUxmDriver(BaseStationDriver):
         "TDD_DL_SLOTS", "TDD_DL_SYMBOLS", "TDD_UL_SLOTS", "TDD_UL_SYMBOLS",
         "CSIRS_PORTS",
         # 小区 ON 时不发 APPLY，上面全部只进缓存、不进协议栈（手册原文）
-        "CONFIG_APPLY_NR",
+        "QCONFIG_APPLY_ALL", "CONFIG_APPLY",
     )
     MAC_CFG_OPTIONAL: Tuple[str, ...] = (
         "HARQ_MAX_TRANS", "HARQ_PROCESSES",
@@ -1894,6 +1859,18 @@ class RealUxmDriver(BaseStationDriver):
             #       有 M10b 变异守着这个顺序, 别挪回末尾。
             await self._enable_kpi_measurements(cell)
 
+            # ⚠ 首组之前先把队列**基线**丢掉（内审 F3）——
+            #   不清的话，进函数前残留的错误（`set_cell_config` 刚跑完、
+            #   或 `_enable_kpi_measurements` 自己产生的）会全记到第一组
+            #   `PDSCH_SCHED_ALGO` 头上，于是本片要产出的「IRAT 认不认」
+            #   实测答案，第一条就是伪证，整轮还被 FAILED 掉。
+            #   同 `propsim_f64` 的既有做法：门只评估**本次写序列**的错误。
+            baseline_errs = self._drain_errors()
+            if baseline_errs:
+                logger.info(
+                    f"[UXM] 进 MAC 配置前队列有 {len(baseline_errs)} 条残留"
+                    f"（**不计入本次归属**）: {baseline_errs}")
+
             # ⚠ P1-33：值形态**全部取自手册**，跟旧的裸值写法完全不同。
             #   每组发完查一次 `SYST:ERR?`，被拒的记名 —— 这就是
             #   「IRAT 认不认这些手册命令」的实测答案，不靠推断。
@@ -1907,34 +1884,36 @@ class RealUxmDriver(BaseStationDriver):
 
             # 1. Full Buffer 调度 —— 手册枚举是 FULL_TPUT，不是 "FULLBUFFER"
             _emit("PDSCH_SCHED_ALGO", " FULL_TPUT")
-            _group("PDSCH_SCHED_ALGO")
-
-            # 2. AMC —— 手册**不是开关**，是资源分配策略枚举：
-            #    FIXed = 固定资源/固定 MCS（= 关 AMC），CQI = 按 CQI 自适应。
-            _emit("PDSCH_AMC_ENABLE", " CQI" if enable_amc else " FIXed",
-                  cell=cell, bwp=bwp)
-            #    UL 侧是 Boolean「固定 MCS 开关」，语义**反过来**：
-            #    ON = 固定 MCS = 关 AMC（手册原文：不设 True 则固定 IMCS 不生效）。
-            _emit("PUSCH_AMC_ENABLE", " OFF" if enable_amc else " ON",
-                  cell=cell, bwp=bwp)
-            _group("AMC")
-
-            # 3. 固定 MCS（Quick Config，Integer 0..28）
             _emit("PDSCH_MCS", f" {mcs}")
-            _group("PDSCH_MCS")
-
-            # 4. RB 分配 —— 手册要**整数 PRB 数**（1..273），不认 "ALL"。
-            #    "ALL" 时**问仪器**本 BWP 有多少 PRB，不敲 38.104 表（那是编数据）。
             n_prb = self._resolve_dl_prb_count(rb_alloc, cell, bwp)
             if n_prb is None:
                 skipped.append("PDSCH_RB_ALLOC")
                 logger.error(
                     f"[UXM/{self._cmds.PROFILE_NAME}] PDSCH_RB_ALLOC 未下发 —— "
                     f"rb_alloc={rb_alloc!r} 要按全带宽发 PRB 数，但**读不到**本 BWP "
-                    f"的 PRB 数（该 `?` 形式手册未标明可查）。**不猜**。")
+                    f"的 PRB 数。**不猜**（退回手册默认 273 会在窄带宽上超上限）。")
             else:
                 _emit("PDSCH_RB_ALLOC", f" {n_prb}")
-                _group("PDSCH_RB_ALLOC")
+            # ⭐ Quick Config 的三条输入参数发完，要用**它自己的** apply 落地。
+            #   手册：应用场景会把当前 scheduler 配置**完全抹掉并替换** ——
+            #   所以必须排在下面 slot 级 AMC **之前**（内审 F2）。
+            _emit("QCONFIG_APPLY_ALL", "")
+            _group("QuickConfig(场景/MCS/PRB)")
+
+            # 2. AMC —— 手册**不是开关**，是资源分配策略枚举：
+            #    FIXed = 固定资源/固定 MCS（= 关 AMC），CQI = 按 CQI 自适应。
+            _emit("PDSCH_AMC_ENABLE", " CQI" if enable_amc else " FIXed",
+                  cell=cell, bwp=bwp)
+            #    UL 侧走 `UL:IMCS:FIXed`，语义**反过来**：ON = 固定 MCS = 关 AMC。
+            #    ⚠ 措辞收窄（内审 F6）：手册对**这一条**标的是
+            #    `Type: Integer / Range: 0..272`，跟"收 ON/OFF"**自相矛盾**；
+            #    "不设 True 则固定 IMCS 不生效"那句是**邻近块**的描述。
+            #    所以 `ON` 是**按描述推断**，不是手册对该条的原文 ——
+            #    现场由 `SYST:ERR?` 定案。另有对称命令 `UL:RRESource:APOLicy`
+            #    未纳入（DL 走 APOLicy、UL 走 IMCS:FIXed 这个不对称已记现场待确认）。
+            _emit("PUSCH_AMC_ENABLE", " OFF" if enable_amc else " ON",
+                  cell=cell, bwp=bwp)
+            _group("AMC")
 
             # 5. TDD —— 手册没有 pattern 字符串，是**六个数**
             slots = _tdd_slots_from_pattern(tdd_pattern)
@@ -1957,6 +1936,22 @@ class RealUxmDriver(BaseStationDriver):
                 _emit("TDD_UL_SYMBOLS", f" {tdd_ul_symbols}", cell=cell)
                 _emit("TDD_PATTERN_STATE", " ON", cell=cell)
                 _group("TDD")
+                # ⚠ 手册原文：pattern 在 enable 时才校验，**无效就不应用、
+                #   state 保持 OFF** —— 也就是说它**不产生 SCPI 错误**，
+                #   只是静默不生效（内审 F5）。所以必须回读，不能"写了就算配上"。
+                st_q = self._cmd("TDD_PATTERN_STATE", cell=cell)
+                if st_q:
+                    try:
+                        st = str(self._query(st_q + "?")).strip()
+                    except Exception:  # noqa: BLE001
+                        st = ""
+                    if st and not st.upper().startswith(("1", "ON")):
+                        rejected.append("TDD(STATE 回读=%s，pattern 被判无效)" % st)
+                        logger.error(
+                            f"[UXM] TDD pattern 被仪器判为无效 —— 回读 STATE={st!r}。"
+                            f"手册：无效组合不应用且**不报错**。"
+                            f"检查 pattern({tdd_pattern}) / period({tdd_period}) / "
+                            f"SCS 是否自洽。")
 
             # 6. HARQ —— 手册是枚举 token（N4 / N16），不是裸整数
             for name, val, allowed in (
@@ -1998,8 +1993,10 @@ class RealUxmDriver(BaseStationDriver):
             # 9. ⭐ APPLY —— 手册：小区 ON 时不发它，上面全部只进缓存、
             #    **不进协议栈**（"This is not needed if the Cell if Off"）。
             #    调用链上游 `set_cell_config` 收尾恰好把小区恢复 ON。
-            _emit("CONFIG_APPLY_NR", "")
-            _group("CONFIG_APPLY_NR")
+            # 通用 APPLY：把小区级缓存配置推进协议栈（跟上面 Quick Config
+            # 那条 apply 是**两件事**，都要发）
+            _emit("CONFIG_APPLY", "")
+            _group("CONFIG_APPLY")
 
             # 同步等待所有配置生效 —— 一条都没发出去时没必要等
             if applied:
@@ -2968,9 +2965,4 @@ class RealUxmDriver(BaseStationDriver):
             out.append(err)
         out.append(f"<队列未排空: 已读 {limit} 条仍未见 No error>")
         return out
-
-    def _check_errors(self) -> None:
-        """检查并清除错误队列（只记日志；要拿到错误请用 `_drain_errors`）"""
-        for err in self._drain_errors():
-            logger.warning(f"[UXM] Instrument error: {err}")
 

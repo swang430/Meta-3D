@@ -114,8 +114,9 @@ class TestGrading:
             "TDD_PATTERN_STATE", "TDD_PERIOD",
             "TDD_DL_SLOTS", "TDD_DL_SYMBOLS", "TDD_UL_SLOTS", "TDD_UL_SYMBOLS",
             "CSIRS_PORTS",          # 端口不匹配 → 跑不到目标层数
-            # 小区 ON 时不发它，上面全部只进缓存不进协议栈（手册原文）
-            "CONFIG_APPLY_NR",
+            # 两条 apply 是**两件事**（内审 F2）：Quick Config 有自己的 apply，
+            # 通用 APPLY 管的是把小区缓存配置推进协议栈。
+            "QCONFIG_APPLY_ALL", "CONFIG_APPLY",
         }
         assert set(RealUxmDriver.MAC_CFG_OPTIONAL) == {
             "HARQ_MAX_TRANS", "HARQ_PROCESSES",
@@ -202,7 +203,7 @@ class Test5gAllPresent:
         res, _ = _run(_all_defined(), mimo_layers=2)
         assert res.missing_mandatory == ()
         assert res.skipped == ()
-        assert len(res.applied) == 15   # 13 必要 + 2 可选（P1-33 后 TDD 拆六条 + APPLY）
+        assert len(res.applied) == 16   # 14 必要 + 2 可选（TDD 六条 + 两条 apply）
         assert res.ok is True and bool(res) is True
 
     def test_commands_actually_reach_the_wire(self):
@@ -230,8 +231,10 @@ class Test5gAllPresent:
         assert f"{P.HARQ_MAX_TRANS.format(cell='CELL0')} N4" in writes, "4→N4 没转"
         assert f"{P.HARQ_PROCESSES.format(cell='CELL0')} N16" in writes, "16→N16 没转"
         assert f"{P.CSIRS_PORTS.format(cell='CELL0')} P4" in writes, "4→P4 没转"
-        assert P.CONFIG_APPLY_NR in " | ".join(writes), (
-            "没发 APPLY —— 小区 ON 时上面这些改动不进协议栈（手册原文）")
+        assert P.QCONFIG_APPLY_ALL in " | ".join(writes), (
+            "没发 Quick Config 自己的 apply —— 场景/MCS/PRB 只是暂存值")
+        assert P.CONFIG_APPLY in " | ".join(writes), (
+            "没发通用 APPLY —— 小区缓存配置不进协议栈")
 
 
 # ── 门④ 部分缺失：必要 vs 可选要分开 ──────────────────────────
@@ -257,7 +260,7 @@ class TestPartialProfiles:
         res, _ = _run(_NoAmc, mimo_layers=2)
         assert res.missing_mandatory == ("PDSCH_AMC_ENABLE",)
         assert res.ok is False
-        assert len(res.applied) == 14, "其余 14 条仍该照发（graceful-skip 不是全停）"
+        assert len(res.applied) == 15, "其余 15 条仍该照发（graceful-skip 不是全停）"
 
 
 class TestEmptyTemplateIsNotTreatedAsDefined:

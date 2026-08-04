@@ -217,7 +217,7 @@ class UxmTestApp:
     TDD_UL_SYMBOLS: Optional[str] = None
     # 手册：小区 ON 时多数配置改动**不发 APPLY 就不进协议栈**
     #   （"This is not needed if the Cell if Off"）。
-    CONFIG_APPLY_NR: Optional[str] = None
+    QCONFIG_APPLY_ALL: Optional[str] = None
     # 查本 BWP 配了多少 PRB —— "ALL" 时问仪器，不敲 38.104 表
     PHY_DL_BWP_NUM_PRBS: Optional[str] = None
 
@@ -520,7 +520,14 @@ class UxmLteNrIratProfile(UxmTestApp):
     CSIRS_PORTS = (
         "BSE:CONFig:NR5G:{cell}:CSI:RESource:CONFig:NZP:CRI0:RM:NPORts")
     # 小区 ON 时不发它，上面这些改动**不进协议栈**（手册原文）
-    CONFIG_APPLY_NR = "BSE:CONFig:NR5G:APPLY"
+    # ⚠ Quick Config 有**自己的** apply（Imm Action）——
+    #   `BSE:CONFig:NR5G:APPLY` 是 General 段的「把小区缓存配置推进协议栈」，
+    #   **管不着** Quick Config 的三条输入参数。不发这条，SCENario / MCS /
+    #   NUM:PRBs 永远只是暂存值（内审 F2）。
+    #   ⚠ 手册：应用场景会把当前 scheduler 配置**完全抹掉并替换** ——
+    #   所以它必须发在 slot 级 AMC 写入**之前**，否则把刚配好的 AMC 抹了。
+    QCONFIG_APPLY_ALL = "BSE:CONFig:NR5G:SCHeduling:QCONFig:APPLy:ALL"
+    # ⛔ 复用既有的 `CONFIG_APPLY`（同一条命令别起第二个名，内审 F9）
     PHY_DL_BWP_NUM_PRBS = "BSE:CONFig:NR5G:{cell}:PHY:DL:{bwp}:NUM:PRBS"
     # ⛔ 统计窗口：普通 NR 小区手册里**没有**这条命令（只有 LTE / NBIot /
     #    NR5G:SLINk 三种）。保持 None，由驱动归入「已知无对应命令」显式清单。

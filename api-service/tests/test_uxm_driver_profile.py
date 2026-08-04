@@ -140,14 +140,18 @@ class TestSetCellConfigGracefulSkip:
             offending = [w for w in written if forbidden in w]
             assert offending == [], f"IRAT skipped command leaked: {offending}"
 
-        # ⭐ 生效端：HARQ 现在会发，且必须发**枚举 token** 不是裸整数
-        #   （手册 Range: N1|N2|...；裸 `4` 是旧的无前缀写法留下的错值形态）。
-        harq = [w for w in written if "HARQ:" in w]
-        assert harq, "HARQ 已补进 IRAT，该发却没发"
-        for w in harq:
-            tail = w.rsplit(" ", 1)[-1]
-            assert tail.startswith("N"), (
-                f"HARQ 发的是裸值不是手册枚举 token: {w!r}")
+        # ⭐ P1-33：MAC 吞吐量那批参数**不再由 set_cell_config 下发** ——
+        #   正门是 `configure_mac_throughput_test()`（`schemas/mimo_ota/config.py`
+        #   自己写着这件事）。这里曾是重复路径，且用的是旧的裸值形态：
+        #   命令补进 profile 后它立刻开始"发错值"，比原来"不发"更糟。
+        #   变异：把那段重复下发加回来 → 红。
+        for driven_elsewhere in ("TDDPATtern", "SCHeduling:QCONFig",
+                                 "RRESource:APOLicy", "IMCS:FIXed",
+                                 "PHY:DL:HARQ", "CSI:RESource"):
+            leaked = [w for w in written if driven_elsewhere in w]
+            assert leaked == [], (
+                f"set_cell_config 又在下发 MAC 吞吐量参数（正门是 "
+                f"configure_mac_throughput_test）: {leaked}")
 
     @pytest.mark.asyncio
     async def test_5g_profile_sends_all_optional_fields(self, driver_5g):
