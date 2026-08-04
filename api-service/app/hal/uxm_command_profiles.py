@@ -174,6 +174,11 @@ class UxmTestApp:
     # --- CSI measurements ---
     MEAS_CSI_START: Optional[str] = None
     MEAS_CSI_STOP: Optional[str] = None
+    # CSI 测量状态查询 —— 手册 **Query only: True**, 返回 STOP | WAIT | MEAS
+    # (STOP=未运行 / WAIT=已启动等开始时刻 / MEAS=正在采集)。
+    # ⚠ 必需: `CSI:STARt` 是 Imm Action, 手册明写「已在跑 → 忽略」「小区关闭 → 忽略」——
+    #   不回读状态就分不清「开成功了」和「被静默忽略」。
+    MEAS_CSI_STATE: Optional[str] = None
     MEAS_CSI_CQI: Optional[str] = None
     MEAS_CSI_RI: Optional[str] = None
 
@@ -429,6 +434,7 @@ class UxmLteNrIratProfile(UxmTestApp):
     # CSI (CQI/RI) — 命令本身原来就对, 缺的是 BSE: 前缀与 STARt 前置
     MEAS_CSI_START = "BSE:MEASure:NR5G:{cell}:CSI:STARt"
     MEAS_CSI_STOP = "BSE:MEASure:NR5G:{cell}:CSI:STOP"
+    MEAS_CSI_STATE = "BSE:MEASure:NR5G:{cell}:CSI:STATe?"
     # 6 doubles {count, min, max, average, median, ...} — 取 idx3 = average
     # ⚠ idx0 是**样本数**不是 CQI。真机回过 7.92E+04 (79200 个样本),
     #   我们曾把它当 CQI 值上报。
