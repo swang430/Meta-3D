@@ -264,8 +264,14 @@ class TestExceptionPathDoesNotLie:
         # ⭐ 半生效不许报 applied：炸之前发出去的照实记，炸之后的**不算**
         assert "PDSCH_SCHED_ALGO" in res.applied
         assert "MEAS_TPUT_STAT_COUNT" not in res.applied
-        # 没发成的必要命令要进 missing_mandatory，调用方才拦得住
-        assert "PDSCH_MCS" in res.missing_mandatory
+        # ⭐ Codex #279 P2：**没轮到发 ≠ profile 没定义**。
+        #    上一版这里写 `n not in applied`，于是 VISA 断线会把"还没轮到发"的
+        #    命令算成 profile 缺项，调用方据此让操作员去补 profile，
+        #    而真凶是传输错误。异常路径与正常路径**同源**（都从 skipped 派生）。
+        assert res.missing_mandatory == (), (
+            "把「未及下发」冒充成「profile 未定义」—— 会把排障指向错方向")
+        # 拦得住靠的是 `error` 让 ok=False，不靠伪造 missing_mandatory
+        assert res.ok is False
 
 
 # ── 门⑤ 调用方必须消费（本片的另一半）────────────────────────
@@ -339,6 +345,32 @@ class TestCallerConsumesTheResult:
                 ok = True
         assert ok, (
             f"`{var}` 没有守住一个 return —— 报了失败仍会继续 start_signaling")
+
+    def test_transport_error_is_reported_before_blaming_the_profile(self):
+        """⭐ Codex #279 P2 —— 传输层炸了却报「profile 未定义」，
+        会把操作员指向 P1-33 补命令，而真正要修的是 VISA 连接。
+
+        两者可以同时成立（既有 profile 缺项、又炸了），所以两段都要说，
+        但**先说真凶**。变异：把 `if err:` 那段删掉 → 红。
+        """
+        from app.services.mimo_ota.executors.measure import MeasureExecutor
+
+        # ① 只有传输错误、profile 不缺
+        only_err = MacThroughputConfigResult(
+            applied=("PDSCH_SCHED_ALGO",), error="VisaIOError: VI_ERROR_CONN_LOST")
+        msg = MeasureExecutor._mac_config_blocker(only_err)
+        assert "下发过程中出错" in msg and "VI_ERROR_CONN_LOST" in msg
+        assert "profile 未定义" not in msg, "没缺 profile 却怪 profile"
+        assert "先排查仪器连接" in msg
+
+        # ② 两者同时成立 —— 真凶在前，profile 缺项也要提但标明次序
+        both = MacThroughputConfigResult(
+            skipped=("TDD_PATTERN",), missing_mandatory=("TDD_PATTERN",),
+            error="TimeoutError: VI_ERROR_TMO")
+        msg2 = MeasureExecutor._mac_config_blocker(both)
+        assert msg2.index("下发过程中出错") < msg2.index("本 profile 未定义"), (
+            "profile 缺项排在传输错误前面 —— 排障会先走错方向")
+        assert "先查上面那个错误" in msg2
 
     def test_measure_actually_reads_missing_mandatory(self):
         """⭐ 不变量门 —— 用 **AST** 判，不是搜源码文本。

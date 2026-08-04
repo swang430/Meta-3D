@@ -1861,11 +1861,19 @@ class RealUxmDriver(BaseStationDriver):
             logger.error(f"[UXM] configure_mac_throughput_test failed: {e}")
             self._set_status(InstrumentStatus.ERROR, str(e))
             # 仍不裸抛（本文件既有布尔契约禁令）——但**也不谎报成功**：
-            # 异常时把已发/已跳如实带回，并让 `ok` 为 False。
+            # 异常时把已发/已跳如实带回，并让 `ok` 为 False（`error` 非空即可）。
+            #
+            # ⚠ `missing_mandatory` 与正常路径**同源**（都从 `skipped` 派生），
+            #   **不能**写成 `n not in applied`（Codex #279 P2）——
+            #   那会把"还没轮到发"的命令也算成"profile 没定义"，于是 VISA
+            #   中途断线时，调用方对操作员说"本 profile 未定义 N 条必要命令"、
+            #   把人指向 P1-33，而真正的问题是**传输错误**。
+            #   没轮到发的命令既不在 `applied` 也不在 `skipped`，
+            #   它们的失败由 `error` 表达，不该冒充 profile 缺项。
             return MacThroughputConfigResult(
                 applied=tuple(applied), skipped=tuple(skipped),
                 missing_mandatory=tuple(
-                    n for n in self.MAC_CFG_MANDATORY if n not in applied),
+                    n for n in self.MAC_CFG_MANDATORY if n in skipped),
                 error=f"{type(e).__name__}: {e}",
             )
 

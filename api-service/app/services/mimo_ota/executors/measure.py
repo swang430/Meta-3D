@@ -235,6 +235,21 @@ class MeasureExecutor(IStepExecutor):
             return None
         missing = tuple(getattr(mac_cfg, "missing_mandatory", ()) or ())
         err = getattr(mac_cfg, "error", None)
+        # ⚠ **`error` 优先于 `missing`**（Codex #279 P2）—— 传输层炸了却报
+        #   "profile 未定义"，会把操作员指向 P1-33 补命令，而真正要修的是
+        #   VISA 连接。两者可以同时成立，所以两段都要说，但**先说真凶**。
+        if err:
+            return (
+                f"P1-32: 3GPP MAC 吞吐量配置未生效 —— **下发过程中出错**: {err}。"
+                f"已发出 {len(getattr(mac_cfg, 'applied', ()) or ())} 条、"
+                f"跳过 {len(getattr(mac_cfg, 'skipped', ()) or ())} 条；"
+                f"其余命令**未及下发**。"
+                + (f"（另：本 profile 未定义 {len(missing)} 条必要命令 "
+                   f"{', '.join(missing)}，见 P1-33 —— 但**先查上面那个错误**）"
+                   if missing else "")
+                + "**先排查仪器连接/超时，不要据此改 profile。**"
+                "配置未受控时测得的吞吐量不是 3GPP MAC 层吞吐量结果，**不能继续测**。"
+            )
         return (
             "P1-32: 3GPP MAC 吞吐量配置未生效 —— "
             + (f"**本驱动的 profile 未定义** {len(missing)} 条必要命令: "
