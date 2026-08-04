@@ -64,6 +64,16 @@ _TDD_PERIOD_TOKENS = {          # Enum，默认 MS5
 _HARQ_MAXTRANS_VALUES = (1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20, 24, 28)
 _HARQ_PROCESSES_VALUES = (1, 2, 4, 6, 8, 10, 12, 13, 14, 16, 32)
 _CSIRS_NPORTS_VALUES = (1, 2, 4, 8, 12, 16, 24, 32)
+_TDD_PERIOD_MS = {
+    "MS0P5": 0.5, "MS0P625": 0.625, "MS1": 1.0, "MS1P25": 1.25, "MS2": 2.0,
+    "MS2P5": 2.5, "MS3": 3.0, "MS4": 4.0, "MS5": 5.0, "MS10": 10.0,
+}
+
+
+def _slot_ms(scs_khz):
+    """NR 一个 slot 多少毫秒：15→1.0 / 30→0.5 / 60→0.25 / 120→0.125。
+    对不上表的 SCS 返回 None，由调用处 fail-loud（不猜）。"""
+    return {15: 1.0, 30: 0.5, 60: 0.25, 120: 0.125}.get(int(scs_khz or 0))
 
 
 def _enum_token(prefix, value, allowed):
@@ -1778,6 +1788,7 @@ class RealUxmDriver(BaseStationDriver):
         cell: Optional[str] = None,
         tdd_dl_symbols: int = 6,
         tdd_ul_symbols: int = 4,
+        scs_khz: Optional[int] = None,
     ) -> MacThroughputConfigResult:
         """
         配置 3GPP MIMO OTA MAC 层吞吐量测试所需的完整参数集。
@@ -1918,7 +1929,35 @@ class RealUxmDriver(BaseStationDriver):
             # 5. TDD —— 手册没有 pattern 字符串，是**六个数**
             slots = _tdd_slots_from_pattern(tdd_pattern)
             period_tok = _TDD_PERIOD_TOKENS.get(str(tdd_period).strip().upper())
-            if slots is None or period_tok is None:
+            # ⭐ SCS 一致性（Codex #281 P1）—— 手册把 **Subcarrier spacing of
+            #   DL and UL BW parts** 列为 `TDDPATtern:STATE` 的 Dependencies。
+            #   pattern 字符串的**含义本身依赖 SCS**：`DDDSU` 是 5 个 slot，
+            #   15kHz 下 = 5ms、30kHz 下 = **2.5ms**。仓库默认正是
+            #   `DDDSU` + `5MS` + `scs=30` —— 30kHz 的 5ms 周期有 10 个 slot，
+            #   于是变成「3 DL + 1 UL + **6 个 flexible**」：
+            #   **不会被拒，但测的是另一个配置**（DL 占比远低于操作员想要的）。
+            #   静默测错的量 > 显式失败，所以对不上就**不发**。
+            slot_ms = _slot_ms(scs_khz)
+            n_slot = len(str(tdd_pattern or "").strip())
+            period_ms = _TDD_PERIOD_MS.get(period_tok or "")
+            tdd_mismatch = None
+            if slots is not None and period_tok is not None:
+                if slot_ms is None:
+                    tdd_mismatch = (f"未提供/无法识别 SCS（scs_khz={scs_khz!r}）——"
+                                    f" pattern 的含义依赖 SCS，**不校验就不发**")
+                elif abs(n_slot * slot_ms - period_ms) > 1e-9:
+                    tdd_mismatch = (
+                        f"pattern `{tdd_pattern}`（{n_slot} slot × {slot_ms}ms "
+                        f"@ {scs_khz}kHz = **{n_slot * slot_ms}ms**）与 period "
+                        f"`{tdd_period}`（{period_ms}ms）**对不上** —— 照发不会被拒，"
+                        f"但 DL/UL 比例变成另一个配置，测的不是那个量")
+            if tdd_mismatch:
+                for n in ("TDD_PATTERN_STATE", "TDD_PERIOD", "TDD_DL_SLOTS",
+                          "TDD_DL_SYMBOLS", "TDD_UL_SLOTS", "TDD_UL_SYMBOLS"):
+                    skipped.append(n)
+                logger.error(f"[UXM/{self._cmds.PROFILE_NAME}] TDD 未下发 —— "
+                             f"{tdd_mismatch}。")
+            elif slots is None or period_tok is None:
                 for n in ("TDD_PATTERN_STATE", "TDD_PERIOD", "TDD_DL_SLOTS",
                           "TDD_DL_SYMBOLS", "TDD_UL_SLOTS", "TDD_UL_SYMBOLS"):
                     skipped.append(n)
@@ -1945,7 +1984,15 @@ class RealUxmDriver(BaseStationDriver):
                         st = str(self._query(st_q + "?")).strip()
                     except Exception:  # noqa: BLE001
                         st = ""
-                    if st and not st.upper().startswith(("1", "ON")):
+                    if not st:
+                        # ⚠ Codex #281 P1：读不到 ≠ 没问题。手册说无效组合
+                        #   **不报错**、只体现在 STATE 上 —— 回读是**唯一**能
+                        #   发现它的手段，这条手段不可用 = 等于没检查过。
+                        rejected.append("TDD(STATE 回读失败，无法确认是否生效)")
+                        logger.error(
+                            "[UXM] TDD STATE 回读不到 —— 而回读是发现"
+                            "「pattern 被静默判无效」的唯一手段，不能当没问题。")
+                    elif not st.upper().startswith(("1", "ON")):
                         rejected.append("TDD(STATE 回读=%s，pattern 被判无效)" % st)
                         logger.error(
                             f"[UXM] TDD pattern 被仪器判为无效 —— 回读 STATE={st!r}。"

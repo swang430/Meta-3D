@@ -44,12 +44,17 @@ def _drv(profile=UxmLteNrIratProfile, responses=None):
     d._cmds = profile
     d._connected = True
     resp = {"*OPC?": "1", "NUM:PRBS": "273", "SYSTem:ERRor": '0,"No error"',
-            "SYST:ERR": '0,"No error"'}
+            "SYST:ERR": '0,"No error"',
+            # TDD STATE 回读 —— 不桩则走「回读失败」分支（Codex #281 P1）
+            "TDDPATtern:STATE": "1"}
     resp.update(responses or {})
     return d, _stub_io(d, resp)
 
 
 def _run(profile=UxmLteNrIratProfile, responses=None, **kw):
+    # ⚠ TDD 要校验 SCS 一致性（Codex #281 P1）——`DDDSU`(5 slot)+`5MS`
+    #   只在 **15kHz** 下自洽。夹具不传就走"不校验就不发"，测不到本门要测的。
+    kw.setdefault("scs_khz", 15)
     d, writes = _drv(profile, responses)
     res = asyncio.run(d.configure_mac_throughput_test(**kw))
     return res, writes
@@ -352,7 +357,8 @@ class TestReviewFixes:
             return orig(cmd, **kw)
 
         d._do_query = _q
-        res = asyncio.run(d.configure_mac_throughput_test(mimo_layers=2))
+        res = asyncio.run(
+            d.configure_mac_throughput_test(mimo_layers=2, scs_khz=15))
         assert res.rejected == (), (
             f"上一步的残留错误被记成本次被拒: {res.rejected}")
         assert res.ok is True
@@ -360,7 +366,7 @@ class TestReviewFixes:
     def test_invalid_tdd_pattern_is_caught_by_state_readback(self):
         """⭐ 内审 F5 —— 手册：pattern 无效时**不报错**，只是 STATE 保持 OFF。
         所以「写了」不等于「配上了」，必须回读。"""
-        res, _ = _run(responses={"TDDPATtern:STATE?": "0"}, mimo_layers=2)
+        res, _ = _run(responses={"TDDPATtern:STATE": "0"}, mimo_layers=2)
         assert any("TDD" in r for r in res.rejected), (
             "STATE 回读是 OFF（pattern 被判无效）却没记进 rejected —— "
             "手册说这种情形不产生 SCPI 错误，光看错误队列看不出来")
@@ -368,7 +374,7 @@ class TestReviewFixes:
 
     def test_state_readback_on_means_accepted(self):
         """反向 —— 回读 ON 就不该记 rejected，否则上一条门用恒红实现也能过。"""
-        res, _ = _run(responses={"TDDPATtern:STATE?": "1"}, mimo_layers=2)
+        res, _ = _run(responses={"TDDPATtern:STATE": "1"}, mimo_layers=2)
         assert not any("TDD" in r for r in res.rejected)
 
     def test_template_with_leftover_placeholder_is_not_sent(self):
@@ -392,3 +398,47 @@ class TestReviewFixes:
         assert "被仪器拒" in msg and "AMC" in msg and "TDD" in msg
         assert "无详情" not in msg
         assert "本片要现场问的" in msg, "没说清这就是现场要的实测答案"
+
+
+# ── 门⑦ Codex #281 两条 P1 ───────────────────────────────────
+
+class TestScsConsistency:
+    """⭐ 手册把 **Subcarrier spacing of DL and UL BW parts** 列为
+    `TDDPATtern:STATE` 的 Dependencies —— pattern 的**含义依赖 SCS**。"""
+
+    def test_default_repo_config_is_caught(self):
+        """⭐ 仓库默认 `DDDSU` + `5MS` + `scs=30` **对不上**：
+        30kHz 下 5 个 slot = 2.5ms，而周期要 5ms（10 slot）——
+        照发不会被拒，只会静默变成「3 DL + 1 UL + 6 flexible」，
+        **测的是另一个配置**。静默测错的量 > 显式失败，所以不发。
+        """
+        res, writes = _run(mimo_layers=2, tdd_pattern="DDDSU",
+                           tdd_period="5MS", scs_khz=30)
+        assert "TDD_DL_SLOTS" in res.missing_mandatory
+        assert not any("TDDPATtern" in w for w in writes), "对不上却照发了"
+        assert res.ok is False
+
+    def test_consistent_combination_is_sent(self):
+        """反向 —— 自洽就得发，否则上一条门用恒不发也能过。"""
+        res, writes = _run(mimo_layers=2, tdd_pattern="DDDSU",
+                           tdd_period="2.5MS", scs_khz=30)
+        assert "TDD_DL_SLOTS" not in res.missing_mandatory
+        assert any("TDDPATtern:DLSLots" in w for w in writes)
+
+    def test_missing_scs_refuses_to_send(self):
+        """SCS 不知道就**不校验、也不发** —— 不猜。"""
+        res, writes = _run(mimo_layers=2, scs_khz=None)
+        assert "TDD_PERIOD" in res.missing_mandatory
+        assert not any("TDDPATtern" in w for w in writes)
+
+
+class TestStateReadbackFailureIsNotSilentlyAccepted:
+    def test_unreadable_state_counts_as_rejected(self):
+        """⭐ Codex #281 P1 —— 回读是发现「pattern 被静默判无效」的**唯一**手段；
+        这条手段不可用 = 等于没检查过，**不能当没问题**。
+        变异：`if not st:` 那格删掉（回到 `if st and ...`）→ 红。
+        """
+        res, _ = _run(responses={"TDDPATtern:STATE": ""}, mimo_layers=2)
+        assert any("回读失败" in r for r in res.rejected), (
+            "STATE 读不到却静默放过 —— ok 会保持 True，调用方照常往下测")
+        assert res.ok is False

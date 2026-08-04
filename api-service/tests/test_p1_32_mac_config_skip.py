@@ -69,8 +69,14 @@ def _run(profile, responses=None, **kw):
     # `"ALL"` 会去问本 BWP 的 PRB 数（不敲 38.104 表）—— 桩上，
     # 否则走进"读不到就不猜"的分支，测的就不是本门要测的东西了。
     resp = {"*OPC?": "1", "NUM:PRBS": "273", "SYSTem:ERRor": '0,"No error"',
-            "SYST:ERR": '0,"No error"'}
+            "SYST:ERR": '0,"No error"',
+            # TDD STATE 回读 —— 不桩则走「回读失败」分支（Codex #281 P1）
+            "TDDPATtern:STATE": "1"}
     resp.update(responses or {})
+    # ⚠ TDD 现在要校验 SCS 一致性（Codex #281 P1）——
+    #   `DDDSU`(5 slot) + `5MS` 只在 **15kHz** 下自洽（5×1.0ms=5ms）。
+    #   夹具不传就走"不校验就不发"，测的就不是本门要测的东西了。
+    kw.setdefault("scs_khz", 15)
     writes = _stub_io(d, resp)
     res = asyncio.run(d.configure_mac_throughput_test(**kw))
     return res, writes
