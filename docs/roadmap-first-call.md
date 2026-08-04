@@ -273,6 +273,7 @@ unblocked) BEFORE starting any new P1.
 | 2026-08-04 | [#277](https://github.com/swang430/Meta-3D/pull/277) | ⚠️ 有缺口 | `b985cbc` —— **R4 两条 P2 的修复**（⑦ 接 P3b 的结果 / 「没变小」那格不算通过）及配套的 4 门 3 变异 | 用户拍板走完 **R1–R4** 后 merge，未再派 R5；**内审也已跑满两轮**，内审 R2 六条的修复同样无覆盖。四轮走势 **2 P1 → 3 P2 → 1 P1+1 P2 → 2 P2**（严重度递减；R4 两条已被新增的不变量门 `test_no_green_verdict_branch_hedges_in_its_text` 覆盖）| 2 | ⬜ 未处置 —— 下次动 `uxm_kpi_readback` 时补审 |
 | 2026-08-04 | [#278](https://github.com/swang430/Meta-3D/pull/278) | <!--278-coverage-->⚠️ 有缺口 | <!--278-gap-->**回填本行这两格的 commit 自己**（docs 一行）—— R1 `8caaba1` / R2 `889db34` 都过了审，回填 commit 没有 | docs-only 一行登记；R1 两条 P2 均**当下修**（`R1 findings` 列被我塞了四轮合计 / 漏了本 PR 自己）。R2 唯一一条 P2 = 「合并前把这两格填掉」—— 而**回填 commit 自己**要么每次都得再派一轮（无穷递归），要么就此收口。选收口并如实标注：这行说的话在合并那一刻就是真的，此后也一直是真的| 2 | ⬜ 未处置 |
 | 2026-08-04 | [#279](https://github.com/swang430/Meta-3D/pull/279) | ✅ 全覆盖 | —（R1 唯一一条 P2 修完后 R2 在 `7f49414` 上 clean，而 `7f49414` 就是合并时的 HEAD）| — | 1 | ✅ 无需处置 |
+| 2026-08-04 | [#280](https://github.com/swang430/Meta-3D/pull/280) | ✅ 全覆盖 | —（R1 唯一一条 P2 = **本表漏了本 PR 自己**，当下修；本行含本格随修复一同提交，并由 R2 审在同一 commit 上 —— R2 非 clean 就不合，所以这句话在合并时已被验证）| — | 1 | ✅ 无需处置 —— ⚠️ 与 [#278](https://github.com/swang430/Meta-3D/pull/278) R1 **同一条**：「每个 PR 都记一行、含本 PR」我一个 PR 之后又漏了 |
 
 ### 📉 更值得看的信号：第一轮 findings 数
 
