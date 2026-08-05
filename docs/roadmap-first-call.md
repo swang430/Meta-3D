@@ -1857,7 +1857,19 @@ class MockBaseStation:
    不新造机制），只在"发给谁"那一步分叉
 2. mock 的回复走 `_log_scpi_response`，行内显式 `simulated: true`
 3. **反向门**：`measurement.log` / 报告 / KPI 字段里不得出现 `simulated` 来源的值
-4. `hal_mode` 字段已存在（每条日志都带 mock/real），**不重复造标记**
+4. ⛔ **`hal_mode` 不够用，别拿它当 `simulated` 的判据**（Codex #285 R2 抓出，
+   立项时我写的「hal_mode 已存在，不重复造标记」**是错的**）——
+   `ContextFilter` 注入的 `hal_mode` 取自 **HAL 服务的全局 mode**
+   （`logging_config.py` 的 `get_hal_service().mode.value`），而 HAL 服务
+   **明确支持 per-instrument 覆盖**（`instrument_hal_service.py` 的 docstring：
+   「global default is mock；per-instrument `'real'` override **IS still
+   honoured**」，反向亦然）。
+   后果正好打在本片的要害上：**全局 real 下被强制 mock 的那台仪器，
+   它的假回复会记成 `hal_mode=real`** —— 假数据冒充真数据，而这正是
+   P1-37 要防的那件事。
+   **所以 SCPI 行需要 per-driver 的来源标记**（由驱动实例自己给，
+   `_log_scpi_*` 已经在传 `extra={"instrument_id": ...}`，同一处加即可），
+   不能复用 `hal_mode`。
 
 ⚠️ **动手前必须先定的一件事**：mock 到底"复刻多深"？
 只产命令串（不模拟状态机）最省且已能验形式；要模拟到能跑完整序列则大得多。
