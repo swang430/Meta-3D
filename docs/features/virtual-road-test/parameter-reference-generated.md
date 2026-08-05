@@ -1,6 +1,6 @@
 # Parameter Reference (Auto-Generated)
 
-> Generated at: 2026-07-30 16:02:09
+> Generated at: 2026-08-05 19:25:11
 > Source: `api-service/app/schemas/`
 
 This document is auto-generated from Pydantic schema definitions.
@@ -340,7 +340,7 @@ Request to create a test case
 |-----------|------|----------|---------|-------------|
 | `name` | str | Yes | - | Test case name |
 | `description` | str | No | - | - |
-| `test_type` | str | Yes | - | TRP | TIS | Throughput | Handover | MIMO | ChannelModel | VirtualRoadTest | Custom |
+| `test_type` | str | Yes | - | TRP | TIS | Throughput | Handover | MIMO | MIMO_OTA | ChannelModel | VirtualRoadTest | Custom |
 | `configuration` | dict[str, Any | Yes | - | Test-specific configuration |
 | `pass_criteria` | dict[str, Any | No | - | - |
 | `expected_results` | dict[str, Any | No | - | - |
@@ -702,20 +702,6 @@ Request to update an instrument category's selection and connection
 | `modelId` | str | No | - | 选择的仪器型号ID (前端字段名) |
 | `selected_model_id` | UUID | No | - | 选择的仪器型号ID (后端字段名，兼容) |
 | `connection` | FEConnectionUpdate | No | - | 连接配置 |
-
-### InstrumentLogCreate
-
-Request to create an instrument log
-
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `category_id` | UUID | Yes | - | - |
-| `event_type` | str | Yes | - | - |
-| `message` | str | Yes | - | - |
-| `level` | str | No | info | - |
-| `details` | dict[str, Any | No | - | - |
-| `performed_by` | str | No | - | - |
 
 ### InstrumentStatistics
 

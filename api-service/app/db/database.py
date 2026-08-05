@@ -53,16 +53,19 @@ def _on_connect(dbapi_connection, connection_record):
     logger.info("DB connection established (pool)")
 
 
-@event.listens_for(engine, "checkout")
-def _on_checkout(dbapi_connection, connection_record, connection_proxy):
-    """从连接池取出连接"""
-    logger.debug("DB connection checked out from pool")
-
-
-@event.listens_for(engine, "checkin")
-def _on_checkin(dbapi_connection, connection_record):
-    """连接归还到连接池"""
-    logger.debug("DB connection returned to pool")
+# ⚠ P1-35：这里**不要**再挂 checkout / checkin 的日志监听器。
+#
+# 原先各有一条 `logger.debug`，每个请求各触发一次。删掉的理由不是"太吵"，
+# 而是**同一事实已经有更好的载体**：SQLAlchemy 自己的 `sqlalchemy.pool`
+# logger 已经把这两个事件记进 `db.log`（2026-08-05 实测同一时段
+# checkout 272 / checkin 272 条，与我们这两条逐字对应），而且它带连接
+# 标识、比我们这条无参数的字符串信息量更大。
+#
+# 我们这份的额外代价：`app.db` 没有专属 handler，只走 root → **app.log**，
+# 于是在操作员最常看的那个文件里，每个请求平白多两行零信息量的行。
+#
+# 连接**建立**（下方 `_on_connect`，INFO、一次性）和**回滚**
+# （`get_db` 的 WARNING）都保留 —— 那两个是真信号。
 
 
 # Create session factory
@@ -86,7 +89,10 @@ def get_db() -> Generator[Session, None, None]:
         yield db
         # Commit any pending changes
         db.commit()
-        logger.debug("DB session committed")
+        # ⚠ P1-35：提交成功**不记日志** —— `sqlalchemy.engine` 已经把
+        # BEGIN / COMMIT 记进 db.log（实测同时段 COMMIT 266 条），这里再打
+        # 一条是同一事实的第二份，且落在 app.log 抢操作员的窗口。
+        # 失败那条（下面的 rollback WARNING）必须留：它是真信号。
     except Exception as e:
         # Rollback on any exception
         db.rollback()

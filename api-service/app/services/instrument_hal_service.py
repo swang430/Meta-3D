@@ -141,6 +141,28 @@ class MetricsCache:
         self._hits = 0
         self._misses = 0
 
+    # ⚠ P1-35：这四个方法里**不要再加 per-event 日志**（原先每次命中/失效/
+    # 更新/清空各打一条 `logger.debug`）。
+    #
+    # 为什么删：这些行**没有一条能回答将来会被问到的问题**。命中率由下面的
+    # `_hits` / `_misses` 计数器如实记着，每次再打一行日志是**同一事实的
+    # 第二份记录**，而且是最贵的那份。
+    #
+    # ⚠ 如实申报这次删除的**代价**（内审 F2）：计数器目前**唯一**被读出的
+    # 地方是 `shutdown()` 里那行 `Cache statistics` —— 也就是说
+    #   · 运行中看不到缓存状态（`get_cache_stats()` 全仓零调用方）；
+    #   · `docker kill` / OOM / SIGKILL 时那行根本不会打，计数器一次都没
+    #     被读过就随进程消失。
+    # 判断这个缺口可接受：TTL 只有 0.5 秒，判错的代价是指标陈旧半秒。
+    # 要运行中可见，正解是把它接进指标端点 —— **另立片**，别在这里加。
+    #
+    # 有多贵（2026-08-05 实测容器 app.log）：这四条占 **90.1%**
+    # （6273 / 6965 行）。监控广播器是 `while True: if active_connections:
+    # ... sleep(1.0)` —— 也就是**只在 GUI 连着时以 1 Hz 刷**，
+    # 恰好在操作员盯着日志面板的时候刷得最凶：200 行窗口只覆盖 53 秒，
+    # 里面约 4 行是有用的。
+    #
+    # 要观测缓存，正确形态是**计数器/指标**，不是每次一行日志。
     async def get(self) -> Optional[Dict[str, Any]]:
         """Get cached metrics if still valid"""
         async with self._lock:
@@ -150,13 +172,10 @@ class MetricsCache:
 
             age = datetime.utcnow() - self._cache_time
             if age.total_seconds() > self.ttl_seconds:
-                # Cache expired
                 self._misses += 1
-                logger.debug(f"Cache expired (age: {age.total_seconds():.3f}s)")
                 return None
 
             self._hits += 1
-            logger.debug(f"Cache hit (age: {age.total_seconds():.3f}s)")
             return self._cache
 
     async def set(self, metrics: Dict[str, Any]):
@@ -164,14 +183,12 @@ class MetricsCache:
         async with self._lock:
             self._cache = metrics
             self._cache_time = datetime.utcnow()
-            logger.debug("Cache updated")
 
     async def clear(self):
         """Clear the cache"""
         async with self._lock:
             self._cache = None
             self._cache_time = None
-            logger.debug("Cache cleared")
 
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics"""

@@ -383,7 +383,10 @@ paths:
           in: query
           schema:
             type: string
-          description: Exact level match (DEBUG/INFO/WARNING/ERROR)
+          description: >-
+            Comma-separated set of levels (e.g. `WARNING,ERROR,CRITICAL`).
+            Exact membership match, NOT a threshold — ZoneLogsAlerts' cross-stream
+            dedup relies on level streams being disjoint; do not change to >=.
         - name: keyword
           in: query
           schema:
