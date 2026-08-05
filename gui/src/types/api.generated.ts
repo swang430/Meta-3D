@@ -666,11 +666,14 @@ export interface paths {
                 query?: {
                     filename?: string;
                     lines?: number;
-                    /** @description Exact level match (DEBUG/INFO/WARNING/ERROR) */
+                    /** @description Comma-separated set of levels (e.g. `WARNING,ERROR,CRITICAL`). Exact membership match, NOT a threshold — ZoneLogsAlerts' cross-stream dedup relies on level streams being disjoint; do not change to >=. */
                     level?: string;
                     /** @description Fuzzy match against msg + logger */
                     keyword?: string;
+                    /** @description Exact match on the per-request correlation id */
                     session_id?: string;
+                    /** @description Exact match on the per-test-execution correlation id. Distinct from session_id: one execution spans multiple requests and may run outside any request (background task). */
+                    execution_id?: string;
                 };
                 header?: never;
                 path?: never;
@@ -1021,6 +1024,7 @@ export interface components {
             logger: string;
             hal_mode: string;
             session_id: string;
+            execution_id: string;
             instrument_id: string;
             msg: string;
             raw?: string | null;

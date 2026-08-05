@@ -308,6 +308,8 @@ export type SystemLogEntry = {
   logger: string
   hal_mode: string
   session_id: string
+  /** P1-36：一次**测试执行**的关联 id。与 session_id（每请求）是两个生命周期。 */
+  execution_id: string
   instrument_id: string
   msg: string
   raw?: string | null

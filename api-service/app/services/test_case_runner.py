@@ -38,6 +38,7 @@ from uuid import UUID
 
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.core.logging_config import current_execution_id
 from app.db.database import SessionLocal
 from app.models.test_plan import (
     TestCase,
@@ -167,6 +168,13 @@ def launch_test_case_execution(db, test_case_id: UUID) -> TestExecution:
     db.commit()
     db.refresh(execution)
 
+    # P1-36（Codex #286 R1）：**请求侧**也要设。
+    # 早前只在后台任务 `_run_case` 里设 —— 于是下面那条「开始执行」是在
+    # 请求上下文里打的，`execution_id` 为 `-`；按返回的 id 过滤日志会**漏掉
+    # 这次执行的起点**（生命周期记录反而不在链上）。
+    # ⚠ 必须在 `create_task` **之前** —— 子任务继承的是创建那一刻的上下文。
+    current_execution_id.set(str(execution.id))
+
     task = asyncio.get_running_loop().create_task(_run_case(execution.id))
     key = str(execution.id)
     _RUNNING_TASKS[key] = task
@@ -210,6 +218,9 @@ def request_cancel(db, execution_id: UUID) -> bool:
     execution.config = cfg
     flag_modified(execution, "config")
     db.commit()
+    # P1-36（Codex #286 R1）：取消也是这次执行的生命周期事件，
+    # 不设的话「谁在什么时候取消的」不在这条链上。
+    current_execution_id.set(str(execution_id))
     logger.info("[case-runner] execution %s 被请求取消 (相位间生效)", execution_id)
     return True
 
@@ -361,6 +372,14 @@ def reset_orphaned_plan_chain_rows() -> None:
 
 async def _run_case(execution_id: UUID) -> None:
     """后台入口: 自建 session, 顶层兜底 (异常 → failed, 不静默消失)。"""
+    # P1-36: 这次执行期间的**全部**日志 (runner / HAL / SCPI) 自动带上执行身份
+    # —— `ContextFilter` 已在给每条 LogRecord 注入 `execution_id`，这里 set 一次
+    # 就够，**零调用点改动**。
+    #
+    # ⚠ 本任务由 `create_task` 拉起，会**继承**发起它的那个 HTTP 请求的
+    # `session_id` —— 那是有用的溯源（哪次点击起的这次执行），刻意保留。
+    # 但读日志时别把它当成"那个请求还在跑"：请求早返回了，执行还在后台。
+    current_execution_id.set(str(execution_id))
     db = SessionLocal()
     try:
         await _run_case_loop(db, execution_id)

@@ -38,6 +38,15 @@ current_instrument_id: contextvars.ContextVar[str] = contextvars.ContextVar(
     "instrument_id", default="-"
 )
 
+# P1-36：一次**测试执行**的关联 id。跟 `session_id`（每请求）刻意分开成
+# 两个字段 —— 它们是**两个不同的生命周期**：
+#   · 一次执行跨多个请求（发起、查询、取消各是一次请求）；
+#   · 也可能完全不在请求里（`_run_case` 跑在后台任务上）。
+# 复用同一个键会让"这次执行"与"这次请求"互相覆盖，两条链都串不成。
+current_execution_id: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "execution_id", default="-"
+)
+
 
 class ContextFilter(logging.Filter):
     """
@@ -47,6 +56,7 @@ class ContextFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.session_id = current_session_id.get("-")  # type: ignore[attr-defined]
+        record.execution_id = current_execution_id.get("-")  # type: ignore[attr-defined]
         # P1-30 收窄：contextvar 只做**兜底**，不得覆盖调用方通过 extra= 显式
         # 给出的值。原实现无条件覆盖 —— HAL 层 _log_scpi_* 明明传了
         # extra={"instrument_id": self.instrument_id}，却在这里被重写成
@@ -97,6 +107,7 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "hal_mode": getattr(record, "hal_mode", "-"),
             "session_id": getattr(record, "session_id", "-"),
+            "execution_id": getattr(record, "execution_id", "-"),
             "instrument_id": getattr(record, "instrument_id", "-"),
             "msg": record.getMessage(),
         }
@@ -108,6 +119,7 @@ class JsonFormatter(logging.Formatter):
             "pathname", "filename", "module", "levelno", "levelname",
             "message", "msecs", "processName", "process", "threadName",
             "thread", "taskName", "session_id", "instrument_id", "hal_mode",
+            "execution_id",
         }
         for key, value in record.__dict__.items():
             if key not in standard_keys and not key.startswith("_"):

@@ -128,6 +128,8 @@ export const fetchSystemLogsTail = async (params?: {
   level?: string
   keyword?: string
   session_id?: string
+  /** P1-36：按一次测试执行过滤（跨多请求 / 后台任务）。 */
+  execution_id?: string
 }): Promise<SystemLogTailResponse> => {
   const response = await client.get<SystemLogTailResponse>('/system-logs/tail', { params })
   return response.data

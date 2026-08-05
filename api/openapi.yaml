@@ -396,6 +396,15 @@ paths:
           in: query
           schema:
             type: string
+          description: Exact match on the per-request correlation id
+        - name: execution_id
+          in: query
+          schema:
+            type: string
+          description: >-
+            Exact match on the per-test-execution correlation id. Distinct from
+            session_id: one execution spans multiple requests and may run
+            outside any request (background task).
       responses:
         '200':
           description: Parsed tail page
@@ -877,6 +886,8 @@ components:
           type: string
         session_id:
           type: string
+        execution_id:
+          type: string
         instrument_id:
           type: string
         msg:
@@ -884,7 +895,7 @@ components:
         raw:
           type: string
           nullable: true
-      required: [ts, level, logger, hal_mode, session_id, instrument_id, msg]
+      required: [ts, level, logger, hal_mode, session_id, execution_id, instrument_id, msg]
     SystemLogTailResponse:
       type: object
       properties:

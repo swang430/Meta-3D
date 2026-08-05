@@ -50,16 +50,11 @@ interface LogFileInfo {
   is_current: boolean
 }
 
-interface LogEntry {
-  ts: string
-  level: string
-  logger: string
-  hal_mode: string
-  session_id: string
-  instrument_id: string
-  msg: string
-  raw: string | null
-}
+// ⚠ 别在这里手写一份日志条目的形状 —— 用共享类型。
+// 本文件原先有一份逐字副本，P1-36 加 `execution_id` 时它当场漂了
+// （共享类型有、副本没有）。手写镜像迟早跟真值源分家，这是 P1-25
+// 「手写类型审计」的同一个母题。
+import type { SystemLogEntry as LogEntry } from '../../../types/api'
 
 // ── Constants ──────────────────────────────────────────────────
 
@@ -91,6 +86,7 @@ function buildLogQuery(opts: {
   levelFilter: string
   keyword: string
   sessionFilter: string | null
+  executionFilter: string | null
 }): Record<string, string> {
   const q: Record<string, string> = {}
   const level =
@@ -102,6 +98,7 @@ function buildLogQuery(opts: {
   if (level) q.level = level
   if (opts.keyword.trim()) q.keyword = opts.keyword.trim()
   if (opts.sessionFilter) q.session_id = opts.sessionFilter
+  if (opts.executionFilter) q.execution_id = opts.executionFilter
   return q
 }
 
@@ -137,6 +134,11 @@ export function SystemLogViewer() {
   // 靠前也捞得到），只是 `session_id` 此前 100% 是 "-"，这个能力从来没能用。
   // AuditMiddleware 现在每请求写一个 id，这里把它接上。
   const [sessionFilter, setSessionFilter] = useState<string | null>(null)
+  // P1-36「只看这次执行」——跟请求链并列的另一条链。
+  // ⚠ 两个 id **不是**一回事：一次执行跨多个请求（发起/查询/取消各一次），
+  //   也可能压根不在请求里（runner 跑在后台任务上）。所以两个过滤各自独立，
+  //   可以同时生效（"这次执行里的这一个请求"）。
+  const [executionFilter, setExecutionFilter] = useState<string | null>(null)
 
   // P1-34 / Codex #282 R2：进入「只看这一次请求」时**清掉 level 与 keyword**。
   //
@@ -148,10 +150,24 @@ export function SystemLogViewer() {
   //
   // 选"清掉"而不是"链条视图忽略其它过滤"：后者会让 level / keyword 控件
   // 明明显示着却不生效 —— 那是换了个地方说谎。清掉之后控件肉眼可见被重置。
-  const isolateRequest = (sid: string) => {
-    setSessionFilter(sid)
+  // ⚠ 两个 isolate 的策略必须**一致**（内审 F8）：都只清 level / keyword，
+  //   **不清对方那条链**。早前 isolateExecution 会清掉 sessionFilter 而
+  //   isolateRequest 不清 executionFilter，于是"执行 A ∩ 请求 B"这个组合
+  //   只能沿一个方向到达 —— 而两个徽章都显示着，用户没法预期哪个会被清。
+  //   两条链本就可以叠加（后端支持同时传），叠加时读作"这次执行里的这个请求"。
+  const clearTextFilters = () => {
     setLevelFilter('ALL')
     setKeyword('')
+  }
+
+  const isolateExecution = (eid: string) => {
+    setExecutionFilter(eid)
+    clearTextFilters()
+  }
+
+  const isolateRequest = (sid: string) => {
+    setSessionFilter(sid)
+    clearTextFilters()
   }
 
   // Auto-refresh
@@ -186,7 +202,7 @@ export function SystemLogViewer() {
       const params = {
         filename: selectedFile,
         lines: maxLines,
-        ...buildLogQuery({ levelFilter, keyword, sessionFilter }),
+        ...buildLogQuery({ levelFilter, keyword, sessionFilter, executionFilter }),
       }
 
       const res = await apiClient.get('/system-logs/tail', { params })
@@ -199,7 +215,7 @@ export function SystemLogViewer() {
     } finally {
       setLoading(false)
     }
-  }, [selectedFile, levelFilter, keyword, maxLines, sessionFilter])
+  }, [selectedFile, levelFilter, keyword, maxLines, sessionFilter, executionFilter])
 
   // ── Download ──
   const handleDownload = useCallback(() => {
@@ -340,7 +356,7 @@ export function SystemLogViewer() {
                 // 「导出的就是屏幕上这些」。内审 F1：两份逐字相同的三元，
                 // 给「改一处忘另一处」留了两个入口。
                 const params = new URLSearchParams(
-                  buildLogQuery({ levelFilter, keyword, sessionFilter }),
+                  buildLogQuery({ levelFilter, keyword, sessionFilter, executionFilter }),
                 )
                 const url = `${apiClient.defaults.baseURL}/system-logs/export/${selectedFile}?${params.toString()}`
                 window.open(url, '_blank')
@@ -389,6 +405,26 @@ export function SystemLogViewer() {
             只看请求 {sessionFilter}
           </Badge>
         )}
+        {executionFilter && (
+          <Badge
+            size="sm"
+            color="indigo"
+            variant="filled"
+            rightSection={
+              <ActionIcon
+                size="xs"
+                variant="transparent"
+                color="white"
+                aria-label="取消只看这次执行"
+                onClick={() => setExecutionFilter(null)}
+              >
+                ✕
+              </ActionIcon>
+            }
+          >
+            只看执行 {executionFilter.slice(0, 8)}
+          </Badge>
+        )}
       </Group>
 
       {/* ── Error ── */}
@@ -418,6 +454,9 @@ export function SystemLogViewer() {
                     而实测那 200 行里 47% 是带 id 的。
                     做了但看不见 = 没做。 */}
                 <Table.Th w={86}>请求</Table.Th>
+                {/* P1-36：执行链跟请求链并排 —— 一次执行跨多个请求，
+                    两列同时可见才看得出"这次执行里的这一个请求"。 */}
+                <Table.Th w={86}>执行</Table.Th>
                 <Table.Th w={60}>模式</Table.Th>
                 <Table.Th w={250}>Logger</Table.Th>
                 <Table.Th>消息</Table.Th>
@@ -426,9 +465,9 @@ export function SystemLogViewer() {
             <Table.Tbody>
               {entries.length === 0 && !loading && (
                 <Table.Tr>
-                  {/* 7 列：展开箭头 / 时间 / 级别 / 请求 / 模式 / Logger / 消息。
-                      加「请求」列前这里写的是 5，本来就少一列。 */}
-                  <Table.Td colSpan={7}>
+                  {/* 8 列：展开箭头 / 时间 / 级别 / 请求 / 执行 / 模式 / Logger / 消息。
+                      加「请求」「执行」两列前这里写的是 5，本来就少一列。 */}
+                  <Table.Td colSpan={8}>
                     <Text ta="center" c="dimmed" py="xl">
                       {error ? '加载出错' : '暂无日志条目'}
                     </Text>
@@ -473,6 +512,24 @@ export function SystemLogViewer() {
                           }}
                         >
                           {entry.session_id.slice(0, 8)}
+                        </Code>
+                      </Tooltip>
+                    ) : (
+                      <Text size="xs" c="dimmed">—</Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    {entry.execution_id && entry.execution_id !== '-' ? (
+                      <Tooltip label={`只看执行 ${entry.execution_id}`} withArrow>
+                        <Code
+                          style={{ cursor: 'pointer', fontSize: '11px' }}
+                          c="indigo"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            isolateExecution(entry.execution_id)
+                          }}
+                        >
+                          {entry.execution_id.slice(0, 8)}
                         </Code>
                       </Tooltip>
                     ) : (

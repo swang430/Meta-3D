@@ -440,12 +440,21 @@ def test_isolating_a_request_clears_the_other_filters():
     m = re.search(r"const isolateRequest\s*=\s*\([^)]*\)\s*=>\s*\{(.+?)\n\s{2}\}", src, re.S)
     assert m, "找不到 isolateRequest —— 隔离逻辑被改名或拆散了，本门失效"
     body = m.group(1)
+    assert "setSessionFilter" in body, "isolateRequest 里没设 session 过滤，按钮等于没用"
+
+    # P1-36 把「清 level + keyword」提成了共享的 `clearTextFilters()`
+    # （两个 isolate 必须策略一致，见 test_the_two_isolate_actions_are_symmetric）。
+    # 所以判据从"体内直接有那两个 setter"改成"要么直接清、要么走那个 helper，
+    # **且 helper 自己两个都清**" —— 意图没变，别因为重构就放松。
+    if "clearTextFilters()" in body:
+        helper = re.search(r"const clearTextFilters = \(\) => \{(.*?)\n  \}", src, re.S)
+        assert helper, "调了 clearTextFilters 但找不到它的定义 —— 本门失效"
+        body = body + helper.group(1)
     for needed, why in (
-        ("setSessionFilter", "没设 session 过滤，按钮等于没用"),
         ("setLevelFilter('ALL')", "没清 level，返回的是交集不是整条链"),
         ("setKeyword('')", "没清 keyword，返回的是交集不是整条链"),
     ):
-        assert needed in body, f"isolateRequest 里缺 {needed} —— {why}"
+        assert needed in body, f"「只看这一次请求」这条路上缺 {needed} —— {why}"
 
     # 所有触发点都得走它，不能有人绕过去直接 setSessionFilter
     direct = re.findall(r"onClick=\{[^}]*setSessionFilter\(entry", src)
