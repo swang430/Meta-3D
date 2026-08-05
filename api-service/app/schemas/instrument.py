@@ -196,36 +196,10 @@ class UpdateInstrumentCategoryRequest(BaseModel):
 
 
 # ==================== Log Schemas ====================
-
-class InstrumentLogCreate(BaseModel):
-    """Request to create an instrument log"""
-    category_id: UUID
-    event_type: str = Field(..., max_length=100)
-    message: str
-    level: str = Field("info", pattern="^(debug|info|warning|error|critical)$")
-    details: Optional[Dict[str, Any]] = None
-    performed_by: Optional[str] = Field(None, max_length=100)
-
-
-class InstrumentLogResponse(BaseModel):
-    """Instrument log response"""
-    id: UUID
-    category_id: UUID
-    event_type: str
-    message: str
-    level: str
-    details: Optional[Dict[str, Any]]
-    timestamp: UTCDateTime
-    performed_by: Optional[str]
-
-    class Config:
-        from_attributes = True
-
-
-class InstrumentLogListResponse(BaseModel):
-    """List of instrument logs response"""
-    total: int
-    logs: List[InstrumentLogResponse]
+# ⚠ P1-35 已删除 `InstrumentLogCreate` / `InstrumentLogResponse` /
+# `InstrumentLogListResponse` —— 三者零引用，配套的 `InstrumentLog` 模型
+# 与 `instrument_logs` 表同为说谎的死类型（库里 0 行、无写入方、无读取方）。
+# 理由与仪器操作的真实留存位置见 `app/models/instrument.py` 同名注释。
 
 
 # ==================== Statistics ====================

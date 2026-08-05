@@ -113,15 +113,31 @@ def _entry_matches(
     level: Optional[str],
     keyword: Optional[str],
     session_id: Optional[str],
+    hal_mode: Optional[str] = None,
 ) -> bool:
-    """tail 过滤谓词: level 精确 + keyword 模糊 (msg/logger) + session_id 精确"""
-    if level and entry.level.upper() != level.upper():
-        return False
+    """日志过滤谓词 —— `/tail` 与 `/export` **共用这一份**。
+
+    ⚠ P1-35 之前 `/export` 自己抄了一份，两处会漂（P1-34 内审 F3 抓到的
+    「屏幕 5 条、导出全量」就是同一个母题）。要改过滤语义只改这里。
+
+    `level` 支持**逗号分隔的多个级别**（如 `WARNING,ERROR,CRITICAL`）——
+    因为后端是**精确相等**不是门槛，没有任何单值能表达「WARNING 及以上」，
+    而故障分诊恰恰要的就是那个。
+    ⚠ 仍然是**精确匹配**（对集合），不是序数比较：`ZoneLogsAlerts`
+    （P2-19 #258）的跨流去重依赖「不同 level 的流天然不相交」，
+    改成门槛式会让那里出错。
+    """
+    if level:
+        wanted = {p.strip().upper() for p in level.split(",") if p.strip()}
+        if entry.level.upper() not in wanted:
+            return False
     if keyword:
         kw_lower = keyword.lower()
         if kw_lower not in entry.msg.lower() and kw_lower not in entry.logger.lower():
             return False
     if session_id and entry.session_id != session_id:
+        return False
+    if hal_mode and entry.hal_mode.lower() != hal_mode.lower():
         return False
     return True
 
@@ -248,7 +264,7 @@ def list_log_files():
 def tail_log_file(
     filename: str = Query(default="app.log", description="日志文件名"),
     lines: int = Query(default=200, ge=1, le=2000, description="返回的最大匹配条数"),
-    level: Optional[str] = Query(default=None, description="按日志级别过滤 (DEBUG/INFO/WARNING/ERROR)"),
+    level: Optional[str] = Query(default=None, description="逗号分隔的级别集合（如 `WARNING,ERROR,CRITICAL`）。**精确匹配不是门槛** —— ZoneLogsAlerts 的跨流去重依赖不同 level 的流互不相交，别改成 >="),
     keyword: Optional[str] = Query(default=None, description="按关键词过滤（模糊匹配 msg 和 logger 字段）"),
     session_id: Optional[str] = Query(default=None, description="按 session_id 精确过滤"),
 ):
@@ -295,7 +311,7 @@ def download_log_file(filename: str):
 @router.get("/export/{filename}")
 def export_filtered_logs(
     filename: str,
-    level: Optional[str] = Query(default=None, description="按日志级别过滤"),
+    level: Optional[str] = Query(default=None, description="逗号分隔的级别集合（如 `WARNING,ERROR,CRITICAL`）。**精确匹配不是门槛** —— ZoneLogsAlerts 的跨流去重依赖不同 level 的流互不相交，别改成 >="),
     keyword: Optional[str] = Query(default=None, description="按关键词过滤"),
     session_id: Optional[str] = Query(default=None, description="按 session_id 过滤"),
     hal_mode: Optional[str] = Query(default=None, description="按 HAL 模式过滤 (mock/real)"),
@@ -319,19 +335,9 @@ def export_filtered_logs(
                 if entry is None:
                     continue
 
-                # 级别过滤
-                if level and entry.level.upper() != level.upper():
-                    continue
-                # 关键词过滤
-                if keyword:
-                    kw_lower = keyword.lower()
-                    if kw_lower not in entry.msg.lower() and kw_lower not in entry.logger.lower():
-                        continue
-                # session_id 过滤
-                if session_id and entry.session_id != session_id:
-                    continue
-                # HAL 模式过滤
-                if hal_mode and entry.hal_mode.lower() != hal_mode.lower():
+                # ⚠ 用 `/tail` 那同一个谓词，别再抄一份 —— 抄出来的两份
+                # 一定会漂（P1-34 内审 F3：屏幕 5 条、导出全量）。
+                if not _entry_matches(entry, level, keyword, session_id, hal_mode):
                     continue
 
                 yield stripped + "\n"

@@ -72,6 +72,39 @@ const LEVEL_COLORS: Record<string, string> = {
   RAW: 'dark',
 }
 
+// P1-35：「仅异常」不是一个后端 level，是**几个 level 的并集**（见 fetchLogs）。
+// 用哨兵值而不是字面量 'ISSUES'，免得哪天有人真加了个叫 ISSUES 的级别撞上。
+const ISSUES = '__ISSUES__'
+const ISSUE_LEVELS = ['WARNING', 'ERROR', 'CRITICAL'] as const
+
+/**
+ * 屏幕与「导出过滤结果」共用的**唯一**一处过滤条件构造。
+ *
+ * ⚠ 别在调用点各写一份。内审 F1 实证：早前这两处各有一份逐字相同的三元
+ * 表达式，于是「改一处忘另一处」有两个入口 —— 而这正是 P1-34 内审 F3
+ * 的母题（屏幕 5 条、导出全量）。合成一份之后，那类分叉**结构上不可能**。
+ *
+ * `level` 归一化尤其重要：`ISSUES` 是**前端哨兵值**，绝不能发给后端
+ * （后端精确匹配 → 0 行）。
+ */
+function buildLogQuery(opts: {
+  levelFilter: string
+  keyword: string
+  sessionFilter: string | null
+}): Record<string, string> {
+  const q: Record<string, string> = {}
+  const level =
+    opts.levelFilter === ISSUES
+      ? ISSUE_LEVELS.join(',')
+      : opts.levelFilter === 'ALL'
+        ? null
+        : opts.levelFilter
+  if (level) q.level = level
+  if (opts.keyword.trim()) q.keyword = opts.keyword.trim()
+  if (opts.sessionFilter) q.session_id = opts.sessionFilter
+  return q
+}
+
 const REFRESH_INTERVALS = [
   { value: '0', label: '手动' },
   { value: '5', label: '5秒' },
@@ -146,19 +179,16 @@ export function SystemLogViewer() {
     setLoading(true)
     setError(null)
     try {
-      const params: Record<string, any> = {
+      // P1-35「仅异常」：后端 `level` 是**精确相等**不是门槛，所以没有任何
+      // 单值能表达「WARNING 及以上」。解法是后端收**逗号集合**，一个请求
+      // 搞定 —— 不做前端并流：「导出过滤结果」是下载链接、天然合不了流，
+      // 前端并流会让屏幕与导出必然分叉（P1-34 内审 F3 的母题）。
+      const params = {
         filename: selectedFile,
         lines: maxLines,
+        ...buildLogQuery({ levelFilter, keyword, sessionFilter }),
       }
-      if (levelFilter !== 'ALL') {
-        params.level = levelFilter
-      }
-      if (keyword.trim()) {
-        params.keyword = keyword.trim()
-      }
-      if (sessionFilter) {
-        params.session_id = sessionFilter
-      }
+
       const res = await apiClient.get('/system-logs/tail', { params })
       setEntries(res.data.entries || [])
       setTotalRead(res.data.total_lines_read || 0)
@@ -243,6 +273,10 @@ export function SystemLogViewer() {
               onChange={setLevelFilter}
               data={[
                 { value: 'ALL', label: '全部' },
+                // 故障分诊的默认落点：WARNING 及以上一次看全。
+                // 单选 ERROR 会漏掉 WARNING，单选 WARNING 会漏掉 ERROR ——
+                // 后端 level 是精确相等，没有任何单档能给出「及以上」。
+                { value: ISSUES, label: '🚨 仅异常' },
                 { value: 'ERROR', label: '❌ ERROR' },
                 { value: 'WARNING', label: '⚠️ WARN' },
                 { value: 'INFO', label: 'ℹ️ INFO' },
@@ -302,10 +336,12 @@ export function SystemLogViewer() {
                 // 「只看这一次请求」之后，屏幕剩 5 条、导出却是全量 ——
                 // 这个分叉是本片自己造的，而后端 /export 本来就支持
                 // session_id（见 api/system_logs.py 的 export_filtered_logs）。
-                const params = new URLSearchParams()
-                if (levelFilter !== 'ALL') params.set('level', levelFilter)
-                if (keyword.trim()) params.set('keyword', keyword.trim())
-                if (sessionFilter) params.set('session_id', sessionFilter)
+                // ⚠ 跟屏幕**同一个**构造函数，不再各写一份 —— 那样才谈得上
+                // 「导出的就是屏幕上这些」。内审 F1：两份逐字相同的三元，
+                // 给「改一处忘另一处」留了两个入口。
+                const params = new URLSearchParams(
+                  buildLogQuery({ levelFilter, keyword, sessionFilter }),
+                )
                 const url = `${apiClient.defaults.baseURL}/system-logs/export/${selectedFile}?${params.toString()}`
                 window.open(url, '_blank')
               }}>
