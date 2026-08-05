@@ -2679,6 +2679,17 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 - `[discovered 2026-08-05 during P1-36, Codex #286 R2 P2 —— 前提已实证为真，判定为越界，本 PR 未做]` **`app.audit` 的请求汇总行归不到 `execution_id` 名下（P3）** —— `AuditMiddleware` 是 `BaseHTTPMiddleware`，它在 `call_next` 返回**之后**才打那行 `POST /...  → 200 (45ms)`；而 Starlette 把下游 endpoint 跑在**独立的子上下文**里，endpoint 里 `current_execution_id.set(...)` 设的值**回不到** middleware。所以按 `execution_id` 过滤时，发起执行 / 取消执行这几个请求的 HTTP 方法+状态码+耗时那一行是缺的（`session_id` 不受影响 —— 它由 middleware 自己在 `call_next` **之前**设）。**实证**（别重做）：最小 app + `AuditMiddleware`，endpoint 内 set `EXEC1234` 后同一请求打两行，捕获结果 `('app.probe', 'EXEC1234', ...)` / `('app.audit', '-', ...)` —— 一行带、一行不带，前提成立。**本 PR 未修的理由**：① ⑦ 判据「不改它，P1-36 那个可观察故障还在吗」答**不在了** —— R1 修完后执行的开始/过程/结束/取消都已在链上，缺的这行是同一事实的第二份记录，且**一跳可达**（case-runner 那行同时印着 `request_id` 与 `execution_id`，GUI 的「只看这一次请求」按钮就是这一跳）；② 三种修法**全属"加机制"**（最低优先级）：换 `request.state` 传值要改每个调用点，正是 P1-36 刻意避开的；把 ContextVar 从 `str` 换成可变盒子要动 `ContextFilter` 与全部 set 点；middleware 改 pure ASGI 是重写。⚠️ 同形态还波及 `commissioning` 的相位请求与 `request_cancel` 的取消请求。真要做时，先问「这行的价值是否值一次机制改动」。
 
+- `[discovered 2026-08-05 during 手动测试前的环境检查]` **⚠️ 日志爆量：7.6 秒写 20 万行、一次事故 24 GB —— UXM 排错误队列的循环停不下来（P1 候选）** —— 实测 `api-service/logs/` 已占 **41 GB**（`app.log` 13 GB + `scpi.log` 11 GB + 30 个滚动文件），磁盘已用 76%。**爆点定位**：`app.log` 首行 `2026-08-04T23:59:59.999` → 第 20 万行 `2026-08-05T00:00:07.604`，**7.6 秒 20 万行 ≈ 26,000 行/秒**，且这 20 万行**百分之百**是同一对（各 10 万）：
+  ```
+  TX: SYSTem:ERRor?
+  RX: -113,"Undefined header"
+  ```
+  语义 = 驱动在排 UXM 错误队列，仪器回「**`SYSTem:ERRor?` 这条命令我不认识**」（`-113` = Undefined header）→ 队列永远排不空 → 循环永远不终止。**两个 bug 叠在一起**：① 终止条件挂在"队列空了"上，而拿不认识的命令去问必然永远不空；② 该方言的错误查询命令形式可能就是错的（与 `[discovered 2026-08-03 …Uxm5GNRTestAppProfile]` 同源 —— 非 IRAT 方言用无前缀形式，`uxm_command_profiles.py:66` 的 `ERR = "SYSTem:ERRor?"` 是否适用于所有方言**未经手册确认**）。
+  **已知的一半**：`uxm_base_station.py:3053-3058` 那处排队循环**已有上界**（`for _ in range(limit)`，docstring 写着「原来是 `while True`，遇到一直吐错误的仪器会挂死」）—— 所以要么爆量来自**别的入口**（同文件 1338 行还有一个 `while True`，未核），要么上界是这次爆完之后才加的。**动手第一步是定位那 20 万行的实际调用栈，别假设就是 3058 那处。**
+  **轮转救不了**：`TimedRotatingFileHandler` 按天滚（30 个滚动文件在，机制是好的），一天之内爆多少都进同一个文件。真正的门是**同一条消息的速率上限 / 去重计数**（"same message x100000"），这正是 P1-35 留存判据的极端形态：20 万行同一句话，对分析系统/测试/AI 训练/故障排除**四不沾**。
+  **排序建议**：本条比 P1-37 更该先做 —— P1-37 是给日志加内容，本条是止血。⚠️ 修的时候连**两侧**一起看：`scpi.log` 同步写了 11 GB，说明同一事实落了两份文件。
+  ⚠️ **磁盘上那 41 GB 未清**（删日志不可逆，等用户拍板）。
+
 - `[discovered 2026-08-03 during 立项 review, Codex #276 R2]` **`Uxm5GNRTestAppProfile`（非 IRAT 方言）的命令形式是独立问题 —— 出路是查手册，不是现场探** —— #275 把 KPI reader 换成新命令字段，只给 IRAT 填了 `BSE:` 形式；5G_NR_Test 方言继承基类的 `None`，那批 KPI 现在整组读不到（有 warn-once 兜着，不静默）。⚠️ **不能靠现场探**：该方言用的是**无前缀**形式，而手册给的两个变体（`BSE:MEASure:NR5G:...` / `BSE:NR5G:MEASure:...`）**都带 `BSE:`** —— 现场去试无前缀拼写就是猜，正是 #275 整片在治的病。**正解**：像 2026-08-03 查 IRAT 那样，直接查手册 / NotebookLM 问 5G_NR_Test 方言（Test Application 名 `5G_NR_Test`）下这批命令的根前缀与完整形式；查得到就本地补齐，查不到就如实标"该方言 KPI 不可用"并让 warn-once 继续响。**本地片，不需要现场**。
 
 
