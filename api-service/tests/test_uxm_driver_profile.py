@@ -131,12 +131,27 @@ class TestSetCellConfigGracefulSkip:
         # ARFCN auto-fill: agent R6 F3 起 N78 fallback = EMQuest 基线 636666。
         assert any("BSE:CONFig:NR5G:CELL1:DL:ARFCN 636666" in w for w in written), written
 
-        # None of the unsupported-in-IRAT fields produced a write.
+        # ⚠ P1-33（2026-08-04）：`HARQ:` 与 `CSIRS:PORTs` **已按手册补进 IRAT**，
+        #   不再属于"本方言没有"那一档 —— 从禁发清单里移出。
+        #   移出后它们该照发，且值形态是手册要的**枚举 token**（下面单独断言）。
         for forbidden in ("DUPLex", "SCS", "MIMO:LAYers", "TDD:PATTern",
-                          "HARQ:", "CSIRS:PORTs", "RFSettings:DL:PORT",
+                          "RFSettings:DL:PORT",
                           "BTHRoughput:DL:TSTatistics:COUNt"):
             offending = [w for w in written if forbidden in w]
             assert offending == [], f"IRAT skipped command leaked: {offending}"
+
+        # ⭐ P1-33：MAC 吞吐量那批参数**不再由 set_cell_config 下发** ——
+        #   正门是 `configure_mac_throughput_test()`（`schemas/mimo_ota/config.py`
+        #   自己写着这件事）。这里曾是重复路径，且用的是旧的裸值形态：
+        #   命令补进 profile 后它立刻开始"发错值"，比原来"不发"更糟。
+        #   变异：把那段重复下发加回来 → 红。
+        for driven_elsewhere in ("TDDPATtern", "SCHeduling:QCONFig",
+                                 "RRESource:APOLicy", "IMCS:FIXed",
+                                 "PHY:DL:HARQ", "CSI:RESource"):
+            leaked = [w for w in written if driven_elsewhere in w]
+            assert leaked == [], (
+                f"set_cell_config 又在下发 MAC 吞吐量参数（正门是 "
+                f"configure_mac_throughput_test）: {leaked}")
 
     @pytest.mark.asyncio
     async def test_5g_profile_sends_all_optional_fields(self, driver_5g):
@@ -159,8 +174,17 @@ class TestSetCellConfigGracefulSkip:
         assert any("CONFig:NR5G:CELL0:DUPLex TDD" in w for w in written), written
         assert any("CONFig:NR5G:CELL0:SCS 30" in w for w in written), written
         assert any("CONFig:NR5G:CELL0:PHY:DL:MIMO:LAYers 4" in w for w in written), written
-        assert any("CONFig:NR5G:CELL0:TDD:PATTern DDDSU" in w for w in written), written
-        assert any("CONFig:NR5G:CELL0:HARQ:MaxTrans 4" in w for w in written), written
+        # ⚠ P1-33（2026-08-04）：`TDD:PATTern` / `HARQ:MaxTrans` 这两条
+        #   **本来就是编出来的** —— 逐条 grep 厂商手册原件，**0 命中**
+        #   （连 `SchedAlgoritm` 的拼写都是错的）。它们从没在真机上工作过：
+        #   IRAT 上是 `None`，这里则是发出去等 -113。
+        #   按「禁盲试」已置 `None`，所以本门不再断言它们被发出 ——
+        #   **断言反过来：编出来的命令一条都不许再发**。
+        for fabricated in ("TDD:PATTern", "HARQ:MaxTrans", "PDSCH:SchedAlgoritm",
+                           "PDSCH:AMC:ENABle", "CSIRS:PORTs",
+                           "BTHRoughput:DL:TSTatistics:COUNt"):
+            assert not any(fabricated in w for w in written), (
+                f"仍在发手册里不存在的编造命令: {fabricated}")
 
 
 class TestProfileSelectedByConfigHint:

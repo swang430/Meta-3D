@@ -813,9 +813,13 @@ class TestUxmScpiCompatibilitySequence:
         assert resp.status_code == 200
         body = resp.json()
         assert body["extra"]["profile"] == "LTE_NR_IRAT"
-        # IRAT profile has fewer commands than 5G_NR_Test (~32 vs ~76).
+        # ⚠ P1-33（2026-08-04）：**旧判据「IRAT 一定比 5G 少」不再成立** ——
+        #   按手册给 IRAT 补了 14 条 MAC 配置命令（TDD 六条 / APPLY / BWP PRB 查询），
+        #   同期 5G profile 那 11 条**本来是编的**（手册 0 命中）已置 `None`。
+        #   **去掉**这个大小断言，不换新魔数 —— 本门真正要守的是
+        #   「普查确实遍历到了当前方言的命令集」，方言名 + 非空即可。
         total = body["extra"]["total_probed"]
-        assert total < 50, f"expected pruned IRAT command set, got {total}"
+        assert total > 0, "普查一条都没遍历到"
         # All emitted steps should use the BSE: prefix and CELL1.
         non_bse = [s for s in body["steps"] if "CONFig:NR5G:CELL1" in s["label"] and "BSE:" not in s["label"]]
         assert non_bse == [], f"IRAT profile emitted non-BSE NR commands: {non_bse}"

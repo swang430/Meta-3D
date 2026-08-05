@@ -20,6 +20,7 @@ SCPI 子系统参考:
 
 import logging
 import asyncio
+import re
 from enum import Enum
 from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
@@ -53,6 +54,56 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# ── P1-33：值形态。全部取自厂商手册原件的 Range 字段，**不是编的**。
+#    旧的无前缀写法发的是裸值（`4` / `16` / `"5MS"` / `"ALL"`），
+#    手册要的是枚举 token（`N4` / `N16` / `MS5`）或整数 PRB 数。
+_TDD_PERIOD_TOKENS = {          # Enum，默认 MS5
+    "0.5MS": "MS0P5", "0.625MS": "MS0P625", "1MS": "MS1", "1.25MS": "MS1P25",
+    "2MS": "MS2", "2.5MS": "MS2P5", "3MS": "MS3", "4MS": "MS4",
+    "5MS": "MS5", "10MS": "MS10",
+}
+_HARQ_MAXTRANS_VALUES = (1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20, 24, 28)
+_HARQ_PROCESSES_VALUES = (1, 2, 4, 6, 8, 10, 12, 13, 14, 16, 32)
+_CSIRS_NPORTS_VALUES = (1, 2, 4, 8, 12, 16, 24, 32)
+_TDD_PERIOD_MS = {
+    "MS0P5": 0.5, "MS0P625": 0.625, "MS1": 1.0, "MS1P25": 1.25, "MS2": 2.0,
+    "MS2P5": 2.5, "MS3": 3.0, "MS4": 4.0, "MS5": 5.0, "MS10": 10.0,
+}
+
+
+def _slot_ms(scs_khz):
+    """NR 一个 slot 多少毫秒：15→1.0 / 30→0.5 / 60→0.25 / 120→0.125。
+    对不上表的 SCS 返回 None，由调用处 fail-loud（不猜）。"""
+    return {15: 1.0, 30: 0.5, 60: 0.25, 120: 0.125}.get(int(scs_khz or 0))
+
+
+def _enum_token(prefix, value, allowed):
+    """`4` → `N4` / `P4`；**不在手册枚举里就返回 None**（由调用处 fail-loud）。
+
+    ⚠ 不做"就近取一个"的兜底 —— 那是静默改测试条件。
+    """
+    return f"{prefix}{value}" if value in allowed else None
+
+
+def _tdd_slots_from_pattern(pattern):
+    """`"DDDSU"` → (DL 整槽数, UL 整槽数)。
+
+    ⚠ **数不出 S 槽里的 DL/UL 符号数** —— 那两个要显式给（手册默认 6 / 4）。
+      这正是本片立项时标的前置阻塞点。
+    ⚠ 只认 D/S/U 三种字符；出现别的返回 None 让调用处 fail-loud，不猜。
+    """
+    p = (pattern or "").strip().upper()
+    if not p or set(p) - set("DSU"):
+        return None
+    # ⚠ 六个数只能表达 **D…D [S] U…U** 这一种排布（手册：DLSLots 从周期窗口
+    #   左侧起算、ULSLots 从右侧起算）。只数个数会把 `DUS` 也放过 ——
+    #   翻出来等于 `DSU`，**仪器会接受、STATE 保持 ON，于是静默跑了另一个
+    #   pattern**（Codex #281 R2 P1）。所以排布不合规范式就拒。
+    if not re.fullmatch(r"D*S?U*", p):
+        return None
+    return p.count("D"), p.count("U")
+
+
 @dataclass(frozen=True)
 class MacThroughputConfigResult:
     """`configure_mac_throughput_test()` 的结果 —— **不是 bool**（P1-32）。
@@ -68,11 +119,24 @@ class MacThroughputConfigResult:
     skipped: Tuple[str, ...] = ()
     missing_mandatory: Tuple[str, ...] = ()
     error: Optional[str] = None
+    # P1-33：发出去了但**被仪器拒**（`SYST:ERR?` 逐组回读）。
+    #   与 `skipped`（profile 没定义）是两回事：这批是"我们发了、它不认"，
+    #   正是「IRAT 认不认这些手册命令」这个未知量的**实测答案**。
+    rejected: Tuple[str, ...] = ()
+    # P1-33：**手册里根本没有对应命令**的设置（如吞吐量统计窗口）。
+    #   既不是 profile 缺项、也不是被拒 —— 单列，报告里写明不受控。
+    no_equivalent: Tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
-        """全部**必要**命令都发了、且没出异常。可选命令缺席不影响 ok。"""
-        return not self.missing_mandatory and self.error is None
+        """全部**必要**命令都发了、**没被拒**、且没出异常。
+
+        可选命令缺席、以及手册无对应命令的设置，都不影响 `ok`。
+        ⚠ `rejected` 必须计入 —— 发出去被拒跟没发是一样的后果
+        （配置没生效），只是原因不同（P1-33）。
+        """
+        return (not self.missing_mandatory and not self.rejected
+                and self.error is None)
 
     def __bool__(self) -> bool:
         # 兼容旧的 `if await configure(...)` 布尔用法；但调用方**应当**看
@@ -345,7 +409,16 @@ class RealUxmDriver(BaseStationDriver):
                 f"supports a vendor alias)"
             )
             return None
-        return template.format(**fmt) if fmt else template
+        out = template.format(**fmt) if fmt else template
+        # ⚠ 零 fmt 时旧实现直接返回模板 —— 模板若含 `{cell}` 就把花括号
+        #   **原样发到线上**，还计进 applied、报 ok（内审 F8）。
+        #   跟 P1-32 刚堵上的空模板裂缝是同一条缝的另一半：视同未定义。
+        if "{" in out:
+            logger.info(
+                f"[UXM/{self._cmds.PROFILE_NAME}] {name} 模板仍含占位符 "
+                f"{out!r} —— 视同未定义，不发。")
+            return None
+        return out
 
     # ===================================================================
     # 1. 连接生命周期
@@ -1140,50 +1213,21 @@ class RealUxmDriver(BaseStationDriver):
                 if (q := self._cmd("RF_PORT_UL", cell=cell)) is not None:
                     self._write(f"{q} {config['rf_port_ul']}")
 
-            # ---- 12. TDD 时隙格式 ----
-            if "tdd_pattern" in config:
-                if (q := self._cmd("TDD_PATTERN", cell=cell)) is not None:
-                    self._write(f"{q} {config['tdd_pattern'].upper()}")
-            if "tdd_period" in config:
-                if (q := self._cmd("TDD_PERIOD", cell=cell)) is not None:
-                    self._write(f"{q} {config['tdd_period']}")
-
-            # ---- 13. PDSCH 调度算法 (Full Buffer) ----
-            if "sched_algo" in config:
-                bwp = config.get("bwp_id", self._bwp_id)
-                if (q := self._cmd("PDSCH_SCHED_ALGO", cell=cell, bwp=bwp)) is not None:
-                    self._write(f"{q} {config['sched_algo'].upper()}")
-
-            # ---- 14. AMC 开关 (关闭以固定 MCS) ----
-            if "enable_amc" in config:
-                bwp = config.get("bwp_id", self._bwp_id)
-                amc_val = "ON" if config["enable_amc"] else "OFF"
-                dl_amc = self._cmd("PDSCH_AMC_ENABLE", cell=cell, bwp=bwp)
-                ul_amc = self._cmd("PUSCH_AMC_ENABLE", cell=cell, bwp=bwp)
-                if dl_amc is not None:
-                    self._write(f"{dl_amc} {amc_val}")
-                if ul_amc is not None:
-                    self._write(f"{ul_amc} {amc_val}")
-                if dl_amc is not None or ul_amc is not None:
-                    logger.info(f"[UXM] AMC: {amc_val}")
-
-            # ---- 15. HARQ 配置 ----
-            if "harq_max_trans" in config:
-                if (q := self._cmd("HARQ_MAX_TRANS", cell=cell)) is not None:
-                    self._write(f"{q} {config['harq_max_trans']}")
-            if "harq_processes" in config:
-                if (q := self._cmd("HARQ_PROCESSES", cell=cell)) is not None:
-                    self._write(f"{q} {config['harq_processes']}")
-
-            # ---- 16. CSI-RS 端口数 (与 MIMO 层数对齐) ----
-            if "csi_rs_ports" in config:
-                if (q := self._cmd("CSIRS_PORTS", cell=cell)) is not None:
-                    self._write(f"{q} {config['csi_rs_ports']}")
-            elif "mimo_layers" in config:
-                # 自动推断: 1L→2ports, 2L→4ports, 4L→8ports
-                auto_ports = max(2, config["mimo_layers"] * 2)
-                if (q := self._cmd("CSIRS_PORTS", cell=cell)) is not None:
-                    self._write(f"{q} {auto_ports}")
+            # ---- 12-16. TDD / 调度 / AMC / HARQ / CSI-RS ----
+            # ⛔ P1-33（2026-08-05）：**整段删除**。这些参数的正门是
+            #    `configure_mac_throughput_test()` —— `schemas/mimo_ota/config.py`
+            #    自己就写着「tdd_pattern/tdd_period 不在这里，已由
+            #    configure_mac_throughput_test 驱动」。这里是**重复路径**。
+            #
+            #    ⚠️ 删它是因为 P1-33 差点造成一个**比原 bug 更糟**的回归：
+            #    这批命令在 IRAT 上原本是 `None`（一条不发，仪器用自洽默认）；
+            #    P1-33 按手册把它们补进 profile 后，**这条旧路径立刻开始用
+            #    旧的裸值形态发出去**（`FULLBUFFER` / `OFF` / `5MS` / `4`），
+            #    条条被拒或误配 —— 从"不发"变成"发错"。
+            #    爆炸半径 Y > X，违反 CLAUDE.md ⓪① 的契约。
+            #
+            #    值形态转换只留在 `configure_mac_throughput_test` 一处，
+            #    不在这里复制第二份（两份必然漂移）。
 
             # ---- 17. 统计窗口 (子帧数) ----
             if "stat_count" in config:
@@ -1691,12 +1735,71 @@ class RealUxmDriver(BaseStationDriver):
     #   可选 = 影响精度/置信区间，**不改量纲**。
     MAC_CFG_MANDATORY: Tuple[str, ...] = (
         "PDSCH_SCHED_ALGO", "PDSCH_AMC_ENABLE", "PUSCH_AMC_ENABLE",
-        "PDSCH_MCS", "PDSCH_RB_ALLOC", "TDD_PATTERN", "TDD_PERIOD",
+        "PDSCH_MCS", "PDSCH_RB_ALLOC",
+        # TDD：手册没有 pattern 字符串命令，是**六个数**（P1-33）
+        "TDD_PATTERN_STATE", "TDD_PERIOD",
+        "TDD_DL_SLOTS", "TDD_DL_SYMBOLS", "TDD_UL_SLOTS", "TDD_UL_SYMBOLS",
         "CSIRS_PORTS",
+        # 小区 ON 时不发 APPLY，上面全部只进缓存、不进协议栈（手册原文）
+        "QCONFIG_APPLY_ALL", "CONFIG_APPLY",
     )
     MAC_CFG_OPTIONAL: Tuple[str, ...] = (
-        "HARQ_MAX_TRANS", "HARQ_PROCESSES", "MEAS_TPUT_STAT_COUNT",
+        "HARQ_MAX_TRANS", "HARQ_PROCESSES",
     )
+    # ⛔ **已知在本仪器手册里没有对应命令**（P1-33 逐条 grep 手册原件确认）——
+    #    跟"profile 忘了定义"是两回事，所以单列一档：既不假装配上了，
+    #    也不当成 profile 缺项去让人补。结果里显式带出来，报告写明不受控。
+    MAC_CFG_NO_EQUIVALENT: Dict[str, str] = {
+        "MEAS_TPUT_STAT_COUNT":
+            "吞吐量统计窗口：手册里带 `BTHRoughput:…:LENGth` 的只有 "
+            "`LTE:<cell>:` / `NBIot:<cell>:` / `NR5G:SLINk:`（V2X 边链路）三种，"
+            "**普通 NR 小区没有这条命令** → 统计窗口不受控，stat_count 参数无处下发。",
+    }
+
+    def _read_tdd_scs(self, cell):
+        """读**仪器生效**的 TDD SCS（kHz）；读不到返回 None（不猜）。
+
+        手册：`…:SCHeduling:TDDPATtern:SUBCarrier:SPACing`，Enum `MU0..MU3`
+        —— μ 与 SCS 的关系是 15×2^μ。**TDD pattern 正是按这个 SCS 评估的**，
+        所以校验要打在它上面，而不是 TestCase 的请求值（标称端）。
+        """
+        q = self._cmd("TDD_SCS", cell=cell)
+        if not q:
+            return None
+        try:
+            raw = str(self._query(q + "?")).strip().upper()
+        except Exception as e:  # noqa: BLE001
+            logger.info(f"[UXM] 读生效 TDD SCS 失败（{e}）—— 不猜")
+            return None
+        m = re.fullmatch(r"MU([0-4])", raw)
+        if m:
+            return 15 * (2 ** int(m.group(1)))
+        return int(raw) if raw.isdigit() else None
+
+    def _resolve_dl_prb_count(self, rb_alloc, cell, bwp):
+        """`rb_alloc` → 手册要的**整数 PRB 数**；解析不了返回 None（不猜）。
+
+        `"ALL"`（全带宽）时**问仪器**本 BWP 有多少 PRB —— 而不是在代码里
+        敲一张 38.104 的带宽×SCS→PRB 表（那等于编数据，且会随带宽/SCS 漂）。
+        ⚠ 该 `?` 形式**手册未标明可查**，所以读不到是**预期内**的一种结果，
+          此时返回 None 让调用处 fail-loud，绝不退回默认值 273。
+        """
+        if isinstance(rb_alloc, int):
+            return rb_alloc
+        txt = str(rb_alloc or "").strip()
+        if txt.isdigit():
+            return int(txt)
+        if txt.upper() != "ALL":
+            return None
+        q = self._cmd("PHY_DL_BWP_NUM_PRBS", cell=cell, bwp=bwp)
+        if not q:
+            return None
+        try:
+            raw = str(self._query(q + "?")).strip()
+        except Exception as e:  # noqa: BLE001
+            logger.info(f"[UXM] 读本 BWP 的 PRB 数失败（{e}）—— 不猜")
+            return None
+        return int(raw) if raw.isdigit() else None
 
     async def configure_mac_throughput_test(
         self,
@@ -1710,6 +1813,10 @@ class RealUxmDriver(BaseStationDriver):
         harq_processes: int = 16,
         stat_count: int = 5000,
         cell: Optional[str] = None,
+        tdd_dl_symbols: int = 6,
+        tdd_ul_symbols: int = 4,
+        scs_khz: Optional[int] = None,
+        csi_rs_ports: Optional[int] = None,
     ) -> MacThroughputConfigResult:
         """
         配置 3GPP MIMO OTA MAC 层吞吐量测试所需的完整参数集。
@@ -1757,9 +1864,14 @@ class RealUxmDriver(BaseStationDriver):
         bwp = self._bwp_id
         applied: List[str] = []
         skipped: List[str] = []
+        rejected: List[str] = []
 
         def _emit(name: str, suffix: str, **fmt) -> None:
-            """发一条配置命令；方言没定义就记进 `skipped`，**不抛**。"""
+            """发一条配置命令；方言没定义就记进 `skipped`，**不抛**。
+
+            ⚠ Quick Config 那几条是**全局**的（模板里没有 `{cell}`/`{bwp}`），
+              所以 `fmt` 按模板实际需要的键给 —— 多给会 KeyError，少给同样会。
+            """
             tpl = self._cmd(name, **fmt)      # None → 已在 _cmd 里 INFO 记账
             if tpl is None:
                 skipped.append(name)
@@ -1786,34 +1898,201 @@ class RealUxmDriver(BaseStationDriver):
             #       有 M10b 变异守着这个顺序, 别挪回末尾。
             await self._enable_kpi_measurements(cell)
 
-            # 1. Full Buffer 调度
-            _emit("PDSCH_SCHED_ALGO", " FULLBUFFER", cell=cell, bwp=bwp)
+            # ⚠ 首组之前先把队列**基线**丢掉（内审 F3）——
+            #   不清的话，进函数前残留的错误（`set_cell_config` 刚跑完、
+            #   或 `_enable_kpi_measurements` 自己产生的）会全记到第一组
+            #   `PDSCH_SCHED_ALGO` 头上，于是本片要产出的「IRAT 认不认」
+            #   实测答案，第一条就是伪证，整轮还被 FAILED 掉。
+            #   同 `propsim_f64` 的既有做法：门只评估**本次写序列**的错误。
+            baseline_errs = self._drain_errors()
+            if baseline_errs:
+                logger.info(
+                    f"[UXM] 进 MAC 配置前队列有 {len(baseline_errs)} 条残留"
+                    f"（**不计入本次归属**）: {baseline_errs}")
 
-            # 2. AMC 开关
-            amc_val = "ON" if enable_amc else "OFF"
-            _emit("PDSCH_AMC_ENABLE", f" {amc_val}", cell=cell, bwp=bwp)
-            _emit("PUSCH_AMC_ENABLE", f" {amc_val}", cell=cell, bwp=bwp)
+            # ⚠ P1-33：值形态**全部取自手册**，跟旧的裸值写法完全不同。
+            #   每组发完查一次 `SYST:ERR?`，被拒的记名 —— 这就是
+            #   「IRAT 认不认这些手册命令」的实测答案，不靠推断。
+            def _group(label: str) -> None:
+                """一组发完，把仪器拒掉的记到**这一组**名下。"""
+                errs = self._drain_errors()
+                if errs:
+                    rejected.append(label)
+                    logger.warning(
+                        f"[UXM/{self._cmds.PROFILE_NAME}] {label} 被拒: {errs}")
 
-            # 3. 固定 MCS (当 AMC=OFF 时生效)
-            _emit("PDSCH_MCS", f" {mcs}", cell=cell, bwp=bwp)
+            # 1. Full Buffer 调度 —— 手册枚举是 FULL_TPUT，不是 "FULLBUFFER"
+            _emit("PDSCH_SCHED_ALGO", " FULL_TPUT")
+            _emit("PDSCH_MCS", f" {mcs}")
+            n_prb = self._resolve_dl_prb_count(rb_alloc, cell, bwp)
+            if n_prb is None:
+                skipped.append("PDSCH_RB_ALLOC")
+                logger.error(
+                    f"[UXM/{self._cmds.PROFILE_NAME}] PDSCH_RB_ALLOC 未下发 —— "
+                    f"rb_alloc={rb_alloc!r} 要按全带宽发 PRB 数，但**读不到**本 BWP "
+                    f"的 PRB 数。**不猜**（退回手册默认 273 会在窄带宽上超上限）。")
+            else:
+                _emit("PDSCH_RB_ALLOC", f" {n_prb}")
+            # ⭐ Quick Config 的三条输入参数发完，要用**它自己的** apply 落地。
+            #   手册：应用场景会把当前 scheduler 配置**完全抹掉并替换** ——
+            #   所以必须排在下面 slot 级 AMC **之前**（内审 F2）。
+            _emit("QCONFIG_APPLY_ALL", "")
+            _group("QuickConfig(场景/MCS/PRB)")
 
-            # 4. 全 RB 分配
-            _emit("PDSCH_RB_ALLOC", f" {rb_alloc}", cell=cell, bwp=bwp)
+            # 2. AMC —— 手册**不是开关**，是资源分配策略枚举：
+            #    FIXed = 固定资源/固定 MCS（= 关 AMC），CQI = 按 CQI 自适应。
+            _emit("PDSCH_AMC_ENABLE", " CQI" if enable_amc else " FIXed",
+                  cell=cell, bwp=bwp)
+            #    UL 侧走 `UL:IMCS:FIXed`，语义**反过来**：ON = 固定 MCS = 关 AMC。
+            #    ⚠ 措辞收窄（内审 F6）：手册对**这一条**标的是
+            #    `Type: Integer / Range: 0..272`，跟"收 ON/OFF"**自相矛盾**；
+            #    "不设 True 则固定 IMCS 不生效"那句是**邻近块**的描述。
+            #    所以 `ON` 是**按描述推断**，不是手册对该条的原文 ——
+            #    现场由 `SYST:ERR?` 定案。另有对称命令 `UL:RRESource:APOLicy`
+            #    未纳入（DL 走 APOLicy、UL 走 IMCS:FIXed 这个不对称已记现场待确认）。
+            _emit("PUSCH_AMC_ENABLE", " OFF" if enable_amc else " ON",
+                  cell=cell, bwp=bwp)
+            _group("AMC")
 
-            # 5. TDD 时隙格式
-            _emit("TDD_PATTERN", f" {tdd_pattern}", cell=cell)
-            _emit("TDD_PERIOD", f" {tdd_period}", cell=cell)
+            # 5. TDD —— 手册没有 pattern 字符串，是**六个数**
+            slots = _tdd_slots_from_pattern(tdd_pattern)
+            period_tok = _TDD_PERIOD_TOKENS.get(str(tdd_period).strip().upper())
+            # ⭐ SCS 一致性（Codex #281 P1）—— 手册把 **Subcarrier spacing of
+            #   DL and UL BW parts** 列为 `TDDPATtern:STATE` 的 Dependencies。
+            #   pattern 字符串的**含义本身依赖 SCS**：`DDDSU` 是 5 个 slot，
+            #   15kHz 下 = 5ms、30kHz 下 = **2.5ms**。仓库默认正是
+            #   `DDDSU` + `5MS` + `scs=30` —— 30kHz 的 5ms 周期有 10 个 slot，
+            #   于是变成「3 DL + 1 UL + **6 个 flexible**」：
+            #   **不会被拒，但测的是另一个配置**（DL 占比远低于操作员想要的）。
+            #   静默测错的量 > 显式失败，所以对不上就**不发**。
+            # ⭐ SCS 必须读**生效端**（Codex #281 R2 P1）——
+            #   入参 `scs_khz` 只是 TestCase 的**请求值**：IRAT 上 `CELL_SCS`
+            #   未定义（`set_cell_config` 只进缓存不下发），inherit 模式更是
+            #   整段跳过。仪器真在别的 SCS 上时，拿请求值算出的 slot 时长
+            #   会把错的组合判成"自洽"。
+            live_scs = self._read_tdd_scs(cell)
+            if live_scs is None:
+                eff_scs = None
+                scs_note = ("读不到仪器**生效**的 TDD SCS")
+            elif scs_khz is not None and int(scs_khz) != live_scs:
+                eff_scs = None
+                scs_note = (f"TestCase 请求 SCS={scs_khz}kHz，仪器**生效** "
+                            f"SCS={live_scs}kHz —— **两方不一致**，"
+                            f"不拿任一方去校验（多方一致性 fail-loud）")
+            else:
+                eff_scs = live_scs
+                scs_note = ""
+            slot_ms = _slot_ms(eff_scs)
+            n_slot = len(str(tdd_pattern or "").strip())
+            period_ms = _TDD_PERIOD_MS.get(period_tok or "")
+            tdd_mismatch = None
+            if slots is not None and period_tok is not None:
+                if slot_ms is None:
+                    tdd_mismatch = (f"{scs_note or f'无法识别 SCS（{eff_scs!r}）'}"
+                                    f" —— pattern 的含义依赖 SCS，**不校验就不发**")
+                elif abs(n_slot * slot_ms - period_ms) > 1e-9:
+                    tdd_mismatch = (
+                        f"pattern `{tdd_pattern}`（{n_slot} slot × {slot_ms}ms "
+                        f"@ {eff_scs}kHz(生效值) = **{n_slot * slot_ms}ms**）与 period "
+                        f"`{tdd_period}`（{period_ms}ms）**对不上** —— 照发不会被拒，"
+                        f"但 DL/UL 比例变成另一个配置，测的不是那个量")
+            if tdd_mismatch:
+                for n in ("TDD_PATTERN_STATE", "TDD_PERIOD", "TDD_DL_SLOTS",
+                          "TDD_DL_SYMBOLS", "TDD_UL_SLOTS", "TDD_UL_SYMBOLS"):
+                    skipped.append(n)
+                logger.error(f"[UXM/{self._cmds.PROFILE_NAME}] TDD 未下发 —— "
+                             f"{tdd_mismatch}。")
+            elif slots is None or period_tok is None:
+                for n in ("TDD_PATTERN_STATE", "TDD_PERIOD", "TDD_DL_SLOTS",
+                          "TDD_DL_SYMBOLS", "TDD_UL_SLOTS", "TDD_UL_SYMBOLS"):
+                    skipped.append(n)
+                logger.error(
+                    f"[UXM/{self._cmds.PROFILE_NAME}] TDD 未下发 —— "
+                    f"pattern={tdd_pattern!r}（只认 D/S/U）或 period={tdd_period!r}"
+                    f"（手册枚举 {sorted(_TDD_PERIOD_TOKENS)}）无法翻成手册形态。**不猜**。")
+            else:
+                dl_slots, ul_slots = slots
+                _emit("TDD_PERIOD", f" {period_tok}", cell=cell)
+                _emit("TDD_DL_SLOTS", f" {dl_slots}", cell=cell)
+                _emit("TDD_UL_SLOTS", f" {ul_slots}", cell=cell)
+                # S 槽的符号数 `DDDSU` 里没有 —— 由入参给（手册默认 6 / 4）
+                _emit("TDD_DL_SYMBOLS", f" {tdd_dl_symbols}", cell=cell)
+                _emit("TDD_UL_SYMBOLS", f" {tdd_ul_symbols}", cell=cell)
+                _emit("TDD_PATTERN_STATE", " ON", cell=cell)
+                _group("TDD")
+                # ⚠ 手册原文：pattern 在 enable 时才校验，**无效就不应用、
+                #   state 保持 OFF** —— 也就是说它**不产生 SCPI 错误**，
+                #   只是静默不生效（内审 F5）。所以必须回读，不能"写了就算配上"。
+                st_q = self._cmd("TDD_PATTERN_STATE", cell=cell)
+                if st_q:
+                    try:
+                        st = str(self._query(st_q + "?")).strip()
+                    except Exception:  # noqa: BLE001
+                        st = ""
+                    if not st:
+                        # ⚠ Codex #281 P1：读不到 ≠ 没问题。手册说无效组合
+                        #   **不报错**、只体现在 STATE 上 —— 回读是**唯一**能
+                        #   发现它的手段，这条手段不可用 = 等于没检查过。
+                        rejected.append("TDD(STATE 回读失败，无法确认是否生效)")
+                        logger.error(
+                            "[UXM] TDD STATE 回读不到 —— 而回读是发现"
+                            "「pattern 被静默判无效」的唯一手段，不能当没问题。")
+                    elif not st.upper().startswith(("1", "ON")):
+                        rejected.append("TDD(STATE 回读=%s，pattern 被判无效)" % st)
+                        logger.error(
+                            f"[UXM] TDD pattern 被仪器判为无效 —— 回读 STATE={st!r}。"
+                            f"手册：无效组合不应用且**不报错**。"
+                            f"检查 pattern({tdd_pattern}) / period({tdd_period}) / "
+                            f"SCS 是否自洽。")
 
-            # 6. HARQ
-            _emit("HARQ_MAX_TRANS", f" {harq_max_trans}", cell=cell)
-            _emit("HARQ_PROCESSES", f" {harq_processes}", cell=cell)
+            # 6. HARQ —— 手册是枚举 token（N4 / N16），不是裸整数
+            for name, val, allowed in (
+                ("HARQ_MAX_TRANS", harq_max_trans, _HARQ_MAXTRANS_VALUES),
+                ("HARQ_PROCESSES", harq_processes, _HARQ_PROCESSES_VALUES),
+            ):
+                tok = _enum_token("N", val, allowed)
+                if tok is None:
+                    skipped.append(name)
+                    logger.warning(
+                        f"[UXM/{self._cmds.PROFILE_NAME}] {name} 未下发 —— "
+                        f"{val} 不在手册枚举 {allowed} 里。**不就近取一个**"
+                        f"（那是静默改测试条件）。")
+                else:
+                    _emit(name, f" {tok}", cell=cell)
+            _group("HARQ")
 
-            # 7. CSI-RS 端口数 (1L→2ports, 2L→4ports, 4L→8ports)
-            csi_rs_ports = max(2, mimo_layers * 2)
-            _emit("CSIRS_PORTS", f" {csi_rs_ports}", cell=cell)
+            # 7. CSI-RS 端口数 —— 手册是 P1|P2|P4|... token（1L→2, 2L→4, 4L→8）
+            # ⚠ TestCase 的**显式** csi_rs_ports 优先 —— 端口数可以**故意**
+            #   大于层数，按层数推会把显式 8 端口静默降成 P4
+            #   （Codex #281 R2 P1：我删 set_cell_config 那段时把这个覆盖丢了）。
+            csi_rs_ports = (int(csi_rs_ports) if csi_rs_ports
+                            else max(2, mimo_layers * 2))
+            port_tok = _enum_token("P", csi_rs_ports, _CSIRS_NPORTS_VALUES)
+            if port_tok is None:
+                skipped.append("CSIRS_PORTS")
+                logger.warning(
+                    f"[UXM/{self._cmds.PROFILE_NAME}] CSIRS_PORTS 未下发 —— "
+                    f"{csi_rs_ports} 不在手册枚举 {_CSIRS_NPORTS_VALUES} 里。")
+            else:
+                _emit("CSIRS_PORTS", f" {port_tok}", cell=cell)
+                _group("CSIRS_PORTS")
 
-            # 8. 统计窗口
-            _emit("MEAS_TPUT_STAT_COUNT", f" {stat_count}", cell=cell)
+            # 8. 统计窗口 —— **手册里普通 NR 小区没有这条命令**（见类常量注释）
+            no_equivalent = tuple(self.MAC_CFG_NO_EQUIVALENT)
+            if no_equivalent:
+                logger.info(
+                    f"[UXM/{self._cmds.PROFILE_NAME}] 以下设置**手册无对应命令**，"
+                    f"未下发（不是 profile 缺项）: "
+                    + "; ".join(f"{k}: {v}" for k, v in
+                                self.MAC_CFG_NO_EQUIVALENT.items()))
+
+            # 9. ⭐ APPLY —— 手册：小区 ON 时不发它，上面全部只进缓存、
+            #    **不进协议栈**（"This is not needed if the Cell if Off"）。
+            #    调用链上游 `set_cell_config` 收尾恰好把小区恢复 ON。
+            # 通用 APPLY：把小区级缓存配置推进协议栈（跟上面 Quick Config
+            # 那条 apply 是**两件事**，都要发）
+            _emit("CONFIG_APPLY", "")
+            _group("CONFIG_APPLY")
 
             # 同步等待所有配置生效 —— 一条都没发出去时没必要等
             if applied:
@@ -1822,7 +2101,8 @@ class RealUxmDriver(BaseStationDriver):
             missing = tuple(n for n in self.MAC_CFG_MANDATORY if n in skipped)
             result = MacThroughputConfigResult(
                 applied=tuple(applied), skipped=tuple(skipped),
-                missing_mandatory=missing,
+                missing_mandatory=missing, rejected=tuple(rejected),
+                no_equivalent=tuple(self.MAC_CFG_NO_EQUIVALENT),
             )
             if missing:
                 # ⚠ **不静默** —— 缺任一必要命令，测出来的就不是那个量。
@@ -1847,13 +2127,19 @@ class RealUxmDriver(BaseStationDriver):
                 #   而本函数**不发 APPLY**、且调用链上游 `set_cell_config`
                 #   收尾会把小区恢复 ON。补 APPLY 是 P1-33 的显式前置，本片不做。
                 logger.info(
-                    f"[UXM] MAC throughput commands sent (**not** confirmed applied): "
-                    f"Full Buffer ON, AMC {amc_val}, MCS={mcs}, RB={rb_alloc}, "
-                    f"TDD={tdd_pattern}/{tdd_period}, "
+                    f"[UXM] MAC throughput commands sent "
+                    f"(**not** confirmed applied): "
+                    f"scenario=FULL_TPUT, AMC={'CQI' if enable_amc else 'FIXed'}, "
+                    f"MCS={mcs}, RB={rb_alloc}, "
+                    f"TDD={tdd_pattern}/{tdd_period}"
+                    f"(S 槽 {tdd_dl_symbols}DL/{tdd_ul_symbols}UL), "
                     f"HARQ={harq_max_trans}x/{harq_processes}proc, "
-                    f"CSI-RS={csi_rs_ports}ports, stat={stat_count}subframes"
-                    + (f"（可选命令跳过 {len(skipped)} 条: "
-                       f"{', '.join(skipped)}）" if skipped else "")
+                    f"CSI-RS={csi_rs_ports}ports；已发 {len(applied)} 条"
+                    + (f"，跳过 {len(skipped)} 条: {', '.join(skipped)}"
+                       if skipped else "")
+                    + (f"；⚠ 手册无对应命令未发: {', '.join(self.MAC_CFG_NO_EQUIVALENT)}"
+                       f"（stat_count={stat_count} 无处下发）"
+                       if self.MAC_CFG_NO_EQUIVALENT else "")
                 )
             return result
 
@@ -1874,6 +2160,8 @@ class RealUxmDriver(BaseStationDriver):
                 applied=tuple(applied), skipped=tuple(skipped),
                 missing_mandatory=tuple(
                     n for n in self.MAC_CFG_MANDATORY if n in skipped),
+                rejected=tuple(rejected),
+                no_equivalent=tuple(self.MAC_CFG_NO_EQUIVALENT),
                 error=f"{type(e).__name__}: {e}",
             )
 
@@ -2756,11 +3044,21 @@ class RealUxmDriver(BaseStationDriver):
         # Unreachable.
         return ""
 
-    def _check_errors(self) -> None:
-        """检查并清除错误队列"""
-        while True:
+    def _drain_errors(self, limit: int = 16) -> List[str]:
+        """排空错误队列并**返回**取到的真错误（P1-33）。
+
+        ⚠ 换源自 `_check_errors()` —— 那个只 log 不返回，错误被吞掉，
+          调用方没法把它**归属到产生它的那条命令**上。而 P1-33 要答的正是
+          「哪几条被 IRAT 拒了」。
+        ⚠ 加上界：原来是 `while True`，遇到一直吐错误的仪器会挂死。
+          撞上界要**说出来**，不能悄悄返回一串看着挺全的错误。
+        """
+        out: List[str] = []
+        for _ in range(limit):
             err = self._query(self._cmds.ERR).strip()
             if err.startswith("0,") or err.startswith("+0,"):
-                break
-            logger.warning(f"[UXM] Instrument error: {err}")
+                return out
+            out.append(err)
+        out.append(f"<队列未排空: 已读 {limit} 条仍未见 No error>")
+        return out
 

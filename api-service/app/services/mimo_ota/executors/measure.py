@@ -235,6 +235,18 @@ class MeasureExecutor(IStepExecutor):
             return None
         missing = tuple(getattr(mac_cfg, "missing_mandatory", ()) or ())
         err = getattr(mac_cfg, "error", None)
+        # ⚠ 内审 F4：`rejected`（发出去被仪器拒）此前没有分支 ——
+        #   落到 else 里被贴上「驱动报告配置失败：（无详情）」，
+        #   而"哪几组被拒"正是 P1-33 要产出的**现场实测答案**。
+        rejected = tuple(getattr(mac_cfg, "rejected", ()) or ())
+        if rejected and not missing and not err:
+            return (
+                f"P1-33: 3GPP MAC 吞吐量配置**被仪器拒了** {len(rejected)} 组: "
+                f"{', '.join(rejected)}。命令形式取自厂商手册，但该 Test App "
+                f"是否支持**本来就是本片要现场问的** —— 这就是答案。"
+                f"把这份清单填回 roadmap P1-33，再决定换哪条命令形式。"
+                "配置未受控时测得的吞吐量不是 3GPP MAC 层吞吐量结果，**不能继续测**。"
+            )
         # ⚠ **`error` 优先于 `missing`**（Codex #279 P2）—— 传输层炸了却报
         #   "profile 未定义"，会把操作员指向 P1-33 补命令，而真正要修的是
         #   VISA 连接。两者可以同时成立，所以两段都要说，但**先说真凶**。
@@ -451,6 +463,11 @@ class MeasureExecutor(IStepExecutor):
                     harq_max_trans=config.harq_max_trans,
                     harq_processes=config.harq_processes,
                     stat_count=config.stat_count,
+                    # ⭐ SCS 必须传 —— TDD pattern 的含义依赖它（手册把 SCS
+                    #   列为 TDDPATtern:STATE 的 Dependencies）。不传则拒发 TDD 组。
+                    scs_khz=pcell.subcarrier_spacing_khz,
+                    # TestCase 的**显式** CSI-RS 端口数优先（可故意 > 层数）
+                    csi_rs_ports=getattr(config, 'csi_rs_ports', None),
                 )
                 # ⚠ 判定收窄进 `_mac_config_blocker`（内审 F3）—— 内嵌时
                 #   只能靠源码文本判，`or`→`and` 那种变异在 138 个用例下全绿。

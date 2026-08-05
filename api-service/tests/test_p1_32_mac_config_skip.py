@@ -47,9 +47,39 @@ def _drv(profile):
     return d
 
 
-def _run(profile, **kw):
+def _all_defined():
+    """全定义那一侧 —— P1-33 之后**就是 IRAT 本身**（手册形式已补齐）。"""
+    return UxmLteNrIratProfile
+
+
+def _none_defined():
+    """全缺那一侧 —— 合成 profile，把必要项全抹掉。
+
+    ⚠ P1-33 前这里用的是真 profile（IRAT=全缺 / 5G=全有）。现在两者都变了：
+      IRAT 补齐了手册形式，5G 那 11 条**本来就是编的**（手册 0 命中）已置 None。
+      拿生产 profile 当"形态夹具"本来就不稳 —— 改用合成的。
+    """
+    return type("_NoneDefined", (UxmLteNrIratProfile,),
+                {n: None for n in (RealUxmDriver.MAC_CFG_MANDATORY
+                                   + RealUxmDriver.MAC_CFG_OPTIONAL)})
+
+
+def _run(profile, responses=None, **kw):
     d = _drv(profile)
-    writes = _stub_io(d, {"*OPC?": "1"})
+    # `"ALL"` 会去问本 BWP 的 PRB 数（不敲 38.104 表）—— 桩上，
+    # 否则走进"读不到就不猜"的分支，测的就不是本门要测的东西了。
+    resp = {"*OPC?": "1", "NUM:PRBS": "273", "SYSTem:ERRor": '0,"No error"',
+            "SYST:ERR": '0,"No error"',
+            # TDD STATE 回读 —— 不桩则走「回读失败」分支（Codex #281 P1）
+            "TDDPATtern:STATE": "1",
+            # 生效端 SCS（MU0=15kHz）—— 校验打在它上面，不是 TestCase 请求值
+            "TDDPATtern:SUBCarrier:SPACing": "MU0"}
+    resp.update(responses or {})
+    # ⚠ TDD 现在要校验 SCS 一致性（Codex #281 P1）——
+    #   `DDDSU`(5 slot) + `5MS` 只在 **15kHz** 下自洽（5×1.0ms=5ms）。
+    #   夹具不传就走"不校验就不发"，测的就不是本门要测的东西了。
+    kw.setdefault("scs_khz", 15)
+    writes = _stub_io(d, resp)
     res = asyncio.run(d.configure_mac_throughput_test(**kw))
     return res, writes
 
@@ -65,7 +95,7 @@ class TestGrading:
 
         真值取自 5G_NR 方言（11 条全定义）下 **实际发出去** 的命令名。
         """
-        res, _ = _run(Uxm5GNRTestAppProfile, mimo_layers=2)
+        res, _ = _run(_all_defined(), mimo_layers=2)
         emitted = set(res.applied) | set(res.skipped)
         graded = set(RealUxmDriver.MAC_CFG_MANDATORY) | set(
             RealUxmDriver.MAC_CFG_OPTIONAL)
@@ -88,13 +118,19 @@ class TestGrading:
             "PUSCH_AMC_ENABLE",
             "PDSCH_MCS",            # 与 AMC=OFF 共同定义工作点
             "PDSCH_RB_ALLOC",       # RB 不满 → 吞吐随分配缩放
-            "TDD_PATTERN",          # DL/UL 比例变 → 绝对值不可比
-            "TDD_PERIOD",
+            # TDD：手册没有 pattern 字符串命令，是**六个数**（P1-33）
+            "TDD_PATTERN_STATE", "TDD_PERIOD",
+            "TDD_DL_SLOTS", "TDD_DL_SYMBOLS", "TDD_UL_SLOTS", "TDD_UL_SYMBOLS",
             "CSIRS_PORTS",          # 端口不匹配 → 跑不到目标层数
+            # 两条 apply 是**两件事**（内审 F2）：Quick Config 有自己的 apply，
+            # 通用 APPLY 管的是把小区缓存配置推进协议栈。
+            "QCONFIG_APPLY_ALL", "CONFIG_APPLY",
         }
         assert set(RealUxmDriver.MAC_CFG_OPTIONAL) == {
-            "HARQ_MAX_TRANS", "HARQ_PROCESSES", "MEAS_TPUT_STAT_COUNT",
+            "HARQ_MAX_TRANS", "HARQ_PROCESSES",
         }
+        # ⛔ 手册里没有对应命令的，单列一档 —— 既不是 profile 缺项也不是被拒
+        assert set(RealUxmDriver.MAC_CFG_NO_EQUIVALENT) == {"MEAS_TPUT_STAT_COUNT"}
 
     def test_mandatory_and_optional_do_not_overlap(self):
         assert not (set(RealUxmDriver.MAC_CFG_MANDATORY)
@@ -110,26 +146,26 @@ class TestIratAllMissing:
         """⭐ 上一版在第一条 `.format()` 上抛 AttributeError，
         被整段 `except` 吞成 `return False`。变异：改回 `self._cmds.X.format`
         → 红。"""
-        res, _ = _run(UxmLteNrIratProfile, mimo_layers=2)
+        res, _ = _run(_none_defined(), mimo_layers=2)
         assert isinstance(res, MacThroughputConfigResult)
         assert res.error is None, f"不该有异常，实际: {res.error}"
 
     def test_reports_all_eight_mandatory_missing(self):
-        res, _ = _run(UxmLteNrIratProfile, mimo_layers=2)
+        res, _ = _run(_none_defined(), mimo_layers=2)
         assert set(res.missing_mandatory) == set(RealUxmDriver.MAC_CFG_MANDATORY)
-        assert len(res.skipped) == 11
+        assert len(res.skipped) >= len(RealUxmDriver.MAC_CFG_MANDATORY)
         assert res.ok is False and bool(res) is False
 
     def test_applied_is_empty_not_optimistic(self):
         """⭐ 「半生效配置不许报 applied」—— 一条都没发就不能列进 applied。"""
-        res, _ = _run(UxmLteNrIratProfile, mimo_layers=2)
+        res, _ = _run(_none_defined(), mimo_layers=2)
         assert res.applied == ()
 
     def test_kpi_prereqs_still_sent_first(self):
         """⭐ 生效端 —— 11 条全跳过，**KPI 前置仍必须发出去**（#275，第 0 步）。
         变异：把 `_enable_kpi_measurements` 挪到 8 组之后 → 本条仍绿，
         但 `test_uxm_kpi_readback.py` 的 M10b 会红；两边合起来才锁死顺序。"""
-        _, writes = _run(UxmLteNrIratProfile, mimo_layers=2)
+        _, writes = _run(_none_defined(), mimo_layers=2)
         joined = " | ".join(writes)
         assert "BTHRoughput:STATe ON" in joined
         assert "CSI:STARt" in joined
@@ -137,7 +173,7 @@ class TestIratAllMissing:
 
     def test_no_mac_config_command_is_sent(self):
         """跳过就是**真的没发**，不是发了个残缺串。"""
-        _, writes = _run(UxmLteNrIratProfile, mimo_layers=2)
+        _, writes = _run(_none_defined(), mimo_layers=2)
         for frag in ("FULLBUFFER", "PDSCh:MCS", "TDD", "HARQ", "CSIRs"):
             assert not any(frag in w and "MEASure" not in w for w in writes), (
                 f"跳过的命令仍被发出: {frag}")
@@ -165,32 +201,48 @@ class Test5gAllPresent:
         drv_logger.propagate = True
 
         with caplog.at_level(logging.INFO, logger="app.hal.uxm_base_station"):
-            _run(Uxm5GNRTestAppProfile, mimo_layers=2)
+            _run(_all_defined(), mimo_layers=2)
         msgs = " | ".join(r.getMessage() for r in caplog.records)
         assert "commands sent" in msgs, "没说清只是「已发出」"
         assert "test configured" not in msgs, (
             "日志宣称「configured」—— 没发 APPLY 就说生效，是替仪器宣布")
 
     def test_all_eleven_applied_and_ok(self):
-        res, _ = _run(Uxm5GNRTestAppProfile, mimo_layers=2)
+        res, _ = _run(_all_defined(), mimo_layers=2)
         assert res.missing_mandatory == ()
         assert res.skipped == ()
-        assert len(res.applied) == 11
+        assert len(res.applied) == 16   # 14 必要 + 2 可选（TDD 六条 + 两条 apply）
         assert res.ok is True and bool(res) is True
 
     def test_commands_actually_reach_the_wire(self):
         """⭐ 生效端门 —— 断言**真发出去了**，不是只看返回值好看。"""
-        _, writes = _run(Uxm5GNRTestAppProfile, mimo_layers=2, mcs=28,
+        _, writes = _run(_all_defined(), mimo_layers=2, mcs=28,
                          enable_amc=False)
         # ⚠ 断言钉在**整串**上 —— `"28" in joined` 会被 `128`/`280` 喂绿，
         #   `" OFF" in joined` 任何带 OFF 的命令都算数（内审 F10）。
         #   同文件上面刚骂过 `"STOP" in detail` 那个形态，这里自己又犯了。
-        amc = Uxm5GNRTestAppProfile.PDSCH_AMC_ENABLE.format(cell="CELL0", bwp="BWP0")
-        mcs = Uxm5GNRTestAppProfile.PDSCH_MCS.format(cell="CELL0", bwp="BWP0")
-        sched = Uxm5GNRTestAppProfile.PDSCH_SCHED_ALGO.format(cell="CELL0", bwp="BWP0")
-        assert f"{sched} FULLBUFFER" in writes, "Full Buffer 没发 → 测的是打流能力"
-        assert f"{amc} OFF" in writes, "AMC 没关 → 测的是 UXM 调度器"
-        assert f"{mcs} 28" in writes, "固定 MCS 没发"
+        # ⚠ P1-33：值形态**全变了**（逐条手册核实过）
+        P = _all_defined()
+        c = {"cell": "CELL0", "bwp": "BWP0"}
+        assert f"{P.PDSCH_SCHED_ALGO} FULL_TPUT" in writes, (
+            "Full Buffer 没发 —— 手册枚举是 FULL_TPUT，不是 FULLBUFFER")
+        assert f"{P.PDSCH_AMC_ENABLE.format(**c)} FIXed" in writes, (
+            "关 AMC 要发资源分配策略 FIXed —— 它**不是**开关命令")
+        assert f"{P.PUSCH_AMC_ENABLE.format(**c)} ON" in writes, (
+            "UL 固定 MCS 开关语义反过来：ON = 固定 MCS = 关 AMC（手册原文）")
+        assert f"{P.PDSCH_MCS} 28" in writes, "固定 MCS 没发"
+        assert f"{P.PDSCH_RB_ALLOC} 273" in writes, '"ALL" 没换算成 PRB 整数'
+        assert f"{P.TDD_PERIOD.format(cell='CELL0')} MS5" in writes, '"5MS"→MS5 没转'
+        assert f"{P.TDD_DL_SLOTS.format(cell='CELL0')} 3" in writes, "DDDSU 的 3 个 D"
+        assert f"{P.TDD_UL_SLOTS.format(cell='CELL0')} 1" in writes, "DDDSU 的 1 个 U"
+        assert f"{P.TDD_DL_SYMBOLS.format(cell='CELL0')} 6" in writes, "S 槽 DL 符号数"
+        assert f"{P.HARQ_MAX_TRANS.format(cell='CELL0')} N4" in writes, "4→N4 没转"
+        assert f"{P.HARQ_PROCESSES.format(cell='CELL0')} N16" in writes, "16→N16 没转"
+        assert f"{P.CSIRS_PORTS.format(cell='CELL0')} P4" in writes, "4→P4 没转"
+        assert P.QCONFIG_APPLY_ALL in " | ".join(writes), (
+            "没发 Quick Config 自己的 apply —— 场景/MCS/PRB 只是暂存值")
+        assert P.CONFIG_APPLY in " | ".join(writes), (
+            "没发通用 APPLY —— 小区缓存配置不进协议栈")
 
 
 # ── 门④ 部分缺失：必要 vs 可选要分开 ──────────────────────────
@@ -198,7 +250,7 @@ class Test5gAllPresent:
 class TestPartialProfiles:
     def test_missing_optional_only_still_ok(self):
         """可选命令缺席**不该**让整件事失败 —— 它只影响精度，不改量纲。"""
-        class _NoHarq(Uxm5GNRTestAppProfile):
+        class _NoHarq(_all_defined()):
             HARQ_MAX_TRANS = None
             HARQ_PROCESSES = None
 
@@ -210,13 +262,13 @@ class TestPartialProfiles:
     def test_missing_one_mandatory_is_enough_to_fail(self):
         """⭐ 缺**一条**必要就够了 —— 不需要 11 条全缺。
         变异：把判据写成「全缺才算失败」→ 红。"""
-        class _NoAmc(Uxm5GNRTestAppProfile):
+        class _NoAmc(_all_defined()):
             PDSCH_AMC_ENABLE = None
 
         res, _ = _run(_NoAmc, mimo_layers=2)
         assert res.missing_mandatory == ("PDSCH_AMC_ENABLE",)
         assert res.ok is False
-        assert len(res.applied) == 10, "其余 10 条仍该照发（graceful-skip 不是全停）"
+        assert len(res.applied) == 15, "其余 15 条仍该照发（graceful-skip 不是全停）"
 
 
 class TestEmptyTemplateIsNotTreatedAsDefined:
@@ -225,16 +277,16 @@ class TestEmptyTemplateIsNotTreatedAsDefined:
     本片把 11 条新接进 `_cmd`，这条缝的爆炸半径是被本片扩大的。"""
 
     def test_blank_template_counts_as_missing_not_sent(self):
-        class _Blank(Uxm5GNRTestAppProfile):
-            TDD_PATTERN = ""
+        class _Blank(_all_defined()):
+            TDD_DL_SLOTS = ""
             CSIRS_PORTS = ""
 
         res, writes = _run(_Blank, mimo_layers=2)
-        assert "TDD_PATTERN" in res.missing_mandatory
+        assert "TDD_DL_SLOTS" in res.missing_mandatory
         assert "CSIRS_PORTS" in res.missing_mandatory
         assert res.ok is False
         for w in writes:
-            assert w.strip() not in ("DDDSU", "4"), f"发出了残缺串: {w!r}"
+            assert w.strip() not in ("3", "P4"), f"发出了残缺串: {w!r}"
 
 
 class TestExceptionPathDoesNotLie:
@@ -246,7 +298,7 @@ class TestExceptionPathDoesNotLie:
     """
 
     def test_mid_way_write_failure_is_reported_not_swallowed(self):
-        d = _drv(Uxm5GNRTestAppProfile)
+        d = _drv(_all_defined())
         sent: list[str] = []
 
         def _boom(cmd, **kw):
