@@ -168,6 +168,13 @@ def launch_test_case_execution(db, test_case_id: UUID) -> TestExecution:
     db.commit()
     db.refresh(execution)
 
+    # P1-36（Codex #286 R1）：**请求侧**也要设。
+    # 早前只在后台任务 `_run_case` 里设 —— 于是下面那条「开始执行」是在
+    # 请求上下文里打的，`execution_id` 为 `-`；按返回的 id 过滤日志会**漏掉
+    # 这次执行的起点**（生命周期记录反而不在链上）。
+    # ⚠ 必须在 `create_task` **之前** —— 子任务继承的是创建那一刻的上下文。
+    current_execution_id.set(str(execution.id))
+
     task = asyncio.get_running_loop().create_task(_run_case(execution.id))
     key = str(execution.id)
     _RUNNING_TASKS[key] = task
@@ -211,6 +218,9 @@ def request_cancel(db, execution_id: UUID) -> bool:
     execution.config = cfg
     flag_modified(execution, "config")
     db.commit()
+    # P1-36（Codex #286 R1）：取消也是这次执行的生命周期事件，
+    # 不设的话「谁在什么时候取消的」不在这条链上。
+    current_execution_id.set(str(execution_id))
     logger.info("[case-runner] execution %s 被请求取消 (相位间生效)", execution_id)
     return True
 

@@ -532,3 +532,46 @@ def test_the_two_isolate_actions_are_symmetric():
                 f"{name} 里出现了 {other} —— 两个 isolate 策略不对称，"
                 f"「执行 A ∩ 请求 B」只能沿一个方向到达，而两个徽章都显示着"
             )
+
+
+def test_request_side_lifecycle_logs_are_on_the_chain():
+    """**行为门（Codex #286 R1）**：执行的**起点**和**取消**也得在链上。
+
+    早前只在后台任务 `_run_case` 里设 —— 而 `launch_test_case_execution`
+    的「开始执行」和 `request_cancel` 的「被请求取消」都打在**请求上下文**
+    里，`execution_id` 为 `-`。于是按返回的 id 过滤日志，**恰恰漏掉这次
+    执行的生命周期记录**。
+
+    ⚠ `launch_...` 那处必须在 `create_task` **之前** —— 子任务继承的是
+      创建那一刻的上下文（先 create 再 set，子任务拿不到）。
+
+    变异：把任一处 set 删掉、或把 launch 那处挪到 create_task 之后 → 本门红。
+    """
+    src = _src("app/services/test_case_runner.py")
+
+    # ⚠ 用 ast 精确取函数体，别用全文 rindex：`current_execution_id.set(
+    #   str(execution_id))` 这个字符串在 `_run_case` 里**也有一份**，
+    #   rindex 会找到那处（第一版就是这么错的：断言 12993 < 7362）。
+    fns = {}
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            fns[node.name] = ast.get_source_segment(src, node)
+
+    # ① 取消侧：set 必须在那条日志之前
+    body = fns.get("request_cancel")
+    assert body, "找不到 request_cancel —— 本门失效"
+    i_set = body.index("current_execution_id.set(")
+    i_log = body.index('"[case-runner] execution %s 被请求取消')
+    assert i_set < i_log, "取消的 set 排在那条日志之后 —— 这行仍会归不了属"
+
+    # ② 请求侧：set 必须在 create_task 之前（子任务继承创建那一刻的上下文）
+    body2 = fns.get("launch_test_case_execution")
+    assert body2, "找不到 launch_test_case_execution —— 本门失效"
+    i_set2 = body2.index("current_execution_id.set(")
+    assert i_set2 < body2.index("create_task(_run_case("), (
+        "请求侧的 set 排在 create_task 之后 —— 子任务继承的是创建那一刻的"
+        "上下文，设晚了后台那条链会拿不到"
+    )
+    assert i_set2 < body2.index('"[case-runner] 用例 %s (%s) 开始执行'), (
+        "「开始执行」这条日志在 set 之前 —— 执行的起点不在链上"
+    )
