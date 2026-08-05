@@ -278,7 +278,7 @@ unblocked) BEFORE starting any new P1.
 | 2026-08-04 | [#279](https://github.com/swang430/Meta-3D/pull/279) | ✅ 全覆盖 | —（R1 唯一一条 P2 修完后 R2 在 `7f49414` 上 clean，而 `7f49414` 就是合并时的 HEAD）| — | 1 | ✅ 无需处置 |
 | 2026-08-04 | [#280](https://github.com/swang430/Meta-3D/pull/280) | ⚠️ 有缺口 | **修 R3 那条 P2 的 commit 自己**（docs 一段）—— R1 `1d3e762` / R2 `7c28ddb` / R3 `a5a6bab` 都过了审，这次修复没有 | 用户授权破例走到 R3（超轮次上限）；R1/R2/R3 三轮各 1 条 P2，**全是同一母题的不同镜像站点**（表漏本 PR → Discovered 源条目 stale → P1-32 条目本体 stale）。R3 后按母题全量扫，确认无第四处 | 1 | ✅ 无需处置 —— ⚠️ 与 [#278](https://github.com/swang430/Meta-3D/pull/278) R1 **同一条**：「每个 PR 都记一行、含本 PR」我一个 PR 之后又漏了 |
 | 2026-08-05 | [#281](https://github.com/swang430/Meta-3D/pull/281) | ⚠️ 有缺口 | `a72ea7a` —— **R2 三条 P1 的修复**（TDD 校验改读**实时** SCS / pattern 排布可编码性 `D*S?U*` / CSI-RS 显式端口不被推导覆盖）及配套的门与变异 | 轮次上限=2 已到，交回用户后拍板 merge。两轮走势 **2 P1 → 3 P1**（**没有收敛**）—— 我在交回时明说了「再审一轮大概率还有」，这行如实记着它 | 2 | ⬜ 未处置 —— 下次动 `uxm_base_station.py` 的 MAC 配置段或 `executors/measure.py` 时**优先补审** |
-| 2026-08-05 | [#282](https://github.com/swang430/Meta-3D/pull/282) | <!--282-coverage-->待填（合并前回填） | <!--282-gap-->待填 | P1-34 本片；按 [#278](https://github.com/swang430/Meta-3D/pull/278) R1 的教训**开片即建行**，不等合并才想起来 | 待填 | ⬜ |
+| 2026-08-05 | [#282](https://github.com/swang430/Meta-3D/pull/282) | <!--282-coverage-->✅ 全覆盖 | <!--282-gap-->—（R3 在 `bd43c8d` 上 clean，而 `bd43c8d` 就是合并时的代码 HEAD）**唯一没覆盖的是回填本行这两格的 docs commit 自己** —— 与 [#278](https://github.com/swang430/Meta-3D/pull/278) 同一个无穷递归，按那次的拍板就此收口 | 用户授权破例走到 R3（超轮次上限=2）。三轮走势 **1 P2 → 1 P2 → clean**，且**每轮那条 P2 都是本片自己在治的母题在新代码上复发**（R1 id 太短会静默合并两条链／R2 按钮名叫「只看这一次请求」实际给的是交集）—— 不是外部挑刺，是我自己没收敛。R3 clean 才算真收敛 | 1 | ✅ 无需处置 |
 
 ### 📉 更值得看的信号：第一轮 findings 数
 
