@@ -29,7 +29,11 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from app.core.audit_middleware import EXCLUDED_PATHS, AuditMiddleware
+from app.core.audit_middleware import (
+    EXCLUDED_PATHS,
+    REQUEST_ID_HEX_LEN,
+    AuditMiddleware,
+)
 from app.core.logging_config import ContextFilter
 
 from .test_rule_gates import _REPO_ROOT, _gui_ts_sources, _strip_ts_comments
@@ -119,6 +123,34 @@ def test_request_id_is_populated_and_stable_within_one_request(logged_app):
             f"endpoint（BaseHTTPMiddleware 的 call_next 换了任务）"
         )
     assert len(set(ids)) == 1, f"同一次请求里 id 不一致: {set(ids)}"
+
+
+def test_request_id_has_enough_entropy_to_avoid_collisions(logged_app):
+    """id 短了会**静默合并两条不相干的链** —— 比没有这个功能更坏。
+
+    Codex #282 R1 P2：`hex[:8]` = 32 bit，一天的日志量级上碰撞是必然
+    （GUI 光轮询约 1 万请求/小时；十万条时 69%、五十万条 ~100%）。
+    而「只看这一次请求」是精确匹配，碰撞 = 把别人的行混进你的链。
+
+    ⚠ 别拿"扫描窗口只有 20000 行"当理由：`/system-logs/export` 是**全文件**
+    流式过滤，不受那个上限约束。
+
+    变异：把 `REQUEST_ID_HEX_LEN` 改回 8 → 本门红。
+    """
+    assert REQUEST_ID_HEX_LEN >= 16, (
+        f"request id 只有 {REQUEST_ID_HEX_LEN} 位 hex = {REQUEST_ID_HEX_LEN * 4} bit，"
+        f"碰撞会把两条不相干的链合并显示"
+    )
+
+    client, handler = logged_app
+    client.get("/api/v1/probes")
+    ids = _ids_for(handler, "端点内部干了点活")
+    assert ids, "端点的日志没被捕获到，门本身失效了"
+    for sid in ids:
+        assert len(sid) == REQUEST_ID_HEX_LEN, (
+            f"实际发出的 id 是 {len(sid)} 位（{sid!r}），跟声明的 "
+            f"{REQUEST_ID_HEX_LEN} 位对不上"
+        )
 
 
 def test_request_id_differs_across_requests(logged_app):

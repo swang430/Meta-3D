@@ -18,6 +18,9 @@ from app.core.logging_config import current_session_id
 
 logger = logging.getLogger("app.audit")
 
+# 每请求关联 id 的 hex 长度。16 = 64 bit，见 dispatch 里的碰撞算账。
+REQUEST_ID_HEX_LEN = 16
+
 # 不记录的路径前缀（高频轮询 + 静态资源）
 #
 # P1-34 新增末两条 —— 日志面板**自指的**轮询。面板按 5/10/30 秒轮询
@@ -76,7 +79,15 @@ class AuditMiddleware(BaseHTTPMiddleware):
         # 直接透传，本 dispatch 根本不会被调用。所以 `/ws/monitoring` 那条流上的
         # 日志 `session_id` 恒为 `-`。这是已知边界，不是漏做 —— 真要给 WS 串链，
         # 得在 WS 端点自己 set，属另一件事。
-        current_session_id.set(uuid.uuid4().hex[:8])
+        # ⚠ 别缩短这个前缀（Codex #282 R1 P2）。8 位 hex = 32 bit，生日碰撞
+        # 在一天的日志量级上是**必然**不是理论：GUI 光轮询就约 1 万请求/小时，
+        # 十万条时碰撞概率 69%、五十万条 ~100%。而「只看这一次请求」是精确
+        # 匹配 —— 一旦碰撞就把两条**不相干**的链合并显示，正是本片在治的那个
+        # 母题（看起来对、其实是错的）。16 位 = 64 bit，五十万条时 6.8e-9。
+        #
+        # 尤其别拿"扫描窗口只有 20000 行"当理由：`/system-logs/export` 是
+        # **全文件**流式过滤，根本不受那个上限约束。
+        current_session_id.set(uuid.uuid4().hex[:REQUEST_ID_HEX_LEN])
 
         path = request.url.path
         # 高频轮询路径：**只在它成功时**不记审计行。
