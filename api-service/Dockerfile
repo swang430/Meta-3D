@@ -30,7 +30,9 @@ COPY scripts/ ./scripts/
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Persistent data dirs (bind-mounted via docker-compose).
+# Persistent data dirs. ⚠️ 部署时**必须**挂持久卷 —— compose 里那个 api 服务
+# (曾经提供这两条 bind mount) 已于 2026-08-05 整体拆除。不挂就落在容器可写层,
+# 换镜像/重建容器时校准数据与证书全丢。挂法见 README 的 "Docker Deployment"。
 RUN mkdir -p /app/calibration_data /app/certificates
 
 EXPOSE 8000

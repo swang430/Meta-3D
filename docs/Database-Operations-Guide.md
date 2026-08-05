@@ -45,11 +45,11 @@ DATABASE_URL=postgresql://meta3d:meta3d_password@localhost:5432/meta3d_ota
 数据库初始化 = 两步：**Alembic 建表** + **Bootstrap 灌默认数据**。两条部署路径殊途同归（都汇到同一套 `alembic upgrade head` + `run_all` / `bootstrap_history` 逻辑）。
 
 ### 3.1 自动（推荐，无需手动干预）
-- **Docker 全栈**：`docker compose --profile full up -d` —— api 容器的 `docker-entrypoint.sh` 自动按顺序跑 `alembic upgrade head` → `python -m scripts.bootstrap` → uvicorn。（api 容器挂了 `profiles: ["full"]`，**不带 `--profile full` 时不会起**，因为它跟 host 的 `npm run dev:api` 抢同一个 8000。）
+- **`npm run dev:safe:all`（推荐入口）** —— `scripts/safe-start.sh` 自动按顺序跑 `alembic upgrade head` → `python -m scripts.bootstrap` → 起 API/ChannelEngine/GUI。⛔ **compose 里已没有 api 服务**（2026-08-05 拆除，理由见 `api-service/docker-compose.yml` 顶部）；容器只剩 Postgres。
 - **host 开发**（host 直接跑 uvicorn）：`app/main.py` 的 lifespan 启动时自动调 `init_db()`（检测到 `alembic_version` 表则跳过 `create_all`）+ `run_bootstrap_on_startup()`（受 config `bootstrap_on_startup=True` 控制）。
 
 > [!WARNING]
-> **host 开发全新空库必须先手动 `alembic upgrade head` 再启动 app**。否则 `init_db()` 检测不到 `alembic_version` 表，会 fallback 用 `create_all()` 建表 —— 表是建了，但没有 alembic 版本跟踪，后续 migration 会冲突。Docker 全栈的 entrypoint 已把顺序焊死，无此坑。
+> **host 开发全新空库必须先手动 `alembic upgrade head` 再启动 app**。否则 `init_db()` 检测不到 `alembic_version` 表，会 fallback 用 `create_all()` 建表 —— 表是建了，但没有 alembic 版本跟踪，后续 migration 会冲突。`npm run dev:safe:all` 已把顺序焊死（先 `alembic upgrade head` 再起 app），无此坑。⚠️ **绕过它的路径都会踩**：`npm run dev:api`、`npm run dev:all`（它不跑 alembic 也不跑 bootstrap）、以及手敲 uvicorn。
 
 ### 3.2 手动（重置 / 排查时）
 
@@ -107,14 +107,19 @@ cat your_backup_file.dump | docker exec -i meta3d_db pg_restore -U meta3d -d met
 > [!WARNING]
 > `down -v` 会**永久删除 volume 数据**（volume 现在是非 external 具名卷，`-v` 会真删）。重置前务必先备份。
 >
-> `down` / `stop` / `restart` 这类**不带 service 名**的 compose 子命令必须带
-> `--profile full`，否则挂了 `profiles: ["full"]` 的 `api` 容器不在作用域里 ——
-> 实测：不带 profile 的 `down` 只删 postgres，api 容器仍在跑、network 因被占用删不掉，
-> 结果是 api 挂在一个已经不存在的 DB 上。`up -d postgres` 这种**显式点名**的不受影响。
+> ⛔ 旧版这里要求带 `--profile full`（那时 compose 里还有个 api 容器）。**2026-08-05
+> api 服务已从 compose 拆除**，compose 里只剩 postgres，`--profile full` 不再需要。
+> ⚠️ **但换成了另一个坑**：服务定义没了 → 任何机器上残留的 `meta3d-api` 容器按定义变成
+> **orphan**，而 `down` 默认不动 orphan。实测：`down -v` 会删掉 volume 和 postgres、
+> **旧 api 容器仍在跑**、network 因被占用删不掉，而**退出码是 0**（静默半途而废）。
+> 所以步骤 2 必须带 `--remove-orphans`；若机器上确实残留着旧容器，先
+> `docker rm -f meta3d-api`。
+> ⚠️ 另外重置前**先停掉 host 上的 API**（`npm run dev:safe:all` 那个进程），
+> 否则它同样会挂在一个已经被删掉的库上。
 
 ```bash
 sh scripts/backup_db.sh                      # 1. 先备份当前数据 (止血, → db-backups/)
-docker compose --profile full down -v        # 2. 删容器 + volume
+docker compose down -v --remove-orphans      # 2. 删容器 + volume (先停 host 上的 API)
 docker compose up -d postgres                # 3. 起空库 (volume 自动重建)
 alembic upgrade head             # 4. 重新建表
 python -m scripts.bootstrap      # 5. 重新灌默认数据
