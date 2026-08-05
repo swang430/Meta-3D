@@ -83,4 +83,11 @@ logs/
 docs/site-debug/**/*.zip
 
 # ② 运行时生成的报告产物（应用自己产出的 PDF，不是源）
-data/
+#
+# ⚠ **开头那个 `/` 不能省**（Codex #284 R1）。不带锚点的 `data/` 会匹配
+#    **任何**叫 data 的目录 —— 实测命中 `gui/src/data/` 与
+#    `api-service/app/data/`，两处共 **23 个已跟踪的源文件**
+#    （`scenario_library.py` / `nr_band_baselines.json` / uxm_configs/…）。
+#    已跟踪的不受影响，但**往那两个目录新加的文件会被静默忽略**。
+#    这正是本文件上方警告过的坑（全局规则误伤源码），我自己先踩了一次。
+/data/
