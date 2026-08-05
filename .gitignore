@@ -67,3 +67,20 @@ Instrument_API_Doc/Keysight UXM NR SCPI/5G_NR_Test_Application_SCPI_Reference.ht
 # Runtime logs (structured JSON, SCPI traces)
 api-service/logs/
 logs/
+
+# ── 大二进制附件 / 运行时产物 ────────────────────────────────────
+#
+# ⚠ 这里**只忽略两类**，别顺手扩大成 `*.pdf` / `*.docx`：
+#   本仓库已经跟踪了 **219.8 MB / 29 个**厂商手册（Keysight / ETS-L /
+#   CAICT / Aerotech …），"手册进库"是既定做法。加个全局 `*.pdf` 会让
+#   下一个人往 Instrument_API_Doc/ 放新手册时**莫名其妙加不进来**。
+#   尤其 `Instrument_API_Doc/Keysight UXM NR SCPI/*.md` 绝不能忽略 ——
+#   CLAUDE.md 指名它们是 SCPI 单点问题的权威源（「单点问题以仓库里的
+#   厂商手册原件为准」），新 clone 没有它，那条规矩当场不可执行。
+
+# ① 现场经验共享的大附件：Antennas.zip 单个 228 MB，会让仓库体积翻倍，
+#    且 zip 对 git 不可 diff、改一个字节就整包重存。要共享走网盘/LFS。
+docs/site-debug/**/*.zip
+
+# ② 运行时生成的报告产物（应用自己产出的 PDF，不是源）
+data/
