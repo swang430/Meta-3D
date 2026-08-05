@@ -157,8 +157,9 @@ if [ ${#STILL_HELD[@]} -gt 0 ]; then
         for P in "${STILL_DOCKER_PORTS[@]}"; do
             echo "     docker ps --filter publish=$P --format '{{.Names}}'   # → docker stop <容器名>"
         done
-        echo "   注：compose 的 api 服务已挪进 'full' profile，默认不再随 up 自启；"
-        echo "       若它还在跑：cd api-service && docker compose stop api"
+        echo "   注：本项目的 compose 里只有 postgres —— api 服务 2026-08-05 已整体拆除。"
+        echo "       若上面查出来的是 meta3d-api，那是拆除前遗留的容器（compose 已不认它，"
+        echo "       'docker compose stop api' 不再有效）：docker rm -f meta3d-api"
     fi
     if [ ${#STILL_DOCKER_PORTS[@]} -lt ${#STILL_HELD[@]} ]; then
         echo "   非容器占用的那些：kill 可能因权限不足失败，试 sudo，或手动停掉占用进程。"

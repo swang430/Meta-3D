@@ -86,14 +86,16 @@ python -m scripts.bootstrap
 python scripts/dev-fixtures/seed_dummy_calibration.py
 ```
 
-> **全自动**:`docker compose --profile full up -d` 会连 api 容器一起起,其
-> `docker-entrypoint.sh` 自动按 `alembic upgrade head → bootstrap → uvicorn`
-> 跑完,步骤 2-3 无需手动执行。
+> **全自动**:`npm run dev:safe:all`(仓库根)会自动按
+> `alembic upgrade head → bootstrap → 起 API/ChannelEngine/GUI` 跑完,
+> 步骤 2-3 无需手动执行。
 >
-> ⚠️ api 容器在 compose 里挂了 `profiles: ["full"]`,**不带 `--profile full` 的
-> `docker compose up -d` 不会起它** —— 它跟 host 开发流程 (`npm run dev:api`)
-> 抢同一个 8000,二选一。默认不起是有意的,详见 `docker-compose.yml` 里 api
-> 服务上方的注释。
+> ⛔ **compose 里没有 api 服务了**(2026-08-05 拆除)。曾经有过一个
+> `--profile full` 的 api 容器,对本地开发零增量能力(entrypoint 干的两件事
+> 跟 `safe-start.sh` 逐字一致)却持续制造混乱(代码烘进镜像改了不生效 /
+> 日志落在容器内那一份 / 占住 host 8000)。本地开发**只走 host**;
+> `Dockerfile` 与 `docker-entrypoint.sh` 保留供部署侧使用。
+> 详见 `docker-compose.yml` 顶部的说明。
 >
 > ⚠️ **host 开发**(host 直接跑 uvicorn)时,全新空库**必须先 `alembic upgrade
 > head`** 再启动 app —— 否则 lifespan 的 `init_db()` 会 fallback 用
@@ -408,8 +410,13 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 docker build -t meta3d-api .
 
 # Run container
+# ⚠️ 那两条 -v 不是可选的: calibration_data 存校准数据、certificates 存证书,
+#    不挂就落在容器可写层, 换镜像/重建容器时全丢。
+#    (这两条挂载原先由 compose 的 api 服务提供, 该服务 2026-08-05 已拆除。)
 docker run -d -p 8000:8000 \
   -e DATABASE_URL=postgresql://user:pass@host:5432/db \
+  -v "$PWD/calibration_data:/app/calibration_data" \
+  -v "$PWD/certificates:/app/certificates" \
   meta3d-api
 ```
 

@@ -30,32 +30,27 @@ services:
       timeout: 5s
       retries: 5
 
-  api:
-    # ⚠️ 默认**不起** —— 它跟 host 开发流程 (`npm run dev` / `dev:api`) 抢同一个
-    #    8000, 二选一。放进 profile 前它会随 `docker compose up -d` 自启, 于是:
-    #    容器占住 host 8000 → safe-start.sh 的端口清理 kill -9 打在 host 那一侧的
-    #    监听者上 → 而那个监听者是 Docker Desktop 的转发进程 com.docker.backend,
-    #    即 **Docker 引擎本体** → daemon 当场死亡 → 下一步 db-up.sh 报
-    #    "Cannot connect to the Docker daemon", 启动失败 (2026-08-02 实测)。
-    #    safe-start.sh / cleanup-ports.sh 那侧已加"容器发布的端口不 kill"守门,
-    #    这里则从源头拆掉 8000 的争抢。
-    #    要跑容器版全栈:  docker compose --profile full up -d
-    #    (`docker compose up -d postgres` 显式点名, 不受 profile 影响, db-up.sh 照常)
-    profiles: ["full"]
-    build: .
-    container_name: meta3d-api
-    ports:
-      - "8000:8000"
-    environment:
-      DATABASE_URL: postgresql://meta3d:meta3d_password@postgres:5432/meta3d_ota
-      DEBUG: "false"
-      USE_MOCK_INSTRUMENTS: "true"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    volumes:
-      - ./calibration_data:/app/calibration_data
-      - ./certificates:/app/certificates
+# ⛔ 这里**没有 api 服务** —— 2026-08-05 用户拍板拆除, 别再加回来。
+#
+# 曾经有过一个 `api` 服务 (`build: .` + `container_name: meta3d-api` + 发布 8000),
+# 后来因为跟 host 的 `npm run dev:api` 抢 8000 而挪进 `profiles: ["full"]`, 最后整段删除。
+#
+# **为什么删**: 它对本地开发**零增量能力**, 却持续制造混乱。
+#   - 能力上完全重合: 容器 entrypoint 干的两件事 (`alembic upgrade head` →
+#     `python -m scripts.bootstrap`) 与 `scripts/safe-start.sh` 逐字一致 ——
+#     `npm run dev:safe:all` 给的是同一套。
+#   - 代价是真的: ① 代码烘进镜像 (只挂了 calibration_data / certificates),
+#     改一行要重建才生效, 排查时极易对着旧代码找问题; ② 日志落在容器内的
+#     `/app/logs/`, 跟 host 的 `api-service/logs/` 是两份, "我的日志呢"反复踩;
+#     ③ 它一旦在跑就占住 host 8000, 而 host 那一侧的监听者是 Docker 引擎本体
+#     `com.docker.backend` —— 早期没有 port-guard 时, 端口清理 `kill -9` 打上去
+#     直接杀死 daemon (2026-08-02 实测)。
+#
+# **本地开发唯一入口**: `npm run dev:safe:all` (host 跑 API/ChannelEngine/GUI,
+# 只有 Postgres 用容器)。`docker compose up -d postgres` 起库, 不受影响。
+#
+# **容器化能力没丢**: `Dockerfile` 与 `docker-entrypoint.sh` 原样保留, 部署侧
+# 照常 `docker build` / `docker run`; 拆掉的只是本地 compose 的那个入口。
 
 volumes:
   # 固定 name (不随 compose project 名漂移), 但【不设 external】:

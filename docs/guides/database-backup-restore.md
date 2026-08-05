@@ -95,7 +95,7 @@ docker exec meta3d_db psql -U meta3d -d meta3d_ota -c \
   "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';"
 ```
 
-切换后 `restart: unless-stopped` 生效 → host/Docker 重启自动拉起。若第 5 步表数不符,`docker compose --profile full down` 后用上面「恢复」章节从 dump 重建(带 `--profile full` 才会把挂了 profile 的 `api` 容器一起停,不带的话它会留在跑着的状态、network 也删不掉)。
+切换后 `restart: unless-stopped` 生效 → host/Docker 重启自动拉起。若第 5 步表数不符,`docker compose down --remove-orphans` 后用上面「恢复」章节从 dump 重建。(⛔ 旧版这里要求带 `--profile full` —— 那时 compose 里还有个 api 容器;**2026-08-05 已拆除**。但服务定义没了会让残留的 `meta3d-api` 容器变成 **orphan**,而 `down` 默认不动 orphan 且**退出码仍是 0** —— 所以改带 `--remove-orphans`,并先停掉 host 上的 API 进程。)
 
 ## 已知 deferred(本轮不做)
 
