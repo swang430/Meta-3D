@@ -34,6 +34,7 @@ import {
   IconSearch,
 } from '@tabler/icons-react'
 import { fetchSystemLogsTail, fetchAlerts, fetchAlertSummary } from '../../api/service'
+import { formatLogTime } from '../../utils/datetime'
 import type { SystemLogTailResponse } from '../../types/api'
 import type {
   SystemLogEntry,
@@ -252,7 +253,10 @@ function LogPanel() {
               {entries.map((e, i) => (
                 <Group key={`${e.ts}-${i}`} gap="xs" wrap="nowrap" align="flex-start">
                   <Text size="xs" c="dimmed" style={{ fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
-                    {e.ts ? e.ts.split('T')[1]?.slice(0, 8) ?? e.ts : '—'}
+                    {/* P1-34: 本地时区。原写法 split('T')[1].slice(0,8) 丢掉了
+                        后端给的时区偏移（容器 UTC），显示比手表慢 8 小时。
+                        侧栏窄，不带毫秒；查看器那侧带。 */}
+                    {formatLogTime(e.ts, { millis: false })}
                   </Text>
                   <Badge size="xs" color={logLevelColor(e.level)} variant="light" w={64}>
                     {e.level}

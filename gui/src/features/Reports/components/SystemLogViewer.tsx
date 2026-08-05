@@ -37,6 +37,7 @@ import {
   IconPlayerPause,
 } from '@tabler/icons-react'
 import apiClient from '../../../api/client'
+import { formatLogDate, formatLogTime } from '../../../utils/datetime'
 
 
 // ── Types ──────────────────────────────────────────────────────
@@ -97,6 +98,12 @@ export function SystemLogViewer() {
   const [levelFilter, setLevelFilter] = useState<string>('ALL')
   const [keyword, setKeyword] = useState('')
   const [maxLines] = useState(200)
+  // P1-34「只看这一次请求」——把一次操作串成一条链。
+  // 后端 /system-logs/tail 的 session_id 精确过滤 + 反向扫描**早就建好了**
+  // （见该端点 docstring：带过滤条件时窗口是"最新 N 条匹配行"，所以链条再
+  // 靠前也捞得到），只是 `session_id` 此前 100% 是 "-"，这个能力从来没能用。
+  // AuditMiddleware 现在每请求写一个 id，这里把它接上。
+  const [sessionFilter, setSessionFilter] = useState<string | null>(null)
 
   // Auto-refresh
   const [refreshInterval, setRefreshInterval] = useState('0')
@@ -133,6 +140,9 @@ export function SystemLogViewer() {
       if (keyword.trim()) {
         params.keyword = keyword.trim()
       }
+      if (sessionFilter) {
+        params.session_id = sessionFilter
+      }
       const res = await apiClient.get('/system-logs/tail', { params })
       setEntries(res.data.entries || [])
       setTotalRead(res.data.total_lines_read || 0)
@@ -143,7 +153,7 @@ export function SystemLogViewer() {
     } finally {
       setLoading(false)
     }
-  }, [selectedFile, levelFilter, keyword, maxLines])
+  }, [selectedFile, levelFilter, keyword, maxLines, sessionFilter])
 
   // ── Download ──
   const handleDownload = useCallback(() => {
@@ -186,18 +196,11 @@ export function SystemLogViewer() {
   }
 
   // ── Format timestamp for display ──
-  const formatTs = (ts: string) => {
-    if (!ts) return '—'
-    // "2026-04-22T16:00:00.716Z" → "16:00:00.716"
-    const match = ts.match(/T(\d{2}:\d{2}:\d{2}\.\d{3})/)
-    return match ? match[1] : ts
-  }
-
-  const formatDate = (ts: string) => {
-    if (!ts) return ''
-    const match = ts.match(/^(\d{4}-\d{2}-\d{2})/)
-    return match ? match[1] : ''
-  }
+  // P1-34: 时间戳一律走共享的 formatLogTime/formatLogDate（本地时区）。
+  // 原实现用正则从字符串里切时分秒，把后端给的时区偏移丢了 —— 容器跑 UTC，
+  // 于是宿主机 10:58 的操作在界面上显示成 02:58。详见 utils/datetime.ts。
+  // ⚠ 不在这里包一层本地别名：包了就是这个文件自己的一份，早晚跟另一个
+  //   面板漂开。直接用导入的那个。
 
   return (
     <Stack gap="md">
@@ -279,9 +282,14 @@ export function SystemLogViewer() {
 
             <Tooltip label="导出过滤结果">
               <ActionIcon variant="light" color="teal" onClick={() => {
+                // ⚠ 导出必须跟屏幕上**同一套**过滤条件。内审 F3：加了
+                // 「只看这一次请求」之后，屏幕剩 5 条、导出却是全量 ——
+                // 这个分叉是本片自己造的，而后端 /export 本来就支持
+                // session_id（见 api/system_logs.py 的 export_filtered_logs）。
                 const params = new URLSearchParams()
                 if (levelFilter !== 'ALL') params.set('level', levelFilter)
                 if (keyword.trim()) params.set('keyword', keyword.trim())
+                if (sessionFilter) params.set('session_id', sessionFilter)
                 const url = `${apiClient.defaults.baseURL}/system-logs/export/${selectedFile}?${params.toString()}`
                 window.open(url, '_blank')
               }}>
@@ -306,6 +314,28 @@ export function SystemLogViewer() {
         {loading && <Loader size="xs" />}
         {refreshInterval !== '0' && (
           <Badge size="sm" variant="dot" color="green">自动刷新 {refreshInterval}s</Badge>
+        )}
+        {/* P1-34: 当前是否只看某一次请求 —— 过滤态必须**看得见**，
+            否则"怎么只有几条"会被当成日志丢了。 */}
+        {sessionFilter && (
+          <Badge
+            size="sm"
+            color="grape"
+            variant="filled"
+            rightSection={
+              <ActionIcon
+                size="xs"
+                variant="transparent"
+                color="white"
+                aria-label="取消只看这一次请求"
+                onClick={() => setSessionFilter(null)}
+              >
+                ✕
+              </ActionIcon>
+            }
+          >
+            只看请求 {sessionFilter}
+          </Badge>
         )}
       </Group>
 
@@ -358,7 +388,7 @@ export function SystemLogViewer() {
                     }
                   </Table.Td>
                   <Table.Td>
-                    <Text size="xs" c="dimmed">{formatTs(entry.ts)}</Text>
+                    <Text size="xs" c="dimmed">{formatLogTime(entry.ts)}</Text>
                   </Table.Td>
                   <Table.Td>
                     <Badge
@@ -398,10 +428,25 @@ export function SystemLogViewer() {
             expandedRows.has(idx) && entry.raw ? (
               <Paper key={`detail-${idx}`} p="sm" mx="md" mb="xs" bg="gray.0" radius="sm">
                 <Group gap="lg" mb="xs">
-                  <Text size="xs"><b>时间:</b> {entry.ts}</Text>
-                  <Text size="xs"><b>Session:</b> {entry.session_id}</Text>
+                  <Text size="xs"><b>时间:</b> {formatLogDate(entry.ts)} {formatLogTime(entry.ts)}</Text>
+                  <Text size="xs" c="dimmed"><b>原始:</b> {entry.ts || '—'}</Text>
                   <Text size="xs"><b>Instrument:</b> {entry.instrument_id}</Text>
-                  <Text size="xs"><b>日期:</b> {formatDate(entry.ts)}</Text>
+                </Group>
+                {/* P1-34: 一次请求内的全部日志（audit / runner / HAL / SCPI）
+                    带同一个 id。点这里就把这条链单独捞出来。
+                    id 为 "-" 的行不是请求产生的（启动期 / 后台任务），无链可串。 */}
+                <Group gap="xs" mb="xs">
+                  <Text size="xs"><b>请求 ID:</b> {entry.session_id}</Text>
+                  {entry.session_id && entry.session_id !== '-' && (
+                    <Button
+                      size="compact-xs"
+                      variant="light"
+                      color="grape"
+                      onClick={() => setSessionFilter(entry.session_id)}
+                    >
+                      只看这一次请求
+                    </Button>
+                  )}
                 </Group>
                 <Code block style={{ fontSize: '11px', maxHeight: 200, overflow: 'auto' }}>
                   {(() => {

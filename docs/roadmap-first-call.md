@@ -13,13 +13,14 @@ blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 �
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-02 二批本地队列已拍板排序（用户明示"只排好优先级，先不忙开工"——待开工指令）**：
-**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → P1-33（本地半）→ P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧；P1-28 为 2026-08-02 用户新增 backlog 当日拍板插入；**P1-30 为 2026-08-03 用户指定插队"把日志提上来先完成"**；**P1-31 / P1-32 为 2026-08-03 UXM KPI 修复（#275）带出、用户当日拍板插到队首**）。**当前队首 = P1-33（本地半）**（P1-25 / P1-26 / P1-30 / P1-31 / P1-32 已收口，最后两片于 2026-08-04）。一句话索引：
+**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → P1-34 → P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧；P1-28 为 2026-08-02 用户新增 backlog 当日拍板插入；**P1-30 为 2026-08-03 用户指定插队"把日志提上来先完成"**；**P1-31 / P1-32 为 2026-08-03 UXM KPI 修复（#275）带出、用户当日拍板插到队首**；**P1-34 为 2026-08-05 用户手工测试当场提出、当日拍板插到队首**）。**当前队首 = P1-34**（P1-25 / P1-26 / P1-30 / P1-31 / P1-32 / P1-33 本地半 已收口）。一句话索引：
 - **P1-25** GUI 主控台"系统状态"面板恒空修复 + api.ts 手写镜像同尺审计
 - **P1-26** GUI 改频同步 component_carriers（**GUI 写侧**收口；后端收敛点与显示端同源另立片）
 - **P1-30** SCPI 往返日志的证据能力（截断显式化 + OK/ERR 配对 + `instrument_id` 收窄）
 - **P1-31** `uxm_kpi_readback` 诊断序列（#275 那批 KPI 命令的现场对账载体）✅
 - **P1-32** `configure_mac_throughput_test()` 在 IRAT 上 11/11 命令为 `None`（不崩 + 不假成功 + 调用方消费）✅
-- **P1-33（本地半）** 按手册重写 IRAT 的 8 组 MAC 配置命令（含值形态转换；现场半在 Blocked 表）
+- **P1-33（本地半）** 按手册重写 IRAT 的 8 组 MAC 配置命令（含值形态转换；现场半在 Blocked 表）✅
+- **P1-34** 日志时间线可读（本地时区显示 + 面板默认滤掉背景轮询 + `request_id` 把一次操作串起来）
 - **P1-27** P1-8 校准门拒 mock cert（provenance + real 模式 strict 拒）
 - **P1-28** 「当前暗室」双真值源收口（active chamber vs active lab 绑定暗室）
 - **P2-22** F64 disconnect 冷缓存判 GOS 换真值源（涉 SCPI 查 NotebookLM）
@@ -190,7 +191,7 @@ P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max /
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → P1-33（本地半）→ P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列 + 08-03 用户指定 P1-30 / P1-31 / P1-32 插队；**队首现为 P1-33（本地半）**，P1-25 / P1-26 / P1-30 / P1-31 / P1-32 已收口；一批 10 片已全收 #256–#265）|
+| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → P1-34 → P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列 + 08-03 用户指定 P1-30 / P1-31 / P1-32 插队 + 08-05 用户指定 P1-34 插队；**队首现为 P1-34**，P1-25 / P1-26 / P1-30 / P1-31 / P1-32 / P1-33 本地半 已收口；一批 10 片已全收 #256–#265）|
 | **ON-SITE-BLOCKED** | P0-5 (P0-3/4 已 2026-07-03 现场完成) + P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -274,6 +275,8 @@ unblocked) BEFORE starting any new P1.
 | 2026-08-04 | [#278](https://github.com/swang430/Meta-3D/pull/278) | <!--278-coverage-->⚠️ 有缺口 | <!--278-gap-->**回填本行这两格的 commit 自己**（docs 一行）—— R1 `8caaba1` / R2 `889db34` 都过了审，回填 commit 没有 | docs-only 一行登记；R1 两条 P2 均**当下修**（`R1 findings` 列被我塞了四轮合计 / 漏了本 PR 自己）。R2 唯一一条 P2 = 「合并前把这两格填掉」—— 而**回填 commit 自己**要么每次都得再派一轮（无穷递归），要么就此收口。选收口并如实标注：这行说的话在合并那一刻就是真的，此后也一直是真的| 2 | ⬜ 未处置 |
 | 2026-08-04 | [#279](https://github.com/swang430/Meta-3D/pull/279) | ✅ 全覆盖 | —（R1 唯一一条 P2 修完后 R2 在 `7f49414` 上 clean，而 `7f49414` 就是合并时的 HEAD）| — | 1 | ✅ 无需处置 |
 | 2026-08-04 | [#280](https://github.com/swang430/Meta-3D/pull/280) | ⚠️ 有缺口 | **修 R3 那条 P2 的 commit 自己**（docs 一段）—— R1 `1d3e762` / R2 `7c28ddb` / R3 `a5a6bab` 都过了审，这次修复没有 | 用户授权破例走到 R3（超轮次上限）；R1/R2/R3 三轮各 1 条 P2，**全是同一母题的不同镜像站点**（表漏本 PR → Discovered 源条目 stale → P1-32 条目本体 stale）。R3 后按母题全量扫，确认无第四处 | 1 | ✅ 无需处置 —— ⚠️ 与 [#278](https://github.com/swang430/Meta-3D/pull/278) R1 **同一条**：「每个 PR 都记一行、含本 PR」我一个 PR 之后又漏了 |
+| 2026-08-05 | [#281](https://github.com/swang430/Meta-3D/pull/281) | ⚠️ 有缺口 | `a72ea7a` —— **R2 三条 P1 的修复**（TDD 校验改读**实时** SCS / pattern 排布可编码性 `D*S?U*` / CSI-RS 显式端口不被推导覆盖）及配套的门与变异 | 轮次上限=2 已到，交回用户后拍板 merge。两轮走势 **2 P1 → 3 P1**（**没有收敛**）—— 我在交回时明说了「再审一轮大概率还有」，这行如实记着它 | 2 | ⬜ 未处置 —— 下次动 `uxm_base_station.py` 的 MAC 配置段或 `executors/measure.py` 时**优先补审** |
+| 2026-08-05 | [#282](https://github.com/swang430/Meta-3D/pull/282) | <!--282-coverage-->待填（合并前回填） | <!--282-gap-->待填 | P1-34 本片；按 [#278](https://github.com/swang430/Meta-3D/pull/278) R1 的教训**开片即建行**，不等合并才想起来 | 待填 | ⬜ |
 
 ### 📉 更值得看的信号：第一轮 findings 数
 
@@ -1520,7 +1523,14 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 
 **来源**: #275 的生效端门 `test_configure_actually_sends_them` 一加上就红，才暴露出来。
 
-### P1-33 — 按手册重写 IRAT 的 MAC 配置命令（本地半 + 现场半）⬜（2026-08-03 立项）
+### P1-33 — 按手册重写 IRAT 的 MAC 配置命令（本地半 ✅ #281 / 现场半 ⬜）（2026-08-03 立项）
+
+> **本地半 2026-08-05 收口（#281）**：8 组命令按手册原件补齐 + 值形态转换
+> （`FULL_TPUT` / `APOLicy` 枚举 / `MS5` / `N4`·`N16` / `P1`…`P8` / TDD 六整数）
+> + 两条 apply（`QCONFig:APPLy:ALL` 先于 slot 级 AMC，再 `CONFig:<celltype>:APPLY`）。
+> 下方那条 ⛔ TDD 前置阻塞**按方案 ① 解**：special-slot 符号数走函数参数（手册默认
+> 6/4），**但 TestCase schema 的契约四步没做** → 拆出 **P1-33b**（见 Discovered）。
+> 外审覆盖有缺口，见[外审表](#️-已合并但未过外审的批次只增不减周度回扫)。
 
 > **⭐ 2026-08-04（P1-32 期间）—— 用**手册原件**裁掉了下表的三处错，并纠正一个前提**
 >
@@ -1594,6 +1604,80 @@ TDD 配置**，猜错会让整批吞吐量结果失效（比现在"一条都没�
 **现场半**: 真机验证被接受（见 Blocked on hardware 表）。
 
 **依赖**: P1-32 先做（不崩 + 不假成功 + 调用方消费），否则改完也看不出对错。
+
+### P1-34 — 日志时间线可读（本地时区 + 噪音抑制 + `request_id` 串联）⬜（2026-08-05 立项）
+
+**目的（用户原话，2026-08-05 手工测试当场）**：
+> 「重要的是帮助使用者了解状况，不会是无头苍蝇……我们想看到针对**什么时候**的操作，
+> 能看到**什么操作流程**，**什么结果**。」
+
+**可观察故障**：操作员打开日志面板，看不出自己刚做的那次操作 —— 时间对不上手表、
+真信息被背景轮询淹掉、同一次操作产生的多条日志无法聚在一起。
+
+**实证（2026-08-05 从运行中的容器实测，非推断）**：
+
+| 判据 | 实测 | 断点 |
+|---|---|---|
+| 什么时候 | 宿主机 `10:57 CST` / 容器 `02:57 UTC` | 后端 `ts` **带** `+00:00`，前端 `formatTs` 用正则 `/T(\d{2}:\d{2}:\d{2}\.\d{3})/` **切字符串把偏移丢了** |
+| 什么操作 | 最近 400 行 = 175 HAL `DEBUG Cache updated` + 107 `app.audit` + 78 `app.db DEBUG` + 40 WARNING | **360/400 是背景噪音**；日志面板每 3 秒轮询两次 `system-logs/tail`，**这两次轮询又被写进它正在看的那份日志** |
+| 什么流程 | `session_id` **24372 行全 `-`，非空 0 行** | ContextVar `current_session_id` 在 [`logging_config.py:34`](../api-service/app/core/logging_config.py) 定义好了，**全仓无任何 `.set()`** —— 字段是纯装饰 |
+| 什么结果 | 执行器**有**流水（`test_case_runner` 15 处 `[case-runner]`） | 未跑过用例故未出现；不是缺口 |
+
+（那 40 条 WARNING **全是 P1-29** 那个 `alerts/summary → 422` 每秒刷屏 —— 本片不修，
+但它是"真 WARNING 会被淹掉"的现成实例，P1-34 做完后它会更刺眼，正好给 P1-29 当验收素材。）
+
+**范围 —— 三件事，各自的修法优先级都取到了「去掉/换源」**：
+
+| # | 做什么 | 修法档位 | 文件 |
+|---|---|---|---|
+| 1 | 前端按**本地时区**渲染 `ts`（`new Date(ts).toLocaleTimeString`），不再正则切串 | **换源**（后端早就给了带偏移的完整时刻） | `SystemLogViewer.tsx` + 核 `ZoneLogsAlerts.tsx` |
+| 2a | 写侧：把日志面板**自指的**两条轮询加进已有的 `EXCLUDED_PATHS`，且**只对成功生效**（4xx/5xx 与未捕获异常照记） | **去掉** + **收窄** | `audit_middleware.py` |
+| 4 | `AuditMiddleware` 每请求生成 `request_id` 并 `current_session_id.set()`；GUI 接上后端**早已存在却没法用**的 `session_id` 精确过滤（「只看这一次请求」，`/tail` 与 `/export` 同一套条件） | **换源**（基建已在，差一次赋值；**零调用点改动**，contextvar 自动贯穿 runner/HAL/SCPI） | `audit_middleware.py` + `SystemLogViewer.tsx` |
+
+**明确不做（划界，防止越界）**：
+- **读侧「隐藏轮询噪音」开关** → **不做**。立项时曾写进范围（原 2b），内审 F2 指出
+  它与验收条留在原地不动、读起来像做了 —— 现移到这里并说明去向：本片给出的
+  「还原一次操作」路径是**按 `request_id` 直接捞整条链**（点日志行 →「只看这一次
+  请求」），不是靠过滤把噪音藏起来；而"让默认视图不刷屏"要动的是**写侧 logger
+  门槛**，那是下一条的 P3-19。两件事，别混。
+- **写侧 logger 门槛降级 / `Cache updated` 该不该是 DEBUG** → 留在 **P3-19**（已有条目，
+  且原条目已注明「根 logger + file_app 均收 DEBUG，单纯降级站点**不会**减少行数」——
+  那是另一件事，不是本片的可观察故障）
+- **`alerts/summary` 422 刷屏** → 留在 **P1-29**（已在队列）
+- **把 `./logs` 挂进容器** → **不做**。会与本地直跑的进程写同一个文件，正是 2026-08-05
+  两个 API 抢 8000 端口那次事故的翻版
+- **宿主机 `api-service/logs/` 41 GB** → 本地开发残留（容器那份 5 MB，按天轮转正常工作），
+  不是产品缺陷，不进本片
+
+**爆炸半径**：原 bug 最坏 = 排障靠猜（2026-08-05 实际发生：我自己拿宿主机文件当容器
+日志讲，误导一轮）。修完最坏 = 排除名单吞掉本该看见的行 —— 所以排除**只对成功生效**
+（内审 F1 的收窄：`/system-logs/frontend` 返 422 时，前端自己静默丢批、`client.ts` 又
+跳过该 URL 防回环，审计这一行是**最后一处**痕迹）。加上排除只覆盖**自指**的两条，
+过滤态在界面上恒可见可清除。**Y < X**。
+
+**验收**：
+1. 面板显示的时刻 == 操作员手表（含跨时区、含 `Z` / `+00:00` / `+08:00` 三种输入形态）
+2. 同一次操作的 audit / runner / HAL 日志**带同一个 `request_id`**，可按它过滤成一条链；
+   `/tail` 与「导出过滤结果」用**同一套**条件（内审 F3）
+3. `session_id` 非 `-` 的行数 **> 0**（今天是 0）
+4. 被排除的路径**失败时仍留审计痕迹**（内审 F1）
+5. ⚠️ **默认视图仍会被 DEBUG 心跳刷屏**（实测最近 400 行里 253 行）—— 本片**不治**，
+   见上方「明确不做」，去向 P3-19。别把本片当"日志面板已经清爽了"读。
+
+**门**（每道配让它红的变异，见 ⓪④）：
+- 行为门：走一次带中间件的请求，`session_id` **既非 `-` 也不为空**，同请求内多条日志
+  **取值相同**、跨请求**取值不同**；被排除的路径**成功不记、失败照记**
+- 不变量门：`logging_config.py` 里**每个写文件的 handler 都接了 `context_filter`**
+  —— 内审 F4 用变异证明，拆掉 `file_app` 那一行会让本片功能对 app.log 整体归零，
+  而当时 57 条测试全绿（原门只锁了测试自己挂的 filter，**没锁真实生效端的接线**）
+- 不变量门：`EXCLUDED_PATHS` 双向 —— 每条都能在 OpenAPI 路径里找到（防写窄/拼错），
+  且下载 / 导出 / 文件列表**不得**被任何排除前缀命中（防写宽，内审 F7）
+- 不变量门：GUI 不得再「切时间戳字符串」，`datetime.ts` 不得出现 `timeZone`
+  （内审 F8：`timeZone:'UTC'` 一行就能把本片修的 bug 原样装回去且全门皆绿）
+- 行为门：`/tail?session_id=` 精确过滤能把整条链**完整**捞回、不夹带前缀相同的别人
+  （内审 F9：这条后端路径此前零覆盖 —— 因为字段恒为 `-`，从没被真正用过）
+
+**依赖**: 无。**现场半**: 无（纯本地可观察）。
 
 ## 🟡 P2 — Abstraction debt
 
@@ -2350,6 +2434,11 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 > Items added mid-task. Reviewed weekly; promoted to P1/P2/P3 or dropped.
 
+- `[discovered 2026-08-05 during P1-34 内审 F5]` **WebSocket 流上的日志拿不到 `request_id`（P3）** —— `BaseHTTPMiddleware` 对 `scope["type"] != "http"` 直接透传（`starlette/middleware/base.py`），`AuditMiddleware.dispatch` 根本不会被调用，所以 `/ws/monitoring` 那条流产生的日志 `session_id` 恒为 `-`。**HTTP 侧八条路径已实测全覆盖**（sync / async / BackgroundTasks / StreamingResponse / HTTPException / 未捕获异常 500 / CORS 预检 / 排除路径），只有 WS 是真空。当前已在 `audit_middleware.py` 注释里写明是已知边界。**要补的话**：在 WS 端点自己 `current_session_id.set()`（每条连接一个 id，语义是"连接"不是"请求"，得先想清楚该不该复用同一个键）。
+- `[discovered 2026-08-05 during P1-34 内审 F6 的镜像扫查]` **roadmap 里两处「P1-31 现为队首」已 stale（P3，docs-only）** —— Discovered 区两条 UXM KPI 条目仍写着「= **P1-31**，2026-08-03 已立项、**现为队首**」，而 P1-31 已于 2026-08-04 收口（#277）。**不属 P1-34 的范围**（不是本片改动造成的，按 `feedback_pr_owns_status_rows` 不跨片顺手改），攒着走独立的 docs-only chore PR。同批可一起扫：全仓 grep `现为队首` / `已立项、现为` 这类**把当下状态写进条目正文**的措辞 —— 它们天然会 stale，最好改成「见顶部 Current Focus」这类**指针**而不是快照。
+- `[discovered 2026-08-05 during P1-34，被本片新加的门抓出]` **`EXCLUDED_PATHS` 里两条排除项指向不存在的路由（P3）** —— `app/core/audit_middleware.py` 的 `/api/v1/monitoring/metrics` 与 `/api/v1/monitoring/instrument-status` 在 OpenAPI 251 条路径里**都不存在**；`app/api/monitoring.py` 实际只有 `GET /monitoring/feeds` 和 `WS /ws/monitoring`。旧路由布局的残留，各自排除了个寂寞。**危害极低**（匹配不到任何请求 = 零噪音贡献，也零副作用），所以 P1-34 **没有顺手删** —— ⑦ 的判据「不改它，那个可观察故障还在吗」答"还在"。当前由 `tests/test_p1_34_log_timeline.py::_EXCLUDED_KNOWN_STALE` 显式豁免并配了**反向门**（哪天这两个路径真变成路由，门会红提醒摘掉豁免）。**修的时候要先定意图**：是想排除 `/monitoring/feeds`（那就改路径）还是这条排除已无意义（那就删）—— 别照着旧字符串猜。
+- `[discovered 2026-08-05 during P1-34]` **日志面板的级别过滤是"精确相等"，选 INFO 会把 ERROR 一起滤掉（P3，与 P3-19 同堆）** —— `/system-logs/tail` 的 `_entry_matches` 用 `entry.level != level` 精确匹配，所以 `SystemLogViewer` 那个单选 SegmentedControl **没有任何一档**能给出"去掉 DEBUG 心跳但保留 INFO/WARN/ERROR"，操作员只能停在 `全部` 挨 DEBUG 刷屏（实测最近 400 行里 253 行是 DEBUG 心跳）。⚠️ **不要改后端把它变成"≥ 门槛"** —— `ZoneLogsAlerts`（P2-19 #258）正是靠"两个 level 流天然不相交"来做去重的，改成门槛会让那里的合并逻辑出错。**正解是照搬 P2-19 已拍板的做法**：前端多选 + 逐 level 各发一次请求合并去重（零后端契约变化）。P1-34 没做，因为该片已用「只看这一次请求」（复用后端既有的 `session_id` 精确过滤）达成"还原一次操作"的目的，级别多选属**另一件事**。
+
 - `[discovered 2026-08-03 during 立项 review, Codex #276 R2]` **`Uxm5GNRTestAppProfile`（非 IRAT 方言）的命令形式是独立问题 —— 出路是查手册，不是现场探** —— #275 把 KPI reader 换成新命令字段，只给 IRAT 填了 `BSE:` 形式；5G_NR_Test 方言继承基类的 `None`，那批 KPI 现在整组读不到（有 warn-once 兜着，不静默）。⚠️ **不能靠现场探**：该方言用的是**无前缀**形式，而手册给的两个变体（`BSE:MEASure:NR5G:...` / `BSE:NR5G:MEASure:...`）**都带 `BSE:`** —— 现场去试无前缀拼写就是猜，正是 #275 整片在治的病。**正解**：像 2026-08-03 查 IRAT 那样，直接查手册 / NotebookLM 问 5G_NR_Test 方言（Test Application 名 `5G_NR_Test`）下这批命令的根前缀与完整形式；查得到就本地补齐，查不到就如实标"该方言 KPI 不可用"并让 warn-once 继续响。**本地片，不需要现场**。
 
 
@@ -2388,7 +2477,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-03 during UXM KPI 修复内审 F9/F10]` **`kpi_valid` 只进日志不进 `to_dict()`，调用方仍分不清「测到 0」和「没测到」** —— `executors/measure.py` 的 `samples_tput.append(metrics.dl_throughput_mbps)` 把"没读到"的 0.0 当真样本平均进交付 KPI。**本片让这个失效模式从罕见变常态**：以前 START/STOP 一直失败、计数器从不归零；现在 CLEar 真生效了，每个窗口归零后若样本还没到就是 NaN → 0.0。同批：新加的 `dl/ul_throughput_current_mbps` 在 mock 与 CMW500 两条路上恒 0.0（`to_dict()` 一律吐 0.0，跟真值并排出现），一旦 GUI 画实时吞吐曲线就是一条 0 线。修法 = `Optional[float]` 一路推到 schema/DB/报告（契约破坏面大，独立片）。
 
 
-- `[discovered 2026-08-03 during UXM KPI 修复]` **[→ P1-32 ✅ 已修（#279, 2026-08-04）／余 P1-33]** ~~**⛔ `configure_mac_throughput_test()` 在现场用的 IRAT 方言上 11/11 条命令都是 `None`，第一行就抛 AttributeError**~~ **⚠️ 崩溃与静默继续那半已由 P1-32 修掉**：8 组写入改走 `_cmd()` graceful-skip、返回 `MacThroughputConfigResult`、调用方必要项缺失即 `FAILED`（不再无条件 `start_signaling`）。**下面这段描述的是修之前的状态，留作背景，别当现状读。****仍未解决的是 P1-33**：补正确命令形式（含 `APPLY` 前置），且「IRAT 到底支不支持」**未经查证**（详见 P1-33 段的手册裁决）。原文如下 ——  —— `PDSCH_SCHED_ALGO` / `PDSCH_AMC_ENABLE` / `PUSCH_AMC_ENABLE` / `PDSCH_MCS` / `PDSCH_RB_ALLOC` / `TDD_PATTERN` / `TDD_PERIOD` / `HARQ_MAX_TRANS` / `HARQ_PROCESSES` / `CSIRS_PORTS` / `MEAS_TPUT_STAT_COUNT` —— `UxmLteNrIratProfile` 继承的是 `UxmTestApp` **基类**（不是 `Uxm5GNRTestAppProfile`），这 11 条全没覆盖。函数在第一条 `.format()` 上 `'NoneType' object has no attribute 'format'`，整段 `except` 捕获 → `return False`。**也就是说 3GPP MIMO OTA MAC 层吞吐量测试的全部配置（Full Buffer / AMC 关 / 固定 MCS / 全 RB / TDD 格式 / HARQ / CSI-RS 端口 / 统计窗口）在现场那台仪器上从来没有生效过。** 仓库已有 `RealUxmDriver._cmd()` graceful-skip helper 专治这个形态（见 `tests/test_uxm_driver_profile.py` 的 docstring），正解是全部换成它 —— 但**必须同时解决"跳过全部还报 True 就是假成功"**：跳过多少、跳了哪些要显式返回给调用方，否则比现在的 fail-loud 更糟。⚠️ **优先级高**：这是测试配置层的整体失效，比 KPI 读错更靠前 —— KPI 修好了，但测的是没配置过的链路。本次 KPI 片刻意不碰它（范围纪律），只把 KPI 前置序列挪到第 0 步、排在崩点之前，否则 KPI 修复在真正用的那个方言上是死的。
+- `[discovered 2026-08-03 during UXM KPI 修复]` **[→ P1-32 ✅ 已修（#279）／P1-33 本地半 ✅ 已修（#281, 2026-08-05）／余 P1-33 现场半]** ~~**⛔ `configure_mac_throughput_test()` 在现场用的 IRAT 方言上 11/11 条命令都是 `None`，第一行就抛 AttributeError**~~ **⚠️ 崩溃与静默继续那半已由 P1-32 修掉**：8 组写入改走 `_cmd()` graceful-skip、返回 `MacThroughputConfigResult`、调用方必要项缺失即 `FAILED`（不再无条件 `start_signaling`）。**下面这段描述的是修之前的状态，留作背景，别当现状读。****命令形式那半也已由 P1-33 本地半修掉**（#281, 2026-08-05：8 组命令按手册原件补齐 + 值形态转换 + 两条 apply 前置）。**仍未解决的只剩 P1-33 现场半** —— 「IRAT 到底支不支持这批命令」两个方向都没有证据，只能真机上跑一次看 `rejected` 列表（详见 P1-33 段的手册裁决）。原文如下 ——  —— `PDSCH_SCHED_ALGO` / `PDSCH_AMC_ENABLE` / `PUSCH_AMC_ENABLE` / `PDSCH_MCS` / `PDSCH_RB_ALLOC` / `TDD_PATTERN` / `TDD_PERIOD` / `HARQ_MAX_TRANS` / `HARQ_PROCESSES` / `CSIRS_PORTS` / `MEAS_TPUT_STAT_COUNT` —— `UxmLteNrIratProfile` 继承的是 `UxmTestApp` **基类**（不是 `Uxm5GNRTestAppProfile`），这 11 条全没覆盖。函数在第一条 `.format()` 上 `'NoneType' object has no attribute 'format'`，整段 `except` 捕获 → `return False`。**也就是说 3GPP MIMO OTA MAC 层吞吐量测试的全部配置（Full Buffer / AMC 关 / 固定 MCS / 全 RB / TDD 格式 / HARQ / CSI-RS 端口 / 统计窗口）在现场那台仪器上从来没有生效过。** 仓库已有 `RealUxmDriver._cmd()` graceful-skip helper 专治这个形态（见 `tests/test_uxm_driver_profile.py` 的 docstring），正解是全部换成它 —— 但**必须同时解决"跳过全部还报 True 就是假成功"**：跳过多少、跳了哪些要显式返回给调用方，否则比现在的 fail-loud 更糟。⚠️ **优先级高**：这是测试配置层的整体失效，比 KPI 读错更靠前 —— KPI 修好了，但测的是没配置过的链路。本次 KPI 片刻意不碰它（范围纪律），只把 KPI 前置序列挪到第 0 步、排在崩点之前，否则 KPI 修复在真正用的那个方言上是死的。
 
 - `[discovered 2026-08-03 during UXM KPI 修复]` **现场 2026-05-27 已经查明的结论，两个多月没喂回驱动** —— `docs/site-debug/2026-05-27-morning-log.md` §9.2/§9.3 白纸黑字记着：`TSTatistics:STARt` **-113 不支持**；`UEReport:* / UL 吞吐` **-113 本 App 不支持**；`BLER:STATistical:ALL?` 停在 `IDLE,UNKN,0,0`「统计未被 enable」；`CSI:CQI:STATistics?` 返回 `7.92E+04,0,NaN...`「**字段义待查手册**」；backlog 明写「**需查手册找 IRAT 下重置/enable 统计的正确命令**」。这些正是 2026-08-03 这次查手册得到的答案 —— **情报早就有了，缺的是把它落回代码的那一步**。§9.5 还解释了为什么没人发现：未定义**查询**→客户端超时、未定义**写**→`resp=None/err=None` **静默像成功**。**该建立的机制**：现场笔记里的「命令不支持 / 字段义待查」条目要有出口，能落进 `uxm_command_profiles.py` 的注释或 backlog，而不是停在 site-debug 文档里。
 
