@@ -13,7 +13,7 @@ blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 �
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-02 二批本地队列已拍板排序（用户明示"只排好优先级，先不忙开工"——待开工指令）**：
-**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → P1-34 → P1-35 → P1-36 → P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧；P1-28 为 2026-08-02 用户新增 backlog 当日拍板插入；**P1-30 为 2026-08-03 用户指定插队"把日志提上来先完成"**；**P1-31 / P1-32 为 2026-08-03 UXM KPI 修复（#275）带出、用户当日拍板插到队首**；**P1-34 为 2026-08-05 用户手工测试当场提出、当日拍板插到队首**）。**当前队首 = P1-34**（P1-25 / P1-26 / P1-30 / P1-31 / P1-32 / P1-33 本地半 已收口）。一句话索引：
+**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → P1-36 → P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧；P1-28 为 2026-08-02 用户新增 backlog 当日拍板插入；**P1-30 为 2026-08-03 用户指定插队"把日志提上来先完成"**；**P1-31 / P1-32 为 2026-08-03 UXM KPI 修复（#275）带出、用户当日拍板插到队首**；**P1-34 为 2026-08-05 用户手工测试当场提出、当日拍板插到队首**）。**当前队首 = P1-36**（P1-25 / P1-26 / P1-30 / P1-31 / P1-32 / P1-33 本地半 已收口）。一句话索引：
 - **P1-25** GUI 主控台"系统状态"面板恒空修复 + api.ts 手写镜像同尺审计
 - **P1-26** GUI 改频同步 component_carriers（**GUI 写侧**收口；后端收敛点与显示端同源另立片）
 - **P1-30** SCPI 往返日志的证据能力（截断显式化 + OK/ERR 配对 + `instrument_id` 收窄）
@@ -193,7 +193,7 @@ P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max /
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → P1-34 → P1-35 → P1-36 → P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列 + 08-03 用户指定 P1-30 / P1-31 / P1-32 插队 + 08-05 用户指定 P1-34 插队；**队首现为 P1-34**，P1-25 / P1-26 / P1-30 / P1-31 / P1-32 / P1-33 本地半 已收口；一批 10 片已全收 #256–#265）|
+| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → P1-36 → P1-27 → P1-28 → P1-29 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列 + 08-03 用户指定 P1-30 / P1-31 / P1-32 插队 + 08-05 用户指定 P1-34 插队；**队首现为 P1-36**，P1-25 / P1-26 / P1-30 / P1-31 / P1-32 / P1-33 本地半 已收口；一批 10 片已全收 #256–#265）|
 | **ON-SITE-BLOCKED** | P0-5 (P0-3/4 已 2026-07-03 现场完成) + P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -279,7 +279,7 @@ unblocked) BEFORE starting any new P1.
 | 2026-08-04 | [#280](https://github.com/swang430/Meta-3D/pull/280) | ⚠️ 有缺口 | **修 R3 那条 P2 的 commit 自己**（docs 一段）—— R1 `1d3e762` / R2 `7c28ddb` / R3 `a5a6bab` 都过了审，这次修复没有 | 用户授权破例走到 R3（超轮次上限）；R1/R2/R3 三轮各 1 条 P2，**全是同一母题的不同镜像站点**（表漏本 PR → Discovered 源条目 stale → P1-32 条目本体 stale）。R3 后按母题全量扫，确认无第四处 | 1 | ✅ 无需处置 —— ⚠️ 与 [#278](https://github.com/swang430/Meta-3D/pull/278) R1 **同一条**：「每个 PR 都记一行、含本 PR」我一个 PR 之后又漏了 |
 | 2026-08-05 | [#281](https://github.com/swang430/Meta-3D/pull/281) | ⚠️ 有缺口 | `a72ea7a` —— **R2 三条 P1 的修复**（TDD 校验改读**实时** SCS / pattern 排布可编码性 `D*S?U*` / CSI-RS 显式端口不被推导覆盖）及配套的门与变异 | 轮次上限=2 已到，交回用户后拍板 merge。两轮走势 **2 P1 → 3 P1**（**没有收敛**）—— 我在交回时明说了「再审一轮大概率还有」，这行如实记着它 | 2 | ⬜ 未处置 —— 下次动 `uxm_base_station.py` 的 MAC 配置段或 `executors/measure.py` 时**优先补审** |
 | 2026-08-05 | [#282](https://github.com/swang430/Meta-3D/pull/282) | <!--282-coverage-->✅ 全覆盖 | <!--282-gap-->—（R3 在 `bd43c8d` 上 clean，而 `bd43c8d` 就是合并时的代码 HEAD）**唯一没覆盖的是回填本行这两格的 docs commit 自己** —— 与 [#278](https://github.com/swang430/Meta-3D/pull/278) 同一个无穷递归，按那次的拍板就此收口 | 用户授权破例走到 R3（超轮次上限=2）。三轮走势 **1 P2 → 1 P2 → clean**，且**每轮那条 P2 都是本片自己在治的母题在新代码上复发**（R1 id 太短会静默合并两条链／R2 按钮名叫「只看这一次请求」实际给的是交集）—— 不是外部挑刺，是我自己没收敛。R3 clean 才算真收敛 | 1 | ✅ 无需处置 |
-
+| 2026-08-05 | [#283](https://github.com/swang430/Meta-3D/pull/283) | <!--283-coverage-->✅ 全覆盖 | <!--283-gap-->—（R1 在 `3a4a7b8` 上即 clean，而 `3a4a7b8` 就是合并时的代码 HEAD）。唯一没覆盖的是回填本行的 docs commit 自己 —— 与 [#278](https://github.com/swang430/Meta-3D/pull/278) 同一个无穷递归，按那次拍板收口 | P1-35 本片；按 #278 R1 的教训**开片即建行**。**首轮即 clean** —— 内审 8 条（含 1 条 P1：三道新门全是存在性档、内审造的 5 条变异全绿）在派外审前就修完了，这是本轮最值得记的一次前后对照 | **0** | ✅ 无需处置 |
 ### 📉 更值得看的信号：第一轮 findings 数
 
 上表最后一列不是装饰。**收口本身不是问题，反复需要收口才是** ——
@@ -1681,7 +1681,67 @@ TDD 配置**，猜错会让整批吞吐量结果失效（比现在"一条都没�
 
 **依赖**: 无。**现场半**: 无（纯本地可观察）。
 
-### P1-35 — 日志噪音治理（从 P3-19 摘出提前）⬜（2026-08-05 用户手工测试当场要求）
+### P1-35 — 无用日志不写 + 清晰过滤 ✅（2026-08-05 完成）
+
+**目的（用户原话，两次）**：
+> 「心跳 log 和 Cache updated log 的确很讨厌，需要 roadmap 提前解决问题。」
+>
+> 「**无用的 log，不能分析系统、测试、积累用于 AI 训练的 log，不应该被存储
+> （无论是本地还是数据库），需要具备清晰的 filter 用于故障排除、测试分析。**」
+
+**⭐ 由此确立的留存判据**（写日志前问自己）：
+
+> 这一行**能不能**服务下面四件事之一 —— **分析系统 / 测试分析 /
+> 积累 AI 训练语料 / 故障排除**？四件都不沾，就别写。
+>
+> 两条最常见的"都不沾"：
+> ① **周期性无信息量心跳** —— 每次内容都一样，只证明"进程还活着"；
+> ② **同一事实的第二份记录** —— 已经有更好的载体（计数器 / 别人的日志 /
+>    专属文件）还要再写一遍。
+
+**治理前后（同一容器、GUI 连着，实测）**：
+
+| | 治理前 | 治理后 |
+|---|---|---|
+| app.log 增速（GUI 连着） | **228 行/分** | **0 行/分**（无操作时） |
+| 心跳占比 | **90.1%**（6273 / 6965 行） | **0** |
+| 4 个真实操作产生 | 淹在心跳里 | **正好 5 行**（一操作一行 + 失败那次的根因） |
+| app.log 里的 DEBUG | 155 / 200 | **0** |
+
+**删了什么**（三类，各配会红的门，见 `tests/test_p1_35_log_value_policy.py`）：
+
+| 类 | 删的 | 判据 |
+|---|---|---|
+| ① 无信息量心跳 | `MetricsCache` 的 hit/expired/updated/cleared 四条 `logger.debug` | 命中率由 `_hits`/`_misses` 计数器如实记着，`get_stats()` 是读取口 —— per-event 日志是同一事实的第二份，且**监控广播器 1 Hz 只在 GUI 连着时跑**，恰好在操作员盯着看时刷得最凶 |
+| ② 逐字重复第三方 | `app.db` 的 checkout / checkin / session-committed 三条 | SQLAlchemy 的 `sqlalchemy.pool` / `.engine` 已把同样事件记进 `db.log`（实测同时段 checkout 272 / checkin 272 / COMMIT 266，逐一对应） |
+| ③ 说谎的死类型 | `InstrumentLog` 模型 + 三个 schema | 类名宣称"记录仪器操作历史"，实测**库里 0 行、0 写入方、0 读取方** |
+
+**保住了什么**（删的是重复，不是信号，各配反向门）：
+`DB session rollback`（WARNING，P1-29 那个 422 能查到根因的唯一来源）/
+`DB connection established`（INFO，一次性）/ 缓存计数器与 `get_stats()`。
+
+**过滤（服务"故障排除 / 测试分析"）**：
+- 新增 **「🚨 仅异常」** 档 = `WARNING,ERROR,CRITICAL` 一次看全。
+  后端 `level` 从单值扩成**逗号集合** —— 因为它是**精确相等不是门槛**，
+  此前没有任何单档能表达「WARNING 及以上」（选 ERROR 漏 WARNING，反之亦然）。
+  ⚠️ **仍是集合成员判断，不是序数比较**：`ZoneLogsAlerts`（P2-19 #258）的
+  跨流去重依赖「不同 level 的流天然不相交」，改成门槛会让那里出错。
+- **`/tail` 与 `/export` 合并成同一份谓词** —— `/export` 原先自己抄了一份
+  （P1-34 内审 F3「屏幕 5 条、导出全量」就是这个母题）。顺带修掉本片一度
+  自己引入的同类缺陷：导出发哨兵值 `__ISSUES__` → 后端精确匹配 → 导出 0 行。
+
+**明确不做**：
+- **六个专属 logger 的 `propagate` 双写原样保留** —— 关掉看着更干净，
+  但那样 `app.log` 只剩 1.8%，`request_id` 的链会从操作员默认看的文件里
+  消失，当场作废 P1-34。**`app.log` 的定位是总线**：故障排除天生跨切面
+  （HTTP → runner → HAL → SCPI），必须有一个文件看得全。配了反向门。
+- **`instrument_logs` 表本身不 drop** —— 需要 migration，而两台现场机器是
+  brownfield 库，属另一类风险，进 Discovered 单独走。
+
+**门**：13 条变异全红（含"删日志顺手把计数也删了"、"app.audit 改成不传播"、
+"导出又抄一份谓词"三条**反向**变异）。全量 3111 passed。
+
+<details><summary>原立项描述（2026-08-05 上午，仅心跳那一半）</summary>
 
 **目的（用户原话）**：「心跳 log 和 Cache updated log 的确很讨厌，需要 roadmap 提前解决问题。」
 
@@ -1711,6 +1771,8 @@ TDD 配置**，猜错会让整批吞吐量结果失效（比现在"一条都没�
 消息模板在 N 秒内超过 K 条"派生，配让它红的变异）。
 
 **依赖**: P1-34 先合（否则改完看不出差别 —— 时间还是错的、链还是串不起来）。
+
+</details>
 
 ### P1-36 — 测试执行身份进日志（`execution_id` 串链）⬜（2026-08-05 用户提出）
 
@@ -2494,6 +2556,9 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 ## 🗂️ Discovered during X — triage backlog
 
 > Items added mid-task. Reviewed weekly; promoted to P1/P2/P3 or dropped.
+
+- `[discovered 2026-08-05 during P1-35]` **`instrument_logs` 孤儿表待 drop（P3）** —— P1-35 删掉了 `InstrumentLog` 模型与三个 schema（零引用、库里 0 行、0 写入方），**表本身还在**。内审已查证**无害**：① `alembic/` 里零命中，这张表从来不是任何迁移建的；② baseline 迁移 `40fd1c51ff40` 走 `Base.metadata.create_all`，所以新的 greenfield 库**不会再有它**；③ 后续迁移全是手写 `table_exists/column_exists` 守门式，本仓库不用 autogenerate。**唯一残留风险**：哪天有人跑 `alembic revision --autogenerate` 会白得一条 `drop_table`。真要 drop 需 migration，而两台现场机器是 brownfield 库，属另一类风险 —— 单独走一片，按 `feedback_addcolumn_migration_dialect_agnostic` 三路径（PG / SQLite-brownfield / SQLite-greenfield）验。
+- `[discovered 2026-08-05 during P1-35 内审 F8]` **两个日志面板对「异常」有两个定义，主控台漏 CRITICAL（P3）** —— P1-35 在 `SystemLogViewer` 确立「异常 = WARNING/ERROR/CRITICAL」，而 `gui/src/features/Dashboard/ZoneLogsAlerts.tsx` 的 `LEVEL_FILTERS` 只有 `{INFO, WARNING, ERROR}`，且**没有任何 chip 能打开 CRITICAL** —— 不是"要多点一下"，是那个开关不存在，于是 CRITICAL 的行在主控台日志面板里**恒被客户端过滤掉**。P2-19 遗留，非 P1-35 造成（按 ⑦ 判据「不改它本片故障还在吗」→ 还在，故本片不顺手改）。**顺带**：`ZoneLogsAlerts` 现在可以用一个 `level=WARNING,ERROR,CRITICAL` 请求替掉那三十行两路 boost + 跨流去重（P1-35 的新能力开出来的化简机会）。
 
 - `[discovered 2026-08-05 during P1-34 内审 F5]` **WebSocket 流上的日志拿不到 `request_id`（P3）** —— `BaseHTTPMiddleware` 对 `scope["type"] != "http"` 直接透传（`starlette/middleware/base.py`），`AuditMiddleware.dispatch` 根本不会被调用，所以 `/ws/monitoring` 那条流产生的日志 `session_id` 恒为 `-`。**HTTP 侧八条路径已实测全覆盖**（sync / async / BackgroundTasks / StreamingResponse / HTTPException / 未捕获异常 500 / CORS 预检 / 排除路径），只有 WS 是真空。当前已在 `audit_middleware.py` 注释里写明是已知边界。**要补的话**：在 WS 端点自己 `current_session_id.set()`（每条连接一个 id，语义是"连接"不是"请求"，得先想清楚该不该复用同一个键）。
 - `[discovered 2026-08-05 during P1-34 内审 F6 的镜像扫查]` **roadmap 里两处「P1-31 现为队首」已 stale（P3，docs-only）** —— Discovered 区两条 UXM KPI 条目仍写着「= **P1-31**，2026-08-03 已立项、**现为队首**」，而 P1-31 已于 2026-08-04 收口（#277）。**不属 P1-34 的范围**（不是本片改动造成的，按 `feedback_pr_owns_status_rows` 不跨片顺手改），攒着走独立的 docs-only chore PR。同批可一起扫：全仓 grep `现为队首` / `已立项、现为` 这类**把当下状态写进条目正文**的措辞 —— 它们天然会 stale，最好改成「见顶部 Current Focus」这类**指针**而不是快照。

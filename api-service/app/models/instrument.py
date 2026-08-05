@@ -188,39 +188,19 @@ class InstrumentConnection(Base):
     category = relationship("InstrumentCategory", back_populates="connection")
 
 
-class InstrumentLog(Base):
-    """
-    Instrument Log - 仪器操作日志
-
-    记录仪器的重要操作和状态变更历史。
-    """
-    __tablename__ = "instrument_logs"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-
-    # 关联
-    category_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey('instrument_categories.id'),
-        nullable=False
-    )
-
-    # 日志内容
-    event_type = Column(
-        String(100),
-        nullable=False,
-        comment="事件类型: connect | disconnect | config_change | error | etc."
-    )
-    message = Column(Text, nullable=False, comment="日志消息")
-    level = Column(
-        String(20),
-        default="info",
-        comment="日志级别: debug | info | warning | error | critical"
-    )
-
-    # 详细信息
-    details = Column(JSON, comment="详细信息（JSON格式）")
-
-    # 元数据
-    timestamp = Column(DateTime, server_default=func.now(), nullable=False)
-    performed_by = Column(String(100), comment="操作者")
+# ⚠ P1-35 已删除 `InstrumentLog` 模型（原 `instrument_logs` 表）。
+#
+# 它是**说谎的死类型**：类名和表名都宣称"记录仪器的重要操作和状态变更历史"，
+# 而实测**库里 0 行、全仓 0 个写入方、0 个读取方**（配套的
+# `InstrumentLogCreate/Response/ListResponse` 三个 schema 同样零引用，
+# 一并删除）。它的存在让人以为仪器操作在库里有留存 —— 没有。
+#
+# 仪器操作的**真实**留存在这两处，别再往库里另起一份：
+#   · `diagnostic_runs` —— 诊断序列的参数 / 成败 / **仪器原始回复** / 耗时
+#   · `scpi.log` —— SCPI 往返全文（AI 训练语料的主体）
+#
+# **表本身还在库里**（0 行）—— drop 需要 migration，而两台现场机器是
+# brownfield 库，属另一类风险。已查证无害：`alembic/` 里零命中（这张表
+# 从来不是任何迁移建的），baseline 走 `create_all` 故新库不会再有它。
+# 待办条目见 `docs/roadmap-first-call.md` 的 Discovered 区，
+# 搜「instrument_logs 孤儿表」。

@@ -75,6 +75,97 @@ class TestFilterDuringScan:
         # 如实报实扫行数 (301 行全扫完才凑到 1 条 ERROR)
         assert body["total_lines_read"] == 301
 
+    @pytest.mark.parametrize("params", [
+        {},                                                   # 无过滤
+        {"level": "WARNING,ERROR,CRITICAL"},                  # 「仅异常」
+        {"level": "ERROR"},                                   # 单值
+        {"session_id": "aaaa1111bbbb2222"},                   # 只看这一次请求
+        {"level": "WARNING,ERROR,CRITICAL", "session_id": "aaaa1111bbbb2222"},
+        {"keyword": "needle"},
+        {"hal_mode": "real"},                                 # 仅 export 支持的维度
+        {"level": "WARNING,ERROR", "keyword": "needle", "hal_mode": "mock"},
+    ])
+    def test_tail_and_export_return_the_same_rows(self, client, log_dir, params):
+        """**行为门**：同一组条件下，`/tail` 看到什么，`/export` 就该导出什么。
+
+        内审 F1：本片把 `/export` 改成复用 `_entry_matches` 之后，守它的只有
+        一道存在性门（"源码里有没有 `_entry_matches(`"）—— 内审造的变异把
+        `session_id` 实参换成 `None`，屏幕剩 5 条、导出全量，而门**全绿**。
+        那正是 P1-34 内审 F3 原样复发。存在性门只能当粗筛，**旁边必须配
+        行为门**（CLAUDE.md ⓪④）。
+
+        变异：`/export` 的 `_entry_matches(...)` 少传 / 错传任一实参 → 本门红。
+        """
+        lines = [
+            _json_line("ERROR", "needle 错误", session_id="aaaa1111bbbb2222"),
+            _json_line("WARNING", "needle 告警", session_id="aaaa1111bbbb2222"),
+            _json_line("CRITICAL", "致命", session_id="ffff9999ffff9999"),
+            _json_line("ERROR", "另一次请求的错误", session_id="ffff9999ffff9999"),
+            _json_line("INFO", "needle 普通信息"),
+            _json_line("DEBUG", "心跳"),
+        ]
+        (log_dir / "app.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        tail = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 200, **params})
+        assert tail.status_code == 200
+        # /tail 不支持 hal_mode，它那侧的该维度恒不过滤 —— 只在 export 生效，
+        # 所以对比时把 hal_mode 从 tail 的条件里剔除、改为在本地施加同样谓词。
+        tail_rows = [e["raw"] for e in tail.json()["entries"]]
+        hm = params.get("hal_mode")
+        if hm:
+            tail_rows = [
+                r for r in tail_rows if json.loads(r).get("hal_mode", "").lower() == hm.lower()
+            ]
+
+        exp = client.get(
+            f"{settings.api_v1_prefix}/system-logs/export/app.log", params=params)
+        assert exp.status_code == 200
+        export_rows = [l for l in exp.text.splitlines() if l.strip()]
+
+        # /tail 是倒序（最新在前），/export 是文件顺序 —— 比**集合**与条数
+        assert sorted(export_rows) == sorted(tail_rows), (
+            f"条件 {params} 下 /tail 与 /export 结果不一致：\n"
+            f"  tail   {len(tail_rows)} 条\n  export {len(export_rows)} 条"
+        )
+
+    def test_level_accepts_a_comma_separated_set(self, client, log_dir):
+        """P1-35「仅异常」：`level=WARNING,ERROR,CRITICAL` 一次拿全。
+
+        后端是**精确相等**不是门槛，所以没有任何单值能表达「WARNING 及以上」
+        —— 选 ERROR 漏 WARNING、选 WARNING 漏 ERROR，故障分诊两边看不全。
+
+        ⚠ 仍是**集合成员**判断，不是序数比较：`ZoneLogsAlerts`（P2-19）的
+        跨流去重依赖「不同 level 的流天然不相交」。
+        """
+        lines = [
+            _json_line("ERROR", "错误一条"),
+            _json_line("WARNING", "告警一条"),
+            _json_line("CRITICAL", "致命一条"),
+        ]
+        lines += [_json_line("INFO", f"噪音 {i}") for i in range(50)]
+        lines += [_json_line("DEBUG", f"心跳 {i}") for i in range(50)]
+        (log_dir / "app.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        body = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 200,
+            "level": "WARNING,ERROR,CRITICAL"}).json()
+        assert body["filtered_count"] == 3, "三个级别没一次拿全"
+        assert {e["level"] for e in body["entries"]} == {"ERROR", "WARNING", "CRITICAL"}
+
+        # 单值行为不能被破坏（ZoneLogsAlerts 还在用）
+        one = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 200, "level": "ERROR"}).json()
+        assert one["filtered_count"] == 1
+        assert one["entries"][0]["level"] == "ERROR"
+
+        # 不是门槛：要 INFO 就只给 INFO，不带上更高的级别
+        info = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 200, "level": "INFO"}).json()
+        assert {e["level"] for e in info["entries"]} == {"INFO"}, (
+            "level 变成序数门槛了 —— ZoneLogsAlerts 的跨流去重会出错"
+        )
+
     def test_session_id_filter_pulls_one_request_chain(self, client, log_dir):
         """P1-34「只看这一次请求」依赖的就是这条路径（内审 F9：此前零覆盖）。
 
