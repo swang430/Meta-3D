@@ -200,12 +200,12 @@ const systemLogTail: SystemLogTailResponse = {
   total_lines_read: 6,
   filtered_count: 6,
   entries: [
-    { ts: '2026-05-20T09:48:01', level: 'INFO', logger: 'app.execution', hal_mode: 'real', session_id: 's-3001', instrument_id: '-', msg: '执行 exec-3001 完成，成功率 100%', raw: null },
-    { ts: '2026-05-20T09:47:55', level: 'INFO', logger: 'app.hal.propsim_f64', hal_mode: 'real', session_id: 's-3001', instrument_id: 'F64-01', msg: '信道仿真器刷新多径权重', raw: null },
-    { ts: '2026-05-20T09:47:40', level: 'WARNING', logger: 'app.probe', hal_mode: 'real', session_id: 's-3001', instrument_id: 'probe-17', msg: '探头#17反馈延迟偏差 1.4ms', raw: null },
-    { ts: '2026-05-20T09:47:10', level: 'DEBUG', logger: 'app.monitoring', hal_mode: 'real', session_id: 's-3001', instrument_id: '-', msg: '静区均匀度采样 0.9 dB', raw: null },
-    { ts: '2026-05-20T09:46:30', level: 'ERROR', logger: 'app.hal.uxm', hal_mode: 'real', session_id: 's-3001', instrument_id: 'UXM-01', msg: 'SCPI 超时，已重试 1 次后恢复', raw: null },
-    { ts: '2026-05-20T09:46:00', level: 'INFO', logger: 'app.execution', hal_mode: 'real', session_id: 's-3001', instrument_id: '-', msg: '执行 exec-3001 开始', raw: null },
+    { ts: '2026-05-20T09:48:01', level: 'INFO', logger: 'app.execution', hal_mode: 'real', session_id: 's-3001', execution_id: 'exec-3001', instrument_id: '-', msg: '执行 exec-3001 完成，成功率 100%', raw: null },
+    { ts: '2026-05-20T09:47:55', level: 'INFO', logger: 'app.hal.propsim_f64', hal_mode: 'real', session_id: 's-3001', execution_id: 'exec-3001', instrument_id: 'F64-01', msg: '信道仿真器刷新多径权重', raw: null },
+    { ts: '2026-05-20T09:47:40', level: 'WARNING', logger: 'app.probe', hal_mode: 'real', session_id: 's-3001', execution_id: 'exec-3001', instrument_id: 'probe-17', msg: '探头#17反馈延迟偏差 1.4ms', raw: null },
+    { ts: '2026-05-20T09:47:10', level: 'DEBUG', logger: 'app.monitoring', hal_mode: 'real', session_id: 's-3001', execution_id: 'exec-3001', instrument_id: '-', msg: '静区均匀度采样 0.9 dB', raw: null },
+    { ts: '2026-05-20T09:46:30', level: 'ERROR', logger: 'app.hal.uxm', hal_mode: 'real', session_id: 's-3001', execution_id: 'exec-3001', instrument_id: 'UXM-01', msg: 'SCPI 超时，已重试 1 次后恢复', raw: null },
+    { ts: '2026-05-20T09:46:00', level: 'INFO', logger: 'app.execution', hal_mode: 'real', session_id: 's-3001', execution_id: 'exec-3001', instrument_id: '-', msg: '执行 exec-3001 开始', raw: null },
   ],
 }
 
@@ -1237,9 +1237,24 @@ export const mockDatabase = {
     const items = typeof limit === 'number' ? rows.slice(0, limit) : rows
     return clone({ total: rows.length, items })
   },
-  getSystemLogsTail(filename?: string, level?: string, keyword?: string): SystemLogTailResponse {
+  getSystemLogsTail(
+    filename?: string,
+    level?: string,
+    keyword?: string,
+    sessionId?: string,
+    executionId?: string,
+  ): SystemLogTailResponse {
     let entries = systemLogTail.entries
-    if (level) entries = entries.filter((e) => e.level.toUpperCase() === level.toUpperCase())
+    // ⚠ 契约四步的第 4 步。这里必须跟真后端 `_entry_matches` 保持**同样的语义**：
+    //   · level 是**逗号分隔的集合**、精确匹配（P1-35），不是门槛；
+    //   · session_id / execution_id 精确匹配（P1-34 / P1-36）。
+    // 少一个维度，mock 下就会看到真后端过滤不出来的行 —— mock 说谎比没有 mock 更坏。
+    if (level) {
+      const wanted = new Set(level.split(',').map((l) => l.trim().toUpperCase()).filter(Boolean))
+      entries = entries.filter((e) => wanted.has(e.level.toUpperCase()))
+    }
+    if (sessionId) entries = entries.filter((e) => e.session_id === sessionId)
+    if (executionId) entries = entries.filter((e) => e.execution_id === executionId)
     if (keyword) {
       const kw = keyword.toLowerCase()
       entries = entries.filter((e) => e.msg.toLowerCase().includes(kw) || e.logger.toLowerCase().includes(kw))

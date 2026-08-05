@@ -24,6 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.core.logging_config import current_execution_id
 from app.db.database import SessionLocal, get_db
 from app.models.calibration import CalibrationCertificate
 from app.models.lab_profile import LabProfile
@@ -435,6 +436,18 @@ def _resolve_execution(
                 f"(executed_by={execution.executed_by!r})"
             ),
         )
+
+    # P1-36（内审 F1）：**这里**才是暗室首测的执行身份落点。
+    #
+    # 早前 set 在 `create_session` 里 —— 但那个端点**根本不跑相位**（只建行
+    # 返回），而真正 dispatch 的 `run_phase` / `run_all_phases` 一处都没有。
+    # 内审探针实证：`run-all` 产生 **51 条日志、0 条带 execution_id**；
+    # 唯一被标上的那行是 `create_session` 那条，而它自己早就把 id 写进了
+    # 消息文本 —— 我拿它当证据，正是「验证打在看起来的那一端」。
+    #
+    # `_resolve_execution` 是 `run_phase` / `run_all_phases` / `get_session`
+    # 三者的**唯一解析点**，跟 VRT 选 `get()` 是同一个理由。
+    current_execution_id.set(str(execution.id))
     if execution.test_case_id is None:
         raise HTTPException(
             status_code=500,
@@ -530,6 +543,12 @@ async def create_session(req: CreateSessionRequest, db: Session = Depends(get_db
     db.add(execution)
     db.commit()
     db.refresh(execution)
+
+    # P1-36: 暗室首测的相位**同步跑在这个请求线程上**，所以在这里 set 一次，
+    # 本次请求内后续的全部日志 (executor / HAL / SCPI) 自动带上执行身份。
+    # 与 test_case_runner 那条是同一个机制，只是作用域从"后台任务"换成
+    # "这次请求"。⚠ 全仓 4 种执行里这是其中两种，别只instrument一处。
+    current_execution_id.set(str(execution.id))
 
     logger.info(
         "Created MIMO_OTA session: execution_id=%s test_case_id=%s",
@@ -725,6 +744,12 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
     db.add(execution)
     db.commit()
     db.refresh(execution)
+
+    # P1-36: 暗室首测的相位**同步跑在这个请求线程上**，所以在这里 set 一次，
+    # 本次请求内后续的全部日志 (executor / HAL / SCPI) 自动带上执行身份。
+    # 与 test_case_runner 那条是同一个机制，只是作用域从"后台任务"换成
+    # "这次请求"。⚠ 全仓 4 种执行里这是其中两种，别只instrument一处。
+    current_execution_id.set(str(execution.id))
 
     # ARCH-1 S3: 开跑置 running, 让 HAL reload 闸门看得见这条链。
     # 不套 _execution_marked_running: 本入口下面已有更精细的收尾

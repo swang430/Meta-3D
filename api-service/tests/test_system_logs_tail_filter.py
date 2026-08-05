@@ -33,6 +33,7 @@ def _json_line(
     msg: str,
     logger: str = "app.services.instrument_hal_service",
     session_id: str = "-",
+    execution_id: str = "-",
 ) -> str:
     return json.dumps({
         "ts": "2026-07-31T10:00:00.000+08:00",
@@ -40,6 +41,7 @@ def _json_line(
         "logger": logger,
         "hal_mode": "mock",
         "session_id": session_id,
+        "execution_id": execution_id,
         "instrument_id": "-",
         "msg": msg,
     }, ensure_ascii=False)
@@ -84,6 +86,8 @@ class TestFilterDuringScan:
         {"keyword": "needle"},
         {"hal_mode": "real"},                                 # 仅 export 支持的维度
         {"level": "WARNING,ERROR", "keyword": "needle", "hal_mode": "mock"},
+        {"execution_id": "exec-aaaa-1111"},                    # P1-36
+        {"execution_id": "exec-aaaa-1111", "level": "ERROR"},  # P1-36 组合
     ])
     def test_tail_and_export_return_the_same_rows(self, client, log_dir, params):
         """**行为门**：同一组条件下，`/tail` 看到什么，`/export` 就该导出什么。
@@ -97,8 +101,10 @@ class TestFilterDuringScan:
         变异：`/export` 的 `_entry_matches(...)` 少传 / 错传任一实参 → 本门红。
         """
         lines = [
-            _json_line("ERROR", "needle 错误", session_id="aaaa1111bbbb2222"),
-            _json_line("WARNING", "needle 告警", session_id="aaaa1111bbbb2222"),
+            _json_line("ERROR", "needle 错误", session_id="aaaa1111bbbb2222",
+                       execution_id="exec-aaaa-1111"),
+            _json_line("WARNING", "needle 告警", session_id="aaaa1111bbbb2222",
+                       execution_id="exec-aaaa-1111"),
             _json_line("CRITICAL", "致命", session_id="ffff9999ffff9999"),
             _json_line("ERROR", "另一次请求的错误", session_id="ffff9999ffff9999"),
             _json_line("INFO", "needle 普通信息"),
@@ -165,6 +171,46 @@ class TestFilterDuringScan:
         assert {e["level"] for e in info["entries"]} == {"INFO"}, (
             "level 变成序数门槛了 —— ZoneLogsAlerts 的跨流去重会出错"
         )
+
+    def test_execution_id_filter_pulls_one_test_run(self, client, log_dir):
+        """P1-36「只看这次执行」——**过滤真的起作用**，不只是"两端一致"。
+
+        变异 M9 实证：把谓词里 execution_id 那两行删掉，`/tail` 与 `/export`
+        会**一起**不过滤 → 等价性门照绿。等价 ≠ 正确，必须单独验它真的筛掉了。
+
+        场景：一次执行的 3 条日志（跨 2 个不同请求）+ 另一次执行的 2 条 +
+        200 行无关噪音 —— 按执行 id 必须**完整**捞回 3 条、不夹带另一次。
+        """
+        mine, other = "exec-1111-aaaa", "exec-2222-bbbb"
+        lines = [
+            _json_line("INFO", "发起", logger="app.audit", session_id="req-a", execution_id=mine),
+            _json_line("INFO", "相位 CONFIGURE", session_id="req-a", execution_id=mine),
+            # 同一次执行、**另一个请求**（查询进度）—— 两个 id 的关系全在这
+            _json_line("INFO", "查进度", logger="app.audit", session_id="req-b", execution_id=mine),
+            _json_line("INFO", "别的执行 1", session_id="req-c", execution_id=other),
+            _json_line("ERROR", "别的执行 2", session_id="req-c", execution_id=other),
+        ]
+        lines += [_json_line("INFO", f"无关噪音 {i}") for i in range(200)]
+        (log_dir / "app.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        body = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 200, "execution_id": mine}).json()
+        assert body["filtered_count"] == 3, "这次执行的链没被完整捞回来"
+        assert {e["execution_id"] for e in body["entries"]} == {mine}, "夹带了别的执行"
+        # 关键：同一次执行**跨了两个请求** —— 这正是两个 id 必须分开的理由
+        assert {e["session_id"] for e in body["entries"]} == {"req-a", "req-b"}
+
+    def test_execution_id_filter_is_exact_not_substring(self, client, log_dir):
+        """前缀相同的两次执行不能互相夹带。"""
+        lines = [
+            _json_line("INFO", "我的", execution_id="exec-1111"),
+            _json_line("INFO", "别人的", execution_id="exec-11110000"),
+        ]
+        (log_dir / "app.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        body = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 200, "execution_id": "exec-1111"}).json()
+        assert body["filtered_count"] == 1
+        assert body["entries"][0]["msg"] == "我的"
 
     def test_session_id_filter_pulls_one_request_chain(self, client, log_dir):
         """P1-34「只看这一次请求」依赖的就是这条路径（内审 F9：此前零覆盖）。

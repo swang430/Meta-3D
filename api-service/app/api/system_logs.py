@@ -44,6 +44,7 @@ class LogEntry(BaseModel):
     logger: str
     hal_mode: str = "-"
     session_id: str = "-"
+    execution_id: str = "-"
     instrument_id: str = "-"
     msg: str
     raw: Optional[str] = None  # 原始 JSON 行（供详情展开）
@@ -114,6 +115,7 @@ def _entry_matches(
     keyword: Optional[str],
     session_id: Optional[str],
     hal_mode: Optional[str] = None,
+    execution_id: Optional[str] = None,
 ) -> bool:
     """日志过滤谓词 —— `/tail` 与 `/export` **共用这一份**。
 
@@ -136,6 +138,8 @@ def _entry_matches(
         if kw_lower not in entry.msg.lower() and kw_lower not in entry.logger.lower():
             return False
     if session_id and entry.session_id != session_id:
+        return False
+    if execution_id and entry.execution_id != execution_id:
         return False
     if hal_mode and entry.hal_mode.lower() != hal_mode.lower():
         return False
@@ -211,6 +215,7 @@ def _parse_log_line(line: str) -> Optional[LogEntry]:
             logger=obj.get("logger", ""),
             hal_mode=obj.get("hal_mode", "-"),
             session_id=obj.get("session_id", "-"),
+            execution_id=obj.get("execution_id", "-"),
             instrument_id=obj.get("instrument_id", "-"),
             msg=obj.get("msg", line),
             raw=line,
@@ -267,6 +272,7 @@ def tail_log_file(
     level: Optional[str] = Query(default=None, description="逗号分隔的级别集合（如 `WARNING,ERROR,CRITICAL`）。**精确匹配不是门槛** —— ZoneLogsAlerts 的跨流去重依赖不同 level 的流互不相交，别改成 >="),
     keyword: Optional[str] = Query(default=None, description="按关键词过滤（模糊匹配 msg 和 logger 字段）"),
     session_id: Optional[str] = Query(default=None, description="按 session_id 精确过滤"),
+    execution_id: Optional[str] = Query(default=None, description="按测试执行 id 精确过滤（一次执行跨多请求、也可能不在请求里，与 session_id 是两个生命周期）"),
 ):
     """
     读取指定日志文件中最新的 N 条匹配日志，支持多维度过滤。
@@ -281,7 +287,8 @@ def tail_log_file(
     entries, scanned = _scan_tail_entries(
         filepath,
         max_entries=lines,
-        predicate=lambda e: _entry_matches(e, level, keyword, session_id),
+        predicate=lambda e: _entry_matches(
+            e, level, keyword, session_id, execution_id=execution_id),
     )
 
     return LogTailResponse(
@@ -315,6 +322,7 @@ def export_filtered_logs(
     keyword: Optional[str] = Query(default=None, description="按关键词过滤"),
     session_id: Optional[str] = Query(default=None, description="按 session_id 过滤"),
     hal_mode: Optional[str] = Query(default=None, description="按 HAL 模式过滤 (mock/real)"),
+    execution_id: Optional[str] = Query(default=None, description="按测试执行 id 精确过滤（一次执行跨多请求、也可能不在请求里，与 session_id 是两个生命周期）"),
 ):
     """
     按过滤条件导出日志。
@@ -337,7 +345,8 @@ def export_filtered_logs(
 
                 # ⚠ 用 `/tail` 那同一个谓词，别再抄一份 —— 抄出来的两份
                 # 一定会漂（P1-34 内审 F3：屏幕 5 条、导出全量）。
-                if not _entry_matches(entry, level, keyword, session_id, hal_mode):
+                if not _entry_matches(
+                        entry, level, keyword, session_id, hal_mode, execution_id):
                     continue
 
                 yield stripped + "\n"

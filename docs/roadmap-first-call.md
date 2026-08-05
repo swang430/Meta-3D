@@ -1805,7 +1805,7 @@ TDD 配置**，猜错会让整批吞吐量结果失效（比现在"一条都没�
 | 2 | [`test_case_runner._run_case()`](../api-service/app/services/test_case_runner.py) 入口 `.set()` 一次 —— **零调用点改动**，这次执行期间 runner / HAL / SCPI 的每一条日志自动带上 |
 | 3 | `/system-logs/tail` + `/export` 加 `execution_id` 精确过滤（与 `session_id` 同形） |
 | 4 | 契约四步（新字段进 `LogEntry`）：`openapi.yaml` → `npm run openapi:generate` → `service.ts` → `mockServer` |
-| 5 | GUI：日志表加「执行」列 + 执行历史每行加「看这次执行的日志」跳转并预置过滤 |
+| 5 | GUI：日志表加「执行」列（点它隔离整条执行链）。⚠️ **「从执行历史一键跳转」本片未做** —— 内审 F7 指出：`SystemLogViewer` 不接 props、不读 URL 参数，**没有任何入口能带着 execution_id 跳过来**，那句可观察故障合并后仍成立，已进 Discovered；同条目 ⚠② 说的「显示用例名+时间而非裸 UUID」同样未做（徽章现在显示 id 前 8 位），一并进 Discovered |
 
 ⚠️ **两个必须先想清楚的点**：
 ① `execution_id` 与 `session_id` 是**两个不同生命周期**（一次执行跨多个请求、
@@ -2664,6 +2664,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 ## 🗂️ Discovered during X — triage backlog
 
 > Items added mid-task. Reviewed weekly; promoted to P1/P2/P3 or dropped.
+
+- `[discovered 2026-08-05 during P1-36 内审 F7]` **「从执行历史一键看这次执行的日志」未做（P2）** —— P1-36 给了 `execution_id` 串链 + 日志表「执行」列（点它隔离），但**没有从执行历史跳过去的入口**：`SystemLogViewer` 不接任何 props、也不读 URL 参数。所以「跑完一个用例想看它做了什么」这条路现在是"自己去日志页、找到那次执行的任意一行、点一下"，而不是"从执行历史点一下"。**顺带**：过滤徽章显示的是裸 UUID 前 8 位，P1-36 条目 ⚠② 原本要求"显示用例名 + 执行时间"（**过滤判据仍须用 id**，别拿名字当键 —— 同名用例会合并成假链）。两件事一起做：给 `SystemLogViewer` 加受控 props（或走 URL 查询参数），执行历史每行加跳转按钮。
 
 - `[discovered 2026-08-05 during P1-35]` **`instrument_logs` 孤儿表待 drop（P3）** —— P1-35 删掉了 `InstrumentLog` 模型与三个 schema（零引用、库里 0 行、0 写入方），**表本身还在**。内审已查证**无害**：① `alembic/` 里零命中，这张表从来不是任何迁移建的；② baseline 迁移 `40fd1c51ff40` 走 `Base.metadata.create_all`，所以新的 greenfield 库**不会再有它**；③ 后续迁移全是手写 `table_exists/column_exists` 守门式，本仓库不用 autogenerate。**唯一残留风险**：哪天有人跑 `alembic revision --autogenerate` 会白得一条 `drop_table`。真要 drop 需 migration，而两台现场机器是 brownfield 库，属另一类风险 —— 单独走一片，按 `feedback_addcolumn_migration_dialect_agnostic` 三路径（PG / SQLite-brownfield / SQLite-greenfield）验。
 - `[discovered 2026-08-05 during P1-35 内审 F8]` **两个日志面板对「异常」有两个定义，主控台漏 CRITICAL（P3）** —— P1-35 在 `SystemLogViewer` 确立「异常 = WARNING/ERROR/CRITICAL」，而 `gui/src/features/Dashboard/ZoneLogsAlerts.tsx` 的 `LEVEL_FILTERS` 只有 `{INFO, WARNING, ERROR}`，且**没有任何 chip 能打开 CRITICAL** —— 不是"要多点一下"，是那个开关不存在，于是 CRITICAL 的行在主控台日志面板里**恒被客户端过滤掉**。P2-19 遗留，非 P1-35 造成（按 ⑦ 判据「不改它本片故障还在吗」→ 还在，故本片不顺手改）。**顺带**：`ZoneLogsAlerts` 现在可以用一个 `level=WARNING,ERROR,CRITICAL` 请求替掉那三十行两路 boost + 跨流去重（P1-35 的新能力开出来的化简机会）。

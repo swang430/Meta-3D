@@ -220,7 +220,8 @@ export function setupMockServer() {
 
   mock.onGet('/system-logs/tail').reply((config) => {
     const params = config.params || {}
-    return [200, mockDatabase.getSystemLogsTail(params.filename, params.level, params.keyword)]
+    return [200, mockDatabase.getSystemLogsTail(
+      params.filename, params.level, params.keyword, params.session_id, params.execution_id)]
   })
 
   // /dashboard/alerts/summary registered before /dashboard/alerts so the

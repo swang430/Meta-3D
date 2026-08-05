@@ -38,6 +38,7 @@ from uuid import UUID
 
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.core.logging_config import current_execution_id
 from app.db.database import SessionLocal
 from app.models.test_plan import (
     TestCase,
@@ -361,6 +362,14 @@ def reset_orphaned_plan_chain_rows() -> None:
 
 async def _run_case(execution_id: UUID) -> None:
     """后台入口: 自建 session, 顶层兜底 (异常 → failed, 不静默消失)。"""
+    # P1-36: 这次执行期间的**全部**日志 (runner / HAL / SCPI) 自动带上执行身份
+    # —— `ContextFilter` 已在给每条 LogRecord 注入 `execution_id`，这里 set 一次
+    # 就够，**零调用点改动**。
+    #
+    # ⚠ 本任务由 `create_task` 拉起，会**继承**发起它的那个 HTTP 请求的
+    # `session_id` —— 那是有用的溯源（哪次点击起的这次执行），刻意保留。
+    # 但读日志时别把它当成"那个请求还在跑"：请求早返回了，执行还在后台。
+    current_execution_id.set(str(execution_id))
     db = SessionLocal()
     try:
         await _run_case_loop(db, execution_id)

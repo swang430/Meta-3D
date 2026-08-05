@@ -26,6 +26,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.core.logging_config import current_execution_id
 from app.models.test_plan import TestExecution as TestExecutionORM
 from app.models.road_test import VrtKpiSample
 from app.schemas.road_test import (
@@ -97,6 +98,8 @@ class VrtExecutionService:
         db.add(row)
         db.commit()
         db.refresh(row)
+        # P1-36: 从这一刻起，本次请求内的日志都归属这次 VRT 执行。
+        current_execution_id.set(str(row.id))
         self.append_log(db, row.id, level="INFO", message="Execution created", source="System")
         logger.info("Created VRT execution %s (mode=%s, scenario=%s)", row.id, mode.value, scenario_id)
         return row
@@ -105,7 +108,21 @@ class VrtExecutionService:
         uid = _resolve_uuid(execution_id)
         if uid is None:
             return None
-        return db.query(TestExecutionORM).filter(TestExecutionORM.id == uid).first()
+        row = db.query(TestExecutionORM).filter(TestExecutionORM.id == uid).first()
+        if row is not None:
+            # P1-36: VRT 没有可包住的运行作用域 —— start / pause / resume / stop /
+            # complete / fail 各是一次**独立请求**，所以没法像 test_case_runner
+            # 那样"入口 set 一次管到底"。
+            #
+            # `get()` 是**唯一的解析点**（`_transition` 与 `fail` 都走它），
+            # 在这里 set 就等于给每一次状态跃迁都盖上执行身份 —— 用户要的
+            # 「至少开始和结束要标记」由此自动满足，且读操作也一并归属。
+            #
+            # ⚠ 在 getter 里设 contextvar 看着奇怪，但语义是准的：
+            # "本次请求是关于这个执行的"。这是本文件里唯一的 choke point，
+            # 分散到 7 个跃迁方法里反而会漏（新增一个方法就少一处）。
+            current_execution_id.set(str(row.id))
+        return row
 
     def list(
         self,
