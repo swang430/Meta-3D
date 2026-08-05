@@ -105,6 +105,22 @@ export function SystemLogViewer() {
   // AuditMiddleware 现在每请求写一个 id，这里把它接上。
   const [sessionFilter, setSessionFilter] = useState<string | null>(null)
 
+  // P1-34 / Codex #282 R2：进入「只看这一次请求」时**清掉 level 与 keyword**。
+  //
+  // 不清的话后端返回的是**交集**而不是整条链：典型场景是操作员先用 ERROR
+  // 过滤找到失败那行，再点这个按钮 —— 期待看到这次请求的完整上下文
+  // (INFO / HAL / SCPI)，实际只看到这次请求里的 ERROR 行。按钮名叫
+  // 「只看这一次请求」，给的却是「这次请求 ∩ 当前过滤」，跟本片在治的
+  // 母题一模一样：看起来对，其实不是承诺的那个东西。
+  //
+  // 选"清掉"而不是"链条视图忽略其它过滤"：后者会让 level / keyword 控件
+  // 明明显示着却不生效 —— 那是换了个地方说谎。清掉之后控件肉眼可见被重置。
+  const isolateRequest = (sid: string) => {
+    setSessionFilter(sid)
+    setLevelFilter('ALL')
+    setKeyword('')
+  }
+
   // Auto-refresh
   const [refreshInterval, setRefreshInterval] = useState('0')
   const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -360,6 +376,12 @@ export function SystemLogViewer() {
                 <Table.Th w={30}></Table.Th>
                 <Table.Th w={100}>时间</Table.Th>
                 <Table.Th w={70}>级别</Table.Th>
+                {/* P1-34: 请求 ID 必须**在表格里直接看得见**。
+                    早前它只在展开详情里 —— 于是这个功能等于不存在：
+                    用户反馈原话「没看到 request_id 真的落进日志了」，
+                    而实测那 200 行里 47% 是带 id 的。
+                    做了但看不见 = 没做。 */}
+                <Table.Th w={86}>请求</Table.Th>
                 <Table.Th w={60}>模式</Table.Th>
                 <Table.Th w={250}>Logger</Table.Th>
                 <Table.Th>消息</Table.Th>
@@ -368,7 +390,9 @@ export function SystemLogViewer() {
             <Table.Tbody>
               {entries.length === 0 && !loading && (
                 <Table.Tr>
-                  <Table.Td colSpan={5}>
+                  {/* 7 列：展开箭头 / 时间 / 级别 / 请求 / 模式 / Logger / 消息。
+                      加「请求」列前这里写的是 5，本来就少一列。 */}
+                  <Table.Td colSpan={7}>
                     <Text ta="center" c="dimmed" py="xl">
                       {error ? '加载出错' : '暂无日志条目'}
                     </Text>
@@ -398,6 +422,26 @@ export function SystemLogViewer() {
                     >
                       {entry.level}
                     </Badge>
+                  </Table.Td>
+                  <Table.Td>
+                    {/* 点这里直接隔离该请求，不必先展开。id 为 '-' 的行不是
+                        请求产生的（启动期 / 后台心跳），如实显示 '—' 不可点。 */}
+                    {entry.session_id && entry.session_id !== '-' ? (
+                      <Tooltip label={`只看请求 ${entry.session_id}`} withArrow>
+                        <Code
+                          style={{ cursor: 'pointer', fontSize: '11px' }}
+                          c="grape"
+                          onClick={(e) => {
+                            e.stopPropagation()   // 别顺手把这一行展开了
+                            isolateRequest(entry.session_id)
+                          }}
+                        >
+                          {entry.session_id.slice(0, 8)}
+                        </Code>
+                      </Tooltip>
+                    ) : (
+                      <Text size="xs" c="dimmed">—</Text>
+                    )}
                   </Table.Td>
                   <Table.Td>
                     <Badge
@@ -442,7 +486,7 @@ export function SystemLogViewer() {
                       size="compact-xs"
                       variant="light"
                       color="grape"
-                      onClick={() => setSessionFilter(entry.session_id)}
+                      onClick={() => isolateRequest(entry.session_id)}
                     >
                       只看这一次请求
                     </Button>

@@ -408,6 +408,53 @@ def test_gui_does_not_slice_timestamp_strings():
     )
 
 
+_LOG_VIEWER = "gui/src/features/Reports/components/SystemLogViewer.tsx"
+
+
+def test_request_id_is_visible_in_the_table_not_only_on_expand():
+    """做了但看不见 = 没做。
+
+    用户反馈原话：「没看到 request_id 真的落进日志了」—— 而实测那 200 行里
+    **47% 是带 id 的**。真因是我把它只放在展开详情里，表格 5 列一个字都不提，
+    随手点一行还大概率点到没 id 的心跳行。
+
+    变异：把 `<Table.Th w={86}>请求</Table.Th>` 删掉 → 本门红。
+    """
+    src = _strip_ts_comments((_REPO_ROOT / _LOG_VIEWER).read_text(encoding="utf-8"))
+    assert ">请求</Table.Th>" in src, (
+        "日志表格里没有「请求」列 —— request_id 又被藏回展开详情里了"
+    )
+
+
+def test_isolating_a_request_clears_the_other_filters():
+    """「只看这一次请求」必须给出**整条链**，不是「这次请求 ∩ 当前过滤」。
+
+    Codex #282 R2：操作员先用 ERROR/keyword 找到失败行，再点这个按钮 ——
+    若不清掉那些过滤，后端返回交集，按钮承诺的 INFO/HAL/SCPI 上下文全没了。
+    按钮名与实际行为不符，正是本片在治的母题。
+
+    变异：把 `isolateRequest` 里的 `setLevelFilter('ALL')` 或
+    `setKeyword('')` 删掉 → 本门红。
+    """
+    src = _strip_ts_comments((_REPO_ROOT / _LOG_VIEWER).read_text(encoding="utf-8"))
+    m = re.search(r"const isolateRequest\s*=\s*\([^)]*\)\s*=>\s*\{(.+?)\n\s{2}\}", src, re.S)
+    assert m, "找不到 isolateRequest —— 隔离逻辑被改名或拆散了，本门失效"
+    body = m.group(1)
+    for needed, why in (
+        ("setSessionFilter", "没设 session 过滤，按钮等于没用"),
+        ("setLevelFilter('ALL')", "没清 level，返回的是交集不是整条链"),
+        ("setKeyword('')", "没清 keyword，返回的是交集不是整条链"),
+    ):
+        assert needed in body, f"isolateRequest 里缺 {needed} —— {why}"
+
+    # 所有触发点都得走它，不能有人绕过去直接 setSessionFilter
+    direct = re.findall(r"onClick=\{[^}]*setSessionFilter\(entry", src)
+    assert not direct, (
+        f"有 {len(direct)} 处直接 setSessionFilter(entry…) 绕过了 isolateRequest，"
+        f"那些入口不会清掉 level/keyword"
+    )
+
+
 def test_the_ts_slicing_gate_can_actually_fail(tmp_path):
     """自覆盖：证明上面那道门不是恒真断言。
 
