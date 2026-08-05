@@ -28,13 +28,18 @@ import app.api.system_logs as system_logs
 TAIL_URL = f"{settings.api_v1_prefix}/system-logs/tail"
 
 
-def _json_line(level: str, msg: str, logger: str = "app.services.instrument_hal_service") -> str:
+def _json_line(
+    level: str,
+    msg: str,
+    logger: str = "app.services.instrument_hal_service",
+    session_id: str = "-",
+) -> str:
     return json.dumps({
         "ts": "2026-07-31T10:00:00.000+08:00",
         "level": level,
         "logger": logger,
         "hal_mode": "mock",
-        "session_id": "-",
+        "session_id": session_id,
         "instrument_id": "-",
         "msg": msg,
     }, ensure_ascii=False)
@@ -69,6 +74,48 @@ class TestFilterDuringScan:
         assert any("相位 CONFIGURE 失败" in e["msg"] for e in body["entries"])
         # 如实报实扫行数 (301 行全扫完才凑到 1 条 ERROR)
         assert body["total_lines_read"] == 301
+
+    def test_session_id_filter_pulls_one_request_chain(self, client, log_dir):
+        """P1-34「只看这一次请求」依赖的就是这条路径（内审 F9：此前零覆盖）。
+
+        这个参数在 P1-34 之前**从未被真正使用过** —— 全仓没有任何地方
+        `current_session_id.set()`，日志里 `session_id` 100% 是 `-`，
+        所以"过滤得对不对"从来没被验证过。现在 GUI 接上了它。
+
+        场景：一次操作产生 3 条日志（HTTP 审计 + runner + HAL），被 300 行
+        别的请求冲出原始窗口 —— 按 id 过滤必须把这 3 条**完整**捞回来，
+        且不夹带别人的行。
+        """
+        mine, other = "a1b2c3d4", "ffff0000"
+        lines = [
+            _json_line("INFO", "POST /api/v1/x → 200", logger="app.audit", session_id=mine),
+            _json_line("INFO", "[case-runner] 相位 CONFIGURE 开始", session_id=mine),
+            _json_line("INFO", "[HAL] 下发 SCPI", session_id=mine),
+        ]
+        lines += [_json_line("INFO", f"别人的请求 {i}", session_id=other) for i in range(300)]
+        (log_dir / "app.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        resp = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 200, "session_id": mine})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["filtered_count"] == 3, "链条没被完整捞回来"
+        assert {e["session_id"] for e in body["entries"]} == {mine}, "夹带了别的请求的行"
+        assert body["total_lines_read"] == 303
+
+    def test_session_id_filter_is_exact_not_substring(self, client, log_dir):
+        """id 是 8 位 hex，前缀相同的两个请求不能互相夹带。"""
+        lines = [
+            _json_line("INFO", "我的", session_id="a1b2c3d4"),
+            _json_line("INFO", "别人的", session_id="a1b2c3d4ff"),
+            _json_line("INFO", "也是别人的", session_id="a1b2"),
+        ]
+        (log_dir / "app.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        body = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 200, "session_id": "a1b2c3d4"}).json()
+        assert body["filtered_count"] == 1
+        assert body["entries"][0]["msg"] == "我的"
 
     def test_keyword_filter_reaches_beyond_raw_window(self, client, log_dir):
         """keyword 谓词同样在扫描中生效, 不止 level。"""

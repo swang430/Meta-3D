@@ -37,6 +37,7 @@ import {
   IconPlayerPause,
 } from '@tabler/icons-react'
 import apiClient from '../../../api/client'
+import { formatLogDate, formatLogTime } from '../../../utils/datetime'
 
 
 // ── Types ──────────────────────────────────────────────────────
@@ -97,6 +98,28 @@ export function SystemLogViewer() {
   const [levelFilter, setLevelFilter] = useState<string>('ALL')
   const [keyword, setKeyword] = useState('')
   const [maxLines] = useState(200)
+  // P1-34「只看这一次请求」——把一次操作串成一条链。
+  // 后端 /system-logs/tail 的 session_id 精确过滤 + 反向扫描**早就建好了**
+  // （见该端点 docstring：带过滤条件时窗口是"最新 N 条匹配行"，所以链条再
+  // 靠前也捞得到），只是 `session_id` 此前 100% 是 "-"，这个能力从来没能用。
+  // AuditMiddleware 现在每请求写一个 id，这里把它接上。
+  const [sessionFilter, setSessionFilter] = useState<string | null>(null)
+
+  // P1-34 / Codex #282 R2：进入「只看这一次请求」时**清掉 level 与 keyword**。
+  //
+  // 不清的话后端返回的是**交集**而不是整条链：典型场景是操作员先用 ERROR
+  // 过滤找到失败那行，再点这个按钮 —— 期待看到这次请求的完整上下文
+  // (INFO / HAL / SCPI)，实际只看到这次请求里的 ERROR 行。按钮名叫
+  // 「只看这一次请求」，给的却是「这次请求 ∩ 当前过滤」，跟本片在治的
+  // 母题一模一样：看起来对，其实不是承诺的那个东西。
+  //
+  // 选"清掉"而不是"链条视图忽略其它过滤"：后者会让 level / keyword 控件
+  // 明明显示着却不生效 —— 那是换了个地方说谎。清掉之后控件肉眼可见被重置。
+  const isolateRequest = (sid: string) => {
+    setSessionFilter(sid)
+    setLevelFilter('ALL')
+    setKeyword('')
+  }
 
   // Auto-refresh
   const [refreshInterval, setRefreshInterval] = useState('0')
@@ -133,6 +156,9 @@ export function SystemLogViewer() {
       if (keyword.trim()) {
         params.keyword = keyword.trim()
       }
+      if (sessionFilter) {
+        params.session_id = sessionFilter
+      }
       const res = await apiClient.get('/system-logs/tail', { params })
       setEntries(res.data.entries || [])
       setTotalRead(res.data.total_lines_read || 0)
@@ -143,7 +169,7 @@ export function SystemLogViewer() {
     } finally {
       setLoading(false)
     }
-  }, [selectedFile, levelFilter, keyword, maxLines])
+  }, [selectedFile, levelFilter, keyword, maxLines, sessionFilter])
 
   // ── Download ──
   const handleDownload = useCallback(() => {
@@ -186,18 +212,11 @@ export function SystemLogViewer() {
   }
 
   // ── Format timestamp for display ──
-  const formatTs = (ts: string) => {
-    if (!ts) return '—'
-    // "2026-04-22T16:00:00.716Z" → "16:00:00.716"
-    const match = ts.match(/T(\d{2}:\d{2}:\d{2}\.\d{3})/)
-    return match ? match[1] : ts
-  }
-
-  const formatDate = (ts: string) => {
-    if (!ts) return ''
-    const match = ts.match(/^(\d{4}-\d{2}-\d{2})/)
-    return match ? match[1] : ''
-  }
+  // P1-34: 时间戳一律走共享的 formatLogTime/formatLogDate（本地时区）。
+  // 原实现用正则从字符串里切时分秒，把后端给的时区偏移丢了 —— 容器跑 UTC，
+  // 于是宿主机 10:58 的操作在界面上显示成 02:58。详见 utils/datetime.ts。
+  // ⚠ 不在这里包一层本地别名：包了就是这个文件自己的一份，早晚跟另一个
+  //   面板漂开。直接用导入的那个。
 
   return (
     <Stack gap="md">
@@ -279,9 +298,14 @@ export function SystemLogViewer() {
 
             <Tooltip label="导出过滤结果">
               <ActionIcon variant="light" color="teal" onClick={() => {
+                // ⚠ 导出必须跟屏幕上**同一套**过滤条件。内审 F3：加了
+                // 「只看这一次请求」之后，屏幕剩 5 条、导出却是全量 ——
+                // 这个分叉是本片自己造的，而后端 /export 本来就支持
+                // session_id（见 api/system_logs.py 的 export_filtered_logs）。
                 const params = new URLSearchParams()
                 if (levelFilter !== 'ALL') params.set('level', levelFilter)
                 if (keyword.trim()) params.set('keyword', keyword.trim())
+                if (sessionFilter) params.set('session_id', sessionFilter)
                 const url = `${apiClient.defaults.baseURL}/system-logs/export/${selectedFile}?${params.toString()}`
                 window.open(url, '_blank')
               }}>
@@ -307,6 +331,28 @@ export function SystemLogViewer() {
         {refreshInterval !== '0' && (
           <Badge size="sm" variant="dot" color="green">自动刷新 {refreshInterval}s</Badge>
         )}
+        {/* P1-34: 当前是否只看某一次请求 —— 过滤态必须**看得见**，
+            否则"怎么只有几条"会被当成日志丢了。 */}
+        {sessionFilter && (
+          <Badge
+            size="sm"
+            color="grape"
+            variant="filled"
+            rightSection={
+              <ActionIcon
+                size="xs"
+                variant="transparent"
+                color="white"
+                aria-label="取消只看这一次请求"
+                onClick={() => setSessionFilter(null)}
+              >
+                ✕
+              </ActionIcon>
+            }
+          >
+            只看请求 {sessionFilter}
+          </Badge>
+        )}
       </Group>
 
       {/* ── Error ── */}
@@ -330,6 +376,12 @@ export function SystemLogViewer() {
                 <Table.Th w={30}></Table.Th>
                 <Table.Th w={100}>时间</Table.Th>
                 <Table.Th w={70}>级别</Table.Th>
+                {/* P1-34: 请求 ID 必须**在表格里直接看得见**。
+                    早前它只在展开详情里 —— 于是这个功能等于不存在：
+                    用户反馈原话「没看到 request_id 真的落进日志了」，
+                    而实测那 200 行里 47% 是带 id 的。
+                    做了但看不见 = 没做。 */}
+                <Table.Th w={86}>请求</Table.Th>
                 <Table.Th w={60}>模式</Table.Th>
                 <Table.Th w={250}>Logger</Table.Th>
                 <Table.Th>消息</Table.Th>
@@ -338,7 +390,9 @@ export function SystemLogViewer() {
             <Table.Tbody>
               {entries.length === 0 && !loading && (
                 <Table.Tr>
-                  <Table.Td colSpan={5}>
+                  {/* 7 列：展开箭头 / 时间 / 级别 / 请求 / 模式 / Logger / 消息。
+                      加「请求」列前这里写的是 5，本来就少一列。 */}
+                  <Table.Td colSpan={7}>
                     <Text ta="center" c="dimmed" py="xl">
                       {error ? '加载出错' : '暂无日志条目'}
                     </Text>
@@ -358,7 +412,7 @@ export function SystemLogViewer() {
                     }
                   </Table.Td>
                   <Table.Td>
-                    <Text size="xs" c="dimmed">{formatTs(entry.ts)}</Text>
+                    <Text size="xs" c="dimmed">{formatLogTime(entry.ts)}</Text>
                   </Table.Td>
                   <Table.Td>
                     <Badge
@@ -368,6 +422,26 @@ export function SystemLogViewer() {
                     >
                       {entry.level}
                     </Badge>
+                  </Table.Td>
+                  <Table.Td>
+                    {/* 点这里直接隔离该请求，不必先展开。id 为 '-' 的行不是
+                        请求产生的（启动期 / 后台心跳），如实显示 '—' 不可点。 */}
+                    {entry.session_id && entry.session_id !== '-' ? (
+                      <Tooltip label={`只看请求 ${entry.session_id}`} withArrow>
+                        <Code
+                          style={{ cursor: 'pointer', fontSize: '11px' }}
+                          c="grape"
+                          onClick={(e) => {
+                            e.stopPropagation()   // 别顺手把这一行展开了
+                            isolateRequest(entry.session_id)
+                          }}
+                        >
+                          {entry.session_id.slice(0, 8)}
+                        </Code>
+                      </Tooltip>
+                    ) : (
+                      <Text size="xs" c="dimmed">—</Text>
+                    )}
                   </Table.Td>
                   <Table.Td>
                     <Badge
@@ -398,10 +472,25 @@ export function SystemLogViewer() {
             expandedRows.has(idx) && entry.raw ? (
               <Paper key={`detail-${idx}`} p="sm" mx="md" mb="xs" bg="gray.0" radius="sm">
                 <Group gap="lg" mb="xs">
-                  <Text size="xs"><b>时间:</b> {entry.ts}</Text>
-                  <Text size="xs"><b>Session:</b> {entry.session_id}</Text>
+                  <Text size="xs"><b>时间:</b> {formatLogDate(entry.ts)} {formatLogTime(entry.ts)}</Text>
+                  <Text size="xs" c="dimmed"><b>原始:</b> {entry.ts || '—'}</Text>
                   <Text size="xs"><b>Instrument:</b> {entry.instrument_id}</Text>
-                  <Text size="xs"><b>日期:</b> {formatDate(entry.ts)}</Text>
+                </Group>
+                {/* P1-34: 一次请求内的全部日志（audit / runner / HAL / SCPI）
+                    带同一个 id。点这里就把这条链单独捞出来。
+                    id 为 "-" 的行不是请求产生的（启动期 / 后台任务），无链可串。 */}
+                <Group gap="xs" mb="xs">
+                  <Text size="xs"><b>请求 ID:</b> {entry.session_id}</Text>
+                  {entry.session_id && entry.session_id !== '-' && (
+                    <Button
+                      size="compact-xs"
+                      variant="light"
+                      color="grape"
+                      onClick={() => isolateRequest(entry.session_id)}
+                    >
+                      只看这一次请求
+                    </Button>
+                  )}
                 </Group>
                 <Code block style={{ fontSize: '11px', maxHeight: 200, overflow: 'auto' }}>
                   {(() => {
