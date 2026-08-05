@@ -1401,3 +1401,56 @@ def test_g11_openapi_yaml_subset_of_live_schema():
         "openapi.yaml (GUI 类型生成源) 声明了实现没有的契约元素:\n  "
         + "\n  ".join(problems))
 
+
+
+# ── G9: .gitignore 的规则不得遮住已跟踪的源文件 ────────────────────
+#
+# 起因（Codex #284 R1）：往 .gitignore 加了一条**没锚定**的 `data/`，
+# 它匹配**任何**叫 data 的目录 —— 实测命中 `gui/src/data/` 与
+# `api-service/app/data/`，共 **23 个已跟踪源文件**
+# （`scenario_library.py` / `nr_band_baselines.json` / uxm_configs/…）。
+#
+# 为什么必须落成门：这个失效是**静默**的。已跟踪的文件不受影响，所以
+# 测试全绿、构建全过、`git status` 干净；只有当某人往那两个目录**新加**
+# 文件时才会发现"加不进去"，而那时早已没人记得是哪条规则干的。
+# 本轮除了外审，没有任何东西会抓到它。
+#
+# ⚠ 判据必须用 `--no-index`：`git check-ignore` **默认跳过已跟踪文件**，
+#    不加这个参数得到的永远是 0 —— 一道恒真断言。（我第一版就是这么写的。）
+
+# 本门开出来时就已经存在的 6 处，**不由本门管**：
+#   · api-service/data/reports/*.pdf ×5 —— 早于 `api-service/data/` 规则
+#     （.gitignore:57）就提交的历史产物
+#   · logs/services.info —— 同理，`logs/` 规则（.gitignore:69）
+# 它们是"该不该继续跟踪"的问题，跟"规则写宽了误伤源码"不是一回事。
+_IGNORED_TRACKED_KNOWN = {
+    "logs/services.info",
+}
+
+
+def test_gitignore_does_not_shadow_tracked_sources():
+    """.gitignore 里的规则不得命中已跟踪的文件。
+
+    变异：把 `/data/` 的开头斜杠去掉 → 本门红（23 个源文件被遮住）。
+    """
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=_REPO_ROOT, capture_output=True, check=True,
+    ).stdout
+    res = subprocess.run(
+        ["git", "check-ignore", "--no-index", "--stdin", "-z"],
+        cwd=_REPO_ROOT, input=tracked, capture_output=True,
+    )
+    shadowed = {p for p in res.stdout.decode().split("\0") if p}
+
+    unexpected = sorted(
+        p for p in shadowed
+        if p not in _IGNORED_TRACKED_KNOWN
+        and not p.startswith("api-service/data/reports/")
+    )
+    assert not unexpected, (
+        "这些**已跟踪**的文件被 .gitignore 命中了 —— 规则写宽了：\n  "
+        + "\n  ".join(unexpected)
+        + "\n已跟踪的不受影响，但往同一目录**新加**的文件会被静默忽略。"
+        "\n多半是漏了开头的 `/`（`data/` 匹配任何叫 data 的目录，`/data/` 只匹配根下那个）。"
+    )
