@@ -57,7 +57,7 @@ export function ChamberConfigCard({
     // 获取所选 LabProfile 绑定的当前暗室配置
     const {
         data: activeChamberData,
-        isFetching: isActiveLoading,
+        isLoading: isActiveLoading,
         isError: isActiveError,
         error: activeChamberError,
     } = useQuery({
@@ -98,29 +98,38 @@ export function ChamberConfigCard({
 
     // 把暗室重新绑定为所选 LabProfile 的当前暗室
     const activateMutation = useMutation({
-        mutationFn: (chamberId: string) => activateChamber(chamberId, selectedLabProfileId),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['chamber', 'active', selectedLabProfileId] })
+        mutationFn: ({ chamberId, labProfileId }: { chamberId: string; labProfileId: string }) =>
+            activateChamber(chamberId, labProfileId),
+        onSuccess: (newChamber, { labProfileId }) => {
+            // Mutation response is the just-committed truth. Replace C1
+            // immediately before background refetch so shared consumers never
+            // operate on a known-stale chamber during the C1 → C2 window.
+            queryClient.setQueryData(['chamber', 'active', labProfileId], newChamber)
+            queryClient.invalidateQueries({ queryKey: ['chamber', 'active', labProfileId] })
             queryClient.invalidateQueries({ queryKey: ['chambers'] })
         },
     })
 
     // 从模板创建
     const createFromTemplateMutation = useMutation({
-        mutationFn: createChamberFromTemplate,
-        onSuccess: (newChamber) => {
+        mutationFn: ({ payload }: {
+            payload: Parameters<typeof createChamberFromTemplate>[0]
+            labProfileId: string
+        }) => createChamberFromTemplate(payload),
+        onSuccess: (newChamber, { labProfileId }) => {
             queryClient.invalidateQueries({ queryKey: ['chambers'] })
             queryClient.invalidateQueries({ queryKey: ['chamber', 'active'] })
             setCreateModalOpen(false)
             // 自动激活新创建的配置
-            activateMutation.mutate(newChamber.id)
+            activateMutation.mutate({ chamberId: newChamber.id, labProfileId })
         },
     })
 
     // 复制暗室配置 (系统预设要改先复制)
     const duplicateMutation = useMutation({
-        mutationFn: duplicateChamber,
-        onSuccess: (cloned) => {
+        mutationFn: ({ chamberId }: { chamberId: string; labProfileId: string }) =>
+            duplicateChamber(chamberId),
+        onSuccess: (cloned, { labProfileId }) => {
             queryClient.invalidateQueries({ queryKey: ['chambers'] })
             notifications.show({
                 color: 'green',
@@ -128,7 +137,7 @@ export function ChamberConfigCard({
                 message: `${cloned.name} — 现在可以编辑这份副本了`,
             })
             // 自动激活副本，方便用户直接进入编辑
-            activateMutation.mutate(cloned.id)
+            activateMutation.mutate({ chamberId: cloned.id, labProfileId })
         },
         onError: (err: any) => {
             notifications.show({
@@ -190,8 +199,8 @@ export function ChamberConfigCard({
     console.log('[ChamberConfigCard] presetSelectData:', presetSelectData)
 
     const handleChamberChange = (chamberId: string | null) => {
-        if (chamberId && chamberId !== activeChamber?.id) {
-            activateMutation.mutate(chamberId)
+        if (chamberId && selectedLabProfileId && chamberId !== activeChamber?.id) {
+            activateMutation.mutate({ chamberId, labProfileId: selectedLabProfileId })
         }
     }
 
@@ -214,7 +223,9 @@ export function ChamberConfigCard({
             payload.pa_p1db_dbm = paP1dB
         }
 
-        createFromTemplateMutation.mutate(payload)
+        if (selectedLabProfileId) {
+            createFromTemplateMutation.mutate({ payload, labProfileId: selectedLabProfileId })
+        }
     }
 
     // 重置表单状态
@@ -261,7 +272,14 @@ export function ChamberConfigCard({
                                 <Button
                                     variant={activeChamber.is_system_preset ? 'filled' : 'subtle'}
                                     color={activeChamber.is_system_preset ? 'brand' : undefined}
-                                    onClick={() => duplicateMutation.mutate(activeChamber.id)}
+                                    onClick={() => {
+                                        if (selectedLabProfileId) {
+                                            duplicateMutation.mutate({
+                                                chamberId: activeChamber.id,
+                                                labProfileId: selectedLabProfileId,
+                                            })
+                                        }
+                                    }}
                                     loading={duplicateMutation.isPending}
                                     disabled={!selectedLabProfileId}
                                     title={
@@ -500,7 +518,12 @@ export function ChamberConfigCard({
                 <CreateChamberForm
                     presets={presets}
                     onSubmit={(payload) => {
-                        createFromTemplateMutation.mutate(payload)
+                        if (selectedLabProfileId) {
+                            createFromTemplateMutation.mutate({
+                                payload,
+                                labProfileId: selectedLabProfileId,
+                            })
+                        }
                         setCreateModalOpen(false)
                     }}
                     onCancel={() => setCreateModalOpen(false)}

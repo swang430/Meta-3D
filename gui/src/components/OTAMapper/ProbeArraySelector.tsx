@@ -60,7 +60,7 @@ export function ProbeArraySelector({ value, onChange }: ProbeArraySelectorProps)
   // 获取所选 LabProfile 绑定的当前暗室
   const {
     data: activeChamberData,
-    isFetching: isActiveChamberLoading,
+    isLoading: isActiveChamberLoading,
     isError: isActiveChamberError,
   } = useQuery({
     queryKey: ['chamber', 'active', selectedLabProfileId],

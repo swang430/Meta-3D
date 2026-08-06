@@ -16,12 +16,12 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
-**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → **P1-28** → P1-43 → P1-44 → P1-42 → P1-40 → P1-37 → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1）。
+**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → **P1-43** → P1-44 → P1-42 → P1-40 → P1-37 → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1）。
 
-**Current Focus = P1-28**。P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
+**Current Focus = P1-43**。P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
 SCPI 闭环依赖链：先把现场项映射到载体 → 用手册证据修判定和缺失载体 → 止住错误队列
 无限循环 → 补传输配对 → 补仪器接受/生效语义 → 接入正式 TestCase。该本地链已完成；
-P0-5 保持 ON-SITE-BLOCKED，P1-28 现成为 Current Focus。设计与逐片实施计划见
+P0-5 保持 ON-SITE-BLOCKED，P1-28 已收口，本地序列切到 P1-43。设计与逐片实施计划见
 [`plans/2026-08-06-scpi-evidence-closure-design.md`](plans/2026-08-06-scpi-evidence-closure-design.md) /
 [`plans/2026-08-06-scpi-evidence-closure-implementation.md`](plans/2026-08-06-scpi-evidence-closure-implementation.md)。一句话索引：
 - **P1-25** GUI 主控台"系统状态"面板恒空修复 + api.ts 手写镜像同尺审计
@@ -224,7 +224,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → **P1-28** → P1-43 → P1-44 → P1-42 → P1-40 → P1-37 → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-06 用户批准“SCPI 闭环整体前置”；当前执行片只看顶部 **Current Focus**）|
+| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → **P1-43** → P1-44 → P1-42 → P1-40 → P1-37 → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-06 用户批准“SCPI 闭环整体前置”；当前执行片只看顶部 **Current Focus**）|
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -360,6 +360,7 @@ P1-47C 已补齐可判定的自动化证据机制，但未补写现场事实；�
 | 2026-08-06 | [#296](https://github.com/swang430/Meta-3D/pull/296) | ⚠️ 有缺口 | 尾部提交 `8d464f8`：R2 要求把诊断关键 observations 持久化、不能只留在会截断的 2KB 摘要；修复新增 `DiagnosticRun.result_extra`、迁移与取消审计，**这批修复本身未再外审** | 两轮上限已到，不发 R3；PR 评论已如实申报。走势 R1 1 P2（同步 VISA 阻塞事件循环）→ R2 1 P2（关键现场证据未持久化），两条均已修并过独立内审/全量测试 | **1** | ⬜ 未处置 —— 下次动 `diagnostic_sequence.py`、`DiagnosticRun` 或诊断持久化时优先补审 |
 | 2026-08-07 | [#297](https://github.com/swang430/Meta-3D/pull/297) | ✅ 全覆盖 | —（R2 在 `53061f4` 上 clean，而 `53061f4` 是 R1 修复 HEAD；唯一未覆盖是回填本行本身，按 [#278](https://github.com/swang430/Meta-3D/pull/278) 无穷递归约定收口） | P1-41；R1 在 `3e594cc` 上出 1 条 P2，指出“归属未知”被误报为“业务命令被拒”。已补契约门并把不可用判定移到记录 rejection 之前；#296 漏行也随 R1 修复进入 R2。R2 在 `53061f4` 上 clean | **1** | ✅ 无需处置 |
 | 2026-08-07 | [#298](https://github.com/swang430/Meta-3D/pull/298) | ⚠️ 有缺口 | R2 后尾部修复（本 commit）：覆盖 `AUTHentication` 从最短 `AUTH` 到全写之间的全部合法 SCPI 缩写；该修复本身未再外审 | 两轮上限已到，不发 R3；走势 R1 1 P1 + 1 P2（分层鉴权末操作数泄漏 / SCPI 复制进长期 `app.log`）→ R2 1 P1（漏识别 `AUTHENT` 等中间缩写），三条均已修并过独立内审与全量测试 | **2** | ⬜ 未处置 —— 下次动 `base.py` 的 SCPI 脱敏器或仪器日志副本时优先补审 |
+| 2026-08-07 | [#301](https://github.com/swang430/Meta-3D/pull/301) | ⚠️ 有缺口 | R2 后尾部修复（本 PR 最终 commit）：后台 refetch 保留已验证暗室缓存；activate 成功先用权威响应替换 cache；新建/复制/直接选择均携带发起时 `labProfileId`。这批修复本身未再外审 | 两轮上限已到，不发 R3；走势 R1 **2 P1**（失败校准部分行可被后续提交 / 断绑时 GUI 无法列出替代暗室）→ R2 **2 P2**（后台刷新会丢 OTA 阵列 / 丢探头选择与未保存编辑）。四条外审 finding 均已修；尾部又经内审抓出并修复两个 mutation 时序窗口，最终 CLEAN | **2** | ⬜ 未处置 —— 下次动 `ChamberConfigCard.tsx` 的暗室切换/创建/复制 mutation 时优先补审 |
 | 2026-08-05 | [#285](https://github.com/swang430/Meta-3D/pull/285) | <!--285-coverage-->✅ 全覆盖 | <!--285-gap-->—（R3 在 `e2ad982` 上出的唯一一条就是「补本行」，除此之外的立项正文三轮全过；`e2ad982` rebase 到 #287 之后内容逐字未变，已用 `git diff` 核过）。唯一没覆盖的是回填本行的 commit 自己 —— #278 拍板的无穷递归 | docs-only 立项。**我把轮次走到了 R3 而没有拿授权** —— 规则是上限 2，例外要用户点头（上次 #282 的 R3 是用户明说「走R3」）。这次 R2 那条不是 R1 修复引入的（是立项正文里独立的错误前提），我就自然而然续了一轮，如实记着。三轮 **1 P2 → 1 P2 → 1 P2**，无一条由上轮修复引入。**R2 那条最值钱**：我写「`hal_mode` 字段已存在、不重复造标记」，而它取自**全局** HAL mode，HAL 明确支持 per-instrument 覆盖 —— 全局 real 下被强制 mock 的仪器会把假回复标成 `hal_mode=real`，正好打穿 P1-37 唯一要防的那件事。另：R1 那个 commit `ba41c26` 上，Codex 先出 1 条 P2，我再发一次 `@codex review` 它在**同一个 commit** 上回了 clean —— 同 commit 两种结论，说明「clean」有随机性，别把单次 clean 当保证 | 1 | ✅ 无需处置 |
 | 2026-08-05 | [#286](https://github.com/swang430/Meta-3D/pull/286) | <!--286-coverage-->✅ 全覆盖（代码） | <!--286-gap-->—（R2 审的 `6e58a1b` 就是 R1 修复本身，代码全过；rebase 到 #285/#287 之后 `api-service/` `gui/` `api/` **零字节差异**，已用 `git diff --stat` 核过）。没覆盖的只有回填本行 + 记 backlog 的 docs commit | P1-36 本片。**轮次上限 2 已到，R2 那条 P2 未修、转 backlog** —— 前提我实证过是**真的**（最小 app 探针：同一请求里 endpoint 那行带 `EXEC1234`、`app.audit` 汇总行是 `-`），不修的判据是 ⑦「不改它，P1-36 那个可观察故障还在吗」答**不在了**：R1 修完后执行的开始/过程/结束/取消都在链上，缺的是同一事实的第二份记录且**一跳可达**；三种修法全属「加机制」（最低优先级修法）。两轮 **1 P2 → 1 P2**，都不是上轮修复引入的，且**是同一母题的两个站点**（"执行的痕迹漏在请求侧"）—— R1 补上了 case-runner 那两行，R2 指出 middleware 那行结构上补不了 | 1 | ⬜ 未处置 —— 下次动 `audit_middleware.py` 或再往 `execution_id` 链上加东西时一并评估 |
 ### 📉 更值得看的信号：第一轮 findings 数
@@ -1497,13 +1498,13 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 **What**: cal 记录带 `use_mock` provenance 标记；real 模式 precheck strict 门拒 mock cert（门现在只查存在/频率/时效）。**来源**: 2026-07-03 现场实证（[→ P1-27] 已标）—— mock 路损 cert 在 real 模式 `cal_pass: true`，真测静默应用 mock 补偿值。
 **Why P1**: 现场实证穿透，下次现场前必修（runtime-gate-not-frozen-snapshot 同母题）。
 
-### P1-28 — 「当前暗室」双真值源收口 🔄（2026-08-02 拍板；**2026-08-06 用户指定排在 SCPI 闭环之后**）
+### P1-28 — 「当前暗室」双真值源收口 ✅（2026-08-02 拍板；2026-08-07 完成）
 
 **What**: `ChamberConfiguration.is_active`（activate 端点强制唯一的"当前工作暗室"单选器）与 `LabProfile.chamber_config_id`（lab 绑定）是两个同名不同义的真值源，之间**零约束零同步**；消费方分两派（`commissioning`/`mimo_ota.factory`/`trp.factory` 走 `resolve_lab_profile` → lab 绑定暗室；`chamber.py` 列表默认过滤 + `workflow_engine` 的 `probe_ids="auto"` 走 `chamber.is_active`），同一时刻拿到不同 chamber 行。修法按 **去掉 > 换源 > 收窄 > 加机制**：推荐**去掉**双源之一（「当前暗室」:= active lab 所绑暗室，`chamber.is_active` 退役或降为派生只读显示），两派消费方换源统一走单一 resolver；最次才是 activate 端点双写同步（双写自身会再漂）。配套门 = 不变量门（全仓解析"当前暗室"的代码路径 ⊆ 单一真值源，`test_rule_gates.py` G 门同款结构断言）+ 诊断序列加 DB 两值一致性 fail-loud。
 **Why P1（2026-08-02 实证抬档，原记 P2）**: 校准数据按 `chamber_id` 键控，dev 库实测已在失配：① `chamber.is_active` 指的「3GPP 16 Probe Dual」(`1b531e5c`) 在**所有校准表里零行** —— 按 active chamber 查校准今天就查不到；② 校准行分散在 `59c73fbe`（active lab 绑的 CAICT-16-Probe-Dual：rf_chain 6 / channel_phase 6 / probe_path_loss 7）与 `b7cd8de0`（calibration_baselines 1 / probe_path_loss 2 / rf_chain 1）；③ **`b7cd8de0` 这个 chamber 行已不存在** = 孤儿引用，根因是**校准类表全无指向 `chamber_configurations` 的外键约束**（现有 FK 仅 `probes` / `probe_configurations` / `switch_topologies` / `lab_profiles` 四条），DB 层拦不住（非 active lab 绑的 `06ca91a2` 同为孤儿）。下次现场要跑路损校准复测，带着双真值源进现场 = 把静默失配带进真测。
 **同批收口候选**（实施时定，别扩成大改）：校准类表补 chamber FK 或显式 orphan 巡检；存量孤儿行 triage（保留/迁移/清理，走 dry-run 脚本模式）。
 
-**实施实况（2026-08-07，内审 CLEAN，待 GitHub Codex 外审）**：新增唯一解析器
+**实施实况（2026-08-07，已收口）**：新增唯一解析器
 `resolve_current_chamber()`，只接受显式 LabProfile 或唯一 active LabProfile，并只返回
 `LabProfile.chamber_config_id` 指向的暗室；无绑定、丢行、无 active lab、多个 active lab
 均 fail-loud。`GET /chambers/active`、列表派生标志、`POST /activate` 和 workflow
@@ -1528,9 +1529,10 @@ workflow 结果与 `probe_amplitude_calibrations.chamber_id`，不再只测 `pro
 为避免继续制造新孤儿，删除暗室前会复用同一张 13 表目录做引用预检；只要存在校准历史就
 409 拒绝并列出表名/行数，不级联删除测量证据。探头管理与 OTA Mapper 在 LabProfile
 未选、绑定解析失败或切换暗室时均 fail-closed：不再回退全量探头，并清除旧暗室来源的已加载配置。
-专项回归 12 条、G13 规则门及完整后端 `3386 passed / 5 skipped` 通过；GUI production
-build 通过（仅保留既有 chunk/dynamic-import 提示）。两轮内审先抓出 5 条、再抓出 2 条边界缺口，
-均修复并终审 `CLEAN`；当前尚未申报完成，等待 GitHub Codex 外审结论。
+专项回归 16 case、G13 规则门及完整后端 `3390 passed / 5 skipped` 通过；GUI production
+build 通过（仅保留既有 chunk/dynamic-import 提示）。GitHub Codex 外审两轮依次出
+`2 P1 → 2 P2`，四条均修；R2 尾部修复又经内审收紧两个 mutation 时序窗口后终审 `CLEAN`。
+按两轮上限不再发 R3，未外审的尾部范围已在 #301 台账行如实登记。
 
 ---
 

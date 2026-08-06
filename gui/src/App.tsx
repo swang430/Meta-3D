@@ -2643,7 +2643,7 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
   // (列出所有暗室探头); 现按 lab 绑定暗室过滤，未选/解析失败时关闭数据与写入口。
   const {
     data: activeChamberData,
-    isFetching: isActiveChamberLoading,
+    isLoading: isActiveChamberLoading,
     isError: isActiveChamberError,
     error: activeChamberError,
   } = useQuery({

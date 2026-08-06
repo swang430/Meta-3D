@@ -1563,6 +1563,9 @@ def test_g13_current_chamber_consumers_use_single_resolver():
 
 def test_g13_gui_chamber_consumers_fail_closed_and_track_source_provenance():
     app_source = (_REPO_ROOT / "gui/src/App.tsx").read_text(encoding="utf-8")
+    chamber_card_source = (
+        _REPO_ROOT / "gui/src/components/ChamberConfigCard.tsx"
+    ).read_text(encoding="utf-8")
     ota_source = (
         _REPO_ROOT / "gui/src/components/OTAMapper/ProbeArraySelector.tsx"
     ).read_text(encoding="utf-8")
@@ -1571,6 +1574,17 @@ def test_g13_gui_chamber_consumers_fail_closed_and_track_source_provenance():
     assert "loadedChamberSource" in ota_source
     assert "loadedChamberSource.labProfileId" in ota_source
     assert "loadedChamberSource.chamberId" in ota_source
+    for source in (app_source, ota_source):
+        assert "isFetching: isActiveChamberLoading" not in source
+        assert "isLoading: isActiveChamberLoading" in source
+    assert "isFetching: isActiveLoading" not in chamber_card_source
+    assert "isLoading: isActiveLoading" in chamber_card_source
+    assert (
+        "queryClient.setQueryData(['chamber', 'active', labProfileId], newChamber)"
+        in chamber_card_source
+    )
+    assert "onSuccess: (newChamber, { labProfileId })" in chamber_card_source
+    assert "onSuccess: (cloned, { labProfileId })" in chamber_card_source
 
 
 def test_g13_integrity_audit_catalog_covers_every_direct_calibration_reference():
