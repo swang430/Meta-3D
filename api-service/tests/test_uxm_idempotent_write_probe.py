@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -116,6 +117,107 @@ def test_loader_discovers_sequence_and_marks_it_unsafe():
     assert "uxm_idempotent_write_probe" in entries
     assert entries["uxm_idempotent_write_probe"]["safe_during_test"] is False
     assert entries["uxm_idempotent_write_probe"]["required_categories"] == ["baseStation"]
+
+
+def test_sequence_offloads_sync_scpi_calls_from_event_loop_thread():
+    """生产 UXM 的 PyVISA I/O 是同步调用，诊断不得阻塞 API 事件循环。"""
+    event_loop_thread = threading.get_ident()
+
+    class _ThreadCapturingBs(_FakeBs):
+        def __init__(self):
+            super().__init__()
+            self.call_threads: list[int] = []
+
+        def _query(self, cmd):
+            self.call_threads.append(threading.get_ident())
+            return super()._query(cmd)
+
+        def _write(self, cmd):
+            self.call_threads.append(threading.get_ident())
+            return super()._write(cmd)
+
+    bs = _ThreadCapturingBs()
+
+    result = _run(bs, {"stability_window_s": 1, "poll_interval_s": 1})
+
+    assert result.extra["execution"]["completed"] is True
+    assert bs.call_threads
+    assert all(thread_id != event_loop_thread for thread_id in bs.call_threads)
+
+
+def test_async_scpi_implementations_still_run_on_event_loop_thread():
+    event_loop_thread = threading.get_ident()
+
+    class _AsyncBs(_FakeBs):
+        def __init__(self):
+            super().__init__()
+            self.call_threads: list[int] = []
+
+        async def _query(self, cmd):
+            self.call_threads.append(threading.get_ident())
+            return super()._query(cmd)
+
+        async def _write(self, cmd):
+            self.call_threads.append(threading.get_ident())
+            return super()._write(cmd)
+
+    bs = _AsyncBs()
+
+    result = _run(bs, {"stability_window_s": 1, "poll_interval_s": 1})
+
+    assert result.extra["execution"]["completed"] is True
+    assert bs.call_threads
+    assert set(bs.call_threads) == {event_loop_thread}
+
+
+def test_sync_hal_wrapper_returning_awaitable_is_supported():
+    """BaseInstrument 普通模板方法可包装异步 _do_* 并返回 coroutine。"""
+    event_loop_thread = threading.get_ident()
+    wrapper_threads: list[int] = []
+    awaited_threads: list[int] = []
+
+    def _sync_wrapper():
+        wrapper_threads.append(threading.get_ident())
+
+        async def _result():
+            awaited_threads.append(threading.get_ident())
+            return "async-result"
+
+        return _result()
+
+    async def _exercise():
+        return await seq._invoke_driver_method(_sync_wrapper)
+
+    assert asyncio.run(_exercise()) == "async-result"
+    assert wrapper_threads and wrapper_threads[0] != event_loop_thread
+    assert awaited_threads == [event_loop_thread]
+
+
+def test_repeated_cancellation_does_not_abandon_inflight_sync_worker():
+    """重复取消也须等 VISA 线程退出，防止 guard 先释放而后台仍操作仪表。"""
+    started = threading.Event()
+    release = threading.Event()
+
+    def _blocking_call():
+        started.set()
+        release.wait(timeout=2)
+        return "done"
+
+    async def _exercise():
+        task = asyncio.create_task(seq._invoke_driver_method(_blocking_call))
+        loop = asyncio.get_running_loop()
+        assert await loop.run_in_executor(None, started.wait, 1)
+        task.cancel()
+        await loop.run_in_executor(None, lambda: None)
+        assert task.done() is False
+        task.cancel()
+        await loop.run_in_executor(None, lambda: None)
+        assert task.done() is False
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(_exercise())
 
 
 def test_connected_on_cell_writes_same_band_then_collects_raw_observations():

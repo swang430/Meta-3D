@@ -13,6 +13,7 @@ Duplex 不在本轮范围：``UxmLteNrIratProfile.CELL_DUPLEX`` 当前为 ``None
 from __future__ import annotations
 
 import asyncio
+import inspect
 import math
 import re
 import time
@@ -119,10 +120,43 @@ def _stability_offsets(params: Dict[str, Any]) -> tuple[Optional[List[float]], s
     return offsets, ""
 
 
-async def _maybe_await(value: Any) -> Any:
-    if asyncio.iscoroutine(value):
-        return await value
-    return value
+async def _invoke_driver_method(method: Callable[..., Any], *args: Any) -> Any:
+    """异步实现直接 await；同步仪表 I/O 在线程中执行。
+
+    ``BaseInstrument._query/_write`` 本身是普通 ``def``：对 UXM 会在调用时
+    直接进入同步 PyVISA，对 F64 一类异步 ``_do_*`` 则返回 awaitable。因此不能
+    先调用再判断返回值，否则 UXM 已经阻塞事件循环。
+
+    取消等待同步调用时，先等工作线程退出再传播 ``CancelledError``。诊断 API
+    外层会在取消后释放 unsafe token；若这里直接遗弃线程，就会出现 token 已释放、
+    旧 VISA 操作仍在仪表上执行的互斥漏洞。
+    """
+    if inspect.iscoroutinefunction(method):
+        return await method(*args)
+
+    worker = asyncio.create_task(asyncio.to_thread(method, *args))
+    try:
+        result = await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        # ``task.cancel()`` 可以被重复调用。收尾阶段若裸 await worker，第二次
+        # 取消会把这个 asyncio Task 标成 cancelled，但真正的 to_thread/PyVISA
+        # 线程仍继续运行。持续 shield 并吸收后续取消，直到线程真实结束。
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+        try:
+            worker.result()
+        except Exception:  # noqa: BLE001
+            # 外层应收到原始取消，而不是后台 I/O 收尾时的次生异常。
+            pass
+        raise
+
+    # 兼容普通 def 包装异步 _do_* 后返回 coroutine 的 HAL 模板方法。
+    if inspect.isawaitable(result):
+        return await result
+    return result
 
 
 async def run(
@@ -238,7 +272,7 @@ async def run(
     async def _query(label: str, cmd: str) -> Optional[str]:
         started = time.monotonic()
         try:
-            value = await _maybe_await(bs._query(cmd))  # noqa: SLF001
+            value = await _invoke_driver_method(bs._query, cmd)  # noqa: SLF001
             raw = value if isinstance(value, str) else (
                 None if value is None else str(value)
             )
@@ -359,7 +393,7 @@ async def run(
     write_cmd = f"{band_header} {band_value}"
     started = time.monotonic()
     try:
-        await _maybe_await(bs._write(write_cmd))  # noqa: SLF001
+        await _invoke_driver_method(bs._write, write_cmd)  # noqa: SLF001
         write_completed_at = time.monotonic()
         common_extra["write_completed_at"] = write_completed_at
         steps.append(SequenceStepResult(
