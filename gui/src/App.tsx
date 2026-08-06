@@ -365,6 +365,9 @@ function App() {
   }, [isDark, setColorScheme])
 
   const [activeSection, setActiveSection] = useState<SectionKey>('dashboard')
+  // P1-39: 执行历史「查看日志」→ 切到报告页并预填日志过滤。
+  // ⚠ 存的是**完整 execution_id**, 不是给人看的短标签 —— 过滤要全长。
+  const [pendingLogExecutionId, setPendingLogExecutionId] = useState<string | null>(null)
   const [logEntries, setLogEntries] = useState<LogEntry[]>(initialLogs)
   const [selectedResultIds, setSelectedResultIds] = useState<string[]>([])
   const timelineTimerRef = useRef<number | null>(null)
@@ -600,6 +603,18 @@ function App() {
     )
   }, [])
 
+  // P1-39: 一键跳日志。两件事一起做 —— 记下要过滤的执行、切到报告页。
+  // 'results' 是报告页的 SectionKey（见 renderSection 的 case）。
+  const handleViewExecutionLogs = useCallback((executionId: string) => {
+    setPendingLogExecutionId(executionId)
+    setActiveSection('results')
+  }, [])
+  // 内审 F1: **一次性交接** —— 消费完立刻清空。
+  // 早前只设不清, 而 renderSection 只渲染当前 section(切走即卸载/切回即重挂),
+  // 于是 effect 每次重挂都重跑: 此后整个会话里点「数据归档与报告」都会被弹到
+  // 系统日志页签并重设过滤, 默认页签 'pending' 事实上再也进不去。
+  const handlePendingLogConsumed = useCallback(() => setPendingLogExecutionId(null), [])
+
   const sectionContent = useMemo(
     () =>
       renderSection(activeSection, {
@@ -609,6 +624,9 @@ function App() {
         selectedResultCount: selectedResultIds.length,
         onResultToggle: handleResultToggle,
         setActiveSection,
+        pendingLogExecutionId,
+        onViewExecutionLogs: handleViewExecutionLogs,
+        onPendingLogConsumed: handlePendingLogConsumed,
         demoPlan: demoRunPlanData?.plan,
         demoProgress: demoRunProgress,
         onDemoStart: handleDemoRunStart,
@@ -627,6 +645,9 @@ function App() {
       selectedResultIds,
       handleResultToggle,
       setActiveSection,
+      pendingLogExecutionId,
+      handleViewExecutionLogs,
+      handlePendingLogConsumed,
       demoRunPlanData,
       demoRunProgress,
       handleDemoRunStart,
@@ -840,6 +861,9 @@ type RenderPayload = {
   selectedResultCount: number
   onResultToggle: (id: string) => void
   setActiveSection: Dispatch<SetStateAction<SectionKey>>
+  pendingLogExecutionId: string | null
+  onViewExecutionLogs: (executionId: string) => void
+  onPendingLogConsumed: () => void
   demoPlan?: DemoRunPlan
   demoProgress: DemoRunProgress
   onDemoStart: () => void
@@ -872,9 +896,14 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
     case 'channelWorkbench':
       return <ChannelWorkbench />
     case 'testManagement':
-      return <TestManagement />
+      return <TestManagement onViewLogs={payload.onViewExecutionLogs} />
     case 'results':
-      return <ReportsPage />
+      return (
+        <ReportsPage
+          pendingLogExecutionId={payload.pendingLogExecutionId}
+          onPendingLogConsumed={payload.onPendingLogConsumed}
+        />
+      )
     case 'systemCalibration':
       return <SystemCalibration />
     case 'commissioning':

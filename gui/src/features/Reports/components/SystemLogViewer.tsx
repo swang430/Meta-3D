@@ -5,7 +5,7 @@
  * 实时查看、级别过滤、关键词搜索和文件下载功能。
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Stack,
   Group,
@@ -24,6 +24,7 @@ import {
   Loader,
   Alert,
   Menu,
+  UnstyledButton,
 } from '@mantine/core'
 import {
   IconSearch,
@@ -35,6 +36,8 @@ import {
   IconAlertCircle,
   IconPlayerPlay,
   IconPlayerPause,
+  IconArrowDown,
+  IconArrowUp,
 } from '@tabler/icons-react'
 import apiClient from '../../../api/client'
 import { formatLogDate, formatLogTime } from '../../../utils/datetime'
@@ -111,7 +114,18 @@ const REFRESH_INTERVALS = [
 
 // ── Component ──────────────────────────────────────────────────
 
-export function SystemLogViewer() {
+interface SystemLogViewerProps {
+  /**
+   * P1-39: 从执行历史「查看日志」跳过来时预填的**完整 `execution_id`**。
+   * ⚠ 只在**值变化**时应用（`useEffect` 依赖它）。同值再次跳转不会重跑 ——
+   * 这没问题, 因为上游 (ReportsPage) 是一次性交接: 每次跳转都会先被清成
+   * null 再设新值, 值必然变化。（内审 F5: 原注释写"用 key 里带的序号驱动",
+   * 那个机制全仓不存在。）
+   */
+  initialExecutionFilter?: string | null
+}
+
+export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps = {}) {
   // File list
   const [files, setFiles] = useState<LogFileInfo[]>([])
   const [selectedFile, setSelectedFile] = useState<string>('app.log')
@@ -175,7 +189,18 @@ export function SystemLogViewer() {
   const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Expanded rows
-  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set())
+  // P1-39 第 5 条: 系统日志**默认新在最上**。
+  //
+  // ⚠ 用户的原话是「为什么不能跟『实时日志』保持一样的方式」, 但实测两个面板
+  //   **排序完全相同**（都是旧上新下）—— 真正的差别是 ZoneLogsAlerts:166-169 有
+  //   autoScroll 自动滚到底。这里选**降序**而不是照抄 autoScroll, 因为:
+  //   ① 系统日志是**查证面板**不是 live tail;
+  //   ② 一旦加了过滤条件, 自动滚动就没有意义（结果不是流式追加的）。
+  const [sortDesc, setSortDesc] = useState(true)
+  // ⚠ 展开态**按条目身份记, 不按下标**。改降序之前这里是 Set<number>(下标),
+  //   而本面板有自动刷新 —— 降序下每来一条新日志所有下标都移位, 展开的行会
+  //   跳到别的日志上。（升序+追加时下标恰好稳定, 所以旧写法一直没暴露。）
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
 
   // ── Fetch file list ──
   const fetchFiles = useCallback(async () => {
@@ -248,14 +273,49 @@ export function SystemLogViewer() {
   }, [refreshInterval, fetchLogs])
 
   // ── Toggle row expand ──
-  const toggleRow = (index: number) => {
+  const toggleRow = (key: string) => {
     setExpandedRows(prev => {
       const next = new Set(prev)
-      if (next.has(index)) next.delete(index)
-      else next.add(index)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
       return next
     })
   }
+
+  // P1-39 + 内审 F3: 条目身份。
+  //
+  // ⚠ **(ts, logger, msg) 三元组在真实日志里大面积撞车** —— 内审实测
+  //   `scpi.log` 尾 200 行只有 71 个不同三元组, 最坏一组重复 25 次
+  //   (同毫秒的 `RX: ` 空回复); traceback 续行走兜底解析后 ts/logger 皆空,
+  //   退化成只剩消息, 更容易撞。后果两条: ① 点一行会把同 key 的 25 行一起
+  //   展开、表下渲染 25 张同样的详情卡; ② React 重复 key(改动前 `key={idx}`
+  //   是唯一的, 是本片引入的回归)。
+  //
+  // 修法: **在同一批内**按出现次序消重 —— 身份语义不变, 唯一性恢复。
+  // ⚠ 消重必须打在**后端给的原始顺序**上, 不能打在翻转后的序列上 ——
+  //   否则切换排序方向时 `#N` 会重新分配, 展开的行会跳。
+  const keyedEntries = useMemo(() => {
+    const seen = new Map<string, number>()
+    return entries.map((e) => {
+      const base = `${e.ts}|${e.logger}|${e.msg}`
+      const n = seen.get(base) ?? 0
+      seen.set(base, n + 1)
+      return { entry: e, key: n === 0 ? base : `${base}#${n}` }
+    })
+  }, [entries])
+
+  // P1-39: 按方向出显示序列。后端给的恒为**升序**(见 system_logs.py 里
+  // `_scan_tail_entries` 结尾那句 `matched.reverse()  # 恢复时间顺序`),
+  // 这里只管显示。⚠ 必须复制再翻转, 就地 reverse 会改掉 React state 数组。
+  const displayEntries = sortDesc ? [...keyedEntries].reverse() : keyedEntries
+
+  // P1-39: 从执行历史跳过来 —— 预填执行过滤并清掉可能冲突的文本过滤,
+  // 与「只看这一次执行」按钮 (isolateExecution) 同口径, 避免两条路给出不同结果。
+  useEffect(() => {
+    if (!initialExecutionFilter) return
+    setExecutionFilter(initialExecutionFilter)
+    clearTextFilters()
+  }, [initialExecutionFilter])
 
   // ── Format timestamp for display ──
   // P1-34: 时间戳一律走共享的 formatLogTime/formatLogDate（本地时区）。
@@ -446,7 +506,17 @@ export function SystemLogViewer() {
             <Table.Thead style={{ position: 'sticky', top: 0, backgroundColor: 'var(--mantine-color-body)', zIndex: 1 }}>
               <Table.Tr>
                 <Table.Th w={30}></Table.Th>
-                <Table.Th w={100}>时间</Table.Th>
+                {/* P1-39: 点表头切排序方向。默认降序(新在最上) —— 见 sortDesc 处注释。 */}
+                <Table.Th w={100}>
+                  <UnstyledButton
+                    onClick={() => setSortDesc(v => !v)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+                    title={sortDesc ? '当前：最新在最上（点击改为最新在最下）' : '当前：最新在最下（点击改为最新在最上）'}
+                  >
+                    <Text size="sm" fw={600}>时间</Text>
+                    {sortDesc ? <IconArrowDown size={13} /> : <IconArrowUp size={13} />}
+                  </UnstyledButton>
+                </Table.Th>
                 <Table.Th w={70}>级别</Table.Th>
                 {/* P1-34: 请求 ID 必须**在表格里直接看得见**。
                     早前它只在展开详情里 —— 于是这个功能等于不存在：
@@ -469,19 +539,35 @@ export function SystemLogViewer() {
                       加「请求」「执行」两列前这里写的是 5，本来就少一列。 */}
                   <Table.Td colSpan={8}>
                     <Text ta="center" c="dimmed" py="xl">
-                      {error ? '加载出错' : '暂无日志条目'}
+                      {error ? '加载出错' : (
+                        executionFilter ? (
+                          /* 内审 F2: 按天轮转 —— 昨天及更早的执行, 日志在
+                             app.log.YYYY-MM-DD 里, 而本面板的文件下拉**只列活跃文件**
+                             (后端 files 端点按 suffix 过滤, 归档文件整类不返回)。
+                             不说这一句, 用户看到的就是"点了看日志, 结果空白",
+                             正是本片要治的「看得见用不了」的翻版。 */
+                          <>
+                            这次执行在 <b>{selectedFile}</b> 里没有匹配行。
+                            <br />
+                            日志按天轮转 —— 若该执行发生在今天之前, 它的日志在
+                            <b> {selectedFile}.YYYY-MM-DD</b> 归档文件里，
+                            而本面板的文件下拉当前只列活跃文件（翻历史见 P1-43）。
+                          </>
+                        ) : '暂无日志条目'
+                      )}
                     </Text>
                   </Table.Td>
                 </Table.Tr>
               )}
-              {entries.map((entry, idx) => (
+              {displayEntries.map(({ entry, key: rk }) => {
+                return (
                 <Table.Tr
-                  key={idx}
-                  onClick={() => toggleRow(idx)}
+                  key={rk}
+                  onClick={() => toggleRow(rk)}
                   style={{ cursor: 'pointer' }}
                 >
                   <Table.Td>
-                    {expandedRows.has(idx)
+                    {expandedRows.has(rk)
                       ? <IconChevronDown size={12} />
                       : <IconChevronRight size={12} />
                     }
@@ -556,14 +642,15 @@ export function SystemLogViewer() {
                     </Text>
                   </Table.Td>
                 </Table.Tr>
-              ))}
+                )
+              })}
             </Table.Tbody>
           </Table>
 
           {/* ── Expanded detail rows (rendered outside table for clean layout) ── */}
-          {entries.map((entry, idx) => (
-            expandedRows.has(idx) && entry.raw ? (
-              <Paper key={`detail-${idx}`} p="sm" mx="md" mb="xs" bg="gray.0" radius="sm">
+          {displayEntries.map(({ entry, key: rk }) => (
+            expandedRows.has(rk) && entry.raw ? (
+              <Paper key={`detail-${rk}`} p="sm" mx="md" mb="xs" bg="gray.0" radius="sm">
                 <Group gap="lg" mb="xs">
                   <Text size="xs"><b>时间:</b> {formatLogDate(entry.ts)} {formatLogTime(entry.ts)}</Text>
                   <Text size="xs" c="dimmed"><b>原始:</b> {entry.ts || '—'}</Text>

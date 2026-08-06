@@ -5,6 +5,7 @@
  * Can be used by both test plan management and virtual road test modules
  */
 
+import { CopyableId } from '../CopyableId'
 import { useQuery } from '@tanstack/react-query'
 import {
   Stack,
@@ -277,11 +278,9 @@ function OverviewTab({ content }: { content: ReportContentData }) {
         </Card>
         <Card withBorder p="sm">
           <Text size="xs" c="dimmed" fw={500}>执行ID</Text>
-          <Text size="sm" ff="monospace">
-            {content.execution_id.length > 12
-              ? `${content.execution_id.slice(0, 12)}...`
-              : content.execution_id}
-          </Text>
+          {/* P1-39: 原来 slice(0,12) 截断且不可复制 —— 而日志过滤要**全长**,
+              日志列表又显示前 8 位, 正好卡在「看得见但用不了」。改共享组件。 */}
+          <CopyableId value={content.execution_id} head={12} size="sm" />
         </Card>
       </SimpleGrid>
 

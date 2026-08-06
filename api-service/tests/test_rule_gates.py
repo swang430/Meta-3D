@@ -1454,3 +1454,70 @@ def test_gitignore_does_not_shadow_tracked_sources():
         + "\n已跟踪的不受影响，但往同一目录**新加**的文件会被静默忽略。"
         "\n多半是漏了开头的 `/`（`data/` 匹配任何叫 data 的目录，`/data/` 只匹配根下那个）。"
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# G12 (P1-39) — 系统日志面板的两条**会静默失效**的不变量
+#
+# 背景: P1-39 把日志表默认改成降序 (新在最上)。这个改动本身很小, 但它让两件
+# 原本"恰好没事"的写法变成真 bug, 而**两者都不会报错、不会崩、看起来还正常**:
+#
+#   ① 排序若就地 reverse (`entries.reverse()`) 会**改掉 state 数组本身** ——
+#      React state 被原地改动, 下一次渲染/轮询的比较基准就错了, 表现为条目
+#      顺序间歇性跳动。写成 `[...entries].reverse()` 才安全。
+#   ② 展开态若按**下标**记 (`Set<number>` + `expandedRows.has(idx)`), 在降序 +
+#      自动刷新下每来一条新日志所有下标都移位 —— 用户展开的那行会跳到别的
+#      日志上。升序+追加时下标恰好稳定, 所以旧写法一直没暴露。
+#
+# 这两条 GUI 侧没有单测基建可守 (gui/ 无 vitest/jest), 所以下沉成结构断言。
+# ⚠️ 存在性档不够: 只查 "有没有 sortDesc" 会被"保留 token 的错写法"绕过,
+#    所以这里查的是**具体的错写法不存在** + **正确写法存在**。
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SLV_SOURCE = "gui/src/features/Reports/components/SystemLogViewer.tsx"
+
+
+def test_g12_log_sort_does_not_mutate_state_and_expand_is_keyed():
+    raw = (_REPO_ROOT / _SLV_SOURCE).read_text(encoding="utf-8")
+    # ⚠ 先剥注释再扫代码 —— 否则注释里**引用**别处代码(例如解释后端那句
+    #   `matched.reverse()`)会被当成本文件的就地调用, 门假红。
+    src = re.sub(r"/\*.*?\*/", "", raw, flags=re.S)
+    src = re.sub(r"^\s*//.*$", "", src, flags=re.M)
+
+    # ① 任何**裸的**就地 reverse/sort 都不允许 —— 断的是"有没有先复制", 不是变量叫什么。
+    #    内审 F4 实证: 早前写死 `entries.reverse()`, 一行别名
+    #    `const rows = entries; rows.reverse()` 就绕过去了。
+    for m in re.finditer(r"(\w+)\.(reverse|sort)\(", src):
+        head = src[max(0, m.start() - 12):m.start()]
+        assert head.rstrip().endswith("]"), (
+            f"{_SLV_SOURCE} 出现就地 {m.group(1)}.{m.group(2)}() —— "
+            f"若 {m.group(1)} 来自 React state 会被原地改动。"
+            f"必须先复制: [...{m.group(1)}].{m.group(2)}()"
+        )
+
+    # ② 展开态必须按条目身份, 不能按下标
+    assert "useState<Set<number>>" not in src, (
+        f"{_SLV_SOURCE} 的 expandedRows 退回了 Set<number>(按下标) —— "
+        f"降序+自动刷新下下标会移位, 展开的行会跳到别的日志上。"
+    )
+    assert "useState<Set<string>>" in src, (
+        f"{_SLV_SOURCE} 找不到 Set<string> 形态的 expandedRows。"
+    )
+
+    # ③ **身份的性质**, 不是标识符的名字 (内审 F4: 早前断言实参必须叫 `rk`/`rowKey(`,
+    #    于是把 rowKey 函数体换成 `String(entries.indexOf(e))` 照样绿, 而正当写法
+    #    `expandedRows.has(rowKeys[i])` 反被假红)。改断 key 的**构成**:
+    #    必须由条目自身的字段拼出, 且不得掺入下标类来源。
+    key_src = re.search(r"const base = ([^\n]+)", src)
+    assert key_src, f"{_SLV_SOURCE} 找不到条目 key 的构造 (const base = ...)"
+    expr = key_src.group(1)
+    for field in ("e.ts", "e.logger", "e.msg"):
+        assert field in expr, (
+            f"{_SLV_SOURCE} 的条目 key 不含 {field} —— key 必须由条目自身字段构成。"
+            f"当前: {expr}"
+        )
+    for banned in ("indexOf", "index", "idx"):
+        assert banned not in expr, (
+            f"{_SLV_SOURCE} 的条目 key 掺入了下标来源 {banned!r} —— "
+            f"那正是本门要防的那个 bug。当前: {expr}"
+        )
