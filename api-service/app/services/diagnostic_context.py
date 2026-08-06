@@ -33,6 +33,10 @@ from app.services.calibration.rf_chain_resolver import (
     RFChainResolution,
     resolve_rf_chains,
 )
+from app.services.chamber_resolution import (
+    ChamberIntegrityReport,
+    audit_chamber_integrity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +74,7 @@ class DiagnosticContext:
     instrument_bindings: List[InstrumentBinding] = field(default_factory=list)
     rf_chains: Optional[RFChainResolution] = None
     warnings: List[str] = field(default_factory=list)
+    chamber_integrity: Optional[ChamberIntegrityReport] = None
 
     # ── Lookups ──────────────────────────────────────────────────────────
 
@@ -211,6 +216,7 @@ def build_diagnostic_context(
     lab_profile_id: Optional[UUID],
     operating_mode: str = "mimo_ota",
     resolve_rf_chains_too: bool = True,
+    audit_chamber_integrity_too: bool = False,
 ) -> DiagnosticContext:
     """Resolve everything the workshop tools commonly need.
 
@@ -248,6 +254,12 @@ def build_diagnostic_context(
 
     bindings = _parse_instrument_bindings(db, lab.instrument_bindings)
 
+    chamber_integrity = (
+        audit_chamber_integrity(db, lab.id)
+        if audit_chamber_integrity_too
+        else None
+    )
+
     rf_chains: Optional[RFChainResolution] = None
     if resolve_rf_chains_too and lab.chamber_config_id is not None:
         try:
@@ -266,6 +278,7 @@ def build_diagnostic_context(
         instrument_bindings=bindings,
         rf_chains=rf_chains,
         warnings=warnings,
+        chamber_integrity=chamber_integrity,
     )
 
 

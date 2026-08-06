@@ -1,7 +1,7 @@
 """Seed the canonical 'CAICT-Lab-1' LabProfile from current DB state.
 
 Bundles:
-- the (single) active ChamberConfiguration as chamber_config_id
+- the explicitly named CAICT ChamberConfiguration as chamber_config_id
 - the latest passing CalibrationCertificate as active_calibration_certificate_id
 - all active InstrumentCategory rows as instrument_bindings
 
@@ -36,20 +36,19 @@ logger = logging.getLogger("seed_caict")
 LAB_NAME = "CAICT-Lab-1"
 LAB_ORG = "中国信通院"
 LAB_LOCATION = "Beijing, China"
+CHAMBER_NAME = "CAICT-16-Probe-Dual"
 
 
 def _resolve_chamber(db) -> ChamberConfiguration:
-    chamber = (
-        db.query(ChamberConfiguration)
-        .filter(ChamberConfiguration.is_active == True)  # noqa: E712
-        .first()
-    )
-    if not chamber:
+    matches = db.query(ChamberConfiguration).filter(
+        ChamberConfiguration.name == CHAMBER_NAME
+    ).all()
+    if len(matches) != 1:
         raise RuntimeError(
-            "No active ChamberConfiguration found. Initialize one before "
-            "seeding a LabProfile."
+            f"Expected exactly one ChamberConfiguration named {CHAMBER_NAME!r}, "
+            f"found {len(matches)}. Seed/repair that explicit chamber first."
         )
-    return chamber
+    return matches[0]
 
 
 def _resolve_calibration(db) -> CalibrationCertificate | None:

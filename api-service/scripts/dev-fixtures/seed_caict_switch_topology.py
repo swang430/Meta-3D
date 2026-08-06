@@ -35,8 +35,10 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from app.db.database import SessionLocal
 from app.models.chamber import ChamberConfiguration
+from app.models.lab_profile import LabProfile
 from app.models.instrument import InstrumentCategory
 from app.models.switch_topology import SwitchTopology
+from app.services.chamber_resolution import resolve_current_chamber
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("seed_caict_topology")
@@ -50,14 +52,10 @@ DEFAULT_CABLE_LOSS_DB = 0.5
 
 
 def _resolve_chamber(db) -> ChamberConfiguration:
-    chamber = (
-        db.query(ChamberConfiguration)
-        .filter(ChamberConfiguration.is_active == True)  # noqa: E712
-        .first()
-    )
-    if not chamber:
-        raise RuntimeError("No active ChamberConfiguration; seed one first.")
-    return chamber
+    lab = db.query(LabProfile).filter(LabProfile.name == "CAICT-Lab-1").one_or_none()
+    if lab is None:
+        raise RuntimeError("CAICT-Lab-1 not found; seed the LabProfile first.")
+    return resolve_current_chamber(db, lab.id)
 
 
 def _resolve_switch_category(db) -> InstrumentCategory | None:

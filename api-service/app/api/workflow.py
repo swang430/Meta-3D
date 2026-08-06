@@ -8,6 +8,7 @@ from typing import Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.db.database import get_db
 from app.schemas.workflow import (
@@ -272,8 +273,9 @@ async def execute_workflow(
     # Store for later retrieval
     _executions[execution.id] = execution
 
-    # Run synchronously (in production, use background task)
-    execution = executor.run(execution)
+    # WorkflowExecutor bridges async instrument/calibration services with
+    # asyncio.run(); keep it off this endpoint's event-loop thread.
+    execution = await run_in_threadpool(executor.run, execution)
     _executions[execution.id] = execution
 
     return _execution_to_response(execution)

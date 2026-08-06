@@ -13,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 from app.main import app
 from app.db.database import Base, get_db
 from app.models.chamber import ChamberConfiguration, ChamberType, CHAMBER_PRESETS, create_chamber_from_preset
+from app.models.lab_profile import LabProfile
 
 
 # Create test database
@@ -308,36 +309,54 @@ class TestChamberAPI:
         assert data["lna_gain_db"] == 25.0
 
     def test_activate_chamber(self):
-        """POST /chambers/{id}/activate should set chamber as active"""
+        """POST /activate should rebind the LabProfile current chamber."""
         # Create two chambers
         response1 = client.post("/api/v1/chambers/from-preset", json={"preset_type": "type_a"})
         response2 = client.post("/api/v1/chambers/from-preset", json={"preset_type": "type_b"})
         chamber_id_1 = response1.json()["id"]
         chamber_id_2 = response2.json()["id"]
+        db = TestingSessionLocal()
+        lab = LabProfile(
+            name="activation-test-lab",
+            chamber_config_id=UUID(chamber_id_1),
+            is_active=True,
+        )
+        db.add(lab)
+        db.commit()
+        lab_id = lab.id
+        db.close()
 
         # Activate first chamber
-        client.post(f"/api/v1/chambers/{chamber_id_1}/activate")
+        client.post(f"/api/v1/chambers/{chamber_id_1}/activate?lab_profile_id={lab_id}")
 
         # Activate second chamber
-        response = client.post(f"/api/v1/chambers/{chamber_id_2}/activate")
+        response = client.post(f"/api/v1/chambers/{chamber_id_2}/activate?lab_profile_id={lab_id}")
         assert response.status_code == 200
         assert response.json()["is_active"] is True
 
         # First chamber should be deactivated
-        response = client.get(f"/api/v1/chambers/{chamber_id_1}")
+        response = client.get(f"/api/v1/chambers/{chamber_id_1}?lab_profile_id={lab_id}")
         assert response.json()["is_active"] is False
 
     def test_get_active_chamber(self):
-        """GET /chambers/active should return active chamber"""
-        # Create and activate a chamber
+        """GET /chambers/active should return the lab-bound chamber."""
         create_response = client.post(
             "/api/v1/chambers/from-preset",
             json={"preset_type": "type_c"}
         )
         chamber_id = create_response.json()["id"]
-        client.post(f"/api/v1/chambers/{chamber_id}/activate")
+        db = TestingSessionLocal()
+        lab = LabProfile(
+            name="active-get-test-lab",
+            chamber_config_id=UUID(chamber_id),
+            is_active=True,
+        )
+        db.add(lab)
+        db.commit()
+        lab_id = lab.id
+        db.close()
 
-        response = client.get("/api/v1/chambers/active")
+        response = client.get(f"/api/v1/chambers/active?lab_profile_id={lab_id}")
         assert response.status_code == 200
         assert response.json()["id"] == chamber_id
 
@@ -366,18 +385,25 @@ class TestChamberAPI:
         response = client.get(f"/api/v1/chambers/{chamber_id}")
         assert response.status_code == 404
 
-    def test_cannot_delete_active_chamber(self):
-        """DELETE /chambers/{id} should fail for active chamber"""
+    def test_cannot_delete_lab_bound_chamber(self):
+        """DELETE /chambers/{id} should fail for a LabProfile-bound chamber."""
         create_response = client.post(
             "/api/v1/chambers/from-preset",
             json={"preset_type": "type_d"}
         )
         chamber_id = create_response.json()["id"]
-        client.post(f"/api/v1/chambers/{chamber_id}/activate")
+        db = TestingSessionLocal()
+        db.add(LabProfile(
+            name="delete-bound-test-lab",
+            chamber_config_id=UUID(chamber_id),
+            is_active=True,
+        ))
+        db.commit()
+        db.close()
 
         response = client.delete(f"/api/v1/chambers/{chamber_id}")
-        assert response.status_code == 400
-        assert "激活" in response.json()["detail"]  # 不能删除当前激活暗室 (中文文案)
+        assert response.status_code == 409
+        assert "Lab Profile" in response.json()["detail"]
 
     def test_get_required_calibrations_type_a(self):
         """Type A chamber should require basic calibrations only"""

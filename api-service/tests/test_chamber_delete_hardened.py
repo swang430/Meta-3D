@@ -18,6 +18,7 @@ from app.models.chamber import ChamberConfiguration
 from app.models.probe import Probe
 from app.models.switch_topology import SwitchTopology
 from app.models.lab_profile import LabProfile
+from app.models.probe_calibration import ProbeCalibrationValidity
 
 engine = create_engine(
     "sqlite:///:memory:",
@@ -96,14 +97,14 @@ def test_delete_cascades_probes_and_topologies():
         db.close()
 
 
-def test_delete_active_blocked():
+def test_legacy_active_flag_does_not_block_delete():
     db = TestingSessionLocal()
     c = _chamber(db, "ActiveOne", active=True)
     db.commit()
     cid = c.id
     db.close()
     resp = client.delete(f"/api/v1/chambers/{cid}")
-    assert resp.status_code == 400
+    assert resp.status_code == 200
 
 
 def test_delete_preset_blocked():
@@ -132,5 +133,26 @@ def test_delete_lab_referenced_blocked():
     db = TestingSessionLocal()
     try:
         assert db.query(ChamberConfiguration).filter_by(id=cid).first() is not None  # 未删
+    finally:
+        db.close()
+
+
+def test_delete_chamber_with_calibration_history_is_blocked():
+    db = TestingSessionLocal()
+    c = _chamber(db, "Calibrated")
+    db.flush()
+    db.add(ProbeCalibrationValidity(probe_id=3, chamber_id=c.id))
+    db.commit()
+    cid = c.id
+    db.close()
+
+    resp = client.delete(f"/api/v1/chambers/{cid}")
+
+    assert resp.status_code == 409, resp.text
+    assert "probe_calibration_validity" in resp.text
+    db = TestingSessionLocal()
+    try:
+        assert db.get(ChamberConfiguration, cid) is not None
+        assert db.query(ProbeCalibrationValidity).filter_by(chamber_id=cid).count() == 1
     finally:
         db.close()

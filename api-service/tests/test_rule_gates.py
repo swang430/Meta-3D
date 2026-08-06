@@ -1517,3 +1517,79 @@ def test_g12_p0_5_scpi_evidence_catalog_is_strict_and_complete():
     assert not evaluate_catalog_scope(catalog.entries["uxm.config_apply"], irat).eligible
     assert not evaluate_catalog_scope(catalog.entries["uxm.cell_status"], irat).eligible
     assert not evaluate_catalog_scope(catalog.entries["uxm.dl_throughput"], irat).eligible
+
+
+# ── G13: P1-28 当前暗室只能来自 LabProfile 绑定 ──────────────────
+
+def test_g13_current_chamber_consumers_use_single_resolver():
+    """旧列可留作迁移兼容，但不能再被生产路径当作当前暗室选择器。"""
+    chamber_api = (
+        _API_SERVICE_ROOT / "app/api/chamber.py"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        _API_SERVICE_ROOT / "app/services/workflow_engine.py"
+    ).read_text(encoding="utf-8")
+
+    assert "ChamberConfiguration.is_active" not in chamber_api
+    assert "ChamberConfiguration.is_active" not in workflow
+    assert "chamber.is_active" not in chamber_api
+    assert "resolve_current_chamber" in chamber_api
+    assert "resolve_current_chamber" in workflow
+
+    from app.schemas.chamber import ChamberConfigurationUpdate
+
+    assert "is_active" not in ChamberConfigurationUpdate.model_fields
+
+    offenders = []
+    for path in (_API_SERVICE_ROOT / "app").rglob("*.py"):
+        if path == _API_SERVICE_ROOT / "app/models/chamber.py":
+            continue
+        source = path.read_text(encoding="utf-8")
+        if "ChamberConfiguration.is_active" in source and path.name != "chamber_resolution.py":
+            offenders.append(str(path.relative_to(_API_SERVICE_ROOT)))
+    assert offenders == [], f"生产代码重新读取了废弃暗室选择器: {offenders}"
+
+    supported_seed_scripts = (
+        _API_SERVICE_ROOT / "scripts/dev-fixtures/seed_caict_lab_profile.py",
+        _API_SERVICE_ROOT / "scripts/dev-fixtures/seed_caict_switch_topology.py",
+    )
+    script_offenders = [
+        str(path.relative_to(_API_SERVICE_ROOT))
+        for path in supported_seed_scripts
+        if "ChamberConfiguration.is_active" in path.read_text(encoding="utf-8")
+    ]
+    assert script_offenders == [], f"受支持的初始化脚本仍读取废弃选择器: {script_offenders}"
+
+
+def test_g13_gui_chamber_consumers_fail_closed_and_track_source_provenance():
+    app_source = (_REPO_ROOT / "gui/src/App.tsx").read_text(encoding="utf-8")
+    ota_source = (
+        _REPO_ROOT / "gui/src/components/OTAMapper/ProbeArraySelector.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert ": probes),\n    [probes, activeChamberId]" not in app_source
+    assert "loadedChamberSource" in ota_source
+    assert "loadedChamberSource.labProfileId" in ota_source
+    assert "loadedChamberSource.chamberId" in ota_source
+
+
+def test_g13_integrity_audit_catalog_covers_every_direct_calibration_reference():
+    """新增带 chamber_id 的校准表时，必须进入 orphan 巡检而非静默漏掉。"""
+    from app.db.database import Base
+    from app.services.chamber_resolution import _CALIBRATION_CHAMBER_TABLES
+
+    direct_chamber_tables = {
+        name
+        for name, table in Base.metadata.tables.items()
+        if "chamber_id" in table.c and name != "switch_topologies"
+    }
+    assert set(_CALIBRATION_CHAMBER_TABLES) == direct_chamber_tables
+
+
+def test_g13_checker_self_test_detects_legacy_selector_shape():
+    """防止 G13 退化成永远为绿的存在性检查。"""
+    bad = (
+        "db.query(ChamberConfiguration).filter("
+        "ChamberConfiguration.is_active == True).first()"
+    )
+    assert "ChamberConfiguration.is_active" in bad

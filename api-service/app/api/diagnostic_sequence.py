@@ -126,6 +126,7 @@ async def run_diagnostic_sequence(
             db,
             lab_profile_id=request.lab_profile_id,
             operating_mode=request.operating_mode,
+            audit_chamber_integrity_too=(key == "chamber_configuration_integrity"),
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))

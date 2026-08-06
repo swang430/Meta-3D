@@ -509,46 +509,131 @@ class WorkflowExecutor:
         result: StepResult
     ):
         """Execute a probe calibration step"""
-        from app.services.probe_calibration_service import ProbeCalibrationService
+        import asyncio as _asyncio
+        from app.schemas.probe_calibration import FrequencyRange, PolarizationType
+        from app.services.probe_calibration_service import (
+            AmplitudeCalibrationService,
+            PhaseCalibrationService,
+        )
+        from app.services.chamber_resolution import resolve_current_chamber
 
-        service = ProbeCalibrationService(self.db)
         params = {**execution.workflow.parameters, **step.parameters}
-
-        # 支持 probe_ids: "auto" — 自动从暗室配置读取探头数量
-        raw_probe_ids = params.get("probe_ids", [0])
-        if raw_probe_ids == "auto":
-            from app.models.chamber import ChamberConfiguration
-            chamber = self.db.query(ChamberConfiguration).filter(
-                ChamberConfiguration.is_active == True
-            ).first()
-            num_probes = chamber.num_probes if chamber else 32
-            probe_ids = list(range(num_probes))
-            logger.info(f"[Workflow] probe_ids='auto' → resolved to {num_probes} probes")
-        else:
-            probe_ids = raw_probe_ids
+        chamber = resolve_current_chamber(self.db, params.get("lab_profile_id"))
+        probe_ids = self._resolve_probe_ids(params, chamber=chamber)
+        raw_polarizations = params.get("polarizations")
+        if raw_polarizations is None:
+            raw_polarizations = [params.get("polarization", "V")]
+        elif isinstance(raw_polarizations, str):
+            raw_polarizations = [raw_polarizations]
+        polarizations = [PolarizationType(value) for value in raw_polarizations]
+        raw_frequency_range = params.get("frequency_range")
+        if raw_frequency_range is None:
+            center_mhz = float(
+                params.get("frequency_mhz")
+                or params.get("new_frequency_mhz")
+                or float(params.get("fc_ghz", 3.5)) * 1000
+            )
+            raw_frequency_range = {
+                "start_mhz": center_mhz - 100,
+                "stop_mhz": center_mhz + 100,
+                "step_mhz": 100,
+            }
+        frequency_range = FrequencyRange.model_validate(raw_frequency_range)
 
         cal_type = step.calibration_type
         if cal_type == "amplitude":
-            calibration = service.run_amplitude_calibration(
-                probe_ids=probe_ids,
-                polarization=params.get("polarization", "V"),
-                frequency_range=params.get("frequency_range", {}),
-                calibrated_by=params.get("calibrated_by", "workflow"),
+            calibration = _asyncio.run(
+                AmplitudeCalibrationService().execute_amplitude_calibration(
+                    db=self.db,
+                    probe_ids=probe_ids,
+                    polarizations=polarizations,
+                    frequency_range=frequency_range,
+                    calibrated_by=params.get("calibrated_by", "workflow"),
+                    reference_antenna_id=params.get("reference_antenna_id"),
+                    power_meter_id=params.get("power_meter_id"),
+                    use_mock=params.get("use_mock", True),
+                    chamber_id=chamber.id,
+                )
             )
         elif cal_type == "phase":
-            calibration = service.run_phase_calibration(
-                probe_ids=probe_ids,
-                reference_probe_id=params.get("reference_probe_id", 0),
-                polarization=params.get("polarization", "V"),
-                frequency_range=params.get("frequency_range", {}),
-                calibrated_by=params.get("calibrated_by", "workflow"),
+            reference_probe_id = params.get("reference_probe_id", 0)
+            if (
+                isinstance(reference_probe_id, bool)
+                or not isinstance(reference_probe_id, int)
+                or not 0 <= reference_probe_id < chamber.num_probes
+            ):
+                raise ValueError(
+                    f"reference_probe_id {reference_probe_id!r} is outside chamber "
+                    f"range 0..{chamber.num_probes - 1}"
+                )
+            calibration = _asyncio.run(
+                PhaseCalibrationService().execute_phase_calibration(
+                    db=self.db,
+                    probe_ids=probe_ids,
+                    reference_probe_id=reference_probe_id,
+                    polarizations=polarizations,
+                    frequency_range=frequency_range,
+                    calibrated_by=params.get("calibrated_by", "workflow"),
+                    vna_id=params.get("vna_id"),
+                    use_mock=params.get("use_mock", True),
+                    chamber_id=chamber.id,
+                )
             )
         else:
             raise ValueError(f"Unknown probe calibration type: {cal_type}")
 
-        result.calibration_id = str(calibration.id)
-        result.validation_pass = calibration.validation_pass if hasattr(calibration, 'validation_pass') else True
-        result.output = {"calibration_type": cal_type, "probe_ids": probe_ids}
+        if not calibration.success:
+            raise RuntimeError(calibration.message)
+        calibration_ids = calibration.data.get("calibration_ids", [])
+        result.calibration_id = calibration_ids[0] if calibration_ids else None
+        result.validation_pass = calibration.success
+        result.output = {
+            "calibration_type": cal_type,
+            "probe_ids": probe_ids,
+            "chamber_id": str(chamber.id),
+            "calibration_ids": calibration_ids,
+            "warnings": calibration.warnings,
+        }
+
+    def _resolve_probe_ids(
+        self, params: Dict[str, Any], *, chamber: Optional[Any] = None,
+    ) -> List[int]:
+        """Resolve and validate every probe set against the bound chamber."""
+        if chamber is None:
+            from app.services.chamber_resolution import resolve_current_chamber
+            chamber = resolve_current_chamber(self.db, params.get("lab_profile_id"))
+        raw_probe_ids = params.get("probe_ids", [0])
+        if raw_probe_ids == "auto":
+            probe_ids = list(range(chamber.num_probes))
+            logger.info(
+                "[Workflow] probe_ids='auto' → resolved to %s probes from chamber %s",
+                chamber.num_probes,
+                chamber.id,
+            )
+        else:
+            if not isinstance(raw_probe_ids, (list, tuple)):
+                raise ValueError("probe_ids must be a list of integers or 'auto'")
+            probe_ids = list(raw_probe_ids)
+
+        if not probe_ids:
+            raise ValueError("probe_ids must not be empty")
+        invalid = [
+            probe_id
+            for probe_id in probe_ids
+            if (
+                isinstance(probe_id, bool)
+                or not isinstance(probe_id, int)
+                or not 0 <= probe_id < chamber.num_probes
+            )
+        ]
+        if invalid:
+            raise ValueError(
+                f"probe_ids {invalid!r} are outside chamber range "
+                f"0..{chamber.num_probes - 1}"
+            )
+        if len(set(probe_ids)) != len(probe_ids):
+            raise ValueError("probe_ids must not contain duplicates")
+        return probe_ids
 
     def _execute_channel_calibration(
         self,

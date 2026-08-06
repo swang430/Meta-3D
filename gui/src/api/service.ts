@@ -442,6 +442,7 @@ export const fetchChamberConfigurations = async (params?: {
   skip?: number
   limit?: number
   activeOnly?: boolean
+  lab_profile_id?: string
 }): Promise<ChamberListResponse> => {
   const response = await client.get<ChamberListResponse>('/chambers', { params })
   return response.data
@@ -453,12 +454,18 @@ export const fetchChamberConfigurations = async (params?: {
  * 单次请求会漏掉靠后的暗室 (如 CAICT-FS 在第 84 位 → 默认 limit 20 根本选不到),
  * 导致下拉框里"暗室凭空消失"。这里按 limit=100 翻页直到取满 total。
  */
-export const fetchAllChamberConfigurations = async (): Promise<ChamberConfiguration[]> => {
+export const fetchAllChamberConfigurations = async (
+  labProfileId?: string,
+): Promise<ChamberConfiguration[]> => {
   const pageSize = 100
   let skip = 0
   const all: ChamberConfiguration[] = []
   for (;;) {
-    const page = await fetchChamberConfigurations({ skip, limit: pageSize })
+    const page = await fetchChamberConfigurations({
+      skip,
+      limit: pageSize,
+      lab_profile_id: labProfileId,
+    })
     const items = page.items ?? []
     all.push(...items)
     if (items.length < pageSize || all.length >= (page.total ?? all.length)) break
@@ -468,10 +475,14 @@ export const fetchAllChamberConfigurations = async (): Promise<ChamberConfigurat
 }
 
 /**
- * 获取当前激活的暗室配置
+ * 获取所选 LabProfile 绑定的当前暗室配置
  */
-export const fetchActiveChamber = async (): Promise<ChamberConfiguration> => {
-  const response = await client.get<ChamberConfiguration>('/chambers/active')
+export const fetchActiveChamber = async (
+  labProfileId?: string,
+): Promise<ChamberConfiguration> => {
+  const response = await client.get<ChamberConfiguration>('/chambers/active', {
+    params: { lab_profile_id: labProfileId },
+  })
   return response.data
 }
 
@@ -515,10 +526,17 @@ export const updateChamber = async (
 }
 
 /**
- * 激活指定暗室配置
+ * 将指定暗室绑定为所选 LabProfile 的当前暗室
  */
-export const activateChamber = async (chamberId: string): Promise<ChamberConfiguration> => {
-  const response = await client.post<ChamberConfiguration>(`/chambers/${chamberId}/activate`)
+export const activateChamber = async (
+  chamberId: string,
+  labProfileId?: string,
+): Promise<ChamberConfiguration> => {
+  const response = await client.post<ChamberConfiguration>(
+    `/chambers/${chamberId}/activate`,
+    undefined,
+    { params: { lab_profile_id: labProfileId } },
+  )
   return response.data
 }
 
