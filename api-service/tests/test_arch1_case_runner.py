@@ -253,6 +253,23 @@ class TestSingleFlight:
             gate.set()
             await tcr._RUNNING_TASKS[str(first.id)]
 
+    def test_unsafe_diagnostic_blocks_formal_execute_endpoint(self, db, lab):
+        """破坏性诊断占用 HAL 时，正式执行正门必须返回 409。"""
+        from app.services import execution_exclusion_guard as guard
+
+        source = _make_case(db, lab, name="诊断互斥")
+        token = guard.try_acquire_unsafe_diagnostic("uxm-write-probe")
+        assert token is not None
+        try:
+            client = TestClient(app)
+            response = client.post(
+                f"/api/v1/test-plans/cases/{source.id}/execute"
+            )
+            assert response.status_code == 409
+            assert "诊断" in response.json()["detail"]
+        finally:
+            guard.release_unsafe_diagnostic(token)
+
     # ARCH-1 S4b: test_plan_runner_mutex 随计划链删除 —— 它断言的是
     # _active_conflict 里"计划 runner 在跑就拒"那个分支, 而计划 runner 已不存在。
     # 反方向那条 (test_plan_start_resume_rejected_while_case_running) 测的是

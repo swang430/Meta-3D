@@ -12,8 +12,9 @@
   → 相位间协作式 cancel
 
 设计要点 (对应设计稿 §2.3):
-- **全局单飞**: 双 5 相位链交错打同一套 HAL 会互相污染。判据两条 ——
-  进程内任务表 + DB 里的 running 行 (防重启后标志丢失的窗口)。
+- **全局单飞**: 正式执行与破坏性诊断交错打同一套 HAL 会互相污染。正式执行
+  判据是进程内任务表 + DB 里的 running 行 (防重启后标志丢失的窗口)；
+  破坏性诊断另有进程内 token，由双方入口双向检查。
   ARCH-1 S4b 拆掉计划链后, 原先"与计划 runner 互斥"那一条随之删除
   (计划 runner 不存在了, 该分支恒 None)。
 - **协作式 cancel**: cancel 端点把 execution.status 置 "cancelled", task
@@ -48,6 +49,7 @@ from app.models.test_plan import (
     TestStep,
 )
 from app.services.mimo_ota.factory import build_mimo_ota_test_case
+from app.services.execution_exclusion_guard import active_unsafe_diagnostic
 from app.services.test_execution.hydrate import build_step_context
 from app.services.test_execution.registry import dispatch_step
 
@@ -69,22 +71,36 @@ def has_active_case_run() -> Optional[str]:
 
 
 def _active_conflict() -> Optional[str]:
-    """全局单飞: 本 runner 在跑 → 返回冲突描述。
+    """全局单飞：本 runner 或破坏性诊断在跑 → 返回冲突描述。
 
     ARCH-1 S4b: 原先这里还查一次 ``test_plan_runner.has_active_runner`` ——
     过渡期两条链都能打 HAL, 必须互斥。计划链拆除后计划 runner 不存在了,
     那个分支恒 None, 连同 import 一并删除 (留着 = 模块删掉后每次执行都
     ModuleNotFoundError)。
 
-    ⚠️ 真正在防重入的两条判据**都还在**, 没被这次删除削弱:
+    ⚠️ 正式 runner 防重入的两条判据**都还在**, 没被这次删除削弱:
       ① 进程内任务表 (``has_active_case_run``, 本函数);
       ② DB 里的 running 行 (``launch_test_case_execution`` 的 dangling 双判据)。
-    双 5 相位链交错污染实验的论证依然成立, 只是现在只剩一条链会产生它。
+    此外，本函数检查独立的破坏性诊断 token，形成诊断 → 正式执行的反向门。
     """
     active_case = has_active_case_run()
     if active_case is not None:
         return f"已有用例执行在跑 (execution {active_case})"
+    active_diagnostic = active_unsafe_diagnostic()
+    if active_diagnostic is not None:
+        return f"已有破坏性诊断在跑 (diagnostic {active_diagnostic})"
     return None
+
+
+def has_running_case_run_row(db) -> Optional[str]:
+    """返回 DB 中本 runner 的 running 行 id；用于另一执行入口的双判据。"""
+    running = (
+        db.query(TestExecution)
+        .filter(TestExecution.status == "running")
+        .filter(TestExecution.executed_by == RUNNER_MARKER)
+        .first()
+    )
+    return str(running.id) if running is not None else None
 
 
 class CaseRunBusy(RuntimeError):
@@ -106,15 +122,10 @@ def launch_test_case_execution(db, test_case_id: UUID) -> TestExecution:
         raise CaseRunBusy(conflict)
     # DB 双判据 (镜像计划 runner): 进程内标志 + DB running 行。防的是
     # 重启后标志丢失但复位没跑到的窗口 — 宁可 409 也不双跑。
-    dangling = (
-        db.query(TestExecution)
-        .filter(TestExecution.status == "running")
-        .filter(TestExecution.executed_by == RUNNER_MARKER)
-        .first()
-    )
+    dangling = has_running_case_run_row(db)
     if dangling is not None:
         raise CaseRunBusy(
-            f"DB 里已有 running 的用例执行 {dangling.id} (可能是残留 — "
+            f"DB 里已有 running 的用例执行 {dangling} (可能是残留 — "
             f"重启后端会自动复位, 或先 cancel 它)"
         )
 
