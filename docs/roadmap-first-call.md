@@ -8,16 +8,16 @@
 
 ## 🎯 Current Focus
 
-**当前状态 (2026-08-06)**：ARCH-1 整案收官（S1–S6 全 ✅，见下方 ARCH-1 表）。P0-5
+**当前状态 (2026-08-07)**：ARCH-1 整案收官（S1–S6 全 ✅，见下方 ARCH-1 表）。P0-5
 已经完成 DUT attach 与转台四方向吞吐，证明物理链路可工作；但关键 SCPI 仍缺
 “发送 → 接受 → 生效 → 业务结果”的同次执行证据，**正式自动化验收未关闭**。P0-8
 现场半同样仍 blocked（见 Blocked on hardware 表）。
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
-**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → **P1-47A** → P1-47B → P1-47C → P1-28 → P1-43 → P1-44 → P1-42 → P1-40 → P1-37 → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1）。
+**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → **P1-47B** → P1-47C → P1-28 → P1-43 → P1-44 → P1-42 → P1-40 → P1-37 → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1）。
 
-**Current Focus = P1-47A**。P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
+**Current Focus = P1-47B**。P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
 SCPI 闭环依赖链：先把现场项映射到载体 → 用手册证据修判定和缺失载体 → 止住错误队列
 无限循环 → 补传输配对 → 补仪器接受/生效语义 → 接入正式 TestCase。P1-28 在这条链完成后
 成为 Current Focus。设计与逐片实施计划见
@@ -38,7 +38,7 @@ SCPI 闭环依赖链：先把现场项映射到载体 → 用手册证据修判�
 - **P1-42** `app.audit` 汇总行进 `execution_id` 链（2026-08-06 用户从 Discovered 升格并指定优先；**改纯 ASGI 中间件，零调用点改动**，顺带解掉 WebSocket 拿不到 `request_id` 那条）
 - **P1-40** 日志按「每次运行」分文件 + 空闲期只留基本内容（2026-08-06 用户定方向；分文件轴复用 P1-36 的 ContextVar，**必须扁平命名**）
 - **P1-41** 修 UXM 排错误队列停不下来的循环（7.6 秒 20 万行 / 一次 24 GB 的根因；**动手前必查 NotebookLM**）
-- **P1-47A/B/C** P0-5 SCPI 证据闭环：A=往返配对/取消超时；B=UXM/F64/转台接受与生效；C=TestCase持久化+GUI/报告
+- **P1-47A** ✅ SCPI 往返配对/取消超时/脱敏/30天留存上限；**P1-47B/C**：B=UXM/F64/转台接受与生效；C=TestCase持久化+GUI/报告
 - **P1-37** mock 也产真命令串并记 `scpi.log` + 回复显式标 `simulated`（**下发侧本地可验、回读侧绝不冒充真值**）
 - **P1-38** 活动告警面板：清 674 条测试污染 + 接上真生产者 or 收窄让位（**排在 P1-29 之后** —— 计数徽章依赖那个被遮蔽的端点，Codex #285 R1）
 
@@ -2266,7 +2266,7 @@ A–D 分类，但不拿它覆盖正式流程载体）：
 
 ---
 
-### P1-47 — P0-5 SCPI 指令→回复→接受→生效→结果证据闭环 ⬜（2026-08-06 用户批准，整体置于 P1-28 前）
+### P1-47 — P0-5 SCPI 指令→回复→接受→生效→结果证据闭环 🔄（2026-08-06 用户批准，A 已完成，B/C 待完成）
 
 **可观察故障**：2026-07-21 现场已完成 DUT attach 与转台四方向吞吐，但同一次执行里
 拿不出关键 SCPI 的完整配对、仪器接受证据和实际生效状态。今天只能证明“物理链路能跑”，
@@ -2299,9 +2299,19 @@ A–D 分类，但不拿它覆盖正式流程载体）：
 
 | Slice | 交付 | Acceptance |
 |---|---|---|
-| **P1-47A 传输证据** | 公共 SCPI helper 与活跃 `RealAerotechDriver._send` socket 路径的 TX/OK/RX/ERR 共用同一证据结构和 `exchange_id`；统一 command/query；timeout/cancelled 明确留痕后原样传播；IMSI/认证信息入日志前脱敏；原始 SCPI 日志默认最多保留30天 | UXM/F64/转台并发与嵌套调用均可配对；空串/空白/`not ready` 不合并；变异删除ID、绕过Aerotech、吞取消、取消脱敏/留存上限均红 |
+| **P1-47A 传输证据** ✅ Done（2026-08-07，本 PR） | 公共 SCPI helper 与活跃 `RealAerotechDriver._send` socket 路径的 TX/OK/RX/ERR 共用同一证据结构和 `exchange_id`；统一 command/query；timeout/cancelled 明确留痕后原样传播；IMSI/认证信息入日志前脱敏；原始 SCPI 日志默认最多保留30天 | UXM/F64/转台并发与嵌套调用均可配对；空串/空白/`not ready` 不合并；变异删除ID、绕过Aerotech、吞取消、取消脱敏/留存上限均红 |
 | **P1-47B 仪器证据** | 机器可检查的关键命令手册清单；从真实连接采集型号/固件/Test App；F64 写→OPC→ERR→回读→STATE；UXM 配置回读/APPLY/协议栈状态分层；转台请求角/反馈角/容差 | 实际环境不在证据范围，或证据为 `onsite-observed` / `unverified` 时不得判绿；回显不得冒充生效 |
 | **P1-47C 正式执行** | 同一 `TestExecution.config.scpi_evidence` 持久化 requested/command_sent/readback/exchange_ids/evidence_level/source_reference/verdict/reason 与执行环境快照；执行状态 FastAPI schema/endpoint 读回；ReportDataCollector→ReportService→PDF 活跃链传递；GUI/报告分层展示 | 证据不得 write-only；任一 mandatory 项 unknown/rejected、非confirmed或范围不匹配，正式验收不得显示通过；摘要可由 execution+exchange 精确追溯原始往返；变异让API/collector丢证据必须红 |
+
+**P1-47A 完成实况（2026-08-07）**：公共 SCPI 模板方法和 Aerotech 活跃 socket
+路径都已产生可由 `execution_id + exchange_id` 配对的结构化 TX/OK/RX/ERR；query/
+command、timeout/cancelled、设备拒绝、空串/空白/`not ready` 分型独立，异常原样传播。
+日志副本统一隐藏 IMSI（仅末四位）及 Ki/OPc/认证秘密，专用 `scpi.log` 的日轮转上限
+固定为最多30天。39条专项门与6类突变验证通过；内审补抓并闭环
+`*OPC?` 误脱敏、裸密钥异常、启动前取消、零天留存、转台重连取消清理与
+`AXISFAULT` 分类六个边界，并将脱敏扩到 SCPI 终端、诊断审计副本及
+UXM/F64/FS16 重连告警；后端全量 `3274 passed, 5 skipped`。本片没有产生需
+另行提升的 Discovered 项，下一片按既定顺序进入 P1-47B。
 
 **正式验收**：诊断序列只做出发前能力/载体验证；P0-5 仍从正式 TestCase 启动。
 同一个 execution 必须证明 UXM RRC connected + bearer active、F64 模型匹配且 RUNNING、

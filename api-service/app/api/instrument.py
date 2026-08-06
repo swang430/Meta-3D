@@ -13,6 +13,10 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
 from app.db.database import get_db
+from app.hal.base import (
+    redact_instrument_exchange_text,
+    redact_instrument_log_text,
+)
 from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
 from app.models.diagnostic_run import DiagnosticKind
 from app.models.instrument import (
@@ -1860,13 +1864,18 @@ async def _run_command_via_hal(
     import time
 
     is_query = command.strip().endswith("?")
+    safe_command = redact_instrument_log_text(command)
     start = time.monotonic()
     pass_timeout = timeout_ms is not None and _driver_supports_timeout_kwarg(driver)
     try:
         scpi_logger.debug(
-            f"[SCPI-TERM via HAL] {category_key} → {command}"
+            f"[SCPI-TERM via HAL] {category_key} → {safe_command}"
             + (f" (timeout={timeout_ms}ms)" if pass_timeout else ""),
-            extra={"instrument_id": category_key, "direction": "WRITE", "command": command},
+            extra={
+                "instrument_id": category_key,
+                "direction": "WRITE",
+                "command": safe_command,
+            },
         )
         if is_query:
             if pass_timeout:
@@ -1874,9 +1883,17 @@ async def _run_command_via_hal(
             else:
                 raw = await _maybe_await(driver._query(command.strip()))
             raw_str = str(raw or "").strip()
+            safe_response = redact_instrument_exchange_text(
+                raw_str, command=command
+            )
             scpi_logger.debug(
-                f"[SCPI-TERM via HAL] {category_key} ← {raw_str[:200] if raw_str else '(empty)'}",
-                extra={"instrument_id": category_key, "direction": "READ"},
+                f"[SCPI-TERM via HAL] {category_key} ← "
+                f"{safe_response[:200] if safe_response else '(empty)'}",
+                extra={
+                    "instrument_id": category_key,
+                    "direction": "READ",
+                    "response": safe_response[:500],
+                },
             )
             latency = (time.monotonic() - start) * 1000
             if not raw_str:
@@ -1907,8 +1924,10 @@ async def _run_command_via_hal(
         )
     except Exception as e:  # noqa: BLE001
         latency = (time.monotonic() - start) * 1000
+        safe_error = redact_instrument_exchange_text(e, command=command)
         scpi_logger.warning(
-            f"[SCPI-TERM via HAL] {category_key} ← ERROR on '{command}': {e}",
+            f"[SCPI-TERM via HAL] {category_key} ← ERROR on "
+            f"'{safe_command}': {safe_error}",
             extra={"instrument_id": category_key, "direction": "ERROR"},
         )
         return ScpiCommandResult(
@@ -1971,12 +1990,17 @@ def _send_scpi_command(
     import time
 
     is_query = command.strip().endswith("?")
+    safe_command = redact_instrument_log_text(command)
     start = time.monotonic()
 
     try:
         scpi_logger.debug(
-            f"[SCPI-TERM] {category_key} → WRITE: {command}",
-            extra={"instrument_id": category_key, "direction": "WRITE", "command": command},
+            f"[SCPI-TERM] {category_key} → WRITE: {safe_command}",
+            extra={
+                "instrument_id": category_key,
+                "direction": "WRITE",
+                "command": safe_command,
+            },
         )
         sock.sendall((command.strip() + "\n").encode())
 
@@ -1984,9 +2008,15 @@ def _send_scpi_command(
         if is_query:
             raw = sock.recv(4096).decode("utf-8", errors="replace").strip()
             response = raw if raw else None
+            safe_response = redact_instrument_exchange_text(raw, command=command)
             scpi_logger.debug(
-                f"[SCPI-TERM] {category_key} ← RESP: {raw[:200] if raw else '(empty)'}",
-                extra={"instrument_id": category_key, "direction": "READ", "response": raw[:500] if raw else ""},
+                f"[SCPI-TERM] {category_key} ← RESP: "
+                f"{safe_response[:200] if safe_response else '(empty)'}",
+                extra={
+                    "instrument_id": category_key,
+                    "direction": "READ",
+                    "response": safe_response[:500],
+                },
             )
 
             # 查询命令返回空响应 → 仪器未真正响应
@@ -2009,8 +2039,10 @@ def _send_scpi_command(
         )
     except Exception as e:
         latency = (time.monotonic() - start) * 1000
+        safe_error = redact_instrument_exchange_text(e, command=command)
         scpi_logger.warning(
-            f"[SCPI-TERM] {category_key} ← ERROR on '{command}': {e}",
+            f"[SCPI-TERM] {category_key} ← ERROR on "
+            f"'{safe_command}': {safe_error}",
             extra={"instrument_id": category_key, "direction": "ERROR"},
         )
         return ScpiCommandResult(
@@ -2166,10 +2198,12 @@ async def send_scpi_command(
     ).first()
 
     ip, port = _resolve_ip_port(request.ip, request.port, conn)
-    target_name = f"{category_key}: {request.command.strip()}"
+    raw_command = request.command.strip()
+    safe_command = redact_instrument_log_text(raw_command)
+    target_name = f"{category_key}: {safe_command}"
     audit_params: Dict[str, Any] = {
         "category_key": category_key,
-        "command": request.command.strip(),
+        "command": safe_command,
         "ip": ip,
         "port": port,
         "timeout_ms": request.timeout_ms,
@@ -2183,8 +2217,18 @@ async def send_scpi_command(
             target_name=target_name,
             params=audit_params,
             success=result.success,
-            output=result.response,
-            error_message=result.error,
+            output=(
+                redact_instrument_exchange_text(
+                    result.response, command=raw_command
+                )
+                if result.response is not None else None
+            ),
+            error_message=(
+                redact_instrument_exchange_text(
+                    result.error, command=raw_command
+                )
+                if result.error is not None else None
+            ),
             duration_ms=int((time.monotonic() - audit_started) * 1000),
             run_by=request.run_by,
         )
