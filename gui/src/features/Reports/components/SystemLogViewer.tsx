@@ -5,7 +5,7 @@
  * 实时查看、级别过滤、关键词搜索和文件下载功能。
  */
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Stack,
   Group,
@@ -24,7 +24,6 @@ import {
   Loader,
   Alert,
   Menu,
-  UnstyledButton,
 } from '@mantine/core'
 import {
   IconSearch,
@@ -36,8 +35,6 @@ import {
   IconAlertCircle,
   IconPlayerPlay,
   IconPlayerPause,
-  IconArrowDown,
-  IconArrowUp,
 } from '@tabler/icons-react'
 import apiClient from '../../../api/client'
 import { formatLogDate, formatLogTime } from '../../../utils/datetime'
@@ -117,10 +114,7 @@ const REFRESH_INTERVALS = [
 interface SystemLogViewerProps {
   /**
    * P1-39: 从执行历史「查看日志」跳过来时预填的**完整 `execution_id`**。
-   * ⚠ 只在**值变化**时应用（`useEffect` 依赖它）。同值再次跳转不会重跑 ——
-   * 这没问题, 因为上游 (ReportsPage) 是一次性交接: 每次跳转都会先被清成
-   * null 再设新值, 值必然变化。（内审 F5: 原注释写"用 key 里带的序号驱动",
-   * 那个机制全仓不存在。）
+   * 上游 (ReportsPage) 是一次性交接：每次跳转都会先清成 null 再设新值。
    */
   initialExecutionFilter?: string | null
 }
@@ -152,7 +146,14 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
   // ⚠ 两个 id **不是**一回事：一次执行跨多个请求（发起/查询/取消各一次），
   //   也可能压根不在请求里（runner 跑在后台任务上）。所以两个过滤各自独立，
   //   可以同时生效（"这次执行里的这一个请求"）。
-  const [executionFilter, setExecutionFilter] = useState<string | null>(null)
+  // ⚠ **惰性初值, 不是挂载后再 set**（Codex #292 R3-b）——
+  //   取数 effect 声明在本组件前部, 挂载时按声明顺序先跑; 若这里初值为 null、
+  //   靠后面的 effect 再 setExecutionFilter, 就会**先发一个不带过滤的 /tail**,
+  //   再发第二个带过滤的。两个请求乱序返回时, 未过滤的结果会盖掉已过滤的,
+  //   而「只看执行 X」的徽章已经显示出来了 —— 看到的表和徽章说的不是一回事。
+  const [executionFilter, setExecutionFilter] = useState<string | null>(
+    initialExecutionFilter ?? null,
+  )
 
   // P1-34 / Codex #282 R2：进入「只看这一次请求」时**清掉 level 与 keyword**。
   //
@@ -189,18 +190,7 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
   const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Expanded rows
-  // P1-39 第 5 条: 系统日志**默认新在最上**。
-  //
-  // ⚠ 用户的原话是「为什么不能跟『实时日志』保持一样的方式」, 但实测两个面板
-  //   **排序完全相同**（都是旧上新下）—— 真正的差别是 ZoneLogsAlerts:166-169 有
-  //   autoScroll 自动滚到底。这里选**降序**而不是照抄 autoScroll, 因为:
-  //   ① 系统日志是**查证面板**不是 live tail;
-  //   ② 一旦加了过滤条件, 自动滚动就没有意义（结果不是流式追加的）。
-  const [sortDesc, setSortDesc] = useState(true)
-  // ⚠ 展开态**按条目身份记, 不按下标**。改降序之前这里是 Set<number>(下标),
-  //   而本面板有自动刷新 —— 降序下每来一条新日志所有下标都移位, 展开的行会
-  //   跳到别的日志上。（升序+追加时下标恰好稳定, 所以旧写法一直没暴露。）
-  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set())
 
   // ── Fetch file list ──
   const fetchFiles = useCallback(async () => {
@@ -273,86 +263,17 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
   }, [refreshInterval, fetchLogs])
 
   // ── Toggle row expand ──
-  const toggleRow = (key: string) => {
+  const toggleRow = (index: number) => {
     setExpandedRows(prev => {
       const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
+      if (next.has(index)) next.delete(index)
+      else next.add(index)
       return next
     })
   }
 
-  /** 展开后的详情卡。Codex #292 R1: 由表内那一行就地调用, 紧跟自己那行。 */
-  const renderDetail = (entry: LogEntry) => (
-    <Paper p="sm" mx="md" mb="xs" bg="gray.0" radius="sm">
-      <Group gap="lg" mb="xs">
-        <Text size="xs"><b>时间:</b> {formatLogDate(entry.ts)} {formatLogTime(entry.ts)}</Text>
-        <Text size="xs" c="dimmed"><b>原始:</b> {entry.ts || '—'}</Text>
-        <Text size="xs"><b>Instrument:</b> {entry.instrument_id}</Text>
-      </Group>
-      {/* P1-34: 一次请求内的全部日志（audit / runner / HAL / SCPI）带同一个 id。
-          点这里就把这条链单独捞出来。id 为 "-" 的行不是请求产生的
-          （启动期 / 后台任务），无链可串。 */}
-      <Group gap="xs" mb="xs">
-        <Text size="xs"><b>请求 ID:</b> {entry.session_id}</Text>
-        {entry.session_id && entry.session_id !== '-' && (
-          <Button size="compact-xs" variant="light" color="grape"
-                  onClick={() => isolateRequest(entry.session_id)}>
-            只看这一次请求
-          </Button>
-        )}
-      </Group>
-      <Code block style={{ fontSize: '11px', maxHeight: 200, overflow: 'auto' }}>
-        {(() => {
-          try { return JSON.stringify(JSON.parse(entry.raw as string), null, 2) }
-          catch { return entry.raw }
-        })()}
-      </Code>
-    </Paper>
-  )
-
-  // P1-39 + 内审 F3: 条目身份。
-  //
-  // ⚠ **(ts, logger, msg) 三元组在真实日志里大面积撞车** —— 内审实测
-  //   `scpi.log` 尾 200 行只有 71 个不同三元组, 最坏一组重复 25 次
-  //   (同毫秒的 `RX: ` 空回复); traceback 续行走兜底解析后 ts/logger 皆空,
-  //   退化成只剩消息, 更容易撞。后果两条: ① 点一行会把同 key 的 25 行一起
-  //   展开、表下渲染 25 张同样的详情卡; ② React 重复 key(改动前 `key={idx}`
-  //   是唯一的, 是本片引入的回归)。
-  //
-  // 修法: **在同一批内**按出现次序消重 —— 身份语义不变, 唯一性恢复。
-  // ⚠ 消重必须打在**后端给的原始顺序**上, 不能打在翻转后的序列上 ——
-  //   否则切换排序方向时 `#N` 会重新分配, 展开的行会跳。
-  const keyedEntries = useMemo(() => {
-    const seen = new Map<string, number>()
-    return entries.map((e) => {
-      // ⚠ 身份取**条目的全部字段**, 不是三个显示字段（Codex #292 R2）——
-      //   早前用 (ts, logger, msg) + 窗口内出现序号 `#N`, 而 N 是**窗口相对**的:
-      //   自动刷新时若某个重复元组最旧那次滚出窗口, 剩下的全部重新从 0 编号,
-      //   展开的 key 就挪到**下一条**匹配项上, 而那条的 raw / 请求 / 执行 / 仪器
-      //   可能完全不同（三个显示字段相同 ≠ 同一行）。
-      //   用全字段之后, 仍然撞的只可能是**逐字段完全相同**的两行 —— 那时展开
-      //   哪一条都没有可观察差别, 不构成缺陷。
-      // ⚠ 用 JSON 编码, **不要**手拼分隔符（Codex #292 R1）——
-      //   `foo` + `#1` 会跟一条字面叫 `foo#1` 的消息撞。JSON 对数组是单射的。
-      const base = JSON.stringify([
-        e.ts, e.level, e.logger, e.hal_mode,
-        e.session_id, e.execution_id, e.instrument_id, e.msg, e.raw,
-      ])
-      const n = seen.get(base) ?? 0
-      seen.set(base, n + 1)
-      // 序号只在**全字段都相同**时才用得上, 那时它区分的是真正无差别的两行。
-      return { entry: e, key: n === 0 ? base : JSON.stringify([n, base]) }
-    })
-  }, [entries])
-
-  // P1-39: 按方向出显示序列。后端给的恒为**升序**(见 system_logs.py 里
-  // `_scan_tail_entries` 结尾那句 `matched.reverse()  # 恢复时间顺序`),
-  // 这里只管显示。⚠ 必须复制再翻转, 就地 reverse 会改掉 React state 数组。
-  const displayEntries = sortDesc ? [...keyedEntries].reverse() : keyedEntries
-
-  // P1-39: 从执行历史跳过来 —— 预填执行过滤并清掉可能冲突的文本过滤,
-  // 与「只看这一次执行」按钮 (isolateExecution) 同口径, 避免两条路给出不同结果。
+  // P1-39: 同一次挂载内再次跳转（换了 execution）时应用新值。
+  // 首次挂载由上面的惰性初值负责, 这里只处理"值变了"。
   useEffect(() => {
     if (!initialExecutionFilter) return
     setExecutionFilter(initialExecutionFilter)
@@ -548,17 +469,7 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
             <Table.Thead style={{ position: 'sticky', top: 0, backgroundColor: 'var(--mantine-color-body)', zIndex: 1 }}>
               <Table.Tr>
                 <Table.Th w={30}></Table.Th>
-                {/* P1-39: 点表头切排序方向。默认降序(新在最上) —— 见 sortDesc 处注释。 */}
-                <Table.Th w={100}>
-                  <UnstyledButton
-                    onClick={() => setSortDesc(v => !v)}
-                    style={{ display: 'flex', alignItems: 'center', gap: 4 }}
-                    title={sortDesc ? '当前：最新在最上（点击改为最新在最下）' : '当前：最新在最下（点击改为最新在最上）'}
-                  >
-                    <Text size="sm" fw={600}>时间</Text>
-                    {sortDesc ? <IconArrowDown size={13} /> : <IconArrowUp size={13} />}
-                  </UnstyledButton>
-                </Table.Th>
+                <Table.Th w={100}>时间</Table.Th>
                 <Table.Th w={70}>级别</Table.Th>
                 {/* P1-34: 请求 ID 必须**在表格里直接看得见**。
                     早前它只在展开详情里 —— 于是这个功能等于不存在：
@@ -583,11 +494,10 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
                     <Text ta="center" c="dimmed" py="xl">
                       {error ? '加载出错' : (
                         executionFilter ? (
-                          /* 内审 F2: 按天轮转 —— 昨天及更早的执行, 日志在
-                             app.log.YYYY-MM-DD 里, 而本面板的文件下拉**只列活跃文件**
-                             (后端 files 端点按 suffix 过滤, 归档文件整类不返回)。
-                             不说这一句, 用户看到的就是"点了看日志, 结果空白",
-                             正是本片要治的「看得见用不了」的翻版。 */
+                          /* 内审 F2: 日志按天轮转 —— 昨天及更早的执行, 日志在
+                             app.log.YYYY-MM-DD 里, 而文件下拉**只列活跃文件**
+                             (后端 files 端点按 suffix 过滤)。不说这一句, 用户看到的
+                             就是"点了看日志结果空白", 正是本片要治的翻版。 */
                           <>
                             这次执行在 <b>{selectedFile}</b> 里没有匹配行。
                             <br />
@@ -601,15 +511,14 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
                   </Table.Td>
                 </Table.Tr>
               )}
-              {displayEntries.map(({ entry, key: rk }) => {
-                return (
-                <React.Fragment key={rk}>
+              {entries.map((entry, idx) => (
                 <Table.Tr
-                  onClick={() => toggleRow(rk)}
+                  key={idx}
+                  onClick={() => toggleRow(idx)}
                   style={{ cursor: 'pointer' }}
                 >
                   <Table.Td>
-                    {expandedRows.has(rk)
+                    {expandedRows.has(idx)
                       ? <IconChevronDown size={12} />
                       : <IconChevronRight size={12} />
                     }
@@ -684,23 +593,47 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
                     </Text>
                   </Table.Td>
                 </Table.Tr>
-                {/* Codex #292 R1: 详情行必须**紧跟它自己那一行**。
-                    早前统一渲染在整张表之后 —— 升序时用户看的是表尾(最新),
-                    详情恰好就在旁边; 改成降序后用户展开的是**顶部**第 1 行,
-                    详情却在 200 行之外, 点了像没反应。这是本片改排序造出来的。 */}
-                {expandedRows.has(rk) && entry.raw && (
-                  <Table.Tr key={`detail-${rk}`}>
-                    <Table.Td colSpan={8} p={0}>
-                      {renderDetail(entry)}
-                    </Table.Td>
-                  </Table.Tr>
-                )}
-                </React.Fragment>
-                )
-              })}
+              ))}
             </Table.Tbody>
           </Table>
 
+          {/* ── Expanded detail rows (rendered outside table for clean layout) ── */}
+          {entries.map((entry, idx) => (
+            expandedRows.has(idx) && entry.raw ? (
+              <Paper key={`detail-${idx}`} p="sm" mx="md" mb="xs" bg="gray.0" radius="sm">
+                <Group gap="lg" mb="xs">
+                  <Text size="xs"><b>时间:</b> {formatLogDate(entry.ts)} {formatLogTime(entry.ts)}</Text>
+                  <Text size="xs" c="dimmed"><b>原始:</b> {entry.ts || '—'}</Text>
+                  <Text size="xs"><b>Instrument:</b> {entry.instrument_id}</Text>
+                </Group>
+                {/* P1-34: 一次请求内的全部日志（audit / runner / HAL / SCPI）
+                    带同一个 id。点这里就把这条链单独捞出来。
+                    id 为 "-" 的行不是请求产生的（启动期 / 后台任务），无链可串。 */}
+                <Group gap="xs" mb="xs">
+                  <Text size="xs"><b>请求 ID:</b> {entry.session_id}</Text>
+                  {entry.session_id && entry.session_id !== '-' && (
+                    <Button
+                      size="compact-xs"
+                      variant="light"
+                      color="grape"
+                      onClick={() => isolateRequest(entry.session_id)}
+                    >
+                      只看这一次请求
+                    </Button>
+                  )}
+                </Group>
+                <Code block style={{ fontSize: '11px', maxHeight: 200, overflow: 'auto' }}>
+                  {(() => {
+                    try {
+                      return JSON.stringify(JSON.parse(entry.raw), null, 2)
+                    } catch {
+                      return entry.raw
+                    }
+                  })()}
+                </Code>
+              </Paper>
+            ) : null
+          ))}
         </ScrollArea>
       </Paper>
     </Stack>
