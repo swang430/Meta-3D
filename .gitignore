@@ -19,6 +19,9 @@ dist/
 .claude/*
 !.claude/agents/
 
+# Codex isolated implementation worktrees
+.worktrees/
+
 # Environment variables
 .env
 .env.local
