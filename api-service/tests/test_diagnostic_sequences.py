@@ -1603,7 +1603,7 @@ class TestStepRawFieldPlumbing:
     —— 而归档 (``DiagnosticRun.output_excerpt``) 正是下次现场用来跟本次对照的东西。
     """
 
-    def _run_with_steps(self, db, lab, monkeypatch, steps):
+    def _run_with_steps(self, db, lab, monkeypatch, steps, *, extra=None):
         """借 idn_sweep 的路由跑一个返回指定 steps 的假序列。"""
         from app.diagnostics import loader
         from app.diagnostics.protocol import SequenceMetadata, SequenceRunResult
@@ -1616,7 +1616,12 @@ class TestStepRawFieldPlumbing:
             @staticmethod
             async def run(ctx, hal, params, *, log):
                 log("stub ran")
-                return SequenceRunResult(success=True, summary="ok", steps=steps)
+                return SequenceRunResult(
+                    success=True,
+                    summary="ok",
+                    steps=steps,
+                    extra=extra or {},
+                )
 
         monkeypatch.setattr(loader, "get_sequence", lambda key: _StubSequence)
         _patched_hal(monkeypatch, drivers={})
@@ -1663,3 +1668,43 @@ class TestStepRawFieldPlumbing:
         ])
         assert body["steps"][0]["raw"] is None
         assert "raw:" not in (audit.output_excerpt or "")
+
+    def test_structured_result_survives_excerpt_truncation(
+        self, db, lab_with_bs, monkeypatch,
+    ):
+        """后置 SCPI 证据不能只活在即时响应或 2KB 摘要的尾部。"""
+        from app.diagnostics.protocol import SequenceStepResult
+
+        decisive = {
+            "observations": {
+                "after_protocol_status": "CONNected",
+                "after_band": "N78",
+            },
+            "coverage": {"band": {"covered": True}},
+            "formal_verdict": "unverified",
+        }
+        verbose_steps = [
+            SequenceStepResult(
+                label=f"verbose-{index}",
+                success=True,
+                detail="D" * 180,
+                raw=f"raw-{index}",
+            )
+            for index in range(30)
+        ]
+
+        body, audit = self._run_with_steps(
+            db,
+            lab_with_bs,
+            monkeypatch,
+            verbose_steps,
+            extra=decisive,
+        )
+
+        assert "truncated" in (audit.output_excerpt or "")
+        assert body["extra"] == decisive
+        assert audit.result_extra == decisive
+
+        detail = client.get(f"/api/v1/diagnostic-runs/{audit.id}")
+        assert detail.status_code == 200
+        assert detail.json()["result_extra"] == decisive

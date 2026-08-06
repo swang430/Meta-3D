@@ -49,9 +49,10 @@ class DiagnosticKind(str, enum.Enum):
 class DiagnosticRun(Base):
     """One workshop-tier run.
 
-    Outputs are truncated on write (~2KB) so a chatty SCPI sweep doesn't
-    blow up row size. The full HAL/SCPI trace stays in the log files,
-    pointed at by ``hal_trace_log_path``.
+    Human-readable outputs are truncated on write (~2KB) so a chatty SCPI
+    sweep doesn't blow up list views. Sequence-specific decisive readings
+    remain retrievable in ``result_extra``; a full HAL/SCPI transport trace
+    can additionally be pointed at by ``hal_trace_log_path``.
     """
 
     __tablename__ = "diagnostic_runs"
@@ -92,6 +93,11 @@ class DiagnosticRun(Base):
 
     # First ~2KB of stdout / SCPI response / executor result; truncated on write.
     output_excerpt = Column(Text)
+
+    # Full structured result returned by diagnostic sequences. Kept separate
+    # from operator-supplied params so audit readers cannot confuse inputs with
+    # observed evidence. List API omits it; detail API exposes it on demand.
+    result_extra = Column(_JSON_PG_OR_SQLITE)
 
     error_message = Column(Text)
 

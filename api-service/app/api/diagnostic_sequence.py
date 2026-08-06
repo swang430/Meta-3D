@@ -14,6 +14,7 @@ Failure modes the API should distinguish:
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import time
@@ -188,6 +189,7 @@ async def run_diagnostic_sequence(
     extra: Dict[str, Any] = {}
     success = False
     summary = ""
+    cancelled_exc: Optional[asyncio.CancelledError] = None
 
     try:
         try:
@@ -197,6 +199,18 @@ async def run_diagnostic_sequence(
             summary = result.summary
             step_results = [asdict(s) for s in result.steps]
             extra = result.extra
+        except asyncio.CancelledError as exc:
+            # 请求取消也必须留下“这次诊断发生过”的审计记录。序列尚未返回
+            # SequenceRunResult，不能声称拿到了内部 partial steps/extra；明确记录
+            # 该边界，待同步 I/O/序列取消收尾和下方同步 DB commit 完成后再重抛。
+            success = False
+            summary = "Sequence cancelled"
+            error_msg = summary
+            extra = {
+                "cancelled": True,
+                "partial_result_available": False,
+            }
+            cancelled_exc = exc
         except Exception as e:  # noqa: BLE001
             # Sequence raised — record as failure, surface error to UI.
             success = False
@@ -238,10 +252,14 @@ async def run_diagnostic_sequence(
         success=success,
         params={"sequence_key": key, **request.params},
         output=output_text.getvalue(),
+        result_extra=extra,
         error_message=error_msg,
         duration_ms=duration_ms,
         run_by=request.run_by,
     )
+
+    if cancelled_exc is not None:
+        raise cancelled_exc
 
     return SequenceRunResponse(
         diagnostic_run_id=run.id,

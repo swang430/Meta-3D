@@ -21,6 +21,7 @@ from app.diagnostics.protocol import (
 )
 from app.models.test_plan import TestCase, TestExecution
 from app.models.chamber import ChamberType, create_chamber_from_preset
+from app.models.diagnostic_run import DiagnosticRun
 from app.models.lab_profile import LabProfile
 from app.services import test_case_runner as tcr
 
@@ -240,6 +241,14 @@ async def test_unsafe_sequence_cancellation_propagates_and_releases_guard(
     from app.services import execution_exclusion_guard as guard
 
     assert guard.active_unsafe_diagnostic() is None
+    audit = db.query(DiagnosticRun).one()
+    assert audit.success is False
+    assert audit.error_message == "Sequence cancelled"
+    assert audit.result_extra == {
+        "cancelled": True,
+        "partial_result_available": False,
+    }
+    assert "cancelled" in (audit.output_excerpt or "").lower()
 
 
 @pytest.mark.asyncio
