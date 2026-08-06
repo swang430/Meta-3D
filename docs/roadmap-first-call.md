@@ -13,7 +13,7 @@ blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 �
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-02 二批本地队列已拍板排序（用户明示"只排好优先级，先不忙开工"——待开工指令）**：
-**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → P1-39 → P1-40 → P1-41 → P1-37 → P1-29 → P1-38 → P1-27 → P1-28 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧；P1-28 为 2026-08-02 用户新增 backlog 当日拍板插入；**P1-30 为 2026-08-03 用户指定插队"把日志提上来先完成"**；**P1-31 / P1-32 为 2026-08-03 UXM KPI 修复（#275）带出、用户当日拍板插到队首**；**P1-34 为 2026-08-05 用户手工测试当场提出、当日拍板插到队首**；**P1-39 为 2026-08-06 用户问「测试例编号除了 log 还能在哪查」当场发现的断链，用户明示「进roadmap，优先完成」插到队首**；**P1-40 为同日用户定的日志分文件方向，紧随其后**）。**当前队首 = P1-39**（P1-25 / P1-26 / P1-30 / P1-31 / P1-32 / P1-33 本地半 / P1-34 / P1-35 / P1-36 已收口）。一句话索引：
+**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → P1-39 → P1-42 → P1-40 → P1-41 → P1-37 → P1-29 → P1-38 → P1-27 → P1-28 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧；P1-28 为 2026-08-02 用户新增 backlog 当日拍板插入；**P1-30 为 2026-08-03 用户指定插队"把日志提上来先完成"**；**P1-31 / P1-32 为 2026-08-03 UXM KPI 修复（#275）带出、用户当日拍板插到队首**；**P1-34 为 2026-08-05 用户手工测试当场提出、当日拍板插到队首**；**P1-39 为 2026-08-06 用户问「测试例编号除了 log 还能在哪查」当场发现的断链，用户明示「进roadmap，优先完成」插到队首**；**P1-40 为同日用户定的日志分文件方向，紧随其后**）。**当前队首 = P1-39**（P1-25 / P1-26 / P1-30 / P1-31 / P1-32 / P1-33 本地半 / P1-34 / P1-35 / P1-36 已收口）。一句话索引：
 - **P1-25** GUI 主控台"系统状态"面板恒空修复 + api.ts 手写镜像同尺审计
 - **P1-26** GUI 改频同步 component_carriers（**GUI 写侧**收口；后端收敛点与显示端同源另立片）
 - **P1-30** SCPI 往返日志的证据能力（截断显式化 + OK/ERR 配对 + `instrument_id` 收窄）
@@ -23,6 +23,10 @@ blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 �
 - **P1-34** 日志时间线可读（本地时区 + `request_id` 把一次操作串起来 + 排除只吞成功那一行）
 - **P1-35** 日志噪音治理（`Cache updated` 每秒两条占 26%）—— **从 P3-19 摘出提前**，2026-08-05 用户手工测试当场要求
 - **P1-36** 测试执行身份进日志（`execution_id` 串链，把 P1-34 那套复制到执行维度）
+- **P1-39** 让人拿得到 ID：执行/用例编号在界面上可见可复制 + 一键跳日志（**当前队首**，2026-08-06 用户指定优先 —— 过滤器有了但钥匙拿不到）
+- **P1-42** `app.audit` 汇总行进 `execution_id` 链（2026-08-06 用户从 Discovered 升格并指定优先；**改纯 ASGI 中间件，零调用点改动**，顺带解掉 WebSocket 拿不到 `request_id` 那条）
+- **P1-40** 日志按「每次运行」分文件 + 空闲期只留基本内容（2026-08-06 用户定方向；分文件轴复用 P1-36 的 ContextVar，**必须扁平命名**）
+- **P1-41** 修 UXM 排错误队列停不下来的循环（7.6 秒 20 万行 / 一次 24 GB 的根因；**动手前必查 NotebookLM**）
 - **P1-37** mock 也产真命令串并记 `scpi.log` + 回复显式标 `simulated`（**下发侧本地可验、回读侧绝不冒充真值**）
 - **P1-38** 活动告警面板：清 674 条测试污染 + 接上真生产者 or 收窄让位（**排在 P1-29 之后** —— 计数徽章依赖那个被遮蔽的端点，Codex #285 R1）
 
@@ -204,7 +208,7 @@ P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max /
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → P1-39 → P1-40 → P1-41 → P1-37 → P1-29 → P1-38 → P1-27 → P1-28 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列 + 08-03 用户指定 P1-30 / P1-31 / P1-32 插队 + 08-05 用户指定 P1-34 插队 + **08-06 用户指定 P1-39 插队「优先完成」、P1-40 紧随**；**队首现为 P1-39**，P1-25 / P1-26 / P1-30 / P1-31 / P1-32 / P1-33 本地半 / P1-34 / P1-35 / P1-36 已收口；一批 10 片已全收 #256–#265）|
+| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → P1-39 → P1-42 → P1-40 → P1-41 → P1-37 → P1-29 → P1-38 → P1-27 → P1-28 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列 + 08-03 用户指定 P1-30 / P1-31 / P1-32 插队 + 08-05 用户指定 P1-34 插队 + **08-06 用户指定 P1-39 插队「优先完成」、P1-40 紧随**；**队首现为 P1-39**，P1-25 / P1-26 / P1-30 / P1-31 / P1-32 / P1-33 本地半 / P1-34 / P1-35 / P1-36 已收口；一批 10 片已全收 #256–#265）|
 | **ON-SITE-BLOCKED** | P0-5 (P0-3/4 已 2026-07-03 现场完成) + P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -2030,6 +2034,45 @@ RX: -113,"Undefined header"
 
 **依赖**: 建议排在 P1-40 之后（闸门先就位）。**现场半**: 无 —— mock 下即可复现。
 
+---
+
+### P1-42 — `app.audit` 请求汇总行进 `execution_id` 链 ⬜（2026-08-06 立项，**用户从 Discovered 升格并指定优先**）
+
+**由 Discovered 条目升格**（`[discovered 2026-08-05 during P1-36, Codex #286 R2 P2]`）。
+
+⚠️ **我原先判它「不值一次机制改动」是错的 —— 错在选项集不全。** 当时只想到两条路，都要改调用点：① `request.state` 传值（每个端点都得写）；② 把 ContextVar 从 `str` 换成可变盒子（要动 `ContextFilter` 与全部 set 点）。**漏了第三条：把 `AuditMiddleware` 从 `BaseHTTPMiddleware` 改成纯 ASGI 中间件 —— 零调用点改动。**
+
+**可观察故障**：按 `execution_id` 过滤日志时，发起执行 / 取消执行那几个请求的 `POST /api/v1/test-plans/cases/{id}/execute → 200 (45ms)` 这一行**不在结果里** —— 少了 HTTP 方法、状态码、耗时。P1-39 做完「一键跳日志」之后，这个洞会立刻被看见。
+
+**根因（已实证）**：`AuditMiddleware` 继承 `BaseHTTPMiddleware`，它在 `call_next` 返回**之后**才打汇总行；而 Starlette 把下游 app 跑在**独立子上下文**里，endpoint 里 `current_execution_id.set(...)` 设的值回不到中间件。
+
+**三形态对照实测（2026-08-06，别重做）** —— 中间件在下游返回后读到的值：
+
+| 形态 | 结果 |
+|---|---|
+| A `BaseHTTPMiddleware`（现状） | ❌ 读到中间件自己设的初值 |
+| B 纯 ASGI + `async def` endpoint | ✅ **看得见 endpoint 设的值** |
+| C 纯 ASGI + `def`（同步）endpoint | ❌ FastAPI 丢进线程池，仍看不见 |
+
+**端点普查（已做，别重查）** —— 纯 ASGI 改造能覆盖 5/6：
+
+| 端点 | 形态 | 纯 ASGI 后 |
+|---|---|---|
+| `test_plan.py:217 execute_test_case` | `async def` | ✅ |
+| `commissioning.py` 的 `create_session` / `get_session` / `run_phase` / `run_adhoc_phase` / `run_all_phases` | 全 `async def` | ✅ |
+| **`test_execution.py:218 cancel_case_execution`** | **`def`（同步）** | ❌ **线程池，需单独处理** |
+
+**修法（按 去掉 > 换源 > 收窄 > 加机制）**：
+1. **主体 = 换源**：`AuditMiddleware` 改纯 ASGI（`async def __call__(scope, receive, send)`），在同一个任务里 `await self.app(...)`，之后读 ContextVar。**不动任何 set 点、不动 `ContextFilter`、不动契约。**
+2. **补 `cancel_case_execution` 那一处**：优先把它改成 `async def`（它内部是同步 DB 调用，改 async 的爆炸半径要先量）；改不动就那一处显式走 `request.state`，并在注释里写明为什么只有它特殊。
+3. ⚠️ **纯 ASGI 改造要自己接管 `BaseHTTPMiddleware` 白送的那些事**：异常传播、`response.status_code` 的取法（纯 ASGI 里要从 `send` 的 `http.response.start` 消息里截）、以及**现有的排除逻辑**（`EXCLUDED_PATHS` 只对成功生效 —— 这条是 P1-34 内审 F1 的成果，改造时**绝不能丢**）。
+
+**附带收益（同一改动顺手解决另一条 Discovered）**：`[discovered 2026-08-05 during P1-34 内审 F5]` **WebSocket 流上的日志拿不到 `request_id`** —— 根因正是 `BaseHTTPMiddleware` 对 `scope["type"] != "http"` 直接透传。改纯 ASGI 后 `scope["type"]` 在我们自己手里，websocket 分支可以一并设 id。**实现时把它一起收，别让它再单独排一次。**
+
+**门（至少到不变量档）**：行为门 —— 造一次真实执行请求，断言 `app.audit` 那行的 `execution_id` **等于**返回的 execution_id（不是「非 `-`」）；配变异：把中间件改回 `BaseHTTPMiddleware` 必须红。另加一条守 3 的门：`EXCLUDED_PATHS` 对 4xx/5xx 仍然记录。
+
+**依赖**: 无。**现场半**: 无 —— mock 下即可验。
+
 ## 🟡 P2 — Abstraction debt
 
 ### P2-1 — UXM two-layer architecture: Test App + Topology Profile ✅ Done
@@ -2795,7 +2838,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-05 during P1-34，被本片新加的门抓出]` **`EXCLUDED_PATHS` 里两条排除项指向不存在的路由（P3）** —— `app/core/audit_middleware.py` 的 `/api/v1/monitoring/metrics` 与 `/api/v1/monitoring/instrument-status` 在 OpenAPI 251 条路径里**都不存在**；`app/api/monitoring.py` 实际只有 `GET /monitoring/feeds` 和 `WS /ws/monitoring`。旧路由布局的残留，各自排除了个寂寞。**危害极低**（匹配不到任何请求 = 零噪音贡献，也零副作用），所以 P1-34 **没有顺手删** —— ⑦ 的判据「不改它，那个可观察故障还在吗」答"还在"。当前由 `tests/test_p1_34_log_timeline.py::_EXCLUDED_KNOWN_STALE` 显式豁免并配了**反向门**（哪天这两个路径真变成路由，门会红提醒摘掉豁免）。**修的时候要先定意图**：是想排除 `/monitoring/feeds`（那就改路径）还是这条排除已无意义（那就删）—— 别照着旧字符串猜。
 - `[discovered 2026-08-05 during P1-34]` **日志面板的级别过滤是"精确相等"，选 INFO 会把 ERROR 一起滤掉（P3，与 P3-19 同堆）** —— `/system-logs/tail` 的 `_entry_matches` 用 `entry.level != level` 精确匹配，所以 `SystemLogViewer` 那个单选 SegmentedControl **没有任何一档**能给出"去掉 DEBUG 心跳但保留 INFO/WARN/ERROR"，操作员只能停在 `全部` 挨 DEBUG 刷屏（实测最近 400 行里 253 行是 DEBUG 心跳）。⚠️ **不要改后端把它变成"≥ 门槛"** —— `ZoneLogsAlerts`（P2-19 #258）正是靠"两个 level 流天然不相交"来做去重的，改成门槛会让那里的合并逻辑出错。**正解是照搬 P2-19 已拍板的做法**：前端多选 + 逐 level 各发一次请求合并去重（零后端契约变化）。P1-34 没做，因为该片已用「只看这一次请求」（复用后端既有的 `session_id` 精确过滤）达成"还原一次操作"的目的，级别多选属**另一件事**。
 
-- `[discovered 2026-08-05 during P1-36, Codex #286 R2 P2 —— 前提已实证为真，判定为越界，本 PR 未做]` **`app.audit` 的请求汇总行归不到 `execution_id` 名下（P3）** —— `AuditMiddleware` 是 `BaseHTTPMiddleware`，它在 `call_next` 返回**之后**才打那行 `POST /...  → 200 (45ms)`；而 Starlette 把下游 endpoint 跑在**独立的子上下文**里，endpoint 里 `current_execution_id.set(...)` 设的值**回不到** middleware。所以按 `execution_id` 过滤时，发起执行 / 取消执行这几个请求的 HTTP 方法+状态码+耗时那一行是缺的（`session_id` 不受影响 —— 它由 middleware 自己在 `call_next` **之前**设）。**实证**（别重做）：最小 app + `AuditMiddleware`，endpoint 内 set `EXEC1234` 后同一请求打两行，捕获结果 `('app.probe', 'EXEC1234', ...)` / `('app.audit', '-', ...)` —— 一行带、一行不带，前提成立。**本 PR 未修的理由**：① ⑦ 判据「不改它，P1-36 那个可观察故障还在吗」答**不在了** —— R1 修完后执行的开始/过程/结束/取消都已在链上，缺的这行是同一事实的第二份记录，且**一跳可达**（case-runner 那行同时印着 `request_id` 与 `execution_id`，GUI 的「只看这一次请求」按钮就是这一跳）；② 三种修法**全属"加机制"**（最低优先级）：换 `request.state` 传值要改每个调用点，正是 P1-36 刻意避开的；把 ContextVar 从 `str` 换成可变盒子要动 `ContextFilter` 与全部 set 点；middleware 改 pure ASGI 是重写。⚠️ 同形态还波及 `commissioning` 的相位请求与 `request_cancel` 的取消请求。真要做时，先问「这行的价值是否值一次机制改动」。
+- `[discovered 2026-08-05 during P1-36, Codex #286 R2 P2]` **[→ 提升 P1-42 (2026-08-06，用户拍板)]** **`app.audit` 的请求汇总行归不到 `execution_id` 名下（P3）** —— `AuditMiddleware` 是 `BaseHTTPMiddleware`，它在 `call_next` 返回**之后**才打那行 `POST /...  → 200 (45ms)`；而 Starlette 把下游 endpoint 跑在**独立的子上下文**里，endpoint 里 `current_execution_id.set(...)` 设的值**回不到** middleware。所以按 `execution_id` 过滤时，发起执行 / 取消执行这几个请求的 HTTP 方法+状态码+耗时那一行是缺的（`session_id` 不受影响 —— 它由 middleware 自己在 `call_next` **之前**设）。**实证**（别重做）：最小 app + `AuditMiddleware`，endpoint 内 set `EXEC1234` 后同一请求打两行，捕获结果 `('app.probe', 'EXEC1234', ...)` / `('app.audit', '-', ...)` —— 一行带、一行不带，前提成立。**本 PR 未修的理由**：① ⑦ 判据「不改它，P1-36 那个可观察故障还在吗」答**不在了** —— R1 修完后执行的开始/过程/结束/取消都已在链上，缺的这行是同一事实的第二份记录，且**一跳可达**（case-runner 那行同时印着 `request_id` 与 `execution_id`，GUI 的「只看这一次请求」按钮就是这一跳）；② 三种修法**全属"加机制"**（最低优先级）：换 `request.state` 传值要改每个调用点，正是 P1-36 刻意避开的；把 ContextVar 从 `str` 换成可变盒子要动 `ContextFilter` 与全部 set 点；middleware 改 pure ASGI 是重写。⚠️ 同形态还波及 `commissioning` 的相位请求与 `request_cancel` 的取消请求。真要做时，先问「这行的价值是否值一次机制改动」。
 
 - `[discovered 2026-08-05 during 手动测试前的环境检查]` **[→ 提升 P1-41 (2026-08-06)]** **⚠️ 日志爆量：7.6 秒写 20 万行、一次事故 24 GB —— UXM 排错误队列的循环停不下来（P1 候选）** —— 实测 `api-service/logs/` 已占 **41 GB**（`app.log` 13 GB + `scpi.log` 11 GB + 30 个滚动文件），磁盘已用 76%。**爆点定位**：`app.log` 首行 `2026-08-04T23:59:59.999` → 第 20 万行 `2026-08-05T00:00:07.604`，**7.6 秒 20 万行 ≈ 26,000 行/秒**，且这 20 万行**百分之百**是同一对（各 10 万）：
   ```
