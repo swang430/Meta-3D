@@ -307,7 +307,9 @@ class TestExceptionPathDoesNotLie:
                 raise OSError("write boom")
 
         d._do_write = _boom
-        d._do_query = lambda cmd, **kw: "1"
+        # 错误队列的 clean 语义是 code 0；裸 1 不是 clean，会被 P1-41 的
+        # fail-closed 上限门在写入前正确拦下，反而测不到本例的中途写异常。
+        d._do_query = lambda cmd, **kw: '0,"No error"'
         res = asyncio.run(d.configure_mac_throughput_test(mimo_layers=2))
 
         assert res.error is not None, "异常被吞了还不留痕 —— 记录在说假话"

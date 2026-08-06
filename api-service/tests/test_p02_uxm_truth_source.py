@@ -216,7 +216,9 @@ def _echo_session_for_config(
         sess.queried.append(c)
         if c == "*OPC?":
             return "1"
-        if c == "SYST:ERR?":
+        # UXM 生产代码必须走 Test App profile 的 ERR 命令；fake 按查询语义
+        # 匹配，不把旧硬编码短写 SYST:ERR? 教成唯一合法拼法（P1-41）。
+        if "ERR" in c.upper():
             return syst_err
         if c.endswith("ACTive:STATe?"):
             return active_state

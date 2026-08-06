@@ -221,9 +221,22 @@ class TestRejectedIsItsOwnCategory:
     前者正是「IRAT 认不认这批手册命令」的**实测答案**。"""
 
     def test_instrument_rejection_lands_in_rejected_not_skipped(self):
-        res, _ = _run(responses={"SYSTem:ERRor": '-113,"Undefined header"',
-                                 "SYST:ERR": '-113,"Undefined header"'},
-                      mimo_layers=2)
+        # P1-41 后“错误查询永远回 -113”代表查询自身不受支持，必须立即停，
+        # 不能再拿来模拟某条业务命令被拒。这里按真实队列语义造：基线 clean，
+        # 首组弹出一条 -113，下一问 clean；后续组均 clean。
+        d, _ = _drv()
+        original_query = d._do_query
+        errors = iter(['0,"No error"', '-113,"Undefined header"',
+                       '0,"No error"'])
+
+        def _query(cmd, **kw):
+            if "ERR" in cmd.upper():
+                return next(errors, '0,"No error"')
+            return original_query(cmd, **kw)
+
+        d._do_query = _query
+        res = asyncio.run(
+            d.configure_mac_throughput_test(mimo_layers=2, scs_khz=15))
         assert res.rejected, "被拒的命令没记名 —— 现场拿不到实测答案"
         assert res.skipped == (), "被拒被误记成 profile 没定义"
         assert res.ok is False, "有命令被拒却报 ok"
