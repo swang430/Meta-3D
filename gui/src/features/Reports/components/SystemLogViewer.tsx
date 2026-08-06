@@ -111,7 +111,15 @@ const REFRESH_INTERVALS = [
 
 // ── Component ──────────────────────────────────────────────────
 
-export function SystemLogViewer() {
+interface SystemLogViewerProps {
+  /**
+   * P1-39: 从执行历史「查看日志」跳过来时预填的**完整 `execution_id`**。
+   * 上游 (ReportsPage) 是一次性交接：每次跳转都会先清成 null 再设新值。
+   */
+  initialExecutionFilter?: string | null
+}
+
+export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps = {}) {
   // File list
   const [files, setFiles] = useState<LogFileInfo[]>([])
   const [selectedFile, setSelectedFile] = useState<string>('app.log')
@@ -138,7 +146,14 @@ export function SystemLogViewer() {
   // ⚠ 两个 id **不是**一回事：一次执行跨多个请求（发起/查询/取消各一次），
   //   也可能压根不在请求里（runner 跑在后台任务上）。所以两个过滤各自独立，
   //   可以同时生效（"这次执行里的这一个请求"）。
-  const [executionFilter, setExecutionFilter] = useState<string | null>(null)
+  // ⚠ **惰性初值, 不是挂载后再 set**（Codex #292 R3-b）——
+  //   取数 effect 声明在本组件前部, 挂载时按声明顺序先跑; 若这里初值为 null、
+  //   靠后面的 effect 再 setExecutionFilter, 就会**先发一个不带过滤的 /tail**,
+  //   再发第二个带过滤的。两个请求乱序返回时, 未过滤的结果会盖掉已过滤的,
+  //   而「只看执行 X」的徽章已经显示出来了 —— 看到的表和徽章说的不是一回事。
+  const [executionFilter, setExecutionFilter] = useState<string | null>(
+    initialExecutionFilter ?? null,
+  )
 
   // P1-34 / Codex #282 R2：进入「只看这一次请求」时**清掉 level 与 keyword**。
   //
@@ -256,6 +271,14 @@ export function SystemLogViewer() {
       return next
     })
   }
+
+  // P1-39: 同一次挂载内再次跳转（换了 execution）时应用新值。
+  // 首次挂载由上面的惰性初值负责, 这里只处理"值变了"。
+  useEffect(() => {
+    if (!initialExecutionFilter) return
+    setExecutionFilter(initialExecutionFilter)
+    clearTextFilters()
+  }, [initialExecutionFilter])
 
   // ── Format timestamp for display ──
   // P1-34: 时间戳一律走共享的 formatLogTime/formatLogDate（本地时区）。
@@ -469,7 +492,21 @@ export function SystemLogViewer() {
                       加「请求」「执行」两列前这里写的是 5，本来就少一列。 */}
                   <Table.Td colSpan={8}>
                     <Text ta="center" c="dimmed" py="xl">
-                      {error ? '加载出错' : '暂无日志条目'}
+                      {error ? '加载出错' : (
+                        executionFilter ? (
+                          /* 内审 F2: 日志按天轮转 —— 昨天及更早的执行, 日志在
+                             app.log.YYYY-MM-DD 里, 而文件下拉**只列活跃文件**
+                             (后端 files 端点按 suffix 过滤)。不说这一句, 用户看到的
+                             就是"点了看日志结果空白", 正是本片要治的翻版。 */
+                          <>
+                            这次执行在 <b>{selectedFile}</b> 里没有匹配行。
+                            <br />
+                            日志按天轮转 —— 若该执行发生在今天之前, 它的日志在
+                            <b> {selectedFile}.YYYY-MM-DD</b> 归档文件里，
+                            而本面板的文件下拉当前只列活跃文件（翻历史见 P1-43）。
+                          </>
+                        ) : '暂无日志条目'
+                      )}
                     </Text>
                   </Table.Td>
                 </Table.Tr>

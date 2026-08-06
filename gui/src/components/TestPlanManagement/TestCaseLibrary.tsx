@@ -5,6 +5,7 @@
  * This is the foundation of the test management system — users pick test cases
  * from here to compose test plans.
  */
+import { CopyableId } from '../CopyableId'
 import { useState, useEffect, useCallback } from 'react';
 import {
   Stack,
@@ -538,6 +539,9 @@ export function TestCaseLibrary({
                         <Divider />
 
                         <Group gap="lg">
+                          {/* P1-39: 用例 ID —— 显示前 8 位, 复制给全长。
+                              此前全仓只有 API/DB 能拿到它。 */}
+                          <CopyableId value={tc.id} label="点击复制完整用例 ID" />
                           {tc.frequency_mhz && (
                             <Tooltip label="中心频率">
                               <Text size="xs" c="dimmed">

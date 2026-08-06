@@ -31,8 +31,10 @@ import {
   Center,
   Modal,
 } from '@mantine/core'
-import { parseServerDateTime } from '../../../../utils/datetime'
+import { parseServerDateTime, formatExecutionTag } from '../../../../utils/datetime'
+import { CopyableId } from '../../../../components/CopyableId'
 import {
+  IconArticle,
   IconSearch,
   IconFileText,
   IconRefresh,
@@ -98,7 +100,16 @@ function formatDurationSec(seconds: number | null): string {
   return `${hours} 小时 ${mins} 分钟`
 }
 
-export function HistoryTab() {
+interface HistoryTabProps {
+  /**
+   * P1-39: 点「查看日志」时回调, 参数是**完整 `execution_id`**。
+   * 由 App 层接到「切到报告页 + 预填日志过滤」上。
+   * 不传 = 不渲染该按钮（见下方 `onViewLogs &&`）—— 不留点了没反应的按钮。
+   */
+  onViewLogs?: (executionId: string) => void
+}
+
+export function HistoryTab({ onViewLogs }: HistoryTabProps = {}) {
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined)
   const [currentPage, setCurrentPage] = useState(1)
@@ -270,7 +281,11 @@ export function HistoryTab() {
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>测试用例</Table.Th>
-                  <Table.Th>状态</Table.Th>
+                  {/* P1-39: 执行标签 —— 短标签给人认, 复制给的是完整 execution_id。
+                      ⚠ 固定宽度 + nowrap: 不给宽度的话 15 字符的标签会折成两行,
+                      并把「状态」列挤到显示「已..」（浏览器实测发现）。 */}
+                  <Table.Th w={150}>执行标签</Table.Th>
+                  <Table.Th w={92}>状态</Table.Th>
                   <Table.Th>相位</Table.Th>
                   <Table.Th>执行时长</Table.Th>
                   <Table.Th>来源</Table.Th>
@@ -281,7 +296,7 @@ export function HistoryTab() {
               <Table.Tbody>
                 {paginatedRecords.length === 0 ? (
                   <Table.Tr>
-                    <Table.Td colSpan={7}>
+                    <Table.Td colSpan={8}>
                       <Stack align="center" gap="xs" py="xl">
                         <IconChartBar size={48} stroke={1.5} color="gray" />
                         <Text c="dimmed" ta="center">
@@ -305,6 +320,17 @@ export function HistoryTab() {
                           <Text size="sm" fw={500}>
                             {record.case_name ?? '未命名用例'}
                           </Text>
+                        </Table.Td>
+
+                        {/* P1-39 执行标签: 显示本地时间短标签, 复制完整 execution_id。
+                            record.id 就是 TestExecution.id
+                            (同 handleGenerateReport 依赖的那个 id, 见其上方注释)。 */}
+                        <Table.Td style={{ whiteSpace: 'nowrap' }}>
+                          <CopyableId
+                            value={record.id}
+                            display={formatExecutionTag(record.started_at)}
+                            label="点击复制完整 execution_id"
+                          />
                         </Table.Td>
 
                         {/* Status */}
@@ -380,6 +406,20 @@ export function HistoryTab() {
                                 <IconFileReport size={16} />
                               </ActionIcon>
                             </Tooltip>
+                            {/* P1-39 第 4 条: 一键跳日志 —— 带的是**完整 UUID**,
+                                不是上面那个给人看的短标签。onViewLogs 未接线时
+                                不渲染, 不留一个点了没反应的按钮。 */}
+                            {onViewLogs && (
+                              <Tooltip label="查看这次执行的日志">
+                                <ActionIcon
+                                  variant="light"
+                                  color="grape"
+                                  onClick={() => onViewLogs(record.id)}
+                                >
+                                  <IconArticle size={16} />
+                                </ActionIcon>
+                              </Tooltip>
+                            )}
                           </Group>
                         </Table.Td>
                       </Table.Tr>

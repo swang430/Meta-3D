@@ -32,7 +32,12 @@ import { TestCaseEditModal } from '../../components/TestPlanManagement/TestCaseE
 import { HistoryTab } from './components/HistoryTab'
 import { VirtualRoadTest } from '../../components/VirtualRoadTest'
 
-export function TestManagement() {
+interface TestManagementProps {
+  /** P1-39: 执行历史里点「查看日志」时回调, 参数是完整 `execution_id`。 */
+  onViewLogs?: (executionId: string) => void
+}
+
+export function TestManagement({ onViewLogs }: TestManagementProps = {}) {
   const [activeTab, setActiveTab] = useState<string | null>('caseLibrary')
   // 「新建用例」两步流状态: 创建弹窗开关 / 建完待编辑的新用例 id / 库刷新纪元
   const [creating, setCreating] = useState(false)
@@ -75,7 +80,7 @@ export function TestManagement() {
 
           {/* History Tab */}
           <Tabs.Panel value="history" pt="md">
-            <HistoryTab />
+            <HistoryTab onViewLogs={onViewLogs} />
           </Tabs.Panel>
 
           {/* Virtual Road Test Tab — VRT consolidated as TestCase derivative */}
