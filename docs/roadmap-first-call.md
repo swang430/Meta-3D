@@ -2339,7 +2339,10 @@ ID 双重白名单；另外补上 UXM 写入/回读同路径和线上实际写�
 四个假绿：无原文的 IRAT 范围、整组旧 execution 复用、requested 与线上写值脱钩、query
 冒充 command；四项均已按 fail-closed 原则闭环。最终全量后端回归与 GitHub Codex 外审
 结果在本片合并前补记；内审 R3 复验四项反例与正常控制样例后结论 CLEAN，修复后全量
-后端回归为 `3330 passed / 5 skipped`。
+后端回归为 `3330 passed / 5 skipped`。GitHub Codex 外审 R1 又抓出并已修复两处现场路径：
+Aerotech 原始 `%` ACK 前缀会阻断反馈角解析，以及 F64 静默重连成功/失败后旧身份仍可能
+冒充实时身份；修复后相关回归 `232 passed`、完整后端 `3332 passed / 5 skipped`，外审 R2
+结果在合并前补记。
 下一片按既定顺序进入 P1-47C。
 
 **正式验收**：诊断序列只做出发前能力/载体验证；P0-5 仍从正式 TestCase 启动。

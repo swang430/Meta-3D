@@ -1299,7 +1299,58 @@ def test_uxm_reconnect_paths_clear_stale_evidence_identity():
     assert driver.detected_test_app is None
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reopen_succeeds", [True, False])
+async def test_f64_reconnect_paths_clear_stale_evidence_identity(reopen_succeeds):
+    class Session:
+        def close(self):
+            return None
+
+    class ResourceManager:
+        def open_resource(self, *_args, **_kwargs):
+            if not reopen_succeeds:
+                raise OSError("reopen failed")
+            return Session()
+
+    driver = RealPropsimF64Driver("f64-reconnect", {"ip_address": "192.0.2.64"})
+    driver._rm = ResourceManager()
+    driver._visa_resource = Session()
+    driver._status = InstrumentStatus.READY
+    driver._identity_response = "Spirent,PROPSIM F64,SN-OLD,FW-OLD"
+    driver.sys_info = F64SysInfo(
+        raw="PROPSIM F64,64,RF,FW-OLD",
+        product_family="PROPSIM F64",
+        firmware_version="FW-OLD",
+        band_label="OLD-BAND",
+    )
+    driver.product_family = "PROPSIM F64"
+    driver.firmware_version = "FW-OLD"
+    driver.band_label = "OLD-BAND"
+
+    assert await driver._silent_reconnect_visa() is reopen_succeeds
+    assert driver._identity_response is None
+    assert driver.sys_info is None
+    assert driver.product_family is None
+    assert driver.firmware_version is None
+    assert driver.band_label is None
+    assert driver.capture_evidence_environment().captured_from_live_connection is False
+
+
 def test_positioner_uses_circular_error_and_caps_formal_tolerance_at_one_degree():
+    ack_prefixed = build_positioner_evidence(
+        requested_angle_deg=0.0,
+        coordinate_offset_deg=90.0,
+        offset_calibrated=True,
+        tolerance_deg=1.0,
+        move_exchange=_exchange("ack-m", "MOVEABS X 90", result_type="ok"),
+        feedback_exchange=_exchange(
+            "ack-f", "PFBK(X)", response="%90.2", operation="query"
+        ),
+        scope=_positioner_scope(),
+    )
+    assert ack_prefixed.verdict is EvidenceVerdict.PASSED
+    assert ack_prefixed.readback["raw_feedback_angle_deg"] == pytest.approx(90.2)
+
     wrapped = build_positioner_evidence(
         requested_angle_deg=0.0,
         coordinate_offset_deg=0.0,

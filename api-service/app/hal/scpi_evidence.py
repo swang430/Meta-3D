@@ -1084,7 +1084,12 @@ def build_positioner_evidence(
 ) -> InstrumentEvidenceItem:
     command_sent = move_exchange.command if move_exchange else None
     response = _value_response(feedback_exchange)
-    parsed_feedback = _parse_first_scalar(response)
+    # AeroBasic 的成功响应在线上以 ``%`` 开头；P1-47A 捕获的是驱动剥离
+    # ACK 之前的原始响应，因此证据解析必须在这里显式识别该协议前缀。
+    normalized_response = (
+        response.strip().removeprefix("%").strip() if response is not None else None
+    )
+    parsed_feedback = _parse_first_scalar(normalized_response)
     raw_feedback_angle_deg = (
         parsed_feedback if isinstance(parsed_feedback, float) else None
     )

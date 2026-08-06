@@ -4487,6 +4487,18 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             return False
         self._reconnect_retry_after = now + _RECONNECT_COOLDOWN_S
 
+        # P1-47B / Codex #299 R1: once the old socket is being replaced,
+        # identity captured through that session is no longer live evidence.
+        # Keep topology/load caches (a bare TCP reconnect is not a controller
+        # reset), but require a full connect() identity probe before formal
+        # evidence may pass again.  This applies to both reopen success and
+        # failure: the retained closed handle is only a retry trigger.
+        self._identity_response = None
+        self.sys_info = None
+        self.firmware_version = None
+        self.band_label = None
+        self.product_family = None
+
         # 先关旧 (手册要求, 见 docstring)。close 半死 session 自身可能抛 —— 吞掉,
         # 我们只是要让服务端那条 socket 释放。
         old_resource = self._visa_resource
