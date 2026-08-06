@@ -1935,9 +1935,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             instrument_id=self.instrument_id,
             instrument="f64",
             model=(self.product_family or identity["model"]) if live else None,
-            firmware_version=(
-                self.firmware_version or identity["firmware_version"]
-            ) if live else None,
+            # ``SYST:INFO?`` positional field 4 is device HW version, not
+            # formal firmware. Missing *IDN? firmware must stay unknown.
+            firmware_version=identity["firmware_version"] if live else None,
+            hardware_firmware_version=self.firmware_version if live else None,
             serial_number=identity["serial_number"] if live else None,
             captured_from_live_connection=live,
         )

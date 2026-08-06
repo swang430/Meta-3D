@@ -215,10 +215,16 @@ def test_f64_environment_snapshot_uses_live_identity_not_config_claims():
     driver.firmware_version = "v1.0"
     env = driver.capture_evidence_environment()
     assert env.model == "PROPSIM F64"
-    assert env.firmware_version == "v1.0"
+    assert env.firmware_version == "9.8.7"
+    assert env.hardware_firmware_version == "v1.0"
     assert env.serial_number == "SN-F64"
     assert "FAKE" not in env.model
     assert env.captured_from_live_connection is True
+
+    driver._identity_response = "Keysight Technologies,F8800A,SN-F64"
+    missing_idn_firmware = driver.capture_evidence_environment()
+    assert missing_idn_firmware.firmware_version is None
+    assert missing_idn_firmware.hardware_firmware_version == "v1.0"
 
 
 def test_uxm_environment_snapshot_requires_live_detected_test_app():
@@ -233,16 +239,39 @@ def test_uxm_environment_snapshot_requires_live_detected_test_app():
     driver._visa_session = object()
     driver._status = InstrumentStatus.CONNECTED
     driver._identity_response = "Keysight Technologies,E7515B,SN-UXM,28.21.0.32"
+    driver._platform_identity_response = (
+        "Keysight Technologies,E7515B Platform,SN-UXM,3.39.0.2"
+    )
     first = driver.capture_evidence_environment()
     assert first.test_application is None
 
     driver.detected_test_app = "LTE_NR_IRAT"
     env = driver.capture_evidence_environment()
-    assert env.model == "E7515B"
+    assert env.model == "E7515B Platform"
     assert env.firmware_version == "28.21.0.32"
     assert env.serial_number == "SN-UXM"
     assert env.test_application == "LTE_NR_IRAT"
     assert env.captured_from_live_connection is True
+
+
+def test_uxm_taf_identity_cannot_impersonate_missing_platform_identity():
+    driver = RealUxmDriver("uxm-taf-only", {})
+    driver._visa_session = object()
+    driver._status = InstrumentStatus.READY
+    driver._identity_response = (
+        "Keysight Technologies,E7515B TAF,SN-TAF,28.21.0.3252"
+    )
+    driver._platform_identity_response = None
+    driver.detected_test_app = "5G_NR_Test"
+    env = driver.capture_evidence_environment()
+    assert env.model is None
+    assert env.serial_number is None
+    assert env.hardware_firmware_version is None
+    assert env.firmware_version == "28.21.0.3252"
+    scope = evaluate_catalog_scope(
+        load_p0_5_catalog(CATALOG).entries["uxm.config_apply"], env
+    )
+    assert scope.eligible is False
 
 
 def test_uxm_snapshot_keeps_platform_hardware_identity_after_framework_redirect():
@@ -266,6 +295,59 @@ def test_uxm_snapshot_keeps_platform_hardware_identity_after_framework_redirect(
         load_p0_5_catalog(CATALOG).entries["uxm.config_apply"], env
     )
     assert scope.eligible
+
+
+@pytest.mark.asyncio
+async def test_uxm_direct_taf_connection_probes_live_platform_identity(monkeypatch):
+    opened: list[str] = []
+
+    class Session:
+        def __init__(self, *, platform: bool):
+            self.platform = platform
+            self.closed = False
+            self.read_termination = None
+            self.write_termination = None
+
+        def query(self, command):
+            if self.platform:
+                return "Keysight Technologies,E7515B Platform,SN-HW,3.39.0.2"
+            return {
+                "*IDN?": (
+                    "Keysight Technologies,C8700200A Test Application "
+                    "Framework,SN-TAF,28.21.0.3252"
+                ),
+                "SYSTem:APPLication:NAME?": "5G_NR_Test",
+                "*OPC?": "1",
+            }.get(command.strip(), "0")
+
+        def write(self, _command):
+            return None
+
+        def close(self):
+            self.closed = True
+
+    main_session = Session(platform=False)
+    platform_session = Session(platform=True)
+
+    class ResourceManager:
+        def open_resource(self, resource, **_kwargs):
+            opened.append(resource)
+            return platform_session if "hislip0" in resource else main_session
+
+    monkeypatch.setattr("pyvisa.ResourceManager", lambda: ResourceManager())
+    driver = RealUxmDriver(
+        "uxm-direct-taf",
+        {"visa_resource": "TCPIP0::10.0.0.9::5125::SOCKET"},
+    )
+    assert await driver.connect() is True
+    env = driver.capture_evidence_environment()
+    assert "TCPIP::10.0.0.9::hislip0::INSTR" in opened
+    assert env.model == "E7515B Platform"
+    assert env.serial_number == "SN-HW"
+    assert env.application_version == "28.21.0.3252"
+    assert env.hardware_firmware_version == "3.39.0.2"
+    assert platform_session.closed is True
+    assert main_session.closed is False
 
 
 def test_positioner_environment_is_honest_when_protocol_has_no_identity_query():
@@ -890,6 +972,9 @@ def test_driver_builders_bind_semantics_to_their_own_live_environment():
     uxm._visa_session = object()
     uxm._status = InstrumentStatus.READY
     uxm._identity_response = "Keysight,E7515B,SN-UXM,28.21.0.32"
+    uxm._platform_identity_response = (
+        "Keysight,E7515B Platform,SN-HW,3.39.0.2"
+    )
     uxm.detected_test_app = "LTE_NR_IRAT"
     def uxm_ref(exchange_id, command, **kwargs):
         return _exchange(

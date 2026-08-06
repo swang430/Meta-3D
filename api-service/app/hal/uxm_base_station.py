@@ -431,6 +431,55 @@ class RealUxmDriver(BaseStationDriver):
     # 1. 连接生命周期
     # ===================================================================
 
+    def _probe_platform_identity(self, active_resource: str) -> Optional[str]:
+        """从独立 hislip0 会话只读采集 E7515B 平台身份。
+
+        Test Application Framework 的 ``*IDN?`` 描述软件端点，不是 UXM
+        硬件。直连 hislip2/5125 时必须另开平台端点，且临时会话不得替换或
+        关闭当前业务会话。探测失败保持 None，由正式证据范围门 fail-closed。
+        """
+        parts = (active_resource or "").split("::")
+        host = parts[1] if len(parts) > 1 and parts[1] else self.ip_address
+        if not self._visa_rm or not host:
+            return None
+        platform_resource = f"TCPIP::{host}::hislip0::INSTR"
+        platform_session = None
+        try:
+            platform_session = self._visa_rm.open_resource(
+                platform_resource,
+                timeout=VISA_TIMEOUT_DEFAULT,
+            )
+            platform_idn = platform_session.query("*IDN?").strip()
+            if "E7515B" not in platform_idn.upper():
+                logger.warning(
+                    "[UXM] Platform identity probe returned non-E7515B: %s",
+                    platform_idn,
+                )
+                return None
+            logger.info("[UXM] Platform identity: %s", platform_idn)
+            return platform_idn
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[UXM] Platform identity probe failed at %s (%s: %s)",
+                platform_resource,
+                type(exc).__name__,
+                exc,
+            )
+            return None
+        finally:
+            if (
+                platform_session is not None
+                and platform_session is not self._visa_session
+            ):
+                try:
+                    platform_session.close()
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "[UXM] Platform identity session close failed (%s: %s)",
+                        type(exc).__name__,
+                        exc,
+                    )
+
     async def connect(self) -> bool:
         """通过 PyVISA 建立与 UXM 的连接。
 
@@ -477,8 +526,12 @@ class RealUxmDriver(BaseStationDriver):
 
             # 验证身份
             idn = self._query("*IDN?").strip()
-            if "E7515B" in idn.upper():
+            if "E7515B PLATFORM" in idn.upper():
                 self._platform_identity_response = idn
+            else:
+                self._platform_identity_response = self._probe_platform_identity(
+                    resource_str
+                )
 
             # Two-tier auto-detection for E7515B platform (CAICT 2026-05-13):
             #
@@ -644,8 +697,10 @@ class RealUxmDriver(BaseStationDriver):
         )
 
         endpoint_identity = parse_ieee488_identity(self._identity_response)
+        # TAF *IDN? describes the software endpoint. Hardware model/serial/HW
+        # version are valid only when the independent platform probe succeeded.
         hardware_identity = parse_ieee488_identity(
-            self._platform_identity_response or self._identity_response
+            self._platform_identity_response
         )
         live = (
             self._visa_session is not None
@@ -657,9 +712,8 @@ class RealUxmDriver(BaseStationDriver):
             instrument="uxm",
             model=hardware_identity["model"] if live else None,
             firmware_version=(
-                endpoint_identity["firmware_version"]
-                or hardware_identity["firmware_version"]
-            ) if live else None,
+                endpoint_identity["firmware_version"] if live else None
+            ),
             test_application=self.detected_test_app if live else None,
             application_version=(
                 endpoint_identity["firmware_version"] if live else None
@@ -667,10 +721,7 @@ class RealUxmDriver(BaseStationDriver):
             hardware_firmware_version=(
                 hardware_identity["firmware_version"] if live else None
             ),
-            serial_number=(
-                hardware_identity["serial_number"]
-                or endpoint_identity["serial_number"]
-            ) if live else None,
+            serial_number=hardware_identity["serial_number"] if live else None,
             captured_from_live_connection=live,
         )
 
