@@ -69,7 +69,7 @@ Notebook：`236d9621-e3ce-4ed1-a8e1-7819b674dbcd`。
 
 ## 6. 公共传输证据
 
-现有 TX/OK/RX/ERR 增加同一次调用共享的 `exchange_id`，并统一携带 `execution_id`、`instrument_id`、结构化 command/query、方向、耗时和结果类型。
+现有 TX/OK/RX/ERR 增加同一次调用共享的 `exchange_id`，并统一携带 `execution_id`、`instrument_id`、结构化 command/query、方向、耗时和结果类型。公共 SCPI helper 与活跃的 `RealAerotechDriver._send` socket 路径都必须接入；不能假设 HAL SCPI 基类自然覆盖转台。
 
 必须区分：
 

@@ -2259,7 +2259,7 @@ backlog，**同时问它落在哪个序列里**；没有就出发前补一个」
 
 | Slice | 交付 | Acceptance |
 |---|---|---|
-| **P1-47A 传输证据** | TX/OK/RX/ERR 同一 `exchange_id`；统一 command/query；timeout/cancelled 明确留痕后原样传播；IMSI/认证信息入日志前脱敏；原始 SCPI 日志默认最多保留30天 | 并发/嵌套可配对；空串/空白/`not ready` 不合并；变异删除ID、吞取消、取消脱敏/留存上限均红 |
+| **P1-47A 传输证据** | 公共 SCPI helper 与活跃 `RealAerotechDriver._send` socket 路径的 TX/OK/RX/ERR 共用同一证据结构和 `exchange_id`；统一 command/query；timeout/cancelled 明确留痕后原样传播；IMSI/认证信息入日志前脱敏；原始 SCPI 日志默认最多保留30天 | UXM/F64/转台并发与嵌套调用均可配对；空串/空白/`not ready` 不合并；变异删除ID、绕过Aerotech、吞取消、取消脱敏/留存上限均红 |
 | **P1-47B 仪器证据** | 机器可检查的关键命令手册清单；从真实连接采集型号/固件/Test App；F64 写→OPC→ERR→回读→STATE；UXM 配置回读/APPLY/协议栈状态分层；转台请求角/反馈角/容差 | 实际环境不在证据范围，或证据为 `onsite-observed` / `unverified` 时不得判绿；回显不得冒充生效 |
 | **P1-47C 正式执行** | 同一 `TestExecution.config.scpi_evidence` 持久化 requested/command_sent/readback/exchange_ids/evidence_level/source_reference/verdict/reason 与执行环境快照；GUI/报告分层展示 | 任一 mandatory 项 unknown/rejected、非confirmed或范围不匹配，正式验收不得显示通过；摘要可由 execution+exchange 精确追溯原始往返 |
 

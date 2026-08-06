@@ -62,16 +62,19 @@
 **Files:**
 - Modify: `api-service/app/hal/base.py`
 - Modify: `api-service/app/core/logging_config.py`
+- Modify: `api-service/app/hal/aerotech_positioner.py`
 - Test: `api-service/tests/test_scpi_log_evidence.py`
+- Test: 对应 Aerotech socket 传输证据测试
 
 1. 写失败测试：一次调用的TX与OK/RX/ERR必须共享非空 `exchange_id`，TX/OK必须带结构化command/query。
 2. 写失败测试：`wait_for`超时和task取消必须各留一条终态证据并原样传播取消。
 3. 运行测试确认失败。
-4. 在调用入口生成 `exchange_id` 并透传现有日志helper。
+4. 在公共 SCPI 调用入口生成 `exchange_id` 并透传现有日志helper；同时把活跃
+   `RealAerotechDriver._send` socket 路径接入同一证据结构，禁止假设 `hal/base.py` 能覆盖转台。
 5. 对 `asyncio.CancelledError` 单独记录后裸raise；普通异常控制流不变。
 6. 保持空字符串、空白字符串、`not ready` 三种原始形态可区分。
 7. 在进入日志前统一脱敏：IMSI 只允许哈希或末四位，认证参数/密钥禁止落日志；原始 SCPI 日志默认最多保留30天。
-8. 运行定向测试；执行删除配对ID、吞掉取消、合并空字符串、取消脱敏/30天上限四类变异并确认变红。
+8. 运行定向测试；执行删除配对ID、让 `RealAerotechDriver._send` 绕过统一证据结构、吞掉取消、合并空字符串、取消脱敏/30天上限等变异并确认变红。
 9. 最后运行全量测试，此后不再编辑；走全套内审和外审。
 
 ### Task 5：P1-47B 仪器接受/生效判据
