@@ -244,7 +244,17 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | ~~P0-4~~ | ~~SignalAnalyzer in HAL for reference TRP~~ | ✅ 2026-07-03 现场完成 | — 已完成 |
 | P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | on-site real DUT (已至 -96 dBm RSRP, 差正式注册) | ⚠️ **半覆盖** `baseStation_attach_check`（只到 attach）。bearer/PDSCH **不该做成序列** —— 那是首测本身的目标，走正常 TestCase 流程 |
 | P0-8 **现场半** | F64 driver 现场修复落地 —— real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真 | on-site real F64 (本地半已 Done, 见 `### P0-8`；跟 P0-5 attach 同一段窗口) | ✅ `propsim_f64_p08_gate`（P1-24 已写，597 行，mock 跑通） |
-| P1-33 **现场半** | 验证按手册重写的 MAC 配置命令在真机上被接受（本地半可先做，见 `### P1-33`） | on-site real UXM。⚠️ **不再 gate 在 P1-31 上**（Codex #276 P2 抓出错误依赖）：P1-31 只跑那 9 项 KPI 对账、且限定「手册有依据 + 驱动已在用」的命令，**产不出 MAC 配置命令的形式**；而 2026-08-03 查手册发现**这 8 组命令 `BSE:` 形式手册里全都有** —— 卡点不是「不知道命令」，是「没在真机上验过」 | ✅ `uxm_scpi_compatibility` —— **已覆盖**（Codex #293 校正）：`_all_commands()` **动态枚举** profile 上所有非 `None` 的字符串命令，P1-33 填进 `UxmLteNrIratProfile` 的 `HARQ_MAX_TRANS` / `HARQ_PROCESSES` 因此已被探；且这两条连同 `TDD_PATTERN` / `TDD_PERIOD` **本就在 `_CRITICAL_NAMES` 里**，不支持会进 `critical_unsupported` |
+| P1-2 | F64 license probe SCPI 现场验证 | on-site real F64 | ✅ `propsim_f64_health`（只读普查，A 类） |
+| P1-4 | first-call repeatability test | on-site 全链路 | ❌ **不是序列能覆盖的** —— 这是**跑多次正式测试比结果**，走 TestCase 流程 + 报告对比，不是诊断序列 |
+| P1-5 **现场半** | CAL-04 phase calibration | on-site 真校准链路 | ❌ 同上 —— 校准是正式流程，走校准页面不走诊断序列 |
+| P1-17 **现场半** | UXM fresh-start 配置落地 | on-site real UXM | ✅ `uxm_config_truth_probe`（下发→生效→核对，正是它要的） |
+| P2-4 | NAT/firewall idle-drop 假设验证 | on-site 现场网络 | ❌ **无载体** → C 类（长连接放置后观察），待排 |
+| P2-9 **现场半** | EMCenter switch bring-up | on-site EMCenter | ❌ **无载体** → 该仪器**连 health 序列都没有**，待排 |
+| P2-10 **现场半** | F64 工程精细化（配置资产 / 外部输出 / 内部 cal） | on-site real F64 | ⚠️ 部分可挂 `propsim_f64_health` / `propsim_f64_state_machine`，需逐项拆 |
+| P2-12 **现场半** | 标准信道文件定义 | on-site real F64 | ⚠️ 与 P2-10 同批拆 |
+| P2-13 **现场半** | SIMProfile + SIM↔UXM 一致性 | on-site 真 SIM | ❌ **无载体** → A 类（读 SIM 身份 + 比对声明），待排 |
+| P1-6 **（HOLD 行）** | FS16 / UXM / ENA silent-reconnect 集成测试 | 需真 idle-close 证据 | ❌ **无载体** —— ⚠️ 见下方「我把它搞反了」 |
+| P1-33 **现场半** | 验证按手册重写的 MAC 配置命令在真机上被接受（本地半可先做，见 `### P1-33`） | on-site real UXM。⚠️ **不再 gate 在 P1-31 上**（Codex #276 P2 抓出错误依赖）：P1-31 只跑那 9 项 KPI 对账、且限定「手册有依据 + 驱动已在用」的命令，**产不出 MAC 配置命令的形式**；而 2026-08-03 查手册发现**这 8 组命令 `BSE:` 形式手册里全都有** —— 卡点不是「不知道命令」，是「没在真机上验过」 | ⚠️ **半覆盖** `uxm_scpi_compatibility` —— 命令被枚举探了, 但**判定集不对**(`TDD_PATTERN` 在 critical 里却恒 `None` → 该序列在 IRAT 上恒判失败; `MAC_CFG_MANDATORY` 里多数不在 critical → 被拒也报 OK)。**别当已完成**, 修法见 `### P1-46` 第 2 件交付物 |
 
 ⚠️ 表里 **P1-33 现场半不是 P0**，不抢 P0-5 / P0-8 的窗口，排在 P0 之后。
 **不依赖 P1-31** —— 命令形式手册里有，本地半已进 LOCAL-OPEN 队列；
@@ -2160,7 +2170,7 @@ backlog，**同时问它落在哪个序列里**；没有就出发前补一个」
 |---|---|---|
 | **UXM 在小区 ON 态同值写 band/duplex 会不会掉 DUT** | **C** | **新写** `uxm_idempotent_write_probe` |
 | 开关1 inherit 只核对频率、层数是盲区 | C | 并入上条同一序列 |
-| P1-6 现场半：真 idle-close 复现 | C | ⚠️ **移出本片**（Codex #293 R2）—— 它是 **F64 侧**剧本，跟 UXM 那条不同仪器、不同前置；留在这里会被「本片只写一个 UXM 序列」的结论覆盖掉，等于永远没有载体。**单列一行进 Discovered，等 F64 侧剧本一起排**
+| P1-6 现场半：真 idle-close 复现 | C | ⚠️ **移出本片**，且 **我上一轮把它归错了驱动**（Codex #293 R3）—— P1-6 的正式定义是「**FS16 / UXM / ENA** silent-reconnect 集成测试」，条目原文明写 **F64 已有 12 个集成测试**、缺的是另外三个驱动。我上一轮写「F64 侧剧本、跟 `propsim_f64_state_machine` 一起排」**正好指向唯一不需要的那个**。正解：载体打在 **FS16 / UXM / ENA** 三个上 |
 
 ⚠️ **最值钱的是那条 C 类**：「ON 态同值写 band/duplex 掉不掉 DUT」是**真机零实证** ——
 今天既没有载体，也没有任何依据。猜错了现场直接掉 DUT，而掉 DUT 意味着重新 attach，
@@ -2177,8 +2187,20 @@ backlog，**同时问它落在哪个序列里**；没有就出发前补一个」
 ③ 出发前用 mock 跑一遍 —— **只证明序列本身不崩，不证明问对了问题**，别当验收。
 
 **本片的交付物（两件，别再多）**：
-1. **写 `uxm_idempotent_write_probe`**（C 类剧本：ON 态同值写 band/duplex 掉不掉 DUT
-   + inherit 层数盲区）—— 必须过 review 再写。
+1. **写 `uxm_idempotent_write_probe`**（C 类剧本，**只做 ON 态同值写 band/duplex 掉不掉 DUT**）
+   —— 必须过 review 再写。
+
+   ⚠️ **「inherit 层数盲区」已从本交付物剔除**（Codex #293 R3 的 P1）——
+   原先把它跟同值写捆在一条序列里，但**没有指定怎么观测层数**，而实况是
+   **今天不知道怎么观测**：① 源 backlog 明写「UE capability **测不出**小区实际
+   生效在比请求更少的层数上」，配置查询**可能只是回声**；② `MIMO_DL_LAYERS` 在
+   `UxmLteNrIratProfile` 上是 `None`（只有 `Uxm5GNRTestAppProfile` 有），
+   而序列规矩是「只放生产驱动已在用的命令」；③ 我要求的查手册范围只写了
+   band/duplex，压根没覆盖层数。
+   **后果**：照原样做，序列会满足「同值写」那一半而通过，却把一个**继承下来的
+   2 层小区当成 4 层实验**报上去 —— 比没有序列更危险。
+   **正解**：先解决「有没有一条能读到**实际生效层数**的命令」（查手册；查不到就
+   定一个显式的 raw 回复 / 面板比对判据），**有了观测手段再排**，不要捆进本片。
 2. **把 `uxm_scpi_compatibility` 的判定集跟 `MAC_CFG_MANDATORY` 对齐**
    （见上方 P1-33 那条）—— 纯判定集调整，不加探针。
 
@@ -3084,7 +3106,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 - `[discovered 2026-08-06 during P1-39 拆分后外审，已修主体，余项记此]` **跳转到日志时会发两次 `/tail`（P3，纯浪费不影响正确性）** —— 实测：修惰性初值前是 **3 个请求、其中 2 个不带 `execution_id`**（未过滤结果可能乱序盖掉已过滤的，而徽章已显示过滤）；`ReportsPage` + `SystemLogViewer` 两层都用惰性初值之后是 **2 个请求、0 个不带过滤** —— 竞态已消除（两个都过滤到同一执行，乱序也一样）。剩下那次重复大概率来自 `clearTextFilters()` 改了 `levelFilter`/`keyword` 触发的 refetch。修法候选：把「预填过滤 + 清文本过滤」合并成一次 state 更新，或给取数加去重/取消。⚠️ 别为此加请求管理机制 —— 量级只有一次多余请求。
 - `[discovered 2026-08-06 during P1-45/46 立项，Codex #293 R2 P1 抓出]` **⚠️ `uxm_scpi_compatibility` 在 IRAT 方言上永远不可能成功（P1，活 bug）** —— `_CRITICAL_NAMES` 里含 `TDD_PATTERN`，而它在 `UxmLteNrIratProfile` 上**是 `None`**（P1-33 逐条 grep 手册原件确认「手册 0 命中」——TDD 在本仪器上是**六个数**不是 pattern 字符串）。`uxm_scpi_compatibility:520-533` 的 `critical_undefined` 把「在 critical 集里但 profile 上不是 str」的全收进来并令 `success = False` → **该序列在 IRAT 上每次都判失败**，而现场就是靠它给 P1-33 结论。⚠️ **同一形态已经处理过一次**：`:146-152` 因为完全相同的理由把 `MEAS_BTHROUGHPUT_DL_BLER` 移出了 critical 清单，**`TDD_PATTERN` 漏了**。修法随 **P1-46** 第 2 件交付物一起做（判定集跟 `MAC_CFG_MANDATORY` 对齐 + 排除 `MAC_CFG_NO_EQUIVALENT` 那档）。
-- `[discovered 2026-08-06 during P1-45/46 立项，Codex #293 R2 P2 —— 从 P1-46 移出]` **P1-6 现场半（真 idle-close 复现）没有载体序列（P3）** —— 属 C 类「一串动作之后会怎样」，但它是 **F64 侧**剧本，跟 P1-46 那条 UXM 剧本不同仪器、不同前置。留在 P1-46 里会被「本片只写一个 UXM 序列」的结论覆盖掉，等于永远没有载体。**等 F64 侧剧本一起排**（可与 `propsim_f64_state_machine` 合并考虑）。
+- `[discovered 2026-08-06 during P1-45/46 立项，Codex #293 R2→R3 两轮才判对]` **P1-6 现场半（真 idle-close 复现）没有载体序列（P3）** —— ⚠️ **我判错过一次**：R2 时写成「F64 侧剧本，跟 `propsim_f64_state_machine` 一起排」，而 P1-6 的正式定义（`### P1-6`）是「**FS16 / UXM / ENA** silent-reconnect 集成测试」，条目原文明写「**F64 已有 12 个集成测试**，FS16 / UXM / ENA 继承了同一模式但没有各自的集成测试」——**我指向了唯一已经覆盖了的那个驱动**。正解：载体要打在 **FS16**（`propsim_fs16_health` 可扩）/ **UXM** / **ENA**（`vna_ena_health` 可扩）三个上，且它是 C 类（要制造 idle 再看重连），不是只读普查。
 - `[discovered 2026-08-06 during P1-39 内审 F7 域枚举 —— 判定为越界，本片未做]` **「待归档执行」是第 4 个拿不到 ID 的界面（P3）** —— `gui/src/features/Reports/components/PendingExecutionsList.tsx` 的两张表都只把 `record.id` / `record.execution_id` 当 React `key`，列是 用例名/时长/完成日期/来源/操作，**跟 P1-39 改动前那三处一模一样**。它就在报告页第一个页签，跟系统日志同页并列。修法**已经现成**：套用本片的 `CopyableId` + `formatExecutionTag`，零新机制。⚠️ 同族第二例：`gui/src/features/TestManagement/README.md` 的用法示例写 `<TestManagement />`，没提 P1-39 新加的 `onViewLogs` —— 而同一份 README 里已有一段专门讲「`onCreateNew` 没人传所以入口不可达」，同一个坑的第二次。
 - `[discovered 2026-08-06 during P1-39 浏览器实测 —— pre-existing，判定为越界，本片未做]` **系统日志表「消息」列被挤到 83px，正文竖着排（P3）** —— 1280 视口实测各列宽：展开 32 / 时间 107 / 级别 70 / 请求 86 / 执行 86 / 模式 60 / **Logger 338** / **消息 83**。`Logger` 声明 `w={250}` 但被 `app.services.test_case_runner` 这类长 token 撑到 338，而**「消息」列没有 min-width 也不横向滚**（容器 `scrollWidth == clientWidth`），于是正文被压成一条竖带，等于读不了。**与 P1-39 无关**（该片一处列宽都没动，`git diff` 已核），但 P1-36 加「执行」列后更明显。修法候选：给消息列 `miw` + Logger 列 `truncate`/`ellipsis`，或整表加 `overflow-x: auto`（⚠ 后者要跟 sticky 表头一起验，别滚出错位）。
 - `[discovered 2026-08-06 during P1-39]` **执行快照名里的时间戳是 UTC，跟界面上所有其它时间差一个时区（P3）** —— `test_case_runner.py:134` 用 `datetime.utcnow().strftime('%Y%m%d-%H%M%S')` 拼进快照用例名（`S6-验收-五步闭环 [执行 20260806-005515]`），而 P1-34 已把界面时间统一成**本地时区**。实测同一次执行：名字里 `20260806-005515`，P1-39 新增的执行标签 `20260806-085515`，完成时间列 `2026/8/6 08:55` —— **两个数字并排，看着像自相矛盾**。P1-39 的标签取本地是对的（它要跟日志时间线和墙上的钟对上），**错的是那个名字**。⚠️ 修它要小心：那是**已落库的历史行的名字**，改生成逻辑只影响新行，存量不一致仍在；要不要回填是单独决定。
