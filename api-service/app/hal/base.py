@@ -13,32 +13,31 @@ SCPI 日志架构:
     RX  → 查询拿到响应 (带 duration_ms + resp_len 真实长度)
     ERR → 下发/读取过程中抛异常 (带 duration_ms + error_type), 异常随后原样重抛
 
-  ⚠ **配对要按 `query` 字段, 不能按"相邻行"** —— TX 记在 `_scpi_lock` **之外**
-  且在 `_do_*` 之前, 所以两种情况下 TX 与结果行不相邻:
+  ⚠ **配对只按 `exchange_id`, 不能按"相邻行"或命令文本** —— TX 记在
+  `_scpi_lock` **之外**且在 `_do_*` 之前, 所以两种情况下 TX 与结果行不相邻:
     · **并发** —— 多协程共用一台仪器时 (broadcaster 1 Hz × 32+ 查询与测量
       序列并行), 连续几条 TX 会先落盘, 结果行随后交错回来;
     · **嵌套** —— F64 `_do_query` 超时后在同一条命令的窗口内调
       `_drain_after_timeout` / `_drain_errors`, 那里每条 `SYST:ERR?` 各产生
       一对 TX/RX, 排完才写外层的 ERR。
-  (`OK` 行目前只在 msg 文本里带命令、没有 `query` 字段 —— 给它补上属于加
-   机制, 已进 backlog。)
-
-  ⚠ **只有 TX 没有后续 ≠ 一定失败**, 它是个**多义签名**, 至少覆盖:
-  被上层 `asyncio.wait_for` 超时 / 被 `task.cancel()` 取消 / coroutine 从未
-  被 await / 进程中断。前两种走 `CancelledError`, 它继承 `BaseException`,
-  **本文件的 `except Exception` 抓不到**, 所以不会留下 ERR 行 —— 这是当前
-  已知的证据缺口, 不是本片修好了的东西 (要覆盖须改成 `except BaseException`
-  + 裸 raise, 已进 backlog)。
+  每行同时携带结构化 `operation`（query/command）与脱敏后的 `command`；
+  timeout/cancelled/transport exception 都会以同一 ID 写 ERR 后原样传播。
+  原生 async 驱动在 task 真正启动后才记 TX；创建后立即取消/从未执行不会留下
+  虚假发送意图。仍可能只留 TX 的边界只剩进程在终态落盘前被强制中断，且不能
+  被伪造成成功。
 
   ⚠ **`duration_ms` 的口径包含排队等锁的时间** —— 对 async 驱动 (F64/FS16),
-  t0 取在 coroutine **创建**时刻, 而 `_scpi_lock` 在 coroutine **内部**才拿;
+  t0 取在 async task **开始执行**时刻, 而 `_scpi_lock` 在 `_do_*` **内部**才拿;
   ERR 的 duration_ms 还额外含 `_drain_after_timeout` 的排水时间 (上界 64 次
   `SYST:ERR?`)。所以它答的是"这次调用从发起到落定花了多久", **不是**"仪器
   响应花了多久" —— 看到 8000ms 别直接判仪器慢。
 """
 
 import asyncio
+import inspect
+import re
 import time
+from uuid import uuid4
 from abc import ABC, abstractmethod
 from enum import Enum
 import logging
@@ -79,6 +78,219 @@ def _resolve_resp_max() -> int:
 
 
 _SCPI_LOG_RESP_MAX = _resolve_resp_max()
+
+
+_IMSI_LOG_RE = re.compile(
+    r"((?<![A-Za-z0-9])(?:[A-Za-z][A-Za-z0-9_-]*)?IMSI\b"
+    r"[\"']?(?:\s*[:=,]\s*|\s+)[\"']?)(\d{10,18})([\"']?)",
+    re.IGNORECASE,
+)
+_AUTH_SECRET_LOG_RE = re.compile(
+    r"((?<![A-Za-z0-9])(?:[A-Za-z][A-Za-z0-9_-]*)?"
+    r"(?:KI|OPC|PASSWORD|PASSWD|SECRET|TOKEN|AUTH(?:ENTICATION)?[_:]?KEY)"
+    r"\b[\"']?(?:\s*[:=,]\s*|\s+))"
+    r'(?:"[^"]*"|\'[^\']*\'|[^\"\';,\s}]+)',
+    re.IGNORECASE,
+)
+_BARE_IMSI_LOG_RE = re.compile(r"(?<!\d)(\d{10,18})(?!\d)")
+_DIRECT_AUTH_PATH_TOKENS = frozenset({
+    "KI", "OPC", "PASSWORD", "PASSWD", "SECRET", "TOKEN",
+})
+_AUTHENTICATION_HEADER = "AUTHENTICATION"
+
+
+def _is_authentication_token(token: str) -> bool:
+    """识别 SCPI ``AUTHentication`` 从最短到全写的全部合法缩写。"""
+    normalized = token.upper()
+    return (
+        len(normalized) >= len("AUTH")
+        and _AUTHENTICATION_HEADER.startswith(normalized)
+    )
+
+
+def _is_authentication_key_token(token: str) -> bool:
+    normalized = token.upper()
+    return any(
+        normalized.endswith(suffix)
+        and _is_authentication_token(normalized[:-len(suffix)])
+        for suffix in ("_KEY", "KEY")
+    )
+
+
+def _split_scpi_program_message(command: str) -> List[str]:
+    """按未被引号包裹的分号切分 SCPI program message。"""
+    segments: List[str] = []
+    current: List[str] = []
+    quote: Optional[str] = None
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if quote is not None:
+            current.append(char)
+            if char == "\\" and index + 1 < len(command):
+                # 宽容处理常见反斜杠转义；SCPI 标准字符串的双引号转义见下支。
+                index += 1
+                current.append(command[index])
+            elif char == quote:
+                if index + 1 < len(command) and command[index + 1] == quote:
+                    index += 1
+                    current.append(command[index])
+                else:
+                    quote = None
+        elif char in {'"', "'"}:
+            quote = char
+            current.append(char)
+        elif char == ";":
+            segments.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+        index += 1
+    segments.append("".join(current))
+    return segments
+
+
+def _auth_secret_path_tokens(tokens: List[str]) -> bool:
+    """判定已解析的绝对 header 路径是否指向认证秘密。"""
+    if tokens == ["*OPC"]:
+        return False
+    if any(token in _DIRECT_AUTH_PATH_TOKENS for token in tokens):
+        return True
+    if any(_is_authentication_key_token(token) for token in tokens):
+        return True
+    auth_positions = [
+        index for index, token in enumerate(tokens)
+        if _is_authentication_token(token)
+    ]
+    return any(
+        any(token in {"KEY", "KI", "OPC"} for token in tokens[index + 1:])
+        for index in auth_positions
+    )
+
+
+def _scpi_segments_with_sensitivity(command: str) -> List[tuple[str, bool]]:
+    """解析分号序列并按 SCPI 相对 header 规则继承命令树上下文。"""
+    classified: List[tuple[str, bool]] = []
+    parent_tokens: List[str] = []
+    for segment in _split_scpi_program_message(command):
+        stripped = segment.strip()
+        if not stripped:
+            classified.append((segment, False))
+            continue
+
+        raw_header = stripped.split(maxsplit=1)[0]
+        header = raw_header.upper().removesuffix("?")
+        if header.startswith("*"):
+            # IEEE 488.2 common command 不属于仪器命令树，也不改变后续相对
+            # header 的当前路径；例如 ``...:VALUE x;*OPC?;VALUE y``。
+            classified.append((segment, False))
+            continue
+
+        own_tokens = [token for token in header.split(":") if token]
+        resolved_tokens = (
+            own_tokens
+            if raw_header.startswith(":")
+            else [*parent_tokens, *own_tokens]
+        )
+        classified.append((segment, _auth_secret_path_tokens(resolved_tokens)))
+        if resolved_tokens:
+            parent_tokens = resolved_tokens[:-1]
+    return classified
+
+
+def _queries_auth_secret(cmd: str) -> bool:
+    return any(
+        segment.strip().split(maxsplit=1)[0].endswith("?")
+        and sensitive
+        for segment, sensitive in _scpi_segments_with_sensitivity(cmd)
+        if segment.strip()
+    )
+
+
+def _command_has_auth_secret_operand(cmd: str) -> bool:
+    return any(
+        sensitive
+        and len(segment.strip().split(maxsplit=1)) == 2
+        for segment, sensitive in _scpi_segments_with_sensitivity(cmd)
+    )
+
+
+def redact_instrument_log_text(
+    value: Any, *, mask_bare_imsi: bool = False
+) -> str:
+    """只清洗日志副本，不改变真正下发给仪器的命令或返回给调用方的回复。
+
+    IMSI 保留末四位用于现场区分卡；Ki/OPc、密码、token 等认证秘密完全移除。
+    同一函数同时用于 TX/RX/ERR 与绕过 SCPI 基类的 AeroBasic socket 路径。
+    """
+    text = str(value)
+
+    def _mask_imsi(match: re.Match[str]) -> str:
+        digits = match.group(2)
+        masked = "*" * max(0, len(digits) - 4) + digits[-4:]
+        return f"{match.group(1)}{masked}{match.group(3)}"
+
+    text = _IMSI_LOG_RE.sub(_mask_imsi, text)
+    if mask_bare_imsi:
+        text = _BARE_IMSI_LOG_RE.sub(
+            lambda match: "*" * (len(match.group(1)) - 4) + match.group(1)[-4:],
+            text,
+        )
+    return _AUTH_SECRET_LOG_RE.sub(
+        lambda match: f"{match.group(1)}[REDACTED]",
+        text,
+    )
+
+
+def redact_instrument_command_text(command: Any) -> str:
+    """清洗命令副本；分层认证路径保留 header，只遮蔽最终操作数。"""
+    safe_parts: List[str] = []
+    for part, sensitive in _scpi_segments_with_sensitivity(str(command)):
+        match = re.match(r"(\s*\S+)(\s+)(.*)", part, re.DOTALL)
+        if match and sensitive:
+            safe_parts.append(f"{match.group(1)}{match.group(2)}[REDACTED]")
+        elif sensitive:
+            # 查询 header 本身不是秘密；不能再交给通用文本规则，否则
+            # ``CONF:AUTH:KEY:VALUE?`` 会被误改成不可辨识的半条命令。
+            safe_parts.append(part)
+        else:
+            safe_parts.append(redact_instrument_log_text(part))
+    return ";".join(safe_parts)
+
+
+def redact_instrument_exchange_text(value: Any, *, command: str) -> str:
+    """清洗与一条命令关联的响应/异常副本，保留真正传输值不变。"""
+    text = redact_instrument_log_text(
+        value,
+        mask_bare_imsi="IMSI" in command.upper(),
+    )
+    # 两类需要整段遮蔽：① 查询本身会返回裸认证秘密；② 写命令携带认证秘密，
+    # 失败异常可能只回显裸值。IMSI 不走第二类，仍保留末四位的现场辨识能力。
+    if text and (
+        _queries_auth_secret(command)
+        or _command_has_auth_secret_operand(command)
+    ):
+        return "[REDACTED]"
+    return text
+
+
+def _response_result_type(response: str) -> str:
+    if response == "":
+        return "empty_response"
+    stripped = response.strip()
+    if stripped == "":
+        return "whitespace_response"
+    if stripped.casefold() == "not ready":
+        return "not_ready"
+    return "response"
+
+
+def _exception_result_type(exc: BaseException) -> str:
+    if isinstance(exc, asyncio.CancelledError):
+        return "cancelled"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    return "exception"
 
 
 class InstrumentStatus(str, Enum):
@@ -168,19 +380,40 @@ class InstrumentDriver(ABC):
 
     # ── SCPI 日志记录 (内部使用) ───────────────────────────────
 
-    def _log_scpi_write(self, cmd: str) -> None:
+    @staticmethod
+    def _new_exchange_id() -> str:
+        return uuid4().hex
+
+    def _log_scpi_write(
+        self, cmd: str, exchange_id: str, operation: str
+    ) -> None:
         """记录"即将下发"到 scpi.log。
 
         ⚠ 这行**不代表仪器收到了** —— 它记在 _do_write / _do_query 执行之前,
         语义是"程序打算发这条"。是否走完看配对的 OK / RX / ERR 行。
         """
+        safe_cmd = redact_instrument_command_text(cmd)
         self._scpi_logger.debug(
-            f"TX: {cmd}",
-            extra={"instrument_id": self.instrument_id, "direction": "TX"},
+            f"TX: {safe_cmd}",
+            extra={
+                "instrument_id": self.instrument_id,
+                "direction": "TX",
+                "exchange_id": exchange_id,
+                "operation": operation,
+                "command": safe_cmd,
+                "result_type": "intent",
+            },
         )
 
     def _log_scpi_response(
-        self, cmd: str, response: str, duration_ms: Optional[float] = None
+        self,
+        cmd: str,
+        response: str,
+        duration_ms: Optional[float] = None,
+        *,
+        exchange_id: str,
+        operation: str,
+        result_type: Optional[str] = None,
     ) -> None:
         """记录 SCPI 查询及其响应到 scpi.log。
 
@@ -196,7 +429,8 @@ class InstrumentDriver(ABC):
         拿"空回复 60,565 条"当立项证据的, 量错了长度等于把证据量废。
         """
         raw_len = len(response)
-        body = response.strip()
+        safe_cmd = redact_instrument_command_text(cmd)
+        body = redact_instrument_exchange_text(response, command=cmd).strip()
         shown_len = len(body)
         if shown_len > _SCPI_LOG_RESP_MAX:
             body = (
@@ -206,31 +440,54 @@ class InstrumentDriver(ABC):
         extra: Dict[str, Any] = {
             "instrument_id": self.instrument_id,
             "direction": "RX",
-            "query": cmd,
+            "query": safe_cmd,
+            "exchange_id": exchange_id,
+            "operation": operation,
+            "command": safe_cmd,
+            "response": body,
+            "result_type": result_type or _response_result_type(response),
             "resp_len": raw_len,
         }
         if duration_ms is not None:
             extra["duration_ms"] = round(duration_ms, 3)
         self._scpi_logger.debug(f"RX: {body}", extra=extra)
 
-    def _log_scpi_done(self, cmd: str, duration_ms: float) -> None:
+    def _log_scpi_done(
+        self,
+        cmd: str,
+        duration_ms: float,
+        *,
+        exchange_id: str,
+        operation: str,
+    ) -> None:
         """记录写命令下发完成 (无响应体) 到 scpi.log。
 
         写命令在 real 模式下只占 SCPI 流量的 ~1% (实测 2,293 条写 vs
         261,755 条查询), 所以给每条写补一条完成行的体量代价可忽略,
         换来的是"发了就一定有配对记录", 不必靠"没看到报错"去推断成功。
         """
+        safe_cmd = redact_instrument_command_text(cmd)
         self._scpi_logger.debug(
-            f"OK: {cmd}",
+            f"OK: {safe_cmd}",
             extra={
                 "instrument_id": self.instrument_id,
                 "direction": "OK",
+                "exchange_id": exchange_id,
+                "operation": operation,
+                "command": safe_cmd,
+                "result_type": "ok",
                 "duration_ms": round(duration_ms, 3),
             },
         )
 
     def _log_scpi_error(
-        self, cmd: str, exc: BaseException, duration_ms: float
+        self,
+        cmd: str,
+        exc: BaseException,
+        duration_ms: float,
+        *,
+        exchange_id: str,
+        operation: str,
     ) -> None:
         """记录往返过程中抛出的异常到 scpi.log。
 
@@ -243,18 +500,23 @@ class InstrumentDriver(ABC):
         这类写法会把整段响应嵌进异常, 不设限的话被 RX 挡住的 3412 字符会从
         ERR 行原样漏出去, 与本片"给日志加边界"正相反。
         """
-        detail = str(exc)
+        safe_cmd = redact_instrument_command_text(cmd)
+        detail = redact_instrument_exchange_text(exc, command=cmd)
         if len(detail) > _SCPI_LOG_RESP_MAX:
             detail = (
                 f"{detail[:_SCPI_LOG_RESP_MAX]}"
                 f"…[truncated {_SCPI_LOG_RESP_MAX}/{len(detail)}]"
             )
         self._scpi_logger.debug(
-            f"ERR: {cmd} -> {type(exc).__name__}: {detail}",
+            f"ERR: {safe_cmd} -> {type(exc).__name__}: {detail}",
             extra={
                 "instrument_id": self.instrument_id,
                 "direction": "ERR",
-                "query": cmd,
+                "query": safe_cmd,
+                "exchange_id": exchange_id,
+                "operation": operation,
+                "command": safe_cmd,
+                "result_type": _exception_result_type(exc),
                 "error_type": type(exc).__name__,
                 "duration_ms": round(duration_ms, 3),
             },
@@ -286,29 +548,93 @@ class InstrumentDriver(ABC):
 
         子类应覆盖 _do_write() 而非本方法。
         """
-        self._log_scpi_write(cmd)
+        # 原生 async 驱动必须把“TX 意图”和底层 coroutine 的创建一起延迟到
+        # task 真正启动。create_task 后立即 cancel 的任务根本没有执行，不能先
+        # 留一条看似已发送、却永远不可能配到终态的 TX。
+        if inspect.iscoroutinefunction(self._do_write):
+            return self._run_native_async_write(cmd, kwargs)
+
+        exchange_id = self._new_exchange_id()
+        operation = "command"
+        self._log_scpi_write(cmd, exchange_id, operation)
         t0 = time.perf_counter()
         try:
             result = self._do_write(cmd, **kwargs)
-        except Exception as exc:
+        except BaseException as exc:
             # 只记日志, 异常**原样重抛** —— 控制流零变化。
-            self._log_scpi_error(cmd, exc, (time.perf_counter() - t0) * 1000)
+            self._log_scpi_error(
+                cmd,
+                exc,
+                (time.perf_counter() - t0) * 1000,
+                exchange_id=exchange_id,
+                operation=operation,
+            )
             raise
         # _do_write 可能是同步或异步实现 — 异步时返回 coroutine,
         # 包一层让 OK / ERR 行在真正执行完之后才写 (与 _query 同形态)。
         if asyncio.iscoroutine(result):
-            return self._log_write_done_after_await(cmd, result, t0)
-        self._log_scpi_done(cmd, (time.perf_counter() - t0) * 1000)
+            return self._log_write_done_after_await(
+                cmd, result, t0, exchange_id, operation
+            )
+        self._log_scpi_done(
+            cmd,
+            (time.perf_counter() - t0) * 1000,
+            exchange_id=exchange_id,
+            operation=operation,
+        )
         return result
 
-    async def _log_write_done_after_await(self, cmd: str, coro, t0: float):
+    async def _run_native_async_write(self, cmd: str, kwargs: Dict[str, Any]):
+        """原生 async 写路径：task 启动后才产生 TX，并保证终态配对。"""
+        exchange_id = self._new_exchange_id()
+        operation = "command"
+        self._log_scpi_write(cmd, exchange_id, operation)
+        t0 = time.perf_counter()
+        try:
+            result = await self._do_write(cmd, **kwargs)
+        except BaseException as exc:
+            self._log_scpi_error(
+                cmd,
+                exc,
+                (time.perf_counter() - t0) * 1000,
+                exchange_id=exchange_id,
+                operation=operation,
+            )
+            raise
+        self._log_scpi_done(
+            cmd,
+            (time.perf_counter() - t0) * 1000,
+            exchange_id=exchange_id,
+            operation=operation,
+        )
+        return result
+
+    async def _log_write_done_after_await(
+        self,
+        cmd: str,
+        coro,
+        t0: float,
+        exchange_id: str,
+        operation: str,
+    ):
         """Helper: await 异步 _do_write, 写 OK / ERR 行, 返回原结果。"""
         try:
             result = await coro
-        except Exception as exc:
-            self._log_scpi_error(cmd, exc, (time.perf_counter() - t0) * 1000)
+        except BaseException as exc:
+            self._log_scpi_error(
+                cmd,
+                exc,
+                (time.perf_counter() - t0) * 1000,
+                exchange_id=exchange_id,
+                operation=operation,
+            )
             raise
-        self._log_scpi_done(cmd, (time.perf_counter() - t0) * 1000)
+        self._log_scpi_done(
+            cmd,
+            (time.perf_counter() - t0) * 1000,
+            exchange_id=exchange_id,
+            operation=operation,
+        )
         return result
 
     def _query(self, cmd: str, **kwargs):
@@ -320,35 +646,95 @@ class InstrumentDriver(ABC):
 
         子类应覆盖 _do_query() 而非本方法。
         """
-        self._log_scpi_write(cmd)
+        if inspect.iscoroutinefunction(self._do_query):
+            return self._run_native_async_query(cmd, kwargs)
+
+        exchange_id = self._new_exchange_id()
+        operation = "query"
+        self._log_scpi_write(cmd, exchange_id, operation)
         t0 = time.perf_counter()
         try:
             result = self._do_query(cmd, **kwargs)
-        except Exception as exc:
+        except BaseException as exc:
             # 只记日志, 异常**原样重抛** —— 控制流零变化。
-            self._log_scpi_error(cmd, exc, (time.perf_counter() - t0) * 1000)
+            self._log_scpi_error(
+                cmd,
+                exc,
+                (time.perf_counter() - t0) * 1000,
+                exchange_id=exchange_id,
+                operation=operation,
+            )
             raise
         if asyncio.iscoroutine(result):
             # 异步路径：包装一层 coroutine，让 RX 日志在真正拿到字符串
             # 之后再写。直接 ``return result`` 会让 _log_scpi_response
             # 永远拿不到 RX，scpi.log 里只有 TX 没有 RX。
-            return self._log_response_after_await(cmd, result, t0)
+            return self._log_response_after_await(
+                cmd, result, t0, exchange_id, operation
+            )
         # 同步路径：直接写日志 + 返回。
-        self._log_scpi_response(cmd, result, (time.perf_counter() - t0) * 1000)
+        self._log_scpi_response(
+            cmd,
+            result,
+            (time.perf_counter() - t0) * 1000,
+            exchange_id=exchange_id,
+            operation=operation,
+        )
         return result
 
+    async def _run_native_async_query(self, cmd: str, kwargs: Dict[str, Any]):
+        """原生 async 查询路径：task 启动后才产生 TX，并保证终态配对。"""
+        exchange_id = self._new_exchange_id()
+        operation = "query"
+        self._log_scpi_write(cmd, exchange_id, operation)
+        t0 = time.perf_counter()
+        try:
+            response = await self._do_query(cmd, **kwargs)
+        except BaseException as exc:
+            self._log_scpi_error(
+                cmd,
+                exc,
+                (time.perf_counter() - t0) * 1000,
+                exchange_id=exchange_id,
+                operation=operation,
+            )
+            raise
+        self._log_scpi_response(
+            cmd,
+            response,
+            (time.perf_counter() - t0) * 1000,
+            exchange_id=exchange_id,
+            operation=operation,
+        )
+        return response
+
     async def _log_response_after_await(
-        self, cmd: str, coro, t0: Optional[float] = None
+        self,
+        cmd: str,
+        coro,
+        t0: float,
+        exchange_id: str,
+        operation: str = "query",
     ):
         """Helper: await an async _do_query result, log RX, return string."""
-        if t0 is None:
-            t0 = time.perf_counter()
         try:
             response = await coro
-        except Exception as exc:
-            self._log_scpi_error(cmd, exc, (time.perf_counter() - t0) * 1000)
+        except BaseException as exc:
+            self._log_scpi_error(
+                cmd,
+                exc,
+                (time.perf_counter() - t0) * 1000,
+                exchange_id=exchange_id,
+                operation=operation,
+            )
             raise
-        self._log_scpi_response(cmd, response, (time.perf_counter() - t0) * 1000)
+        self._log_scpi_response(
+            cmd,
+            response,
+            (time.perf_counter() - t0) * 1000,
+            exchange_id=exchange_id,
+            operation=operation,
+        )
         return response
 
     def _do_write(self, cmd: str, **kwargs) -> None:

@@ -48,6 +48,8 @@ from app.hal.base import (
     InstrumentStatus,
     InstrumentCapability,
     InstrumentMetrics,
+    redact_instrument_command_text,
+    redact_instrument_exchange_text,
 )
 from app.hal.channel_emulator import (
     CalibrationToneCapability,
@@ -4528,6 +4530,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         全程已持 _scpi_lock (由 _do_write/_do_query 调用)。失败只记日志 —
         原始超时异常由调用方上抛, 这里不再抛。
         """
+        safe_timed_out_cmd = redact_instrument_command_text(timed_out_cmd)
         try:
             for _ in range(4):
                 try:
@@ -4537,9 +4540,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                         stale = await asyncio.to_thread(self._visa_resource.read)
                     finally:
                         self._visa_resource.timeout = original
-                    logger.info(
-                        f"[F64] 排水: 吃掉迟到应答 {str(stale).strip()[:60]!r}"
-                    )
+                    safe_stale = redact_instrument_exchange_text(
+                        stale, command=timed_out_cmd
+                    ).strip()
+                    logger.info(f"[F64] 排水: 吃掉迟到应答 {safe_stale[:60]!r}")
                 except Exception:
                     break  # 读超时 = 无更多残留应答, 会话已对齐
             for i in range(4):
@@ -4554,13 +4558,17 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 if re.match(r'^\+?0\s*,\s*"?no error', resp, re.IGNORECASE):
                     logger.warning(
                         f"[F64] 超时排水完成 (残留已清 + {i + 1} 条 ERR) — 会话已净 "
-                        f"(超时命令: {timed_out_cmd[:40]!r})"
+                        f"(超时命令: {safe_timed_out_cmd[:40]!r})"
                     )
                     return True
             logger.error("[F64] 超时排水仍未净 — 会话已错位, 升级重建会话")
         except Exception as drain_e:  # noqa: BLE001
+            safe_drain_error = redact_instrument_exchange_text(
+                drain_e, command=timed_out_cmd
+            )
             logger.error(
-                f"[F64] 超时排水失败 ({type(drain_e).__name__}: {drain_e}) — "
+                f"[F64] 超时排水失败 ({type(drain_e).__name__}: "
+                f"{safe_drain_error}) — "
                 f"会话已错位, 升级重建会话"
             )
         # F64R-1: 排水**也失败** = 会话确实坏了 → 升级重建 (P0-1 遗留的"业务挂死不自动
@@ -4572,7 +4580,8 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         try:
             if await self._silent_reconnect_visa():
                 logger.warning(
-                    f"[F64] 会话已重建 (超时命令 {timed_out_cmd[:40]!r} 不重放) — "
+                    f"[F64] 会话已重建 (超时命令 "
+                    f"{safe_timed_out_cmd[:40]!r} 不重放) — "
                     f"本次仍报失败, 下一条命令可用"
                 )
             else:
@@ -4583,6 +4592,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
     async def _do_write_unlocked(self, cmd: str, timeout: Optional[int] = None) -> None:
         """实际写 IO (锁内)。conn-lost 一次静默重连重试; 其余异常原样上抛。"""
+        safe_cmd = redact_instrument_command_text(cmd)
         for attempt in (0, 1):
             if timeout:
                 original_timeout = self._visa_resource.timeout
@@ -4594,7 +4604,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             except Exception as e:
                 if attempt == 0 and self._is_visa_conn_lost(e):
                     logger.warning(
-                        f"[F64] VISA connection lost on write '{cmd[:40]}...' "
+                        f"[F64] VISA connection lost on write '{safe_cmd[:40]}...' "
                         f"({type(e).__name__}: code=0x{getattr(e, 'error_code', 0) & 0xFFFFFFFF:08X}) — "
                         f"silent reconnect"
                     )
@@ -4612,6 +4622,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self, cmd: str, timeout: Optional[int] = None, *, note_success: bool = True
     ) -> str:
         """实际查询 IO (锁内) — retry 语义同 `_do_write_unlocked`。"""
+        safe_cmd = redact_instrument_command_text(cmd)
         for attempt in (0, 1):
             if timeout:
                 original_timeout = self._visa_resource.timeout
@@ -4624,7 +4635,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             except Exception as e:
                 if attempt == 0 and self._is_visa_conn_lost(e):
                     logger.warning(
-                        f"[F64] VISA connection lost on query '{cmd[:40]}...' "
+                        f"[F64] VISA connection lost on query '{safe_cmd[:40]}...' "
                         f"({type(e).__name__}: code=0x{getattr(e, 'error_code', 0) & 0xFFFFFFFF:08X}) — "
                         f"silent reconnect"
                     )

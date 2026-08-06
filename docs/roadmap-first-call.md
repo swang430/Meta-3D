@@ -8,16 +8,16 @@
 
 ## 🎯 Current Focus
 
-**当前状态 (2026-08-06)**：ARCH-1 整案收官（S1–S6 全 ✅，见下方 ARCH-1 表）。P0-5
+**当前状态 (2026-08-07)**：ARCH-1 整案收官（S1–S6 全 ✅，见下方 ARCH-1 表）。P0-5
 已经完成 DUT attach 与转台四方向吞吐，证明物理链路可工作；但关键 SCPI 仍缺
 “发送 → 接受 → 生效 → 业务结果”的同次执行证据，**正式自动化验收未关闭**。P0-8
 现场半同样仍 blocked（见 Blocked on hardware 表）。
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
-**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → **P1-47A** → P1-47B → P1-47C → P1-28 → P1-43 → P1-44 → P1-42 → P1-40 → P1-37 → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1）。
+**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → **P1-47B** → P1-47C → P1-28 → P1-43 → P1-44 → P1-42 → P1-40 → P1-37 → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1）。
 
-**Current Focus = P1-47A**。P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
+**Current Focus = P1-47B**。P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
 SCPI 闭环依赖链：先把现场项映射到载体 → 用手册证据修判定和缺失载体 → 止住错误队列
 无限循环 → 补传输配对 → 补仪器接受/生效语义 → 接入正式 TestCase。P1-28 在这条链完成后
 成为 Current Focus。设计与逐片实施计划见
@@ -38,7 +38,7 @@ SCPI 闭环依赖链：先把现场项映射到载体 → 用手册证据修判�
 - **P1-42** `app.audit` 汇总行进 `execution_id` 链（2026-08-06 用户从 Discovered 升格并指定优先；**改纯 ASGI 中间件，零调用点改动**，顺带解掉 WebSocket 拿不到 `request_id` 那条）
 - **P1-40** 日志按「每次运行」分文件 + 空闲期只留基本内容（2026-08-06 用户定方向；分文件轴复用 P1-36 的 ContextVar，**必须扁平命名**）
 - **P1-41** 修 UXM 排错误队列停不下来的循环（7.6 秒 20 万行 / 一次 24 GB 的根因；**动手前必查 NotebookLM**）
-- **P1-47A/B/C** P0-5 SCPI 证据闭环：A=往返配对/取消超时；B=UXM/F64/转台接受与生效；C=TestCase持久化+GUI/报告
+- **P1-47A** ✅ SCPI 往返配对/取消超时/脱敏/30天留存上限；**P1-47B/C**：B=UXM/F64/转台接受与生效；C=TestCase持久化+GUI/报告
 - **P1-37** mock 也产真命令串并记 `scpi.log` + 回复显式标 `simulated`（**下发侧本地可验、回读侧绝不冒充真值**）
 - **P1-38** 活动告警面板：清 674 条测试污染 + 接上真生产者 or 收窄让位（**排在 P1-29 之后** —— 计数徽章依赖那个被遮蔽的端点，Codex #285 R1）
 
@@ -358,6 +358,7 @@ These are still the highest-priority items overall. P0-5 的物理链已跑通�
 | 2026-08-06 | [#295](https://github.com/swang430/Meta-3D/pull/295) | <!--295-coverage-->✅ 全覆盖 | <!--295-gap-->—（R2 在 `36bc478` 上 clean，而 `36bc478` 是 R1 修复 HEAD；唯一未覆盖是回填本行本身，按 [#278](https://github.com/swang430/Meta-3D/pull/278) 无穷递归约定收口） | P1-45 docs-only 映射；R1 在 `c7094ec` 上指出诊断证据持久化承诺过度、P1-5 正式校准载体误判，两条 P2 均已修；R2 在 `36bc478` 上 clean | **2** | ✅ 无需处置 |
 | 2026-08-06 | [#296](https://github.com/swang430/Meta-3D/pull/296) | ⚠️ 有缺口 | 尾部提交 `8d464f8`：R2 要求把诊断关键 observations 持久化、不能只留在会截断的 2KB 摘要；修复新增 `DiagnosticRun.result_extra`、迁移与取消审计，**这批修复本身未再外审** | 两轮上限已到，不发 R3；PR 评论已如实申报。走势 R1 1 P2（同步 VISA 阻塞事件循环）→ R2 1 P2（关键现场证据未持久化），两条均已修并过独立内审/全量测试 | **1** | ⬜ 未处置 —— 下次动 `diagnostic_sequence.py`、`DiagnosticRun` 或诊断持久化时优先补审 |
 | 2026-08-07 | [#297](https://github.com/swang430/Meta-3D/pull/297) | ✅ 全覆盖 | —（R2 在 `53061f4` 上 clean，而 `53061f4` 是 R1 修复 HEAD；唯一未覆盖是回填本行本身，按 [#278](https://github.com/swang430/Meta-3D/pull/278) 无穷递归约定收口） | P1-41；R1 在 `3e594cc` 上出 1 条 P2，指出“归属未知”被误报为“业务命令被拒”。已补契约门并把不可用判定移到记录 rejection 之前；#296 漏行也随 R1 修复进入 R2。R2 在 `53061f4` 上 clean | **1** | ✅ 无需处置 |
+| 2026-08-07 | [#298](https://github.com/swang430/Meta-3D/pull/298) | ⚠️ 有缺口 | R2 后尾部修复（本 commit）：覆盖 `AUTHentication` 从最短 `AUTH` 到全写之间的全部合法 SCPI 缩写；该修复本身未再外审 | 两轮上限已到，不发 R3；走势 R1 1 P1 + 1 P2（分层鉴权末操作数泄漏 / SCPI 复制进长期 `app.log`）→ R2 1 P1（漏识别 `AUTHENT` 等中间缩写），三条均已修并过独立内审与全量测试 | **2** | ⬜ 未处置 —— 下次动 `base.py` 的 SCPI 脱敏器或仪器日志副本时优先补审 |
 | 2026-08-05 | [#285](https://github.com/swang430/Meta-3D/pull/285) | <!--285-coverage-->✅ 全覆盖 | <!--285-gap-->—（R3 在 `e2ad982` 上出的唯一一条就是「补本行」，除此之外的立项正文三轮全过；`e2ad982` rebase 到 #287 之后内容逐字未变，已用 `git diff` 核过）。唯一没覆盖的是回填本行的 commit 自己 —— #278 拍板的无穷递归 | docs-only 立项。**我把轮次走到了 R3 而没有拿授权** —— 规则是上限 2，例外要用户点头（上次 #282 的 R3 是用户明说「走R3」）。这次 R2 那条不是 R1 修复引入的（是立项正文里独立的错误前提），我就自然而然续了一轮，如实记着。三轮 **1 P2 → 1 P2 → 1 P2**，无一条由上轮修复引入。**R2 那条最值钱**：我写「`hal_mode` 字段已存在、不重复造标记」，而它取自**全局** HAL mode，HAL 明确支持 per-instrument 覆盖 —— 全局 real 下被强制 mock 的仪器会把假回复标成 `hal_mode=real`，正好打穿 P1-37 唯一要防的那件事。另：R1 那个 commit `ba41c26` 上，Codex 先出 1 条 P2，我再发一次 `@codex review` 它在**同一个 commit** 上回了 clean —— 同 commit 两种结论，说明「clean」有随机性，别把单次 clean 当保证 | 1 | ✅ 无需处置 |
 | 2026-08-05 | [#286](https://github.com/swang430/Meta-3D/pull/286) | <!--286-coverage-->✅ 全覆盖（代码） | <!--286-gap-->—（R2 审的 `6e58a1b` 就是 R1 修复本身，代码全过；rebase 到 #285/#287 之后 `api-service/` `gui/` `api/` **零字节差异**，已用 `git diff --stat` 核过）。没覆盖的只有回填本行 + 记 backlog 的 docs commit | P1-36 本片。**轮次上限 2 已到，R2 那条 P2 未修、转 backlog** —— 前提我实证过是**真的**（最小 app 探针：同一请求里 endpoint 那行带 `EXEC1234`、`app.audit` 汇总行是 `-`），不修的判据是 ⑦「不改它，P1-36 那个可观察故障还在吗」答**不在了**：R1 修完后执行的开始/过程/结束/取消都在链上，缺的是同一事实的第二份记录且**一跳可达**；三种修法全属「加机制」（最低优先级修法）。两轮 **1 P2 → 1 P2**，都不是上轮修复引入的，且**是同一母题的两个站点**（"执行的痕迹漏在请求侧"）—— R1 补上了 case-runner 那两行，R2 指出 middleware 那行结构上补不了 | 1 | ⬜ 未处置 —— 下次动 `audit_middleware.py` 或再往 `execution_id` 链上加东西时一并评估 |
 ### 📉 更值得看的信号：第一轮 findings 数
@@ -2266,7 +2267,7 @@ A–D 分类，但不拿它覆盖正式流程载体）：
 
 ---
 
-### P1-47 — P0-5 SCPI 指令→回复→接受→生效→结果证据闭环 ⬜（2026-08-06 用户批准，整体置于 P1-28 前）
+### P1-47 — P0-5 SCPI 指令→回复→接受→生效→结果证据闭环 🔄（2026-08-06 用户批准，A 已完成，B/C 待完成）
 
 **可观察故障**：2026-07-21 现场已完成 DUT attach 与转台四方向吞吐，但同一次执行里
 拿不出关键 SCPI 的完整配对、仪器接受证据和实际生效状态。今天只能证明“物理链路能跑”，
@@ -2299,9 +2300,26 @@ A–D 分类，但不拿它覆盖正式流程载体）：
 
 | Slice | 交付 | Acceptance |
 |---|---|---|
-| **P1-47A 传输证据** | 公共 SCPI helper 与活跃 `RealAerotechDriver._send` socket 路径的 TX/OK/RX/ERR 共用同一证据结构和 `exchange_id`；统一 command/query；timeout/cancelled 明确留痕后原样传播；IMSI/认证信息入日志前脱敏；原始 SCPI 日志默认最多保留30天 | UXM/F64/转台并发与嵌套调用均可配对；空串/空白/`not ready` 不合并；变异删除ID、绕过Aerotech、吞取消、取消脱敏/留存上限均红 |
+| **P1-47A 传输证据** ✅ Done（2026-08-07，本 PR） | 公共 SCPI helper 与活跃 `RealAerotechDriver._send` socket 路径的 TX/OK/RX/ERR 共用同一证据结构和 `exchange_id`；统一 command/query；timeout/cancelled 明确留痕后原样传播；IMSI/认证信息入日志前脱敏；原始 SCPI 日志默认最多保留30天 | UXM/F64/转台并发与嵌套调用均可配对；空串/空白/`not ready` 不合并；变异删除ID、绕过Aerotech、吞取消、取消脱敏/留存上限均红 |
 | **P1-47B 仪器证据** | 机器可检查的关键命令手册清单；从真实连接采集型号/固件/Test App；F64 写→OPC→ERR→回读→STATE；UXM 配置回读/APPLY/协议栈状态分层；转台请求角/反馈角/容差 | 实际环境不在证据范围，或证据为 `onsite-observed` / `unverified` 时不得判绿；回显不得冒充生效 |
 | **P1-47C 正式执行** | 同一 `TestExecution.config.scpi_evidence` 持久化 requested/command_sent/readback/exchange_ids/evidence_level/source_reference/verdict/reason 与执行环境快照；执行状态 FastAPI schema/endpoint 读回；ReportDataCollector→ReportService→PDF 活跃链传递；GUI/报告分层展示 | 证据不得 write-only；任一 mandatory 项 unknown/rejected、非confirmed或范围不匹配，正式验收不得显示通过；摘要可由 execution+exchange 精确追溯原始往返；变异让API/collector丢证据必须红 |
+
+**P1-47A 完成实况（2026-08-07）**：公共 SCPI 模板方法和 Aerotech 活跃 socket
+路径都已产生可由 `execution_id + exchange_id` 配对的结构化 TX/OK/RX/ERR；query/
+command、timeout/cancelled、设备拒绝、空串/空白/`not ready` 分型独立，异常原样传播。
+日志副本统一隐藏 IMSI（仅末四位）及 Ki/OPc/认证秘密，专用 `scpi.log` 的日轮转上限
+固定为最多30天，且专用命名空间不再复制进保留期更长的 `app.log`（控制台传播仍保留）。
+53条专项门与6类突变验证通过；内审补抓并闭环
+`*OPC?` 误脱敏、裸密钥异常、启动前取消、零天留存、转台重连取消清理与
+`AXISFAULT` 分类六个边界、引号内含分号的密钥被错误切段泄漏，以及分号后相对
+header 继承认证路径却漏脱敏；R2 尾修复内审又拦下 `AUTHKEY` 无下划线形式的
+兼容性回归。脱敏同时扩到 SCPI 终端、诊断审计副本及
+UXM/F64/FS16 重连告警。GitHub Codex 外审 R1 又抓出并已修复两处：分层鉴权路径
+`CONF:AUTH:KEY:VALUE <secret>` 的末操作数泄漏/查询 header 误改，以及 SCPI 证据
+经 root 重复落入长期 `app.log`；R2 又抓出并已修复 `AUTHentication` 中间缩写漏判。
+两轮上限已到，该尾部修复不发 R3，并已如实登记外审覆盖缺口；后端全量
+`3288 passed, 5 skipped`。本片没有产生需
+另行提升的 Discovered 项，下一片按既定顺序进入 P1-47B。
 
 **正式验收**：诊断序列只做出发前能力/载体验证；P0-5 仍从正式 TestCase 启动。
 同一个 execution 必须证明 UXM RRC connected + bearer active、F64 模型匹配且 RUNNING、
@@ -2355,6 +2373,11 @@ P1-36 已经把 `execution_id` 做成了自动注入的 ContextVar，**分文件
 - 每执行文件：**收到 DEBUG**，含全部 SCPI 往返
   → 「跑测试例才需要大量交互 log」
 - 判据来源就是 ContextFilter 已经注入的 `execution_id != "-"`，**零新机制**
+
+> **已前置一小步（P1-47A）**：为封住 SCPI 独立文件最多 30 天、却又经 root
+> 复制进长期 `app.log` 的留存漏洞，`app.log` 排除 `app.hal.scpi.*` 已随 P1-47A
+> 落地；传播仍开启，控制台可见性不变。P1-40 后续不重复实现这一项，只完成
+> INFO 基线、按 execution 分文件及速率闸门。
 
 **③ 速率闸门（本片的止血阀，不做就白搭）**
 ①②只解决「日志放哪」，**解决不了「7.6 秒 20 万行」** —— 那 20 万行本来就

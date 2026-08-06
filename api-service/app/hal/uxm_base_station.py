@@ -30,6 +30,7 @@ from app.hal.base import (
     InstrumentStatus,
     InstrumentCapability,
     InstrumentMetrics,
+    redact_instrument_command_text,
 )
 from app.hal.base_station import (
     BaseStationDriver,
@@ -2995,6 +2996,7 @@ class RealUxmDriver(BaseStationDriver):
 
     def _do_write(self, cmd: str) -> None:
         """发送 SCPI 写命令（由基类 _write() 自动调用）"""
+        safe_cmd = redact_instrument_command_text(cmd)
         for attempt in (0, 1):
             if not self._visa_session:
                 raise ConnectionError("[UXM] Not connected")
@@ -3004,7 +3006,7 @@ class RealUxmDriver(BaseStationDriver):
             except Exception as e:
                 if attempt == 0 and self._is_visa_conn_lost(e):
                     logger.warning(
-                        f"[UXM] VISA connection lost on write '{cmd[:40]}...' "
+                        f"[UXM] VISA connection lost on write '{safe_cmd[:40]}...' "
                         f"(code=0x{getattr(e, 'error_code', 0) & 0xFFFFFFFF:08X}) "
                         f"— silent reconnect"
                     )
@@ -3014,6 +3016,7 @@ class RealUxmDriver(BaseStationDriver):
 
     def _do_query(self, cmd: str) -> str:
         """发送 SCPI 查询并返回响应（由基类 _query() 自动调用）"""
+        safe_cmd = redact_instrument_command_text(cmd)
         for attempt in (0, 1):
             if not self._visa_session:
                 raise ConnectionError("[UXM] Not connected")
@@ -3022,7 +3025,7 @@ class RealUxmDriver(BaseStationDriver):
             except Exception as e:
                 if attempt == 0 and self._is_visa_conn_lost(e):
                     logger.warning(
-                        f"[UXM] VISA connection lost on query '{cmd[:40]}...' "
+                        f"[UXM] VISA connection lost on query '{safe_cmd[:40]}...' "
                         f"(code=0x{getattr(e, 'error_code', 0) & 0xFFFFFFFF:08X}) "
                         f"— silent reconnect"
                     )

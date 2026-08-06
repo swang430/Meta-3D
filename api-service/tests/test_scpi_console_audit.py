@@ -174,6 +174,48 @@ class TestScpiCommandAudit:
         # No audit when target doesn't exist — there's nothing to point at.
         assert db.query(DiagnosticRun).count() == 0
 
+    def test_auth_write_secret_is_redacted_in_audit_copy(self, category, db):
+        secret = "0123456789ABCDEF0123456789ABCDEF"
+        resp = client.post(
+            f"/api/v1/instruments/{category.category_key}/scpi-command",
+            json={"command": f"CONF:AUTH:KEY:VALUE {secret}"},
+        )
+        assert resp.status_code == 200
+        assert secret in resp.json()["command"], "API 返回值保持原始操作员输入"
+
+        row = db.query(DiagnosticRun).one()
+        persisted = f"{row.target_name} {row.params} {row.output_excerpt} {row.error_message}"
+        assert secret not in persisted
+        assert "[REDACTED]" in persisted
+
+    def test_auth_query_response_is_redacted_only_in_audit_copy(
+        self, category, db, monkeypatch
+    ):
+        secret = "FEDCBA9876543210FEDCBA9876543210"
+
+        class RealAuthDriver:
+            def _query(self, _cmd: str) -> str:
+                return secret
+
+            def _write(self, _cmd: str) -> None:
+                return None
+
+        monkeypatch.setattr(
+            "app.api.instrument._get_loaded_hal_driver",
+            lambda _category_key: RealAuthDriver(),
+        )
+        resp = client.post(
+            f"/api/v1/instruments/{category.category_key}/scpi-command",
+            json={"command": "BSE:AUTH:OPC?"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["response"] == secret
+
+        row = db.query(DiagnosticRun).one()
+        persisted = f"{row.target_name} {row.params} {row.output_excerpt} {row.error_message}"
+        assert secret not in persisted
+        assert "[REDACTED]" in persisted
+
 
 class TestScpiProbeAudit:
     """POST /instruments/{category_key}/scpi-probe writes ONE row, not five."""

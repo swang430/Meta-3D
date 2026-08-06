@@ -72,6 +72,7 @@ from app.hal.base import (
     InstrumentCapability,
     InstrumentMetrics,
     InstrumentStatus,
+    redact_instrument_command_text,
 )
 from app.hal.channel_emulator import (
     CalibrationToneCapability,
@@ -428,6 +429,7 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
             await self._do_write_unlocked(cmd, timeout)
 
     async def _do_write_unlocked(self, cmd: str, timeout: Optional[int] = None) -> None:
+        safe_cmd = redact_instrument_command_text(cmd)
         for attempt in (0, 1):
             if not self._visa_resource:
                 raise RuntimeError("[FS16] No VISA resource")
@@ -439,7 +441,7 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
             except Exception as e:
                 if attempt == 0 and self._is_visa_conn_lost(e):
                     logger.warning(
-                        f"[FS16] VISA connection lost on write '{cmd[:40]}...' "
+                        f"[FS16] VISA connection lost on write '{safe_cmd[:40]}...' "
                         f"(code=0x{getattr(e, 'error_code', 0) & 0xFFFFFFFF:08X}) "
                         f"— silent reconnect"
                     )
@@ -453,6 +455,7 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
             return await self._do_query_unlocked(cmd, timeout)
 
     async def _do_query_unlocked(self, cmd: str, timeout: Optional[int] = None) -> str:
+        safe_cmd = redact_instrument_command_text(cmd)
         for attempt in (0, 1):
             if not self._visa_resource:
                 raise RuntimeError("[FS16] No VISA resource")
@@ -463,7 +466,7 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
             except Exception as e:
                 if attempt == 0 and self._is_visa_conn_lost(e):
                     logger.warning(
-                        f"[FS16] VISA connection lost on query '{cmd[:40]}...' "
+                        f"[FS16] VISA connection lost on query '{safe_cmd[:40]}...' "
                         f"(code=0x{getattr(e, 'error_code', 0) & 0xFFFFFFFF:08X}) "
                         f"— silent reconnect"
                     )

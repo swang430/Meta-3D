@@ -20,6 +20,7 @@ References:
 import asyncio
 import logging
 import socket
+import time
 from typing import Dict, Any, List, Tuple, Optional
 from datetime import datetime
 
@@ -27,6 +28,7 @@ from app.hal.base import (
     InstrumentStatus,
     InstrumentCapability,
     InstrumentMetrics,
+    redact_instrument_log_text,
 )
 from app.hal.positioner import PositionerDriver
 
@@ -163,6 +165,7 @@ class RealAerotechDriver(PositionerDriver):
             AerotechError: 当控制器返回 '!' 错误响应, 或 reconnect 失败时
             asyncio.TimeoutError: 当超时未收到响应时
         """
+        safe_cmd = redact_instrument_log_text(cmd)
         if not self._writer or not self._reader:
             raise AerotechError("Not connected to Aerotech controller")
 
@@ -176,12 +179,12 @@ class RealAerotechDriver(PositionerDriver):
             # "写中途被断" 仍由下方 ConnectionError 路径覆盖, 两路径合并即完备。
             if self._writer.is_closing():
                 logger.warning(
-                    f"[Aerotech] transport already closed before '{cmd}' "
+                    f"[Aerotech] transport already closed before '{safe_cmd}' "
                     f"— lazy reconnect"
                 )
                 if not await self._silent_reconnect():
                     raise AerotechError(
-                        f"Transport closed before '{cmd}' and reconnect failed"
+                        f"Transport closed before '{safe_cmd}' and reconnect failed"
                     )
             try:
                 return await self._tx_rx(cmd)
@@ -198,12 +201,12 @@ class RealAerotechDriver(PositionerDriver):
                 # Only one retry — if the controller is genuinely down
                 # we don't want to hammer it.
                 logger.warning(
-                    f"[Aerotech] connection lost during '{cmd}' "
+                    f"[Aerotech] connection lost during '{safe_cmd}' "
                     f"({type(e).__name__}: {e}) — attempting silent reconnect"
                 )
                 if not await self._silent_reconnect():
                     raise AerotechError(
-                        f"Connection lost during '{cmd}' and reconnect failed"
+                        f"Connection lost during '{safe_cmd}' and reconnect failed"
                     ) from e
                 return await self._tx_rx(cmd)
 
@@ -216,37 +219,71 @@ class RealAerotechDriver(PositionerDriver):
         writes — both come from the same controller behaviour, both need
         the same recovery.
         """
-        self._scpi_logger.debug(
-            f"TX: {cmd}",
-            extra={"instrument_id": self.instrument_id, "direction": "TX"},
-        )
-        self._writer.write((cmd + "\n").encode("ascii"))
-        await self._writer.drain()
+        exchange_id = self._new_exchange_id()
+        operation = self._aerobasic_operation(cmd)
+        self._log_scpi_write(cmd, exchange_id, operation)
+        t0 = time.perf_counter()
+        response_logged = False
+        try:
+            self._writer.write((cmd + "\n").encode("ascii"))
+            await self._writer.drain()
 
-        raw = await asyncio.wait_for(
-            self._reader.readline(), timeout=self.timeout_s
-        )
-        if raw == b"":
-            raise ConnectionResetError(
-                "EOF reading from Aerotech controller (socket closed)"
+            raw = await asyncio.wait_for(
+                self._reader.readline(), timeout=self.timeout_s
             )
-        response = raw.decode("ascii", errors="replace").strip()
+            if raw == b"":
+                raise ConnectionResetError(
+                    "EOF reading from Aerotech controller (socket closed)"
+                )
+            raw_response = raw.decode("ascii", errors="replace")
+            response = raw_response.strip()
+            rejected = response.startswith("!")
+            self._log_scpi_response(
+                cmd,
+                raw_response,
+                (time.perf_counter() - t0) * 1000,
+                exchange_id=exchange_id,
+                operation=operation,
+                result_type="device_rejected" if rejected else None,
+            )
+            response_logged = True
 
-        self._scpi_logger.debug(
-            f"RX: {response}",
-            extra={
-                "instrument_id": self.instrument_id,
-                "direction": "RX",
-                "query": cmd,
-            },
-        )
+            if rejected:
+                safe_cmd = redact_instrument_log_text(cmd)
+                safe_response = redact_instrument_log_text(response)
+                error_msg = (
+                    f"AeroBasic error for '{safe_cmd}': {safe_response}"
+                )
+                logger.error(f"[Aerotech] {error_msg}")
+                raise AerotechError(error_msg)
 
-        if response.startswith("!"):
-            error_msg = f"AeroBasic error for '{cmd}': {response}"
-            logger.error(f"[Aerotech] {error_msg}")
-            raise AerotechError(error_msg)
+            return response.lstrip("%").strip()
+        except BaseException as exc:
+            # `!` 是控制器返回的设备拒绝，已经由 RX/device_rejected 完整落定；
+            # transport exception / timeout / cancelled 才写 ERR。
+            if not response_logged:
+                self._log_scpi_error(
+                    cmd,
+                    exc,
+                    (time.perf_counter() - t0) * 1000,
+                    exchange_id=exchange_id,
+                    operation=operation,
+                )
+            raise
 
-        return response.lstrip("%").strip()
+    @staticmethod
+    def _aerobasic_operation(cmd: str) -> str:
+        """AeroBasic 没有 `?` 约定，按生产查询指令族标结构化类型。"""
+        token = cmd.strip().upper()
+        if token.startswith((
+            "PFBK(",
+            "AXISSTATUS(",
+            "AXISFAULT(",
+            "VFBK(",
+            "GETPARM(",
+        )):
+            return "query"
+        return "command"
 
     async def _silent_reconnect(self) -> bool:
         """Reopen TCP + restore ACK/ENABLE state after an idle close.
@@ -291,10 +328,11 @@ class RealAerotechDriver(PositionerDriver):
             await self._tx_rx(
                 AeroBasicCmd.ENABLE.format(axes=" ".join(self._axes_present))
             )
-        except Exception as e:
-            logger.error(
-                f"[Aerotech] silent reconnect: handshake failed: {e}"
-            )
+        except BaseException as exc:
+            if not isinstance(exc, asyncio.CancelledError):
+                logger.error(
+                    f"[Aerotech] silent reconnect: handshake failed: {exc}"
+                )
             if self._writer:
                 try:
                     self._writer.close()
@@ -302,6 +340,8 @@ class RealAerotechDriver(PositionerDriver):
                     pass
             self._reader = None
             self._writer = None
+            if isinstance(exc, asyncio.CancelledError):
+                raise
             return False
 
         logger.info(
@@ -316,7 +356,11 @@ class RealAerotechDriver(PositionerDriver):
         try:
             return float(result)
         except ValueError:
-            logger.warning(f"[Aerotech] Cannot parse '{result}' as float from '{cmd}'")
+            logger.warning(
+                f"[Aerotech] Cannot parse "
+                f"'{redact_instrument_log_text(result)}' as float from "
+                f"'{redact_instrument_log_text(cmd)}'"
+            )
             return 0.0
 
     def _check_status_bit(self, status_int: int, bit: int) -> bool:

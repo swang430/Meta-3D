@@ -78,6 +78,20 @@ class ContextFilter(logging.Filter):
         return True
 
 
+class ExcludeLoggerPrefixesFilter(logging.Filter):
+    """让专用高敏日志保留在自己的文件，同时仍可传播到控制台。"""
+
+    def __init__(self, prefixes: tuple[str, ...] | list[str]) -> None:
+        super().__init__()
+        self._prefixes = tuple(prefix.rstrip(".") for prefix in prefixes)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not any(
+            record.name == prefix or record.name.startswith(f"{prefix}.")
+            for prefix in self._prefixes
+        )
+
+
 # ============================================================
 # 2. JSON Formatter (无外部依赖的轻量实现)
 # ============================================================
@@ -165,6 +179,11 @@ def setup_logging(
     db_log_path = os.path.join(log_dir, "db.log")
 
     console_level = "DEBUG" if debug else "INFO"
+    # P1-47A：原始仪器往返可能包含高敏现场信息，独立 SCPI 文件无论
+    # 全局日志策略如何放宽，都不得保留超过 30 个日轮转归档。
+    # TimedRotatingFileHandler 的 backupCount=0 语义是“永不删除归档”，不是
+    # “保留零天”。对非正配置收窄为 1 天，避免高敏 SCPI 文件无限累积。
+    scpi_retention_days = min(30, max(1, int(log_retention_days)))
 
     # ---- dictConfig 配置 ----
     config = {
@@ -173,6 +192,10 @@ def setup_logging(
         "filters": {
             "context_filter": {
                 "()": ContextFilter,
+            },
+            "exclude_scpi_from_app": {
+                "()": ExcludeLoggerPrefixesFilter,
+                "prefixes": ["app.hal.scpi"],
             },
         },
         "formatters": {
@@ -201,7 +224,7 @@ def setup_logging(
                 "class": "logging.handlers.TimedRotatingFileHandler",
                 "level": "DEBUG",
                 "formatter": "json",
-                "filters": ["context_filter"],
+                "filters": ["context_filter", "exclude_scpi_from_app"],
                 "filename": app_log_path,
                 "when": "midnight",
                 "interval": 1,
@@ -236,14 +259,15 @@ def setup_logging(
             "filename": scpi_log_path,
             "when": "midnight",
             "interval": 1,
-            "backupCount": log_retention_days,
+            "backupCount": scpi_retention_days,
             "encoding": "utf-8",
         }
-        # app.hal.scpi 命名空间的日志 → 同时写入 scpi.log
+        # app.hal.scpi 命名空间的日志 → 写入 scpi.log，并传播到控制台；
+        # file_app 上的命名空间过滤器阻止同一高敏证据复制进长期 app.log。
         config["loggers"]["app.hal.scpi"] = {
             "level": "DEBUG",
             "handlers": ["file_scpi"],
-            "propagate": True,  # 同时传播到 root (app.log + console)
+            "propagate": True,
         }
 
     # Handler 4 (可选): 数据库 SQL 查询日志
@@ -425,6 +449,6 @@ def setup_logging(
         f"audit={audit_log_path}, "
         f"alert={alert_log_path}, "
         f"frontend={frontend_log_path}, "
-        f"retention={log_retention_days}d"
+        f"retention={log_retention_days}d, "
+        f"scpi_retention={scpi_retention_days}d"
     )
-
