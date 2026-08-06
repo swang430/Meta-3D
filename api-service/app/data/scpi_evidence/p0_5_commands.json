@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "commands": [
+    {
+      "id": "f64.model_load", "instrument": "f64", "mandatory": true,
+      "command": "CALCulate:FILTer:FILE <path>", "query": "DIAGnostic:SIMUlation:MODel:STATE?",
+      "status": "confirmed", "max_evidence_level": "E3",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.3 / 20.6.1.1"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]},
+      "notes": "加载后须 OPC、错误队列、模型/仿真状态共同确认。"
+    },
+    {
+      "id": "f64.operation_complete", "instrument": "f64", "mandatory": true,
+      "command": "*OPC?", "query": "*OPC?", "status": "confirmed", "max_evidence_level": "E1",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim ATE environment and practices AN", "section": "1.3 / User Reference 20.6.1.2"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]},
+      "notes": "只证明操作完成，不证明无错误或已生效。"
+    },
+    {
+      "id": "f64.error_queue", "instrument": "f64", "mandatory": true,
+      "command": "SYSTem:ERRor?", "query": "SYSTem:ERRor?", "status": "confirmed", "max_evidence_level": "E2",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.1 / 20.6.1.1"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "必须在本次事务前清旧队列并在写后读取。"
+    },
+    {
+      "id": "f64.simulation_state", "instrument": "f64", "mandatory": true,
+      "command": "DIAGnostic:SIMUlation:GO", "query": "DIAGnostic:SIMUlation:STATE?", "status": "confirmed", "max_evidence_level": "E3",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.3.14"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "RUNNING 是仿真实际运行判据。"
+    },
+    {
+      "id": "f64.model_state", "instrument": "f64", "mandatory": true,
+      "command": "DIAGnostic:SIMUlation:MODel:STATE?", "query": "DIAGnostic:SIMUlation:MODel:STATE?", "status": "confirmed", "max_evidence_level": "E3",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.3"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "用于核对当前模型/CIR/仿真时间。"
+    },
+    {
+      "id": "f64.center_frequency", "instrument": "f64", "mandatory": true,
+      "command": "CALCulate:FILTer:CENTer:CHannel <channel>,<MHz>", "query": "CALCulate:FILTer:CENTer:CHannel? <channel>", "status": "confirmed", "max_evidence_level": "E2",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.6.1-2"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "中心频率按仿真组生效；回读只证明参数值。"
+    },
+    {
+      "id": "f64.input_reference", "instrument": "f64", "mandatory": true,
+      "command": "INPut:LEVel:AMPLitude:CHannel <input>,<dBm>", "query": "INPut:LEVel:AMPLitude:CHannel? <input>", "status": "confirmed", "max_evidence_level": "E2",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.4.3-5"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "空回复不得解释为已接受。"
+    },
+    {
+      "id": "f64.crest_factor", "instrument": "f64", "mandatory": true,
+      "command": "INPut:CRESt:SET <input>,<dB>", "query": "INPut:CRESt:GET? <input>", "status": "confirmed", "max_evidence_level": "E2",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.4.9-11"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "写后回读并结合输入测量/系统状态判定。"
+    },
+    {
+      "id": "f64.output_gain", "instrument": "f64", "mandatory": true,
+      "command": "OUTPut:GAIN:CHannel <output>,<dB>", "query": "OUTPut:GAIN:CHannel? <output>", "status": "confirmed", "max_evidence_level": "E2",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.5.7-8"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "超范围可能静默钳位，必须回读。"
+    },
+    {
+      "id": "f64.output_loss", "instrument": "f64", "mandatory": true,
+      "command": "OUTPut:LOSS:SET <output>,<dB>", "query": "OUTPut:LOSS:GET? <output>", "status": "confirmed", "max_evidence_level": "E2",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.5.19-20"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "逐输出口回读。"
+    },
+    {
+      "id": "f64.bypass_mode", "instrument": "f64", "mandatory": true,
+      "command": "DIAGnostic:SIMUlation:MODel:STATic <mode>", "query": "DIAGnostic:SIMUlation:MODel:STATic?", "status": "confirmed", "max_evidence_level": "E3",
+      "source": {"kind": "notebooklm", "source_id": "982222b7-4953-46cd-9949-00fa97882353", "document": "Propsim User Reference", "section": "20.4.6.25-26"},
+      "applicability": {"models": ["PROPSIM F64", "F8800*"], "firmware_versions": ["*"]}, "notes": "旁路/衰落状态需精确回读。"
+    },
+    {
+      "id": "uxm.config_readback", "instrument": "uxm", "mandatory": true,
+      "command": "CONFigure:NR5G:<cell>:<parameter> <value>", "query": "CONFigure:NR5G:<cell>:<parameter>?", "status": "confirmed", "max_evidence_level": "E2",
+      "source": {"kind": "notebooklm", "source_id": "236d9621-e3ce-4ed1-a8e1-7819b674dbcd", "document": "5G NR Test Application SCPI Reference", "section": "NR Cell Configuration / Application Mode NSA|SA"},
+      "applicability": {"models": ["E7515B*"], "test_applications": ["5G_NR_Test", "5G NR Test"], "firmware_versions": ["*"]}, "notes": "回读只到 E2，不代表 APPLY 后协议栈生效。"
+    },
+    {
+      "id": "uxm.config_apply", "instrument": "uxm", "mandatory": true,
+      "command": "BSE:CONFig:NR5G:APPLY", "query": null, "status": "confirmed", "max_evidence_level": "E3",
+      "source": {"kind": "notebooklm", "source_id": "236d9621-e3ce-4ed1-a8e1-7819b674dbcd", "document": "5G NR Test Application SCPI Reference", "section": "General / Apply Configured Changes / Application Mode NSA|SA"},
+      "applicability": {"models": ["E7515B*"], "test_applications": ["5G_NR_Test", "5G NR Test"], "firmware_versions": ["*"]}, "notes": "Imm Action、无 query；只能靠随后协议栈状态支持 E3。LTE_NR_IRAT 范围未确认。"
+    },
+    {
+      "id": "uxm.cell_status", "instrument": "uxm", "mandatory": true,
+      "command": "BSE:STATus:NR5G:<cell>?", "query": "BSE:STATus:NR5G:<cell>?", "status": "confirmed", "max_evidence_level": "E3",
+      "source": {"kind": "notebooklm", "source_id": "236d9621-e3ce-4ed1-a8e1-7819b674dbcd", "document": "5G NR Test Application SCPI Reference", "section": "NR Cell / NR Connection Status"},
+      "applicability": {"models": ["E7515B*"], "test_applications": ["5G_NR_Test", "5G NR Test"], "firmware_versions": ["*"]}, "notes": "协议栈枚举 OFF|ON|CONNected|IDLE|AGGRegated|ACTivated；该状态查询可支撑 5G NR Test 的 APPLY 生效证据，LTE_NR_IRAT 范围未确认。"
+    },
+    {
+      "id": "uxm.error_queue", "instrument": "uxm", "mandatory": true,
+      "command": "SYSTem:ERRor[:NEXT]?", "query": "SYSTem:ERRor[:NEXT]?", "status": "unverified", "max_evidence_level": "E2",
+      "source": {"kind": "notebooklm", "source_id": "236d9621-e3ce-4ed1-a8e1-7819b674dbcd", "document": "5G NR Test Application SCPI Reference", "section": "System / Error Queue / Application Mode NSA|SA"},
+      "applicability": {"models": ["E7515B*"], "test_applications": ["LTE_NR_IRAT"], "firmware_versions": ["*"]}, "notes": "当前来源未证明 LTE_NR_IRAT 支持，禁止判绿或猜缩写。"
+    },
+    {
+      "id": "uxm.dl_throughput", "instrument": "uxm", "mandatory": true,
+      "command": "BSE:MEASure:NR5G:BTHRoughput:DL:THRoughput:OTA:<cell>?", "query": "BSE:MEASure:NR5G:BTHRoughput:DL:THRoughput:OTA:<cell>?", "status": "confirmed", "max_evidence_level": "E4",
+      "source": {"kind": "notebooklm", "source_id": "236d9621-e3ce-4ed1-a8e1-7819b674dbcd", "document": "5G NR Test Application SCPI Reference", "section": "NR PHY Measurements / OTA DL Throughput"},
+      "applicability": {"models": ["E7515B*"], "test_applications": ["5G_NR_Test", "5G NR Test"], "firmware_versions": ["*"]}, "notes": "6 doubles，平均值单位 bps；有效且大于零才是 E4。LTE_NR_IRAT 范围未确认。"
+    },
+    {
+      "id": "positioner.move_absolute", "instrument": "positioner", "mandatory": true,
+      "command": "MOVEABS <axis> <position>", "query": null, "status": "confirmed", "max_evidence_level": "E2",
+      "source": {"kind": "vendor-integration", "source_id": "aerotech-ensemble-ascii-v1.0", "document": "Aerotech_Ensemble_ASCII_TCP转台控制集成说明.docx", "section": "4-6,16"},
+      "applicability": {"models": ["Aerotech Ensemble*", "A3200*", "Automation1*"], "firmware_versions": ["*"]}, "notes": "% ACK 只证明接受；必须等到位并读反馈。"
+    },
+    {
+      "id": "positioner.position_feedback", "instrument": "positioner", "mandatory": true,
+      "command": "PFBK(<axis>)", "query": "PFBK(<axis>)", "status": "confirmed", "max_evidence_level": "E3",
+      "source": {"kind": "vendor-integration", "source_id": "aerotech-ensemble-ascii-v1.0", "document": "Aerotech_Ensemble_ASCII_TCP转台控制集成说明.docx", "section": "6-8,11-12"},
+      "applicability": {"models": ["Aerotech Ensemble*", "A3200*", "Automation1*"], "firmware_versions": ["*"]}, "notes": "必须保存目标、原始反馈、经校准偏置修正值及误差阈值。"
+    }
+  ]
+}

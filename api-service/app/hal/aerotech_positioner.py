@@ -21,7 +21,7 @@ import asyncio
 import logging
 import socket
 import time
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, List, Tuple, Optional, TYPE_CHECKING
 from datetime import datetime
 
 from app.hal.base import (
@@ -31,6 +31,9 @@ from app.hal.base import (
     redact_instrument_log_text,
 )
 from app.hal.positioner import PositionerDriver
+
+if TYPE_CHECKING:
+    from app.hal.scpi_evidence import ScpiExchangeRef
 
 logger = logging.getLogger(__name__)
 
@@ -565,6 +568,52 @@ class RealAerotechDriver(PositionerDriver):
         # 可扩展: 设置运动速度、加速度等参数
         # 例如: SETPARM(X, MaxSpeed, 20.0)
         return True
+
+    def capture_evidence_environment(self):
+        """AeroBasic 当前路径无安全的型号/固件查询，未知值必须保持未知。"""
+        from app.hal.scpi_evidence import InstrumentEnvironment
+
+        live = (
+            self._reader is not None
+            and self._writer is not None
+            and self._status in {InstrumentStatus.CONNECTED, InstrumentStatus.READY}
+        )
+        return InstrumentEnvironment(
+            instrument_id=self.instrument_id,
+            instrument="positioner",
+            model=None,
+            firmware_version=None,
+            captured_from_live_connection=live,
+        )
+
+    def build_p0_5_position_evidence(
+        self,
+        *,
+        requested_angle_deg: float,
+        coordinate_offset_deg: Optional[float],
+        offset_calibrated: bool,
+        tolerance_deg: float,
+        move_exchange: Optional["ScpiExchangeRef"],
+        feedback_exchange: Optional["ScpiExchangeRef"],
+    ):
+        """生成请求角/原始反馈/偏置修正/容差证据，并绑定真实环境门。"""
+        from app.hal.scpi_evidence import (
+            build_positioner_evidence,
+            scope_for_evidence,
+        )
+
+        scope = scope_for_evidence(
+            "positioner.position_feedback", self.capture_evidence_environment()
+        )
+        return build_positioner_evidence(
+            requested_angle_deg=requested_angle_deg,
+            coordinate_offset_deg=coordinate_offset_deg,
+            offset_calibrated=offset_calibrated,
+            tolerance_deg=tolerance_deg,
+            move_exchange=move_exchange,
+            feedback_exchange=feedback_exchange,
+            scope=scope,
+        )
 
     async def get_capabilities(self) -> list[InstrumentCapability]:
         single = self.is_single_axis

@@ -41,7 +41,7 @@ from app.hal.scpi_lock import ReentrantAsyncLock
 import ftplib
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Any, Iterable, List, Optional, Tuple
+from typing import Dict, Any, Iterable, List, Optional, Tuple, TYPE_CHECKING
 from datetime import datetime
 
 from app.hal.base import (
@@ -56,6 +56,9 @@ from app.hal.channel_emulator import (
     ChannelEmulatorDriver,
     ChannelLoadMode,
 )
+
+if TYPE_CHECKING:
+    from app.hal.scpi_evidence import ScpiExchangeRef
 
 logger = logging.getLogger(__name__)
 
@@ -575,6 +578,8 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         # individual ``firmware_version`` / ``band_label`` mirrors are
         # convenience attrs for the existing log call sites.
         self.sys_info: Optional[F64SysInfo] = None
+        # P1-47B：只保存真实连接的 *IDN? 回答；不得由 config 冒充执行环境。
+        self._identity_response: Optional[str] = None
         self.firmware_version: Optional[str] = None
         self.band_label: Optional[str] = None
         self.product_family: Optional[str] = None
@@ -1644,6 +1649,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
           4. 查询 SYST:INFO? 获取硬件配置
         """
         self._status = InstrumentStatus.CONNECTING
+        self._identity_response = None
         # 连接起始复位网 (F3): connect 是新会话干净起点 → 全清 6 字段 (含 running/pipeline/
         # bypass), 防 disconnect→reconnect 或 socket 掉直连的 reconnect 后旧实例 stale 残留。
         self._apply_session_reset()
@@ -1665,6 +1671,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
             # 验证连接: IEEE 488.2 标准身份查询
             idn = await self._query("*IDN?")
+            self._identity_response = idn.strip()
             logger.info(f"[F64] Connected: {idn}")
 
             # 查询硬件信息: 通道数、频段、License
@@ -1910,6 +1917,64 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             # (RM 为何不关: 见上面那段 / `_visa_reconnect.py` 的「ResourceManager 所有权」)
         # running/pipeline/identity/bypass 已在内层 finally 的 _apply_session_reset 全清
         return stop_confirmed
+
+    def capture_evidence_environment(self):
+        """从本次真实连接的 *IDN?/SYST:INFO? 生成 P1-47B 环境快照。"""
+        from app.hal.scpi_evidence import (
+            InstrumentEnvironment,
+            parse_ieee488_identity,
+        )
+
+        identity = parse_ieee488_identity(self._identity_response)
+        live = (
+            self._visa_resource is not None
+            and bool(self._identity_response)
+            and self._status in {InstrumentStatus.CONNECTED, InstrumentStatus.READY}
+        )
+        return InstrumentEnvironment(
+            instrument_id=self.instrument_id,
+            instrument="f64",
+            model=(self.product_family or identity["model"]) if live else None,
+            # ``SYST:INFO?`` positional field 4 is device HW version, not
+            # formal firmware. Missing *IDN? firmware must stay unknown.
+            firmware_version=identity["firmware_version"] if live else None,
+            hardware_firmware_version=self.firmware_version if live else None,
+            serial_number=identity["serial_number"] if live else None,
+            captured_from_live_connection=live,
+        )
+
+    def build_p0_5_command_evidence(
+        self,
+        *,
+        evidence_key: str,
+        requested: Any,
+        preclear_exchanges: List["ScpiExchangeRef"],
+        command_exchange: Optional["ScpiExchangeRef"],
+        opc_exchange: Optional["ScpiExchangeRef"],
+        error_exchange: Optional["ScpiExchangeRef"],
+        readback_exchange: Optional["ScpiExchangeRef"],
+        state_exchange: Optional["ScpiExchangeRef"],
+    ):
+        """把 F64 的 OPC/ERR/回读/STATE 按清单范围分层成 E0-E3。"""
+        from app.hal.scpi_evidence import (
+            build_f64_evidence,
+            scope_for_evidence,
+        )
+
+        scope = scope_for_evidence(
+            evidence_key, self.capture_evidence_environment()
+        )
+        return build_f64_evidence(
+            evidence_key=evidence_key,
+            requested=requested,
+            preclear_exchanges=preclear_exchanges,
+            command_exchange=command_exchange,
+            opc_exchange=opc_exchange,
+            error_exchange=error_exchange,
+            readback_exchange=readback_exchange,
+            state_exchange=state_exchange,
+            scope=scope,
+        )
 
     def readiness_metadata(self) -> Dict[str, Any]:
         """P3-5: expose parsed SYST:INFO? fields to the HAL readiness
@@ -4422,6 +4487,18 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             )
             return False
         self._reconnect_retry_after = now + _RECONNECT_COOLDOWN_S
+
+        # P1-47B / Codex #299 R1: once the old socket is being replaced,
+        # identity captured through that session is no longer live evidence.
+        # Keep topology/load caches (a bare TCP reconnect is not a controller
+        # reset), but require a full connect() identity probe before formal
+        # evidence may pass again.  This applies to both reopen success and
+        # failure: the retained closed handle is only a retry trigger.
+        self._identity_response = None
+        self.sys_info = None
+        self.firmware_version = None
+        self.band_label = None
+        self.product_family = None
 
         # 先关旧 (手册要求, 见 docstring)。close 半死 session 自身可能抛 —— 吞掉,
         # 我们只是要让服务端那条 socket 释放。

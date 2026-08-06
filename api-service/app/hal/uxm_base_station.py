@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     # Import only for type checking — runtime callers pass an already-
     # constructed instance, so we don't need the import at runtime.
     from app.hal.uxm_test_profiles import UxmTopologyProfile  # noqa: F401
+    from app.hal.scpi_evidence import ScpiExchangeRef
 
 logger = logging.getLogger(__name__)
 
@@ -299,6 +300,11 @@ class RealUxmDriver(BaseStationDriver):
         # by the HAL service post-connect for GUI audit / P3-5 readiness
         # panel.
         self.detected_test_app: Optional[str] = None
+        # P1-47B：最终落到业务端点后的真实 *IDN?，只由 connect() 写入。
+        self._identity_response: Optional[str] = None
+        # 若连接先落平台再重定向 hislip2，保留平台的硬件型号/序列/固件；
+        # Framework 的 *IDN? 只描述软件端点，不能冒充仪器硬件身份。
+        self._platform_identity_response: Optional[str] = None
         # P1-17: fresh-start 系统默认 topology profile id。binding 没显式选
         # profile 时, HAL service _initialize_from_db 读这个 attr 做 fallback
         # (见 UXM_DEFAULT_TOPOLOGY_PROFILE_ID)。operator 经 connection_params
@@ -425,6 +431,55 @@ class RealUxmDriver(BaseStationDriver):
     # 1. 连接生命周期
     # ===================================================================
 
+    def _probe_platform_identity(self, active_resource: str) -> Optional[str]:
+        """从独立 hislip0 会话只读采集 E7515B 平台身份。
+
+        Test Application Framework 的 ``*IDN?`` 描述软件端点，不是 UXM
+        硬件。直连 hislip2/5125 时必须另开平台端点，且临时会话不得替换或
+        关闭当前业务会话。探测失败保持 None，由正式证据范围门 fail-closed。
+        """
+        parts = (active_resource or "").split("::")
+        host = parts[1] if len(parts) > 1 and parts[1] else self.ip_address
+        if not self._visa_rm or not host:
+            return None
+        platform_resource = f"TCPIP::{host}::hislip0::INSTR"
+        platform_session = None
+        try:
+            platform_session = self._visa_rm.open_resource(
+                platform_resource,
+                timeout=VISA_TIMEOUT_DEFAULT,
+            )
+            platform_idn = platform_session.query("*IDN?").strip()
+            if "E7515B" not in platform_idn.upper():
+                logger.warning(
+                    "[UXM] Platform identity probe returned non-E7515B: %s",
+                    platform_idn,
+                )
+                return None
+            logger.info("[UXM] Platform identity: %s", platform_idn)
+            return platform_idn
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[UXM] Platform identity probe failed at %s (%s: %s)",
+                platform_resource,
+                type(exc).__name__,
+                exc,
+            )
+            return None
+        finally:
+            if (
+                platform_session is not None
+                and platform_session is not self._visa_session
+            ):
+                try:
+                    platform_session.close()
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "[UXM] Platform identity session close failed (%s: %s)",
+                        type(exc).__name__,
+                        exc,
+                    )
+
     async def connect(self) -> bool:
         """通过 PyVISA 建立与 UXM 的连接。
 
@@ -442,6 +497,9 @@ class RealUxmDriver(BaseStationDriver):
         self._cmds。若检测不到（如纯 Platform 模式），保留 __init__ 时的初值。
         """
         self._set_status(InstrumentStatus.CONNECTING)
+        self._identity_response = None
+        self._platform_identity_response = None
+        self.detected_test_app = None
         try:
             import pyvisa
             self._visa_rm = pyvisa.ResourceManager()
@@ -468,6 +526,12 @@ class RealUxmDriver(BaseStationDriver):
 
             # 验证身份
             idn = self._query("*IDN?").strip()
+            if "E7515B PLATFORM" in idn.upper():
+                self._platform_identity_response = idn
+            else:
+                self._platform_identity_response = self._probe_platform_identity(
+                    resource_str
+                )
 
             # Two-tier auto-detection for E7515B platform (CAICT 2026-05-13):
             #
@@ -556,6 +620,7 @@ class RealUxmDriver(BaseStationDriver):
                     f"[UXM] SYSTem:APPLication:NAME? not available ({type(e).__name__}); "
                     f"keeping profile {self._cmds.PROFILE_NAME}"
                 )
+            self._identity_response = idn.strip()
             logger.info(f"[UXM] Connected: {idn}")
             # Remember the endpoint we actually ended up on (post any
             # Platform→hislip2 redirect) for silent reconnect.
@@ -578,6 +643,9 @@ class RealUxmDriver(BaseStationDriver):
         except Exception as e:
             error_msg = f"[UXM] Connection failed: {e}"
             logger.error(error_msg)
+            self._identity_response = None
+            self._platform_identity_response = None
+            self.detected_test_app = None
             self._set_status(InstrumentStatus.ERROR, error_msg)
             return False
 
@@ -605,6 +673,10 @@ class RealUxmDriver(BaseStationDriver):
         except Exception as e:
             logger.error(f"[UXM] Disconnect error: {e}")
             return False
+        finally:
+            self._identity_response = None
+            self._platform_identity_response = None
+            self.detected_test_app = None
 
     async def configure(self, config: Dict[str, Any]) -> bool:
         """
@@ -616,6 +688,92 @@ class RealUxmDriver(BaseStationDriver):
         if state_file:
             return await self.load_state_file(state_file)
         return await self.set_cell_config(config)
+
+    def capture_evidence_environment(self):
+        """从活 VISA 会话、*IDN? 与实际探测 Test App 生成环境快照。"""
+        from app.hal.scpi_evidence import (
+            InstrumentEnvironment,
+            parse_ieee488_identity,
+        )
+
+        endpoint_identity = parse_ieee488_identity(self._identity_response)
+        # TAF *IDN? describes the software endpoint. Hardware model/serial/HW
+        # version are valid only when the independent platform probe succeeded.
+        hardware_identity = parse_ieee488_identity(
+            self._platform_identity_response
+        )
+        live = (
+            self._visa_session is not None
+            and bool(self._identity_response)
+            and self._status in {InstrumentStatus.CONNECTED, InstrumentStatus.READY}
+        )
+        return InstrumentEnvironment(
+            instrument_id=self.instrument_id,
+            instrument="uxm",
+            model=hardware_identity["model"] if live else None,
+            firmware_version=(
+                endpoint_identity["firmware_version"] if live else None
+            ),
+            test_application=self.detected_test_app if live else None,
+            application_version=(
+                endpoint_identity["firmware_version"] if live else None
+            ),
+            hardware_firmware_version=(
+                hardware_identity["firmware_version"] if live else None
+            ),
+            serial_number=hardware_identity["serial_number"] if live else None,
+            captured_from_live_connection=live,
+        )
+
+    def build_p0_5_config_evidence(
+        self,
+        *,
+        evidence_key: str,
+        requested: Any,
+        command_exchange: Optional["ScpiExchangeRef"],
+        readback_exchange: Optional["ScpiExchangeRef"],
+        apply_exchange: Optional["ScpiExchangeRef"],
+        protocol_state_exchange: Optional["ScpiExchangeRef"],
+    ):
+        """配置回读只到 E2；APPLY 后协议栈状态才可能到 E3。"""
+        from app.hal.scpi_evidence import (
+            build_uxm_evidence,
+            scope_for_evidence,
+        )
+
+        scope = scope_for_evidence(
+            evidence_key, self.capture_evidence_environment()
+        )
+        return build_uxm_evidence(
+            evidence_key=evidence_key,
+            requested=requested,
+            command_exchange=command_exchange,
+            readback_exchange=readback_exchange,
+            apply_exchange=apply_exchange,
+            protocol_state_exchange=protocol_state_exchange,
+            scope=scope,
+        )
+
+    def build_p0_5_throughput_evidence(
+        self,
+        *,
+        requested: Any,
+        throughput_exchange: Optional["ScpiExchangeRef"],
+    ):
+        """把本次真实吞吐 query 分层为 P0-5 E4 业务结果。"""
+        from app.hal.scpi_evidence import (
+            build_uxm_throughput_evidence,
+            scope_for_evidence,
+        )
+
+        scope = scope_for_evidence(
+            "uxm.dl_throughput", self.capture_evidence_environment()
+        )
+        return build_uxm_throughput_evidence(
+            requested=requested,
+            throughput_exchange=throughput_exchange,
+            scope=scope,
+        )
 
     def readiness_metadata(self) -> Dict[str, Any]:
         """P2-1 / P3-5: expose Test App detection state to the readiness
@@ -2968,6 +3126,11 @@ class RealUxmDriver(BaseStationDriver):
         """Sync reopen of the UXM VISA session — reuses the resource
         string captured by connect() so we don't re-run the Platform/
         hislip2 auto-detection."""
+        # 新 TCP/VISA 会话不能继承旧会话探测到的型号、固件和 Test App。
+        # 静默重连不会重走平台端点探测，所以正式证据保持 unknown，直到完整 connect。
+        self._identity_response = None
+        self._platform_identity_response = None
+        self.detected_test_app = None
         if self._visa_rm is None or not self._active_resource_string:
             return False
         try:
