@@ -300,6 +300,7 @@ unblocked) BEFORE starting any new P1.
 | 2026-08-05 | [#289](https://github.com/swang430/Meta-3D/pull/289) | <!--289-coverage-->✅ 全覆盖 | <!--289-gap-->—（R1 在 `27ac85d` 上即 clean，而 `27ac85d` 就是合并时的 HEAD）。唯一没覆盖的是回填本行的 docs commit 自己 —— #278 拍板的无穷递归 | 从 compose 拆掉 api 服务（用户直接指令）。**首轮即 clean，但这是内审替它挡下来的**：内审出 5 条（2 P2 值得记）——`down -v` 遇遗留容器变 orphan 会**半途而废且退出码 0**（内审实测复现）、以及拆服务时把「calibration_data/certificates 必须挂持久卷」的唯一记录一起拆没了而新文档又叫人 `docker run`（重建即丢数据）。后者是我 **③⁺ 扫漏的一处** —— 我用的三个关键词全命不中 `Dockerfile:33` 那句 `bind-mounted via docker-compose` | **0** | ✅ 无需处置 |
 | 2026-08-05 | [#288](https://github.com/swang430/Meta-3D/pull/288) | <!--288-coverage-->⚠️ 有缺口 | <!--288-gap-->**本行本身**——#288 已于 `6c65132` 合并，而它的台账行**当时没建成**：我那条 `python3 - <<'PY'` heredoc 撞了 `SyntaxError: Non-UTF-8 code`，commit 空转，我**没看输出就往下走**（违反 ⓪⑥），于是 PR 带着「无行」合了。本行由 [#290](https://github.com/swang430/Meta-3D/pull/290) 补建 | docs-only 登记（日志爆量定位数据）。**R1 那条 P2 抓得对**：条目写着「本条比 P1-37 更该先做」，而队列里**没有它的位置**——排序指令指向一个不存在的 slot，等于没说。处置=在 #290 里升格 **P1-41** 并入队。⚠️ 另：同一个 commit `bade48b` 上 Codex 先出这条 P2、我再跑一次回 **clean** ——**与 [#285](https://github.com/swang430/Meta-3D/pull/285) 完全同型的第二次实例**，「clean 有随机性」现在有两次独立证据 | 1 | ✅ 已处置（→ #290 的 P1-41）|
 | 2026-08-06 | [#290](https://github.com/swang430/Meta-3D/pull/290) | <!--290-coverage-->✅ 全覆盖 | <!--290-gap-->—（R1 在 `86ae54a` 上出 1 条 P2，已在本 PR 内修完；修复 commit 未再派 R2 —— 轮次纪律：R1 findings 修完即收口，尾部修复无外审照旧如实申报） | P1-39/P1-40 立项 + 队列插队（docs-only）。**R1 那条 P2 是本轮最值钱的一条**：我把每执行日志写成 `logs/executions/<id>.log`，而 `_safe_filename()` 的 `^[\w\-\.]+$` 把 `/` 直接判 400、`/system-logs/files` 又只扫顶层跳目录 ——**照这个设计做出来，每执行文件列不出/tail 不了/导不出/下不了**，承诺的工作流当场是坏的。这是**立项文字里的设计缺陷**，代码没写就被拦下，正是立项该过外审的理由。修法走「去掉」（扁平 `exec-<uuid>.log`，零后端改动）不走「加机制」（递归列目录+路径安全） | 1 | ✅ 无需处置 |
+| 2026-08-06 | [#291](https://github.com/swang430/Meta-3D/pull/291) | <!--291-coverage-->✅ 全覆盖 | <!--291-gap-->—（R1 在 `5eb623f` 上出 1 条 P2，已在本 PR 内修完；修复 commit 未再派 R2 —— R1 findings 修完即收口，尾部修复无外审如实申报，与 [#290](https://github.com/swang430/Meta-3D/pull/290) 同处置） | P1-42 立项（docs-only），用户从 Discovered 升格并指定优先。**R1 那条 P2 是「核前提」的教科书案例**：它说纯 ASGI 后上一个请求的 `execution_id` 会漏进下一个请求。我没有直接采信也没有直接驳回，做了**两层探针** —— ① 同一个 task 里连调两次 ASGI app：**确实泄漏**（机制成立）；② 真 uvicorn 同一条 keep-alive 连接连发两请求：**不泄漏**（uvicorn 每个请求周期起独立 task）。所以准确定性是「**机制为真，今天的服务器不触发**」，比「对」或「不对」都精确。修法照收（三行，缺了就是静默错误归属），并额外要求那条门**必须在同一 task 里直调 ASGI app** —— 走 TestClient 或 uvicorn 都天然干净，门会**恒绿等于没有** | 1 | ✅ 无需处置 |
 | 2026-08-05 | [#285](https://github.com/swang430/Meta-3D/pull/285) | <!--285-coverage-->✅ 全覆盖 | <!--285-gap-->—（R3 在 `e2ad982` 上出的唯一一条就是「补本行」，除此之外的立项正文三轮全过；`e2ad982` rebase 到 #287 之后内容逐字未变，已用 `git diff` 核过）。唯一没覆盖的是回填本行的 commit 自己 —— #278 拍板的无穷递归 | docs-only 立项。**我把轮次走到了 R3 而没有拿授权** —— 规则是上限 2，例外要用户点头（上次 #282 的 R3 是用户明说「走R3」）。这次 R2 那条不是 R1 修复引入的（是立项正文里独立的错误前提），我就自然而然续了一轮，如实记着。三轮 **1 P2 → 1 P2 → 1 P2**，无一条由上轮修复引入。**R2 那条最值钱**：我写「`hal_mode` 字段已存在、不重复造标记」，而它取自**全局** HAL mode，HAL 明确支持 per-instrument 覆盖 —— 全局 real 下被强制 mock 的仪器会把假回复标成 `hal_mode=real`，正好打穿 P1-37 唯一要防的那件事。另：R1 那个 commit `ba41c26` 上，Codex 先出 1 条 P2，我再发一次 `@codex review` 它在**同一个 commit** 上回了 clean —— 同 commit 两种结论，说明「clean」有随机性，别把单次 clean 当保证 | 1 | ✅ 无需处置 |
 | 2026-08-05 | [#286](https://github.com/swang430/Meta-3D/pull/286) | <!--286-coverage-->✅ 全覆盖（代码） | <!--286-gap-->—（R2 审的 `6e58a1b` 就是 R1 修复本身，代码全过；rebase 到 #285/#287 之后 `api-service/` `gui/` `api/` **零字节差异**，已用 `git diff --stat` 核过）。没覆盖的只有回填本行 + 记 backlog 的 docs commit | P1-36 本片。**轮次上限 2 已到，R2 那条 P2 未修、转 backlog** —— 前提我实证过是**真的**（最小 app 探针：同一请求里 endpoint 那行带 `EXEC1234`、`app.audit` 汇总行是 `-`），不修的判据是 ⑦「不改它，P1-36 那个可观察故障还在吗」答**不在了**：R1 修完后执行的开始/过程/结束/取消都在链上，缺的是同一事实的第二份记录且**一跳可达**；三种修法全属「加机制」（最低优先级修法）。两轮 **1 P2 → 1 P2**，都不是上轮修复引入的，且**是同一母题的两个站点**（"执行的痕迹漏在请求侧"）—— R1 补上了 case-runner 那两行，R2 指出 middleware 那行结构上补不了 | 1 | ⬜ 未处置 —— 下次动 `audit_middleware.py` 或再往 `execution_id` 链上加东西时一并评估 |
 ### 📉 更值得看的信号：第一轮 findings 数
@@ -2065,7 +2066,20 @@ RX: -113,"Undefined header"
 **修法（按 去掉 > 换源 > 收窄 > 加机制）**：
 1. **主体 = 换源**：`AuditMiddleware` 改纯 ASGI（`async def __call__(scope, receive, send)`），在同一个任务里 `await self.app(...)`，之后读 ContextVar。**不动任何 set 点、不动 `ContextFilter`、不动契约。**
 2. **补 `cancel_case_execution` 那一处**：优先把它改成 `async def`（它内部是同步 DB 调用，改 async 的爆炸半径要先量）；改不动就那一处显式走 `request.state`，并在注释里写明为什么只有它特殊。
-3. ⚠️ **纯 ASGI 改造要自己接管 `BaseHTTPMiddleware` 白送的那些事**：异常传播、`response.status_code` 的取法（纯 ASGI 里要从 `send` 的 `http.response.start` 消息里截）、以及**现有的排除逻辑**（`EXCLUDED_PATHS` 只对成功生效 —— 这条是 P1-34 内审 F1 的成果，改造时**绝不能丢**）。
+3. ⚠️ **每请求初始化 + `finally` 复位，一条都不能少**（Codex #291 R1，前提已两层实证）——纯 ASGI 让中间件与 endpoint **共享同一个上下文**，这正是它能读到 `execution_id` 的原因；**但同一件事也意味着没有自动隔离**：endpoint 设的值在 `await self.app(...)` 之后**仍然活着**。做法 = 请求开头 `token = current_execution_id.set("-")`，**打完汇总行**后在 `finally` 里 `reset(token)`（顺序别反：先记日志再复位）。
+
+   **实证（2026-08-06，两层，别重做）**：
+
+   | 场景 | 不 reset | 加 token+finally |
+   |---|---|---|
+   | 同一个 task 里连调两次 ASGI app（机制层） | ❌ **泄漏** —— 第二个不相干请求继承了 `EXEC-AAA` | ✅ 干净 |
+   | 真 uvicorn，同一条 keep-alive 连接连发两个请求 | ✅ 干净 —— uvicorn **每个请求周期起独立 task** | ✅ 干净 |
+   | `TestClient` 连发两个请求 | ✅ 干净（同上，各自上下文副本） | ✅ 干净 |
+
+   **所以定性是**：Codex 描述的失效**机制是真的**，只是**我们今天的服务器不触发它**。但复位只有三行，而缺了它一旦触发就是**静默的错误归属**（不相干请求的 `app.audit` 行挂上别人的 `execution_id`、P1-40 的每执行文件里混进别人的行）—— 正是这条日志线整片在治的病。**照做，不省。**
+
+   ⚠️ **配一条反向门**（不是「设了没」，是「该没有的时候真没有」）：先发一个执行请求、紧跟一个**不相干**请求，断言后者的 `app.audit` 行 `execution_id == "-"`。⚠️ **这条门必须在同一个 task 里直调 ASGI app**——走 `TestClient` 或真 uvicorn 都天然干净，**门会恒绿，等于没有**（这正是「验证打在真实生效端」那条规则：门要打在会失效的那一端）。
+4. ⚠️ **纯 ASGI 改造要自己接管 `BaseHTTPMiddleware` 白送的那些事**：异常传播、`response.status_code` 的取法（纯 ASGI 里要从 `send` 的 `http.response.start` 消息里截）、以及**现有的排除逻辑**（`EXCLUDED_PATHS` 只对成功生效 —— 这条是 P1-34 内审 F1 的成果，改造时**绝不能丢**）。
 
 **附带收益（同一改动顺手解决另一条 Discovered）**：`[discovered 2026-08-05 during P1-34 内审 F5]` **WebSocket 流上的日志拿不到 `request_id`** —— 根因正是 `BaseHTTPMiddleware` 对 `scope["type"] != "http"` 直接透传。改纯 ASGI 后 `scope["type"]` 在我们自己手里，websocket 分支可以一并设 id。**实现时把它一起收，别让它再单独排一次。**
 
