@@ -192,6 +192,9 @@ def test_mac_configuration_aborts_at_first_group_when_err_query_turns_self_reple
     )
     assert result.ok is False
     assert result.error is not None and "错误查询疑似不受支持" in result.error
+    assert result.rejected == (), (
+        "错误查询机制不可用只证明归属未知，不能冒充首组业务命令被拒"
+    )
 
 
 @pytest.mark.asyncio

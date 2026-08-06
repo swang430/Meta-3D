@@ -1900,12 +1900,14 @@ class RealUxmDriver(BaseStationDriver):
             def _group(label: str) -> None:
                 """一组发完，把仪器拒掉的记到**这一组**名下。"""
                 errs = self._drain_errors()
+                if self._error_queue_unusable(errs):
+                    # 排错门本身不可用只说明归属未知，不能把当前业务组
+                    # 冒充成“已被仪器拒绝”。
+                    raise RuntimeError(errs[-1])
                 if errs:
                     rejected.append(label)
                     logger.warning(
                         f"[UXM/{self._cmds.PROFILE_NAME}] {label} 被拒: {errs}")
-                if self._error_queue_unusable(errs):
-                    raise RuntimeError(errs[-1])
 
             # 1. Full Buffer 调度 —— 手册枚举是 FULL_TPUT，不是 "FULLBUFFER"
             _emit("PDSCH_SCHED_ALGO", " FULL_TPUT")
