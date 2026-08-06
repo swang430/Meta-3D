@@ -19,7 +19,7 @@
 ```
 搜索命中：memory 规则 / 目标文件自己的禁令 / 仓库已有的权威清单
 必要性：要修的**那一个**可观察故障
-范围：动 N 个文件；枚举到 M 处，这次只做 1 处，其余进 backlog
+范围：动 N 个文件；枚举到 M 处，这次只做 1 处，其余进 Discovered 待评估池
 爆炸半径：原 bug 最坏 X → 修完最坏 Y，**Y ≤ X**
 ```
 
@@ -27,7 +27,7 @@
    十秒钟。2026-07-26 F64R-10 的 P1 回归就死在这 —— `_silent_reconnect_visa`
    的 docstring 白纸黑字写着"绝不置 `_visa_resource=None`"。
 
-**③ 枚举结果进 backlog，不进当前改动** —— 除非用户明说"全都修"。
+**③ 枚举结果进 Discovered 待评估池，不进当前改动** —— 除非用户明说"全都修"。
    **枚举 ≠ 修复**：枚举回答"这条规则还适用于哪里"(情报)，不等于"这次必须全做完"(工单)。
    一次改一处 + 把清单留下，既不逐点漏镜像，也不做超出验证能力的大改。
 
@@ -63,7 +63,7 @@
    （2026-08-02 用户定："为什么开的 PR，要针对这个目的，不能自己发挥。"）
    - **修** = 不改它，①里那个可观察故障还在
    - **顺带** = 同一次排查暴露的、跟故障同源、不修下次还踩同一个坑
-   - **越界** = 都不是 —— **哪怕它真的是个好改动**。一律撤回 backlog。
+   - **越界** = 都不是 —— **哪怕它真的是个好改动**。一律撤回并记入 Discovered 待评估池。
 
    **判据不是"这改动好不好"，是"它对应目的里的哪个字"。** 前者的答案永远是"好"——
    越界从来不是一个坏决定造成的，是一串**每步单看都合理**的决定累积出来的。
@@ -110,12 +110,13 @@
 **② 先 review plan，后写代码**：出设计稿（`docs/design/` 或 todo 条目内嵌方案）
 供用户 review，**用户过目后才动代码**。
 
-**③ 实现**：⓪ 六条照做（四行契约 / grep 禁令 / 枚举进 backlog / 门配变异 /
+**③ 实现**：⓪ 六条照做（四行契约 / grep 禁令 / 枚举进 Discovered 待评估池 / 门配变异 /
 一轮只删不加 / 看输出再说已跑）。
 
-**④ 内审 = pre-commit-reviewer agent 硬门**：代码 push 前必过；agent 不可用
-（额度 / 故障）时**如实声明"审查未发生"**，不得当"审过无问题"，并在 PR body
-标注由外审独挑。
+**④ 内审 = 独立 Codex subagent 硬门**：代码 push 前必过；该 subagent 必须完整遵循
+[`.claude/agents/pre-commit-reviewer.md`](.claude/agents/pre-commit-reviewer.md)，只审不改，
+主代理自审不能替代。subagent 不可用（额度 / 故障）时**如实声明"审查未发生"**，
+不得当"审过无问题"，并在 PR body 标注由外审独挑。
 
 > **调用时必须在 prompt 里给三样东西**（2026-08-03 定，缺了 agent 的时间预算
 > 就落空）：① `git diff --cached` 原文，别让它自己摸索改动范围；② **你已经跑过
@@ -164,11 +165,17 @@
 > 主 agent 声明的事实支持**。否则"为了快而少声明"会把这道门掏空 ——
 > 那正是本文件反复在治的母题。
 
-**⑤ 外审 = Codex**：PR 开出 / 修复推送即触发；**270s 定时器**从触发时刻起算，
+**⑤ 外审 = GitHub `chatgpt-codex-connector[bot]`**：PR 开出 / 修复推送后用
+`@codex review` 明确触发；本地主代理审查不算外审。**270s 定时器**从触发时刻起算，
 到点主动查**三通道**（reviews / inline / issue comments，"usage limits" 提示 =
 review 未发生 ≠ clean）；**Codex 无问题或 5 分钟无 comment 即 squash merge**
 （持久授权）；审查-修复循环**轮次上限 = 2**，第二轮 findings 主要由上轮修复
 引入即收口。
+
+> **逐片审查，不攒成总包**：roadmap 的每个切片 = 1 个 PR = 1 次内审 + 1 次外审。
+> 纯文档片可走“精简”内审；涉及驱动、契约、持久化或正式执行链的片一律“全套”。
+> 对 P1-47，A（传输证据）/B（接受与生效）/C（正式 TestCase 落证）分别过门；
+> C 不得用 A/B 的测试输出或审查结论代替。WIP=1，前一片 merge 后才启动后一片。
 
 **⑥ merge 后迟到回查**：squash 后挂回查定时器再扫一轮三通道；迟到真 finding
 走新分支（原分支只读）。
@@ -198,14 +205,15 @@ review 未发生 ≠ clean）；**Codex 无问题或 5 分钟无 comment 即 squ
 ### 3. 不在路线图上的改动 — 三种处理
 
 - **琐碎 (<30 分钟)**：直接做，commit message 标 `chore:` 前缀。
-- **中等大小**：在 roadmap.md 的 "Discovered during X" backlog 区加一行
-  (`[discovered YYYY-MM-DD during P0-X] <一句话>`)，然后**回到当前 P0**。
+- **中等大小**：在 roadmap.md 的 "Discovered during X" 待评估区加一行
+  (`[discovered YYYY-MM-DD during P0-X] <一句话>`)，然后**回到当前 P0**；
+  该条在 triage 前既不是 roadmap，也不是 backlog。
 - **大改**：停下来跟人讨论。
 
 ### 4. 严禁"顺手优化"
 
 看到代码 mess 不要清理。Mess 不是 bug。如果它不让当前 P0 更容易，
-就进 P3 backlog，不是 inline cleanup。
+就进 Discovered 待评估池，不是 inline cleanup；triage 后才决定是否进 P3。
 
 ### 5. PR 必须声明 roadmap 对齐
 
@@ -217,8 +225,9 @@ Roadmap: P0-X  (或)  Out-of-roadmap, reason: ...
 
 ### 6. Review 反馈的处理
 
-Codex / 人类 reviewer 的 P0/P1 安全问题：当下修。
-P2/P3 风格类反馈：appended to backlog, not 当下修，避免 review 黑洞。
+Codex / 人类 reviewer 发现且确属本片验收边界内的 P0/P1 安全问题：当下修。
+越界或 P2/P3 风格类反馈：append 到 Discovered 待评估池，不当下修，避免 review 黑洞；
+后续 triage 再决定 roadmap / backlog / dropped。
 
 ### 7. 周度短 review
 
@@ -392,7 +401,7 @@ GUI 遵循 **API优先架构**，包含以下层次：
 （参数 / 成败 / **仪器原始回复** / 耗时 / 日志路径 / 谁跑的 / 何时跑），下次能对照。
 现场时间极贵，序列让现场从"写代码"变成"点一下、看数、抄回来"。
 
-**怎么用** —— 每记一条"这个得现场验"的 backlog，**同时问它落在哪个序列里**；
+**怎么用** —— 每记一条"这个得现场验"的发现或 backlog，**同时问它落在哪个序列里**；
 没有就出发前补一个。按问题类型选载体：
 
 | 问的是什么 | 载体 | 例子 |

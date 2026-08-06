@@ -11,8 +11,8 @@ PR 模板 — 强制声明 roadmap 对齐, 避免再次出现"两天现场, 全�
   *(单 PR 原则上只对应一个 roadmap 项。如果跨项, 说明为什么不能拆。)*
 - [ ] **Out of roadmap**, justified because: ……
   *(典型场景: blocking bug fix / security fix / 紧急回滚)*
-- [ ] **Drive-by fixes** appended to roadmap backlog as: ……
-  *(在 docs/roadmap-first-call.md 的 "Discovered during X" 区添加了对应条目)*
+- [ ] **Drive-by findings** appended to the Discovered intake as: ……
+  *(在 docs/roadmap-first-call.md 的 "Discovered during X" 待评估区添加了对应条目；triage 前不是正式 backlog)*
 
 ## Summary
 
@@ -39,7 +39,8 @@ PR 模板 — 强制声明 roadmap 对齐, 避免再次出现"两天现场, 全�
 ## Out of scope (deferred)
 
 <!-- 本 PR 期间发现但没在本 PR 解决的事项。
-     必须同步追加到 docs/roadmap-first-call.md 的 "Discovered during X" backlog。 -->
+     必须同步追加到 docs/roadmap-first-call.md 的 "Discovered during X" 待评估区；
+     不得未经 triage 直接视为正式 backlog 或 roadmap。 -->
 
 - 
 
