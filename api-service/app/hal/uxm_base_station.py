@@ -734,6 +734,7 @@ class RealUxmDriver(BaseStationDriver):
         readback_exchange: Optional["ScpiExchangeRef"],
         apply_exchange: Optional["ScpiExchangeRef"],
         protocol_state_exchange: Optional["ScpiExchangeRef"],
+        activation_exchange: Optional["ScpiExchangeRef"] = None,
     ):
         """配置回读只到 E2；APPLY 后协议栈状态才可能到 E3。"""
         from app.hal.scpi_evidence import (
@@ -752,6 +753,7 @@ class RealUxmDriver(BaseStationDriver):
             apply_exchange=apply_exchange,
             protocol_state_exchange=protocol_state_exchange,
             scope=scope,
+            activation_exchange=activation_exchange,
         )
 
     def build_p0_5_throughput_evidence(

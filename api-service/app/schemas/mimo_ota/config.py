@@ -78,10 +78,11 @@ REGISTERED DEVIATIONS (登记过的偏差)
 
 ═══════════════════════════════════════════════════════════════════════════
 """
+import math
 from enum import Enum
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # Canonical TestCase.test_type value
@@ -184,7 +185,11 @@ class MIMOOTAConfiguration(BaseModel):
     subcarrier_spacing_khz: int = 30
 
     # === Turntable ===
-    azimuths_deg: List[float] = Field(default_factory=lambda: [0.0, 90.0, 180.0, 270.0])
+    azimuths_deg: List[float] = Field(
+        default_factory=lambda: [0.0, 90.0, 180.0, 270.0],
+        min_length=1,
+        max_length=361,
+    )
     measurement_duration_s: float = 10.0
     settling_time_s: float = 2.0
 
@@ -418,6 +423,19 @@ class MIMOOTAConfiguration(BaseModel):
     # Keyed by MIMOOTAStepType.value; merged into step.parameters by the factory.
     # Lets tests pin one phase without rewriting the whole config.
     step_overrides: Optional[dict] = None
+
+    @field_validator("azimuths_deg")
+    @classmethod
+    def _validate_azimuths(cls, values: List[float]) -> List[float]:
+        """限制正式扫描规模并拒绝无穷值/等价重复角，避免证据 JSONB 写放大。"""
+        if any(not math.isfinite(value) for value in values):
+            raise ValueError("azimuths_deg must contain only finite angles")
+        if any(value < -360.0 or value > 360.0 for value in values):
+            raise ValueError("azimuths_deg angles must be within [-360, 360]")
+        canonical = [round(value % 360.0, 9) for value in values]
+        if len(canonical) != len(set(canonical)):
+            raise ValueError("azimuths_deg must not contain equivalent duplicates")
+        return values
 
     @model_validator(mode="after")
     def _resolve_component_carriers(self) -> "MIMOOTAConfiguration":

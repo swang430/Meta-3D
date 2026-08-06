@@ -1,6 +1,6 @@
 """Test Plan Management API endpoints"""
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
@@ -16,6 +16,7 @@ from app.schemas.test_plan import (
 )
 from app.services.test_plan_service import TestCaseService
 from app.models.test_plan import TestCase
+from app.services.execution_scpi_evidence import ExecutionScpiEvidence
 
 router = APIRouter(prefix="/test-plans", tags=["Test Plan Management"])
 
@@ -202,11 +203,15 @@ class CaseExecutionStatusResponse(BaseModel):
     execution_id: UUID
     status: str
     source_test_case_id: Optional[str] = None
-    phase_progress: List[dict] = []
+    phase_progress: List[dict] = Field(default_factory=list)
     failed_phase: Optional[str] = None
     error_message: Optional[str] = None
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
+    # P1-47C：仅返回严格模型校验后的脱敏摘要；原始响应仍在 scpi.log。
+    scpi_evidence: Optional[
+        "ExecutionScpiEvidence"
+    ] = None
 
 
 @router.post(
@@ -268,6 +273,10 @@ def get_case_execution_status(
     if execution is None:
         raise HTTPException(status_code=404, detail="Execution not found")
     cfg = execution.config or {}
+    from app.services.execution_scpi_evidence import (
+        public_execution_scpi_evidence,
+    )
+
     return CaseExecutionStatusResponse(
         execution_id=execution.id,
         status=execution.status or "unknown",
@@ -284,4 +293,5 @@ def get_case_execution_status(
         completed_at=(
             execution.completed_at.isoformat() if execution.completed_at else None
         ),
+        scpi_evidence=public_execution_scpi_evidence(execution),
     )

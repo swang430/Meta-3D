@@ -31,12 +31,17 @@ def _driver(error_seq=None, static_val="0", raise_on_write=None, state_val=None)
     drv._visa_resource = visa
     seq = {k: list(v) for k, v in (error_seq or {}).items()}
     last = {"cmd": None}
+    instrument = {"static": static_val}
 
     async def _w(cmd, timeout=None):
         last["cmd"] = cmd
         visa.write(cmd)
         if raise_on_write and raise_on_write in cmd:
             raise TimeoutError("VI_ERROR_TMO")
+        # 仪器只在该次写没有待报错误时接受档位；首发拒绝、复位、重试的
+        # 状态变化由 fake 自己持有，不能借用驱动缓存反推。
+        if cmd.startswith("DIAG:SIMU:MODEL:STATIC ") and not seq.get(cmd):
+            instrument["static"] = cmd.rsplit(maxsplit=1)[-1]
 
     async def _q(cmd, timeout=None, **_kw):
         if cmd == "*OPC?":
@@ -53,7 +58,7 @@ def _driver(error_seq=None, static_val="0", raise_on_write=None, state_val=None)
                 return "STOPPED"
             return "STOPPED"
         if cmd == "DIAG:SIMU:MODEL:STATIC?":
-            return static_val
+            return instrument["static"]
         if cmd == "SYST:ERR?":
             errs = seq.get(last["cmd"])
             if errs:

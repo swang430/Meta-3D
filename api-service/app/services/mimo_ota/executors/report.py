@@ -47,6 +47,12 @@ class ReportExecutor(IStepExecutor):
 
         case_name = _lookup_case_name(context, execution)
         try:
+            # 报告本身属于正式结论，必须先应用 SCPI AND 门再读取
+            # validation_pass；否则 PDF 会比 runner 的最终判定早一步写出假 PASS。
+            from app.services.test_case_runner import _finalize_scpi_acceptance
+
+            _finalize_scpi_acceptance(execution)
+            context.db.commit()
             content_data = _build_mimo_ota_content_data(execution, now, case_name)
             svc = ReportService()
             report = svc.create_report(
@@ -324,6 +330,28 @@ def _build_mimo_ota_content_data(
         "statistics": statistics,
         "table_data": table_data,
         "step_results": step_results,
+        "scpi_evidence": _public_scpi_evidence(execution),
+    }
+
+
+def _public_scpi_evidence(execution: Any) -> Dict[str, Any]:
+    from app.services.execution_scpi_evidence import public_execution_scpi_evidence
+
+    evidence = public_execution_scpi_evidence(execution)
+    if evidence is not None:
+        return evidence
+    return {
+        "schema_version": 1,
+        # 旧报告重建测试/迁移对象可能没有 id；缺失证据本就只能 UNKNOWN，
+        # 用稳定占位而不是让历史内容重建直接异常。
+        "execution_id": str(getattr(execution, "id", "legacy-unknown")),
+        "environments": {},
+        "required": [],
+        "items": [],
+        "missing_requirements": [],
+        "formal_verdict": "unknown",
+        "formal_acceptance": False,
+        "reason": "execution_evidence_missing_or_invalid",
     }
 
 

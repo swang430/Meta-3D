@@ -311,6 +311,14 @@ class MeasureExecutor(IStepExecutor):
         )
         from app.hal.channel_emulator import ChannelLoadMode
         from app.hal.nr_arfcn import freq_mhz_to_nr_arfcn
+        from app.hal.scpi_evidence import EvidenceLevel, capture_scpi_exchanges
+        from app.services.execution_scpi_evidence import (
+            record_f64_command_capture,
+            record_positioner_capture,
+            record_uxm_config_capture,
+            record_uxm_throughput_capture,
+            register_required_scpi_evidence,
+        )
 
         hal = get_hal_service()
         positioner = hal.drivers.get("positioner")
@@ -327,6 +335,8 @@ class MeasureExecutor(IStepExecutor):
         # exception (HAL hiccup, channel-gen timeout, DUT drop) doesn't leave
         # UXM signaling, F64 emulating, and the turntable mid-rotation.
         cleanup_warnings: List[str] = []
+        uxm_config_capture_manager = None
+        uxm_config_exchanges = []
         try:
             # --- Phase 2g: PCell from component_carriers[0] (always populated
             # by MIMOOTAConfiguration._resolve_component_carriers); SCells
@@ -367,6 +377,18 @@ class MeasureExecutor(IStepExecutor):
             # 继承)。MAC 吞吐配置 / start_signaling / RRC reconfig 不属于小区
             # 参数, 两种模式都执行。
             uxm_inherit = config.uxm_config_mode == "inherit"
+            pcell_arfcn = freq_mhz_to_nr_arfcn(pcell_freq_mhz)
+            # 即使选择 inherit，也必须把“本次 TestCase 期望的 PCell 配置”登记为
+            # mandatory。inherit 路径当前没有同事务写入/回读/APPLY 证据，因此应在
+            # 正式判定中保持 missing/unknown，不能因跳过控制动作而从证据门消失。
+            register_required_scpi_evidence(
+                context.test_execution,
+                requirement_id="uxm.pcell.config_applied",
+                evidence_key="uxm.config_apply",
+                requested=pcell_arfcn,
+                required_evidence_level=EvidenceLevel.APPLIED,
+            )
+            context.db.commit()
             if uxm_inherit:
                 logger.info(
                     "[%s] 开关1 uxm_config_mode=inherit: 跳过 UXM 小区级参数下发 "
@@ -378,10 +400,15 @@ class MeasureExecutor(IStepExecutor):
             # path B 显式驱动端口路由/调度 (见 _build_pcell_cell_config); None 字段不传 →
             # 保持 HAL profile (backward-compat, 旧 case 不被默认值覆盖)。
             if not uxm_inherit:
+                # 配置事务跨越 set_cell_config 与 start_signaling：CELL 已 ON 时
+                # 走 APPLY；初始 OFF 时手册规定后续 CELL ON 自动应用。两条合法
+                # recipe 必须留在同一 capture，不能依赖执行前仪器恰好为 ON。
+                uxm_config_capture_manager = capture_scpi_exchanges()
+                uxm_config_exchanges = uxm_config_capture_manager.__enter__()
                 cell_cfg = _build_pcell_cell_config(
                     config,
                     frequency_mhz=pcell_freq_mhz,
-                    arfcn=freq_mhz_to_nr_arfcn(pcell_freq_mhz),
+                    arfcn=pcell_arfcn,
                     bandwidth_mhz=pcell.bandwidth_mhz,
                     scs_khz=pcell.subcarrier_spacing_khz,
                     band=pcell.band,
@@ -389,6 +416,8 @@ class MeasureExecutor(IStepExecutor):
                 # Codex #195 R5 P1: set_cell_config 布尔契约必须消费 — HAL 层回读对账
                 # mismatch / 下发被拒都只 return False (不裸抛), 这里不检查会带着错配
                 # 小区配置进测量, 正是回读门要拦的实验污染。
+                # 先落“必需项”，即使 HAL 调用随后异常/进程中断，收尾也会显示
+                # missing，而不是空集合误绿。
                 ok = await base_station.set_cell_config(cell_cfg)
                 if not ok:
                     return StepExecutionResult(
@@ -478,7 +507,35 @@ class MeasureExecutor(IStepExecutor):
                         error_message=_blocker,
                     )
 
-            await base_station.start_signaling()
+            signaling_started = await base_station.start_signaling()
+            if uxm_config_capture_manager is not None:
+                uxm_config_capture_manager.__exit__(None, None, None)
+                uxm_config_capture_manager = None
+            if not uxm_inherit and hasattr(
+                base_station, "build_p0_5_config_evidence"
+            ):
+                try:
+                    record_uxm_config_capture(
+                        context.test_execution,
+                        requirement_id="uxm.pcell.config_applied",
+                        requested=cell_cfg.get("arfcn"),
+                        driver=base_station,
+                        exchanges=uxm_config_exchanges,
+                    )
+                    context.db.commit()
+                except Exception:  # noqa: BLE001 — 证据失败不得伪装业务失败原因
+                    logger.exception(
+                        "[%s] UXM P1-47C 证据归档失败；正式判定将保持 unknown",
+                        context.test_execution.id,
+                    )
+            if not signaling_started:
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    error_message=(
+                        "UXM start_signaling 返回 False（CELL ON/UE Attach 未确认）；"
+                        "中止测量，防止读取上一轮缓存吞吐造成假绿。"
+                    ),
+                )
 
             # --- Phase 2e: RRC reconfig pushes new layer/modulation to attached UE.
             # Some UXM firmware applies cell-config changes via RRC automatically;
@@ -805,7 +862,38 @@ class MeasureExecutor(IStepExecutor):
                         f"改用 MIMO-First ASC 引擎, 或清空自定义 CDL 选择。"
                     ),
                 )
-            gen_ok = await generator.generate_and_load(sim_rules, cdl_model_data)
+            # 三种信道管线都必须证明 F64 已加载本次模型。当前正式 recipe 只对
+            # GCM 的 FILE 路径完成绑定；ASC/B2 先保留 missing/unknown，不能因
+            # 分支不同而从 mandatory 集合消失后假绿。
+            register_required_scpi_evidence(
+                context.test_execution,
+                requirement_id="f64.model_loaded",
+                evidence_key="f64.model_load",
+                requested=resolved_emulation_file,
+                required_evidence_level=EvidenceLevel.APPLIED,
+            )
+            context.db.commit()
+            with capture_scpi_exchanges() as channel_load_exchanges:
+                gen_ok = await generator.generate_and_load(sim_rules, cdl_model_data)
+            if (
+                engine_mode == EngineMode.GCM_NATIVE
+                and hasattr(emulator, "build_p0_5_command_evidence")
+            ):
+                try:
+                    record_f64_command_capture(
+                        context.test_execution,
+                        requirement_id="f64.model_loaded",
+                        evidence_key="f64.model_load",
+                        requested=resolved_emulation_file,
+                        driver=emulator,
+                        exchanges=channel_load_exchanges,
+                    )
+                    context.db.commit()
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "[%s] F64 model-load P1-47C 证据归档失败；正式判定将保持 unknown",
+                        context.test_execution.id,
+                    )
             if not gen_ok:
                 return StepExecutionResult(
                     status=StepExecutionStatus.FAILED,
@@ -945,9 +1033,34 @@ class MeasureExecutor(IStepExecutor):
                                 "直通态测量前置失败, 明细见驱动日志。"
                             ),
                         )
-                _bp_ok = await emulator.set_passthrough_mode(
-                    mode=config.f64_bypass_mode
+                register_required_scpi_evidence(
+                    context.test_execution,
+                    requirement_id="f64.output_state",
+                    evidence_key="f64.bypass_mode",
+                    requested=config.f64_bypass_mode,
+                    required_evidence_level=EvidenceLevel.APPLIED,
                 )
+                context.db.commit()
+                with capture_scpi_exchanges() as f64_state_exchanges:
+                    _bp_ok = await emulator.set_passthrough_mode(
+                        mode=config.f64_bypass_mode
+                    )
+                if hasattr(emulator, "build_p0_5_command_evidence"):
+                    try:
+                        record_f64_command_capture(
+                            context.test_execution,
+                            requirement_id="f64.output_state",
+                            evidence_key="f64.bypass_mode",
+                            requested=config.f64_bypass_mode,
+                            driver=emulator,
+                            exchanges=f64_state_exchanges,
+                        )
+                        context.db.commit()
+                    except Exception:  # noqa: BLE001
+                        logger.exception(
+                            "[%s] F64 bypass P1-47C 证据归档失败；正式判定将保持 unknown",
+                            context.test_execution.id,
+                        )
                 if not _bp_ok:
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
@@ -961,7 +1074,32 @@ class MeasureExecutor(IStepExecutor):
                     context.test_execution.id, config.f64_bypass_mode,
                 )
             else:
-                started = await emulator.start_emulation()
+                register_required_scpi_evidence(
+                    context.test_execution,
+                    requirement_id="f64.output_state",
+                    evidence_key="f64.simulation_state",
+                    requested="RUNNING",
+                    required_evidence_level=EvidenceLevel.APPLIED,
+                )
+                context.db.commit()
+                with capture_scpi_exchanges() as f64_state_exchanges:
+                    started = await emulator.start_emulation()
+                if hasattr(emulator, "build_p0_5_command_evidence"):
+                    try:
+                        record_f64_command_capture(
+                            context.test_execution,
+                            requirement_id="f64.output_state",
+                            evidence_key="f64.simulation_state",
+                            requested="RUNNING",
+                            driver=emulator,
+                            exchanges=f64_state_exchanges,
+                        )
+                        context.db.commit()
+                    except Exception:  # noqa: BLE001
+                        logger.exception(
+                            "[%s] F64 run-state P1-47C 证据归档失败；正式判定将保持 unknown",
+                            context.test_execution.id,
+                        )
                 if not started:
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
@@ -1114,6 +1252,22 @@ class MeasureExecutor(IStepExecutor):
 
             dut_disconnect_warnings: List[str] = []
             for az_idx, azimuth in enumerate(config.azimuths_deg):
+                register_required_scpi_evidence(
+                    context.test_execution,
+                    requirement_id=f"positioner.azimuth.{az_idx:03d}",
+                    evidence_key="positioner.angle",
+                    requested={"angle_deg": azimuth},
+                    required_evidence_level=EvidenceLevel.APPLIED,
+                )
+                register_required_scpi_evidence(
+                    context.test_execution,
+                    requirement_id=f"uxm.throughput.azimuth.{az_idx:03d}",
+                    evidence_key="uxm.dl_throughput",
+                    requested={"azimuth_deg": azimuth, "window_s": window_s},
+                    required_evidence_level=EvidenceLevel.OUTCOME,
+                )
+            context.db.commit()
+            for az_idx, azimuth in enumerate(config.azimuths_deg):
                 # --- Phase 2m: DUT health check before each azimuth ---
                 if az_idx % _DUT_HEALTH_CHECK_EVERY_N_AZIMUTHS == 0 and hasattr(
                     base_station, "get_ue_info"
@@ -1142,13 +1296,45 @@ class MeasureExecutor(IStepExecutor):
                     num_windows,
                     window_s,
                 )
-                await positioner.move_to(azimuth, 0.0)
+                with capture_scpi_exchanges() as position_exchanges:
+                    moved = await positioner.move_to(azimuth, 0.0)
+                if hasattr(positioner, "build_p0_5_position_evidence"):
+                    try:
+                        record_positioner_capture(
+                            context.test_execution,
+                            requirement_id=f"positioner.azimuth.{az_idx:03d}",
+                            requested_angle_deg=azimuth,
+                            driver=positioner,
+                            exchanges=position_exchanges,
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.exception(
+                            "[%s] 转台 %.1f° P1-47C 证据归档失败；正式判定将保持 unknown",
+                            context.test_execution.id,
+                            azimuth,
+                        )
+                if not moved:
+                    # RealAerotechDriver / ETS 驱动都用 False 表达设备拒绝或移动
+                    # 失败；继续在旧角度采吞吐会污染结果。必需项已预登记，当前
+                    # capture 也先落库，正式证据保持 fail-closed。
+                    context.db.commit()
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            f"转台移动到 {azimuth:.1f}° 失败；中止该方位及后续测量，"
+                            "防止在旧角度采集并归档错误吞吐。"
+                        ),
+                    )
                 await asyncio.sleep(config.settling_time_s)
 
                 samples_rsrp: List[float] = []
                 samples_sinr: List[float] = []
                 samples_tput: List[float] = []
                 samples_ri: List[float] = []
+                # 同一方位的 formal requirement 只保留最终统计窗。旧实现每个窗口都
+                # 覆写同一 JSONB 摘要并 commit，窗口数增大时会造成不必要的整行写放大；
+                # 必需项已经在动作前落库，因此中途异常仍会安全地保持 missing/unknown。
+                latest_throughput_exchanges = []
 
                 az_meta = azimuth_probe_gains.get(azimuth, {})
                 gain_offset = az_meta.get("gain_offset_db")
@@ -1159,7 +1345,9 @@ class MeasureExecutor(IStepExecutor):
                 ce_base_rsrp = config.target_rsrp_dbm - az_path_loss_db
 
                 for _ in range(num_windows):
-                    metrics = await base_station.measure_throughput_window(window_s)
+                    with capture_scpi_exchanges() as throughput_exchanges:
+                        metrics = await base_station.measure_throughput_window(window_s)
+                    latest_throughput_exchanges = throughput_exchanges
 
                     # RF KPIs (RSRP/SINR) are normally UE-reported; until that
                     # path exists we synthesize from target + per-probe pattern
@@ -1182,6 +1370,31 @@ class MeasureExecutor(IStepExecutor):
                     # 整组有效测量 abort)。只收真实报告的 (>0); 0/None 都视作"未报" skip。
                     _mcs = getattr(metrics, "mcs_dl", None)
                     mcs_samples.append(_mcs if (_mcs and _mcs > 0) else None)
+
+                if (
+                    latest_throughput_exchanges
+                    and hasattr(base_station, "build_p0_5_throughput_evidence")
+                ):
+                    try:
+                        record_uxm_throughput_capture(
+                            context.test_execution,
+                            requirement_id=f"uxm.throughput.azimuth.{az_idx:03d}",
+                            requested={
+                                "azimuth_deg": azimuth,
+                                "window_s": window_s,
+                            },
+                            driver=base_station,
+                            exchanges=latest_throughput_exchanges,
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.exception(
+                            "[%s] UXM %.1f° E4 证据归档失败；正式判定将保持 unknown",
+                            context.test_execution.id,
+                            azimuth,
+                        )
+                # 每个方位只提交一次：同时持久化转台与最终吞吐窗证据，避免同一
+                # TestExecution.config JSONB 在一个角度内被重复整块改写。
+                context.db.commit()
 
                 az = {
                     "azimuth_deg": azimuth,
@@ -1317,6 +1530,8 @@ class MeasureExecutor(IStepExecutor):
                     "testcase" if config.emulation_file else "driver_default"
                 )
         finally:
+            if uxm_config_capture_manager is not None:
+                uxm_config_capture_manager.__exit__(None, None, None)
             cleanup_warnings = await cleanup_chamber_instruments(
                 hal, context.test_execution.id
             )

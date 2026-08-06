@@ -726,6 +726,14 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self._state_query_retry_after = 0.0   # 读到真值 → 解除静默期
         return state
 
+    async def _query_model_state_for_evidence(self) -> Optional[str]:
+        """P1-47C 只读证据探针；失败留 unknown，不改加载业务契约。"""
+        try:
+            return await self._query("DIAG:SIMU:MODEL:STATE?")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[F64] MODEL:STATE? 证据回读失败: {e}")
+            return None
+
     def _has_load_state(self) -> bool:
         """驱动当前还记着"**仪器上有个仿真加载着**"的任何痕迹吗 —— CLOSED 判定要不要
         触发破坏性卸载 (以及要不要为此多发一条复查) 的准入判据。
@@ -1466,6 +1474,9 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     return False
                 close_confirmed = True  # STATE?==CLOSED: 旧场景确认卸载 → 后续失败可清 identity
                 # ——加载 (大文件抬超时, 手册 §2.2.4 默认 2000ms 必 -400)——
+                # P1-47C: CLOSE/preflight 本身会产生往返；在真正 FILE 写入前再清一次
+                # 错误队列，给本次加载建立紧邻且可归属的 baseline。
+                await self._drain_errors()
                 await self._write(
                     f"CALC:FILT:FILE {file_path}", timeout=VISA_TIMEOUT_FILE_LOAD
                 )
@@ -1476,6 +1487,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     logger.error(f"[F64] {self._last_error}")
                     self._apply_unload()  # CLOSE 已发 (旧仿真已停+卸载) → 清加载态
                     return False
+                # 手册确认的模型/仿真状态回读进入同一 FILE 事务证据。模型状态
+                # 证明已存在可读模型；加载阶段通常 STOPPED，运行态由后续 GO 单独到 E3。
+                await self._query_model_state_for_evidence()
+                await self._query_simulation_state()
                 # ——加载后回读真频 (母题③: 频率来自仪器, 不靠文件名。CENT:CH? 1 读
                 # 第一组的组中心频, 单值不越界)——
                 freq = await self._readback_center_freq(1)
@@ -1587,6 +1602,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     return False
                 close_confirmed = True
                 self._emulation_running = False
+                await self._drain_errors()
                 await self._write(f"CALC:FILT:FILE {load_file}", timeout=VISA_TIMEOUT_FILE_LOAD)
                 await self._query("*OPC?", timeout=VISA_TIMEOUT_FILE_LOAD)
                 load_err = await self._first_error()
@@ -2325,6 +2341,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                     return False
                 close_confirmed = True
                 self._emulation_running = False
+                await self._drain_errors()
                 await self._write(
                     f'CALC:FILT:FILE {runtime_smu}',
                     timeout=VISA_TIMEOUT_FILE_LOAD
@@ -3064,6 +3081,17 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             async with self._scpi_lock:
                 await self._drain_errors()
                 await self._write(f"DIAG:SIMU:MODEL:STATIC {mode.value}")
+                static_opc = (await self._query("*OPC?")).strip()
+                if static_opc != "1":
+                    self._last_error = (
+                        f"set_bypass_mode({mode.name}) incomplete: *OPC?={static_opc!r}"
+                    )
+                    logger.error(
+                        "[F64] STATIC %d 未完成 (*OPC?=%r) — fail-loud",
+                        mode.value,
+                        static_opc,
+                    )
+                    return False
                 static_err = await self._first_error()
                 if static_err is not None:
                     # 2026-07-21 现场实证 (GOS 同族幂等怪癖): F64 已处于目标
@@ -3119,6 +3147,18 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                         await self._write("DIAG:SIMU:MODEL:STATIC 0")
                         await self._drain_errors()  # 清位错误不计 (0→0 同样会怪叫)
                         await self._write(f"DIAG:SIMU:MODEL:STATIC {mode.value}")
+                        retry_opc = (await self._query("*OPC?")).strip()
+                        if retry_opc != "1":
+                            self._last_error = (
+                                f"set_bypass_mode({mode.name}) retry incomplete: "
+                                f"*OPC?={retry_opc!r}"
+                            )
+                            logger.error(
+                                "[F64] STATIC %d 复位重试未完成 (*OPC?=%r) — fail-loud",
+                                mode.value,
+                                retry_opc,
+                            )
+                            return False
                         retry_err = await self._first_error()
                         if retry_err is not None:
                             self._last_error = (
@@ -3129,6 +3169,22 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                                 f"(SYST:ERR?): {retry_err}"
                             )
                             return False
+                # 手册 §20.4.6.25-26 的专用回读是旁路档位真值。业务布尔成功、
+                # P1-47C E3 与后续状态缓存都只能建立在精确回读一致之上。
+                static_readback = (
+                    await self._query("DIAG:SIMU:MODEL:STATIC?")
+                ).strip()
+                if static_readback != str(mode.value):
+                    self._last_error = (
+                        f"set_bypass_mode({mode.name}) readback mismatch: "
+                        f"STATIC?={static_readback!r}"
+                    )
+                    logger.error(
+                        "[F64] STATIC %d 回读不一致 (STATIC?=%r) — fail-loud",
+                        mode.value,
+                        static_readback,
+                    )
+                    return False
                 # F64R-1: 运行态切 STATIC≠0 后 F64 会自动暂停 (手册 §20.4.6.25 "启用
                 # 静态模型时**仿真被暂停**"), 但**具体停没停以仪器为准, 不在这里猜** ——
                 # 旧代码内联置 False, 而手册同时又说"退出旁路时若之前在跑则继续运行"

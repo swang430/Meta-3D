@@ -14,6 +14,7 @@
  */
 
 import { useState, useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
   Stack,
   Paper,
@@ -30,6 +31,8 @@ import {
   Loader,
   Center,
   Modal,
+  Code,
+  Divider,
 } from '@mantine/core'
 import { parseServerDateTime, formatExecutionTag } from '../../../../utils/datetime'
 import { CopyableId } from '../../../../components/CopyableId'
@@ -44,6 +47,7 @@ import {
 import { useTestHistory } from '../../hooks'
 import { useReportGeneration } from '../../../Reports/hooks'
 import type { TestExecutionRecord } from '../../types'
+import { getCaseExecutionStatus } from '../../../../api/testPlanService'
 
 // Helper functions for status display
 // 状态表要覆盖 test_executions.status 的全部合法值 (内审 F5): 换源后
@@ -124,6 +128,11 @@ export function HistoryTab({ onViewLogs }: HistoryTabProps = {}) {
   })
   const historyRecords = historyPage?.items
   const backendTotal = historyPage?.total ?? 0
+  const detailQuery = useQuery({
+    queryKey: ['test-execution-detail', selectedRecord?.id],
+    queryFn: () => getCaseExecutionStatus(selectedRecord!.id),
+    enabled: detailModalOpened && selectedRecord !== null,
+  })
 
   // Report generation hook (unified with PendingExecutionsList)
   const { generateExecutionReport, isGenerating } = useReportGeneration()
@@ -482,14 +491,19 @@ export function HistoryTab({ onViewLogs }: HistoryTabProps = {}) {
                 </Group>
                 <Group justify="space-between">
                   <Text size="sm" c="dimmed">
-                    判定:
+                    正式判定:
                   </Text>
                   <Text size="sm">
                     {selectedRecord.validation_pass === null
                       ? '未判定'
-                      : selectedRecord.validation_pass
-                        ? '通过'
-                        : '不通过'}
+                      : detailQuery.isLoading
+                        ? '核验指令证据中'
+                        : detailQuery.isError
+                          ? '未通过（证据读取失败）'
+                          : selectedRecord.validation_pass &&
+                              detailQuery.data?.scpi_evidence?.formal_acceptance === true
+                            ? '通过'
+                            : '未通过（业务结果与指令证据未同时通过）'}
                   </Text>
                 </Group>
               </Stack>
@@ -547,6 +561,70 @@ export function HistoryTab({ onViewLogs }: HistoryTabProps = {}) {
                 </Text>
               </Paper>
             )}
+
+            <Paper p="md" withBorder>
+              <Group justify="space-between" mb="xs">
+                <Text size="sm" fw={600}>仪器指令闭环证据</Text>
+                {detailQuery.data?.scpi_evidence && (
+                  <Badge
+                    color={detailQuery.data.scpi_evidence.formal_acceptance ? 'green' : 'orange'}
+                    variant="light"
+                  >
+                    {detailQuery.data.scpi_evidence.formal_acceptance
+                      ? '正式证据通过'
+                      : detailQuery.data.scpi_evidence.formal_verdict === 'rejected'
+                        ? '证据被拒绝'
+                        : '证据未闭环'}
+                  </Badge>
+                )}
+              </Group>
+              {detailQuery.isLoading ? (
+                <Center py="md"><Loader size="sm" /></Center>
+              ) : detailQuery.isError ? (
+                <Text size="sm" c="red">
+                  证据摘要读取失败，请稍后重试或查看服务日志。
+                </Text>
+              ) : !detailQuery.data?.scpi_evidence ? (
+                <Text size="sm" c="dimmed">本次执行没有可用的仪器证据摘要。</Text>
+              ) : (
+                <Stack gap="sm">
+                  <Text size="xs" c="dimmed">
+                    {detailQuery.data.scpi_evidence.reason}
+                  </Text>
+                  {detailQuery.data.scpi_evidence.missing_requirements.length > 0 && (
+                    <Text size="xs" c="orange">
+                      缺少 {detailQuery.data.scpi_evidence.missing_requirements.length} 项必需证据：
+                      {' '}{detailQuery.data.scpi_evidence.missing_requirements.join('、')}
+                    </Text>
+                  )}
+                  <Divider />
+                  {detailQuery.data.scpi_evidence.items.map((item) => (
+                    <Paper key={item.requirement_id} p="sm" withBorder>
+                      <Group justify="space-between" mb={6}>
+                        <Text size="sm" fw={500}>{item.requirement_id}</Text>
+                        <Group gap={6}>
+                          <Badge size="sm" variant="outline">{item.evidence_level}</Badge>
+                          <Badge
+                            size="sm"
+                            color={item.verdict === 'passed' ? 'green' : item.verdict === 'rejected' ? 'red' : 'orange'}
+                          >
+                            {item.verdict === 'passed' ? '通过' : item.verdict === 'rejected' ? '拒绝' : '未知'}
+                          </Badge>
+                        </Group>
+                      </Group>
+                      <Text size="xs" c="dimmed" mb={4}>{item.reason}</Text>
+                      {item.command_sent && <Code block>{item.command_sent}</Code>}
+                      <Text size="xs" c="dimmed" mt={6}>
+                        往返索引：{item.exchange_ids.length > 0 ? item.exchange_ids.join('、') : '无'}
+                      </Text>
+                      {item.source_reference && (
+                        <Text size="xs" c="dimmed">佐证来源：{item.source_reference}</Text>
+                      )}
+                    </Paper>
+                  ))}
+                </Stack>
+              )}
+            </Paper>
           </Stack>
         )}
       </Modal>

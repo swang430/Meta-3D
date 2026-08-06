@@ -356,6 +356,25 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TestExecutionListResponse'
+  /api/v1/test-plans/cases/executions/{execution_id}:
+    get:
+      summary: Get one TestCase execution status and sanitized SCPI evidence
+      parameters:
+        - name: execution_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Execution status with P1-47C evidence when available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseExecutionStatus'
+        '404':
+          description: Execution not found
   /api/v1/system-logs/tail:
     get:
       summary: Tail a structured log file (P2-8 cockpit log zone)
@@ -869,6 +888,154 @@ components:
           items:
             $ref: '#/components/schemas/TestExecutionItem'
       required: [total, items]
+    ScpiEvidenceEnvironment:
+      type: object
+      additionalProperties: true
+      properties:
+        instrument_id:
+          type: string
+        instrument:
+          type: string
+        model:
+          type: string
+          nullable: true
+        firmware_version:
+          type: string
+          nullable: true
+        captured_from_live_connection:
+          type: boolean
+      required: [instrument_id, instrument, captured_from_live_connection]
+    ScpiEvidenceRequirement:
+      type: object
+      properties:
+        requirement_id:
+          type: string
+        evidence_key:
+          type: string
+        requested: {}
+        required_evidence_level:
+          type: string
+          enum: [E0, E1, E2, E3, E4]
+      required: [requirement_id, evidence_key, requested, required_evidence_level]
+    ScpiEvidenceItem:
+      type: object
+      properties:
+        requirement_id:
+          type: string
+        instrument:
+          type: string
+        evidence_key:
+          type: string
+        requested: {}
+        command_sent:
+          type: string
+          nullable: true
+        readback: {}
+        exchange_ids:
+          type: array
+          items:
+            type: string
+        evidence_level:
+          type: string
+          enum: [E0, E1, E2, E3, E4]
+        source_reference:
+          type: string
+          nullable: true
+        verdict:
+          type: string
+          enum: [passed, rejected, unknown]
+        reason:
+          type: string
+      required:
+        - requirement_id
+        - instrument
+        - evidence_key
+        - requested
+        - command_sent
+        - readback
+        - exchange_ids
+        - evidence_level
+        - source_reference
+        - verdict
+        - reason
+    ExecutionScpiEvidence:
+      type: object
+      description: |
+        Sanitized P1-47C summary. Raw replies stay in scpi.log and are linked
+        by execution_id + exchange_ids. Any missing/unknown/rejected mandatory
+        item makes formal_acceptance false.
+      properties:
+        schema_version:
+          type: integer
+        execution_id:
+          type: string
+          format: uuid
+        environments:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/ScpiEvidenceEnvironment'
+        required:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScpiEvidenceRequirement'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScpiEvidenceItem'
+        missing_requirements:
+          type: array
+          items:
+            type: string
+        formal_verdict:
+          type: string
+          enum: [passed, rejected, unknown]
+        formal_acceptance:
+          type: boolean
+        reason:
+          type: string
+      required:
+        - schema_version
+        - execution_id
+        - environments
+        - required
+        - items
+        - missing_requirements
+        - formal_verdict
+        - formal_acceptance
+        - reason
+    CaseExecutionStatus:
+      type: object
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+        source_test_case_id:
+          type: string
+          nullable: true
+        phase_progress:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        failed_phase:
+          type: string
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        started_at:
+          type: string
+          nullable: true
+        completed_at:
+          type: string
+          nullable: true
+        scpi_evidence:
+          allOf:
+            - $ref: '#/components/schemas/ExecutionScpiEvidence'
+          nullable: true
+      required: [execution_id, status, phase_progress]
     SystemLogEntry:
       type: object
       description: |

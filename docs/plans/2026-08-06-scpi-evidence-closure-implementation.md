@@ -96,7 +96,7 @@
 7. 转台记录请求角、反馈角、容差和坐标系偏置。
 8. 运行定向测试与全量测试；走全套内审和外审。
 
-### Task 6：P1-47C TestCase持久化与展示
+### Task 6：P1-47C TestCase持久化与展示 ✅（2026-08-07 完成）
 
 **Files:**
 - Modify: `api-service/app/services/test_case_runner.py`
@@ -119,6 +119,17 @@
 7. `ReportDataCollector`、`ReportData`/`to_dict()`、`ReportService` 与活跃 PDF 渲染器必须把证据读出并渲染，明确区分直接证据、间接证据和未确认项；IMSI只显示哈希/末四位，认证信息绝不展示。
 8. 做“执行状态端点漏返回证据”“报告 collector 丢证据”“删除一项证据仍显示通过”“断开exchange_ids关联”“完整IMSI/认证参数泄漏”的变异并确认测试变红。
 9. 运行全量测试；走全套内审和外审。
+
+**完成记录**：已实现同 execution/capture 的严格 provenance、真实环境指纹、mandatory
+fail-closed 汇总、API/生成类型/GUI/报告/PDF 同源结论，以及业务结果与
+`formal_acceptance` 的 AND 门。UXM 初始 ON/OFF 两条合法应用路径均可达；
+`start_signaling=False`、转台 `move_to=False`、报告执行 ID 缺失、模板/客户端覆盖和
+0/0 汇总均不能假绿。GCM 正式路径已接通；`inherit`、ASC/B2、未标定转台偏置及缺失
+Aerotech 实时身份继续如实为 unknown。内审最终结论 CLEAN；外审与完整回归结果在合并前补记。
+本地固定基线：后端 `3369 passed / 5 skipped`，GUI production build 通过。GitHub Codex
+首轮外审发现 F64 旁路证据曾误选模型状态；已改为对最终目标 `STATIC` 写入执行
+`*OPC? → SYST:ERR? → STATIC? → STATE?` 闭环，并补齐首发失败后重试事务的选择测试。
+内审进一步钉住 `STATE?` 缺失、传输失败或非法响应时不得升级 E3。
 
 ### Task 7：P0-5现场正式复验
 

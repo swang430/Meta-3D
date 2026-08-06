@@ -62,6 +62,19 @@ RUNNER_MARKER = "test_case_runner"
 _RUNNING_TASKS: Dict[str, "asyncio.Task[None]"] = {}
 
 
+def _finalize_scpi_acceptance(execution):
+    """P1-47C：仪器证据是正式通过的必要条件，不替代业务判定。"""
+    from app.services.execution_scpi_evidence import (
+        finalize_execution_scpi_evidence,
+    )
+
+    summary = finalize_execution_scpi_evidence(execution)
+    if not summary.formal_acceptance:
+        # 只做 AND 门：证据不完整强制不通过；证据通过也不能替业务分析判绿。
+        execution.validation_pass = False
+    return summary
+
+
 def has_active_case_run() -> Optional[str]:
     """返回当前活跃的 case 执行 id (无则 None)。"""
     for key, task in _RUNNING_TASKS.items():
@@ -409,6 +422,7 @@ async def _run_case(execution_id: UUID) -> None:
                 cfg["error_message"] = f"执行器异常: {e}"
                 ex.config = cfg
                 flag_modified(ex, "config")
+                _finalize_scpi_acceptance(ex)
                 db.commit()
         except Exception:  # noqa: BLE001
             logger.exception("[case-runner] execution %s 异常收尾也失败", execution_id)
@@ -443,6 +457,8 @@ async def _run_case_loop(db, execution_id: UUID) -> None:
         db.expire(execution)
         db.refresh(execution)
         if execution.status != "running":
+            _finalize_scpi_acceptance(execution)
+            db.commit()
             logger.info(
                 "[case-runner] execution %s 状态已变为 %s, 停在相位 %s 前",
                 execution_id, execution.status, raw.get("type"),
@@ -479,6 +495,7 @@ async def _run_case_loop(db, execution_id: UUID) -> None:
 
     db.expire(execution)
     db.refresh(execution)
+    evidence_summary = _finalize_scpi_acceptance(execution)
     if (execution.config or {}).get("cancel_requested"):
         # Codex #237 C5: cancel 的 status 可能已被 REPORT executor 覆盖成
         # completed — 痕迹在就强制回 cancelled, 取消不许被相位收尾吃掉。
@@ -490,8 +507,11 @@ async def _run_case_loop(db, execution_id: UUID) -> None:
                 "[case-runner] execution %s 末相位覆盖了 cancelled, 已救回",
                 execution_id,
             )
+        else:
+            db.commit()
         return
     if execution.status != "running":
+        db.commit()
         return  # cancel 在最后一个相位后到达 — 尊重外部终态
     if failed_phase is not None:
         execution.status = "failed"
@@ -505,7 +525,11 @@ async def _run_case_loop(db, execution_id: UUID) -> None:
     execution.completed_at = datetime.utcnow()
     db.commit()
     logger.info(
-        "[case-runner] execution %s 收尾: %s", execution_id, execution.status
+        "[case-runner] execution %s 收尾: %s, SCPI formal=%s (%s)",
+        execution_id,
+        execution.status,
+        evidence_summary.formal_verdict.value,
+        evidence_summary.reason,
     )
 
 

@@ -51,15 +51,25 @@ def _make_driver(*, has_interference_generator=_SENTINEL):
     visa_mock.query.return_value = '0,"No error"'
     visa_mock.write.return_value = None
     drv._visa_resource = visa_mock
+    instrument = {"static": "0", "state": "STOPPED"}
 
     # Bypass base-class transport wrapper — call the visa mock directly,
     # async-wrap with a trivial coroutine. Driver code only awaits, doesn't
     # care about the underlying transport mechanics in tests.
     async def _async_write(cmd, timeout=None):
         visa_mock.write(cmd)
+        if cmd.startswith("DIAG:SIMU:MODEL:STATIC "):
+            instrument["static"] = cmd.rsplit(maxsplit=1)[-1]
 
     async def _async_query(cmd, timeout=None, **_kw):
-        return visa_mock.query(cmd)
+        raw = visa_mock.query(cmd)
+        if cmd == "*OPC?":
+            return "1"
+        if cmd == "DIAG:SIMU:MODEL:STATIC?":
+            return instrument["static"]
+        if cmd == "DIAG:SIMU:STATE?":
+            return instrument["state"]
+        return raw
 
     drv._write = _async_write  # type: ignore[assignment]
     drv._query = _async_query  # type: ignore[assignment]
