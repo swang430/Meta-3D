@@ -14,13 +14,13 @@
 现场半同样仍 blocked（见 Blocked on hardware 表）。
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
-**2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体放到队首**：
-**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → **P1-45** → P1-46 → P1-41 → P1-47A → P1-47B → P1-47C → P1-28 → P1-43 → P1-44 → P1-42 → P1-40 → P1-37 → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1）。
+**2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
+**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → **P1-46** → P1-41 → P1-47A → P1-47B → P1-47C → P1-28 → P1-43 → P1-44 → P1-42 → P1-40 → P1-37 → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1）。
 
-**当前队首 = P1-45**。P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
+**Current Focus = P1-46**。P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
 SCPI 闭环依赖链：先把现场项映射到载体 → 用手册证据修判定和缺失载体 → 止住错误队列
 无限循环 → 补传输配对 → 补仪器接受/生效语义 → 接入正式 TestCase。P1-28 在这条链完成后
-立即恢复为队首。设计与逐片实施计划见
+成为 Current Focus。设计与逐片实施计划见
 [`plans/2026-08-06-scpi-evidence-closure-design.md`](plans/2026-08-06-scpi-evidence-closure-design.md) /
 [`plans/2026-08-06-scpi-evidence-closure-implementation.md`](plans/2026-08-06-scpi-evidence-closure-implementation.md)。一句话索引：
 - **P1-25** GUI 主控台"系统状态"面板恒空修复 + api.ts 手写镜像同尺审计
@@ -50,7 +50,7 @@ SCPI 闭环依赖链：先把现场项映射到载体 → 用手册证据修判�
 > **高效** = 找得到（P1-35 去噪 90.1%；P1-34 按请求/时间定位）。
 > 后续再有日志相关发现，默认按此线插队，不必每次重新论证优先级。
 
-- **P1-45** 现场验证项 → 载体序列映射（表加一列 + 修 stale；docs-only）
+- ~~**P1-45**~~ ✅ 现场验证项 → 载体序列 / 正式 TestCase 映射（表逐行核对 + 修 stale；docs-only）
 - **P1-46** 补现场载体与判定缺口：ON 态同值写剧本 + `uxm_scpi_compatibility` 对齐 mandatory；inherit 层数因无生效观测手段继续留 Discovered（**动手前必查手册**）
 - **P1-27** P1-8 校准门拒 mock cert（provenance + real 模式 strict 拒）
 - **P1-28** 「当前暗室」双真值源收口（active chamber vs active lab 绑定暗室）
@@ -61,7 +61,7 @@ SCPI 闭环依赖链：先把现场项映射到载体 → 用手册证据修判�
 - **P3-18** 门/测试精化批（G11 三覆盖面 / p08 零残留站点 / PDF 转义收口 / 诊断序列串行化 / **手写类型审计尺子改逐层递归**）
 - **P3-19** 日志/告警/留痕卫生批（tail 上限 / app.log 噪声 / 校准 warnings 持久化+清理警告可见 / UXM 两组 P3 / **四个说谎死类型删死链** / **`is_docker_pid` 改 allowlist**）
 
-**2026-08-01 拍板的本地队列 10/10 全部收口**（P1-22 ✅ #256 / P1-23 ✅ #257 / P2-19 ✅ #258 / P2-20 ✅ #259 / P1-24 ✅ #260 / P2-21 ✅ #261 / P3-14 ✅ #262 / P3-15 ✅ #263 / P3-16 ✅ #264 / P3-17 ✅ done 本 PR）。**这是 2026-08-01 的历史快照，不表示当前队列为空；当前队首以本节顶部为准。** 原顺序备查 **P1-22 → P1-23 → P2-19 → P2-20 → P1-24 → P2-21 → P3-14 → P3-15 → P3-16 → P3-17**
+**2026-08-01 拍板的本地队列 10/10 全部收口**（P1-22 ✅ #256 / P1-23 ✅ #257 / P2-19 ✅ #258 / P2-20 ✅ #259 / P1-24 ✅ #260 / P2-21 ✅ #261 / P3-14 ✅ #262 / P3-15 ✅ #263 / P3-16 ✅ #264 / P3-17 ✅ done 本 PR）。**这是 2026-08-01 的历史快照，不表示当前队列为空；当前执行片只看本节顶部 Current Focus。** 原顺序备查 **P1-22 → P1-23 → P2-19 → P2-20 → P1-24 → P2-21 → P3-14 → P3-15 → P3-16 → P3-17**
 （逐片 WIP=1；P1-24/P2-21 为 2026-08-01 用户二次拍板从 Discovered 提升，插在 P3 批前）。一句话索引（详情见各 P 区条目）：
 - **P1-22** 报告可信化：`overall_pass` 死键 + PDF CJK 字体 + `Test Plan: N/A` 残留（设计稿 [`design/p1-22-report-trustworthy-fix.md`](design/p1-22-report-trustworthy-fix.md)）
 - **P1-23** 现场协议补 P0-8 gate（纯文档，行前必办）
@@ -201,14 +201,15 @@ TestCase（自带 `configuration`，单一真值源）→ TestExecution（每次
 > error + 输入口变绿 + DL 不失真，见 `### P0-8` 条目），跟 attach 是同一台 F64、
 > 同一段窗口的活。⚠️ 「Blocked on hardware」表**此前漏列 P0-8**，本 PR 一并补上 ——
 > 否则"权威表"和 `ON-SITE-BLOCKED` 行会各说各话（Codex #249 抓到）。
-> ⚠️ 本文上方 2026-06-21 那段写的"切回依赖链 P0-4 → P0-3 → P0-5"**写于 P0-3/4 完成之前，
-> 已 stale**，别照它安排现场（清理它属 07-03 现场记录的收口，不在本条目范围）。
+> ⚠️ 2026-06-21 原记录曾写“切回依赖链 P0-4 → P0-3 → P0-5”，那是 P0-3/4
+> 完成前的历史快照；P1-45 已把现行规则换成 Blocked 表指针，**不要恢复该旧链**。
 
 
 P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max / RT→MPC 接入)
 已进 on-site 队列。**原开发的现场验证基线已打 tag** `onsite-verification-baseline-2026-06-21`（留在 main）。
-**下次现场** (校准天线 / SGH / 真 DUT 到位) Current Focus **必须从该 tag 切回依赖链 P0-4 → P0-3 → P0-5**
-（见下方「🚧 Blocked on hardware」段 + [`guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md)），
+**下次现场窗口按下方「🚧 Blocked on hardware」表排程**；P1-47C 完成后优先执行
+P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
+（执行协议见 [`guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md)）。
 现场只调硬件、不写 driver 代码；P2-14 现场验证可在 P0 链路间隙穿插。
 
 > **完整项目历程** (第一次现场 → 现在的全程 + 5 条主线) 见
@@ -222,7 +223,7 @@ P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max /
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → **P1-45** → P1-46 → P1-41 → P1-47A → P1-47B → P1-47C → P1-28 → P1-43 → P1-44 → P1-42 → P1-40 → P1-37 → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-06 用户批准“SCPI闭环放队首”；**队首现为 P1-45**，完成 P1-47C 后恢复 P1-28）|
+| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → **P1-46** → P1-41 → P1-47A → P1-47B → P1-47C → P1-28 → P1-43 → P1-44 → P1-42 → P1-40 → P1-37 → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-06 用户批准“SCPI 闭环整体前置”；当前执行片只看顶部 **Current Focus**，完成 P1-47C 后切到 P1-28）|
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；先等 P1-47C 本地证据链）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -241,40 +242,60 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 
 ## 🚧 Blocked on hardware (on-site queue —— **P0 优先**)
 
-> ⚠️ **「载体序列」这一列必须填得出**（2026-08-06 用户定，正式条目见 `### P1-45`）——
-> **填不出 = 出发前要补的活**，不是到了现场再想办法。CLAUDE.md 早写了「每记一条
+> ⚠️ **「正式载体」这一列必须填得出**（2026-08-06 用户定，正式条目见 `### P1-45`）——
+> **填不出 = 不能带到现场临时补**。它继续留在原有 Discovered / Blocked / HOLD 分区，
+> 只有经 triage 批准的两项 P1-46 交付物才能并入 P1-46，不能借映射审计自动扩 scope。
+> CLAUDE.md 早写了「每记一条
 > 『这个得现场验』的发现或 backlog，同时问它落在哪个序列里」，但**从来没人做过这个映射**；
-> 本列就是让它跑不掉。载体 = `api-service/app/diagnostics/sequences/` 下 checked-in 的
-> 诊断序列，在 GUI 「调试序列 + 单阶段」面板里点一下就跑，**不是临时脚本**
+> 本列就是让它跑不掉。诊断载体只能是 `api-service/app/diagnostics/sequences/` 下
+> checked-in 的序列；正式测试载体只能是 MIMO_OTA TestCase，**不是临时脚本**
 > （理由见 CLAUDE.md「仪表驱动调试走诊断序列」一节）。
+>
+> **注册证据（P1-45 已逐层核对）**：诊断序列由
+> [`diagnostics/loader.py`](../api-service/app/diagnostics/loader.py) 按文件名发现，经
+> [`GET /api/v1/diagnostic-sequences`](../api-service/app/api/diagnostic_sequence.py) 列表端点与
+> `POST /api/v1/diagnostic-sequences/{key}/run` 执行端点；GUI
+> [`apiClient`](../gui/src/api/client.ts) 以 `/api/v1` 为 `baseURL`，由
+> [`SequenceRunnerPanel`](../gui/src/features/Diagnostics/SequenceRunnerPanel.tsx) 发起列表/执行请求。因此下表写出的
+> 序列 key 都确实能在「调试维护 → 调试序列」选择并执行。正式 MIMO_OTA TestCase 则由
+> [`TestManagement`](../gui/src/features/TestManagement/TestManagement.tsx) 打开执行入口，经
+> [`executeTestCase`](../gui/src/api/testPlanService.ts) 调用
+> [`test_case_runner`](../api-service/app/services/test_case_runner.py)；该 runner 当前明确只接受
+> `test_type='MIMO_OTA'`。下表凡写“正式 TestCase”均指这条已注册路径，不把普通页面、旧计划链
+> 或手工操作冒充正式载体。
 
-| ID | Item | Blocker | 载体序列 |
+| ID | Item | Blocker | 正式载体（P1-45 核对结论） |
 |----|------|---------|---------|
 | ~~P0-3~~ | ~~Path-loss calibration loop closure + cal cert~~ | ✅ 2026-07-03 现场完成 (余复测 ±0.5dB → P1-4) | — 已完成 |
 | ~~P0-4~~ | ~~SignalAnalyzer in HAL for reference TRP~~ | ✅ 2026-07-03 现场完成 | — 已完成 |
-| P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | 2026-07-21 物理 attach + 转台四方向已跑通；先完成 P1-47C，再用 on-site real DUT 做正式 TestCase 证据复验 | ⚠️ `baseStation_attach_check` 只作出发前诊断；正式关闭载体是正常 TestCase，必须产出 UXM/F64/转台同次执行的 E0–E4 证据 |
-| P0-8 **现场半** | F64 driver 现场修复落地 —— real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真 | on-site real F64 (本地半已 Done, 见 `### P0-8`；跟 P0-5 attach 同一段窗口) | ✅ `propsim_f64_p08_gate`（P1-24 已写，597 行，mock 跑通） |
-| P1-2 | F64 license probe SCPI 现场验证 | on-site real F64 | ✅ `propsim_f64_health`（只读普查，A 类） |
-| P1-4 | first-call repeatability test | on-site 全链路 | ❌ **不是序列能覆盖的** —— 这是**跑多次正式测试比结果**，走 TestCase 流程 + 报告对比，不是诊断序列 |
-| P1-5 **现场半** | CAL-04 phase calibration | on-site 真校准链路 | ❌ 同上 —— 校准是正式流程，走校准页面不走诊断序列 |
-| P1-17 **现场半** | UXM fresh-start 配置落地 | on-site real UXM | ✅ `uxm_config_truth_probe`（下发→生效→核对，正是它要的） |
-| P2-4 | NAT/firewall idle-drop 假设验证 | on-site 现场网络 | ❌ **无载体** → C 类（长连接放置后观察），待排 |
-| P2-9 **现场半** | EMCenter switch bring-up | on-site EMCenter | ❌ **无载体** → 该仪器**连 health 序列都没有**，待排 |
-| P2-10 **现场半** | F64 工程精细化（配置资产 / 外部输出 / 内部 cal） | on-site real F64 | ⚠️ 部分可挂 `propsim_f64_health` / `propsim_f64_state_machine`，需逐项拆 |
-| P2-12 **现场半** | 标准信道文件定义 | on-site real F64 | ⚠️ 与 P2-10 同批拆 |
-| P2-13 **现场半** | SIMProfile + SIM↔UXM 一致性 | on-site 真 SIM | ❌ **无载体** → A 类（读 SIM 身份 + 比对声明），待排 |
-| P1-6 **（HOLD 行）** | FS16 / UXM / ENA silent-reconnect 集成测试 | 需真 idle-close 证据 | ❌ **无载体** —— ⚠️ 见下方「我把它搞反了」 |
-| P1-33 **现场半** | 验证按手册重写的 MAC 配置命令在真机上被接受（本地半可先做，见 `### P1-33`） | on-site real UXM。⚠️ **不再 gate 在 P1-31 上**（Codex #276 P2 抓出错误依赖）：P1-31 只跑那 9 项 KPI 对账、且限定「手册有依据 + 驱动已在用」的命令，**产不出 MAC 配置命令的形式**；而 2026-08-03 查手册发现**这 8 组命令 `BSE:` 形式手册里全都有** —— 卡点不是「不知道命令」，是「没在真机上验过」 | ⚠️ **半覆盖** `uxm_scpi_compatibility` —— 命令被枚举探了, 但**判定集不对**(`TDD_PATTERN` 在 critical 里却恒 `None` → 该序列在 IRAT 上恒判失败; `MAC_CFG_MANDATORY` 里多数不在 critical → 被拒也报 OK)。**别当已完成**, 修法见 `### P1-46` 第 2 件交付物 |
+| P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | 2026-07-21 物理 attach + 转台四方向已跑通；先完成 P1-47C，再用 on-site real DUT 做正式 TestCase 证据复验 | ✅ 诊断：[`baseStation_attach_check`](../api-service/app/diagnostics/sequences/baseStation_attach_check.py)；正式关闭：MIMO_OTA TestCase。当前缺的是 P1-47C 的同次执行 E0–E4 机制，**现场已观察事实不等于正式通过** |
+| P0-8 **现场半** | F64 driver 现场修复落地 —— real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真 | on-site real F64 (本地半已 Done, 见 `### P0-8`；跟 P0-5 attach 同一段窗口) | ✅ P0-8a：[`propsim_f64_p08_gate`](../api-service/app/diagnostics/sequences/propsim_f64_p08_gate.py)；P0-8b（DL 不失真）：同一条 MIMO_OTA TestCase |
+| P1-2 | F64 license probe SCPI 现场验证 | on-site real F64 | ⚠️ **部分载体**：[`propsim_f64_health`](../api-service/app/diagnostics/sequences/propsim_f64_health.py) 只覆盖 `OUTPut:INTERFerence:LIST?`；校准侧实际只探 `SYSTem:CALIBration:USER:GET?/INFO?`，没有事项要求的 `SYSTem:CALibration:USER:LIST?`，也没有按已知状态判 license presence/absence。保留 Blocked；不并入 P1-46 |
+| P1-4 | first-call repeatability test | on-site 全链路 | ⚠️ **部分载体**：MIMO_OTA TestCase 可重复执行；但现有 [`ReportComparison`](../api-service/app/models/report.py) 契约仍比较已封存的 `plan_id`，不是 TestExecution 级对比，不能宣称“报告对比闭环”。保留 Blocked，缺口不并入 P1-46 |
+| P1-5 **现场半** | CAL-04 phase calibration | on-site 真校准链路 | ❌ **无合规载体**：现有 [`CAL-04 API`](../api-service/app/api/path_loss_calibration.py) 不是诊断序列，也不是 MIMO_OTA TestCase。保留 Blocked；不写临时脚本、不并入 P1-46 |
+| P1-17 **现场半** | UXM fresh-start 配置落地 | on-site real UXM | ⚠️ **部分载体**：[`uxm_config_truth_probe`](../api-service/app/diagnostics/sequences/uxm_config_truth_probe.py) 只在已 ON 小区扰动/恢复 ARFCN；不触发 fresh-start/HAL reload、`default_state_file` recall、默认 profile/state 自动应用、全配置/MIMO 对齐或 `.state` 盘点。保留 Blocked；不并入 P1-46 |
+| P2-4 | NAT/firewall idle-drop 假设验证 | on-site 现场网络 | ❌ **无载体**：C 类长连接放置后观察。保留 Blocked，待独立 triage；不并入 P1-46 |
+| P2-9 **现场半** | EMCenter switch bring-up | on-site EMCenter | ❌ **无载体**：[`rf_switch.py`](../api-service/app/hal/rf_switch.py) 有驱动不等于有 GUI 诊断载体，当前 12 个已注册序列里没有 EMCenter。保留 Blocked；不并入 P1-46 |
+| P2-10 **现场半** | F64 工程精细化（配置资产 / 外部输出 / 内部 cal） | on-site real F64 | ⚠️ **部分载体**：[`propsim_f64_health`](../api-service/app/diagnostics/sequences/propsim_f64_health.py) / [`propsim_f64_state_machine`](../api-service/app/diagnostics/sequences/propsim_f64_state_machine.py) 只覆盖公共能力与状态语义，配置资产/外部输出/内部 cal 仍须在 P2-10 内逐项拆；不并入 P1-46 |
+| P2-12 **现场半** | 标准信道文件定义 | on-site real F64 | ❌ **无事项级载体**：F64 公共序列只能验健康/状态，不能证明标准信道文件定义端到端正确。保留 P2-12，跟 P2-10 同批拆；不并入 P1-46 |
+| P2-13 **现场半** | SIMProfile + SIM↔UXM 一致性 | on-site 真 SIM | ⚠️ **正式 TestCase 半覆盖**：[`MIMOOTAConfiguration.sim_profile_id`](../api-service/app/schemas/mimo_ota/config.py) 已由 [`precheck`](../api-service/app/services/mimo_ota/executors/precheck.py) 核对 SIMProfile；但 UXM 实测 IMSI 当前多数仍回退 attach 手填值，不能证明真卡身份闭环。保留 Blocked；不并入 P1-46 |
+| P1-6 **（HOLD 行）** | FS16 / UXM / ENA silent-reconnect 集成测试 | 需真 idle-close 证据 | ❌ **无 C 类载体**：[`propsim_fs16_health`](../api-service/app/diagnostics/sequences/propsim_fs16_health.py) / [`uxm_scpi_compatibility`](../api-service/app/diagnostics/sequences/uxm_scpi_compatibility.py) / [`vna_ena_health`](../api-service/app/diagnostics/sequences/vna_ena_health.py) 都不会制造 idle-close。继续 HOLD；不并入 P1-46 |
+| P1-33 **现场半** | 验证按手册重写的 MAC 配置命令在真机上被接受（本地半可先做，见 `### P1-33`） | on-site real UXM。⚠️ **不再 gate 在 P1-31 上**（Codex #276 P2 抓出错误依赖）：P1-31 只跑那 9 项 KPI 对账、且限定「手册有依据 + 驱动已在用」的命令，**产不出 MAC 配置命令的形式**；而 2026-08-03 查手册发现**这 8 组命令 `BSE:` 形式手册里全都有** —— 卡点不是「不知道命令」，是「没在真机上验过」 | ⚠️ **半覆盖** [`uxm_scpi_compatibility`](../api-service/app/diagnostics/sequences/uxm_scpi_compatibility.py)：命令被枚举，但判定集错（`TDD_PATTERN` 恒 `None` 仍在 critical；`MAC_CFG_MANDATORY` 多数未进 critical）。这是表内唯一并入 P1-46 的缺口，见其第 2 件交付物 |
+
+**P1-45 triage 结论**：13 条未完成/现场半/HOLD 行中，2 条已有合规载体，6 条只有
+部分载体，5 条没有合规载体。**P1-46 只接**已批准的
+`uxm_idempotent_write_probe` 与 P1-33 判定集对齐；其余缺口保持上表注明的
+Blocked / HOLD / 原 P 项，不写临时脚本替代，也不因本轮审计自动升级为 backlog。
 
 ⚠️ 表里 **P1-33 现场半不是 P0**，不抢 P0-5 / P0-8 的窗口，排在 P0 之后。
-**不依赖 P1-31** —— 命令形式手册里有，本地半已进 LOCAL-OPEN 队列；
+**不依赖 P1-31** —— 命令形式手册里有，本地半已完成；
 现场只验「真机接不接受」。
 
 These are still the highest-priority items overall. P0-5 的物理链已跑通，
 但在 P1-47C 前缺少可判定的自动化证据，所以当前仍先做本地闭环；P1-47C 完成后，
 下一次现场窗口必须立即切回 P0-5 正式复验，再启动新的非闭环 P1。
 
-> ⚠️ **P0-5 是主线，但不是当天唯一的 P0 活** —— P0-8 的现场半（上表最后一行）
+> ⚠️ **P0-5 是主线，但不是当天唯一的 P0 活** —— P0-8 的现场半（见上表对应行）
 > 需要同一台 real F64，排窗口时一起算。两者都在「📋 可规划工作 audit」的
 > `ON-SITE-BLOCKED` 行里；本表此前漏列 P0-8，2026-07-30 补上。
 >
@@ -551,7 +572,7 @@ throughput. The MEASURE phase needs this to compute real RSRP/SINR/Tput.
   and positioner control; only in-scope `confirmed` manual evidence can make the gate green
 
 **Status**: `[ ]` formal acceptance open — physical attach + four-direction run completed
-on 2026-07-21; blocked on local P1-45/46/41/47A-C evidence work, then one on-site
+on 2026-07-21; P1-45 mapping is complete, now blocked on local P1-46/41/47A-C evidence work, then one on-site
 formal TestCase revalidation.
 
 > **历史记录 — 5/27 现场部分重现 (非验收)**: DUT 经 SCPI 控制的 UXM + F64(3600M/N78) 稳定 **CONN + DL live**,
@@ -1470,7 +1491,7 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 **What**: cal 记录带 `use_mock` provenance 标记；real 模式 precheck strict 门拒 mock cert（门现在只查存在/频率/时效）。**来源**: 2026-07-03 现场实证（[→ P1-27] 已标）—— mock 路损 cert 在 real 模式 `cal_pass: true`，真测静默应用 mock 补偿值。
 **Why P1**: 现场实证穿透，下次现场前必修（runtime-gate-not-frozen-snapshot 同母题）。
 
-### P1-28 — 「当前暗室」双真值源收口 ⬜（2026-08-02 拍板；**2026-08-06 用户指定插到队首**）
+### P1-28 — 「当前暗室」双真值源收口 ⬜（2026-08-02 拍板；**2026-08-06 用户指定排在 SCPI 闭环之后**）
 
 **What**: `ChamberConfiguration.is_active`（activate 端点强制唯一的"当前工作暗室"单选器）与 `LabProfile.chamber_config_id`（lab 绑定）是两个同名不同义的真值源，之间**零约束零同步**；消费方分两派（`commissioning`/`mimo_ota.factory`/`trp.factory` 走 `resolve_lab_profile` → lab 绑定暗室；`chamber.py` 列表默认过滤 + `workflow_engine` 的 `probe_ids="auto"` 走 `chamber.is_active`），同一时刻拿到不同 chamber 行。修法按 **去掉 > 换源 > 收窄 > 加机制**：推荐**去掉**双源之一（「当前暗室」:= active lab 所绑暗室，`chamber.is_active` 退役或降为派生只读显示），两派消费方换源统一走单一 resolver；最次才是 activate 端点双写同步（双写自身会再漂）。配套门 = 不变量门（全仓解析"当前暗室"的代码路径 ⊆ 单一真值源，`test_rule_gates.py` G 门同款结构断言）+ 诊断序列加 DB 两值一致性 fail-loud。
 **Why P1（2026-08-02 实证抬档，原记 P2）**: 校准数据按 `chamber_id` 键控，dev 库实测已在失配：① `chamber.is_active` 指的「3GPP 16 Probe Dual」(`1b531e5c`) 在**所有校准表里零行** —— 按 active chamber 查校准今天就查不到；② 校准行分散在 `59c73fbe`（active lab 绑的 CAICT-16-Probe-Dual：rf_chain 6 / channel_phase 6 / probe_path_loss 7）与 `b7cd8de0`（calibration_baselines 1 / probe_path_loss 2 / rf_chain 1）；③ **`b7cd8de0` 这个 chamber 行已不存在** = 孤儿引用，根因是**校准类表全无指向 `chamber_configurations` 的外键约束**（现有 FK 仅 `probes` / `probe_configurations` / `switch_topologies` / `lab_profiles` 四条），DB 层拦不住（非 active lab 绑的 `06ca91a2` 同为孤儿）。下次现场要跑路损校准复测，带着双真值源进现场 = 把静默失配带进真测。
@@ -1523,7 +1544,7 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 
 **What**: 一个只读诊断序列，把 #275 换上的那批 KPI 命令**逐条发出并打印原始回复**，供现场对着 UXM 面板核验。不做任何解析判定 —— 它的产出就是"真机回了什么"。
 
-**Why 队首**: #275 已合并，但**本地零真机验证** —— 命令形式 / 元素下标 / 单位 / 前置条件全部来自手册与真机历史日志。现有 `uxm_scpi_compatibility` 只能回答"通不通"（命令存不存在），**回答不了"回了几个元素、第几个是什么、单位是什么"** —— 而 #275 的正确性恰恰全押在这上面。现场日期不由我们定，**没有它，下次现场这批改动就白跑一趟**。
+**Why 当时优先**: #275 已合并，但**本地零真机验证** —— 命令形式 / 元素下标 / 单位 / 前置条件全部来自手册与真机历史日志。现有 `uxm_scpi_compatibility` 只能回答"通不通"（命令存不存在），**回答不了"回了几个元素、第几个是什么、单位是什么"** —— 而 #275 的正确性恰恰全押在这上面。现场日期不由我们定，**没有它，下次现场这批改动就白跑一趟**。当前执行片永远见顶部 Current Focus。
 
 **要打印/回答的 9 项**（判据见 Discovered 同日「#275 整批必须现场核验」条）：
 ① OTA 吞吐量回不回 6 个 double ② 单位 bps 还是 Mbps（跟面板比，差 10⁶）③ `idx4=average`/`idx1=current` ④ BLER DL 10 个 / UL 6 个、`idx8`/`idx4` ⑤ CQI `result[4]=average`（idx3 是 maximum，取错一位系统性乐观）⑥ RI 8 个 bin 是码点（rank=码点+1）⑦ RSRP/SINR 口径（**差 156 = 码点，相等 = dBm**）⑧ 三条前置真被接受 ⑨ `BTHRoughput:CLEar` 真能圈窗口
@@ -2094,15 +2115,16 @@ class MockBaseStation:
 
 ---
 
-### P1-45 — 现场验证项 → 载体序列映射（每条都指得到面板上的一个条目）⬜（2026-08-06 立项）
+### P1-45 — 现场验证项 → 诊断序列 / 正式 TestCase 映射 ✅（2026-08-06 完成）
 
 **目的（用户原话）**：
 > 「关于硬件 blocked，序列载体是什么意思，如果是验证脚本，我是想让你把它们挂在
 > 『调试序列+单阶段』上，你是这么理解的吗？」
 
-**是的，就是这个意思。** 载体 = `api-service/app/diagnostics/sequences/` 下 checked-in 的
-诊断序列，在 GUI「调试序列 + 单阶段」面板里点一下就跑，**不是临时脚本**。
-现场应当是「点它、看数、抄回来」，而不是到了现场写代码。
+**是的，但要补一条边界。** 驱动调试载体 = `api-service/app/diagnostics/sequences/` 下
+checked-in 的诊断序列，在 GUI「调试序列」面板里点一下就跑；正式测试载体 =
+MIMO_OTA TestCase。两者都**不是临时脚本**。现场应当是「点它、看数、抄回来」，而不是
+到了现场写代码。
 
 **为什么必须是序列不是脚本**（CLAUDE.md 已有规矩，这里只记它的落地缺口）：
 脚本不查源码 → 重复犯已经修过的错（2026-07-21 现场铁证：懒重连早已存在，脚本还在
@@ -2111,31 +2133,37 @@ class MockBaseStation:
 何时跑），**下次能对照** —— 现场的价值不在「这次通了」，在「下次还能拿出来比」。
 
 **问题不是规矩没写，是映射没人做。** CLAUDE.md 早写了「每记一条『这个得现场验』的
-backlog，**同时问它落在哪个序列里**；没有就出发前补一个」。实况（2026-08-06 普查）：
-**12 个序列覆盖 6 项，5 项半没载体**，而且**没有任何地方把这个映射记下来** ——
-所以既看不出缺口，也没人被这条规矩挡住。
+backlog，**同时问它落在哪个序列里**；没有就出发前补一个」。P1-45 实跑 loader 确认
+当前 12 个 GUI 可见序列，并逐行核对 TestCase 正式执行路径。结论已落到上方 Blocked 表：
+13 条未完成/现场半/HOLD 行中，**2 条已有合规载体、6 条部分覆盖、5 条没有合规载体**。
+这不是说 8 条已经现场验证，只说明它们有可复跑的承载路径；mock 跑通也不能代替真机证据。
 
-**范围（docs-only，本片不写任何序列）**：
-1. 「🚧 Blocked on hardware」表**加一列「载体序列」**，每行必须填得出；
-   **填不出 = 出发前要补的活**（本 PR 已加，见上方该表）
-2. 修 stale：该段原写 `propsim_f64_p08_gate`「**序列本身待写**」——
-   **假的**，P1-24 早已 Done（597 行、mock 跑通），协议清单里也打了勾（本 PR 已修）
-3. 把「现场验」类 Discovered 条目逐条补上载体归属（缺的指向 P1-46）
+**范围与收口（docs-only，本片没有写任何序列）**：
+1. ✅ 「🚧 Blocked on hardware」表逐行写明诊断序列、正式 TestCase、部分覆盖或无载体，
+   并给出 loader/API/GUI/TestCase runner 注册证据。
+2. ✅ 修 stale：`propsim_f64_p08_gate` 已由 P1-24 写好并 mock 跑通；P2-13 也不是“无载体”，
+   而是 TestCase precheck 半覆盖（实测 IMSI 仍有回退手填缺口）。
+3. ✅ 只有 P1-33 判定集缺口并入已批准 P1-46；其余无/半载体项保留在原
+   Discovered / Blocked / HOLD / P 项，不自动变 backlog。
+4. ✅ 全文当前片措辞统一指向顶部 Current Focus，不再把会漂移的动态状态写进条目正文。
 
-**分类不按仪器分，按「问的是什么」**（沿用 CLAUDE.md 那张表）：
+**诊断序列按「问的是什么」分类；正式测试/校准/对比流程另列**（沿用 CLAUDE.md 的
+A–D 分类，但不拿它覆盖正式流程载体）：
 
 | 问什么 | 载体形态 | 现状 |
 |---|---|---|
-| **A 通不通**（命令支不支持） | 只读普查序列 | `uxm_scpi_compatibility` / `propsim_f64_health` 等 6 个已在 |
-| **B 返回什么字面值** | 同上，读 `step.raw`（**不是** `detail`） | `uxm_kpi_readback` / `propsim_f64_state_machine` |
-| **C 一串动作之后会怎样** | **剧本式序列** | ⚠️ **缺口全在这类**，见 P1-46 |
-| **D 一轮要多久** | 序列已记 `duration_ms` | 无缺口 |
+| **A 通不通**（命令支不支持） | 只读普查序列 | 已有 `uxm_scpi_compatibility` / `propsim_f64_health` 等；P1-2 仍是事项级半覆盖。P1-46 在本类**只做** P1-33 `MAC_CFG_MANDATORY` 判定集对齐 |
+| **B 返回什么字面值** | 同上，读 `step.raw`（**不是** `detail`） | 已有 `uxm_kpi_readback` / `propsim_f64_state_machine`；本类没有 P1-46 新增范围 |
+| **C 一串动作之后会怎样** | **剧本式序列** | P1-46 在本类**只新增** `uxm_idempotent_write_probe`；P1-17、P1-6 等其它剧本缺口保留原 Blocked / HOLD，不并入 |
+| **D 一轮要多久** | 序列记录 `duration_ms` | 现有序列具备计时字段；这不代表事项级或正式流程载体完整 |
+| **正式测试 / 校准 / 结果对比** | MIMO_OTA TestCase 或对应正式流程 | 不属于 A–D 诊断分类；P1-4 / P1-5 / P2-13 等结论以上方 Blocked 表为准，均不并入 P1-46 |
 
-**依赖**: 无。**现场半**: 无（本片是出发前的准备工作本身）。
+**依赖**: 无。**现场半**: 无（本片是出发前的准备工作本身）。**代码变更**: 无；
+不宣称真机 SCPI 已验证，不以 `onsite-observed` / `unverified` 代替正式通过。
 
 ---
 
-### P1-46 — 补上没有载体的那几项现场验证 ⬜（2026-08-06 立项，从 P1-45 拆出）
+### P1-46 — 补已批准的 UXM 载体与判定缺口 ⬜（2026-08-06 立项，从 P1-45 拆出）
 
 **缺口清单**（2026-08-06 普查，别重查）：
 
@@ -2218,10 +2246,10 @@ backlog，**同时问它落在哪个序列里**；没有就出发前补一个」
 2. **把 `uxm_scpi_compatibility` 的判定集跟 `MAC_CFG_MANDATORY` 对齐**
    （见上方 P1-33 那条）—— 纯判定集调整，不加探针。
 
-⚠️ **P1-6 的 F64 idle-close 剧本不在本片**（Codex #293 R2）——
+⚠️ **P1-6 的 FS16 / UXM / ENA idle-close 剧本不在本片**（Codex #293 R2→R3）——
 它跟上面两件不同仪器、不同前置，塞进来会让本片范围失控；已单列进 Discovered。
 
-**依赖**: P1-45（先有那张表，才知道缺什么）。**现场半**: 本片产出的序列本身要现场跑，
+**依赖**: P1-45 ✅（映射见上表）。**现场半**: 本片产出的序列本身要现场跑，
 但**写序列不需要现场**。
 
 ---
@@ -3183,7 +3211,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-05 during P1-35 内审 F8]` **两个日志面板对「异常」有两个定义，主控台漏 CRITICAL（P3）** —— P1-35 在 `SystemLogViewer` 确立「异常 = WARNING/ERROR/CRITICAL」，而 `gui/src/features/Dashboard/ZoneLogsAlerts.tsx` 的 `LEVEL_FILTERS` 只有 `{INFO, WARNING, ERROR}`，且**没有任何 chip 能打开 CRITICAL** —— 不是"要多点一下"，是那个开关不存在，于是 CRITICAL 的行在主控台日志面板里**恒被客户端过滤掉**。P2-19 遗留，非 P1-35 造成（按 ⑦ 判据「不改它本片故障还在吗」→ 还在，故本片不顺手改）。**顺带**：`ZoneLogsAlerts` 现在可以用一个 `level=WARNING,ERROR,CRITICAL` 请求替掉那三十行两路 boost + 跨流去重（P1-35 的新能力开出来的化简机会）。
 
 - `[discovered 2026-08-05 during P1-34 内审 F5]` **WebSocket 流上的日志拿不到 `request_id`（P3）** —— `BaseHTTPMiddleware` 对 `scope["type"] != "http"` 直接透传（`starlette/middleware/base.py`），`AuditMiddleware.dispatch` 根本不会被调用，所以 `/ws/monitoring` 那条流产生的日志 `session_id` 恒为 `-`。**HTTP 侧八条路径已实测全覆盖**（sync / async / BackgroundTasks / StreamingResponse / HTTPException / 未捕获异常 500 / CORS 预检 / 排除路径），只有 WS 是真空。当前已在 `audit_middleware.py` 注释里写明是已知边界。**要补的话**：在 WS 端点自己 `current_session_id.set()`（每条连接一个 id，语义是"连接"不是"请求"，得先想清楚该不该复用同一个键）。
-- `[discovered 2026-08-05 during P1-34 内审 F6 的镜像扫查]` **roadmap 里两处「P1-31 现为队首」已 stale（P3，docs-only）** —— Discovered 区两条 UXM KPI 条目仍写着「= **P1-31**，2026-08-03 已立项、**现为队首**」，而 P1-31 已于 2026-08-04 收口（#277）。**不属 P1-34 的范围**（不是本片改动造成的，按 `feedback_pr_owns_status_rows` 不跨片顺手改），攒着走独立的 docs-only chore PR。同批可一起扫：全仓 grep `现为队首` / `已立项、现为` 这类**把当下状态写进条目正文**的措辞 —— 它们天然会 stale，最好改成「见顶部 Current Focus」这类**指针**而不是快照。
+- `[resolved 2026-08-06 by P1-45；原 discovered 2026-08-05 during P1-34 内审 F6]` **roadmap 两处 P1-31 状态快照已改成 Current Focus 指针** —— P1-31 已于 2026-08-04 收口（#277），两条 UXM KPI 记录现只保留载体归属与历史日期，当前执行片统一看顶部 Current Focus；同批已全文件扫描并清掉其它同类快照措辞。
 - `[discovered 2026-08-05 during P1-34，被本片新加的门抓出]` **`EXCLUDED_PATHS` 里两条排除项指向不存在的路由（P3）** —— `app/core/audit_middleware.py` 的 `/api/v1/monitoring/metrics` 与 `/api/v1/monitoring/instrument-status` 在 OpenAPI 251 条路径里**都不存在**；`app/api/monitoring.py` 实际只有 `GET /monitoring/feeds` 和 `WS /ws/monitoring`。旧路由布局的残留，各自排除了个寂寞。**危害极低**（匹配不到任何请求 = 零噪音贡献，也零副作用），所以 P1-34 **没有顺手删** —— ⑦ 的判据「不改它，那个可观察故障还在吗」答"还在"。当前由 `tests/test_p1_34_log_timeline.py::_EXCLUDED_KNOWN_STALE` 显式豁免并配了**反向门**（哪天这两个路径真变成路由，门会红提醒摘掉豁免）。**修的时候要先定意图**：是想排除 `/monitoring/feeds`（那就改路径）还是这条排除已无意义（那就删）—— 别照着旧字符串猜。
 - `[discovered 2026-08-05 during P1-34]` **日志面板的级别过滤是"精确相等"，选 INFO 会把 ERROR 一起滤掉（P3，与 P3-19 同堆）** —— `/system-logs/tail` 的 `_entry_matches` 用 `entry.level != level` 精确匹配，所以 `SystemLogViewer` 那个单选 SegmentedControl **没有任何一档**能给出"去掉 DEBUG 心跳但保留 INFO/WARN/ERROR"，操作员只能停在 `全部` 挨 DEBUG 刷屏（实测最近 400 行里 253 行是 DEBUG 心跳）。⚠️ **不要改后端把它变成"≥ 门槛"** —— `ZoneLogsAlerts`（P2-19 #258）正是靠"两个 level 流天然不相交"来做去重的，改成门槛会让那里的合并逻辑出错。**正解是照搬 P2-19 已拍板的做法**：前端多选 + 逐 level 各发一次请求合并去重（零后端契约变化）。P1-34 没做，因为该片已用「只看这一次请求」（复用后端既有的 `session_id` 精确过滤）达成"还原一次操作"的目的，级别多选属**另一件事**。
 
@@ -3230,11 +3258,11 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
   | 8 | 三条前置真被接受：`BTHRoughput:STATe ON` / `CSI:STARt` / `CONFig:MEASurement:REPort ON` | 不接受则所有 KPI 恒 `9.91E+37` |
   | 9 | `BTHRoughput:CLEar` 真能圈窗口（清零后重新累积） | 连读两次窗口值应不同；相同 = 没清 |
 
-  **载体**：`uxm_kpi_readback` 诊断序列 = **P1-31**（2026-08-03 已立项、现为队首）。现有 `uxm_scpi_compatibility` 已把这批命令加进 critical 清单、且未定义不再报假绿，可先用它做第一轮"通不通"普查；但**返回值的元素个数与下标语义它验不了**，那要专门的序列打印原始回复。
+  **载体**：`uxm_kpi_readback` 诊断序列 = **P1-31**（2026-08-04 已完成；当前执行片见顶部 Current Focus）。现有 `uxm_scpi_compatibility` 已把这批命令加进 critical 清单、且未定义不再报假绿，可先用它做第一轮"通不通"普查；但**返回值的元素个数与下标语义它验不了**，那要专门的序列打印原始回复。
   ⚠️ **在核验之前，不要把 #275 产出的 KPI 数字当作可交付结果。**
 
 
-- `[discovered 2026-08-03 during UXM KPI 修复, Codex #275 R2]` **UE L3 测量报告里 RSRP/RSRQ/SINR 的口径手册未说明 —— 现场必须对着面板比对一次** —— `BSE:CONFig:NR5G:<cell>:MEASurement:JSON:REPort:FETCh?` 返回的这几个值，究竟是 **3GPP RRC 上报的原始码点**（`rsrp-Result` 0..127，需 `value − 156` 换算成 dBm）还是**仪表已换算好的 dBm/dB**，手册对 JSON 与 legacy 两种 FETCh **都只给了示例**（示例里全是 `"NaN"`），没有单位、取值范围、换算公式（NotebookLM 三次明确回"手册未说明"，未做推断）。⚠️ 按 3GPP 通式自己换算 = **盲试**；原样写进名为 `rsrp_dbm` 的字段 = **假数据冒充真数据**。所以当前实现**只把原样值留进证据**（`scpi.log` 有完整响应，`measurement.log` 记 `kpi_raw_unverified`），`rsrp_dbm` / `sinr_db` 保持"未读到"、`kpi_valid` 标 false。**现场做法**：让 UE 驻留后同时看 UXM 面板上的 RSRP 读数与本查询返回值，差 156 就是码点、相等就是 dBm，确认后接线。落在 `uxm_kpi_readback` 序列里（**= P1-31**，2026-08-03 已立项、现为队首）。
+- `[discovered 2026-08-03 during UXM KPI 修复, Codex #275 R2]` **UE L3 测量报告里 RSRP/RSRQ/SINR 的口径手册未说明 —— 现场必须对着面板比对一次** —— `BSE:CONFig:NR5G:<cell>:MEASurement:JSON:REPort:FETCh?` 返回的这几个值，究竟是 **3GPP RRC 上报的原始码点**（`rsrp-Result` 0..127，需 `value − 156` 换算成 dBm）还是**仪表已换算好的 dBm/dB**，手册对 JSON 与 legacy 两种 FETCh **都只给了示例**（示例里全是 `"NaN"`），没有单位、取值范围、换算公式（NotebookLM 三次明确回"手册未说明"，未做推断）。⚠️ 按 3GPP 通式自己换算 = **盲试**；原样写进名为 `rsrp_dbm` 的字段 = **假数据冒充真数据**。所以当前实现**只把原样值留进证据**（`scpi.log` 有完整响应，`measurement.log` 记 `kpi_raw_unverified`），`rsrp_dbm` / `sinr_db` 保持"未读到"、`kpi_valid` 标 false。**现场做法**：让 UE 驻留后同时看 UXM 面板上的 RSRP 读数与本查询返回值，差 156 就是码点、相等就是 dBm，确认后接线。落在 `uxm_kpi_readback` 序列里（**= P1-31**，2026-08-04 已完成；当前执行片见顶部 Current Focus）。
 
 
 - `[discovered 2026-08-03 during UXM KPI 修复内审 F6]` **UE L3 测量报告 `FETCh?` 不带 `<Integer>` = 每轮取回整个队列，且全程没人清队列** —— 手册：「Number of requested reports. **If not specified all the available reports are returned.**」队列由 `BSE:CONFig:MEASurement:REPort ON` 持续排队，另有**独立**的 `:CLEAr` 才清 —— 代码只写 ON。**⚠️ 2026-08-04 更新（#277 R3）**：`MEAS_UE_REPORT_CLEAR = "BSE:CONFig:MEASurement:REPort:CLEAr"` 已加进 `UxmLteNrIratProfile`（手册有据：Imm Action / 无 `<cell>` 绑定 = 全局），且 `uxm_kpi_readback` 序列已在观测窗口**之前**清一次；**但监控路 `get_metrics()` 仍未清、仍不带 `<Integer>`，本条对它依然成立**。后果：监控路 `get_metrics()` 每轮把开测以来的**全部** L3 报告拉一遍，响应无界增长 → VISA 越读越慢/超时、`scpi.log` 被截断成没用的片段、`json.loads` 开销 O(n)，而代码只用其中**一份**。另：取 `reports[-1]` 假设"最新在末尾"，**手册没写返回顺序**，这个假设未经核验 —— **NotebookLM 2026-08-04 三问确认**：带 `<Integer>` 取最新还是最旧、多份的排列顺序、以及 FETCh 是不是消费式（取完即移除），**手册三项全未说明**；旁证是手册对 **RAR 报告**与 **UAI 报告**都明写 "Querying the results will remove items from storage"，唯独 UE 测量报告只字未提。修法 = **先清队列再取**（`:CLEAr` 现已定义，`uxm_kpi_readback` 已这么做），`? 1` 仍需先在真机上确认它取的是哪一份。
@@ -3328,7 +3356,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-07-31 during GUI 新建入口片, Codex #250 P1]` **[→ 提升 P2-24 (2026-08-02)]** **测试用例 REST 契约无 `lab_profile_id` 字段 — 多 active lab 部署下 GUI 建的用例不可执行且无处补绑** —— `TestCase.lab_profile_id` 是列（runner 执行时传 `source.lab_profile_id` 给工厂），但 `TestCaseCreate`/`TestCaseUpdate` 两个 schema 都没有该字段，GUI 两个弹窗结构性设不了。单 active lab（当前所有部署形态）下 `resolve_lab_profile(db, None)` 兜底完美工作；多 active lab 下执行 422 结构化 fail-loud（ambiguous 拒绝，非静默错配）。不绑 = bootstrap 种子模板明文设计（deployment-agnostic），GUI 建例同派；6 个 factory 产 MIMO_OTA 模板带绑定是快照语义的特例。**正修**（~~多 lab 部署真出现时~~ 2026-08-02 拍板提升 P2-24，条件性搁置作废，以正式条目为准）：契约加可选 `lab_profile_id` 走四步同步 + 创建/编辑弹窗加绑定口（起点=模板时顺带复制其绑定）。
 - `[discovered 2026-07-31 during GUI 新建入口片]` **`created_by="gui"` 是硬编码占位** —— GUI 无认证上下文（`require_auth` 全仓零使用点，S4c 申报过），`TestCaseCreateModal` 建例统一落 `created_by="gui"`。接上认证上下文（roadmap 既有 Auth Context 待实现项）后换成真实用户名。
 
-- `[discovered 2026-07-30 during ARCH-1 roadmap 补记]` **[→ 提升 P1-23 (2026-08-01)]** **现场协议不覆盖 P0-8，照 checklist 走完会漏掉 F64 验证** —— [`guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md) 开篇写「配套 P0 队列（**P0-3/4/5**）使用」，五个 Phase（网络 / 逐仪表 SCPI 握手 / SA 入 HAL / 路损校准 / DUT attach）**没有 P0-8 的 gate**。而上方「Blocked on hardware」表强制要求按该协议走 —— 结果是「走完了」却漏掉 P0-8 现场半（real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真），**比没有 checklist 更危险**（给人已覆盖的错觉）。当前缓解：P0 队列表已补 P0-8 行 + 表下注解写明出发前手动排进当天计划。**正修要定两件事**：① P0-8 塞进哪个 Phase（比 Phase 1 SCPI 握手重，要 load→run→改参→读电平，可能单独一段或作 Phase 1 的 F64 子门）；② gate 判据怎么拆 —— P0-8 验收最后一条「DL 不失真（DUT attach 后非 0% ACK）」**依赖 DUT attach**，有一半得等 Phase 4，gate 可能要拆两半挂两个 Phase。**顺带**：该协议里「Current Focus 按依赖链 P0-4 → P0-3 → P0-5 推进」那句同样已 stale（P0-3/4 已 2026-07-03 现场完成），跟 roadmap 里那句同源，一并清。⚠️ 动之前按标题/条目名定位，**别在文档里写行号** —— 本次 PR 实证：行号会被自己的编辑挤跑。
+- `[discovered 2026-07-30 during ARCH-1 roadmap 补记]` **[→ 提升 P1-23 (2026-08-01)]** **现场协议不覆盖 P0-8，照 checklist 走完会漏掉 F64 验证** —— [`guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md) 开篇写「配套 P0 队列（**P0-3/4/5**）使用」，五个 Phase（网络 / 逐仪表 SCPI 握手 / SA 入 HAL / 路损校准 / DUT attach）**没有 P0-8 的 gate**。而上方「Blocked on hardware」表强制要求按该协议走 —— 结果是「走完了」却漏掉 P0-8 现场半（real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真），**比没有 checklist 更危险**（给人已覆盖的错觉）。当前缓解：P0 队列表已补 P0-8 行 + 表下注解写明出发前手动排进当天计划。**正修要定两件事**：① P0-8 塞进哪个 Phase（比 Phase 1 SCPI 握手重，要 load→run→改参→读电平，可能单独一段或作 Phase 1 的 F64 子门）；② gate 判据怎么拆 —— P0-8 验收最后一条「DL 不失真（DUT attach 后非 0% ACK）」**依赖 DUT attach**，有一半得等 Phase 4，gate 可能要拆两半挂两个 Phase。**收口更新**：P1-23 已改协议，P1-45 已改 roadmap，现行现场排程统一指向 Blocked 表；P0-3/4 已完成，不恢复旧链。⚠️ 动之前按标题/条目名定位，**别在文档里写行号** —— 本次 PR 实证：行号会被自己的编辑挤跑。
 - `[discovered 2026-07-29 during ARCH-1 S4a]` **GUI 没有「新建测试用例」入口** —— `TestCaseLibrary` 的新建按钮由 `onCreateNew` prop 守着，**全仓无人传**（`TestManagement.tsx` 只传 `enableExecute`）；入口原本挂在 StepsTab 上，随 S4a 一并删除。现状：**直接执行路径上的** MIMO_OTA 用例只能来自 bootstrap 种子，可改可执行不可新建。（GUI 并非完全建不了 TestCase —— 虚拟路测的「创建场景」会落一行 VRT 型 TestCase，但那条不走 S6 要验的直接执行路径。）S4a 已显式申报为能力缺口。⚠️ **这是 ARCH-1 S6（浏览器闭环总验）的前置** —— S6 验收第一步就是「建用例」，开工前先决定：补入口（GUI 新功能，需设计稿），还是把 S6 验收改成「改现有用例」。**✅ done (2026-07-31, GUI 新建入口片)**：走了「补入口」路 —— 设计稿 [`docs/design/gui-create-test-case-entry.md`](design/gui-create-test-case-entry.md)（四待决 2026-07-31 拍板全甲案），`TestCaseCreateModal` 建壳（`is_template=true` 堵"建完即隐形"洞）→ 复用 `TestCaseEditModal` 填参数两步流；D-1 行为门（建→可见→可执行，变异实跑）+ 浏览器闭环实测（建→见→改参→执行→历史有行）。S6 前置解除。
 - `[discovered 2026-07-20 during 出发前门审 F5]` **UXM 幂等捷径生效后剩余写全在小区 ON 态执行 — ON 态同值写 band/duplex 是否触发 UXM 内部重配 (掉 DUT) 真机零实证**。ARFCN/功率有回读对账兜底; band/duplex ON 态被拒 (-221 类) 只进错误队列无对账项即静默。现场若"BW 已同仍重启"按 onsite-plan-20260721 风险⑧②排查; 正修方向 = band/duplex 也纳入幂等预读 (值同跳写) 或对账。TDD 主线 (n78) 幂等已限定 (F3 保守化: 仅 TDD + readback 能力位开才走捷径)。
 - `[discovered 2026-07-20 during 三开关门审 #216]` **开关1 inherit 的"知情继承"只核对频率, 层数盲区**: 小区级层数继承仪器态但 RRC recon 仍按 TestCase 推层, CSI-RS 端口按 TestCase 层数算 — 三方可各不相同; Phase 6 读 UE 能力抓不到 cell 生效层数低于请求。正修方向 = read_live_frequency_identity 扩展读层数 (注意 #114 教训: 配置旋钮回读是 echo, 要找真生效读法) 或 inherit 下强制核对面板。当前缓解 = inherit 日志显式披露"层数未核对"。
