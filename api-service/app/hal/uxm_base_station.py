@@ -1289,32 +1289,12 @@ class RealUxmDriver(BaseStationDriver):
                         "刷进协议栈 (P0-2 D2; 此前从不发 = 静默不生效)"
                     )
                     # #236 R2 P1a: APPLY 被拒时 VISA write 照常返回, 错误只进
-                    # SYST:ERR? — 旧栈继续跑**旧**配置 (状态非 OFF) + 回读回显
+                    # error queue — 旧栈继续跑**旧**配置 (状态非 OFF) + 回读回显
                     # 缓存**新**值 → 状态闸和回读对账双双假绿。写后必查错误
-                    # 队列 (F64R-4 同母题: 写完不查队列 = 假成功), 最多排 5 条。
-                    _apply_errs: List[str] = []
-                    for _ in range(5):
-                        try:
-                            _raw_err = (self._query("SYST:ERR?") or "").strip()
-                        except Exception as e:  # noqa: BLE001
-                            logger.warning(
-                                f"[UXM] APPLY 后 SYST:ERR? 读取失败 "
-                                f"({type(e).__name__}) — 队列状态未知, 按失败处理"
-                            )
-                            _apply_errs.append(f"<读取失败 {type(e).__name__}>")
-                            break
-                        try:
-                            _err_code: Optional[int] = int(
-                                _raw_err.split(",", 1)[0])
-                        except ValueError:
-                            _err_code = None
-                        if _err_code == 0:
-                            break
-                        _apply_errs.append(
-                            _raw_err if _err_code is not None
-                            else f"<不可解析: {_raw_err!r}>")
-                        if _err_code is None:
-                            break
+                    # 队列 (F64R-4 同母题: 写完不查队列 = 假成功)。必须复用
+                    # profile 的 ERR 命令与 P1-41 的自增殖停止判据；这里曾硬编码
+                    # SYST:ERR? 并另写 5 次循环，同一故障有第二个入口。
+                    _apply_errs = self._drain_errors(limit=5)
                     if _apply_errs:
                         logger.error(
                             f"[UXM] APPLY 被仪器拒绝/错误队列异常: "
@@ -1909,6 +1889,10 @@ class RealUxmDriver(BaseStationDriver):
                 logger.info(
                     f"[UXM] 进 MAC 配置前队列有 {len(baseline_errs)} 条残留"
                     f"（**不计入本次归属**）: {baseline_errs}")
+            if self._error_queue_unusable(baseline_errs):
+                # 错误门本身不可判定时继续下发，只会让每组再问一轮并把
+                # “门不可用”冒充成“业务命令被拒”。当前流程 fail-closed。
+                raise RuntimeError(baseline_errs[-1])
 
             # ⚠ P1-33：值形态**全部取自手册**，跟旧的裸值写法完全不同。
             #   每组发完查一次 `SYST:ERR?`，被拒的记名 —— 这就是
@@ -1920,6 +1904,8 @@ class RealUxmDriver(BaseStationDriver):
                     rejected.append(label)
                     logger.warning(
                         f"[UXM/{self._cmds.PROFILE_NAME}] {label} 被拒: {errs}")
+                if self._error_queue_unusable(errs):
+                    raise RuntimeError(errs[-1])
 
             # 1. Full Buffer 调度 —— 手册枚举是 FULL_TPUT，不是 "FULLBUFFER"
             _emit("PDSCH_SCHED_ALGO", " FULL_TPUT")
@@ -3050,15 +3036,54 @@ class RealUxmDriver(BaseStationDriver):
         ⚠ 换源自 `_check_errors()` —— 那个只 log 不返回，错误被吞掉，
           调用方没法把它**归属到产生它的那条命令**上。而 P1-33 要答的正是
           「哪几条被 IRAT 拒了」。
-        ⚠ 加上界：原来是 `while True`，遇到一直吐错误的仪器会挂死。
-          撞上界要**说出来**，不能悄悄返回一串看着挺全的错误。
+        ⚠ P1-41 根因机制：该 helper 的前身原来是 `while True`；当前虽有通用上界，
+          但错误查询自身若不受 Test App 支持，每问一次都会再制造一条
+          ``-113,Undefined header``，而 MAC 每组又会重新排一次，仍会放大日志。
+          连续两次收到**相同**的 -113/Undefined header 时无法区分“队列里恰有
+          两条相同旧错误”和“查询自身在补充错误”；按代价不对称保守停止并
+          返回显式标记，由业务流程 fail-closed，不猜另一条 SCPI。
+
+        NotebookLM/厂商手册只明确 ``SYSTem:ERRor[:NEXT]?`` 会弹出最旧错误、
+        clean 回 ``+0,No error``；没有明确它适用于 5G_NR_Test / LTE_NR_IRAT，
+        也没有定义查询自身报 -113 时的终止语义。因此保留 profile 命令并限制
+        风险，绝不把缩写或别名升级成 confirmed。
         """
         out: List[str] = []
+        previous_undefined: Optional[str] = None
         for _ in range(limit):
             err = self._query(self._cmds.ERR).strip()
-            if err.startswith("0,") or err.startswith("+0,"):
+            try:
+                code = int(err.split(",", 1)[0])
+            except ValueError:
+                code = None
+            # 保留 APPLY 原有契约：既接受手册形态 +0,"No error"，也接受
+            # 现场/既有 fake 的裸 0。统一 helper 不能把原先明确 clean 的形态
+            # 收窄成错误。
+            if code == 0:
                 return out
             out.append(err)
+            if code is None:
+                out.append(
+                    f"<错误查询回复不可解析: {err!r}；已停止排队；"
+                    "当前流程不得据此判成功>"
+                )
+                return out
+            is_undefined = code == -113 and "UNDEFINED HEADER" in err.upper()
+            if is_undefined and err == previous_undefined:
+                out.append(
+                    "<错误查询疑似不受支持: 连续两次返回相同 -113/Undefined "
+                    "header，已停止排队；当前流程不得据此判成功>"
+                )
+                return out
+            previous_undefined = err if is_undefined else None
         out.append(f"<队列未排空: 已读 {limit} 条仍未见 No error>")
         return out
 
+    @staticmethod
+    def _error_queue_unusable(errors: List[str]) -> bool:
+        """P1-41：识别 `_drain_errors` 的 fail-closed 标记。"""
+        return bool(errors and errors[-1].startswith((
+            "<错误查询疑似不受支持:",
+            "<错误查询回复不可解析:",
+            "<队列未排空:",
+        )))
