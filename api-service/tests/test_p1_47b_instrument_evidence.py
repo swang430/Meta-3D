@@ -422,6 +422,59 @@ def test_f64_needs_opc_clean_error_readback_and_running_for_e3():
     assert item.evidence_level is EvidenceLevel.APPLIED
     assert item.verdict is EvidenceVerdict.PASSED
 
+
+def test_f64_bypass_requires_static_readback_and_reaches_e3():
+    scope = evaluate_catalog_scope(
+        load_p0_5_catalog(CATALOG).entries["f64.bypass_mode"], _env()
+    )
+    item = build_f64_evidence(
+        evidence_key="f64.bypass_mode",
+        requested=2,
+        preclear_exchanges=[
+            _exchange("bp-pre", "SYST:ERR?", response='0,"No error"')
+        ],
+        command_exchange=_exchange(
+            "bp-set", "DIAG:SIMU:MODEL:STATIC 2", result_type="ok", response=None
+        ),
+        opc_exchange=_exchange("bp-opc", "*OPC?", response="1"),
+        error_exchange=_exchange(
+            "bp-err", "SYST:ERR?", response='0,"No error"'
+        ),
+        readback_exchange=_exchange(
+            "bp-read", "DIAG:SIMU:MODEL:STATIC?", response="2"
+        ),
+        state_exchange=_exchange(
+            "bp-state", "DIAG:SIMU:STATE?", response="STOPPED"
+        ),
+        scope=scope,
+    )
+    assert item.evidence_level is EvidenceLevel.APPLIED
+    assert item.verdict is EvidenceVerdict.PASSED
+    assert item.readback["value"] == 2.0
+
+    wrong_readback = build_f64_evidence(
+        evidence_key="f64.bypass_mode",
+        requested=2,
+        preclear_exchanges=[
+            _exchange("bp2-pre", "SYST:ERR?", response='0,"No error"')
+        ],
+        command_exchange=_exchange(
+            "bp2-set", "DIAG:SIMU:MODEL:STATIC 2", result_type="ok", response=None
+        ),
+        opc_exchange=_exchange("bp2-opc", "*OPC?", response="1"),
+        error_exchange=_exchange(
+            "bp2-err", "SYST:ERR?", response='0,"No error"'
+        ),
+        readback_exchange=_exchange(
+            "bp2-read", "DIAG:SIMU:MODEL:STATE?", response="2"
+        ),
+        state_exchange=_exchange(
+            "bp2-state", "DIAG:SIMU:STATE?", response="STOPPED"
+        ),
+        scope=scope,
+    )
+    assert wrong_readback.verdict is EvidenceVerdict.UNKNOWN
+
     no_readback = build_f64_evidence(
         evidence_key="f64.simulation_state",
         requested={"model": "CDL-C"},
@@ -439,6 +492,148 @@ def test_f64_needs_opc_clean_error_readback_and_running_for_e3():
     )
     assert no_readback.evidence_level is EvidenceLevel.TRANSPORT
     assert no_readback.verdict is EvidenceVerdict.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    ("state_result_type", "state_response", "expected_reason"),
+    [
+        (None, None, "state_readback_missing"),
+        ("transport_error", None, "state_query_terminal=transport_error"),
+        ("response", '0,"No error"', "state_readback_invalid"),
+    ],
+)
+def test_f64_bypass_requires_valid_state_readback_for_e3(
+    state_result_type, state_response, expected_reason
+):
+    """STATIC? 匹配不够：旁路正式证据还必须拿到合法的 STATE? 终态。"""
+    scope = evaluate_catalog_scope(
+        load_p0_5_catalog(CATALOG).entries["f64.bypass_mode"], _env()
+    )
+    item = build_f64_evidence(
+        evidence_key="f64.bypass_mode",
+        requested=2,
+        preclear_exchanges=[
+            _exchange("bp-neg-pre", "SYST:ERR?", response='0,"No error"')
+        ],
+        command_exchange=_exchange(
+            "bp-neg-set",
+            "DIAG:SIMU:MODEL:STATIC 2",
+            result_type="ok",
+            response=None,
+        ),
+        opc_exchange=_exchange("bp-neg-opc", "*OPC?", response="1"),
+        error_exchange=_exchange(
+            "bp-neg-err", "SYST:ERR?", response='0,"No error"'
+        ),
+        readback_exchange=_exchange(
+            "bp-neg-read", "DIAG:SIMU:MODEL:STATIC?", response="2"
+        ),
+        state_exchange=(
+            _exchange(
+                "bp-neg-state",
+                "DIAG:SIMU:STATE?",
+                result_type=state_result_type,
+                response=state_response,
+            )
+            if state_result_type is not None
+            else None
+        ),
+        scope=scope,
+    )
+    assert item.evidence_level is not EvidenceLevel.APPLIED
+    assert item.verdict is EvidenceVerdict.UNKNOWN
+    assert item.reason == expected_reason
+
+
+def test_f64_active_driver_recipes_are_reachable_without_synthetic_stages():
+    catalog = load_p0_5_catalog(CATALOG)
+    go_scope = evaluate_catalog_scope(
+        catalog.entries["f64.simulation_state"], _env()
+    )
+    preclear = _exchange("live-pre", "SYST:ERR?", response='0,"No error"')
+    go = _exchange(
+        "live-go", "DIAG:SIMU:GO", result_type="ok", response=None
+    )
+    opc = _exchange("live-opc", "*OPC?", response="1")
+    err = _exchange("live-err", "SYST:ERR?", response='0,"No error"')
+    state = _exchange("live-state", "DIAG:SIMU:STATE?", response="RUNNING")
+    go_item = build_f64_evidence(
+        evidence_key="f64.simulation_state",
+        requested="RUNNING",
+        preclear_exchanges=[preclear],
+        command_exchange=go,
+        opc_exchange=opc,
+        error_exchange=err,
+        readback_exchange=state,
+        state_exchange=state,
+        scope=go_scope,
+    )
+    assert go_item.evidence_level is EvidenceLevel.APPLIED
+    assert go_item.verdict is EvidenceVerdict.PASSED
+
+    load_scope = evaluate_catalog_scope(catalog.entries["f64.model_load"], _env())
+    load_pre = _exchange("load-pre", "SYST:ERR?", response='0,"No error"')
+    load = _exchange(
+        "load-file",
+        r"CALC:FILT:FILE D:\\Models\\CDL-C.smu",
+        result_type="ok",
+        response=None,
+    )
+    load_opc = _exchange("load-opc", "*OPC?", response="1")
+    load_err = _exchange("load-err", "SYST:ERR?", response='0,"No error"')
+    model_state = _exchange(
+        "load-model", "DIAG:SIMU:MODEL:STATE?", response="MODEL_READY"
+    )
+    stopped = _exchange(
+        "load-state", "DIAG:SIMU:STATE?", response="STOPPED"
+    )
+    load_item = build_f64_evidence(
+        evidence_key="f64.model_load",
+        requested=r"D:\\Models\\CDL-C.smu",
+        preclear_exchanges=[load_pre],
+        command_exchange=load,
+        opc_exchange=load_opc,
+        error_exchange=load_err,
+        readback_exchange=model_state,
+        state_exchange=stopped,
+        scope=load_scope,
+    )
+    assert load_item.evidence_level is EvidenceLevel.APPLIED
+    assert load_item.verdict is EvidenceVerdict.PASSED
+
+
+def test_uxm_real_order_with_controlled_interleaving_reaches_e3():
+    scope = evaluate_catalog_scope(
+        load_p0_5_catalog(CATALOG).entries["uxm.config_apply"],
+        _env(app="5G_NR_Test"),
+    )
+    command = _exchange(
+        "real-uc", "CONF:NR5G:CELL0:DL:ARFCN 636666",
+        result_type="ok", response=None,
+    )
+    _exchange("real-noise-1", "CONF:NR5G:CELL0:DL:BW 100", result_type="ok")
+    apply = _exchange(
+        "real-ua", "BSE:CONF:NR5G:APPLY", result_type="ok", response=None
+    )
+    state = _exchange(
+        "real-us", "BSE:STATUS:NR5G:CELL0?", response="CONNECTED"
+    )
+    _exchange("real-noise-2", "CONF:NR5G:CELL0:BAND?", response="N78")
+    readback = _exchange(
+        "real-ur", "CONF:NR5G:CELL0:DL:ARFCN?", response="636666"
+    )
+    item = build_uxm_evidence(
+        evidence_key="uxm.config_apply",
+        requested=636666,
+        command_exchange=command,
+        readback_exchange=readback,
+        apply_exchange=apply,
+        protocol_state_exchange=state,
+        scope=scope,
+    )
+    assert item.evidence_level is EvidenceLevel.APPLIED
+    assert item.verdict is EvidenceVerdict.PASSED
+    assert item.exchange_ids == ["real-uc", "real-ua", "real-us", "real-ur"]
 
 
 def test_f64_opc_one_never_hides_device_error():
@@ -535,6 +730,101 @@ def test_uxm_config_readback_is_e2_until_apply_and_protocol_state():
         scope=scope,
     )
     assert applied.evidence_level is EvidenceLevel.APPLIED
+
+
+def test_uxm_offline_config_can_reach_e3_via_later_cell_activation():
+    """CELL 初始 OFF：写配置不发 APPLY，后续 CELL ON 自动应用。"""
+    scope = evaluate_catalog_scope(
+        load_p0_5_catalog(CATALOG).entries["uxm.config_apply"],
+        _env(app="5G_NR_Test"),
+    )
+    applied = build_uxm_evidence(
+        evidence_key="uxm.config_apply",
+        requested={"arfcn": 636666},
+        command_exchange=_exchange(
+            "offline-set",
+            "CONF:NR5G:CELL0:DL:ARFCN 636666",
+            result_type="ok",
+            response=None,
+        ),
+        readback_exchange=_exchange(
+            "offline-read", "CONF:NR5G:CELL0:DL:ARFCN?", response="636666"
+        ),
+        apply_exchange=None,
+        activation_exchange=_exchange(
+            "cell-on",
+            "CONF:NR5G:CELL0:ACTive:STATe ON",
+            result_type="ok",
+            response=None,
+        ),
+        protocol_state_exchange=_exchange(
+            "connected", "BSE:STATUS:NR5G:CELL0?", response="CONNECTED"
+        ),
+        scope=scope,
+    )
+    assert applied.evidence_level is EvidenceLevel.APPLIED
+    assert applied.verdict is EvidenceVerdict.PASSED
+    assert applied.reason == "cell_activated_and_protocol_state=CONNECTED"
+    assert applied.exchange_ids == [
+        "offline-set", "offline-read", "cell-on", "connected"
+    ]
+
+
+def test_uxm_initial_on_long_capture_apply_readback_then_state_reaches_e3():
+    """长 capture 的真实 ON 路径：write → APPLY → readback → CONNECTED。"""
+    scope = evaluate_catalog_scope(
+        load_p0_5_catalog(CATALOG).entries["uxm.config_apply"],
+        _env(app="5G_NR_Test"),
+    )
+    item = build_uxm_evidence(
+        evidence_key="uxm.config_apply",
+        requested=636666,
+        command_exchange=_exchange(
+            "on-set", "CONF:NR5G:CELL0:DL:ARFCN 636666", result_type="ok", response=None
+        ),
+        apply_exchange=_exchange(
+            "on-apply", "BSE:CONF:NR5G:APPLY", result_type="ok", response=None
+        ),
+        readback_exchange=_exchange(
+            "on-read", "CONF:NR5G:CELL0:DL:ARFCN?", response="636666"
+        ),
+        protocol_state_exchange=_exchange(
+            "on-state", "BSE:STATUS:NR5G:CELL0?", response="CONNECTED"
+        ),
+        scope=scope,
+    )
+    assert item.evidence_level is EvidenceLevel.APPLIED
+    assert item.verdict is EvidenceVerdict.PASSED
+    assert item.exchange_ids == ["on-set", "on-apply", "on-read", "on-state"]
+
+
+def test_unrelated_on_command_cannot_impersonate_uxm_cell_activation():
+    scope = evaluate_catalog_scope(
+        load_p0_5_catalog(CATALOG).entries["uxm.config_apply"],
+        _env(app="5G_NR_Test"),
+    )
+    item = build_uxm_evidence(
+        evidence_key="uxm.config_apply",
+        requested=636666,
+        command_exchange=_exchange(
+            "set", "CONF:NR5G:CELL0:DL:ARFCN 636666", result_type="ok", response=None
+        ),
+        readback_exchange=_exchange(
+            "read", "CONF:NR5G:CELL0:DL:ARFCN?", response="636666"
+        ),
+        apply_exchange=None,
+        activation_exchange=_exchange(
+            "display-on", "DISPLAY:STATE ON", result_type="ok", response=None
+        ),
+        protocol_state_exchange=_exchange(
+            "state", "BSE:STATUS:NR5G:CELL0?", response="CONNECTED"
+        ),
+        scope=scope,
+    )
+    assert item.evidence_level is EvidenceLevel.ACCEPTED
+    # config_apply 清单要求 E3；无 APPLY/CELL ON 时，即使 E2 回读匹配也不能
+    # 满足 formal scope，最终必须降为 unknown。
+    assert item.verdict is EvidenceVerdict.UNKNOWN
 
 
 def test_uxm_scope_mismatch_forces_unknown_even_when_values_look_good():
@@ -1036,6 +1326,30 @@ def test_positioner_driver_builder_refuses_formal_green_without_live_identity():
     assert item.evidence_level is EvidenceLevel.APPLIED
     assert item.verdict is EvidenceVerdict.UNKNOWN
     assert "missing_model_or_firmware" in item.reason
+
+
+def test_positioner_real_settle_poll_interleaving_can_reach_e3():
+    move = _exchange(
+        "move-real", "MOVEABS X 90.0000", result_type="ok", response=None
+    )
+    _exchange(
+        "settle-real", "AXISSTATUS(X)", response="4", operation="query"
+    )
+    feedback = _exchange(
+        "feedback-real", "PFBK(X)", response="90.1", operation="query"
+    )
+    item = build_positioner_evidence(
+        requested_angle_deg=0.0,
+        coordinate_offset_deg=90.0,
+        offset_calibrated=True,
+        tolerance_deg=1.0,
+        move_exchange=move,
+        feedback_exchange=feedback,
+        scope=_positioner_scope(),
+    )
+    assert item.evidence_level is EvidenceLevel.APPLIED
+    assert item.verdict is EvidenceVerdict.PASSED
+    assert item.exchange_ids == ["move-real", "feedback-real"]
 
 
 def test_confirmed_catalog_source_kind_is_allowlisted_per_instrument():

@@ -155,6 +155,9 @@ class ReportData:
     # Chart data (processed for visualization)
     chart_data: Dict[str, Any] = field(default_factory=dict)
 
+    # P1-47C：仪器闭环证据的脱敏摘要；exchange_ids 回链 scpi.log。
+    scpi_evidence: Dict[str, Any] = field(default_factory=dict)
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "title": self.title,
@@ -169,6 +172,7 @@ class ReportData:
             "step_results": self.step_results,
             "table_data": self.table_data,
             "chart_data": self.chart_data,
+            "scpi_evidence": self.scpi_evidence,
         }
 
 
@@ -187,7 +191,13 @@ class ReportDataCollector:
     def __init__(self, anomaly_threshold: float = 3.0):
         self.anomaly_threshold = anomaly_threshold
 
-    def collect(self, db: Session, report: TestReport) -> ReportData:
+    def collect(
+        self,
+        db: Session,
+        report: TestReport,
+        *,
+        strict_execution_ids: bool = False,
+    ) -> ReportData:
         """
         Collect all data needed for report generation.
 
@@ -225,6 +235,18 @@ class ReportDataCollector:
 
         # 2. Get test executions
         executions = self._get_executions(db, report)
+        if strict_execution_ids and report.test_execution_ids:
+            requested_ids = {str(execution_id) for execution_id in report.test_execution_ids}
+            found_ids = {str(execution.id) for execution in executions}
+            missing_ids = sorted(requested_ids - found_ids)
+            if missing_ids:
+                # 正式报告不能把缺失 ID 静默过滤后对剩余子集判绿。默认保持
+                # ARCH-1 读侧“旧汇总表 ID 查 0 行”的历史诊断契约；只有活跃
+                # 报告生成链显式开启 strict 门。
+                raise ValueError(
+                    "Requested TestExecution rows not found: "
+                    + ", ".join(missing_ids)
+                )
         if executions:
             # 3. Build execution summary
             report_data.execution_summary = self._build_execution_summary(executions)
@@ -255,8 +277,50 @@ class ReportDataCollector:
             # 10. Build chart data
             report_data.chart_data = self._build_chart_data(report_data)
 
+            # 11. P1-47C instrument evidence (active report chain)
+            report_data.scpi_evidence = self._collect_scpi_evidence(executions)
+
         logger.info(f"Data collection complete for report: {report.id}")
         return report_data
+
+    @staticmethod
+    def _collect_scpi_evidence(executions) -> Dict[str, Any]:
+        """收集严格校验后的公开摘要；多执行报告保留逐执行边界。"""
+        from app.services.execution_scpi_evidence import (
+            public_execution_scpi_evidence,
+        )
+
+        bundles = []
+        for execution in executions:
+            evidence = public_execution_scpi_evidence(execution)
+            bundles.append(
+                evidence
+                if evidence is not None
+                else {
+                    "schema_version": 1,
+                    "execution_id": str(execution.id),
+                    "environments": {},
+                    "required": [],
+                    "items": [],
+                    "missing_requirements": [],
+                    "formal_verdict": "unknown",
+                    "formal_acceptance": False,
+                    "reason": "execution_evidence_missing_or_invalid",
+                }
+            )
+        if not bundles:
+            return {}
+        if len(bundles) == 1:
+            return bundles[0]
+        accepted = all(bundle.get("formal_acceptance") is True for bundle in bundles)
+        rejected = any(bundle.get("formal_verdict") == "rejected" for bundle in bundles)
+        return {
+            "schema_version": 1,
+            "formal_verdict": "passed" if accepted else ("rejected" if rejected else "unknown"),
+            "formal_acceptance": accepted,
+            "reason": "all_executions_confirmed" if accepted else "one_or_more_executions_unconfirmed",
+            "executions": bundles,
+        }
 
     def _get_test_plan(self, db: Session, test_plan_id: UUID) -> Optional[TestPlan]:
         """Fetch test plan from database"""
@@ -284,10 +348,30 @@ class ReportDataCollector:
         return query.order_by(TestExecution.executed_at.asc()).all()
 
     def _build_execution_summary(self, executions: List[TestExecution]) -> ExecutionSummary:
-        """Build summary from execution records"""
+        """Build summary using the formal business-result AND evidence gate."""
+        from app.services.execution_scpi_evidence import (
+            public_execution_scpi_evidence,
+        )
+
         total = len(executions)
-        passed = sum(1 for e in executions if e.validation_pass is True)
-        failed = sum(1 for e in executions if e.validation_pass is False)
+        formally_accepted = {
+            str(e.id): (
+                (evidence := public_execution_scpi_evidence(e)) is not None
+                and evidence.get("formal_acceptance") is True
+            )
+            for e in executions
+        }
+        passed = sum(
+            1
+            for e in executions
+            if e.validation_pass is True and formally_accepted[str(e.id)]
+        )
+        failed = sum(
+            1
+            for e in executions
+            if e.validation_pass is False
+            or (e.validation_pass is True and not formally_accepted[str(e.id)])
+        )
         pending = sum(1 for e in executions if e.validation_pass is None)
         total_duration = sum(e.duration_sec or 0 for e in executions)
 

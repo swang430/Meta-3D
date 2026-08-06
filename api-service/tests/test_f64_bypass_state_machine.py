@@ -29,13 +29,15 @@ def _make_driver(*, initial_state="STOPPED"):
     # 推导。那样等于让被测对象自己出考题 —— 驱动缓存漂了 (正是本 PR 要治的病:
     # 后端重启后缓存 False 而硬件在播), fake 会跟着一起漂, "缓存 vs 真值不一致"的
     # 场景在测试里根本构造不出来, 相关断言全成空转。
-    _sim = {"state": initial_state}
+    _sim = {"state": initial_state, "static": "0"}
 
     def _router(cmd):
         if cmd == "*OPC?":
             return "1"
         if cmd == "DIAG:SIMU:STATE?":
             return _sim["state"]
+        if cmd == "DIAG:SIMU:MODEL:STATIC?":
+            return _sim["static"]
         return '0,"No error"'
 
     visa.query.side_effect = _router
@@ -50,6 +52,9 @@ def _make_driver(*, initial_state="STOPPED"):
             _sim["state"] = "CLOSED"
         elif cmd.startswith("DIAG:SIMU:MODEL:STATIC") and not cmd.endswith(" 0"):
             _sim["state"] = "STOPPED"     # 手册 §20.4.6.25: 进旁路 → 仿真暂停
+            _sim["static"] = cmd.rsplit(maxsplit=1)[-1]
+        elif cmd == "DIAG:SIMU:MODEL:STATIC 0":
+            _sim["static"] = "0"
         visa.write(cmd)
 
     async def _q(cmd, timeout=None, **_kw):
@@ -250,6 +255,8 @@ class TestStaticPlaybackMutex:
         def _q(cmd, **_kw):
             if cmd == "*OPC?":
                 return "1"
+            if cmd == "DIAG:SIMU:MODEL:STATIC?":
+                return "3"
             if cmd == "SYST:ERR?":
                 return err_q.pop(0) if err_q else '0,"No error"'
             return '0,"No error"'
@@ -329,6 +336,36 @@ class TestPassthroughModeSwitch:
         assert "DIAG:SIMU:MODEL:STATIC 2" in w, w
         assert not any("STATIC 3" in c for c in w), w
         assert drv._passthrough_active is True
+
+    async def test_passthrough_confirms_opc_error_and_static_readback_in_order(self):
+        """正式旁路证据的驱动来源必须完整闭环：写档位后依次等完成、查错、
+        回读同一个档位，再读取运行态；不能拿模型状态替代 STATIC?。"""
+        drv, visa = _make_driver()
+        seen: list[str] = []
+        original_query = drv._query
+
+        async def _q(cmd, timeout=None, **kwargs):
+            seen.append(cmd)
+            return await original_query(cmd, timeout, **kwargs)
+
+        drv._query = _q  # type: ignore[assignment]
+        assert await drv.set_passthrough_mode(mode=3) is True
+        tail = [
+            cmd for cmd in seen
+            if cmd in (
+                "*OPC?",
+                "SYST:ERR?",
+                "DIAG:SIMU:MODEL:STATIC?",
+                "DIAG:SIMU:STATE?",
+            )
+        ]
+        assert tail[-4:] == [
+            "*OPC?",
+            "SYST:ERR?",
+            "DIAG:SIMU:MODEL:STATIC?",
+            "DIAG:SIMU:STATE?",
+        ], tail
+        assert "DIAG:SIMU:MODEL:STATIC 3" in _writes(visa)
 
     async def test_channel_model_mode_writes_static1(self):
         drv, visa = _make_driver()

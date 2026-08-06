@@ -10,6 +10,7 @@ import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from io import BytesIO
+from xml.sax.saxutils import escape
 
 from reportlab.lib.pagesizes import A4, LETTER, landscape, portrait
 from reportlab.lib.units import mm
@@ -167,6 +168,39 @@ class PDFGenerator:
             if not sections:
                 sections = self._auto_generate_sections(report_data)
 
+            # P1-47C：自定义模板不能删掉正式证据。只要报告数据含服务端证据摘要，
+            # 就强制保留一节；位置优先紧跟执行摘要，避免模板选择造成“证据缺席”。
+            sections = list(sections)
+            if report_data.get('scpi_evidence') and not any(
+                section.get('type') == 'scpi_evidence' for section in sections
+            ):
+                summary_index = next(
+                    (
+                        index
+                        for index, section in enumerate(sections)
+                        if section.get('type') == 'execution_summary'
+                    ),
+                    None,
+                )
+                insert_at = summary_index + 1 if summary_index is not None else len(sections)
+                if summary_index is not None:
+                    evidence_order = float(
+                        sections[summary_index].get('order', summary_index)
+                    ) + 0.5
+                else:
+                    numeric_orders = [
+                        float(section.get('order', index))
+                        for index, section in enumerate(sections)
+                    ]
+                    evidence_order = max(numeric_orders, default=0.0) + 1.0
+                evidence_section = {
+                    'type': 'scpi_evidence',
+                    'order': evidence_order,
+                    'title': 'Instrument Command Evidence (SCPI/AeroBasic)',
+                    'page_break_after': True,
+                }
+                sections.insert(insert_at, evidence_section)
+
             # Sort sections by order
             sections = sorted(sections, key=lambda x: x.get('order', 999))
 
@@ -225,6 +259,8 @@ class PDFGenerator:
             elements.extend(self._generate_logs_section(data))
         elif section_type == 'step_details':
             elements.extend(self._generate_step_details_section(data))
+        elif section_type == 'scpi_evidence':
+            elements.extend(self._generate_scpi_evidence_section(data))
         # VRT specific section types
         elif section_type == 'vrt_scenario':
             elements.extend(self._generate_vrt_scenario_section(section_config, data))
@@ -285,6 +321,16 @@ class PDFGenerator:
             })
             order += 1
 
+        # P1-47C：证据是正式结论的一部分，放在执行摘要之后、统计图表之前。
+        if data.get('scpi_evidence'):
+            sections.append({
+                'type': 'scpi_evidence',
+                'order': order,
+                'title': 'Instrument Command Evidence (SCPI/AeroBasic)',
+                'page_break_after': True,
+            })
+            order += 1
+
         # Add statistics section if available
         if data.get('statistics'):
             sections.append({
@@ -337,6 +383,78 @@ class PDFGenerator:
             order += 1
 
         return sections
+
+    def _generate_scpi_evidence_section(self, data: Dict[str, Any]) -> List:
+        """渲染 E1-E4 分层摘要；原始响应不进入 PDF。"""
+        evidence = data.get('scpi_evidence') or {}
+        if not evidence:
+            return [Paragraph("No instrument evidence available", self.styles['BodyText'])]
+
+        elements: List = []
+        verdict = str(evidence.get('formal_verdict', 'unknown')).upper()
+        accepted = evidence.get('formal_acceptance') is True
+        status_style = self.styles['PassStatus'] if accepted else self.styles['FailStatus']
+        elements.append(Paragraph(
+            f"<b>Formal verdict:</b> {verdict} &nbsp; "
+            f"<b>Reason:</b> {escape(str(evidence.get('reason', 'N/A')))}",
+            status_style,
+        ))
+        elements.append(Spacer(1, 10))
+
+        rows = [[
+            Paragraph('<b>Requirement</b>', self.styles['BodyText']),
+            Paragraph('<b>Instrument</b>', self.styles['BodyText']),
+            Paragraph('<b>Level</b>', self.styles['BodyText']),
+            Paragraph('<b>Verdict</b>', self.styles['BodyText']),
+            Paragraph('<b>Exchange IDs</b>', self.styles['BodyText']),
+        ]]
+        bundles = (
+            evidence.get('executions')
+            if isinstance(evidence.get('executions'), list)
+            else [evidence]
+        )
+        for bundle in bundles:
+            if not isinstance(bundle, dict):
+                continue
+            execution_id = str(bundle.get('execution_id', ''))
+            items = bundle.get('items') if isinstance(bundle.get('items'), list) else []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                requirement = str(item.get('requirement_id', 'N/A'))
+                if execution_id:
+                    requirement = f"{execution_id[:8]}: {requirement}"
+                rows.append([
+                    Paragraph(escape(requirement), self.styles['BodyText']),
+                    Paragraph(escape(str(item.get('instrument', 'N/A'))), self.styles['BodyText']),
+                    Paragraph(escape(str(item.get('evidence_level', 'N/A'))), self.styles['BodyText']),
+                    Paragraph(escape(str(item.get('verdict', 'N/A'))), self.styles['BodyText']),
+                    Paragraph(escape(', '.join(map(str, item.get('exchange_ids') or []))), self.styles['BodyText']),
+                ])
+        if len(rows) == 1:
+            rows.append([
+                Paragraph('No captured item', self.styles['BodyText']),
+                '', '', '', '',
+            ])
+        table = Table(rows, repeatRows=1, colWidths=[42*mm, 27*mm, 18*mm, 23*mm, 55*mm])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('FONTNAME', (0, 0), (-1, -1), CJK_FONT),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f0f0f0')]),
+        ]))
+        elements.append(table)
+        elements.append(Spacer(1, 10))
+        elements.append(Paragraph(
+            "Evidence levels: E1 transport, E2 accepted/read back, "
+            "E3 applied state, E4 business outcome. Raw replies remain in scpi.log; "
+            "the report stores only sanitized summaries and exchange identifiers.",
+            self.styles['BodyText'],
+        ))
+        return elements
 
     def _get_test_case_template(self) -> str:
         """single_execution 报告: test_plan dict 装的是 TestCase 信息 (ARCH-1

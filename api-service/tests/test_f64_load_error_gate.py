@@ -112,8 +112,13 @@ class TestLoadErrorGate:
         assert ok is True
 
     async def test_failed_load_returns_false_and_skips_freq(self):
-        # 队列加载前干净, 加载后报 -200 → fail-loud, 不进设频
-        drv, visa = _make_driver(['0,"No error"', '-200,"No simulation opened"'])
+        # 首次 drain 清旧队列；CLOSE 完成后紧邻 FILE 的第二次 drain 建立可归属基线；
+        # 加载后报 -200 → fail-loud, 不进设频。
+        drv, visa = _make_driver([
+            '0,"No error"',
+            '0,"No error"',
+            '-200,"No simulation opened"',
+        ])
         ok = await drv.set_channel_model(
             "CDL-C", "UMa",
             {"emulation_file": "D:\\bad\\missing.smu", "center_frequency_mhz": 3600},
@@ -124,7 +129,11 @@ class TestLoadErrorGate:
         assert drv._loaded_emulation_file != "D:\\bad\\missing.smu"
 
     async def test_minus_300_also_gated(self):
-        drv, visa = _make_driver(['0,"No error"', '-300,"Device-specific error"'])
+        drv, visa = _make_driver([
+            '0,"No error"',
+            '0,"No error"',
+            '-300,"Device-specific error"',
+        ])
         ok = await drv.set_channel_model(
             "CDL-C", "UMa", {"emulation_file": "D:\\bad\\corrupt.smu"}
         )
@@ -154,7 +163,8 @@ class TestLoadErrorGate:
         # drain 清掉 stale 后, 本次加载又真失败 (-200) → gate 仍要拦住 (drain 不掩盖真错误)
         drv, visa = _make_driver([
             '-221,"Settings conflict (stale)"',
-            '0,"No error"',   # drain 终止
+            '0,"No error"',   # 首次 drain 终止
+            '0,"No error"',   # CLOSE 后、FILE 前的紧邻 baseline
             '-200,"No simulation opened"',  # gate: 本次加载真失败
         ])
         ok = await drv.set_channel_model(

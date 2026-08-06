@@ -503,6 +503,22 @@ def _matches_catalog_role(
     )
 
 
+def exchange_matches_catalog_role(
+    exchange: Optional[ScpiExchangeRef],
+    evidence_key: str,
+    field_name: str,
+    *,
+    optional_bse: bool = False,
+) -> bool:
+    """P1-47C 公共选择器：按已审清单识别捕获往返，不复制命令拼写。"""
+    return _matches_catalog_role(
+        exchange,
+        evidence_key,
+        field_name,
+        optional_bse=optional_bse,
+    )
+
+
 def _is_error_query(exchange: Optional[ScpiExchangeRef]) -> bool:
     return _matches_catalog_role(exchange, "f64.error_queue", "query")
 
@@ -523,6 +539,23 @@ def _is_uxm_protocol_state_query(exchange: Optional[ScpiExchangeRef]) -> bool:
     return _matches_catalog_role(exchange, "uxm.cell_status", "query")
 
 
+def exchange_matches_uxm_cell_activation(
+    exchange: Optional[ScpiExchangeRef],
+) -> bool:
+    """识别 start_signaling 的 CELL ON 写入，不把任意 ON 命令当应用证据。"""
+    return bool(
+        exchange
+        and exchange.operation == "command"
+        and _transport_succeeded(exchange)
+        and _header_matches_declared(
+            exchange,
+            "CONFigure:NR5G:<cell>:ACTive:STATe",
+            optional_bse=True,
+        )
+        and str(_command_operand(exchange)).strip().upper() in {"1", "ON"}
+    )
+
+
 def _is_positioner_move(exchange: Optional[ScpiExchangeRef]) -> bool:
     return _matches_catalog_role(exchange, "positioner.move_absolute", "command")
 
@@ -535,7 +568,7 @@ _F64_RECIPES = {
     "f64.model_load": ("f64.model_load", "f64.model_state", "f64.simulation_state"),
     "f64.simulation_state": (
         "f64.simulation_state",
-        "f64.model_state",
+        "f64.simulation_state",
         "f64.simulation_state",
     ),
     "f64.center_frequency": ("f64.center_frequency", "f64.center_frequency", None),
@@ -543,8 +576,16 @@ _F64_RECIPES = {
     "f64.crest_factor": ("f64.crest_factor", "f64.crest_factor", None),
     "f64.output_gain": ("f64.output_gain", "f64.output_gain", None),
     "f64.output_loss": ("f64.output_loss", "f64.output_loss", None),
-    "f64.bypass_mode": ("f64.bypass_mode", "f64.bypass_mode", None),
+    "f64.bypass_mode": (
+        "f64.bypass_mode",
+        "f64.bypass_mode",
+        "f64.simulation_state",
+    ),
 }
+
+_F64_SIMULATION_STATES = frozenset(
+    {"CLOSED", "OPENING", "STOPPING", "STOPPED", "RUNNING", "EDITING", "CLOSING"}
+)
 
 
 def _f64_roles_match(
@@ -556,10 +597,23 @@ def _f64_roles_match(
     recipe = _F64_RECIPES.get(evidence_key)
     if not recipe:
         return False
-    command_key, readback_key, _state_key = recipe
+    command_key, readback_key, state_key = recipe
     if not _matches_catalog_role(command_exchange, command_key, "command"):
         return False
-    return _matches_catalog_role(readback_exchange, readback_key, "query")
+    if evidence_key == "f64.simulation_state":
+        # 运行态 recipe 既可带 MODEL:STATE? 作为模型上下文，再用 STATE?
+        # 判 RUNNING；也可像活跃 start_emulation 一样直接以同一条 STATE?
+        # 同时承担回读和生效状态。
+        return _matches_catalog_role(
+            readback_exchange, "f64.model_state", "query"
+        ) or _matches_catalog_role(
+            readback_exchange, "f64.simulation_state", "query"
+        )
+    if not _matches_catalog_role(readback_exchange, readback_key, "query"):
+        return False
+    return state_key is None or _matches_catalog_role(
+        state_exchange, state_key, "query"
+    )
 
 
 def _uxm_config_roles_match(
@@ -639,6 +693,8 @@ def _apply_exchange_origin(
     verdict: EvidenceVerdict,
     reason: str,
     exchanges: list[Optional[ScpiExchangeRef]],
+    *,
+    allow_interleaved: bool = False,
 ) -> tuple[EvidenceLevel, EvidenceVerdict, str]:
     exchange_ids = [exchange.exchange_id for exchange in exchanges if exchange]
     if len(exchange_ids) != len(set(exchange_ids)):
@@ -676,7 +732,10 @@ def _apply_exchange_origin(
         sequence = [exchange.sequence for exchange in present]
         if sequence != sorted(sequence) or len(sequence) != len(set(sequence)):
             return level, EvidenceVerdict.UNKNOWN, "exchange_stage_order_mismatch"
-        if sequence != list(range(sequence[0], sequence[0] + len(sequence))):
+        if (
+            not allow_interleaved
+            and sequence != list(range(sequence[0], sequence[0] + len(sequence)))
+        ):
             return level, EvidenceVerdict.UNKNOWN, "exchange_stage_interleaved"
     return level, verdict, reason
 
@@ -721,8 +780,15 @@ def build_f64_evidence(
         if evidence_key == "f64.simulation_state"
         else command_operand
     )
-    readback_matches_wire = _response_matches_expected(
-        readback_response, wire_expected
+    readback_matches_wire = (
+        bool(readback_response and readback_response.strip())
+        if evidence_key == "f64.model_load"
+        else _response_matches_expected(readback_response, wire_expected)
+    )
+    bypass_state_valid = evidence_key != "f64.bypass_mode" or (
+        _transport_succeeded(state_exchange)
+        and _is_f64_state_query(state_exchange)
+        and (simulation_state or "").strip().upper() in _F64_SIMULATION_STATES
     )
     queue_precleared = _error_queue_precleared(preclear_exchanges)
     level = EvidenceLevel.INTENT
@@ -791,14 +857,28 @@ def build_f64_evidence(
         and readback_response is not None
         and readback_matches_wire
         and command_matches_requested
+        and bypass_state_valid
     ):
         level = EvidenceLevel.ACCEPTED
         verdict = EvidenceVerdict.PASSED
         reason = "opc_complete_error_queue_clean_readback_matched"
         recipe = _F64_RECIPES[evidence_key]
-        if evidence_key == "f64.bypass_mode":
+        if (
+            evidence_key == "f64.model_load"
+            and (simulation_state or "").strip().upper()
+            in {"STOPPED", "RUNNING", "EDITING"}
+        ):
             level = EvidenceLevel.APPLIED
-            reason = "accepted_and_bypass_readback_matched"
+            reason = (
+                "accepted_and_model_loaded_state="
+                f"{(simulation_state or '').strip().upper()}"
+            )
+        elif evidence_key == "f64.bypass_mode":
+            level = EvidenceLevel.APPLIED
+            reason = (
+                "accepted_and_bypass_readback_matched_state="
+                f"{(simulation_state or '').strip().upper()}"
+            )
         elif recipe[2] and _is_f64_state_query(state_exchange) and (
             simulation_state or ""
         ).strip().upper() == "RUNNING":
@@ -825,21 +905,45 @@ def build_f64_evidence(
         reason = f"error_query_terminal={error_exchange.result_type}"
     elif readback_exchange and not _transport_succeeded(readback_exchange):
         reason = f"readback_terminal={readback_exchange.result_type}"
+    elif evidence_key == "f64.bypass_mode" and state_exchange is None:
+        reason = "state_readback_missing"
+    elif evidence_key == "f64.bypass_mode" and not _transport_succeeded(
+        state_exchange
+    ):
+        reason = f"state_query_terminal={state_exchange.result_type}"
+    elif evidence_key == "f64.bypass_mode" and not _is_f64_state_query(
+        state_exchange
+    ):
+        reason = "catalog_command_role_mismatch"
+    elif evidence_key == "f64.bypass_mode" and not bypass_state_valid:
+        reason = "state_readback_invalid"
     elif command_exchange or readback_exchange:
         reason = "catalog_command_role_mismatch"
+    origin_exchanges = [
+        *preclear_exchanges,
+        command_exchange,
+        opc_exchange,
+        error_exchange,
+        readback_exchange,
+        state_exchange,
+    ]
+    if evidence_key == "f64.simulation_state":
+        # GO 的业务回读与生效状态是同一条 STATE?；只在 provenance 顺序门中
+        # 去重，摘要 exchange_ids 本来也按 ID 去重。
+        seen_origin_ids: set[str] = set()
+        deduplicated: list[Optional[ScpiExchangeRef]] = []
+        for exchange in origin_exchanges:
+            if exchange is None or exchange.exchange_id not in seen_origin_ids:
+                deduplicated.append(exchange)
+                if exchange is not None:
+                    seen_origin_ids.add(exchange.exchange_id)
+        origin_exchanges = deduplicated
     level, verdict, reason = _apply_exchange_origin(
         scope,
         level,
         verdict,
         reason,
-        [
-            *preclear_exchanges,
-            command_exchange,
-            opc_exchange,
-            error_exchange,
-            readback_exchange,
-            state_exchange,
-        ],
+        origin_exchanges,
     )
     level, verdict, reason = _apply_scope(scope, level, verdict, reason)
     return InstrumentEvidenceItem(
@@ -876,6 +980,7 @@ def build_uxm_evidence(
     apply_exchange: Optional[ScpiExchangeRef],
     protocol_state_exchange: Optional[ScpiExchangeRef],
     scope: ScopeDecision,
+    activation_exchange: Optional[ScpiExchangeRef] = None,
 ) -> InstrumentEvidenceItem:
     command_sent = command_exchange.command if command_exchange else None
     protocol_state = _value_response(protocol_state_exchange)
@@ -901,6 +1006,7 @@ def build_uxm_evidence(
                 command_exchange,
                 readback_exchange,
                 apply_exchange,
+                activation_exchange,
                 protocol_state_exchange,
             )
             if exchange and exchange.result_type == "device_rejected"
@@ -944,11 +1050,14 @@ def build_uxm_evidence(
     elif command_exchange or readback_exchange:
         reason = "catalog_command_role_mismatch"
     state = (protocol_state or "").strip().upper()
+    apply_path = bool(
+        _transport_succeeded(apply_exchange) and _is_uxm_apply(apply_exchange)
+    )
+    activation_path = exchange_matches_uxm_cell_activation(activation_exchange)
     if (
         level is EvidenceLevel.ACCEPTED
         and verdict is EvidenceVerdict.PASSED
-        and _transport_succeeded(apply_exchange)
-        and _is_uxm_apply(apply_exchange)
+        and (apply_path or activation_path)
         and _is_uxm_protocol_state_query(protocol_state_exchange)
         and _value_response(protocol_state_exchange) is not None
         and state in {
@@ -963,18 +1072,57 @@ def build_uxm_evidence(
         }
     ):
         level = EvidenceLevel.APPLIED
-        reason = f"apply_sent_and_protocol_state={state}"
+        reason = (
+            f"apply_sent_and_protocol_state={state}"
+            if apply_path
+            else f"cell_activated_and_protocol_state={state}"
+        )
+    application_exchange = (
+        apply_exchange
+        if apply_path
+        else (
+            activation_exchange
+            if activation_path
+            else apply_exchange or activation_exchange
+        )
+    )
+    semantic_origin = [
+        command_exchange,
+        application_exchange,
+        protocol_state_exchange,
+        readback_exchange,
+    ]
+    present_origin = [exchange for exchange in semantic_origin if exchange]
+    if len(present_origin) == 4:
+        cmd_seq = command_exchange.sequence
+        apply_seq = application_exchange.sequence
+        state_seq = protocol_state_exchange.sequence
+        read_seq = readback_exchange.sequence
+        valid_transaction_order = (
+            cmd_seq < apply_seq < state_seq < read_seq
+            or cmd_seq < read_seq < apply_seq < state_seq
+            # RealUxmDriver.set_cell_config 的 ON 路径先发 APPLY、随后做配置
+            # readback；长事务末尾 start_signaling 才提供协议状态。
+            or cmd_seq < apply_seq < read_seq < state_seq
+        )
+        if valid_transaction_order:
+            semantic_origin = sorted(present_origin, key=lambda item: item.sequence)
+    elif (
+        present_origin
+        and command_exchange is not None
+        and command_exchange.sequence
+        == min(exchange.sequence for exchange in present_origin)
+        and len({exchange.sequence for exchange in present_origin})
+        == len(present_origin)
+    ):
+        semantic_origin = sorted(present_origin, key=lambda item: item.sequence)
     level, verdict, reason = _apply_exchange_origin(
         scope,
         level,
         verdict,
         reason,
-        [
-            command_exchange,
-            readback_exchange,
-            apply_exchange,
-            protocol_state_exchange,
-        ],
+        semantic_origin,
+        allow_interleaved=True,
     )
     level, verdict, reason = _apply_scope(scope, level, verdict, reason)
     return InstrumentEvidenceItem(
@@ -987,12 +1135,7 @@ def build_uxm_evidence(
             "expected": expected_readback,
             "protocol_state": protocol_state,
         },
-        exchange_ids=_exchange_ids(
-            command_exchange,
-            readback_exchange,
-            apply_exchange,
-            protocol_state_exchange,
-        ),
+        exchange_ids=_exchange_ids(*semantic_origin),
         evidence_level=level,
         source_reference=scope.source_reference,
         verdict=verdict,
@@ -1141,7 +1284,14 @@ def build_positioner_evidence(
             verdict = EvidenceVerdict.REJECTED
             reason = f"feedback_error_exceeds_tolerance:{error:.6f}"
     level, verdict, reason = _apply_exchange_origin(
-        scope, level, verdict, reason, [move_exchange, feedback_exchange]
+        scope,
+        level,
+        verdict,
+        reason,
+        [move_exchange, feedback_exchange],
+        # 真实 move_to 在 MOVEABS 与最终 PFBK 之间轮询 AXISSTATUS 等待到位。
+        # 这些同 capture/同仪器的受控查询不能让合法证据永久降级为 interleaved。
+        allow_interleaved=True,
     )
     level, verdict, reason = _apply_scope(scope, level, verdict, reason)
     return InstrumentEvidenceItem(

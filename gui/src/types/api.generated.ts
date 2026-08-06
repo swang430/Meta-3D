@@ -645,6 +645,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/test-plans/cases/executions/{execution_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one TestCase execution status and sanitized SCPI evidence */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    execution_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Execution status with P1-47C evidence when available */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CaseExecutionStatus"];
+                    };
+                };
+                /** @description Execution not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/system-logs/tail": {
         parameters: {
             query?: never;
@@ -1012,6 +1057,71 @@ export interface components {
         TestExecutionListResponse: {
             total: number;
             items: components["schemas"]["TestExecutionItem"][];
+        };
+        ScpiEvidenceEnvironment: {
+            instrument_id: string;
+            instrument: string;
+            model?: string | null;
+            firmware_version?: string | null;
+            captured_from_live_connection: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        ScpiEvidenceRequirement: {
+            requirement_id: string;
+            evidence_key: string;
+            requested: unknown;
+            /** @enum {string} */
+            required_evidence_level: "E0" | "E1" | "E2" | "E3" | "E4";
+        };
+        ScpiEvidenceItem: {
+            requirement_id: string;
+            instrument: string;
+            evidence_key: string;
+            requested: unknown;
+            command_sent: string | null;
+            readback: unknown;
+            exchange_ids: string[];
+            /** @enum {string} */
+            evidence_level: "E0" | "E1" | "E2" | "E3" | "E4";
+            source_reference: string | null;
+            /** @enum {string} */
+            verdict: "passed" | "rejected" | "unknown";
+            reason: string;
+        };
+        /**
+         * @description Sanitized P1-47C summary. Raw replies stay in scpi.log and are linked
+         *     by execution_id + exchange_ids. Any missing/unknown/rejected mandatory
+         *     item makes formal_acceptance false.
+         */
+        ExecutionScpiEvidence: {
+            schema_version: number;
+            /** Format: uuid */
+            execution_id: string;
+            environments: {
+                [key: string]: components["schemas"]["ScpiEvidenceEnvironment"];
+            };
+            required: components["schemas"]["ScpiEvidenceRequirement"][];
+            items: components["schemas"]["ScpiEvidenceItem"][];
+            missing_requirements: string[];
+            /** @enum {string} */
+            formal_verdict: "passed" | "rejected" | "unknown";
+            formal_acceptance: boolean;
+            reason: string;
+        };
+        CaseExecutionStatus: {
+            /** Format: uuid */
+            execution_id: string;
+            status: string;
+            source_test_case_id?: string | null;
+            phase_progress: {
+                [key: string]: unknown;
+            }[];
+            failed_phase?: string | null;
+            error_message?: string | null;
+            started_at?: string | null;
+            completed_at?: string | null;
+            scpi_evidence?: components["schemas"]["ExecutionScpiEvidence"] | null;
         };
         /**
          * @description P2-8: one parsed log line. `level` is RAW for non-JSON continuation

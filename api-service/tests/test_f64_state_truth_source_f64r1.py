@@ -39,10 +39,13 @@ def _drv(*, state="RUNNING", err_on=None):
     writes: list[str] = []
     states = list(state) if isinstance(state, list) else [state]
     last = {"cmd": None}
+    instrument = {"static": "0"}
 
     async def _w(cmd, timeout=None):
         last["cmd"] = cmd
         writes.append(cmd)
+        if cmd.startswith("DIAG:SIMU:MODEL:STATIC "):
+            instrument["static"] = cmd.rsplit(maxsplit=1)[-1]
 
     async def _q(cmd, timeout=None, **_kw):
         if cmd == "*OPC?":
@@ -56,7 +59,7 @@ def _drv(*, state="RUNNING", err_on=None):
                 return e
             return '0,"No error"'
         if cmd == "DIAG:SIMU:MODEL:STATIC?":
-            return "0"
+            return instrument["static"]
         return '0,"No error"'
 
     d._write = _w  # type: ignore[assignment]

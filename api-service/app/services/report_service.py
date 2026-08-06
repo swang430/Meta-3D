@@ -306,13 +306,46 @@ class ReportService:
                                  "anomaly_indices": []
                              }
                         report_data_dict['chart_data'] = chart_data
+
+                # P1-47C：关联 TestExecution 的结论字段只能来自服务端执行行。
+                # MIMO_OTA 仍可用 override 携带专用图表/相位内容，但公开 API 可写的
+                # content_data 不能覆盖 SCPI 证据或把 AND 门失败伪装成 PASS。VRT 使用
+                # 独立 road_test_execution_id 数据链，不套用 TestExecution 证据契约。
+                if report.test_execution_ids and not report.road_test_execution_id:
+                    authoritative = ReportDataCollector().collect(
+                        db, report, strict_execution_ids=True
+                    ).to_dict()
+                    summary = authoritative.get('execution_summary')
+                    if not summary:
+                        raise ValueError(
+                            f"No TestExecution rows found for report {report_id}"
+                        )
+                    report_data_dict['scpi_evidence'] = authoritative.get(
+                        'scpi_evidence', {}
+                    )
+                    report_data_dict['execution_summary'] = summary
+                    report_data_dict['pass_rate'] = summary.get('pass_rate', 0)
+                    if summary.get('passed') == summary.get('total_executions'):
+                        report_data_dict['overall_result'] = 'passed'
+                    elif summary.get('failed', 0) > 0:
+                        report_data_dict['overall_result'] = 'failed'
+                    else:
+                        report_data_dict['overall_result'] = 'pending'
             else:
                 # For standard reports, collect data from DB
                 data_collector = ReportDataCollector()
-                report_data = data_collector.collect(db, report)
+                report_data = data_collector.collect(
+                    db,
+                    report,
+                    strict_execution_ids=bool(report.test_execution_ids),
+                )
                 if report_data is None:
                     raise ValueError(f"Failed to collect report data for report {report_id}")
                 report_data_dict = report_data.to_dict()
+
+            # PDF、报告详情 API 与 GUI 必须共享同一份服务端最终结论；否则 PDF 已被
+            # AND 门判失败，查看器仍可能从创建时的客户端 content_data 显示 PASS。
+            report.content_data = report_data_dict
 
             # Update progress
             report.progress_percent = 50

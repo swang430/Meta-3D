@@ -266,6 +266,46 @@ export interface CaseExecutionStatus {
   error_message?: string | null
   started_at?: string | null
   completed_at?: string | null
+  scpi_evidence?: ExecutionScpiEvidence | null
+}
+
+export type ScpiEvidenceLevel = 'E0' | 'E1' | 'E2' | 'E3' | 'E4'
+export type ScpiEvidenceVerdict = 'passed' | 'rejected' | 'unknown'
+
+export interface ExecutionScpiEvidence {
+  schema_version: number
+  execution_id: string
+  environments: Record<string, {
+    instrument_id: string
+    instrument: string
+    model?: string | null
+    firmware_version?: string | null
+    test_application?: string | null
+    captured_from_live_connection: boolean
+  }>
+  required: Array<{
+    requirement_id: string
+    evidence_key: string
+    requested: unknown
+    required_evidence_level: ScpiEvidenceLevel
+  }>
+  items: Array<{
+    requirement_id: string
+    instrument: string
+    evidence_key: string
+    requested: unknown
+    command_sent: string | null
+    readback: unknown
+    exchange_ids: string[]
+    evidence_level: ScpiEvidenceLevel
+    source_reference: string | null
+    verdict: ScpiEvidenceVerdict
+    reason: string
+  }>
+  missing_requirements: string[]
+  formal_verdict: ScpiEvidenceVerdict
+  formal_acceptance: boolean
+  reason: string
 }
 
 export async function executeTestCase(caseId: string): Promise<CaseExecuteResponse> {
