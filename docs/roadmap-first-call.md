@@ -272,7 +272,7 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | P0-8 **现场半** | F64 driver 现场修复落地 —— real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真 | on-site real F64 (本地半已 Done, 见 `### P0-8`；跟 P0-5 attach 同一段窗口) | ✅ P0-8a：[`propsim_f64_p08_gate`](../api-service/app/diagnostics/sequences/propsim_f64_p08_gate.py)；P0-8b（DL 不失真）：同一条 MIMO_OTA TestCase |
 | P1-2 | F64 license probe SCPI 现场验证 | on-site real F64 | ⚠️ **部分载体**：[`propsim_f64_health`](../api-service/app/diagnostics/sequences/propsim_f64_health.py) 只覆盖 `OUTPut:INTERFerence:LIST?`；校准侧实际只探 `SYSTem:CALIBration:USER:GET?/INFO?`，没有事项要求的 `SYSTem:CALibration:USER:LIST?`，也没有按已知状态判 license presence/absence。保留 Blocked；不并入 P1-46 |
 | P1-4 | first-call repeatability test | on-site 全链路 | ⚠️ **部分载体**：MIMO_OTA TestCase 可重复执行；但现有 [`ReportComparison`](../api-service/app/models/report.py) 契约仍比较已封存的 `plan_id`，不是 TestExecution 级对比，不能宣称“报告对比闭环”。保留 Blocked，缺口不并入 P1-46 |
-| P1-5 **现场半** | CAL-04 phase calibration | on-site 真校准链路 | ❌ **无合规载体**：现有 [`CAL-04 API`](../api-service/app/api/path_loss_calibration.py) 不是诊断序列，也不是 MIMO_OTA TestCase。保留 Blocked；不写临时脚本、不并入 P1-46 |
+| P1-5 **现场半** | CAL-04 phase calibration | on-site 真校准链路 | ⚠️ **正式校准流程部分载体**：正式入口是 [`POST /api/v1/calibration/probe/phase/start`](../api-service/app/api/probe_calibration.py)；当前 endpoint body 会生成 `job_id` 并直接落库相位校准行，但这些行仍由 mock 数据生成，尚未替换为 CE→SA 实测循环。保留 Blocked，不判完成、不并入 P1-46 |
 | P1-17 **现场半** | UXM fresh-start 配置落地 | on-site real UXM | ⚠️ **部分载体**：[`uxm_config_truth_probe`](../api-service/app/diagnostics/sequences/uxm_config_truth_probe.py) 只在已 ON 小区扰动/恢复 ARFCN；不触发 fresh-start/HAL reload、`default_state_file` recall、默认 profile/state 自动应用、全配置/MIMO 对齐或 `.state` 盘点。保留 Blocked；不并入 P1-46 |
 | P2-4 | NAT/firewall idle-drop 假设验证 | on-site 现场网络 | ❌ **无载体**：C 类长连接放置后观察。保留 Blocked，待独立 triage；不并入 P1-46 |
 | P2-9 **现场半** | EMCenter switch bring-up | on-site EMCenter | ❌ **无载体**：[`rf_switch.py`](../api-service/app/hal/rf_switch.py) 有驱动不等于有 GUI 诊断载体，当前 12 个已注册序列里没有 EMCenter。保留 Blocked；不并入 P1-46 |
@@ -282,8 +282,9 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | P1-6 **（HOLD 行）** | FS16 / UXM / ENA silent-reconnect 集成测试 | 需真 idle-close 证据 | ❌ **无 C 类载体**：[`propsim_fs16_health`](../api-service/app/diagnostics/sequences/propsim_fs16_health.py) / [`uxm_scpi_compatibility`](../api-service/app/diagnostics/sequences/uxm_scpi_compatibility.py) / [`vna_ena_health`](../api-service/app/diagnostics/sequences/vna_ena_health.py) 都不会制造 idle-close。继续 HOLD；不并入 P1-46 |
 | P1-33 **现场半** | 验证按手册重写的 MAC 配置命令在真机上被接受（本地半可先做，见 `### P1-33`） | on-site real UXM。⚠️ **不再 gate 在 P1-31 上**（Codex #276 P2 抓出错误依赖）：P1-31 只跑那 9 项 KPI 对账、且限定「手册有依据 + 驱动已在用」的命令，**产不出 MAC 配置命令的形式**；而 2026-08-03 查手册发现**这 8 组命令 `BSE:` 形式手册里全都有** —— 卡点不是「不知道命令」，是「没在真机上验过」 | ⚠️ **半覆盖** [`uxm_scpi_compatibility`](../api-service/app/diagnostics/sequences/uxm_scpi_compatibility.py)：命令被枚举，但判定集错（`TDD_PATTERN` 恒 `None` 仍在 critical；`MAC_CFG_MANDATORY` 多数未进 critical）。这是表内唯一并入 P1-46 的缺口，见其第 2 件交付物 |
 
-**P1-45 triage 结论**：13 条未完成/现场半/HOLD 行中，2 条已有合规载体，6 条只有
-部分载体，5 条没有合规载体。**P1-46 只接**已批准的
+**P1-45 triage 结论**：13 条未完成/现场半/HOLD 行中，2 条已有合规载体，7 条只有
+部分载体，4 条没有合规载体，即已有 **9 条可复跑承载路径**；这只是入口/路径存在，
+不等于现场事项完成。**P1-46 只接**已批准的
 `uxm_idempotent_write_probe` 与 P1-33 判定集对齐；其余缺口保持上表注明的
 Blocked / HOLD / 原 P 项，不写临时脚本替代，也不因本轮审计自动升级为 backlog。
 
@@ -354,6 +355,7 @@ These are still the highest-priority items overall. P0-5 的物理链已跑通�
 | 2026-08-06 | [#290](https://github.com/swang430/Meta-3D/pull/290) | <!--290-coverage-->✅ 全覆盖 | <!--290-gap-->—（R1 在 `86ae54a` 上出 1 条 P2，已在本 PR 内修完；修复 commit 未再派 R2 —— 轮次纪律：R1 findings 修完即收口，尾部修复无外审照旧如实申报） | P1-39/P1-40 立项 + 队列插队（docs-only）。**R1 那条 P2 是本轮最值钱的一条**：我把每执行日志写成 `logs/executions/<id>.log`，而 `_safe_filename()` 的 `^[\w\-\.]+$` 把 `/` 直接判 400、`/system-logs/files` 又只扫顶层跳目录 ——**照这个设计做出来，每执行文件列不出/tail 不了/导不出/下不了**，承诺的工作流当场是坏的。这是**立项文字里的设计缺陷**，代码没写就被拦下，正是立项该过外审的理由。修法走「去掉」（扁平 `exec-<uuid>.log`，零后端改动）不走「加机制」（递归列目录+路径安全） | 1 | ✅ 无需处置 |
 | 2026-08-06 | [#292](https://github.com/swang430/Meta-3D/pull/292) | <!--292-coverage-->✅ 全覆盖 | <!--292-gap-->—（末轮在 `8a70b50` 上 **clean**，而 `8a70b50` 就是合并时的 HEAD）。唯一没覆盖的是回填本行的 docs commit 自己 | P1-39。**走了 5 轮，前 4 轮每轮都是「修完引入新的」**：R1 2 P2 → R2 2 P2 → R3 2 P2 → 拆分后 1 P2 → **末轮 clean**。⚠️ **拆掉排序之后才收敛** —— 三轮 6 条 P2 的分布是「排序 5 / 跳转 1 / ID 展示 **0**」，用户拍板把排序摘成 P1-44，摘完一轮就干净了。**这是 `feedback_review_loop_scope_discipline` ② 那条（上限触发条件不适用时看 finding 的文件分布，不看轮数）的第二次实证**，第一次是 S5。⚠️ 另记两次流程漏洞：① 我说「270 秒后去查」但**没有计时器**，一轮结束就停了，连着两次要用户来问，后改用后台任务兜；② `8a70b502` 推完**没发 `@codex review`**（push 不触发），差点带着一个从没审过的竞态修复合进去，是用户问「哪个在 review」才发现 | 2 | ✅ 无需处置 |
 | 2026-08-06 | [#291](https://github.com/swang430/Meta-3D/pull/291) | <!--291-coverage-->✅ 全覆盖 | <!--291-gap-->—（R1 在 `5eb623f` 上出 1 条 P2，已在本 PR 内修完；修复 commit 未再派 R2 —— R1 findings 修完即收口，尾部修复无外审如实申报，与 [#290](https://github.com/swang430/Meta-3D/pull/290) 同处置） | P1-42 立项（docs-only），用户从 Discovered 升格并指定优先。**R1 那条 P2 是「核前提」的教科书案例**：它说纯 ASGI 后上一个请求的 `execution_id` 会漏进下一个请求。我没有直接采信也没有直接驳回，做了**两层探针** —— ① 同一个 task 里连调两次 ASGI app：**确实泄漏**（机制成立）；② 真 uvicorn 同一条 keep-alive 连接连发两请求：**不泄漏**（uvicorn 每个请求周期起独立 task）。所以准确定性是「**机制为真，今天的服务器不触发**」，比「对」或「不对」都精确。修法照收（三行，缺了就是静默错误归属），并额外要求那条门**必须在同一 task 里直调 ASGI app** —— 走 TestClient 或 uvicorn 都天然干净，门会**恒绿等于没有** | 1 | ✅ 无需处置 |
+| 2026-08-06 | [#295](https://github.com/swang430/Meta-3D/pull/295) | 🔄 R1 已覆盖 `c7094ec` | R1 两条 P2 的修复尚未获 R2 覆盖 | P1-45 docs-only 映射；R1 在 `c7094ec` 上指出诊断证据持久化承诺过度、P1-5 正式校准载体误判。正在当轮修复，完成内审后将发 R2，不预写 R2 结论 | **2** | 🔄 当轮修复中，将发 R2 |
 | 2026-08-05 | [#285](https://github.com/swang430/Meta-3D/pull/285) | <!--285-coverage-->✅ 全覆盖 | <!--285-gap-->—（R3 在 `e2ad982` 上出的唯一一条就是「补本行」，除此之外的立项正文三轮全过；`e2ad982` rebase 到 #287 之后内容逐字未变，已用 `git diff` 核过）。唯一没覆盖的是回填本行的 commit 自己 —— #278 拍板的无穷递归 | docs-only 立项。**我把轮次走到了 R3 而没有拿授权** —— 规则是上限 2，例外要用户点头（上次 #282 的 R3 是用户明说「走R3」）。这次 R2 那条不是 R1 修复引入的（是立项正文里独立的错误前提），我就自然而然续了一轮，如实记着。三轮 **1 P2 → 1 P2 → 1 P2**，无一条由上轮修复引入。**R2 那条最值钱**：我写「`hal_mode` 字段已存在、不重复造标记」，而它取自**全局** HAL mode，HAL 明确支持 per-instrument 覆盖 —— 全局 real 下被强制 mock 的仪器会把假回复标成 `hal_mode=real`，正好打穿 P1-37 唯一要防的那件事。另：R1 那个 commit `ba41c26` 上，Codex 先出 1 条 P2，我再发一次 `@codex review` 它在**同一个 commit** 上回了 clean —— 同 commit 两种结论，说明「clean」有随机性，别把单次 clean 当保证 | 1 | ✅ 无需处置 |
 | 2026-08-05 | [#286](https://github.com/swang430/Meta-3D/pull/286) | <!--286-coverage-->✅ 全覆盖（代码） | <!--286-gap-->—（R2 审的 `6e58a1b` 就是 R1 修复本身，代码全过；rebase 到 #285/#287 之后 `api-service/` `gui/` `api/` **零字节差异**，已用 `git diff --stat` 核过）。没覆盖的只有回填本行 + 记 backlog 的 docs commit | P1-36 本片。**轮次上限 2 已到，R2 那条 P2 未修、转 backlog** —— 前提我实证过是**真的**（最小 app 探针：同一请求里 endpoint 那行带 `EXEC1234`、`app.audit` 汇总行是 `-`），不修的判据是 ⑦「不改它，P1-36 那个可观察故障还在吗」答**不在了**：R1 修完后执行的开始/过程/结束/取消都在链上，缺的是同一事实的第二份记录且**一跳可达**；三种修法全属「加机制」（最低优先级修法）。两轮 **1 P2 → 1 P2**，都不是上轮修复引入的，且**是同一母题的两个站点**（"执行的痕迹漏在请求侧"）—— R1 补上了 case-runner 那两行，R2 指出 middleware 那行结构上补不了 | 1 | ⬜ 未处置 —— 下次动 `audit_middleware.py` 或再往 `execution_id` 链上加东西时一并评估 |
 ### 📉 更值得看的信号：第一轮 findings 数
@@ -2128,15 +2130,18 @@ MIMO_OTA TestCase。两者都**不是临时脚本**。现场应当是「点它�
 
 **为什么必须是序列不是脚本**（CLAUDE.md 已有规矩，这里只记它的落地缺口）：
 脚本不查源码 → 重复犯已经修过的错（2026-07-21 现场铁证：懒重连早已存在，脚本还在
-手动重连）；脚本是一次性的 → 跑完只剩终端那一屏。序列过 review、有测试，每次跑落进
-`DiagnosticRun`（参数 / 成败 / **仪器原始回复 `step.raw`** / 耗时 / 日志路径 / 谁跑的 /
-何时跑），**下次能对照** —— 现场的价值不在「这次通了」，在「下次还能拿出来比」。
+手动重连）；脚本是一次性的 → 跑完只剩终端那一屏。序列过 review、有测试，live response
+会返回完整 `steps`（含仪器原始回复 `step.raw`）；但当前 `DiagnosticRun` 审计行只持久化
+参数、成败、耗时、操作人与**最多约 2048 bytes、可能截断的 `output_excerpt`**，且诊断序列
+endpoint 没有传 `hal_trace_log_path`，所以不能承诺审计行永久保留完整 raw 或可追溯日志路径。
+**当前现场操作要求**：离开 live 结果前必须导出或复制完整响应；截断摘要只能用于快速回顾，
+**不能作为正式证据，也不能据此承诺下次可完整对照**。
 
 **问题不是规矩没写，是映射没人做。** CLAUDE.md 早写了「每记一条『这个得现场验』的
 backlog，**同时问它落在哪个序列里**；没有就出发前补一个」。P1-45 实跑 loader 确认
 当前 12 个 GUI 可见序列，并逐行核对 TestCase 正式执行路径。结论已落到上方 Blocked 表：
-13 条未完成/现场半/HOLD 行中，**2 条已有合规载体、6 条部分覆盖、5 条没有合规载体**。
-这不是说 8 条已经现场验证，只说明它们有可复跑的承载路径；mock 跑通也不能代替真机证据。
+13 条未完成/现场半/HOLD 行中，**2 条已有合规载体、7 条部分覆盖、4 条没有合规载体**。
+这不是说 9 条已经现场验证，只说明它们有可复跑的承载路径；mock 跑通也不能代替真机证据。
 
 **范围与收口（docs-only，本片没有写任何序列）**：
 1. ✅ 「🚧 Blocked on hardware」表逐行写明诊断序列、正式 TestCase、部分覆盖或无载体，
@@ -3204,6 +3209,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 | 空回复与 F64 明确定义的 `not ready` 混用 | → P1-47B | 属于仪器接受/生效语义；手册未定义的空串保持 `unverified` |
 | phase 只记 start/complete，不记实际生效参数 | → P1-47C | 需要落到正式 TestExecution/GUI/报告 |
 | 与闭环无直接关系的其它未标记发现 | 保留 Discovered | 继续待评估，不因本轮自动变成 backlog |
+
+- `[discovered 2026-08-06 during P1-45 external review, Codex #295 R1]` **诊断序列完整 output / trace pointer 持久化缺口（P2，待独立 triage）** —— `POST /api/v1/diagnostic-sequences/{key}/run` 的 live response 含完整 `steps/raw`，但 `DiagnosticContext.record_run()` 只把组合输出截成最多约 2048 bytes 的 `DiagnosticRun.output_excerpt`，该 endpoint 又没有传 `hal_trace_log_path`；离开 live 结果后，审计行可能既没有完整 raw，也没有可回取全量 trace 的指针。当前现场必须先导出/复制完整响应，截断摘要不能作为正式证据。proper fix 需独立评估完整 output 存储或可靠 trace pointer 的生命周期、访问与清理策略；**不并入 P1-46，也不因此扩当前执行队列**。
 
 - `[discovered 2026-08-05 during P1-36 内审 F7]` **「从执行历史一键看这次执行的日志」未做（P2）** —— P1-36 给了 `execution_id` 串链 + 日志表「执行」列（点它隔离），但**没有从执行历史跳过去的入口**：`SystemLogViewer` 不接任何 props、也不读 URL 参数。所以「跑完一个用例想看它做了什么」这条路现在是"自己去日志页、找到那次执行的任意一行、点一下"，而不是"从执行历史点一下"。**顺带**：过滤徽章显示的是裸 UUID 前 8 位，P1-36 条目 ⚠② 原本要求"显示用例名 + 执行时间"（**过滤判据仍须用 id**，别拿名字当键 —— 同名用例会合并成假链）。两件事一起做：给 `SystemLogViewer` 加受控 props（或走 URL 查询参数），执行历史每行加跳转按钮。
 
