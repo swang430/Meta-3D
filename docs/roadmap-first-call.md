@@ -41,7 +41,7 @@ blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 �
 > 后续再有日志相关发现，默认按此线插队，不必每次重新论证优先级。
 
 - **P1-45** 现场验证项 → 载体序列映射（表加一列 + 修 stale；docs-only）
-- **P1-46** 补上没有载体的那几项（2 个只读扩展 + 1 个 C 类剧本序列，**动手前必查手册**）
+- **P1-46** 补上没有载体的那几项（经 Codex 校正后**只剩 C 类剧本序列**：ON 态同值写掉不掉 DUT + inherit 层数盲区，**动手前必查手册**）
 - **P1-27** P1-8 校准门拒 mock cert（provenance + real 模式 strict 拒）
 - **P1-28** 「当前暗室」双真值源收口（active chamber vs active lab 绑定暗室）
 - **P2-22** F64 disconnect 冷缓存判 GOS 换真值源（涉 SCPI 查 NotebookLM）
@@ -244,7 +244,7 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | ~~P0-4~~ | ~~SignalAnalyzer in HAL for reference TRP~~ | ✅ 2026-07-03 现场完成 | — 已完成 |
 | P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | on-site real DUT (已至 -96 dBm RSRP, 差正式注册) | ⚠️ **半覆盖** `baseStation_attach_check`（只到 attach）。bearer/PDSCH **不该做成序列** —— 那是首测本身的目标，走正常 TestCase 流程 |
 | P0-8 **现场半** | F64 driver 现场修复落地 —— real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真 | on-site real F64 (本地半已 Done, 见 `### P0-8`；跟 P0-5 attach 同一段窗口) | ✅ `propsim_f64_p08_gate`（P1-24 已写，597 行，mock 跑通） |
-| P1-33 **现场半** | 验证按手册重写的 MAC 配置命令在真机上被接受（本地半可先做，见 `### P1-33`） | on-site real UXM。⚠️ **不再 gate 在 P1-31 上**（Codex #276 P2 抓出错误依赖）：P1-31 只跑那 9 项 KPI 对账、且限定「手册有依据 + 驱动已在用」的命令，**产不出 MAC 配置命令的形式**；而 2026-08-03 查手册发现**这 8 组命令 `BSE:` 形式手册里全都有** —— 卡点不是「不知道命令」，是「没在真机上验过」 | ❌ **无载体** → 属 A 类「通不通」，扩 `uxm_scpi_compatibility` 即可，见 `### P1-46` |
+| P1-33 **现场半** | 验证按手册重写的 MAC 配置命令在真机上被接受（本地半可先做，见 `### P1-33`） | on-site real UXM。⚠️ **不再 gate 在 P1-31 上**（Codex #276 P2 抓出错误依赖）：P1-31 只跑那 9 项 KPI 对账、且限定「手册有依据 + 驱动已在用」的命令，**产不出 MAC 配置命令的形式**；而 2026-08-03 查手册发现**这 8 组命令 `BSE:` 形式手册里全都有** —— 卡点不是「不知道命令」，是「没在真机上验过」 | ✅ `uxm_scpi_compatibility` —— **已覆盖**（Codex #293 校正）：`_all_commands()` **动态枚举** profile 上所有非 `None` 的字符串命令，P1-33 填进 `UxmLteNrIratProfile` 的 `HARQ_MAX_TRANS` / `HARQ_PROCESSES` 因此已被探；且这两条连同 `TDD_PATTERN` / `TDD_PERIOD` **本就在 `_CRITICAL_NAMES` 里**，不支持会进 `critical_unsupported` |
 
 ⚠️ 表里 **P1-33 现场半不是 P0**，不抢 P0-5 / P0-8 的窗口，排在 P0 之后。
 **不依赖 P1-31** —— 命令形式手册里有，本地半已进 LOCAL-OPEN 队列；
@@ -2115,10 +2115,21 @@ backlog，**同时问它落在哪个序列里**；没有就出发前补一个」
 
 **缺口清单**（2026-08-06 普查，别重查）：
 
+⚠️ **原清单里的 A / B 两条是我搞错的，已删**（Codex #293 校正，前提逐条核过）：
+
+| 我原以为缺的 | 实况 |
+|---|---|
+| ~~P1-33 的 MAC 配置命令~~ | ✅ **已覆盖** —— `uxm_scpi_compatibility._all_commands()` **动态枚举** profile 上所有非 `None` 的字符串命令，P1-33 填进 `UxmLteNrIratProfile` 的 `HARQ_MAX_TRANS` / `HARQ_PROCESSES` 因此已被探；且这两条连同 `TDD_PATTERN` / `TDD_PERIOD` **本就在 `_CRITICAL_NAMES` 里** |
+| ~~UE L3 报告 RSRP/RSRQ/SINR 口径~~ | ✅ **已覆盖** —— `uxm_kpi_readback` 的步骤 ⑦ `UE L3 测量报告 (RSRP/RSRQ/SINR 口径)` 就是干这个的，`raw=rep_raw` 存原样回复，代码注释写着「口径未知，本序列就是来定它的」 |
+
+**我错在哪**：只读了序列文件头的 docstring，没看它**实际枚举/发出**的步骤 ——
+`_all_commands()` 是**动态**枚举，docstring 里当然不会逐条列出 P1-33 后来填进去的命令。
+这正是「验证打在真实生效端，不打在看起来的那一端」。
+
+**真正的缺口（全在 C 类）**：
+
 | 缺的 | 类 | 修法 |
 |---|---|---|
-| P1-33：按手册重写的 MAC 配置命令真机接不接受 | A | **扩** `uxm_scpi_compatibility`，加那 11 条 —— 只读，风险低，不新建序列 |
-| UE L3 测量报告 RSRP/RSRQ/SINR 的口径 | B | **扩** `uxm_kpi_readback`，加一组 L3 步骤读 `step.raw`（现有的读的是 KPI，不是 L3 报告口径） |
 | **UXM 在小区 ON 态同值写 band/duplex 会不会掉 DUT** | **C** | **新写** `uxm_idempotent_write_probe` |
 | 开关1 inherit 只核对频率、层数是盲区 | C | 并入上条同一序列 |
 | P1-6 现场半：真 idle-close 复现 | C | 待定（可能并入 F64 侧剧本） |
@@ -2137,7 +2148,7 @@ backlog，**同时问它落在哪个序列里**；没有就出发前补一个」
 ② 带动作的剧本**必须先查状态再决定发不发**，并在每步后读一次错误队列；
 ③ 出发前用 mock 跑一遍 —— **只证明序列本身不崩，不证明问对了问题**，别当验收。
 
-**顺序建议**：两个只读扩展先做（A/B，风险低、当天能完），C 类剧本单独设计过 review。
+**顺序建议**：本片现在**只剩 C 类**（A/B 两条经核实已有载体）——所以整片就是「设计 + 写一个剧本序列」，必须过 review 再写。
 
 **依赖**: P1-45（先有那张表，才知道缺什么）。**现场半**: 本片产出的序列本身要现场跑，
 但**写序列不需要现场**。
