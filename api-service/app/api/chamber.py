@@ -31,18 +31,29 @@ from app.schemas.chamber import (
     RequiredCalibrationsResponse,
     LinkBudgetResponse,
 )
+from app.services.chamber_resolution import (
+    bind_current_chamber,
+    calibration_chamber_reference_counts,
+    resolve_current_chamber,
+)
+from app.services.lab_resolution import LabResolutionError, resolve_lab_profile
 
 router = APIRouter(prefix="/chambers", tags=["Chamber Configuration"])
 
 
-def _to_response(chamber: ChamberConfiguration) -> ChamberConfigurationResponse:
+def _to_response(
+    chamber: ChamberConfiguration,
+    current_chamber_id: Optional[UUID] = None,
+) -> ChamberConfigurationResponse:
     """转换为响应模型"""
     data = {
         "id": chamber.id,
         "name": chamber.name,
         "description": chamber.description,
         "chamber_type": chamber.chamber_type,
-        "is_active": chamber.is_active,
+        # Wire compatibility only: operational state is derived from the
+        # resolved LabProfile binding, never the retained legacy DB flag.
+        "is_active": chamber.id == current_chamber_id,
         "is_system_preset": chamber.is_system_preset,
         "chamber_radius_m": chamber.chamber_radius_m,
         "quiet_zone_diameter_m": chamber.quiet_zone_diameter_m,
@@ -79,6 +90,33 @@ def _to_response(chamber: ChamberConfiguration) -> ChamberConfigurationResponse:
         "max_ul_radius_m": chamber.calculate_max_radius_for_ul(),
     }
     return ChamberConfigurationResponse(**data)
+
+
+def _current_chamber_id(
+    db: Session,
+    lab_profile_id: Optional[UUID],
+    *,
+    required: bool,
+) -> Optional[UUID]:
+    """Resolve the current chamber and translate configuration errors to 422.
+
+    Full-list/detail responses remain usable when no lab was selected and the
+    active-lab fallback is ambiguous.  Endpoints whose meaning is explicitly
+    "current" pass ``required=True`` and fail loudly instead.
+    """
+    if lab_profile_id is not None:
+        try:
+            # Invalid/inactive identities are caller errors, unlike a valid
+            # lab whose missing chamber binding can be repaired from a list.
+            resolve_lab_profile(db, lab_profile_id)
+        except (LabResolutionError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        return resolve_current_chamber(db, lab_profile_id).id
+    except (LabResolutionError, ValueError) as exc:
+        if required:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return None
 
 
 @router.get("/presets", response_model=ChamberPresetsResponse)
@@ -157,41 +195,47 @@ def list_chambers(
     db: Session = Depends(get_db),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
-    active_only: bool = Query(False, description="只返回激活的配置")
+    active_only: bool = Query(False, description="只返回当前 LabProfile 绑定的配置"),
+    lab_profile_id: Optional[UUID] = Query(None, description="LabProfile；省略时要求唯一 active lab"),
 ):
     """
     获取暗室配置列表
     """
+    current_id = _current_chamber_id(
+        db, lab_profile_id, required=active_only,
+    )
     query = db.query(ChamberConfiguration)
     if active_only:
-        query = query.filter(ChamberConfiguration.is_active == True)
+        query = query.filter(ChamberConfiguration.id == current_id)
 
     total = query.count()
     chambers = query.offset(skip).limit(limit).all()
 
     return ChamberListResponse(
-        items=[_to_response(c) for c in chambers],
+        items=[_to_response(c, current_id) for c in chambers],
         total=total
     )
 
 
 @router.get("/active", response_model=ChamberConfigurationResponse)
-def get_active_chamber(db: Session = Depends(get_db)):
+def get_active_chamber(
+    db: Session = Depends(get_db),
+    lab_profile_id: Optional[UUID] = Query(None, description="LabProfile；省略时要求唯一 active lab"),
+):
     """
     获取当前激活的暗室配置
     """
-    chamber = db.query(ChamberConfiguration).filter(
-        ChamberConfiguration.is_active == True
-    ).first()
-
-    if not chamber:
-        raise HTTPException(status_code=404, detail="No active chamber configuration found")
-
-    return _to_response(chamber)
+    current_id = _current_chamber_id(db, lab_profile_id, required=True)
+    chamber = db.get(ChamberConfiguration, current_id)
+    return _to_response(chamber, current_id)
 
 
 @router.get("/{chamber_id}", response_model=ChamberConfigurationResponse)
-def get_chamber(chamber_id: UUID, db: Session = Depends(get_db)):
+def get_chamber(
+    chamber_id: UUID,
+    db: Session = Depends(get_db),
+    lab_profile_id: Optional[UUID] = Query(None),
+):
     """
     获取指定暗室配置
     """
@@ -202,14 +246,18 @@ def get_chamber(chamber_id: UUID, db: Session = Depends(get_db)):
     if not chamber:
         raise HTTPException(status_code=404, detail="Chamber configuration not found")
 
-    return _to_response(chamber)
+    return _to_response(
+        chamber,
+        _current_chamber_id(db, lab_profile_id, required=False),
+    )
 
 
 @router.put("/{chamber_id}", response_model=ChamberConfigurationResponse)
 def update_chamber(
     chamber_id: UUID,
     update_data: ChamberConfigurationUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    lab_profile_id: Optional[UUID] = Query(None),
 ):
     """
     更新暗室配置
@@ -236,11 +284,18 @@ def update_chamber(
 
     db.commit()
     db.refresh(chamber)
-    return _to_response(chamber)
+    return _to_response(
+        chamber,
+        _current_chamber_id(db, lab_profile_id, required=False),
+    )
 
 
 @router.post("/{chamber_id}/duplicate", response_model=ChamberConfigurationResponse, status_code=201)
-def duplicate_chamber(chamber_id: UUID, db: Session = Depends(get_db)):
+def duplicate_chamber(
+    chamber_id: UUID,
+    db: Session = Depends(get_db),
+    lab_profile_id: Optional[UUID] = Query(None),
+):
     """复制一个现有暗室配置，得到一份用户可编辑的副本.
 
     System presets (``is_system_preset=True``) cannot be edited in place
@@ -276,29 +331,30 @@ def duplicate_chamber(chamber_id: UUID, db: Session = Depends(get_db)):
     db.add(clone)
     db.commit()
     db.refresh(clone)
-    return _to_response(clone)
+    return _to_response(
+        clone,
+        _current_chamber_id(db, lab_profile_id, required=False),
+    )
 
 
 @router.post("/{chamber_id}/activate", response_model=ChamberConfigurationResponse)
-def activate_chamber(chamber_id: UUID, db: Session = Depends(get_db)):
+def activate_chamber(
+    chamber_id: UUID,
+    db: Session = Depends(get_db),
+    lab_profile_id: Optional[UUID] = Query(None, description="要重新绑定的 LabProfile"),
+):
     """
-    激活指定暗室配置 (同时禁用其他配置)
+    将指定暗室绑定为所选 LabProfile 的当前暗室。
     """
-    # 先禁用所有配置
-    db.query(ChamberConfiguration).update({"is_active": False})
-
-    # 激活指定配置
-    chamber = db.query(ChamberConfiguration).filter(
-        ChamberConfiguration.id == chamber_id
-    ).first()
-
-    if not chamber:
-        raise HTTPException(status_code=404, detail="Chamber configuration not found")
-
-    chamber.is_active = True
+    try:
+        _lab, chamber = bind_current_chamber(db, chamber_id, lab_profile_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (LabResolutionError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     db.commit()
     db.refresh(chamber)
-    return _to_response(chamber)
+    return _to_response(chamber, chamber.id)
 
 
 @router.delete("/{chamber_id}")
@@ -307,7 +363,6 @@ def delete_chamber(chamber_id: UUID, db: Session = Depends(get_db)):
 
     守门:
     - 系统预设 → 409 (不可删)
-    - 当前激活暗室 → 400 (先激活其它暗室)
     - 被 lab profile 引用 → 409 (先改指向/删除该 lab, 避免 orphan 掉 lab 的暗室关联)
 
     依赖清理 (避免 orphan / FK 报错):
@@ -327,12 +382,6 @@ def delete_chamber(chamber_id: UUID, db: Session = Depends(get_db)):
             detail="系统预设暗室不可删除（如不想看到，请在界面隐藏，而非删除该行）。",
         )
 
-    if chamber.is_active:
-        raise HTTPException(
-            status_code=400,
-            detail="不能删除当前激活的暗室，请先激活其它暗室再删除。",
-        )
-
     # 被 lab profile 引用 → 拦截 (否则 SET NULL 会断掉 lab 的暗室关联)
     labs = db.query(LabProfile).filter(LabProfile.chamber_config_id == chamber_id).all()
     if labs:
@@ -342,6 +391,19 @@ def delete_chamber(chamber_id: UUID, db: Session = Depends(get_db)):
             detail=(
                 f"暗室被 {len(labs)} 个 Lab Profile 引用（{names}），"
                 "请先把它们改指向其它暗室或删除这些 Lab 后再删暗室。"
+            ),
+        )
+
+    calibration_refs = calibration_chamber_reference_counts(db, chamber_id)
+    if calibration_refs:
+        summary = "、".join(
+            f"{table}={count}" for table, count in sorted(calibration_refs.items())
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"暗室已被校准历史引用（{summary}），"
+                "为保留测量追溯性不允许删除。"
             ),
         )
 

@@ -60,7 +60,14 @@ class ChamberConfiguration(Base):
         default=ChamberType.CUSTOM.value,
         comment="暗室类型: type_a, type_b, type_c, type_d, custom"
     )
-    is_active = Column(Boolean, default=True, comment="是否为当前激活配置")
+    is_active = Column(
+        Boolean,
+        default=False,
+        comment=(
+            "DEPRECATED compatibility column; operational current chamber is "
+            "LabProfile.chamber_config_id"
+        ),
+    )
 
     # === 物理参数 ===
     chamber_radius_m = Column(Float, nullable=False, comment="暗室半径 (m)")
@@ -359,4 +366,3 @@ def create_chamber_from_preset(
         chamber.pa_p1db_dbm = pa_p1db_dbm
     
     return chamber
-

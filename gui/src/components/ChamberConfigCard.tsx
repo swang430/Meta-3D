@@ -26,12 +26,21 @@ import {
     fetchChamberCalibration,
 } from '../api/service'
 import { CreateChamberForm } from './CreateChamberForm'
+import type { LabProfileSummary } from '../api/labProfileService'
 
 type ChamberConfigCardProps = {
     onNavigate?: (section: string) => void
+    labProfiles: LabProfileSummary[]
+    selectedLabProfileId?: string
+    onLabProfileChange: (labProfileId: string | null) => void
 }
 
-export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
+export function ChamberConfigCard({
+    onNavigate,
+    labProfiles,
+    selectedLabProfileId,
+    onLabProfileChange,
+}: ChamberConfigCardProps) {
     const queryClient = useQueryClient()
     const [createModalOpen, setCreateModalOpen] = useState(false)
     const [selectedPreset, _setSelectedPreset] = useState<string>('type_a')
@@ -45,12 +54,23 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
 
     console.log('[ChamberConfigCard] Component mounted')
 
-    // 获取当前激活的暗室配置
-    const { data: activeChamber, isLoading: isActiveLoading } = useQuery({
-        queryKey: ['chamber', 'active'],
-        queryFn: fetchActiveChamber,
+    // 获取所选 LabProfile 绑定的当前暗室配置
+    const {
+        data: activeChamberData,
+        isLoading: isActiveLoading,
+        isError: isActiveError,
+        error: activeChamberError,
+    } = useQuery({
+        queryKey: ['chamber', 'active', selectedLabProfileId],
+        queryFn: () => fetchActiveChamber(selectedLabProfileId),
+        enabled: !!selectedLabProfileId,
         retry: 1,
     })
+    const activeChamber = (
+        selectedLabProfileId && !isActiveLoading && !isActiveError
+            ? activeChamberData
+            : undefined
+    )
 
     // 获取所有暗室配置 (分页聚合全部, 否则 124 个暗室只取前 20, CAICT-FS 等靠后暗室
     // 在下拉框里"消失")。
@@ -59,8 +79,8 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
     // 崩 (TypeError: chambers.map is not a function)。换 key 走全新缓存即拿数组; 现有
     // invalidateQueries(['chambers']) 按前缀仍能命中 ['chambers','all']。
     const { data: chambersData } = useQuery({
-        queryKey: ['chambers', 'all'],
-        queryFn: fetchAllChamberConfigurations,
+        queryKey: ['chambers', 'all', selectedLabProfileId],
+        queryFn: () => fetchAllChamberConfigurations(selectedLabProfileId),
     })
 
     // 获取预设模板
@@ -76,31 +96,40 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
         enabled: !!activeChamber?.id,
     })
 
-    // 激活暗室配置
+    // 把暗室重新绑定为所选 LabProfile 的当前暗室
     const activateMutation = useMutation({
-        mutationFn: activateChamber,
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['chamber', 'active'] })
+        mutationFn: ({ chamberId, labProfileId }: { chamberId: string; labProfileId: string }) =>
+            activateChamber(chamberId, labProfileId),
+        onSuccess: (newChamber, { labProfileId }) => {
+            // Mutation response is the just-committed truth. Replace C1
+            // immediately before background refetch so shared consumers never
+            // operate on a known-stale chamber during the C1 → C2 window.
+            queryClient.setQueryData(['chamber', 'active', labProfileId], newChamber)
+            queryClient.invalidateQueries({ queryKey: ['chamber', 'active', labProfileId] })
             queryClient.invalidateQueries({ queryKey: ['chambers'] })
         },
     })
 
     // 从模板创建
     const createFromTemplateMutation = useMutation({
-        mutationFn: createChamberFromTemplate,
-        onSuccess: (newChamber) => {
+        mutationFn: ({ payload }: {
+            payload: Parameters<typeof createChamberFromTemplate>[0]
+            labProfileId: string
+        }) => createChamberFromTemplate(payload),
+        onSuccess: (newChamber, { labProfileId }) => {
             queryClient.invalidateQueries({ queryKey: ['chambers'] })
             queryClient.invalidateQueries({ queryKey: ['chamber', 'active'] })
             setCreateModalOpen(false)
             // 自动激活新创建的配置
-            activateMutation.mutate(newChamber.id)
+            activateMutation.mutate({ chamberId: newChamber.id, labProfileId })
         },
     })
 
     // 复制暗室配置 (系统预设要改先复制)
     const duplicateMutation = useMutation({
-        mutationFn: duplicateChamber,
-        onSuccess: (cloned) => {
+        mutationFn: ({ chamberId }: { chamberId: string; labProfileId: string }) =>
+            duplicateChamber(chamberId),
+        onSuccess: (cloned, { labProfileId }) => {
             queryClient.invalidateQueries({ queryKey: ['chambers'] })
             notifications.show({
                 color: 'green',
@@ -108,7 +137,7 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
                 message: `${cloned.name} — 现在可以编辑这份副本了`,
             })
             // 自动激活副本，方便用户直接进入编辑
-            activateMutation.mutate(cloned.id)
+            activateMutation.mutate({ chamberId: cloned.id, labProfileId })
         },
         onError: (err: any) => {
             notifications.show({
@@ -170,8 +199,8 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
     console.log('[ChamberConfigCard] presetSelectData:', presetSelectData)
 
     const handleChamberChange = (chamberId: string | null) => {
-        if (chamberId && chamberId !== activeChamber?.id) {
-            activateMutation.mutate(chamberId)
+        if (chamberId && selectedLabProfileId && chamberId !== activeChamber?.id) {
+            activateMutation.mutate({ chamberId, labProfileId: selectedLabProfileId })
         }
     }
 
@@ -194,7 +223,9 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
             payload.pa_p1db_dbm = paP1dB
         }
 
-        createFromTemplateMutation.mutate(payload)
+        if (selectedLabProfileId) {
+            createFromTemplateMutation.mutate({ payload, labProfileId: selectedLabProfileId })
+        }
     }
 
     // 重置表单状态
@@ -241,8 +272,16 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
                                 <Button
                                     variant={activeChamber.is_system_preset ? 'filled' : 'subtle'}
                                     color={activeChamber.is_system_preset ? 'brand' : undefined}
-                                    onClick={() => duplicateMutation.mutate(activeChamber.id)}
+                                    onClick={() => {
+                                        if (selectedLabProfileId) {
+                                            duplicateMutation.mutate({
+                                                chamberId: activeChamber.id,
+                                                labProfileId: selectedLabProfileId,
+                                            })
+                                        }
+                                    }}
                                     loading={duplicateMutation.isPending}
+                                    disabled={!selectedLabProfileId}
                                     title={
                                         activeChamber.is_system_preset
                                             ? '系统预设不能直接修改 — 复制一份再改'
@@ -255,6 +294,7 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
                             <Button
                                 variant="subtle"
                                 onClick={() => setCreateModalOpen(true)}
+                                disabled={!selectedLabProfileId}
                             >
                                 新建配置
                             </Button>
@@ -275,6 +315,30 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
                         </Group>
                     </Group>
 
+                    <Select
+                        label="LabProfile"
+                        description="当前暗室属于所选 LabProfile；多个活动实验室时必须明确选择"
+                        placeholder="选择 LabProfile"
+                        data={labProfiles.map((lab) => ({ value: lab.id, label: lab.name }))}
+                        value={selectedLabProfileId ?? null}
+                        onChange={onLabProfileChange}
+                        disabled={labProfiles.length <= 1}
+                    />
+
+                    {!selectedLabProfileId && (
+                        <Alert color="yellow" title="请选择 LabProfile">
+                            当前有多个活动 LabProfile，未选择前不能读取或切换“当前暗室”。
+                        </Alert>
+                    )}
+
+                    {selectedLabProfileId && isActiveError && (
+                        <Alert color="red" title="当前暗室不可用">
+                            {activeChamberError instanceof Error
+                                ? activeChamberError.message
+                                : '旧暗室缓存已停用，请在下方重新绑定暗室。'}
+                        </Alert>
+                    )}
+
                     {/* 当前配置选择器 */}
                     <Select
                         label="当前激活配置"
@@ -283,7 +347,7 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
                         data={chamberSelectData}
                         value={activeChamber?.id ?? ''}
                         onChange={handleChamberChange}
-                        disabled={activateMutation.isPending}
+                        disabled={activateMutation.isPending || !selectedLabProfileId}
                         searchable
                         nothingFoundMessage="无匹配暗室"
                     />
@@ -454,7 +518,12 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
                 <CreateChamberForm
                     presets={presets}
                     onSubmit={(payload) => {
-                        createFromTemplateMutation.mutate(payload)
+                        if (selectedLabProfileId) {
+                            createFromTemplateMutation.mutate({
+                                payload,
+                                labProfileId: selectedLabProfileId,
+                            })
+                        }
                         setCreateModalOpen(false)
                     }}
                     onCancel={() => setCreateModalOpen(false)}
@@ -467,7 +536,7 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
                 <Stack gap="sm">
                     <Text size="xs" c="dimmed">
                         共 {chambers.length} 个暗室。删除会<b>连同该暗室的探头与 RF 拓扑一并删除</b>；
-                        系统预设、当前激活、被 Lab Profile 引用的暗室不可删（后端会拦截并提示）。
+                        系统预设、被 LabProfile 引用的暗室不可删（后端会拦截并提示）。
                     </Text>
                     <Table.ScrollContainer minWidth={480} mah={420}>
                         <Table highlightOnHover withTableBorder stickyHeader>
@@ -499,7 +568,7 @@ export function ChamberConfigCard({ onNavigate }: ChamberConfigCardProps) {
                                                     variant="subtle"
                                                     color="red"
                                                     disabled={blocked}
-                                                    title={blocked ? '系统预设 / 当前激活暗室不可删除' : '删除此暗室'}
+                                                    title={blocked ? '系统预设 / LabProfile 当前暗室不可删除' : '删除此暗室'}
                                                     onClick={() => setConfirmDelete({ id: c.id, name: c.name })}
                                                 >
                                                     删除

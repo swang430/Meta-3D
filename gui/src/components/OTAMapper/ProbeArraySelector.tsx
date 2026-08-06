@@ -7,7 +7,7 @@
  * 2. 从当前活跃暗室配置加载（DB 数据）★ Phase 2 新增
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Stack, Title, Select, NumberInput, Group, Text, Badge, Button, Alert } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useQuery } from '@tanstack/react-query'
@@ -18,6 +18,7 @@ import {
   generateThreeRingProbeArray
 } from '../../services/channelEngine'
 import { fetchActiveChamber } from '../../api/service'
+import { fetchLabProfiles } from '../../api/labProfileService'
 import { dbProbesToProbeArrayConfig, validateProbeInChamber } from '../../utils/probeConverter'
 
 // 前端直接请求探头数据（按 chamber_id 过滤）
@@ -35,14 +36,56 @@ interface ProbeArraySelectorProps {
 
 export function ProbeArraySelector({ value, onChange }: ProbeArraySelectorProps) {
   const [dataSource, setDataSource] = useState<string | null>(null)
+  const [loadedChamberSource, setLoadedChamberSource] = useState<{
+    labProfileId: string
+    chamberId: string
+  } | null>(null)
   const [loadingFromDB, setLoadingFromDB] = useState(false)
+  const { data: activeLabProfiles = [] } = useQuery({
+    queryKey: ['lab-profiles'],
+    queryFn: () => fetchLabProfiles(true),
+  })
+  const [selectedLabProfileId, setSelectedLabProfileId] = useState<string>()
+  useEffect(() => {
+    if (activeLabProfiles.length === 1) {
+      setSelectedLabProfileId(activeLabProfiles[0].id)
+    } else if (
+      selectedLabProfileId
+      && !activeLabProfiles.some((lab) => lab.id === selectedLabProfileId)
+    ) {
+      setSelectedLabProfileId(undefined)
+    }
+  }, [activeLabProfiles, selectedLabProfileId])
 
-  // 获取当前激活暗室
-  const { data: activeChamber } = useQuery({
-    queryKey: ['chamber', 'active'],
-    queryFn: fetchActiveChamber,
+  // 获取所选 LabProfile 绑定的当前暗室
+  const {
+    data: activeChamberData,
+    isLoading: isActiveChamberLoading,
+    isError: isActiveChamberError,
+  } = useQuery({
+    queryKey: ['chamber', 'active', selectedLabProfileId],
+    queryFn: () => fetchActiveChamber(selectedLabProfileId),
+    enabled: !!selectedLabProfileId,
     retry: 1,
   })
+  const activeChamber = (
+    selectedLabProfileId && !isActiveChamberLoading && !isActiveChamberError
+      ? activeChamberData
+      : undefined
+  )
+
+  // LabProfile 或其绑定暗室变更后，旧暗室的探头数组不得继续伪装为当前值。
+  useEffect(() => {
+    if (!loadedChamberSource) return
+    if (
+      loadedChamberSource.labProfileId !== selectedLabProfileId
+      || loadedChamberSource.chamberId !== activeChamber?.id
+    ) {
+      onChange(null)
+      setDataSource(null)
+      setLoadedChamberSource(null)
+    }
+  }, [activeChamber?.id, loadedChamberSource, onChange, selectedLabProfileId])
 
   // 模板选项
   const templateOptions = PROBE_ARRAY_TEMPLATES.map(template => ({
@@ -64,7 +107,7 @@ export function ProbeArraySelector({ value, onChange }: ProbeArraySelectorProps)
     if (!activeChamber) {
       notifications.show({
         title: '无可用暗室',
-        message: '请先在"暗室配置"中创建并激活一个暗室配置',
+        message: '请先为所选 LabProfile 绑定一个暗室配置',
         color: 'orange',
       })
       return
@@ -105,6 +148,10 @@ export function ProbeArraySelector({ value, onChange }: ProbeArraySelectorProps)
 
       onChange(config)
       setDataSource('active-chamber')
+      setLoadedChamberSource({
+        labProfileId: selectedLabProfileId as string,
+        chamberId: activeChamber.id,
+      })
 
       notifications.show({
         title: '加载成功',
@@ -127,6 +174,8 @@ export function ProbeArraySelector({ value, onChange }: ProbeArraySelectorProps)
   const applyTemplate = (templateId: string | null) => {
     if (!templateId) {
       onChange(null)
+      setDataSource(null)
+      setLoadedChamberSource(null)
       return
     }
 
@@ -152,6 +201,7 @@ export function ProbeArraySelector({ value, onChange }: ProbeArraySelectorProps)
 
     onChange(config)
     setDataSource(templateId)
+    setLoadedChamberSource(null)
   }
 
   // 更新探头数量（仅适用于单环）
@@ -202,6 +252,32 @@ export function ProbeArraySelector({ value, onChange }: ProbeArraySelectorProps)
   return (
     <Stack gap="md">
       <Title order={4}>2. 探头阵列配置</Title>
+
+      <Select
+        label="LabProfile"
+        description="实际探头配置从所选实验室绑定的暗室加载"
+        placeholder="选择 LabProfile"
+        data={activeLabProfiles.map((lab) => ({ value: lab.id, label: lab.name }))}
+        value={selectedLabProfileId ?? null}
+        onChange={(id) => setSelectedLabProfileId(id ?? undefined)}
+        disabled={activeLabProfiles.length <= 1}
+      />
+
+      {!selectedLabProfileId && activeLabProfiles.length > 1 && (
+        <Alert color="yellow" title="请选择 LabProfile">
+          多个活动 LabProfile 不能共用一个隐式“当前暗室”。
+        </Alert>
+      )}
+
+      {selectedLabProfileId && isActiveChamberLoading && (
+        <Alert color="blue">正在重新解析该 LabProfile 的当前暗室…</Alert>
+      )}
+
+      {selectedLabProfileId && isActiveChamberError && (
+        <Alert color="red" title="当前暗室不可用">
+          旧暗室探头配置已清除，请先修复 LabProfile 绑定。
+        </Alert>
+      )}
 
       {/* 从当前暗室加载 — 推荐入口 */}
       {activeChamber && (

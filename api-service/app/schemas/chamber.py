@@ -6,7 +6,7 @@ Chamber Configuration Schemas
 from typing import Optional, List
 from ._datetime import UTCDateTime
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from enum import Enum
 
 
@@ -112,6 +112,7 @@ class ChamberConfigurationCreate(ChamberConfigurationBase):
 
 class ChamberConfigurationUpdate(BaseModel):
     """更新暗室配置 (所有字段可选)"""
+    model_config = ConfigDict(extra="forbid")
     name: Optional[str] = None
     description: Optional[str] = None
     chamber_type: Optional[str] = None
@@ -143,13 +144,17 @@ class ChamberConfigurationUpdate(BaseModel):
     typical_cable_loss_db: Optional[float] = None
     probe_gain_dbi: Optional[float] = None
     probe_distribution: Optional[ProbeDistributionEnum] = None  # P1-10
-    is_active: Optional[bool] = None
 
 
 class ChamberConfigurationResponse(ChamberConfigurationBase):
     """暗室配置响应"""
     id: UUID
-    is_active: bool
+    is_active: bool = Field(
+        description=(
+            "兼容字段：是否为所选 LabProfile.chamber_config_id 指向的暗室；"
+            "不是 chamber_configurations.is_active 持久列的值"
+        )
+    )
     is_system_preset: bool = Field(
         default=False,
         description="True for canonical out-of-the-box presets; PUT/DELETE rejected with 409. "

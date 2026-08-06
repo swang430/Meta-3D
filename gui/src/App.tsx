@@ -64,7 +64,7 @@ import { TopologyProfileEditor } from './features/TopologyProfileEditor'
 import { LabProfileWizard } from './components/LabProfile/LabProfileWizard'
 import { AssetProfilesPanel } from './components/AssetProfiles/AssetProfilesPanel'
 import { ChannelWorkbench } from './features/ChannelWorkbench/ChannelWorkbench'
-import { fetchLabProfiles } from './api/labProfileService'
+import { fetchLabProfiles, type LabProfileSummary } from './api/labProfileService'
 import { ExecutionMetricsCard } from './features/Monitoring'
 import ChartsDemoPage from './components/Charts/ChartsDemoPage'
 import { ChamberConfigCard } from './components/ChamberConfigCard'
@@ -2600,6 +2600,21 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
   })
 
   const probes = useMemo(() => data?.probes ?? [], [data])
+  const { data: activeLabProfiles = [] } = useQuery({
+    queryKey: ['lab-profiles'],
+    queryFn: () => fetchLabProfiles(true),
+  })
+  const [selectedLabProfileId, setSelectedLabProfileId] = useState<string>()
+  useEffect(() => {
+    if (activeLabProfiles.length === 1) {
+      setSelectedLabProfileId(activeLabProfiles[0].id)
+    } else if (
+      selectedLabProfileId
+      && !activeLabProfiles.some((lab: LabProfileSummary) => lab.id === selectedLabProfileId)
+    ) {
+      setSelectedLabProfileId(undefined)
+    }
+  }, [activeLabProfiles, selectedLabProfileId])
 
   // 暗室 id→name 映射: probe_number 按 chamber 局部编号 (1..N), 全局标识 = 暗室名 + #探头号。
   // 只精确拉取 probes 实际引用的 chamber (按 id), 不受暗室总数/分页 (默认 limit 20) 影响。
@@ -2623,18 +2638,28 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
     ),
     [chamberQueries],
   )
-  // 选中/激活的暗室 (复用 ChamberConfigCard 的 ['chamber','active'] 查询: 在该卡片选暗室
-  // 即激活, 这里读同一缓存 → 总览/布局/计数随之过滤)。
+  // 所选 LabProfile 绑定的当前暗室（与 ChamberConfigCard 共用精确到 lab id 的缓存键）。
   // Bug 修复 (2026-06-07): 此前总览表/3D 布局/系统信息计数都用全量 probes, 选暗室不起作用
-  // (列出所有暗室探头); 现按激活暗室过滤, 无激活暗室时回退全部。
-  const { data: activeChamber } = useQuery({
-    queryKey: ['chamber', 'active'],
-    queryFn: fetchActiveChamber,
+  // (列出所有暗室探头); 现按 lab 绑定暗室过滤，未选/解析失败时关闭数据与写入口。
+  const {
+    data: activeChamberData,
+    isLoading: isActiveChamberLoading,
+    isError: isActiveChamberError,
+    error: activeChamberError,
+  } = useQuery({
+    queryKey: ['chamber', 'active', selectedLabProfileId],
+    queryFn: () => fetchActiveChamber(selectedLabProfileId),
+    enabled: !!selectedLabProfileId,
     retry: 1,
   })
+  const activeChamber = (
+    selectedLabProfileId && !isActiveChamberLoading && !isActiveChamberError
+      ? activeChamberData
+      : undefined
+  )
   const activeChamberId = activeChamber?.id
   const displayedProbes = useMemo(
-    () => (activeChamberId ? probes.filter((p) => p.chamber_config_id === activeChamberId) : probes),
+    () => (activeChamberId ? probes.filter((p) => p.chamber_config_id === activeChamberId) : []),
     [probes, activeChamberId],
   )
 
@@ -2856,7 +2881,7 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
     const payload = {
       version: '1.0',
       generatedAt: new Date().toISOString(),
-      probes: probes.map((probe) => ({
+      probes: displayedProbes.map((probe) => ({
         probe_number: probe.probe_number,
         name: probe.name,
         ring: probe.ring,
@@ -2983,7 +3008,12 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
   return (
     <Stack gap="xl">
       {/* 暗室配置卡片 - CAL-00.1 新增 */}
-      <ChamberConfigCard onNavigate={(s) => onNavigate(s as SectionKey)} />
+      <ChamberConfigCard
+        onNavigate={(s) => onNavigate(s as SectionKey)}
+        labProfiles={activeLabProfiles}
+        selectedLabProfileId={selectedLabProfileId}
+        onLabProfileChange={(id) => setSelectedLabProfileId(id ?? undefined)}
+      />
 
       <Card withBorder radius="md" padding="xl">
         <Stack gap="md">
@@ -2997,7 +3027,7 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
               </Text>
             </Stack>
             <Group gap="sm">
-              <Button variant="subtle" onClick={handleExportLayout}>
+              <Button variant="subtle" onClick={handleExportLayout} disabled={!activeChamberId}>
                 导出当前布局
               </Button>
               <FileButton onChange={handleImportFile} accept="application/json">
@@ -3025,13 +3055,27 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
         </Stack>
       </Card>
 
+      {!selectedLabProfileId ? (
+        <Alert color="yellow" title="请先选择 LabProfile">
+          未解析出当前暗室时不展示跨暗室探头，也不允许修改。
+        </Alert>
+      ) : isActiveChamberLoading ? (
+        <Alert color="blue">正在解析该 LabProfile 绑定的当前暗室…</Alert>
+      ) : isActiveChamberError || !activeChamber ? (
+        <Alert color="red" title="当前暗室不可用">
+          {activeChamberError instanceof Error
+            ? activeChamberError.message
+            : '请先为该 LabProfile 绑定有效暗室。'}
+        </Alert>
+      ) : null}
+
       <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="xl">
         <Card withBorder radius="md" padding="xl" style={{ display: 'flex', flexDirection: 'column' }}>
           <Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
             <Group justify="space-between" align="center">
               <Title order={3}>探头阵列总览</Title>
               <Badge variant="light" color="brand">
-                {activeChamber ? `${activeChamber.name} · ${displayedProbes.length} 探头` : `全部暗室 · ${displayedProbes.length} 探头`}
+                {activeChamber ? `${activeChamber.name} · ${displayedProbes.length} 探头` : '未解析当前暗室'}
               </Badge>
             </Group>
             <Box style={{ flex: 1, overflow: 'auto', minHeight: 200 }}>
@@ -3248,7 +3292,7 @@ function ProbeManager({ onNavigate }: ProbeManagerProps) {
               <Title order={3}>系统信息</Title>
               <Stack gap="sm">
                 <Text size="sm" c="gray.7">
-                  <strong>当前暗室:</strong> {activeChamber ? activeChamber.name : '全部暗室 (未选激活)'}
+                  <strong>当前暗室:</strong> {activeChamber ? activeChamber.name : '未解析（已禁止跨暗室操作）'}
                 </Text>
                 <Text size="sm" c="gray.7">
                   <strong>探头总数:</strong> {displayedProbes.length} 个

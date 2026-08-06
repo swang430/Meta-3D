@@ -62,7 +62,7 @@
 | `freq_min/max_mhz` | 400 / 7125 | FR1 全段 |
 | `supports_trp / tis / mimo_ota` | True / True / True | 全功能（has_lna 满足 uplink-chain 门） |
 | `is_system_preset` | False | 特定 lab 配置，可编辑（非只读模板） |
-| `is_active` | **False** | 不抢占当前激活暗室；需显式激活/绑定（见 §5） |
+| `is_active` | **False（兼容列）** | 不参与当前暗室解析；当前暗室只由 `LabProfile.chamber_config_id` 决定（见 §5） |
 
 ---
 
@@ -86,7 +86,8 @@ CAICT-FS 已通过 `api-service/scripts/dev-fixtures/seed_caict_fs_chamber.py` �
 （chamber 行 + 62 探头行，幂等）。
 
 - **查看探头布局**：GUI「探头与暗室配置」选 CAICT-FS → ProbeLayoutView 3D/2D 渲染满天星。
-- **激活为当前暗室**（可选）：`PUT /api/v1/chambers/{id}`（或 GUI）设 `is_active=true`
+- **绑定为当前暗室**（可选）：`POST /api/v1/chambers/{id}/activate?lab_profile_id={lab_id}`
+  （或 GUI 先选 LabProfile 再切换）；该接口更新 `LabProfile.chamber_config_id`，不写兼容列
   （会把其它暗室置非激活）。
 - **绑定到 LabProfile**：`PATCH /api/v1/lab-profiles/{caict-lab-1-id}` 设
   `chamber_config_id=<CAICT-FS id>`，让 CAICT-Lab-1 用满天星暗室跑测试。
