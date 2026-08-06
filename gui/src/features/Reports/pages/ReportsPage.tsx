@@ -39,7 +39,16 @@ export function ReportsPage({
   // 内审 F1: 切页签 + 把值往下交, 然后**立刻交还** —— 本 state 只活一次事件。
   // ⚠ 先把值存进本地 state 再交还, 否则清空会连带把 SystemLogViewer 的
   //   initialExecutionFilter 抹成 null（那样过滤根本来不及应用）。
-  const [logExecutionFilter, setLogExecutionFilter] = useState<string | null>(null)
+  // ⚠ **惰性初值**（Codex #292 拆分后一轮）—— 上一版这里是 null、靠下面的 effect 再设。
+  //   Mantine 的 Tabs.Panel 默认 keepMounted, 所以 SystemLogViewer 在 ReportsPage
+  //   **首次渲染时就已挂载**, 拿到的 initialExecutionFilter 是这个中间态的 null ——
+  //   我在 SystemLogViewer 那侧加的惰性初值捕获的正是这个 null, 等于没修到根上。
+  //   实测: 一次跳转发出 3 个 /tail, 其中 2 个不带 execution_id。
+  //   ReportsPage 自己是**切到 results 时才挂载**的 (renderSection 只渲染当前 section),
+  //   那时 pendingLogExecutionId 已经有值, 所以在这里取初值是安全的。
+  const [logExecutionFilter, setLogExecutionFilter] = useState<string | null>(
+    pendingLogExecutionId ?? null,
+  )
   useEffect(() => {
     if (!pendingLogExecutionId) return
     setActiveTab('systemLogs')
