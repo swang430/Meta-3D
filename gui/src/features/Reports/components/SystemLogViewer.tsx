@@ -326,14 +326,23 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
   const keyedEntries = useMemo(() => {
     const seen = new Map<string, number>()
     return entries.map((e) => {
-      // ⚠ 用 JSON 编码, **不要**手拼分隔符 + `#N` 后缀（Codex #292 R1）——
-      //   `foo` 的第 2 次出现会得到 `…|foo#1`, 而一条内容**字面就是** `foo#1`
-      //   的消息第 1 次出现也得到 `…|foo#1`, 两个命名空间重叠又撞回去了。
-      //   JSON.stringify 对数组是单射的（分隔符与内容各自转义, 不可能互相伪装）。
-      const base = JSON.stringify([e.ts, e.logger, e.msg])
+      // ⚠ 身份取**条目的全部字段**, 不是三个显示字段（Codex #292 R2）——
+      //   早前用 (ts, logger, msg) + 窗口内出现序号 `#N`, 而 N 是**窗口相对**的:
+      //   自动刷新时若某个重复元组最旧那次滚出窗口, 剩下的全部重新从 0 编号,
+      //   展开的 key 就挪到**下一条**匹配项上, 而那条的 raw / 请求 / 执行 / 仪器
+      //   可能完全不同（三个显示字段相同 ≠ 同一行）。
+      //   用全字段之后, 仍然撞的只可能是**逐字段完全相同**的两行 —— 那时展开
+      //   哪一条都没有可观察差别, 不构成缺陷。
+      // ⚠ 用 JSON 编码, **不要**手拼分隔符（Codex #292 R1）——
+      //   `foo` + `#1` 会跟一条字面叫 `foo#1` 的消息撞。JSON 对数组是单射的。
+      const base = JSON.stringify([
+        e.ts, e.level, e.logger, e.hal_mode,
+        e.session_id, e.execution_id, e.instrument_id, e.msg, e.raw,
+      ])
       const n = seen.get(base) ?? 0
       seen.set(base, n + 1)
-      return { entry: e, key: JSON.stringify([n, e.ts, e.logger, e.msg]) }
+      // 序号只在**全字段都相同**时才用得上, 那时它区分的是真正无差别的两行。
+      return { entry: e, key: n === 0 ? base : JSON.stringify([n, base]) }
     })
   }, [entries])
 

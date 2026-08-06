@@ -1508,10 +1508,15 @@ def test_g12_log_sort_does_not_mutate_state_and_expand_is_keyed():
     #    于是把 rowKey 函数体换成 `String(entries.indexOf(e))` 照样绿, 而正当写法
     #    `expandedRows.has(rowKeys[i])` 反被假红)。改断 key 的**构成**:
     #    必须由条目自身的字段拼出, 且不得掺入下标类来源。
-    key_src = re.search(r"const base = ([^\n]+)", src)
-    assert key_src, f"{_SLV_SOURCE} 找不到条目 key 的构造 (const base = ...)"
+    # ⚠ 跨行捕获 —— 身份表达式是多行的 (Codex #292 R2 后从 3 字段扩到全字段),
+    #   早前的单行正则 `([^\n]+)` 只吃到 `JSON.stringify([` 就截断, 门假红。
+    key_src = re.search(r"const base = (.*?)\n\s*const n = ", src, re.S)
+    assert key_src, f"{_SLV_SOURCE} 找不到条目 key 的构造 (const base = ... 到 const n =)"
     expr = key_src.group(1)
-    for field in ("e.ts", "e.logger", "e.msg"):
+    # 身份必须覆盖**全部会影响展开内容的字段** —— 只用三个显示字段时,
+    # 逐条实证: 显示字段相同而 raw/请求/执行不同的两行会共用 key。
+    for field in ("e.ts", "e.level", "e.logger", "e.session_id",
+                  "e.execution_id", "e.instrument_id", "e.msg", "e.raw"):
         assert field in expr, (
             f"{_SLV_SOURCE} 的条目 key 不含 {field} —— key 必须由条目自身字段构成。"
             f"当前: {expr}"

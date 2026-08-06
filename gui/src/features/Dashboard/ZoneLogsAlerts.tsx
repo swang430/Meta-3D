@@ -176,9 +176,16 @@ function LogPanel() {
 
   useEffect(() => {
     if (autoScroll && viewportRef.current) {
-      viewportRef.current.scrollTo({ top: viewportRef.current.scrollHeight })
+      // Codex #292 R2: 滚动方向必须**跟着排序方向走**。
+      // 我在 sortDesc 的注释里已经写出了"两个开关会互相打架", 却只防了默认路径
+      // (默认不改成降序) —— 而按钮就是给人按的。用户切到「最新在最上」后,
+      // 每 3 秒刷新仍 scrollTo(scrollHeight) 把视口按到**最旧**那几行,
+      // 新选项在默认配置下反而把最新条目藏起来。
+      viewportRef.current.scrollTo({
+        top: sortDesc ? 0 : viewportRef.current.scrollHeight,
+      })
     }
-  }, [entries, autoScroll])
+  }, [entries, autoScroll, sortDesc])
 
   return (
     <Card withBorder radius="md" padding="md" h="100%">
