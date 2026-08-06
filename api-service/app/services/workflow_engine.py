@@ -541,49 +541,55 @@ class WorkflowExecutor:
         frequency_range = FrequencyRange.model_validate(raw_frequency_range)
 
         cal_type = step.calibration_type
-        if cal_type == "amplitude":
-            calibration = _asyncio.run(
-                AmplitudeCalibrationService().execute_amplitude_calibration(
-                    db=self.db,
-                    probe_ids=probe_ids,
-                    polarizations=polarizations,
-                    frequency_range=frequency_range,
-                    calibrated_by=params.get("calibrated_by", "workflow"),
-                    reference_antenna_id=params.get("reference_antenna_id"),
-                    power_meter_id=params.get("power_meter_id"),
-                    use_mock=params.get("use_mock", True),
-                    chamber_id=chamber.id,
+        try:
+            if cal_type == "amplitude":
+                calibration = _asyncio.run(
+                    AmplitudeCalibrationService().execute_amplitude_calibration(
+                        db=self.db,
+                        probe_ids=probe_ids,
+                        polarizations=polarizations,
+                        frequency_range=frequency_range,
+                        calibrated_by=params.get("calibrated_by", "workflow"),
+                        reference_antenna_id=params.get("reference_antenna_id"),
+                        power_meter_id=params.get("power_meter_id"),
+                        use_mock=params.get("use_mock", True),
+                        chamber_id=chamber.id,
+                    )
                 )
-            )
-        elif cal_type == "phase":
-            reference_probe_id = params.get("reference_probe_id", 0)
-            if (
-                isinstance(reference_probe_id, bool)
-                or not isinstance(reference_probe_id, int)
-                or not 0 <= reference_probe_id < chamber.num_probes
-            ):
-                raise ValueError(
-                    f"reference_probe_id {reference_probe_id!r} is outside chamber "
-                    f"range 0..{chamber.num_probes - 1}"
+            elif cal_type == "phase":
+                reference_probe_id = params.get("reference_probe_id", 0)
+                if (
+                    isinstance(reference_probe_id, bool)
+                    or not isinstance(reference_probe_id, int)
+                    or not 0 <= reference_probe_id < chamber.num_probes
+                ):
+                    raise ValueError(
+                        f"reference_probe_id {reference_probe_id!r} is outside chamber "
+                        f"range 0..{chamber.num_probes - 1}"
+                    )
+                calibration = _asyncio.run(
+                    PhaseCalibrationService().execute_phase_calibration(
+                        db=self.db,
+                        probe_ids=probe_ids,
+                        reference_probe_id=reference_probe_id,
+                        polarizations=polarizations,
+                        frequency_range=frequency_range,
+                        calibrated_by=params.get("calibrated_by", "workflow"),
+                        vna_id=params.get("vna_id"),
+                        use_mock=params.get("use_mock", True),
+                        chamber_id=chamber.id,
+                    )
                 )
-            calibration = _asyncio.run(
-                PhaseCalibrationService().execute_phase_calibration(
-                    db=self.db,
-                    probe_ids=probe_ids,
-                    reference_probe_id=reference_probe_id,
-                    polarizations=polarizations,
-                    frequency_range=frequency_range,
-                    calibrated_by=params.get("calibrated_by", "workflow"),
-                    vna_id=params.get("vna_id"),
-                    use_mock=params.get("use_mock", True),
-                    chamber_id=chamber.id,
-                )
-            )
-        else:
-            raise ValueError(f"Unknown probe calibration type: {cal_type}")
+            else:
+                raise ValueError(f"Unknown probe calibration type: {cal_type}")
 
-        if not calibration.success:
-            raise RuntimeError(calibration.message)
+            if not calibration.success:
+                raise RuntimeError(calibration.message)
+        except Exception:
+            # Calibration services flush rows incrementally.  Never carry a
+            # failed attempt's pending writes into the retry or session close.
+            self.db.rollback()
+            raise
         calibration_ids = calibration.data.get("calibration_ids", [])
         result.calibration_id = calibration_ids[0] if calibration_ids else None
         result.validation_pass = calibration.success

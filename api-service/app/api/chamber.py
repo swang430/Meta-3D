@@ -36,7 +36,7 @@ from app.services.chamber_resolution import (
     calibration_chamber_reference_counts,
     resolve_current_chamber,
 )
-from app.services.lab_resolution import LabResolutionError
+from app.services.lab_resolution import LabResolutionError, resolve_lab_profile
 
 router = APIRouter(prefix="/chambers", tags=["Chamber Configuration"])
 
@@ -104,10 +104,17 @@ def _current_chamber_id(
     active-lab fallback is ambiguous.  Endpoints whose meaning is explicitly
     "current" pass ``required=True`` and fail loudly instead.
     """
+    if lab_profile_id is not None:
+        try:
+            # Invalid/inactive identities are caller errors, unlike a valid
+            # lab whose missing chamber binding can be repaired from a list.
+            resolve_lab_profile(db, lab_profile_id)
+        except (LabResolutionError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:
         return resolve_current_chamber(db, lab_profile_id).id
     except (LabResolutionError, ValueError) as exc:
-        if required or lab_profile_id is not None:
+        if required:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return None
 

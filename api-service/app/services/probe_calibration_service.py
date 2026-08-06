@@ -342,6 +342,10 @@ class AmplitudeCalibrationService:
 
                 except Exception as e:
                     logger.error(f"Calibration failed for probe {probe_id} pol {pol.value}: {e}")
+                    # Earlier probe/polarization rows may already be flushed.
+                    # A failed calibration job is one experiment: discard all
+                    # partial evidence before returning or allowing a retry.
+                    db.rollback()
                     return CalibrationResult(
                         success=False,
                         message=f"Calibration failed: {str(e)}"
@@ -750,6 +754,7 @@ class PhaseCalibrationService:
 
                 except Exception as e:
                     logger.error(f"Phase calibration failed for probe {probe_id}: {e}")
+                    db.rollback()
                     return CalibrationResult(
                         success=False,
                         message=f"Calibration failed: {str(e)}"

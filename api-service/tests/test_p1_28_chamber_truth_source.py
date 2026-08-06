@@ -143,6 +143,41 @@ def test_active_endpoint_fails_loud_when_active_lab_is_ambiguous(db, two_chamber
     assert "Multiple active LabProfiles" in response.text
 
 
+def test_plain_list_remains_available_when_selected_lab_binding_is_broken(
+    db, two_chambers_and_lab,
+):
+    _, _, lab = two_chambers_and_lab
+    lab.chamber_config_id = None
+    db.commit()
+    client = TestClient(app)
+
+    listing = client.get(f"/api/v1/chambers?lab_profile_id={lab.id}")
+    active = client.get(f"/api/v1/chambers/active?lab_profile_id={lab.id}")
+
+    assert listing.status_code == 200, listing.text
+    assert listing.json()["total"] == 2
+    assert all(item["is_active"] is False for item in listing.json()["items"])
+    assert active.status_code == 422
+
+
+@pytest.mark.parametrize("lab_state", ["missing", "inactive"])
+def test_plain_list_rejects_invalid_explicit_lab_identity(
+    db, two_chambers_and_lab, lab_state,
+):
+    _, _, lab = two_chambers_and_lab
+    if lab_state == "inactive":
+        lab.is_active = False
+        db.commit()
+        lab_id = lab.id
+    else:
+        lab_id = uuid.uuid4()
+
+    response = TestClient(app).get(f"/api/v1/chambers?lab_profile_id={lab_id}")
+
+    assert response.status_code == 422
+    assert lab_state in response.text.lower() or "not found" in response.text.lower()
+
+
 def test_is_active_is_not_a_writable_chamber_field(two_chambers_and_lab):
     _, bound, lab = two_chambers_and_lab
 
@@ -324,4 +359,50 @@ steps:
 
     assert execution.status == WorkflowStatus.FAILED
     assert "outside chamber range" in execution.step_results["amplitude"].error_message
+    assert db.query(ProbeAmplitudeCalibration).count() == 0
+
+
+def test_failed_probe_calibration_attempt_rolls_back_partial_rows_before_retry(
+    db, two_chambers_and_lab, monkeypatch,
+):
+    _, _, lab = two_chambers_and_lab
+    from app.services.probe_calibration_service import AmplitudeCalibrationService
+    from app.services.workflow_engine import WorkflowExecutor, WorkflowParser, WorkflowStatus
+
+    original_measurements = AmplitudeCalibrationService._mock_measurements
+
+    def fail_after_first_probe(self, probe_id, polarization, freq_points):
+        if probe_id == 1:
+            raise RuntimeError("injected second-probe failure")
+        return original_measurements(self, probe_id, polarization, freq_points)
+
+    monkeypatch.setattr(
+        AmplitudeCalibrationService, "_mock_measurements", fail_after_first_probe,
+    )
+    workflow = WorkflowParser.parse_string(
+        f"""
+name: "P1-28 atomic failed attempt"
+settings:
+  retry_count: 1
+  retry_delay_seconds: 0
+parameters:
+  lab_profile_id: "{lab.id}"
+steps:
+  - id: amplitude
+    type: probe_calibration
+    calibration_type: amplitude
+    parameters:
+      probe_ids: [0, 1]
+      frequency_range:
+        start_mhz: 3300
+        stop_mhz: 3400
+        step_mhz: 100
+"""
+    )
+    executor = WorkflowExecutor(db)
+
+    execution = executor.run(executor.create_execution(workflow))
+
+    assert execution.status == WorkflowStatus.FAILED
+    assert execution.step_results["amplitude"].retry_count == 2
     assert db.query(ProbeAmplitudeCalibration).count() == 0
