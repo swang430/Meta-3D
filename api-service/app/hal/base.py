@@ -96,7 +96,25 @@ _BARE_IMSI_LOG_RE = re.compile(r"(?<!\d)(\d{10,18})(?!\d)")
 _DIRECT_AUTH_PATH_TOKENS = frozenset({
     "KI", "OPC", "PASSWORD", "PASSWD", "SECRET", "TOKEN",
 })
-_AUTH_KEY_TOKEN_RE = re.compile(r"^AUTH(?:ENTICATION)?_?KEY$", re.IGNORECASE)
+_AUTHENTICATION_HEADER = "AUTHENTICATION"
+
+
+def _is_authentication_token(token: str) -> bool:
+    """识别 SCPI ``AUTHentication`` 从最短到全写的全部合法缩写。"""
+    normalized = token.upper()
+    return (
+        len(normalized) >= len("AUTH")
+        and _AUTHENTICATION_HEADER.startswith(normalized)
+    )
+
+
+def _is_authentication_key_token(token: str) -> bool:
+    normalized = token.upper()
+    return any(
+        normalized.endswith(suffix)
+        and _is_authentication_token(normalized[:-len(suffix)])
+        for suffix in ("_KEY", "KEY")
+    )
 
 
 def _split_scpi_program_message(command: str) -> List[str]:
@@ -138,11 +156,11 @@ def _auth_secret_path_tokens(tokens: List[str]) -> bool:
         return False
     if any(token in _DIRECT_AUTH_PATH_TOKENS for token in tokens):
         return True
-    if any(_AUTH_KEY_TOKEN_RE.fullmatch(token) for token in tokens):
+    if any(_is_authentication_key_token(token) for token in tokens):
         return True
     auth_positions = [
         index for index, token in enumerate(tokens)
-        if token in {"AUTH", "AUTHENTICATION"}
+        if _is_authentication_token(token)
     ]
     return any(
         any(token in {"KEY", "KI", "OPC"} for token in tokens[index + 1:])

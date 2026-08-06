@@ -358,6 +358,7 @@ These are still the highest-priority items overall. P0-5 的物理链已跑通�
 | 2026-08-06 | [#295](https://github.com/swang430/Meta-3D/pull/295) | <!--295-coverage-->✅ 全覆盖 | <!--295-gap-->—（R2 在 `36bc478` 上 clean，而 `36bc478` 是 R1 修复 HEAD；唯一未覆盖是回填本行本身，按 [#278](https://github.com/swang430/Meta-3D/pull/278) 无穷递归约定收口） | P1-45 docs-only 映射；R1 在 `c7094ec` 上指出诊断证据持久化承诺过度、P1-5 正式校准载体误判，两条 P2 均已修；R2 在 `36bc478` 上 clean | **2** | ✅ 无需处置 |
 | 2026-08-06 | [#296](https://github.com/swang430/Meta-3D/pull/296) | ⚠️ 有缺口 | 尾部提交 `8d464f8`：R2 要求把诊断关键 observations 持久化、不能只留在会截断的 2KB 摘要；修复新增 `DiagnosticRun.result_extra`、迁移与取消审计，**这批修复本身未再外审** | 两轮上限已到，不发 R3；PR 评论已如实申报。走势 R1 1 P2（同步 VISA 阻塞事件循环）→ R2 1 P2（关键现场证据未持久化），两条均已修并过独立内审/全量测试 | **1** | ⬜ 未处置 —— 下次动 `diagnostic_sequence.py`、`DiagnosticRun` 或诊断持久化时优先补审 |
 | 2026-08-07 | [#297](https://github.com/swang430/Meta-3D/pull/297) | ✅ 全覆盖 | —（R2 在 `53061f4` 上 clean，而 `53061f4` 是 R1 修复 HEAD；唯一未覆盖是回填本行本身，按 [#278](https://github.com/swang430/Meta-3D/pull/278) 无穷递归约定收口） | P1-41；R1 在 `3e594cc` 上出 1 条 P2，指出“归属未知”被误报为“业务命令被拒”。已补契约门并把不可用判定移到记录 rejection 之前；#296 漏行也随 R1 修复进入 R2。R2 在 `53061f4` 上 clean | **1** | ✅ 无需处置 |
+| 2026-08-07 | [#298](https://github.com/swang430/Meta-3D/pull/298) | ⚠️ 有缺口 | R2 后尾部修复（本 commit）：覆盖 `AUTHentication` 从最短 `AUTH` 到全写之间的全部合法 SCPI 缩写；该修复本身未再外审 | 两轮上限已到，不发 R3；走势 R1 1 P1 + 1 P2（分层鉴权末操作数泄漏 / SCPI 复制进长期 `app.log`）→ R2 1 P1（漏识别 `AUTHENT` 等中间缩写），三条均已修并过独立内审与全量测试 | **2** | ⬜ 未处置 —— 下次动 `base.py` 的 SCPI 脱敏器或仪器日志副本时优先补审 |
 | 2026-08-05 | [#285](https://github.com/swang430/Meta-3D/pull/285) | <!--285-coverage-->✅ 全覆盖 | <!--285-gap-->—（R3 在 `e2ad982` 上出的唯一一条就是「补本行」，除此之外的立项正文三轮全过；`e2ad982` rebase 到 #287 之后内容逐字未变，已用 `git diff` 核过）。唯一没覆盖的是回填本行的 commit 自己 —— #278 拍板的无穷递归 | docs-only 立项。**我把轮次走到了 R3 而没有拿授权** —— 规则是上限 2，例外要用户点头（上次 #282 的 R3 是用户明说「走R3」）。这次 R2 那条不是 R1 修复引入的（是立项正文里独立的错误前提），我就自然而然续了一轮，如实记着。三轮 **1 P2 → 1 P2 → 1 P2**，无一条由上轮修复引入。**R2 那条最值钱**：我写「`hal_mode` 字段已存在、不重复造标记」，而它取自**全局** HAL mode，HAL 明确支持 per-instrument 覆盖 —— 全局 real 下被强制 mock 的仪器会把假回复标成 `hal_mode=real`，正好打穿 P1-37 唯一要防的那件事。另：R1 那个 commit `ba41c26` 上，Codex 先出 1 条 P2，我再发一次 `@codex review` 它在**同一个 commit** 上回了 clean —— 同 commit 两种结论，说明「clean」有随机性，别把单次 clean 当保证 | 1 | ✅ 无需处置 |
 | 2026-08-05 | [#286](https://github.com/swang430/Meta-3D/pull/286) | <!--286-coverage-->✅ 全覆盖（代码） | <!--286-gap-->—（R2 审的 `6e58a1b` 就是 R1 修复本身，代码全过；rebase 到 #285/#287 之后 `api-service/` `gui/` `api/` **零字节差异**，已用 `git diff --stat` 核过）。没覆盖的只有回填本行 + 记 backlog 的 docs commit | P1-36 本片。**轮次上限 2 已到，R2 那条 P2 未修、转 backlog** —— 前提我实证过是**真的**（最小 app 探针：同一请求里 endpoint 那行带 `EXEC1234`、`app.audit` 汇总行是 `-`），不修的判据是 ⑦「不改它，P1-36 那个可观察故障还在吗」答**不在了**：R1 修完后执行的开始/过程/结束/取消都在链上，缺的是同一事实的第二份记录且**一跳可达**；三种修法全属「加机制」（最低优先级修法）。两轮 **1 P2 → 1 P2**，都不是上轮修复引入的，且**是同一母题的两个站点**（"执行的痕迹漏在请求侧"）—— R1 补上了 case-runner 那两行，R2 指出 middleware 那行结构上补不了 | 1 | ⬜ 未处置 —— 下次动 `audit_middleware.py` 或再往 `execution_id` 链上加东西时一并评估 |
 ### 📉 更值得看的信号：第一轮 findings 数
@@ -2308,13 +2309,16 @@ A–D 分类，但不拿它覆盖正式流程载体）：
 command、timeout/cancelled、设备拒绝、空串/空白/`not ready` 分型独立，异常原样传播。
 日志副本统一隐藏 IMSI（仅末四位）及 Ki/OPc/认证秘密，专用 `scpi.log` 的日轮转上限
 固定为最多30天，且专用命名空间不再复制进保留期更长的 `app.log`（控制台传播仍保留）。
-52条专项门与6类突变验证通过；内审补抓并闭环
+53条专项门与6类突变验证通过；内审补抓并闭环
 `*OPC?` 误脱敏、裸密钥异常、启动前取消、零天留存、转台重连取消清理与
 `AXISFAULT` 分类六个边界、引号内含分号的密钥被错误切段泄漏，以及分号后相对
-header 继承认证路径却漏脱敏，并将脱敏扩到 SCPI 终端、诊断审计副本及
+header 继承认证路径却漏脱敏；R2 尾修复内审又拦下 `AUTHKEY` 无下划线形式的
+兼容性回归。脱敏同时扩到 SCPI 终端、诊断审计副本及
 UXM/F64/FS16 重连告警。GitHub Codex 外审 R1 又抓出并已修复两处：分层鉴权路径
 `CONF:AUTH:KEY:VALUE <secret>` 的末操作数泄漏/查询 header 误改，以及 SCPI 证据
-经 root 重复落入长期 `app.log`；后端全量 `3287 passed, 5 skipped`。本片没有产生需
+经 root 重复落入长期 `app.log`；R2 又抓出并已修复 `AUTHentication` 中间缩写漏判。
+两轮上限已到，该尾部修复不发 R3，并已如实登记外审覆盖缺口；后端全量
+`3288 passed, 5 skipped`。本片没有产生需
 另行提升的 Discovered 项，下一片按既定顺序进入 P1-47B。
 
 **正式验收**：诊断序列只做出发前能力/载体验证；P0-5 仍从正式 TestCase 启动。

@@ -17,7 +17,12 @@ from app.api.instrument import _run_command_via_hal, _send_scpi_command
 from app.core import logging_config
 from app.core.logging_config import ContextFilter, JsonFormatter
 from app.hal.aerotech_positioner import AerotechError, RealAerotechDriver
-from app.hal.base import InstrumentDriver, redact_instrument_log_text
+from app.hal.base import (
+    InstrumentDriver,
+    redact_instrument_command_text,
+    redact_instrument_exchange_text,
+    redact_instrument_log_text,
+)
 from app.hal.propsim_f64 import RealPropsimF64Driver
 from app.hal.propsim_fs16 import RealPropsimFs16Driver
 from app.hal.uxm_base_station import RealUxmDriver
@@ -320,6 +325,34 @@ def test_hierarchical_auth_path_redacts_final_operand_without_changing_wire_valu
     rendered = " ".join(record.getMessage() for record in scpi_capture.records)
     assert secret not in rendered
     assert "CONF:AUTH:KEY:VALUE [REDACTED]" in rendered
+
+
+def test_all_valid_authentication_abbreviations_redact_write_and_query_secrets():
+    full_header = "AUTHENTICATION"
+    secret = "0123456789ABCDEF0123456789ABCDEF"
+
+    for length in range(len("AUTH"), len(full_header) + 1):
+        auth_header = full_header[:length]
+        for path in (
+            f"CONF:{auth_header}:KEY:VALUE",
+            f"CONF:{auth_header}KEY:VALUE",
+            f"CONF:{auth_header}_KEY:VALUE",
+        ):
+            safe_command = redact_instrument_command_text(f"{path} {secret}")
+            assert secret not in safe_command
+            assert safe_command == f"{path} [REDACTED]"
+            assert redact_instrument_exchange_text(
+                secret, command=f"{path}?"
+            ) == "[REDACTED]"
+
+    for invalid_short_path in (
+        "CONF:AUT:KEY:VALUE",
+        "CONF:AUTKEY:VALUE",
+        "CONF:AUT_KEY:VALUE",
+    ):
+        assert redact_instrument_command_text(
+            f"{invalid_short_path} visible"
+        ).endswith(" visible")
 
 
 @pytest.mark.parametrize(
