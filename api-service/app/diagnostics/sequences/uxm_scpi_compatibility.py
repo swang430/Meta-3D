@@ -75,7 +75,7 @@ from app.diagnostics.protocol import (
     mock_driver_refusal_summary,
     SequenceStepResult,
 )
-from app.hal.uxm_base_station import UxmScpiCommands
+from app.hal.uxm_base_station import RealUxmDriver, UxmScpiCommands
 from app.hal.uxm_command_profiles import (
     UxmTestApp,
     Uxm5GNRTestAppProfile,
@@ -128,33 +128,48 @@ _ACTION_NEIGHBOR_QUERY: Dict[str, Optional[str]] = {
     "MEAS_CSI_STOP":             "MEAS_CSI_CQI",
     "MEAS_EVM_START":            "MEAS_BTHROUGHPUT_DL_JSON",
     "RRC_RECONFIG_APPLY":        "RRC_RECONFIG_LAYERS",
+    # 手册标 Imm Action / No query：只从同一配置子系统的只读邻居推断，
+    # 绝不能让通用逻辑拼出不存在的 ``...:APPLY?``。
+    "QCONFIG_APPLY_ALL":         "PDSCH_SCHED_ALGO",
+    "CONFIG_APPLY":              "CELL_STATUS_QUERY",
     "SCELL_ADD":                 "SCELL_LIST_QUERY",
     "SCELL_REMOVE_ALL":          "SCELL_LIST_QUERY",
 }
 
-# Critical commands — if any of these come back UNSUPPORTED, commissioning
-# can't run. This is the minimum viable MIMO_OTA test surface.
-_CRITICAL_NAMES = frozenset({
+# 这两条是生产 MAC 必选动作，但手册明确 Imm Action / No query。邻居只证明
+# 同一子系统有可读命令，不能把动作本身判成 SUPPORTED；又因为从未直接探测，
+# 也不能谎报成实测 UNSUPPORTED。单独归入 critical_unverified_actions。
+_MANDATORY_ACTIONS_REQUIRING_DIRECT_EVIDENCE = frozenset({
+    "QCONFIG_APPLY_ALL", "CONFIG_APPLY",
+})
+
+# MAC 子集只有一个真值源：生产驱动真正会用来配置 MAC 吞吐量的 mandatory
+# 契约。诊断侧不再复制第二份 MAC 清单，否则驱动把旧的 TDD_PATTERN 拆成六个
+# 数以后，这里仍会因 profile.TDD_PATTERN=None 恒红。
+_MAC_CRITICAL_NAMES = frozenset(RealUxmDriver.MAC_CFG_MANDATORY)
+_NO_EQUIVALENT_NAMES = frozenset(RealUxmDriver.MAC_CFG_NO_EQUIVALENT)
+
+# 兼容性普查原有的 cell / RF / MIMO / KPI blockers 仍保留；P1-46 只修正
+# 其中已经被生产 MAC 契约替代的静态 TDD 项，不借机缩窄既有保护面。
+_CORE_CRITICAL_NAMES = frozenset({
     "IDN", "ERR", "APP_SELECT",
     "CELL_BAND", "CELL_DL_BW", "CELL_SCS", "CELL_DUPLEX", "CELL_ACTIVE",
     "DL_POWER", "SSB_POWER",
     "MIMO_DL_LAYERS", "MIMO_TX_ANT_PORT", "MIMO_RX_ANT_PORT",
     "PDSCH_MCS", "PDSCH_SCHED_ALGO", "PDSCH_AMC_ENABLE",
-    "TDD_PATTERN", "TDD_PERIOD",
+    "TDD_PERIOD",
     "HARQ_MAX_TRANS", "HARQ_PROCESSES",
     "MEAS_BTHROUGHPUT_DL_JSON",
-    # 2026-08-03: KPI 回读整批换命令后, critical 清单同步。
-    # ⚠ 移除 MEAS_BTHROUGHPUT_DL_BLER —— 它在 IRAT profile 上已置 None
-    #   (那条是 Early Pass/Fail 状态机不是 BLER), 留在清单里会被
-    #   _collect_commands 的 isinstance(value, str) 静默过滤掉,
-    #   而总结仍按 len(_CRITICAL_NAMES) 报 "All N critical commands
-    #   supported" —— 报一个**从没探测过**的命令为已支持。
-    # 新增下面这批 = 吞吐量/BLER/CSI/UE 报告的真值源, 现场必须逐条对账。
     "MEAS_TPUT_DL_OTA", "MEAS_TPUT_UL_OTA",
     "MEAS_BLER_DL", "MEAS_BLER_UL",
     "MEAS_CSI_CQI", "MEAS_CSI_RI",
     "MEAS_UE_REPORT_JSON",
 })
+
+# 手册确认“无对应命令”的项无论哪一侧误加，都必须从判定集显式排除。
+_CRITICAL_NAMES = (
+    _CORE_CRITICAL_NAMES | _MAC_CRITICAL_NAMES
+) - _NO_EQUIVALENT_NAMES
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +410,7 @@ async def run(
     results_by_name: Dict[str, SequenceStepResult] = {}
     counts = {"SUPPORTED": 0, "SUPPORTED_BUT_STATE": 0, "UNSUPPORTED": 0, "UNKNOWN": 0}
     critical_unsupported: List[str] = []
+    critical_unverified_actions: List[str] = []
     action_pending: List[Tuple[str, str]] = []
     consecutive_timeouts = 0
     aborted_early = False
@@ -487,17 +503,36 @@ async def run(
 
     # Action commands: infer from neighbors.
     for name, value in action_pending:
-        status, _ec, detail_msg = _categorize_action(name, results_by_name)
+        inferred_status, _ec, detail_msg = _categorize_action(name, results_by_name)
+        if name in _MANDATORY_ACTIONS_REQUIRING_DIRECT_EVIDENCE:
+            status = "INFERRED_ONLY"
+        else:
+            status = inferred_status
         counts[status] = counts.get(status, 0) + 1
         is_critical = name in _CRITICAL_NAMES
-        step_ok = status == "SUPPORTED"
-        if not step_ok and is_critical:
+        is_unverified_action = status == "INFERRED_ONLY"
+        step_ok = status == "SUPPORTED" and not is_unverified_action
+        if is_unverified_action and is_critical:
+            critical_unverified_actions.append(name)
+        elif not step_ok and is_critical:
             critical_unsupported.append(name)
         if include_supported or not step_ok or is_critical:
+            if is_unverified_action:
+                detail = (
+                    f"INFERRED_ONLY ★ ← 邻居 {detail_msg}（邻居结论="
+                    f"{inferred_status}）；动作本身未直接验证"
+                    if is_critical else
+                    f"INFERRED_ONLY ← {detail_msg}；动作本身未直接验证"
+                )
+            else:
+                detail = (
+                    f"{status} ★ ← {detail_msg}" if is_critical
+                    else f"{status} ← {detail_msg}"
+                )
             steps.append(SequenceStepResult(
                 label=f"{name} (ACTION) → {value}",
                 success=step_ok,
-                detail=f"{status} ★ ← {detail_msg}" if is_critical else f"{status} ← {detail_msg}",
+                detail=detail,
                 duration_ms=0,
             ))
 
@@ -511,6 +546,11 @@ async def run(
     )
     if critical_unsupported:
         log(f"  ✗ CRITICAL UNSUPPORTED: {sorted(critical_unsupported)}")
+    if critical_unverified_actions:
+        log(
+            "  ✗ CRITICAL ACTIONS 未直接验证: "
+            f"{sorted(critical_unverified_actions)}"
+        )
 
     # ⚠ Codex #275 P2: critical 清单里的命令若在**本方言上是 None**,
     # _all_commands() 会按"这个 Test App 不暴露该命令"的契约把它过滤掉 ——
@@ -530,6 +570,7 @@ async def run(
     success = (
         (not critical_unsupported)
         and (not critical_undefined)
+        and (not critical_unverified_actions)
         and (not aborted_early)
     )
     if aborted_early:
@@ -538,7 +579,8 @@ async def run(
             f"profile {profile.PROFILE_NAME}. Last probed: {last_probed}. "
             f"SCPI session is stuck — POST /api/v1/instruments/hal/reload and retry."
         )
-    elif not critical_unsupported and not critical_undefined:
+    elif (not critical_unsupported and not critical_undefined
+          and not critical_unverified_actions):
         summary = (
             f"All {len(_CRITICAL_NAMES)} critical SCPI commands supported on "
             f"profile {profile.PROFILE_NAME} "
@@ -564,6 +606,12 @@ async def run(
                 f"{profile.PROFILE_NAME} 中定义** —— 既没探测也没结论, "
                 f"不能当作已支持: {critical_undefined}"
             )
+        if critical_unverified_actions:
+            parts.append(
+                f"{len(critical_unverified_actions)} 条 critical ACTION "
+                "仅有邻居推断、动作本身未直接验证，不能当作已支持: "
+                f"{sorted(critical_unverified_actions)}"
+            )
         summary = "BLOCKER: " + "; ".join(parts)
 
     return SequenceRunResult(
@@ -574,6 +622,7 @@ async def run(
             "profile": profile.PROFILE_NAME,
             "counts": counts,
             "critical_unsupported": sorted(critical_unsupported),
+            "critical_unverified_actions": sorted(critical_unverified_actions),
             "total_probed": len(all_cmds),
             "include_supported": include_supported,
             "aborted_early": aborted_early,

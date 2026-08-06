@@ -14,6 +14,7 @@ Failure modes the API should distinguish:
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import time
@@ -33,6 +34,15 @@ from app.services.diagnostic_context import (
     DiagnosticContext,
 )
 from app.services.instrument_hal_service import get_hal_service
+from app.services.execution_exclusion_guard import (
+    active_unsafe_diagnostic,
+    release_unsafe_diagnostic,
+    try_acquire_unsafe_diagnostic,
+)
+from app.services.test_case_runner import (
+    has_active_case_run,
+    has_running_case_run_row,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +148,35 @@ async def run_diagnostic_sequence(
             ),
         )
 
+    # 破坏性诊断与正式 TestCase 执行共用同一套 HAL，不能交错下发。先用正式
+    # runner 的进程任务表 + DB running 行双判据拒绝，再无等待地占进程内 token。
+    # 三步之间都没有 await，在当前单进程/单事件循环部署契约下不会被另一请求插入。
+    # safe_during_test=True 的只读序列不占位，也不受该门影响。
+    unsafe_token: Optional[str] = None
+    if not sequence.metadata.safe_during_test:
+        active_case = has_active_case_run()
+        if active_case is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"正式用例执行 {active_case} 正在运行；"
+                        f"破坏性诊断 '{key}' 未发送任何仪器指令。"),
+            )
+        running_row = has_running_case_run_row(db)
+        if running_row is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"DB 中正式用例执行 {running_row} 仍为 running；"
+                        f"破坏性诊断 '{key}' 未发送任何仪器指令。"),
+            )
+        unsafe_token = try_acquire_unsafe_diagnostic(key)
+        if unsafe_token is None:
+            active_diagnostic = active_unsafe_diagnostic() or "(unknown)"
+            raise HTTPException(
+                status_code=409,
+                detail=(f"破坏性诊断 '{active_diagnostic}' 正在运行；"
+                        f"'{key}' 未发送任何仪器指令。"),
+            )
+
     log_buffer: List[str] = []
 
     def _log(msg: str) -> None:
@@ -150,20 +189,39 @@ async def run_diagnostic_sequence(
     extra: Dict[str, Any] = {}
     success = False
     summary = ""
+    cancelled_exc: Optional[asyncio.CancelledError] = None
 
     try:
-        hal = get_hal_service()
-        result = await sequence.run(ctx, hal, request.params, log=_log)
-        success = bool(result.success)
-        summary = result.summary
-        step_results = [asdict(s) for s in result.steps]
-        extra = result.extra
-    except Exception as e:  # noqa: BLE001
-        # Sequence raised — record as failure, surface error to UI.
-        success = False
-        summary = f"Sequence aborted: {e}"
-        error_msg = str(e)
-        logger.exception("Sequence %s aborted with exception", key)
+        try:
+            hal = get_hal_service()
+            result = await sequence.run(ctx, hal, request.params, log=_log)
+            success = bool(result.success)
+            summary = result.summary
+            step_results = [asdict(s) for s in result.steps]
+            extra = result.extra
+        except asyncio.CancelledError as exc:
+            # 请求取消也必须留下“这次诊断发生过”的审计记录。序列尚未返回
+            # SequenceRunResult，不能声称拿到了内部 partial steps/extra；明确记录
+            # 该边界，待同步 I/O/序列取消收尾和下方同步 DB commit 完成后再重抛。
+            success = False
+            summary = "Sequence cancelled"
+            error_msg = summary
+            extra = {
+                "cancelled": True,
+                "partial_result_available": False,
+            }
+            cancelled_exc = exc
+        except Exception as e:  # noqa: BLE001
+            # Sequence raised — record as failure, surface error to UI.
+            success = False
+            summary = f"Sequence aborted: {e}"
+            error_msg = str(e)
+            logger.exception("Sequence %s aborted with exception", key)
+    finally:
+        # asyncio.CancelledError 属于 BaseException，不会被上面的普通异常分支吞掉；
+        # 但它仍必须释放破坏性诊断占位，避免进程永久 409。
+        if unsafe_token is not None:
+            release_unsafe_diagnostic(unsafe_token)
 
     duration_ms = int((time.monotonic() - started) * 1000)
 
@@ -194,10 +252,14 @@ async def run_diagnostic_sequence(
         success=success,
         params={"sequence_key": key, **request.params},
         output=output_text.getvalue(),
+        result_extra=extra,
         error_message=error_msg,
         duration_ms=duration_ms,
         run_by=request.run_by,
     )
+
+    if cancelled_exc is not None:
+        raise cancelled_exc
 
     return SequenceRunResponse(
         diagnostic_run_id=run.id,

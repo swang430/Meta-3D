@@ -44,6 +44,7 @@ class DiagnosticRunSummary(BaseModel):
 
 class DiagnosticRunDetail(DiagnosticRunSummary):
     params: Optional[dict] = None
+    result_extra: Optional[dict] = None
     hal_trace_log_path: Optional[str] = None
 
 
@@ -136,5 +137,6 @@ def get_diagnostic_run(run_id: UUID, db: Session = Depends(get_db)):
         error_message=row.error_message,
         params=row.params,
         output_excerpt=row.output_excerpt,
+        result_extra=row.result_extra,
         hal_trace_log_path=row.hal_trace_log_path,
     )

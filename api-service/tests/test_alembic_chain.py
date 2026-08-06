@@ -70,6 +70,7 @@ _EXPECTED_COLUMNS: dict[str, list[str]] = {
         "source", "probe_model", "probe_vendor", "probe_serial",
         "imported_file_format", "coordinate_system",
     ],
+    "diagnostic_runs": ["result_extra"],
     "bootstrap_history": ["seeder_name", "seeder_version"],
 }
 _EXPECTED_INDEXES: dict[str, list[str]] = {
