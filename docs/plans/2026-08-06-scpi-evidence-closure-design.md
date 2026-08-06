@@ -106,6 +106,8 @@ Notebook：`236d9621-e3ce-4ed1-a8e1-7819b674dbcd`。
 - 正式 TestCase 在同一个 `execution_id` 下产生 `scpi_evidence` 摘要。
 - 执行快照保存从真实连接自动采集的 instrument_model、firmware_version、uxm_test_application。
 - 摘要逐项保存 requested、command_sent、readback、exchange_ids、evidence_level、source_reference、verdict、reason；`exchange_ids` 按发生顺序关联到原始往返。
+- 执行状态 FastAPI response schema/endpoint 必须读回脱敏摘要，不能让持久化字段保持 write-only。
+- `ReportDataCollector` → `ReportData.to_dict()` → `ReportService` → 活跃 PDF 渲染器必须逐层传递并展示证据。
 - `DiagnosticRun.output_excerpt` 只作人读摘要；2KB 截断内容不作为正式原始证据。
 - GUI/报告分别显示“已发送、已接受、已生效、结果成立”，不压缩成一个模糊成功标记。
 

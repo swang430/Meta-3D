@@ -101,19 +101,23 @@
 **Files:**
 - Modify: `api-service/app/services/test_case_runner.py`
 - Modify: `api-service/app/services/mimo_ota/executors/` 中产生关键控制/结果的执行器
+- Modify: `api-service/app/api/test_plan.py`（执行状态 response schema + endpoint 读回证据）
+- Modify: `api-service/app/services/report_data_collector.py`
+- Modify: `api-service/app/services/report_service.py`
+- Modify: `api-service/app/services/pdf_generator.py` 或开片时确认的活跃报告渲染器
 - Modify: `api/openapi.yaml`
 - Modify: `gui/src/types/api.generated.ts`（生成）
 - Modify: TestExecution详情/报告相关GUI组件（开片时按活消费方定位）
-- Test: TestCase执行、API契约、报告和GUI规则门测试
+- Test: TestCase执行、执行状态API读回、API契约、report collector/PDF、GUI规则门测试
 
 1. 写失败测试：正式执行必须把 `scpi_evidence` 摘要持久化到同一 TestExecution。
 2. 摘要字段固定为 requested、command_sent、readback、exchange_ids、evidence_level、source_reference、verdict、reason；`exchange_ids` 按发生顺序关联原始往返。
 3. 同一 TestExecution 固化真实连接采集的 instrument_model、firmware_version、uxm_test_application，不接受配置声明冒充。
 4. 任何mandatory项为unknown/rejected、证据非confirmed或执行环境不匹配时，正式验收不得显示通过。
-5. 按 OpenAPI → 生成类型 → 服务 → GUI 顺序接通展示。
+5. 先让 `get_case_execution_status` 的 response schema/endpoint 返回脱敏后的证据摘要，再按 OpenAPI → 生成类型 → GUI 接通展示；禁止只改前端而让持久化字段保持 write-only。
 6. GUI分别显示已发送/已接受/已生效/结果成立。
-7. 报告明确区分直接证据、间接证据和未确认项；IMSI只显示哈希/末四位，认证信息绝不展示。
-8. 做“删除一项证据仍显示通过”“断开exchange_ids关联”“完整IMSI/认证参数泄漏”的变异并确认测试变红。
+7. `ReportDataCollector`、`ReportData`/`to_dict()`、`ReportService` 与活跃 PDF 渲染器必须把证据读出并渲染，明确区分直接证据、间接证据和未确认项；IMSI只显示哈希/末四位，认证信息绝不展示。
+8. 做“执行状态端点漏返回证据”“报告 collector 丢证据”“删除一项证据仍显示通过”“断开exchange_ids关联”“完整IMSI/认证参数泄漏”的变异并确认测试变红。
 9. 运行全量测试；走全套内审和外审。
 
 ### Task 7：P0-5现场正式复验
