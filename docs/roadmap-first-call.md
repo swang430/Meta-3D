@@ -13,7 +13,7 @@ blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 �
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-02 二批本地队列已拍板排序（用户明示"只排好优先级，先不忙开工"——待开工指令）**：
-**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → P1-39 → P1-40 → P1-41 → P1-37 → P1-29 → P1-38 → P1-27 → P1-28 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧；P1-28 为 2026-08-02 用户新增 backlog 当日拍板插入；**P1-30 为 2026-08-03 用户指定插队"把日志提上来先完成"**；**P1-31 / P1-32 为 2026-08-03 UXM KPI 修复（#275）带出、用户当日拍板插到队首**；**P1-34 为 2026-08-05 用户手工测试当场提出、当日拍板插到队首**；**P1-39 为 2026-08-06 用户问「测试例编号除了 log 还能在哪查」当场发现的断链，用户明示「进roadmap，优先完成」插到队首**；**P1-40 为同日用户定的日志分文件方向，紧随其后**）。**当前队首 = P1-39**（P1-25 / P1-26 / P1-30 / P1-31 / P1-32 / P1-33 本地半 / P1-34 / P1-35 / P1-36 已收口）。一句话索引：
+**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → P1-39 → P1-42 → P1-40 → P1-41 → P1-37 → P1-29 → P1-38 → P1-27 → P1-28 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1，全流程照旧；P1-28 为 2026-08-02 用户新增 backlog 当日拍板插入；**P1-30 为 2026-08-03 用户指定插队"把日志提上来先完成"**；**P1-31 / P1-32 为 2026-08-03 UXM KPI 修复（#275）带出、用户当日拍板插到队首**；**P1-34 为 2026-08-05 用户手工测试当场提出、当日拍板插到队首**；**P1-39 为 2026-08-06 用户问「测试例编号除了 log 还能在哪查」当场发现的断链，用户明示「进roadmap，优先完成」插到队首**；**P1-40 为同日用户定的日志分文件方向，紧随其后**）。**当前队首 = P1-39**（P1-25 / P1-26 / P1-30 / P1-31 / P1-32 / P1-33 本地半 / P1-34 / P1-35 / P1-36 已收口）。一句话索引：
 - **P1-25** GUI 主控台"系统状态"面板恒空修复 + api.ts 手写镜像同尺审计
 - **P1-26** GUI 改频同步 component_carriers（**GUI 写侧**收口；后端收敛点与显示端同源另立片）
 - **P1-30** SCPI 往返日志的证据能力（截断显式化 + OK/ERR 配对 + `instrument_id` 收窄）
@@ -23,6 +23,10 @@ blocked（P0-5 / P0-8 现场半，见 Blocked on hardware 表）。2026-08-01 �
 - **P1-34** 日志时间线可读（本地时区 + `request_id` 把一次操作串起来 + 排除只吞成功那一行）
 - **P1-35** 日志噪音治理（`Cache updated` 每秒两条占 26%）—— **从 P3-19 摘出提前**，2026-08-05 用户手工测试当场要求
 - **P1-36** 测试执行身份进日志（`execution_id` 串链，把 P1-34 那套复制到执行维度）
+- **P1-39** 让人拿得到 ID：执行/用例编号在界面上可见可复制 + 一键跳日志（**当前队首**，2026-08-06 用户指定优先 —— 过滤器有了但钥匙拿不到）
+- **P1-42** `app.audit` 汇总行进 `execution_id` 链（2026-08-06 用户从 Discovered 升格并指定优先；**改纯 ASGI 中间件，零调用点改动**，顺带解掉 WebSocket 拿不到 `request_id` 那条）
+- **P1-40** 日志按「每次运行」分文件 + 空闲期只留基本内容（2026-08-06 用户定方向；分文件轴复用 P1-36 的 ContextVar，**必须扁平命名**）
+- **P1-41** 修 UXM 排错误队列停不下来的循环（7.6 秒 20 万行 / 一次 24 GB 的根因；**动手前必查 NotebookLM**）
 - **P1-37** mock 也产真命令串并记 `scpi.log` + 回复显式标 `simulated`（**下发侧本地可验、回读侧绝不冒充真值**）
 - **P1-38** 活动告警面板：清 674 条测试污染 + 接上真生产者 or 收窄让位（**排在 P1-29 之后** —— 计数徽章依赖那个被遮蔽的端点，Codex #285 R1）
 
@@ -204,7 +208,7 @@ P2-14 的**现场验证半**(V1.0 §9：.tap schema / gaussian 谱 / f_upd_max /
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → P1-39 → P1-40 → P1-41 → P1-37 → P1-29 → P1-38 → P1-27 → P1-28 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列 + 08-03 用户指定 P1-30 / P1-31 / P1-32 插队 + 08-05 用户指定 P1-34 插队 + **08-06 用户指定 P1-39 插队「优先完成」、P1-40 紧随**；**队首现为 P1-39**，P1-25 / P1-26 / P1-30 / P1-31 / P1-32 / P1-33 本地半 / P1-34 / P1-35 / P1-36 已收口；一批 10 片已全收 #256–#265）|
+| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → P1-39 → P1-42 → P1-40 → P1-41 → P1-37 → P1-29 → P1-38 → P1-27 → P1-28 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-02 拍板二批队列 + 08-03 用户指定 P1-30 / P1-31 / P1-32 插队 + 08-05 用户指定 P1-34 插队 + **08-06 用户指定 P1-39 插队「优先完成」、P1-40 紧随**；**队首现为 P1-39**，P1-25 / P1-26 / P1-30 / P1-31 / P1-32 / P1-33 本地半 / P1-34 / P1-35 / P1-36 已收口；一批 10 片已全收 #256–#265）|
 | **ON-SITE-BLOCKED** | P0-5 (P0-3/4 已 2026-07-03 现场完成) + P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -296,6 +300,7 @@ unblocked) BEFORE starting any new P1.
 | 2026-08-05 | [#289](https://github.com/swang430/Meta-3D/pull/289) | <!--289-coverage-->✅ 全覆盖 | <!--289-gap-->—（R1 在 `27ac85d` 上即 clean，而 `27ac85d` 就是合并时的 HEAD）。唯一没覆盖的是回填本行的 docs commit 自己 —— #278 拍板的无穷递归 | 从 compose 拆掉 api 服务（用户直接指令）。**首轮即 clean，但这是内审替它挡下来的**：内审出 5 条（2 P2 值得记）——`down -v` 遇遗留容器变 orphan 会**半途而废且退出码 0**（内审实测复现）、以及拆服务时把「calibration_data/certificates 必须挂持久卷」的唯一记录一起拆没了而新文档又叫人 `docker run`（重建即丢数据）。后者是我 **③⁺ 扫漏的一处** —— 我用的三个关键词全命不中 `Dockerfile:33` 那句 `bind-mounted via docker-compose` | **0** | ✅ 无需处置 |
 | 2026-08-05 | [#288](https://github.com/swang430/Meta-3D/pull/288) | <!--288-coverage-->⚠️ 有缺口 | <!--288-gap-->**本行本身**——#288 已于 `6c65132` 合并，而它的台账行**当时没建成**：我那条 `python3 - <<'PY'` heredoc 撞了 `SyntaxError: Non-UTF-8 code`，commit 空转，我**没看输出就往下走**（违反 ⓪⑥），于是 PR 带着「无行」合了。本行由 [#290](https://github.com/swang430/Meta-3D/pull/290) 补建 | docs-only 登记（日志爆量定位数据）。**R1 那条 P2 抓得对**：条目写着「本条比 P1-37 更该先做」，而队列里**没有它的位置**——排序指令指向一个不存在的 slot，等于没说。处置=在 #290 里升格 **P1-41** 并入队。⚠️ 另：同一个 commit `bade48b` 上 Codex 先出这条 P2、我再跑一次回 **clean** ——**与 [#285](https://github.com/swang430/Meta-3D/pull/285) 完全同型的第二次实例**，「clean 有随机性」现在有两次独立证据 | 1 | ✅ 已处置（→ #290 的 P1-41）|
 | 2026-08-06 | [#290](https://github.com/swang430/Meta-3D/pull/290) | <!--290-coverage-->✅ 全覆盖 | <!--290-gap-->—（R1 在 `86ae54a` 上出 1 条 P2，已在本 PR 内修完；修复 commit 未再派 R2 —— 轮次纪律：R1 findings 修完即收口，尾部修复无外审照旧如实申报） | P1-39/P1-40 立项 + 队列插队（docs-only）。**R1 那条 P2 是本轮最值钱的一条**：我把每执行日志写成 `logs/executions/<id>.log`，而 `_safe_filename()` 的 `^[\w\-\.]+$` 把 `/` 直接判 400、`/system-logs/files` 又只扫顶层跳目录 ——**照这个设计做出来，每执行文件列不出/tail 不了/导不出/下不了**，承诺的工作流当场是坏的。这是**立项文字里的设计缺陷**，代码没写就被拦下，正是立项该过外审的理由。修法走「去掉」（扁平 `exec-<uuid>.log`，零后端改动）不走「加机制」（递归列目录+路径安全） | 1 | ✅ 无需处置 |
+| 2026-08-06 | [#291](https://github.com/swang430/Meta-3D/pull/291) | <!--291-coverage-->✅ 全覆盖 | <!--291-gap-->—（R1 在 `5eb623f` 上出 1 条 P2，已在本 PR 内修完；修复 commit 未再派 R2 —— R1 findings 修完即收口，尾部修复无外审如实申报，与 [#290](https://github.com/swang430/Meta-3D/pull/290) 同处置） | P1-42 立项（docs-only），用户从 Discovered 升格并指定优先。**R1 那条 P2 是「核前提」的教科书案例**：它说纯 ASGI 后上一个请求的 `execution_id` 会漏进下一个请求。我没有直接采信也没有直接驳回，做了**两层探针** —— ① 同一个 task 里连调两次 ASGI app：**确实泄漏**（机制成立）；② 真 uvicorn 同一条 keep-alive 连接连发两请求：**不泄漏**（uvicorn 每个请求周期起独立 task）。所以准确定性是「**机制为真，今天的服务器不触发**」，比「对」或「不对」都精确。修法照收（三行，缺了就是静默错误归属），并额外要求那条门**必须在同一 task 里直调 ASGI app** —— 走 TestClient 或 uvicorn 都天然干净，门会**恒绿等于没有** | 1 | ✅ 无需处置 |
 | 2026-08-05 | [#285](https://github.com/swang430/Meta-3D/pull/285) | <!--285-coverage-->✅ 全覆盖 | <!--285-gap-->—（R3 在 `e2ad982` 上出的唯一一条就是「补本行」，除此之外的立项正文三轮全过；`e2ad982` rebase 到 #287 之后内容逐字未变，已用 `git diff` 核过）。唯一没覆盖的是回填本行的 commit 自己 —— #278 拍板的无穷递归 | docs-only 立项。**我把轮次走到了 R3 而没有拿授权** —— 规则是上限 2，例外要用户点头（上次 #282 的 R3 是用户明说「走R3」）。这次 R2 那条不是 R1 修复引入的（是立项正文里独立的错误前提），我就自然而然续了一轮，如实记着。三轮 **1 P2 → 1 P2 → 1 P2**，无一条由上轮修复引入。**R2 那条最值钱**：我写「`hal_mode` 字段已存在、不重复造标记」，而它取自**全局** HAL mode，HAL 明确支持 per-instrument 覆盖 —— 全局 real 下被强制 mock 的仪器会把假回复标成 `hal_mode=real`，正好打穿 P1-37 唯一要防的那件事。另：R1 那个 commit `ba41c26` 上，Codex 先出 1 条 P2，我再发一次 `@codex review` 它在**同一个 commit** 上回了 clean —— 同 commit 两种结论，说明「clean」有随机性，别把单次 clean 当保证 | 1 | ✅ 无需处置 |
 | 2026-08-05 | [#286](https://github.com/swang430/Meta-3D/pull/286) | <!--286-coverage-->✅ 全覆盖（代码） | <!--286-gap-->—（R2 审的 `6e58a1b` 就是 R1 修复本身，代码全过；rebase 到 #285/#287 之后 `api-service/` `gui/` `api/` **零字节差异**，已用 `git diff --stat` 核过）。没覆盖的只有回填本行 + 记 backlog 的 docs commit | P1-36 本片。**轮次上限 2 已到，R2 那条 P2 未修、转 backlog** —— 前提我实证过是**真的**（最小 app 探针：同一请求里 endpoint 那行带 `EXEC1234`、`app.audit` 汇总行是 `-`），不修的判据是 ⑦「不改它，P1-36 那个可观察故障还在吗」答**不在了**：R1 修完后执行的开始/过程/结束/取消都在链上，缺的是同一事实的第二份记录且**一跳可达**；三种修法全属「加机制」（最低优先级修法）。两轮 **1 P2 → 1 P2**，都不是上轮修复引入的，且**是同一母题的两个站点**（"执行的痕迹漏在请求侧"）—— R1 补上了 case-runner 那两行，R2 指出 middleware 那行结构上补不了 | 1 | ⬜ 未处置 —— 下次动 `audit_middleware.py` 或再往 `execution_id` 链上加东西时一并评估 |
 ### 📉 更值得看的信号：第一轮 findings 数
@@ -2030,6 +2035,58 @@ RX: -113,"Undefined header"
 
 **依赖**: 建议排在 P1-40 之后（闸门先就位）。**现场半**: 无 —— mock 下即可复现。
 
+---
+
+### P1-42 — `app.audit` 请求汇总行进 `execution_id` 链 ⬜（2026-08-06 立项，**用户从 Discovered 升格并指定优先**）
+
+**由 Discovered 条目升格**（`[discovered 2026-08-05 during P1-36, Codex #286 R2 P2]`）。
+
+⚠️ **我原先判它「不值一次机制改动」是错的 —— 错在选项集不全。** 当时只想到两条路，都要改调用点：① `request.state` 传值（每个端点都得写）；② 把 ContextVar 从 `str` 换成可变盒子（要动 `ContextFilter` 与全部 set 点）。**漏了第三条：把 `AuditMiddleware` 从 `BaseHTTPMiddleware` 改成纯 ASGI 中间件 —— 零调用点改动。**
+
+**可观察故障**：按 `execution_id` 过滤日志时，发起执行 / 取消执行那几个请求的 `POST /api/v1/test-plans/cases/{id}/execute → 200 (45ms)` 这一行**不在结果里** —— 少了 HTTP 方法、状态码、耗时。P1-39 做完「一键跳日志」之后，这个洞会立刻被看见。
+
+**根因（已实证）**：`AuditMiddleware` 继承 `BaseHTTPMiddleware`，它在 `call_next` 返回**之后**才打汇总行；而 Starlette 把下游 app 跑在**独立子上下文**里，endpoint 里 `current_execution_id.set(...)` 设的值回不到中间件。
+
+**三形态对照实测（2026-08-06，别重做）** —— 中间件在下游返回后读到的值：
+
+| 形态 | 结果 |
+|---|---|
+| A `BaseHTTPMiddleware`（现状） | ❌ 读到中间件自己设的初值 |
+| B 纯 ASGI + `async def` endpoint | ✅ **看得见 endpoint 设的值** |
+| C 纯 ASGI + `def`（同步）endpoint | ❌ FastAPI 丢进线程池，仍看不见 |
+
+**端点普查（已做，别重查）** —— 纯 ASGI 改造能覆盖 5/6：
+
+| 端点 | 形态 | 纯 ASGI 后 |
+|---|---|---|
+| `test_plan.py:217 execute_test_case` | `async def` | ✅ |
+| `commissioning.py` 的 `create_session` / `get_session` / `run_phase` / `run_adhoc_phase` / `run_all_phases` | 全 `async def` | ✅ |
+| **`test_execution.py:218 cancel_case_execution`** | **`def`（同步）** | ❌ **线程池，需单独处理** |
+
+**修法（按 去掉 > 换源 > 收窄 > 加机制）**：
+1. **主体 = 换源**：`AuditMiddleware` 改纯 ASGI（`async def __call__(scope, receive, send)`），在同一个任务里 `await self.app(...)`，之后读 ContextVar。**不动任何 set 点、不动 `ContextFilter`、不动契约。**
+2. **补 `cancel_case_execution` 那一处**：优先把它改成 `async def`（它内部是同步 DB 调用，改 async 的爆炸半径要先量）；改不动就那一处显式走 `request.state`，并在注释里写明为什么只有它特殊。
+3. ⚠️ **每请求初始化 + `finally` 复位，一条都不能少**（Codex #291 R1，前提已两层实证）——纯 ASGI 让中间件与 endpoint **共享同一个上下文**，这正是它能读到 `execution_id` 的原因；**但同一件事也意味着没有自动隔离**：endpoint 设的值在 `await self.app(...)` 之后**仍然活着**。做法 = 请求开头 `token = current_execution_id.set("-")`，**打完汇总行**后在 `finally` 里 `reset(token)`（顺序别反：先记日志再复位）。
+
+   **实证（2026-08-06，两层，别重做）**：
+
+   | 场景 | 不 reset | 加 token+finally |
+   |---|---|---|
+   | 同一个 task 里连调两次 ASGI app（机制层） | ❌ **泄漏** —— 第二个不相干请求继承了 `EXEC-AAA` | ✅ 干净 |
+   | 真 uvicorn，同一条 keep-alive 连接连发两个请求 | ✅ 干净 —— uvicorn **每个请求周期起独立 task** | ✅ 干净 |
+   | `TestClient` 连发两个请求 | ✅ 干净（同上，各自上下文副本） | ✅ 干净 |
+
+   **所以定性是**：Codex 描述的失效**机制是真的**，只是**我们今天的服务器不触发它**。但复位只有三行，而缺了它一旦触发就是**静默的错误归属**（不相干请求的 `app.audit` 行挂上别人的 `execution_id`、P1-40 的每执行文件里混进别人的行）—— 正是这条日志线整片在治的病。**照做，不省。**
+
+   ⚠️ **配一条反向门**（不是「设了没」，是「该没有的时候真没有」）：先发一个执行请求、紧跟一个**不相干**请求，断言后者的 `app.audit` 行 `execution_id == "-"`。⚠️ **这条门必须在同一个 task 里直调 ASGI app**——走 `TestClient` 或真 uvicorn 都天然干净，**门会恒绿，等于没有**（这正是「验证打在真实生效端」那条规则：门要打在会失效的那一端）。
+4. ⚠️ **纯 ASGI 改造要自己接管 `BaseHTTPMiddleware` 白送的那些事**：异常传播、`response.status_code` 的取法（纯 ASGI 里要从 `send` 的 `http.response.start` 消息里截）、以及**现有的排除逻辑**（`EXCLUDED_PATHS` 只对成功生效 —— 这条是 P1-34 内审 F1 的成果，改造时**绝不能丢**）。
+
+**附带收益（同一改动顺手解决另一条 Discovered）**：`[discovered 2026-08-05 during P1-34 内审 F5]` **WebSocket 流上的日志拿不到 `request_id`** —— 根因正是 `BaseHTTPMiddleware` 对 `scope["type"] != "http"` 直接透传。改纯 ASGI 后 `scope["type"]` 在我们自己手里，websocket 分支可以一并设 id。**实现时把它一起收，别让它再单独排一次。**
+
+**门（至少到不变量档）**：行为门 —— 造一次真实执行请求，断言 `app.audit` 那行的 `execution_id` **等于**返回的 execution_id（不是「非 `-`」）；配变异：把中间件改回 `BaseHTTPMiddleware` 必须红。另加一条守 3 的门：`EXCLUDED_PATHS` 对 4xx/5xx 仍然记录。
+
+**依赖**: 无。**现场半**: 无 —— mock 下即可验。
+
 ## 🟡 P2 — Abstraction debt
 
 ### P2-1 — UXM two-layer architecture: Test App + Topology Profile ✅ Done
@@ -2795,7 +2852,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-05 during P1-34，被本片新加的门抓出]` **`EXCLUDED_PATHS` 里两条排除项指向不存在的路由（P3）** —— `app/core/audit_middleware.py` 的 `/api/v1/monitoring/metrics` 与 `/api/v1/monitoring/instrument-status` 在 OpenAPI 251 条路径里**都不存在**；`app/api/monitoring.py` 实际只有 `GET /monitoring/feeds` 和 `WS /ws/monitoring`。旧路由布局的残留，各自排除了个寂寞。**危害极低**（匹配不到任何请求 = 零噪音贡献，也零副作用），所以 P1-34 **没有顺手删** —— ⑦ 的判据「不改它，那个可观察故障还在吗」答"还在"。当前由 `tests/test_p1_34_log_timeline.py::_EXCLUDED_KNOWN_STALE` 显式豁免并配了**反向门**（哪天这两个路径真变成路由，门会红提醒摘掉豁免）。**修的时候要先定意图**：是想排除 `/monitoring/feeds`（那就改路径）还是这条排除已无意义（那就删）—— 别照着旧字符串猜。
 - `[discovered 2026-08-05 during P1-34]` **日志面板的级别过滤是"精确相等"，选 INFO 会把 ERROR 一起滤掉（P3，与 P3-19 同堆）** —— `/system-logs/tail` 的 `_entry_matches` 用 `entry.level != level` 精确匹配，所以 `SystemLogViewer` 那个单选 SegmentedControl **没有任何一档**能给出"去掉 DEBUG 心跳但保留 INFO/WARN/ERROR"，操作员只能停在 `全部` 挨 DEBUG 刷屏（实测最近 400 行里 253 行是 DEBUG 心跳）。⚠️ **不要改后端把它变成"≥ 门槛"** —— `ZoneLogsAlerts`（P2-19 #258）正是靠"两个 level 流天然不相交"来做去重的，改成门槛会让那里的合并逻辑出错。**正解是照搬 P2-19 已拍板的做法**：前端多选 + 逐 level 各发一次请求合并去重（零后端契约变化）。P1-34 没做，因为该片已用「只看这一次请求」（复用后端既有的 `session_id` 精确过滤）达成"还原一次操作"的目的，级别多选属**另一件事**。
 
-- `[discovered 2026-08-05 during P1-36, Codex #286 R2 P2 —— 前提已实证为真，判定为越界，本 PR 未做]` **`app.audit` 的请求汇总行归不到 `execution_id` 名下（P3）** —— `AuditMiddleware` 是 `BaseHTTPMiddleware`，它在 `call_next` 返回**之后**才打那行 `POST /...  → 200 (45ms)`；而 Starlette 把下游 endpoint 跑在**独立的子上下文**里，endpoint 里 `current_execution_id.set(...)` 设的值**回不到** middleware。所以按 `execution_id` 过滤时，发起执行 / 取消执行这几个请求的 HTTP 方法+状态码+耗时那一行是缺的（`session_id` 不受影响 —— 它由 middleware 自己在 `call_next` **之前**设）。**实证**（别重做）：最小 app + `AuditMiddleware`，endpoint 内 set `EXEC1234` 后同一请求打两行，捕获结果 `('app.probe', 'EXEC1234', ...)` / `('app.audit', '-', ...)` —— 一行带、一行不带，前提成立。**本 PR 未修的理由**：① ⑦ 判据「不改它，P1-36 那个可观察故障还在吗」答**不在了** —— R1 修完后执行的开始/过程/结束/取消都已在链上，缺的这行是同一事实的第二份记录，且**一跳可达**（case-runner 那行同时印着 `request_id` 与 `execution_id`，GUI 的「只看这一次请求」按钮就是这一跳）；② 三种修法**全属"加机制"**（最低优先级）：换 `request.state` 传值要改每个调用点，正是 P1-36 刻意避开的；把 ContextVar 从 `str` 换成可变盒子要动 `ContextFilter` 与全部 set 点；middleware 改 pure ASGI 是重写。⚠️ 同形态还波及 `commissioning` 的相位请求与 `request_cancel` 的取消请求。真要做时，先问「这行的价值是否值一次机制改动」。
+- `[discovered 2026-08-05 during P1-36, Codex #286 R2 P2]` **[→ 提升 P1-42 (2026-08-06，用户拍板)]** **`app.audit` 的请求汇总行归不到 `execution_id` 名下（P3）** —— `AuditMiddleware` 是 `BaseHTTPMiddleware`，它在 `call_next` 返回**之后**才打那行 `POST /...  → 200 (45ms)`；而 Starlette 把下游 endpoint 跑在**独立的子上下文**里，endpoint 里 `current_execution_id.set(...)` 设的值**回不到** middleware。所以按 `execution_id` 过滤时，发起执行 / 取消执行这几个请求的 HTTP 方法+状态码+耗时那一行是缺的（`session_id` 不受影响 —— 它由 middleware 自己在 `call_next` **之前**设）。**实证**（别重做）：最小 app + `AuditMiddleware`，endpoint 内 set `EXEC1234` 后同一请求打两行，捕获结果 `('app.probe', 'EXEC1234', ...)` / `('app.audit', '-', ...)` —— 一行带、一行不带，前提成立。**本 PR 未修的理由**：① ⑦ 判据「不改它，P1-36 那个可观察故障还在吗」答**不在了** —— R1 修完后执行的开始/过程/结束/取消都已在链上，缺的这行是同一事实的第二份记录，且**一跳可达**（case-runner 那行同时印着 `request_id` 与 `execution_id`，GUI 的「只看这一次请求」按钮就是这一跳）；② 三种修法**全属"加机制"**（最低优先级）：换 `request.state` 传值要改每个调用点，正是 P1-36 刻意避开的；把 ContextVar 从 `str` 换成可变盒子要动 `ContextFilter` 与全部 set 点；middleware 改 pure ASGI 是重写。⚠️ 同形态还波及 `commissioning` 的相位请求与 `request_cancel` 的取消请求。真要做时，先问「这行的价值是否值一次机制改动」。
 
 - `[discovered 2026-08-05 during 手动测试前的环境检查]` **[→ 提升 P1-41 (2026-08-06)]** **⚠️ 日志爆量：7.6 秒写 20 万行、一次事故 24 GB —— UXM 排错误队列的循环停不下来（P1 候选）** —— 实测 `api-service/logs/` 已占 **41 GB**（`app.log` 13 GB + `scpi.log` 11 GB + 30 个滚动文件），磁盘已用 76%。**爆点定位**：`app.log` 首行 `2026-08-04T23:59:59.999` → 第 20 万行 `2026-08-05T00:00:07.604`，**7.6 秒 20 万行 ≈ 26,000 行/秒**，且这 20 万行**百分之百**是同一对（各 10 万）：
   ```
