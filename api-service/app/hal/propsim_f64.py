@@ -48,8 +48,8 @@ from app.hal.base import (
     InstrumentStatus,
     InstrumentCapability,
     InstrumentMetrics,
+    redact_instrument_command_text,
     redact_instrument_exchange_text,
-    redact_instrument_log_text,
 )
 from app.hal.channel_emulator import (
     CalibrationToneCapability,
@@ -4530,7 +4530,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         全程已持 _scpi_lock (由 _do_write/_do_query 调用)。失败只记日志 —
         原始超时异常由调用方上抛, 这里不再抛。
         """
-        safe_timed_out_cmd = redact_instrument_log_text(timed_out_cmd)
+        safe_timed_out_cmd = redact_instrument_command_text(timed_out_cmd)
         try:
             for _ in range(4):
                 try:
@@ -4592,7 +4592,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
     async def _do_write_unlocked(self, cmd: str, timeout: Optional[int] = None) -> None:
         """实际写 IO (锁内)。conn-lost 一次静默重连重试; 其余异常原样上抛。"""
-        safe_cmd = redact_instrument_log_text(cmd)
+        safe_cmd = redact_instrument_command_text(cmd)
         for attempt in (0, 1):
             if timeout:
                 original_timeout = self._visa_resource.timeout
@@ -4622,7 +4622,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         self, cmd: str, timeout: Optional[int] = None, *, note_success: bool = True
     ) -> str:
         """实际查询 IO (锁内) — retry 语义同 `_do_write_unlocked`。"""
-        safe_cmd = redact_instrument_log_text(cmd)
+        safe_cmd = redact_instrument_command_text(cmd)
         for attempt in (0, 1):
             if timeout:
                 original_timeout = self._visa_resource.timeout

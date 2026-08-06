@@ -5,6 +5,9 @@ import asyncio
 import inspect
 import json
 import logging
+from pathlib import Path
+import subprocess
+import sys
 from typing import Any
 
 import pytest
@@ -243,7 +246,12 @@ def test_bare_imsi_query_response_is_masked_but_returned_unchanged(scpi_capture)
 
 @pytest.mark.parametrize(
     "command",
-    ("BSE:AUTH:KI?", "BSE:AUTH:OPC?", "BSE:AUTHENTICATION:KEY?"),
+    (
+        "BSE:AUTH:KI?",
+        "BSE:AUTH:OPC?",
+        "BSE:AUTHENTICATION:KEY?",
+        "CONF:AUTH:KEY:VALUE?",
+    ),
 )
 def test_bare_auth_secret_query_response_is_fully_redacted(
     scpi_capture, command
@@ -253,6 +261,7 @@ def test_bare_auth_secret_query_response_is_fully_redacted(
 
     assert driver._query(command) == ki
     rx = _direction(scpi_capture.records, "RX")[0]
+    assert rx.command == command
     rendered = f"{rx.getMessage()} {rx.response}"
     assert ki not in rendered
     assert "[REDACTED]" in rendered
@@ -260,7 +269,12 @@ def test_bare_auth_secret_query_response_is_fully_redacted(
 
 @pytest.mark.parametrize(
     "command",
-    ("BSE:AUTH:KI?", "BSE:AUTH:OPC?", "BSE:AUTHENTICATION:KEY?"),
+    (
+        "BSE:AUTH:KI?",
+        "BSE:AUTH:OPC?",
+        "BSE:AUTHENTICATION:KEY?",
+        "CONF:AUTH:KEY:VALUE?",
+    ),
 )
 def test_bare_auth_secret_error_is_redacted_but_exception_is_unchanged(
     scpi_capture, command
@@ -273,6 +287,7 @@ def test_bare_auth_secret_error_is_redacted_but_exception_is_unchanged(
 
     assert caught.value is original
     err = _direction(scpi_capture.records, "ERR")[0]
+    assert err.command == command
     assert ki not in err.getMessage()
     assert "[REDACTED]" in err.getMessage()
 
@@ -290,6 +305,81 @@ def test_bare_auth_secret_write_error_is_redacted_but_exception_is_unchanged(
     err = _direction(scpi_capture.records, "ERR")[0]
     assert ki not in err.getMessage()
     assert "[REDACTED]" in err.getMessage()
+
+
+def test_hierarchical_auth_path_redacts_final_operand_without_changing_wire_value(
+    scpi_capture,
+):
+    secret = "0123456789ABCDEF0123456789ABCDEF"
+    command = f"CONF:AUTH:KEY:VALUE {secret}"
+    driver = _Driver()
+
+    driver._write(command)
+
+    assert driver.seen == [command]
+    rendered = " ".join(record.getMessage() for record in scpi_capture.records)
+    assert secret not in rendered
+    assert "CONF:AUTH:KEY:VALUE [REDACTED]" in rendered
+
+
+@pytest.mark.parametrize(
+    "secret",
+    ('"alpha;bravo"', '"alpha;""bravo"', "'alpha;''bravo'", '"alpha;bravo'),
+)
+def test_quoted_auth_operand_with_semicolon_is_not_split_or_leaked(
+    scpi_capture, secret
+):
+    command = f"CONF:AUTH:KEY:VALUE {secret}"
+    driver = _Driver()
+
+    driver._write(command)
+
+    assert driver.seen == [command]
+    rendered = " ".join(record.getMessage() for record in scpi_capture.records)
+    assert "alpha" not in rendered
+    assert "bravo" not in rendered
+    assert "CONF:AUTH:KEY:VALUE [REDACTED]" in rendered
+
+
+def test_relative_scpi_header_inherits_sensitive_auth_path(scpi_capture):
+    command = "CONF:AUTH:KEY:VALUE alpha;VALUE bravo"
+
+    _Driver()._write(command)
+
+    rendered = " ".join(record.getMessage() for record in scpi_capture.records)
+    assert "alpha" not in rendered
+    assert "bravo" not in rendered
+    assert "CONF:AUTH:KEY:VALUE [REDACTED];VALUE [REDACTED]" in rendered
+
+
+def test_absolute_scpi_header_resets_sensitive_auth_path(scpi_capture):
+    command = "CONF:AUTH:KEY:VALUE alpha;:MEAS:VALUE bravo"
+
+    _Driver()._write(command)
+
+    rendered = " ".join(record.getMessage() for record in scpi_capture.records)
+    assert "alpha" not in rendered
+    assert ":MEAS:VALUE bravo" in rendered
+
+
+def test_common_scpi_header_does_not_break_sensitive_relative_context(scpi_capture):
+    command = "CONF:AUTH:KEY:VALUE alpha;*OPC?;VALUE bravo"
+
+    _Driver()._write(command)
+
+    rendered = " ".join(record.getMessage() for record in scpi_capture.records)
+    assert "alpha" not in rendered
+    assert "bravo" not in rendered
+    assert ";*OPC?;VALUE [REDACTED]" in rendered
+
+
+def test_ordinary_relative_scpi_headers_remain_visible(scpi_capture):
+    command = "SOUR:FREQ:START 1;STOP 2"
+
+    _Driver()._write(command)
+
+    rendered = " ".join(record.getMessage() for record in scpi_capture.records)
+    assert command in rendered
 
 
 def test_standard_opc_response_is_not_misclassified_as_authentication_secret(
@@ -708,6 +798,50 @@ def test_scpi_file_retention_is_capped_at_30_days(
         captured["handlers"]["file_scpi"]["backupCount"]
         == expected_scpi_days
     )
+    assert "exclude_scpi_from_app" in captured["handlers"]["file_app"]["filters"]
+    assert captured["loggers"]["app.hal.scpi"]["propagate"] is True
+
+
+def test_app_log_filter_excludes_only_propagated_scpi_records():
+    filter_cls = logging_config.ExcludeLoggerPrefixesFilter
+    app_filter = filter_cls(("app.hal.scpi",))
+
+    assert app_filter.filter(logging.LogRecord(
+        "app.hal.scpi.uxm", logging.DEBUG, __file__, 1, "TX", None, None
+    )) is False
+    assert app_filter.filter(logging.LogRecord(
+        "app.hal.uxm_base_station", logging.WARNING, __file__, 1,
+        "reconnect", None, None
+    )) is True
+
+
+def test_scpi_disabled_keeps_console_evidence_out_of_app_log(tmp_path):
+    marker = "SCPI_DISABLED_ROUTE_SENTINEL"
+    code = f"""
+import logging
+from app.core.logging_config import setup_logging
+
+setup_logging(
+    debug=True,
+    log_dir={str(tmp_path)!r},
+    scpi_enabled=False,
+    db_log_enabled=False,
+)
+logging.getLogger("app.hal.scpi.uxm").info({marker!r})
+for handler in logging.getLogger().handlers:
+    handler.flush()
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert marker in completed.stdout
+    assert marker not in (tmp_path / "app.log").read_text(encoding="utf-8")
+    assert not (tmp_path / "scpi.log").exists()
 
 
 def test_scpi_file_retention_defaults_to_30_days():

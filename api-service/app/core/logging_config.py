@@ -78,6 +78,20 @@ class ContextFilter(logging.Filter):
         return True
 
 
+class ExcludeLoggerPrefixesFilter(logging.Filter):
+    """让专用高敏日志保留在自己的文件，同时仍可传播到控制台。"""
+
+    def __init__(self, prefixes: tuple[str, ...] | list[str]) -> None:
+        super().__init__()
+        self._prefixes = tuple(prefix.rstrip(".") for prefix in prefixes)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not any(
+            record.name == prefix or record.name.startswith(f"{prefix}.")
+            for prefix in self._prefixes
+        )
+
+
 # ============================================================
 # 2. JSON Formatter (无外部依赖的轻量实现)
 # ============================================================
@@ -179,6 +193,10 @@ def setup_logging(
             "context_filter": {
                 "()": ContextFilter,
             },
+            "exclude_scpi_from_app": {
+                "()": ExcludeLoggerPrefixesFilter,
+                "prefixes": ["app.hal.scpi"],
+            },
         },
         "formatters": {
             "console": {
@@ -206,7 +224,7 @@ def setup_logging(
                 "class": "logging.handlers.TimedRotatingFileHandler",
                 "level": "DEBUG",
                 "formatter": "json",
-                "filters": ["context_filter"],
+                "filters": ["context_filter", "exclude_scpi_from_app"],
                 "filename": app_log_path,
                 "when": "midnight",
                 "interval": 1,
@@ -244,11 +262,12 @@ def setup_logging(
             "backupCount": scpi_retention_days,
             "encoding": "utf-8",
         }
-        # app.hal.scpi 命名空间的日志 → 同时写入 scpi.log
+        # app.hal.scpi 命名空间的日志 → 写入 scpi.log，并传播到控制台；
+        # file_app 上的命名空间过滤器阻止同一高敏证据复制进长期 app.log。
         config["loggers"]["app.hal.scpi"] = {
             "level": "DEBUG",
             "handlers": ["file_scpi"],
-            "propagate": True,  # 同时传播到 root (app.log + console)
+            "propagate": True,
         }
 
     # Handler 4 (可选): 数据库 SQL 查询日志

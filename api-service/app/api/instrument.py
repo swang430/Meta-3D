@@ -14,8 +14,8 @@ from pydantic import BaseModel, Field
 
 from app.db.database import get_db
 from app.hal.base import (
+    redact_instrument_command_text,
     redact_instrument_exchange_text,
-    redact_instrument_log_text,
 )
 from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
 from app.models.diagnostic_run import DiagnosticKind
@@ -1864,7 +1864,7 @@ async def _run_command_via_hal(
     import time
 
     is_query = command.strip().endswith("?")
-    safe_command = redact_instrument_log_text(command)
+    safe_command = redact_instrument_command_text(command)
     start = time.monotonic()
     pass_timeout = timeout_ms is not None and _driver_supports_timeout_kwarg(driver)
     try:
@@ -1990,7 +1990,7 @@ def _send_scpi_command(
     import time
 
     is_query = command.strip().endswith("?")
-    safe_command = redact_instrument_log_text(command)
+    safe_command = redact_instrument_command_text(command)
     start = time.monotonic()
 
     try:
@@ -2199,7 +2199,7 @@ async def send_scpi_command(
 
     ip, port = _resolve_ip_port(request.ip, request.port, conn)
     raw_command = request.command.strip()
-    safe_command = redact_instrument_log_text(raw_command)
+    safe_command = redact_instrument_command_text(raw_command)
     target_name = f"{category_key}: {safe_command}"
     audit_params: Dict[str, Any] = {
         "category_key": category_key,

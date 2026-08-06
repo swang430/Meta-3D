@@ -178,7 +178,7 @@ class TestScpiCommandAudit:
         secret = "0123456789ABCDEF0123456789ABCDEF"
         resp = client.post(
             f"/api/v1/instruments/{category.category_key}/scpi-command",
-            json={"command": f"BSE:AUTH:KI {secret}"},
+            json={"command": f"CONF:AUTH:KEY:VALUE {secret}"},
         )
         assert resp.status_code == 200
         assert secret in resp.json()["command"], "API 返回值保持原始操作员输入"

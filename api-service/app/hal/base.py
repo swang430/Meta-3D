@@ -92,19 +92,109 @@ _AUTH_SECRET_LOG_RE = re.compile(
     r'(?:"[^"]*"|\'[^\']*\'|[^\"\';,\s}]+)',
     re.IGNORECASE,
 )
-_AUTH_SECRET_QUERY_RE = re.compile(
-    r"(?:^|[:;,\s])(?:AUTH(?:ENTICATION)?[:_](?:KI|OPC|KEY)|"
-    r"KI|OPC|PASSWORD|PASSWD|SECRET|TOKEN)\s*\?",
-    re.IGNORECASE,
-)
 _BARE_IMSI_LOG_RE = re.compile(r"(?<!\d)(\d{10,18})(?!\d)")
+_DIRECT_AUTH_PATH_TOKENS = frozenset({
+    "KI", "OPC", "PASSWORD", "PASSWD", "SECRET", "TOKEN",
+})
+_AUTH_KEY_TOKEN_RE = re.compile(r"^AUTH(?:ENTICATION)?_?KEY$", re.IGNORECASE)
+
+
+def _split_scpi_program_message(command: str) -> List[str]:
+    """按未被引号包裹的分号切分 SCPI program message。"""
+    segments: List[str] = []
+    current: List[str] = []
+    quote: Optional[str] = None
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if quote is not None:
+            current.append(char)
+            if char == "\\" and index + 1 < len(command):
+                # 宽容处理常见反斜杠转义；SCPI 标准字符串的双引号转义见下支。
+                index += 1
+                current.append(command[index])
+            elif char == quote:
+                if index + 1 < len(command) and command[index + 1] == quote:
+                    index += 1
+                    current.append(command[index])
+                else:
+                    quote = None
+        elif char in {'"', "'"}:
+            quote = char
+            current.append(char)
+        elif char == ";":
+            segments.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+        index += 1
+    segments.append("".join(current))
+    return segments
+
+
+def _auth_secret_path_tokens(tokens: List[str]) -> bool:
+    """判定已解析的绝对 header 路径是否指向认证秘密。"""
+    if tokens == ["*OPC"]:
+        return False
+    if any(token in _DIRECT_AUTH_PATH_TOKENS for token in tokens):
+        return True
+    if any(_AUTH_KEY_TOKEN_RE.fullmatch(token) for token in tokens):
+        return True
+    auth_positions = [
+        index for index, token in enumerate(tokens)
+        if token in {"AUTH", "AUTHENTICATION"}
+    ]
+    return any(
+        any(token in {"KEY", "KI", "OPC"} for token in tokens[index + 1:])
+        for index in auth_positions
+    )
+
+
+def _scpi_segments_with_sensitivity(command: str) -> List[tuple[str, bool]]:
+    """解析分号序列并按 SCPI 相对 header 规则继承命令树上下文。"""
+    classified: List[tuple[str, bool]] = []
+    parent_tokens: List[str] = []
+    for segment in _split_scpi_program_message(command):
+        stripped = segment.strip()
+        if not stripped:
+            classified.append((segment, False))
+            continue
+
+        raw_header = stripped.split(maxsplit=1)[0]
+        header = raw_header.upper().removesuffix("?")
+        if header.startswith("*"):
+            # IEEE 488.2 common command 不属于仪器命令树，也不改变后续相对
+            # header 的当前路径；例如 ``...:VALUE x;*OPC?;VALUE y``。
+            classified.append((segment, False))
+            continue
+
+        own_tokens = [token for token in header.split(":") if token]
+        resolved_tokens = (
+            own_tokens
+            if raw_header.startswith(":")
+            else [*parent_tokens, *own_tokens]
+        )
+        classified.append((segment, _auth_secret_path_tokens(resolved_tokens)))
+        if resolved_tokens:
+            parent_tokens = resolved_tokens[:-1]
+    return classified
 
 
 def _queries_auth_secret(cmd: str) -> bool:
-    """只识别认证秘密查询，不能把 IEEE 488.2 ``*OPC?`` 当作 OPc。"""
-    if cmd.strip().upper() == "*OPC?":
-        return False
-    return bool(_AUTH_SECRET_QUERY_RE.search(cmd))
+    return any(
+        segment.strip().split(maxsplit=1)[0].endswith("?")
+        and sensitive
+        for segment, sensitive in _scpi_segments_with_sensitivity(cmd)
+        if segment.strip()
+    )
+
+
+def _command_has_auth_secret_operand(cmd: str) -> bool:
+    return any(
+        sensitive
+        and len(segment.strip().split(maxsplit=1)) == 2
+        for segment, sensitive in _scpi_segments_with_sensitivity(cmd)
+    )
 
 
 def redact_instrument_log_text(
@@ -134,6 +224,22 @@ def redact_instrument_log_text(
     )
 
 
+def redact_instrument_command_text(command: Any) -> str:
+    """清洗命令副本；分层认证路径保留 header，只遮蔽最终操作数。"""
+    safe_parts: List[str] = []
+    for part, sensitive in _scpi_segments_with_sensitivity(str(command)):
+        match = re.match(r"(\s*\S+)(\s+)(.*)", part, re.DOTALL)
+        if match and sensitive:
+            safe_parts.append(f"{match.group(1)}{match.group(2)}[REDACTED]")
+        elif sensitive:
+            # 查询 header 本身不是秘密；不能再交给通用文本规则，否则
+            # ``CONF:AUTH:KEY:VALUE?`` 会被误改成不可辨识的半条命令。
+            safe_parts.append(part)
+        else:
+            safe_parts.append(redact_instrument_log_text(part))
+    return ";".join(safe_parts)
+
+
 def redact_instrument_exchange_text(value: Any, *, command: str) -> str:
     """清洗与一条命令关联的响应/异常副本，保留真正传输值不变。"""
     text = redact_instrument_log_text(
@@ -144,7 +250,7 @@ def redact_instrument_exchange_text(value: Any, *, command: str) -> str:
     # 失败异常可能只回显裸值。IMSI 不走第二类，仍保留末四位的现场辨识能力。
     if text and (
         _queries_auth_secret(command)
-        or _AUTH_SECRET_LOG_RE.search(command)
+        or _command_has_auth_secret_operand(command)
     ):
         return "[REDACTED]"
     return text
@@ -268,7 +374,7 @@ class InstrumentDriver(ABC):
         ⚠ 这行**不代表仪器收到了** —— 它记在 _do_write / _do_query 执行之前,
         语义是"程序打算发这条"。是否走完看配对的 OK / RX / ERR 行。
         """
-        safe_cmd = redact_instrument_log_text(cmd)
+        safe_cmd = redact_instrument_command_text(cmd)
         self._scpi_logger.debug(
             f"TX: {safe_cmd}",
             extra={
@@ -305,7 +411,7 @@ class InstrumentDriver(ABC):
         拿"空回复 60,565 条"当立项证据的, 量错了长度等于把证据量废。
         """
         raw_len = len(response)
-        safe_cmd = redact_instrument_log_text(cmd)
+        safe_cmd = redact_instrument_command_text(cmd)
         body = redact_instrument_exchange_text(response, command=cmd).strip()
         shown_len = len(body)
         if shown_len > _SCPI_LOG_RESP_MAX:
@@ -342,7 +448,7 @@ class InstrumentDriver(ABC):
         261,755 条查询), 所以给每条写补一条完成行的体量代价可忽略,
         换来的是"发了就一定有配对记录", 不必靠"没看到报错"去推断成功。
         """
-        safe_cmd = redact_instrument_log_text(cmd)
+        safe_cmd = redact_instrument_command_text(cmd)
         self._scpi_logger.debug(
             f"OK: {safe_cmd}",
             extra={
@@ -376,7 +482,7 @@ class InstrumentDriver(ABC):
         这类写法会把整段响应嵌进异常, 不设限的话被 RX 挡住的 3412 字符会从
         ERR 行原样漏出去, 与本片"给日志加边界"正相反。
         """
-        safe_cmd = redact_instrument_log_text(cmd)
+        safe_cmd = redact_instrument_command_text(cmd)
         detail = redact_instrument_exchange_text(exc, command=cmd)
         if len(detail) > _SCPI_LOG_RESP_MAX:
             detail = (
