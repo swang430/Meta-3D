@@ -393,6 +393,13 @@ class InstrumentDriver(ABC):
         语义是"程序打算发这条"。是否走完看配对的 OK / RX / ERR 行。
         """
         safe_cmd = redact_instrument_command_text(cmd)
+        from app.hal.scpi_evidence import record_exchange_intent
+        record_exchange_intent(
+            exchange_id=exchange_id,
+            instrument_id=self.instrument_id,
+            operation=operation,
+            command=safe_cmd,
+        )
         self._scpi_logger.debug(
             f"TX: {safe_cmd}",
             extra={
@@ -451,6 +458,12 @@ class InstrumentDriver(ABC):
         if duration_ms is not None:
             extra["duration_ms"] = round(duration_ms, 3)
         self._scpi_logger.debug(f"RX: {body}", extra=extra)
+        from app.hal.scpi_evidence import record_exchange_terminal
+        record_exchange_terminal(
+            exchange_id=exchange_id,
+            result_type=extra["result_type"],
+            response=body,
+        )
 
     def _log_scpi_done(
         self,
@@ -479,6 +492,8 @@ class InstrumentDriver(ABC):
                 "duration_ms": round(duration_ms, 3),
             },
         )
+        from app.hal.scpi_evidence import record_exchange_terminal
+        record_exchange_terminal(exchange_id=exchange_id, result_type="ok")
 
     def _log_scpi_error(
         self,
@@ -520,6 +535,12 @@ class InstrumentDriver(ABC):
                 "error_type": type(exc).__name__,
                 "duration_ms": round(duration_ms, 3),
             },
+        )
+        from app.hal.scpi_evidence import record_exchange_terminal
+        record_exchange_terminal(
+            exchange_id=exchange_id,
+            result_type=_exception_result_type(exc),
+            response=detail,
         )
 
     # ── SCPI 模板方法 (子类覆盖 _do_write / _do_query) ────────

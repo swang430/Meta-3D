@@ -1454,3 +1454,66 @@ def test_gitignore_does_not_shadow_tracked_sources():
         + "\n已跟踪的不受影响，但往同一目录**新加**的文件会被静默忽略。"
         "\n多半是漏了开头的 `/`（`data/` 匹配任何叫 data 的目录，`/data/` 只匹配根下那个）。"
     )
+
+
+# ── G12: P0-5 SCPI 手册证据范围不得被现场观察/配置声明放宽 ───────
+
+def test_g12_p0_5_scpi_evidence_catalog_is_strict_and_complete():
+    """关键命令有来源；IRAT 未证错误队列与 APPLY 范围必须保持 fail-closed。"""
+    from app.hal.scpi_evidence import (
+        EvidenceStatus,
+        InstrumentEnvironment,
+        evaluate_catalog_scope,
+        load_p0_5_catalog,
+    )
+
+    path = _API_SERVICE_ROOT / "app/data/scpi_evidence/p0_5_commands.json"
+    catalog = load_p0_5_catalog(path)
+    mandatory = {entry.id for entry in catalog.entries.values() if entry.mandatory}
+    expected = {
+        "f64.model_load", "f64.operation_complete", "f64.error_queue",
+        "f64.simulation_state", "f64.model_state", "f64.center_frequency",
+        "f64.input_reference", "f64.crest_factor", "f64.output_gain",
+        "f64.output_loss", "f64.bypass_mode", "uxm.config_readback",
+        "uxm.config_apply", "uxm.cell_status", "uxm.error_queue",
+        "uxm.dl_throughput", "positioner.move_absolute",
+        "positioner.position_feedback",
+    }
+    assert mandatory == expected
+    source_ids = {
+        "f64": "982222b7-4953-46cd-9949-00fa97882353",
+        "uxm": "236d9621-e3ce-4ed1-a8e1-7819b674dbcd",
+        "positioner": "aerotech-ensemble-ascii-v1.0",
+    }
+    source_kinds = {
+        "f64": "notebooklm",
+        "uxm": "notebooklm",
+        "positioner": "vendor-integration",
+    }
+    assert all(
+        (
+            entry.source.kind,
+            entry.source.source_id,
+        )
+        == (
+            source_kinds[entry.instrument],
+            source_ids[entry.instrument],
+        )
+        for entry in catalog.entries.values()
+    )
+
+    irat = InstrumentEnvironment(
+        instrument_id="gate",
+        instrument="uxm",
+        model="E7515B",
+        firmware_version="28.21.0.32",
+        test_application="LTE_NR_IRAT",
+        captured_from_live_connection=True,
+    )
+    err = catalog.entries["uxm.error_queue"]
+    assert err.status is EvidenceStatus.UNVERIFIED
+    assert not evaluate_catalog_scope(err, irat).eligible
+    # BSE APPLY 的现有手册来源只声明 NSA|SA；不得凭现场能发就扩到 IRAT。
+    assert not evaluate_catalog_scope(catalog.entries["uxm.config_apply"], irat).eligible
+    assert not evaluate_catalog_scope(catalog.entries["uxm.cell_status"], irat).eligible
+    assert not evaluate_catalog_scope(catalog.entries["uxm.dl_throughput"], irat).eligible

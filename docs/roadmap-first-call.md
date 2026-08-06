@@ -15,9 +15,9 @@
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
-**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → **P1-47B** → P1-47C → P1-28 → P1-43 → P1-44 → P1-42 → P1-40 → P1-37 → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1）。
+**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → **P1-47C** → P1-28 → P1-43 → P1-44 → P1-42 → P1-40 → P1-37 → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1）。
 
-**Current Focus = P1-47B**。P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
+**Current Focus = P1-47C**。P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
 SCPI 闭环依赖链：先把现场项映射到载体 → 用手册证据修判定和缺失载体 → 止住错误队列
 无限循环 → 补传输配对 → 补仪器接受/生效语义 → 接入正式 TestCase。P1-28 在这条链完成后
 成为 Current Focus。设计与逐片实施计划见
@@ -223,7 +223,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → **P1-47A** → P1-47B → P1-47C → P1-28 → P1-43 → P1-44 → P1-42 → P1-40 → P1-37 → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-06 用户批准“SCPI 闭环整体前置”；当前执行片只看顶部 **Current Focus**，完成 P1-47C 后切到 P1-28）|
+| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → **P1-47C** → P1-28 → P1-43 → P1-44 → P1-42 → P1-40 → P1-37 → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-06 用户批准“SCPI 闭环整体前置”；当前执行片只看顶部 **Current Focus**，完成 P1-47C 后切到 P1-28）|
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；先等 P1-47C 本地证据链）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -2267,7 +2267,7 @@ A–D 分类，但不拿它覆盖正式流程载体）：
 
 ---
 
-### P1-47 — P0-5 SCPI 指令→回复→接受→生效→结果证据闭环 🔄（2026-08-06 用户批准，A 已完成，B/C 待完成）
+### P1-47 — P0-5 SCPI 指令→回复→接受→生效→结果证据闭环 🔄（2026-08-06 用户批准，A/B 已完成，C 待完成）
 
 **可观察故障**：2026-07-21 现场已完成 DUT attach 与转台四方向吞吐，但同一次执行里
 拿不出关键 SCPI 的完整配对、仪器接受证据和实际生效状态。今天只能证明“物理链路能跑”，
@@ -2301,7 +2301,7 @@ A–D 分类，但不拿它覆盖正式流程载体）：
 | Slice | 交付 | Acceptance |
 |---|---|---|
 | **P1-47A 传输证据** ✅ Done（2026-08-07，本 PR） | 公共 SCPI helper 与活跃 `RealAerotechDriver._send` socket 路径的 TX/OK/RX/ERR 共用同一证据结构和 `exchange_id`；统一 command/query；timeout/cancelled 明确留痕后原样传播；IMSI/认证信息入日志前脱敏；原始 SCPI 日志默认最多保留30天 | UXM/F64/转台并发与嵌套调用均可配对；空串/空白/`not ready` 不合并；变异删除ID、绕过Aerotech、吞取消、取消脱敏/留存上限均红 |
-| **P1-47B 仪器证据** | 机器可检查的关键命令手册清单；从真实连接采集型号/固件/Test App；F64 写→OPC→ERR→回读→STATE；UXM 配置回读/APPLY/协议栈状态分层；转台请求角/反馈角/容差 | 实际环境不在证据范围，或证据为 `onsite-observed` / `unverified` 时不得判绿；回显不得冒充生效 |
+| **P1-47B 仪器证据** ✅ Done（2026-08-07，本片） | 机器可检查的关键命令手册清单；从真实连接采集型号/固件/Test App；F64 清旧队列→写→OPC→ERR→回读→STATE；UXM 配置回读/APPLY/协议栈状态/正吞吐分层；转台请求角/反馈角/容差 | 实际环境不在证据范围，或证据为 `onsite-observed` / `unverified` 时不得判绿；回显不得冒充生效 |
 | **P1-47C 正式执行** | 同一 `TestExecution.config.scpi_evidence` 持久化 requested/command_sent/readback/exchange_ids/evidence_level/source_reference/verdict/reason 与执行环境快照；执行状态 FastAPI schema/endpoint 读回；ReportDataCollector→ReportService→PDF 活跃链传递；GUI/报告分层展示 | 证据不得 write-only；任一 mandatory 项 unknown/rejected、非confirmed或范围不匹配，正式验收不得显示通过；摘要可由 execution+exchange 精确追溯原始往返；变异让API/collector丢证据必须红 |
 
 **P1-47A 完成实况（2026-08-07）**：公共 SCPI 模板方法和 Aerotech 活跃 socket
@@ -2319,7 +2319,28 @@ UXM/F64/FS16 重连告警。GitHub Codex 外审 R1 又抓出并已修复两处�
 经 root 重复落入长期 `app.log`；R2 又抓出并已修复 `AUTHentication` 中间缩写漏判。
 两轮上限已到，该尾部修复不发 R3，并已如实登记外审覆盖缺口；后端全量
 `3288 passed, 5 skipped`。本片没有产生需
-另行提升的 Discovered 项，下一片按既定顺序进入 P1-47B。
+另行提升的 Discovered 项；P1-47B 已完成，下一片按既定顺序进入 P1-47C。
+
+**P1-47B 完成实况（2026-08-07）**：新增18项 P0-5 强制证据清单，逐项固定来源、
+章节、适用型号/Test Application、`confirmed | onsite-observed | unverified` 与最高证据等级；
+任何配置声明、断线残留身份、未知型号/固件、Test App 越界或非 confirmed 来源均不能判绿。
+F64 只有在同一事务具备清旧错误队列、成功写入、`*OPC?=1`、写后错误队列 clean、
+回读匹配及 `RUNNING` 状态时才逐级到 E2/E3；UXM 配置回读只到 E2，成功 APPLY 加协议栈
+状态才到 E3，有效且有限的正吞吐才到 E4；转台保存目标角、原始反馈、已标定坐标偏置、
+修正角与 ±1° 容差。构造器直接消费 P1-47A 的成功往返对象，不能靠布尔值或漂亮回读
+绕过 timeout/cancelled/device rejection。UXM 平台硬件固件与 Test Application Framework
+版本分别保存，命令范围按业务端点版本核对。当前 LTE_NR_IRAT 的错误队列、通用 APPLY、
+NR 状态与下行吞吐手册范围均明确保持 unknown；Aerotech 当前 AeroBasic 路径没有已佐证
+的型号/固件查询，
+即使反馈角合格也保持 unknown，留待 P0-5 前补齐厂商依据。内审 R1 的七项发现已全部
+闭环：命令角色精确匹配、值只从真实响应与线上命令解析、同 execution/capture 严格连续
+顺序、mandatory 最高等级门、UXM 重连清残留身份、转台圆周角差与 1° 上限、来源类型与
+ID 双重白名单；另外补上 UXM 写入/回读同路径和线上实际写值校验。内审 R2 又用反例拦下
+四个假绿：无原文的 IRAT 范围、整组旧 execution 复用、requested 与线上写值脱钩、query
+冒充 command；四项均已按 fail-closed 原则闭环。最终全量后端回归与 GitHub Codex 外审
+结果在本片合并前补记；内审 R3 复验四项反例与正常控制样例后结论 CLEAN，修复后全量
+后端回归为 `3330 passed / 5 skipped`。
+下一片按既定顺序进入 P1-47C。
 
 **正式验收**：诊断序列只做出发前能力/载体验证；P0-5 仍从正式 TestCase 启动。
 同一个 execution 必须证明 UXM RRC connected + bearer active、F64 模型匹配且 RUNNING、
@@ -3270,7 +3291,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 - `[discovered 2026-08-06 during P1-39 拆分后外审，已修主体，余项记此]` **跳转到日志时会发两次 `/tail`（P3，纯浪费不影响正确性）** —— 实测：修惰性初值前是 **3 个请求、其中 2 个不带 `execution_id`**（未过滤结果可能乱序盖掉已过滤的，而徽章已显示过滤）；`ReportsPage` + `SystemLogViewer` 两层都用惰性初值之后是 **2 个请求、0 个不带过滤** —— 竞态已消除（两个都过滤到同一执行，乱序也一样）。剩下那次重复大概率来自 `clearTextFilters()` 改了 `levelFilter`/`keyword` 触发的 refetch。修法候选：把「预填过滤 + 清文本过滤」合并成一次 state 更新，或给取数加去重/取消。⚠️ 别为此加请求管理机制 —— 量级只有一次多余请求。
 - `[discovered 2026-08-06 during P1-45/46 立项，Codex #293 R2 P1 抓出]` **⚠️ `uxm_scpi_compatibility` 在 IRAT 方言上永远不可能成功（P1，活 bug）** —— `_CRITICAL_NAMES` 里含 `TDD_PATTERN`，而它在 `UxmLteNrIratProfile` 上**是 `None`**（P1-33 逐条 grep 手册原件确认「手册 0 命中」——TDD 在本仪器上是**六个数**不是 pattern 字符串）。`uxm_scpi_compatibility:520-533` 的 `critical_undefined` 把「在 critical 集里但 profile 上不是 str」的全收进来并令 `success = False` → **该序列在 IRAT 上每次都判失败**，而现场就是靠它给 P1-33 结论。⚠️ **同一形态已经处理过一次**：`:146-152` 因为完全相同的理由把 `MEAS_BTHROUGHPUT_DL_BLER` 移出了 critical 清单，**`TDD_PATTERN` 漏了**。修法随 **P1-46** 第 2 件交付物一起做（判定集跟 `MAC_CFG_MANDATORY` 对齐 + 排除 `MAC_CFG_NO_EQUIVALENT` 那档）。
-- `[discovered 2026-08-07 during P1-41 内审 F2]` **两条 UXM 诊断序列仍各自维护有界、硬编码的错误队列读取（待 triage，不自动进 roadmap/backlog）** —— `uxm_config_truth_probe.py` 最多读 100 次并硬编码 `SYST:ERR?`；`uxm_manual_spelling_probe.py` 也有自己的有界排队逻辑。它们不在 `RealUxmDriver` 的生产业务路径上，因此不是本次 24 GB 无界事故的已证根因，也不应扩大 P1-41 顺手重构；但在错误查询自身持续返回 `-113` 时，诊断输出仍会重复，且短命令形式绕过 profile。候选出路：P1-47B 立项时评估是否抽取诊断专用公共 helper；进入哪一层必须先做 triage。
+- `[triaged 2026-08-07 during P1-47B；原 discovered 2026-08-07 during P1-41 内审 F2；→ 正式延后 backlog/P3]` **两条 UXM 诊断序列仍各自维护有界、硬编码的错误队列读取** —— `uxm_config_truth_probe.py` 最多读 100 次并硬编码 `SYST:ERR?`；`uxm_manual_spelling_probe.py` 也有自己的有界排队逻辑。两者不在正式 TestCase/`RealUxmDriver` 业务路径上，且已有明确上界，不影响 P1-47B 的同次执行证据构造；现在抽公共 helper 会扩大本片范围，也不能解决 LTE_NR_IRAT 手册适用性未知。结论：不并入 P1-47B，进入正式延后 backlog/P3；将来处理时必须复用 profile 命令并保持 error-query-self-rejection fail-closed。
+- `[triaged 2026-08-07 during P1-47B；→ ON-SITE-BLOCKED / Known unknown]` **Aerotech 活跃 AeroBasic/TCP 路径没有已佐证的型号与固件查询** —— 现有厂商集成说明能证明 `MOVEABS`、`PFBK`、ACK/错误形态与偏置校准，但没有安全的身份查询；数据库/connection config 里的 `A3200` 只是声明，不能冒充实时环境。P1-47B 已让角度证据在型号或固件缺失时强制 unknown；P1-47C 只持久化这个 unknown，不补假值。P0-5 正式复验前必须从厂商手册找到并实现只读身份查询，或取得明确覆盖现场控制器的等价厂商证据，否则该 mandatory 环境门不能关闭。
 - `[discovered 2026-08-06 during P1-45/46 立项，Codex #293 R2→R3 两轮才判对]` **P1-6 现场半（真 idle-close 复现）没有载体序列（P3）** —— ⚠️ **我判错过一次**：R2 时写成「F64 侧剧本，跟 `propsim_f64_state_machine` 一起排」，而 P1-6 的正式定义（`### P1-6`）是「**FS16 / UXM / ENA** silent-reconnect 集成测试」，条目原文明写「**F64 已有 12 个集成测试**，FS16 / UXM / ENA 继承了同一模式但没有各自的集成测试」——**我指向了唯一已经覆盖了的那个驱动**。正解：载体要打在 **FS16**（`propsim_fs16_health` 可扩）/ **UXM** / **ENA**（`vna_ena_health` 可扩）三个上，且它是 C 类（要制造 idle 再看重连），不是只读普查。
 - `[discovered 2026-08-06 during P1-39 内审 F7 域枚举 —— 判定为越界，本片未做]` **「待归档执行」是第 4 个拿不到 ID 的界面（P3）** —— `gui/src/features/Reports/components/PendingExecutionsList.tsx` 的两张表都只把 `record.id` / `record.execution_id` 当 React `key`，列是 用例名/时长/完成日期/来源/操作，**跟 P1-39 改动前那三处一模一样**。它就在报告页第一个页签，跟系统日志同页并列。修法**已经现成**：套用本片的 `CopyableId` + `formatExecutionTag`，零新机制。⚠️ 同族第二例：`gui/src/features/TestManagement/README.md` 的用法示例写 `<TestManagement />`，没提 P1-39 新加的 `onViewLogs` —— 而同一份 README 里已有一段专门讲「`onCreateNew` 没人传所以入口不可达」，同一个坑的第二次。
 - `[discovered 2026-08-06 during P1-39 浏览器实测 —— pre-existing，判定为越界，本片未做]` **系统日志表「消息」列被挤到 83px，正文竖着排（P3）** —— 1280 视口实测各列宽：展开 32 / 时间 107 / 级别 70 / 请求 86 / 执行 86 / 模式 60 / **Logger 338** / **消息 83**。`Logger` 声明 `w={250}` 但被 `app.services.test_case_runner` 这类长 token 撑到 338，而**「消息」列没有 min-width 也不横向滚**（容器 `scrollWidth == clientWidth`），于是正文被压成一条竖带，等于读不了。**与 P1-39 无关**（该片一处列宽都没动，`git diff` 已核），但 P1-36 加「执行」列后更明显。修法候选：给消息列 `miw` + Logger 列 `truncate`/`ellipsis`，或整表加 `overflow-x: auto`（⚠ 后者要跟 sticky 表头一起验，别滚出错位）。
