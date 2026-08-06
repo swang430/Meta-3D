@@ -1516,6 +1516,17 @@ def test_g12_log_sort_does_not_mutate_state_and_expand_is_keyed():
             f"{_SLV_SOURCE} 的条目 key 不含 {field} —— key 必须由条目自身字段构成。"
             f"当前: {expr}"
         )
+    # ③b 补上"实参不得是下标"（G12 换判据时一度把这条丢了, 变异 M4 当场变绿 ——
+    #     构成检查与实参检查是**互补**的两个洞, 缺一个就能绕: 前者防"改 rowKey
+    #     函数体", 后者防"绕过 key 直接传下标"）。用**否定式**而不是白名单,
+    #     以免正当写法 (如 has(keys[i])) 被假红。
+    for arg in re.findall(r"expandedRows\.has\(([^)]*)\)", src):
+        a = arg.strip()
+        assert not re.fullmatch(r"\d+|idx|index|i", a), (
+            f"{_SLV_SOURCE} 的 expandedRows.has({a}) 传的是下标/常量 —— "
+            f"降序+自动刷新下下标会移位, 展开的行会跳到别的日志上。"
+        )
+
     for banned in ("indexOf", "index", "idx"):
         assert banned not in expr, (
             f"{_SLV_SOURCE} 的条目 key 掺入了下标来源 {banned!r} —— "

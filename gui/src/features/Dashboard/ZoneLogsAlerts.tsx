@@ -29,6 +29,8 @@ import {
 } from '@mantine/core'
 import {
   IconRefresh,
+  IconSortAscending,
+  IconSortDescending,
   IconTerminal2,
   IconBellRinging,
   IconSearch,
@@ -89,6 +91,13 @@ function LogPanel() {
   const [keyword, setKeyword] = useState('')
   const [filename, setFilename] = useState<string>('app.log')
   const [autoScroll, setAutoScroll] = useState(true)
+  // P1-39 (用户 2026-08-06 追加): 跟系统日志同一个方向开关。
+  //
+  // ⚠ **默认值故意跟系统日志不同**: 那边默认降序(新在最上), 这边默认 false
+  //   (维持新在最下)。不是疏忽 —— 这里有 autoScroll 自动滚到底, 两者配合才是
+  //   live tail 的正常形态; 把默认改成降序会让「自动滚动」变成滚向最旧的一条,
+  //   两个开关互相打架。给开关是为了让人能选, 不是为了强行统一默认。
+  const [sortDesc, setSortDesc] = useState(false)
   const [autoRefresh, setAutoRefresh] = useState(true)
   const viewportRef = useRef<HTMLDivElement>(null)
 
@@ -162,6 +171,9 @@ function LogPanel() {
     })
   }, [data, enabledLevels])
 
+  // ⚠ 复制再翻转 —— 就地 reverse 会改掉上游 useMemo 缓存的数组。
+  const displayEntries = sortDesc ? [...entries].reverse() : entries
+
   useEffect(() => {
     if (autoScroll && viewportRef.current) {
       viewportRef.current.scrollTo({ top: viewportRef.current.scrollHeight })
@@ -182,6 +194,11 @@ function LogPanel() {
             )}
           </Group>
           <Group gap="xs">
+            <Tooltip label={sortDesc ? '当前：最新在最上（点击改为最新在最下）' : '当前：最新在最下（点击改为最新在最上）'}>
+              <ActionIcon variant="subtle" onClick={() => setSortDesc((v) => !v)} aria-label="切换日志排序方向">
+                {sortDesc ? <IconSortDescending size={16} /> : <IconSortAscending size={16} />}
+              </ActionIcon>
+            </Tooltip>
             <Switch
               size="xs"
               label="自动滚动"
@@ -250,7 +267,7 @@ function LogPanel() {
             </Text>
           ) : (
             <Stack gap={2} p={4}>
-              {entries.map((e, i) => (
+              {displayEntries.map((e, i) => (
                 <Group key={`${e.ts}-${i}`} gap="xs" wrap="nowrap" align="flex-start">
                   <Text size="xs" c="dimmed" style={{ fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
                     {/* P1-34: 本地时区。原写法 split('T')[1].slice(0,8) 丢掉了

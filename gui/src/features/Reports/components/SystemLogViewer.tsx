@@ -5,7 +5,7 @@
  * 实时查看、级别过滤、关键词搜索和文件下载功能。
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Stack,
   Group,
@@ -282,6 +282,35 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
     })
   }
 
+  /** 展开后的详情卡。Codex #292 R1: 由表内那一行就地调用, 紧跟自己那行。 */
+  const renderDetail = (entry: LogEntry) => (
+    <Paper p="sm" mx="md" mb="xs" bg="gray.0" radius="sm">
+      <Group gap="lg" mb="xs">
+        <Text size="xs"><b>时间:</b> {formatLogDate(entry.ts)} {formatLogTime(entry.ts)}</Text>
+        <Text size="xs" c="dimmed"><b>原始:</b> {entry.ts || '—'}</Text>
+        <Text size="xs"><b>Instrument:</b> {entry.instrument_id}</Text>
+      </Group>
+      {/* P1-34: 一次请求内的全部日志（audit / runner / HAL / SCPI）带同一个 id。
+          点这里就把这条链单独捞出来。id 为 "-" 的行不是请求产生的
+          （启动期 / 后台任务），无链可串。 */}
+      <Group gap="xs" mb="xs">
+        <Text size="xs"><b>请求 ID:</b> {entry.session_id}</Text>
+        {entry.session_id && entry.session_id !== '-' && (
+          <Button size="compact-xs" variant="light" color="grape"
+                  onClick={() => isolateRequest(entry.session_id)}>
+            只看这一次请求
+          </Button>
+        )}
+      </Group>
+      <Code block style={{ fontSize: '11px', maxHeight: 200, overflow: 'auto' }}>
+        {(() => {
+          try { return JSON.stringify(JSON.parse(entry.raw as string), null, 2) }
+          catch { return entry.raw }
+        })()}
+      </Code>
+    </Paper>
+  )
+
   // P1-39 + 内审 F3: 条目身份。
   //
   // ⚠ **(ts, logger, msg) 三元组在真实日志里大面积撞车** —— 内审实测
@@ -297,10 +326,14 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
   const keyedEntries = useMemo(() => {
     const seen = new Map<string, number>()
     return entries.map((e) => {
-      const base = `${e.ts}|${e.logger}|${e.msg}`
+      // ⚠ 用 JSON 编码, **不要**手拼分隔符 + `#N` 后缀（Codex #292 R1）——
+      //   `foo` 的第 2 次出现会得到 `…|foo#1`, 而一条内容**字面就是** `foo#1`
+      //   的消息第 1 次出现也得到 `…|foo#1`, 两个命名空间重叠又撞回去了。
+      //   JSON.stringify 对数组是单射的（分隔符与内容各自转义, 不可能互相伪装）。
+      const base = JSON.stringify([e.ts, e.logger, e.msg])
       const n = seen.get(base) ?? 0
       seen.set(base, n + 1)
-      return { entry: e, key: n === 0 ? base : `${base}#${n}` }
+      return { entry: e, key: JSON.stringify([n, e.ts, e.logger, e.msg]) }
     })
   }, [entries])
 
@@ -561,8 +594,8 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
               )}
               {displayEntries.map(({ entry, key: rk }) => {
                 return (
+                <React.Fragment key={rk}>
                 <Table.Tr
-                  key={rk}
                   onClick={() => toggleRow(rk)}
                   style={{ cursor: 'pointer' }}
                 >
@@ -642,48 +675,23 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
                     </Text>
                   </Table.Td>
                 </Table.Tr>
+                {/* Codex #292 R1: 详情行必须**紧跟它自己那一行**。
+                    早前统一渲染在整张表之后 —— 升序时用户看的是表尾(最新),
+                    详情恰好就在旁边; 改成降序后用户展开的是**顶部**第 1 行,
+                    详情却在 200 行之外, 点了像没反应。这是本片改排序造出来的。 */}
+                {expandedRows.has(rk) && entry.raw && (
+                  <Table.Tr key={`detail-${rk}`}>
+                    <Table.Td colSpan={8} p={0}>
+                      {renderDetail(entry)}
+                    </Table.Td>
+                  </Table.Tr>
+                )}
+                </React.Fragment>
                 )
               })}
             </Table.Tbody>
           </Table>
 
-          {/* ── Expanded detail rows (rendered outside table for clean layout) ── */}
-          {displayEntries.map(({ entry, key: rk }) => (
-            expandedRows.has(rk) && entry.raw ? (
-              <Paper key={`detail-${rk}`} p="sm" mx="md" mb="xs" bg="gray.0" radius="sm">
-                <Group gap="lg" mb="xs">
-                  <Text size="xs"><b>时间:</b> {formatLogDate(entry.ts)} {formatLogTime(entry.ts)}</Text>
-                  <Text size="xs" c="dimmed"><b>原始:</b> {entry.ts || '—'}</Text>
-                  <Text size="xs"><b>Instrument:</b> {entry.instrument_id}</Text>
-                </Group>
-                {/* P1-34: 一次请求内的全部日志（audit / runner / HAL / SCPI）
-                    带同一个 id。点这里就把这条链单独捞出来。
-                    id 为 "-" 的行不是请求产生的（启动期 / 后台任务），无链可串。 */}
-                <Group gap="xs" mb="xs">
-                  <Text size="xs"><b>请求 ID:</b> {entry.session_id}</Text>
-                  {entry.session_id && entry.session_id !== '-' && (
-                    <Button
-                      size="compact-xs"
-                      variant="light"
-                      color="grape"
-                      onClick={() => isolateRequest(entry.session_id)}
-                    >
-                      只看这一次请求
-                    </Button>
-                  )}
-                </Group>
-                <Code block style={{ fontSize: '11px', maxHeight: 200, overflow: 'auto' }}>
-                  {(() => {
-                    try {
-                      return JSON.stringify(JSON.parse(entry.raw), null, 2)
-                    } catch {
-                      return entry.raw
-                    }
-                  })()}
-                </Code>
-              </Paper>
-            ) : null
-          ))}
         </ScrollArea>
       </Paper>
     </Stack>
