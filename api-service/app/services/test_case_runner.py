@@ -52,6 +52,10 @@ from app.services.mimo_ota.factory import build_mimo_ota_test_case
 from app.services.execution_exclusion_guard import active_unsafe_diagnostic
 from app.services.test_execution.hydrate import build_step_context
 from app.services.test_execution.registry import dispatch_step
+from app.services.instrument_test_lease import (
+    InstrumentTestLeaseError,
+    instrument_test_lease,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -406,7 +410,8 @@ async def _run_case(execution_id: UUID) -> None:
     current_execution_id.set(str(execution_id))
     db = SessionLocal()
     try:
-        await _run_case_loop(db, execution_id)
+        async with instrument_test_lease(f"formal-case:{execution_id}"):
+            await _run_case_loop(db, execution_id)
     except Exception as e:  # noqa: BLE001
         logger.exception("[case-runner] execution %s 执行器异常: %s", execution_id, e)
         try:
@@ -415,11 +420,18 @@ async def _run_case(execution_id: UUID) -> None:
                 db.query(TestExecution)
                 .filter(TestExecution.id == execution_id).first()
             )
-            if ex is not None and ex.status == "running":
-                ex.status = "failed"
-                ex.completed_at = datetime.utcnow()
+            lease_failed = isinstance(e, InstrumentTestLeaseError)
+            if ex is not None and (ex.status == "running" or lease_failed):
+                # Local 交接是执行完整性的一部分：业务相位全绿但 F64 仍被 Remote
+                # 占着，不得继续显示 completed。cancelled/failed 本来已是非成功，
+                # 只补证据；completed/running 才降级为 failed。
+                if ex.status in {"running", "completed"}:
+                    ex.status = "failed"
+                    ex.completed_at = datetime.utcnow()
                 cfg = dict(ex.config or {})
                 cfg["error_message"] = f"执行器异常: {e}"
+                if lease_failed:
+                    cfg["local_control_handoff_failed"] = True
                 ex.config = cfg
                 flag_modified(ex, "config")
                 _finalize_scpi_acceptance(ex)

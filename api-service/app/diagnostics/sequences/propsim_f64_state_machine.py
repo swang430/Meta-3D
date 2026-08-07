@@ -371,9 +371,8 @@ async def run(
 
     log("  · 读初始状态 ...")
     initial_state = await p.read_state("初始 STATE?")
-    initial_bypass = await p.read_bypass("初始 MODEL:STATIC?")
     findings["initial_state"] = initial_state
-    findings["initial_bypass"] = initial_bypass
+    findings["initial_bypass"] = None
 
     if initial_state is None:
         return SequenceRunResult(
@@ -382,21 +381,13 @@ async def run(
                      "(跑 F64 健康探针), 不在状态未知时下发控制命令。"),
             steps=p.steps, extra=findings,
         )
-    if initial_bypass is None:
-        # 审查 P2: 旁路档读不到跟状态读不到**同等严重**, 待遇必须一样。
-        # 放行的话: 仪器实际在 STATIC 3 却被当成 0 → 不退旁路就 GO(灰色地带),
-        # 且收工时恢复闸同样为假 → 把人家的 STATIC 3 改成 0 还不还原。
-        return SequenceRunResult(
-            success=False,
-            summary=("初始 DIAG:SIMU:MODEL:STATIC? 读不到合法档位 (0/1/2/3) —— "
-                     "旁路档未知就动手, 收工时也没法还原成接手的样子。先确认 SCPI 通道正常。"),
-            steps=p.steps, extra=findings,
-        )
     if initial_state == "CLOSED":
         return SequenceRunResult(
             success=False,
-            summary=("F64 当前 CLOSED = 未加载仿真。本剧本要验的是**已加载**仿真的状态迁移; "
-                     "CLOSED 下发 GO 只会拿到 -200 wrong device state。先加载一个 .smu 再跑。"),
+            summary=("F64 的 DIAG:SIMU:STATE? 已可靠返回 CLOSED，SCPI 通道正常；"
+                     "CLOSED = 未加载仿真。本剧本要验的是**已加载**仿真的状态迁移，"
+                     "此时 MODEL:STATIC? 没有有效档位，GO 也只会拿到 -200 wrong device state。"
+                     "先加载一个 .smu 再跑。"),
             steps=p.steps, extra=findings,
         )
     if initial_state not in _ACTIONABLE_STATES:
@@ -405,6 +396,22 @@ async def run(
             summary=(f"F64 当前 {initial_state} 是瞬态/占用态 (加载中·停止中·卸载中·编辑中) —— "
                      "手册未定义此时下发控制命令的行为, 剧本不碰。等它稳定到 "
                      "STOPPED/RUNNING 再跑。"),
+            steps=p.steps, extra=findings,
+        )
+
+    # MODEL:STATIC? 只有在仿真已加载并稳定到 STOPPED/RUNNING 后才有可恢复的
+    # 档位语义。现场 F8800A 8.0 在 CLOSED 下会返回空回复 + -200；若先问它，
+    # 就会把已经由 STATE? 证实的“通道正常、只是没加载仿真”误报成 SCPI 故障。
+    initial_bypass = await p.read_bypass("初始 MODEL:STATIC?")
+    findings["initial_bypass"] = initial_bypass
+    if initial_bypass is None:
+        # 在可操作稳态里，旁路档读不到跟状态读不到**同等严重**。放行的话：
+        # 仪器实际在 STATIC 3 却被当成 0，收工时也无法还原接手状态。
+        return SequenceRunResult(
+            success=False,
+            summary=("F64 已处于可操作稳态，但初始 DIAG:SIMU:MODEL:STATIC? 仍读不到"
+                     "合法档位 (0/1/2/3) —— 旁路档未知就动手，收工时无法还原。"
+                     "请跑 F64 健康探针并检查错误队列。"),
             steps=p.steps, extra=findings,
         )
 

@@ -104,7 +104,10 @@ _IDN_MODEL_TAGS = ("PROPSIM", "F8800")
 PROPSIM_SCPI: List[Tuple[str, str, bool, str]] = [
     # Identification & status — every F64 must answer these.
     ("IDN",                "*IDN?",                            True,  "identification"),
-    ("OPT",                "*OPT?",                            True,  "installed licenses/options"),
+    # Real CAICT F8800A firmware 8.0 returns -100 for *OPT?.  The F64
+    # driver discovers licenses through SYST:INFO? plus feature probes;
+    # keep this row for evidence, but an unsupported reply is expected.
+    ("OPT",                "*OPT?",                            False, "legacy options query (feature-probed on F64)"),
     ("STB",                "*STB?",                            False, "status byte"),
     ("ESR",                "*ESR?",                            False, "event status register"),
     ("ERR",                "SYST:ERR?",                        True,  "error queue read"),

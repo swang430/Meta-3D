@@ -391,6 +391,23 @@ def test_ha_running_case_execution_blocks_reload(db):
     assert "取消" in blockers[0].detail
 
 
+def test_active_in_process_instrument_lease_blocks_reload(db, monkeypatch):
+    import app.services.hal_reload_policy as policy
+
+    monkeypatch.setattr(
+        policy,
+        "active_test_lease_purpose",
+        lambda: "diagnostic-sequence:uxm-health",
+        raising=False,
+    )
+
+    blockers = policy.find_reload_blockers(db)
+
+    assert len(blockers) == 1
+    assert blockers[0].kind == "instrument_lease"
+    assert "uxm-health" in blockers[0].detail
+
+
 def test_hb_legacy_plan_rows_no_longer_block(db):
     """H-b **契约已变** (ARCH-1 S4c) —— 这条从"并集不是替换"翻面成
     "计划半截已删"。**不是回归, 是有意的**:

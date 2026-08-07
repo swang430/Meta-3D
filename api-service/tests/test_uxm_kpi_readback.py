@@ -116,6 +116,35 @@ class TestCommandTableMatchesManual:
             assert getattr(p, name) is None, f"{name} 应为 None（手册里没有这条命令）"
 
 
+class TestMonitoringStateGate:
+    """后台监控不得在小区 OFF 时轮询 KPI/JSON 报告。"""
+
+    def test_get_metrics_skips_kpi_queries_when_cell_is_off(self, drv):
+        trace: list[tuple[str, str]] = []
+        _stub_io(drv, {"BSE:STATus:NR5G:CELL1?": "OFF"}, trace)
+
+        result = asyncio.run(drv.get_metrics())
+
+        queries = [cmd for op, cmd in trace if op == "Q"]
+        assert queries == ["BSE:STATus:NR5G:CELL1?"], queries
+        assert result.metrics["cell_state"] == "OFF"
+        assert result.metrics["dl_throughput_mbps"] == 0.0
+
+    def test_get_metrics_reads_kpis_when_cell_is_connected(self, drv):
+        trace: list[tuple[str, str]] = []
+        _stub_io(drv, {
+            "BSE:STATus:NR5G:CELL1?": "CONNected",
+            "DL:THRoughput:OTA": "1,2e6,2e6,2e6,2e6,2e6",
+        }, trace)
+
+        result = asyncio.run(drv.get_metrics())
+
+        queries = [cmd for op, cmd in trace if op == "Q"]
+        assert "BSE:MEASure:NR5G:BTHRoughput:DL:THRoughput:OTA:CELL1?" in queries
+        assert result.metrics["cell_state"] == "CONN"
+        assert result.metrics["dl_throughput_mbps"] == pytest.approx(2.0)
+
+
 class TestSyncContractNotViolated:
     """⭐ UXM 的 `_do_query`/`_do_write` 是**同步 def**（F64 才是 async）。
 

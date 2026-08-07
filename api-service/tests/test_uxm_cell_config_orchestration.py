@@ -462,14 +462,15 @@ class TestSsbBaselineAutofill:
         assert not any("SSB:NCD" in w or "POINta" in w for w in written), written
 
     @pytest.mark.asyncio
-    async def test_irat_autofill_skips_gracefully(self, driver_irat):
-        """IRAT 的 SSB_ARFCN/CELL_DL_POINTA=None (-113 探明) → 命中基线也只跳过。"""
+    async def test_irat_autofill_uses_live_verified_commands(self, driver_irat):
+        """2026-08-07 实机已证 IRAT 的 SSB/PointA 正确拼写。"""
         _, written = wire_echo_visa(driver_irat)
         ok = await driver_irat.set_cell_config({
             "band": "N78", "arfcn": 636666, "bandwidth_mhz": 100,
         })
         assert ok is True
-        assert not any("SSB" in w or "POINta" in w for w in written), written
+        assert any("SSB:ARFCN 635712" in w for w in written), written
+        assert any("DL:POINta 632946" in w for w in written), written
 
     @pytest.mark.asyncio
     async def test_explicit_ssb_overrides_autofill(self, driver_5g):
@@ -500,6 +501,42 @@ class TestReadbackVerify:
             "dl_power_dbm": -46.0,
         })
         assert ok is True
+
+    @pytest.mark.asyncio
+    async def test_live_verified_scs_readback_mismatch_fails_loud(self, driver_irat):
+        wire_echo_visa(
+            driver_irat,
+            overrides={"SUBCarrier:SPACing:COMMon?": "MU0"},
+        )
+        ok = await driver_irat.set_cell_config({
+            "band": "N78", "arfcn": 636666, "scs_khz": 30,
+        })
+        assert ok is False
+
+    @pytest.mark.asyncio
+    async def test_r15_mimo_layers_are_written_after_builtin_mimo_preset(
+        self, driver_irat
+    ):
+        """N4X4 会把 R15 serving-cell max layers 重置为 4，层数必须后写。"""
+        _, written = wire_echo_visa(driver_irat)
+
+        ok = await driver_irat.set_cell_config({
+            "band": "N78",
+            "arfcn": 636666,
+            "mimo_port_preset": "4x4",
+            "mimo_layers": 2,
+        })
+
+        assert ok is True
+        preset_index = next(
+            i for i, command in enumerate(written)
+            if command.endswith("DL:MIMO:CONFig N4X4")
+        )
+        layers_index = next(
+            i for i, command in enumerate(written)
+            if command.endswith("PHY:PDSCh:MAX:MIMOlayers 2")
+        )
+        assert preset_index < layers_index, written
 
     @pytest.mark.asyncio
     async def test_explicit_off_switch_skips_readback(self, driver_irat):
@@ -644,6 +681,34 @@ class TestInst0Redirect:
         ok = await d.connect()
         assert ok is True
         assert not any("hislip2" in r for r in opened), opened  # 保持锁定
+
+    @pytest.mark.asyncio
+    async def test_irat_hint_selects_irat_default_when_app_probe_unavailable(
+        self, monkeypatch
+    ):
+        """直连端点不支持 App 查询时，显式 IRAT 方言仍必须选 CELL1 基线。"""
+        d = RealUxmDriver("uxm-irat-hint", {
+            "visa_resource": "TCPIP0::10.0.0.9::5125::SOCKET",
+            "uxm_profile": "irat",
+        })
+        sess = MagicMock()
+        sess.timeout = 5000
+
+        def _query(command):
+            if command == "*IDN?":
+                return "Keysight Technologies,E7515B TAF,MY123,1.0"
+            if command == "SYSTem:APPLication:NAME?":
+                raise TimeoutError("unsupported")
+            return "1"
+
+        sess.query = MagicMock(side_effect=_query)
+        sess.write = MagicMock()
+        rm = MagicMock()
+        rm.open_resource = MagicMock(return_value=sess)
+        monkeypatch.setattr("pyvisa.ResourceManager", MagicMock(return_value=rm))
+
+        assert await d.connect() is True
+        assert d._default_topology_profile_id == "caict_n78_3550_irat_2layer"
 
     @pytest.mark.asyncio
     async def test_uppercase_inst0_still_redirects(self, monkeypatch):

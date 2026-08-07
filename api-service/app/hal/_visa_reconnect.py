@@ -17,6 +17,9 @@ The same Codex P2 lesson from #14 applies here:
     must propagate so the caller can decide.
 
 PyVISA-level equivalent (F64R-1, 2026-07-25 实测 pyvisa 1.16.2):
+  - ``ConnectionError`` 族（``BrokenPipeError`` / ``ConnectionResetError`` /
+    ``ConnectionAbortedError``）→ pyvisa-py 的 raw SOCKET 后端可能直接透出 Python
+    原生异常，而不是包装成 ``VisaIOError``。语义同样是远端 socket 已断，必须重建。
   - ``pyvisa.errors.InvalidSession`` → 在**已 close 的 Resource** 上再发命令时抛。
     它**不是** ``VisaIOError`` 的子类 (MRO: InvalidSession → Error → Exception),
     因为 ``Resource.session`` 这个 property 在 ``_session is None`` 时就抛了, 根本
@@ -83,6 +86,11 @@ def is_visa_conn_lost(exc: BaseException) -> bool:
     Returns False if PyVISA isn't importable in this environment (e.g.
     Mock-only test mode) so callers don't have to guard the import.
     """
+    # pyvisa-py raw SOCKET can surface EPIPE/ECONNRESET directly instead of
+    # wrapping it in VisaIOError.  Keep this narrower than OSError: timeout,
+    # EINTR and local resource failures must not be mistaken for a dead peer.
+    if isinstance(exc, ConnectionError):
+        return True
     try:
         import pyvisa
     except ImportError:

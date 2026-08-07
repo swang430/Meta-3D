@@ -8,6 +8,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from uuid import UUID
 import logging
+from contextlib import asynccontextmanager
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Optional, List, Dict, Any
 
 from pydantic import BaseModel, Field
@@ -28,6 +30,7 @@ from app.schemas.instrument import (
     UpdateInstrumentCategoryRequest,
 )
 from app.services.diagnostic_context import build_diagnostic_context
+from app.services.instrument_test_lease import instrument_test_lease
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -393,51 +396,56 @@ async def reload_hal_service(
         get_hal_service,
         reload_hal_service_atomic,
     )
+    from app.services.instrument_test_lease import hal_mutation_guard
+
+    def _refused_response(blockers):
+        payload = HalReloadRefusedResult(
+            reason=(
+                f"HAL reload refused: {len(blockers)} active "
+                f"blocker(s). Operator must cancel/complete the "
+                f"in-flight work first, or re-POST with ?force=true "
+                f"to abort it."
+            ),
+            blockers=[
+                HalReloadBlocker(
+                    kind=b.kind, id=b.id, name=b.name,
+                    status=b.status, detail=b.detail,
+                )
+                for b in blockers
+            ],
+        )
+        return JSONResponse(status_code=409, content=payload.model_dump())
 
     # Refuse arm: check blockers BEFORE acquiring the lifecycle lock,
     # so a no-op refusal doesn't serialise behind in-progress reloads.
     if not force:
         blockers = find_reload_blockers(db)
         if blockers:
-            payload = HalReloadRefusedResult(
-                reason=(
-                    f"HAL reload refused: {len(blockers)} active "
-                    f"blocker(s). Operator must cancel/complete the "
-                    f"in-flight work first, or re-POST with ?force=true "
-                    f"to abort it."
-                ),
-                blockers=[
-                    HalReloadBlocker(
-                        kind=b.kind, id=b.id, name=b.name,
-                        status=b.status, detail=b.detail,
-                    )
-                    for b in blockers
-                ],
-            )
-            # 409 Conflict — semantic match: "the request is valid but
-            # the current state of the target resource (HAL + in-flight
-            # tests) makes it impossible to apply right now".
-            #
-            # Codex P2 fix: return JSONResponse directly so the body
-            # shape IS the documented HalReloadRefusedResult model
-            # (top-level ``refused`` / ``blockers`` / etc.). The
-            # previous HTTPException(detail=payload.model_dump()) form
-            # wrapped the payload in ``{"detail": {...}}``, mismatching
-            # the ``responses={409: {"model": HalReloadRefusedResult}}``
-            # contract — any generated client would look for
-            # ``response.blockers`` at the top level and miss the
-            # nested copy.
-            return JSONResponse(
-                status_code=409, content=payload.model_dump(),
-            )
+            return _refused_response(blockers)
 
     started = time.monotonic()
     # Preserve the mode the service was running in (REAL vs MOCK_FALLBACK
     # vs MOCK_FORCE) — operators usually don't want to switch global mode
     # when reloading specific instruments.
-    prior_service = get_hal_service()
-    prior_mode = getattr(prior_service, "mode", DriverMode.REAL) if prior_service else DriverMode.REAL
-    await reload_hal_service_atomic(prior_mode)
+    async def _reload_now() -> None:
+        prior_service = get_hal_service()
+        prior_mode = (
+            getattr(prior_service, "mode", DriverMode.REAL)
+            if prior_service else DriverMode.REAL
+        )
+        await reload_hal_service_atomic(prior_mode)
+
+    if force:
+        # force 是现场主动放弃在飞操作的逃生口，保留其原有“立即拆”语义。
+        await _reload_now()
+    else:
+        # 第二次检查必须在与测试租约相同的锁内：第一次检查后若测试开始，
+        # 此处会等待其完整释放；本锁到手后再查，消除 check→reload TOCTOU。
+        async with hal_mutation_guard():
+            blockers = find_reload_blockers(db)
+            if blockers:
+                return _refused_response(blockers)
+            await _reload_now()
     fresh = get_hal_service()
     drivers = sorted(fresh.drivers.keys()) if fresh else []
     duration_ms = int((time.monotonic() - started) * 1000)
@@ -875,40 +883,72 @@ async def select_topology_profile_endpoint(
                     },
                 )
 
-    # Persist (or clear) the selection.
-    params = dict(conn.connection_params or {})
-    if profile_id is None:
-        params.pop("topology_profile_id", None)
-    else:
-        params["topology_profile_id"] = profile_id
-    conn.connection_params = params
-    db.commit()
+    # 持有 UXM-only 租约跨过“最终兼容性复查→持久化→立即下发”，避免 reload
+    # 在拿 driver 与首条 SCPI 之间换实例，也避免空闲 Local 门让本端点静默退化。
+    async with instrument_test_lease(
+        f"uxm-topology-profile:{category_key}",
+        control_f64=False,
+        control_uxm=(category_key == "baseStation"),
+        enable_monitoring=False,
+    ):
+        from app.services.instrument_hal_service import get_hal_service
+        live_hal = get_hal_service()
+        driver = (live_hal.drivers or {}).get(category_key) if live_hal else None
+        if proposed_dc is not None and driver is not None and hasattr(
+            driver, "apply_topology_profile"
+        ):
+            current_app = _resolve_current_test_app(driver)
+            if not proposed_dc.is_compatible_with(current_app):
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "refused": True,
+                        "reason": "incompatible_test_app",
+                        "profile_id": profile_id,
+                        "test_app": current_app,
+                        "profile_compatible_with": list(
+                            proposed_dc.compatible_test_apps
+                        ),
+                        "detail": (
+                            f"Topology profile {profile_id!r} compatible with "
+                            f"{proposed_dc.compatible_test_apps}, but UXM is currently "
+                            f"running Test App {current_app!r}. Pick a compatible "
+                            f"profile or switch the UXM hardware to a matching Test App."
+                        ),
+                    },
+                )
 
-    # Optionally apply NOW if we have a live driver.
-    applied_now = False
-    apply_skipped_reason: Optional[str] = None
-    test_app: Optional[str] = None
-    if profile_id is None:
-        apply_skipped_reason = "no_selection"
-    elif driver is None:
-        apply_skipped_reason = "no_live_driver"
-    elif not hasattr(driver, "apply_topology_profile"):
-        apply_skipped_reason = "driver_does_not_support_topology_profiles"
-    else:
-        # P2-1 Phase 2.1: driver consumes the dataclass directly.
-        result = await driver.apply_topology_profile(proposed_dc)
-        applied_now = bool(result.get("applied"))
-        test_app = result.get("test_app")
-        if not applied_now:
-            apply_skipped_reason = result.get("reason") or "unknown"
+        params = dict(conn.connection_params or {})
+        if profile_id is None:
+            params.pop("topology_profile_id", None)
+        else:
+            params["topology_profile_id"] = profile_id
+        conn.connection_params = params
+        db.commit()
 
-    return SelectTopologyProfileResult(
-        persisted=True,
-        profile_id=profile_id,
-        applied_now=applied_now,
-        apply_skipped_reason=apply_skipped_reason,
-        test_app=test_app,
-    )
+        applied_now = False
+        apply_skipped_reason: Optional[str] = None
+        test_app: Optional[str] = None
+        if profile_id is None:
+            apply_skipped_reason = "no_selection"
+        elif driver is None:
+            apply_skipped_reason = "no_live_driver"
+        elif not hasattr(driver, "apply_topology_profile"):
+            apply_skipped_reason = "driver_does_not_support_topology_profiles"
+        else:
+            result = await driver.apply_topology_profile(proposed_dc)
+            applied_now = bool(result.get("applied"))
+            test_app = result.get("test_app")
+            if not applied_now:
+                apply_skipped_reason = result.get("reason") or "unknown"
+
+        return SelectTopologyProfileResult(
+            persisted=True,
+            profile_id=profile_id,
+            applied_now=applied_now,
+            apply_skipped_reason=apply_skipped_reason,
+            test_app=test_app,
+        )
 
 
 # ============================================================
@@ -1642,6 +1682,7 @@ async def test_instrument_connection(
     """
     import socket
     import time
+    from contextlib import AsyncExitStack
 
     # 使用 SCPI 命名空间的 logger，确保记录到 scpi.log
     scpi_logger = logging.getLogger("app.hal.scpi")
@@ -1681,6 +1722,50 @@ async def test_instrument_connection(
         extra={"instrument_id": category_key, "direction": "CONNECT"},
     )
 
+    from app.services.instrument_test_lease import instrument_test_lease
+
+    stack = AsyncExitStack()
+    await stack.enter_async_context(instrument_test_lease(
+        f"test-connection:{category_key}",
+        control_f64=(category_key == "channelEmulator"),
+        control_uxm=(category_key == "baseStation"),
+        enable_monitoring=False,
+    ))
+
+    # 已加载的 F64/UXM 必须复用租约刚取得的唯一 HAL 会话；另开 raw socket
+    # 会顶掉单会话仪表的既有连接并制造 BrokenPipe。只有 HAL 无该驱动时，
+    # 才走下面的临时 TCP 探测路径。
+    hal_driver = _get_loaded_hal_driver(category_key)
+    if hal_driver is not None:
+        try:
+            result = await _run_command_via_hal(
+                hal_driver,
+                "*IDN?",
+                scpi_logger,
+                category_key,
+                timeout_ms=3000,
+            )
+            if conn:
+                from datetime import datetime
+                conn.status = "connected" if result.success else "error"
+                conn.last_connected_at = datetime.utcnow() if result.success else None
+                conn.last_error = None if result.success else result.error
+                db.commit()
+            return TestConnectionResult(
+                success=result.success,
+                status="connected" if result.success else "error",
+                message=(
+                    f"已通过现有 HAL 会话连接 {category_key}"
+                    if result.success
+                    else f"HAL 会话查询失败: {result.error}"
+                ),
+                idn=result.response,
+                latency_ms=round(result.latency_ms, 1),
+            )
+        finally:
+            await stack.aclose()
+
+    sock = None
     start = time.monotonic()
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1713,8 +1798,6 @@ async def test_instrument_connection(
                     f"[TEST-CONN] {category_key} ← SCPI *IDN? failed: {e}",
                     extra={"instrument_id": category_key, "direction": "ERROR"},
                 )
-
-        sock.close()
 
         # Update status in DB (only if conn record exists)
         if conn:
@@ -1775,6 +1858,13 @@ async def test_instrument_connection(
             status="error",
             message=f"网络错误: {e}",
         )
+    finally:
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+        await stack.aclose()
 
 
 # ============================================================
@@ -2234,56 +2324,59 @@ async def send_scpi_command(
         )
         return result
 
-    # HAL-first routing same as /scpi-probe. See _run_command_via_hal docstring.
-    # P1-16: 透传 request.timeout_ms 给 driver (F64/FS16 慢操作必须明给, 见
-    # _driver_supports_timeout_kwarg)。pyvisa driver 自动 fallback 不变。
-    hal_driver = _get_loaded_hal_driver(category_key)
-    if hal_driver is not None:
-        result = await _run_command_via_hal(
-            hal_driver, request.command, scpi_logger, category_key,
-            timeout_ms=request.timeout_ms,
-        )
-        return _audit(result)
+    async with instrument_test_lease(
+        f"scpi-command:{category_key}",
+        control_f64=(category_key == "channelEmulator"),
+        control_uxm=(category_key == "baseStation"),
+        enable_monitoring=False,
+    ):
+        # 在租约内重新解析 driver，防止 HAL reload 在解析与首条命令之间换实例。
+        hal_driver = _get_loaded_hal_driver(category_key)
+        if hal_driver is not None:
+            result = await _run_command_via_hal(
+                hal_driver, request.command, scpi_logger, category_key,
+                timeout_ms=request.timeout_ms,
+            )
+            return _audit(result)
 
-    if not ip:
-        return _audit(ScpiCommandResult(
-            command=request.command,
-            success=False,
-            error="未配置 IP 地址",
-            latency_ms=0,
-        ))
-    if not _validate_ip_address(ip):
-        return _audit(ScpiCommandResult(
-            command=request.command,
-            success=False,
-            error=f"IP 地址格式无效: '{ip}'",
-            latency_ms=0,
-        ))
+        if not ip:
+            return _audit(ScpiCommandResult(
+                command=request.command,
+                success=False,
+                error="未配置 IP 地址",
+                latency_ms=0,
+            ))
+        if not _validate_ip_address(ip):
+            return _audit(ScpiCommandResult(
+                command=request.command,
+                success=False,
+                error=f"IP 地址格式无效: '{ip}'",
+                latency_ms=0,
+            ))
 
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(request.timeout_ms / 1000.0)
-        sock.connect((ip, port))
-
-        result = _send_scpi_command(sock, request.command, scpi_logger, category_key)
-
-        sock.close()
-        return _audit(result)
-
-    except socket.timeout:
-        return _audit(ScpiCommandResult(
-            command=request.command,
-            success=False,
-            error=f"连接超时: {ip}:{port}",
-            latency_ms=request.timeout_ms,
-        ))
-    except Exception as e:
-        return _audit(ScpiCommandResult(
-            command=request.command,
-            success=False,
-            error=str(e),
-            latency_ms=0,
-        ))
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(request.timeout_ms / 1000.0)
+            sock.connect((ip, port))
+            result = _send_scpi_command(
+                sock, request.command, scpi_logger, category_key
+            )
+            sock.close()
+            return _audit(result)
+        except socket.timeout:
+            return _audit(ScpiCommandResult(
+                command=request.command,
+                success=False,
+                error=f"连接超时: {ip}:{port}",
+                latency_ms=request.timeout_ms,
+            ))
+        except Exception as e:
+            return _audit(ScpiCommandResult(
+                command=request.command,
+                success=False,
+                error=str(e),
+                latency_ms=0,
+            ))
 
 
 @router.post("/instruments/{category_key}/scpi-probe", response_model=ScpiProbeResult)
@@ -2323,53 +2416,56 @@ async def probe_scpi_commands(
     results: List[ScpiCommandResult] = []
     audit_started = time.monotonic()
 
-    # Prefer the live HAL driver session if loaded — avoids opening a
-    # parallel TCP client to single-session instruments. Fall back to
-    # opening a fresh socket only when HAL hasn't loaded this category
-    # (e.g. driver_mode=mock, or before HAL init has run).
-    hal_driver = _get_loaded_hal_driver(category_key)
-    if hal_driver is not None:
-        scpi_logger.info(
-            f"[SCPI-PROBE] {category_key} → Running {len(COMMON_SCPI_COMMANDS)} "
-            f"diagnostic commands via live HAL driver ({type(hal_driver).__name__})",
-            extra={"instrument_id": category_key, "direction": "PROBE"},
-        )
-        for cmd, _desc in COMMON_SCPI_COMMANDS:
-            results.append(await _run_command_via_hal(hal_driver, cmd, scpi_logger, category_key))
-    else:
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(3.0)
-            sock.connect((ip, port))
-
+    async with instrument_test_lease(
+        f"scpi-probe:{category_key}",
+        control_f64=(category_key == "channelEmulator"),
+        control_uxm=(category_key == "baseStation"),
+        enable_monitoring=False,
+    ):
+        # Prefer the live HAL driver session if loaded — avoids a parallel
+        # TCP client to single-session instruments. Driver lookup stays inside
+        # the lease so reload cannot swap it before the first command.
+        hal_driver = _get_loaded_hal_driver(category_key)
+        if hal_driver is not None:
             scpi_logger.info(
                 f"[SCPI-PROBE] {category_key} → Running {len(COMMON_SCPI_COMMANDS)} "
-                f"diagnostic commands on {ip}:{port} via fresh socket "
-                f"(HAL driver not loaded)",
+                f"diagnostic commands via live HAL driver ({type(hal_driver).__name__})",
                 extra={"instrument_id": category_key, "direction": "PROBE"},
             )
-
             for cmd, _desc in COMMON_SCPI_COMMANDS:
-                result = _send_scpi_command(sock, cmd, scpi_logger, category_key)
-                results.append(result)
-
-            sock.close()
-
-        except Exception as e:
-            scpi_logger.error(
-                f"[SCPI-PROBE] {category_key} → Connection failed: {e}",
-                extra={"instrument_id": category_key, "direction": "ERROR"},
-            )
-            # 将连接错误作为所有未执行命令的结果
-            executed = {r.command for r in results}
-            for cmd, _desc in COMMON_SCPI_COMMANDS:
-                if cmd not in executed:
-                    results.append(ScpiCommandResult(
-                        command=cmd,
-                        success=False,
-                        error=str(e),
-                        latency_ms=0,
+                results.append(await _run_command_via_hal(
+                    hal_driver, cmd, scpi_logger, category_key
+                ))
+        else:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(3.0)
+                sock.connect((ip, port))
+                scpi_logger.info(
+                    f"[SCPI-PROBE] {category_key} → Running {len(COMMON_SCPI_COMMANDS)} "
+                    f"diagnostic commands on {ip}:{port} via fresh socket "
+                    f"(HAL driver not loaded)",
+                    extra={"instrument_id": category_key, "direction": "PROBE"},
+                )
+                for cmd, _desc in COMMON_SCPI_COMMANDS:
+                    results.append(_send_scpi_command(
+                        sock, cmd, scpi_logger, category_key
                     ))
+                sock.close()
+            except Exception as e:
+                scpi_logger.error(
+                    f"[SCPI-PROBE] {category_key} → Connection failed: {e}",
+                    extra={"instrument_id": category_key, "direction": "ERROR"},
+                )
+                executed = {r.command for r in results}
+                for cmd, _desc in COMMON_SCPI_COMMANDS:
+                    if cmd not in executed:
+                        results.append(ScpiCommandResult(
+                            command=cmd,
+                            success=False,
+                            error=str(e),
+                            latency_ms=0,
+                        ))
 
     # Single audit row for the whole probe — operator cognition is
     # "one health check", per-command rows would just be noise.
@@ -2637,6 +2733,10 @@ async def switch_hal_mode_endpoint(request: HALModeSwitchRequest):
     不需要重启服务。切换后所有驱动会被重新初始化。
     """
     from app.services.instrument_hal_service import switch_hal_mode, DriverMode
+    from app.services.instrument_test_lease import (
+        active_test_lease_purpose,
+        hal_mutation_guard,
+    )
 
     if request.mode not in ("mock", "real"):
         raise HTTPException(400, f"Invalid mode: {request.mode}. Use 'mock' or 'real'.")
@@ -2644,7 +2744,14 @@ async def switch_hal_mode_endpoint(request: HALModeSwitchRequest):
     target_mode = DriverMode.MOCK if request.mode == "mock" else DriverMode.REAL
 
     try:
-        result = await switch_hal_mode(target_mode)
+        async with hal_mutation_guard():
+            active_lease = active_test_lease_purpose()
+            if active_lease is not None:
+                raise HTTPException(
+                    409,
+                    f"仪表操作 {active_lease!r} 正在运行，结束前不能切换 HAL 模式",
+                )
+            result = await switch_hal_mode(target_mode)
         return HALModeSwitchResult(
             success=True,
             previous_mode=result["previous_mode"],
@@ -2653,6 +2760,8 @@ async def switch_hal_mode_endpoint(request: HALModeSwitchRequest):
             driver_count=result["driver_count"],
             message=f"已切换到 {result['current_mode']} 模式，{result['driver_count']} 个驱动已激活",
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"HAL mode switch failed: {e}", exc_info=True)
         return HALModeSwitchResult(
@@ -2798,10 +2907,185 @@ class EmulationControlRequest(BaseModel):
     action: str  # "start" (DIAG:SIMU:GO) | "stop" (DIAG:SIMU:GOS 停并倒回)
 
 
+class F64ControlOwnershipRequest(BaseModel):
+    action: str  # "release_local" | "acquire_remote"
+
+
+class F64LoadSmuRequest(BaseModel):
+    # 必须是操作员提供的 F64 本机路径；系统不猜文件名、不扫描目录。
+    file_path: str = Field(min_length=1)
+
+
 class OutputGainRequest(BaseModel):
     # agent F5: 空列表 → all({})=True 零下发却假成功; min_length=1 让空列表 422
     ports: List[int] = Field(min_length=1)   # F64 输出口号 (1..16), 非空
     gain_db: float     # 绝对增益 (OUTP:GAIN:CH), 支持正负 (负 = 衰减)
+
+
+def _refuse_f64_control_change_while_running(db: Session) -> None:
+    """控制权切换/换场景会影响整台 F64，执行中一律拒绝。"""
+    from app.services.hal_reload_policy import find_reload_blockers
+    from app.services.test_case_runner import has_active_case_run
+
+    blockers = find_reload_blockers(db)
+    active_case = has_active_case_run()
+    if active_case is not None:
+        blockers.append({
+            "kind": "case_run",
+            "id": active_case,
+            "name": f"execution {active_case}",
+            "status": "running",
+        })
+    if blockers:
+        def serialize(blocker):
+            if isinstance(blocker, dict):
+                return blocker
+            return {
+                "kind": blocker.kind,
+                "id": blocker.id,
+                "name": blocker.name,
+                "status": blocker.status,
+            }
+
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "F64 正被测试执行占用，不能切换控制权或加载 .smu",
+                "blockers": [serialize(blocker) for blocker in blockers],
+            },
+        )
+
+
+@asynccontextmanager
+async def _exclusive_f64_control_operation(db: Session):
+    """与正式执行/破坏性诊断共用单飞门，覆盖整个控制操作。"""
+    from app.services.execution_exclusion_guard import (
+        active_unsafe_diagnostic,
+        release_unsafe_diagnostic,
+        try_acquire_unsafe_diagnostic,
+    )
+
+    token = try_acquire_unsafe_diagnostic("f64_control_operation")
+    if token is None:
+        active = active_unsafe_diagnostic() or "unknown"
+        raise HTTPException(409, f"破坏性操作 '{active}' 正在占用仪表")
+    try:
+        # token 先占位，正式 runner 的反向门此刻已经生效；随后复查进程任务和 DB 行，
+        # 消除“检查完才被别的流程抢占”的 TOCTOU 窗口。
+        _refuse_f64_control_change_while_running(db)
+        yield
+    finally:
+        release_unsafe_diagnostic(token)
+
+
+@router.get("/instruments/{category_key}/control-ownership")
+async def get_control_ownership(category_key: str):
+    """读取驱动控制门状态，不向 F64/UXM 发送 SCPI。"""
+    driver = _get_loaded_hal_driver(category_key)
+    if driver is None:
+        raise HTTPException(404, f"{category_key} HAL driver 未加载")
+    local = bool(getattr(driver, "local_control_reserved", False))
+    release_failed = bool(getattr(driver, "local_release_failed", False))
+    connected = (
+        getattr(driver, "_visa_resource", None) is not None
+        or getattr(driver, "_visa_session", None) is not None
+    )
+    return {
+        "control_mode": (
+            "local_release_failed"
+            if release_failed
+            else ("local" if local else ("remote" if connected else "disconnected"))
+        ),
+        "remote_polling_suppressed": local,
+        "connected": connected,
+    }
+
+
+@router.post("/instruments/{category_key}/control-ownership")
+async def set_control_ownership(
+    category_key: str,
+    request: F64ControlOwnershipRequest,
+    db: Session = Depends(get_db),
+):
+    """F64/UXM 控制会话的现场应急手工交接。
+
+    正常测试无需调用此端点：租约会自动取得并释放。release_local 只关闭驱动
+    控制会话并暂停后台轮询，不发停止仿真/停止小区/停止信令；acquire_remote
+    只用于现场显式重连。UXM 手册没有证实 Local SCPI，因此不发送猜测指令。
+    """
+    async with _exclusive_f64_control_operation(db):
+        driver = _get_loaded_hal_driver(category_key)
+        if driver is None:
+            raise HTTPException(404, f"{category_key} HAL driver 未加载")
+        action = request.action.strip().lower()
+        if action == "release_local":
+            method = getattr(driver, "release_to_local_control", None)
+        elif action == "acquire_remote":
+            method = getattr(driver, "acquire_remote_control", None)
+        else:
+            raise HTTPException(400, f"未知 action '{action}' (release_local|acquire_remote)")
+        if method is None:
+            raise HTTPException(400, f"{category_key} 驱动不支持控制权交接")
+        ok = await _call_f64_method(method)
+        local = bool(getattr(driver, "local_control_reserved", False))
+        release_failed = bool(getattr(driver, "local_release_failed", False))
+        connected = (
+            getattr(driver, "_visa_resource", None) is not None
+            or getattr(driver, "_visa_session", None) is not None
+        )
+        if release_failed:
+            control_mode = "local_release_failed"
+        else:
+            control_mode = "local" if local else ("remote" if connected else "disconnected")
+        return {
+            "ok": bool(ok),
+            "action": action,
+            "control_mode": control_mode,
+            "remote_polling_suppressed": local,
+            "connected": connected,
+            "last_error": None if ok else getattr(driver, "_last_error", None),
+        }
+
+
+@router.post("/instruments/{category_key}/load-smu")
+async def load_smu_endpoint(
+    category_key: str,
+    request: F64LoadSmuRequest,
+    db: Session = Depends(get_db),
+):
+    """必要时重新取得 Remote，加载操作员指定 `.smu`，并以 STATE? 回读验收。"""
+    file_path = request.file_path.strip()
+    if not file_path.lower().endswith(".smu"):
+        raise HTTPException(400, "只允许加载显式指定的 .smu 文件路径")
+    if not (
+        PureWindowsPath(file_path).is_absolute()
+        or PurePosixPath(file_path).is_absolute()
+    ):
+        raise HTTPException(400, "必须提供 F64 本机上的完整绝对 .smu 路径")
+
+    async with _exclusive_f64_control_operation(db):
+        async with instrument_test_lease(
+            f"f64-load-smu:{category_key}",
+            control_f64=True,
+            control_uxm=False,
+            enable_monitoring=False,
+        ):
+            driver = _get_loaded_hal_driver(category_key)
+            if driver is None:
+                raise HTTPException(404, f"{category_key} HAL driver 未加载")
+            load = getattr(driver, "load_local_scenario", None)
+            confirm = getattr(driver, "confirm_scenario_loaded", None)
+            if load is None or confirm is None:
+                raise HTTPException(400, f"{category_key} 驱动不支持 .smu 加载及回读确认")
+            loaded = bool(await _call_f64_method(load, file_path))
+            verification = await _call_f64_method(confirm) if loaded else None
+            confirmed = bool(verification and verification.get("confirmed"))
+            return {
+                "ok": loaded and confirmed,
+                "loaded_file": file_path if loaded else None,
+                "verification": verification,
+                "last_error": None if loaded and confirmed else getattr(driver, "_last_error", None),
+            }
 
 
 @router.post("/instruments/{category_key}/emulation-control")
@@ -2813,25 +3097,31 @@ async def emulation_control(category_key: str, request: EmulationControlRequest)
     搞卡死 (仅剩 SYST:INFO? 应答, *RST 救不回, 只能重启 PropSim)。调用方应先查状态、
     避免盲目重试 start。
     """
-    driver = _get_loaded_hal_driver(category_key)
-    if driver is None:
-        raise HTTPException(404, f"{category_key} HAL driver 未加载 (需 Real 模式 + 已连接)")
-    action = request.action.strip().lower()
-    if action == "start":
-        method = getattr(driver, "start_emulation", None)
-    elif action == "stop":
-        method = getattr(driver, "stop_emulation", None)
-    else:
-        raise HTTPException(400, f"未知 action '{action}' (start|stop)")
-    if method is None:
-        raise HTTPException(400, f"{category_key} 驱动不支持 {action}_emulation")
-    ok = await _call_f64_method(method)
-    return {
-        "ok": bool(ok),
-        "action": action,
-        "emulation_running": getattr(driver, "_emulation_running", None),
-        "last_error": None if ok else getattr(driver, "_last_error", None),
-    }
+    async with instrument_test_lease(
+        f"f64-emulation-control:{category_key}",
+        control_f64=True,
+        control_uxm=False,
+        enable_monitoring=False,
+    ):
+        driver = _get_loaded_hal_driver(category_key)
+        if driver is None:
+            raise HTTPException(404, f"{category_key} HAL driver 未加载 (需 Real 模式 + 已连接)")
+        action = request.action.strip().lower()
+        if action == "start":
+            method = getattr(driver, "start_emulation", None)
+        elif action == "stop":
+            method = getattr(driver, "stop_emulation", None)
+        else:
+            raise HTTPException(400, f"未知 action '{action}' (start|stop)")
+        if method is None:
+            raise HTTPException(400, f"{category_key} 驱动不支持 {action}_emulation")
+        ok = await _call_f64_method(method)
+        return {
+            "ok": bool(ok),
+            "action": action,
+            "emulation_running": getattr(driver, "_emulation_running", None),
+            "last_error": None if ok else getattr(driver, "_last_error", None),
+        }
 
 
 @router.post("/instruments/{category_key}/output-gain")
@@ -2842,22 +3132,28 @@ async def set_output_gain_endpoint(category_key: str, request: OutputGainRequest
     -200 "Parameter exceeds set limits", 且各口上限可不同 → 批量下发部分口生效部分
     被拒, 电平不一致)。大幅 / 整体输出功率调整不用此端点, 走 P0-4 归一化总功率方案。
     """
-    driver = _get_loaded_hal_driver(category_key)
-    if driver is None:
-        raise HTTPException(404, f"{category_key} HAL driver 未加载")
-    method = getattr(driver, "set_output_gain", None)
-    if method is None:
-        raise HTTPException(400, f"{category_key} 驱动不支持 set_output_gain")
-    results: Dict[int, bool] = {}
-    for p in request.ports:
-        results[p] = bool(await _call_f64_method(method, p, request.gain_db))
-    all_ok = all(results.values())
-    return {
-        "ok": all_ok,
-        "gain_db": request.gain_db,
-        "ports": results,
-        "last_error": None if all_ok else getattr(driver, "_last_error", None),
-    }
+    async with instrument_test_lease(
+        f"f64-output-gain:{category_key}",
+        control_f64=True,
+        control_uxm=False,
+        enable_monitoring=False,
+    ):
+        driver = _get_loaded_hal_driver(category_key)
+        if driver is None:
+            raise HTTPException(404, f"{category_key} HAL driver 未加载")
+        method = getattr(driver, "set_output_gain", None)
+        if method is None:
+            raise HTTPException(400, f"{category_key} 驱动不支持 set_output_gain")
+        results: Dict[int, bool] = {}
+        for p in request.ports:
+            results[p] = bool(await _call_f64_method(method, p, request.gain_db))
+        all_ok = all(results.values())
+        return {
+            "ok": all_ok,
+            "gain_db": request.gain_db,
+            "ports": results,
+            "last_error": None if all_ok else getattr(driver, "_last_error", None),
+        }
 
 
 @router.get("/instruments/{category_key}/output-calibration/{output_num}")
@@ -2868,14 +3164,20 @@ async def get_output_calibration_endpoint(category_key: str, output_num: int):
     本端点回 ok=false/calibration=null)。读回路径保留, 待对照 F64 手册确认命令适用
     条件 / 固件差异; 调用方不得依赖它拿"当前增益基准"。
     """
-    driver = _get_loaded_hal_driver(category_key)
-    if driver is None:
-        raise HTTPException(404, f"{category_key} HAL driver 未加载")
-    method = getattr(driver, "get_output_calibration", None)
-    if method is None:
-        raise HTTPException(400, f"{category_key} 驱动不支持 get_output_calibration")
-    calib = await _call_f64_method(method, output_num)
-    return {"ok": calib is not None, "output_num": output_num, "calibration": calib}
+    async with instrument_test_lease(
+        f"f64-output-calibration:{category_key}",
+        control_f64=True,
+        control_uxm=False,
+        enable_monitoring=False,
+    ):
+        driver = _get_loaded_hal_driver(category_key)
+        if driver is None:
+            raise HTTPException(404, f"{category_key} HAL driver 未加载")
+        method = getattr(driver, "get_output_calibration", None)
+        if method is None:
+            raise HTTPException(400, f"{category_key} 驱动不支持 get_output_calibration")
+        calib = await _call_f64_method(method, output_num)
+        return {"ok": calib is not None, "output_num": output_num, "calibration": calib}
 
 
 class InputReferenceRequest(BaseModel):
@@ -2898,30 +3200,32 @@ async def set_input_reference_endpoint(category_key: str, request: InputReferenc
     不再用 `_tx_antennas` 猜 (那个冷缓存在操作员手动加载 4x4 .smu 后会停在构造默认 2、
     只覆盖输入 1/2 致 MIMO 不平衡, 端点还回 ok=true)。
     """
-    driver = _get_loaded_hal_driver(category_key)
-    if driver is None:
-        raise HTTPException(404, f"{category_key} HAL driver 未加载")
-    method = getattr(driver, "set_baseband_power", None)
-    if method is None:
-        raise HTTPException(400, f"{category_key} 驱动不支持 set_baseband_power")
-    # 没给 ports 时先让驱动补齐拓扑 —— 与 /crest-factor 同口径。
-    # ⚠ 不能指望"驱动在 set_baseband_power 内部会 ensure": 那是**它的**实现细节, 端点
-    # 的回显路径不该依赖; 一旦驱动改了内部顺序, 回显就静默变 None (测试当场抓到)。
-    if not request.input_ports:
-        _ensure = getattr(driver, "ensure_topology", None)
-        if callable(_ensure):
-            await _ensure()
-    ok = await _call_f64_method(method, request.power_dbm, request.input_ports)
-    # F64R-2: 回显**实际下发的口号**。请求没给 ports 时驱动用回读的真实口号, 只回显
-    # request.input_ports (=None) 会让操作员无从确认到底写了哪几个口 —— 而这正是排
-    # "路损/电平只配了一半"这类问题最需要的证据。
-    _eff_ports = request.input_ports
-    if not _eff_ports:
-        _getter = getattr(driver, "get_active_input_ports", None)
-        _eff_ports = _getter() if callable(_getter) else None
-    return {"ok": bool(ok), "power_dbm": request.power_dbm,
-            "input_ports": _eff_ports,
-            "last_error": None if ok else getattr(driver, "_last_error", None)}
+    async with instrument_test_lease(
+        f"f64-input-reference:{category_key}",
+        control_f64=True,
+        control_uxm=False,
+        enable_monitoring=False,
+    ):
+        driver = _get_loaded_hal_driver(category_key)
+        if driver is None:
+            raise HTTPException(404, f"{category_key} HAL driver 未加载")
+        method = getattr(driver, "set_baseband_power", None)
+        if method is None:
+            raise HTTPException(400, f"{category_key} 驱动不支持 set_baseband_power")
+        # 没给 ports 时先让驱动补齐拓扑 —— 与 /crest-factor 同口径。
+        if not request.input_ports:
+            _ensure = getattr(driver, "ensure_topology", None)
+            if callable(_ensure):
+                await _ensure()
+        ok = await _call_f64_method(method, request.power_dbm, request.input_ports)
+        # 回显实际下发的口号，不能用请求里的 None 冒充未知。
+        _eff_ports = request.input_ports
+        if not _eff_ports:
+            _getter = getattr(driver, "get_active_input_ports", None)
+            _eff_ports = _getter() if callable(_getter) else None
+        return {"ok": bool(ok), "power_dbm": request.power_dbm,
+                "input_ports": _eff_ports,
+                "last_error": None if ok else getattr(driver, "_last_error", None)}
 
 
 class CrestFactorRequest(BaseModel):
@@ -2945,34 +3249,39 @@ async def set_crest_factor_endpoint(category_key: str, request: CrestFactorReque
     /input-reference 同口径), 读不到则 400 —— 旧的硬编码默认 [1,2,3,4] 在非连续口
     (如仿真只占 {3,5}) 下会配错口。
     """
-    driver = _get_loaded_hal_driver(category_key)
-    if driver is None:
-        raise HTTPException(404, f"{category_key} HAL driver 未加载")
-    method = getattr(driver, "set_crest_factor", None)
-    if method is None:
-        raise HTTPException(400, f"{category_key} 驱动不支持 set_crest_factor")
-    ports = request.input_ports
-    if not ports:
-        # 先让驱动按需补回读 (后端重启后缓存空、但 F64 仍加载着仿真的真实场景);
-        # 不 await 这一步就会退化成 400, 反而不如改动前的硬编码默认。
-        _ensure = getattr(driver, "ensure_topology", None)
-        if callable(_ensure):
-            await _ensure()
-        _getter = getattr(driver, "get_active_input_ports", None)
-        ports = (_getter() if callable(_getter) else None) or []
-    if not ports:
-        raise HTTPException(
-            400,
-            f"{category_key} 物理输入口未知 (仿真未加载 / 拓扑回读失败) —"
-            f" 请显式传 input_ports, 或先加载仿真。不按猜测的端口号下发峰均比。"
-            f"{_TOPOLOGY_ESCAPE_HINT}",
-        )
-    results: Dict[int, bool] = {}
-    for inp in ports:
-        results[inp] = bool(await _call_f64_method(method, inp, request.crest_db))
-    all_ok = all(results.values())
-    return {"ok": all_ok, "crest_db": request.crest_db, "ports": results,
-            "last_error": None if all_ok else getattr(driver, "_last_error", None)}
+    async with instrument_test_lease(
+        f"f64-crest-factor:{category_key}",
+        control_f64=True,
+        control_uxm=False,
+        enable_monitoring=False,
+    ):
+        driver = _get_loaded_hal_driver(category_key)
+        if driver is None:
+            raise HTTPException(404, f"{category_key} HAL driver 未加载")
+        method = getattr(driver, "set_crest_factor", None)
+        if method is None:
+            raise HTTPException(400, f"{category_key} 驱动不支持 set_crest_factor")
+        ports = request.input_ports
+        if not ports:
+            # 后端重启后缓存空但仪表仍有场景，先按需补回读。
+            _ensure = getattr(driver, "ensure_topology", None)
+            if callable(_ensure):
+                await _ensure()
+            _getter = getattr(driver, "get_active_input_ports", None)
+            ports = (_getter() if callable(_getter) else None) or []
+        if not ports:
+            raise HTTPException(
+                400,
+                f"{category_key} 物理输入口未知 (仿真未加载 / 拓扑回读失败) —"
+                f" 请显式传 input_ports, 或先加载仿真。不按猜测的端口号下发峰均比。"
+                f"{_TOPOLOGY_ESCAPE_HINT}",
+            )
+        results: Dict[int, bool] = {}
+        for inp in ports:
+            results[inp] = bool(await _call_f64_method(method, inp, request.crest_db))
+        all_ok = all(results.values())
+        return {"ok": all_ok, "crest_db": request.crest_db, "ports": results,
+                "last_error": None if all_ok else getattr(driver, "_last_error", None)}
 
 
 # ============================================================

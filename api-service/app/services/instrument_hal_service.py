@@ -1126,6 +1126,10 @@ class InstrumentHALService:
             logger.error(f"Error aggregating metrics: {e}")
             return {}
 
+    async def clear_metrics_cache(self) -> None:
+        """测试租约切换控制权时清掉跨边界的监控快照。"""
+        await self._metrics_cache.clear()
+
     def _build_monitoring_data(
         self,
         channel_metrics: Optional[Dict[str, Any]],
@@ -1312,6 +1316,11 @@ async def _initialize_hal_service_inner(mode: DriverMode) -> None:
     global _hal_service
     _hal_service = InstrumentHALService(mode=mode)
     await _hal_service.initialize()
+    # HAL connect/readiness 会短暂取得 F64 Remote。初始化完成即关闭 ATE socket，
+    # 空闲态由仪表前面板自行控制；正式测试会通过统一租约重新取得 Remote。
+    from app.services.instrument_test_lease import park_idle_instruments
+
+    await park_idle_instruments()
     logger.info("Global HAL service initialized")
 
 

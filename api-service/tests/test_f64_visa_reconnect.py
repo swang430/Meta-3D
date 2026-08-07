@@ -186,6 +186,22 @@ class TestConnLostTriggersReconnect:
         assert replacement.writes == ["INIT"]
         assert primary.closed is True
 
+    @pytest.mark.asyncio
+    async def test_broken_pipe_on_query_retries_after_reconnect(self):
+        """pyvisa-py raw SOCKET can surface EPIPE as native BrokenPipeError."""
+        primary = _FakeVisaResource("primary")
+        primary.query_fail_with = [BrokenPipeError(32, "Broken pipe")]
+        replacement = _FakeVisaResource("post-reconnect")
+        replacement.query_response = "PROPSIM F64\n"
+
+        d = _build_driver_with_fake_session(primary, post_reconnect=[replacement])
+        result = await d._do_query("*IDN?")
+
+        assert result == "PROPSIM F64\n"
+        assert primary.closed is True
+        assert replacement.queries == ["*IDN?"]
+        assert d._rm.open_calls == 1
+
 
 # ---------------------------------------------------------------------------
 # 2. Timeout MUST NOT trigger reconnect — Codex P2 lesson
@@ -363,7 +379,15 @@ class TestIsVisaConnLostClassifier:
     def test_non_visa_error_not_recognised(self):
         d = RealPropsimF64Driver("t", {})
         assert d._is_visa_conn_lost(RuntimeError("not visa")) is False
-        assert d._is_visa_conn_lost(ConnectionResetError("plain")) is False
+
+    @pytest.mark.parametrize("exc", [
+        BrokenPipeError(32, "broken pipe"),
+        ConnectionResetError(54, "connection reset"),
+        ConnectionAbortedError(53, "connection aborted"),
+    ])
+    def test_native_connection_errors_recognised(self, exc):
+        d = RealPropsimF64Driver("t", {})
+        assert d._is_visa_conn_lost(exc) is True
 
 
 # ---------------------------------------------------------------------------

@@ -34,6 +34,7 @@ from app.services.diagnostic_context import (
     DiagnosticContext,
 )
 from app.services.instrument_hal_service import get_hal_service
+from app.services.instrument_test_lease import instrument_test_lease
 from app.services.execution_exclusion_guard import (
     active_unsafe_diagnostic,
     release_unsafe_diagnostic,
@@ -194,8 +195,21 @@ async def run_diagnostic_sequence(
 
     try:
         try:
-            hal = get_hal_service()
-            result = await sequence.run(ctx, hal, request.params, log=_log)
+            lease_categories = set(sequence.metadata.required_categories)
+            if key == "instrument_idn_sweep":
+                lease_categories.update(
+                    binding.category_key
+                    for binding in (ctx.instrument_bindings or [])
+                    if binding.category_key
+                )
+            async with instrument_test_lease(
+                f"diagnostic-sequence:{key}",
+                control_f64="channelEmulator" in lease_categories,
+                control_uxm="baseStation" in lease_categories,
+            ):
+                # 在租约内解析 HAL，避免 reload 在“拿实例→首条命令”窗口换掉驱动。
+                hal = get_hal_service()
+                result = await sequence.run(ctx, hal, request.params, log=_log)
             success = bool(result.success)
             summary = result.summary
             step_results = [asdict(s) for s in result.steps]

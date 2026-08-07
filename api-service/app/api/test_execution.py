@@ -304,12 +304,21 @@ async def attach_dut(
     # Best-effort UE Capability + UE info query
     try:
         from app.services.instrument_hal_service import get_hal_service
-        hal = get_hal_service()
-        bs = hal.drivers.get("baseStation")
-        if bs is None:
-            warnings.append("baseStation driver not in HAL — DUT attach recorded without RRC verification")
-        else:
-            if hasattr(bs, "query_ue_capability"):
+        from app.services.instrument_test_lease import instrument_test_lease
+
+        async with instrument_test_lease(
+            f"attach-dut:{execution_id}",
+            control_f64=False,
+            control_uxm=True,
+            enable_monitoring=False,
+        ):
+            hal = get_hal_service()
+            bs = hal.drivers.get("baseStation")
+            if bs is None:
+                warnings.append(
+                    "baseStation driver not in HAL — DUT attach recorded without RRC verification"
+                )
+            elif hasattr(bs, "query_ue_capability"):
                 cap = await bs.query_ue_capability()
                 if cap.get("source") == "unavailable":
                     warnings.append(

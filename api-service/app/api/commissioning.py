@@ -37,6 +37,7 @@ from app.services.test_execution import (
     StepExecutionContext,
     dispatch_step,
 )
+from app.services.instrument_test_lease import instrument_test_lease
 
 
 COMMISSIONING_CHAINS = ("commissioning_api", "commissioning_adhoc")
@@ -630,8 +631,11 @@ async def run_phase(
     # ARCH-1 S3: 相位期间行标 running, 让 HAL reload 闸门看得见 (这条
     # 链 GUI 可点、跑真硬件, 之前全程 pending 所以闸门看不见它)
     ctx = _build_context(db, execution, test_case, step)
-    with _execution_marked_running(db, execution):
-        result = await dispatch_step(ctx)
+    async with instrument_test_lease(
+        f"commissioning-phase:{session_id}:{phase_name}"
+    ):
+        with _execution_marked_running(db, execution):
+            result = await dispatch_step(ctx)
 
     db.refresh(execution)  # pick up measurements written by executor
     phases_key = _STEP_TYPE_TO_PHASES_KEY[target_step_type]
@@ -762,7 +766,10 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
     status_value = "failed"
     try:
         ctx = _build_context(db, execution, test_case, step)
-        result = await dispatch_step(ctx)
+        async with instrument_test_lease(
+            f"commissioning-adhoc:{req.phase_name}"
+        ):
+            result = await dispatch_step(ctx)
         status_value = result.status.value
         error_message = result.error_message
     except Exception as e:  # noqa: BLE001
@@ -893,20 +900,21 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
     aborted_at: Optional[str] = None
     abort_message: Optional[str] = None
     started_at = datetime.utcnow()
-    with _execution_marked_running(db, execution):
-        for step in descriptors:
-            ctx = _build_context(db, execution, test_case, step)
-            result = await dispatch_step(ctx)
-            if result.status.value == "failed":
-                aborted_at = step.type
-                abort_message = result.error_message
-                logger.warning(
-                    "[%s] run-all aborted at %s: %s",
-                    session_id,
-                    step.type,
-                    result.error_message,
-                )
-                break
+    async with instrument_test_lease(f"commissioning-run-all:{session_id}"):
+        with _execution_marked_running(db, execution):
+            for step in descriptors:
+                ctx = _build_context(db, execution, test_case, step)
+                result = await dispatch_step(ctx)
+                if result.status.value == "failed":
+                    aborted_at = step.type
+                    abort_message = result.error_message
+                    logger.warning(
+                        "[%s] run-all aborted at %s: %s",
+                        session_id,
+                        step.type,
+                        result.error_message,
+                    )
+                    break
 
     if aborted_at is not None:
         # 中止的链是 failed —— 记成 completed 会让它混进待归档报告列表
@@ -952,32 +960,35 @@ class DeviceSelfcheckResult(BaseModel):
 @router.post("/device-selfcheck", response_model=DeviceSelfcheckResult)
 async def device_selfcheck() -> DeviceSelfcheckResult:
     """暗室首测前逐设备快速自检 (连接 + 响应性主动探测)。"""
-    try:
-        from app.services.instrument_hal_service import get_hal_service
-        hal = get_hal_service()
-    except Exception:  # noqa: BLE001
-        return DeviceSelfcheckResult(all_ready=False, devices=[], message="HAL 服务不可用")
-    drivers = (hal.drivers or {}) if hal else {}
-    if not drivers:
-        return DeviceSelfcheckResult(
-            all_ready=False, devices=[],
-            message="无 HAL 驱动加载 — 检查仪器已选 + 连接 IP 已填, 或重载 HAL 驱动",
-        )
     items: List[DeviceSelfcheckItem] = []
-    for category, driver in sorted(drivers.items()):
-        status = getattr(driver, "status", None)
-        status_str = str(getattr(status, "value", status) or "").lower()
-        connected = status_str in ("connected", "ready", "busy")
-        responsive = False
-        detail: Optional[str] = None
+    async with instrument_test_lease("commissioning-device-selfcheck"):
         try:
-            await driver.get_metrics()  # 主动轻量探测 driver 是否响应
-            responsive = True
-        except Exception as e:  # noqa: BLE001
-            detail = str(e)
-        items.append(DeviceSelfcheckItem(
-            category=category, connected=connected, responsive=responsive, detail=detail,
-        ))
+            from app.services.instrument_hal_service import get_hal_service
+            hal = get_hal_service()
+        except Exception:  # noqa: BLE001
+            return DeviceSelfcheckResult(
+                all_ready=False, devices=[], message="HAL 服务不可用"
+            )
+        drivers = (hal.drivers or {}) if hal else {}
+        if not drivers:
+            return DeviceSelfcheckResult(
+                all_ready=False, devices=[],
+                message="无 HAL 驱动加载 — 检查仪器已选 + 连接 IP 已填, 或重载 HAL 驱动",
+            )
+        for category, driver in sorted(drivers.items()):
+            status = getattr(driver, "status", None)
+            status_str = str(getattr(status, "value", status) or "").lower()
+            connected = status_str in ("connected", "ready", "busy")
+            responsive = False
+            detail: Optional[str] = None
+            try:
+                await driver.get_metrics()  # 主动轻量探测 driver 是否响应
+                responsive = True
+            except Exception as e:  # noqa: BLE001
+                detail = str(e)
+            items.append(DeviceSelfcheckItem(
+                category=category, connected=connected, responsive=responsive, detail=detail,
+            ))
     all_ready = all(d.connected and d.responsive for d in items)
     return DeviceSelfcheckResult(
         all_ready=all_ready,

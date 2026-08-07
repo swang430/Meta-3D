@@ -1,4 +1,4 @@
-"""P1-17: UXM fresh-start 默认 topology profile 测试.
+"""UXM fresh-start 按 Test App 选择默认 topology profile 的测试.
 
 设计: UXM 走了"快速路"—— fresh-start 时 binding 没选 profile 就空配置 (driver
 内部默认 2x2/3500M/-50dBm), 现场得手动 PUT 选。对称 F64 已有的默认 .smu 自动加载,
@@ -8,11 +8,10 @@
   - _initialize_from_db: binding 无 profile_id → fallback 到 driver._default_topology_profile_id
 
 本测试钉死:
-1. 3600M profile 存在 + 频率/MIMO 对齐 F64 默认 (防有人改频率破坏对齐)
-2. 默认常量指向存在的 profile
-3. driver 默认 attr + config override
-4. fallback 语义 (binding 优先, 无则默认)
-5. 现有 3500M profile 没被动 (没破坏既有引用)
+1. 5G_NR_Test 保持 EMQuest 基线默认 profile；
+2. LTE_NR_IRAT 识别后自动切到 CELL1 专用基线；
+3. 用户显式指定的 default_topology_profile_id 不被自动选择覆盖；
+4. binding 有 profile_id 时优先，无绑定时才 fallback。
 """
 from __future__ import annotations
 
@@ -22,6 +21,7 @@ from app.hal.uxm_base_station import (
     RealUxmDriver,
 )
 from app.hal.propsim_f64 import F64_DEFAULT_EMULATION_FILE
+from app.hal.uxm_command_profiles import UxmLteNrIratProfile
 
 # registry 是 module global, import 时填充一次
 _register_builtin_profiles()
@@ -79,6 +79,16 @@ class TestDefaultConstant:
         # 常量必须指向 registry 里真实存在的 profile (防 typo / 删 profile 后常量悬空)
         assert UXM_DEFAULT_TOPOLOGY_PROFILE_ID in _PROFILE_REGISTRY
 
+    def test_irat_baseline_profile_uses_cell1_and_live_values(self):
+        p = _PROFILE_REGISTRY["caict_n78_3550_irat_2layer"]
+        assert p.compatible_test_apps == ["LTE_NR_IRAT"]
+        assert p.cell_id == "CELL1"
+        assert p.arfcn == 636666
+        assert p.bandwidth_mhz == 40.0
+        assert p.scs_khz == 30
+        assert p.mimo_layers == 2
+        assert p.mimo_port_preset == "4x4"
+
 
 class TestDriverDefaultAttr:
     def test_driver_default_attr_is_const(self):
@@ -92,6 +102,20 @@ class TestDriverDefaultAttr:
         drv = RealUxmDriver(
             "uxm-test", {"default_topology_profile_id": "caict_n78_2x2"}
         )
+        assert drv._default_topology_profile_id == "caict_n78_2x2"
+
+    def test_irat_detection_selects_irat_default_when_not_overridden(self):
+        drv = RealUxmDriver("uxm-test", {})
+        drv._cmds = UxmLteNrIratProfile()
+        drv._sync_default_topology_to_profile()
+        assert drv._default_topology_profile_id == "caict_n78_3550_irat_2layer"
+
+    def test_explicit_default_is_not_replaced_by_detection(self):
+        drv = RealUxmDriver(
+            "uxm-test", {"default_topology_profile_id": "caict_n78_2x2"}
+        )
+        drv._cmds = UxmLteNrIratProfile()
+        drv._sync_default_topology_to_profile()
         assert drv._default_topology_profile_id == "caict_n78_2x2"
 
 
@@ -120,7 +144,7 @@ class TestExistingProfilesUnchanged:
         p = _PROFILE_REGISTRY["caict_n78_4x4"]
         assert p.frequency_mhz == 3500.0
 
-    def test_registry_has_9_profiles(self):
+    def test_registry_has_10_profiles(self):
         # 7 原有 + caict_n78_3600_4x4 (P1-17, 历史保留) + caict_n78_3550_4x4_baseline
-        # (门审 #216 F1, 2026-07-20 起系统默认)
-        assert len(_PROFILE_REGISTRY) == 9
+        # (门审 #216 F1, 2026-07-20 起 5G 默认) + IRAT/CELL1 现场基线。
+        assert len(_PROFILE_REGISTRY) == 10

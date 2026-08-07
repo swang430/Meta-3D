@@ -48,9 +48,19 @@ class TestCmdHelper:
         result = driver_irat._cmd("CELL_BAND", cell="CELL1")
         assert result == "BSE:CONFig:NR5G:CELL1:BAND"
 
-    def test_returns_none_when_unsupported_in_profile(self, driver_irat):
-        # IRAT profile sets CELL_SCS = None (no equivalent in this Test App).
-        assert driver_irat._cmd("CELL_SCS", cell="CELL1") is None
+    def test_live_verified_irat_cell_commands_use_bse_dialect(self, driver_irat):
+        """2026-08-07 现场只读探针 12/12 通过后的驱动不变量。"""
+        expected = {
+            "CELL_SCS": "BSE:CONFig:NR5G:CELL1:SUBCarrier:SPACing:COMMon",
+            "CELL_DUPLEX": "BSE:CONFig:NR5G:CELL1:DUPLEX:MODe",
+            "CELL_DL_POINTA": "BSE:CONFig:NR5G:CELL1:DL:POINta",
+            "SSB_ARFCN": "BSE:CONFig:NR5G:CELL1:SSB:ARFCN",
+            "MIMO_DL_LAYERS": (
+                "BSE:CONFig:NR5G:CELL1:PHY:PDSCh:MAX:MIMOlayers"
+            ),
+        }
+        for name, command in expected.items():
+            assert driver_irat._cmd(name, cell="CELL1") == command
 
     def test_returns_none_when_attribute_missing(self, driver_irat):
         # Attribute doesn't exist on the profile at all.
@@ -65,6 +75,11 @@ class TestCmdHelper:
         # CELL_DUPLEX exists in 5G_NR_Test profile.
         result = driver_5g._cmd("CELL_DUPLEX", cell="CELL0")
         assert result == "CONFig:NR5G:CELL0:DUPLex"
+
+    def test_irat_readback_tokens_parse_to_engineering_values(self):
+        assert RealUxmDriver._parse_bw_response("BW40") == 40.0
+        assert RealUxmDriver._parse_scs_response("MU1") == 30
+        assert RealUxmDriver._parse_scs_response("30") == 30
 
 
 class TestSetCellConfigGracefulSkip:
@@ -102,17 +117,17 @@ class TestSetCellConfigGracefulSkip:
         return sess
 
     @pytest.mark.asyncio
-    async def test_irat_skips_unsupported_optional_fields(self, driver_irat):
+    async def test_irat_sends_live_verified_cell_fields_and_skips_unknowns(self, driver_irat):
         sess = self._wire_fake_visa(driver_irat)
-        # All these are None in UxmLteNrIratProfile — driver must skip
-        # each, NOT crash. Mandatory fields (band, bandwidth_mhz, ARFCN)
-        # ARE supported and should still be sent.
+        # 现场已证的字段必须进入正式配置链；仍未经验证的字段继续跳过。
         ok = await driver_irat.set_cell_config({
             "band": "N78",
             "bandwidth_mhz": 100,
-            "duplex": "TDD",          # CELL_DUPLEX = None in IRAT
-            "scs_khz": 30,            # CELL_SCS = None in IRAT
-            "mimo_layers": 4,         # MIMO_DL_LAYERS = None in IRAT
+            "duplex": "TDD",
+            "scs_khz": 30,
+            "mimo_layers": 4,
+            "ssb_arfcn": 635712,
+            "point_a_arfcn": 632946,
             "rf_port_dl": "RF1OUT",   # RF_PORT_DL = None in IRAT
             "tdd_pattern": "DDDSU",   # TDD_PATTERN = None in IRAT
             "tdd_period": 5,          # TDD_PERIOD = None in IRAT
@@ -131,11 +146,30 @@ class TestSetCellConfigGracefulSkip:
         # ARFCN auto-fill: agent R6 F3 起 N78 fallback = EMQuest 基线 636666。
         assert any("BSE:CONFig:NR5G:CELL1:DL:ARFCN 636666" in w for w in written), written
 
+        # 2026-08-07 实机 query + 厂商手册写值形态共同确认。
+        assert any(
+            "BSE:CONFig:NR5G:CELL1:SUBCarrier:SPACing:COMMon MU1" in w
+            for w in written
+        ), written
+        assert any(
+            "BSE:CONFig:NR5G:CELL1:DUPLEX:MODe TDD" in w for w in written
+        ), written
+        assert any(
+            "BSE:CONFig:NR5G:CELL1:SSB:ARFCN 635712" in w for w in written
+        ), written
+        assert any(
+            "BSE:CONFig:NR5G:CELL1:DL:POINta 632946" in w for w in written
+        ), written
+        assert any(
+            "BSE:CONFig:NR5G:CELL1:PHY:PDSCh:MAX:MIMOlayers 4" in w
+            for w in written
+        ), written
+        assert not any("PHY:PDSCh:MMIMolayers" in w for w in written), written
+
         # ⚠ P1-33（2026-08-04）：`HARQ:` 与 `CSIRS:PORTs` **已按手册补进 IRAT**，
         #   不再属于"本方言没有"那一档 —— 从禁发清单里移出。
         #   移出后它们该照发，且值形态是手册要的**枚举 token**（下面单独断言）。
-        for forbidden in ("DUPLex", "SCS", "MIMO:LAYers", "TDD:PATTern",
-                          "RFSettings:DL:PORT",
+        for forbidden in ("TDD:PATTern", "RFSettings:DL:PORT",
                           "BTHRoughput:DL:TSTatistics:COUNt"):
             offending = [w for w in written if forbidden in w]
             assert offending == [], f"IRAT skipped command leaked: {offending}"
@@ -185,6 +219,25 @@ class TestSetCellConfigGracefulSkip:
                            "BTHRoughput:DL:TSTatistics:COUNt"):
             assert not any(fabricated in w for w in written), (
                 f"仍在发手册里不存在的编造命令: {fabricated}")
+
+
+class TestIratMimoConfiguration:
+    @pytest.mark.asyncio
+    async def test_4x4_preset_uses_verified_builtin_mimo_config(self, driver_irat):
+        sess = MagicMock()
+        sess.write = MagicMock()
+        sess.query = MagicMock(side_effect=lambda cmd: (
+            "1" if cmd == "*OPC?" else "N4X4"
+        ))
+        sess.timeout = 5000
+        driver_irat._visa_session = sess
+
+        ok = await driver_irat.set_mimo_port_mapping(preset="4x4")
+
+        assert ok is True
+        writes = [c.args[0] for c in sess.write.call_args_list]
+        assert writes == ["BSE:CONFig:NR5G:CELL1:DL:MIMO:CONFig N4X4"]
+        assert not any("ROUTe:" in w for w in writes)
 
 
 class TestProfileSelectedByConfigHint:

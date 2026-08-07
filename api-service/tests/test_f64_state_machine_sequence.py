@@ -193,6 +193,34 @@ class TestGuards:
         )
         assert "瞬态" not in result.summary, "CLOSED 不是瞬态, 别给错指引"
 
+    def test_closed_does_not_require_bypass_readback(self):
+        """现场 F8800A 在 CLOSED 下不返回 MODEL:STATIC 档位。
+
+        STATE? 已可靠返回 CLOSED 就证明 SCPI 通道正常；此时应直接提示加载
+        仿真，而不是继续查询一个依赖已加载仿真的档位并误报“通道异常”。
+        """
+        class _ClosedF64(_FakeF64):
+            def __init__(self):
+                super().__init__(state="CLOSED")
+                self.queries: List[str] = []
+
+            async def _query(self, cmd: str) -> str:
+                self.queries.append(cmd)
+                if cmd == "DIAG:SIMU:MODEL:STATIC?":
+                    return ""
+                return await super()._query(cmd)
+
+        ce = _ClosedF64()
+        result, _ = _run(ce)
+
+        assert result.success is False
+        assert "SCPI 通道正常" in result.summary
+        assert ".smu" in result.summary
+        assert ce.queries == ["DIAG:SIMU:STATE?"], (
+            "CLOSED 下 MODEL:STATIC? 没有有效语义，不应让它遮住已确认的 CLOSED"
+        )
+        assert ce.writes == []
+
     @pytest.mark.parametrize("state", ["OPENING", "STOPPING", "CLOSING", "EDITING"])
     def test_transient_states_abort_without_writing(self, state):
         ce = _FakeF64(state=state)

@@ -69,6 +69,11 @@ logger = logging.getLogger(__name__)
 # F64 专用枚举和常量
 # ===========================================================================
 
+
+class F64LocalControlReservedError(RuntimeError):
+    """F64 已交还前面板，本进程不得再发 ATE/SCPI 指令。"""
+
+
 class F64Pipeline(str, Enum):
     """信道加载管线类型"""
     GCM_NATIVE = "gcm"          # Pipeline A: F64 原生 GCM
@@ -475,6 +480,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         # PyVISA 资源句柄
         self._visa_resource = None
         self._rm = None
+        # True 表示操作员已显式要求把控制权交还 F64 前面板。F64 只要收到任意
+        # ATE 命令就会再次进入 Remote，因此该标志必须同时禁止监控轮询和静默重连，
+        # 不能仅仅 close 当前 socket。
+        self._local_control_reserved: bool = False
+        self._local_release_failed: bool = False
+        self._control_lock = asyncio.Lock()
 
         # 管线状态追踪
         self._active_pipeline: Optional[F64Pipeline] = None
@@ -1542,6 +1553,31 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         logger.info(f"[F64] 本地场景已加载 (手册序列): {file_path}")
         return True
 
+    async def confirm_scenario_loaded(self) -> Dict[str, Any]:
+        """用 F64 自身状态回读确认 `.smu` 已加载，而不是只相信脚本缓存。"""
+        if self._local_control_reserved or not self._visa_resource:
+            return {
+                "confirmed": False,
+                "simulation_state": None,
+                "reason": "F64 当前不在远程控制会话中",
+            }
+        async with self._scpi_lock:
+            state = await self._query_simulation_state()
+            _, effective_state = await self._apply_state_truth_confirmed(state)
+        # CALC:FILT:FILE + *OPC? 的正常终态应为 STOPPED。EDITING/OPENING 等仍
+        # 属占用/过渡态，不能向现场脚本报“加载完成”；RUNNING 也不是本端点的预期，
+        # 因为 load_local_scenario 明确不发送 GO。
+        confirmed = effective_state == "STOPPED" and bool(self._loaded_emulation_file)
+        return {
+            "confirmed": confirmed,
+            "simulation_state": effective_state,
+            "loaded_file": self._loaded_emulation_file,
+            "active_inputs": self._active_inputs,
+            "active_outputs": self._active_outputs,
+            "active_channels": self._active_channels,
+            "reason": None if confirmed else "STATE? 未确认处于已加载稳态",
+        }
+
     async def load_parametric_tdl(self, waveform_dir: str, model_name: str) -> bool:
         """P2-14 B-2: 加载参数化 TDL (.tap/.rtc) 模型, F64 硬件 FPGA 实时合成衰落。
 
@@ -1666,6 +1702,11 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
           3. 发送 *IDN? 验证身份
           4. 查询 SYST:INFO? 获取硬件配置
         """
+        if self._local_control_reserved:
+            self._status = InstrumentStatus.DISCONNECTED
+            self._last_error = "F64 已交还本地控制；需显式重新取得远程控制"
+            return False
+
         self._status = InstrumentStatus.CONNECTING
         self._identity_response = None
         # 连接起始复位网 (F3): connect 是新会话干净起点 → 全清 6 字段 (含 running/pipeline/
@@ -1680,12 +1721,29 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             self._rm = pyvisa.ResourceManager('@py')
             resource_string = f"TCPIP0::{self.ip_address}::{self.port}::SOCKET"
 
-            self._visa_resource = await asyncio.to_thread(
+            open_task = asyncio.create_task(asyncio.to_thread(
                 self._rm.open_resource, resource_string,
                 read_termination='\n',
                 write_termination='\n',
                 timeout=VISA_TIMEOUT_DEFAULT
-            )
+            ))
+            try:
+                self._visa_resource = await asyncio.shield(open_task)
+            except asyncio.CancelledError:
+                # to_thread 不会随外层 task 取消。若 TCP open 稍后成功，必须由回调
+                # 立即关掉，否则这个“无人持有”的 socket 会把 F64 永久留在 Remote。
+                def _close_late_open(task: asyncio.Task) -> None:
+                    try:
+                        late_resource = task.result()
+                    except BaseException:
+                        return
+                    try:
+                        late_resource.close()
+                    except Exception:
+                        pass
+
+                open_task.add_done_callback(_close_late_open)
+                raise
 
             # 验证连接: IEEE 488.2 标准身份查询
             idn = await self._query("*IDN?")
@@ -1759,11 +1817,106 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             self._teardown_unconfirmed = False
             return True
 
-        except Exception as e:
+        except BaseException as e:
             logger.error(f"[F64] Connection failed ({self.ip_address}:{self.port}): {e}")
+            # F64 在收到第一条 ATE 命令时就进入 Remote。若 *IDN?/SYST:INFO? 等
+            # 后续握手失败但不关 socket，这个未注册进 HAL 的半连接不会再被 shutdown
+            # 清理，前面板也会一直被 Remote 抢占。
+            failed_resource = self._visa_resource
+            self._visa_resource = None
+            self._rm = None
+            if failed_resource is not None:
+                try:
+                    # 取消展开期间不再 await；同步 close 是确保句柄不泄漏的兜底。
+                    failed_resource.close()
+                except Exception:
+                    pass
+            if isinstance(e, asyncio.CancelledError):
+                self._status = InstrumentStatus.DISCONNECTED
+                self._last_error = "F64 连接建立被取消，ATE socket 已清理"
+                raise
             self._status = InstrumentStatus.ERROR
             self._last_error = str(e)
             return False
+
+    @property
+    def local_control_reserved(self) -> bool:
+        """是否已把 F64 控制权保留给前面板操作员。"""
+        return self._local_control_reserved
+
+    @property
+    def local_release_failed(self) -> bool:
+        """最近一次 Local 交接是否因 socket 未能关闭而未完成。"""
+        return self._local_release_failed
+
+    async def release_to_local_control(self) -> bool:
+        """非破坏性地释放 ATE socket，并禁止后台重新夺回 Remote。
+
+        本方法故意不发 STOP/GOS/CLOSE 或任何查询；关闭 TCP socket 后，操作员可在
+        F64 GUI 点击 Local Mode。当前已加载/运行的仿真由仪器继续保持。
+        """
+        async with self._control_lock:
+            # 先立门，再等锁：已排队的 monitoring 查询拿到锁后也会被 _do_query 拒绝。
+            self._local_control_reserved = True
+            self._local_release_failed = False
+            async with self._scpi_lock:
+                resource = self._visa_resource
+                if resource is not None:
+                    try:
+                        await asyncio.to_thread(resource.close)
+                    except asyncio.CancelledError:
+                        # close 在线程里可能继续执行，但当前请求已无法确认结果；保留句柄
+                        # 与失败态供下一次操作重试，且继续封锁所有 SCPI。
+                        self._local_release_failed = True
+                        self._status = InstrumentStatus.ERROR
+                        self._last_error = "释放 F64 ATE socket 的请求被取消，交接结果未确认"
+                        raise
+                    except Exception as exc:
+                        # 不丢句柄：实际 close 未确认，保留供操作员重试，且对外不能谎报
+                        # 已进入 Local。SCPI 门仍保持，后台不会继续使用这个句柄。
+                        self._local_release_failed = True
+                        self._status = InstrumentStatus.ERROR
+                        self._last_error = f"释放 F64 ATE socket 失败: {exc}"
+                        logger.warning("[F64] 释放本地控制时关闭 VISA socket 失败: %s", exc)
+                        return False
+                self._visa_resource = None
+                self._rm = None
+                self._identity_response = None
+                self.sys_info = None
+                self.firmware_version = None
+                self.band_label = None
+                self.product_family = None
+                self._status = InstrumentStatus.DISCONNECTED
+                self._last_error = None
+            logger.info(
+                "[F64] ATE socket 已释放，后台 SCPI 轮询已暂停；未发送 STOP/GOS/CLOSE"
+            )
+            return True
+
+    async def acquire_remote_control(self) -> bool:
+        """由操作员显式重新取得 Remote；失败时继续保护 Local。"""
+        async with self._control_lock:
+            if (
+                not self._local_control_reserved
+                and self._visa_resource is not None
+                and self._status in {InstrumentStatus.CONNECTED, InstrumentStatus.READY}
+            ):
+                return True
+            if self._local_release_failed and self._visa_resource is not None:
+                self._last_error = "上次 ATE socket 关闭未确认；请先重试交还 Local"
+                return False
+            self._local_control_reserved = False
+            self._local_release_failed = False
+            try:
+                connected = await self.connect()
+            except asyncio.CancelledError:
+                # acquire 前清过 Local 门；取消若不恢复，后台后续路径会误以为可自动
+                # 连接并重新抢权。
+                self._local_control_reserved = True
+                raise
+            if not connected:
+                self._local_control_reserved = True
+            return connected
 
     async def disconnect(self) -> bool:
         """
@@ -4236,6 +4389,15 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         query_errors 里显式标注"跳过查询" —— 读操作降级但可见, 区别于 set_* 写操作的
         fail-loud (拿错口号写会真的配错硬件, 读只是没数)。
         """
+        if self._local_control_reserved:
+            return InstrumentMetrics(
+                timestamp=datetime.utcnow(),
+                metrics={
+                    "control_mode": "local",
+                    "remote_polling_suppressed": True,
+                },
+                status="normal",
+            )
         if not self._visa_resource:
             return InstrumentMetrics(
                 timestamp=datetime.utcnow(),
@@ -4532,6 +4694,9 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
           就先抛了, 走不到 VISA C 库; 实测 pyvisa 1.16.2), 该类型已归入
           `_is_visa_conn_lost` → 冷却窗口过后再次重连, 网络一恢复即自愈。
         """
+        if self._local_control_reserved:
+            logger.info("[F64] 本地控制保留中 — 跳过 VISA 会话重建")
+            return False
         if self._rm is None or not self.ip_address:
             return False
         if self._tearing_down:
@@ -4609,6 +4774,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         命令不再读到迟到应答; 排水失败才需要上层重载。
         """
         async with self._scpi_lock:
+            if self._local_control_reserved:
+                raise F64LocalControlReservedError(
+                    "F64 已交还本地控制；拒绝后台 SCPI 写入"
+                )
             try:
                 await self._do_write_unlocked(cmd, timeout)
             except Exception as e:
@@ -4624,6 +4793,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         `note_success=False` 透传给底层 (基类 `_query(cmd, **kwargs)` 本就转发 kwargs),
         供**清错误队列**这类"不算业务恢复"的读使用 —— 见 `_note_io_success`。"""
         async with self._scpi_lock:
+            if self._local_control_reserved:
+                raise F64LocalControlReservedError(
+                    "F64 已交还本地控制；拒绝后台 SCPI 查询"
+                )
             try:
                 return await self._do_query_unlocked(
                     cmd, timeout, note_success=note_success

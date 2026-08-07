@@ -178,17 +178,18 @@ class TestProfileCompatDeclaration:
         )
         assert profile.is_compatible_with(None) is True
 
-    def test_all_builtin_templates_declare_5g_compat(self):
-        """All built-in templates use `cell_id="CELL0"` which only
-        works on 5G_NR_Test (IRAT's primary cell is CELL1). Pin that
-        they all DECLARE this constraint explicitly — a future template
-        for IRAT must declare its own compat (not silently inherit
-        empty=any and break at SCPI time)."""
+    def test_all_builtin_templates_declare_exact_app_compat(self):
+        """每个内置模板必须显式声明方言，禁止 empty=any。"""
         templates = list_profiles()
         assert len(templates) == _N_BUILTIN
         for entry in templates:
             full = get_profile(entry["profile_id"])
-            assert full.compatible_test_apps == ["5G_NR_Test"], (
+            expected = (
+                ["LTE_NR_IRAT"]
+                if full.profile_id == "caict_n78_3550_irat_2layer"
+                else ["5G_NR_Test"]
+            )
+            assert full.compatible_test_apps == expected, (
                 f"profile {full.profile_id!r} doesn't declare "
                 f"compatible_test_apps — got {full.compatible_test_apps}"
             )
@@ -358,9 +359,10 @@ class TestListTopologyProfilesEndpoint:
             resp = client.get(f"/api/v1/instruments/{cat.category_key}/topology-profiles")
         body = resp.json()
         assert body["current_test_app"] == "5G_NR_Test"
-        # All 7 templates declare compat with 5G_NR_Test → all True.
+        # 5G templates 可用，IRAT 专用模板不可用。
         for item in body["items"]:
-            assert item["compatible_with_current_test_app"] is True
+            expected = item["profile_id"] != "caict_n78_3550_irat_2layer"
+            assert item["compatible_with_current_test_app"] is expected
 
     def test_compat_flag_false_when_test_app_differs(self, db):
         cat = _make_basestation_category(db)
@@ -376,9 +378,10 @@ class TestListTopologyProfilesEndpoint:
         ):
             resp = client.get(f"/api/v1/instruments/{cat.category_key}/topology-profiles")
         body = resp.json()
-        # All built-ins declare 5G_NR_Test only — incompat with IRAT.
+        # 只有新的 CELL1/IRAT 现场基线可用。
         for item in body["items"]:
-            assert item["compatible_with_current_test_app"] is False
+            expected = item["profile_id"] == "caict_n78_3550_irat_2layer"
+            assert item["compatible_with_current_test_app"] is expected
 
     def test_returns_persisted_selection(self, db):
         cat = _make_basestation_category(db)
@@ -419,7 +422,8 @@ class TestListTopologyProfilesEndpoint:
         # = '5G NR Test' but profile wants '5G_NR_Test'" cognitive mismatch).
         assert body["current_test_app"] == "5G_NR_Test"
         for item in body["items"]:
-            assert item["compatible_with_current_test_app"] is True
+            expected = item["profile_id"] != "caict_n78_3550_irat_2layer"
+            assert item["compatible_with_current_test_app"] is expected
 
 
 # ============================================================

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime
 
 import pytest
@@ -98,6 +99,39 @@ def lab(db, chamber):
 
 
 class TestAdhocPhaseEndpoint:
+    def test_adhoc_phase_holds_instrument_lease(self, lab, monkeypatch):
+        from app.services.test_execution.executor_base import (
+            StepExecutionResult,
+            StepExecutionStatus,
+        )
+
+        events = []
+
+        @asynccontextmanager
+        async def _lease(purpose):
+            events.append(f"enter:{purpose}")
+            try:
+                yield
+            finally:
+                events.append("exit")
+
+        async def _dispatch(_ctx):
+            events.append("dispatch")
+            return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
+
+        monkeypatch.setattr(
+            "app.api.commissioning.instrument_test_lease", _lease, raising=False
+        )
+        monkeypatch.setattr("app.api.commissioning.dispatch_step", _dispatch)
+
+        resp = client.post(
+            "/api/v1/commissioning/diagnostic/run-phase",
+            json={"lab_profile_id": str(lab.id), "phase_name": "precheck"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert events == ["enter:commissioning-adhoc:precheck", "dispatch", "exit"]
+
     def test_unknown_phase_returns_400(self, lab):
         resp = client.post(
             "/api/v1/commissioning/diagnostic/run-phase",
@@ -353,6 +387,85 @@ class TestHALTraceTail:
 
 
 class TestExecutionStatusVisibleToReloadGate:
+    def test_saved_session_single_phase_holds_instrument_lease(
+        self, lab, monkeypatch
+    ):
+        from app.services.test_execution.executor_base import (
+            StepExecutionResult,
+            StepExecutionStatus,
+        )
+
+        events = []
+
+        @asynccontextmanager
+        async def _lease(purpose):
+            events.append(f"enter:{purpose}")
+            try:
+                yield
+            finally:
+                events.append("exit")
+
+        async def _dispatch(_ctx):
+            events.append("dispatch")
+            return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
+
+        monkeypatch.setattr(
+            "app.api.commissioning.instrument_test_lease", _lease, raising=False
+        )
+        monkeypatch.setattr("app.api.commissioning.dispatch_step", _dispatch)
+        sess = client.post(
+            "/api/v1/commissioning/sessions",
+            json={"lab_profile_id": str(lab.id)},
+        )
+        sid = sess.json()["session_id"]
+
+        resp = client.post(
+            f"/api/v1/commissioning/sessions/{sid}/phase/precheck"
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert events == [
+            f"enter:commissioning-phase:{sid}:precheck",
+            "dispatch",
+            "exit",
+        ]
+
+    def test_run_all_holds_one_lease_across_every_phase(self, lab, monkeypatch):
+        from app.services.test_execution.executor_base import (
+            StepExecutionResult,
+            StepExecutionStatus,
+        )
+
+        events = []
+
+        @asynccontextmanager
+        async def _lease(purpose):
+            events.append(f"enter:{purpose}")
+            try:
+                yield
+            finally:
+                events.append("exit")
+
+        async def _dispatch(_ctx):
+            events.append("dispatch")
+            return StepExecutionResult(status=StepExecutionStatus.SUCCESS)
+
+        monkeypatch.setattr(
+            "app.api.commissioning.instrument_test_lease", _lease, raising=False
+        )
+        monkeypatch.setattr("app.api.commissioning.dispatch_step", _dispatch)
+        sess = client.post(
+            "/api/v1/commissioning/sessions",
+            json={"lab_profile_id": str(lab.id)},
+        )
+        sid = sess.json()["session_id"]
+
+        resp = client.post(f"/api/v1/commissioning/sessions/{sid}/run-all")
+
+        assert resp.status_code == 200, resp.text
+        assert events[0] == f"enter:commissioning-run-all:{sid}"
+        assert events[-1] == "exit"
+        assert events.count("dispatch") == 5
     """ARCH-1 S3: 三个 commissioning 入口在跑相位期间必须把行标 running,
     否则 HAL reload 闸门看不见它们 (现场最常用的链会裸奔)。
 

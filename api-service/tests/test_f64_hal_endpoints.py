@@ -11,6 +11,7 @@ output-calibration / input-reference / crest-factor)。
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+from contextlib import asynccontextmanager
 
 import pytest
 
@@ -38,6 +39,9 @@ class _FakeF64Driver:
         # F64R-2: 冷缓存 (后端重启后驱动忘了拓扑, 但 F64 仍加载着仿真)。端点必须先
         # await ensure_topology() 补读, 才读得到口号 —— 不 await 就退化成 400。
         self._input_ports: Optional[List[int]] = None
+        self.local_control_reserved = False
+        self._visa_resource = object()
+        self._loaded_emulation_file: Optional[str] = None
 
     async def ensure_topology(self) -> bool:
         self.calls.append(("ensure_topology",))
@@ -73,6 +77,32 @@ class _FakeF64Driver:
     async def set_crest_factor(self, input_num: int, crest_db: float) -> bool:
         self.calls.append(("set_crest_factor", input_num, crest_db))
         return self._ok and input_num not in self._fail_ports
+
+    async def release_to_local_control(self) -> bool:
+        self.calls.append(("release_to_local_control",))
+        self.local_control_reserved = True
+        self._visa_resource = None
+        return self._ok
+
+    async def acquire_remote_control(self) -> bool:
+        self.calls.append(("acquire_remote_control",))
+        if self._ok:
+            self.local_control_reserved = False
+            self._visa_resource = object()
+        return self._ok
+
+    async def load_local_scenario(self, file_path: str) -> bool:
+        self.calls.append(("load_local_scenario", file_path))
+        if self._ok:
+            self._loaded_emulation_file = file_path
+        return self._ok
+
+    async def confirm_scenario_loaded(self):
+        self.calls.append(("confirm_scenario_loaded",))
+        return {
+            "confirmed": self._ok and bool(self._loaded_emulation_file),
+            "simulation_state": "STOPPED" if self._ok else None,
+        }
 
 
 @pytest.fixture()
@@ -125,6 +155,49 @@ def test_emulation_control_start_ok(client, fake_driver):
     assert ("start_emulation",) in fake_driver.calls
 
 
+@pytest.mark.parametrize(
+    "method,path,body",
+    [
+        ("post", "/emulation-control", {"action": "start"}),
+        ("post", "/output-gain", {"ports": [1], "gain_db": -1.0}),
+        ("get", "/output-calibration/1", None),
+        ("post", "/input-reference", {"power_dbm": -17.0, "input_ports": [1]}),
+        ("post", "/crest-factor", {"input_ports": [1], "crest_db": 15.0}),
+        (
+            "post",
+            "/load-smu",
+            {"file_path": r"D:\\User Emulations\\onsite\\attach.smu"},
+        ),
+    ],
+)
+def test_f64_standalone_scpi_endpoints_hold_non_polling_lease(
+    client, fake_driver, monkeypatch, method, path, body
+):
+    events = []
+
+    @asynccontextmanager
+    async def _lease(purpose, **kwargs):
+        events.append(("enter", purpose, kwargs))
+        try:
+            yield
+        finally:
+            events.append(("exit", purpose))
+
+    monkeypatch.setattr(
+        instrument_api, "instrument_test_lease", _lease, raising=False
+    )
+    resp = getattr(client, method)(BASE + path, **({"json": body} if body else {}))
+
+    assert resp.status_code == 200, resp.text
+    assert events[0][0] == "enter"
+    assert events[0][2] == {
+        "control_f64": True,
+        "control_uxm": False,
+        "enable_monitoring": False,
+    }
+    assert events[-1][0] == "exit"
+
+
 def test_emulation_control_stop_ok(client, fake_driver):
     resp = client.post(BASE + "/emulation-control", json={"action": "stop"})
     assert resp.status_code == 200
@@ -163,6 +236,96 @@ def test_emulation_control_driver_without_method_400(client, monkeypatch):
     monkeypatch.setattr(instrument_api, "_get_loaded_hal_driver", lambda key: _Bare())
     resp = client.post(BASE + "/emulation-control", json={"action": "start"})
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# F64 Local/Remote ownership + explicit .smu fallback
+# ---------------------------------------------------------------------------
+
+def test_release_to_local_control(client, fake_driver):
+    resp = client.post(BASE + "/control-ownership", json={"action": "release_local"})
+    assert resp.status_code == 200
+    assert resp.json()["control_mode"] == "local"
+    assert resp.json()["remote_polling_suppressed"] is True
+    assert ("release_to_local_control",) in fake_driver.calls
+
+
+def test_acquire_remote_control(client, fake_driver):
+    fake_driver.local_control_reserved = True
+    resp = client.post(BASE + "/control-ownership", json={"action": "acquire_remote"})
+    assert resp.status_code == 200
+    assert resp.json()["control_mode"] == "remote"
+    assert ("acquire_remote_control",) in fake_driver.calls
+
+
+def test_control_operation_holds_shared_unsafe_token(client, fake_driver, monkeypatch):
+    from app.services.execution_exclusion_guard import active_unsafe_diagnostic
+
+    original = fake_driver.release_to_local_control
+
+    async def checked_release():
+        assert active_unsafe_diagnostic() == "f64_control_operation"
+        return await original()
+
+    monkeypatch.setattr(fake_driver, "release_to_local_control", checked_release)
+    resp = client.post(BASE + "/control-ownership", json={"action": "release_local"})
+    assert resp.status_code == 200
+    assert active_unsafe_diagnostic() is None
+
+
+def test_control_operation_refuses_when_unsafe_diagnostic_is_active(client, fake_driver):
+    from app.services.execution_exclusion_guard import (
+        release_unsafe_diagnostic,
+        try_acquire_unsafe_diagnostic,
+    )
+
+    token = try_acquire_unsafe_diagnostic("propsim_f64_state_machine")
+    assert token is not None
+    try:
+        resp = client.post(BASE + "/control-ownership", json={"action": "release_local"})
+        assert resp.status_code == 409
+        assert ("release_to_local_control",) not in fake_driver.calls
+    finally:
+        release_unsafe_diagnostic(token)
+
+
+def test_load_smu_uses_lease_then_loads_explicit_path(client, fake_driver):
+    fake_driver.local_control_reserved = True
+    path = r"D:\\User Emulations\\onsite\\attach.smu"
+    resp = client.post(BASE + "/load-smu", json={"file_path": path})
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    assert resp.json()["loaded_file"] == path
+    assert fake_driver.calls[-2:] == [
+        ("load_local_scenario", path),
+        ("confirm_scenario_loaded",),
+    ]
+    # Remote/Local 取得已集中到 instrument_test_lease；端点不得再绕过租约
+    # 直接操作驱动控制权（租约行为由 test_instrument_test_lease 覆盖）。
+    assert ("acquire_remote_control",) not in fake_driver.calls
+    assert resp.json()["verification"]["simulation_state"] == "STOPPED"
+
+
+def test_load_smu_disconnected_driver_is_delegated_to_control_lease(client, fake_driver):
+    fake_driver.local_control_reserved = False
+    fake_driver._visa_resource = None
+    path = r"D:\\User Emulations\\onsite\\attach.smu"
+    resp = client.post(BASE + "/load-smu", json={"file_path": path})
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    assert ("acquire_remote_control",) not in fake_driver.calls
+
+
+def test_load_smu_refuses_non_smu_path(client, fake_driver):
+    resp = client.post(BASE + "/load-smu", json={"file_path": r"D:\\x.rtc"})
+    assert resp.status_code == 400
+    assert not any(call[0] == "load_local_scenario" for call in fake_driver.calls)
+
+
+def test_load_smu_refuses_relative_path(client, fake_driver):
+    resp = client.post(BASE + "/load-smu", json={"file_path": "onsite/attach.smu"})
+    assert resp.status_code == 400
+    assert not any(call[0] == "load_local_scenario" for call in fake_driver.calls)
 
 
 # ---------------------------------------------------------------------------
