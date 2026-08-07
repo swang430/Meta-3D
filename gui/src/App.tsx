@@ -2029,12 +2029,14 @@ function EquipmentManager() {
         refetchHAL()
         const warningText = result.warnings?.length ? `；警告: ${result.warnings.join(' / ')}` : ''
         showFeedback(categoryKey, 'success', `${result.message}${warningText}`)
-      } catch (err: any) {
-        const detail = err?.response?.data?.detail
+      } catch (err: unknown) {
+        const errorResponse = err as { response?: { data?: { detail?: unknown } } }
+        const detail = errorResponse.response?.data?.detail
+        const message = err instanceof Error ? err.message : '未知错误'
         showFeedback(
           categoryKey,
           'error',
-          `控制权切换失败: ${typeof detail === 'string' ? detail : err.message}`,
+          `控制权切换失败: ${typeof detail === 'string' ? detail : message}`,
         )
       } finally {
         setControlModeLoading((prev) => ({ ...prev, [categoryKey]: null }))
