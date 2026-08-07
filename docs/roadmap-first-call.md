@@ -362,7 +362,7 @@ Current Focus 为准。
 | 2026-08-07 | [#297](https://github.com/swang430/Meta-3D/pull/297) | ✅ 全覆盖 | —（R2 在 `53061f4` 上 clean，而 `53061f4` 是 R1 修复 HEAD；唯一未覆盖是回填本行本身，按 [#278](https://github.com/swang430/Meta-3D/pull/278) 无穷递归约定收口） | P1-41；R1 在 `3e594cc` 上出 1 条 P2，指出“归属未知”被误报为“业务命令被拒”。已补契约门并把不可用判定移到记录 rejection 之前；#296 漏行也随 R1 修复进入 R2。R2 在 `53061f4` 上 clean | **1** | ✅ 无需处置 |
 | 2026-08-07 | [#298](https://github.com/swang430/Meta-3D/pull/298) | ⚠️ 有缺口 | R2 后尾部修复（本 commit）：覆盖 `AUTHentication` 从最短 `AUTH` 到全写之间的全部合法 SCPI 缩写；该修复本身未再外审 | 两轮上限已到，不发 R3；走势 R1 1 P1 + 1 P2（分层鉴权末操作数泄漏 / SCPI 复制进长期 `app.log`）→ R2 1 P1（漏识别 `AUTHENT` 等中间缩写），三条均已修并过独立内审与全量测试 | **2** | ⬜ 未处置 —— 下次动 `base.py` 的 SCPI 脱敏器或仪器日志副本时优先补审 |
 | 2026-08-07 | [#301](https://github.com/swang430/Meta-3D/pull/301) | ⚠️ 有缺口 | R2 后尾部修复（本 PR 最终 commit）：后台 refetch 保留已验证暗室缓存；activate 成功先用权威响应替换 cache；新建/复制/直接选择均携带发起时 `labProfileId`。这批修复本身未再外审 | 两轮上限已到，不发 R3；走势 R1 **2 P1**（失败校准部分行可被后续提交 / 断绑时 GUI 无法列出替代暗室）→ R2 **2 P2**（后台刷新会丢 OTA 阵列 / 丢探头选择与未保存编辑）。四条外审 finding 均已修；尾部又经内审抓出并修复两个 mutation 时序窗口，最终 CLEAN | **2** | ⬜ 未处置 —— 下次动 `ChamberConfigCard.tsx` 的暗室切换/创建/复制 mutation 时优先补审 |
-| 2026-08-07 | [#302](https://github.com/swang430/Meta-3D/pull/302) | ⏳ 待外审 | 待外审完成后回填 | P1-43 日志历史分页；按“每个 PR 开片即建行”先登记，避免合并时漏台账 | ⏳ | ⏳ 待处置 |
+| 2026-08-07 | [#302](https://github.com/swang430/Meta-3D/pull/302) | ✅ 全覆盖 | —（R1 在 `d696d7a` 上 clean，而 `d696d7a` 是合并代码 HEAD；唯一未覆盖是回填本行的 docs commit，按 [#278](https://github.com/swang430/Meta-3D/pull/278) 无穷递归约定收口） | P1-43 日志历史分页；内审两轮先后拦下 4 P2 + 2 P2，尾修复最终 CLEAN；GitHub Codex R1 “Didn't find any major issues” | **0** | ✅ 无需处置 |
 | 2026-08-05 | [#285](https://github.com/swang430/Meta-3D/pull/285) | <!--285-coverage-->✅ 全覆盖 | <!--285-gap-->—（R3 在 `e2ad982` 上出的唯一一条就是「补本行」，除此之外的立项正文三轮全过；`e2ad982` rebase 到 #287 之后内容逐字未变，已用 `git diff` 核过）。唯一没覆盖的是回填本行的 commit 自己 —— #278 拍板的无穷递归 | docs-only 立项。**我把轮次走到了 R3 而没有拿授权** —— 规则是上限 2，例外要用户点头（上次 #282 的 R3 是用户明说「走R3」）。这次 R2 那条不是 R1 修复引入的（是立项正文里独立的错误前提），我就自然而然续了一轮，如实记着。三轮 **1 P2 → 1 P2 → 1 P2**，无一条由上轮修复引入。**R2 那条最值钱**：我写「`hal_mode` 字段已存在、不重复造标记」，而它取自**全局** HAL mode，HAL 明确支持 per-instrument 覆盖 —— 全局 real 下被强制 mock 的仪器会把假回复标成 `hal_mode=real`，正好打穿 P1-37 唯一要防的那件事。另：R1 那个 commit `ba41c26` 上，Codex 先出 1 条 P2，我再发一次 `@codex review` 它在**同一个 commit** 上回了 clean —— 同 commit 两种结论，说明「clean」有随机性，别把单次 clean 当保证 | 1 | ✅ 无需处置 |
 | 2026-08-05 | [#286](https://github.com/swang430/Meta-3D/pull/286) | <!--286-coverage-->✅ 全覆盖（代码） | <!--286-gap-->—（R2 审的 `6e58a1b` 就是 R1 修复本身，代码全过；rebase 到 #285/#287 之后 `api-service/` `gui/` `api/` **零字节差异**，已用 `git diff --stat` 核过）。没覆盖的只有回填本行 + 记 backlog 的 docs commit | P1-36 本片。**轮次上限 2 已到，R2 那条 P2 未修、转 backlog** —— 前提我实证过是**真的**（最小 app 探针：同一请求里 endpoint 那行带 `EXEC1234`、`app.audit` 汇总行是 `-`），不修的判据是 ⑦「不改它，P1-36 那个可观察故障还在吗」答**不在了**：R1 修完后执行的开始/过程/结束/取消都在链上，缺的是同一事实的第二份记录且**一跳可达**；三种修法全属「加机制」（最低优先级修法）。两轮 **1 P2 → 1 P2**，都不是上轮修复引入的，且**是同一母题的两个站点**（"执行的痕迹漏在请求侧"）—— R1 补上了 case-runner 那两行，R2 指出 middleware 那行结构上补不了 | 1 | ⬜ 未处置 —— 下次动 `audit_middleware.py` 或再往 `execution_id` 链上加东西时一并评估 |
 ### 📉 更值得看的信号：第一轮 findings 数
@@ -2130,6 +2130,8 @@ GUI 首次加载历史会自动冻结实时轮询，把更早页前插到当前�
 轮转测试在游标校验后替换路径，仍只返回旧文件描述符中的同代内容。R2 又拦下扫描期间
 改写会被新 hash 收编，以及累计区间 hash 导致 O(N²) 两条 P2；现已改为扫描前后复验输入
 双锚点（含最终页）与恒定 64 字节级样本，并收窄为“分页连续性”而非全文快照承诺。
+最终完整后端回归 `3402 passed / 5 skipped`，GUI production build exit 0；内审尾修复结论
+CLEAN，GitHub Codex 外审 R1 在合并代码 HEAD `d696d7a` 上 clean。
 
 **依赖**: 无。**现场半**: 无。
 
