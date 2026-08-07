@@ -221,7 +221,10 @@ class CreateSessionRequest(BaseModel):
     mimo_layers: int = 2
     azimuths_deg: List[float] = [0.0, 90.0, 180.0, 270.0]
     measurement_duration_s: float = 10.0
-    engine_mode: str = "mimo_first_asc"
+    # 2026-08-07 现场: 跟 MIMOOTAConfiguration.engine_mode 同步改成 GCM 原生
+    # (现场唯一验过的信道资产是 vendor_file/.smu, ASC 合成碰不到它)。
+    # ⚠ 这里改了 schema 那边也必须改 —— 两处不一致时本字段赢(它是请求默认)。
+    engine_mode: str = "keysight_gcm"
     # 2026-05-18 P0-7: engine_mode='external_asc' 时必填 (本机绝对路径,
     # 操作员手工产 .asc 的目录). 其他 engine_mode 该字段被忽略.
     asc_source_path: Optional[str] = None

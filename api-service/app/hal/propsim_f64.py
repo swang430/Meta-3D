@@ -3080,6 +3080,58 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             self._last_error = str(e)
             return False
 
+    async def set_output_level_dbm(
+        self,
+        level_dbm: float,
+        output_ports: Optional[List[int]] = None,
+    ) -> bool:
+        """把**绝对平均输出电平**写到全部（或指定）输出口。
+
+        手册原文（NotebookLM 2026-08-07 核对，User Reference §20.4.5.3）::
+
+            OUTPut:LEVel:AMPlitude:CH <output number>,<amplitude value>
+            "This command sets the average output level of the specific
+             channel output in dBm."
+            // 例: outp:lev:amp:ch 2,-40
+
+        限值由 ``OUTP:LEV:AMP:LIM? <out>`` 查（手册示例 ``-68.8401,-23.8401``）。
+
+        ⚠ **跟 `set_external_attenuators` / `set_output_path_loss` 是三条不同命令**：
+        本方法写绝对电平（`OUTP:LEV:AMP:CH`），那两个写增益（`OUTP:GAIN:CH`）
+        和外部线缆损耗（`OUTP:LOSS:SET`）。手册**没有给出**三者的换算关系式
+        （"实际输出 = 输入 + 模型增益 + GAIN − LOSS" 这个式子手册未说明），
+        所以**不要在这里换算，也不要同时写两条去"对齐"** —— 那是在猜。
+
+        ⚠ **端口号不猜**：跟 F64R-2 同一条规矩，用驱动回读的真实输出口
+        (`_active_output_ports`)。拓扑未知时 fail-loud 返回 False，
+        **不按 1..N 猜着发** —— 拿错口号写会真的配错硬件。
+        """
+        if not self._visa_resource:
+            return False
+        ports = output_ports if output_ports else (self._active_output_ports or [])
+        if not ports:
+            self._last_error = (
+                "set_output_level_dbm: 物理输出口未知 (仿真未加载 / 拓扑回读失败)"
+                " — 拒绝按猜测端口号下发"
+            )
+            logger.error("[F64] %s", self._last_error)
+            return False
+        try:
+            if not await self._gated_write_transaction(
+                "set_output_level_dbm",
+                [f"OUTP:LEV:AMP:CH {p},{level_dbm:.2f}" for p in ports],
+            ):
+                return False
+            logger.info(
+                "[F64] Output level set to %.2f dBm on %d ports: %s",
+                level_dbm, len(ports), ports,
+            )
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[F64] set_output_level_dbm failed: {e}")
+            self._last_error = str(e)
+            return False
+
     async def set_output_path_loss(self, output_num: int, loss_db: float) -> bool:
         """P2-10 Step 2: 单通道输出路损补偿 (per-output), 区别于 set_path_loss 的 batch 统一。
 

@@ -354,6 +354,10 @@ class RealUxmDriver(BaseStationDriver):
         self._arfcn: Optional[int] = None
         self._scs_khz: int = 30
         self._dl_power_dbm: float = -50.0
+        # 整带宽口径的最后下发值（`:DL:POWer:CHANnel`）。None = 本次没走这条路，
+        # 功率是 `_dl_power_dbm` 那个 dBm/SCS 值。**两者不可换算比较** ——
+        # 换算依赖带宽和 SCS，是派生值，不在驱动里算。
+        self._dl_power_dbm_per_bw: Optional[float] = None
         self._cell_state: CellState = CellState.OFF
         # Phase 2h: 跨实验室部署允许覆盖 freq→band 推断表 + ARFCN 映射
         # config["freq_to_band_map"] 形如 [[3300, 3800, "N78", "TDD"], ...]
@@ -1179,7 +1183,20 @@ class RealUxmDriver(BaseStationDriver):
                 except ValueError:
                     mismatches.append(f"BW 回读不可解析: {resp!r}")
 
-        if "dl_power_dbm" in config:
+        # ⚠ **回读要跟"实际写过的那条命令"对账**，不是跟 config 里存在的字段对账。
+        #   走整带宽口径时 `:DL:POWer[:EPRE]` 那条**根本没写过** —— 拿它的回读去比
+        #   `dl_power_dbm` 必然 mismatch，而那是个假失败。
+        if config.get("dl_power_dbm_per_bw") is not None:
+            resp = _read("DL_POWER_CHANNEL")
+            if resp is not None:
+                try:
+                    if abs(float(resp) - float(config["dl_power_dbm_per_bw"])) > 0.1:
+                        mismatches.append(
+                            f"DL 功率(整带宽) 下发 {config['dl_power_dbm_per_bw']} "
+                            f"回读 {resp}")
+                except ValueError:
+                    mismatches.append(f"DL 功率(整带宽) 回读不可解析: {resp!r}")
+        elif "dl_power_dbm" in config:
             resp = _read("DL_POWER")
             if resp is not None:
                 try:
@@ -1555,7 +1572,26 @@ class RealUxmDriver(BaseStationDriver):
                     self._write(f"{q} {layers}")
 
             # ---- 8. 下行功率 ----
-            if "dl_power_dbm" in config:
+            # ⚠️ **两种口径互斥**（手册原文见 uxm_command_profiles 的 DL_POWER 注释）：
+            #   dl_power_dbm_per_bw → `:DL:POWer:CHANnel`  整带宽总功率 dBm
+            #   dl_power_dbm        → `:DL:POWer[:EPRE]`   每子载波 dBm/SCS
+            # 同一 cell 两条都写会互相覆盖、最后生效哪个不确定 —— 所以 per_bw 给了
+            # 就**只走它**，不再写 EPRE 那条。绝不"两个都发一遍图保险"。
+            if config.get("dl_power_dbm_per_bw") is not None:
+                _pw = float(config["dl_power_dbm_per_bw"])
+                q = self._cmd("DL_POWER_CHANNEL", cell=cell)
+                if q is None:
+                    # 本方言没有整带宽命令 —— **不静默回退到 EPRE 口径**（那会把
+                    # -15 当成 -15 dBm/SCS 发出去，比请求值热 31 dB）。
+                    logger.error(
+                        "[UXM] dl_power_dbm_per_bw=%.1f 无法下发: profile %s 未定义 "
+                        "DL_POWER_CHANNEL；**不回退到 dBm/SCS 口径**（会热 31 dB）",
+                        _pw, self._cmds.PROFILE_NAME,
+                    )
+                    return False
+                self._write(f"{q} {_pw:.1f}")
+                self._dl_power_dbm_per_bw = _pw
+            elif "dl_power_dbm" in config:
                 self._dl_power_dbm = config["dl_power_dbm"]
                 if (q := self._cmd("DL_POWER", cell=cell)) is not None:
                     self._write(f"{q} {self._dl_power_dbm:.1f}")

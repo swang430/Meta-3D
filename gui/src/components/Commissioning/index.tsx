@@ -25,7 +25,9 @@ export function CommissioningSandbox() {
   const [session, setSession] = useState<SessionResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [activeStep, setActiveStep] = useState(0)
-  const [engineMode, setEngineMode] = useState<string>('mimo_first_asc')
+  // 2026-08-07 现场: 默认 GCM 原生 —— 现场那个 .smu 资产只允许 gcm_native,
+  // 走 ASC 合成根本加载不到它。跟后端 CreateSessionRequest.engine_mode 同步。
+  const [engineMode, setEngineMode] = useState<string>('keysight_gcm')
   // Lab-smoke: relax strict precheck gates (P1-8 cal / P1-9 DUT) for local
   // rehearsal without a real DUT / calibration. Default OFF = strict ON, so
   // on-site real first-call keeps the fail-loud protection (P1-9 intent).

@@ -183,6 +183,12 @@ def _build_pcell_cell_config(
         "mimo_layers": config.mimo_layers,
         "dl_power_dbm": config.target_tx_power_dbm,
     }
+    # 整带宽口径优先（2026-08-07）。给了就由驱动**只走** `:DL:POWer:CHANnel`，
+    # 上面那条 dBm/SCS 的 `dl_power_dbm` 在驱动里被跳过 —— 这里仍然照常放进去，
+    # 是为了让 payload 保留"如果走 EPRE 口径会是多少"的审计痕迹，
+    # **不是**让驱动两条都发（驱动侧是 if/elif，见 uxm_base_station 第 8 节）。
+    if config.uxm_dl_power_dbm_per_bw is not None:
+        cell_cfg["dl_power_dbm_per_bw"] = config.uxm_dl_power_dbm_per_bw
     # 可选字段: 仅 TestCase 显式给 (非 None) 才驱动, 否则保持 HAL profile (backward-compat)
     if config.mimo_port_preset is not None:
         cell_cfg["mimo_port_preset"] = config.mimo_port_preset
@@ -1010,6 +1016,40 @@ class MeasureExecutor(IStepExecutor):
                         status=StepExecutionStatus.FAILED, error_message=_gain_err,
                     )
 
+            # 2026-08-07 现场: 绝对输出电平 (OUTP:LEV:AMP:CH)。
+            # ⚠ 跟 f64_output_gain_db (OUTP:GAIN:CH) 是**两条不同命令**, 手册
+            #   **未给出**两者的换算关系式 —— 同时给会写两次、谁最后生效不确定,
+            #   所以 fail-loud 让操作员二选一, 不替他猜。
+            if (config.f64_output_level_dbm is not None
+                    and config.f64_output_gain_db is not None):
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    error_message=(
+                        "f64_output_level_dbm 与 f64_output_gain_db 同时配置 —— "
+                        "前者写绝对电平 (OUTP:LEV:AMP:CH)、后者写增益 (OUTP:GAIN:CH), "
+                        "手册未定义两者的换算关系, 同时下发结果不可预测。请只留一个。"
+                    ),
+                )
+            if config.f64_output_level_dbm is not None:
+                if not hasattr(emulator, "set_output_level_dbm"):
+                    # 显式配了参数, CE 无能力不得静默无痕跳过 (门审 #217 F1 同款)
+                    logger.warning(
+                        "[%s] f64_output_level_dbm=%s 已配置但 CE 驱动无 "
+                        "set_output_level_dbm 能力 (mock/非 F64) — 跳过, 真机不受此限",
+                        context.test_execution.id, config.f64_output_level_dbm,
+                    )
+                elif not await emulator.set_output_level_dbm(
+                    float(config.f64_output_level_dbm)
+                ):
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            f"F64 输出电平下发被拒 "
+                            f"({config.f64_output_level_dbm} dBm) — 明细见驱动日志"
+                            "(限值查 OUTP:LEV:AMP:LIM?, 拓扑未知时驱动拒绝按猜测端口下发)。"
+                        ),
+                    )
+
             # --- P2-17 (Codex #201 R3 P1): 信道加载后显式启动仿真播放 ---
             # 执行链原本无人调 start_emulation (现场靠脚本手动 GO) — attach 默认
             # 直通态落地后, 不启动 = 测量在 STOPPED+STATIC 3 下跑 (无衰落输出)。
@@ -1114,6 +1154,119 @@ class MeasureExecutor(IStepExecutor):
                             "信道仿真启动失败 (start_emulation=False, 明细见仿真器"
                             "驱动日志) — 中止, 不在 STOPPED/直通态下测量。"
                         ),
+                    )
+
+            # === 2026-08-07 现场时序: 直通 attach → 开衰落 → 再确认 → 测吞吐 ===
+            # 用户当场定的顺序: F64 先 Butler 直通让 DUT 挂上, attach 成功后再
+            # 启动衰落。三个节点各留一条里程碑, 现场一眼看出卡在哪一环:
+            #   bypass_attach  — 直通态 DUT 挂上了吗
+            #   fading_attach  — 开了衰落之后还在吗 (衰落一上掉线 = 功率/信道问题)
+            #   throughput     — 有没有真跑出吞吐 (在下面的方位扫描里落)
+            # ⚠ 每一环失败都**当场停**, 不带着"其实没挂上"继续测 —— 那会产出
+            #   看着像数的假结果, 正是本项目一直在治的东西。
+            milestones: Dict[str, Any] = {
+                "bypass_attach": None,
+                "fading_attach": None,
+                "throughput": None,
+            }
+
+            async def _probe_ue_attached(stage: str) -> Dict[str, Any]:
+                """读一次 UE 状态。**只报实况, 不推断。**
+
+                查不到能力 (`source == "unavailable"`) = UE 没挂上或读不到,
+                两者对现场是同一个动作(去看 DUT), 但**不能**当成"挂上了"。
+                驱动没有这个方法 (mock/非 UXM) → attached=None = "没测",
+                跟 False("测了没挂上") 区分开 —— 别让 mock 跑出绿色里程碑。
+                """
+                if not hasattr(base_station, "query_ue_capability"):
+                    return {"stage": stage, "attached": None,
+                            "reason": "BS 驱动无 query_ue_capability (mock/非 UXM) — 未测"}
+                try:
+                    cap = await base_station.query_ue_capability()
+                except Exception as e:  # noqa: BLE001
+                    return {"stage": stage, "attached": False,
+                            "reason": f"UE 能力查询抛异常: {type(e).__name__}: {e}"}
+                src = (cap or {}).get("source")
+                if src == "unavailable":
+                    return {"stage": stage, "attached": False,
+                            "reason": "UE capability unavailable — DUT 未 attach 或读不到",
+                            "ue_info": cap}
+                return {"stage": stage, "attached": True, "reason": "ok", "ue_info": cap}
+
+            if config.f64_bypass_mode is not None and config.f64_fade_after_attach:
+                # ① 直通态确认 DUT 已挂上
+                milestones["bypass_attach"] = await _probe_ue_attached("bypass")
+                logger.info(
+                    "[%s] 里程碑 bypass_attach = %s (%s)",
+                    context.test_execution.id,
+                    milestones["bypass_attach"]["attached"],
+                    milestones["bypass_attach"]["reason"],
+                )
+                if milestones["bypass_attach"]["attached"] is False:
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            "直通(Butler)态下 DUT 未 attach —— 不开衰落、不继续测量。"
+                            f"原因: {milestones['bypass_attach']['reason']}。"
+                            "⚠ 手册未说明 STATIC 态是否有射频输出; 若确认 DUT 侧无信号, "
+                            "把 f64_fade_after_attach 设 False 走无衰落基线, 或先 GO 再 bypass。"
+                        ),
+                        measurements={"attach_milestones": milestones},
+                    )
+                # ② 解直通 + 启动衰落。start_emulation 内建「GO 前无条件 STATIC 0」
+                #    (P2-17 ①), 所以这一步同时完成"解 bypass"和"开播"。
+                register_required_scpi_evidence(
+                    context.test_execution,
+                    requirement_id="f64.output_state",
+                    evidence_key="f64.simulation_state",
+                    requested="RUNNING",
+                    required_evidence_level=EvidenceLevel.APPLIED,
+                )
+                context.db.commit()
+                with capture_scpi_exchanges() as f64_fade_exchanges:
+                    faded = await emulator.start_emulation()
+                if hasattr(emulator, "build_p0_5_command_evidence"):
+                    try:
+                        record_f64_command_capture(
+                            context.test_execution,
+                            requirement_id="f64.output_state",
+                            evidence_key="f64.simulation_state",
+                            requested="RUNNING",
+                            driver=emulator,
+                            exchanges=f64_fade_exchanges,
+                        )
+                        context.db.commit()
+                    except Exception:  # noqa: BLE001
+                        logger.exception(
+                            "[%s] F64 fading-start P1-47C 证据归档失败；正式判定保持 unknown",
+                            context.test_execution.id,
+                        )
+                if not faded:
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            "DUT 已 attach 但衰落启动失败 (start_emulation=False) — "
+                            "中止, 不在直通态下冒充衰落测量。"
+                        ),
+                        measurements={"attach_milestones": milestones},
+                    )
+                # ③ 衰落态再确认一次 —— 衰落一上就掉线是现场常见形态
+                milestones["fading_attach"] = await _probe_ue_attached("fading")
+                logger.info(
+                    "[%s] 里程碑 fading_attach = %s (%s)",
+                    context.test_execution.id,
+                    milestones["fading_attach"]["attached"],
+                    milestones["fading_attach"]["reason"],
+                )
+                if milestones["fading_attach"]["attached"] is False:
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            "衰落启动后 DUT 掉线 —— 直通能挂、加衰落掉, 通常是功率余量"
+                            "不够或信道模型衰减过大。"
+                            f"原因: {milestones['fading_attach']['reason']}。"
+                        ),
+                        measurements={"attach_milestones": milestones},
                     )
 
             # --- P2-11 Phase 6: UXM cell config 下发后一致性 (吞吐链版频率校验) ---
@@ -1459,6 +1612,13 @@ class MeasureExecutor(IStepExecutor):
 
             total_duration = loop.time() - t_start
 
+            # 三里程碑的 throughput 那一格用它。**从实测样本算, 不是流程走到就算数** ——
+            # 方位扫描不会因为吞吐为 0 而中止, 所以"跑完了"跟"跑出数了"是两件事。
+            _mean_tput_mbps = (
+                sum(a["throughput_mbps"] for a in azimuth_results) / len(azimuth_results)
+                if azimuth_results else 0.0
+            )
+
             # --- P2-11 Phase 6 (MCS index 线): AMC off 时实测生效 mcs_dl vs 请求 mcs ---
             # UE 撑不住请求 MCS → 静默 clamp (吞吐反映 clamp 后 MCS 却当请求 MCS 测)。是
             # throughput **实际生效回读** (区别于 layers/modulation 的 attach 后 UE
@@ -1541,6 +1701,26 @@ class MeasureExecutor(IStepExecutor):
                 # P2-11 Phase 1: 多方频率一致性校验 (一致/opt-out 路径留 audit;
                 # strict-fail 路径早期 return 时已塞进 measurements)。
                 "frequency_consistency": freq_result.to_payload(),
+                # 2026-08-07 现场三里程碑。⚠ throughput 这一格**从实际扫出来的
+                # 平均吞吐派生**, 不是"跑到这儿了就算成功" —— 全 0 吞吐照样会
+                # 走到这里(方位扫描不因 0 吞吐中止), 那种情况必须显示 False。
+                "attach_milestones": {
+                    **milestones,
+                    "throughput": (
+                        None
+                        if not azimuth_results
+                        else {
+                            "stage": "throughput",
+                            "ok": _mean_tput_mbps > 0.0,
+                            "mean_mbps": _mean_tput_mbps,
+                            "azimuths_completed": len(azimuth_results),
+                            "reason": (
+                                "ok" if _mean_tput_mbps > 0.0 else
+                                "各方位平均吞吐为 0 —— 链路通但没数据流过"
+                            ),
+                        }
+                    ),
+                },
             }
 
             # ``asc_files_loaded`` is ASC-specific (ExternalWaveformStrategy /

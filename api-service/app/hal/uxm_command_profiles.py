@@ -88,7 +88,14 @@ class UxmTestApp:
     SSB_CORESET0: Optional[str] = None
 
     # --- Downlink power ---
+    # ⚠️ **两条命令、两种口径，别混**（NotebookLM 2026-08-07 手册原文核对）：
+    #   DL_POWER         → `...:DL:POWer[:EPRE]`   Unit `dBm/SCS`  Range `-200 .. 10`
+    #                      "Changes DL Power - energy per resource element"
+    #   DL_POWER_CHANNEL → `...:DL:POWer:CHANnel`  整带宽总功率 dBm  Range `-168 .. 42`
+    #                      "the power integrated over the whole cell bandwidth"
+    # 同一个 cell 上**只该写其中一条** —— 两条都写会互相覆盖，最后生效哪个不确定。
     DL_POWER: Optional[str] = None
+    DL_POWER_CHANNEL: Optional[str] = None
     PDSCH_POWER: Optional[str] = None
     SSB_POWER: Optional[str] = None
 
@@ -590,6 +597,11 @@ class UxmLteNrIratProfile(UxmTestApp):
     #             form is the actually-routable one; bare :SSB:POWer is
     #             undefined header on this firmware)
     DL_POWER = "BSE:CONFig:NR5G:{cell}:DL:POWer"
+    # 整带宽口径（2026-08-07 NotebookLM 手册原文）。手册推荐用 :CHANnel
+    # （TA v15.26.6 起引入，为跟 LTE 接口对齐）；旧别名 :DBmBw 行为相同。
+    # ⚠ 手册标 `Application Mode : NSA | SA`，**未覆盖 LTE_NR_IRAT** ——
+    #   跟本 profile 其它命令同一处境，下发后查 SYST:ERR? 才知道认不认。
+    DL_POWER_CHANNEL = "BSE:CONFig:NR5G:{cell}:DL:POWer:CHANnel"
     SSB_POWER = "BSE:CONFig:NR5G:{cell}:SSB:POWer:ADVertised"
     SCELL_CONF_BAND = "BSE:CONFig:LTE:{cell}:CAGGregation:AGGRegate:SCC:LIST"
     SCELL_ADD = "BSE:CONFig:LTE:{cell}:CAGGregation:ACTivate:SCC:LIST"
