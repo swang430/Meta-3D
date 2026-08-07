@@ -60,6 +60,7 @@ export interface DiagnosticRunSummary {
 export interface DiagnosticRunDetail extends DiagnosticRunSummary {
   params?: Record<string, unknown> | null
   hal_trace_log_path?: string | null
+  sequence_result?: Partial<Omit<SequenceRunResponse, 'diagnostic_run_id'>> | null
 }
 
 export interface DiagnosticRunListResponse {
@@ -77,6 +78,18 @@ export interface RunSequencePayload {
   operating_mode?: string
   params?: Record<string, unknown>
   run_by?: string
+  progress_token?: string
+}
+
+export interface DiagnosticSequenceProgress {
+  token: string
+  sequence_key: string
+  status: 'running' | 'completed'
+  log: string[]
+  started_at_epoch_ms: number
+  updated_at_epoch_ms: number
+  success?: boolean | null
+  summary?: string | null
 }
 
 export async function runDiagnosticSequence(
@@ -85,6 +98,42 @@ export async function runDiagnosticSequence(
 ): Promise<SequenceRunResponse> {
   const res = await apiClient.post<SequenceRunResponse>(
     `/diagnostic-sequences/${encodeURIComponent(key)}/run`,
+    payload,
+  )
+  return res.data
+}
+
+export async function getDiagnosticSequenceProgress(
+  token: string,
+): Promise<DiagnosticSequenceProgress> {
+  const res = await apiClient.get<DiagnosticSequenceProgress>(
+    `/diagnostic-sequences/progress/${encodeURIComponent(token)}`,
+  )
+  return res.data
+}
+
+export interface ScpiCommandPayload {
+  command: string
+  ip?: string
+  port?: number
+  timeout_ms?: number
+  run_by?: string
+}
+
+export interface ScpiCommandResult {
+  command: string
+  response?: string | null
+  success: boolean
+  error?: string | null
+  latency_ms: number
+}
+
+export async function sendInstrumentScpiCommand(
+  categoryKey: string,
+  payload: ScpiCommandPayload,
+): Promise<ScpiCommandResult> {
+  const res = await apiClient.post<ScpiCommandResult>(
+    `/instruments/${encodeURIComponent(categoryKey)}/scpi-command`,
     payload,
   )
   return res.data

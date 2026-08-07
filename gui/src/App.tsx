@@ -1708,6 +1708,7 @@ function EquipmentManager() {
   const [scpiManualCmd, setScpiManualCmd] = useState<Record<string, string>>({})
   const [scpiManualResults, setScpiManualResults] = useState<Record<string, ScpiResult[]>>({})
   const [scpiLoading, setScpiLoading] = useState<Record<string, boolean>>({})
+  const [controlModeLoading, setControlModeLoading] = useState<Record<string, string | null>>({})
 
   useEffect(() => {
     if (categories.length === 0) {
@@ -1773,6 +1774,9 @@ function EquipmentManager() {
           endpoint: updatedCategory.connection.endpoint ?? '',
           controller: updatedCategory.connection.controller ?? '',
           notes: updatedCategory.connection.notes ?? '',
+          connection_params: updatedCategory.connection.connection_params
+            ? JSON.stringify(updatedCategory.connection.connection_params, null, 2)
+            : '',
         },
       }))
       showFeedback(variables.categoryKey, 'success', '配置已保存。')
@@ -1988,6 +1992,57 @@ function EquipmentManager() {
     })
   }, [performHALReload])
 
+  const handleControlModeChange = useCallback(
+    async (categoryKey: string, mode: 'software' | 'manual_local') => {
+      setControlModeLoading((prev) => ({ ...prev, [categoryKey]: mode }))
+      try {
+        const resp = await client.post(`/instruments/${categoryKey}/control-mode`, {
+          mode,
+          stop_playback: false,
+          close_emulation: false,
+        })
+        const result = resp.data as {
+          mode: 'software' | 'manual_local'
+          message: string
+          warnings?: string[]
+        }
+        setDrafts((prev) => {
+          const current = prev[categoryKey]
+          if (!current) return prev
+          let parsed: Record<string, unknown> = {}
+          try {
+            parsed = current.connection_params ? JSON.parse(current.connection_params) : {}
+          } catch {
+            parsed = {}
+          }
+          parsed.control_mode = result.mode
+          return {
+            ...prev,
+            [categoryKey]: {
+              ...current,
+              connection_params: JSON.stringify(parsed, null, 2),
+            },
+          }
+        })
+        queryClient.invalidateQueries({ queryKey: ['instruments', 'catalog'] })
+        queryClient.invalidateQueries({ queryKey: ['cockpit', 'readiness'] })
+        refetchHAL()
+        const warningText = result.warnings?.length ? `；警告: ${result.warnings.join(' / ')}` : ''
+        showFeedback(categoryKey, 'success', `${result.message}${warningText}`)
+      } catch (err: any) {
+        const detail = err?.response?.data?.detail
+        showFeedback(
+          categoryKey,
+          'error',
+          `控制权切换失败: ${typeof detail === 'string' ? detail : err.message}`,
+        )
+      } finally {
+        setControlModeLoading((prev) => ({ ...prev, [categoryKey]: null }))
+      }
+    },
+    [queryClient, refetchHAL, showFeedback],
+  )
+
   return (
     <Stack gap="xl">
       <Drawer
@@ -2013,6 +2068,20 @@ function EquipmentManager() {
             .join(' ')
             .toLowerCase()
           const drawerIsFs16Model = drawerModelText.includes('fs16')
+          const drawerIsUxmModel = drawerModelText.includes('uxm') || drawerModelText.includes('e7515')
+          let drawerParsedParams: Record<string, unknown> = {}
+          try {
+            drawerParsedParams = draft.connection_params ? JSON.parse(draft.connection_params) : {}
+          } catch {
+            drawerParsedParams = {}
+          }
+          const detectedUxmApp = String(drawerParsedParams.detected_test_app ?? '').toUpperCase()
+          const drawerUxmAppMode = drawerParsedParams.uxm_app_mode === 'rf_app'
+            || (!drawerParsedParams.uxm_app_mode && detectedUxmApp.includes('IRAT_LITE'))
+            ? 'rf_app'
+            : 'test_app'
+          const drawerIsManualLocal =
+            drawerIsFs16Model && drawerParsedParams.control_mode === 'manual_local'
 
           return (
             <Stack gap="xl">
@@ -2094,6 +2163,36 @@ function EquipmentManager() {
               </Stack>
 
               <Stack gap="md">
+                {category.key === 'baseStation' && drawerIsUxmModel && (
+                  <Stack gap={6}>
+                    <Text size="sm" fw={500}>UXM 应用类型</Text>
+                    <SegmentedControl
+                      fullWidth
+                      value={drawerUxmAppMode}
+                      data={[
+                        { value: 'rf_app', label: 'RF App' },
+                        { value: 'test_app', label: 'Test App' },
+                      ]}
+                      onChange={(value) => {
+                        const nextParams = {
+                          ...drawerParsedParams,
+                          uxm_app_mode: value,
+                        }
+                        setDrafts((prev) => ({
+                          ...prev,
+                          [category.key]: {
+                            ...prev[category.key],
+                            connection_params: JSON.stringify(nextParams, null, 2),
+                          },
+                        }))
+                      }}
+                      disabled={instrumentMutation.isPending}
+                    />
+                    <Text size="xs" c="dimmed">
+                      RF App 使用 C871/IRAT_LITE 的 BSE 指令；Test App 保留原 5G NR Test SCPI 指令。保存后重载 HAL 生效。
+                    </Text>
+                  </Stack>
+                )}
                 <TextInput
                   label="控制端点"
                   description={drawerIsFs16Model ? 'FS16 现场优先使用 HiSLIP；raw 5025 仅作为诊断排查项。' : undefined}
@@ -2201,6 +2300,53 @@ function EquipmentManager() {
                       {isFs16Model ? (
                         <Card withBorder padding="md" radius="md" shadow="xs" bg="gray.0">
                           <Stack gap="sm">
+                            <Group justify="space-between" align="center" wrap="wrap">
+                              <Stack gap={2}>
+                                <Text fw={600} size="sm">FS16 控制权</Text>
+                                <Text size="xs" c="dimmed">
+                                  交还本机后软件会释放 FS16 会话；请在 FS16 GUI 右上角点击 Local Mode。
+                                </Text>
+                              </Stack>
+                              <Badge
+                                color={parsedParams.control_mode === 'manual_local' ? 'orange' : 'teal'}
+                                variant="light"
+                              >
+                                {parsedParams.control_mode === 'manual_local' ? '本机操作中' : '软件控制中'}
+                              </Badge>
+                            </Group>
+                            <Group gap="xs" wrap="wrap">
+                              <Button
+                                size="xs"
+                                variant="light"
+                                color="orange"
+                                disabled={
+                                  parsedParams.control_mode === 'manual_local' ||
+                                  Boolean(controlModeLoading[category.key])
+                                }
+                                loading={controlModeLoading[category.key] === 'manual_local'}
+                                onClick={() => handleControlModeChange(category.key, 'manual_local')}
+                              >
+                                交还本机
+                              </Button>
+                              <Button
+                                size="xs"
+                                variant="filled"
+                                color="teal"
+                                disabled={
+                                  parsedParams.control_mode !== 'manual_local' ||
+                                  Boolean(controlModeLoading[category.key])
+                                }
+                                loading={controlModeLoading[category.key] === 'software'}
+                                onClick={() => handleControlModeChange(category.key, 'software')}
+                              >
+                                软件接管
+                              </Button>
+                            </Group>
+                            {parsedParams.control_mode === 'manual_local' ? (
+                              <Alert color="orange" variant="light" radius="md">
+                                FS16 当前交还给本机 UI。软件侧测试连接、SCPI 命令和监控轮询会暂停，避免把仪器再次拉回 Remote mode。
+                              </Alert>
+                            ) : null}
                             <Stack gap={2}>
                               <Text fw={600} size="sm">FS16 Playback 文件</Text>
                               <Text size="xs" c="dimmed">
@@ -2264,6 +2410,10 @@ function EquipmentManager() {
                     variant="outline"
                     color="teal"
                     onClick={async () => {
+                      if (drawerIsManualLocal) {
+                        showFeedback(category.key, 'error', 'FS16 当前为本机操作模式，请先点击“软件接管”。')
+                        return
+                      }
                       showFeedback(category.key, 'success', '正在测试连接...')
                       try {
                         const { ip: testIp, port: testPort } = parseEndpointToIpPort(draft.endpoint || '')
@@ -2321,6 +2471,7 @@ function EquipmentManager() {
                         variant="light"
                         color="cyan"
                         loading={scpiLoading[category.key]}
+                        disabled={drawerIsManualLocal}
                         onClick={async () => {
                           const key = category.key
                           setScpiLoading(p => ({ ...p, [key]: true }))
@@ -2341,6 +2492,11 @@ function EquipmentManager() {
                         🔍 运行诊断命令
                       </Button>
                     </Group>
+                    {drawerIsManualLocal ? (
+                      <Alert color="orange" variant="light" radius="md">
+                        FS16 当前为本机操作模式。SCPI 终端已禁用；本机操作结束后点击上方“软件接管”。
+                      </Alert>
+                    ) : null}
 
                     {/* 诊断结果表格 */}
                     {scpiProbeResults[category.key]?.length ? (
@@ -2381,8 +2537,10 @@ function EquipmentManager() {
                         style={{ flex: 1, fontFamily: 'monospace' }}
                         size="xs"
                         value={scpiManualCmd[category.key] || ''}
+                        disabled={drawerIsManualLocal}
                         onChange={(e) => setScpiManualCmd(p => ({ ...p, [category.key]: e.target.value }))}
                         onKeyDown={async (e) => {
+                          if (drawerIsManualLocal) return
                           if (e.key === 'Enter') {
                             const cmd = scpiManualCmd[category.key]?.trim()
                             if (!cmd) return
@@ -2416,6 +2574,7 @@ function EquipmentManager() {
                         variant="filled"
                         color="cyan"
                         loading={scpiLoading[category.key]}
+                        disabled={drawerIsManualLocal}
                         onClick={async () => {
                           const cmd = scpiManualCmd[category.key]?.trim()
                           if (!cmd) return
@@ -2555,6 +2714,14 @@ function EquipmentManager() {
       ) : null}
       {categories.map((category) => {
         const selectedModelInfo = category.models.find((model) => model.id === category.selectedModelId) ?? null
+        const selectedModelText = [
+          selectedModelInfo?.vendor,
+          selectedModelInfo?.model,
+          selectedModelInfo?.summary,
+        ].filter(Boolean).join(' ').toLowerCase()
+        const isFs16ManualLocal =
+          selectedModelText.includes('fs16') &&
+          category.connection?.connection_params?.control_mode === 'manual_local'
 
         return (
           <Card key={category.key} withBorder radius="md" padding="lg" style={{
@@ -2579,6 +2746,11 @@ function EquipmentManager() {
                   <Badge variant="light" color={selectedModelInfo ? "indigo" : "gray"}>
                     {selectedModelInfo ? "已分配型号" : "槽位闲置"}
                   </Badge>
+                  {isFs16ManualLocal ? (
+                    <Badge variant="filled" color="orange">
+                      本机操作中
+                    </Badge>
+                  ) : null}
                 </Group>
                 
                 <Group gap="md">
