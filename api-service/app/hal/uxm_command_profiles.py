@@ -240,6 +240,10 @@ class UxmTestApp:
     PDSCH_SCHED_ALGO: Optional[str] = None
     PDSCH_AMC_ENABLE: Optional[str] = None
     PUSCH_AMC_ENABLE: Optional[str] = None
+    # slot 级 AMC 命令的**只读探测**模板（configure_mac 里逐条 query+对账，
+    # 不作为写路径）。None = 本方言不探。
+    AMC_SLOT_DL_APOLICY_PROBE: Optional[str] = None
+    AMC_SLOT_UL_IMCS_FIXED_PROBE: Optional[str] = None
 
     # --- HARQ ---
     HARQ_MAX_TRANS: Optional[str] = None
@@ -525,10 +529,23 @@ class UxmLteNrIratProfile(UxmTestApp):
     #      "ALL" → PRB 整数 ｜ "5MS" → MS5 ｜ 4/16 → N4/N16 ｜ 4 → P4
     # Enum: BASIc | FULL_TPUT | DL_RMC | UL_RMC | APC_RMC | EVM_RMC（默认 BASIc）
     PDSCH_SCHED_ALGO = "BSE:CONFig:NR5G:SCHeduling:QCONFig:SCENario"
-    # Enum: FIXed | BLER | DYNamic | CQI | ...（默认 FIXed）—— **不是开关**
-    PDSCH_AMC_ENABLE = (
+    # ⛔ slot 级 AMC 两条盲写**已去掉**（2026-08-07 现场两轮实测：作为写下发时
+    #    恰有一条 -113 Undefined header，组级对账定位不了是哪条）。
+    #    「关 AMC / 固定 MCS」的意图由 QCONFig 组承担，依据（手册原文）：
+    #      · SCENario FULL_TPUT: "maximizes the throughput achieved given the
+    #        selected TDD Pattern, RB count and MCS" —— MCS 是**输入**不是自适应量
+    #      · QCONFig:DL:MCS: "The MCS that will be applied to all DL slots"
+    #      · DL:RRESource:APOLicy 的 Default 本身就是 FIXed；CQI 自适应
+    #        "Only allowed when [policy] is CQI ... and some CSI Report is enabled"
+    #    ⚠ FULL_TPUT 重建后 APOLicy 的生效值手册**未说明** —— 由下面的
+    #    只读探测回读定案（能读到非 FIXed 时驱动仍然致命拦）。
+    PDSCH_AMC_ENABLE = None
+    PUSCH_AMC_ENABLE = None
+    # 探测（只读，手册原文形式）：定位到底哪条 header 不被本 Test App 认，
+    # 顺带回读 FULL_TPUT 重建后的生效策略。
+    AMC_SLOT_DL_APOLICY_PROBE = (
         "BSE:CONFig:NR5G:{cell}:SCHeduling:{bwp}:FC0:SC0:DL:RRESource:APOLicy")
-    PUSCH_AMC_ENABLE = (
+    AMC_SLOT_UL_IMCS_FIXED_PROBE = (
         "BSE:CONFig:NR5G:{cell}:SCHeduling:{bwp}:FC0:SC0:UL:IMCS:FIXed")
     PDSCH_MCS = "BSE:CONFig:NR5G:SCHeduling:QCONFig:DL:MCS"        # Integer 0..28
     PDSCH_RB_ALLOC = "BSE:CONFig:NR5G:SCHeduling:QCONFig:DL:NUM:PRBs"  # Integer 1..273

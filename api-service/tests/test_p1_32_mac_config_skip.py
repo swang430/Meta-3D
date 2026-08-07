@@ -114,8 +114,11 @@ class TestGrading:
         """
         assert set(RealUxmDriver.MAC_CFG_MANDATORY) == {
             "PDSCH_SCHED_ALGO",     # Full Buffer 没开 → 测的是打流能力
-            "PDSCH_AMC_ENABLE",     # AMC 没关 → 测的是调度器
-            "PUSCH_AMC_ENABLE",
+            # ⛔ PDSCH_AMC_ENABLE / PUSCH_AMC_ENABLE 已移出（2026-08-07 现场）：
+            #   slot 级两条盲写在 IRAT 实测恰一条 -113，且对「固定 MCS」意图
+            #   本来就是第二次盲写 —— 关 AMC 由 SCENario FULL_TPUT + 固定
+            #   PDSCH_MCS + QCONFIG_APPLY_ALL（已被仪器接受）承担，生效策略
+            #   改由只读探测回读对账（回读非 FIXed 照样致命，有独立行为门守）。
             "PDSCH_MCS",            # 与 AMC=OFF 共同定义工作点
             "PDSCH_RB_ALLOC",       # RB 不满 → 吞吐随分配缩放
             # TDD：手册没有 pattern 字符串命令，是**六个数**（P1-33）
@@ -211,7 +214,7 @@ class Test5gAllPresent:
         res, _ = _run(_all_defined(), mimo_layers=2)
         assert res.missing_mandatory == ()
         assert res.skipped == ()
-        assert len(res.applied) == 16   # 14 必要 + 2 可选（TDD 六条 + 两条 apply）
+        assert len(res.applied) == 14   # 12 必要 + 2 可选（AMC 两条已移出写路径）
         assert res.ok is True and bool(res) is True
 
     def test_commands_actually_reach_the_wire(self):
@@ -223,13 +226,12 @@ class Test5gAllPresent:
         #   同文件上面刚骂过 `"STOP" in detail` 那个形态，这里自己又犯了。
         # ⚠ P1-33：值形态**全变了**（逐条手册核实过）
         P = _all_defined()
-        c = {"cell": "CELL0", "bwp": "BWP0"}
         assert f"{P.PDSCH_SCHED_ALGO} FULL_TPUT" in writes, (
             "Full Buffer 没发 —— 手册枚举是 FULL_TPUT，不是 FULLBUFFER")
-        assert f"{P.PDSCH_AMC_ENABLE.format(**c)} FIXed" in writes, (
-            "关 AMC 要发资源分配策略 FIXed —— 它**不是**开关命令")
-        assert f"{P.PUSCH_AMC_ENABLE.format(**c)} ON" in writes, (
-            "UL 固定 MCS 开关语义反过来：ON = 固定 MCS = 关 AMC（手册原文）")
+        # ⛔ slot 级 AMC 盲写不许复活（2026-08-07 IRAT 实测恰一条 -113；
+        #    关 AMC 由 FULL_TPUT+固定 MCS 承担，探测是 query 不进 writes）
+        assert not any("RRESource:APOLicy" in w or "IMCS:FIXed" in w
+                       for w in writes), "slot 级 AMC 盲写死灰复燃"
         assert f"{P.PDSCH_MCS} 28" in writes, "固定 MCS 没发"
         assert f"{P.PDSCH_RB_ALLOC} 273" in writes, '"ALL" 没换算成 PRB 整数'
         assert f"{P.TDD_PERIOD.format(cell='CELL0')} MS5" in writes, '"5MS"→MS5 没转'
@@ -261,14 +263,15 @@ class TestPartialProfiles:
 
     def test_missing_one_mandatory_is_enough_to_fail(self):
         """⭐ 缺**一条**必要就够了 —— 不需要 11 条全缺。
-        变异：把判据写成「全缺才算失败」→ 红。"""
-        class _NoAmc(_all_defined()):
-            PDSCH_AMC_ENABLE = None
+        变异：把判据写成「全缺才算失败」→ 红。
+        （小白鼠原来是 PDSCH_AMC_ENABLE —— 它已移出写路径，换 CSIRS_PORTS。）"""
+        class _NoCsirs(_all_defined()):
+            CSIRS_PORTS = None
 
-        res, _ = _run(_NoAmc, mimo_layers=2)
-        assert res.missing_mandatory == ("PDSCH_AMC_ENABLE",)
+        res, _ = _run(_NoCsirs, mimo_layers=2)
+        assert res.missing_mandatory == ("CSIRS_PORTS",)
         assert res.ok is False
-        assert len(res.applied) == 15, "其余 15 条仍该照发（graceful-skip 不是全停）"
+        assert len(res.applied) == 13, "其余 13 条仍该照发（graceful-skip 不是全停）"
 
 
 class TestEmptyTemplateIsNotTreatedAsDefined:
@@ -287,6 +290,68 @@ class TestEmptyTemplateIsNotTreatedAsDefined:
         assert res.ok is False
         for w in writes:
             assert w.strip() not in ("3", "P4"), f"发出了残缺串: {w!r}"
+
+
+class TestAmcProbeContract:
+    """⭐ 2026-08-07 现场：slot 级 AMC 盲写换成只读探测后的三条行为契约。
+
+    背景：两条盲写在 IRAT 上实测恰一条 -113（组级对账定位不了哪条），
+    关 AMC 的意图换源到 QCONFig FULL_TPUT+固定 MCS（已被仪器接受）。
+    探测不是装饰 —— 它是那道门的**生效端**替身，三条契约缺一不可。
+    """
+
+    def test_readback_not_fixed_is_fatal(self):
+        """⭐ 行为门正向：FULL_TPUT 重建后 DL 策略回读到非 FIXed
+        → MCS 会按 CQI 漂 → 测量前提破 → 必须致命。
+
+        变异：让探测忽略回读值（删 rejected.append）→ 本条红。
+        """
+        res, _ = _run(_all_defined(), {"RRESource:APOLicy": "CQI"},
+                      mimo_layers=2)
+        assert res.ok is False, "生效策略=CQI（自适应）却放行 —— 测的是调度器"
+        assert any("DL_APOLICY_READBACK" in r for r in res.rejected)
+
+    def test_readback_fixed_confirms_and_passes(self):
+        """反向：回读到 FIXed = 生效端确认（比盲写时代更强），不许误伤。"""
+        res, _ = _run(_all_defined(), {"RRESource:APOLicy": "FIX"},
+                      mimo_layers=2)
+        assert res.ok is True
+        assert res.rejected == ()
+
+    def test_probe_undefined_header_is_evidence_not_fatal(self):
+        """⭐ 探测吃到 -113 = 「这方言不认这个 header」的实测答案（P1-33），
+        **不是**配置失败 —— 写路径已由 QCONFig 组承担，被拒的只是探测本身。
+
+        窗口归属用「上一条 query 是不是探测」判，不数第几次 drain
+        （数次序会被新增组悄悄挪位喂绿）。
+        """
+        d = _drv(_all_defined())
+        trace: list[tuple[str, str]] = []
+        resp = {"*OPC?": "1", "NUM:PRBS": "273", "SYSTem:ERRor": '0,"No error"',
+                "SYST:ERR": '0,"No error"', "TDDPATtern:STATE": "1",
+                "TDDPATtern:SUBCarrier:SPACing": "MU0"}
+        _stub_io(d, resp, trace)
+        orig_drain = d._drain_errors
+
+        def _probe_window_gets_113():
+            if trace and trace[-1][0] == "Q" and (
+                    "APOLicy" in trace[-1][1] or "IMCS:FIXed" in trace[-1][1]):
+                return ['-113,"Undefined header"']
+            return orig_drain()
+
+        d._drain_errors = _probe_window_gets_113  # type: ignore[assignment]
+        res = asyncio.run(
+            d.configure_mac_throughput_test(mimo_layers=2, scs_khz=15))
+        assert res.ok is True, (
+            "探测 -113 被当成配置失败 —— 那就回到了『每轮现场都死在 AMC』")
+        assert res.rejected == () and res.error is None
+
+    def test_enable_amc_true_fails_loudly(self):
+        """开 AMC 的唯一已知路径就是被 -113 的 slot 级写 ——
+        不能假装开了继续测（静默测错的量 > 显式失败）。"""
+        res, _ = _run(_all_defined(), mimo_layers=2, enable_amc=True)
+        assert res.ok is False
+        assert res.error is not None and "enable_amc=True" in res.error
 
 
 class TestExceptionPathDoesNotLie:

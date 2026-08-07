@@ -2153,8 +2153,16 @@ class RealUxmDriver(BaseStationDriver):
     #     · TDD 比例变                → 绝对值不可比
     #     · CSI-RS 端口不匹配         → 根本跑不到目标层数
     #   可选 = 影响精度/置信区间，**不改量纲**。
+    #
+    #   ⚠ 「AMC 没关」这一格**不再有独立命令名**（2026-08-07 现场）：
+    #     slot 级 PDSCH_AMC_ENABLE / PUSCH_AMC_ENABLE 两条盲写在 IRAT 上
+    #     实测恰有一条 -113，而它们本来就是对同一意图的**第二次盲写** ——
+    #     关 AMC/固定 MCS 由 PDSCH_SCHED_ALGO(FULL_TPUT) + PDSCH_MCS(固定值)
+    #     + QCONFIG_APPLY_ALL 这三条**已被仪器接受**的命令承担（手册依据见
+    #     uxm_command_profiles.py 的 ⛔ 段），生效策略由只读探测回读对账
+    #     （回读到非 FIXed 照样致命，见 configure_mac 的探测块）。
     MAC_CFG_MANDATORY: Tuple[str, ...] = (
-        "PDSCH_SCHED_ALGO", "PDSCH_AMC_ENABLE", "PUSCH_AMC_ENABLE",
+        "PDSCH_SCHED_ALGO",
         "PDSCH_MCS", "PDSCH_RB_ALLOC",
         # TDD：手册没有 pattern 字符串命令，是**六个数**（P1-33）
         "TDD_PATTERN_STATE", "TDD_PERIOD",
@@ -2362,25 +2370,69 @@ class RealUxmDriver(BaseStationDriver):
             else:
                 _emit("PDSCH_RB_ALLOC", f" {n_prb}")
             # ⭐ Quick Config 的三条输入参数发完，要用**它自己的** apply 落地。
-            #   手册：应用场景会把当前 scheduler 配置**完全抹掉并替换** ——
-            #   所以必须排在下面 slot 级 AMC **之前**（内审 F2）。
+            #   手册：应用场景会把当前 scheduler 配置**完全抹掉并替换**。
             _emit("QCONFIG_APPLY_ALL", "")
             _group("QuickConfig(场景/MCS/PRB)")
 
-            # 2. AMC —— 手册**不是开关**，是资源分配策略枚举：
-            #    FIXed = 固定资源/固定 MCS（= 关 AMC），CQI = 按 CQI 自适应。
-            _emit("PDSCH_AMC_ENABLE", " CQI" if enable_amc else " FIXed",
-                  cell=cell, bwp=bwp)
-            #    UL 侧走 `UL:IMCS:FIXed`，语义**反过来**：ON = 固定 MCS = 关 AMC。
-            #    ⚠ 措辞收窄（内审 F6）：手册对**这一条**标的是
-            #    `Type: Integer / Range: 0..272`，跟"收 ON/OFF"**自相矛盾**；
-            #    "不设 True 则固定 IMCS 不生效"那句是**邻近块**的描述。
-            #    所以 `ON` 是**按描述推断**，不是手册对该条的原文 ——
-            #    现场由 `SYST:ERR?` 定案。另有对称命令 `UL:RRESource:APOLicy`
-            #    未纳入（DL 走 APOLicy、UL 走 IMCS:FIXed 这个不对称已记现场待确认）。
-            _emit("PUSCH_AMC_ENABLE", " OFF" if enable_amc else " ON",
-                  cell=cell, bwp=bwp)
-            _group("AMC")
+            # 2. AMC（关）—— **不再有独立的写命令**（2026-08-07 现场）。
+            #    slot 级两条盲写（DL:RRESource:APOLicy FIXed / UL:IMCS:FIXed ON）
+            #    在 IRAT 上实测恰有一条 -113（两轮复现，组级对账定位不了哪条），
+            #    而它们对「固定 MCS」这个意图本来就是**第二次盲写** ——
+            #    FULL_TPUT + QCONFig:DL:MCS（上面刚被接受的那组）已经承担了它
+            #    （手册依据见 profile 的 ⛔ 段）。被拒的盲写不减少已知量。
+            #
+            #    这里换成**逐条只读探测**（各自独立对账窗口）：
+            #      · 能读 → 回读 FULL_TPUT 重建后的**生效**策略 —— 手册没写
+            #        该场景把 APOLicy 置成什么，这是拿真机把它问出来；
+            #        **DL 回读到非 FIXed = MCS 会漂 = 测量前提破 → 照样致命**。
+            #      · -113 → 精确定位不被认的 header（P1-33 要的实测答案），
+            #        只记档不致命 —— 写路径已由 QCONFig 承担。
+            if enable_amc:
+                # 开 AMC 的唯一已知路径就是被 -113 的 slot 级 APOLicy CQI ——
+                # 不能假装开了继续测（静默测错的量 > 显式失败）。
+                return MacThroughputConfigResult(
+                    applied=tuple(applied), skipped=tuple(skipped),
+                    rejected=tuple(rejected),
+                    error=(
+                        "enable_amc=True 在本方言没有已验证的下发路径："
+                        "slot 级 DL:RRESource:APOLicy 2026-08-07 实测 -113"
+                        "（两条盲写恰一条被拒，未定位）。固定 MCS 路径"
+                        "（enable_amc=False）才可用；要开 AMC 先用探测日志"
+                        "确认 header 再补 profile。"),
+                )
+            for _probe, _expect_fixed in (
+                ("AMC_SLOT_DL_APOLICY_PROBE", True),
+                ("AMC_SLOT_UL_IMCS_FIXED_PROBE", False),
+            ):
+                _tpl = self._cmd(_probe, cell=cell, bwp=bwp)
+                if _tpl is None:
+                    continue
+                try:
+                    _raw = str(self._query(_tpl + "?") or "").strip()
+                except Exception as _pe:  # noqa: BLE001 — 探测失败≠配置失败
+                    logger.warning(
+                        f"[UXM/{self._cmds.PROFILE_NAME}] {_probe} 查询异常"
+                        f"（不影响配置判定）: {_pe}")
+                    _raw = ""
+                _perrs = self._drain_errors()
+                if self._error_queue_unusable(_perrs):
+                    raise RuntimeError(_perrs[-1])
+                if _perrs:
+                    logger.warning(
+                        f"[UXM/{self._cmds.PROFILE_NAME}] {_probe} header 不被"
+                        f"本 Test App 认: {_perrs} —— P1-33 实测答案（写路径已由 "
+                        f"QCONFig 组承担，不影响本次判定）")
+                    continue
+                logger.info(
+                    f"[UXM/{self._cmds.PROFILE_NAME}] {_probe} 回读: {_raw!r}")
+                if _expect_fixed and _raw and not _raw.upper().startswith("FIX"):
+                    # 生效端说话：策略不是 FIXed → MCS 会按 CQI 漂 →
+                    # 测的就不是固定 MCS 那个量。跟盲写时代不同，这是**回读**。
+                    rejected.append(f"DL_APOLICY_READBACK={_raw}")
+                    logger.error(
+                        f"[UXM/{self._cmds.PROFILE_NAME}] FULL_TPUT 重建后 DL "
+                        f"RRESource:APOLicy 生效值 = {_raw!r} ≠ FIXed —— "
+                        f"MCS 不固定，3GPP MAC 吞吐量前提不成立")
 
             # 5. TDD —— 手册没有 pattern 字符串，是**六个数**
             slots = _tdd_slots_from_pattern(tdd_pattern)
@@ -2564,7 +2616,8 @@ class RealUxmDriver(BaseStationDriver):
                 logger.info(
                     f"[UXM] MAC throughput commands sent "
                     f"(**not** confirmed applied): "
-                    f"scenario=FULL_TPUT, AMC={'CQI' if enable_amc else 'FIXed'}, "
+                    # AMC 关断由 FULL_TPUT+固定 MCS 承担，生效策略看上面探测回读
+                    f"scenario=FULL_TPUT, AMC=off(经QCONFig, 探测回读见上), "
                     f"MCS={mcs}, RB={rb_alloc}, "
                     f"TDD={tdd_pattern}/{tdd_period}"
                     f"(S 槽 {tdd_dl_symbols}DL/{tdd_ul_symbols}UL), "
