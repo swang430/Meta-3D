@@ -1,6 +1,6 @@
 # Keysight PROPSIM FS16 回放控制 SCPI 指令整理
 
-> 适用对象：Keysight PROPSIM FS16 / F8820A 信道模拟器的 emulation / `.smu` 文件加载与回放控制。  
+> 适用对象：Keysight PROPSIM FS16 / F8820A 信道模拟器的 emulation / `.smu` 文件加载与回放控制。
 > 说明：不同固件版本、连接方式和软件选件可能导致少量命令差异，实际使用时应以对应设备的 Programming Guide / User Reference 为准。
 
 ---
@@ -398,30 +398,30 @@ inst.write("DIAG:SIMU:CLOSE")
 
 ## 15. 使用注意事项
 
-1. **`STOP` 和 `GOS` 不一样**  
+1. **`STOP` 和 `GOS` 不一样**
    - `DIAG:SIMU:STOP`：暂停在当前位置；
    - `DIAG:SIMU:GOS`：停止并回到起点。
 
-2. **加载文件后建议执行 `*OPC?`**  
+2. **加载文件后建议执行 `*OPC?`**
    加载 `.smu` 文件可能需要时间，建议用 `*OPC?` 等待操作完成。
 
-3. **每个关键步骤后建议查询 `SYST:ERR?`**  
-   `*OPC?` 只表示操作完成，不代表操作没有错误。  
+3. **每个关键步骤后建议查询 `SYST:ERR?`**
+   `*OPC?` 只表示操作完成，不代表操作没有错误。
    推荐关键步骤后执行：
 
    ```scpi
    SYST:ERR?
    ```
 
-4. **路径写法要注意转义**  
-   不同控制环境对反斜杠处理不同。  
+4. **路径写法要注意转义**
+   不同控制环境对反斜杠处理不同。
    例如 Python 原始字符串可以写：
 
    ```python
    smu_file = r"D:\User Emulations\test_2x2.smu"
    ```
 
-5. **`GOTO` 建议在暂停或停止状态下执行**  
+5. **`GOTO` 建议在暂停或停止状态下执行**
    例如：
 
    ```scpi
@@ -429,7 +429,7 @@ inst.write("DIAG:SIMU:CLOSE")
    DIAG:SIMU:GOTO 2 s
    ```
 
-6. **不同固件版本可能存在差异**  
+6. **不同固件版本可能存在差异**
    如果指令返回错误，需要结合：
 
    ```scpi

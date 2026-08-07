@@ -1,8 +1,8 @@
 # FS16 SMU playback 传导测试联调记录
 
-> 日期: 2026-06-11  
-> 设备: Keysight PROPSIM FS16 / F8820A, `192.168.0.100`  
-> 目标: 基站仿真器和终端指标保持 mock, 信道仿真器使用真实 FS16, 通过 GUI 跑一次 FS16 hybrid KPI smoke  
+> 日期: 2026-06-11
+> 设备: Keysight PROPSIM FS16 / F8820A, `192.168.0.100`
+> 目标: 基站仿真器和终端指标保持 mock, 信道仿真器使用真实 FS16, 通过 GUI 跑一次 FS16 hybrid KPI smoke
 > 当前状态: 软件侧 FS16 playback + hybrid KPI 通路已补齐并通过单测; 下次现场主路径优先使用 HiSLIP, raw `5025` 仅保留为诊断项
 
 ## 一句话结论

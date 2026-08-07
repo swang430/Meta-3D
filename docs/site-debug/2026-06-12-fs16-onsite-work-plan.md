@@ -1,9 +1,9 @@
 # FS16 现场调试工作计划与操作步骤
 
-日期: 2026-06-12  
-目标: 真实 FS16 信道仿真器 + mock 基站 + mock DUT/KPI 的软件闭环确认  
-主路径 endpoint: `TCPIP0::192.168.0.100::hislip0::INSTR`  
-默认 `.smu`: `Emulation0609.smu`, 现场可改为真实文件名或完整路径  
+日期: 2026-06-12
+目标: 真实 FS16 信道仿真器 + mock 基站 + mock DUT/KPI 的软件闭环确认
+主路径 endpoint: `TCPIP0::192.168.0.100::hislip0::INSTR`
+默认 `.smu`: `Emulation0609.smu`, 现场可改为真实文件名或完整路径
 
 ---
 
@@ -507,4 +507,3 @@ KPI 表至少关注:
 3. HAL reload
 4. Sequence Runner 把 `base_station_mode` 改 `real`
 5. 跑同类 smoke 或正式 TestPlan
-
