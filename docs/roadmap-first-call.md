@@ -3393,6 +3393,10 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 | ASC/B2 模型加载尚无 confirmed 正式证据 hook | → 正式延后 backlog；使用该路径时保持 unknown | P0-5 可先用已闭环的 GCM 正式路径；ASC/B2 若要正式关闭需另立证据 recipe 与执行 hook |
 | 与闭环无直接关系的其它未标记发现 | 保留 Discovered | 继续待评估，不因本轮自动变成 backlog |
 
+- `[discovered 2026-08-07 during P1-44 external review, Codex #303 R1]` **重复抑制桶不按日志级别隔离（P2，待 triage）** —— `logging_config.py:185` 的抑制 key 不含 `record.levelno`：同一执行/仪器/logger 在一秒内先输出至少 100 条相同文本的 INFO，随后用**相同文本**输出 ERROR 时，该 ERROR 会被归进已经满额的 INFO 桶并直接抑制；最终摘要又复制首条 INFO，因此日志里**完全看不到级别升级**。突发限流因此可能吞掉真正的告警或错误。修法方向是把 `levelno` 纳入 key。按 CLAUDE.md ⑥ 不在 #303 当下修（P2、非本片验收边界内的安全问题），避免 review 黑洞。
+
+- `[discovered 2026-08-07 during P1-44 external review, Codex #303 R1]` **关键词过滤匹配不到 traceback 续行（P2，待 triage）** —— `system_logs.py:364` 的反向扫描只对**父记录**调用谓词，随后无条件清空续行。于是关键词只出现在续行里时（父消息 `request failed`、续行 `ValueError: broken`），搜 `broken` 会同时从 `/tail` 和 `/history` 消失；导出路径同样只检查父记录，结果一致遗漏。修法方向是归组时让关键词能匹配组内任一续行，同时保留父级 level/session 语义。同上，不在 #303 当下修。
+
 - `[discovered 2026-08-06 during P1-45 external review, Codex #295 R1]` **诊断序列完整 output / trace pointer 持久化缺口（P2，待独立 triage）** —— `POST /api/v1/diagnostic-sequences/{key}/run` 的 live response 含完整 `steps/raw`，但 `DiagnosticContext.record_run()` 只把组合输出截成最多约 2048 bytes 的 `DiagnosticRun.output_excerpt`，该 endpoint 又没有传 `hal_trace_log_path`；离开 live 结果后，审计行可能既没有完整 raw，也没有可回取全量 trace 的指针。当前现场必须先导出/复制完整响应，截断摘要不能作为正式证据。proper fix 需独立评估完整 output 存储或可靠 trace pointer 的生命周期、访问与清理策略；**不并入 P1-46，也不因此扩当前执行队列**。
 
 - `[discovered 2026-08-05 during P1-36 内审 F7]` **「从执行历史一键看这次执行的日志」未做（P2）** —— P1-36 给了 `execution_id` 串链 + 日志表「执行」列（点它隔离），但**没有从执行历史跳过去的入口**：`SystemLogViewer` 不接任何 props、也不读 URL 参数。所以「跑完一个用例想看它做了什么」这条路现在是"自己去日志页、找到那次执行的任意一行、点一下"，而不是"从执行历史点一下"。**顺带**：过滤徽章显示的是裸 UUID 前 8 位，P1-36 条目 ⚠② 原本要求"显示用例名 + 执行时间"（**过滤判据仍须用 id**，别拿名字当键 —— 同名用例会合并成假链）。两件事一起做：给 `SystemLogViewer` 加受控 props（或走 URL 查询参数），执行历史每行加跳转按钮。
