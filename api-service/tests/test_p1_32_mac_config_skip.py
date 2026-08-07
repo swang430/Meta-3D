@@ -336,13 +336,11 @@ class TestCallerConsumesTheResult:
 
     @pytest.mark.parametrize("cfg,blocked,why", [
         (MacThroughputConfigResult(applied=("A",) * 11), False, "全配好"),
-        # 2026-08-07 用户批准降级: `missing`(本 profile 压根没这条命令) 不再拦。
-        # 理由见 measure._mac_config_blocker 里那段注释 —— 它拦的是一件**做不到**
-        # 的事(P1-33 已逐条查过手册原件, 0 命中), 拦住的结果是"永远测不了"。
-        # ⚠ 降级**不等于放行**: 配套 `_mac_config_warning` 必须留痕, 由下面
-        #   test_missing_is_downgraded_but_leaves_a_trace 守着。两条一起才是完整契约,
-        #   删掉任一条都会让"静默放行"变成可能。
-        (MacThroughputConfigResult(missing_mandatory=("PDSCH_MCS",)), False,
+        # ⚠ 2026-08-07 现场一度把这格降级成"放行"，当天撤回：降级的前提
+        #   （"这 6 条 TDD 命令 profile 里没有"）是**假的** —— 手册有、
+        #   profile 也早就定义了，真凶是错误标签把「整组没下发」说成
+        #   「profile 未定义」。前提错了，降级就不成立。
+        (MacThroughputConfigResult(missing_mandatory=("PDSCH_MCS",)), True,
          "缺必要命令"),
         (MacThroughputConfigResult(applied=("A",) * 11,
                                    error="TimeoutError: VI_ERROR_TMO"), True,
@@ -492,33 +490,43 @@ class TestCallerConsumesTheResult:
             assert claim not in msg.replace("「仪器不支持」或「仪器支持」", ""), (
                 f"消息里对仪器能力下了结论: {claim!r} —— 我们两个方向都没证据")
 
-    def test_missing_is_downgraded_but_leaves_a_trace(self):
-        """⭐ 降级的**另一半**: 放行了, 但必须留痕说"这次不算合规结果"。
+    def test_two_causes_of_missing_are_told_apart(self):
+        """⭐ **行为门** —— `missing_mandatory` 有两种完全不同的成因，
+        消息必须分开说，否则会把排障指向错方向。
 
-        2026-08-07 用户批准把 `missing` 从致命降级, **条件是留痕**。
-        只改 blocker 不加这条 = 静默放行, 那正是本项目一直在治的东西
-        (memory: 路径 B 绝不用默认 fallback 静默兜底)。
+        2026-08-07 现场铁证：6 条 TDD 命令 profile 里**明明有**，
+        是 pattern 翻不成手册形态导致整组没下发，可消息说的是
+        「profile 未定义」—— 于是我据此断定"手册没这些命令"，
+        进而降级了一道 fail-loud 门。**标签错 → 结论错 → 门被拆**。
 
-        变异: 让 `_mac_config_warning` 恒返回 None → 本条红。
+        变异: 让 `_mac_config_blocker` 无视 `undefined_on_profile`
+        统一说成"profile 未定义" → 下面第二段红。
         """
         from app.services.mimo_ota.executors.measure import MeasureExecutor
 
-        cfg = MacThroughputConfigResult(
-            applied=("A",), missing_mandatory=("TDD_PERIOD", "TDD_DL_SLOTS"))
-        assert MeasureExecutor._mac_config_blocker(cfg) is None, "降级没生效"
-        w = MeasureExecutor._mac_config_warning(cfg)
-        assert w is not None, "降级了却没留痕 —— 静默放行"
-        assert w["compliant"] is False, "没显式标成不合规"
-        assert "TDD_PERIOD" in w["missing_mandatory"], "没说清缺哪几条"
-        assert "不是 3GPP MAC 层" in w["reason"], "没说清这次的数不能当合规结果用"
+        # A: profile 真没这条命令（undefined 覆盖了全部 missing）
+        a = MeasureExecutor._mac_config_blocker(MacThroughputConfigResult(
+            missing_mandatory=("FOO",), undefined_on_profile=("FOO",)))
+        assert a is not None and "**本驱动的 profile 未定义**" in a
+        assert "整组没下发" not in a, "profile 真缺项，却扯上了「没下发」"
 
-    def test_warning_is_none_when_config_is_complete(self):
-        """反向: 配置完整时不许留痕 —— 否则每次都标"不合规", 留痕就失去意义。"""
-        from app.services.mimo_ota.executors.measure import MeasureExecutor
+        # B: 命令在 profile 里，是整组没轮到发（undefined 为空）
+        b = MeasureExecutor._mac_config_blocker(MacThroughputConfigResult(
+            missing_mandatory=("TDD_PERIOD", "TDD_DL_SLOTS")))
+        assert b is not None
+        assert "**命令在 profile 里但整组没下发**" in b
+        assert "**不是 profile 缺项**" in b, (
+            "没否掉错成因 —— 会让操作员去补一条早就存在的命令")
+        assert "**本驱动的 profile 未定义**" not in b, (
+            "把「整组没下发」冒充成「profile 未定义」—— 2026-08-07 就是这条"
+            "错标签让我拆掉了一道 fail-loud 门")
 
-        assert MeasureExecutor._mac_config_warning(
-            MacThroughputConfigResult(applied=("A",) * 11)) is None
-        assert MeasureExecutor._mac_config_warning(True) is None
+        # C: 两种同时存在 → 两段都要出现
+        c = MeasureExecutor._mac_config_blocker(MacThroughputConfigResult(
+            missing_mandatory=("FOO", "TDD_PERIOD"),
+            undefined_on_profile=("FOO",)))
+        assert c is not None
+        assert "**本驱动的 profile 未定义**" in c and "整组没下发" in c
 
     def test_start_signaling_is_not_reached_when_mandatory_missing(self):
         """⭐ **生效端** —— 光断言"返回 FAILED"不够，

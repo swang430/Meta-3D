@@ -126,6 +126,14 @@ class MacThroughputConfigResult:
     applied: Tuple[str, ...] = ()
     skipped: Tuple[str, ...] = ()
     missing_mandatory: Tuple[str, ...] = ()
+    # ⚠️ 2026-08-07 现场血泪：`missing_mandatory` 是 **mandatory ∩ skipped**，
+    #   而 `skipped` 有**两种成因**：① profile 里这条命令是 None（真缺口）；
+    #   ② 命令在，但值翻译失败/校验不过导致**整组没发**。
+    #   调用方的消息此前对两者一律说「**本 profile 未定义**」——
+    #   ②的情况下那是**假话**，而它把 2026-08-07 的现场诊断带偏了两次：
+    #   先据此把 fail-loud 门降级，再据此准备"补命令"（命令根本不缺）。
+    #   本字段只装①，让调用方能说真话。
+    undefined_on_profile: Tuple[str, ...] = ()
     error: Optional[str] = None
     # P1-33：发出去了但**被仪器拒**（`SYST:ERR?` 逐组回读）。
     #   与 `skipped`（profile 没定义）是两回事：这批是"我们发了、它不认"，
@@ -2519,9 +2527,16 @@ class RealUxmDriver(BaseStationDriver):
                 self._query("*OPC?")
 
             missing = tuple(n for n in self.MAC_CFG_MANDATORY if n in skipped)
+            # 只有 profile 上**真的没有**这条命令才算 undefined —— 跟
+            # "命令在、但这组因为值翻不了而整组跳过" 分开（见 dataclass 注释）。
+            undefined = tuple(
+                n for n in missing
+                if getattr(self._cmds, n, None) is None
+            )
             result = MacThroughputConfigResult(
                 applied=tuple(applied), skipped=tuple(skipped),
-                missing_mandatory=missing, rejected=tuple(rejected),
+                missing_mandatory=missing, undefined_on_profile=undefined,
+                rejected=tuple(rejected),
                 no_equivalent=tuple(self.MAC_CFG_NO_EQUIVALENT),
             )
             if missing:
@@ -2580,6 +2595,10 @@ class RealUxmDriver(BaseStationDriver):
                 applied=tuple(applied), skipped=tuple(skipped),
                 missing_mandatory=tuple(
                     n for n in self.MAC_CFG_MANDATORY if n in skipped),
+                # 与正常路径同源：只有 profile 上真没这条命令才算 undefined。
+                undefined_on_profile=tuple(
+                    n for n in self.MAC_CFG_MANDATORY
+                    if n in skipped and getattr(self._cmds, n, None) is None),
                 rejected=tuple(rejected),
                 no_equivalent=tuple(self.MAC_CFG_NO_EQUIVALENT),
                 error=f"{type(e).__name__}: {e}",

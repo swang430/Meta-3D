@@ -246,10 +246,23 @@ class MIMOOTAConfiguration(BaseModel):
     # 30 kHz SCS 下 5 × 0.5ms = **2.5ms**，跟 `tdd_period = "5MS"` 对不上 ——
     # 驱动因此**拒发整个 TDD 组**（照发不会被仪器拒，但 DL/UL 比例会静默变成
     # 另一个配置，测的不是那个量；见 test_p1_33 的 TestScsConsistency）。
-    # `DDDSUDDSUU` = 10 slot × 0.5ms = 5.0ms，跟 period 自洽。
+    # `DDDDDDDSUU` = 7D + 1S + 2U = 10 slot × 0.5ms = 5.0ms，跟 period 自洽。
+    #
+    # ⚠️ **为什么不是 `DDDSUDDSUU`**（2026-08-07 现场先选了它，翻不了）：
+    #   本仪器的 TDD 配置是**六个数**（DLSLots/DLSYmbols/ULSLots/ULSYmbols/
+    #   PERiod/STATE），手册原文 "DL Slots … starting from the **left side**
+    #   of the periodicity window" / "UL Slots … from the **right side**" ——
+    #   六个数只能表达 **D…D [S] U…U** 这**一种**排布。
+    #   `DDDSUDDSUU` = `DDD S U DD S UU`（S 后面还有 D、且两个 S）
+    #   在 3GPP 里合法(那是 pattern1+pattern2 双段)，但**单段六个数表达不了**，
+    #   驱动会拒发整组 TDD（拒得对：照发会静默变成另一个配置）。
+    #   手册**确实支持**双段 `TDDPATtern:TWO:*`，但本驱动只实现了单段 ——
+    #   要用双段得先扩驱动，别改这里的值去凑。
+    # ✅ `DDDDDDDSUU` 恰好等于**手册自己的默认值** dslots=7 / dsym=6 /
+    #   ulslots=2 / ulsym=4 / period=MS5（NotebookLM 2026-08-07 原文核对）。
     # ⚠ 换 SCS 就要重算：pattern 的含义**依赖 SCS**（手册把 SCS 列为
     #   `TDDPATtern:STATE` 的 Dependencies）。60 kHz 下同样 10 slot 只有 2.5ms。
-    tdd_pattern: str = "DDDSUDDSUU"
+    tdd_pattern: str = "DDDDDDDSUU"
     tdd_period: str = "5MS"
     harq_max_trans: int = 4
     harq_processes: int = 16
