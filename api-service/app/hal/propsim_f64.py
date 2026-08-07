@@ -1739,8 +1739,15 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                         return
                     try:
                         late_resource.close()
-                    except Exception:
-                        pass
+                    except Exception as close_exc:  # noqa: BLE001
+                        # 吞异常**不吞信息**（G4 棘轮门）：关不掉意味着那个
+                        # "无人持有"的 socket 仍在，F64 可能一直被 Remote 抢占、
+                        # 前面板动不了 —— 现场看到这条就知道该去面板上手动放。
+                        logger.warning(
+                            "[F64] 迟到打开的 ATE socket 关闭失败: %s "
+                            "— F64 可能仍被 Remote 占用，需在前面板确认",
+                            close_exc,
+                        )
 
                 open_task.add_done_callback(_close_late_open)
                 raise
@@ -1829,8 +1836,15 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 try:
                     # 取消展开期间不再 await；同步 close 是确保句柄不泄漏的兜底。
                     failed_resource.close()
-                except Exception:
-                    pass
+                except Exception as close_exc:  # noqa: BLE001
+                    # 吞异常**不吞信息**（G4 棘轮门）：半连接关不掉 = 句柄泄漏 +
+                    # F64 可能仍停在 Remote，而上面那条 ERROR 只说了握手失败，
+                    # 不说清理也失败了 —— 现场会误判成"连不上"而不是"占着没放"。
+                    logger.warning(
+                        "[F64] 半连接 socket 关闭失败: %s "
+                        "— 句柄可能泄漏且 F64 仍被 Remote 占用",
+                        close_exc,
+                    )
             if isinstance(e, asyncio.CancelledError):
                 self._status = InstrumentStatus.DISCONNECTED
                 self._last_error = "F64 连接建立被取消，ATE socket 已清理"
@@ -4707,10 +4721,27 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
     @staticmethod
     def _is_visa_conn_lost(exc: BaseException) -> bool:
-        """Delegate to the shared classifier so all VISA-backed drivers
-        agree on which error codes mean 'reconnect to recover'."""
+        """共享判据 **+ F64 自己的 `ConnectionError` 扩展**。
+
+        共享 classifier 只认 VISA 层的 conn-lost 码（见 `_visa_reconnect.py`）。
+        F64 走 **raw SOCKET**（3334，非 VXI-11），pyvisa-py 的这个后端会把
+        `EPIPE` / `ECONNRESET` 直接透成 Python 原生 `BrokenPipeError` /
+        `ConnectionResetError` / `ConnectionAbortedError`，而不包成
+        `VisaIOError` —— 语义就是"对端 socket 没了"，必须重建。
+
+        ⚠ 这条**只放在 F64 这一层**，不抬进共享 classifier（2026-08-07 内审 F1）：
+          · UXM / FS16 / ENA 没有对应实测依据；
+          · UXM 判成断链后会静默重连并**重发**同一条 `BSE:`/`CALL:` 写命令，
+            而重复信令有副作用；它自己还用 `ConnectionError("[UXM] Not connected")`
+            表示"从来没连过"，跟"对端断了"混进同一判据就废了。
+
+        判据保持比 `OSError` 窄：`TimeoutError` / `InterruptedError`(EINTR) /
+        `BlockingIOError`(EAGAIN) 都是 `OSError` 子类却不代表对端断了，
+        误判会跳过 GOS/CLOSE 把**还在发射**的 F64 丢下（同 `DIAG:SIMU:STATE?`
+        失败分支那段注释论证的边界，此处与之同源）。
+        """
         from app.hal._visa_reconnect import is_visa_conn_lost
-        return is_visa_conn_lost(exc)
+        return is_visa_conn_lost(exc) or isinstance(exc, ConnectionError)
 
     async def _silent_reconnect_visa(self) -> bool:
         """Reopen the VISA resource after a connection drop.

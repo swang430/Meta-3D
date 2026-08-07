@@ -1634,9 +1634,20 @@ class MeasureExecutor(IStepExecutor):
 
             # 三里程碑的 throughput 那一格用它。**从实测样本算, 不是流程走到就算数** ——
             # 方位扫描不会因为吞吐为 0 而中止, 所以"跑完了"跟"跑出数了"是两件事。
+            # ⚠ `throughput_mbps` 可能是 **None**（驱动没读到 / mock 路径 / KPI 查询
+            #   失败时那一格就是 None）—— 直接 `sum()` 会抛
+            #   `TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'`，
+            #   把整个 measure 相位炸掉。2026-08-07 实证：本行是我加三里程碑时写的，
+            #   `test_analysis_reads_what_measure_wrote` 当场红（值形态没枚举 None）。
+            # ⚠ None **不能当 0 算进平均** —— 那会把"没测到"伪装成"测到了但是 0"，
+            #   拉低均值、制造假的低吞吐读数。只对**真有数**的样本求平均；
+            #   一个有效样本都没有时 mean=0.0，里程碑 throughput 那格如实判 False。
+            _tput_samples = [
+                a["throughput_mbps"] for a in azimuth_results
+                if a.get("throughput_mbps") is not None
+            ]
             _mean_tput_mbps = (
-                sum(a["throughput_mbps"] for a in azimuth_results) / len(azimuth_results)
-                if azimuth_results else 0.0
+                sum(_tput_samples) / len(_tput_samples) if _tput_samples else 0.0
             )
 
             # --- P2-11 Phase 6 (MCS index 线): AMC off 时实测生效 mcs_dl vs 请求 mcs ---

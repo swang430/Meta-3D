@@ -17,9 +17,6 @@ The same Codex P2 lesson from #14 applies here:
     must propagate so the caller can decide.
 
 PyVISA-level equivalent (F64R-1, 2026-07-25 实测 pyvisa 1.16.2):
-  - ``ConnectionError`` 族（``BrokenPipeError`` / ``ConnectionResetError`` /
-    ``ConnectionAbortedError``）→ pyvisa-py 的 raw SOCKET 后端可能直接透出 Python
-    原生异常，而不是包装成 ``VisaIOError``。语义同样是远端 socket 已断，必须重建。
   - ``pyvisa.errors.InvalidSession`` → 在**已 close 的 Resource** 上再发命令时抛。
     它**不是** ``VisaIOError`` 的子类 (MRO: InvalidSession → Error → Exception),
     因为 ``Resource.session`` 这个 property 在 ``_session is None`` 时就抛了, 根本
@@ -86,11 +83,24 @@ def is_visa_conn_lost(exc: BaseException) -> bool:
     Returns False if PyVISA isn't importable in this environment (e.g.
     Mock-only test mode) so callers don't have to guard the import.
     """
-    # pyvisa-py raw SOCKET can surface EPIPE/ECONNRESET directly instead of
-    # wrapping it in VisaIOError.  Keep this narrower than OSError: timeout,
-    # EINTR and local resource failures must not be mistaken for a dead peer.
-    if isinstance(exc, ConnectionError):
-        return True
+    # ⚠ 这里**故意不收** ``ConnectionError``（2026-08-07 撤回）。
+    #
+    # pyvisa-py 的 raw SOCKET 后端确实可能直接透出 ``BrokenPipeError`` /
+    # ``ConnectionResetError`` 而不包成 ``VisaIOError`` —— 这条观察是对的，
+    # 但它**只对具体调用点成立**，不该抬进四个驱动共用的判据：
+    #
+    #   · F64 需要它的那一个点（`propsim_f64.py` 的 `DIAG:SIMU:STATE?` 失败分支）
+    #     **早就有** `self._is_visa_conn_lost(e) or isinstance(e, ConnectionError)`，
+    #     且那处注释逐条论证过为何收窄到 `ConnectionError`、为何故意不收裸 `OSError`。
+    #     共享层再放宽一次是重复，不是补缺。
+    #   · UXM / FS16 / ENA 三个驱动**没有**对应的实测依据。UXM 尤其危险：
+    #     判成断链后会静默重连并**重发同一条 `BSE:`/`CALL:` 写命令**，
+    #     而重复信令是有副作用的；它自己还用 `ConnectionError("[UXM] Not connected")`
+    #     表示"从来没连过"，跟"对端断了"混进同一个判据里语义就废了。
+    #
+    # 结论：放宽留在需要它的驱动里做 override，共享层保持严格。
+    # 契约由 `tests/test_fs16_uxm_ena_visa_reconnect.py::TestConnLostClassifier`
+    # 的 `is_conn_lost(ConnectionResetError("plain")) is False` 守着。
     try:
         import pyvisa
     except ImportError:
