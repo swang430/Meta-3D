@@ -567,6 +567,19 @@ class MeasureExecutor(IStepExecutor):
                     error_message=(
                         "UXM start_signaling 返回 False（CELL ON/UE Attach 未确认）；"
                         "中止测量，防止读取上一轮缓存吞吐造成假绿。"
+                        + (
+                            # 有的 DUT 在衰落已经打开的情况下挂不上，用直通"扶一把"
+                            # 就能进来。这个开关默认关着，所以失败时**由系统提示**，
+                            # 不指望操作员记得它存在（2026-08-07 用户定的方向）。
+                            "\n💡 若这个 DUT 在衰落下反复挂不上：把 `f64_bypass_mode` "
+                            "设成 2（Butler 直通）可先用直通扶它挂上，挂上后自动撤掉"
+                            "直通再开衰落测量。撤掉之后还在不在，会记进 "
+                            "`attach_milestones.fading_attach`。"
+                            if config.f64_bypass_mode is None else
+                            "\n⚠ 本次已开直通扶持（f64_bypass_mode="
+                            f"{config.f64_bypass_mode}）仍未挂上 —— 说明问题不在"
+                            "「衰落太深挂不上」这一层，查 F64 输出电平与 DUT 侧。"
+                        )
                     ),
                 )
 
@@ -1191,27 +1204,43 @@ class MeasureExecutor(IStepExecutor):
             }
 
             async def _probe_ue_attached(stage: str) -> Dict[str, Any]:
-                """读一次 UE 状态。**只报实况, 不推断。**
+                """读一次**小区连接状态**判断 DUT 挂上没有。**只报实况, 不推断。**
 
-                查不到能力 (`source == "unavailable"`) = UE 没挂上或读不到,
-                两者对现场是同一个动作(去看 DUT), 但**不能**当成"挂上了"。
+                判据是 `BSE:STATus:NR5G:<cell>?` 回 `CONNected`（手册枚举
+                `OFF|ON|CONNected|IDLE|AGGRegated|ACTivated`），走驱动既有的
+                `get_cell_state()`。
+
+                ⚠ 上一版用的是 `query_ue_capability()` —— **判据用错了**
+                （2026-08-07 现场实证）：那个查的是"这个 DUT 支持几层、什么调制"
+                （能力），不是"现在连上了没有"（状态）。而且 IRAT 方言的 profile 上
+                `UE_CAPABILITY_*` 四条命令全是 `None`，一调就崩、恒返回
+                `source="unavailable"` → 里程碑恒判 False → 相位必然 FAILED。
+                真正的判据就在旁边、`start_signaling()` 已经在用、当天还双向验证过：
+                17:38:29 读到 `CONN` 判 attach 成功、17:42:29 一直读 `'ON'` 判超时。
+                （memory `feedback_effective_end_not_nominal`：不从"能拿到的相似
+                属性"取，要从 caller 已经在用的那个源取。）
+
                 驱动没有这个方法 (mock/非 UXM) → attached=None = "没测",
                 跟 False("测了没挂上") 区分开 —— 别让 mock 跑出绿色里程碑。
                 """
-                if not hasattr(base_station, "query_ue_capability"):
+                from app.hal.base_station import CellState
+
+                if not hasattr(base_station, "get_cell_state"):
                     return {"stage": stage, "attached": None,
-                            "reason": "BS 驱动无 query_ue_capability (mock/非 UXM) — 未测"}
+                            "reason": "BS 驱动无 get_cell_state (mock/非 UXM) — 未测"}
                 try:
-                    cap = await base_station.query_ue_capability()
+                    state = await base_station.get_cell_state()
                 except Exception as e:  # noqa: BLE001
                     return {"stage": stage, "attached": False,
-                            "reason": f"UE 能力查询抛异常: {type(e).__name__}: {e}"}
-                src = (cap or {}).get("source")
-                if src == "unavailable":
-                    return {"stage": stage, "attached": False,
-                            "reason": "UE capability unavailable — DUT 未 attach 或读不到",
-                            "ue_info": cap}
-                return {"stage": stage, "attached": True, "reason": "ok", "ue_info": cap}
+                            "reason": f"小区状态查询抛异常: {type(e).__name__}: {e}"}
+                raw = getattr(state, "value", state)
+                if state == CellState.CONNECTED:
+                    return {"stage": stage, "attached": True,
+                            "reason": "ok", "cell_state": raw}
+                # ON = 小区开着但没 UE 连上；ERROR = 读不到/枚举外。都不算挂上。
+                return {"stage": stage, "attached": False,
+                        "reason": f"小区状态 {raw!r} ≠ CONN — DUT 未 attach",
+                        "cell_state": raw}
 
             if config.f64_bypass_mode is not None and config.f64_fade_after_attach:
                 # ① 直通态确认 DUT 已挂上
@@ -1226,10 +1255,12 @@ class MeasureExecutor(IStepExecutor):
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
                         error_message=(
-                            "直通(Butler)态下 DUT 未 attach —— 不开衰落、不继续测量。"
+                            "直通态下 DUT 未 attach —— 不开衰落、不继续测量。"
                             f"原因: {milestones['bypass_attach']['reason']}。"
-                            "⚠ 手册未说明 STATIC 态是否有射频输出; 若确认 DUT 侧无信号, "
-                            "把 f64_fade_after_attach 设 False 走无衰落基线, 或先 GO 再 bypass。"
+                            "⚠ 已经用直通扶过仍挂不上，说明问题不在「衰落太深」这一层。"
+                            "手册未说明 STATIC 态是否有射频输出；若确认 DUT 侧无信号，"
+                            "查 F64 输出电平（`OUTP:LEV:AMP:LIM?` 各口上限）与馈线，"
+                            "或把 `f64_bypass_mode` 设回 None 走正常衰落流程对比。"
                         ),
                         measurements={"attach_milestones": milestones},
                     )

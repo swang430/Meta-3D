@@ -270,6 +270,32 @@ class CreateSessionRequest(BaseModel):
     # 用临时卡)。新 strict 门同步 bypass (feedback_strict_gate_extend_bypass_toggle)。
     precheck_strict_sim_identity: Optional[bool] = None
 
+    # === 仪表工作点（暗室首测这一条路专用）===
+    #
+    # ⭐ 这些**不放进 `MIMOOTAConfiguration` 的默认值**（2026-08-07 撤回后的定案）：
+    #   共享 schema 的默认会流进每一条新建用例，也会被填进数据库里**已经存在**、
+    #   JSON 里没有这些键的老用例 —— 实测既有 MIMO_OTA 用例的 configuration 里
+    #   这几个键全都缺，所以改 schema 默认 = 改全库既有用例的行为。
+    #   放在请求侧就只影响"这次建的这个会话"，跟上面 8 个 `precheck_strict_*`
+    #   和 `engine_mode` 同一套路数。
+    #
+    # None = 不覆盖，用 schema 默认。给了值才下发。
+    # 2026-08-07 CAICT 现场实测过的一组（下次现场可直接照填）：
+    #   frequency_hz=3.54999e9 (ARFCN 636666) / bandwidth_mhz=40
+    #   uxm_dl_power_dbm_per_bw=-15  ← 整带宽口径，已下发并回读确认
+    #   f64_input_ref_dbm=-17（UXM→F64 路损按 2 dB 估，⚠ 尚未实测）
+    #   f64_crest_db=15 / f64_output_level_dbm=-52
+    #   ⚠ -50 会被 F64 拒（该机口 1 实测上限 `OUTP:LEV:AMP:LIM?` = -51.61）
+    uxm_dl_power_dbm_per_bw: Optional[float] = None
+    f64_input_ref_dbm: Optional[float] = None
+    f64_crest_db: Optional[float] = None
+    f64_output_level_dbm: Optional[float] = None
+    emulation_file: Optional[str] = None
+    # 「扶一把」开关：None = 关（正常流程）。有的 DUT 在衰落打开时挂不上，
+    # 设成 2（Butler 直通）可先用直通扶它 attach，挂上后自动撤掉再开衰落。
+    # attach 超时的错误消息会主动提示这个开关，不需要谁记住它。
+    f64_bypass_mode: Optional[int] = None
+
 
 class SessionResponse(BaseModel):
     session_id: str
@@ -309,12 +335,26 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
             "max_rsrp_variance_db": req.max_rsrp_variance_db,
         },
     }
-    # 频率/带宽: None = 不覆盖 → 用 MIMOOTAConfiguration 的默认（现场基线
-    # 3549.99 MHz / 40 MHz）。显式给才覆盖。见类定义上的注释。
+    # 频率/带宽: None = 不覆盖 → 用 MIMOOTAConfiguration 的通用默认
+    # （3.5 GHz / 100 MHz）。现场工作点由调用方显式给。见类定义上的注释。
     if req.frequency_hz is not None:
         overrides["frequency_hz"] = req.frequency_hz
     if req.bandwidth_mhz is not None:
         overrides["bandwidth_mhz"] = req.bandwidth_mhz
+    # 仪表工作点（暗室首测专用）—— 同样 None = 不覆盖。这些**不放共享 schema
+    # 默认**：那会流进每条新建用例、也会被填进 JSON 里缺这些键的既有用例
+    # （2026-08-07 实证：既有 MIMO_OTA 用例的 configuration 里这几个键全缺）。
+    for _f in (
+        "uxm_dl_power_dbm_per_bw",
+        "f64_input_ref_dbm",
+        "f64_crest_db",
+        "f64_output_level_dbm",
+        "emulation_file",
+        "f64_bypass_mode",
+    ):
+        _v = getattr(req, _f)
+        if _v is not None:
+            overrides[_f] = _v
     # P3-14: 资产引用透传 (MIMOOTAConfiguration.channel_asset_id 已存在, S3 起
     # measure resolver 按它派生 engine_mode / .smu 源)。None 不发 — 不覆盖默认。
     if req.channel_asset_id is not None:
