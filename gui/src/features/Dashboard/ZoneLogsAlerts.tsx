@@ -35,7 +35,7 @@ import {
 } from '@tabler/icons-react'
 import { fetchSystemLogsTail, fetchAlerts, fetchAlertSummary } from '../../api/service'
 import { formatLogTime } from '../../utils/datetime'
-import { groupLogContinuations } from '../../utils/logEntries'
+import { filterGroupedLogEntries } from '../../utils/logEntries'
 import type { SystemLogTailResponse } from '../../types/api'
 import type {
   SystemLogEntry,
@@ -151,21 +151,11 @@ function LogPanel() {
     refetchInterval: autoRefresh ? 3_000 : false,
   })
 
-  // 客户端过滤兜底 (多选 level 时后端没法只过滤一个)。
-  const filteredEntries = useMemo<SystemLogEntry[]>(() => {
-    const all = data?.entries ?? []
-    if (enabledLevels.length === 0) return []
-    return all.filter((e) => {
-      const up = e.level.toUpperCase()
-      // RAW continuation lines follow whatever line preceded them — keep
-      // them visible whenever any level is enabled so tracebacks aren't lost.
-      if (up === 'RAW') return true
-      return enabledLevels.includes(up)
-    })
-  }, [data, enabledLevels])
   const groupedEntries = useMemo(
-    () => groupLogContinuations(filteredEntries),
-    [filteredEntries],
+    () => filterGroupedLogEntries(data?.entries ?? [], (entry) => (
+      enabledLevels.length > 0 && enabledLevels.includes(entry.level.toUpperCase())
+    )),
+    [data, enabledLevels],
   )
   const entries = sortDesc ? [...groupedEntries].reverse() : groupedEntries
 

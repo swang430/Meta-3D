@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -134,11 +136,14 @@ async def test_mock_rf_switch_emits_emcenter_command(caplog, monkeypatch):
     monkeypatch.setattr("app.hal.rf_switch.asyncio.sleep", _no_sleep)
     assert await driver.switch_path("1:INT_RELAY_A", 1, "NO") is True
 
-    _assert_simulated_exchange(
-        _scpi_records(caplog, instrument_id),
-        instrument_id=instrument_id,
-        command="1:INT_RELAY_A_NO",
-    )
+    matching = [
+        record for record in _scpi_records(caplog, instrument_id)
+        if getattr(record, "command", None) == "1:INT_RELAY_A_NO"
+    ]
+    assert {getattr(record, "direction", None) for record in matching} == {"TX", "OK"}
+    assert {getattr(record, "operation", None) for record in matching} == {"write"}
+    assert all(record.driver_source == "mock" for record in matching)
+    assert all(record.simulated is True for record in matching)
 
 
 def test_driver_source_is_not_derived_from_global_hal_mode():
@@ -157,3 +162,46 @@ async def test_simulated_exchange_cannot_satisfy_authoritative_transport_gate():
     assert exchanges
     assert all(exchange.simulated is True for exchange in exchanges)
     assert all(not _transport_succeeded(exchange) for exchange in exchanges)
+
+
+def test_simulated_measurement_serializes_as_unknown_na_report():
+    from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
+
+    execution = SimpleNamespace(
+        id="exec-simulated",
+        status="completed",
+        validation_pass=False,
+        duration_sec=1.0,
+        started_at=None,
+        completed_at=None,
+        config={},
+        measurements={
+            "phases": {
+                "precheck": {},
+                "reference": {},
+                "measure": {
+                    "measurement_source": "simulated",
+                    "measurement_verified": False,
+                    "azimuth_results": [{
+                        "azimuth_deg": 0.0,
+                        "rsrp_dbm": None,
+                        "sinr_db": None,
+                        "throughput_mbps": None,
+                        "rank_indicator": None,
+                    }],
+                },
+                "analysis": {"verdict": "UNKNOWN"},
+            },
+        },
+    )
+
+    content = _build_mimo_ota_content_data(
+        execution, datetime(2026, 8, 7), "Mock case",
+    )
+
+    assert content["overall_result"] == "unknown"
+    assert content["execution_summary"]["pending"] == 1
+    assert content["statistics"] == {}
+    assert set(content["table_data"][0].values()) >= {"N/A"}
+    measure_step = next(item for item in content["step_results"] if item["phase"] == "measure")
+    assert "未验证" in measure_step["parameters"]["测量验证"]

@@ -78,7 +78,7 @@ git commit -m "feat(logs): add stable newest-first views"
 
 **Step 1: Write failing direct-ASGI tests**
 
-Construct one ASGI app that sets `current_execution_id` in an async endpoint and assert the emitted `app.audit` record contains that exact ID. Call the same middleware instance twice in one task and assert the unrelated second request records `-`. Add WebSocket coverage asserting a non-default request ID is visible downstream. Keep 4xx/5xx exclusion-path behavior covered.
+Construct one ASGI app that sets `current_execution_id` in an async endpoint and assert the emitted `app.audit` record contains that exact ID. Call the same middleware instance twice in one task and assert the unrelated second request records `-`. Add WebSocket coverage asserting a non-default request ID is visible downstream and an execution-bound socket drains/closes its handler on disconnect. Keep 4xx/5xx exclusion-path behavior covered.
 
 **Step 2: Run tests and verify RED**
 
@@ -88,7 +88,7 @@ Expected: FAIL because `BaseHTTPMiddleware` loses the endpoint ContextVar and by
 
 **Step 3: Replace BaseHTTPMiddleware with pure ASGI**
 
-Implement `async def __call__(scope, receive, send)`. For HTTP, intercept `http.response.start` to capture status, preserve exception propagation and existing exclusion semantics, log after downstream completion, then reset both request and execution ContextVar tokens in `finally`. For WebSocket, set/reset request context around the downstream app without emitting an HTTP summary.
+Implement `async def __call__(scope, receive, send)`. For HTTP, intercept `http.response.start` to capture status, preserve exception propagation and existing exclusion semantics, log after downstream completion, then reset both request and execution ContextVar tokens in `finally`. For WebSocket, set/reset request context around the downstream app without emitting an HTTP summary, and drain/close an execution-bound handler at disconnect without changing the socket outcome if logging cleanup fails.
 
 **Step 4: Handle cancellation endpoint context**
 
@@ -166,7 +166,7 @@ Expected: FAIL because duplicate suppression is absent.
 
 **Step 3: Implement one reusable suppression policy**
 
-Keep bounded state keyed by logger and `record.msg` template, not rendered exception text. Apply it to execution files and the dedicated SCPI file. Summary records bypass their own suppression path and retain execution/instrument context.
+Keep bounded state keyed by logger and `record.msg` template, not rendered exception text. Apply it to execution files and the dedicated SCPI file. Summary records bypass their own suppression path and retain execution/instrument context. Records carrying a unique `exchange_id` bypass suppression because persisted evidence refers back to that exact raw identity; folding those rows would make the reference unresolvable.
 
 **Step 4: Verify GREEN and commit P1-40**
 

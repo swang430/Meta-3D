@@ -212,6 +212,13 @@ class _DuplicateBurstLimiter:
     def process(self, record: logging.LogRecord) -> list[logging.LogRecord]:
         now = self.clock()
         output = self._expire(now)
+        # Raw SCPI evidence has a unique exchange identity referenced by the
+        # persisted evidence model. Folding it by rendered text would make
+        # those references unresolvable and copy the first ID onto a summary.
+        # Noise without an evidence identity remains eligible for suppression.
+        if getattr(record, "exchange_id", None):
+            output.append(record)
+            return output
         key = self._key(record)
         bucket = self._buckets.get(key)
 
@@ -267,6 +274,15 @@ class SuppressingTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHand
     def emit(self, record: logging.LogRecord) -> None:
         for output_record in self._repeat_limiter.process(record):
             super().emit(output_record)
+
+    def drain_execution(self, execution_id: str) -> None:
+        """Persist pending suppression summaries for one completed execution."""
+        self.acquire()
+        try:
+            for record in self._repeat_limiter.drain(execution_id=str(execution_id)):
+                super().emit(record)
+        finally:
+            self.release()
 
     def close(self) -> None:
         self.acquire()
@@ -346,10 +362,20 @@ class ExecutionFileHandler(logging.Handler):
 
 
 def close_execution_log(execution_id: str) -> None:
-    """关闭当前日志配置中属于一次执行的文件句柄。"""
-    for handler in logging.getLogger().handlers:
+    """关闭执行文件，并让共享 SCPI 文件立即写出该执行的抑制摘要。"""
+    handlers = [
+        *logging.getLogger().handlers,
+        *logging.getLogger("app.hal.scpi").handlers,
+    ]
+    seen: set[int] = set()
+    for handler in handlers:
+        if id(handler) in seen:
+            continue
+        seen.add(id(handler))
         if isinstance(handler, ExecutionFileHandler):
             handler.close_execution(execution_id)
+        elif isinstance(handler, SuppressingTimedRotatingFileHandler):
+            handler.drain_execution(execution_id)
 
 
 # ============================================================

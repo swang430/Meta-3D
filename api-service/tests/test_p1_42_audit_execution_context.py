@@ -67,8 +67,12 @@ def audit_capture():
     capture.addFilter(ContextFilter())
     old_level = logger.level
     old_propagate = logger.propagate
+    old_disabled = logger.disabled
     logger.setLevel(logging.INFO)
     logger.propagate = False
+    # Alembic's in-process fileConfig disables already-imported loggers.
+    # Keep this fixture independent of full-suite collection/execution order.
+    logger.disabled = False
     logger.addHandler(capture)
     try:
         yield capture
@@ -76,6 +80,7 @@ def audit_capture():
         logger.removeHandler(capture)
         logger.setLevel(old_level)
         logger.propagate = old_propagate
+        logger.disabled = old_disabled
 
 
 @pytest.mark.asyncio
@@ -125,6 +130,24 @@ async def test_sync_endpoint_can_return_execution_id_through_scope_state(audit_c
 
 
 @pytest.mark.asyncio
+async def test_request_boundary_closes_execution_after_audit(monkeypatch, audit_capture):
+    closed: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        "app.core.audit_middleware.close_execution_log",
+        lambda execution_id: closed.append((execution_id, len(audit_capture.records))),
+    )
+
+    async def downstream(scope, receive, send):
+        current_execution_id.set("exec-request-bound")
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    await _call_asgi(AuditMiddleware(downstream), "/api/v1/test/execute")
+
+    assert closed == [("exec-request-bound", 1)]
+
+
+@pytest.mark.asyncio
 async def test_websocket_downstream_receives_request_id():
     observed: list[str] = []
 
@@ -136,3 +159,24 @@ async def test_websocket_downstream_receives_request_id():
 
     assert len(observed[0]) == 16
     assert observed[0] != "-"
+
+
+@pytest.mark.asyncio
+async def test_websocket_disconnect_closes_bound_execution(monkeypatch):
+    closed: list[str] = []
+    monkeypatch.setattr(
+        "app.core.audit_middleware.close_execution_log",
+        closed.append,
+    )
+
+    async def downstream(scope, receive, send):
+        current_execution_id.set("exec-vrt-websocket")
+        await send({"type": "websocket.close", "code": 1000})
+
+    await _call_asgi(
+        AuditMiddleware(downstream),
+        "/api/v1/road-test/executions/exec-vrt-websocket/ws",
+        scope_type="websocket",
+    )
+
+    assert closed == ["exec-vrt-websocket"]

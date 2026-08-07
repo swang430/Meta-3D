@@ -162,6 +162,26 @@ def _entry_matches(
     return True
 
 
+def _inherit_parent_context(
+    continuations: List[LogEntry], parent: LogEntry,
+) -> List[LogEntry]:
+    """Give RAW rows their parent's identity while retaining RAW level/text."""
+    inherited = {
+        "ts": parent.ts,
+        "logger": parent.logger,
+        "hal_mode": parent.hal_mode,
+        "session_id": parent.session_id,
+        "execution_id": parent.execution_id,
+        "instrument_id": parent.instrument_id,
+    }
+    return [entry.model_copy(update=inherited) for entry in continuations]
+
+
+def _is_raw_entry(entry: LogEntry) -> bool:
+    """Structural continuation test; filtering remains centralized elsewhere."""
+    return entry.level.upper() == "RAW"
+
+
 class _CursorState(NamedTuple):
     device: int
     inode: int
@@ -290,6 +310,10 @@ def _scan_reverse_entries(
     字节位置只会落在行首；历史页因此可以从上次停止处继续，不重新扫描文件尾。
     """
     matched: List[LogEntry] = []
+    matched_groups = 0
+    # Reverse scan sees traceback lines before their structured parent. Hold
+    # them until the parent decides whether the whole group matches filters.
+    pending_continuations: List[LogEntry] = []
     scanned = 0
     end = file_size if before_offset is None else before_offset
     if end < 0 or end > file_size:
@@ -303,7 +327,11 @@ def _scan_reverse_entries(
     buffer = b""
     buffer_start = end
 
-    while position > 0 and len(matched) < max_entries and scanned < scan_limit:
+    while (
+        position > 0
+        and matched_groups < max_entries
+        and (scanned < scan_limit or pending_continuations)
+    ):
         read_start = max(0, position - chunk_size)
         stream.seek(read_start)
         block = stream.read(position - read_start)
@@ -326,9 +354,21 @@ def _scan_reverse_entries(
                 continue
             scanned += 1
             entry = _parse_log_line(stripped.decode("utf-8", errors="replace"))
-            if entry is not None and predicate(entry):
-                matched.append(entry)
-            if len(matched) >= max_entries or scanned >= scan_limit:
+            if entry is not None:
+                if _is_raw_entry(entry):
+                    pending_continuations.append(entry)
+                else:
+                    if predicate(entry):
+                        # ``matched`` is in newest→oldest scan order; append
+                        # Rn..R1 then parent so final reverse becomes P,R1..Rn.
+                        matched.extend(_inherit_parent_context(pending_continuations, entry))
+                        matched.append(entry)
+                        matched_groups += 1
+                    pending_continuations.clear()
+            if (
+                matched_groups >= max_entries
+                or (scanned >= scan_limit and not pending_continuations)
+            ):
                 break
 
         buffer = parts[0]
@@ -336,16 +376,28 @@ def _scan_reverse_entries(
     # 文件开头没有前导换行，它是最后一条待处理的完整行。
     if (
         position == 0
-        and len(matched) < max_entries
-        and scanned < scan_limit
+        and matched_groups < max_entries
+        and (scanned < scan_limit or pending_continuations)
     ):
         next_offset = 0
         stripped = buffer.strip()
         if stripped:
             scanned += 1
             entry = _parse_log_line(stripped.decode("utf-8", errors="replace"))
-            if entry is not None and predicate(entry):
-                matched.append(entry)
+            if entry is not None:
+                if _is_raw_entry(entry):
+                    pending_continuations.append(entry)
+                else:
+                    if predicate(entry):
+                        matched.extend(_inherit_parent_context(pending_continuations, entry))
+                        matched.append(entry)
+                        matched_groups += 1
+                    pending_continuations.clear()
+
+    # A file/page that begins with unparented RAW data keeps the legacy
+    # standalone behavior; level filters still exclude it as RAW.
+    if pending_continuations and any(predicate(entry) for entry in pending_continuations):
+        matched.extend(pending_continuations)
 
     matched.reverse()
     return matched, scanned, next_offset, next_offset > 0
@@ -533,6 +585,18 @@ def export_filtered_logs(
 
     def filtered_stream():
         with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+            group: list[tuple[str, LogEntry]] = []
+
+            def emit_group():
+                if not group:
+                    return []
+                parent = group[0][1]
+                if not _entry_matches(
+                    parent, level, keyword, session_id, hal_mode, execution_id,
+                ):
+                    return []
+                return [raw for raw, _entry in group]
+
             for line in f:
                 stripped = line.strip()
                 if not stripped:
@@ -541,14 +605,16 @@ def export_filtered_logs(
                 entry = _parse_log_line(stripped)
                 if entry is None:
                     continue
-
-                # ⚠ 用 `/tail` 那同一个谓词，别再抄一份 —— 抄出来的两份
-                # 一定会漂（P1-34 内审 F3：屏幕 5 条、导出全量）。
-                if not _entry_matches(
-                        entry, level, keyword, session_id, hal_mode, execution_id):
+                if _is_raw_entry(entry) and group:
+                    group.append((stripped, entry))
                     continue
 
-                yield stripped + "\n"
+                for raw in emit_group():
+                    yield raw + "\n"
+                group = [(stripped, entry)]
+
+            for raw in emit_group():
+                yield raw + "\n"
 
     # 导出文件名带过滤标记
     parts = [filename.replace('.log', '')]

@@ -149,6 +149,35 @@ def test_suppression_buckets_do_not_cross_execution_or_message(tmp_path):
     assert "same" in second_rows
 
 
+def test_scpi_exchange_identity_is_never_suppressed(tmp_path):
+    handler = logging_config.ExecutionFileHandler(
+        str(tmp_path), repeat_limit=1, repeat_window_seconds=60,
+    )
+    handler.setFormatter(JsonFormatter())
+    handler.addFilter(ContextFilter())
+    execution_id = str(uuid4())
+    logger = logging.Logger("app.hal.scpi.identity", level=logging.DEBUG)
+    logger.addHandler(handler)
+    token = current_execution_id.set(execution_id)
+    try:
+        for exchange_id in ("exchange-a", "exchange-b"):
+            logger.debug(
+                "TX: *OPC?",
+                extra={"exchange_id": exchange_id, "instrument_id": "uxm"},
+            )
+    finally:
+        current_execution_id.reset(token)
+        logger.removeHandler(handler)
+        handler.close()
+
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / f"exec-{execution_id}.log").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [row["exchange_id"] for row in rows] == ["exchange-a", "exchange-b"]
+    assert all("suppressed_count" not in row for row in rows)
+
+
 def test_scpi_file_uses_same_suppression_handler(monkeypatch, tmp_path):
     captured = {}
     monkeypatch.setattr(logging_config.logging.config, "dictConfig", captured.update)
@@ -158,6 +187,47 @@ def test_scpi_file_uses_same_suppression_handler(monkeypatch, tmp_path):
     )
 
     assert captured["handlers"]["file_scpi"]["()"] is logging_config.SuppressingTimedRotatingFileHandler
+
+
+def test_close_execution_drains_idle_scpi_suppression_summary(tmp_path):
+    path = tmp_path / "scpi.log"
+    handler = logging_config.SuppressingTimedRotatingFileHandler(
+        path,
+        when="midnight",
+        repeat_limit=1,
+        repeat_window_seconds=60,
+        encoding="utf-8",
+    )
+    handler.setFormatter(JsonFormatter())
+    handler.addFilter(ContextFilter())
+    logger = logging.getLogger("app.hal.scpi")
+    old_level = logger.level
+    old_disabled = logger.disabled
+    old_propagate = logger.propagate
+    logger.setLevel(logging.DEBUG)
+    logger.disabled = False
+    logger.propagate = False
+    logger.addHandler(handler)
+    execution_id = str(uuid4())
+    token = current_execution_id.set(execution_id)
+    try:
+        for _ in range(4):
+            logger.debug("TX: repeated")
+        # No later record and no process shutdown: execution close itself must
+        # make the suppressed-count evidence visible in the global SCPI file.
+        logging_config.close_execution_log(execution_id)
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        assert [row["msg"] for row in rows] == [
+            "TX: repeated",
+            "… same message suppressed x3",
+        ]
+    finally:
+        current_execution_id.reset(token)
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
+        logger.disabled = old_disabled
+        logger.propagate = old_propagate
+        handler.close()
 
 
 @pytest.mark.asyncio
@@ -178,6 +248,30 @@ async def test_case_runner_closes_execution_log(monkeypatch):
     await test_case_runner._run_case(execution_id)
 
     assert closed == [str(execution_id)]
+
+
+@pytest.mark.asyncio
+async def test_case_runner_log_close_failure_does_not_leak_db(monkeypatch):
+    from app.services import test_case_runner
+
+    execution_id = uuid4()
+    state = {"db_closed": False}
+
+    class _Db:
+        def close(self):
+            state["db_closed"] = True
+
+    monkeypatch.setattr(test_case_runner, "SessionLocal", _Db)
+    monkeypatch.setattr(test_case_runner, "_run_case_loop", lambda db, eid: _done())
+    monkeypatch.setattr(
+        test_case_runner,
+        "close_execution_log",
+        lambda _execution_id: (_ for _ in ()).throw(OSError("disk unavailable")),
+    )
+
+    await test_case_runner._run_case(execution_id)
+
+    assert state["db_closed"] is True
 
 
 async def _done():

@@ -32,3 +32,11 @@ export function groupLogContinuations(entries: SystemLogEntry[]): GroupedSystemL
 
   return grouped
 }
+
+/** Group first so a hidden parent cannot leave its RAW traceback on a neighbor. */
+export function filterGroupedLogEntries(
+  entries: SystemLogEntry[],
+  predicate: (entry: GroupedSystemLogEntry) => boolean,
+): GroupedSystemLogEntry[] {
+  return groupLogContinuations(entries).filter(predicate)
+}

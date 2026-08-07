@@ -1673,7 +1673,7 @@ def test_g15_log_sort_groups_continuations_and_uses_stable_identity():
     assert "useState<Set<number>>" not in viewer
     assert "useState<Set<string>>" in viewer
     assert "groupLogContinuations(entries)" in viewer
-    assert "groupLogContinuations(filteredEntries)" in zone
+    assert "filterGroupedLogEntries(data?.entries ?? []," in zone
     assert "[...keyedEntries].reverse()" in viewer
     assert "[...groupedEntries].reverse()" in zone
     assert "top: sortDesc ? 0 : viewportRef.current.scrollHeight" in zone
@@ -1697,7 +1697,7 @@ def test_g15_log_sort_groups_continuations_and_uses_stable_identity():
     assert "previous.continuation_lines.push" in util
     assert "grouped.push" in util
     assert viewer.index("groupLogContinuations(entries)") < viewer.index(".reverse()")
-    assert zone.index("groupLogContinuations(filteredEntries)") < zone.index(".reverse()")
+    assert zone.index("filterGroupedLogEntries(data?.entries ?? [],") < zone.index(".reverse()")
 
     tbody_start = viewer.index("<Table.Tbody>")
     tbody_end = viewer.index("</Table.Tbody>", tbody_start)

@@ -12,7 +12,11 @@ import logging
 import uuid
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.core.logging_config import current_execution_id, current_session_id
+from app.core.logging_config import (
+    close_execution_log,
+    current_execution_id,
+    current_session_id,
+)
 
 logger = logging.getLogger("app.audit")
 
@@ -94,11 +98,27 @@ class AuditMiddleware:
         execution_token = current_execution_id.set("-")
 
         if scope["type"] == "websocket":
+            close_error: Exception | None = None
+            request_execution_id = "-"
             try:
                 await self.app(scope, receive, send)
             finally:
+                request_execution_id = current_execution_id.get("-")
+                if request_execution_id != "-":
+                    try:
+                        # VRT 等长连接会在握手后才解析 execution_id；断开
+                        # 就是这次操作唯一可靠的生命周期边界。
+                        close_execution_log(request_execution_id)
+                    except Exception as exc:  # 日志清理不得改变断开结果
+                        close_error = exc
                 current_execution_id.reset(execution_token)
                 current_session_id.reset(session_token)
+                if close_error is not None:
+                    logger.error(
+                        "execution log close failed for websocket %s: %s",
+                        request_execution_id,
+                        close_error,
+                    )
             return
 
         path = scope.get("path", "")
@@ -166,5 +186,22 @@ class AuditMiddleware:
             else:
                 logger.info(log_msg, extra=extra)
         finally:
+            request_execution_id = current_execution_id.get("-")
+            close_error: Exception | None = None
+            if request_execution_id != "-":
+                try:
+                    # Request-scoped producers (commissioning/VRT/sync APIs)
+                    # have no background runner finally. Closing at the ASGI
+                    # boundary bounds descriptors and drains SCPI summaries;
+                    # a later request/task can reopen the same flat file.
+                    close_execution_log(request_execution_id)
+                except Exception as exc:  # logging cleanup must not alter HTTP outcome
+                    close_error = exc
             current_execution_id.reset(execution_token)
             current_session_id.reset(session_token)
+            if close_error is not None:
+                logger.error(
+                    "execution log close failed for %s: %s",
+                    request_execution_id,
+                    close_error,
+                )

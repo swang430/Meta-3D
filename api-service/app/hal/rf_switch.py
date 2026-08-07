@@ -112,7 +112,9 @@ class MockRfSwitch(RfSwitchDriver):
     async def switch_path(self, switch_id: str, input_port: int, output_port: Union[int, str]) -> bool:
         # Transparent simulation
         command = build_emcenter_switch_command(switch_id, output_port)
-        self._simulate_scpi_query(command, "OK")
+        # Real EMCenter transport treats commands without ``?`` as writes and
+        # returns a local success sentinel; do not fabricate an instrument RX.
+        self._simulate_scpi_write(command)
         self._states[switch_id] = output_port
         await asyncio.sleep(0.05)
         return True
