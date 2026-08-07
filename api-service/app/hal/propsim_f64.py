@@ -55,6 +55,8 @@ from app.hal.channel_emulator import (
     CalibrationToneCapability,
     ChannelEmulatorDriver,
     ChannelLoadMode,
+    F64_GO_COMMAND,
+    F64_STATE_QUERY,
 )
 
 if TYPE_CHECKING:
@@ -680,7 +682,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         if throttle and time.monotonic() < self._state_query_retry_after:
             return None
         try:
-            raw = await self._query("DIAG:SIMU:STATE?")
+            raw = await self._query(F64_STATE_QUERY)
         except Exception as e:  # noqa: BLE001
             # ⚠ **超时不算"链路不通"** (Codex P1): `VI_ERROR_TMO` 的含义是"**设备太慢**",
             # 不是"连接断了" —— 这条区分本来就写在 `_visa_reconnect.py` 的模块注释里
@@ -2744,7 +2746,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 # 吞掉, 让下面的错误门**只**反映 GO 本身 (真 STATIC 故障会让
                 # GO 也 -200, 门仍兜底)。
                 await self._drain_errors()
-                await self._write("DIAG:SIMU:GO")
+                await self._write(F64_GO_COMMAND)
                 # F64R-1: 判定看 **STATE? 终态**, 不看错误文字 (见 _confirm_state_after)。
                 # 取代原先的"-200 签名 + 回查 STATIC?==0"豁免 —— STATIC? 只报**旁路档**,
                 # 根本不报运行态: "STATIC=0 且 STOPPED"(非旁路但停着) 会被误判成"已在

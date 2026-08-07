@@ -173,6 +173,31 @@ class TestFilterDuringScan:
             "level 变成序数门槛了 —— ZoneLogsAlerts 的跨流去重会出错"
         )
 
+    def test_level_filter_keeps_matching_parent_traceback_group(self, client, log_dir):
+        lines = [
+            _json_line("ERROR", "boom", execution_id="exec-trace"),
+            "Traceback (most recent call last):",
+            "ValueError: broken",
+            _json_line("INFO", "later noise"),
+        ]
+        (log_dir / "app.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        tail = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 200, "level": "ERROR",
+        })
+        assert tail.status_code == 200
+        entries = tail.json()["entries"]
+        assert [entry["level"] for entry in entries] == ["ERROR", "RAW", "RAW"]
+        assert [entry["msg"] for entry in entries[1:]] == lines[1:3]
+        assert {entry["execution_id"] for entry in entries} == {"exec-trace"}
+
+        exported = client.get(
+            f"{settings.api_v1_prefix}/system-logs/export/app.log",
+            params={"level": "ERROR"},
+        )
+        assert exported.status_code == 200
+        assert exported.text.splitlines() == lines[:3]
+
     def test_execution_id_filter_pulls_one_test_run(self, client, log_dir):
         """P1-36「只看这次执行」——**过滤真的起作用**，不只是"两端一致"。
 

@@ -313,11 +313,10 @@ class TestFivePhaseCommissioningSmoke:
             assert phases[key], f"phases['{key}'] is empty"
 
         # 4. Analysis verdict surfaced on canonical execution-level fields.
-        # validation_pass may be False (mock data is random), but it must be
-        # set (not None) — that proves AnalysisExecutor wrote it.
-        assert execution.validation_pass is not None, (
-            "AnalysisExecutor failed to write validation_pass"
-        )
+        # Mock values cannot become a formal pass. The analysis payload stays
+        # UNKNOWN; the later SCPI acceptance AND-gate may conservatively store
+        # False on the execution row, but never True.
+        assert execution.validation_pass is not True
         assert execution.validation_details, (
             "AnalysisExecutor failed to write validation_details"
         )
@@ -356,6 +355,8 @@ class TestFivePhaseCommissioningSmoke:
         azimuth_results = measure.get("azimuth_results")
         assert isinstance(azimuth_results, list)
         assert len(azimuth_results) == 2  # one per requested azimuth
+        assert measure.get("measurement_source") == "simulated"
+        assert measure.get("measurement_verified") is False
         for az in azimuth_results:
             for required_key in (
                 "azimuth_deg",
@@ -368,6 +369,10 @@ class TestFivePhaseCommissioningSmoke:
                     f"azimuth_results entry missing '{required_key}' — "
                     f"analysis/report executors depend on this key"
                 )
+            assert all(
+                az[key] is None
+                for key in ("rsrp_dbm", "sinr_db", "throughput_mbps", "rank_indicator")
+            ), "mock KPI must remain N/A rather than entering the formal value chain"
 
     def test_analysis_reads_what_measure_wrote(self, lab, hal_with_mocks, db):
         """Contract test: analysis must see measure's output. If measure
@@ -382,6 +387,8 @@ class TestFivePhaseCommissioningSmoke:
             .first()
         )
         analysis = (execution.measurements or {}).get("phases", {}).get("analysis", {})
+        assert analysis.get("verdict") == "UNKNOWN"
+        assert analysis.get("measurement_verified") is False
         # These keys are what ReportExecutor's content_data builder reads.
         # Missing any of these breaks PDF generation downstream.
         for key in (

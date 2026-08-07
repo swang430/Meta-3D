@@ -328,6 +328,13 @@ class MeasureExecutor(IStepExecutor):
                 status=StepExecutionStatus.FAILED,
                 error_message="positioner + baseStation drivers required (HAL)",
             )
+        simulated_sources = [
+            category
+            for category in ("baseStation", "channelEmulator", "positioner")
+            if (driver := hal.drivers.get(category)) is None
+            or bool(getattr(driver, "simulated", is_mock_driver(driver)))
+        ]
+        measurement_simulated = bool(simulated_sources)
 
         await positioner.connect()
         await base_station.connect()
@@ -1398,14 +1405,33 @@ class MeasureExecutor(IStepExecutor):
 
                 az = {
                     "azimuth_deg": azimuth,
-                    "rsrp_dbm": sum(samples_rsrp) / len(samples_rsrp),
-                    "sinr_db": sum(samples_sinr) / len(samples_sinr),
-                    "throughput_mbps": sum(samples_tput) / len(samples_tput),
-                    "rank_indicator": sum(samples_ri) / len(samples_ri),
+                    # Mock values remain useful while stepping through the
+                    # loop, but must not enter formal measurement/KPI/report
+                    # fields. Provenance is carried at phase and row level.
+                    "rsrp_dbm": (
+                        None if measurement_simulated
+                        else sum(samples_rsrp) / len(samples_rsrp)
+                    ),
+                    "sinr_db": (
+                        None if measurement_simulated
+                        else sum(samples_sinr) / len(samples_sinr)
+                    ),
+                    "throughput_mbps": (
+                        None if measurement_simulated
+                        else sum(samples_tput) / len(samples_tput)
+                    ),
+                    "rank_indicator": (
+                        None if measurement_simulated
+                        else sum(samples_ri) / len(samples_ri)
+                    ),
                     "num_samples": len(samples_rsrp),
-                    "rsrp_std_db": stddev(samples_rsrp),
-                    "sinr_std_db": stddev(samples_sinr),
-                    "throughput_std_mbps": stddev(samples_tput),
+                    "rsrp_std_db": None if measurement_simulated else stddev(samples_rsrp),
+                    "sinr_std_db": None if measurement_simulated else stddev(samples_sinr),
+                    "throughput_std_mbps": (
+                        None if measurement_simulated else stddev(samples_tput)
+                    ),
+                    "measurement_source": "simulated" if measurement_simulated else "instrument",
+                    "measurement_verified": not measurement_simulated,
                     "active_probe_id": az_meta.get("probe_id"),
                     "probe_pattern_gain_dbi": az_meta.get("pattern_gain_dbi"),
                     "path_loss_compensation_db": az_path_loss_db,
@@ -1415,14 +1441,21 @@ class MeasureExecutor(IStepExecutor):
                 }
                 azimuth_results.append(az)
 
-                logger.info(
-                    "  azimuth=%.0f°: RSRP=%.1f, SINR=%.1f, Tput=%.0f Mbps, RI=%.2f",
-                    azimuth,
-                    az["rsrp_dbm"],
-                    az["sinr_db"],
-                    az["throughput_mbps"],
-                    az["rank_indicator"],
-                )
+                if measurement_simulated:
+                    logger.info(
+                        "  azimuth=%.0f°: KPI=N/A (simulated sources=%s)",
+                        azimuth,
+                        ",".join(simulated_sources),
+                    )
+                else:
+                    logger.info(
+                        "  azimuth=%.0f°: RSRP=%.1f, SINR=%.1f, Tput=%.0f Mbps, RI=%.2f",
+                        azimuth,
+                        az["rsrp_dbm"],
+                        az["sinr_db"],
+                        az["throughput_mbps"],
+                        az["rank_indicator"],
+                    )
 
             total_duration = loop.time() - t_start
 
@@ -1463,6 +1496,9 @@ class MeasureExecutor(IStepExecutor):
                 "frequency_ghz": config.frequency_hz / 1e9,
                 "mimo_config": f"{config.mimo_layers}x{config.mimo_layers}",
                 "azimuth_results": azimuth_results,
+                "measurement_source": "simulated" if measurement_simulated else "instrument",
+                "measurement_verified": not measurement_simulated,
+                "simulated_sources": simulated_sources,
                 "total_duration_s": total_duration,
                 "engine_mode": config.engine_mode,
                 "calibration_entries_used": len(calibration_entries) if calibration_entries else 0,
@@ -1542,6 +1578,12 @@ class MeasureExecutor(IStepExecutor):
         # Surface the uncalibrated-path-loss case as a result warning (not just
         # a server-side log) so it rides into the report / operator view.
         measure_warnings: List[str] = list(cleanup_warnings or [])
+        if not result_payload.get("measurement_verified"):
+            measure_warnings.insert(
+                0,
+                "⚠️ Mock/缺失仪器参与本次测量：KPI 与报告数值保持 N/A，"
+                "不得作为正式测试结论。",
+            )
         if not result_payload.get("path_loss_verified"):
             measure_warnings.insert(
                 0,

@@ -47,6 +47,40 @@ class AnalysisExecutor(IStepExecutor):
                 error_message="No azimuth_results in measure phase output",
             )
 
+        if measure.get("measurement_verified") is False:
+            result: Dict[str, Any] = {
+                "verdict": "UNKNOWN",
+                "details": [
+                    "N/A: measurement contains simulated instrument provenance; "
+                    "formal KPI analysis was not performed"
+                ],
+                "measurement_verified": False,
+                "avg_throughput_mbps": None,
+                "throughput_ratio": None,
+                "throughput_pass": None,
+                "rsrp_variance_db": None,
+                "rsrp_pass": None,
+                "avg_sinr_db": None,
+                "sinr_pass": None,
+                "avg_rank_indicator": None,
+                "rank_pass": None,
+                "qz_pass": None,
+                "margin_db": None,
+            }
+            write_phase_result(context.test_execution, "analysis", result)
+            context.test_execution.validation_pass = None
+            context.test_execution.validation_details = result
+            context.db.commit()
+            logger.warning(
+                "[%s] Phase 4: UNKNOWN (simulated measurement provenance)",
+                context.test_execution.id,
+            )
+            return StepExecutionResult(
+                status=StepExecutionStatus.SUCCESS,
+                measurements=result,
+                warnings=["模拟测量不进入正式 KPI 判定，结论保持 UNKNOWN"],
+            )
+
         details: List[str] = []
         result: Dict[str, Any] = {}
 

@@ -37,6 +37,7 @@ from app.hal.base_station import (
     RadioTechnology,
     CellState,
     ThroughputMetrics,
+    build_uxm_downlink_power_command,
 )
 from app.hal.nr_band_baselines import get_band_baseline
 from app.hal.uxm_command_profiles import (
@@ -2321,10 +2322,12 @@ class RealUxmDriver(BaseStationDriver):
         SCPI: CONFig:NR5G:CELL0:PHY:DL:POWer <power_dbm>
         """
         try:
-            self._write(
-                self._cmds.DL_POWER.format(cell=self._cell_id)
-                + f" {power_dbm:.1f}"
-            )
+            self._write(build_uxm_downlink_power_command(
+                self.config,
+                power_dbm,
+                cell=self._cell_id,
+                command_template=self._cmds.DL_POWER,
+            ))
             self._dl_power_dbm = power_dbm
             self._query("*OPC?")
             logger.info(f"[UXM] DL power set: {power_dbm} dBm")

@@ -179,11 +179,12 @@ def _build_mimo_ota_content_data(
         overall_pass = analysis.get("verdict") in ("PASS", "MARGINAL")
     duration_sec = float(execution.duration_sec or 0.0)
 
+    verdict_unknown = analysis.get("verdict") == "UNKNOWN"
     summary = {
         "total_executions": 1,
         "passed": 1 if overall_pass else 0,
-        "failed": 0 if overall_pass else 1,
-        "pending": 0,
+        "failed": 0 if overall_pass or verdict_unknown else 1,
+        "pending": 1 if verdict_unknown else 0,
         "pass_rate": 100.0 if overall_pass else 0.0,
         "total_duration_sec": duration_sec,
         "first_execution": execution.started_at.isoformat() if execution.started_at else None,
@@ -217,12 +218,15 @@ def _build_mimo_ota_content_data(
                 }
 
         for a in azimuth_results:
+            def _format_metric(value, digits: int) -> str:
+                return "N/A" if value is None else f"{value:.{digits}f}"
+
             table_data.append({
                 "Azimuth (°)": f"{a.get('azimuth_deg', 0):.1f}",
-                "RSRP (dBm)": f"{a.get('rsrp_dbm', 0):.1f}",
-                "SINR (dB)": f"{a.get('sinr_db', 0):.1f}",
-                "Throughput (Mbps)": f"{a.get('throughput_mbps', 0):.1f}",
-                "RI": f"{a.get('rank_indicator', 0):.2f}",
+                "RSRP (dBm)": _format_metric(a.get("rsrp_dbm"), 1),
+                "SINR (dB)": _format_metric(a.get("sinr_db"), 1),
+                "Throughput (Mbps)": _format_metric(a.get("throughput_mbps"), 1),
+                "RI": _format_metric(a.get("rank_indicator"), 2),
             })
 
     # Backward-compat for historical/migrated executions that predate the
@@ -307,6 +311,11 @@ def _build_mimo_ota_content_data(
              # P1-12: 无路损证书 → RSRP 未补偿 → 结果未校准, 必须标注。
              "路损验证": _verified_label(
                  _pl_verified, "路损校准证书", "无路损校准, RSRP 未补偿"),
+             "测量验证": _verified_label(
+                 measure.get("measurement_verified"),
+                 "真实仪器链",
+                 "Mock/缺失仪器, KPI 为 N/A",
+             ),
              "已测方位数": len(azimuth_results),
          }},
         {"phase": "analysis",
@@ -323,7 +332,9 @@ def _build_mimo_ota_content_data(
         "report_type": "single_execution",
         "generated_by": "MIMO OTA System",
         "generated_at": now.isoformat(),
-        "overall_result": "passed" if overall_pass else "failed",
+        "overall_result": (
+            "passed" if overall_pass else "unknown" if verdict_unknown else "failed"
+        ),
         "duration_s": duration_sec,
         "test_plan": plan_info,
         "execution_summary": summary,

@@ -16,12 +16,15 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
-**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → **P1-44** → P1-42 → P1-40 → P1-37 → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1）。
+**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → **P1-29** → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1）。
 
-**Current Focus = P1-44**。P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
+**Current Focus = P1-29**。P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
 SCPI 闭环依赖链：先把现场项映射到载体 → 用手册证据修判定和缺失载体 → 止住错误队列
 无限循环 → 补传输配对 → 补仪器接受/生效语义 → 接入正式 TestCase。该本地链已完成；
-P0-5 保持 ON-SITE-BLOCKED，P1-43 已收口，本地序列切到 P1-44。设计与逐片实施计划见
+P0-5 保持 ON-SITE-BLOCKED；P1-44/42/40/37 已在 Draft PR #303 完成本地实现与回归，
+本地序列切到 P1-29。本轮日志设计与逐片实施计划见
+[`plans/2026-08-07-log-sprint-design.md`](plans/2026-08-07-log-sprint-design.md) /
+[`plans/2026-08-07-log-sprint.md`](plans/2026-08-07-log-sprint.md)；SCPI 闭环设计与实施计划见
 [`plans/2026-08-06-scpi-evidence-closure-design.md`](plans/2026-08-06-scpi-evidence-closure-design.md) /
 [`plans/2026-08-06-scpi-evidence-closure-implementation.md`](plans/2026-08-06-scpi-evidence-closure-implementation.md)。一句话索引：
 - **P1-25** GUI 主控台"系统状态"面板恒空修复 + api.ts 手写镜像同尺审计
@@ -35,12 +38,12 @@ P0-5 保持 ON-SITE-BLOCKED，P1-43 已收口，本地序列切到 P1-44。设�
 - **P1-36** 测试执行身份进日志（`execution_id` 串链，把 P1-34 那套复制到执行维度）
 - ~~**P1-39**~~ ✅ 让人拿得到 ID：执行/用例编号在界面上可见可复制 + 一键跳日志（#292 已合）
 - ~~**P1-43**~~ ✅ 日志翻页：看得到 200 行 / 20000 行扫描窗口以外的历史（2026-08-07 完成）
-- **P1-44** 日志排序方向 + traceback 续行归组（2026-08-06 从 P1-39 拆出 —— 该片三轮外审 6 条 P2 里 5 条出自排序，ID 展示零 finding）
-- **P1-42** `app.audit` 汇总行进 `execution_id` 链（2026-08-06 用户从 Discovered 升格并指定优先；**改纯 ASGI 中间件，零调用点改动**，顺带解掉 WebSocket 拿不到 `request_id` 那条）
-- **P1-40** 日志按「每次运行」分文件 + 空闲期只留基本内容（2026-08-06 用户定方向；分文件轴复用 P1-36 的 ContextVar，**必须扁平命名**）
+- ~~**P1-44**~~ ✅ 日志排序方向 + traceback 续行归组（PR #303）
+- ~~**P1-42**~~ ✅ `app.audit` 汇总行进 `execution_id` 链；纯 ASGI + WebSocket `request_id`（PR #303）
+- ~~**P1-40**~~ ✅ 日志按 `execution_id` 扁平分文件 + 空闲 INFO 基线 + 重复突发抑制（PR #303）
 - **P1-41** 修 UXM 排错误队列停不下来的循环（7.6 秒 20 万行 / 一次 24 GB 的根因；**动手前必查 NotebookLM**）
 - **P1-47A** ✅ SCPI 往返配对/取消超时/脱敏/30天留存上限；**P1-47B/C**：B=UXM/F64/转台接受与生效；C=TestCase持久化+GUI/报告
-- **P1-37** mock 也产真命令串并记 `scpi.log` + 回复显式标 `simulated`（**下发侧本地可验、回读侧绝不冒充真值**）
+- ~~**P1-37**~~ ✅ 五类现场 mock 产真实命令格式并记 `scpi.log`；回复带 per-driver `simulated=true`，正式证据门拒绝模拟来源（PR #303）
 - **P1-38** 活动告警面板：清 674 条测试污染 + 接上真生产者 or 收窄让位（**排在 P1-29 之后** —— 计数徽章依赖那个被遮蔽的端点，Codex #285 R1）
 
 > **⭐ 2026-08-05 用户定方向：「今后 log 是我们主要的调试手段，让它尽快
@@ -224,7 +227,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → **P1-44** → P1-42 → P1-40 → P1-37 → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-06 用户批准“SCPI 闭环整体前置”；当前执行片只看顶部 **Current Focus**）|
+| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → **P1-29** → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-07 PR #303 完成本轮日志四片；当前执行片只看顶部 **Current Focus**）|
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -1922,7 +1925,7 @@ TDD 配置**，猜错会让整批吞吐量结果失效（比现在"一条都没�
 
 **依赖**: P1-34 先合（`ContextFilter` 注入机制与 GUI 过滤入口都在那片建好）。
 
-### P1-37 — mock 也产真命令串并记 `scpi.log` + 回复显式标 `simulated` ⬜（2026-08-05 立项）
+### P1-37 — mock 也产真命令串并记 `scpi.log` + 回复显式标 `simulated` ✅（2026-08-07，PR #303）
 
 **目的（用户原话）**：
 > 「我们当前都是 mock，但是**下发的 SCPI 内容是不是还是应该记录**（Mock 回的消息不是真消息，**要不要也记录**呢）？」
@@ -1984,6 +1987,13 @@ class MockBaseStation:
 
 **依赖**: P1-36 先做 —— 那片落地 `execution_id` 的 contextvar 之后，
 本片新增的**一大批** SCPI 日志**天生就带执行身份**，不必回头补验。
+
+**收口**：UXM/F64/X-Series SA/EMCenter 转台/EMCenter Switch 五类现场 mock 各覆盖
+一个代表性操作；命令构造常量或 profile 与真实驱动共用。SCPI TX/RX 记录携带
+`driver_source=mock` 与 `simulated=true`，不依赖全局 `hal_mode`。`ScpiExchangeRef`
+同步保存来源，模拟往返不能满足 transport gate，也不能持久化为正式执行证据。
+测量归一化边界把 Mock/缺失仪器参与的 KPI 写为 N/A，analysis 保持 UNKNOWN，报告
+不再序列化随机模拟数值；RF switch 的无问号命令按真实驱动语义记录 TX/OK write。
 
 ### P1-38 — 活动告警面板：清污染 + 接真生产者 or 收窄让位 ⬜（2026-08-05 立项）
 
@@ -2137,7 +2147,7 @@ CLEAN，GitHub Codex 外审 R1 在合并代码 HEAD `d696d7a` 上 clean。
 
 ---
 
-### P1-44 — 日志排序方向（新在最上）+ traceback 续行归组 ⬜（2026-08-06 从 P1-39 拆出）
+### P1-44 — 日志排序方向（新在最上）+ traceback 续行归组 ✅（2026-08-07，PR #303）
 
 **目的（用户原话）**：
 > 「当前系统日志显示是最新的内容在最下方，而不是最上方，每次看新内容要拉下去，
@@ -2172,6 +2182,11 @@ CLEAN，GitHub Codex 外审 R1 在合并代码 HEAD `d696d7a` 上 clean。
 ⚠️ 门里要**先剥注释再扫代码**，否则注释里引用后端的 `matched.reverse()` 会假红。
 
 **依赖**: 无。**现场半**: 无。
+
+**收口**：两个日志面板统一默认“最新在最上”，可切方向；先将 traceback/RAW
+续行归到父条目再排序，展开详情留在对应表行内。稳定身份由全部字段与续行内容构成，
+并从新到旧计数，历史 prepend 不会让已有展开态跳行；自动滚动跟随方向。后端
+tail/history/export 同样按父行做过滤并保留整组续行，客户端多选级别也先归组再筛选。
 
 ---
 
@@ -2444,7 +2459,7 @@ P1-41 提前是止血前置：错误查询自身被拒时不能让闭环序列�
 
 ---
 
-### P1-40 — 日志按「每次运行」分文件 + 空闲期只留基本内容 ⬜（2026-08-06 立项，用户定方向）
+### P1-40 — 日志按「每次运行」分文件 + 空闲期只留基本内容 ✅（2026-08-07，PR #303）
 
 **目的（用户原话）**：
 > 「我们不该一直在一个文件里存 log，而应该根据每次测试存新 log 文件，
@@ -2501,6 +2516,14 @@ P1-36 已经把 `execution_id` 做成了自动注入的 ContextVar，**分文件
 
 **依赖**: 无（P1-36 已落地，本片直接复用它的 ContextVar）。**现场半**: 无。
 
+**收口**：常驻 `app.log` 收 INFO+；执行期 DEBUG/SCPI 进入扁平
+`exec-<execution_id>.log`；runner 与 HTTP/WebSocket ASGI 边界收尾目标句柄，并同步让全局
+`scpi.log` 写出该执行的待决抑制摘要。普通重复日志按
+`(execution_id, instrument_id, logger, 完整消息)` 分桶；带唯一 `exchange_id` 的
+SCPI 原始证据 fail-open 不折叠，避免持久化引用找不到原始往返。收尾异常不改变执行
+结果且不泄漏 DB session。当前没有 TestExecution 删除端点，故不存在可接的删除调用点；
+未来新增删除端点时必须同时删除对应 `exec-*.log`，该项不伪造未存在的流程。
+
 ---
 
 ### P1-41 — 修 UXM 排错误队列停不下来的那个循环 ✅ Done（2026-08-07）
@@ -2542,7 +2565,7 @@ RX: -113,"Undefined header"
 
 ---
 
-### P1-42 — `app.audit` 请求汇总行进 `execution_id` 链 ⬜（2026-08-06 立项，**用户从 Discovered 升格并指定优先**）
+### P1-42 — `app.audit` 请求汇总行进 `execution_id` 链 ✅（2026-08-07，PR #303）
 
 **由 Discovered 条目升格**（`[discovered 2026-08-05 during P1-36, Codex #286 R2 P2]`）。
 
@@ -2591,6 +2614,11 @@ RX: -113,"Undefined header"
 **门（至少到不变量档）**：行为门 —— 造一次真实执行请求，断言 `app.audit` 那行的 `execution_id` **等于**返回的 execution_id（不是「非 `-`」）；配变异：把中间件改回 `BaseHTTPMiddleware` 必须红。另加一条守 3 的门：`EXCLUDED_PATHS` 对 4xx/5xx 仍然记录。
 
 **依赖**: 无。**现场半**: 无 —— mock 下即可验。
+
+**收口**：`AuditMiddleware` 已改为纯 ASGI；HTTP 从 `http.response.start` 捕获状态码，
+async 执行端点的 execution ContextVar 能回到汇总行。同步取消端点只在成功后通过
+`request.state.execution_id` 回传。HTTP/WebSocket 均初始化 request id，并在 `finally`
+复位 session/execution token；同 task 连续请求反向门确认不串链。
 
 ## 🟡 P2 — Abstraction debt
 
@@ -3364,6 +3392,10 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 | 转台坐标偏置没有可信真值，执行器只能传 `None/False` | → ON-SITE-BLOCKED / U-9 | 不在本地猜偏置；补齐标定来源前 positioner mandatory 项保持 unknown |
 | ASC/B2 模型加载尚无 confirmed 正式证据 hook | → 正式延后 backlog；使用该路径时保持 unknown | P0-5 可先用已闭环的 GCM 正式路径；ASC/B2 若要正式关闭需另立证据 recipe 与执行 hook |
 | 与闭环无直接关系的其它未标记发现 | 保留 Discovered | 继续待评估，不因本轮自动变成 backlog |
+
+- `[discovered 2026-08-07 during P1-44 external review, Codex #303 R1]` **重复抑制桶不按日志级别隔离（P2，待 triage）** —— `logging_config.py:185` 的抑制 key 不含 `record.levelno`：同一执行/仪器/logger 在一秒内先输出至少 100 条相同文本的 INFO，随后用**相同文本**输出 ERROR 时，该 ERROR 会被归进已经满额的 INFO 桶并直接抑制；最终摘要又复制首条 INFO，因此日志里**完全看不到级别升级**。突发限流因此可能吞掉真正的告警或错误。修法方向是把 `levelno` 纳入 key。按 CLAUDE.md ⑥ 不在 #303 当下修（P2、非本片验收边界内的安全问题），避免 review 黑洞。
+
+- `[discovered 2026-08-07 during P1-44 external review, Codex #303 R1]` **关键词过滤匹配不到 traceback 续行（P2，待 triage）** —— `system_logs.py:364` 的反向扫描只对**父记录**调用谓词，随后无条件清空续行。于是关键词只出现在续行里时（父消息 `request failed`、续行 `ValueError: broken`），搜 `broken` 会同时从 `/tail` 和 `/history` 消失；导出路径同样只检查父记录，结果一致遗漏。修法方向是归组时让关键词能匹配组内任一续行，同时保留父级 level/session 语义。同上，不在 #303 当下修。
 
 - `[discovered 2026-08-06 during P1-45 external review, Codex #295 R1]` **诊断序列完整 output / trace pointer 持久化缺口（P2，待独立 triage）** —— `POST /api/v1/diagnostic-sequences/{key}/run` 的 live response 含完整 `steps/raw`，但 `DiagnosticContext.record_run()` 只把组合输出截成最多约 2048 bytes 的 `DiagnosticRun.output_excerpt`，该 endpoint 又没有传 `hal_trace_log_path`；离开 live 结果后，审计行可能既没有完整 raw，也没有可回取全量 trace 的指针。当前现场必须先导出/复制完整响应，截断摘要不能作为正式证据。proper fix 需独立评估完整 output 存储或可靠 trace pointer 的生命周期、访问与清理策略；**不并入 P1-46，也不因此扩当前执行队列**。
 

@@ -24,6 +24,26 @@ from app.hal.base import (
 logger = logging.getLogger(__name__)
 
 
+def build_uxm_downlink_power_command(
+    config: Dict[str, Any],
+    power_dbm: float,
+    *,
+    cell: str = "CELL0",
+    command_template: Optional[str] = None,
+) -> str:
+    """用真实 UXM Test App profile 构造 mock/real 共用的功率命令。"""
+    from app.hal.uxm_command_profiles import (
+        Uxm5GNRTestAppProfile,
+        UxmLteNrIratProfile,
+    )
+
+    if command_template is None:
+        test_app = str(config.get("detected_test_app", "")).upper()
+        profile = UxmLteNrIratProfile if "IRAT" in test_app else Uxm5GNRTestAppProfile
+        command_template = profile.DL_POWER
+    return command_template.format(cell=cell) + f" {power_dbm:.1f}"
+
+
 # ===========================================================================
 # 基站仿真器通用枚举
 # ===========================================================================
@@ -390,6 +410,9 @@ class BaseStationDriver(InstrumentDriver):
 class MockBaseStation(BaseStationDriver):
     """Mock Base Station Emulator for development"""
 
+    driver_source = "mock"
+    simulated = True
+
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         self._cell_running = False
@@ -487,6 +510,10 @@ class MockBaseStation(BaseStationDriver):
     async def set_downlink_power(self, power_dbm: float) -> bool:
         if power_dbm < -120 or power_dbm > 0:
             return False
+        self._simulate_scpi_write(
+            build_uxm_downlink_power_command(self.config, power_dbm)
+        )
+        self._simulate_scpi_query("*OPC?", "1")
         self._dl_power_dbm = power_dbm
         return True
 

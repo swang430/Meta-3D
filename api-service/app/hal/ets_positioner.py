@@ -19,7 +19,7 @@ from app.hal.base import (
     InstrumentCapability,
     InstrumentMetrics,
 )
-from app.hal.positioner import PositionerDriver
+from app.hal.positioner import EtsPositionerScpi, PositionerDriver
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +27,7 @@ logger = logging.getLogger(__name__)
 # ===========================================================================
 # ETS-L EMCenter SCPI Commands (Generic/Representative)
 # ===========================================================================
-class EtsScpi:
-    IDN = "*IDN?"
-    RST = "*RST"
-    # Positioner specific (Axis 1 = Turntable)
-    GET_POS = "SOURce:POSition? 1"
-    SET_POS = "SOURce:POSition 1,{angle}"
-    STOP = "ABORt 1"
-    WAIT = "*OPC?"
+EtsScpi = EtsPositionerScpi
 
 
 class RealEtsEmcenterDriver(PositionerDriver):

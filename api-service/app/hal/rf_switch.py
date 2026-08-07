@@ -20,6 +20,10 @@ from app.hal.base import (
 logger = logging.getLogger(__name__)
 
 
+def build_emcenter_switch_command(switch_id: str, output_port: Union[int, str]) -> str:
+    return f"{switch_id}_{output_port}"
+
+
 class RfSwitchDriver(InstrumentDriver):
     """
     Abstract interface for RF Switch Matrices (HAL Layer 2)
@@ -72,6 +76,9 @@ class RfSwitchDriver(InstrumentDriver):
 class MockRfSwitch(RfSwitchDriver):
     """Fallback Mock implementation"""
 
+    driver_source = "mock"
+    simulated = True
+
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         self._states: Dict[str, int] = {}
@@ -104,6 +111,10 @@ class MockRfSwitch(RfSwitchDriver):
 
     async def switch_path(self, switch_id: str, input_port: int, output_port: Union[int, str]) -> bool:
         # Transparent simulation
+        command = build_emcenter_switch_command(switch_id, output_port)
+        # Real EMCenter transport treats commands without ``?`` as writes and
+        # returns a local success sentinel; do not fabricate an instrument RX.
+        self._simulate_scpi_write(command)
         self._states[switch_id] = output_port
         await asyncio.sleep(0.05)
         return True
@@ -302,7 +313,7 @@ class EtslSwitchDriver(RfSwitchDriver):
         Translates to -> Write 1:INT_RELAY_A_<output_port>\n
         """
         # ETS-L expects position value. Input_port usually ignored as it's a 1xN switch.
-        cmd = f"{switch_id}_{output_port}"
+        cmd = build_emcenter_switch_command(switch_id, output_port)
         resp = await self._send_command(cmd)
         return resp is not None
 
