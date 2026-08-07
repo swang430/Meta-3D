@@ -221,8 +221,30 @@ export function setupMockServer() {
   mock.onGet('/system-logs/tail').reply((config) => {
     const params = config.params || {}
     return [200, mockDatabase.getSystemLogsTail(
-      params.filename, params.level, params.keyword, params.session_id, params.execution_id)]
+      params.filename,
+      params.lines ? Number(params.lines) : undefined,
+      params.level,
+      params.keyword,
+      params.session_id,
+      params.execution_id,
+    )]
   })
+
+  mock.onGet('/system-logs/history').reply((config) => {
+    const params = config.params || {}
+    const result = mockDatabase.getSystemLogsHistory(
+      params.cursor,
+      params.filename,
+      params.lines ? Number(params.lines) : undefined,
+      params.level,
+      params.keyword,
+      params.session_id,
+      params.execution_id,
+    )
+    return [result.status, result.body]
+  })
+
+  mock.onGet('/system-logs/files').reply(200, mockDatabase.getSystemLogFiles())
 
   // /dashboard/alerts/summary registered before /dashboard/alerts so the
   // exact-string summary route isn't shadowed by the list route.

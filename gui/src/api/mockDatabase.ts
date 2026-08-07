@@ -195,11 +195,29 @@ const testExecutions: TestExecutionListResponse = {
   ],
 }
 
+const mockHistoricalLogs: SystemLogTailResponse['entries'] = Array.from(
+  { length: 254 },
+  (_, index) => ({
+    ts: `2026-05-19T08:${String(Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}`,
+    level: index === 0 ? 'ERROR' : 'DEBUG',
+    logger: 'app.mock.history',
+    hal_mode: 'mock',
+    session_id: 'mock-history',
+    execution_id: 'mock-execution',
+    instrument_id: '-',
+    msg: index === 0 ? 'mock-old-target' : `历史调试记录 ${index}`,
+    raw: null,
+  }),
+)
+
 const systemLogTail: SystemLogTailResponse = {
   filename: 'app.log',
-  total_lines_read: 6,
-  filtered_count: 6,
+  total_lines_read: 260,
+  filtered_count: 260,
+  older_cursor: null,
+  has_older: false,
   entries: [
+    ...mockHistoricalLogs,
     { ts: '2026-05-20T09:48:01', level: 'INFO', logger: 'app.execution', hal_mode: 'real', session_id: 's-3001', execution_id: 'exec-3001', instrument_id: '-', msg: '执行 exec-3001 完成，成功率 100%', raw: null },
     { ts: '2026-05-20T09:47:55', level: 'INFO', logger: 'app.hal.propsim_f64', hal_mode: 'real', session_id: 's-3001', execution_id: 'exec-3001', instrument_id: 'F64-01', msg: '信道仿真器刷新多径权重', raw: null },
     { ts: '2026-05-20T09:47:40', level: 'WARNING', logger: 'app.probe', hal_mode: 'real', session_id: 's-3001', execution_id: 'exec-3001', instrument_id: 'probe-17', msg: '探头#17反馈延迟偏差 1.4ms', raw: null },
@@ -207,6 +225,81 @@ const systemLogTail: SystemLogTailResponse = {
     { ts: '2026-05-20T09:46:30', level: 'ERROR', logger: 'app.hal.uxm', hal_mode: 'real', session_id: 's-3001', execution_id: 'exec-3001', instrument_id: 'UXM-01', msg: 'SCPI 超时，已重试 1 次后恢复', raw: null },
     { ts: '2026-05-20T09:46:00', level: 'INFO', logger: 'app.execution', hal_mode: 'real', session_id: 's-3001', execution_id: 'exec-3001', instrument_id: '-', msg: '执行 exec-3001 开始', raw: null },
   ],
+}
+
+const MOCK_TAIL_SCAN_LIMIT = 200
+const MOCK_HISTORY_SCAN_LIMIT = 20
+const MOCK_CURSOR_PREFIX = 'mock-log-v1'
+
+function mockLogMatches(
+  e: SystemLogTailResponse['entries'][number],
+  level?: string,
+  keyword?: string,
+  sessionId?: string,
+  executionId?: string,
+): boolean {
+  if (level) {
+    const wanted = new Set(level.split(',').map((item) => item.trim().toUpperCase()).filter(Boolean))
+    if (!wanted.has(e.level.toUpperCase())) return false
+  }
+  if (sessionId && e.session_id !== sessionId) return false
+  if (executionId && e.execution_id !== executionId) return false
+  if (keyword) {
+    const wanted = keyword.toLowerCase()
+    if (!e.msg.toLowerCase().includes(wanted) && !e.logger.toLowerCase().includes(wanted)) {
+      return false
+    }
+  }
+  return true
+}
+
+function encodeMockLogCursor(filename: string, offset: number): string {
+  return `${MOCK_CURSOR_PREFIX}:${encodeURIComponent(filename)}:${offset}`
+}
+
+function decodeMockLogCursor(cursor: string): { filename: string; offset: number } | null {
+  const match = cursor.match(/^mock-log-v1:([^:]+):(\d+)$/)
+  if (!match) return null
+  const offset = Number(match[2])
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > systemLogTail.entries.length) return null
+  try {
+    return { filename: decodeURIComponent(match[1]), offset }
+  } catch {
+    return null
+  }
+}
+
+function scanMockLogPage(options: {
+  filename: string
+  before: number
+  lines: number
+  scanLimit: number
+  level?: string
+  keyword?: string
+  sessionId?: string
+  executionId?: string
+}): SystemLogTailResponse {
+  const entries: SystemLogTailResponse['entries'] = []
+  let index = options.before - 1
+  let scanned = 0
+  while (index >= 0 && entries.length < options.lines && scanned < options.scanLimit) {
+    const entry = systemLogTail.entries[index]
+    scanned += 1
+    if (mockLogMatches(
+      entry, options.level, options.keyword, options.sessionId, options.executionId,
+    )) entries.unshift(entry)
+    index -= 1
+  }
+  const nextOffset = index + 1
+  const hasOlder = nextOffset > 0
+  return clone({
+    filename: options.filename,
+    total_lines_read: scanned,
+    filtered_count: entries.length,
+    entries,
+    older_cursor: hasOlder ? encodeMockLogCursor(options.filename, nextOffset) : null,
+    has_older: hasOlder,
+  })
 }
 
 const dashboardAlerts: DashboardAlertListResponse = {
@@ -1239,31 +1332,60 @@ export const mockDatabase = {
   },
   getSystemLogsTail(
     filename?: string,
+    lines?: number,
     level?: string,
     keyword?: string,
     sessionId?: string,
     executionId?: string,
   ): SystemLogTailResponse {
-    let entries = systemLogTail.entries
-    // ⚠ 契约四步的第 4 步。这里必须跟真后端 `_entry_matches` 保持**同样的语义**：
-    //   · level 是**逗号分隔的集合**、精确匹配（P1-35），不是门槛；
-    //   · session_id / execution_id 精确匹配（P1-34 / P1-36）。
-    // 少一个维度，mock 下就会看到真后端过滤不出来的行 —— mock 说谎比没有 mock 更坏。
-    if (level) {
-      const wanted = new Set(level.split(',').map((l) => l.trim().toUpperCase()).filter(Boolean))
-      entries = entries.filter((e) => wanted.has(e.level.toUpperCase()))
-    }
-    if (sessionId) entries = entries.filter((e) => e.session_id === sessionId)
-    if (executionId) entries = entries.filter((e) => e.execution_id === executionId)
-    if (keyword) {
-      const kw = keyword.toLowerCase()
-      entries = entries.filter((e) => e.msg.toLowerCase().includes(kw) || e.logger.toLowerCase().includes(kw))
-    }
-    return clone({
+    return scanMockLogPage({
       filename: filename || systemLogTail.filename,
-      total_lines_read: systemLogTail.entries.length,
-      filtered_count: entries.length,
-      entries,
+      before: systemLogTail.entries.length,
+      lines: Math.min(2000, Math.max(1, lines || 200)),
+      scanLimit: MOCK_TAIL_SCAN_LIMIT,
+      level,
+      keyword,
+      sessionId,
+      executionId,
+    })
+  },
+  getSystemLogsHistory(
+    cursor: string | undefined,
+    filename?: string,
+    lines?: number,
+    level?: string,
+    keyword?: string,
+    sessionId?: string,
+    executionId?: string,
+  ): { status: number; body: SystemLogTailResponse | { detail: string } } {
+    if (!cursor) return { status: 400, body: { detail: '缺少历史日志游标' } }
+    const decoded = decodeMockLogCursor(cursor)
+    if (!decoded) return { status: 400, body: { detail: '历史日志游标格式无效，请刷新后重试' } }
+    const selectedFile = filename || systemLogTail.filename
+    if (decoded.filename !== selectedFile) {
+      return { status: 409, body: { detail: '日志文件已轮转或替换，请刷新后重新浏览' } }
+    }
+    return { status: 200, body: scanMockLogPage({
+      filename: selectedFile,
+      before: decoded.offset,
+      lines: Math.min(2000, Math.max(1, lines || 200)),
+      scanLimit: MOCK_HISTORY_SCAN_LIMIT,
+      level,
+      keyword,
+      sessionId,
+      executionId,
+    }) }
+  },
+  getSystemLogFiles() {
+    return clone({
+      log_dir: 'mock://logs',
+      files: [{
+        filename: systemLogTail.filename,
+        size_bytes: systemLogTail.entries.length,
+        size_human: `${systemLogTail.entries.length} mock rows`,
+        last_modified: '2026-05-20 09:48:01',
+        is_current: true,
+      }],
     })
   },
   getDashboardAlerts(): DashboardAlertListResponse {

@@ -745,6 +745,73 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/system-logs/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read an explicitly requested older log page (P1-43)
+         * @description Continues a reverse scan from the opaque cursor returned by `/tail`
+         *     or a previous history page. This endpoint is for explicit operator
+         *     actions only and must not be placed on the live polling path. An empty
+         *     filtered page can still return a newer cursor so sparse matches remain
+         *     reachable without an unbounded single request.
+         */
+        get: {
+            parameters: {
+                query: {
+                    /** @description Opaque continuation cursor returned by the server */
+                    cursor: string;
+                    filename?: string;
+                    lines?: number;
+                    /** @description Comma-separated exact-match level set */
+                    level?: string;
+                    keyword?: string;
+                    session_id?: string;
+                    execution_id?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description One older log page and its continuation cursor */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SystemLogTailResponse"];
+                    };
+                };
+                /** @description Malformed or unsupported cursor */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Cursor no longer matches the selected log snapshot */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/dashboard/alerts": {
         parameters: {
             query?: never;
@@ -1144,6 +1211,10 @@ export interface components {
             total_lines_read: number;
             filtered_count: number;
             entries: components["schemas"]["SystemLogEntry"][];
+            /** @description Opaque cursor for the next older page; null at file start */
+            older_cursor: string | null;
+            /** @description Whether an explicit history request can continue */
+            has_older: boolean;
         };
         /**
          * @description P2-8: one alert row. Mirrors api-service AlertResponse. `severity`

@@ -400,7 +400,9 @@ def test_execution_filter_goes_through_the_shared_query_builder():
         "buildLogQuery 不产出 execution_id —— 导出会跟屏幕分叉"
     )
     calls = len(re.findall(r"buildLogQuery\(\{", src))
-    assert calls == 2, f"buildLogQuery 被调用 {calls} 次（应为 2：屏幕 + 导出）"
+    assert calls == 3, (
+        f"buildLogQuery 被调用 {calls} 次（应为 3：实时屏幕 + 历史页 + 导出）"
+    )
     # 归一化只该在一处：别处不得再拼 execution_id 参数
     outside = len(re.findall(r"params\.set\('execution_id'", src))
     assert outside == 0, "有地方绕过 buildLogQuery 自己拼 execution_id 参数"
@@ -445,7 +447,7 @@ def test_contract_carries_execution_id_end_to_end():
         "gui/src/types/api.ts": ["execution_id: string"],
         "gui/src/api/service.ts": ["execution_id?: string"],
         "gui/src/api/mockServer.ts": ["params.execution_id"],
-        "gui/src/api/mockDatabase.ts": ["e.execution_id === executionId"],
+        "gui/src/api/mockDatabase.ts": ["e.execution_id !== executionId"],
     }
     for rel, tokens in checks.items():
         text = (_REPO_ROOT / rel).read_text(encoding="utf-8")

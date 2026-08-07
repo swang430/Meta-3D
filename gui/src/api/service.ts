@@ -136,6 +136,22 @@ export const fetchSystemLogsTail = async (params?: {
 }
 
 /**
+ * P1-43：显式读取一页更早日志。与 `/tail` 分离，严禁放入自动轮询。
+ */
+export const fetchSystemLogsHistory = async (params: {
+  cursor: string
+  filename?: string
+  lines?: number
+  level?: string
+  keyword?: string
+  session_id?: string
+  execution_id?: string
+}): Promise<SystemLogTailResponse> => {
+  const response = await client.get<SystemLogTailResponse>('/system-logs/history', { params })
+  return response.data
+}
+
+/**
  * ④ 实时告警 — active alerts ordered by severity.
  */
 export const fetchAlerts = async (params?: {

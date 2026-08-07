@@ -26,6 +26,7 @@ from app.main import app
 import app.api.system_logs as system_logs
 
 TAIL_URL = f"{settings.api_v1_prefix}/system-logs/tail"
+HISTORY_URL = f"{settings.api_v1_prefix}/system-logs/history"
 
 
 def _json_line(
@@ -296,3 +297,281 @@ class TestFilterDuringScan:
         body = resp.json()
         assert body["filtered_count"] == 0
         assert body["total_lines_read"] == 500
+
+
+class TestHistoryPagination:
+    def test_tail_cursor_loads_older_rows_without_overlap(self, client, log_dir):
+        """最新 200 条之后还能继续读到前 50 条，且不重不漏。"""
+        lines = [_json_line("INFO", f"seq-{i}") for i in range(250)]
+        (log_dir / "app.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        tail = client.get(TAIL_URL, params={"filename": "app.log", "lines": 200})
+        assert tail.status_code == 200
+        tail_body = tail.json()
+        assert tail_body["has_older"] is True
+        assert tail_body["older_cursor"]
+
+        history = client.get(HISTORY_URL, params={
+            "filename": "app.log",
+            "lines": 200,
+            "cursor": tail_body["older_cursor"],
+        })
+        assert history.status_code == 200
+        history_body = history.json()
+        assert [e["msg"] for e in history_body["entries"]] == [
+            f"seq-{i}" for i in range(50)
+        ]
+        assert history_body["has_older"] is False
+        assert history_body["older_cursor"] is None
+
+        combined = history_body["entries"] + tail_body["entries"]
+        assert [e["msg"] for e in combined] == [f"seq-{i}" for i in range(250)]
+
+    def test_empty_filtered_page_still_advances_cursor(
+        self, client, log_dir, monkeypatch,
+    ):
+        """稀疏过滤不得卡死在同一扫描窗口；空页也要能继续向前。"""
+        monkeypatch.setattr(system_logs, "_TAIL_SCAN_LIMIT", 3)
+        monkeypatch.setattr(system_logs, "_HISTORY_SCAN_LIMIT", 4)
+        lines = [_json_line("ERROR", "old-target")]
+        lines += [_json_line("INFO", f"noise-{i}") for i in range(12)]
+        (log_dir / "app.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        page = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 2, "level": "ERROR",
+        }).json()
+        assert page["entries"] == []
+        cursors = [page["older_cursor"]]
+
+        first_history_page = True
+        while page["has_older"]:
+            response = client.get(HISTORY_URL, params={
+                "filename": "app.log",
+                "lines": 2,
+                "level": "ERROR",
+                "cursor": page["older_cursor"],
+            })
+            assert response.status_code == 200
+            page = response.json()
+            if first_history_page:
+                assert page["total_lines_read"] == 4, (
+                    "历史端点误用了实时 tail 的较小扫描预算"
+                )
+                first_history_page = False
+            if page["older_cursor"]:
+                assert page["older_cursor"] not in cursors, "空页没有推进游标"
+                cursors.append(page["older_cursor"])
+
+        assert [e["msg"] for e in page["entries"]] == ["old-target"]
+
+    def test_chunk_boundary_and_missing_final_newline_do_not_break_pages(
+        self, client, log_dir,
+    ):
+        long_msg = "x" * 9000
+        lines = [_json_line("INFO", "first"), _json_line("INFO", long_msg),
+                 _json_line("INFO", "last")]
+        (log_dir / "app.log").write_text("\n".join(lines), encoding="utf-8")
+
+        tail = client.get(TAIL_URL, params={"filename": "app.log", "lines": 1}).json()
+        assert [e["msg"] for e in tail["entries"]] == ["last"]
+        middle = client.get(HISTORY_URL, params={
+            "filename": "app.log", "cursor": tail["older_cursor"], "lines": 1,
+        }).json()
+        assert [e["msg"] for e in middle["entries"]] == [long_msg]
+        first = client.get(HISTORY_URL, params={
+            "filename": "app.log", "cursor": middle["older_cursor"], "lines": 1,
+        }).json()
+        assert [e["msg"] for e in first["entries"]] == ["first"]
+        assert first["has_older"] is False
+
+    def test_same_filter_contract_applies_to_history(self, client, log_dir):
+        mine = "exec-history"
+        lines = [
+            _json_line("ERROR", "mine-old", session_id="req-a", execution_id=mine),
+            _json_line("ERROR", "other", session_id="req-b", execution_id="other"),
+        ]
+        lines += [_json_line("INFO", f"noise-{i}") for i in range(210)]
+        (log_dir / "app.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        tail = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 200,
+        }).json()
+        history = client.get(HISTORY_URL, params={
+            "filename": "app.log",
+            "cursor": tail["older_cursor"],
+            "lines": 200,
+            "level": "ERROR",
+            "session_id": "req-a",
+            "execution_id": mine,
+        })
+        assert history.status_code == 200
+        assert [e["msg"] for e in history.json()["entries"]] == ["mine-old"]
+
+    def test_cursor_survives_append_but_rejects_rewrite(self, client, log_dir):
+        path = log_dir / "app.log"
+        path.write_text("\n".join(_json_line("INFO", f"seq-{i}") for i in range(3)) + "\n",
+                        encoding="utf-8")
+        tail = client.get(TAIL_URL, params={"filename": "app.log", "lines": 1}).json()
+        cursor = tail["older_cursor"]
+
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(_json_line("INFO", "new-append") + "\n")
+        appended = client.get(HISTORY_URL, params={
+            "filename": "app.log", "cursor": cursor, "lines": 10,
+        })
+        assert appended.status_code == 200
+        assert [e["msg"] for e in appended.json()["entries"]] == ["seq-0", "seq-1"]
+
+        original = path.read_text(encoding="utf-8")
+        # 等长改写已经返回给 GUI 的尾页：偏移、inode、大小与换行边界都不变，
+        # 只能由游标携带的可见区间指纹检出。
+        path.write_text(original.replace("seq-2", "bad-2"), encoding="utf-8")
+        stale = client.get(HISTORY_URL, params={
+            "filename": "app.log", "cursor": cursor, "lines": 10,
+        })
+        assert stale.status_code == 409
+        assert "刷新" in stale.json()["detail"]
+
+    def test_cursor_survives_append_immediately_after_boundary(self, client, log_dir):
+        """游标离旧文件尾不足锚点宽度时，正常追加也不能让游标失效。"""
+        path = log_dir / "app.log"
+        path.write_text(
+            _json_line("INFO", "old") + "\n" + _json_line("INFO", "latest") + "\n",
+            encoding="utf-8",
+        )
+        tail = client.get(TAIL_URL, params={"filename": "app.log", "lines": 1}).json()
+
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(_json_line("INFO", "appended") + "\n")
+
+        history = client.get(HISTORY_URL, params={
+            "filename": "app.log", "cursor": tail["older_cursor"], "lines": 10,
+        })
+        assert history.status_code == 200
+        assert [entry["msg"] for entry in history.json()["entries"]] == ["old"]
+
+    def test_rotation_between_cursor_validation_and_scan_keeps_one_file_instance(
+        self, client, log_dir, monkeypatch,
+    ):
+        """游标校验后发生轮转，也只能继续读已打开的旧文件，不能混进新一代。"""
+        path = log_dir / "app.log"
+        path.write_text(
+            "\n".join(_json_line("INFO", f"old-{i}") for i in range(3)) + "\n",
+            encoding="utf-8",
+        )
+        cursor = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 1,
+        }).json()["older_cursor"]
+
+        original_scan = system_logs._scan_reverse_entries
+        rotated = False
+
+        def rotate_then_scan(*args, **kwargs):
+            nonlocal rotated
+            if not rotated:
+                path.rename(log_dir / "app.log.1")
+                path.write_text(
+                    "\n".join(_json_line("INFO", f"new-{i}") for i in range(3)) + "\n",
+                    encoding="utf-8",
+                )
+                rotated = True
+            return original_scan(*args, **kwargs)
+
+        monkeypatch.setattr(system_logs, "_scan_reverse_entries", rotate_then_scan)
+        history = client.get(HISTORY_URL, params={
+            "filename": "app.log", "cursor": cursor, "lines": 10,
+        })
+        assert history.status_code == 200
+        assert [entry["msg"] for entry in history.json()["entries"]] == ["old-0", "old-1"]
+
+    def test_visible_boundary_rewrite_during_final_page_is_rejected(
+        self, client, log_dir, monkeypatch,
+    ):
+        """decode 后才发生的等长改写也要在返回前被二次校验拦住，包括最终页。"""
+        path = log_dir / "app.log"
+        path.write_text(
+            "\n".join(_json_line("INFO", f"seq-{i}") for i in range(3)) + "\n",
+            encoding="utf-8",
+        )
+        cursor = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 1,
+        }).json()["older_cursor"]
+
+        original_scan = system_logs._scan_reverse_entries
+
+        def rewrite_after_scan(*args, **kwargs):
+            result = original_scan(*args, **kwargs)
+            original = path.read_text(encoding="utf-8")
+            path.write_text(original.replace("seq-2", "bad-2"), encoding="utf-8")
+            return result
+
+        monkeypatch.setattr(system_logs, "_scan_reverse_entries", rewrite_after_scan)
+        history = client.get(HISTORY_URL, params={
+            "filename": "app.log", "cursor": cursor, "lines": 10,
+        })
+        assert history.status_code == 409
+        assert "变化" in history.json()["detail"]
+
+    def test_cursor_guard_io_is_fixed_size_not_cumulative(
+        self, client, log_dir, monkeypatch,
+    ):
+        """翻页游标只能读固定锚点，不能从当前 offset 一路重哈希到快照 EOF。"""
+        path = log_dir / "app.log"
+        path.write_text(
+            "\n".join(_json_line("INFO", f"seq-{i}") for i in range(500)) + "\n",
+            encoding="utf-8",
+        )
+        cursor = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 1,
+        }).json()["older_cursor"]
+
+        real_pread = system_logs.os.pread
+        requested_sizes = []
+
+        def recording_pread(fd, size, offset):
+            requested_sizes.append(size)
+            return real_pread(fd, size, offset)
+
+        monkeypatch.setattr(system_logs.os, "pread", recording_pread)
+        history = client.get(HISTORY_URL, params={
+            "filename": "app.log", "cursor": cursor, "lines": 1,
+        })
+        assert history.status_code == 200
+        assert requested_sizes
+        assert max(requested_sizes) <= system_logs._CURSOR_ANCHOR_BYTES * 2
+        assert len(requested_sizes) <= 6, "游标校验次数随累计历史增长"
+
+    def test_malformed_or_cross_file_cursor_is_rejected(self, client, log_dir):
+        (log_dir / "app.log").write_text(
+            "\n".join(_json_line("INFO", f"app-{i}") for i in range(3)) + "\n",
+            encoding="utf-8",
+        )
+        (log_dir / "scpi.log").write_text(
+            "\n".join(_json_line("INFO", f"scpi-{i}") for i in range(3)) + "\n",
+            encoding="utf-8",
+        )
+        cursor = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 1,
+        }).json()["older_cursor"]
+
+        malformed = client.get(HISTORY_URL, params={
+            "filename": "app.log", "cursor": "not-a-cursor", "lines": 10,
+        })
+        assert malformed.status_code == 400
+
+        cross_file = client.get(HISTORY_URL, params={
+            "filename": "scpi.log", "cursor": cursor, "lines": 10,
+        })
+        assert cross_file.status_code == 409
+
+    def test_rotated_log_files_are_listed(self, client, log_dir):
+        for filename in ("app.log", "app.log.2026-08-05", "scpi.log.1", "ignore.txt"):
+            (log_dir / filename).write_text("x\n", encoding="utf-8")
+
+        response = client.get(f"{settings.api_v1_prefix}/system-logs/files")
+        assert response.status_code == 200
+        files = {item["filename"]: item for item in response.json()["files"]}
+        assert set(files) == {"app.log", "app.log.2026-08-05", "scpi.log.1"}
+        assert files["app.log"]["is_current"] is True
+        assert files["app.log.2026-08-05"]["is_current"] is False
+        assert files["scpi.log.1"]["is_current"] is False
