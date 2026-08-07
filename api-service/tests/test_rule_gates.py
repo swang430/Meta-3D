@@ -1657,3 +1657,49 @@ def test_g14_log_history_is_explicit_and_freezes_the_live_snapshot():
         "params.session_id", "params.execution_id",
     ):
         assert forwarded in mock_history, f"mock history 未转发 {forwarded}"
+
+
+# ── G15: P1-44 日志降序必须先归组，展开态不得按下标 ─────────────
+
+def test_g15_log_sort_groups_continuations_and_uses_stable_identity():
+    """恢复 #292 拆出的原 G12，并补上 traceback 先归组后翻转的不变量。"""
+    viewer_path = "gui/src/features/Reports/components/SystemLogViewer.tsx"
+    zone_path = "gui/src/features/Dashboard/ZoneLogsAlerts.tsx"
+    util_path = "gui/src/utils/logEntries.ts"
+    viewer = _strip_ts_comments((_REPO_ROOT / viewer_path).read_text(encoding="utf-8"))
+    zone = _strip_ts_comments((_REPO_ROOT / zone_path).read_text(encoding="utf-8"))
+    util = (_REPO_ROOT / util_path).read_text(encoding="utf-8")
+
+    assert "useState<Set<number>>" not in viewer
+    assert "useState<Set<string>>" in viewer
+    assert "groupLogContinuations(entries)" in viewer
+    assert "groupLogContinuations(filteredEntries)" in zone
+    assert "[...keyedEntries].reverse()" in viewer
+    assert "[...groupedEntries].reverse()" in zone
+    assert "top: sortDesc ? 0 : viewportRef.current.scrollHeight" in zone
+
+    key_src = re.search(r"const base = (.*?)\n\s*const n = ", viewer, re.S)
+    assert key_src, "找不到稳定日志身份构造"
+    expr = key_src.group(1)
+    for field in (
+        "e.ts", "e.level", "e.logger", "e.hal_mode", "e.session_id",
+        "e.execution_id", "e.instrument_id", "e.msg", "e.raw",
+        "e.continuation_lines",
+    ):
+        assert field in expr, f"日志身份缺 {field}"
+    assert "JSON.stringify([" in expr
+    for banned in ("indexOf", "idx"):
+        assert banned not in expr
+    for arg in re.findall(r"expandedRows\.has\(([^)]*)\)", viewer):
+        assert not re.fullmatch(r"\s*(?:\d+|idx|index|i)\s*", arg)
+
+    assert "entry.level.toUpperCase() === 'RAW'" in util
+    assert "previous.continuation_lines.push" in util
+    assert "grouped.push" in util
+    assert viewer.index("groupLogContinuations(entries)") < viewer.index(".reverse()")
+    assert zone.index("groupLogContinuations(filteredEntries)") < zone.index(".reverse()")
+
+    tbody_start = viewer.index("<Table.Tbody>")
+    tbody_end = viewer.index("</Table.Tbody>", tbody_start)
+    tbody = viewer[tbody_start:tbody_end]
+    assert "renderLogDetail(entry)" in tbody

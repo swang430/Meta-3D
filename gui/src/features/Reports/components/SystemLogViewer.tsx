@@ -5,7 +5,7 @@
  * 实时查看、级别过滤、关键词搜索和文件下载功能。
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Stack,
   Group,
@@ -39,6 +39,10 @@ import {
 } from '@tabler/icons-react'
 import apiClient from '../../../api/client'
 import { formatLogDate, formatLogTime } from '../../../utils/datetime'
+import {
+  groupLogContinuations,
+  type GroupedSystemLogEntry,
+} from '../../../utils/logEntries'
 
 
 // ── Types ──────────────────────────────────────────────────────
@@ -136,6 +140,7 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
   const [hasOlder, setHasOlder] = useState(false)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyPages, setHistoryPages] = useState(0)
+  const [sortDesc, setSortDesc] = useState(true)
   // tail / history 共用一代号。文件或过滤变化后，旧请求即使晚返回也不得
   // 覆盖新快照或把上一组条件的历史拼进来。
   const requestGenerationRef = useRef(0)
@@ -201,7 +206,28 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
   const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Expanded rows
-  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set())
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
+
+  const groupedEntries = useMemo(() => groupLogContinuations(entries), [entries])
+  const keyedEntries = useMemo(() => {
+    const counts = new Map<string, number>()
+    const result: Array<{ entry: GroupedSystemLogEntry; key: string }> = new Array(groupedEntries.length)
+
+    // 从最新往最旧编号：加载更早历史页只会在数组前面增加内容，现有条目 key 不漂移。
+    for (let i = groupedEntries.length - 1; i >= 0; i -= 1) {
+      const e = groupedEntries[i]
+      const base = JSON.stringify([
+        e.ts, e.level, e.logger, e.hal_mode, e.session_id,
+        e.execution_id, e.instrument_id, e.msg, e.raw,
+        e.continuation_lines,
+      ])
+      const n = counts.get(base) ?? 0
+      counts.set(base, n + 1)
+      result[i] = { entry: e, key: JSON.stringify([base, n]) }
+    }
+    return result
+  }, [groupedEntries])
+  const visibleEntries = sortDesc ? [...keyedEntries].reverse() : keyedEntries
 
   // ── Fetch file list ──
   const fetchFiles = useCallback(async () => {
@@ -287,9 +313,6 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
       setOlderCursor(res.data.older_cursor || null)
       setHasOlder(Boolean(res.data.has_older))
       setHistoryPages(current => current + 1)
-      // 当前版本按下标维护展开态；前插会让下标指向另一条，宁可收起也不说谎。
-      // P1-44 会在续行归组后把条目身份作为长期展开键。
-      setExpandedRows(new Set())
     } catch (err: any) {
       if (requestGeneration !== requestGenerationRef.current) return
       setError(err.response?.data?.detail || err.message)
@@ -344,13 +367,53 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
   }, [refreshInterval, fetchLogs])
 
   // ── Toggle row expand ──
-  const toggleRow = (index: number) => {
+  const toggleRow = (key: string) => {
     setExpandedRows(prev => {
       const next = new Set(prev)
-      if (next.has(index)) next.delete(index)
-      else next.add(index)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
       return next
     })
+  }
+
+  const renderLogDetail = (entry: GroupedSystemLogEntry) => {
+    const raw = entry.grouped_raw
+    if (!raw) return null
+    return (
+      <Table.Tr>
+        <Table.Td colSpan={8} p={0}>
+          <Paper p="sm" m="xs" bg="gray.0" radius="sm">
+            <Group gap="lg" mb="xs">
+              <Text size="xs"><b>时间:</b> {formatLogDate(entry.ts)} {formatLogTime(entry.ts)}</Text>
+              <Text size="xs" c="dimmed"><b>原始:</b> {entry.ts || '—'}</Text>
+              <Text size="xs"><b>Instrument:</b> {entry.instrument_id}</Text>
+            </Group>
+            <Group gap="xs" mb="xs">
+              <Text size="xs"><b>请求 ID:</b> {entry.session_id}</Text>
+              {entry.session_id && entry.session_id !== '-' && (
+                <Button
+                  size="compact-xs"
+                  variant="light"
+                  color="grape"
+                  onClick={() => isolateRequest(entry.session_id)}
+                >
+                  只看这一次请求
+                </Button>
+              )}
+            </Group>
+            <Code block style={{ fontSize: '11px', maxHeight: 200, overflow: 'auto' }}>
+              {(() => {
+                try {
+                  return JSON.stringify(JSON.parse(raw), null, 2)
+                } catch {
+                  return raw
+                }
+              })()}
+            </Code>
+          </Paper>
+        </Table.Td>
+      </Table.Tr>
+    )
   }
 
   // P1-39: 同一次挂载内再次跳转（换了 execution）时应用新值。
@@ -401,6 +464,16 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
                 { value: 'WARNING', label: '⚠️ WARN' },
                 { value: 'INFO', label: 'ℹ️ INFO' },
                 { value: 'DEBUG', label: '🔍 DEBUG' },
+              ]}
+              size="xs"
+            />
+
+            <SegmentedControl
+              value={sortDesc ? 'desc' : 'asc'}
+              onChange={(value) => setSortDesc(value === 'desc')}
+              data={[
+                { value: 'desc', label: '最新在上' },
+                { value: 'asc', label: '最旧在上' },
               ]}
               size="xs"
             />
@@ -614,14 +687,14 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
                   </Table.Td>
                 </Table.Tr>
               )}
-              {entries.map((entry, idx) => (
-                <Table.Tr
-                  key={idx}
-                  onClick={() => toggleRow(idx)}
-                  style={{ cursor: 'pointer' }}
-                >
+              {visibleEntries.map(({ entry, key }) => (
+                <Fragment key={key}>
+                  <Table.Tr
+                    onClick={() => toggleRow(key)}
+                    style={{ cursor: 'pointer' }}
+                  >
                   <Table.Td>
-                    {expandedRows.has(idx)
+                    {expandedRows.has(key)
                       ? <IconChevronDown size={12} />
                       : <IconChevronRight size={12} />
                     }
@@ -695,48 +768,12 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
                       {entry.msg}
                     </Text>
                   </Table.Td>
-                </Table.Tr>
+                  </Table.Tr>
+                  {expandedRows.has(key) && renderLogDetail(entry)}
+                </Fragment>
               ))}
             </Table.Tbody>
           </Table>
-
-          {/* ── Expanded detail rows (rendered outside table for clean layout) ── */}
-          {entries.map((entry, idx) => (
-            expandedRows.has(idx) && entry.raw ? (
-              <Paper key={`detail-${idx}`} p="sm" mx="md" mb="xs" bg="gray.0" radius="sm">
-                <Group gap="lg" mb="xs">
-                  <Text size="xs"><b>时间:</b> {formatLogDate(entry.ts)} {formatLogTime(entry.ts)}</Text>
-                  <Text size="xs" c="dimmed"><b>原始:</b> {entry.ts || '—'}</Text>
-                  <Text size="xs"><b>Instrument:</b> {entry.instrument_id}</Text>
-                </Group>
-                {/* P1-34: 一次请求内的全部日志（audit / runner / HAL / SCPI）
-                    带同一个 id。点这里就把这条链单独捞出来。
-                    id 为 "-" 的行不是请求产生的（启动期 / 后台任务），无链可串。 */}
-                <Group gap="xs" mb="xs">
-                  <Text size="xs"><b>请求 ID:</b> {entry.session_id}</Text>
-                  {entry.session_id && entry.session_id !== '-' && (
-                    <Button
-                      size="compact-xs"
-                      variant="light"
-                      color="grape"
-                      onClick={() => isolateRequest(entry.session_id)}
-                    >
-                      只看这一次请求
-                    </Button>
-                  )}
-                </Group>
-                <Code block style={{ fontSize: '11px', maxHeight: 200, overflow: 'auto' }}>
-                  {(() => {
-                    try {
-                      return JSON.stringify(JSON.parse(entry.raw), null, 2)
-                    } catch {
-                      return entry.raw
-                    }
-                  })()}
-                </Code>
-              </Paper>
-            ) : null
-          ))}
         </ScrollArea>
       </Paper>
     </Stack>

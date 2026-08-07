@@ -35,6 +35,7 @@ import {
 } from '@tabler/icons-react'
 import { fetchSystemLogsTail, fetchAlerts, fetchAlertSummary } from '../../api/service'
 import { formatLogTime } from '../../utils/datetime'
+import { groupLogContinuations } from '../../utils/logEntries'
 import type { SystemLogTailResponse } from '../../types/api'
 import type {
   SystemLogEntry,
@@ -90,6 +91,7 @@ function LogPanel() {
   const [filename, setFilename] = useState<string>('app.log')
   const [autoScroll, setAutoScroll] = useState(true)
   const [autoRefresh, setAutoRefresh] = useState(true)
+  const [sortDesc, setSortDesc] = useState(true)
   const viewportRef = useRef<HTMLDivElement>(null)
 
   // P2-19: 主流 (无过滤 200 行, 保 RAW/traceback 与最新行邻接) + WARN/ERROR
@@ -150,7 +152,7 @@ function LogPanel() {
   })
 
   // 客户端过滤兜底 (多选 level 时后端没法只过滤一个)。
-  const entries = useMemo<SystemLogEntry[]>(() => {
+  const filteredEntries = useMemo<SystemLogEntry[]>(() => {
     const all = data?.entries ?? []
     if (enabledLevels.length === 0) return []
     return all.filter((e) => {
@@ -161,12 +163,17 @@ function LogPanel() {
       return enabledLevels.includes(up)
     })
   }, [data, enabledLevels])
+  const groupedEntries = useMemo(
+    () => groupLogContinuations(filteredEntries),
+    [filteredEntries],
+  )
+  const entries = sortDesc ? [...groupedEntries].reverse() : groupedEntries
 
   useEffect(() => {
     if (autoScroll && viewportRef.current) {
-      viewportRef.current.scrollTo({ top: viewportRef.current.scrollHeight })
+      viewportRef.current.scrollTo({ top: sortDesc ? 0 : viewportRef.current.scrollHeight })
     }
-  }, [entries, autoScroll])
+  }, [entries, autoScroll, sortDesc])
 
   return (
     <Card withBorder radius="md" padding="md" h="100%">
@@ -193,6 +200,12 @@ function LogPanel() {
               label="自动刷新"
               checked={autoRefresh}
               onChange={(e) => setAutoRefresh(e.currentTarget.checked)}
+            />
+            <Switch
+              size="xs"
+              label="最新在上"
+              checked={sortDesc}
+              onChange={(e) => setSortDesc(e.currentTarget.checked)}
             />
             <Tooltip label="手动刷新">
               <ActionIcon variant="subtle" onClick={() => refetch()} loading={isFetching}>
@@ -263,7 +276,7 @@ function LogPanel() {
                   </Badge>
                   <Code style={{ flex: 1, background: 'transparent', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                     {e.logger && e.logger !== '' ? `[${e.logger}] ` : ''}
-                    {e.msg}
+                    {[e.msg, ...e.continuation_lines].filter(Boolean).join('\n')}
                   </Code>
                 </Group>
               ))}
