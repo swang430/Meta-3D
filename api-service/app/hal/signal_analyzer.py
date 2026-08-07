@@ -29,6 +29,21 @@ from app.hal.base import (
 logger = logging.getLogger(__name__)
 
 
+class XSeriesScpi:
+    """Keysight X-Series 命令真值；real 与 mock 使用同一组常量。"""
+
+    IDN = "*IDN?"
+    RST = "*RST"
+    OPC = "*OPC?"
+    SET_FREQ = "SENSe:FREQuency:CENTer {freq}"
+    SET_SPAN = "SENSe:FREQuency:SPAN {span}"
+    SET_RBW = "SENSe:BANDwidth:RESolution {rbw}"
+    INIT_CONT_OFF = "INIT:CONT OFF"
+    TRIG = "INIT:IMM; *OPC?"
+    READ_MEAS = "READ:SAN?"
+    READ_TRAC = "FETCh:SAN?"
+
+
 class SignalAnalyzerDriver(InstrumentDriver):
     """
     Abstract interface for Signal Analyzers (HAL Layer 2)
@@ -131,6 +146,9 @@ class SignalAnalyzerDriver(InstrumentDriver):
 class MockSignalAnalyzer(SignalAnalyzerDriver):
     """Fallback Mock implementation"""
 
+    driver_source = "mock"
+    simulated = True
+
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         self._center_freq = 1e9
@@ -162,6 +180,10 @@ class MockSignalAnalyzer(SignalAnalyzerDriver):
         return True
 
     async def setup_spectrum(self, center_freq_hz: float, span_hz: float, rbw_hz: float) -> bool:
+        self._simulate_scpi_write(XSeriesScpi.SET_FREQ.format(freq=center_freq_hz))
+        self._simulate_scpi_write(XSeriesScpi.SET_SPAN.format(span=span_hz))
+        self._simulate_scpi_write(XSeriesScpi.SET_RBW.format(rbw=rbw_hz))
+        self._simulate_scpi_query(XSeriesScpi.OPC, "1")
         self._center_freq = center_freq_hz
         return True
 

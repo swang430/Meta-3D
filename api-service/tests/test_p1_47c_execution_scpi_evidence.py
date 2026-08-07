@@ -191,6 +191,33 @@ def test_fixed_summary_is_sanitized_and_persisted_on_same_execution(db):
     )
 
 
+def test_simulated_exchanges_cannot_be_persisted_as_formal_evidence(db):
+    execution = _execution(db)
+    register_required_scpi_evidence(
+        execution,
+        requirement_id="uxm.pcell.arfcn",
+        evidence_key="uxm.config_readback",
+        requested=636666,
+    )
+    simulated = [
+        exchange.model_copy(update={"simulated": True})
+        for exchange in _exchanges(execution)
+    ]
+
+    record_execution_scpi_evidence(
+        execution,
+        requirement_id="uxm.pcell.arfcn",
+        item=_item(),
+        environment=_environment(),
+        exchanges=simulated,
+    )
+    summary = finalize_execution_scpi_evidence(execution)
+
+    assert summary.formal_acceptance is False
+    assert summary.formal_verdict is EvidenceVerdict.UNKNOWN
+    assert "simulated_exchange_not_authoritative" in summary.items[0].reason
+
+
 @pytest.mark.parametrize("verdict", [EvidenceVerdict.UNKNOWN, EvidenceVerdict.REJECTED])
 def test_unknown_or_rejected_mandatory_evidence_blocks_formal_pass(db, verdict):
     execution = _execution(db)

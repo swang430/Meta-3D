@@ -15,24 +15,12 @@ from app.hal.base import (
     InstrumentCapability,
     InstrumentMetrics,
 )
-from app.hal.signal_analyzer import SignalAnalyzerDriver
+from app.hal.signal_analyzer import SignalAnalyzerDriver, XSeriesScpi
 
 logger = logging.getLogger(__name__)
 
 
-class XSaScpi:
-    IDN = "*IDN?"
-    RST = "*RST"
-    OPC = "*OPC?"
-
-    SET_FREQ = "SENSe:FREQuency:CENTer {freq}"
-    SET_SPAN = "SENSe:FREQuency:SPAN {span}"
-    SET_RBW = "SENSe:BANDwidth:RESolution {rbw}"
-    
-    INIT_CONT_OFF = "INIT:CONT OFF"
-    TRIG = "INIT:IMM; *OPC?"
-    READ_MEAS = "READ:SAN?"
-    READ_TRAC = "FETCh:SAN?"
+XSaScpi = XSeriesScpi
 
 
 class RealKeysightXSeriesSaDriver(SignalAnalyzerDriver):

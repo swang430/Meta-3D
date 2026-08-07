@@ -349,6 +349,8 @@ class InstrumentDriver(ABC):
     # means either the model declaration is wrong or the runtime probe is
     # reading something the vocabulary doesn't cover.
     model_capabilities: ClassVar[FrozenSet[str]] = frozenset()
+    driver_source: ClassVar[str] = "real"
+    simulated: ClassVar[bool] = False
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         """
@@ -399,6 +401,7 @@ class InstrumentDriver(ABC):
             instrument_id=self.instrument_id,
             operation=operation,
             command=safe_cmd,
+            simulated=self.simulated,
         )
         self._scpi_logger.debug(
             f"TX: {safe_cmd}",
@@ -409,6 +412,8 @@ class InstrumentDriver(ABC):
                 "operation": operation,
                 "command": safe_cmd,
                 "result_type": "intent",
+                "driver_source": self.driver_source,
+                "simulated": self.simulated,
             },
         )
 
@@ -454,6 +459,8 @@ class InstrumentDriver(ABC):
             "response": body,
             "result_type": result_type or _response_result_type(response),
             "resp_len": raw_len,
+            "driver_source": self.driver_source,
+            "simulated": self.simulated,
         }
         if duration_ms is not None:
             extra["duration_ms"] = round(duration_ms, 3)
@@ -463,6 +470,7 @@ class InstrumentDriver(ABC):
             exchange_id=exchange_id,
             result_type=extra["result_type"],
             response=body,
+            simulated=self.simulated,
         )
 
     def _log_scpi_done(
@@ -490,10 +498,16 @@ class InstrumentDriver(ABC):
                 "command": safe_cmd,
                 "result_type": "ok",
                 "duration_ms": round(duration_ms, 3),
+                "driver_source": self.driver_source,
+                "simulated": self.simulated,
             },
         )
         from app.hal.scpi_evidence import record_exchange_terminal
-        record_exchange_terminal(exchange_id=exchange_id, result_type="ok")
+        record_exchange_terminal(
+            exchange_id=exchange_id,
+            result_type="ok",
+            simulated=self.simulated,
+        )
 
     def _log_scpi_error(
         self,
@@ -534,6 +548,8 @@ class InstrumentDriver(ABC):
                 "result_type": _exception_result_type(exc),
                 "error_type": type(exc).__name__,
                 "duration_ms": round(duration_ms, 3),
+                "driver_source": self.driver_source,
+                "simulated": self.simulated,
             },
         )
         from app.hal.scpi_evidence import record_exchange_terminal
@@ -541,7 +557,32 @@ class InstrumentDriver(ABC):
             exchange_id=exchange_id,
             result_type=_exception_result_type(exc),
             response=detail,
+            simulated=self.simulated,
         )
+
+    def _simulate_scpi_write(self, cmd: str) -> None:
+        """Mock 传输边界：记录真实命令意图和模拟完成，不触碰硬件。"""
+        exchange_id = self._new_exchange_id()
+        self._log_scpi_write(cmd, exchange_id, "write")
+        self._log_scpi_done(
+            cmd,
+            0.0,
+            exchange_id=exchange_id,
+            operation="write",
+        )
+
+    def _simulate_scpi_query(self, cmd: str, response: str) -> str:
+        """Mock 查询边界：模拟值只进入带 provenance 的 SCPI 证据链。"""
+        exchange_id = self._new_exchange_id()
+        self._log_scpi_write(cmd, exchange_id, "query")
+        self._log_scpi_response(
+            cmd,
+            response,
+            0.0,
+            exchange_id=exchange_id,
+            operation="query",
+        )
+        return response
 
     # ── SCPI 模板方法 (子类覆盖 _do_write / _do_query) ────────
     #

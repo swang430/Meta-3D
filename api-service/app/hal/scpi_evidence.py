@@ -121,6 +121,7 @@ class ScpiExchangeRef(BaseModel):
     sequence: int
     result_type: str = "intent"
     response: Optional[str] = None
+    simulated: bool = False
 
 
 class InstrumentEvidenceItem(BaseModel):
@@ -167,7 +168,12 @@ def capture_scpi_exchanges() -> Iterator[list[ScpiExchangeRef]]:
 
 
 def record_exchange_intent(
-    *, exchange_id: str, instrument_id: str, operation: str, command: str
+    *,
+    exchange_id: str,
+    instrument_id: str,
+    operation: str,
+    command: str,
+    simulated: bool = False,
 ) -> None:
     for collector in _exchange_collectors.get():
         collector.exchanges.append(
@@ -179,18 +185,24 @@ def record_exchange_intent(
                 execution_id=collector.execution_id,
                 capture_id=collector.capture_id,
                 sequence=len(collector.exchanges),
+                simulated=simulated,
             )
         )
 
 
 def record_exchange_terminal(
-    *, exchange_id: str, result_type: str, response: Optional[str] = None
+    *,
+    exchange_id: str,
+    result_type: str,
+    response: Optional[str] = None,
+    simulated: bool = False,
 ) -> None:
     for collector in _exchange_collectors.get():
         for item in reversed(collector.exchanges):
             if item.exchange_id == exchange_id:
                 item.result_type = result_type
                 item.response = response
+                item.simulated = simulated
                 break
 
 
@@ -410,11 +422,15 @@ _TRANSPORT_TERMINALS = {
 
 
 def _transport_succeeded(exchange: Optional[ScpiExchangeRef]) -> bool:
-    return bool(exchange and exchange.result_type in _TRANSPORT_TERMINALS)
+    return bool(
+        exchange
+        and not exchange.simulated
+        and exchange.result_type in _TRANSPORT_TERMINALS
+    )
 
 
 def _value_response(exchange: Optional[ScpiExchangeRef]) -> Optional[str]:
-    if not exchange or exchange.result_type != "response":
+    if not exchange or exchange.simulated or exchange.result_type != "response":
         return None
     return exchange.response
 

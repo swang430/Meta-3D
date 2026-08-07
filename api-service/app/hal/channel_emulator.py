@@ -29,6 +29,10 @@ from app.hal.base import (
 logger = logging.getLogger(__name__)
 
 
+F64_GO_COMMAND = "DIAG:SIMU:GO"
+F64_STATE_QUERY = "DIAG:SIMU:STATE?"
+
+
 # ===========================================================================
 # 信道加载模式枚举（对应用层透明的抽象）
 # ===========================================================================
@@ -458,6 +462,9 @@ class MockChannelEmulator(ChannelEmulatorDriver):
     Simulates realistic behavior without requiring actual hardware.
     """
 
+    driver_source = "mock"
+    simulated = True
+
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         self._emulation_running = False
@@ -660,6 +667,8 @@ class MockChannelEmulator(ChannelEmulatorDriver):
         if self.status != InstrumentStatus.READY:
             return False
 
+        self._simulate_scpi_write(F64_GO_COMMAND)
+        self._simulate_scpi_query(F64_STATE_QUERY, "RUNNING")
         self._set_status(InstrumentStatus.BUSY)
         self._emulation_running = True
         await asyncio.sleep(0.2)  # Simulate startup time

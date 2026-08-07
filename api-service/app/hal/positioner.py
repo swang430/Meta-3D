@@ -20,6 +20,17 @@ from app.hal.base import (
 logger = logging.getLogger(__name__)
 
 
+class EtsPositionerScpi:
+    """EMCenter 转台命令真值；real 与 mock 使用同一组常量。"""
+
+    IDN = "*IDN?"
+    RST = "*RST"
+    GET_POS = "SOURce:POSition? 1"
+    SET_POS = "SOURce:POSition 1,{angle}"
+    STOP = "ABORt 1"
+    WAIT = "*OPC?"
+
+
 class PositionerDriver(InstrumentDriver):
     """
     Abstract interface for multi-axis positioners (HAL Layer 2)
@@ -52,6 +63,9 @@ class PositionerDriver(InstrumentDriver):
 
 class MockPositioner(PositionerDriver):
     """Fallback Mock implementation"""
+
+    driver_source = "mock"
+    simulated = True
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
@@ -101,6 +115,10 @@ class MockPositioner(PositionerDriver):
         return True
 
     async def get_position(self) -> Tuple[float, float]:
+        self._simulate_scpi_query(
+            EtsPositionerScpi.GET_POS,
+            f"{self._azimuth}",
+        )
         return (self._azimuth, self._elevation)
 
     async def stop(self) -> bool:

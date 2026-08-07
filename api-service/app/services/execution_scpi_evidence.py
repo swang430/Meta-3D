@@ -224,6 +224,8 @@ def record_execution_scpi_evidence(
         provenance_errors.append("exchange_id_not_in_capture")
     present = [exchange for exchange in referenced if exchange is not None]
     if present:
+        if any(exchange.simulated for exchange in present):
+            provenance_errors.append("simulated_exchange_not_authoritative")
         if [exchange.exchange_id for exchange in selected if exchange.exchange_id in item.exchange_ids] != item.exchange_ids:
             provenance_errors.append("exchange_ids_not_in_capture_order")
         if {exchange.execution_id for exchange in present} != {str(execution.id)}:
