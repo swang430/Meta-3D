@@ -39,7 +39,7 @@ from uuid import UUID
 
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.core.logging_config import current_execution_id
+from app.core.logging_config import close_execution_log, current_execution_id
 from app.db.database import SessionLocal
 from app.models.test_plan import (
     TestCase,
@@ -427,6 +427,7 @@ async def _run_case(execution_id: UUID) -> None:
         except Exception:  # noqa: BLE001
             logger.exception("[case-runner] execution %s 异常收尾也失败", execution_id)
     finally:
+        close_execution_log(str(execution_id))
         db.close()
 
 

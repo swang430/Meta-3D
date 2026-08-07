@@ -21,11 +21,18 @@ Usage:
 """
 
 import contextvars
+import copy
 import logging
 import logging.config
+import logging.handlers
 import os
+import re
+import threading
+import time
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from pathlib import Path
+from typing import Optional, TextIO
 
 # ============================================================
 # 1. Context Variables — 自动注入到每条日志
@@ -145,6 +152,206 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(log_entry, ensure_ascii=False, default=str)
 
 
+@dataclass
+class _RepeatBucket:
+    started_at: float
+    emitted: int
+    suppressed: int
+    sample: logging.LogRecord
+
+
+class _DuplicateBurstLimiter:
+    """限制短窗口内的完全相同日志，并保留可审计的抑制摘要。"""
+
+    def __init__(
+        self,
+        repeat_limit: int = 100,
+        repeat_window_seconds: float = 1.0,
+        clock=time.monotonic,
+        max_buckets: int = 2048,
+    ) -> None:
+        self.repeat_limit = max(1, int(repeat_limit))
+        self.repeat_window_seconds = max(0.001, float(repeat_window_seconds))
+        self.clock = clock
+        self.max_buckets = max(1, int(max_buckets))
+        self._buckets: dict[tuple[str, str, str, str], _RepeatBucket] = {}
+
+    @staticmethod
+    def _key(record: logging.LogRecord) -> tuple[str, str, str, str]:
+        return (
+            str(getattr(record, "execution_id", "-")),
+            str(getattr(record, "instrument_id", "-")),
+            record.name,
+            record.getMessage(),
+        )
+
+    @staticmethod
+    def _summary(bucket: _RepeatBucket) -> logging.LogRecord | None:
+        if bucket.suppressed <= 0:
+            return None
+        record = copy.copy(bucket.sample)
+        original_message = bucket.sample.getMessage()
+        record.msg = f"… same message suppressed x{bucket.suppressed}"
+        record.args = ()
+        record.suppressed_count = bucket.suppressed  # type: ignore[attr-defined]
+        record.suppressed_message = original_message  # type: ignore[attr-defined]
+        return record
+
+    def _expire(self, now: float) -> list[logging.LogRecord]:
+        summaries: list[logging.LogRecord] = []
+        expired = [
+            key for key, bucket in self._buckets.items()
+            if now - bucket.started_at >= self.repeat_window_seconds
+        ]
+        for key in expired:
+            summary = self._summary(self._buckets.pop(key))
+            if summary is not None:
+                summaries.append(summary)
+        return summaries
+
+    def process(self, record: logging.LogRecord) -> list[logging.LogRecord]:
+        now = self.clock()
+        output = self._expire(now)
+        key = self._key(record)
+        bucket = self._buckets.get(key)
+
+        if bucket is None:
+            if len(self._buckets) >= self.max_buckets:
+                oldest_key = min(
+                    self._buckets,
+                    key=lambda item: self._buckets[item].started_at,
+                )
+                summary = self._summary(self._buckets.pop(oldest_key))
+                if summary is not None:
+                    output.append(summary)
+            self._buckets[key] = _RepeatBucket(now, 1, 0, copy.copy(record))
+            output.append(record)
+        elif bucket.emitted < self.repeat_limit:
+            bucket.emitted += 1
+            output.append(record)
+        else:
+            bucket.suppressed += 1
+        return output
+
+    def drain(self, *, execution_id: str | None = None) -> list[logging.LogRecord]:
+        summaries: list[logging.LogRecord] = []
+        keys = [
+            key for key in self._buckets
+            if execution_id is None or key[0] == str(execution_id)
+        ]
+        for key in keys:
+            summary = self._summary(self._buckets.pop(key))
+            if summary is not None:
+                summaries.append(summary)
+        return summaries
+
+
+class SuppressingTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
+    """带重复突发抑制的按时轮转文件处理器。"""
+
+    def __init__(
+        self,
+        *args,
+        repeat_limit: int = 100,
+        repeat_window_seconds: float = 1.0,
+        clock=time.monotonic,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._repeat_limiter = _DuplicateBurstLimiter(
+            repeat_limit=repeat_limit,
+            repeat_window_seconds=repeat_window_seconds,
+            clock=clock,
+        )
+
+    def emit(self, record: logging.LogRecord) -> None:
+        for output_record in self._repeat_limiter.process(record):
+            super().emit(output_record)
+
+    def close(self) -> None:
+        self.acquire()
+        try:
+            for record in self._repeat_limiter.drain():
+                super().emit(record)
+            super().close()
+        finally:
+            self.release()
+
+
+class ExecutionFileHandler(logging.Handler):
+    """按 LogRecord.execution_id 将详细日志写入扁平执行文件。"""
+
+    _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+
+    def __init__(
+        self,
+        log_dir: str,
+        encoding: str = "utf-8",
+        repeat_limit: int = 100,
+        repeat_window_seconds: float = 1.0,
+        clock=time.monotonic,
+    ) -> None:
+        super().__init__(logging.DEBUG)
+        self.log_dir = Path(log_dir)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.encoding = encoding
+        self._streams: dict[str, TextIO] = {}
+        self._streams_lock = threading.RLock()
+        self._repeat_limiter = _DuplicateBurstLimiter(
+            repeat_limit=repeat_limit,
+            repeat_window_seconds=repeat_window_seconds,
+            clock=clock,
+        )
+
+    def _write_locked(self, record: logging.LogRecord) -> None:
+        execution_id = str(getattr(record, "execution_id", "-"))
+        stream = self._streams.get(execution_id)
+        if stream is None:
+            path = self.log_dir / f"exec-{execution_id}.log"
+            stream = path.open("a", encoding=self.encoding, buffering=1)
+            self._streams[execution_id] = stream
+        stream.write(self.format(record) + "\n")
+        stream.flush()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        execution_id = str(getattr(record, "execution_id", "-"))
+        if execution_id == "-" or not self._SAFE_ID.fullmatch(execution_id):
+            return
+        try:
+            with self._streams_lock:
+                for output_record in self._repeat_limiter.process(record):
+                    self._write_locked(output_record)
+        except Exception:
+            self.handleError(record)
+
+    def close_execution(self, execution_id: str) -> None:
+        with self._streams_lock:
+            for record in self._repeat_limiter.drain(execution_id=str(execution_id)):
+                self._write_locked(record)
+            stream = self._streams.pop(str(execution_id), None)
+            if stream is not None:
+                stream.flush()
+                stream.close()
+
+    def close(self) -> None:
+        with self._streams_lock:
+            for record in self._repeat_limiter.drain():
+                self._write_locked(record)
+            streams = list(self._streams.values())
+            self._streams.clear()
+            for stream in streams:
+                stream.flush()
+                stream.close()
+        super().close()
+
+
+def close_execution_log(execution_id: str) -> None:
+    """关闭当前日志配置中属于一次执行的文件句柄。"""
+    for handler in logging.getLogger().handlers:
+        if isinstance(handler, ExecutionFileHandler):
+            handler.close_execution(execution_id)
+
+
 # ============================================================
 # 3. 主配置函数
 # ============================================================
@@ -222,7 +429,7 @@ def setup_logging(
             # Handler 2: app.log (JSON 结构化, 按天轮转)
             "file_app": {
                 "class": "logging.handlers.TimedRotatingFileHandler",
-                "level": "DEBUG",
+                "level": "INFO",
                 "formatter": "json",
                 "filters": ["context_filter", "exclude_scpi_from_app"],
                 "filename": app_log_path,
@@ -231,12 +438,21 @@ def setup_logging(
                 "backupCount": log_retention_days,
                 "encoding": "utf-8",
             },
+            # Handler 3: 执行期间的 DEBUG/SCPI 详情，按 execution_id 分文件。
+            "file_execution": {
+                "()": ExecutionFileHandler,
+                "level": "DEBUG",
+                "formatter": "json",
+                "filters": ["context_filter"],
+                "log_dir": log_dir,
+                "encoding": "utf-8",
+            },
         },
         "loggers": {
             # 根 logger: 所有日志的默认处理
             "": {
                 "level": "DEBUG",
-                "handlers": ["console", "file_app"],
+                "handlers": ["console", "file_app", "file_execution"],
             },
             # 抑制第三方库的过度日志
             "uvicorn": {"level": "INFO", "propagate": True},
@@ -252,7 +468,7 @@ def setup_logging(
     # Handler 3 (可选): SCPI 专用日志
     if scpi_enabled:
         config["handlers"]["file_scpi"] = {
-            "class": "logging.handlers.TimedRotatingFileHandler",
+            "()": SuppressingTimedRotatingFileHandler,
             "level": "DEBUG",
             "formatter": "json",
             "filters": ["context_filter"],
