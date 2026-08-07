@@ -41,6 +41,9 @@ FS16_DEFAULT_LOAD_TEMPLATE = "CALC:FILT:FILE {path}"
 FS16_DEFAULT_START_COMMAND = "DIAG:SIMU:GO"
 FS16_DEFAULT_STOP_COMMAND = "DIAG:SIMU:GOS"
 FS16_DEFAULT_CLOSE_COMMAND = "DIAG:SIMU:CLOSE"
+FS16_DEFAULT_EMULATION_DIR = r"D:\User Emulations"
+FS16_DEFAULT_EDIT_TEMPLATE = "CALC:FILT:EDIT {path}"
+FS16_DEFAULT_CONNECT_COMMAND = "CALC:FILT:CONN"
 
 _DEFAULT_ACCEPTED_EXTS = (".smu", ".rtc", ".asc", ".zip")
 _ENTRY_PRIORITY = (".smu", ".rtc", ".zip", ".asc")
@@ -60,6 +63,7 @@ class RealPropsimFs16PlaybackDriver(RealPropsimFs16Driver):
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         self.playback_dir = config.get("playback_dir", FS16_PLAYBACK_DIR)
+        self.emulation_dir = config.get("emulation_dir", FS16_DEFAULT_EMULATION_DIR)
         self.enable_scpi_file_upload: bool = bool(
             config.get("enable_scpi_file_upload", False)
         )
@@ -87,10 +91,19 @@ class RealPropsimFs16PlaybackDriver(RealPropsimFs16Driver):
         self._start_command = config.get("start_command", FS16_DEFAULT_START_COMMAND)
         self._stop_command = config.get("stop_command", FS16_DEFAULT_STOP_COMMAND)
         self._close_command = config.get("close_command", FS16_DEFAULT_CLOSE_COMMAND)
+        self._edit_command_template = config.get(
+            "edit_command_template", FS16_DEFAULT_EDIT_TEMPLATE
+        )
+        self._connect_command = config.get(
+            "connect_command", FS16_DEFAULT_CONNECT_COMMAND
+        )
         self._opc_after_load = bool(config.get("opc_after_load", True))
         self._opc_after_start = bool(config.get("opc_after_start", True))
         self._opc_after_stop = bool(config.get("opc_after_stop", False))
+        self._opc_after_edit = bool(config.get("opc_after_edit", True))
+        self._opc_after_connect = bool(config.get("opc_after_connect", True))
         self._loaded_playback_file: Optional[str] = None
+        self._edited_emulation_file: Optional[str] = None
 
     async def get_capabilities(self) -> List[InstrumentCapability]:
         caps = await super().get_capabilities()
@@ -108,7 +121,10 @@ class RealPropsimFs16PlaybackDriver(RealPropsimFs16Driver):
                         supported=True,
                         parameters={
                             "playback_dir": self.playback_dir,
+                            "emulation_dir": self.emulation_dir,
                             "load_command_template": self._load_command_template,
+                            "edit_command_template": self._edit_command_template,
+                            "connect_command": self._connect_command,
                             "upload_enabled": self.enable_scpi_file_upload,
                         },
                     )
@@ -122,6 +138,7 @@ class RealPropsimFs16PlaybackDriver(RealPropsimFs16Driver):
         metrics.metrics.update(
             {
                 "loaded_playback_file": self._loaded_playback_file,
+                "edited_emulation_file": self._edited_emulation_file,
                 "playback_upload_enabled": self.enable_scpi_file_upload,
             }
         )
@@ -131,9 +148,17 @@ class RealPropsimFs16PlaybackDriver(RealPropsimFs16Driver):
         """Return the FS16-side playback path for an operator-supplied name."""
         return self._remote_path(path_or_name)
 
+    def remote_emulation_path(self, path_or_name: str) -> str:
+        """Return the FS16-side emulation path for an operator-supplied name."""
+        return self._remote_emulation_path(path_or_name)
+
     async def remote_playback_file_exists(self, path_or_name: str) -> bool:
         """Check whether an operator-staged playback file is visible on FS16."""
         return await self._remote_file_exists(self._remote_path(path_or_name))
+
+    async def remote_emulation_file_exists(self, path_or_name: str) -> bool:
+        """Check whether an operator-staged emulation file is visible on FS16."""
+        return await self._remote_file_exists(self._remote_emulation_path(path_or_name))
 
     async def disconnect(self) -> bool:
         if self._visa_resource:
@@ -280,6 +305,126 @@ class RealPropsimFs16PlaybackDriver(RealPropsimFs16Driver):
             logger.warning("[FS16/PB] close_playback failed: %s", exc)
             return False
 
+    async def open_emulation_for_edit(self, path_or_name: str) -> bool:
+        """Open an existing FS16 ``.smu`` in edit mode.
+
+        The public command surface seen so far supports editing an existing
+        emulation. It does not expose a reliable from-scratch Scenario Wizard
+        creation API, so this method deliberately requires an operator-staged
+        source file.
+        """
+        if not self._visa_resource:
+            self._last_error = "[FS16/EMUL] No VISA resource"
+            return False
+        remote_file = self._remote_emulation_path(path_or_name)
+        cmd = self._render_template(
+            self._edit_command_template,
+            path=remote_file,
+            filename=ntpath.basename(remote_file),
+            remote_dir=self.emulation_dir,
+        )
+        ok = await self._write_checked(
+            cmd,
+            operation="FS16 emulation edit",
+            wait_opc=self._opc_after_edit,
+        )
+        if (
+            not ok
+            and self._edited_emulation_file == remote_file
+            and self._is_already_open_for_editing_error(self._last_error)
+        ):
+            logger.info("[FS16/PB] emulation already open for editing: %s", remote_file)
+            self._last_error = None
+            ok = True
+        if ok:
+            self._edited_emulation_file = remote_file
+            self._status = InstrumentStatus.READY
+        return ok
+
+    async def connect_edited_emulation(self) -> bool:
+        """Load the edited emulation into FS16 hardware paths."""
+        if not self._visa_resource:
+            self._last_error = "[FS16/EMUL] No VISA resource"
+            return False
+        ok = await self._write_checked(
+            self._connect_command,
+            operation="FS16 emulation connect",
+            wait_opc=self._opc_after_connect,
+        )
+        if ok:
+            self._status = InstrumentStatus.READY
+        return ok
+
+    async def set_center_frequency(self, channel: int, frequency_mhz: float) -> bool:
+        return await self._write_checked(
+            f"CALC:FILT:CENT:CH {int(channel)},{float(frequency_mhz):.3f}",
+            operation=f"FS16 set center frequency CH{channel}",
+        )
+
+    async def set_input_enabled(self, channel: int, enabled: bool) -> bool:
+        return await self._write_checked(
+            f"INP:EN {int(channel)},{1 if enabled else 0}",
+            operation=f"FS16 set input enable CH{channel}",
+        )
+
+    async def set_output_enabled(self, channel: int, enabled: bool) -> bool:
+        return await self._write_checked(
+            f"OUTP:EN {int(channel)},{1 if enabled else 0}",
+            operation=f"FS16 set output enable CH{channel}",
+        )
+
+    async def set_input_level(self, channel: int, level_dbm: float) -> bool:
+        return await self._write_checked(
+            f"INP:LEV:AMP:CH {int(channel)},{float(level_dbm):.3f}",
+            operation=f"FS16 set input level CH{channel}",
+        )
+
+    async def set_input_crest_factor(self, channel: int, crest_factor_db: float) -> bool:
+        return await self._write_checked(
+            f"INP:CRE:SET {int(channel)},{float(crest_factor_db):.3f}",
+            operation=f"FS16 set input crest factor CH{channel}",
+        )
+
+    async def autoset_input_level(self, channel: int) -> bool:
+        return await self._write_checked(
+            f"INP:LEV:AUTOSET {int(channel)}",
+            operation=f"FS16 autoset input level CH{channel}",
+            wait_opc=True,
+        )
+
+    async def set_output_level(self, channel: int, level_dbm: float) -> bool:
+        return await self._write_checked(
+            f"OUTP:LEV:AMP:CH {int(channel)},{float(level_dbm):.3f}",
+            operation=f"FS16 set output level CH{channel}",
+        )
+
+    async def query_model_info(self) -> str:
+        return (await self._query("DIAG:SIMU:MOD:INFO?", timeout=VISA_TIMEOUT_LONG)).strip()
+
+    async def query_channel_model_source(self, channel: int) -> str:
+        return (
+            await self._query(
+                f"CH:MOD:FILE:SOURCE? {int(channel)}",
+                timeout=VISA_TIMEOUT_LONG,
+            )
+        ).strip()
+
+    async def query_channel_connector(self, channel: int) -> str:
+        return (
+            await self._query(
+                f"ROUT:PATH:CONN? {int(channel)}",
+                timeout=VISA_TIMEOUT_LONG,
+            )
+        ).strip()
+
+    async def query_center_frequency(self, channel: int) -> str:
+        return (
+            await self._query(
+                f"CALC:FILT:CENT:CH? {int(channel)}",
+                timeout=VISA_TIMEOUT_LONG,
+            )
+        ).strip()
+
     async def _load_remote_playback(self, remote_file: str, model_name: str) -> bool:
         try:
             logger.info("[FS16/PB] loading playback file: %s", remote_file)
@@ -307,6 +452,29 @@ class RealPropsimFs16PlaybackDriver(RealPropsimFs16Driver):
         except Exception as exc:  # noqa: BLE001
             self._last_error = str(exc)
             logger.error("[FS16/PB] load failed: %s", exc)
+            return False
+
+    async def _write_checked(
+        self,
+        command: str,
+        *,
+        operation: str,
+        wait_opc: bool = False,
+    ) -> bool:
+        try:
+            await self._clear_error_queue()
+            await self._write(command, timeout=VISA_TIMEOUT_LONG)
+            if wait_opc:
+                await self._query("*OPC?", timeout=VISA_TIMEOUT_LONG)
+            err = await self._first_error()
+            if err:
+                self._last_error = f"{operation} failed: {err}"
+                logger.error("[FS16/PB] %s", self._last_error)
+                return False
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self._last_error = f"{operation} failed: {exc}"
+            logger.error("[FS16/PB] %s", self._last_error)
             return False
 
     async def _upload_local_payloads(
@@ -421,6 +589,12 @@ class RealPropsimFs16PlaybackDriver(RealPropsimFs16Driver):
             return text
         return f"{self.playback_dir}\\{text}"
 
+    def _remote_emulation_path(self, path_or_name: str) -> str:
+        text = str(path_or_name).strip().strip('"').strip("'")
+        if re.match(r"^[A-Za-z]:\\", text) or text.startswith("\\\\"):
+            return text
+        return f"{self.emulation_dir}\\{text}"
+
     async def _remote_file_exists(self, remote_file: str) -> bool:
         target = ntpath.basename(remote_file).lower()
         directory = ntpath.dirname(remote_file)
@@ -510,6 +684,16 @@ class RealPropsimFs16PlaybackDriver(RealPropsimFs16Driver):
     @staticmethod
     def _strip_scpi_string(value: str) -> str:
         return value.strip().strip('"').strip("'")
+
+    @staticmethod
+    def _is_already_open_for_editing_error(value: Optional[str]) -> bool:
+        return bool(
+            value
+            and (
+                "already open for editing" in value.lower()
+                or "smu file already open" in value.lower()
+            )
+        )
 
     @staticmethod
     def _render_template(template: str, **values: Any) -> str:

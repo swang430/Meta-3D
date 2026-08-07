@@ -39,9 +39,20 @@ class _FakeVisaResource:
         if cmd == "MMEM:CAT?":
             if self.cwd == r"D:\User Playbacks":
                 return '"Emulation0609.smu",2048,"mimo0609.smu",1024\n'
+            if self.cwd == r"D:\User Emulations":
+                return '"Emulation16.smu",2048\n'
             return '"DL.asc",1024\n'
         if cmd == "DIAG:SIMU:STATe?":
             return "OPEN\n"
+        if cmd == "DIAG:SIMU:MOD:INFO?":
+            return "5G TDD,2x2,n34\n"
+        if cmd.startswith("CH:MOD:FILE:SOURCE?"):
+            return r"D:\Models\3GPP_5GNR_2x2_TDLA30-5_low_correlation.ctap" + "\n"
+        if cmd.startswith("ROUT:PATH:CONN?"):
+            channel = cmd.rsplit(" ", 1)[-1].strip()
+            return f"{channel},RF-{channel},RF-{channel},1,1\n"
+        if cmd.startswith("CALC:FILT:CENT:CH?"):
+            return "2010.000\n"
         return "\n"
 
     def write_raw(self, payload: bytes) -> None:
@@ -95,6 +106,56 @@ async def test_remote_playback_file_loads_without_local_waveform_dir():
     assert ok is True
     assert r"CALC:FILT:FILE D:\User Playbacks\DL.asc" in visa.writes
     assert d._loaded_playback_file == r"D:\User Playbacks\DL.asc"
+
+
+@pytest.mark.asyncio
+async def test_public_remote_emulation_visibility_helpers_use_fs16_path():
+    d, _visa = _driver()
+
+    assert d.remote_emulation_path("Emulation16.smu") == r"D:\User Emulations\Emulation16.smu"
+    assert await d.remote_emulation_file_exists("Emulation16.smu") is True
+    assert await d.remote_emulation_file_exists("Missing.smu") is False
+
+
+@pytest.mark.asyncio
+async def test_edit_existing_emulation_and_connect_use_checked_scpi_order():
+    d, visa = _driver()
+
+    assert await d.open_emulation_for_edit(r"D:\User Emulations\Emulation16.smu") is True
+    assert await d.set_center_frequency(1, 2010.0) is True
+    assert await d.set_input_enabled(1, True) is True
+    assert await d.set_input_level(1, 20.0) is True
+    assert await d.set_input_crest_factor(1, 12.0) is True
+    assert await d.set_output_enabled(1, True) is True
+    assert await d.set_output_level(1, -32.0) is True
+    assert await d.connect_edited_emulation() is True
+
+    assert r"CALC:FILT:EDIT D:\User Emulations\Emulation16.smu" in visa.writes
+    assert "CALC:FILT:CENT:CH 1,2010.000" in visa.writes
+    assert "INP:EN 1,1" in visa.writes
+    assert "INP:LEV:AMP:CH 1,20.000" in visa.writes
+    assert "INP:CRE:SET 1,12.000" in visa.writes
+    assert "OUTP:EN 1,1" in visa.writes
+    assert "OUTP:LEV:AMP:CH 1,-32.000" in visa.writes
+    assert "CALC:FILT:CONN" in visa.writes
+    assert d._edited_emulation_file == r"D:\User Emulations\Emulation16.smu"
+
+
+@pytest.mark.asyncio
+async def test_add_emulation_readback_queries_render_channel_arguments():
+    d, visa = _driver()
+
+    assert await d.query_model_info() == "5G TDD,2x2,n34"
+    assert await d.query_channel_model_source(2) == (
+        r"D:\Models\3GPP_5GNR_2x2_TDLA30-5_low_correlation.ctap"
+    )
+    assert await d.query_channel_connector(3) == "3,RF-3,RF-3,1,1"
+    assert await d.query_center_frequency(4) == "2010.000"
+
+    assert "DIAG:SIMU:MOD:INFO?" in visa.queries
+    assert "CH:MOD:FILE:SOURCE? 2" in visa.queries
+    assert "ROUT:PATH:CONN? 3" in visa.queries
+    assert "CALC:FILT:CENT:CH? 4" in visa.queries
 
 
 @pytest.mark.asyncio
