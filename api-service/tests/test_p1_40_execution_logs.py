@@ -348,3 +348,64 @@ class TestExecutionLogRetention:
         assert active.exists(), "把正在写的执行日志删了 —— 句柄会悬空"
         assert purged == 0
         handler.close()
+
+    def test_retention_is_enforced_after_startup_not_only_at_init(self, tmp_path):
+        """#303 R2 P1：常驻进程跑过 retention_days 后，启动时没过期的文件
+        此后无人检查 —— 30 天上限被静默突破。
+
+        变异：删掉 `close_execution` 末尾的 `purge_expired()` → 本条红。
+        """
+        import os
+        import time as _time
+
+        handler = logging_config.ExecutionFileHandler(str(tmp_path), retention_days=30)
+        handler.setFormatter(JsonFormatter())
+        handler.addFilter(ContextFilter())
+
+        # 启动时它还新鲜（没被 __init__ 那次清掉），之后才过期
+        survivor = tmp_path / "exec-0000later.log"
+        survivor.write_text("SCPI: 启动后才到期\n", encoding="utf-8")
+
+        _emit(handler, "someexec99", "触发一次执行")
+        old = _time.time() - 31 * 86400
+        os.utime(survivor, (old, old))
+
+        handler.close_execution("someexec99")
+
+        assert not survivor.exists(), (
+            "执行收尾时没复查留存 —— 常驻进程里到期文件永远不会被清")
+        handler.close()
+
+    def test_cleanup_failure_is_reported_outside_handleError(self, tmp_path, caplog):
+        """#303 R2 P2：`handleError` 在 `raiseExceptions=False`（生产常见）下
+        按标准库契约静默返回，告警根本不会出现。
+
+        变异：把 `_module_logger.warning(...)` 换回 `self.handleError(...)`
+        → 本条在 `raiseExceptions=False` 下红。
+        """
+        import logging as _logging
+        import os
+        import time as _time
+        from unittest.mock import patch
+
+        doomed = tmp_path / "exec-0000doomed.log"
+        doomed.write_text("SCPI: 删不掉\n", encoding="utf-8")
+        old = _time.time() - 31 * 86400
+        os.utime(doomed, (old, old))
+
+        prev = _logging.raiseExceptions
+        _logging.raiseExceptions = False        # 复刻生产配置
+        try:
+            with patch.object(logging_config.Path, "unlink",
+                              side_effect=OSError("只读文件系统")):
+                with caplog.at_level(_logging.WARNING,
+                                     logger="app.core.logging_config"):
+                    logging_config.ExecutionFileHandler(
+                        str(tmp_path), retention_days=30)
+        finally:
+            _logging.raiseExceptions = prev
+
+        msgs = " | ".join(r.getMessage() for r in caplog.records)
+        assert "留存清理失败" in msgs, (
+            "生产配置下清理失败无声无息 —— 过期高敏日志留在盘上且运维不知道")
+        assert doomed.exists(), "夹具前提错了：本例要的是删除失败"

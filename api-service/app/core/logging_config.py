@@ -34,6 +34,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, TextIO
 
+# 本模块自身的运维告警通道（留存清理失败等）。⚠ 刻意**不用**
+# `Handler.handleError` —— 那条路在 `logging.raiseExceptions=False`（生产常见）
+# 下按标准库契约静默返回，等于没有告警（Codex #303 R2 P2）。
+_module_logger = logging.getLogger(__name__)
+
 # ============================================================
 # 1. Context Variables — 自动注入到每条日志
 # ============================================================
@@ -347,13 +352,19 @@ class ExecutionFileHandler(logging.Handler):
                         continue
                     path.unlink()
                     purged += 1
-                except OSError:
-                    # 单个文件删不掉（权限/占用）不该拖垮日志初始化，
-                    # 但也不能静默 —— 交给 handleError 走既有告警路径。
-                    self.handleError(logging.LogRecord(
-                        __name__, logging.WARNING, __file__, 0,
-                        "执行日志留存清理失败: %s", (path,), None,
-                    ))
+                except OSError as exc:
+                    # 单个文件删不掉（权限/只读盘/占用）不该拖垮日志初始化，
+                    # 但**也不能静默** —— 删不掉意味着过期的高敏日志继续留着，
+                    # 运维必须看得见。
+                    # ⚠ 这里**不能用 `self.handleError`**（Codex #303 R2 P2）：
+                    #   标准库契约是 `logging.raiseExceptions=False` 时它静默返回，
+                    #   而生产恰恰常关这个开关 —— 那句"走既有告警路径"就成了假话。
+                    #   改走模块 logger：它没有 execution_id 上下文，`emit()` 首行
+                    #   即 return，不会回流进本 handler，也就不会递归。
+                    _module_logger.warning(
+                        "执行日志留存清理失败（过期高敏日志仍在盘上）: %s — %s",
+                        path, exc,
+                    )
         return purged
 
     def _write_locked(self, record: logging.LogRecord) -> None:
@@ -385,6 +396,11 @@ class ExecutionFileHandler(logging.Handler):
             if stream is not None:
                 stream.flush()
                 stream.close()
+        # ⚠ 只在 __init__ 清一次，常驻进程跑过 retention_days 之后就再也不清了
+        #   —— 启动时没过期的文件此后无人检查，30 天上限被静默突破
+        #   （Codex #303 R2 P1）。挂在这里是**换源不是加机制**：执行收尾是已有的
+        #   运行期生命周期边界，每次执行必经，不需要额外定时器。
+        self.purge_expired()
 
     def close(self) -> None:
         with self._streams_lock:
