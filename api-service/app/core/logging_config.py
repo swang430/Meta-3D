@@ -306,11 +306,13 @@ class ExecutionFileHandler(logging.Handler):
         repeat_limit: int = 100,
         repeat_window_seconds: float = 1.0,
         clock=time.monotonic,
+        retention_days: int = 30,
     ) -> None:
         super().__init__(logging.DEBUG)
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.encoding = encoding
+        self.retention_days = max(1, int(retention_days))
         self._streams: dict[str, TextIO] = {}
         self._streams_lock = threading.RLock()
         self._repeat_limiter = _DuplicateBurstLimiter(
@@ -318,6 +320,41 @@ class ExecutionFileHandler(logging.Handler):
             repeat_window_seconds=repeat_window_seconds,
             clock=clock,
         )
+        self.purge_expired()
+
+    def purge_expired(self, now: Optional[float] = None) -> int:
+        """删除超过 `retention_days` 的执行日志，返回删除条数。
+
+        ⚠ 这些文件跟 `scpi.log` 装的是同一类东西 —— 原始仪器往返。本文件
+        `setup_logging` 里那条禁令（"独立 SCPI 文件无论全局日志策略如何放宽，
+        都不得保留超过 30 个日轮转归档"）对它们同样成立：`file_execution`
+        从根 logger 收 `app.hal.scpi.*` 的传播记录，而 `exec-<id>.log` 是
+        手写 `open("a")`，不走 TimedRotatingFileHandler 的 `backupCount`。
+        没有这道清理，高敏往返会无限期留在一个能被
+        `GET /system-logs/files` 列出的目录里（Codex #303 P1）。
+
+        判据用 mtime 不用文件名里的 execution_id —— id 是 UUID，不带时间。
+        """
+        cutoff = (now if now is not None else time.time()) - self.retention_days * 86400
+        purged = 0
+        with self._streams_lock:
+            for path in self.log_dir.glob("exec-*.log"):
+                # 仍在写的执行不动：它的流还开着，删了会留下悬空句柄。
+                if path.stem[len("exec-"):] in self._streams:
+                    continue
+                try:
+                    if path.stat().st_mtime >= cutoff:
+                        continue
+                    path.unlink()
+                    purged += 1
+                except OSError:
+                    # 单个文件删不掉（权限/占用）不该拖垮日志初始化，
+                    # 但也不能静默 —— 交给 handleError 走既有告警路径。
+                    self.handleError(logging.LogRecord(
+                        __name__, logging.WARNING, __file__, 0,
+                        "执行日志留存清理失败: %s", (path,), None,
+                    ))
+        return purged
 
     def _write_locked(self, record: logging.LogRecord) -> None:
         execution_id = str(getattr(record, "execution_id", "-"))
@@ -465,6 +502,9 @@ def setup_logging(
                 "encoding": "utf-8",
             },
             # Handler 3: 执行期间的 DEBUG/SCPI 详情，按 execution_id 分文件。
+            # ⚠ 留存上限跟 scpi.log **同源**（`scpi_retention_days`）——
+            #   这些文件收的是同一批 `app.hal.scpi.*` 原始往返，不能只让
+            #   scpi.log 受 30 天封顶而它们无限期堆着（Codex #303 P1）。
             "file_execution": {
                 "()": ExecutionFileHandler,
                 "level": "DEBUG",
@@ -472,6 +512,7 @@ def setup_logging(
                 "filters": ["context_filter"],
                 "log_dir": log_dir,
                 "encoding": "utf-8",
+                "retention_days": scpi_retention_days,
             },
         },
         "loggers": {

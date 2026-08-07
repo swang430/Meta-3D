@@ -276,3 +276,75 @@ async def test_case_runner_log_close_failure_does_not_leak_db(monkeypatch):
 
 async def _done():
     return None
+
+
+class TestExecutionLogRetention:
+    """#303 外审 P1：`exec-<id>.log` 收的是 `app.hal.scpi.*` 传播来的原始往返，
+    但它手写 `open("a")`、不走 `TimedRotatingFileHandler` 的 `backupCount`，
+    于是绕过了 `setup_logging` 里那条「独立 SCPI 文件不得保留超过 30 个日轮转
+    归档」的禁令 —— 高敏往返无限期留在一个能被 `GET /system-logs/files`
+    列出的目录里。
+
+    ⚠ 这三条是**行为门**：造出过期/新鲜/正在写三种文件，断言可观察后果
+    （谁被删、谁留下），不是断言"代码里有 purge 这个词"。
+    """
+
+    def test_expired_execution_logs_are_purged_on_init(self, tmp_path):
+        """变异：删掉 `__init__` 末尾的 `self.purge_expired()` → 本条红。"""
+        import os
+        import time as _time
+
+        stale = tmp_path / "exec-0000stale.log"
+        stale.write_text("SCPI: 高敏往返\n", encoding="utf-8")
+        old = _time.time() - 31 * 86400
+        os.utime(stale, (old, old))
+
+        fresh = tmp_path / "exec-0000fresh.log"
+        fresh.write_text("SCPI: 今天的\n", encoding="utf-8")
+
+        logging_config.ExecutionFileHandler(str(tmp_path), retention_days=30)
+
+        assert not stale.exists(), (
+            "31 天前的执行日志没被清掉 —— 原始 SCPI 往返会无限期堆在可枚举目录里")
+        assert fresh.exists(), "把没过期的执行日志也删了"
+
+    def test_retention_follows_the_scpi_cap_not_the_global_policy(self, tmp_path):
+        """留存上限必须**跟 scpi.log 同源**。
+
+        变异：把 dictConfig 里的 `retention_days` 换成 `log_retention_days`
+        （全局策略，可被放宽到 >30）→ 本条红。
+        """
+        import inspect
+
+        src = inspect.getsource(logging_config.setup_logging)
+        exec_block = src[src.index('"file_execution"'):]
+        exec_block = exec_block[:exec_block.index("},")]
+        assert "scpi_retention_days" in exec_block, (
+            "执行日志的留存上限没接在 scpi_retention_days 上 —— "
+            "全局策略一放宽，高敏往返就又无限期了")
+        assert "log_retention_days" not in exec_block
+
+    def test_active_execution_file_is_never_purged(self, tmp_path):
+        """正在写的执行不能被删 —— 删了会留下悬空句柄。
+
+        变异：去掉 `purge_expired` 里那个 `in self._streams` 的跳过 → 本条红。
+        """
+        import os
+        import time as _time
+
+        handler = logging_config.ExecutionFileHandler(str(tmp_path), retention_days=30)
+        handler.setFormatter(JsonFormatter())
+        handler.addFilter(ContextFilter())
+        exec_id = "activeexec1"
+        _emit(handler, exec_id, "正在写")
+
+        active = tmp_path / f"exec-{exec_id}.log"
+        assert active.exists()
+        old = _time.time() - 99 * 86400
+        os.utime(active, (old, old))
+
+        purged = handler.purge_expired()
+
+        assert active.exists(), "把正在写的执行日志删了 —— 句柄会悬空"
+        assert purged == 0
+        handler.close()
