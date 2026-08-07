@@ -3324,7 +3324,19 @@ class RealUxmDriver(BaseStationDriver):
         """Phase 2g: cleanup helper — remove every SCell on this PCell."""
         cell = self._cell_id
         try:
-            self._write(self._cmds.SCELL_REMOVE_ALL.format(cell=cell))
+            # ⚠ 2026-08-07 现场崩溃修复: 本 profile (LTE_NR_IRAT) 的
+            #   SCELL_REMOVE_ALL 是 None, 这里直接 .format() 抛
+            #   `'NoneType' object has no attribute 'format'`, 被 except 吞成
+            #   一条 ERROR 日志。别处都走 `self._cmd(...)` 守卫, **独独这里漏了**。
+            #   没有这条命令 = 该方言没有 SCell 概念 = 无需移除, 直接算成功。
+            q = self._cmd("SCELL_REMOVE_ALL", cell=cell)
+            if q is None:
+                logger.debug(
+                    "[UXM/%s] SCELL_REMOVE_ALL 本 profile 未定义 — 无 SCell 可移除, 跳过",
+                    self._cmds.PROFILE_NAME,
+                )
+                return True
+            self._write(q)
             self._query(self._cmds.OPC)
             logger.info("[UXM] All SCells removed for cell %s", cell)
             return True

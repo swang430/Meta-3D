@@ -242,7 +242,14 @@ class MIMOOTAConfiguration(BaseModel):
     # === Base station MAC throughput parameters (for Phase 3) ===
     mcs: int = 28
     enable_amc: bool = False
-    tdd_pattern: str = "DDDSU"
+    # 2026-08-07 现场（用户当场选定 DDDSUDDSUU）：原默认 `DDDSU` 是 **5 个 slot**，
+    # 30 kHz SCS 下 5 × 0.5ms = **2.5ms**，跟 `tdd_period = "5MS"` 对不上 ——
+    # 驱动因此**拒发整个 TDD 组**（照发不会被仪器拒，但 DL/UL 比例会静默变成
+    # 另一个配置，测的不是那个量；见 test_p1_33 的 TestScsConsistency）。
+    # `DDDSUDDSUU` = 10 slot × 0.5ms = 5.0ms，跟 period 自洽。
+    # ⚠ 换 SCS 就要重算：pattern 的含义**依赖 SCS**（手册把 SCS 列为
+    #   `TDDPATtern:STATE` 的 Dependencies）。60 kHz 下同样 10 slot 只有 2.5ms。
+    tdd_pattern: str = "DDDSUDDSUU"
     tdd_period: str = "5MS"
     harq_max_trans: int = 4
     harq_processes: int = 16

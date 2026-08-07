@@ -268,6 +268,24 @@ class MeasureExecutor(IStepExecutor):
                 + "**先排查仪器连接/超时，不要据此改 profile。**"
                 "配置未受控时测得的吞吐量不是 3GPP MAC 层吞吐量结果，**不能继续测**。"
             )
+        if missing and not rejected and not err:
+            # 2026-08-07 现场，用户当场拍板降级 —— **只降这一格**。
+            #
+            # 为什么降：`missing` 的含义是「本 profile 压根没有这条命令」。
+            # LTE_NR_IRAT 上那 6 条 TDD 命令 P1-33 已逐条查过厂商手册原件，
+            # **手册 0 命中**。也就是说这道门在拦一件**做不到**的事 ——
+            # 拦住的结果不是"配好再测", 而是"永远测不了", F64 那一整段
+            # (加载 .smu / 输入参考 / 输出电平 / Butler 直通) 一行都跑不到。
+            #
+            # 为什么另外两格不降（这是本次改动的边界）：
+            #   · `rejected` = 命令**发出去被仪器拒了** → 是真配错, 必须停
+            #   · `error`    = 下发过程炸了 → 传输层问题, 必须停
+            # 只有"我们根本没有这条命令"这一格是"拦不出结果"的。
+            #
+            # ⚠ **降级不等于放行** —— 判定交给 `_mac_config_warning()`，
+            #   调用方必须把它落进 measurements 并让本次执行**判不通过**。
+            #   软化一个 fail-loud 门而不留痕, 正是本项目一直在治的东西。
+            return None
         return (
             "P1-32: 3GPP MAC 吞吐量配置未生效 —— "
             + (f"**本驱动的 profile 未定义** {len(missing)} 条必要命令: "
@@ -283,6 +301,37 @@ class MeasureExecutor(IStepExecutor):
             "测得的吞吐量反映的是**基站调度器行为**而非 DUT 的 MIMO 能力，"
             "不是 3GPP MAC 层吞吐量结果，**不能继续测**。"
         )
+
+    @staticmethod
+    def _mac_config_warning(mac_cfg: Any) -> Optional[Dict[str, Any]]:
+        """`_mac_config_blocker` 放行但**配置并不完整**时的留痕。
+
+        跟 blocker 是一对：blocker 回答"能不能继续测"，本方法回答"这次测的
+        算不算数"。返回 None = 配置完整, 无需留痕。
+
+        2026-08-07 用户批准把 `missing`(profile 无此命令) 从致命降级，
+        条件是**必须留痕**。这里就是那个痕：进 measurements，并让调用方
+        把本次执行标成"不算合规结果"。**没有这个方法，降级就是静默放行。**
+        """
+        if mac_cfg is True or mac_cfg:
+            return None
+        missing = tuple(getattr(mac_cfg, "missing_mandatory", ()) or ())
+        if not missing:
+            return None
+        return {
+            "incomplete": True,
+            "missing_mandatory": list(missing),
+            "applied": list(getattr(mac_cfg, "applied", ()) or ()),
+            "skipped": list(getattr(mac_cfg, "skipped", ()) or ()),
+            "compliant": False,
+            "reason": (
+                f"本 profile 未定义 {len(missing)} 条 MAC 必要命令: "
+                f"{', '.join(missing)} —— 这些参数**沿用仪器当前态**, 未受本次"
+                f"TestCase 控制。⚠ 因此本次测得的吞吐量**不是 3GPP MAC 层"
+                f"吞吐量结果**(AMC/MCS/RB/TDD 未受控), 不能当合规数据用, "
+                f"只能当链路连通性/相对趋势看。补命令见 roadmap P1-33。"
+            ),
+        }
 
     async def execute(self, context: StepExecutionContext) -> StepExecutionResult:
         lab = context.require_lab_profile()
@@ -495,6 +544,9 @@ class MeasureExecutor(IStepExecutor):
             # 在**没配置过的链路**上跑完，数却当 3GPP 合规结果用。
             # 同构先例见本文件 mimo_port_preset 前置门（driver 静默不生效 →
             # 调用方 fail-loud）；memory: 路径 B 绝不用默认 fallback 静默兜底。
+            # 驱动没有这个方法时保持 None —— "没配过"跟"配了但不完整"是两回事，
+            # 别用同一个值表示（值形态空间：None / dict，不引入第三种）。
+            _mac_warning: Optional[Dict[str, Any]] = None
             if hasattr(base_station, "configure_mac_throughput_test"):
                 mac_cfg = await base_station.configure_mac_throughput_test(
                     mimo_layers=config.mimo_layers,
@@ -518,6 +570,16 @@ class MeasureExecutor(IStepExecutor):
                     return StepExecutionResult(
                         status=StepExecutionStatus.FAILED,
                         error_message=_blocker,
+                    )
+                # 放行但不完整 → 留痕（2026-08-07 降级的配套条件）。
+                # 这里只**存**，判不通过由下面 result_payload 里的
+                # `mac_config_compliant=False` 驱动 —— 存和判分开，
+                # 免得将来有人删了判定却以为还留着痕。
+                _mac_warning = self._mac_config_warning(mac_cfg)
+                if _mac_warning is not None:
+                    logger.error(
+                        "[%s] MAC 配置不完整但已放行: %s",
+                        context.test_execution.id, _mac_warning["reason"],
                     )
 
             signaling_started = await base_station.start_signaling()
@@ -1701,6 +1763,14 @@ class MeasureExecutor(IStepExecutor):
                 # P2-11 Phase 1: 多方频率一致性校验 (一致/opt-out 路径留 audit;
                 # strict-fail 路径早期 return 时已塞进 measurements)。
                 "frequency_consistency": freq_result.to_payload(),
+                # MAC 配置完整性（2026-08-07 降级的留痕）。
+                # `mac_config_compliant=False` 是给分析/报告看的硬信号：
+                # 这次的吞吐**不是 3GPP MAC 层合规结果**。
+                # ⚠ 判定写在这里而不是靠 `mac_config_incomplete` 是否存在去猜 ——
+                #   显式的 False 比"某个键在不在"更难被误读, 也更难被后续代码
+                #   顺手删掉而不被发现。
+                "mac_config_compliant": _mac_warning is None,
+                "mac_config_incomplete": _mac_warning,
                 # 2026-08-07 现场三里程碑。⚠ throughput 这一格**从实际扫出来的
                 # 平均吞吐派生**, 不是"跑到这儿了就算成功" —— 全 0 吞吐照样会
                 # 走到这里(方位扫描不因 0 吞吐中止), 那种情况必须显示 False。

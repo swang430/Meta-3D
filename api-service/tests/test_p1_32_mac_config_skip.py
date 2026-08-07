@@ -336,7 +336,13 @@ class TestCallerConsumesTheResult:
 
     @pytest.mark.parametrize("cfg,blocked,why", [
         (MacThroughputConfigResult(applied=("A",) * 11), False, "全配好"),
-        (MacThroughputConfigResult(missing_mandatory=("PDSCH_MCS",)), True,
+        # 2026-08-07 用户批准降级: `missing`(本 profile 压根没这条命令) 不再拦。
+        # 理由见 measure._mac_config_blocker 里那段注释 —— 它拦的是一件**做不到**
+        # 的事(P1-33 已逐条查过手册原件, 0 命中), 拦住的结果是"永远测不了"。
+        # ⚠ 降级**不等于放行**: 配套 `_mac_config_warning` 必须留痕, 由下面
+        #   test_missing_is_downgraded_but_leaves_a_trace 守着。两条一起才是完整契约,
+        #   删掉任一条都会让"静默放行"变成可能。
+        (MacThroughputConfigResult(missing_mandatory=("PDSCH_MCS",)), False,
          "缺必要命令"),
         (MacThroughputConfigResult(applied=("A",) * 11,
                                    error="TimeoutError: VI_ERROR_TMO"), True,
@@ -472,14 +478,47 @@ class TestCallerConsumesTheResult:
         from app.services.mimo_ota.executors import measure
 
         src = _strip_comments(inspect.getsource(measure))
-        i = src.index("P1-32: 3GPP MAC 吞吐量配置未生效")
-        msg = src[i:i + 1200]
+        # ⚠ 2026-08-07: 原来这里是 `index(第一处 "P1-32:") + 1200 字符` ——
+        #   **依赖了两段消息之间的字节距离**这个偶然事实。往中间插几行注释就红,
+        #   而它测的契约(不对仪器能力下结论)根本没变。改成锚在**它真正关心的那段**:
+        #   "profile 未定义" 开头的那条消息。跟 test_mimo_ota_precheck_cal_gate 的
+        #   ±5% 窗口是同一类修法 —— 测试不该依赖偶然事实。
+        i = src.index("**本驱动的 profile 未定义**")
+        msg = src[i:i + 900]
         assert "profile 未定义" in msg, "没说清是 profile 缺项（这是唯一的事实）"
         assert "未经查证" in msg, "没标明仪器能力未经查证"
         # ⭐ 关键：**两个方向的结论都不许出现**
         for claim in ("不是仪器不支持", "仪器支持", "方言不支持", "仪器不支持"):
             assert claim not in msg.replace("「仪器不支持」或「仪器支持」", ""), (
                 f"消息里对仪器能力下了结论: {claim!r} —— 我们两个方向都没证据")
+
+    def test_missing_is_downgraded_but_leaves_a_trace(self):
+        """⭐ 降级的**另一半**: 放行了, 但必须留痕说"这次不算合规结果"。
+
+        2026-08-07 用户批准把 `missing` 从致命降级, **条件是留痕**。
+        只改 blocker 不加这条 = 静默放行, 那正是本项目一直在治的东西
+        (memory: 路径 B 绝不用默认 fallback 静默兜底)。
+
+        变异: 让 `_mac_config_warning` 恒返回 None → 本条红。
+        """
+        from app.services.mimo_ota.executors.measure import MeasureExecutor
+
+        cfg = MacThroughputConfigResult(
+            applied=("A",), missing_mandatory=("TDD_PERIOD", "TDD_DL_SLOTS"))
+        assert MeasureExecutor._mac_config_blocker(cfg) is None, "降级没生效"
+        w = MeasureExecutor._mac_config_warning(cfg)
+        assert w is not None, "降级了却没留痕 —— 静默放行"
+        assert w["compliant"] is False, "没显式标成不合规"
+        assert "TDD_PERIOD" in w["missing_mandatory"], "没说清缺哪几条"
+        assert "不是 3GPP MAC 层" in w["reason"], "没说清这次的数不能当合规结果用"
+
+    def test_warning_is_none_when_config_is_complete(self):
+        """反向: 配置完整时不许留痕 —— 否则每次都标"不合规", 留痕就失去意义。"""
+        from app.services.mimo_ota.executors.measure import MeasureExecutor
+
+        assert MeasureExecutor._mac_config_warning(
+            MacThroughputConfigResult(applied=("A",) * 11)) is None
+        assert MeasureExecutor._mac_config_warning(True) is None
 
     def test_start_signaling_is_not_reached_when_mandatory_missing(self):
         """⭐ **生效端** —— 光断言"返回 FAILED"不够，

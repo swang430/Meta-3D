@@ -21,7 +21,12 @@ class TestPortRoutingSchemaFields:
         assert cfg.mimo_port_preset is None
         assert cfg.sched_algo is None
         assert cfg.csi_rs_ports is None
-        assert cfg.tdd_pattern == "DDDSU"  # 旧字段不变 (由 configure_mac 驱动)
+        # 旧字段跟上面三个**语义不同**: 它不是 None-可区分的 opt-in 旋钮,
+        # 而是有真实默认、由 configure_mac 驱动下发的必填项。
+        # ⚠ 2026-08-07: 原来这里写死 `== "DDDSU"`, 现场把默认改成
+        #   `DDDSUDDSUU`(30kHz 下配 5ms 周期) 时它就红了 —— 而本测试测的
+        #   契约("新字段 None 可区分")根本没变。钉字面值 ≠ 钉契约。
+        assert cfg.tdd_pattern is not None and cfg.tdd_pattern != ""
 
     def test_override(self):
         cfg = MIMOOTAConfiguration(
