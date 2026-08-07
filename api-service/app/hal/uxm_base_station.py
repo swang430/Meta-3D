@@ -20,6 +20,7 @@ SCPI 子系统参考:
 
 import logging
 import asyncio
+import math
 import re
 from enum import Enum
 from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
@@ -43,6 +44,7 @@ from app.hal.uxm_command_profiles import (
     UxmTestApp,
     Uxm5GNRTestAppProfile,
     UxmLteNrIratProfile,
+    UxmRfAppIratLiteProfile,
     detect_profile,
 )
 
@@ -280,7 +282,14 @@ class RealUxmDriver(BaseStationDriver):
         self.ip_address: str = config.get("ip", "192.168.100.10")
         self.port: int = config.get("port", 5025)
         self.protocol: str = config.get("protocol", "TCPIP")  # TCPIP or HiSLIP
-        self.visa_resource: Optional[str] = config.get("visa_resource")
+        # The instrument resource is operator-owned configuration. The GUI
+        # persists it as InstrumentConnection.endpoint and the HAL service
+        # passes that field through as config["endpoint"]. Prefer an explicit
+        # driver override, otherwise consume the canonical GUI/DB endpoint.
+        configured_resource = config.get("visa_resource") or config.get("endpoint")
+        self.visa_resource: Optional[str] = (
+            str(configured_resource).strip() if configured_resource else None
+        )
         # Test-App command profile (CAICT 2026-05-13: E7515B platform hosts
         # multiple test apps with different SCPI dialects). Default profile
         # is 5G NR Test App for backward compat; auto-detected in connect()
@@ -290,6 +299,11 @@ class RealUxmDriver(BaseStationDriver):
         # Store an *instance* of the profile (not the class itself) so any
         # future mutation of profile attrs stays scoped to this driver
         # rather than leaking to every UXM driver via class-level state.
+        # uxm_app_mode is the operator's explicit GUI choice. Keep it separate
+        # from live app-name probing so RF App and Test App command trees are
+        # never silently exchanged after an explicit selection.
+        self._uxm_app_mode: str = str(config.get("uxm_app_mode") or "auto").lower()
+        self._profile_locked: bool = self._uxm_app_mode in {"rf_app", "test_app"}
         self._cmds: UxmTestApp = self._resolve_initial_profile(config)()
         # P2-1: Test App actually detected at connect() (via
         # SYSTem:APPLication:NAME?), as opposed to the resolved-from-
@@ -357,6 +371,11 @@ class RealUxmDriver(BaseStationDriver):
         # agent R6 F3: 部署级 custom 声明要在 ARFCN fallback 里压过自动基线
         # (原实现段 5 直接查模块常量, 本旋钮从未被消费过)
         self._custom_arfcn_provided = bool(custom_arfcn)
+        # Active RF App BTPut diagnostic state. This is deliberately separate
+        # from the legacy Test App throughput helpers: only an explicit
+        # diagnostic sequence may populate it, and stop always restores the
+        # operator's original Padding / Continuous / Length settings.
+        self._rf_app_dl_restore: Optional[Dict[str, Any]] = None
 
     @staticmethod
     def _resolve_initial_profile(config: Dict[str, Any]):
@@ -367,6 +386,11 @@ class RealUxmDriver(BaseStationDriver):
         and overwrites if mismatch.
         """
         hint = (config.get("uxm_profile") or "").lower()
+        app_mode = (config.get("uxm_app_mode") or "").lower()
+        if app_mode == "rf_app":
+            return UxmRfAppIratLiteProfile
+        if app_mode == "test_app":
+            return Uxm5GNRTestAppProfile
         if hint in ("irat", "lte_nr_irat", "lte+nr"):
             return UxmLteNrIratProfile
         return Uxm5GNRTestAppProfile
@@ -602,7 +626,21 @@ class RealUxmDriver(BaseStationDriver):
                     # detect_profile() registry didn't recognise it.
                     self.detected_test_app = app_name
                     detected = detect_profile(app_name)
-                    if not isinstance(self._cmds, detected):
+                    if self._profile_locked:
+                        if not isinstance(self._cmds, detected):
+                            logger.warning(
+                                f"[UXM] Instrument reports app {app_name!r} "
+                                f"({detected.PROFILE_NAME}), but GUI locks "
+                                f"uxm_app_mode={self._uxm_app_mode!r} to "
+                                f"{self._cmds.PROFILE_NAME}; keeping the "
+                                "GUI-selected SCPI profile"
+                            )
+                        else:
+                            logger.info(
+                                f"[UXM] App detected: {app_name!r} — locked GUI "
+                                f"profile {self._cmds.PROFILE_NAME} confirmed"
+                            )
+                    elif not isinstance(self._cmds, detected):
                         logger.info(
                             f"[UXM] App detected: {app_name!r} — switching "
                             f"command profile {self._cmds.PROFILE_NAME} → {detected.PROFILE_NAME}"
@@ -792,6 +830,8 @@ class RealUxmDriver(BaseStationDriver):
         return {
             "detected_test_app": self.detected_test_app,
             "command_profile": self._cmds.PROFILE_NAME,
+            "uxm_app_mode": self._uxm_app_mode,
+            "profile_locked": self._profile_locked,
             "primary_cell": self._cmds.PRIMARY_CELL,
             "hislip_index": self._cmds.HISLIP_INDEX,
         }
@@ -1276,7 +1316,14 @@ class RealUxmDriver(BaseStationDriver):
                 scs = config["scs_khz"]
                 self._scs_khz = scs
                 if (q := self._cmd("CELL_SCS", cell=cell)) is not None:
-                    self._write(f"{q} {scs}")
+                    # C8714000A RF App uses NR numerology enums for Common
+                    # SCS; Test App profiles accept the numeric kHz value.
+                    scs_value: Any = scs
+                    if self._cmds.PROFILE_NAME == "IRAT_LITE":
+                        scs_value = {15: "MU0", 30: "MU1", 120: "MU3"}.get(
+                            int(scs), scs
+                        )
+                    self._write(f"{q} {scs_value}")
 
             # ---- 5. ARFCN (自动查表或手动指定) ----
             if "arfcn" in config:
@@ -2674,6 +2721,356 @@ class RealUxmDriver(BaseStationDriver):
     def _pick(vals: List[Optional[float]], idx: int) -> Optional[float]:
         """按下标取值; 越界或 NaN → None (而不是 0.0)。"""
         return vals[idx] if 0 <= idx < len(vals) else None
+
+    @staticmethod
+    def _rf_app_no_error(response: str) -> bool:
+        """Return True for the usual ``0,"No error"`` SCPI responses."""
+        first = str(response or "").strip().strip('"').split(",", 1)[0].strip()
+        try:
+            return int(first) == 0
+        except ValueError:
+            return False
+
+    def _require_rf_app_profile(self) -> None:
+        """Fail before putting RF-only commands on a Test App session."""
+        required = (
+            "RF_CELL_STATUS",
+            "RF_DL_PADDING",
+            "RF_BTPUT_STATE",
+            "RF_BTPUT_CONTINUOUS_ALL",
+            "RF_BTPUT_LENGTH_ALL",
+            "RF_BTPUT_RESET",
+            "RF_BTPUT_DL_QUERY",
+            "RF_TMONITOR_DL_NR_QUERY",
+        )
+        missing = [name for name in required if not getattr(self._cmds, name, None)]
+        if self._cmds.PROFILE_NAME != "IRAT_LITE" or missing:
+            suffix = f"; missing={missing}" if missing else ""
+            raise RuntimeError(
+                "RF App 最大吞吐接口仅支持 IRAT_LITE Profile，当前为 "
+                f"{self._cmds.PROFILE_NAME}{suffix}"
+            )
+
+    def _rf_app_read_error(self) -> str:
+        return str(self._query(self._cmds.ERR)).strip()
+
+    def _rf_app_assert_no_error(self, command: str) -> str:
+        error = self._rf_app_read_error()
+        if not self._rf_app_no_error(error):
+            raise RuntimeError(f"SCPI error after {command}: {error}")
+        return error
+
+    def _rf_app_write_checked(self, command: str) -> None:
+        self._write(command)
+        self._rf_app_assert_no_error(command)
+
+    def _rf_app_query_checked(self, command: str) -> str:
+        response = str(self._query(command)).strip()
+        self._rf_app_assert_no_error(command)
+        return response
+
+    def _rf_app_drain_errors(self, *, limit: int = 20) -> List[str]:
+        """Drain the SCPI queue, returning only non-zero entries."""
+        errors: List[str] = []
+        for _ in range(limit):
+            response = self._rf_app_read_error()
+            if self._rf_app_no_error(response):
+                return errors
+            errors.append(response)
+        errors.append(f"error queue did not clear after {limit} reads")
+        return errors
+
+    @staticmethod
+    def _rf_app_parse_csv(response: str, expected: int) -> List[str]:
+        raw = str(response or "").strip()
+        if len(raw) >= 2 and raw[0] == raw[-1] == '"':
+            raw = raw[1:-1]
+        values = [part.strip() for part in raw.split(",")]
+        if len(values) != expected:
+            raise ValueError(
+                f"unexpected RF App result field count: expected {expected}, "
+                f"got {len(values)} ({response!r})"
+            )
+        return values
+
+    @staticmethod
+    def _rf_app_float(value: str) -> Optional[float]:
+        token = str(value or "").strip().upper()
+        if token in {"", "NAN", "UNKN", "NONE", "NULL", "---"}:
+            return None
+        try:
+            parsed = float(token)
+        except ValueError:
+            return None
+        return parsed if math.isfinite(parsed) else None
+
+    @staticmethod
+    def _rf_app_int(value: str) -> Optional[int]:
+        token = str(value or "").strip().upper()
+        if token in {"ON", "TRUE"}:
+            return 1
+        if token in {"OFF", "FALSE"}:
+            return 0
+        parsed = RealUxmDriver._rf_app_float(value)
+        return int(parsed) if parsed is not None else None
+
+    async def get_rf_app_dl_throughput_context(
+        self,
+        cell: str = "CELL1",
+    ) -> Dict[str, Any]:
+        """Read RF App identity, connection state, and cell snapshot.
+
+        This method does not change the cell.  It drains pre-existing errors
+        once so the subsequent run can attribute every new error to a concrete
+        command; the drained entries remain in the returned audit payload.
+        """
+        self._require_rf_app_profile()
+        if cell != "CELL1":
+            raise ValueError("RF App DL吞吐 v1 仅支持 CELL1")
+
+        preexisting_errors = self._rf_app_drain_errors()
+        self._rf_app_write_checked(self._cmds.CLS)
+
+        def query_template(name: str) -> str:
+            template = getattr(self._cmds, name, None)
+            if not template:
+                raise RuntimeError(f"IRAT_LITE Profile missing {name}")
+            return self._rf_app_query_checked(template.format(cell=cell) + "?")
+
+        identity = self._rf_app_query_checked(self._cmds.IDN)
+        app_name = self._rf_app_query_checked("SYSTem:APPLication:NAME?").strip('"')
+        if app_name.strip().upper() != "IRAT_LITE":
+            raise RuntimeError(
+                "仪表当前应用不是 IRAT_LITE，拒绝发送 RF App BTPut 指令: "
+                f"{app_name or 'unknown'}"
+            )
+        status = self._rf_app_query_checked(
+            self._cmds.RF_CELL_STATUS.format(cell=cell) + "?"
+        ).strip('"')
+        snapshot = {
+            "cell": cell,
+            "status": status,
+            "band": query_template("CELL_BAND").strip('"'),
+            "dl_arfcn": self._rf_app_int(query_template("CELL_DL_ARFCN")),
+            "dl_bandwidth": query_template("CELL_DL_BW").strip('"'),
+            "ul_bandwidth": query_template("CELL_UL_BW").strip('"'),
+            "dl_power_dbm_per_bw": self._rf_app_float(
+                query_template("RF_DL_CHANNEL_POWER")
+            ),
+        }
+        return {
+            "identity": identity,
+            "app_name": app_name,
+            "detected_test_app": self.detected_test_app,
+            "command_profile": self._cmds.PROFILE_NAME,
+            "cell_config": snapshot,
+            "preexisting_scpi_errors": preexisting_errors,
+        }
+
+    async def start_rf_app_max_dl_throughput(
+        self,
+        cell: str = "CELL1",
+        measurement_length_slots: int = 200,
+    ) -> Dict[str, Any]:
+        """Start RF App DL MAC-padding + BTPut measurement.
+
+        Scheduling scenario, MCS, RB allocation, Band, ARFCN, bandwidth and
+        power are intentionally untouched.  Only the measurement controls and
+        DL Padding are changed, and their original values are restored by
+        :meth:`stop_rf_app_max_dl_throughput`.
+        """
+        self._require_rf_app_profile()
+        if cell != "CELL1":
+            raise ValueError("RF App DL吞吐 v1 仅支持 CELL1")
+        raw_length = float(measurement_length_slots)
+        if not raw_length.is_integer():
+            raise ValueError("measurement_length_slots 必须是整数")
+        length = int(raw_length)
+        if length < 200 or length > 360000 or length % 200 != 0:
+            raise ValueError("measurement_length_slots 必须为 200..360000 且为200的整数倍")
+        if self._rf_app_dl_restore is not None:
+            raise RuntimeError("RF App DL吞吐测量已由当前驱动启动")
+
+        status = self._rf_app_query_checked(
+            self._cmds.RF_CELL_STATUS.format(cell=cell) + "?"
+        ).strip().strip('"').upper()
+        if status not in {"CONN", "CONNECTED"}:
+            raise RuntimeError(f"CELL1 未连接 UE（当前状态 {status or 'unknown'}）")
+
+        padding_cmd = self._cmds.RF_DL_PADDING.format(cell=cell)
+        state_cmd = self._cmds.RF_BTPUT_STATE
+        continuous_cmd = self._cmds.RF_BTPUT_CONTINUOUS_ALL
+        length_cmd = self._cmds.RF_BTPUT_LENGTH_ALL
+        original = {
+            "cell": cell,
+            "dl_padding": self._rf_app_int(
+                self._rf_app_query_checked(padding_cmd + "?")
+            ),
+            "btput_state": self._rf_app_int(
+                self._rf_app_query_checked(state_cmd + "?")
+            ),
+            "continuous_all": self._rf_app_int(
+                self._rf_app_query_checked(continuous_cmd + "?")
+            ),
+            "length_all": self._rf_app_int(
+                self._rf_app_query_checked(length_cmd + "?")
+            ),
+        }
+        if original["btput_state"] not in {0, None}:
+            raise RuntimeError(
+                "UXM BTPut 已在运行；为避免接管其他测量，本诊断拒绝启动"
+            )
+        if any(
+            original[key] is None
+            for key in ("dl_padding", "btput_state", "continuous_all", "length_all")
+        ):
+            raise RuntimeError(f"无法读取 RF App 原始测量设置: {original}")
+
+        # Store restore data before the first mutating write so the sequence's
+        # finally block can recover even if a later command fails.
+        self._rf_app_dl_restore = original
+        self._rf_app_write_checked(f"{state_cmd} OFF")
+        if original["dl_padding"] == 0:
+            self._rf_app_write_checked(f"{padding_cmd} ON")
+        self._rf_app_write_checked(f"{continuous_cmd} ON")
+        self._rf_app_write_checked(f"{length_cmd} {length}")
+        self._rf_app_write_checked(self._cmds.RF_BTPUT_RESET)
+        if self._cmds.RF_TMONITOR_RESET:
+            self._rf_app_write_checked(self._cmds.RF_TMONITOR_RESET)
+        self._rf_app_write_checked(f"{state_cmd} ON")
+        active = self._rf_app_int(self._rf_app_query_checked(state_cmd + "?"))
+        if active != 1:
+            raise RuntimeError(f"BTPut 启动后状态异常: {active!r}")
+        return {
+            "cell": cell,
+            "measurement_length_slots": length,
+            "original": dict(original),
+            "dl_padding_enabled_by_diagnostic": original["dl_padding"] == 0,
+        }
+
+    async def read_rf_app_max_dl_throughput(
+        self,
+        cell: str = "CELL1",
+    ) -> Dict[str, Any]:
+        """Read one real RF App DL sample from BTPut and TMONitor."""
+        self._require_rf_app_profile()
+        if cell != "CELL1":
+            raise ValueError("RF App DL吞吐 v1 仅支持 CELL1")
+        if self._rf_app_dl_restore is None:
+            raise RuntimeError("RF App DL吞吐测量尚未启动")
+
+        btput_raw = self._rf_app_query_checked(
+            self._cmds.RF_BTPUT_DL_QUERY.format(cell=cell)
+        )
+        tmonitor_raw = self._rf_app_query_checked(
+            self._cmds.RF_TMONITOR_DL_NR_QUERY
+        )
+        btput = self._rf_app_parse_csv(btput_raw, 9)
+        tmonitor = self._rf_app_parse_csv(tmonitor_raw, 4)
+        btput_throughput = self._rf_app_float(btput[7])
+        current_throughput = self._rf_app_float(tmonitor[0])
+        throughput = (
+            btput_throughput
+            if btput_throughput is not None
+            else current_throughput
+        )
+        source = "btput" if btput_throughput is not None else (
+            "tmonitor" if current_throughput is not None else "none"
+        )
+        return {
+            "timestamp": datetime.utcnow().isoformat(timespec="milliseconds") + "Z",
+            "valid": throughput is not None,
+            "source": source,
+            "dl_throughput_mbps": throughput,
+            "dl_bler": self._rf_app_float(btput[6]),
+            "progress_count": self._rf_app_int(btput[0]),
+            "dl_ack_count": self._rf_app_int(btput[1]),
+            "dl_nack_count": self._rf_app_int(btput[2]),
+            "dl_statdtx_count": self._rf_app_int(btput[3]),
+            "dl_nack_statdtx_count": self._rf_app_int(btput[4]),
+            "pdsch_bler_count": self._rf_app_int(btput[5]),
+            "dl_throughput_ratio": self._rf_app_float(btput[8]),
+            "tmonitor_current_mbps": current_throughput,
+            "tmonitor_peak_mbps": self._rf_app_float(tmonitor[1]),
+            "tmonitor_average_mbps": self._rf_app_float(tmonitor[2]),
+            "tmonitor_transferred_bits": self._rf_app_int(tmonitor[3]),
+            "mcs_dl": None,
+            "cqi": None,
+            "rank_indicator": None,
+            "raw_btput": btput_raw,
+            "raw_tmonitor": tmonitor_raw,
+        }
+
+    @property
+    def rf_app_dl_throughput_cleanup_required(self) -> bool:
+        """Whether a partially/fully started RF App measurement needs stop."""
+        return self._rf_app_dl_restore is not None
+
+    async def stop_rf_app_max_dl_throughput(self) -> Dict[str, Any]:
+        """Stop BTPut and restore every setting changed by the diagnostic."""
+        self._require_rf_app_profile()
+        restore = self._rf_app_dl_restore
+        errors: List[str] = []
+        restored: Dict[str, Any] = {}
+
+        def attempt(label: str, command: str) -> None:
+            try:
+                self._rf_app_write_checked(command)
+                restored[label] = True
+            except Exception as exc:  # noqa: BLE001
+                restored[label] = False
+                errors.append(f"{label}: {type(exc).__name__}: {exc}")
+
+        attempt("btput_state_off", f"{self._cmds.RF_BTPUT_STATE} OFF")
+        if restore is not None:
+            attempt(
+                "length_all",
+                f"{self._cmds.RF_BTPUT_LENGTH_ALL} {restore['length_all']}",
+            )
+            attempt(
+                "continuous_all",
+                f"{self._cmds.RF_BTPUT_CONTINUOUS_ALL} "
+                f"{'ON' if restore['continuous_all'] else 'OFF'}",
+            )
+            if restore.get("dl_padding") == 0:
+                padding_cmd = self._cmds.RF_DL_PADDING.format(cell=restore["cell"])
+                attempt("dl_padding", f"{padding_cmd} OFF")
+            else:
+                restored["dl_padding"] = "unchanged_on"
+
+        self._rf_app_dl_restore = None
+        try:
+            queue_errors = self._rf_app_drain_errors()
+        except Exception as exc:  # noqa: BLE001
+            queue_errors = [f"error queue read failed: {type(exc).__name__}: {exc}"]
+        errors.extend(queue_errors)
+        result = {
+            "stopped": restored.get("btput_state_off") is True,
+            "restored": restored,
+            "scpi_errors": errors,
+        }
+        if errors:
+            raise RuntimeError(f"RF App DL吞吐停止/恢复失败: {errors}")
+        return result
+
+    async def get_rf_app_dl_throughput_final_status(
+        self,
+        cell: str = "CELL1",
+    ) -> Dict[str, Any]:
+        """Final non-mutating audit after stop/restore."""
+        self._require_rf_app_profile()
+        status = self._rf_app_query_checked(
+            self._cmds.RF_CELL_STATUS.format(cell=cell) + "?"
+        ).strip().strip('"')
+        btput_state = self._rf_app_int(
+            self._rf_app_query_checked(self._cmds.RF_BTPUT_STATE + "?")
+        )
+        return {
+            "cell_status": status,
+            "btput_state": btput_state,
+            "scpi_errors": self._rf_app_drain_errors(),
+        }
+
 
     async def get_throughput_metrics(self) -> ThroughputMetrics:
         """

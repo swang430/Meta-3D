@@ -24,6 +24,8 @@ from app.hal.uxm_base_station import RealUxmDriver
 from app.hal.uxm_command_profiles import (
     Uxm5GNRTestAppProfile,
     UxmLteNrIratProfile,
+    UxmRfAppIratLiteProfile,
+    detect_profile,
 )
 
 
@@ -38,6 +40,78 @@ def driver_irat():
     """Driver pre-configured with the LTE_NR_IRAT profile via config hint
     (skips the connect-time auto-detect)."""
     return RealUxmDriver("uxm-irat", {"ip": "10.0.0.2", "uxm_profile": "irat"})
+
+
+def test_gui_endpoint_becomes_uxm_visa_resource():
+    """The endpoint saved by the instrument GUI is the driver's source of truth."""
+    endpoint = "TCPIP0::201.20.2.1::inst0::INSTR"
+    driver = RealUxmDriver(
+        "uxm-dynamic-ip",
+        {
+            "endpoint": endpoint,
+            "ip": "201.20.2.1",
+            "port": None,
+            "protocol": "VISA/SCPI",
+        },
+    )
+
+    assert driver.visa_resource == endpoint
+
+
+def test_explicit_visa_resource_overrides_gui_endpoint():
+    """Keep the per-driver escape hatch for unusual deployments."""
+    driver = RealUxmDriver(
+        "uxm-explicit-resource",
+        {
+            "endpoint": "TCPIP0::201.20.2.1::inst0::INSTR",
+            "visa_resource": "TCPIP0::201.20.2.1::hislip2::INSTR",
+        },
+    )
+
+    assert driver.visa_resource == "TCPIP0::201.20.2.1::hislip2::INSTR"
+
+
+def test_c8714000a_rf_app_selects_bse_profile():
+    assert detect_profile("IRAT_LITE") is UxmRfAppIratLiteProfile
+
+
+def test_gui_rf_app_mode_selects_and_locks_rf_profile():
+    driver = RealUxmDriver(
+        "uxm-rf", {"ip": "201.20.2.1", "uxm_app_mode": "rf_app"},
+    )
+    assert isinstance(driver._cmds, UxmRfAppIratLiteProfile)
+    assert driver._profile_locked is True
+    assert driver.readiness_metadata()["uxm_app_mode"] == "rf_app"
+
+
+def test_gui_test_app_mode_preserves_legacy_test_profile():
+    driver = RealUxmDriver(
+        "uxm-test", {"ip": "201.20.2.1", "uxm_app_mode": "test_app"},
+    )
+    assert isinstance(driver._cmds, Uxm5GNRTestAppProfile)
+    assert driver._profile_locked is True
+    assert driver._cmds.CELL_BAND == "CONFig:NR5G:{cell}:BAND"
+    assert driver._cmds.CELL_SCS == "CONFig:NR5G:{cell}:SCS"
+
+
+def test_irat_lite_uses_verified_oband_and_common_scs_headers():
+    profile = UxmRfAppIratLiteProfile()
+    assert profile.CELL_BAND == "BSE:CONFig:NR5G:{cell}:OBANd"
+    assert profile.CELL_SCS == "BSE:CONFig:NR5G:{cell}:SUBCarrier:SPACing:COMMon"
+
+
+@pytest.mark.asyncio
+async def test_irat_lite_metrics_do_not_send_unsupported_scpi():
+    """Periodic HAL metrics refresh must be wire-silent for unverified KPIs."""
+    driver = RealUxmDriver("uxm-rf-app", {"ip": "201.20.2.1"})
+    driver._cmds = UxmRfAppIratLiteProfile()
+    driver._cell_id = "CELL1"
+    driver._query = MagicMock(side_effect=AssertionError("unexpected SCPI query"))
+
+    metrics = await driver.get_throughput_metrics()
+
+    driver._query.assert_not_called()
+    assert metrics.dl_throughput_mbps == 0.0
 
 
 class TestCmdHelper:
@@ -100,6 +174,28 @@ class TestSetCellConfigGracefulSkip:
         sess.timeout = 5000
         driver._visa_session = sess
         return sess
+
+    @pytest.mark.asyncio
+    async def test_irat_lite_encodes_band_and_scs_for_rf_app(self):
+        driver = RealUxmDriver("uxm-rf-app", {"ip": "201.20.2.1"})
+        driver._cmds = UxmRfAppIratLiteProfile()
+        driver._cell_id = "CELL1"
+        sess = self._wire_fake_visa(driver)
+
+        ok = await driver.set_cell_config({
+            "band": "N78",
+            "scs_khz": 30,
+            "bandwidth_mhz": 40,
+            "arfcn": 636666,
+        })
+
+        assert ok is True
+        written = [call.args[0] for call in sess.write.call_args_list]
+        assert "BSE:CONFig:NR5G:CELL1:OBANd N78" in written
+        assert (
+            "BSE:CONFig:NR5G:CELL1:SUBCarrier:SPACing:COMMon MU1"
+            in written
+        )
 
     @pytest.mark.asyncio
     async def test_irat_skips_unsupported_optional_fields(self, driver_irat):

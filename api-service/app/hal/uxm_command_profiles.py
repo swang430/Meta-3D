@@ -151,6 +151,22 @@ class UxmTestApp:
     MEAS_UE_REPORT_CLEAR: Optional[str] = None
     MEAS_UE_REPORT_JSON: Optional[str] = None
 
+    # --- RF App on-demand DL throughput (IRAT_LITE only) ---
+    # Keep these separate from MEAS_BTHROUGHPUT_* above.  The latter is the
+    # legacy Test App ``BTHRoughput`` tree used by periodic KPI polling;
+    # C8714000A RF App exposes a different ``BTPut``/``TMONitor`` tree and
+    # must only be driven by an explicit diagnostic run.
+    RF_CELL_STATUS: Optional[str] = None
+    RF_DL_CHANNEL_POWER: Optional[str] = None
+    RF_DL_PADDING: Optional[str] = None
+    RF_BTPUT_STATE: Optional[str] = None
+    RF_BTPUT_CONTINUOUS_ALL: Optional[str] = None
+    RF_BTPUT_LENGTH_ALL: Optional[str] = None
+    RF_BTPUT_RESET: Optional[str] = None
+    RF_BTPUT_DL_QUERY: Optional[str] = None
+    RF_TMONITOR_RESET: Optional[str] = None
+    RF_TMONITOR_DL_NR_QUERY: Optional[str] = None
+
     # --- UE capability / RRC reconfig ---
     UE_CAPABILITY_QUERY: Optional[str] = None
     UE_MAX_DL_LAYERS_QUERY: Optional[str] = None
@@ -598,11 +614,79 @@ class UxmLteNrIratProfile(UxmTestApp):
     # — driver should check `if cmd is not None` before sending.
 
 
+class UxmRfAppIratLiteProfile(UxmLteNrIratProfile):
+    """C8714000A RF Application Framework / ``IRAT_LITE`` dialect.
+
+    Live verified on MY62226143, RF Application Framework 3.5.134.12281
+    (2026-07-13).  Its scalar cell controls use the BSE-rooted family, but
+    the older C8700200A throughput ``...CELL1:...TSTatistics:JSON?`` query is
+    not present.  The global HAL metrics cache calls ``get_metrics`` every
+    few seconds, so inheriting that query caused a permanent stream of
+    ``-113 Undefined header`` popups on the instrument.
+
+    Keep only commands verified on this RF App.  Measurement commands stay
+    disabled until their C8714000A-specific forms are verified explicitly;
+    unsupported means "do not put anything on the wire", not "try and log".
+    """
+
+    PROFILE_NAME = "IRAT_LITE"
+    APP_NAME_MATCH = ("IRAT_LITE",)
+    PRIMARY_CELL = "CELL1"
+    PRIMARY_BWP = "BWP0"
+    HISLIP_INDEX = 2
+
+    # Live-verified scalar controls.  C8714000A names Operating Band
+    # ``OBANd`` (plain ``BAND`` is -113) and encodes common SCS as MU0/MU1/MU3
+    # rather than a naked kHz number.
+    CELL_BAND = "BSE:CONFig:NR5G:{cell}:OBANd"
+    CELL_SCS = "BSE:CONFig:NR5G:{cell}:SUBCarrier:SPACing:COMMon"
+
+    # RF App-specific, live-verified on MY62226143 / 3.5.134.12281 on
+    # 2026-07-13.  These commands are intentionally NOT wired into the
+    # background get_throughput_metrics() path: the diagnostics sequence is
+    # the sole caller, so an idle system remains wire-silent.
+    RF_CELL_STATUS = "BSE:STATus:NR5G:{cell}"
+    RF_DL_CHANNEL_POWER = "BSE:CONFig:NR5G:{cell}:DL:POWer:CHANnel"
+    RF_DL_PADDING = "BSE:CONFig:NR5G:{cell}:SCHeduling:DL:PADDing:STATe"
+    RF_BTPUT_STATE = "BSE:MEASure:NR5G:BTPut:STATe"
+    RF_BTPUT_CONTINUOUS_ALL = "BSE:MEASure:NR5G:BTPut:CONTinuous:ALL"
+    RF_BTPUT_LENGTH_ALL = "BSE:MEASure:NR5G:BTPut:LENGth:ALL"
+    RF_BTPUT_RESET = "BSE:MEASure:NR5G:BTPut:RESet"
+    RF_BTPUT_DL_QUERY = "BSE:MEASure:NR5G:{cell}:BTPut:DL?"
+    RF_TMONITOR_RESET = "BSE:METRics:RESet"
+    RF_TMONITOR_DL_NR_QUERY = "BSE:METRics:TMONitor:OTA:DL:NR?"
+
+    # Disable automatic KPI polling commands inherited from C8700200A.
+    MEAS_BTHROUGHPUT_DL_START = None
+    MEAS_BTHROUGHPUT_DL_STOP = None
+    MEAS_BTHROUGHPUT_DL_JSON = None
+    MEAS_BTHROUGHPUT_DL_BLER = None
+    MEAS_BTHROUGHPUT_STATE = None
+    MEAS_BTHROUGHPUT_CLEAR = None
+    MEAS_TPUT_DL_OTA = None
+    MEAS_TPUT_UL_OTA = None
+    MEAS_BLER_DL = None
+    MEAS_BLER_UL = None
+    MEAS_TPUT_UL_JSON = None
+    MEAS_TPUT_UL_BLER = None
+    MEAS_CSI_START = None
+    MEAS_CSI_STOP = None
+    MEAS_CSI_STATE = None
+    MEAS_CSI_CQI = None
+    MEAS_CSI_RI = None
+    MEAS_UE_REPORT_STATE = None
+    MEAS_UE_REPORT_CLEAR = None
+    MEAS_UE_REPORT_JSON = None
+    MEAS_UE_RSRP = None
+    MEAS_UE_SINR = None
+
+
 # ===========================================================================
 # Profile registry + detection
 # ===========================================================================
 
 ALL_PROFILES: tuple[Type[UxmTestApp], ...] = (
+    UxmRfAppIratLiteProfile,
     Uxm5GNRTestAppProfile,
     UxmLteNrIratProfile,
 )
