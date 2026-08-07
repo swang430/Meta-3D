@@ -30,9 +30,21 @@ export function CommissioningSandbox() {
   // rehearsal without a real DUT / calibration. Default OFF = strict ON, so
   // on-site real first-call keeps the fail-loud protection (P1-9 intent).
   const [labSmoke, setLabSmoke] = useState(false)
+  // 2026-08-07 现场: 只放过校准证书那一道门。跟 labSmoke 分开是因为 labSmoke
+  // 一开就废掉全部 8 道 —— 为了绕开"证书未绑"而开它, 会把 DUT 门也一起废掉,
+  // 「登记 DUT」按钮就白点了。校准没做完 vs DUT 能不能 attach 是两件事。
+  const [calBypass, setCalBypass] = useState(false)
   // U-5: 暗室首测前逐设备自检 (借鉴转台/EMCenter standalone 验证, 首测前先单独验各仪表通)
   const [selfcheck, setSelfcheck] = useState<api.DeviceSelfcheckResult | null>(null)
   const [selfcheckLoading, setSelfcheckLoading] = useState(false)
+  // DUT attach 登记 —— 严格门要的那条记录, 在此之前 GUI 无入口 (只有 Phases.tsx
+  // 一段"自己去 POST"的提示文字)。2026-08-07 现场实证: precheck 死在
+  // "DUT attach record missing", 操作员只能手敲 curl。
+  const [dutImsi, setDutImsi] = useState<string>('')
+  const [dutModel, setDutModel] = useState<string>('')
+  const [attachResult, setAttachResult] = useState<api.AttachDutResponse | null>(null)
+  const [attachError, setAttachError] = useState<string | null>(null)
+  const [attachLoading, setAttachLoading] = useState(false)
   // 2026-05-18 P0-7: only meaningful when engineMode==='external_asc'.
   // Operator-supplied absolute path of a local directory of channel_InX_OutY.asc
   // files (typically produced by ChannelEgine app.py Streamlit on the same host).
@@ -89,6 +101,7 @@ export function CommissioningSandbox() {
         labId || undefined,
         engineMode === 'external_asc' ? ascSourcePath : undefined,
         labSmoke,
+        calBypass,
       )
       setSession(res.data)
       setActiveStep(0)
@@ -284,6 +297,12 @@ export function CommissioningSandbox() {
 
               <Divider my={4} />
               <Switch
+                checked={calBypass}
+                onChange={(e) => setCalBypass(e.currentTarget.checked)}
+                label="只跳过校准证书门（其余 7 道照常守着）"
+                description="lab 未绑校准证书（P0-3 未做完）但 DUT 能真 attach 时用这个 —— DUT 门 / 频率门 / .smu 门等仍然生效。别为了绕证书去开下面那个总开关，那会把 DUT 门一起废掉。"
+              />
+              <Switch
                 checked={labSmoke}
                 onChange={(e) => setLabSmoke(e.currentTarget.checked)}
                 label="强制跳过严格 DUT / 校准门（real 模式 override）"
@@ -380,6 +399,12 @@ export function CommissioningSandbox() {
 
           <Divider my="sm" />
           <Switch
+            checked={calBypass}
+            onChange={(e) => setCalBypass(e.currentTarget.checked)}
+            label="只跳过校准证书门（其余 7 道照常守着）"
+            description="lab 未绑校准证书（P0-3 未做完）但 DUT 能真 attach 时用这个 —— DUT 门 / 频率门 / .smu 门等仍然生效。切换后点「重置会话」生效。别为了绕证书去开下面那个总开关，那会把 DUT 门一起废掉，「登记 DUT」就白点了。"
+          />
+          <Switch
             checked={labSmoke}
             onChange={(e) => setLabSmoke(e.currentTarget.checked)}
             label="强制跳过严格 DUT / 校准门（real 模式 override）"
@@ -436,6 +461,113 @@ export function CommissioningSandbox() {
                   </Group>
                 ))}
               </Stack>
+            </Alert>
+          )}
+
+          <Divider my={4} />
+          {/* DUT attach 登记 —— precheck §5b 严格门要的那条记录。
+              ⚠ session.session_id **就是** execution_id (后端
+              _execution_to_session_response 写的 session_id=str(execution.id))。 */}
+          <div>
+            <Text size="sm" fw={500}>DUT attach 登记（严格门必需）</Text>
+            <Text size="xs" c="dimmed" mb="xs">
+              把 DUT 的 IMSI 登记到本次执行，并<strong>当场向 UXM 查一次 UE 状态</strong>。
+              先把手机放进静区、插好 SIM、确认已 attach 到 UXM 再点。
+              不登记则真仪表下 precheck 必 FAIL（“DUT attach record missing”）。
+            </Text>
+            <Group align="flex-end" gap="xs">
+              <TextInput
+                label="IMSI"
+                placeholder="460xxxxxxxxxxxx"
+                value={dutImsi}
+                onChange={(e) => setDutImsi(e.currentTarget.value)}
+                style={{ flex: 1 }}
+                size="xs"
+              />
+              <TextInput
+                label="DUT 型号（选填）"
+                placeholder="例: Xiaomi 15"
+                value={dutModel}
+                onChange={(e) => setDutModel(e.currentTarget.value)}
+                style={{ flex: 1 }}
+                size="xs"
+              />
+              <Button
+                size="xs"
+                variant="light"
+                loading={attachLoading}
+                disabled={!dutImsi.trim()}
+                onClick={async () => {
+                  setAttachLoading(true)
+                  setAttachError(null)
+                  try {
+                    // session_id === execution_id, 见上方注释
+                    const res = await api.attachDut(session.session_id, {
+                      imsi: dutImsi.trim(),
+                      dut_model: dutModel.trim() || null,
+                    })
+                    setAttachResult(res.data)
+                  } catch (e: unknown) {
+                    setAttachResult(null)
+                    const detail =
+                      (e as { response?: { data?: { detail?: string } } })?.response
+                        ?.data?.detail
+                    setAttachError(detail || (e as Error)?.message || '登记失败')
+                  } finally {
+                    setAttachLoading(false)
+                  }
+                }}
+              >
+                登记 DUT
+              </Button>
+            </Group>
+          </div>
+          {attachError && (
+            <Alert color="red" variant="light" mt="xs" title="登记失败">
+              <Text size="sm">{attachError}</Text>
+            </Alert>
+          )}
+          {attachResult && (
+            /* ⚠ 颜色跟 rrc_connected 走, **不跟 success 走** —— 接口查不到 UE
+               也会返回 success=true 并把原因塞进 warnings。拿 success 上色
+               会让"记录写下了"看起来像"DUT 已就位", 那正是严格门要防的事。 */
+            <Alert
+              color={attachResult.rrc_connected ? 'green' : 'orange'}
+              variant="light"
+              mt="xs"
+              title={
+                attachResult.rrc_connected
+                  ? '已登记，UE 在线'
+                  : '已登记，但 UE 未确认在线 —— 严格门仍会 FAIL'
+              }
+            >
+              <Group gap="xs" mb={4}>
+                <Badge size="sm" variant="light" color="gray">
+                  IMSI {attachResult.dut_imsi}
+                </Badge>
+                <Badge
+                  size="sm"
+                  variant="light"
+                  color={attachResult.rrc_connected ? 'green' : 'orange'}
+                >
+                  rrc_connected={String(attachResult.rrc_connected)}
+                </Badge>
+              </Group>
+              {attachResult.warnings.length > 0 && (
+                <Stack gap={2}>
+                  {attachResult.warnings.map((w, i) => (
+                    <Text key={i} size="xs" c="dimmed">
+                      · {w}
+                    </Text>
+                  ))}
+                </Stack>
+              )}
+              {!attachResult.rrc_connected && (
+                <Text size="xs" c="dimmed" mt={4}>
+                  严格门要三个条件同时成立：记录存在 + rrc_connected=true +
+                  precheck 当下再查 UE 仍在线。只写记录不够。
+                </Text>
+              )}
             </Alert>
           )}
 

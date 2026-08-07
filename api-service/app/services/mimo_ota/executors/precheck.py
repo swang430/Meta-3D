@@ -175,7 +175,8 @@ class PrecheckExecutor(IStepExecutor):
                     "No DUT attach record on this execution — strict DUT gate "
                     "will fail this precheck when run against a real baseStation "
                     "(mock/absent baseStation auto-skips the gate). "
-                    "POST /api/v1/test-executions/{id}/attach-dut before retry, "
+                    "用暗室首测面板的「登记 DUT」按钮登记 IMSI 后重试 "
+                    "(等价于 POST /api/v1/test-executions/{id}/attach-dut), "
                     "or set precheck_strict_dut=False to override on real hardware."
                 )
             else:
@@ -630,7 +631,8 @@ class PrecheckExecutor(IStepExecutor):
             if dut_attach_missing:
                 dut_reason_parts.append(
                     "DUT attach record missing "
-                    "(POST /api/v1/test-executions/{id}/attach-dut before precheck)"
+                    "(用暗室首测面板的「登记 DUT」按钮登记 IMSI; 等价端点 "
+                    "POST /api/v1/test-executions/{id}/attach-dut)"
                 )
             if dut_rrc_broken:
                 dut_reason_parts.append(
