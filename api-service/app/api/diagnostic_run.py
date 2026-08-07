@@ -46,6 +46,9 @@ class DiagnosticRunDetail(DiagnosticRunSummary):
     params: Optional[dict] = None
     result_extra: Optional[dict] = None
     hal_trace_log_path: Optional[str] = None
+    # SCPI sequence runs persist their full structured response here from
+    # 2026-06-17 onward so the GUI can restore the result card after navigation.
+    sequence_result: Optional[dict] = None
 
 
 class DiagnosticRunListResponse(BaseModel):
@@ -125,6 +128,11 @@ def get_diagnostic_run(run_id: UUID, db: Session = Depends(get_db)):
     row = db.query(DiagnosticRun).filter(DiagnosticRun.id == run_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail=f"DiagnosticRun {run_id} not found")
+    sequence_result = None
+    if isinstance(row.params, dict):
+        raw_sequence_result = row.params.get("_sequence_result")
+        if isinstance(raw_sequence_result, dict):
+            sequence_result = raw_sequence_result
     return DiagnosticRunDetail(
         id=row.id,
         kind=row.kind,
@@ -139,4 +147,5 @@ def get_diagnostic_run(run_id: UUID, db: Session = Depends(get_db)):
         output_excerpt=row.output_excerpt,
         result_extra=row.result_extra,
         hal_trace_log_path=row.hal_trace_log_path,
+        sequence_result=sequence_result,
     )

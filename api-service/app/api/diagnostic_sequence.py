@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import threading
 import time
 from dataclasses import asdict
 from typing import Any, Dict, List, Optional
@@ -49,6 +50,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/diagnostic-sequences", tags=["Diagnostics"])
 
+# Lightweight in-process progress feed for the synchronous sequence endpoint.
+# The POST remains the source of truth and persists the final result; this
+# cache only lets the GUI display log/sample updates while that POST is still
+# running.  It is bounded and contains no credentials or SCPI endpoint data.
+_progress_lock = threading.Lock()
+_sequence_progress: Dict[str, Dict[str, Any]] = {}
+_MAX_PROGRESS_RUNS = 100
+
 
 class SequenceParamSpec(BaseModel):
     name: str
@@ -75,6 +84,13 @@ class RunSequenceRequest(BaseModel):
     operating_mode: str = Field("mimo_ota", description="For RF chain resolution if the sequence wants it")
     params: Dict[str, Any] = Field(default_factory=dict)
     run_by: Optional[str] = Field(None, description="Operator name / id for audit row")
+    progress_token: Optional[str] = Field(
+        None,
+        min_length=8,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9._-]+$",
+        description="Ephemeral GUI token for polling live sequence log progress",
+    )
 
 
 class SequenceStepResponse(BaseModel):
@@ -96,10 +112,85 @@ class SequenceRunResponse(BaseModel):
     extra: Dict[str, Any] = Field(default_factory=dict)
 
 
+class SequenceProgressResponse(BaseModel):
+    token: str
+    sequence_key: str
+    status: str
+    log: List[str] = Field(default_factory=list)
+    started_at_epoch_ms: int
+    updated_at_epoch_ms: int
+    success: Optional[bool] = None
+    summary: Optional[str] = None
+
+
+def _progress_start(token: str, sequence_key: str) -> None:
+    now_ms = int(time.time() * 1000)
+    with _progress_lock:
+        if len(_sequence_progress) >= _MAX_PROGRESS_RUNS:
+            oldest = min(
+                _sequence_progress,
+                key=lambda key: _sequence_progress[key].get("updated_at_epoch_ms", 0),
+            )
+            _sequence_progress.pop(oldest, None)
+        _sequence_progress[token] = {
+            "token": token,
+            "sequence_key": sequence_key,
+            "status": "running",
+            "log": [],
+            "started_at_epoch_ms": now_ms,
+            "updated_at_epoch_ms": now_ms,
+            "success": None,
+            "summary": None,
+        }
+
+
+def _progress_log(token: Optional[str], message: str) -> None:
+    if not token:
+        return
+    with _progress_lock:
+        progress = _sequence_progress.get(token)
+        if progress is None:
+            return
+        progress["log"].append(message)
+        progress["updated_at_epoch_ms"] = int(time.time() * 1000)
+
+
+def _progress_finish(
+    token: Optional[str],
+    *,
+    success: bool,
+    summary: str,
+) -> None:
+    if not token:
+        return
+    with _progress_lock:
+        progress = _sequence_progress.get(token)
+        if progress is None:
+            return
+        progress["status"] = "completed"
+        progress["success"] = success
+        progress["summary"] = summary
+        progress["updated_at_epoch_ms"] = int(time.time() * 1000)
+
+
 @router.get("", response_model=List[SequenceMetadataResponse])
 def list_diagnostic_sequences():
     """List sequences discovered under app/diagnostics/sequences/."""
     return [SequenceMetadataResponse(**entry) for entry in loader.list_sequences()]
+
+
+@router.get("/progress/{token}", response_model=SequenceProgressResponse)
+def get_diagnostic_sequence_progress(token: str):
+    """Read transient live log progress for a currently running sequence."""
+    with _progress_lock:
+        progress = _sequence_progress.get(token)
+        if progress is None:
+            raise HTTPException(status_code=404, detail="Sequence progress token not found")
+        snapshot = {
+            **progress,
+            "log": list(progress.get("log", [])),
+        }
+    return SequenceProgressResponse(**snapshot)
 
 
 @router.post("/{key}/run", response_model=SequenceRunResponse)
@@ -180,9 +271,12 @@ async def run_diagnostic_sequence(
             )
 
     log_buffer: List[str] = []
+    if request.progress_token:
+        _progress_start(request.progress_token, key)
 
     def _log(msg: str) -> None:
         log_buffer.append(msg)
+        _progress_log(request.progress_token, msg)
         logger.info("[diagnostic %s] %s", key, msg)
 
     started = time.monotonic()
@@ -226,6 +320,11 @@ async def run_diagnostic_sequence(
             release_unsafe_diagnostic(unsafe_token)
 
     duration_ms = int((time.monotonic() - started) * 1000)
+    _progress_finish(
+        request.progress_token,
+        success=success,
+        summary=summary,
+    )
 
     # Persist the audit row. output_excerpt = the human log lines + summary
     # so the list view recap shows what actually happened.
@@ -247,12 +346,25 @@ async def run_diagnostic_sequence(
             if raw is not None:
                 output_text.write(f"      raw: {raw!r}\n")
 
+    sequence_result_for_history = {
+        "success": success,
+        "summary": summary,
+        "duration_ms": duration_ms,
+        "log": log_buffer,
+        "steps": step_results,
+        "extra": extra,
+    }
+
     run = ctx.record_run(
         db,
         kind=DiagnosticKind.SCPI_SEQUENCE,
         target_name=key,
         success=success,
-        params={"sequence_key": key, **request.params},
+        params={
+            "sequence_key": key,
+            **request.params,
+            "_sequence_result": sequence_result_for_history,
+        },
         output=output_text.getvalue(),
         result_extra=extra,
         error_message=error_msg,

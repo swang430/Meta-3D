@@ -335,6 +335,19 @@ class TestRunSequence:
         assert "start_signaling" in labels
         assert body["extra"]["ue_info"]["connected"] is True
 
+        detail = client.get(f"/api/v1/diagnostic-runs/{body['diagnostic_run_id']}")
+        assert detail.status_code == 200
+        detail_body = detail.json()
+        assert detail_body["sequence_result"]["summary"] == body["summary"]
+        assert (
+            detail_body["sequence_result"]["steps"][0]["label"]
+            == body["steps"][0]["label"]
+        )
+        assert (
+            detail_body["sequence_result"]["extra"]["ue_info"]["connected"]
+            is True
+        )
+
     def test_attach_check_aborts_when_set_cell_config_returns_false(
         self, db, lab_with_bs, monkeypatch
     ):
