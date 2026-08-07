@@ -1,5 +1,5 @@
 """Test Execution History API endpoints"""
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from typing import Optional
@@ -217,6 +217,7 @@ class CancelExecutionResponse(BaseModel):
 @router.post("/{execution_id}/cancel", response_model=CancelExecutionResponse)
 def cancel_case_execution(
     execution_id: UUID,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """协作式取消用例执行 (ARCH-1 S1): 置 cancelled, runner 在相位间尊重。
@@ -238,6 +239,7 @@ def cancel_case_execution(
             status_code=409,
             detail="执行不在 running 状态, 无可取消",
         )
+    request.state.execution_id = str(execution_id)
     return CancelExecutionResponse(execution_id=execution_id, status="cancelled")
 
 
