@@ -327,6 +327,183 @@ class ChannelModelsListResult(BaseModel):
     reason: Optional[str] = None  # "driver_not_loaded" | "not_a_channel_emulator" | None
 
 
+class InstrumentControlModeRequest(BaseModel):
+    """请求切换仪器控制权。
+
+    ``manual_local`` 会把软件侧会话释放，让操作员在仪器本机 UI
+    点击 Local Mode 后继续操作；``software`` 会重新加载 HAL 驱动。
+    """
+    mode: str
+    stop_playback: bool = False
+    close_emulation: bool = False
+
+
+class InstrumentControlModeResponse(BaseModel):
+    """当前仪器控制权状态。"""
+    category_key: str
+    mode: str
+    status: str
+    message: str
+    driver_loaded: bool = False
+    warnings: List[str] = []
+
+
+def _get_category_and_connection(
+    db: Session,
+    category_key: str,
+) -> tuple[InstrumentCategoryModel, Optional[InstrumentConnectionDB]]:
+    category = db.query(InstrumentCategoryModel).filter(
+        InstrumentCategoryModel.category_key == category_key
+    ).first()
+    if not category:
+        raise HTTPException(404, f"Category '{category_key}' not found")
+    conn = db.query(InstrumentConnectionDB).filter(
+        InstrumentConnectionDB.category_id == category.id
+    ).first()
+    return category, conn
+
+
+def _connection_control_mode(conn: Optional[InstrumentConnectionDB]) -> str:
+    params = conn.connection_params if conn and isinstance(conn.connection_params, dict) else {}
+    return "manual_local" if params.get("control_mode") == "manual_local" else "software"
+
+
+def _set_connection_control_mode(
+    db: Session,
+    conn: InstrumentConnectionDB,
+    mode: str,
+) -> None:
+    params = dict(conn.connection_params or {})
+    if mode == "manual_local":
+        params["control_mode"] = "manual_local"
+    else:
+        params["control_mode"] = "software"
+    conn.connection_params = params
+    db.commit()
+
+
+def _manual_local_scpi_result(command: str) -> "ScpiCommandResult":
+    return ScpiCommandResult(
+        command=command.strip(),
+        response=None,
+        success=False,
+        error=(
+            "仪器当前处于 manual_local（本机操作）模式，软件已暂停 SCPI 控制。"
+            "请先在仪器资源中点击“软件接管”。"
+        ),
+        latency_ms=0,
+    )
+
+
+@router.get(
+    "/instruments/{category_key}/control-mode",
+    response_model=InstrumentControlModeResponse,
+)
+def get_instrument_control_mode(
+    category_key: str,
+    db: Session = Depends(get_db),
+):
+    """读取仪器当前控制权状态。"""
+    _category, conn = _get_category_and_connection(db, category_key)
+    mode = _connection_control_mode(conn)
+    from app.services.instrument_hal_service import get_hal_service
+    hal = get_hal_service()
+    return InstrumentControlModeResponse(
+        category_key=category_key,
+        mode=mode,
+        status=conn.status if conn else "unknown",
+        message=(
+            "本机操作中：软件不会发送 SCPI。"
+            if mode == "manual_local"
+            else "软件控制中。"
+        ),
+        driver_loaded=category_key in hal.drivers,
+    )
+
+
+@router.post(
+    "/instruments/{category_key}/control-mode",
+    response_model=InstrumentControlModeResponse,
+)
+async def set_instrument_control_mode(
+    category_key: str,
+    request: InstrumentControlModeRequest,
+    db: Session = Depends(get_db),
+):
+    """切换仪器控制权。
+
+    切到 ``manual_local`` 时只释放软件侧会话，不发送未确认的
+    ``SYST:LOC`` 类命令；PROPSIM/FS16 本机仍需由操作员点击 GUI 右上角
+    Local Mode。
+    """
+    if request.mode not in {"software", "manual_local"}:
+        raise HTTPException(422, "mode must be 'software' or 'manual_local'")
+
+    _category, conn = _get_category_and_connection(db, category_key)
+    if conn is None:
+        raise HTTPException(400, f"Category '{category_key}' has no connection record")
+
+    from app.services.instrument_hal_service import get_hal_service, reload_hal_service_atomic
+
+    hal = get_hal_service()
+    warnings: List[str] = []
+
+    if request.mode == "manual_local":
+        driver = hal.drivers.get(category_key)
+        if driver is not None:
+            if request.stop_playback and hasattr(driver, "stop_emulation"):
+                ok = await driver.stop_emulation()
+                if not ok:
+                    warnings.append(getattr(driver, "last_error", None) or "stop_emulation returned false")
+            if request.close_emulation and hasattr(driver, "close_playback"):
+                ok = await driver.close_playback()
+                if not ok:
+                    warnings.append(getattr(driver, "last_error", None) or "close_playback returned false")
+            try:
+                setattr(driver, "control_mode", "manual_local")
+                await driver.disconnect()
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"driver disconnect failed: {exc}")
+            hal.drivers.pop(category_key, None)
+            await hal._metrics_cache.clear()
+
+        conn.status = "disconnected"
+        conn.last_error = "manual_local: operator is using instrument UI"
+        _set_connection_control_mode(db, conn, "manual_local")
+        return InstrumentControlModeResponse(
+            category_key=category_key,
+            mode="manual_local",
+            status=conn.status,
+            message=(
+                "已交还本机。软件已关闭该仪器会话；请在 FS16 本机 GUI 右上角点击 Local Mode。"
+            ),
+            driver_loaded=False,
+            warnings=warnings,
+        )
+
+    _set_connection_control_mode(db, conn, "software")
+    mode = hal.mode
+    await reload_hal_service_atomic(mode)
+    db.expire_all()
+    refreshed_hal = get_hal_service()
+    refreshed_conn = db.query(InstrumentConnectionDB).filter(
+        InstrumentConnectionDB.category_id == conn.category_id
+    ).first()
+    loaded = category_key in refreshed_hal.drivers
+    return InstrumentControlModeResponse(
+        category_key=category_key,
+        mode="software",
+        status=refreshed_conn.status if refreshed_conn else "unknown",
+        message=(
+            "软件已重新接管并重新加载 HAL 驱动。"
+            if loaded
+            else "已切回软件控制；HAL 重新加载后该仪器未成功连接，请查看 readiness。"
+        ),
+        driver_loaded=loaded,
+        warnings=warnings,
+    )
+
+
 @router.post(
     "/instruments/hal/reload",
     response_model=HalReloadResult,
@@ -1583,8 +1760,16 @@ def update_instrument_category(
             parsed_ip, parsed_port = _parse_endpoint_to_ip_port(conn_data["endpoint"])
             if parsed_ip:
                 conn_data["controller_ip"] = parsed_ip
-            if parsed_port:
-                conn_data["port"] = parsed_port
+            # Replace, rather than preserve, the structured port whenever the
+            # endpoint changes.  VISA resources such as ``::inst0::INSTR`` do
+            # not carry a TCP port; retaining a previous raw-SOCKET 5025 here
+            # makes diagnostics and fallback connection paths target the old
+            # transport even though the GUI displays the new VISA endpoint.
+            # ``None`` is meaningful here (the resource delegates port
+            # selection to VISA), so assign it directly; the generic loop
+            # below intentionally ignores None for ordinary partial updates.
+            connection.port = parsed_port
+            conn_data.pop("port", None)
 
         for key, value in conn_data.items():
             if value is not None and hasattr(connection, key):
@@ -2247,6 +2432,9 @@ async def send_scpi_command(
         )
         return result
 
+    if _connection_control_mode(conn) == "manual_local":
+        return _audit(_manual_local_scpi_result(request.command))
+
     # HAL-first routing same as /scpi-probe. See _run_command_via_hal docstring.
     # P1-16: 透传 request.timeout_ms 给 driver (F64/FS16 慢操作必须明给, 见
     # _driver_supports_timeout_kwarg)。pyvisa driver 自动 fallback 不变。
@@ -2327,6 +2515,16 @@ async def probe_scpi_commands(
 
     ip = (body.ip if body and body.ip else None) or (conn.controller_ip if conn else None)
     port = (body.port if body and body.port else None) or (conn.port if conn else None) or 5025
+
+    if _connection_control_mode(conn) == "manual_local":
+        return ScpiProbeResult(
+            ip=ip or "",
+            port=port,
+            results=[
+                _manual_local_scpi_result(cmd)
+                for cmd, _desc in COMMON_SCPI_COMMANDS
+            ],
+        )
 
     if not ip:
         raise HTTPException(400, "未配置 IP 地址")

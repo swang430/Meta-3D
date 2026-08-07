@@ -154,6 +154,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/instruments/{categoryKey}/control-mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read instrument software/local control mode */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    categoryKey: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Current control mode */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["InstrumentControlModeResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Switch instrument software/local control mode
+         * @description `manual_local` releases software-side control so an operator can
+         *     use the instrument UI. For PROPSIM FS16 this intentionally does
+         *     not send unverified `SYST:LOC` commands; the operator clicks the
+         *     instrument GUI Local Mode button after the software session is
+         *     closed. `software` persists software control and reloads HAL.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    categoryKey: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["InstrumentControlModeRequest"];
+                };
+            };
+            responses: {
+                /** @description Updated control mode */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["InstrumentControlModeResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/instruments/{categoryKey}/topology-profile": {
         parameters: {
             query?: never;
@@ -948,6 +1019,23 @@ export interface components {
             selectedModelId: string | null;
             connection: components["schemas"]["InstrumentConnection"];
             models: components["schemas"]["InstrumentModel"][];
+        };
+        InstrumentControlModeRequest: {
+            /** @enum {string} */
+            mode: "software" | "manual_local";
+            /** @default false */
+            stop_playback: boolean;
+            /** @default false */
+            close_emulation: boolean;
+        };
+        InstrumentControlModeResponse: {
+            category_key: string;
+            /** @enum {string} */
+            mode: "software" | "manual_local";
+            status: string;
+            message: string;
+            driver_loaded: boolean;
+            warnings: string[];
         };
         InstrumentModel: {
             id: string;

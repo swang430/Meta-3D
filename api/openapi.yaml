@@ -57,6 +57,49 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/InstrumentCategory'
+  /api/v1/instruments/{categoryKey}/control-mode:
+    get:
+      summary: Read instrument software/local control mode
+      parameters:
+        - name: categoryKey
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Current control mode
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstrumentControlModeResponse'
+    post:
+      summary: Switch instrument software/local control mode
+      description: |
+        `manual_local` releases software-side control so an operator can
+        use the instrument UI. For PROPSIM FS16 this intentionally does
+        not send unverified `SYST:LOC` commands; the operator clicks the
+        instrument GUI Local Mode button after the software session is
+        closed. `software` persists software control and reloads HAL.
+      parameters:
+        - name: categoryKey
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstrumentControlModeRequest'
+      responses:
+        '200':
+          description: Updated control mode
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstrumentControlModeResponse'
   /api/v1/instruments/{categoryKey}/topology-profile:
     put:
       summary: Operator selects (or clears) the topology profile for a binding (P2-1)
@@ -662,6 +705,39 @@ components:
           items:
             $ref: '#/components/schemas/InstrumentModel'
       required: [key, label, description, selectedModelId, connection, models]
+    InstrumentControlModeRequest:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [software, manual_local]
+        stop_playback:
+          type: boolean
+          default: false
+        close_emulation:
+          type: boolean
+          default: false
+      required: [mode]
+      additionalProperties: false
+    InstrumentControlModeResponse:
+      type: object
+      properties:
+        category_key:
+          type: string
+        mode:
+          type: string
+          enum: [software, manual_local]
+        status:
+          type: string
+        message:
+          type: string
+        driver_loaded:
+          type: boolean
+        warnings:
+          type: array
+          items:
+            type: string
+      required: [category_key, mode, status, message, driver_loaded, warnings]
     InstrumentModel:
       type: object
       properties:

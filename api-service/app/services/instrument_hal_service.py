@@ -435,6 +435,20 @@ class InstrumentHALService:
             return True
         return self.mode == DriverMode.REAL
 
+    @staticmethod
+    def _connection_control_mode(conn: Any) -> str:
+        """Return persisted operator control mode for one instrument.
+
+        ``manual_local`` means the operator intentionally handed the
+        instrument back to its own UI. HAL must not connect or poll it,
+        because PROPSIM enters Remote mode as soon as it receives ATE
+        commands.
+        """
+        params = getattr(conn, "connection_params", None) if conn else None
+        if isinstance(params, dict) and params.get("control_mode") == "manual_local":
+            return "manual_local"
+        return "software"
+
     async def initialize(self):
         """Initialize all instrument drivers"""
         if self._initialized:
@@ -536,6 +550,29 @@ class InstrumentHALService:
                 conn = db.query(InstrumentConnectionDB).filter(
                     InstrumentConnectionDB.category_id == cat.id
                 ).first()
+
+                if self._connection_control_mode(conn) == "manual_local":
+                    endpoint_str = (
+                        f"{conn.controller_ip}:{conn.port}" if conn and conn.controller_ip
+                        else (conn.endpoint if conn and conn.endpoint else "")
+                    )
+                    logger.info(
+                        f"[HAL] {cat.category_key}: control_mode=manual_local, "
+                        "skipping driver connect so the instrument UI stays local"
+                    )
+                    if conn:
+                        conn.status = "disconnected"
+                        conn.last_error = "manual_local: operator is using instrument UI"
+                        db.commit()
+                    report_rows.append(DriverReadinessRow(
+                        category=cat.category_key,
+                        model=f"{model.vendor} {model.model}",
+                        endpoint=endpoint_str,
+                        status="skipped",
+                        detail="manual_local: 本机操作中，HAL 未连接",
+                        extras={"control_mode": "manual_local"},
+                    ))
+                    continue
 
                 # Build driver config from DB
                 driver_config = {
@@ -1081,9 +1118,14 @@ class InstrumentHALService:
 
         try:
             # Cache miss - collect metrics from all drivers
+            metric_drivers = [
+                (name, driver)
+                for name, driver in self.drivers.items()
+                if getattr(driver, "control_mode", "software") != "manual_local"
+            ]
             metrics_tasks = [
                 driver.get_metrics()
-                for driver in self.drivers.values()
+                for _name, driver in metric_drivers
             ]
             all_metrics = await asyncio.gather(*metrics_tasks, return_exceptions=True)
 
@@ -1100,7 +1142,7 @@ class InstrumentHALService:
                     logger.error(f"Error getting metrics from driver {i}: {result}")
                     continue
 
-                driver_name = list(self.drivers.keys())[i]
+                driver_name = metric_drivers[i][0]
                 if driver_name == "channel_emulator":
                     channel_metrics = result.metrics
                 elif driver_name == "base_station":
