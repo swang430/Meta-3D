@@ -1607,3 +1607,53 @@ def test_g13_checker_self_test_detects_legacy_selector_shape():
         "ChamberConfiguration.is_active == True).first()"
     )
     assert "ChamberConfiguration.is_active" in bad
+
+
+# ── G14: P1-43 历史分页不得混进实时轮询 ────────────────────────
+
+def test_g14_log_history_is_explicit_and_freezes_the_live_snapshot():
+    """GUI 的历史取数必须走独立端点，并在前插旧页前退出自动刷新。
+
+    后端不重不漏、空页推进及游标失效由 test_system_logs_tail_filter.py 的
+    行为门兜底；本门只守前端接线不把重历史路径挂进 interval。
+
+    变异：interval 回调改为 loadOlder、删掉 historyModeRef 短路、删掉同步
+    clearInterval，或把前插改成覆盖 → 本门红。
+    """
+    source = _strip_ts_comments((
+        _REPO_ROOT / "gui/src/features/Reports/components/SystemLogViewer.tsx"
+    ).read_text(encoding="utf-8"))
+
+    assert "if (!historyModeRef.current) fetchLogs()" in source
+    assert "setInterval(loadOlder" not in source
+    history_start = source.index("const loadOlder = useCallback")
+    history_end = source.index("const handleDownload", history_start)
+    history = source[history_start:history_end]
+    assert "'/system-logs/history'" in history
+    assert "historyModeRef.current = true" in history
+    assert "clearInterval(intervalRef.current)" in history
+    assert "setRefreshInterval('0')" in history
+    assert "setEntries(current => [...olderEntries, ...current])" in history
+    assert "cursor," in history
+
+    mock_db = (
+        _REPO_ROOT / "gui/src/api/mockDatabase.ts"
+    ).read_text(encoding="utf-8")
+    mock_server = (
+        _REPO_ROOT / "gui/src/api/mockServer.ts"
+    ).read_text(encoding="utf-8")
+    assert "MOCK_HISTORY_SCAN_LIMIT" in mock_db
+    mock_db_history_start = mock_db.index("getSystemLogsHistory(")
+    mock_db_history_end = mock_db.index("getSystemLogFiles()", mock_db_history_start)
+    mock_db_history = mock_db[mock_db_history_start:mock_db_history_end]
+    assert "scanMockLogPage" in mock_db_history
+    assert "decodeMockLogCursor" in mock_db_history
+    assert "status: 400" in mock_db_history and "status: 409" in mock_db_history
+    mock_history_start = mock_server.index("mock.onGet('/system-logs/history')")
+    mock_history_end = mock_server.index("mock.onGet('/system-logs/files')", mock_history_start)
+    mock_history = mock_server[mock_history_start:mock_history_end]
+    for forwarded in (
+        "params.cursor", "params.lines", "params.level", "params.keyword",
+        "params.session_id", "params.execution_id",
+    ):
+        assert forwarded in mock_history, f"mock history 未转发 {forwarded}"

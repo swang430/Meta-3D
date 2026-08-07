@@ -35,6 +35,7 @@ import {
   IconAlertCircle,
   IconPlayerPlay,
   IconPlayerPause,
+  IconArrowUp,
 } from '@tabler/icons-react'
 import apiClient from '../../../api/client'
 import { formatLogDate, formatLogTime } from '../../../utils/datetime'
@@ -131,6 +132,16 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
   const [error, setError] = useState<string | null>(null)
   const [totalRead, setTotalRead] = useState(0)
   const [filteredCount, setFilteredCount] = useState(0)
+  const [olderCursor, setOlderCursor] = useState<string | null>(null)
+  const [hasOlder, setHasOlder] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyPages, setHistoryPages] = useState(0)
+  // tail / history 共用一代号。文件或过滤变化后，旧请求即使晚返回也不得
+  // 覆盖新快照或把上一组条件的历史拼进来。
+  const requestGenerationRef = useRef(0)
+  // state 的 effect cleanup 不是同步屏障；历史模式必须另有 ref，让已经进入
+  // 事件队列的 interval callback 也能在调用 fetchLogs 前立即退出。
+  const historyModeRef = useRef(false)
 
   // Filters
   const [levelFilter, setLevelFilter] = useState<string>('ALL')
@@ -207,6 +218,9 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
 
   // ── Fetch log entries ──
   const fetchLogs = useCallback(async () => {
+    historyModeRef.current = false
+    const requestGeneration = ++requestGenerationRef.current
+    setHistoryLoading(false)
     setLoading(true)
     setError(null)
     try {
@@ -221,16 +235,81 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
       }
 
       const res = await apiClient.get('/system-logs/tail', { params })
+      if (requestGeneration !== requestGenerationRef.current) return
       setEntries(res.data.entries || [])
       setTotalRead(res.data.total_lines_read || 0)
       setFilteredCount(res.data.filtered_count || 0)
+      setOlderCursor(res.data.older_cursor || null)
+      setHasOlder(Boolean(res.data.has_older))
+      setHistoryPages(0)
+      setExpandedRows(new Set())
     } catch (err: any) {
+      if (requestGeneration !== requestGenerationRef.current) return
       setError(err.response?.data?.detail || err.message)
       setEntries([])
+      setOlderCursor(null)
+      setHasOlder(false)
+      setHistoryPages(0)
     } finally {
-      setLoading(false)
+      if (requestGeneration === requestGenerationRef.current) setLoading(false)
     }
   }, [selectedFile, levelFilter, keyword, maxLines, sessionFilter, executionFilter])
+
+  // ── Explicit older page ──
+  const loadOlder = useCallback(async () => {
+    if (!olderCursor || historyLoading) return
+    historyModeRef.current = true
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
+    const requestGeneration = ++requestGenerationRef.current
+    const cursor = olderCursor
+    // 历史快照与移动中的实时窗口不能混用；用户重新刷新或开启自动刷新时
+    // 会由 fetchLogs 建立一份新的尾部快照。
+    setRefreshInterval('0')
+    setLoading(false)
+    setHistoryLoading(true)
+    setError(null)
+    try {
+      const params = {
+        filename: selectedFile,
+        lines: maxLines,
+        cursor,
+        ...buildLogQuery({ levelFilter, keyword, sessionFilter, executionFilter }),
+      }
+      const res = await apiClient.get('/system-logs/history', { params })
+      if (requestGeneration !== requestGenerationRef.current) return
+      const olderEntries = (res.data.entries || []) as LogEntry[]
+      setEntries(current => [...olderEntries, ...current])
+      setTotalRead(current => current + (res.data.total_lines_read || 0))
+      setFilteredCount(current => current + (res.data.filtered_count || 0))
+      setOlderCursor(res.data.older_cursor || null)
+      setHasOlder(Boolean(res.data.has_older))
+      setHistoryPages(current => current + 1)
+      // 当前版本按下标维护展开态；前插会让下标指向另一条，宁可收起也不说谎。
+      // P1-44 会在续行归组后把条目身份作为长期展开键。
+      setExpandedRows(new Set())
+    } catch (err: any) {
+      if (requestGeneration !== requestGenerationRef.current) return
+      setError(err.response?.data?.detail || err.message)
+      if (err.response?.status === 409) {
+        setOlderCursor(null)
+        setHasOlder(false)
+      }
+    } finally {
+      if (requestGeneration === requestGenerationRef.current) setHistoryLoading(false)
+    }
+  }, [
+    olderCursor,
+    historyLoading,
+    selectedFile,
+    maxLines,
+    levelFilter,
+    keyword,
+    sessionFilter,
+    executionFilter,
+  ])
 
   // ── Download ──
   const handleDownload = useCallback(() => {
@@ -255,7 +334,9 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
     }
     const seconds = parseInt(refreshInterval)
     if (seconds > 0) {
-      intervalRef.current = setInterval(fetchLogs, seconds * 1000)
+      intervalRef.current = setInterval(() => {
+        if (!historyModeRef.current) fetchLogs()
+      }, seconds * 1000)
     }
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
@@ -354,7 +435,13 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
                 {REFRESH_INTERVALS.map(ri => (
                   <Menu.Item
                     key={ri.value}
-                    onClick={() => setRefreshInterval(ri.value)}
+                    onClick={() => {
+                      const wasHistorySnapshot = historyModeRef.current
+                      if (ri.value !== '0') historyModeRef.current = false
+                      setRefreshInterval(ri.value)
+                      // 从冻结历史回实时模式时立即重建尾部，不保留有缺口风险的拼接页。
+                      if (ri.value !== '0' && (wasHistorySnapshot || historyPages > 0)) fetchLogs()
+                    }}
                     style={ri.value === refreshInterval ? { fontWeight: 700 } : undefined}
                   >
                     {ri.label}
@@ -400,11 +487,16 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
       {/* ── Status bar ── */}
       <Group gap="md">
         <Text size="xs" c="dimmed">
-          读取 {totalRead} 行 · 匹配 {filteredCount} 条
+          扫描 {totalRead} 行 · 当前显示 {filteredCount} 条
         </Text>
         {loading && <Loader size="xs" />}
         {refreshInterval !== '0' && (
           <Badge size="sm" variant="dot" color="green">自动刷新 {refreshInterval}s</Badge>
+        )}
+        {historyPages > 0 && (
+          <Badge size="sm" variant="light" color="cyan">
+            历史快照 · 已加载 {historyPages} 页
+          </Badge>
         )}
         {/* P1-34: 当前是否只看某一次请求 —— 过滤态必须**看得见**，
             否则"怎么只有几条"会被当成日志丢了。 */}
@@ -448,6 +540,20 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
             只看执行 {executionFilter.slice(0, 8)}
           </Badge>
         )}
+        {hasOlder && olderCursor ? (
+          <Button
+            size="compact-xs"
+            variant="light"
+            leftSection={<IconArrowUp size={13} />}
+            loading={historyLoading}
+            disabled={loading}
+            onClick={loadOlder}
+          >
+            加载更早 {maxLines} 条
+          </Button>
+        ) : historyPages > 0 ? (
+          <Text size="xs" c="dimmed">已到当前文件开头</Text>
+        ) : null}
       </Group>
 
       {/* ── Error ── */}
@@ -494,16 +600,13 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
                     <Text ta="center" c="dimmed" py="xl">
                       {error ? '加载出错' : (
                         executionFilter ? (
-                          /* 内审 F2: 日志按天轮转 —— 昨天及更早的执行, 日志在
-                             app.log.YYYY-MM-DD 里, 而文件下拉**只列活跃文件**
-                             (后端 files 端点按 suffix 过滤)。不说这一句, 用户看到的
-                             就是"点了看日志结果空白", 正是本片要治的翻版。 */
+                          /* 日志按天轮转。P1-43 已把归档文件放进下拉，但仍需明确
+                             提示用户切换文件，否则空结果会被误认为链路日志丢失。 */
                           <>
                             这次执行在 <b>{selectedFile}</b> 里没有匹配行。
                             <br />
-                            日志按天轮转 —— 若该执行发生在今天之前, 它的日志在
-                            <b> {selectedFile}.YYYY-MM-DD</b> 归档文件里，
-                            而本面板的文件下拉当前只列活跃文件（翻历史见 P1-43）。
+                            日志按天轮转 —— 若该执行不在当前文件，请在文件下拉中
+                            选择发生日期对应的 <b>app.log.YYYY-MM-DD</b> 归档文件。
                           </>
                         ) : '暂无日志条目'
                       )}

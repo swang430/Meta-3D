@@ -431,6 +431,62 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SystemLogTailResponse'
+  /api/v1/system-logs/history:
+    get:
+      summary: Read an explicitly requested older log page (P1-43)
+      description: |
+        Continues a reverse scan from the opaque cursor returned by `/tail`
+        or a previous history page. This endpoint is for explicit operator
+        actions only and must not be placed on the live polling path. An empty
+        filtered page can still return a newer cursor so sparse matches remain
+        reachable without an unbounded single request.
+      parameters:
+        - name: cursor
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Opaque continuation cursor returned by the server
+        - name: filename
+          in: query
+          schema:
+            type: string
+            default: app.log
+        - name: lines
+          in: query
+          schema:
+            type: integer
+            default: 200
+            minimum: 1
+            maximum: 2000
+        - name: level
+          in: query
+          schema:
+            type: string
+          description: Comma-separated exact-match level set
+        - name: keyword
+          in: query
+          schema:
+            type: string
+        - name: session_id
+          in: query
+          schema:
+            type: string
+        - name: execution_id
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: One older log page and its continuation cursor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemLogTailResponse'
+        '400':
+          description: Malformed or unsupported cursor
+        '409':
+          description: Cursor no longer matches the selected log snapshot
   /api/v1/dashboard/alerts:
     get:
       summary: List active alerts ordered by severity (P2-8 cockpit alert zone)
@@ -1076,7 +1132,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/SystemLogEntry'
-      required: [filename, total_lines_read, filtered_count, entries]
+        older_cursor:
+          type: string
+          nullable: true
+          description: Opaque cursor for the next older page; null at file start
+        has_older:
+          type: boolean
+          description: Whether an explicit history request can continue
+      required: [filename, total_lines_read, filtered_count, entries, older_cursor, has_older]
     DashboardAlert:
       type: object
       description: |

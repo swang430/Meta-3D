@@ -276,8 +276,8 @@ def test_level_filter_is_set_membership_not_threshold():
     )
 
 
-def test_screen_and_export_build_their_query_from_one_place():
-    """屏幕与导出必须走**同一个** `buildLogQuery()`。
+def test_screen_history_and_export_build_their_query_from_one_place():
+    """实时屏幕、历史页与导出必须走**同一个** `buildLogQuery()`。
 
     内审 F1：早前两处各写了一份逐字相同的三元表达式，于是「改一处忘另一处」
     有两个入口 —— 内审造的变异（导出侧只发 `'ERROR'`、屏幕侧发哨兵值）
@@ -293,8 +293,8 @@ def test_screen_and_export_build_their_query_from_one_place():
 
     assert "function buildLogQuery(" in src, "buildLogQuery 不见了"
     calls = len(re.findall(r"buildLogQuery\(\{", src))
-    assert calls == 2, (
-        f"buildLogQuery 只被调用了 {calls} 次（预期 2：屏幕 + 导出）—— "
+    assert calls == 3, (
+        f"buildLogQuery 被调用了 {calls} 次（预期 3：实时屏幕 + 历史页 + 导出）—— "
         f"有一处又自己拼参数了"
     )
 

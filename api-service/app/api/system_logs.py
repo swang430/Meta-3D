@@ -7,15 +7,18 @@
 端点:
   GET /system-logs/files           — 列出所有日志文件
   GET /system-logs/tail            — 尾读指定文件（支持级别/关键词过滤）
+  GET /system-logs/history         — 显式游标读取更早一页
   GET /system-logs/download/{name} — 下载原始日志文件
 """
 
+import base64
+import hashlib
 import json
 import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import BinaryIO, List, NamedTuple, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
@@ -56,6 +59,8 @@ class LogTailResponse(BaseModel):
     total_lines_read: int
     filtered_count: int
     entries: List[LogEntry]
+    older_cursor: Optional[str] = None
+    has_older: bool = False
 
 
 class LogFilesResponse(BaseModel):
@@ -108,6 +113,17 @@ def _human_size(size_bytes: int) -> str:
 # (app.log 按天轮转, 峰值 ~250 行/分 → 2 万行 ≈ 80 分钟窗口)。
 _TAIL_SCAN_LIMIT = 20_000
 
+# 历史页只由用户显式点击触发，不进入自动轮询。仍给单次请求设扫描预算，避免
+# 极稀疏过滤一次扫完整个超大文件；空匹配页也会返回向前推进的新游标。
+_HISTORY_SCAN_LIMIT = 100_000
+_CURSOR_VERSION = 2
+_CURSOR_ANCHOR_BYTES = 64
+_ACTIVE_LOG_NAMES = {
+    "app.log", "scpi.log", "db.log",
+    "calibration.log", "measurement.log", "channel_engine.log",
+    "audit.log", "alert.log", "frontend.log",
+}
+
 
 def _entry_matches(
     entry: LogEntry,
@@ -117,7 +133,7 @@ def _entry_matches(
     hal_mode: Optional[str] = None,
     execution_id: Optional[str] = None,
 ) -> bool:
-    """日志过滤谓词 —— `/tail` 与 `/export` **共用这一份**。
+    """日志过滤谓词 —— `/tail`、`/history` 与 `/export` **共用这一份**。
 
     ⚠ P1-35 之前 `/export` 自己抄了一份，两处会漂（P1-34 内审 F3 抓到的
     「屏幕 5 条、导出全量」就是同一个母题）。要改过滤语义只改这里。
@@ -146,11 +162,121 @@ def _entry_matches(
     return True
 
 
-def _scan_tail_entries(
-    filepath: Path,
+class _CursorState(NamedTuple):
+    device: int
+    inode: int
+    offset: int
+    snapshot_eof: int
+    boundary_hash: str
+    eof_hash: str
+
+
+def _sample_digest(stream: BinaryIO, start: int, end: int) -> str:
+    """固定字节样本指纹；游标校验成本不随翻页深度增长。"""
+    # 用 pread 绕过 BufferedReader 的用户态 read-ahead cache；否则另一个句柄
+    # 等长改写后，同一个 stream.seek/read 仍可能读到扫描阶段缓存的旧字节。
+    sample = os.pread(stream.fileno(), end - start, start)
+    if len(sample) != end - start:
+        raise HTTPException(status_code=409, detail="日志文件已截断，请刷新后重新浏览")
+    return hashlib.sha256(sample).hexdigest()[:24]
+
+
+def _boundary_digest(stream: BinaryIO, offset: int, snapshot_eof: int) -> str:
+    return _sample_digest(
+        stream,
+        max(0, offset - _CURSOR_ANCHOR_BYTES),
+        min(snapshot_eof, offset + _CURSOR_ANCHOR_BYTES),
+    )
+
+
+def _eof_digest(stream: BinaryIO, snapshot_eof: int) -> str:
+    return _sample_digest(
+        stream,
+        max(0, snapshot_eof - _CURSOR_ANCHOR_BYTES),
+        snapshot_eof,
+    )
+
+
+def _validate_cursor_state(
+    state: _CursorState,
+    stream: BinaryIO,
+    stat: os.stat_result,
+) -> None:
+    current = os.fstat(stream.fileno())
+    if (state.device, state.inode) != (stat.st_dev, stat.st_ino):
+        raise HTTPException(status_code=409, detail="日志文件已轮转或替换，请刷新后重新浏览")
+    if (current.st_dev, current.st_ino) != (stat.st_dev, stat.st_ino):
+        raise HTTPException(status_code=409, detail="日志文件已轮转或替换，请刷新后重新浏览")
+    if state.offset < 0 or state.snapshot_eof < state.offset or state.snapshot_eof > current.st_size:
+        raise HTTPException(status_code=409, detail="日志文件已截断，请刷新后重新浏览")
+    if state.offset > 0:
+        stream.seek(state.offset - 1)
+        if stream.read(1) != b"\n":
+            raise HTTPException(status_code=409, detail="日志分页边界已变化，请刷新后重新浏览")
+    if state.boundary_hash != _boundary_digest(stream, state.offset, state.snapshot_eof):
+        raise HTTPException(status_code=409, detail="日志分页边界内容已变化，请刷新后重新浏览")
+    if state.eof_hash != _eof_digest(stream, state.snapshot_eof):
+        raise HTTPException(status_code=409, detail="日志快照尾部内容已变化，请刷新后重新浏览")
+
+
+def _encode_cursor(
+    stream: BinaryIO,
+    stat: os.stat_result,
+    offset: int,
+    snapshot_eof: int,
+) -> str:
+    """游标绑定同一文件实例、分页边界和初始 EOF；EOF 后 append 不参与校验。"""
+    current = os.fstat(stream.fileno())
+    if (current.st_dev, current.st_ino) != (stat.st_dev, stat.st_ino):
+        raise HTTPException(status_code=409, detail="日志文件已轮转或替换，请刷新后重新浏览")
+    if snapshot_eof > current.st_size:
+        raise HTTPException(status_code=409, detail="日志文件已截断，请刷新后重新浏览")
+    payload = {
+        "v": _CURSOR_VERSION,
+        "dev": stat.st_dev,
+        "ino": stat.st_ino,
+        "offset": offset,
+        "snapshot_eof": snapshot_eof,
+        "boundary_hash": _boundary_digest(stream, offset, snapshot_eof),
+        "eof_hash": _eof_digest(stream, snapshot_eof),
+    }
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_cursor(cursor: str, stream: BinaryIO, stat: os.stat_result) -> _CursorState:
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(cursor + padding).decode("utf-8"))
+        version = int(payload["v"])
+        device = int(payload["dev"])
+        inode = int(payload["ino"])
+        offset = int(payload["offset"])
+        snapshot_eof = int(payload["snapshot_eof"])
+        boundary_hash = str(payload["boundary_hash"])
+        eof_hash = str(payload["eof_hash"])
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="历史日志游标格式无效，请刷新后重试") from exc
+
+    if version != _CURSOR_VERSION:
+        raise HTTPException(status_code=400, detail="历史日志游标版本不受支持，请刷新后重试")
+
+    state = _CursorState(
+        device, inode, offset, snapshot_eof, boundary_hash, eof_hash,
+    )
+    _validate_cursor_state(state, stream, stat)
+    return state
+
+
+def _scan_reverse_entries(
+    stream: BinaryIO,
+    file_size: int,
     max_entries: int,
     predicate,
-) -> Tuple[List[LogEntry], int]:
+    *,
+    before_offset: Optional[int] = None,
+    scan_limit: int = _TAIL_SCAN_LIMIT,
+) -> Tuple[List[LogEntry], int, int, bool]:
     """
     从文件末尾反向扫描, 边读边过滤, 凑满 max_entries 条匹配行为止。
 
@@ -160,49 +286,69 @@ def _scan_tail_entries(
     最坏开销按行数有界 (字节数不设上限: 无换行的损坏/巨行文件仍会整读,
     与旧实现同病, 字节上限在 backlog)。
 
-    返回 (匹配条目按时间正序, 实际扫描的非空行数)。
+    返回 (匹配条目按时间正序, 实际扫描的非空行数, 下一位置, 是否还有更早内容)。
+    字节位置只会落在行首；历史页因此可以从上次停止处继续，不重新扫描文件尾。
     """
     matched: List[LogEntry] = []
     scanned = 0
+    end = file_size if before_offset is None else before_offset
+    if end < 0 or end > file_size:
+        raise HTTPException(status_code=409, detail="日志文件已截断，请刷新后重新浏览")
+    if end == 0 or file_size == 0:
+        return [], 0, 0, False
+
+    next_offset = end
     chunk_size = 8192
+    position = end
+    buffer = b""
+    buffer_start = end
 
-    with open(filepath, 'rb') as f:
-        # 移动到文件末尾
-        f.seek(0, 2)
-        remaining = f.tell()
-        buffer = b''
+    while position > 0 and len(matched) < max_entries and scanned < scan_limit:
+        read_start = max(0, position - chunk_size)
+        stream.seek(read_start)
+        block = stream.read(position - read_start)
+        buffer = block + buffer
+        buffer_start = read_start
+        position = read_start
 
-        while remaining > 0 and len(matched) < max_entries and scanned < _TAIL_SCAN_LIMIT:
-            read_size = min(chunk_size, remaining)
-            remaining -= read_size
-            f.seek(remaining)
-            buffer = f.read(read_size) + buffer
+        parts = buffer.split(b"\n")
+        # parts[0] 可能被 chunk 边界截断，留给下一轮；其余都是完整行。
+        part_starts = []
+        part_start = buffer_start
+        for part in parts:
+            part_starts.append(part_start)
+            part_start += len(part) + 1
 
-            # 按行拆分; 第一个片段可能被 chunk 边界截断, 留给下一轮拼接
-            split_lines = buffer.split(b'\n')
-            buffer = split_lines[0]
-            for line in reversed(split_lines[1:]):
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                scanned += 1
-                entry = _parse_log_line(stripped.decode('utf-8', errors='replace'))
-                if entry is not None and predicate(entry):
-                    matched.append(entry)
-                    if len(matched) >= max_entries:
-                        break
-                if scanned >= _TAIL_SCAN_LIMIT:
-                    break
-
-        # 文件开头剩余的半行
-        if buffer.strip() and len(matched) < max_entries and scanned < _TAIL_SCAN_LIMIT:
+        for index in range(len(parts) - 1, 0, -1):
+            next_offset = part_starts[index]
+            stripped = parts[index].strip()
+            if not stripped:
+                continue
             scanned += 1
-            entry = _parse_log_line(buffer.strip().decode('utf-8', errors='replace'))
+            entry = _parse_log_line(stripped.decode("utf-8", errors="replace"))
+            if entry is not None and predicate(entry):
+                matched.append(entry)
+            if len(matched) >= max_entries or scanned >= scan_limit:
+                break
+
+        buffer = parts[0]
+
+    # 文件开头没有前导换行，它是最后一条待处理的完整行。
+    if (
+        position == 0
+        and len(matched) < max_entries
+        and scanned < scan_limit
+    ):
+        next_offset = 0
+        stripped = buffer.strip()
+        if stripped:
+            scanned += 1
+            entry = _parse_log_line(stripped.decode("utf-8", errors="replace"))
             if entry is not None and predicate(entry):
                 matched.append(entry)
 
-    matched.reverse()  # 恢复时间顺序
-    return matched, scanned
+    matched.reverse()
+    return matched, scanned, next_offset, next_offset > 0
 
 
 def _parse_log_line(line: str) -> Optional[LogEntry]:
@@ -247,10 +393,11 @@ def list_log_files():
 
     files = []
     for entry in sorted(log_dir.iterdir()):
-        if entry.is_file() and entry.suffix in ('.log', '') and not entry.name.startswith('.'):
+        is_log_file = entry.name.endswith(".log") or ".log." in entry.name
+        if entry.is_file() and is_log_file and not entry.name.startswith('.'):
             stat = entry.stat()
-            # 当前活跃文件 = 没有日期后缀的文件
-            is_current = '.' not in entry.stem or entry.name in ('app.log', 'scpi.log')
+            # 只有固定写入目标是活跃文件；带轮转后缀的同族文件都是归档。
+            is_current = entry.name in _ACTIVE_LOG_NAMES
             files.append(LogFileInfo(
                 filename=entry.name,
                 size_bytes=int(stat.st_size),
@@ -284,18 +431,70 @@ def tail_log_file(
     """
     filepath = _safe_filename(filename)
 
-    entries, scanned = _scan_tail_entries(
-        filepath,
-        max_entries=lines,
-        predicate=lambda e: _entry_matches(
-            e, level, keyword, session_id, execution_id=execution_id),
-    )
+    with open(filepath, "rb") as stream:
+        stat = os.fstat(stream.fileno())
+        entries, scanned, next_offset, has_older = _scan_reverse_entries(
+            stream,
+            stat.st_size,
+            max_entries=lines,
+            predicate=lambda e: _entry_matches(
+                e, level, keyword, session_id, execution_id=execution_id),
+            scan_limit=_TAIL_SCAN_LIMIT,
+        )
+        older_cursor = (
+            _encode_cursor(stream, stat, next_offset, stat.st_size)
+            if has_older else None
+        )
 
     return LogTailResponse(
         filename=filename,
         total_lines_read=scanned,
         filtered_count=len(entries),
         entries=entries,
+        older_cursor=older_cursor,
+        has_older=has_older,
+    )
+
+
+@router.get("/history", response_model=LogTailResponse)
+def read_log_history(
+    cursor: str = Query(description="由 `/tail` 或上一页返回的不透明历史游标"),
+    filename: str = Query(default="app.log", description="日志文件名"),
+    lines: int = Query(default=200, ge=1, le=2000, description="返回的最大匹配条数"),
+    level: Optional[str] = Query(default=None, description="逗号分隔的级别集合；精确匹配"),
+    keyword: Optional[str] = Query(default=None, description="按关键词过滤"),
+    session_id: Optional[str] = Query(default=None, description="按 session_id 精确过滤"),
+    execution_id: Optional[str] = Query(default=None, description="按测试执行 id 精确过滤"),
+):
+    """从显式游标继续读取更早日志；本端点不得用于自动轮询。"""
+    filepath = _safe_filename(filename)
+    with open(filepath, "rb") as stream:
+        stat = os.fstat(stream.fileno())
+        cursor_state = _decode_cursor(cursor, stream, stat)
+        entries, scanned, next_offset, has_older = _scan_reverse_entries(
+            stream,
+            stat.st_size,
+            max_entries=lines,
+            predicate=lambda e: _entry_matches(
+                e, level, keyword, session_id, execution_id=execution_id,
+            ),
+            before_offset=cursor_state.offset,
+            scan_limit=_HISTORY_SCAN_LIMIT,
+        )
+        # decode 后到 scan 结束之间也可能发生截断/原位改写；最终页没有下一枚
+        # cursor，同样必须复验输入游标，不能靠 encode 的副作用兜底。
+        _validate_cursor_state(cursor_state, stream, stat)
+        older_cursor = (
+            _encode_cursor(stream, stat, next_offset, cursor_state.snapshot_eof)
+            if has_older else None
+        )
+    return LogTailResponse(
+        filename=filename,
+        total_lines_read=scanned,
+        filtered_count=len(entries),
+        entries=entries,
+        older_cursor=older_cursor,
+        has_older=has_older,
     )
 
 
@@ -375,14 +574,6 @@ import logging
 # 前端日志通道使用的 logger
 _frontend_logger = logging.getLogger("app.frontend")
 
-# 已知的活跃日志文件名集合（用于 is_current 判定）
-_ACTIVE_LOG_NAMES = {
-    "app.log", "scpi.log", "db.log",
-    "calibration.log", "measurement.log", "channel_engine.log",
-    "audit.log", "alert.log", "frontend.log",
-}
-
-
 class FrontendLogEntry(BaseModel):
     """浏览器端单条日志"""
     ts: Optional[float] = None        # Unix ms 时间戳
@@ -458,4 +649,3 @@ def ingest_frontend_logs(batch: FrontendLogBatch):
         count += 1
 
     return FrontendLogResponse(accepted=count)
-

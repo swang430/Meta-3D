@@ -320,6 +320,8 @@ export type SystemLogTailResponse = {
   total_lines_read: number
   filtered_count: number
   entries: SystemLogEntry[]
+  older_cursor: string | null
+  has_older: boolean
 }
 
 // ── ④ 实时告警 — GET /dashboard/alerts + /dashboard/alerts/summary ──
