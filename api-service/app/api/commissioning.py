@@ -216,8 +216,16 @@ _LEGACY_PHASE_ORDER = ["precheck", "reference", "mimo_test", "analysis", "report
 
 class CreateSessionRequest(BaseModel):
     cdl_model_name: str = "UMa CDL-C NLOS"
-    frequency_hz: float = 3.5e9
-    bandwidth_mhz: float = 100
+    # 2026-08-07 现场实证的坑：这两个原来是 `float = 3.5e9 / 100`，**同一个默认值
+    # 活在两个地方**（这里 + MIMOOTAConfiguration），而 `_request_overrides` 把它们
+    # **无条件**塞进 overrides —— 于是改了 schema 默认根本不生效，建出来的会话
+    # 仍是 3500 MHz / 100 MHz。改成 `Optional = None`：**None = 不覆盖，用 schema
+    # 默认**，跟下面 8 个 `precheck_strict_*` 同一套语义。
+    # 这是"去掉重复"而不是"同步重复" —— 同步要靠人记得，去掉之后记不记得都对。
+    # G14 门（test_rule_gates.py）盯着这件事：本类里任何跟 MIMOOTAConfiguration
+    # 同名的字段，要么默认值相等，要么就是 None（不覆盖）。
+    frequency_hz: Optional[float] = None
+    bandwidth_mhz: Optional[float] = None
     mimo_layers: int = 2
     azimuths_deg: List[float] = [0.0, 90.0, 180.0, 270.0]
     measurement_duration_s: float = 10.0
@@ -291,8 +299,6 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
     """Translate CreateSessionRequest fields into MIMOOTAConfiguration overrides."""
     overrides: Dict[str, Any] = {
         "cdl_model_name": req.cdl_model_name,
-        "frequency_hz": req.frequency_hz,
-        "bandwidth_mhz": req.bandwidth_mhz,
         "mimo_layers": req.mimo_layers,
         "azimuths_deg": req.azimuths_deg,
         "measurement_duration_s": req.measurement_duration_s,
@@ -303,6 +309,12 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
             "max_rsrp_variance_db": req.max_rsrp_variance_db,
         },
     }
+    # 频率/带宽: None = 不覆盖 → 用 MIMOOTAConfiguration 的默认（现场基线
+    # 3549.99 MHz / 40 MHz）。显式给才覆盖。见类定义上的注释。
+    if req.frequency_hz is not None:
+        overrides["frequency_hz"] = req.frequency_hz
+    if req.bandwidth_mhz is not None:
+        overrides["bandwidth_mhz"] = req.bandwidth_mhz
     # P3-14: 资产引用透传 (MIMOOTAConfiguration.channel_asset_id 已存在, S3 起
     # measure resolver 按它派生 engine_mode / .smu 源)。None 不发 — 不覆盖默认。
     if req.channel_asset_id is not None:

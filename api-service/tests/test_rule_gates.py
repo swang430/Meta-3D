@@ -1703,3 +1703,93 @@ def test_g15_log_sort_groups_continuations_and_uses_stable_identity():
     tbody_end = viewer.index("</Table.Tbody>", tbody_start)
     tbody = viewer[tbody_start:tbody_end]
     assert "renderLogDetail(entry)" in tbody
+
+
+# ─────────────────────────────────────────────────────────────────────
+# G16 建会话请求的默认值不得跟配置 schema 打架
+# ─────────────────────────────────────────────────────────────────────
+#
+# 母题: **同一个默认值活在两个地方**。`CreateSessionRequest` 与
+# `MIMOOTAConfiguration` 有一批同名字段, 而 `_request_overrides()` 把请求侧的值
+# **无条件**塞进 overrides —— 于是改了 schema 默认根本不生效, 被请求侧的旧值盖掉,
+# 而且**没有任何测试会红**(两边各自的单测都过)。
+#
+# 2026-08-07 现场实证: 把 schema 的 frequency_hz/bandwidth_mhz 改成现场基线
+# (3549.99 MHz / 40 MHz) 后, 建出来的会话仍然是 3500 MHz / 100 MHz —— 靠端到端
+# 建一次真会话读回配置才发现。**单测全绿, 默认值全错。**
+#
+# 不变量: 请求侧任一跟配置 schema 同名的字段, 要么默认值**相等**,
+#         要么请求侧默认是 **None**(= 不覆盖, 用 schema 默认)。
+# 这条门是**不变量档**(从代码派生恒成立的关系), 不是存在性档 ——
+# 新加字段、改任一侧默认值, 只要两处漂开就红。
+
+def _session_request_vs_config_conflicts():
+    """返回 [(字段名, 请求侧默认, schema 默认)] —— 两处打架的字段。"""
+    from app.api.commissioning import CreateSessionRequest
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+
+    cfg = MIMOOTAConfiguration()
+    out = []
+    for name, field in CreateSessionRequest.model_fields.items():
+        if not hasattr(cfg, name):
+            continue
+        req_default = field.default
+        # None = "不覆盖, 用 schema 默认" —— 这是本仓已确立的语义
+        # (见 _request_overrides 里 8 个 precheck_strict_* 的 is-not-None 写法)。
+        if req_default is None:
+            continue
+        cfg_default = getattr(cfg, name)
+        if req_default != cfg_default:
+            out.append((name, req_default, cfg_default))
+    return out
+
+
+def test_g16_session_request_defaults_match_config_schema():
+    """站点: CreateSessionRequest 的默认值不得静默盖掉 MIMOOTAConfiguration。"""
+    conflicts = _session_request_vs_config_conflicts()
+    assert not conflicts, (
+        "CreateSessionRequest 与 MIMOOTAConfiguration 的默认值打架 —— "
+        "请求侧会**无条件**覆盖 schema 默认, 改 schema 不生效且无测试会红。\n"
+        + "\n".join(
+            f"  {n}: 请求侧={r!r} vs schema={c!r}" for n, r, c in conflicts
+        )
+        + "\n修法二选一: ① 两处改成同值; ② 请求侧改成 Optional=None "
+        "(不覆盖, 跟 precheck_strict_* 同语义) 并在 _request_overrides 里加 "
+        "`if req.x is not None` 守卫。**优先 ②** —— 去掉重复胜过同步重复。"
+    )
+
+
+def test_g16_checker_detects_a_planted_conflict():
+    """G16 判定器的行为自测: 造一个假冲突, 判定器必须抓到。
+
+    ⓪④ 要求「每加一道门, 附上让它红的变异并实跑」。没有这条自测, 上面那条
+    在判定器写错(比如把 `!=` 写成 `==`, 或者 hasattr 恒 False)时会**恒绿** ——
+    那正是本文件反复在治的"存在性门被绕过"形态。
+    """
+    from app.api.commissioning import CreateSessionRequest
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+
+    cfg = MIMOOTAConfiguration()
+    # 挑一个两侧同名、且请求侧默认不是 None 的真实字段来做变异。
+    victim = next(
+        (n for n, f in CreateSessionRequest.model_fields.items()
+         if hasattr(cfg, n) and f.default is not None),
+        None,
+    )
+    assert victim is not None, (
+        "找不到可用于变异的同名字段 —— G16 已失去意义(两侧不再有重叠), "
+        "该删门或改写本自测, 别让它假绿。"
+    )
+    field = CreateSessionRequest.model_fields[victim]
+    saved = field.default
+    try:
+        # 种一个绝不可能等于 schema 默认的值
+        field.default = object()
+        conflicts = _session_request_vs_config_conflicts()
+        assert any(n == victim for n, _r, _c in conflicts), (
+            f"判定器没抓到植入的冲突 (字段 {victim}) —— G16 是恒绿的假门"
+        )
+    finally:
+        field.default = saved
+    # 复位后必须回到干净态, 否则本自测会污染同进程的其它测试
+    assert not any(n == victim for n, _r, _c in _session_request_vs_config_conflicts())
