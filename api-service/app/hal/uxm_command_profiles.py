@@ -57,6 +57,9 @@ class UxmTestApp:
     # App 2026-05-27 实证配置查询不支持 (超时) → False, 开了只会拖慢并误伤。
     # config["readback_verify"] 可显式双向覆盖。
     SUPPORTS_CONFIG_READBACK: bool = False
+    # SCS 值编码: 旧 5G_NR_Test 使用裸 kHz；BSE/IRAT 使用 numerology
+    # token（15/30/60/120 kHz → MU0/MU1/MU2/MU3）。
+    SCS_VALUE_FORM: str = "raw"
 
     # --- IEEE 488.2 / platform-mandatory ---
     IDN = "*IDN?"
@@ -77,12 +80,22 @@ class UxmTestApp:
     CELL_DUPLEX: Optional[str] = None
     CELL_ACTIVE: Optional[str] = None
     CELL_DL_POINTA: Optional[str] = None
+    CELL_FREQ_RANGE: Optional[str] = None
 
     # --- SSB ---
     SSB_ARFCN: Optional[str] = None
+    SSB_SCS: Optional[str] = None
+    SSB_CORESET0: Optional[str] = None
 
     # --- Downlink power ---
+    # ⚠️ **两条命令、两种口径，别混**（NotebookLM 2026-08-07 手册原文核对）：
+    #   DL_POWER         → `...:DL:POWer[:EPRE]`   Unit `dBm/SCS`  Range `-200 .. 10`
+    #                      "Changes DL Power - energy per resource element"
+    #   DL_POWER_CHANNEL → `...:DL:POWer:CHANnel`  整带宽总功率 dBm  Range `-168 .. 42`
+    #                      "the power integrated over the whole cell bandwidth"
+    # 同一个 cell 上**只该写其中一条** —— 两条都写会互相覆盖，最后生效哪个不确定。
     DL_POWER: Optional[str] = None
+    DL_POWER_CHANNEL: Optional[str] = None
     PDSCH_POWER: Optional[str] = None
     SSB_POWER: Optional[str] = None
 
@@ -95,6 +108,7 @@ class UxmTestApp:
     # --- MIMO logical layers ---
     MIMO_DL_LAYERS: Optional[str] = None
     MIMO_DL_CODEBOOK: Optional[str] = None
+    MIMO_DL_CONFIG: Optional[str] = None
 
     # --- MIMO antenna → physical RF port routing ---
     MIMO_TX_ANT_PORT: Optional[str] = None
@@ -226,6 +240,10 @@ class UxmTestApp:
     PDSCH_SCHED_ALGO: Optional[str] = None
     PDSCH_AMC_ENABLE: Optional[str] = None
     PUSCH_AMC_ENABLE: Optional[str] = None
+    # slot 级 AMC 命令的**只读探测**模板（configure_mac 里逐条 query+对账，
+    # 不作为写路径）。None = 本方言不探。
+    AMC_SLOT_DL_APOLICY_PROBE: Optional[str] = None
+    AMC_SLOT_UL_IMCS_FIXED_PROBE: Optional[str] = None
 
     # --- HARQ ---
     HARQ_MAX_TRANS: Optional[str] = None
@@ -397,6 +415,7 @@ class UxmLteNrIratProfile(UxmTestApp):
     # ARFCN/BW/POWer/STATe 回读可用且与面板一致 → 回读对账默认开。
     BW_VALUE_FORM = "prefixed"
     SUPPORTS_CONFIG_READBACK = True
+    SCS_VALUE_FORM = "mu"
 
     # Note: app selection on E7515B Test App Framework is GUI-driven —
     # SCPI write to change app isn't safe to send unprompted.
@@ -407,6 +426,20 @@ class UxmLteNrIratProfile(UxmTestApp):
     CELL_DL_ARFCN = "BSE:CONFig:NR5G:{cell}:DL:ARFCN"
     CELL_DL_BW = "BSE:CONFig:NR5G:{cell}:DL:BW"        # value form "BW40"
     CELL_UL_BW = "BSE:CONFig:NR5G:{cell}:UL:BW"
+    # 2026-08-07 现场手工拼写探针已在 LTE_NR_IRAT / CELL1 上直接回读成功；
+    # 写值形态同时由仓库内 Keysight SCPI Reference 的 Type/Range 确认。
+    CELL_SCS = "BSE:CONFig:NR5G:{cell}:SUBCarrier:SPACing:COMMon"
+    CELL_DUPLEX = "BSE:CONFig:NR5G:{cell}:DUPLEX:MODe"
+    CELL_DL_POINTA = "BSE:CONFig:NR5G:{cell}:DL:POINta"
+    CELL_FREQ_RANGE = "BSE:CONFig:NR5G:{cell}:FREQuency:RANGe"
+    SSB_ARFCN = "BSE:CONFig:NR5G:{cell}:SSB:ARFCN"
+    SSB_SCS = "BSE:CONFig:NR5G:{cell}:SSB:SUBCarrier:SPACing"
+    SSB_CORESET0 = "BSE:CONFig:NR5G:{cell}:SSB:COReset0"
+    # 现场仪表为 NR5G_R15。BWP 级 ``PDSCh:MMIMolayers`` 虽然可查询/
+    # 写入，但在 APPLY 时会被 R16 license 门拒绝；R15 对应的是
+    # serving-cell 级 ``PDSCh:MAX:MIMOlayers``（手册 + 2026-08-07 实机查询）。
+    MIMO_DL_LAYERS = "BSE:CONFig:NR5G:{cell}:PHY:PDSCh:MAX:MIMOlayers"
+    MIMO_DL_CONFIG = "BSE:CONFig:NR5G:{cell}:DL:MIMO:CONFig"
     CELL_ACTIVE = "BSE:CONFig:NR5G:{cell}:ACTive:STATe"
     CELL_STATE_ON = "BSE:CONFig:NR5G:{cell}:ACTive:STATe 1"
     CELL_STATE_OFF = "BSE:CONFig:NR5G:{cell}:ACTive:STATe 0"
@@ -496,10 +529,23 @@ class UxmLteNrIratProfile(UxmTestApp):
     #      "ALL" → PRB 整数 ｜ "5MS" → MS5 ｜ 4/16 → N4/N16 ｜ 4 → P4
     # Enum: BASIc | FULL_TPUT | DL_RMC | UL_RMC | APC_RMC | EVM_RMC（默认 BASIc）
     PDSCH_SCHED_ALGO = "BSE:CONFig:NR5G:SCHeduling:QCONFig:SCENario"
-    # Enum: FIXed | BLER | DYNamic | CQI | ...（默认 FIXed）—— **不是开关**
-    PDSCH_AMC_ENABLE = (
+    # ⛔ slot 级 AMC 两条盲写**已去掉**（2026-08-07 现场两轮实测：作为写下发时
+    #    恰有一条 -113 Undefined header，组级对账定位不了是哪条）。
+    #    「关 AMC / 固定 MCS」的意图由 QCONFig 组承担，依据（手册原文）：
+    #      · SCENario FULL_TPUT: "maximizes the throughput achieved given the
+    #        selected TDD Pattern, RB count and MCS" —— MCS 是**输入**不是自适应量
+    #      · QCONFig:DL:MCS: "The MCS that will be applied to all DL slots"
+    #      · DL:RRESource:APOLicy 的 Default 本身就是 FIXed；CQI 自适应
+    #        "Only allowed when [policy] is CQI ... and some CSI Report is enabled"
+    #    ⚠ FULL_TPUT 重建后 APOLicy 的生效值手册**未说明** —— 由下面的
+    #    只读探测回读定案（能读到非 FIXed 时驱动仍然致命拦）。
+    PDSCH_AMC_ENABLE = None
+    PUSCH_AMC_ENABLE = None
+    # 探测（只读，手册原文形式）：定位到底哪条 header 不被本 Test App 认，
+    # 顺带回读 FULL_TPUT 重建后的生效策略。
+    AMC_SLOT_DL_APOLICY_PROBE = (
         "BSE:CONFig:NR5G:{cell}:SCHeduling:{bwp}:FC0:SC0:DL:RRESource:APOLicy")
-    PUSCH_AMC_ENABLE = (
+    AMC_SLOT_UL_IMCS_FIXED_PROBE = (
         "BSE:CONFig:NR5G:{cell}:SCHeduling:{bwp}:FC0:SC0:UL:IMCS:FIXed")
     PDSCH_MCS = "BSE:CONFig:NR5G:SCHeduling:QCONFig:DL:MCS"        # Integer 0..28
     PDSCH_RB_ALLOC = "BSE:CONFig:NR5G:SCHeduling:QCONFig:DL:NUM:PRBs"  # Integer 1..273
@@ -568,6 +614,11 @@ class UxmLteNrIratProfile(UxmTestApp):
     #             form is the actually-routable one; bare :SSB:POWer is
     #             undefined header on this firmware)
     DL_POWER = "BSE:CONFig:NR5G:{cell}:DL:POWer"
+    # 整带宽口径（2026-08-07 NotebookLM 手册原文）。手册推荐用 :CHANnel
+    # （TA v15.26.6 起引入，为跟 LTE 接口对齐）；旧别名 :DBmBw 行为相同。
+    # ⚠ 手册标 `Application Mode : NSA | SA`，**未覆盖 LTE_NR_IRAT** ——
+    #   跟本 profile 其它命令同一处境，下发后查 SYST:ERR? 才知道认不认。
+    DL_POWER_CHANNEL = "BSE:CONFig:NR5G:{cell}:DL:POWer:CHANnel"
     SSB_POWER = "BSE:CONFig:NR5G:{cell}:SSB:POWer:ADVertised"
     SCELL_CONF_BAND = "BSE:CONFig:LTE:{cell}:CAGGregation:AGGRegate:SCC:LIST"
     SCELL_ADD = "BSE:CONFig:LTE:{cell}:CAGGregation:ACTivate:SCC:LIST"
@@ -588,8 +639,7 @@ class UxmLteNrIratProfile(UxmTestApp):
     # ⚠️ 下面这份清单**本身也会 stale** —— 例如 `MEAS_CSI_*` 已由 #275/P1-31
     #    补进本 profile（`MEAS_CSI_CQI/RI/START/STOP/STATE`），却仍列在这里。
     #    **以类里的实际赋值为准，别信这份清单。**
-    # CELL_SCS, CELL_DUPLEX, CELL_DL_POINTA, SSB_ARFCN,
-    # MIMO_DL_LAYERS, MIMO_DL_CODEBOOK, MIMO_TX/RX_ANT_PORT*,
+    # MIMO_DL_CODEBOOK, MIMO_TX/RX_ANT_PORT*,
     # PDSCH_MCS / RB_ALLOC, PUSCH_MCS / RB_ALLOC,
     # UE_* (CALL: prefix not exposed), RRC_*,
     # MEAS_CSI_*, MEAS_UE_RSRP/SINR, MEAS_EVM_START,

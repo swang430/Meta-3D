@@ -169,6 +169,14 @@ class MIMOOTAConfiguration(BaseModel):
     # 前置解析读 ChannelAsset 按 source_type 推导 engine_mode + 信道字段。留空 = 走旧字段路
     # (backward-compat 方案 A: 旧 cdl_profile_id/scd_id 一行不改, 解析层只在本字段显式给时介入)。
     channel_asset_id: Optional[str] = None
+    # ⚠ 这里是**全库通用默认**，不是某次现场的工作点。2026-08-07 一度被改成
+    #   CAICT n78 基线（3549.99 MHz / BW40），当天即撤回 —— 共享 schema 的默认值
+    #   会流进每一条新建用例，把一次现场的配置变成全项目的隐含前提。
+    #   现场基线属于**暗室首测那一条路**，走 `CreateSessionRequest` 显式传，
+    #   或由操作员在 GUI 上填；权威值备查：ARFCN 636666 = 3549.99 MHz、BW40、
+    #   信道资产 MF_N78_636666_BW40_CDLC_UMa_4x4_DP_v1
+    #   （2026-07-03 EMQuest .prm 破译；⚠ .smu 文件名标称 3600M 是错的，
+    #    见 memory `project_f64_smu_filename_freq_mismatch`）。
     frequency_hz: float = 3.5e9
     bandwidth_mhz: float = 100.0
 
@@ -198,7 +206,34 @@ class MIMOOTAConfiguration(BaseModel):
     sample_interval_ms: float = 100.0
 
     # === Power ===
+    # ⚠️ **口径陷阱**：本字段最终写到 `BSE:CONFig:NR5G:<cell>:DL:POWer`，
+    # 手册原文 `Unit : dBm/SCS`、`Range : -200 .. 10`、
+    # `Description: Changes DL Power - energy per resource element`
+    # (NotebookLM 2026-08-07 原文核对) —— 它是**每子载波 (EPRE)** 口径，
+    # 不是整带宽总功率。默认 0.0 曾被原样发成 `0 dBm/SCS`，仪器当场回
+    # `510,"Configuration warning;DL Power adjusted on NR Cell-1 from 0 dBm/SCS
+    # to -25.12 dBm/SCS due to HW port limitations"` —— 即请求值根本没生效。
+    # 想按「整带宽 dBm」配功率，用下面的 `uxm_dl_power_dbm_per_bw`，
+    # **别在这里自己换算** (换算随带宽/SCS 变，是派生值)。
     target_tx_power_dbm: float = 0.0
+
+    uxm_dl_power_dbm_per_bw: Optional[float] = None
+    # 2026-08-07 现场（用户当场指定 -15 dBm/BW）。
+    # 非 None = DL 功率改走**整带宽口径**的专用命令，**不再写** `DL:POWer`
+    # (dBm/SCS)。手册原文（NotebookLM 2026-08-07 核对）：
+    #   SCPI 变体① `BSE:CONFig:NR5G:<cell>:DL:POWer:CHANnel`  ← 推荐 (TA v15.26.6+)
+    #   SCPI 变体② `BSE:CONFig:NR5G:<cell>:DL:POWer:DBmBw`    ← 旧别名，同行为
+    #   Description: "Sets the total DL Reference Signal "Channel" Power
+    #                 (i.e. the power integrated over the whole cell bandwidth) in dBm"
+    #   Default : -23.0    Range : -168 .. 42    → -15 在范围内
+    # ⚠ **为什么不在 target_tx_power_dbm 里填换算值**：dBm/SCS ↔ dBm/BW 的换算
+    #   取决于带宽和 SCS（BW40/SCS30 差 31.0 dB，BW100 差 35.2 dB），是**派生值**。
+    #   仪器自己有这条命令，就让仪器换算 —— 本项目在派生值上栽过（.smu 文件名
+    #   频率，见 project_f64_smu_filename_freq_mismatch）。
+    # ⚠ 手册标 `Application Mode : NSA | SA`，**没写 LTE_NR_IRAT** —— 跟
+    #   band/ARFCN 那批一样，下发后必须查 `SYST:ERR?` 才知道认不认。
+    # None = 回到旧行为（写 `DL:POWer` = target_tx_power_dbm，dBm/SCS）。
+
     target_rsrp_dbm: float = -85.0
     target_snr_db: float = 20.0
 
@@ -209,7 +244,27 @@ class MIMOOTAConfiguration(BaseModel):
     # === Base station MAC throughput parameters (for Phase 3) ===
     mcs: int = 28
     enable_amc: bool = False
-    tdd_pattern: str = "DDDSU"
+    # 2026-08-07 现场（用户当场选定 DDDSUDDSUU）：原默认 `DDDSU` 是 **5 个 slot**，
+    # 30 kHz SCS 下 5 × 0.5ms = **2.5ms**，跟 `tdd_period = "5MS"` 对不上 ——
+    # 驱动因此**拒发整个 TDD 组**（照发不会被仪器拒，但 DL/UL 比例会静默变成
+    # 另一个配置，测的不是那个量；见 test_p1_33 的 TestScsConsistency）。
+    # `DDDDDDDSUU` = 7D + 1S + 2U = 10 slot × 0.5ms = 5.0ms，跟 period 自洽。
+    #
+    # ⚠️ **为什么不是 `DDDSUDDSUU`**（2026-08-07 现场先选了它，翻不了）：
+    #   本仪器的 TDD 配置是**六个数**（DLSLots/DLSYmbols/ULSLots/ULSYmbols/
+    #   PERiod/STATE），手册原文 "DL Slots … starting from the **left side**
+    #   of the periodicity window" / "UL Slots … from the **right side**" ——
+    #   六个数只能表达 **D…D [S] U…U** 这**一种**排布。
+    #   `DDDSUDDSUU` = `DDD S U DD S UU`（S 后面还有 D、且两个 S）
+    #   在 3GPP 里合法(那是 pattern1+pattern2 双段)，但**单段六个数表达不了**，
+    #   驱动会拒发整组 TDD（拒得对：照发会静默变成另一个配置）。
+    #   手册**确实支持**双段 `TDDPATtern:TWO:*`，但本驱动只实现了单段 ——
+    #   要用双段得先扩驱动，别改这里的值去凑。
+    # ✅ `DDDDDDDSUU` 恰好等于**手册自己的默认值** dslots=7 / dsym=6 /
+    #   ulslots=2 / ulsym=4 / period=MS5（NotebookLM 2026-08-07 原文核对）。
+    # ⚠ 换 SCS 就要重算：pattern 的含义**依赖 SCS**（手册把 SCS 列为
+    #   `TDDPATtern:STATE` 的 Dependencies）。60 kHz 下同样 10 slot 只有 2.5ms。
+    tdd_pattern: str = "DDDDDDDSUU"
     tdd_period: str = "5MS"
     harq_max_trans: int = 4
     harq_processes: int = 16
@@ -229,6 +284,19 @@ class MIMOOTAConfiguration(BaseModel):
     csi_rs_ports: Optional[int] = None  # CSI-RS 端口数
 
     # === Channel generation engine ===
+    # 2026-08-07 现场（用户当场指定「硬编码 GCM 以及指定的文件」）：
+    # 默认改成 GCM 原生 —— 现场唯一验过的信道资产
+    # `MF_N78_636666_BW40_CDLC_UMa_4x4_DP_v1` 是 `source_type=vendor_file`、
+    # `allowed_targets=['gcm_native']`，走 ASC 合成**根本碰不到它**。
+    # 原默认 `mimo_first_asc` 会让暗室首测拿 ChannelEgine 现场合成的 UMa CDL-C
+    # 去测，跟 EMQuest 那套基线不同源，结果没法跟历史对比。
+    # 配套的 .smu 路径见下方 `emulation_file`；两者必须同时改，改一个就自相矛盾。
+    # ⚠ 撤回到 ASC（外审 #304 P1）。2026-08-07 现场把它改成 keysight_gcm，
+    #   但 GCM 路**必须**有 `.smu`（`emulation_file` 或 `channel_asset_id`），
+    #   而那两个字段昨天已随其它现场基线撤回成 None —— 于是默认会话会被
+    #   measure 的 strict emulation-file 门在加载模型前全部拒掉。
+    #   engine_mode 跟 frequency_hz / bandwidth_mhz 是同一批现场基线，
+    #   撤回时漏了它。现场那条路（GCM + 指定 .smu）走 CreateSessionRequest 显式给。
     engine_mode: str = "mimo_first_asc"
     # Allowed: "mimo_first_asc" | "keysight_gcm" | "external_asc" | "b2_parametric_tdl"
     #   - mimo_first_asc:    api-service → channel-engine-service → ChannelEgine strict_pfs
@@ -279,24 +347,97 @@ class MIMOOTAConfiguration(BaseModel):
     # expose this flag — same opt-in-only contract as precheck_strict_cal.
 
     # === 仪表使用参数 (开关 3 块 2, 2026-07-20) — 全部 None = 现行为不变 ===
+    #
+    # ⭐ **默认必须是「不覆盖」**（2026-08-07 收窄）。这些字段跟数据库里**已经
+    #   存在**的用例共用同一个 schema：老用例的 configuration JSON 里没有这些键，
+    #   `model_validate()` 会拿**当前代码里的默认值**替它们补齐 —— 于是改一个
+    #   默认值就等于改了全库既有用例的行为，而用例本身一个字节没动。
+    #   实证：本字段一度默认 2，导致所有既有用例都被塞进"先直通→探 attach→
+    #   再开衰落"的流程，而那道 attach 探针在真 UXM 上必然失败（判据当时用错成
+    #   `query_ue_capability`，IRAT 方言上那几条命令是 None）→ 老用例全 FAILED。
+    #   现场基线值属于**暗室首测这一条路**，已搬到 `CreateSessionRequest`
+    #   （同 `engine_mode` 先例），不放在共享 schema 里。
+    #   由 `test_rule_gates.py` 的 G16 守着请求侧与 schema 侧默认值不打架。
+
     f64_bypass_mode: Optional[int] = Field(default=None, ge=1, le=3)
-    # 非 None = **直通态测量** (无衰落基线): 信道加载后设 STATIC <mode>、不
-    # GO。2=Butler (官方为建 MIMO 链设计, 4x4 基线用它 — Calibration 零相位
-    # 塌秩); 3=Calibration (-10dB 等增益, 单层/校准); 1=模型旁路。None=正常
-    # 衰落回放 (现行为)。注意直通稳态下 F64 输出功率显示冻结 (07-03 实证)。
+    # **「扶一把」开关**：attach 之前先把 F64 设成直通，让 DUT 容易挂上；
+    # 挂上之后撤掉直通、开衰落，再确认一次还在，然后才测。
+    # None = 关（默认，正常流程：直接开衰落测量）。非 None = 开，值是直通档位。
+    #
+    # 为什么默认关（2026-08-07 用户定的方向）：不 bypass 才是正常测试流程，
+    # bypass 是**例外处理** —— 有的 DUT 在衰落打开的情况下不容易 attach，
+    # 拿直通扶一把让测试能开始。它是**调试辅助**，不是测试参数：
+    # 频率/带宽/功率/信道模型定义"测的是什么"，本开关定义"怎么让它开始"。
+    # 混进默认值会污染可比性（扶过的和没扶过的数能不能直接比？）。
+    # ⚠ attach 超时时的错误消息会提示这个开关，不需要谁记住它存在。
+    #
+    # 档位（手册原文，NotebookLM 2026-08-07 核对 §20.4.6.25）：
+    #   1 Channel model bypass — 衰减=平均衰减, 时延=最小路径时延, **相位为零**
+    #   2 Butler bypass        — 衰减=平均衰减, 时延=最小路径时延,
+    #                            **相位用 Butler Matrix 算, 取决于拓扑**
+    #   3 Calibration bypass   — 所有通道衰减相同、时延相同、**相位为零**
+    # 4x4 要用 2：1 和 3 的零相位会让 MIMO 秩塌掉。
+    #
+    # 流程（三个节点各留一条里程碑，进 result_payload 也进报告）：
+    #   bypass_attach  扶着的时候挂上了吗
+    #   fading_attach  **梯子撤掉之后还在吗** ← 判断"这个 DUT 到底需不需要扶"
+    #   throughput     撤掉之后测出数来了吗
+    # 跑够几轮就能用历史数据回答"要不要扶"，而不是靠猜。
+    #
+    # ⚠ 手册："When static model is enabled, **emulation is paused**"；
+    #   而「设了 STATIC 之后需不需要 DIAG:SIMU:GO 才有射频输出」**手册未说明**
+    #   —— 所以直通态下 DUT 到底能不能 attach 是**现场才知道**的。挂不上时
+    #   里程碑如实停在 bypass_attach=False，**不假装往下走**。
+    # ⚠ 直通稳态下 F64 输出功率显示冻结（07-03 实证），判据以 DUT 侧吞吐为准。
+    #
+    # 📌 待评估（不在本片做）：本字段与下面的 `f64_fade_after_attach` 其实是
+    #    一件事的两半（开了直通就必然要撤掉，没有"开了不撤"这种用法），
+    #    合成一个语义更达意的开关（如 `bypass_assist_attach`）更清楚。
+    #    但改名波及 GUI 表单、`baseStation_attach_check` 的同名参数与两个测试
+    #    文件，**一个故障都不修** —— 按 ⑦ 记入 Discovered 单独立项。
+
+    f64_fade_after_attach: bool = True
+    # 仅在 `f64_bypass_mode` 非 None（即开了"扶一把"）时有意义。
+    # True  = 撤掉直通、开衰落、再确认一次 DUT 还在，然后测（默认，也是
+    #         "扶一把"该有的完整语义）。
+    # False = 停在直通态测量，全程不 GO、没有衰落 —— 无衰落基线专用。
+    # ⚠ bypass 关掉时本字段被忽略（那条路本来就直接 start_emulation）。
 
     f64_input_ref_dbm: Optional[float] = None
     # 非 None = **手动定标**: 直接 set F64 输入参考 (INP:LEV:AMP × 全输入),
     # 跳过 AUTOSET 闭环; 读回 (measure_input) 进 input_level_calibration
-    # payload 作反馈。07-03 实证工作点 -15 (crest 12)。None = AUTOSET 闭环
-    # (现行为)。
+    # payload 作反馈。None = AUTOSET 闭环。
+    #
+    # 2026-08-07 现场（用户当场指定 -17）：UXM 出 -15 dBm/BW，UXM→F64 路损
+    # **按 2 dB 估**（尚未实测，见下方警告），故 F64 输入口实际 -17。
+    # 手册原文（§20.4.4.3 / GUI「Input RF level」）："sets the average input
+    # level ... in dBm"、"Defines the maximum RMS transmit power of the BS or MS
+    # **without cables or external losses**"；limits 示例 `-23, 0` → -17 在范围内。
+    # ⚠ **口径等价性**：手册把「发射端功率」和「线缆损耗 (In loss)」分成两个参数。
+    #   这里把 2 dB 路损**吸收进参考值**(-15−2=-17)，**只在 In loss = 0 时等价**
+    #   （2026-08-07 用户确认 In loss 未设过）。若哪天 F64 上填了 In loss，
+    #   这个值必须改回 -15，否则路损被扣两次。
+    # ⚠ **2 dB 是估计值不是实测** —— 真实路损要用 CE+SA 实测（P0-3 校准链），
+    #   在那之前所有绝对电平结论都带这 2 dB 的不确定度。
 
     f64_crest_db: Optional[float] = None
     # 手动定标的峰均比 (随 f64_input_ref_dbm 使用; 单独给不生效 — crest 是
     # 定标的一部分, 不做独立下发路径)。
+    # 2026-08-07 现场用户指定 15（07-03 那次用的是 12，工作点不同不要照抄）。
 
     f64_output_gain_db: Optional[float] = None
     # 非 None = 信道加载后对全部输出写 OUTP:GAIN (统一值)。None = 不写。
+    # ⚠ 这是**增益 dB**不是绝对电平；手册 `OUTPut:GAIN:CH` limits 示例 `-45, 0`。
+    # 要按绝对 dBm 设输出用下面的 `f64_output_level_dbm`。
+
+    f64_output_level_dbm: Optional[float] = None
+    # 2026-08-07 现场（用户当场指定 -50，"大一点没关系"）。
+    # 非 None = 信道加载后对全部输出写 **绝对平均输出电平**
+    # `OUTPut:LEVel:AMPlitude:CH <out>,<dBm>`（手册 §20.4.5.3 原文
+    # "sets the average output level of the specific channel output in dBm"，
+    # limits 由 `OUTP:LEV:AMP:LIM? <out>` 查，手册示例 `-68.8401,-23.8401`）。
+    # ⚠ 跟 `f64_output_gain_db` 是**两条不同的命令**，手册对二者的换算关系
+    # **未说明** —— 两个都给会写两次、互相覆盖，语义不可预测。同时给 = fail-loud。
 
     input_loop_initial_dl_power_dbm: Optional[float] = None
     # AUTOSET 闭环的 UXM 起点功率。None = controller 默认 -10 dBm (比 EMQuest
@@ -344,8 +485,19 @@ class MIMOOTAConfiguration(BaseModel):
 
     # === F64 GCM .smu TestCase 驱动 (P2-11 Phase 2, 2026-05-31) ===
     emulation_file: Optional[str] = None
-    # GCM (keysight_gcm) 模式下 F64 加载的 .smu 仿真文件完整路径 (F64 Windows 主机上,
-    # e.g. "D:\\Scenario Packs\\...\\..._3600M.smu")。None = 不由 TestCase 指定。
+    # 2026-08-07 现场（用户当场给的 F64 本机路径，「硬编码指定的文件」）。
+    # 对应资产 `MF_N78_636666_BW40_CDLC_UMa_4x4_DP_v1`
+    # (id b328d53a-edfa-40a0-81e1-5efc759bcc5a, source_type=vendor_file)。
+    # ⚠️ **文件名标称 3600M，工程真值是 3549.99 MHz / ARFCN 636666**
+    #   （2026-07-03 现场纯净加载 + 面板实证；见
+    #   project_f64_smu_filename_freq_mismatch）。**别拿文件名推频率** ——
+    #   上面 `frequency_hz = 3.54999e9` 才是真值，两者不一致是预期的。
+    # ⚠️ 这是**站点特定的硬编码**：换一台 F64 / 换一版 Scenario Pack 就得改。
+    #   正规做法是传 `channel_asset_id`（资产的 associated_file_path 已登记同一
+    #   路径，resolver 会覆盖本字段），但 GUI 暂无资产选择器 —— 2026-08-07
+    #   用户明确要求「不用复杂，可以硬编码」，故先钉死，资产选择器留作后续。
+    # GCM (keysight_gcm) 模式下 F64 加载的 .smu 仿真文件完整路径 (F64 Windows 主机上)。
+    # None = 不由 TestCase 指定。
     # 路径 B (正式测试): 显式指定 → measure 经 sim_rules 透传给 F64 GCM, 优先于驱动
     # 默认 .smu。ASC 模式无关 (.asc 由 channel-engine 按 frequency_hz 生成, 不用 .smu)。
 

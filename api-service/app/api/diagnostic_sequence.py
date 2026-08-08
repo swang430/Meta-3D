@@ -34,6 +34,7 @@ from app.services.diagnostic_context import (
     DiagnosticContext,
 )
 from app.services.instrument_hal_service import get_hal_service
+from app.services.instrument_test_lease import instrument_test_lease
 from app.services.execution_exclusion_guard import (
     active_unsafe_diagnostic,
     release_unsafe_diagnostic,
@@ -194,8 +195,42 @@ async def run_diagnostic_sequence(
 
     try:
         try:
-            hal = get_hal_service()
-            result = await sequence.run(ctx, hal, request.params, log=_log)
+            # 租约要覆盖序列**会碰到**的驱动，不只是它**跑不了就得有**的那些。
+            # 只取 required 时，声明为可选依赖的驱动会停在 park 后的 Local 态，
+            # 序列一调它就返 False（内审 F3：`baseStation_attach_check` 声明
+            # 只有 baseStation，序列体却实打实调 channelEmulator 的
+            # stop_emulation / set_passthrough_mode）。G17 门守着两者不脱钩。
+            # ⚠ optional 那半必须再过一遍**本 lab 到底绑没绑**（内审 F2）——
+            #   判据要跟序列体同源。`baseStation_attach_check:145` 用的是
+            #   `ctx.find_binding_by_category_key("channelEmulator")`，而
+            #   HAL drivers 是**全局**的：线缆直连 lab（无 CE binding）撞上别的
+            #   setup 残留的 F64 驱动时，只按声明取租约会
+            #     ① 把**不属于本 lab** 的 F64 拽进 Remote —— 手册原文
+            #        （PROPSIM User Reference §20.1）：发第一条 ATE 命令即进
+            #        remote，**回 local 要操作员在 GUI 右上角点按钮**，我们
+            #        没法替它回去；
+            #     ② 那台 F64 不可达时 acquire 失败 → InstrumentTestLeaseError
+            #        → 整条 attach 序列 aborted，「可选依赖」变成硬前置，
+            #        正好抵消 optional_categories 想解决的问题。
+            #   required 保持无条件取：跑不了就得有，那是真前置。
+            lease_categories = set(sequence.metadata.required_categories) | {
+                c for c in sequence.metadata.optional_categories
+                if ctx.find_binding_by_category_key(c) is not None
+            }
+            if key == "instrument_idn_sweep":
+                lease_categories.update(
+                    binding.category_key
+                    for binding in (ctx.instrument_bindings or [])
+                    if binding.category_key
+                )
+            async with instrument_test_lease(
+                f"diagnostic-sequence:{key}",
+                control_f64="channelEmulator" in lease_categories,
+                control_uxm="baseStation" in lease_categories,
+            ):
+                # 在租约内解析 HAL，避免 reload 在“拿实例→首条命令”窗口换掉驱动。
+                hal = get_hal_service()
+                result = await sequence.run(ctx, hal, request.params, log=_log)
             success = bool(result.success)
             summary = result.summary
             step_results = [asdict(s) for s in result.steps]

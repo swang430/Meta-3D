@@ -1126,6 +1126,10 @@ class InstrumentHALService:
             logger.error(f"Error aggregating metrics: {e}")
             return {}
 
+    async def clear_metrics_cache(self) -> None:
+        """测试租约切换控制权时清掉跨边界的监控快照。"""
+        await self._metrics_cache.clear()
+
     def _build_monitoring_data(
         self,
         channel_metrics: Optional[Dict[str, Any]],
@@ -1315,6 +1319,30 @@ async def _initialize_hal_service_inner(mode: DriverMode) -> None:
     logger.info("Global HAL service initialized")
 
 
+async def _park_after_lifecycle() -> None:
+    """初始化/重载完成后把空闲仪表停回 Local —— **必须在生命周期锁之外调**。
+
+    ⚠ 这行原本在 `_initialize_hal_service_inner` 末尾，也就是**持着生命周期锁
+    去拿租约锁**。而 `POST /hal/reload`（非 force）与 `POST /hal/switch` 是
+    反过来的顺序：先 `hal_mutation_guard()` 拿租约锁，再进
+    `reload_hal_service_atomic` 拿生命周期锁。两条路径顺序相反、两把锁都无超时
+    —— 经典 ABBA 死锁，撞上就是租约锁被**永久持有**：此后每一次
+    `instrument_test_lease` / `park` / `hal_mutation_guard` 都无限等待，
+    正式执行、暗室首测、诊断序列、所有 F64/UXM 端点全部挂死，只能重启后端。
+    触发路径在现场很平常：被 409 拦住后改点 force，同时另一标签页点重载。
+    （2026-08-07 内审 F1，真模块探针复现。）
+
+    修法是**去掉锁嵌套**而不是加超时/换可重入锁：park 本来就不需要在
+    生命周期锁内做 —— 它操作的是刚建好的驱动实例，跟"谁在改全局 _hal_service"
+    无关。移到锁外后两条路径都只在同一时刻持一把锁，环就断了。
+    """
+    from app.services.instrument_test_lease import park_idle_instruments
+
+    # HAL connect/readiness 会短暂取得 F64 Remote。初始化完成即关闭 ATE socket，
+    # 空闲态由仪表前面板自行控制；正式测试会通过统一租约重新取得 Remote。
+    await park_idle_instruments()
+
+
 async def _shutdown_hal_service_inner() -> None:
     """Shutdown without acquiring the lifecycle lock — see
     ``_initialize_hal_service_inner`` for why."""
@@ -1329,6 +1357,8 @@ async def initialize_hal_service(mode: DriverMode = DriverMode.MOCK):
     """Initialise the global HAL service (serialised via lifecycle lock)."""
     async with _get_lifecycle_lock():
         await _initialize_hal_service_inner(mode)
+    # 锁外 —— 见 `_park_after_lifecycle` 的 ABBA 死锁说明
+    await _park_after_lifecycle()
 
 
 async def shutdown_hal_service():
@@ -1351,6 +1381,8 @@ async def reload_hal_service_atomic(mode: DriverMode) -> None:
     async with _get_lifecycle_lock():
         await _shutdown_hal_service_inner()
         await _initialize_hal_service_inner(mode)
+    # 锁外 —— 见 `_park_after_lifecycle` 的 ABBA 死锁说明
+    await _park_after_lifecycle()
 
 
 async def switch_hal_mode(new_mode: DriverMode) -> Dict[str, Any]:

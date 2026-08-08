@@ -11,6 +11,7 @@ import random
 
 from app.db.database import get_db
 from app.services.instrument_hal_service import get_hal_service
+from app.services.instrument_test_lease import is_test_monitoring_enabled
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -85,6 +86,11 @@ async def generate_monitoring_data() -> Dict[str, Any]:
     Phase 2.4.6: Uses HAL service with mock drivers
     Phase 3+: Will use real instrument drivers
     """
+    # 空闲时不允许 GUI 的 REST/WS 刷新重新触发任何仪表 SCPI。测试租约进入后
+    # 才开放实时指标；退出时租约先关此门，再释放 F64 ATE socket。
+    if not is_test_monitoring_enabled():
+        return {}
+
     hal_service = get_hal_service()
 
     try:
@@ -179,7 +185,7 @@ async def monitoring_data_broadcaster():
 
     while True:
         try:
-            if manager.active_connections:
+            if manager.active_connections and is_test_monitoring_enabled():
                 # Generate monitoring data from HAL service
                 metrics = await generate_monitoring_data()
 

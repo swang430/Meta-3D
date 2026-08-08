@@ -208,15 +208,23 @@ def _build_context(
     *,
     cal_cert: Optional[CalibrationCertificate],
     strict_mode: bool,
+    frequency_hz: Optional[float] = None,
 ) -> StepExecutionContext:
     """Build a TestCase + TestExecution + StepExecutionContext pinned to the
-    given strict mode and (detached) cal cert."""
+    given strict mode and (detached) cal cert.
+
+    ``frequency_hz``: 显式钉住目标频率。**±5% 窗口的边界测试必须给它** ——
+    否则窗口跟着 ``MIMOOTAConfiguration.frequency_hz`` 的默认值漂，改一次默认
+    就红一次（2026-08-07 实证：默认从 3.5e9 换成 3.54999e9 时，三条边界测试
+    同时红，而它们测的契约根本没变）。留 None = 沿用 schema 默认（对不关心
+    频率的用例是对的）。"""
     test_case, _descriptors = build_mimo_ota_test_case(
         db,
         name=f"CalGateCase-{uuid.uuid4().hex[:8]}",
         description="P1-8 cartesian",
         lab_profile_id=lab.id,
         config_overrides={
+            **({"frequency_hz": frequency_hz} if frequency_hz is not None else {}),
             "precheck_strict_cal": strict_mode,
             # P1-9 (2026-05-19): dut gate disabled so it doesn't fight the
             # cal_pass test signal — dut gate is covered by
@@ -381,7 +389,8 @@ class TestFrequencyWindow:
     ):
         """Cert at 700 MHz can't satisfy a 3500 MHz commissioning run."""
         _seed_path_loss_cal(db, chamber.id, frequency_mhz=700.0)
-        ctx = _build_context(db, lab, cal_cert=None, strict_mode=True)
+        ctx = _build_context(db, lab, cal_cert=None, strict_mode=True,
+                             frequency_hz=3500e6)
         result = await PrecheckExecutor().execute(ctx)
         measurements = result.measurements or {}
 
@@ -421,7 +430,8 @@ class TestFrequencyWindow:
         """3500 × 1.05 = 3675 MHz cert ↔ 3500 MHz target: at-window edge,
         must pass strict."""
         _seed_path_loss_cal(db, chamber.id, frequency_mhz=3675.0)
-        ctx = _build_context(db, lab, cal_cert=None, strict_mode=True)
+        ctx = _build_context(db, lab, cal_cert=None, strict_mode=True,
+                             frequency_hz=3500e6)
         result = await PrecheckExecutor().execute(ctx)
         measurements = result.measurements or {}
 
@@ -438,7 +448,8 @@ class TestFrequencyWindow:
         """3500 × 0.95 = 3325 MHz cert ↔ 3500 MHz target: at-window edge,
         must pass strict."""
         _seed_path_loss_cal(db, chamber.id, frequency_mhz=3325.0)
-        ctx = _build_context(db, lab, cal_cert=None, strict_mode=True)
+        ctx = _build_context(db, lab, cal_cert=None, strict_mode=True,
+                             frequency_hz=3500e6)
         result = await PrecheckExecutor().execute(ctx)
         measurements = result.measurements or {}
 
@@ -454,7 +465,8 @@ class TestFrequencyWindow:
         """Just above the +5% window: 3676 MHz cert vs 3500 MHz target →
         out of window → FAIL strict."""
         _seed_path_loss_cal(db, chamber.id, frequency_mhz=3676.0)
-        ctx = _build_context(db, lab, cal_cert=None, strict_mode=True)
+        ctx = _build_context(db, lab, cal_cert=None, strict_mode=True,
+                             frequency_hz=3500e6)
         result = await PrecheckExecutor().execute(ctx)
         measurements = result.measurements or {}
 
@@ -468,7 +480,8 @@ class TestFrequencyWindow:
         """`path_loss_calibration_target_frequency_mhz` always written so
         operator / audit can correlate the cert window with the test config."""
         _seed_path_loss_cal(db, chamber.id, frequency_mhz=3500.0)
-        ctx = _build_context(db, lab, cal_cert=None, strict_mode=True)
+        ctx = _build_context(db, lab, cal_cert=None, strict_mode=True,
+                             frequency_hz=3500e6)
         result = await PrecheckExecutor().execute(ctx)
         measurements = result.measurements or {}
 
@@ -504,7 +517,8 @@ async def test_mock_channelEmulator_auto_skips_strict_cal_gate(
     mock driver → simulated measurement → cal gate N/A, cal_pass True. Local
     rehearsal isn't blocked by a missing calibration."""
     # Deliberately seed NO path-loss cal.
-    ctx = _build_context(db, lab, cal_cert=None, strict_mode=True)
+    ctx = _build_context(db, lab, cal_cert=None, strict_mode=True,
+                             frequency_hz=3500e6)
     result = await PrecheckExecutor().execute(ctx)
     measurements = result.measurements or {}
 

@@ -2,6 +2,19 @@
 
 本目录包含开发环境管理脚本。
 
+## F64 现场控制权与场景加载
+
+```bash
+# 释放后台 ATE socket；随后可在 F64 GUI 点击 Local Mode
+python scripts/onsite-f64-control.py local
+
+# 如果仍无法在前面板操作，脚本重新取得 Remote，加载指定 .smu 并回读确认
+python scripts/onsite-f64-control.py load 'D:\User Emulations\onsite\attach.smu'
+```
+
+`load` 必须给出 F64 本机上的完整 `.smu` 路径，不会猜路径或自动选择文件。测试执行中，
+后台会拒绝切换控制权和换场景，避免破坏正在运行的流程。
+
 ## 脚本列表
 
 ### 1. cleanup-ports.sh

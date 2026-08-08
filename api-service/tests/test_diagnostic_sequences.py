@@ -1157,9 +1157,13 @@ class TestPropsimF64HealthSequence:
         assert "get_metrics()" in labels
         assert any("query_runtime_environment" in lb for lb in labels)
 
-    def test_critical_unsupported_fails_with_blocker(self, lab_with_ce, monkeypatch):
-        """*OPT? returns Undefined header → license probing broken,
-        critical command → BLOCKER summary."""
+    def test_f64_opt_unsupported_is_expected_and_not_a_blocker(self, lab_with_ce, monkeypatch):
+        """Real F64 ATE firmware does not implement ``*OPT?``.
+
+        License discovery uses F64 feature probes instead, so this legacy
+        IEEE-488 query may remain visible as unsupported but must not fail
+        the health sequence.
+        """
         broken = "*OPT?"
 
         def err_for(probe_cmd):
@@ -1175,9 +1179,12 @@ class TestPropsimF64HealthSequence:
             json={"lab_profile_id": str(lab_with_ce.id)},
         )
         body = resp.json()
-        assert body["success"] is False
-        assert "BLOCKER" in body["summary"]
-        assert "OPT" in body["extra"]["critical_unsupported"]
+        assert body["success"] is True
+        assert "BLOCKER" not in body["summary"]
+        assert "OPT" not in body["extra"]["critical_unsupported"]
+        opt_step = next(step for step in body["steps"] if step["label"].startswith("OPT "))
+        assert opt_step["success"] is False
+        assert "UNSUPPORTED" in opt_step["detail"]
 
     def test_state_error_categorized_as_ok(self, lab_with_ce, monkeypatch):
         """-200..-299 = header exists, state rejects query — not a blocker."""

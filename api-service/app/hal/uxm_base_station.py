@@ -57,6 +57,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class UxmLocalControlReservedError(RuntimeError):
+    """UXM 控制会话已释放给现场操作员，拒绝后台重新发 SCPI。"""
+
+
 # ── P1-33：值形态。全部取自厂商手册原件的 Range 字段，**不是编的**。
 #    旧的无前缀写法发的是裸值（`4` / `16` / `"5MS"` / `"ALL"`），
 #    手册要的是枚举 token（`N4` / `N16` / `MS5`）或整数 PRB 数。
@@ -72,6 +76,7 @@ _TDD_PERIOD_MS = {
     "MS0P5": 0.5, "MS0P625": 0.625, "MS1": 1.0, "MS1P25": 1.25, "MS2": 2.0,
     "MS2P5": 2.5, "MS3": 3.0, "MS4": 4.0, "MS5": 5.0, "MS10": 10.0,
 }
+_SCS_MU_TOKENS = {15: "MU0", 30: "MU1", 60: "MU2", 120: "MU3"}
 
 
 def _slot_ms(scs_khz):
@@ -121,6 +126,14 @@ class MacThroughputConfigResult:
     applied: Tuple[str, ...] = ()
     skipped: Tuple[str, ...] = ()
     missing_mandatory: Tuple[str, ...] = ()
+    # ⚠️ 2026-08-07 现场血泪：`missing_mandatory` 是 **mandatory ∩ skipped**，
+    #   而 `skipped` 有**两种成因**：① profile 里这条命令是 None（真缺口）；
+    #   ② 命令在，但值翻译失败/校验不过导致**整组没发**。
+    #   调用方的消息此前对两者一律说「**本 profile 未定义**」——
+    #   ②的情况下那是**假话**，而它把 2026-08-07 的现场诊断带偏了两次：
+    #   先据此把 fail-loud 门降级，再据此准备"补命令"（命令根本不缺）。
+    #   本字段只装①，让调用方能说真话。
+    undefined_on_profile: Tuple[str, ...] = ()
     error: Optional[str] = None
     # P1-33：发出去了但**被仪器拒**（`SYST:ERR?` 逐组回读）。
     #   与 `skipped`（profile 没定义）是两回事：这批是"我们发了、它不认"，
@@ -193,8 +206,11 @@ VISA_TIMEOUT_STATE_LOAD = 60000  # 配置文件加载可能需要较长时间
 # 门审 #216 F1: 2026-07-20 起指向 EMQuest 基线 profile (636666/BW40/-46) —
 # 旧默认 caict_n78_3600_4x4 的 3600/640000/BW100/-50 是 .smu 文件名标称推出
 # 的 stale 值 (工程真值 3549.99)。auto-apply 生效场景 (5G_NR_Test) 重载即对
-# 齐基线; IRAT 被 profile 兼容门拒 apply, 重载不动 UXM 小区 (07-03 实录)。
+# 齐基线。2026-08-07 现场已证实 IRAT/CELL1 的核心配置词形，
+# 因此驱动在识别到 LTE_NR_IRAT 后改用专用的 3549.99 MHz / 2-layer
+# 默认拓扑；5G_NR_Test 仍保持原 EMQuest 基线。
 UXM_DEFAULT_TOPOLOGY_PROFILE_ID = "caict_n78_3550_4x4_baseline"
+UXM_IRAT_DEFAULT_TOPOLOGY_PROFILE_ID = "caict_n78_3550_irat_2layer"
 
 # 默认 ARFCN 映射 (NR 频段 → ARFCN)
 NR_BAND_ARFCN_MAP = {
@@ -310,12 +326,21 @@ class RealUxmDriver(BaseStationDriver):
         # profile 时, HAL service _initialize_from_db 读这个 attr 做 fallback
         # (见 UXM_DEFAULT_TOPOLOGY_PROFILE_ID)。operator 经 connection_params
         # ["default_topology_profile_id"] 覆盖 (对称 F64 default_emulation_file)。
+        self._default_topology_profile_explicit = bool(
+            config.get("default_topology_profile_id")
+        )
         self._default_topology_profile_id: str = config.get(
             "default_topology_profile_id", UXM_DEFAULT_TOPOLOGY_PROFILE_ID
         )
         # VISA session
         self._visa_rm = None
         self._visa_session = None
+        # 空闲期不持有 UXM 的 VISA/HiSLIP 控制会话。厂商 SCPI 资料没有确认
+        # SYST:LOC 一类本地切换指令，因此这里只用“关闭本进程会话”表达释放，
+        # 并以该门阻止监控/静默重连重新打开它；绝不顺带停小区或停信令。
+        self._local_control_reserved: bool = False
+        self._local_release_failed: bool = False
+        self._control_lock = asyncio.Lock()
         # The final resource string that connect() landed on after any
         # Platform → hislip2 auto-redirection. Silent reconnect re-opens
         # this exact string so a half-dead session can be replaced
@@ -337,6 +362,10 @@ class RealUxmDriver(BaseStationDriver):
         self._arfcn: Optional[int] = None
         self._scs_khz: int = 30
         self._dl_power_dbm: float = -50.0
+        # 整带宽口径的最后下发值（`:DL:POWer:CHANnel`）。None = 本次没走这条路，
+        # 功率是 `_dl_power_dbm` 那个 dBm/SCS 值。**两者不可换算比较** ——
+        # 换算依赖带宽和 SCS，是派生值，不在驱动里算。
+        self._dl_power_dbm_per_bw: Optional[float] = None
         self._cell_state: CellState = CellState.OFF
         # Phase 2h: 跨实验室部署允许覆盖 freq→band 推断表 + ARFCN 映射
         # config["freq_to_band_map"] 形如 [[3300, 3800, "N78", "TDD"], ...]
@@ -428,6 +457,15 @@ class RealUxmDriver(BaseStationDriver):
             return None
         return out
 
+    def _sync_default_topology_to_profile(self) -> None:
+        """未显式覆盖时，让 fresh-start topology 跟检测到的 Test App 同方言。"""
+        if self._default_topology_profile_explicit:
+            return
+        if isinstance(self._cmds, UxmLteNrIratProfile):
+            self._default_topology_profile_id = UXM_IRAT_DEFAULT_TOPOLOGY_PROFILE_ID
+        else:
+            self._default_topology_profile_id = UXM_DEFAULT_TOPOLOGY_PROFILE_ID
+
     # ===================================================================
     # 1. 连接生命周期
     # ===================================================================
@@ -497,6 +535,9 @@ class RealUxmDriver(BaseStationDriver):
         连上后 query SYSTem:APPLication:NAME? 决定实际 Test App，按结果切换
         self._cmds。若检测不到（如纯 Platform 模式），保留 __init__ 时的初值。
         """
+        if self._local_control_reserved:
+            self._last_error = "UXM 已释放控制会话；仅测试租约可重新取得 Remote"
+            return False
         self._set_status(InstrumentStatus.CONNECTING)
         self._identity_response = None
         self._platform_identity_response = None
@@ -621,6 +662,9 @@ class RealUxmDriver(BaseStationDriver):
                     f"[UXM] SYSTem:APPLication:NAME? not available ({type(e).__name__}); "
                     f"keeping profile {self._cmds.PROFILE_NAME}"
                 )
+            # App 查询失败时仍应尊重 config 预选的方言；否则
+            # uxm_profile=irat 会错用 CELL0/5G_NR_Test 的默认拓扑。
+            self._sync_default_topology_to_profile()
             self._identity_response = idn.strip()
             logger.info(f"[UXM] Connected: {idn}")
             # Remember the endpoint we actually ended up on (post any
@@ -641,7 +685,15 @@ class RealUxmDriver(BaseStationDriver):
             self._clear_error()
             return True
 
+        except asyncio.CancelledError:
+            await self._cleanup_failed_connect_session()
+            self._set_status(
+                InstrumentStatus.DISCONNECTED,
+                "UXM 连接建立被取消，VISA/HiSLIP 会话已清理",
+            )
+            raise
         except Exception as e:
+            await self._cleanup_failed_connect_session()
             error_msg = f"[UXM] Connection failed: {e}"
             logger.error(error_msg)
             self._identity_response = None
@@ -649,6 +701,102 @@ class RealUxmDriver(BaseStationDriver):
             self.detected_test_app = None
             self._set_status(InstrumentStatus.ERROR, error_msg)
             return False
+
+    async def _cleanup_failed_connect_session(self) -> None:
+        """握手失败/取消后关闭尚未注册进 HAL 的临时会话。"""
+        session = self._visa_session
+        if session is not None:
+            try:
+                await asyncio.to_thread(session.close)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[UXM] 失败连接的临时会话关闭异常: %s", exc)
+        self._visa_session = None
+        self._visa_rm = None
+        self._active_resource_string = None
+        self._identity_response = None
+        self._platform_identity_response = None
+        self.detected_test_app = None
+
+    @property
+    def local_control_reserved(self) -> bool:
+        """是否已关闭 UXM 控制会话并禁止后台重新连接。"""
+        return self._local_control_reserved
+
+    @property
+    def local_release_failed(self) -> bool:
+        """最近一次控制会话关闭是否未能确认。"""
+        return self._local_release_failed
+
+    async def release_to_local_control(self) -> bool:
+        """只关闭 VISA/HiSLIP 会话，不发送任何改变 UXM 业务状态的 SCPI。
+
+        NotebookLM 对厂商 SCPI 手册的核对结果是：没有证实 Local 指令，也没有
+        说明关闭会话对前面板状态的保证。因此本方法只承诺软件不再占用/轮询；
+        不调用 stop_signaling，不关闭小区，不 reset，也不清错误队列。
+        """
+        async with self._control_lock:
+            # 先关门，再把 close 放到线程：close 期间其它 task 即使运行，也会在
+            # _do_write/_do_query 入口被拒绝，不能趁隙重新发命令。
+            self._local_control_reserved = True
+            self._local_release_failed = False
+            session = self._visa_session
+            if session is not None:
+                try:
+                    await asyncio.to_thread(session.close)
+                except asyncio.CancelledError:
+                    self._local_release_failed = True
+                    self._set_status(
+                        InstrumentStatus.ERROR,
+                        "释放 UXM VISA/HiSLIP 会话的请求被取消，交接结果未确认",
+                    )
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    self._local_release_failed = True
+                    self._set_status(
+                        InstrumentStatus.ERROR,
+                        f"释放 UXM VISA/HiSLIP 会话失败: {exc}",
+                    )
+                    logger.warning("[UXM] 释放控制会话失败: %s", exc)
+                    return False
+
+            self._visa_session = None
+            # ResourceManager 是进程共享对象，不调用 close；只丢本驱动引用。
+            self._visa_rm = None
+            self._identity_response = None
+            self._platform_identity_response = None
+            self.detected_test_app = None
+            self._set_status(InstrumentStatus.DISCONNECTED)
+            self._clear_error()
+            logger.info(
+                "[UXM] VISA/HiSLIP 会话已关闭，后台 SCPI 轮询已暂停；"
+                "未发送停止小区/停止信令/复位指令"
+            )
+            return True
+
+    async def acquire_remote_control(self) -> bool:
+        """仅由测试/单次操作租约显式重建 UXM 控制会话。"""
+        async with self._control_lock:
+            if (
+                not self._local_control_reserved
+                and self._visa_session is not None
+                and self._status
+                in {InstrumentStatus.CONNECTED, InstrumentStatus.READY}
+            ):
+                return True
+            if self._local_release_failed and self._visa_session is not None:
+                self._last_error = "上次 UXM 会话关闭未确认；请先重试释放控制"
+                return False
+
+            self._local_control_reserved = False
+            self._local_release_failed = False
+            try:
+                connected = await self.connect()
+            except asyncio.CancelledError:
+                self._local_control_reserved = True
+                raise
+            if not connected:
+                self._local_control_reserved = True
+            return connected
 
     async def disconnect(self) -> bool:
         """断开 VISA 连接"""
@@ -969,6 +1117,33 @@ class RealUxmDriver(BaseStationDriver):
             return f"BW{int(bw_mhz)}"
         return str(int(bw_mhz))
 
+    def _format_scs_value(self, scs_khz: int) -> str:
+        """按 Test App 方言编码 SCS；未知值拒绝而不是就近猜测。"""
+        if getattr(self._cmds, "SCS_VALUE_FORM", "raw") == "mu":
+            token = _SCS_MU_TOKENS.get(int(scs_khz))
+            if token is None:
+                raise ValueError(
+                    f"LTE_NR_IRAT 不支持 SCS={scs_khz}kHz；"
+                    f"允许值={tuple(_SCS_MU_TOKENS)}"
+                )
+            return token
+        return str(int(scs_khz))
+
+    @staticmethod
+    def _parse_bw_response(raw: str) -> float:
+        token = (raw or "").strip().upper()
+        if token.startswith("BW"):
+            token = token[2:]
+        return float(token)
+
+    @staticmethod
+    def _parse_scs_response(raw: str) -> int:
+        token = (raw or "").strip().upper()
+        match = re.fullmatch(r"MU([0-4])", token)
+        if match:
+            return 15 * (2 ** int(match.group(1)))
+        return int(float(token))
+
     def _readback_verify(self, cell: str, config: Dict[str, Any]) -> List[str]:
         """写后回读对账 (P1-19): 对本次下发过的 ARFCN / BW / DL 功率逐项回读比对。
 
@@ -978,8 +1153,9 @@ class RealUxmDriver(BaseStationDriver):
         `BSE:STATus:NR5G:<cell>?` + P2-11 频率一致性网, **判绿只能靠二层**。
         R4 (回读到底是缓存还是生效) 待现场用 uxm_config_truth_probe 序列验一次。
 
-        语义: 回读异常或空响应 → 单项跳过 (方言能力不齐放行, debug 记录);
-        回读成功但与下发值不一致 → 记入 mismatch (caller fail-loud)。
+        语义: 旧有的 ARFCN / BW / 功率在方言缺失时仍兼容性跳过；
+        2026-08-07 现场已证实的 duplex / SCS / SSB / PointA / MIMO 只要本次
+        请求下发，回读不可用或不一致均记入 mismatch (caller fail-loud)。
         BW 回读归一化 "BW100"→100; 功率浮点容差 0.1 dB。
         """
         mismatches: List[str] = []
@@ -1015,7 +1191,20 @@ class RealUxmDriver(BaseStationDriver):
                 except ValueError:
                     mismatches.append(f"BW 回读不可解析: {resp!r}")
 
-        if "dl_power_dbm" in config:
+        # ⚠ **回读要跟"实际写过的那条命令"对账**，不是跟 config 里存在的字段对账。
+        #   走整带宽口径时 `:DL:POWer[:EPRE]` 那条**根本没写过** —— 拿它的回读去比
+        #   `dl_power_dbm` 必然 mismatch，而那是个假失败。
+        if config.get("dl_power_dbm_per_bw") is not None:
+            resp = _read("DL_POWER_CHANNEL")
+            if resp is not None:
+                try:
+                    if abs(float(resp) - float(config["dl_power_dbm_per_bw"])) > 0.1:
+                        mismatches.append(
+                            f"DL 功率(整带宽) 下发 {config['dl_power_dbm_per_bw']} "
+                            f"回读 {resp}")
+                except ValueError:
+                    mismatches.append(f"DL 功率(整带宽) 回读不可解析: {resp!r}")
+        elif "dl_power_dbm" in config:
             resp = _read("DL_POWER")
             if resp is not None:
                 try:
@@ -1024,6 +1213,41 @@ class RealUxmDriver(BaseStationDriver):
                             f"DL 功率下发 {config['dl_power_dbm']} 回读 {resp}")
                 except ValueError:
                     mismatches.append(f"DL 功率回读不可解析: {resp!r}")
+
+        # 2026-08-07 现场已确认以下 query 形式可用。正式驱动现在会写这些
+        # 参数，因此同一路径回读必须进入闭环，读不到或不一致都不能判成功。
+        def _required_text(
+            template_name: str,
+            config_key: str,
+            expected: str,
+        ) -> None:
+            if config_key not in config:
+                return
+            resp = _read(template_name)
+            if resp is None:
+                mismatches.append(f"{config_key} 回读不可用")
+                return
+            if resp.strip().upper() != expected.strip().upper():
+                mismatches.append(f"{config_key} 下发 {expected} 回读 {resp}")
+
+        _required_text("CELL_DUPLEX", "duplex", str(config.get("duplex", "")))
+        if "scs_khz" in config:
+            _required_text(
+                "CELL_SCS",
+                "scs_khz",
+                self._format_scs_value(config["scs_khz"]),
+            )
+        _required_text("SSB_ARFCN", "ssb_arfcn", str(config.get("ssb_arfcn", "")))
+        _required_text(
+            "CELL_DL_POINTA",
+            "point_a_arfcn",
+            str(config.get("point_a_arfcn", "")),
+        )
+        _required_text(
+            "MIMO_DL_LAYERS",
+            "mimo_layers",
+            str(config.get("mimo_layers", "")),
+        )
 
         return mismatches
 
@@ -1277,7 +1501,7 @@ class RealUxmDriver(BaseStationDriver):
                 scs = config["scs_khz"]
                 self._scs_khz = scs
                 if (q := self._cmd("CELL_SCS", cell=cell)) is not None:
-                    self._write(f"{q} {scs}")
+                    self._write(f"{q} {self._format_scs_value(scs)}")
 
             # ---- 5. ARFCN (自动查表或手动指定) ----
             if "arfcn" in config:
@@ -1309,8 +1533,8 @@ class RealUxmDriver(BaseStationDriver):
             # ---- 5b. SSB / PointA 频率身份 (P1-19 ④, EMQuest 基线) ----
             # 显式给 ssb_arfcn / point_a_arfcn 则下发; 都没给且目标 ARFCN 与该
             # band 的 EMQuest 运行基线一致时自动补齐 (合拍条件严格 —— 自定义
-            # 频率不乱补, SSB 是 GSCN 栅格产物不能按比例平移)。profile 无命令
-            # (IRAT SSB_ARFCN/CELL_DL_POINTA=None, -113 已探明) 由 _cmd 跳过。
+            # 频率不乱补, SSB 是 GSCN 栅格产物不能按比例平移)。对仍未定义
+            # 这些命令的其他方言由 _cmd 显式跳过；IRAT 词形已现场证实。
             if "ssb_arfcn" not in config and "point_a_arfcn" not in config:
                 _baseline = get_band_baseline(config.get("band") or self._band)
                 if _baseline and _baseline.get("dl_arfcn") == arfcn:
@@ -1329,29 +1553,53 @@ class RealUxmDriver(BaseStationDriver):
                 if (q := self._cmd("CELL_DL_POINTA", cell=cell)) is not None:
                     self._write(f"{q} {config['point_a_arfcn']}")
 
-            # ---- 6. MIMO 层数 ----
+            # ---- 6. MIMO 天线/内建配置选择 ----
+            # 支持两种方式:
+            #   a) mimo_port_preset: "siso" / "2x2" / "4x4" (使用预置映射)
+            #   b) mimo_port_map: 自定义映射 dict
+            if "mimo_port_preset" in config:
+                if not await self.set_mimo_port_mapping(
+                    preset=config["mimo_port_preset"],
+                    cell=cell,
+                ):
+                    return False
+            elif "mimo_port_map" in config:
+                if not await self.set_mimo_port_mapping(
+                    custom_map=config["mimo_port_map"],
+                    cell=cell,
+                ):
+                    return False
+
+            # ---- 7. MIMO 层数 ----
+            # IRAT/R15 的 DL:MIMO:CONFig N4X4 会把 serving-cell 级
+            # PDSCh:MAX:MIMOlayers 自动改回 4，因此层数必须在内建
+            # MIMO 配置之后收敛；否则回读必然与请求的 2-layer 不符。
             if "mimo_layers" in config:
                 layers = config["mimo_layers"]
                 if (q := self._cmd("MIMO_DL_LAYERS", cell=cell)) is not None:
                     self._write(f"{q} {layers}")
 
-            # ---- 7. MIMO 天线→物理端口路由 (Layer 1) ----
-            # 支持两种方式:
-            #   a) mimo_port_preset: "siso" / "2x2" / "4x4" (使用预置映射)
-            #   b) mimo_port_map: 自定义映射 dict
-            if "mimo_port_preset" in config:
-                await self.set_mimo_port_mapping(
-                    preset=config["mimo_port_preset"],
-                    cell=cell,
-                )
-            elif "mimo_port_map" in config:
-                await self.set_mimo_port_mapping(
-                    custom_map=config["mimo_port_map"],
-                    cell=cell,
-                )
-
             # ---- 8. 下行功率 ----
-            if "dl_power_dbm" in config:
+            # ⚠️ **两种口径互斥**（手册原文见 uxm_command_profiles 的 DL_POWER 注释）：
+            #   dl_power_dbm_per_bw → `:DL:POWer:CHANnel`  整带宽总功率 dBm
+            #   dl_power_dbm        → `:DL:POWer[:EPRE]`   每子载波 dBm/SCS
+            # 同一 cell 两条都写会互相覆盖、最后生效哪个不确定 —— 所以 per_bw 给了
+            # 就**只走它**，不再写 EPRE 那条。绝不"两个都发一遍图保险"。
+            if config.get("dl_power_dbm_per_bw") is not None:
+                _pw = float(config["dl_power_dbm_per_bw"])
+                q = self._cmd("DL_POWER_CHANNEL", cell=cell)
+                if q is None:
+                    # 本方言没有整带宽命令 —— **不静默回退到 EPRE 口径**（那会把
+                    # -15 当成 -15 dBm/SCS 发出去，比请求值热 31 dB）。
+                    logger.error(
+                        "[UXM] dl_power_dbm_per_bw=%.1f 无法下发: profile %s 未定义 "
+                        "DL_POWER_CHANNEL；**不回退到 dBm/SCS 口径**（会热 31 dB）",
+                        _pw, self._cmds.PROFILE_NAME,
+                    )
+                    return False
+                self._write(f"{q} {_pw:.1f}")
+                self._dl_power_dbm_per_bw = _pw
+            elif "dl_power_dbm" in config:
                 self._dl_power_dbm = config["dl_power_dbm"]
                 if (q := self._cmd("DL_POWER", cell=cell)) is not None:
                     self._write(f"{q} {self._dl_power_dbm:.1f}")
@@ -1598,10 +1846,11 @@ class RealUxmDriver(BaseStationDriver):
         cell: Optional[str] = None,
     ) -> bool:
         """
-        配置 MIMO 逻辑天线到 UXM 物理 RF 端口的映射。
+        配置 MIMO 逻辑天线到 UXM RF 端口的映射。
 
-        这是 RF 路由的 Layer 1 (天线级)，决定了每个 NR 逻辑天线
-        从哪个物理端口发射/接收信号。
+        5G_NR_Test 使用 ROUTe:* 执行天线级物理路由；LTE_NR_IRAT
+        不暴露该组命令，改用现场已证实的 DL:MIMO:CONFig 内建配置
+        (N1X1 / N2X2 / N4X4)。IRAT 的 HCCU 物理端口仍由仪表端拓扑管理。
 
         UXM 前面板端口布局:
             ┌─────────────────────────────┐
@@ -1627,7 +1876,7 @@ class RealUxmDriver(BaseStationDriver):
             cell: 小区标识 (默认 CELL0)
 
         Returns:
-            True if port mapping configured successfully
+            True if the selected MIMO configuration was applied and read back
         """
         cell = cell or self._cell_id
 
@@ -1655,6 +1904,35 @@ class RealUxmDriver(BaseStationDriver):
             return False
 
         try:
+            # IRAT 不暴露旧 ROUTe:* 物理端口命令，但现场已确认内建
+            # DL:MIMO:CONFig query 可用，厂商手册也明确它是可写 Enum。
+            mimo_config_cmd = self._cmd("MIMO_DL_CONFIG", cell=cell)
+            tx_cmd = self._cmd("MIMO_TX_ANT_PORT", cell=cell, ant=1)
+            rx_cmd = self._cmd("MIMO_RX_ANT_PORT", cell=cell, ant=1)
+            if preset and mimo_config_cmd is not None and tx_cmd is None and rx_cmd is None:
+                token = {"siso": "N1X1", "2x2": "N2X2", "4x4": "N4X4"}.get(
+                    preset.lower()
+                )
+                if token is None:
+                    logger.error(
+                        "[UXM/%s] preset %r 不能由 DL:MIMO:CONFig 无损表达",
+                        self._cmds.PROFILE_NAME,
+                        preset,
+                    )
+                    return False
+                self._write(f"{mimo_config_cmd} {token}")
+                self._query("*OPC?")
+                readback = (self._query(f"{mimo_config_cmd}?") or "").strip().upper()
+                if readback != token:
+                    logger.error(
+                        "[UXM] DL MIMO config 回读不一致: 下发=%s 回读=%r",
+                        token,
+                        readback,
+                    )
+                    return False
+                logger.info("[UXM] DL MIMO config applied: %s", token)
+                return True
+
             # 配置 TX 天线端口
             for ant_num, port_name in tx_map.items():
                 self._write(
@@ -1875,8 +2153,16 @@ class RealUxmDriver(BaseStationDriver):
     #     · TDD 比例变                → 绝对值不可比
     #     · CSI-RS 端口不匹配         → 根本跑不到目标层数
     #   可选 = 影响精度/置信区间，**不改量纲**。
+    #
+    #   ⚠ 「AMC 没关」这一格**不再有独立命令名**（2026-08-07 现场）：
+    #     slot 级 PDSCH_AMC_ENABLE / PUSCH_AMC_ENABLE 两条盲写在 IRAT 上
+    #     实测恰有一条 -113，而它们本来就是对同一意图的**第二次盲写** ——
+    #     关 AMC/固定 MCS 由 PDSCH_SCHED_ALGO(FULL_TPUT) + PDSCH_MCS(固定值)
+    #     + QCONFIG_APPLY_ALL 这三条**已被仪器接受**的命令承担（手册依据见
+    #     uxm_command_profiles.py 的 ⛔ 段），生效策略由只读探测回读对账
+    #     （回读到非 FIXed 照样致命，见 configure_mac 的探测块）。
     MAC_CFG_MANDATORY: Tuple[str, ...] = (
-        "PDSCH_SCHED_ALGO", "PDSCH_AMC_ENABLE", "PUSCH_AMC_ENABLE",
+        "PDSCH_SCHED_ALGO",
         "PDSCH_MCS", "PDSCH_RB_ALLOC",
         # TDD：手册没有 pattern 字符串命令，是**六个数**（P1-33）
         "TDD_PATTERN_STATE", "TDD_PERIOD",
@@ -2084,25 +2370,69 @@ class RealUxmDriver(BaseStationDriver):
             else:
                 _emit("PDSCH_RB_ALLOC", f" {n_prb}")
             # ⭐ Quick Config 的三条输入参数发完，要用**它自己的** apply 落地。
-            #   手册：应用场景会把当前 scheduler 配置**完全抹掉并替换** ——
-            #   所以必须排在下面 slot 级 AMC **之前**（内审 F2）。
+            #   手册：应用场景会把当前 scheduler 配置**完全抹掉并替换**。
             _emit("QCONFIG_APPLY_ALL", "")
             _group("QuickConfig(场景/MCS/PRB)")
 
-            # 2. AMC —— 手册**不是开关**，是资源分配策略枚举：
-            #    FIXed = 固定资源/固定 MCS（= 关 AMC），CQI = 按 CQI 自适应。
-            _emit("PDSCH_AMC_ENABLE", " CQI" if enable_amc else " FIXed",
-                  cell=cell, bwp=bwp)
-            #    UL 侧走 `UL:IMCS:FIXed`，语义**反过来**：ON = 固定 MCS = 关 AMC。
-            #    ⚠ 措辞收窄（内审 F6）：手册对**这一条**标的是
-            #    `Type: Integer / Range: 0..272`，跟"收 ON/OFF"**自相矛盾**；
-            #    "不设 True 则固定 IMCS 不生效"那句是**邻近块**的描述。
-            #    所以 `ON` 是**按描述推断**，不是手册对该条的原文 ——
-            #    现场由 `SYST:ERR?` 定案。另有对称命令 `UL:RRESource:APOLicy`
-            #    未纳入（DL 走 APOLicy、UL 走 IMCS:FIXed 这个不对称已记现场待确认）。
-            _emit("PUSCH_AMC_ENABLE", " OFF" if enable_amc else " ON",
-                  cell=cell, bwp=bwp)
-            _group("AMC")
+            # 2. AMC（关）—— **不再有独立的写命令**（2026-08-07 现场）。
+            #    slot 级两条盲写（DL:RRESource:APOLicy FIXed / UL:IMCS:FIXed ON）
+            #    在 IRAT 上实测恰有一条 -113（两轮复现，组级对账定位不了哪条），
+            #    而它们对「固定 MCS」这个意图本来就是**第二次盲写** ——
+            #    FULL_TPUT + QCONFig:DL:MCS（上面刚被接受的那组）已经承担了它
+            #    （手册依据见 profile 的 ⛔ 段）。被拒的盲写不减少已知量。
+            #
+            #    这里换成**逐条只读探测**（各自独立对账窗口）：
+            #      · 能读 → 回读 FULL_TPUT 重建后的**生效**策略 —— 手册没写
+            #        该场景把 APOLicy 置成什么，这是拿真机把它问出来；
+            #        **DL 回读到非 FIXed = MCS 会漂 = 测量前提破 → 照样致命**。
+            #      · -113 → 精确定位不被认的 header（P1-33 要的实测答案），
+            #        只记档不致命 —— 写路径已由 QCONFig 承担。
+            if enable_amc:
+                # 开 AMC 的唯一已知路径就是被 -113 的 slot 级 APOLicy CQI ——
+                # 不能假装开了继续测（静默测错的量 > 显式失败）。
+                return MacThroughputConfigResult(
+                    applied=tuple(applied), skipped=tuple(skipped),
+                    rejected=tuple(rejected),
+                    error=(
+                        "enable_amc=True 在本方言没有已验证的下发路径："
+                        "slot 级 DL:RRESource:APOLicy 2026-08-07 实测 -113"
+                        "（两条盲写恰一条被拒，未定位）。固定 MCS 路径"
+                        "（enable_amc=False）才可用；要开 AMC 先用探测日志"
+                        "确认 header 再补 profile。"),
+                )
+            for _probe, _expect_fixed in (
+                ("AMC_SLOT_DL_APOLICY_PROBE", True),
+                ("AMC_SLOT_UL_IMCS_FIXED_PROBE", False),
+            ):
+                _tpl = self._cmd(_probe, cell=cell, bwp=bwp)
+                if _tpl is None:
+                    continue
+                try:
+                    _raw = str(self._query(_tpl + "?") or "").strip()
+                except Exception as _pe:  # noqa: BLE001 — 探测失败≠配置失败
+                    logger.warning(
+                        f"[UXM/{self._cmds.PROFILE_NAME}] {_probe} 查询异常"
+                        f"（不影响配置判定）: {_pe}")
+                    _raw = ""
+                _perrs = self._drain_errors()
+                if self._error_queue_unusable(_perrs):
+                    raise RuntimeError(_perrs[-1])
+                if _perrs:
+                    logger.warning(
+                        f"[UXM/{self._cmds.PROFILE_NAME}] {_probe} header 不被"
+                        f"本 Test App 认: {_perrs} —— P1-33 实测答案（写路径已由 "
+                        f"QCONFig 组承担，不影响本次判定）")
+                    continue
+                logger.info(
+                    f"[UXM/{self._cmds.PROFILE_NAME}] {_probe} 回读: {_raw!r}")
+                if _expect_fixed and _raw and not _raw.upper().startswith("FIX"):
+                    # 生效端说话：策略不是 FIXed → MCS 会按 CQI 漂 →
+                    # 测的就不是固定 MCS 那个量。跟盲写时代不同，这是**回读**。
+                    rejected.append(f"DL_APOLICY_READBACK={_raw}")
+                    logger.error(
+                        f"[UXM/{self._cmds.PROFILE_NAME}] FULL_TPUT 重建后 DL "
+                        f"RRESource:APOLicy 生效值 = {_raw!r} ≠ FIXed —— "
+                        f"MCS 不固定，3GPP MAC 吞吐量前提不成立")
 
             # 5. TDD —— 手册没有 pattern 字符串，是**六个数**
             slots = _tdd_slots_from_pattern(tdd_pattern)
@@ -2249,9 +2579,16 @@ class RealUxmDriver(BaseStationDriver):
                 self._query("*OPC?")
 
             missing = tuple(n for n in self.MAC_CFG_MANDATORY if n in skipped)
+            # 只有 profile 上**真的没有**这条命令才算 undefined —— 跟
+            # "命令在、但这组因为值翻不了而整组跳过" 分开（见 dataclass 注释）。
+            undefined = tuple(
+                n for n in missing
+                if getattr(self._cmds, n, None) is None
+            )
             result = MacThroughputConfigResult(
                 applied=tuple(applied), skipped=tuple(skipped),
-                missing_mandatory=missing, rejected=tuple(rejected),
+                missing_mandatory=missing, undefined_on_profile=undefined,
+                rejected=tuple(rejected),
                 no_equivalent=tuple(self.MAC_CFG_NO_EQUIVALENT),
             )
             if missing:
@@ -2279,7 +2616,8 @@ class RealUxmDriver(BaseStationDriver):
                 logger.info(
                     f"[UXM] MAC throughput commands sent "
                     f"(**not** confirmed applied): "
-                    f"scenario=FULL_TPUT, AMC={'CQI' if enable_amc else 'FIXed'}, "
+                    # AMC 关断由 FULL_TPUT+固定 MCS 承担，生效策略看上面探测回读
+                    f"scenario=FULL_TPUT, AMC=off(经QCONFig, 探测回读见上), "
                     f"MCS={mcs}, RB={rb_alloc}, "
                     f"TDD={tdd_pattern}/{tdd_period}"
                     f"(S 槽 {tdd_dl_symbols}DL/{tdd_ul_symbols}UL), "
@@ -2310,6 +2648,10 @@ class RealUxmDriver(BaseStationDriver):
                 applied=tuple(applied), skipped=tuple(skipped),
                 missing_mandatory=tuple(
                     n for n in self.MAC_CFG_MANDATORY if n in skipped),
+                # 与正常路径同源：只有 profile 上真没这条命令才算 undefined。
+                undefined_on_profile=tuple(
+                    n for n in self.MAC_CFG_MANDATORY
+                    if n in skipped and getattr(self._cmds, n, None) is None),
                 rejected=tuple(rejected),
                 no_equivalent=tuple(self.MAC_CFG_NO_EQUIVALENT),
                 error=f"{type(e).__name__}: {e}",
@@ -2616,14 +2958,14 @@ class RealUxmDriver(BaseStationDriver):
                 self._cmds.CELL_DL_BW.format(cell=cell) + "?"
             ).strip()
             if bw:
-                self._bandwidth_mhz = float(bw)
+                self._bandwidth_mhz = self._parse_bw_response(bw)
 
             # 回读 SCS
             scs = self._query(
                 self._cmds.CELL_SCS.format(cell=cell) + "?"
             ).strip()
             if scs:
-                self._scs_khz = int(float(scs))
+                self._scs_khz = self._parse_scs_response(scs)
 
             # 回读功率
             pwr = self._query(
@@ -3054,7 +3396,19 @@ class RealUxmDriver(BaseStationDriver):
         """Phase 2g: cleanup helper — remove every SCell on this PCell."""
         cell = self._cell_id
         try:
-            self._write(self._cmds.SCELL_REMOVE_ALL.format(cell=cell))
+            # ⚠ 2026-08-07 现场崩溃修复: 本 profile (LTE_NR_IRAT) 的
+            #   SCELL_REMOVE_ALL 是 None, 这里直接 .format() 抛
+            #   `'NoneType' object has no attribute 'format'`, 被 except 吞成
+            #   一条 ERROR 日志。别处都走 `self._cmd(...)` 守卫, **独独这里漏了**。
+            #   没有这条命令 = 该方言没有 SCell 概念 = 无需移除, 直接算成功。
+            q = self._cmd("SCELL_REMOVE_ALL", cell=cell)
+            if q is None:
+                logger.debug(
+                    "[UXM/%s] SCELL_REMOVE_ALL 本 profile 未定义 — 无 SCell 可移除, 跳过",
+                    self._cmds.PROFILE_NAME,
+                )
+                return True
+            self._write(q)
             self._query(self._cmds.OPC)
             logger.info("[UXM] All SCells removed for cell %s", cell)
             return True
@@ -3082,11 +3436,31 @@ class RealUxmDriver(BaseStationDriver):
         ]
 
     async def get_metrics(self) -> InstrumentMetrics:
-        tput = await self.get_throughput_metrics()
+        if self._local_control_reserved:
+            return InstrumentMetrics(
+                timestamp=datetime.utcnow(),
+                metrics={
+                    # 说的是我们这端关了 ATE socket，不是"仪器面板在 Local"
+                    # —— 后者手册说要操作员自己点（见 api/instrument.py 的注释）
+                    "control_mode": "ate_socket_released",
+                    "remote_polling_suppressed": True,
+                },
+                status="normal",
+            )
+        # 后台监控必须先看协议栈实况。CELL OFF/IDLE 时 KPI 无测量上下文，
+        # UXM 会回 9.91E+37，JSON report 还会等满 VISA timeout；继续轮询只会
+        # 占用共享会话并污染日志。正式测试中的显式 KPI 读取仍直接调用
+        # get_throughput_metrics()，不受本监控门影响。
+        live_state = await self.get_cell_state()
+        tput = (
+            await self.get_throughput_metrics()
+            if live_state == CellState.CONNECTED
+            else ThroughputMetrics()
+        )
         return InstrumentMetrics(
             timestamp=datetime.utcnow(),
             metrics={
-                "cell_state": self._cell_state.value,
+                "cell_state": live_state.value,
                 "band": self._band,
                 "frequency_mhz": self._frequency_mhz,
                 "bandwidth_mhz": self._bandwidth_mhz,
@@ -3131,6 +3505,9 @@ class RealUxmDriver(BaseStationDriver):
         """Sync reopen of the UXM VISA session — reuses the resource
         string captured by connect() so we don't re-run the Platform/
         hislip2 auto-detection."""
+        if self._local_control_reserved:
+            logger.info("[UXM] 控制会话已释放 — 跳过 VISA 静默重连")
+            return False
         # 新 TCP/VISA 会话不能继承旧会话探测到的型号、固件和 Test App。
         # 静默重连不会重走平台端点探测，所以正式证据保持 unknown，直到完整 connect。
         self._identity_response = None
@@ -3164,6 +3541,10 @@ class RealUxmDriver(BaseStationDriver):
 
     def _do_write(self, cmd: str) -> None:
         """发送 SCPI 写命令（由基类 _write() 自动调用）"""
+        if self._local_control_reserved:
+            raise UxmLocalControlReservedError(
+                "UXM 控制会话已释放；拒绝后台 SCPI 写入"
+            )
         safe_cmd = redact_instrument_command_text(cmd)
         for attempt in (0, 1):
             if not self._visa_session:
@@ -3184,6 +3565,10 @@ class RealUxmDriver(BaseStationDriver):
 
     def _do_query(self, cmd: str) -> str:
         """发送 SCPI 查询并返回响应（由基类 _query() 自动调用）"""
+        if self._local_control_reserved:
+            raise UxmLocalControlReservedError(
+                "UXM 控制会话已释放；拒绝后台 SCPI 查询"
+            )
         safe_cmd = redact_instrument_command_text(cmd)
         for attempt in (0, 1):
             if not self._visa_session:

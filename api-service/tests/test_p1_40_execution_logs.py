@@ -393,6 +393,16 @@ class TestExecutionLogRetention:
         old = _time.time() - 31 * 86400
         os.utime(doomed, (old, old))
 
+        # ⚠ 必须复位 `.disabled` 并保证 propagate —— 别的用例里 in-process
+        #   alembic 的 `fileConfig(disable_existing_loggers=True)` 会**永久禁用**
+        #   已导入的 logger，本条于是在单文件下绿、跑全量才红（2026-08-08 实测：
+        #   单跑 16 passed，全量 `assert '留存清理失败' in ''`）。
+        #   memory `feedback_test_logger_emit_alembic_pollution` 记的就是这个坑。
+        mod_logger = _logging.getLogger("app.core.logging_config")
+        prev_disabled, prev_propagate = mod_logger.disabled, mod_logger.propagate
+        mod_logger.disabled = False
+        mod_logger.propagate = True
+
         prev = _logging.raiseExceptions
         _logging.raiseExceptions = False        # 复刻生产配置
         try:
@@ -404,6 +414,8 @@ class TestExecutionLogRetention:
                         str(tmp_path), retention_days=30)
         finally:
             _logging.raiseExceptions = prev
+            mod_logger.disabled = prev_disabled
+            mod_logger.propagate = prev_propagate
 
         msgs = " | ".join(r.getMessage() for r in caplog.records)
         assert "留存清理失败" in msgs, (

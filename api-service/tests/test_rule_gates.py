@@ -1703,3 +1703,238 @@ def test_g15_log_sort_groups_continuations_and_uses_stable_identity():
     tbody_end = viewer.index("</Table.Tbody>", tbody_start)
     tbody = viewer[tbody_start:tbody_end]
     assert "renderLogDetail(entry)" in tbody
+
+
+# ─────────────────────────────────────────────────────────────────────
+# G16 建会话请求的默认值不得跟配置 schema 打架
+# ─────────────────────────────────────────────────────────────────────
+#
+# 母题: **同一个默认值活在两个地方**。`CreateSessionRequest` 与
+# `MIMOOTAConfiguration` 有一批同名字段, 而 `_request_overrides()` 把请求侧的值
+# **无条件**塞进 overrides —— 于是改了 schema 默认根本不生效, 被请求侧的旧值盖掉,
+# 而且**没有任何测试会红**(两边各自的单测都过)。
+#
+# 2026-08-07 现场实证: 把 schema 的 frequency_hz/bandwidth_mhz 改成现场基线
+# (3549.99 MHz / 40 MHz) 后, 建出来的会话仍然是 3500 MHz / 100 MHz —— 靠端到端
+# 建一次真会话读回配置才发现。**单测全绿, 默认值全错。**
+#
+# 不变量: 请求侧任一跟配置 schema 同名的字段, 要么默认值**相等**,
+#         要么请求侧默认是 **None**(= 不覆盖, 用 schema 默认)。
+# 这条门是**不变量档**(从代码派生恒成立的关系), 不是存在性档 ——
+# 新加字段、改任一侧默认值, 只要两处漂开就红。
+
+def _session_request_vs_config_conflicts():
+    """返回 [(字段名, 请求侧默认, schema 默认)] —— 两处打架的字段。"""
+    from app.api.commissioning import CreateSessionRequest
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+
+    cfg = MIMOOTAConfiguration()
+    out = []
+    for name, field in CreateSessionRequest.model_fields.items():
+        if not hasattr(cfg, name):
+            continue
+        req_default = field.default
+        # None = "不覆盖, 用 schema 默认" —— 这是本仓已确立的语义
+        # (见 _request_overrides 里 8 个 precheck_strict_* 的 is-not-None 写法)。
+        if req_default is None:
+            continue
+        cfg_default = getattr(cfg, name)
+        if req_default != cfg_default:
+            out.append((name, req_default, cfg_default))
+    return out
+
+
+def test_g16_session_request_defaults_match_config_schema():
+    """站点: CreateSessionRequest 的默认值不得静默盖掉 MIMOOTAConfiguration。"""
+    conflicts = _session_request_vs_config_conflicts()
+    assert not conflicts, (
+        "CreateSessionRequest 与 MIMOOTAConfiguration 的默认值打架 —— "
+        "请求侧会**无条件**覆盖 schema 默认, 改 schema 不生效且无测试会红。\n"
+        + "\n".join(
+            f"  {n}: 请求侧={r!r} vs schema={c!r}" for n, r, c in conflicts
+        )
+        + "\n修法二选一: ① 两处改成同值; ② 请求侧改成 Optional=None "
+        "(不覆盖, 跟 precheck_strict_* 同语义) 并在 _request_overrides 里加 "
+        "`if req.x is not None` 守卫。**优先 ②** —— 去掉重复胜过同步重复。"
+    )
+
+
+def test_g16_checker_detects_a_planted_conflict():
+    """G16 判定器的行为自测: 造一个假冲突, 判定器必须抓到。
+
+    ⓪④ 要求「每加一道门, 附上让它红的变异并实跑」。没有这条自测, 上面那条
+    在判定器写错(比如把 `!=` 写成 `==`, 或者 hasattr 恒 False)时会**恒绿** ——
+    那正是本文件反复在治的"存在性门被绕过"形态。
+    """
+    from app.api.commissioning import CreateSessionRequest
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+
+    cfg = MIMOOTAConfiguration()
+    # 挑一个两侧同名、且请求侧默认不是 None 的真实字段来做变异。
+    victim = next(
+        (n for n, f in CreateSessionRequest.model_fields.items()
+         if hasattr(cfg, n) and f.default is not None),
+        None,
+    )
+    assert victim is not None, (
+        "找不到可用于变异的同名字段 —— G16 已失去意义(两侧不再有重叠), "
+        "该删门或改写本自测, 别让它假绿。"
+    )
+    field = CreateSessionRequest.model_fields[victim]
+    saved = field.default
+    try:
+        # 种一个绝不可能等于 schema 默认的值
+        field.default = object()
+        conflicts = _session_request_vs_config_conflicts()
+        assert any(n == victim for n, _r, _c in conflicts), (
+            f"判定器没抓到植入的冲突 (字段 {victim}) —— G16 是恒绿的假门"
+        )
+    finally:
+        field.default = saved
+    # 复位后必须回到干净态, 否则本自测会污染同进程的其它测试
+    assert not any(n == victim for n, _r, _c in _session_request_vs_config_conflicts())
+
+
+# ─────────────────────────────────────────────────────────────────────
+# G18 诊断序列声明的品类必须覆盖它真正碰的驱动
+# ─────────────────────────────────────────────────────────────────────
+#
+# 母题: **声明与事实脱钩**。序列的 `required_categories` / `optional_categories`
+# 决定跑之前取哪些仪表租约; 序列体里 `drivers.get("X")` 才是它真正会碰的。
+# 两者不一致时, 没声明的那个驱动停在 park 后的 Local 态 —— 一调就返 False。
+#
+# 2026-08-07 实证 (内审 F3): `baseStation_attach_check` 只声明 baseStation,
+# 序列体却实打实调 channelEmulator 的 `stop_emulation` / `set_passthrough_mode`
+# → F64 不在 Remote → 整条 attach 主力序列失败, 报错还指向 F64 状态机 (错方向)。
+# 同文件里那句 `if key == "instrument_idn_sweep"` 的硬编码特判, 就是这个洞
+# 已经咬过一次的物证。
+#
+# ⚠ 本门是**不变量门**: 从代码派生"声明集 ⊇ 实碰集"这个恒成立的关系,
+#   不是"某个 token 在不在"的存在性门。新加序列漏声明会直接红。
+
+def _sequence_declaration_gaps(seq_dir=None):
+    """返回 [(模块名, 碰了但没声明的品类集合)]，空列表 = 全部对得上。
+
+    `seq_dir` 可传：自测用它指向 `tmp_path`，避免往**源码包目录**写探针文件
+    （G18 自测此前真往 `app/diagnostics/sequences/` 写，`finally` 兜不住
+    Ctrl-C / 进程被杀，残留文件会被 `loader.py` 尝试导入，还会混进 git add）。
+    """
+    import re
+
+    seq_dir = seq_dir or (_REPO_ROOT / "api-service/app/diagnostics/sequences")
+    gaps = []
+    for path in sorted(seq_dir.glob("*.py")):
+        if path.name.startswith("_"):
+            continue
+        src = path.read_text(encoding="utf-8")
+        declared = set()
+        for field in ("required_categories", "optional_categories"):
+            m = re.search(rf"{field}=\[([^\]]*)\]", src)
+            if m:
+                declared |= set(re.findall(r'"([^"]+)"', m.group(1)))
+        touched = (
+            set(re.findall(r'drivers\.get\(\s*"([^"]+)"', src))
+            | set(re.findall(r'drivers\[\s*"([^"]+)"\s*\]', src))
+        )
+        missing = touched - declared
+        if missing:
+            gaps.append((path.name, sorted(missing)))
+    return gaps
+
+
+def test_g18_sequence_declares_every_driver_it_touches():
+    """⭐ 不变量门：每个序列声明的品类必须覆盖它源码里真正取用的驱动。"""
+    gaps = _sequence_declaration_gaps()
+    assert not gaps, (
+        "以下诊断序列碰了没声明的驱动 —— 跑的时候那个驱动会停在 Local 态, "
+        "一调就返 False, 而错误会指向被调的驱动而不是这里:\n"
+        + "\n".join(f"  {name}: 碰了 {cats} 但 required/optional 里没有" for name, cats in gaps)
+        + "\n修法: 跑不了就得有 → required_categories; 在场才碰、缺了能跳过 → optional_categories。"
+    )
+
+
+def test_g18_checker_catches_a_planted_gap(tmp_path):
+    """判定器自测：种一个"碰了没声明"的假序列，判定器必须抓到。
+
+    没有这条，上面那个门在**判定器抽不出东西**时会恒绿（比如正则写错、
+    目录挪了），而恒绿的门比没有门更坏。
+    """
+    import re
+
+    seq_dir = tmp_path
+    planted = seq_dir / "zz_g18_planted_probe.py"
+    planted.write_text(
+        'METADATA = SequenceMetadata(\n'
+        '    name="planted", description="g17 self-test",\n'
+        '    required_categories=["baseStation"],\n'
+        ')\n'
+        'async def run(ctx, hal, params, log):\n'
+        '    ce = drivers.get("channelEmulator")\n',
+        encoding="utf-8",
+    )
+    try:
+        gaps = dict(_sequence_declaration_gaps(seq_dir))
+        assert "zz_g18_planted_probe.py" in gaps, (
+            "判定器没抓到植入的脱钩序列 —— G18 是恒绿的假门"
+        )
+        assert gaps["zz_g18_planted_probe.py"] == ["channelEmulator"]
+    finally:
+        planted.unlink()
+    # 复位后必须回到干净态
+    assert "zz_g18_planted_probe.py" not in dict(_sequence_declaration_gaps(seq_dir))
+
+
+# ── G17: 测试不得以 REAL 模式拉起 HAL（不会去连真仪器）──────────────
+
+def test_g17_tests_never_bring_up_hal_in_real_mode():
+    """⭐ **行为门** —— 在当前测试进程里，HAL 模式必须是 mock。
+
+    2026-08-07 实证：`.env` 有 `USE_MOCK_INSTRUMENTS=false`（生产就该这样），
+    而 `conftest.py` 此前不隔离，于是 `TestClient(app)` 的 lifespan 把 HAL 拉成
+    REAL、真去连驱动默认 IP `192.168.100.x`。两个后果：本机 TUN 接管该网段后
+    全量测试挂死 11m47s（内审硬门跟着落空）；**在现场机上跑 pytest 会把 F64
+    拽进 Remote**，测试本身变成一次未经批准的仪器操作。
+
+    变异：注释掉 `conftest.py` 顶部那行 `os.environ.setdefault(...)` → 本条红。
+    """
+    from app.config import settings
+
+    assert settings.use_mock_instruments is True, (
+        "测试进程的 HAL 模式是 REAL —— lifespan 会真去连 192.168.100.x 系列"
+        "生产默认 IP。检查 tests/conftest.py 顶部的环境隔离是否还在、"
+        "以及它是否仍排在 `from app.main import app` 之前。"
+    )
+
+
+def test_g17_isolation_precedes_app_import_in_conftest():
+    """⭐ 顺序不变量 —— `settings` 是模块级单例，导入 `app.main` 那一刻就把
+    `.env` 读定了。隔离必须排在它**之前**，否则设了也白设。
+
+    上面那条断言的是"结果对"，这条锁的是"为什么对" —— 只有结果门时，
+    把隔离挪到 app 导入之后，结果门在**单跑本文件**时可能仍绿（别的模块
+    先导入过 app），这条能直接抓住。
+
+    变异：把 `os.environ.setdefault` 挪到 `from app.main import app` 之后 → 本条红。
+    """
+    import pathlib
+
+    src = pathlib.Path(__file__).parent.joinpath("conftest.py").read_text(
+        encoding="utf-8"
+    )
+    # ⚠ 必须**行首锚定**：这两句话在文件顶部的注释里也逐字出现过
+    #   （"必须在 `from app.main import app` 之前"），裸 `str.index` 会命中
+    #   注释里那个、拿到比真导入更早的位置 —— 门当场给出假信号（本条第一版
+    #   就这么红的）。同 memory「不去注释的文本门会被注释里的同一个词喂绿」。
+    lines = src.splitlines()
+
+    def _lineno(prefix: str) -> int:
+        hits = [i for i, ln in enumerate(lines) if ln.startswith(prefix)]
+        assert hits, f"conftest.py 里找不到行首以 {prefix!r} 开头的语句"
+        return hits[0]
+
+    isolation = _lineno('os.environ.setdefault("USE_MOCK_INSTRUMENTS"')
+    app_import = _lineno("from app.main import app")
+    assert isolation < app_import, (
+        "conftest.py 里 HAL 模式隔离排在 `from app.main import app` 之后 —— "
+        "settings 单例那时已经把 .env 读定了，设了也白设"
+    )

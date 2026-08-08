@@ -786,7 +786,52 @@ class ProbePathLossCalibrationService:
 
         前置: HAL 必须绑 channelEmulator + signalAnalyzer; CE driver 必须
         声明 ≥1 个 CalibrationToneCapability.
+
+        ⚠ **本方法自己取仪表租约**（2026-08-07 内审 F2）。HAL 初始化/重载后
+        `park_idle_instruments()` 会把 F64 停回 Local 并立门，此后所有 F64 SCPI
+        直接抛 `F64LocalControlReservedError`。而校准链**不走 commissioning
+        的相位租约**，于是「后端启动 → 操作员点路损校准」必然报
+        "已交还本地控制" —— 错误文本跟操作员正在做的事完全对不上。
+        租约加在这个共用 primitive 上而不是三个调用方各加一次：
+        `quiet_zone_validation_service`(3 处) / `probe_calibration_service`(1 处)
+        / 本服务自己，都经这里碰 CE。
+        ⚠ 本方法**可以安全嵌套**在外层租约里（`hold()` 用引用计数：内层复用
+        外层那份控制权、退出不拆）。所以调用方要减少 socket 建拆开销时，
+        直接在作业入口（一次探头方向图 / 一次 QZ 校验 / 一次 path-loss 作业）
+        外面再包一圈租约即可，本方法这圈会自动变成 no-op。
+        ⚠ 唯一会抛的情况：外层持的控制权**比内层要的窄**（例如外层只取了 UXM，
+        内层要 F64）—— 那台 F64 根本没被 acquire，照跑会在第一条 SCPI 上撞
+        Local 门，所以 fail-loud 不静默降级。
+        （⚠ 此处一度写着"租约不可嵌套、会当场抛" —— 那是 `hold()` 改成引用
+        计数**之前**的说法，同一个 commit 里没跟着改，内审 F7 抓出。）
         """
+        from app.services.instrument_test_lease import instrument_test_lease
+
+        async with instrument_test_lease(
+            f"path-loss-tone:probe{probe_id}:{polarization.value}",
+            control_f64=True,
+            control_uxm=False,   # B 路会用 BSE 出 tone，但那是 SG 角色不是 UXM 小区
+            enable_monitoring=False,
+        ):
+            return await self._acquire_sa_power_via_ce_tone_inner(
+                frequency_mhz=frequency_mhz,
+                ce_tx_power_dbm=ce_tx_power_dbm,
+                ce_port=ce_port,
+                route_target=route_target,
+                probe_id=probe_id,
+                polarization=polarization,
+            )
+
+    async def _acquire_sa_power_via_ce_tone_inner(
+        self,
+        frequency_mhz: float,
+        ce_tx_power_dbm: float = -20.0,
+        ce_port: Optional[str] = None,
+        route_target: Optional[str] = None,
+        probe_id: int = 0,
+        polarization: PolarizationType = PolarizationType.V,
+    ) -> Tuple[float, float, str]:
+        """`acquire_sa_power_via_ce_tone` 的实体，**已在租约内**。"""
         # Codex #206 R3: 清理失败 (tone 停不掉 / CE 留直通) 不得只沉日志 —
         # 本方法返回 3 元组无 warnings 通道 (改签名波及 QZ/XPD 共用方), 用
         # 实例收集器传播: 每次 acquire 开头清空, finally 失败时 append,

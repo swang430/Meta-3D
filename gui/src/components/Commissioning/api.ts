@@ -47,6 +47,13 @@ export const createSession = async (
   // Omitted (undefined) → backend keeps its strict default (True) → on-site
   // real first-call stays protected. Only sent when the operator opts in.
   labSmoke?: boolean,
+  // 2026-08-07 现场: 只放过**校准证书**那一道门, 其余 7 道照常守着。
+  // 为什么要单独一个: `labSmoke` 是一次降级全部 8 道 —— 操作员为了绕开
+  // "lab has no active calibration certificate" 打开它, 会**连 DUT 门一起废掉**,
+  // 于是刚补的「登记 DUT」按钮形同虚设, P1-9 防对错车保护也没了。
+  // 现场实况 (CAICT 2026-08-07): 校准证书未绑 (P0-3 未做完) 但 DUT 可以真 attach,
+  // 这两件事本来就该分开决定。
+  calBypass?: boolean,
 ) => {
   // 2026-05-18 P0-7: engine_mode='external_asc' requires asc_source_path
   // (operator-supplied .asc directory). For the other two engine modes the
@@ -88,6 +95,13 @@ export const createSession = async (
     body.precheck_strict_dut_capability = false
     body.precheck_strict_sim_identity = false
   }
+  // 只跳校准门 —— 独立于 labSmoke, 两个都开时结果一致 (都是 false), 不冲突。
+  // ⚠ 这里**只准写 precheck_strict_cal 一个 flag**。想再放过别的门就各自加一个
+  // 独立开关, 别往这个分支里塞 —— 一塞就又变回"一开全废"的 labSmoke, 那正是
+  // 本分支要治的东西。
+  if (calBypass) {
+    body.precheck_strict_cal = false
+  }
   return client.post<SessionResponse>('/commissioning/sessions', body)
 }
 
@@ -117,4 +131,49 @@ export interface DeviceSelfcheckResult {
 }
 export const deviceSelfcheck = async () => {
   return client.post<DeviceSelfcheckResult>('/commissioning/device-selfcheck')
+}
+
+/**
+ * DUT attach 登记 —— 补 GUI 侧唯一的入口。
+ *
+ * 背景：precheck 的严格 DUT 门（`precheck.py` §5b）要求
+ * `measurements['dut_attach']` 存在，否则真仪表下必 FAIL；但在此之前
+ * **全仓只有 Phases.tsx 里一段提示文字**告诉操作员"自己去 POST"，
+ * 没有任何可点的入口 —— 现场只能手敲 curl（2026-08-07 现场实证：
+ * execution 1d4a642a 就死在 "DUT attach record missing"）。
+ *
+ * ⚠ **`session_id` 就是 `execution_id`** —— 后端
+ * `commissioning.py` 的 `_execution_to_session_response()` 写的是
+ * `session_id=str(execution.id)`。这里直接拿它当路径参数，**别再去
+ * 找一个叫 execution_id 的字段**，SessionResponse 里没有那个名字。
+ *
+ * ⚠ 本接口**总是成功写记录**：查不到 UE 只会让 `rrc_connected=false`
+ * 并往 `warnings` 里塞原因。所以"调用成功"≠"门会过"——
+ * 严格门还要 `rrc_connected===true` **且** precheck 当下再查一次
+ * UE 仍然在线。调用方必须把 `rrc_connected` 如实显示出来，
+ * 不能拿 `success` 冒充"DUT 已就位"。
+ */
+export interface AttachDutRequest {
+  imsi: string
+  phone_number?: string | null
+  dut_model?: string | null
+  dut_serial?: string | null
+  notes?: string | null
+}
+
+export interface AttachDutResponse {
+  success: boolean
+  execution_id: string
+  dut_imsi: string
+  rrc_connected: boolean
+  ue_info?: Record<string, unknown> | null
+  warnings: string[]
+  error?: string | null
+}
+
+export const attachDut = async (executionId: string, body: AttachDutRequest) => {
+  return client.post<AttachDutResponse>(
+    `/test-executions/${executionId}/attach-dut`,
+    body,
+  )
 }

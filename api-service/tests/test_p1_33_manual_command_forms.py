@@ -129,8 +129,6 @@ class TestWireFormIsTheManualForm:
         c = {"cell": _CELL, "bwp": "BWP0"}
         cases = [
             (f"{P.PDSCH_SCHED_ALGO} FULL_TPUT", "Full Buffer 的 token 是 FULL_TPUT"),
-            (f"{P.PDSCH_AMC_ENABLE.format(**c)} FIXed", "关 AMC = 资源策略 FIXed"),
-            (f"{P.PUSCH_AMC_ENABLE.format(**c)} ON", "UL 固定 MCS 开关语义反过来"),
             (f"{P.PDSCH_MCS} 28", "固定 MCS"),
             (f"{P.PDSCH_RB_ALLOC} 273", '"ALL" → 整数 PRB 数'),
             (f"{P.TDD_PERIOD.format(cell=_CELL)} MS5", '"5MS" → MS5'),
@@ -144,6 +142,23 @@ class TestWireFormIsTheManualForm:
         ]
         for expect, why in cases:
             assert expect in writes, f"{why} —— 没发出 {expect!r}"
+        # ⛔ slot 级 AMC 两条盲写已去掉（2026-08-07 现场实测恰一条 -113，
+        #    意图由 QCONFig FULL_TPUT+固定 MCS 承担）——**写**一条都不许出现，
+        #    探测是 query 不落 writes。
+        for frag in ("RRESource:APOLicy", "IMCS:FIXed"):
+            assert not any(frag in w for w in writes), (
+                f"slot 级 AMC 盲写死灰复燃: {frag} —— 2026-08-07 实测该组"
+                f"在 IRAT 上被 -113，写路径已由 QCONFig 组承担")
+
+    def test_amc_probe_templates_are_the_manual_form(self):
+        """探测模板必须钉在手册原文形式上（只读 query 用）。"""
+        P = UxmLteNrIratProfile
+        assert P.AMC_SLOT_DL_APOLICY_PROBE == (
+            "BSE:CONFig:NR5G:{cell}:SCHeduling:{bwp}:FC0:SC0:DL:RRESource:APOLicy")
+        assert P.AMC_SLOT_UL_IMCS_FIXED_PROBE == (
+            "BSE:CONFig:NR5G:{cell}:SCHeduling:{bwp}:FC0:SC0:UL:IMCS:FIXed")
+        # 写模板保持 None —— 变异「把写路径接回去」由上面的反向断言守
+        assert P.PDSCH_AMC_ENABLE is None and P.PUSCH_AMC_ENABLE is None
 
     def test_no_bare_value_reaches_the_wire(self):
         """⭐ 反向：**裸值一条都不许出现**。
@@ -166,15 +181,14 @@ class TestWireFormIsTheManualForm:
         gapply = [i for i, w in enumerate(writes) if w.strip() == P.CONFIG_APPLY]
         qcfg = [i for i, w in enumerate(writes) if "QCONFig:SCENario" in w
                 or "QCONFig:DL:MCS" in w or "QCONFig:DL:NUM:PRBs" in w]
-        amc = [i for i, w in enumerate(writes) if "RRESource:APOLicy" in w]
         tdd = [i for i, w in enumerate(writes) if "TDDPATtern" in w]
         assert qapply, "没发 Quick Config 自己的 apply —— 三条核心参数只是暂存值"
         assert gapply, "没发通用 APPLY —— 小区缓存配置不进协议栈"
-        # ⭐ Quick Config 的 apply 要在它那三条**之后**、slot 级 AMC **之前** ——
+        # ⭐ Quick Config 的 apply 要在它那三条**之后** ——
         #   手册：应用场景会把当前 scheduler 配置完全抹掉并替换（内审 F2）。
+        #   （slot 级 AMC 写已去掉 2026-08-07，"apply 在 AMC 之前"的顺序
+        #   约束随之消失；探测是 query 在 apply 之后读生效值，不在 writes 里。）
         assert qcfg and qapply[0] > max(qcfg), "Quick Config apply 发早了"
-        assert amc and qapply[0] < min(amc), (
-            "Quick Config apply 发在 AMC 之后 —— 会把刚配好的 AMC 抹掉")
         # 通用 APPLY 收尾，在所有配置写入之后
         assert gapply[-1] > max(tdd), "通用 APPLY 发在配置之前 —— 等于没发"
 

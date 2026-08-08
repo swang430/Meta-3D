@@ -18,7 +18,22 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → **P1-29** → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1）。
 
-**Current Focus = P1-29**。P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
+**Current Focus = 现场分支收口（`codex/uxm-driver-completion`），完成后回 P1-29**。
+
+> **2026-08-07/08 现场插队**（用户当日拍板）：CAICT 现场暴露的驱动阻塞 + 其内审收口。
+> 这批 out-of-roadmap，19 个 commit（Codex 现场 1 个 + 修复 18 个），全量
+> **3542 passed / 0 failed**。做了什么：
+> ① 现场阻塞（TDD pattern 与周期对不上、AMC 组 -113 拦死 measure、attach 判据用错
+>    对象、现场基线被写进共享 schema 默认值会改写全库既有用例）；
+> ② 内审 11 条 findings 全部处置（P1 与「修复不算数」那批已修并配会红的门，
+>    F4/F8/F9/F10/F12 进 Discovered 并写明不做的理由）；
+> ③ **测试第一次能跑完全量** —— 此前 conftest 以 REAL 模式拉起 HAL 去连
+>    `192.168.100.x`，本机 TUN 下挂死 11m47s，内审那道「全量输出」硬门一直落空。
+>
+> ⚠ 现场半仍 blocked：三个 attach 里程碑**零现场实证**，四条新的现场待验
+> （NEW-1..4）载体全部待建 —— 见下方「Blocked on hardware」表。
+
+P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
 SCPI 闭环依赖链：先把现场项映射到载体 → 用手册证据修判定和缺失载体 → 止住错误队列
 无限循环 → 补传输配对 → 补仪器接受/生效语义 → 接入正式 TestCase。该本地链已完成；
 P0-5 保持 ON-SITE-BLOCKED；P1-44/42/40/37 已在 Draft PR #303 完成本地实现与回归，
@@ -274,7 +289,7 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | ~~P0-4~~ | ~~SignalAnalyzer in HAL for reference TRP~~ | ✅ 2026-07-03 现场完成 | — 已完成 |
 | P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | 2026-07-21 物理 attach + 转台四方向已跑通；P1-47C 已完成本地同次执行证据机制。当前阻塞为：Aerotech 实时型号/固件依据、可信坐标偏置/标定状态，以及 on-site real DUT 的正式 TestCase 复验 | ✅ 诊断：[`baseStation_attach_check`](../api-service/app/diagnostics/sequences/baseStation_attach_check.py)；正式关闭：MIMO_OTA TestCase。只有受支持环境下同一 execution 的 mandatory E0–E4 全部成立才可关闭；`uxm_config_mode=inherit`、ASC/B2 模型加载和未标定转台路径会按设计保持 unknown，**现场已观察事实不等于正式通过** |
 | P0-8 **现场半** | F64 driver 现场修复落地 —— real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真 | on-site real F64 (本地半已 Done, 见 `### P0-8`；跟 P0-5 attach 同一段窗口) | ✅ P0-8a：[`propsim_f64_p08_gate`](../api-service/app/diagnostics/sequences/propsim_f64_p08_gate.py)；P0-8b（DL 不失真）：同一条 MIMO_OTA TestCase |
-| P1-2 | F64 license probe SCPI 现场验证 | on-site real F64 | ⚠️ **部分载体**：[`propsim_f64_health`](../api-service/app/diagnostics/sequences/propsim_f64_health.py) 只覆盖 `OUTPut:INTERFerence:LIST?`；校准侧实际只探 `SYSTem:CALIBration:USER:GET?/INFO?`，没有事项要求的 `SYSTem:CALibration:USER:LIST?`，也没有按已知状态判 license presence/absence。保留 Blocked；不并入 P1-46 |
+| P1-2 | F64 license probe SCPI 现场验证 | ⚠️ **2026-08-07 拿到部分答案** | **实测**：连接流程每次都会发 `SYSTem:CALibration:USER:LIST?`，该机回 **"ATE command not supported"**（-100 族），且这条 -100 会留在错误队列里跨会话带走。所以「校准侧没有这条命令」这半个前提**不成立** —— 命令发了，是**本机不支持**。剩余未答：按 license presence/absence 判定的那半。⚠ 条目原文写「没有事项要求的 `SYSTem:CALibration:USER:LIST?`」，与实测矛盾，已按实测改写。保留 Blocked（判定逻辑未做）；不并入 P1-46 |
 | P1-4 | first-call repeatability test | on-site 全链路 | ⚠️ **部分载体**：MIMO_OTA TestCase 可重复执行；但现有 [`ReportComparison`](../api-service/app/models/report.py) 契约仍比较已封存的 `plan_id`，不是 TestExecution 级对比，不能宣称“报告对比闭环”。保留 Blocked，缺口不并入 P1-46 |
 | P1-5 **现场半** | CAL-04 phase calibration | on-site 真校准链路 | ⚠️ **正式校准流程部分载体**：正式入口是 [`POST /api/v1/calibration/probe/phase/start`](../api-service/app/api/probe_calibration.py)；当前 endpoint body 会生成 `job_id` 并直接落库相位校准行，但这些行仍由 mock 数据生成，尚未替换为 CE→SA 实测循环。保留 Blocked，不判完成、不并入 P1-46 |
 | P1-17 **现场半** | UXM fresh-start 配置落地 | on-site real UXM | ⚠️ **部分载体**：[`uxm_config_truth_probe`](../api-service/app/diagnostics/sequences/uxm_config_truth_probe.py) 只在已 ON 小区扰动/恢复 ARFCN；不触发 fresh-start/HAL reload、`default_state_file` recall、默认 profile/state 自动应用、全配置/MIMO 对齐或 `.state` 盘点。保留 Blocked；不并入 P1-46 |
@@ -283,8 +298,12 @@ Baseline commit: see [announcement](announcements/2026-05-14-roadmap-baseline.md
 | P2-10 **现场半** | F64 工程精细化（配置资产 / 外部输出 / 内部 cal） | on-site real F64 | ⚠️ **部分载体**：[`propsim_f64_health`](../api-service/app/diagnostics/sequences/propsim_f64_health.py) / [`propsim_f64_state_machine`](../api-service/app/diagnostics/sequences/propsim_f64_state_machine.py) 只覆盖公共能力与状态语义，配置资产/外部输出/内部 cal 仍须在 P2-10 内逐项拆；不并入 P1-46 |
 | P2-12 **现场半** | 标准信道文件定义 | on-site real F64 | ❌ **无事项级载体**：F64 公共序列只能验健康/状态，不能证明标准信道文件定义端到端正确。保留 P2-12，跟 P2-10 同批拆；不并入 P1-46 |
 | P2-13 **现场半** | SIMProfile + SIM↔UXM 一致性 | on-site 真 SIM | ⚠️ **正式 TestCase 半覆盖**：[`MIMOOTAConfiguration.sim_profile_id`](../api-service/app/schemas/mimo_ota/config.py) 已由 [`precheck`](../api-service/app/services/mimo_ota/executors/precheck.py) 核对 SIMProfile；但 UXM 实测 IMSI 当前多数仍回退 attach 手填值，不能证明真卡身份闭环。保留 Blocked；不并入 P1-46 |
+| **NEW-1** 现场半 | **F64 各输出口的电平合法窗口** —— `OUTP:LEV:AMP:LIM? <out>` 逐口读上下限 | on-site real F64。⚠ 2026-08-07 实测：口 1 = `-166.60000,-51.6100`，而我们发的 `-50.00` 超上限 1.61 dB 被 `-200 Parameter exceeds set limits` 拒 → **当轮 measure 当场 FAILED**。其余 31 口未知；限值由什么决定（是否随已加载模型 / `OUTP:LOSS` 变）**手册未说明** | ❌ **待建**：现有 [`propsim_f64_health`](../api-service/app/diagnostics/sequences/propsim_f64_health.py) 只查 ch1，无 per-port。出发前须扩它或新写只读普查序列 |
+| **NEW-2** 现场半 | **关掉 ATE socket 后 F64 前面板 Local 是否真的可用** | on-site real F64 + 人在面板前。⚠ 这是整套租约 / `release_to_local_control` 机制的**地基假设**，而手册原文（PROPSIM User Reference §20.1）说的是：发第一条 ATE 命令后自动进 remote，**回 local 要操作员在 GUI 右上角点 Local Mode 按钮** —— 方向与实现前提相反。代码里 `control_mode` 已改成如实措辞 `ate_socket_released`（不再替仪器宣布「它在 Local」），但**真相要现场 5 分钟测出来** | ❌ **无载体**：不是 SCPI 能问的，属「发一条命令 + 人看面板」的观察项。可挂在任一 F64 序列末尾做人工确认步 |
+| **NEW-3** 现场半 | **`OffsetToCarrier` 要不要一并下发 102** | on-site real UXM。⚠ `nr_band_baselines.json:11-20` 有 `offset_to_carrier: 102` 但**全仓零写方**；而 `1bb0acc` **第一次**在 IRAT 上真正打开了 PointA 下发（改动前 `CELL_DL_POINTA=None`，从不发）。PointA 632946 只有配 OffsetToCarrier=102 才与 ARFCN 636666 / BW40 自洽，仪器上为 0 或残留值时载波栅格错位 —— 是 2026-08-07 后两轮 **attach 60s 超时**的候选解释之一（未证实） | ❌ **待建**：属「下发 + 回读 + 看 attach」的剧本式序列 |
+| **NEW-4** 现场半 | **转台收到 `MOVEABS X 0` 为什么不动** | on-site real Aerotech。⚠ 2026-08-07 实测：14:23–17:44 共 **6 个 execution / 15 次** `MOVEABS X 0.0000`，编码器 `PFBK(X)` 一个计数都没动，而 `move_to` 仍返回成功并打印「Arrived: Az=90.00°」。**最危险的一条**：功率问题一旦修好走进方位循环，四个方位测的是同一个物理位置，产出一份看不出破绽的假数据，现有的门一个都不会红。⚠ 仓内厂商文档对象是 **Ensemble**，而驱动文件头写 **A3200**，型号不符待确认 | ❌ **无载体**：需新写运动诊断序列（带 / 不带 `XF` 进给速度对照、全程保持 ENABLE 不提前 DISABLE、每 200ms 连采 `AXISSTATUS` + `PFBK` 共 10s 落 raw） |
 | P1-6 **（HOLD 行）** | FS16 / UXM / ENA silent-reconnect 集成测试 | 需真 idle-close 证据 | ❌ **无 C 类载体**：[`propsim_fs16_health`](../api-service/app/diagnostics/sequences/propsim_fs16_health.py) / [`uxm_scpi_compatibility`](../api-service/app/diagnostics/sequences/uxm_scpi_compatibility.py) / [`vna_ena_health`](../api-service/app/diagnostics/sequences/vna_ena_health.py) 都不会制造 idle-close。继续 HOLD；不并入 P1-46 |
-| P1-33 **现场半** | 验证按手册重写的 MAC 配置命令在真机上被接受（本地半可先做，见 `### P1-33`） | on-site real UXM。⚠️ **不再 gate 在 P1-31 上**（Codex #276 P2 抓出错误依赖）：P1-31 只跑那 9 项 KPI 对账、且限定「手册有依据 + 驱动已在用」的命令，**产不出 MAC 配置命令的形式**；而 2026-08-03 查手册发现**这 8 组命令 `BSE:` 形式手册里全都有** —— 卡点不是「不知道命令」，是「没在真机上验过」 | ⚠️ **半覆盖** [`uxm_scpi_compatibility`](../api-service/app/diagnostics/sequences/uxm_scpi_compatibility.py)：命令被枚举，但判定集错（`TDD_PATTERN` 恒 `None` 仍在 critical；`MAC_CFG_MANDATORY` 多数未进 critical）。这是表内唯一并入 P1-46 的缺口，见其第 2 件交付物 |
+| ~~P1-33 **现场半**~~ ✅ **2026-08-07 现场完成** | ~~验证按手册重写的 MAC 配置命令在真机上被接受~~ —— **实测：14 条全部被仪器接受、0 条被拒**（execution `ea016f0f`，17:38:18 与 17:41:29 两轮一致；逐组 `SYST:ERR?` 回读为证）。唯一的 `-113` 来自一条**只读探测** `UL:IMCS:FIXed?`，不在那 14 条之内 —— 那正是本项要问的「IRAT 认不认」的实测答案：DL 侧 `RRESource:APOLicy?` 回读 `FIX`（认），UL 侧那条不认。⚠ 由此产生的**新**现场待验见下方新增行。原描述（本地半可先做，见 `### P1-33`） | on-site real UXM。⚠️ **不再 gate 在 P1-31 上**（Codex #276 P2 抓出错误依赖）：P1-31 只跑那 9 项 KPI 对账、且限定「手册有依据 + 驱动已在用」的命令，**产不出 MAC 配置命令的形式**；而 2026-08-03 查手册发现**这 8 组命令 `BSE:` 形式手册里全都有** —— 卡点不是「不知道命令」，是「没在真机上验过」 | ⚠️ **半覆盖** [`uxm_scpi_compatibility`](../api-service/app/diagnostics/sequences/uxm_scpi_compatibility.py)：命令被枚举，但判定集错（`TDD_PATTERN` 恒 `None` 仍在 critical；`MAC_CFG_MANDATORY` 多数未进 critical）。这是表内唯一并入 P1-46 的缺口，见其第 2 件交付物 |
 
 **P1-45 triage 结论**：13 条未完成/现场半/HOLD 行中，2 条已有合规载体，7 条只有
 部分载体，4 条没有合规载体，即已有 **9 条可复跑承载路径**；这只是入口/路径存在，
@@ -3396,6 +3415,19 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-07 during P1-44 external review, Codex #303 R1]` **重复抑制桶不按日志级别隔离（P2，待 triage）** —— `logging_config.py:185` 的抑制 key 不含 `record.levelno`：同一执行/仪器/logger 在一秒内先输出至少 100 条相同文本的 INFO，随后用**相同文本**输出 ERROR 时，该 ERROR 会被归进已经满额的 INFO 桶并直接抑制；最终摘要又复制首条 INFO，因此日志里**完全看不到级别升级**。突发限流因此可能吞掉真正的告警或错误。修法方向是把 `levelno` 纳入 key。按 CLAUDE.md ⑥ 不在 #303 当下修（P2、非本片验收边界内的安全问题），避免 review 黑洞。
 
 - `[discovered 2026-08-07 during P1-44 external review, Codex #303 R1]` **关键词过滤匹配不到 traceback 续行（P2，待 triage）** —— `system_logs.py:364` 的反向扫描只对**父记录**调用谓词，随后无条件清空续行。于是关键词只出现在续行里时（父消息 `request failed`、续行 `ValueError: broken`），搜 `broken` 会同时从 `/tail` 和 `/history` 消失；导出路径同样只检查父记录，结果一致遗漏。修法方向是归组时让关键词能匹配组内任一续行，同时保留父级 level/session 语义。同上，不在 #303 当下修。
+
+- `[discovered 2026-08-08 during 现场分支内审, F4]` **仪表租约的粒度落在最内层 primitive，一次校准作业要建拆几十上百次 socket（P2，待 triage）** —— `acquire_sa_power_via_ce_tone`（`path_loss_calibration_service.py:803`）自己取租约解决了「park 之后校准必撞 Local 门」，但三个调用方**没有一个**在外层持租约（`probe_calibration_service.py:1776` 是 elevation × azimuth 双重循环逐点调）。于是每点都真取真放：`release_to_local_control()` 清 `_visa_resource` → 下一点的 `acquire_remote_control()` 走完整 `connect()` → `_apply_session_reset()` 每次清 6 个缓存字段（含 running / pipeline / bypass）。一次 32 探头 × 2 极化的方向图扫描 = 64 次 socket 建拆 + 缓存复位。⚠ **不是加机制**：`hold()` 已经是引用计数、嵌套安全，只需在三个作业入口（`measure_probe_pattern` / QZ 校验 / path-loss 作业）各包一圈外层租约，内层那圈自动变 no-op。**本轮没做**：改动横跨三个服务的入口，超出「让现场分支能合进 main」这个目的（⑦）。
+
+- `[discovered 2026-08-08 during 现场分支内审, F8/F9/F10/F12]` **内审四条 P3 待 triage** —— ① `InstrumentTestLeaseError` 统一映射 409，把「取不到控制权」与「用完归还失败」合并成同一个码：后者发生在整条链已跑完的 `finally` 里，而 409 的语义是「稍后重试」，GUI / 脚本按 409 重试会**重跑整条链**（`main.py:217`）。② 嵌套租约只校验 `control_f64` / `control_uxm`，`enable_monitoring` 被静默忽略（`instrument_test_lease.py:214`）—— 内层要求关监控却嵌进开监控的外层时，1 Hz 轮询会插进 CW tone 测量抢 SCPI 锁；今天无可达路径，属潜伏。③ 「None 不能当 0 算进均值」只有「别崩」那半有门，且镜像站点 `analysis.py:88` 保留同样的裸写法（今天安全只因 `measurement_simulated` 是循环不变量）。④ `optional_categories` 这个新字段没进 `loader.list_sequences()`，GUI 的诊断面板看不到它，声明与展示脱钩。
+
+- `[discovered 2026-08-08 during 现场分支内审收口]` **驱动带「猜出来的」默认 IP（P2，待 triage）** —— `propsim_f64.py:393` 的 `config.get("ip", "192.168.100.21")`、`uxm_base_station.py:296` 的 `192.168.100.10`、`cmw500_base_station.py:179` 的 `192.168.100.20`、`rs_zna.py:82` / `ets_positioner.py:47` 的 `192.168.100.30`、`rs_fsw.py:42` 的 `192.168.100.80`，以及 `driver_registry.py:22/27/213/214` 与 `bootstrap/instruments.py:88/128/204/242/276` 的一批 seed endpoint。生产路径上这些地址早就从 LabProfile 读，默认值只在「谁都没配」时才用得上 —— 而那种情况**本该 fail-loud 报「未配置」，不是拿一个猜出来的地址去连**（连上了更糟：那可能是别人的仪器）。
+  ⚠ 用户 2026-08-08 当场问「为什么要用 192.168.100.x 的硬编码跑呢，没有这个必要，为什么不改掉」。
+  ⚠ **跟 `852f6d2` 不是同一件事**：那条修的是「测试别以 REAL 模式拉起 HAL」（已完成，配 G17 两道门）；本条修的是「驱动别有猜出来的默认地址」。改法要连带看 `bootstrap/instruments.py` 的 seed 值该不该留、以及缺配置时的失败措辞。
+
+- `[discovered 2026-08-07 during CAICT 现场]` ~~**单元测试会对生产默认 IP 发真 TCP，全量测试在 TUN 环境下挂死**~~ → **⑤ dropped（2026-08-07 用户当场裁决：「这是测试环境的问题，不是产品的问题」）**。事实记录保留备查，不进任何队列。原始描述： —— `conftest.py` 的 `client` fixture 触发 FastAPI lifespan → HAL 真去连驱动默认 IP（`propsim_f64.py:393` `192.168.100.21`、`uxm_base_station.py:296` `192.168.100.10`、`bootstrap/instruments.py:276` `TCPIP0::192.168.100.26::inst0::INSTR` 等）。平时这些地址不通、连接秒失败，测试照过；2026-08-07 本机 Clash TUN（网关 `198.18.0.1`）接管该网段后，连接不再快速失败而是挂住等超时 —— `lsof` 实证 `TCP 198.18.0.1:57661->192.168.100.27:sunrpc (ESTABLISHED)`，进程 CPU 0.3% 挂了 11 分 47 秒。**后果两层**：① 当天现场分支 46 文件 4246 行**零全量回归**，内审最后一道兜底落空；② **在现场机上跑 pytest 会真的把 F64 拽进 Remote**（F64 收到第一条 ATE 命令即进 Remote），测试本身变成一次未经批准的仪器操作。另：`pytest-timeout` 未安装，连"卡住就超时失败"的兜底都没有，一个挂住的测试能拖垮整轮。修法方向是 conftest 强制 mock + 装 `pytest-timeout`；它是「现场每个 commit 前跑门文件」这条纪律的前置。
+
+- `[discovered 2026-08-07 during CAICT 现场]` **同一天三条平行分支从同一 base 分出且互不可见（流程，待 triage）** —— 2026-08-07 从 `main` (`2a47126`, 08:56) 分出三条互不相干的线：`codex/onsite-20260807`（日志线，PR #303，33 文件）、`add-new-features`（FS16/UXM 功能线，无 PR，49 文件 +16167）、`codex/uxm-driver-completion`（现场驱动线，未推送，46 文件 +4246）。**现场实际跑的是第三条**，因此当天现场排障用不上第一条刚做完的「执行日志隔离与限界」「审计摘要关联执行」—— 而那正是 Current Focus P1-44 的交付物，也正是当天排障最缺的东西（实测在 63 MB 日志里逐条 grep 了一晚上）。三条之间 12 个核心文件重叠（`api/instrument.py` / `hal/propsim_f64.py` / `hal/uxm_base_station.py` / `services/instrument_hal_service.py` / `services/mimo_ota/executors/measure.py` / `tests/test_rule_gates.py` 等），`git merge-tree` 实测第二条与第三条有 3 处硬冲突，最要命的一处是 `send_scpi_command` 里「manual_local 闸门」与「instrument_test_lease 租约」抢同一位置且前者对所有仪器类别泛化生效。**待 triage 的是流程问题**：现场作业开分支前是否必须先合掉/rebase 已完成的队列项，以及 WIP=1 在"多人/多 agent 同日并行"下如何表达。
+
 
 - `[discovered 2026-08-06 during P1-45 external review, Codex #295 R1]` **诊断序列完整 output / trace pointer 持久化缺口（P2，待独立 triage）** —— `POST /api/v1/diagnostic-sequences/{key}/run` 的 live response 含完整 `steps/raw`，但 `DiagnosticContext.record_run()` 只把组合输出截成最多约 2048 bytes 的 `DiagnosticRun.output_excerpt`，该 endpoint 又没有传 `hal_trace_log_path`；离开 live 结果后，审计行可能既没有完整 raw，也没有可回取全量 trace 的指针。当前现场必须先导出/复制完整响应，截断摘要不能作为正式证据。proper fix 需独立评估完整 output 存储或可靠 trace pointer 的生命周期、访问与清理策略；**不并入 P1-46，也不因此扩当前执行队列**。
 

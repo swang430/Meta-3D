@@ -1,4 +1,4 @@
-"""Seed the 8 canonical UXM topology profiles (P2-1 Phase 2.1 + P1-17 default).
+"""Seed the 10 canonical UXM topology profiles, including both Test App defaults.
 
 Source of truth is ``app.hal.uxm_test_profiles._PROFILE_REGISTRY`` —
 the in-code dataclass registry that pre-dates DB persistence. Keeping
@@ -106,10 +106,9 @@ def _seed(db: Session) -> SeedResult:
 
 topology_profiles_seeder = Seeder(
     name="topology_profiles",
-    version=3,  # 门审 #216 F1: +caict_n78_3550_4x4_baseline (EMQuest 基线新默认;
-                # 旧 3600 profile 保留历史; seeder 对已存在行 skip, 新 id 走 insert)
-    description="9 canonical UXM topology profiles (SISO/MIMO/calibration + "
-                "3549.99M EMQuest-baseline fresh-start default) marked "
+    version=4,  # + LTE_NR_IRAT/CELL1 现场闭环基线；新 id 幂等 insert
+    description="10 canonical UXM topology profiles (SISO/MIMO/calibration + "
+                "3549.99M defaults for 5G_NR_Test and LTE_NR_IRAT) marked "
                 "is_system_preset=true",
     run=_seed,
 )

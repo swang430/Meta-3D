@@ -41,21 +41,10 @@ responsibility for the abort. We don't try to refuse harder than that
 because in actual on-site debugging, the operator sometimes KNOWS
 the test is hung on a bad driver and reload is the right escape hatch.
 
-**What this module does NOT detect**:
-
-- In-flight diagnostic sequences (``app/api/diagnostic_sequence.py``)
-  run synchronously on the FastAPI request thread; no DB row exists
-  until the run completes, so there's nothing to query.
-- Live SCPI commands via ``/instruments/{cat}/scpi-command``: same —
-  request-thread bound, no in-flight registry.
-- Background metrics broadcaster: continuously polling; not a "user
-  initiated" operation worth refusing for.
-
-A future P3 item could add an in-process active-operations registry
-on the HAL service for the diagnostic / SCPI paths to opt-in to. For
-P2-5 the execution-row check covers the most consequential case (a
-multi-minute formal test) and the warning log on shutdown (with the
-active driver list) gives post-mortem context for the unguarded cases.
+除执行行外，``instrument_test_lease`` 现在提供进程内活跃操作判据，覆盖正式
+TestCase、commissioning、诊断序列、单次 SCPI 与 F64 控制操作。它既阻止这些
+操作期间 HAL reload 拆驱动，也负责空闲关闭 F64/UXM 控制会话和监控门。
+后台 metrics broadcaster 不作为 blocker；租约未开启监控门时它根本不读取 HAL。
 (P2-5 原文写的是 TestPlan check —— S4c 拆完计划链后判据换成执行行。)
 """
 from __future__ import annotations
@@ -67,6 +56,7 @@ from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.models.test_plan import TestCase, TestExecution
+from app.services.instrument_test_lease import active_test_lease_purpose
 
 # VRT 里唯一不持有 HAL 驱动的模式 —— 纯数字仿真。conducted 需要拓扑、
 # ota 走 MPAC 暗室, 两者都占真硬件, 必须照拦 (Codex #241 D1)。
@@ -77,15 +67,13 @@ NON_HAL_EXECUTION_MODE = "digital_twin"
 class ReloadBlocker:
     """One reason a HAL reload should be refused (without ``force=true``).
 
-    ``kind`` lets future blocker types coexist — today only
-    ``"test_execution"`` is emitted, but the registry / GUI rendering can
-    branch on this when additional check sources (in-flight diagnostics,
-    calibration session, etc.) get wired in later.
+    ``kind`` lets blocker types coexist：数据库执行行发 ``test_execution``，
+    进程内仪表租约发 ``instrument_lease``。
     (ARCH-1 S4c 之前这里发的是 ``"test_plan"`` —— 那半截已删,
     ``test_plan`` 自此是**唯一不可能**出现的值。)
     """
 
-    kind: str  # "test_execution" today; future: "diagnostic_run", "calibration"
+    kind: str  # "test_execution" | "instrument_lease"
     id: str
     name: str
     status: str
@@ -178,4 +166,17 @@ def find_reload_blockers(db: Session) -> List[ReloadBlocker]:
     reset_orphaned_plan_chain_rows`` 在启动时清成终态 (让封存表的数据如实,
     不再是"永远在跑"的谎)。
     """
-    return find_execution_blockers(db)
+    blockers = find_execution_blockers(db)
+    active_lease = active_test_lease_purpose()
+    if active_lease is not None:
+        blockers.append(ReloadBlocker(
+            kind="instrument_lease",
+            id=active_lease,
+            name=active_lease,
+            status="running",
+            detail=(
+                f"进程内仪表操作 {active_lease!r} 正在使用 HAL；重载会拆掉它的"
+                "驱动。请等待操作结束，或明确使用 force=true 放弃该操作。"
+            ),
+        ))
+    return blockers

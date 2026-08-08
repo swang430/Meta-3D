@@ -130,10 +130,9 @@ class UxmTopologyProfile:
     # ``RealUxmDriver.apply_topology_profile`` refuse (返回结构化错误,
     # 不进入 SCPI 路径); 同时 GUI 可读这个字段灰化不兼容选项.
     #
-    # 当前 7 个 built-in template 用的都是 cell_id="CELL0" + 直接数字
-    # 带宽, 仅在 5G_NR_Test 下工作; 显式声明这点比依赖 cell_id 形式推断
-    # 更稳健 (未来加 IRAT 拓扑时不会因为 cell_id 改成 "CELL1" 就被认为
-    # 通用兼容).
+    # built-in template 显式声明所属 Test App：5G_NR_Test 使用 CELL0
+    # 及直接数字带宽，LTE_NR_IRAT 使用 CELL1 及 BWxx/MUxx 枚举。不依赖
+    # cell_id 的形式暗自推断，避免新 App 被误认为通用兼容。
     compatible_test_apps: List[str] = field(default_factory=list)
 
     # --- 备注 ---
@@ -484,6 +483,45 @@ PROFILE_4X4_N78_3550_BASELINE = UxmTopologyProfile(
     ),
 )
 
+# ---- LTE_NR_IRAT @ 3549.99M（2026-08-07 现场驱动闭环基线）----
+# CELL1 / BW40 / ARFCN / SCS / PointA / SSB / 2 layer / N4X4 均来自现场
+# 回读；功率沿用已经拍板的 EMQuest -46 dBm/SCS 基线。
+PROFILE_IRAT_N78_3550_2LAYER = UxmTopologyProfile(
+    profile_id="caict_n78_3550_irat_2layer",
+    name="CAICT UXM IRAT 基线 (N78 3549.99MHz, 2-layer/N4X4)",
+    description=(
+        "LTE_NR_IRAT/CELL1 现场基线：ARFCN 636666、BW40、30kHz、TDD、"
+        "SSB 635712、PointA 632946、2 DL layers、N4X4 内建 MIMO 配置。"
+    ),
+    category="mimo",
+    band="N78",
+    frequency_mhz=3549.99,
+    arfcn=636666,
+    bandwidth_mhz=40.0,
+    scs_khz=30,
+    duplex="TDD",
+    mimo_layers=2,
+    mimo_port_preset="4x4",
+    dl_power_dbm=-46.0,
+    ssb_power_dbm=-46.0,
+    modulation="256QAM",
+    target_mcs=28,
+    sched_algo="FULLBUFFER",
+    enable_amc=False,
+    tdd_pattern="DDDSU",
+    tdd_period="5MS",
+    harq_max_trans=4,
+    harq_processes=8,
+    csi_rs_ports=4,
+    stat_count=5000,
+    cell_id="CELL1",
+    compatible_test_apps=["LTE_NR_IRAT"],
+    notes=(
+        "2026-08-07 现场回读闭环基线。N4X4 是 UXM 内建 DL MIMO 配置；"
+        "最大 DL MIMO layers 当前回读为 2。"
+    ),
+)
+
 # ---- 校准专用 ----
 PROFILE_CAL_POWER = UxmTopologyProfile(
     profile_id="cal_power_sweep",
@@ -544,6 +582,7 @@ def _register_builtin_profiles() -> None:
         PROFILE_4X4_N78,
         PROFILE_4X4_N78_3600,   # 历史保留 (2026-07-20 起非默认, 3600 是文件名标称)
         PROFILE_4X4_N78_3550_BASELINE,  # P1-17 系统默认 (EMQuest 基线 636666/BW40/-46)
+        PROFILE_IRAT_N78_3550_2LAYER,
         PROFILE_CAL_POWER,
         PROFILE_CAL_2X2_ALT,
     ]:

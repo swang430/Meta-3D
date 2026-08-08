@@ -12,6 +12,8 @@ record_run with right kind/target/params) is what's under test.
 from __future__ import annotations
 
 import uuid
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,6 +23,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base, get_db
 from app.main import app
+import app.api.instrument as instrument_api
 from app.models.diagnostic_run import DiagnosticKind, DiagnosticRun
 from app.models.instrument import (
     InstrumentCategory as InstrumentCategoryModel,
@@ -399,6 +402,49 @@ class TestHalDriverGate:
             lambda: FakeHal(),
         )
         assert _get_loaded_hal_driver("baseStation") is real
+
+    def test_connection_reuses_loaded_uxm_session_without_second_socket(
+        self, db, monkeypatch
+    ):
+        cat = InstrumentCategoryModel(
+            id=uuid.uuid4(),
+            category_key="baseStation",
+            category_name="UXM",
+            is_active=True,
+            usage_phase=["testing"],
+            driver_mode="real",
+        )
+        db.add(cat)
+        db.commit()
+
+        class RealUxmDriver:
+            _query = AsyncMock(return_value="Keysight,E7515B,SN,FW")
+            _write = AsyncMock()
+
+        driver = RealUxmDriver()
+
+        @asynccontextmanager
+        async def _lease(*_args, **_kwargs):
+            yield
+
+        monkeypatch.setattr(
+            instrument_api, "_get_loaded_hal_driver", lambda _key: driver
+        )
+        monkeypatch.setattr(instrument_api, "instrument_test_lease", _lease)
+
+        with patch(
+            "socket.socket.connect",
+            side_effect=AssertionError("已加载 UXM 时不得另开 raw socket"),
+        ):
+            resp = client.post(
+                "/api/v1/instruments/baseStation/test-connection",
+                json={"ip": "192.0.2.20", "port": 5125, "protocol": "SCPI"},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        assert resp.json()["idn"] == "Keysight,E7515B,SN,FW"
+        driver._query.assert_awaited_once_with("*IDN?")
 
     def test_returns_none_when_hal_empty(self, monkeypatch):
         from app.api.instrument import _get_loaded_hal_driver

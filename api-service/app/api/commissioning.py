@@ -37,6 +37,7 @@ from app.services.test_execution import (
     StepExecutionContext,
     dispatch_step,
 )
+from app.services.instrument_test_lease import instrument_test_lease
 
 
 COMMISSIONING_CHAINS = ("commissioning_api", "commissioning_adhoc")
@@ -215,11 +216,24 @@ _LEGACY_PHASE_ORDER = ["precheck", "reference", "mimo_test", "analysis", "report
 
 class CreateSessionRequest(BaseModel):
     cdl_model_name: str = "UMa CDL-C NLOS"
-    frequency_hz: float = 3.5e9
-    bandwidth_mhz: float = 100
+    # 2026-08-07 现场实证的坑：这两个原来是 `float = 3.5e9 / 100`，**同一个默认值
+    # 活在两个地方**（这里 + MIMOOTAConfiguration），而 `_request_overrides` 把它们
+    # **无条件**塞进 overrides —— 于是改了 schema 默认根本不生效，建出来的会话
+    # 仍是 3500 MHz / 100 MHz。改成 `Optional = None`：**None = 不覆盖，用 schema
+    # 默认**，跟下面 8 个 `precheck_strict_*` 同一套语义。
+    # 这是"去掉重复"而不是"同步重复" —— 同步要靠人记得，去掉之后记不记得都对。
+    # G14 门（test_rule_gates.py）盯着这件事：本类里任何跟 MIMOOTAConfiguration
+    # 同名的字段，要么默认值相等，要么就是 None（不覆盖）。
+    frequency_hz: Optional[float] = None
+    bandwidth_mhz: Optional[float] = None
     mimo_layers: int = 2
     azimuths_deg: List[float] = [0.0, 90.0, 180.0, 270.0]
     measurement_duration_s: float = 10.0
+    # ⚠ 与 MIMOOTAConfiguration.engine_mode 保持一致（G16 门守着）。
+    #   一度双双改成 keysight_gcm（2026-08-07 现场），外审 #304 P1 指出：
+    #   GCM 路必须配 `.smu`，而 emulation_file / channel_asset_id 都是 None，
+    #   默认会话会被 strict emulation-file 门全部拒掉。两侧一起撤回 ASC。
+    #   现场那条路显式传 engine_mode="keysight_gcm" + emulation_file=<.smu 路径>。
     engine_mode: str = "mimo_first_asc"
     # 2026-05-18 P0-7: engine_mode='external_asc' 时必填 (本机绝对路径,
     # 操作员手工产 .asc 的目录). 其他 engine_mode 该字段被忽略.
@@ -258,6 +272,32 @@ class CreateSessionRequest(BaseModel):
     # 用临时卡)。新 strict 门同步 bypass (feedback_strict_gate_extend_bypass_toggle)。
     precheck_strict_sim_identity: Optional[bool] = None
 
+    # === 仪表工作点（暗室首测这一条路专用）===
+    #
+    # ⭐ 这些**不放进 `MIMOOTAConfiguration` 的默认值**（2026-08-07 撤回后的定案）：
+    #   共享 schema 的默认会流进每一条新建用例，也会被填进数据库里**已经存在**、
+    #   JSON 里没有这些键的老用例 —— 实测既有 MIMO_OTA 用例的 configuration 里
+    #   这几个键全都缺，所以改 schema 默认 = 改全库既有用例的行为。
+    #   放在请求侧就只影响"这次建的这个会话"，跟上面 8 个 `precheck_strict_*`
+    #   和 `engine_mode` 同一套路数。
+    #
+    # None = 不覆盖，用 schema 默认。给了值才下发。
+    # 2026-08-07 CAICT 现场实测过的一组（下次现场可直接照填）：
+    #   frequency_hz=3.54999e9 (ARFCN 636666) / bandwidth_mhz=40
+    #   uxm_dl_power_dbm_per_bw=-15  ← 整带宽口径，已下发并回读确认
+    #   f64_input_ref_dbm=-17（UXM→F64 路损按 2 dB 估，⚠ 尚未实测）
+    #   f64_crest_db=15 / f64_output_level_dbm=-52
+    #   ⚠ -50 会被 F64 拒（该机口 1 实测上限 `OUTP:LEV:AMP:LIM?` = -51.61）
+    uxm_dl_power_dbm_per_bw: Optional[float] = None
+    f64_input_ref_dbm: Optional[float] = None
+    f64_crest_db: Optional[float] = None
+    f64_output_level_dbm: Optional[float] = None
+    emulation_file: Optional[str] = None
+    # 「扶一把」开关：None = 关（正常流程）。有的 DUT 在衰落打开时挂不上，
+    # 设成 2（Butler 直通）可先用直通扶它 attach，挂上后自动撤掉再开衰落。
+    # attach 超时的错误消息会主动提示这个开关，不需要谁记住它。
+    f64_bypass_mode: Optional[int] = None
+
 
 class SessionResponse(BaseModel):
     session_id: str
@@ -287,8 +327,6 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
     """Translate CreateSessionRequest fields into MIMOOTAConfiguration overrides."""
     overrides: Dict[str, Any] = {
         "cdl_model_name": req.cdl_model_name,
-        "frequency_hz": req.frequency_hz,
-        "bandwidth_mhz": req.bandwidth_mhz,
         "mimo_layers": req.mimo_layers,
         "azimuths_deg": req.azimuths_deg,
         "measurement_duration_s": req.measurement_duration_s,
@@ -299,6 +337,26 @@ def _request_overrides(req: CreateSessionRequest) -> Dict[str, Any]:
             "max_rsrp_variance_db": req.max_rsrp_variance_db,
         },
     }
+    # 频率/带宽: None = 不覆盖 → 用 MIMOOTAConfiguration 的通用默认
+    # （3.5 GHz / 100 MHz）。现场工作点由调用方显式给。见类定义上的注释。
+    if req.frequency_hz is not None:
+        overrides["frequency_hz"] = req.frequency_hz
+    if req.bandwidth_mhz is not None:
+        overrides["bandwidth_mhz"] = req.bandwidth_mhz
+    # 仪表工作点（暗室首测专用）—— 同样 None = 不覆盖。这些**不放共享 schema
+    # 默认**：那会流进每条新建用例、也会被填进 JSON 里缺这些键的既有用例
+    # （2026-08-07 实证：既有 MIMO_OTA 用例的 configuration 里这几个键全缺）。
+    for _f in (
+        "uxm_dl_power_dbm_per_bw",
+        "f64_input_ref_dbm",
+        "f64_crest_db",
+        "f64_output_level_dbm",
+        "emulation_file",
+        "f64_bypass_mode",
+    ):
+        _v = getattr(req, _f)
+        if _v is not None:
+            overrides[_f] = _v
     # P3-14: 资产引用透传 (MIMOOTAConfiguration.channel_asset_id 已存在, S3 起
     # measure resolver 按它派生 engine_mode / .smu 源)。None 不发 — 不覆盖默认。
     if req.channel_asset_id is not None:
@@ -630,8 +688,11 @@ async def run_phase(
     # ARCH-1 S3: 相位期间行标 running, 让 HAL reload 闸门看得见 (这条
     # 链 GUI 可点、跑真硬件, 之前全程 pending 所以闸门看不见它)
     ctx = _build_context(db, execution, test_case, step)
-    with _execution_marked_running(db, execution):
-        result = await dispatch_step(ctx)
+    async with instrument_test_lease(
+        f"commissioning-phase:{session_id}:{phase_name}"
+    ):
+        with _execution_marked_running(db, execution):
+            result = await dispatch_step(ctx)
 
     db.refresh(execution)  # pick up measurements written by executor
     phases_key = _STEP_TYPE_TO_PHASES_KEY[target_step_type]
@@ -762,7 +823,10 @@ async def run_adhoc_phase(req: AdhocPhaseRequest, db: Session = Depends(get_db))
     status_value = "failed"
     try:
         ctx = _build_context(db, execution, test_case, step)
-        result = await dispatch_step(ctx)
+        async with instrument_test_lease(
+            f"commissioning-adhoc:{req.phase_name}"
+        ):
+            result = await dispatch_step(ctx)
         status_value = result.status.value
         error_message = result.error_message
     except Exception as e:  # noqa: BLE001
@@ -893,20 +957,21 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
     aborted_at: Optional[str] = None
     abort_message: Optional[str] = None
     started_at = datetime.utcnow()
-    with _execution_marked_running(db, execution):
-        for step in descriptors:
-            ctx = _build_context(db, execution, test_case, step)
-            result = await dispatch_step(ctx)
-            if result.status.value == "failed":
-                aborted_at = step.type
-                abort_message = result.error_message
-                logger.warning(
-                    "[%s] run-all aborted at %s: %s",
-                    session_id,
-                    step.type,
-                    result.error_message,
-                )
-                break
+    async with instrument_test_lease(f"commissioning-run-all:{session_id}"):
+        with _execution_marked_running(db, execution):
+            for step in descriptors:
+                ctx = _build_context(db, execution, test_case, step)
+                result = await dispatch_step(ctx)
+                if result.status.value == "failed":
+                    aborted_at = step.type
+                    abort_message = result.error_message
+                    logger.warning(
+                        "[%s] run-all aborted at %s: %s",
+                        session_id,
+                        step.type,
+                        result.error_message,
+                    )
+                    break
 
     if aborted_at is not None:
         # 中止的链是 failed —— 记成 completed 会让它混进待归档报告列表
@@ -952,32 +1017,35 @@ class DeviceSelfcheckResult(BaseModel):
 @router.post("/device-selfcheck", response_model=DeviceSelfcheckResult)
 async def device_selfcheck() -> DeviceSelfcheckResult:
     """暗室首测前逐设备快速自检 (连接 + 响应性主动探测)。"""
-    try:
-        from app.services.instrument_hal_service import get_hal_service
-        hal = get_hal_service()
-    except Exception:  # noqa: BLE001
-        return DeviceSelfcheckResult(all_ready=False, devices=[], message="HAL 服务不可用")
-    drivers = (hal.drivers or {}) if hal else {}
-    if not drivers:
-        return DeviceSelfcheckResult(
-            all_ready=False, devices=[],
-            message="无 HAL 驱动加载 — 检查仪器已选 + 连接 IP 已填, 或重载 HAL 驱动",
-        )
     items: List[DeviceSelfcheckItem] = []
-    for category, driver in sorted(drivers.items()):
-        status = getattr(driver, "status", None)
-        status_str = str(getattr(status, "value", status) or "").lower()
-        connected = status_str in ("connected", "ready", "busy")
-        responsive = False
-        detail: Optional[str] = None
+    async with instrument_test_lease("commissioning-device-selfcheck"):
         try:
-            await driver.get_metrics()  # 主动轻量探测 driver 是否响应
-            responsive = True
-        except Exception as e:  # noqa: BLE001
-            detail = str(e)
-        items.append(DeviceSelfcheckItem(
-            category=category, connected=connected, responsive=responsive, detail=detail,
-        ))
+            from app.services.instrument_hal_service import get_hal_service
+            hal = get_hal_service()
+        except Exception:  # noqa: BLE001
+            return DeviceSelfcheckResult(
+                all_ready=False, devices=[], message="HAL 服务不可用"
+            )
+        drivers = (hal.drivers or {}) if hal else {}
+        if not drivers:
+            return DeviceSelfcheckResult(
+                all_ready=False, devices=[],
+                message="无 HAL 驱动加载 — 检查仪器已选 + 连接 IP 已填, 或重载 HAL 驱动",
+            )
+        for category, driver in sorted(drivers.items()):
+            status = getattr(driver, "status", None)
+            status_str = str(getattr(status, "value", status) or "").lower()
+            connected = status_str in ("connected", "ready", "busy")
+            responsive = False
+            detail: Optional[str] = None
+            try:
+                await driver.get_metrics()  # 主动轻量探测 driver 是否响应
+                responsive = True
+            except Exception as e:  # noqa: BLE001
+                detail = str(e)
+            items.append(DeviceSelfcheckItem(
+                category=category, connected=connected, responsive=responsive, detail=detail,
+            ))
     all_ready = all(d.connected and d.responsive for d in items)
     return DeviceSelfcheckResult(
         all_ready=all_ready,

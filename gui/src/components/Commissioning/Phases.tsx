@@ -39,7 +39,7 @@ export function PrecheckPhase({ data }: { data: any }) {
             {strictGateFailed && (
               <Text size="sm" mt="sm" c="dimmed">
                 严格门只在<strong>接了真实仪表</strong>时生效（mock 模式会自动跳过）。现场真测请
-                先 POST <code>/api/v1/test-executions/{'{id}'}/attach-dut</code> 并完成校准；
+                用本页上方的「<strong>登记 DUT</strong>」按钮登记 IMSI 并完成校准；
                 若只是想在真仪表下空跑调试，可打开顶部「<strong>强制跳过严格门</strong>」开关后
                 点「重置会话」。
               </Text>
