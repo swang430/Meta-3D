@@ -25,9 +25,13 @@ export function CommissioningSandbox() {
   const [session, setSession] = useState<SessionResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [activeStep, setActiveStep] = useState(0)
-  // 2026-08-07 现场: 默认 GCM 原生 —— 现场那个 .smu 资产只允许 gcm_native,
-  // 走 ASC 合成根本加载不到它。跟后端 CreateSessionRequest.engine_mode 同步。
-  const [engineMode, setEngineMode] = useState<string>('keysight_gcm')
+  // ⚠ 必须跟后端 `CreateSessionRequest.engine_mode` / `MIMOOTAConfiguration.engine_mode`
+  //   保持一致（三处同步）。2026-08-07 现场一度三处都改成 'keysight_gcm'，
+  //   2026-08-08 后端两处撤回 'mimo_first_asc' 时**漏了这里**（Antigravity 异源审查
+  //   Finding 1 抓出）：GCM 路必须配 .smu，而 emulation_file 已撤回成 None ——
+  //   GUI 默认建的会话会被 emulation_file 严格门在 precheck/measure 阶段拒掉。
+  //   现场要走 GCM 时在界面上显式选，别靠默认值。
+  const [engineMode, setEngineMode] = useState<string>('mimo_first_asc')
   // Lab-smoke: relax strict precheck gates (P1-8 cal / P1-9 DUT) for local
   // rehearsal without a real DUT / calibration. Default OFF = strict ON, so
   // on-site real first-call keeps the fail-loud protection (P1-9 intent).

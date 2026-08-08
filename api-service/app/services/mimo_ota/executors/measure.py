@@ -584,10 +584,16 @@ class MeasureExecutor(IStepExecutor):
                             f"{config.f64_bypass_mode}) — 明细见驱动日志。"
                         ),
                     )
+                # ⚠ 后半句必须跟着 `f64_fade_after_attach` 走：它为 False 时是
+                #   「纯直通吞吐测试」，全程不撤直通也不开衰落 —— 照抄"挂上后会撤掉"
+                #   会让现场看着日志等一件不会发生的事（Antigravity 异源审查 Finding 2）。
                 logger.info(
-                    "[%s] attach 前已置 F64 直通 mode=%s —— 用直通扶 DUT 挂上，"
-                    "挂上后会撤掉直通再开衰落",
+                    "[%s] attach 前已置 F64 直通 mode=%s —— 用直通扶 DUT 挂上，%s",
                     context.test_execution.id, config.f64_bypass_mode,
+                    "挂上后会撤掉直通再开衰落测量"
+                    if config.f64_fade_after_attach
+                    else "挂上后**保持直通**测量（f64_fade_after_attach=False，"
+                         "无衰落基线），全程不开衰落",
                 )
 
             signaling_started = await base_station.start_signaling()
