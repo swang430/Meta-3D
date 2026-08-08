@@ -540,6 +540,56 @@ class MeasureExecutor(IStepExecutor):
                         error_message=_blocker,
                     )
 
+            # --- 「扶一把」：attach **之前**先把 F64 置直通（外审 #304 P1）---
+            #
+            # ⚠ 这一段必须排在 `start_signaling()` **前面**。上一版把直通建立
+            #   放在 F64 段（本函数靠后 550 行处），而 `start_signaling()` 等
+            #   attach 失败就直接 return —— 于是这个开关**只在 DUT 已经自己
+            #   挂上之后才生效**，救不了它宣称要救的场景（"衰落打开时挂不上，
+            #   用直通扶一把让测试能开始"）。顺序反了，开关就是装饰。
+            #
+            # 只做"取驱动 + 设直通"这一个动作，不把整段 F64 逻辑提前：
+            # 加载 .smu 会把直通冲掉（2026-08-07 现场实证），所以后面那段
+            # 仍会在加载后重建直通 —— 两处都要，不是重复。
+            if config.f64_bypass_mode is not None:
+                _assist_ce = hal.drivers.get("channelEmulator")
+                if _assist_ce is None or not hasattr(
+                    _assist_ce, "set_passthrough_mode"
+                ):
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            f"f64_bypass_mode={config.f64_bypass_mode} 要求 attach 前"
+                            "先建立直通，但 HAL 里没有可用的 channelEmulator "
+                            f"({type(_assist_ce).__name__ if _assist_ce else 'None'})。"
+                            "不静默降级成无直通 attach —— 那样这个开关等于没开。"
+                        ),
+                    )
+                if hasattr(_assist_ce, "stop_emulation"):
+                    if not await _assist_ce.stop_emulation():
+                        return StepExecutionResult(
+                            status=StepExecutionStatus.FAILED,
+                            error_message=(
+                                "attach 前建立直通失败：stop_emulation 返回 False"
+                                "（仿真可能仍在播放）。明细见驱动日志。"
+                            ),
+                        )
+                if not await _assist_ce.set_passthrough_mode(
+                    mode=config.f64_bypass_mode
+                ):
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        error_message=(
+                            f"attach 前建立直通失败 (f64_bypass_mode="
+                            f"{config.f64_bypass_mode}) — 明细见驱动日志。"
+                        ),
+                    )
+                logger.info(
+                    "[%s] attach 前已置 F64 直通 mode=%s —— 用直通扶 DUT 挂上，"
+                    "挂上后会撤掉直通再开衰落",
+                    context.test_execution.id, config.f64_bypass_mode,
+                )
+
             signaling_started = await base_station.start_signaling()
             if uxm_config_capture_manager is not None:
                 uxm_config_capture_manager.__exit__(None, None, None)

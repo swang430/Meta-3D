@@ -291,7 +291,13 @@ class MIMOOTAConfiguration(BaseModel):
     # 原默认 `mimo_first_asc` 会让暗室首测拿 ChannelEgine 现场合成的 UMa CDL-C
     # 去测，跟 EMQuest 那套基线不同源，结果没法跟历史对比。
     # 配套的 .smu 路径见下方 `emulation_file`；两者必须同时改，改一个就自相矛盾。
-    engine_mode: str = "keysight_gcm"
+    # ⚠ 撤回到 ASC（外审 #304 P1）。2026-08-07 现场把它改成 keysight_gcm，
+    #   但 GCM 路**必须**有 `.smu`（`emulation_file` 或 `channel_asset_id`），
+    #   而那两个字段昨天已随其它现场基线撤回成 None —— 于是默认会话会被
+    #   measure 的 strict emulation-file 门在加载模型前全部拒掉。
+    #   engine_mode 跟 frequency_hz / bandwidth_mhz 是同一批现场基线，
+    #   撤回时漏了它。现场那条路（GCM + 指定 .smu）走 CreateSessionRequest 显式给。
+    engine_mode: str = "mimo_first_asc"
     # Allowed: "mimo_first_asc" | "keysight_gcm" | "external_asc" | "b2_parametric_tdl"
     #   - mimo_first_asc:    api-service → channel-engine-service → ChannelEgine strict_pfs
     #   - keysight_gcm:      Keysight F64 GCM Studio (vendor native, no microservice)

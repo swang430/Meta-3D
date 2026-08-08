@@ -318,16 +318,32 @@ async def attach_dut(
                 warnings.append(
                     "baseStation driver not in HAL — DUT attach recorded without RRC verification"
                 )
-            elif hasattr(bs, "query_ue_capability"):
-                cap = await bs.query_ue_capability()
-                if cap.get("source") == "unavailable":
+            elif hasattr(bs, "get_cell_state"):
+                # ⚠ 连通性判据用**小区状态**，不用 UE 能力（外审 #304 P1）。
+                #   `query_ue_capability()` 查的是"这个 DUT 支持几层、什么调制"
+                #   （能力），不是"现在连上了没有"（状态）；而 LTE_NR_IRAT 上
+                #   `UE_CAPABILITY_*` 命令模板全是 None，即使小区已经回 CONN，
+                #   它也恒返回 source="unavailable" → `rrc_connected` 永远写
+                #   False → GUI 的「登记 DUT」**永远满足不了严格 DUT 门**。
+                #   同 measure 的 `_probe_ue_attached`：判据取
+                #   `BSE:STATus:NR5G:<cell>?` 回 CONNected（手册枚举）。
+                from app.hal.base_station import CellState
+
+                state = await bs.get_cell_state()
+                rrc_connected = state == CellState.CONNECTED
+                if not rrc_connected:
                     warnings.append(
-                        "UE capability unavailable; DUT may not have attached to UXM yet. "
-                        "Verify the SIM is inserted and SIB1 has been broadcast."
+                        f"小区状态 {getattr(state, 'value', state)!r} ≠ CONN —— "
+                        "DUT 尚未接入 UXM。检查 SIM 是否插好、SIB1 是否已广播。"
                     )
-                else:
-                    rrc_connected = True
-                    ue_info_snapshot = cap
+                # 能力查询仍然做，但只用来记 UE 信息（层数/调制），不参与连通性判定
+                if hasattr(bs, "query_ue_capability"):
+                    try:
+                        cap = await bs.query_ue_capability()
+                        if cap.get("source") != "unavailable":
+                            ue_info_snapshot = cap
+                    except Exception as e:  # noqa: BLE001
+                        warnings.append(f"UE 能力查询失败（不影响连通性判定）: {e}")
             elif hasattr(bs, "get_ue_info"):
                 info = await bs.get_ue_info()
                 rrc_connected = bool(info.get("connected"))

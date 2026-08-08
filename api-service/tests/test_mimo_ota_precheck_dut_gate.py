@@ -131,13 +131,28 @@ class _RealLikeBaseStation:
     engages against a **real** baseStation (`is_mock_driver()` False). These
     cartesian tests are about the strict gate's logic, so they need a BS that
     reads as real — a `MockBaseStation` would now auto-skip the gate. Only the
-    surface precheck touches matters: `query_ue_capability()`.
+    surface precheck touches matters: `get_cell_state()` + `query_ue_capability()`.
+
+    ⚠ 2026-08-08（外审 #304 P1）起**连通性判据换成小区状态** —— 能力查询只
+    用于层数协商校验。理由：`query_ue_capability` 查的是"支持几层"（能力）
+    不是"连上了没有"（状态），而 LTE_NR_IRAT 上那几条命令模板全是 None，
+    即使小区已回 CONN 也恒报 unavailable → 严格门永远判 DUT 没挂上。
+    所以这个桩必须同时提供两个面，否则测的就不是门的逻辑了。
     """
 
+    #: 让用例能改：CONNECTED = DUT 挂上了；ON = 小区开着但没 UE
+    cell_state = None    # 在 __init__ 里填，避免类属性被跨用例共享
+
+    def __init__(self):
+        from app.hal.base_station import CellState
+        self.cell_state = CellState.CONNECTED
+
+    async def get_cell_state(self):
+        return self.cell_state
+
     async def query_ue_capability(self):
-        # source != "unavailable" → live_ue_query_state == "available";
-        # max_dl_layers 4 ≥ requested 2 → ue_cap_pass. Mirrors what the old
-        # MockBaseStation returned so the cartesian's expectations hold.
+        # max_dl_layers 4 ≥ requested 2 → ue_cap_pass。
+        # ⚠ 这里的 source 不再影响连通性判定（那已换源到 get_cell_state）。
         return {"max_dl_layers": 4, "max_ul_layers": 2, "source": "real"}
 
 
@@ -463,13 +478,21 @@ class TestDutAndCalGatesIndependent:
 
 
 def _patch_mock_bs_to_unavailable(hal):
-    """Force the mock BS to report `source: 'unavailable'` so we can test the
-    live-unverified branch of the dut gate.
+    """让 BS 报「DUT 没挂上」，用来测严格门的 live-unverified 分支。
 
-    Mock default returns `source: 'mock'` which maps to live_ue_query_state
-    = 'available', so the cartesian above never exercises the unavailable
-    path. This helper monkey-patches the in-memory mock for one test."""
+    ⚠ 2026-08-08（外审 #304 P1）起换源：连通性判据是 **`get_cell_state()`**，
+    不再是 `query_ue_capability` 的 source 字段。所以模拟"DUT 掉线"要打的是
+    小区状态 —— 打 `ON`（小区开着但没 UE 连上），那正是 2026-08-07 现场后两轮
+    60 秒 attach 超时时读到的值。
+    能力查询一并打成 unavailable，保持"掉线时两个面一致"，但**它不再决定
+    这条分支走哪边** —— 只打它的话本 helper 会失效（换源后 source 不参与判定）。
+    """
     mock_bs = hal.drivers["baseStation"]
+
+    from app.hal.base_station import CellState
+
+    async def _cell_not_connected() -> CellState:
+        return CellState.ON
 
     async def _unavailable_cap() -> Dict[str, Any]:
         return {
@@ -478,6 +501,7 @@ def _patch_mock_bs_to_unavailable(hal):
             "source": "unavailable",
         }
 
+    mock_bs.get_cell_state = _cell_not_connected  # type: ignore[method-assign]
     mock_bs.query_ue_capability = _unavailable_cap  # type: ignore[method-assign]
     return mock_bs
 

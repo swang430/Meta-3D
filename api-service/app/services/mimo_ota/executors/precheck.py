@@ -276,25 +276,44 @@ class PrecheckExecutor(IStepExecutor):
         bs = hal.drivers.get("baseStation")
         ue_cap_pass = True  # default pass when bs unavailable (no DUT to check)
         live_ue_query_state: str = "unknown"
+
+        # ⚠ **连通性**判据取小区状态，不取 UE 能力（外审 #304 P1）。
+        #   `live_ue_query_state` 喂给下面 §5b 的严格 DUT 门，而
+        #   `query_ue_capability` 查的是能力不是状态：LTE_NR_IRAT 上那几条
+        #   命令模板全是 None，即使小区已回 CONN 它也恒报 unavailable →
+        #   严格门永远判 DUT 没挂上。同 measure `_probe_ue_attached` 与
+        #   attach-dut 端点，三处同源。
+        if bs is not None and hasattr(bs, "get_cell_state"):
+            try:
+                from app.hal.base_station import CellState
+
+                _state = await bs.get_cell_state()
+                result_payload["cell_state"] = getattr(_state, "value", _state)
+                live_ue_query_state = (
+                    "available" if _state == CellState.CONNECTED else "unavailable"
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[precheck] 小区状态查询失败: %s", e)
+                live_ue_query_state = "unknown"
+
+        # 能力查询仍然做，但只用于**层数协商校验**，不再决定连通性
         if bs is not None and hasattr(bs, "query_ue_capability"):
             try:
                 cap = await bs.query_ue_capability()
                 result_payload["ue_capability"] = cap
                 cap_max_dl = cap.get("max_dl_layers")
-                if cap.get("source") == "unavailable":
-                    live_ue_query_state = "unavailable"
-                else:
-                    live_ue_query_state = "available"
                 if cap_max_dl is not None and cap_max_dl < config.mimo_layers:
                     ue_cap_pass = False
                     messages.append(
                         f"UE Capability: max_dl_layers={cap_max_dl} < requested "
                         f"{config.mimo_layers} — DUT will fall back to {cap_max_dl} layer DL"
                     )
-                elif live_ue_query_state == "unavailable":
+                elif cap_max_dl is None:
+                    # ⚠ 判据换成"能力**读到了没有**"，不再借 live_ue_query_state
+                    #   （那个现在表示小区连通性，跟能力读没读到是两回事）。
                     warnings.append(
-                        "UE capability unavailable (DUT may not be attached yet); "
-                        "proceeding without 4x4 layer verification"
+                        "UE 能力读不到（DUT 可能尚未接入，或本方言无 UEINFO 命令）；"
+                        "跳过层数协商校验"
                     )
                     messages.append(
                         f"UE Capability: unavailable ({config.mimo_layers}-layer "

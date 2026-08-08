@@ -148,3 +148,49 @@ class TestMeasureUsesTheSameJudgement:
         assert body.index("is_mock_driver(base_station)") < body.index(
             'hasattr(base_station, "get_cell_state")'
         ), "mock 判定排在 hasattr 之后 —— hasattr 恒真，前面就返回了"
+
+
+class TestBypassAssistOrdering:
+    """「扶一把」必须在 attach **之前**建立直通 —— 外审 #304 P1。
+
+    上一版把直通建立放在 F64 段（`_probe_ue_attached` 之后 500 多行），而
+    `start_signaling()` 等 attach 失败就直接 return —— 于是这个开关**只在
+    DUT 已经自己挂上之后才生效**，救不了它宣称要救的场景。顺序反了，
+    开关就是装饰。
+    """
+
+    def _src(self) -> str:
+        import inspect
+        from app.services.mimo_ota.executors import measure
+        return inspect.getsource(measure)
+
+    def test_bypass_is_established_before_the_first_attach_attempt(self):
+        """⭐ 顺序不变量。变异：把 attach 前那段直通建立删掉/挪到
+        `start_signaling()` 之后 → 本条红。"""
+        src = self._src()
+
+        assist = src.index("attach 前已置 F64 直通")
+        signaling = src.index("signaling_started = await base_station.start_signaling()")
+
+        assert assist < signaling, (
+            "直通建立排在 start_signaling 之后 —— attach 失败会直接 return，"
+            "这个开关只能在 DUT 已经自己挂上之后才生效，救不了它要救的场景"
+        )
+
+    def test_assist_failure_is_loud_not_silently_skipped(self):
+        """开了开关却建不起直通时必须 fail-loud。
+
+        静默跳过 = 在**没有直通**的情况下去 attach，然后把失败归给 DUT ——
+        而真因是我们没把梯子搭上。
+
+        变异：把那三处 `return StepExecutionResult(FAILED)` 改成 `pass` → 本条红。
+        """
+        src = self._src()
+        head = src.index("attach 前已置 F64 直通")
+        block = src[src.index("if config.f64_bypass_mode is not None:", 0, head):head]
+
+        assert block.count("StepExecutionStatus.FAILED") >= 3, (
+            "attach 前建立直通的三条失败路径（无 CE / stop_emulation 失败 / "
+            "set_passthrough_mode 失败）没有全部 fail-loud"
+        )
+        assert "不静默降级" in block, "缺少'不静默降级'的显式声明"
