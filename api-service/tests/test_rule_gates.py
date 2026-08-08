@@ -1793,3 +1793,87 @@ def test_g16_checker_detects_a_planted_conflict():
         field.default = saved
     # 复位后必须回到干净态, 否则本自测会污染同进程的其它测试
     assert not any(n == victim for n, _r, _c in _session_request_vs_config_conflicts())
+
+
+# ─────────────────────────────────────────────────────────────────────
+# G17 诊断序列声明的品类必须覆盖它真正碰的驱动
+# ─────────────────────────────────────────────────────────────────────
+#
+# 母题: **声明与事实脱钩**。序列的 `required_categories` / `optional_categories`
+# 决定跑之前取哪些仪表租约; 序列体里 `drivers.get("X")` 才是它真正会碰的。
+# 两者不一致时, 没声明的那个驱动停在 park 后的 Local 态 —— 一调就返 False。
+#
+# 2026-08-07 实证 (内审 F3): `baseStation_attach_check` 只声明 baseStation,
+# 序列体却实打实调 channelEmulator 的 `stop_emulation` / `set_passthrough_mode`
+# → F64 不在 Remote → 整条 attach 主力序列失败, 报错还指向 F64 状态机 (错方向)。
+# 同文件里那句 `if key == "instrument_idn_sweep"` 的硬编码特判, 就是这个洞
+# 已经咬过一次的物证。
+#
+# ⚠ 本门是**不变量门**: 从代码派生"声明集 ⊇ 实碰集"这个恒成立的关系,
+#   不是"某个 token 在不在"的存在性门。新加序列漏声明会直接红。
+
+def _sequence_declaration_gaps():
+    """返回 [(模块名, 碰了但没声明的品类集合)]，空列表 = 全部对得上。"""
+    import re
+
+    seq_dir = _REPO_ROOT / "api-service/app/diagnostics/sequences"
+    gaps = []
+    for path in sorted(seq_dir.glob("*.py")):
+        if path.name.startswith("_"):
+            continue
+        src = path.read_text(encoding="utf-8")
+        declared = set()
+        for field in ("required_categories", "optional_categories"):
+            m = re.search(rf"{field}=\[([^\]]*)\]", src)
+            if m:
+                declared |= set(re.findall(r'"([^"]+)"', m.group(1)))
+        touched = (
+            set(re.findall(r'drivers\.get\(\s*"([^"]+)"', src))
+            | set(re.findall(r'drivers\[\s*"([^"]+)"\s*\]', src))
+        )
+        missing = touched - declared
+        if missing:
+            gaps.append((path.name, sorted(missing)))
+    return gaps
+
+
+def test_g17_sequence_declares_every_driver_it_touches():
+    """⭐ 不变量门：每个序列声明的品类必须覆盖它源码里真正取用的驱动。"""
+    gaps = _sequence_declaration_gaps()
+    assert not gaps, (
+        "以下诊断序列碰了没声明的驱动 —— 跑的时候那个驱动会停在 Local 态, "
+        "一调就返 False, 而错误会指向被调的驱动而不是这里:\n"
+        + "\n".join(f"  {name}: 碰了 {cats} 但 required/optional 里没有" for name, cats in gaps)
+        + "\n修法: 跑不了就得有 → required_categories; 在场才碰、缺了能跳过 → optional_categories。"
+    )
+
+
+def test_g17_checker_catches_a_planted_gap(tmp_path):
+    """判定器自测：种一个"碰了没声明"的假序列，判定器必须抓到。
+
+    没有这条，上面那个门在**判定器抽不出东西**时会恒绿（比如正则写错、
+    目录挪了），而恒绿的门比没有门更坏。
+    """
+    import re
+
+    seq_dir = _REPO_ROOT / "api-service/app/diagnostics/sequences"
+    planted = seq_dir / "zz_g17_planted_probe.py"
+    planted.write_text(
+        'METADATA = SequenceMetadata(\n'
+        '    name="planted", description="g17 self-test",\n'
+        '    required_categories=["baseStation"],\n'
+        ')\n'
+        'async def run(ctx, hal, params, log):\n'
+        '    ce = drivers.get("channelEmulator")\n',
+        encoding="utf-8",
+    )
+    try:
+        gaps = dict(_sequence_declaration_gaps())
+        assert "zz_g17_planted_probe.py" in gaps, (
+            "判定器没抓到植入的脱钩序列 —— G17 是恒绿的假门"
+        )
+        assert gaps["zz_g17_planted_probe.py"] == ["channelEmulator"]
+    finally:
+        planted.unlink()
+    # 复位后必须回到干净态
+    assert "zz_g17_planted_probe.py" not in dict(_sequence_declaration_gaps())

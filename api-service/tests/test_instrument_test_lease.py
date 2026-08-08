@@ -520,3 +520,150 @@ async def test_diagnostic_sequence_holds_lease_around_sequence_run(monkeypatch):
         "sequence-run",
         "lease-exit",
     ]
+
+
+class TestLeaseErrorReachesTheOperator:
+    """内审 F7：租约取不到控制权时，端点必须回 409 + 那句中文原因。
+
+    `InstrumentTestLeaseError` 继承 `RuntimeError`，没有 exception_handler 时
+    FastAPI 兜成 `{"detail": "Internal Server Error"}` —— 精心写的
+    「测试 'xxx' 无法取得 F64 Remote 控制: <驱动原因>」只留在后端日志里，
+    现场排障的人在 GUI 上只看得到"服务器错误"。
+    """
+
+    def test_lease_error_becomes_409_with_the_reason(self):
+        """⭐ 行为门。变异：注释掉 main.py 的 @app.exception_handler → 本条红
+        （裸 500 + detail 变成 'Internal Server Error'）。"""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.main import _instrument_lease_error_handler
+        from app.services.instrument_test_lease import InstrumentTestLeaseError
+
+        probe = FastAPI()
+        probe.add_exception_handler(
+            InstrumentTestLeaseError, _instrument_lease_error_handler
+        )
+
+        @probe.get("/boom")
+        async def _boom():
+            raise InstrumentTestLeaseError(
+                "测试 'load-smu' 无法取得 F64 Remote 控制: 上次 ATE socket 关闭未确认"
+            )
+
+        resp = TestClient(probe, raise_server_exceptions=False).get("/boom")
+
+        assert resp.status_code == 409, (
+            f"租约冲突回了 {resp.status_code} —— 应当是 409（资源被占用），"
+            "500 会让 GUI 只显示'服务器错误'"
+        )
+        detail = resp.json()["detail"]
+        assert "无法取得 F64 Remote 控制" in detail, "驱动给的原因没到操作员手里"
+        assert "Internal Server Error" not in detail
+
+    def test_handler_is_actually_registered_on_the_real_app(self):
+        """⭐ 生效端：上面那条用的是探针 app，证明不了**真 app** 接上了。
+
+        变异：删掉 main.py 里的 `@app.exception_handler(...)` 装饰器 → 本条红。
+        """
+        from app.main import app
+        from app.services.instrument_test_lease import InstrumentTestLeaseError
+
+        assert InstrumentTestLeaseError in app.exception_handlers, (
+            "真 app 上没注册 InstrumentTestLeaseError 处理器 —— "
+            "15 个租约端点仍会裸 500"
+        )
+
+
+class TestNestedLeaseReusesInsteadOfTearingDown:
+    """内审 F5：`hold()` 的 `finally` 原本**无条件**清 `_active_purpose` /
+    `_monitoring_enabled` 并把 F64/UXM 交还 Local —— 嵌套时内层退出就把外层的
+    控制权拆了，而外层还在跑：此后外层每条 SCPI 撞 Local 门，同时
+    `hal_reload_policy` 的 blocker 消失，`POST /hal/reload` 会在正式执行进行中
+    直接放行拆驱动。
+
+    修法不是"禁止嵌套"（那跟校准链冲突：`acquire_sa_power_via_ce_tone` 是三个
+    校准服务共用的最内层 primitive，租约必须加在它上面，而一次探头校准要跑
+    32 探头 × 2 极化 = 64 次调用，每次 connect/close 的开销不可接受），
+    而是**引用计数**：最外层取/放，内层复用、退出不拆。
+    """
+
+    def test_inner_exit_does_not_tear_down_the_outer_lease(self):
+        """⭐ 本组最要紧的一条：内层退出后，外层必须**仍然**持有控制权。
+
+        变异：把 `hold()` 里的 `if nested: yield; return` 快路径删掉（回到
+        每层都走 finally 释放）→ 本条红。
+        """
+        import asyncio
+
+        from app.services.instrument_test_lease import InstrumentTestLease
+
+        lease = InstrumentTestLease(hal_getter=lambda: None)
+        seen = []
+
+        async def _scenario():
+            async with lease.hold("outer", control_f64=False, control_uxm=False):
+                seen.append(("outer-in", lease.is_active, lease.active_purpose))
+                async with lease.hold("inner", control_f64=False, control_uxm=False):
+                    seen.append(("inner-in", lease.is_active, lease.active_purpose))
+                seen.append(("inner-out", lease.is_active, lease.active_purpose))
+            seen.append(("outer-out", lease.is_active, lease.active_purpose))
+
+        asyncio.run(_scenario())
+
+        assert seen == [
+            ("outer-in", True, "outer"),
+            ("inner-in", True, "outer"),      # 嵌套不改写 active_purpose
+            ("inner-out", True, "outer"),     # ★ 内层退出没拆外层
+            ("outer-out", False, None),       # 最外层退出才真正释放
+        ], f"嵌套租约的生命周期不对: {seen}"
+
+    def test_inner_asking_for_wider_control_fails_loud(self):
+        """内层要的控制权比外层宽 → 那台仪表根本没被 acquire，照跑会在第一条
+        SCPI 上撞 Local 门。必须当场抛，不静默降级。
+
+        变异：删掉 `widened` 校验 → 本条红。
+        """
+        import asyncio
+
+        import pytest as _pytest
+
+        from app.services.instrument_test_lease import (
+            InstrumentTestLease,
+            InstrumentTestLeaseError,
+        )
+
+        lease = InstrumentTestLease(hal_getter=lambda: None)
+
+        async def _scenario():
+            # 外层只持 UXM，内层却要 F64
+            async with lease.hold("outer", control_f64=False, control_uxm=True):
+                with _pytest.raises(InstrumentTestLeaseError) as ei:
+                    async with lease.hold("inner", control_f64=True, control_uxm=False):
+                        pass
+                # 拒绝路径不能有副作用：外层必须原样持有
+                assert lease.is_active and lease.active_purpose == "outer"
+                return str(ei.value)
+
+        msg = asyncio.run(_scenario())
+        assert "F64" in msg and "outer" in msg and "inner" in msg
+
+    def test_park_and_mutation_guard_stay_reentrant(self):
+        """反向：可重入不能被一刀切掉 —— `park` / `hal_mutation_guard`
+        那条同 task 路径必须照常工作（reload 初始化会走它）。
+        """
+        import asyncio
+
+        from app.services.instrument_test_lease import InstrumentTestLease
+
+        lease = InstrumentTestLease(hal_getter=lambda: None)
+
+        async def _scenario():
+            async with lease.hal_mutation_guard():
+                async with lease.hal_mutation_guard():   # 同 task 重入
+                    return True
+            return False
+
+        assert asyncio.run(_scenario()) is True, (
+            "hal_mutation_guard 的同 task 重入被误伤 —— reload→park 那条路会自锁"
+        )

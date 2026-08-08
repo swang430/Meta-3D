@@ -195,7 +195,14 @@ async def run_diagnostic_sequence(
 
     try:
         try:
-            lease_categories = set(sequence.metadata.required_categories)
+            # 租约要覆盖序列**会碰到**的驱动，不只是它**跑不了就得有**的那些。
+            # 只取 required 时，声明为可选依赖的驱动会停在 park 后的 Local 态，
+            # 序列一调它就返 False（内审 F3：`baseStation_attach_check` 声明
+            # 只有 baseStation，序列体却实打实调 channelEmulator 的
+            # stop_emulation / set_passthrough_mode）。G17 门守着两者不脱钩。
+            lease_categories = set(sequence.metadata.required_categories) | set(
+                sequence.metadata.optional_categories
+            )
             if key == "instrument_idn_sweep":
                 lease_categories.update(
                     binding.category_key

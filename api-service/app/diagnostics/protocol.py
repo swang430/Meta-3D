@@ -15,9 +15,21 @@ class SequenceMetadata:
     """Metadata exposed by each sequence module.
 
     `required_categories` lists InstrumentCategory keys ('channelEmulator',
-    'baseStation', etc.) the sequence calls into; used to pre-flight check
-    that the lab has them bound + the driver loaded before invocation.
-    Empty list means "no HAL needed" (rare — only for sanity/echo helpers).
+    'baseStation', etc.) the sequence **cannot run without**; missing binding
+    → 422 before the sequence starts (see api/diagnostic_sequence.py).
+
+    `optional_categories` lists keys the sequence **may touch when present**
+    but can gracefully skip when absent. They do NOT gate the run, but they
+    DO take an instrument lease so the driver is in Remote when touched.
+
+    ⚠ 这两个字段 2026-08-07 拆开之前是同一个（`required_categories` 既当前置门
+      又当租约标志），于是"可选依赖"无处安放：`baseStation_attach_check` 支持
+      线缆直连（无 CE）场景，所以不能把 channelEmulator 写进 required —— 写了
+      就把那个场景 422 拦掉；不写则租约不取 F64，F64 停在 park 后的 Local 态，
+      序列体一调 `stop_emulation()` 就返 False，整条 attach 序列失败，
+      报错还指向 F64 状态机（错方向）。内审 F3。
+      G17 门（test_rule_gates.py）守着：序列源码里 `drivers.get("X")` 的 X
+      必须出现在 required ∪ optional 里，声明与事实不许再脱钩。
 
     `params_schema` is a *non-validated* hint to the GUI for rendering an
     inputs form. Keep it shallow: each entry { name, label, type:
@@ -28,6 +40,7 @@ class SequenceMetadata:
     name: str
     description: str
     required_categories: List[str] = field(default_factory=list)
+    optional_categories: List[str] = field(default_factory=list)
     params_schema: List[Dict[str, Any]] = field(default_factory=list)
     # Whether the sequence is generally safe to run while a real test is
     # active (most aren't — they reset cells, query power, etc.).

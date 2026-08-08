@@ -34,6 +34,9 @@ class InstrumentTestLease:
         self._lock_owner: Optional[asyncio.Task] = None
         self._lock_depth = 0
         self._active_purpose: Optional[str] = None
+        # 最外层 hold() 实际取到的控制权 —— 嵌套时用来校验内层没有"要更宽"
+        self._held_f64 = False
+        self._held_uxm = False
         self._monitoring_enabled = False
 
     @property
@@ -126,8 +129,15 @@ class InstrumentTestLease:
 
     @staticmethod
     async def _clear_metrics_cache(hal) -> None:
+        # ⚠ 必须查**协程性**，不能只查 callable —— 跟同文件 `_f64_driver`
+        #   对 `acquire_remote_control` / `release_to_local_control` 的做法一致。
+        #   `callable()` 对 MagicMock、对同名的同步方法、对任意属性都成立，
+        #   `await` 上去就是 `TypeError: object X can't be used in 'await'`，
+        #   而它发生在 `hold()` 的 try 里 → 整个租约连同业务操作一起炸，
+        #   错误还长得像"仪表控制出问题"（2026-08-08：给校准链加租约时撞到，
+        #   4 个静区/XPD 测试的 hal 是 MagicMock）。
         clear = getattr(hal, "clear_metrics_cache", None)
-        if callable(clear):
+        if inspect.iscoroutinefunction(clear):
             await clear()
 
     async def _acquire_remote(
@@ -175,12 +185,57 @@ class InstrumentTestLease:
         control_uxm: bool = True,
         enable_monitoring: bool = True,
     ) -> AsyncIterator[None]:
-        """在整个测试生命周期内持有 Remote，任何退出路径都归还 Local。"""
+        """在整个测试生命周期内持有 Remote，任何退出路径都归还 Local。
+
+        ⚠ **嵌套按引用计数处理，只有最外层真正取/放控制权**（2026-08-07 内审 F5）。
+
+        原实现的 `finally` 会**无条件**清 `_active_purpose` / `_monitoring_enabled`
+        并把 F64/UXM 交还 Local —— 嵌套时内层退出就把外层的控制权拆了，而外层
+        还在跑：此后外层每条 SCPI 都撞 Local 门，同时 `hal_reload_policy` 的
+        blocker 消失，`POST /hal/reload` 会在正式执行进行中直接放行拆驱动。
+
+        一度改成"嵌套直接抛"，但那跟**校准链**冲突：`acquire_sa_power_via_ce_tone`
+        是三个校准服务共用的最内层 primitive，租约必须加在它上面（否则 park 之后
+        校准必然撞 Local 门）；而一次探头校准要跑 32 探头 × 2 极化 = 64 次调用，
+        每次进出都 connect/close 的开销不可接受。所以正解是让嵌套**安全**：
+        最外层 acquire/release，内层复用同一份控制权、退出不拆。
+
+        ⚠ 内层要的控制权**不能比外层宽** —— 外层只持了 UXM，内层却要 F64 时，
+        那台 F64 根本没被 acquire，内层照跑就会在第一条 SCPI 上撞 Local 门。
+        这种情况 fail-loud，不静默降级。
+        """
         hal = None
         operation_error: Optional[BaseException] = None
+        # 同 task 已持租约 = 嵌套。内层不重复 acquire/release，只做控制权校验。
+        nested = (
+            self._lock_owner is asyncio.current_task()
+            and self._active_purpose is not None
+        )
+        if nested:
+            widened = [
+                name for want, have, name in (
+                    (control_f64, self._held_f64, "F64"),
+                    (control_uxm, self._held_uxm, "UXM"),
+                ) if want and not have
+            ]
+            if widened:
+                raise InstrumentTestLeaseError(
+                    f"嵌套租约 {purpose!r} 要求 {widened} 的控制权，"
+                    f"而外层 {self._active_purpose!r} 没有持有它 —— "
+                    f"内层不会重复 acquire，照跑会在第一条 SCPI 上撞 Local 门。"
+                    f"把外层的 control_f64/control_uxm 放宽，或把内层移到租约外。"
+                )
+            logger.debug(
+                "[instrument-lease] 嵌套复用 %r 的控制权: %s",
+                self._active_purpose, purpose,
+            )
+            yield
+            return
         async with self._coordinated():
             # 锁一到手立即对外标 active，覆盖“正在连接 Remote”的窗口。
             self._active_purpose = purpose
+            self._held_f64 = control_f64
+            self._held_uxm = control_uxm
             try:
                 try:
                     hal = self._hal()
@@ -198,6 +253,8 @@ class InstrumentTestLease:
             finally:
                 # 先关监控门，阻止新一轮 get_metrics 排到 SCPI 锁后面。
                 self._active_purpose = None
+                self._held_f64 = False
+                self._held_uxm = False
                 self._monitoring_enabled = False
                 try:
                     if hal is not None:

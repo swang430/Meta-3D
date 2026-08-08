@@ -2991,10 +2991,20 @@ async def get_control_ownership(category_key: str):
         or getattr(driver, "_visa_session", None) is not None
     )
     return {
+        # ⚠ 取值说的是**我们这一端做了什么**，不是仪器面板上是什么模式。
+        #   `ate_socket_released` = 我们关掉了 ATE socket 并停止后台轮询；
+        #   仪器**是否真的回到 Local**，手册原文说要操作员在 F64 GUI 右上角
+        #   点 Local Mode 按钮（PROPSIM User Reference §20.1：开远程连接发第一条
+        #   ATE 命令后自动进 remote mode，回 local 需人工点击）。我们没有、也
+        #   查不到那个状态，所以字段名不能替仪器宣布"它在 Local"（内审母题 B）。
+        #   ⓪ 2026-08-07 改名前叫 `local`，那是在断言一件我们没核实过的事。
         "control_mode": (
-            "local_release_failed"
+            "release_unconfirmed"
             if release_failed
-            else ("local" if local else ("remote" if connected else "disconnected"))
+            else (
+                "ate_socket_released" if local
+                else ("remote" if connected else "disconnected")
+            )
         ),
         "remote_polling_suppressed": local,
         "connected": connected,
@@ -3033,10 +3043,15 @@ async def set_control_ownership(
             getattr(driver, "_visa_resource", None) is not None
             or getattr(driver, "_visa_session", None) is not None
         )
+        # 取值语义见上面 GET 端点的注释：说的是我们这端做了什么，
+        # 不是仪器面板上是什么模式（手册：回 Local 要人在 F64 GUI 上点）。
         if release_failed:
-            control_mode = "local_release_failed"
+            control_mode = "release_unconfirmed"
         else:
-            control_mode = "local" if local else ("remote" if connected else "disconnected")
+            control_mode = (
+                "ate_socket_released" if local
+                else ("remote" if connected else "disconnected")
+            )
         return {
             "ok": bool(ok),
             "action": action,

@@ -77,7 +77,7 @@ async def test_release_to_local_is_non_destructive_and_blocks_background_queries
     assert resource.queries == []
 
     metrics = await driver.get_metrics()
-    assert metrics.metrics["control_mode"] == "local"
+    assert metrics.metrics["control_mode"] == "ate_socket_released"
     assert metrics.metrics["remote_polling_suppressed"] is True
     assert resource.queries == []
 

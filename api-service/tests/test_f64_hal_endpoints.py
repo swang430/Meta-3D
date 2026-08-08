@@ -245,7 +245,7 @@ def test_emulation_control_driver_without_method_400(client, monkeypatch):
 def test_release_to_local_control(client, fake_driver):
     resp = client.post(BASE + "/control-ownership", json={"action": "release_local"})
     assert resp.status_code == 200
-    assert resp.json()["control_mode"] == "local"
+    assert resp.json()["control_mode"] == "ate_socket_released"
     assert resp.json()["remote_polling_suppressed"] is True
     assert ("release_to_local_control",) in fake_driver.calls
 

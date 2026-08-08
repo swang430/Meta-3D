@@ -4459,7 +4459,9 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             return InstrumentMetrics(
                 timestamp=datetime.utcnow(),
                 metrics={
-                    "control_mode": "local",
+                    # 说的是我们这端关了 ATE socket，不是"仪器面板在 Local"
+                    # —— 后者手册说要操作员自己点（见 api/instrument.py 的注释）
+                    "control_mode": "ate_socket_released",
                     "remote_polling_suppressed": True,
                 },
                 status="normal",

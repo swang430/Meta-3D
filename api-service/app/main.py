@@ -203,6 +203,29 @@ app.add_middleware(
 from app.core.audit_middleware import AuditMiddleware
 app.add_middleware(AuditMiddleware)
 
+
+# 仪表租约取不到控制权 → 409，不是 500。
+#
+# ⚠ 2026-08-07 内审 F7：`InstrumentTestLeaseError` 继承 `RuntimeError`，
+#   而全仓只有 `test_case_runner` 处理它，没有任何 exception_handler。
+#   于是 F64 离线时 `/instruments/{cat}/load-smu`、`/scpi-command`、
+#   `/sessions/{id}/run-all`、`/device-selfcheck` 等 15 个租约端点抛出的
+#   「测试 'xxx' 无法取得 F64 Remote 控制: <驱动原因>」被 FastAPI 兜成
+#   `{"detail": "Internal Server Error"}` → GUI 只显示"服务器错误"，
+#   而现场排障最需要的那句话（谁没取到、驱动报了什么）只留在后端日志里。
+#   409 而不是 503：这是"资源被占用/取不到"，不是"服务不可用"。
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from app.services.instrument_test_lease import InstrumentTestLeaseError
+
+
+@app.exception_handler(InstrumentTestLeaseError)
+async def _instrument_lease_error_handler(
+    request: Request, exc: InstrumentTestLeaseError
+) -> JSONResponse:
+    logger.warning("[instrument-lease] 请求被拒 %s: %s", request.url.path, exc)
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
 # Include routers
 app.include_router(health.router, prefix=settings.api_v1_prefix)
 app.include_router(calibration.router, prefix=settings.api_v1_prefix)

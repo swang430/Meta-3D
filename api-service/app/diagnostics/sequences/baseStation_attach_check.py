@@ -34,6 +34,12 @@ metadata = SequenceMetadata(
         "sequence or stop the BS yourself when done."
     ),
     required_categories=["baseStation"],
+    # CE 是**可选依赖**：线缆直连场景（lab 无 CE binding）本序列跳过直通继续跑，
+    # 所以不能写进 required（那会把该场景 422 拦掉）。但 CE 在场时序列体确实调它
+    # （下方 `drivers.get("channelEmulator")` → `stop_emulation` /
+    # `set_passthrough_mode`），必须取租约让它进 Remote —— 否则它停在 park 后的
+    # Local 态，一调就返 False，整条 attach 失败还把人指向 F64 状态机（内审 F3）。
+    optional_categories=["channelEmulator"],
     # agent R6 复核 F3: schema default 与 run() 默认同源 — GUI 表单按 schema
     # 预填并全量显式提交, 只改 run() 默认会被 GUI 主路径击穿
     params_schema=[

@@ -96,7 +96,7 @@ async def test_metrics_are_scpi_free_while_local_control_is_reserved():
     metrics = await driver.get_metrics()
 
     assert metrics.metrics == {
-        "control_mode": "local",
+        "control_mode": "ate_socket_released",
         "remote_polling_suppressed": True,
     }
     driver.get_cell_state.assert_not_awaited()
