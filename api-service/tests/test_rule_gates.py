@@ -1796,7 +1796,7 @@ def test_g16_checker_detects_a_planted_conflict():
 
 
 # ─────────────────────────────────────────────────────────────────────
-# G17 诊断序列声明的品类必须覆盖它真正碰的驱动
+# G18 诊断序列声明的品类必须覆盖它真正碰的驱动
 # ─────────────────────────────────────────────────────────────────────
 #
 # 母题: **声明与事实脱钩**。序列的 `required_categories` / `optional_categories`
@@ -1812,11 +1812,16 @@ def test_g16_checker_detects_a_planted_conflict():
 # ⚠ 本门是**不变量门**: 从代码派生"声明集 ⊇ 实碰集"这个恒成立的关系,
 #   不是"某个 token 在不在"的存在性门。新加序列漏声明会直接红。
 
-def _sequence_declaration_gaps():
-    """返回 [(模块名, 碰了但没声明的品类集合)]，空列表 = 全部对得上。"""
+def _sequence_declaration_gaps(seq_dir=None):
+    """返回 [(模块名, 碰了但没声明的品类集合)]，空列表 = 全部对得上。
+
+    `seq_dir` 可传：自测用它指向 `tmp_path`，避免往**源码包目录**写探针文件
+    （G18 自测此前真往 `app/diagnostics/sequences/` 写，`finally` 兜不住
+    Ctrl-C / 进程被杀，残留文件会被 `loader.py` 尝试导入，还会混进 git add）。
+    """
     import re
 
-    seq_dir = _REPO_ROOT / "api-service/app/diagnostics/sequences"
+    seq_dir = seq_dir or (_REPO_ROOT / "api-service/app/diagnostics/sequences")
     gaps = []
     for path in sorted(seq_dir.glob("*.py")):
         if path.name.startswith("_"):
@@ -1837,7 +1842,7 @@ def _sequence_declaration_gaps():
     return gaps
 
 
-def test_g17_sequence_declares_every_driver_it_touches():
+def test_g18_sequence_declares_every_driver_it_touches():
     """⭐ 不变量门：每个序列声明的品类必须覆盖它源码里真正取用的驱动。"""
     gaps = _sequence_declaration_gaps()
     assert not gaps, (
@@ -1848,7 +1853,7 @@ def test_g17_sequence_declares_every_driver_it_touches():
     )
 
 
-def test_g17_checker_catches_a_planted_gap(tmp_path):
+def test_g18_checker_catches_a_planted_gap(tmp_path):
     """判定器自测：种一个"碰了没声明"的假序列，判定器必须抓到。
 
     没有这条，上面那个门在**判定器抽不出东西**时会恒绿（比如正则写错、
@@ -1856,8 +1861,8 @@ def test_g17_checker_catches_a_planted_gap(tmp_path):
     """
     import re
 
-    seq_dir = _REPO_ROOT / "api-service/app/diagnostics/sequences"
-    planted = seq_dir / "zz_g17_planted_probe.py"
+    seq_dir = tmp_path
+    planted = seq_dir / "zz_g18_planted_probe.py"
     planted.write_text(
         'METADATA = SequenceMetadata(\n'
         '    name="planted", description="g17 self-test",\n'
@@ -1868,15 +1873,15 @@ def test_g17_checker_catches_a_planted_gap(tmp_path):
         encoding="utf-8",
     )
     try:
-        gaps = dict(_sequence_declaration_gaps())
-        assert "zz_g17_planted_probe.py" in gaps, (
-            "判定器没抓到植入的脱钩序列 —— G17 是恒绿的假门"
+        gaps = dict(_sequence_declaration_gaps(seq_dir))
+        assert "zz_g18_planted_probe.py" in gaps, (
+            "判定器没抓到植入的脱钩序列 —— G18 是恒绿的假门"
         )
-        assert gaps["zz_g17_planted_probe.py"] == ["channelEmulator"]
+        assert gaps["zz_g18_planted_probe.py"] == ["channelEmulator"]
     finally:
         planted.unlink()
     # 复位后必须回到干净态
-    assert "zz_g17_planted_probe.py" not in dict(_sequence_declaration_gaps())
+    assert "zz_g18_planted_probe.py" not in dict(_sequence_declaration_gaps(seq_dir))
 
 
 # ── G17: 测试不得以 REAL 模式拉起 HAL（不会去连真仪器）──────────────
