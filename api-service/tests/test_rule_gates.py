@@ -1877,3 +1877,59 @@ def test_g17_checker_catches_a_planted_gap(tmp_path):
         planted.unlink()
     # 复位后必须回到干净态
     assert "zz_g17_planted_probe.py" not in dict(_sequence_declaration_gaps())
+
+
+# ── G17: 测试不得以 REAL 模式拉起 HAL（不会去连真仪器）──────────────
+
+def test_g17_tests_never_bring_up_hal_in_real_mode():
+    """⭐ **行为门** —— 在当前测试进程里，HAL 模式必须是 mock。
+
+    2026-08-07 实证：`.env` 有 `USE_MOCK_INSTRUMENTS=false`（生产就该这样），
+    而 `conftest.py` 此前不隔离，于是 `TestClient(app)` 的 lifespan 把 HAL 拉成
+    REAL、真去连驱动默认 IP `192.168.100.x`。两个后果：本机 TUN 接管该网段后
+    全量测试挂死 11m47s（内审硬门跟着落空）；**在现场机上跑 pytest 会把 F64
+    拽进 Remote**，测试本身变成一次未经批准的仪器操作。
+
+    变异：注释掉 `conftest.py` 顶部那行 `os.environ.setdefault(...)` → 本条红。
+    """
+    from app.config import settings
+
+    assert settings.use_mock_instruments is True, (
+        "测试进程的 HAL 模式是 REAL —— lifespan 会真去连 192.168.100.x 系列"
+        "生产默认 IP。检查 tests/conftest.py 顶部的环境隔离是否还在、"
+        "以及它是否仍排在 `from app.main import app` 之前。"
+    )
+
+
+def test_g17_isolation_precedes_app_import_in_conftest():
+    """⭐ 顺序不变量 —— `settings` 是模块级单例，导入 `app.main` 那一刻就把
+    `.env` 读定了。隔离必须排在它**之前**，否则设了也白设。
+
+    上面那条断言的是"结果对"，这条锁的是"为什么对" —— 只有结果门时，
+    把隔离挪到 app 导入之后，结果门在**单跑本文件**时可能仍绿（别的模块
+    先导入过 app），这条能直接抓住。
+
+    变异：把 `os.environ.setdefault` 挪到 `from app.main import app` 之后 → 本条红。
+    """
+    import pathlib
+
+    src = pathlib.Path(__file__).parent.joinpath("conftest.py").read_text(
+        encoding="utf-8"
+    )
+    # ⚠ 必须**行首锚定**：这两句话在文件顶部的注释里也逐字出现过
+    #   （"必须在 `from app.main import app` 之前"），裸 `str.index` 会命中
+    #   注释里那个、拿到比真导入更早的位置 —— 门当场给出假信号（本条第一版
+    #   就这么红的）。同 memory「不去注释的文本门会被注释里的同一个词喂绿」。
+    lines = src.splitlines()
+
+    def _lineno(prefix: str) -> int:
+        hits = [i for i, ln in enumerate(lines) if ln.startswith(prefix)]
+        assert hits, f"conftest.py 里找不到行首以 {prefix!r} 开头的语句"
+        return hits[0]
+
+    isolation = _lineno('os.environ.setdefault("USE_MOCK_INSTRUMENTS"')
+    app_import = _lineno("from app.main import app")
+    assert isolation < app_import, (
+        "conftest.py 里 HAL 模式隔离排在 `from app.main import app` 之后 —— "
+        "settings 单例那时已经把 .env 读定了，设了也白设"
+    )

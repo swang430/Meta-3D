@@ -4,6 +4,30 @@ Pytest Configuration and Fixtures
 Shared test fixtures for integration tests
 """
 
+import os
+
+# ⭐ 必须在 `from app.main import app` **之前** —— `settings` 是模块级单例，
+#    导入那一刻就把 `.env` 读定了，之后再改环境变量没用。
+#
+# 为什么要这条：`.env` 里 `USE_MOCK_INSTRUMENTS=false`（生产就该这样），
+# 而 conftest 此前不做任何隔离，于是 `TestClient(app)` 触发 lifespan →
+# HAL 以 **REAL 模式**初始化 → 真去连驱动默认 IP（`propsim_f64.py` 的
+# `192.168.100.21`、`uxm_base_station.py` 的 `192.168.100.10`、
+# `bootstrap/instruments.py` 的 `TCPIP0::192.168.100.26::inst0::INSTR` 等）。
+#
+# 两个后果，2026-08-07 都真的发生了：
+#   ① 平时这些地址不通、连接秒失败，测试照过；本机 Clash TUN 接管该网段后
+#      连接不再快速失败而是挂住等超时 —— 全量测试跑不完（实测挂死 11m47s，
+#      CPU 0.3%，lsof 抓到 198.18.0.1:57661->192.168.100.27:sunrpc）。
+#      内审硬门要全量输出，那道门也跟着落空。
+#   ② **在现场机上跑 pytest 会真的把 F64 拽进 Remote**（F64 收到第一条 ATE
+#      命令即进 Remote），测试本身变成一次未经批准的仪器操作。
+#
+# 用 setdefault 不覆盖调用方已经给的值：要在测试里跑 real，
+# 显式 `USE_MOCK_INSTRUMENTS=false pytest ...` 即可。
+# G17 门（test_rule_gates.py）盯着这行的存在与**位置**。
+os.environ.setdefault("USE_MOCK_INSTRUMENTS", "true")
+
 import pytest
 from fastapi.testclient import TestClient
 from typing import Generator, Dict, Any
