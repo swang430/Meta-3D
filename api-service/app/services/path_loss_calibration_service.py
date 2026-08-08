@@ -795,8 +795,15 @@ class ProbePathLossCalibrationService:
         租约加在这个共用 primitive 上而不是三个调用方各加一次：
         `quiet_zone_validation_service`(3 处) / `probe_calibration_service`(1 处)
         / 本服务自己，都经这里碰 CE。
-        ⚠ 租约**不可嵌套**（见 `instrument_test_lease.hold` 的 docstring）——
-        若将来有调用方已经持租约再调本方法，会当场抛而不是静默拆掉外层控制权。
+        ⚠ 本方法**可以安全嵌套**在外层租约里（`hold()` 用引用计数：内层复用
+        外层那份控制权、退出不拆）。所以调用方要减少 socket 建拆开销时，
+        直接在作业入口（一次探头方向图 / 一次 QZ 校验 / 一次 path-loss 作业）
+        外面再包一圈租约即可，本方法这圈会自动变成 no-op。
+        ⚠ 唯一会抛的情况：外层持的控制权**比内层要的窄**（例如外层只取了 UXM，
+        内层要 F64）—— 那台 F64 根本没被 acquire，照跑会在第一条 SCPI 上撞
+        Local 门，所以 fail-loud 不静默降级。
+        （⚠ 此处一度写着"租约不可嵌套、会当场抛" —— 那是 `hold()` 改成引用
+        计数**之前**的说法，同一个 commit 里没跟着改，内审 F7 抓出。）
         """
         from app.services.instrument_test_lease import instrument_test_lease
 

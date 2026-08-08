@@ -667,3 +667,225 @@ class TestNestedLeaseReusesInsteadOfTearingDown:
         assert asyncio.run(_scenario()) is True, (
             "hal_mutation_guard 的同 task 重入被误伤 —— reload→park 那条路会自锁"
         )
+
+
+class TestOptionalCategoryLease:
+    """诊断序列的租约要不要覆盖 optional 依赖 —— 内审 F2/F3。
+
+    **F3（零覆盖）**：`optional_categories` 进租约这条线此前没有任何测试。
+    内审把它改回 `lease_categories = set(required)` （= 修之前的原状）后跑
+    144 个用例**全绿** —— 上面那条 `test_diagnostic_sequence_holds_lease_...`
+    用的探针两个 flag 都是 False，正好绕过这一格。
+
+    **F2（判据不同源）**：租约按 metadata **声明**取，而序列体按
+    `ctx.find_binding_by_category_key()` 判**本 lab 绑没绑**。HAL drivers 是
+    全局的，线缆直连 lab（无 CE binding）撞上别的 setup 残留的 F64 驱动时，
+    只按声明取会把**不属于本 lab** 的 F64 拽进 Remote —— 而手册原文
+    （PROPSIM User Reference §20.1）说回 local 要操作员在 GUI 上点按钮，
+    我们没法替它回去。
+    """
+
+    @staticmethod
+    def _make(monkeypatch, *, optional, bound):
+        """装一个 optional_categories=<optional>、本 lab 绑了 <bound> 的探针。"""
+        import app.api.diagnostic_sequence as api
+        from app.diagnostics.protocol import SequenceMetadata, SequenceRunResult
+
+        seen: dict = {}
+
+        class _Context:
+            lab_profile_name = "unit-test"
+            instrument_bindings: list = []
+
+            def find_binding_by_category_key(self, key):
+                return object() if key in bound else None
+
+            def find_binding_by_role(self, _key):
+                return None
+
+            def record_run(self, *_args, **_kwargs):
+                return SimpleNamespace(
+                    id=UUID("00000000-0000-0000-0000-000000000003")
+                )
+
+        async def _run(_ctx, _hal, _params, *, log):
+            return SequenceRunResult(success=True, summary="ok")
+
+        sequence = SimpleNamespace(
+            metadata=SequenceMetadata(
+                name="probe", description="probe",
+                required_categories=["baseStation"],
+                optional_categories=list(optional),
+                safe_during_test=True,
+            ),
+            run=_run,
+        )
+
+        @asynccontextmanager
+        async def _lease(purpose: str, **kwargs):
+            seen.update(kwargs)
+            yield
+
+        monkeypatch.setattr(api.loader, "get_sequence", lambda _key: sequence)
+        monkeypatch.setattr(
+            api, "build_diagnostic_context", lambda *_a, **_k: _Context())
+        monkeypatch.setattr(api, "get_hal_service", lambda: object())
+        monkeypatch.setattr(api, "instrument_test_lease", _lease, raising=False)
+        return api, seen
+
+    @pytest.mark.asyncio
+    async def test_optional_category_takes_lease_when_this_lab_binds_it(
+        self, monkeypatch
+    ):
+        """⭐ F3：声明了 optional CE **且本 lab 绑了** → 必须取 F64 租约。
+
+        不取的话 F64 停在 park 后的 Local 态，序列体一调 `stop_emulation()`
+        就返 False，报成「F64 状态机异常」——操作员会去查 F64，而真因是
+        没给它发钥匙。
+
+        变异：把 `lease_categories` 改回只含 required → 本条红。
+        """
+        api, seen = self._make(
+            monkeypatch,
+            optional=["channelEmulator"],
+            bound={"baseStation", "channelEmulator"},
+        )
+        await api.run_diagnostic_sequence(
+            "probe", api.RunSequenceRequest(), db=object())
+
+        assert seen["control_f64"] is True, (
+            "本 lab 绑了 CE 而租约没取 F64 —— 序列体调它会撞 Local 门"
+        )
+        assert seen["control_uxm"] is True, "required 的 baseStation 没取"
+
+    @pytest.mark.asyncio
+    async def test_optional_category_is_skipped_when_this_lab_does_not_bind_it(
+        self, monkeypatch
+    ):
+        """⭐ F2：声明了 optional CE **但本 lab 没绑** → 不得取 F64 租约。
+
+        线缆直连 lab 就是这一格。取了会：① 把别的 setup 的 F64 拽进 Remote
+        且回不去 Local（手册 §20.1：要人在 GUI 上点）；② 那台 F64 不可达时
+        acquire 失败抛 InstrumentTestLeaseError，整条序列 aborted ——
+        「可选依赖」变成硬前置。
+
+        变异：把 binding 过滤去掉（改回纯 `set(optional)`）→ 本条红。
+        """
+        api, seen = self._make(
+            monkeypatch,
+            optional=["channelEmulator"],
+            bound={"baseStation"},          # 线缆直连：没有 CE binding
+        )
+        await api.run_diagnostic_sequence(
+            "probe", api.RunSequenceRequest(), db=object())
+
+        assert seen["control_f64"] is False, (
+            "本 lab 没绑 CE 却去取了 F64 租约 —— 会把不属于本 lab 的 F64 "
+            "拽进 Remote，而手册说它回不去 local 要人去点"
+        )
+        assert seen["control_uxm"] is True, "required 的 baseStation 仍要取"
+
+    @pytest.mark.asyncio
+    async def test_required_category_missing_binding_fails_loud_before_lease(
+        self, monkeypatch
+    ):
+        """反向：required 缺 binding 时**在取租约之前**就 422 fail-loud。
+
+        ⚠ 本条第一版写的是"required 不过 binding 过滤、照样取租约" —— 跑出来
+        才发现端点在更早处就拦了（`Sequence 'probe' requires ['baseStation']
+        but the lab has no binding for them`）。那才是对的行为：required 是真
+        前置，缺了就该当场说清楚，而不是取个租约再到序列体里崩。
+        门跟着事实走，不是跟着我预想的走。
+
+        变异：把 required 也套上 binding 过滤（悄悄不取租约、继续往下跑）
+        → 本条红（不再抛 422）。
+        """
+        import fastapi
+
+        api, seen = self._make(
+            monkeypatch,
+            optional=[],
+            bound=set(),                    # 什么都没绑
+        )
+        with pytest.raises(fastapi.HTTPException) as exc:
+            await api.run_diagnostic_sequence(
+                "probe", api.RunSequenceRequest(), db=object())
+
+        assert exc.value.status_code == 422
+        assert "baseStation" in str(exc.value.detail), (
+            "422 没说清缺的是哪个类别 —— 操作员不知道该去绑什么"
+        )
+        assert seen == {}, "缺 required binding 却仍然取了租约"
+
+
+class TestCalibrationToneHoldsLease:
+    """校准链的共用 primitive 必须自己取 F64 租约 —— 内审 F5。
+
+    HAL 初始化/重载后 `park_idle_instruments()` 把 F64 停回 Local 并立门，
+    此后所有 F64 SCPI 直接抛 `F64LocalControlReservedError`。而校准链**不走**
+    commissioning 的相位租约，于是「后端启动 → 操作员点路损校准」必然报
+    "已交还本地控制" —— 错误文本跟操作员正在做的事完全对不上。
+
+    租约加在 `acquire_sa_power_via_ce_tone` 这个共用 primitive 上，一处覆盖
+    三个调用方（quiet_zone 3 处 / probe_calibration 1 处 / path_loss 自己）。
+
+    内审把整圈租约换成 `if True:` 直调 inner 后跑 226 个用例**全绿** ——
+    这条修复此前零覆盖。
+    """
+
+    @pytest.mark.asyncio
+    async def test_tone_acquisition_runs_inside_an_f64_lease(self, monkeypatch):
+        """⭐ 行为门：租约必须**包住** inner 的执行，且要 F64 不要 UXM。
+
+        变异：去掉整圈 `async with instrument_test_lease(...)` → 本条红。
+        """
+        import app.services.path_loss_calibration_service as pl_mod
+        from app.schemas.probe_calibration import PolarizationType
+
+        events: list[str] = []
+        seen: dict = {}
+
+        @asynccontextmanager
+        async def _lease(purpose: str, **kwargs):
+            seen["purpose"] = purpose
+            seen.update(kwargs)
+            events.append("lease-enter")
+            try:
+                yield
+            finally:
+                events.append("lease-exit")
+
+        monkeypatch.setattr(
+            pl_mod, "instrument_test_lease", _lease, raising=False)
+        monkeypatch.setattr(
+            "app.services.instrument_test_lease.instrument_test_lease",
+            _lease, raising=False)
+
+        svc = pl_mod.ProbePathLossCalibrationService.__new__(
+            pl_mod.ProbePathLossCalibrationService)
+
+        async def _inner(**_kw):
+            events.append("tone-measured")
+            return (-42.0, 0.1, "CE-D")
+
+        svc._acquire_sa_power_via_ce_tone_inner = _inner  # type: ignore[assignment]
+
+        result = await pl_mod.ProbePathLossCalibrationService.\
+            acquire_sa_power_via_ce_tone(
+                svc, frequency_mhz=3550.0, probe_id=7,
+                polarization=PolarizationType.V,
+            )
+
+        assert result == (-42.0, 0.1, "CE-D")
+        assert events == ["lease-enter", "tone-measured", "lease-exit"], (
+            "CE tone 测量没跑在租约里 —— park 之后每次校准都会撞 Local 门，"
+            f"实际顺序: {events}"
+        )
+        assert seen["control_f64"] is True, "没取 F64 控制权，tone 下发会被拒"
+        assert seen["control_uxm"] is False, (
+            "多取了 UXM 控制权 —— 出 tone 用的是 CE/SG 角色，不该占用小区"
+        )
+        assert seen["enable_monitoring"] is False, (
+            "没关监控 —— 1Hz 轮询会插在 CW tone 功率测量中间抢 SCPI 锁"
+        )
+        assert "probe7" in seen["purpose"], "租约用途没带探头号，现场看不出是谁在占用"

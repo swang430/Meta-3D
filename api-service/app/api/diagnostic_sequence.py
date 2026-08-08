@@ -200,9 +200,23 @@ async def run_diagnostic_sequence(
             # 序列一调它就返 False（内审 F3：`baseStation_attach_check` 声明
             # 只有 baseStation，序列体却实打实调 channelEmulator 的
             # stop_emulation / set_passthrough_mode）。G17 门守着两者不脱钩。
-            lease_categories = set(sequence.metadata.required_categories) | set(
-                sequence.metadata.optional_categories
-            )
+            # ⚠ optional 那半必须再过一遍**本 lab 到底绑没绑**（内审 F2）——
+            #   判据要跟序列体同源。`baseStation_attach_check:145` 用的是
+            #   `ctx.find_binding_by_category_key("channelEmulator")`，而
+            #   HAL drivers 是**全局**的：线缆直连 lab（无 CE binding）撞上别的
+            #   setup 残留的 F64 驱动时，只按声明取租约会
+            #     ① 把**不属于本 lab** 的 F64 拽进 Remote —— 手册原文
+            #        （PROPSIM User Reference §20.1）：发第一条 ATE 命令即进
+            #        remote，**回 local 要操作员在 GUI 右上角点按钮**，我们
+            #        没法替它回去；
+            #     ② 那台 F64 不可达时 acquire 失败 → InstrumentTestLeaseError
+            #        → 整条 attach 序列 aborted，「可选依赖」变成硬前置，
+            #        正好抵消 optional_categories 想解决的问题。
+            #   required 保持无条件取：跑不了就得有，那是真前置。
+            lease_categories = set(sequence.metadata.required_categories) | {
+                c for c in sequence.metadata.optional_categories
+                if ctx.find_binding_by_category_key(c) is not None
+            }
             if key == "instrument_idn_sweep":
                 lease_categories.update(
                     binding.category_key
