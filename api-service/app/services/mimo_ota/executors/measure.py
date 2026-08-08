@@ -1220,14 +1220,26 @@ class MeasureExecutor(IStepExecutor):
                 （memory `feedback_effective_end_not_nominal`：不从"能拿到的相似
                 属性"取，要从 caller 已经在用的那个源取。）
 
-                驱动没有这个方法 (mock/非 UXM) → attached=None = "没测",
-                跟 False("测了没挂上") 区分开 —— 别让 mock 跑出绿色里程碑。
+                mock 驱动 / 无此方法 → attached=None = "没测"，跟 False（"测了
+                没挂上"）区分开 —— **别让 mock 跑出绿色里程碑**。mock 那格另带
+                `simulated: True`，报告侧据此区分"编的"与"测的"。
                 """
                 from app.hal.base_station import CellState
 
+                # ⚠ 判据必须问「这是不是真驱动」，**不能**用 `hasattr(...)`
+                #   （内审 F6）：`get_cell_state` 在抽象基类 `base_station.py:232`
+                #   **和** `MockBaseStation:533` 都有定义 → `hasattr` **恒为真**，
+                #   那个 mock 分支是死分支。而 mock 的 `start_signaling()` 直接把
+                #   `_cell_state = CONNECTED`，于是 mock 下里程碑会报 attached=True
+                #   并一路写进 result_payload → 报告 —— 正是本 docstring 下面那句
+                #   「别让 mock 跑出绿色里程碑」要防的事，那句话此前是假的。
+                #   （memory: mock 回读侧必须标 simulated，且绝不进报告/KPI。）
+                if is_mock_driver(base_station):
+                    return {"stage": stage, "attached": None, "simulated": True,
+                            "reason": "BS 是 mock 驱动 — 未测（mock 的小区状态是编的）"}
                 if not hasattr(base_station, "get_cell_state"):
                     return {"stage": stage, "attached": None,
-                            "reason": "BS 驱动无 get_cell_state (mock/非 UXM) — 未测"}
+                            "reason": "BS 驱动无 get_cell_state — 未测"}
                 try:
                     state = await base_station.get_cell_state()
                 except Exception as e:  # noqa: BLE001
