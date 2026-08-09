@@ -166,7 +166,8 @@
 > 那正是本文件反复在治的母题。
 
 **⑤ 外审 = GitHub `chatgpt-codex-connector[bot]`**：PR 开出 / 修复推送后用
-`@codex review` 明确触发；本地主代理审查不算外审。**270s 定时器**从触发时刻起算，
+`@codex review` 明确触发；本地主代理审查不算外审。
+📌 **外审依据的规则写在 [`AGENTS.md`](AGENTS.md) 开头的 `## Code Review Rules`**（2026-08-09 立，10 条，每条都有本仓库真实事故支撑）—— 想调整 Codex 的审查行为改那里。⚠️ **它与本文件的「⓪ 动手前照做」及 [`.claude/agents/pre-commit-reviewer.md`](.claude/agents/pre-commit-reviewer.md) 同源，改任一处须同步另两处**（三份表述互不引用会静默漂移，没有任何门抓得到）。**270s 定时器**从触发时刻起算，
 到点主动查**三通道**（reviews / inline / issue comments，"usage limits" 提示 =
 review 未发生 ≠ clean）；**Codex 无问题或 5 分钟无 comment 即 squash merge**
 （持久授权）；审查-修复循环**轮次上限 = 2**，第二轮 findings 主要由上轮修复
@@ -494,7 +495,7 @@ P0-3（重写 F64 load .smu 前置序列）。详见 memory
 - [Swagger 使用指南](docs/api/swagger-guide.md) - 在线 API 文档
 
 **架构设计**:
-- [AGENTS.md](AGENTS.md) - 系统架构和设计文档（35K+ tokens）
+- [AGENTS.md](AGENTS.md) - **两个用途**：① 开头的 `## Code Review Rules` 是 **Codex 外审的规则源**（Codex 的 GitHub 集成会读它并照做）；② 其余正文是 2025 年的早期设计稿，**大面积已被推翻**（计划链那一整条已拆除），文件开头已挂整份降格声明
 - [系统集成](docs/architecture/system-integration.md) - 系统集成设计
 - [硬件同步](docs/architecture/hardware-sync.md) - ⭐ L0-L3 分层同步
 - 测试管理：现状看 [`gui/src/features/TestManagement/README.md`](gui/src/features/TestManagement/README.md)；原「统一架构」文档以计划链为主语，已随 ARCH-1 S4 归档至 [`docs/archive/test-management-unified-architecture.md`](docs/archive/test-management-unified-architecture.md)
