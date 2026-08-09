@@ -1577,10 +1577,24 @@ build 通过（仅保留既有 chunk/dynamic-import 提示）。GitHub Codex 外
 
 ### P1-48 — 日志与报告分不出哪台仪表是真的（P1-37 的三个缺口）⬜（2026-08-09 拍板，待开工）
 
+> ⚠️ **先读这条：本条目的证据成色不均匀。** 2026-08-09 六路并行只读调查 + 对抗性核实，
+> **核实阶段被月度额度上限打断** —— 下面 **B / C / 「8-7 现场无法追溯」三段未经对抗性核实**；
+> 已完成的 10 条核实**全部判「需收窄」、零条判「成立」**。随后的**内审**（`pre-commit-reviewer`，
+> 精简档）抽查 12 项事实，9 项完全命中、**3 项被证伪或判过强**，已按其结论改写（F1/F2/F3/F6/F7/F8）。
+> **未核实那三段按「待验」看，别当定论直接引用。**
+
 **What**: P1-37（PR #303）**已经把仪表粒度的真假标记做出来了** —— 每个驱动类带
-`driver_source`(real/mock) + `simulated`(bool) 两个 ClassVar（`app/hal/base.py:352-353`，
-五个 Mock 类覆盖），逐行打进 SCPI 往返记录的 TX/RX/OK/ERR 四种行。
-**但它只到了 `scpi.log`，三个消费端一个都没接上。** 本片是那个缺口的收口，不是从零开发。
+`driver_source`(real/mock) + `simulated`(bool) 两个 ClassVar（`app/hal/base.py` 里搜
+`driver_source: ClassVar`，五个 Mock 类覆盖），逐行打进 SCPI 往返记录的 TX/RX/OK/ERR 四种行。
+
+**两个字段的落地程度不一样，别混为一谈**（内审 F2 收窄）：
+- **`simulated` 已经有一个活消费方** —— 正式证据门
+  （`app/services/execution_scpi_evidence.py` 里 `simulated_exchange_not_authoritative`）
+  会拒收模拟来源，roadmap 的 P1-37 索引行原话也是这么写的。**收口时绝不能把这个门改坏。**
+  它今天不具区分力的原因另有其他（`formal_acceptance` 全库 0 次为 true，见次生栏）。
+- **`driver_source` 才是零消费方** —— `grep -rn "driver_source" app/ | grep -v "^app/hal/"` = **0 命中**。
+
+本片是**产出侧补齐 + 消费侧接上**的收口，不是从零开发。
 
 **Why P1**: 2026-08-09 用户手工测试时的原话 ——「我在 log 里是不是看不出哪些是 mock，
 哪些是 real 仪表？」**是的，看不出。** 而这条线的方向早已定死（2026-08-05 用户：
@@ -1591,36 +1605,63 @@ build 通过（仅保留既有 chunk/dynamic-import 提示）。GitHub Codex 外
 
 ---
 
-#### A — `app.log` 里看不到仪表真假，且 `hal_mode` 这个字段本身会说谎
+#### A — `app.log` 里的仪表真假只有一行自由文本，且 `hal_mode` 这个字段会说谎
 
-**A1 命名空间被过滤器挡掉**：`file_app` handler 挂了 `exclude_scpi_from_app`
-（`app/core/logging_config.py:482-485` 定义、`:513` 挂载），把 `app.hal.scpi.*` 整个命名空间
-挡在 app.log 之外。实测 `app.log` / `app.log.2026-08-05/06/07` 四个文件，`driver_source`
-出现 **0 次**。⚠️ **那个过滤器是对的**（P1-40 噪音治理的产物），**修法是换源不是去掉**。
+⚠️ **本段标题原写「app.log 里看不到仪表真假」，被内审 F3 判过强，已改。** 实况是：
+`app.log` 里**每台在册仪器、每次 HAL 初始化各有一条**声明行，形如
+`[HAL] signalAnalyzer: mode=auto, use_real=True (auto (global=real))`
+（实测 `app.log.2026-08-08`：baseStation 132 / channelEmulator 129 / positioner 129 /
+rfSwitch 129 / signalAnalyzer 129 / vectorSignalGenerator 7 / vna 7）。
+**真实缺口是三件别的事**：
+① 声明在自由文本 `msg` 里，**不是可过滤的结构化字段**；
+② **只覆盖初始化那一刻**，不覆盖后续每一行；
+③ `use_real` 是**配置意图**不是**实际落地的驱动类** —— 连接失败回退 mock 时它仍是 `True`。
+
+**A1 结构化标记被命名空间过滤器挡掉**：`file_app` handler 挂了 `exclude_scpi_from_app`
+（在 `app/core/logging_config.py` 里搜这个名字，以及 `ExcludeLoggerPrefixesFilter`），
+把 `app.hal.scpi.*` 整个命名空间挡在 app.log 之外。实测 `app.log.2026-08-05/06/07/08`
+四个文件 + 当前 `app.log`，`driver_source` 出现 **0 次**。
+⚠️ **那个过滤器是对的，修法是换源不是去掉** —— 但它的**出处是 P1-47A（#298 `66b09a0`），
+不是 P1-40**（内审 F6 用 `git log -S` 纠正，两个 token 都只命中那一个 commit）。
 
 **A2 `hal_mode` 与仪表事实矛盾**：它读的是「写这条日志那一刻**全局单例**的 mode」
-（`logging_config.py:87` → `get_hal_service().mode.value`），跟这行说的是哪台仪表无关。
+（`logging_config.py` 里搜 `get_hal_service().mode.value`），跟这行说的是哪台仪表无关。
+⚠️ **本条目一律用可 grep 的稳定锚，不写行号**（内审 F5：P1-48 的 A1/A2 修法必然改
+`logging_config.py`，改完所有行号全部下移；memory「指针四问」里「坐标稳吗——绝不写行号」）。
 - **铁证一**：8/7 的 `scpi.log` **第一批行**标着 `hal_mode="mock"`，内容却是在跟**真 F64**
   通信、拿回了带真实序列号的 IDN。
-- **铁证二**：今天 app.log 里同一行 —— `{"hal_mode": "mock", "msg": "[HAL] channelEmulator:
+- **铁证二**：`app.log.2026-08-08` 里同一行（内审实测该行在 8/8 出现 **4 次**、当前 app.log 0 次）—— `{"hal_mode": "mock", "msg": "[HAL] channelEmulator:
   mode=real, use_real=True (per-instrument (forced real))"}`。全局说 mock，那台仪表说 real。
 - **二义性**：`get_hal_service()` 发现单例是 `None` 会**现场 new 一个 `DriverMode.MOCK`**
-  顶上（`instrument_hal_service.py:1301-1306`），所以 `mock` 也可能意思是
-  「**这个进程压根没初始化过 HAL**」。今天 120 次热重载，每次头 26 行 boot 日志全被误标。
+  顶上（`instrument_hal_service.py` 里搜 `if _hal_service is None`），所以 `mock` 也可能意思是
+  「**这个进程压根没初始化过 HAL**」。`app.log.2026-08-08` 里 120 次热重载，每次头 26 行 boot 日志全被误标。
 - **副作用**：日志 filter 会把这个假单例**写回全局变量**，此后判空逻辑看到的不再是 `None`。
-- **取值实际有四种**：今天 real 14939 / mock 14859 / `<MagicMock ...>` 347 / `-` 31；
+- **取值实际有四种**：`app.log.2026-08-08` 里 real 14939 / mock 14859 / `<MagicMock ...>` 347 / `-` 31（共 30176 行）；
   8/7 现场 mock 107632 / real 72087 / `-` 821 / MagicMock 1490。
-  下游按 hal_mode 过滤的代码（`app/api/system_logs.py:160`）只认 mock/real 两种。
+  下游按 hal_mode 过滤的代码（`app/api/system_logs.py` 里搜 `entry.hal_mode.lower()`）只认 mock/real 两种。
 
-**A3 `instrument_id` 94–95% 是 `-`**：不是字段死了（今天 1810 行 / 8-7 有 9043 行带真 id），
+**A3 `instrument_id` 94–95% 是 `-`**：不是字段死了（`app.log.2026-08-08` 有 1810 行 / `app.log.2026-08-07` 有 9043 行带真 id），
 是**结构性**的 —— 30 个填充点里 20 个挂在被过滤掉的 `app.hal.scpi*` 上；
 `current_instrument_id` contextvar 在**生产代码里零设置方**（只有两个测试文件 set 过）。
 
 ---
 
+#### A4 — 手动 SCPI 终端那条路根本不产真假字段（内审 F8 补，**正是手工测试走的路**）
+
+`app/api/instrument.py` 有三处 `logging.getLogger("app.hal.scpi")`，发出的
+`[SCPI-TERM via HAL]` / `[SCPI-TERM]` / `[SCPI-PROBE]` 行，`extra` 只带
+`instrument_id / direction / command`，**没有 `driver_source` / `simulated`** ——
+它们不走 `app/hal/base.py` 的四个共享 helper，所以 P1-37 的标记完全绕过。
+实测 `scpi.log`（8/8，P1-37 之后）里 **80 行**无这两个字段，**全部**来自 exact logger
+`app.hal.scpi` 这条路；8/7 同类 263 行。
+⚠️ **这正是用户手工测试时用的那条路** —— 把本片定性成「三个**消费端**的收口」会低估工作量，
+**产出侧还差这一处**。
+
+---
+
 #### B — 报告不说自己是 mock
 
-今天那份 mock 报告的 PDF **有三处「未验证」标注 + 一处 UNKNOWN 判词，没有假称 PASS**
+2026-08-08 那份 mock 报告的 PDF **有三处「未验证」标注 + 一处 UNKNOWN 判词，没有假称 PASS**
 （这点是对的，不要在收口时把它改坏）。但：
 - **没有任何一句话说明「本次为模拟模式」**，不写 hal_mode，不写哪几台是假的；
 - 把 mock 编出来的 TRP 数值**当普通数字印了出来**，且「TRP 来源」栏写的是 `hal_signal_analyzer`；
@@ -1636,7 +1677,10 @@ build 通过（仅保留既有 chunk/dynamic-import 提示）。GitHub Codex 外
 #### C — VRT 报告用 `random.uniform()` 现编 KPI（**最危险，建议先做**）
 
 虚拟路测报告链会用 `random.uniform()` 现编 KPI，标 `passed=True`，写进 PDF，
-**全程零标注、零证据段**。2026-08-09 23:09 就产出了一份这样的 PDF。
+**全程零标注、零证据段**。**2026-08-08 23:09** 就产出了一份这样的 PDF（内审 F1 纠正：原写 2026-08-09，那是个**未来时间戳**，全仓无 8/9 的 PDF）。
+内审独立复核了 C 段的核心断言，**成立** —— `app/api/road_test.py` 的 KPI 确实用
+`random.uniform` 且硬编 `passed=True`；`app/api/report.py` 的 `POST /compare` 端点
+整体返回 random 编造的 similarity / confidence。
 报告比对端点 `POST /api/v1/reports/compare` 整体返回 random 编造的 KPI 差异与
 「趋势/置信度」，路由已注册（GUI 侧未发现调用方）。
 
@@ -1647,18 +1691,20 @@ build 通过（仅保留既有 chunk/dynamic-import 提示）。GitHub Codex 外
 #### 次生（记录在案，本片不一定做 —— 按 ⓪③ 进 Discovered 待评估池）
 
 - **日志行里没有 PID** —— `JsonFormatter` 显式把 `process`/`processName` 排除
-  （`logging_config.py:142-149`）。服务进程 + pytest + 热重载子进程写同一个文件，无法切分。
+  （`logging_config.py` 里搜 `standard_keys`）。服务进程 + pytest + 热重载子进程写同一个文件，无法切分。
   8/7 全天 `hal_mode` 「变化」**1977 次**，真正的模式切换**只有 6 次**，其余 1971 次是
   多进程交织造成的**假切换**。
 - **`driver_source="real"` ≠ 「真硬件答的」** —— 它是**基类默认值**，只有 5 个 Mock 类覆盖了它。
-  pytest 的 MagicMock 桩不是 Mock 驱动类，照样标 `real`/`false`。今天 `scpi.log` 里
-  pytest 夹具 `uxm-1`（20050 行）、`uxm-irat`（19530 行）跟真实注册的
+  pytest 的 MagicMock 桩不是 Mock 驱动类，照样标 `real`/`false`。`scpi.log`（8/8 数据）里
+  pytest 夹具 `uxm-1`（20050 行）、`uxm-irat`（19530 行，均为 `scpi.log` 的 8/8 数据）跟真实注册的
   `channelEmulator_37fb0c01`，这两个字段**完全一样**。
 - **`MockVNA` / `MockSignalGenerator` 漏声明**这两个 ClassVar，会继承基类 `"real"`/`False`
   （目前不可达 —— 这两类零 SCPI 日志调用；换句话说是**装着的地雷**）。
-- **GUI 日志查看器把 `driver_source` 丢了** —— `LogEntry` 只解析 8 个固定字段，
-  它只在 raw 原文里，且过滤维度里没有它。
-- **pytest 写进生产日志** —— 今天 `scpi.log` 里绝大多数行来自单元测试，不是运行中的服务。
+- **`driver_source` 丢在后端不是 GUI**（内审 F7 指正层级）—— 截断发生在
+  `app/api/system_logs.py` 的 `LogEntry` Pydantic 模型（`ts/level/logger/hal_mode/
+  session_id/execution_id/instrument_id/msg` 八个固定字段 + `raw`）。GUI 拿不到是因为
+  **API 不给**；按「改 GUI」去做改不动这件事。
+- **pytest 写进生产日志** —— `scpi.log`（8/8 数据）里绝大多数行来自单元测试，不是运行中的服务。
 - **`Result_Report/` 与 `api-service/data/reports/` 下存在没有对应 `test_reports` 行、
   也没有对应日志行的 PDF** —— 报告产物与数据库记录会脱钩。
 - **`formal_acceptance` 全库 0 次为 true** —— SCPI 证据链是最强的真假门，但目前对
@@ -1680,8 +1726,11 @@ SCPI 日志标记 / instrument_id / 报告与 KPI / 8-7 现场日志实证）+ �
 
 **配门**（⓪④：每加一道门必须附让它红的变异并**实跑**；至少到「不变量」档）:
 - **A** `hal_mode` 二义性门 —— 懒建单例那条路径不得产出与真实模式无法区分的 `mock` 标签
-- **A** 仪表真假不变量门 —— HAL 初始化后，**每台在册仪器**都必须在 `app.log` 里有且仅有
-  一条真假声明行（数量对等，不是「存在性」档）
+- **A** 仪表真假不变量门 —— ⚠️ **原措辞「每台在册仪器有且仅有一条真假声明行」已作废**
+  （内审 F3 当场判死：按「有没有声明」判 → **今天就绿**，一行代码不改也绿 = ⓪④ 最低档的
+  恒真断言；按「有且仅有一条」判 → **今天就红**，因为 8/8 有约 129 次热重载 = 129 条/仪器，
+  红的原因跟本片缺陷毫无关系）。**改成打在**「结构化字段存在 **且** 与该驱动类实际的
+  `simulated` 属性一致」上 —— 判据取**驱动实例的真值**，不取「日志里有没有那句话」。
 - **B** 报告不变量门 —— 任一 step 的 `simulated=true` ⟹ 报告正文**必须**含模拟声明
 - **C** VRT 门 —— `random` 产出的 KPI **不得**标 `passed=True`
 
