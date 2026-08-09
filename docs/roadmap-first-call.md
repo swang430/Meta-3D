@@ -1684,6 +1684,19 @@ rfSwitch 129 / signalAnalyzer 129 / vectorSignalGenerator 7 / vna 7）。
 报告比对端点 `POST /api/v1/reports/compare` 整体返回 random 编造的 KPI 差异与
 「趋势/置信度」，路由已注册（GUI 侧未发现调用方）。
 
+⚠️ **设计勘察查出这是两层假**：**GUI 也在编** —— `TestExecutionModal.tsx` 用
+`Math.random()` 现编样本、经 `POST /metrics` 落库，而**后端注释管它叫 `Use real collected data`**；
+**PASS/FAIL 判决是浏览器算的**，后端原样落库、原样打印。
+⚠️ **只治后端那一层，会把前端编的数「洗成真实采集」，比现状更隐蔽** —— 所以删后端编数
+必须配一句「本节数值非仪器实测」的显式声明（设计稿的 S1 + S7）。
+
+**VRT 全链零 HAL 引用** —— 是「从来没做」不是「做了被顶掉」；唯一像接线的模块自己的
+docstring 里写着"全仓零调用方"。
+
+⚠️ **仓里有一道旧门在给谎言背书**：`tests/test_feature_gaps.py` 的 `TestReportComparison`
+两个用例 assert `POST /reports/compare` 返回 200。删端点那片**必须把它一起删**，
+否则落地当天全量红在一个没预料的文件上。
+
 **为什么排最危险**：A/B 是「看不出真假」，C 是「**编出来的数标着通过进了正式报告**」。
 
 ---
@@ -1734,6 +1747,17 @@ SCPI 日志标记 / instrument_id / 报告与 KPI / 8-7 现场日志实证）+ �
 - **B** 报告不变量门 —— 任一 step 的 `simulated=true` ⟹ 报告正文**必须**含模拟声明
 - **C** VRT 门 —— `random` 产出的 KPI **不得**标 `passed=True`
 
+**设计稿已出**：[`docs/design/P1-48-instrument-provenance.md`](design/P1-48-instrument-provenance.md)
+（2026-08-09，三套对立方案 + 四维判官评审 + 综合）。**切成 9 片**，修法分布
+**去掉 4 / 换源 4 / 收窄 1 / 加机制 0**（唯一那片"加机制"是加一句固定文案，且论证了
+去掉/换源/收窄三种都不成立）。**零新数据库列、零新 API 字段、零新服务。**
+⏸️ **等用户拍板 5 个决策点后才动代码。**
+
+最要紧的一处纠错：两套候选方案都用"遍历 `app.routes` 断言那四条 path 不在里面"当门、
+**并写着"今天必红"**，判官实测**今天就是绿的** —— 本仓 fastapi 版本下 `include_router`
+不展平。而这坑仓里**已经踩过并立了碑**（`test_rule_gates.py` 的 `_expand_app_routes`）。
+
+<!-- 历史留存：本条原文 -->
 **⚠ 先出设计稿再动代码**（⓪⁺②「先 review plan，后写代码」）。设计稿落
 `docs/design/P1-48-instrument-provenance.md`，用户过目后才动代码。
 
