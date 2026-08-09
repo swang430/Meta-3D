@@ -33,14 +33,28 @@ def _scan_hal_driver_classes() -> set[type]:
     """
     import app.hal
 
+    # ⚠️ 必须 walk_packages 不是 iter_modules（内审 F1 实跑证伪）：
+    #   iter_modules 只列**一层**，`app/hal/vendor_x/ghost.py` 里的 Mock 类扫不到 ——
+    #   门的 docstring 声称的域是"app.hal 里所有 Mock* 驱动类"，用 iter_modules
+    #   就等于 docstring 本身是假陈述。
+    modules = [app.hal]
+    for mod_info in pkgutil.walk_packages(app.hal.__path__, prefix="app.hal."):
+        try:
+            modules.append(importlib.import_module(mod_info.name))
+        except Exception:  # noqa: BLE001 - 某个可选驱动缺依赖不该让整道门瞎掉
+            continue
+
     found: set[type] = set()
-    for mod_info in pkgutil.iter_modules(app.hal.__path__, prefix="app.hal."):
-        module = importlib.import_module(mod_info.name)
+    for module in modules:
         for _, obj in inspect.getmembers(module, inspect.isclass):
             if not issubclass(obj, InstrumentDriver) or obj is InstrumentDriver:
                 continue
-            # 只认在 app.hal 包里定义的（排除 import 进来的第三方/基类）
-            if getattr(obj, "__module__", "").startswith("app.hal."):
+            # 只认住在 app.hal 包里的类（排除 import 进来的第三方/基类）。
+            # ⚠️ 必须同时认 `app.hal` 本身（内审 F3）：
+            #   `'app.hal'.startswith('app.hal.')` 是 **False**，
+            #   光判前缀会漏掉直接定义在 `app/hal/__init__.py` 里的类。
+            mod_name = getattr(obj, "__module__", "")
+            if mod_name == "app.hal" or mod_name.startswith("app.hal."):
                 found.add(obj)
     return found
 
@@ -73,9 +87,16 @@ def _all_real_driver_classes() -> list[type]:
     "cls", _all_real_driver_classes(), ids=lambda c: c.__name__
 )
 def test_g19_every_real_driver_declares_itself_real(cls):
-    """② 真驱动注册表里的**每一个**类都必须自称 real（反向，防把常量写反）。
+    """② 真驱动**注册表里**的每一个类都必须自称 real（反向，防把常量写反）。
 
     让它红的变异：给任一真驱动加 `simulated = True`。
+
+    ⚠️ **已知入口域边界（内审 F4，如实申报而非假装覆盖）**：本条的域是
+    `_real_driver_registry()`，**不是** app.hal 里的全部真驱动类。今天两者恰好重合
+    （实测 app.hal 共 28 个驱动类 = 6 抽象 + 7 mock + 14 真，14 个真驱动全在注册表内），
+    但将来新增一个**未注册**的真驱动，本条看不见它。
+    之所以接受这个边界：真驱动的默认值（`real`/`False`）本身就在安全侧，
+    要出事得有人主动把它写反 —— 与门① 那侧（漏声明即自称真机）的代价不对称。
     """
     assert cls.driver_source == "real", (
         f"{cls.__name__} 在真驱动注册表里却自称 {cls.driver_source!r}"
@@ -94,11 +115,17 @@ def test_g19_mock_table_covers_every_mock_class_in_hal():
       - 新写一个 `MockFoo(InstrumentDriver)` 放进 app.hal 而不加进表 → 红；
       - 把某个类从表里删掉（它仍在 app.hal 里）→ 红。
     """
-    scanned = {c for c in _scan_hal_driver_classes() if c.__name__.startswith("Mock")}
+    all_hal_drivers = _scan_hal_driver_classes()
+    scanned_mock_named = {c for c in all_hal_drivers if c.__name__.startswith("Mock")}
     declared = set(_MOCK_DRIVER_CLASSES)
 
-    missing_from_table = scanned - declared
-    stale_in_table = declared - scanned
+    missing_from_table = scanned_mock_named - declared
+    # ⚠️ stale 那半必须对**全集**判，不能对 `Mock*` 子集判（内审 F2 实跑证伪）：
+    #   一个行为是 mock 但没按 Mock* 命名的类（如 `SimulatedVNA`），**正确地**进了权威表，
+    #   对子集判会报"表里但包扫描不到（改名了？删了？）" —— 做对了反而红。
+    #   而面对这条误红，最省事的转绿做法是**把它从表里删掉**，那恰好让
+    #   is_mock_driver() 判它是真机 = 放行。门绝不能把人往不安全那侧推。
+    stale_in_table = declared - all_hal_drivers
 
     assert not missing_from_table, (
         f"这些 Mock 驱动类在 app.hal 里，却不在 _MOCK_DRIVER_CLASSES 表里："
