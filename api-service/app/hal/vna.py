@@ -48,6 +48,12 @@ class VNADriver(InstrumentDriver):
 class MockVNA(VNADriver):
     """Fallback Mock implementation"""
 
+    # 仪表粒度的真假标记（P1-37 引入，P1-48 S0 补上本类的漏声明）。
+    # 不声明会继承基类的 "real"/False —— 这个模拟驱动就会自称真机，
+    # 它 np.random 造的扫描轨迹可被下游判成实测。
+    driver_source = "mock"
+    simulated = True
+
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         self._start_freq = 1e9
