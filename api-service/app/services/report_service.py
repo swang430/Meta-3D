@@ -262,7 +262,13 @@ class ReportService:
                         # P1-48: 四态里的后两态在这里不属于 passed/failed/pending。
                         # 不显式记的话，PDF 那边 total=1 而三类全 0，
                         # 分布图会画出满宽灰条、图例却写 Pending(0)，自相矛盾。
-                        'undetermined': 1 if _result in ('undetermined', 'incomplete') else 0,
+                        #
+                        # ⚠️ 两者**分开记**（外审 P2）：上一版把 incomplete 也算进
+                        # undetermined，被 stop 掉的执行会在 PDF 上印成「未判定」——
+                        # 那等于说「测完了但结果不可信」，而它其实是**根本没测完**。
+                        # 这两个状态前几轮才刚区分开，别在摘要这层又合回去。
+                        'undetermined': 1 if _result == 'undetermined' else 0,
+                        'incomplete': 1 if _result == 'incomplete' else 0,
                         # 默认值不能是 0 —— 0 会被读成「一条都没过」（P1-48）
                         'pass_rate': report_data_dict.get('pass_rate'),
                         'total_duration_sec': report_data_dict.get('duration_s', 0),

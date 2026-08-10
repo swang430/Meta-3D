@@ -805,12 +805,17 @@ class PDFGenerator:
 
         # P1-48: 跑完但一条可信判决都没有的执行既不算 passed 也不算 failed
         # 更不是 pending —— 显式列出来，否则 total 跟三类之和对不上，
-        # 读者只会以为报告算错了。旧数据没有这个键，缺省 0 就不显示。
+        # 读者只会以为报告算错了。旧数据没有这些键，缺省 0 就不显示。
+        #
+        # ⚠️ 「未判定」跟「未完成」分两行（外审 P2）：前者是测完了但结果不可信，
+        # 后者是根本没测完（例如被 stop 掉）。混成一行会把没测完的执行
+        # 说成「测完了但不可信」。
         undetermined = exec_summary.get('undetermined', 0)
+        incomplete = exec_summary.get('incomplete', 0)
+        if incomplete:
+            summary_data.insert(-2, ['未完成 (Incomplete)', str(incomplete)])
         if undetermined:
-            summary_data.insert(
-                -2, ['未判定 (Undetermined)', str(undetermined)]
-            )
+            summary_data.insert(-2, ['未判定 (Undetermined)', str(undetermined)])
 
         # Add time range if available
         first_exec = exec_summary.get('first_execution')
@@ -849,7 +854,8 @@ class PDFGenerator:
             # 于是「total=1、passed/failed/pending 全 0」的未判定执行会画出
             # **满宽灰条**，图例却写 `Pending (0)`，自相矛盾。
             # 余量里除了 pending，还有第四态 undetermined（跑完但无可信判决）
-            # 与 incomplete（没跑完），所以第三块统称「未判定 / 等待」。
+            # 与 incomplete（没跑完），所以第三块统称「未判定 / 未完成 / 等待」，
+            # 三者在上面的摘要表格里分行列出。
             other = max(total - passed - failed, 0)
             pending_width = 300 - pass_width - fail_width
 
@@ -869,7 +875,7 @@ class PDFGenerator:
             # Legend
             legend_text = f"<font color='#2ca02c'>■</font> Passed ({passed}) &nbsp;&nbsp; "
             legend_text += f"<font color='#d62728'>■</font> Failed ({failed}) &nbsp;&nbsp; "
-            legend_text += f"<font color='#cccccc'>■</font> 未判定 / 等待 ({other})"
+            legend_text += f"<font color='#cccccc'>■</font> 未判定 / 未完成 / 等待 ({other})"
             elements.append(Spacer(1, 5))
             elements.append(Paragraph(legend_text, self.styles['BodyText']))
 

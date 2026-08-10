@@ -357,3 +357,14 @@ def test_undetermined_execution_has_a_consistent_summary():
     assert "other = max(total - passed - failed, 0)" in pdf, (
         "图例数字没跟宽度同源"
     )
+
+    # ③「未判定」跟「未完成」不许合并计数（外审 P2）——
+    #    被 stop 掉的执行是**根本没测完**，不是「测完了但结果不可信」。
+    assert "'undetermined': 1 if _result == 'undetermined' else 0," in svc, (
+        "undetermined 计数又把 incomplete 算进来了 —— "
+        "没测完的执行会在 PDF 上印成「未判定」"
+    )
+    assert "'incomplete': 1 if _result == 'incomplete' else 0," in svc, (
+        "没有单独记 incomplete —— 被 stop 掉的执行在摘要里无处安放"
+    )
+    assert "未完成 (Incomplete)" in pdf, "PDF 摘要没有单列「未完成」"
