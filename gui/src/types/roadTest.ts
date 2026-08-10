@@ -1003,8 +1003,10 @@ export interface ExecutionReport {
   // Results
   phases: PhaseResult[]
   kpi_summary: KPISummary[]
-  overall_result: 'passed' | 'failed' | 'incomplete'
-  pass_rate: number
+  // undetermined = 跑完了但一条 KPI 都没有可信判决；incomplete = 执行没跑完（P1-48）
+  overall_result: 'passed' | 'failed' | 'incomplete' | 'undetermined'
+  // 没有可信判决时为 null —— 不是 0（0 会被读成「一条都没过」）
+  pass_rate: number | null
   events: Array<{
     time: string
     type: string

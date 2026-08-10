@@ -67,6 +67,9 @@ const RESULT_CONFIG = {
   passed: { color: 'green', label: '通过', icon: IconCheck },
   failed: { color: 'red', label: '失败', icon: IconX },
   incomplete: { color: 'yellow', label: '未完成', icon: IconClock },
+  // ⚠️ 跑完了但一条 KPI 都没有可信判决（P1-48）——
+  //    跟「未完成」是两回事：那个是执行中断了，这个是执行跑完但结论无从判起。
+  undetermined: { color: 'gray', label: '未判定', icon: IconClock },
 }
 
 const EVENT_ICONS: Record<string, typeof IconCheck> = {
@@ -157,10 +160,22 @@ function ReportContent({ content, title }: ReportContentProps) {
             )}
           </div>
           <div style={{ textAlign: 'right' }}>
-            <Text size="xl" fw={700} c={resultConfig.color}>
-              {content.pass_rate}%
-            </Text>
-            <Text size="xs" c="dimmed">通过率</Text>
+            {/* ⚠️ 后端在一条 KPI 都没有可信判决时返回 null（P1-48）——
+                原来无条件渲染成 `null%`/`0%`，读者以为「一条都没过」，
+                实际是**一条都没判**。 */}
+            {content.pass_rate === null || content.pass_rate === undefined ? (
+              <>
+                <Text size="xl" fw={700} c="dimmed">—</Text>
+                <Text size="xs" c="dimmed">通过率未判定</Text>
+              </>
+            ) : (
+              <>
+                <Text size="xl" fw={700} c={resultConfig.color}>
+                  {content.pass_rate}%
+                </Text>
+                <Text size="xs" c="dimmed">通过率</Text>
+              </>
+            )}
           </div>
         </Group>
       </Card>
@@ -574,7 +589,10 @@ function KPISummaryTable({ kpiSummary }: { kpiSummary: ReportContentData['kpi_su
                 <Text size="sm" c="dimmed">{kpi.target ?? '-'}</Text>
               </Table.Td>
               <Table.Td style={{ textAlign: 'center' }}>
-                {kpi.passed !== undefined ? (
+                {/* ⚠️ 必须同时排除 null（P1-48）：后端在没有可信判决时写 passed=null，
+                    序列化成 JSON null。原来只判 !== undefined，null 会掉进 false 分支、
+                    渲染成红色 ✗ —— **把「未判定」显示成「不合格」，那是新造的假信息**。 */}
+                {kpi.passed !== undefined && kpi.passed !== null ? (
                   <ThemeIcon
                     size="sm"
                     radius="xl"
@@ -584,7 +602,7 @@ function KPISummaryTable({ kpiSummary }: { kpiSummary: ReportContentData['kpi_su
                     {kpi.passed ? <IconCheck size={12} /> : <IconX size={12} />}
                   </ThemeIcon>
                 ) : (
-                  <Text size="sm" c="dimmed">-</Text>
+                  <Text size="sm" c="dimmed" title="没有可信的合格判定">未判定</Text>
                 )}
               </Table.Td>
             </Table.Tr>

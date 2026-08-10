@@ -542,8 +542,11 @@ class PDFGenerator:
         if data.get('execution_summary'):
             exec_summary = data['execution_summary']
             metadata.append(['Total Executions:', str(exec_summary.get('total_executions', 0))])
-            pass_rate = exec_summary.get('pass_rate', 0)
-            metadata.append(['Pass Rate:', f"{pass_rate:.1f}%"])
+            # ⚠️ pass_rate 现在可能是 None（一条 KPI 都没有可信判决时，P1-48）——
+            #    直接 f"{None:.1f}%" 会 TypeError 把整份 PDF 弄崩。
+            pass_rate = exec_summary.get('pass_rate')
+            metadata.append(['Pass Rate:',
+                             "未判定" if pass_rate is None else f"{pass_rate:.1f}%"])
 
         table = Table(metadata, colWidths=[140, 300])
         table.setStyle(TableStyle([
@@ -779,7 +782,7 @@ class PDFGenerator:
         passed = exec_summary.get('passed', 0)
         failed = exec_summary.get('failed', 0)
         pending = exec_summary.get('pending', 0)
-        pass_rate = exec_summary.get('pass_rate', 0)
+        pass_rate = exec_summary.get('pass_rate')   # 可能为 None（见封面页说明）
         duration = exec_summary.get('total_duration_sec', 0)
 
         # Format duration
@@ -796,9 +799,23 @@ class PDFGenerator:
             ['Passed', Paragraph(f'<font color="green">{passed}</font>', self.styles['BodyText'])],
             ['Failed', Paragraph(f'<font color="red">{failed}</font>', self.styles['BodyText'])],
             ['Pending', str(pending)],
-            ['Pass Rate', f"{pass_rate:.1f}%"],
+            ['Pass Rate', "未判定" if pass_rate is None else f"{pass_rate:.1f}%"],
             ['Total Duration', duration_str],
         ]
+
+        # P1-48: 跑完但一条可信判决都没有的执行既不算 passed 也不算 failed
+        # 更不是 pending —— 显式列出来，否则 total 跟三类之和对不上，
+        # 读者只会以为报告算错了。旧数据没有这些键，缺省 0 就不显示。
+        #
+        # ⚠️ 「未判定」跟「未完成」分两行（外审 P2）：前者是测完了但结果不可信，
+        # 后者是根本没测完（例如被 stop 掉）。混成一行会把没测完的执行
+        # 说成「测完了但不可信」。
+        undetermined = exec_summary.get('undetermined', 0)
+        incomplete = exec_summary.get('incomplete', 0)
+        if incomplete:
+            summary_data.insert(-2, ['未完成 (Incomplete)', str(incomplete)])
+        if undetermined:
+            summary_data.insert(-2, ['未判定 (Undetermined)', str(undetermined)])
 
         # Add time range if available
         first_exec = exec_summary.get('first_execution')
@@ -832,6 +849,14 @@ class PDFGenerator:
             # Create a simple visual bar using table
             pass_width = int((passed / total) * 300)
             fail_width = int((failed / total) * 300)
+            # ⚠️ 第三块的**数字和宽度必须同源**（P1-48 外审 P1）。
+            # 原来宽度取余量、图例数字取 `pending` 字段 —— 两者不同源，
+            # 于是「total=1、passed/failed/pending 全 0」的未判定执行会画出
+            # **满宽灰条**，图例却写 `Pending (0)`，自相矛盾。
+            # 余量里除了 pending，还有第四态 undetermined（跑完但无可信判决）
+            # 与 incomplete（没跑完），所以第三块统称「未判定 / 未完成 / 等待」，
+            # 三者在上面的摘要表格里分行列出。
+            other = max(total - passed - failed, 0)
             pending_width = 300 - pass_width - fail_width
 
             bar_data = [['', '', '']]
@@ -850,7 +875,7 @@ class PDFGenerator:
             # Legend
             legend_text = f"<font color='#2ca02c'>■</font> Passed ({passed}) &nbsp;&nbsp; "
             legend_text += f"<font color='#d62728'>■</font> Failed ({failed}) &nbsp;&nbsp; "
-            legend_text += f"<font color='#cccccc'>■</font> Pending ({pending})"
+            legend_text += f"<font color='#cccccc'>■</font> 未判定 / 未完成 / 等待 ({other})"
             elements.append(Spacer(1, 5))
             elements.append(Paragraph(legend_text, self.styles['BodyText']))
 
@@ -1255,13 +1280,19 @@ class PDFGenerator:
 
         # Overall pass rate
         overall_result = data.get('overall_result', 'incomplete')
-        pass_rate = data.get('pass_rate', 0)
+        # 可能为 None（没有可信判决时）—— 直接插进 f-string 会印出 "None%"
+        pass_rate = data.get('pass_rate')
         elements.append(Spacer(1, 12))
 
         result_color = '#43a047' if overall_result == 'passed' else '#e53935' if overall_result == 'failed' else '#ff9800'
+        # ⚠️ 三元表达式**不能**直接跨相邻 f-string 写（外审 P2）：
+        #    Python 先把相邻字符串拼起来再套三元，于是 false 分支只剩
+        #    "(Pass Rate: 100.0%)"，整句 "Overall Result: ..." 被静默吃掉。
+        #    把判断收进一个变量，字符串拼接保持完整。
+        _rate_txt = "未判定" if pass_rate is None else f"{pass_rate}%"
         elements.append(Paragraph(
             f'<b>Overall Result:</b> <font color="{result_color}">{overall_result.upper()}</font> '
-            f'(Pass Rate: {pass_rate}%)',
+            f'(Pass Rate: {_rate_txt})',
             self.styles['BodyText']
         ))
 
@@ -1308,7 +1339,8 @@ class PDFGenerator:
                 Paragraph(str(name), self.styles['BodyText']),
                 Paragraph(f'{duration:.1f}s' if isinstance(duration, (int, float)) else str(duration), self.styles['BodyText']),
                 Paragraph(status_text, self.styles['BodyText']),
-                Paragraph(f'{pass_rate}%', self.styles['BodyText']),
+                Paragraph("未判定" if pass_rate is None else f'{pass_rate}%',
+                          self.styles['BodyText']),
                 Paragraph(notes_display, self.styles['BodyText'])
             ])
 

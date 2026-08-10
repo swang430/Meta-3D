@@ -488,6 +488,12 @@ class VrtExecutionService:
             summary=orm.measurements or {},
             events=list(orm.execution_events or []),
             kpi_results=orm.test_results or {},
+            # P1-48 (外审 P1): 批次级的真假标记，由服务端无条件给出。
+            # 判据不是「请求里写了什么」，而是「这张表只有浏览器一个写入方」——
+            # 有样本 ⇒ 一定是浏览器造的。
+            # 只挂在逐条摘要里不够：请求可以带 time_series 而 kpi_summary 为空，
+            # 那样一条 provenance 都不会写，样本却照样入库、照样被这里读出去。
+            provenance="client_simulated" if kpi_samples else None,
         )
 
     @staticmethod

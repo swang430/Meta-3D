@@ -398,6 +398,8 @@ def delete_schedule(
 
 # ==================== Statistics Endpoints ====================
 
+# ==================== Generic Report Operations (Must be last) ====================
+
 @router.get("/{report_id}", response_model=ReportResponse)
 def get_report(
     report_id: UUID,
@@ -471,7 +473,7 @@ def download_report(
     return FileResponse(
         path=full_path,
         media_type=media_type,
-        filename=filename
+        filename=filename,
     )
 
 

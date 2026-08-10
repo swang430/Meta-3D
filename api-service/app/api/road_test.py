@@ -205,6 +205,43 @@ def _compute_kpi_summary_from_samples(kpi_samples: List[KPIMetrics]) -> List[KPI
 
 # ===== Scenario Management =====
 
+def compute_overall_result(kpi_summary, execution_status):
+    """算合格率与总结论。抽成纯函数是为了让它能被直接测到（P1-48）。
+
+    ⚠️ **一条 KPI 都没有真判决时，结论恒为「未判定」** —— 不能掉进 failed。
+    那等于把「编造的通过」换成「编造的不通过」，只是换了个方向说谎，半径没收敛。
+
+    虚拟路测今天没有真数据源，所以「没有真判决」是常态；合格判定原先由**浏览器**
+    算完发上来、后端原样存原样印，现在一律不采信（落库与读回都置 None）。
+    """
+    judged = [k for k in kpi_summary if getattr(k, "passed", None) is not None]
+    passed_kpis = sum(1 for k in judged if k.passed)
+
+    if not judged:
+        # ⚠️ 合格率返回 None 而不是 0.0（外审 P1）：0.0 会被界面无条件
+        #    显示成「通过率 0%」，读者以为一条都没过 —— 实际是**一条都没判**。
+        #
+        # ⚠️ 结论用 undetermined 而不是 incomplete（外审 P2）：
+        #    incomplete 原本表示「执行没跑完」（还在跑 / 被停止），
+        #    把它拿来兼表「跑完了但没有可信判决」会让真正没跑完的执行
+        #    也显示成「未判定」—— 那是新的假信息。两者必须分开。
+        # ⚠️ 执行**本身失败**这个信息不能丢（外审 P2）：原来这个早退分支
+        #    在 FAILED 那一格之前就返回 incomplete，于是真正失败的执行
+        #    被显示成「未完成」。
+        if execution_status == ExecutionStatus.FAILED:
+            return None, "failed"
+        if execution_status == ExecutionStatus.COMPLETED:
+            return None, "undetermined"
+        return None, "incomplete"
+
+    pass_rate = (passed_kpis / len(judged)) * 100
+    if execution_status == ExecutionStatus.COMPLETED:
+        return pass_rate, ("passed" if pass_rate >= 80 else "failed")
+    if execution_status == ExecutionStatus.FAILED:
+        return pass_rate, "failed"
+    return pass_rate, "incomplete"
+
+
 @router.get("/scenarios", response_model=List[ScenarioSummary])
 async def list_scenarios(
     category: Optional[ScenarioCategory] = None,
@@ -724,10 +761,17 @@ async def submit_execution_metrics(
     ]
 
     # 2. Build summary from kpi_summary
+    # ⚠️ 这个入口收到的**就是浏览器提交的数据**（虚拟路测今天没有服务端真实数据源），
+    #    所以后端**无条件**把这批标成模拟、不读请求里的任何标记 —— 被检查的一方
+    #    不能自己声明自己是真是假。
+    #    上一版只丢掉了 passed，而 mean/min/max/std **照样落库、照样印进报告**
+    #    （外审 P1）—— 判决不采信了，数值还是编的，等于只挡了一半。
     summary = {
         kpi.name: {
             "mean": kpi.mean, "min": kpi.min, "max": kpi.max,
-            "std": kpi.std, "target": kpi.target, "passed": kpi.passed,
+            "std": kpi.std, "target": kpi.target,
+            "passed": None,          # 客户端的判决一律不采信
+            "provenance": "client_simulated",   # 这批数的来源，报告据此决定印不印
         }
         for kpi in metrics.kpi_summary
     }
@@ -1027,14 +1071,26 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
         raise HTTPException(status_code=500, detail=f"Error processing scenario details: {str(e)}")
 
     from datetime import datetime, timedelta
-    import random
 
     base_time = execution.start_time or datetime.now()
 
     # Pull real metrics + phases from DB (Phase 2.4c)
     kpi_samples_orm = vrt_execution_service.query_kpi_samples(db, execution_id)
     metrics_obj = vrt_execution_service.to_test_metrics(row, kpi_samples_orm)
-    has_real_metrics = len(metrics_obj.kpi_samples) > 0
+    # ⚠️ 光看「有没有样本」不够（外审 P1）：那些样本本身就是浏览器
+    #    Math.random() 造的。上一版只在摘要那层 continue 掉，而下面
+    #    kpi_summary 空了之后会 **从原始样本重算** —— 编的数又算回来了。
+    #    所以来源是客户端模拟时，整批都不算「真数据」。
+    #    ⚠️ 判法是**白名单放行**不是黑名单拦截（外审 P1）：
+    #    历史执行的样本**没有这个标记**，按黑名单会被当成真数据放行；
+    #    带样本但 summary 为空的提交同理。而虚拟路测今天**没有服务端真实数据源** ——
+    #    所有样本都来自浏览器，所以只有**明确标着 real** 的才允许当真数据。
+    _summary = getattr(metrics_obj, "summary", None) or {}
+    _explicitly_real = bool(_summary) and all(
+        (v or {}).get("provenance") == "server_measured"
+        for v in _summary.values()
+    )
+    has_real_metrics = len(metrics_obj.kpi_samples) > 0 and _explicitly_real
     persisted_phases = vrt_execution_service.to_phase_results(row)
 
     # Initialize new fields
@@ -1069,6 +1125,10 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
             # Build KPI summary from real metrics
             kpi_summary = []
             for name, stats in metrics.summary.items():
+                # ⚠️ 来源是客户端模拟的 → 数值不进正式 KPI（外审 P1）。
+                #    只丢 passed 不够：mean/min/max/std 本身就是 Math.random() 造的。
+                if stats.get("provenance") == "client_simulated":
+                    continue
                 kpi_summary.append(KPISummary(
                     name=name,
                     unit=stats.get("unit", ""),
@@ -1077,7 +1137,8 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
                     max=stats.get("max", 0),
                     std=stats.get("std"),
                     target=stats.get("target"),
-                    passed=stats.get("passed")
+                    # 同上：不采信落库的 passed（历史行里可能还留着浏览器算的值）
+                    passed=None
                 ))
 
             # If no summary, compute from samples
@@ -1113,49 +1174,21 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
             logger.info(f"Using real metrics for report: {len(metrics.kpi_samples)} samples")
 
         else:
-            # ===== Fallback to simulated data (backwards compatibility) =====
+            # ===== 没有样本 → 什么都不编（P1-48）=====
+            # 这里原先用 random.uniform 现编 7 个相位、5 条 KPI（全部硬编 passed=True）、
+            # 3 条事件，写进正式 PDF。生产库里有实物：一份 PDF 上 5 行全 ✓ PASS、
+            # 通过率 100%，而那次执行零仪器参与。
+            #
+            # 编出来的数标着「通过」进正式报告，比没有报告危险得多。
             phases = []
-            phase_names = ["初始化", "配置网络", "启动基站", "连接DUT", "运行测试", "收集数据", "生成报告"]
-            current_time = base_time
+            kpi_summary = []
+            events = []
+            logger.info(
+                "[road-test] 执行 %s 没有采集到样本 —— 不生成任何 KPI/相位/事件，"
+                "报告将标为未判定（原先此处会用随机数编造一份「全部通过」的报告）",
+                execution.id,
+            )
 
-            for i, name in enumerate(phase_names):
-                duration = random.uniform(3, 10)
-                end_time = current_time + timedelta(seconds=duration)
-                phases.append(PhaseResult(
-                    name=name,
-                    status="completed" if execution.status == ExecutionStatus.COMPLETED else ("failed" if i == len(phase_names) - 1 else "completed"),
-                    duration_s=round(duration, 2),
-                    start_time=current_time,
-                    end_time=end_time,
-                    notes=None
-                ))
-                current_time = end_time
-
-            # Generate KPI summary (simulated)
-            kpi_summary = [
-                KPISummary(name="下行吞吐量", unit="Mbps", mean=round(random.uniform(80, 120), 1),
-                        min=round(random.uniform(40, 60), 1), max=round(random.uniform(140, 180), 1),
-                        std=round(random.uniform(10, 30), 1), target=100.0, passed=True),
-                KPISummary(name="上行吞吐量", unit="Mbps", mean=round(random.uniform(30, 50), 1),
-                        min=round(random.uniform(15, 25), 1), max=round(random.uniform(60, 80), 1),
-                        std=round(random.uniform(5, 15), 1), target=40.0, passed=True),
-                KPISummary(name="端到端延迟", unit="ms", mean=round(random.uniform(8, 15), 1),
-                        min=round(random.uniform(3, 6), 1), max=round(random.uniform(20, 35), 1),
-                        std=round(random.uniform(2, 5), 1), target=20.0, passed=True),
-                KPISummary(name="RSRP", unit="dBm", mean=round(random.uniform(-85, -75), 1),
-                        min=round(random.uniform(-100, -90), 1), max=round(random.uniform(-70, -60), 1),
-                        std=round(random.uniform(5, 10), 1), target=-90.0, passed=True),
-                KPISummary(name="SINR", unit="dB", mean=round(random.uniform(12, 18), 1),
-                        min=round(random.uniform(5, 8), 1), max=round(random.uniform(22, 28), 1),
-                        std=round(random.uniform(3, 6), 1), target=10.0, passed=True),
-            ]
-
-            # Generate events (simulated)
-            events = [
-                {"time": (base_time + timedelta(seconds=15)).isoformat(), "type": "handover", "description": "切换到基站 gNB-002"},
-                {"time": (base_time + timedelta(seconds=35)).isoformat(), "type": "beam_switch", "description": "波束切换 Beam 3 → Beam 7"},
-                {"time": (base_time + timedelta(seconds=50)).isoformat(), "type": "handover", "description": "切换到基站 gNB-003"},
-            ]
     except Exception as e:
         logger.error(f"Error generating metrics/phases: {e}")
         logger.error(traceback.format_exc())
@@ -1273,17 +1306,7 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
         raise HTTPException(status_code=500, detail=f"Error processing details: {str(e)}")
 
     try:
-        # Calculate pass rate
-        passed_kpis = sum(1 for kpi in kpi_summary if kpi.passed)
-        pass_rate = (passed_kpis / len(kpi_summary)) * 100 if kpi_summary else 0
-
-        # Determine overall result
-        if execution.status == ExecutionStatus.COMPLETED:
-            overall_result = "passed" if pass_rate >= 80 else "failed"
-        elif execution.status == ExecutionStatus.FAILED:
-            overall_result = "failed"
-        else:
-            overall_result = "incomplete"
+        pass_rate, overall_result = compute_overall_result(kpi_summary, execution.status)
 
         report = ExecutionReport(
             execution_id=execution_id,
@@ -1305,7 +1328,10 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
             phases=phases,
             kpi_summary=kpi_summary,
             overall_result=overall_result,
-            pass_rate=round(pass_rate, 1),
+            # ⚠️ 合格率可能是 None（一条 KPI 都没有可信判决时）——
+            #    `round(None, 1)` 会 TypeError。上一轮我查了 pdf_generator 与
+            #    report_service 两处下游，**漏了本文件自己这一处**（外审 P1）。
+            pass_rate=None if pass_rate is None else round(pass_rate, 1),
             events=events,
             # NEW: Time series and trajectory
             time_series=time_series_data,

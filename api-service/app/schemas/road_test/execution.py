@@ -140,6 +140,24 @@ class TestMetrics(BaseModel):
         description="KPI target achievement results"
     )
 
+    # P1-48: 这批样本是真是假 —— 由服务端给，不问客户端。
+    #
+    # `vrt_kpi_samples` 全仓**只有一个写入方**：`POST /executions/{id}/metrics`，
+    # 也就是浏览器提交。服务端执行链不写这张表。所以只要有样本，就一定是
+    # 浏览器 `Math.random()` 造的。
+    #
+    # 外审 P1 的实证：请求里带 time_series 但 kpi_summary 为空时（schema 允许），
+    # 逐条 KPI 的 provenance 一条都不会写，而原始样本照样入库 ——
+    # 这个读端点再把它们原样返回，调用方分不出真假。所以标记必须挂在**批次层**，
+    # 不能只挂在逐条摘要里。
+    provenance: Optional[str] = Field(
+        default=None,
+        description=(
+            "这批 KPI 样本的来源：client_simulated = 浏览器模拟生成（不得作为验收依据）；"
+            "None = 没有样本。虚拟路测目前没有服务端真实数据源。"
+        ),
+    )
+
 
 # ===== Test Execution =====
 
@@ -382,8 +400,16 @@ class ExecutionReport(BaseModel):
     kpi_summary: List[KPISummary] = Field(default_factory=list, description="KPI summary")
 
     # Overall result
-    overall_result: str = Field(description="passed | failed | incomplete")
-    pass_rate: float = Field(description="Percentage of passed KPIs")
+    overall_result: str = Field(
+        description="passed | failed | incomplete | undetermined —— "
+                    "incomplete=执行没跑完（还在跑/被停止）；"
+                    "undetermined=跑完了但一条 KPI 都没有可信判决",
+    )
+    pass_rate: Optional[float] = Field(
+        default=None,
+        description="合格率；一条 KPI 都没有可信判决时为 None（不是 0）—— "
+                    "0 会被读成「一条都没过」，而实际是「一条都没判」",
+    )
 
     # Events
     events: List[Dict[str, Any]] = Field(default_factory=list, description="Notable events")
