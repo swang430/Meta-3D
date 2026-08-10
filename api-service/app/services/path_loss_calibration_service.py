@@ -92,6 +92,54 @@ NUM_POLARIZATIONS = 2
 
 # ==================== 数据类 ====================
 
+
+def _reject_simulated_instrument(driver, category: str, what: str) -> None:
+    """通用版：要求「真测」时，任何模拟驱动一律拒绝。"""
+    from app.services.instrument_hal_service import is_mock_driver
+
+    if driver is None:
+        raise RuntimeError(f"HAL 里没有 {category} 驱动 — 无法执行{what}。")
+    if is_mock_driver(driver):
+        raise RuntimeError(
+            f"HAL 里的 {category} 是模拟驱动（{type(driver).__name__}）— 拒绝执行{what}。"
+            f"它造出来的数不是实测值，据此出的校准证书会被后续所有测试当成真校准使用。"
+            f"**请换成真实驱动**。"
+        )
+
+
+def _reject_simulated_vna(vna, what: str) -> None:
+    """调用方要求「真测」时，模拟的 VNA 驱动一律拒绝。
+
+    ⚠️ 这里原先**只判 vna 是不是 None**，而这个方法的 docstring 自己就把
+    ``MockVNA`` 列在候选驱动里 —— 于是 MockVNA 在位时，它 ``np.random`` 造出来的
+    扫描数据会被当成实测，算出一个路损值，**挂着真型号名落库成一张有效的校准证书**。
+
+    后果比「报告里印了个假数字」严重得多：报告里的「路损验证」是由
+    「有没有证书」派生的，所以这张证书会把一处诚实的「未验证」**翻成「已验证」**；
+    而校准证书还会被后续所有测试拿去做补偿 —— 假数据从这里扩散出去。
+
+    拒绝的方向是安全的：调用方的异常处理会直接返回失败，**不落库、不出证书**。
+    """
+    from app.services.instrument_hal_service import is_mock_driver
+
+    if vna is None:
+        raise RuntimeError(
+            f"HAL 里没有 VNA 驱动 — 无法执行{what}。"
+            f"请先配置一台可连接的 VNA（R&S ZNA / Keysight ENA）。"
+        )
+    if is_mock_driver(vna):
+        raise RuntimeError(
+            f"HAL 里的 VNA 是模拟驱动（{type(vna).__name__}）— 拒绝执行{what}。"
+            f"模拟驱动造出来的扫描数据不是实测值，据此出的校准证书会被后续所有测试"
+            f"当成真校准使用。**请换成真实 VNA 驱动**。"
+        )
+        # ⚠️ 这里原先还写了第二条出路「明确以 use_mock=True 调用，那样会被标成非实测」——
+        #    **那句话是错的，已删**（外审 P1）：`use_mock=True` 走 mock 测量之后，
+        #    证书**仍然写成 VALID**；`vna_model="Mock VNA"` 只是个文本标记，
+        #    `get_latest_calibration()` 照样会选中它做验证和后续补偿。
+        #    也就是说那条「出路」会把被这道门拦下的操作员，直接引回同一条假数据链。
+
+
 class PathLossMeasurement:
     """单个路损测量结果"""
     def __init__(
@@ -856,6 +904,14 @@ class ProbePathLossCalibrationService:
                 "Bind both on the active LabProfile."
             )
 
+        # ⚠️ 这条 CE+SA 才是**主路径**（暗室配了 cable_sgh_to_sa_loss_db 就走它），
+        #    我上一版只拦了那条 DEPRECATED 的 VNA 旧路径，主路径完全绕过去了（外审 P1）。
+        #    MockSignalAnalyzer 的 measure_channel_power() 返回随机值，
+        #    MockChannelEmulator 也不发真的 tone —— 两者都会被当成真机，
+        #    结果照样以 valid 证书落库。
+        _reject_simulated_instrument(ce, "channelEmulator", "CE+SA 真测路损")
+        _reject_simulated_instrument(sa, "signalAnalyzer", "CE+SA 真测路损")
+
         # Capability-based dispatch: prefer D (single-instrument) when CE
         # supports it, else fall through to B (needs upstream SG/BSE).
         caps = ce.get_calibration_tone_capabilities()
@@ -915,6 +971,12 @@ class ProbePathLossCalibrationService:
                     "an SG, both must implement set_cw / start_tx / stop_tx, "
                     "or use a CE with INTERNAL_CW_GENERATOR capability."
                 )
+            # ⚠️ 上游信号源同样只判了 None（外审 P1）：CE/SA 是真机、
+            #    但 BSE/SG 绑的是模拟驱动时，它的 set_cw / start_tx 会「成功」，
+            #    SA 读数照样算成 VALID 证书。
+            _reject_simulated_instrument(
+                source, "baseStation/signalGenerator", "CE+SA 真测路损（B 路径）")
+
             sa_rx_mean_dbm, sa_rx_std_db = await self._measure_via_ce_passthrough(
                 ce, sa, source, probe_id, polarization, frequency_mhz, ce_tx_power_dbm,
                 ce_port=ce_port,
@@ -948,6 +1010,11 @@ class ProbePathLossCalibrationService:
                 route_target, probe_id, polarization.value,
             )
             return
+
+        # ⚠️ 模拟开关会返回 True 但物理矩阵**根本没切**（外审 P1）——
+        #    于是我们测的是当前那条错通路，结果却签成目标 chain/probe 的有效证书。
+        #    固定布线的暗室不绑 rfSwitch 驱动，走上面那条 no-op 分支，不受影响。
+        _reject_simulated_instrument(rf_switch, "rfSwitch", "真测路损的通道切换")
 
         ok = await rf_switch.set_mapped_path(route_target)
         if not ok:
@@ -1141,12 +1208,7 @@ class ProbePathLossCalibrationService:
 
         hal = get_hal_service()
         vna = hal.drivers.get("vna")
-        if vna is None:
-            raise RuntimeError(
-                "No VNA driver available in HAL — cannot run real path-loss "
-                "measurement. Ensure an active VNA instrument is configured "
-                "(R&S ZNA / Keysight ENA) before calling with use_mock=False."
-            )
+        _reject_simulated_vna(vna, "real path-loss measurement")
 
         center_hz = frequency_mhz * 1e6
         span_hz = 1e6
@@ -1503,11 +1565,7 @@ class RFChainCalibrationService:
         hal = get_hal_service()
         vna = hal.drivers.get("vna")
         pm = hal.drivers.get("powerMeter")
-        if vna is None:
-            raise RuntimeError(
-                "No VNA driver in HAL — cannot run real uplink measurement. "
-                "Set HAL category 'vna' to a connected R&S ZNA / Keysight ENA driver."
-            )
+        _reject_simulated_vna(vna, "real uplink measurement")
 
         center_hz = frequency_mhz * 1e6
         span_hz = 1e6
@@ -1576,10 +1634,7 @@ class RFChainCalibrationService:
         hal = get_hal_service()
         vna = hal.drivers.get("vna")
         sg = hal.drivers.get("signalGenerator")
-        if vna is None:
-            raise RuntimeError(
-                "No VNA driver in HAL — cannot run real downlink measurement"
-            )
+        _reject_simulated_vna(vna, "real downlink measurement")
 
         # SG 配置 (仅在 driver 提供该方法时调用; 否则假定 SG 已被运维预置)
         if sg is not None:
