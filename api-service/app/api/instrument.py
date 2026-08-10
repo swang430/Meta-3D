@@ -1759,11 +1759,6 @@ async def test_instrument_connection(
             message=f"IP 地址格式无效: '{ip}'。请输入有效的 IPv4 地址（如 192.168.0.132）或 VISA 资源字符串（如 TCPIP0::192.168.0.132::inst0::INSTR）",
         )
 
-    scpi_logger.info(
-        f"[TEST-CONN] {category_key} → TCP connecting {ip}:{port} (protocol={protocol})",
-        extra={"instrument_id": category_key, "direction": "CONNECT"},
-    )
-
     from app.services.instrument_test_lease import instrument_test_lease
 
     stack = AsyncExitStack()
@@ -1778,6 +1773,25 @@ async def test_instrument_connection(
     # 会顶掉单会话仪表的既有连接并制造 BrokenPipe。只有 HAL 无该驱动时，
     # 才走下面的临时 TCP 探测路径。
     hal_driver = _get_loaded_hal_driver(category_key)
+
+    # 摘要行挪到**选定传输方式之后**才发（外审 P1）：
+    #   - 走已加载的驱动 → 按它自己的真假标，且文案说清是「复用现有会话」而不是
+    #     「新建 TCP 连接」—— 那条分支根本没有新建连接，原文案在说假话；
+    #   - 走裸 socket → 保持「来源不确定」。
+    # 原先摘要在查找驱动**之前**发，于是摘要标 unverified、同一次操作的往返记录标 real。
+    if hal_driver is not None:
+        scpi_logger = _unverified_scpi_logger(hal_driver)
+        scpi_logger.info(
+            f"[TEST-CONN] {category_key} → 复用已加载的 HAL 会话 "
+            f"({type(hal_driver).__name__})，未新建 TCP 连接",
+            extra={"instrument_id": category_key, "direction": "CONNECT"},
+        )
+    else:
+        scpi_logger.info(
+            f"[TEST-CONN] {category_key} → TCP connecting {ip}:{port} (protocol={protocol})",
+            extra={"instrument_id": category_key, "direction": "CONNECT"},
+        )
+
     if hal_driver is not None:
         try:
             result = await _run_command_via_hal(
