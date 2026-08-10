@@ -374,9 +374,24 @@ def finalize_execution_scpi_evidence(execution) -> ExecutionScpiEvidence:
         ):
             invalid_provenance.append(req.requirement_id)
 
+    raw_measurements = getattr(execution, "measurements", None)
+    measurements = raw_measurements if isinstance(raw_measurements, dict) else {}
+    phases = measurements.get("phases")
+    measure = phases.get("measure") if isinstance(phases, dict) else None
+    frequency_consistency = (
+        measure.get("frequency_consistency") if isinstance(measure, dict) else None
+    )
+    frequency_identity_unverified = (
+        isinstance(frequency_consistency, dict)
+        and frequency_consistency.get("fully_verified") is not True
+    )
+
     if rejected:
         evidence.formal_verdict = EvidenceVerdict.REJECTED
         evidence.reason = "mandatory_evidence_rejected:" + ",".join(rejected)
+    elif frequency_identity_unverified:
+        evidence.formal_verdict = EvidenceVerdict.UNKNOWN
+        evidence.reason = "frequency_identity_not_fully_verified"
     elif not evidence.required:
         evidence.formal_verdict = EvidenceVerdict.UNKNOWN
         evidence.reason = "no_mandatory_evidence_registered"

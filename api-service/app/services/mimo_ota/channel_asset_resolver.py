@@ -32,6 +32,20 @@ _SOURCE_TO_ENGINE = {
 }
 
 
+def engine_mode_for_channel_asset(asset: Any) -> str:
+    """Return the currently executable engine selected by an asset source.
+
+    Commissioning uses the same lookup before persisting a session so the
+    operator's requested engine cannot be silently replaced later in measure.
+    """
+    try:
+        return _SOURCE_TO_ENGINE[asset.source_type]
+    except KeyError as exc:
+        raise ChannelAssetResolveError(
+            f"未知 source_type: {asset.source_type!r}"
+        ) from exc
+
+
 @dataclass(frozen=True)
 class ResolvedChannelAsset:
     """解析结果: engine_mode 覆盖 + 翻译到现有 config/cdl_model_data 字段。"""
@@ -60,9 +74,7 @@ def resolve_channel_asset(db: Session, config: Any) -> Optional[ResolvedChannelA
         raise ChannelAssetResolveError(f"channel_asset_id={aid} 无效/不存在: {e}")
 
     st = asset.source_type
-    if st not in _SOURCE_TO_ENGINE:
-        raise ChannelAssetResolveError(f"未知 source_type: {st!r}")
-    engine = _SOURCE_TO_ENGINE[st]
+    engine = engine_mode_for_channel_asset(asset)
 
     if st == "custom_static":
         snapshots = (asset.payload or {}).get("snapshots") or [{}]

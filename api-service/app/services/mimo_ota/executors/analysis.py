@@ -47,14 +47,32 @@ class AnalysisExecutor(IStepExecutor):
                 error_message="No azimuth_results in measure phase output",
             )
 
-        if measure.get("measurement_verified") is False:
-            result: Dict[str, Any] = {
-                "verdict": "UNKNOWN",
-                "details": [
+        frequency_consistency = measure.get("frequency_consistency")
+        frequency_identity_unverified = (
+            isinstance(frequency_consistency, dict)
+            and frequency_consistency.get("fully_verified") is False
+        )
+        simulated_measurement = measure.get("measurement_verified") is False
+        if simulated_measurement or frequency_identity_unverified:
+            if simulated_measurement:
+                detail = (
                     "N/A: measurement contains simulated instrument provenance; "
                     "formal KPI analysis was not performed"
-                ],
-                "measurement_verified": False,
+                )
+                warning = "模拟测量不进入正式 KPI 判定，结论保持 UNKNOWN"
+                log_reason = "simulated measurement provenance"
+            else:
+                detail = (
+                    "N/A: F64 frequency identity is not fully verified; "
+                    "formal KPI analysis was not performed"
+                )
+                warning = "F64 频率身份未完整闭环，不进入正式 KPI 判定，结论保持 UNKNOWN"
+                log_reason = "frequency identity not fully verified"
+            result: Dict[str, Any] = {
+                "verdict": "UNKNOWN",
+                "details": [detail],
+                "measurement_verified": not simulated_measurement,
+                "frequency_identity_verified": not frequency_identity_unverified,
                 "avg_throughput_mbps": None,
                 "throughput_ratio": None,
                 "throughput_pass": None,
@@ -72,13 +90,14 @@ class AnalysisExecutor(IStepExecutor):
             context.test_execution.validation_details = result
             context.db.commit()
             logger.warning(
-                "[%s] Phase 4: UNKNOWN (simulated measurement provenance)",
+                "[%s] Phase 4: UNKNOWN (%s)",
                 context.test_execution.id,
+                log_reason,
             )
             return StepExecutionResult(
                 status=StepExecutionStatus.SUCCESS,
                 measurements=result,
-                warnings=["模拟测量不进入正式 KPI 判定，结论保持 UNKNOWN"],
+                warnings=[warning],
             )
 
         details: List[str] = []

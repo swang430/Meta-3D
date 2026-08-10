@@ -583,10 +583,54 @@ async def create_session(req: CreateSessionRequest, db: Session = Depends(get_db
             ChannelAssetNotFound,
             get_channel_asset,
         )
+        from app.services.mimo_ota.channel_asset_resolver import (
+            ChannelAssetResolveError,
+            engine_mode_for_channel_asset,
+        )
         try:
-            get_channel_asset(db, req.channel_asset_id)
+            asset = get_channel_asset(db, req.channel_asset_id)
         except ChannelAssetNotFound as err:
             raise HTTPException(status_code=422, detail=str(err)) from err
+        try:
+            resolved_engine = engine_mode_for_channel_asset(asset)
+        except ChannelAssetResolveError as err:
+            raise HTTPException(status_code=422, detail=str(err)) from err
+
+        # ChannelAsset resolver is authoritative and otherwise overwrites
+        # config.engine_mode at measure time. Reject the contradiction here,
+        # before the operator spends instrument time on earlier phases.
+        if resolved_engine != req.engine_mode:
+            required_target = {
+                "keysight_gcm": "gcm_native",
+                "mimo_first_asc": "asc_baked",
+                "b2_parametric_tdl": "b2_parametric",
+            }.get(req.engine_mode, "no_channel_asset_target")
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"engine_mode={req.engine_mode} requires ChannelAsset target "
+                    f"{required_target}; asset {asset.id} source_type={asset.source_type} "
+                    f"resolves to engine_mode={resolved_engine} "
+                    f"(allowed_targets={asset.allowed_targets})."
+                ),
+            )
+
+        # A vendor declaration without an associated .smu is useful metadata,
+        # but it is not an executable GCM cold-start source. The explicit
+        # lab-smoke downgrade remains the only exception.
+        if (
+            req.engine_mode == "keysight_gcm"
+            and req.precheck_strict_emulation_file is not False
+            and not str(asset.associated_file_path or "").strip().lower().endswith(".smu")
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"ChannelAsset {asset.id} is declared_only and has no usable "
+                    "associated .smu file; strict keysight_gcm commissioning "
+                    "cannot depend on the F64's previous model."
+                ),
+            )
     overrides = _request_overrides(req)
     try:
         test_case, descriptors = build_mimo_ota_test_case(
