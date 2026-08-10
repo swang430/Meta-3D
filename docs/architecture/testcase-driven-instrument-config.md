@@ -23,8 +23,10 @@
 - **ARFCN 是 3GPP TS 38.104 标准定义的整数** channel number, 精确 → **根本没有浮点
   "容差"问题**。容差恰恰是"用近似 MHz 而非标准 ARFCN"混出来的。
 - **中心频点** (不是起始/边缘频率), 带宽单独标识。
-- 系统里**所有仪表** (UXM cell / F64 .smu / SA center) 都归一到 `(中心 ARFCN, 带宽)`
-  再比对。
+- 能回读完整身份的仪表（如 UXM cell）归一到 `(中心 ARFCN, 带宽)` 再比对。
+- F64 运行时只用 `CALC:FILT:CENT:CH?` 证明中心频率；当前 `.smu` 带宽来自已登记
+  ChannelAsset/SCD 工程元数据。没有可信资产元数据时带宽保持 `unknown`，不得把
+  `SYST:INFO?` 的系统能力 100 MHz 冒充当前仿真带宽，完整闭环保持未验证。
 
 `frequency_mhz` 是给人看的**派生视图**, 不是真值。这同时是 P1-17 ARFCN bug 的根本解:
 那个 bug (profile 标称 `frequency_mhz=3600` 但实际下发 ARFCN→3489) 正是因为没拿

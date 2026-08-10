@@ -191,6 +191,39 @@ def test_fixed_summary_is_sanitized_and_persisted_on_same_execution(db):
     )
 
 
+def test_unverified_frequency_identity_blocks_formal_acceptance(db):
+    execution = _execution(db)
+    register_required_scpi_evidence(
+        execution,
+        requirement_id="uxm.pcell.arfcn",
+        evidence_key="uxm.config_readback",
+        requested=636666,
+    )
+    record_execution_scpi_evidence(
+        execution,
+        requirement_id="uxm.pcell.arfcn",
+        item=_item(),
+        environment=_environment(),
+        exchanges=_exchanges(execution),
+    )
+    execution.measurements = {
+        "phases": {
+            "measure": {
+                "frequency_consistency": {
+                    "fully_verified": False,
+                    "warnings": ["F64 bandwidth lacks a supported readback"],
+                }
+            }
+        }
+    }
+
+    summary = finalize_execution_scpi_evidence(execution)
+
+    assert summary.formal_acceptance is False
+    assert summary.formal_verdict is EvidenceVerdict.UNKNOWN
+    assert summary.reason == "frequency_identity_not_fully_verified"
+
+
 def test_simulated_exchanges_cannot_be_persisted_as_formal_evidence(db):
     execution = _execution(db)
     register_required_scpi_evidence(

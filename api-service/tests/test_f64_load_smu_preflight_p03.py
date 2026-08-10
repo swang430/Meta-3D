@@ -140,7 +140,7 @@ class TestLoadLocalScenario:
         assert drv._loaded_emulation_file == "D:\\old.smu"
         assert drv._readback_center_freq_mhz == 3550.0
         assert drv._emulation_running is False
-        assert drv.get_frequency_identity() is not None  # 报旧频率, 非 None
+        assert drv.get_center_frequency_mhz() == 3550.0  # 报旧中心频率, 非 None
 
     async def test_load_error_fails_clears_stale(self):
         """CLOSE 成功但 CALC:FILT:FILE 后 SYST:ERR? 有错 → fail-loud + 清 stale file。"""
@@ -171,7 +171,7 @@ class TestLoadLocalScenario:
         )
         assert await drv.load_local_scenario("D:\\A_3600M.smu") is True
         assert drv._readback_center_freq_mhz == 3550.0
-        assert drv.get_frequency_identity() is not None  # A 加载后有真频身份
+        assert drv.get_center_frequency_mhz() == 3550.0  # A 加载后有真中心频率
         assert await drv.load_local_scenario("D:\\B.smu") is False
         assert drv._readback_center_freq_mhz is None  # A 已确认卸载 + B 失败 → 清
         assert drv.get_frequency_identity() is None
@@ -196,9 +196,9 @@ class TestFrequencyIdentityReadback:
         drv, _ = _driver(state_seq=("STOPPED", "CLOSED"), center_freq="3550")
         assert await drv.load_local_scenario("D:\\UMa_3600M.smu") is True
         with patch.object(drv, "_parse_loaded_center_freq_mhz") as mock_parse:
-            ident = drv.get_frequency_identity()
+            center_mhz = drv.get_center_frequency_mhz()
             mock_parse.assert_not_called()  # 回读优先, 不落文件名解析
-        assert ident is not None
+        assert center_mhz == 3550.0
 
     def test_programmed_still_wins_over_readback(self):
         """显式下发过 (programmed) → 仍优先 programmed 频 (回读只在未下发时用)。"""
@@ -207,7 +207,7 @@ class TestFrequencyIdentityReadback:
         drv._center_freq_mhz = 3500.0
         drv._readback_center_freq_mhz = 3550.0
         with patch.object(drv, "_parse_loaded_center_freq_mhz") as mock_parse:
-            drv.get_frequency_identity()
+            drv.get_center_frequency_mhz()
             mock_parse.assert_not_called()
 
     def test_filename_fallback_when_no_readback(self):
@@ -217,7 +217,7 @@ class TestFrequencyIdentityReadback:
         drv._readback_center_freq_mhz = None
         drv._loaded_emulation_file = "D:\\UMa_3600M.smu"
         with patch.object(drv, "_parse_loaded_center_freq_mhz", return_value=3600.0) as mock_parse:
-            drv.get_frequency_identity()
+            drv.get_center_frequency_mhz()
             mock_parse.assert_called_once()
 
 
@@ -415,7 +415,7 @@ class TestIdentityResetNetFanout:
         # STOP 就超时 → CLOSE 未发 → 旧 GCM 仍加载 → identity 全保留
         assert drv._readback_center_freq_mhz == 3550.0
         assert drv._loaded_emulation_file == "D:\\old_gcm.smu"
-        assert drv.get_frequency_identity() is not None  # 报旧 GCM 频率, 非 None
+        assert drv.get_center_frequency_mhz() == 3550.0  # 报旧 GCM 中心频率
 
     async def test_gcm_helper_exception_after_close_clears_identity(self):
         """对照: 加载前 STOPPED (无 STOP), CLOSE 已发后 CALC:FILT:FILE 超时 → CLOSE 后
@@ -443,7 +443,7 @@ class TestIdentityResetNetFanout:
         assert drv._emulation_running is False
         assert drv._readback_center_freq_mhz == 3550.0
         assert drv._loaded_emulation_file == "D:\\old_gcm.smu"
-        assert drv.get_frequency_identity() is not None
+        assert drv.get_center_frequency_mhz() == 3550.0
 
     async def test_reset_opc_timeout_still_clears_identity(self):
         """Codex #223 复审 (clear-on-issue 非 on-confirm): *RST 写成功但 *OPC? 超时 →

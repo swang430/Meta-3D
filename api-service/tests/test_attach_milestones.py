@@ -194,3 +194,64 @@ class TestBypassAssistOrdering:
             "set_passthrough_mode 失败）没有全部 fail-loud"
         )
         assert "不静默降级" in block, "缺少'不静默降级'的显式声明"
+
+
+class TestColdStartRfInitializationOrdering:
+    """暗室首测必须由**本次 execution** 建好 F64 初始态再尝试 attach。
+
+    2026-08-07 的旧顺序先执行 ``start_signaling``，DUT attach 成功后才加载
+    ``.smu``。这会静默依赖 F64 上一轮残留的模型、中心频率和 STATIC 档位；
+    冷启动或换场景时不可重复。
+    """
+
+    def _src(self) -> str:
+        import inspect
+        from app.services.mimo_ota.executors import measure
+        return inspect.getsource(measure)
+
+    def test_model_frequency_and_workpoint_are_ready_before_attach(self):
+        """模型加载、频率门、输出与显式输入工作点均早于第一次 attach。"""
+        src = self._src()
+        signaling = src.index(
+            "signaling_started = await base_station.start_signaling()"
+        )
+
+        required_before_attach = {
+            "本次 F64 模型加载": "gen_ok = await generator.generate_and_load",
+            "多方频率一致性": "freq_result = check_frequency_consistency",
+            "F64 绝对输出电平": "await emulator.set_output_level_dbm",
+            "F64 显式输入参考": "await self._apply_manual_input_reference",
+        }
+        for label, token in required_before_attach.items():
+            assert src.index(token) < signaling, (
+                f"{label} 仍在 start_signaling 之后 —— attach 会继续依赖仪表遗留状态"
+            )
+
+    def test_passthrough_is_built_after_model_load_and_before_attach(self):
+        """加载 .smu 会清掉 STATIC；因此旁路只能在本次加载后建立一次。"""
+        src = self._src()
+        load = src.index("gen_ok = await generator.generate_and_load")
+        signaling = src.index(
+            "signaling_started = await base_station.start_signaling()"
+        )
+        between = src[load:signaling]
+
+        assert "await emulator.set_passthrough_mode(" in between, (
+            "本次模型加载后、attach 前没有建立 F64 旁路；冷启动仍不能 attach"
+        )
+        assert "await _assist_ce.set_passthrough_mode(" not in src[:load], (
+            "仍在模型加载前写旁路 —— 随后的 .smu 加载会把它清掉，属于无效动作"
+        )
+
+    def test_channel_initialization_failures_return_before_attach(self):
+        """模型/频率/工作点/旁路失败时，控制流必须在 attach 调用之前返回。"""
+        src = self._src()
+        load = src.index("gen_ok = await generator.generate_and_load")
+        signaling = src.index(
+            "signaling_started = await base_station.start_signaling()"
+        )
+        initialization = src[load:signaling]
+
+        assert initialization.count("StepExecutionStatus.FAILED") >= 8, (
+            "RF 初始化的 fail-loud 分支没有完整位于 start_signaling 之前"
+        )

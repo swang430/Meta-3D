@@ -540,120 +540,10 @@ class MeasureExecutor(IStepExecutor):
                         error_message=_blocker,
                     )
 
-            # --- 「扶一把」：attach **之前**先把 F64 置直通（外审 #304 P1）---
-            #
-            # ⚠ 这一段必须排在 `start_signaling()` **前面**。上一版把直通建立
-            #   放在 F64 段（本函数靠后 550 行处），而 `start_signaling()` 等
-            #   attach 失败就直接 return —— 于是这个开关**只在 DUT 已经自己
-            #   挂上之后才生效**，救不了它宣称要救的场景（"衰落打开时挂不上，
-            #   用直通扶一把让测试能开始"）。顺序反了，开关就是装饰。
-            #
-            # 只做"取驱动 + 设直通"这一个动作，不把整段 F64 逻辑提前：
-            # 加载 .smu 会把直通冲掉（2026-08-07 现场实证），所以后面那段
-            # 仍会在加载后重建直通 —— 两处都要，不是重复。
-            if config.f64_bypass_mode is not None:
-                _assist_ce = hal.drivers.get("channelEmulator")
-                if _assist_ce is None or not hasattr(
-                    _assist_ce, "set_passthrough_mode"
-                ):
-                    return StepExecutionResult(
-                        status=StepExecutionStatus.FAILED,
-                        error_message=(
-                            f"f64_bypass_mode={config.f64_bypass_mode} 要求 attach 前"
-                            "先建立直通，但 HAL 里没有可用的 channelEmulator "
-                            f"({type(_assist_ce).__name__ if _assist_ce else 'None'})。"
-                            "不静默降级成无直通 attach —— 那样这个开关等于没开。"
-                        ),
-                    )
-                if hasattr(_assist_ce, "stop_emulation"):
-                    if not await _assist_ce.stop_emulation():
-                        return StepExecutionResult(
-                            status=StepExecutionStatus.FAILED,
-                            error_message=(
-                                "attach 前建立直通失败：stop_emulation 返回 False"
-                                "（仿真可能仍在播放）。明细见驱动日志。"
-                            ),
-                        )
-                if not await _assist_ce.set_passthrough_mode(
-                    mode=config.f64_bypass_mode
-                ):
-                    return StepExecutionResult(
-                        status=StepExecutionStatus.FAILED,
-                        error_message=(
-                            f"attach 前建立直通失败 (f64_bypass_mode="
-                            f"{config.f64_bypass_mode}) — 明细见驱动日志。"
-                        ),
-                    )
-                # ⚠ 后半句必须跟着 `f64_fade_after_attach` 走：它为 False 时是
-                #   「纯直通吞吐测试」，全程不撤直通也不开衰落 —— 照抄"挂上后会撤掉"
-                #   会让现场看着日志等一件不会发生的事（Antigravity 异源审查 Finding 2）。
-                logger.info(
-                    "[%s] attach 前已置 F64 直通 mode=%s —— 用直通扶 DUT 挂上，%s",
-                    context.test_execution.id, config.f64_bypass_mode,
-                    "挂上后会撤掉直通再开衰落测量"
-                    if config.f64_fade_after_attach
-                    else "挂上后**保持直通**测量（f64_fade_after_attach=False，"
-                         "无衰落基线），全程不开衰落",
-                )
-
-            signaling_started = await base_station.start_signaling()
-            if uxm_config_capture_manager is not None:
-                uxm_config_capture_manager.__exit__(None, None, None)
-                uxm_config_capture_manager = None
-            if not uxm_inherit and hasattr(
-                base_station, "build_p0_5_config_evidence"
-            ):
-                try:
-                    record_uxm_config_capture(
-                        context.test_execution,
-                        requirement_id="uxm.pcell.config_applied",
-                        requested=cell_cfg.get("arfcn"),
-                        driver=base_station,
-                        exchanges=uxm_config_exchanges,
-                    )
-                    context.db.commit()
-                except Exception:  # noqa: BLE001 — 证据失败不得伪装业务失败原因
-                    logger.exception(
-                        "[%s] UXM P1-47C 证据归档失败；正式判定将保持 unknown",
-                        context.test_execution.id,
-                    )
-            if not signaling_started:
-                return StepExecutionResult(
-                    status=StepExecutionStatus.FAILED,
-                    error_message=(
-                        "UXM start_signaling 返回 False（CELL ON/UE Attach 未确认）；"
-                        "中止测量，防止读取上一轮缓存吞吐造成假绿。"
-                        + (
-                            # 有的 DUT 在衰落已经打开的情况下挂不上，用直通"扶一把"
-                            # 就能进来。这个开关默认关着，所以失败时**由系统提示**，
-                            # 不指望操作员记得它存在（2026-08-07 用户定的方向）。
-                            "\n💡 若这个 DUT 在衰落下反复挂不上：把 `f64_bypass_mode` "
-                            "设成 2（Butler 直通）可先用直通扶它挂上，挂上后自动撤掉"
-                            "直通再开衰落测量。撤掉之后还在不在，会记进 "
-                            "`attach_milestones.fading_attach`。"
-                            if config.f64_bypass_mode is None else
-                            "\n⚠ 本次已开直通扶持（f64_bypass_mode="
-                            f"{config.f64_bypass_mode}）仍未挂上 —— 说明问题不在"
-                            "「衰落太深挂不上」这一层，查 F64 输出电平与 DUT 侧。"
-                        )
-                    ),
-                )
-
-            # --- Phase 2e: RRC reconfig pushes new layer/modulation to attached UE.
-            # Some UXM firmware applies cell-config changes via RRC automatically;
-            # explicit reconfig is a no-op there but harmless. Old firmware needs it.
-            if hasattr(base_station, "reconfigure_rrc"):
-                rrc_ok = await base_station.reconfigure_rrc(
-                    mimo_layers=config.mimo_layers,
-                    modulation=config.modulation,
-                )
-                if not rrc_ok:
-                    logger.warning(
-                        "[%s] RRC reconfig returned False; UE may still be on prior layer/modulation",
-                        context.test_execution.id,
-                    )
-
-            # --- Resolve chamber from LabProfile, then run channel generation ---
+            # --- RF 冷启动初始化：第一次 attach 前准备本次信道与工作点 ---
+            # 2026-08-07 的旧顺序在这里先 start_signaling，attach 成功后才加载
+            # .smu；这会依赖 F64 上一轮遗留模型/频率/STATIC。以下整段完成后才
+            # 允许第一次 attach，任何失败都直接返回。
             chamber: ChamberConfiguration = lab.chamber_config
             if chamber is None:
                 return StepExecutionResult(
@@ -1010,6 +900,7 @@ class MeasureExecutor(IStepExecutor):
             # input level / RSRP / 吞吐都不可信, 所以放在 Phase 2b input level 之前。
             from app.hal.nr_arfcn import FrequencyIdentity
             from app.services.mimo_ota.frequency_consistency import (
+                CenterFrequencyObservation,
                 check_frequency_consistency,
             )
             # 资产声明频率统一兜底喂一致性网 (Codex 0ea6cca P2: standard_3gpp 走 ASC 路, GCM/B2
@@ -1057,18 +948,55 @@ class MeasureExecutor(IStepExecutor):
                     base_station.get_frequency_identity()
                     if hasattr(base_station, "get_frequency_identity") else None
                 )
+
+            # F64 的 ATE 运行时能回读中心频率，但手册没有当前 .smu 仿真带宽
+            # 的查询。绝不再把 SYST:INFO? 的系统能力 100 MHz 当场景带宽。
+            # 有 ChannelAsset/SCD 时，用其已登记带宽与 live 中心频组合；没有时
+            # 只核对中心频率，并在 payload 留 BW unknown，不能假装完整闭环。
+            f64_center_mhz = (
+                emulator.get_center_frequency_mhz()
+                if hasattr(emulator, "get_center_frequency_mhz") else None
+            )
+            if f64_center_mhz is not None and scd_freq_identity is not None:
+                f64_identity = FrequencyIdentity.from_center_freq_mhz(
+                    f64_center_mhz, scd_freq_identity.bandwidth_mhz
+                )
+                f64_bandwidth_source = "channel_asset_or_scd_declared"
+            elif f64_center_mhz is not None:
+                f64_identity = CenterFrequencyObservation.from_center_freq_mhz(
+                    f64_center_mhz,
+                    source="F64 CALC:FILT:CENT:CH?; no verified asset bandwidth",
+                )
+                f64_bandwidth_source = "unknown"
+            else:
+                f64_identity = None
+                f64_bandwidth_source = "unknown"
             freq_result = check_frequency_consistency(
                 FrequencyIdentity.from_center_freq_mhz(
                     pcell.frequency_hz / 1e6, pcell.bandwidth_mhz
                 ),
                 {
                     "UXM": uxm_identity,
-                    "F64": emulator.get_frequency_identity()
-                    if hasattr(emulator, "get_frequency_identity") else None,
+                    "F64": f64_identity,
                     # slice 4: SCD 声明 ARFCN 进一致性网 (scd_id 给了才非 None; None 时忽略)
                     "SCD": scd_freq_identity,
                 },
             )
+            frequency_consistency_payload = freq_result.to_payload()
+            frequency_consistency_payload["f64_center_readback_mhz"] = f64_center_mhz
+            frequency_consistency_payload["f64_bandwidth_source"] = f64_bandwidth_source
+            f64_frequency_fully_verified = (
+                f64_center_mhz is not None
+                and f64_bandwidth_source == "channel_asset_or_scd_declared"
+            )
+            if not f64_frequency_fully_verified:
+                frequency_consistency_payload["fully_verified"] = False
+                _unverified = list(
+                    frequency_consistency_payload.get("unverified") or []
+                )
+                if "F64" not in _unverified:
+                    _unverified.append("F64")
+                frequency_consistency_payload["unverified"] = _unverified
             if not freq_result.consistent:
                 if config.precheck_strict_frequency:
                     return StepExecutionResult(
@@ -1077,11 +1005,19 @@ class MeasureExecutor(IStepExecutor):
                             "P2-11 频率一致性校验失败: "
                             + (freq_result.failure_reason() or "")
                         ),
-                        measurements={"frequency_consistency": freq_result.to_payload()},
+                        measurements={
+                            "frequency_consistency": frequency_consistency_payload
+                        },
                     )
                 logger.warning(
                     "[%s] P2-11 频率不一致 (precheck_strict_frequency=False, 继续): %s",
                     context.test_execution.id, freq_result.failure_reason(),
+                )
+            elif not frequency_consistency_payload["fully_verified"]:
+                logger.warning(
+                    "[%s] F64 中心频率已回读，但当前场景带宽没有可信资产声明；"
+                    "频率中心一致，带宽保持 unknown，P0-5 不得据此判完整闭环。",
+                    context.test_execution.id,
                 )
 
             # --- 仪表参数 (开关 3 块 2): F64 输出增益, 显式给才写 ---
@@ -1139,7 +1075,33 @@ class MeasureExecutor(IStepExecutor):
                         ),
                     )
 
-            # --- P2-17 (Codex #201 R3 P1): 信道加载后显式启动仿真播放 ---
+            # --- RF 冷启动初始化：显式 F64 输入参考/crest ---
+            # 现场给定工作点时不需要 DUT 已 attach；模型已经加载，真实输入口也已
+            # 回读，因此在第一次 attach 前完成下发。未显式给定时仍保留 attach 后
+            # AUTOSET 闭环，因为 AUTOSET 必须有真实下行信号，不能在无信号态假失败。
+            input_level_payload = None
+            if config.f64_input_ref_dbm is not None:
+                input_level_payload = await self._apply_manual_input_reference(
+                    emulator=emulator,
+                    config=config,
+                    execution_id=context.test_execution.id,
+                )
+                if (
+                    not input_level_payload.get("skipped")
+                    and not input_level_payload.get("success")
+                    and config.precheck_strict_input_level
+                ):
+                    return StepExecutionResult(
+                        status=StepExecutionStatus.FAILED,
+                        measurements={"input_level_calibration": input_level_payload},
+                        error_message=(
+                            "F64 显式输入工作点初始化失败（发生在 DUT attach 前）: "
+                            f"{input_level_payload.get('failure_reason')}。"
+                            "不带着未知输入参考/crest 继续 attach。"
+                        ),
+                    )
+
+            # --- P2-17：本次模型加载后建立 attach 所需 F64 输出态 ---
             # 执行链原本无人调 start_emulation (现场靠脚本手动 GO) — attach 默认
             # 直通态落地后, 不启动 = 测量在 STOPPED+STATIC 3 下跑 (无衰落输出)。
             # start_emulation 内建 GO 前无条件 STATIC 0 恢复衰落 (P2-17 ①), 此
@@ -1206,8 +1168,12 @@ class MeasureExecutor(IStepExecutor):
                         ),
                     )
                 logger.info(
-                    "[%s] 直通态测量: STATIC %s 已建立 (无衰落基线, 不 GO)",
-                    context.test_execution.id, config.f64_bypass_mode,
+                    "[%s] attach 前已置 F64 直通 mode=%s（本次模型加载后建立）—— %s",
+                    context.test_execution.id,
+                    config.f64_bypass_mode,
+                    "DUT 挂上后撤掉直通并启动衰落"
+                    if config.f64_fade_after_attach
+                    else "本次为纯直通基线，全程不启动衰落",
                 )
             else:
                 register_required_scpi_evidence(
@@ -1243,6 +1209,63 @@ class MeasureExecutor(IStepExecutor):
                             "信道仿真启动失败 (start_emulation=False, 明细见仿真器"
                             "驱动日志) — 中止, 不在 STOPPED/直通态下测量。"
                         ),
+                    )
+
+            # --- 第一次 DUT attach：只有本次 RF 初始态全部成功后才允许进入 ---
+            # UXM 的 ARFCN/BW/功率已由上面的 set_cell_config 下发并回读；F64
+            # 模型、中心频率、显式工作点和 STATIC/GO 状态也均已建立。这里不再
+            # 能借用仪表上一次执行的遗留场景。
+            signaling_started = await base_station.start_signaling()
+            if uxm_config_capture_manager is not None:
+                uxm_config_capture_manager.__exit__(None, None, None)
+                uxm_config_capture_manager = None
+            if not uxm_inherit and hasattr(
+                base_station, "build_p0_5_config_evidence"
+            ):
+                try:
+                    record_uxm_config_capture(
+                        context.test_execution,
+                        requirement_id="uxm.pcell.config_applied",
+                        requested=cell_cfg.get("arfcn"),
+                        driver=base_station,
+                        exchanges=uxm_config_exchanges,
+                    )
+                    context.db.commit()
+                except Exception:  # noqa: BLE001 — 证据失败不得伪装业务失败原因
+                    logger.exception(
+                        "[%s] UXM P1-47C 证据归档失败；正式判定将保持 unknown",
+                        context.test_execution.id,
+                    )
+            if not signaling_started:
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    error_message=(
+                        "RF 初始化已完成，但 UXM start_signaling 返回 False"
+                        "（CELL ON/UE Attach 未确认）；中止测量，防止读取上一轮"
+                        "缓存吞吐造成假绿。"
+                        + (
+                            "\n💡 若这个 DUT 在衰落下反复挂不上：把 `f64_bypass_mode` "
+                            "设成 2（Butler 直通）可先用直通扶它挂上，挂上后自动撤掉"
+                            "直通再开衰落测量。撤掉之后还在不在，会记进 "
+                            "`attach_milestones.fading_attach`。"
+                            if config.f64_bypass_mode is None else
+                            "\n⚠ 本次已加载指定场景并建立直通扶持（f64_bypass_mode="
+                            f"{config.f64_bypass_mode}）仍未挂上 —— 说明问题不在"
+                            "「旧场景/未建直通」这一层，查 F64 输出电平、馈线与 DUT。"
+                        )
+                    ),
+                )
+
+            # --- Phase 2e: attach 后 RRC reconfig ---
+            if hasattr(base_station, "reconfigure_rrc"):
+                rrc_ok = await base_station.reconfigure_rrc(
+                    mimo_layers=config.mimo_layers,
+                    modulation=config.modulation,
+                )
+                if not rrc_ok:
+                    logger.warning(
+                        "[%s] RRC reconfig returned False; UE may still be on prior layer/modulation",
+                        context.test_execution.id,
                     )
 
             # === 2026-08-07 现场时序: 直通 attach → 开衰落 → 再确认 → 测吞吐 ===
@@ -1422,19 +1445,10 @@ class MeasureExecutor(IStepExecutor):
                         context.test_execution.id, cc_result.failure_reason(),
                     )
 
-            # --- P0-8 Step 2 Phase 2b: F64 输入操作点 (CE↔BS) ---
-            # 开关 3 块 2: f64_input_ref_dbm 显式给定 = **手动定标** — 直接
-            # set 输入参考 (+crest), 跳过 AUTOSET 闭环 (调试灵活应变: 现场
-            # 已知工作点时不折腾; 07-03 实证工作点 -15/crest12)。读回反馈
-            # (measure_input) 进 payload。未给定 = 现行为 AUTOSET 闭环。
-            # 设计依据: docs/architecture/f64-input-level-and-dynamic-range.md §4.
-            if config.f64_input_ref_dbm is not None:
-                input_level_payload = await self._apply_manual_input_reference(
-                    emulator=emulator,
-                    config=config,
-                    execution_id=context.test_execution.id,
-                )
-            else:
+            # --- P0-8 Step 2 Phase 2b: attach 后 AUTOSET（仅未显式给工作点）---
+            # 显式 f64_input_ref_dbm/crest 已在 RF 冷启动初始化中下发；这里不得
+            # 再写一次。未给定时才用已建立的真实下行信号跑 AUTOSET 闭环。
+            if config.f64_input_ref_dbm is None:
                 # capability 检测 (hasattr) 跟项目 pattern 一致 — 任一方缺接口
                 # (mock driver / 新 vendor 未实现) 自动跳, 不影响 mock dry-run。
                 input_level_payload = await self._run_input_level_closed_loop(
@@ -1443,6 +1457,7 @@ class MeasureExecutor(IStepExecutor):
                     config=config,
                     execution_id=context.test_execution.id,
                 )
+            assert input_level_payload is not None
             if (
                 not input_level_payload.get("skipped")
                 and not input_level_payload.get("success")
@@ -1830,7 +1845,7 @@ class MeasureExecutor(IStepExecutor):
                 "input_level_calibration": input_level_payload,
                 # P2-11 Phase 1: 多方频率一致性校验 (一致/opt-out 路径留 audit;
                 # strict-fail 路径早期 return 时已塞进 measurements)。
-                "frequency_consistency": freq_result.to_payload(),
+                "frequency_consistency": frequency_consistency_payload,
                 # 2026-08-07 现场三里程碑。⚠ throughput 这一格**从实际扫出来的
                 # 平均吞吐派生**, 不是"跑到这儿了就算成功" —— 全 0 吞吐照样会
                 # 走到这里(方位扫描不因 0 吞吐中止), 那种情况必须显示 False。
@@ -1899,6 +1914,15 @@ class MeasureExecutor(IStepExecutor):
                 0,
                 "⚠️ 路损未校准: 无 path-loss certificate, RSRP 基线未补偿 (兜底 0 dB) — "
                 "RSRP / 吞吐量为非校准值。运行 CAL-01 路损校准 (P0-3) 后重测。",
+            )
+        if not (
+            result_payload.get("frequency_consistency") or {}
+        ).get("fully_verified", False):
+            measure_warnings.insert(
+                0,
+                "⚠️ F64 频率身份未完整闭环：中心频率按仪表实时回读，"
+                "但当前场景带宽缺少已登记 ChannelAsset/SCD 声明或仍为 unknown。"
+                "本结果不能作为 P0-5 完整闭环证据。",
             )
 
         write_phase_result(context.test_execution, "measure", result_payload)

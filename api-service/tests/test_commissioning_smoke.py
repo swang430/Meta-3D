@@ -33,6 +33,7 @@ from app.models.chamber import (
 )
 from app.models.instrument import InstrumentCategory
 from app.models.lab_profile import LabProfile
+from app.models.channel_asset import ChannelAsset
 from app.models.test_plan import TestExecution
 
 
@@ -183,6 +184,63 @@ def hal_with_mocks(instrument_categories):
     yield hal
     hal.drivers.clear()
     hal.drivers.update(saved)
+
+
+def _channel_asset(db, *, source_type: str, allowed_targets: list[str],
+                   associated_file_path: str | None = None) -> ChannelAsset:
+    asset = ChannelAsset(
+        name=f"commissioning-{source_type}-{uuid.uuid4()}",
+        source_type=source_type,
+        allowed_targets=allowed_targets,
+        payload={"fixture": True},
+        associated_file_path=associated_file_path,
+        is_active=True,
+    )
+    db.add(asset)
+    db.commit()
+    db.refresh(asset)
+    return asset
+
+
+def test_gcm_session_rejects_asset_for_a_different_engine(lab, db):
+    asset = _channel_asset(
+        db,
+        source_type="standard_3gpp",
+        allowed_targets=["asc_baked"],
+    )
+
+    response = client.post(
+        "/api/v1/commissioning/sessions",
+        json={
+            "lab_profile_id": str(lab.id),
+            "engine_mode": "keysight_gcm",
+            "channel_asset_id": str(asset.id),
+        },
+    )
+
+    assert response.status_code == 422
+    assert "gcm_native" in response.text
+
+
+def test_strict_gcm_session_rejects_declared_only_asset_without_smu(lab, db):
+    asset = _channel_asset(
+        db,
+        source_type="vendor_file",
+        allowed_targets=["gcm_native"],
+        associated_file_path=None,
+    )
+
+    response = client.post(
+        "/api/v1/commissioning/sessions",
+        json={
+            "lab_profile_id": str(lab.id),
+            "engine_mode": "keysight_gcm",
+            "channel_asset_id": str(asset.id),
+        },
+    )
+
+    assert response.status_code == 422
+    assert ".smu" in response.text
 
 
 # ============================================================================
@@ -409,3 +467,41 @@ class TestFivePhaseCommissioningSmoke:
                 f"analysis output missing '{key}' — "
                 f"AnalysisExecutor regressed or measure changed contract"
             )
+
+    def test_analysis_stays_unknown_when_frequency_identity_is_unverified(
+        self, lab, db
+    ):
+        session_id = self._create_fast_session(lab, db, azimuths=(0.0,))
+        execution = (
+            db.query(TestExecution)
+            .filter(TestExecution.id == uuid.UUID(session_id))
+            .one()
+        )
+        execution.measurements = {
+            "phases": {
+                "precheck": {"quiet_zone_pass": True},
+                "measure": {
+                    "measurement_verified": True,
+                    "frequency_consistency": {
+                        "fully_verified": False,
+                        "warnings": ["F64 bandwidth lacks a supported readback"],
+                    },
+                    "azimuth_results": [
+                        {
+                            "azimuth_deg": 0.0,
+                            "throughput_mbps": 1000.0,
+                            "rsrp_dbm": -80.0,
+                            "sinr_db": 30.0,
+                            "rank_indicator": 2.0,
+                        }
+                    ],
+                },
+            }
+        }
+        db.commit()
+
+        body = self._run_phase(session_id, "analysis")
+        assert body["status"] == "success"
+        assert body["result"]["verdict"] == "UNKNOWN"
+        db.refresh(execution)
+        assert execution.validation_pass is None

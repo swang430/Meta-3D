@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy.orm import Session
 
 from app.core.logging_config import current_execution_id
@@ -298,6 +298,25 @@ class CreateSessionRequest(BaseModel):
     # attach 超时的错误消息会主动提示这个开关，不需要谁记住它。
     f64_bypass_mode: Optional[int] = None
 
+    @model_validator(mode="after")
+    def require_current_gcm_model_source(self) -> "CreateSessionRequest":
+        """正式 GCM 会话必须声明本次要加载的模型来源。
+
+        ``precheck_strict_emulation_file=False`` 是既有 lab-smoke 明确降级，
+        仍允许 mock/诊断空跑；默认严格路径不得依赖 F64 上一轮遗留 ``.smu``。
+        """
+        if (
+            self.engine_mode == "keysight_gcm"
+            and self.precheck_strict_emulation_file is not False
+            and self.channel_asset_id is None
+            and not (self.emulation_file or "").strip()
+        ):
+            raise ValueError(
+                "engine_mode=keysight_gcm 的正式暗室首测必须提供 "
+                "channel_asset_id 或 emulation_file；不能依赖 F64 遗留场景。"
+            )
+        return self
+
 
 class SessionResponse(BaseModel):
     session_id: str
@@ -564,10 +583,54 @@ async def create_session(req: CreateSessionRequest, db: Session = Depends(get_db
             ChannelAssetNotFound,
             get_channel_asset,
         )
+        from app.services.mimo_ota.channel_asset_resolver import (
+            ChannelAssetResolveError,
+            engine_mode_for_channel_asset,
+        )
         try:
-            get_channel_asset(db, req.channel_asset_id)
+            asset = get_channel_asset(db, req.channel_asset_id)
         except ChannelAssetNotFound as err:
             raise HTTPException(status_code=422, detail=str(err)) from err
+        try:
+            resolved_engine = engine_mode_for_channel_asset(asset)
+        except ChannelAssetResolveError as err:
+            raise HTTPException(status_code=422, detail=str(err)) from err
+
+        # ChannelAsset resolver is authoritative and otherwise overwrites
+        # config.engine_mode at measure time. Reject the contradiction here,
+        # before the operator spends instrument time on earlier phases.
+        if resolved_engine != req.engine_mode:
+            required_target = {
+                "keysight_gcm": "gcm_native",
+                "mimo_first_asc": "asc_baked",
+                "b2_parametric_tdl": "b2_parametric",
+            }.get(req.engine_mode, "no_channel_asset_target")
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"engine_mode={req.engine_mode} requires ChannelAsset target "
+                    f"{required_target}; asset {asset.id} source_type={asset.source_type} "
+                    f"resolves to engine_mode={resolved_engine} "
+                    f"(allowed_targets={asset.allowed_targets})."
+                ),
+            )
+
+        # A vendor declaration without an associated .smu is useful metadata,
+        # but it is not an executable GCM cold-start source. The explicit
+        # lab-smoke downgrade remains the only exception.
+        if (
+            req.engine_mode == "keysight_gcm"
+            and req.precheck_strict_emulation_file is not False
+            and not str(asset.associated_file_path or "").strip().lower().endswith(".smu")
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"ChannelAsset {asset.id} is declared_only and has no usable "
+                    "associated .smu file; strict keysight_gcm commissioning "
+                    "cannot depend on the F64's previous model."
+                ),
+            )
     overrides = _request_overrides(req)
     try:
         test_case, descriptors = build_mimo_ota_test_case(

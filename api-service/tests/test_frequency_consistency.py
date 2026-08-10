@@ -10,7 +10,10 @@ from __future__ import annotations
 from app.hal.nr_arfcn import FrequencyIdentity, freq_mhz_to_nr_arfcn
 from app.hal.propsim_f64 import RealPropsimF64Driver
 from app.hal.uxm_base_station import RealUxmDriver
-from app.services.mimo_ota.frequency_consistency import check_frequency_consistency
+from app.services.mimo_ota.frequency_consistency import (
+    CenterFrequencyObservation,
+    check_frequency_consistency,
+)
 
 
 def _fi(freq_mhz, bw=100.0):
@@ -52,6 +55,22 @@ class TestConsistencyLogic:
         r = check_frequency_consistency(_fi(3600, 100.0), {"UXM": _fi(3600, 40.0)})
         assert not r.consistent
 
+    def test_center_only_observation_checks_center_without_inventing_bandwidth(self):
+        center = CenterFrequencyObservation.from_center_freq_mhz(
+            3600.0, source="F64 CALC:FILT:CENT:CH?"
+        )
+        r = check_frequency_consistency(_fi(3600, 40.0), {"F64": center})
+        assert r.consistent
+        assert not r.fully_verified
+        assert r.unverified == ["F64"]
+        assert "BW unknown" in r.per_instrument["F64"]
+
+        mismatch = check_frequency_consistency(
+            _fi(3550, 40.0), {"F64": center}
+        )
+        assert not mismatch.consistent
+        assert mismatch.mismatches[0].instrument == "F64"
+
     def test_multiple_mismatches(self):
         r = check_frequency_consistency(_fi(3600), {"UXM": _fi(3500), "F64": _fi(3700)})
         assert not r.consistent
@@ -84,14 +103,19 @@ class TestUxmFrequencyIdentity:
 
 
 class TestF64FrequencyIdentity:
-    def test_parses_3600m_smu(self):
+    def test_reports_center_but_not_a_fabricated_bandwidth(self):
+        """F64 运行时只能证明中心频率；系统能力 100 MHz 不是当前 .smu 带宽。"""
         drv = RealPropsimF64Driver("test", {})
         drv._loaded_emulation_file = (
             r"D:\Scenario Packs\...\3GPP_FR1_OTA_CDLC_UMa_3600M.smu"
         )
-        fi = drv.get_frequency_identity()
+        assert drv.get_center_frequency_mhz() == 3600.0
+        assert drv.get_frequency_identity() is None
+
+        fi = drv.get_frequency_identity(declared_bandwidth_mhz=40.0)
         assert fi is not None
         assert fi.center_arfcn == 640000   # 3600 MHz
+        assert fi.bandwidth_mhz == 40.0
 
     def test_none_when_no_file_loaded(self):
         drv = RealPropsimF64Driver("test", {})
@@ -113,9 +137,10 @@ class TestF64FrequencyIdentity:
         )
         drv._center_freq_mhz = 3500.0
         drv._center_freq_programmed = True
-        fi = drv.get_frequency_identity()
-        assert fi == FrequencyIdentity.from_center_freq_mhz(3500.0, 100.0)
-        assert fi != FrequencyIdentity.from_center_freq_mhz(3600.0, 100.0)  # 非文件名
+        assert drv.get_center_frequency_mhz() == 3500.0
+        fi = drv.get_frequency_identity(declared_bandwidth_mhz=40.0)
+        assert fi == FrequencyIdentity.from_center_freq_mhz(3500.0, 40.0)
+        assert fi != FrequencyIdentity.from_center_freq_mhz(3600.0, 40.0)  # 非文件名
 
     async def test_configure_marks_programmed_and_reports_it(self):
         # configure(center_frequency_mhz=...) 显式下发 → 标记 programmed → 自报该频率,
@@ -127,8 +152,10 @@ class TestF64FrequencyIdentity:
         assert drv._center_freq_programmed is False  # 默认未下发
         await drv.configure({"center_frequency_mhz": 3500.0})
         assert drv._center_freq_programmed is True
-        assert drv.get_frequency_identity() == FrequencyIdentity.from_center_freq_mhz(
-            3500.0, 100.0
+        assert drv.get_frequency_identity(
+            declared_bandwidth_mhz=40.0
+        ) == FrequencyIdentity.from_center_freq_mhz(
+            3500.0, 40.0
         )
 
 
