@@ -81,12 +81,26 @@ class ContextFilter(logging.Filter):
         #   不顺手改（改了也观察不到差别）。
         if not hasattr(record, "instrument_id"):
             record.instrument_id = current_instrument_id.get("-")  # type: ignore[attr-defined]
-        # 注入当前 HAL 全局模式 (mock/real)
-        try:
-            from app.services.instrument_hal_service import get_hal_service
-            record.hal_mode = get_hal_service().mode.value  # type: ignore[attr-defined]
-        except Exception:
-            record.hal_mode = "-"  # type: ignore[attr-defined]
+        # 这条记录是真是假（P1-48）。取值顺序：
+        #   ① 这条记录自己带的 driver_source —— 驱动基类的四个 SCPI 日志 helper
+        #      逐行都带它，是**这台仪表**的事实；
+        #   ② 取不到才回落到全局 HAL 模式 —— 那只是"这个进程当前的总开关"，
+        #      跟这一行说的是哪台仪表无关；
+        #   ③ 都没有就写 "-"。
+        # ⚠️ 回落时**不再用 get_hal_service()** —— 它发现单例为空会当场造一个
+        #    DriverMode.MOCK 顶上**并写回全局变量**，于是「进程还没初始化 HAL」
+        #    会被打成 mock，跟「真在跑 mock」分不开（实测每次热重载头 26 行都被误标）。
+        #    改成只读已有的单例，没有就写 "-"，绝不制造副作用。
+        _src = getattr(record, "driver_source", None)
+        if _src in ("real", "mock", "unverified"):
+            record.hal_mode = _src  # type: ignore[attr-defined]
+        else:
+            try:
+                from app.services import instrument_hal_service as _hal_mod
+                _svc = getattr(_hal_mod, "_hal_service", None)
+                record.hal_mode = _svc.mode.value if _svc is not None else "-"  # type: ignore[attr-defined]
+            except Exception:
+                record.hal_mode = "-"  # type: ignore[attr-defined]
         return True
 
 

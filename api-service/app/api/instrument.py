@@ -330,6 +330,48 @@ class ChannelModelsListResult(BaseModel):
     reason: Optional[str] = None  # "driver_not_loaded" | "not_a_channel_emulator" | None
 
 
+class _UnverifiedScpiAdapter(logging.LoggerAdapter):
+    """给手敲 SCPI / 连通性探测那几条路的日志自动打上「来源不确定」。
+
+    为什么是 unverified 而不是 real（P1-48）：这几条路绕开正规驱动，
+    直接 socket 连数据库里配的地址 —— 地址可能指向仪器模拟器、代理、
+    或者接错的设备，**连上了不等于对面是真仪器**。标 real 会把
+    「连上了某个端口」说成「真仪器回的数」，界面上还会亮成绿色。
+
+    用 Adapter 而不是逐个日志点加 extra：那条路有十几个日志点，
+    逐个加会漏，**新开的点也自动带上**。
+    """
+
+    def __init__(self, logger, driver=None):
+        super().__init__(logger, {})
+        # 走已加载的 HAL 驱动时，来源是**已知的**（`_get_loaded_hal_driver` 只返回
+        # 真驱动，Mock 会被它跳过）—— 这时必须按驱动自己的真假标，
+        # 否则真仪器的往返会被盖成「来源不确定」，那是反方向的同一个毛病（外审指出）。
+        self._driver = driver
+
+    def process(self, msg, kwargs):
+        extra = dict(kwargs.get("extra") or {})
+        if self._driver is not None:
+            from app.services.instrument_hal_service import is_mock_driver
+            src = "mock" if is_mock_driver(self._driver) else "real"
+            extra.setdefault("driver_source", src)
+            extra.setdefault("simulated", src == "mock")
+        else:
+            extra.setdefault("driver_source", "unverified")
+            extra.setdefault("simulated", None)
+        kwargs["extra"] = extra
+        return msg, kwargs
+
+
+def _unverified_scpi_logger(driver=None) -> logging.LoggerAdapter:
+    """拿 SCPI 日志器。
+
+    ``driver`` 为 None（裸 socket 直连配置地址）→ 标「来源不确定」；
+    传了 driver（走已加载的 HAL 驱动）→ 按驱动自己的真假标。
+    """
+    return _UnverifiedScpiAdapter(logging.getLogger("app.hal.scpi"), driver)
+
+
 @router.post(
     "/instruments/hal/reload",
     response_model=HalReloadResult,
@@ -1685,7 +1727,7 @@ async def test_instrument_connection(
     from contextlib import AsyncExitStack
 
     # 使用 SCPI 命名空间的 logger，确保记录到 scpi.log
-    scpi_logger = logging.getLogger("app.hal.scpi")
+    scpi_logger = _unverified_scpi_logger()
 
     category = db.query(InstrumentCategoryModel).filter(
         InstrumentCategoryModel.category_key == category_key
@@ -1717,11 +1759,6 @@ async def test_instrument_connection(
             message=f"IP 地址格式无效: '{ip}'。请输入有效的 IPv4 地址（如 192.168.0.132）或 VISA 资源字符串（如 TCPIP0::192.168.0.132::inst0::INSTR）",
         )
 
-    scpi_logger.info(
-        f"[TEST-CONN] {category_key} → TCP connecting {ip}:{port} (protocol={protocol})",
-        extra={"instrument_id": category_key, "direction": "CONNECT"},
-    )
-
     from app.services.instrument_test_lease import instrument_test_lease
 
     stack = AsyncExitStack()
@@ -1736,6 +1773,25 @@ async def test_instrument_connection(
     # 会顶掉单会话仪表的既有连接并制造 BrokenPipe。只有 HAL 无该驱动时，
     # 才走下面的临时 TCP 探测路径。
     hal_driver = _get_loaded_hal_driver(category_key)
+
+    # 摘要行挪到**选定传输方式之后**才发（外审 P1）：
+    #   - 走已加载的驱动 → 按它自己的真假标，且文案说清是「复用现有会话」而不是
+    #     「新建 TCP 连接」—— 那条分支根本没有新建连接，原文案在说假话；
+    #   - 走裸 socket → 保持「来源不确定」。
+    # 原先摘要在查找驱动**之前**发，于是摘要标 unverified、同一次操作的往返记录标 real。
+    if hal_driver is not None:
+        scpi_logger = _unverified_scpi_logger(hal_driver)
+        scpi_logger.info(
+            f"[TEST-CONN] {category_key} → 复用已加载的 HAL 会话 "
+            f"({type(hal_driver).__name__})，未新建 TCP 连接",
+            extra={"instrument_id": category_key, "direction": "CONNECT"},
+        )
+    else:
+        scpi_logger.info(
+            f"[TEST-CONN] {category_key} → TCP connecting {ip}:{port} (protocol={protocol})",
+            extra={"instrument_id": category_key, "direction": "CONNECT"},
+        )
+
     if hal_driver is not None:
         try:
             result = await _run_command_via_hal(
@@ -1937,6 +1993,9 @@ async def _run_command_via_hal(
     category_key: str,
     timeout_ms: Optional[int] = None,
 ) -> ScpiCommandResult:
+    # 传输方式已经定了：走的是这个已加载的驱动，来源就是**已知的** ——
+    # 改用按它派生的日志器，别让调用方传进来的「来源不确定」把真往返标错（外审 P1）。
+    scpi_logger = _unverified_scpi_logger(driver)
     """Execute one SCPI command through the loaded HAL driver's primitives.
 
     Reuses the live VISA session the driver already holds — critical for
@@ -2275,7 +2334,7 @@ async def send_scpi_command(
     import socket
     import time
 
-    scpi_logger = logging.getLogger("app.hal.scpi")
+    scpi_logger = _unverified_scpi_logger()
 
     category = db.query(InstrumentCategoryModel).filter(
         InstrumentCategoryModel.category_key == category_key
@@ -2393,7 +2452,7 @@ async def probe_scpi_commands(
     import socket
     import time
 
-    scpi_logger = logging.getLogger("app.hal.scpi")
+    scpi_logger = _unverified_scpi_logger()
 
     category = db.query(InstrumentCategoryModel).filter(
         InstrumentCategoryModel.category_key == category_key
@@ -2427,6 +2486,9 @@ async def probe_scpi_commands(
         # the lease so reload cannot swap it before the first command.
         hal_driver = _get_loaded_hal_driver(category_key)
         if hal_driver is not None:
+            # 传输方式已定：走这个已加载的驱动 → 摘要行也要按它的真假标。
+            # 否则会出现「摘要标 unverified、同一次探测的命令记录标 real」自相矛盾（外审 P1）。
+            scpi_logger = _unverified_scpi_logger(hal_driver)
             scpi_logger.info(
                 f"[SCPI-PROBE] {category_key} → Running {len(COMMON_SCPI_COMMANDS)} "
                 f"diagnostic commands via live HAL driver ({type(hal_driver).__name__})",
