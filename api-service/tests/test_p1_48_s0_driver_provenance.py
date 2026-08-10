@@ -38,11 +38,19 @@ def _scan_hal_driver_classes() -> set[type]:
     #   门的 docstring 声称的域是"app.hal 里所有 Mock* 驱动类"，用 iter_modules
     #   就等于 docstring 本身是假陈述。
     modules = [app.hal]
+    unimportable: list[str] = []
     for mod_info in pkgutil.walk_packages(app.hal.__path__, prefix="app.hal."):
         try:
             modules.append(importlib.import_module(mod_info.name))
-        except Exception:  # noqa: BLE001 - 某个可选驱动缺依赖不该让整道门瞎掉
-            continue
+        except Exception as exc:  # noqa: BLE001
+            # ⚠️ 绝不静默 continue（外审 P2）：某个 HAL 模块在 CI 缺可选依赖而在生产
+            #   能加载时，静默跳过会让整个模块脱离扫描 —— 门在 CI 绿着，生产里却漏着
+            #   一个继承了 real/False 的 mock。**扫不全就不是一次成功的门。**
+            unimportable.append(f"{mod_info.name}: {type(exc).__name__}: {exc}")
+    assert not unimportable, (
+        "以下 app.hal 模块无法导入，本门的扫描域不完整，结果不可信：\n  "
+        + "\n  ".join(unimportable)
+    )
 
     found: set[type] = set()
     for module in modules:
@@ -103,6 +111,82 @@ def test_g19_every_real_driver_declares_itself_real(cls):
     )
     assert cls.simulated is False, (
         f"{cls.__name__} 的 simulated 是 {cls.simulated!r}，应为 False"
+    )
+
+
+def _mock_fallback_class_names() -> set[str]:
+    """从 `_initialize_from_db` 的源码里 AST 提取 `MOCK_FALLBACK` 的值集（类名）。
+
+    ⚠️ **为什么读它**（外审 P1 指正）：`MOCK_FALLBACK` 是**驱动装载时真正查的那张表**
+    （`_MOCK_DRIVER_CLASSES` 的注释自己写着 "the method-local one used at driver-load time"），
+    而 `_MOCK_DRIVER_CLASSES` 只是给外部调用方问"这是不是真驱动"用的副本。
+    两者必须恒等 —— 否则 HAL 会装上一个 `is_mock_driver()` 判成真机的 mock。
+
+    ⚠️ **为什么用 AST 而不是把它提级成模块级常量**：提级要改生产代码，属"加机制"；
+    本门只需读那张表的内容，AST 解析是"换源"，不动生产代码。
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from app.services.instrument_hal_service import InstrumentHALService
+
+    src = textwrap.dedent(inspect.getsource(InstrumentHALService._initialize_from_db))
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        targets = []
+        if isinstance(node, ast.AnnAssign) and node.target is not None:
+            targets = [node.target]
+        elif isinstance(node, ast.Assign):
+            targets = node.targets
+        for t in targets:
+            if isinstance(t, ast.Name) and t.id == "MOCK_FALLBACK":
+                value = node.value
+                assert isinstance(value, ast.Dict), (
+                    "MOCK_FALLBACK 不再是字典字面量，本门的 AST 解析已失效 —— "
+                    "不要放宽这条断言，去改解析方式"
+                )
+                names = set()
+                for v in value.values:
+                    assert isinstance(v, ast.Name), (
+                        f"MOCK_FALLBACK 的值出现了非简单名字的表达式 "
+                        f"({ast.dump(v)[:80]})，本门解析不了，请更新解析方式"
+                    )
+                    names.add(v.id)
+                return names
+    raise AssertionError(
+        "在 _initialize_from_db 里找不到 MOCK_FALLBACK —— 它被改名或挪走了？"
+        "本门依赖它做真值源，请更新本门而不是删掉这条断言"
+    )
+
+
+def test_g19_mock_fallback_matches_authoritative_table():
+    """④ 运行时真正装载用的 MOCK_FALLBACK，其值集必须等于权威白名单。
+
+    这一条守的是外审 P1 指出的洞：门③ 按"类名 + 包位置"推断谁是 mock，
+    而**真正生效的那一端**是 `MOCK_FALLBACK`。一个 `SimulatedVNA`、或从别的包
+    import 进来的 `MockVendorVNA`，接进 `MOCK_FALLBACK` 却漏进 `_MOCK_DRIVER_CLASSES`，
+    门③ 看不见 —— 而运行时 HAL 会装上它，`is_mock_driver()` 判成真机，
+    它造的数就穿过了所有按真假判定的门。
+
+    让它红的变异：
+      - 往 `MOCK_FALLBACK` 加一项而不加进 `_MOCK_DRIVER_CLASSES` → 红；
+      - 从 `MOCK_FALLBACK` 删一项（权威表仍有）→ 红。
+    """
+    fallback_names = _mock_fallback_class_names()
+    declared_names = {c.__name__ for c in _MOCK_DRIVER_CLASSES}
+
+    only_in_fallback = fallback_names - declared_names
+    only_in_table = declared_names - fallback_names
+
+    assert not only_in_fallback, (
+        f"这些类在驱动装载时会被当 mock 装上，却不在 _MOCK_DRIVER_CLASSES 里："
+        f"{sorted(only_in_fallback)} —— is_mock_driver() 会把它们判成真机，"
+        f"它们造的数会穿过所有按真假判定的门"
+    )
+    assert not only_in_table, (
+        f"这些类在权威表里，却不在装载时的 MOCK_FALLBACK 里：{sorted(only_in_table)} —— "
+        f"两张表已经分叉，改一处漏一处"
     )
 
 
