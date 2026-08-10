@@ -226,20 +226,26 @@ class DriverMode(str, Enum):
     MOCK_FORCE = "mock_force"  # Hard mock; overrides per-instrument 'real' too (no hardware traffic)
 
 
-# Mock-fallback driver classes, by category. Keep in sync with the
-# ``MOCK_FALLBACK`` mapping inside ``InstrumentHALService`` (the method-local
-# one used at driver-load time). Exposed module-level so callers outside the
-# service (e.g. commissioning session-create) can ask "is this a real driver?"
-# without re-deriving the set. See ``is_mock_driver``.
-_MOCK_DRIVER_CLASSES: tuple = (
-    MockChannelEmulator,
-    MockBaseStation,
-    MockSignalAnalyzer,
-    MockSignalGenerator,
-    MockVNA,
-    MockPositioner,
-    MockRfSwitch,
-)
+# 类目 → mock 驱动类。**这是唯一一份**，装载时按它选类、``is_mock_driver`` 按它判真假。
+#
+# ⚠️ 2026-08-10 P1-48 S0：这里原来有两份 —— 模块级一份手写的 ``_MOCK_DRIVER_CLASSES``，
+#    方法 ``_initialize_from_db`` 里另一份 ``MOCK_FALLBACK``，靠一句注释"keep in sync"
+#    维持一致；另有第三处 ``isinstance(driver, tuple(MOCK_FALLBACK.values()))`` 在就地
+#    重新推导同一件事。外审连续三轮攻破为此写的守门测试（它只能靠解析源码猜有没有人
+#    改过那份局部表，而写法枚举不完）。**合成一份之后，"两份分叉"这件事不复存在。**
+_MOCK_FALLBACK_BY_CATEGORY: Dict[str, type] = {
+    "channelEmulator": MockChannelEmulator,
+    "baseStation": MockBaseStation,
+    "signalAnalyzer": MockSignalAnalyzer,
+    "vectorSignalGenerator": MockSignalGenerator,
+    "vna": MockVNA,
+    "positioner": MockPositioner,
+    "rfSwitch": MockRfSwitch,
+}
+
+# 从上表派生，不再手写 —— 供 service 之外的调用方（如 commissioning 建会话）
+# 问"这是不是真驱动"。见 ``is_mock_driver``。
+_MOCK_DRIVER_CLASSES: tuple = tuple(_MOCK_FALLBACK_BY_CATEGORY.values())
 
 
 def is_mock_driver(driver) -> bool:
@@ -476,16 +482,9 @@ class InstrumentHALService:
         # of truth (P2-3). See ``_real_driver_registry`` at module level.
         REAL_DRIVER_REGISTRY = _real_driver_registry()
 
-        # Mock fallback registry (same category → mock driver class mapping)
-        MOCK_FALLBACK: Dict[str, type] = {
-            "channelEmulator": MockChannelEmulator,
-            "baseStation": MockBaseStation,
-            "signalAnalyzer": MockSignalAnalyzer,
-            "vectorSignalGenerator": MockSignalGenerator,
-            "vna": MockVNA,
-            "positioner": MockPositioner,
-            "rfSwitch": MockRfSwitch,
-        }
+        # 类目 → mock 驱动类：用模块级那份唯一的表（原先这里另有一份局部副本，
+        # 靠注释"keep in sync"维持一致，已于 2026-08-10 合并）
+        MOCK_FALLBACK = _MOCK_FALLBACK_BY_CATEGORY
 
         from app.services.readiness import (
             DriverReadinessRow,
@@ -641,7 +640,7 @@ class InstrumentHALService:
                 host_reachable: Optional[bool] = None
                 target = (
                     None
-                    if isinstance(driver, tuple(MOCK_FALLBACK.values()))
+                    if is_mock_driver(driver)
                     else preflight_target(conn)
                 )
                 if target is not None:
