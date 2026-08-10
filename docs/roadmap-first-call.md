@@ -16,9 +16,23 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
-**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → **P1-29** → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1）。
+**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → **P1-48** → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1）。
 
-**Current Focus = 现场分支收口（`codex/uxm-driver-completion`），完成后回 P1-29**。
+**Current Focus = P1-48**（2026-08-09 用户拍板插在 P1-29 之前，兼作 Gemini 外审首测对象）。
+
+> **2026-08-07/08 现场插队批次已收口**：PR #303（日志四片）+ #304（现场驱动阻塞 + 内审收口）
+> 均已 merge 进 main（`1430a6e` / `7e4f602`）。**现场半仍 blocked** —— 三个 attach 里程碑
+> 零现场实证、四条新待验（NEW-1..4）载体全部待建，见「Blocked on hardware」表。
+>
+> ⚠ **两个 PR 的尾部 commit 都没过外审**（Codex 额度耗尽 + 「push 新 commit 不触发 Codex」
+> 这个已知陷阱）：#303 的 `af51abb`（代码）/ `df33191`（文档）、#304 的 `9f29419` / `a7819ff`
+> （均为代码）。2026-08-09 已接入 Gemini Code Assist 补审，`/gemini review` 已在 #303 触发。
+>
+> ⚠ **`add-new-features` 分支尚未处理**（乾径科技，49 文件 +16167，无 PR）——
+> 内容是 2026-06 积压的 FS16/UXM 功能线，跟 8/7 现场无关，按用户 2026-08-08 判断「放在最后」。
+> 它与已 merge 的现场分支有 **3 处硬冲突**，最要紧的是 `send_scpi_command` 里它新增的
+> `manual_local` 闸门 vs 现场分支的 `instrument_test_lease` 租约 —— 两套控制权语义抢同一位置，
+> 且那道闸门对**所有**仪器类别泛化生效。**合并前必须先裁决哪套语义算数，不能靠解冲突糊过去。**
 
 > **2026-08-07/08 现场插队**（用户当日拍板）：CAICT 现场暴露的驱动阻塞 + 其内审收口。
 > 这批 out-of-roadmap，19 个 commit（Codex 现场 1 个 + 修复 18 个），全量
@@ -37,7 +51,7 @@ P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
 SCPI 闭环依赖链：先把现场项映射到载体 → 用手册证据修判定和缺失载体 → 止住错误队列
 无限循环 → 补传输配对 → 补仪器接受/生效语义 → 接入正式 TestCase。该本地链已完成；
 P0-5 保持 ON-SITE-BLOCKED；P1-44/42/40/37 已在 Draft PR #303 完成本地实现与回归，
-本地序列切到 P1-29。本轮日志设计与逐片实施计划见
+本地序列切到 **P1-48**（2026-08-09 插队，见上方 Current Focus）。本轮日志设计与逐片实施计划见
 [`plans/2026-08-07-log-sprint-design.md`](plans/2026-08-07-log-sprint-design.md) /
 [`plans/2026-08-07-log-sprint.md`](plans/2026-08-07-log-sprint.md)；SCPI 闭环设计与实施计划见
 [`plans/2026-08-06-scpi-evidence-closure-design.md`](plans/2026-08-06-scpi-evidence-closure-design.md) /
@@ -76,6 +90,7 @@ P0-5 保持 ON-SITE-BLOCKED；P1-44/42/40/37 已在 Draft PR #303 完成本地�
 - **P2-22** F64 disconnect 冷缓存判 GOS 换真值源（涉 SCPI 查 NotebookLM）
 - **P2-23** 会话资产 is_active 预检 + measure resolver 同病排查
 - **P2-24** 测试用例契约补 lab_profile_id（契约四步）
+- **P1-48** 日志/报告分不出哪台仪表是真的 —— P1-37 的标记只到 `scpi.log`，app.log / 报告 / VRT 三个消费端一个没接上（**Gemini 外审首测对象**）
 - **P1-29** `/dashboard/alerts/summary` 被 `/alerts/{alert_id}` 遮蔽 → 驾驶舱告警计数条恒坏（一行声明顺序 + 配遮蔽门）
 - **P3-18** 门/测试精化批（G11 三覆盖面 / p08 零残留站点 / PDF 转义收口 / 诊断序列串行化 / **手写类型审计尺子改逐层递归**）
 - **P3-19** 日志/告警/留痕卫生批（tail 上限 / app.log 噪声 / 校准 warnings 持久化+清理警告可见 / UXM 两组 P3 / **四个说谎死类型删死链** / **`is_docker_pid` 改 allowlist**）
@@ -242,7 +257,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → **P1-29** → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-07 PR #303 完成本轮日志四片；当前执行片只看顶部 **Current Focus**）|
+| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → **P1-48** → P1-29 → P1-38 → P1-27 → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（2026-08-07 PR #303 完成本轮日志四片；当前执行片只看顶部 **Current Focus**）|
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -1557,6 +1572,204 @@ workflow 结果与 `probe_amplitude_calibrations.chamber_id`，不再只测 `pro
 build 通过（仅保留既有 chunk/dynamic-import 提示）。GitHub Codex 外审两轮依次出
 `2 P1 → 2 P2`，四条均修；R2 尾部修复又经内审收紧两个 mutation 时序窗口后终审 `CLEAN`。
 按两轮上限不再发 R3，未外审的尾部范围已在 #301 台账行如实登记。
+
+---
+
+### P1-48 — 日志与报告分不出哪台仪表是真的（P1-37 的三个缺口）⬜（2026-08-09 拍板，待开工）
+
+> ⚠️ **先读这条：本条目的证据成色不均匀。** 2026-08-09 六路并行只读调查 + 对抗性核实，
+> **核实阶段被月度额度上限打断** —— 下面 **B / C / 「8-7 现场无法追溯」三段未经对抗性核实**；
+> 已完成的 10 条核实**全部判「需收窄」、零条判「成立」**。随后的**内审**（`pre-commit-reviewer`，
+> 精简档）抽查 12 项事实，9 项完全命中、**3 项被证伪或判过强**，已按其结论改写（F1/F2/F3/F6/F7/F8）。
+> **未核实那三段按「待验」看，别当定论直接引用。**
+
+**What**: P1-37（PR #303）**已经把仪表粒度的真假标记做出来了** —— 每个驱动类带
+`driver_source`(real/mock) + `simulated`(bool) 两个 ClassVar（`app/hal/base.py` 里搜
+`driver_source: ClassVar`，五个 Mock 类覆盖），逐行打进 SCPI 往返记录的 TX/RX/OK/ERR 四种行。
+
+**两个字段的落地程度不一样，别混为一谈**（内审 F2 收窄）：
+- **`simulated` 已经有一个活消费方** —— 正式证据门
+  （`app/services/execution_scpi_evidence.py` 里 `simulated_exchange_not_authoritative`）
+  会拒收模拟来源，roadmap 的 P1-37 索引行原话也是这么写的。**收口时绝不能把这个门改坏。**
+  它今天不具区分力的原因另有其他（`formal_acceptance` 全库 0 次为 true，见次生栏）。
+- **`driver_source` 才是零消费方** —— `grep -rn "driver_source" app/ | grep -v "^app/hal/"` = **0 命中**。
+
+本片是**产出侧补齐 + 消费侧接上**的收口，不是从零开发。
+
+**Why P1**: 2026-08-09 用户手工测试时的原话 ——「我在 log 里是不是看不出哪些是 mock，
+哪些是 real 仪表？」**是的，看不出。** 而这条线的方向早已定死（2026-08-05 用户：
+「今后 log 是我们主要的调试手段，让它尽快完整/正确/高效的就位」），本片正落在**「正确」**
+那个字上：有的都是真的 —— 现在**分不清哪些是真的**。
+
+按危害排三片（**建议 C → B → A，但用户拍板**）：
+
+---
+
+#### A — `app.log` 里的仪表真假只有一行自由文本，且 `hal_mode` 这个字段会说谎
+
+⚠️ **本段标题原写「app.log 里看不到仪表真假」，被内审 F3 判过强，已改。** 实况是：
+`app.log` 里**每台在册仪器、每次 HAL 初始化各有一条**声明行，形如
+`[HAL] signalAnalyzer: mode=auto, use_real=True (auto (global=real))`
+（实测 `app.log.2026-08-08`：baseStation 132 / channelEmulator 129 / positioner 129 /
+rfSwitch 129 / signalAnalyzer 129 / vectorSignalGenerator 7 / vna 7）。
+**真实缺口是三件别的事**：
+① 声明在自由文本 `msg` 里，**不是可过滤的结构化字段**；
+② **只覆盖初始化那一刻**，不覆盖后续每一行；
+③ `use_real` 是**配置意图**不是**实际落地的驱动类** —— **真驱动类没注册时，
+  选类阶段会回落 Mock，而 `use_real` 仍是 `True`**。
+  ⚠️ **别写成"连接失败回退 mock"**（外审纠正）：连接失败**不会**替换驱动 ——
+  驱动只在 `connect()` 成功时才进 `self.drivers`，失败的两条路都只记一行 fail，
+  从不换成 Mock 顶上。照"连接失败回退"去写 S2/S3 的门，会测一条**不存在的路径**，
+  同时漏掉真正的选类阶段回落。
+
+**A1 结构化标记被命名空间过滤器挡掉**：`file_app` handler 挂了 `exclude_scpi_from_app`
+（在 `app/core/logging_config.py` 里搜这个名字，以及 `ExcludeLoggerPrefixesFilter`），
+把 `app.hal.scpi.*` 整个命名空间挡在 app.log 之外。实测 `app.log.2026-08-05/06/07/08`
+四个文件 + 当前 `app.log`，`driver_source` 出现 **0 次**。
+⚠️ **那个过滤器是对的，修法是换源不是去掉** —— 但它的**出处是 P1-47A（#298 `66b09a0`），
+不是 P1-40**（内审 F6 用 `git log -S` 纠正，两个 token 都只命中那一个 commit）。
+
+**A2 `hal_mode` 与仪表事实矛盾**：它读的是「写这条日志那一刻**全局单例**的 mode」
+（`logging_config.py` 里搜 `get_hal_service().mode.value`），跟这行说的是哪台仪表无关。
+⚠️ **本条目一律用可 grep 的稳定锚，不写行号**（内审 F5：P1-48 的 A1/A2 修法必然改
+`logging_config.py`，改完所有行号全部下移；memory「指针四问」里「坐标稳吗——绝不写行号」）。
+- **铁证一**：8/7 的 `scpi.log` **第一批行**标着 `hal_mode="mock"`，内容却是在跟**真 F64**
+  通信、拿回了带真实序列号的 IDN。
+- **铁证二**：`app.log.2026-08-08` 里同一行（内审实测该行在 8/8 出现 **4 次**、当前 app.log 0 次）—— `{"hal_mode": "mock", "msg": "[HAL] channelEmulator:
+  mode=real, use_real=True (per-instrument (forced real))"}`。全局说 mock，那台仪表说 real。
+- **二义性**：`get_hal_service()` 发现单例是 `None` 会**现场 new 一个 `DriverMode.MOCK`**
+  顶上（`instrument_hal_service.py` 里搜 `if _hal_service is None`），所以 `mock` 也可能意思是
+  「**这个进程压根没初始化过 HAL**」。`app.log.2026-08-08` 里 120 次热重载，每次头 26 行 boot 日志全被误标。
+- **副作用**：日志 filter 会把这个假单例**写回全局变量**，此后判空逻辑看到的不再是 `None`。
+- **取值实际有四种**：`app.log.2026-08-08` 里 real 14939 / mock 14859 / `<MagicMock ...>` 347 / `-` 31（共 30176 行）；
+  8/7 现场 mock 107632 / real 72087 / `-` 821 / MagicMock 1490。
+  下游按 hal_mode 过滤的代码（`app/api/system_logs.py` 里搜 `entry.hal_mode.lower()`）只认 mock/real 两种。
+
+**A3 `instrument_id` 94–95% 是 `-`**：不是字段死了（`app.log.2026-08-08` 有 1810 行 / `app.log.2026-08-07` 有 9043 行带真 id），
+是**结构性**的 —— 30 个填充点里 20 个挂在被过滤掉的 `app.hal.scpi*` 上；
+`current_instrument_id` contextvar 在**生产代码里零设置方**（只有两个测试文件 set 过）。
+
+---
+
+#### A4 — 手动 SCPI 终端那条路根本不产真假字段（内审 F8 补，**正是手工测试走的路**）
+
+`app/api/instrument.py` 有三处 `logging.getLogger("app.hal.scpi")`，发出的
+`[SCPI-TERM via HAL]` / `[SCPI-TERM]` / `[SCPI-PROBE]` 行，`extra` 只带
+`instrument_id / direction / command`，**没有 `driver_source` / `simulated`** ——
+它们不走 `app/hal/base.py` 的四个共享 helper，所以 P1-37 的标记完全绕过。
+实测 `scpi.log`（8/8，P1-37 之后）里 **80 行**无这两个字段，**全部**来自 exact logger
+`app.hal.scpi` 这条路；8/7 同类 263 行。
+⚠️ **这正是用户手工测试时用的那条路** —— 把本片定性成「三个**消费端**的收口」会低估工作量，
+**产出侧还差这一处**。
+
+---
+
+#### B — 报告不说自己是 mock
+
+2026-08-08 那份 mock 报告的 PDF **有三处「未验证」标注 + 一处 UNKNOWN 判词，没有假称 PASS**
+（这点是对的，不要在收口时把它改坏）。但：
+- **没有任何一句话说明「本次为模拟模式」**，不写 hal_mode，不写哪几台是假的；
+- 把 mock 编出来的 TRP 数值**当普通数字印了出来**，且「TRP 来源」栏写的是 `hal_signal_analyzer`；
+- precheck 阶段那句明确说「这是 mock」的原话**落了库**，**报告渲染器把它丢了**；
+- `report_service.py` / `report_data_collector.py` / `pdf_generator.py` 三个文件里
+  `mock|simulat|verified|hal_mode|trust` 五个词的命中数**都是 0** —— 通用报告链完全不知道这回事；
+- `TestExecution` 表**没有任何** hal_mode / is_mock / 数据来源列；
+- 唯一带真假标注的地方是 MIMO_OTA 报告执行器自己拼的 `content_data`，标注是塞进
+  `step_results[].parameters` 的**中文字符串**，不是结构化字段。
+
+---
+
+#### C — VRT 报告用 `random.uniform()` 现编 KPI（**最危险，建议先做**）
+
+虚拟路测报告链会用 `random.uniform()` 现编 KPI，标 `passed=True`，写进 PDF，
+**全程零标注、零证据段**。**2026-08-08 23:09** 就产出了一份这样的 PDF（内审 F1 纠正：原写 2026-08-09，那是个**未来时间戳**，全仓无 8/9 的 PDF）。
+内审独立复核了 C 段的核心断言，**成立** —— `app/api/road_test.py` 的 KPI 确实用
+`random.uniform` 且硬编 `passed=True`；`app/api/report.py` 的 `POST /compare` 端点
+整体返回 random 编造的 similarity / confidence。
+报告比对端点 `POST /api/v1/reports/compare` 整体返回 random 编造的 KPI 差异与
+「趋势/置信度」，路由已注册（GUI 侧未发现调用方）。
+
+⚠️ **设计勘察查出这是两层假**：**GUI 也在编** —— `TestExecutionModal.tsx` 用
+`Math.random()` 现编样本、经 `POST /metrics` 落库，而**后端注释管它叫 `Use real collected data`**；
+**PASS/FAIL 判决是浏览器算的**，后端原样落库、原样打印。
+⚠️ **只治后端那一层，会把前端编的数「洗成真实采集」，比现状更隐蔽** —— 所以删后端编数
+必须在后端落库入口无条件标成模拟、并在报告构造处新加一个读这个标记的地方（设计稿 S1；
+  原先打算靠一句免责声明的 S7 已取消 —— 标注代替不了剔除）。
+
+**VRT 全链零 HAL 引用** —— 是「从来没做」不是「做了被顶掉」；唯一像接线的模块自己的
+docstring 里写着"全仓零调用方"。
+
+⚠️ **仓里有一道旧门在给谎言背书**：`tests/test_feature_gaps.py` 的 `TestReportComparison`
+两个用例 assert `POST /reports/compare` 返回 200。删端点那片**必须把它一起删**，
+否则落地当天全量红在一个没预料的文件上。
+
+**为什么排最危险**：A/B 是「看不出真假」，C 是「**编出来的数标着通过进了正式报告**」。
+
+---
+
+#### 次生（记录在案，本片不一定做 —— 按 ⓪③ 进 Discovered 待评估池）
+
+- **日志行里没有 PID** —— `JsonFormatter` 显式把 `process`/`processName` 排除
+  （`logging_config.py` 里搜 `standard_keys`）。服务进程 + pytest + 热重载子进程写同一个文件，无法切分。
+  8/7 全天 `hal_mode` 「变化」**1977 次**，真正的模式切换**只有 6 次**，其余 1971 次是
+  多进程交织造成的**假切换**。
+- **`driver_source="real"` ≠ 「真硬件答的」** —— 它是**基类默认值**，只有 5 个 Mock 类覆盖了它。
+  pytest 的 MagicMock 桩不是 Mock 驱动类，照样标 `real`/`false`。`scpi.log`（8/8 数据）里
+  pytest 夹具 `uxm-1`（20050 行）、`uxm-irat`（19530 行，均为 `scpi.log` 的 8/8 数据）跟真实注册的
+  `channelEmulator_37fb0c01`，这两个字段**完全一样**。
+- **`MockVNA` / `MockSignalGenerator` 漏声明**这两个 ClassVar，会继承基类 `"real"`/`False`
+  （目前不可达 —— 这两类零 SCPI 日志调用；换句话说是**装着的地雷**）。
+- **`driver_source` 丢在后端不是 GUI**（内审 F7 指正层级）—— 截断发生在
+  `app/api/system_logs.py` 的 `LogEntry` Pydantic 模型（`ts/level/logger/hal_mode/
+  session_id/execution_id/instrument_id/msg` 八个固定字段 + `raw`）。GUI 拿不到是因为
+  **API 不给**；按「改 GUI」去做改不动这件事。
+- **pytest 写进生产日志** —— `scpi.log`（8/8 数据）里绝大多数行来自单元测试，不是运行中的服务。
+- **`Result_Report/` 与 `api-service/data/reports/` 下存在没有对应 `test_reports` 行、
+  也没有对应日志行的 PDF** —— 报告产物与数据库记录会脱钩。
+- **`formal_acceptance` 全库 0 次为 true** —— SCPI 证据链是最强的真假门，但目前对
+  mock/real **不构成区分力**（`measurement_verified` 全库 395 行里只有 1 行有值，
+  且该字段 2026-08-07 21:03 才引入，**晚于 8/7 现场真机时段**）。
+
+---
+
+**⚠ 8/7 现场那批数据无法追溯**：`driver_source` / `simulated` 是 **8/7 21:03 提交、
+21:33 首次落盘**的。现场测量窗口 **11:00–19:00 那 173,124 行** SCPI 记录完全没有这两个字段
+（最后一行无字段 20:14:06，第一行有字段 21:33:20，**零重叠**）。
+**恰恰是最需要回答「哪台是真的」的那批数据，机制不存在。** 本片修不回来，只能防下次。
+
+**调查方法与证据留存**: 2026-08-09 六路并行**只读**调查（hal_mode 来源 / 单机真假判定 /
+SCPI 日志标记 / instrument_id / 报告与 KPI / 8-7 现场日志实证）+ 对抗性核实。
+⚠️ **核实阶段被月度额度上限打断**：`per-instrument-truth` / `report-kpi-leakage` /
+`onsite-real-log-evidence` 三路的发现**未经对抗性核实**；已完成的 10 条核实
+**全部判「需收窄」，零条判「成立」** —— 上文已按核实结论改写，未核实那三路**按「待验」看**。
+
+**配门**（⓪④：每加一道门必须附让它红的变异并**实跑**；至少到「不变量」档）:
+- **A** `hal_mode` 二义性门 —— 懒建单例那条路径不得产出与真实模式无法区分的 `mock` 标签
+- **A** 仪表真假不变量门 —— ⚠️ **原措辞「每台在册仪器有且仅有一条真假声明行」已作废**
+  （内审 F3 当场判死：按「有没有声明」判 → **今天就绿**，一行代码不改也绿 = ⓪④ 最低档的
+  恒真断言；按「有且仅有一条」判 → **今天就红**，因为 8/8 有约 129 次热重载 = 129 条/仪器，
+  红的原因跟本片缺陷毫无关系）。**改成打在**「结构化字段存在 **且** 与该驱动类实际的
+  `simulated` 属性一致」上 —— 判据取**驱动实例的真值**，不取「日志里有没有那句话」。
+- **B** 报告不变量门 —— 任一 step 的 `simulated=true` ⟹ 报告正文**必须**含模拟声明
+- **C** VRT 门 —— `random` 产出的 KPI **不得**标 `passed=True`
+
+**设计稿已出**：[`docs/design/P1-48-instrument-provenance.md`](design/P1-48-instrument-provenance.md)
+（2026-08-09，三套对立方案 + 四维判官评审 + 综合）。**切成 9 片**，修法分布
+**删掉 4 / 换地方取数 4 / 收紧 1 / 新加一套东西 1 处**（S7 已取消；但外审指出虚拟路测那条链没有读模拟标记的地方，S1 里必须新加一处）。
+> 这个数改过四次（0 → 1(S7) → S7 取消回 0 → 外审指出虚拟路测那条链没有读模拟标记的地方
+> 必须新加一处 → 1 处），**四次都是被外审纠出来的**。。**零新数据库列、零新 API 字段、零新服务。**
+⏸️ **等用户拍板 5 个决策点后才动代码。**
+
+最要紧的一处纠错：两套候选方案都用"遍历 `app.routes` 断言那四条 path 不在里面"当门、
+**并写着"今天必红"**，判官实测**今天就是绿的** —— 本仓 fastapi 版本下 `include_router`
+不展平。而这坑仓里**已经踩过并立了碑**（`test_rule_gates.py` 的 `_expand_app_routes`）。
+
+<!-- 历史留存：本条原文 -->
+**⚠ 先出设计稿再动代码**（⓪⁺②「先 review plan，后写代码」）。设计稿落
+`docs/design/P1-48-instrument-provenance.md`，用户过目后才动代码。
+
+**本片是 Gemini Code Assist 外审首测对象**（2026-08-09 用户定）—— Codex 月度额度已耗尽，
+本片走 `/gemini review`，并与 Codex 的历史表现做能力对比。
 
 ---
 
@@ -3426,6 +3639,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 - `[discovered 2026-08-07 during CAICT 现场]` ~~**单元测试会对生产默认 IP 发真 TCP，全量测试在 TUN 环境下挂死**~~ → **⑤ dropped（2026-08-07 用户当场裁决：「这是测试环境的问题，不是产品的问题」）**。事实记录保留备查，不进任何队列。原始描述： —— `conftest.py` 的 `client` fixture 触发 FastAPI lifespan → HAL 真去连驱动默认 IP（`propsim_f64.py:393` `192.168.100.21`、`uxm_base_station.py:296` `192.168.100.10`、`bootstrap/instruments.py:276` `TCPIP0::192.168.100.26::inst0::INSTR` 等）。平时这些地址不通、连接秒失败，测试照过；2026-08-07 本机 Clash TUN（网关 `198.18.0.1`）接管该网段后，连接不再快速失败而是挂住等超时 —— `lsof` 实证 `TCP 198.18.0.1:57661->192.168.100.27:sunrpc (ESTABLISHED)`，进程 CPU 0.3% 挂了 11 分 47 秒。**后果两层**：① 当天现场分支 46 文件 4246 行**零全量回归**，内审最后一道兜底落空；② **在现场机上跑 pytest 会真的把 F64 拽进 Remote**（F64 收到第一条 ATE 命令即进 Remote），测试本身变成一次未经批准的仪器操作。另：`pytest-timeout` 未安装，连"卡住就超时失败"的兜底都没有，一个挂住的测试能拖垮整轮。修法方向是 conftest 强制 mock + 装 `pytest-timeout`；它是「现场每个 commit 前跑门文件」这条纪律的前置。
 
+- `[discovered 2026-08-09 during #303 迟到外审]` **留存清理失败的告警会把它自己要清的文件重新打开 —— 该文件此后永不被清理 + 每次失败泄漏一个 fd** —— Codex P2，`api-service/app/core/logging_config.py:364` 附近。链条：`close_execution()` 在 `unlink()` 失败时发 WARNING → 调用方（用例执行 / HTTP / WebSocket 收尾）**此时仍持有当前 `execution_id`** → 告警传播到根 logger → `ContextFilter` 把这个 ID 注进记录 → 记录**回流进同一个 `ExecutionFileHandler`** → 重新打开刚关闭的 `exec-<execution_id>.log` 并把流留在 `_streams` 里 → 此后该文件被误判成"仍在写入"而**永远跳过清理**。修法（Codex 给的两选一）：发运维告警时**显式隔离执行上下文**，或改用**不会传播到执行文件 handler 的独立通道**。⚠️ **现有测试盖不住这条路径** —— `caplog` 只捕获模块 logger，没把待测 handler 挂到根 logger，所以补门时必须**挂到根 logger 复现回流**，否则又是一道假门。**来源与它为什么现在才被发现**：`af51abb`（"留存清理补两个洞 —— 运行期复查 + 告警不走 handleError"）是 #303 R2 findings 的修复，**它自己从未过外审** —— Codex R2 覆盖 `652ae18`，而 merge 时 HEAD 已是 `df33191`；"push 新 commit 不触发 Codex，必须显式再发一次"这个已知陷阱当时没被执行。2026-08-09 用户要求补审时，Codex 对 squash commit `1430a6e` 重审抓出。**建议**：跟 P1-48 同域（`logging_config.py`）但**不同事**（P1-48 是"分不出真假"，本条是"清理失效 + fd 泄漏"），按 ⑦ 不并片。
 - `[discovered 2026-08-07 during CAICT 现场]` **同一天三条平行分支从同一 base 分出且互不可见（流程，待 triage）** —— 2026-08-07 从 `main` (`2a47126`, 08:56) 分出三条互不相干的线：`codex/onsite-20260807`（日志线，PR #303，33 文件）、`add-new-features`（FS16/UXM 功能线，无 PR，49 文件 +16167）、`codex/uxm-driver-completion`（现场驱动线，未推送，46 文件 +4246）。**现场实际跑的是第三条**，因此当天现场排障用不上第一条刚做完的「执行日志隔离与限界」「审计摘要关联执行」—— 而那正是 Current Focus P1-44 的交付物，也正是当天排障最缺的东西（实测在 63 MB 日志里逐条 grep 了一晚上）。三条之间 12 个核心文件重叠（`api/instrument.py` / `hal/propsim_f64.py` / `hal/uxm_base_station.py` / `services/instrument_hal_service.py` / `services/mimo_ota/executors/measure.py` / `tests/test_rule_gates.py` 等），`git merge-tree` 实测第二条与第三条有 3 处硬冲突，最要命的一处是 `send_scpi_command` 里「manual_local 闸门」与「instrument_test_lease 租约」抢同一位置且前者对所有仪器类别泛化生效。**待 triage 的是流程问题**：现场作业开分支前是否必须先合掉/rebase 已完成的队列项，以及 WIP=1 在"多人/多 agent 同日并行"下如何表达。
 
 
