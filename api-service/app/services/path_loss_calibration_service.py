@@ -92,6 +92,36 @@ NUM_POLARIZATIONS = 2
 
 # ==================== 数据类 ====================
 
+
+def _reject_simulated_vna(vna, what: str) -> None:
+    """调用方要求「真测」时，模拟的 VNA 驱动一律拒绝。
+
+    ⚠️ 这里原先**只判 vna 是不是 None**，而这个方法的 docstring 自己就把
+    ``MockVNA`` 列在候选驱动里 —— 于是 MockVNA 在位时，它 ``np.random`` 造出来的
+    扫描数据会被当成实测，算出一个路损值，**挂着真型号名落库成一张有效的校准证书**。
+
+    后果比「报告里印了个假数字」严重得多：报告里的「路损验证」是由
+    「有没有证书」派生的，所以这张证书会把一处诚实的「未验证」**翻成「已验证」**；
+    而校准证书还会被后续所有测试拿去做补偿 —— 假数据从这里扩散出去。
+
+    拒绝的方向是安全的：调用方的异常处理会直接返回失败，**不落库、不出证书**。
+    """
+    from app.services.instrument_hal_service import is_mock_driver
+
+    if vna is None:
+        raise RuntimeError(
+            f"HAL 里没有 VNA 驱动 — 无法执行{what}。"
+            f"请先配置一台可连接的 VNA（R&S ZNA / Keysight ENA）。"
+        )
+    if is_mock_driver(vna):
+        raise RuntimeError(
+            f"HAL 里的 VNA 是模拟驱动（{type(vna).__name__}）— 拒绝执行{what}。"
+            f"模拟驱动造出来的扫描数据不是实测值，据此出的校准证书会被后续所有测试"
+            f"当成真校准使用。两条出路：① 换成真实 VNA 驱动；"
+            f"② 明确以 use_mock=True 调用（那样产出的结果会被标成非实测）。"
+        )
+
+
 class PathLossMeasurement:
     """单个路损测量结果"""
     def __init__(
@@ -1141,12 +1171,7 @@ class ProbePathLossCalibrationService:
 
         hal = get_hal_service()
         vna = hal.drivers.get("vna")
-        if vna is None:
-            raise RuntimeError(
-                "No VNA driver available in HAL — cannot run real path-loss "
-                "measurement. Ensure an active VNA instrument is configured "
-                "(R&S ZNA / Keysight ENA) before calling with use_mock=False."
-            )
+        _reject_simulated_vna(vna, "real path-loss measurement")
 
         center_hz = frequency_mhz * 1e6
         span_hz = 1e6
@@ -1503,11 +1528,7 @@ class RFChainCalibrationService:
         hal = get_hal_service()
         vna = hal.drivers.get("vna")
         pm = hal.drivers.get("powerMeter")
-        if vna is None:
-            raise RuntimeError(
-                "No VNA driver in HAL — cannot run real uplink measurement. "
-                "Set HAL category 'vna' to a connected R&S ZNA / Keysight ENA driver."
-            )
+        _reject_simulated_vna(vna, "real uplink measurement")
 
         center_hz = frequency_mhz * 1e6
         span_hz = 1e6
@@ -1576,10 +1597,7 @@ class RFChainCalibrationService:
         hal = get_hal_service()
         vna = hal.drivers.get("vna")
         sg = hal.drivers.get("signalGenerator")
-        if vna is None:
-            raise RuntimeError(
-                "No VNA driver in HAL — cannot run real downlink measurement"
-            )
+        _reject_simulated_vna(vna, "real downlink measurement")
 
         # SG 配置 (仅在 driver 提供该方法时调用; 否则假定 SG 已被运维预置)
         if sg is not None:
