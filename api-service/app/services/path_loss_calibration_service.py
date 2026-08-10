@@ -93,6 +93,20 @@ NUM_POLARIZATIONS = 2
 # ==================== 数据类 ====================
 
 
+def _reject_simulated_instrument(driver, category: str, what: str) -> None:
+    """通用版：要求「真测」时，任何模拟驱动一律拒绝。"""
+    from app.services.instrument_hal_service import is_mock_driver
+
+    if driver is None:
+        raise RuntimeError(f"HAL 里没有 {category} 驱动 — 无法执行{what}。")
+    if is_mock_driver(driver):
+        raise RuntimeError(
+            f"HAL 里的 {category} 是模拟驱动（{type(driver).__name__}）— 拒绝执行{what}。"
+            f"它造出来的数不是实测值，据此出的校准证书会被后续所有测试当成真校准使用。"
+            f"**请换成真实驱动**。"
+        )
+
+
 def _reject_simulated_vna(vna, what: str) -> None:
     """调用方要求「真测」时，模拟的 VNA 驱动一律拒绝。
 
@@ -117,9 +131,13 @@ def _reject_simulated_vna(vna, what: str) -> None:
         raise RuntimeError(
             f"HAL 里的 VNA 是模拟驱动（{type(vna).__name__}）— 拒绝执行{what}。"
             f"模拟驱动造出来的扫描数据不是实测值，据此出的校准证书会被后续所有测试"
-            f"当成真校准使用。两条出路：① 换成真实 VNA 驱动；"
-            f"② 明确以 use_mock=True 调用（那样产出的结果会被标成非实测）。"
+            f"当成真校准使用。**请换成真实 VNA 驱动**。"
         )
+        # ⚠️ 这里原先还写了第二条出路「明确以 use_mock=True 调用，那样会被标成非实测」——
+        #    **那句话是错的，已删**（外审 P1）：`use_mock=True` 走 mock 测量之后，
+        #    证书**仍然写成 VALID**；`vna_model="Mock VNA"` 只是个文本标记，
+        #    `get_latest_calibration()` 照样会选中它做验证和后续补偿。
+        #    也就是说那条「出路」会把被这道门拦下的操作员，直接引回同一条假数据链。
 
 
 class PathLossMeasurement:
@@ -885,6 +903,14 @@ class ProbePathLossCalibrationService:
                 f"CE+SA tone acquisition requires HAL drivers: {missing}. "
                 "Bind both on the active LabProfile."
             )
+
+        # ⚠️ 这条 CE+SA 才是**主路径**（暗室配了 cable_sgh_to_sa_loss_db 就走它），
+        #    我上一版只拦了那条 DEPRECATED 的 VNA 旧路径，主路径完全绕过去了（外审 P1）。
+        #    MockSignalAnalyzer 的 measure_channel_power() 返回随机值，
+        #    MockChannelEmulator 也不发真的 tone —— 两者都会被当成真机，
+        #    结果照样以 valid 证书落库。
+        _reject_simulated_instrument(ce, "channelEmulator", "CE+SA 真测路损")
+        _reject_simulated_instrument(sa, "signalAnalyzer", "CE+SA 真测路损")
 
         # Capability-based dispatch: prefer D (single-instrument) when CE
         # supports it, else fall through to B (needs upstream SG/BSE).
