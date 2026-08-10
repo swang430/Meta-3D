@@ -11,7 +11,7 @@
 |---|---|
 | ① MPDB 射线入口 | schema / DB 表 / API 传参都有，**无 MPDB 文件解析器** —— 射线以 JSON 由人工或现场写进 `TestCase.configuration` 或 `channel_assets` |
 | ② RT 射线 → 标注式 CDL 聚类 | **全部实现**（四种聚类 + §6 判决），产出 `AnnotatedCDLProfile` |
-| ③ 标注式 CDL → .asc | 烘焙器实现了，但**唯一把 ①②③ 串起来的端点没有调用方** —— **ChannelEgine 服务**的 `synthesize_deterministic_b1` 端点（`CE/…/hardware_pipeline.py:259`，不是本仓库的路由）只有 CE 自己的测试在调 |
+| ③ 标注式 CDL → .asc | 烘焙器实现了，但**唯一把 ①②③ 串起来的端点没有调用方** —— `synthesize_deterministic_b1` 端点 —— ⚠️ 它在 **`channel-engine-service` 这个服务**上（`channel-engine-service/app/api/endpoints/hardware_pipeline.py`），**不在主后端 `api-service` 上**，两个服务各有各的 `/api/v1` 前缀和端口，别照着打主后端。目前只有 CE 自己的测试在调它 |
 
 **今天生产真正跑的是另一条路**：3GPP 标准 CDL（UMa/UMi/CDL-C…）→ 38.901 内部生成器造簇 → .asc，
 不经过 MPDB、也不经过 native-fit 聚类。B-2（闭式谱参数）断得更早：参数表算出来了但 `.tap` 字节零实现，
