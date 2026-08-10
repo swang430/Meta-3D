@@ -244,7 +244,19 @@ reviews / inline comments / issue comments / **PR 本体的 👍 reaction**。
 **不在评论上** —— 2026-08-10 实测，别去评论里找。它是"审过无建议"的唯一正面证据。
 "usage limits" / "create an environment" = review 未发生 ≠ clean。
 拿到 👍 后**核对它写的 `Reviewed commit` 是不是当前最新 commit**，再 merge。
-**Codex 无问题或 5 分钟无 comment 即 squash merge**（持久授权）。
+
+**合并条件分两种，产出的 commit message 不一样**（2026-08-10 用户拍板，
+外审 #316 指出原表述自相矛盾：超时不是证据，是**没有**证据）：
+
+| 情况 | 能不能合 | commit message 必须写什么 |
+|---|---|---|
+| 拿到 👍 / 明文 "no major issues"，且 `Reviewed commit` = 最新 commit | ✅ 合 | 照常 |
+| **5 分钟无任何 comment**（持久授权，速度优先） | ✅ 合 | **必须写明「本合并未获外审正面证据（超时合并）」**，并挂迟到回查 |
+| Codex 报 "usage limits" / "create an environment" | ❌ **不合** | —— 这是 review **未发生**，不是 clean |
+
+⚠️ **超时合并不隐形。** 这是有意接受的权衡（用户选的：速度优先），不是疏忽 ——
+所以它必须在 commit message 里留痕，事后能一条 `git log --grep` 捞出来复查。
+不留痕的超时合并跟"审过了"在历史里长得一模一样，那才是真正的问题。
 
 **轮次上限按严重度分级**（2026-08-10 用户定，取代原来一刀切的"上限 2 轮"）：
 
