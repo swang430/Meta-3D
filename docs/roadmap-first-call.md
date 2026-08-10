@@ -3876,6 +3876,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 - `[discovered 2026-08-07 during P1-28 TDD]` ~~**`POST /workflows/execute` 的探头校准步骤必然在服务构造处崩溃**~~ ✅ **已并入 P1-28 收口（内审 F1 判为真值源端到端阻断项）** —— 没有补同名空壳；已改接现有 `AmplitudeCalibrationService` / `PhaseCalibrationService`，API 通过线程池隔离同步 executor 的 `asyncio.run()` 边界，映射 `CalibrationResult` 并将唯一 resolver 得到的 `chamber.id` 传入落库。新增直调 executor 与 live API 两层回归，都校验实际校准行归属所选 LabProfile 暗室。
 
+- `[discovered 2026-08-10 during P1-48 第 5 片外审]` **GUI 缺「查看归档报告」入口 —— `ReportList` 的 onView 全仓无人传（P2）** —— `gui/src/features/Reports/pages/ReportsPage.tsx:93` 挂 `<ReportList />` 时不传 `onView`，而「查看」按钮由 `{onView && (...)}` 守着（`ReportList.tsx:298`），所以从报告列表**只能下载不能看**。后果：`GET /reports/{id}` 返回的 `content_data` 里那些只在 JSON 里的字段（例如 P1-48 加的 `provenance_warning`）**在 GUI 里永远照不到人** —— 唯一挂载的 `ReportViewer` 拿的是执行的 contentData，不是归档报告。这是外审在 P1-48 第 5 片查出来的：我原本想靠「JSON 字段 + 响应头」提示老报告不可信，两条路都没有真实消费方（响应头被前端 `downloadReport()` 的 `response.data` 丢掉）。该片已改成后端 409 拦下载收口，**补 GUI 入口越界未做**。修法待评估：`ReportsPage` 传 `onView` 打开 `ReportViewer` 并喂归档的 `content_data`（注意 `ReportViewer` 现在的入参形态是执行侧的，可能要适配）。同族问题值得一并扫：还有多少后端字段是「加了但前端没有消费方」。
+
 ---
 
 ## 📊 Summary
