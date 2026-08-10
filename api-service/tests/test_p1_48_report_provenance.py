@@ -213,3 +213,33 @@ def test_multi_execution_report_does_not_cross_contaminate():
     second = str(rows[1]["parameters"].get("模拟来源", ""))
     assert "baseStation" in first, f"第一个执行的参数被覆盖了：{first}"
     assert "positioner" in second, f"第二个执行的参数不对：{second}"
+
+
+def test_descriptor_phase_names_are_normalized():
+    """⭐ 外审抓出：真实执行里 phase_progress 存的是描述符名，查不到小写键。
+
+    `phase_progress[].type` = `MIMO_OTA_REFERENCE`，而 `measurements.phases`
+    用的是 `reference` —— 原实现直接拿前者查后者，**永远查不到**，
+    手点报告每一行还是空的，本片想治的毛病原封不动。
+
+    让它报错的改法：把 `_normalize_phase_name(...)` 换回 `row.get("name")`。
+    """
+    from app.services.report_data_collector import ReportDataCollector
+
+    ex = _Exec({"phases": {
+        "reference": {"measurement_source": "mock", "measured_trp_dbm": -20.0},
+        "measure": {"simulated_sources": ["baseStation"]},
+    }})
+    # 真实的 case runner 写进去的就是这套描述符名
+    ex.config = {"phase_progress": [
+        {"type": "MIMO_OTA_REFERENCE", "status": "success"},
+        {"type": "MIMO_OTA_MEASURE", "status": "success"},
+    ]}
+
+    rows = ReportDataCollector.__new__(ReportDataCollector)._get_phase_results([ex])
+    assert len(rows) == 2
+    assert rows[0].get("parameters"), (
+        "描述符名的相位没匹配上 —— 手点报告的行还是空的"
+    )
+    assert "TRP 验证" in rows[0]["parameters"]
+    assert "baseStation" in str(rows[1]["parameters"].get("模拟来源", ""))

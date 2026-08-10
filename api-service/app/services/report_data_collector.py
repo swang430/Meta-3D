@@ -685,7 +685,7 @@ def _fill_provenance_parameters(execution, results: List[Dict[str, Any]]) -> Non
             for s in (content.get("step_results") or [])
         }
         for row in results:
-            params = by_phase.get(row.get("name"))
+            params = by_phase.get(_normalize_phase_name(row.get("name")))
             if params:
                 row["parameters"] = params
     except Exception:  # noqa: BLE001 - 报告渲染不该因为补标注而整份失败
@@ -693,3 +693,26 @@ def _fill_provenance_parameters(execution, results: List[Dict[str, Any]]) -> Non
             "[report] 补真假标注失败，本份报告的相位参数保持为空",
             exc_info=True,
         )
+
+
+# 相位名两套写法的对照（外审 P1）：
+#   `phase_progress[].type` 里存的是执行器的描述符（MIMO_OTA_REFERENCE …），
+#   而 measurements.phases 用的是小写持久化键（reference …）。
+#   原实现直接拿前者去查后者 —— **永远查不到**，手点报告的每一行还是空的，
+#   本片想治的「那份看起来更干净的报告」原封不动。
+_PHASE_ALIASES = {
+    "MIMO_OTA_PRECHECK": "precheck",
+    "MIMO_OTA_REFERENCE": "reference",
+    "MIMO_OTA_MEASURE": "measure",
+    "MIMO_OTA_ANALYSIS": "analysis",
+    "MIMO_OTA_REPORT": "report",
+    # 历史执行里还留着这套旧名字
+    "mimo_test": "measure",
+}
+
+
+def _normalize_phase_name(name):
+    """把相位名归一到 measurements.phases 用的那套键。"""
+    if not isinstance(name, str):
+        return name
+    return _PHASE_ALIASES.get(name, name)
