@@ -129,3 +129,37 @@ def test_error_message_does_not_point_back_to_the_fake_data_path():
     assert "use_mock=True" not in msg, (
         f"错误信息里又出现了 use_mock=True 这条出路 —— 它会把人引回假数据链：\n{msg}"
     )
+
+
+def test_b_path_upstream_source_and_rf_switch_also_rejected():
+    """⭐ 外审抓出：B 路径的上游信号源、以及射频开关，也都只判了 None。
+
+    - CE/SA 是真机但 BSE/SG 绑模拟驱动 → 它的 set_cw/start_tx 会「成功」，
+      SA 读数照样算成 VALID 证书；
+    - 模拟开关 `set_mapped_path()` 返回 True 但**物理矩阵根本没切** →
+      测的是当前那条错通路，结果却签成目标 chain/probe 的证书。
+
+    让它报错的改法：把这两处的 `_reject_simulated_instrument` 删掉。
+    """
+    import ast
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parents[1]
+           / "app/services/path_loss_calibration_service.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    for fn_name, expect in [
+        ("_acquire_sa_power_via_ce_tone_inner", 3),   # CE + SA + 上游源
+        ("_route_switch_to_chain", 1),                # 射频开关
+    ]:
+        fn = next((n for n in ast.walk(tree)
+                   if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                   and n.name == fn_name), None)
+        assert fn, f"找不到 {fn_name} —— 改名了？请更新本门"
+        got = len([n for n in ast.walk(fn)
+                   if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                   and n.func.id == "_reject_simulated_instrument"])
+        assert got >= expect, (
+            f"{fn_name} 里只有 {got} 处拦截，应至少 {expect} 处 —— "
+            f"漏掉的那个仪器是模拟的时候，结果照样会签成有效证书"
+        )

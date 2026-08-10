@@ -971,6 +971,12 @@ class ProbePathLossCalibrationService:
                     "an SG, both must implement set_cw / start_tx / stop_tx, "
                     "or use a CE with INTERNAL_CW_GENERATOR capability."
                 )
+            # ⚠️ 上游信号源同样只判了 None（外审 P1）：CE/SA 是真机、
+            #    但 BSE/SG 绑的是模拟驱动时，它的 set_cw / start_tx 会「成功」，
+            #    SA 读数照样算成 VALID 证书。
+            _reject_simulated_instrument(
+                source, "baseStation/signalGenerator", "CE+SA 真测路损（B 路径）")
+
             sa_rx_mean_dbm, sa_rx_std_db = await self._measure_via_ce_passthrough(
                 ce, sa, source, probe_id, polarization, frequency_mhz, ce_tx_power_dbm,
                 ce_port=ce_port,
@@ -1004,6 +1010,11 @@ class ProbePathLossCalibrationService:
                 route_target, probe_id, polarization.value,
             )
             return
+
+        # ⚠️ 模拟开关会返回 True 但物理矩阵**根本没切**（外审 P1）——
+        #    于是我们测的是当前那条错通路，结果却签成目标 chain/probe 的有效证书。
+        #    固定布线的暗室不绑 rfSwitch 驱动，走上面那条 no-op 分支，不受影响。
+        _reject_simulated_instrument(rf_switch, "rfSwitch", "真测路损的通道切换")
 
         ok = await rf_switch.set_mapped_path(route_target)
         if not ok:
