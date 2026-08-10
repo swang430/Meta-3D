@@ -803,6 +803,15 @@ class PDFGenerator:
             ['Total Duration', duration_str],
         ]
 
+        # P1-48: 跑完但一条可信判决都没有的执行既不算 passed 也不算 failed
+        # 更不是 pending —— 显式列出来，否则 total 跟三类之和对不上，
+        # 读者只会以为报告算错了。旧数据没有这个键，缺省 0 就不显示。
+        undetermined = exec_summary.get('undetermined', 0)
+        if undetermined:
+            summary_data.insert(
+                -2, ['未判定 (Undetermined)', str(undetermined)]
+            )
+
         # Add time range if available
         first_exec = exec_summary.get('first_execution')
         last_exec = exec_summary.get('last_execution')
@@ -835,6 +844,13 @@ class PDFGenerator:
             # Create a simple visual bar using table
             pass_width = int((passed / total) * 300)
             fail_width = int((failed / total) * 300)
+            # ⚠️ 第三块的**数字和宽度必须同源**（P1-48 外审 P1）。
+            # 原来宽度取余量、图例数字取 `pending` 字段 —— 两者不同源，
+            # 于是「total=1、passed/failed/pending 全 0」的未判定执行会画出
+            # **满宽灰条**，图例却写 `Pending (0)`，自相矛盾。
+            # 余量里除了 pending，还有第四态 undetermined（跑完但无可信判决）
+            # 与 incomplete（没跑完），所以第三块统称「未判定 / 等待」。
+            other = max(total - passed - failed, 0)
             pending_width = 300 - pass_width - fail_width
 
             bar_data = [['', '', '']]
@@ -853,7 +869,7 @@ class PDFGenerator:
             # Legend
             legend_text = f"<font color='#2ca02c'>■</font> Passed ({passed}) &nbsp;&nbsp; "
             legend_text += f"<font color='#d62728'>■</font> Failed ({failed}) &nbsp;&nbsp; "
-            legend_text += f"<font color='#cccccc'>■</font> Pending ({pending})"
+            legend_text += f"<font color='#cccccc'>■</font> 未判定 / 等待 ({other})"
             elements.append(Spacer(1, 5))
             elements.append(Paragraph(legend_text, self.styles['BodyText']))
 

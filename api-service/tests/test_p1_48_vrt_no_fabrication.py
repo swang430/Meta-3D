@@ -322,3 +322,38 @@ def test_raw_metrics_read_path_is_marked_simulated():
 
     empty = VrtExecutionService.to_test_metrics(_Orm(), [])
     assert empty.provenance is None, "没有样本时不该乱标"
+
+
+def test_undetermined_execution_has_a_consistent_summary():
+    """⭐ 外审抓出：`undetermined` 的执行在 PDF 摘要里「无处安放」。
+
+    失败场景：一次跑完但只有浏览器数据的执行 → overall_result='undetermined'，
+    而 execution_summary 是 total=1 / passed=0 / failed=0 / pending=0。
+    PDF 那边灰条宽度取**余量**（满宽），图例数字取 **pending 字段**（0）——
+    两者不同源，于是画出「满宽灰条 + Pending (0)」的自相矛盾报告。
+
+    这条门盯两件事：
+    ① 服务端构造摘要时显式记 undetermined（total 跟各类之和对得上）
+    ② PDF 图例的第三块数字跟宽度**同源**（都用余量）
+
+    让它报错的改法：把 report_service 里的 undetermined 那行删掉，
+    或把 pdf_generator 图例改回 `Pending ({pending})`（已实跑，见变异脚本）。
+    """
+    import pathlib
+
+    svc = (pathlib.Path(__file__).resolve().parents[1]
+           / "app/services/report_service.py").read_text(encoding="utf-8")
+    assert "'undetermined':" in svc, (
+        "构造 execution_summary 时没记 undetermined —— "
+        "total=1 而 passed/failed/pending 全 0，读者只会以为报告算错了"
+    )
+
+    pdf = (pathlib.Path(__file__).resolve().parents[1]
+           / "app/services/pdf_generator.py").read_text(encoding="utf-8")
+    assert "Pending ({pending})" not in pdf, (
+        "分布图图例的数字还在取 pending 字段，而宽度取的是余量 —— "
+        "未判定的执行会画出满宽灰条却标 Pending (0)"
+    )
+    assert "other = max(total - passed - failed, 0)" in pdf, (
+        "图例数字没跟宽度同源"
+    )

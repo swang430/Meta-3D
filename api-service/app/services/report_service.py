@@ -253,11 +253,16 @@ class ReportService:
                 
                 # 1. Execution Summary
                 if 'execution_summary' not in report_data_dict:
+                    _result = report_data_dict.get('overall_result')
                     report_data_dict['execution_summary'] = {
                         'total_executions': 1,
-                        'passed': 1 if report_data_dict.get('overall_result') == 'passed' else 0,
-                        'failed': 1 if report_data_dict.get('overall_result') == 'failed' else 0,
+                        'passed': 1 if _result == 'passed' else 0,
+                        'failed': 1 if _result == 'failed' else 0,
                         'pending': 0,
+                        # P1-48: 四态里的后两态在这里不属于 passed/failed/pending。
+                        # 不显式记的话，PDF 那边 total=1 而三类全 0，
+                        # 分布图会画出满宽灰条、图例却写 Pending(0)，自相矛盾。
+                        'undetermined': 1 if _result in ('undetermined', 'incomplete') else 0,
                         # 默认值不能是 0 —— 0 会被读成「一条都没过」（P1-48）
                         'pass_rate': report_data_dict.get('pass_rate'),
                         'total_duration_sec': report_data_dict.get('duration_s', 0),
