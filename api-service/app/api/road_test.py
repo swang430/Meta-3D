@@ -216,10 +216,13 @@ def compute_overall_result(kpi_summary, execution_status):
     """
     judged = [k for k in kpi_summary if getattr(k, "passed", None) is not None]
     passed_kpis = sum(1 for k in judged if k.passed)
-    pass_rate = (passed_kpis / len(judged)) * 100 if judged else 0.0
 
     if not judged:
-        return pass_rate, "incomplete"
+        # ⚠️ 合格率返回 None 而不是 0.0（外审 P1）：0.0 会被界面无条件
+        #    显示成「通过率 0%」，读者以为一条都没过 —— 实际是**一条都没判**。
+        return None, "incomplete"
+
+    pass_rate = (passed_kpis / len(judged)) * 100
     if execution_status == ExecutionStatus.COMPLETED:
         return pass_rate, ("passed" if pass_rate >= 80 else "failed")
     if execution_status == ExecutionStatus.FAILED:
@@ -1062,7 +1065,15 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
     # Pull real metrics + phases from DB (Phase 2.4c)
     kpi_samples_orm = vrt_execution_service.query_kpi_samples(db, execution_id)
     metrics_obj = vrt_execution_service.to_test_metrics(row, kpi_samples_orm)
-    has_real_metrics = len(metrics_obj.kpi_samples) > 0
+    # ⚠️ 光看「有没有样本」不够（外审 P1）：那些样本本身就是浏览器
+    #    Math.random() 造的。上一版只在摘要那层 continue 掉，而下面
+    #    kpi_summary 空了之后会 **从原始样本重算** —— 编的数又算回来了。
+    #    所以来源是客户端模拟时，整批都不算「真数据」。
+    _client_simulated = any(
+        (v or {}).get("provenance") == "client_simulated"
+        for v in (metrics_obj.summary or {}).values()
+    ) if getattr(metrics_obj, "summary", None) else False
+    has_real_metrics = len(metrics_obj.kpi_samples) > 0 and not _client_simulated
     persisted_phases = vrt_execution_service.to_phase_results(row)
 
     # Initialize new fields

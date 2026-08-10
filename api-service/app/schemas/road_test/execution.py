@@ -383,7 +383,11 @@ class ExecutionReport(BaseModel):
 
     # Overall result
     overall_result: str = Field(description="passed | failed | incomplete")
-    pass_rate: float = Field(description="Percentage of passed KPIs")
+    pass_rate: Optional[float] = Field(
+        default=None,
+        description="合格率；一条 KPI 都没有可信判决时为 None（不是 0）—— "
+                    "0 会被读成「一条都没过」，而实际是「一条都没判」",
+    )
 
     # Events
     events: List[Dict[str, Any]] = Field(default_factory=list, description="Notable events")

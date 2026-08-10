@@ -130,3 +130,38 @@ def test_undetermined_is_not_rendered_as_failed_in_ui():
         "界面判 passed 时没排除 null —— null 会掉进 false 分支、显示成红色 ✗，"
         "把「未判定」说成「不合格」"
     )
+
+
+def test_client_samples_do_not_reach_the_recompute_path():
+    """⭐ 外审抓出：上一版的 continue 只挡了摘要，**原始样本还在**。
+
+    `has_real_metrics` 只看 `len(kpi_samples) > 0`，而 kpi_summary 被排空之后
+    下游会 `_compute_kpi_summary_from_samples()` **从原始样本重算** ——
+    那些样本正是浏览器 `Math.random()` 造的，编的数又算回来了。
+
+    让它报错的改法：把 `has_real_metrics` 改回只判 `len(...) > 0`。
+    """
+    text = _SRC.read_text(encoding="utf-8")
+    assert "_client_simulated" in text and "not _client_simulated" in text, (
+        "has_real_metrics 没有排除客户端来源 —— 重算路径会把编的数算回来"
+    )
+
+
+def test_unjudged_pass_rate_is_none_not_zero():
+    """⭐ 外审抓出：`pass_rate=0.0` 会被显示成「通过率 0%」。
+
+    读者以为一条都没过，实际是**一条都没判**。
+
+    让它报错的改法：把 `return None, "incomplete"` 改回 `return 0.0, ...`。
+    """
+    from app.api.road_test import ExecutionStatus, compute_overall_result
+
+    rate, result = compute_overall_result([], ExecutionStatus.COMPLETED)
+    assert rate is None, f"没有可信判决时合格率应为 None，实际 {rate!r}"
+    assert result == "incomplete"
+
+    class _KPI:
+        passed = True
+
+    rate2, result2 = compute_overall_result([_KPI()], ExecutionStatus.COMPLETED)
+    assert rate2 == 100.0 and result2 == "passed", "有真判决时照常算"

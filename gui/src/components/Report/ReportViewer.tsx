@@ -159,10 +159,22 @@ function ReportContent({ content, title }: ReportContentProps) {
             )}
           </div>
           <div style={{ textAlign: 'right' }}>
-            <Text size="xl" fw={700} c={resultConfig.color}>
-              {content.pass_rate}%
-            </Text>
-            <Text size="xs" c="dimmed">通过率</Text>
+            {/* ⚠️ 后端在一条 KPI 都没有可信判决时返回 null（P1-48）——
+                原来无条件渲染成 `null%`/`0%`，读者以为「一条都没过」，
+                实际是**一条都没判**。 */}
+            {content.pass_rate === null || content.pass_rate === undefined ? (
+              <>
+                <Text size="xl" fw={700} c="dimmed">—</Text>
+                <Text size="xs" c="dimmed">通过率未判定</Text>
+              </>
+            ) : (
+              <>
+                <Text size="xl" fw={700} c={resultConfig.color}>
+                  {content.pass_rate}%
+                </Text>
+                <Text size="xs" c="dimmed">通过率</Text>
+              </>
+            )}
           </div>
         </Group>
       </Card>
