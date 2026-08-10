@@ -461,20 +461,6 @@ def download_report(
     import os
 
     report = report_service.get_report(db, report_id)
-    # 出口②：下载这条路送的是**归档时那份原始 PDF**，改不了它的内容
-    #（改历史文件是伪造）。改成在响应头上带警示，让调用方至少能看到。
-    _extra_headers = {}
-    if report is not None:
-        _probe = type("_P", (), {
-            "road_test_execution_id": getattr(report, "road_test_execution_id", None),
-            "content_data": dict(getattr(report, "content_data", None) or {}),
-        })()
-        _flag_pre_provenance_report(_probe)
-        if "provenance_warning" in _probe.content_data:
-            _extra_headers["X-Provenance-Warning"] = (
-                "This archived virtual-road-test report predates provenance marking; "
-                "its KPI values and verdicts are unverified."
-            )
     if not report:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -485,6 +471,28 @@ def download_report(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Report is not ready for download. Status: {report.status}"
+        )
+
+    # 真假标注上线之前归档的虚拟路测报告：直接拒绝下载（外审 P1）。
+    #
+    # 上一版在响应头上挂警示 —— 那是无效装饰：前端 `downloadReport()` 只取
+    # `response.data`（blob），响应头当场丢掉；而归档报告在 GUI 里根本进不了
+    # ReportViewer（`ReportsPage` 挂 `ReportList` 时没传 `onView`，「查看」按钮
+    # 不显示），JSON 里的警示字段也照不到人。**下载是这类报告唯一走得通的出口**，
+    # 所以拦在这里，而不是指望调用方去读什么。
+    #
+    # PDF 文件本身不改（改历史归档是伪造），只是不再提供下载。
+    # 影响面：库里当前零份虚拟路测报告（214 份全是 single_execution），
+    # 这道拦截是防将来的。
+    _probe = type("_P", (), {
+        "road_test_execution_id": getattr(report, "road_test_execution_id", None),
+        "content_data": dict(getattr(report, "content_data", None) or {}),
+    })()
+    _flag_pre_provenance_report(_probe)
+    if "provenance_warning" in _probe.content_data:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_probe.content_data["provenance_warning"],
         )
 
     if not report.file_path:
@@ -524,7 +532,6 @@ def download_report(
         path=full_path,
         media_type=media_type,
         filename=filename,
-        headers=_extra_headers or None,
     )
 
 

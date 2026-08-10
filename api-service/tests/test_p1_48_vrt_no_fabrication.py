@@ -323,3 +323,35 @@ def test_archived_pre_provenance_reports_are_flagged():
     assert "provenance_warning" not in real.content_data, (
         "普通的实测报告被挂上了「未经验证」警示 —— 反方向的假信息"
     )
+
+
+def test_legacy_vrt_archive_download_is_blocked():
+    """⭐ 外审抓出：警示挂在了**没人读的地方**。
+
+    上一版在下载响应头上挂警示 —— 无效装饰：
+    - 前端 `downloadReport()` 只取 `response.data`（blob），响应头当场丢掉
+    - 归档报告在 GUI 里进不了 ReportViewer（`ReportsPage` 挂 `ReportList`
+      时没传 `onView`，「查看」按钮不显示），JSON 里的警示也照不到人
+
+    **下载是这类报告唯一走得通的出口**，所以拦在这里，不指望调用方读什么。
+
+    这道门盯的是「拦截判据接在了 download 端点上」：
+    源码里 download_report 必须调 `_flag_pre_provenance_report` 并在命中时
+    抛 409 —— 而不是把结果塞进一个没人看的响应头。
+
+    让它报错的改法：把 409 那段删掉，或改回 `_extra_headers`（已实跑，见变异脚本）。
+    """
+    import inspect
+
+    from app.api.report import download_report
+
+    src = inspect.getsource(download_report)
+    assert "_flag_pre_provenance_report" in src, (
+        "download 端点没有检查归档报告的真假标注 —— 老的虚拟路测报告能原样下载"
+    )
+    assert "HTTP_409_CONFLICT" in src, (
+        "命中了却不拦 —— 警示没有生效的出口（上一版就是挂在响应头上被前端丢掉的）"
+    )
+    assert "headers=" not in src, (
+        "又把警示塞进响应头了 —— 前端 downloadReport() 只取 response.data，收不到"
+    )

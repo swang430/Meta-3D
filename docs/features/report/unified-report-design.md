@@ -133,8 +133,17 @@ interface ReportContentData {
   }>;
 
   // === 总体结果 ===
-  overall_result: 'passed' | 'failed' | 'incomplete';
-  pass_rate: number;
+  // P1-48: 四态，别只记 passed/failed。
+  //   passed / failed  —— 有可信判决（failed 也包括执行本身失败）
+  //   undetermined     —— 跑完了，但没有一条可信判决（例如全部来自浏览器模拟）
+  //   incomplete       —— 没跑完（还在跑 / 被中止）
+  // ⚠️ undetermined 与 incomplete 不是一回事：前者是「测了但结果不可信」，
+  //    后者是「压根没测完」。混用会让操作员以为测试中断了。
+  overall_result: 'passed' | 'failed' | 'incomplete' | 'undetermined';
+  // P1-48: 可空。没有可信判决时是 null，不是 0 ——
+  // 写 0 会把「没有证据」变成「0% 通过」这个假的量化失败结论。
+  // 消费方（PDF、界面）必须显式处理 null，别直接 round() / f"{x:.1f}"。
+  pass_rate: number | null;
 
   // === 事件日志 ===
   events: Array<{
