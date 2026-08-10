@@ -133,6 +133,10 @@ def _mock_fallback_class_names() -> set[str]:
 
     src = textwrap.dedent(inspect.getsource(InstrumentHALService._initialize_from_db))
     tree = ast.parse(src)
+    # ⚠️ 外审 R2-P1a：原实现读到**第一个**字面量就 return，后面一句
+    #    `MOCK_FALLBACK.update({...})` 或条件重新赋值它完全看不见 → 门恒绿。
+    #    所以先把「本门赖以成立的前提」逐条查掉，任一不成立即硬失败。
+    literal_nodes, later_touches, local_imports = [], [], []
     for node in ast.walk(tree):
         targets = []
         if isinstance(node, ast.AnnAssign) and node.target is not None:
@@ -141,19 +145,60 @@ def _mock_fallback_class_names() -> set[str]:
             targets = node.targets
         for t in targets:
             if isinstance(t, ast.Name) and t.id == "MOCK_FALLBACK":
-                value = node.value
-                assert isinstance(value, ast.Dict), (
-                    "MOCK_FALLBACK 不再是字典字面量，本门的 AST 解析已失效 —— "
-                    "不要放宽这条断言，去改解析方式"
-                )
-                names = set()
-                for v in value.values:
-                    assert isinstance(v, ast.Name), (
-                        f"MOCK_FALLBACK 的值出现了非简单名字的表达式 "
-                        f"({ast.dump(v)[:80]})，本门解析不了，请更新解析方式"
-                    )
-                    names.add(v.id)
-                return names
+                literal_nodes.append(node)
+            if isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name) \
+                    and t.value.id == "MOCK_FALLBACK":
+                later_touches.append(f"下标赋值 line {getattr(node, 'lineno', '?')}")
+        # ⚠️ 只把**会改内容**的方法算成 mutation。`.get()` / `.values()` / `.items()`
+        #    是只读的，把它们算进来会造成误红 —— 而误红的最省事转绿方式是放宽断言，
+        #    那正好把门掏空（本门第一版就踩了这个，红在生产代码正常的 .get()/.values() 上）。
+        _MUTATING = {"update", "setdefault", "pop", "popitem", "clear"}
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and isinstance(node.func.value, ast.Name) \
+                and node.func.value.id == "MOCK_FALLBACK" \
+                and node.func.attr in _MUTATING:
+            later_touches.append(f".{node.func.attr}() line {getattr(node, 'lineno', '?')}")
+        # 局部 import 能把**不同的类**绑到已有名字上（外审 R2-P1b）。
+        # ⚠️ 但方法内本来就有多处为避开循环导入的局部 import（生产代码的合法写法），
+        #    所以判据不是"有没有局部 import"，而是"它绑定的名字**是否与 MOCK_FALLBACK
+        #    用到的名字相交**" —— 相交才有可能把另一个类顶替进来。
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                bound = alias.asname or alias.name.split(".")[0]
+                local_imports.append((bound, getattr(node, "lineno", "?")))
+
+    assert literal_nodes, (
+        "在 _initialize_from_db 里找不到 MOCK_FALLBACK —— 它被改名或挪走了？"
+        "本门依赖它做真值源，请更新本门而不是删掉这条断言"
+    )
+    assert len(literal_nodes) == 1, (
+        f"MOCK_FALLBACK 被赋值 {len(literal_nodes)} 次 —— 本门只解析静态字面量，"
+        f"运行时的有效映射可能与第一个不同。请改解析方式，别放宽这条"
+    )
+    assert not later_touches, (
+        f"MOCK_FALLBACK 在字面量之后还被改动过：{later_touches} —— "
+        f"本门看不见这些改动，运行时可能装上未列入权威表的 mock。请改解析方式，别放宽这条"
+    )
+    value = literal_nodes[0].value
+    assert isinstance(value, ast.Dict), (
+        "MOCK_FALLBACK 不再是字典字面量，本门的 AST 解析已失效 —— "
+        "不要放宽这条断言，去改解析方式"
+    )
+    names = set()
+    for v in value.values:
+        assert isinstance(v, ast.Name), (
+            f"MOCK_FALLBACK 的值出现了非简单名字的表达式 "
+            f"({ast.dump(v)[:80]})，本门解析不了，请更新解析方式"
+        )
+        names.add(v.id)
+
+    shadowed = [(b, ln) for b, ln in local_imports if b in names]
+    assert not shadowed, (
+        f"方法内的局部 import 绑定了 MOCK_FALLBACK 用到的名字：{shadowed} —— "
+        f"它可能把**另一个类**顶替进来，而本门按名字解析到模块全局的那个类，"
+        f"会解析成不同的东西。请改解析方式（读有效映射），别放宽这条断言"
+    )
+    return names
     raise AssertionError(
         "在 _initialize_from_db 里找不到 MOCK_FALLBACK —— 它被改名或挪走了？"
         "本门依赖它做真值源，请更新本门而不是删掉这条断言"
@@ -173,21 +218,38 @@ def test_g19_mock_fallback_matches_authoritative_table():
       - 往 `MOCK_FALLBACK` 加一项而不加进 `_MOCK_DRIVER_CLASSES` → 红；
       - 从 `MOCK_FALLBACK` 删一项（权威表仍有）→ 红。
     """
-    fallback_names = _mock_fallback_class_names()
-    declared_names = {c.__name__ for c in _MOCK_DRIVER_CLASSES}
+    from app.services import instrument_hal_service as svc_mod
+    from app.services.instrument_hal_service import is_mock_driver
 
-    only_in_fallback = fallback_names - declared_names
-    only_in_table = declared_names - fallback_names
+    # ⚠️ 外审 R2-P1b：只比**名字**的话，「同名不同类」会让两边差集都空、门全绿。
+    #    名字不是生效端，类对象才是 —— 解析成类对象再比身份。
+    fallback_classes = set()
+    for name in sorted(_mock_fallback_class_names()):
+        assert hasattr(svc_mod, name), (
+            f"MOCK_FALLBACK 里的 {name} 在 instrument_hal_service 模块命名空间解析不到 —— "
+            f"本门无法确认它是哪个类，请更新解析方式"
+        )
+        fallback_classes.add(getattr(svc_mod, name))
+
+    declared = set(_MOCK_DRIVER_CLASSES)
+    only_in_fallback = fallback_classes - declared
+    only_in_table = declared - fallback_classes
 
     assert not only_in_fallback, (
-        f"这些类在驱动装载时会被当 mock 装上，却不在 _MOCK_DRIVER_CLASSES 里："
-        f"{sorted(only_in_fallback)} —— is_mock_driver() 会把它们判成真机，"
-        f"它们造的数会穿过所有按真假判定的门"
+        f"这些类装载时会被当 mock 装上，却不在 _MOCK_DRIVER_CLASSES 里："
+        f"{sorted(c.__name__ for c in only_in_fallback)} —— is_mock_driver() 判它们是真机"
     )
     assert not only_in_table, (
-        f"这些类在权威表里，却不在装载时的 MOCK_FALLBACK 里：{sorted(only_in_table)} —— "
-        f"两张表已经分叉，改一处漏一处"
+        f"这些类在权威表里，却不在装载时的 MOCK_FALLBACK 里："
+        f"{sorted(c.__name__ for c in only_in_table)} —— 两张表已分叉"
     )
+
+    # 末了直接问**运行时真正生效的那个函数**（外审建议的第二条路）
+    for cls in sorted(fallback_classes, key=lambda c: c.__name__):
+        probe = cls.__new__(cls)  # 不跑 __init__，只验 isinstance 判定
+        assert is_mock_driver(probe), (
+            f"{cls.__name__} 装载时会被当 mock 用，但 is_mock_driver() 判它不是 mock"
+        )
 
 
 def test_g19_mock_table_covers_every_mock_class_in_hal():
