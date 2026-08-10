@@ -215,11 +215,14 @@ interface BenchmarkMetric {
 
 ## 与后端 API 集成
 
-这些图表组件设计为直接与统计服务 API 配合使用：
+⚠️ **原先这里列的三条统计接口已于 2026-08-10 删除**（P1-48）。
 
-- **TimeSeriesChart** ← `/api/v1/reports/statistics/time-series`
-- **StatisticsComparisonChart** ← `/api/v1/reports/statistics/compare`
-- **PerformanceBenchmarkChart** ← `/api/v1/reports/statistics/benchmark`
+它们**整体返回随机数** —— 相似度、趋势、置信度全是 `np.random` 现编的，
+而且连传进去的报告 ID 存不存在都不查（当时的测试就是传随机 UUID 断言返回 200）。
+一份看不出是编的对比结论，比没有这个功能危险得多。
+
+这几个图表组件目前**没有真实数据源**。要接真数据得先有一个真的统计服务；
+在那之前，它们只能吃调用方自己传进来的数据（见 `ChartsDemoPage.tsx` 的用法）。
 
 ## 下一步扩展
 

@@ -535,25 +535,6 @@ class ScheduleListResponse(BaseModel):
 
 # ==================== Statistics Schemas ====================
 
-class StatisticsCompareRequest(BaseModel):
-    """Request to compare multiple reports statistically"""
-    report_ids: List[UUID] = Field(..., min_length=2, description="At least 2 reports to compare")
-    metrics: Optional[List[str]] = Field(
-        None,
-        description="Specific metrics to compare. If None, compares all common metrics"
-    )
-    group_by: Optional[str] = Field(
-        None,
-        description="Group comparison by: frequency, power_level, test_type"
-    )
-    confidence_level: float = Field(
-        0.95,
-        ge=0.0,
-        le=1.0,
-        description="Confidence level for statistical tests"
-    )
-
-
 class MetricStatistics(BaseModel):
     """Statistical summary for a single metric"""
     metric_name: str
@@ -578,28 +559,6 @@ class ComparisonResult(BaseModel):
     significant_differences: Optional[List[Dict[str, Any]]] = None
 
 
-class StatisticsCompareResponse(BaseModel):
-    """Response with statistical comparison results"""
-    report_ids: List[UUID]
-    metrics_compared: List[str]
-    comparison_results: List[ComparisonResult]
-    summary: Dict[str, Any]
-    generated_at: UTCDateTime
-
-
-class BenchmarkRequest(BaseModel):
-    """Request to benchmark a report against reference data"""
-    report_id: UUID = Field(..., description="Report to benchmark")
-    reference_report_ids: Optional[List[UUID]] = Field(
-        None,
-        description="Reference reports. If None, uses all reports of same type"
-    )
-    metrics: Optional[List[str]] = Field(
-        None,
-        description="Metrics to benchmark. If None, benchmarks all metrics"
-    )
-
-
 class BenchmarkMetric(BaseModel):
     """Benchmark result for a single metric"""
     metric_name: str
@@ -609,36 +568,6 @@ class BenchmarkMetric(BaseModel):
     reference_mean: float
     reference_std: float
     z_score: float
-
-
-class BenchmarkResponse(BaseModel):
-    """Response with benchmark results"""
-    report_id: UUID
-    reference_count: int
-    benchmark_metrics: List[BenchmarkMetric]
-    overall_percentile: float
-    overall_rating: str
-    summary: str
-    generated_at: UTCDateTime
-
-
-class TimeSeriesRequest(BaseModel):
-    """Request for time series analysis"""
-    test_plan_id: UUID = Field(..., description="Test plan to analyze")
-    metric_name: str = Field(..., description="Metric to analyze over time")
-    start_date: Optional[datetime] = Field(None, description="Start of time range")
-    end_date: Optional[datetime] = Field(None, description="End of time range")
-    window_size: int = Field(
-        5,
-        ge=2,
-        description="Rolling window size for trend analysis"
-    )
-    anomaly_threshold: float = Field(
-        3.0,
-        ge=1.0,
-        le=10.0,
-        description="Z-score threshold for anomaly detection"
-    )
 
 
 class TimeSeriesPoint(BaseModel):
@@ -658,30 +587,7 @@ class TrendAnalysis(BaseModel):
     strength: str  # "strong" | "moderate" | "weak"
 
 
-class TimeSeriesResponse(BaseModel):
-    """Response with time series analysis"""
-    test_plan_id: UUID
-    metric_name: str
-    data_points: List[TimeSeriesPoint]
-    trend: TrendAnalysis
-    anomalies: List[Dict[str, Any]]
-    statistics: MetricStatistics
-    rolling_mean: List[float]
-    rolling_std: List[float]
-    generated_at: UTCDateTime
-
-
 # ==================== Simple Compare Schemas ====================
-
-class SimpleCompareRequest(BaseModel):
-    """Simple report comparison request"""
-    report_ids: List[UUID] = Field(..., min_length=2, description="Report IDs to compare")
-    comparison_type: str = Field(
-        "kpi_diff",
-        description="Comparison type: kpi_diff | trend_analysis | full"
-    )
-    metrics: Optional[List[str]] = Field(None, description="Specific metrics to compare")
-
 
 class KPIDifference(BaseModel):
     """KPI difference between reports"""
@@ -691,12 +597,3 @@ class KPIDifference(BaseModel):
     differences: Dict[str, float]  # report_id -> difference from baseline
     percent_changes: Dict[str, float]  # report_id -> percent change
 
-
-class SimpleCompareResponse(BaseModel):
-    """Simple report comparison response"""
-    report_ids: List[UUID]
-    comparison_type: str
-    comparison_result: Dict[str, Any]
-    kpi_differences: Optional[List[KPIDifference]] = None
-    summary: Dict[str, Any] = Field(default_factory=dict)
-    generated_at: UTCDateTime
