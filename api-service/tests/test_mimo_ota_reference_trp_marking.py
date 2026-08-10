@@ -137,8 +137,13 @@ async def test_no_sa_trp_marked_unverified(db, lab):
 
 @pytest.mark.asyncio
 async def test_mock_sa_trp_marked_unverified(db, lab):
-    """SA driver present but mock → 'hal_signal_analyzer' label, yet NOT a real
-    measurement → still flagged unverified."""
+    """SA 挂着但是 mock 驱动 → 来源如实标成 `hal_signal_analyzer_mock`，且不算已验证。
+
+    ⚠️ 2026-08-10（P1-48）改了断言：原来断言标签是 `hal_signal_analyzer`，
+    而这条测试自己的 docstring 当时就写着「yet NOT a real measurement」——
+    **它把一个已知会误导读者的标签钉成了契约**。现在来源如实说是 mock 驱动。
+    核心意图（mock SA 不算已验证）不变。
+    """
     from app.hal import MockSignalAnalyzer
 
     hal, saved = _swap_sa(MockSignalAnalyzer("mock-sa", {"model": "Mock"}))
@@ -148,7 +153,7 @@ async def test_mock_sa_trp_marked_unverified(db, lab):
         hal.drivers.clear()
         hal.drivers.update(saved)
     m = result.measurements or {}
-    assert m["measurement_source"] == "hal_signal_analyzer"
+    assert m["measurement_source"] == "hal_signal_analyzer_mock"
     assert m["trp_verified"] is False, "mock SA must not count as verified"
     assert any("未验证" in w for w in (result.warnings or [])), result.warnings
 

@@ -71,7 +71,14 @@ class ReferenceExecutor(IStepExecutor):
                 bandwidth_hz=config.bandwidth_mhz * 1e6
             )
             measured_trp_dbm = measured_pwr + _MOCK_SA_TO_TRP_OFFSET_DB
-            result_payload["measurement_source"] = "hal_signal_analyzer"
+            # 「来源」这一栏要说实话（P1-48）：SA 挂着但是 mock 驱动时，
+            # 这个功率是仿真出来的，写 "hal_signal_analyzer" 会让读报告的人
+            # 以为是实测。旁边虽然有一句 warning，但那句进不了「来源」这一栏，
+            # 于是同一份 PDF 上「来源：hal_signal_analyzer」和「验证：未验证(mock/兜底值)」
+            # 并排打架 —— 一句真话一句假话。
+            result_payload["measurement_source"] = (
+                "hal_signal_analyzer" if sa_is_real else "hal_signal_analyzer_mock"
+            )
             if not sa_is_real:
                 # SA driver present but it's a MOCK — the "hal_signal_analyzer"
                 # label is misleading; the power is simulated, not measured.

@@ -555,10 +555,19 @@ class PrecheckExecutor(IStepExecutor):
                 f"[{result_payload['quiet_zone_ripple_source']}]"
             )
         else:
+            # P1-48 (外审): 这条消息会被 report.py 渲染进正式报告的「提示」栏，
+            # 所以**绝不能带兜底数字** —— 上一轮只把 quiet_zone_ripple_db 字段
+            # 置空是不够的，同一个 0.7 从这条文案里照样印进 PDF。
+            # 阈值 (max_quiet_zone_ripple_db) 是配置里的真值，可以印；
+            # ripple_db 是兜底默认值，只进日志不进报告。
+            logger.info(
+                "[%s] 静区均匀度未验证，兜底波纹值 ±%.1f dB（仅日志，不进报告）",
+                context.test_execution.id, ripple_db,
+            )
             messages.append(
-                f"⚠️ 静区均匀度未验证: ±{ripple_db:.1f} dB 为兜底默认值 "
-                f"(无 ProbePattern 实测数据, 非实测合格; threshold "
-                f"±{criteria.max_quiet_zone_ripple_db:.1f}) [fallback_default]"
+                "⚠️ 静区均匀度未验证: 无 ProbePattern 实测数据, 波纹值不可用 "
+                f"(阈值 ±{criteria.max_quiet_zone_ripple_db:.1f} dB; 非实测合格) "
+                "[fallback_default]"
             )
 
         # --- 5. Calibration gate (P1-8, 2026-05-19) ---

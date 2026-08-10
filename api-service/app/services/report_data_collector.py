@@ -565,6 +565,7 @@ class ReportDataCollector:
         """
         results = []
         for execution in executions:
+            _rows_before = len(results)
             cfg = execution.config or {}
             progress = cfg.get("phase_progress") or []
             # Codex #238 迟到 C-1: case-runner 的失败文本在 config 不在列;
@@ -587,6 +588,16 @@ class ReportDataCollector:
                     "started_at": None,
                     "completed_at": None,
                 })
+
+            # ⭐ 把真假标注补进来（P1-48）：用户手点「生成执行报告」走的是这条路，
+            #    而它原来给每个相位的 parameters 都是空字典 —— 系统自动出的那份
+            #    有「TRP 验证 / 路损验证 / 测量验证」三处标注，手点的这份一个都没有，
+            #    看起来反而更「干净」。同一次执行两份报告可信度天差地别。
+            #    复用 MIMO_OTA 那套渲染，两条路从此同源。
+            # ⚠️ 只填**本次执行**新增的那几行（外审 P1-3）：
+            #    results 是跨执行累积的，把整个列表传进去会让后一个执行的参数
+            #    覆盖掉前面执行的 —— 手点报告选多个执行时就会串。
+            _fill_provenance_parameters(execution, results[_rows_before:])
         return results
 
     def _build_table_data(self, report_data: ReportData) -> List[Dict[str, Any]]:
@@ -650,3 +661,68 @@ class ReportDataCollector:
             }
 
         return chart_data
+
+
+def _fill_provenance_parameters(execution, results: List[Dict[str, Any]]) -> None:
+    """把 MIMO_OTA 报告那套「哪几台是模拟的 / 各处验证状态」填进相位结果里。
+
+    只在这次执行确实有相位测量数据时才填；没有的执行链（调试台等）保持原样，
+    行为完全不变。
+    延迟 import 是为了避开模块环（本文件已有先例）。
+    """
+    measurements = getattr(execution, "measurements", None)
+    if not isinstance(measurements, dict) or not measurements.get("phases"):
+        return
+    try:
+        from app.services.mimo_ota.executors.report import (
+            _build_mimo_ota_content_data,
+        )
+        from datetime import datetime
+
+        content = _build_mimo_ota_content_data(execution, datetime.utcnow(), "")
+        by_phase = {
+            s.get("phase"): (s.get("parameters") or {})
+            for s in (content.get("step_results") or [])
+        }
+        for row in results:
+            params = by_phase.get(_normalize_phase_name(row.get("name")))
+            if params:
+                row["parameters"] = params
+    except Exception:  # noqa: BLE001 - 报告渲染不该因为补标注而整份失败
+        # ⚠️ 但**不能静默留空**（外审 P1）：留空就退回了那份「看起来很干净、
+        #    实则没有任何真假标注」的报告 —— 正是本片要治的毛病。
+        #    历史或不规整但 JSON 合法的执行（比如 simulated_sources 里有个 null）
+        #    会让构造器在渲染时抛异常，走到这里。
+        #    留一个显式的「未知」，让读者知道这份报告的真假信息缺失了。
+        logger.warning(
+            "[report] 补真假标注失败，改为显式标注「未知」", exc_info=True,
+        )
+        for row in results:
+            if not row.get("parameters"):
+                row["parameters"] = {
+                    "数据来源": "⚠️ 未知 —— 本次未能提取真假标注，"
+                                "不能据此认为这些数据来自真实仪器",
+                }
+
+
+# 相位名两套写法的对照（外审 P1）：
+#   `phase_progress[].type` 里存的是执行器的描述符（MIMO_OTA_REFERENCE …），
+#   而 measurements.phases 用的是小写持久化键（reference …）。
+#   原实现直接拿前者去查后者 —— **永远查不到**，手点报告的每一行还是空的，
+#   本片想治的「那份看起来更干净的报告」原封不动。
+_PHASE_ALIASES = {
+    "MIMO_OTA_PRECHECK": "precheck",
+    "MIMO_OTA_REFERENCE": "reference",
+    "MIMO_OTA_MEASURE": "measure",
+    "MIMO_OTA_ANALYSIS": "analysis",
+    "MIMO_OTA_REPORT": "report",
+    # 历史执行里还留着这套旧名字
+    "mimo_test": "measure",
+}
+
+
+def _normalize_phase_name(name):
+    """把相位名归一到 measurements.phases 用的那套键。"""
+    if not isinstance(name, str):
+        return name
+    return _PHASE_ALIASES.get(name, name)
