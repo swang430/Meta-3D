@@ -258,6 +258,33 @@ def is_mock_driver(driver) -> bool:
     return driver is not None and isinstance(driver, _MOCK_DRIVER_CLASSES)
 
 
+def connected_log_fields(driver, category_key: str, vendor: str, model: str):
+    """算出「connected →」那行日志的正文与结构化字段。
+
+    抽成纯函数是为了**能被门直接测到**（内审 F1：原先这几行嵌在
+    ``_initialize_from_db`` 里，把它整条改回「按全局开关标」测试照样全绿 ——
+    本片最主要的那处修复零门守着）。
+
+    ⚠️ 前缀与 ``driver_source`` 字段**同源**（内审 F4）：两者都从
+    ``is_mock_driver(driver)`` 这一个判断派生。原先前缀用 is_mock_driver、
+    字段用 ``getattr(driver, "driver_source", "-")``，两个来源会打架，
+    而且 ``"-"`` 不在日志过滤器的白名单里、会静默回落成全局开关的值。
+    """
+    src = "mock" if is_mock_driver(driver) else "real"
+    msg = (
+        f"[HAL-{src.upper()}] {category_key}: connected → "
+        f"{vendor} {model} "
+        # 实际装上的驱动类名 —— 就绪表的 detail 里早有，只有这行丢了它
+        f"(driver={type(driver).__name__})"
+    )
+    extra = {
+        "instrument_id": category_key,
+        "driver_source": src,
+        "simulated": src == "mock",
+    }
+    return msg, extra
+
+
 _IPV4_RE = re.compile(r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b")
 
 
@@ -699,18 +726,10 @@ class InstrumentHALService:
                         # 实测 2026-08-07 的 app.log 里有 21 条
                         # `[HAL-MOCK] channelEmulator: connected → Keysight PROPSIM F64`，
                         # 而那台当时连的是真机。
-                        _src = "MOCK" if is_mock_driver(driver) else "REAL"
-                        logger.info(
-                            f"[HAL-{_src}] {cat.category_key}: connected → "
-                            f"{model.vendor} {model.model} "
-                            # 实际装上的驱动类名 —— 就绪表的 detail 里早有，只有这行丢了它
-                            f"(driver={type(driver).__name__})",
-                            extra={
-                                "instrument_id": cat.category_key,
-                                "driver_source": getattr(driver, "driver_source", "-"),
-                                "simulated": getattr(driver, "simulated", None),
-                            },
+                        _msg, _extra = connected_log_fields(
+                            driver, cat.category_key, model.vendor, model.model
                         )
+                        logger.info(_msg, extra=_extra)
                         # P3-5: pull driver-specific extras (F64 surfaces
                         # parsed SYST:INFO? fields here; other drivers
                         # return ``{}`` from the base default).
