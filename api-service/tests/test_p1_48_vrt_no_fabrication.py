@@ -294,19 +294,32 @@ def test_archived_pre_provenance_reports_are_flagged():
     """
     from app.api.report import _flag_pre_provenance_report
 
-    class _R:
-        content_data = {"overall_result": "passed", "pass_rate": 100.0,
-                        "kpi_summary": [{"name": "下行吞吐量", "passed": True}]}
+    class _OldVrt:
+        road_test_execution_id = "vrt-1"
+        content_data = {"overall_result": "passed", "pass_rate": 100.0}
 
-    old = _R()
+    old = _OldVrt()
     _flag_pre_provenance_report(old)
-    assert "provenance_warning" in old.content_data, "老报告没挂警示"
+    assert "provenance_warning" in old.content_data, "老的虚拟路测报告没挂警示"
     assert "未经验证" in old.content_data["provenance_warning"]
 
-    # 新报告（带真假标注痕迹）不该被挂警示
-    class _New:
+    class _NewVrt:
+        road_test_execution_id = "vrt-2"
         content_data = {"overall_result": "undetermined", "pass_rate": None}
 
-    new = _New()
+    new = _NewVrt()
     _flag_pre_provenance_report(new)
     assert "provenance_warning" not in new.content_data, "新报告被误挂了警示"
+
+    # ⭐ 最要紧的一格（外审 P2）：**普通的仪器实测报告绝不能被挂警示**。
+    #    库里 214 份报告全是这种，上一版按「形状」判会把它们全部标成「未经验证」——
+    #    把真数据说成假的，比不加警示更糟。
+    class _RealReport:
+        road_test_execution_id = None
+        content_data = {"overall_result": "passed", "pass_rate": 100.0}
+
+    real = _RealReport()
+    _flag_pre_provenance_report(real)
+    assert "provenance_warning" not in real.content_data, (
+        "普通的实测报告被挂上了「未经验证」警示 —— 反方向的假信息"
+    )

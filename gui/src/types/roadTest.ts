@@ -1007,6 +1007,8 @@ export interface ExecutionReport {
   overall_result: 'passed' | 'failed' | 'incomplete' | 'undetermined'
   // 没有可信判决时为 null —— 不是 0（0 会被读成「一条都没过」）
   pass_rate: number | null
+  // 归档于真假标注机制上线之前的报告，后端读取时挂的警示（P1-48）
+  provenance_warning?: string
   events: Array<{
     time: string
     type: string

@@ -635,26 +635,30 @@ def analyze_time_series_metric(
 
 
 def _flag_pre_provenance_report(report) -> None:
-    """给「真假标注机制上线之前」归档的报告加一句警示（P1-48）。
+    """给「真假标注机制上线之前」归档的**虚拟路测**报告挂一句警示（P1-48）。
 
-    ⚠️ 本片新加的白名单只在**生成报告时**生效。而在这次部署之前就归档的报告
-    （生产库里有实物：一份 5 行 KPI 全 ✓ PASS、通过率 100%，那次执行零仪器参与）
-    照样能通过这个端点原样取出来 —— 读者拿到的仍是一份看不出是编的报告。
+    ⚠️ **只对虚拟路测报告生效**（外审 P2）：判据用 `road_test_execution_id` 非空，
+    不用「形状」去猜。上一版按形状判（有数值 pass_rate、无 provenance、结论 passed/failed）——
+    而库里 **214 份报告全是普通的仪器实测报告，形状恰好全部命中** ——
+    会把**全部真报告标成「未经验证」**，那是反方向的假信息，比不加警示更糟。
 
-    **不改历史数据**（改历史记录是伪造），只在读取时挂一个显式标记，
-    让调用方知道这份报告产出于真假标注上线之前、其数据来源未经验证。
+    ⚠️ **不改历史数据**（改历史记录是伪造），只在读取时挂标记。
+
+    ⚠️ **实际影响面：当前为零** —— 库里一份虚拟路测报告都没有（214 份全是
+    `single_execution`）。这个机制是防将来的，不是治现在的。
     """
+    if getattr(report, "road_test_execution_id", None) is None:
+        return          # 不是虚拟路测报告 —— 不碰
     data = getattr(report, "content_data", None)
     if not isinstance(data, dict):
         return
-    # 上线后生成的报告，KPI 那格一定带得出 provenance 相关的痕迹；
-    # 老报告没有 —— 用「有没有这些键」来区分，不去猜时间戳。
+    # 上线后生成的虚拟路测报告一定带得出真假标注的痕迹；老的没有。
     has_marker = (
-        "pass_rate" in data and data.get("pass_rate") is None
-    ) or any(
-        isinstance(v, dict) and "provenance" in v
-        for v in (data.get("summary") or {}).values()
-    ) or data.get("overall_result") == "undetermined"
+        ("pass_rate" in data and data.get("pass_rate") is None)
+        or data.get("overall_result") == "undetermined"
+        or any(isinstance(v, dict) and "provenance" in v
+               for v in (data.get("summary") or {}).values())
+    )
     if has_marker:
         return
     data.setdefault(
@@ -693,6 +697,20 @@ def download_report(
     import os
 
     report = report_service.get_report(db, report_id)
+    # 出口②：下载这条路送的是**归档时那份原始 PDF**，改不了它的内容
+    #（改历史文件是伪造）。改成在响应头上带警示，让调用方至少能看到。
+    _extra_headers = {}
+    if report is not None:
+        _probe = type("_P", (), {
+            "road_test_execution_id": getattr(report, "road_test_execution_id", None),
+            "content_data": dict(getattr(report, "content_data", None) or {}),
+        })()
+        _flag_pre_provenance_report(_probe)
+        if "provenance_warning" in _probe.content_data:
+            _extra_headers["X-Provenance-Warning"] = (
+                "This archived virtual-road-test report predates provenance marking; "
+                "its KPI values and verdicts are unverified."
+            )
     if not report:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -741,7 +759,8 @@ def download_report(
     return FileResponse(
         path=full_path,
         media_type=media_type,
-        filename=filename
+        filename=filename,
+        headers=_extra_headers or None,
     )
 
 
