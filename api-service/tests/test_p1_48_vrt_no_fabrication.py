@@ -217,3 +217,46 @@ def test_pdf_does_not_crash_on_unknown_pass_rate():
     assert not bad, (
         "PDF 里还有没做 None 判断的合格率格式化，会崩：\n  " + "\n  ".join(bad)
     )
+
+
+def test_every_pass_rate_consumer_handles_none():
+    """⭐ 外审两轮都抓到「改了返回值没查全下游」。
+
+    第一轮漏了 `road_test.py` 自己里的 `round(pass_rate, 1)`（会 TypeError）；
+    还有一处 f-string 会印出 "Pass Rate: None%"。
+
+    这条把**所有**用到 pass_rate 的地方一次性钉住。
+
+    让它报错的改法：任一处去掉 None 判断。
+    """
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "app"
+    offenders = []
+    for f in root.rglob("*.py"):
+        for i, line in enumerate(f.read_text(encoding="utf-8").split("\n"), 1):
+            if "pass_rate" not in line or line.strip().startswith("#"):
+                continue
+            # 会崩或会印出 None 的用法：round(...)、:.1f 格式化、裸插值
+            risky = (re.search(r"round\(\s*pass_rate", line)
+                     or re.search(r"\{pass_rate[:!]", line)
+                     or re.search(r"\{pass_rate\}", line))
+            if risky and "None" not in line:
+                offenders.append(f"{f.relative_to(root)}:{i}: {line.strip()[:70]}")
+    assert not offenders, (
+        "这些地方用了 pass_rate 但没处理 None（会崩或印出 None%）：\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_failed_execution_keeps_its_failed_result():
+    """⭐ 外审抓出：执行本身失败时，早退分支把它盖成了「未完成」。
+
+    让它报错的改法：把 `if execution_status == ExecutionStatus.FAILED: return None, "failed"`
+    这个分支删掉。
+    """
+    from app.api.road_test import ExecutionStatus, compute_overall_result
+
+    _rate, r = compute_overall_result([], ExecutionStatus.FAILED)
+    assert r == "failed", f"执行失败且无判决时应保留 failed，实际 {r}"

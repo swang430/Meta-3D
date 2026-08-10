@@ -1258,13 +1258,14 @@ class PDFGenerator:
 
         # Overall pass rate
         overall_result = data.get('overall_result', 'incomplete')
-        pass_rate = data.get('pass_rate', 0)
+        # 可能为 None（没有可信判决时）—— 直接插进 f-string 会印出 "None%"
+        pass_rate = data.get('pass_rate')
         elements.append(Spacer(1, 12))
 
         result_color = '#43a047' if overall_result == 'passed' else '#e53935' if overall_result == 'failed' else '#ff9800'
         elements.append(Paragraph(
             f'<b>Overall Result:</b> <font color="{result_color}">{overall_result.upper()}</font> '
-            f'(Pass Rate: {pass_rate}%)',
+            f'(Pass Rate: 未判定)' if pass_rate is None else f'(Pass Rate: {pass_rate}%)',
             self.styles['BodyText']
         ))
 
@@ -1311,7 +1312,8 @@ class PDFGenerator:
                 Paragraph(str(name), self.styles['BodyText']),
                 Paragraph(f'{duration:.1f}s' if isinstance(duration, (int, float)) else str(duration), self.styles['BodyText']),
                 Paragraph(status_text, self.styles['BodyText']),
-                Paragraph(f'{pass_rate}%', self.styles['BodyText']),
+                Paragraph("未判定" if pass_rate is None else f'{pass_rate}%',
+                          self.styles['BodyText']),
                 Paragraph(notes_display, self.styles['BodyText'])
             ])
 

@@ -225,6 +225,11 @@ def compute_overall_result(kpi_summary, execution_status):
         #    incomplete 原本表示「执行没跑完」（还在跑 / 被停止），
         #    把它拿来兼表「跑完了但没有可信判决」会让真正没跑完的执行
         #    也显示成「未判定」—— 那是新的假信息。两者必须分开。
+        # ⚠️ 执行**本身失败**这个信息不能丢（外审 P2）：原来这个早退分支
+        #    在 FAILED 那一格之前就返回 incomplete，于是真正失败的执行
+        #    被显示成「未完成」。
+        if execution_status == ExecutionStatus.FAILED:
+            return None, "failed"
         if execution_status == ExecutionStatus.COMPLETED:
             return None, "undetermined"
         return None, "incomplete"
@@ -1323,7 +1328,10 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
             phases=phases,
             kpi_summary=kpi_summary,
             overall_result=overall_result,
-            pass_rate=round(pass_rate, 1),
+            # ⚠️ 合格率可能是 None（一条 KPI 都没有可信判决时）——
+            #    `round(None, 1)` 会 TypeError。上一轮我查了 pdf_generator 与
+            #    report_service 两处下游，**漏了本文件自己这一处**（外审 P1）。
+            pass_rate=None if pass_rate is None else round(pass_rate, 1),
             events=events,
             # NEW: Time series and trajectory
             time_series=time_series_data,
