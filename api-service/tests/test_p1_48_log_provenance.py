@@ -153,7 +153,23 @@ def test_no_raw_scpi_logger_outside_the_wrapper():
         elif isinstance(arg, ast.JoinedStr):
             text = "".join(v.value for v in arg.values
                            if isinstance(v, ast.Constant) and isinstance(v.value, str))
-        if not text or not text.startswith("app.hal.scpi"):
+        # `getLogger(__name__)` 是模块级 logger 的标准写法，跟 SCPI 无关 —— 放行。
+        # （第一版把所有解析不出的都当违规，红在这上面：那是我判据写宽了，不是代码有问题。）
+        if isinstance(arg, ast.Name) and arg.id == "__name__":
+            continue
+        if text is None:
+            # ⚠️ 解析不出来的写法（变量名、字符串拼接、常量引用）**一律当违规**
+            #    （外审 P2）：`_LOG = "app.hal.scpi"; getLogger(_LOG)` 或
+            #    `getLogger("app.hal." + "scpi")` 会让 text 保持 None，
+            #    原来 `continue` 掉等于门静默放行 —— 那条路照样不带来源标记。
+            if wrapper_span[0] <= node.lineno <= wrapper_span[1]:
+                continue
+            offenders.append(
+                f"line {node.lineno}: getLogger(<解析不出的表达式>) —— "
+                f"本门只认字面量与 f-string，请改成字面量或走 _unverified_scpi_logger()"
+            )
+            continue
+        if not text.startswith("app.hal.scpi"):
             continue
         if wrapper_span[0] <= node.lineno <= wrapper_span[1]:
             continue  # 包装函数内部那一处
@@ -254,4 +270,106 @@ def test_hal_mode_actually_reaches_the_rendered_log_line():
     assert "hal_mode" in line, "渲染出来的日志行里没有 hal_mode 字段 —— 用户看不到"
     assert line["hal_mode"] == "mock", (
         f"日志行里 hal_mode 是 {line['hal_mode']!r}，应为 mock"
+    )
+
+
+def test_production_call_site_actually_uses_the_helper():
+    """⭐ 外审抓出：门测的是纯函数，**没测生产代码真的在用它**。
+
+    把 `_initialize_from_db` 里那句改回 `logger.info(f"[HAL-{self.mode.value.upper()}] ...")`、
+    让 `connected_log_fields()` 变成没人调，上面那几条门照样全绿 ——
+    这正是它要防的那个退化。
+
+    让它报错的改法：把调用点改回自己拼 f-string（`connected_log_fields` 就没人用了）。
+    """
+    import ast
+    import pathlib as _pl
+
+    src = _pl.Path(__file__).resolve().parents[1] / "app/services/instrument_hal_service.py"
+    tree = ast.parse(src.read_text(encoding="utf-8"))
+
+    init_fn = None
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "_initialize_from_db":
+            init_fn = node
+    assert init_fn, "找不到 _initialize_from_db —— 它被改名了？请更新本门"
+
+    calls_helper = any(
+        isinstance(n, ast.Call)
+        and ((isinstance(n.func, ast.Name) and n.func.id == "connected_log_fields")
+             or (isinstance(n.func, ast.Attribute) and n.func.attr == "connected_log_fields"))
+        for n in ast.walk(init_fn)
+    )
+    assert calls_helper, (
+        "_initialize_from_db 里没有调用 connected_log_fields() —— "
+        "那几条门测的纯函数已经没人用了，生产代码可能又在自己拼 f-string"
+    )
+
+    # ⚠️ 刻意**不**断言「函数体里不许出现 [HAL- 」——那条第一版写了，红在 5 处合法日志上
+    # （选型失败 / 连接失败 / 工厂完成等）。那些说的是「real 流程走到这步怎么了」，
+    # 不是「某台仪表是真是假」，语义不同。判据写宽了会逼人去改无关代码。
+
+
+def test_scpi_logger_source_follows_the_transport_actually_used():
+    """⭐ 外审抓出：走已加载的真驱动时，不能标「来源不确定」。
+
+    `_get_loaded_hal_driver()` 只返回**真驱动**（Mock 会被它跳过），
+    所以走那条路时来源是已知的。原实现无条件标 unverified —— 真仪器的往返
+    被盖成「不确定」，是反方向的同一个毛病。
+
+    让它报错的改法：把 `_run_command_via_hal` 里的 `_unverified_scpi_logger(driver)`
+    改回 `_unverified_scpi_logger()` → 「真驱动应标 real」那条断言红。
+    """
+    from app.api.instrument import _unverified_scpi_logger
+    from app.hal.rf_switch import EtslSwitchDriver
+    from app.services.instrument_hal_service import MockVNA
+
+    # 裸 socket：证明不了对面是谁
+    _, kw = _unverified_scpi_logger().process("x", {})
+    assert kw["extra"]["driver_source"] == "unverified"
+
+    # 走真驱动：来源已知
+    _, kw = _unverified_scpi_logger(EtslSwitchDriver.__new__(EtslSwitchDriver)).process("x", {})
+    assert kw["extra"]["driver_source"] == "real", (
+        f"走已加载的真驱动时应标 real，实际 {kw['extra']['driver_source']!r} —— "
+        f"把真仪器的往返盖成「不确定」"
+    )
+    assert kw["extra"]["simulated"] is False
+
+    # 走 mock 驱动（今天 _get_loaded_hal_driver 会跳过，但判据本身要对）
+    _, kw = _unverified_scpi_logger(MockVNA.__new__(MockVNA)).process("x", {})
+    assert kw["extra"]["driver_source"] == "mock"
+    assert kw["extra"]["simulated"] is True
+
+
+def test_run_command_via_hal_derives_source_from_its_driver():
+    """走 HAL 那个函数内部必须按它拿到的 driver 派生日志器，不用调用方传进来的。
+
+    让它报错的改法：删掉 `_run_command_via_hal` 里那句
+    `scpi_logger = _unverified_scpi_logger(driver)`。
+    """
+    import ast
+    import pathlib as _pl
+
+    src = _pl.Path(__file__).resolve().parents[1] / "app/api/instrument.py"
+    tree = ast.parse(src.read_text(encoding="utf-8"))
+
+    fn = None
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "_run_command_via_hal":
+            fn = node
+    assert fn, "找不到 _run_command_via_hal —— 改名了？请更新本门"
+
+    rebinds = [
+        n for n in ast.walk(fn)
+        if isinstance(n, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "scpi_logger" for t in n.targets)
+        and isinstance(n.value, ast.Call)
+        and isinstance(n.value.func, ast.Name)
+        and n.value.func.id == "_unverified_scpi_logger"
+        and n.value.args  # 必须传了 driver
+    ]
+    assert rebinds, (
+        "_run_command_via_hal 里没有按 driver 重新取日志器 —— "
+        "调用方传进来的是「来源不确定」，会把真仪器的往返标错"
     )

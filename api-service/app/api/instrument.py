@@ -342,16 +342,34 @@ class _UnverifiedScpiAdapter(logging.LoggerAdapter):
     逐个加会漏，**新开的点也自动带上**。
     """
 
+    def __init__(self, logger, driver=None):
+        super().__init__(logger, {})
+        # 走已加载的 HAL 驱动时，来源是**已知的**（`_get_loaded_hal_driver` 只返回
+        # 真驱动，Mock 会被它跳过）—— 这时必须按驱动自己的真假标，
+        # 否则真仪器的往返会被盖成「来源不确定」，那是反方向的同一个毛病（外审指出）。
+        self._driver = driver
+
     def process(self, msg, kwargs):
         extra = dict(kwargs.get("extra") or {})
-        extra.setdefault("driver_source", "unverified")
-        extra.setdefault("simulated", None)
+        if self._driver is not None:
+            from app.services.instrument_hal_service import is_mock_driver
+            src = "mock" if is_mock_driver(self._driver) else "real"
+            extra.setdefault("driver_source", src)
+            extra.setdefault("simulated", src == "mock")
+        else:
+            extra.setdefault("driver_source", "unverified")
+            extra.setdefault("simulated", None)
         kwargs["extra"] = extra
         return msg, kwargs
 
 
-def _unverified_scpi_logger() -> logging.LoggerAdapter:
-    return _UnverifiedScpiAdapter(logging.getLogger("app.hal.scpi"), {})
+def _unverified_scpi_logger(driver=None) -> logging.LoggerAdapter:
+    """拿 SCPI 日志器。
+
+    ``driver`` 为 None（裸 socket 直连配置地址）→ 标「来源不确定」；
+    传了 driver（走已加载的 HAL 驱动）→ 按驱动自己的真假标。
+    """
+    return _UnverifiedScpiAdapter(logging.getLogger("app.hal.scpi"), driver)
 
 
 @router.post(
@@ -1961,6 +1979,9 @@ async def _run_command_via_hal(
     category_key: str,
     timeout_ms: Optional[int] = None,
 ) -> ScpiCommandResult:
+    # 传输方式已经定了：走的是这个已加载的驱动，来源就是**已知的** ——
+    # 改用按它派生的日志器，别让调用方传进来的「来源不确定」把真往返标错（外审 P1）。
+    scpi_logger = _unverified_scpi_logger(driver)
     """Execute one SCPI command through the loaded HAL driver's primitives.
 
     Reuses the live VISA session the driver already holds — critical for
