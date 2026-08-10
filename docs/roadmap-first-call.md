@@ -3876,7 +3876,12 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 - `[discovered 2026-08-07 during P1-28 TDD]` ~~**`POST /workflows/execute` 的探头校准步骤必然在服务构造处崩溃**~~ ✅ **已并入 P1-28 收口（内审 F1 判为真值源端到端阻断项）** —— 没有补同名空壳；已改接现有 `AmplitudeCalibrationService` / `PhaseCalibrationService`，API 通过线程池隔离同步 executor 的 `asyncio.run()` 边界，映射 `CalibrationResult` 并将唯一 resolver 得到的 `chamber.id` 传入落库。新增直调 executor 与 live API 两层回归，都校验实际校准行归属所选 LabProfile 暗室。
 
-- `[discovered 2026-08-10 during P1-48 第 5 片外审]` **GUI 缺「查看归档报告」入口 —— `ReportList` 的 onView 全仓无人传（P2）** —— `gui/src/features/Reports/pages/ReportsPage.tsx:93` 挂 `<ReportList />` 时不传 `onView`，而「查看」按钮由 `{onView && (...)}` 守着（`ReportList.tsx:298`），所以从报告列表**只能下载不能看**。后果：`GET /reports/{id}` 返回的 `content_data` 里那些只在 JSON 里的字段（例如 P1-48 加的 `provenance_warning`）**在 GUI 里永远照不到人** —— 唯一挂载的 `ReportViewer` 拿的是执行的 contentData，不是归档报告。这是外审在 P1-48 第 5 片查出来的：我原本想靠「JSON 字段 + 响应头」提示老报告不可信，两条路都没有真实消费方（响应头被前端 `downloadReport()` 的 `response.data` 丢掉）。该片已改成后端 409 拦下载收口，**补 GUI 入口越界未做**。修法待评估：`ReportsPage` 传 `onView` 打开 `ReportViewer` 并喂归档的 `content_data`（注意 `ReportViewer` 现在的入参形态是执行侧的，可能要适配）。同族问题值得一并扫：还有多少后端字段是「加了但前端没有消费方」。
+- `[discovered 2026-08-10 during P1-48 第 5 片外审]` **给「真假标注上线前归档的旧报告」挂警示 —— 整条支线撤回，重做时按下面三个洞设计（P2）** —— P1-48 第 5 片里我加了这条支线，外审连查三轮、每轮的洞都是上一轮修复引入的，最后**整条撤掉**（修法优先级「去掉 > 换源 > 收窄 > 加机制」的第一档）。⚠️ **实际影响面当时为零**：库里 214 份报告全是 `single_execution`，一份虚拟路测报告都没有 —— 这个机制从头到尾是防将来的，却消耗了三轮外审。重做前先问「现在有这类数据吗」。
+  **踩过的三个洞（重做时逐个避开）**：
+  ① **判据别按「形状」猜** —— 第一版按「有数值 pass_rate + 无 provenance + 结论 passed/failed」判新旧，而 **214 份真报告的形状恰好全部命中**，会把全部真数据标成「未经验证」（反方向的假信息，比不加更糟）。改用 `road_test_execution_id` 非空才算虚拟路测报告。
+  ② **判据别取客户端能写的数据** —— 换成 `road_test_execution_id` 之后，判「新/旧」仍看 `content_data`，而 `POST /reports` 允许调用方塞任意 `content_data`：加一个 `pass_rate: null` 就能自称「已标注」绕过警示。真值源必须是服务端拥有的执行记录，不是报告创建者的自述。
+  ③ **警示要挂在真正走得通的出口上** —— 试过三个出口，**一个都不通**：(a) `GET /reports/{id}` 的 JSON 字段 —— 归档报告在 GUI 里进不了 `ReportViewer`（`ReportsPage.tsx:93` 挂 `<ReportList />` 不传 `onView`，而「查看」按钮由 `{onView && ...}` 守着），照不到人；(b) `/download` 的响应头 —— 被前端 `downloadReport()` 的 `response.data` 当场丢掉；(c) 改成 409 拦下载 —— 文件是拦住了，但 axios `responseType:'blob'` 把错误体也变成 Blob，`ReportList.tsx` 只显示 `error.message`（"Request failed with status code 409"），**操作员看不到为什么**。
+  **附带的独立缺陷（可单独做）**：GUI 缺「查看归档报告」入口（上面 ③a），从报告列表只能下载不能看。同族问题值得一并扫：还有多少后端字段是「加了但前端没有消费方」。
 
 ---
 

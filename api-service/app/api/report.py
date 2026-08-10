@@ -398,41 +398,6 @@ def delete_schedule(
 
 # ==================== Statistics Endpoints ====================
 
-def _flag_pre_provenance_report(report) -> None:
-    """给「真假标注机制上线之前」归档的**虚拟路测**报告挂一句警示（P1-48）。
-
-    ⚠️ **只对虚拟路测报告生效**（外审 P2）：判据用 `road_test_execution_id` 非空，
-    不用「形状」去猜。上一版按形状判（有数值 pass_rate、无 provenance、结论 passed/failed）——
-    而库里 **214 份报告全是普通的仪器实测报告，形状恰好全部命中** ——
-    会把**全部真报告标成「未经验证」**，那是反方向的假信息，比不加警示更糟。
-
-    ⚠️ **不改历史数据**（改历史记录是伪造），只在读取时挂标记。
-
-    ⚠️ **实际影响面：当前为零** —— 库里一份虚拟路测报告都没有（214 份全是
-    `single_execution`）。这个机制是防将来的，不是治现在的。
-    """
-    if getattr(report, "road_test_execution_id", None) is None:
-        return          # 不是虚拟路测报告 —— 不碰
-    data = getattr(report, "content_data", None)
-    if not isinstance(data, dict):
-        return
-    # 上线后生成的虚拟路测报告一定带得出真假标注的痕迹；老的没有。
-    has_marker = (
-        ("pass_rate" in data and data.get("pass_rate") is None)
-        or data.get("overall_result") == "undetermined"
-        or any(isinstance(v, dict) and "provenance" in v
-               for v in (data.get("summary") or {}).values())
-    )
-    if has_marker:
-        return
-    data.setdefault(
-        "provenance_warning",
-        "⚠️ 本报告产出于真假标注机制上线（2026-08-10）之前，"
-        "其中的 KPI 数值与合格判定**来源未经验证** —— "
-        "虚拟路测在那之前会用随机数生成数据并标为「通过」。不得作为验收依据。",
-    )
-
-
 # ==================== Generic Report Operations (Must be last) ====================
 
 @router.get("/{report_id}", response_model=ReportResponse)
@@ -447,7 +412,6 @@ def get_report(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Report {report_id} not found"
         )
-    _flag_pre_provenance_report(report)
     return report
 
 
@@ -471,28 +435,6 @@ def download_report(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Report is not ready for download. Status: {report.status}"
-        )
-
-    # 真假标注上线之前归档的虚拟路测报告：直接拒绝下载（外审 P1）。
-    #
-    # 上一版在响应头上挂警示 —— 那是无效装饰：前端 `downloadReport()` 只取
-    # `response.data`（blob），响应头当场丢掉；而归档报告在 GUI 里根本进不了
-    # ReportViewer（`ReportsPage` 挂 `ReportList` 时没传 `onView`，「查看」按钮
-    # 不显示），JSON 里的警示字段也照不到人。**下载是这类报告唯一走得通的出口**，
-    # 所以拦在这里，而不是指望调用方去读什么。
-    #
-    # PDF 文件本身不改（改历史归档是伪造），只是不再提供下载。
-    # 影响面：库里当前零份虚拟路测报告（214 份全是 single_execution），
-    # 这道拦截是防将来的。
-    _probe = type("_P", (), {
-        "road_test_execution_id": getattr(report, "road_test_execution_id", None),
-        "content_data": dict(getattr(report, "content_data", None) or {}),
-    })()
-    _flag_pre_provenance_report(_probe)
-    if "provenance_warning" in _probe.content_data:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=_probe.content_data["provenance_warning"],
         )
 
     if not report.file_path:

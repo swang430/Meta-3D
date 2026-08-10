@@ -159,13 +159,6 @@ function ReportContent({ content, title }: ReportContentProps) {
               <Text size="sm" c="dimmed" mt="xs">{content.description}</Text>
             )}
           </div>
-          {/* 归档于真假标注上线之前的报告 —— 后端在读取时挂的警示（P1-48）。
-              光在 JSON 里加没用，得真的显示出来。 */}
-          {content.provenance_warning && (
-            <Alert color="orange" variant="light" mb="md">
-              {content.provenance_warning}
-            </Alert>
-          )}
           <div style={{ textAlign: 'right' }}>
             {/* ⚠️ 后端在一条 KPI 都没有可信判决时返回 null（P1-48）——
                 原来无条件渲染成 `null%`/`0%`，读者以为「一条都没过」，

@@ -284,74 +284,41 @@ def test_pdf_overall_result_line_is_not_truncated():
     )
 
 
-def test_archived_pre_provenance_reports_are_flagged():
-    """⭐ 外审抓出：白名单只在生成报告时生效，**已归档的旧报告照样能原样取出**。
+def test_raw_metrics_read_path_is_marked_simulated():
+    """⭐ 外审抓出：真假标记只挂在逐条 KPI 摘要里，**批次层没有**。
 
-    生产库里有实物（5 行 KPI 全 ✓ PASS、通过率 100%、零仪器参与）。
-    不改历史数据（那是伪造），读取时挂显式警示。
+    失败场景（schema 允许）：请求带 `time_series` 但 `kpi_summary` 为空 ——
+    逐条 provenance 一条都不会写，而原始样本照样入库；
+    `GET /executions/{id}/metrics` 再把它们原样返回，调用方分不出真假。
 
-    让它报错的改法：把 `_flag_pre_provenance_report(report)` 那句删掉。
+    判据由服务端给，不问客户端：`vrt_kpi_samples` 全仓只有
+    `POST /executions/{id}/metrics`（浏览器提交）一个写入方，
+    所以**有样本就一定是浏览器造的**。
+
+    让它报错的改法：把 `to_test_metrics` 里的 provenance 那行删掉，
+    或改成读 orm.measurements 里的逐条标记（已实跑，见变异脚本）。
     """
-    from app.api.report import _flag_pre_provenance_report
+    from app.services.road_test.vrt_execution_service import VrtExecutionService
 
-    class _OldVrt:
-        road_test_execution_id = "vrt-1"
-        content_data = {"overall_result": "passed", "pass_rate": 100.0}
+    class _Orm:
+        id = "vrt-x"
+        measurements = {}          # ← 摘要为空：逐条 provenance 一条都没有
+        execution_events = []
+        test_results = {}
 
-    old = _OldVrt()
-    _flag_pre_provenance_report(old)
-    assert "provenance_warning" in old.content_data, "老的虚拟路测报告没挂警示"
-    assert "未经验证" in old.content_data["provenance_warning"]
+    class _S:
+        time_s = 1.0
+        rsrp_dbm = -80.0
+        rsrq_db = rssi_dbm = sinr_db = None
+        dl_throughput_mbps = 100.0
+        ul_throughput_mbps = latency_ms = bler_percent = None
+        cqi = ri = pmi = mcs = position = velocity_kmh = event_occurred = None
 
-    class _NewVrt:
-        road_test_execution_id = "vrt-2"
-        content_data = {"overall_result": "undetermined", "pass_rate": None}
-
-    new = _NewVrt()
-    _flag_pre_provenance_report(new)
-    assert "provenance_warning" not in new.content_data, "新报告被误挂了警示"
-
-    # ⭐ 最要紧的一格（外审 P2）：**普通的仪器实测报告绝不能被挂警示**。
-    #    库里 214 份报告全是这种，上一版按「形状」判会把它们全部标成「未经验证」——
-    #    把真数据说成假的，比不加警示更糟。
-    class _RealReport:
-        road_test_execution_id = None
-        content_data = {"overall_result": "passed", "pass_rate": 100.0}
-
-    real = _RealReport()
-    _flag_pre_provenance_report(real)
-    assert "provenance_warning" not in real.content_data, (
-        "普通的实测报告被挂上了「未经验证」警示 —— 反方向的假信息"
+    m = VrtExecutionService.to_test_metrics(_Orm(), [_S()])
+    assert m.provenance == "client_simulated", (
+        "带样本但摘要为空时，批次层没有真假标记 —— "
+        f"浏览器造的样本会被当成真数据读出去（provenance={m.provenance!r}）"
     )
 
-
-def test_legacy_vrt_archive_download_is_blocked():
-    """⭐ 外审抓出：警示挂在了**没人读的地方**。
-
-    上一版在下载响应头上挂警示 —— 无效装饰：
-    - 前端 `downloadReport()` 只取 `response.data`（blob），响应头当场丢掉
-    - 归档报告在 GUI 里进不了 ReportViewer（`ReportsPage` 挂 `ReportList`
-      时没传 `onView`，「查看」按钮不显示），JSON 里的警示也照不到人
-
-    **下载是这类报告唯一走得通的出口**，所以拦在这里，不指望调用方读什么。
-
-    这道门盯的是「拦截判据接在了 download 端点上」：
-    源码里 download_report 必须调 `_flag_pre_provenance_report` 并在命中时
-    抛 409 —— 而不是把结果塞进一个没人看的响应头。
-
-    让它报错的改法：把 409 那段删掉，或改回 `_extra_headers`（已实跑，见变异脚本）。
-    """
-    import inspect
-
-    from app.api.report import download_report
-
-    src = inspect.getsource(download_report)
-    assert "_flag_pre_provenance_report" in src, (
-        "download 端点没有检查归档报告的真假标注 —— 老的虚拟路测报告能原样下载"
-    )
-    assert "HTTP_409_CONFLICT" in src, (
-        "命中了却不拦 —— 警示没有生效的出口（上一版就是挂在响应头上被前端丢掉的）"
-    )
-    assert "headers=" not in src, (
-        "又把警示塞进响应头了 —— 前端 downloadReport() 只取 response.data，收不到"
-    )
+    empty = VrtExecutionService.to_test_metrics(_Orm(), [])
+    assert empty.provenance is None, "没有样本时不该乱标"
