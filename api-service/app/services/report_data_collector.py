@@ -565,6 +565,7 @@ class ReportDataCollector:
         """
         results = []
         for execution in executions:
+            _rows_before = len(results)
             cfg = execution.config or {}
             progress = cfg.get("phase_progress") or []
             # Codex #238 迟到 C-1: case-runner 的失败文本在 config 不在列;
@@ -593,7 +594,10 @@ class ReportDataCollector:
             #    有「TRP 验证 / 路损验证 / 测量验证」三处标注，手点的这份一个都没有，
             #    看起来反而更「干净」。同一次执行两份报告可信度天差地别。
             #    复用 MIMO_OTA 那套渲染，两条路从此同源。
-            _fill_provenance_parameters(execution, results)
+            # ⚠️ 只填**本次执行**新增的那几行（外审 P1-3）：
+            #    results 是跨执行累积的，把整个列表传进去会让后一个执行的参数
+            #    覆盖掉前面执行的 —— 手点报告选多个执行时就会串。
+            _fill_provenance_parameters(execution, results[_rows_before:])
         return results
 
     def _build_table_data(self, report_data: ReportData) -> List[Dict[str, Any]]:

@@ -139,18 +139,22 @@ def _lookup_case_name(context: StepExecutionContext, execution: Any) -> str:
     return "未命名用例"
 
 
-def _trp_source_label(src) -> str:
+def _trp_source_label(src, verified) -> str:
     """把「来源」这一栏渲染成人能看懂、且不说假话的文字。
 
-    历史上这一栏直接把内部取值印出来，其中 `hal_signal_analyzer` 在 SA 是
-    mock 驱动时也照写 —— 读报告的人会以为是实测。
+    ⚠️ **以验证状态为准，不单看 src**（外审）：
+    - `verified is True` 才允许说「实测」；
+    - `verified is False` → 按 src 区分是「模拟驱动」还是「无 SA 兜底」；
+    - `verified is None` → 一律「未知」，**哪怕 src 写着 hal_signal_analyzer** ——
+      那个标签在 `trp_verified` 引入之前对真 SA 和 mock SA 是同一个值，分不出来。
     """
-    return {
-        "hal_signal_analyzer": "真实信号分析仪（实测）",
-        "hal_signal_analyzer_mock": "信号分析仪的模拟驱动（仿真值，非实测）",
-        "mock": "无信号分析仪，套用兜底默认值（非实测）",
-        None: "未知（历史数据未区分来源）",
-    }.get(src, f"未知来源：{src}")
+    if verified is True:
+        return "真实信号分析仪（实测）"
+    if verified is False:
+        if src == "mock":
+            return "无信号分析仪，套用兜底默认值（非实测）"
+        return "信号分析仪的模拟驱动（仿真值，非实测）"
+    return "未知（历史数据未区分真实/模拟信号分析仪）"
 
 
 def _build_mimo_ota_content_data(
@@ -262,10 +266,13 @@ def _build_mimo_ota_content_data(
             _trp_verified = False            # 压根没有 SA，套的兜底值
         elif _src == "hal_signal_analyzer_mock":
             _trp_verified = False            # SA 挂着但是 mock 驱动，功率是仿真的
-        elif _src == "hal_signal_analyzer":
-            _trp_verified = True             # 真 SA 实测
         else:
-            _trp_verified = None             # 历史记录：来源不明，**不能当成真的**
+            # ⚠️ 外审纠正：`hal_signal_analyzer` **不能当成已验证**。
+            #    在 `trp_verified` 这个字段引入之前，写入端对真 SA 和 mock SA
+            #    **写的是同一个值** —— 历史记录里这个标签既可能是真实测、
+            #    也可能是仿真值，**分不出来**。当成 True 会把历史上那些 mock SA
+            #    的记录判成实测、数值照印，那是我新引入的一个说谎方向。
+            _trp_verified = None             # 来源不明 → 未知，按未确认处理
     _pl_verified = measure.get("path_loss_verified")
     if _pl_verified is None:
         # Historical measure records carry path_loss_certificate_id — a non-null
@@ -333,7 +340,12 @@ def _build_mimo_ota_content_data(
                  _cell(reference.get("compensation_factor_db")) if _trp_verified is True
                  else "—（未确认来源，不印数值）"
              ),
-             "TRP 来源": _cell(_trp_source_label(reference.get("measurement_source"))),
+             # ⚠️ 标签由**验证状态**派生，不单独看 source（外审 P1-2）：
+             #    存了 trp_verified=False 而 source 仍是 hal_signal_analyzer 的历史记录，
+             #    单看 source 会渲染成「真实信号分析仪（实测）」，跟旁边的
+             #    「验证：未验证」又打起来。两栏必须同源。
+             "TRP 来源": _cell(_trp_source_label(
+                 reference.get("measurement_source"), _trp_verified)),
              # P1-12: mock/兜底 TRP → 参考数据不是实测, 必须标注。
              "TRP 验证": _verified_label(
                  _trp_verified, "真实信号分析仪", "mock/兜底值"),

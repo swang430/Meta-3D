@@ -56,9 +56,47 @@ def test_mock_sa_is_not_labelled_as_a_real_instrument():
 
 
 def test_real_sa_is_labelled_as_measured():
+    """只有**明确记着已验证**的那一档才算实测。
+
+    ⚠️ 2026-08-10 外审纠正后收紧：光有 `measurement_source="hal_signal_analyzer"`
+    **不够** —— 在 `trp_verified` 这个字段引入之前，写入端对真 SA 和 mock SA
+    写的是同一个值，历史记录里分不出来。
+    """
     p = _phase(_content(reference={"measurement_source": "hal_signal_analyzer",
+                                   "trp_verified": True,
                                    "measured_trp_dbm": -12.3}), "reference")
     assert "实测" in str(p.get("TRP 来源"))
+
+
+def test_legacy_analyzer_label_without_flag_is_unknown_not_verified():
+    """⭐ 外审抓出：历史记录里的 `hal_signal_analyzer` 不能当成已验证。
+
+    那批记录既可能是真实测、也可能是 mock SA —— 写入端当时写的是同一个值。
+    当成已验证会把历史上那些仿真值判成实测、数值照印。
+    """
+    p = _phase(_content(reference={"measurement_source": "hal_signal_analyzer",
+                                   "measured_trp_dbm": -12.3}), "reference")
+    assert "未知" in str(p.get("TRP 来源")), f"实际：{p.get('TRP 来源')}"
+    assert "-12.3" not in str(p.get("参考 TRP (dBm)")), "来源不明却把数值印出来了"
+
+
+def test_source_label_never_contradicts_the_verification_column():
+    """⭐ 外审抓出：两栏必须同源。
+
+    存了 `trp_verified=False` 而 source 仍是 `hal_signal_analyzer` 的记录
+    （字段引入之后、本次改动之前写的），单看 source 会渲染成「实测」，
+    跟旁边的「验证：未验证」打架。
+    """
+    p = _phase(_content(reference={"measurement_source": "hal_signal_analyzer",
+                                   "trp_verified": False,
+                                   "measured_trp_dbm": -12.3}), "reference")
+    label = str(p.get("TRP 来源"))
+    # ⚠️ 不能用 `"实测" not in label` 判 —— 正确标签是「…（仿真值，非实测）」，
+    #    「非实测」里就含「实测」两个字。判的是有没有被说成真实测。
+    assert label != "真实信号分析仪（实测）", (
+        f"验证状态是「假」，来源那栏却说成真实测：{label}"
+    )
+    assert "非实测" in label or "未知" in label, f"来源那栏没说清不是实测：{label}"
 
 
 def test_unconfirmed_trp_values_are_not_printed():
@@ -80,6 +118,7 @@ def test_unconfirmed_trp_values_are_not_printed():
 
     # 反向：确认真实测那一档必须印出来
     p = _phase(_content(reference={"measurement_source": "hal_signal_analyzer",
+                                   "trp_verified": True,
                                    "measured_trp_dbm": -12.3,
                                    "compensation_factor_db": 4.5}), "reference")
     assert "-12.3" in str(p.get("参考 TRP (dBm)")), "真实测的数值该印却没印"
@@ -151,3 +190,26 @@ def test_manual_report_path_call_site_is_wired():
         "相位参数是空的 —— 调用点没接上，三处标注全丢了"
     )
     assert "TRP 验证" in rows[0]["parameters"]
+
+
+def test_multi_execution_report_does_not_cross_contaminate():
+    """⭐ 外审抓出：手点报告选多个执行时，后一个的参数会覆盖前一个。
+
+    `results` 是跨执行累积的，原实现每次把**整个列表**传进填充函数。
+
+    让它报错的改法：把 `results[_rows_before:]` 改回 `results`。
+    """
+    from app.services.report_data_collector import ReportDataCollector
+
+    ex1 = _Exec({"phases": {"measure": {"simulated_sources": ["baseStation"]}}})
+    ex1.config = {"phase_progress": [{"type": "measure", "status": "success"}]}
+    ex2 = _Exec({"phases": {"measure": {"simulated_sources": ["positioner"]}}})
+    ex2.config = {"phase_progress": [{"type": "measure", "status": "success"}]}
+
+    rows = ReportDataCollector.__new__(ReportDataCollector)._get_phase_results([ex1, ex2])
+    assert len(rows) == 2, f"应有两行，实际 {len(rows)}"
+
+    first = str(rows[0]["parameters"].get("模拟来源", ""))
+    second = str(rows[1]["parameters"].get("模拟来源", ""))
+    assert "baseStation" in first, f"第一个执行的参数被覆盖了：{first}"
+    assert "positioner" in second, f"第二个执行的参数不对：{second}"
