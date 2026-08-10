@@ -382,7 +382,11 @@ class ExecutionReport(BaseModel):
     kpi_summary: List[KPISummary] = Field(default_factory=list, description="KPI summary")
 
     # Overall result
-    overall_result: str = Field(description="passed | failed | incomplete")
+    overall_result: str = Field(
+        description="passed | failed | incomplete | undetermined —— "
+                    "incomplete=执行没跑完（还在跑/被停止）；"
+                    "undetermined=跑完了但一条 KPI 都没有可信判决",
+    )
     pass_rate: Optional[float] = Field(
         default=None,
         description="合格率；一条 KPI 都没有可信判决时为 None（不是 0）—— "

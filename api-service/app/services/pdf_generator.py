@@ -542,8 +542,11 @@ class PDFGenerator:
         if data.get('execution_summary'):
             exec_summary = data['execution_summary']
             metadata.append(['Total Executions:', str(exec_summary.get('total_executions', 0))])
-            pass_rate = exec_summary.get('pass_rate', 0)
-            metadata.append(['Pass Rate:', f"{pass_rate:.1f}%"])
+            # ⚠️ pass_rate 现在可能是 None（一条 KPI 都没有可信判决时，P1-48）——
+            #    直接 f"{None:.1f}%" 会 TypeError 把整份 PDF 弄崩。
+            pass_rate = exec_summary.get('pass_rate')
+            metadata.append(['Pass Rate:',
+                             "未判定" if pass_rate is None else f"{pass_rate:.1f}%"])
 
         table = Table(metadata, colWidths=[140, 300])
         table.setStyle(TableStyle([
@@ -779,7 +782,7 @@ class PDFGenerator:
         passed = exec_summary.get('passed', 0)
         failed = exec_summary.get('failed', 0)
         pending = exec_summary.get('pending', 0)
-        pass_rate = exec_summary.get('pass_rate', 0)
+        pass_rate = exec_summary.get('pass_rate')   # 可能为 None（见封面页说明）
         duration = exec_summary.get('total_duration_sec', 0)
 
         # Format duration
@@ -796,7 +799,7 @@ class PDFGenerator:
             ['Passed', Paragraph(f'<font color="green">{passed}</font>', self.styles['BodyText'])],
             ['Failed', Paragraph(f'<font color="red">{failed}</font>', self.styles['BodyText'])],
             ['Pending', str(pending)],
-            ['Pass Rate', f"{pass_rate:.1f}%"],
+            ['Pass Rate', "未判定" if pass_rate is None else f"{pass_rate:.1f}%"],
             ['Total Duration', duration_str],
         ]
 

@@ -220,6 +220,13 @@ def compute_overall_result(kpi_summary, execution_status):
     if not judged:
         # ⚠️ 合格率返回 None 而不是 0.0（外审 P1）：0.0 会被界面无条件
         #    显示成「通过率 0%」，读者以为一条都没过 —— 实际是**一条都没判**。
+        #
+        # ⚠️ 结论用 undetermined 而不是 incomplete（外审 P2）：
+        #    incomplete 原本表示「执行没跑完」（还在跑 / 被停止），
+        #    把它拿来兼表「跑完了但没有可信判决」会让真正没跑完的执行
+        #    也显示成「未判定」—— 那是新的假信息。两者必须分开。
+        if execution_status == ExecutionStatus.COMPLETED:
+            return None, "undetermined"
         return None, "incomplete"
 
     pass_rate = (passed_kpis / len(judged)) * 100
@@ -1069,11 +1076,16 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
     #    Math.random() 造的。上一版只在摘要那层 continue 掉，而下面
     #    kpi_summary 空了之后会 **从原始样本重算** —— 编的数又算回来了。
     #    所以来源是客户端模拟时，整批都不算「真数据」。
-    _client_simulated = any(
-        (v or {}).get("provenance") == "client_simulated"
-        for v in (metrics_obj.summary or {}).values()
-    ) if getattr(metrics_obj, "summary", None) else False
-    has_real_metrics = len(metrics_obj.kpi_samples) > 0 and not _client_simulated
+    #    ⚠️ 判法是**白名单放行**不是黑名单拦截（外审 P1）：
+    #    历史执行的样本**没有这个标记**，按黑名单会被当成真数据放行；
+    #    带样本但 summary 为空的提交同理。而虚拟路测今天**没有服务端真实数据源** ——
+    #    所有样本都来自浏览器，所以只有**明确标着 real** 的才允许当真数据。
+    _summary = getattr(metrics_obj, "summary", None) or {}
+    _explicitly_real = bool(_summary) and all(
+        (v or {}).get("provenance") == "server_measured"
+        for v in _summary.values()
+    )
+    has_real_metrics = len(metrics_obj.kpi_samples) > 0 and _explicitly_real
     persisted_phases = vrt_execution_service.to_phase_results(row)
 
     # Initialize new fields

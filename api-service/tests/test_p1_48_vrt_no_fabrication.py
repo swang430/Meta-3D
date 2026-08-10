@@ -62,8 +62,9 @@ def test_no_real_verdict_means_undetermined_not_failed():
 
     让它报错的改法：把 `compute_overall_result` 里的 `if not judged:` 分支去掉。
     """
-    assert _report_result([]) == "incomplete", "零 KPI 时应为未判定"
-    assert _report_result([None, None, None]) == "incomplete", (
+    # 跑完了但没判决 → undetermined（不是 failed，也不是 incomplete）
+    assert _report_result([]) == "undetermined", "零 KPI 时应为未判定"
+    assert _report_result([None, None, None]) == "undetermined", (
         "KPI 都没有真判决时应为未判定，不能算 failed"
     )
 
@@ -142,8 +143,9 @@ def test_client_samples_do_not_reach_the_recompute_path():
     让它报错的改法：把 `has_real_metrics` 改回只判 `len(...) > 0`。
     """
     text = _SRC.read_text(encoding="utf-8")
-    assert "_client_simulated" in text and "not _client_simulated" in text, (
-        "has_real_metrics 没有排除客户端来源 —— 重算路径会把编的数算回来"
+    # 2026-08-10 外审后改成白名单：只有显式标着真实的才算真数据
+    assert "_explicitly_real" in text, (
+        "has_real_metrics 没有要求显式的真实标记 —— 重算路径会把编的数算回来"
     )
 
 
@@ -158,10 +160,60 @@ def test_unjudged_pass_rate_is_none_not_zero():
 
     rate, result = compute_overall_result([], ExecutionStatus.COMPLETED)
     assert rate is None, f"没有可信判决时合格率应为 None，实际 {rate!r}"
-    assert result == "incomplete"
+    # 跑完了但没判决 → undetermined（跟「没跑完」的 incomplete 分开，见外审 P2）
+    assert result == "undetermined"
 
     class _KPI:
         passed = True
 
     rate2, result2 = compute_overall_result([_KPI()], ExecutionStatus.COMPLETED)
     assert rate2 == 100.0 and result2 == "passed", "有真判决时照常算"
+
+
+def test_real_data_requires_an_explicit_marker():
+    """⭐ 外审抓出：上一版用黑名单（有 client_simulated 标记才排除）。
+
+    历史执行的样本**没有这个标记** → 被当成真数据放行；
+    带样本但 summary 为空的提交同理。而虚拟路测今天没有服务端真实数据源。
+
+    让它报错的改法：把 `_explicitly_real` 那段改回黑名单判法。
+    """
+    text = _SRC.read_text(encoding="utf-8")
+    assert "_explicitly_real" in text and 'provenance") == "server_measured"' in text, (
+        "没有改成白名单 —— 历史样本会被当成真数据"
+    )
+    assert "and _explicitly_real" in text, "has_real_metrics 没有要求显式的真实标记"
+
+
+def test_unfinished_and_unjudged_are_different_labels():
+    """⭐ 外审抓出：incomplete 原本表示「执行没跑完」。
+
+    拿它兼表「跑完但没判决」，会让真正没跑完的执行也显示成「未判定」。
+
+    让它报错的改法：把 undetermined 那个分支改回统一返回 incomplete。
+    """
+    from app.api.road_test import ExecutionStatus, compute_overall_result
+
+    # 跑完了但没有可信判决 → undetermined
+    _rate, r1 = compute_overall_result([], ExecutionStatus.COMPLETED)
+    assert r1 == "undetermined", f"跑完但没判决应为 undetermined，实际 {r1}"
+
+    # 真的没跑完 → 仍是 incomplete
+    _rate, r2 = compute_overall_result([], ExecutionStatus.RUNNING)
+    assert r2 == "incomplete", f"没跑完应为 incomplete，实际 {r2}"
+
+
+def test_pdf_does_not_crash_on_unknown_pass_rate():
+    """⭐ 外审抓出：`f"{None:.1f}%"` 会 TypeError 把整份 PDF 弄崩。
+
+    让它报错的改法：把 pdf_generator 里那两处的 None 判断去掉。
+    """
+    import pathlib
+
+    text = (pathlib.Path(__file__).resolve().parents[1]
+            / "app/services/pdf_generator.py").read_text(encoding="utf-8")
+    bad = [l for l in text.split("\n")
+           if 'f"{pass_rate:.1f}%"' in l and "None" not in l]
+    assert not bad, (
+        "PDF 里还有没做 None 判断的合格率格式化，会崩：\n  " + "\n  ".join(bad)
+    )

@@ -258,7 +258,8 @@ class ReportService:
                         'passed': 1 if report_data_dict.get('overall_result') == 'passed' else 0,
                         'failed': 1 if report_data_dict.get('overall_result') == 'failed' else 0,
                         'pending': 0,
-                        'pass_rate': report_data_dict.get('pass_rate', 0),
+                        # 默认值不能是 0 —— 0 会被读成「一条都没过」（P1-48）
+                        'pass_rate': report_data_dict.get('pass_rate'),
                         'total_duration_sec': report_data_dict.get('duration_s', 0),
                         'first_execution': report_data_dict.get('start_time'),
                         'last_execution': report_data_dict.get('end_time')
@@ -324,7 +325,7 @@ class ReportService:
                         'scpi_evidence', {}
                     )
                     report_data_dict['execution_summary'] = summary
-                    report_data_dict['pass_rate'] = summary.get('pass_rate', 0)
+                    report_data_dict['pass_rate'] = summary.get('pass_rate')
                     if summary.get('passed') == summary.get('total_executions'):
                         report_data_dict['overall_result'] = 'passed'
                     elif summary.get('failed', 0) > 0:
