@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy.orm import Session
 
 from app.core.logging_config import current_execution_id
@@ -297,6 +297,25 @@ class CreateSessionRequest(BaseModel):
     # 设成 2（Butler 直通）可先用直通扶它 attach，挂上后自动撤掉再开衰落。
     # attach 超时的错误消息会主动提示这个开关，不需要谁记住它。
     f64_bypass_mode: Optional[int] = None
+
+    @model_validator(mode="after")
+    def require_current_gcm_model_source(self) -> "CreateSessionRequest":
+        """正式 GCM 会话必须声明本次要加载的模型来源。
+
+        ``precheck_strict_emulation_file=False`` 是既有 lab-smoke 明确降级，
+        仍允许 mock/诊断空跑；默认严格路径不得依赖 F64 上一轮遗留 ``.smu``。
+        """
+        if (
+            self.engine_mode == "keysight_gcm"
+            and self.precheck_strict_emulation_file is not False
+            and self.channel_asset_id is None
+            and not (self.emulation_file or "").strip()
+        ):
+            raise ValueError(
+                "engine_mode=keysight_gcm 的正式暗室首测必须提供 "
+                "channel_asset_id 或 emulation_file；不能依赖 F64 遗留场景。"
+            )
+        return self
 
 
 class SessionResponse(BaseModel):

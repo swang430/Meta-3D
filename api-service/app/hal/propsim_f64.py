@@ -2191,8 +2191,8 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         from app.hal.nr_arfcn import parse_smu_center_freq_mhz
         return parse_smu_center_freq_mhz(self._loaded_emulation_file)
 
-    def get_frequency_identity(self):
-        """P2-11: F64 当前加载信道的频率规范标识 (中心 ARFCN + 带宽), 供多方一致性校验。
+    def get_center_frequency_mhz(self) -> Optional[float]:
+        """返回当前 F64 中心频率观察值；不声称知道当前仿真带宽。
 
         频率来源优先级 (Codex on PR #109 P2 — 报"实际下发", 不是"文件名 token"):
         1. **显式下发过的中心频** (`_center_freq_programmed`): configure / set_channel_model
@@ -2201,9 +2201,14 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         2. **P0-3 母题③**: 否则用加载时 `CALC:FILT:CENT:CH?` 回读的真频
            (`_readback_center_freq_mhz`) —— 从仪器读, 治 "3600M.smu 实为 3550" 文件名说谎。
         3. **最后**才解析 `_loaded_emulation_file` 文件名 (回读失败 / ASC 路径无仿真时降级)。
-        返回 None = 既没显式下发、文件名也无法解析 (e.g. ASC 路径 — 频率由 channel-engine
-        按 TestCase 生成, 不在 F64 driver 状态; 校验跳过 F64, 由 ASC 同源保证)。
-        带宽信道仿真器不强标识, 用 N78 标准 100M。
+        返回 None = 既没显式下发、回读也不可用、文件名也无法解析。
+
+        手册依据：User Reference §20.4.6.1/§20.4.6.2 的
+        ``CALC:FILT:CENT:CH`` / ``CALC:FILT:CENT:CH?`` 定义了逐信道组中心频率。
+        Scenario Wizard §3.1.2.1 则把仿真带宽定义为工程创建时选择的属性；当前
+        ATE 手册没有给出可运行时回读该工程带宽的 SCPI。``SYST:INFO?`` 的
+        ``Bandwidth:100`` 是系统能力/许可，不是当前 ``.smu`` 的仿真带宽，
+        因此本方法只返回有证据的中心频率。
         """
         if self._center_freq_programmed:
             freq_mhz = self._center_freq_mhz
@@ -2213,10 +2218,24 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             freq_mhz = self._readback_center_freq_mhz
         else:
             freq_mhz = self._parse_loaded_center_freq_mhz()
-        if freq_mhz is None:
+        return float(freq_mhz) if freq_mhz is not None else None
+
+    def get_frequency_identity(
+        self, *, declared_bandwidth_mhz: Optional[float] = None
+    ):
+        """组合 F64 实时中心频率与**外部已核验资产**声明的带宽。
+
+        ``declared_bandwidth_mhz`` 必须来自 ChannelAsset/SCD/已核验工程元数据；
+        未提供时返回 ``None``，避免把设备能力 100 MHz 冒充当前场景带宽。
+        这不是 F64 带宽回读：调用方必须在审计载荷中标明带宽来源为资产声明。
+        """
+        freq_mhz = self.get_center_frequency_mhz()
+        if freq_mhz is None or declared_bandwidth_mhz is None:
             return None
         from app.hal.nr_arfcn import FrequencyIdentity
-        return FrequencyIdentity.from_center_freq_mhz(freq_mhz, 100.0)
+        return FrequencyIdentity.from_center_freq_mhz(
+            freq_mhz, declared_bandwidth_mhz
+        )
 
     async def configure(self, config: Dict[str, Any]) -> bool:
         """

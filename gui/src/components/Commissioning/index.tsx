@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
-import { Container, Title, Text, Stepper, Group, Button, Paper, Stack, Divider, Loader, Select, Badge, Alert, TextInput, Switch } from '@mantine/core'
+import { Container, Title, Text, Stepper, Group, Button, Paper, Stack, Divider, Loader, Select, Badge, Alert, TextInput, Switch, NumberInput, SimpleGrid } from '@mantine/core'
 import { IconTestPipe, IconPlayerPlay, IconPlayerTrackNext, IconAlertTriangle } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 import { PrecheckPhase, ReferencePhase, MIMOTestPhase, AnalysisPhase, ReportPhase } from './Phases'
 import * as api from './api'
 import type { SessionResponse, LabResolutionDetail } from './api'
 import { fetchLabProfiles, type LabProfileSummary } from '../../api/labProfileService'
+import { fetchChannelAssets, type ChannelAsset } from '../../api/channelAssetService'
 
 // Remember the operator's last commissioning-lab choice so the next
 // session-create defaults to it. Per-browser; not per-user (no auth
@@ -21,6 +22,17 @@ const PHASE_STEPS = [
   { id: 'report', label: '报告归档', desc: '生成标准报告' },
 ]
 
+interface HttpLikeError {
+  message?: string
+  response?: {
+    status?: number
+    data?: { detail?: unknown }
+  }
+}
+
+const asHttpError = (error: unknown): HttpLikeError =>
+  typeof error === 'object' && error !== null ? error as HttpLikeError : {}
+
 export function CommissioningSandbox() {
   const [session, setSession] = useState<SessionResponse | null>(null)
   const [loading, setLoading] = useState(false)
@@ -32,6 +44,18 @@ export function CommissioningSandbox() {
   //   GUI 默认建的会话会被 emulation_file 严格门在 precheck/measure 阶段拒掉。
   //   现场要走 GCM 时在界面上显式选，别靠默认值。
   const [engineMode, setEngineMode] = useState<string>('mimo_first_asc')
+  // RF 冷启动工作点：2026-08-07 现场已验证的基线。它们不是共享 schema
+  // 默认，而是本次 session 的显式输入；创建后会固定进 execution.config。
+  const [frequencyMhz, setFrequencyMhz] = useState(3549.99)
+  const [bandwidthMhz, setBandwidthMhz] = useState(40)
+  const [uxmPowerDbmPerBw, setUxmPowerDbmPerBw] = useState(-15)
+  const [f64InputRefDbm, setF64InputRefDbm] = useState(-17)
+  const [f64CrestDb, setF64CrestDb] = useState(15)
+  const [f64OutputLevelDbm, setF64OutputLevelDbm] = useState(-52)
+  const [f64BypassAssist, setF64BypassAssist] = useState(true)
+  const [emulationFile, setEmulationFile] = useState('')
+  const [channelAssetId, setChannelAssetId] = useState<string | null>(null)
+  const [channelAssets, setChannelAssets] = useState<ChannelAsset[]>([])
   // Lab-smoke: relax strict precheck gates (P1-8 cal / P1-9 DUT) for local
   // rehearsal without a real DUT / calibration. Default OFF = strict ON, so
   // on-site real first-call keeps the fail-loud protection (P1-9 intent).
@@ -98,17 +122,39 @@ export function CommissioningSandbox() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  useEffect(() => {
+    fetchChannelAssets({ includeInactive: false })
+      .then(setChannelAssets)
+      .catch(() => {
+        // 资产清单失败不伪装为空清单：裸 .smu 仍可现场输入，后端会做严格门。
+        notifications.show({
+          title: '信道资产清单读取失败',
+          message: '可改用显式 .smu 路径；创建会话时仍会由后端校验。',
+          color: 'yellow',
+        })
+      })
+  }, [])
+
   // Initialization
   const initSession = async () => {
     try {
       setLoading(true)
-      const res = await api.createSession(
+      const res = await api.createSession({
         engineMode,
-        labId || undefined,
-        engineMode === 'external_asc' ? ascSourcePath : undefined,
+        labProfileId: labId || undefined,
+        ascSourcePath: engineMode === 'external_asc' ? ascSourcePath : undefined,
+        channelAssetId: channelAssetId || undefined,
+        frequencyHz: frequencyMhz * 1e6,
+        bandwidthMhz,
+        uxmDlPowerDbmPerBw: uxmPowerDbmPerBw,
+        f64InputRefDbm,
+        f64CrestDb,
+        f64OutputLevelDbm,
+        emulationFile: emulationFile.trim() || undefined,
+        f64BypassMode: f64BypassAssist ? 2 : undefined,
         labSmoke,
         calBypass,
-      )
+      })
       setSession(res.data)
       setActiveStep(0)
       setPickerLabs([])
@@ -117,7 +163,8 @@ export function CommissioningSandbox() {
         localStorage.setItem(LAST_LAB_LS_KEY, labId)
       }
       notifications.show({ title: '首测会话已创建', message: `ID: ${res.data.session_id}`, color: 'blue' })
-    } catch (err: any) {
+    } catch (error: unknown) {
+      const err = asHttpError(error)
       // 422 with structured LabResolutionDetail → render picker / route
       // to wizard instead of just toasting a useless error.
       const detail = err.response?.data?.detail
@@ -144,7 +191,7 @@ export function CommissioningSandbox() {
         return
       }
       // Other errors: keep the legacy toast behavior.
-      const msg = typeof detail === 'string' ? detail : err.message
+      const msg = typeof detail === 'string' ? detail : err.message ?? '未知错误'
       notifications.show({ title: '初始化失败', message: String(msg), color: 'red' })
     } finally {
       setLoading(false)
@@ -152,21 +199,24 @@ export function CommissioningSandbox() {
   }
 
   useEffect(() => {
-    // Wait until the operator either has a saved/default lab or has
-    // explicitly chosen one — otherwise re-entering the page would
-    // immediately fire init with no lab and bounce to the 422 picker
-    // before the lab list has even loaded.
+    // RF 工作点现在是会话创建前的必审输入，因此不再因“已有默认 lab / 切换
+    // engine”自动创建。只有操作员点击「启动首测会话」使 initAttempt 递增才执行。
+    if (initAttempt === 0) return
     if (!labChoiceMade && !labId) return
     // external_asc 必须先有 ASC 路径才能建会话 (后端校验)。engineMode 在 deps 里,
     // 切到 external_asc 会触发本 effect; 若此时路径还没填, 不要 auto-fire 一个注定
     // 422 的 createSession。等操作员填好路径点「启动」(bump initAttempt) 再建。
     if (engineMode === 'external_asc' && !ascSourcePath.trim()) return
+    if (
+      engineMode === 'keysight_gcm' &&
+      !channelAssetId &&
+      !emulationFile.trim()
+    ) return
     initSession()
-    // labId in deps so that switching labs after a failed create
-    // re-fires init. initAttempt in deps so that re-clicking the
-    // "启动首测会话" button (same lab) is a valid retry path.
+    // 只依赖显式点击计数。选择 lab/资产、编辑频率或切换引擎都只是编辑表单，
+    // 不得静默创建一个操作员尚未确认的硬件工作点。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engineMode, labChoiceMade, labId, initAttempt])
+  }, [initAttempt])
 
   const handleLabSelect = (value: string | null) => {
     setLabId(value)
@@ -186,7 +236,8 @@ export function CommissioningSandbox() {
       if (newStatus === 'completed') {
         setActiveStep(prev => prev + 1)
       }
-    } catch (err: any) {
+    } catch (error: unknown) {
+      const err = asHttpError(error)
       const detail = err.response?.data?.detail || err.message
       notifications.show({ title: '执行失败', message: String(detail).substring(0, 200), color: 'red' })
     } finally {
@@ -203,7 +254,8 @@ export function CommissioningSandbox() {
       const res = await api.getSession(session.session_id)
       setSession(res.data)
       setActiveStep(5)
-    } catch (err: any) {
+    } catch (error: unknown) {
+      const err = asHttpError(error)
       const detail = err.response?.data?.detail || err.message
       notifications.show({ title: '执行全流程失败', message: String(detail).substring(0, 200), color: 'red' })
     } finally {
@@ -258,7 +310,12 @@ export function CommissioningSandbox() {
                     { value: 'external_asc', label: '📂 External ASC (operator-supplied, debug)' },
                   ]}
                   value={engineMode}
-                  onChange={(val) => val && setEngineMode(val)}
+                  onChange={(val) => {
+                    if (!val) return
+                    setEngineMode(val)
+                    // 不把上一引擎的资产残留带进新引擎；重新选择等于显式确认。
+                    setChannelAssetId(null)
+                  }}
                   w={360}
                 />
                 <Button
@@ -266,7 +323,11 @@ export function CommissioningSandbox() {
                   disabled={
                     (!labId && pickerLabs.length !== 1) ||
                     // 2026-05-18 P0-7: external_asc 必须给路径才能启动会话
-                    (engineMode === 'external_asc' && !ascSourcePath.trim())
+                    (engineMode === 'external_asc' && !ascSourcePath.trim()) ||
+                    // GCM 冷启动必须能解析本次 .smu；不能再借用 F64 遗留场景。
+                    (engineMode === 'keysight_gcm' && !channelAssetId && !emulationFile.trim()) ||
+                    !Number.isFinite(frequencyMhz) || frequencyMhz <= 0 ||
+                    !Number.isFinite(bandwidthMhz) || bandwidthMhz <= 0
                   }
                   onClick={() => {
                     // If exactly one lab and operator hasn't picked, auto-fill.
@@ -286,6 +347,110 @@ export function CommissioningSandbox() {
                   启动首测会话
                 </Button>
               </Group>
+
+              <Divider label="本次 RF 冷启动工作点" labelPosition="left" />
+              <Alert color="blue" title="先初始化 F64，再允许 DUT attach">
+                本次会话会先加载所选信道、核对 F64 中心频率、设置输入/输出工作点并建立
+                Butler 直通，然后才启动 UXM 等待 DUT。F64 带宽来自信道资产声明；没有资产时
+                会明确记为 unknown，不再把设备能力 100 MHz 当作场景带宽。
+              </Alert>
+
+              <Select
+                clearable
+                searchable
+                disabled={engineMode === 'external_asc'}
+                label="信道资产（推荐）"
+                description="优先选择已登记资产；资产同时提供场景文件与带宽来源"
+                placeholder="选择 ChannelAsset，或在 GCM 模式输入 .smu"
+                data={channelAssets.map((asset) => {
+                  const requiredTarget = engineMode === 'keysight_gcm'
+                    ? 'gcm_native'
+                    : 'asc_baked'
+                  const engineCompatible = asset.allowed_targets.includes(requiredTarget)
+                  const multiSnapshotRt =
+                    asset.source_type === 'rt_dynamic' &&
+                    Array.isArray((asset.payload as { snapshots?: unknown[] }).snapshots) &&
+                    ((asset.payload as { snapshots?: unknown[] }).snapshots?.length ?? 0) > 1
+                  return {
+                    value: asset.id,
+                    label:
+                      `${asset.name}（${asset.source_type}）` +
+                      (!engineCompatible ? ' — 与当前引擎不兼容' : ''),
+                    disabled: !engineCompatible || multiSnapshotRt,
+                  }
+                })}
+                value={channelAssetId}
+                onChange={(value) => {
+                  setChannelAssetId(value)
+                  const asset = channelAssets.find((item) => item.id === value)
+                  if (asset?.center_frequency_hz != null) {
+                    setFrequencyMhz(asset.center_frequency_hz / 1e6)
+                  }
+                  if (asset?.bandwidth_mhz != null) {
+                    setBandwidthMhz(asset.bandwidth_mhz)
+                  }
+                }}
+              />
+
+              <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>
+                <NumberInput
+                  label="中心频率 (MHz)"
+                  value={frequencyMhz}
+                  decimalScale={3}
+                  onChange={(value) => setFrequencyMhz(Number(value))}
+                  min={1}
+                />
+                <NumberInput
+                  label="UXM 带宽 (MHz)"
+                  value={bandwidthMhz}
+                  onChange={(value) => setBandwidthMhz(Number(value))}
+                  min={1}
+                />
+                <NumberInput
+                  label="UXM 整带宽功率 (dBm)"
+                  value={uxmPowerDbmPerBw}
+                  onChange={(value) => setUxmPowerDbmPerBw(Number(value))}
+                  decimalScale={1}
+                />
+                <NumberInput
+                  label="F64 输入参考 (dBm)"
+                  value={f64InputRefDbm}
+                  onChange={(value) => setF64InputRefDbm(Number(value))}
+                  decimalScale={1}
+                />
+                <NumberInput
+                  label="F64 Crest (dB)"
+                  value={f64CrestDb}
+                  onChange={(value) => setF64CrestDb(Number(value))}
+                  decimalScale={1}
+                />
+                <NumberInput
+                  label="F64 输出电平 (dBm)"
+                  description="现场已知 -50 会超口 1 上限；基线为 -52"
+                  value={f64OutputLevelDbm}
+                  onChange={(value) => setF64OutputLevelDbm(Number(value))}
+                  decimalScale={1}
+                />
+              </SimpleGrid>
+
+              <Switch
+                checked={f64BypassAssist}
+                onChange={(e) => setF64BypassAssist(e.currentTarget.checked)}
+                label="attach 前使用 F64 Butler 直通（STATIC 2）"
+                description="在本次 .smu 加载后建立；DUT 挂上后按既有流程撤直通并启动衰落"
+              />
+
+              {engineMode === 'keysight_gcm' && !channelAssetId && (
+                <TextInput
+                  required
+                  label="F64 .smu 路径"
+                  description="必须是 F64 本机可访问的 .smu；不允许依赖仪表上一次加载的场景"
+                  placeholder={'D:\\Scenario Packs\\...\\your_model.smu'}
+                  value={emulationFile}
+                  onChange={(e) => setEmulationFile(e.currentTarget.value)}
+                  error={!emulationFile.trim() ? 'GCM 模式必须选择信道资产或填写 .smu' : undefined}
+                />
+              )}
 
               {/* 2026-05-18 P0-7: External ASC 模式专属路径输入. 仅在 pre-session
                   阶段可编辑 (会话创建后路径被锁进 session.config), 所以只有这一
@@ -389,7 +554,7 @@ export function CommissioningSandbox() {
                     ? 'F64 原生'
                     : 'External ASC (调试)'}
               </Badge>
-              {session?.config?.engine_mode && (
+              {Boolean(session?.config?.engine_mode) && (
                 <Badge color="gray" variant="outline" size="lg">
                   会话锁定: {
                     session.config.engine_mode === 'mimo_first_asc'
@@ -601,10 +766,11 @@ export function CommissioningSandbox() {
           )}
 
           {session?.config?.engine_mode === 'external_asc' &&
-            session?.config?.asc_source_path && (
+            typeof session?.config?.asc_source_path === 'string' &&
+            session.config.asc_source_path.length > 0 && (
               <Alert color="gray" mt="md" title="当前会话锁定的 ASC 路径">
                 <Text size="sm" ff="monospace">
-                  {session.config.asc_source_path as string}
+                  {session.config.asc_source_path}
                 </Text>
               </Alert>
             )}

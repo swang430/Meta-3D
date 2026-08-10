@@ -326,10 +326,9 @@ class TestCentDispatchOnlyWhenExplicit:
         # identity 退回**新**文件名 3550, 不是脏态残留的旧显式 3600
         # (test_real_dispatch 母题: 若回归让 programmed=False 仍读 _center_
         # freq_mhz, field-only 断言会假绿, 本断言会红)。
-        ident = drv.get_frequency_identity()
-        assert ident is not None
-        assert "3550" in ident.describe(), ident.describe()
-        assert "3600" not in ident.describe(), ident.describe()
+        center_mhz = drv.get_center_frequency_mhz()
+        assert center_mhz == 3550.0
+        assert center_mhz != 3600.0
 
     async def test_load_rejected_clears_prior_loaded_file(self):
         """Codex #211 follow-up + #202 兜底: 上一次成功 load 过文件且 program

@@ -475,8 +475,9 @@ class MIMOOTAConfiguration(BaseModel):
 
     precheck_strict_frequency: bool = True
     # P2-11 Phase 1 (2026-05-30): 多方频率一致性校验。measure phase 在 UXM
-    # set_cell_config + F64 信道加载后, 把各仪表归一到 (中心 ARFCN, 带宽) 规范标识,
-    # 跟 TestCase 精确比对 (架构原则: ARFCN 是频率单一真值, 见
+    # set_cell_config + F64 信道加载后，UXM 用完整 (中心 ARFCN, 带宽) 回读；
+    # F64 用 live 中心频率 + ChannelAsset/SCD 声明带宽（无资产则 BW unknown），
+    # 跟 TestCase 比对 (架构原则: ARFCN 是频率单一真值, 见
     # docs/architecture/testcase-driven-instrument-config.md)。
     # True (生产默认): 不一致 → measure phase FAILED (静默错配 = UXM/F64/TestCase 不
     # 同频 → 测试结果不可信, 如 GCM 模式 TestCase 3500 但 F64 默认 .smu 3600, 或 UXM

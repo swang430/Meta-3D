@@ -17,6 +17,11 @@ live at precheck time (`strict = config_flag AND hardware_real`, see
 test_mimo_ota_precheck_{dut,cal}_gate.py). So here we only pin the request →
 override translation: omitted leaves the schema default, explicit value carries.
 """
+from uuid import UUID
+
+import pytest
+from pydantic import ValidationError
+
 from app.api.commissioning import CreateSessionRequest, _request_overrides
 
 
@@ -104,6 +109,48 @@ def test_p2_11_flags_true_pass_through():
     )
     for flag in _P2_11_FLAGS:
         assert overrides[flag] is True
+
+
+def test_gcm_session_requires_current_model_source_in_strict_mode():
+    """GCM 冷启动不能创建一个依赖 F64 遗留 .smu 的正式会话。"""
+    with pytest.raises(ValidationError, match="emulation_file|channel_asset_id"):
+        CreateSessionRequest(engine_mode="keysight_gcm")
+
+    assert CreateSessionRequest(
+        engine_mode="keysight_gcm",
+        emulation_file=r"D:\Scenario Packs\onsite.smu",
+    ).emulation_file
+    assert CreateSessionRequest(
+        engine_mode="keysight_gcm",
+        precheck_strict_emulation_file=False,
+    ).precheck_strict_emulation_file is False
+
+
+def test_onsite_rf_workpoint_is_saved_in_session_overrides():
+    """本次首测的 UXM/F64 工作点必须完整进入会话，不能只停留在界面。"""
+    asset_id = UUID("12345678-1234-5678-1234-567812345678")
+    overrides = _request_overrides(
+        CreateSessionRequest(
+            engine_mode="keysight_gcm",
+            channel_asset_id=asset_id,
+            frequency_hz=3_549_990_000.0,
+            bandwidth_mhz=40.0,
+            uxm_dl_power_dbm_per_bw=-15.0,
+            f64_input_ref_dbm=-17.0,
+            f64_crest_db=15.0,
+            f64_output_level_dbm=-52.0,
+            f64_bypass_mode=2,
+        )
+    )
+
+    assert overrides["channel_asset_id"] == str(asset_id)
+    assert overrides["frequency_hz"] == 3_549_990_000.0
+    assert overrides["bandwidth_mhz"] == 40.0
+    assert overrides["uxm_dl_power_dbm_per_bw"] == -15.0
+    assert overrides["f64_input_ref_dbm"] == -17.0
+    assert overrides["f64_crest_db"] == 15.0
+    assert overrides["f64_output_level_dbm"] == -52.0
+    assert overrides["f64_bypass_mode"] == 2
 
 # NOTE: the mock/real auto-skip is verified at the precheck gate level (live
 # HAL), see test_mimo_ota_precheck_{dut,cal}_gate.py
