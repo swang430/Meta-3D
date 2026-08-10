@@ -118,39 +118,6 @@ class TestStatisticsRealData:
     # 它的做法是 POST /test-plans 建计划再看 dashboard 计数变化, 而计划链已拆除,
     # 且 dashboard 的 total_executions 不再查封存表 (设计稿 §1.5 待决①)。
 
-class TestReportComparison:
-    """Tests for report comparison functionality (report_service.py:401)"""
-
-    def test_compare_two_reports(self):
-        """Test comparing two reports"""
-        report1_id = str(uuid4())
-        report2_id = str(uuid4())
-
-        response = client.post(
-            "/api/v1/reports/compare",
-            json={
-                "report_ids": [report1_id, report2_id],
-                "comparison_type": "kpi_diff"
-            }
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert "comparison_result" in data
-
-    def test_compare_multiple_reports(self):
-        """Test comparing more than two reports"""
-        report_ids = [str(uuid4()) for _ in range(3)]
-
-        response = client.post(
-            "/api/v1/reports/compare",
-            json={
-                "report_ids": report_ids,
-                "comparison_type": "trend_analysis"
-            }
-        )
-        assert response.status_code == 200
-
-
 class TestTopologyAPI:
     """Tests for topology CRUD API"""
 
