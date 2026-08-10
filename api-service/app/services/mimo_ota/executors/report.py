@@ -139,6 +139,20 @@ def _lookup_case_name(context: StepExecutionContext, execution: Any) -> str:
     return "未命名用例"
 
 
+def _trp_source_label(src) -> str:
+    """把「来源」这一栏渲染成人能看懂、且不说假话的文字。
+
+    历史上这一栏直接把内部取值印出来，其中 `hal_signal_analyzer` 在 SA 是
+    mock 驱动时也照写 —— 读报告的人会以为是实测。
+    """
+    return {
+        "hal_signal_analyzer": "真实信号分析仪（实测）",
+        "hal_signal_analyzer_mock": "信号分析仪的模拟驱动（仿真值，非实测）",
+        "mock": "无信号分析仪，套用兜底默认值（非实测）",
+        None: "未知（历史数据未区分来源）",
+    }.get(src, f"未知来源：{src}")
+
+
 def _build_mimo_ota_content_data(
     execution: Any, now: datetime, case_name: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -243,7 +257,15 @@ def _build_mimo_ota_content_data(
     if _trp_verified is None:
         # "mock" = no SA → unverified; legacy "hal_signal_analyzer" didn't
         # distinguish real vs mock SA → unknown (None), rendered as not-verified.
-        _trp_verified = False if reference.get("measurement_source") == "mock" else None
+        _src = reference.get("measurement_source")
+        if _src == "mock":
+            _trp_verified = False            # 压根没有 SA，套的兜底值
+        elif _src == "hal_signal_analyzer_mock":
+            _trp_verified = False            # SA 挂着但是 mock 驱动，功率是仿真的
+        elif _src == "hal_signal_analyzer":
+            _trp_verified = True             # 真 SA 实测
+        else:
+            _trp_verified = None             # 历史记录：来源不明，**不能当成真的**
     _pl_verified = measure.get("path_loss_verified")
     if _pl_verified is None:
         # Historical measure records carry path_loss_certificate_id — a non-null
@@ -291,13 +313,27 @@ def _build_mimo_ota_content_data(
              # P1-12: 非 True 时波纹是遗留默认值, 静区从未实测 —— 必须标注。
              "静区验证": _verified_label(
                  _qz_verified, "探头方向图实测", "兜底默认值, 非实测静区"),
+             # ⭐ 预检那两句「为什么算通过」的原话（P1-48）：库里早就存着
+             #    （cal_pass_reason / dut_pass_reason），报告一直没取。
+             #    其中一句会明说「这是 mock」—— 那正是读者最该看到的。
+             "校准门理由": _cell(precheck.get("cal_pass_reason") or "未记录"),
+             "DUT 门理由": _cell(precheck.get("dut_pass_reason") or "未记录"),
              "提示": _cell(precheck.get("messages") or []),
          }},
         {"phase": "reference", "name": "reference (参考测量)",
          "parameters": {
-             "参考 TRP (dBm)": _cell(reference.get("measured_trp_dbm")),
-             "补偿 (dB)": _cell(reference.get("compensation_factor_db")),
-             "TRP 来源": _cell(reference.get("measurement_source")),
+             # ⚠️ 只有确认是真实测的那一档才印数值（P1-48）：
+             #   「假」= 仿真或兜底值；「空」= 历史记录来源不明，两者都可能是编的。
+             #   光加一句「未验证」的标注不够 —— 数字印在那儿，读者会当成测量结果。
+             "参考 TRP (dBm)": (
+                 _cell(reference.get("measured_trp_dbm")) if _trp_verified is True
+                 else "—（未确认来源，不印数值）"
+             ),
+             "补偿 (dB)": (
+                 _cell(reference.get("compensation_factor_db")) if _trp_verified is True
+                 else "—（未确认来源，不印数值）"
+             ),
+             "TRP 来源": _cell(_trp_source_label(reference.get("measurement_source"))),
              # P1-12: mock/兜底 TRP → 参考数据不是实测, 必须标注。
              "TRP 验证": _verified_label(
                  _trp_verified, "真实信号分析仪", "mock/兜底值"),
@@ -315,6 +351,14 @@ def _build_mimo_ota_content_data(
                  measure.get("measurement_verified"),
                  "真实仪器链",
                  "Mock/缺失仪器, KPI 为 N/A",
+             ),
+             # ⭐ 逐台点名哪几台是模拟的（P1-48）：这份名单**早就存在库里**
+             #    （measure 那格的 simulated_sources），只是报告一直没取。
+             #    只说「未验证」读者不知道是哪个环节出的问题。
+             "模拟来源": (
+                 "、".join(measure.get("simulated_sources") or [])
+                 or ("无（全链真实仪器）" if measure.get("simulated_sources") is not None
+                     else "未知（历史数据未记录）")
              ),
              "已测方位数": len(azimuth_results),
          }},

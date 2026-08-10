@@ -587,6 +587,13 @@ class ReportDataCollector:
                     "started_at": None,
                     "completed_at": None,
                 })
+
+            # ⭐ 把真假标注补进来（P1-48）：用户手点「生成执行报告」走的是这条路，
+            #    而它原来给每个相位的 parameters 都是空字典 —— 系统自动出的那份
+            #    有「TRP 验证 / 路损验证 / 测量验证」三处标注，手点的这份一个都没有，
+            #    看起来反而更「干净」。同一次执行两份报告可信度天差地别。
+            #    复用 MIMO_OTA 那套渲染，两条路从此同源。
+            _fill_provenance_parameters(execution, results)
         return results
 
     def _build_table_data(self, report_data: ReportData) -> List[Dict[str, Any]]:
@@ -650,3 +657,35 @@ class ReportDataCollector:
             }
 
         return chart_data
+
+
+def _fill_provenance_parameters(execution, results: List[Dict[str, Any]]) -> None:
+    """把 MIMO_OTA 报告那套「哪几台是模拟的 / 各处验证状态」填进相位结果里。
+
+    只在这次执行确实有相位测量数据时才填；没有的执行链（调试台等）保持原样，
+    行为完全不变。
+    延迟 import 是为了避开模块环（本文件已有先例）。
+    """
+    measurements = getattr(execution, "measurements", None)
+    if not isinstance(measurements, dict) or not measurements.get("phases"):
+        return
+    try:
+        from app.services.mimo_ota.executors.report import (
+            _build_mimo_ota_content_data,
+        )
+        from datetime import datetime
+
+        content = _build_mimo_ota_content_data(execution, datetime.utcnow(), "")
+        by_phase = {
+            s.get("phase"): (s.get("parameters") or {})
+            for s in (content.get("step_results") or [])
+        }
+        for row in results:
+            params = by_phase.get(row.get("name"))
+            if params:
+                row["parameters"] = params
+    except Exception:  # noqa: BLE001 - 报告渲染不该因为补标注而整份失败
+        logger.warning(
+            "[report] 补真假标注失败，本份报告的相位参数保持为空",
+            exc_info=True,
+        )
