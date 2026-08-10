@@ -689,10 +689,20 @@ def _fill_provenance_parameters(execution, results: List[Dict[str, Any]]) -> Non
             if params:
                 row["parameters"] = params
     except Exception:  # noqa: BLE001 - 报告渲染不该因为补标注而整份失败
+        # ⚠️ 但**不能静默留空**（外审 P1）：留空就退回了那份「看起来很干净、
+        #    实则没有任何真假标注」的报告 —— 正是本片要治的毛病。
+        #    历史或不规整但 JSON 合法的执行（比如 simulated_sources 里有个 null）
+        #    会让构造器在渲染时抛异常，走到这里。
+        #    留一个显式的「未知」，让读者知道这份报告的真假信息缺失了。
         logger.warning(
-            "[report] 补真假标注失败，本份报告的相位参数保持为空",
-            exc_info=True,
+            "[report] 补真假标注失败，改为显式标注「未知」", exc_info=True,
         )
+        for row in results:
+            if not row.get("parameters"):
+                row["parameters"] = {
+                    "数据来源": "⚠️ 未知 —— 本次未能提取真假标注，"
+                                "不能据此认为这些数据来自真实仪器",
+                }
 
 
 # 相位名两套写法的对照（外审 P1）：

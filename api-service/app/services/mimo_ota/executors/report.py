@@ -316,7 +316,13 @@ def _build_mimo_ota_content_data(
         {"phase": "precheck", "name": "precheck (预检)",
          "parameters": {
              "结果": "PASS" if precheck.get("overall_pass") else "FAIL",
-             "静区波纹 (±dB)": _cell(precheck.get("quiet_zone_ripple_db")),
+             # ⚠️ 未验证时不印数值（外审 P1）：没有探头方向图时，写入端存的是
+             #    兜底值 0.7，验证标志为假 —— 光标一句「未验证」不够，
+             #    数字印在那儿读者会当成实测的静区波纹。
+             "静区波纹 (±dB)": (
+                 _cell(precheck.get("quiet_zone_ripple_db")) if _qz_verified is True
+                 else "—（未实测，不印兜底值）"
+             ),
              # P1-12: 非 True 时波纹是遗留默认值, 静区从未实测 —— 必须标注。
              "静区验证": _verified_label(
                  _qz_verified, "探头方向图实测", "兜底默认值, 非实测静区"),
@@ -355,7 +361,11 @@ def _build_mimo_ota_content_data(
              "频率 (GHz)": _cell(measure.get("frequency_ghz")),
              "MIMO 配置": _cell(measure.get("mimo_config")),
              "CDL 模型": _cell(measure.get("cdl_model_name")),
-             "路损补偿 (dB)": _cell(measure.get("path_loss_compensation_db")),
+             # ⚠️ 同上：没有路损证书时存的是兜底值 0.0，印出来会被当成「补偿过了」
+             "路损补偿 (dB)": (
+                 _cell(measure.get("path_loss_compensation_db")) if _pl_verified is True
+                 else "—（无路损校准，未补偿）"
+             ),
              # P1-12: 无路损证书 → RSRP 未补偿 → 结果未校准, 必须标注。
              "路损验证": _verified_label(
                  _pl_verified, "路损校准证书", "无路损校准, RSRP 未补偿"),

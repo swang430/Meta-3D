@@ -243,3 +243,36 @@ def test_descriptor_phase_names_are_normalized():
     )
     assert "TRP 验证" in rows[0]["parameters"]
     assert "baseStation" in str(rows[1]["parameters"].get("模拟来源", ""))
+
+
+def test_fallback_calibration_numbers_are_not_printed():
+    """⭐ 外审抓出：没有探头方向图 / 路损证书时，写入端存的是兜底值
+    （静区波纹 0.7、路损补偿 0.0），验证标志为假 —— 那些数字不能照印。
+
+    让它报错的改法：把那两处的条件判断去掉、改回无条件 `_cell(...)`。
+    """
+    p = _phase(_content(precheck={"quiet_zone_ripple_db": 0.7}), "precheck")
+    assert "0.7" not in str(p.get("静区波纹 (±dB)")), (
+        f"未验证却印了兜底的静区波纹：{p.get('静区波纹 (±dB)')}"
+    )
+    m = _phase(_content(measure={"path_loss_compensation_db": 0.0}), "measure")
+    assert "—" in str(m.get("路损补偿 (dB)")), (
+        f"无路损证书却印了补偿值：{m.get('路损补偿 (dB)')}"
+    )
+
+
+def test_provenance_failure_leaves_an_explicit_unknown():
+    """⭐ 外审抓出：填充失败时静默留空 = 退回那份「看起来很干净」的报告。
+
+    让它报错的改法：把 except 里那段填「未知」的代码删掉。
+    """
+    from app.services.report_data_collector import _fill_provenance_parameters
+
+    # simulated_sources 里有个 null —— JSON 合法但渲染时会炸
+    ex = _Exec({"phases": {"measure": {"simulated_sources": ["baseStation", None]}}})
+    rows = [{"name": "measure", "parameters": {}}]
+    _fill_provenance_parameters(ex, rows)
+
+    params = rows[0]["parameters"]
+    assert params, "填充失败后参数还是空的 —— 报告看起来很干净，实则真假信息缺失"
+    assert "未知" in str(params), f"没留下显式的未知标记：{params}"
