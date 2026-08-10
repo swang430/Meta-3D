@@ -746,13 +746,17 @@ async def submit_execution_metrics(
     ]
 
     # 2. Build summary from kpi_summary
+    # ⚠️ 这个入口收到的**就是浏览器提交的数据**（虚拟路测今天没有服务端真实数据源），
+    #    所以后端**无条件**把这批标成模拟、不读请求里的任何标记 —— 被检查的一方
+    #    不能自己声明自己是真是假。
+    #    上一版只丢掉了 passed，而 mean/min/max/std **照样落库、照样印进报告**
+    #    （外审 P1）—— 判决不采信了，数值还是编的，等于只挡了一半。
     summary = {
         kpi.name: {
             "mean": kpi.mean, "min": kpi.min, "max": kpi.max,
             "std": kpi.std, "target": kpi.target,
-            # ⚠️ 不再落库浏览器算的 passed（P1-48）：合格判定是浏览器算完发上来的，
-            #    后端原样存、原样印进正式 PDF —— 等于把客户端的判决当成系统的结论。
-            "passed": None,
+            "passed": None,          # 客户端的判决一律不采信
+            "provenance": "client_simulated",   # 这批数的来源，报告据此决定印不印
         }
         for kpi in metrics.kpi_summary
     }
@@ -1093,6 +1097,10 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
             # Build KPI summary from real metrics
             kpi_summary = []
             for name, stats in metrics.summary.items():
+                # ⚠️ 来源是客户端模拟的 → 数值不进正式 KPI（外审 P1）。
+                #    只丢 passed 不够：mean/min/max/std 本身就是 Math.random() 造的。
+                if stats.get("provenance") == "client_simulated":
+                    continue
                 kpi_summary.append(KPISummary(
                     name=name,
                     unit=stats.get("unit", ""),

@@ -90,3 +90,43 @@ def test_empty_sample_path_produces_nothing():
     assert "启动基站" not in text or "原先" in text, (
         "又出现了硬编的假相位名"
     )
+
+
+def test_client_submitted_values_are_marked_and_excluded():
+    """⭐ 外审抓出：上一版只丢掉 passed，而 mean/min/max/std 照样落库照样印。
+
+    那些数值本身就是浏览器 `Math.random()` 造的 —— 判决不采信了、数值还是编的，
+    等于只挡了一半。
+
+    让它报错的改法：把落库处的 `"provenance": "client_simulated"` 删掉，
+    或把读回处那句 `continue` 去掉。
+    """
+    text = _SRC.read_text(encoding="utf-8")
+    assert '"provenance": "client_simulated"' in text, (
+        "落库时没给客户端提交的数据打来源标记 —— 报告分不出这批是编的"
+    )
+    assert 'stats.get("provenance") == "client_simulated"' in text, (
+        "读回时没按来源排除 —— 浏览器造的 mean/min/max/std 会进正式 KPI"
+    )
+
+
+def test_undetermined_is_not_rendered_as_failed_in_ui():
+    """⭐ 外审抓出：`passed=null` 在界面上会掉进 false 分支、显示成 ✗ 不合格。
+
+    那是**新造的假信息** —— 把「未判定」说成「不合格」。
+
+    （前端没有测试框架，这里从源码上确认那个判断已经排除 null。
+      如实申报：这一格只能这么验，真实渲染要靠人眼。）
+    """
+    import pathlib
+
+    viewer = (pathlib.Path(__file__).resolve().parents[2]
+              / "gui/src/components/Report/ReportViewer.tsx")
+    if not viewer.exists():
+        import pytest as _pt
+        _pt.skip("找不到 ReportViewer.tsx")
+    text = viewer.read_text(encoding="utf-8")
+    assert "kpi.passed !== undefined && kpi.passed !== null" in text, (
+        "界面判 passed 时没排除 null —— null 会掉进 false 分支、显示成红色 ✗，"
+        "把「未判定」说成「不合格」"
+    )
