@@ -693,9 +693,23 @@ class InstrumentHALService:
                     success = await driver.connect()
                     if success:
                         self.drivers[cat.category_key] = driver
+                        # 真假按**这台驱动自己**的标记，不按全局模式（P1-48）：
+                        # 全局 real 时某台可能回落 Mock，全局 mock 时某台可能被
+                        # 强制 real 连真硬件 —— 用全局模式打前缀会把这两种情况都说反。
+                        # 实测 2026-08-07 的 app.log 里有 21 条
+                        # `[HAL-MOCK] channelEmulator: connected → Keysight PROPSIM F64`，
+                        # 而那台当时连的是真机。
+                        _src = "MOCK" if is_mock_driver(driver) else "REAL"
                         logger.info(
-                            f"[HAL-{self.mode.value.upper()}] {cat.category_key}: connected → "
-                            f"{model.vendor} {model.model}"
+                            f"[HAL-{_src}] {cat.category_key}: connected → "
+                            f"{model.vendor} {model.model} "
+                            # 实际装上的驱动类名 —— 就绪表的 detail 里早有，只有这行丢了它
+                            f"(driver={type(driver).__name__})",
+                            extra={
+                                "instrument_id": cat.category_key,
+                                "driver_source": getattr(driver, "driver_source", "-"),
+                                "simulated": getattr(driver, "simulated", None),
+                            },
                         )
                         # P3-5: pull driver-specific extras (F64 surfaces
                         # parsed SYST:INFO? fields here; other drivers

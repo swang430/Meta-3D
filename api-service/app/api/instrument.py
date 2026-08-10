@@ -330,6 +330,30 @@ class ChannelModelsListResult(BaseModel):
     reason: Optional[str] = None  # "driver_not_loaded" | "not_a_channel_emulator" | None
 
 
+class _UnverifiedScpiAdapter(logging.LoggerAdapter):
+    """给手敲 SCPI / 连通性探测那几条路的日志自动打上「来源不确定」。
+
+    为什么是 unverified 而不是 real（P1-48）：这几条路绕开正规驱动，
+    直接 socket 连数据库里配的地址 —— 地址可能指向仪器模拟器、代理、
+    或者接错的设备，**连上了不等于对面是真仪器**。标 real 会把
+    「连上了某个端口」说成「真仪器回的数」，界面上还会亮成绿色。
+
+    用 Adapter 而不是逐个日志点加 extra：那条路有十几个日志点，
+    逐个加会漏，**新开的点也自动带上**。
+    """
+
+    def process(self, msg, kwargs):
+        extra = dict(kwargs.get("extra") or {})
+        extra.setdefault("driver_source", "unverified")
+        extra.setdefault("simulated", None)
+        kwargs["extra"] = extra
+        return msg, kwargs
+
+
+def _unverified_scpi_logger() -> logging.LoggerAdapter:
+    return _UnverifiedScpiAdapter(logging.getLogger("app.hal.scpi"), {})
+
+
 @router.post(
     "/instruments/hal/reload",
     response_model=HalReloadResult,
@@ -1685,7 +1709,7 @@ async def test_instrument_connection(
     from contextlib import AsyncExitStack
 
     # 使用 SCPI 命名空间的 logger，确保记录到 scpi.log
-    scpi_logger = logging.getLogger("app.hal.scpi")
+    scpi_logger = _unverified_scpi_logger()
 
     category = db.query(InstrumentCategoryModel).filter(
         InstrumentCategoryModel.category_key == category_key
@@ -2275,7 +2299,7 @@ async def send_scpi_command(
     import socket
     import time
 
-    scpi_logger = logging.getLogger("app.hal.scpi")
+    scpi_logger = _unverified_scpi_logger()
 
     category = db.query(InstrumentCategoryModel).filter(
         InstrumentCategoryModel.category_key == category_key
@@ -2393,7 +2417,7 @@ async def probe_scpi_commands(
     import socket
     import time
 
-    scpi_logger = logging.getLogger("app.hal.scpi")
+    scpi_logger = _unverified_scpi_logger()
 
     category = db.query(InstrumentCategoryModel).filter(
         InstrumentCategoryModel.category_key == category_key
