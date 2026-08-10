@@ -2472,6 +2472,9 @@ async def probe_scpi_commands(
         # the lease so reload cannot swap it before the first command.
         hal_driver = _get_loaded_hal_driver(category_key)
         if hal_driver is not None:
+            # 传输方式已定：走这个已加载的驱动 → 摘要行也要按它的真假标。
+            # 否则会出现「摘要标 unverified、同一次探测的命令记录标 real」自相矛盾（外审 P1）。
+            scpi_logger = _unverified_scpi_logger(hal_driver)
             scpi_logger.info(
                 f"[SCPI-PROBE] {category_key} → Running {len(COMMON_SCPI_COMMANDS)} "
                 f"diagnostic commands via live HAL driver ({type(hal_driver).__name__})",

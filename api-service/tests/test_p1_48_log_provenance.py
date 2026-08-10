@@ -273,41 +273,90 @@ def test_hal_mode_actually_reaches_the_rendered_log_line():
     )
 
 
-def test_production_call_site_actually_uses_the_helper():
-    """⭐ 外审抓出：门测的是纯函数，**没测生产代码真的在用它**。
+def test_connected_log_is_actually_emitted_with_source_fields():
+    """⭐ 行为门（外审连续两轮要求）：真的跑一次 HAL 初始化，捕获那条日志。
 
-    把 `_initialize_from_db` 里那句改回 `logger.info(f"[HAL-{self.mode.value.upper()}] ...")`、
-    让 `connected_log_fields()` 变成没人调，上面那几条门照样全绿 ——
-    这正是它要防的那个退化。
+    前两版都是「查源码里有没有这行」的检查，外审两次指出它防不住：
+      - 第一版查「有没有调用 connected_log_fields」→ 把调用改成
+        `logger.info(_msg)`（丢掉 extra）门照样绿；
+      - 结构化字段丢了之后，混合模式下 hal_mode 又会回落成错误的全局值。
 
-    让它报错的改法：把调用点改回自己拼 f-string（`connected_log_fields` 就没人用了）。
+    这一版**真的驱动 `_initialize_from_db`**，断言那条记录的正文前缀、
+    驱动类名、以及三个结构化字段都在。
+
+    让它报错的改法：
+      - 调用点改回自拼 f-string → 前缀/类名/字段全对不上；
+      - 调用点只传 msg 不传 extra → 三个字段断言红；
+      - `connected_log_fields` 里前缀改回读全局开关 → 前缀断言红。
     """
-    import ast
-    import pathlib as _pl
+    import asyncio
+    import uuid as _uuid
 
-    src = _pl.Path(__file__).resolve().parents[1] / "app/services/instrument_hal_service.py"
-    tree = ast.parse(src.read_text(encoding="utf-8"))
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
 
-    init_fn = None
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "_initialize_from_db":
-            init_fn = node
-    assert init_fn, "找不到 _initialize_from_db —— 它被改名了？请更新本门"
-
-    calls_helper = any(
-        isinstance(n, ast.Call)
-        and ((isinstance(n.func, ast.Name) and n.func.id == "connected_log_fields")
-             or (isinstance(n.func, ast.Attribute) and n.func.attr == "connected_log_fields"))
-        for n in ast.walk(init_fn)
+    import app.db.database as dbmod
+    from app.db.database import Base
+    from app.models.instrument import (
+        InstrumentCategory as CategoryModel,
+        InstrumentModel,
     )
-    assert calls_helper, (
-        "_initialize_from_db 里没有调用 connected_log_fields() —— "
-        "那几条门测的纯函数已经没人用了，生产代码可能又在自己拼 f-string"
-    )
+    from app.services import instrument_hal_service as hal_mod
+    from app.services.instrument_hal_service import DriverMode, InstrumentHALService
 
-    # ⚠️ 刻意**不**断言「函数体里不许出现 [HAL- 」——那条第一版写了，红在 5 处合法日志上
-    # （选型失败 / 连接失败 / 工厂完成等）。那些说的是「real 流程走到这步怎么了」，
-    # 不是「某台仪表是真是假」，语义不同。判据写宽了会逼人去改无关代码。
+    engine = create_engine("sqlite:///:memory:",
+                           connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
+    Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    Base.metadata.create_all(bind=engine)
+
+    captured = []
+
+    class _RecordingLogger:
+        def __getattr__(self, name):
+            def _call(msg, *a, **kw):
+                if name == "info":
+                    captured.append((msg, kw.get("extra") or {}))
+            return _call
+
+    orig_session, orig_logger = dbmod.SessionLocal, hal_mod.logger
+    try:
+        dbmod.SessionLocal = Session
+        hal_mod.logger = _RecordingLogger()
+
+        db = Session()
+        cat = CategoryModel(id=_uuid.uuid4(), category_key="vna", category_name="VNA",
+                            is_active=True, display_order=1, driver_mode="mock")
+        db.add(cat); db.commit(); db.refresh(cat)
+        mdl = InstrumentModel(id=_uuid.uuid4(), category_id=cat.id,
+                              vendor="Keysight", model="E5071C", capabilities={})
+        db.add(mdl); db.commit(); db.refresh(mdl)
+        cat.selected_model_id = mdl.id
+        db.commit()
+        db.close()
+
+        svc = InstrumentHALService(mode=DriverMode.MOCK)
+        asyncio.run(svc._initialize_from_db())
+    finally:
+        dbmod.SessionLocal, hal_mod.logger = orig_session, orig_logger
+        Base.metadata.drop_all(bind=engine)
+
+    connected = [(m, e) for m, e in captured if "connected →" in str(m)]
+    assert connected, (
+        f"没捕获到 connected 那行日志 —— 共 {len(captured)} 条 info。"
+        f"前几条：{[str(m)[:60] for m, _ in captured[:3]]}"
+    )
+    msg, extra = connected[0]
+
+    assert msg.startswith("[HAL-MOCK]"), f"装的是 Mock 驱动，正文却是：{msg[:50]}"
+    assert "MockVNA" in msg, f"正文里没有实际驱动类名：{msg}"
+    assert extra.get("driver_source") == "mock", (
+        f"结构化字段 driver_source={extra.get('driver_source')!r} —— "
+        f"调用点可能只传了 msg、没传 extra"
+    )
+    assert extra.get("simulated") is True
+    assert extra.get("instrument_id") == "vna"
 
 
 def test_scpi_logger_source_follows_the_transport_actually_used():
@@ -342,34 +391,87 @@ def test_scpi_logger_source_follows_the_transport_actually_used():
     assert kw["extra"]["simulated"] is True
 
 
-def test_run_command_via_hal_derives_source_from_its_driver():
-    """走 HAL 那个函数内部必须按它拿到的 driver 派生日志器，不用调用方传进来的。
+def test_run_command_via_hal_stamps_real_on_its_first_record():
+    """⭐ 行为门（外审要求）：真的跑一次，看**第一条**记录标的是什么。
 
-    让它报错的改法：删掉 `_run_command_via_hal` 里那句
-    `scpi_logger = _unverified_scpi_logger(driver)`。
+    上一版是 AST 检查「函数里有没有那句重绑定」，外审指出两个洞：
+      - 把重绑定**挪到第一条日志之后** → AST 仍找得到那句赋值，门绿，
+        而第一条 WRITE 记录仍被调用方的「不确定」标记盖住；
+      - 它只检查「有任意参数」，`_unverified_scpi_logger(None)` 也能通过。
+
+    让它报错的改法：把重绑定删掉、或挪到首条日志之后、或改成传 None。
     """
-    import ast
+    import asyncio
+    import logging as _logging
+
+    from app.api import instrument as inst_mod
+    from app.hal.rf_switch import EtslSwitchDriver
+
+    records = []
+
+    class _Sink(_logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    class _FakeRealDriver(EtslSwitchDriver):
+        def __init__(self):  # 不跑父类 __init__
+            self.instrument_id = "rfSwitch"
+
+        async def _do_query(self, command, **kw):
+            return "OK"
+
+        async def _do_write(self, command, **kw):
+            return None
+
+    lg = _logging.getLogger("app.hal.scpi")
+    sink = _Sink()
+    lg.addHandler(sink)
+    prev_level, prev_disabled = lg.level, lg.disabled
+    lg.setLevel(_logging.DEBUG)
+    lg.disabled = False          # 别的测试跑 alembic 会把 logger 禁掉
+    try:
+        asyncio.run(inst_mod._run_command_via_hal(
+            _FakeRealDriver(), "*IDN?", inst_mod._unverified_scpi_logger(), "rfSwitch"))
+    finally:
+        lg.removeHandler(sink)
+        lg.setLevel(prev_level)
+        lg.disabled = prev_disabled
+
+    assert records, "一条 SCPI 记录都没产生 —— 无法验证来源标记"
+    first = records[0]
+    assert getattr(first, "driver_source", None) == "real", (
+        f"走真驱动时**第一条**记录标的是 "
+        f"{getattr(first, 'driver_source', None)!r}，应为 real —— "
+        f"重绑定可能被挪到了首条日志之后"
+    )
+    assert getattr(first, "simulated", "MISSING") is False
+
+
+def test_probe_summary_is_stamped_after_the_driver_is_known():
+    """探测那条路的摘要行，必须在「按 driver 重取日志器」之后才发。
+
+    外审指出：摘要行原先在重绑定之前发出 → 摘要标「不确定」、
+    同一次探测的命令记录标 real，自相矛盾。
+
+    ⚠️ **如实标注档次**：这是**源码顺序检查**，不是行为门 ——
+    跑真正的 probe 端点要拉起 DB + 租约 + 驱动，成本远超本片。
+    它能防「把重绑定删掉」和「把摘要挪到重绑定之前」，
+    防不住「重绑定传了个错的 driver」（那一格由上面那条行为门覆盖）。
+
+    让它报错的改法：删掉 probe 分支里那句重绑定，或把它挪到摘要行之后。
+    """
     import pathlib as _pl
 
-    src = _pl.Path(__file__).resolve().parents[1] / "app/api/instrument.py"
-    tree = ast.parse(src.read_text(encoding="utf-8"))
+    src = (_pl.Path(__file__).resolve().parents[1] / "app/api/instrument.py").read_text(encoding="utf-8")
+    marker = '[SCPI-PROBE]'
+    assert marker in src, "找不到 SCPI-PROBE 摘要行 —— 改写了？请更新本门"
 
-    fn = None
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "_run_command_via_hal":
-            fn = node
-    assert fn, "找不到 _run_command_via_hal —— 改名了？请更新本门"
-
-    rebinds = [
-        n for n in ast.walk(fn)
-        if isinstance(n, ast.Assign)
-        and any(isinstance(t, ast.Name) and t.id == "scpi_logger" for t in n.targets)
-        and isinstance(n.value, ast.Call)
-        and isinstance(n.value.func, ast.Name)
-        and n.value.func.id == "_unverified_scpi_logger"
-        and n.value.args  # 必须传了 driver
-    ]
-    assert rebinds, (
-        "_run_command_via_hal 里没有按 driver 重新取日志器 —— "
-        "调用方传进来的是「来源不确定」，会把真仪器的往返标错"
+    summary_at = src.index(marker)
+    rebind = "scpi_logger = _unverified_scpi_logger(hal_driver)"
+    assert rebind in src, (
+        "探测分支里没有按 hal_driver 重取日志器 —— "
+        "摘要行会被调用方的「来源不确定」标记盖住，而同一次探测的命令记录标 real"
+    )
+    assert src.index(rebind) < summary_at, (
+        "那句重绑定出现在摘要行**之后** —— 摘要仍会被标成「不确定」"
     )
