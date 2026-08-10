@@ -1263,9 +1263,14 @@ class PDFGenerator:
         elements.append(Spacer(1, 12))
 
         result_color = '#43a047' if overall_result == 'passed' else '#e53935' if overall_result == 'failed' else '#ff9800'
+        # ⚠️ 三元表达式**不能**直接跨相邻 f-string 写（外审 P2）：
+        #    Python 先把相邻字符串拼起来再套三元，于是 false 分支只剩
+        #    "(Pass Rate: 100.0%)"，整句 "Overall Result: ..." 被静默吃掉。
+        #    把判断收进一个变量，字符串拼接保持完整。
+        _rate_txt = "未判定" if pass_rate is None else f"{pass_rate}%"
         elements.append(Paragraph(
             f'<b>Overall Result:</b> <font color="{result_color}">{overall_result.upper()}</font> '
-            f'(Pass Rate: 未判定)' if pass_rate is None else f'(Pass Rate: {pass_rate}%)',
+            f'(Pass Rate: {_rate_txt})',
             self.styles['BodyText']
         ))
 

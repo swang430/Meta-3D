@@ -260,3 +260,53 @@ def test_failed_execution_keeps_its_failed_result():
 
     _rate, r = compute_overall_result([], ExecutionStatus.FAILED)
     assert r == "failed", f"执行失败且无判决时应保留 failed，实际 {r}"
+
+
+def test_pdf_overall_result_line_is_not_truncated():
+    """⭐ 外审抓出：我上一轮的三元表达式跨相邻 f-string 写，把前半句吃掉了。
+
+    Python 先把相邻字符串拼起来再套三元 → false 分支只剩 "(Pass Rate: 100.0%)"，
+    整句 "Overall Result: ..." 被静默丢掉。
+
+    让它报错的改法：把 `_rate_txt` 那个变量去掉、改回三元跨行写。
+    """
+    import pathlib
+
+    text = (pathlib.Path(__file__).resolve().parents[1]
+            / "app/services/pdf_generator.py").read_text(encoding="utf-8")
+    bad = [
+        l for l in text.split("\n")
+        if "Pass Rate:" in l and " if " in l and " else " in l
+        and not l.strip().startswith("#")
+    ]
+    assert not bad, (
+        "三元又跨相邻 f-string 写了，会把前半句吃掉：\n  " + "\n  ".join(bad)
+    )
+
+
+def test_archived_pre_provenance_reports_are_flagged():
+    """⭐ 外审抓出：白名单只在生成报告时生效，**已归档的旧报告照样能原样取出**。
+
+    生产库里有实物（5 行 KPI 全 ✓ PASS、通过率 100%、零仪器参与）。
+    不改历史数据（那是伪造），读取时挂显式警示。
+
+    让它报错的改法：把 `_flag_pre_provenance_report(report)` 那句删掉。
+    """
+    from app.api.report import _flag_pre_provenance_report
+
+    class _R:
+        content_data = {"overall_result": "passed", "pass_rate": 100.0,
+                        "kpi_summary": [{"name": "下行吞吐量", "passed": True}]}
+
+    old = _R()
+    _flag_pre_provenance_report(old)
+    assert "provenance_warning" in old.content_data, "老报告没挂警示"
+    assert "未经验证" in old.content_data["provenance_warning"]
+
+    # 新报告（带真假标注痕迹）不该被挂警示
+    class _New:
+        content_data = {"overall_result": "undetermined", "pass_rate": None}
+
+    new = _New()
+    _flag_pre_provenance_report(new)
+    assert "provenance_warning" not in new.content_data, "新报告被误挂了警示"

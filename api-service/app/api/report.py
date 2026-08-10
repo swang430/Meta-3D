@@ -634,6 +634,37 @@ def analyze_time_series_metric(
     )
 
 
+def _flag_pre_provenance_report(report) -> None:
+    """给「真假标注机制上线之前」归档的报告加一句警示（P1-48）。
+
+    ⚠️ 本片新加的白名单只在**生成报告时**生效。而在这次部署之前就归档的报告
+    （生产库里有实物：一份 5 行 KPI 全 ✓ PASS、通过率 100%，那次执行零仪器参与）
+    照样能通过这个端点原样取出来 —— 读者拿到的仍是一份看不出是编的报告。
+
+    **不改历史数据**（改历史记录是伪造），只在读取时挂一个显式标记，
+    让调用方知道这份报告产出于真假标注上线之前、其数据来源未经验证。
+    """
+    data = getattr(report, "content_data", None)
+    if not isinstance(data, dict):
+        return
+    # 上线后生成的报告，KPI 那格一定带得出 provenance 相关的痕迹；
+    # 老报告没有 —— 用「有没有这些键」来区分，不去猜时间戳。
+    has_marker = (
+        "pass_rate" in data and data.get("pass_rate") is None
+    ) or any(
+        isinstance(v, dict) and "provenance" in v
+        for v in (data.get("summary") or {}).values()
+    ) or data.get("overall_result") == "undetermined"
+    if has_marker:
+        return
+    data.setdefault(
+        "provenance_warning",
+        "⚠️ 本报告产出于真假标注机制上线（2026-08-10）之前，"
+        "其中的 KPI 数值与合格判定**来源未经验证** —— "
+        "虚拟路测在那之前会用随机数生成数据并标为「通过」。不得作为验收依据。",
+    )
+
+
 # ==================== Generic Report Operations (Must be last) ====================
 
 @router.get("/{report_id}", response_model=ReportResponse)
@@ -648,6 +679,7 @@ def get_report(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Report {report_id} not found"
         )
+    _flag_pre_provenance_report(report)
     return report
 
 
