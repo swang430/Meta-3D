@@ -367,10 +367,14 @@ export function CommissioningSandbox() {
                     ? 'gcm_native'
                     : 'asc_baked'
                   const engineCompatible = asset.allowed_targets.includes(requiredTarget)
+                  const assetPayload = asset.payload as
+                    | { snapshots?: unknown[] }
+                    | null
+                    | undefined
                   const multiSnapshotRt =
                     asset.source_type === 'rt_dynamic' &&
-                    Array.isArray((asset.payload as { snapshots?: unknown[] }).snapshots) &&
-                    ((asset.payload as { snapshots?: unknown[] }).snapshots?.length ?? 0) > 1
+                    Array.isArray(assetPayload?.snapshots) &&
+                    (assetPayload?.snapshots?.length ?? 0) > 1
                   return {
                     value: asset.id,
                     label:
