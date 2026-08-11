@@ -52,6 +52,7 @@ from app.services.mimo_ota import build_mimo_ota_test_case
 from app.services.mimo_ota.executors.measure import (
     MeasureExecutor,
     _evaluate_path_loss_provenance_for_measure,
+    _is_path_loss_certificate_verified,
 )
 from app.services.mimo_ota.executors.precheck import PrecheckExecutor
 from app.services.test_execution import (
@@ -649,6 +650,18 @@ def test_measure_path_loss_provenance_policy(
 
     assert usable is expect_usable
     assert (blocker is not None) is expect_blocked
+
+
+@pytest.mark.parametrize(
+    "use_mock, expected",
+    [(False, True), (True, False), (None, False)],
+    ids=["real", "mock", "unknown"],
+)
+def test_path_loss_verified_flag_is_an_explicit_real_allowlist(
+    use_mock: Optional[bool], expected: bool,
+):
+    """报告中的“已验证”不能只等于“证书存在”。"""
+    assert _is_path_loss_certificate_verified(use_mock) is expected
 
 
 # ---------------------------------------------------------------------------

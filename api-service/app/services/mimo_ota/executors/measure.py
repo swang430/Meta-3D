@@ -70,6 +70,11 @@ _MOCK_WINDOW_FLOOR_S = 0.05
 _DUT_HEALTH_CHECK_EVERY_N_AZIMUTHS = 1
 
 
+def _is_path_loss_certificate_verified(use_mock: Optional[bool]) -> bool:
+    """Only an explicitly real certificate may be labelled verified."""
+    return use_mock is False
+
+
 def _evaluate_path_loss_provenance_for_measure(
     use_mock: Optional[bool],
     *,
@@ -2197,7 +2202,12 @@ class MeasureExecutor(IStepExecutor):
                 # report/GUI mark 未验证(无路损校准) rather than presenting them as
                 # calibrated. (Real mode is already gated by P1-8 precheck cal
                 # gate; this marks the mock/bypass path + carries provenance.)
-                "path_loss_verified": path_loss_cert is not None,
+                "path_loss_verified": (
+                    path_loss_cert is not None
+                    and _is_path_loss_certificate_verified(
+                        selected_path_loss_use_mock
+                    )
+                ),
                 "switch_topology": topology_result.to_payload(),
                 "mcs_consistency": mcs_result.to_payload(),
                 "sampling": {
