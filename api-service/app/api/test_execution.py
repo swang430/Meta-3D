@@ -21,7 +21,50 @@ def _str_or_none(value) -> Optional[str]:
     return value if isinstance(value, str) else None
 
 
-def _to_history_item(execution: TestExecution, case_name: Optional[str]) -> ExecutionHistoryItem:
+def _is_mimo_ota_execution(
+    execution: TestExecution,
+    test_type: Optional[str] = None,
+) -> bool:
+    """Use execution config / TestCase type, never a user-controlled title."""
+    cfg = execution.config if isinstance(execution.config, dict) else {}
+    descriptors = cfg.get("step_descriptors")
+    if isinstance(descriptors, list) and any(
+        str(descriptor.get("type") or "").startswith("MIMO_OTA_")
+        for descriptor in descriptors
+        if isinstance(descriptor, dict)
+    ):
+        return True
+    return test_type == "MIMO_OTA"
+
+
+def _formal_validation_pass(
+    execution: TestExecution,
+    test_type: Optional[str] = None,
+) -> Optional[bool]:
+    """Do not republish legacy MIMO PASS without explicit-real calibration."""
+    if not _is_mimo_ota_execution(execution, test_type):
+        return execution.validation_pass
+    phases = (
+        (execution.measurements or {}).get("phases")
+        if isinstance(execution.measurements, dict)
+        else None
+    )
+    measure = phases.get("measure") if isinstance(phases, dict) else None
+    if not isinstance(measure, dict):
+        return None
+    if not (
+        measure.get("path_loss_verified") is True
+        and measure.get("path_loss_calibration_use_mock") is False
+    ):
+        return None
+    return execution.validation_pass
+
+
+def _to_history_item(
+    execution: TestExecution,
+    case_name: Optional[str],
+    test_type: Optional[str] = None,
+) -> ExecutionHistoryItem:
     """执行行 → 历史列表项。
 
     相位进度只有 case-runner 在 config.phase_progress 里记
@@ -66,7 +109,7 @@ def _to_history_item(execution: TestExecution, case_name: Optional[str]) -> Exec
         # 整行 → 被外层 except 吞成空表, 正是本文件毒行不变量禁的事
         error_message=execution.error_message or _str_or_none(
             cfg.get("error_message")),
-        validation_pass=execution.validation_pass,
+        validation_pass=_formal_validation_pass(execution, test_type),
     )
 
 
@@ -76,7 +119,7 @@ def _history_query(db: Session):
     显式 outerjoin 快照 TestCase 取执行时的名字 (模型上的 relationship 是
     注释掉的, 不能走属性)。"""
     return (
-        db.query(TestExecution, TestCase.name)
+        db.query(TestExecution, TestCase.name, TestCase.test_type)
         .outerjoin(TestCase, TestExecution.test_case_id == TestCase.id)
         .filter(TestExecution.mode.is_(None))
     )
@@ -119,7 +162,7 @@ def get_recent_tests(
         )
 
         recent_tests = []
-        for exe, case_name in rows:
+        for exe, case_name, _test_type in rows:
             recent_tests.append(RecentTestItem(
                 id=str(exe.id),
                 name=case_name or "未命名用例",
@@ -189,7 +232,10 @@ def get_execution_history(
 
         return ExecutionHistoryListResponse(
             total=total,
-            items=[_to_history_item(exe, case_name) for exe, case_name in rows],
+            items=[
+                _to_history_item(exe, case_name, test_type)
+                for exe, case_name, test_type in rows
+            ],
         )
     except Exception as e:
         # Database unavailable - return empty list

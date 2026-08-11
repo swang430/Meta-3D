@@ -1543,6 +1543,7 @@ class PDFGenerator:
             ('polarization', 'Polarization Calibration', 'XPD 和轴比校准'),
             ('pattern', 'Pattern Calibration', '3D 辐射方向图校准'),
             ('link', 'Link Calibration', '端到端链路验证'),
+            ('path_loss', 'Path Loss Calibration', '路损校准（来源必须可审计）'),
         ]
 
         for cal_type, title, description in cal_types:
@@ -1553,7 +1554,29 @@ class PDFGenerator:
                 elements.append(Spacer(1, 6))
 
                 # Create table for this calibration type
-                if cal_type == 'amplitude':
+                if cal_type == 'path_loss':
+                    headers = ['Frequency (MHz)', 'Probes', 'Provenance', 'Status', 'Calibrated At']
+                    rows = [headers]
+                    for cal in cal_data[:20]:
+                        verdict = cal.get('validation_pass')
+                        if verdict is True:
+                            status = '✓ PASS'
+                            status_color = '#43a047'
+                        elif verdict is False:
+                            status = '✗ FAIL'
+                            status_color = '#e53935'
+                        else:
+                            status = '? UNVERIFIED'
+                            status_color = '#f9a825'
+                        provenance = str(cal.get('provenance', 'unknown')).upper()
+                        rows.append([
+                            str(cal.get('frequency_mhz', '-')),
+                            str(cal.get('num_probes', '-')),
+                            provenance,
+                            Paragraph(f'<font color="{status_color}">{status}</font>', self.styles['BodyText']),
+                            str(cal.get('calibrated_at', '-'))[:19],
+                        ])
+                elif cal_type == 'amplitude':
                     headers = ['Probe ID', 'Polarization', 'Status', 'Calibrated At']
                     rows = [headers]
                     for cal in cal_data[:20]:  # Limit to 20 entries

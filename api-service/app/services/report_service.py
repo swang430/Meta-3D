@@ -15,11 +15,68 @@ from app.models.report import (
     ReportType,
     ReportFormat,
 )
-from app.models.test_plan import TestPlan, TestExecution
+from app.models.test_plan import TestPlan, TestCase, TestExecution
 from app.services.pdf_generator import PDFGenerator
 from app.services.report_data_collector import ReportDataCollector
 
 logger = logging.getLogger(__name__)
+
+
+_SERVER_OWNED_REPORT_TRUST_FIELDS = frozenset({
+    "report_family",
+    "calibration_trust_schema_version",
+    "formal_path_loss_verified",
+})
+
+
+def _strip_untrusted_report_attestation(
+    content_data: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Creation payloads cannot self-attest provenance-aware generation.
+
+    The MIMO builder writes these fields only after rebuilding content from the
+    linked TestExecution. Keeping them out of pending report rows makes the
+    read/download allowlist a server-owned transition rather than client JSON.
+    """
+    if not isinstance(content_data, dict):
+        return content_data
+    return {
+        key: value
+        for key, value in content_data.items()
+        if key not in _SERVER_OWNED_REPORT_TRUST_FIELDS
+    }
+
+
+def is_mimo_ota_execution(db: Session, execution: TestExecution) -> bool:
+    """Classify from the execution's server-side type truth, not report text."""
+    descriptors = (execution.config or {}).get("step_descriptors") or []
+    if any(
+        str(descriptor.get("type") or "").startswith("MIMO_OTA_")
+        for descriptor in descriptors
+        if isinstance(descriptor, dict)
+    ):
+        return True
+    if execution.test_case_id is None:
+        return False
+    test_type = db.query(TestCase.test_type).filter(
+        TestCase.id == execution.test_case_id
+    ).scalar()
+    return test_type == "MIMO_OTA"
+
+
+def report_references_mimo_ota_execution(db: Session, report: TestReport) -> bool:
+    """True when any linked execution is authoritatively a MIMO OTA run."""
+    for raw_execution_id in (getattr(report, "test_execution_ids", None) or []):
+        try:
+            execution_id = UUID(str(raw_execution_id))
+        except (TypeError, ValueError):
+            continue
+        execution = db.query(TestExecution).filter(
+            TestExecution.id == execution_id
+        ).first()
+        if execution is not None and is_mimo_ota_execution(db, execution):
+            return True
+    return False
 
 
 class ReportService:
@@ -38,6 +95,10 @@ class ReportService:
         **kwargs
     ) -> TestReport:
         """Create a new report"""
+        if "content_data" in kwargs:
+            kwargs["content_data"] = _strip_untrusted_report_attestation(
+                kwargs["content_data"]
+            )
         # Convert UUID to string for JSON serialization
         execution_ids_str = [str(eid) for eid in (test_execution_ids or [])]
         comparison_ids = kwargs.pop('comparison_plan_ids', None)
@@ -219,8 +280,66 @@ class ReportService:
             
             # Use overrides if available (critical for VRT immediate generation)
             source_data = content_data_override or report.content_data
-            
-            if report.report_type == ReportType.SINGLE_EXECUTION and source_data:
+
+            declared_mimo_report = (
+                (source_data or {}).get("report_family") == "mimo_ota"
+                or report.generated_by == "mimo_ota.executors.report"
+            )
+            linked_mimo_execution = report_references_mimo_ota_execution(
+                db, report
+            )
+            mimo_report = declared_mimo_report or linked_mimo_execution
+            if mimo_report and len(report.test_execution_ids or []) != 1:
+                raise ValueError(
+                    "Multi-execution MIMO OTA reports cannot be safely "
+                    "regenerated with calibration provenance; rerun as "
+                    "separate single-execution reports"
+                )
+
+            linked_execution = None
+            if (
+                report.report_type == ReportType.SINGLE_EXECUTION
+                and not report.road_test_execution_id
+                and len(report.test_execution_ids or []) == 1
+            ):
+                execution_id = UUID(str(report.test_execution_ids[0]))
+                linked_execution = db.query(TestExecution).filter(
+                    TestExecution.id == execution_id
+                ).first()
+            is_mimo_single_execution = (
+                linked_execution is not None
+                and (
+                    is_mimo_ota_execution(db, linked_execution)
+                    or declared_mimo_report
+                )
+            )
+            if mimo_report and linked_execution is None:
+                raise ValueError(
+                    "MIMO OTA report cannot be safely regenerated because its "
+                    "linked TestExecution is unavailable"
+                )
+            if is_mimo_single_execution:
+                execution = linked_execution
+                # Legacy report JSON is not an authoritative regeneration
+                # source: it may contain pre-P1-27 mock/unknown calibration
+                # KPIs. Rebuild the whole payload from the execution using the
+                # current provenance-aware builder instead of patching only its
+                # summary fields.
+                from app.services.mimo_ota.executors.report import (
+                    _build_mimo_ota_content_data,
+                )
+                from app.services.test_case_runner import (
+                    _finalize_scpi_acceptance,
+                )
+
+                _finalize_scpi_acceptance(execution)
+                case_name = report.title.split("—", 1)[-1].strip()
+                report_data_dict = _build_mimo_ota_content_data(
+                    execution,
+                    datetime.utcnow(),
+                    case_name,
+                )
+            elif report.report_type == ReportType.SINGLE_EXECUTION and source_data:
                 # For VRT/Single Execution, use the data directly
                 report_data_dict = source_data.copy() if hasattr(source_data, 'copy') else dict(source_data)
                 

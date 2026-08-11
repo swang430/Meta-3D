@@ -70,6 +70,37 @@ _MOCK_WINDOW_FLOOR_S = 0.05
 _DUT_HEALTH_CHECK_EVERY_N_AZIMUTHS = 1
 
 
+def _is_path_loss_certificate_verified(use_mock: Optional[bool]) -> bool:
+    """Only an explicitly real certificate may be labelled verified."""
+    return use_mock is False
+
+
+def _evaluate_path_loss_provenance_for_measure(
+    use_mock: Optional[bool],
+    *,
+    channel_emulator_is_real: bool,
+    strict: bool,
+) -> tuple[bool, Optional[str]]:
+    """判定一张路损证书能否参与本次测量补偿。
+
+    真实测量只接受显式 ``use_mock=False``。严格模式额外阻断执行；显式
+    opt-out 只允许继续做未补偿的调试测量，不能把模拟/未知值洗进正式 KPI。
+    mock 仪表链本身不产出正式 KPI，可继续复用 mock 证书做流程演练。
+    """
+    if not channel_emulator_is_real or use_mock is False:
+        return True, None
+
+    provenance = "simulated" if use_mock is True else "unknown"
+    blocker = None
+    if strict:
+        blocker = (
+            f"path-loss calibration has {provenance} provenance "
+            f"(use_mock={use_mock!r}); real measurement requires explicit "
+            "use_mock=False"
+        )
+    return False, blocker
+
+
 def _managed_attach_failure(
     *,
     managed: bool,
@@ -402,8 +433,77 @@ class MeasureExecutor(IStepExecutor):
             record_uxm_throughput_capture,
             register_required_scpi_evidence,
         )
+        from app.services.path_loss_calibration_service import (
+            ProbePathLossCalibrationService,
+        )
 
         hal = get_hal_service()
+        chamber: ChamberConfiguration = lab.chamber_config
+        if chamber is None:
+            return StepExecutionResult(
+                status=StepExecutionStatus.FAILED,
+                error_message=f"LabProfile {lab.name} has no chamber_config",
+            )
+
+        emulator = hal.drivers.get("channelEmulator")
+        channel_emulator_is_real = (
+            emulator is not None and not is_mock_driver(emulator)
+        )
+        pl_service = ProbePathLossCalibrationService(context.db, use_mock=False)
+        selected_path_loss_cert = pl_service.get_latest_calibration(
+            chamber.id,
+            config.frequency_hz / 1e6,
+            operating_mode=config.switch_mode_id,
+            require_real=channel_emulator_is_real,
+        )
+        if selected_path_loss_cert is None and channel_emulator_is_real:
+            selected_path_loss_cert = pl_service.get_latest_calibration(
+                chamber.id,
+                config.frequency_hz / 1e6,
+                operating_mode=config.switch_mode_id,
+            )
+        selected_path_loss_use_mock = (
+            selected_path_loss_cert.use_mock
+            if selected_path_loss_cert is not None
+            else None
+        )
+        if selected_path_loss_cert is None:
+            path_loss_cert_usable = False
+            provenance_blocker = (
+                "path-loss calibration is missing or expired; real measurement "
+                "strict mode requires a currently valid explicit-real certificate"
+                if channel_emulator_is_real and config.precheck_strict_cal
+                else None
+            )
+        else:
+            path_loss_cert_usable, provenance_blocker = (
+                _evaluate_path_loss_provenance_for_measure(
+                    selected_path_loss_use_mock,
+                    channel_emulator_is_real=channel_emulator_is_real,
+                    strict=config.precheck_strict_cal,
+                )
+            )
+        if provenance_blocker is not None:
+            return StepExecutionResult(
+                status=StepExecutionStatus.FAILED,
+                error_message=(
+                    "P1-27 calibration provenance gate failed before hardware "
+                    f"connect: {provenance_blocker}"
+                ),
+            )
+        path_loss_cert = (
+            selected_path_loss_cert if path_loss_cert_usable else None
+        )
+        if selected_path_loss_cert is not None and path_loss_cert is None:
+            logger.warning(
+                "[%s] P1-27: ignoring untrusted path-loss certificate %s "
+                "(use_mock=%r) for real measurement; strict gate was explicitly "
+                "bypassed, continuing without path-loss compensation",
+                context.test_execution.id,
+                selected_path_loss_cert.id,
+                selected_path_loss_use_mock,
+            )
+
         positioner = hal.drivers.get("positioner")
         base_station = hal.drivers.get("baseStation")
         if positioner is None or base_station is None:
@@ -601,15 +701,7 @@ class MeasureExecutor(IStepExecutor):
             # 2026-08-07 的旧顺序在这里先 start_signaling，attach 成功后才加载
             # .smu；这会依赖 F64 上一轮遗留模型/频率/STATIC。以下整段完成后才
             # 允许第一次 attach，任何失败都直接返回。
-            chamber: ChamberConfiguration = lab.chamber_config
-            if chamber is None:
-                return StepExecutionResult(
-                    status=StepExecutionStatus.FAILED,
-                    error_message=f"LabProfile {lab.name} has no chamber_config",
-                )
-
             ce_client = ChannelEngineClient(context.db)
-            emulator = hal.drivers.get("channelEmulator")
             if emulator is None:
                 from app.hal.channel_emulator import MockChannelEmulator
 
@@ -668,6 +760,7 @@ class MeasureExecutor(IStepExecutor):
             calibration_entries = ce_client._query_calibration_entries(
                 chamber.id, config.frequency_hz, chamber,
                 operating_mode=config.switch_mode_id,
+                path_loss_calibration=path_loss_cert,
             )
 
             # --- Phase 2a / P0: path-loss compensation ---
@@ -677,17 +770,6 @@ class MeasureExecutor(IStepExecutor):
             #   when the cert was created via /calibration/path-loss/start-for-lab.
             # Falls back to avg when the cert is legacy (no per-chain map) so
             # existing chamber-keyed calibrations still work.
-            from app.services.path_loss_calibration_service import (
-                ProbePathLossCalibrationService,
-            )
-
-            pl_service = ProbePathLossCalibrationService(context.db, use_mock=False)
-            # P2-11 Phase 3 (Codex on PR #111): 按 TestCase switch_mode_id 过滤 cert,
-            # 让 per-chain 线损来自请求的 RF 通路 (精确优先, 退回 legacy NULL)。
-            path_loss_cert = pl_service.get_latest_calibration(
-                chamber.id, config.frequency_hz / 1e6,
-                operating_mode=config.switch_mode_id,
-            )
             if path_loss_cert is not None:
                 avg_path_loss_db = float(path_loss_cert.avg_path_loss_db or 0.0)
                 per_chain_pl: Dict[str, Any] = (
@@ -2120,6 +2202,13 @@ class MeasureExecutor(IStepExecutor):
                 "path_loss_certificate_id": (
                     str(path_loss_cert.id) if path_loss_cert is not None else None
                 ),
+                "path_loss_calibration_use_mock": selected_path_loss_use_mock,
+                "path_loss_rejected_certificate_id": (
+                    str(selected_path_loss_cert.id)
+                    if selected_path_loss_cert is not None
+                    and path_loss_cert is None
+                    else None
+                ),
                 "path_loss_per_chain_used": chains_used,
                 "path_loss_per_chain_available": len(per_chain_pl),
                 # P1-12 audit (sibling QZ #79 / TRP #80): no path-loss cert →
@@ -2128,7 +2217,12 @@ class MeasureExecutor(IStepExecutor):
                 # report/GUI mark 未验证(无路损校准) rather than presenting them as
                 # calibrated. (Real mode is already gated by P1-8 precheck cal
                 # gate; this marks the mock/bypass path + carries provenance.)
-                "path_loss_verified": path_loss_cert is not None,
+                "path_loss_verified": (
+                    path_loss_cert is not None
+                    and _is_path_loss_certificate_verified(
+                        selected_path_loss_use_mock
+                    )
+                ),
                 "switch_topology": topology_result.to_payload(),
                 "mcs_consistency": mcs_result.to_payload(),
                 "sampling": {

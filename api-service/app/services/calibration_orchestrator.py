@@ -308,11 +308,33 @@ class CalibrationOrchestrator:
 
             # 检查每种校准类型的状态
             if item == CalibrationItem.PROBE_PATH_LOSS:
-                cal = self.path_loss_service.get_latest_calibration(chamber_id, frequency_mhz)
+                cal = self.path_loss_service.get_latest_calibration(
+                    chamber_id,
+                    frequency_mhz,
+                    require_real=not self.use_mock,
+                )
+                if cal is None and not self.use_mock:
+                    # 正式状态以 explicit-real 为白名单；若白名单为空，再取任意
+                    # 来源只为解释 simulated/unknown，不能把其数值判为有效。
+                    cal = self.path_loss_service.get_latest_calibration(
+                        chamber_id,
+                        frequency_mhz,
+                    )
                 if cal:
-                    is_valid = cal.status == "valid"
+                    provenance = (
+                        "simulated" if cal.use_mock is True
+                        else "real" if cal.use_mock is False
+                        else "unknown"
+                    )
+                    provenance_allowed = self.use_mock or cal.use_mock is False
+                    is_valid = cal.status == "valid" and provenance_allowed
                     valid_until = cal.valid_until
                     calibration_id = cal.id
+                    if not provenance_allowed:
+                        message = (
+                            f"Path loss calibration has {provenance} provenance; "
+                            "real compensation requires explicit use_mock=False"
+                        )
                 else:
                     message = "No path loss calibration found"
 
@@ -970,7 +992,7 @@ class CalibrationOrchestrator:
         probe_id: int,
         polarization: str,
         frequency_mhz: float
-    ) -> Dict[str, float]:
+    ) -> Dict[str, Any]:
         """
         获取测量补偿因子
 
@@ -997,14 +1019,33 @@ class CalibrationOrchestrator:
             "ul_gain_db": 0.0,
             "dl_gain_db": 0.0,
             "duplexer_loss_db": 0.0,
+            "path_loss_provenance": "missing",
+            "path_loss_usable": False,
         }
 
         # 获取路损
+        path_loss_cal = self.path_loss_service.get_latest_calibration(
+            chamber_id,
+            frequency_mhz,
+            require_real=not self.use_mock,
+        )
+        if path_loss_cal is None and not self.use_mock:
+            path_loss_cal = self.path_loss_service.get_latest_calibration(
+                chamber_id,
+                frequency_mhz,
+            )
+        if path_loss_cal is not None:
+            factors["path_loss_provenance"] = (
+                "simulated" if path_loss_cal.use_mock is True
+                else "real" if path_loss_cal.use_mock is False
+                else "unknown"
+            )
         path_loss = self.path_loss_service.get_path_loss_for_probe(
             chamber_id, probe_id, polarization, frequency_mhz
         )
         if path_loss:
             factors["path_loss_db"] = path_loss
+            factors["path_loss_usable"] = True
 
         # 获取上行链路增益 (TRP 测量用)
         if chamber.has_lna:

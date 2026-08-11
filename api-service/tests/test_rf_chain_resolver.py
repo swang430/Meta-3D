@@ -172,6 +172,7 @@ class TestPathLossForLabProfile:
         assert cert is not None
         assert cert.lab_profile_id == lab_profile.id
         assert cert.operating_mode == "mimo_ota"
+        assert cert.use_mock is True
 
         per_chain = cert.path_loss_db_by_rf_chain
         assert isinstance(per_chain, dict)

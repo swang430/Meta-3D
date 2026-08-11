@@ -37,6 +37,14 @@ def _exec(phases, validation_pass=None, status="completed"):
 
 
 def _content(phases, **kw):
+    # These tests isolate the canonical PASS predicate. Pin the independent
+    # P1-27 path-loss trust gate open so it cannot mask the predicate under test.
+    phases = dict(phases)
+    phases["measure"] = {
+        "path_loss_verified": True,
+        "path_loss_calibration_use_mock": False,
+        **(phases.get("measure") or {}),
+    }
     return _build_mimo_ota_content_data(_exec(phases, **kw), datetime(2026, 1, 1))
 
 

@@ -505,3 +505,42 @@ class TestFivePhaseCommissioningSmoke:
         assert body["result"]["verdict"] == "UNKNOWN"
         db.refresh(execution)
         assert execution.validation_pass is None
+
+    @pytest.mark.parametrize("path_loss_verified", [False, None])
+    def test_analysis_stays_unknown_without_explicit_real_path_loss(
+        self, lab, db, path_loss_verified,
+    ):
+        session_id = self._create_fast_session(lab, db, azimuths=(0.0,))
+        execution = (
+            db.query(TestExecution)
+            .filter(TestExecution.id == uuid.UUID(session_id))
+            .one()
+        )
+        measure = {
+            "measurement_verified": True,
+            "frequency_consistency": {"fully_verified": True},
+            "azimuth_results": [{
+                "azimuth_deg": 0.0,
+                "throughput_mbps": 1000.0,
+                "rsrp_dbm": -80.0,
+                "sinr_db": 30.0,
+                "rank_indicator": 2.0,
+            }],
+        }
+        if path_loss_verified is not None:
+            measure["path_loss_verified"] = path_loss_verified
+        execution.measurements = {
+            "phases": {
+                "precheck": {"quiet_zone_pass": True},
+                "measure": measure,
+            }
+        }
+        db.commit()
+
+        body = self._run_phase(session_id, "analysis")
+
+        assert body["status"] == "success"
+        assert body["result"]["verdict"] == "UNKNOWN"
+        assert body["result"]["avg_throughput_mbps"] is None
+        db.refresh(execution)
+        assert execution.validation_pass is None

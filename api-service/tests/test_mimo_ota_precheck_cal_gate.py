@@ -30,7 +30,7 @@ Each case asserts:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 import pytest
@@ -48,7 +48,13 @@ from app.models.probe_calibration import (
     ProbePathLossCalibration,
 )
 from app.models.test_plan import TestExecution
+from app.services.channel_engine_client import ChannelEngineClient
 from app.services.mimo_ota import build_mimo_ota_test_case
+from app.services.mimo_ota.executors.measure import (
+    MeasureExecutor,
+    _evaluate_path_loss_provenance_for_measure,
+    _is_path_loss_certificate_verified,
+)
 from app.services.mimo_ota.executors.precheck import PrecheckExecutor
 from app.services.test_execution import (
     StepDescriptor,
@@ -166,7 +172,14 @@ def hal_with_mocks(instrument_categories):
 # Helpers — seed cal data + build StepExecutionContext
 # ---------------------------------------------------------------------------
 
-def _seed_path_loss_cal(db, chamber_id, frequency_mhz: float = 3500.0) -> None:
+def _seed_path_loss_cal(
+    db,
+    chamber_id,
+    frequency_mhz: float = 3500.0,
+    *,
+    use_mock: Optional[bool] = False,
+    valid_until: Optional[datetime] = None,
+) -> None:
     """Write a minimal VALID ProbePathLossCalibration so
     `latest_pl is not None` and `result_payload["path_loss_calibration_valid"]
     = True`."""
@@ -179,8 +192,13 @@ def _seed_path_loss_cal(db, chamber_id, frequency_mhz: float = 3500.0) -> None:
         sgh_gain_dbi=8.0,
         status=CalibrationStatus.VALID.value,
         calibrated_at=now,
-        valid_until=now.replace(year=now.year + 1),  # 1 year validity
+        valid_until=valid_until or now.replace(year=now.year + 1),
     )
+    # P1-27: pre-existing tests are about certificate existence/frequency,
+    # so they explicitly represent a real calibration. ``setattr`` keeps the
+    # RED test importable before the model column exists; the producer tests
+    # separately prove the value survives a database round-trip.
+    setattr(cal, "use_mock", use_mock)
     db.add(cal)
     db.commit()
 
@@ -490,6 +508,260 @@ class TestFrequencyWindow:
 
 
 # ---------------------------------------------------------------------------
+# P1-27: path-loss calibration provenance is a strict allowlist.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "use_mock, strict_mode, expect_pass, reason_keywords",
+    [
+        (False, True, True, ["ok"]),
+        (True, True, False, ["simulated", "provenance"]),
+        (None, True, False, ["unknown", "provenance"]),
+        (True, False, True, ["bypassed", "simulated", "provenance"]),
+        (None, False, True, ["bypassed", "unknown", "provenance"]),
+    ],
+    ids=[
+        "real-strict",
+        "mock-strict",
+        "unknown-strict",
+        "mock-bypass",
+        "unknown-bypass",
+    ],
+)
+@pytest.mark.asyncio
+async def test_path_loss_provenance_gate(
+    db,
+    lab,
+    chamber,
+    hal_with_mocks,
+    use_mock: Optional[bool],
+    strict_mode: bool,
+    expect_pass: bool,
+    reason_keywords: list[str],
+):
+    """A real run may trust only an explicitly real path-loss record.
+
+    Historical rows are ``None`` rather than silently backfilled to real.
+    Explicit strict bypass remains available for rehearsal, but its audit
+    reason must still say exactly what strict mode would have rejected.
+    """
+    _seed_path_loss_cal(db, chamber.id, use_mock=use_mock)
+    ctx = _build_context(
+        db,
+        lab,
+        cal_cert=None,
+        strict_mode=strict_mode,
+        frequency_hz=3500e6,
+    )
+
+    result = await PrecheckExecutor().execute(ctx)
+    measurements = result.measurements or {}
+
+    assert measurements.get("path_loss_calibration_use_mock") is use_mock
+    assert measurements.get("cal_pass") is expect_pass
+    assert measurements.get("overall_pass") is expect_pass
+    assert result.status == (
+        StepExecutionStatus.SUCCESS if expect_pass else StepExecutionStatus.FAILED
+    )
+
+    reason = measurements.get("cal_pass_reason", "") or ""
+    for keyword in reason_keywords:
+        assert keyword in reason, f"missing {keyword!r} in {reason!r}"
+
+
+@pytest.mark.parametrize(
+    "use_mock, reason_keywords",
+    [
+        (True, ["simulated", "provenance"]),
+        (None, ["unknown", "provenance"]),
+    ],
+    ids=["mock", "legacy-unknown"],
+)
+@pytest.mark.asyncio
+async def test_direct_measure_rejects_untrusted_path_loss_before_hardware_touch(
+    db,
+    lab,
+    chamber,
+    hal_with_mocks,
+    use_mock: Optional[bool],
+    reason_keywords: list[str],
+):
+    """单阶段 MEASURE 不能绕过 PRECHECK 的 provenance 门。
+
+    失败必须发生在 connect / SCPI 下发之前；否则即使最终返回失败，也已经
+    改动了现场仪表状态。
+    """
+
+    class _MustNotConnect:
+        async def connect(self):
+            raise AssertionError("provenance gate ran after hardware connect")
+
+    _seed_path_loss_cal(db, chamber.id, use_mock=use_mock)
+    hal_with_mocks.drivers["positioner"] = _MustNotConnect()
+    hal_with_mocks.drivers["baseStation"] = _MustNotConnect()
+    ctx = _build_context(
+        db,
+        lab,
+        cal_cert=None,
+        strict_mode=True,
+        frequency_hz=3500e6,
+    )
+
+    result = await MeasureExecutor().execute(ctx)
+
+    assert result.status == StepExecutionStatus.FAILED
+    reason = result.error_message or ""
+    for keyword in reason_keywords:
+        assert keyword in reason, f"missing {keyword!r} in {reason!r}"
+
+
+@pytest.mark.parametrize("cert_state", ["missing", "expired"])
+@pytest.mark.asyncio
+async def test_direct_measure_strict_rejects_missing_or_expired_cert_before_connect(
+    db,
+    lab,
+    chamber,
+    hal_with_mocks,
+    cert_state: str,
+):
+    class _MustNotConnect:
+        async def connect(self):
+            raise AssertionError("calibration gate ran after hardware connect")
+
+    if cert_state == "expired":
+        _seed_path_loss_cal(
+            db,
+            chamber.id,
+            use_mock=False,
+            valid_until=datetime.utcnow() - timedelta(days=1),
+        )
+    hal_with_mocks.drivers["positioner"] = _MustNotConnect()
+    hal_with_mocks.drivers["baseStation"] = _MustNotConnect()
+    ctx = _build_context(
+        db,
+        lab,
+        cal_cert=None,
+        strict_mode=True,
+        frequency_hz=3500e6,
+    )
+
+    result = await MeasureExecutor().execute(ctx)
+
+    assert result.status == StepExecutionStatus.FAILED
+    assert "missing or expired" in (result.error_message or "")
+
+
+@pytest.mark.parametrize(
+    "use_mock, ce_is_real, strict, expect_usable, expect_blocked",
+    [
+        (False, True, True, True, False),
+        (True, True, True, False, True),
+        (None, True, True, False, True),
+        (True, True, False, False, False),
+        (None, True, False, False, False),
+        (True, False, True, True, False),
+    ],
+    ids=[
+        "real-cert-real-run",
+        "mock-cert-real-strict",
+        "unknown-cert-real-strict",
+        "mock-cert-real-bypass-not-applied",
+        "unknown-cert-real-bypass-not-applied",
+        "mock-cert-mock-run",
+    ],
+)
+def test_measure_path_loss_provenance_policy(
+    use_mock: Optional[bool],
+    ce_is_real: bool,
+    strict: bool,
+    expect_usable: bool,
+    expect_blocked: bool,
+):
+    """Opt-out may continue, but it must never apply simulated calibration
+    values to a real measurement or let them influence formal KPIs."""
+    usable, blocker = _evaluate_path_loss_provenance_for_measure(
+        use_mock,
+        channel_emulator_is_real=ce_is_real,
+        strict=strict,
+    )
+
+    assert usable is expect_usable
+    assert (blocker is not None) is expect_blocked
+
+
+@pytest.mark.parametrize(
+    "use_mock, expected",
+    [(False, True), (True, False), (None, False)],
+    ids=["real", "mock", "unknown"],
+)
+def test_path_loss_verified_flag_is_an_explicit_real_allowlist(
+    use_mock: Optional[bool], expected: bool,
+):
+    """报告中的“已验证”不能只等于“证书存在”。"""
+    assert _is_path_loss_certificate_verified(use_mock) is expected
+
+
+def test_channel_generation_cannot_requery_a_rejected_mock_certificate(
+    db, chamber,
+):
+    """MEASURE 已拒绝 cert 后，ASC/GCM calibration entries 必须消费同一个
+    过滤结果；不能自己再查数据库把 mock 数值捞回来。"""
+    _seed_path_loss_cal(db, chamber.id, use_mock=True)
+    entries = ChannelEngineClient(db)._query_calibration_entries(
+        chamber.id,
+        3500e6,
+        chamber,
+        path_loss_calibration=None,
+    )
+
+    fallback_loss = chamber.typical_cable_loss_db
+    if chamber.has_pa and chamber.pa_gain_db:
+        fallback_loss -= chamber.pa_gain_db
+    if chamber.has_duplexer and chamber.duplexer_insertion_loss_db:
+        fallback_loss += chamber.duplexer_insertion_loss_db
+
+    assert entries
+    assert all(
+        entry["cable_loss_db"] == pytest.approx(float(fallback_loss))
+        for entry in entries
+    )
+    assert all(entry["cable_loss_db"] != 5.0 for entry in entries)
+
+
+@pytest.mark.asyncio
+async def test_asc_strategy_forwards_the_already_filtered_calibration_entries(chamber):
+    """ASC strategy must not discard MEASURE's provenance-filtered entries and
+    let the client auto-select a second, potentially simulated certificate."""
+    from types import SimpleNamespace
+
+    from app.services.channel_generation.asc_strategy import ExternalWaveformStrategy
+
+    class CapturingChannelEngineClient:
+        def __init__(self):
+            self.kwargs = None
+
+        async def synthesize_hardware_pipeline(self, **kwargs):
+            self.kwargs = kwargs
+            return SimpleNamespace(success=False, message="stop after capture")
+
+    client = CapturingChannelEngineClient()
+    filtered_entries = [{"port": 1, "cable_loss_db": 1.25}]
+    strategy = ExternalWaveformStrategy(
+        emulator=object(),
+        ce_client=client,
+        chamber_config=chamber,
+        calibration_entries=filtered_entries,
+    )
+
+    assert await strategy.generate_and_load(
+        {"frequency_hz": 3.5e9},
+        {"model_name": "UMa NLOS CDL-C"},
+    ) is False
+    assert client.kwargs["calibration_entries"] is filtered_entries
+
+
+# ---------------------------------------------------------------------------
 # Runtime mock-awareness (Codex on PR #75): mock/absent CE auto-skips cal gate
 # ---------------------------------------------------------------------------
 
@@ -528,3 +800,27 @@ async def test_mock_channelEmulator_auto_skips_strict_cal_gate(
     )
     reason = measurements.get("cal_pass_reason", "") or ""
     assert "gate N/A" in reason and "mock" in reason, f"got {reason!r}"
+
+
+@pytest.mark.asyncio
+async def test_mock_channelEmulator_rehearsal_keeps_mock_calibration_chain(
+    db, lab, chamber, hal_with_mock_ce,
+):
+    """模拟仪表链应演练校准选择，而不是悄悄退回默认线损。"""
+    _seed_path_loss_cal(db, chamber.id, use_mock=True)
+    ctx = _build_context(
+        db,
+        lab,
+        cal_cert=None,
+        strict_mode=True,
+        frequency_hz=3500e6,
+    )
+
+    result = await PrecheckExecutor().execute(ctx)
+    measurements = result.measurements or {}
+
+    assert measurements["path_loss_calibration_valid"] is True
+    assert measurements["path_loss_calibration_use_mock"] is True
+    assert measurements["path_loss_calibration_frequency_mhz"] == 3500.0
+    assert measurements["cal_pass"] is True
+    assert "gate N/A" in measurements["cal_pass_reason"]
