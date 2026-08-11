@@ -49,7 +49,10 @@ from app.models.probe_calibration import (
 )
 from app.models.test_plan import TestExecution
 from app.services.mimo_ota import build_mimo_ota_test_case
-from app.services.mimo_ota.executors.measure import MeasureExecutor
+from app.services.mimo_ota.executors.measure import (
+    MeasureExecutor,
+    _evaluate_path_loss_provenance_for_measure,
+)
 from app.services.mimo_ota.executors.precheck import PrecheckExecutor
 from app.services.test_execution import (
     StepDescriptor,
@@ -608,6 +611,44 @@ async def test_direct_measure_rejects_untrusted_path_loss_before_hardware_touch(
     reason = result.error_message or ""
     for keyword in reason_keywords:
         assert keyword in reason, f"missing {keyword!r} in {reason!r}"
+
+
+@pytest.mark.parametrize(
+    "use_mock, ce_is_real, strict, expect_usable, expect_blocked",
+    [
+        (False, True, True, True, False),
+        (True, True, True, False, True),
+        (None, True, True, False, True),
+        (True, True, False, False, False),
+        (None, True, False, False, False),
+        (True, False, True, True, False),
+    ],
+    ids=[
+        "real-cert-real-run",
+        "mock-cert-real-strict",
+        "unknown-cert-real-strict",
+        "mock-cert-real-bypass-not-applied",
+        "unknown-cert-real-bypass-not-applied",
+        "mock-cert-mock-run",
+    ],
+)
+def test_measure_path_loss_provenance_policy(
+    use_mock: Optional[bool],
+    ce_is_real: bool,
+    strict: bool,
+    expect_usable: bool,
+    expect_blocked: bool,
+):
+    """Opt-out may continue, but it must never apply simulated calibration
+    values to a real measurement or let them influence formal KPIs."""
+    usable, blocker = _evaluate_path_loss_provenance_for_measure(
+        use_mock,
+        channel_emulator_is_real=ce_is_real,
+        strict=strict,
+    )
+
+    assert usable is expect_usable
+    assert (blocker is not None) is expect_blocked
 
 
 # ---------------------------------------------------------------------------
