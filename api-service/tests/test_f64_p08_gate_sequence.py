@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from app.diagnostics.sequences.propsim_f64_p08_gate import run as run_gate
+from app.diagnostics.sequences.propsim_f64_p08_gate import _Gate, run as run_gate
 from app.hal.propsim_f64 import RealPropsimF64Driver
 
 
@@ -352,6 +352,52 @@ class TestFailClosed:
         assert fake.gains[1] == 0.0  # 增益已还原
         assert any(s.label.startswith("还原旁路档") for s in result.steps)
         assert "旁路" in result.summary
+
+
+class TestResidueSites:
+    """正常主路径的每个零残留站点都必须真正消费错误队列。
+
+    这组参数化门把同一条未认领错误注入到每个 ``residue`` 调用的入口。若删掉
+    任一站点，注入也不会发生，剧本会错误地 PASS，本测试随即变红；若站点仍在，
+    它必须把错误原样归档并 fail-closed。退旁路固件不自动续跑时会多一个 GO 前
+    归属窗口，再加所有路径共同出口的收尾检查，因此当前成功执行路径共有 10 个
+    站点，而不是旧 roadmap 粗记的 8 个；中止专用站点已有上方独立失败场景保护。
+    """
+
+    _NORMAL_RESIDUE_LABELS = (
+        "加载与读态后错误队列",
+        "AUTOSET 与收敛判定后错误队列",
+        "GO 与增益读后错误队列",
+        "改参后错误队列",
+        "衰落态测量后错误队列",
+        "进旁路后错误队列",
+        "旁路态测量后错误队列",
+        "退旁路读态后错误队列",
+        "退旁路后错误队列",
+        "收尾错误队列",
+    )
+
+    @pytest.mark.parametrize("target_label", _NORMAL_RESIDUE_LABELS)
+    async def test_each_normal_residue_site_fails_on_unclaimed_error(
+        self, monkeypatch, target_label,
+    ):
+        drv, fake = _make(auto_resume_on_bypass_exit=False)
+        original = _Gate.residue
+
+        async def inject_then_check(gate, label):
+            if label == target_label:
+                fake._err('-222,"Injected unclaimed error"')
+            return await original(gate, label)
+
+        monkeypatch.setattr(_Gate, "residue", inject_then_check)
+        result, _ = await _run(drv)
+
+        assert not result.success, target_label
+        step = next((s for s in result.steps if s.label == target_label), None)
+        assert step is not None, f"零残留站点未执行: {target_label}"
+        assert not step.success, target_label
+        assert "Injected unclaimed error" in (step.raw or ""), target_label
+        assert fake.errors == [], f"错误未被 {target_label} 排空归档"
 
 
 class TestParamGates:
