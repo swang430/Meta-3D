@@ -52,4 +52,3 @@ P3-15 已把该测试文件改为内存 SQLite，并通过 `get_db` override 与
 - 原告警 API 与 summary 路由回归继续通过。
 - 前端契约门：页面不再请求告警详情，只请求 summary；无大面板；日志区域全宽。
 - GUI TypeScript production build 通过。
-

@@ -117,4 +117,3 @@ git commit -m "docs: close P1-38 and advance roadmap"
 ### Task 4: Review and publish
 
 Run internal spec and code-quality reviews over `origin/main..HEAD`; fix all functional P1 findings with TDD. Push `codex/p1-38-alert-panel-hygiene`, open a ready PR, request `@codex review`, and follow the established loop: P1 fixes are unbounded; P2/P3 are recorded once. When the final reviewed HEAD has no major functional issue and checks are green, merge with a merge commit and begin P1-27 from the new `origin/main`.
-
