@@ -3648,7 +3648,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 > ④进入 ON-SITE-BLOCKED / HOLD / Known unknown；⑤ resolved / dropped。
 > 没有出口标记的条目仍是“待评估”，不得出现在 LOCAL-OPEN 执行队列里。
 
-- `[discovered 2026-08-11 during P1-29 G19 全路由枚举]` **另有两条存量静态路由被更早的 path 参数路由遮蔽（待 triage）** —— `GET /api/v1/calibration/channel/temporal/{calibration_id}` 会先吃掉后声明的 `/temporal/latest`（GUI `channelCalibrationService.ts` 有活消费者）；`GET /api/v1/topologies/{topology_id}` 会先吃掉另一 router 后注册的 `/topologies/default`。二者与 P1-29 同母题但不属于驾驶舱告警故障，本片不跨域修；G19 以精确例外锁住这两条存量并禁止第三条新增，后续 triage 后分别处理。
+- `[discovered 2026-08-11 during P1-29 G19 全路由枚举]` **另有两条存量静态路由被更早的 path 参数路由遮蔽（待 triage）** —— `GET /api/v1/calibration/channel/temporal/{calibration_id}` 会先吃掉后声明的 `/temporal/latest`（GUI `channelCalibrationService.ts` 有活消费者）；`api/topology.py` 的同一个 `topology.router` 内，`GET /api/v1/topologies/{topology_id}` 同样声明在 `/topologies/default` 之前。二者与 P1-29 同母题但不属于驾驶舱告警故障，本片不跨域修；G19 以精确例外锁住这两条存量并禁止第三条新增，后续分别把字面量路由移到同方法参数路由之前。
 
 **2026-08-06 SCPI 闭环专项 triage（本表是状态真值；下方原始条目保留发现上下文）**：
 
