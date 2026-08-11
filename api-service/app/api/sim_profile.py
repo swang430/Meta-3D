@@ -1,7 +1,8 @@
 """SIMProfile (SIM/eSIM 身份 + 鉴权声明) CRUD API (P2-13 阶段 1)。
 
-operator 规划期建/管测试卡池 (IMSI/PLMN/Ki/OPc/算法/卡类型)。后续阶段接 SIM↔UXM 一致性
-precheck 校验 + attach 后实测 IMSI 核对 + (档 A) 自动 provision UXM HSS。
+operator 规划期建/管测试卡池 (IMSI/PLMN/Ki/OPc/算法/卡类型)。managed 流程在 MEASURE
+受控 attach 后核对 UXM/UE 实测 IMSI；legacy/unmanaged 流程保留 PRECHECK 快照核对；
+档 A 自动 provision UXM HSS 仍属后续扩展。
 
 注: router prefix="/sim-profiles", main.py include 时加 /api/v1 → /api/v1/sim-profiles。
 端点路径只写 prefix 之后部分 (feedback_fastapi_router_prefix_no_double)。

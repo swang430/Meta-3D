@@ -51,8 +51,8 @@ export interface CreateSessionParams {
   f64OutputLevelDbm?: number
   emulationFile?: string
   f64BypassMode?: number
-  // Lab-smoke mode: relax the strict precheck gates (P1-8 cal / P1-9 DUT) so a
-  // local rehearsal without a real DUT / calibration can get past 系统预检.
+  // Lab-smoke mode: relax strict safety gates（cal 在 PRECHECK；managed 流程的
+  // DUT 动态门在 MEASURE）so a local rehearsal without real DUT/cal can proceed.
   // Omitted (undefined) → backend keeps its strict default (True) → on-site
   // real first-call stays protected. Only sent when the operator opts in.
   labSmoke?: boolean
@@ -143,7 +143,7 @@ export const buildCreateSessionBody = (
     // P2-11/P2-13: "强制跳过严格门" = 统一的暗室首测 (路径 A) bypass —— 一次降级**全部**
     // 8 道 strict 门 (cal/dut/频率/.smu/switch mode/cell_config/dut_capability/sim_identity),
     // 否则真仪表 bring-up 会撞上它们。dut_capability = DUTProfile 声明门, sim_identity = SIMProfile
-    // 防插错卡门 (都规划期/attach 校验), 跟其它门一起 bypass (feedback_strict_gate_extend_bypass_toggle:
+    // 防插错卡门（managed 流程在 MEASURE attach 后校验）, 跟其它门一起 bypass (feedback_strict_gate_extend_bypass_toggle:
     // 加门同步 4 处, 这次提前补)。镜像 test_commissioning_strict_gate_overrides。
     body.precheck_strict_dut = false
     body.precheck_strict_cal = false

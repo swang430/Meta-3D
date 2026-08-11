@@ -2,7 +2,8 @@
  * SIMProfile (SIM/eSIM 身份+鉴权声明) 管理界面 (P2-13 Phase 3) — 填写/编辑/删除测试卡档案。
  *
  * 平行 DUTProfileManager。operator 规划期登记测试卡池 (IMSI/PLMN/Ki/OPc/算法/卡类型)。
- * TestCase 配置选其中一张 → precheck 拿 attach IMSI 跟声明核对 (防插错卡)。
+ * TestCase 配置选其中一张 → managed 流程在 MEASURE 受控 attach 后拿 UXM/UE 实测 IMSI
+ * 跟声明核对（防插错卡）；legacy/unmanaged 流程仍在 PRECHECK 核对已有 attach 快照。
  *
  * ⚠️ 凭据 ki/opc write-only: 后端响应不回原始值 (只 ki_set/ki_masked)。编辑时 ki/opc 输入框
  * **留空 = 保持原值**, 填新值才改。card_kind=commercial → 禁用 ki/opc (商用卡不存 Ki)。

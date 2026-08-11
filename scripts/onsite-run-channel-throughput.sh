@@ -122,7 +122,7 @@ print(','.join(c['id'] for c in (d.get('items') or [])))")
 
 say "3/6 创建 MIMO_OTA 会话 (freq=${FREQ_HZ}Hz bw=${BW_MHZ}M layers=${LAYERS} az=[${AZIMUTHS}])"
 EXTRA_FLAGS=""
-[ "${STRICT_DUT:-}" = "false" ] && EXTRA_FLAGS+=', "precheck_strict_dut": false' && echo "  ⚠ bring-up 旁路: precheck_strict_dut=false"
+[ "${STRICT_DUT:-}" = "false" ] && EXTRA_FLAGS+=', "precheck_strict_dut": false' && echo "  ⚠ bring-up 旁路: managed MEASURE DUT 动态门关闭"
 [ "${STRICT_CAL:-}" = "false" ] && EXTRA_FLAGS+=', "precheck_strict_cal": false' && echo "  ⚠ bring-up 旁路: precheck_strict_cal=false"
 SESSION_ID=$(curl -sf -X POST "$API/commissioning/sessions" -H "Content-Type: application/json" -d "{
   \"frequency_hz\": $FREQ_HZ,
@@ -170,8 +170,8 @@ curl -sf -X PATCH "$API/test-plans/cases/$TC_ID" -H "Content-Type: application/j
 rm -f /tmp/onsite_patch_$$.json
 echo "  test_case_id = $TC_ID  channel_asset_id 已注入"
 
-# P1-9 DUT 门要求 attach 记录在**本会话的 TestExecution** 上 (session_id 即 execution_id) ——
-# 早前会话/物理 attach 不算 (Codex #192 P1)。真硬件下: 物理 attach 后传 DUT_IMSI 走正路。
+# DUT_IMSI 是可选的执行追溯元数据；managed 流程不拿它证明连接成功。正式 DUT 门在
+# MEASURE 按本次 TestCase 初始化 RF 链并受控 attach 后读取 UXM live CONN 状态。
 if [ -n "${DUT_IMSI:-}" ]; then
   say "4b/6 记录 DUT attach (imsi=${DUT_IMSI})"
   ATTACH_JSON=$(curl -sf -X POST "$API/test-executions/$SESSION_ID/attach-dut" \
@@ -185,8 +185,8 @@ for w in a.get('warnings') or []:
     print(f"  ⚠ {w}")
 PY
 elif [ "${STRICT_DUT:-}" != "false" ]; then
-  echo "  ℹ 未传 DUT_IMSI 且未旁路 P1-9 门: mock 模式自动降级可继续; Real 模式 precheck 会拦 ——"
-  echo "    物理 attach 后加 DUT_IMSI=<imsi> 重跑 (正路), 或 bring-up 用 STRICT_DUT=false。"
+  echo "  ℹ 未传 DUT_IMSI：允许继续；Real 模式将在 MEASURE 初始化后用 UXM live CONN 严格确认 attach。"
+  echo "    DUT_IMSI 仅用于追溯；bring-up 如需跳过真实连接门，显式设置 STRICT_DUT=false。"
 fi
 
 say "5/6 run-all (预估 ~1min/方位, 超时 ${RUN_TIMEOUT_S}s)"

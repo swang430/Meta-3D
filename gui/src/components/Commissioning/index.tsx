@@ -56,9 +56,9 @@ export function CommissioningSandbox() {
   const [emulationFile, setEmulationFile] = useState('')
   const [channelAssetId, setChannelAssetId] = useState<string | null>(null)
   const [channelAssets, setChannelAssets] = useState<ChannelAsset[]>([])
-  // Lab-smoke: relax strict precheck gates (P1-8 cal / P1-9 DUT) for local
-  // rehearsal without a real DUT / calibration. Default OFF = strict ON, so
-  // on-site real first-call keeps the fail-loud protection (P1-9 intent).
+  // Lab-smoke: relax strict safety gates（cal 在 PRECHECK；managed DUT 动态门在
+  // MEASURE）for local rehearsal without a real DUT/calibration. Default OFF
+  // keeps on-site first-call fail-loud protection enabled.
   const [labSmoke, setLabSmoke] = useState(false)
   // 2026-08-07 现场: 只放过校准证书那一道门。跟 labSmoke 分开是因为 labSmoke
   // 一开就废掉全部 8 道。校准没做完 vs DUT 能不能在本次 RF 配置下 attach
