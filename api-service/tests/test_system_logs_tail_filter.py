@@ -336,6 +336,27 @@ class TestFilterDuringScan:
         assert response.status_code == 422
         assert "128" in response.json()["detail"]
 
+    def test_byte_limit_rejects_split_traceback_group(
+        self, client, log_dir, monkeypatch,
+    ):
+        """超大 traceback 逻辑组不能跨页拆开后静默丢掉前半段续行。"""
+        monkeypatch.setattr(
+            system_logs, "_REVERSE_SCAN_BYTE_LIMIT", 256, raising=False,
+        )
+        lines = [_json_line("ERROR", "parent boom", execution_id="exec-trace")]
+        lines += [f"  File trace_{index}.py, line {index}" for index in range(80)]
+        (log_dir / "app.log").write_text(
+            "\n".join(lines) + "\n", encoding="utf-8",
+        )
+
+        response = client.get(TAIL_URL, params={
+            "filename": "app.log", "lines": 1, "level": "ERROR",
+        })
+
+        assert response.status_code == 422
+        assert "256" in response.json()["detail"]
+        assert "日志组" in response.json()["detail"]
+
 
 class TestHistoryPagination:
     def test_tail_cursor_loads_older_rows_without_overlap(self, client, log_dir):
