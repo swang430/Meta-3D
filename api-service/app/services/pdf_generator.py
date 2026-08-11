@@ -501,7 +501,7 @@ class PDFGenerator:
 
         # Report title
         title = data.get('title', 'Test Report')
-        elements.append(Paragraph(title, self.styles['ReportTitle']))
+        elements.append(Paragraph(escape(str(title)), self.styles['ReportTitle']))
         elements.append(Spacer(1, 50))
 
         # Extract test plan name from nested data if available
@@ -1101,7 +1101,10 @@ class PDFGenerator:
         for i, step in enumerate(steps):
             # Step Header
             step_name = step.get('name') or step.get('step_name') or f"Step {i+1}"
-            elements.append(Paragraph(f"{i+1}. {step_name}", self.styles['SubsectionTitle']))
+            elements.append(Paragraph(
+                f"{i+1}. {escape(str(step_name))}",
+                self.styles['SubsectionTitle'],
+            ))
             
             # Parameters Table
             params = step.get('parameters', {})
@@ -1123,8 +1126,8 @@ class PDFGenerator:
                             val_str = str(v)
                             
                     param_rows.append([
-                        Paragraph(k, self.styles['BodyText']),
-                        Paragraph(val_str, self.styles['BodyText'])
+                        Paragraph(escape(str(k)), self.styles['BodyText']),
+                        Paragraph(escape(val_str), self.styles['BodyText'])
                     ])
                 
                 if len(param_rows) > 1:
