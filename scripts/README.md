@@ -30,7 +30,8 @@ bash scripts/cleanup-ports.sh
 
 **功能**:
 - 自动检测端口 8000, 8001, 5173 是否被占用
-- 强制终止占用端口的进程
+- 只自动终止“进程类型在 allowlist 且 cwd 位于本仓”的开发服务
+- Docker、SSH、其他项目及身份不可确认的进程一律不终止，并以非零状态提示人工确认
 - 显示清理结果
 
 **适用场景**:
@@ -139,12 +140,11 @@ Operation not permitted
 # 和同号 UDP 一起列出来，照着它 kill 会误杀浏览器之类的无关进程
 lsof -nP -iTCP:8000 -sTCP:LISTEN
 
-# ⚠️ 若上面列出的是 com.docker.backend / docker-proxy / rootlesskit，**别 kill** ——
-#    那是容器的端口转发进程，杀它 = 杀整个 Docker daemon。改为停容器：
-#    docker ps --filter publish=8000 --format '{{.Names}}'   → docker stop <容器名>
+# 不要对 lsof 的结果直接拼 kill；统一走共享 allowlist，未知进程会保留并返回失败
+npm run cleanup
 
-# 确认是自家 dev 进程后再强制终止
-sudo kill -9 <PID>
+# 若脚本保护了该 PID，先用只读命令确认身份，再在对应应用/容器里正常停止
+ps -p <PID> -o pid=,command=
 ```
 
 ## 开发工作流建议
@@ -173,13 +173,9 @@ npm run dev:safe
 npm run cleanup
 npm run dev
 
-# 方法3：直接清理特定端口
-# ⚠️ 先确认该端口不是 Docker 容器发布的 —— 有输出就别 kill (那 PID 是容器转发
-#    进程 com.docker.backend / docker-proxy, 杀它 = 杀整个 daemon),
-#    改用 docker stop <容器名>
-docker ps --filter publish=8000 --format '{{.Names}}'
-# -t -iTCP -sTCP:LISTEN: 只杀监听者, 不误杀连着该端口的客户端和同号 UDP 进程
-lsof -t -iTCP:8000 -sTCP:LISTEN | xargs kill -9
+# 方法3：只读检查特定端口；清理仍统一使用 npm run cleanup，不绕过共享判据
+lsof -nP -iTCP:8000 -sTCP:LISTEN
+npm run cleanup
 ```
 
 ### IDE 崩溃后恢复

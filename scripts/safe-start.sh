@@ -13,9 +13,9 @@ echo ""
 PORTS=(8000 8001 5173)
 SERVICE_NAMES=("API Service" "ChannelEngine" "Frontend GUI")
 
-# 端口占用者的取数 (listening_pids) 与"能不能杀"判定 (is_docker_pid) 在
-# scripts/lib/port-guard.sh —— 跟 cleanup-ports.sh 同源。为什么需要这层守门、
-# 覆盖了哪些容器运行时、哪些没覆盖, 全写在那个文件的头注释里。
+# 端口占用者的取数 (listening_pids) 与"能不能杀"判定 (is_project_dev_pid) 在
+# scripts/lib/port-guard.sh —— 跟 cleanup-ports.sh 同源。为什么必须采用正向 allowlist、
+# 哪些开发进程可自动终止, 全写在那个文件的头注释里。
 # **别在这里复制副本**: 上一版两边各一份, 立刻就漂出了两处行为分叉。
 source "$(dirname "${BASH_SOURCE[0]}")/lib/port-guard.sh"
 
@@ -31,20 +31,18 @@ for i in "${!PORTS[@]}"; do
     [ -n "$PIDS" ] || continue
 
     KILLABLE=""
-    DOCKER_PIDS=""
+    PROTECTED_PIDS=""
     for P in $PIDS; do
-        if is_docker_pid "$P"; then
-            DOCKER_PIDS="$DOCKER_PIDS $P"
-        else
+        if is_project_dev_pid "$P"; then
             KILLABLE="$KILLABLE $P"
+        else
+            PROTECTED_PIDS="$PROTECTED_PIDS $P"
         fi
     done
 
-    if [ -n "$DOCKER_PIDS" ]; then
-        echo "⛔ 端口 $PORT ($SERVICE) 上有容器转发进程在监听 (PID${DOCKER_PIDS}) — 不 kill"
-        echo "   杀它 = 杀整个 Docker daemon（见 scripts/lib/port-guard.sh）。"
-        echo "   要腾出这个端口，先查是哪个容器再停它："
-        echo "     docker ps --filter publish=$PORT --format '{{.Names}}'"
+    if [ -n "$PROTECTED_PIDS" ]; then
+        echo "⛔ 端口 $PORT ($SERVICE) 上有非本项目 allowlist 进程在监听 (PID${PROTECTED_PIDS}) — 不 kill"
+        echo "   请逐个确认进程身份再手动处置：ps -p <PID> -o pid=,command="
         # 这里**不记标记** —— 最终提示的分类在收尾判定处当场重算 (原因见那里)
     fi
 
@@ -73,8 +71,8 @@ if [ ${#OCCUPIED_PORTS[@]} -gt 0 ]; then
             # Docker 刚启动、容器陆续 up 的场景)。守门必须打在真正执行 kill 的这一端,
             # 不能只打在检查那一端。
             for P in $(listening_pids "$PORT"); do
-                if is_docker_pid "$P"; then
-                    echo "  ⛔ 端口 $PORT 的 PID $P 是容器转发进程 — 跳过不 kill"
+                if ! is_project_dev_pid "$P"; then
+                    echo "  ⛔ 端口 $PORT 的 PID $P 不在项目开发进程 allowlist — 跳过不 kill"
                     continue
                 fi
                 kill -9 "$P" 2>/dev/null
@@ -84,21 +82,20 @@ if [ ${#OCCUPIED_PORTS[@]} -gt 0 ]; then
             # 属于别的用户/root 时它会 EPERM 失败。不复验就报 ✅ 是假成功: 脚本
             # 一路往下走, 最后 npm run dev 撞 EADDRINUSE 才炸, 且看不出跟这里有关。
             sleep 0.5
-            REMAIN_OTHER=""; REMAIN_DOCKER=""
+            REMAIN_KILLABLE=""; REMAIN_PROTECTED=""
             for R in $(listening_pids "$PORT"); do
-                if is_docker_pid "$R"; then
-                    REMAIN_DOCKER="$REMAIN_DOCKER $R"
+                if is_project_dev_pid "$R"; then
+                    REMAIN_KILLABLE="$REMAIN_KILLABLE $R"
                 else
-                    REMAIN_OTHER="$REMAIN_OTHER $R"
+                    REMAIN_PROTECTED="$REMAIN_PROTECTED $R"
                 fi
             done
-            # 三态, 别把"只剩容器"混进"已清理" —— 只剩容器时端口照样用不了
-            # (Docker 是双栈 socket), 报"已清理"是谎报, 下面收尾判定会立刻打脸。
-            if [ -n "$REMAIN_OTHER" ]; then
-                echo "  ❌ 端口 $PORT 清理失败，仍有监听者:$REMAIN_OTHER"
-                echo "     (kill 可能因权限不足失败; 试 sudo kill -9$REMAIN_OTHER)"
-            elif [ -n "$REMAIN_DOCKER" ]; then
-                echo "  ↳ 端口 $PORT 的 host 进程已清，但容器转发进程仍占着（需 docker stop）"
+            # 三态, 别把"只剩受保护进程"混进"已清理" —— 端口照样用不了。
+            if [ -n "$REMAIN_KILLABLE" ]; then
+                echo "  ❌ 端口 $PORT 清理失败，allowlist 监听者仍在:$REMAIN_KILLABLE"
+                echo "     (kill 可能因权限不足失败; 请确认身份后手动处置)"
+            elif [ -n "$REMAIN_PROTECTED" ]; then
+                echo "  ↳ 端口 $PORT 的项目开发进程已清，但受保护进程仍占着:$REMAIN_PROTECTED"
             else
                 echo "  ✅ 端口 $PORT 已清理"
             fi
@@ -127,20 +124,19 @@ fi
 # 所以: 让它在这里带着修复命令停下, 而不是放行后由 uvicorn/vite 抛 EADDRINUSE、
 #   埋在 concurrently 的交错日志里。**故障现象离原因十万八千里正是本脚本要治的病。**
 # ⚠️ 提示分类**在这里当场重新算**，不读初次扫描留下的标记 (Codex #268 R2)。
-#   竞态复现: 初次扫描时端口上只有普通进程 → 标记为空 → 用户答 y 的那几秒里
-#   Docker 接管了端口 → 清理循环认出并跳过它 → 但若最终提示读的是那个**旧标记**,
-#   就会走进"非容器占用……试 sudo"分支, **叫用户 sudo kill -9 掉 Docker 引擎的
-#   PID** —— 手动重演本 PR 要修的事故。判据必须跟被判定的对象同一时刻取。
+#   竞态复现: 初次扫描时端口上只有 allowlist 进程 → 用户答 y 的几秒里未知进程接管
+#   端口 → 清理循环会保护它；最终提示也必须按当下 PID 重算，不能沿用旧分类后建议
+#   强制 kill。判据必须跟被判定的对象同一时刻取。
 STILL_HELD=()
-STILL_DOCKER_PORTS=()
+STILL_PROTECTED_PORTS=()
 for i in "${!PORTS[@]}"; do
     PORT=${PORTS[$i]}
     PIDS=$(listening_pids "$PORT")
     [ -n "$PIDS" ] || continue
     STILL_HELD+=("$PORT (${SERVICE_NAMES[$i]})")
     for P in $PIDS; do
-        if is_docker_pid "$P"; then
-            STILL_DOCKER_PORTS+=($PORT)
+        if ! is_project_dev_pid "$P"; then
+            STILL_PROTECTED_PORTS+=($PORT)
             break            # 一个端口只登记一次
         fi
     done
@@ -151,18 +147,16 @@ if [ ${#STILL_HELD[@]} -gt 0 ]; then
     echo "❌ 清理后这些端口仍有人监听，本次启动会撞 EADDRINUSE，先停下："
     for HELD in "${STILL_HELD[@]}"; do echo "     - $HELD"; done
     echo ""
-    if [ ${#STILL_DOCKER_PORTS[@]} -gt 0 ]; then
-        echo "   其中 ${STILL_DOCKER_PORTS[*]} 是容器发布的（本脚本故意不 kill —— 杀它 = 杀 Docker 引擎）。"
-        echo "   查出容器并停掉："
-        for P in "${STILL_DOCKER_PORTS[@]}"; do
-            echo "     docker ps --filter publish=$P --format '{{.Names}}'   # → docker stop <容器名>"
+    if [ ${#STILL_PROTECTED_PORTS[@]} -gt 0 ]; then
+        echo "   其中 ${STILL_PROTECTED_PORTS[*]} 存在非本项目 allowlist 的进程，本脚本按安全方向不 kill。"
+        echo "   请确认监听者身份："
+        for P in "${STILL_PROTECTED_PORTS[@]}"; do
+            echo "     lsof -nP -iTCP:$P -sTCP:LISTEN"
         done
-        echo "   注：本项目的 compose 里只有 postgres —— api 服务 2026-08-05 已整体拆除。"
-        echo "       若上面查出来的是 meta3d-api，那是拆除前遗留的容器（compose 已不认它，"
-        echo "       'docker compose stop api' 不再有效）：docker rm -f meta3d-api"
+        echo "   若确认是容器发布端口，再用 docker ps --filter publish=<端口> 查容器并停止容器。"
     fi
-    if [ ${#STILL_DOCKER_PORTS[@]} -lt ${#STILL_HELD[@]} ]; then
-        echo "   非容器占用的那些：kill 可能因权限不足失败，试 sudo，或手动停掉占用进程。"
+    if [ ${#STILL_PROTECTED_PORTS[@]} -lt ${#STILL_HELD[@]} ]; then
+        echo "   allowlist 进程仍占用的端口：自动 kill 可能因权限不足失败，请确认身份后手动处置。"
     fi
     exit 1
 fi
