@@ -1219,6 +1219,11 @@ def _is_absolute_url(line: str, start: int) -> bool:
 # 文档里路径前面那个动词 —— `POST /api/v1/test-plans/cases/{id}/execute` 里的 POST。
 # 允许中间夹反引号 / 空白: "**POST** `/api/v1/...`" 也认。
 _DOC_VERB = re.compile(r"\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b[\s`*]*$")
+_DOC_CURL_REQUEST = re.compile(
+    r"\bcurl\b.*?(?:-X\s+|--request(?:=|\s+))"
+    r"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b",
+    re.IGNORECASE,
+)
 
 
 def _live_path_shapes():
@@ -1237,8 +1242,13 @@ def _live_method_shapes():
 
 def _doc_verb_before(line: str, start: int):
     """路径前面紧挨着的 HTTP 动词; 没有就返回 None (那时只比路径)。"""
-    m = _DOC_VERB.search(line[:start])
-    return m.group(1) if m else None
+    prefix = line[:start]
+    m = _DOC_VERB.search(prefix)
+    if m:
+        return m.group(1)
+    # curl 的动词与路径之间隔着 URL authority，不能靠“紧邻路径”抽取。
+    curl = _DOC_CURL_REQUEST.search(prefix)
+    return curl.group(1).upper() if curl else None
 
 
 def test_g8_checker_normalises_paths():
@@ -1510,6 +1520,109 @@ def _g11_matches(cited: str, live_shapes) -> bool:
     return False
 
 
+def _g11_non_path_parameter_pairs(parameters):
+    """契约参数的 (name, in)；path 名由路径 shape 负责，避免参数名差异误报。"""
+    return {
+        (parameter["name"], parameter.get("in", ""))
+        for parameter in (parameters or [])
+        if isinstance(parameter, dict)
+        and "name" in parameter
+        and parameter.get("in") != "path"
+    }
+
+
+def _g11_schema_type(schema):
+    """提取响应容器类型；无显式 type 时由 properties/items 作保守推导。"""
+    if not isinstance(schema, dict):
+        return None
+    schema_type = schema.get("type")
+    if isinstance(schema_type, str):
+        return schema_type
+    if "properties" in schema:
+        return "object"
+    if "items" in schema:
+        return "array"
+    return None
+
+
+def _g11_resolve(doc, node):
+    """解析本地 $ref；循环/异常深链必须明确失败，不能让门挂死。"""
+    for _ in range(20):
+        if not (isinstance(node, dict) and "$ref" in node):
+            return node
+        ref = node["$ref"]
+        assert ref.startswith("#/"), ref
+        current = doc
+        for part in ref[2:].split("/"):
+            current = current[part]
+        node = current
+    raise AssertionError(f"$ref 链过深/成环: {node}")
+
+
+def _g11_contract_problems(spec, live):
+    """返回 checked-in OpenAPI 相对 live OpenAPI 的全部不兼容声明。"""
+    live_by_shape = {}
+    for path, operations in (live.get("paths") or {}).items():
+        live_by_shape.setdefault(_g11_shape_segs(path), {}).update(operations)
+
+    problems = []
+    for path, methods in (spec.get("paths") or {}).items():
+        live_methods = live_by_shape.get(_g11_shape_segs(path))
+        if live_methods is None:
+            problems.append(f"yaml 声明的路径不在实现: {path}")
+            continue
+        for method, operation in methods.items():
+            if method in ("parameters", "description", "summary"):
+                continue
+            live_operation = live_methods.get(method)
+            if live_operation is None:
+                problems.append(f"yaml 声明的动词不在实现: {method.upper()} {path}")
+                continue
+            want = _g11_non_path_parameter_pairs(operation.get("parameters"))
+            have = _g11_non_path_parameter_pairs(live_operation.get("parameters"))
+            extra = want - have
+            if extra:
+                problems.append(
+                    f"yaml 参数不在实现: {method.upper()} {path} → {sorted(extra)}")
+
+            for code, response in (operation.get("responses") or {}).items():
+                if not str(code).startswith("2"):
+                    continue
+                yaml_schema = _g11_resolve(
+                    spec,
+                    ((response.get("content") or {}).get("application/json") or {})
+                    .get("schema") or {},
+                )
+                live_response = (live_operation.get("responses") or {}).get(str(code))
+                if live_response is None:
+                    problems.append(
+                        f"yaml 声明的响应码不在实现: {method.upper()} {path} {code}")
+                    continue
+                live_schema = _g11_resolve(
+                    live,
+                    ((live_response.get("content") or {}).get("application/json") or {})
+                    .get("schema") or {},
+                )
+                yaml_type = _g11_schema_type(yaml_schema)
+                live_type = _g11_schema_type(live_schema)
+                if yaml_type and live_type and yaml_type != live_type:
+                    problems.append(
+                        f"yaml 响应类型与实现不兼容: {method.upper()} {path} {code} "
+                        f"→ yaml={yaml_type}, live={live_type}")
+                    continue
+                yaml_properties = set((yaml_schema.get("properties") or {}).keys())
+                live_properties = set((live_schema.get("properties") or {}).keys())
+                if yaml_properties and live_properties:
+                    missing = yaml_properties - live_properties
+                    if missing:
+                        problems.append(
+                            f"yaml 响应键不在实现: {method.upper()} {path} {code} "
+                            f"→ {sorted(missing)}")
+                # yaml 有 properties 而 live 没有 schema = live 没声明 response_model；
+                # 契约弱侧不硬比，维持既有收窄语义。
+    return problems
+
+
 def test_g11_matcher_behavior():
     """通配匹配器行为自测 — 实值段命中参数位 / 段数不齐不命中。"""
     shapes = [("instruments", "{}", "topology-profiles"), ("dashboard",)]
@@ -1521,6 +1634,68 @@ def test_g11_matcher_behavior():
     # 曾经此洞穿透 (变异实证: /instruments/{x}/status 配上 hal 实值段)。
     assert not _g11_matches("/instruments/{x}/status",
                             [("instruments", "hal", "status")])
+
+
+def test_g11_parameter_comparison_includes_location():
+    """同名 path 参数不能替 query/header 参数顶账。"""
+    yaml_params = [{"name": "execution_id", "in": "query"}]
+    live_params = [{"name": "execution_id", "in": "path"}]
+    assert (
+        _g11_non_path_parameter_pairs(yaml_params)
+        - _g11_non_path_parameter_pairs(live_params)
+    ) == {("execution_id", "query")}
+
+
+def test_g11_curl_request_verb_is_extracted_before_absolute_url():
+    line = "curl -X POST http://localhost:8000/api/v1/dashboard/alerts"
+    assert _doc_verb_before(line, line.index("/api/v1")) == "POST"
+    long_form = "curl --request=PATCH http://localhost/api/v1/test-plans/cases/abc"
+    assert _doc_verb_before(long_form, long_form.index("/api/v1")) == "PATCH"
+
+
+def test_g11_response_schema_type_mismatch_is_visible():
+    assert _g11_schema_type({"type": "array"}) == "array"
+    assert _g11_schema_type({"type": "object", "properties": {}}) == "object"
+    assert _g11_schema_type({"properties": {"id": {"type": "string"}}}) == "object"
+
+
+def test_g11_contract_checker_catches_location_and_schema_mutations():
+    response_object = {
+        "content": {
+            "application/json": {
+                "schema": {"type": "object", "properties": {"id": {"type": "string"}}}
+            }
+        }
+    }
+    live = {
+        "paths": {
+            "/items/{live_id}": {
+                "get": {
+                    "parameters": [{"name": "execution_id", "in": "path"}],
+                    "responses": {"200": response_object},
+                }
+            }
+        }
+    }
+    mutated_spec = {
+        "paths": {
+            "/items/{doc_id}": {
+                "get": {
+                    "parameters": [{"name": "execution_id", "in": "query"}],
+                    "responses": {
+                        "200": {
+                            "content": {
+                                "application/json": {"schema": {"type": "array", "items": {}}}
+                            }
+                        }
+                    },
+                }
+            }
+        }
+    }
+    problems = _g11_contract_problems(mutated_spec, live)
+    assert any("('execution_id', 'query')" in problem for problem in problems)
+    assert any("yaml=array, live=object" in problem for problem in problems)
 
 
 def test_g11_docs_cite_live_api_routes_full_domain():
@@ -1573,83 +1748,15 @@ def test_g11_openapi_yaml_subset_of_live_schema():
     required 维度不比对 (实扫 6 处差异全为 "live 字段有默认值故不 required 但
     序列化恒出现" 的良性形态, 硬比误报)。
 
-    已知收窄面 (Codex #265 R2 枚举, 转 backlog 独立精化 — 声明与覆盖对齐):
-    ① 参数比对只按名不分 in= location (query 重名 path 参数会穿透);
-    ② 散文半动词抽取不识别 curl 形态 (`curl -X POST http://host/api/v1/...`
-       动词与路径隔着 host, 抽不出 → 只比路径);
-    ③ 响应比对只在双侧都是 object properties 时进行 (yaml 改成 type: array
-       等不兼容形态时 y_props 空 → 跳过)。"""
+    P3-18 已收口三处覆盖面：非 path 参数按 (name, in) 比对；curl -X/--request
+    动词由散文半识别；响应 schema 在 properties 比对前先拒绝 object/array 等
+    明确容器类型不兼容。"""
     import yaml as _yaml
 
     from app.main import app
 
     spec = _yaml.safe_load((_REPO_ROOT / "api" / "openapi.yaml").read_text())
-    live = app.openapi()
-    live_paths = live.get("paths", {})
-    live_by_shape = {}
-    for p, ops in live_paths.items():
-        live_by_shape.setdefault(_g11_shape_segs(p), {}).update(ops)
-
-    def _resolve(doc, node):
-        # hop 上限: 循环 $ref (A→B→A) 该红不该挂死 (内审 F4)。
-        # 已知漏比 (申报): allOf/anyOf 组合形态解出的 properties 为空 → 跳过
-        # 比对 — 漏报方向, 当前 yaml 无此形态 (grep 证实), 出现时再精化。
-        for _ in range(20):
-            if not (isinstance(node, dict) and "$ref" in node):
-                return node
-            ref = node["$ref"]
-            assert ref.startswith("#/"), ref
-            cur = doc
-            for part in ref[2:].split("/"):
-                cur = cur[part]
-            node = cur
-        raise AssertionError(f"$ref 链过深/成环: {node}")
-
-    problems = []
-    for p, methods in (spec.get("paths") or {}).items():
-        shape = _g11_shape_segs(p)
-        lp = live_by_shape.get(shape)
-        if lp is None:
-            problems.append(f"yaml 声明的路径不在实现: {p}")
-            continue
-        for m, op in methods.items():
-            if m in ("parameters", "description", "summary"):
-                continue
-            lop = lp.get(m)
-            if lop is None:
-                problems.append(f"yaml 声明的动词不在实现: {m.upper()} {p}")
-                continue
-            want = {pr["name"] for pr in (op.get("parameters") or [])
-                    if isinstance(pr, dict) and "name" in pr and pr.get("in") != "path"}
-            have = {pr["name"] for pr in (lop.get("parameters") or [])}
-            extra = want - have
-            if extra:
-                problems.append(f"yaml 参数不在实现: {m.upper()} {p} → {sorted(extra)}")
-            # 2xx 响应键: yaml 声明的顶层 properties ⊆ live (双侧都解 $ref;
-            # live 未声明 response_model 时无 schema — 跳过, 契约弱侧不硬比)
-            for code, resp in (op.get("responses") or {}).items():
-                if not str(code).startswith("2"):
-                    continue
-                y_schema = _resolve(spec, ((resp.get("content") or {})
-                                           .get("application/json") or {}).get("schema") or {})
-                l_resp = (lop.get("responses") or {}).get(str(code))
-                if l_resp is None:
-                    # Codex #265 R1: 声明的响应码 live 根本没有 — 这是 mismatch,
-                    # 静默跳过会让 "改 200 成 201 + 编键" 照绿。
-                    problems.append(
-                        f"yaml 声明的响应码不在实现: {m.upper()} {p} {code}")
-                    continue
-                l_schema = _resolve(live, ((l_resp.get("content") or {})
-                                           .get("application/json") or {}).get("schema") or {})
-                y_props = set((y_schema.get("properties") or {}).keys())
-                l_props = set((l_schema.get("properties") or {}).keys())
-                if y_props and l_props:
-                    missing = y_props - l_props
-                    if missing:
-                        problems.append(
-                            f"yaml 响应键不在实现: {m.upper()} {p} {code} → {sorted(missing)}")
-                # y_props 有而 l_props 空 = live 响应无 schema (未声明
-                # response_model) — 契约弱侧, 跳过 (已在 docstring 申报)
+    problems = _g11_contract_problems(spec, app.openapi())
     assert not problems, (
         "openapi.yaml (GUI 类型生成源) 声明了实现没有的契约元素:\n  "
         + "\n  ".join(problems))
