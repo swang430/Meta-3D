@@ -113,6 +113,10 @@ def _human_size(size_bytes: int) -> str:
 # (app.log 按天轮转, 峰值 ~250 行/分 → 2 万行 ≈ 80 分钟窗口)。
 _TAIL_SCAN_LIMIT = 20_000
 
+# 行数不能约束损坏/巨行日志的内存占用。tail 与 history 共用反向扫描器，
+# 因此两条入口必须共享同一份单请求字节预算。
+_REVERSE_SCAN_BYTE_LIMIT = 16 * 1024 * 1024
+
 # 历史页只由用户显式点击触发，不进入自动轮询。仍给单次请求设扫描预算，避免
 # 极稀疏过滤一次扫完整个超大文件；空匹配页也会返回向前推进的新游标。
 _HISTORY_SCAN_LIMIT = 100_000
@@ -296,6 +300,7 @@ def _scan_reverse_entries(
     *,
     before_offset: Optional[int] = None,
     scan_limit: int = _TAIL_SCAN_LIMIT,
+    byte_limit: int = _REVERSE_SCAN_BYTE_LIMIT,
 ) -> Tuple[List[LogEntry], int, int, bool]:
     """
     从文件末尾反向扫描, 边读边过滤, 凑满 max_entries 条匹配行为止。
@@ -303,8 +308,8 @@ def _scan_reverse_entries(
     过滤必须发生在扫描过程中而非截尾之后 — 否则低频 WARNING/ERROR 会被
     高频 INFO 冲出固定行数的原始窗口 (2026-07-31 P2-11 相位失败三次落盘
     但面板不可见的根因)。扫描行数以 _TAIL_SCAN_LIMIT 封顶 — 3s 轮询下的
-    最坏开销按行数有界 (字节数不设上限: 无换行的损坏/巨行文件仍会整读,
-    与旧实现同病, 字节上限在 backlog)。
+    最坏开销同时按行数与 byte_limit 字节有界。若预算内连一个安全换行
+    边界都找不到，明确拒绝损坏/巨行文件，不能返回假成功或生成不前进的游标。
 
     返回 (匹配条目按时间正序, 实际扫描的非空行数, 下一位置, 是否还有更早内容)。
     字节位置只会落在行首；历史页因此可以从上次停止处继续，不重新扫描文件尾。
@@ -326,15 +331,19 @@ def _scan_reverse_entries(
     position = end
     buffer = b""
     buffer_start = end
+    bytes_read = 0
 
     while (
         position > 0
         and matched_groups < max_entries
         and (scanned < scan_limit or pending_continuations)
+        and bytes_read < byte_limit
     ):
-        read_start = max(0, position - chunk_size)
+        read_size = min(chunk_size, position, byte_limit - bytes_read)
+        read_start = position - read_size
         stream.seek(read_start)
-        block = stream.read(position - read_start)
+        block = stream.read(read_size)
+        bytes_read += len(block)
         buffer = block + buffer
         buffer_start = read_start
         position = read_start
@@ -372,6 +381,15 @@ def _scan_reverse_entries(
                 break
 
         buffer = parts[0]
+
+    if position > 0 and bytes_read >= byte_limit and next_offset >= end:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"日志单行超过反向扫描字节预算 {byte_limit}，"
+                "无法安全解析；请下载文件检查损坏内容"
+            ),
+        )
 
     # 文件开头没有前导换行，它是最后一条待处理的完整行。
     if (
@@ -477,7 +495,8 @@ def tail_log_file(
     读取指定日志文件中最新的 N 条匹配日志，支持多维度过滤。
 
     过滤发生在反向扫描过程中: 从文件末尾往回读, 直到凑满 lines 条匹配行、
-    扫到文件开头或达到 _TAIL_SCAN_LIMIT 行上限。带过滤条件时窗口是
+    扫到文件开头、达到 _TAIL_SCAN_LIMIT 行上限或单请求字节预算。
+    带过滤条件时窗口是
     "最新 N 条匹配行"而非"最新 N 行原始行" — 低频 WARNING/ERROR 不会被
     高频 INFO 冲出窗口。total_lines_read 为实际扫描的行数。
     """
@@ -492,6 +511,7 @@ def tail_log_file(
             predicate=lambda e: _entry_matches(
                 e, level, keyword, session_id, execution_id=execution_id),
             scan_limit=_TAIL_SCAN_LIMIT,
+            byte_limit=_REVERSE_SCAN_BYTE_LIMIT,
         )
         older_cursor = (
             _encode_cursor(stream, stat, next_offset, stat.st_size)
@@ -518,7 +538,10 @@ def read_log_history(
     session_id: Optional[str] = Query(default=None, description="按 session_id 精确过滤"),
     execution_id: Optional[str] = Query(default=None, description="按测试执行 id 精确过滤"),
 ):
-    """从显式游标继续读取更早日志；本端点不得用于自动轮询。"""
+    """从显式游标继续读取更早日志；本端点不得用于自动轮询。
+
+    与 `/tail` 共用单请求字节预算，损坏/巨行日志不会借手工翻页绕过内存上限。
+    """
     filepath = _safe_filename(filename)
     with open(filepath, "rb") as stream:
         stat = os.fstat(stream.fileno())
@@ -532,6 +555,7 @@ def read_log_history(
             ),
             before_offset=cursor_state.offset,
             scan_limit=_HISTORY_SCAN_LIMIT,
+            byte_limit=_REVERSE_SCAN_BYTE_LIMIT,
         )
         # decode 后到 scan 结束之间也可能发生截断/原位改写；最终页没有下一枚
         # cursor，同样必须复验输入游标，不能靠 encode 的副作用兜底。

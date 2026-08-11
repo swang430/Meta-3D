@@ -5,13 +5,14 @@
      低频 WARNING/ERROR 不允许被高频轮询 INFO 冲出窗口
      (P2-11 频率一致性失败三次落盘但面板不可见的根因);
   ② 无过滤条件时行为不变: 最新 N 行原始行;
-  ③ 反向扫描以 _TAIL_SCAN_LIMIT 行封顶 (3s 轮询下最坏开销有界),
-     total_lines_read 如实报实扫行数。
+  ③ 反向扫描同时以 _TAIL_SCAN_LIMIT 行和单请求字节预算封顶
+     (3s 轮询下最坏开销有界), total_lines_read 如实报实扫行数。
 
 变异自验对应表 (⓪-④):
 - 过滤挪回截尾之后 (旧实现) → test_level_filter_reaches_beyond_raw_window 红
 - keyword 谓词不进扫描循环 → test_keyword_filter_reaches_beyond_raw_window 红
 - 砍扫描上限 (无界扫全文件) → test_scan_limit_bounds_reverse_scan 红
+- 砍字节上限 (无换行巨行整读) → test_byte_limit_rejects_unbounded_line 红
 - 改坏无过滤路径的截尾语义 → test_no_filter_keeps_raw_window_semantics 红
 """
 from __future__ import annotations
@@ -322,6 +323,18 @@ class TestFilterDuringScan:
         body = resp.json()
         assert body["filtered_count"] == 0
         assert body["total_lines_read"] == 500
+
+    def test_byte_limit_rejects_unbounded_line(self, client, log_dir, monkeypatch):
+        """损坏的无换行巨行不得让 3s 轮询端点把整文件读进内存。"""
+        monkeypatch.setattr(
+            system_logs, "_REVERSE_SCAN_BYTE_LIMIT", 128, raising=False,
+        )
+        (log_dir / "app.log").write_bytes(b"x" * 4096)
+
+        response = client.get(TAIL_URL, params={"filename": "app.log", "lines": 1})
+
+        assert response.status_code == 422
+        assert "128" in response.json()["detail"]
 
 
 class TestHistoryPagination:
