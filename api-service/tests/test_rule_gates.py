@@ -19,6 +19,8 @@ G4 HAL 静默吞异常棘轮   ← todo F64R-12 的"防新增"半边
    (谓词 = ExceptHandler 函数体恰为单条 pass; 2026-07-26 基线 38 处,
     #231 Codex 独立统计一致。修复存量时手动下调基线, 锁住进度)
    变异: 自测函数对合成源码计数 2/2; 实跑给驱动加一处裸 pass → 红。
+G19 静态路由不被参数兄弟遮蔽 ← P1-29 `/alerts/{alert_id}` 抢先吃掉 `/alerts/summary`
+   变异: 自测 router 先注册 `/{id}` 再注册 `/summary` → 必须检出；倒序必须放行。
 
 ⚠ 本文件的判定全部走 AST / live import / model_fields, 不 grep 源码文本
   (例外: G3 的 GUI 站点是 .ts 文件, 剥注释后做 token 存在性检查 —— 存在性门
@@ -94,6 +96,95 @@ def test_g2_no_doubled_route_segments():
     bad = _doubled_segments(p for _, p in _live_route_table())
     assert not bad, (
         f"路由出现连续重复段 (router prefix 又写进了端点路径?): {bad}"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# G19 字面量路由不得被更早的同方法 path 参数路由遮蔽
+# ─────────────────────────────────────────────────────────────────────
+
+def _ordered_route_objects(routes, prefix=""):
+    """按真实声明顺序展开 FastAPI 0.141 的懒加载路由树。"""
+    out = []
+    for route in routes:
+        if type(route).__name__ == "_IncludedRouter":
+            sub = getattr(route, "original_router", None)
+            ctx = getattr(route, "include_context", None)
+            sub_prefix = getattr(ctx, "prefix", "") or "" if ctx is not None else ""
+            if sub is not None:
+                out.extend(_ordered_route_objects(sub.routes, prefix + sub_prefix))
+            continue
+        methods = getattr(route, "methods", None)
+        if methods:
+            out.append((set(methods), prefix + route.path))
+    return out
+
+
+def _literal_route_shadows(routes):
+    """返回更早参数路由会吞掉的后续静态路由。"""
+    from starlette.routing import compile_path
+
+    ordered = _ordered_route_objects(routes)
+    bad = []
+    for index, (earlier_methods, earlier_path) in enumerate(ordered):
+        if "{" not in earlier_path:
+            continue
+        earlier_regex, _, _ = compile_path(earlier_path)
+        for later_methods, later_path in ordered[index + 1:]:
+            shared_methods = earlier_methods & later_methods
+            if "{" in later_path or not shared_methods:
+                continue
+            if earlier_regex.fullmatch(later_path):
+                bad.append(
+                    (earlier_path, later_path, tuple(sorted(shared_methods)))
+                )
+    return bad
+
+
+def test_g19_checker_detects_shadow_and_accepts_safe_order():
+    """判定器自测：必须会红，也不能把正确顺序误杀。"""
+    from fastapi import APIRouter
+
+    bad_router = APIRouter(prefix="/items")
+    bad_router.get("/{item_id}")(lambda item_id: item_id)
+    bad_router.get("/summary")(lambda: {})
+    assert _literal_route_shadows(bad_router.routes) == [
+        ("/items/{item_id}", "/items/summary", ("GET",))
+    ]
+
+    safe_router = APIRouter(prefix="/items")
+    safe_router.get("/summary")(lambda: {})
+    safe_router.get("/{item_id}")(lambda item_id: item_id)
+    assert _literal_route_shadows(safe_router.routes) == []
+
+
+def test_g19_live_static_routes_precede_shadowing_parameters():
+    from app.main import app
+
+    # 本门首次落地时全量枚举出的存量；不在 P1-29 顺手修，已逐条记入
+    # roadmap Discovered。精确例外同时充当棘轮：不得新增，修掉后必须删例外。
+    known_existing = {
+        (
+            "/api/v1/calibration/channel/temporal/{calibration_id}",
+            "/api/v1/calibration/channel/temporal/latest",
+            ("GET",),
+        ),
+        (
+            "/api/v1/topologies/{topology_id}",
+            "/api/v1/topologies/default",
+            ("GET",),
+        ),
+    }
+    bad = set(_literal_route_shadows(app.routes))
+    unexpected = bad - known_existing
+    stale_exceptions = known_existing - bad
+    assert not unexpected, (
+        "以下静态路由声明在会吞掉它的 path 参数路由之后，真实请求会先命中参数路由: "
+        f"{sorted(unexpected)}"
+    )
+    assert not stale_exceptions, (
+        "G19 存量例外已经不再命中；请删除对应例外并同步关闭 Discovered 条目: "
+        f"{sorted(stale_exceptions)}"
     )
 
 

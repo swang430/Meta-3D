@@ -99,6 +99,32 @@ def create_alert(
     return alert
 
 
+@router.get("/alerts/summary", response_model=AlertSummary)
+def get_alert_summary(db: Session = Depends(get_db)):
+    """
+    Get alert summary statistics
+
+    Returns counts of active alerts by severity.
+    """
+    # Count active alerts
+    active_query = db.query(Alert).filter(Alert.status == AlertStatus.ACTIVE.value)
+    total_active = active_query.count()
+
+    # Count by severity
+    info_count = active_query.filter(Alert.severity == AlertSeverity.INFO.value).count()
+    warning_count = active_query.filter(Alert.severity == AlertSeverity.WARNING.value).count()
+    error_count = active_query.filter(Alert.severity == AlertSeverity.ERROR.value).count()
+    critical_count = active_query.filter(Alert.severity == AlertSeverity.CRITICAL.value).count()
+
+    return AlertSummary(
+        total_active=total_active,
+        info_count=info_count,
+        warning_count=warning_count,
+        error_count=error_count,
+        critical_count=critical_count,
+    )
+
+
 @router.get("/alerts/{alert_id}", response_model=AlertResponse)
 def get_alert(
     alert_id: UUID,
@@ -167,29 +193,3 @@ def dismiss_alert(
 
     logger.info(f"Dismissed alert: {alert_id}")
     return None
-
-
-@router.get("/alerts/summary", response_model=AlertSummary)
-def get_alert_summary(db: Session = Depends(get_db)):
-    """
-    Get alert summary statistics
-
-    Returns counts of active alerts by severity.
-    """
-    # Count active alerts
-    active_query = db.query(Alert).filter(Alert.status == AlertStatus.ACTIVE.value)
-    total_active = active_query.count()
-
-    # Count by severity
-    info_count = active_query.filter(Alert.severity == AlertSeverity.INFO.value).count()
-    warning_count = active_query.filter(Alert.severity == AlertSeverity.WARNING.value).count()
-    error_count = active_query.filter(Alert.severity == AlertSeverity.ERROR.value).count()
-    critical_count = active_query.filter(Alert.severity == AlertSeverity.CRITICAL.value).count()
-
-    return AlertSummary(
-        total_active=total_active,
-        info_count=info_count,
-        warning_count=warning_count,
-        error_count=error_count,
-        critical_count=critical_count,
-    )
