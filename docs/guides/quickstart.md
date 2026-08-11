@@ -61,28 +61,25 @@ npm run cleanup
 npm run kill-ports
 ```
 
-这将强制终止占用以下端口的进程：
+这会检查以下端口，但只自动终止“进程类型在 allowlist 且 cwd 位于本仓”的开发服务：
 - 8000 (API Service)
 - 8001 (ChannelEngine)
 - 5173 (Frontend GUI)
 
-> ⚠️ **端口若是 Docker 容器发布的，脚本会跳过而不是 kill**。原因：在 macOS host
-> 一侧监听容器端口的不是容器，而是 Docker Desktop 的转发进程
-> `com.docker.backend` —— 也就是 Docker 引擎本体，`kill -9` 打上去整个 daemon
-> 当场死亡。这时按脚本提示跑 `docker stop <容器名>` 腾端口。
+> ⚠️ **Docker、SSH、其他项目和身份不可确认的进程都会被保护**。脚本会保留监听者、
+> 返回非零状态并提示只读检查命令；确认是容器后应停止容器，确认是其他应用后应在该
+> 应用中正常停止。不要把监听 PID 直接拼进强制终止命令。
 
-#### 手动清理特定端口
+#### 只读检查特定端口
 
 ```bash
-# ⚠️ 手敲 kill 前先确认这个端口不是容器发布的, 否则杀掉的是容器转发进程
-#    (macOS: com.docker.backend / Linux: docker-proxy) = 整个 Docker daemon:
-#    docker ps --filter publish=8000 --format '{{.Names}}'   # 有输出 = 不要 kill
-# macOS/Linux
-# -t -iTCP -sTCP:LISTEN: 只杀**监听者**。裸 `lsof -ti:8000` 会连"连到"该端口的
-# 客户端 (浏览器 tab) 和同号 UDP 一起选中, 那些进程跟端口占用毫无关系。
-lsof -t -iTCP:8000 -sTCP:LISTEN | xargs kill -9  # 清理 API Service 端口
-lsof -t -iTCP:8001 -sTCP:LISTEN | xargs kill -9  # 清理 ChannelEngine 端口
-lsof -t -iTCP:5173 -sTCP:LISTEN | xargs kill -9  # 清理 Frontend 端口
+# 只显示 TCP 监听者，不执行终止动作
+lsof -nP -iTCP:8000 -sTCP:LISTEN  # API Service
+lsof -nP -iTCP:8001 -sTCP:LISTEN  # ChannelEngine
+lsof -nP -iTCP:5173 -sTCP:LISTEN  # Frontend
+
+# 实际清理统一走共享 allowlist
+npm run cleanup
 ```
 
 ## 初次设置 🔧
@@ -181,15 +178,8 @@ OSError: [Errno 48] Address already in use
 
 **解决方案**：
 ```bash
-# ⚠️ 先确认该端口不是 Docker 容器发布的 —— 有输出就**别** kill, 那个 PID 是容器
-#    转发进程 (com.docker.backend / docker-proxy), 杀它 = 杀整个 daemon;
-#    改用 docker stop <容器名>
-docker ps --filter publish=8000 --format '{{.Names}}'
-
-# 查找并终止占用端口的进程 (-t -iTCP -sTCP:LISTEN = 只要监听者)
-lsof -t -iTCP:8000 -sTCP:LISTEN | xargs kill -9  # API Service
-lsof -t -iTCP:8001 -sTCP:LISTEN | xargs kill -9  # ChannelEngine
-lsof -t -iTCP:5173 -sTCP:LISTEN | xargs kill -9  # Frontend
+# 统一使用共享 allowlist；受保护进程不会被终止，脚本会返回非零并给出排查提示
+npm run cleanup
 ```
 
 ### 问题：Python 依赖缺失
