@@ -106,22 +106,24 @@ def get_alert_summary(db: Session = Depends(get_db)):
 
     Returns counts of active alerts by severity.
     """
-    # Count active alerts
-    active_query = db.query(Alert).filter(Alert.status == AlertStatus.ACTIVE.value)
-    total_active = active_query.count()
-
-    # Count by severity
-    info_count = active_query.filter(Alert.severity == AlertSeverity.INFO.value).count()
-    warning_count = active_query.filter(Alert.severity == AlertSeverity.WARNING.value).count()
-    error_count = active_query.filter(Alert.severity == AlertSeverity.ERROR.value).count()
-    critical_count = active_query.filter(Alert.severity == AlertSeverity.CRITICAL.value).count()
+    # 单次聚合保证 total 与各级计数来自同一个数据库快照。severity 目前只是
+    # String 列、没有 CHECK 约束；未知值仍计入 total，使消费方能通过总数与
+    # 四级计数和不一致识别脏数据，不能静默显示“无活动告警”。
+    rows = (
+        db.query(Alert.severity, func.count(Alert.id))
+        .filter(Alert.status == AlertStatus.ACTIVE.value)
+        .group_by(Alert.severity)
+        .all()
+    )
+    counts = {severity: count for severity, count in rows}
+    total_active = sum(counts.values())
 
     return AlertSummary(
         total_active=total_active,
-        info_count=info_count,
-        warning_count=warning_count,
-        error_count=error_count,
-        critical_count=critical_count,
+        info_count=counts.get(AlertSeverity.INFO.value, 0),
+        warning_count=counts.get(AlertSeverity.WARNING.value, 0),
+        error_count=counts.get(AlertSeverity.ERROR.value, 0),
+        critical_count=counts.get(AlertSeverity.CRITICAL.value, 0),
     )
 
 

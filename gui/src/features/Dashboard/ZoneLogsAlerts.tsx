@@ -83,6 +83,18 @@ function AlertSummaryBadge() {
   }
 
   const summary = summaryQuery.data
+  const knownTotal = summary.critical_count
+    + summary.error_count
+    + summary.warning_count
+    + summary.info_count
+  if (knownTotal !== summary.total_active) {
+    return (
+      <Badge size="sm" color="red" variant="filled">
+        告警计数不一致
+      </Badge>
+    )
+  }
+
   if (summary.total_active === 0) {
     return (
       <Badge size="sm" color="green" variant="light">

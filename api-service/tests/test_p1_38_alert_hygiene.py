@@ -182,6 +182,8 @@ def test_dashboard_uses_alert_summary_badge_without_alert_detail_panel():
     assert "summaryQuery.isLoading" in source
     assert "summaryQuery.error" in source
     assert "告警计数不可用" in source
+    assert "告警计数不一致" in source
+    assert "knownTotal !== summary.total_active" in source
     assert "无活动告警" in source
     assert "活动告警 {summary.total_active}" in source
     assert "严重 {summary.critical_count}" in source
