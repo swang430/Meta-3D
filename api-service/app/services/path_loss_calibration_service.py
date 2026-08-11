@@ -273,12 +273,9 @@ class ProbePathLossCalibrationService:
         两个校准入口在每次测量后与失败返回前都调本方法收割, 保证成功 /
         异常任一出口都不丢 (agent #206 F1/F3)。
 
-        已知边界 (借用方清单, 均无 warnings 通道, 清理失败仍只沉日志;
-        roadmap Discovered 已登记, 需签名穿透另修):
-        - quiet_zone_validation_service (XPD ×2 + grid 扫描)
-        - probe_calibration_service (方向图扫描)
-        - 本文件 MultiFrequencyPathLossService.calibrate_frequency_sweep
-          (agent 复审 F3: 局部 pl_service 无人收割 + 下频点 acquire 开头清零)
+        共享 primitive 的借用方通过 warning_sink + warning_label 在每次调用的
+        finally 中收割；这样下一次 acquire 开头清零前，上一点的告警已经进入
+        外层 CalibrationResult.warnings。
         """
         if self._last_acquire_warnings:
             warnings.extend(f"{label}: {w}" for w in self._last_acquire_warnings)
@@ -748,6 +745,8 @@ class ProbePathLossCalibrationService:
         cable_sgh_to_sa_loss_db: float,
         ce_port: Optional[str] = None,
         route_target: Optional[str] = None,
+        warning_sink: Optional[List[str]] = None,
+        warning_label: Optional[str] = None,
     ) -> PathLossMeasurement:
         """CE+SA 路损测量 — 自动按 CE driver capability 选 D / B 路径。
 
@@ -791,6 +790,8 @@ class ProbePathLossCalibrationService:
             route_target=route_target,
             probe_id=probe_id,
             polarization=polarization,
+            warning_sink=warning_sink,
+            warning_label=warning_label,
         )
 
         # path_loss = CE_TX - SA_RX + G_sgh + G_probe - cable_sgh_to_sa
@@ -826,6 +827,8 @@ class ProbePathLossCalibrationService:
         route_target: Optional[str] = None,
         probe_id: int = 0,
         polarization: PolarizationType = PolarizationType.V,
+        warning_sink: Optional[List[str]] = None,
+        warning_label: Optional[str] = None,
     ) -> Tuple[float, float, str]:
         """[shared primitive] CE+SA 测一次 SA 功率读数 — D/B 自动 dispatch.
 
@@ -859,20 +862,32 @@ class ProbePathLossCalibrationService:
         """
         from app.services.instrument_test_lease import instrument_test_lease
 
-        async with instrument_test_lease(
-            f"path-loss-tone:probe{probe_id}:{polarization.value}",
-            control_f64=True,
-            control_uxm=False,   # B 路会用 BSE 出 tone，但那是 SG 角色不是 UXM 小区
-            enable_monitoring=False,
-        ):
-            return await self._acquire_sa_power_via_ce_tone_inner(
-                frequency_mhz=frequency_mhz,
-                ce_tx_power_dbm=ce_tx_power_dbm,
-                ce_port=ce_port,
-                route_target=route_target,
-                probe_id=probe_id,
-                polarization=polarization,
-            )
+        if warning_sink is not None:
+            # sink 调用必须只接收本次 acquire 的 cleanup 事实；即使租约在
+            # inner reset 前失败，也不能把同一 service 上的陈旧值错标到本次。
+            self._last_acquire_warnings = []
+        try:
+            async with instrument_test_lease(
+                f"path-loss-tone:probe{probe_id}:{polarization.value}",
+                control_f64=True,
+                control_uxm=False,   # B 路会用 BSE 出 tone，但那是 SG 角色不是 UXM 小区
+                enable_monitoring=False,
+            ):
+                return await self._acquire_sa_power_via_ce_tone_inner(
+                    frequency_mhz=frequency_mhz,
+                    ce_tx_power_dbm=ce_tx_power_dbm,
+                    ce_port=ce_port,
+                    route_target=route_target,
+                    probe_id=probe_id,
+                    polarization=polarization,
+                )
+        finally:
+            if warning_sink is not None:
+                self._harvest_acquire_warnings(
+                    warning_sink,
+                    warning_label
+                    or f"probe {probe_id} pol {polarization.value}",
+                )
 
     async def _acquire_sa_power_via_ce_tone_inner(
         self,
@@ -884,10 +899,9 @@ class ProbePathLossCalibrationService:
         polarization: PolarizationType = PolarizationType.V,
     ) -> Tuple[float, float, str]:
         """`acquire_sa_power_via_ce_tone` 的实体，**已在租约内**。"""
-        # Codex #206 R3: 清理失败 (tone 停不掉 / CE 留直通) 不得只沉日志 —
-        # 本方法返回 3 元组无 warnings 通道 (改签名波及 QZ/XPD 共用方), 用
-        # 实例收集器传播: 每次 acquire 开头清空, finally 失败时 append,
-        # 外层校准循环 extend 进 CalibrationResult.warnings 后再清。
+        # Codex #206 R3: 清理失败 (tone 停不掉 / CE 留直通) 不得只沉日志。
+        # 实例收集器在 finally 失败时 append；public wrapper 若收到
+        # warning_sink 会立即 drain，否则由 path-loss 证书外层循环收割。
         self._last_acquire_warnings = []
 
         # Lazy import — avoid circular and SQLite-test-killing pulls.
@@ -1819,6 +1833,7 @@ class MultiFrequencyPathLossService:
         frequency_points = [freq_start_mhz + i * freq_step_mhz for i in range(num_points)]
 
         calibration_ids = []
+        warnings: List[str] = []
 
         for probe_id in probe_ids:
             try:
@@ -1839,6 +1854,7 @@ class MultiFrequencyPathLossService:
                         sgh_gain_dbi=sgh_gain_dbi,
                         probe_gain_dbi=chamber.probe_gain_dbi,
                         cable_sgh_to_sa_loss_db=chamber.cable_sgh_to_sa_loss_db,
+                        warnings=warnings,
                     )
                 else:
                     return CalibrationResult(
@@ -1875,7 +1891,8 @@ class MultiFrequencyPathLossService:
                 logger.error(f"Multi-freq calibration failed for probe {probe_id}: {e}")
                 return CalibrationResult(
                     success=False,
-                    message=f"Calibration failed for probe {probe_id}: {str(e)}"
+                    message=f"Calibration failed for probe {probe_id}: {str(e)}",
+                    warnings=warnings,
                 )
 
         self.db.commit()
@@ -1888,7 +1905,8 @@ class MultiFrequencyPathLossService:
                 "num_probes": len(probe_ids),
                 "num_freq_points": num_points,
                 "freq_range": f"{freq_start_mhz}-{freq_stop_mhz} MHz"
-            }
+            },
+            warnings=warnings,
         )
 
     def _mock_frequency_sweep(
@@ -1935,6 +1953,7 @@ class MultiFrequencyPathLossService:
         sgh_gain_dbi: float,
         probe_gain_dbi: float,
         cable_sgh_to_sa_loss_db: float,
+        warnings: List[str],
     ) -> Tuple[List[float], List[float]]:
         """[A3] CE+SA 真测多频点扫频 — delegates each freq to single-freq path.
 
@@ -1964,6 +1983,11 @@ class MultiFrequencyPathLossService:
                 sgh_gain_dbi=sgh_gain_dbi,
                 probe_gain_dbi=probe_gain_dbi,
                 cable_sgh_to_sa_loss_db=cable_sgh_to_sa_loss_db,
+                warning_sink=warnings,
+                warning_label=(
+                    f"sweep probe {probe_id} {polarization.value} "
+                    f"{freq_mhz:.1f} MHz"
+                ),
             )
             path_losses.append(m.path_loss_db)
             uncertainties.append(m.uncertainty_db)

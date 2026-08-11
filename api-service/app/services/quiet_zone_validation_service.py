@@ -123,6 +123,7 @@ class QuietZoneValidationService:
             )
 
         offsets = scan_offsets_cm if scan_offsets_cm is not None else DEFAULT_SCAN_OFFSETS_CM
+        warnings: List[str] = []
 
         try:
             if self.use_mock:
@@ -135,12 +136,14 @@ class QuietZoneValidationService:
                     ce_port=ce_port,
                     route_target=route_target,
                     polarization=polarization,
+                    warnings=warnings,
                 )
         except Exception as e:  # noqa: BLE001
             logger.error("[QZ uniformity] grid scan failed: %s", e)
             return CalibrationResult(
                 success=False,
                 message=f"Grid scan failed: {e}",
+                warnings=warnings,
             )
 
         powers_dbm = np.array([p["measured_value"] for p in grid_data])
@@ -183,7 +186,6 @@ class QuietZoneValidationService:
         self.db.commit()
         self.db.refresh(cal)
 
-        warnings: List[str] = []
         if not amplitude_pass:
             warnings.append(
                 f"Field uniformity FAIL: std={std_db:.2f} dB, "
@@ -254,6 +256,8 @@ class QuietZoneValidationService:
                 message=f"Chamber {chamber_id} not found",
             )
 
+        warnings: List[str] = []
+
         try:
             if self.use_mock:
                 # Mock: 30 dB XPD 典型值 + 噪声
@@ -268,6 +272,8 @@ class QuietZoneValidationService:
                     route_target=route_target_co,
                     probe_id=probe_id,
                     polarization=PolarizationType.V,
+                    warning_sink=warnings,
+                    warning_label="XPD co-pol",
                 )
                 p_cross_dbm, _, _ = await pl_service.acquire_sa_power_via_ce_tone(
                     frequency_mhz=frequency_mhz,
@@ -276,12 +282,15 @@ class QuietZoneValidationService:
                     route_target=route_target_cross,
                     probe_id=probe_id,
                     polarization=PolarizationType.H,
+                    warning_sink=warnings,
+                    warning_label="XPD cross-pol",
                 )
         except Exception as e:  # noqa: BLE001
             logger.error("[QZ XPD] measurement failed: %s", e)
             return CalibrationResult(
                 success=False,
                 message=f"XPD measurement failed: {e}",
+                warnings=warnings,
             )
 
         xpd_db = float(p_co_dbm - p_cross_dbm)
@@ -333,6 +342,7 @@ class QuietZoneValidationService:
                 "cross_pol_dbm": float(p_cross_dbm),
                 "threshold_db": float(xpd_threshold_db),
             },
+            warnings=warnings,
         )
 
     # ======================================================================
@@ -365,6 +375,7 @@ class QuietZoneValidationService:
         ce_port: Optional[str],
         route_target: Optional[str],
         polarization: PolarizationType,
+        warnings: List[str],
     ) -> List[Dict[str, Any]]:
         """每点 positioner.move_to → CE+SA tone → SA mean dBm 入 grid。
 
@@ -398,6 +409,8 @@ class QuietZoneValidationService:
                 route_target=route_target,
                 probe_id=0,
                 polarization=polarization,
+                warning_sink=warnings,
+                warning_label=f"grid point ({x_cm}, {y_cm}, {z_cm})",
             )
             grid.append({
                 "x": float(x_cm), "y": float(y_cm), "z": float(z_cm),

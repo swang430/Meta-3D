@@ -178,6 +178,29 @@ class TestRealPatternMeasurement:
         assert cal.frequency_mhz == 3500.0
 
     @pytest.mark.asyncio
+    async def test_cleanup_warning_reaches_pattern_result(self, db, monkeypatch):
+        ce = _make_ce_d_path()
+        ce.stop_calibration_tone = AsyncMock(return_value=False)
+        sa = _make_sa_constant(power_dbm=-85.0)
+        pos = _make_positioner()
+        _patched_hal(monkeypatch, ce=ce, sa=sa, positioner=pos)
+
+        result = await PatternCalibrationService().execute_pattern_calibration(
+            db=db,
+            probe_ids=[0],
+            polarizations=[PolarizationType.V],
+            frequency_mhz=3500.0,
+            azimuth_step_deg=360.0,
+            elevation_step_deg=181.0,
+            calibrated_by="test",
+            use_mock=False,
+        )
+
+        assert result.success
+        assert any("pattern probe 0 V" in warning for warning in result.warnings)
+        assert any("stop_calibration_tone" in warning for warning in result.warnings)
+
+    @pytest.mark.asyncio
     async def test_gain_math_matches_formula(self, db, monkeypatch):
         """With constant SA power, gain_dbi = sa_dbm - ce_tx + FSPL - G_sgh - correction.
         For SA=-85, CE_tx=-20, d=3m, f=3500 MHz, G_sgh=10, correction=0:

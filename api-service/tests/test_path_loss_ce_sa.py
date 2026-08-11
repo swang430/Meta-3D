@@ -743,6 +743,34 @@ class TestMultiFrequencySweep:
         assert called_freqs_hz == pytest.approx([3400e6, 3450e6, 3500e6])
 
     @pytest.mark.asyncio
+    async def test_real_sweep_cleanup_warning_reaches_result(
+        self, db, monkeypatch, chamber_with_cable_loss
+    ):
+        ce = _make_ce([CalibrationToneCapability.INTERNAL_CW_GENERATOR])
+        ce.stop_calibration_tone = AsyncMock(return_value=False)
+        sa = MagicMock()
+        sa.setup_spectrum = AsyncMock(return_value=True)
+        sa.measure_channel_power = AsyncMock(return_value=-85.0)
+        _patched_hal(monkeypatch, ce=ce, sa=sa)
+
+        result = await MultiFrequencyPathLossService(
+            db, use_mock=False
+        ).calibrate_frequency_sweep(
+            chamber_id=chamber_with_cable_loss.id,
+            probe_ids=[0],
+            polarization=PolarizationType.V,
+            freq_start_mhz=3500.0,
+            freq_stop_mhz=3500.0,
+            freq_step_mhz=50.0,
+            sgh_model="SGH-01",
+            sgh_gain_dbi=10.0,
+        )
+
+        assert result.success
+        assert any("sweep probe 0 V 3500.0 MHz" in warning for warning in result.warnings)
+        assert any("stop_calibration_tone" in warning for warning in result.warnings)
+
+    @pytest.mark.asyncio
     async def test_real_sweep_without_cable_loss_field_returns_actionable_error(
         self, db, monkeypatch
     ):
