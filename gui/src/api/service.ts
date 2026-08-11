@@ -2,15 +2,8 @@ import client from './client'
 import type {
   InstrumentCategory,
   CreateProbePayload,
-  DashboardResponse,
   DemoRunPlanResponse,
-  MonitoringFeedsResponse,
   ProbesResponse,
-  RecentTestsResponse,
-  ReportTemplatesResponse,
-  SequenceLibraryResponse,
-  TestCasesResponse,
-  TestTemplatesResponse,
   UpdateProbePayload,
   UpdateInstrumentPayload,
   InstrumentsResponse,
@@ -25,18 +18,12 @@ import type {
   HALReadinessResponse,
   TestExecutionListResponse,
   SystemLogTailResponse,
-  DashboardAlertListResponse,
   DashboardAlertSummary,
 } from '../types/api'
 import type { components as ApiComponents } from '../types/api.generated'
 
 type ContractTestCaseCreate = ApiComponents['schemas']['TestCaseCreate']
 type ContractTestCaseResponse = ApiComponents['schemas']['TestCaseResponse']
-
-export const fetchDashboard = async (): Promise<DashboardResponse> => {
-  const response = await client.get<DashboardResponse>('/dashboard')
-  return response.data
-}
 
 export const fetchProbes = async (): Promise<ProbesResponse> => {
   const response = await client.get<ProbesResponse>('/probes')
@@ -75,24 +62,6 @@ export const replaceProbes = async (
 // 计划链拆除。它此前只被 App.tsx import 未调用 (noUnusedLocals:false 不报),
 // 谁把它接回组件就是运行时 404。⚠️ G5 门只守 /test-plans 前缀, 覆盖不到
 // /test-sequences —— 这一处靠人删, 不靠门。
-
-export const fetchTestTemplates = async (): Promise<TestTemplatesResponse> => {
-  const response = await client.get<TestTemplatesResponse>('/test-plans/cases?is_template=true')
-  return response.data
-}
-
-export const fetchTestCases = async (): Promise<TestCasesResponse> => {
-  const response = await client.get<TestCasesResponse>('/test-plans/cases')
-  return response.data
-}
-
-export const fetchRecentTests = async (): Promise<RecentTestsResponse> => {
-  // ARCH-1 S4c: 这里原本挂着一句 "TODO: 后端需要实现 /test-executions/recent"
-  // —— 那是 **stale 注释**: 该端点 S2 已实现 (api/test_execution.py 的
-  // @router.get("/recent")), 且声明在 /{record_id} 之前, 路由匹配顺序正确。
-  const response = await client.get<RecentTestsResponse>('/test-executions/recent')
-  return response.data
-}
 
 // ============================================================
 // P2-8: Operational Cockpit data sources
@@ -154,16 +123,6 @@ export const fetchSystemLogsHistory = async (params: {
 /**
  * ④ 实时告警 — active alerts ordered by severity.
  */
-export const fetchAlerts = async (params?: {
-  status?: string
-  severity?: string
-  limit?: number
-  skip?: number
-}): Promise<DashboardAlertListResponse> => {
-  const response = await client.get<DashboardAlertListResponse>('/dashboard/alerts', { params })
-  return response.data
-}
-
 /**
  * ④ 实时告警 — counts of active alerts by severity (top-of-zone tally).
  */
@@ -172,18 +131,8 @@ export const fetchAlertSummary = async (): Promise<DashboardAlertSummary> => {
   return response.data
 }
 
-export const fetchReportTemplates = async (): Promise<ReportTemplatesResponse> => {
-  const response = await client.get<ReportTemplatesResponse>('/reports/templates')
-  return response.data
-}
-
 export const fetchDemoRunPlan = async (): Promise<DemoRunPlanResponse> => {
   const response = await client.get<DemoRunPlanResponse>('/tests/demo-run')
-  return response.data
-}
-
-export const fetchMonitoringFeeds = async (): Promise<MonitoringFeedsResponse> => {
-  const response = await client.get<MonitoringFeedsResponse>('/monitoring/feeds')
   return response.data
 }
 

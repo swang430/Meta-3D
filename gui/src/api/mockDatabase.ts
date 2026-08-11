@@ -7,7 +7,7 @@ import type {
   InstrumentCategory,
   InstrumentsResponse,
   MetricItem,
-  MonitoringFeedsResponse,
+  MockMonitoringFeedsResponse,
   Probe,
   ProbesResponse,
   RecentTest,
@@ -1397,7 +1397,7 @@ export const mockDatabase = {
   getReportTemplates(): ReportTemplatesResponse {
     return { reportTemplates: clone(reportTemplates) }
   },
-  getMonitoringFeeds(): MonitoringFeedsResponse {
+  getMonitoringFeeds(): MockMonitoringFeedsResponse {
     return { feeds: clone(monitoringFeeds) }
   },
   getDemoRunPlan(): DemoRunPlanResponse {

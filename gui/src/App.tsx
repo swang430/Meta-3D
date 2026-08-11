@@ -73,7 +73,6 @@ import {
   createProbe,
   deleteProbe,
   fetchDemoRunPlan,
-  fetchMonitoringFeeds,
   fetchProbes,
   fetchChamber,
   fetchActiveChamber,
@@ -87,7 +86,6 @@ import {
   deleteTopologyProfile,
   duplicateTopologyProfile,
   type TopologyProfileDetail,
-  fetchTestCases,
   deleteTestCase,
   updateInstrumentCategory,
   replaceProbes,
@@ -104,7 +102,6 @@ import type {
   Probe as ProbeType,
   SequenceStep as SequenceStepType,
   TestCase,
-  TestCasesResponse,
   UpdateProbePayload,
   UpdateInstrumentPayload,
 } from './types/api'
@@ -917,7 +914,6 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
             <Monitoring
               logs={payload.logs}
               setLogs={payload.setLogs}
-              scenarioMetrics={payload.demoMetrics}
               scenarioStatus={payload.demoProgress.status}
               progress={payload.demoProgress}
               executionMode={payload.executionMode}
@@ -3390,7 +3386,6 @@ function createWaveSamples(length: number): number[] {
 type MonitoringProps = {
   logs: LogEntry[]
   setLogs: Dispatch<SetStateAction<LogEntry[]>>
-  scenarioMetrics: MetricItem[] | null
   scenarioStatus: DemoRunStatus
   progress: DemoRunProgress
   executionMode: 'real' | 'mock'
@@ -3404,7 +3399,6 @@ type MonitoringProps = {
 function Monitoring({
   logs,
   setLogs,
-  scenarioMetrics,
   scenarioStatus,
   progress,
   executionMode,
@@ -3415,12 +3409,6 @@ function Monitoring({
   onStop,
 }: MonitoringProps) {
   const theme = useMantineTheme()
-  const { data: feedsData } = useQuery({
-    queryKey: ['monitoring', 'feeds'],
-    queryFn: fetchMonitoringFeeds,
-  })
-
-  const [metricFeeds, setMetricFeeds] = useState(feedsData?.feeds ?? [])
   const [waveform, setWaveform] = useState<number[]>(() => createWaveSamples(60))
   const [execStatus, setExecStatus] = useState<'running' | 'paused' | 'idle'>('running')
   const [powerLevel, setPowerLevel] = useState<number>(-20)
@@ -3437,7 +3425,6 @@ function Monitoring({
   const logFeedRef = useRef<HTMLDivElement | null>(null)
   const reconnectTimerRef = useRef<number | null>(null)
   const socketRef = useRef<WebSocket | null>(null)
-  const scenarioMetricsRef = useRef<MetricItem[] | null>(null)
   const controlsDisabled = scenarioStatus === 'running'
   // ARCH-1 S4a: 时间线原先优先用 TestPlan 的步骤, 无计划才回落到演示夹具。
   // 计划链拆除后只剩演示夹具这一路。
@@ -3479,20 +3466,6 @@ function Monitoring({
   const finishedAtText = progress.finishedAt
     ? new Date(progress.finishedAt).toLocaleTimeString('zh-CN', { hour12: false })
     : null
-
-  useEffect(() => {
-    if (scenarioMetricsRef.current) return
-    if (feedsData?.feeds) {
-      setMetricFeeds(feedsData.feeds)
-    }
-  }, [feedsData])
-
-  useEffect(() => {
-    scenarioMetricsRef.current = scenarioMetrics
-    if (scenarioMetrics) {
-      setMetricFeeds(scenarioMetrics)
-    }
-  }, [scenarioMetrics])
 
   useEffect(() => {
     if (scenarioStatus === 'running') {
