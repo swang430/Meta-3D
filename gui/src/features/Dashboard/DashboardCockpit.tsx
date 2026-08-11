@@ -7,7 +7,7 @@
  *   ① ZoneReadiness   — 顶部常驻就绪带 (能不能开测 + 阻塞原因)
  *   ② ZoneActiveRun   — 左主区 最近执行 (终结态历史)
  *   ③ ZoneLiveMetrics — 右主区 实时 WS 指标
- *   ④ ZoneLogsAlerts  — 底部宽条 实时日志 + 活动告警
+ *   ④ ZoneLogsAlerts  — 底部宽条 实时日志 + 紧凑告警计数
  *
  * 设计原则: 计数→状态 · 实时优先 · 就绪前置 · 消灭死数据/mock.
  */
@@ -37,7 +37,7 @@ export function DashboardCockpit({
         </Grid.Col>
       </Grid>
 
-      {/* ④ 实时日志 + 告警 — 底部宽条 */}
+      {/* ④ 实时日志 + 紧凑告警计数 — 底部宽条 */}
       <ZoneLogsAlerts />
     </Stack>
   )

@@ -1,17 +1,15 @@
 /**
- * P2-8 ④ 实时日志 + 告警 — bottom wide bar, split left / right.
+ * P2-8 ④ 实时日志 + 紧凑告警计数 — bottom wide bar.
  *
  * 左 日志: GET /system-logs/tail — level 多选过滤 (INFO/WARN/ERROR) +
  *   关键字搜索 + 自动滚动开关 + filename 下拉. Polls ~3s (pausable via
  *   自动刷新 toggle) + 手动刷新按钮.
- * 右 告警: GET /dashboard/alerts (按 severity 颜色排) + /alerts/summary
- *   做顶部计数. Polls ~10s.
+ * 告警计数: GET /dashboard/alerts/summary 放在日志标题栏. Polls ~10s.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   Card,
-  Grid,
   Group,
   Stack,
   Text,
@@ -33,16 +31,11 @@ import {
   IconBellRinging,
   IconSearch,
 } from '@tabler/icons-react'
-import { fetchSystemLogsTail, fetchAlerts, fetchAlertSummary } from '../../api/service'
+import { fetchSystemLogsTail, fetchAlertSummary } from '../../api/service'
 import { formatLogTime } from '../../utils/datetime'
 import { filterGroupedLogEntries } from '../../utils/logEntries'
 import type { SystemLogTailResponse } from '../../types/api'
-import type {
-  SystemLogEntry,
-  SystemLogLevel,
-  DashboardAlert,
-  DashboardAlertSeverity,
-} from '../../types/api'
+import type { SystemLogEntry, SystemLogLevel } from '../../types/api'
 
 // ── 日志级别 → 颜色 ──
 const LOG_LEVEL_COLOR: Record<string, string> = {
@@ -66,23 +59,66 @@ function logLevelColor(level: SystemLogLevel): string {
   return LOG_LEVEL_COLOR[level.toUpperCase()] ?? 'gray'
 }
 
-// ── 告警 severity → 颜色 / 排序权重 ──
-const ALERT_SEVERITY_COLOR: Record<string, string> = {
-  critical: 'red',
-  error: 'red',
-  warning: 'yellow',
-  info: 'blue',
-}
+function AlertSummaryBadge() {
+  const summaryQuery = useQuery({
+    queryKey: ['cockpit', 'alert-summary'],
+    queryFn: fetchAlertSummary,
+    refetchInterval: 10_000,
+  })
 
-const SEVERITY_RANK: Record<string, number> = {
-  critical: 0,
-  error: 1,
-  warning: 2,
-  info: 3,
-}
+  if (summaryQuery.isLoading) {
+    return (
+      <Tooltip label="活动告警计数读取中">
+        <Loader size="xs" />
+      </Tooltip>
+    )
+  }
 
-function alertColor(severity: DashboardAlertSeverity): string {
-  return ALERT_SEVERITY_COLOR[severity] ?? 'gray'
+  if (summaryQuery.error || !summaryQuery.data) {
+    return (
+      <Badge size="sm" color="red" variant="light">
+        告警计数不可用
+      </Badge>
+    )
+  }
+
+  const summary = summaryQuery.data
+  if (summary.total_active === 0) {
+    return (
+      <Badge size="sm" color="green" variant="light">
+        无活动告警
+      </Badge>
+    )
+  }
+
+  const color = summary.critical_count > 0 || summary.error_count > 0
+    ? 'red'
+    : summary.warning_count > 0
+      ? 'yellow'
+      : 'blue'
+
+  return (
+    <Tooltip
+      multiline
+      label={(
+        <Stack gap={0}>
+          <Text size="xs">严重 {summary.critical_count}</Text>
+          <Text size="xs">错误 {summary.error_count}</Text>
+          <Text size="xs">警告 {summary.warning_count}</Text>
+          <Text size="xs">信息 {summary.info_count}</Text>
+        </Stack>
+      )}
+    >
+      <Badge
+        size="sm"
+        color={color}
+        variant="light"
+        leftSection={<IconBellRinging size={12} />}
+      >
+        活动告警 {summary.total_active}
+      </Badge>
+    </Tooltip>
+  )
 }
 
 function LogPanel() {
@@ -172,6 +208,7 @@ function LogPanel() {
           <Group gap="xs">
             <IconTerminal2 size={18} />
             <Text fw={700}>实时日志</Text>
+            <AlertSummaryBadge />
             {data && (
               <Badge size="sm" variant="light" color="gray">
                 {entries.length} 条 · 最深已扫 {data.total_scanned} 行
@@ -278,131 +315,6 @@ function LogPanel() {
   )
 }
 
-function AlertPanel() {
-  const summaryQuery = useQuery({
-    queryKey: ['cockpit', 'alert-summary'],
-    queryFn: fetchAlertSummary,
-    refetchInterval: 10_000,
-  })
-  const alertsQuery = useQuery({
-    queryKey: ['cockpit', 'alerts'],
-    queryFn: () => fetchAlerts({ status: 'active', limit: 20 }),
-    refetchInterval: 10_000,
-  })
-
-  const summary = summaryQuery.data
-  const alerts = useMemo<DashboardAlert[]>(() => {
-    const list = alertsQuery.data?.alerts ?? []
-    // 按 severity 排 (critical 最前)，同级按 created_at 倒序。
-    return [...list].sort((a, b) => {
-      const rA = SEVERITY_RANK[a.severity] ?? 99
-      const rB = SEVERITY_RANK[b.severity] ?? 99
-      if (rA !== rB) return rA - rB
-      return b.created_at.localeCompare(a.created_at)
-    })
-  }, [alertsQuery.data])
-
-  return (
-    <Card withBorder radius="md" padding="md" h="100%">
-      <Stack gap="sm" h="100%">
-        <Group justify="space-between">
-          <Group gap="xs">
-            <IconBellRinging size={18} />
-            <Text fw={700}>活动告警</Text>
-          </Group>
-          {summary && (
-            <Group gap={6}>
-              {summary.critical_count > 0 && (
-                <Badge size="sm" color="red" variant="filled">
-                  严重 {summary.critical_count}
-                </Badge>
-              )}
-              {summary.error_count > 0 && (
-                <Badge size="sm" color="red" variant="light">
-                  错误 {summary.error_count}
-                </Badge>
-              )}
-              {summary.warning_count > 0 && (
-                <Badge size="sm" color="yellow" variant="light">
-                  警告 {summary.warning_count}
-                </Badge>
-              )}
-              {summary.info_count > 0 && (
-                <Badge size="sm" color="blue" variant="light">
-                  信息 {summary.info_count}
-                </Badge>
-              )}
-              {summary.total_active === 0 && (
-                <Badge size="sm" color="green" variant="light">
-                  无活动告警
-                </Badge>
-              )}
-            </Group>
-          )}
-        </Group>
-
-        {alertsQuery.error && (
-          <Alert color="red" variant="light" title="告警读取失败">
-            {(alertsQuery.error as Error).message}
-          </Alert>
-        )}
-
-        <ScrollArea h={280} type="auto">
-          {alertsQuery.isLoading ? (
-            <Group gap="xs" p="sm">
-              <Loader size="sm" />
-              <Text size="sm" c="dimmed">
-                告警读取中……
-              </Text>
-            </Group>
-          ) : alerts.length === 0 ? (
-            <Stack gap={4} p="sm" align="center">
-              <Text fw={600}>暂无活动告警</Text>
-              <Text size="sm" c="dimmed">
-                系统运行正常
-              </Text>
-            </Stack>
-          ) : (
-            <Stack gap="xs" p={4}>
-              {alerts.map((a) => (
-                <Card key={a.id} withBorder radius="sm" padding="xs">
-                  <Group justify="space-between" align="flex-start" wrap="nowrap">
-                    <Stack gap={2} style={{ flex: 1 }}>
-                      <Text fw={600} size="sm" lineClamp={1} title={a.title}>
-                        {a.title}
-                      </Text>
-                      {a.message && (
-                        <Text size="xs" c="dimmed" lineClamp={2} title={a.message}>
-                          {a.message}
-                        </Text>
-                      )}
-                      <Text size="xs" c="dimmed">
-                        #{a.id} · {new Date(a.created_at).toLocaleString('zh-CN', { hour12: false })}
-                      </Text>
-                    </Stack>
-                    <Badge color={alertColor(a.severity)} variant="light">
-                      {a.severity.toUpperCase()}
-                    </Badge>
-                  </Group>
-                </Card>
-              ))}
-            </Stack>
-          )}
-        </ScrollArea>
-      </Stack>
-    </Card>
-  )
-}
-
 export function ZoneLogsAlerts() {
-  return (
-    <Grid gutter="md">
-      <Grid.Col span={{ base: 12, lg: 7 }}>
-        <LogPanel />
-      </Grid.Col>
-      <Grid.Col span={{ base: 12, lg: 5 }}>
-        <AlertPanel />
-      </Grid.Col>
-    </Grid>
-  )
+  return <LogPanel />
 }

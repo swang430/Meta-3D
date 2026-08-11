@@ -16,6 +16,8 @@ from app.models.alert import Alert
 
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "cleanup_test_suite_alerts.py"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_ZONE = _REPO_ROOT / "gui/src/features/Dashboard/ZoneLogsAlerts.tsx"
 
 
 def _cleanup_module():
@@ -164,3 +166,30 @@ def test_cli_requires_explicit_execute_flag():
 
     assert module.build_parser().parse_args([]).execute is False
     assert module.build_parser().parse_args(["--execute"]).execute is True
+
+
+def test_dashboard_uses_alert_summary_badge_without_alert_detail_panel():
+    """P1-38：告警只占实时日志标题栏，不再拉取或展示详情列表。"""
+    source = _ZONE.read_text(encoding="utf-8")
+
+    assert "fetchAlerts" not in source
+    assert "function AlertPanel" not in source
+    assert "DashboardAlert" not in source
+    assert "SEVERITY_RANK" not in source
+
+    assert "queryFn: fetchAlertSummary" in source
+    assert "refetchInterval: 10_000" in source
+    assert "summaryQuery.isLoading" in source
+    assert "summaryQuery.error" in source
+    assert "告警计数不可用" in source
+    assert "无活动告警" in source
+    assert "活动告警 {summary.total_active}" in source
+    assert "严重 {summary.critical_count}" in source
+    assert "错误 {summary.error_count}" in source
+    assert "警告 {summary.warning_count}" in source
+    assert "信息 {summary.info_count}" in source
+
+    assert "Grid.Col" not in source
+    assert "lg: 7" not in source
+    assert "lg: 5" not in source
+    assert "return <LogPanel />" in source
