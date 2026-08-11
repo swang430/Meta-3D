@@ -220,6 +220,38 @@ NR_BAND_ARFCN_MAP = {
     "N79": 693334,  # 4.7 GHz
 }
 
+
+def _normalize_nr_band_arfcn_map(raw_map: Dict[Any, Any]) -> Dict[str, int]:
+    """Normalize deployment ARFCN overrides once, before any hardware use.
+
+    Band names are case-insensitive.  Two aliases may repeat the same value,
+    but conflicting values are rejected instead of depending on dict order.
+    Values must be integer ARFCNs; numeric strings are accepted because these
+    settings also arrive through JSON/environment-backed configuration.
+    """
+    normalized: Dict[str, int] = {}
+    for raw_band, raw_value in raw_map.items():
+        band = str(raw_band).upper()
+        if isinstance(raw_value, bool):
+            raise ValueError(f"{band} ARFCN 必须是整数，不能是布尔值")
+        if isinstance(raw_value, float) and not raw_value.is_integer():
+            raise ValueError(f"{band} ARFCN 必须是整数，收到 {raw_value!r}")
+        try:
+            arfcn = int(raw_value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{band} ARFCN 必须是整数，收到 {raw_value!r}"
+            ) from exc
+        if not 0 <= arfcn <= 3_279_165:
+            raise ValueError(f"{band} ARFCN 超出 NR 定义域: {arfcn}")
+        if band in normalized and normalized[band] != arfcn:
+            raise ValueError(
+                f"{band} ARFCN 大小写别名冲突: "
+                f"{normalized[band]} != {arfcn}"
+            )
+        normalized[band] = arfcn
+    return normalized
+
 # 频率 → 频段自动推断 (MHz → Band)
 # 用于 set_cell_config 中当用户只给了 frequency_mhz 但没给 band 时自动映射
 FREQ_TO_BAND_MAP = [
@@ -381,7 +413,7 @@ class RealUxmDriver(BaseStationDriver):
         # (空 dict 不算部署声明, 否则粗值表被当 custom 压过基线) + 键大写归一
         # (3GPP 惯用小写 "n78", self._band 恒大写, 不归一则声明静默失效)
         self._nr_band_arfcn_map = (
-            {str(k).upper(): v for k, v in custom_arfcn.items()}
+            _normalize_nr_band_arfcn_map(custom_arfcn)
             if custom_arfcn else NR_BAND_ARFCN_MAP
         )
         # agent R6 F3: 部署级 custom 声明要在 ARFCN fallback 里压过自动基线

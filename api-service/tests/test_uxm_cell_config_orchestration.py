@@ -837,6 +837,35 @@ class TestArfcnFallbackBaseline:
         assert ok is True
         assert any(w.endswith("DL:ARFCN 640000") for w in written), written
 
+    def test_custom_map_rejects_conflicting_case_folded_keys(self):
+        """同一 band 的大小写别名值不一致时，加载阶段必须 fail-loud。"""
+        with pytest.raises(ValueError, match="N78.*冲突"):
+            RealUxmDriver(
+                "uxm-collision",
+                {
+                    "ip": "10.0.0.7",
+                    "nr_band_arfcn_map": {"n78": 640000, "N78": 636666},
+                },
+            )
+
+    def test_custom_map_normalizes_numeric_strings_before_runtime(self):
+        """JSON/环境配置里的整数字符串应在驱动加载时收敛为 int。"""
+        drv = RealUxmDriver(
+            "uxm-string",
+            {"ip": "10.0.0.8", "nr_band_arfcn_map": {"n78": "640000"}},
+        )
+        assert drv._nr_band_arfcn_map == {"N78": 640000}
+        assert isinstance(drv._nr_band_arfcn_map["N78"], int)
+
+    @pytest.mark.parametrize("bad_value", ["not-an-arfcn", 640000.5, True])
+    def test_custom_map_rejects_invalid_values_during_driver_load(self, bad_value):
+        """坏配置不得拖到频率身份读取时才 TypeError，或被静默截断。"""
+        with pytest.raises(ValueError, match="N78.*ARFCN"):
+            RealUxmDriver(
+                "uxm-invalid",
+                {"ip": "10.0.0.9", "nr_band_arfcn_map": {"N78": bad_value}},
+            )
+
     @pytest.mark.asyncio
     async def test_custom_map_empty_dict_not_treated_as_declaration(self):
         """agent R6 复核 F1: 空 dict (GUI 表单/JSONB 留空的现实形态) 不算
