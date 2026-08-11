@@ -72,6 +72,10 @@ def resolve_channel_asset(db: Session, config: Any) -> Optional[ResolvedChannelA
         asset = get_channel_asset(db, UUID(str(aid)))
     except (ChannelAssetNotFound, ValueError) as e:
         raise ChannelAssetResolveError(f"channel_asset_id={aid} 无效/不存在: {e}")
+    if asset.is_active is not True:
+        raise ChannelAssetResolveError(
+            f"channel_asset_id={aid} 已退役，不能用于新的 MEASURE 执行"
+        )
 
     st = asset.source_type
     engine = engine_mode_for_channel_asset(asset)

@@ -592,6 +592,11 @@ async def create_session(req: CreateSessionRequest, db: Session = Depends(get_db
             asset = get_channel_asset(db, req.channel_asset_id)
         except ChannelAssetNotFound as err:
             raise HTTPException(status_code=422, detail=str(err)) from err
+        if asset.is_active is not True:
+            raise HTTPException(
+                status_code=422,
+                detail=f"ChannelAsset {asset.id} 已退役，不能用于创建新会话。",
+            )
         try:
             resolved_engine = engine_mode_for_channel_asset(asset)
         except ChannelAssetResolveError as err:

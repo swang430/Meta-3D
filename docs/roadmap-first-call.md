@@ -16,9 +16,9 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
-**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → **P2-23** → P2-24 → P3-18 → P3-19**（逐片 WIP=1）。
+**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → **P2-24** → P3-18 → P3-19**（逐片 WIP=1）。
 
-**Current Focus = P2-23** —— 会话创建的资产预检补 `is_active`，并检查 MEASURE resolver 是否同样会放行已退役资产。P2-22 经代码、回归与 NotebookLM 厂商资料复核确认已由 F64R-1（#225）完整交付，本轮只纠正 roadmap 的滞后状态，不重复改写硬件控制链。条目见下方 P2-23。
+**Current Focus = P2-24** —— 测试用例契约补 `lab_profile_id`（契约四步）。P2-23 已让会话创建与 MEASURE 的显式资产及两条 legacy 兼容入口都拒绝已退役 ChannelAsset，同时保留历史记录的只读可追溯性。条目见下方 P2-24。
 
 > **~~P1-48~~ ✅ 2026-08-10 完成**（2026-08-09 插队，兼作 Gemini 外审首测对象）。五片全部 merge 进 main：#308 日志线 / #313 删掉四条整体返回随机数的报告接口（−955 行）/ #312 路损校准拒绝模拟驱动 / #310 报告线 / #314 虚拟路测不再编数。
 > **代价记录**：外审 27 轮 30 条，其中 #314 一个 PR 占 12 轮 22 条；复盘后 ①内审改成每次 push 前都过（新增轻量档）②「改之前先列全集」写进三份规则文档 ③规则整理 #316（消 8 处手工同步契约、轮次上限改分级）。
@@ -55,7 +55,7 @@ P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
 SCPI 闭环依赖链：先把现场项映射到载体 → 用手册证据修判定和缺失载体 → 止住错误队列
 无限循环 → 补传输配对 → 补仪器接受/生效语义 → 接入正式 TestCase。该本地链已完成；
 P0-5 保持 ON-SITE-BLOCKED；P1-44/42/40/37 已在 Draft PR #303 完成本地实现与回归，
-本地序列现切到 **P2-23**（P1-29 已由 PR #320、P1-38 已由 PR #321、P1-27 已由 PR #322 收口；P2-22 经复核确认早已由 #225 交付，见上方 Current Focus）。本轮日志设计与逐片实施计划见
+本地序列现切到 **P2-24**（P1-29 已由 PR #320、P1-38 已由 PR #321、P1-27 已由 PR #322、P2-22 已由 PR #323 收口；P2-23 本地实现完成，见上方 Current Focus）。本轮日志设计与逐片实施计划见
 [`plans/2026-08-07-log-sprint-design.md`](plans/2026-08-07-log-sprint-design.md) /
 [`plans/2026-08-07-log-sprint.md`](plans/2026-08-07-log-sprint.md)；SCPI 闭环设计与实施计划见
 [`plans/2026-08-06-scpi-evidence-closure-design.md`](plans/2026-08-06-scpi-evidence-closure-design.md) /
@@ -92,7 +92,7 @@ P0-5 保持 ON-SITE-BLOCKED；P1-44/42/40/37 已在 Draft PR #303 完成本地�
 - ~~**P1-27**~~ ✅ P1-8 校准门拒 mock cert（provenance + real 模式 strict 拒；直接 MEASURE 同样前置拦截）
 - **P1-28** 「当前暗室」双真值源收口（active chamber vs active lab 绑定暗室）
 - ~~**P2-22**~~ ✅ F64 disconnect 冷缓存判 GOS 换真值源（F64R-1 / #225 已交付；本轮 NotebookLM 复核厂商依据后纠正 roadmap 滞后状态）
-- **P2-23** 会话资产 is_active 预检 + measure resolver 同病排查
+- ~~**P2-23**~~ ✅ 会话资产 is_active 预检 + MEASURE resolver 同病收口
 - **P2-24** 测试用例契约补 lab_profile_id（契约四步）
 - ~~**P1-48**~~ ✅ 日志/报告分不出哪台仪表是真的 —— P1-37 的标记只到 `scpi.log`，app.log / 报告 / VRT 三个消费端一个没接上（2026-08-10 五片全合）
 - ~~**P1-29**~~ ✅ `/dashboard/alerts/summary` 被 `/alerts/{alert_id}` 遮蔽 → 驾驶舱告警计数条恒坏（一行声明顺序 + G19 遮蔽门，PR #320）
@@ -261,7 +261,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → **P2-23** → P2-24 → P3-18 → P3-19**（当前执行片只看顶部 **Current Focus**）|
+| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → **P2-24** → P3-18 → P3-19**（当前执行片只看顶部 **Current Focus**）|
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -3615,9 +3615,9 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 **What / completion evidence**: 原缺口是 `disconnect()` 依赖 `_emulation_running` 冷缓存判“要不要 GOS”，HAL 重载后可能把仍在播放的 F64 留下。复核确认 #225 的 F64R-1 已将判据换成仪器 `DIAG:SIMU:STATE?` 真值：`RUNNING` 或读不到时保守 GOS，`STOPPED/CLOSED` 跳过 GOS；只有明确 `CLOSED` 才跳过幂等 CLOSE，且传输层断链单独 fail-loud。定点回归 `TestDisconnectAsksInstrument::test_stops_when_instrument_running_despite_cold_cache` 与 `test_disconnect_confirms_closed_even_with_cold_cache` 已锁住冷缓存场景。NotebookLM（“PROPSIM 资料”，2026-08-11）核对厂商原文：Propsim User Reference §20.4.3.14 定义 STATE? 七态及 RUNNING/STOPPED/CLOSED；§20.4.3.11 定义 GOS 为 stop + rewind；§20.4.3.18 与 ATE environment and practices AN §2.2.2 定义 CLOSE，后者明确未加载时 CLOSE 不会在远程接口报错、可作 fail-safe。先查 STATE? 再决定 teardown 是建立在这些原文上的工程判定，不冒充厂商直接规定。**来源**: #206 补扫（[→ P2-22] 已标）；实现：#225 / `62cd796`。
 
-### P2-23 — 会话资产 is_active 预检 + resolver 同病排查 ⬜（2026-08-02 拍板，待开工）
+### P2-23 — 会话资产 is_active 预检 + resolver 同病排查 ✅（2026-08-11 本地完成）
 
-**What**: `POST /commissioning/sessions` 的资产预检只查存在不查 `is_active`（软删资产可建会话执行退役配置）；预检处判 `asset.is_active` + 顺带查 measure resolver 对 inactive 的行为。**来源**: Codex #262 R2（[→ P2-23] 已标）。
+**What / completion evidence**: `POST /commissioning/sessions` 在创建 TestCase/TestExecution 前以 `is_active is True` 白名单拒绝退役资产并返回 422。MEASURE 侧已枚举并收口三条 live 消费路径：①显式 `channel_asset_id` 在任何仪表连接/配置前 fail-loud；②历史 `cdl_profile_id` 命中同 UUID 的 `custom_static` ChannelAsset 时，退役资产不得进入 ASC 合成，也不得回落 legacy twin；③历史 `scd_id` 命中同 UUID 的 `vendor_file` ChannelAsset 时，退役资产不得返回 `.smu`，也不得回落 legacy twin。软删仍保留实体与历史引用，历史记录可读，但“可追溯”不再等同于“可重新执行”。HTTP 回归断言失败时 TestCase/TestExecution 均不新增；执行级回归锁住显式路径必须在硬件 connect 前失败，两条兼容回归锁住退役配置不会重新进入 ASC/GCM。**来源**: Codex #262 R2（[→ P2-23] 已标）。
 
 ### P2-24 — 测试用例契约补 lab_profile_id ⬜（2026-08-02 拍板，待开工）
 
@@ -3861,7 +3861,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-01 during P1-24, Codex #260 R2]` **[→ 提升 P3-18 (2026-08-02)]** **带动作的诊断序列整体无串行化（run endpoint 层）** —— 两个客户端并发跑同一序列（或与其它 F64 操作并行）时只有单个驱动原子持 `_scpi_lock`，序列整体可交错（load-A → load-B → AUTOSET-A → GO-B），互相污染归档、甚至把对方的增益/旁路态"还原"掉。基建共性（`propsim_f64_state_machine`/`baseStation_attach_check` 同型），非 p08 序列独有；整段持锁会饿死 broadcaster 监控（state_machine 当年显式取舍过），正解大概率在 run endpoint 加序列级互斥。范围外基建债，独立小片。
 - `[discovered 2026-08-01 during P2-21 内审]` **[→ 提升 P3-18 (2026-08-02)]** **PDF 渲染管道其余自由文本入口无 XML 转义**（pre-existing，非 P2-21 引入）—— ①封面 `Paragraph(title)` 含 case_name，`<字母` 命名会炸整份报告；②共享步骤区渲染器 `_generate_step_details_section` 的 `val_str` 侧统一转义能让 VRT `step_configs` 管线同受益（P2-21 只修了 report.py 组装侧自己的面）。修法 = 渲染器入口统一 `xml.sax.saxutils.escape`，共享文件独立小片。
 - `[discovered 2026-08-01 during P3-14, Codex #262 R1]` **[→ 提升 P1-26 (2026-08-02)]** **GUI 改频只写顶层 frequency_hz，带 component_carriers 的持久化用例执行仍按 CC[0] 旧频率跑**（pre-existing，非 P3-14 引入）—— factory `model_dump` 落库自带 CC，而 `MIMOOTAConfiguration` 的 validator 在 CC 非空时忽略顶层频率（measure Phase 2g 权威 = CC[0]）；GUI `MIMOOTAConfigForm` 不写 CC → 顶层与 CC[0] 漂移时**执行侧**错频（P2-11 一致性门只兜"CC[0] vs SCD 不符"的形态，兜不住"用户以为改了新频、CC[0] 旧频恰与 SCD 一致"）。P3-14 已让**显示**与执行同源（CC[0] 优先），执行侧正修 = GUI 写侧同步 CC[0] 或 PATCH 时 drop CC 重构造，独立小片。
-- `[discovered 2026-08-01 during P3-14, Codex #262 R2]` **[→ 提升 P2-23 (2026-08-02)]** **会话创建的资产预检只查存在不查 `is_active`** —— 软删（退役）的 ChannelAsset 仍能通过 `POST /commissioning/sessions` 的 422 预检建会话执行退役信道配置；对称先例 = active-only 列表与 lab-profile resolver 都拦 inactive。修法一行（预检处判 `asset.is_active`，消息说明"已退役"）+ 顺带查 measure resolver 对 inactive 的行为是否同病。
+- ~~`[discovered 2026-08-01 during P3-14, Codex #262 R2]` **[→ P2-23；2026-08-11 本地完成]** **会话创建的资产预检只查存在不查 `is_active`**~~ —— 创建入口、显式 MEASURE resolver 以及 `cdl_profile_id`/`scd_id` 两条迁移兼容入口已同时改为只放行 `is_active is True`；软删资产保留历史只读追溯，但不能再创建或执行新的测量。
 - `[discovered 2026-08-02 during P3-17 内审 F2]` **[→ 提升 P1-25 (2026-08-02)]** **GUI 主控台"系统状态"面板对 live 后端恒空态** —— `gui/src/App.tsx:482` 读 `dashboardData?.systemStatus`（camelCase，`gui/src/types/api.ts` 手写三键），而 live `/api/v1/dashboard` 返回 snake 四键（summary/live_metrics/active_alerts/recent_tests）→ 恒 undefined 走空态分支。P3-17 修了 yaml 契约（判定端），生效端副本在手写 api.ts；修法 = App.tsx/api.ts 换 live 键形态，顺带同一把尺子过 api.ts 其余手写镜像类型 + 清理死导出 `InstrumentCategoryResponse`（service.ts 早已用平铺）。独立小片。⚠ 按行号引用会漂 — 动手时按 `systemStatus` 检索定位。
 - `[discovered 2026-08-02 during P3-17, Codex #265 R2]` **[→ 提升 P3-18 (2026-08-02)]** **G11 三个覆盖面精化**（门 docstring 已申报为已知收窄面，声明与覆盖对齐）：①契约半参数比对分 in= location（query 重名 path 参数现在穿透）②散文半动词抽取识别 curl 形态（`curl -X POST http://host/api/v1/...` 动词隔着 host 抽不出）③响应比对拒绝不兼容 schema 类型（yaml 改 object→array 时 y_props 空跳过）。各配变异，独立小片。
 - `[discovered 2026-08-01 during P1-22 内审 F3，本行补欠登记]` **[→ 提升 P2-21 (2026-08-01)]** **precheck/reference/measure 的 P1-12 可信化标志渲染不可达 — 报告对兜底数据沉默（P3）** —— `executors/report.py` step_results 里 `quiet_zone_verified` / `trp_verified` / `path_loss_verified` 是顶层键，渲染器只读 `name`/`step_name` 与 `parameters` → PDF 步骤区零显示，P1-12"标注 未验证(兜底值)"意图从未生效。修法同 P1-22 的 analysis 站点（标志挪 `parameters` 下）。顺带同域：`pdf_certificate.py`（校准证书）无 CJK 字体，证书中文同样豆腐块。

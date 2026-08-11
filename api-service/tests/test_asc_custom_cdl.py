@@ -39,6 +39,7 @@ def _profile():
 
 def _channel_asset():
     a = MagicMock()
+    a.is_active = True
     a.name = "CA-custom"
     a.center_frequency_hz = 3.5e9
     a.is_los = False
@@ -133,6 +134,48 @@ def test_cdl_profile_id_redirects_to_channel_asset():
     assert len(call["clusters"]) == 1
     assert call["clusters"][0].power_relative_linear == 0.9  # ChannelAsset 簇 (非 legacy 0.5)
     assert call["pathloss_db"] == 85.0                      # ChannelAsset payload (非 legacy 999)
+
+
+def test_cdl_profile_id_rejects_inactive_migrated_channel_asset_without_legacy_fallback():
+    """迁移后的资产一旦退役，不得借 legacy cdl_profile_id 重新执行。"""
+    strat = _strategy()
+    ca = _channel_asset()
+    ca.id = "11111111-1111-1111-1111-111111111111"
+    ca.source_type = "custom_static"
+    ca.is_active = False
+    ca.payload = {
+        "snapshots": [
+            {
+                "clusters": [
+                    {
+                        "delay_s": 0.0,
+                        "power_linear": 1.0,
+                        "aoa_deg": 30,
+                        "aod_deg": 10,
+                        "num_rays": 12,
+                    }
+                ]
+            }
+        ],
+        "pathloss_db": 85.0,
+    }
+    with patch(
+        "app.services.channel_asset_service.find_custom_static_asset",
+        return_value=ca,
+    ), patch(
+        "app.services.custom_cdl_profile_service.get_custom_cdl_profile",
+        return_value=_profile(),
+    ) as legacy_getter, patch("os.path.exists", return_value=True):
+        ok = asyncio.run(
+            strat.generate_and_load(
+                {"frequency_hz": 3.5e9},
+                {"cdl_profile_id": "11111111-1111-1111-1111-111111111111"},
+            )
+        )
+
+    assert ok is False
+    legacy_getter.assert_not_called()
+    strat.ce_client.synthesize_hardware_pipeline.assert_not_awaited()
 
 
 def test_cdl_profile_id_no_channel_asset_falls_back_to_legacy():

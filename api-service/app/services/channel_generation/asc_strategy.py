@@ -81,6 +81,11 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
                 except (ValueError, TypeError):
                     asset = None  # cdl_profile_id 非合法 UUID → 落 legacy 查表 (自然报错)
                 if asset is not None:
+                    if asset.is_active is not True:
+                        raise ValueError(
+                            f"ChannelAsset {getattr(asset, 'id', cdl_profile_id)} "
+                            "已退役，不能用于新的 ASC 合成"
+                        )
                     clusters = ((asset.payload or {}).get("snapshots") or [{}])[0].get("clusters")
                     pipeline_result = await self._synthesize_from_clusters(
                         clusters, asset, simulation_rules, session_id,
