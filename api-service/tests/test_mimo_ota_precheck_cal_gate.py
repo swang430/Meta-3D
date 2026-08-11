@@ -166,7 +166,13 @@ def hal_with_mocks(instrument_categories):
 # Helpers — seed cal data + build StepExecutionContext
 # ---------------------------------------------------------------------------
 
-def _seed_path_loss_cal(db, chamber_id, frequency_mhz: float = 3500.0) -> None:
+def _seed_path_loss_cal(
+    db,
+    chamber_id,
+    frequency_mhz: float = 3500.0,
+    *,
+    use_mock: Optional[bool] = False,
+) -> None:
     """Write a minimal VALID ProbePathLossCalibration so
     `latest_pl is not None` and `result_payload["path_loss_calibration_valid"]
     = True`."""
@@ -181,6 +187,11 @@ def _seed_path_loss_cal(db, chamber_id, frequency_mhz: float = 3500.0) -> None:
         calibrated_at=now,
         valid_until=now.replace(year=now.year + 1),  # 1 year validity
     )
+    # P1-27: pre-existing tests are about certificate existence/frequency,
+    # so they explicitly represent a real calibration. ``setattr`` keeps the
+    # RED test importable before the model column exists; the producer tests
+    # separately prove the value survives a database round-trip.
+    setattr(cal, "use_mock", use_mock)
     db.add(cal)
     db.commit()
 
@@ -487,6 +498,69 @@ class TestFrequencyWindow:
 
         assert measurements["path_loss_calibration_target_frequency_mhz"] == 3500.0
         assert measurements["path_loss_calibration_frequency_mhz"] == 3500.0
+
+
+# ---------------------------------------------------------------------------
+# P1-27: path-loss calibration provenance is a strict allowlist.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "use_mock, strict_mode, expect_pass, reason_keywords",
+    [
+        (False, True, True, ["ok"]),
+        (True, True, False, ["simulated", "provenance"]),
+        (None, True, False, ["unknown", "provenance"]),
+        (True, False, True, ["bypassed", "simulated", "provenance"]),
+        (None, False, True, ["bypassed", "unknown", "provenance"]),
+    ],
+    ids=[
+        "real-strict",
+        "mock-strict",
+        "unknown-strict",
+        "mock-bypass",
+        "unknown-bypass",
+    ],
+)
+@pytest.mark.asyncio
+async def test_path_loss_provenance_gate(
+    db,
+    lab,
+    chamber,
+    hal_with_mocks,
+    use_mock: Optional[bool],
+    strict_mode: bool,
+    expect_pass: bool,
+    reason_keywords: list[str],
+):
+    """A real run may trust only an explicitly real path-loss record.
+
+    Historical rows are ``None`` rather than silently backfilled to real.
+    Explicit strict bypass remains available for rehearsal, but its audit
+    reason must still say exactly what strict mode would have rejected.
+    """
+    _seed_path_loss_cal(db, chamber.id, use_mock=use_mock)
+    ctx = _build_context(
+        db,
+        lab,
+        cal_cert=None,
+        strict_mode=strict_mode,
+        frequency_hz=3500e6,
+    )
+
+    result = await PrecheckExecutor().execute(ctx)
+    measurements = result.measurements or {}
+
+    assert measurements.get("path_loss_calibration_use_mock") is use_mock
+    assert measurements.get("cal_pass") is expect_pass
+    assert measurements.get("overall_pass") is expect_pass
+    assert result.status == (
+        StepExecutionStatus.SUCCESS if expect_pass else StepExecutionStatus.FAILED
+    )
+
+    reason = measurements.get("cal_pass_reason", "") or ""
+    for keyword in reason_keywords:
+        assert keyword in reason, f"missing {keyword!r} in {reason!r}"
 
 
 # ---------------------------------------------------------------------------

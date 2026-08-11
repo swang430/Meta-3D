@@ -16,10 +16,12 @@ from app.db.database import Base, get_db
 from app.models.chamber import ChamberConfiguration, ChamberType, CHAMBER_PRESETS, create_chamber_from_preset
 from app.models.probe_calibration import ProbePathLossCalibration, RFChainCalibration
 from app.services.path_loss_calibration_service import (
+    PathLossMeasurement,
     ProbePathLossCalibrationService,
     RFChainCalibrationService,
     calculate_fspl,
 )
+from app.schemas.probe_calibration import PolarizationType
 from app.services.calibration_orchestrator import (
     CalibrationOrchestrator,
     CalibrationItem,
@@ -185,6 +187,45 @@ class TestProbePathLossCalibrationService:
         assert calibration.frequency_mhz == 3500.0
         assert calibration.sgh_model == "Test SGH"
         assert calibration.status == "valid"
+        assert calibration.use_mock is True
+
+    @pytest.mark.asyncio
+    async def test_real_path_persists_explicit_real_provenance(
+        self, db_session, type_c_chamber, monkeypatch,
+    ):
+        """The service mode, not a driver-name heuristic, is persisted."""
+        service = ProbePathLossCalibrationService(db_session, use_mock=False)
+
+        async def _real_like_measurement(*_args, **_kwargs):
+            return PathLossMeasurement(
+                probe_id=0,
+                polarization="V",
+                path_loss_db=55.0,
+                uncertainty_db=0.2,
+            )
+
+        monkeypatch.setattr(
+            service,
+            "_real_path_loss_measurement",
+            _real_like_measurement,
+        )
+
+        result = await service.start_calibration(
+            chamber_id=type_c_chamber.id,
+            frequency_mhz=3500.0,
+            sgh_model="Test SGH",
+            sgh_gain_dbi=10.0,
+            probe_ids=[0],
+            polarizations=[PolarizationType.V],
+            calibrated_by="Test Engineer",
+        )
+
+        calibration = db_session.get(
+            ProbePathLossCalibration,
+            UUID(result.data["calibration_id"]),
+        )
+        assert calibration is not None
+        assert calibration.use_mock is False
 
     @pytest.mark.asyncio
     async def test_get_latest_calibration(self, db_session, type_c_chamber):
