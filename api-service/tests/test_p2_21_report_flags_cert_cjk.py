@@ -126,8 +126,9 @@ class TestTrustFlagsReachable:
                   "measure": {**_FALLBACK_PHASES["measure"],
                               "cdl_model_name": "TDL-A <30ns"}}
         text = _rendered_text(_content(phases))  # 不转义时这里直接抛
-        assert "TDL-A" in text and "30ns" in text        # 内容没被吞
-        assert "MPAC" in text                             # tag 形态也保下来了
+        assert "TDL-A <30ns" in text                      # 内容没被吞/没双重转义
+        assert "标签 <MPAC> 完整形态" in text             # tag 形态也保下来了
+        assert "DUT <prototype 掉线" in text
 
     def test_none_values_render_as_dash_not_english_none(self):
         """内审 F3: 缺值/显式 null → "—", 不是英文字面 "None" (中文报告里
@@ -147,6 +148,41 @@ class TestTrustFlagsReachable:
                                 "measurement_source": "hal_signal_analyzer"}}
         text = _rendered_text(_content(phases))
         assert "未知 (历史数据未区分真实/兜底)" in text
+
+
+class TestSharedPdfFreeTextEscaping:
+    def test_cover_title_with_angle_bracket_survives_rendering(self):
+        """P3-18: TestCase 名进入封面标题后仍必须作为文本，而不是 XML tag。"""
+        gen = PDFGenerator()
+        elements = gen._generate_cover_page(
+            {
+                "title": "MIMO OTA — DUT <prototype",
+                "report_type": "single_execution",
+            },
+            {},
+        )
+        rendered = " ".join(_para_text(item) for item in elements)
+        assert "DUT <prototype" in rendered
+
+    def test_vrt_step_parameter_free_text_survives_shared_renderer(self):
+        """VRT step_configs 绕过 MIMO report builder，必须在共享渲染器入口转义。"""
+        text = _rendered_text(
+            {
+                "step_configs": [
+                    {
+                        "name": "车辆 <prototype",
+                        "parameters": {
+                            "场景 <name>": "TDL-A <30ns",
+                            "标签": "<MPAC>",
+                        },
+                    }
+                ]
+            }
+        )
+        assert "车辆 <prototype" in text
+        assert "场景 <name>" in text
+        assert "TDL-A <30ns" in text
+        assert "<MPAC>" in text
 
 
 class TestCertificateCJK:

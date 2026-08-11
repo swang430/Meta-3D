@@ -18,7 +18,7 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → **P3-18** → P3-19**（逐片 WIP=1）。
 
-**Current Focus = P3-18** —— 门/测试精化批（G11 三覆盖面 / p08 零残留站点 / PDF 转义收口 / 诊断序列串行化 / 手写类型审计尺子改逐层递归）。P2-24 已把 TestCase 的 `lab_profile_id` 贯通 REST 契约、生成类型、GUI 服务、mock 与创建/编辑弹窗。条目见下方 P3-18。
+**Current Focus = P3-18 / PDF 转义子片** —— 先收口封面标题与共享步骤参数渲染器的自由文本 XML 转义；其余 G11 三覆盖面 / p08 零残留站点 / 诊断序列串行化 / 手写类型审计递归比对继续保持 P3-18 后续逐片 WIP=1。P2-24 已由 PR #325 合并。条目见下方 P3-18。
 
 > **~~P1-48~~ ✅ 2026-08-10 完成**（2026-08-09 插队，兼作 Gemini 外审首测对象）。五片全部 merge 进 main：#308 日志线 / #313 删掉四条整体返回随机数的报告接口（−955 行）/ #312 路损校准拒绝模拟驱动 / #310 报告线 / #314 虚拟路测不再编数。
 > **代价记录**：外审 27 轮 30 条，其中 #314 一个 PR 占 12 轮 22 条；复盘后 ①内审改成每次 push 前都过（新增轻量档）②「改之前先列全集」写进三份规则文档 ③规则整理 #316（消 8 处手工同步契约、轮次上限改分级）。
@@ -55,7 +55,7 @@ P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
 SCPI 闭环依赖链：先把现场项映射到载体 → 用手册证据修判定和缺失载体 → 止住错误队列
 无限循环 → 补传输配对 → 补仪器接受/生效语义 → 接入正式 TestCase。该本地链已完成；
 P0-5 保持 ON-SITE-BLOCKED；P1-44/42/40/37 已在 Draft PR #303 完成本地实现与回归，
-本地序列现切到 **P3-18**（P1-29 已由 PR #320、P1-38 已由 PR #321、P1-27 已由 PR #322、P2-22 已由 PR #323、P2-23 已由 PR #324 收口；P2-24 本地实现完成，见上方 Current Focus）。本轮日志设计与逐片实施计划见
+本地序列现切到 **P3-18 / PDF 转义子片**（P1-29 已由 PR #320、P1-38 已由 PR #321、P1-27 已由 PR #322、P2-22 已由 PR #323、P2-23 已由 PR #324、P2-24 已由 PR #325 收口）。本轮日志设计与逐片实施计划见
 [`plans/2026-08-07-log-sprint-design.md`](plans/2026-08-07-log-sprint-design.md) /
 [`plans/2026-08-07-log-sprint.md`](plans/2026-08-07-log-sprint.md)；SCPI 闭环设计与实施计划见
 [`plans/2026-08-06-scpi-evidence-closure-design.md`](plans/2026-08-06-scpi-evidence-closure-design.md) /
@@ -3627,7 +3627,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 ## 🟢 P3 — Polish / tooling
 
-**17/19 ✅ Done，P3-18~19 ⬜ open（2026-08-02 二批队列，待开工）。** 已完成项的完整 What / Fix / Acceptance 详情已迁出 → [`roadmap-archive.md`](roadmap-archive.md)。速览：
+**17/19 ✅ Done，P3-18 🔄 分片进行中、P3-19 ⬜ open。** 已完成项的完整 What / Fix / Acceptance 详情已迁出 → [`roadmap-archive.md`](roadmap-archive.md)。速览：
 
 | ID | Item | Done |
 |----|------|------|
@@ -3648,7 +3648,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 | P3-15 | 数据/测试卫生批 | ✅ 本 PR — ①`test_feature_gaps` SQLite 隔离（实证跑前后 dev 库计划数不变）②2 flaky triage=**已被 #211 护栏修好**（受害测试自带 `.disabled` 复位 fixture，恶意排序复现失败，Discovered 行系 stale）③vendor_file 顶层声明 vs scd_config 一致性 fail-loud（create/update 双侧、最终状态判、2 变异红）④僵尸 triage：来源已断 + 存量 1201 计划/~2700 子行走 `scripts/cleanup_zombie_test_plans.py`（dry-run 默认，删除须操作员 `--execute`——批量删库不自动执行）|
 | P3-16 | 门 G-B：状态列注释 ⊇ 全仓状态字面量 | ✅ 本 PR — 落地为 test_rule_gates **G10**：真值源 = live import `TestExecution.__table__.columns['status'].comment`；写点识别双判据（`TestExecution(status=…)` 构造 + `execution/ex/test_execution` 变量属性赋值，2026-08-01 全仓 AST 普查定的；conn/session 等别的 status 域不误伤、动态值写点不归字面量门管——宁漏报不误伤）；checker 行为自测 + 变异实跑红（写入 'exploded' → 红） |
 | P3-17 | 门 G-C：文档 (动词,路径,参数,响应键) ⊇ 真实实现 | ✅ 本 PR — 落地为 test_rule_gates **G11** 双半：①散文半 = 现状文档**全 API 面** (动词,路径) ⊆ 路由表（G8 只锁计划链域；实值段通配匹配器防误杀示例；设计愿景文档/跨服务路由显式豁免并申报）②契约半 = checked-in openapi.yaml (路径,动词,参数名,2xx 响应键) ⊆ live schema —— 参数/响应键维度的机械落点（散文书写形态不可机械解析，实施时定的收窄）。首跑即抓 3 条 yaml 说谎（dashboard camelCase 三键 / category 包层 / 选择 profile 的 PUT 挂错路径）+ 2 条散文死引用，全修；openapi:generate 重生成 + GUI build 绿；双变异实跑红 |
-| P3-18 | 门/测试精化批（G11 三覆盖面 in=location/curl 动词/schema 类型 + p08 零残留站点参数化 + PDF 渲染管道其余转义入口 + 诊断序列 run endpoint 串行化 + 手写类型审计尺子改逐层递归比对）——2026-08-02 拍板，各配变异 | ⬜ |
+| P3-18 | 门/测试精化批（G11 三覆盖面 in=location/curl 动词/schema 类型 + p08 零残留站点参数化 + PDF 渲染管道其余转义入口 + 诊断序列 run endpoint 串行化 + 手写类型审计尺子改逐层递归比对）——2026-08-02 拍板，各配变异。**首片 PDF 转义已本地完成**：封面 `title`、共享步骤 `step_name`/参数键/参数值统一在 ReportLab `Paragraph` 入口转义；MIMO 组装层去掉重复预转义，避免正文显示 `&lt;`。直接 VRT `step_configs` 与 `<字母`/完整 `<tag>` 两类回归，连同报告/历史/规则门共 85 passed。 | 🔄 |
 | P3-19 | 日志/告警/留痕卫生批（tail 反向扫描字节上限 + 执行失败告警通道 + 校准 warnings DB 持久化 + 借用 acquire 的清理失败警告可见 + UXM 终止符大小写 + UXM ARFCN 三条加固 + 四个说谎死类型删死链 + `is_docker_pid` 改 allowlist）——2026-08-02 拍板。⚠️ **原含的「app.log 噪声治理」已于 2026-08-05 摘出提升为 P1-35**（用户手工测试当场要求提前），此处不再重复 | ⬜ |
 
 ---
@@ -3675,6 +3675,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 > 显式出口：①提升到 P0/P1/P2/P3；②并入已有 roadmap 项；③进入正式延后 backlog；
 > ④进入 ON-SITE-BLOCKED / HOLD / Known unknown；⑤ resolved / dropped。
 > 没有出口标记的条目仍是“待评估”，不得出现在 LOCAL-OPEN 执行队列里。
+
+- `[discovered 2026-08-11 during P2-24 external review, Codex #325 R1]` **TestCase 编辑弹窗吞掉 LabProfile 列表加载失败（P2，待 triage；不阻塞已合并的契约片）** —— `fetchAllLabProfiles().catch(() => [])` 会把瞬时失败伪装成空列表并继续允许保存；已有绑定因此没有匹配选项，操作员选择唯一可见的“不绑定”可能清掉有效绑定。后续 GUI 片应像创建弹窗一样显式展示加载错误并在列表不可用时禁用 LabProfile 修改/保存。
 
 - `[discovered 2026-08-11 during P2-24 internal review]` **启用前端 mock server 时缺少 `/lab-profiles` handler（P3，待 triage；当前 mock server 默认关闭）** —— TestCase 创建/编辑弹窗已经改走共享 client，并在 LabProfile 列表不可用时 fail-closed；未来若重新启用浏览器内 mock server，需要给 lab-profiles 补一组与 live 分页/active 过滤一致的 handler，否则该弹窗会正确阻止创建但无法完成演练。本轮不为默认关闭的测试辅助模式扩大实现。
 

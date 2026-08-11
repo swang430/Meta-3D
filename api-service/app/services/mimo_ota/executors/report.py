@@ -316,18 +316,13 @@ def _build_mimo_ota_content_data(
 
     def _cell(v):
         """parameters 单元格值卫生 (内审 F1/F3):
-        - 字符串过 XML 转义 — 渲染器把值喂 Paragraph(paraparser), `<字母` 形态
-          的自由文本 (操作员命名 "TDL-A <30ns" / DUT 名) 会被当未闭合 tag,
-          **整份报告 PDF 生成失败**; 完整 `<tag>` 形态更阴险 — 内容被静默吞掉。
-          旧顶层键时代这些值从不进 Paragraph, 本次接入渲染管道必须带转义。
+        - XML 转义统一由 PDFGenerator 的 Paragraph 入口负责；这里保留原始字符串，
+          避免 MIMO 路径预转义后被共享渲染器二次转义成可见的 ``&lt;``。
         - None → "—" (中文报告里英文字面 "None" 含义模糊; .get 默认值只兜键
           缺失, 兜不住显式 null — 值形态三态)。
-        - 列表逐条同处理 (messages; 渲染器 json.dumps 保留原字符)。"""
-        from xml.sax.saxutils import escape
+        - 列表逐条同处理 (messages; 渲染器 json.dumps 后统一转义)。"""
         if v is None:
             return "—"
-        if isinstance(v, str):
-            return escape(v)
         if isinstance(v, list):
             return [_cell(x) for x in v]
         return v
