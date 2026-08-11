@@ -200,13 +200,11 @@ export const deviceSelfcheck = async () => {
 }
 
 /**
- * DUT attach 登记 —— 补 GUI 侧唯一的入口。
+ * DUT 身份元数据登记（可选）。
  *
- * 背景：precheck 的严格 DUT 门（`precheck.py` §5b）要求
- * `measurements['dut_attach']` 存在，否则真仪表下必 FAIL；但在此之前
- * **全仓只有 Phases.tsx 里一段提示文字**告诉操作员"自己去 POST"，
- * 没有任何可点的入口 —— 现场只能手敲 curl（2026-08-07 现场实证：
- * execution 1d4a642a 就死在 "DUT attach record missing"）。
+ * 标准 MIMO OTA 吞吐量执行不再靠运行前登记满足连接门：MEASURE 会按
+ * TestCase 初始化 UXM/F64/开关矩阵并在最终测量态读取 CONN。这个接口
+ * 保留给 IMSI/车型追溯和 SIM 身份核对；调用时读取的 UE 状态只是即时参考。
  *
  * ⚠ **`session_id` 就是 `execution_id`** —— 后端
  * `commissioning.py` 的 `_execution_to_session_response()` 写的是
@@ -214,10 +212,8 @@ export const deviceSelfcheck = async () => {
  * 找一个叫 execution_id 的字段**，SessionResponse 里没有那个名字。
  *
  * ⚠ 本接口**总是成功写记录**：查不到 UE 只会让 `rrc_connected=false`
- * 并往 `warnings` 里塞原因。所以"调用成功"≠"门会过"——
- * 严格门还要 `rrc_connected===true` **且** precheck 当下再查一次
- * UE 仍然在线。调用方必须把 `rrc_connected` 如实显示出来，
- * 不能拿 `success` 冒充"DUT 已就位"。
+ * 并往 `warnings` 里塞原因。所以"调用成功"不代表正式 attach 已完成；
+ * 调用方仍须把即时状态如实显示，不能拿 `success` 冒充"DUT 已就位"。
  */
 export interface AttachDutRequest {
   imsi: string

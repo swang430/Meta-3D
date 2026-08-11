@@ -657,7 +657,10 @@ async def create_session(req: CreateSessionRequest, db: Session = Depends(get_db
             "step_descriptors": [
                 {"id": d.id, "type": d.type, "parameters": d.parameters}
                 for d in descriptors
-            ]
+            ],
+            # 与测试管理正门同一语义：静态 PRECHECK 后，由 MEASURE 按本次
+            # TestCase 初始化完整 RF 链、受控 attach，再做动态门和正式采样。
+            "managed_rf_attach": True,
         },
         executed_by="commissioning_api",
     )

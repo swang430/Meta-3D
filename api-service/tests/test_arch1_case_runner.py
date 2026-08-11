@@ -152,6 +152,10 @@ class TestExecuteHappyPath:
         assert mocked.await_count == 5  # 5 相位全跑
         cfg = ex.config or {}
         assert cfg.get("source_test_case_id") == str(source.id)
+        assert cfg.get("managed_rf_attach") is True, (
+            "正式 MIMO OTA 吞吐量执行必须声明由执行器按 TestCase 初始化仪表并"
+            "完成受控 UE attach，不能再依赖运行前的仪表/DUT 遗留状态"
+        )
         assert len(cfg.get("phase_progress") or []) == 5
         # 快照是独立行, 不是原用例
         assert ex.test_case_id != source.id

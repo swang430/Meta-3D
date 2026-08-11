@@ -3,6 +3,9 @@
 > 设计依据：`docs/plans/2026-08-10-commissioning-rf-initialization-design.md`
 >
 > 执行原则：所有硬件动作先写失败测试；不新增无手册出处的 SCPI；任何初始化失败都必须发生在 DUT attach 之前。
+>
+> 2026-08-11 状态：Task 1–4 及所有正式 MIMO OTA 入口接线已完成；Task 5 本地验证已完成，
+> 尚欠真 UXM/F64/开关矩阵上的同次 execution 现场复验。
 
 ## Task 1：钉死“初始化先于 attach”的执行契约
 

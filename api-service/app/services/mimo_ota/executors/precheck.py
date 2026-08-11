@@ -44,6 +44,9 @@ class PrecheckExecutor(IStepExecutor):
         messages: list[str] = []
         result_payload: Dict[str, Any] = {}
         warnings: list[str] = []
+        managed_rf_attach = bool(
+            (context.test_execution.config or {}).get("managed_rf_attach")
+        )
 
         # --- 1. Chamber binding ---
         chamber = lab.chamber_config
@@ -165,7 +168,7 @@ class PrecheckExecutor(IStepExecutor):
                 f"model={dut_attach.get('dut_model') or 'unspecified'} "
                 f"rrc_connected={dut_attach.get('rrc_connected')}"
             )
-        else:
+        elif not managed_rf_attach:
             if config.precheck_strict_dut:
                 # May be turned into FAIL at section 5b — the strict DUT gate
                 # only engages against a real baseStation (mock/absent BS
@@ -185,6 +188,11 @@ class PrecheckExecutor(IStepExecutor):
                     "precheck_strict_dut=False — will proceed assuming DUT "
                     "is already in chamber (audit trail in dut_pass_reason)."
                 )
+        else:
+            messages.append(
+                "DUT live gate deferred: MEASURE 将先按本次 TestCase 初始化 "
+                "UXM/F64/开关矩阵，再执行受控 attach 与动态核对"
+            )
 
         # --- 2.4b SIM 身份核对 (P2-13 Phase 2: 防插错卡) ---
         # config.sim_profile_id 指向声明卡时, 拿 **实测**(优先 ue_info_snapshot.imsi)/attach 手敲
@@ -192,7 +200,7 @@ class PrecheckExecutor(IStepExecutor):
         # IMSI 敲错), 测的不是预期那张, 结果无意义。
         # strict (precheck_strict_sim_identity, 默认 True) → FAIL; opt-out → warn。mock-aware:
         # 无 sim_profile_id / SIMProfile 不存在 / 卡无声明 imsi / 无 dut_attach → 跳过。
-        if config.sim_profile_id:
+        if config.sim_profile_id and not managed_rf_attach:
             from app.models.sim_profile import SIMProfile
             from uuid import UUID as _UUID
 
@@ -276,6 +284,12 @@ class PrecheckExecutor(IStepExecutor):
         bs = hal.drivers.get("baseStation")
         ue_cap_pass = True  # default pass when bs unavailable (no DUT to check)
         live_ue_query_state: str = "unknown"
+        if managed_rf_attach:
+            # 标准吞吐量流程尚未开始本次 TestCase 的 RF 初始化，此时读取
+            # UE 状态/能力只会把上一轮残留状态误当成本轮证据。明确记为延期，
+            # 由 MEASURE 在 UXM/F64/开关矩阵配置完成且 attach 后重新采集。
+            live_ue_query_state = "deferred"
+            result_payload["ue_capability_deferred"] = True
 
         # ⚠ **连通性**判据取小区状态，不取 UE 能力（外审 #304 P1）。
         #   `live_ue_query_state` 喂给下面 §5b 的严格 DUT 门，而
@@ -283,7 +297,11 @@ class PrecheckExecutor(IStepExecutor):
         #   命令模板全是 None，即使小区已回 CONN 它也恒报 unavailable →
         #   严格门永远判 DUT 没挂上。同 measure `_probe_ue_attached` 与
         #   attach-dut 端点，三处同源。
-        if bs is not None and hasattr(bs, "get_cell_state"):
+        if (
+            not managed_rf_attach
+            and bs is not None
+            and hasattr(bs, "get_cell_state")
+        ):
             try:
                 from app.hal.base_station import CellState
 
@@ -297,7 +315,11 @@ class PrecheckExecutor(IStepExecutor):
                 live_ue_query_state = "unknown"
 
         # 能力查询仍然做，但只用于**层数协商校验**，不再决定连通性
-        if bs is not None and hasattr(bs, "query_ue_capability"):
+        if (
+            not managed_rf_attach
+            and bs is not None
+            and hasattr(bs, "query_ue_capability")
+        ):
             try:
                 cap = await bs.query_ue_capability()
                 result_payload["ue_capability"] = cap
@@ -649,7 +671,16 @@ class PrecheckExecutor(IStepExecutor):
         # hardware still gets the strict gate — no silent P1-9 bypass.
         bs_is_real = bs is not None and not is_mock_driver(bs)
 
-        if config.precheck_strict_dut and bs_is_real:
+        if managed_rf_attach:
+            # 标准吞吐量执行的动态门必须落在本次 RF 配置真正生效、UE attach
+            # 之后。这里不是绕过：MEASURE 会消费同一个 strict 配置并 fail-loud。
+            dut_pass = True
+            dut_pass_reason = (
+                "deferred to MEASURE after TestCase-driven RF initialization "
+                "and controlled UE attach"
+            )
+            result_payload["dut_gate_deferred"] = True
+        elif config.precheck_strict_dut and bs_is_real:
             dut_pass = (
                 (not dut_attach_missing)
                 and (not dut_rrc_broken)
