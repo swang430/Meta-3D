@@ -186,6 +186,30 @@ class TestFieldUniformityRealCeSa:
             assert call.kwargs.get("ce_port") == "B1.1"
 
     @pytest.mark.asyncio
+    async def test_real_grid_cleanup_warning_reaches_result(
+        self, db, chamber, monkeypatch
+    ):
+        ce = _make_ce_d_path()
+        ce.stop_calibration_tone = AsyncMock(return_value=False)
+        sa = _make_sa(power_dbm=-85.0)
+        pos = _make_positioner()
+        _patched_hal(monkeypatch, ce=ce, sa=sa, positioner=pos)
+
+        result = await QuietZoneValidationService(
+            db, use_mock=False
+        ).run_field_uniformity_validation(
+            chamber_id=chamber.id,
+            frequency_mhz=3500.0,
+            sgh_model="SGH-01",
+            sgh_gain_dbi=10.0,
+            scan_offsets_cm=[(0.0, 0.0, 0.0)],
+        )
+
+        assert result.success
+        assert any("grid point" in warning for warning in result.warnings)
+        assert any("stop_calibration_tone" in warning for warning in result.warnings)
+
+    @pytest.mark.asyncio
     async def test_real_path_fails_uniformity_records_fail(
         self, db, chamber, monkeypatch
     ):
@@ -331,6 +355,31 @@ class TestXpdValidation:
             for call in ce.set_calibration_tone.await_args_list
         ]
         assert ce_ports_used == ["B1.1", "B1.2"]
+
+    @pytest.mark.asyncio
+    async def test_real_xpd_preserves_cleanup_warnings_from_both_acquisitions(
+        self, db, chamber, monkeypatch
+    ):
+        ce = _make_ce_d_path()
+        ce.stop_calibration_tone = AsyncMock(return_value=False)
+        powers = iter([-85.0] * 5 + [-115.0] * 5)
+        sa = MagicMock()
+        sa.setup_spectrum = AsyncMock(return_value=True)
+        sa.measure_channel_power = AsyncMock(side_effect=lambda *_: next(powers))
+        _patched_hal(monkeypatch, ce=ce, sa=sa)
+
+        result = await QuietZoneValidationService(
+            db, use_mock=False
+        ).run_xpd_validation(
+            chamber_id=chamber.id,
+            frequency_mhz=3500.0,
+            sgh_model="SGH-01",
+            sgh_gain_dbi=10.0,
+        )
+
+        assert result.success
+        assert any("XPD co-pol" in warning for warning in result.warnings)
+        assert any("XPD cross-pol" in warning for warning in result.warnings)
 
     @pytest.mark.asyncio
     async def test_real_xpd_below_threshold_records_fail(

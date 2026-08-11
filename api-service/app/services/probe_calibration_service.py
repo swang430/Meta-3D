@@ -1573,6 +1573,7 @@ class PatternCalibrationService:
                             measurement_distance_m=measurement_distance_m,
                             reference_antenna_id=reference_antenna_id,
                             turntable_id=turntable_id,
+                            warnings=warnings,
                         )
 
                     # 提取增益数据 (行优先存储: elevation 外循环, azimuth 内循环)
@@ -1644,7 +1645,8 @@ class PatternCalibrationService:
                     logger.error(f"Pattern calibration failed for probe {probe_id}: {e}")
                     return CalibrationResult(
                         success=False,
-                        message=f"Calibration failed: {str(e)}"
+                        message=f"Calibration failed: {str(e)}",
+                        warnings=warnings,
                     )
 
         db.commit()
@@ -1728,6 +1730,7 @@ class PatternCalibrationService:
         measurement_distance_m: float,
         reference_antenna_id: Optional[str],
         turntable_id: Optional[str],
+        warnings: List[str],
     ) -> List[PatternMeasurement]:
         """执行实际方向图测量 — CE+SA + positioner.
 
@@ -1790,6 +1793,12 @@ class PatternCalibrationService:
                     ce_port=ce_port,
                     probe_id=probe_id,
                     polarization=polarization,
+                    warning_sink=warnings,
+                    warning_label=(
+                        f"pattern probe {probe_id} "
+                        f"{polarization.value if hasattr(polarization, 'value') else polarization} "
+                        f"az={float(az):g} el={float(elev):g}"
+                    ),
                 )
                 gain_dbi = (
                     sa_mean_dbm
