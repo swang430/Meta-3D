@@ -651,6 +651,13 @@ class ProbePathLossCalibrationResponse(BaseModel):
     max_path_loss_db: Optional[float] = None
     min_path_loss_db: Optional[float] = None
     std_dev_db: Optional[float] = None
+    warnings: Optional[List[str]] = Field(
+        None,
+        description=(
+            "校准期间持久化的警告（含仪表清理失败）；"
+            "null=迁移前未记录"
+        ),
+    )
 
     # 元数据
     calibrated_at: UTCDateTime

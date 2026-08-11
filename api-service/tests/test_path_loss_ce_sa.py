@@ -27,6 +27,7 @@ from app.db.database import Base
 from app.hal.channel_emulator import CalibrationToneCapability
 from app.models.chamber import ChamberType, create_chamber_from_preset
 from app.models.lab_profile import LabProfile
+from app.models.probe_calibration import ProbePathLossCalibration
 from app.models.switch_topology import SwitchTopology
 from app.services.path_loss_calibration_service import (
     MultiFrequencyPathLossService,
@@ -1024,6 +1025,11 @@ class TestForLabHarvestEndToEnd:
         harvested = [w for w in result.warnings if "stop_calibration_tone 被拒" in w]
         assert harvested and harvested[0].startswith("chain conn_p0v: "), result.warnings
         assert svc._last_acquire_warnings == []
+
+        certificate = db.query(ProbePathLossCalibration).filter(
+            ProbePathLossCalibration.id == uuid.UUID(result.data["calibration_id"])
+        ).one()
+        assert certificate.warnings == result.warnings
 
     @pytest.mark.asyncio
     async def test_for_lab_failure_return_carries_cleanup_warnings(

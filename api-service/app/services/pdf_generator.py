@@ -1560,6 +1560,7 @@ class PDFGenerator:
                 if cal_type == 'path_loss':
                     headers = ['Frequency (MHz)', 'Probes', 'Provenance', 'Status', 'Calibrated At']
                     rows = [headers]
+                    warning_rows = [['Calibration', 'Warnings']]
                     for cal in cal_data[:20]:
                         verdict = cal.get('validation_pass')
                         if verdict is True:
@@ -1578,6 +1579,25 @@ class PDFGenerator:
                             provenance,
                             Paragraph(f'<font color="{status_color}">{status}</font>', self.styles['BodyText']),
                             str(cal.get('calibrated_at', '-'))[:19],
+                        ])
+                        warnings = cal.get('warnings')
+                        if warnings is None:
+                            warning_text = '? NOT RECORDED (legacy certificate)'
+                        elif warnings:
+                            warning_text = '<br/>'.join(
+                                escape(str(warning)) for warning in warnings
+                            )
+                        else:
+                            warning_text = 'None'
+                        warning_rows.append([
+                            Paragraph(
+                                escape(
+                                    f"{cal.get('frequency_mhz', '-')} MHz / "
+                                    f"{str(cal.get('calibrated_at', '-'))[:19]}"
+                                ),
+                                self.styles['BodyText'],
+                            ),
+                            Paragraph(warning_text, self.styles['BodyText']),
                         ])
                 elif cal_type == 'amplitude':
                     headers = ['Probe ID', 'Polarization', 'Status', 'Calibrated At']
@@ -1625,6 +1645,26 @@ class PDFGenerator:
                         ('PADDING', (0, 0), (-1, -1), 4),
                     ]))
                     elements.append(table)
+
+                    if cal_type == 'path_loss':
+                        elements.append(Spacer(1, 6))
+                        elements.append(Paragraph(
+                            '<b>Path Loss Warning Audit</b>',
+                            self.styles['BodyText'],
+                        ))
+                        warning_table = Table(
+                            warning_rows,
+                            colWidths=[150, 300],
+                            repeatRows=1,
+                        )
+                        warning_table.setStyle(TableStyle([
+                            ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#fff3e0')),
+                            ('FONTSIZE', (0, 0), (-1, -1), 8),
+                            ('PADDING', (0, 0), (-1, -1), 4),
+                            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                        ]))
+                        elements.append(warning_table)
 
                 if len(cal_data) > 20:
                     elements.append(Paragraph(

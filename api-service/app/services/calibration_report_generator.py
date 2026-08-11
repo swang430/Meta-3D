@@ -322,6 +322,7 @@ class CalibrationReportGenerator:
                 'max_path_loss_db': cal.max_path_loss_db,
                 'min_path_loss_db': cal.min_path_loss_db,
                 'std_dev_db': cal.std_dev_db,
+                'warnings': cal.warnings,
             })
         data['chamber_calibration']['path_loss'] = path_loss_data
 
@@ -645,6 +646,7 @@ class CalibrationReportGenerator:
                     'max_path_loss_db': cal.max_path_loss_db,
                     'min_path_loss_db': cal.min_path_loss_db,
                     'std_dev_db': cal.std_dev_db,
+                    'warnings': cal.warnings,
                     # 环境条件
                     'temperature_celsius': cal.temperature_celsius,
                     'humidity_percent': cal.humidity_percent,

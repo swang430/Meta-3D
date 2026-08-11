@@ -5,6 +5,7 @@ Path Loss Calibration Tests
 """
 import pytest
 import json
+from unittest.mock import AsyncMock
 from uuid import UUID
 from pathlib import Path
 from fastapi.testclient import TestClient
@@ -18,6 +19,8 @@ from app.db.database import Base, get_db
 from app.models.chamber import ChamberConfiguration, ChamberType, CHAMBER_PRESETS, create_chamber_from_preset
 from app.models.probe_calibration import ProbePathLossCalibration, RFChainCalibration
 from app.services.path_loss_calibration_service import (
+    CalibrationResult,
+    MultiFrequencyPathLossService,
     PathLossMeasurement,
     ProbePathLossCalibrationService,
     RFChainCalibrationService,
@@ -261,6 +264,31 @@ class TestProbePathLossCalibrationService:
         ).model_dump()
 
         assert payload["use_mock"] is True
+        assert payload["warnings"] == []
+        assert calibration.warnings == []
+
+    def test_latest_response_preserves_unknown_warnings_for_legacy_rows(
+        self, db_session, type_c_chamber,
+    ):
+        now = datetime.utcnow()
+        legacy = ProbePathLossCalibration(
+            chamber_id=type_c_chamber.id,
+            frequency_mhz=3500.0,
+            use_mock=None,
+            probe_path_losses={"0": {"path_loss_db": 10.0}},
+            sgh_model="legacy",
+            sgh_gain_dbi=10.0,
+            calibrated_at=now,
+            valid_until=now + timedelta(days=1),
+            status="valid",
+        )
+        db_session.add(legacy)
+        db_session.commit()
+        db_session.refresh(legacy)
+
+        payload = ProbePathLossCalibrationResponse.model_validate(legacy).model_dump()
+        assert legacy.warnings is None
+        assert payload["warnings"] is None
 
     @pytest.mark.asyncio
     async def test_get_latest_calibration(self, db_session, type_c_chamber):
@@ -762,6 +790,7 @@ class TestMeasurementCompensator:
         assert chamber_rows["real"]["validation_pass"] is True
         assert chamber_rows["simulated"]["validation_pass"] is None
         assert chamber_rows["unknown"]["validation_pass"] is None
+        assert chamber_rows["unknown"]["warnings"] is None
         assert chamber_data["execution_summary"] == {
             "total_executions": 1,
             "passed": 1,
@@ -781,6 +810,7 @@ class TestMeasurementCompensator:
         assert probe_rows["real"]["validation_pass"] is True
         assert probe_rows["simulated"]["validation_pass"] is None
         assert probe_rows["unknown"]["validation_pass"] is None
+        assert probe_rows["unknown"]["warnings"] is None
         assert probe_data["execution_summary"] == {
             "total_executions": 1,
             "passed": 1,
@@ -888,6 +918,60 @@ class TestPathLossCalibrationAPI:
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["warnings"] == []
+
+    def test_calibration_failure_endpoints_preserve_warning_detail(self, monkeypatch):
+        chamber_response = client.post(
+            "/api/v1/chambers/from-preset", json={"preset_type": "type_d"}
+        )
+        chamber_id = chamber_response.json()["id"]
+        failure = CalibrationResult(
+            success=False,
+            message="measurement failed",
+            warnings=["cleanup failed"],
+        )
+
+        monkeypatch.setattr(
+            RFChainCalibrationService, "calibrate_uplink", AsyncMock(return_value=failure)
+        )
+        monkeypatch.setattr(
+            RFChainCalibrationService, "calibrate_downlink", AsyncMock(return_value=failure)
+        )
+        monkeypatch.setattr(
+            MultiFrequencyPathLossService,
+            "calibrate_frequency_sweep",
+            AsyncMock(return_value=failure),
+        )
+
+        chain_payload = {
+            "chamber_id": chamber_id,
+            "chain_type": "uplink",
+            "frequency_mhz": 3500.0,
+            "calibrated_by": "wire-test",
+        }
+        uplink = client.post("/api/v1/calibration/path-loss/rf-chain/uplink", json=chain_payload)
+        chain_payload["chain_type"] = "downlink"
+        downlink = client.post("/api/v1/calibration/path-loss/rf-chain/downlink", json=chain_payload)
+        multi = client.post(
+            "/api/v1/calibration/path-loss/multi-frequency/start",
+            json={
+                "chamber_id": chamber_id,
+                "probe_ids": [0],
+                "polarization": "V",
+                "freq_start_mhz": 3400.0,
+                "freq_stop_mhz": 3500.0,
+                "freq_step_mhz": 100.0,
+                "sgh_model": "SGH-01",
+                "sgh_gain_dbi": 10.0,
+                "calibrated_by": "wire-test",
+            },
+        )
+
+        for response in (uplink, downlink, multi):
+            assert response.status_code == 500, response.text
+            assert response.json()["detail"] == {
+                "message": "measurement failed",
+                "warnings": ["cleanup failed"],
+            }
 
 
 class TestIntegration:
