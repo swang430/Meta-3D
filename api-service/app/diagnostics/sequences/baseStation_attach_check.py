@@ -25,6 +25,18 @@ from app.diagnostics.protocol import (
 from app.services.diagnostic_context import DiagnosticContext
 
 
+ATTACH_CONFIG_DEFAULTS = {
+    "frequency_mhz": 3549.99,
+    "bandwidth_mhz": 40,
+    "scs_khz": 30,
+    "band": "n78",
+    "dl_power_dbm": -46,
+    "attach_timeout_s": 15,
+    "establish_f64_passthrough": True,
+    "f64_bypass_mode": 3,
+}
+
+
 metadata = SequenceMetadata(
     name="Base station attach probe",
     description=(
@@ -43,18 +55,24 @@ metadata = SequenceMetadata(
     # agent R6 复核 F3: schema default 与 run() 默认同源 — GUI 表单按 schema
     # 预填并全量显式提交, 只改 run() 默认会被 GUI 主路径击穿
     params_schema=[
-        {"name": "frequency_mhz", "label": "频率 (MHz)", "type": "number", "default": 3549.99},
-        {"name": "bandwidth_mhz", "label": "带宽 (MHz)", "type": "number", "default": 40},
-        {"name": "scs_khz", "label": "SCS (kHz)", "type": "number", "default": 30},
-        {"name": "band", "label": "Band", "type": "string", "default": "n78"},
-        {"name": "dl_power_dbm", "label": "RS EPRE (dBm)", "type": "number", "default": -46},
-        {"name": "attach_timeout_s", "label": "Attach 等待 (秒)", "type": "number", "default": 15},
+        {"name": "frequency_mhz", "label": "频率 (MHz)", "type": "number",
+         "default": ATTACH_CONFIG_DEFAULTS["frequency_mhz"]},
+        {"name": "bandwidth_mhz", "label": "带宽 (MHz)", "type": "number",
+         "default": ATTACH_CONFIG_DEFAULTS["bandwidth_mhz"]},
+        {"name": "scs_khz", "label": "SCS (kHz)", "type": "number",
+         "default": ATTACH_CONFIG_DEFAULTS["scs_khz"]},
+        {"name": "band", "label": "Band", "type": "string",
+         "default": ATTACH_CONFIG_DEFAULTS["band"]},
+        {"name": "dl_power_dbm", "label": "RS EPRE (dBm)", "type": "number",
+         "default": ATTACH_CONFIG_DEFAULTS["dl_power_dbm"]},
+        {"name": "attach_timeout_s", "label": "Attach 等待 (秒)", "type": "number",
+         "default": ATTACH_CONFIG_DEFAULTS["attach_timeout_s"]},
         {"name": "establish_f64_passthrough", "label": "F64 直通预备 (attach 默认态)",
-         "type": "boolean", "default": True},
+         "type": "boolean", "default": ATTACH_CONFIG_DEFAULTS["establish_f64_passthrough"]},
         # 开关 2: 3=Calibration (默认, -10dB 零相位, 07-03 -96 RSRP 实证) /
         # 2=Butler (官方为建 MIMO 链设计, 4 层配置起不来时切) / 1=模型旁路
         {"name": "f64_bypass_mode", "label": "F64 直通模式 (3=校准/2=Butler/1=模型)",
-         "type": "number", "default": 3},
+         "type": "number", "default": ATTACH_CONFIG_DEFAULTS["f64_bypass_mode"]},
     ],
     safe_during_test=False,
 )
@@ -85,12 +103,12 @@ async def run(
     # agent R6 F2: 默认对齐 2026-07-03 现场实证 attach 基线 (EMQuest n78:
     # ARFCN 636666 = 3549.99 MHz / BW40 / RS EPRE -46) — 本序列的使命是复刻
     # 已实证的 attach 直通编排, 不是任意频率探索
-    freq_mhz = float(params.get("frequency_mhz", 3549.99))
-    bw_mhz = float(params.get("bandwidth_mhz", 40))
-    scs_khz = int(params.get("scs_khz", 30))
-    band = str(params.get("band", "n78"))
-    dl_power_dbm = float(params.get("dl_power_dbm", -46))
-    timeout_s = float(params.get("attach_timeout_s", 15))
+    freq_mhz = float(params.get("frequency_mhz", ATTACH_CONFIG_DEFAULTS["frequency_mhz"]))
+    bw_mhz = float(params.get("bandwidth_mhz", ATTACH_CONFIG_DEFAULTS["bandwidth_mhz"]))
+    scs_khz = int(params.get("scs_khz", ATTACH_CONFIG_DEFAULTS["scs_khz"]))
+    band = str(params.get("band", ATTACH_CONFIG_DEFAULTS["band"]))
+    dl_power_dbm = float(params.get("dl_power_dbm", ATTACH_CONFIG_DEFAULTS["dl_power_dbm"]))
+    timeout_s = float(params.get("attach_timeout_s", ATTACH_CONFIG_DEFAULTS["attach_timeout_s"]))
 
     steps: list[SequenceStepResult] = []
 
@@ -140,7 +158,10 @@ async def run(
         # start_emulation 内建 GO 前清直通 (P2-17 ①), 本序列只建立不负责恢复。
         # CE 不在 required_categories: 无真实 CE (线缆直连场景) 跳过继续;
         # CE 在场但直通失败 = fail-loud (衰落在跑 attach 大概率失败, 不硬闯)。
-        if bool(params.get("establish_f64_passthrough", True)):
+        if bool(params.get(
+            "establish_f64_passthrough",
+            ATTACH_CONFIG_DEFAULTS["establish_f64_passthrough"],
+        )):
             # Codex #201 R2 P2: lab binding 是第一道门 — HAL drivers 是全局的,
             # 线缆直连 lab (无 CE binding) 撞上别的 setup 残留的 F64 驱动时,
             # 不得去停/切不属于本 lab 的 CE。
@@ -181,7 +202,9 @@ async def run(
                 # Codex #216 P2: 不在此层 int() 强转 — JSON true 会被转成 1 绕过
                 # 驱动的 bool 拒绝 (静默切到 STATIC 1)。原始值透传, 守门单点在
                 # 驱动 set_passthrough_mode (bool/0/非法 → False 布尔契约)。
-                bypass_mode = params.get("f64_bypass_mode", 3)
+                bypass_mode = params.get(
+                    "f64_bypass_mode", ATTACH_CONFIG_DEFAULTS["f64_bypass_mode"]
+                )
                 await _step("F64 stop_emulation (直通稳态前置)", ce.stop_emulation())
                 await _step(
                     f"F64 passthrough (STATIC {bypass_mode})",

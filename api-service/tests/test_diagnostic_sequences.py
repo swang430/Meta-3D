@@ -400,6 +400,18 @@ class TestRunSequence:
         assert cfg["dl_power_dbm"] == -46
         assert cfg["band"] == "n78"
 
+    def test_attach_schema_and_runtime_defaults_have_one_declared_source(self):
+        """GUI schema 与 run() fallback 必须引用同一份 attach 默认配置。"""
+        from app.diagnostics.sequences import baseStation_attach_check as sequence
+
+        defaults = getattr(sequence, "ATTACH_CONFIG_DEFAULTS", None)
+        assert defaults is not None, "attach defaults must have one declared source"
+        schema_defaults = {
+            item["name"]: item.get("default") for item in sequence.metadata.params_schema
+        }
+        for name, expected in defaults.items():
+            assert schema_defaults[name] == expected
+
     def test_attach_check_custom_freq_converts_arfcn(
         self, db, lab_with_bs, monkeypatch
     ):
