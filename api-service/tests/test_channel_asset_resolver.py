@@ -120,11 +120,11 @@ class TestResolver:
         with pytest.raises(ChannelAssetResolveError):
             resolve_channel_asset(db, _cfg(channel_asset_id="not-a-uuid"))
 
-    def test_inactive_asset_still_resolves(self, db):
-        # 软删资产仍可解析 (历史执行引用有效); get_channel_asset 不过滤 is_active
+    def test_inactive_asset_is_not_executable(self, db):
+        # 软删只保留历史记录的可读性，不代表退役配置仍可被 MEASURE 重新执行。
         a = create_channel_asset(db, name="c2", source_type="custom_static",
                                  payload={"snapshots": [{"clusters": [_CLUSTER]}]})
         from app.services.channel_asset_service import delete_channel_asset
         delete_channel_asset(db, a.id)  # 软删
-        r = resolve_channel_asset(db, _cfg(channel_asset_id=str(a.id)))
-        assert r is not None and r.engine_mode == "mimo_first_asc"
+        with pytest.raises(ChannelAssetResolveError, match="已退役"):
+            resolve_channel_asset(db, _cfg(channel_asset_id=str(a.id)))

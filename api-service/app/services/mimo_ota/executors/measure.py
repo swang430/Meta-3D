@@ -410,6 +410,10 @@ class MeasureExecutor(IStepExecutor):
         from app.services.channel_generation.gcm_strategy import NativeModelStrategy
         from app.services.instrument_hal_service import get_hal_service, is_mock_driver
         from app.services.mimo_ota.cleanup import cleanup_chamber_instruments
+        from app.services.mimo_ota.channel_asset_resolver import (
+            ChannelAssetResolveError,
+            resolve_channel_asset,
+        )
         from app.services.mimo_ota.emulation_file_gate import (
             evaluate_emulation_file_gate,
         )
@@ -444,6 +448,26 @@ class MeasureExecutor(IStepExecutor):
                 status=StepExecutionStatus.FAILED,
                 error_message=f"LabProfile {lab.name} has no chamber_config",
             )
+
+        # P2-23: 显式 ChannelAsset 必须在任何仪表连接/配置前完成解析与 active 门。
+        # 历史记录仍可读，但退役资产不得用于新的 MEASURE。
+        try:
+            resolved_asset = resolve_channel_asset(context.db, config)
+        except ChannelAssetResolveError as e:
+            return StepExecutionResult(
+                status=StepExecutionStatus.FAILED, error_message=str(e)
+            )
+        if resolved_asset is not None:
+            config.engine_mode = resolved_asset.engine_mode
+            # ChannelAsset 是唯一信道源：清掉保存用例中的 legacy 残留引用。
+            config.cdl_profile_id = None
+            config.scd_id = None
+            if resolved_asset.cdl_model_name:
+                config.cdl_model_name = resolved_asset.cdl_model_name
+            # vendor_file authoritative：None 也必须覆盖旧 .smu，避免 declared-only
+            # 资产被保存用例中的 stale 路径绕过。
+            if resolved_asset.engine_mode == EngineMode.GCM_NATIVE.value:
+                config.emulation_file = resolved_asset.emulation_file
 
         emulator = hal.drivers.get("channelEmulator")
         channel_emulator_is_real = (
@@ -814,32 +838,6 @@ class MeasureExecutor(IStepExecutor):
             # emulation_file (ASC strategy 忽略它) + 无 SCD 频率 (不进一致性网)。SCD 解析只在
             # 下方 GCM 分支做 —— Codex on #122: 在 GCM 选了 SCD 再切 ASC 时 config 残留 scd_id,
             # 不该让 ASC run 去 resolve (SCD 删了/非法会误 fail) 或撞 SCD 频率门 (ASC 不用 SCD)。
-            # P2-16 S2: ChannelAsset 前置解析 (方案 A: 仅 channel_asset_id 显式给时介入,
-            # 翻译成现有 config 字段, 下游 engine dispatch / strategy 不变)。
-            from app.services.mimo_ota.channel_asset_resolver import (
-                ChannelAssetResolveError,
-                resolve_channel_asset,
-            )
-            try:
-                resolved_asset = resolve_channel_asset(context.db, config)
-            except ChannelAssetResolveError as e:
-                return StepExecutionResult(
-                    status=StepExecutionStatus.FAILED, error_message=str(e))
-            if resolved_asset is not None:
-                config.engine_mode = resolved_asset.engine_mode  # source_type 派生 engine 覆盖
-                # ChannelAsset 是唯一信道源: 清残留 legacy 引用 (Codex #174 P2)。saved TestCase
-                # 里残留的 cdl_profile_id/scd_id 否则会让下游 asc custom 分支 / SCD 路误触发
-                # (568 门因 channel_asset 派生 engine=ASC 不拦 standard 残留的 cdl_profile_id)。
-                config.cdl_profile_id = None
-                config.scd_id = None
-                if resolved_asset.cdl_model_name:
-                    config.cdl_model_name = resolved_asset.cdl_model_name
-                # vendor_file authoritative: **无条件**设 emulation_file (含 None) — declared_only
-                # (None) 必须清掉 saved TestCase 残留的 legacy .smu, 否则 GCM declared_only strict
-                # fail-loud 被旧 stale 文件绕过 (Codex #174 复查 P2)。
-                if resolved_asset.engine_mode == EngineMode.GCM_NATIVE.value:
-                    config.emulation_file = resolved_asset.emulation_file
-
             resolved_emulation_file = config.emulation_file
             scd_freq_identity = None
 

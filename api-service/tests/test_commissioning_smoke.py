@@ -34,7 +34,7 @@ from app.models.chamber import (
 from app.models.instrument import InstrumentCategory
 from app.models.lab_profile import LabProfile
 from app.models.channel_asset import ChannelAsset
-from app.models.test_plan import TestExecution
+from app.models.test_plan import TestCase, TestExecution
 
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -241,6 +241,32 @@ def test_strict_gcm_session_rejects_declared_only_asset_without_smu(lab, db):
 
     assert response.status_code == 422
     assert ".smu" in response.text
+
+
+def test_session_rejects_inactive_channel_asset_before_creating_rows(lab, db):
+    asset = _channel_asset(
+        db,
+        source_type="standard_3gpp",
+        allowed_targets=["asc_baked"],
+    )
+    asset.is_active = False
+    db.commit()
+
+    before_executions = db.query(TestExecution).count()
+    before_cases = db.query(TestCase).count()
+    response = client.post(
+        "/api/v1/commissioning/sessions",
+        json={
+            "lab_profile_id": str(lab.id),
+            "engine_mode": "mimo_first_asc",
+            "channel_asset_id": str(asset.id),
+        },
+    )
+
+    assert response.status_code == 422
+    assert "已退役" in response.text
+    assert db.query(TestExecution).count() == before_executions
+    assert db.query(TestCase).count() == before_cases
 
 
 # ============================================================================

@@ -375,6 +375,37 @@ class TestResolveEmulationForMeasure:
         assert freq.center_arfcn == 620000       # ChannelAsset scd_config (非 SCD 640000)
         assert freq.bandwidth_mhz == 50
 
+    def test_scd_id_rejects_inactive_vendor_asset_without_legacy_fallback(
+        self, db, ce_binding
+    ):
+        """迁移后的资产一旦退役，不得回落到同 UUID 的 legacy SCD 重新执行。"""
+        from app.models.channel_asset import ChannelAsset
+
+        scd = _create(db, ce_binding)
+        svc.associate_file(
+            db,
+            scd.id,
+            file_path="legacy_old.smu",
+            association_source="vendor_associated",
+        )
+        db.add(
+            ChannelAsset(
+                id=scd.id,
+                name="retired-vendor",
+                source_type="vendor_file",
+                payload={"scd_config": {"arfcn": 620000, "bandwidth_mhz": 50}},
+                allowed_targets=["gcm_native"],
+                associated_file_path="retired.smu",
+                is_active=False,
+            )
+        )
+        db.commit()
+
+        with pytest.raises(svc.StandardChannelError, match="已退役"):
+            svc.resolve_emulation_for_measure(
+                db, scd_id=str(scd.id), fallback_emulation_file=None
+            )
+
     def test_scd_not_found_raises(self, db):
         with pytest.raises(svc.StandardChannelNotFound):
             svc.resolve_emulation_for_measure(

@@ -203,6 +203,10 @@ def resolve_emulation_for_measure(
     except (ValueError, TypeError):
         asset = None  # 非法 UUID → 落 legacy 查表 (get_scd 会自然报错)
     if asset is not None:
+        if asset.is_active is not True:
+            raise StandardChannelError(
+                f"ChannelAsset {asset.id} 已退役，不能用于新的 GCM MEASURE 执行"
+            )
         scd_cfg = (asset.payload or {}).get("scd_config") or {}
         arfcn, bw = scd_cfg.get("arfcn"), scd_cfg.get("bandwidth_mhz")
         # 声明频率一致性网身份 (同 channel_asset_resolver vendor 路; arfcn/bw 缺则 None 不拦)

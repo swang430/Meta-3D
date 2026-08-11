@@ -481,7 +481,7 @@ def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
 
 
 def delete_channel_asset(db: Session, asset_id: UUID, *, soft: bool = True) -> None:
-    """默认软删 (is_active=False), 历史执行引用仍有效; soft=False 物理删。"""
+    """默认软删；历史记录仍可读，但该资产不可再用于新会话/MEASURE；soft=False 物理删。"""
     asset = get_channel_asset(db, asset_id)
     if soft:
         asset.is_active = False

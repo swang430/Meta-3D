@@ -71,7 +71,7 @@ class ChannelAsset(Base):
         comment="vendor_file .smu / 未来 b2 现场 .tap 关联路径")
 
     is_active = Column(Boolean, default=True, nullable=False, index=True,
-                       comment="软停用标志; 历史执行仍有效")
+                       comment="软停用标志; 历史记录仍可读，但不得用于新会话或新的 MEASURE 执行")
 
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

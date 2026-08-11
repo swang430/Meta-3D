@@ -43,6 +43,7 @@ from app.models.calibration import CalibrationCertificate
 from app.models.chamber import ChamberType, create_chamber_from_preset
 from app.models.instrument import InstrumentCategory
 from app.models.lab_profile import LabProfile
+from app.models.channel_asset import ChannelAsset
 from app.models.probe_calibration import (
     CalibrationStatus,
     ProbePathLossCalibration,
@@ -227,6 +228,7 @@ def _build_context(
     cal_cert: Optional[CalibrationCertificate],
     strict_mode: bool,
     frequency_hz: Optional[float] = None,
+    channel_asset_id: Optional[str] = None,
 ) -> StepExecutionContext:
     """Build a TestCase + TestExecution + StepExecutionContext pinned to the
     given strict mode and (detached) cal cert.
@@ -243,6 +245,7 @@ def _build_context(
         lab_profile_id=lab.id,
         config_overrides={
             **({"frequency_hz": frequency_hz} if frequency_hz is not None else {}),
+            **({"channel_asset_id": channel_asset_id} if channel_asset_id is not None else {}),
             "precheck_strict_cal": strict_mode,
             # P1-9 (2026-05-19): dut gate disabled so it doesn't fight the
             # cal_pass test signal — dut gate is covered by
@@ -276,6 +279,45 @@ def _build_context(
         lab_profile=lab,
         calibration_certificate=cal_cert,
     )
+
+
+@pytest.mark.asyncio
+async def test_direct_measure_rejects_inactive_asset_before_hardware_connect(
+    db,
+    lab,
+    hal_with_mocks,
+):
+    """已有用例在资产退役后重跑，也必须在任何仪表连接前 fail-loud。"""
+
+    class _MustNotConnect:
+        async def connect(self):
+            raise AssertionError("inactive asset gate ran after hardware connect")
+
+    asset = ChannelAsset(
+        name=f"retired-{uuid.uuid4().hex[:8]}",
+        source_type="standard_3gpp",
+        allowed_targets=["asc_baked"],
+        payload={"cdl_model_name": "UMa CDL-C NLOS"},
+        is_active=False,
+    )
+    db.add(asset)
+    db.commit()
+    db.refresh(asset)
+
+    hal_with_mocks.drivers["positioner"] = _MustNotConnect()
+    hal_with_mocks.drivers["baseStation"] = _MustNotConnect()
+    ctx = _build_context(
+        db,
+        lab,
+        cal_cert=None,
+        strict_mode=False,
+        channel_asset_id=str(asset.id),
+    )
+
+    result = await MeasureExecutor().execute(ctx)
+
+    assert result.status == StepExecutionStatus.FAILED
+    assert "已退役" in (result.error_message or "")
 
 
 # ---------------------------------------------------------------------------
