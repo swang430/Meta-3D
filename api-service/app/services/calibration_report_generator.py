@@ -38,6 +38,19 @@ from app.models.channel_calibration import (
 logger = logging.getLogger(__name__)
 
 
+def _path_loss_provenance(calibration: ProbePathLossCalibration) -> str:
+    if calibration.use_mock is True:
+        return "simulated"
+    if calibration.use_mock is False:
+        return "real"
+    return "unknown"
+
+
+def _path_loss_validation_pass(calibration: ProbePathLossCalibration) -> bool:
+    """Formal calibration reports accept only explicitly real records."""
+    return calibration.status == "valid" and calibration.use_mock is False
+
+
 class CalibrationReportGenerator:
     """Service for generating calibration reports"""
 
@@ -236,7 +249,7 @@ class CalibrationReportGenerator:
         path_loss_data = []
         for cal in calibrations:
             total += 1
-            is_valid = cal.status == 'valid'
+            is_valid = _path_loss_validation_pass(cal)
             if is_valid:
                 passed += 1
             path_loss_data.append({
@@ -244,6 +257,8 @@ class CalibrationReportGenerator:
                 'frequency_mhz': cal.frequency_mhz,
                 'num_probes': len(cal.probe_path_losses) if cal.probe_path_losses else 0,
                 'validation_pass': is_valid,
+                'use_mock': cal.use_mock,
+                'provenance': _path_loss_provenance(cal),
                 'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                 'calibrated_by': cal.calibrated_by,
                 'valid_until': str(cal.valid_until) if cal.valid_until else None,
@@ -549,7 +564,7 @@ class CalibrationReportGenerator:
             path_loss_data = []
             for cal in calibrations:
                 total += 1
-                is_valid = cal.status == 'valid'
+                is_valid = _path_loss_validation_pass(cal)
                 if is_valid:
                     passed += 1
 
@@ -562,6 +577,8 @@ class CalibrationReportGenerator:
                     'frequency_mhz': cal.frequency_mhz,
                     'num_probes': num_probes,
                     'validation_pass': is_valid,
+                    'use_mock': cal.use_mock,
+                    'provenance': _path_loss_provenance(cal),
                     'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                     'calibrated_by': cal.calibrated_by,
                     'valid_until': str(cal.valid_until) if cal.valid_until else None,

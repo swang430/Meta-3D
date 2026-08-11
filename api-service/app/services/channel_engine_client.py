@@ -56,6 +56,7 @@ logger = logging.getLogger("app.channel_engine")
 # Channel Engine 服务地址
 CE_BASE_URL = os.environ.get("CHANNEL_ENGINE_URL", "http://localhost:8001")
 CE_TIMEOUT_SECONDS = 60.0
+_AUTO_SELECT_PATH_LOSS = object()
 
 # 硬件产物存储根目录
 HARDWARE_ARTIFACTS_DIR = os.path.join(
@@ -496,6 +497,7 @@ class ChannelEngineClient:
         frequency_hz: float,
         chamber: ChamberConfiguration,
         operating_mode: Optional[str] = None,
+        path_loss_calibration: Any = _AUTO_SELECT_PATH_LOSS,
     ) -> List[Dict[str, Any]]:
         """
         从 PostgreSQL 查询校准数据，构造 calibration_data.entries[]。
@@ -512,17 +514,21 @@ class ChannelEngineClient:
         entries = []
         frequency_mhz = frequency_hz / 1e6
 
-        # 查询最新的路损校准
-        # P2-11 Phase 3 (Codex on PR #111): 按请求的 switch operating_mode 过滤 cert
-        # (精确优先, 退回 legacy NULL), 否则多 mode 同频校准的 lab 会喂错 RF 通路的
-        # per-port cable_loss/probe_gain 给 channel gen。
-        latest_cal = select_latest_path_loss_by_mode(
-            self.db.query(ProbePathLossCalibration).filter(
-                ProbePathLossCalibration.chamber_id == chamber_id,
-                ProbePathLossCalibration.status == CalibrationStatus.VALID.value,
-            ),
-            operating_mode,
-        )
+        if path_loss_calibration is _AUTO_SELECT_PATH_LOSS:
+            # Legacy/general caller: select from DB. MIMO OTA MEASURE passes its
+            # already frequency/mode/provenance-filtered result explicitly so
+            # this helper cannot resurrect a rejected mock/unknown certificate.
+            latest_cal = select_latest_path_loss_by_mode(
+                self.db.query(ProbePathLossCalibration).filter(
+                    ProbePathLossCalibration.chamber_id == chamber_id,
+                    ProbePathLossCalibration.status == CalibrationStatus.VALID.value,
+                ),
+                operating_mode,
+            )
+        else:
+            # ``None`` is meaningful: the caller explicitly rejected/missed a
+            # certificate and requests chamber defaults, not a second DB query.
+            latest_cal = path_loss_calibration
 
         num_ports = chamber.num_probes * (2 if chamber.num_polarizations >= 2 else 1)
 

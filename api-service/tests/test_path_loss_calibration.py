@@ -31,6 +31,7 @@ from app.services.calibration_orchestrator import (
     CALIBRATION_CONFIG,
 )
 from app.services.measurement_compensation import MeasurementCompensator
+from app.services.calibration_report_generator import CalibrationReportGenerator
 
 
 # Create test database
@@ -491,6 +492,144 @@ class TestMeasurementCompensator:
         assert details["valid"] is True
         # Compensated should be different from raw
         assert compensated != raw_power
+
+    @pytest.mark.parametrize(
+        "use_mock, expected_provenance",
+        [(True, "simulated"), (None, "unknown")],
+        ids=["mock", "legacy-unknown"],
+    )
+    def test_real_compensation_refuses_untrusted_path_loss_and_returns_no_kpi(
+        self,
+        db_session,
+        type_c_chamber,
+        use_mock,
+        expected_provenance,
+    ):
+        now = datetime.utcnow()
+        db_session.add(ProbePathLossCalibration(
+            chamber_id=type_c_chamber.id,
+            frequency_mhz=3500.0,
+            use_mock=use_mock,
+            probe_path_losses={"0": {"path_loss_db": 123.45}},
+            sgh_model="Known source",
+            sgh_gain_dbi=10.0,
+            avg_path_loss_db=123.45,
+            status="valid",
+            calibrated_at=now,
+            valid_until=now + timedelta(days=1),
+        ))
+        db_session.commit()
+
+        compensated, details = MeasurementCompensator(
+            db_session, use_mock=False,
+        ).compensate_trp_measurement(
+            -50.0,
+            type_c_chamber.id,
+            probe_id=0,
+            polarization="V",
+            frequency_mhz=3500.0,
+        )
+
+        assert compensated is None
+        assert details["valid"] is False
+        assert details["path_loss_db"] is None
+        assert details["total_compensation_db"] is None
+        assert details["path_loss_provenance"] == expected_provenance
+
+        status = CalibrationOrchestrator(
+            db_session, use_mock=False,
+        ).check_calibration_status(type_c_chamber.id, 3500.0)[
+            CalibrationItem.PROBE_PATH_LOSS
+        ]
+        assert status.is_valid is False
+        assert expected_provenance in status.message
+
+    def test_apply_trp_api_does_not_publish_mock_compensated_value(
+        self, db_session, type_c_chamber,
+    ):
+        now = datetime.utcnow()
+        db_session.add(ProbePathLossCalibration(
+            chamber_id=type_c_chamber.id,
+            frequency_mhz=3500.0,
+            use_mock=True,
+            probe_path_losses={"0": {"path_loss_db": 123.45}},
+            sgh_model="Known mock",
+            sgh_gain_dbi=10.0,
+            avg_path_loss_db=123.45,
+            status="valid",
+            calibrated_at=now,
+            valid_until=now + timedelta(days=1),
+        ))
+        db_session.commit()
+
+        response = client.post(
+            "/api/v1/calibration/compensation/apply-trp",
+            params={
+                "chamber_id": str(type_c_chamber.id),
+                "probe_id": 0,
+                "raw_power_dbm": -50.0,
+                "frequency_mhz": 3500.0,
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["compensated_power_dbm"] is None
+        assert payload["compensation_applied_db"] is None
+        assert payload["details"]["valid"] is False
+        assert payload["details"]["path_loss_provenance"] == "simulated"
+
+        probe_response = client.get(
+            f"/api/v1/calibration/path-loss/probe/{type_c_chamber.id}/0",
+            params={"frequency_mhz": 3500.0},
+        )
+        assert probe_response.status_code == 404
+
+        status_response = client.get(
+            f"/api/v1/calibration/orchestrator/status/{type_c_chamber.id}",
+            params={"frequency_mhz": 3500.0},
+        )
+        assert status_response.status_code == 200
+        path_status = status_response.json()["calibrations"]["probe_path_loss"]
+        assert path_status["is_valid"] is False
+        assert "simulated" in path_status["message"]
+
+    def test_calibration_reports_disclose_and_fail_mock_path_loss(
+        self, db_session, type_c_chamber,
+    ):
+        now = datetime.utcnow()
+        db_session.add(ProbePathLossCalibration(
+            chamber_id=type_c_chamber.id,
+            frequency_mhz=3500.0,
+            use_mock=True,
+            probe_path_losses={"0": {"path_loss_db": 123.45}},
+            sgh_model="Known mock",
+            sgh_gain_dbi=10.0,
+            avg_path_loss_db=123.45,
+            status="valid",
+            calibrated_at=now,
+            valid_until=now + timedelta(days=1),
+        ))
+        db_session.commit()
+
+        generator = CalibrationReportGenerator(db_session)
+        chamber_data = generator._collect_chamber_calibration_data(
+            type_c_chamber.id, 3500.0,
+        )
+        chamber_row = chamber_data["chamber_calibration"]["path_loss"][0]
+        assert chamber_row["use_mock"] is True
+        assert chamber_row["provenance"] == "simulated"
+        assert chamber_row["validation_pass"] is False
+        assert chamber_data["execution_summary"]["passed"] == 0
+
+        probe_data = generator._collect_probe_data(
+            calibration_type="path_loss",
+        )
+        probe_row = probe_data["probe_calibration"]["path_loss"][0]
+        assert probe_row["use_mock"] is True
+        assert probe_row["provenance"] == "simulated"
+        assert probe_row["validation_pass"] is False
+        assert probe_data["execution_summary"]["passed"] == 0
 
 
 class TestPathLossCalibrationAPI:

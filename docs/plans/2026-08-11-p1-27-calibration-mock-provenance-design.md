@@ -43,6 +43,9 @@ live API/调用方；本片不把坏死链伪装成第三个生产入口，已�
 
 两条正常生成路径在落库时直接写入服务实例的 `self.use_mock`。latest API 显式返回三态，
 precheck 与 measure payload 记录 `path_loss_calibration_use_mock` 便于 GUI、日志和报告审计。
+真实测量的 ASC 信道生成、TRP/TIS 补偿、校准状态与校准报告同样只消费显式
+`use_mock=False` 的记录；模拟或来源未知的数值可以在演练上下文展示，但必须同行披露来源，
+且不得计入正式 KPI、有效状态或报告通过数。
 
 strict 判定保持现有运行时硬件来源：仅当当前 live channel emulator 是真实驱动时启用。此时
 `path_loss_valid`、证书总体状态和来源白名单共同决定 `cal_pass`。显式 bypass 或 mock CE 仍不

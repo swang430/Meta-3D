@@ -101,7 +101,7 @@ Run the full precheck calibration test file and confirm all previous cartesian/f
 
 **Step 3: Close the direct-MEASURE bypass**
 
-Resolve the selected path-loss certificate before any instrument `connect()`. For a real channel emulator, only explicit `use_mock=False` may be applied. Strict mode returns FAILED before hardware touch; explicit bypass continues without applying the untrusted certificate and records its id/provenance for audit. Mock CE rehearsal may continue using mock calibration because its entire measurement is already excluded from formal KPI.
+Resolve the selected path-loss certificate before any instrument `connect()`. For a real channel emulator, only explicit `use_mock=False` may be applied. Strict mode returns FAILED before hardware touch; explicit bypass continues without applying the untrusted certificate and records its id/provenance for audit. Pass that already-filtered certificate into ASC channel generation so it cannot independently re-query an untrusted row. Apply the same explicit-real allowlist to TRP/TIS compensation, calibration status and formal calibration-report pass counts. Mock CE rehearsal may continue using mock calibration because its entire measurement is already excluded from formal KPI, but its reports must disclose simulated provenance and stay failed/unverified.
 
 **Step 4: Run adjacent regressions**
 

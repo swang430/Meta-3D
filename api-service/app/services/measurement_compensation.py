@@ -17,7 +17,7 @@ CAL-06: TIS 测量补偿
 
 参考: docs/design/MPAC-OTA-Chamber-Topology.md
 """
-from typing import Dict, Optional, List, Tuple
+from typing import Any, Dict, Optional, List, Tuple
 from uuid import UUID
 from sqlalchemy.orm import Session
 import numpy as np
@@ -46,7 +46,7 @@ class MeasurementCompensator:
         probe_id: int,
         polarization: str,
         frequency_mhz: float
-    ) -> Dict[str, float]:
+    ) -> Dict[str, Any]:
         """
         获取 TRP 测量补偿值
 
@@ -88,13 +88,25 @@ class MeasurementCompensator:
         # TRP 补偿: P_dut = P_measured + PathLoss - UL_Gain
         path_loss = factors.get("path_loss_db", 0.0)
         ul_gain = factors.get("ul_gain_db", 0.0)
+        if not factors.get("path_loss_usable", False) or path_loss <= 0:
+            return {
+                "path_loss_db": None,
+                "ul_gain_db": ul_gain,
+                "total_compensation_db": None,
+                "valid": False,
+                "path_loss_provenance": factors.get(
+                    "path_loss_provenance", "missing"
+                ),
+                "warning": "No explicitly real path-loss calibration available",
+            }
         total = path_loss - ul_gain
 
         return {
             "path_loss_db": path_loss,
             "ul_gain_db": ul_gain,
             "total_compensation_db": total,
-            "valid": path_loss > 0  # 至少需要路损数据
+            "valid": True,
+            "path_loss_provenance": factors.get("path_loss_provenance"),
         }
 
     def get_tis_compensation(
@@ -103,7 +115,7 @@ class MeasurementCompensator:
         probe_id: int,
         polarization: str,
         frequency_mhz: float
-    ) -> Dict[str, float]:
+    ) -> Dict[str, Any]:
         """
         获取 TIS 测量补偿值
 
@@ -140,13 +152,25 @@ class MeasurementCompensator:
         # TIS 补偿: P_at_DUT = P_delivered - PathLoss + DL_Gain
         path_loss = factors.get("path_loss_db", 0.0)
         dl_gain = factors.get("dl_gain_db", 0.0)
+        if not factors.get("path_loss_usable", False) or path_loss <= 0:
+            return {
+                "path_loss_db": None,
+                "dl_gain_db": dl_gain,
+                "total_compensation_db": None,
+                "valid": False,
+                "path_loss_provenance": factors.get(
+                    "path_loss_provenance", "missing"
+                ),
+                "warning": "No explicitly real path-loss calibration available",
+            }
         total = dl_gain - path_loss
 
         return {
             "path_loss_db": path_loss,
             "dl_gain_db": dl_gain,
             "total_compensation_db": total,
-            "valid": path_loss > 0
+            "valid": True,
+            "path_loss_provenance": factors.get("path_loss_provenance"),
         }
 
     def compensate_trp_measurement(
@@ -156,7 +180,7 @@ class MeasurementCompensator:
         probe_id: int,
         polarization: str,
         frequency_mhz: float
-    ) -> Tuple[float, Dict[str, float]]:
+    ) -> Tuple[Optional[float], Dict[str, Any]]:
         """
         对 TRP 测量值进行补偿
 
@@ -174,6 +198,8 @@ class MeasurementCompensator:
             chamber_id, probe_id, polarization, frequency_mhz
         )
 
+        if not compensation.get("valid", False):
+            return None, compensation
         compensated = raw_power_dbm + compensation["total_compensation_db"]
 
         return compensated, compensation
@@ -185,7 +211,7 @@ class MeasurementCompensator:
         probe_id: int,
         polarization: str,
         frequency_mhz: float
-    ) -> Tuple[float, Dict[str, float]]:
+    ) -> Tuple[Optional[float], Dict[str, Any]]:
         """
         对 TIS 测量值进行补偿
 
@@ -205,6 +231,8 @@ class MeasurementCompensator:
 
         # P_at_DUT = P_delivered + total_compensation
         # 其中 total = dl_gain - path_loss
+        if not compensation.get("valid", False):
+            return None, compensation
         power_at_dut = delivered_power_dbm + compensation["total_compensation_db"]
 
         return power_at_dut, compensation
@@ -215,7 +243,7 @@ class MeasurementCompensator:
         probe_ids: List[int],
         polarization: str,
         frequency_mhz: float
-    ) -> Dict[int, Dict[str, float]]:
+    ) -> Dict[int, Dict[str, Any]]:
         """
         批量获取多个探头的 TRP 补偿值
 
@@ -247,7 +275,7 @@ class MeasurementCompensator:
         frequency_mhz: float,
         theta_step_deg: float = 15.0,
         phi_step_deg: float = 15.0
-    ) -> Tuple[float, Dict[str, any]]:
+    ) -> Tuple[Optional[float], Dict[str, Any]]:
         """
         计算补偿后的 TRP
 
@@ -268,6 +296,17 @@ class MeasurementCompensator:
         compensations = self.get_bulk_trp_compensation(
             chamber_id, probe_ids, polarization, frequency_mhz
         )
+        invalid_probe_ids = [
+            probe_id
+            for probe_id, compensation in compensations.items()
+            if not compensation.get("valid", False)
+        ]
+        if invalid_probe_ids:
+            return None, {
+                "valid": False,
+                "invalid_probe_ids": invalid_probe_ids,
+                "compensations": compensations,
+            }
 
         # 补偿每个探头
         compensated_powers = {}
@@ -365,7 +404,7 @@ def get_system_compensation_summary(
     if not chamber:
         return {"error": "Chamber not found"}
 
-    orchestrator = CalibrationOrchestrator(db, use_mock=True)
+    orchestrator = CalibrationOrchestrator(db, use_mock=False)
 
     # 获取典型探头的补偿值 (探头 0, V 极化)
     factors = orchestrator.get_compensation_factors(
@@ -388,11 +427,24 @@ def get_system_compensation_summary(
         "has_pa": chamber.has_pa,
         "has_duplexer": chamber.has_duplexer,
         "typical_compensation": {
-            "path_loss_db": factors.get("path_loss_db", 0),
+            "path_loss_db": (
+                factors.get("path_loss_db")
+                if factors.get("path_loss_usable", False)
+                else None
+            ),
             "ul_gain_db": factors.get("ul_gain_db", 0),
             "dl_gain_db": factors.get("dl_gain_db", 0),
-            "trp_compensation_db": factors.get("trp_compensation_db", 0),
-            "tis_compensation_db": factors.get("tis_compensation_db", 0),
+            "trp_compensation_db": (
+                factors.get("trp_compensation_db")
+                if factors.get("path_loss_usable", False)
+                else None
+            ),
+            "tis_compensation_db": (
+                factors.get("tis_compensation_db")
+                if factors.get("path_loss_usable", False)
+                else None
+            ),
+            "path_loss_provenance": factors.get("path_loss_provenance"),
         },
         "calibration_status": {
             "valid_calibrations": valid_count,

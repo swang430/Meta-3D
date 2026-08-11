@@ -187,7 +187,7 @@ def get_latest_path_loss_calibration(
         chamber_id: 暗室配置 ID
         frequency_mhz: 目标频率，用于查找最接近的校准
     """
-    service = ProbePathLossCalibrationService(db, use_mock=True)
+    service = ProbePathLossCalibrationService(db, use_mock=False)
     calibration = service.get_latest_calibration(chamber_id, frequency_mhz)
 
     if not calibration:
@@ -209,7 +209,7 @@ def get_probe_path_loss(
 
     用于测量补偿。
     """
-    service = ProbePathLossCalibrationService(db, use_mock=True)
+    service = ProbePathLossCalibrationService(db, use_mock=False)
     path_loss = service.get_path_loss_for_probe(
         chamber_id, probe_id, polarization, frequency_mhz
     )
@@ -438,7 +438,7 @@ def get_required_calibrations(
     if not chamber:
         raise HTTPException(status_code=404, detail="Chamber configuration not found")
 
-    orchestrator = CalibrationOrchestrator(db, use_mock=True)
+    orchestrator = CalibrationOrchestrator(db, use_mock=False)
     required = orchestrator.get_required_calibrations(chamber)
     optional = orchestrator.get_optional_calibrations(chamber)
 
@@ -461,7 +461,7 @@ def get_calibration_status(
 
     返回每个校准项的当前状态和有效期。
     """
-    orchestrator = CalibrationOrchestrator(db, use_mock=True)
+    orchestrator = CalibrationOrchestrator(db, use_mock=False)
     statuses = orchestrator.check_calibration_status(chamber_id, frequency_mhz)
 
     if not statuses:
@@ -561,7 +561,7 @@ def get_trp_compensation(
 
     用于测量前查询补偿参数。
     """
-    compensator = MeasurementCompensator(db, use_mock=True)
+    compensator = MeasurementCompensator(db, use_mock=False)
     compensation = compensator.get_trp_compensation(
         chamber_id, probe_id, polarization, frequency_mhz
     )
@@ -585,7 +585,7 @@ def get_tis_compensation(
     """
     获取 TIS 测量补偿值
     """
-    compensator = MeasurementCompensator(db, use_mock=True)
+    compensator = MeasurementCompensator(db, use_mock=False)
     compensation = compensator.get_tis_compensation(
         chamber_id, probe_id, polarization, frequency_mhz
     )
@@ -631,7 +631,7 @@ def apply_trp_compensation(
 
     输入原始测量值，返回补偿后的值。
     """
-    compensator = MeasurementCompensator(db, use_mock=True)
+    compensator = MeasurementCompensator(db, use_mock=False)
     compensated, details = compensator.compensate_trp_measurement(
         raw_power_dbm, chamber_id, probe_id, polarization, frequency_mhz
     )
@@ -658,7 +658,7 @@ def apply_tis_compensation(
 
     输入信道仿真器发射功率，返回 DUT 接收功率。
     """
-    compensator = MeasurementCompensator(db, use_mock=True)
+    compensator = MeasurementCompensator(db, use_mock=False)
     power_at_dut, details = compensator.compensate_tis_measurement(
         delivered_power_dbm, chamber_id, probe_id, polarization, frequency_mhz
     )

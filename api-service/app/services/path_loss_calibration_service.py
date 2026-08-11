@@ -1301,6 +1301,14 @@ class ProbePathLossCalibrationService:
         calibration = self.get_latest_calibration(chamber_id, frequency_mhz)
         if not calibration:
             return None
+        if not self.use_mock and calibration.use_mock is not False:
+            provenance = "simulated" if calibration.use_mock is True else "unknown"
+            logger.warning(
+                "Refusing %s path-loss calibration %s for real compensation",
+                provenance,
+                calibration.id,
+            )
+            return None
 
         probe_data = calibration.probe_path_losses.get(str(probe_id))
         if not probe_data:

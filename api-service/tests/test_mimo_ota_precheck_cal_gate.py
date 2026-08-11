@@ -48,6 +48,7 @@ from app.models.probe_calibration import (
     ProbePathLossCalibration,
 )
 from app.models.test_plan import TestExecution
+from app.services.channel_engine_client import ChannelEngineClient
 from app.services.mimo_ota import build_mimo_ota_test_case
 from app.services.mimo_ota.executors.measure import (
     MeasureExecutor,
@@ -662,6 +663,33 @@ def test_path_loss_verified_flag_is_an_explicit_real_allowlist(
 ):
     """报告中的“已验证”不能只等于“证书存在”。"""
     assert _is_path_loss_certificate_verified(use_mock) is expected
+
+
+def test_channel_generation_cannot_requery_a_rejected_mock_certificate(
+    db, chamber,
+):
+    """MEASURE 已拒绝 cert 后，ASC/GCM calibration entries 必须消费同一个
+    过滤结果；不能自己再查数据库把 mock 数值捞回来。"""
+    _seed_path_loss_cal(db, chamber.id, use_mock=True)
+    entries = ChannelEngineClient(db)._query_calibration_entries(
+        chamber.id,
+        3500e6,
+        chamber,
+        path_loss_calibration=None,
+    )
+
+    fallback_loss = chamber.typical_cable_loss_db
+    if chamber.has_pa and chamber.pa_gain_db:
+        fallback_loss -= chamber.pa_gain_db
+    if chamber.has_duplexer and chamber.duplexer_insertion_loss_db:
+        fallback_loss += chamber.duplexer_insertion_loss_db
+
+    assert entries
+    assert all(
+        entry["cable_loss_db"] == pytest.approx(float(fallback_loss))
+        for entry in entries
+    )
+    assert all(entry["cable_loss_db"] != 5.0 for entry in entries)
 
 
 # ---------------------------------------------------------------------------
