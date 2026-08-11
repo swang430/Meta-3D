@@ -51,8 +51,8 @@ export interface CreateSessionParams {
   f64OutputLevelDbm?: number
   emulationFile?: string
   f64BypassMode?: number
-  // Lab-smoke mode: relax the strict precheck gates (P1-8 cal / P1-9 DUT) so a
-  // local rehearsal without a real DUT / calibration can get past 系统预检.
+  // Lab-smoke mode: relax strict safety gates（cal 在 PRECHECK；managed 流程的
+  // DUT 动态门在 MEASURE）so a local rehearsal without real DUT/cal can proceed.
   // Omitted (undefined) → backend keeps its strict default (True) → on-site
   // real first-call stays protected. Only sent when the operator opts in.
   labSmoke?: boolean
@@ -143,7 +143,7 @@ export const buildCreateSessionBody = (
     // P2-11/P2-13: "强制跳过严格门" = 统一的暗室首测 (路径 A) bypass —— 一次降级**全部**
     // 8 道 strict 门 (cal/dut/频率/.smu/switch mode/cell_config/dut_capability/sim_identity),
     // 否则真仪表 bring-up 会撞上它们。dut_capability = DUTProfile 声明门, sim_identity = SIMProfile
-    // 防插错卡门 (都规划期/attach 校验), 跟其它门一起 bypass (feedback_strict_gate_extend_bypass_toggle:
+    // 防插错卡门（managed 流程在 MEASURE attach 后校验）, 跟其它门一起 bypass (feedback_strict_gate_extend_bypass_toggle:
     // 加门同步 4 处, 这次提前补)。镜像 test_commissioning_strict_gate_overrides。
     body.precheck_strict_dut = false
     body.precheck_strict_cal = false
@@ -200,13 +200,11 @@ export const deviceSelfcheck = async () => {
 }
 
 /**
- * DUT attach 登记 —— 补 GUI 侧唯一的入口。
+ * DUT 身份元数据登记（可选）。
  *
- * 背景：precheck 的严格 DUT 门（`precheck.py` §5b）要求
- * `measurements['dut_attach']` 存在，否则真仪表下必 FAIL；但在此之前
- * **全仓只有 Phases.tsx 里一段提示文字**告诉操作员"自己去 POST"，
- * 没有任何可点的入口 —— 现场只能手敲 curl（2026-08-07 现场实证：
- * execution 1d4a642a 就死在 "DUT attach record missing"）。
+ * 标准 MIMO OTA 吞吐量执行不再靠运行前登记满足连接门：MEASURE 会按
+ * TestCase 初始化 UXM/F64/开关矩阵并在最终测量态读取 CONN。这个接口
+ * 保留给 IMSI/车型追溯和 SIM 身份核对；调用时读取的 UE 状态只是即时参考。
  *
  * ⚠ **`session_id` 就是 `execution_id`** —— 后端
  * `commissioning.py` 的 `_execution_to_session_response()` 写的是
@@ -214,10 +212,8 @@ export const deviceSelfcheck = async () => {
  * 找一个叫 execution_id 的字段**，SessionResponse 里没有那个名字。
  *
  * ⚠ 本接口**总是成功写记录**：查不到 UE 只会让 `rrc_connected=false`
- * 并往 `warnings` 里塞原因。所以"调用成功"≠"门会过"——
- * 严格门还要 `rrc_connected===true` **且** precheck 当下再查一次
- * UE 仍然在线。调用方必须把 `rrc_connected` 如实显示出来，
- * 不能拿 `success` 冒充"DUT 已就位"。
+ * 并往 `warnings` 里塞原因。所以"调用成功"不代表正式 attach 已完成；
+ * 调用方仍须把即时状态如实显示，不能拿 `success` 冒充"DUT 已就位"。
  */
 export interface AttachDutRequest {
   imsi: string

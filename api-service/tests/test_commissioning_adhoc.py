@@ -324,7 +324,7 @@ class TestAdhocPhaseEndpoint:
 
 
 class TestSessionsListFilter:
-    def test_ad_hoc_runs_hidden_by_default(self, lab):
+    def test_ad_hoc_runs_hidden_by_default(self, lab, db):
         """Ad-hoc rows shouldn't appear in the regular sessions list."""
         # Create a regular session via the legacy endpoint
         regular = client.post(
@@ -333,6 +333,12 @@ class TestSessionsListFilter:
         )
         assert regular.status_code == 201
         regular_id = regular.json()["session_id"]
+        regular_execution = db.query(TestExecution).filter(
+            TestExecution.id == uuid.UUID(regular_id)
+        ).first()
+        assert (regular_execution.config or {}).get("managed_rf_attach") is True, (
+            "暗室首测与测试管理必须复用按 TestCase 初始化后受控 attach 的标准流程"
+        )
 
         # And an ad-hoc one
         adhoc = client.post(

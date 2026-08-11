@@ -33,7 +33,10 @@ import inspect
 import logging
 import math
 import random
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.chamber import ChamberConfiguration
 from app.services.mimo_ota.executors._helpers import (
@@ -65,6 +68,60 @@ _MOCK_WINDOW_FLOOR_S = 0.05
 # 单 azimuth 内不检查 (统计窗口本身已 >= 50ms, 中途掉线被 measure_throughput_window
 # 内部 retry 兜底). azimuth 间隔检查能在转台移动期间发现, 是最佳折衷.
 _DUT_HEALTH_CHECK_EVERY_N_AZIMUTHS = 1
+
+
+def _managed_attach_failure(
+    *,
+    managed: bool,
+    strict: bool,
+    base_station_is_real: bool,
+    milestone: Dict[str, Any],
+) -> Optional[str]:
+    """返回标准受控 attach 动态门的失败原因；通过/不适用返回 ``None``。
+
+    PRECHECK 在 ``managed_rf_attach`` 流程里只做静态门，所以真实连接门必须
+    在本次 TestCase 的 UXM/F64/开关配置已建立后补回。mock 不产生真 UE
+    事实；显式 opt-out 只留下审计记录，不在这里假造失败。
+    """
+    if not managed or not strict or not base_station_is_real:
+        return None
+    if milestone.get("attached") is True:
+        return None
+    return (
+        "受控 UE attach 动态门失败：本次 TestCase 的 RF 测量态未确认 CONN。"
+        f"{milestone.get('reason') or '小区连接状态未知'}"
+    )
+
+
+def _managed_sim_identity_unverified_failure(
+    *,
+    managed: bool,
+    strict: bool,
+    sim_profile_id: Optional[str],
+    sim_profile_exists: bool,
+    declared_imsi: Optional[str],
+    observed_imsi: Optional[str],
+) -> Optional[str]:
+    """严格 SIM 身份门无法形成真实观测时 fail-closed。
+
+    操作员登记的 IMSI 只能用于追溯和非严格审计，不能证明当前 attach 的
+    就是那张卡；严格门只接受 UXM/UE 的本次实测 IMSI。
+    """
+    if not managed or not strict or not sim_profile_id:
+        return None
+    if not sim_profile_exists:
+        return (
+            f"严格 SIM 身份门无法验证：sim_profile_id={sim_profile_id} 不存在"
+        )
+    if not declared_imsi:
+        return "严格 SIM 身份门无法验证：所选 SIMProfile 没有声明 IMSI"
+    if not observed_imsi:
+        return (
+            "严格 SIM 身份门无法验证：受控 attach 后未获得 UXM/UE 实测 IMSI；"
+            "操作员登记值不能证明实际插入的 SIM。若仪表方言暂不支持实测 IMSI，"
+            "只能显式设置 precheck_strict_sim_identity=False 以未验证方式运行"
+        )
+    return None
 
 
 def _call_topology_getter(emulator, getter_name: str):
@@ -1411,6 +1468,258 @@ class MeasureExecutor(IStepExecutor):
                         measurements={"attach_milestones": milestones},
                     )
 
+            # --- 标准受控 attach 动态门：在最终测量态统一确认 ---
+            # 三种合法路径收敛到同一个判据：
+            #   ① 正常流程：本次信道已 GO，确认 fading_attach；
+            #   ② Butler 扶持：直通 attach 后已撤梯并 GO，复用上面的确认；
+            #   ③ 明确的无衰落基线：最终态就是 bypass，确认 bypass_attach。
+            # 这一步必须早于任何 AUTOSET/方位采样，避免 PRECHECK 延后了门却
+            # 没有在真实配置生效后补回来。
+            managed_rf_attach = bool(
+                (context.test_execution.config or {}).get("managed_rf_attach")
+            )
+            final_attach_key = (
+                "bypass_attach"
+                if config.f64_bypass_mode is not None
+                and not config.f64_fade_after_attach
+                else "fading_attach"
+            )
+            if milestones[final_attach_key] is None:
+                milestones[final_attach_key] = await _probe_ue_attached(
+                    "bypass" if final_attach_key == "bypass_attach" else "fading"
+                )
+            final_attach = milestones[final_attach_key]
+            logger.info(
+                "[%s] 标准受控 attach 最终门 %s = %s (%s)",
+                context.test_execution.id,
+                final_attach_key,
+                final_attach.get("attached"),
+                final_attach.get("reason"),
+            )
+
+            # PRECHECK 在标准流程中不会碰尚未初始化的 UE 状态；能力与身份
+            # 信息必须在本次 RF 配置下 attach 成功后读取。失败只记 unknown，
+            # 不用默认值冒充真实协商结果。
+            ue_info_snapshot: Optional[Dict[str, Any]] = None
+            dynamic_gate_warnings: List[str] = []
+            base_station_is_real = not is_mock_driver(base_station)
+            if (
+                managed_rf_attach
+                and base_station_is_real
+                and hasattr(base_station, "query_ue_capability")
+            ):
+                try:
+                    queried = await base_station.query_ue_capability()
+                    if (
+                        isinstance(queried, dict)
+                        and queried.get("source") != "unavailable"
+                    ):
+                        ue_info_snapshot = queried
+                    else:
+                        dynamic_gate_warnings.append(
+                            "受控 attach 后 UE 能力/身份回读不可用；能力交叉核对保持 unknown"
+                        )
+                except Exception as exc:  # noqa: BLE001 — 回读失败不伪造结果
+                    dynamic_gate_warnings.append(
+                        f"受控 attach 后 UE 能力/身份查询失败: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+
+            # 自动把本次“配置后 attach”的事实写回 execution；若操作员此前登记
+            # 了 IMSI/车型则保留那些元数据，只更新本次实时连接事实。不能拿
+            # SIMProfile 的声明 IMSI 填成“实测 IMSI”，那会形成自证假通过。
+            execution_measurements = dict(
+                context.test_execution.measurements or {}
+            )
+            controlled_attach = dict(
+                execution_measurements.get("dut_attach") or {}
+            )
+            # 每次执行先清掉旧的验真时间；本轮只有真实 UXM 明确回 CONN 才会
+            # 重新写入。mock / False / unknown 只能证明“检查过”，不能证明通过。
+            controlled_attach.pop("verified_at", None)
+            if ue_info_snapshot is not None:
+                controlled_attach["ue_info_snapshot"] = ue_info_snapshot
+            else:
+                # 旧快照可能来自初始化前的人工登记/上一轮执行。动态回读失败时
+                # 必须删掉它，不能配上本轮 verified_at 后伪装成本轮观测；IMSI、
+                # DUT 型号等人工元数据仍由 controlled_attach 保留。
+                controlled_attach.pop("ue_info_snapshot", None)
+            attach_checked_at = datetime.now(timezone.utc).isoformat()
+            controlled_attach.update(
+                {
+                    "rrc_connected": final_attach.get("attached"),
+                    "controlled_attach": True,
+                    "attach_stage": final_attach.get("stage"),
+                    "checked_at": attach_checked_at,
+                    "simulated": bool(final_attach.get("simulated")),
+                    "verification_reason": final_attach.get("reason"),
+                    "rf_configuration": {
+                        "pcell_frequency_hz": pcell.frequency_hz,
+                        "pcell_bandwidth_mhz": pcell.bandwidth_mhz,
+                        "pcell_band": pcell.band,
+                        "component_carriers": len(ccs),
+                        "engine_mode": config.engine_mode,
+                        "channel_asset_id": config.channel_asset_id,
+                        "channel_model": config.cdl_model_name,
+                        "switch_mode_id": config.switch_mode_id,
+                        "f64_bypass_mode": config.f64_bypass_mode,
+                        "f64_fade_after_attach": config.f64_fade_after_attach,
+                    },
+                }
+            )
+            if base_station_is_real and final_attach.get("attached") is True:
+                controlled_attach["verified_at"] = attach_checked_at
+            # SIM 身份门：优先使用 UXM 实测 IMSI；仪器方言未提供时才使用
+            # 操作员提前登记的 IMSI。绝不能拿 SIMProfile 的声明 IMSI 回填成
+            # “实测值”再跟自身比较，那会制造防插错卡假通过。
+            sim_identity_failure: Optional[str] = None
+            if managed_rf_attach and config.sim_profile_id:
+                from uuid import UUID as _UUID
+
+                from app.models.sim_profile import SIMProfile
+                from app.services.mimo_ota.sim_identity_check import (
+                    check_sim_identity,
+                )
+
+                try:
+                    sim_profile_uuid = _UUID(str(config.sim_profile_id))
+                except (ValueError, TypeError, AttributeError):
+                    sim_profile_uuid = None
+                sim_profile = (
+                    context.db.query(SIMProfile)
+                    .filter(SIMProfile.id == sim_profile_uuid)
+                    .first()
+                    if sim_profile_uuid is not None
+                    else None
+                )
+                observed_imsi = (ue_info_snapshot or {}).get("imsi")
+                registered_imsi = controlled_attach.get("imsi")
+                identity_imsi = observed_imsi or registered_imsi
+                imsi_source = "observed" if observed_imsi else "declared"
+                unverified_failure = _managed_sim_identity_unverified_failure(
+                    managed=managed_rf_attach,
+                    strict=config.precheck_strict_sim_identity,
+                    sim_profile_id=str(config.sim_profile_id),
+                    sim_profile_exists=sim_profile is not None,
+                    declared_imsi=(sim_profile.imsi if sim_profile is not None else None),
+                    observed_imsi=observed_imsi,
+                )
+                if unverified_failure is not None:
+                    sim_identity_failure = unverified_failure
+                if sim_profile is None:
+                    dynamic_gate_warnings.append(
+                        f"sim_profile_id={config.sim_profile_id} 不存在；SIM 身份保持 unknown"
+                    )
+                elif sim_profile.imsi and identity_imsi:
+                    sim_identity = check_sim_identity(
+                        declared_imsi=sim_profile.imsi,
+                        attached_imsi=identity_imsi,
+                    )
+                    sim_identity_payload = {
+                        "sim_profile": sim_profile.name,
+                        "consistent": sim_identity.consistent,
+                        "verified": imsi_source == "observed",
+                        "imsi_source": imsi_source,
+                        "declared_imsi": sim_identity.declared_imsi_masked,
+                        "attached_imsi": sim_identity.attached_imsi_masked,
+                    }
+                    controlled_attach["sim_identity_check"] = sim_identity_payload
+                    if (
+                        not sim_identity.consistent
+                        and config.precheck_strict_sim_identity
+                    ):
+                        sim_identity_failure = (
+                            f"SIM 身份不符：TestCase 选择的卡 '{sim_profile.name}' "
+                            f"({sim_identity.declared_imsi_masked}) 与受控 attach 后的 "
+                            f"{imsi_source} IMSI ({sim_identity.attached_imsi_masked}) 不一致"
+                        )
+                    elif imsi_source != "observed":
+                        dynamic_gate_warnings.append(
+                            "SIM IMSI 仅来自操作员登记，未由 UXM/UE 实测；"
+                            "该比对只作未验证审计"
+                        )
+                else:
+                    dynamic_gate_warnings.append(
+                        "受控 attach 后没有可核对的 IMSI；SIM 身份保持 unknown"
+                    )
+
+            # DUT 声明 vs 本次 attach 后实测能力仍是 audit-only，不覆盖声明、
+            # 不单独判失败；吞吐所需层数/调制硬门由后面的 cell config 一致性负责。
+            if managed_rf_attach and config.dut_profile_id:
+                from app.models.dut_profile import DUTProfile
+                from app.services.mimo_ota.dut_capability_crosscheck import (
+                    canonical_modulation,
+                    check_dut_capability_mismatch,
+                )
+                from uuid import UUID as _UUID
+
+                try:
+                    dut_profile_uuid = _UUID(str(config.dut_profile_id))
+                except (ValueError, TypeError, AttributeError):
+                    dut_profile_uuid = None
+                dut_profile = (
+                    context.db.query(DUTProfile)
+                    .filter(DUTProfile.id == dut_profile_uuid)
+                    .first()
+                    if dut_profile_uuid is not None
+                    else None
+                )
+                if dut_profile is not None:
+                    cap = ue_info_snapshot or {}
+                    observed_source = cap.get("source")
+                    obs_mod_dl = canonical_modulation(cap.get("max_modulation_dl"))
+                    obs_mod_ul = canonical_modulation(cap.get("max_modulation_ul"))
+                    mismatch = check_dut_capability_mismatch(
+                        declared_max_dl_layers=dut_profile.max_dl_layers,
+                        declared_max_ul_layers=dut_profile.max_ul_layers,
+                        declared_max_modulation_dl=dut_profile.max_modulation_dl,
+                        declared_max_modulation_ul=dut_profile.max_modulation_ul,
+                        observed_max_dl_layers=cap.get("max_dl_layers"),
+                        observed_max_ul_layers=cap.get("max_ul_layers"),
+                        observed_max_modulation_dl=obs_mod_dl,
+                        observed_max_modulation_ul=obs_mod_ul,
+                        observed_available=(observed_source == "real_ue"),
+                    )
+                    controlled_attach["dut_capability_observed"] = {
+                        "dut_profile_id": str(dut_profile.id),
+                        "dut_profile_name": dut_profile.name,
+                        "source": observed_source,
+                        "max_dl_layers": cap.get("max_dl_layers"),
+                        "max_ul_layers": cap.get("max_ul_layers"),
+                        "max_modulation_dl": obs_mod_dl,
+                        "max_modulation_ul": obs_mod_ul,
+                    }
+                    controlled_attach[
+                        "dut_capability_mismatch"
+                    ] = mismatch.to_payload()
+            if dynamic_gate_warnings:
+                controlled_attach["warnings"] = [
+                    *(controlled_attach.get("warnings") or []),
+                    *dynamic_gate_warnings,
+                ]
+            execution_measurements["dut_attach"] = controlled_attach
+            context.test_execution.measurements = execution_measurements
+            flag_modified(context.test_execution, "measurements")
+            context.db.commit()
+
+            attach_failure = _managed_attach_failure(
+                managed=managed_rf_attach,
+                strict=config.precheck_strict_dut,
+                base_station_is_real=base_station_is_real,
+                milestone=final_attach,
+            )
+            dynamic_failure = attach_failure or sim_identity_failure
+            if dynamic_failure is not None:
+                return StepExecutionResult(
+                    status=StepExecutionStatus.FAILED,
+                    error_message=dynamic_failure,
+                    measurements={
+                        "attach_milestones": milestones,
+                        "controlled_dut_attach": controlled_attach,
+                    },
+                    warnings=dynamic_gate_warnings,
+                )
+
             # --- P2-11 Phase 6: UXM cell config 下发后一致性 (吞吐链版频率校验) ---
             # set_cell_config + RRC reconfig 后, 拿 **UE 协商能力** (max_dl_layers /
             # max_modulation_dl) 跟 TestCase 请求比 —— 请求超 UE 能力 (4 层但 UE 只 2 /
@@ -1866,6 +2175,7 @@ class MeasureExecutor(IStepExecutor):
                         }
                     ),
                 },
+                "controlled_dut_attach": controlled_attach,
             }
 
             # ``asc_files_loaded`` is ASC-specific (ExternalWaveformStrategy /

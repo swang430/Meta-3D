@@ -369,6 +369,33 @@ async def test_precheck_dut_gate_cartesian(
         )
 
 
+@pytest.mark.asyncio
+async def test_managed_rf_attach_defers_live_dut_gate_until_measure(
+    db, lab, chamber, hal_with_mocks,
+):
+    """标准吞吐量流程在 PRECHECK 时还没有初始化仪表，不能要求旧 attach。
+
+    静态预检应通过并明确记录“动态门延后”；随后 MEASURE 必须在按 TestCase
+    初始化并受控 attach 后重新执行真实连接门。这里仅锁定前半段边界。
+    """
+    _seed_valid_cal(db, chamber.id)
+    ctx = _build_context(db, lab, dut_attach=None, strict_mode=True)
+    cfg = dict(ctx.test_execution.config or {})
+    cfg["managed_rf_attach"] = True
+    ctx.test_execution.config = cfg
+    db.commit()
+
+    result = await PrecheckExecutor().execute(ctx)
+    measurements = result.measurements or {}
+
+    assert result.status == StepExecutionStatus.SUCCESS
+    assert measurements.get("dut_pass") is True
+    assert measurements.get("dut_gate_deferred") is True
+    assert measurements.get("live_ue_query_state") == "deferred"
+    assert measurements.get("ue_capability_deferred") is True
+    assert "MEASURE" in (measurements.get("dut_pass_reason") or "")
+
+
 # ---------------------------------------------------------------------------
 # Runtime mock-awareness (Codex on PR #75): mock/absent BS auto-skips the gate
 # ---------------------------------------------------------------------------

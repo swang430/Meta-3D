@@ -255,3 +255,149 @@ class TestColdStartRfInitializationOrdering:
         assert initialization.count("StepExecutionStatus.FAILED") >= 8, (
             "RF 初始化的 fail-loud 分支没有完整位于 start_signaling 之前"
         )
+
+
+class TestManagedAttachDynamicGate:
+    """标准吞吐量流程不能只在 PRECHECK 延后门，却不在初始化后补回来。"""
+
+    def test_gate_requires_real_connected_readback(self):
+        from app.services.mimo_ota.executors import measure
+
+        gate = getattr(measure, "_managed_attach_failure", None)
+        assert callable(gate), "缺少 MEASURE 内受控 attach 的动态门"
+        assert gate(
+            managed=True,
+            strict=True,
+            base_station_is_real=True,
+            milestone={"attached": True, "reason": "ok"},
+        ) is None
+        failure = gate(
+            managed=True,
+            strict=True,
+            base_station_is_real=True,
+            milestone={"attached": False, "reason": "cell ON != CONN"},
+        )
+        assert failure and "cell ON != CONN" in failure
+
+    def test_mock_and_explicit_opt_out_do_not_fake_a_failure(self):
+        from app.services.mimo_ota.executors import measure
+
+        gate = getattr(measure, "_managed_attach_failure", None)
+        assert callable(gate), "缺少 MEASURE 内受控 attach 的动态门"
+        unknown = {"attached": None, "simulated": True, "reason": "mock"}
+        assert gate(
+            managed=True, strict=True, base_station_is_real=False,
+            milestone=unknown,
+        ) is None
+        assert gate(
+            managed=True, strict=False, base_station_is_real=True,
+            milestone={"attached": False, "reason": "not connected"},
+        ) is None
+
+    def test_strict_sim_identity_fails_without_observed_imsi(self):
+        """操作员手填 IMSI 不能替代 UXM 对本次真实 SIM 的观测。"""
+        from app.services.mimo_ota.executors import measure
+
+        gate = getattr(measure, "_managed_sim_identity_unverified_failure", None)
+        assert callable(gate), "缺少严格 SIM 身份 unknown 的 fail-closed 门"
+        failure = gate(
+            managed=True,
+            strict=True,
+            sim_profile_id="sim-profile-1",
+            sim_profile_exists=True,
+            declared_imsi="460001234567890",
+            observed_imsi=None,
+        )
+        assert failure and "实测 IMSI" in failure
+
+    def test_sim_identity_unknown_can_only_continue_with_explicit_opt_out(self):
+        from app.services.mimo_ota.executors import measure
+
+        gate = getattr(measure, "_managed_sim_identity_unverified_failure", None)
+        assert callable(gate), "缺少严格 SIM 身份 unknown 的 fail-closed 门"
+        common = {
+            "managed": True,
+            "sim_profile_id": "sim-profile-1",
+            "sim_profile_exists": True,
+            "declared_imsi": "460001234567890",
+            "observed_imsi": None,
+        }
+        assert gate(strict=False, **common) is None
+        assert gate(strict=True, **{**common, "observed_imsi": "460001234567890"}) is None
+
+    def test_strict_sim_identity_fails_when_selected_profile_is_unusable(self):
+        from app.services.mimo_ota.executors import measure
+
+        gate = getattr(measure, "_managed_sim_identity_unverified_failure", None)
+        assert callable(gate), "缺少严格 SIM 身份 unknown 的 fail-closed 门"
+        assert gate(
+            managed=True,
+            strict=True,
+            sim_profile_id="missing-profile",
+            sim_profile_exists=False,
+            declared_imsi=None,
+            observed_imsi=None,
+        )
+
+    def test_final_attach_gate_runs_before_azimuth_sampling(self):
+        import inspect
+        from app.services.mimo_ota.executors import measure
+
+        src = inspect.getsource(measure)
+        gate = src.index("_managed_attach_failure(", src.index("class MeasureExecutor"))
+        sampling = src.index("# --- Per-azimuth measurement loop", gate)
+        assert gate < sampling
+
+    def test_deferred_identity_and_capability_checks_run_after_attach(self):
+        import inspect
+        from app.services.mimo_ota.executors import measure
+
+        src = inspect.getsource(measure)
+        start = src.index("# --- 标准受控 attach 动态门")
+        end = src.index("# --- P2-11 Phase 6", start)
+        block = src[start:end]
+        assert "query_ue_capability" in block
+        assert "check_sim_identity" in block
+        assert "precheck_strict_sim_identity" in block
+        assert "_managed_sim_identity_unverified_failure(" in block, (
+            "严格 SIM 身份 unknown 的 fail-closed 门未接入受控 attach 执行路径"
+        )
+        assert "check_dut_capability_mismatch" in block
+        assert "不能拿" in block and "声明 IMSI" in block
+        assert 'controlled_attach.pop("ue_info_snapshot", None)' in block, (
+            "动态回读失败时仍保留初始化前的 UE 快照，会让旧能力值跟新的 "
+            "verified_at 一起被误认成本轮证据"
+        )
+        assert '"checked_at": attach_checked_at' in block
+        assert 'controlled_attach.pop("verified_at", None)' in block
+        assert (
+            'base_station_is_real and final_attach.get("attached") is True'
+            in block
+        ), "mock/失败的 attach 也写 verified_at，会制造已经验真的假证据"
+
+    def test_commissioning_ui_does_not_require_preinitialized_attach(self):
+        from pathlib import Path
+
+        ui = (
+            Path(__file__).parents[2]
+            / "gui/src/components/Commissioning/index.tsx"
+        ).read_text(encoding="utf-8")
+        assert "DUT attach 登记（严格门必需）" not in ui
+        assert "不登记则真仪表下 precheck 必 FAIL" not in ui
+        assert "DUT 身份登记（可选）" in ui
+        assert "正式连接由执行器在按 TestCase 初始化后确认" in ui
+
+    def test_measure_phase_surfaces_deferred_capability_crosscheck(self):
+        from pathlib import Path
+
+        phases = (
+            Path(__file__).parents[2]
+            / "gui/src/components/Commissioning/Phases.tsx"
+        ).read_text(encoding="utf-8")
+        start = phases.index("export function MIMOTestPhase")
+        end = phases.index("export function AnalysisPhase", start)
+        body = phases[start:end]
+        assert "DUTCapabilityCrosscheckCard" in body
+        assert "controlled_dut_attach" in body, (
+            "MEASURE 产生的能力差异没有路由到现有交叉核对卡片"
+        )

@@ -247,13 +247,14 @@ def cancel_case_execution(
 
 
 class AttachDutRequest(BaseModel):
-    """前端在测试启动前调用本接口"宣布"DUT 已放入暗室并发起 attach。
+    """为某次执行登记可选的 DUT 身份元数据，并读取一次即时 UE 状态。
 
     服务侧记录 IMSI / phone_number 到 execution.measurements['dut_attach'],
-    precheck phase 拿这个跟 baseStation.query_ue_capability 报告的 UE 信息
-    比对, 不匹配则 FAIL (避免对错车测试)。
+    供后续 SIM 身份核对和执行追溯使用。标准 MIMO OTA 吞吐量流程不会把
+    这次初始化前的读取当作正式连接证据：MEASURE 会按 TestCase 配置完
+    UXM/F64/开关矩阵后重新确认 CONN，并更新本次受控 attach 记录。
 
-    工艺前提: DUT 已物理放入暗室静区, SIM 已插入并能 attach 到 UXM。
+    调用本接口不是标准流程的必需前置条件；调用成功也不代表正式 attach 通过。
     """
     imsi: str
     phone_number: Optional[str] = None
@@ -278,14 +279,14 @@ async def attach_dut(
     request: AttachDutRequest,
     db: Session = Depends(get_db),
 ):
-    """Phase 2l: 把 DUT IMSI/型号写入 TestExecution + 验证 RRC 状态。
+    """Phase 2l: 把 DUT IMSI/型号写入 TestExecution + 读取即时 RRC 状态。
 
     服务流程:
       1. 找 TestExecution (必须存在且未 running)
       2. 查 HAL baseStation (若未连/无 query_ue_capability 则降级仅记元数据)
       3. 写 execution.measurements['dut_attach'] 含 imsi / dut_model /
          attached_at / rrc_connected / ue_info_snapshot
-      4. precheck phase 拿到这个数据做 IMSI 一致性检查
+      4. 标准吞吐量流程在 MEASURE 初始化后覆盖实时连接事实，并做 SIM 身份核对
     """
     execution = db.query(TestExecution).filter(TestExecution.id == execution_id).first()
     if not execution:

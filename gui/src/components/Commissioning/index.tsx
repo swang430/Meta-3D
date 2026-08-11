@@ -56,20 +56,20 @@ export function CommissioningSandbox() {
   const [emulationFile, setEmulationFile] = useState('')
   const [channelAssetId, setChannelAssetId] = useState<string | null>(null)
   const [channelAssets, setChannelAssets] = useState<ChannelAsset[]>([])
-  // Lab-smoke: relax strict precheck gates (P1-8 cal / P1-9 DUT) for local
-  // rehearsal without a real DUT / calibration. Default OFF = strict ON, so
-  // on-site real first-call keeps the fail-loud protection (P1-9 intent).
+  // Lab-smoke: relax strict safety gates（cal 在 PRECHECK；managed DUT 动态门在
+  // MEASURE）for local rehearsal without a real DUT/calibration. Default OFF
+  // keeps on-site first-call fail-loud protection enabled.
   const [labSmoke, setLabSmoke] = useState(false)
   // 2026-08-07 现场: 只放过校准证书那一道门。跟 labSmoke 分开是因为 labSmoke
-  // 一开就废掉全部 8 道 —— 为了绕开"证书未绑"而开它, 会把 DUT 门也一起废掉,
-  // 「登记 DUT」按钮就白点了。校准没做完 vs DUT 能不能 attach 是两件事。
+  // 一开就废掉全部 8 道。校准没做完 vs DUT 能不能在本次 RF 配置下 attach
+  // 是两件事，后者仍由 MEASURE 的受控 attach 动态门负责。
   const [calBypass, setCalBypass] = useState(false)
   // U-5: 暗室首测前逐设备自检 (借鉴转台/EMCenter standalone 验证, 首测前先单独验各仪表通)
   const [selfcheck, setSelfcheck] = useState<api.DeviceSelfcheckResult | null>(null)
   const [selfcheckLoading, setSelfcheckLoading] = useState(false)
-  // DUT attach 登记 —— 严格门要的那条记录, 在此之前 GUI 无入口 (只有 Phases.tsx
-  // 一段"自己去 POST"的提示文字)。2026-08-07 现场实证: precheck 死在
-  // "DUT attach record missing", 操作员只能手敲 curl。
+  // DUT 身份元数据登记（可选）。正式连接不靠这条记录判定：执行器会先按
+  // TestCase 初始化 UXM/F64/开关矩阵，再读取 UXM CONN 状态。这里保留 IMSI/
+  // 型号输入，供 SIM 身份核对与执行追溯使用。
   const [dutImsi, setDutImsi] = useState<string>('')
   const [dutModel, setDutModel] = useState<string>('')
   const [attachResult, setAttachResult] = useState<api.AttachDutResponse | null>(null)
@@ -475,7 +475,7 @@ export function CommissioningSandbox() {
                 checked={calBypass}
                 onChange={(e) => setCalBypass(e.currentTarget.checked)}
                 label="只跳过校准证书门（其余 7 道照常守着）"
-                description="lab 未绑校准证书（P0-3 未做完）但 DUT 能真 attach 时用这个 —— DUT 门 / 频率门 / .smu 门等仍然生效。别为了绕证书去开下面那个总开关，那会把 DUT 门一起废掉。"
+                description="lab 未绑校准证书（P0-3 未做完）但要继续验证真实 RF 链时使用。DUT 动态门、频率门和 .smu 门仍然生效。"
               />
               <Switch
                 checked={labSmoke}
@@ -577,7 +577,7 @@ export function CommissioningSandbox() {
             checked={calBypass}
             onChange={(e) => setCalBypass(e.currentTarget.checked)}
             label="只跳过校准证书门（其余 7 道照常守着）"
-            description="lab 未绑校准证书（P0-3 未做完）但 DUT 能真 attach 时用这个 —— DUT 门 / 频率门 / .smu 门等仍然生效。切换后点「重置会话」生效。别为了绕证书去开下面那个总开关，那会把 DUT 门一起废掉，「登记 DUT」就白点了。"
+            description="lab 未绑校准证书（P0-3 未做完）但要继续验证真实 RF 链时使用。DUT 动态门、频率门和 .smu 门仍然生效；切换后点「重置会话」生效。"
           />
           <Switch
             checked={labSmoke}
@@ -640,15 +640,14 @@ export function CommissioningSandbox() {
           )}
 
           <Divider my={4} />
-          {/* DUT attach 登记 —— precheck §5b 严格门要的那条记录。
-              ⚠ session.session_id **就是** execution_id (后端
-              _execution_to_session_response 写的 session_id=str(execution.id))。 */}
+          {/* DUT 身份元数据登记（可选）。正式连接由 MEASURE 在按 TestCase
+              初始化后自动确认。⚠ session.session_id **就是** execution_id。 */}
           <div>
-            <Text size="sm" fw={500}>DUT attach 登记（严格门必需）</Text>
+            <Text size="sm" fw={500}>DUT 身份登记（可选）</Text>
             <Text size="xs" c="dimmed" mb="xs">
-              把 DUT 的 IMSI 登记到本次执行，并<strong>当场向 UXM 查一次 UE 状态</strong>。
-              先把手机放进静区、插好 SIM、确认已 attach 到 UXM 再点。
-              不登记则真仪表下 precheck 必 FAIL（“DUT attach record missing”）。
+              可提前登记 IMSI 和型号用于防插错卡及报告追溯；此处读取的当前 UE 状态
+              只作参考。<strong>正式连接由执行器在按 TestCase 初始化后确认</strong>，
+              不依赖仪表上一轮遗留状态。
             </Text>
             <Group align="flex-end" gap="xs">
               <TextInput
@@ -712,8 +711,8 @@ export function CommissioningSandbox() {
               mt="xs"
               title={
                 attachResult.rrc_connected
-                  ? '已登记，UE 在线'
-                  : '已登记，但 UE 未确认在线 —— 严格门仍会 FAIL'
+                  ? '身份已登记；当前 UE 在线（仅供参考）'
+                  : '身份已登记；当前 UE 未在线（正式流程会在初始化后重试）'
               }
             >
               <Group gap="xs" mb={4}>
@@ -739,8 +738,8 @@ export function CommissioningSandbox() {
               )}
               {!attachResult.rrc_connected && (
                 <Text size="xs" c="dimmed" mt={4}>
-                  严格门要三个条件同时成立：记录存在 + rrc_connected=true +
-                  precheck 当下再查 UE 仍在线。只写记录不够。
+                  这不会让 PRECHECK 因“缺少登记”失败；MEASURE 会先配置本次
+                  UXM/F64/开关状态，再等待并核对 CONN，失败才停止正式测量。
                 </Text>
               )}
             </Alert>

@@ -99,7 +99,8 @@ export interface MIMOOTAConfiguration {
   dut_profile_id?: string
   // strict: 请求超声明时 FAIL (默认 true); false=降级 warning 继续 (bring-up 旁路)。
   precheck_strict_dut_capability?: boolean
-  // P2-13 Phase 3: 引用一张 SIMProfile (测试卡)。precheck 拿 attach IMSI 跟声明核对 (防插错卡)。
+  // P2-13 Phase 3: 引用一张 SIMProfile。managed 流程在 MEASURE 受控 attach 后核对
+  // UXM/UE 实测 IMSI；legacy/unmanaged 流程仍在 PRECHECK 核对已有 attach 快照。
   sim_profile_id?: string
   // strict: attach IMSI ≠ 声明 → FAIL (默认 true); false=降级 warning。
   precheck_strict_sim_identity?: boolean
@@ -289,7 +290,7 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
       : dutOptions
   // strict 默认 true (后端 default), 仅当显式 false 才关。
   const dutStrict = value.precheck_strict_dut_capability !== false
-  // P2-13 Phase 3: 列卡池供选 (precheck 拿 attach IMSI 跟它声明 IMSI 比, 防插错卡)。
+  // P2-13 Phase 3: 列卡池供选（managed 流程在 MEASURE attach 后核对实测 IMSI）。
   const simProfilesQuery = useQuery({
     queryKey: ['sim-profiles'],
     queryFn: () => fetchSIMProfiles(false),
@@ -617,8 +618,8 @@ export function MIMOOTAConfigForm({ value, onChange, readOnly = false }: Props) 
               nothingFoundMessage="无匹配的 SIM 卡"
             />
             <Switch
-              label="严格校验 (attach IMSI 不符则 fail)"
-              description="关 = 仅降级 warning 继续 (bring-up 旁路)"
+              label="严格校验（实测 IMSI 缺失或不符则 fail）"
+              description="managed 流程在受控 attach 后核对 UXM/UE 实测值；关 = 未验证 warning 继续"
               checked={simStrict}
               onChange={(e) =>
                 update('precheck_strict_sim_identity', e.currentTarget.checked)

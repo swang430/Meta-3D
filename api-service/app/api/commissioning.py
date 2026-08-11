@@ -246,7 +246,8 @@ class CreateSessionRequest(BaseModel):
     # configuration 绕道 (scripts/onsite-run-channel-throughput.sh 固化的临时路)。
     # None = 不带资产, 走 cdl_model_name 等显式参数 (兼容不变)。
     channel_asset_id: Optional[UUID] = None
-    # Lab-smoke opt-outs for the strict precheck gates (P1-8 cal / P1-9 DUT).
+    # Lab-smoke opt-outs for strict safety gates：cal 在 PRECHECK；managed
+    # execution 的 DUT / SIM 动态门在 MEASURE 完成本次 RF 初始化和 attach 后执行。
     # Default None = don't override → config schema default (True, strict) applies,
     # so on-site real first-call keeps the fail-loud protection. The GUI's
     # "Lab smoke" toggle sends False to rehearse locally without a real DUT /
@@ -657,7 +658,10 @@ async def create_session(req: CreateSessionRequest, db: Session = Depends(get_db
             "step_descriptors": [
                 {"id": d.id, "type": d.type, "parameters": d.parameters}
                 for d in descriptors
-            ]
+            ],
+            # 与测试管理正门同一语义：静态 PRECHECK 后，由 MEASURE 按本次
+            # TestCase 初始化完整 RF 链、受控 attach，再做动态门和正式采样。
+            "managed_rf_attach": True,
         },
         executed_by="commissioning_api",
     )

@@ -39,9 +39,9 @@ export function PrecheckPhase({ data }: { data: any }) {
             {strictGateFailed && (
               <Text size="sm" mt="sm" c="dimmed">
                 严格门只在<strong>接了真实仪表</strong>时生效（mock 模式会自动跳过）。现场真测请
-                用本页上方的「<strong>登记 DUT</strong>」按钮登记 IMSI 并完成校准；
-                若只是想在真仪表下空跑调试，可打开顶部「<strong>强制跳过严格门</strong>」开关后
-                点「重置会话」。
+                完成校准；DUT 连接会在 MEASURE 按本次 TestCase 初始化后自动建立并核对。
+                若只是想在真仪表下空跑调试，可打开顶部「<strong>强制跳过严格门</strong>」
+                开关后点「重置会话」。
               </Text>
             )}
           </Alert>
@@ -179,6 +179,11 @@ export function MIMOTestPhase({ data, config: _config }: { data: any, config: an
       <Alert color="grape" title="静态 MIMO OTA 测量" icon={<IconRotate3d />}>
         系统正在或已完成在多个转台方位的 KPI 测量。CDL 模型为 {data.cdl_model_name}。
       </Alert>
+
+      {/* managed RF attach 把真实 UE 能力核对延期到本次 RF 初始化及 attach 后，
+          结果位于 MEASURE 的 controlled_dut_attach；继续复用既有卡片与“采纳
+          实测值”动作，不能让证据换阶段后从 UI 消失。 */}
+      <DUTCapabilityCrosscheckCard data={data.controlled_dut_attach} />
 
       {data.path_loss_verified !== true && (
         <Alert color="yellow" variant="light" icon={<IconAlertTriangle />} title="路损未校准（RSRP 未补偿）">

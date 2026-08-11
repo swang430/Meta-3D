@@ -333,18 +333,17 @@ class MIMOOTAConfiguration(BaseModel):
     # opt-in only, so an operator can't accidentally disable the safety gate.
 
     precheck_strict_dut: bool = True
-    # When True (production default): precheck FAILS if dut_attach record is
-    # missing or if rrc_connected != True. Prevents commissioning from running
-    # without a DUT actually attached — measure phase otherwise still produces
-    # numbers (synthesized RSRP from target + path-loss, BS-side mock metrics)
-    # that look plausible but don't reflect any real DUT in the chamber.
+    # True（生产默认）= DUT 动态门 fail-closed。标准 managed_rf_attach 执行不会在
+    # PRECHECK 读取初始化前的旧 attach 状态；它在 MEASURE 按本次 TestCase 初始化
+    # UXM/F64/开关矩阵并受控 attach 后，要求真实基站明确回传 connected。legacy /
+    # unmanaged 执行仍在 PRECHECK 用 dut_attach + live BS query 判定。
+    # 两条路径都防止“没有真实 DUT 仍产出看似合理的测量数值”。
     # See P1-8 audit finding #3 + docs/architecture/channel-engine-data-flow.md
     # surprising #3 (sibling gap to the cal-missing gate).
     #
-    # Set False to bypass for lab dev / smoke / unit-test setups where the
-    # 5-phase chain is tested without a DUT. Bypass leaves an audit trail in
-    # result_payload["dut_pass_reason"]. GUI commissioning workflow does not
-    # expose this flag — same opt-in-only contract as precheck_strict_cal.
+    # False = 显式旁路对应路径的 DUT 动态门，仅供 lab dev / smoke / unit test；
+    # managed 路径在 MEASURE 留痕，legacy 路径在 PRECHECK 的 dut_pass_reason 留痕。
+    # 字段名保留 precheck_ 前缀只为配置兼容，不代表 managed 路径仍在 PRECHECK 判定。
 
     # === 仪表使用参数 (开关 3 块 2, 2026-07-20) — 全部 None = 现行为不变 ===
     #
@@ -561,13 +560,14 @@ class MIMOOTAConfiguration(BaseModel):
 
     sim_profile_id: Optional[str] = None
     # P2-13 阶段 1: 关联的 SIMProfile id (str UUID) —— 本次测试用哪张测试卡 (IMSI/PLMN/Ki/OPc)。
-    # None = 不做 SIM↔UXM 一致性校验。后续阶段: precheck 拿 SIMProfile vs UXM 小区 PLMN/HSS 比 +
-    # attach 后实测认证 IMSI vs 声明核对 (防对错卡)。
+    # None = 不做 SIM 身份门。managed_rf_attach 在 MEASURE 受控 attach 后，用 UXM/UE 本次实测
+    # IMSI 对照声明；legacy / unmanaged 仍由 PRECHECK 使用已有 attach 快照核对。
     precheck_strict_sim_identity: bool = True
-    # P2-13 阶段 2: SIM 身份核对门 (防插错卡)。config.sim_profile_id 指向声明卡时, precheck 拿
-    # attach 记录 IMSI 跟 SIMProfile.imsi 比 —— 不一致 = 实际 attach 的卡跟 TestCase 选的卡对不上。
-    # True (生产默认): 不一致 → precheck FAILED。无 sim_profile_id / 卡无声明 imsi / 无 dut_attach
-    # → 跳过。False (opt-out / 暗室首测 bring-up): 降级 warning。同 precheck_strict_* 走 bypass。
+    # P2-13 阶段 2: SIM 身份核对门 (防插错卡)。True（生产默认）时，managed 路径若
+    # SIMProfile 不可用、无声明 IMSI、UXM/UE 没有本次实测 IMSI或两者不一致，均在 MEASURE
+    # fail-closed；操作员登记 IMSI 只作未验证审计，不能替代实测。legacy / unmanaged 路径
+    # 仍在 PRECHECK 核对已有 attach 身份。False（bring-up opt-out）= 降级 warning。
+    # 字段名保留 precheck_ 前缀只为配置兼容。
 
     # === Pass/fail thresholds ===
     pass_criteria: MIMOOTAPassCriteria = Field(default_factory=MIMOOTAPassCriteria)
