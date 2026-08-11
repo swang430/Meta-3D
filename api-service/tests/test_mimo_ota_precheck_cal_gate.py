@@ -692,6 +692,38 @@ def test_channel_generation_cannot_requery_a_rejected_mock_certificate(
     assert all(entry["cable_loss_db"] != 5.0 for entry in entries)
 
 
+@pytest.mark.asyncio
+async def test_asc_strategy_forwards_the_already_filtered_calibration_entries(chamber):
+    """ASC strategy must not discard MEASURE's provenance-filtered entries and
+    let the client auto-select a second, potentially simulated certificate."""
+    from types import SimpleNamespace
+
+    from app.services.channel_generation.asc_strategy import ExternalWaveformStrategy
+
+    class CapturingChannelEngineClient:
+        def __init__(self):
+            self.kwargs = None
+
+        async def synthesize_hardware_pipeline(self, **kwargs):
+            self.kwargs = kwargs
+            return SimpleNamespace(success=False, message="stop after capture")
+
+    client = CapturingChannelEngineClient()
+    filtered_entries = [{"port": 1, "cable_loss_db": 1.25}]
+    strategy = ExternalWaveformStrategy(
+        emulator=object(),
+        ce_client=client,
+        chamber_config=chamber,
+        calibration_entries=filtered_entries,
+    )
+
+    assert await strategy.generate_and_load(
+        {"frequency_hz": 3.5e9},
+        {"model_name": "UMa NLOS CDL-C"},
+    ) is False
+    assert client.kwargs["calibration_entries"] is filtered_entries
+
+
 # ---------------------------------------------------------------------------
 # Runtime mock-awareness (Codex on PR #75): mock/absent CE auto-skips cal gate
 # ---------------------------------------------------------------------------

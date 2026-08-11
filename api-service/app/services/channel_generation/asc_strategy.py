@@ -134,6 +134,7 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
                     ),
                     ue_velocity_mps=ue_velocity_mps,
                     k_factor_db=simulation_rules.get("k_factor_db"),
+                    calibration_entries=self.calibration_entries,
                 )
 
             if not pipeline_result.success:
@@ -244,6 +245,7 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
                 profile.ue_velocity_mps or simulation_rules.get("ue_velocity_mps")
             ),
             k_factor_db=profile.k_factor_db,
+            calibration_entries=self.calibration_entries,
         )
 
     async def _synthesize_from_clusters(
@@ -295,4 +297,5 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
             synthesis_method=simulation_rules.get("synthesis_method", "strict_pfs"),
             ue_velocity_mps=velocity or simulation_rules.get("ue_velocity_mps"),
             k_factor_db=kfac,
+            calibration_entries=self.calibration_entries,
         )

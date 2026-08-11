@@ -57,6 +57,7 @@ logger = logging.getLogger("app.channel_engine")
 CE_BASE_URL = os.environ.get("CHANNEL_ENGINE_URL", "http://localhost:8001")
 CE_TIMEOUT_SECONDS = 60.0
 _AUTO_SELECT_PATH_LOSS = object()
+_AUTO_SELECT_CALIBRATION_ENTRIES = object()
 
 # 硬件产物存储根目录
 HARDWARE_ARTIFACTS_DIR = os.path.join(
@@ -261,6 +262,7 @@ class ChannelEngineClient:
         random_seed: Optional[int] = None,
         # 2026-06-30 P2-16 S3-3: 合成路由 (annotated_b1 = 标注式 B-1 烘焙脊, S3-1)
         routing_mode: Literal["legacy", "annotated_b1"] = "legacy",
+        calibration_entries: Any = _AUTO_SELECT_CALIBRATION_ENTRIES,
     ) -> HardwarePipelineResult:
         """
         调用 Channel Engine 硬件流水线合成 API。
@@ -306,10 +308,13 @@ class ChannelEngineClient:
                 message=f"Chamber configuration {chamber_id} not found"
             )
 
-        # ----- Step 2: 从 DB 查询校准数据 (含相位补偿) -----
-        calibration_entries = self._query_calibration_entries(
-            chamber_id, frequency_hz, chamber
-        )
+        # ----- Step 2: 消费上游已做 provenance 过滤的校准数据 -----
+        # 独立调用仍可保持原来的自动选择；MIMO MEASURE/ASC 必须显式传入
+        # 同一批已筛选条目，避免 strict bypass 后在这里二次查询复活 mock/NULL cert。
+        if calibration_entries is _AUTO_SELECT_CALIBRATION_ENTRIES:
+            calibration_entries = self._query_calibration_entries(
+                chamber_id, frequency_hz, chamber
+            )
 
         # ----- Step 2.5: Automatic PAS Rotation (GCM 合规性) -----
         # P1-7: PAS rotation 只在 custom mode (操作员/上游提供簇) 才有意义;

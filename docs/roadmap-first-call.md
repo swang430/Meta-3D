@@ -1541,7 +1541,7 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 **What**: cal 记录带 `use_mock` provenance 标记；real 模式 precheck strict 门拒 mock cert（门现在只查存在/频率/时效）。**来源**: 2026-07-03 现场实证（[→ P1-27] 已标）—— mock 路损 cert 在 real 模式 `cal_pass: true`，真测静默应用 mock 补偿值。
 **Why P1**: 现场实证穿透，下次现场前必修（runtime-gate-not-frozen-snapshot 同母题）。
 
-**收口**：`ProbePathLossCalibration.use_mock` 采用 `False=真仪器 / True=模拟 / NULL=历史来源未知` 三态，迁移不设默认值、不回填旧行；两条 live 生成路径均在落库时写入来源，latest API、precheck 与 measure payload 均显式暴露。真实 CE + strict 只允许 `use_mock is False`；mock/unknown 在 PRECHECK fail-loud。另按“入口/消费方全集”补齐现场常用的单阶段 MEASURE、ASC 信道生成二次查询、TRP/TIS 补偿、校准状态与校准报告：在任何仪表 connect/SCPI 下发前复核来源；strict 失败，显式 bypass 则忽略不可信证书、以无路损补偿方式继续；模拟/未知证书不再进入真实 KPI、有效状态或正式报告通过数，并在演练报告中同行披露来源。最终定点回归 81 passed；完整相关回归（含全仓规则门）**267 passed**；SQLite migration 已完成 f6→head→f6→head 往返且仅一条 Alembic head。
+**收口**：`ProbePathLossCalibration.use_mock` 采用 `False=真仪器 / True=模拟 / NULL=历史来源未知` 三态，迁移不设默认值、不回填旧行；两条 live 生成路径均在落库时写入来源，latest API、precheck 与 measure payload 均显式暴露。真实 CE + strict 只允许 `use_mock is False`；mock/unknown 在 PRECHECK fail-loud。另按“入口/消费方全集”补齐现场常用的单阶段 MEASURE、ASC 信道生成二次查询、TRP/TIS 补偿、校准状态与校准报告：在任何仪表 connect/SCPI 下发前复核来源；strict 失败，显式 bypass 则忽略不可信证书、以无路损补偿方式继续；模拟/未知证书不再进入真实 KPI、有效状态或正式报告通过数，并在演练报告中同行披露来源。最终定点回归 82 passed；完整相关回归（含全仓规则门）**268 passed**；SQLite migration 已完成 f6→head→f6→head 往返且仅一条 Alembic head。
 
 ### P1-28 — 「当前暗室」双真值源收口 ✅（2026-08-02 拍板；2026-08-07 完成）
 
