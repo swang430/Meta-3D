@@ -83,7 +83,7 @@ P0-5 保持 ON-SITE-BLOCKED；P1-44/42/40/37 已在 Draft PR #303 完成本地�
 > 完整 / 正确 / 高效的就位。」** —— 这句话是 P1-30 / P1-34 / P1-35 / P1-36 /
 > P1-37 这条线**排在其它本地项前面**的依据，不是一次性偏好。按三个字对号：
 > **完整** = 该有的都有（P1-37 补上 mock 下恒空的整个 SCPI 层；P1-36 补执行身份）；
-> **正确** = 有的都是真的（P1-37 回读侧标 `simulated`；P1-38 隔离测试告警并用精确 dry-run 锁定 674 条存量，不把测试污染当现场状态展示）；
+> **正确** = 有的都是真的（P1-37 回读侧标 `simulated`；P1-38 隔离并精确清理 674 条测试告警，不把测试污染当当前告警状态展示）；
 > **高效** = 找得到（P1-35 去噪 90.1%；P1-34 按请求/时间定位）。
 > 后续再有日志相关发现，默认按此线插队，不必每次重新论证优先级。
 
@@ -2294,7 +2294,7 @@ class MockBaseStation:
 
 **依赖**: **P1-29**（见上）。**现场半**: 无。
 
-**收口实况（PR #321，2026-08-11）**：现场数据库核对到 `alerts` 共 **674 行**，
+**收口实况（PR #321，2026-08-11）**：当前本机开发库核对到 `alerts` 共 **674 行**，
 来源只有 `test_suite`，分布为 **337 active + 337 dismissed**，创建时间覆盖
 **2026-05-05 ~ 2026-08-01**；没有其它来源。追溯确认 P3-15 已把原写入测试改用
 独立 SQLite engine + `get_db` override，污染源已经断开；本片新增 **G20** 常驻门，
@@ -2307,8 +2307,11 @@ class MockBaseStation:
 `WARNING: Alert / Test alert / warning / warning / active` 或
 `INFO: Alert / Alert to dismiss / info / info / dismissed`
 （依次为 title / message / severity / alert_type / status）。工具默认 **dry-run**，
-只有显式 `--execute` 才会在单事务中删除，异常回滚；本轮 dry-run 命中 674、
-`deleted=0`，**没有执行删除**。
+只有显式 `--execute` 才会在单事务中删除，异常回滚。实际操作先以 dry-run 确认
+`matched=674, deleted=0`；随后建立可恢复备份表
+`alerts_p1_38_backup_20260811`（674 行），再执行 `--execute`，结果为
+`matched=674, deleted=674`。最终本机开发库 `alerts=0`、`test_suite=0`；上述
+674 行备份表保留为恢复路径。
 
 主控台已移除活动告警详情列表与 5/12 宽大面板，只在全宽实时日志标题栏保留
 `/dashboard/alerts/summary` 的紧凑 badge；告警详情 REST API 与数据模型仍保留，
