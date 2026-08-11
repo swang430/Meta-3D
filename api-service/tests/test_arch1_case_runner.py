@@ -36,6 +36,7 @@ from sqlalchemy.pool import StaticPool
 from app.main import app
 from app.db.database import Base, get_db
 from app.models.chamber import ChamberType, create_chamber_from_preset
+from app.models.alert import Alert
 from app.models.lab_profile import LabProfile
 from app.models.test_plan import TestCase, TestExecution
 from app.services.test_execution.executor_base import (
@@ -67,6 +68,10 @@ def _db_schema(monkeypatch):
     app.dependency_overrides[get_db] = _override
     # 后台 task / 复位函数自建 session — 指到测试库
     monkeypatch.setattr(tcr, "SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr(
+        "app.services.execution_failure_alerts.SessionLocal",
+        TestingSessionLocal,
+    )
     yield
     if prev is None:
         app.dependency_overrides.pop(get_db, None)
@@ -197,6 +202,10 @@ class TestExecuteHappyPath:
         assert ex.completed_at is not None
         assert "执行器异常" in ((ex.config or {}).get("error_message") or "")
         assert "boom-dispatch" in ((ex.config or {}).get("error_message") or "")
+        assert db.query(Alert).filter(
+            Alert.alert_type == "execution_failed",
+            Alert.related_entity_id == ex.id,
+        ).count() == 1
 
     @pytest.mark.asyncio
     async def test_phase_failure_recorded_and_early_stop(self, db, lab):
@@ -211,6 +220,12 @@ class TestExecuteHappyPath:
         cfg = ex.config or {}
         assert cfg.get("failed_phase") is not None
         assert "REFERENCE 炸了" in (cfg.get("error_message") or "")
+        alert = db.query(Alert).filter(
+            Alert.alert_type == "execution_failed",
+            Alert.related_entity_id == ex.id,
+        ).one()
+        assert alert.status == "active"
+        assert alert.source == tcr.RUNNER_MARKER
 
     @pytest.mark.asyncio
     async def test_phase_failure_logged_as_error(self, db, lab, caplog):
@@ -429,6 +444,13 @@ class TestStaleReset:
         assert db.query(TestExecution).get(theirs_id).status == "running", (
             "暗室首测的执行行被误复位 — 谓词收窄失效"
         )
+        assert db.query(Alert).filter(
+            Alert.alert_type == "execution_failed",
+            Alert.related_entity_id == mine_id,
+        ).count() == 1
+        assert db.query(Alert).filter(
+            Alert.related_entity_id == theirs_id,
+        ).count() == 0
 
 
 # ─────────────────────────────────────────────────────────────────────
