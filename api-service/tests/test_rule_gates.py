@@ -251,7 +251,13 @@ def _test_suite_alert_isolation_gaps(tests_dir: Path | None = None):
     """返回每个写测试告警但隔离契约不完整的模块及缺项。"""
     tests_dir = tests_dir or (_API_SERVICE_ROOT / "tests")
     gaps = []
-    for path in sorted(tests_dir.rglob("test*.py")):
+    # 与 pytest.ini 的 python_files 保持一致；集合并集避免 test_*_test.py 重复扫描。
+    test_paths = {
+        path
+        for pattern in ("test_*.py", "*_test.py")
+        for path in tests_dir.rglob(pattern)
+    }
+    for path in sorted(test_paths):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         write_lines = _test_suite_source_write_lines(tree)
         if not write_lines:
@@ -292,23 +298,36 @@ def _test_suite_alert_isolation_gaps(tests_dir: Path | None = None):
 
 
 def test_g20_checker_detects_any_writer_module_and_accepts_isolation(tmp_path):
-    """判定器自测：未知文件名的坏写点必须报，完整隔离模块必须放行。"""
+    """判定器自测：pytest 两种文件名的坏写点必须报，完整隔离模块必须放行。"""
     bad = tmp_path / "test_unexpected_alert_writer.py"
     bad.write_text(
         'payload = {"source": "test_suite", "message": "Test alert"}\n',
         encoding="utf-8",
     )
+    suffix_bad = tmp_path / "alert_writer_test.py"
+    suffix_bad.write_text(
+        'payload = build_alert(source="test_suite")\n',
+        encoding="utf-8",
+    )
+    overlap_bad = tmp_path / "test_overlap_test.py"
+    overlap_bad.write_text(
+        'payload = build_alert(source="test_suite")\n',
+        encoding="utf-8",
+    )
     gaps = _test_suite_alert_isolation_gaps(tmp_path)
-    assert len(gaps) == 1
-    assert gaps[0][0] == str(bad)
-    assert gaps[0][1] == (1,)
-    assert set(gaps[0][2]) == {
-        "independent SQLite create_engine",
-        "app.dependency_overrides[get_db]",
-        "Base.metadata.drop_all teardown",
-    }
+    assert len(gaps) == 3, "同时命中两种 pytest 文件模式的模块不得重复报告"
+    assert {gap[0] for gap in gaps} == {str(bad), str(suffix_bad), str(overlap_bad)}
+    for _path, lines, missing in gaps:
+        assert lines == (1,)
+        assert set(missing) == {
+            "independent SQLite create_engine",
+            "app.dependency_overrides[get_db]",
+            "Base.metadata.drop_all teardown",
+        }
 
     bad.unlink()
+    suffix_bad.unlink()
+    overlap_bad.unlink()
     good = tmp_path / "test_another_alert_writer.py"
     good.write_text(
         '_engine = create_engine("sqlite://")\n'
