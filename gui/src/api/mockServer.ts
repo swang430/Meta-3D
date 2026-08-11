@@ -6,9 +6,9 @@ import type {
   CreatePlanPayload,
   UpdatePlanPayload,
   CreateTestCaseFromPlanPayload,
-  CreateTestCasePayload,
 } from '../types/api'
 import type { components as ApiComponents } from '../types/api.generated'
+import type { TemplateListResponse } from '../features/Reports/types'
 
 type ContractTestCase = ApiComponents['schemas']['TestCaseResponse']
 type ContractTestCaseCreate = ApiComponents['schemas']['TestCaseCreate']
@@ -19,6 +19,18 @@ let monitoringSocket: MockSocketServer | null = null
 const contractTestCases = new Map<string, ContractTestCase>()
 
 const DELAY_MS = 300
+const mockReportTemplates: TemplateListResponse['templates'] = [
+  {
+    id: 'mock-report-template-standard',
+    name: '标准 MIMO OTA 报告模板（演示）',
+    template_type: 'standard',
+    is_active: true,
+    is_default: true,
+    usage_count: 0,
+    created_by: 'mock-server',
+    created_at: '2026-01-01T00:00:00Z',
+  },
+]
 // Dynamically construct WebSocket URL based on current host
 const MONITORING_WS_URL = typeof window !== 'undefined'
   ? `${window.location.origin.replace(/^http/, 'ws')}/api/v1/ws/monitoring`
@@ -113,14 +125,6 @@ export function setupMockServer() {
       ? [204]
       : [404, { detail: 'Test case not found' }]
   })
-
-  mock.onGet('/tests/cases').reply(200, mockDatabase.getTestCases())
-  // ⚠️ 上面这条是**用例**端点 (保留集)。S4c 清计划处理器时曾被一个过宽的判据
-  // ("往后 8 行出现 savePlanAsTestCase") 连坐误删 —— 而编译门抓不到, mock
-  // 处理器是运行时注册的。POST /tests/cases 走的是 savePlanAsTestCase
-  // (从计划存为用例), 随计划链删除是对的。
-
-  mock.onGet('/dashboard').reply(200, mockDatabase.getDashboard())
 
   mock.onGet('/probes').reply(200, mockDatabase.getProbes())
 
@@ -259,41 +263,25 @@ export function setupMockServer() {
     }]
   })
 
-  mock.onGet('/tests/templates').reply(200, mockDatabase.getTestTemplates())
-
-  mock.onPost('/tests/cases/new').reply((config) => {
-    try {
-      const payload = JSON.parse(config.data) as CreateTestCasePayload
-      const created = mockDatabase.createTestCase(payload)
-      if (!created) return [400, { message: '创建测试例失败' }]
-      return [201, created]
-    } catch {
-      return [400, { message: '创建测试例失败' }]
-    }
-  })
-
-  mock.onDelete(/\/tests\/cases\/[^/]+$/).reply((config) => {
-    const caseId = config.url?.split('/').pop() ?? ''
-    const result = mockDatabase.deleteTestCase(caseId)
-    if (!result.success) return [404, { message: '未找到测试例' }]
-    return [200, result]
-  })
-
-
-  mock.onGet(/\/tests\/cases\/[^/]+$/).reply((config) => {
-    const caseId = config.url?.split('/').pop() ?? ''
-    const result = mockDatabase.getTestCaseDetail(caseId)
-    if (!result) return [404, { message: '未找到测试例' }]
-    return [200, result]
-  })
-
-  mock.onGet('/tests/recent').reply(200, mockDatabase.getRecentTests())
-
   mock.onGet('/tests/demo-run').reply(200, mockDatabase.getDemoRunPlan())
 
-  mock.onGet('/reports/templates').reply(200, mockDatabase.getReportTemplates())
-
-  mock.onGet('/monitoring/feeds').reply(200, mockDatabase.getMonitoringFeeds())
+  // 报告模板页仍使用这条活动路径。复用 feature 的权威响应契约，避免旧 mock
+  // {reportTemplates} 形态冒充 live 接口，也避免启用 Mock Server 后页面 404。
+  mock.onGet('/reports/templates').reply((config) => {
+    const templateType = config.params?.template_type
+    const active = config.params?.is_active
+    const templates = mockReportTemplates.filter((template) => (
+      (templateType === undefined || template.template_type === templateType)
+      && (active === undefined || template.is_active === active)
+    ))
+    const response: TemplateListResponse = {
+      templates,
+      total: templates.length,
+      page: 1,
+      page_size: 20,
+    }
+    return [200, response]
+  })
 
   // ===== P2-8 Operational Cockpit =====
   mock.onGet('/instruments/hal/readiness').reply(200, mockDatabase.getReadiness())
@@ -337,10 +325,7 @@ export function setupMockServer() {
 
   mock.onGet('/system-logs/files').reply(200, mockDatabase.getSystemLogFiles())
 
-  // /dashboard/alerts/summary registered before /dashboard/alerts so the
-  // exact-string summary route isn't shadowed by the list route.
   mock.onGet('/dashboard/alerts/summary').reply(200, mockDatabase.getDashboardAlertSummary())
-  mock.onGet('/dashboard/alerts').reply(200, mockDatabase.getDashboardAlerts())
 
   mock.onPut(/\/instruments\/[^/]+$/).reply((config) => {
     try {

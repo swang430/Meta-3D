@@ -101,7 +101,6 @@ import type {
   MetricItem,
   Probe as ProbeType,
   SequenceStep as SequenceStepType,
-  TestCase,
   UpdateProbePayload,
   UpdateInstrumentPayload,
 } from './types/api'
