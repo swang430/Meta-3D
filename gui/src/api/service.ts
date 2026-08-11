@@ -4,16 +4,12 @@ import type {
   CreateProbePayload,
   DashboardResponse,
   DemoRunPlanResponse,
-  CreateTestCasePayload,
-  CreateTestCaseResponse,
-  DeleteTestCaseResponse,
   MonitoringFeedsResponse,
   ProbesResponse,
   RecentTestsResponse,
   ReportTemplatesResponse,
   SequenceLibraryResponse,
   TestCasesResponse,
-  TestCaseResponse,
   TestTemplatesResponse,
   UpdateProbePayload,
   UpdateInstrumentPayload,
@@ -32,6 +28,10 @@ import type {
   DashboardAlertListResponse,
   DashboardAlertSummary,
 } from '../types/api'
+import type { components as ApiComponents } from '../types/api.generated'
+
+type ContractTestCaseCreate = ApiComponents['schemas']['TestCaseCreate']
+type ContractTestCaseResponse = ApiComponents['schemas']['TestCaseResponse']
 
 export const fetchDashboard = async (): Promise<DashboardResponse> => {
   const response = await client.get<DashboardResponse>('/dashboard')
@@ -423,20 +423,19 @@ export interface SetPlanTopologyProfileResult {
 }
 
 export const createTestCase = async (
-  payload: CreateTestCasePayload,
-): Promise<CreateTestCaseResponse> => {
-  const response = await client.post<CreateTestCaseResponse>('/test-plans/cases', payload)
+  payload: ContractTestCaseCreate,
+): Promise<ContractTestCaseResponse> => {
+  const response = await client.post<ContractTestCaseResponse>('/test-plans/cases', payload)
   return response.data
 }
 
-export const fetchTestCaseDetail = async (caseId: string): Promise<TestCaseResponse> => {
-  const response = await client.get<TestCaseResponse>(`/test-plans/cases/${caseId}`)
+export const fetchTestCaseDetail = async (caseId: string): Promise<ContractTestCaseResponse> => {
+  const response = await client.get<ContractTestCaseResponse>(`/test-plans/cases/${caseId}`)
   return response.data
 }
 
-export const deleteTestCase = async (caseId: string): Promise<DeleteTestCaseResponse> => {
-  const response = await client.delete<DeleteTestCaseResponse>(`/test-plans/cases/${caseId}`)
-  return response.data
+export const deleteTestCase = async (caseId: string): Promise<void> => {
+  await client.delete(`/test-plans/cases/${caseId}`)
 }
 
 // ============================================================

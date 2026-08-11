@@ -356,6 +356,100 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TestExecutionListResponse'
+  /api/v1/test-plans/cases:
+    get:
+      summary: List reusable TestCases
+      parameters:
+        - name: skip
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+        - name: test_type
+          in: query
+          schema:
+            type: string
+        - name: is_template
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: TestCase page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestCaseListResponse'
+    post:
+      summary: Create a reusable TestCase
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestCaseCreate'
+      responses:
+        '201':
+          description: Created TestCase
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestCaseResponse'
+        '422':
+          description: Invalid TestCase payload
+  /api/v1/test-plans/cases/{test_case_id}:
+    parameters:
+      - name: test_case_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get one TestCase
+      responses:
+        '200':
+          description: TestCase detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestCaseResponse'
+        '404':
+          description: TestCase not found
+    patch:
+      summary: Update one TestCase
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestCaseUpdate'
+      responses:
+        '200':
+          description: Updated TestCase
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestCaseResponse'
+        '404':
+          description: TestCase not found
+        '422':
+          description: Invalid TestCase payload
+    delete:
+      summary: Delete one TestCase
+      responses:
+        '204':
+          description: TestCase deleted
+        '404':
+          description: TestCase not found
   /api/v1/test-plans/cases/executions/{execution_id}:
     get:
       summary: Get one TestCase execution status and sanitized SCPI evidence
@@ -533,6 +627,278 @@ paths:
                 $ref: '#/components/schemas/DashboardAlertSummary'
 components:
   schemas:
+    TestCaseCreate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          nullable: true
+        test_type:
+          type: string
+        configuration:
+          type: object
+          additionalProperties: true
+        pass_criteria:
+          type: object
+          nullable: true
+          additionalProperties: true
+        expected_results:
+          type: object
+          nullable: true
+          additionalProperties: true
+        probe_selection:
+          type: object
+          nullable: true
+          additionalProperties: true
+        instrument_config:
+          type: object
+          nullable: true
+          additionalProperties: true
+        channel_model:
+          type: string
+          nullable: true
+        channel_parameters:
+          type: object
+          nullable: true
+          additionalProperties: true
+        frequency_mhz:
+          type: number
+          nullable: true
+        tx_power_dbm:
+          type: number
+          nullable: true
+        bandwidth_mhz:
+          type: number
+          nullable: true
+        test_duration_sec:
+          type: number
+          nullable: true
+        lab_profile_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            LabProfile targeted by this TestCase. Null keeps the case
+            deployment-agnostic and requires a unique active LabProfile at execution time.
+        is_template:
+          type: boolean
+          nullable: true
+          default: false
+        template_category:
+          type: string
+          nullable: true
+          maxLength: 100
+        created_by:
+          type: string
+        tags:
+          type: array
+          nullable: true
+          items:
+            type: string
+      required: [name, test_type, configuration, created_by]
+    TestCaseUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          nullable: true
+        configuration:
+          type: object
+          nullable: true
+          additionalProperties: true
+        pass_criteria:
+          type: object
+          nullable: true
+          additionalProperties: true
+        expected_results:
+          type: object
+          nullable: true
+          additionalProperties: true
+        probe_selection:
+          type: object
+          nullable: true
+          additionalProperties: true
+        instrument_config:
+          type: object
+          nullable: true
+          additionalProperties: true
+        channel_model:
+          type: string
+          nullable: true
+        channel_parameters:
+          type: object
+          nullable: true
+          additionalProperties: true
+        frequency_mhz:
+          type: number
+          nullable: true
+        tx_power_dbm:
+          type: number
+          nullable: true
+        bandwidth_mhz:
+          type: number
+          nullable: true
+        test_duration_sec:
+          type: number
+          nullable: true
+        lab_profile_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: LabProfile targeted by this TestCase; explicit null clears the binding.
+        tags:
+          type: array
+          nullable: true
+          items:
+            type: string
+    TestCaseResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        test_type:
+          type: string
+        configuration:
+          type: object
+          additionalProperties: true
+        pass_criteria:
+          type: object
+          nullable: true
+          additionalProperties: true
+        expected_results:
+          type: object
+          nullable: true
+          additionalProperties: true
+        probe_selection:
+          type: object
+          nullable: true
+          additionalProperties: true
+        instrument_config:
+          type: object
+          nullable: true
+          additionalProperties: true
+        channel_model:
+          type: string
+          nullable: true
+        channel_parameters:
+          type: object
+          nullable: true
+          additionalProperties: true
+        frequency_mhz:
+          type: number
+          nullable: true
+        tx_power_dbm:
+          type: number
+          nullable: true
+        bandwidth_mhz:
+          type: number
+          nullable: true
+        test_duration_sec:
+          type: number
+          nullable: true
+        lab_profile_id:
+          type: string
+          format: uuid
+          nullable: true
+        is_template:
+          type: boolean
+        template_category:
+          type: string
+          nullable: true
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: string
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+        tags:
+          type: array
+          nullable: true
+          items:
+            type: string
+      required: [id, name, description, test_type, configuration, pass_criteria,
+        expected_results, probe_selection, instrument_config, channel_model,
+        channel_parameters, frequency_mhz, tx_power_dbm, bandwidth_mhz,
+        test_duration_sec, lab_profile_id, is_template, template_category,
+        created_by, created_at, updated_at, version, parent_id, tags]
+    TestCaseSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        test_type:
+          type: string
+        template_category:
+          type: string
+          nullable: true
+        channel_model:
+          type: string
+          nullable: true
+        frequency_mhz:
+          type: number
+          nullable: true
+        bandwidth_mhz:
+          type: number
+          nullable: true
+        test_duration_sec:
+          type: number
+          nullable: true
+        is_template:
+          type: boolean
+        pass_criteria:
+          type: object
+          nullable: true
+          additionalProperties: true
+        tags:
+          type: array
+          nullable: true
+          items:
+            type: string
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+      required: [id, name, test_type, is_template, created_by, created_at]
+    TestCaseListResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TestCaseSummary'
+      required: [total, items]
     DashboardResponse:
       # P3-17 G11: 顶层键对齐 live 实现 (曾是 camelCase 三键 — yaml 是 GUI 类型
       # 生成源, 声明实现没有的键 = 生成的类型说谎)。

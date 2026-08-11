@@ -15,10 +15,19 @@ from app.schemas.test_plan import (
     TestCaseGroupedResponse,
 )
 from app.services.test_plan_service import TestCaseService
+from app.services.lab_resolution import resolve_lab_profile
 from app.models.test_plan import TestCase
 from app.services.execution_scpi_evidence import ExecutionScpiEvidence
 
 router = APIRouter(prefix="/test-plans", tags=["Test Plan Management"])
+
+
+def _validate_explicit_lab_profile(db: Session, lab_profile_id: UUID) -> None:
+    """新建/换绑只能指向当前活动实验室，避免保存成功后执行才失败。"""
+    try:
+        resolve_lab_profile(db, lab_profile_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 
@@ -45,6 +54,9 @@ def create_test_case(
     Test cases define the configuration for a single test and can be reused
     across multiple test plans.
     """
+    if request.lab_profile_id is not None:
+        _validate_explicit_lab_profile(db, request.lab_profile_id)
+
     service = TestCaseService()
     test_case = service.create_test_case(
         db=db,
@@ -63,6 +75,7 @@ def create_test_case(
         tx_power_dbm=request.tx_power_dbm,
         bandwidth_mhz=request.bandwidth_mhz,
         test_duration_sec=request.test_duration_sec,
+        lab_profile_id=request.lab_profile_id,
         is_template=request.is_template,
         template_category=request.template_category,
         tags=request.tags,
@@ -163,6 +176,13 @@ def update_test_case(
     service = TestCaseService()
 
     update_data = request.dict(exclude_unset=True)
+    if "lab_profile_id" in update_data and update_data["lab_profile_id"] is not None:
+        current = service.get_test_case(db, test_case_id)
+        if not current:
+            raise HTTPException(status_code=404, detail="Test case not found")
+        if update_data["lab_profile_id"] != current.lab_profile_id:
+            _validate_explicit_lab_profile(db, update_data["lab_profile_id"])
+
     test_case = service.update_test_case(db, test_case_id, **update_data)
 
     if not test_case:

@@ -651,6 +651,87 @@ class TestEndpoints:
         assert ex.status == "completed"
         assert mocked.await_count == 5
 
+    def test_create_update_and_clear_lab_profile_binding(self, db, lab):
+        """P2-24: REST 创建/编辑契约必须能绑定、换绑并显式清空 LabProfile。"""
+        second = LabProfile(
+            name="CaseRunner-Lab-2",
+            chamber_config_id=lab.chamber_config_id,
+            instrument_bindings=[],
+            is_active=True,
+        )
+        db.add(second)
+        db.commit()
+        db.refresh(second)
+
+        client = TestClient(app)
+        created = client.post(
+            "/api/v1/test-plans/cases",
+            json={
+                "name": "GUI-显式实验室绑定",
+                "test_type": "MIMO_OTA",
+                "configuration": {},
+                "is_template": True,
+                "created_by": "gui",
+                "lab_profile_id": str(lab.id),
+            },
+        )
+        assert created.status_code == 201
+        case_id = created.json()["id"]
+        assert created.json()["lab_profile_id"] == str(lab.id)
+
+        rebound = client.patch(
+            f"/api/v1/test-plans/cases/{case_id}",
+            json={"lab_profile_id": str(second.id)},
+        )
+        assert rebound.status_code == 200
+        assert rebound.json()["lab_profile_id"] == str(second.id)
+
+        cleared = client.patch(
+            f"/api/v1/test-plans/cases/{case_id}",
+            json={"lab_profile_id": None},
+        )
+        assert cleared.status_code == 200
+        assert cleared.json()["lab_profile_id"] is None
+        row = db.query(TestCase).filter(TestCase.id == uuid.UUID(case_id)).first()
+        db.refresh(row)
+        assert row.lab_profile_id is None
+
+    def test_create_and_rebind_reject_inactive_lab_profile(self, db, lab):
+        """新绑定只接受活动 LabProfile；不能先保存成功、到执行时才 422。"""
+        inactive = LabProfile(
+            name="CaseRunner-Inactive-Lab",
+            chamber_config_id=lab.chamber_config_id,
+            instrument_bindings=[],
+            is_active=False,
+        )
+        db.add(inactive)
+        db.commit()
+        db.refresh(inactive)
+
+        client = TestClient(app)
+        rejected_create = client.post(
+            "/api/v1/test-plans/cases",
+            json={
+                "name": "不得绑定停用实验室",
+                "test_type": "MIMO_OTA",
+                "configuration": {},
+                "created_by": "gui",
+                "lab_profile_id": str(inactive.id),
+            },
+        )
+        assert rejected_create.status_code == 422
+        assert "inactive" in rejected_create.json()["detail"]
+        assert db.query(TestCase).filter(TestCase.name == "不得绑定停用实验室").count() == 0
+
+        source = _make_case(db, lab, name="保持原绑定")
+        rejected_patch = client.patch(
+            f"/api/v1/test-plans/cases/{source.id}",
+            json={"lab_profile_id": str(inactive.id)},
+        )
+        assert rejected_patch.status_code == 422
+        db.refresh(source)
+        assert source.lab_profile_id == lab.id
+
     def test_cancel_endpoint_contract(self, db, lab):
         source = _make_case(db, lab, name="cancel端点")
         ex = TestExecution(

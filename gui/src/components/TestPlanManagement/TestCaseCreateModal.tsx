@@ -19,7 +19,7 @@
  *   fail-loud 校验。"先建壳再填参"是有意的捷径, 不是静默兜底(拍板③)。
  * - created_by 固定 "gui" —— GUI 今天无认证上下文(拍板④), 接上后换真实用户。
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Modal,
   Stack,
@@ -37,10 +37,15 @@ import {
   listTestCases,
   type TestCaseSummary,
 } from '../../api/testPlanService'
+import {
+  fetchAllLabProfiles,
+  type LabProfileSummary,
+} from '../../api/labProfileService'
 import { logFrontendEvent } from '../../observability/frontendLogger'
 
 /** 空白起点的哨兵值 (Select 的 value 只能是 string) */
 const BLANK_START = '__blank__'
+const UNBOUND_LAB = '__unbound__'
 const DEFAULT_CATEGORY = '我的用例'
 
 interface TestCaseCreateModalProps {
@@ -59,7 +64,19 @@ export function TestCaseCreateModal({
   const [startFrom, setStartFrom] = useState<string>(BLANK_START)
   const [category, setCategory] = useState(DEFAULT_CATEGORY)
   const [templates, setTemplates] = useState<TestCaseSummary[]>([])
+  const [labs, setLabs] = useState<LabProfileSummary[]>([])
+  const [labsLoading, setLabsLoading] = useState(false)
+  const [labsError, setLabsError] = useState<string | null>(null)
+  const [selectedLabId, setSelectedLabId] = useState(UNBOUND_LAB)
+  const [loadingTemplate, setLoadingTemplate] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const templateRequestId = useRef(0)
+  const activeLabs = labs.filter((item) => item.is_active)
+  const selectedLab = labs.find((item) => item.id === selectedLabId)
+  const labSelectionInvalid =
+    labsLoading || labsError !== null
+    || (activeLabs.length > 1 && selectedLabId === UNBOUND_LAB)
+    || (selectedLabId !== UNBOUND_LAB && selectedLab?.is_active !== true)
 
   useEffect(() => {
     if (!opened) return
@@ -68,6 +85,12 @@ export function TestCaseCreateModal({
     setName('')
     setStartFrom(BLANK_START)
     setCategory(DEFAULT_CATEGORY)
+    setLabs([])
+    setLabsLoading(true)
+    setLabsError(null)
+    setSelectedLabId(UNBOUND_LAB)
+    setLoadingTemplate(false)
+    templateRequestId.current += 1
     let cancelled = false
     listTestCases(0, 500, 'MIMO_OTA', true)
       .then((res) => {
@@ -76,10 +99,56 @@ export function TestCaseCreateModal({
       .catch(() => {
         if (!cancelled) setTemplates([])
       })
+    fetchAllLabProfiles()
+      .then((items) => {
+        if (cancelled) return
+        setLabs(items)
+        const active = items.filter((item) => item.is_active)
+        if (active.length === 1) setSelectedLabId(active[0].id)
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return
+        setLabs([])
+        setLabsError((error as Error)?.message || '无法加载 LabProfile 列表')
+      })
+      .finally(() => {
+        if (!cancelled) setLabsLoading(false)
+      })
     return () => {
       cancelled = true
     }
   }, [opened])
+
+  const handleStartChange = async (value: string | null) => {
+    const next = value ?? BLANK_START
+    const requestId = ++templateRequestId.current
+    setStartFrom(next)
+    if (next === BLANK_START) {
+      setLoadingTemplate(false)
+      const active = labs.filter((item) => item.is_active)
+      setSelectedLabId(active.length === 1 ? active[0].id : UNBOUND_LAB)
+      return
+    }
+    setLoadingTemplate(true)
+    try {
+      const tpl = await getTestCase(next)
+      if (requestId === templateRequestId.current) {
+        setSelectedLabId(tpl.lab_profile_id ?? UNBOUND_LAB)
+      }
+    } catch (error) {
+      if (requestId !== templateRequestId.current) return
+      setSelectedLabId(UNBOUND_LAB)
+      notifications.show({
+        title: '模板加载失败',
+        message: (error as Error)?.message || '无法复制模板的 LabProfile 绑定',
+        color: 'red',
+      })
+    } finally {
+      if (requestId === templateRequestId.current) {
+        setLoadingTemplate(false)
+      }
+    }
+  }
 
   const handleCreate = async () => {
     const trimmed = name.trim()
@@ -95,13 +164,6 @@ export function TestCaseCreateModal({
           configuration = cfg
         }
       }
-      // lab_profile_id 不传 (Codex #250 P1 核实后判「不改」, 依据):
-      // ① create/update 契约本就没有该字段, GUI 想传也传不了;
-      // ② 不绑 = bootstrap 种子模板的明文设计 (deployment-agnostic,
-      //    执行时由 resolve_lab_profile 解析当前 active lab);
-      // ③ 多 active lab 部署下执行会 422 结构化 fail-loud, 不是静默错配 —
-      //    该形态今天不存在, 正修(契约加可选字段+GUI 绑定口)已记 roadmap
-      //    Discovered 2026-07-31 条, 多 lab 真出现时再做。
       const created = await createTestCase({
         name: trimmed,
         test_type: 'MIMO_OTA',
@@ -109,6 +171,8 @@ export function TestCaseCreateModal({
         is_template: true,
         template_category: category.trim() || DEFAULT_CATEGORY,
         created_by: 'gui',
+        lab_profile_id:
+          selectedLabId === UNBOUND_LAB ? null : selectedLabId,
       })
       notifications.show({
         title: '用例已创建',
@@ -167,12 +231,35 @@ export function TestCaseCreateModal({
           label="起点"
           description="选一个现有模板把它的参数复制过来当起点, 或从空白开始"
           value={startFrom}
-          onChange={(v) => setStartFrom(v ?? BLANK_START)}
+          onChange={handleStartChange}
           data={[
             { value: BLANK_START, label: '空白 (全默认参数)' },
             ...templates.map((t) => ({ value: t.id, label: t.name })),
           ]}
           allowDeselect={false}
+          disabled={labsLoading || labsError !== null}
+        />
+        <Select
+          label="LabProfile"
+          description="绑定后执行使用该实验室的暗室与仪表；从模板开始时会复制其绑定"
+          value={selectedLabId}
+          onChange={(value) => setSelectedLabId(value ?? UNBOUND_LAB)}
+          data={[
+            { value: UNBOUND_LAB, label: '不绑定（执行时要求唯一活动 LabProfile）' },
+            ...labs.map((lab) => ({
+              value: lab.id,
+              label: `${lab.name}${lab.is_active ? '' : '（已停用）'}`,
+              disabled: !lab.is_active,
+            })),
+          ]}
+          allowDeselect={false}
+          disabled={labsLoading || labsError !== null}
+          error={
+            labsError
+              ?? (labSelectionInvalid
+              ? '多个活动 LabProfile 时必须选择一个可用实验室'
+              : undefined)
+          }
         />
         <TextInput
           label="类别"
@@ -192,8 +279,14 @@ export function TestCaseCreateModal({
           <Button
             leftSection={<IconPlus size={16} />}
             onClick={handleCreate}
-            loading={submitting}
-            disabled={!name.trim()}
+            loading={submitting || loadingTemplate || labsLoading}
+            disabled={
+              !name.trim()
+              || loadingTemplate
+              || labsLoading
+              || labsError !== null
+              || labSelectionInvalid
+            }
           >
             创建并配置参数
           </Button>

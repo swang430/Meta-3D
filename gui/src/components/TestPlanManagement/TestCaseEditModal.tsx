@@ -27,6 +27,7 @@ import {
   Alert,
   Code,
   TagsInput,
+  Select,
 } from '@mantine/core'
 import { IconAlertCircle, IconDeviceFloppy, IconX } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
@@ -40,9 +41,14 @@ import {
   type MIMOOTAConfiguration,
 } from '../TestCaseConfig/MIMOOTAConfigForm'
 import { logFrontendEvent } from '../../observability/frontendLogger'
+import {
+  fetchAllLabProfiles,
+  type LabProfileSummary,
+} from '../../api/labProfileService'
 
 /** 有类型化配置表单的用例类型。其余走 raw JSON。 */
 const TYPED_CONFIG_CASE_TYPE = 'MIMO_OTA'
+const UNBOUND_LAB = '__unbound__'
 
 interface TestCaseEditModalProps {
   opened: boolean
@@ -65,6 +71,8 @@ export function TestCaseEditModal({
   const [tags, setTags] = useState<string[]>([])
   const [configText, setConfigText] = useState('{}')
   const [mimoConfig, setMimoConfig] = useState<MIMOOTAConfiguration>({})
+  const [labs, setLabs] = useState<LabProfileSummary[]>([])
+  const [selectedLabId, setSelectedLabId] = useState(UNBOUND_LAB)
   const [jsonError, setJsonError] = useState<string | null>(null)
 
   // 类型化表单只对 MIMO_OTA 生效; 其余 test_type 仍是 raw JSON。
@@ -74,9 +82,14 @@ export function TestCaseEditModal({
     if (!opened || !testCaseId) return
     setLoading(true)
     setJsonError(null)
-    getTestCase(testCaseId)
-      .then((data) => {
+    Promise.all([
+      getTestCase(testCaseId),
+      fetchAllLabProfiles().catch(() => [] as LabProfileSummary[]),
+    ])
+      .then(([data, labItems]) => {
         setTc(data)
+        setLabs(labItems)
+        setSelectedLabId(data.lab_profile_id ?? UNBOUND_LAB)
         setName(data.name || '')
         setDescription(data.description || '')
         setTags((data as unknown as { tags?: string[] }).tags || [])
@@ -131,6 +144,8 @@ export function TestCaseEditModal({
         description: description || null,
         tags,
         configuration: config,
+        lab_profile_id:
+          selectedLabId === UNBOUND_LAB ? null : selectedLabId,
       })
       notifications.show({
         title: 'TestCase 已更新',
@@ -207,6 +222,21 @@ export function TestCaseEditModal({
             value={tags}
             onChange={setTags}
             placeholder="按回车添加..."
+          />
+          <Select
+            label="LabProfile"
+            description="绑定后执行使用该实验室的暗室与仪表；不绑定时要求系统只有一个活动 LabProfile"
+            value={selectedLabId}
+            onChange={(value) => setSelectedLabId(value ?? UNBOUND_LAB)}
+            data={[
+              { value: UNBOUND_LAB, label: '不绑定（执行时自动解析）' },
+              ...labs.map((lab) => ({
+                value: lab.id,
+                label: `${lab.name}${lab.is_active ? '' : '（已停用）'}`,
+                disabled: !lab.is_active,
+              })),
+            ]}
+            allowDeselect={false}
           />
 
           {useTypedForm ? (
