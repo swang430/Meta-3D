@@ -16,9 +16,9 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
-**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → **P1-27** → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1）。
+**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → **P2-22** → P2-23 → P2-24 → P3-18 → P3-19**（逐片 WIP=1）。
 
-**Current Focus = P1-27**（2026-08-11 起）—— 给校准记录补齐 mock provenance，并让 real 模式的 precheck strict 门拒绝 mock certificate，堵住真测静默应用模拟补偿值。条目见下方 P1-27。
+**Current Focus = P2-22**（P1-27 本地实现与回归已完成，待本 PR 外审/合并后开工）—— F64 `disconnect()` 不再依赖冷缓存判断是否 GOS，改读仪器运行态真值。该片涉及 F64 SCPI，动手前必须先用 NotebookLM 核对厂商手册出处。条目见下方 P2-22。
 
 > **~~P1-48~~ ✅ 2026-08-10 完成**（2026-08-09 插队，兼作 Gemini 外审首测对象）。五片全部 merge 进 main：#308 日志线 / #313 删掉四条整体返回随机数的报告接口（−955 行）/ #312 路损校准拒绝模拟驱动 / #310 报告线 / #314 虚拟路测不再编数。
 > **代价记录**：外审 27 轮 30 条，其中 #314 一个 PR 占 12 轮 22 条；复盘后 ①内审改成每次 push 前都过（新增轻量档）②「改之前先列全集」写进三份规则文档 ③规则整理 #316（消 8 处手工同步契约、轮次上限改分级）。
@@ -55,7 +55,7 @@ P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
 SCPI 闭环依赖链：先把现场项映射到载体 → 用手册证据修判定和缺失载体 → 止住错误队列
 无限循环 → 补传输配对 → 补仪器接受/生效语义 → 接入正式 TestCase。该本地链已完成；
 P0-5 保持 ON-SITE-BLOCKED；P1-44/42/40/37 已在 Draft PR #303 完成本地实现与回归，
-本地序列现切到 **P1-27**（P1-29 已由 PR #320、P1-38 已由 PR #321 收口，见上方 Current Focus）。本轮日志设计与逐片实施计划见
+本地序列现切到 **P2-22**（P1-29 已由 PR #320、P1-38 已由 PR #321 收口，P1-27 本地完成，见上方 Current Focus）。本轮日志设计与逐片实施计划见
 [`plans/2026-08-07-log-sprint-design.md`](plans/2026-08-07-log-sprint-design.md) /
 [`plans/2026-08-07-log-sprint.md`](plans/2026-08-07-log-sprint.md)；SCPI 闭环设计与实施计划见
 [`plans/2026-08-06-scpi-evidence-closure-design.md`](plans/2026-08-06-scpi-evidence-closure-design.md) /
@@ -89,7 +89,7 @@ P0-5 保持 ON-SITE-BLOCKED；P1-44/42/40/37 已在 Draft PR #303 完成本地�
 
 - ~~**P1-45**~~ ✅ 现场验证项 → 载体序列 / 正式 TestCase 映射（表逐行核对 + 修 stale；docs-only）
 - **P1-46** 补现场载体与判定缺口：ON 态同值写剧本 + `uxm_scpi_compatibility` 对齐 mandatory；inherit 层数因无生效观测手段继续留 Discovered（**动手前必查手册**）
-- **P1-27** P1-8 校准门拒 mock cert（provenance + real 模式 strict 拒）
+- ~~**P1-27**~~ ✅ P1-8 校准门拒 mock cert（provenance + real 模式 strict 拒；直接 MEASURE 同样前置拦截）
 - **P1-28** 「当前暗室」双真值源收口（active chamber vs active lab 绑定暗室）
 - **P2-22** F64 disconnect 冷缓存判 GOS 换真值源（涉 SCPI 查 NotebookLM）
 - **P2-23** 会话资产 is_active 预检 + measure resolver 同病排查
@@ -261,7 +261,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → **P1-27** → P2-22 → P2-23 → P2-24 → P3-18 → P3-19**（P1-29 由 PR #320、P1-38 由 PR #321 收口；当前执行片只看顶部 **Current Focus**）|
+| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → **P2-22** → P2-23 → P2-24 → P3-18 → P3-19**（P1-27 本地完成；当前执行片只看顶部 **Current Focus**）|
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -1536,10 +1536,12 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 
 **对照**：用旧代码实际产生的 payload 形态（`{...value, frequency_hz: next}`，CC 一字不动）复现 → `顶层=3700000000 / CC[0]=3600000000`，**漂移 100 MHz** 🔴。实验用例事后逐字段还原（`逐字段一致=True`）。
 
-### P1-27 — P1-8 校准门拒 mock cert（provenance + real 模式 strict 拒）⬜（2026-08-02 拍板，待开工）
+### P1-27 — P1-8 校准门拒 mock cert（provenance + real 模式 strict 拒）✅（2026-08-11 本地完成）
 
 **What**: cal 记录带 `use_mock` provenance 标记；real 模式 precheck strict 门拒 mock cert（门现在只查存在/频率/时效）。**来源**: 2026-07-03 现场实证（[→ P1-27] 已标）—— mock 路损 cert 在 real 模式 `cal_pass: true`，真测静默应用 mock 补偿值。
 **Why P1**: 现场实证穿透，下次现场前必修（runtime-gate-not-frozen-snapshot 同母题）。
+
+**收口**：`ProbePathLossCalibration.use_mock` 采用 `False=真仪器 / True=模拟 / NULL=历史来源未知` 三态，迁移不设默认值、不回填旧行；两条 live 生成路径均在落库时写入来源，latest API、precheck 与 measure payload 均显式暴露。真实 CE + strict 只允许 `use_mock is False`；mock/unknown 在 PRECHECK fail-loud。另按“入口全集”补齐现场常用的单阶段 MEASURE：在任何仪表 connect/SCPI 下发前复核来源；strict 失败，显式 bypass 则忽略不可信证书、以无路损补偿方式继续，模拟数值不进入真实 KPI。定点回归 67 passed；完整相关回归与迁移门见本 PR 验证记录。
 
 ### P1-28 — 「当前暗室」双真值源收口 ✅（2026-08-02 拍板；2026-08-07 完成）
 
@@ -3943,6 +3945,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 - `[discovered 2026-08-07 during P1-28 TDD]` ~~**`POST /workflows/execute` 的探头校准步骤必然在服务构造处崩溃**~~ ✅ **已并入 P1-28 收口（内审 F1 判为真值源端到端阻断项）** —— 没有补同名空壳；已改接现有 `AmplitudeCalibrationService` / `PhaseCalibrationService`，API 通过线程池隔离同步 executor 的 `asyncio.run()` 边界，映射 `CalibrationResult` 并将唯一 resolver 得到的 `chamber.id` 传入落库。新增直调 executor 与 live API 两层回归，都校验实际校准行归属所选 LabProfile 暗室。
 
+- `[discovered 2026-08-11 during P1-27 入口全集审计]` **`CalibrationOrchestrator.export_calibration_data/import_calibration_data` 仍按已删除的逐探头列读写当前聚合 `ProbePathLossCalibration`（待 triage）** —— 方法访问/构造 `probe_id`、`polarization`、`path_loss_db`，而当前模型权威字段是聚合 JSON；全仓没有这两个 orchestrator 方法的 live API 或调用方。照现状调用会在导出属性访问或导入构造时失败，但它不是 P1-27 的 live 校准生成入口，不能为“顺手传播 provenance”先修一条无人消费的坏死链。后续先裁决删除还是按当前聚合包重写，再决定是否进 roadmap/backlog。
 - `[discovered 2026-08-10 during P1-48 第 5 片外审]` **给「真假标注上线前归档的旧报告」挂警示 —— 整条支线撤回，重做时按下面三个洞设计（P2）** —— P1-48 第 5 片里我加了这条支线，外审连查三轮、每轮的洞都是上一轮修复引入的，最后**整条撤掉**（修法优先级「去掉 > 换源 > 收窄 > 加机制」的第一档）。⚠️ **实际影响面当时为零**：库里 214 份报告全是 `single_execution`，一份虚拟路测报告都没有 —— 这个机制从头到尾是防将来的，却消耗了三轮外审。重做前先问「现在有这类数据吗」。
   **踩过的三个洞（重做时逐个避开）**：
   ① **判据别按「形状」猜** —— 第一版按「有数值 pass_rate + 无 provenance + 结论 passed/failed」判新旧，而 **214 份真报告的形状恰好全部命中**，会把全部真数据标成「未经验证」（反方向的假信息，比不加更糟）。改用 `road_test_execution_id` 非空才算虚拟路测报告。

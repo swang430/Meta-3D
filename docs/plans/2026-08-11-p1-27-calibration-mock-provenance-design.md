@@ -8,14 +8,14 @@ precheck。现有门只检查记录存在、频率窗口、有效期与状态，
 
 ## 已核对的全集
 
-权威记录是 `ProbePathLossCalibration`，不是系统级 `CalibrationCertificate`。生产写入有三类：
+权威记录是 `ProbePathLossCalibration`，不是系统级 `CalibrationCertificate`。live 生产写入有两类：
 
 1. `ProbePathLossCalibrationService.start_calibration()`；
-2. `start_calibration_for_lab_profile()`；
-3. 校准数据包导入路径（来源可能来自新版数据包，也可能是未带来源的历史包）。
+2. `start_calibration_for_lab_profile()`。
 
-读取侧包括 latest API、precheck、measure、补偿服务与校准编排器。本片只改变已批准的
-strict precheck 判定，不在底层查询中静默过滤记录，也不改变操作员显式关闭 strict 的语义。
+读取侧包括 latest API、precheck、单阶段 measure、补偿服务与校准编排器。`CalibrationOrchestrator`
+内另有一套旧 export/import 方法，但它仍按已删除的逐探头列读写当前聚合模型，且全仓没有该方法的
+live API/调用方；本片不把坏死链伪装成第三个生产入口，已单列 Discovered 待评估。
 
 ## 方案比较
 
@@ -41,13 +41,14 @@ strict precheck 判定，不在底层查询中静默过滤记录，也不改变�
 
 ## 数据流与判定
 
-两条正常生成路径在落库时直接写入服务实例的 `self.use_mock`。新版导出包携带该字段；导入时
-只原样传播 `True` / `False`，缺字段保持 `None`，不从 `vna_model` 文本猜来源。latest API
-显式返回三态，precheck payload 记录 `path_loss_calibration_use_mock` 便于 GUI、日志和报告审计。
+两条正常生成路径在落库时直接写入服务实例的 `self.use_mock`。latest API 显式返回三态，
+precheck 与 measure payload 记录 `path_loss_calibration_use_mock` 便于 GUI、日志和报告审计。
 
 strict 判定保持现有运行时硬件来源：仅当当前 live channel emulator 是真实驱动时启用。此时
 `path_loss_valid`、证书总体状态和来源白名单共同决定 `cal_pass`。显式 bypass 或 mock CE 仍不
-阻塞，但 `cal_pass_reason` 必须记录 mock/unknown 在 strict 下会失败。
+阻塞，但 `cal_pass_reason` 必须记录 mock/unknown 在 strict 下会失败。由于现场可直接运行单阶段
+MEASURE，同一来源门还必须在任何仪表 connect/下发之前重检：strict 时直接失败；显式 bypass 时
+继续做无路损补偿的调试测量，但不应用模拟/未知证书，避免其数值进入真实 KPI。
 
 ## 迁移与兼容
 
@@ -61,4 +62,5 @@ downgrade。
 2. 新增真实 CE + strict 的 `False` 通过、`True` 拒绝、`None` 拒绝；
 3. 新增 bypass 审计理由，证明模拟/未知不会被悄悄写成 `ok`；
 4. 验证两条正常校准生成路径写入来源，并验证 API schema 暴露三态；
-5. 运行 migration head、相关回归、完整规则门与差异检查。
+5. 验证直接单阶段 MEASURE 在硬件连接前拒绝不可信来源，并验证 bypass 不应用该证书；
+6. 运行 migration head、相关回归、完整规则门与差异检查。

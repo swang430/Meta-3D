@@ -4,7 +4,7 @@
 
 **Goal:** Persist path-loss calibration provenance and make real-hardware strict precheck reject mock or unknown-source calibration records.
 
-**Architecture:** Add a nullable `ProbePathLossCalibration.use_mock` Boolean whose three states mean real, simulated, and unknown. Stamp every live generation path, preserve the field through export/import and API responses, then include an explicit-real allowlist in the existing runtime-aware calibration gate.
+**Architecture:** Add a nullable `ProbePathLossCalibration.use_mock` Boolean whose three states mean real, simulated, and unknown. Stamp both live generation paths, expose the field through API responses, then include an explicit-real allowlist in precheck and the direct MEASURE entry.
 
 **Tech Stack:** FastAPI, SQLAlchemy, Alembic, Pydantic, pytest, SQLite/PostgreSQL.
 
@@ -55,7 +55,6 @@ git commit -m "test: reproduce mock calibration passing strict precheck"
 - Modify: `api-service/app/models/probe_calibration.py`
 - Modify: `api-service/app/services/path_loss_calibration_service.py`
 - Modify: `api-service/app/schemas/probe_calibration.py`
-- Modify: `api-service/app/services/calibration_orchestrator.py`
 - Test: `api-service/tests/test_path_loss_calibration.py`
 
 **Step 1: Write producer tests before production changes**
@@ -70,9 +69,9 @@ Run the selected test names and confirm failure is the missing provenance field/
 
 Declare `use_mock = Column(Boolean, nullable=True)` with a comment defining `False` / `True` / `NULL`. Add an idempotent Alembic migration from `f6c2d8a41b73`; do not set a server default and do not backfill brownfield rows.
 
-**Step 4: Stamp and transport the value**
+**Step 4: Stamp and expose the value**
 
-Set `use_mock=self.use_mock` in both live `ProbePathLossCalibration` constructors. Add `Optional[bool]` to `ProbePathLossCalibrationResponse`. Export the exact value and import only explicit Boolean values, leaving absent/invalid values as `None`; never infer from `vna_model`.
+Set `use_mock=self.use_mock` in both live `ProbePathLossCalibration` constructors. Add `Optional[bool]` to `ProbePathLossCalibrationResponse`. Do not modify the stale `CalibrationOrchestrator` export/import methods: they still target removed per-probe columns and have no live caller, so that dead-chain repair is a separate Discovered item.
 
 **Step 5: Run producer GREEN and migration checks**
 
@@ -85,10 +84,11 @@ git add api-service/app api-service/alembic/versions api-service/tests/test_path
 git commit -m "feat: persist path-loss calibration provenance"
 ```
 
-### Task 3: Enforce the explicit-real strict gate
+### Task 3: Enforce the explicit-real gate at every live execution entrance
 
 **Files:**
 - Modify: `api-service/app/services/mimo_ota/executors/precheck.py`
+- Modify: `api-service/app/services/mimo_ota/executors/measure.py`
 - Test: `api-service/tests/test_mimo_ota_precheck_cal_gate.py`
 
 **Step 1: Implement the minimal allowlist**
@@ -99,11 +99,15 @@ Read `latest_pl.use_mock` into `path_loss_calibration_use_mock`. Under real live
 
 Run the full precheck calibration test file and confirm all previous cartesian/frequency cases plus new provenance cases pass.
 
-**Step 3: Run adjacent regressions**
+**Step 3: Close the direct-MEASURE bypass**
+
+Resolve the selected path-loss certificate before any instrument `connect()`. For a real channel emulator, only explicit `use_mock=False` may be applied. Strict mode returns FAILED before hardware touch; explicit bypass continues without applying the untrusted certificate and records its id/provenance for audit. Mock CE rehearsal may continue using mock calibration because its entire measurement is already excluded from formal KPI.
+
+**Step 4: Run adjacent regressions**
 
 Run commissioning precheck, measure compensation, mode filtering, readiness, and rule-gate tests.
 
-**Step 4: Commit**
+**Step 5: Commit**
 
 ```bash
 git add api-service/app/services/mimo_ota/executors/precheck.py \
