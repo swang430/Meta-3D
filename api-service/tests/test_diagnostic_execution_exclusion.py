@@ -207,6 +207,96 @@ async def test_second_concurrent_unsafe_diagnostic_is_rejected(
 
 
 @pytest.mark.asyncio
+async def test_unsafe_sequence_does_not_interleave_with_f64_standalone_operation(
+    db, lab_with_bs, monkeypatch,
+):
+    """序列级租约覆盖整个 run；F64 手工操作只能在序列退出后开始。
+
+    P3-18 回查发现，原始 Discovered 所要求的 run-endpoint 串行化已由
+    P1-46 / PR #296 的 exclusion token 与后续 PR #304 的全局
+    ``InstrumentTestLease`` 共同落地：破坏性诊断之间直接拒绝，诊断与其它
+    F64 端点则串行等待。本条补上此前缺少的跨入口行为证据，避免日后退回
+    “每条 SCPI 原子各自加锁、序列仍可交错”。
+    """
+    from contextlib import asynccontextmanager
+
+    from app.api import instrument as instrument_api
+    from app.services import instrument_test_lease as lease_service
+    from app.services.instrument_test_lease import InstrumentTestLease
+
+    sequence_started = asyncio.Event()
+    release_sequence = asyncio.Event()
+    f64_waiting_for_lease = asyncio.Event()
+    events = []
+
+    class _F64:
+        async def acquire_remote_control(self):
+            events.append("f64-acquire")
+            return True
+
+        async def release_to_local_control(self):
+            events.append("f64-release")
+            return True
+
+        async def start_emulation(self):
+            events.append("f64-start")
+            return True
+
+    driver = _F64()
+    fake_hal = SimpleNamespace(drivers={"channelEmulator": driver})
+
+    async def _run(*_args, **_kwargs):
+        events.append("sequence-enter")
+        sequence_started.set()
+        await release_sequence.wait()
+        events.append("sequence-exit")
+        return SequenceRunResult(success=True, summary="sequence complete")
+
+    _patch_sequence(monkeypatch, _sequence(safe=False, run=_run))
+    monkeypatch.setattr(diagnostic_api, "get_hal_service", lambda: fake_hal)
+    monkeypatch.setattr(
+        instrument_api, "_get_loaded_hal_driver", lambda _category: driver,
+    )
+    monkeypatch.setattr(
+        lease_service, "_LEASE", InstrumentTestLease(lambda: fake_hal),
+    )
+
+    @asynccontextmanager
+    async def _observable_f64_lease(purpose, **kwargs):
+        f64_waiting_for_lease.set()
+        async with lease_service.instrument_test_lease(purpose, **kwargs):
+            yield
+
+    monkeypatch.setattr(
+        instrument_api, "instrument_test_lease", _observable_f64_lease,
+    )
+
+    sequence_task = asyncio.create_task(diagnostic_api.run_diagnostic_sequence(
+        "unsafe", _request(lab_with_bs.id), db,
+    ))
+    await sequence_started.wait()
+    f64_task = asyncio.create_task(instrument_api.emulation_control(
+        "channelEmulator",
+        instrument_api.EmulationControlRequest(action="start"),
+    ))
+    interleaved = False
+    try:
+        # 第二个 task 已进入租约入口；此后必须停在共享锁，而不是进入 F64 驱动。
+        await asyncio.wait_for(f64_waiting_for_lease.wait(), timeout=1.0)
+        await asyncio.sleep(0)
+        interleaved = "f64-start" in events
+    finally:
+        release_sequence.set()
+        await asyncio.wait_for(
+            asyncio.gather(sequence_task, f64_task), timeout=1.0,
+        )
+    assert not interleaved, (
+        "F64 手工操作插进了诊断序列中间；load/GO/AUTOSET 等步骤会互相污染"
+    )
+    assert events.index("sequence-exit") < events.index("f64-start"), events
+
+
+@pytest.mark.asyncio
 async def test_unsafe_sequence_exception_releases_guard(
     db, lab_with_bs, monkeypatch,
 ):
