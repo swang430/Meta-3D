@@ -22,6 +22,31 @@ from app.services.report_data_collector import ReportDataCollector
 logger = logging.getLogger(__name__)
 
 
+_SERVER_OWNED_REPORT_TRUST_FIELDS = frozenset({
+    "report_family",
+    "calibration_trust_schema_version",
+    "formal_path_loss_verified",
+})
+
+
+def _strip_untrusted_report_attestation(
+    content_data: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Creation payloads cannot self-attest provenance-aware generation.
+
+    The MIMO builder writes these fields only after rebuilding content from the
+    linked TestExecution. Keeping them out of pending report rows makes the
+    read/download allowlist a server-owned transition rather than client JSON.
+    """
+    if not isinstance(content_data, dict):
+        return content_data
+    return {
+        key: value
+        for key, value in content_data.items()
+        if key not in _SERVER_OWNED_REPORT_TRUST_FIELDS
+    }
+
+
 def is_mimo_ota_execution(db: Session, execution: TestExecution) -> bool:
     """Classify from the execution's server-side type truth, not report text."""
     descriptors = (execution.config or {}).get("step_descriptors") or []
@@ -70,6 +95,10 @@ class ReportService:
         **kwargs
     ) -> TestReport:
         """Create a new report"""
+        if "content_data" in kwargs:
+            kwargs["content_data"] = _strip_untrusted_report_attestation(
+                kwargs["content_data"]
+            )
         # Convert UUID to string for JSON serialization
         execution_ids_str = [str(eid) for eid in (test_execution_ids or [])]
         comparison_ids = kwargs.pop('comparison_plan_ids', None)

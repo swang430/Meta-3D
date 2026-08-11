@@ -1541,7 +1541,7 @@ gate 按 DUT attach 依赖拆两半）+ 同源 stale 句清理（"P0-4→P0-3→
 **What**: cal 记录带 `use_mock` provenance 标记；real 模式 precheck strict 门拒 mock cert（门现在只查存在/频率/时效）。**来源**: 2026-07-03 现场实证（[→ P1-27] 已标）—— mock 路损 cert 在 real 模式 `cal_pass: true`，真测静默应用 mock 补偿值。
 **Why P1**: 现场实证穿透，下次现场前必修（runtime-gate-not-frozen-snapshot 同母题）。
 
-**收口**：`ProbePathLossCalibration.use_mock` 采用 `False=真仪器 / True=模拟 / NULL=历史来源未知` 三态，迁移不设默认值、不回填旧行；两条 live 生成路径均在落库时写入来源，latest API、precheck 与 measure payload 均显式暴露。真实 CE + strict 只允许来源明确为 real、状态为 valid 且 `valid_until > now` 的记录；真实执行从 explicit-real 白名单内选最新证书，更新的 mock 演练证书不会遮住仍有效的真实证书；mock CE 则保留 mock 证书以演练完整校准链。missing / expired / mock / unknown 在 PRECHECK 与单阶段 MEASURE 的任何仪表 connect/SCPI 下发前 fail-loud。显式 bypass 只允许无路损补偿调试，不能应用不可信证书。ASC 三条生成路径只消费 MEASURE 已筛选的证书，TRP/TIS 补偿、校准状态与校准报告采用同一白名单。历史 MIMO execution 即使旧 `path_loss_verified=true`，缺少 `path_loss_calibration_use_mock=false` 仍重生成成 UNKNOWN/N/A；旧报告详情与 PDF 在重生成前 409，新 builder 以 trust schema 区分“可审计 UNKNOWN”与“可作正式结论”。模拟、未知或过期证书不进入真实 KPI、有效状态或正式报告分母。最新相关回归（含 commissioning、readiness、历史报告、全仓规则门）**255 passed**；SQLite migration 已完成 f6→head→f6→head 往返且仅一条 Alembic head。
+**收口**：`ProbePathLossCalibration.use_mock` 采用 `False=真仪器 / True=模拟 / NULL=历史来源未知` 三态，迁移不设默认值、不回填旧行；两条 live 生成路径均在落库时写入来源，latest API、precheck 与 measure payload 均显式暴露。真实 CE + strict 只允许来源明确为 real、状态为 valid 且 `valid_until > now` 的记录；真实执行从 explicit-real 白名单内选最新证书，更新的 mock 演练证书不会遮住仍有效的真实证书；mock CE 则保留 mock 证书以演练完整校准链。missing / expired / mock / unknown 在 PRECHECK 与单阶段 MEASURE 的任何仪表 connect/SCPI 下发前 fail-loud。显式 bypass 只允许无路损补偿调试，不能应用不可信证书。ASC 三条生成路径只消费 MEASURE 已筛选的证书，TRP/TIS 补偿、校准状态与校准报告采用同一白名单。历史 MIMO execution 即使旧 `path_loss_verified=true`，缺少 `path_loss_calibration_use_mock=false` 仍重生成成 UNKNOWN/N/A；旧报告详情与 PDF 在重生成前 409，新 builder 以 trust schema 区分“可审计 UNKNOWN”与“可作正式结论”，且创建入口会剥离客户端伪造的 trust 字段，只有服务端重建可写入。模拟、未知或过期证书不进入真实 KPI、有效状态或正式报告分母。最新相关回归（含 commissioning、readiness、历史报告、全仓规则门）**256 passed**；SQLite migration 已完成 f6→head→f6→head 往返且仅一条 Alembic head。
 
 ### P1-28 — 「当前暗室」双真值源收口 ✅（2026-08-02 拍板；2026-08-07 完成）
 
@@ -3682,6 +3682,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-11 during P1-38 final internal review]` **P1-38 已完成计划文档的事实镜像收口（P2/P3，待 triage；不影响运行功能，本轮不修）** —— **P2**：`docs/plans/2026-08-11-p1-38-alert-hygiene-design.md` 仍称“现场数据库中的 674 条”，而本轮只核验并清理了当前本机开发库；如继续把这份已执行计划作为施工输入，应换成可核验的数据库身份。**P3**：实施计划仍引用旧测试名 `test_g20_test_suite_alert_writers_are_db_isolated`，且保留清理前 dry-run 应命中 674 的口径；当前正确终态是 live dry-run 命中 0、恢复备份表保留 674 行。后续整理计划归档时一并更正，不为其启动本轮修复循环。
 
 - `[discovered 2026-08-11 during P1-27 final internal review]` **P1-27 三条 ASC 对称路径与 mock-CE MEASURE 演练的测试保护可补齐（P2，待 triage；功能已复核正确，本轮不为测试增强启动第二轮）** —— standard ASC 已直接断言筛选后的 `calibration_entries` 透传，mock CE 的 PRECHECK 也已证明模拟证书不会被 real-only 选择误伤；custom CDL、ChannelAsset 与 mock-CE MEASURE 目前由实现全集审查和相关回归间接覆盖。后续若进入 P3-18 测试精化批，可为三条 strategy 各加同一条 provenance 透传断言，并钉死 mock CE 的 MEASURE 仍消费 mock 证书、真实 CE 则优先 explicit-real。
+
+- `[discovered 2026-08-11 during P1-27 external review, Codex #322 R1]` **legacy MIMO 报告被 409 封锁后，GUI 没有可操作的重生成入口（P2，待 triage；不阻塞本轮来源安全修复）** —— 下载请求使用 blob 响应，界面只显示通用 `error.message`，服务端的“重生成 UNKNOWN/N/A 审计件”说明不会展示；同时 completed 行只提供下载，Regenerate 仅对 pending/failed 开放。后续应让 completed legacy blocked 状态可见，并提供显式重生成动作或正确解析 blob 错误。该项改善操作员恢复路径，但不放宽本轮服务端 fail-closed 门。
 
 **2026-08-06 SCPI 闭环专项 triage（本表是状态真值；下方原始条目保留发现上下文）**：
 

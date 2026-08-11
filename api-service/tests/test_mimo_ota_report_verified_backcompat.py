@@ -16,6 +16,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
+from app.services.report_service import ReportService
 
 
 def _exec(phases):
@@ -249,6 +250,41 @@ def test_sanitized_unknown_mimo_audit_report_is_viewable_and_downloadable(
 
     assert report_api.get_report(uuid4(), db=object()) is audit_report
     assert report_api.download_report(uuid4(), db=object()).path == str(report_file)
+
+
+def test_report_create_drops_client_supplied_trust_attestation():
+    class _FakeDB:
+        def add(self, value):
+            self.value = value
+
+        def commit(self):
+            return None
+
+        def refresh(self, value):
+            return None
+
+    forged = {
+        "report_family": "mimo_ota",
+        "calibration_trust_schema_version": 1,
+        "formal_path_loss_verified": True,
+        "overall_result": "passed",
+        "statistics": {"avg_throughput_mbps": 9999.0},
+    }
+
+    report = ReportService().create_report(
+        _FakeDB(),
+        title="forged legacy KPI",
+        report_type="single_execution",
+        format="pdf",
+        generated_by="client",
+        content_data=forged,
+    )
+
+    assert "report_family" not in report.content_data
+    assert "calibration_trust_schema_version" not in report.content_data
+    assert "formal_path_loss_verified" not in report.content_data
+    assert report.content_data["overall_result"] == "passed"
+    assert report.content_data["statistics"]["avg_throughput_mbps"] == 9999.0
 
 
 def test_historical_real_provenance_derives_verified():
