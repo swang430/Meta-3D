@@ -49,6 +49,7 @@ from app.models.probe_calibration import (
 )
 from app.models.test_plan import TestExecution
 from app.services.mimo_ota import build_mimo_ota_test_case
+from app.services.mimo_ota.executors.measure import MeasureExecutor
 from app.services.mimo_ota.executors.precheck import PrecheckExecutor
 from app.services.test_execution import (
     StepDescriptor,
@@ -559,6 +560,52 @@ async def test_path_loss_provenance_gate(
     )
 
     reason = measurements.get("cal_pass_reason", "") or ""
+    for keyword in reason_keywords:
+        assert keyword in reason, f"missing {keyword!r} in {reason!r}"
+
+
+@pytest.mark.parametrize(
+    "use_mock, reason_keywords",
+    [
+        (True, ["simulated", "provenance"]),
+        (None, ["unknown", "provenance"]),
+    ],
+    ids=["mock", "legacy-unknown"],
+)
+@pytest.mark.asyncio
+async def test_direct_measure_rejects_untrusted_path_loss_before_hardware_touch(
+    db,
+    lab,
+    chamber,
+    hal_with_mocks,
+    use_mock: Optional[bool],
+    reason_keywords: list[str],
+):
+    """单阶段 MEASURE 不能绕过 PRECHECK 的 provenance 门。
+
+    失败必须发生在 connect / SCPI 下发之前；否则即使最终返回失败，也已经
+    改动了现场仪表状态。
+    """
+
+    class _MustNotConnect:
+        async def connect(self):
+            raise AssertionError("provenance gate ran after hardware connect")
+
+    _seed_path_loss_cal(db, chamber.id, use_mock=use_mock)
+    hal_with_mocks.drivers["positioner"] = _MustNotConnect()
+    hal_with_mocks.drivers["baseStation"] = _MustNotConnect()
+    ctx = _build_context(
+        db,
+        lab,
+        cal_cert=None,
+        strict_mode=True,
+        frequency_hz=3500e6,
+    )
+
+    result = await MeasureExecutor().execute(ctx)
+
+    assert result.status == StepExecutionStatus.FAILED
+    reason = result.error_message or ""
     for keyword in reason_keywords:
         assert keyword in reason, f"missing {keyword!r} in {reason!r}"
 
