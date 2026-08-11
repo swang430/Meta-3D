@@ -1,7 +1,9 @@
 # F64R-1 设计:`DIAG:SIMU:STATE?` 接入为运行状态唯一真值源
 
-> 状态:**设计评审中**(评审通过后开发)。Roadmap: F64R-1(F64 驱动 review 母题①
-> 「该问仪器的地方在猜」之"运行状态"维度;P0-3 已落地加载路,本项收剩余)。
+> 状态：**✅ 已完成**（PR #225，提交 `62cd796`）。本文正文保留实施前的设计语态，
+> 仅用于解释决策与验收边界；当前运行行为以 `api-service/app/hal/propsim_f64.py`
+> 及 `api-service/tests/test_f64_state_truth_source_f64r1.py` 为准。Roadmap: F64R-1
+> （F64 驱动 review 母题①「该问仪器的地方在猜」之“运行状态”维度）。
 > 手册依据全部经 NotebookLM「PROPSIM 资料」查证(User Reference §20.4.3 / §20.5.2 /
 > §20.6.1 + ATE AN §2.4/§2.5),关键条目附章节号。
 
