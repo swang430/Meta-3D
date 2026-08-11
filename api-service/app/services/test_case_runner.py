@@ -56,6 +56,7 @@ from app.services.instrument_test_lease import (
     InstrumentTestLeaseError,
     instrument_test_lease,
 )
+from app.services.execution_failure_alerts import emit_execution_failed_alert
 
 logger = logging.getLogger(__name__)
 
@@ -283,6 +284,8 @@ def reset_stale_running_case_executions() -> None:
             )
         if stale:
             db.commit()
+            for ex in stale:
+                emit_execution_failed_alert(ex.id)
     except Exception:  # noqa: BLE001
         logger.exception("[case-runner] stale 复位失败 (不阻塞启动)")
         db.rollback()
@@ -440,6 +443,8 @@ async def _run_case(execution_id: UUID) -> None:
                 flag_modified(ex, "config")
                 _finalize_scpi_acceptance(ex)
                 db.commit()
+                if ex.status == "failed":
+                    emit_execution_failed_alert(ex.id)
         except Exception:  # noqa: BLE001
             logger.exception("[case-runner] execution %s 异常收尾也失败", execution_id)
     finally:
@@ -472,6 +477,7 @@ async def _run_case_loop(db, execution_id: UUID) -> None:
         execution.status = "failed"
         execution.completed_at = datetime.utcnow()
         db.commit()
+        emit_execution_failed_alert(execution.id)
         logger.error("[case-runner] execution %s 的快照 TestCase 不存在", execution_id)
         return
 
@@ -552,6 +558,8 @@ async def _run_case_loop(db, execution_id: UUID) -> None:
         execution.status = "completed"
     execution.completed_at = datetime.utcnow()
     db.commit()
+    if execution.status == "failed":
+        emit_execution_failed_alert(execution.id)
     logger.info(
         "[case-runner] execution %s 收尾: %s, SCPI formal=%s (%s)",
         execution_id,

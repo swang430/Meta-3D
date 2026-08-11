@@ -16,9 +16,9 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
-**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → **P3-19**（逐片 WIP=1）。
+**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅。
 
-**Current Focus = P3-19 / 超大 traceback 逻辑组 fail-closed 子片** —— tail 字节预算、端口清理 allowlist、UXM SOCKET、UXM ARFCN、mock-only、calibration warnings 持久化与 acquire 清理警告穿透已分别由 PR #331–#337 合并。当前片收口 #331 外审登记的边界：反向扫描耗尽 16 MiB 预算时，只要仍持有尚未找到父行的 traceback 续行，就返回 422，禁止把同一逻辑日志组拆到两页并静默丢续行。`/tail` 与 `/history` 继续共用同一扫描器；完成后进入正式执行失败告警生产者。
+**Current Focus = P3-19 已完成，连续开发暂停** —— PR #331–#338 与本 PR 已收口全部子片。最后片把 `test_case_runner` 与 `commissioning_api` 的 `TestExecution.status=failed` 系统故障发布为一次性 active Alert：执行终态先提交，告警用独立 session best-effort 落库；按执行 ID 在全部告警生命周期去重。调试链、废弃计划链、VRT 与 `completed + validation_pass=false` 的业务判定失败不进入系统故障告警。按用户要求，本 PR 合入后暂停，不自动开始 P1-49、现场载体或新增商用 Todo。
 
 > **~~P1-48~~ ✅ 2026-08-10 完成**（2026-08-09 插队，兼作 Gemini 外审首测对象）。五片全部 merge 进 main：#308 日志线 / #313 删掉四条整体返回随机数的报告接口（−955 行）/ #312 路损校准拒绝模拟驱动 / #310 报告线 / #314 虚拟路测不再编数。
 > **代价记录**：外审 27 轮 30 条，其中 #314 一个 PR 占 12 轮 22 条；复盘后 ①内审改成每次 push 前都过（新增轻量档）②「改之前先列全集」写进三份规则文档 ③规则整理 #316（消 8 处手工同步契约、轮次上限改分级）。
@@ -77,7 +77,7 @@ P0-5 保持 ON-SITE-BLOCKED；P1-44/42/40/37 已在 Draft PR #303 完成本地�
 - **P1-41** 修 UXM 排错误队列停不下来的循环（7.6 秒 20 万行 / 一次 24 GB 的根因；**动手前必查 NotebookLM**）
 - **P1-47A** ✅ SCPI 往返配对/取消超时/脱敏/30天留存上限；**P1-47B/C**：B=UXM/F64/转台接受与生效；C=TestCase持久化+GUI/报告
 - ~~**P1-37**~~ ✅ 五类现场 mock 产真实命令格式并记 `scpi.log`；回复带 per-driver `simulated=true`，正式证据门拒绝模拟来源（PR #303）
-- ~~**P1-38**~~ ✅ 活动告警卫生：确认 P3-15 的 SQLite override 已切断测试污染源，以 G20 常驻门锁住；新增精确 dry-run 清理工具，并把大面板收成 summary badge（PR #321；生产告警生产者仍归 P3-19）
+- ~~**P1-38**~~ ✅ 活动告警卫生：确认 P3-15 的 SQLite override 已切断测试污染源，以 G20 常驻门锁住；新增精确 dry-run 清理工具，并把大面板收成 summary badge（PR #321；生产告警生产者后由 P3-19 最后一片补齐）
 
 > **⭐ 2026-08-05 用户定方向：「今后 log 是我们主要的调试手段，让它尽快
 > 完整 / 正确 / 高效的就位。」** —— 这句话是 P1-30 / P1-34 / P1-35 / P1-36 /
@@ -97,7 +97,7 @@ P0-5 保持 ON-SITE-BLOCKED；P1-44/42/40/37 已在 Draft PR #303 完成本地�
 - ~~**P1-48**~~ ✅ 日志/报告分不出哪台仪表是真的 —— P1-37 的标记只到 `scpi.log`，app.log / 报告 / VRT 三个消费端一个没接上（2026-08-10 五片全合）
 - ~~**P1-29**~~ ✅ `/dashboard/alerts/summary` 被 `/alerts/{alert_id}` 遮蔽 → 驾驶舱告警计数条恒坏（一行声明顺序 + G19 遮蔽门，PR #320）
 - **P3-18** 门/测试精化批（G11 三覆盖面 / p08 零残留站点 / PDF 转义收口 / 诊断序列串行化 / **手写类型审计尺子改逐层递归**）
-- **P3-19** 日志/告警/留痕卫生批（tail 上限 / app.log 噪声 / 校准 warnings 持久化+清理警告可见 / UXM 两组 P3 / **mock-only 遗留响应类型与 handler 收口** / **端口清理改项目身份 allowlist**）
+- **P3-19** 日志/告警/留痕卫生批（tail 上限与逻辑组边界 / 正式执行失败告警 / 校准 warnings 持久化+清理警告可见 / UXM 两组 P3 / **mock-only 遗留响应类型与 handler 收口** / **端口清理改项目身份 allowlist**）
 
 **2026-08-01 拍板的本地队列 10/10 全部收口**（P1-22 ✅ #256 / P1-23 ✅ #257 / P2-19 ✅ #258 / P2-20 ✅ #259 / P1-24 ✅ #260 / P2-21 ✅ #261 / P3-14 ✅ #262 / P3-15 ✅ #263 / P3-16 ✅ #264 / P3-17 ✅ done 本 PR）。**这是 2026-08-01 的历史快照，不表示当前队列为空；当前执行片只看本节顶部 Current Focus。** 原顺序备查 **P1-22 → P1-23 → P2-19 → P2-20 → P1-24 → P2-21 → P3-14 → P3-15 → P3-16 → P3-17**
 （逐片 WIP=1；P1-24/P2-21 为 2026-08-01 用户二次拍板从 Discovered 提升，插在 P3 批前）。一句话索引（详情见各 P 区条目）：
@@ -261,7 +261,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → **P3-19**（当前执行片只看顶部 **Current Focus**）|
+| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅；按用户要求暂停，下一轮须重新 triage** |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -2274,15 +2274,15 @@ class MockBaseStation:
 **实测（2026-08-05）**：`alerts` 表 **674 行，`source` 100% 是 `test_suite`**
 （2026-05-05 ~ 08-01），面板上那 **337 条"活动告警"一条真的都没有**。
 
-**根因**：**没有生产者**。runner 相位失败只落日志、不进告警表
-（P3-19 里正好有「执行失败告警通道」这条待办）。所以半屏宽度在展示测试垃圾。
+**当时根因**：**没有生产者**。runner 相位失败只落日志、不进告警表
+（当时 P3-19 尚有「执行失败告警通道」待办；现已由最后一片完成）。所以半屏宽度在展示测试垃圾。
 
 **范围（两件事，别混）**：
 1. **清污染** —— 674 条 `source=test_suite` 出库；**同时**堵住测试往生产库
    写告警的那条路（否则清完还会长回来 —— 这才是真修法，光清是治标）
 2. **面板去留** —— 告警这个**概念**该留（P1-8 校准门 / P1-9 DUT attach 那些
    fail-loud 天然就是告警源），但现在这个**面板**该收：收窄成计数徽章，
-   把腾出的宽度给日志与抽屉内容。真接生产者是独立增量（与 P3-19 那条合并考虑）。
+   把腾出的宽度给日志与抽屉内容。真接生产者是独立增量（后由 P3-19 最后一片完成）。
 
 ⚠️ **顺序要求**：先查清楚「测试为什么能写生产库」再清数据 —— 反过来做，
 清完下次跑测试又长回来，等于白干。
@@ -2320,7 +2320,7 @@ class MockBaseStation:
 供未来生产者接入复用。summary 后端改为单次 `GROUP BY` 聚合，避免五次独立查询在
 并发写入时拼出互相矛盾的快照；未知 severity 仍计入 total，GUI 遇到查询失败或
 `total != 四级计数之和` 时红色 fail-loud，不会把未知/不一致状态显示成绿色
-“无活动告警”。**生产告警生产者没有在本片实现，仍归 P3-19。**
+“无活动告警”。**生产告警生产者没有在 P1-38 实现；后由 P3-19 最后一片补齐。**
 
 ---
 
@@ -3627,7 +3627,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 ## 🟢 P3 — Polish / tooling
 
-**17/19 ✅ Done，P3-18 🔄 分片进行中、P3-19 ⬜ open。** 已完成项的完整 What / Fix / Acceptance 详情已迁出 → [`roadmap-archive.md`](roadmap-archive.md)。速览：
+**19/19 ✅ Done。P3-19 完成后按用户要求暂停。** 已完成项的完整 What / Fix / Acceptance 详情已迁出 → [`roadmap-archive.md`](roadmap-archive.md)。速览：
 
 | ID | Item | Done |
 |----|------|------|
@@ -3649,7 +3649,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 | P3-16 | 门 G-B：状态列注释 ⊇ 全仓状态字面量 | ✅ 本 PR — 落地为 test_rule_gates **G10**：真值源 = live import `TestExecution.__table__.columns['status'].comment`；写点识别双判据（`TestExecution(status=…)` 构造 + `execution/ex/test_execution` 变量属性赋值，2026-08-01 全仓 AST 普查定的；conn/session 等别的 status 域不误伤、动态值写点不归字面量门管——宁漏报不误伤）；checker 行为自测 + 变异实跑红（写入 'exploded' → 红） |
 | P3-17 | 门 G-C：文档 (动词,路径,参数,响应键) ⊇ 真实实现 | ✅ 本 PR — 落地为 test_rule_gates **G11** 双半：①散文半 = 现状文档**全 API 面** (动词,路径) ⊆ 路由表（G8 只锁计划链域；实值段通配匹配器防误杀示例；设计愿景文档/跨服务路由显式豁免并申报）②契约半 = checked-in openapi.yaml (路径,动词,参数名,2xx 响应键) ⊆ live schema —— 参数/响应键维度的机械落点（散文书写形态不可机械解析，实施时定的收窄）。首跑即抓 3 条 yaml 说谎（dashboard camelCase 三键 / category 包层 / 选择 profile 的 PUT 挂错路径）+ 2 条散文死引用，全修；openapi:generate 重生成 + GUI build 绿；双变异实跑红 |
 | P3-18 | 门/测试精化批（G11 三覆盖面 in=location/curl 动词/schema 类型 + p08 零残留站点参数化 + PDF 渲染管道其余转义入口 + 诊断序列 run endpoint 串行化 + 手写类型审计尺子改逐层递归比对）——2026-08-02 拍板，各配变异。PDF/G11/p08/诊断序列/手写类型五片已分别由 PR #326/#327/#328/#329/#330 合并；最后一片删除 7 条零消费 live fetch、隔离 `MockMonitoringFeedsResponse`，并把递归审计发现的 9 组活动契约差异登记 Discovered。 | ✅ |
-| P3-19 | 日志/告警/留痕卫生批（~~tail 反向扫描字节上限~~ ✅ PR #331 + ~~端口清理进程 allowlist~~ ✅ PR #332 + ~~UXM 终止符大小写~~ ✅ PR #333 + ~~UXM ARFCN 三条加固~~ ✅ PR #334 + ~~mock-only 遗留响应类型与 handler~~ ✅ PR #335 + ~~校准 warnings DB 持久化~~ ✅ PR #336 + ~~借用 acquire 的清理失败警告进入底层结果~~ ✅ PR #337 + 超大 traceback 逻辑组 fail-closed + 执行失败告警通道）——2026-08-02 拍板。**拆序**：~~tail 字节预算~~ ✅ → ~~端口清理安全方向~~ ✅ → ~~UXM SOCKET~~ ✅ → ~~UXM ARFCN~~ ✅ → ~~mock-only 类型~~ ✅ → ~~warnings 持久化~~ ✅ → ~~acquire warnings~~ ✅ → traceback 逻辑组 → 日志/告警生产者。⚠️ 原含的 app.log 噪声治理已于 2026-08-05 摘出提升为 P1-35；重新枚举确认旧 namespace 阈值描述已 stale，不再施工。 | 🔄 |
+| P3-19 | 日志/告警/留痕卫生批（~~tail 反向扫描字节上限~~ ✅ PR #331 + ~~端口清理进程 allowlist~~ ✅ PR #332 + ~~UXM 终止符大小写~~ ✅ PR #333 + ~~UXM ARFCN 三条加固~~ ✅ PR #334 + ~~mock-only 遗留响应类型与 handler~~ ✅ PR #335 + ~~校准 warnings DB 持久化~~ ✅ PR #336 + ~~借用 acquire 的清理失败警告进入底层结果~~ ✅ PR #337 + ~~超大 traceback 逻辑组 fail-closed~~ ✅ PR #338 + ~~正式执行失败告警通道~~ ✅ 本 PR）——2026-08-02 拍板。最后片在正式 runner / commissioning 终态所有者提交 `failed` 后，以独立 session 写一次性 `execution_failed` active Alert；全部生命周期去重，告警失败不回滚执行，调试/废弃/VRT/KPI 不通过均排除。⚠️ 原含的 app.log 噪声治理已由 P1-35完成；PR #338 外审指出的摘要镜像也已删除，不再施工 stale namespace 阈值。 | ✅ |
 
 ---
 
@@ -3960,7 +3960,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-07-31 during P2-8 tail 过滤语义修复]` **[→ 提升 P2-19 (2026-08-01)]** **主控台日志面板多选/默认态仍是 P2-11 失效模式（GUI 跟进,P2）** —— `/system-logs/tail` 已改"扫描中过滤",但 `ZoneLogsAlerts` 只在**单选一个 level** 时才下推 `level` 参数;默认三 chip 全开或 WARN+ERROR 双选走无过滤路径(最新 200 原始行+客户端过滤),低频失败行照样 ~48s 被冲出。修法=多选时逐 level 各发一次请求合并去重(零后端契约变化);同批顺带把 `total_lines_read` 显示成"已扫 N 行"(触顶时"无匹配日志"是假阴性,SystemLogViewer 已展示该字段,面板未展示)。
 - `[discovered 2026-07-31 during P2-8 tail 过滤语义修复]` **[→ 提升 P3-19 (2026-08-02)]** ~~**tail 反向扫描字节上限缺失（P3,pre-existing）**~~ ✅ **已由 P3-19 首片收口** —— `_scan_reverse_entries` 现在以 16 MiB 单请求字节预算同时约束 `/tail` 与 `/history`；预算内找不到可推进的安全换行边界时明确返回 422，不整读损坏/巨行文件，也不生成原地打转的游标。
 - ~~`[discovered 2026-08-11 during P3-19 首片 Codex 外审，P2，非本轮阻塞]` **字节预算可能从父 ERROR 行前切断超大 traceback 续行组**~~ ✅ **P3-19 traceback 逻辑组子片已收口** —— 当一组 RAW traceback 续行自身超过 16 MiB、反向扫描尚未找到父行时，tail/history 共用扫描器直接返回 422；不再返回空页并推进游标，也不会把父行与续行拆到不同页后静默丢失前半组。
-- `[discovered 2026-07-31 during P2-8 tail 过滤语义修复]` **[→ 提升 P3-19 (2026-08-02)]** **正式执行失败告警通道** —— `test_case_runner` / commissioning 正式执行进入终态 `failed` 时目前只落日志，不写 Alert，右侧「活动告警」摘要因而看不到系统执行故障；P3-19 最后一片只在终态所有者处生成一次 execution-failed 告警，并与执行状态提交隔离。原组合条目中的 app.log namespace 阈值判断已 stale：P1-35 已删除逐请求 DB 与 1 Hz cache 噪声，`app.audit.propagate=True` 又是 P1-34 跨域日志总线契约；不得再关闭 propagation 或 blanket 提高 `instrument_hal_service` / `app.db` 阈值。面板 `lines=200` 的可调性属于独立体验候选，不混入本片。
+- ~~`[discovered 2026-07-31 during P2-8 tail 过滤语义修复]` **[→ 提升 P3-19 (2026-08-02)]** **正式执行失败告警通道**~~ ✅ **P3-19 最后一片收口** —— `test_case_runner` / `commissioning_api` 正式执行进入终态 `failed` 后生成一次 `execution_failed` active Alert，右侧摘要下一轮轮询即可计入；执行状态先提交，告警独立事务失败不改写真实终态，已处置的同一执行告警不会重开。调试、废弃、VRT 与 KPI 不通过明确排除。原 app.log namespace 判断已证实 stale 并删除；面板 `lines=200` 的可调性仍只是独立体验候选。
 - `[discovered 2026-08-01 during VRT 摘要 channel_model 换源修复]` **[→ 提升 P2-20 (2026-08-01)]** **标准场景库 5 处 `channel_model=` 死 kwarg（P3）** —— `app/data/scenario_library.py` 给 Environment 传的 `channel_model=ChannelModel.*` 被 Pydantic `extra='ignore'` 静默吞掉,标准场景 `channel_snapshots` 恒空 → 场景库列表里标准场景的信道模型列恒 None。修法=把这 5 处改成 `channel_snapshots=[ChannelSnapshot(channel_type="3GPP", standard_model=..., ...)]`;`tests/test_data.py` 的 environment 也还在用旧 `channel_model` key,同批一起换。
 - `[discovered 2026-08-01 during VRT 摘要 channel_model 换源修复]` **[→ 提升 P2-20 (2026-08-01)]** **channel_model 死字段其余读/写方 3 站点（同母题清单, P3）** —— 内审全量扫出摘要行之外还有: ① `road_test.py::_generate_execution_report` 的 `EnvironmentInfo` 构造用 `get_attr_or_item(env, 'channel_model', '')`,tolerant 默认让它不崩但**恒空串**(live 路径: 列表显示 CDL-C、同场景报告显示空,两读方不同源),修法同款换源 `channel_snapshots[0].standard_model`;② `ota_scenario_mapper.py` 5 处读 `scenario.environment.channel_model`(当前全仓零调用方的死代码,任何人接线即 100% AttributeError);③ GUI 写侧 `CreateScenarioDialog`/`EditScenarioDialog` 恒发 `channel_snapshots: []`,表单选的 channelModel 只进 tags → GUI 建/编场景摘要 channel_model 恒 null、Edit 预填恒回落 'UMa',快照真值今天只有 API 直发能写。三处与标准库死 kwarg(上条)同母题,宜同批收口。
 - `[discovered 2026-08-01 during VRT 摘要 channel_model 换源修复]` **[→ 提升 P2-20 (2026-08-01)]** **`_list_custom_scenarios` 单行坏配置会 500 全列表（P2）** —— `road_test.py` 列表推导逐行 `vrt_test_case_to_scenario`,任何一行 DB configuration 过不了 `VirtualRoadTestConfig.model_validate`(如旧 schema 遗留行)就 ValidationError 冒泡,整个 `/road-test/scenarios` 500,全部场景消失。比摘要降级更烈的全灭模式,与"场景数==摘要数"不变量门同母题;修法待设计(逐行 try + 降级出行 or 显式隔离坏行报表),注意别静默丢行。

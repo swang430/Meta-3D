@@ -38,6 +38,7 @@ from app.services.test_execution import (
     dispatch_step,
 )
 from app.services.instrument_test_lease import instrument_test_lease
+from app.services.execution_failure_alerts import emit_execution_failed_alert
 
 
 COMMISSIONING_CHAINS = ("commissioning_api", "commissioning_adhoc")
@@ -86,6 +87,8 @@ def reset_stale_running_commissioning_executions() -> None:
             )
         if stale:
             db.commit()
+            for ex in stale:
+                emit_execution_failed_alert(ex.id)
     except Exception:  # noqa: BLE001
         logger.exception("[commissioning] stale running 复位失败 (不阻塞启动)")
         db.rollback()
@@ -1058,6 +1061,7 @@ async def run_all_phases(session_id: str, db: Session = Depends(get_db)):
             f"链在相位 {aborted_at} 中止: {abort_message or '明细见相位结果'}"
         )
         db.commit()
+        emit_execution_failed_alert(execution.id)
 
     db.refresh(execution)
     db.refresh(test_case)

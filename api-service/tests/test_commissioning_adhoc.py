@@ -28,6 +28,7 @@ from app.models.chamber import (
     create_chamber_from_preset,
 )
 from app.models.diagnostic_run import DiagnosticKind, DiagnosticRun
+from app.models.alert import Alert
 from app.models.lab_profile import LabProfile
 from app.models.test_plan import TestExecution
 
@@ -53,10 +54,14 @@ client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def setup_db():
+def setup_db(monkeypatch):
     Base.metadata.create_all(bind=engine)
     prev = app.dependency_overrides.get(get_db)
     app.dependency_overrides[get_db] = override_get_db
+    monkeypatch.setattr(
+        "app.services.execution_failure_alerts.SessionLocal",
+        TestingSessionLocal,
+    )
     try:
         yield
     finally:
@@ -546,6 +551,12 @@ class TestExecutionStatusVisibleToReloadGate:
             db.refresh(ex)
             assert ex.status == "failed", f"{ex.executed_by} 的僵尸行没被复位"
             assert ex.completed_at is not None
+        assert db.query(Alert).filter(
+            Alert.related_entity_id == rows[0].id,
+        ).count() == 1
+        assert db.query(Alert).filter(
+            Alert.related_entity_id == rows[1].id,
+        ).count() == 0, "commissioning_adhoc 调试失败不应进入正式活动告警"
         db.refresh(other)
         assert other.status == "running", "越界复位了别的链的行"
 
@@ -625,6 +636,12 @@ class TestExecutionStatusVisibleToReloadGate:
             f"中止的链被记成 {row.status!r} — 会混进待归档报告并算进成功率"
         )
         assert "中止" in (row.error_message or "")
+        alert = db.query(Alert).filter(
+            Alert.alert_type == "execution_failed",
+            Alert.related_entity_id == row.id,
+        ).one()
+        assert alert.status == "active"
+        assert alert.source == "commissioning_api"
 
     def test_commissioning_endpoints_reject_other_chains_rows(self, lab, db):
         """内审 F5: 用例执行的快照用例同样是 MIMO_OTA, 拿它的 execution id
