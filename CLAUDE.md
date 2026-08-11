@@ -386,7 +386,7 @@ GUI 遵循 **API优先架构**，包含以下层次：
 
 1. **API 层** (`gui/src/api/`):
    - `client.ts`: Axios HTTP 客户端实例
-   - `service.ts`: API 服务函数（fetchDashboard, fetchProbes 等）
+   - `service.ts`: API 服务函数（fetchProbes, fetchReadiness 等）
    - `mockServer.ts`: Axios mock 适配器，用于无后端开发
    - `mockDatabase.ts`: mock 服务器的内存数据存储
 
