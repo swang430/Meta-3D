@@ -16,9 +16,9 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **六项自 Discovered 区按既定 triage 出口提升为正式 P 编号 + 两项门候选直接立项**
 （P3-16/17，无 Discovered 来源条目）。**执行顺序与当前片记在本段，完成状态在各 P 条目/表处**：
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
-**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → **P2-24** → P3-18 → P3-19**（逐片 WIP=1）。
+**~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → **P3-18** → P3-19**（逐片 WIP=1）。
 
-**Current Focus = P2-24** —— 测试用例契约补 `lab_profile_id`（契约四步）。P2-23 已让会话创建与 MEASURE 的显式资产及两条 legacy 兼容入口都拒绝已退役 ChannelAsset，同时保留历史记录的只读可追溯性。条目见下方 P2-24。
+**Current Focus = P3-18** —— 门/测试精化批（G11 三覆盖面 / p08 零残留站点 / PDF 转义收口 / 诊断序列串行化 / 手写类型审计尺子改逐层递归）。P2-24 已把 TestCase 的 `lab_profile_id` 贯通 REST 契约、生成类型、GUI 服务、mock 与创建/编辑弹窗。条目见下方 P3-18。
 
 > **~~P1-48~~ ✅ 2026-08-10 完成**（2026-08-09 插队，兼作 Gemini 外审首测对象）。五片全部 merge 进 main：#308 日志线 / #313 删掉四条整体返回随机数的报告接口（−955 行）/ #312 路损校准拒绝模拟驱动 / #310 报告线 / #314 虚拟路测不再编数。
 > **代价记录**：外审 27 轮 30 条，其中 #314 一个 PR 占 12 轮 22 条；复盘后 ①内审改成每次 push 前都过（新增轻量档）②「改之前先列全集」写进三份规则文档 ③规则整理 #316（消 8 处手工同步契约、轮次上限改分级）。
@@ -55,7 +55,7 @@ P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
 SCPI 闭环依赖链：先把现场项映射到载体 → 用手册证据修判定和缺失载体 → 止住错误队列
 无限循环 → 补传输配对 → 补仪器接受/生效语义 → 接入正式 TestCase。该本地链已完成；
 P0-5 保持 ON-SITE-BLOCKED；P1-44/42/40/37 已在 Draft PR #303 完成本地实现与回归，
-本地序列现切到 **P2-24**（P1-29 已由 PR #320、P1-38 已由 PR #321、P1-27 已由 PR #322、P2-22 已由 PR #323 收口；P2-23 本地实现完成，见上方 Current Focus）。本轮日志设计与逐片实施计划见
+本地序列现切到 **P3-18**（P1-29 已由 PR #320、P1-38 已由 PR #321、P1-27 已由 PR #322、P2-22 已由 PR #323、P2-23 已由 PR #324 收口；P2-24 本地实现完成，见上方 Current Focus）。本轮日志设计与逐片实施计划见
 [`plans/2026-08-07-log-sprint-design.md`](plans/2026-08-07-log-sprint-design.md) /
 [`plans/2026-08-07-log-sprint.md`](plans/2026-08-07-log-sprint.md)；SCPI 闭环设计与实施计划见
 [`plans/2026-08-06-scpi-evidence-closure-design.md`](plans/2026-08-06-scpi-evidence-closure-design.md) /
@@ -93,7 +93,7 @@ P0-5 保持 ON-SITE-BLOCKED；P1-44/42/40/37 已在 Draft PR #303 完成本地�
 - **P1-28** 「当前暗室」双真值源收口（active chamber vs active lab 绑定暗室）
 - ~~**P2-22**~~ ✅ F64 disconnect 冷缓存判 GOS 换真值源（F64R-1 / #225 已交付；本轮 NotebookLM 复核厂商依据后纠正 roadmap 滞后状态）
 - ~~**P2-23**~~ ✅ 会话资产 is_active 预检 + MEASURE resolver 同病收口
-- **P2-24** 测试用例契约补 lab_profile_id（契约四步）
+- ~~**P2-24**~~ ✅ 测试用例契约补 lab_profile_id（契约四步 + GUI 创建/编辑绑定）
 - ~~**P1-48**~~ ✅ 日志/报告分不出哪台仪表是真的 —— P1-37 的标记只到 `scpi.log`，app.log / 报告 / VRT 三个消费端一个没接上（2026-08-10 五片全合）
 - ~~**P1-29**~~ ✅ `/dashboard/alerts/summary` 被 `/alerts/{alert_id}` 遮蔽 → 驾驶舱告警计数条恒坏（一行声明顺序 + G19 遮蔽门，PR #320）
 - **P3-18** 门/测试精化批（G11 三覆盖面 / p08 零残留站点 / PDF 转义收口 / 诊断序列串行化 / **手写类型审计尺子改逐层递归**）
@@ -261,7 +261,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → **P2-24** → P3-18 → P3-19**（当前执行片只看顶部 **Current Focus**）|
+| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → **P3-18** → P3-19**（当前执行片只看顶部 **Current Focus**）|
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -3619,9 +3619,9 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 **What / completion evidence**: `POST /commissioning/sessions` 在创建 TestCase/TestExecution 前以 `is_active is True` 白名单拒绝退役资产并返回 422。MEASURE 侧已枚举并收口三条 live 消费路径：①显式 `channel_asset_id` 在任何仪表连接/配置前 fail-loud；②历史 `cdl_profile_id` 命中同 UUID 的 `custom_static` ChannelAsset 时，退役资产不得进入 ASC 合成，也不得回落 legacy twin；③历史 `scd_id` 命中同 UUID 的 `vendor_file` ChannelAsset 时，退役资产不得返回 `.smu`，也不得回落 legacy twin。软删仍保留实体与历史引用，历史记录可读，但“可追溯”不再等同于“可重新执行”。HTTP 回归断言失败时 TestCase/TestExecution 均不新增；执行级回归锁住显式路径必须在硬件 connect 前失败，两条兼容回归锁住退役配置不会重新进入 ASC/GCM。**来源**: Codex #262 R2（[→ P2-23] 已标）。
 
-### P2-24 — 测试用例契约补 lab_profile_id ⬜（2026-08-02 拍板，待开工）
+### P2-24 — 测试用例契约补 lab_profile_id ✅（2026-08-11 本地完成）
 
-**What**: `TestCaseCreate`/`TestCaseUpdate` 补 `lab_profile_id`（列在、runner 消费，schema 缺失 → 多 active lab 部署下 GUI 建的用例不可执行且无处补绑）；契约四步 + GUI 弹窗透传。**来源**: Codex #250 P1 遗留（[→ P2-24] 已标）。单 lab 现状不炸故 P2。
+**What / completion evidence**: `TestCaseCreate`/`TestCaseUpdate`/`TestCaseResponse` 已贯通可空 `lab_profile_id`；创建可绑定、编辑可换绑，PATCH 显式 `null` 可解除绑定，字段省略仍保持原值。OpenAPI 新增 TestCase CRUD 契约并重生成 TypeScript；共享 GUI service、TestCase service 与 mockServer 使用同一字段形态。创建弹窗列出 LabProfile：唯一活动实验室自动选中，多个活动实验室必须显式选择；列表加载中或失败时 fail-closed，模板异步回读不会被旧请求覆盖。编辑弹窗显示当前绑定并允许换绑/清空，已停用实验室只作历史展示、不可新选。后端创建与发生变化的换绑复用 `resolve_lab_profile()` 权威判据，仅接受活动实验室；显式清空仍保留。行为回归锁住创建→换绑→清空以及 inactive 绑定 422，契约同步回归锁住四步、两个弹窗和加载失败门；相关 84 passed，GUI production build 通过。**来源**: Codex #250 P1 遗留（[→ P2-24] 已标）。
 
 ---
 
@@ -3675,6 +3675,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 > 显式出口：①提升到 P0/P1/P2/P3；②并入已有 roadmap 项；③进入正式延后 backlog；
 > ④进入 ON-SITE-BLOCKED / HOLD / Known unknown；⑤ resolved / dropped。
 > 没有出口标记的条目仍是“待评估”，不得出现在 LOCAL-OPEN 执行队列里。
+
+- `[discovered 2026-08-11 during P2-24 internal review]` **启用前端 mock server 时缺少 `/lab-profiles` handler（P3，待 triage；当前 mock server 默认关闭）** —— TestCase 创建/编辑弹窗已经改走共享 client，并在 LabProfile 列表不可用时 fail-closed；未来若重新启用浏览器内 mock server，需要给 lab-profiles 补一组与 live 分页/active 过滤一致的 handler，否则该弹窗会正确阻止创建但无法完成演练。本轮不为默认关闭的测试辅助模式扩大实现。
 
 - `[discovered 2026-08-11 during P1-29 G19 全路由枚举]` **另有两条存量静态路由被更早的 path 参数路由遮蔽（待 triage）** —— `GET /api/v1/calibration/channel/temporal/{calibration_id}` 会先吃掉后声明的 `/temporal/latest`（GUI `channelCalibrationService.ts` 有活消费者）；`api/topology.py` 的同一个 `topology.router` 内，`GET /api/v1/topologies/{topology_id}` 同样声明在 `/topologies/default` 之前。二者与 P1-29 同母题但不属于驾驶舱告警故障，本片不跨域修；G19 以精确例外锁住这两条存量并禁止第三条新增，后续分别把字面量路由移到同方法参数路由之前。
 
@@ -3870,7 +3872,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-01 during ARCH-1 S6 总验]` **[→ 提升 P1-22 (2026-08-01)]** **PDF 生成器缺 CJK 字体 — 中文全渲染成豆腐块（P3）** —— 报告标题/正文里所有汉字显示为 ■，中文用例名的报告不可读。`pdf_generator.py`（reportlab）需显式注册中文字体（内置 `STSong-Light` CID 字体或捆绑开源 Noto Sans CJK），并全模板换用（已核实全 `app/` 无 registerFont/TTFont/CID 调用）。
 - `[discovered 2026-08-01 during ARCH-1 S6 总验, 内审定案]` **[→ 提升 P2-19 (2026-08-01)]** **执行相位计数对所有行恒 0 — 后端计数谓词 token 错配（P3）** —— `api/test_execution.py` 的 `_to_history_item` 数相位用 `p.get("status") == "completed"`，而 runner 落库写的是 `StepExecutionStatus.SUCCESS.value = "success"` → `phases_done` **全程恒 0**（不是只在终态；"进行中显示正常"是 0/N 初期像正常的观察偏差；失败行徽章正常是 "failed" token 巧合两边一致）。该函数 docstring 自己写的 `completed/failed` 就是错误谓词的种子，一并清。修后端一处，三个消费方（HistoryTab / 主控台最近执行卡 / TestCaseLibrary 执行进度）全好。
 - `[discovered 2026-07-31 during GUI 新建入口片]` **[→ 提升 P3-14 (2026-08-01)]** **`TestCaseCreate.test_type` 的 schema 描述漏 `MIMO_OTA`** —— 枚举 `TestCaseType` 里有，但请求 schema description 只列 `TRP | TIS | Throughput | Handover | MIMO | ChannelModel | VirtualRoadTest | Custom`。这段进 OpenAPI，是外部调用方唯一会读的东西。改它要走契约四步；顺带候选：「描述 ⊇ 枚举」可做成会红的门（同 G7/G8 思路，属**加机制**，待拍板）。同片顺带：`template_category` 的 schema 无 `max_length` 而列是 `String(100)`，超长在 PG 直接 500（GUI 侧本片已 `maxLength={100}` 收窄，schema 约束走契约四步一并做）。
-- `[discovered 2026-07-31 during GUI 新建入口片, Codex #250 P1]` **[→ 提升 P2-24 (2026-08-02)]** **测试用例 REST 契约无 `lab_profile_id` 字段 — 多 active lab 部署下 GUI 建的用例不可执行且无处补绑** —— `TestCase.lab_profile_id` 是列（runner 执行时传 `source.lab_profile_id` 给工厂），但 `TestCaseCreate`/`TestCaseUpdate` 两个 schema 都没有该字段，GUI 两个弹窗结构性设不了。单 active lab（当前所有部署形态）下 `resolve_lab_profile(db, None)` 兜底完美工作；多 active lab 下执行 422 结构化 fail-loud（ambiguous 拒绝，非静默错配）。不绑 = bootstrap 种子模板明文设计（deployment-agnostic），GUI 建例同派；6 个 factory 产 MIMO_OTA 模板带绑定是快照语义的特例。**正修**（~~多 lab 部署真出现时~~ 2026-08-02 拍板提升 P2-24，条件性搁置作废，以正式条目为准）：契约加可选 `lab_profile_id` 走四步同步 + 创建/编辑弹窗加绑定口（起点=模板时顺带复制其绑定）。
+- ~~`[discovered 2026-07-31 during GUI 新建入口片, Codex #250 P1]` **[→ P2-24；2026-08-11 本地完成]** **测试用例 REST 契约无 lab_profile_id 字段 — 多 active lab 部署下 GUI 建的用例不可执行且无处补绑**~~ —— 可空字段已贯通 REST/OpenAPI/生成类型/GUI/mock；创建与编辑弹窗可显式绑定，模板起点复制绑定，多活动实验室创建时不再允许含糊放行。
 - `[discovered 2026-07-31 during GUI 新建入口片]` **`created_by="gui"` 是硬编码占位** —— GUI 无认证上下文（`require_auth` 全仓零使用点，S4c 申报过），`TestCaseCreateModal` 建例统一落 `created_by="gui"`。接上认证上下文（roadmap 既有 Auth Context 待实现项）后换成真实用户名。
 
 - `[discovered 2026-07-30 during ARCH-1 roadmap 补记]` **[→ 提升 P1-23 (2026-08-01)]** **现场协议不覆盖 P0-8，照 checklist 走完会漏掉 F64 验证** —— [`guides/on-site-debug-protocol.md`](guides/on-site-debug-protocol.md) 开篇写「配套 P0 队列（**P0-3/4/5**）使用」，五个 Phase（网络 / 逐仪表 SCPI 握手 / SA 入 HAL / 路损校准 / DUT attach）**没有 P0-8 的 gate**。而上方「Blocked on hardware」表强制要求按该协议走 —— 结果是「走完了」却漏掉 P0-8 现场半（real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真），**比没有 checklist 更危险**（给人已覆盖的错觉）。当前缓解：P0 队列表已补 P0-8 行 + 表下注解写明出发前手动排进当天计划。**正修要定两件事**：① P0-8 塞进哪个 Phase（比 Phase 1 SCPI 握手重，要 load→run→改参→读电平，可能单独一段或作 Phase 1 的 F64 子门）；② gate 判据怎么拆 —— P0-8 验收最后一条「DL 不失真（DUT attach 后非 0% ACK）」**依赖 DUT attach**，有一半得等 Phase 4，gate 可能要拆两半挂两个 Phase。**收口更新**：P1-23 已改协议，P1-45 已改 roadmap，现行现场排程统一指向 Blocked 表；P0-3/4 已完成，不恢复旧链。⚠️ 动之前按标题/条目名定位，**别在文档里写行号** —— 本次 PR 实证：行号会被自己的编辑挤跑。

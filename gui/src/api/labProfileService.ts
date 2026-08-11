@@ -49,6 +49,15 @@ export async function fetchLabProfiles(activeOnly = true): Promise<LabProfileSum
   return res.data
 }
 
+/** 编辑器既要列可选的 active 行，也要展示历史已绑定但停用的行。 */
+export async function fetchAllLabProfiles(): Promise<LabProfileSummary[]> {
+  const [active, inactive] = await Promise.all([
+    fetchLabProfiles(true),
+    fetchLabProfiles(false),
+  ])
+  return [...active, ...inactive].sort((a, b) => a.name.localeCompare(b.name))
+}
+
 /**
  * P0-2: payload the first-run wizard sends to create a LabProfile.
  * Mirrors `LabProfileCreateRequest` on the backend; keep both sides in

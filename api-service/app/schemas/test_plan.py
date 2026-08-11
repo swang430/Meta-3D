@@ -51,6 +51,13 @@ class TestCaseCreate(BaseModel):
     tx_power_dbm: Optional[float] = None
     bandwidth_mhz: Optional[float] = None
     test_duration_sec: Optional[float] = None
+    lab_profile_id: Optional[UUID] = Field(
+        None,
+        description=(
+            "LabProfile targeted by this TestCase; null keeps the case deployment-agnostic "
+            "and requires a unique active LabProfile at execution time"
+        ),
+    )
     is_template: Optional[bool] = False
     template_category: Optional[str] = Field(None, max_length=100)  # 列 String(100), 超长 PG 500 (P3-14)
     created_by: str = Field(..., description="User who created the test case")
@@ -72,6 +79,10 @@ class TestCaseUpdate(BaseModel):
     tx_power_dbm: Optional[float] = None
     bandwidth_mhz: Optional[float] = None
     test_duration_sec: Optional[float] = None
+    lab_profile_id: Optional[UUID] = Field(
+        None,
+        description="LabProfile targeted by this TestCase; explicit null clears the binding",
+    )
     tags: Optional[List[str]] = None
 
 
@@ -92,6 +103,7 @@ class TestCaseResponse(BaseModel):
     tx_power_dbm: Optional[float]
     bandwidth_mhz: Optional[float]
     test_duration_sec: Optional[float]
+    lab_profile_id: Optional[UUID]
     is_template: bool
     template_category: Optional[str]
     created_by: str
@@ -209,4 +221,3 @@ class TestCaseGroupedResponse(BaseModel):
     """Test cases grouped by template_category"""
     categories: List[str]
     groups: Dict[str, List[TestCaseSummary]]
-

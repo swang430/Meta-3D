@@ -8,6 +8,7 @@ G9 (门 G-A, schema 描述 ⊇ 枚举) 在 test_rule_gates.py。
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -18,11 +19,15 @@ from app.api.commissioning import CreateSessionRequest, _request_overrides
 from app.schemas.test_plan import TestCaseCreate, TestCaseResponse, TestCaseSummary
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
 def _row(**kw):
     base = dict(
         id=uuid4(), name="tc", description=None, test_type="MIMO_OTA",
         template_category=None, channel_model=None,
         frequency_mhz=3500.0, bandwidth_mhz=100.0, test_duration_sec=None,
+        lab_profile_id=None,
         is_template=False, pass_criteria=None, tags=None,
         created_by="t", created_at=datetime(2026, 1, 1),
         configuration={},
@@ -147,3 +152,43 @@ class TestSessionChannelAsset:
     def test_invalid_uuid_rejected(self):
         with pytest.raises(ValidationError):
             CreateSessionRequest(channel_asset_id="not-a-uuid")
+
+
+class TestLabProfileContract:
+    def test_lab_profile_id_is_carried_through_contract_and_gui(self):
+        """P2-24 契约四步 + 两个弹窗：少同步一端就会在这里暴露。"""
+        assert "lab_profile_id" in TestCaseCreate.model_fields
+
+        openapi = (REPO_ROOT / "api/openapi.yaml").read_text()
+        generated = (REPO_ROOT / "gui/src/types/api.generated.ts").read_text()
+        service = (REPO_ROOT / "gui/src/api/service.ts").read_text()
+        mock_server = (REPO_ROOT / "gui/src/api/mockServer.ts").read_text()
+        create_modal = (
+            REPO_ROOT
+            / "gui/src/components/TestPlanManagement/TestCaseCreateModal.tsx"
+        ).read_text()
+        edit_modal = (
+            REPO_ROOT
+            / "gui/src/components/TestPlanManagement/TestCaseEditModal.tsx"
+        ).read_text()
+
+        assert "TestCaseCreate:" in openapi and "lab_profile_id:" in openapi
+        assert 'lab_profile_id?: string | null' in generated
+        assert "ContractTestCaseCreate" in service
+        assert "payload.lab_profile_id ?? null" in mock_server
+        assert "setSelectedLabId(tpl.lab_profile_id ?? UNBOUND_LAB)" in create_modal
+        assert "lab_profile_id:" in create_modal
+        assert "setSelectedLabId(data.lab_profile_id ?? UNBOUND_LAB)" in edit_modal
+        assert "lab_profile_id:" in edit_modal
+
+    def test_create_modal_fails_closed_until_lab_profiles_are_known(self):
+        """多 Lab 部署不能在实验室列表尚未返回或加载失败时抢先建未绑定用例。"""
+        create_modal = (
+            REPO_ROOT
+            / "gui/src/components/TestPlanManagement/TestCaseCreateModal.tsx"
+        ).read_text()
+
+        assert "const [labsLoading, setLabsLoading] = useState(false)" in create_modal
+        assert "const [labsError, setLabsError] = useState<string | null>(null)" in create_modal
+        assert "labsLoading || labsError !== null" in create_modal
+        assert "disabled={!name.trim() || loadingTemplate || labSelectionInvalid}" not in create_modal

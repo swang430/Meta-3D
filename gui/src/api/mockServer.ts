@@ -8,9 +8,15 @@ import type {
   CreateTestCaseFromPlanPayload,
   CreateTestCasePayload,
 } from '../types/api'
+import type { components as ApiComponents } from '../types/api.generated'
+
+type ContractTestCase = ApiComponents['schemas']['TestCaseResponse']
+type ContractTestCaseCreate = ApiComponents['schemas']['TestCaseCreate']
+type ContractTestCaseUpdate = ApiComponents['schemas']['TestCaseUpdate']
 
 let mock: MockAdapter | null = null
 let monitoringSocket: MockSocketServer | null = null
+const contractTestCases = new Map<string, ContractTestCase>()
 
 const DELAY_MS = 300
 // Dynamically construct WebSocket URL based on current host
@@ -22,6 +28,91 @@ export function setupMockServer() {
   if (mock) return
 
   mock = new MockAdapter(client, { delayResponse: DELAY_MS })
+
+  // P2-24: TestCase CRUD 的 mock 与 live 契约使用同一 lab_profile_id 形态。
+  // testPlanService 复用共享 client，mock 模式下创建/编辑也会走到这里。
+  mock.onGet(/\/test-plans\/cases(?:\?.*)?$/).reply((config) => {
+    const params = new URLSearchParams((config.url || '').split('?')[1] || '')
+    let items = Array.from(contractTestCases.values())
+    const testType = params.get('test_type')
+    const isTemplate = params.get('is_template')
+    if (testType) items = items.filter((item) => item.test_type === testType)
+    if (isTemplate !== null) {
+      items = items.filter((item) => item.is_template === (isTemplate === 'true'))
+    }
+    return [200, { total: items.length, items }]
+  })
+
+  mock.onPost('/test-plans/cases').reply((config) => {
+    const payload = JSON.parse(config.data) as ContractTestCaseCreate
+    const now = new Date().toISOString()
+    const id = globalThis.crypto?.randomUUID?.()
+      ?? `00000000-0000-4000-8000-${String(Date.now()).padStart(12, '0').slice(-12)}`
+    const created: ContractTestCase = {
+      id,
+      name: payload.name,
+      description: payload.description ?? null,
+      test_type: payload.test_type,
+      configuration: payload.configuration,
+      pass_criteria: payload.pass_criteria ?? null,
+      expected_results: payload.expected_results ?? null,
+      probe_selection: payload.probe_selection ?? null,
+      instrument_config: payload.instrument_config ?? null,
+      channel_model: payload.channel_model ?? null,
+      channel_parameters: payload.channel_parameters ?? null,
+      frequency_mhz: payload.frequency_mhz ?? null,
+      tx_power_dbm: payload.tx_power_dbm ?? null,
+      bandwidth_mhz: payload.bandwidth_mhz ?? null,
+      test_duration_sec: payload.test_duration_sec ?? null,
+      lab_profile_id: payload.lab_profile_id ?? null,
+      is_template: payload.is_template ?? false,
+      template_category: payload.template_category ?? null,
+      created_by: payload.created_by,
+      created_at: now,
+      updated_at: now,
+      version: '1.0',
+      parent_id: null,
+      tags: payload.tags ?? [],
+    }
+    contractTestCases.set(id, created)
+    return [201, created]
+  })
+
+  mock.onGet(/\/test-plans\/cases\/[^/]+$/).reply((config) => {
+    const id = config.url?.split('/').pop() ?? ''
+    const row = contractTestCases.get(id)
+    return row ? [200, row] : [404, { detail: 'Test case not found' }]
+  })
+
+  mock.onPatch(/\/test-plans\/cases\/[^/]+$/).reply((config) => {
+    const id = config.url?.split('/').pop() ?? ''
+    const row = contractTestCases.get(id)
+    if (!row) return [404, { detail: 'Test case not found' }]
+    const payload = JSON.parse(config.data) as ContractTestCaseUpdate
+    const nonNullPatch = Object.fromEntries(
+      Object.entries(payload).filter(
+        ([key, value]) => key === 'lab_profile_id' || value !== null,
+      ),
+    )
+    const updated: ContractTestCase = {
+      ...row,
+      ...nonNullPatch,
+      lab_profile_id:
+        Object.prototype.hasOwnProperty.call(payload, 'lab_profile_id')
+          ? payload.lab_profile_id ?? null
+          : row.lab_profile_id,
+      updated_at: new Date().toISOString(),
+    } as ContractTestCase
+    contractTestCases.set(id, updated)
+    return [200, updated]
+  })
+
+  mock.onDelete(/\/test-plans\/cases\/[^/]+$/).reply((config) => {
+    const id = config.url?.split('/').pop() ?? ''
+    return contractTestCases.delete(id)
+      ? [204]
+      : [404, { detail: 'Test case not found' }]
+  })
 
   mock.onGet('/tests/cases').reply(200, mockDatabase.getTestCases())
   // ⚠️ 上面这条是**用例**端点 (保留集)。S4c 清计划处理器时曾被一个过宽的判据

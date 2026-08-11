@@ -3,17 +3,7 @@
  *
  * Provides API functions for test plan, test case, and queue management.
  */
-import axios from 'axios';
-
-// Create axios instance for test plan API
-// Use relative path to leverage Vite proxy instead of hardcoded address
-const testPlanClient = axios.create({
-  baseURL: '/api/v1',
-  timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
+import testPlanClient from './client';
 
 // ==================== Type Definitions ====================
 
@@ -76,6 +66,7 @@ export interface TestCase {
   tx_power_dbm?: number;
   bandwidth_mhz?: number;
   test_duration_sec?: number;
+  lab_profile_id?: string | null;
   is_template: boolean;
   template_category?: string;
   created_by: string;
@@ -164,6 +155,7 @@ export interface CreateTestCaseRequest {
   tx_power_dbm?: number;
   bandwidth_mhz?: number;
   test_duration_sec?: number;
+  lab_profile_id?: string | null;
   is_template?: boolean;
   template_category?: string;
   created_by: string;
@@ -220,6 +212,7 @@ export async function updateTestCase(
     description: string | null;
     configuration: Record<string, unknown>;
     pass_criteria: Record<string, unknown>;
+    lab_profile_id: string | null;
     tags: string[];
   }>
 ): Promise<TestCase> {

@@ -645,6 +645,192 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/test-plans/cases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List reusable TestCases */
+        get: {
+            parameters: {
+                query?: {
+                    skip?: number;
+                    limit?: number;
+                    test_type?: string;
+                    is_template?: boolean;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description TestCase page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TestCaseListResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a reusable TestCase */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TestCaseCreate"];
+                };
+            };
+            responses: {
+                /** @description Created TestCase */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TestCaseResponse"];
+                    };
+                };
+                /** @description Invalid TestCase payload */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/test-plans/cases/{test_case_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                test_case_id: string;
+            };
+            cookie?: never;
+        };
+        /** Get one TestCase */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    test_case_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description TestCase detail */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TestCaseResponse"];
+                    };
+                };
+                /** @description TestCase not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /** Delete one TestCase */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    test_case_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description TestCase deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description TestCase not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Update one TestCase */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    test_case_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TestCaseUpdate"];
+                };
+            };
+            responses: {
+                /** @description Updated TestCase */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TestCaseResponse"];
+                    };
+                };
+                /** @description TestCase not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid TestCase payload */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        trace?: never;
+    };
     "/api/v1/test-plans/cases/executions/{execution_id}": {
         parameters: {
             query?: never;
@@ -894,6 +1080,145 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        TestCaseCreate: {
+            name: string;
+            description?: string | null;
+            test_type: string;
+            configuration: {
+                [key: string]: unknown;
+            };
+            pass_criteria?: {
+                [key: string]: unknown;
+            } | null;
+            expected_results?: {
+                [key: string]: unknown;
+            } | null;
+            probe_selection?: {
+                [key: string]: unknown;
+            } | null;
+            instrument_config?: {
+                [key: string]: unknown;
+            } | null;
+            channel_model?: string | null;
+            channel_parameters?: {
+                [key: string]: unknown;
+            } | null;
+            frequency_mhz?: number | null;
+            tx_power_dbm?: number | null;
+            bandwidth_mhz?: number | null;
+            test_duration_sec?: number | null;
+            /**
+             * Format: uuid
+             * @description LabProfile targeted by this TestCase. Null keeps the case
+             *     deployment-agnostic and requires a unique active LabProfile at execution time.
+             */
+            lab_profile_id?: string | null;
+            /** @default false */
+            is_template: boolean | null;
+            template_category?: string | null;
+            created_by: string;
+            tags?: string[] | null;
+        };
+        TestCaseUpdate: {
+            name?: string | null;
+            description?: string | null;
+            configuration?: {
+                [key: string]: unknown;
+            } | null;
+            pass_criteria?: {
+                [key: string]: unknown;
+            } | null;
+            expected_results?: {
+                [key: string]: unknown;
+            } | null;
+            probe_selection?: {
+                [key: string]: unknown;
+            } | null;
+            instrument_config?: {
+                [key: string]: unknown;
+            } | null;
+            channel_model?: string | null;
+            channel_parameters?: {
+                [key: string]: unknown;
+            } | null;
+            frequency_mhz?: number | null;
+            tx_power_dbm?: number | null;
+            bandwidth_mhz?: number | null;
+            test_duration_sec?: number | null;
+            /**
+             * Format: uuid
+             * @description LabProfile targeted by this TestCase; explicit null clears the binding.
+             */
+            lab_profile_id?: string | null;
+            tags?: string[] | null;
+        };
+        TestCaseResponse: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            description: string | null;
+            test_type: string;
+            configuration: {
+                [key: string]: unknown;
+            };
+            pass_criteria: {
+                [key: string]: unknown;
+            } | null;
+            expected_results: {
+                [key: string]: unknown;
+            } | null;
+            probe_selection: {
+                [key: string]: unknown;
+            } | null;
+            instrument_config: {
+                [key: string]: unknown;
+            } | null;
+            channel_model: string | null;
+            channel_parameters: {
+                [key: string]: unknown;
+            } | null;
+            frequency_mhz: number | null;
+            tx_power_dbm: number | null;
+            bandwidth_mhz: number | null;
+            test_duration_sec: number | null;
+            /** Format: uuid */
+            lab_profile_id: string | null;
+            is_template: boolean;
+            template_category: string | null;
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            version: string;
+            /** Format: uuid */
+            parent_id: string | null;
+            tags: string[] | null;
+        };
+        TestCaseSummary: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            description?: string | null;
+            test_type: string;
+            template_category?: string | null;
+            channel_model?: string | null;
+            frequency_mhz?: number | null;
+            bandwidth_mhz?: number | null;
+            test_duration_sec?: number | null;
+            is_template: boolean;
+            pass_criteria?: {
+                [key: string]: unknown;
+            } | null;
+            tags?: string[] | null;
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        TestCaseListResponse: {
+            total: number;
+            items: components["schemas"]["TestCaseSummary"][];
+        };
         DashboardResponse: {
             summary: components["schemas"]["DashboardSummary"];
             recent_tests: components["schemas"]["RecentTestItem"][];

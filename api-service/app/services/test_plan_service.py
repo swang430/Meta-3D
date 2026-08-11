@@ -86,7 +86,9 @@ class TestCaseService:
             return None
 
         for key, value in kwargs.items():
-            if value is not None and hasattr(test_case, key):
+            # P2-24: PATCH {lab_profile_id: null} 是显式解除绑定，不是“字段未给”。
+            # 其它存量字段继续保持原有 None-leaves-unchanged 语义。
+            if (value is not None or key == "lab_profile_id") and hasattr(test_case, key):
                 setattr(test_case, key, value)
 
         db.commit()
