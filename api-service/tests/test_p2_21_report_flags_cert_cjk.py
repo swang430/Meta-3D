@@ -164,6 +164,24 @@ class TestSharedPdfFreeTextEscaping:
         rendered = " ".join(_para_text(item) for item in elements)
         assert "DUT <prototype" in rendered
 
+    def test_test_case_template_autoescapes_substitutions_but_keeps_markup(self):
+        """Jinja 只转义数据替换值；模板自带的 ``<b>`` 仍由 ReportLab 解析。"""
+        gen = PDFGenerator()
+        elements = gen._generate_text_section(
+            {"content_template": gen._get_test_case_template()},
+            {
+                "test_plan": {
+                    "name": "DUT <prototype",
+                    "description": "描述 <MPAC>",
+                    "status": "completed",
+                    "created_by": "gui",
+                }
+            },
+        )
+        rendered = " ".join(_para_text(item) for item in elements)
+        assert "Test Case: DUT <prototype" in rendered
+        assert "Description: 描述 <MPAC>" in rendered
+
     def test_vrt_step_parameter_free_text_survives_shared_renderer(self):
         """VRT step_configs 绕过 MIMO report builder，必须在共享渲染器入口转义。"""
         text = _rendered_text(
