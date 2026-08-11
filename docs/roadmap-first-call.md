@@ -3677,6 +3677,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-11 during P1-29 G19 全路由枚举]` **另有两条存量静态路由被更早的 path 参数路由遮蔽（待 triage）** —— `GET /api/v1/calibration/channel/temporal/{calibration_id}` 会先吃掉后声明的 `/temporal/latest`（GUI `channelCalibrationService.ts` 有活消费者）；`api/topology.py` 的同一个 `topology.router` 内，`GET /api/v1/topologies/{topology_id}` 同样声明在 `/topologies/default` 之前。二者与 P1-29 同母题但不属于驾驶舱告警故障，本片不跨域修；G19 以精确例外锁住这两条存量并禁止第三条新增，后续分别把字面量路由移到同方法参数路由之前。
 
 - `[discovered 2026-08-11 during P1-38 review]` **P1-38 测试与 G20 精化候选（P2/P3，待 triage；非本轮功能缺陷，默认不实现，归 P3-18 同族）** —— **P2**：清理测试目前用 `message` near-miss 证明内容白名单不能宽匹配，但没有再对 `title` / `severity` / `alert_type` / `status` 四个字段逐个做单字段变异；功能谓词本身已逐字段精确匹配，本项只是测试保护可更细。**P3**：G20 是 AST 语法门，常量间接传入 `source` 或声明了但未执行的 fixture 可能绕过，纯构造 payload 又可能被误判为真实写入；未来若经 triage 决定精化，应把判据换成实际 fixture / 写入链的行为验证，不继续叠加源码形状规则。
+- `[discovered 2026-08-11 during P1-38 final internal review]` **P1-38 已完成计划文档的事实镜像收口（P2/P3，待 triage；不影响运行功能，本轮不修）** —— **P2**：`docs/plans/2026-08-11-p1-38-alert-hygiene-design.md` 仍称“现场数据库中的 674 条”，而本轮只核验并清理了当前本机开发库；如继续把这份已执行计划作为施工输入，应换成可核验的数据库身份。**P3**：实施计划仍引用旧测试名 `test_g20_test_suite_alert_writers_are_db_isolated`，且保留清理前 dry-run 应命中 674 的口径；当前正确终态是 live dry-run 命中 0、恢复备份表保留 674 行。后续整理计划归档时一并更正，不为其启动本轮修复循环。
 
 **2026-08-06 SCPI 闭环专项 triage（本表是状态真值；下方原始条目保留发现上下文）**：
 
