@@ -501,13 +501,21 @@ class PrecheckExecutor(IStepExecutor):
         result_payload["path_loss_calibration_target_frequency_mhz"] = target_freq_mhz
         if latest_pl is not None:
             age_h = (datetime.utcnow() - latest_pl.calibrated_at).total_seconds() / 3600.0
+            path_loss_use_mock = latest_pl.use_mock
             result_payload["path_loss_calibration_valid"] = True
             result_payload["path_loss_calibration_age_hours"] = age_h
             result_payload["path_loss_calibration_frequency_mhz"] = latest_pl.frequency_mhz
+            result_payload["path_loss_calibration_use_mock"] = path_loss_use_mock
+            provenance_label = (
+                "simulated" if path_loss_use_mock is True
+                else "real" if path_loss_use_mock is False
+                else "unknown"
+            )
             messages.append(
                 f"Path-loss calibration: VALID (age {age_h:.1f}h, "
                 f"cert@{latest_pl.frequency_mhz:.0f} MHz matches target "
-                f"{target_freq_mhz:.0f} MHz within ±5% window)"
+                f"{target_freq_mhz:.0f} MHz within ±5% window, "
+                f"provenance={provenance_label})"
             )
         else:
             # Disambiguate the two failure modes for audit trail / operator UX:
@@ -522,6 +530,7 @@ class PrecheckExecutor(IStepExecutor):
                 .first()
             )
             result_payload["path_loss_calibration_valid"] = False
+            result_payload["path_loss_calibration_use_mock"] = None
             if any_valid_for_chamber is not None:
                 result_payload["path_loss_calibration_reason"] = "frequency_out_of_window"
                 warnings.append(
@@ -604,16 +613,35 @@ class PrecheckExecutor(IStepExecutor):
         # mock but RUN against real hardware still gets the strict gate.
         ce_is_real = ce is not None and not is_mock_driver(ce)
         path_loss_valid = result_payload.get("path_loss_calibration_valid", False)
+        path_loss_use_mock = result_payload.get("path_loss_calibration_use_mock")
+        path_loss_provenance_untrusted = (
+            path_loss_valid and path_loss_use_mock is not False
+        )
         cal_cert_broken = cal_cert is not None and not cal_cert.overall_pass
         cal_cert_missing_only = cal_cert is None  # warning, not FAIL — see P1-8 design #1
 
         if config.precheck_strict_cal and ce_is_real:
-            cal_pass = path_loss_valid and (not cal_cert_broken)
+            cal_pass = (
+                path_loss_valid
+                and (not path_loss_provenance_untrusted)
+                and (not cal_cert_broken)
+            )
             cal_pass_reason_parts: list[str] = []
             if not path_loss_valid:
                 cal_pass_reason_parts.append(
                     "path-loss calibration missing or invalid "
                     "(no VALID ProbePathLossCalibration for this chamber)"
+                )
+            elif path_loss_use_mock is True:
+                cal_pass_reason_parts.append(
+                    "path-loss calibration has simulated provenance "
+                    "(use_mock=True; real measurement requires use_mock=False)"
+                )
+            elif path_loss_use_mock is None:
+                cal_pass_reason_parts.append(
+                    "path-loss calibration provenance is unknown "
+                    "(use_mock=NULL/legacy; real measurement requires explicit "
+                    "use_mock=False)"
                 )
             if cal_cert_broken:
                 cal_pass_reason_parts.append(
@@ -629,6 +657,14 @@ class PrecheckExecutor(IStepExecutor):
             bypass_parts: list[str] = []
             if not path_loss_valid:
                 bypass_parts.append("path-loss calibration missing")
+            elif path_loss_use_mock is True:
+                bypass_parts.append(
+                    "path-loss calibration simulated provenance (use_mock=True)"
+                )
+            elif path_loss_use_mock is None:
+                bypass_parts.append(
+                    "path-loss calibration unknown provenance (use_mock=NULL/legacy)"
+                )
             if cal_cert_broken:
                 bypass_parts.append("cal_cert.overall_pass=False")
             if cal_cert_missing_only:

@@ -617,6 +617,13 @@ class ProbePathLossCalibrationResponse(BaseModel):
     id: UUID
     chamber_id: UUID
     frequency_mhz: float
+    use_mock: Optional[bool] = Field(
+        None,
+        description=(
+            "校准来源: false=真实仪器测量, true=模拟生成, "
+            "null=历史或导入来源未知"
+        ),
+    )
 
     # 探头路损数据
     probe_path_losses: Dict[str, Dict[str, Any]] = Field(

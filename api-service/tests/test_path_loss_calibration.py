@@ -21,7 +21,10 @@ from app.services.path_loss_calibration_service import (
     RFChainCalibrationService,
     calculate_fspl,
 )
-from app.schemas.probe_calibration import PolarizationType
+from app.schemas.probe_calibration import (
+    PolarizationType,
+    ProbePathLossCalibrationResponse,
+)
 from app.services.calibration_orchestrator import (
     CalibrationOrchestrator,
     CalibrationItem,
@@ -226,6 +229,28 @@ class TestProbePathLossCalibrationService:
         )
         assert calibration is not None
         assert calibration.use_mock is False
+
+    @pytest.mark.asyncio
+    async def test_latest_response_exposes_mock_provenance(
+        self, db_session, type_c_chamber,
+    ):
+        service = ProbePathLossCalibrationService(db_session, use_mock=True)
+        await service.start_calibration(
+            chamber_id=type_c_chamber.id,
+            frequency_mhz=3500.0,
+            sgh_model="Test SGH",
+            sgh_gain_dbi=10.0,
+            probe_ids=[0],
+            polarizations=[PolarizationType.V],
+            calibrated_by="Test Engineer",
+        )
+
+        calibration = service.get_latest_calibration(type_c_chamber.id, 3500.0)
+        payload = ProbePathLossCalibrationResponse.model_validate(
+            calibration
+        ).model_dump()
+
+        assert payload["use_mock"] is True
 
     @pytest.mark.asyncio
     async def test_get_latest_calibration(self, db_session, type_c_chamber):

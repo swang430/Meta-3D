@@ -442,6 +442,14 @@ class ProbePathLossCalibration(Base):
     sgh_certificate_date = Column(DateTime, comment="SGH 校准证书日期")
 
     # 测量设置
+    use_mock = Column(
+        Boolean,
+        nullable=True,
+        comment=(
+            "校准数据来源: false=真实仪器测量, true=模拟生成, "
+            "NULL=迁移前历史或导入来源未知"
+        ),
+    )
     vna_model = Column(String(255), comment="VNA 型号")
     vna_if_bandwidth_hz = Column(Float, comment="VNA IF 带宽 (Hz)")
     cable_loss_db = Column(Float, default=0.0, comment="测量电缆损耗 (dB)")

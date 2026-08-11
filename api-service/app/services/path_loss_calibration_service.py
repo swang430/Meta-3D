@@ -436,6 +436,7 @@ class ProbePathLossCalibrationService:
         calibration = ProbePathLossCalibration(
             chamber_id=chamber_id,
             frequency_mhz=frequency_mhz,
+            use_mock=self.use_mock,
             probe_path_losses=probe_path_losses,
             sgh_model=sgh_model,
             sgh_serial=sgh_serial,
@@ -653,6 +654,7 @@ class ProbePathLossCalibrationService:
         calibration = ProbePathLossCalibration(
             chamber_id=chamber.id,
             frequency_mhz=frequency_mhz,
+            use_mock=self.use_mock,
             probe_path_losses=probe_path_losses,
             path_loss_db_by_rf_chain=path_loss_db_by_rf_chain,
             lab_profile_id=lab.id,

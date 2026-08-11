@@ -70,6 +70,32 @@ _MOCK_WINDOW_FLOOR_S = 0.05
 _DUT_HEALTH_CHECK_EVERY_N_AZIMUTHS = 1
 
 
+def _evaluate_path_loss_provenance_for_measure(
+    use_mock: Optional[bool],
+    *,
+    channel_emulator_is_real: bool,
+    strict: bool,
+) -> tuple[bool, Optional[str]]:
+    """判定一张路损证书能否参与本次测量补偿。
+
+    真实测量只接受显式 ``use_mock=False``。严格模式额外阻断执行；显式
+    opt-out 只允许继续做未补偿的调试测量，不能把模拟/未知值洗进正式 KPI。
+    mock 仪表链本身不产出正式 KPI，可继续复用 mock 证书做流程演练。
+    """
+    if not channel_emulator_is_real or use_mock is False:
+        return True, None
+
+    provenance = "simulated" if use_mock is True else "unknown"
+    blocker = None
+    if strict:
+        blocker = (
+            f"path-loss calibration has {provenance} provenance "
+            f"(use_mock={use_mock!r}); real measurement requires explicit "
+            "use_mock=False"
+        )
+    return False, blocker
+
+
 def _managed_attach_failure(
     *,
     managed: bool,
@@ -402,8 +428,63 @@ class MeasureExecutor(IStepExecutor):
             record_uxm_throughput_capture,
             register_required_scpi_evidence,
         )
+        from app.services.path_loss_calibration_service import (
+            ProbePathLossCalibrationService,
+        )
 
         hal = get_hal_service()
+        chamber: ChamberConfiguration = lab.chamber_config
+        if chamber is None:
+            return StepExecutionResult(
+                status=StepExecutionStatus.FAILED,
+                error_message=f"LabProfile {lab.name} has no chamber_config",
+            )
+
+        emulator = hal.drivers.get("channelEmulator")
+        channel_emulator_is_real = (
+            emulator is not None and not is_mock_driver(emulator)
+        )
+        pl_service = ProbePathLossCalibrationService(context.db, use_mock=False)
+        selected_path_loss_cert = pl_service.get_latest_calibration(
+            chamber.id,
+            config.frequency_hz / 1e6,
+            operating_mode=config.switch_mode_id,
+        )
+        selected_path_loss_use_mock = (
+            selected_path_loss_cert.use_mock
+            if selected_path_loss_cert is not None
+            else None
+        )
+        path_loss_cert_usable, provenance_blocker = (
+            _evaluate_path_loss_provenance_for_measure(
+                selected_path_loss_use_mock,
+                channel_emulator_is_real=channel_emulator_is_real,
+                strict=config.precheck_strict_cal,
+            )
+            if selected_path_loss_cert is not None
+            else (False, None)
+        )
+        if provenance_blocker is not None:
+            return StepExecutionResult(
+                status=StepExecutionStatus.FAILED,
+                error_message=(
+                    "P1-27 calibration provenance gate failed before hardware "
+                    f"connect: {provenance_blocker}"
+                ),
+            )
+        path_loss_cert = (
+            selected_path_loss_cert if path_loss_cert_usable else None
+        )
+        if selected_path_loss_cert is not None and path_loss_cert is None:
+            logger.warning(
+                "[%s] P1-27: ignoring untrusted path-loss certificate %s "
+                "(use_mock=%r) for real measurement; strict gate was explicitly "
+                "bypassed, continuing without path-loss compensation",
+                context.test_execution.id,
+                selected_path_loss_cert.id,
+                selected_path_loss_use_mock,
+            )
+
         positioner = hal.drivers.get("positioner")
         base_station = hal.drivers.get("baseStation")
         if positioner is None or base_station is None:
@@ -601,15 +682,7 @@ class MeasureExecutor(IStepExecutor):
             # 2026-08-07 的旧顺序在这里先 start_signaling，attach 成功后才加载
             # .smu；这会依赖 F64 上一轮遗留模型/频率/STATIC。以下整段完成后才
             # 允许第一次 attach，任何失败都直接返回。
-            chamber: ChamberConfiguration = lab.chamber_config
-            if chamber is None:
-                return StepExecutionResult(
-                    status=StepExecutionStatus.FAILED,
-                    error_message=f"LabProfile {lab.name} has no chamber_config",
-                )
-
             ce_client = ChannelEngineClient(context.db)
-            emulator = hal.drivers.get("channelEmulator")
             if emulator is None:
                 from app.hal.channel_emulator import MockChannelEmulator
 
@@ -677,17 +750,6 @@ class MeasureExecutor(IStepExecutor):
             #   when the cert was created via /calibration/path-loss/start-for-lab.
             # Falls back to avg when the cert is legacy (no per-chain map) so
             # existing chamber-keyed calibrations still work.
-            from app.services.path_loss_calibration_service import (
-                ProbePathLossCalibrationService,
-            )
-
-            pl_service = ProbePathLossCalibrationService(context.db, use_mock=False)
-            # P2-11 Phase 3 (Codex on PR #111): 按 TestCase switch_mode_id 过滤 cert,
-            # 让 per-chain 线损来自请求的 RF 通路 (精确优先, 退回 legacy NULL)。
-            path_loss_cert = pl_service.get_latest_calibration(
-                chamber.id, config.frequency_hz / 1e6,
-                operating_mode=config.switch_mode_id,
-            )
             if path_loss_cert is not None:
                 avg_path_loss_db = float(path_loss_cert.avg_path_loss_db or 0.0)
                 per_chain_pl: Dict[str, Any] = (
@@ -2119,6 +2181,13 @@ class MeasureExecutor(IStepExecutor):
                 "path_loss_compensation_db": avg_path_loss_db,
                 "path_loss_certificate_id": (
                     str(path_loss_cert.id) if path_loss_cert is not None else None
+                ),
+                "path_loss_calibration_use_mock": selected_path_loss_use_mock,
+                "path_loss_rejected_certificate_id": (
+                    str(selected_path_loss_cert.id)
+                    if selected_path_loss_cert is not None
+                    and path_loss_cert is None
+                    else None
                 ),
                 "path_loss_per_chain_used": chains_used,
                 "path_loss_per_chain_available": len(per_chain_pl),
