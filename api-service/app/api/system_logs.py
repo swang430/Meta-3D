@@ -382,6 +382,15 @@ def _scan_reverse_entries(
 
         buffer = parts[0]
 
+    if position > 0 and bytes_read >= byte_limit and pending_continuations:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"日志组超过反向扫描字节预算 {byte_limit}，"
+                "无法在不拆分 traceback 的情况下安全分页；请下载文件检查"
+            ),
+        )
+
     if position > 0 and bytes_read >= byte_limit and next_offset >= end:
         raise HTTPException(
             status_code=422,
