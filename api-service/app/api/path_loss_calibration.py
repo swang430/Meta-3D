@@ -261,12 +261,16 @@ async def calibrate_uplink_chain(
     )
 
     if not result.success:
-        raise HTTPException(status_code=500, detail=result.message)
+        raise HTTPException(
+            status_code=500,
+            detail={"message": result.message, "warnings": result.warnings},
+        )
 
     return CalibrationJobResponse(
         calibration_job_id=UUID(result.data["calibration_id"]),
         status=CalibrationJobStatus.COMPLETED,
-        message=result.message
+        message=result.message,
+        warnings=result.warnings,
     )
 
 
@@ -304,12 +308,16 @@ async def calibrate_downlink_chain(
     )
 
     if not result.success:
-        raise HTTPException(status_code=500, detail=result.message)
+        raise HTTPException(
+            status_code=500,
+            detail={"message": result.message, "warnings": result.warnings},
+        )
 
     return CalibrationJobResponse(
         calibration_job_id=UUID(result.data["calibration_id"]),
         status=CalibrationJobStatus.COMPLETED,
-        message=result.message
+        message=result.message,
+        warnings=result.warnings,
     )
 
 
@@ -379,12 +387,16 @@ async def start_multi_frequency_calibration(
     )
 
     if not result.success:
-        raise HTTPException(status_code=500, detail=result.message)
+        raise HTTPException(
+            status_code=500,
+            detail={"message": result.message, "warnings": result.warnings},
+        )
 
     return CalibrationJobResponse(
         calibration_job_id=UUID(result.data["calibration_ids"][0]) if result.data.get("calibration_ids") else UUID(int=0),
         status=CalibrationJobStatus.COMPLETED,
-        message=result.message
+        message=result.message,
+        warnings=result.warnings,
     )
 
 

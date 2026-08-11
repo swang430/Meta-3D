@@ -465,6 +465,16 @@ class ProbePathLossCalibration(Base):
     min_path_loss_db = Column(Float, comment="最小路损 (dB)")
     std_dev_db = Column(Float, comment="路损标准差 (dB)")
 
+    # 校准完成后仍需可审计；不能只在同步启动响应里短暂返回。
+    warnings = Column(
+        JSON,
+        nullable=True,
+        comment=(
+            "校准期间产生的警告列表（含仪表清理失败）；"
+            "NULL=迁移前未记录"
+        ),
+    )
+
     # 元数据
     calibrated_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     calibrated_by = Column(String(100), comment="校准人员")
