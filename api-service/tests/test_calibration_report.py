@@ -115,6 +115,39 @@ class TestPDFGeneratorCalibrationSections:
         assert "unverified" in rendered_text
         assert "✗ fail" not in rendered_text
 
+    def test_probe_report_renders_persisted_path_loss_warnings(self):
+        generator = PDFGenerator()
+        data = {
+            "probe_calibration": {
+                "path_loss": [{
+                    "frequency_mhz": 3500.0,
+                    "num_probes": 16,
+                    "provenance": "real",
+                    "validation_pass": True,
+                    "calibrated_at": "2026-08-11 17:00:00",
+                    "warnings": ["RF switch cleanup failed <prototype>"],
+                }],
+            },
+            "probe_summary": {
+                "total_executions": 1,
+                "passed": 1,
+                "failed": 0,
+                "pass_rate": 100.0,
+            },
+        }
+
+        elements = generator._generate_calibration_probe_section(data)
+        rendered_parts = []
+        for element in elements:
+            rendered_parts.append(str(getattr(element, "text", "")))
+            for row in getattr(element, "_cellvalues", []):
+                for cell in row:
+                    rendered_parts.append(str(getattr(cell, "text", cell)))
+        rendered_text = " ".join(rendered_parts)
+
+        assert "Path Loss Warning Audit" in rendered_text
+        assert "RF switch cleanup failed &lt;prototype&gt;" in rendered_text
+
     @pytest.mark.asyncio
     async def test_legacy_calibration_pdf_without_provenance_manifest_is_blocked(
         self, monkeypatch, tmp_path,
