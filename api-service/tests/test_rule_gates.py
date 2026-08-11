@@ -21,6 +21,8 @@ G4 HAL 静默吞异常棘轮   ← todo F64R-12 的"防新增"半边
    变异: 自测函数对合成源码计数 2/2; 实跑给驱动加一处裸 pass → 红。
 G19 静态路由不被参数兄弟遮蔽 ← P1-29 `/alerts/{alert_id}` 抢先吃掉 `/alerts/summary`
    变异: 自测 router 先注册 `/{id}` 再注册 `/summary` → 必须检出；倒序必须放行。
+G20 test_suite 告警写入必须有模块级 SQLite 隔离 ← P1-38 测试污染开发库
+   变异: 任意新测试模块写 source=test_suite 但没接 SQLite/get_db/drop_all → 必须检出。
 
 ⚠ 本文件的判定全部走 AST / live import / model_fields, 不 grep 源码文本
   (例外: G3 的 GUI 站点是 .ts 文件, 剥注释后做 token 存在性检查 —— 存在性门
@@ -185,6 +187,166 @@ def test_g19_live_static_routes_precede_shadowing_parameters():
     assert not stale_exceptions, (
         "G19 存量例外已经不再命中；请删除对应例外并同步关闭 Discovered 条目: "
         f"{sorted(stale_exceptions)}"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# G20 test_suite 告警写入必须隔离在模块自己的 SQLite DB
+# ─────────────────────────────────────────────────────────────────────
+
+def _literal_string(node):
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+def _test_suite_source_write_lines(tree: ast.AST) -> list[int]:
+    """定位真正构造 ``source=test_suite`` 数据的 AST 站点，不查注释/说明文本。"""
+    lines = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values):
+                if _literal_string(key) == "source" and _literal_string(value) == "test_suite":
+                    lines.add(node.lineno)
+        elif isinstance(node, ast.Call):
+            for keyword in node.keywords:
+                if keyword.arg == "source" and _literal_string(keyword.value) == "test_suite":
+                    lines.add(node.lineno)
+    return sorted(lines)
+
+
+def _call_name(call: ast.Call) -> str | None:
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    if isinstance(call.func, ast.Attribute):
+        return call.func.attr
+    return None
+
+
+def _is_get_db_override_target(node: ast.AST) -> bool:
+    if not isinstance(node, ast.Subscript):
+        return False
+    owner = node.value
+    if not (
+        isinstance(owner, ast.Attribute)
+        and owner.attr == "dependency_overrides"
+        and isinstance(owner.value, ast.Name)
+        and owner.value.id == "app"
+    ):
+        return False
+    return isinstance(node.slice, ast.Name) and node.slice.id == "get_db"
+
+
+def _is_base_metadata_drop_all(call: ast.Call) -> bool:
+    func = call.func
+    return (
+        isinstance(func, ast.Attribute)
+        and func.attr == "drop_all"
+        and isinstance(func.value, ast.Attribute)
+        and func.value.attr == "metadata"
+        and isinstance(func.value.value, ast.Name)
+        and func.value.value.id == "Base"
+    )
+
+
+def _test_suite_alert_isolation_gaps(tests_dir: Path | None = None):
+    """返回每个写测试告警但隔离契约不完整的模块及缺项。"""
+    tests_dir = tests_dir or (_API_SERVICE_ROOT / "tests")
+    gaps = []
+    # 与 pytest.ini 的 python_files 保持一致；集合并集避免 test_*_test.py 重复扫描。
+    test_paths = {
+        path
+        for pattern in ("test_*.py", "*_test.py")
+        for path in tests_dir.rglob(pattern)
+    }
+    for path in sorted(test_paths):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        write_lines = _test_suite_source_write_lines(tree)
+        if not write_lines:
+            continue
+
+        has_sqlite_engine = False
+        has_get_db_override = False
+        has_drop_all = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                if (
+                    _call_name(node) == "create_engine"
+                    and node.args
+                    and (_literal_string(node.args[0]) or "").startswith("sqlite")
+                ):
+                    has_sqlite_engine = True
+                if _is_base_metadata_drop_all(node):
+                    has_drop_all = True
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                if any(_is_get_db_override_target(target) for target in targets):
+                    has_get_db_override = True
+
+        missing = []
+        if not has_sqlite_engine:
+            missing.append("independent SQLite create_engine")
+        if not has_get_db_override:
+            missing.append("app.dependency_overrides[get_db]")
+        if not has_drop_all:
+            missing.append("Base.metadata.drop_all teardown")
+        if missing:
+            try:
+                shown = str(path.relative_to(_API_SERVICE_ROOT))
+            except ValueError:
+                shown = str(path)
+            gaps.append((shown, tuple(write_lines), tuple(missing)))
+    return gaps
+
+
+def test_g20_checker_detects_any_writer_module_and_accepts_isolation(tmp_path):
+    """判定器自测：pytest 两种文件名的坏写点必须报，完整隔离模块必须放行。"""
+    bad = tmp_path / "test_unexpected_alert_writer.py"
+    bad.write_text(
+        'payload = {"source": "test_suite", "message": "Test alert"}\n',
+        encoding="utf-8",
+    )
+    suffix_bad = tmp_path / "alert_writer_test.py"
+    suffix_bad.write_text(
+        'payload = build_alert(source="test_suite")\n',
+        encoding="utf-8",
+    )
+    overlap_bad = tmp_path / "test_overlap_test.py"
+    overlap_bad.write_text(
+        'payload = build_alert(source="test_suite")\n',
+        encoding="utf-8",
+    )
+    gaps = _test_suite_alert_isolation_gaps(tmp_path)
+    assert len(gaps) == 3, "同时命中两种 pytest 文件模式的模块不得重复报告"
+    assert {gap[0] for gap in gaps} == {str(bad), str(suffix_bad), str(overlap_bad)}
+    for _path, lines, missing in gaps:
+        assert lines == (1,)
+        assert set(missing) == {
+            "independent SQLite create_engine",
+            "app.dependency_overrides[get_db]",
+            "Base.metadata.drop_all teardown",
+        }
+
+    bad.unlink()
+    suffix_bad.unlink()
+    overlap_bad.unlink()
+    good = tmp_path / "test_another_alert_writer.py"
+    good.write_text(
+        '_engine = create_engine("sqlite://")\n'
+        'app.dependency_overrides[get_db] = override\n'
+        'payload = build_alert(source="test_suite")\n'
+        'Base.metadata.drop_all(bind=_engine)\n',
+        encoding="utf-8",
+    )
+    assert _test_suite_alert_isolation_gaps(tmp_path) == []
+
+
+def test_g20_test_suite_alert_writers_are_sqlite_isolated():
+    gaps = _test_suite_alert_isolation_gaps()
+    assert not gaps, (
+        "以下测试模块会写 source=test_suite 告警，却没把 HTTP DB 会话完整隔离到"
+        "独立 SQLite（新站点不得污染开发/现场库）:\n"
+        + "\n".join(
+            f"  {path}:{lines} 缺 {missing}" for path, lines, missing in gaps
+        )
     )
 
 
