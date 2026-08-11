@@ -454,21 +454,35 @@ class MeasureExecutor(IStepExecutor):
             chamber.id,
             config.frequency_hz / 1e6,
             operating_mode=config.switch_mode_id,
+            require_real=channel_emulator_is_real,
         )
+        if selected_path_loss_cert is None and channel_emulator_is_real:
+            selected_path_loss_cert = pl_service.get_latest_calibration(
+                chamber.id,
+                config.frequency_hz / 1e6,
+                operating_mode=config.switch_mode_id,
+            )
         selected_path_loss_use_mock = (
             selected_path_loss_cert.use_mock
             if selected_path_loss_cert is not None
             else None
         )
-        path_loss_cert_usable, provenance_blocker = (
-            _evaluate_path_loss_provenance_for_measure(
-                selected_path_loss_use_mock,
-                channel_emulator_is_real=channel_emulator_is_real,
-                strict=config.precheck_strict_cal,
+        if selected_path_loss_cert is None:
+            path_loss_cert_usable = False
+            provenance_blocker = (
+                "path-loss calibration is missing or expired; real measurement "
+                "strict mode requires a currently valid explicit-real certificate"
+                if channel_emulator_is_real and config.precheck_strict_cal
+                else None
             )
-            if selected_path_loss_cert is not None
-            else (False, None)
-        )
+        else:
+            path_loss_cert_usable, provenance_blocker = (
+                _evaluate_path_loss_provenance_for_measure(
+                    selected_path_loss_use_mock,
+                    channel_emulator_is_real=channel_emulator_is_real,
+                    strict=config.precheck_strict_cal,
+                )
+            )
         if provenance_blocker is not None:
             return StepExecutionResult(
                 status=StepExecutionStatus.FAILED,

@@ -1558,8 +1558,16 @@ class PDFGenerator:
                     headers = ['Frequency (MHz)', 'Probes', 'Provenance', 'Status', 'Calibrated At']
                     rows = [headers]
                     for cal in cal_data[:20]:
-                        status = '✓ PASS' if cal.get('validation_pass') else '✗ FAIL'
-                        status_color = '#43a047' if cal.get('validation_pass') else '#e53935'
+                        verdict = cal.get('validation_pass')
+                        if verdict is True:
+                            status = '✓ PASS'
+                            status_color = '#43a047'
+                        elif verdict is False:
+                            status = '✗ FAIL'
+                            status_color = '#e53935'
+                        else:
+                            status = '? UNVERIFIED'
+                            status_color = '#f9a825'
                         provenance = str(cal.get('provenance', 'unknown')).upper()
                         rows.append([
                             str(cal.get('frequency_mhz', '-')),

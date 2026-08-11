@@ -291,6 +291,12 @@ def test_case_runner_gate_cannot_leave_business_validation_green(db):
 
     execution = _execution(db)
     execution.validation_pass = True
+    execution.measurements = {
+        "phases": {"measure": {
+            "path_loss_verified": True,
+            "path_loss_calibration_use_mock": False,
+        }}
+    }
     register_required_scpi_evidence(
         execution,
         requirement_id="positioner.azimuth.000",
@@ -748,6 +754,129 @@ def test_report_service_overwrites_client_pass_in_pdf_and_persisted_content(
     assert generated.content_data["scpi_evidence"]["formal_acceptance"] is False
 
 
+def test_report_service_rebuilds_legacy_mimo_content_from_execution(
+    db, tmp_path, monkeypatch,
+):
+    from pathlib import Path
+
+    from app.services.report_service import ReportService
+
+    execution = _execution(db)
+    execution.status = "completed"
+    execution.validation_pass = True
+    execution.config = {
+        "step_descriptors": [{"type": "MIMO_OTA_MEASURE"}],
+    }
+    execution.measurements = {
+        "phases": {
+            "precheck": {"overall_pass": True},
+            "reference": {},
+            "measure": {
+                "path_loss_verified": True,
+                # Legacy record: no path_loss_calibration_use_mock.
+                "azimuth_results": [{
+                    "azimuth_deg": 0.0,
+                    "rsrp_dbm": -70.0,
+                    "sinr_db": 20.0,
+                    "throughput_mbps": 500.0,
+                    "rank_indicator": 4.0,
+                }],
+            },
+            "analysis": {"verdict": "PASS"},
+        }
+    }
+    report = TestReport(
+        title="MIMO OTA Test Report — legacy",
+        report_type="single_execution",
+        format="pdf",
+        generated_by="user",
+        test_execution_ids=[str(execution.id)],
+        content_data={
+            "overall_result": "passed",
+            "statistics": {"throughput_mbps": {"mean": 500.0}},
+            "table_data": [{"Throughput (Mbps)": "500.0"}],
+        },
+    )
+    db.add(report)
+    db.commit()
+    captured = {}
+
+    def _fake_generate(self, report_data, template, output_path):
+        captured.update(report_data)
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"%PDF-1.4\n")
+        return str(path)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "app.services.report_service.PDFGenerator.generate_report", _fake_generate,
+    )
+
+    generated = ReportService().generate_report(db, report.id)
+
+    assert captured["calibration_trust_schema_version"] == 1
+    assert captured["overall_result"] == "unknown"
+    assert captured["statistics"] == {}
+    assert captured["table_data"][0]["Throughput (Mbps)"] == "N/A"
+    assert generated.content_data == captured
+
+
+def test_legacy_user_mimo_report_detail_is_blocked_by_execution_truth(db):
+    from app.api import report as report_api
+
+    execution = _execution(db)
+    execution.config = {
+        "step_descriptors": [{"type": "MIMO_OTA_MEASURE"}],
+    }
+    legacy = TestReport(
+        title="手工生成的执行报告",
+        report_type="single_execution",
+        format="pdf",
+        generated_by="user",
+        status="completed",
+        test_execution_ids=[str(execution.id)],
+        content_data={"overall_result": "passed"},
+    )
+    db.add(legacy)
+    db.commit()
+
+    with pytest.raises(Exception) as exc_info:
+        report_api.get_report(legacy.id, db=db)
+
+    assert getattr(exc_info.value, "status_code", None) == 409
+
+
+def test_multi_execution_mimo_regeneration_fails_closed(db):
+    from app.services.report_service import ReportService
+
+    executions = [_execution(db), _execution(db)]
+    for execution in executions:
+        execution.config = {
+            "step_descriptors": [{"type": "MIMO_OTA_MEASURE"}],
+        }
+    legacy = TestReport(
+        title="legacy multi MIMO",
+        report_type="single_execution",
+        format="pdf",
+        generated_by="user",
+        test_execution_ids=[str(execution.id) for execution in executions],
+        content_data={
+            "overall_result": "passed",
+            "table_data": [{"Throughput (Mbps)": "500.0"}],
+        },
+    )
+    db.add(legacy)
+    db.commit()
+
+    with pytest.raises(ValueError, match="cannot be safely regenerated"):
+        ReportService().generate_report(db, legacy.id)
+
+    db.refresh(legacy)
+    assert legacy.status == "failed"
+    assert legacy.file_path is None
+
+
 def test_pdf_active_chain_contains_layered_evidence_section(tmp_path):
     from app.services.pdf_generator import PDFGenerator
 
@@ -859,6 +988,16 @@ def test_mimo_report_applies_evidence_gate_before_building_content(db):
         required_evidence_level=EvidenceLevel.APPLIED,
     )
     _finalize_scpi_acceptance(execution)
+    measurements = dict(execution.measurements or {})
+    phases = dict(measurements.get("phases") or {})
+    measure = dict(phases.get("measure") or {})
+    measure.update({
+        "path_loss_verified": True,
+        "path_loss_calibration_use_mock": False,
+    })
+    phases["measure"] = measure
+    measurements["phases"] = phases
+    execution.measurements = measurements
     content = _build_mimo_ota_content_data(
         execution, datetime.utcnow(), "evidence-gated"
     )

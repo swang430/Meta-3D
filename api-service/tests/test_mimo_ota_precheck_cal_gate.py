@@ -30,7 +30,7 @@ Each case asserts:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 import pytest
@@ -178,6 +178,7 @@ def _seed_path_loss_cal(
     frequency_mhz: float = 3500.0,
     *,
     use_mock: Optional[bool] = False,
+    valid_until: Optional[datetime] = None,
 ) -> None:
     """Write a minimal VALID ProbePathLossCalibration so
     `latest_pl is not None` and `result_payload["path_loss_calibration_valid"]
@@ -191,7 +192,7 @@ def _seed_path_loss_cal(
         sgh_gain_dbi=8.0,
         status=CalibrationStatus.VALID.value,
         calibrated_at=now,
-        valid_until=now.replace(year=now.year + 1),  # 1 year validity
+        valid_until=valid_until or now.replace(year=now.year + 1),
     )
     # P1-27: pre-existing tests are about certificate existence/frequency,
     # so they explicitly represent a real calibration. ``setattr`` keeps the
@@ -615,6 +616,42 @@ async def test_direct_measure_rejects_untrusted_path_loss_before_hardware_touch(
         assert keyword in reason, f"missing {keyword!r} in {reason!r}"
 
 
+@pytest.mark.parametrize("cert_state", ["missing", "expired"])
+@pytest.mark.asyncio
+async def test_direct_measure_strict_rejects_missing_or_expired_cert_before_connect(
+    db,
+    lab,
+    chamber,
+    hal_with_mocks,
+    cert_state: str,
+):
+    class _MustNotConnect:
+        async def connect(self):
+            raise AssertionError("calibration gate ran after hardware connect")
+
+    if cert_state == "expired":
+        _seed_path_loss_cal(
+            db,
+            chamber.id,
+            use_mock=False,
+            valid_until=datetime.utcnow() - timedelta(days=1),
+        )
+    hal_with_mocks.drivers["positioner"] = _MustNotConnect()
+    hal_with_mocks.drivers["baseStation"] = _MustNotConnect()
+    ctx = _build_context(
+        db,
+        lab,
+        cal_cert=None,
+        strict_mode=True,
+        frequency_hz=3500e6,
+    )
+
+    result = await MeasureExecutor().execute(ctx)
+
+    assert result.status == StepExecutionStatus.FAILED
+    assert "missing or expired" in (result.error_message or "")
+
+
 @pytest.mark.parametrize(
     "use_mock, ce_is_real, strict, expect_usable, expect_blocked",
     [
@@ -763,3 +800,27 @@ async def test_mock_channelEmulator_auto_skips_strict_cal_gate(
     )
     reason = measurements.get("cal_pass_reason", "") or ""
     assert "gate N/A" in reason and "mock" in reason, f"got {reason!r}"
+
+
+@pytest.mark.asyncio
+async def test_mock_channelEmulator_rehearsal_keeps_mock_calibration_chain(
+    db, lab, chamber, hal_with_mock_ce,
+):
+    """模拟仪表链应演练校准选择，而不是悄悄退回默认线损。"""
+    _seed_path_loss_cal(db, chamber.id, use_mock=True)
+    ctx = _build_context(
+        db,
+        lab,
+        cal_cert=None,
+        strict_mode=True,
+        frequency_hz=3500e6,
+    )
+
+    result = await PrecheckExecutor().execute(ctx)
+    measurements = result.measurements or {}
+
+    assert measurements["path_loss_calibration_valid"] is True
+    assert measurements["path_loss_calibration_use_mock"] is True
+    assert measurements["path_loss_calibration_frequency_mhz"] == 3500.0
+    assert measurements["cal_pass"] is True
+    assert "gate N/A" in measurements["cal_pass_reason"]

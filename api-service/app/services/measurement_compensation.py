@@ -414,9 +414,13 @@ def get_system_compensation_summary(
     # 检查校准状态
     statuses = orchestrator.check_calibration_status(chamber_id, frequency_mhz)
 
-    # 统计有效校准数
-    valid_count = sum(1 for s in statuses.values() if s.is_valid)
-    required_count = sum(1 for s in statuses.values() if s.is_required)
+    # 只用必需项计算正式校准门。可选项会在“硬件未配置/无需校准”时标 valid，
+    # 若把它们混入分子，会把缺失的必需校准顶成 all_valid=true。
+    required_statuses = [s for s in statuses.values() if s.is_required]
+    valid_count = sum(
+        1 for s in required_statuses if s.is_valid and not s.is_expired
+    )
+    required_count = len(required_statuses)
 
     return {
         "chamber_id": str(chamber_id),
@@ -449,6 +453,8 @@ def get_system_compensation_summary(
         "calibration_status": {
             "valid_calibrations": valid_count,
             "required_calibrations": required_count,
-            "all_valid": valid_count >= required_count
+            "all_valid": all(
+                s.is_valid and not s.is_expired for s in required_statuses
+            )
         }
     }

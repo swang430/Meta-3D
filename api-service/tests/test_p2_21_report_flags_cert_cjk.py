@@ -39,7 +39,7 @@ _FALLBACK_PHASES = {
     "reference": {"measured_trp_dbm": -30.0, "compensation_factor_db": 1.5,
                   "measurement_source": "mock"},
     "measure": {"frequency_ghz": 3.55, "mimo_config": "4x4",
-                "path_loss_certificate_id": None},
+                "path_loss_certificate_id": None, "path_loss_verified": False},
     "analysis": {"verdict": "PASS"},
 }
 
@@ -49,7 +49,11 @@ _VERIFIED_PHASES = {
                  "quiet_zone_ripple_db": 0.5, "quiet_zone_verified": True},
     "reference": {"measured_trp_dbm": -28.0, "trp_verified": True,
                   "measurement_source": "hal_signal_analyzer"},
-    "measure": {"frequency_ghz": 3.55, "path_loss_verified": True},
+    "measure": {
+        "frequency_ghz": 3.55,
+        "path_loss_verified": True,
+        "path_loss_calibration_use_mock": False,
+    },
     "analysis": {"verdict": "PASS"},
 }
 

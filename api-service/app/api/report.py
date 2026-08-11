@@ -40,6 +40,7 @@ from app.services.report_service import (
     ReportTemplateService,
     ReportComparisonService,
     ReportScheduleService,
+    report_references_mimo_ota_execution,
 )
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -49,6 +50,42 @@ report_service = ReportService()
 template_service = ReportTemplateService()
 comparison_service = ReportComparisonService()
 schedule_service = ReportScheduleService()
+
+
+def _is_mimo_report(db: Session, report) -> bool:
+    content = report.content_data or {}
+    return (
+        content.get("report_family") == "mimo_ota"
+        or getattr(report, "generated_by", None) == "mimo_ota.executors.report"
+        or report_references_mimo_ota_execution(db, report)
+    )
+
+
+def _mimo_report_is_provenance_sanitized(db: Session, report) -> bool:
+    """Legacy MIMO artifacts are inaccessible until rebuilt safely.
+
+    New/rebuilt reports stamp a trust schema version and either preserve formal
+    KPI data (explicit-real calibration) or replace it with UNKNOWN/N/A. Old
+    artifacts lack that proof and therefore fail closed.
+    """
+    content = report.content_data or {}
+    if not _is_mimo_report(db, report):
+        return True
+    return content.get("calibration_trust_schema_version") == 1
+
+
+def _reject_untrusted_mimo_report(db: Session, report) -> None:
+    if _mimo_report_is_provenance_sanitized(db, report):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            "Legacy MIMO OTA report cannot be viewed or downloaded until its "
+            "path-loss provenance is sanitized. Regenerate the report to "
+            "produce an UNKNOWN/N/A audit record, or re-run the measurement "
+            "with a real calibration for a formal result."
+        ),
+    )
 
 
 # ==================== Report Endpoints ====================
@@ -131,12 +168,22 @@ def generate_report(
     This starts the async report generation process.
     The actual PDF/HTML/Excel generation will be done in a background task.
     """
-    report = report_service.generate_report(db, report_id)
+    existing = report_service.get_report(db, report_id)
+    try:
+        report = report_service.generate_report(db, report_id)
+    except ValueError as exc:
+        if existing is not None and _is_mimo_report(db, existing):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
+        raise
     if not report:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Report {report_id} not found"
         )
+    _reject_untrusted_mimo_report(db, report)
     return report
 
 
@@ -412,6 +459,7 @@ def get_report(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Report {report_id} not found"
         )
+    _reject_untrusted_mimo_report(db, report)
     return report
 
 
@@ -436,6 +484,8 @@ def download_report(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Report is not ready for download. Status: {report.status}"
         )
+
+    _reject_untrusted_mimo_report(db, report)
 
     if not report.file_path:
         raise HTTPException(

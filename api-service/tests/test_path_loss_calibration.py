@@ -4,7 +4,9 @@ Path Loss Calibration Tests
 测试探头路损校准、RF 链路校准和编排器功能
 """
 import pytest
+import json
 from uuid import UUID
+from pathlib import Path
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -28,10 +30,17 @@ from app.schemas.probe_calibration import (
 from app.services.calibration_orchestrator import (
     CalibrationOrchestrator,
     CalibrationItem,
+    CalibrationItemStatus,
     CALIBRATION_CONFIG,
 )
-from app.services.measurement_compensation import MeasurementCompensator
-from app.services.calibration_report_generator import CalibrationReportGenerator
+from app.services.measurement_compensation import (
+    MeasurementCompensator,
+    get_system_compensation_summary,
+)
+from app.services.calibration_report_generator import (
+    CalibrationReportGenerator,
+    _path_loss_validation_pass,
+)
 
 
 # Create test database
@@ -272,6 +281,77 @@ class TestProbePathLossCalibrationService:
         assert calibration is not None
         assert calibration.frequency_mhz == 3500.0
 
+    def test_expired_valid_status_is_not_selectable_or_formally_passed(
+        self, db_session, type_c_chamber,
+    ):
+        now = datetime.utcnow()
+        expired = ProbePathLossCalibration(
+            chamber_id=type_c_chamber.id,
+            frequency_mhz=3500.0,
+            use_mock=False,
+            probe_path_losses={"0": {"path_loss_db": 10.0}},
+            sgh_model="expired real cert",
+            sgh_gain_dbi=10.0,
+            avg_path_loss_db=10.0,
+            status="valid",
+            calibrated_at=now - timedelta(days=2),
+            valid_until=now - timedelta(days=1),
+        )
+        db_session.add(expired)
+        db_session.commit()
+
+        selected = ProbePathLossCalibrationService(
+            db_session, use_mock=False,
+        ).get_latest_calibration(type_c_chamber.id, 3500.0)
+
+        assert selected is None
+        assert _path_loss_validation_pass(expired) is False
+
+    def test_real_selection_is_not_shadowed_by_newer_mock_certificate(
+        self, db_session, type_c_chamber,
+    ):
+        now = datetime.utcnow()
+        real = ProbePathLossCalibration(
+            chamber_id=type_c_chamber.id,
+            frequency_mhz=3500.0,
+            use_mock=False,
+            probe_path_losses={"0": {"path_loss_db": 11.0}},
+            sgh_model="real cert",
+            sgh_gain_dbi=10.0,
+            avg_path_loss_db=11.0,
+            status="valid",
+            calibrated_at=now - timedelta(hours=2),
+            valid_until=now + timedelta(days=1),
+        )
+        mock = ProbePathLossCalibration(
+            chamber_id=type_c_chamber.id,
+            frequency_mhz=3500.0,
+            use_mock=True,
+            probe_path_losses={"0": {"path_loss_db": 99.0}},
+            sgh_model="newer mock cert",
+            sgh_gain_dbi=10.0,
+            avg_path_loss_db=99.0,
+            status="valid",
+            calibrated_at=now - timedelta(hours=1),
+            valid_until=now + timedelta(days=1),
+        )
+        db_session.add_all([real, mock])
+        db_session.commit()
+
+        service = ProbePathLossCalibrationService(db_session, use_mock=False)
+        audit_latest = service.get_latest_calibration(
+            type_c_chamber.id, 3500.0,
+        )
+        formal_latest = service.get_latest_calibration(
+            type_c_chamber.id, 3500.0, require_real=True,
+        )
+
+        assert audit_latest.id == mock.id
+        assert formal_latest.id == real.id
+        assert service.get_path_loss_for_probe(
+            type_c_chamber.id, probe_id=0, frequency_mhz=3500.0,
+        ) == 11.0
+
     @pytest.mark.asyncio
     async def test_get_path_loss_for_probe(self, db_session, type_c_chamber):
         """Should get path loss for specific probe"""
@@ -457,6 +537,52 @@ class TestMeasurementCompensator:
         assert "dl_gain_db" in compensation
         assert "total_compensation_db" in compensation
 
+    def test_summary_cannot_let_optional_valid_items_mask_required_failures(
+        self, monkeypatch, db_session, type_a_chamber,
+    ):
+        future = datetime.utcnow() + timedelta(days=1)
+
+        class StubOrchestrator:
+            def __init__(self, db, use_mock):
+                assert use_mock is False
+
+            def get_compensation_factors(self, *args):
+                return {
+                    "path_loss_db": 0.0,
+                    "path_loss_usable": False,
+                    "path_loss_provenance": "simulated",
+                }
+
+            def check_calibration_status(self, *args):
+                return {
+                    CalibrationItem.PROBE_PATH_LOSS: CalibrationItemStatus(
+                        CalibrationItem.PROBE_PATH_LOSS, True, False, future,
+                    ),
+                    CalibrationItem.QUIET_ZONE_UNIFORMITY: CalibrationItemStatus(
+                        CalibrationItem.QUIET_ZONE_UNIFORMITY, True, False, future,
+                    ),
+                    CalibrationItem.UPLINK_CHAIN: CalibrationItemStatus(
+                        CalibrationItem.UPLINK_CHAIN, False, True, future,
+                    ),
+                    CalibrationItem.DOWNLINK_CHAIN: CalibrationItemStatus(
+                        CalibrationItem.DOWNLINK_CHAIN, False, True, future,
+                    ),
+                }
+
+        monkeypatch.setattr(
+            "app.services.measurement_compensation.CalibrationOrchestrator",
+            StubOrchestrator,
+        )
+        summary = get_system_compensation_summary(
+            db_session, type_a_chamber.id, 3500.0,
+        )["calibration_status"]
+
+        assert summary == {
+            "valid_calibrations": 0,
+            "required_calibrations": 2,
+            "all_valid": False,
+        }
+
     @pytest.mark.asyncio
     async def test_compensate_trp_with_calibration(self, db_session, type_c_chamber):
         """Should compensate TRP measurement after calibration"""
@@ -594,42 +720,92 @@ class TestMeasurementCompensator:
         assert path_status["is_valid"] is False
         assert "simulated" in path_status["message"]
 
-    def test_calibration_reports_disclose_and_fail_mock_path_loss(
-        self, db_session, type_c_chamber,
+        summary_response = client.get(
+            f"/api/v1/calibration/compensation/summary/{type_c_chamber.id}",
+            params={"frequency_mhz": 3500.0},
+        )
+        assert summary_response.status_code == 200
+        summary_status = summary_response.json()["calibration_status"]
+        assert summary_status["all_valid"] is False
+        assert (
+            summary_status["valid_calibrations"]
+            < summary_status["required_calibrations"]
+        )
+
+    def test_calibration_reports_exclude_untrusted_path_loss_from_formal_kpi(
+        self, db_session, type_c_chamber, tmp_path,
     ):
         now = datetime.utcnow()
-        db_session.add(ProbePathLossCalibration(
-            chamber_id=type_c_chamber.id,
-            frequency_mhz=3500.0,
-            use_mock=True,
-            probe_path_losses={"0": {"path_loss_db": 123.45}},
-            sgh_model="Known mock",
-            sgh_gain_dbi=10.0,
-            avg_path_loss_db=123.45,
-            status="valid",
-            calibrated_at=now,
-            valid_until=now + timedelta(days=1),
-        ))
+        for offset, use_mock in enumerate((False, True, None)):
+            db_session.add(ProbePathLossCalibration(
+                chamber_id=type_c_chamber.id,
+                frequency_mhz=3500.0,
+                use_mock=use_mock,
+                probe_path_losses={"0": {"path_loss_db": 10.0 + offset}},
+                sgh_model=f"provenance-{use_mock}",
+                sgh_gain_dbi=10.0,
+                avg_path_loss_db=10.0 + offset,
+                status="valid",
+                calibrated_at=now + timedelta(seconds=offset),
+                valid_until=now + timedelta(days=1),
+            ))
         db_session.commit()
 
         generator = CalibrationReportGenerator(db_session)
         chamber_data = generator._collect_chamber_calibration_data(
             type_c_chamber.id, 3500.0,
         )
-        chamber_row = chamber_data["chamber_calibration"]["path_loss"][0]
-        assert chamber_row["use_mock"] is True
-        assert chamber_row["provenance"] == "simulated"
-        assert chamber_row["validation_pass"] is False
-        assert chamber_data["execution_summary"]["passed"] == 0
+        chamber_rows = {
+            row["provenance"]: row
+            for row in chamber_data["chamber_calibration"]["path_loss"]
+        }
+        assert chamber_rows["real"]["validation_pass"] is True
+        assert chamber_rows["simulated"]["validation_pass"] is None
+        assert chamber_rows["unknown"]["validation_pass"] is None
+        assert chamber_data["execution_summary"] == {
+            "total_executions": 1,
+            "passed": 1,
+            "failed": 0,
+            "pending": 0,
+            "pass_rate": 100.0,
+        }
 
         probe_data = generator._collect_probe_data(
             calibration_type="path_loss",
         )
-        probe_row = probe_data["probe_calibration"]["path_loss"][0]
-        assert probe_row["use_mock"] is True
-        assert probe_row["provenance"] == "simulated"
-        assert probe_row["validation_pass"] is False
-        assert probe_data["execution_summary"]["passed"] == 0
+        probe_rows = {
+            row["provenance"]: row
+            for row in probe_data["probe_calibration"]["path_loss"]
+            if row["chamber_id"] == str(type_c_chamber.id)
+        }
+        assert probe_rows["real"]["validation_pass"] is True
+        assert probe_rows["simulated"]["validation_pass"] is None
+        assert probe_rows["unknown"]["validation_pass"] is None
+        assert probe_data["execution_summary"] == {
+            "total_executions": 1,
+            "passed": 1,
+            "failed": 0,
+            "pending": 0,
+            "pass_rate": 100.0,
+        }
+
+        output_path = tmp_path / "probe.pdf"
+
+        def fake_generate_report(data, template, path):
+            Path(path).write_bytes(b"pdf")
+            return path
+
+        generator.pdf_generator.generate_report = fake_generate_report
+        generated = generator.generate_probe_calibration_report(
+            calibration_type="path_loss",
+            output_path=str(output_path),
+        )
+        assert generated == str(output_path)
+        manifest = json.loads(
+            Path(f"{output_path}.provenance.json").read_text(encoding="utf-8")
+        )
+        assert manifest["path_loss_provenance_disclosed"] is True
+        assert manifest["unverified_path_loss_records"] == 2
 
 
 class TestPathLossCalibrationAPI:

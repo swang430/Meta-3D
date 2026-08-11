@@ -53,6 +53,12 @@ strict 判定保持现有运行时硬件来源：仅当当前 live channel emula
 MEASURE，同一来源门还必须在任何仪表 connect/下发之前重检：strict 时直接失败；显式 bypass 时
 继续做无路损补偿的调试测量，但不应用模拟/未知证书，避免其数值进入真实 KPI。
 
+有效证书的权威口径同时要求 `status=valid` 与 `valid_until > now`；单阶段 MEASURE 在 strict 下
+对 missing / expired 同样在 connect 前失败。历史 execution 的旧 `path_loss_verified=true` 不足以
+证明真实来源，重生成正式结论还必须有本片新增的 `path_loss_calibration_use_mock=false`。旧报告
+在 provenance-aware builder 重生成前不可读取或下载；重生成后的 UNKNOWN/N/A 报告可供审计，
+但不恢复正式 KPI 与 PASS。
+
 ## 迁移与兼容
 
 新增 nullable Boolean 列，不设 server default，不批量回填。这样 brownfield 数据保持

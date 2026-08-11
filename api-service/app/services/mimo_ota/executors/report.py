@@ -273,11 +273,37 @@ def _build_mimo_ota_content_data(
             #    也可能是仿真值，**分不出来**。当成 True 会把历史上那些 mock SA
             #    的记录判成实测、数值照印，那是我新引入的一个说谎方向。
             _trp_verified = None             # 来源不明 → 未知，按未确认处理
-    _pl_verified = measure.get("path_loss_verified")
-    if _pl_verified is None:
-        # Historical measure records carry path_loss_certificate_id — a non-null
-        # cert is the provenance that recovers "verified" without the flag.
-        _pl_verified = measure.get("path_loss_certificate_id") is not None
+    _pl_verified_raw = measure.get("path_loss_verified")
+    _pl_use_mock = measure.get("path_loss_calibration_use_mock")
+    if _pl_verified_raw is True and _pl_use_mock is False:
+        _pl_verified = True
+    elif _pl_verified_raw is False or _pl_use_mock is True:
+        _pl_verified = False
+    else:
+        # Before P1-27, even ``path_loss_verified=True`` did not distinguish a
+        # real certificate from a mock one. Missing/NULL provenance therefore
+        # stays UNKNOWN; neither a cert ID nor the legacy boolean can recover it.
+        _pl_verified = None
+
+    # A formal KPI/report verdict requires explicit proof that the applied
+    # path-loss certificate was real. Historical, mock and bypass executions
+    # remain auditable, but their numerical KPI values cannot be re-published
+    # as a formal PASS/FAIL after report regeneration.
+    reported_verdict = analysis.get("verdict")
+    if _pl_verified is not True:
+        overall_pass = False
+        verdict_unknown = True
+        reported_verdict = "UNKNOWN"
+        summary.update({
+            "passed": 0,
+            "failed": 0,
+            "pending": 1,
+            "pass_rate": 0.0,
+        })
+        statistics = {}
+        for row in table_data:
+            for metric in ("RSRP (dBm)", "SINR (dB)", "Throughput (Mbps)", "RI"):
+                row[metric] = "N/A"
 
     def _verified_label(flag, verified_note: str, unverified_note: str) -> str:
         """P1-12 三值标志 → 报告可读标注。None (历史数据判不了) 也要显式说出来,
@@ -388,7 +414,7 @@ def _build_mimo_ota_content_data(
          # P1-22: verdict 三值放渲染器可达位置; 旧 overall_pass /
          # pass_criteria_summary 是全仓无写方的死键, 删站点。
          "name": "analysis",
-         "parameters": {"verdict": analysis.get("verdict")}},
+         "parameters": {"verdict": reported_verdict}},
     ]
 
     return {
@@ -396,6 +422,9 @@ def _build_mimo_ota_content_data(
         # P1-22 (Codex #256): 报告类型进 content_data — PDFGenerator 靠它分流
         # 计划口径/用例口径的字段标签 (名字有无判不了型: 本路径恒有名字)。
         "report_type": "single_execution",
+        "report_family": "mimo_ota",
+        "calibration_trust_schema_version": 1,
+        "formal_path_loss_verified": _pl_verified is True,
         "generated_by": "MIMO OTA System",
         "generated_at": now.isoformat(),
         "overall_result": (

@@ -6,7 +6,9 @@ Tests for the calibration report generation functionality.
 
 import pytest
 import os
+from pathlib import Path
 from datetime import datetime
+from fastapi import HTTPException
 
 from app.services.pdf_generator import PDFGenerator
 
@@ -79,7 +81,7 @@ class TestPDFGeneratorCalibrationSections:
         elements = generator._generate_calibration_probe_section(data)
         assert len(elements) > 0
 
-    def test_probe_report_renders_mock_path_loss_as_untrusted(self):
+    def test_probe_report_renders_mock_path_loss_as_unverified(self):
         generator = PDFGenerator()
         data = {
             "probe_calibration": {
@@ -87,14 +89,14 @@ class TestPDFGeneratorCalibrationSections:
                     "frequency_mhz": 3500.0,
                     "num_probes": 16,
                     "provenance": "simulated",
-                    "validation_pass": False,
+                    "validation_pass": None,
                     "calibrated_at": "2026-08-11 17:00:00",
                 }],
             },
             "probe_summary": {
-                "total_executions": 1,
+                "total_executions": 0,
                 "passed": 0,
-                "failed": 1,
+                "failed": 0,
                 "pass_rate": 0.0,
             },
         }
@@ -110,6 +112,25 @@ class TestPDFGeneratorCalibrationSections:
 
         assert "path loss calibration" in rendered_text
         assert "simulated" in rendered_text
+        assert "unverified" in rendered_text
+        assert "✗ fail" not in rendered_text
+
+    @pytest.mark.asyncio
+    async def test_legacy_calibration_pdf_without_provenance_manifest_is_blocked(
+        self, monkeypatch, tmp_path,
+    ):
+        from app.api import calibration_report as calibration_report_api
+
+        monkeypatch.chdir(tmp_path)
+        report_path = Path("data/reports/calibration/legacy.pdf")
+        report_path.parent.mkdir(parents=True)
+        report_path.write_bytes(b"legacy")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await calibration_report_api.download_report(str(report_path))
+
+        assert exc_info.value.status_code == 409
+        assert "regenerate" in str(exc_info.value.detail).lower()
 
     def test_generate_calibration_probe_section_empty(self):
         """Test generating probe calibration section with no data"""

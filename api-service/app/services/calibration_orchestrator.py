@@ -308,7 +308,18 @@ class CalibrationOrchestrator:
 
             # 检查每种校准类型的状态
             if item == CalibrationItem.PROBE_PATH_LOSS:
-                cal = self.path_loss_service.get_latest_calibration(chamber_id, frequency_mhz)
+                cal = self.path_loss_service.get_latest_calibration(
+                    chamber_id,
+                    frequency_mhz,
+                    require_real=not self.use_mock,
+                )
+                if cal is None and not self.use_mock:
+                    # 正式状态以 explicit-real 为白名单；若白名单为空，再取任意
+                    # 来源只为解释 simulated/unknown，不能把其数值判为有效。
+                    cal = self.path_loss_service.get_latest_calibration(
+                        chamber_id,
+                        frequency_mhz,
+                    )
                 if cal:
                     provenance = (
                         "simulated" if cal.use_mock is True
@@ -1014,8 +1025,15 @@ class CalibrationOrchestrator:
 
         # 获取路损
         path_loss_cal = self.path_loss_service.get_latest_calibration(
-            chamber_id, frequency_mhz
+            chamber_id,
+            frequency_mhz,
+            require_real=not self.use_mock,
         )
+        if path_loss_cal is None and not self.use_mock:
+            path_loss_cal = self.path_loss_service.get_latest_calibration(
+                chamber_id,
+                frequency_mhz,
+            )
         if path_loss_cal is not None:
             factors["path_loss_provenance"] = (
                 "simulated" if path_loss_cal.use_mock is True

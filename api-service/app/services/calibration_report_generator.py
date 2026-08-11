@@ -6,6 +6,7 @@ Integrates with PDFGenerator for report generation.
 """
 
 import os
+import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -38,6 +39,34 @@ from app.models.channel_calibration import (
 logger = logging.getLogger(__name__)
 
 
+def _write_report_provenance_manifest(
+    report_path: str,
+    report_data: Dict[str, Any],
+    *,
+    path_loss_provenance_disclosed: bool,
+) -> None:
+    """Stamp a sidecar that distinguishes rebuilt reports from legacy PDFs.
+
+    The old PDF bytes cannot prove whether mock/NULL path-loss records were
+    rendered as PASS. The download endpoint therefore accepts probe/
+    comprehensive reports only when this manifest says the provenance-aware
+    renderer produced them.
+    """
+    probe_rows = (
+        (report_data.get("probe_calibration") or {}).get("path_loss") or []
+    )
+    manifest = {
+        "schema_version": 1,
+        "path_loss_section_included": bool(probe_rows),
+        "path_loss_provenance_disclosed": path_loss_provenance_disclosed,
+        "unverified_path_loss_records": sum(
+            1 for row in probe_rows if row.get("validation_pass") is None
+        ),
+    }
+    with open(f"{report_path}.provenance.json", "w", encoding="utf-8") as handle:
+        json.dump(manifest, handle, ensure_ascii=False, indent=2)
+
+
 def _path_loss_provenance(calibration: ProbePathLossCalibration) -> str:
     if calibration.use_mock is True:
         return "simulated"
@@ -46,9 +75,20 @@ def _path_loss_provenance(calibration: ProbePathLossCalibration) -> str:
     return "unknown"
 
 
-def _path_loss_validation_pass(calibration: ProbePathLossCalibration) -> bool:
-    """Formal calibration reports accept only explicitly real records."""
-    return calibration.status == "valid" and calibration.use_mock is False
+def _path_loss_validation_pass(
+    calibration: ProbePathLossCalibration,
+) -> Optional[bool]:
+    """Return formal verdict only for explicitly real records.
+
+    Simulated and historical/unknown records remain visible for audit, but
+    carry no PASS/FAIL verdict and never enter the formal report denominator.
+    """
+    if calibration.use_mock is not False:
+        return None
+    return (
+        calibration.status == "valid"
+        and calibration.valid_until > datetime.utcnow()
+    )
 
 
 class CalibrationReportGenerator:
@@ -110,8 +150,15 @@ class CalibrationReportGenerator:
         # Generate template configuration
         template = self._create_calibration_template()
 
-        # Generate PDF
-        return self.pdf_generator.generate_report(report_data, template, output_path)
+        # Generate PDF and stamp the provenance-aware renderer sidecar. Legacy
+        # PDFs lack this sidecar and are blocked from formal download.
+        report_path = self.pdf_generator.generate_report(report_data, template, output_path)
+        _write_report_provenance_manifest(
+            report_path,
+            report_data,
+            path_loss_provenance_disclosed=True,
+        )
+        return report_path
 
     def generate_probe_calibration_report(
         self,
@@ -135,7 +182,13 @@ class CalibrationReportGenerator:
             output_path = f"{output_dir}/probe_calibration_{timestamp}.pdf"
 
         template = self._create_probe_template()
-        return self.pdf_generator.generate_report(report_data, template, output_path)
+        report_path = self.pdf_generator.generate_report(report_data, template, output_path)
+        _write_report_provenance_manifest(
+            report_path,
+            report_data,
+            path_loss_provenance_disclosed=True,
+        )
+        return report_path
 
     def generate_channel_calibration_report(
         self,
@@ -248,10 +301,11 @@ class CalibrationReportGenerator:
 
         path_loss_data = []
         for cal in calibrations:
-            total += 1
             is_valid = _path_loss_validation_pass(cal)
-            if is_valid:
-                passed += 1
+            if is_valid is not None:
+                total += 1
+                if is_valid:
+                    passed += 1
             path_loss_data.append({
                 'id': str(cal.id),
                 'frequency_mhz': cal.frequency_mhz,
@@ -563,10 +617,11 @@ class CalibrationReportGenerator:
 
             path_loss_data = []
             for cal in calibrations:
-                total += 1
                 is_valid = _path_loss_validation_pass(cal)
-                if is_valid:
-                    passed += 1
+                if is_valid is not None:
+                    total += 1
+                    if is_valid:
+                        passed += 1
 
                 # 计算探头数量
                 num_probes = len(cal.probe_path_losses) if cal.probe_path_losses else 0

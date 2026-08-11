@@ -223,6 +223,57 @@ def test_ga_no_phase_progress_stays_none(db, lab):
     assert row["phases_total"] == 1  # descriptors 有, 只是不记进度
 
 
+def test_ga_mimo_validation_requires_explicit_real_path_loss_provenance(db, lab):
+    snapshot = _make_case(db, lab, name="MIMO provenance history")
+    legacy = _case_runner_execution(db, snapshot)
+    legacy.validation_pass = True
+    legacy.measurements = {
+        "phases": {"measure": {
+            "path_loss_verified": True,
+            "path_loss_certificate_id": "legacy-cert",
+        }}
+    }
+    fresh = _case_runner_execution(db, snapshot)
+    fresh.validation_pass = True
+    fresh.measurements = {
+        "phases": {"measure": {
+            "path_loss_verified": True,
+            "path_loss_calibration_use_mock": False,
+        }}
+    }
+    db.commit()
+
+    rows = {
+        row["id"]: row
+        for row in TestClient(app).get("/api/v1/test-executions").json()["items"]
+    }
+
+    assert rows[str(legacy.id)]["validation_pass"] is None
+    assert rows[str(fresh.id)]["validation_pass"] is True
+
+
+def test_ga_legacy_mimo_without_path_loss_markers_is_not_formal_fail(db, lab):
+    snapshot = _make_case(db, lab, name="Legacy MIMO without provenance")
+    legacy = _case_runner_execution(db, snapshot)
+    legacy.validation_pass = False
+    legacy.config = {
+        **legacy.config,
+        "step_descriptors": [
+            {"id": "measure", "type": "MIMO_OTA_MEASURE", "parameters": {}}
+        ],
+    }
+    legacy.measurements = {"phases": {"measure": {}}}
+    db.commit()
+
+    row = next(
+        item
+        for item in TestClient(app).get("/api/v1/test-executions").json()["items"]
+        if item["id"] == str(legacy.id)
+    )
+
+    assert row["validation_pass"] is None
+
+
 # ── G-b VRT 行不混入 ───────────────────────────────────────────────
 
 

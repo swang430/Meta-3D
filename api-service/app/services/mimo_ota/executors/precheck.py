@@ -412,6 +412,7 @@ class PrecheckExecutor(IStepExecutor):
         # 上报状态供操作员判断当天 alignment 数据是否新鲜. 不在 alignment
         # 状态上 hard-fail: 这是 OPTIONAL license, 多数现场不一定激活.
         ce = hal.drivers.get("channelEmulator")
+        ce_is_real = ce is not None and not is_mock_driver(ce)
         if ce is not None and hasattr(ce, "get_user_alignment_status"):
             try:
                 alignment = await ce.get_user_alignment_status()
@@ -495,8 +496,19 @@ class PrecheckExecutor(IStepExecutor):
         # gate 会拿别的 operating mode 的 cert 通过 precheck, 但 measure 用对的 mode 查
         # 不到 → precheck 通过却 measure 静默退兜底 (P1-8 要防的正是这种 gate↔measure 漂移)。
         latest_pl = pl_service.get_latest_calibration(
-            chamber.id, target_freq_mhz, operating_mode=config.switch_mode_id
+            chamber.id,
+            target_freq_mhz,
+            operating_mode=config.switch_mode_id,
+            require_real=ce_is_real,
         )
+        if latest_pl is None and ce_is_real:
+            # 保留“不可信证书存在”的诊断事实；正式执行先从 real 白名单选，
+            # 只有白名单为空才回读任意来源用于 fail-loud 原因，绝不应用其数值。
+            latest_pl = pl_service.get_latest_calibration(
+                chamber.id,
+                target_freq_mhz,
+                operating_mode=config.switch_mode_id,
+            )
 
         result_payload["path_loss_calibration_target_frequency_mhz"] = target_freq_mhz
         if latest_pl is not None:
@@ -526,6 +538,7 @@ class PrecheckExecutor(IStepExecutor):
                 .filter(
                     ProbePathLossCalibration.chamber_id == chamber.id,
                     ProbePathLossCalibration.status == CalibrationStatus.VALID.value,
+                    ProbePathLossCalibration.valid_until > datetime.utcnow(),
                 )
                 .first()
             )
@@ -611,7 +624,6 @@ class PrecheckExecutor(IStepExecutor):
         # moot → auto-N/A. Re-deriving live (rather than freezing at create)
         # closes the mock-create-then-switch-to-real bypass: a session built in
         # mock but RUN against real hardware still gets the strict gate.
-        ce_is_real = ce is not None and not is_mock_driver(ce)
         path_loss_valid = result_payload.get("path_loss_calibration_valid", False)
         path_loss_use_mock = result_payload.get("path_loss_calibration_use_mock")
         path_loss_provenance_untrusted = (

@@ -5,6 +5,8 @@ REST API for generating calibration reports.
 """
 
 from typing import Optional, List
+import json
+import os
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -68,6 +70,22 @@ class ReportGeneratedResponse(BaseModel):
     success: bool
     report_path: str
     message: str
+
+
+def _has_provenance_aware_calibration_manifest(report_path: str) -> bool:
+    """Only provenance-aware probe/comprehensive PDFs are formal artifacts."""
+    # Channel-only reports do not consume ProbePathLossCalibration.
+    if os.path.basename(report_path).startswith("channel_calibration_"):
+        return True
+    try:
+        with open(f"{report_path}.provenance.json", encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except (OSError, ValueError, TypeError):
+        return False
+    return (
+        manifest.get("schema_version") == 1
+        and manifest.get("path_loss_provenance_disclosed") is True
+    )
 
 
 # ==================== API Endpoints ====================
@@ -189,8 +207,6 @@ async def download_report(report_path: str):
 
     通过路径下载生成的 PDF 报告文件。
     """
-    import os
-
     # Validate path is within allowed directory
     if not report_path.startswith("data/reports/calibration/"):
         raise HTTPException(
@@ -203,6 +219,16 @@ async def download_report(report_path: str):
         raise HTTPException(
             status_code=404,
             detail="Report file not found"
+        )
+
+    if not _has_provenance_aware_calibration_manifest(full_path):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Legacy calibration PDF has no auditable path-loss provenance "
+                "and cannot be downloaded as a formal report. Regenerate it "
+                "with the provenance-aware report generator."
+            ),
         )
 
     return FileResponse(
