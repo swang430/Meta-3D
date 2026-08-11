@@ -561,8 +561,9 @@ class RealUxmDriver(BaseStationDriver):
                 resource_str,
                 timeout=VISA_TIMEOUT_DEFAULT,
             )
-            # Socket 模式需要设置终止符
-            if "SOCKET" in resource_str:
+            # Socket 模式需要设置终止符。VISA resource token 的比较与下方
+            # Platform redirect 一样先归一化；资源串原值仍原样交给 PyVISA。
+            if (resource_str or "").rsplit("::", 1)[-1].strip().lower() == "socket":
                 self._visa_session.read_termination = "\n"
                 self._visa_session.write_termination = "\n"
 
@@ -3526,7 +3527,13 @@ class RealUxmDriver(BaseStationDriver):
                 self._active_resource_string,
                 timeout=VISA_TIMEOUT_DEFAULT,
             )
-            if "SOCKET" in self._active_resource_string:
+            if (
+                (self._active_resource_string or "")
+                .rsplit("::", 1)[-1]
+                .strip()
+                .lower()
+                == "socket"
+            ):
                 self._visa_session.read_termination = "\n"
                 self._visa_session.write_termination = "\n"
             logger.info(
