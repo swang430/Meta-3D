@@ -18,7 +18,7 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → **P3-18** → P3-19**（逐片 WIP=1）。
 
-**Current Focus = P3-18 / PDF 转义子片** —— 先收口封面标题与共享步骤参数渲染器的自由文本 XML 转义；其余 G11 三覆盖面 / p08 零残留站点 / 诊断序列串行化 / 手写类型审计递归比对继续保持 P3-18 后续逐片 WIP=1。P2-24 已由 PR #325 合并。条目见下方 P3-18。
+**Current Focus = P3-18 / G11 三覆盖面子片** —— PDF 转义首片已由 PR #326 合并；本片收口参数 `in=` location、curl `-X/--request` 动词与响应 schema 容器类型三处假绿。其余 p08 零残留站点 / 诊断序列串行化 / 手写类型审计递归比对继续保持 P3-18 后续逐片 WIP=1。条目见下方 P3-18。
 
 > **~~P1-48~~ ✅ 2026-08-10 完成**（2026-08-09 插队，兼作 Gemini 外审首测对象）。五片全部 merge 进 main：#308 日志线 / #313 删掉四条整体返回随机数的报告接口（−955 行）/ #312 路损校准拒绝模拟驱动 / #310 报告线 / #314 虚拟路测不再编数。
 > **代价记录**：外审 27 轮 30 条，其中 #314 一个 PR 占 12 轮 22 条；复盘后 ①内审改成每次 push 前都过（新增轻量档）②「改之前先列全集」写进三份规则文档 ③规则整理 #316（消 8 处手工同步契约、轮次上限改分级）。
@@ -55,7 +55,7 @@ P1-45/46/41/47A-C 不是六条互不相干的插队需求，而是同一条
 SCPI 闭环依赖链：先把现场项映射到载体 → 用手册证据修判定和缺失载体 → 止住错误队列
 无限循环 → 补传输配对 → 补仪器接受/生效语义 → 接入正式 TestCase。该本地链已完成；
 P0-5 保持 ON-SITE-BLOCKED；P1-44/42/40/37 已在 Draft PR #303 完成本地实现与回归，
-本地序列现切到 **P3-18 / PDF 转义子片**（P1-29 已由 PR #320、P1-38 已由 PR #321、P1-27 已由 PR #322、P2-22 已由 PR #323、P2-23 已由 PR #324、P2-24 已由 PR #325 收口）。本轮日志设计与逐片实施计划见
+本地序列现切到 **P3-18 / G11 三覆盖面子片**（P1-29 已由 PR #320、P1-38 已由 PR #321、P1-27 已由 PR #322、P2-22 已由 PR #323、P2-23 已由 PR #324、P2-24 已由 PR #325、P3-18 PDF 子片已由 PR #326 收口）。本轮日志设计与逐片实施计划见
 [`plans/2026-08-07-log-sprint-design.md`](plans/2026-08-07-log-sprint-design.md) /
 [`plans/2026-08-07-log-sprint.md`](plans/2026-08-07-log-sprint.md)；SCPI 闭环设计与实施计划见
 [`plans/2026-08-06-scpi-evidence-closure-design.md`](plans/2026-08-06-scpi-evidence-closure-design.md) /
@@ -3648,7 +3648,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 | P3-15 | 数据/测试卫生批 | ✅ 本 PR — ①`test_feature_gaps` SQLite 隔离（实证跑前后 dev 库计划数不变）②2 flaky triage=**已被 #211 护栏修好**（受害测试自带 `.disabled` 复位 fixture，恶意排序复现失败，Discovered 行系 stale）③vendor_file 顶层声明 vs scd_config 一致性 fail-loud（create/update 双侧、最终状态判、2 变异红）④僵尸 triage：来源已断 + 存量 1201 计划/~2700 子行走 `scripts/cleanup_zombie_test_plans.py`（dry-run 默认，删除须操作员 `--execute`——批量删库不自动执行）|
 | P3-16 | 门 G-B：状态列注释 ⊇ 全仓状态字面量 | ✅ 本 PR — 落地为 test_rule_gates **G10**：真值源 = live import `TestExecution.__table__.columns['status'].comment`；写点识别双判据（`TestExecution(status=…)` 构造 + `execution/ex/test_execution` 变量属性赋值，2026-08-01 全仓 AST 普查定的；conn/session 等别的 status 域不误伤、动态值写点不归字面量门管——宁漏报不误伤）；checker 行为自测 + 变异实跑红（写入 'exploded' → 红） |
 | P3-17 | 门 G-C：文档 (动词,路径,参数,响应键) ⊇ 真实实现 | ✅ 本 PR — 落地为 test_rule_gates **G11** 双半：①散文半 = 现状文档**全 API 面** (动词,路径) ⊆ 路由表（G8 只锁计划链域；实值段通配匹配器防误杀示例；设计愿景文档/跨服务路由显式豁免并申报）②契约半 = checked-in openapi.yaml (路径,动词,参数名,2xx 响应键) ⊆ live schema —— 参数/响应键维度的机械落点（散文书写形态不可机械解析，实施时定的收窄）。首跑即抓 3 条 yaml 说谎（dashboard camelCase 三键 / category 包层 / 选择 profile 的 PUT 挂错路径）+ 2 条散文死引用，全修；openapi:generate 重生成 + GUI build 绿；双变异实跑红 |
-| P3-18 | 门/测试精化批（G11 三覆盖面 in=location/curl 动词/schema 类型 + p08 零残留站点参数化 + PDF 渲染管道其余转义入口 + 诊断序列 run endpoint 串行化 + 手写类型审计尺子改逐层递归比对）——2026-08-02 拍板，各配变异。**首片 PDF 转义已本地完成**：封面 `title`、共享步骤 `step_name`/参数键/参数值统一在 ReportLab `Paragraph` 入口转义；MIMO 组装层去掉重复预转义，避免正文显示 `&lt;`。直接 VRT `step_configs`、Jinja 模板数据替换与 `<字母`/完整 `<tag>` 两类回归，连同报告/历史/规则门共 86 passed。 | 🔄 |
+| P3-18 | 门/测试精化批（G11 三覆盖面 in=location/curl 动词/schema 类型 + p08 零残留站点参数化 + PDF 渲染管道其余转义入口 + 诊断序列 run endpoint 串行化 + 手写类型审计尺子改逐层递归比对）——2026-08-02 拍板，各配变异。**PDF 子片已由 PR #326 合并**：封面与共享步骤自由文本统一在 `Paragraph` 边界转义，并去除 MIMO 双重转义。**G11 子片已本地完成**：非 path 参数按 `(name, in)` 比对；散文识别 curl `-X/--request` 动词；响应 properties 前先拒绝 object/array 类型不兼容；合成 checker 变异同时锁住 location 与 schema 集成，完整规则门 50 passed。 | 🔄 |
 | P3-19 | 日志/告警/留痕卫生批（tail 反向扫描字节上限 + 执行失败告警通道 + 校准 warnings DB 持久化 + 借用 acquire 的清理失败警告可见 + UXM 终止符大小写 + UXM ARFCN 三条加固 + 四个说谎死类型删死链 + `is_docker_pid` 改 allowlist）——2026-08-02 拍板。⚠️ **原含的「app.log 噪声治理」已于 2026-08-05 摘出提升为 P1-35**（用户手工测试当场要求提前），此处不再重复 | ⬜ |
 
 ---
@@ -3675,6 +3675,10 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 > 显式出口：①提升到 P0/P1/P2/P3；②并入已有 roadmap 项；③进入正式延后 backlog；
 > ④进入 ON-SITE-BLOCKED / HOLD / Known unknown；⑤ resolved / dropped。
 > 没有出口标记的条目仍是“待评估”，不得出现在 LOCAL-OPEN 执行队列里。
+
+- `[discovered 2026-08-11 during P3-18 G11 internal review]` **G11 curl 动词抽取仍不覆盖引号 + 反斜杠续行（P3，待 triage；本片 Ready，不阻塞）** —— 当前判据只在 URL 同一行、且动词位于 URL 前时识别 `-X/--request`；live `docs/api/swagger-guide.md` 已存在 `curl -X 'POST' \\` 后下一行写 URL 的形态，若把 POST 错改成 DELETE，门仍只核路径而假绿。后续应先把反斜杠续行归一成一条逻辑 curl 命令，再允许引号包裹的动词；不为测试门增强启动本轮第二次修复。
+
+- `[discovered 2026-08-11 during P3-18 G11 internal review]` **G11 schema 原始类型比较尚未表达 JSON Schema 可赋值关系（P3，待 triage；本片 Ready，不阻塞）** —— 本片要收口的明确故障是 object/array 容器相反时仍只比 properties；当前 helper 同时严格比较全部显式 `type`，可能把 checked-in `number`、live `integer` 这类合法收窄误报为不兼容。后续可只对 object/array 容器做本门承诺的比较，或另片实现 JSON Schema assignability；不扩大当前边界。
 
 - `[discovered 2026-08-11 during P2-24 external review, Codex #325 R1]` **TestCase 编辑弹窗吞掉 LabProfile 列表加载失败（P2，待 triage；不阻塞已合并的契约片）** —— `fetchAllLabProfiles().catch(() => [])` 会把瞬时失败伪装成空列表并继续允许保存；已有绑定因此没有匹配选项，操作员选择唯一可见的“不绑定”可能清掉有效绑定。后续 GUI 片应像创建弹窗一样显式展示加载错误并在列表不可用时禁用 LabProfile 修改/保存。
 
@@ -3867,7 +3871,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 - `[discovered 2026-08-01 during P3-14, Codex #262 R1]` **[→ 提升 P1-26 (2026-08-02)]** **GUI 改频只写顶层 frequency_hz，带 component_carriers 的持久化用例执行仍按 CC[0] 旧频率跑**（pre-existing，非 P3-14 引入）—— factory `model_dump` 落库自带 CC，而 `MIMOOTAConfiguration` 的 validator 在 CC 非空时忽略顶层频率（measure Phase 2g 权威 = CC[0]）；GUI `MIMOOTAConfigForm` 不写 CC → 顶层与 CC[0] 漂移时**执行侧**错频（P2-11 一致性门只兜"CC[0] vs SCD 不符"的形态，兜不住"用户以为改了新频、CC[0] 旧频恰与 SCD 一致"）。P3-14 已让**显示**与执行同源（CC[0] 优先），执行侧正修 = GUI 写侧同步 CC[0] 或 PATCH 时 drop CC 重构造，独立小片。
 - ~~`[discovered 2026-08-01 during P3-14, Codex #262 R2]` **[→ P2-23；2026-08-11 本地完成]** **会话创建的资产预检只查存在不查 `is_active`**~~ —— 创建入口、显式 MEASURE resolver 以及 `cdl_profile_id`/`scd_id` 两条迁移兼容入口已同时改为只放行 `is_active is True`；软删资产保留历史只读追溯，但不能再创建或执行新的测量。
 - `[discovered 2026-08-02 during P3-17 内审 F2]` **[→ 提升 P1-25 (2026-08-02)]** **GUI 主控台"系统状态"面板对 live 后端恒空态** —— `gui/src/App.tsx:482` 读 `dashboardData?.systemStatus`（camelCase，`gui/src/types/api.ts` 手写三键），而 live `/api/v1/dashboard` 返回 snake 四键（summary/live_metrics/active_alerts/recent_tests）→ 恒 undefined 走空态分支。P3-17 修了 yaml 契约（判定端），生效端副本在手写 api.ts；修法 = App.tsx/api.ts 换 live 键形态，顺带同一把尺子过 api.ts 其余手写镜像类型 + 清理死导出 `InstrumentCategoryResponse`（service.ts 早已用平铺）。独立小片。⚠ 按行号引用会漂 — 动手时按 `systemStatus` 检索定位。
-- `[discovered 2026-08-02 during P3-17, Codex #265 R2]` **[→ 提升 P3-18 (2026-08-02)]** **G11 三个覆盖面精化**（门 docstring 已申报为已知收窄面，声明与覆盖对齐）：①契约半参数比对分 in= location（query 重名 path 参数现在穿透）②散文半动词抽取识别 curl 形态（`curl -X POST http://host/api/v1/...` 动词隔着 host 抽不出）③响应比对拒绝不兼容 schema 类型（yaml 改 object→array 时 y_props 空跳过）。各配变异，独立小片。
+- ~~`[discovered 2026-08-02 during P3-17, Codex #265 R2]` **[→ P3-18；2026-08-11 本地完成]** **G11 三个覆盖面精化**~~ —— 参数 location、curl 动词与响应 schema 类型三处已统一进入 G11 生效判据，并由合成变异与 live 完整门共同保护。
 - `[discovered 2026-08-01 during P1-22 内审 F3，本行补欠登记]` **[→ 提升 P2-21 (2026-08-01)]** **precheck/reference/measure 的 P1-12 可信化标志渲染不可达 — 报告对兜底数据沉默（P3）** —— `executors/report.py` step_results 里 `quiet_zone_verified` / `trp_verified` / `path_loss_verified` 是顶层键，渲染器只读 `name`/`step_name` 与 `parameters` → PDF 步骤区零显示，P1-12"标注 未验证(兜底值)"意图从未生效。修法同 P1-22 的 analysis 站点（标志挪 `parameters` 下）。顺带同域：`pdf_certificate.py`（校准证书）无 CJK 字体，证书中文同样豆腐块。
 
 - `[discovered 2026-08-01 during ARCH-1 S6 总验, 内审定案]` **[→ 提升 P1-22 (2026-08-01)]** **自动执行报告恒报 failed/0.0% — REPORT 相位读一个从没人写的键（P2）** —— `mimo_ota/executors/report.py` 的 `overall_pass = bool(analysis.get("overall_pass", False))`：analysis 执行器写的是 `verdict`（canonical 字段是 `validation_pass`），全仓**无人写 `overall_pass` 键**（`pass_criteria_summary` 同样无人写）→ 恒 False → 自动报告 `overall_result` 恒 "failed"、`pass_rate` 恒 0.0 —— `.get` 默认值静默吞断层的教科书形态。修法=换判据来源，**精确谓词**（Codex #254 R1 校正）：首选读 `context.test_execution.validation_pass`（TestExecution **列**，analysis 执行器按 `verdict in ("PASS","MARGINAL")` 写入的 canonical 布尔 —— 注意它不在 analysis payload 里，`analysis.get("validation_pass")` 还是恒 None）；若只拿得到 payload 则用 `analysis.get("verdict") in ("PASS", "MARGINAL")`（verdict 取值就这三个字面量）。**绝不 `bool(verdict)`** —— 非空字符串恒 True，"FAIL" 也会判成通过，反向翻车。⚠️ **修法红线**：不得用 `status=='completed'` 当通过谓词 —— 相位机械成功与 KPI 通过是两层（analysis 相位对 KPI FAIL 也返回 SUCCESS），completed 判通过会让失败的测试谎报通过，代价不对称。手动路径（HistoryTab 生成的那份）走 `report_data_collector` 的 `validation_pass` 谓词，**现状正确**——它显示 0.0% 可能是如实报告 mock 环境 KPI FAIL，修自动路径前先分辨两份 PDF。⚠️ `report_service.py` 建 summary 的 `overall_result`/`.get('pass_rate', 0)` 段**不许当残留清理**（Codex #254 R2）：VRT 归档路径（`road_test.py::_archive_execution_report` 传 `ExecutionReport.model_dump()`，该 schema 无 `execution_summary` 键）**仍在消费它** —— 它只是不在用例执行路径上，对 VRT 是活代码。可同 PR 清理的只有报告模板 `Test Plan: N/A` 计划链残留字段。
