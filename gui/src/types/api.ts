@@ -1,18 +1,3 @@
-export type SystemStatusItem = {
-  label: string
-  value: string
-  detail: string
-}
-
-export type AlertSeverity = 'info' | 'warning' | 'critical'
-
-export type AlertItem = {
-  id: string
-  title: string
-  severity: AlertSeverity
-  timestamp: string
-}
-
 export type MetricTrend = '↑' | '↓' | '→' | string
 
 export type MetricItem = {
@@ -116,14 +101,12 @@ export type SequenceStep = {
 
 export type SequenceLibraryItem = SequenceStep
 
-export type TestTemplate = {
+// MockServer/localStorage 的演示用例，不是 live TestCaseResponse 契约。
+export type MockTestCase = {
   id: string
   name: string
   dut: string
   createdAt: string
-}
-
-export type TestCase = TestTemplate & {
   category?: string
   tags?: string[]
   description?: string
@@ -136,29 +119,8 @@ export type TestCase = TestTemplate & {
   }
 }
 
-export type TestCaseDetail = TestCase & {
+export type MockTestCaseDetail = MockTestCase & {
   steps: SequenceStep[]
-}
-
-export type RecentTest = {
-  id: string
-  name: string
-  dut: string
-  result: string
-  date: string
-}
-
-export type ReportTemplate = {
-  id: string
-  name: string
-  format: string
-  lastUpdated: string
-}
-
-export type DashboardResponse = {
-  systemStatus: SystemStatusItem[]
-  activeAlerts: AlertItem[]
-  liveMetrics: MetricItem[]
 }
 
 export type ProbesResponse = {
@@ -173,17 +135,6 @@ export type SequenceLibraryResponse = {
   library: SequenceLibraryItem[]
 }
 
-export type TestTemplatesResponse = {
-  templates: TestTemplate[]
-}
-
-export type TestCasesResponse = {
-  cases: TestCase[]
-}
-
-export type RecentTestsResponse = {
-  recentTests: RecentTest[]
-}
 
 // ============================================================
 // P2-8: Operational Cockpit data sources
@@ -359,10 +310,6 @@ export type DashboardAlertSummary = {
   critical_count: number
 }
 
-export type ReportTemplatesResponse = {
-  reportTemplates: ReportTemplate[]
-}
-
 // MockServer 的演示监控帧；不是 live `/monitoring/feeds` 契约。live 元素是
 // `{name, value:number, unit, timestamp}`，不得再复用本类型的展示型 MetricItem。
 export type MockMonitoringFeedsResponse = {
@@ -515,27 +462,6 @@ export type CreateTestCaseFromPlanPayload = {
   description?: string
   caseId?: string
   steps?: SequenceStep[]
-}
-
-export type CreateTestCasePayload = {
-  name: string
-  category: string
-  dut: string
-  tags?: string[]
-  description?: string
-  blueprint?: string[]
-}
-
-export type TestCaseResponse = {
-  testCase: TestCaseDetail
-}
-
-export type CreateTestCaseResponse = {
-  testCase: TestCaseDetail
-}
-
-export type DeleteTestCaseResponse = {
-  success: boolean
 }
 
 export type InstrumentsResponse = {

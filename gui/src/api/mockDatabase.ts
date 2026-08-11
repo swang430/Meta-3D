@@ -1,6 +1,4 @@
 import type {
-  AlertItem,
-  DashboardResponse,
   DemoRunPlan,
   DemoRunPlanResponse,
   DemoRunResult,
@@ -10,55 +8,24 @@ import type {
   MockMonitoringFeedsResponse,
   Probe,
   ProbesResponse,
-  RecentTest,
-  RecentTestsResponse,
-  ReportTemplate,
-  ReportTemplatesResponse,
   SequenceLibraryItem,
   SequenceLibraryResponse,
   SequenceStep,
-  TestCase,
-  TestCaseDetail,
-  TestCaseResponse,
-  TestCasesResponse,
+  MockTestCase,
+  MockTestCaseDetail,
   TestPlanDetail,
   TestPlanListResponse,
   TestPlanResponse,
   TestPlanSummary,
-  TestTemplate,
-  TestTemplatesResponse,
   UpdateInstrumentPayload,
   CreatePlanPayload,
   UpdatePlanPayload,
   CreateTestCaseFromPlanPayload,
-  CreateTestCasePayload,
-  CreateTestCaseResponse,
-  DeleteTestCaseResponse,
   HALReadinessResponse,
   TestExecutionListResponse,
   SystemLogTailResponse,
-  DashboardAlertListResponse,
   DashboardAlertSummary,
 } from '../types/api'
-
-const systemStatus = [
-  { label: '信道仿真器', value: '在线', detail: 'PROPSIM F64 #01' },
-  { label: '基站仿真器', value: '空闲', detail: 'CMX500, NR-SA 3.5 GHz' },
-  { label: '转台', value: '定位完成', detail: '方位 45°' },
-  { label: '探头阵列', value: '校准通过', detail: '幅度波纹 0.8 dB' },
-]
-
-const activeAlerts: AlertItem[] = [
-  { id: 'AL-1024', title: '放大器温度接近上限', severity: 'warning', timestamp: '10:21' },
-  { id: 'AL-1026', title: '探头#17反馈延迟偏差', severity: 'info', timestamp: '09:58' },
-]
-
-const liveMetrics: MetricItem[] = [
-  { label: '当前测试', value: 'NR UMi 城市路测回放' },
-  { label: '时间戳', value: '2024-10-18 10:32:45' },
-  { label: '测试进度', value: '62%' },
-  { label: '静区幅度波纹', value: '0.9 dB' },
-]
 
 // ── P2-8 Operational Cockpit mock fixtures ──
 
@@ -302,48 +269,6 @@ function scanMockLogPage(options: {
   })
 }
 
-const dashboardAlerts: DashboardAlertListResponse = {
-  total: 2,
-  alerts: [
-    {
-      id: 'AL-1024',
-      title: '放大器温度接近上限',
-      message: '功放模块温度 78°C，接近 80°C 阈值',
-      severity: 'warning',
-      alert_type: 'thermal',
-      source: 'monitoring',
-      status: 'active',
-      is_read: false,
-      related_entity_type: null,
-      related_entity_id: null,
-      created_at: '2026-05-20T10:21:00',
-      updated_at: '2026-05-20T10:21:00',
-      acknowledged_at: null,
-      resolved_at: null,
-      created_by: 'monitoring',
-      acknowledged_by: null,
-    },
-    {
-      id: 'AL-1026',
-      title: '探头#17反馈延迟偏差',
-      message: '反馈延迟偏差 1.4ms',
-      severity: 'info',
-      alert_type: 'probe',
-      source: 'monitoring',
-      status: 'active',
-      is_read: false,
-      related_entity_type: null,
-      related_entity_id: null,
-      created_at: '2026-05-20T09:58:00',
-      updated_at: '2026-05-20T09:58:00',
-      acknowledged_at: null,
-      resolved_at: null,
-      created_by: 'monitoring',
-      acknowledged_by: null,
-    },
-  ],
-}
-
 const dashboardAlertSummary: DashboardAlertSummary = {
   total_active: 2,
   info_count: 1,
@@ -462,7 +387,7 @@ const hasStorage = typeof window !== 'undefined' && typeof window.localStorage !
 
 const caseSnapshots: Record<string, SequenceStep[]> = {}
 
-const testCaseLibrary: TestCase[] = [
+const testCaseLibrary: MockTestCase[] = [
   {
     id: 'CTIA-01-40',
     name: 'CTIA 01.40 OTA 性能测试',
@@ -535,17 +460,6 @@ const testCaseLibrary: TestCase[] = [
     category: '方向图',
     tags: ['PWG', '天线'],
   },
-]
-
-const recentTests: RecentTest[] = [
-  { id: 'R-1345', name: 'NR 城市宏场景', dut: 'Pilot SUV', result: '通过', date: '2024-10-15' },
-  { id: 'R-1342', name: 'PWG 车顶天线', dut: 'Sedan X', result: '进行中', date: '2024-10-14' },
-  { id: 'R-1338', name: 'C-V2X 干扰容限', dut: 'Prototype Z', result: '失败', date: '2024-10-12' },
-]
-
-const reportTemplates: ReportTemplate[] = [
-  { id: 'RP-01', name: '认证报告', format: 'PDF', lastUpdated: '2024-09-28' },
-  { id: 'RP-02', name: '研发调试报告', format: 'HTML', lastUpdated: '2024-10-10' },
 ]
 
 const monitoringFeeds: MetricItem[] = [
@@ -749,7 +663,7 @@ const caseBlueprints: Record<string, string[]> = {
 const defaultBlueprint = ['lib-setup-frequency', 'lib-load-channel', 'lib-measure-kpi']
 
 type PersistedCasePayload = {
-  library: TestCase[]
+  library: MockTestCase[]
   snapshots: Record<string, SequenceStep[]>
   blueprints: Record<string, string[]>
   customCounter: number
@@ -843,7 +757,7 @@ const createSnapshotFromPlan = (steps: SequenceStep[]): SequenceStep[] =>
     parameters: step.parameters ? { ...step.parameters } : {},
   }))
 
-const buildCaseDetail = (testCase: TestCase): TestCaseDetail => {
+const buildCaseDetail = (testCase: MockTestCase): MockTestCaseDetail => {
   const snapshot = ensureCaseSnapshot(testCase.id)
   const steps = snapshot.map((step, index) => ({
     id: `${step.templateId ?? step.id}-detail-${index}`,
@@ -1213,9 +1127,6 @@ const bumpPlanTimestamp = (plan: TestPlanRecord) => {
 const clone = <T,>(data: T): T => JSON.parse(JSON.stringify(data))
 
 export const mockDatabase = {
-  getDashboard(): DashboardResponse {
-    return clone({ systemStatus, activeAlerts, liveMetrics })
-  },
   getProbes(): ProbesResponse {
     return { probes: clone(probes) }
   },
@@ -1244,70 +1155,6 @@ export const mockDatabase = {
     const vrtCount = sequenceLibrary.filter(s => s.id.startsWith('vrt-')).length
     console.log('[MockDatabase] getSequenceLibrary: lib-*:', libCount, 'vrt-*:', vrtCount, 'total:', sequenceLibrary.length)
     return { library: clone(sequenceLibrary) }
-  },
-  getTestTemplates(): TestTemplatesResponse {
-    // 兼容旧接口，返回同样结构
-    return {
-      templates: clone(
-        testCaseLibrary.map<TestTemplate>(({ id, name, dut, createdAt }) => ({
-          id,
-          name,
-          dut,
-          createdAt,
-        })),
-      ),
-    }
-  },
-  getTestCases(): TestCasesResponse {
-    return { cases: clone(testCaseLibrary) }
-  },
-  createTestCase(payload: CreateTestCasePayload): CreateTestCaseResponse | null {
-    const rawBlueprint = payload.blueprint?.map((templateId) => templateId.trim()).filter(Boolean) ?? []
-    const filteredBlueprint = rawBlueprint.filter((templateId) =>
-      sequenceLibrary.some((item) => item.id === templateId),
-    )
-    const uniqueBlueprint = Array.from(new Set(filteredBlueprint))
-    const blueprint = uniqueBlueprint.length > 0 ? uniqueBlueprint : defaultBlueprint
-    const snapshot = createSnapshotFromTemplates(blueprint)
-    if (snapshot.length === 0) {
-      return null
-    }
-    const caseId = createCaseId()
-    caseSnapshots[caseId] = snapshot
-    caseBlueprints[caseId] = blueprint
-    const tags = payload.tags?.map((tag) => tag.trim()).filter((tag) => tag.length > 0) ?? []
-    const newCase: TestCase = {
-      id: caseId,
-      name: payload.name,
-      dut: payload.dut,
-      createdAt: formatDate(),
-      category: payload.category,
-      tags,
-      description: payload.description,
-    }
-    testCaseLibrary.unshift(newCase)
-    persistCases()
-    return { testCase: buildCaseDetail(newCase) }
-  },
-  getTestCaseDetail(caseId: string): TestCaseResponse | null {
-    const target = testCaseLibrary.find((item) => item.id === caseId)
-    if (!target) return null
-    ensureCaseSnapshot(caseId)
-    return { testCase: buildCaseDetail(target) }
-  },
-  deleteTestCase(caseId: string): DeleteTestCaseResponse {
-    const index = testCaseLibrary.findIndex((item) => item.id === caseId)
-    if (index === -1) {
-      return { success: false }
-    }
-    testCaseLibrary.splice(index, 1)
-    delete caseBlueprints[caseId]
-    delete caseSnapshots[caseId]
-    persistCases()
-    return { success: true }
-  },
-  getRecentTests(): RecentTestsResponse {
-    return { recentTests: clone(recentTests) }
   },
   // ── P2-8 Operational Cockpit ──
   getReadiness(): HALReadinessResponse {
@@ -1388,14 +1235,8 @@ export const mockDatabase = {
       }],
     })
   },
-  getDashboardAlerts(): DashboardAlertListResponse {
-    return clone(dashboardAlerts)
-  },
   getDashboardAlertSummary(): DashboardAlertSummary {
     return clone(dashboardAlertSummary)
-  },
-  getReportTemplates(): ReportTemplatesResponse {
-    return { reportTemplates: clone(reportTemplates) }
   },
   getMonitoringFeeds(): MockMonitoringFeedsResponse {
     return { feeds: clone(monitoringFeeds) }
