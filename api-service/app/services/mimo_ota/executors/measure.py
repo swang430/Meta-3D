@@ -93,6 +93,37 @@ def _managed_attach_failure(
     )
 
 
+def _managed_sim_identity_unverified_failure(
+    *,
+    managed: bool,
+    strict: bool,
+    sim_profile_id: Optional[str],
+    sim_profile_exists: bool,
+    declared_imsi: Optional[str],
+    observed_imsi: Optional[str],
+) -> Optional[str]:
+    """严格 SIM 身份门无法形成真实观测时 fail-closed。
+
+    操作员登记的 IMSI 只能用于追溯和非严格审计，不能证明当前 attach 的
+    就是那张卡；严格门只接受 UXM/UE 的本次实测 IMSI。
+    """
+    if not managed or not strict or not sim_profile_id:
+        return None
+    if not sim_profile_exists:
+        return (
+            f"严格 SIM 身份门无法验证：sim_profile_id={sim_profile_id} 不存在"
+        )
+    if not declared_imsi:
+        return "严格 SIM 身份门无法验证：所选 SIMProfile 没有声明 IMSI"
+    if not observed_imsi:
+        return (
+            "严格 SIM 身份门无法验证：受控 attach 后未获得 UXM/UE 实测 IMSI；"
+            "操作员登记值不能证明实际插入的 SIM。若仪表方言暂不支持实测 IMSI，"
+            "只能显式设置 precheck_strict_sim_identity=False 以未验证方式运行"
+        )
+    return None
+
+
 def _call_topology_getter(emulator, getter_name: str):
     """调 CE 驱动的拓扑 getter, 返回原始值; 拿不到 / 不可用返回 None。
 
@@ -1561,27 +1592,33 @@ class MeasureExecutor(IStepExecutor):
                     if sim_profile_uuid is not None
                     else None
                 )
-                observed_imsi = (
-                    (ue_info_snapshot or {}).get("imsi")
-                    or controlled_attach.get("imsi")
+                observed_imsi = (ue_info_snapshot or {}).get("imsi")
+                registered_imsi = controlled_attach.get("imsi")
+                identity_imsi = observed_imsi or registered_imsi
+                imsi_source = "observed" if observed_imsi else "declared"
+                unverified_failure = _managed_sim_identity_unverified_failure(
+                    managed=managed_rf_attach,
+                    strict=config.precheck_strict_sim_identity,
+                    sim_profile_id=str(config.sim_profile_id),
+                    sim_profile_exists=sim_profile is not None,
+                    declared_imsi=(sim_profile.imsi if sim_profile is not None else None),
+                    observed_imsi=observed_imsi,
                 )
-                imsi_source = (
-                    "observed"
-                    if (ue_info_snapshot or {}).get("imsi")
-                    else "declared"
-                )
+                if unverified_failure is not None:
+                    sim_identity_failure = unverified_failure
                 if sim_profile is None:
                     dynamic_gate_warnings.append(
                         f"sim_profile_id={config.sim_profile_id} 不存在；SIM 身份保持 unknown"
                     )
-                elif sim_profile.imsi and observed_imsi:
+                elif sim_profile.imsi and identity_imsi:
                     sim_identity = check_sim_identity(
                         declared_imsi=sim_profile.imsi,
-                        attached_imsi=observed_imsi,
+                        attached_imsi=identity_imsi,
                     )
                     sim_identity_payload = {
                         "sim_profile": sim_profile.name,
                         "consistent": sim_identity.consistent,
+                        "verified": imsi_source == "observed",
                         "imsi_source": imsi_source,
                         "declared_imsi": sim_identity.declared_imsi_masked,
                         "attached_imsi": sim_identity.attached_imsi_masked,
@@ -1595,6 +1632,11 @@ class MeasureExecutor(IStepExecutor):
                             f"SIM 身份不符：TestCase 选择的卡 '{sim_profile.name}' "
                             f"({sim_identity.declared_imsi_masked}) 与受控 attach 后的 "
                             f"{imsi_source} IMSI ({sim_identity.attached_imsi_masked}) 不一致"
+                        )
+                    elif imsi_source != "observed":
+                        dynamic_gate_warnings.append(
+                            "SIM IMSI 仅来自操作员登记，未由 UXM/UE 实测；"
+                            "该比对只作未验证审计"
                         )
                 else:
                     dynamic_gate_warnings.append(

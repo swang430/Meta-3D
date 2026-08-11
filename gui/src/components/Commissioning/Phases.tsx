@@ -180,6 +180,11 @@ export function MIMOTestPhase({ data, config: _config }: { data: any, config: an
         系统正在或已完成在多个转台方位的 KPI 测量。CDL 模型为 {data.cdl_model_name}。
       </Alert>
 
+      {/* managed RF attach 把真实 UE 能力核对延期到本次 RF 初始化及 attach 后，
+          结果位于 MEASURE 的 controlled_dut_attach；继续复用既有卡片与“采纳
+          实测值”动作，不能让证据换阶段后从 UI 消失。 */}
+      <DUTCapabilityCrosscheckCard data={data.controlled_dut_attach} />
+
       {data.path_loss_verified !== true && (
         <Alert color="yellow" variant="light" icon={<IconAlertTriangle />} title="路损未校准（RSRP 未补偿）">
           无 path-loss certificate，RSRP 基线按兜底 0 dB 未补偿——下方 RSRP / 吞吐量为<strong>非校准值</strong>。运行 CAL-01 路损校准（P0-3）后重测。

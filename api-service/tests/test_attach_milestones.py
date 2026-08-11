@@ -294,6 +294,51 @@ class TestManagedAttachDynamicGate:
             milestone={"attached": False, "reason": "not connected"},
         ) is None
 
+    def test_strict_sim_identity_fails_without_observed_imsi(self):
+        """操作员手填 IMSI 不能替代 UXM 对本次真实 SIM 的观测。"""
+        from app.services.mimo_ota.executors import measure
+
+        gate = getattr(measure, "_managed_sim_identity_unverified_failure", None)
+        assert callable(gate), "缺少严格 SIM 身份 unknown 的 fail-closed 门"
+        failure = gate(
+            managed=True,
+            strict=True,
+            sim_profile_id="sim-profile-1",
+            sim_profile_exists=True,
+            declared_imsi="460001234567890",
+            observed_imsi=None,
+        )
+        assert failure and "实测 IMSI" in failure
+
+    def test_sim_identity_unknown_can_only_continue_with_explicit_opt_out(self):
+        from app.services.mimo_ota.executors import measure
+
+        gate = getattr(measure, "_managed_sim_identity_unverified_failure", None)
+        assert callable(gate), "缺少严格 SIM 身份 unknown 的 fail-closed 门"
+        common = {
+            "managed": True,
+            "sim_profile_id": "sim-profile-1",
+            "sim_profile_exists": True,
+            "declared_imsi": "460001234567890",
+            "observed_imsi": None,
+        }
+        assert gate(strict=False, **common) is None
+        assert gate(strict=True, **{**common, "observed_imsi": "460001234567890"}) is None
+
+    def test_strict_sim_identity_fails_when_selected_profile_is_unusable(self):
+        from app.services.mimo_ota.executors import measure
+
+        gate = getattr(measure, "_managed_sim_identity_unverified_failure", None)
+        assert callable(gate), "缺少严格 SIM 身份 unknown 的 fail-closed 门"
+        assert gate(
+            managed=True,
+            strict=True,
+            sim_profile_id="missing-profile",
+            sim_profile_exists=False,
+            declared_imsi=None,
+            observed_imsi=None,
+        )
+
     def test_final_attach_gate_runs_before_azimuth_sampling(self):
         import inspect
         from app.services.mimo_ota.executors import measure
@@ -314,6 +359,9 @@ class TestManagedAttachDynamicGate:
         assert "query_ue_capability" in block
         assert "check_sim_identity" in block
         assert "precheck_strict_sim_identity" in block
+        assert "_managed_sim_identity_unverified_failure(" in block, (
+            "严格 SIM 身份 unknown 的 fail-closed 门未接入受控 attach 执行路径"
+        )
         assert "check_dut_capability_mismatch" in block
         assert "不能拿" in block and "声明 IMSI" in block
         assert 'controlled_attach.pop("ue_info_snapshot", None)' in block, (
@@ -338,3 +386,18 @@ class TestManagedAttachDynamicGate:
         assert "不登记则真仪表下 precheck 必 FAIL" not in ui
         assert "DUT 身份登记（可选）" in ui
         assert "正式连接由执行器在按 TestCase 初始化后确认" in ui
+
+    def test_measure_phase_surfaces_deferred_capability_crosscheck(self):
+        from pathlib import Path
+
+        phases = (
+            Path(__file__).parents[2]
+            / "gui/src/components/Commissioning/Phases.tsx"
+        ).read_text(encoding="utf-8")
+        start = phases.index("export function MIMOTestPhase")
+        end = phases.index("export function AnalysisPhase", start)
+        body = phases[start:end]
+        assert "DUTCapabilityCrosscheckCard" in body
+        assert "controlled_dut_attach" in body, (
+            "MEASURE 产生的能力差异没有路由到现有交叉核对卡片"
+        )

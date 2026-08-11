@@ -1,7 +1,8 @@
 /**
  * DUTProfile 阶段 4: 声明 vs 实测协商交叉核对结果卡片 + operator 显式反写。
  *
- * 后端 precheck section 2.5b 把交叉核对写进 measurements:
+ * 后端把交叉核对写进阶段 measurements（旧流程在 PRECHECK，managed RF attach
+ * 流程在 MEASURE.controlled_dut_attach）:
  *   - dut_capability_mismatch: { consistent, skipped, mismatches[{field, declared, observed}] }
  *   - dut_capability_observed: { dut_profile_id, dut_profile_name, source, max_* }
  *
@@ -49,12 +50,12 @@ const FIELD_LABELS: Record<string, string> = {
   max_modulation_ul: '最大 UL 调制',
 }
 
-interface PrecheckData {
+interface CapabilityCrosscheckData {
   dut_capability_mismatch?: MismatchPayload
   dut_capability_observed?: ObservedPayload
 }
 
-export function DUTCapabilityCrosscheckCard({ data }: { data: PrecheckData | null | undefined }) {
+export function DUTCapabilityCrosscheckCard({ data }: { data: CapabilityCrosscheckData | null | undefined }) {
   const queryClient = useQueryClient()
   const mismatch: MismatchPayload | undefined = data?.dut_capability_mismatch
   const observed: ObservedPayload | undefined = data?.dut_capability_observed
@@ -132,7 +133,7 @@ export function DUTCapabilityCrosscheckCard({ data }: { data: PrecheckData | nul
         ) : null}
       </Group>
       <Text size="sm" c="dimmed" mb="sm">
-        DUT 实际协商能力跟它的声明 spec 不符（固件 / SIM / 声明过时）。这是有用发现, 不影响本次预检通过。
+        DUT 实际协商能力跟它的声明 spec 不符（固件 / SIM / 声明过时）。这是有用发现，不单独改变本次测量判定。
         可「采纳实测值」把声明更新为实测, 或保留声明手动核查。
       </Text>
       <Table striped withTableBorder>
