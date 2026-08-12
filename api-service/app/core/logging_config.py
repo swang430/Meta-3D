@@ -416,6 +416,11 @@ class ExecutionFileHandler(logging.Handler):
         #   运行期生命周期边界，每次执行必经，不需要额外定时器。
         self.purge_expired()
 
+    def active_execution_ids(self) -> set[str]:
+        """返回仍持有打开写流的执行 ID 快照。"""
+        with self._streams_lock:
+            return set(self._streams)
+
     def close(self) -> None:
         with self._streams_lock:
             for record in self._repeat_limiter.drain():
@@ -443,6 +448,23 @@ def close_execution_log(execution_id: str) -> None:
             handler.close_execution(execution_id)
         elif isinstance(handler, SuppressingTimedRotatingFileHandler):
             handler.drain_execution(execution_id)
+
+
+def active_execution_log_ids() -> set[str]:
+    """从执行日志 writer 真值返回仍在写入的执行 ID。"""
+    handlers = [
+        *logging.getLogger().handlers,
+        *logging.getLogger("app.hal.scpi").handlers,
+    ]
+    active_ids: set[str] = set()
+    seen: set[int] = set()
+    for handler in handlers:
+        if id(handler) in seen:
+            continue
+        seen.add(id(handler))
+        if isinstance(handler, ExecutionFileHandler):
+            active_ids.update(handler.active_execution_ids())
+    return active_ids
 
 
 # ============================================================

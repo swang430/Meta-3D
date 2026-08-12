@@ -2087,6 +2087,8 @@ def test_p2_25_log_file_picker_separates_current_and_searchable_history():
     assert "stopAutoRefreshForHistory()" in mode_handler
     assert "setSelectedFile" in mode_handler
     assert "disabled={logMode === 'history'}" in viewer
+    assert "const fileActionsDisabled = !selectedFile" in viewer
+    assert viewer.count("disabled={fileActionsDisabled}") >= 3
 
     fetch_logs = viewer[viewer.index("const fetchLogs = useCallback"):]
     fetch_logs = fetch_logs[:fetch_logs.index("const loadOlder")]

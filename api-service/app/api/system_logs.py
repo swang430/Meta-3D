@@ -25,6 +25,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.config import settings
+from app.core.logging_config import active_execution_log_ids
 
 router = APIRouter(prefix="/system-logs", tags=["System Logs"])
 
@@ -471,12 +472,20 @@ def list_log_files():
         return LogFilesResponse(log_dir=str(log_dir), files=[])
 
     files = []
+    active_execution_files = {
+        f"exec-{execution_id}.log"
+        for execution_id in active_execution_log_ids()
+    }
     for entry in sorted(log_dir.iterdir()):
         is_log_file = entry.name.endswith(".log") or ".log." in entry.name
         if entry.is_file() and is_log_file and not entry.name.startswith('.'):
             stat = entry.stat()
-            # 只有固定写入目标是活跃文件；带轮转后缀的同族文件都是归档。
-            is_current = entry.name in _ACTIVE_LOG_NAMES
+            # 固定写入目标与 writer 仍持有流的 execution 文件是活跃文件；
+            # 带轮转后缀或已关闭 writer 的同族文件都是归档。
+            is_current = (
+                entry.name in _ACTIVE_LOG_NAMES
+                or entry.name in active_execution_files
+            )
             files.append(LogFileInfo(
                 filename=entry.name,
                 size_bytes=int(stat.st_size),

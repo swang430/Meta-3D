@@ -133,6 +133,7 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
     : historyKind === 'category'
       ? fileCatalog.historyCategory
       : fileCatalog.historyExecution
+  const fileActionsDisabled = !selectedFile || filesLoading
 
   // Log entries
   const [entries, setEntries] = useState<LogEntry[]>([])
@@ -600,13 +601,22 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
             </Menu>
 
             <Tooltip label="手动刷新">
-              <ActionIcon variant="light" onClick={fetchLogs} loading={loading}>
+              <ActionIcon
+                variant="light"
+                onClick={fetchLogs}
+                loading={loading}
+                disabled={fileActionsDisabled}
+              >
                 <IconRefresh size={16} />
               </ActionIcon>
             </Tooltip>
 
             <Tooltip label="导出过滤结果">
-              <ActionIcon variant="light" color="teal" onClick={() => {
+              <ActionIcon
+                disabled={fileActionsDisabled}
+                variant="light"
+                color="teal"
+                onClick={() => {
                 // ⚠ 导出必须跟屏幕上**同一套**过滤条件。内审 F3：加了
                 // 「只看这一次请求」之后，屏幕剩 5 条、导出却是全量 ——
                 // 这个分叉是本片自己造的，而后端 /export 本来就支持
@@ -619,13 +629,19 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
                 )
                 const url = `${apiClient.defaults.baseURL}/system-logs/export/${selectedFile}?${params.toString()}`
                 window.open(url, '_blank')
-              }}>
+                }}
+              >
                 <IconDownload size={16} />
               </ActionIcon>
             </Tooltip>
 
             <Tooltip label="下载原始日志（全量）">
-              <ActionIcon variant="light" color="blue" onClick={handleDownload}>
+              <ActionIcon
+                disabled={fileActionsDisabled}
+                variant="light"
+                color="blue"
+                onClick={handleDownload}
+              >
                 <IconDownload size={16} />
               </ActionIcon>
             </Tooltip>
