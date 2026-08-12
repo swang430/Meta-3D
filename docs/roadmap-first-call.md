@@ -3705,10 +3705,6 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 > ④进入 ON-SITE-BLOCKED / HOLD / Known unknown；⑤ resolved / dropped。
 > 没有出口标记的条目仍是“待评估”，不得出现在 LOCAL-OPEN 执行队列里。
 
-- `[discovered 2026-08-12 during P2-25 external review, Codex #340 R1]` **运行中的 execution 日志被当作历史文件冻结（P2，待 triage；不阻塞 P2-25）** —— `ExecutionFileHandler` 会在 TestCase 运行期间持续写 `exec-<id>.log`，但 `/system-logs/files` 当前只把固定分类日志标为 `is_current=true`；P2-25 因而把所有 execution 文件放进历史分组并关闭自动刷新。后续应从写入器/执行状态取得“仍在写”真值，把活动 execution 日志留在可刷新视图；不得仅凭文件名猜活动状态。
-
-- `[discovered 2026-08-12 during P2-25 external review, Codex #340 R1]` **空日志分组仍允许触发文件操作（P2，待 triage；不阻塞 P2-25）** —— 没有轮转分类日志或 execution 日志时，切换分组会把 `selectedFile` 清空，但手动刷新、导出、下载仍可点击并生成空文件名请求。后续应统一以“已选中有效文件”为文件操作白名单；本轮核心分类与搜索功能不受影响。
-
 - `[discovered 2026-08-11 during P3-18 G11 external review, Codex #327 R1]` **G11 未合并 OpenAPI Path Item 级 parameters（P3，待 triage；不阻塞已合并子片）** —— 当前 location 比对只读 operation 自身的 `parameters`；若 query/header/cookie 参数声明在 Path Item 级并对全部动词生效，它从 live 消失或换 location 时本门仍可能假绿。后续若继续精化 G11，应把 path-item 与 operation 两层参数按 OpenAPI 覆盖规则合并后再比较；按测试门意见上限记 P3，不为其启动第二轮。
 
 - `[discovered 2026-08-11 during P3-18 p08 external review, Codex #328 R1]` **p08 参数门锁住 checkpoint 存在与标签，但未直接锁调用位置（P3，待 triage；不阻塞已合并子片）** —— 当前 fake 错误是在 `residue()` 内注入；若以后把某个 checkpoint 移到受保护写操作之前但保留标签，参数用例仍可能通过。功能实现与本轮逐站错误归档均已复核正确，本项只登记为测试精化候选，不为其启动第二轮。

@@ -249,14 +249,15 @@ reviews / inline comments / issue comments / **PR 本体的 👍 reaction**。
 ⚠️ 👍 由 `chatgpt-codex-connector[bot]` 加在 **PR 本体**上（`issues/{n}/reactions`），
 **不在评论上** —— 2026-08-10 实测，别去评论里找。它是"审过无建议"的唯一正面证据。
 "usage limits" / "create an environment" = review 未发生 ≠ clean。
-拿到 👍 后**核对它写的 `Reviewed commit` 是不是当前最新 commit**，再 merge。
+拿到 👍 后核对 `Reviewed commit` 覆盖功能代码 HEAD；R1 无 P1 后只用于状态收口的
+roadmap / review 台账提交不再触发第二轮，也不因此制造“永远审不到最后一个文档提交”的递归。
 
 **合并条件分两种，产出的 commit message 不一样**（2026-08-10 用户拍板，
 外审 #316 指出原表述自相矛盾：超时不是证据，是**没有**证据）：
 
 | 情况 | 能不能合 | commit message 必须写什么 |
 |---|---|---|
-| 拿到 👍 / 明文 "no major issues"，且 `Reviewed commit` = 最新 commit | ✅ 合 | 照常 |
+| 拿到 👍 / 明文 review，且该轮 **无 P1** | ✅ 合 | 照常；P2/P3 不自动沉淀为 Discovered |
 | **5 分钟无任何 comment**（持久授权，速度优先） | ✅ 合 | **必须写明「本合并未获外审正面证据（超时合并）」**，并挂迟到回查 |
 | Codex 报 "usage limits" / "create an environment" | ❌ **不合** | —— 这是 review **未发生**，不是 clean |
 
@@ -264,16 +265,10 @@ reviews / inline comments / issue comments / **PR 本体的 👍 reaction**。
 所以它必须在 commit message 里留痕，事后能一条 `git log --grep` 捞出来复查。
 不留痕的超时合并跟"审过了"在历史里长得一模一样，那才是真正的问题。
 
-**轮次上限按严重度分级**（2026-08-10 用户定，取代原来一刀切的"上限 2 轮"）：
-
-| severity | 上限 |
-|---|---|
-| **P1** | **无上限** —— 追到没有为止（功能缺陷不能留） |
-| **P2 / P3** | **1 轮** —— 提一次就够，第二轮起全转待评估池 |
-
-⚠️ **一条硬止损压过分级**：**连续两轮的 findings 都主要由上一轮修复引入 →
-停下来报告，不要继续修。** 那说明在同一处纵向加深而不是收敛。
-实证见 AGENTS.md 第 10 条（#314 跑到 12 轮，一整条支线最后整个撤回）。
+**外审最多两轮；无 P1 就收口**（2026-08-12 用户定）：R1 无 P1 立即合；只有 R1
+出现 P1 才修复并触发 R2。R2 后不发 R3；若仍有 P1，修完并过内审/回归后如实记录尾部
+修复未获外审覆盖，再收口。P2/P3 只报告一次，**不自动进入 Discovered / backlog**；只有
+后续独立 triage 明确确认价值与载体时才提升。完整判据见 AGENTS.md 第 10 条。
 
 > **逐片审查，不攒成总包**：roadmap 的每个切片 = 1 个 PR = 1 次内审 + 1 次外审。
 > 纯文档片可走“精简”内审；涉及驱动、契约、持久化或正式执行链的片一律“全套”。
@@ -329,8 +324,8 @@ Roadmap: P0-X  (或)  Out-of-roadmap, reason: ...
 ### 6. Review 反馈的处理
 
 Codex / 人类 reviewer 发现且确属本片验收边界内的 P0/P1 安全问题：当下修。
-越界或 P2/P3 风格类反馈：append 到 Discovered 待评估池，不当下修，避免 review 黑洞；
-后续 triage 再决定 roadmap / backlog / dropped。
+越界或 P2/P3 反馈：在 PR 中报告一次，本轮不修、**不自动 append 到 Discovered**；只有
+后续独立 triage 能写出明确可观察故障、用户价值与载体时，才进入 roadmap / backlog / Discovered。
 
 ### 7. 周度短 review
 
