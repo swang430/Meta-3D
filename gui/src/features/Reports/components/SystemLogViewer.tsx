@@ -43,17 +43,13 @@ import {
   groupLogContinuations,
   type GroupedSystemLogEntry,
 } from '../../../utils/logEntries'
+import {
+  buildLogFileCatalog,
+  type LogFileInfo,
+} from '../logFileCatalog'
 
 
 // ── Types ──────────────────────────────────────────────────────
-
-interface LogFileInfo {
-  filename: string
-  size_bytes: number
-  size_human: string
-  last_modified: string
-  is_current: boolean
-}
 
 // ⚠ 别在这里手写一份日志条目的形状 —— 用共享类型。
 // 本文件原先有一份逐字副本，P1-36 加 `execution_id` 时它当场漂了
@@ -129,6 +125,14 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
   const [files, setFiles] = useState<LogFileInfo[]>([])
   const [selectedFile, setSelectedFile] = useState<string>('app.log')
   const [filesLoading, setFilesLoading] = useState(false)
+  const [logMode, setLogMode] = useState<'current' | 'history'>('current')
+  const [historyKind, setHistoryKind] = useState<'category' | 'execution'>('category')
+  const fileCatalog = useMemo(() => buildLogFileCatalog(files), [files])
+  const selectableFiles = logMode === 'current'
+    ? fileCatalog.current
+    : historyKind === 'category'
+      ? fileCatalog.historyCategory
+      : fileCatalog.historyExecution
 
   // Log entries
   const [entries, setEntries] = useState<LogEntry[]>([])
@@ -205,6 +209,39 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
   const [refreshInterval, setRefreshInterval] = useState('0')
   const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const stopAutoRefreshForHistory = () => {
+    historyModeRef.current = true
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
+    setRefreshInterval('0')
+  }
+
+  const handleLogModeChange = (value: string) => {
+    const nextMode = value as 'current' | 'history'
+    setLogMode(nextMode)
+    if (nextMode === 'history') stopAutoRefreshForHistory()
+    else historyModeRef.current = false
+
+    const nextFiles = nextMode === 'current'
+      ? fileCatalog.current
+      : historyKind === 'category'
+        ? fileCatalog.historyCategory
+        : fileCatalog.historyExecution
+    setSelectedFile(nextFiles[0]?.value ?? '')
+  }
+
+  const handleHistoryKindChange = (value: string) => {
+    const nextKind = value as 'category' | 'execution'
+    setHistoryKind(nextKind)
+    stopAutoRefreshForHistory()
+    const nextFiles = nextKind === 'category'
+      ? fileCatalog.historyCategory
+      : fileCatalog.historyExecution
+    setSelectedFile(nextFiles[0]?.value ?? '')
+  }
+
   // Expanded rows
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
 
@@ -244,6 +281,14 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
 
   // ── Fetch log entries ──
   const fetchLogs = useCallback(async () => {
+    if (!selectedFile) {
+      setEntries([])
+      setTotalRead(0)
+      setFilteredCount(0)
+      setOlderCursor(null)
+      setHasOlder(false)
+      return
+    }
     historyModeRef.current = false
     const requestGeneration = ++requestGenerationRef.current
     setHistoryLoading(false)
@@ -346,6 +391,11 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
   }, [fetchFiles])
 
   useEffect(() => {
+    if (selectableFiles.some((file) => file.value === selectedFile)) return
+    setSelectedFile(selectableFiles[0]?.value ?? '')
+  }, [selectableFiles, selectedFile])
+
+  useEffect(() => {
     fetchLogs()
   }, [fetchLogs])
 
@@ -436,17 +486,38 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
       {/* ── Toolbar ── */}
       <Paper withBorder p="sm" radius="md">
         <Group justify="space-between" wrap="wrap" gap="sm">
-          {/* Left: File selector + level filter */}
+          {/* Left: Current/history taxonomy + file selector + level filter */}
           <Group gap="sm">
+            <SegmentedControl
+              value={logMode}
+              onChange={handleLogModeChange}
+              data={[
+                { value: 'current', label: '当前日志' },
+                { value: 'history', label: '历史日志' },
+              ]}
+              size="xs"
+            />
+
+            {logMode === 'history' && (
+              <SegmentedControl
+                value={historyKind}
+                onChange={handleHistoryKindChange}
+                data={[
+                  { value: 'category', label: '分类日志' },
+                  { value: 'execution', label: '执行日志' },
+                ]}
+                size="xs"
+              />
+            )}
+
             <Select
               value={selectedFile}
               onChange={(v) => v && setSelectedFile(v)}
-              data={files.map(f => ({
-                value: f.filename,
-                label: `${f.filename} (${f.size_human})`,
-              }))}
-              placeholder="选择日志文件"
-              w={280}
+              data={selectableFiles}
+              placeholder={logMode === 'current' ? '选择当前日志' : '按时间或名称搜索历史日志'}
+              searchable
+              nothingFoundMessage="没有匹配的日志文件"
+              w={420}
               leftSection={<IconTerminal2 size={14} />}
               disabled={filesLoading}
             />
@@ -495,6 +566,7 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
                 <Button
                   variant="light"
                   size="sm"
+                  disabled={logMode === 'history'}
                   leftSection={
                     refreshInterval !== '0'
                       ? <IconPlayerPlay size={14} />
@@ -565,6 +637,9 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
         {loading && <Loader size="xs" />}
         {refreshInterval !== '0' && (
           <Badge size="sm" variant="dot" color="green">自动刷新 {refreshInterval}s</Badge>
+        )}
+        {logMode === 'history' && (
+          <Badge size="sm" variant="light" color="gray">历史文件 · 自动刷新已关闭</Badge>
         )}
         {historyPages > 0 && (
           <Badge size="sm" variant="light" color="cyan">

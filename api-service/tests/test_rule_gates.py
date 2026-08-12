@@ -2065,6 +2065,30 @@ def test_g15_log_sort_groups_continuations_and_uses_stable_identity():
     assert "renderLogDetail(entry)" in tbody
 
 
+def test_p2_25_log_file_picker_separates_current_and_searchable_history():
+    """当前日志不得再与两类历史文件混成一份平铺下拉。"""
+    viewer = _strip_ts_comments((
+        _REPO_ROOT / "gui/src/features/Reports/components/SystemLogViewer.tsx"
+    ).read_text(encoding="utf-8"))
+
+    assert "buildLogFileCatalog(files)" in viewer
+    assert "'current' | 'history'" in viewer
+    assert "'category' | 'execution'" in viewer
+    for label in ("当前日志", "历史日志", "分类日志", "执行日志"):
+        assert label in viewer
+    assert "searchable" in viewer
+
+    refresh_helper = viewer[viewer.index("const stopAutoRefreshForHistory"):]
+    refresh_helper = refresh_helper[:refresh_helper.index("const handleLogModeChange")]
+    assert "setRefreshInterval('0')" in refresh_helper
+    assert "clearInterval(intervalRef.current)" in refresh_helper
+    mode_handler = viewer[viewer.index("const handleLogModeChange"):]
+    mode_handler = mode_handler[:mode_handler.index("return (")]
+    assert "stopAutoRefreshForHistory()" in mode_handler
+    assert "setSelectedFile" in mode_handler
+    assert "disabled={logMode === 'history'}" in viewer
+
+
 # ─────────────────────────────────────────────────────────────────────
 # G16 建会话请求的默认值不得跟配置 schema 打架
 # ─────────────────────────────────────────────────────────────────────
