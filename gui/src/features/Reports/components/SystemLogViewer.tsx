@@ -281,16 +281,20 @@ export function SystemLogViewer({ initialExecutionFilter }: SystemLogViewerProps
 
   // ── Fetch log entries ──
   const fetchLogs = useCallback(async () => {
+    const requestGeneration = ++requestGenerationRef.current
     if (!selectedFile) {
+      setLoading(false)
+      setHistoryLoading(false)
+      setError(null)
       setEntries([])
       setTotalRead(0)
       setFilteredCount(0)
       setOlderCursor(null)
       setHasOlder(false)
+      setHistoryPages(0)
       return
     }
     historyModeRef.current = false
-    const requestGeneration = ++requestGenerationRef.current
     setHistoryLoading(false)
     setLoading(true)
     setError(null)

@@ -2088,6 +2088,39 @@ def test_p2_25_log_file_picker_separates_current_and_searchable_history():
     assert "setSelectedFile" in mode_handler
     assert "disabled={logMode === 'history'}" in viewer
 
+    fetch_logs = viewer[viewer.index("const fetchLogs = useCallback"):]
+    fetch_logs = fetch_logs[:fetch_logs.index("const loadOlder")]
+    empty_guard = fetch_logs.index("if (!selectedFile)")
+    assert fetch_logs.index("++requestGenerationRef.current") < empty_guard
+    empty_branch = fetch_logs[empty_guard:fetch_logs.index("historyModeRef.current = false")]
+    assert "setLoading(false)" in empty_branch
+
+
+def test_p2_25_mock_catalog_and_roadmap_wip_match_live_ui():
+    """Mock 开发必须能看到三类目录，Roadmap 必须指向同一 WIP。"""
+    mock_db = (
+        _REPO_ROOT / "gui/src/api/mockDatabase.ts"
+    ).read_text(encoding="utf-8")
+    files_start = mock_db.index("getSystemLogFiles()")
+    files_end = mock_db.index("getDashboardAlertSummary()", files_start)
+    files_source = mock_db[files_start:files_end]
+    assert "app.log" in files_source
+    assert "app.log.2026-08-11" in files_source
+    assert "exec-848a0000-dead-beef.log" in files_source
+    assert files_source.count("is_current: false") >= 2
+
+    roadmap = (
+        _REPO_ROOT / "docs/roadmap-first-call.md"
+    ).read_text(encoding="utf-8")
+    current_focus = roadmap[:roadmap.index("> **~~P1-48~~")]
+    assert "Current Focus = P2-25（WIP=1）" in current_focus
+    for item_id in (
+        *(f"P1-{number}" for number in range(49, 54)),
+        *(f"P2-{number}" for number in range(25, 35)),
+        "P3-20", "P3-21",
+    ):
+        assert item_id in current_focus, f"批准队列缺少 {item_id}"
+
 
 # ─────────────────────────────────────────────────────────────────────
 # G16 建会话请求的默认值不得跟配置 schema 打架

@@ -1226,13 +1226,29 @@ export const mockDatabase = {
   getSystemLogFiles() {
     return clone({
       log_dir: 'mock://logs',
-      files: [{
-        filename: systemLogTail.filename,
-        size_bytes: systemLogTail.entries.length,
-        size_human: `${systemLogTail.entries.length} mock rows`,
-        last_modified: '2026-05-20 09:48:01',
-        is_current: true,
-      }],
+      files: [
+        {
+          filename: 'app.log',
+          size_bytes: systemLogTail.entries.length,
+          size_human: `${systemLogTail.entries.length} mock rows`,
+          last_modified: '2026-08-12 09:48:01',
+          is_current: true,
+        },
+        {
+          filename: 'app.log.2026-08-11',
+          size_bytes: systemLogTail.entries.length,
+          size_human: `${systemLogTail.entries.length} mock rows`,
+          last_modified: '2026-08-12 00:00:01',
+          is_current: false,
+        },
+        {
+          filename: 'exec-848a0000-dead-beef.log',
+          size_bytes: systemLogTail.entries.length,
+          size_human: `${systemLogTail.entries.length} mock rows`,
+          last_modified: '2026-08-11 13:21:09',
+          is_current: false,
+        },
+      ],
     })
   },
   getDashboardAlertSummary(): DashboardAlertSummary {
