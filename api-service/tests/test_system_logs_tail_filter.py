@@ -634,3 +634,45 @@ class TestHistoryPagination:
         assert files["app.log"]["is_current"] is True
         assert files["app.log.2026-08-05"]["is_current"] is False
         assert files["scpi.log.1"]["is_current"] is False
+
+    def test_open_execution_log_is_current_until_writer_closes(self, client, log_dir):
+        """执行文件的当前/历史判据必须读取 writer 生命周期，而不是猜文件名。"""
+        import logging
+
+        from app.core.logging_config import ExecutionFileHandler
+
+        execution_id = "active-execution"
+        handler = ExecutionFileHandler(str(log_dir))
+        root_logger = logging.getLogger()
+        root_logger.addHandler(handler)
+        record = logging.LogRecord(
+            name="app.execution",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="still running",
+            args=(),
+            exc_info=None,
+        )
+        record.execution_id = execution_id
+        try:
+            handler.emit(record)
+            active_files = {
+                item["filename"]: item
+                for item in client.get(
+                    f"{settings.api_v1_prefix}/system-logs/files"
+                ).json()["files"]
+            }
+            assert active_files[f"exec-{execution_id}.log"]["is_current"] is True
+
+            handler.close_execution(execution_id)
+            closed_files = {
+                item["filename"]: item
+                for item in client.get(
+                    f"{settings.api_v1_prefix}/system-logs/files"
+                ).json()["files"]
+            }
+            assert closed_files[f"exec-{execution_id}.log"]["is_current"] is False
+        finally:
+            root_logger.removeHandler(handler)
+            handler.close()

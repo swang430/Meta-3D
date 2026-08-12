@@ -2065,6 +2065,67 @@ def test_g15_log_sort_groups_continuations_and_uses_stable_identity():
     assert "renderLogDetail(entry)" in tbody
 
 
+def test_p2_25_log_file_picker_separates_current_and_searchable_history():
+    """当前日志不得再与两类历史文件混成一份平铺下拉。"""
+    viewer = _strip_ts_comments((
+        _REPO_ROOT / "gui/src/features/Reports/components/SystemLogViewer.tsx"
+    ).read_text(encoding="utf-8"))
+
+    assert "buildLogFileCatalog(files)" in viewer
+    assert "'current' | 'history'" in viewer
+    assert "'category' | 'execution'" in viewer
+    for label in ("当前日志", "历史日志", "分类日志", "执行日志"):
+        assert label in viewer
+    assert "searchable" in viewer
+
+    refresh_helper = viewer[viewer.index("const stopAutoRefreshForHistory"):]
+    refresh_helper = refresh_helper[:refresh_helper.index("const handleLogModeChange")]
+    assert "setRefreshInterval('0')" in refresh_helper
+    assert "clearInterval(intervalRef.current)" in refresh_helper
+    mode_handler = viewer[viewer.index("const handleLogModeChange"):]
+    mode_handler = mode_handler[:mode_handler.index("return (")]
+    assert "stopAutoRefreshForHistory()" in mode_handler
+    assert "setSelectedFile" in mode_handler
+    assert "disabled={logMode === 'history'}" in viewer
+    assert "const fileActionsDisabled = !selectedFile" in viewer
+    assert viewer.count("disabled={fileActionsDisabled}") >= 3
+
+    fetch_logs = viewer[viewer.index("const fetchLogs = useCallback"):]
+    fetch_logs = fetch_logs[:fetch_logs.index("const loadOlder")]
+    empty_guard = fetch_logs.index("if (!selectedFile)")
+    assert fetch_logs.index("++requestGenerationRef.current") < empty_guard
+    empty_branch = fetch_logs[empty_guard:fetch_logs.index("historyModeRef.current = false")]
+    assert "setLoading(false)" in empty_branch
+
+
+def test_p2_25_mock_catalog_and_roadmap_status_match_live_ui():
+    """Mock 开发必须能看到三类目录，Roadmap 必须指向收口后的下一项。"""
+    mock_db = (
+        _REPO_ROOT / "gui/src/api/mockDatabase.ts"
+    ).read_text(encoding="utf-8")
+    files_start = mock_db.index("getSystemLogFiles()")
+    files_end = mock_db.index("getDashboardAlertSummary()", files_start)
+    files_source = mock_db[files_start:files_end]
+    assert "app.log" in files_source
+    assert "app.log.2026-08-11" in files_source
+    assert "exec-848a0000-dead-beef.log" in files_source
+    assert files_source.count("is_current: false") >= 2
+
+    roadmap = (
+        _REPO_ROOT / "docs/roadmap-first-call.md"
+    ).read_text(encoding="utf-8")
+    current_focus = roadmap[:roadmap.index("> **~~P1-48~~")]
+    assert "Current Focus = P1-49（等待启动，WIP=0）" in current_focus
+    assert "| **P2-25** |" in current_focus
+    assert "| ✅ PR #340 |" in current_focus
+    for item_id in (
+        *(f"P1-{number}" for number in range(49, 54)),
+        *(f"P2-{number}" for number in range(25, 35)),
+        "P3-20", "P3-21",
+    ):
+        assert item_id in current_focus, f"批准队列缺少 {item_id}"
+
+
 # ─────────────────────────────────────────────────────────────────────
 # G16 建会话请求的默认值不得跟配置 schema 打架
 # ─────────────────────────────────────────────────────────────────────
