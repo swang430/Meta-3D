@@ -288,7 +288,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅；按用户要求暂停，下一轮须重新 triage** |
+| **LOCAL-OPEN (roadmap 内)** | **P2-25 🔄 → P1-49 → P1-50 → P1-51 → P1-52 → P1-53 → P2-26 → P2-27 → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；完整编号、范围与状态只看顶部 Current Focus 表。历史已完成序列保留在 git 与 `roadmap-archive.md`，不再复制到本动态镜像。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -3607,6 +3607,8 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 ### P2-18 — 信道资产真值自动化 (SMB 扫描 + EMQuest 权威表数据化)
 
+> **编号继承（2026-08-12）**：本条是早期母项；重新 triage 后，仍未交付的本地自动化范围已稳定编号为顶部队列 **P2-31**。后续施工、PR 与完成状态只更新 P2-31，避免 P2-18/P2-31 两个开放编号重复推进；本段保留来源与完整验收背景。
+
 **What**: ① .smu 工程频率扫描器: SMB 只读挂载 → 解析 `[Channel Group 0] CenterFrequency`(解析器 2026-07-03 已验证, 金标准=面板实证)→ available_channel_models / ChannelAsset 自动真值化(今日 `scripts/onsite-fix-f64-scenario-assets.py` 手工流程的产品化: 后端周期扫描或一键同步端点); ② EMQuest prm 破译出的 band→(dl_arfcn/ssb_arfcn/point_a/offset_to_carrier/duplex) **10 band 权威查表**入 repo 数据文件(prm 二进制解析脚本一并入库), 供 P1-19 ④ SSB 下发与 onsite 脚本消费; ③ n79 栅格注意项(4700.000 非 15k 整栅格, EMQuest 用 713334)。
 
 **Why P2**: "SCD 频率以工程实测为准"(用户定流程)的自动化; 手工 18 条已就位, 自动化防 drift + 支持后续场景包扩展。
@@ -3654,7 +3656,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 ## 🟢 P3 — Polish / tooling
 
-**19/19 ✅ Done。P3-19 完成后按用户要求暂停。** 已完成项的完整 What / Fix / Acceptance 详情已迁出 → [`roadmap-archive.md`](roadmap-archive.md)。速览：
+**P3-1～P3-19 ✅ Done；新 triage 的 P3-20/P3-21 ⬜ 待排期。** 已完成项的完整 What / Fix / Acceptance 详情已迁出 → [`roadmap-archive.md`](roadmap-archive.md)；新增项的当前范围与顺序只看顶部 Current Focus 表。速览：
 
 | ID | Item | Done |
 |----|------|------|
