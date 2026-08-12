@@ -2096,8 +2096,8 @@ def test_p2_25_log_file_picker_separates_current_and_searchable_history():
     assert "setLoading(false)" in empty_branch
 
 
-def test_p2_25_mock_catalog_and_roadmap_wip_match_live_ui():
-    """Mock 开发必须能看到三类目录，Roadmap 必须指向同一 WIP。"""
+def test_p2_25_mock_catalog_and_roadmap_status_match_live_ui():
+    """Mock 开发必须能看到三类目录，Roadmap 必须指向收口后的下一项。"""
     mock_db = (
         _REPO_ROOT / "gui/src/api/mockDatabase.ts"
     ).read_text(encoding="utf-8")
@@ -2113,7 +2113,9 @@ def test_p2_25_mock_catalog_and_roadmap_wip_match_live_ui():
         _REPO_ROOT / "docs/roadmap-first-call.md"
     ).read_text(encoding="utf-8")
     current_focus = roadmap[:roadmap.index("> **~~P1-48~~")]
-    assert "Current Focus = P2-25（WIP=1）" in current_focus
+    assert "Current Focus = P1-49（等待启动，WIP=0）" in current_focus
+    assert "| **P2-25** |" in current_focus
+    assert "| ✅ PR #340 |" in current_focus
     for item_id in (
         *(f"P1-{number}" for number in range(49, 54)),
         *(f"P2-{number}" for number in range(25, 35)),
