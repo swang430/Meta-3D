@@ -544,6 +544,25 @@ def test_non_mimo_generation_claim_conflict_is_http_409(monkeypatch):
     assert "already in progress" in str(exc_info.value.detail)
 
 
+def test_legacy_mimo_regeneration_rejection_is_http_409(monkeypatch):
+    from app.api import report as report_api
+    from app.services.report_service import LegacyMimoRegenerationRejected
+
+    monkeypatch.setattr(
+        report_api.report_service,
+        "generate_report",
+        lambda db, report_id: (_ for _ in ()).throw(
+            LegacyMimoRegenerationRejected("Only PDF reports can be regenerated")
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        report_api.generate_report(uuid4(), db=object())
+
+    assert exc_info.value.status_code == 409
+    assert "Only PDF reports" in str(exc_info.value.detail)
+
+
 def test_mimo_generation_value_error_after_claim_is_not_misreported_as_conflict(
     monkeypatch,
 ):
