@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -12,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.api.probe_calibration import check_link_validity as check_link_validity_api
+from app.api.path_loss_calibration import get_path_loss_at_frequency
 from app.models.chamber import ChamberConfiguration
 from app.models.probe_calibration import (
     CalibrationStatus,
@@ -31,8 +33,13 @@ from app.schemas.probe_calibration import (
     StartPolarizationCalibrationRequest,
 )
 from app.services.calibration_report_generator import CalibrationReportGenerator
+from app.services.calibration_orchestrator import CalibrationItem, CalibrationOrchestrator
+from app.services.path_loss_calibration_service import (
+    MultiFrequencyPathLossService,
+    RFChainCalibrationService,
+)
 from app.services.pdf_generator import PDFGenerator
-from app.services.probe_calibration_service import CalibrationValidityService
+from app.services.probe_calibration_service import CalibrationValidityService, LinkCalibrationService
 from app.services.probe_pattern.consumer import get_probe_gain_at_azimuth
 from app.services.probe_pattern.import_service import import_probe_pattern
 from app.services.probe_phase_calibration_import import import_phase_calibration_from_csv
@@ -613,3 +620,152 @@ def test_mock_link_is_unknown_and_absent_from_validity_deadlines(session):
     assert validity.get_expired_calibrations(
         session, uuid.uuid4(), calibration_type="link"
     ) == []
+
+
+def test_chamber_report_excludes_untrusted_rf_and_multi_from_formal_kpi(session):
+    chamber_id = uuid.uuid4()
+    _chamber(session, chamber_id, "Chamber Report Provenance")
+    now = datetime.utcnow()
+    session.add_all([
+        RFChainCalibration(
+            chamber_id=chamber_id,
+            use_mock=True,
+            chain_type="uplink",
+            frequency_mhz=3500.0,
+            calibrated_at=now,
+            valid_until=now + timedelta(days=30),
+            status=CalibrationStatus.VALID.value,
+        ),
+        MultiFrequencyPathLoss(
+            chamber_id=chamber_id,
+            use_mock=None,
+            probe_id=0,
+            polarization="V",
+            freq_start_mhz=3400.0,
+            freq_stop_mhz=3600.0,
+            freq_step_mhz=100.0,
+            num_points=3,
+            frequency_points_mhz=[3400.0, 3500.0, 3600.0],
+            path_loss_db=[50.0, 51.0, 52.0],
+            calibrated_at=now,
+            valid_until=now + timedelta(days=30),
+            status=CalibrationStatus.VALID.value,
+        ),
+    ])
+    session.commit()
+
+    data = CalibrationReportGenerator(session)._collect_chamber_calibration_data(chamber_id)
+    assert data["chamber_calibration"]["uplink"][0]["validation_pass"] is None
+    assert data["chamber_calibration"]["uplink"][0]["use_mock"] is True
+    assert data["chamber_calibration"]["multi_frequency"][0]["validation_pass"] is None
+    assert data["chamber_calibration"]["multi_frequency"][0]["use_mock"] is None
+    assert data["execution_summary"]["total_executions"] == 0
+
+
+def test_formal_rf_multi_consumers_ignore_untrusted_rows(session):
+    chamber_id = uuid.uuid4()
+    chamber = _chamber(session, chamber_id, "Formal Consumer Provenance")
+    chamber.has_lna = True
+    now = datetime.utcnow()
+    session.add_all([
+        RFChainCalibration(
+            chamber_id=chamber_id,
+            use_mock=True,
+            chain_type="uplink",
+            frequency_mhz=3500.0,
+            total_chain_gain_db=99.0,
+            calibrated_at=now,
+            valid_until=now + timedelta(days=30),
+            status=CalibrationStatus.VALID.value,
+        ),
+        MultiFrequencyPathLoss(
+            chamber_id=chamber_id,
+            use_mock=True,
+            probe_id=0,
+            polarization="V",
+            freq_start_mhz=3400.0,
+            freq_stop_mhz=3600.0,
+            freq_step_mhz=100.0,
+            num_points=3,
+            frequency_points_mhz=[3400.0, 3500.0, 3600.0],
+            path_loss_db=[50.0, 51.0, 52.0],
+            calibrated_at=now,
+            valid_until=now + timedelta(days=30),
+            status=CalibrationStatus.VALID.value,
+        ),
+    ])
+    session.commit()
+
+    assert RFChainCalibrationService(session, use_mock=False).get_latest_uplink_calibration(
+        chamber_id, 3500.0
+    ) is None
+    assert MultiFrequencyPathLossService(session, use_mock=False).get_path_loss_at_frequency(
+        chamber_id, 0, "V", 3500.0
+    ) is None
+    with pytest.raises(HTTPException) as exc_info:
+        get_path_loss_at_frequency(
+            chamber_id=chamber_id,
+            probe_id=0,
+            frequency_mhz=3500.0,
+            polarization="V",
+            db=session,
+        )
+    assert exc_info.value.status_code == 404
+    status = CalibrationOrchestrator(session, use_mock=False).check_calibration_status(
+        chamber_id, 3500.0
+    )
+    assert status[CalibrationItem.UPLINK_CHAIN].is_valid is False
+    assert status[CalibrationItem.MULTI_FREQUENCY].is_valid is False
+
+
+def test_link_formal_validity_prefers_real_and_report_expires_after_seven_days(session):
+    now = datetime.utcnow()
+    chamber_id = uuid.uuid4()
+    _chamber(session, chamber_id, "Link Report")
+    real = LinkCalibration(
+        use_mock=False,
+        calibration_type="weekly_check",
+        validation_pass=True,
+        threshold_db=1.0,
+        calibrated_at=now - timedelta(days=1),
+    )
+    newer_mock = LinkCalibration(
+        use_mock=True,
+        calibration_type="weekly_check",
+        validation_pass=None,
+        threshold_db=1.0,
+        calibrated_at=now,
+    )
+    session.add_all([real, newer_mock])
+    session.commit()
+
+    assert check_link_validity_api(db=session)["calibration_id"] == str(real.id)
+    assert LinkCalibrationService().check_link_validity(session)["calibration_id"] == str(real.id)
+    probe = CalibrationValidityService().check_validity(session, 0, uuid.uuid4())
+    assert probe["link"]["calibration_id"] == str(real.id)
+
+    real.calibrated_at = now - timedelta(days=8)
+    session.commit()
+    report = CalibrationReportGenerator(session)._collect_probe_data(
+        chamber_id=chamber_id, calibration_type="link"
+    )
+    by_id = {row["id"]: row for row in report["probe_calibration"]["link"]}
+    assert by_id[str(real.id)]["validation_pass"] is False
+    assert report["execution_summary"]["passed"] == 0
+
+
+def test_probe_overall_requires_all_four_scoped_families(session):
+    chamber_id = uuid.uuid4()
+    _chamber(session, chamber_id, "Partial Probe")
+    _amplitude(
+        session,
+        chamber_id=chamber_id,
+        probe_id=0,
+        gain=4.0,
+        calibrated_at=datetime.utcnow(),
+    )
+    session.commit()
+
+    result = CalibrationValidityService().check_validity(session, 0, chamber_id)
+    assert result["amplitude"]["status"] == "valid"
+    assert result["overall_status"] == "partial"

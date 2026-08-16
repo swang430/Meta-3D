@@ -1184,7 +1184,9 @@ def check_link_validity(
     Returns:
         链路校准有效性状态
     """
-    latest = db.query(LinkCalibration).order_by(
+    latest = db.query(LinkCalibration).filter(
+        LinkCalibration.use_mock.is_(False)
+    ).order_by(
         desc(LinkCalibration.calibrated_at)
     ).first()
 

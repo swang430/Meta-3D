@@ -1970,6 +1970,7 @@ class TestCalibrationValidityService:
 
         # 创建链路校准 (新的，有效期足够长)
         link_cal = LinkCalibration(
+            use_mock=False,
             calibration_type="pre_test",
             known_gain_dbi=2.15,
             measured_gain_dbi=2.2,

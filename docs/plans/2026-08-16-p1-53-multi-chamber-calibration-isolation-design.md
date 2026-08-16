@@ -77,8 +77,11 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
 7. 正式有效性、报告统计和 pattern 消费只接受 `use_mock is False`；mock 与历史 NULL
    可在审计读取中展示，但判词保持 UNVERIFIED、不得进入正式分母或 MIMO 增益补偿。
    全局 Link 可单独展示设施状态，但不参与单探头四类完整性的 overall 判定；其 validity、
-   临期/过期汇总同样只接受显式 real。当前硬编码 mock 的 RF-chain / multi-frequency 写入口
-   必须持久化 `True`，不得因数据库 `status=valid` 在 PDF 中变成 PASS。
+   临期/过期汇总同样只接受显式 real，并在 explicit-real 白名单内选最新记录，避免较新的
+   mock 遮住仍有效的真实记录。单探头只有 amplitude / phase / polarization / pattern 四族
+   齐全且全部有效才可 overall VALID。当前硬编码 mock 的 RF-chain / multi-frequency 写入口
+   必须持久化 `True`，不得因数据库 `status=valid` 在 PDF、正式状态或路损插值数值接口中
+   变成 PASS/有效补偿。
 8. 报告有效性同时检查 `valid_until`；过期记录不得仅凭持久化 `status=valid` 显示 PASS。
 9. PDF 必须渲染 collector 纳入摘要的全部家族；RF-chain 与 multi-frequency 不得只计数不展示。
 

@@ -262,9 +262,8 @@ class TestCompleteCalibrationWorkflow:
         assert validity_data["phase"] is None
         assert validity_data["polarization"] is None
         assert validity_data["pattern"] is None
-        assert validity_data["link"] is not None
-        assert validity_data["link"]["status"] == "unknown"
-        assert validity_data["link"]["use_mock"] is True
+        # 正式有效性只从 explicit-real 白名单选择；mock 记录仅保留在审计读取中。
+        assert validity_data["link"] is None
         assert validity_data["overall_status"] == "unknown"
 
         # Step 7: 获取综合校准数据
@@ -563,7 +562,7 @@ class TestValidityReportWorkflow:
 
         db = TestingSessionLocal()
         try:
-            # 探头 40: 完全有效
+            # 探头 40: 仅有幅度校准，四族不完整，因此不能判为完全有效
             db.add(ProbeAmplitudeCalibration(
                 chamber_id=CHAMBER_ID,
                 use_mock=False,
@@ -630,7 +629,7 @@ class TestValidityReportWorkflow:
 
         # 验证报告内容
         assert report_data["total_probes"] == 4
-        assert report_data["valid_probes"] >= 1  # 至少 1 个有效
+        assert report_data["valid_probes"] == 0  # 单一可信家族不足以判完整有效
         assert report_data["expiring_soon_probes"] >= 1  # 至少 1 个即将过期
         assert report_data["expired_probes"] >= 1  # 至少 1 个已过期
 

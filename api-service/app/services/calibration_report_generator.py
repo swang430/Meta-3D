@@ -8,7 +8,7 @@ Integrates with PDFGenerator for report generation.
 import os
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -100,6 +100,17 @@ def _probe_validation_pass(calibration: Any) -> Optional[bool]:
         and calibration.valid_until
         and calibration.valid_until > datetime.utcnow()
     )
+
+
+def _link_validation_pass(calibration: LinkCalibration) -> Optional[bool]:
+    """Only an explicit-real, unexpired global link check has a verdict."""
+    if calibration.use_mock is not False:
+        return None
+    is_current = (
+        calibration.calibrated_at
+        and calibration.calibrated_at + timedelta(days=7) > datetime.utcnow()
+    )
+    return bool(is_current and calibration.validation_pass is True)
 
 
 def _active_validation_pass(calibration: Any) -> bool:
@@ -360,14 +371,16 @@ class CalibrationReportGenerator:
 
         uplink_data = []
         for cal in uplink_cals:
-            total += 1
-            is_valid = cal.status == 'valid'
-            if is_valid:
-                passed += 1
+            is_valid = _probe_validation_pass(cal)
+            if is_valid is not None:
+                total += 1
+                if is_valid:
+                    passed += 1
             uplink_data.append({
                 'id': str(cal.id),
                 'frequency_mhz': cal.frequency_mhz,
                 'validation_pass': is_valid,
+                'use_mock': cal.use_mock,
                 'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                 'calibrated_by': cal.calibrated_by,
                 'valid_until': str(cal.valid_until) if cal.valid_until else None,
@@ -390,14 +403,16 @@ class CalibrationReportGenerator:
 
         downlink_data = []
         for cal in downlink_cals:
-            total += 1
-            is_valid = cal.status == 'valid'
-            if is_valid:
-                passed += 1
+            is_valid = _probe_validation_pass(cal)
+            if is_valid is not None:
+                total += 1
+                if is_valid:
+                    passed += 1
             downlink_data.append({
                 'id': str(cal.id),
                 'frequency_mhz': cal.frequency_mhz,
                 'validation_pass': is_valid,
+                'use_mock': cal.use_mock,
                 'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                 'calibrated_by': cal.calibrated_by,
                 'valid_until': str(cal.valid_until) if cal.valid_until else None,
@@ -419,15 +434,17 @@ class CalibrationReportGenerator:
 
         multi_freq_data = []
         for cal in multi_freq_cals:
-            total += 1
-            is_valid = cal.status == 'valid'
-            if is_valid:
-                passed += 1
+            is_valid = _probe_validation_pass(cal)
+            if is_valid is not None:
+                total += 1
+                if is_valid:
+                    passed += 1
             multi_freq_data.append({
                 'id': str(cal.id),
                 'probe_id': cal.probe_id,
                 'polarization': cal.polarization,
                 'validation_pass': is_valid,
+                'use_mock': cal.use_mock,
                 'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                 'valid_until': str(cal.valid_until) if cal.valid_until else None,
                 'freq_start_mhz': cal.freq_start_mhz,
@@ -657,7 +674,7 @@ class CalibrationReportGenerator:
 
             link_data = []
             for cal in calibrations:
-                validation_pass = cal.validation_pass if cal.use_mock is False else None
+                validation_pass = _link_validation_pass(cal)
                 if validation_pass is not None:
                     total += 1
                     if validation_pass:

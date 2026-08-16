@@ -2175,7 +2175,9 @@ class LinkCalibrationService:
         Returns:
             有效性状态
         """
-        latest = self.get_latest_calibration(db)
+        latest = db.query(LinkCalibration).filter(
+            LinkCalibration.use_mock.is_(False)
+        ).order_by(desc(LinkCalibration.calibrated_at)).first()
 
         if not latest:
             return {
@@ -2349,7 +2351,9 @@ class CalibrationValidityService:
 
         # 检查链路校准 (链路校准是全局的，不是按探头分的)
         # 这里返回最新的链路校准状态
-        link = db.query(LinkCalibration).order_by(
+        link = db.query(LinkCalibration).filter(
+            LinkCalibration.use_mock.is_(False)
+        ).order_by(
             desc(LinkCalibration.calibrated_at)
         ).first()
 
@@ -2384,12 +2388,17 @@ class CalibrationValidityService:
             if result[cal_type] is not None:
                 calibration_statuses.append(result[cal_type]["status"])
 
+        missing_required = any(result[cal_type] is None for cal_type in [
+            "amplitude", "phase", "polarization", "pattern"
+        ])
         if not calibration_statuses:
             result["overall_status"] = "unknown"
         elif "expired" in calibration_statuses:
             result["overall_status"] = "expired"
         elif "expiring_soon" in calibration_statuses:
             result["overall_status"] = "expiring_soon"
+        elif missing_required:
+            result["overall_status"] = "partial"
         elif all(s == "valid" for s in calibration_statuses):
             result["overall_status"] = "valid"
         else:

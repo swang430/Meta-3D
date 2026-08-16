@@ -372,6 +372,7 @@ async def start_multi_frequency_calibration(
     if not chamber:
         raise HTTPException(status_code=404, detail="Chamber configuration not found")
 
+    # 现有生产入口仍是模拟校准；正式实测入口需另行完成硬件授权与接线。
     service = MultiFrequencyPathLossService(db, use_mock=True)
     result = await service.calibrate_frequency_sweep(
         chamber_id=request.chamber_id,
@@ -411,7 +412,9 @@ def get_path_loss_at_frequency(
     """
     获取指定频率的路损值 (支持插值)
     """
-    service = MultiFrequencyPathLossService(db, use_mock=True)
+    # This endpoint returns a compensation value, not an audit row. Only
+    # explicitly real, unexpired calibration may supply that value.
+    service = MultiFrequencyPathLossService(db, use_mock=False)
     path_loss = service.get_path_loss_at_frequency(
         chamber_id, probe_id, polarization, frequency_mhz
     )

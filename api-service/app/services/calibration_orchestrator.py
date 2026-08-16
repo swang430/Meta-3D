@@ -364,12 +364,18 @@ class CalibrationOrchestrator:
 
             elif item == CalibrationItem.MULTI_FREQUENCY:
                 # 检查是否有多频点校准覆盖目标频率
-                cal = self.db.query(MultiFrequencyPathLoss).filter(
+                query = self.db.query(MultiFrequencyPathLoss).filter(
                     MultiFrequencyPathLoss.chamber_id == chamber_id,
                     MultiFrequencyPathLoss.status == "valid",
                     MultiFrequencyPathLoss.freq_start_mhz <= frequency_mhz,
                     MultiFrequencyPathLoss.freq_stop_mhz >= frequency_mhz
-                ).order_by(desc(MultiFrequencyPathLoss.calibrated_at)).first()
+                )
+                if not self.use_mock:
+                    query = query.filter(
+                        MultiFrequencyPathLoss.use_mock.is_(False),
+                        MultiFrequencyPathLoss.valid_until > datetime.utcnow(),
+                    )
+                cal = query.order_by(desc(MultiFrequencyPathLoss.calibrated_at)).first()
 
                 if cal:
                     is_valid = True
@@ -391,11 +397,17 @@ class CalibrationOrchestrator:
 
             elif item == CalibrationItem.DUPLEXER_ISOLATION:
                 # 双工器隔离度从 RFChainCalibration 中带出
-                cal = self.db.query(RFChainCalibration).filter(
+                query = self.db.query(RFChainCalibration).filter(
                     RFChainCalibration.chamber_id == chamber_id,
                     RFChainCalibration.has_duplexer == True,
-                    RFChainCalibration.status == "valid"
-                ).order_by(desc(RFChainCalibration.calibrated_at)).first()
+                    RFChainCalibration.status == "valid",
+                )
+                if not self.use_mock:
+                    query = query.filter(
+                        RFChainCalibration.use_mock.is_(False),
+                        RFChainCalibration.valid_until > datetime.utcnow(),
+                    )
+                cal = query.order_by(desc(RFChainCalibration.calibrated_at)).first()
                 if cal:
                     is_valid = True
                     valid_until = cal.valid_until

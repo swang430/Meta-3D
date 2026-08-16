@@ -1738,6 +1738,12 @@ class RFChainCalibrationService:
             RFChainCalibration.status == CalibrationStatus.VALID.value
         )
 
+        if not self.use_mock:
+            query = query.filter(
+                RFChainCalibration.use_mock.is_(False),
+                RFChainCalibration.valid_until > datetime.utcnow(),
+            )
+
         if frequency_mhz:
             query = query.filter(
                 RFChainCalibration.frequency_mhz.between(
@@ -1758,6 +1764,12 @@ class RFChainCalibrationService:
             RFChainCalibration.chain_type == ChainTypeEnum.DOWNLINK.value,
             RFChainCalibration.status == CalibrationStatus.VALID.value
         )
+
+        if not self.use_mock:
+            query = query.filter(
+                RFChainCalibration.use_mock.is_(False),
+                RFChainCalibration.valid_until > datetime.utcnow(),
+            )
 
         if frequency_mhz:
             query = query.filter(
@@ -2045,7 +2057,13 @@ class MultiFrequencyPathLossService:
             MultiFrequencyPathLoss.status == CalibrationStatus.VALID.value,
             MultiFrequencyPathLoss.freq_start_mhz <= frequency_mhz,
             MultiFrequencyPathLoss.freq_stop_mhz >= frequency_mhz
-        ).order_by(desc(MultiFrequencyPathLoss.calibrated_at)).first()
+        )
+        if not self.use_mock:
+            calibration = calibration.filter(
+                MultiFrequencyPathLoss.use_mock.is_(False),
+                MultiFrequencyPathLoss.valid_until > datetime.utcnow(),
+            )
+        calibration = calibration.order_by(desc(MultiFrequencyPathLoss.calibrated_at)).first()
 
         if not calibration:
             return None
