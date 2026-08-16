@@ -25,7 +25,6 @@ R&S 命名约定:
 
 import logging
 import asyncio
-import math
 from enum import Enum
 from typing import Dict, Any, List, Optional
 from datetime import datetime
@@ -588,8 +587,9 @@ class RealCmw500Driver(BaseStationDriver):
           FETCh:LTE:SIGN1:EBLer:PCC:ABSolute?
           FETCh:LTE:SIGN1:EBLer:PCC:CQIReporting:STReam1?
 
-        ETHRoughput 返回格式 (逗号分隔):
-          <current_tput_kbps>, <average_tput_kbps>, <max_tput_kbps>
+        当前仓库没有可核对的厂商手册章节来证明 ETHRoughput 响应的字段顺序、
+        单位与不可用 sentinel。响应仅保留为诊断证据；四个正式吞吐字段均保持
+        ``None`` / ``kpi_valid=False``，直到该契约有厂商出处后再接线。
         """
         metrics = ThroughputMetrics()
         valid: Dict[str, bool] = {
@@ -599,37 +599,17 @@ class RealCmw500Driver(BaseStationDriver):
             "ul_throughput_current": False,
         }
 
+        dl_str = ""
+        ul_str = ""
         try:
-            # DL 吞吐量 (SENSe)
+            # 仍回读并通过 SCPI/measurement 日志保留原始证据，但没有手册
+            # 契约前不得解释字段位置、物理单位或 sentinel。
             dl_str = self._query(
                 self._fmt(CmwScpiCommands.ETPUT_DL_PCC)
             )
-            if dl_str:
-                parts = dl_str.strip().split(",")
-                if len(parts) >= 2:
-                    try:
-                        # 第二个值: average throughput (kbps)
-                        dl_kbps = float(parts[1])
-                        if math.isfinite(dl_kbps):
-                            metrics.dl_throughput_mbps = dl_kbps / 1000.0
-                            valid["dl_throughput"] = True
-                    except ValueError:
-                        pass
-
-            # UL 吞吐量
             ul_str = self._query(
                 self._fmt(CmwScpiCommands.ETPUT_UL_PCC)
             )
-            if ul_str:
-                parts = ul_str.strip().split(",")
-                if len(parts) >= 2:
-                    try:
-                        ul_kbps = float(parts[1])
-                        if math.isfinite(ul_kbps):
-                            metrics.ul_throughput_mbps = ul_kbps / 1000.0
-                            valid["ul_throughput"] = True
-                    except ValueError:
-                        pass
 
             # BLER
             bler_str = self._query(
@@ -693,6 +673,10 @@ class RealCmw500Driver(BaseStationDriver):
                 "rsrp_dbm": metrics.rsrp_dbm,
                 "sinr_db": metrics.sinr_db,
                 "kpi_valid": dict(metrics.kpi_valid),
+                "kpi_raw_unverified": {
+                    "dl_ethroughput_pcc": dl_str or None,
+                    "ul_ethroughput_pcc": ul_str or None,
+                },
                 "band": self._band,
                 "bandwidth_mhz": self._bandwidth_mhz,
                 "dl_power_dbm": self._dl_power_dbm,

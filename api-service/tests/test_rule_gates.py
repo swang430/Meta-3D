@@ -471,7 +471,7 @@ def test_g3_override_test_table_covers_all_flags():
 _SILENT_SWALLOW_BASELINE = {
     "aerotech_positioner.py": {"_silent_reconnect": 2, "disconnect": 1},
     "cmw500_base_station.py": {
-        "get_throughput_metrics": 6, "get_ue_info": 1, "start_signaling": 1,
+        "get_throughput_metrics": 4, "get_ue_info": 1, "start_signaling": 1,
     },
     "keysight_ena.py": {"_silent_reconnect_visa": 1},
     "propsim_f64.py": {

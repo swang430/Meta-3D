@@ -81,29 +81,39 @@ def test_uxm_nan_is_missing_but_real_zero_is_valid():
 
 
 @pytest.mark.parametrize(
-    "response, expected, valid",
+    "response",
     [
-        ("", None, False),
-        ("CURRENT,BAD,MAX", None, False),
-        ("CURRENT,nan,MAX", None, False),
-        ("CURRENT,inf,MAX", None, False),
-        ("CURRENT,0,MAX", 0.0, True),
-        ("CURRENT,125000,MAX", 125.0, True),
+        "",
+        "CURRENT,BAD,MAX",
+        "CURRENT,nan,MAX",
+        "CURRENT,inf,MAX",
+        "CURRENT,0,MAX",
+        "CURRENT,125000,MAX",
     ],
 )
-def test_cmw500_only_marks_successfully_parsed_throughput_valid(
+def test_cmw500_throughput_stays_unverified_without_a_sourced_response_contract(
     response: str,
-    expected: float | None,
-    valid: bool,
 ):
     driver = RealCmw500Driver("cmw-p1-54", {"ip": "10.0.0.3"})
-    _stub_cmw(driver, {"ETHRoughput:DL:PCC?": response})
+    _stub_cmw(
+        driver,
+        {
+            "ETHRoughput:DL:PCC?": response,
+            "ETHRoughput:UL:PCC?": response,
+        },
+    )
 
     metrics = asyncio.run(driver.get_throughput_metrics())
     payload = metrics.to_dict()
 
-    assert metrics.dl_throughput_mbps == expected
-    assert payload["kpi_valid"]["dl_throughput"] is valid
+    assert metrics.dl_throughput_mbps is None
+    assert metrics.dl_throughput_current_mbps is None
+    assert metrics.ul_throughput_mbps is None
+    assert metrics.ul_throughput_current_mbps is None
+    assert payload["kpi_valid"]["dl_throughput"] is False
+    assert payload["kpi_valid"]["dl_throughput_current"] is False
+    assert payload["kpi_valid"]["ul_throughput"] is False
+    assert payload["kpi_valid"]["ul_throughput_current"] is False
 
 
 def test_measure_sample_gate_accepts_real_zero_and_rejects_invalid_default():

@@ -7,10 +7,10 @@
 1. 在 `api-service/tests/test_p1_54_kpi_valid_contract.py` 写 RED：
    - `ThroughputMetrics()` 的吞吐字段为 None，`to_dict()` 携带显式 false；
    - 显式真实零值保持 0.0 且 valid；
-   - UXM NaN 与 CMW500 坏响应不再返回默认 0.0；
-   - 两个真实驱动成功解析时 valid=True。
+   - UXM NaN 不再返回默认 0.0；CMW500 在响应契约无厂商出处时始终保持 unverified；
+   - 仅有厂商出处的 UXM 成功解析时 valid=True；CMW500 在响应契约无出处时始终 unverified。
 2. 运行定点测试确认因契约尚不存在而失败。
-3. 修改 `base_station.py`、UXM、CMW500；同步 nullable 日志格式与 Mock 构造。
+3. 修改 `base_station.py`、UXM、CMW500；同步 nullable 日志格式与 Mock 构造；CMW500 只保留原始诊断证据，不解释无出处的 tuple。
 4. 运行定点测试至 GREEN。
 
 ## Task 2：MEASURE 正式样本门

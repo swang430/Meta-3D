@@ -7,7 +7,9 @@ UXM 已能识别每一项 KPI 查询是否真的返回有效值，但这个真�
 查询失败或统计窗口尚无样本时，驱动仍把构造默认值 `0.0` 交给 MIMO MEASURE；
 MEASURE 将它当真样本求平均，ANALYSIS 可能据此生成假的低吞吐 FAIL 与正式报告 KPI。
 
-同一契约问题也存在于 CMW500 与实时吞吐字段：缺测与真实零值目前不可区分。
+同一契约问题也存在于 CMW500 与实时吞吐字段：缺测与真实零值目前不可区分；但仓库没有
+可核对的 CMW500 手册章节证明 ETHRoughput 响应字段顺序、单位与 sentinel，因此本片只能
+保留原始诊断证据，四个正式吞吐字段一律 fail-closed，不能从有限数值反推有效。
 
 ## 改前全集
 
@@ -94,7 +96,7 @@ MEASURE 将它当真样本求平均，ANALYSIS 可能据此生成假的低吞吐
 
 1. UXM 真测 `0.0` 时值为 `0.0` 且 `kpi_valid.dl_throughput=True`。
 2. UXM NaN/查询失败时 DL average/current 为 None，valid=False；`to_dict()` 保留两者。
-3. CMW500 对成功解析与缺测/坏响应做同样区分。
+3. CMW500 在响应契约缺少厂商出处时，任意响应都保持 nullable/invalid；原始响应只作诊断证据。
 4. MEASURE 不收无效零值；有效零值仍计样本。
 5. 任一方位无可信吞吐时 ANALYSIS 为 UNKNOWN，执行级 `validation_pass=None`。
 6. 报告中缺测显示 N/A，不出现假的 `0.0 Mbps` 或正式 FAIL。
