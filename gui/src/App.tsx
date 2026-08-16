@@ -1744,7 +1744,15 @@ function EquipmentManager() {
           notes: updatedCategory.connection.notes ?? '',
         },
       }))
-      showFeedback(variables.categoryKey, 'success', '配置已保存。')
+      const needsHALReload =
+        updatedCategory.key === 'baseStation' || updatedCategory.key === 'channelEmulator'
+      showFeedback(
+        variables.categoryKey,
+        'success',
+        needsHALReload
+          ? '配置已保存；请重新加载 HAL 后再进行连接测试或 SCPI 操作。'
+          : '配置已保存。',
+      )
     },
     onError: (_error, variables) => {
       showFeedback(variables.categoryKey, 'error', '保存失败，请重试。')

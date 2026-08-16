@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -318,6 +319,78 @@ def test_single_session_instruments_reject_address_override_before_lease(
         error_text = str(exc_info.value.detail)
 
     assert "先保存配置并重新加载 HAL" in error_text
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ["test-connection", "scpi-command", "scpi-probe"],
+)
+def test_saved_single_session_target_must_match_live_driver_before_remote(
+    category,
+    db,
+    monkeypatch,
+    operation,
+):
+    """保存 B 但 HAL 仍连 A 时，三入口必须在 Remote/SCPI 前拒绝。"""
+    from app.services.instrument_test_lease import InstrumentTestLeaseError
+
+    category.category_key = "baseStation"
+    db.add(InstrumentConnectionDB(
+        id=uuid.uuid4(),
+        category_id=category.id,
+        controller_ip="192.0.2.20",
+        port=5025,
+        protocol="SCPI",
+        connection_params={"ip": "192.0.2.20", "port": 5025},
+    ))
+    db.commit()
+
+    class RealInstrumentDriver:
+        config = {"ip": "192.0.2.10", "port": 5025}
+        _query = AsyncMock(return_value="VENDOR,MODEL,SN,FW")
+        _write = AsyncMock()
+
+    driver = RealInstrumentDriver()
+    monkeypatch.setattr(
+        instrument_api, "_get_loaded_hal_driver", lambda _key: driver
+    )
+
+    @asynccontextmanager
+    async def _lease(*_args, **kwargs):
+        validator = kwargs.get("validate_before_remote")
+        assert validator is not None
+        error = validator(SimpleNamespace(drivers={"baseStation": driver}))
+        if error:
+            raise InstrumentTestLeaseError(error)
+        yield
+
+    monkeypatch.setattr(instrument_api, "instrument_test_lease", _lease)
+    monkeypatch.setattr(
+        "app.services.instrument_test_lease.instrument_test_lease", _lease
+    )
+
+    with pytest.raises(InstrumentTestLeaseError, match="活动 HAL 会话目标不一致"):
+        if operation == "test-connection":
+            asyncio.run(instrument_api.test_instrument_connection(
+                "baseStation",
+                body=instrument_api.TestConnectionRequest(),
+                db=db,
+            ))
+        elif operation == "scpi-command":
+            asyncio.run(instrument_api.send_scpi_command(
+                "baseStation",
+                request=instrument_api.ScpiCommandRequest(command="*IDN?"),
+                db=db,
+            ))
+        else:
+            asyncio.run(instrument_api.probe_scpi_commands(
+                "baseStation",
+                body=instrument_api.TestConnectionRequest(),
+                db=db,
+            ))
+
+    driver._query.assert_not_awaited()
+    driver._write.assert_not_awaited()
 
 
 @pytest.fixture(autouse=True)
@@ -693,6 +766,14 @@ class TestHalDriverGate:
             driver_mode="real",
         )
         db.add(cat)
+        db.commit()
+        db.add(InstrumentConnectionDB(
+            id=uuid.uuid4(),
+            category_id=cat.id,
+            controller_ip="192.0.2.20",
+            port=5125,
+            protocol="SCPI",
+        ))
         db.commit()
 
         class RealUxmDriver:

@@ -47,8 +47,9 @@
    操作员配置。既有 connection 行一律不改，避免清空真实现场地址。
 6. 删除旧 F64 compatibility controller 的默认参数，调用者必须显式给地址。
 7. 基站/信道仿真器是单会话控制类别：三个人工诊断入口禁止请求体临时覆盖地址，必须先保存配置并
-   reload HAL，再复用活动会话。GUI 草稿与已保存 endpoint 不同时直接提示保存；一致时不发送
-   `ip`/`port`。其他类别保留一次性覆盖能力。
+   reload HAL，再复用活动会话。GUI 草稿与已保存 endpoint 不同时直接提示保存，保存成功后明确提示
+   reload。后端在与 reload 共用的协调锁内、取得 Remote 前，用完整合并配置（含
+   `connection_params`）核对活动 driver 目标；不一致即拒绝。其他类别保留一次性覆盖能力。
 
 ## 状态与错误语义
 
@@ -70,4 +71,5 @@
 5. fresh bootstrap 七类 connection 的地址均为空；已有连接再次 seed 后保持原值；
 6. 全仓生产代码不再含真实驱动地址兜底。
 7. 基站/信道仿真器的连接测试、SCPI probe 与单条 SCPI 在 GUI 草稿未保存时均不发请求；配置一致时
-   请求不携带地址覆盖并复用活动 HAL。其他类别仍可携带显式临时目标。
+   请求不携带地址覆盖；后端在协调锁内、Remote I/O 前核对持久化合并目标与活动 driver 目标，未
+   reload 的旧会话必须 fail-loud。其他类别仍可携带显式临时目标。

@@ -1759,37 +1759,82 @@ def _reconcile_diagnostic_target_with_live_driver(
     requested_port: Optional[int],
     target_error: Optional[str],
     override_requested: bool,
+    require_saved_match: bool = False,
 ) -> tuple[Optional[str], Optional[int], Optional[str]]:
     """让人工诊断请求与实际复用的 HAL 会话保持同一目标真值。"""
-    if override_requested and target_error:
+    must_match = override_requested or require_saved_match
+    if must_match and target_error:
         return None, None, target_error
 
     driver_config = getattr(driver, "config", None)
     if not isinstance(driver_config, dict):
-        if override_requested:
-            return None, None, "无法核实活动 HAL 会话目标，拒绝请求体地址覆盖"
+        if must_match:
+            return None, None, (
+                "无法核实活动 HAL 会话目标；请重新加载 HAL"
+                if require_saved_match and not override_requested
+                else "无法核实活动 HAL 会话目标，拒绝请求体地址覆盖"
+            )
         return requested_ip, requested_port, None
 
     live_ip, live_port, _resource, live_error = (
         resolve_configured_tcpip_connection(driver_config)
     )
     if live_error or not live_ip:
-        if override_requested:
+        if must_match:
+            prefix = (
+                "无法核实活动 HAL 会话目标；请重新加载 HAL"
+                if require_saved_match and not override_requested
+                else "无法核实活动 HAL 会话目标，拒绝请求体地址覆盖"
+            )
             return None, None, (
-                "无法核实活动 HAL 会话目标，拒绝请求体地址覆盖"
+                prefix
                 + (f": {live_error}" if live_error else "")
             )
         return requested_ip, requested_port, target_error
 
     actual_port = live_port if live_port is not None else 5025
-    if override_requested and (
+    if must_match and (
         requested_ip != live_ip or requested_port != actual_port
     ):
+        if require_saved_match and not override_requested:
+            return None, None, (
+                "已保存配置与活动 HAL 会话目标不一致；"
+                "请重新加载 HAL 后再操作"
+            )
         return None, None, (
             "请求体覆盖目标与活动 HAL 会话目标不一致；"
             "请先保存配置并重新加载 HAL"
         )
     return live_ip, actual_port, None
+
+
+def _single_session_saved_target_validator(
+    category_key: str,
+    *,
+    saved_ip: Optional[str],
+    saved_port: Optional[int],
+    saved_error: Optional[str],
+):
+    """在协调锁内、Remote acquire 前核对 DB 真值与活动单会话。"""
+    if category_key not in {"baseStation", "channelEmulator"}:
+        return None
+
+    def _validate(hal: Any) -> Optional[str]:
+        driver = _get_loaded_hal_driver_from_hal(hal, category_key)
+        if driver is None:
+            # 没有活动真实 driver 时，端点会走已校验的 DB raw fallback。
+            return saved_error
+        _ip, _port, error = _reconcile_diagnostic_target_with_live_driver(
+            driver,
+            requested_ip=saved_ip,
+            requested_port=saved_port,
+            target_error=saved_error,
+            override_requested=False,
+            require_saved_match=True,
+        )
+        return error
+
+    return _validate
 
 
 def _single_session_override_error(
@@ -1871,6 +1916,13 @@ async def test_instrument_connection(
             message=preflight_error,
         )
 
+    validate_saved_target = _single_session_saved_target_validator(
+        category_key,
+        saved_ip=raw_ip,
+        saved_port=raw_port,
+        saved_error=raw_target_error,
+    )
+
     from app.services.instrument_test_lease import instrument_test_lease
 
     stack = AsyncExitStack()
@@ -1879,6 +1931,7 @@ async def test_instrument_connection(
         control_f64=(category_key == "channelEmulator"),
         control_uxm=(category_key == "baseStation"),
         enable_monitoring=False,
+        validate_before_remote=validate_saved_target,
     ))
 
     # 已加载的 F64/UXM 必须复用租约刚取得的唯一 HAL 会话；另开 raw socket
@@ -2224,6 +2277,22 @@ async def _run_command_via_hal(
         )
 
 
+def _get_loaded_hal_driver_from_hal(hal: Any, category_key: str):
+    """从指定 HAL 快照读取可直接通信的真实 driver。"""
+    if hal is None:
+        return None
+    driver = (getattr(hal, "drivers", None) or {}).get(category_key)
+    if driver is None:
+        return None
+    if type(driver).__name__.startswith("Mock"):
+        return None
+    if not callable(getattr(driver, "_query", None)):
+        return None
+    if not callable(getattr(driver, "_write", None)):
+        return None
+    return driver
+
+
 def _get_loaded_hal_driver(category_key: str):
     """Return the live HAL driver instance for ``category_key`` if it's a
     *real* driver that can actually talk to hardware; otherwise None so
@@ -2249,21 +2318,7 @@ def _get_loaded_hal_driver(category_key: str):
         hal = get_hal_service()
     except Exception:  # noqa: BLE001
         return None
-    if hal is None:
-        return None
-    driver = (hal.drivers or {}).get(category_key)
-    if driver is None:
-        return None
-    # Skip Mock* drivers — project convention names every mock class
-    # MockXxx (MockBaseStation, MockChannelEmulator, MockRfSwitch, etc.)
-    # and reserves RealXxx for actual hardware-talking implementations.
-    if type(driver).__name__.startswith("Mock"):
-        return None
-    if not callable(getattr(driver, "_query", None)):
-        return None
-    if not callable(getattr(driver, "_write", None)):
-        return None
-    return driver
+    return _get_loaded_hal_driver_from_hal(hal, category_key)
 
 
 def _send_scpi_command(
@@ -2555,11 +2610,19 @@ async def send_scpi_command(
             latency_ms=0,
         ))
 
+    validate_saved_target = _single_session_saved_target_validator(
+        category_key,
+        saved_ip=raw_ip,
+        saved_port=raw_port,
+        saved_error=raw_target_error,
+    )
+
     async with instrument_test_lease(
         f"scpi-command:{category_key}",
         control_f64=(category_key == "channelEmulator"),
         control_uxm=(category_key == "baseStation"),
         enable_monitoring=False,
+        validate_before_remote=validate_saved_target,
     ):
         # 在租约内重新解析 driver，防止 HAL reload 在解析与首条命令之间换实例。
         hal_driver = _get_loaded_hal_driver(category_key)
@@ -2687,6 +2750,13 @@ async def probe_scpi_commands(
     if preflight_error:
         raise HTTPException(400, preflight_error)
 
+    validate_saved_target = _single_session_saved_target_validator(
+        category_key,
+        saved_ip=raw_ip,
+        saved_port=raw_port,
+        saved_error=raw_target_error,
+    )
+
     results: List[ScpiCommandResult] = []
     audit_started = time.monotonic()
 
@@ -2695,6 +2765,7 @@ async def probe_scpi_commands(
         control_f64=(category_key == "channelEmulator"),
         control_uxm=(category_key == "baseStation"),
         enable_monitoring=False,
+        validate_before_remote=validate_saved_target,
     ):
         # Prefer the live HAL driver session if loaded — avoids a parallel
         # TCP client to single-session instruments. Driver lookup stays inside
