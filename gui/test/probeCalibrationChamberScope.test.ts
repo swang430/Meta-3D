@@ -64,7 +64,10 @@ test('probe calibration page passes one chamber truth to dashboard, grid, and de
   )
 
   assert.match(pageSource, /interface ProbeCalibrationPageProps[\s\S]*chamberId:\s*string/)
+  assert.match(pageSource, /interface ProbeCalibrationPageProps[\s\S]*probeCount:\s*number/)
   assert.match(pageSource, /<ProbeCalibrationDashboard[\s\S]*chamberId=\{chamberId\}/)
   assert.match(pageSource, /<ProbeCalibrationGrid[\s\S]*chamberId=\{chamberId\}/)
   assert.match(pageSource, /<ProbeCalibrationDetail[\s\S]*chamberId=\{chamberId\}/)
+  assert.match(pageSource, /<ProbeCalibrationGrid[\s\S]*probeCount=\{probeCount\}/)
+  assert.doesNotMatch(pageSource, /probeCount=\{32\}/)
 })

@@ -165,11 +165,12 @@ class TestAmplitudeCalibrationRequest:
         """验证无效探头 ID 被拒绝"""
         with pytest.raises(ValidationError) as exc_info:
             StartAmplitudeCalibrationRequest(
-                probe_ids=[1, 2, 100],  # 100 超出范围
+                chamber_id=uuid4(),
+                probe_ids=[1, 2, -1],
                 frequency_range=FrequencyRange(start_mhz=3300, stop_mhz=3800, step_mhz=100),
                 calibrated_by="Test User"
             )
-        assert "probe_id must be between 0 and 63" in str(exc_info.value)
+        assert "probe_id must be non-negative" in str(exc_info.value)
 
     def test_amplitude_request_default_polarizations(self):
         """验证默认极化类型"""

@@ -10,6 +10,7 @@
 参考: docs/features/calibration/IMPLEMENTATION-PLAN.md
 """
 import pytest
+import uuid
 from datetime import datetime, timedelta
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -17,6 +18,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.main import app
 from app.db.database import Base, get_db
+from app.models.chamber import ChamberConfiguration
 from app.models.probe_calibration import (
     ProbeAmplitudeCalibration,
     ProbePhaseCalibration,
@@ -34,6 +36,7 @@ engine = create_engine(
     SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+CHAMBER_ID = uuid.UUID("b2222222-2222-2222-2222-222222222153")
 
 
 def override_get_db():
@@ -56,6 +59,17 @@ def setup_database():
 
     # 创建所有表
     Base.metadata.create_all(bind=engine)
+    with TestingSessionLocal() as db:
+        db.add(
+            ChamberConfiguration(
+                id=CHAMBER_ID,
+                name="P1-53 integration chamber",
+                chamber_type="custom",
+                chamber_radius_m=4.0,
+                num_probes=64,
+            )
+        )
+        db.commit()
     yield
     # 测试完成后清理
     Base.metadata.drop_all(bind=engine)
@@ -69,6 +83,29 @@ def setup_database():
 
 # 创建测试客户端
 client = TestClient(app)
+
+
+def _scoped_get(path: str, **kwargs):
+    """Attach the explicit chamber truth to chamber-scoped probe reads."""
+    params = dict(kwargs.pop("params", {}) or {})
+    if "/calibration/probe/" in path and "/link/" not in path:
+        params["chamber_id"] = str(CHAMBER_ID)
+    return client.get(path, params=params, **kwargs)
+
+
+def _scoped_post(path: str, **kwargs):
+    """Attach chamber truth to scoped writes; LinkCalibration stays global."""
+    if "/calibration/probe/" in path and "/link/" not in path:
+        if "/invalidate/" in path:
+            params = dict(kwargs.pop("params", {}) or {})
+            params["chamber_id"] = str(CHAMBER_ID)
+            kwargs["params"] = params
+        elif "json" in kwargs:
+            kwargs["json"] = {
+                "chamber_id": str(CHAMBER_ID),
+                **kwargs["json"],
+            }
+    return client.post(path, **kwargs)
 
 
 @pytest.fixture(autouse=True)
@@ -101,7 +138,7 @@ class TestCompleteCalibrationWorkflow:
         probe_id = 5
 
         # Step 1: 幅度校准
-        amp_response = client.post(
+        amp_response = _scoped_post(
             "/api/v1/calibration/probe/amplitude/start",
             json={
                 "probe_ids": [probe_id],
@@ -118,12 +155,12 @@ class TestCompleteCalibrationWorkflow:
         assert amp_response.json()["status"] == "completed"
 
         # 验证幅度校准数据
-        amp_data = client.get(f"/api/v1/calibration/probe/amplitude/{probe_id}")
+        amp_data = _scoped_get(f"/api/v1/calibration/probe/amplitude/{probe_id}")
         assert amp_data.status_code == 200
         assert amp_data.json()["probe_id"] == probe_id
 
         # Step 2: 相位校准
-        phase_response = client.post(
+        phase_response = _scoped_post(
             "/api/v1/calibration/probe/phase/start",
             json={
                 "probe_ids": [probe_id],
@@ -141,12 +178,12 @@ class TestCompleteCalibrationWorkflow:
         assert phase_response.json()["status"] == "completed"
 
         # 验证相位校准数据
-        phase_data = client.get(f"/api/v1/calibration/probe/phase/{probe_id}")
+        phase_data = _scoped_get(f"/api/v1/calibration/probe/phase/{probe_id}")
         assert phase_data.status_code == 200
         assert phase_data.json()["reference_probe_id"] == 0
 
         # Step 3: 极化校准
-        pol_response = client.post(
+        pol_response = _scoped_post(
             "/api/v1/calibration/probe/polarization/start",
             json={
                 "probe_ids": [probe_id],
@@ -163,12 +200,12 @@ class TestCompleteCalibrationWorkflow:
         assert pol_response.json()["status"] == "completed"
 
         # 验证极化校准数据
-        pol_data = client.get(f"/api/v1/calibration/probe/polarization/{probe_id}")
+        pol_data = _scoped_get(f"/api/v1/calibration/probe/polarization/{probe_id}")
         assert pol_data.status_code == 200
         assert pol_data.json()["probe_type"] == "dual_linear"
 
         # Step 4: 方向图校准
-        pattern_response = client.post(
+        pattern_response = _scoped_post(
             "/api/v1/calibration/probe/pattern/start",
             json={
                 "probe_ids": [probe_id],
@@ -184,12 +221,12 @@ class TestCompleteCalibrationWorkflow:
         assert pattern_response.json()["status"] == "completed"
 
         # 验证方向图校准数据
-        pattern_data = client.get(f"/api/v1/calibration/probe/pattern/{probe_id}")
+        pattern_data = _scoped_get(f"/api/v1/calibration/probe/pattern/{probe_id}")
         assert pattern_data.status_code == 200
         assert len(pattern_data.json()) >= 1
 
         # Step 5: 链路校准
-        link_response = client.post(
+        link_response = _scoped_post(
             "/api/v1/calibration/probe/link/start",
             json={
                 "calibration_type": "pre_test",
@@ -209,29 +246,25 @@ class TestCompleteCalibrationWorkflow:
         assert link_response.json()["status"] == "completed"
 
         # 验证链路校准数据
-        link_data = client.get("/api/v1/calibration/probe/link/latest")
+        link_data = _scoped_get("/api/v1/calibration/probe/link/latest")
         assert link_data.status_code == 200
         assert "deviation_db" in link_data.json()
 
-        # Step 6: 验证有效性状态 (所有校准都应该有效)
-        validity = client.get(f"/api/v1/calibration/probe/validity/{probe_id}")
+        # Step 6: mock/random 入口可留原始数据，但不得成为正式有效校准。
+        validity = _scoped_get(f"/api/v1/calibration/probe/validity/{probe_id}")
         assert validity.status_code == 200
         validity_data = validity.json()
 
-        assert validity_data["amplitude"] is not None
-        assert validity_data["amplitude"]["status"] == "valid"
-        assert validity_data["phase"] is not None
-        assert validity_data["phase"]["status"] == "valid"
-        assert validity_data["polarization"] is not None
-        assert validity_data["polarization"]["status"] == "valid"
-        assert validity_data["pattern"] is not None
-        assert validity_data["pattern"]["status"] == "valid"
+        assert validity_data["amplitude"] is None
+        assert validity_data["phase"] is None
+        assert validity_data["polarization"] is None
+        assert validity_data["pattern"] is None
         assert validity_data["link"] is not None
         # 链路校准可能是 valid 或 expiring_soon (取决于时间差)
         assert validity_data["link"]["status"] in ["valid", "expiring_soon"]
 
         # Step 7: 获取综合校准数据
-        full_data = client.get(f"/api/v1/calibration/probe/{probe_id}/data")
+        full_data = _scoped_get(f"/api/v1/calibration/probe/{probe_id}/data")
         assert full_data.status_code == 200
         full_data_json = full_data.json()
 
@@ -252,7 +285,7 @@ class TestCompleteCalibrationWorkflow:
         probe_ids = [10, 11, 12, 13]
 
         # 批量幅度校准
-        amp_response = client.post(
+        amp_response = _scoped_post(
             "/api/v1/calibration/probe/amplitude/start",
             json={
                 "probe_ids": probe_ids,
@@ -269,12 +302,12 @@ class TestCompleteCalibrationWorkflow:
 
         # 验证每个探头都有幅度校准数据
         for pid in probe_ids:
-            data = client.get(f"/api/v1/calibration/probe/amplitude/{pid}")
+            data = _scoped_get(f"/api/v1/calibration/probe/amplitude/{pid}")
             assert data.status_code == 200
             assert data.json()["probe_id"] == pid
 
         # 批量相位校准
-        phase_response = client.post(
+        phase_response = _scoped_post(
             "/api/v1/calibration/probe/phase/start",
             json={
                 "probe_ids": probe_ids,
@@ -292,12 +325,12 @@ class TestCompleteCalibrationWorkflow:
 
         # 验证每个探头都有相位校准数据
         for pid in probe_ids:
-            data = client.get(f"/api/v1/calibration/probe/phase/{pid}")
+            data = _scoped_get(f"/api/v1/calibration/probe/phase/{pid}")
             assert data.status_code == 200
             assert data.json()["probe_id"] == pid
 
         # 获取批量有效性报告
-        report = client.get(
+        report = _scoped_get(
             "/api/v1/calibration/probe/validity/report",
             params={"probe_ids": ",".join(map(str, probe_ids))}
         )
@@ -321,7 +354,7 @@ class TestExpirationWorkflow:
         probe_id = 20
 
         # Step 1: 创建初始校准
-        client.post(
+        _scoped_post(
             "/api/v1/calibration/probe/amplitude/start",
             json={
                 "probe_ids": [probe_id],
@@ -339,6 +372,8 @@ class TestExpirationWorkflow:
         db = TestingSessionLocal()
         try:
             expired_cal = ProbeAmplitudeCalibration(
+                chamber_id=CHAMBER_ID,
+                use_mock=False,
                 probe_id=probe_id + 1,  # 使用不同的探头
                 polarization="H",
                 frequency_points_mhz=[3500],
@@ -358,7 +393,7 @@ class TestExpirationWorkflow:
             db.close()
 
         # Step 3: 检测过期校准
-        expired = client.get("/api/v1/calibration/probe/validity/expired")
+        expired = _scoped_get("/api/v1/calibration/probe/validity/expired")
         assert expired.status_code == 200
         expired_data = expired.json()
 
@@ -368,13 +403,13 @@ class TestExpirationWorkflow:
         assert expired_cal_id in expired_ids
 
         # Step 4: 检查该探头的有效性状态
-        validity = client.get(f"/api/v1/calibration/probe/validity/{probe_id + 1}")
+        validity = _scoped_get(f"/api/v1/calibration/probe/validity/{probe_id + 1}")
         assert validity.status_code == 200
         assert validity.json()["amplitude"]["status"] == "expired"
         assert validity.json()["overall_status"] == "expired"
 
         # Step 5: 重新校准
-        recal_response = client.post(
+        recal_response = _scoped_post(
             "/api/v1/calibration/probe/amplitude/start",
             json={
                 "probe_ids": [probe_id + 1],
@@ -390,9 +425,11 @@ class TestExpirationWorkflow:
         assert recal_response.status_code == 202
 
         # Step 6: 验证新校准已生效
-        new_validity = client.get(f"/api/v1/calibration/probe/validity/{probe_id + 1}")
+        new_validity = _scoped_get(f"/api/v1/calibration/probe/validity/{probe_id + 1}")
         assert new_validity.status_code == 200
-        assert new_validity.json()["amplitude"]["status"] == "valid"
+        # Recalibration endpoint is a mock producer; it cannot replace the
+        # expired explicit-real certificate in the formal validity view.
+        assert new_validity.json()["amplitude"]["status"] == "expired"
 
     def test_expiring_soon_detection(self):
         """测试即将过期校准的检测"""
@@ -402,6 +439,8 @@ class TestExpirationWorkflow:
         db = TestingSessionLocal()
         try:
             expiring_cal = ProbeAmplitudeCalibration(
+                chamber_id=CHAMBER_ID,
+                use_mock=False,
                 probe_id=probe_id,
                 polarization="V",
                 frequency_points_mhz=[3500],
@@ -420,7 +459,7 @@ class TestExpirationWorkflow:
             db.close()
 
         # 检测即将过期的校准
-        expiring = client.get(
+        expiring = _scoped_get(
             "/api/v1/calibration/probe/validity/expiring",
             params={"days": 7}
         )
@@ -431,7 +470,7 @@ class TestExpirationWorkflow:
         assert expiring_data["count"] >= 1
 
         # 检查探头有效性状态
-        validity = client.get(f"/api/v1/calibration/probe/validity/{probe_id}")
+        validity = _scoped_get(f"/api/v1/calibration/probe/validity/{probe_id}")
         assert validity.status_code == 200
         assert validity.json()["amplitude"]["status"] == "expiring_soon"
         assert validity.json()["overall_status"] == "expiring_soon"
@@ -451,7 +490,7 @@ class TestInvalidationWorkflow:
         probe_id = 30
 
         # Step 1: 创建初始校准
-        client.post(
+        _scoped_post(
             "/api/v1/calibration/probe/amplitude/start",
             json={
                 "probe_ids": [probe_id],
@@ -466,12 +505,12 @@ class TestInvalidationWorkflow:
         )
 
         # 获取校准 ID
-        amp_data = client.get(f"/api/v1/calibration/probe/amplitude/{probe_id}")
+        amp_data = _scoped_get(f"/api/v1/calibration/probe/amplitude/{probe_id}")
         assert amp_data.status_code == 200
         cal_id = amp_data.json()["id"]
 
         # Step 2: 作废校准
-        invalidate_response = client.post(
+        invalidate_response = _scoped_post(
             f"/api/v1/calibration/probe/invalidate/amplitude/{cal_id}",
             json={"reason": "Test invalidation - suspected measurement error"}
         )
@@ -479,7 +518,7 @@ class TestInvalidationWorkflow:
         assert invalidate_response.json()["success"] is True
 
         # Step 3: 验证作废状态
-        validity = client.get(f"/api/v1/calibration/probe/validity/{probe_id}")
+        validity = _scoped_get(f"/api/v1/calibration/probe/validity/{probe_id}")
         assert validity.status_code == 200
 
         # 作废后应该没有有效的幅度校准
@@ -487,7 +526,7 @@ class TestInvalidationWorkflow:
         assert validity.json()["overall_status"] == "unknown"
 
         # Step 4: 重新校准
-        recal_response = client.post(
+        recal_response = _scoped_post(
             "/api/v1/calibration/probe/amplitude/start",
             json={
                 "probe_ids": [probe_id],
@@ -503,10 +542,9 @@ class TestInvalidationWorkflow:
         assert recal_response.status_code == 202
 
         # Step 5: 验证新校准
-        new_validity = client.get(f"/api/v1/calibration/probe/validity/{probe_id}")
+        new_validity = _scoped_get(f"/api/v1/calibration/probe/validity/{probe_id}")
         assert new_validity.status_code == 200
-        assert new_validity.json()["amplitude"] is not None
-        assert new_validity.json()["amplitude"]["status"] == "valid"
+        assert new_validity.json()["amplitude"] is None
 
 
 # ==================== 有效性报告流程测试 ====================
@@ -523,6 +561,8 @@ class TestValidityReportWorkflow:
         try:
             # 探头 40: 完全有效
             db.add(ProbeAmplitudeCalibration(
+                chamber_id=CHAMBER_ID,
+                use_mock=False,
                 probe_id=40,
                 polarization="V",
                 frequency_points_mhz=[3500],
@@ -538,6 +578,8 @@ class TestValidityReportWorkflow:
 
             # 探头 41: 即将过期
             db.add(ProbeAmplitudeCalibration(
+                chamber_id=CHAMBER_ID,
+                use_mock=False,
                 probe_id=41,
                 polarization="V",
                 frequency_points_mhz=[3500],
@@ -553,6 +595,8 @@ class TestValidityReportWorkflow:
 
             # 探头 42: 已过期
             db.add(ProbeAmplitudeCalibration(
+                chamber_id=CHAMBER_ID,
+                use_mock=False,
                 probe_id=42,
                 polarization="V",
                 frequency_points_mhz=[3500],
@@ -573,7 +617,7 @@ class TestValidityReportWorkflow:
             db.close()
 
         # 生成有效性报告
-        report = client.get(
+        report = _scoped_get(
             "/api/v1/calibration/probe/validity/report",
             params={"probe_ids": ",".join(map(str, probe_ids))}
         )
@@ -607,7 +651,7 @@ class TestHistoryWorkflow:
 
         # 执行多次校准
         for i in range(3):
-            response = client.post(
+            response = _scoped_post(
                 "/api/v1/calibration/probe/amplitude/start",
                 json={
                     "probe_ids": [probe_id],
@@ -623,7 +667,7 @@ class TestHistoryWorkflow:
             assert response.status_code == 202
 
         # 查询历史记录
-        history = client.get(
+        history = _scoped_get(
             f"/api/v1/calibration/probe/amplitude/{probe_id}/history",
             params={"limit": 10}
         )
@@ -649,7 +693,7 @@ class TestComprehensiveDataQuery:
 
         # 创建所有类型的校准数据
         # 幅度校准
-        client.post(
+        _scoped_post(
             "/api/v1/calibration/probe/amplitude/start",
             json={
                 "probe_ids": [probe_id],
@@ -660,7 +704,7 @@ class TestComprehensiveDataQuery:
         )
 
         # 相位校准
-        client.post(
+        _scoped_post(
             "/api/v1/calibration/probe/phase/start",
             json={
                 "probe_ids": [probe_id],
@@ -672,7 +716,7 @@ class TestComprehensiveDataQuery:
         )
 
         # 极化校准
-        client.post(
+        _scoped_post(
             "/api/v1/calibration/probe/polarization/start",
             json={
                 "probe_ids": [probe_id],
@@ -683,7 +727,7 @@ class TestComprehensiveDataQuery:
         )
 
         # 方向图校准
-        client.post(
+        _scoped_post(
             "/api/v1/calibration/probe/pattern/start",
             json={
                 "probe_ids": [probe_id],
@@ -696,7 +740,7 @@ class TestComprehensiveDataQuery:
         )
 
         # 链路校准
-        client.post(
+        _scoped_post(
             "/api/v1/calibration/probe/link/start",
             json={
                 "calibration_type": "pre_test",
@@ -712,7 +756,7 @@ class TestComprehensiveDataQuery:
         )
 
         # 查询综合数据
-        full_data = client.get(f"/api/v1/calibration/probe/{probe_id}/data")
+        full_data = _scoped_get(f"/api/v1/calibration/probe/{probe_id}/data")
         assert full_data.status_code == 200
         data = full_data.json()
 
@@ -743,12 +787,12 @@ class TestEdgeCases:
 
     def test_calibration_with_all_probes(self):
         """测试所有探头的有效性报告"""
-        # 获取默认的 32 个探头的有效性报告
-        report = client.get("/api/v1/calibration/probe/validity/report")
+        # 默认全集由目标暗室 num_probes 决定。
+        report = _scoped_get("/api/v1/calibration/probe/validity/report")
         assert report.status_code == 200
         report_data = report.json()
 
-        assert report_data["total_probes"] == 32
+        assert report_data["total_probes"] == 64
         assert "valid_probes" in report_data
         assert "expired_probes" in report_data
         assert "expiring_soon_probes" in report_data
@@ -756,13 +800,13 @@ class TestEdgeCases:
     def test_invalid_probe_id_handling(self):
         """测试无效探头 ID 处理"""
         # 超出范围的探头 ID
-        response = client.get("/api/v1/calibration/probe/amplitude/100")
+        response = _scoped_get("/api/v1/calibration/probe/amplitude/100")
         assert response.status_code == 400
 
-        response = client.get("/api/v1/calibration/probe/validity/100")
+        response = _scoped_get("/api/v1/calibration/probe/validity/100")
         assert response.status_code == 400
 
-        response = client.get("/api/v1/calibration/probe/100/data")
+        response = _scoped_get("/api/v1/calibration/probe/100/data")
         assert response.status_code == 400
 
     def test_nonexistent_calibration_handling(self):
@@ -771,12 +815,12 @@ class TestEdgeCases:
         probe_id = 63
 
         # 获取有效性状态 (应该返回 unknown)
-        validity = client.get(f"/api/v1/calibration/probe/validity/{probe_id}")
+        validity = _scoped_get(f"/api/v1/calibration/probe/validity/{probe_id}")
         assert validity.status_code == 200
         assert validity.json()["overall_status"] == "unknown"
 
         # 获取综合数据 (应该返回空数据)
-        full_data = client.get(f"/api/v1/calibration/probe/{probe_id}/data")
+        full_data = _scoped_get(f"/api/v1/calibration/probe/{probe_id}/data")
         assert full_data.status_code == 200
         data = full_data.json()
         assert data["probe_id"] == probe_id

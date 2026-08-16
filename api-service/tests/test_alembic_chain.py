@@ -21,6 +21,8 @@ from __future__ import annotations
 import importlib
 import logging
 import pkgutil
+import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -68,8 +70,11 @@ _EXPECTED_COLUMNS: dict[str, list[str]] = {
     ],
     "probe_patterns": [
         "source", "probe_model", "probe_vendor", "probe_serial",
-        "imported_file_format", "coordinate_system",
+        "imported_file_format", "coordinate_system", "use_mock",
     ],
+    "probe_amplitude_calibrations": ["use_mock"],
+    "probe_phase_calibrations": ["use_mock"],
+    "probe_polarization_calibrations": ["use_mock"],
     "diagnostic_runs": ["result_extra"],
     "bootstrap_history": ["seeder_name", "seeder_version"],
 }
@@ -188,3 +193,42 @@ def test_idempotent_upgrade_already_at_head(tmp_path):
 
     engine = create_engine(url)
     _assert_chain_end_state(engine)
+
+
+def test_probe_provenance_migration_keeps_historical_rows_unknown(tmp_path):
+    """Adding use_mock must not backfill legacy rows as trusted real calibrations."""
+    db_path = tmp_path / "probe_provenance.db"
+    url = f"sqlite:///{db_path}"
+    cfg = _alembic_config(url)
+    engine = create_engine(url)
+
+    command.upgrade(cfg, "head")
+    command.downgrade(cfg, "d4e6f8a1b3c5")
+
+    calibration_id = uuid.uuid4()
+    now = datetime.utcnow()
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO probe_amplitude_calibrations (
+                id, probe_id, polarization, frequency_points_mhz,
+                tx_gain_dbi, rx_gain_dbi,
+                tx_gain_uncertainty_db, rx_gain_uncertainty_db,
+                calibrated_at, valid_until, status
+            ) VALUES (
+                :id, 1, 'V', '[3500]', '[5.0]', '[5.0]', '[0.2]', '[0.2]',
+                :calibrated_at, :valid_until, 'valid'
+            )
+        """), {
+            "id": calibration_id.hex,
+            "calibrated_at": now,
+            "valid_until": now + timedelta(days=30),
+        })
+
+    command.upgrade(cfg, "head")
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT use_mock FROM probe_amplitude_calibrations WHERE id = :id"),
+            {"id": calibration_id.hex},
+        ).first()
+    assert row is not None
+    assert row[0] is None

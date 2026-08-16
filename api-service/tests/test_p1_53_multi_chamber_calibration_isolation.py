@@ -19,6 +19,7 @@ from app.models.probe_calibration import (
     ProbePathLossCalibration,
     ProbePattern,
     ProbePhaseCalibration,
+    ProbePolarizationCalibration,
     RFChainCalibration,
 )
 from app.schemas.probe_calibration import (
@@ -28,7 +29,9 @@ from app.schemas.probe_calibration import (
     StartPolarizationCalibrationRequest,
 )
 from app.services.calibration_report_generator import CalibrationReportGenerator
+from app.services.pdf_generator import PDFGenerator
 from app.services.probe_calibration_service import CalibrationValidityService
+from app.services.probe_pattern.consumer import get_probe_gain_at_azimuth
 from app.services.probe_pattern.import_service import import_probe_pattern
 from app.services.probe_phase_calibration_import import import_phase_calibration_from_csv
 
@@ -58,6 +61,7 @@ def _amplitude(
 ) -> ProbeAmplitudeCalibration:
     record = ProbeAmplitudeCalibration(
         chamber_id=chamber_id,
+        use_mock=False,
         probe_id=probe_id,
         polarization="V",
         frequency_points_mhz=[3500.0],
@@ -242,6 +246,49 @@ def test_validity_uses_only_requested_chamber(session):
     assert result["amplitude"]["calibration_id"] == str(a.id)
 
 
+def test_invalidation_cannot_cross_chamber_and_link_remains_global(session):
+    chamber_a, chamber_b = uuid.uuid4(), uuid.uuid4()
+    now = datetime.utcnow()
+    foreign = _amplitude(
+        session,
+        chamber_id=chamber_b,
+        probe_id=1,
+        gain=9.0,
+        calibrated_at=now,
+    )
+    session.commit()
+
+    service = CalibrationValidityService()
+    denied = service.invalidate_calibration(
+        session,
+        calibration_type="amplitude",
+        calibration_id=str(foreign.id),
+        chamber_id=chamber_a,
+        reason="wrong chamber",
+    )
+
+    assert denied["success"] is False
+    session.refresh(foreign)
+    assert foreign.status == CalibrationStatus.VALID.value
+
+
+def test_validity_report_uses_chamber_probe_count_and_rejects_phantoms(session):
+    from fastapi import HTTPException
+    from app.api.probe_calibration import get_validity_report
+
+    chamber_id = uuid.uuid4()
+    chamber = _chamber(session, chamber_id, "16 Probe Chamber")
+    chamber.num_probes = 16
+    session.commit()
+
+    report = get_validity_report(chamber_id=chamber_id, probe_ids=None, db=session)
+    assert report.total_probes == 16
+
+    with pytest.raises(HTTPException) as exc:
+        get_validity_report(chamber_id=chamber_id, probe_ids="15,16", db=session)
+    assert exc.value.status_code == 400
+
+
 def test_probe_report_collector_excludes_other_chambers_and_legacy(session):
     chamber_a, chamber_b = uuid.uuid4(), uuid.uuid4()
     _chamber(session, chamber_a, "Chamber A")
@@ -345,3 +392,131 @@ def test_probe_report_scopes_existing_path_loss_and_rf_chain_families(session):
         own,
     ):
         assert [row["id"] for row in data["probe_calibration"][section]] == [str(expected.id)]
+
+
+def test_probe_report_keeps_mock_unknown_and_expired_out_of_formal_kpi(session):
+    chamber_id = uuid.uuid4()
+    _chamber(session, chamber_id, "Trust Chamber")
+    now = datetime.utcnow()
+    mock = _amplitude(
+        session,
+        chamber_id=chamber_id,
+        probe_id=1,
+        gain=88.0,
+        calibrated_at=now,
+    )
+    mock.use_mock = True
+    legacy = _amplitude(
+        session,
+        chamber_id=chamber_id,
+        probe_id=3,
+        gain=77.0,
+        calibrated_at=now - timedelta(days=10),
+    )
+    legacy.use_mock = None
+    expired = _amplitude(
+        session,
+        chamber_id=chamber_id,
+        probe_id=2,
+        gain=5.0,
+        calibrated_at=now - timedelta(days=60),
+    )
+    expired.valid_until = now - timedelta(days=1)
+    session.commit()
+
+    data = CalibrationReportGenerator(session)._collect_probe_data(chamber_id=chamber_id)
+    rows = data["probe_calibration"]["amplitude"]
+    by_probe = {row["probe_id"]: row for row in rows}
+
+    assert by_probe[1]["validation_pass"] is None
+    assert by_probe[2]["validation_pass"] is False
+    assert by_probe[3]["validation_pass"] is None
+    assert data["execution_summary"]["total_executions"] == 1
+    assert data["execution_summary"]["passed"] == 0
+
+    validity = CalibrationValidityService()
+    assert validity.check_validity(session, 1, chamber_id)["amplitude"] is None
+    expiring_ids = {
+        row["calibration_id"]
+        for row in validity.get_expiring_calibrations(session, chamber_id, days_threshold=90)
+    }
+    assert str(mock.id) not in expiring_ids
+    assert str(legacy.id) not in expiring_ids
+
+
+def test_polarization_report_uses_persisted_isolation_and_does_not_crash(session):
+    chamber_id = uuid.uuid4()
+    _chamber(session, chamber_id, "Polarization Chamber")
+    now = datetime.utcnow()
+    session.add(ProbePolarizationCalibration(
+        chamber_id=chamber_id,
+        use_mock=False,
+        probe_id=1,
+        probe_type="dual_linear",
+        v_to_h_isolation_db=24.0,
+        h_to_v_isolation_db=22.0,
+        calibrated_at=now,
+        valid_until=now + timedelta(days=30),
+        status=CalibrationStatus.VALID.value,
+    ))
+    session.commit()
+
+    data = CalibrationReportGenerator(session)._collect_probe_data(
+        chamber_id=chamber_id,
+        calibration_type="polarization",
+    )
+
+    assert data["probe_calibration"]["polarization"][0]["xpd_db"] == 22.0
+
+
+def test_pattern_consumer_rejects_mock_and_expired_rows(session):
+    chamber_id = uuid.uuid4()
+    now = datetime.utcnow()
+
+    def pattern(*, use_mock, valid_until, gain):
+        return ProbePattern(
+            chamber_id=chamber_id,
+            use_mock=use_mock,
+            source="simulated" if use_mock else "in_chamber_measured",
+            probe_id=0,
+            polarization="V",
+            frequency_mhz=3500.0,
+            azimuth_deg=[0.0],
+            elevation_deg=[90.0],
+            gain_pattern_dbi=[gain],
+            peak_gain_dbi=gain,
+            measured_at=now,
+            valid_until=valid_until,
+            status=CalibrationStatus.VALID.value,
+        )
+
+    session.add(pattern(use_mock=True, valid_until=now + timedelta(days=30), gain=99.0))
+    session.add(pattern(use_mock=False, valid_until=now - timedelta(days=1), gain=77.0))
+    session.commit()
+    assert get_probe_gain_at_azimuth(session, 1, 0, 3500, chamber_id=chamber_id) is None
+
+    session.add(pattern(use_mock=False, valid_until=now + timedelta(days=30), gain=5.5))
+    session.commit()
+    assert get_probe_gain_at_azimuth(session, 1, 0, 3500, chamber_id=chamber_id) == 5.5
+
+
+def test_probe_pdf_renders_every_family_counted_in_summary():
+    elements = PDFGenerator()._generate_calibration_probe_section({
+        "probe_calibration": {
+            "rf_chain": [{
+                "chain_type": "uplink", "frequency_mhz": 3500,
+                "validation_pass": True, "calibrated_at": "2026-08-16",
+            }],
+            "multi_freq_path_loss": [{
+                "probe_id": 1, "freq_start_mhz": 3400, "freq_stop_mhz": 3600,
+                "validation_pass": True, "calibrated_at": "2026-08-16",
+            }],
+        },
+    })
+    rendered = " ".join(
+        str(getattr(element, "text", ""))
+        for element in elements
+        if hasattr(element, "text")
+    )
+    assert "RF Chain Calibration" in rendered
+    assert "Multi-Frequency Path Loss" in rendered

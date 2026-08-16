@@ -289,6 +289,7 @@ def import_phase_calibration_from_csv(
     now = datetime.utcnow()
     cal = ProbePhaseCalibration(
         chamber_id=chamber_id,
+        use_mock=False,
         probe_id=probe_id,
         polarization=polarization,
         reference_probe_id=reference_probe_id,

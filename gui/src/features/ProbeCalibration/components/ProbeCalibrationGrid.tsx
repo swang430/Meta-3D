@@ -35,14 +35,14 @@ interface ProbeCalibrationGridProps {
   chamberId: string
   onProbeSelect?: (probeId: number) => void
   selectedProbeId?: number
-  probeCount?: number
+  probeCount: number
 }
 
 export function ProbeCalibrationGrid({
   chamberId,
   onProbeSelect,
   selectedProbeId,
-  probeCount = 32,
+  probeCount,
 }: ProbeCalibrationGridProps) {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [searchQuery, setSearchQuery] = useState('')

@@ -2371,6 +2371,7 @@ _P1_53_CHAMBER_SCOPE_INVENTORY = (
     ("api-service/app/api/probe_calibration.py", "get_expiring_calibrations"),
     ("api-service/app/api/probe_calibration.py", "get_expired_calibrations"),
     ("api-service/app/api/probe_calibration.py", "get_probe_validity"),
+    ("api-service/app/api/probe_calibration.py", "invalidate_calibration"),
     ("api-service/app/api/probe_calibration.py", "get_probe_calibration_data"),
     # Service writers/imports and formal consumers
     ("api-service/app/services/probe_calibration_service.py", "AmplitudeCalibrationService.execute_amplitude_calibration"),
@@ -2381,6 +2382,7 @@ _P1_53_CHAMBER_SCOPE_INVENTORY = (
     ("api-service/app/services/probe_calibration_service.py", "CalibrationValidityService.generate_validity_report"),
     ("api-service/app/services/probe_calibration_service.py", "CalibrationValidityService.get_expiring_calibrations"),
     ("api-service/app/services/probe_calibration_service.py", "CalibrationValidityService.get_expired_calibrations"),
+    ("api-service/app/services/probe_calibration_service.py", "CalibrationValidityService.invalidate_calibration"),
     ("api-service/app/services/probe_phase_calibration_import.py", "import_phase_calibration_from_csv"),
     ("api-service/app/services/probe_pattern/import_service.py", "import_probe_pattern"),
     ("api-service/app/services/probe_pattern/consumer.py", "_query_valid_pattern"),

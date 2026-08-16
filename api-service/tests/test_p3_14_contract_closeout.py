@@ -178,8 +178,8 @@ class TestLabProfileContract:
         assert "payload.lab_profile_id ?? null" in mock_server
         assert "setSelectedLabId(tpl.lab_profile_id ?? UNBOUND_LAB)" in create_modal
         assert "lab_profile_id:" in create_modal
-        assert "setSelectedLabId(data.lab_profile_id ?? UNBOUND_LAB)" in edit_modal
-        assert "lab_profile_id:" in edit_modal
+        assert "setSelectedLabId(binding ?? UNBOUND_LAB)" in edit_modal
+        assert "...buildLabProfileBindingPatch({" in edit_modal
 
     def test_create_modal_fails_closed_until_lab_profiles_are_known(self):
         """多 Lab 部署不能在实验室列表尚未返回或加载失败时抢先建未绑定用例。"""

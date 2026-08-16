@@ -75,7 +75,7 @@ def _require_chamber_probe_ids(
     invalid = sorted({probe_id for probe_id in probe_ids if probe_id < 0 or probe_id >= chamber.num_probes})
     if invalid:
         raise HTTPException(
-            status_code=422,
+            status_code=400,
             detail=f"Probe IDs {invalid} do not belong to chamber {chamber_id}",
         )
     return chamber
@@ -135,6 +135,7 @@ async def start_amplitude_calibration(
 
             calibration = ProbeAmplitudeCalibration(
                 chamber_id=request.chamber_id,
+                use_mock=True,
                 probe_id=probe_id,
                 polarization=pol.value,
                 frequency_points_mhz=freq_points,
@@ -172,14 +173,13 @@ def get_amplitude_calibration(
     获取探头的最新幅度校准数据
 
     Args:
-        probe_id: 探头 ID (0-63)
+        probe_id: 探头 ID（范围由目标暗室决定）
         polarization: 可选的极化类型过滤
 
     Returns:
         AmplitudeCalibrationResponse: 幅度校准数据
     """
-    if probe_id < 0 or probe_id > 63:
-        raise HTTPException(status_code=400, detail="probe_id must be between 0 and 63")
+    _require_chamber_probe_ids(db, chamber_id, [probe_id])
 
     query = db.query(ProbeAmplitudeCalibration).filter(
         ProbeAmplitudeCalibration.probe_id == probe_id,
@@ -212,14 +212,13 @@ def get_amplitude_calibration_history(
     获取探头的幅度校准历史记录
 
     Args:
-        probe_id: 探头 ID (0-63)
+        probe_id: 探头 ID（范围由目标暗室决定）
         limit: 返回记录数量 (默认 20, 最大 100)
 
     Returns:
         CalibrationHistoryResponse: 校准历史列表和趋势分析
     """
-    if probe_id < 0 or probe_id > 63:
-        raise HTTPException(status_code=400, detail="probe_id must be between 0 and 63")
+    _require_chamber_probe_ids(db, chamber_id, [probe_id])
 
     calibrations = db.query(ProbeAmplitudeCalibration).filter(
         ProbeAmplitudeCalibration.probe_id == probe_id,
@@ -332,6 +331,7 @@ async def start_phase_calibration(
 
             calibration = ProbePhaseCalibration(
                 chamber_id=request.chamber_id,
+                use_mock=True,
                 probe_id=probe_id,
                 polarization=pol.value,
                 reference_probe_id=request.reference_probe_id,
@@ -466,14 +466,13 @@ def get_phase_calibration(
     获取探头的最新相位校准数据
 
     Args:
-        probe_id: 探头 ID (0-63)
+        probe_id: 探头 ID（范围由目标暗室决定）
         polarization: 可选的极化类型过滤
 
     Returns:
         PhaseCalibrationResponse: 相位校准数据
     """
-    if probe_id < 0 or probe_id > 63:
-        raise HTTPException(status_code=400, detail="probe_id must be between 0 and 63")
+    _require_chamber_probe_ids(db, chamber_id, [probe_id])
 
     query = db.query(ProbePhaseCalibration).filter(
         ProbePhaseCalibration.probe_id == probe_id,
@@ -505,14 +504,13 @@ def get_phase_calibration_history(
     获取探头的相位校准历史记录
 
     Args:
-        probe_id: 探头 ID (0-63)
+        probe_id: 探头 ID（范围由目标暗室决定）
         limit: 返回记录数量
 
     Returns:
         CalibrationHistoryResponse: 校准历史列表
     """
-    if probe_id < 0 or probe_id > 63:
-        raise HTTPException(status_code=400, detail="probe_id must be between 0 and 63")
+    _require_chamber_probe_ids(db, chamber_id, [probe_id])
 
     calibrations = db.query(ProbePhaseCalibration).filter(
         ProbePhaseCalibration.probe_id == probe_id,
@@ -623,6 +621,7 @@ async def start_polarization_calibration(
 
             calibration = ProbePolarizationCalibration(
                 chamber_id=request.chamber_id,
+                use_mock=True,
                 probe_id=probe_id,
                 probe_type=request.probe_type.value,
                 v_to_h_isolation_db=avg_v_to_h,
@@ -651,6 +650,7 @@ async def start_polarization_calibration(
 
             calibration = ProbePolarizationCalibration(
                 chamber_id=request.chamber_id,
+                use_mock=True,
                 probe_id=probe_id,
                 probe_type=request.probe_type.value,
                 polarization_hand=hand,
@@ -687,13 +687,12 @@ def get_polarization_calibration(
     获取探头的最新极化校准数据
 
     Args:
-        probe_id: 探头 ID (0-63)
+        probe_id: 探头 ID（范围由目标暗室决定）
 
     Returns:
         PolarizationCalibrationResponse: 极化校准数据
     """
-    if probe_id < 0 or probe_id > 63:
-        raise HTTPException(status_code=400, detail="probe_id must be between 0 and 63")
+    _require_chamber_probe_ids(db, chamber_id, [probe_id])
 
     calibration = db.query(ProbePolarizationCalibration).filter(
         ProbePolarizationCalibration.probe_id == probe_id,
@@ -720,14 +719,13 @@ def get_polarization_calibration_history(
     获取探头的极化校准历史记录
 
     Args:
-        probe_id: 探头 ID (0-63)
+        probe_id: 探头 ID（范围由目标暗室决定）
         limit: 返回记录数量
 
     Returns:
         CalibrationHistoryResponse: 校准历史列表
     """
-    if probe_id < 0 or probe_id > 63:
-        raise HTTPException(status_code=400, detail="probe_id must be between 0 and 63")
+    _require_chamber_probe_ids(db, chamber_id, [probe_id])
 
     calibrations = db.query(ProbePolarizationCalibration).filter(
         ProbePolarizationCalibration.probe_id == probe_id,
@@ -953,6 +951,8 @@ async def start_pattern_calibration(
 
             calibration = ProbePattern(
                 chamber_id=request.chamber_id,
+                use_mock=True,
+                source="simulated",
                 probe_id=probe_id,
                 polarization=polarization.value,
                 frequency_mhz=request.frequency_mhz,
@@ -1001,14 +1001,13 @@ def get_pattern_calibration(
     获取探头的方向图校准数据
 
     Args:
-        probe_id: 探头 ID (0-63)
+        probe_id: 探头 ID（范围由目标暗室决定）
         frequency_mhz: 可选的频率筛选
 
     Returns:
         List[PatternCalibrationResponse]: 方向图校准数据列表
     """
-    if probe_id < 0 or probe_id > 63:
-        raise HTTPException(status_code=400, detail="probe_id must be between 0 and 63")
+    _require_chamber_probe_ids(db, chamber_id, [probe_id])
 
     query = db.query(ProbePattern).filter(
         ProbePattern.probe_id == probe_id,
@@ -1241,7 +1240,7 @@ validity_service = CalibrationValidityService(expiring_threshold_days=7)
 @router.get("/validity/report", response_model=CalibrationValidityReport)
 def get_validity_report(
     chamber_id: UUID = Query(..., description="暗室配置 ID"),
-    probe_ids: Optional[str] = Query(None, description="探头 ID 列表 (逗号分隔)，为空表示检查前 32 个探头"),
+    probe_ids: Optional[str] = Query(None, description="探头 ID 列表 (逗号分隔)，为空表示检查该暗室全部探头"),
     db: Session = Depends(get_db)
 ):
     """
@@ -1255,18 +1254,19 @@ def get_validity_report(
     - 即将过期的校准列表
     - 校准建议 (优先级: critical > high > medium)
     """
+    chamber = db.get(ChamberConfiguration, chamber_id)
+    if chamber is None:
+        raise HTTPException(status_code=404, detail="Chamber configuration not found")
+
     # 解析探头 ID
     if probe_ids:
         try:
             ids = [int(x.strip()) for x in probe_ids.split(",")]
-            for pid in ids:
-                if pid < 0 or pid > 63:
-                    raise HTTPException(status_code=400, detail=f"Invalid probe_id: {pid}")
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid probe_ids format")
+        _require_chamber_probe_ids(db, chamber_id, ids)
     else:
-        # 默认检查前 32 个探头
-        ids = list(range(32))
+        ids = list(range(chamber.num_probes))
 
     report = validity_service.generate_validity_report(db, chamber_id, probe_ids=ids)
 
@@ -1372,8 +1372,7 @@ def get_probe_validity(
     - expired: 已过期
     - unknown: 无校准数据
     """
-    if probe_id < 0 or probe_id > 63:
-        raise HTTPException(status_code=400, detail="probe_id must be between 0 and 63")
+    _require_chamber_probe_ids(db, chamber_id, [probe_id])
 
     status = validity_service.check_validity(db, probe_id, chamber_id)
 
@@ -1394,6 +1393,10 @@ def invalidate_calibration(
     calibration_type: str,
     calibration_id: UUID,
     request: InvalidateCalibrationRequest,
+    chamber_id: Optional[UUID] = Query(
+        None,
+        description="探头校准所属暗室 ID；全局 LinkCalibration 不需要",
+    ),
     db: Session = Depends(get_db)
 ):
     """
@@ -1420,11 +1423,17 @@ def invalidate_calibration(
             status_code=400,
             detail=f"Invalid calibration_type. Must be one of: {', '.join(valid_types)}"
         )
+    if calibration_type != "link" and chamber_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail="chamber_id is required for probe calibration invalidation",
+        )
 
     result = validity_service.invalidate_calibration(
         db=db,
         calibration_type=calibration_type,
         calibration_id=str(calibration_id),
+        chamber_id=chamber_id,
         reason=request.reason
     )
 
@@ -1455,8 +1464,7 @@ def get_probe_calibration_data(
     - link_calibration: 最新链路校准数据
     - validity_status: 综合有效性状态
     """
-    if probe_id < 0 or probe_id > 63:
-        raise HTTPException(status_code=400, detail="probe_id must be between 0 and 63")
+    _require_chamber_probe_ids(db, chamber_id, [probe_id])
 
     # 获取幅度校准
     amplitude = db.query(ProbeAmplitudeCalibration).filter(

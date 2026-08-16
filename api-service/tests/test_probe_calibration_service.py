@@ -442,6 +442,7 @@ class TestCalibrationValidityService:
         # 创建有效的校准记录
         cal = ProbeAmplitudeCalibration(
             chamber_id=TEST_CHAMBER_ID,
+            use_mock=False,
             probe_id=20,
             polarization="V",
             frequency_points_mhz=[3500],
@@ -1864,6 +1865,7 @@ class TestCalibrationValidityService:
         """测试有幅度校准数据时的有效性检查"""
         cal = ProbeAmplitudeCalibration(
             chamber_id=TEST_CHAMBER_ID,
+            use_mock=False,
             probe_id=30,
             polarization="V",
             frequency_points_mhz=[3500],
@@ -1897,6 +1899,7 @@ class TestCalibrationValidityService:
         # 创建幅度校准
         amp_cal = ProbeAmplitudeCalibration(
             chamber_id=TEST_CHAMBER_ID,
+            use_mock=False,
             probe_id=probe_id,
             polarization="V",
             frequency_points_mhz=[3500],
@@ -1914,6 +1917,7 @@ class TestCalibrationValidityService:
         # 创建相位校准
         phase_cal = ProbePhaseCalibration(
             chamber_id=TEST_CHAMBER_ID,
+            use_mock=False,
             probe_id=probe_id,
             polarization="V",
             reference_probe_id=0,
@@ -1931,6 +1935,7 @@ class TestCalibrationValidityService:
         # 创建极化校准
         pol_cal = ProbePolarizationCalibration(
             chamber_id=TEST_CHAMBER_ID,
+            use_mock=False,
             probe_id=probe_id,
             probe_type="dual_linear",
             v_to_h_isolation_db=28.0,
@@ -1946,6 +1951,7 @@ class TestCalibrationValidityService:
         # 创建方向图校准
         pattern_cal = ProbePattern(
             chamber_id=TEST_CHAMBER_ID,
+            use_mock=False,
             probe_id=probe_id,
             polarization="V",
             frequency_mhz=3500,
@@ -1989,6 +1995,7 @@ class TestCalibrationValidityService:
         """测试过期校准的有效性检查"""
         cal = ProbeAmplitudeCalibration(
             chamber_id=TEST_CHAMBER_ID,
+            use_mock=False,
             probe_id=32,
             polarization="V",
             frequency_points_mhz=[3500],
@@ -2048,6 +2055,7 @@ class TestCalibrationValidityService:
             db=db_session,
             calibration_type="amplitude",
             calibration_id=str(cal.id),
+            chamber_id=TEST_CHAMBER_ID,
             reason="Test invalidation"
         )
 
@@ -2066,6 +2074,7 @@ class TestCalibrationValidityService:
             db=db_session,
             calibration_type="amplitude",
             calibration_id="00000000-0000-0000-0000-000000000001",
+            chamber_id=TEST_CHAMBER_ID,
             reason="Test"
         )
 
@@ -2079,6 +2088,7 @@ class TestCalibrationValidityService:
             db=db_session,
             calibration_type="invalid_type",
             calibration_id="00000000-0000-0000-0000-000000000001",
+            chamber_id=TEST_CHAMBER_ID,
             reason="Test"
         )
 
@@ -2092,6 +2102,7 @@ class TestCalibrationValidityService:
             db=db_session,
             calibration_type="amplitude",
             calibration_id="invalid-uuid",
+            chamber_id=TEST_CHAMBER_ID,
             reason="Test"
         )
 
@@ -2103,6 +2114,7 @@ class TestCalibrationValidityService:
         # 创建一个即将过期的校准
         cal = ProbeAmplitudeCalibration(
             chamber_id=TEST_CHAMBER_ID,
+            use_mock=False,
             probe_id=34,
             polarization="V",
             frequency_points_mhz=[3500],
@@ -2151,6 +2163,7 @@ class TestCalibrationValidityService:
         # 创建一个已过期的校准
         cal = ProbeAmplitudeCalibration(
             chamber_id=TEST_CHAMBER_ID,
+            use_mock=False,
             probe_id=35,
             polarization="V",
             frequency_points_mhz=[3500],

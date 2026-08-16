@@ -148,6 +148,7 @@ def import_probe_pattern(
     now = datetime.utcnow()
     pattern = ProbePattern(
         chamber_id=chamber_id,
+        use_mock=False,
         probe_id=probe_id,
         polarization=polarization,
         frequency_mhz=frequency_mhz,

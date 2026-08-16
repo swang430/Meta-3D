@@ -24,9 +24,10 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
 2. pattern 的列表读取
 3. `GET /calibration/probe/{probe_id}/data`
 4. validity report / expiring / expired / single-probe status
-5. `CalibrationValidityService` 的 latest、报告和过期清单
-6. `probe_pattern.consumer` 的正式 MIMO/TRP 消费
-7. `CalibrationReportGenerator` 的 probe/comprehensive PDF 数据收集
+5. 四类探头校准按 UUID 作废；LinkCalibration 保持全局作废语义
+6. `CalibrationValidityService` 的 latest、报告和过期清单
+7. `probe_pattern.consumer` 的正式 MIMO/TRP 消费
+8. `CalibrationReportGenerator` 的 probe/comprehensive PDF 数据收集与 PDF 家族表
 
 ### 前端消费
 
@@ -56,6 +57,8 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
 
 - amplitude / phase / polarization / pattern 已有 nullable `chamber_id`，本片不自动猜测或回填 legacy NULL。
 - 新写入一律要求非空暗室；历史 NULL 仅保留审计，不进入正式 latest、有效性或报告。
+- 四张表新增 nullable `use_mock`：`False` 表示本轮真实测量或厂商文件导入，`True` 表示
+  mock/random 流程演练，`NULL` 表示历史来源未知。迁移不回填，避免把旧行伪装成真实。
 - `probe_calibration_validity` 当前没有生产写入/读取方，正式有效性由 `CalibrationValidityService` 现算。本片不为死表新增复合主键机制；改为用规则门锁住生产代码不得把它当权威源。将来若恢复物化汇总，须另做 `(probe_id, chamber_id)` 迁移。
 - 不加破坏性外键或清理脚本；P1-28 的 orphan 诊断与删除门继续负责存量完整性。
 
@@ -67,12 +70,18 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
    以及已经自带暗室维度的 path-loss / RF-chain / multi-frequency 记录都只接受 exact chamber。
    报告 payload 每行携带 chamber ID，PDF 标题或摘要明确暗室。
 4. replace-existing 只作废相同 chamber、probe、polarization/frequency 的旧行，绝不触碰其他暗室。
-5. lower-level service 的正式消费必须传 chamber；若调用方没有 chamber，不得静默退回全局 probe 编号查询。
-6. `LinkCalibration` 仍按现有全局语义展示，不把它伪装成 per-chamber；本片只隔离带 `chamber_id` 的四类探头记录。
+5. invalidate 对四类探头校准要求 `chamber_id` 并按 `(id, chamber_id)` 修改；
+   `LinkCalibration` 仍按现有全局语义作废，不伪造暗室归属。
+6. lower-level service 的正式消费必须传 chamber；若调用方没有 chamber，不得静默退回全局 probe 编号查询。
+7. 正式有效性、报告统计和 pattern 消费只接受 `use_mock is False`；mock 与历史 NULL
+   可在审计读取中展示，但判词保持 UNVERIFIED、不得进入正式分母或 MIMO 增益补偿。
+8. 报告有效性同时检查 `valid_until`；过期记录不得仅凭持久化 `status=valid` 显示 PASS。
+9. PDF 必须渲染 collector 纳入摘要的全部家族；RF-chain 与 multi-frequency 不得只计数不展示。
 
 ## 前端行为
 
 - Probe Calibration 页面在当前暗室未解析、冲突或缺失时 fail-closed，显示可操作错误，不发无作用域请求。
+- 探头网格数量来自当前 `ChamberConfiguration.num_probes`，不得默认 32 或生成不存在的探头。
 - 暗室 ID 进入所有 probe calibration query key；切换暗室会产生新缓存域。
 - 启动和导入请求使用同一个已解析暗室 ID，不允许表单另藏一个自由文本暗室。
 - 页面标题/摘要显示当前暗室名称，避免操作员把 B 暗室结果当作 A 暗室。
@@ -81,7 +90,7 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
 
 - 缺 `chamber_id`：FastAPI 422，任何写入/报告生成前失败。
 - 暗室不存在：404。
-- 探头编号不在该暗室 `0 <= probe_id < num_probes` 范围：422。
+- 探头编号不在该暗室 `0 <= probe_id < num_probes` 范围：400；请求体自身结构错误仍由 FastAPI 返回 422。
 - 该暗室只有 legacy NULL 或其他暗室记录：latest 返回 404、有效性返回 unknown，不回退。
 - 报告请求缺暗室或找不到该暗室记录：生成 UNKNOWN/空作用域摘要或明确失败；不得混入其他暗室记录来凑数据。
 
@@ -95,6 +104,8 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
    multi-frequency 家族）和正式统计仅含请求暗室。
 6. GUI 请求与 React Query key 均含当前暗室；无当前暗室时不发请求。
 7. 完整 probe calibration 回归、P1-28 真值源回归、报告回归、rule gates、GUI build、compileall 与 diff-check 通过。
+8. 跨暗室作废被拒绝；非 32 探头暗室无 phantom probe；mock/legacy/expired 不得正式 PASS；
+   极化报告读取持久化隔离字段，RF-chain/multi-frequency 在 PDF 可审计。
 
 ## 非目标
 

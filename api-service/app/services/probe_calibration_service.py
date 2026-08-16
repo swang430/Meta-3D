@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 import logging
 
+from app.models.chamber import ChamberConfiguration
 from app.models.probe_calibration import (
     ProbeAmplitudeCalibration,
     ProbePhaseCalibration,
@@ -321,6 +322,7 @@ class AmplitudeCalibrationService:
                     calibration = ProbeAmplitudeCalibration(
                         probe_id=probe_id,
                         chamber_id=chamber_id,  # 校准 chamber-scoping; None=未标注/legacy
+                        use_mock=use_mock,
                         polarization=pol.value,
                         frequency_points_mhz=freq_points,
                         tx_gain_dbi=tx_gains,
@@ -737,6 +739,7 @@ class PhaseCalibrationService:
                     calibration = ProbePhaseCalibration(
                         probe_id=probe_id,
                         chamber_id=chamber_id,  # 校准 chamber-scoping; None=未标注/legacy
+                        use_mock=use_mock,
                         polarization=pol.value,
                         reference_probe_id=reference_probe_id,
                         frequency_points_mhz=freq_points,
@@ -1105,6 +1108,7 @@ class PolarizationCalibrationService:
                     calibration = ProbePolarizationCalibration(
                         probe_id=probe_id,
                         chamber_id=chamber_id,  # 校准 chamber-scoping; None=未标注/legacy
+                        use_mock=use_mock,
                         probe_type=probe_type,
                         v_to_h_isolation_db=avg_v_to_h,
                         h_to_v_isolation_db=avg_h_to_v,
@@ -1134,6 +1138,7 @@ class PolarizationCalibrationService:
                     calibration = ProbePolarizationCalibration(
                         probe_id=probe_id,
                         chamber_id=chamber_id,  # 校准 chamber-scoping; None=未标注/legacy
+                        use_mock=use_mock,
                         probe_type=probe_type,
                         polarization_hand=hand,
                         axial_ratio_db=avg_ar,
@@ -1621,6 +1626,8 @@ class PatternCalibrationService:
                     calibration = ProbePattern(
                         probe_id=probe_id,
                         chamber_id=chamber_id,  # 校准 chamber-scoping; None=未标注/legacy
+                        use_mock=use_mock,
+                        source="simulated" if use_mock else "in_chamber_measured",
                         polarization=polarization.value if hasattr(polarization, 'value') else str(polarization),
                         frequency_mhz=frequency_mhz,
                         azimuth_deg=azimuth_deg_native,
@@ -2285,7 +2292,8 @@ class CalibrationValidityService:
         amplitude = db.query(ProbeAmplitudeCalibration).filter(
             ProbeAmplitudeCalibration.probe_id == probe_id,
             ProbeAmplitudeCalibration.chamber_id == chamber_id,
-            ProbeAmplitudeCalibration.status != CalibrationStatus.INVALIDATED.value
+            ProbeAmplitudeCalibration.status != CalibrationStatus.INVALIDATED.value,
+            ProbeAmplitudeCalibration.use_mock.is_(False),
         ).order_by(desc(ProbeAmplitudeCalibration.calibrated_at)).first()
 
         if amplitude:
@@ -2295,7 +2303,8 @@ class CalibrationValidityService:
         phase = db.query(ProbePhaseCalibration).filter(
             ProbePhaseCalibration.probe_id == probe_id,
             ProbePhaseCalibration.chamber_id == chamber_id,
-            ProbePhaseCalibration.status != CalibrationStatus.INVALIDATED.value
+            ProbePhaseCalibration.status != CalibrationStatus.INVALIDATED.value,
+            ProbePhaseCalibration.use_mock.is_(False),
         ).order_by(desc(ProbePhaseCalibration.calibrated_at)).first()
 
         if phase:
@@ -2305,7 +2314,8 @@ class CalibrationValidityService:
         polarization = db.query(ProbePolarizationCalibration).filter(
             ProbePolarizationCalibration.probe_id == probe_id,
             ProbePolarizationCalibration.chamber_id == chamber_id,
-            ProbePolarizationCalibration.status != CalibrationStatus.INVALIDATED.value
+            ProbePolarizationCalibration.status != CalibrationStatus.INVALIDATED.value,
+            ProbePolarizationCalibration.use_mock.is_(False),
         ).order_by(desc(ProbePolarizationCalibration.calibrated_at)).first()
 
         if polarization:
@@ -2315,7 +2325,8 @@ class CalibrationValidityService:
         pattern = db.query(ProbePattern).filter(
             ProbePattern.probe_id == probe_id,
             ProbePattern.chamber_id == chamber_id,
-            ProbePattern.status != CalibrationStatus.INVALIDATED.value
+            ProbePattern.status != CalibrationStatus.INVALIDATED.value,
+            ProbePattern.use_mock.is_(False),
         ).order_by(desc(ProbePattern.measured_at)).first()
 
         if pattern:
@@ -2417,7 +2428,10 @@ class CalibrationValidityService:
             有效性报告
         """
         if probe_ids is None:
-            probe_ids = list(range(PROBE_ID_MIN, PROBE_ID_MAX + 1))
+            chamber = db.get(ChamberConfiguration, chamber_id)
+            if chamber is None:
+                raise ValueError(f"Chamber configuration {chamber_id} not found")
+            probe_ids = list(range(chamber.num_probes))
 
         total_probes = len(probe_ids)
         valid_probes = 0
@@ -2501,6 +2515,7 @@ class CalibrationValidityService:
         db: Session,
         calibration_type: str,
         calibration_id: str,
+        chamber_id: Optional[UUID],
         reason: str
     ) -> Dict[str, Any]:
         """
@@ -2541,7 +2556,15 @@ class CalibrationValidityService:
                 "message": f"Invalid calibration ID format: {calibration_id}"
             }
 
-        calibration = db.query(model).filter(model.id == cal_uuid).first()
+        query = db.query(model).filter(model.id == cal_uuid)
+        if calibration_type != "link":
+            if chamber_id is None:
+                return {
+                    "success": False,
+                    "message": "chamber_id is required for probe calibration invalidation",
+                }
+            query = query.filter(model.chamber_id == chamber_id)
+        calibration = query.first()
 
         if not calibration:
             return {
@@ -2609,6 +2632,7 @@ class CalibrationValidityService:
             # 查询即将过期的校准 (在有效期内但即将过期)
             query = db.query(model).filter(
                 model.chamber_id == chamber_id,
+                model.use_mock.is_(False),
                 getattr(model, valid_until_field) > now,
                 getattr(model, valid_until_field) <= expiring_threshold,
                 model.status != CalibrationStatus.INVALIDATED.value
@@ -2682,6 +2706,7 @@ class CalibrationValidityService:
             # 查询已过期但未作废的校准
             query = db.query(model).filter(
                 model.chamber_id == chamber_id,
+                model.use_mock.is_(False),
                 getattr(model, valid_until_field) < now,
                 model.status != CalibrationStatus.INVALIDATED.value
             ).order_by(getattr(model, valid_until_field))

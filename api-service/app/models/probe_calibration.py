@@ -63,11 +63,12 @@ class ProbeAmplitudeCalibration(Base):
     __tablename__ = "probe_amplitude_calibrations"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    probe_id = Column(Integer, nullable=False, index=True, comment="探头 ID (0-63)")
+    probe_id = Column(Integer, nullable=False, index=True, comment="探头 ID（范围由关联暗室 num_probes 决定）")
     # 校准 chamber-scoping foundation: probe_id 在多暗室下不再全局唯一 (CAICT-FS 与
     # Type-C 各有 probe 1..N), 故按 chamber 限定校准记录, 避免跨暗室取错数据。
     # nullable 仅用于保留历史记录；正式读写只接受显式且完全匹配的 chamber_id。
     chamber_id = Column(UUID(as_uuid=True), nullable=True, index=True, comment="关联暗室配置 ID (校准 chamber-scoping; NULL=未标注/legacy)")
+    use_mock = Column(Boolean, nullable=True, comment="False=真实校准；True=模拟；NULL=历史来源未知")
     polarization = Column(String(10), nullable=False, comment="极化类型: V, H, LHCP, RHCP")
 
     # 频率-增益数据 (JSONB 数组)
@@ -138,9 +139,10 @@ class ProbePhaseCalibration(Base):
     __tablename__ = "probe_phase_calibrations"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    probe_id = Column(Integer, nullable=False, index=True, comment="探头 ID (0-63)")
+    probe_id = Column(Integer, nullable=False, index=True, comment="探头 ID（范围由关联暗室 num_probes 决定）")
     # 校准 chamber-scoping foundation, 见 ProbeAmplitudeCalibration.chamber_id 说明。
     chamber_id = Column(UUID(as_uuid=True), nullable=True, index=True, comment="关联暗室配置 ID (校准 chamber-scoping; NULL=未标注/legacy)")
+    use_mock = Column(Boolean, nullable=True, comment="False=真实校准；True=模拟；NULL=历史来源未知")
     polarization = Column(String(10), nullable=False, comment="极化类型")
     reference_probe_id = Column(
         Integer, nullable=False, default=0,
@@ -202,6 +204,7 @@ class ProbePolarizationCalibration(Base):
     probe_id = Column(Integer, nullable=False, index=True)
     # 校准 chamber-scoping foundation, 见 ProbeAmplitudeCalibration.chamber_id 说明。
     chamber_id = Column(UUID(as_uuid=True), nullable=True, index=True, comment="关联暗室配置 ID (校准 chamber-scoping; NULL=未标注/legacy)")
+    use_mock = Column(Boolean, nullable=True, comment="False=真实校准；True=模拟；NULL=历史来源未知")
     probe_type = Column(
         String(50), nullable=False,
         comment="探头类型: dual_linear, dual_slant, circular"
@@ -248,6 +251,7 @@ class ProbePattern(Base):
         典型 12-24 个月有效期, 过期重新向厂家索取
       - source="in_chamber_measured": 偶发, 实验室转台扫场实测
         损坏后重验证 / 顶级认证场景独立验证 / 研究用
+      - source="simulated": 流程演练数据，仅供审计展示，不得进入正式消费/判定
 
     有效期：12 个月
     数据量：典型 72×36 = 2592 个测量点
@@ -259,6 +263,7 @@ class ProbePattern(Base):
     # 校准 chamber-scoping foundation (测量路径活跃消费方: probe_pattern.consumer):
     # consumer 正式查询只接受 exact chamber，不回退 NULL/legacy。见 chamber_id 综述。
     chamber_id = Column(UUID(as_uuid=True), nullable=True, index=True, comment="关联暗室配置 ID (校准 chamber-scoping; NULL=未标注/legacy)")
+    use_mock = Column(Boolean, nullable=True, comment="False=真实/厂商数据；True=模拟；NULL=历史来源未知")
     polarization = Column(String(10), nullable=False)
     frequency_mhz = Column(Float, nullable=False, index=True, comment="测量频率 (MHz)")
 
@@ -268,7 +273,7 @@ class ProbePattern(Base):
         nullable=False,
         default="in_chamber_measured",
         index=True,
-        comment="数据来源: 'vendor_datasheet' | 'in_chamber_measured'",
+        comment="数据来源: 'vendor_datasheet' | 'in_chamber_measured' | 'simulated'",
     )
     probe_model = Column(String(100), comment="探头型号 e.g. 'SGA-3500'")
     probe_vendor = Column(String(100), comment="探头厂商 e.g. 'MVG' / 'Satimo' / 'Keysight'")

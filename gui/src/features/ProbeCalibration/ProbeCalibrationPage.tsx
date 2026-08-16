@@ -31,9 +31,10 @@ interface ProbeCalibrationPageProps {
   defaultTab?: 'dashboard' | 'probes'
   chamberId: string
   chamberName?: string
+  probeCount: number
 }
 
-export function ProbeCalibrationPage({ defaultTab = 'dashboard', chamberId, chamberName }: ProbeCalibrationPageProps) {
+export function ProbeCalibrationPage({ defaultTab = 'dashboard', chamberId, chamberName, probeCount }: ProbeCalibrationPageProps) {
   const [activeTab, setActiveTab] = useState<string | null>(defaultTab)
   const [selectedProbeId, setSelectedProbeId] = useState<number | null>(null)
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
@@ -96,7 +97,7 @@ export function ProbeCalibrationPage({ defaultTab = 'dashboard', chamberId, cham
               chamberId={chamberId}
               onProbeSelect={handleProbeSelect}
               selectedProbeId={selectedProbeId ?? undefined}
-              probeCount={32}
+              probeCount={probeCount}
             />
           </Tabs.Panel>
 

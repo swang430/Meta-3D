@@ -153,7 +153,7 @@ class TestAmplitudeCalibrationStart:
                 "calibrated_by": "Test Engineer"
             }
         )
-        assert response.status_code == 422  # Validation error
+        assert response.status_code == 400  # 由目标暗室 num_probes 判定
 
     def test_start_amplitude_calibration_empty_probe_list(self):
         """测试空探头列表"""
@@ -200,7 +200,7 @@ class TestAmplitudeCalibrationGet:
         """测试无效探头 ID"""
         response = client.get(f"/api/v1/calibration/probe/amplitude/100?chamber_id={TEST_CHAMBER_ID}")
         assert response.status_code == 400
-        assert "probe_id must be between 0 and 63" in response.json()["detail"]
+        assert "do not belong to chamber" in response.json()["detail"]
 
     def test_get_amplitude_calibration_with_polarization_filter(self, sample_amplitude_calibration):
         """测试带极化过滤的获取"""
@@ -668,10 +668,17 @@ class TestValidityManagement:
     def test_invalidate_calibration_not_found(self):
         """测试作废不存在的校准"""
         response = client.post(
-            "/api/v1/calibration/probe/invalidate/amplitude/00000000-0000-0000-0000-000000000001",
+            f"/api/v1/calibration/probe/invalidate/amplitude/00000000-0000-0000-0000-000000000001?chamber_id={TEST_CHAMBER_ID}",
             json={"reason": "Test invalidation reason"}
         )
         assert response.status_code == 404
+
+    def test_invalidate_probe_calibration_requires_chamber(self):
+        response = client.post(
+            "/api/v1/calibration/probe/invalidate/amplitude/00000000-0000-0000-0000-000000000001",
+            json={"reason": "Test invalidation reason"},
+        )
+        assert response.status_code == 422
 
     def test_get_probe_calibration_data(self):
         """测试获取探头综合校准数据"""

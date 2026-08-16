@@ -19,6 +19,7 @@ is good enough.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
@@ -36,14 +37,16 @@ def _query_valid_pattern(
     polarization: str,
     frequency_mhz: float,
     freq_tolerance_pct: float = 5.0,
-    chamber_id: Optional[UUID] = None,
+    *,
+    chamber_id: UUID,
 ) -> Optional[ProbePattern]:
     """Most-recent VALID ProbePattern matching probe_id+pol within ±5% freq.
 
-    probe_id 在多暗室下不再全局唯一。给定 chamber_id 时只返回显式属于该暗室的
-    方向图；legacy NULL 与其它暗室记录都不能进入正式测量。
-    chamber_id 为 None 时维持历史行为 (仅按 probe_id+pol+freq 取最新)。
+    probe_id 在多暗室下不再全局唯一。只返回显式属于 chamber_id 的方向图；
+    legacy NULL 与其它暗室记录都不能进入正式测量。
     """
+    if chamber_id is None:
+        raise ValueError("chamber_id is required for formal ProbePattern consumption")
     f_min = frequency_mhz * (1.0 - freq_tolerance_pct / 100.0)
     f_max = frequency_mhz * (1.0 + freq_tolerance_pct / 100.0)
 
@@ -54,10 +57,9 @@ def _query_valid_pattern(
             ProbePattern.frequency_mhz >= f_min,
             ProbePattern.frequency_mhz <= f_max,
             ProbePattern.status == CalibrationStatus.VALID.value,
+            ProbePattern.use_mock.is_(False),
+            ProbePattern.valid_until > datetime.utcnow(),
         )
-
-    if chamber_id is None:
-        return _base().order_by(desc(ProbePattern.measured_at)).first()
 
     exact = (
         _base()
@@ -87,7 +89,8 @@ def get_probe_gain_at_azimuth(
     azimuth_deg: float,
     frequency_mhz: float,
     polarization: str = "V",
-    chamber_id: Optional[UUID] = None,
+    *,
+    chamber_id: UUID,
 ) -> Optional[float]:
     """Return peak gain (dBi) of the probe closest to `azimuth_deg`.
 
@@ -95,7 +98,7 @@ def get_probe_gain_at_azimuth(
     gain_pattern_dbi at the actual angle offset, but for canonical 4-azimuth
     tests where each azimuth aligns with a probe, peak gain is appropriate.
 
-    chamber_id: 见 _query_valid_pattern — 限定取该暗室 (或 legacy) 的方向图。
+    chamber_id: 见 _query_valid_pattern — 只取该暗室的显式可信方向图。
 
     Returns None if no valid pattern exists for the resolved probe — caller
     should fall back to nominal gain or synthesize.
@@ -116,7 +119,8 @@ def estimate_quiet_zone_ripple_db(
     num_probes: int,
     frequency_mhz: float,
     polarization: str = "V",
-    chamber_id: Optional[UUID] = None,
+    *,
+    chamber_id: UUID,
 ) -> Optional[float]:
     """Estimate QZ ripple from cross-probe peak-gain spread.
 

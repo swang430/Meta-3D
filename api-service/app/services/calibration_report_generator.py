@@ -91,6 +91,25 @@ def _path_loss_validation_pass(
     )
 
 
+def _probe_validation_pass(calibration: Any) -> Optional[bool]:
+    """Only explicit-real, unexpired probe calibration can receive a verdict."""
+    if getattr(calibration, "use_mock", None) is not False:
+        return None
+    return bool(
+        calibration.status == "valid"
+        and calibration.valid_until
+        and calibration.valid_until > datetime.utcnow()
+    )
+
+
+def _active_validation_pass(calibration: Any) -> bool:
+    return bool(
+        calibration.status == "valid"
+        and calibration.valid_until
+        and calibration.valid_until > datetime.utcnow()
+    )
+
+
 class CalibrationReportGenerator:
     """Service for generating calibration reports"""
 
@@ -514,16 +533,18 @@ class CalibrationReportGenerator:
 
             amplitude_data = []
             for cal in calibrations:
-                total += 1
-                is_valid = cal.status == 'valid'
-                if is_valid:
-                    passed += 1
+                is_valid = _probe_validation_pass(cal)
+                if is_valid is not None:
+                    total += 1
+                    if is_valid:
+                        passed += 1
                 amplitude_data.append({
                     'id': str(cal.id),
                     'chamber_id': str(cal.chamber_id),
                     'probe_id': cal.probe_id,
                     'polarization': cal.polarization,
                     'validation_pass': is_valid,
+                    'use_mock': cal.use_mock,
                     'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                     'calibrated_by': cal.calibrated_by,
                     'frequency_points': cal.frequency_points_mhz,
@@ -543,10 +564,11 @@ class CalibrationReportGenerator:
 
             phase_data = []
             for cal in calibrations:
-                total += 1
-                is_valid = cal.status == 'valid'
-                if is_valid:
-                    passed += 1
+                is_valid = _probe_validation_pass(cal)
+                if is_valid is not None:
+                    total += 1
+                    if is_valid:
+                        passed += 1
                 phase_data.append({
                     'id': str(cal.id),
                     'chamber_id': str(cal.chamber_id),
@@ -554,6 +576,7 @@ class CalibrationReportGenerator:
                     'reference_probe_id': cal.reference_probe_id,
                     'polarization': cal.polarization,
                     'validation_pass': is_valid,
+                    'use_mock': cal.use_mock,
                     'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                     'calibrated_by': cal.calibrated_by,
                     'phase_offset_deg': cal.phase_offset_deg,
@@ -572,19 +595,27 @@ class CalibrationReportGenerator:
 
             polarization_data = []
             for cal in calibrations:
-                total += 1
-                is_valid = cal.status == 'valid'
-                if is_valid:
-                    passed += 1
+                is_valid = _probe_validation_pass(cal)
+                if is_valid is not None:
+                    total += 1
+                    if is_valid:
+                        passed += 1
+                isolation_values = [
+                    value for value in (
+                        cal.v_to_h_isolation_db,
+                        cal.h_to_v_isolation_db,
+                    ) if value is not None
+                ]
                 polarization_data.append({
                     'id': str(cal.id),
                     'chamber_id': str(cal.chamber_id),
                     'probe_id': cal.probe_id,
                     'probe_type': cal.probe_type,
                     'validation_pass': is_valid,
+                    'use_mock': cal.use_mock,
                     'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                     'calibrated_by': cal.calibrated_by,
-                    'xpd_db': cal.xpd_db,
+                    'xpd_db': min(isolation_values) if isolation_values else None,
                     'axial_ratio_db': cal.axial_ratio_db,
                 })
             data['probe_calibration']['polarization'] = polarization_data
@@ -600,17 +631,18 @@ class CalibrationReportGenerator:
 
             pattern_data = []
             for pat in patterns:
-                total += 1
-                # Pattern is considered "valid" if it exists and status is valid
-                is_valid = pat.status == 'valid'
-                if is_valid:
-                    passed += 1
+                is_valid = _probe_validation_pass(pat)
+                if is_valid is not None:
+                    total += 1
+                    if is_valid:
+                        passed += 1
                 pattern_data.append({
                     'id': str(pat.id),
                     'chamber_id': str(pat.chamber_id),
                     'probe_id': pat.probe_id,
                     'frequency_mhz': pat.frequency_mhz,
                     'validation_pass': is_valid,
+                    'use_mock': pat.use_mock,
                     'calibrated_at': str(pat.measured_at) if pat.measured_at else None,
                     'calibrated_by': pat.measured_by,
                     'beamwidth_3db_deg': pat.hpbw_azimuth_deg,
@@ -696,7 +728,7 @@ class CalibrationReportGenerator:
             rf_chain_data = []
             for cal in calibrations:
                 total += 1
-                is_valid = cal.status == 'valid'
+                is_valid = _active_validation_pass(cal)
                 if is_valid:
                     passed += 1
 
@@ -741,7 +773,7 @@ class CalibrationReportGenerator:
             multi_freq_data = []
             for cal in calibrations:
                 total += 1
-                is_valid = cal.status == 'valid'
+                is_valid = _active_validation_pass(cal)
                 if is_valid:
                     passed += 1
 

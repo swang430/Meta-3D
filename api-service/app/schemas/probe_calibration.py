@@ -101,8 +101,7 @@ class StartAmplitudeCalibrationRequest(BaseModel):
     probe_ids: List[int] = Field(
         ...,
         min_length=1,
-        max_length=64,
-        description="要校准的探头 ID 列表 (0-63)"
+        description="要校准的探头 ID 列表；上限由 chamber.num_probes 决定"
     )
     polarizations: List[PolarizationType] = Field(
         default=[PolarizationType.V, PolarizationType.H],
@@ -126,8 +125,8 @@ class StartAmplitudeCalibrationRequest(BaseModel):
     @classmethod
     def validate_probe_ids(cls, v):
         for probe_id in v:
-            if probe_id < 0 or probe_id > 63:
-                raise ValueError(f'probe_id must be between 0 and 63, got {probe_id}')
+            if probe_id < 0:
+                raise ValueError(f'probe_id must be non-negative, got {probe_id}')
         return v
 
 
@@ -146,6 +145,7 @@ class AmplitudeCalibrationResponse(BaseModel):
     """幅度校准响应"""
     id: UUID
     chamber_id: UUID
+    use_mock: Optional[bool] = None
     probe_id: int
     polarization: str
     frequency_points_mhz: List[float]
@@ -174,7 +174,6 @@ class StartPhaseCalibrationRequest(BaseModel):
     probe_ids: List[int] = Field(
         ...,
         min_length=1,
-        max_length=64,
         description="要校准的探头 ID 列表"
     )
     polarizations: List[PolarizationType] = Field(
@@ -184,7 +183,6 @@ class StartPhaseCalibrationRequest(BaseModel):
     reference_probe_id: int = Field(
         default=0,
         ge=0,
-        le=63,
         description="参考探头 ID"
     )
     frequency_range: FrequencyRange = Field(..., description="频率范围配置")
@@ -195,8 +193,8 @@ class StartPhaseCalibrationRequest(BaseModel):
     @classmethod
     def validate_probe_ids(cls, v):
         for probe_id in v:
-            if probe_id < 0 or probe_id > 63:
-                raise ValueError(f'probe_id must be between 0 and 63, got {probe_id}')
+            if probe_id < 0:
+                raise ValueError(f'probe_id must be non-negative, got {probe_id}')
         return v
 
 
@@ -204,6 +202,7 @@ class PhaseCalibrationResponse(BaseModel):
     """相位校准响应"""
     id: UUID
     chamber_id: UUID
+    use_mock: Optional[bool] = None
     probe_id: int
     polarization: str
     reference_probe_id: int
@@ -227,7 +226,7 @@ class PhaseCalibrationResponse(BaseModel):
 class StartPolarizationCalibrationRequest(BaseModel):
     """启动极化校准请求"""
     chamber_id: UUID = Field(..., description="校准所属暗室 ID")
-    probe_ids: List[int] = Field(..., min_length=1, max_length=64)
+    probe_ids: List[int] = Field(..., min_length=1)
     probe_type: ProbeTypeEnum = Field(..., description="探头类型")
     frequency_range: FrequencyRange = Field(..., description="频率范围配置")
     reference_antenna_id: Optional[str] = Field(None, description="参考天线设备 ID")
@@ -255,6 +254,7 @@ class PolarizationCalibrationResponse(BaseModel):
     """极化校准响应"""
     id: UUID
     chamber_id: UUID
+    use_mock: Optional[bool] = None
     probe_id: int
     probe_type: str
     # 线极化数据
@@ -285,7 +285,7 @@ class PolarizationCalibrationResponse(BaseModel):
 class StartPatternCalibrationRequest(BaseModel):
     """启动方向图校准请求"""
     chamber_id: UUID = Field(..., description="校准所属暗室 ID")
-    probe_ids: List[int] = Field(..., min_length=1, max_length=64)
+    probe_ids: List[int] = Field(..., min_length=1)
     polarizations: List[PolarizationType] = Field(
         default=[PolarizationType.V, PolarizationType.H]
     )
@@ -307,6 +307,7 @@ class PatternCalibrationResponse(BaseModel):
     """方向图校准响应"""
     id: UUID
     chamber_id: UUID
+    use_mock: Optional[bool] = None
     probe_id: int
     polarization: str
     frequency_mhz: float

@@ -277,3 +277,15 @@ Review by AGENTS.md 0.5: all writes, latest/history, validity, pattern consumers
 **Step 5: Open Ready PR and request Codex review**
 
 Run the repository's standard commit/push/PR flow. External review has at most two rounds; after R2, fix any P1 and merge without R3.
+
+### Task 8: Close fresh internal-review gaps
+
+**Files:** probe calibration API/model/schema/service, report collector/PDF, pattern consumer,
+GUI grid, Alembic migration, focused tests, design/roadmap mirrors.
+
+1. Scope invalidate by `(calibration_id, chamber_id)` while preserving global LinkCalibration.
+2. Replace fixed 32/64 probe assumptions in the four scoped families with `ChamberConfiguration.num_probes`.
+3. Persist nullable `use_mock` provenance without backfilling history; formal validity/report/pattern consumers whitelist `False`.
+4. Compute polarization XPD from persisted directional isolation fields and evaluate expiry dynamically.
+5. Render RF-chain and multi-frequency families that contribute to report summary totals.
+6. Re-run focused regressions, migration paths, GUI build, full rule gates, compileall and diff-check, then request a fresh internal review.

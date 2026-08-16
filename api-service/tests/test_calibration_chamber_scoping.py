@@ -60,6 +60,7 @@ def _pattern(
     p = ProbePattern(
         probe_id=probe_id,
         chamber_id=chamber_id,
+        use_mock=False,
         polarization=pol,
         frequency_mhz=freq,
         azimuth_deg=[0.0],
@@ -108,13 +109,12 @@ class TestPatternConsumerChamberScoping:
         hit = _query_valid_pattern(session, 0, "V", 3500.0, chamber_id=target)
         assert hit is None
 
-    def test_chamber_none_is_legacy_unscoped(self, session):
-        """chamber_id=None: 维持历史行为, 不加暗室过滤 (任意暗室/NULL 都可命中)。"""
+    def test_chamber_none_is_rejected_for_formal_consumption(self, session):
+        """正式消费不得用 None 恢复跨暗室/legacy 查询。"""
         other = uuid.uuid4()
         _pattern(session, probe_id=0, chamber_id=other, peak_gain_dbi=42.0)
-        hit = _query_valid_pattern(session, 0, "V", 3500.0, chamber_id=None)
-        assert hit is not None
-        assert hit.peak_gain_dbi == 42.0
+        with pytest.raises(ValueError, match="chamber_id is required"):
+            _query_valid_pattern(session, 0, "V", 3500.0, chamber_id=None)
 
     def test_get_probe_gain_at_azimuth_is_chamber_scoped(self, session):
         """同一 probe 在两暗室有不同 peak gain, 取值随 chamber_id 切换。"""
