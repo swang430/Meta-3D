@@ -189,19 +189,6 @@ async def start_temporal_calibration(
     )
 
 
-@router.get("/temporal/{calibration_id}", response_model=TemporalCalibrationResponse)
-async def get_temporal_calibration(
-    calibration_id: UUID,
-    db: Session = Depends(get_db)
-):
-    """获取时域校准详情"""
-    service = ChannelCalibrationService(db)
-    calibration = service.get_temporal_calibration(calibration_id)
-    if not calibration:
-        raise HTTPException(status_code=404, detail="Calibration not found")
-    return calibration
-
-
 @router.get("/temporal/latest", response_model=TemporalCalibrationResponse)
 async def get_latest_temporal_calibration(
     scenario_type: Optional[str] = Query(None, description="场景类型: UMa, UMi, RMa, InH"),
@@ -216,6 +203,19 @@ async def get_latest_temporal_calibration(
     )
     if not calibration:
         raise HTTPException(status_code=404, detail="No temporal calibration found")
+    return calibration
+
+
+@router.get("/temporal/{calibration_id}", response_model=TemporalCalibrationResponse)
+async def get_temporal_calibration(
+    calibration_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """获取时域校准详情"""
+    service = ChannelCalibrationService(db)
+    calibration = service.get_temporal_calibration(calibration_id)
+    if not calibration:
+        raise HTTPException(status_code=404, detail="Calibration not found")
     return calibration
 
 
