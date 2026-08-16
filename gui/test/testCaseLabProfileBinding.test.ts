@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
 import {
   buildLabProfileBindingPatch,
@@ -66,4 +67,21 @@ test('disables lab selection until the option list is authoritative', () => {
     labProfileSelectionDisabled({ labsLoading: false, labsError: null }),
     false,
   )
+})
+
+test('the edit modal wires the guarded binding patch into updateTestCase', () => {
+  const source = readFileSync(
+    new URL(
+      '../src/components/TestPlanManagement/TestCaseEditModal.tsx',
+      import.meta.url,
+    ),
+    'utf8',
+  )
+  const updateCall = source.slice(
+    source.indexOf('const updated = await updateTestCase'),
+    source.indexOf("notifications.show({", source.indexOf('const updated = await updateTestCase')),
+  )
+
+  assert.match(updateCall, /\.\.\.buildLabProfileBindingPatch\(\{/)
+  assert.doesNotMatch(updateCall, /\blab_profile_id\s*:/)
 })
