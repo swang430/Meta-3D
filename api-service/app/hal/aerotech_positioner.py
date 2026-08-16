@@ -95,7 +95,7 @@ class RealAerotechDriver(PositionerDriver):
     不走 PyVISA / SCPI，直接使用 asyncio 的 TCP 流。
 
     配置参数 (config dict):
-        ip: 控制器 IP 地址 (默认 192.168.1.10)
+        ip: 控制器 IP 地址（必填；不提供设备地址默认值）
         port: TCP 端口 (默认 8000, A3200 ASCII Interface)
         azimuth_axis: 方位角轴名 (默认 "X")
         elevation_axis: 俯仰角轴名 (默认 "Y")

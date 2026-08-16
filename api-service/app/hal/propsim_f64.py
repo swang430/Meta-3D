@@ -1703,6 +1703,10 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
           3. 发送 *IDN? 验证身份
           4. 查询 SYST:INFO? 获取硬件配置
         """
+        # connect() 无论能否进入外部 I/O，都是一次新的会话尝试。先清掉上一会话的
+        # 加载态/回读缓存，避免“缺配置”失败后状态接口继续谎报旧频率或仍在运行。
+        # 地址门仍位于 ResourceManager/socket/SCPI 之前，P1-51 的 fail-closed 不变。
+        self._apply_session_reset()
         if not self.ip_address:
             return self._fail_missing_connection_address()
         if self._local_control_reserved:
@@ -1712,9 +1716,6 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
         self._status = InstrumentStatus.CONNECTING
         self._identity_response = None
-        # 连接起始复位网 (F3): connect 是新会话干净起点 → 全清 6 字段 (含 running/pipeline/
-        # bypass), 防 disconnect→reconnect 或 socket 掉直连的 reconnect 后旧实例 stale 残留。
-        self._apply_session_reset()
         # 拆卸标志兜底 (agent T3/U2): 正常路径由 disconnect 的 finally 复位; 这里再清一次
         # 防极端情况 (CancelledError 把那个 finally 也跳过) 让实例永久失去懒重连能力 ——
         # 走到 connect 就说明**要活过来了**, 标志没有理由还留着。

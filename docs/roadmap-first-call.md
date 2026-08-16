@@ -18,7 +18,7 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅。
 
-**Current Focus = P1-51（设计完成，开始 TDD，WIP=1）**。P1-50 已由 PR #343（merge `e10afa4`）
+**Current Focus = P1-51（实现与全量回归完成，进入内审，WIP=1）**。P1-50 已由 PR #343（merge `e10afa4`）
 完成留存失败告警上下文隔离，内审与两轮 Codex 外审均无 P1；告警仍进入 app/console，但不再
 回流重开执行文件或泄漏 fd。P1-49 已由 PR #342（merge `3e0a11d`）
 完成两个静态 GET 路由顺序修复、真实 HTTP 回归与 G19 零例外收口；内审与两轮 Codex 外审均无 P1。
@@ -39,7 +39,7 @@ P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → 
 |---|---|---|
 | **P1-49** | 修复 `/calibration/channel/temporal/latest`、`/topologies/default` 静态路由遮挡 | ✅ PR #342 |
 | **P1-50** | 日志留存清理失败时禁止回流重开执行文件并泄漏 fd | ✅ PR #343 |
-| **P1-51** | 删除仪表默认 IP 猜测；缺配置时 fail-closed | 🔄 设计完成，TDD 中 |
+| **P1-51** | 删除仪表默认 IP 猜测；缺配置时 fail-closed | 🔄 实现完成，内审中 |
 | **P1-52** | TestCase 编辑时 LabProfile 列表加载失败不得清空原绑定 | ⬜ |
 | **P1-53** | 多暗室校准数据隔离，禁止跨暗室误用校准结果 | ⬜ |
 | **P2-25** | 当前/历史日志分类；历史按分类/执行分组并支持时间、名称、execution ID 搜索 | ✅ PR #340 |
@@ -3755,9 +3755,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 - `[discovered 2026-08-08 during 现场分支内审, F8/F9/F10/F12]` **内审四条 P3 待 triage** —— ① `InstrumentTestLeaseError` 统一映射 409，把「取不到控制权」与「用完归还失败」合并成同一个码：后者发生在整条链已跑完的 `finally` 里，而 409 的语义是「稍后重试」，GUI / 脚本按 409 重试会**重跑整条链**（`main.py:217`）。② 嵌套租约只校验 `control_f64` / `control_uxm`，`enable_monitoring` 被静默忽略（`instrument_test_lease.py:214`）—— 内层要求关监控却嵌进开监控的外层时，1 Hz 轮询会插进 CW tone 测量抢 SCPI 锁；今天无可达路径，属潜伏。③ 「None 不能当 0 算进均值」只有「别崩」那半有门，且镜像站点 `analysis.py:88` 保留同样的裸写法（今天安全只因 `measurement_simulated` 是循环不变量）。④ `optional_categories` 这个新字段没进 `loader.list_sequences()`，GUI 的诊断面板看不到它，声明与展示脱钩。
 
-- `[discovered 2026-08-08 during 现场分支内审收口]` **驱动带「猜出来的」默认 IP（P2，待 triage）** —— `propsim_f64.py:393` 的 `config.get("ip", "192.168.100.21")`、`uxm_base_station.py:296` 的 `192.168.100.10`、`cmw500_base_station.py:179` 的 `192.168.100.20`、`rs_zna.py:82` / `ets_positioner.py:47` 的 `192.168.100.30`、`rs_fsw.py:42` 的 `192.168.100.80`，以及 `driver_registry.py:22/27/213/214` 与 `bootstrap/instruments.py:88/128/204/242/276` 的一批 seed endpoint。生产路径上这些地址早就从 LabProfile 读，默认值只在「谁都没配」时才用得上 —— 而那种情况**本该 fail-loud 报「未配置」，不是拿一个猜出来的地址去连**（连上了更糟：那可能是别人的仪器）。
-  ⚠ 用户 2026-08-08 当场问「为什么要用 192.168.100.x 的硬编码跑呢，没有这个必要，为什么不改掉」。
-  ⚠ **跟 `852f6d2` 不是同一件事**：那条修的是「测试别以 REAL 模式拉起 HAL」（已完成，配 G17 两道门）；本条修的是「驱动别有猜出来的默认地址」。改法要连带看 `bootstrap/instruments.py` 的 seed 值该不该留、以及缺配置时的失败措辞。
+- `[resolved 2026-08-16 by P1-51]` **驱动与 fresh bootstrap 不再带「猜出来的」默认 IP** —— 14 个真实驱动统一只消费显式 `ip/controller_ip/ip_address/endpoint/visa_resource`；空配置在 ResourceManager/socket/SCPI 前进入 ERROR，并提示在仪表目录或 LabProfile 配置地址。DriverRegistry auto 同样只在显式地址存在时选择真实驱动。新数据库的七类 connection 只预置端口/协议，地址为空；既有数据库连接不自动清空，避免把无法区分的现场真实配置当旧 seed 删除。旧 F64 compatibility controller 也已取消默认地址。
 
 - `[discovered 2026-08-07 during CAICT 现场]` ~~**单元测试会对生产默认 IP 发真 TCP，全量测试在 TUN 环境下挂死**~~ → **⑤ dropped（2026-08-07 用户当场裁决：「这是测试环境的问题，不是产品的问题」）**。事实记录保留备查，不进任何队列。原始描述： —— `conftest.py` 的 `client` fixture 触发 FastAPI lifespan → HAL 真去连驱动默认 IP（`propsim_f64.py:393` `192.168.100.21`、`uxm_base_station.py:296` `192.168.100.10`、`bootstrap/instruments.py:276` `TCPIP0::192.168.100.26::inst0::INSTR` 等）。平时这些地址不通、连接秒失败，测试照过；2026-08-07 本机 Clash TUN（网关 `198.18.0.1`）接管该网段后，连接不再快速失败而是挂住等超时 —— `lsof` 实证 `TCP 198.18.0.1:57661->192.168.100.27:sunrpc (ESTABLISHED)`，进程 CPU 0.3% 挂了 11 分 47 秒。**后果两层**：① 当天现场分支 46 文件 4246 行**零全量回归**，内审最后一道兜底落空；② **在现场机上跑 pytest 会真的把 F64 拽进 Remote**（F64 收到第一条 ATE 命令即进 Remote），测试本身变成一次未经批准的仪器操作。另：`pytest-timeout` 未安装，连"卡住就超时失败"的兜底都没有，一个挂住的测试能拖垮整轮。修法方向是 conftest 强制 mock + 装 `pytest-timeout`；它是「现场每个 commit 前跑门文件」这条纪律的前置。
 
