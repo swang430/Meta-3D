@@ -40,12 +40,8 @@ def _query_valid_pattern(
 ) -> Optional[ProbePattern]:
     """Most-recent VALID ProbePattern matching probe_id+pol within ±5% freq.
 
-    校准 chamber-scoping foundation: probe_id 在多暗室下不再全局唯一 (CAICT-FS 与
-    Type-C 各有 probe 1..N)。给定 chamber_id 时:
-      1. 优先返回**显式标注**该暗室 (ProbePattern.chamber_id == chamber_id) 的方向图;
-      2. 若无, 回退到**未标注/legacy** 行 (chamber_id IS NULL) — 这样在 import 端
-         尚未写 chamber_id 前 (该改造 backlog) 已有导入数据仍可用, 不造成回归;
-      3. **绝不**返回标注为**其它**暗室的方向图 (这正是要消除的取错数据风险)。
+    probe_id 在多暗室下不再全局唯一。给定 chamber_id 时只返回显式属于该暗室的
+    方向图；legacy NULL 与其它暗室记录都不能进入正式测量。
     chamber_id 为 None 时维持历史行为 (仅按 probe_id+pol+freq 取最新)。
     """
     f_min = frequency_mhz * (1.0 - freq_tolerance_pct / 100.0)
@@ -69,15 +65,7 @@ def _query_valid_pattern(
         .order_by(desc(ProbePattern.measured_at))
         .first()
     )
-    if exact is not None:
-        return exact
-    # 回退: 仅未标注/legacy 行 (NULL), 不含其它暗室
-    return (
-        _base()
-        .filter(ProbePattern.chamber_id.is_(None))
-        .order_by(desc(ProbePattern.measured_at))
-        .first()
-    )
+    return exact
 
 
 def select_active_probe_id(num_probes: int, azimuth_deg: float) -> Optional[int]:

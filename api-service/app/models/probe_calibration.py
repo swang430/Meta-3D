@@ -66,7 +66,7 @@ class ProbeAmplitudeCalibration(Base):
     probe_id = Column(Integer, nullable=False, index=True, comment="探头 ID (0-63)")
     # 校准 chamber-scoping foundation: probe_id 在多暗室下不再全局唯一 (CAICT-FS 与
     # Type-C 各有 probe 1..N), 故按 chamber 限定校准记录, 避免跨暗室取错数据。
-    # nullable: 现有单暗室 dummy 数据保持 NULL; 查询侧 prefer exact-chamber, 回退 NULL/legacy。
+    # nullable 仅用于保留历史记录；正式读写只接受显式且完全匹配的 chamber_id。
     chamber_id = Column(UUID(as_uuid=True), nullable=True, index=True, comment="关联暗室配置 ID (校准 chamber-scoping; NULL=未标注/legacy)")
     polarization = Column(String(10), nullable=False, comment="极化类型: V, H, LHCP, RHCP")
 
@@ -257,7 +257,7 @@ class ProbePattern(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     probe_id = Column(Integer, nullable=False, index=True)
     # 校准 chamber-scoping foundation (测量路径活跃消费方: probe_pattern.consumer):
-    # consumer 查询时 prefer exact-chamber, 回退 NULL/legacy。见 chamber_id 综述。
+    # consumer 正式查询只接受 exact chamber，不回退 NULL/legacy。见 chamber_id 综述。
     chamber_id = Column(UUID(as_uuid=True), nullable=True, index=True, comment="关联暗室配置 ID (校准 chamber-scoping; NULL=未标注/legacy)")
     polarization = Column(String(10), nullable=False)
     frequency_mhz = Column(Float, nullable=False, index=True, comment="测量频率 (MHz)")

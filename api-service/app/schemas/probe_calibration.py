@@ -97,6 +97,7 @@ class CalibrationProgress(BaseModel):
 
 class StartAmplitudeCalibrationRequest(BaseModel):
     """启动幅度校准请求"""
+    chamber_id: UUID = Field(..., description="校准所属暗室 ID")
     probe_ids: List[int] = Field(
         ...,
         min_length=1,

@@ -475,6 +475,7 @@ class CalibrationReportGenerator:
 
     def _collect_probe_data(
         self,
+        chamber_id: UUID,
         probe_ids: Optional[List[int]] = None,
         calibration_type: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -490,7 +491,9 @@ class CalibrationReportGenerator:
 
         # Amplitude calibrations
         if not calibration_type or calibration_type == 'amplitude':
-            query = self.db.query(ProbeAmplitudeCalibration)
+            query = self.db.query(ProbeAmplitudeCalibration).filter(
+                ProbeAmplitudeCalibration.chamber_id == chamber_id
+            )
             if probe_ids:
                 query = query.filter(ProbeAmplitudeCalibration.probe_id.in_(probe_ids))
             calibrations = query.order_by(desc(ProbeAmplitudeCalibration.calibrated_at)).limit(100).all()
@@ -498,13 +501,15 @@ class CalibrationReportGenerator:
             amplitude_data = []
             for cal in calibrations:
                 total += 1
-                if cal.validation_pass:
+                is_valid = cal.status == 'valid'
+                if is_valid:
                     passed += 1
                 amplitude_data.append({
                     'id': str(cal.id),
+                    'chamber_id': str(cal.chamber_id),
                     'probe_id': cal.probe_id,
                     'polarization': cal.polarization,
-                    'validation_pass': cal.validation_pass,
+                    'validation_pass': is_valid,
                     'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                     'calibrated_by': cal.calibrated_by,
                     'frequency_points': cal.frequency_points_mhz,
@@ -515,7 +520,9 @@ class CalibrationReportGenerator:
 
         # Phase calibrations
         if not calibration_type or calibration_type == 'phase':
-            query = self.db.query(ProbePhaseCalibration)
+            query = self.db.query(ProbePhaseCalibration).filter(
+                ProbePhaseCalibration.chamber_id == chamber_id
+            )
             if probe_ids:
                 query = query.filter(ProbePhaseCalibration.probe_id.in_(probe_ids))
             calibrations = query.order_by(desc(ProbePhaseCalibration.calibrated_at)).limit(100).all()
@@ -523,14 +530,16 @@ class CalibrationReportGenerator:
             phase_data = []
             for cal in calibrations:
                 total += 1
-                if cal.validation_pass:
+                is_valid = cal.status == 'valid'
+                if is_valid:
                     passed += 1
                 phase_data.append({
                     'id': str(cal.id),
+                    'chamber_id': str(cal.chamber_id),
                     'probe_id': cal.probe_id,
                     'reference_probe_id': cal.reference_probe_id,
                     'polarization': cal.polarization,
-                    'validation_pass': cal.validation_pass,
+                    'validation_pass': is_valid,
                     'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                     'calibrated_by': cal.calibrated_by,
                     'phase_offset_deg': cal.phase_offset_deg,
@@ -540,7 +549,9 @@ class CalibrationReportGenerator:
 
         # Polarization calibrations
         if not calibration_type or calibration_type == 'polarization':
-            query = self.db.query(ProbePolarizationCalibration)
+            query = self.db.query(ProbePolarizationCalibration).filter(
+                ProbePolarizationCalibration.chamber_id == chamber_id
+            )
             if probe_ids:
                 query = query.filter(ProbePolarizationCalibration.probe_id.in_(probe_ids))
             calibrations = query.order_by(desc(ProbePolarizationCalibration.calibrated_at)).limit(100).all()
@@ -548,13 +559,15 @@ class CalibrationReportGenerator:
             polarization_data = []
             for cal in calibrations:
                 total += 1
-                if cal.validation_pass:
+                is_valid = cal.status == 'valid'
+                if is_valid:
                     passed += 1
                 polarization_data.append({
                     'id': str(cal.id),
+                    'chamber_id': str(cal.chamber_id),
                     'probe_id': cal.probe_id,
                     'probe_type': cal.probe_type,
-                    'validation_pass': cal.validation_pass,
+                    'validation_pass': is_valid,
                     'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                     'calibrated_by': cal.calibrated_by,
                     'xpd_db': cal.xpd_db,
@@ -564,7 +577,9 @@ class CalibrationReportGenerator:
 
         # Pattern data (ProbePattern - not really a "calibration" but pattern measurement)
         if not calibration_type or calibration_type == 'pattern':
-            query = self.db.query(ProbePattern)
+            query = self.db.query(ProbePattern).filter(
+                ProbePattern.chamber_id == chamber_id
+            )
             if probe_ids:
                 query = query.filter(ProbePattern.probe_id.in_(probe_ids))
             patterns = query.order_by(desc(ProbePattern.measured_at)).limit(100).all()
@@ -578,6 +593,7 @@ class CalibrationReportGenerator:
                     passed += 1
                 pattern_data.append({
                     'id': str(pat.id),
+                    'chamber_id': str(pat.chamber_id),
                     'probe_id': pat.probe_id,
                     'frequency_mhz': pat.frequency_mhz,
                     'validation_pass': is_valid,

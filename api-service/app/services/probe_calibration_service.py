@@ -2250,7 +2250,8 @@ class CalibrationValidityService:
     def check_validity(
         self,
         db: Session,
-        probe_id: int
+        probe_id: int,
+        chamber_id: UUID,
     ) -> Dict[str, Any]:
         """
         检查探头的校准有效性
@@ -2267,6 +2268,7 @@ class CalibrationValidityService:
 
         result = {
             "probe_id": probe_id,
+            "chamber_id": str(chamber_id),
             "amplitude": None,
             "phase": None,
             "polarization": None,
@@ -2278,6 +2280,7 @@ class CalibrationValidityService:
         # 检查幅度校准
         amplitude = db.query(ProbeAmplitudeCalibration).filter(
             ProbeAmplitudeCalibration.probe_id == probe_id,
+            ProbeAmplitudeCalibration.chamber_id == chamber_id,
             ProbeAmplitudeCalibration.status != CalibrationStatus.INVALIDATED.value
         ).order_by(desc(ProbeAmplitudeCalibration.calibrated_at)).first()
 
@@ -2287,6 +2290,7 @@ class CalibrationValidityService:
         # 检查相位校准
         phase = db.query(ProbePhaseCalibration).filter(
             ProbePhaseCalibration.probe_id == probe_id,
+            ProbePhaseCalibration.chamber_id == chamber_id,
             ProbePhaseCalibration.status != CalibrationStatus.INVALIDATED.value
         ).order_by(desc(ProbePhaseCalibration.calibrated_at)).first()
 
@@ -2296,6 +2300,7 @@ class CalibrationValidityService:
         # 检查极化校准
         polarization = db.query(ProbePolarizationCalibration).filter(
             ProbePolarizationCalibration.probe_id == probe_id,
+            ProbePolarizationCalibration.chamber_id == chamber_id,
             ProbePolarizationCalibration.status != CalibrationStatus.INVALIDATED.value
         ).order_by(desc(ProbePolarizationCalibration.calibrated_at)).first()
 
@@ -2305,6 +2310,7 @@ class CalibrationValidityService:
         # 检查方向图校准
         pattern = db.query(ProbePattern).filter(
             ProbePattern.probe_id == probe_id,
+            ProbePattern.chamber_id == chamber_id,
             ProbePattern.status != CalibrationStatus.INVALIDATED.value
         ).order_by(desc(ProbePattern.measured_at)).first()
 
