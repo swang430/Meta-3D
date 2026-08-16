@@ -996,6 +996,9 @@ def test_mimo_report_applies_evidence_gate_before_building_content(db):
     measure.update({
         "path_loss_verified": True,
         "path_loss_calibration_use_mock": False,
+        # P1-54 的独立吞吐可信门不是本用例的被测对象；显式打开后，
+        # overall_result 仍只由 SCPI formal acceptance 决定。
+        "throughput_verified": True,
     })
     phases["measure"] = measure
     measurements["phases"] = phases

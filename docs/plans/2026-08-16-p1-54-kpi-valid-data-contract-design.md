@@ -33,7 +33,10 @@ MEASURE 将它当真样本求平均，ANALYSIS 可能据此生成假的低吞吐
 
 - 历史 phase result 没有 `throughput_verified`，正式重算必须 fail-closed 为 UNKNOWN，
   不可通过旧数值形状猜可信。
-- 已生成历史报告不回填、不批量重算。
+- 新生成报告写精确整数 `throughput_trust_schema_version=1`；报告列表、详情与下载只有
+  路损、吞吐两枚服务端 trust marker 都存在时才视为已净化。
+- 已生成历史报告不回填、不批量改写。只有旧路损 marker 的报告同样 fail-closed，复用
+  P2-26 的安全重新生成入口；重建后缺少历史 `throughput_verified` 时只输出 UNKNOWN/N/A。
 
 ## 方案比较
 
@@ -78,7 +81,8 @@ MEASURE 将它当真样本求平均，ANALYSIS 可能据此生成假的低吞吐
 - `measurement_verified`、频率身份、路损 provenance 之外，再要求
   `throughput_verified is True`。否则整个正式结论保持 UNKNOWN，吞吐 KPI 与判词为 None。
 - 报告沿用现有 nullable 过滤与 `N/A` 格式，不把缺测计入统计。
-- 历史缺标记默认 UNKNOWN；不猜测、不回填。
+- 报告写独立吞吐 trust marker；历史执行/报告缺标记默认 UNKNOWN，并通过既有恢复入口
+  重新生成审计记录，不猜测、不回填。
 
 ### 失败与安全方向
 
@@ -95,4 +99,5 @@ MEASURE 将它当真样本求平均，ANALYSIS 可能据此生成假的低吞吐
 5. 任一方位无可信吞吐时 ANALYSIS 为 UNKNOWN，执行级 `validation_pass=None`。
 6. 报告中缺测显示 N/A，不出现假的 `0.0 Mbps` 或正式 FAIL。
 7. Mock 数值仍被既有模拟 provenance 门挡在正式 KPI 外。
-
+8. 只有旧路损 trust marker 的历史报告不能查看/下载；安全重建后吞吐保持 UNKNOWN/N/A，
+   新报告同时带路损与吞吐两枚精确整数 trust marker。

@@ -77,8 +77,8 @@ class ThroughputMetrics:
     """
     def __init__(
         self,
-        dl_throughput_mbps: float = 0.0,
-        ul_throughput_mbps: float = 0.0,
+        dl_throughput_mbps: Optional[float] = None,
+        ul_throughput_mbps: Optional[float] = None,
         dl_bler: float = 0.0,
         ul_bler: float = 0.0,
         cqi: int = 0,
@@ -87,8 +87,9 @@ class ThroughputMetrics:
         mcs_ul: int = 0,
         rsrp_dbm: float = -999.0,
         sinr_db: float = -999.0,
-        dl_throughput_current_mbps: float = 0.0,
-        ul_throughput_current_mbps: float = 0.0,
+        dl_throughput_current_mbps: Optional[float] = None,
+        ul_throughput_current_mbps: Optional[float] = None,
+        kpi_valid: Optional[Dict[str, bool]] = None,
     ):
         self.dl_throughput_mbps = dl_throughput_mbps
         self.ul_throughput_mbps = ul_throughput_mbps
@@ -102,6 +103,20 @@ class ThroughputMetrics:
         self.sinr_db = sinr_db
         self.dl_throughput_current_mbps = dl_throughput_current_mbps
         self.ul_throughput_current_mbps = ul_throughput_current_mbps
+        # 显式白名单：真实 0.0 是有效值；缺测 None 不是。真实驱动可以用
+        # ``kpi_valid`` 覆盖/补充其余 KPI 的解析真值，正式调用方不得从数值大小猜。
+        self.kpi_valid: Dict[str, bool] = {
+            "dl_throughput": dl_throughput_mbps is not None,
+            "ul_throughput": ul_throughput_mbps is not None,
+            "dl_throughput_current": dl_throughput_current_mbps is not None,
+            "ul_throughput_current": ul_throughput_current_mbps is not None,
+        }
+        if kpi_valid:
+            self.kpi_valid.update({key: value is True for key, value in kpi_valid.items()})
+
+    def is_valid(self, key: str) -> bool:
+        """仅显式 ``True`` 才算可信 KPI；缺键与历史对象一律 fail-closed。"""
+        return self.kpi_valid.get(key) is True
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -117,6 +132,7 @@ class ThroughputMetrics:
             "mcs_ul": self.mcs_ul,
             "rsrp_dbm": self.rsrp_dbm,
             "sinr_db": self.sinr_db,
+            "kpi_valid": dict(self.kpi_valid),
         }
 
 

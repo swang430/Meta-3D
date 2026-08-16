@@ -46,9 +46,13 @@ _SERVER_OWNED_REPORT_TRUST_FIELDS = frozenset({
     "report_family",
     "calibration_trust_schema_version",
     "formal_path_loss_verified",
+    "throughput_trust_schema_version",
+    "formal_throughput_verified",
     "vrt_archive_trust_schema_version",
 })
 
+THROUGHPUT_TRUST_SCHEMA_VERSION = 1
+THROUGHPUT_TRUST_FIELD = "throughput_trust_schema_version"
 VRT_ARCHIVE_TRUST_SCHEMA_VERSION = 1
 VRT_ARCHIVE_TRUST_FIELD = "vrt_archive_trust_schema_version"
 _UNCONDITIONAL_REPORT_SNAPSHOT = object()
@@ -73,11 +77,17 @@ def _strip_untrusted_report_attestation(
 
 
 def report_has_provenance_trust(content_data: Any) -> bool:
-    """Accept only the exact server-written JSON integer schema marker."""
+    """Accept only exact server-written calibration *and* throughput markers."""
     if not isinstance(content_data, dict):
         return False
-    marker = content_data.get("calibration_trust_schema_version")
-    return type(marker) is int and marker == 1
+    calibration_marker = content_data.get("calibration_trust_schema_version")
+    throughput_marker = content_data.get(THROUGHPUT_TRUST_FIELD)
+    return (
+        type(calibration_marker) is int
+        and calibration_marker == 1
+        and type(throughput_marker) is int
+        and throughput_marker == THROUGHPUT_TRUST_SCHEMA_VERSION
+    )
 
 
 def report_has_vrt_archive_trust(content_data: Any) -> bool:

@@ -128,7 +128,8 @@ class TestMonitoringStateGate:
         queries = [cmd for op, cmd in trace if op == "Q"]
         assert queries == ["BSE:STATus:NR5G:CELL1?"], queries
         assert result.metrics["cell_state"] == "OFF"
-        assert result.metrics["dl_throughput_mbps"] == 0.0
+        assert result.metrics["dl_throughput_mbps"] is None
+        assert result.metrics["kpi_valid"]["dl_throughput"] is False
 
     def test_get_metrics_reads_kpis_when_cell_is_connected(self, drv):
         trace: list[tuple[str, str]] = []
@@ -267,7 +268,7 @@ class TestScpiNanSentinel:
             "CSI:CQI:STAT": "9.91E+37,9.91E+37,9.91E+37,9.91E+37,9.91E+37,9.91E+37",
         })
         m = asyncio.run(drv.get_throughput_metrics())
-        assert m.dl_throughput_mbps == 0.0, "NaN 不该被算成 9.91e31 Mbps"
+        assert m.dl_throughput_mbps is None, "NaN 应保留为缺测，不能冒充 0 Mbps"
         assert m.cqi == 0
 
     def test_literal_nan_token_also_rejected(self, drv):
@@ -275,8 +276,8 @@ class TestScpiNanSentinel:
         内审变异 M-C（去掉 `v != v` 判据）从这个缝钻过去过。"""
         _stub_io(drv, {"DL:THRoughput:OTA": "1000,NaN,NaN,NaN,NaN,NaN"})
         m = asyncio.run(drv.get_throughput_metrics())
-        assert m.dl_throughput_mbps == 0.0
-        assert m.dl_throughput_current_mbps == 0.0
+        assert m.dl_throughput_mbps is None
+        assert m.dl_throughput_current_mbps is None
 
     def test_all_nan_ri_histogram_does_not_divide_by_zero(self, drv):
         _stub_io(drv, {"CSI:RI:HIST": ",".join(["9.91E+37"] * 8)})

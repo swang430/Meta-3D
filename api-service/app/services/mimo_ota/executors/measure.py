@@ -311,6 +311,36 @@ class MeasureExecutor(IStepExecutor):
     """Drive the chamber + base station through the azimuth grid, collect KPIs."""
 
     @staticmethod
+    def _all_requested_throughput_is_valid(
+        requested_azimuths: List[float],
+        azimuth_results: List[Dict[str, Any]],
+    ) -> bool:
+        """Only a complete scan with trusted throughput at every azimuth passes."""
+        return (
+            bool(requested_azimuths)
+            and len(azimuth_results) == len(requested_azimuths)
+            and all(
+                azimuth.get("throughput_valid") is True
+                for azimuth in azimuth_results
+            )
+        )
+
+    @staticmethod
+    def _trusted_throughput_value(metrics: Any) -> Optional[float]:
+        """返回显式可信的 DL average；缺标记、无效或缺值都 fail-closed。"""
+        validity = getattr(metrics, "kpi_valid", None)
+        if not isinstance(validity, dict):
+            return None
+        value = getattr(metrics, "dl_throughput_mbps", None)
+        if validity.get("dl_throughput") is not True or value is None:
+            return None
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if math.isfinite(parsed) else None
+
+    @staticmethod
     def _mac_config_blocker(mac_cfg: Any) -> Optional[str]:
         """MAC 吞吐量配置的结果够不够格**继续测**；不够就返回给操作员的原因。
 
@@ -2046,7 +2076,9 @@ class MeasureExecutor(IStepExecutor):
 
                     samples_rsrp.append(rsrp)
                     samples_sinr.append(sinr)
-                    samples_tput.append(metrics.dl_throughput_mbps)
+                    trusted_tput = self._trusted_throughput_value(metrics)
+                    if trusted_tput is not None:
+                        samples_tput.append(trusted_tput)
                     samples_ri.append(float(metrics.rank_indicator))
                     # P1 (Codex #126): ThroughputMetrics.mcs_dl 默认 0 —— 真 UXM 不报
                     # DL_MCS 时保持 0, 不能当有效样本 (否则众数 0 < 请求 → 误判 clamp 把
@@ -2093,9 +2125,13 @@ class MeasureExecutor(IStepExecutor):
                         else sum(samples_sinr) / len(samples_sinr)
                     ),
                     "throughput_mbps": (
-                        None if measurement_simulated
+                        None if measurement_simulated or not samples_tput
                         else sum(samples_tput) / len(samples_tput)
                     ),
+                    "throughput_valid": (
+                        not measurement_simulated and bool(samples_tput)
+                    ),
+                    "throughput_sample_count": len(samples_tput),
                     "rank_indicator": (
                         None if measurement_simulated
                         else sum(samples_ri) / len(samples_ri)
@@ -2104,7 +2140,9 @@ class MeasureExecutor(IStepExecutor):
                     "rsrp_std_db": None if measurement_simulated else stddev(samples_rsrp),
                     "sinr_std_db": None if measurement_simulated else stddev(samples_sinr),
                     "throughput_std_mbps": (
-                        None if measurement_simulated else stddev(samples_tput)
+                        None
+                        if measurement_simulated or not samples_tput
+                        else stddev(samples_tput)
                     ),
                     "measurement_source": "simulated" if measurement_simulated else "instrument",
                     "measurement_verified": not measurement_simulated,
@@ -2122,6 +2160,11 @@ class MeasureExecutor(IStepExecutor):
                         "  azimuth=%.0f°: KPI=N/A (simulated sources=%s)",
                         azimuth,
                         ",".join(simulated_sources),
+                    )
+                elif az["throughput_mbps"] is None:
+                    logger.warning(
+                        "  azimuth=%.0f°: Tput=N/A（本方位没有显式有效的吞吐 KPI 窗口）",
+                        azimuth,
                     )
                 else:
                     logger.info(
@@ -2144,13 +2187,17 @@ class MeasureExecutor(IStepExecutor):
             #   `test_analysis_reads_what_measure_wrote` 当场红（值形态没枚举 None）。
             # ⚠ None **不能当 0 算进平均** —— 那会把"没测到"伪装成"测到了但是 0"，
             #   拉低均值、制造假的低吞吐读数。只对**真有数**的样本求平均；
-            #   一个有效样本都没有时 mean=0.0，里程碑 throughput 那格如实判 False。
+            #   一个有效样本都没有时 mean=None，里程碑 throughput 那格保持 unknown。
             _tput_samples = [
                 a["throughput_mbps"] for a in azimuth_results
                 if a.get("throughput_mbps") is not None
             ]
             _mean_tput_mbps = (
-                sum(_tput_samples) / len(_tput_samples) if _tput_samples else 0.0
+                sum(_tput_samples) / len(_tput_samples) if _tput_samples else None
+            )
+            throughput_verified = self._all_requested_throughput_is_valid(
+                config.azimuths_deg,
+                azimuth_results,
             )
 
             # --- P2-11 Phase 6 (MCS index 线): AMC off 时实测生效 mcs_dl vs 请求 mcs ---
@@ -2192,6 +2239,7 @@ class MeasureExecutor(IStepExecutor):
                 "azimuth_results": azimuth_results,
                 "measurement_source": "simulated" if measurement_simulated else "instrument",
                 "measurement_verified": not measurement_simulated,
+                "throughput_verified": throughput_verified,
                 "simulated_sources": simulated_sources,
                 "total_duration_s": total_duration,
                 "engine_mode": config.engine_mode,
@@ -2257,12 +2305,20 @@ class MeasureExecutor(IStepExecutor):
                         if not azimuth_results
                         else {
                             "stage": "throughput",
-                            "ok": _mean_tput_mbps > 0.0,
+                            "ok": (
+                                None
+                                if _mean_tput_mbps is None
+                                else _mean_tput_mbps > 0.0
+                            ),
                             "mean_mbps": _mean_tput_mbps,
                             "azimuths_completed": len(azimuth_results),
                             "reason": (
-                                "ok" if _mean_tput_mbps > 0.0 else
-                                "各方位平均吞吐为 0 —— 链路通但没数据流过"
+                                "吞吐 KPI 未读到显式有效样本"
+                                if _mean_tput_mbps is None
+                                else (
+                                    "ok" if _mean_tput_mbps > 0.0 else
+                                    "各方位平均吞吐为 0 —— 链路通但没数据流过"
+                                )
                             ),
                         }
                     ),
@@ -2316,6 +2372,12 @@ class MeasureExecutor(IStepExecutor):
                 0,
                 "⚠️ 路损未校准: 无 path-loss certificate, RSRP 基线未补偿 (兜底 0 dB) — "
                 "RSRP / 吞吐量为非校准值。运行 CAL-01 路损校准 (P0-3) 后重测。",
+            )
+        if not result_payload.get("throughput_verified"):
+            measure_warnings.insert(
+                0,
+                "⚠️ 至少一个方位没有显式有效的吞吐 KPI 样本：吞吐结论保持 N/A，"
+                "不得将缺测默认值当作 0 Mbps 进入正式判定。",
             )
         if not (
             result_payload.get("frequency_consistency") or {}

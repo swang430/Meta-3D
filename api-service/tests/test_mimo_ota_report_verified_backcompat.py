@@ -161,6 +161,7 @@ def test_fresh_explicit_real_path_loss_can_publish_formal_kpis():
         "measure": {
             "path_loss_verified": True,
             "path_loss_calibration_use_mock": False,
+            "throughput_verified": True,
             "azimuth_results": [{
                 "azimuth_deg": 0.0,
                 "rsrp_dbm": -70.0,
@@ -259,6 +260,7 @@ def test_sanitized_unknown_mimo_audit_report_is_viewable_and_downloadable(
         content_data={
             "report_family": "mimo_ota",
             "calibration_trust_schema_version": 1,
+            "throughput_trust_schema_version": 1,
             "formal_path_loss_verified": False,
             "overall_result": "unknown",
         },
@@ -369,6 +371,7 @@ def test_report_list_regeneration_state_comes_from_mimo_trust_and_execution_trut
             content_data={
                 "report_family": "mimo_ota",
                 "calibration_trust_schema_version": 1,
+                "throughput_trust_schema_version": 1,
             },
             execution_ids=[recoverable_execution_id],
         ),
@@ -482,6 +485,7 @@ def test_report_list_malformed_historical_json_does_not_poison_page(monkeypatch)
             content_data={
                 "report_family": "mimo_ota",
                 "calibration_trust_schema_version": True,
+                "throughput_trust_schema_version": 1,
             },
             test_execution_ids=[healthy_execution_id],
         ),
@@ -490,6 +494,7 @@ def test_report_list_malformed_historical_json_does_not_poison_page(monkeypatch)
             content_data={
                 "report_family": "mimo_ota",
                 "calibration_trust_schema_version": 1.0,
+                "throughput_trust_schema_version": 1,
             },
             test_execution_ids=[healthy_execution_id],
         ),
@@ -498,6 +503,7 @@ def test_report_list_malformed_historical_json_does_not_poison_page(monkeypatch)
             content_data={
                 "report_family": "mimo_ota",
                 "calibration_trust_schema_version": 1,
+                "throughput_trust_schema_version": 1,
             },
             test_execution_ids=[healthy_execution_id],
         ),
@@ -757,6 +763,7 @@ def test_sanitized_mimo_report_still_rejects_non_mimo_execution_after_claim(
         content_data={
             "report_family": "mimo_ota",
             "calibration_trust_schema_version": 1,
+            "throughput_trust_schema_version": 1,
         },
     )
     report_db.add_all([execution, report])
@@ -1562,6 +1569,7 @@ def test_mimo_generation_value_error_after_claim_is_not_misreported_as_conflict(
         content_data={
             "report_family": "mimo_ota",
             "calibration_trust_schema_version": 1,
+            "throughput_trust_schema_version": 1,
         },
         generated_by="mimo_ota.executors.report",
         test_execution_ids=[],
@@ -1597,7 +1605,9 @@ def test_report_create_drops_client_supplied_trust_attestation():
     forged = {
         "report_family": "mimo_ota",
         "calibration_trust_schema_version": 1,
+        "throughput_trust_schema_version": 1,
         "formal_path_loss_verified": True,
+        "formal_throughput_verified": True,
         "overall_result": "passed",
         "statistics": {"avg_throughput_mbps": 9999.0},
     }
@@ -1613,7 +1623,9 @@ def test_report_create_drops_client_supplied_trust_attestation():
 
     assert "report_family" not in report.content_data
     assert "calibration_trust_schema_version" not in report.content_data
+    assert "throughput_trust_schema_version" not in report.content_data
     assert "formal_path_loss_verified" not in report.content_data
+    assert "formal_throughput_verified" not in report.content_data
     assert report.content_data["overall_result"] == "passed"
     assert report.content_data["statistics"]["avg_throughput_mbps"] == 9999.0
 

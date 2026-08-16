@@ -25,6 +25,7 @@ R&S 命名约定:
 
 import logging
 import asyncio
+import math
 from enum import Enum
 from typing import Dict, Any, List, Optional
 from datetime import datetime
@@ -591,6 +592,12 @@ class RealCmw500Driver(BaseStationDriver):
           <current_tput_kbps>, <average_tput_kbps>, <max_tput_kbps>
         """
         metrics = ThroughputMetrics()
+        valid: Dict[str, bool] = {
+            "dl_throughput": False,
+            "ul_throughput": False,
+            "dl_throughput_current": False,
+            "ul_throughput_current": False,
+        }
 
         try:
             # DL 吞吐量 (SENSe)
@@ -603,7 +610,9 @@ class RealCmw500Driver(BaseStationDriver):
                     try:
                         # 第二个值: average throughput (kbps)
                         dl_kbps = float(parts[1])
-                        metrics.dl_throughput_mbps = dl_kbps / 1000.0
+                        if math.isfinite(dl_kbps):
+                            metrics.dl_throughput_mbps = dl_kbps / 1000.0
+                            valid["dl_throughput"] = True
                     except ValueError:
                         pass
 
@@ -616,7 +625,9 @@ class RealCmw500Driver(BaseStationDriver):
                 if len(parts) >= 2:
                     try:
                         ul_kbps = float(parts[1])
-                        metrics.ul_throughput_mbps = ul_kbps / 1000.0
+                        if math.isfinite(ul_kbps):
+                            metrics.ul_throughput_mbps = ul_kbps / 1000.0
+                            valid["ul_throughput"] = True
                     except ValueError:
                         pass
 
@@ -662,9 +673,14 @@ class RealCmw500Driver(BaseStationDriver):
             pass
 
         # ── 测量数据归档 → measurement.log ──
+        metrics.kpi_valid.update(valid)
         meas_logger = logging.getLogger("app.measurement.throughput")
+
+        def _throughput_text(value: Optional[float]) -> str:
+            return "N/A" if value is None else f"{value:.1f}Mbps"
+
         meas_logger.info(
-            f"[KPI] DL={metrics.dl_throughput_mbps:.1f}Mbps "
+            f"[KPI] DL={_throughput_text(metrics.dl_throughput_mbps)} "
             f"BLER={metrics.dl_bler:.4f} CQI={metrics.cqi} "
             f"RSRP={metrics.rsrp_dbm:.1f}dBm SINR={metrics.sinr_db:.1f}dB",
             extra={
@@ -676,6 +692,7 @@ class RealCmw500Driver(BaseStationDriver):
                 "cqi": metrics.cqi,
                 "rsrp_dbm": metrics.rsrp_dbm,
                 "sinr_db": metrics.sinr_db,
+                "kpi_valid": dict(metrics.kpi_valid),
                 "band": self._band,
                 "bandwidth_mhz": self._bandwidth_mhz,
                 "dl_power_dbm": self._dl_power_dbm,

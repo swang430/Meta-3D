@@ -3136,6 +3136,7 @@ class RealUxmDriver(BaseStationDriver):
         if dl_cur is not None:
             metrics.dl_throughput_current_mbps = dl_cur / 1e6
         valid["dl_throughput"] = dl_avg is not None
+        valid["dl_throughput_current"] = dl_cur is not None
 
         # ── UL 吞吐量 (bps → Mbps) ──────────────────────────────
         ul = _read_doubles(self._cmds.MEAS_TPUT_UL_OTA, "UL OTA throughput")
@@ -3145,6 +3146,7 @@ class RealUxmDriver(BaseStationDriver):
         if ul_cur is not None:
             metrics.ul_throughput_current_mbps = ul_cur / 1e6
         valid["ul_throughput"] = ul_avg is not None
+        valid["ul_throughput_current"] = ul_cur is not None
 
         # ── DL BLER (idx8 = pdschBlerRatio) ────────────────────
         dl_bler = _read_doubles(self._cmds.MEAS_BLER_DL, "DL BLER")
@@ -3226,11 +3228,16 @@ class RealUxmDriver(BaseStationDriver):
         meas_logger = logging.getLogger("app.measurement.throughput")
         # ⚠ 每个 KPI 都带一个 *_valid 标志 —— 没有它, "DL=0.0Mbps" 与
         # "这一项根本没读到" 在日志里长得一模一样 (P1-30 同一个母题)。
-        missing = [k for k, ok in valid.items() if not ok]
+        metrics.kpi_valid.update(valid)
+        missing = [k for k, ok in metrics.kpi_valid.items() if not ok]
+
+        def _throughput_text(value: Optional[float], digits: int = 1) -> str:
+            return "N/A" if value is None else f"{value:.{digits}f}Mbps"
+
         meas_logger.info(
-            f"[KPI] DL={metrics.dl_throughput_mbps:.1f}Mbps"
-            f"(cur {metrics.dl_throughput_current_mbps:.1f}) "
-            f"UL={metrics.ul_throughput_mbps:.1f}Mbps "
+            f"[KPI] DL={_throughput_text(metrics.dl_throughput_mbps)}"
+            f"(cur {_throughput_text(metrics.dl_throughput_current_mbps)}) "
+            f"UL={_throughput_text(metrics.ul_throughput_mbps)} "
             f"BLER={metrics.dl_bler:.4f} CQI={metrics.cqi} RI={metrics.rank_indicator} "
             f"RSRP={metrics.rsrp_dbm:.1f}dBm SINR={metrics.sinr_db:.1f}dB"
             + (f"  ⚠未读到: {','.join(missing)}" if missing else ""),
@@ -3248,7 +3255,7 @@ class RealUxmDriver(BaseStationDriver):
                 "mcs_ul": getattr(metrics, "mcs_ul", None),
                 "rsrp_dbm": metrics.rsrp_dbm,
                 "sinr_db": metrics.sinr_db,
-                "kpi_valid": valid,
+                "kpi_valid": dict(metrics.kpi_valid),
                 "kpi_missing": missing,
                 # 口径未确认的原始上报值（手册未说明单位）——
                 # 只作证据，**不要**当 dBm/dB 用。

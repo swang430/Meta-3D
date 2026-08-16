@@ -24,7 +24,8 @@
 
 1. 写 RED：缺少或 false 的 `throughput_verified` 使 ANALYSIS 输出 UNKNOWN；显式 true
    的健康数据保持既有 PASS/FAIL；报告缺测为 N/A 且不进统计。
-2. 修改 `analysis.py`，将吞吐可信度加入正式 allowlist。
+2. 修改 `analysis.py`，将吞吐可信度加入正式 allowlist；报告生成写独立吞吐 trust marker，
+   列表/详情/下载要求路损与吞吐两枚 marker，旧报告走 P2-26 安全重建。
 3. 运行 analysis/report/commissioning 回归至 GREEN。
 
 ## Task 4：镜像、全量验证与交付
@@ -34,4 +35,3 @@
 3. 运行完整 rule gates、后端全量、GUI production build（若 GUI 契约有改动）、compileall、
    Alembic head（若无迁移仅确认未新增）与 `git diff --check`。
 4. fresh 内审到 P1=0；提交、推送、开 Ready PR，按既定 Codex 外审流程闭环并合并。
-

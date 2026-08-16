@@ -285,12 +285,18 @@ def _build_mimo_ota_content_data(
         # stays UNKNOWN; neither a cert ID nor the legacy boolean can recover it.
         _pl_verified = None
 
+    # P1-54: 吞吐的数值与“这次是否真的读到”必须同行。历史执行没有该字段，
+    # 也可能正是把缺测默认 0.0 当样本的旧数据，所以只能 fail-closed；不能从
+    # 数值是否为 0、analysis 旧 verdict 或 measurement_verified 反推可信性。
+    _throughput_verified = measure.get("throughput_verified")
+
     # A formal KPI/report verdict requires explicit proof that the applied
-    # path-loss certificate was real. Historical, mock and bypass executions
+    # path-loss certificate was real *and* every azimuth contributed a trusted
+    # throughput sample. Historical, mock, bypass and missing-read executions
     # remain auditable, but their numerical KPI values cannot be re-published
     # as a formal PASS/FAIL after report regeneration.
     reported_verdict = analysis.get("verdict")
-    if _pl_verified is not True:
+    if _pl_verified is not True or _throughput_verified is not True:
         overall_pass = False
         verdict_unknown = True
         reported_verdict = "UNKNOWN"
@@ -395,6 +401,11 @@ def _build_mimo_ota_content_data(
                  "真实仪器链",
                  "Mock/缺失仪器, KPI 为 N/A",
              ),
+             "吞吐验证": _verified_label(
+                 _throughput_verified,
+                 "各方位均有仪表有效读数",
+                 "存在缺测/无效读数, 吞吐 KPI 为 N/A",
+             ),
              # ⭐ 逐台点名哪几台是模拟的（P1-48）：这份名单**早就存在库里**
              #    （measure 那格的 simulated_sources），只是报告一直没取。
              #    只说「未验证」读者不知道是哪个环节出的问题。
@@ -420,6 +431,8 @@ def _build_mimo_ota_content_data(
         "report_family": "mimo_ota",
         "calibration_trust_schema_version": 1,
         "formal_path_loss_verified": _pl_verified is True,
+        "throughput_trust_schema_version": 1,
+        "formal_throughput_verified": _throughput_verified is True,
         "generated_by": "MIMO OTA System",
         "generated_at": now.isoformat(),
         "overall_result": (
