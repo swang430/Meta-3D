@@ -1751,6 +1751,46 @@ def _resolve_diagnostic_tcp_target(
     return host, port if port is not None else 5025, None
 
 
+def _reconcile_diagnostic_target_with_live_driver(
+    driver: Any,
+    *,
+    requested_ip: Optional[str],
+    requested_port: Optional[int],
+    target_error: Optional[str],
+    override_requested: bool,
+) -> tuple[Optional[str], Optional[int], Optional[str]]:
+    """让人工诊断请求与实际复用的 HAL 会话保持同一目标真值。"""
+    if override_requested and target_error:
+        return None, None, target_error
+
+    driver_config = getattr(driver, "config", None)
+    if not isinstance(driver_config, dict):
+        if override_requested:
+            return None, None, "无法核实活动 HAL 会话目标，拒绝请求体地址覆盖"
+        return requested_ip, requested_port, None
+
+    live_ip, live_port, _resource, live_error = (
+        resolve_configured_tcpip_connection(driver_config)
+    )
+    if live_error or not live_ip:
+        if override_requested:
+            return None, None, (
+                "无法核实活动 HAL 会话目标，拒绝请求体地址覆盖"
+                + (f": {live_error}" if live_error else "")
+            )
+        return requested_ip, requested_port, target_error
+
+    actual_port = live_port if live_port is not None else 5025
+    if override_requested and (
+        requested_ip != live_ip or requested_port != actual_port
+    ):
+        return None, None, (
+            "请求体覆盖目标与活动 HAL 会话目标不一致；"
+            "请先保存配置并重新加载 HAL"
+        )
+    return live_ip, actual_port, None
+
+
 @router.post("/instruments/{category_key}/test-connection", response_model=TestConnectionResult)
 async def test_instrument_connection(
     category_key: str,
@@ -1788,9 +1828,18 @@ async def test_instrument_connection(
         override_port=body.port if body else None,
     )
     preloaded_hal_driver = _get_loaded_hal_driver(category_key)
+    override_requested = bool(body and (body.ip is not None or body.port is not None))
+    if preloaded_hal_driver is not None:
+        ip, port, target_error = _reconcile_diagnostic_target_with_live_driver(
+            preloaded_hal_driver,
+            requested_ip=ip,
+            requested_port=port,
+            target_error=target_error,
+            override_requested=override_requested,
+        )
     protocol = (body.protocol if body and body.protocol else None) or (conn.protocol if conn else None) or ""
 
-    if target_error and preloaded_hal_driver is None:
+    if target_error:
         return TestConnectionResult(
             success=False,
             status="error",
@@ -1811,6 +1860,21 @@ async def test_instrument_connection(
     # 会顶掉单会话仪表的既有连接并制造 BrokenPipe。只有 HAL 无该驱动时，
     # 才走下面的临时 TCP 探测路径。
     hal_driver = _get_loaded_hal_driver(category_key)
+    if hal_driver is not None:
+        ip, port, live_target_error = _reconcile_diagnostic_target_with_live_driver(
+            hal_driver,
+            requested_ip=ip,
+            requested_port=port,
+            target_error=None,
+            override_requested=override_requested,
+        )
+        if live_target_error:
+            await stack.aclose()
+            return TestConnectionResult(
+                success=False,
+                status="error",
+                message=live_target_error,
+            )
 
     # 摘要行挪到**选定传输方式之后**才发（外审 P1）：
     #   - 走已加载的驱动 → 按它自己的真假标，且文案说清是「复用现有会话」而不是
@@ -2396,6 +2460,7 @@ async def send_scpi_command(
     ip, port, target_error = _resolve_diagnostic_tcp_target(
         conn, override_ip=request.ip, override_port=request.port
     )
+    override_requested = request.ip is not None or request.port is not None
     raw_command = request.command.strip()
     safe_command = redact_instrument_command_text(raw_command)
     target_name = f"{category_key}: {safe_command}"
@@ -2433,7 +2498,17 @@ async def send_scpi_command(
         return result
 
     preloaded_hal_driver = _get_loaded_hal_driver(category_key)
-    if target_error and preloaded_hal_driver is None:
+    if preloaded_hal_driver is not None:
+        ip, port, target_error = _reconcile_diagnostic_target_with_live_driver(
+            preloaded_hal_driver,
+            requested_ip=ip,
+            requested_port=port,
+            target_error=target_error,
+            override_requested=override_requested,
+        )
+        audit_params["ip"] = ip
+        audit_params["port"] = port
+    if target_error:
         return _audit(ScpiCommandResult(
             command=request.command,
             success=False,
@@ -2450,6 +2525,22 @@ async def send_scpi_command(
         # 在租约内重新解析 driver，防止 HAL reload 在解析与首条命令之间换实例。
         hal_driver = _get_loaded_hal_driver(category_key)
         if hal_driver is not None:
+            ip, port, live_target_error = _reconcile_diagnostic_target_with_live_driver(
+                hal_driver,
+                requested_ip=ip,
+                requested_port=port,
+                target_error=None,
+                override_requested=override_requested,
+            )
+            if live_target_error:
+                return _audit(ScpiCommandResult(
+                    command=request.command,
+                    success=False,
+                    error=live_target_error,
+                    latency_ms=0,
+                ))
+            audit_params["ip"] = ip
+            audit_params["port"] = port
             result = await _run_command_via_hal(
                 hal_driver, request.command, scpi_logger, category_key,
                 timeout_ms=request.timeout_ms,
@@ -2536,7 +2627,16 @@ async def probe_scpi_commands(
         override_port=body.port if body else None,
     )
     preloaded_hal_driver = _get_loaded_hal_driver(category_key)
-    if target_error and preloaded_hal_driver is None:
+    override_requested = bool(body and (body.ip is not None or body.port is not None))
+    if preloaded_hal_driver is not None:
+        ip, port, target_error = _reconcile_diagnostic_target_with_live_driver(
+            preloaded_hal_driver,
+            requested_ip=ip,
+            requested_port=port,
+            target_error=target_error,
+            override_requested=override_requested,
+        )
+    if target_error:
         raise HTTPException(400, target_error)
 
     results: List[ScpiCommandResult] = []
@@ -2553,6 +2653,15 @@ async def probe_scpi_commands(
         # the lease so reload cannot swap it before the first command.
         hal_driver = _get_loaded_hal_driver(category_key)
         if hal_driver is not None:
+            ip, port, live_target_error = _reconcile_diagnostic_target_with_live_driver(
+                hal_driver,
+                requested_ip=ip,
+                requested_port=port,
+                target_error=None,
+                override_requested=override_requested,
+            )
+            if live_target_error:
+                raise HTTPException(400, live_target_error)
             # 传输方式已定：走这个已加载的驱动 → 摘要行也要按它的真假标。
             # 否则会出现「摘要标 unverified、同一次探测的命令记录标 real」自相矛盾（外审 P1）。
             scpi_logger = _unverified_scpi_logger(hal_driver)

@@ -115,6 +115,73 @@ def test_manual_socket_fallback_rejects_conflicting_merged_config_before_io(
     assert "冲突" in error_text
 
 
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "test-connection",
+        "scpi-command",
+        "scpi-probe",
+    ],
+)
+def test_manual_override_must_match_loaded_hal_target_before_scpi(
+    category,
+    db,
+    monkeypatch,
+    operation,
+):
+    """请求目标 B 不能借用已经连接到目标 A 的 HAL 会话。"""
+
+    class RealInstrumentDriver:
+        config = {"ip": "192.0.2.10", "port": 5025}
+        _query = AsyncMock(return_value="VENDOR,MODEL,SN,FW")
+        _write = AsyncMock()
+
+    driver = RealInstrumentDriver()
+    monkeypatch.setattr(
+        instrument_api, "_get_loaded_hal_driver", lambda _key: driver
+    )
+
+    @asynccontextmanager
+    async def _lease(*_args, **_kwargs):
+        yield
+
+    monkeypatch.setattr(instrument_api, "instrument_test_lease", _lease)
+    override = instrument_api.TestConnectionRequest(
+        ip="192.0.2.99", port=5025
+    )
+
+    if operation == "test-connection":
+        result = asyncio.run(instrument_api.test_instrument_connection(
+            category.category_key,
+            body=override,
+            db=db,
+        ))
+        error_text = result.message
+    elif operation == "scpi-command":
+        result = asyncio.run(instrument_api.send_scpi_command(
+            category.category_key,
+            request=instrument_api.ScpiCommandRequest(
+                command="*IDN?",
+                ip=override.ip,
+                port=override.port,
+            ),
+            db=db,
+        ))
+        error_text = result.error or ""
+    else:
+        with pytest.raises(instrument_api.HTTPException) as exc_info:
+            asyncio.run(instrument_api.probe_scpi_commands(
+                category.category_key,
+                body=override,
+                db=db,
+            ))
+        error_text = str(exc_info.value.detail)
+
+    assert "活动 HAL 会话" in error_text
+    driver._query.assert_not_awaited()
+    driver._write.assert_not_awaited()
+
+
 @pytest.fixture(autouse=True)
 def setup_db():
     Base.metadata.create_all(bind=engine)
@@ -483,6 +550,7 @@ class TestHalDriverGate:
         db.commit()
 
         class RealUxmDriver:
+            config = {"ip": "192.0.2.20", "port": 5125}
             _query = AsyncMock(return_value="Keysight,E7515B,SN,FW")
             _write = AsyncMock()
 
