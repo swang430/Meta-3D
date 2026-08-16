@@ -11,8 +11,10 @@ record_run with right kind/target/params) is what's under test.
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -27,6 +29,7 @@ import app.api.instrument as instrument_api
 from app.models.diagnostic_run import DiagnosticKind, DiagnosticRun
 from app.models.instrument import (
     InstrumentCategory as InstrumentCategoryModel,
+    InstrumentConnection as InstrumentConnectionDB,
 )
 
 
@@ -48,6 +51,609 @@ def override_get_db():
 
 
 client = TestClient(app)
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "test-connection",
+        "scpi-command",
+        "scpi-probe",
+    ],
+)
+def test_manual_socket_fallback_rejects_conflicting_merged_config_before_io(
+    category,
+    db,
+    monkeypatch,
+    operation,
+):
+    conn = InstrumentConnectionDB(
+        id=uuid.uuid4(),
+        category_id=category.id,
+        controller_ip="192.0.2.10",
+        endpoint="TCPIP0::192.0.2.10::5025::SOCKET",
+        port=5025,
+        protocol="SCPI",
+        connection_params={
+            "visa_resource": "TCPIP0::192.0.2.99::5025::SOCKET"
+        },
+    )
+    db.add(conn)
+    db.commit()
+    monkeypatch.setattr(instrument_api, "_get_loaded_hal_driver", lambda _key: None)
+
+    @asynccontextmanager
+    async def _lease(*_args, **_kwargs):
+        yield
+
+    monkeypatch.setattr(instrument_api, "instrument_test_lease", _lease)
+
+    with patch("socket.socket.connect") as socket_connect:
+        if operation == "test-connection":
+            result = asyncio.run(instrument_api.test_instrument_connection(
+                category.category_key,
+                body=instrument_api.TestConnectionRequest(),
+                db=db,
+            ))
+            error_text = result.message
+        elif operation == "scpi-command":
+            result = asyncio.run(instrument_api.send_scpi_command(
+                category.category_key,
+                request=instrument_api.ScpiCommandRequest(command="*IDN?"),
+                db=db,
+            ))
+            error_text = result.error or ""
+        else:
+            with pytest.raises(instrument_api.HTTPException) as exc_info:
+                asyncio.run(instrument_api.probe_scpi_commands(
+                    category.category_key,
+                    body=instrument_api.TestConnectionRequest(),
+                    db=db,
+                ))
+            error_text = str(exc_info.value.detail)
+
+    socket_connect.assert_not_called()
+    assert "冲突" in error_text
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "test-connection",
+        "scpi-command",
+        "scpi-probe",
+    ],
+)
+def test_manual_override_must_match_loaded_hal_target_before_scpi(
+    category,
+    db,
+    monkeypatch,
+    operation,
+):
+    """请求目标 B 不能借用已经连接到目标 A 的 HAL 会话。"""
+
+    class RealInstrumentDriver:
+        config = {"ip": "192.0.2.10", "port": 5025}
+        _query = AsyncMock(return_value="VENDOR,MODEL,SN,FW")
+        _write = AsyncMock()
+
+    driver = RealInstrumentDriver()
+    monkeypatch.setattr(
+        instrument_api, "_get_loaded_hal_driver", lambda _key: driver
+    )
+
+    @asynccontextmanager
+    async def _lease(*_args, **_kwargs):
+        yield
+
+    monkeypatch.setattr(instrument_api, "instrument_test_lease", _lease)
+    override = instrument_api.TestConnectionRequest(
+        ip="192.0.2.99", port=5025
+    )
+
+    if operation == "test-connection":
+        result = asyncio.run(instrument_api.test_instrument_connection(
+            category.category_key,
+            body=override,
+            db=db,
+        ))
+        error_text = result.message
+    elif operation == "scpi-command":
+        result = asyncio.run(instrument_api.send_scpi_command(
+            category.category_key,
+            request=instrument_api.ScpiCommandRequest(
+                command="*IDN?",
+                ip=override.ip,
+                port=override.port,
+            ),
+            db=db,
+        ))
+        error_text = result.error or ""
+    else:
+        with pytest.raises(instrument_api.HTTPException) as exc_info:
+            asyncio.run(instrument_api.probe_scpi_commands(
+                category.category_key,
+                body=override,
+                db=db,
+            ))
+        error_text = str(exc_info.value.detail)
+
+    assert "活动 HAL 会话" in error_text
+    driver._query.assert_not_awaited()
+    driver._write.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "test-connection",
+        "scpi-command",
+        "scpi-probe",
+    ],
+)
+def test_hal_removed_during_lease_restores_raw_target_error(
+    category,
+    db,
+    monkeypatch,
+    operation,
+):
+    """活动 driver 在租约内消失时，不能把旧目标 A 当作 raw fallback。"""
+    conn = InstrumentConnectionDB(
+        id=uuid.uuid4(),
+        category_id=category.id,
+        controller_ip="192.0.2.20",
+        endpoint="TCPIP0::192.0.2.20::5025::SOCKET",
+        port=5025,
+        protocol="SCPI",
+        connection_params={
+            "visa_resource": "TCPIP0::192.0.2.99::5025::SOCKET"
+        },
+    )
+    db.add(conn)
+    db.commit()
+
+    class RealInstrumentDriver:
+        config = {"ip": "192.0.2.10", "port": 5025}
+        _query = AsyncMock(return_value="VENDOR,MODEL,SN,FW")
+        _write = AsyncMock()
+
+    loaded_drivers = iter([RealInstrumentDriver(), None])
+    monkeypatch.setattr(
+        instrument_api,
+        "_get_loaded_hal_driver",
+        lambda _key: next(loaded_drivers),
+    )
+
+    @asynccontextmanager
+    async def _lease(*_args, **_kwargs):
+        yield
+
+    monkeypatch.setattr(instrument_api, "instrument_test_lease", _lease)
+
+    with patch("socket.socket.connect") as socket_connect:
+        if operation == "test-connection":
+            result = asyncio.run(instrument_api.test_instrument_connection(
+                category.category_key,
+                body=instrument_api.TestConnectionRequest(),
+                db=db,
+            ))
+            error_text = result.message
+        elif operation == "scpi-command":
+            result = asyncio.run(instrument_api.send_scpi_command(
+                category.category_key,
+                request=instrument_api.ScpiCommandRequest(command="*IDN?"),
+                db=db,
+            ))
+            error_text = result.error or ""
+        else:
+            with pytest.raises(instrument_api.HTTPException) as exc_info:
+                asyncio.run(instrument_api.probe_scpi_commands(
+                    category.category_key,
+                    body=instrument_api.TestConnectionRequest(),
+                    db=db,
+                ))
+            error_text = str(exc_info.value.detail)
+
+    socket_connect.assert_not_called()
+    assert "冲突" in error_text
+
+
+@pytest.mark.parametrize("category_key", ["baseStation", "channelEmulator"])
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "test-connection",
+        "scpi-command",
+        "scpi-probe",
+    ],
+)
+def test_single_session_instruments_reject_address_override_before_lease(
+    category,
+    db,
+    monkeypatch,
+    category_key,
+    operation,
+):
+    category.category_key = category_key
+    db.commit()
+    monkeypatch.setattr(instrument_api, "_get_loaded_hal_driver", lambda _key: None)
+
+    @asynccontextmanager
+    async def _lease(*_args, **_kwargs):
+        raise AssertionError("单会话地址覆盖必须在协调租约前拒绝")
+        yield
+
+    monkeypatch.setattr(instrument_api, "instrument_test_lease", _lease)
+    monkeypatch.setattr(
+        "app.services.instrument_test_lease.instrument_test_lease", _lease
+    )
+    override = instrument_api.TestConnectionRequest(
+        ip="192.0.2.99", port=5025
+    )
+
+    if operation == "test-connection":
+        result = asyncio.run(instrument_api.test_instrument_connection(
+            category_key,
+            body=override,
+            db=db,
+        ))
+        error_text = result.message
+    elif operation == "scpi-command":
+        result = asyncio.run(instrument_api.send_scpi_command(
+            category_key,
+            request=instrument_api.ScpiCommandRequest(
+                command="*IDN?",
+                ip=override.ip,
+                port=override.port,
+            ),
+            db=db,
+        ))
+        error_text = result.error or ""
+    else:
+        with pytest.raises(instrument_api.HTTPException) as exc_info:
+            asyncio.run(instrument_api.probe_scpi_commands(
+                category_key,
+                body=override,
+                db=db,
+            ))
+        error_text = str(exc_info.value.detail)
+
+    assert "先保存配置并重新加载 HAL" in error_text
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ["test-connection", "scpi-command", "scpi-probe"],
+)
+def test_saved_single_session_target_must_match_live_driver_before_remote(
+    category,
+    db,
+    monkeypatch,
+    operation,
+):
+    """保存 B 但 HAL 仍连 A 时，三入口必须在 Remote/SCPI 前拒绝。"""
+    from app.services.instrument_test_lease import InstrumentTestLeaseError
+
+    category.category_key = "baseStation"
+    db.add(InstrumentConnectionDB(
+        id=uuid.uuid4(),
+        category_id=category.id,
+        controller_ip="192.0.2.20",
+        port=5025,
+        protocol="SCPI",
+        connection_params={"ip": "192.0.2.20", "port": 5025},
+    ))
+    db.commit()
+
+    class RealInstrumentDriver:
+        config = {"ip": "192.0.2.10", "port": 5025}
+        _query = AsyncMock(return_value="VENDOR,MODEL,SN,FW")
+        _write = AsyncMock()
+
+    driver = RealInstrumentDriver()
+    monkeypatch.setattr(
+        instrument_api, "_get_loaded_hal_driver", lambda _key: driver
+    )
+
+    @asynccontextmanager
+    async def _lease(*_args, **kwargs):
+        validator = kwargs.get("validate_before_remote")
+        assert validator is not None
+        error = validator(SimpleNamespace(drivers={"baseStation": driver}))
+        if error:
+            raise InstrumentTestLeaseError(error)
+        yield
+
+    monkeypatch.setattr(instrument_api, "instrument_test_lease", _lease)
+    monkeypatch.setattr(
+        "app.services.instrument_test_lease.instrument_test_lease", _lease
+    )
+
+    with pytest.raises(InstrumentTestLeaseError, match="活动 HAL 会话目标不一致"):
+        if operation == "test-connection":
+            asyncio.run(instrument_api.test_instrument_connection(
+                "baseStation",
+                body=instrument_api.TestConnectionRequest(),
+                db=db,
+            ))
+        elif operation == "scpi-command":
+            asyncio.run(instrument_api.send_scpi_command(
+                "baseStation",
+                request=instrument_api.ScpiCommandRequest(command="*IDN?"),
+                db=db,
+            ))
+        else:
+            asyncio.run(instrument_api.probe_scpi_commands(
+                "baseStation",
+                body=instrument_api.TestConnectionRequest(),
+                db=db,
+            ))
+
+    driver._query.assert_not_awaited()
+    driver._write.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ["test-connection", "scpi-command", "scpi-probe"],
+)
+def test_saved_single_session_full_resource_must_match_live_before_remote(
+    category,
+    db,
+    monkeypatch,
+    operation,
+):
+    """同 host 的 hislip2→hislip0 仍是不同控制目标，必须在 Remote 前拒绝。"""
+    from app.services.instrument_test_lease import InstrumentTestLeaseError
+
+    category.category_key = "baseStation"
+    db.add(InstrumentConnectionDB(
+        id=uuid.uuid4(),
+        category_id=category.id,
+        controller_ip="192.0.2.20",
+        port=5025,
+        endpoint="TCPIP0::192.0.2.20::hislip2::INSTR",
+        protocol="SCPI",
+    ))
+    db.commit()
+
+    class RealInstrumentDriver:
+        config = {
+            "ip": "192.0.2.20",
+            "port": 5025,
+            "endpoint": "TCPIP0::192.0.2.20::hislip0::INSTR",
+        }
+        _query = AsyncMock(return_value="VENDOR,MODEL,SN,FW")
+        _write = AsyncMock()
+
+    driver = RealInstrumentDriver()
+    monkeypatch.setattr(instrument_api, "_get_loaded_hal_driver", lambda _key: driver)
+
+    @asynccontextmanager
+    async def _lease(*_args, **kwargs):
+        error = kwargs["validate_before_remote"](
+            SimpleNamespace(drivers={"baseStation": driver})
+        )
+        if error:
+            raise InstrumentTestLeaseError(error)
+        yield
+
+    monkeypatch.setattr(instrument_api, "instrument_test_lease", _lease)
+    monkeypatch.setattr(
+        "app.services.instrument_test_lease.instrument_test_lease", _lease
+    )
+
+    with pytest.raises(InstrumentTestLeaseError, match="活动 HAL 会话目标不一致"):
+        if operation == "test-connection":
+            asyncio.run(instrument_api.test_instrument_connection(
+                "baseStation", body=instrument_api.TestConnectionRequest(), db=db
+            ))
+        elif operation == "scpi-command":
+            asyncio.run(instrument_api.send_scpi_command(
+                "baseStation",
+                request=instrument_api.ScpiCommandRequest(command="*IDN?"),
+                db=db,
+            ))
+        else:
+            asyncio.run(instrument_api.probe_scpi_commands(
+                "baseStation", body=instrument_api.TestConnectionRequest(), db=db
+            ))
+    driver._query.assert_not_awaited()
+    driver._write.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ["test-connection", "scpi-command", "scpi-probe"],
+)
+def test_saved_uxm_protocol_and_profile_must_match_live_before_remote(
+    category,
+    db,
+    monkeypatch,
+    operation,
+):
+    """同 host/port 下 TCPIP→HiSLIP 或 Test App profile 变化也必须拒绝。"""
+    from app.services.instrument_test_lease import InstrumentTestLeaseError
+
+    category.category_key = "baseStation"
+    db.add(InstrumentConnectionDB(
+        id=uuid.uuid4(),
+        category_id=category.id,
+        controller_ip="192.0.2.20",
+        port=5025,
+        protocol="HISLIP",
+        connection_params={"uxm_profile": "irat"},
+    ))
+    db.commit()
+
+    class RealInstrumentDriver:
+        config = {
+            "ip": "192.0.2.20",
+            "port": 5025,
+            "protocol": "TCPIP",
+            "uxm_profile": "5g_nr",
+        }
+        _query = AsyncMock(return_value="VENDOR,MODEL,SN,FW")
+        _write = AsyncMock()
+
+    driver = RealInstrumentDriver()
+    monkeypatch.setattr(instrument_api, "_get_loaded_hal_driver", lambda _key: driver)
+
+    @asynccontextmanager
+    async def _lease(*_args, **kwargs):
+        error = kwargs["validate_before_remote"](
+            SimpleNamespace(drivers={"baseStation": driver})
+        )
+        if error:
+            raise InstrumentTestLeaseError(error)
+        yield
+
+    monkeypatch.setattr(instrument_api, "instrument_test_lease", _lease)
+    monkeypatch.setattr(
+        "app.services.instrument_test_lease.instrument_test_lease", _lease
+    )
+
+    with pytest.raises(InstrumentTestLeaseError, match="活动 HAL 会话目标不一致"):
+        if operation == "test-connection":
+            asyncio.run(instrument_api.test_instrument_connection(
+                "baseStation", body=instrument_api.TestConnectionRequest(), db=db
+            ))
+        elif operation == "scpi-command":
+            asyncio.run(instrument_api.send_scpi_command(
+                "baseStation",
+                request=instrument_api.ScpiCommandRequest(command="*IDN?"),
+                db=db,
+            ))
+        else:
+            asyncio.run(instrument_api.probe_scpi_commands(
+                "baseStation", body=instrument_api.TestConnectionRequest(), db=db
+            ))
+    driver._query.assert_not_awaited()
+    driver._write.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ["test-connection", "scpi-command", "scpi-probe"],
+)
+def test_single_session_validator_rereads_saved_target_after_waiting_for_lock(
+    category,
+    db,
+    monkeypatch,
+    operation,
+):
+    """请求捕获 A 后 DB 改成 B，锁内必须重读并拒绝继续使用旧 A。"""
+    from app.services.instrument_test_lease import InstrumentTestLeaseError
+
+    category.category_key = "baseStation"
+    conn = InstrumentConnectionDB(
+        id=uuid.uuid4(),
+        category_id=category.id,
+        controller_ip="192.0.2.10",
+        port=5025,
+        endpoint="TCPIP0::192.0.2.10::hislip0::INSTR",
+        protocol="SCPI",
+    )
+    db.add(conn)
+    db.commit()
+
+    class RealInstrumentDriver:
+        config = {
+            "ip": "192.0.2.10",
+            "port": 5025,
+            "endpoint": "TCPIP0::192.0.2.10::hislip0::INSTR",
+        }
+        _query = AsyncMock(return_value="VENDOR,MODEL,SN,FW")
+        _write = AsyncMock()
+
+    driver = RealInstrumentDriver()
+    monkeypatch.setattr(instrument_api, "_get_loaded_hal_driver", lambda _key: driver)
+
+    @asynccontextmanager
+    async def _lease(*_args, **kwargs):
+        conn.controller_ip = "192.0.2.20"
+        conn.endpoint = "TCPIP0::192.0.2.20::hislip0::INSTR"
+        db.commit()
+        error = kwargs["validate_before_remote"](
+            SimpleNamespace(drivers={"baseStation": driver})
+        )
+        if error:
+            raise InstrumentTestLeaseError(error)
+        yield
+
+    monkeypatch.setattr(instrument_api, "instrument_test_lease", _lease)
+    monkeypatch.setattr(
+        "app.services.instrument_test_lease.instrument_test_lease", _lease
+    )
+
+    with pytest.raises(InstrumentTestLeaseError, match="请求期间发生变化"):
+        if operation == "test-connection":
+            asyncio.run(instrument_api.test_instrument_connection(
+                "baseStation", body=instrument_api.TestConnectionRequest(), db=db
+            ))
+        elif operation == "scpi-command":
+            asyncio.run(instrument_api.send_scpi_command(
+                "baseStation",
+                request=instrument_api.ScpiCommandRequest(command="*IDN?"),
+                db=db,
+            ))
+        else:
+            asyncio.run(instrument_api.probe_scpi_commands(
+                "baseStation", body=instrument_api.TestConnectionRequest(), db=db
+            ))
+    driver._query.assert_not_awaited()
+    driver._write.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ["test-connection", "scpi-command", "scpi-probe"],
+)
+def test_single_session_raw_fallback_never_guesses_a_missing_port(
+    category,
+    db,
+    monkeypatch,
+    operation,
+):
+    """没有活动 F64 会话且只保存 host 时，不得把 5025 当成 F64 端口。"""
+    category.category_key = "channelEmulator"
+    db.add(InstrumentConnectionDB(
+        id=uuid.uuid4(),
+        category_id=category.id,
+        controller_ip="192.0.2.30",
+        port=None,
+        endpoint=None,
+        protocol="SCPI",
+    ))
+    db.commit()
+    monkeypatch.setattr(instrument_api, "_get_loaded_hal_driver", lambda _key: None)
+
+    with patch("socket.socket") as raw_socket:
+        if operation == "test-connection":
+            result = asyncio.run(instrument_api.test_instrument_connection(
+                "channelEmulator",
+                body=instrument_api.TestConnectionRequest(),
+                db=db,
+            ))
+            assert result.success is False
+            assert "端口" in result.message
+        elif operation == "scpi-command":
+            result = asyncio.run(instrument_api.send_scpi_command(
+                "channelEmulator",
+                request=instrument_api.ScpiCommandRequest(command="*IDN?"),
+                db=db,
+            ))
+            assert result.success is False
+            assert "端口" in (result.error or "")
+        else:
+            with pytest.raises(instrument_api.HTTPException) as exc_info:
+                asyncio.run(instrument_api.probe_scpi_commands(
+                    "channelEmulator",
+                    body=instrument_api.TestConnectionRequest(),
+                    db=db,
+                ))
+            assert "端口" in str(exc_info.value.detail)
+    raw_socket.return_value.connect.assert_not_called()
 
 
 @pytest.fixture(autouse=True)
@@ -303,6 +909,14 @@ class TestAuditListIntegration:
                 driver_mode="auto",
             )
             db.add(cat)
+            db.flush()
+            db.add(InstrumentConnectionDB(
+                id=uuid.uuid4(),
+                category_id=cat.id,
+                controller_ip="127.0.0.1",
+                port=1,
+                protocol="SCPI",
+            ))
         db.commit()
 
         for key in ("vna", "baseStation"):
@@ -312,7 +926,7 @@ class TestAuditListIntegration:
             )
             client.post(
                 f"/api/v1/instruments/{key}/scpi-probe",
-                json={"ip": "127.0.0.1", "port": 1},
+                json={},
             )
 
         # No filter: 4 rows total (2 single + 2 probe).
@@ -416,8 +1030,17 @@ class TestHalDriverGate:
         )
         db.add(cat)
         db.commit()
+        db.add(InstrumentConnectionDB(
+            id=uuid.uuid4(),
+            category_id=cat.id,
+            controller_ip="192.0.2.20",
+            port=5125,
+            protocol="SCPI",
+        ))
+        db.commit()
 
         class RealUxmDriver:
+            config = {"ip": "192.0.2.20", "port": 5125}
             _query = AsyncMock(return_value="Keysight,E7515B,SN,FW")
             _write = AsyncMock()
 
@@ -438,7 +1061,7 @@ class TestHalDriverGate:
         ):
             resp = client.post(
                 "/api/v1/instruments/baseStation/test-connection",
-                json={"ip": "192.0.2.20", "port": 5125, "protocol": "SCPI"},
+                json={"protocol": "SCPI"},
             )
 
         assert resp.status_code == 200

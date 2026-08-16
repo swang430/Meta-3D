@@ -158,7 +158,7 @@ class TestF64PortMigration:
         assert result.updated == 0
 
 
-def test_seeder_version_bumped_to_2():
+def test_seeder_version_tracks_latest_connection_contract():
     # 没 bump 版本, runner (run_all) 会因 history.seeder_version >= version 跳过,
     # 迁移在已 bootstrap 的库上永不生效 (Codex on PR #92)。
-    assert instruments_seeder.version == 2
+    assert instruments_seeder.version == 3

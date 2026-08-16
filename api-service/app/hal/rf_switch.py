@@ -15,6 +15,7 @@ from app.hal.base import (
     InstrumentStatus,
     InstrumentCapability,
     InstrumentMetrics,
+    resolve_configured_instrument_host,
 )
 
 logger = logging.getLogger(__name__)
@@ -173,10 +174,33 @@ class EtslSwitchDriver(RfSwitchDriver):
         # controller_ip, 与 F64/UXM 同惯例), 只认 ip_address 会让标准绑定
         # 落 127.0.0.1 → VXI-11 永远连不上真开关。"ip" 优先 (结构化列权威),
         # ip_address 保留兼容 (onsite 脚本 / 旧 connection_params)。
-        self._ip = config.get("ip") or config.get("ip_address") or "127.0.0.1"
-        self._port = int(config.get("port") or self._DEFAULT_PORT)
+        self._ip = self._connection_host
+        self._port = self._resolved_tcp_port(self._DEFAULT_PORT)
         # P2-9: 默认 vxi11 — 现场机老固件 (2.5.1) 唯一实证 LAN 通路
         self._transport = str(config.get("transport") or "vxi11").lower()
+        if self._transport == "vxi11":
+            self._reject_incompatible_visa_resource(allowed_type="INSTR")
+            self._reject_plain_endpoint_port(fixed_type="VXI-11 INSTR")
+            self._reject_nondefault_metadata_port(
+                default=self._DEFAULT_PORT, fixed_type="VXI-11 INSTR"
+            )
+            if self._connection_resource:
+                resource_parts = self._connection_resource.split("::")
+                if (
+                    len(resource_parts) == 4
+                    and resource_parts[-1].strip().casefold() == "instr"
+                    and resource_parts[2].strip().casefold() != "inst0"
+                ):
+                    self._connection_config_error = (
+                        "ETSL VXI-11 仅接受默认 INSTR 或 inst0::INSTR 资源；"
+                        f"不接受子地址 {resource_parts[2]!r}"
+                    )
+        else:
+            self._reject_incompatible_visa_resource(allowed_type="SOCKET")
+        self._connection_visa_resource = self._resolved_visa_resource(
+            f"TCPIP0::{self._ip}::inst0::INSTR",
+            explicit_port_to_socket=(self._transport != "vxi11"),
+        )
         self._command_style = str(config.get("command_style") or "raw").lower()
         self._line_terminator = self._TERMINATOR_MAP.get(
             str(config.get("line_terminator", "cr")).lower(), "\r"
@@ -187,11 +211,13 @@ class EtslSwitchDriver(RfSwitchDriver):
         self._visa_session = None
 
     async def connect(self) -> bool:
+        if self._connection_config_error or not self._ip:
+            return self._fail_missing_connection_address()
         try:
             if self._transport == "vxi11":
                 import pyvisa
                 self._visa_rm = pyvisa.ResourceManager("@py")
-                resource = f"TCPIP0::{self._ip}::inst0::INSTR"
+                resource = self._connection_visa_resource
                 self._visa_session = await asyncio.to_thread(
                     self._visa_rm.open_resource, resource
                 )

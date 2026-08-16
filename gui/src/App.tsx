@@ -93,6 +93,10 @@ import {
 } from './api/service'
 import client from './api/client'
 import { listDiagnosticRuns, type DiagnosticRunSummary } from './api/diagnosticService'
+import {
+  buildDiagnosticTarget,
+  diagnosticErrorMessage,
+} from './features/Equipment/diagnosticTarget'
 import type {
   DemoRunPlan,
   DemoRunResult,
@@ -932,46 +936,6 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
   }
 }
 
-/**
- * 解析仪器端点字符串为 IP 和 Port
- * 支持格式:
- * - VISA: "TCPIP0::192.168.0.132::inst0::INSTR"
- * - VISA with port: "TCPIP0::192.168.0.132::5025::INSTR"
- * - IP:Port: "192.168.0.132:5025"
- * - Plain IP: "192.168.0.132"
- */
-function parseEndpointToIpPort(endpoint: string): { ip?: string; port?: number } {
-  const ep = endpoint.trim()
-  if (!ep) return {}
-
-  // VISA 资源字符串: TCPIP[n]::host[::port]::...::INSTR
-  if (ep.toUpperCase().startsWith('TCPIP')) {
-    const parts = ep.split('::')
-    if (parts.length >= 2) {
-      const ip = parts[1].trim()
-      let port: number | undefined
-      if (parts.length >= 3) {
-        const p = parseInt(parts[2].trim(), 10)
-        if (!isNaN(p) && p > 0 && p < 65536) port = p
-      }
-      return { ip, port }
-    }
-    return {}
-  }
-
-  // IP:Port 格式
-  if (ep.includes(':')) {
-    const lastColon = ep.lastIndexOf(':')
-    const host = ep.slice(0, lastColon).trim()
-    const p = parseInt(ep.slice(lastColon + 1).trim(), 10)
-    if (!isNaN(p) && p > 0 && p < 65536) return { ip: host, port: p }
-    return { ip: ep }
-  }
-
-  // 纯 IP
-  return { ip: ep }
-}
-
 // SCPI history query key — exported as a const so EquipmentManager handlers
 // can invalidate the right key after each successful command send.
 const scpiHistoryQueryKey = (categoryKey: string) => ['scpi-history', categoryKey] as const
@@ -1746,6 +1710,19 @@ function EquipmentManager() {
     }, 2000)
   }, [])
 
+  const diagnosticTargetFor = useCallback((
+    categoryKey: string,
+    draftEndpoint: string,
+    savedEndpoint: string,
+  ) => {
+    const target = buildDiagnosticTarget(categoryKey, draftEndpoint, savedEndpoint)
+    if (target.error) {
+      showFeedback(categoryKey, 'error', target.error)
+      return null
+    }
+    return target.payload ?? {}
+  }, [showFeedback])
+
   const instrumentMutation = useMutation({
     mutationFn: ({ categoryKey, payload }: EquipmentMutationVariables) =>
       updateInstrumentCategory(categoryKey, payload),
@@ -1770,7 +1747,15 @@ function EquipmentManager() {
           notes: updatedCategory.connection.notes ?? '',
         },
       }))
-      showFeedback(variables.categoryKey, 'success', '配置已保存。')
+      const needsHALReload =
+        updatedCategory.key === 'baseStation' || updatedCategory.key === 'channelEmulator'
+      showFeedback(
+        variables.categoryKey,
+        'success',
+        needsHALReload
+          ? '配置已保存；请重新加载 HAL 后再进行连接测试或 SCPI 操作。'
+          : '配置已保存。',
+      )
     },
     onError: (_error, variables) => {
       showFeedback(variables.categoryKey, 'error', '保存失败，请重试。')
@@ -2180,11 +2165,15 @@ function EquipmentManager() {
                     onClick={async () => {
                       showFeedback(category.key, 'success', '正在测试连接...')
                       try {
-                        const { ip: testIp, port: testPort } = parseEndpointToIpPort(draft.endpoint || '')
+                        const target = diagnosticTargetFor(
+                          category.key,
+                          draft.endpoint || '',
+                          category.connection.endpoint || '',
+                        )
+                        if (!target) return
                         const draftProtocol = draft.controller?.trim() || ''
                         const resp = await client.post(`/instruments/${category.key}/test-connection`, {
-                          ip: testIp,
-                          port: testPort,
+                          ...target,
                           protocol: draftProtocol || undefined,
                         })
                         const result = resp.data as { success: boolean; message: string; idn?: string; latency_ms?: number }
@@ -2195,8 +2184,8 @@ function EquipmentManager() {
                         } else {
                           showFeedback(category.key, 'error', `❌ ${result.message}`)
                         }
-                      } catch (err: any) {
-                        showFeedback(category.key, 'error', `测试失败: ${err.message}`)
+                      } catch (err: unknown) {
+                        showFeedback(category.key, 'error', `测试失败: ${diagnosticErrorMessage(err)}`)
                       }
                     }}
                   >
@@ -2239,13 +2228,18 @@ function EquipmentManager() {
                           const key = category.key
                           setScpiLoading(p => ({ ...p, [key]: true }))
                           try {
-                            const { ip: testIp, port: testPort } = parseEndpointToIpPort(draft.endpoint || '')
+                            const target = diagnosticTargetFor(
+                              key,
+                              draft.endpoint || '',
+                              category.connection.endpoint || '',
+                            )
+                            if (!target) return
                             const resp = await client.post(`/instruments/${key}/scpi-probe`, {
-                              ip: testIp, port: testPort,
+                              ...target,
                             })
                             setScpiProbeResults(p => ({ ...p, [key]: resp.data.results }))
-                          } catch (err: any) {
-                            showFeedback(key, 'error', `SCPI 探测失败: ${err.message}`)
+                          } catch (err: unknown) {
+                            showFeedback(key, 'error', `SCPI 探测失败: ${diagnosticErrorMessage(err)}`)
                           } finally {
                             setScpiLoading(p => ({ ...p, [key]: false }))
                             queryClient.invalidateQueries({ queryKey: scpiHistoryQueryKey(key) })
@@ -2301,21 +2295,26 @@ function EquipmentManager() {
                             const cmd = scpiManualCmd[category.key]?.trim()
                             if (!cmd) return
                             const key = category.key
-                            const { ip: testIp, port: testPort } = parseEndpointToIpPort(draft.endpoint || '')
+                            const target = diagnosticTargetFor(
+                              key,
+                              draft.endpoint || '',
+                              category.connection.endpoint || '',
+                            )
+                            if (!target) return
                             setScpiLoading(p => ({ ...p, [key]: true }))
                             try {
                               const resp = await client.post(`/instruments/${key}/scpi-command`, {
-                                command: cmd, ip: testIp, port: testPort,
+                                command: cmd, ...target,
                               })
                               const result = resp.data as ScpiResult
                               setScpiManualResults(p => ({
                                 ...p, [key]: [...(p[key] || []), result],
                               }))
                               setScpiManualCmd(p => ({ ...p, [key]: '' }))
-                            } catch (err: any) {
+                            } catch (err: unknown) {
                               setScpiManualResults(p => ({
                                 ...p, [key]: [...(p[key] || []), {
-                                  command: cmd, success: false, error: err.message, latency_ms: 0,
+                                  command: cmd, success: false, error: diagnosticErrorMessage(err), latency_ms: 0,
                                 }],
                               }))
                             } finally {
@@ -2334,21 +2333,26 @@ function EquipmentManager() {
                           const cmd = scpiManualCmd[category.key]?.trim()
                           if (!cmd) return
                           const key = category.key
-                          const { ip: testIp, port: testPort } = parseEndpointToIpPort(draft.endpoint || '')
+                          const target = diagnosticTargetFor(
+                            key,
+                            draft.endpoint || '',
+                            category.connection.endpoint || '',
+                          )
+                          if (!target) return
                           setScpiLoading(p => ({ ...p, [key]: true }))
                           try {
                             const resp = await client.post(`/instruments/${key}/scpi-command`, {
-                              command: cmd, ip: testIp, port: testPort,
+                              command: cmd, ...target,
                             })
                             const result = resp.data as ScpiResult
                             setScpiManualResults(p => ({
                               ...p, [key]: [...(p[key] || []), result],
                             }))
                             setScpiManualCmd(p => ({ ...p, [key]: '' }))
-                          } catch (err: any) {
+                          } catch (err: unknown) {
                             setScpiManualResults(p => ({
                               ...p, [key]: [...(p[key] || []), {
-                                command: cmd, success: false, error: err.message, latency_ms: 0,
+                                command: cmd, success: false, error: diagnosticErrorMessage(err), latency_ms: 0,
                               }],
                             }))
                           } finally {

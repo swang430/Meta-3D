@@ -184,6 +184,7 @@ class InstrumentTestLease:
         control_f64: bool = True,
         control_uxm: bool = True,
         enable_monitoring: bool = True,
+        validate_before_remote: Optional[Callable[[object], Optional[str]]] = None,
     ) -> AsyncIterator[None]:
         """在整个测试生命周期内持有 Remote，任何退出路径都归还 Local。
 
@@ -232,13 +233,20 @@ class InstrumentTestLease:
             yield
             return
         async with self._coordinated():
+            # 校验必须与 HAL reload 共用同一把协调锁，并且排在 cache clear / Remote
+            # acquire 之前。否则“保存了新地址、活动 driver 仍是旧地址”的窗口会先
+            # 对旧仪表产生控制 I/O，随后才报配置冲突。
+            hal = self._hal()
+            if validate_before_remote is not None:
+                validation_error = validate_before_remote(hal)
+                if validation_error:
+                    raise InstrumentTestLeaseError(validation_error)
             # 锁一到手立即对外标 active，覆盖“正在连接 Remote”的窗口。
             self._active_purpose = purpose
             self._held_f64 = control_f64
             self._held_uxm = control_uxm
             try:
                 try:
-                    hal = self._hal()
                     await self._clear_metrics_cache(hal)
                     if control_f64:
                         await self._acquire_remote(hal, purpose, instrument="F64")
@@ -344,12 +352,14 @@ async def instrument_test_lease(
     control_f64: bool = True,
     control_uxm: bool = True,
     enable_monitoring: bool = True,
+    validate_before_remote: Optional[Callable[[object], Optional[str]]] = None,
 ) -> AsyncIterator[None]:
     async with _LEASE.hold(
         purpose,
         control_f64=control_f64,
         control_uxm=control_uxm,
         enable_monitoring=enable_monitoring,
+        validate_before_remote=validate_before_remote,
     ):
         yield
 

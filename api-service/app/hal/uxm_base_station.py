@@ -30,6 +30,7 @@ from app.hal.base import (
     InstrumentStatus,
     InstrumentCapability,
     InstrumentMetrics,
+    resolve_configured_tcpip_connection,
     redact_instrument_command_text,
 )
 from app.hal.base_station import (
@@ -55,6 +56,18 @@ if TYPE_CHECKING:
     from app.hal.scpi_evidence import ScpiExchangeRef
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_uxm_connection_selector(config: Dict[str, Any]) -> tuple[str, str]:
+    """归一 UXM 实际连接分支所消费的 protocol 与 Test App profile。"""
+    protocol = str(config.get("protocol") or "TCPIP").strip().upper()
+    profile_hint = str(config.get("uxm_profile") or "").strip().casefold()
+    profile = (
+        "irat"
+        if profile_hint in {"irat", "lte_nr_irat", "lte+nr"}
+        else "5g_nr"
+    )
+    return protocol, profile
 
 
 class UxmLocalControlReservedError(RuntimeError):
@@ -326,10 +339,14 @@ class RealUxmDriver(BaseStationDriver):
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         # 连接参数
-        self.ip_address: str = config.get("ip", "192.168.100.10")
-        self.port: int = config.get("port", 5025)
-        self.protocol: str = config.get("protocol", "TCPIP")  # TCPIP or HiSLIP
-        self.visa_resource: Optional[str] = config.get("visa_resource")
+        (
+            self.ip_address,
+            configured_port,
+            self.visa_resource,
+            self._connection_config_error,
+        ) = resolve_configured_tcpip_connection(config)
+        self.port: int = configured_port if configured_port is not None else 5025
+        self.protocol, _profile = normalize_uxm_connection_selector(config)
         # Test-App command profile (CAICT 2026-05-13: E7515B platform hosts
         # multiple test apps with different SCPI dialects). Default profile
         # is 5G NR Test App for backward compat; auto-detected in connect()
@@ -428,8 +445,8 @@ class RealUxmDriver(BaseStationDriver):
         immediately. connect() re-confirms via live SYSTem:APPLication:NAME?
         and overwrites if mismatch.
         """
-        hint = (config.get("uxm_profile") or "").lower()
-        if hint in ("irat", "lte_nr_irat", "lte+nr"):
+        _protocol, profile = normalize_uxm_connection_selector(config)
+        if profile == "irat":
             return UxmLteNrIratProfile
         return Uxm5GNRTestAppProfile
 
@@ -559,7 +576,7 @@ class RealUxmDriver(BaseStationDriver):
           hislip2 → Test Application Framework（真测试 App SCPI 在这）
 
         本方法按以下顺序探测：
-          1. config["visa_resource"] 给了，直接用
+          1. 有效的 TCPIP VISA resource 给了，原样使用
           2. protocol=HISLIP — 按 self._cmds.HISLIP_INDEX 决定 hislipN（默认 0；
              IRAT profile 默认 2）
           3. 否则走 SOCKET 端口 5025
@@ -567,6 +584,10 @@ class RealUxmDriver(BaseStationDriver):
         连上后 query SYSTem:APPLication:NAME? 决定实际 Test App，按结果切换
         self._cmds。若检测不到（如纯 Platform 模式），保留 __init__ 时的初值。
         """
+        if self._connection_config_error:
+            return self._fail_connection_configuration(self._connection_config_error)
+        if not self.ip_address:
+            return self._fail_missing_connection_address()
         if self._local_control_reserved:
             self._last_error = "UXM 已释放控制会话；仅测试租约可重新取得 Remote"
             return False

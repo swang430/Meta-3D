@@ -48,6 +48,7 @@ from app.hal.base import (
     InstrumentStatus,
     InstrumentCapability,
     InstrumentMetrics,
+    resolve_configured_instrument_host,
     redact_instrument_command_text,
     redact_instrument_exchange_text,
 )
@@ -392,13 +393,21 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         # 连接参数
-        self.ip_address: str = config.get("ip", "192.168.100.21")
+        self.ip_address: str = self._connection_host
         # PROPSIM F64 ATE/SCPI 端口固定为 3334 (User Reference §1.1.2.1:
         # "Fixed TCP/IP port for PROPSIM is 3334")。早期配置/默认误用 5025
         # (Keysight/R&S 风格的 SCPI-RAW 口) → 在 F64 上响应 desync + 文件加载报
-        # -300。强制 3334、忽略 config 端口 (PROPSIM 此口硬件固定不可改)。
+        # -300。端口固定为 3334；显式声明其他端口必须在 I/O 前失败，不能忽略。
         # [现场 2026-05-27 实测: 3334 加载/运行/改参全 0 error, 5025 全 desync]
         self.port: int = 3334
+        if self._connection_port is not None and self._connection_port != self.port:
+            self._connection_config_error = (
+                f"PROPSIM F64 ATE 端口固定为 3334，显式配置为 {self._connection_port}"
+            )
+        self._reject_incompatible_visa_resource(allowed_type="SOCKET")
+        self._connection_visa_resource = self._resolved_visa_resource(
+            f"TCPIP0::{self.ip_address}::{self.port}::SOCKET"
+        )
         self.ftp_user: str = config.get("ftp_user", F64_FTP_USER)
         self.ftp_pass: str = config.get("ftp_pass", F64_FTP_PASS)
         # Phase 2h: 跨实验室部署时由 InstrumentCategory.config 覆盖
@@ -1702,6 +1711,12 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
           3. 发送 *IDN? 验证身份
           4. 查询 SYST:INFO? 获取硬件配置
         """
+        # connect() 无论能否进入外部 I/O，都是一次新的会话尝试。先清掉上一会话的
+        # 加载态/回读缓存，避免“缺配置”失败后状态接口继续谎报旧频率或仍在运行。
+        # 地址门仍位于 ResourceManager/socket/SCPI 之前，P1-51 的 fail-closed 不变。
+        self._apply_session_reset()
+        if self._connection_config_error or not self.ip_address:
+            return self._fail_missing_connection_address()
         if self._local_control_reserved:
             self._status = InstrumentStatus.DISCONNECTED
             self._last_error = "F64 已交还本地控制；需显式重新取得远程控制"
@@ -1709,9 +1724,6 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
 
         self._status = InstrumentStatus.CONNECTING
         self._identity_response = None
-        # 连接起始复位网 (F3): connect 是新会话干净起点 → 全清 6 字段 (含 running/pipeline/
-        # bypass), 防 disconnect→reconnect 或 socket 掉直连的 reconnect 后旧实例 stale 残留。
-        self._apply_session_reset()
         # 拆卸标志兜底 (agent T3/U2): 正常路径由 disconnect 的 finally 复位; 这里再清一次
         # 防极端情况 (CancelledError 把那个 finally 也跳过) 让实例永久失去懒重连能力 ——
         # 走到 connect 就说明**要活过来了**, 标志没有理由还留着。
@@ -1719,7 +1731,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         try:
             import pyvisa
             self._rm = pyvisa.ResourceManager('@py')
-            resource_string = f"TCPIP0::{self.ip_address}::{self.port}::SOCKET"
+            resource_string = self._connection_visa_resource
 
             open_task = asyncio.create_task(asyncio.to_thread(
                 self._rm.open_resource, resource_string,
@@ -4837,7 +4849,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 pass
 
         try:
-            resource_string = f"TCPIP0::{self.ip_address}::{self.port}::SOCKET"
+            resource_string = self._connection_visa_resource
             self._visa_resource = await asyncio.to_thread(
                 self._rm.open_resource,
                 resource_string,
@@ -5474,7 +5486,7 @@ class PropsimF64Controller:
     注意: 此类将在下个版本废弃, 请使用 RealPropsimF64Driver。
     """
 
-    def __init__(self, ip_address: str = "192.168.100.21"):
+    def __init__(self, ip_address: str):
         self.ip_address = ip_address
         logger.info(f"Initialized PROPSIM F64 Controller (Legacy) at {self.ip_address}")
 

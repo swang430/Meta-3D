@@ -222,6 +222,33 @@ async def test_uxm_only_operation_does_not_open_f64_and_disables_monitoring():
 
 
 @pytest.mark.asyncio
+async def test_pre_remote_validator_rejects_before_any_hal_io():
+    """持久化配置与活动单会话不一致时，连 cache/Remote/Local 都不能碰。"""
+    from app.services.instrument_test_lease import (
+        InstrumentTestLease,
+        InstrumentTestLeaseError,
+    )
+
+    events: list[str] = []
+    hal = _FakeHAL(_FakeF64(events), _FakeUxm(events))
+    lease = InstrumentTestLease(lambda: hal)
+
+    with pytest.raises(InstrumentTestLeaseError, match="重新加载 HAL"):
+        async with lease.hold(
+            "uxm-scpi-console",
+            control_f64=False,
+            control_uxm=True,
+            validate_before_remote=lambda _hal: (
+                "已保存配置与活动 HAL 会话目标不一致；请重新加载 HAL"
+            ),
+        ):
+            pytest.fail("校验失败后不得进入操作体")
+
+    assert events == []
+    assert hal.cache_clears == 0
+
+
+@pytest.mark.asyncio
 async def test_idle_parking_releases_f64_and_uxm_without_acquiring_remote():
     from app.services.instrument_test_lease import InstrumentTestLease
 

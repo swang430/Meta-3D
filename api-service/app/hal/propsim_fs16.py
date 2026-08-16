@@ -72,6 +72,7 @@ from app.hal.base import (
     InstrumentCapability,
     InstrumentMetrics,
     InstrumentStatus,
+    resolve_configured_instrument_host,
     redact_instrument_command_text,
 )
 from app.hal.channel_emulator import (
@@ -111,9 +112,13 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
+        self._reject_incompatible_visa_resource(allowed_type="SOCKET")
         # Connection params
-        self.ip_address: str = config.get("ip", "192.168.0.100")
-        self.port: int = config.get("port", 5025)
+        self.ip_address: str = self._connection_host
+        self.port: int = self._resolved_tcp_port(5025)
+        self._connection_visa_resource = self._resolved_visa_resource(
+            f"TCPIP0::{self.ip_address}::{self.port}::SOCKET"
+        )
         self.playback_dir: str = config.get("playback_dir", FS16_PLAYBACK_DIR)
 
         # PyVISA handles
@@ -153,11 +158,13 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
 
     async def connect(self) -> bool:
         """Open SOCKET, verify identity, cache SYST:INFO parse."""
+        if self._connection_config_error or not self.ip_address:
+            return self._fail_missing_connection_address()
         self._status = InstrumentStatus.CONNECTING
         try:
             import pyvisa
             self._rm = pyvisa.ResourceManager("@py")
-            resource_string = f"TCPIP0::{self.ip_address}::{self.port}::SOCKET"
+            resource_string = self._connection_visa_resource
 
             self._visa_resource = await asyncio.to_thread(
                 self._rm.open_resource,
@@ -406,7 +413,7 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
             pass
         self._visa_resource = None
         try:
-            resource_string = f"TCPIP0::{self.ip_address}::{self.port}::SOCKET"
+            resource_string = self._connection_visa_resource
             self._visa_resource = await asyncio.to_thread(
                 self._rm.open_resource,
                 resource_string,

@@ -48,6 +48,126 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 
+def has_explicit_instrument_address(config: Dict[str, Any]) -> bool:
+    """配置里是否存在非空连接地址；不判断该地址是否有效。"""
+    return any(
+        str(config.get(key) or "").strip()
+        for key in ("ip", "controller_ip", "ip_address", "visa_resource", "endpoint")
+    )
+
+
+def resolve_configured_tcpip_connection(
+    config: Dict[str, Any],
+) -> tuple[str, Optional[int], Optional[str], Optional[str]]:
+    """解析网络仪表的显式 host/port/VISA resource，并检查镜像冲突。
+
+    返回 ``(host, port, visa_resource, error)``。``endpoint`` 可为纯 host、
+    ``host:port`` 或完整 TCPIP VISA resource；只有完整 VISA 语法才会原样交给
+    PyVISA。多个显式来源指向不同 host（或不同显式 socket port）时 fail-loud，
+    防止 preflight 检查一台仪表、connect 却向另一台下发命令。
+    """
+    host_sources: List[tuple[str, str]] = []
+    for key in ("ip", "controller_ip", "ip_address"):
+        value = str(config.get(key) or "").strip()
+        if value:
+            host_sources.append((key, value))
+            # 结构化列保留既有优先级：ip → controller_ip → ip_address。
+            # 冲突门针对结构化真值与 resource 镜像，不能把仍带旧 alias 的
+            # 历史配置误判为两个并列真值源。
+            break
+
+    selected_resource: Optional[str] = None
+    resource_sources: List[tuple[str, tuple[str, ...]]] = []
+    port_sources: List[tuple[str, int]] = []
+    for key in ("visa_resource", "endpoint"):
+        raw = str(config.get(key) or "").strip()
+        if not raw:
+            continue
+        if "::" in raw:
+            parts = raw.split("::")
+            if (
+                not re.fullmatch(r"TCPIP\d*", parts[0], flags=re.IGNORECASE)
+                or not parts[1].strip()
+            ):
+                return "", None, None, f"{key} 不是有效的 TCPIP VISA resource"
+            resource_type = parts[-1].strip().casefold()
+            if resource_type == "socket":
+                if len(parts) != 4 or not parts[2].strip().isdigit():
+                    return "", None, None, f"{key} 不是完整的 TCPIP SOCKET resource"
+            elif resource_type == "instr":
+                if len(parts) not in (3, 4) or (len(parts) == 4 and not parts[2].strip()):
+                    return "", None, None, f"{key} 不是完整的 TCPIP INSTR resource"
+            else:
+                return "", None, None, f"{key} 缺少 INSTR/SOCKET 资源类型"
+            host_sources.append((key, parts[1].strip()))
+            resource_sources.append((
+                key,
+                tuple(part.strip().casefold() for part in parts),
+            ))
+            if selected_resource is None:
+                selected_resource = raw
+            # 只有显式 SOCKET resource 的数字 token 才与结构化 port 同义；
+            # hislipN/instN 是 VISA 子地址，不能误当端口比较。
+            if (
+                len(parts) == 4
+                and parts[-1].strip().casefold() == "socket"
+            ):
+                port_sources.append((key, int(parts[-2].strip())))
+            continue
+
+        if key == "visa_resource":
+            return "", None, None, "visa_resource 不是有效的 TCPIP VISA resource"
+
+        host, separator, port_text = raw.rpartition(":")
+        if separator:
+            if not host.strip() or not port_text.isdigit():
+                return "", None, None, "endpoint 必须是 host、host:port 或 TCPIP VISA resource"
+            endpoint_host = host.strip()
+            port_sources.append((key, int(port_text)))
+        else:
+            endpoint_host = raw
+        host_sources.append((key, endpoint_host))
+
+    distinct_hosts = {value.casefold() for _, value in host_sources}
+    if len(distinct_hosts) > 1:
+        detail = ", ".join(f"{key}={value}" for key, value in host_sources)
+        return "", None, None, f"连接地址冲突：{detail}"
+
+    configured_port = config.get("port")
+    explicit_port: Optional[int] = None
+    if configured_port not in (None, ""):
+        try:
+            explicit_port = int(configured_port)
+        except (TypeError, ValueError):
+            return "", None, None, f"port 不是有效整数：{configured_port!r}"
+        port_sources.append(("port", explicit_port))
+    distinct_ports = {value for _, value in port_sources}
+    invalid_ports = [(key, value) for key, value in port_sources if not 1 <= value <= 65535]
+    if invalid_ports:
+        detail = ", ".join(f"{key}={value}" for key, value in invalid_ports)
+        return "", None, None, f"连接端口超出 1..65535：{detail}"
+    if len(distinct_ports) > 1:
+        detail = ", ".join(f"{key}={value}" for key, value in port_sources)
+        return "", None, None, f"连接端口冲突：{detail}"
+
+    distinct_resources = {value for _, value in resource_sources}
+    if len(distinct_resources) > 1:
+        detail = ", ".join(
+            f"{key}={'::'.join(value)}" for key, value in resource_sources
+        )
+        return "", None, None, f"VISA 资源冲突：{detail}"
+
+    host_value = host_sources[0][1] if host_sources else ""
+    resolved_port = port_sources[0][1] if port_sources else None
+    return host_value, resolved_port, selected_resource, None
+
+
+def resolve_configured_instrument_host(config: Dict[str, Any]) -> str:
+    """从显式连接配置解析 host；没有配置或配置冲突时返回空串。"""
+    host, _, _, error = resolve_configured_tcpip_connection(config)
+    return "" if error else host
+
+
 def _resolve_resp_max() -> int:
     """响应体写进日志的最大字符数 (超出截断并显式标记)。
 
@@ -364,6 +484,18 @@ class InstrumentDriver(ABC):
         self.config = config
         self._status = InstrumentStatus.DISCONNECTED
         self._last_error: Optional[str] = None
+        # 所有真实网络驱动共享同一份配置错误真值。host-only 驱动过去只拿
+        # ``resolve_configured_instrument_host`` 的空串，随后把“地址冲突/非法
+        # resource/越界端口”误报成“未配置”；这里保留原始原因，统一由缺地址门
+        # 在任何 I/O 前原样上报。
+        (
+            self._connection_host,
+            self._connection_port,
+            self._connection_resource,
+            self._connection_config_error,
+        ) = (
+            resolve_configured_tcpip_connection(config)
+        )
 
         # 安装选件 (license) 缓存。connect() 中由 _probe_installed_options()
         # 调 *OPT? 填充。空列表 = 探测失败 / 仪表不支持 *OPT? / 尚未连接。
@@ -379,6 +511,84 @@ class InstrumentDriver(ABC):
         # SCPI 通信专用 logger — 命名空间 app.hal.scpi.{id}
         # 被 logging_config 中的 SCPI handler 独立捕获到 scpi.log
         self._scpi_logger = logging.getLogger(f"app.hal.scpi.{instrument_id}")
+
+    def _fail_missing_connection_address(self) -> bool:
+        """在任何外部 I/O 前把缺少连接地址收敛成明确失败。"""
+        if self._connection_config_error:
+            return self._fail_connection_configuration(
+                self._connection_config_error
+            )
+        error = (
+            f"{self.instrument_id}: 未配置连接地址；请在仪表目录/LabProfile 中设置 "
+            "IP 或 endpoint 后重新加载 HAL"
+        )
+        self._set_status(InstrumentStatus.ERROR, error)
+        return False
+
+    def _fail_connection_configuration(self, detail: str) -> bool:
+        """在任何外部 I/O 前把矛盾或无效连接配置收敛成明确失败。"""
+        error = (
+            f"{self.instrument_id}: 连接配置无效：{detail}；请在仪表目录/LabProfile "
+            "中修正后重新加载 HAL"
+        )
+        self._set_status(InstrumentStatus.ERROR, error)
+        return False
+
+    def _resolved_tcp_port(self, default: int) -> int:
+        """返回显式 endpoint/SOCKET 端口；未声明时才使用驱动协议默认值。"""
+        return self._connection_port if self._connection_port is not None else default
+
+    def _resolved_visa_resource(
+        self,
+        default_resource: str,
+        *,
+        socket_prefix: str = "TCPIP0",
+        explicit_port_to_socket: bool = True,
+    ) -> str:
+        """返回完整显式 VISA resource，或按显式端口构造 SOCKET resource。
+
+        不能只保留 resource 里的 host 后再拼驱动默认子地址；那会让配置/预检
+        指向一个 Test App，而真实 SCPI 会话打开另一个子地址。
+        """
+        if self._connection_resource:
+            return self._connection_resource
+        if explicit_port_to_socket and self._connection_port is not None:
+            return (
+                f"{socket_prefix}::{self._connection_host}::"
+                f"{self._connection_port}::SOCKET"
+            )
+        return default_resource
+
+    def _reject_incompatible_visa_resource(self, *, allowed_type: str) -> None:
+        """协议固定的 raw 驱动拒绝不兼容的显式 VISA 传输类型。"""
+        if not self._connection_resource:
+            return
+        actual = self._connection_resource.rsplit("::", 1)[-1].strip().casefold()
+        if actual != allowed_type.casefold():
+            self._connection_config_error = (
+                f"显式 VISA resource 类型 {actual.upper()} 与驱动固定的 "
+                f"{allowed_type.upper()} 传输不一致"
+            )
+
+    def _reject_plain_endpoint_port(self, *, fixed_type: str) -> None:
+        """固定 INSTR/VXI-11 驱动拒绝把 host:port 静默降成默认 resource。"""
+        raw = str(self.config.get("endpoint") or "").strip()
+        if not raw or "::" in raw:
+            return
+        host, separator, port_text = raw.rpartition(":")
+        if separator and host.strip() and port_text.isdigit():
+            self._connection_config_error = (
+                f"endpoint={raw!r} 声明 raw socket 端口，但驱动固定使用 "
+                f"{fixed_type}；请提供兼容的完整 VISA resource"
+            )
+
+    def _reject_nondefault_metadata_port(self, *, default: int, fixed_type: str) -> None:
+        """兼容 bootstrap 的既有默认端口，但拒绝把其他端口静默忽略。"""
+        if self._connection_port is not None and self._connection_port != default:
+            self._connection_config_error = (
+                f"port={self._connection_port} 与驱动固定的 {fixed_type} 传输不一致；"
+                f"该驱动不支持自定义 raw socket 端口"
+            )
 
     # ── SCPI 日志记录 (内部使用) ───────────────────────────────
 

@@ -18,6 +18,7 @@ from app.hal.base import (
     InstrumentStatus,
     InstrumentCapability,
     InstrumentMetrics,
+    resolve_configured_instrument_host,
 )
 from app.hal.positioner import EtsPositionerScpi, PositionerDriver
 
@@ -37,18 +38,25 @@ class RealEtsEmcenterDriver(PositionerDriver):
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
-        self.ip_address: str = config.get("ip", "192.168.100.30")
-        self.port: int = config.get("port", 2000)
+        self._reject_incompatible_visa_resource(allowed_type="SOCKET")
+        self.ip_address: str = self._connection_host
+        self.port: int = self._resolved_tcp_port(2000)
+        self._connection_visa_resource = self._resolved_visa_resource(
+            f"TCPIP::{self.ip_address}::{self.port}::SOCKET",
+            socket_prefix="TCPIP",
+        )
         self._visa_rm = None
         self._visa_session = None
         self._current_azimuth = 0.0
 
     async def connect(self) -> bool:
+        if self._connection_config_error or not self.ip_address:
+            return self._fail_missing_connection_address()
         self._set_status(InstrumentStatus.CONNECTING)
         try:
             import pyvisa
             self._visa_rm = pyvisa.ResourceManager()
-            resource_str = f"TCPIP::{self.ip_address}::{self.port}::SOCKET"
+            resource_str = self._connection_visa_resource
             self._visa_session = self._visa_rm.open_resource(resource_str)
             self._visa_session.read_termination = '\n'
             self._visa_session.write_termination = '\n'

@@ -11,20 +11,20 @@ HAL Driver Registry (驱动注册与工厂)
     驱动选择策略:
     1. 若 instrument_config 指定了 driver_class → 使用指定的驱动类
     2. 若系统环境变量 HAL_MODE=mock → 全部使用 Mock
-    3. 若能通过 PyVISA 探测到仪器 → 使用 Real 驱动
-    4. 回退到 Mock 驱动
+    3. auto 模式下有显式连接地址 → 使用 Real 驱动类
+    4. auto 模式下无地址 → 使用 Mock 驱动；连接失败不会自动降级
 
 使用示例:
     registry = DriverRegistry()
     registry.register_from_config({
         "channel_emulator": {
             "driver_class": "RealPropsimF64Driver",
-            "ip": "192.168.100.21",
+            "ip": operator_configured_f64_ip,
             "port": 3334,  # PROPSIM F64 ATE/SCPI 端口硬件固定 3334 (非 5025)
         },
         "base_station": {
-            "driver_class": "auto",  # 自动探测
-            "ip": "192.168.100.10",
+            "driver_class": "auto",  # 按显式地址选择 Real 或 Mock
+            "ip": operator_configured_base_station_ip,
         },
     })
 
@@ -36,7 +36,11 @@ import logging
 import os
 from typing import Dict, Any, Optional, Type
 
-from app.hal.base import InstrumentDriver, InstrumentStatus
+from app.hal.base import (
+    has_explicit_instrument_address,
+    InstrumentDriver,
+    InstrumentStatus,
+)
 
 # --- Mock 驱动 ---
 from app.hal.channel_emulator import (
@@ -210,8 +214,8 @@ class DriverRegistry:
 
         Args:
             instruments_config: {
-                "channel_emulator": {"driver_class": "RealPropsimF64Driver", "ip": "192.168.100.21"},
-                "base_station": {"driver_class": "auto", "ip": "192.168.100.10"},
+                "channel_emulator": {"driver_class": "RealPropsimF64Driver", "ip": operator_f64_ip},
+                "base_station": {"driver_class": "auto", "endpoint": operator_uxm_resource},
                 ...
             }
         """
@@ -343,7 +347,7 @@ class DriverRegistry:
         2. config["driver_class"] 显式指定 → 查表
         3. HAL_MODE=mock → Mock
         4. HAL_MODE=real → Real (第一个)
-        5. HAL_MODE=auto → 尝试 Real，失败则 Mock
+        5. HAL_MODE=auto → 有显式地址选 Real 类；无地址选 Mock
         """
         # 强制 Mock
         if force_mock or self._hal_mode == "mock":
@@ -368,8 +372,8 @@ class DriverRegistry:
                 return real_options[0]
             return DEFAULT_MOCK_MAP.get(category, MockChannelEmulator)
 
-        # Auto 模式: 有 IP 配置则使用 Real，否则 Mock
-        if config.get("ip"):
+        # Auto 模式: 只有显式连接地址才使用 Real；禁止靠驱动默认 IP 猜设备。
+        if has_explicit_instrument_address(config):
             real_options = DEFAULT_REAL_MAP.get(category, [])
             if real_options:
                 return real_options[0]

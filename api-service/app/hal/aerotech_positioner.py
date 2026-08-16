@@ -28,6 +28,7 @@ from app.hal.base import (
     InstrumentStatus,
     InstrumentCapability,
     InstrumentMetrics,
+    resolve_configured_instrument_host,
     redact_instrument_log_text,
 )
 from app.hal.positioner import PositionerDriver
@@ -94,7 +95,7 @@ class RealAerotechDriver(PositionerDriver):
     不走 PyVISA / SCPI，直接使用 asyncio 的 TCP 流。
 
     配置参数 (config dict):
-        ip: 控制器 IP 地址 (默认 192.168.1.10)
+        ip: 控制器 IP 地址（必填；不提供设备地址默认值）
         port: TCP 端口 (默认 8000, A3200 ASCII Interface)
         azimuth_axis: 方位角轴名 (默认 "X")
         elevation_axis: 俯仰角轴名 (默认 "Y")
@@ -114,8 +115,9 @@ class RealAerotechDriver(PositionerDriver):
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
-        self.ip_address: str = config.get("ip", "192.168.1.10")
-        self.port: int = config.get("port", 8000)
+        self.ip_address: str = self._connection_host
+        self.port: int = self._resolved_tcp_port(8000)
+        self._reject_incompatible_visa_resource(allowed_type="SOCKET")
         self.az_axis: str = config.get("azimuth_axis", "X")
         self.el_axis: str = config.get("elevation_axis", "Y")
         self.timeout_s: float = config.get("timeout_s", 10.0)
@@ -454,6 +456,8 @@ class RealAerotechDriver(PositionerDriver):
 
     async def connect(self) -> bool:
         """连接到 Aerotech 控制器并启用轴"""
+        if self._connection_config_error or not self.ip_address:
+            return self._fail_missing_connection_address()
         self._set_status(InstrumentStatus.CONNECTING)
         try:
             logger.info(
