@@ -18,7 +18,7 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅。
 
-**Current Focus = P1-52（内审 P1=0，Ready，待外审，WIP=1）**。TestCase 编辑弹窗已把详情与 LabProfile 列表拆成独立状态；列表加载中或失败时绑定选择冻结并显示可重试错误，保存其它字段时省略 `lab_profile_id`，复用后端“字段省略保持原绑定”的契约。列表成功后才允许显式换绑或清空；关闭、切换用例与重试的旧响应均以请求代次丢弃。P1-51 已完成设计、TDD、内审、两轮 Codex 外审与 R2 P1 尾部修复；
+**Current Focus = P1-53（设计中，WIP=1）**。目标是贯通 P1-28 已加入的探头校准 `chamber_id` 基础列：四类探头校准的 REST 写入、latest/history、有效性、正式消费与报告均改为显式暗室作用域；多暗室同号探头不得互相读取、作废或进入正式统计，legacy `chamber_id=NULL` 保留审计但不再作为正式回退。P1-52 已由 PR #345（merge `b7b7be3`）完成详情/列表状态拆分、失败时保留原绑定、显式换绑/清空与请求代次防 stale，并完成两轮 Codex 外审；R2 仅一条 P3 状态镜像建议，按规则不积压。P1-51 已完成设计、TDD、内审、两轮 Codex 外审与 R2 P1 尾部修复；
 第二轮指出的完整连接目标消费、诊断入口目标一致性及锁内重读持久化真值均已收口，按两轮上限不再触发 R3。P1-50 已由 PR #343（merge `e10afa4`）
 完成留存失败告警上下文隔离，内审与两轮 Codex 外审均无 P1；告警仍进入 app/console，但不再
 回流重开执行文件或泄漏 fd。P1-49 已由 PR #342（merge `3e0a11d`）
@@ -41,8 +41,8 @@ P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → 
 | **P1-49** | 修复 `/calibration/channel/temporal/latest`、`/topologies/default` 静态路由遮挡 | ✅ PR #342 |
 | **P1-50** | 日志留存清理失败时禁止回流重开执行文件并泄漏 fd | ✅ PR #343 |
 | **P1-51** | 删除仪表默认 IP 猜测；缺配置时 fail-closed | ✅ PR #344 |
-| **P1-52** | TestCase 编辑时 LabProfile 列表加载失败不得清空原绑定 | 🟡 Ready，待外审 |
-| **P1-53** | 多暗室校准数据隔离，禁止跨暗室误用校准结果 | ⬜ |
+| **P1-52** | TestCase 编辑时 LabProfile 列表加载失败不得清空原绑定 | ✅ PR #345 |
+| **P1-53** | 多暗室校准数据隔离，禁止跨暗室误用校准结果 | 🟡 设计中 |
 | **P2-25** | 当前/历史日志分类；历史按分类/执行分组并支持时间、名称、execution ID 搜索 | ✅ PR #340 |
 | **P2-26** | 历史 MIMO 报告 UNKNOWN/N/A 的重新生成与恢复界面 | ⬜ |
 | **P2-27** | 修复 9 组前端手写契约与 live OpenAPI 不一致 | ⬜ |
@@ -297,7 +297,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → P1-52 🟡 → P1-53 → P2-26 → P2-27 → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；当前 P1-52 内审 P1=0、Ready、WIP=1，等待外审；P1-51 已按两轮外审规则收口。完整编号、范围与状态只看顶部 Current Focus 表。 |
+| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → ~~P1-52~~ ✅ → P1-53 🟡 → P2-26 → P2-27 → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；当前 P1-53 设计中、WIP=1；P1-52 已由 PR #345 完成并按两轮外审规则收口。完整编号、范围与状态只看顶部 Current Focus 表。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -3722,7 +3722,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 - `[discovered 2026-08-11 during P3-18 G11 internal review]` **G11 schema 原始类型比较尚未表达 JSON Schema 可赋值关系（P3，待 triage；本片 Ready，不阻塞）** —— 本片要收口的明确故障是 object/array 容器相反时仍只比 properties；当前 helper 同时严格比较全部显式 `type`，可能把 checked-in `number`、live `integer` 这类合法收窄误报为不兼容。后续可只对 object/array 容器做本门承诺的比较，或另片实现 JSON Schema assignability；不扩大当前边界。
 
-- `[discovered 2026-08-11 during P2-24 external review, Codex #325 R1]` **[→ 提升 P1-52；本地实现完成，待内审/外审] TestCase 编辑弹窗吞掉 LabProfile 列表加载失败** —— 原 `fetchAllLabProfiles().catch(() => [])` 会把瞬时失败伪装成空列表并允许显式清空已有绑定。P1-52 已拆开详情与列表状态：失败时冻结选择、显示可重试错误，PATCH 省略 `lab_profile_id` 以保留原绑定；仅在列表成功且操作员明确改变选择时发送新 ID 或 `null`。
+- `[resolved 2026-08-16 by P1-52 / PR #345]` **TestCase 编辑弹窗吞掉 LabProfile 列表加载失败** —— 已拆开详情与列表状态：失败时冻结选择、显示可重试错误，PATCH 省略 `lab_profile_id` 以保留原绑定；仅在列表成功且操作员明确改变选择时发送新 ID 或 `null`。两轮 Codex 外审完成，组件到 PATCH 的真实 wiring 受变异会红测试保护。
 
 - `[discovered 2026-08-11 during P2-24 internal review]` **启用前端 mock server 时缺少 `/lab-profiles` handler（P3，待 triage；当前 mock server 默认关闭）** —— TestCase 创建/编辑弹窗已经改走共享 client，并在 LabProfile 列表不可用时 fail-closed；未来若重新启用浏览器内 mock server，需要给 lab-profiles 补一组与 live 分页/active 过滤一致的 handler，否则该弹窗会正确阻止创建但无法完成演练。本轮不为默认关闭的测试辅助模式扩大实现。
 
