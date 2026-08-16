@@ -93,7 +93,10 @@ import {
 } from './api/service'
 import client from './api/client'
 import { listDiagnosticRuns, type DiagnosticRunSummary } from './api/diagnosticService'
-import { buildDiagnosticTarget } from './features/Equipment/diagnosticTarget'
+import {
+  buildDiagnosticTarget,
+  diagnosticErrorMessage,
+} from './features/Equipment/diagnosticTarget'
 import type {
   DemoRunPlan,
   DemoRunResult,
@@ -2181,8 +2184,8 @@ function EquipmentManager() {
                         } else {
                           showFeedback(category.key, 'error', `❌ ${result.message}`)
                         }
-                      } catch (err: any) {
-                        showFeedback(category.key, 'error', `测试失败: ${err.message}`)
+                      } catch (err: unknown) {
+                        showFeedback(category.key, 'error', `测试失败: ${diagnosticErrorMessage(err)}`)
                       }
                     }}
                   >
@@ -2235,8 +2238,8 @@ function EquipmentManager() {
                               ...target,
                             })
                             setScpiProbeResults(p => ({ ...p, [key]: resp.data.results }))
-                          } catch (err: any) {
-                            showFeedback(key, 'error', `SCPI 探测失败: ${err.message}`)
+                          } catch (err: unknown) {
+                            showFeedback(key, 'error', `SCPI 探测失败: ${diagnosticErrorMessage(err)}`)
                           } finally {
                             setScpiLoading(p => ({ ...p, [key]: false }))
                             queryClient.invalidateQueries({ queryKey: scpiHistoryQueryKey(key) })
@@ -2308,10 +2311,10 @@ function EquipmentManager() {
                                 ...p, [key]: [...(p[key] || []), result],
                               }))
                               setScpiManualCmd(p => ({ ...p, [key]: '' }))
-                            } catch (err: any) {
+                            } catch (err: unknown) {
                               setScpiManualResults(p => ({
                                 ...p, [key]: [...(p[key] || []), {
-                                  command: cmd, success: false, error: err.message, latency_ms: 0,
+                                  command: cmd, success: false, error: diagnosticErrorMessage(err), latency_ms: 0,
                                 }],
                               }))
                             } finally {
@@ -2346,10 +2349,10 @@ function EquipmentManager() {
                               ...p, [key]: [...(p[key] || []), result],
                             }))
                             setScpiManualCmd(p => ({ ...p, [key]: '' }))
-                          } catch (err: any) {
+                          } catch (err: unknown) {
                             setScpiManualResults(p => ({
                               ...p, [key]: [...(p[key] || []), {
-                                command: cmd, success: false, error: err.message, latency_ms: 0,
+                                command: cmd, success: false, error: diagnosticErrorMessage(err), latency_ms: 0,
                               }],
                             }))
                           } finally {

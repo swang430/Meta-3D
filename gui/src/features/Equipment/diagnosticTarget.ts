@@ -3,6 +3,19 @@ export type DiagnosticTarget = {
   error?: string
 }
 
+export function diagnosticErrorMessage(error: unknown): string {
+  const candidate = error as {
+    message?: string
+    response?: { data?: { detail?: unknown } }
+  }
+  const detail = candidate?.response?.data?.detail
+  if (typeof detail === 'string' && detail.trim()) return detail
+  if (typeof candidate?.message === 'string' && candidate.message.trim()) {
+    return candidate.message
+  }
+  return '未知错误'
+}
+
 export function parseEndpointToIpPort(
   endpoint: string,
 ): { ip?: string; port?: number } {
