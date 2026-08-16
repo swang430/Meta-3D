@@ -203,4 +203,5 @@ gh pr create --base main --head codex/p1-49-static-route-order --title "fix: res
 
 **Step 6: 合并后核验 main**
 
-确认 merge commit 是 `origin/main` 祖先，roadmap 的 P1-49/P1-50/WIP 三处一致，然后暂停等待用户确认 P1-50。
+确认 merge commit 是 `origin/main` 祖先，roadmap 的 P1-49/P1-50/WIP 三处一致；随后自动创建
+P1-50 独立分支并开始设计与开发，继续维持逐片 WIP=1。只有出现真实阻塞时才请求用户介入。
