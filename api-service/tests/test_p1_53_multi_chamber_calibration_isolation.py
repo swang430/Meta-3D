@@ -13,7 +13,10 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
 from app.api.probe_calibration import check_link_validity as check_link_validity_api
-from app.api.path_loss_calibration import get_path_loss_at_frequency
+from app.api.path_loss_calibration import (
+    get_path_loss_at_frequency,
+    start_multi_frequency_calibration,
+)
 from app.models.chamber import ChamberConfiguration
 from app.models.probe_calibration import (
     CalibrationStatus,
@@ -27,6 +30,7 @@ from app.models.probe_calibration import (
     RFChainCalibration,
 )
 from app.schemas.probe_calibration import (
+    StartMultiFrequencyPathLossRequest,
     StartAmplitudeCalibrationRequest,
     StartPatternCalibrationRequest,
     StartPhaseCalibrationRequest,
@@ -35,6 +39,7 @@ from app.schemas.probe_calibration import (
 from app.services.calibration_report_generator import CalibrationReportGenerator
 from app.services.calibration_orchestrator import CalibrationItem, CalibrationOrchestrator
 from app.services.path_loss_calibration_service import (
+    CalibrationResult,
     MultiFrequencyPathLossService,
     RFChainCalibrationService,
 )
@@ -716,6 +721,39 @@ def test_formal_rf_multi_consumers_ignore_untrusted_rows(session):
     )
     assert status[CalibrationItem.UPLINK_CHAIN].is_valid is False
     assert status[CalibrationItem.MULTI_FREQUENCY].is_valid is False
+
+
+@pytest.mark.asyncio
+async def test_multi_frequency_start_remains_explicitly_mock(session, monkeypatch):
+    chamber_id = uuid.uuid4()
+    _chamber(session, chamber_id, "Mock-only multi-frequency start")
+    session.commit()
+    observed = {}
+
+    async def fake_sweep(service, **_kwargs):
+        observed["use_mock"] = service.use_mock
+        return CalibrationResult(success=True, message="mock", data={"calibration_ids": []})
+
+    monkeypatch.setattr(
+        MultiFrequencyPathLossService,
+        "calibrate_frequency_sweep",
+        fake_sweep,
+    )
+    request = StartMultiFrequencyPathLossRequest(
+        chamber_id=chamber_id,
+        probe_ids=[0],
+        polarization="V",
+        freq_start_mhz=3400.0,
+        freq_stop_mhz=3600.0,
+        freq_step_mhz=100.0,
+        sgh_model="audit-only",
+        sgh_gain_dbi=0.0,
+        calibrated_by="test",
+    )
+
+    await start_multi_frequency_calibration(request=request, db=session)
+
+    assert observed == {"use_mock": True}
 
 
 def test_link_formal_validity_prefers_real_and_report_expires_after_seven_days(session):

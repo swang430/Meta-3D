@@ -18,7 +18,7 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅。
 
-**Current Focus = P1-53（正式判定尾部收口完成、fresh 内审中，WIP=1）**。目标是贯通 P1-28 已加入的探头校准 `chamber_id` 基础列：四类探头校准的 REST 写入、latest/history、有效性、作废、正式消费与报告均改为显式暗室作用域；多暗室同号探头不得互相读取、作废或进入正式统计，legacy `chamber_id=NULL` 保留审计但不再作为正式回退。fresh 内审扩出的正式判定收口也归本片：四类探头以及全局 Link、RF-chain、multi-frequency 以 nullable `use_mock` 白名单隔离 mock/历史未知，过期记录不判 PASS，pattern 正式消费与多频数值接口拒绝模拟/过期数据，GUI 详情把非 real 数值同行标成 UNVERIFIED；全局 Link 的正式有效性优先选择仍有效的 explicit-real 记录且不再替代单探头四类完整性，单探头只有四类齐全且均有效才可 overall VALID；PDF 渲染其摘要计入的 RF-chain 与 multi-frequency 家族但不把硬编码 mock 写入口显示为 PASS，探头网格数量来自暗室 `num_probes`。当前验证：后端全量 `3879 passed / 5 skipped`，相关校准/报告/迁移/完整 rule gates `315 passed`，GUI 契约 `4 passed`，production build、compileall 与 diff-check 均通过；待 fresh 内审 P1=0 后进入 Ready PR。P1-52 已由 PR #345（merge `b7b7be3`）完成详情/列表状态拆分、失败时保留原绑定、显式换绑/清空与请求代次防 stale，并完成两轮 Codex 外审；R2 仅一条 P3 状态镜像建议，按规则不积压。P1-51 已完成设计、TDD、内审、两轮 Codex 外审与 R2 P1 尾部修复；
+**Current Focus = P1-53（内审 P1/P2/P3=0，Ready PR，WIP=1）**。目标是贯通 P1-28 已加入的探头校准 `chamber_id` 基础列：四类探头校准的 REST 写入、latest/history、有效性、作废、正式消费与报告均改为显式暗室作用域；多暗室同号探头不得互相读取、作废或进入正式统计，legacy `chamber_id=NULL` 保留审计但不再作为正式回退。fresh 内审扩出的正式判定收口也归本片：四类探头以及全局 Link、RF-chain、multi-frequency 以 nullable `use_mock` 白名单隔离 mock/历史未知，过期记录不判 PASS，pattern 正式消费与多频数值接口拒绝模拟/过期数据，GUI 详情把非 real 数值同行标成 UNVERIFIED；全局 Link 的正式有效性优先选择仍有效的 explicit-real 记录且不再替代单探头四类完整性，单探头只有四类齐全且均有效才可 overall VALID；PDF 渲染其摘要计入的 RF-chain 与 multi-frequency 家族但不把硬编码 mock 写入口显示为 PASS，探头网格数量来自暗室 `num_probes`。当前验证：后端全量 `3880 passed / 5 skipped`，相关校准/报告/迁移/完整 rule gates `316 passed`，GUI 契约 `4 passed`，production build、compileall 与 diff-check 均通过；fresh 内审 P1/P2/P3=0，进入 Ready PR。P1-52 已由 PR #345（merge `b7b7be3`）完成详情/列表状态拆分、失败时保留原绑定、显式换绑/清空与请求代次防 stale，并完成两轮 Codex 外审；R2 仅一条 P3 状态镜像建议，按规则不积压。P1-51 已完成设计、TDD、内审、两轮 Codex 外审与 R2 P1 尾部修复；
 第二轮指出的完整连接目标消费、诊断入口目标一致性及锁内重读持久化真值均已收口，按两轮上限不再触发 R3。P1-50 已由 PR #343（merge `e10afa4`）
 完成留存失败告警上下文隔离，内审与两轮 Codex 外审均无 P1；告警仍进入 app/console，但不再
 回流重开执行文件或泄漏 fd。P1-49 已由 PR #342（merge `3e0a11d`）
@@ -42,7 +42,7 @@ P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → 
 | **P1-50** | 日志留存清理失败时禁止回流重开执行文件并泄漏 fd | ✅ PR #343 |
 | **P1-51** | 删除仪表默认 IP 猜测；缺配置时 fail-closed | ✅ PR #344 |
 | **P1-52** | TestCase 编辑时 LabProfile 列表加载失败不得清空原绑定 | ✅ PR #345 |
-| **P1-53** | 多暗室校准数据隔离，禁止跨暗室误用校准结果 | 🟡 尾修完成 / fresh 内审中 |
+| **P1-53** | 多暗室校准数据隔离，禁止跨暗室误用校准结果 | 🟡 Ready PR / 外审中 |
 | **P2-25** | 当前/历史日志分类；历史按分类/执行分组并支持时间、名称、execution ID 搜索 | ✅ PR #340 |
 | **P2-26** | 历史 MIMO 报告 UNKNOWN/N/A 的重新生成与恢复界面 | ⬜ |
 | **P2-27** | 修复 9 组前端手写契约与 live OpenAPI 不一致 | ⬜ |
@@ -297,7 +297,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → ~~P1-52~~ ✅ → P1-53 🟡 → P2-26 → P2-27 → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；当前 P1-53 的正式判定尾修与全量回归已完成，正在 fresh 内审，WIP=1；P1-52 已由 PR #345 完成并按两轮外审规则收口。完整编号、范围与状态只看顶部 Current Focus 表。 |
+| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → ~~P1-52~~ ✅ → P1-53 🟡 → P2-26 → P2-27 → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；当前 P1-53 已完成正式判定尾修、全量回归与 fresh 内审（P1/P2/P3=0），进入 Ready PR/外审，WIP=1；P1-52 已由 PR #345 完成并按两轮外审规则收口。完整编号、范围与状态只看顶部 Current Focus 表。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |

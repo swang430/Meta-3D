@@ -123,7 +123,8 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
 ## 非目标
 
 - 不自动迁移/删除 legacy NULL 或 orphan 校准数据。
-- 不改 path-loss、RF-chain、channel calibration 的写入模型与既有暗室维度；正式 probe/
-  comprehensive report 仍必须按请求暗室过滤这些已有数据源，不能让报告边界成为旁路。
+- 不重做 path-loss、RF-chain、channel calibration 的测量流程与既有暗室维度；本片只为
+  RF-chain 补 provenance 持久化/正式消费门，并要求 probe/comprehensive report 按请求暗室
+  过滤这些已有数据源，不能让报告边界成为旁路。
 - 不修 `CalibrationOrchestrator.export/import_calibration_data` 无调用死链。
 - 不顺手处理 SystemCalibration 页面既有硬编码暗室 ID；它需要以自己的活动入口和数据模型另行 triage。
