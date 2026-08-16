@@ -116,6 +116,17 @@ def create_topology(
     return _topology_to_response(topology)
 
 
+@router.get("/default", response_model=TopologyResponse)
+def get_default_topology(db: Session = Depends(get_db)):
+    """Get the default topology"""
+    topology = db.query(Topology).filter(Topology.is_default == True).first()
+
+    if not topology:
+        raise HTTPException(status_code=404, detail="No default topology configured")
+
+    return _topology_to_response(topology)
+
+
 @router.get("/{topology_id}", response_model=TopologyResponse)
 def get_topology(
     topology_id: UUID,
@@ -188,17 +199,6 @@ def delete_topology(
     logger.info(f"Deleted topology: {topology_id}")
 
     return None
-
-
-@router.get("/default", response_model=TopologyResponse)
-def get_default_topology(db: Session = Depends(get_db)):
-    """Get the default topology"""
-    topology = db.query(Topology).filter(Topology.is_default == True).first()
-
-    if not topology:
-        raise HTTPException(status_code=404, detail="No default topology configured")
-
-    return _topology_to_response(topology)
 
 
 @router.post("/{topology_id}/set-default", response_model=TopologyResponse)

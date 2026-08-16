@@ -163,20 +163,8 @@ def test_g19_checker_detects_shadow_and_accepts_safe_order():
 def test_g19_live_static_routes_precede_shadowing_parameters():
     from app.main import app
 
-    # 本门首次落地时全量枚举出的存量；不在 P1-29 顺手修，已逐条记入
-    # roadmap Discovered。精确例外同时充当棘轮：不得新增，修掉后必须删例外。
-    known_existing = {
-        (
-            "/api/v1/calibration/channel/temporal/{calibration_id}",
-            "/api/v1/calibration/channel/temporal/latest",
-            ("GET",),
-        ),
-        (
-            "/api/v1/topologies/{topology_id}",
-            "/api/v1/topologies/default",
-            ("GET",),
-        ),
-    }
+    # P1-49 已清零首次落门时记录的两个存量；后续不得新增精确例外。
+    known_existing = set()
     bad = set(_literal_route_shadows(app.routes))
     unexpected = bad - known_existing
     stale_exceptions = known_existing - bad
@@ -2099,7 +2087,7 @@ def test_p2_25_log_file_picker_separates_current_and_searchable_history():
 
 
 def test_p2_25_mock_catalog_and_roadmap_status_match_live_ui():
-    """Mock 开发必须能看到三类目录，Roadmap 必须指向收口后的下一项。"""
+    """Mock 开发必须能看到三类目录，Roadmap 必须保留 P2-25 完成事实与批准队列。"""
     mock_db = (
         _REPO_ROOT / "gui/src/api/mockDatabase.ts"
     ).read_text(encoding="utf-8")
@@ -2115,7 +2103,6 @@ def test_p2_25_mock_catalog_and_roadmap_status_match_live_ui():
         _REPO_ROOT / "docs/roadmap-first-call.md"
     ).read_text(encoding="utf-8")
     current_focus = roadmap[:roadmap.index("> **~~P1-48~~")]
-    assert "Current Focus = P1-49（等待启动，WIP=0）" in current_focus
     assert "| **P2-25** |" in current_focus
     assert "| ✅ PR #340 |" in current_focus
     for item_id in (

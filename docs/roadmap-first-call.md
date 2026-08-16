@@ -18,10 +18,12 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅。
 
-**Current Focus = P1-49（等待启动，WIP=0）**。P2-25 已由 PR #340（merge `ece3965`）
+**Current Focus = P1-49（PR #342，R1 无 P1，等待最终 R2/merge，WIP=1）**。P2-25 已由 PR #340（merge `ece3965`）
 完成实现、两轮外审与合并：系统日志已分为当前/历史，历史再分分类/执行；历史可按日期、时间、中文分类、
 文件名或 execution ID 搜索。2026-08-12 用户批准新队列并明确 P2-25 完成后回到
-P1-49～P1-53；本轮合并后先暂停，等待用户确认再启动 P1-49。
+P1-49～P1-53；2026-08-16 用户批准启动 P1-49，当前按
+[`设计`](plans/2026-08-16-p1-49-static-route-order-design.md) 与
+[`实施计划`](plans/2026-08-16-p1-49-static-route-order.md) 收口两个静态 GET 路由遮挡。
 
 **2026-08-12 批准队列（稳定编号，逐片 WIP=1）**：
 **P2-25 → P1-49 → P1-50 → P1-51 → P1-52 → P1-53 → P2-26 → P2-27 →
@@ -29,7 +31,7 @@ P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → 
 
 | ID | 正式条目 | 当前状态 |
 |---|---|---|
-| **P1-49** | 修复 `/calibration/channel/temporal/latest`、`/topologies/default` 静态路由遮挡 | ⬜ |
+| **P1-49** | 修复 `/calibration/channel/temporal/latest`、`/topologies/default` 静态路由遮挡 | 🔄 PR #342，R1 无 P1，待 R2/merge |
 | **P1-50** | 日志留存清理失败时禁止回流重开执行文件并泄漏 fd | ⬜ |
 | **P1-51** | 删除仪表默认 IP 猜测；缺配置时 fail-closed | ⬜ |
 | **P1-52** | TestCase 编辑时 LabProfile 列表加载失败不得清空原绑定 | ⬜ |
@@ -288,7 +290,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → P1-49 → P1-50 → P1-51 → P1-52 → P1-53 → P2-26 → P2-27 → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；当前 WIP=0，等待用户确认后启动 P1-49。完整编号、范围与状态只看顶部 Current Focus 表。 |
+| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → P1-49 🔄 → P1-50 → P1-51 → P1-52 → P1-53 → P2-26 → P2-27 → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；当前 P1-49 WIP=1、PR #342 R1 无 P1，等待最终 R2/merge。完整编号、范围与状态只看顶部 Current Focus 表。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -3717,7 +3719,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 - `[discovered 2026-08-11 during P2-24 internal review]` **启用前端 mock server 时缺少 `/lab-profiles` handler（P3，待 triage；当前 mock server 默认关闭）** —— TestCase 创建/编辑弹窗已经改走共享 client，并在 LabProfile 列表不可用时 fail-closed；未来若重新启用浏览器内 mock server，需要给 lab-profiles 补一组与 live 分页/active 过滤一致的 handler，否则该弹窗会正确阻止创建但无法完成演练。本轮不为默认关闭的测试辅助模式扩大实现。
 
-- `[discovered 2026-08-11 during P1-29 G19 全路由枚举]` **另有两条存量静态路由被更早的 path 参数路由遮蔽（待 triage）** —— `GET /api/v1/calibration/channel/temporal/{calibration_id}` 会先吃掉后声明的 `/temporal/latest`（GUI `channelCalibrationService.ts` 有活消费者）；`api/topology.py` 的同一个 `topology.router` 内，`GET /api/v1/topologies/{topology_id}` 同样声明在 `/topologies/default` 之前。二者与 P1-29 同母题但不属于驾驶舱告警故障，本片不跨域修；G19 以精确例外锁住这两条存量并禁止第三条新增，后续分别把字面量路由移到同方法参数路由之前。
+- `[discovered 2026-08-11 during P1-29 G19 全路由枚举]` **[→ 提升 P1-49；PR #342 R1 无 P1，待 R2/merge] 两条存量静态路由被更早的 path 参数路由遮蔽** —— `GET /api/v1/calibration/channel/temporal/{calibration_id}` 曾先吃掉后声明的 `/temporal/latest`（GUI `channelCalibrationService.ts` 有活消费者）；`api/topology.py` 的同一个 `topology.router` 内，`GET /api/v1/topologies/{topology_id}` 也曾声明在 `/topologies/default` 之前。P1-49 已将两个字面量 GET handler 移到同级 UUID GET handler 之前，真实 HTTP 回归锁定静态端点不再返回 `uuid_parsing` 422，合法 UUID 详情路由保持 404 语义；G19 两个存量例外已删除，后续新增同类遮挡直接失败。
 
 - `[discovered 2026-08-11 during P1-38 review]` **P1-38 测试与 G20 精化候选（P2/P3，待 triage；非本轮功能缺陷，默认不实现，归 P3-18 同族）** —— **P2**：清理测试目前用 `message` near-miss 证明内容白名单不能宽匹配，但没有再对 `title` / `severity` / `alert_type` / `status` 四个字段逐个做单字段变异；功能谓词本身已逐字段精确匹配，本项只是测试保护可更细。**P3**：G20 是 AST 语法门，常量间接传入 `source` 或声明了但未执行的 fixture 可能绕过，纯构造 payload 又可能被误判为真实写入；未来若经 triage 决定精化，应把判据换成实际 fixture / 写入链的行为验证，不继续叠加源码形状规则。
 - `[discovered 2026-08-11 during P1-38 final internal review]` **P1-38 已完成计划文档的事实镜像收口（P2/P3，待 triage；不影响运行功能，本轮不修）** —— **P2**：`docs/plans/2026-08-11-p1-38-alert-hygiene-design.md` 仍称“现场数据库中的 674 条”，而本轮只核验并清理了当前本机开发库；如继续把这份已执行计划作为施工输入，应换成可核验的数据库身份。**P3**：实施计划仍引用旧测试名 `test_g20_test_suite_alert_writers_are_db_isolated`，且保留清理前 dry-run 应命中 674 的口径；当前正确终态是 live dry-run 命中 0、恢复备份表保留 674 行。后续整理计划归档时一并更正，不为其启动本轮修复循环。
