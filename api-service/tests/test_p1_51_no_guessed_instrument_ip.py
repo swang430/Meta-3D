@@ -159,6 +159,24 @@ async def test_uxm_cmw_blank_endpoint_fails_before_resource_manager(driver_class
     assert "未配置连接地址" in (driver.last_error or "")
 
 
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"endpoint": "TCPIP_BOGUS::10.20.30.40"},
+        {"endpoint": "TCPIP0::10.20.30.40::BAD"},
+        {"endpoint": "10.20.30.40:70000"},
+        {"controller_ip": "10.20.30.40", "port": 0},
+    ],
+)
+@pytest.mark.asyncio
+async def test_uxm_rejects_invalid_tcpip_resources_and_ports_before_io(config):
+    driver = RealUxmDriver("invalid-resource", config)
+    with patch("pyvisa.ResourceManager") as resource_manager:
+        assert await driver.connect() is False
+    resource_manager.assert_not_called()
+    assert driver.status is InstrumentStatus.ERROR
+
+
 def test_registry_auto_requires_an_explicit_address():
     registry = DriverRegistry()
     registry.set_mode("auto")

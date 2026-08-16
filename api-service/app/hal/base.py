@@ -85,22 +85,31 @@ def resolve_configured_tcpip_connection(
         if "::" in raw:
             parts = raw.split("::")
             if (
-                len(parts) < 2
-                or not parts[0].upper().startswith("TCPIP")
+                not re.fullmatch(r"TCPIP\d*", parts[0], flags=re.IGNORECASE)
                 or not parts[1].strip()
             ):
                 return "", None, None, f"{key} 不是有效的 TCPIP VISA resource"
+            resource_type = parts[-1].strip().casefold()
+            if resource_type == "socket":
+                if len(parts) != 4 or not parts[2].strip().isdigit():
+                    return "", None, None, f"{key} 不是完整的 TCPIP SOCKET resource"
+            elif resource_type == "instr":
+                if len(parts) not in (3, 4) or (len(parts) == 4 and not parts[2].strip()):
+                    return "", None, None, f"{key} 不是完整的 TCPIP INSTR resource"
+            else:
+                return "", None, None, f"{key} 缺少 INSTR/SOCKET 资源类型"
             host_sources.append((key, parts[1].strip()))
             if selected_resource is None:
                 selected_resource = raw
             # 只有显式 SOCKET resource 的数字 token 才与结构化 port 同义；
             # hislipN/instN 是 VISA 子地址，不能误当端口比较。
             if (
-                len(parts) >= 4
+                len(parts) == 4
                 and parts[-1].strip().casefold() == "socket"
-                and parts[-2].strip().isdigit()
             ):
                 port_sources.append((key, int(parts[-2].strip())))
+            elif len(parts) == 4 and parts[2].strip().isdigit():
+                port_sources.append((key, int(parts[2].strip())))
             continue
 
         if key == "visa_resource":
@@ -130,6 +139,10 @@ def resolve_configured_tcpip_connection(
             return "", None, None, f"port 不是有效整数：{configured_port!r}"
         port_sources.append(("port", explicit_port))
     distinct_ports = {value for _, value in port_sources}
+    invalid_ports = [(key, value) for key, value in port_sources if not 1 <= value <= 65535]
+    if invalid_ports:
+        detail = ", ".join(f"{key}={value}" for key, value in invalid_ports)
+        return "", None, None, f"连接端口超出 1..65535：{detail}"
     if len(distinct_ports) > 1:
         detail = ", ".join(f"{key}={value}" for key, value in port_sources)
         return "", None, None, f"连接端口冲突：{detail}"

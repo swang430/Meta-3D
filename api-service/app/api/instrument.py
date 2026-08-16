@@ -18,6 +18,7 @@ from app.db.database import get_db
 from app.hal.base import (
     redact_instrument_command_text,
     redact_instrument_exchange_text,
+    resolve_configured_tcpip_connection,
 )
 from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
 from app.models.diagnostic_run import DiagnosticKind
@@ -1708,6 +1709,48 @@ class TestConnectionRequest(BaseModel):
     run_by: Optional[str] = None  # 操作员标识，写入 diagnostic_runs.run_by
 
 
+def _merged_connection_config(conn: Optional[Any]) -> Dict[str, Any]:
+    """构造与 HAL 初始化完全相同的 DB 连接配置真值。"""
+    if conn is None:
+        return {}
+    config: Dict[str, Any] = {
+        "endpoint": conn.endpoint,
+        "ip": conn.controller_ip,
+        "port": conn.port,
+        "protocol": conn.protocol,
+    }
+    if conn.connection_params and isinstance(conn.connection_params, dict):
+        config.update(conn.connection_params)
+    return config
+
+
+def _resolve_diagnostic_tcp_target(
+    conn: Optional[Any],
+    *,
+    override_ip: Optional[str] = None,
+    override_port: Optional[int] = None,
+) -> tuple[Optional[str], Optional[int], Optional[str]]:
+    """解析人工诊断 socket 目标；请求体 override 是一次性完整真值源。"""
+    if override_ip is not None or override_port is not None:
+        if not str(override_ip or "").strip():
+            return None, None, "请求体覆盖 port 时必须同时提供 IP"
+        config: Dict[str, Any] = {
+            "ip": str(override_ip).strip(),
+            "port": override_port if override_port is not None else 5025,
+        }
+    else:
+        config = _merged_connection_config(conn)
+
+    host, port, _resource, error = resolve_configured_tcpip_connection(config)
+    if error:
+        return None, None, error
+    if not host:
+        return None, None, "未配置 IP 地址"
+    if not _validate_ip_address(host):
+        return None, None, f"IP 地址格式无效: '{host}'"
+    return host, port if port is not None else 5025, None
+
+
 @router.post("/instruments/{category_key}/test-connection", response_model=TestConnectionResult)
 async def test_instrument_connection(
     category_key: str,
@@ -1739,24 +1782,19 @@ async def test_instrument_connection(
         InstrumentConnectionDB.category_id == category.id
     ).first()
 
-    # 优先使用请求体中的覆盖值，其次使用数据库中保存的值
-    ip = (body.ip if body and body.ip else None) or (conn.controller_ip if conn else None)
-    port = (body.port if body and body.port else None) or (conn.port if conn else None) or 5025
+    ip, port, target_error = _resolve_diagnostic_tcp_target(
+        conn,
+        override_ip=body.ip if body else None,
+        override_port=body.port if body else None,
+    )
+    preloaded_hal_driver = _get_loaded_hal_driver(category_key)
     protocol = (body.protocol if body and body.protocol else None) or (conn.protocol if conn else None) or ""
 
-    if not ip:
+    if target_error and preloaded_hal_driver is None:
         return TestConnectionResult(
             success=False,
             status="error",
-            message="未配置连接信息（IP 地址为空）",
-        )
-
-    # 验证 IP 地址格式
-    if not _validate_ip_address(ip):
-        return TestConnectionResult(
-            success=False,
-            status="error",
-            message=f"IP 地址格式无效: '{ip}'。请输入有效的 IPv4 地址（如 192.168.0.132）或 VISA 资源字符串（如 TCPIP0::192.168.0.132::inst0::INSTR）",
+            message=target_error,
         )
 
     from app.services.instrument_test_lease import instrument_test_lease
@@ -1820,6 +1858,14 @@ async def test_instrument_connection(
             )
         finally:
             await stack.aclose()
+
+    if target_error:
+        await stack.aclose()
+        return TestConnectionResult(
+            success=False,
+            status="error",
+            message=target_error,
+        )
 
     sock = None
     start = time.monotonic()
@@ -2217,9 +2263,10 @@ def _resolve_ip_port(
     body_port: Optional[int],
     conn: Optional[Any],
 ) -> tuple:
-    """从请求体或数据库解析 IP 和 Port"""
-    ip = body_ip or (conn.controller_ip if conn else None)
-    port = body_port or (conn.port if conn else None) or 5025
+    """兼容包装：从一次性 override 或完整 DB 配置解析 IP 和 Port。"""
+    ip, port, _error = _resolve_diagnostic_tcp_target(
+        conn, override_ip=body_ip, override_port=body_port
+    )
     return ip, port
 
 
@@ -2346,15 +2393,17 @@ async def send_scpi_command(
         InstrumentConnectionDB.category_id == category.id
     ).first()
 
-    ip, port = _resolve_ip_port(request.ip, request.port, conn)
+    ip, port, target_error = _resolve_diagnostic_tcp_target(
+        conn, override_ip=request.ip, override_port=request.port
+    )
     raw_command = request.command.strip()
     safe_command = redact_instrument_command_text(raw_command)
     target_name = f"{category_key}: {safe_command}"
     audit_params: Dict[str, Any] = {
         "category_key": category_key,
         "command": safe_command,
-        "ip": ip,
-        "port": port,
+        "ip": request.ip if request.ip is not None else ip,
+        "port": request.port if request.port is not None else port,
         "timeout_ms": request.timeout_ms,
     }
     audit_started = time.monotonic()
@@ -2383,6 +2432,15 @@ async def send_scpi_command(
         )
         return result
 
+    preloaded_hal_driver = _get_loaded_hal_driver(category_key)
+    if target_error and preloaded_hal_driver is None:
+        return _audit(ScpiCommandResult(
+            command=request.command,
+            success=False,
+            error=target_error,
+            latency_ms=0,
+        ))
+
     async with instrument_test_lease(
         f"scpi-command:{category_key}",
         control_f64=(category_key == "channelEmulator"),
@@ -2397,6 +2455,14 @@ async def send_scpi_command(
                 timeout_ms=request.timeout_ms,
             )
             return _audit(result)
+
+        if target_error:
+            return _audit(ScpiCommandResult(
+                command=request.command,
+                success=False,
+                error=target_error,
+                latency_ms=0,
+            ))
 
         if not ip:
             return _audit(ScpiCommandResult(
@@ -2464,13 +2530,14 @@ async def probe_scpi_commands(
         InstrumentConnectionDB.category_id == category.id
     ).first()
 
-    ip = (body.ip if body and body.ip else None) or (conn.controller_ip if conn else None)
-    port = (body.port if body and body.port else None) or (conn.port if conn else None) or 5025
-
-    if not ip:
-        raise HTTPException(400, "未配置 IP 地址")
-    if not _validate_ip_address(ip):
-        raise HTTPException(400, f"IP 地址格式无效: '{ip}'。请检查端点配置。")
+    ip, port, target_error = _resolve_diagnostic_tcp_target(
+        conn,
+        override_ip=body.ip if body else None,
+        override_port=body.port if body else None,
+    )
+    preloaded_hal_driver = _get_loaded_hal_driver(category_key)
+    if target_error and preloaded_hal_driver is None:
+        raise HTTPException(400, target_error)
 
     results: List[ScpiCommandResult] = []
     audit_started = time.monotonic()
@@ -2499,6 +2566,8 @@ async def probe_scpi_commands(
                     hal_driver, cmd, scpi_logger, category_key
                 ))
         else:
+            if target_error:
+                raise HTTPException(400, target_error)
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(3.0)

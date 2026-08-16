@@ -11,6 +11,7 @@ record_run with right kind/target/params) is what's under test.
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
@@ -27,6 +28,7 @@ import app.api.instrument as instrument_api
 from app.models.diagnostic_run import DiagnosticKind, DiagnosticRun
 from app.models.instrument import (
     InstrumentCategory as InstrumentCategoryModel,
+    InstrumentConnection as InstrumentConnectionDB,
 )
 
 
@@ -48,6 +50,69 @@ def override_get_db():
 
 
 client = TestClient(app)
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "test-connection",
+        "scpi-command",
+        "scpi-probe",
+    ],
+)
+def test_manual_socket_fallback_rejects_conflicting_merged_config_before_io(
+    category,
+    db,
+    monkeypatch,
+    operation,
+):
+    conn = InstrumentConnectionDB(
+        id=uuid.uuid4(),
+        category_id=category.id,
+        controller_ip="192.0.2.10",
+        endpoint="TCPIP0::192.0.2.10::5025::SOCKET",
+        port=5025,
+        protocol="SCPI",
+        connection_params={
+            "visa_resource": "TCPIP0::192.0.2.99::5025::SOCKET"
+        },
+    )
+    db.add(conn)
+    db.commit()
+    monkeypatch.setattr(instrument_api, "_get_loaded_hal_driver", lambda _key: None)
+
+    @asynccontextmanager
+    async def _lease(*_args, **_kwargs):
+        yield
+
+    monkeypatch.setattr(instrument_api, "instrument_test_lease", _lease)
+
+    with patch("socket.socket.connect") as socket_connect:
+        if operation == "test-connection":
+            result = asyncio.run(instrument_api.test_instrument_connection(
+                category.category_key,
+                body=instrument_api.TestConnectionRequest(),
+                db=db,
+            ))
+            error_text = result.message
+        elif operation == "scpi-command":
+            result = asyncio.run(instrument_api.send_scpi_command(
+                category.category_key,
+                request=instrument_api.ScpiCommandRequest(command="*IDN?"),
+                db=db,
+            ))
+            error_text = result.error or ""
+        else:
+            with pytest.raises(instrument_api.HTTPException) as exc_info:
+                asyncio.run(instrument_api.probe_scpi_commands(
+                    category.category_key,
+                    body=instrument_api.TestConnectionRequest(),
+                    db=db,
+                ))
+            error_text = str(exc_info.value.detail)
+
+    socket_connect.assert_not_called()
+    assert "冲突" in error_text
 
 
 @pytest.fixture(autouse=True)
