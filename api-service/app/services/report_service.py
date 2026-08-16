@@ -88,7 +88,7 @@ def report_references_mimo_ota_execution(db: Session, report: TestReport) -> boo
 
 
 def report_is_mimo_ota_report(db: Session, report: TestReport) -> bool:
-    """Classify a report from server-owned family/producer/execution truth."""
+    """Identify a MIMO candidate; linked execution remains the trust source."""
     content = getattr(report, "content_data", None) or {}
     return (
         content.get("report_family") == "mimo_ota"
@@ -141,10 +141,16 @@ def legacy_mimo_regeneration_error(
         execution_id = UUID(str(execution_ids[0]))
     except (TypeError, ValueError):
         return "The linked TestExecution identifier is invalid."
-    if db.get(TestExecution, execution_id) is None:
+    execution = db.get(TestExecution, execution_id)
+    if execution is None:
         return (
             "The linked TestExecution is unavailable; regeneration cannot "
             "be performed safely."
+        )
+    if not is_mimo_ota_execution(db, execution):
+        return (
+            "The linked TestExecution is not an authoritative MIMO OTA "
+            "execution; regeneration cannot be performed safely."
         )
     return None
 
@@ -400,15 +406,17 @@ class ReportService:
                 ).first()
             is_mimo_single_execution = (
                 linked_execution is not None
-                and (
-                    is_mimo_ota_execution(db, linked_execution)
-                    or declared_mimo_report
-                )
+                and is_mimo_ota_execution(db, linked_execution)
             )
             if mimo_report and linked_execution is None:
                 raise ValueError(
                     "MIMO OTA report cannot be safely regenerated because its "
                     "linked TestExecution is unavailable"
+                )
+            if mimo_report and not is_mimo_single_execution:
+                raise ValueError(
+                    "MIMO OTA report cannot be safely regenerated because its "
+                    "linked TestExecution is not authoritatively MIMO OTA"
                 )
             if is_mimo_single_execution:
                 execution = linked_execution

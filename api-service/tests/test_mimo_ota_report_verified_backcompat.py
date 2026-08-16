@@ -321,7 +321,12 @@ def test_report_list_regeneration_state_comes_from_mimo_trust_and_execution_trut
 
     class _DB:
         def get(self, model, value):
-            return object() if value == recoverable_execution_id else None
+            if value != recoverable_execution_id:
+                return None
+            return SimpleNamespace(
+                config={"step_descriptors": [{"type": "MIMO_OTA_MEASURE"}]},
+                test_case_id=None,
+            )
 
     monkeypatch.setattr(report_api.report_service, "list_reports", lambda **kwargs: reports)
     monkeypatch.setattr(report_api.report_service, "count_reports", lambda **kwargs: len(reports))
@@ -450,6 +455,83 @@ def test_non_pdf_legacy_mimo_regeneration_fails_before_mutating_report(report_db
         "report_family": "mimo_ota",
         "overall_result": "passed",
     }
+
+
+def test_declared_mimo_report_cannot_regenerate_from_non_mimo_execution(report_db):
+    from app.models.report import TestReport
+    from app.models.test_plan import TestExecution
+    from app.services.report_service import LegacyMimoRegenerationRejected
+
+    execution = TestExecution(
+        id=uuid4(),
+        status="completed",
+        config={"step_descriptors": [{"type": "WAIT"}]},
+    )
+    report = TestReport(
+        title="spoofed MIMO source",
+        report_type="single_execution",
+        format="pdf",
+        generated_by="mimo_ota.executors.report",
+        status="completed",
+        test_execution_ids=[str(execution.id)],
+        file_path="legacy.pdf",
+        content_data={"report_family": "mimo_ota", "overall_result": "passed"},
+    )
+    report_db.add_all([execution, report])
+    report_db.commit()
+
+    with pytest.raises(LegacyMimoRegenerationRejected, match="MIMO OTA"):
+        ReportService().generate_report(report_db, report.id)
+
+    report_db.refresh(report)
+    assert report.status == "completed"
+    assert report.file_path == "legacy.pdf"
+    assert report.content_data == {
+        "report_family": "mimo_ota",
+        "overall_result": "passed",
+    }
+
+
+def test_sanitized_mimo_report_still_rejects_non_mimo_execution_after_claim(
+    report_db,
+    monkeypatch,
+):
+    from app.models.report import TestReport
+    from app.models.test_plan import TestExecution
+
+    execution = TestExecution(
+        id=uuid4(),
+        status="completed",
+        config={"step_descriptors": [{"type": "WAIT"}]},
+    )
+    report = TestReport(
+        title="sanitized marker with non-MIMO source",
+        report_type="single_execution",
+        format="pdf",
+        generated_by="mimo_ota.executors.report",
+        status="completed",
+        test_execution_ids=[str(execution.id)],
+        content_data={
+            "report_family": "mimo_ota",
+            "calibration_trust_schema_version": 1,
+        },
+    )
+    report_db.add_all([execution, report])
+    report_db.commit()
+
+    monkeypatch.setattr(
+        "app.services.mimo_ota.executors.report._build_mimo_ota_content_data",
+        lambda *args, **kwargs: pytest.fail(
+            "non-MIMO execution must never reach the MIMO report builder"
+        ),
+    )
+
+    with pytest.raises(ValueError, match="not authoritatively MIMO OTA"):
+        ReportService().generate_report(report_db, report.id)
+
+    report_db.refresh(report)
+    assert report.status == "failed"
+    assert "not authoritatively MIMO OTA" in report.error_message
 
 
 def test_report_generation_rejects_an_already_claimed_report(report_db):

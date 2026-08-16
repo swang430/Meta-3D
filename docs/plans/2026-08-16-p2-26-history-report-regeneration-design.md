@@ -15,12 +15,12 @@ P1-27 已让缺少可信校准来源的旧 MIMO 报告详情与下载 fail-close
 `ReportSummary` 增加三个只读字段：
 
 - `requires_regeneration: bool`：仅 MIMO 报告且缺 `calibration_trust_schema_version == 1` 时为真。
-- `regeneration_available: bool`：仅需恢复且同时满足当前安全生成链的完整前置条件时为真：`single_execution`、无 `road_test_execution_id`、PDF 格式、恰有一个仍存在的关联 `TestExecution`，且当前没有恢复任务占用该报告。
+- `regeneration_available: bool`：仅需恢复且同时满足当前安全生成链的完整前置条件时为真：`single_execution`、无 `road_test_execution_id`、PDF 格式、恰有一个仍存在且经 `is_mimo_ota_execution()` 权威判定为 MIMO OTA 的关联 `TestExecution`，且当前没有恢复任务占用该报告。报告自身的 `report_family` / `generated_by` 只用于识别候选，不能替代执行来源真值。
 - `regeneration_reason: Optional[str]`：稳定的操作说明或不可恢复原因。
 
 列表构造必须复用已有 MIMO/可信判据，不按标题、文件名或 generated_by 单独猜测。非 MIMO 与已 sanitized 报告均不显示恢复动作。
 
-`POST /reports/{id}/generate` 继续作为唯一恢复写入口：completed legacy MIMO PDF 可显式调用；列表与写入口复用同一个安全前置条件判据，非 `single_execution`、VRT 关联、非 PDF、无唯一可用执行均在修改状态/content/file 前 409。从关联执行重建全部 payload，不读取旧报告 KPI 作为真值；缺可信 provenance 时输出 UNKNOWN/N/A；explicit-real 证据完整时才恢复正式值；成功后详情与下载恢复可用。入口通过数据库条件更新原子认领 `generating` 状态，认领失败返回 409，禁止多个客户端同时写同一报告文件。
+`POST /reports/{id}/generate` 继续作为唯一恢复写入口：completed legacy MIMO PDF 可显式调用；列表与写入口复用同一个安全前置条件判据，非 `single_execution`、VRT 关联、非 PDF、无唯一可用且权威属于 MIMO OTA 的执行均在修改状态/content/file 前 409。从关联执行重建全部 payload，不读取旧报告 KPI 作为真值；缺可信 provenance 时输出 UNKNOWN/N/A；explicit-real 证据完整时才恢复正式值；成功后详情与下载恢复可用。入口通过数据库条件更新原子认领 `generating` 状态，认领失败返回 409，禁止多个客户端同时写同一报告文件。
 
 ## GUI 行为
 
@@ -37,6 +37,7 @@ P1-27 已让缺少可信校准来源的旧 MIMO 报告详情与下载 fail-close
 - 不回填或猜测 `use_mock`、校准证书来源与 KPI。
 - 不自动批量改写历史报告，不为多 execution 报告拼接证据。
 - 非 MIMO 报告不受影响。
+- 崩溃后遗留的 `generating` claim 保持 fail-closed；在没有 owner/epoch/lease 存活真值前，不因新进程启动就把它自动判成僵尸。Gunicorn 平滑替换即使配置单 worker 也可能短暂重叠，自动复位会重新放行同一正式报告的并发写。
 
 ## TDD 验收
 
@@ -48,6 +49,8 @@ P1-27 已让缺少可信校准来源的旧 MIMO 报告详情与下载 fail-close
 6. Blob 409 显示后端 detail，不退化成通用 HTTP 状态文本。
 7. 既有“恢复前 409、恢复后 UNKNOWN/N/A 可下载、explicit-real 才保留正式 KPI”回归通过。
 8. 两个客户端同时请求恢复时，仅一个能原子认领；另一个 409，禁止并发覆盖同一文件。
+9. 报告标记声称 MIMO、但唯一关联执行不是权威 MIMO OTA 时，列表不可恢复且生成在任何改写前 409。
+10. 已带 trust stamp、会绕过 legacy 前置门的 MIMO 候选，若关联执行不是权威 MIMO OTA，仍在生成端第二道防线拒绝且不调用 builder。
 
 ## 非目标
 
@@ -55,3 +58,4 @@ P1-27 已让缺少可信校准来源的旧 MIMO 报告详情与下载 fail-close
 - 不批量迁移全部历史报告。
 - 不新增报告版本树、任务队列或后台作业系统。
 - 不处理 VRT/非 MIMO 报告重生成体验。
+- 不新增 report claim owner/epoch/lease，也不在无法证明 owner 已死亡时自动复位 `generating`。
