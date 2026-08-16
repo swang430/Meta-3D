@@ -14,3 +14,13 @@ export function buildLabProfileBindingPatch({
   }
   return { lab_profile_id: selectedLabProfileId }
 }
+
+export function labProfileSelectionDisabled({
+  labsLoading,
+  labsError,
+}: {
+  labsLoading: boolean
+  labsError: string | null
+}): boolean {
+  return labsLoading || labsError !== null
+}
