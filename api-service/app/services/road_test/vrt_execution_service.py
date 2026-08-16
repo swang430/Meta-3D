@@ -147,6 +147,7 @@ class VrtExecutionService:
         execution_id: str,
         target_status: ExecutionStatus,
         *,
+        expected_status: ExecutionStatus,
         log_message: str,
         set_started_at: bool = False,
         set_completed_at: bool = False,
@@ -155,45 +156,160 @@ class VrtExecutionService:
         row = self.get(db, execution_id)
         if row is None:
             return None
-        row.status = target_status.value
+        values: Dict[str, Any] = {"status": target_status.value}
         if set_started_at and row.started_at is None:
-            row.started_at = _utcnow()
+            values["started_at"] = _utcnow()
         if set_completed_at:
-            row.completed_at = _utcnow()
+            completed_at = _utcnow()
+            values["completed_at"] = completed_at
             if row.started_at is not None:
-                row.duration_sec = (row.completed_at - row.started_at).total_seconds()
+                values["duration_sec"] = (completed_at - row.started_at).total_seconds()
         if progress_percent is not None:
-            self._merge_runtime_status(row, {"progress_percent": progress_percent})
-        db.commit()
-        db.refresh(row)
-        self.append_log(db, row.id, level="INFO", message=log_message, source="System")
-        return row
+            runtime_status = dict(row.vrt_runtime_status or {})
+            runtime_status["progress_percent"] = progress_percent
+            values["vrt_runtime_status"] = runtime_status
 
-    def start(self, db: Session, execution_id: str) -> Optional[TestExecutionORM]:
+        updated = db.query(TestExecutionORM).filter(
+            TestExecutionORM.id == row.id,
+            TestExecutionORM.status == expected_status.value,
+        ).update(values, synchronize_session=False)
+        if updated != 1:
+            db.rollback()
+            return None
+
+        db.commit()
+        db.expire_all()
+        transitioned_row = self.get(db, execution_id)
+        if transitioned_row is not None:
+            self.append_log(
+                db,
+                transitioned_row.id,
+                level="INFO",
+                message=log_message,
+                source="System",
+            )
+        return transitioned_row
+
+    def start(
+        self,
+        db: Session,
+        execution_id: str,
+        *,
+        expected_status: ExecutionStatus = ExecutionStatus.IDLE,
+    ) -> Optional[TestExecutionORM]:
         return self._transition(
             db, execution_id, ExecutionStatus.RUNNING,
+            expected_status=expected_status,
             log_message="Execution started",
             set_started_at=True,
         )
 
-    def pause(self, db: Session, execution_id: str) -> Optional[TestExecutionORM]:
-        return self._transition(db, execution_id, ExecutionStatus.PAUSED, log_message="Execution paused")
-
-    def resume(self, db: Session, execution_id: str) -> Optional[TestExecutionORM]:
-        return self._transition(db, execution_id, ExecutionStatus.RUNNING, log_message="Execution resumed")
-
-    def stop(self, db: Session, execution_id: str) -> Optional[TestExecutionORM]:
+    def pause(
+        self,
+        db: Session,
+        execution_id: str,
+        *,
+        expected_status: ExecutionStatus = ExecutionStatus.RUNNING,
+    ) -> Optional[TestExecutionORM]:
         return self._transition(
-            db, execution_id, ExecutionStatus.STOPPED,
-            log_message="Execution stopped",
-            set_completed_at=True,
+            db,
+            execution_id,
+            ExecutionStatus.PAUSED,
+            expected_status=expected_status,
+            log_message="Execution paused",
         )
 
-    def complete(self, db: Session, execution_id: str) -> Optional[TestExecutionORM]:
+    def resume(
+        self,
+        db: Session,
+        execution_id: str,
+        *,
+        expected_status: ExecutionStatus = ExecutionStatus.PAUSED,
+    ) -> Optional[TestExecutionORM]:
         return self._transition(
-            db, execution_id, ExecutionStatus.COMPLETED,
+            db,
+            execution_id,
+            ExecutionStatus.RUNNING,
+            expected_status=expected_status,
+            log_message="Execution resumed",
+        )
+
+    def _terminal_transition(
+        self,
+        db: Session,
+        execution_id: str,
+        target_status: ExecutionStatus,
+        *,
+        expected_status: ExecutionStatus,
+        log_message: str,
+        progress_percent: Optional[float] = None,
+    ) -> Optional[TestExecutionORM]:
+        """Atomically choose the sole terminal action/archive owner."""
+        row = self.get(db, execution_id)
+        if row is None:
+            return None
+
+        completed_at = _utcnow()
+        values: Dict[str, Any] = {
+            "status": target_status.value,
+            "completed_at": completed_at,
+        }
+        if row.started_at is not None:
+            values["duration_sec"] = (completed_at - row.started_at).total_seconds()
+        if progress_percent is not None:
+            runtime_status = dict(row.vrt_runtime_status or {})
+            runtime_status["progress_percent"] = progress_percent
+            values["vrt_runtime_status"] = runtime_status
+
+        updated = db.query(TestExecutionORM).filter(
+            TestExecutionORM.id == row.id,
+            TestExecutionORM.status == expected_status.value,
+        ).update(values, synchronize_session=False)
+        if updated != 1:
+            db.rollback()
+            return None
+
+        db.commit()
+        db.expire_all()
+        terminal_row = self.get(db, execution_id)
+        if terminal_row is not None:
+            self.append_log(
+                db,
+                terminal_row.id,
+                level="INFO",
+                message=log_message,
+                source="System",
+            )
+        return terminal_row
+
+    def stop(
+        self,
+        db: Session,
+        execution_id: str,
+        *,
+        expected_status: ExecutionStatus = ExecutionStatus.RUNNING,
+    ) -> Optional[TestExecutionORM]:
+        return self._terminal_transition(
+            db,
+            execution_id,
+            ExecutionStatus.STOPPED,
+            expected_status=expected_status,
+            log_message="Execution stopped",
+        )
+
+    def complete(
+        self,
+        db: Session,
+        execution_id: str,
+        *,
+        expected_status: ExecutionStatus = ExecutionStatus.RUNNING,
+    ) -> Optional[TestExecutionORM]:
+        return self._terminal_transition(
+            db,
+            execution_id,
+            ExecutionStatus.COMPLETED,
+            expected_status=expected_status,
             log_message="Execution completed",
-            set_completed_at=True,
             progress_percent=100.0,
         )
 

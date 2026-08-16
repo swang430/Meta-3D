@@ -36,11 +36,19 @@ from app.schemas.report import (
     KPIDifference,
 )
 from app.services.report_service import (
+    LegacyMimoRegenerationRejected,
+    LegacyVrtArchiveRejected,
+    ReportGenerationConflict,
+    RoadTestReportConflict,
     ReportService,
     ReportTemplateService,
     ReportComparisonService,
     ReportScheduleService,
-    report_references_mimo_ota_execution,
+    legacy_mimo_regeneration_error,
+    normalized_report_execution_ids,
+    report_has_provenance_trust,
+    report_has_vrt_archive_trust,
+    report_is_mimo_ota_report,
 )
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -53,12 +61,7 @@ schedule_service = ReportScheduleService()
 
 
 def _is_mimo_report(db: Session, report) -> bool:
-    content = report.content_data or {}
-    return (
-        content.get("report_family") == "mimo_ota"
-        or getattr(report, "generated_by", None) == "mimo_ota.executors.report"
-        or report_references_mimo_ota_execution(db, report)
-    )
+    return report_is_mimo_ota_report(db, report)
 
 
 def _mimo_report_is_provenance_sanitized(db: Session, report) -> bool:
@@ -68,10 +71,10 @@ def _mimo_report_is_provenance_sanitized(db: Session, report) -> bool:
     KPI data (explicit-real calibration) or replace it with UNKNOWN/N/A. Old
     artifacts lack that proof and therefore fail closed.
     """
-    content = report.content_data or {}
+    content = report.content_data if isinstance(report.content_data, dict) else {}
     if not _is_mimo_report(db, report):
         return True
-    return content.get("calibration_trust_schema_version") == 1
+    return report_has_provenance_trust(content)
 
 
 def _reject_untrusted_mimo_report(db: Session, report) -> None:
@@ -88,6 +91,59 @@ def _reject_untrusted_mimo_report(db: Session, report) -> None:
     )
 
 
+def _reject_untrusted_vrt_report(report) -> None:
+    if getattr(report, "road_test_execution_id", None) is None:
+        return
+    if report_has_vrt_archive_trust(report.content_data):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            "Historical VRT report content is not server-owned. Rebuild it from "
+            "the terminal execution before viewing or downloading the artifact."
+        ),
+    )
+
+
+def _report_summary(db: Session, report) -> ReportSummary:
+    """Build list metadata from the same MIMO trust truth as detail/download."""
+    summary = ReportSummary.model_validate({
+        "id": report.id,
+        "title": report.title,
+        "report_type": report.report_type,
+        "format": report.format,
+        "status": report.status,
+        "progress_percent": report.progress_percent,
+        "file_size_bytes": report.file_size_bytes,
+        "generated_by": report.generated_by,
+        "generated_at": report.generated_at,
+        "test_execution_ids": normalized_report_execution_ids(report),
+        "road_test_execution_id": report.road_test_execution_id,
+        "vrt_archive_trusted": (
+            report.road_test_execution_id is None
+            or report_has_vrt_archive_trust(report.content_data)
+        ),
+    })
+    if _mimo_report_is_provenance_sanitized(db, report):
+        return summary
+
+    regeneration_error = legacy_mimo_regeneration_error(db, report)
+    if regeneration_error:
+        return summary.model_copy(update={
+            "requires_regeneration": True,
+            "regeneration_available": False,
+            "regeneration_reason": regeneration_error,
+        })
+
+    return summary.model_copy(update={
+        "requires_regeneration": True,
+        "regeneration_available": True,
+        "regeneration_reason": (
+            "Regenerate to produce a provenance-sanitized UNKNOWN/N/A audit report."
+        ),
+    })
+
+
 # ==================== Report Endpoints ====================
 
 @router.post("", response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
@@ -96,30 +152,41 @@ def create_report(
     db: Session = Depends(get_db)
 ):
     """Create a new test report"""
-    return report_service.create_report(
-        db=db,
-        title=report.title,
-        report_type=report.report_type,
-        format=report.format,
-        generated_by=report.generated_by,
-        test_plan_id=report.test_plan_id,
-        test_execution_ids=report.test_execution_ids,
-        template_id=report.template_id,
-        description=report.description,
-        comparison_plan_ids=report.comparison_plan_ids,
-        include_raw_data=report.include_raw_data,
-        include_charts=report.include_charts,
-        include_statistics=report.include_statistics,
-        include_recommendations=report.include_recommendations,
-        config=report.config,
-        custom_sections=report.custom_sections,
-        tags=report.tags,
-        category=report.category,
-        notes=report.notes,
-        # Unified report content
-        content_data=report.content_data,
-        road_test_execution_id=report.road_test_execution_id,
-    )
+    if report.road_test_execution_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "VRT reports are created from the authoritative terminal archive; "
+                "the generic report endpoint cannot claim a road-test execution."
+            ),
+        )
+    try:
+        return report_service.create_report(
+            db=db,
+            title=report.title,
+            report_type=report.report_type,
+            format=report.format,
+            generated_by=report.generated_by,
+            test_plan_id=report.test_plan_id,
+            test_execution_ids=report.test_execution_ids,
+            template_id=report.template_id,
+            description=report.description,
+            comparison_plan_ids=report.comparison_plan_ids,
+            include_raw_data=report.include_raw_data,
+            include_charts=report.include_charts,
+            include_statistics=report.include_statistics,
+            include_recommendations=report.include_recommendations,
+            config=report.config,
+            custom_sections=report.custom_sections,
+            tags=report.tags,
+            category=report.category,
+            notes=report.notes,
+            # Unified report content
+            content_data=report.content_data,
+            road_test_execution_id=report.road_test_execution_id,
+        )
+    except RoadTestReportConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("", response_model=ReportListResponse)
@@ -150,7 +217,7 @@ def list_reports(
         generated_by=generated_by
     )
     return ReportListResponse(
-        reports=[ReportSummary.model_validate(r) for r in reports],
+        reports=[_report_summary(db, report) for report in reports],
         total=total,
         page=1 + (skip // limit),
         page_size=limit
@@ -168,22 +235,24 @@ def generate_report(
     This starts the async report generation process.
     The actual PDF/HTML/Excel generation will be done in a background task.
     """
-    existing = report_service.get_report(db, report_id)
     try:
         report = report_service.generate_report(db, report_id)
-    except ValueError as exc:
-        if existing is not None and _is_mimo_report(db, existing):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=str(exc),
-            ) from exc
-        raise
+    except (
+        ReportGenerationConflict,
+        LegacyMimoRegenerationRejected,
+        LegacyVrtArchiveRejected,
+    ) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     if not report:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Report {report_id} not found"
         )
     _reject_untrusted_mimo_report(db, report)
+    _reject_untrusted_vrt_report(report)
     return report
 
 
@@ -460,6 +529,7 @@ def get_report(
             detail=f"Report {report_id} not found"
         )
     _reject_untrusted_mimo_report(db, report)
+    _reject_untrusted_vrt_report(report)
     return report
 
 
@@ -486,6 +556,7 @@ def download_report(
         )
 
     _reject_untrusted_mimo_report(db, report)
+    _reject_untrusted_vrt_report(report)
 
     if not report.file_path:
         raise HTTPException(

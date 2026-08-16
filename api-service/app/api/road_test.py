@@ -6,6 +6,7 @@ REST API endpoints for virtual road test scenarios, topologies, and executions
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from typing import List, Optional, Any
 import logging
@@ -675,28 +676,73 @@ async def control_execution(
     if action == "start":
         if current != ExecutionStatus.IDLE:
             raise HTTPException(status_code=400, detail="Execution already started")
-        vrt_execution_service.start(db, execution_id)
+        transitioned = vrt_execution_service.start(
+            db,
+            execution_id,
+            expected_status=current,
+        )
+        if transitioned is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Execution state changed before start; refresh and retry.",
+            )
 
     elif action == "pause":
         if current != ExecutionStatus.RUNNING:
             raise HTTPException(status_code=400, detail="Execution not running")
-        vrt_execution_service.pause(db, execution_id)
+        transitioned = vrt_execution_service.pause(
+            db,
+            execution_id,
+            expected_status=current,
+        )
+        if transitioned is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Execution state changed before pause; refresh and retry.",
+            )
 
     elif action == "resume":
         if current != ExecutionStatus.PAUSED:
             raise HTTPException(status_code=400, detail="Execution not paused")
-        vrt_execution_service.resume(db, execution_id)
+        transitioned = vrt_execution_service.resume(
+            db,
+            execution_id,
+            expected_status=current,
+        )
+        if transitioned is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Execution state changed before resume; refresh and retry.",
+            )
 
     elif action == "stop":
         if current in (ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.STOPPED):
             raise HTTPException(status_code=400, detail="Execution already finished")
-        vrt_execution_service.stop(db, execution_id)
+        terminal_row = vrt_execution_service.stop(
+            db,
+            execution_id,
+            expected_status=current,
+        )
+        if terminal_row is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Execution state changed before stop; refresh and retry.",
+            )
         await _archive_execution_report(execution_id, db)
 
     elif action == "complete":
         if current in (ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.STOPPED):
             raise HTTPException(status_code=400, detail="Execution already finished")
-        vrt_execution_service.complete(db, execution_id)
+        terminal_row = vrt_execution_service.complete(
+            db,
+            execution_id,
+            expected_status=current,
+        )
+        if terminal_row is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Execution state changed before completion; refresh and retry.",
+            )
         await _archive_execution_report(execution_id, db)
 
     else:
@@ -818,6 +864,51 @@ async def get_execution_report(execution_id: str, db: Session = Depends(get_db))
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
 
+@router.post("/executions/{execution_id}/archive-report")
+async def archive_execution_report(execution_id: str, db: Session = Depends(get_db)):
+    """Create/reuse the server-owned archive for a terminal VRT execution."""
+    row = vrt_execution_service.get(db, execution_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Execution '{execution_id}' not found")
+    if row.status not in {
+        ExecutionStatus.COMPLETED.value,
+        ExecutionStatus.STOPPED.value,
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail="VRT report archival is available only after the execution is terminal.",
+        )
+
+    await _archive_execution_report(execution_id, db)
+    db.expire_all()
+    report = db.query(TestReport).filter(
+        TestReport.road_test_execution_id == execution_id
+    ).first()
+    if report is None:
+        raise HTTPException(
+            status_code=500,
+            detail="VRT report archival failed before a recoverable report was created.",
+        )
+    payload = {"id": str(report.id), "title": report.title, "status": report.status}
+    if report.status == ReportStatus.COMPLETED.value:
+        return payload
+    if report.status == ReportStatus.GENERATING.value:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "VRT archive remains generating, but writer liveness cannot be proven. "
+                "Automatic retry is blocked; inspect the existing claim before recovery."
+            ),
+        )
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"VRT archive remains {report.status}; writer liveness cannot be proven. "
+            f"Use /reports/{report.id}/generate to retry."
+        ),
+    )
+
+
 async def _archive_execution_report(execution_id: str, db: Session):
     """
     Helper to generate and save execution report to database (Option B+)
@@ -826,12 +917,36 @@ async def _archive_execution_report(execution_id: str, db: Session):
         # DEBUG ENTRY
         logger.info(f"Archiving execution report for {execution_id}")
 
+        # A terminal execution owns one immutable automatic archive.  Only a
+        # strict server-written trust marker proves that an existing row was
+        # produced by this path; pre-upgrade GUI rows used client-owned KPI
+        # payloads and must be rebuilt from the execution instead of reused.
+        existing_report = db.query(TestReport).filter(
+            TestReport.road_test_execution_id == execution_id
+        ).first()
+        from app.services.report_service import (
+            VRT_ARCHIVE_TRUST_FIELD,
+            VRT_ARCHIVE_TRUST_SCHEMA_VERSION,
+            report_has_vrt_archive_trust,
+        )
+        if (
+            existing_report is not None
+            and report_has_vrt_archive_trust(existing_report.content_data)
+        ):
+            logger.info(
+                "Skipped duplicate VRT archive for execution %s; report %s already exists",
+                execution_id,
+                existing_report.id,
+            )
+            return
+
         # 1. Generate full report (Pydantic model)
         # Note: We temporarily allow report generation even if status is just changed
         report_data: ExecutionReport = await _generate_execution_report(execution_id, db)
         
         # 2. Convert to JSON dict
         content_data = report_data.model_dump(mode="json")
+        content_data[VRT_ARCHIVE_TRUST_FIELD] = VRT_ARCHIVE_TRUST_SCHEMA_VERSION
         
         # DEBUG LOGGING FOR REPORT DATA
         logger.info(f"Generated report data for {execution_id}. Keys: {list(content_data.keys())}")
@@ -863,30 +978,35 @@ async def _archive_execution_report(execution_id: str, db: Session):
         from datetime import datetime, timezone
         import uuid
         
-        # Check if report already exists for this execution to avoid duplicates
-        existing_report = db.query(TestReport).filter(
-            TestReport.road_test_execution_id == execution_id
-        ).first()
-        
-        if existing_report:
-            logger.info(f"Updating existing archived report for execution {execution_id}")
-            existing_report.content_data = content_data
-            existing_report.status = ReportStatus.COMPLETED
-            existing_report.generation_completed_at = datetime.now(timezone.utc)
-            existing_report.title = f"虚拟路测报告: {report_data.scenario_name}"
+        legacy_content_snapshot = None
+        if existing_report is not None:
+            from copy import deepcopy
+
+            # Do not mutate the legacy row before acquiring ReportService's
+            # writer claim.  The authoritative payload is supplied only to
+            # the claim winner, which then replaces the old content/file.
+            target_report = existing_report
+            legacy_content_snapshot = deepcopy(existing_report.content_data)
+            logger.info(
+                "Rebuilding untrusted historical VRT report %s for execution %s",
+                target_report.id,
+                execution_id,
+            )
         else:
             logger.info(f"Creating new archived report for execution {execution_id}")
             new_report = TestReport(
                 id=uuid.uuid4(),
                 title=f"虚拟路测报告: {report_data.scenario_name}",
                 description=f"Mode: {report_data.mode}, Result: {report_data.overall_result}",
-                report_type=ReportType.SINGLE_EXECUTION,  # Or add a specialized type if needed
+                report_type=ReportType.SINGLE_EXECUTION,
                 format=ReportFormat.PDF,
-                status=ReportStatus.COMPLETED,
+                # This is only a recoverable input snapshot until ReportService
+                # atomically owns the writer claim and publishes the PDF.  A
+                # crash before that claim must not leave a completed report with
+                # no artifact.
+                status=ReportStatus.PENDING,
                 generated_by="System (Auto-Archive)",
                 generated_at=datetime.now(timezone.utc),
-                generation_started_at=datetime.now(timezone.utc),
-                generation_completed_at=datetime.now(timezone.utc),
                 content_data=content_data,
                 road_test_execution_id=execution_id,
                 # Metadata
@@ -894,30 +1014,100 @@ async def _archive_execution_report(execution_id: str, db: Session):
                 tags=["VRT", report_data.mode.value, report_data.overall_result]
             )
             db.add(new_report)
-        
-        db.commit()
-        logger.info(f"Successfully archived VRT report for {execution_id}")
+            try:
+                db.commit()
+                target_report = new_report
+            except IntegrityError:
+                # A concurrent first archive inserted the unique execution row
+                # while this request prepared its local snapshot.  This request
+                # is the insert loser and must exit: retrying the generation claim
+                # could overwrite the winner after it has already completed.
+                db.rollback()
+                target_report = db.query(TestReport).filter(
+                    TestReport.road_test_execution_id == execution_id
+                ).first()
+                if target_report is None:
+                    raise
+                logger.info(
+                    "Skipped duplicate first VRT archive; report %s already owns execution %s",
+                    target_report.id,
+                    execution_id,
+                )
+                return
+
+        logger.info("Prepared VRT report archive for %s", execution_id)
 
         # Trigger PDF generation immediately (for user convenience)
+        from app.services.report_service import (
+            ReportGenerationConflict,
+            ReportService,
+        )
         try:
-            target_report = new_report if new_report else existing_report
             target_report_id = target_report.id if target_report else None
             logger.info(f"Triggering auto-generation of PDF for report {target_report_id}")
-            # Import here to avoid circular dependency
-            from app.services.report_service import ReportService
             service = ReportService()
             if target_report_id:
                 # Pass content_data directly to bypass DB read lag/issues
-                service.generate_report(db, target_report_id, content_data_override=content_data)
+                generation_kwargs = {
+                    "content_data_override": content_data,
+                    "vrt_archive_metadata_override": {
+                        "title": f"虚拟路测报告: {report_data.scenario_name}",
+                        "description": (
+                            f"Mode: {report_data.mode}, "
+                            f"Result: {report_data.overall_result}"
+                        ),
+                        "notes": report_data.notes,
+                        "tags": [
+                            "VRT",
+                            report_data.mode.value,
+                            report_data.overall_result,
+                        ],
+                    },
+                }
+                if existing_report is not None:
+                    generation_kwargs["expected_content_data"] = (
+                        legacy_content_snapshot
+                    )
+                service.generate_report(db, target_report_id, **generation_kwargs)
+        except ReportGenerationConflict as pdf_err:
+            # This request never owned the writer claim.  Do not race a later
+            # winner state (including completed/failed) with any retry reset.
+            db.rollback()
+            logger.warning(
+                "Skipped VRT archive generation for report %s: %s",
+                target_report.id if target_report else None,
+                pdf_err,
+            )
         except Exception as pdf_err:
             logger.error(f"Failed to auto-generate PDF: {pdf_err}")
-            # Update report status to indicate PDF generation failed but data is preserved
-            target_report = new_report if new_report else existing_report
+            # Preserve another request's active generation claim.  For an
+            # ordinary generation failure ReportService has already moved the
+            # row out of generating, so this conditional update retains the
+            # existing retryable pending behavior.
             if target_report:
-                target_report.status = ReportStatus.PENDING  # Mark as pending so user can retry
-                target_report.error_message = f"PDF generation failed: {str(pdf_err)}"
-                db.commit()
-                logger.info(f"Report {target_report.id} marked as PENDING due to PDF generation failure")
+                reset = db.query(TestReport).filter(
+                    TestReport.id == target_report.id,
+                    TestReport.status != ReportStatus.GENERATING.value,
+                ).update(
+                    {
+                        TestReport.status: ReportStatus.PENDING.value,
+                        TestReport.error_message: f"PDF generation failed: {str(pdf_err)}",
+                    },
+                    synchronize_session=False,
+                )
+                if reset == 1:
+                    db.commit()
+                    logger.info(
+                        "Report %s marked as PENDING due to PDF generation failure",
+                        target_report.id,
+                    )
+                else:
+                    db.rollback()
+                    logger.warning(
+                        "Preserved active generation claim for report %s after "
+                        "archive generation conflict",
+                        target_report.id,
+                    )
         
         
     except Exception as e:

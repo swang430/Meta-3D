@@ -18,7 +18,7 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅。
 
-**Current Focus = P1-53（R2 P1 尾修完成，待合并，WIP=1）**。目标是贯通 P1-28 已加入的探头校准 `chamber_id` 基础列：四类探头校准的 REST 写入、latest/history、有效性、作废、正式消费与报告均改为显式暗室作用域；多暗室同号探头不得互相读取、作废或进入正式统计，legacy `chamber_id=NULL` 保留审计但不再作为正式回退。fresh 内审扩出的正式判定收口也归本片：四类探头以及全局 Link、RF-chain、multi-frequency 以 nullable `use_mock` 白名单隔离 mock/历史未知，过期记录不判 PASS，pattern 正式消费与多频数值接口拒绝模拟/过期数据，GUI 详情把非 real 数值同行标成 UNVERIFIED；全局 Link 的正式有效性优先选择仍有效的 explicit-real 记录且不再替代单探头四类完整性，单探头只有四类齐全且均有效才可 overall VALID，部分齐全为 PARTIAL；validity report 返回逐探头权威状态供 Dashboard/Grid 直接消费，避免暗室假绿，非 real 阈值数值只用中性颜色；PDF 渲染其摘要计入的 RF-chain 与 multi-frequency 家族但不把硬编码 mock 写入口显示为 PASS，探头网格数量来自暗室 `num_probes`。验证：后端全量 `3881 passed / 5 skipped`，R2 尾修后的 P1-53 + 完整 rule gates `78 passed`，GUI 契约 `8 passed`，production build、compileall 与 diff-check 均通过。R2 两条 P1 与尾修内审补充的一条聚合 P1 已按 TDD 修复；依两轮上限不触发 R3，尾修如实记录为未获外审覆盖。P1-52 已由 PR #345（merge `b7b7be3`）完成详情/列表状态拆分、失败时保留原绑定、显式换绑/清空与请求代次防 stale，并完成两轮 Codex 外审；R2 仅一条 P3 状态镜像建议，按规则不积压。P1-51 已完成设计、TDD、内审、两轮 Codex 外审与 R2 P1 尾部修复；
+**Current Focus = P2-26（PR #347 R6 P1 已按 TDD 修复，fresh 内审 P1/P2/P3=0，待 R7，WIP=1）**。P1-53 已由 PR #346（merge `da65888`）完成多暗室探头校准隔离；P2-26 复用 P1-27 的 provenance-aware builder，为被 409 封锁的历史 MIMO 报告补后端恢复状态与 GUI 显式恢复入口，缺可信来源仍输出 UNKNOWN/N/A，不放宽详情/下载门。R1～R4 已依次收口执行来源、VRT writer claim、畸形历史 JSON 与坏关联旧 PASS 复用。R5 将 VRT 全部控制跃迁收窄为数据库 CAS，自动归档首次只写 `pending` 输入快照并由唯一 writer 发布完成；同 execution 以部分唯一索引保持单一报告真值，既有自动归档不可被延迟 worker 重开。通用 `POST /reports` 禁止客户端声明 VRT 关联，GUI 恢复改走只接受 completed/stopped、从权威执行重建的服务端归档入口；缺 owner/lease 真值时 `generating` 也保持 409 fail-closed，不假报进行中。R6 进一步收窄“既有归档”判据：只有精确服务端 trust 标记才可复用；升级前旧 GUI 行会保留 report id、从终态执行重建，重建前详情/下载/普通 generate 均 409，且重新显示在待归档列表；旧客户端 envelope 在单一 writer claim 内归一为服务端 PDF，迟到 loser 不能重开 completed。R1 的崩溃残留 P2 在没有 owner/lease 真值时继续 fail-closed，不做可能误放并发写的启动猜测复位。验证：最新报告/VRT/迁移与完整 rule gates 191 passed、GUI 契约 6 passed、production build、compileall、diff-check 通过。设计见 [`P2-26 设计`](plans/2026-08-16-p2-26-history-report-regeneration-design.md)。
 第二轮指出的完整连接目标消费、诊断入口目标一致性及锁内重读持久化真值均已收口，按两轮上限不再触发 R3。P1-50 已由 PR #343（merge `e10afa4`）
 完成留存失败告警上下文隔离，内审与两轮 Codex 外审均无 P1；告警仍进入 app/console，但不再
 回流重开执行文件或泄漏 fd。P1-49 已由 PR #342（merge `3e0a11d`）
@@ -33,7 +33,7 @@ P1-49～P1-53；2026-08-16 用户明确一个编号项默认连续走完设计�
 均在任何外部 I/O 前明确失败，已有数据库连接值不自动清空。
 
 **2026-08-12 批准队列（稳定编号，逐片 WIP=1）**：
-**P2-25 → P1-49 → P1-50 → P1-51 → P1-52 → P1-53 → P2-26 → P2-27 →
+**P2-25 → P1-49 → P1-50 → P1-51 → P1-52 → P1-53 → P2-26 → P1-54 → P1-55 → P1-56 → P2-27 →
 P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**。
 
 | ID | 正式条目 | 当前状态 |
@@ -42,9 +42,12 @@ P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → 
 | **P1-50** | 日志留存清理失败时禁止回流重开执行文件并泄漏 fd | ✅ PR #343 |
 | **P1-51** | 删除仪表默认 IP 猜测；缺配置时 fail-closed | ✅ PR #344 |
 | **P1-52** | TestCase 编辑时 LabProfile 列表加载失败不得清空原绑定 | ✅ PR #345 |
-| **P1-53** | 多暗室校准数据隔离，禁止跨暗室误用校准结果 | 🟡 R2 P1 尾修完成 / 待合并 |
+| **P1-53** | 多暗室校准数据隔离，禁止跨暗室误用校准结果 | ✅ PR #346 |
 | **P2-25** | 当前/历史日志分类；历史按分类/执行分组并支持时间、名称、execution ID 搜索 | ✅ PR #340 |
-| **P2-26** | 历史 MIMO 报告 UNKNOWN/N/A 的重新生成与恢复界面 | ⬜ |
+| **P2-26** | 历史 MIMO 报告 UNKNOWN/N/A 的重新生成与恢复界面 | 🟢 PR #347 R6 P1 已修复 / 内审 P1/P2/P3=0 / 待 R7 |
+| **P1-54** | 用户指定的优先 P1 槽位（具体故障与验收范围待补） | ⬜ 已预留，P2-26 后第一项 |
+| **P1-55** | 用户指定的优先 P1 槽位（具体故障与验收范围待补） | ⬜ 已预留，紧随 P1-54 |
+| **P1-56** | 用户指定的优先 P1 槽位（具体故障与验收范围待补） | ⬜ 已预留，紧随 P1-55 |
 | **P2-27** | 修复 9 组前端手写契约与 live OpenAPI 不一致 | ⬜ |
 | **P2-28** | 诊断序列持久化完整 raw 或可靠 trace pointer | ⬜ |
 | **P2-29** | ASC/B2 正式模型加载证据 hook | ⬜ |
@@ -297,7 +300,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → ~~P1-52~~ ✅ → P1-53 🟡 → P2-26 → P2-27 → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；当前 P1-53 已完成 R2 P1 尾修与 fresh 内审，按两轮上限不触发 R3，待合并，WIP=1；P1-52 已由 PR #345 完成并按两轮外审规则收口。完整编号、范围与状态只看顶部 Current Focus 表。 |
+| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → ~~P1-52~~ ✅ → ~~P1-53~~ ✅ → P2-26 🟢 → P1-54 → P1-55 → P1-56 → P2-27 → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；当前 P2-26 已收口 PR #347 R6 的历史 VRT 客户端行可信旁路 P1：仅精确服务端标记可复用，旧行从终态执行重建且重建前 fail-closed；旧客户端 envelope 在单一 writer claim 内归一为服务端 PDF，迟到 loser 不能重开 completed；fresh 内审 P1/P2/P3=0，待 R7。崩溃残留 claim 在缺 owner/lease 真值时维持 fail-closed；WIP=1。P1-54～56 已按用户要求预留为紧随其后的优先槽位，具体可观察故障与验收范围尚待补齐，未在本文虚构。完整编号、范围与状态只看顶部 Current Focus 表。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -3733,7 +3736,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 - `[discovered 2026-08-11 during P1-27 final internal review]` **P1-27 三条 ASC 对称路径与 mock-CE MEASURE 演练的测试保护可补齐（P2，待 triage；功能已复核正确，本轮不为测试增强启动第二轮）** —— standard ASC 已直接断言筛选后的 `calibration_entries` 透传，mock CE 的 PRECHECK 也已证明模拟证书不会被 real-only 选择误伤；custom CDL、ChannelAsset 与 mock-CE MEASURE 目前由实现全集审查和相关回归间接覆盖。后续若进入 P3-18 测试精化批，可为三条 strategy 各加同一条 provenance 透传断言，并钉死 mock CE 的 MEASURE 仍消费 mock 证书、真实 CE 则优先 explicit-real。
 
-- `[discovered 2026-08-11 during P1-27 external review, Codex #322 R1]` **legacy MIMO 报告被 409 封锁后，GUI 没有可操作的重生成入口（P2，待 triage；不阻塞本轮来源安全修复）** —— 下载请求使用 blob 响应，界面只显示通用 `error.message`，服务端的“重生成 UNKNOWN/N/A 审计件”说明不会展示；同时 completed 行只提供下载，Regenerate 仅对 pending/failed 开放。后续应让 completed legacy blocked 状态可见，并提供显式重生成动作或正确解析 blob 错误。该项改善操作员恢复路径，但不放宽本轮服务端 fail-closed 门。
+- ~~`[discovered 2026-08-11 during P1-27 external review, Codex #322 R1]` **legacy MIMO 报告被 409 封锁后，GUI 没有可操作的重生成入口**~~ ✅ **[→ P2-26，本 PR 已收口，待合并]** —— completed legacy blocked 状态现已显示恢复可用性与不可恢复原因；安全形状可显式原子认领并复用 provenance-aware builder 重生成，Blob 409 detail 可读。缺可信来源仍输出 UNKNOWN/N/A，详情/下载 fail-closed 门未放宽。
 
 **2026-08-06 SCPI 闭环专项 triage（本表是状态真值；下方原始条目保留发现上下文）**：
 

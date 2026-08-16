@@ -1,10 +1,14 @@
 """Report Generation Services"""
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from datetime import datetime, timezone
 import os
 import logging
+import json
+
+from sqlalchemy import String, cast
 
 from app.models.report import (
     TestReport,
@@ -22,11 +26,32 @@ from app.services.report_data_collector import ReportDataCollector
 logger = logging.getLogger(__name__)
 
 
+class ReportGenerationConflict(ValueError):
+    """Another request already owns generation for this report."""
+
+
+class LegacyMimoRegenerationRejected(ValueError):
+    """A legacy MIMO report cannot be regenerated safely."""
+
+
+class LegacyVrtArchiveRejected(ValueError):
+    """A historical VRT row lacks server-owned archive provenance."""
+
+
+class RoadTestReportConflict(ValueError):
+    """A VRT execution already has its single report artifact."""
+
+
 _SERVER_OWNED_REPORT_TRUST_FIELDS = frozenset({
     "report_family",
     "calibration_trust_schema_version",
     "formal_path_loss_verified",
+    "vrt_archive_trust_schema_version",
 })
+
+VRT_ARCHIVE_TRUST_SCHEMA_VERSION = 1
+VRT_ARCHIVE_TRUST_FIELD = "vrt_archive_trust_schema_version"
+_UNCONDITIONAL_REPORT_SNAPSHOT = object()
 
 
 def _strip_untrusted_report_attestation(
@@ -47,9 +72,49 @@ def _strip_untrusted_report_attestation(
     }
 
 
+def report_has_provenance_trust(content_data: Any) -> bool:
+    """Accept only the exact server-written JSON integer schema marker."""
+    if not isinstance(content_data, dict):
+        return False
+    marker = content_data.get("calibration_trust_schema_version")
+    return type(marker) is int and marker == 1
+
+
+def report_has_vrt_archive_trust(content_data: Any) -> bool:
+    """Accept only the exact server-written JSON integer VRT marker."""
+    if not isinstance(content_data, dict):
+        return False
+    marker = content_data.get(VRT_ARCHIVE_TRUST_FIELD)
+    return type(marker) is int and marker == VRT_ARCHIVE_TRUST_SCHEMA_VERSION
+
+
+def _parse_report_execution_ids(report: TestReport) -> tuple[List[UUID], bool]:
+    """Parse the complete historical link set without dropping bad siblings."""
+    raw_execution_ids = getattr(report, "test_execution_ids", None)
+    if raw_execution_ids is None:
+        return [], True
+    if not isinstance(raw_execution_ids, list):
+        return [], False
+    execution_ids = []
+    for raw_execution_id in raw_execution_ids:
+        try:
+            execution_ids.append(UUID(str(raw_execution_id)))
+        except (TypeError, ValueError):
+            return [], False
+    return execution_ids, True
+
+
+def normalized_report_execution_ids(report: TestReport) -> List[UUID]:
+    """Return the full UUID link set, or none when any item is malformed."""
+    execution_ids, well_formed = _parse_report_execution_ids(report)
+    return execution_ids if well_formed else []
+
+
 def is_mimo_ota_execution(db: Session, execution: TestExecution) -> bool:
     """Classify from the execution's server-side type truth, not report text."""
-    descriptors = (execution.config or {}).get("step_descriptors") or []
+    config = execution.config if isinstance(execution.config, dict) else {}
+    raw_descriptors = config.get("step_descriptors")
+    descriptors = raw_descriptors if isinstance(raw_descriptors, list) else []
     if any(
         str(descriptor.get("type") or "").startswith("MIMO_OTA_")
         for descriptor in descriptors
@@ -65,18 +130,126 @@ def is_mimo_ota_execution(db: Session, execution: TestExecution) -> bool:
 
 
 def report_references_mimo_ota_execution(db: Session, report: TestReport) -> bool:
-    """True when any linked execution is authoritatively a MIMO OTA run."""
-    for raw_execution_id in (getattr(report, "test_execution_ids", None) or []):
+    """Conservatively identify any authoritative MIMO link in a JSON array.
+
+    This is candidate classification, not a regeneration allowlist: a bad
+    sibling ID must not erase positive MIMO evidence from another item.
+    """
+    raw_execution_ids = getattr(report, "test_execution_ids", None)
+    if not isinstance(raw_execution_ids, list):
+        return False
+    for raw_execution_id in raw_execution_ids:
         try:
             execution_id = UUID(str(raw_execution_id))
         except (TypeError, ValueError):
             continue
-        execution = db.query(TestExecution).filter(
-            TestExecution.id == execution_id
-        ).first()
+        execution = db.get(TestExecution, execution_id)
         if execution is not None and is_mimo_ota_execution(db, execution):
             return True
     return False
+
+
+def report_is_mimo_ota_report(db: Session, report: TestReport) -> bool:
+    """Identify a MIMO candidate; linked execution remains the trust source."""
+    raw_content = getattr(report, "content_data", None)
+    content = raw_content if isinstance(raw_content, dict) else {}
+    return (
+        content.get("report_family") == "mimo_ota"
+        or getattr(report, "generated_by", None) == "mimo_ota.executors.report"
+        or report_references_mimo_ota_execution(db, report)
+    )
+
+
+def legacy_mimo_regeneration_error(
+    db: Session,
+    report: TestReport,
+) -> Optional[str]:
+    """Return why a legacy MIMO report cannot be rebuilt without false trust.
+
+    This is the shared source for list metadata and the generation gate.  The
+    current trusted builder can only replace a single-execution PDF; accepting
+    any wider shape would stamp new provenance onto an old, untouched file.
+    """
+    raw_content = getattr(report, "content_data", None)
+    content = raw_content if isinstance(raw_content, dict) else {}
+    if (
+        not report_is_mimo_ota_report(db, report)
+        or report_has_provenance_trust(content)
+    ):
+        return None
+
+    report_status = getattr(report, "status", None)
+    report_status = getattr(report_status, "value", report_status)
+    if report_status == ReportStatus.GENERATING.value:
+        return "Safe regeneration is already in progress."
+
+    report_type = getattr(report, "report_type", None)
+    report_type = getattr(report_type, "value", report_type)
+    if report_type != ReportType.SINGLE_EXECUTION.value:
+        return "Safe regeneration requires a single-execution report."
+    if getattr(report, "road_test_execution_id", None):
+        return "Road-test reports cannot use the MIMO execution recovery path."
+
+    report_format = getattr(report, "format", None)
+    report_format = getattr(report_format, "value", report_format)
+    if report_format != ReportFormat.PDF.value:
+        return "Safe regeneration is currently available only for PDF reports."
+
+    execution_ids = normalized_report_execution_ids(report)
+    if len(execution_ids) != 1:
+        return (
+            "Multi-execution MIMO OTA reports cannot be safely regenerated; "
+            "safe regeneration requires a single linked TestExecution."
+        )
+    try:
+        execution_id = UUID(str(execution_ids[0]))
+    except (TypeError, ValueError):
+        return "The linked TestExecution identifier is invalid."
+    execution = db.get(TestExecution, execution_id)
+    if execution is None:
+        return (
+            "The linked TestExecution is unavailable; regeneration cannot "
+            "be performed safely."
+        )
+    if not is_mimo_ota_execution(db, execution):
+        return (
+            "The linked TestExecution is not an authoritative MIMO OTA "
+            "execution; regeneration cannot be performed safely."
+        )
+    return None
+
+
+def claim_report_generation(
+    db: Session,
+    report_id: UUID,
+    *,
+    expected_content_data: Any = _UNCONDITIONAL_REPORT_SNAPSHOT,
+) -> None:
+    """Atomically acquire the single writer slot for a report artifact."""
+    claim_query = db.query(TestReport).filter(
+        TestReport.id == report_id,
+        TestReport.status != ReportStatus.GENERATING.value,
+    )
+    if expected_content_data is not _UNCONDITIONAL_REPORT_SNAPSHOT:
+        # A historical VRT rebuild must claim the exact untrusted snapshot it
+        # inspected. A late request cannot re-claim a row after another writer
+        # has published the server-owned payload.
+        claim_query = claim_query.filter(
+            cast(TestReport.content_data, String)
+            == json.dumps(expected_content_data)
+        )
+    claimed = claim_query.update(
+        {
+            TestReport.status: ReportStatus.GENERATING.value,
+            TestReport.generation_started_at: datetime.now(timezone.utc),
+            TestReport.progress_percent: 0,
+        },
+        synchronize_session=False,
+    )
+    if claimed != 1:
+        db.rollback()
+        raise ReportGenerationConflict("Report generation is already in progress")
+    db.commit()
 
 
 class ReportService:
@@ -95,6 +268,11 @@ class ReportService:
         **kwargs
     ) -> TestReport:
         """Create a new report"""
+        road_test_execution_id = kwargs.get("road_test_execution_id")
+        if road_test_execution_id is not None:
+            raise RoadTestReportConflict(
+                "VRT reports must be created by the authoritative terminal archive path."
+            )
         if "content_data" in kwargs:
             kwargs["content_data"] = _strip_untrusted_report_attestation(
                 kwargs["content_data"]
@@ -119,7 +297,11 @@ class ReportService:
         )
 
         db.add(report)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise
         db.refresh(report)
 
         logger.info(f"Created report: {report.id} - {title}")
@@ -213,7 +395,10 @@ class ReportService:
         self,
         db: Session,
         report_id: UUID,
-        content_data_override: Optional[Dict[str, Any]] = None
+        content_data_override: Optional[Dict[str, Any]] = None,
+        *,
+        expected_content_data: Any = _UNCONDITIONAL_REPORT_SNAPSHOT,
+        vrt_archive_metadata_override: Optional[Dict[str, Any]] = None,
     ) -> Optional[TestReport]:
         """
         Trigger report generation
@@ -227,11 +412,66 @@ class ReportService:
         if not report:
             return None
 
-        # Update status to generating
-        report.status = ReportStatus.GENERATING
-        report.generation_started_at = datetime.now(timezone.utc)
-        report.progress_percent = 0
-        db.commit()
+        execution_ids, execution_ids_well_formed = _parse_report_execution_ids(
+            report
+        )
+        if not execution_ids_well_formed:
+            raise ValueError("Report TestExecution identifiers are malformed")
+
+        regeneration_error = legacy_mimo_regeneration_error(db, report)
+        if regeneration_error:
+            raise LegacyMimoRegenerationRejected(regeneration_error)
+
+        if report.road_test_execution_id:
+            vrt_source = (
+                content_data_override
+                if isinstance(content_data_override, dict)
+                else report.content_data
+            )
+            if not report_has_vrt_archive_trust(vrt_source):
+                raise LegacyVrtArchiveRejected(
+                    "Historical VRT report content is not server-owned; rebuild it "
+                    "through the terminal execution archive endpoint."
+                )
+
+        # A read-then-write status check permits two clients to generate the
+        # same path concurrently; the database decides the single winner.
+        claim_report_generation(
+            db,
+            report_id,
+            expected_content_data=expected_content_data,
+        )
+        db.refresh(report)
+
+        if vrt_archive_metadata_override is not None:
+            if not report.road_test_execution_id:
+                raise LegacyVrtArchiveRejected(
+                    "VRT archive metadata can be normalized only for a VRT report."
+                )
+            # The claim owns the entire formal artifact, not just its JSON.
+            # Discard the client-selected legacy envelope before producing the
+            # authoritative PDF.
+            report.title = vrt_archive_metadata_override["title"]
+            report.description = vrt_archive_metadata_override.get("description")
+            report.report_type = ReportType.SINGLE_EXECUTION.value
+            report.format = ReportFormat.PDF.value
+            report.generated_by = "System (Auto-Archive)"
+            report.template_id = None
+            report.notes = vrt_archive_metadata_override.get("notes")
+            report.tags = vrt_archive_metadata_override.get("tags")
+            report.file_path = None
+            report.file_size_bytes = None
+            report.file_hash = None
+            report.page_count = None
+            report.section_count = None
+            report.chart_count = None
+            report.table_count = None
+            report.generation_completed_at = None
+            report.generation_duration_sec = None
+            report.error_message = None
+            report.error_details = None
+            db.commit()
+            db.refresh(report)
 
         logger.info(f"Starting report generation: {report_id}")
 
@@ -279,7 +519,10 @@ class ReportService:
             report_data_dict = {}
             
             # Use overrides if available (critical for VRT immediate generation)
-            source_data = content_data_override or report.content_data
+            raw_source_data = content_data_override or report.content_data
+            source_data = (
+                raw_source_data if isinstance(raw_source_data, dict) else {}
+            )
 
             declared_mimo_report = (
                 (source_data or {}).get("report_family") == "mimo_ota"
@@ -289,7 +532,7 @@ class ReportService:
                 db, report
             )
             mimo_report = declared_mimo_report or linked_mimo_execution
-            if mimo_report and len(report.test_execution_ids or []) != 1:
+            if mimo_report and len(execution_ids) != 1:
                 raise ValueError(
                     "Multi-execution MIMO OTA reports cannot be safely "
                     "regenerated with calibration provenance; rerun as "
@@ -300,23 +543,25 @@ class ReportService:
             if (
                 report.report_type == ReportType.SINGLE_EXECUTION
                 and not report.road_test_execution_id
-                and len(report.test_execution_ids or []) == 1
+                and len(execution_ids) == 1
             ):
-                execution_id = UUID(str(report.test_execution_ids[0]))
+                execution_id = UUID(str(execution_ids[0]))
                 linked_execution = db.query(TestExecution).filter(
                     TestExecution.id == execution_id
                 ).first()
             is_mimo_single_execution = (
                 linked_execution is not None
-                and (
-                    is_mimo_ota_execution(db, linked_execution)
-                    or declared_mimo_report
-                )
+                and is_mimo_ota_execution(db, linked_execution)
             )
             if mimo_report and linked_execution is None:
                 raise ValueError(
                     "MIMO OTA report cannot be safely regenerated because its "
                     "linked TestExecution is unavailable"
+                )
+            if mimo_report and not is_mimo_single_execution:
+                raise ValueError(
+                    "MIMO OTA report cannot be safely regenerated because its "
+                    "linked TestExecution is not authoritatively MIMO OTA"
                 )
             if is_mimo_single_execution:
                 execution = linked_execution
@@ -442,7 +687,7 @@ class ReportService:
                 # MIMO_OTA 仍可用 override 携带专用图表/相位内容，但公开 API 可写的
                 # content_data 不能覆盖 SCPI 证据或把 AND 门失败伪装成 PASS。VRT 使用
                 # 独立 road_test_execution_id 数据链，不套用 TestExecution 证据契约。
-                if report.test_execution_ids and not report.road_test_execution_id:
+                if execution_ids and not report.road_test_execution_id:
                     authoritative = ReportDataCollector().collect(
                         db, report, strict_execution_ids=True
                     ).to_dict()
@@ -468,7 +713,7 @@ class ReportService:
                 report_data = data_collector.collect(
                     db,
                     report,
-                    strict_execution_ids=bool(report.test_execution_ids),
+                    strict_execution_ids=bool(execution_ids),
                 )
                 if report_data is None:
                     raise ValueError(f"Failed to collect report data for report {report_id}")

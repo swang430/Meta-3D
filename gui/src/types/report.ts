@@ -286,6 +286,8 @@ export interface ReportSummary {
   file_size_bytes?: number
   generated_by: string
   generated_at: string
+  road_test_execution_id?: string
+  vrt_archive_trusted: boolean
 }
 
 export interface ReportListResponse {

@@ -1,5 +1,5 @@
 """Test Report database models"""
-from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, JSON, Text, ForeignKey, Enum
+from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, JSON, Text, ForeignKey, Enum, Index, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -53,6 +53,15 @@ class TestReport(Base):
     存储测试报告的元数据和生成状态，实际报告文件存储在文件系统中。
     """
     __tablename__ = "test_reports"
+    __table_args__ = (
+        Index(
+            "uq_test_reports_road_test_execution_id_not_null",
+            "road_test_execution_id",
+            unique=True,
+            postgresql_where=text("road_test_execution_id IS NOT NULL"),
+            sqlite_where=text("road_test_execution_id IS NOT NULL"),
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
