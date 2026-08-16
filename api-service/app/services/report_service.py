@@ -1,5 +1,6 @@
 """Report Generation Services"""
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from datetime import datetime, timezone
@@ -28,6 +29,10 @@ class ReportGenerationConflict(ValueError):
 
 class LegacyMimoRegenerationRejected(ValueError):
     """A legacy MIMO report cannot be regenerated safely."""
+
+
+class RoadTestReportConflict(ValueError):
+    """A VRT execution already has its single report artifact."""
 
 
 _SERVER_OWNED_REPORT_TRUST_FIELDS = frozenset({
@@ -229,6 +234,11 @@ class ReportService:
         **kwargs
     ) -> TestReport:
         """Create a new report"""
+        road_test_execution_id = kwargs.get("road_test_execution_id")
+        if road_test_execution_id is not None:
+            raise RoadTestReportConflict(
+                "VRT reports must be created by the authoritative terminal archive path."
+            )
         if "content_data" in kwargs:
             kwargs["content_data"] = _strip_untrusted_report_attestation(
                 kwargs["content_data"]
@@ -253,7 +263,11 @@ class ReportService:
         )
 
         db.add(report)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise
         db.refresh(report)
 
         logger.info(f"Created report: {report.id} - {title}")

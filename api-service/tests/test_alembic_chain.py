@@ -83,6 +83,7 @@ _EXPECTED_COLUMNS: dict[str, list[str]] = {
 }
 _EXPECTED_INDEXES: dict[str, list[str]] = {
     "chamber_configurations": ["ix_chamber_configurations_is_system_preset"],
+    "test_reports": ["uq_test_reports_road_test_execution_id_not_null"],
     "probe_path_loss_calibrations": [
         "ix_probe_path_loss_calibrations_lab_profile_id",
     ],
@@ -235,3 +236,36 @@ def test_probe_provenance_migration_keeps_historical_rows_unknown(tmp_path):
         ).first()
     assert row is not None
     assert row[0] is None
+
+
+def test_vrt_report_uniqueness_migration_fails_loud_on_historical_duplicates(
+    tmp_path,
+):
+    """Formal report duplicates require operator reconciliation, not deletion."""
+    db_path = tmp_path / "duplicate_vrt_reports.db"
+    url = f"sqlite:///{db_path}"
+    cfg = _alembic_config(url)
+    engine = create_engine(url)
+
+    command.upgrade(cfg, "head")
+    command.downgrade(cfg, "e7a9c1d3f5b7")
+
+    with engine.begin() as conn:
+        for title in ("first", "second"):
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO test_reports (
+                        id, title, report_type, format, status, generated_by,
+                        road_test_execution_id
+                    ) VALUES (
+                        :id, :title, 'single_execution', 'pdf', 'completed',
+                        'System (Auto-Archive)', 'duplicate-execution'
+                    )
+                    """
+                ),
+                {"id": uuid.uuid4().hex, "title": title},
+            )
+
+    with pytest.raises(RuntimeError, match="reconcile the formal report artifacts"):
+        command.upgrade(cfg, "head")

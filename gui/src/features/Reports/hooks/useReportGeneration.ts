@@ -114,10 +114,10 @@ export function useReportGeneration() {
         color: 'blue',
       })
     },
-    onError: (error: Error) => {
+    onError: async (error: Error) => {
       notifications.show({
         title: '生成失败',
-        message: `无法生成报告: ${error.message}`,
+        message: `无法生成报告: ${await ReportsAPI.reportApiErrorMessage(error)}`,
         color: 'red',
       })
     },
@@ -132,55 +132,27 @@ export function useReportGeneration() {
       record: RoadTestExecutionRecord
       options?: ReportGenerationOptions
     }) => {
-      const opts = { ...defaultOptions, ...options }
-
-      // First, fetch the complete execution report data
-      // This is critical - VRT reports need content_data to be passed
-      let contentData: Record<string, any> | undefined
-      try {
-        const executionReport = await RoadTestAPI.fetchExecutionReport(record.execution_id)
-        contentData = executionReport as unknown as Record<string, any>
-      } catch (error) {
-        console.warn('Failed to fetch VRT execution report data:', error)
-        // Continue without content_data - backend will try to reconstruct
-      }
-
-      const reportRequest: CreateReportRequest = {
-        title: `${record.scenario_name} - 路测报告`,
-        report_type: 'single_execution',
-        format: opts.format,
-        generated_by: 'user',
-        description: `虚拟路测场景 "${record.scenario_name}" 的执行报告`,
-        road_test_execution_id: record.execution_id,
-        include_raw_data: opts.includeRawData,
-        include_charts: opts.includeCharts,
-        include_statistics: opts.includeStatistics,
-        include_recommendations: opts.includeRecommendations,
-        // Pass content_data directly - backend stores it in DB and uses during generation
-        // This ensures VRT report data is available even if the in-memory execution is gone
-        ...(contentData && { content_data: contentData }),
-      }
-
-      // Create report (content_data is stored in the report record)
-      const report = await ReportsAPI.createReport(reportRequest)
-
-      // Trigger generation - backend will use content_data from the report record
-      await ReportsAPI.generateReport(report.id)
-
-      return report
+      void options
+      // VRT archive content must be rebuilt by the server from the terminal
+      // execution.  The generic report endpoint intentionally cannot accept
+      // client-supplied VRT content or claim the execution's unique slot.
+      return RoadTestAPI.archiveExecutionReport(record.execution_id)
     },
     onSuccess: (report) => {
       invalidateCaches()
+      const completed = report.status === 'completed'
       notifications.show({
-        title: '报告生成中',
-        message: `报告 "${report.title}" 正在生成，请在报告管理页面查看`,
-        color: 'blue',
+        title: completed ? '报告已归档' : '报告生成中',
+        message: completed
+          ? `报告 "${report.title}" 已从权威执行数据生成`
+          : `报告 "${report.title}" 正在生成，请在报告管理页面查看`,
+        color: completed ? 'green' : 'blue',
       })
     },
-    onError: (error: Error) => {
+    onError: async (error: Error) => {
       notifications.show({
         title: '生成失败',
-        message: `无法生成报告: ${error.message}`,
+        message: `无法生成报告: ${await ReportsAPI.reportApiErrorMessage(error)}`,
         color: 'red',
       })
     },

@@ -38,6 +38,7 @@ from app.schemas.report import (
 from app.services.report_service import (
     LegacyMimoRegenerationRejected,
     ReportGenerationConflict,
+    RoadTestReportConflict,
     ReportService,
     ReportTemplateService,
     ReportComparisonService,
@@ -131,30 +132,41 @@ def create_report(
     db: Session = Depends(get_db)
 ):
     """Create a new test report"""
-    return report_service.create_report(
-        db=db,
-        title=report.title,
-        report_type=report.report_type,
-        format=report.format,
-        generated_by=report.generated_by,
-        test_plan_id=report.test_plan_id,
-        test_execution_ids=report.test_execution_ids,
-        template_id=report.template_id,
-        description=report.description,
-        comparison_plan_ids=report.comparison_plan_ids,
-        include_raw_data=report.include_raw_data,
-        include_charts=report.include_charts,
-        include_statistics=report.include_statistics,
-        include_recommendations=report.include_recommendations,
-        config=report.config,
-        custom_sections=report.custom_sections,
-        tags=report.tags,
-        category=report.category,
-        notes=report.notes,
-        # Unified report content
-        content_data=report.content_data,
-        road_test_execution_id=report.road_test_execution_id,
-    )
+    if report.road_test_execution_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "VRT reports are created from the authoritative terminal archive; "
+                "the generic report endpoint cannot claim a road-test execution."
+            ),
+        )
+    try:
+        return report_service.create_report(
+            db=db,
+            title=report.title,
+            report_type=report.report_type,
+            format=report.format,
+            generated_by=report.generated_by,
+            test_plan_id=report.test_plan_id,
+            test_execution_ids=report.test_execution_ids,
+            template_id=report.template_id,
+            description=report.description,
+            comparison_plan_ids=report.comparison_plan_ids,
+            include_raw_data=report.include_raw_data,
+            include_charts=report.include_charts,
+            include_statistics=report.include_statistics,
+            include_recommendations=report.include_recommendations,
+            config=report.config,
+            custom_sections=report.custom_sections,
+            tags=report.tags,
+            category=report.category,
+            notes=report.notes,
+            # Unified report content
+            content_data=report.content_data,
+            road_test_execution_id=report.road_test_execution_id,
+        )
+    except RoadTestReportConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("", response_model=ReportListResponse)

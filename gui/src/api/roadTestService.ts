@@ -107,6 +107,15 @@ export async function fetchExecutionReport(executionId: string): Promise<Executi
   return response.data
 }
 
+export async function archiveExecutionReport(
+  executionId: string
+): Promise<{ id: string; title: string; status: string }> {
+  const response = await apiClient.post<{ id: string; title: string; status: string }>(
+    `${BASE_URL}/executions/${executionId}/archive-report`
+  )
+  return response.data
+}
+
 // ===== Metrics APIs =====
 
 export interface TimeSeriesPoint {

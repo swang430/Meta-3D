@@ -748,14 +748,18 @@ async def test_vrt_archive_preserves_an_existing_generation_claim(
     report_db.add(report)
     report_db.commit()
 
-    async def _fake_execution_report(execution_id, db):
-        return _vrt_archive_payload()
+    async def _unexpected_execution_report(execution_id, db):
+        pytest.fail("an existing VRT archive must not be regenerated")
 
-    monkeypatch.setattr(road_test, "_generate_execution_report", _fake_execution_report)
+    monkeypatch.setattr(
+        road_test,
+        "_generate_execution_report",
+        _unexpected_execution_report,
+    )
     monkeypatch.setattr(
         "app.services.report_service.ReportService.generate_report",
         lambda *args, **kwargs: pytest.fail(
-            "an archive writer must not enter generation while another claim is active"
+            "an existing VRT archive must not reopen the writer claim"
         ),
     )
     monkeypatch.setattr(
@@ -772,6 +776,53 @@ async def test_vrt_archive_preserves_an_existing_generation_claim(
 
 
 @pytest.mark.asyncio
+async def test_vrt_archive_does_not_rewrite_existing_completed_snapshot(
+    report_db,
+    monkeypatch,
+):
+    from app.api import road_test
+    from app.models.report import TestReport
+
+    report = TestReport(
+        title="authoritative final snapshot",
+        report_type="single_execution",
+        format="pdf",
+        generated_by="System (Auto-Archive)",
+        status="completed",
+        road_test_execution_id="vrt-preclaim-window",
+        content_data={"snapshot": "final"},
+    )
+    report_db.add(report)
+    report_db.commit()
+
+    async def _unexpected_execution_report(execution_id, db):
+        pytest.fail("an existing completed VRT archive must be immutable")
+
+    monkeypatch.setattr(
+        road_test,
+        "_generate_execution_report",
+        _unexpected_execution_report,
+    )
+    monkeypatch.setattr(
+        "app.services.report_service.ReportService.generate_report",
+        lambda *args, **kwargs: pytest.fail(
+            "an existing completed VRT archive must not be regenerated"
+        ),
+    )
+    monkeypatch.setattr(
+        "builtins.open",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disabled in test")),
+    )
+
+    await road_test._archive_execution_report("vrt-preclaim-window", report_db)
+
+    report_db.expire_all()
+    preserved = report_db.get(TestReport, report.id)
+    assert preserved.status == "completed"
+    assert preserved.content_data == {"snapshot": "final"}
+
+
+@pytest.mark.asyncio
 async def test_vrt_archive_conflict_handler_does_not_release_winner_claim(
     report_db,
     monkeypatch,
@@ -780,22 +831,13 @@ async def test_vrt_archive_conflict_handler_does_not_release_winner_claim(
     from app.models.report import ReportStatus, TestReport
     from app.services.report_service import ReportGenerationConflict
 
-    report = TestReport(
-        title="archived report",
-        report_type="single_execution",
-        format="pdf",
-        generated_by="System (Auto-Archive)",
-        status="completed",
-        road_test_execution_id="vrt-lost-claim",
-        content_data={"version": "old"},
-    )
-    report_db.add(report)
-    report_db.commit()
-
     async def _fake_execution_report(execution_id, db):
         return _vrt_archive_payload()
 
     def _lose_claim(self, db, report_id, content_data_override=None):
+        preclaim = db.get(TestReport, report_id)
+        assert preclaim.status == ReportStatus.PENDING.value
+        assert preclaim.generation_completed_at is None
         db.query(TestReport).filter(TestReport.id == report_id).update(
             {TestReport.status: ReportStatus.GENERATING.value},
             synchronize_session=False,
@@ -816,8 +858,291 @@ async def test_vrt_archive_conflict_handler_does_not_release_winner_claim(
     await road_test._archive_execution_report("vrt-lost-claim", report_db)
 
     report_db.expire_all()
-    preserved = report_db.get(TestReport, report.id)
+    preserved = report_db.query(TestReport).filter(
+        TestReport.road_test_execution_id == "vrt-lost-claim"
+    ).one()
     assert preserved.status == "generating"
+
+
+@pytest.mark.asyncio
+async def test_vrt_archive_conflict_loser_does_not_downgrade_completed_winner(
+    report_db,
+    monkeypatch,
+):
+    from app.api import road_test
+    from app.models.report import ReportStatus, TestReport
+    from app.services.report_service import ReportGenerationConflict
+
+    async def _fake_execution_report(execution_id, db):
+        return _vrt_archive_payload()
+
+    def _winner_completes_before_conflict_is_handled(
+        self,
+        db,
+        report_id,
+        content_data_override=None,
+    ):
+        db.query(TestReport).filter(TestReport.id == report_id).update(
+            {
+                TestReport.status: ReportStatus.COMPLETED.value,
+                TestReport.content_data: {"version": "winner"},
+                TestReport.file_path: "winner.pdf",
+            },
+            synchronize_session=False,
+        )
+        db.commit()
+        raise ReportGenerationConflict("another archive completed generation")
+
+    monkeypatch.setattr(road_test, "_generate_execution_report", _fake_execution_report)
+    monkeypatch.setattr(
+        "app.services.report_service.ReportService.generate_report",
+        _winner_completes_before_conflict_is_handled,
+    )
+    monkeypatch.setattr(
+        "builtins.open",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disabled in test")),
+    )
+
+    await road_test._archive_execution_report("vrt-winner-completed", report_db)
+
+    report_db.expire_all()
+    preserved = report_db.query(TestReport).filter(
+        TestReport.road_test_execution_id == "vrt-winner-completed"
+    ).one()
+    assert preserved.status == "completed"
+    assert preserved.content_data == {"version": "winner"}
+    assert preserved.file_path == "winner.pdf"
+
+
+def test_vrt_execution_id_has_one_report_database_invariant(report_db):
+    from sqlalchemy.exc import IntegrityError
+
+    from app.models.report import TestReport
+
+    report_db.add_all(
+        [
+            TestReport(
+                title="first",
+                report_type="single_execution",
+                format="pdf",
+                generated_by="System (Auto-Archive)",
+                status="completed",
+                road_test_execution_id="vrt-one-report",
+            ),
+            TestReport(
+                title="second",
+                report_type="single_execution",
+                format="pdf",
+                generated_by="System (Auto-Archive)",
+                status="completed",
+                road_test_execution_id="vrt-one-report",
+            ),
+        ]
+    )
+    with pytest.raises(IntegrityError):
+        report_db.commit()
+    report_db.rollback()
+
+
+def test_generic_report_creation_cannot_claim_vrt_archive_slot(report_db, monkeypatch):
+    from app.api import report as report_api
+    from app.schemas.report import ReportCreate
+
+    monkeypatch.setattr(
+        report_api.report_service,
+        "create_report",
+        lambda *args, **kwargs: pytest.fail(
+            "generic report creation must not write a VRT archive row"
+        ),
+    )
+
+    request = ReportCreate(
+        title="manual archive",
+        report_type="single_execution",
+        format="pdf",
+        generated_by="operator",
+        road_test_execution_id="vrt-preclaim",
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        report_api.create_report(request, report_db)
+
+    assert exc_info.value.status_code == 409
+    assert "terminal archive" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("archive_status", ["pending", "generating"])
+async def test_manual_vrt_archive_does_not_report_pending_row_as_generated(
+    report_db,
+    monkeypatch,
+    archive_status,
+):
+    from app.api import road_test
+    from app.models.report import TestReport
+    from app.models.test_plan import TestExecution
+
+    execution = TestExecution(
+        status="completed",
+        scenario_id="pending-archive",
+        mode="ota",
+    )
+    report_db.add(execution)
+    report_db.flush()
+    report_db.add(
+        TestReport(
+            title="recoverable pending archive",
+            report_type="single_execution",
+            format="pdf",
+            generated_by="System (Auto-Archive)",
+            status=archive_status,
+            road_test_execution_id=str(execution.id),
+        )
+    )
+    report_db.commit()
+    async def _existing_pending_archive(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        road_test,
+        "_archive_execution_report",
+        _existing_pending_archive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await road_test.archive_execution_report(str(execution.id), report_db)
+
+    assert exc_info.value.status_code == 409
+    detail = str(exc_info.value.detail).lower()
+    assert archive_status in detail
+    if archive_status == "generating":
+        assert "inspect" in detail
+        assert "/generate" not in detail
+    else:
+        assert "/generate" in detail
+
+
+def test_vrt_terminal_transition_allows_only_one_archive_owner(report_db):
+    from app.models.test_plan import TestExecution
+    from app.schemas.road_test import ExecutionStatus
+    from app.services.road_test.vrt_execution_service import VrtExecutionService
+
+    execution = TestExecution(
+        status=ExecutionStatus.RUNNING.value,
+        scenario_id="terminal-cas",
+        mode="ota",
+        vrt_runtime_status={"progress_percent": 50.0},
+    )
+    report_db.add(execution)
+    report_db.commit()
+
+    service = VrtExecutionService()
+    first = service.stop(
+        report_db,
+        str(execution.id),
+        expected_status=ExecutionStatus.RUNNING,
+    )
+    second = service.complete(
+        report_db,
+        str(execution.id),
+        expected_status=ExecutionStatus.RUNNING,
+    )
+
+    assert first is not None
+    assert first.status == ExecutionStatus.STOPPED.value
+    assert second is None
+    report_db.expire_all()
+    assert report_db.get(TestExecution, execution.id).status == ExecutionStatus.STOPPED.value
+
+
+def test_stale_nonterminal_transition_cannot_overwrite_terminal_state(report_db):
+    from app.models.test_plan import TestExecution
+    from app.schemas.road_test import ExecutionStatus
+    from app.services.road_test.vrt_execution_service import VrtExecutionService
+
+    execution = TestExecution(
+        status=ExecutionStatus.PAUSED.value,
+        scenario_id="terminal-cas-vs-resume",
+        mode="ota",
+    )
+    report_db.add(execution)
+    report_db.commit()
+
+    service = VrtExecutionService()
+    terminal = service.stop(
+        report_db,
+        str(execution.id),
+        expected_status=ExecutionStatus.PAUSED,
+    )
+    stale_resume = service.resume(
+        report_db,
+        str(execution.id),
+        expected_status=ExecutionStatus.PAUSED,
+    )
+
+    assert terminal is not None
+    assert stale_resume is None
+    report_db.expire_all()
+    assert report_db.get(TestExecution, execution.id).status == ExecutionStatus.STOPPED.value
+
+
+@pytest.mark.asyncio
+async def test_vrt_first_archive_loser_exits_after_unique_insert_conflict(
+    report_db,
+    monkeypatch,
+):
+    from sqlalchemy.exc import IntegrityError
+
+    from app.api import road_test
+    from app.models.report import TestReport
+
+    async def _fake_execution_report(execution_id, db):
+        return _vrt_archive_payload()
+
+    original_commit = report_db.commit
+    first_commit = True
+    winner = TestReport(
+        title="concurrent winner",
+        report_type="single_execution",
+        format="pdf",
+        generated_by="System (Auto-Archive)",
+        status="completed",
+        road_test_execution_id="vrt-first-race",
+        content_data={"owner": "winner"},
+    )
+
+    def _race_commit():
+        nonlocal first_commit
+        if not first_commit:
+            return original_commit()
+        first_commit = False
+        report_db.rollback()
+        report_db.add(winner)
+        original_commit()
+        raise IntegrityError("INSERT test_reports", {}, Exception("unique conflict"))
+
+    generated_report_ids = []
+
+    def _generate_winner(self, db, report_id, content_data_override=None):
+        generated_report_ids.append(report_id)
+
+    monkeypatch.setattr(road_test, "_generate_execution_report", _fake_execution_report)
+    monkeypatch.setattr(report_db, "commit", _race_commit)
+    monkeypatch.setattr(
+        "app.services.report_service.ReportService.generate_report",
+        _generate_winner,
+    )
+    monkeypatch.setattr(
+        "builtins.open",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disabled in test")),
+    )
+
+    await road_test._archive_execution_report("vrt-first-race", report_db)
+
+    reports = report_db.query(TestReport).filter(
+        TestReport.road_test_execution_id == "vrt-first-race"
+    ).all()
+    assert [report.id for report in reports] == [winner.id]
+    assert generated_report_ids == []
 
 
 def test_report_generation_rejects_an_already_claimed_report(report_db):
