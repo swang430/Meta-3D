@@ -48,31 +48,104 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 
-def resolve_configured_instrument_host(config: Dict[str, Any]) -> str:
-    """从显式连接配置解析 host；没有配置时返回空串。
+def has_explicit_instrument_address(config: Dict[str, Any]) -> bool:
+    """配置里是否存在非空连接地址；不判断该地址是否有效。"""
+    return any(
+        str(config.get(key) or "").strip()
+        for key in ("ip", "controller_ip", "ip_address", "visa_resource", "endpoint")
+    )
 
-    不提供任何设备地址默认值。结构化字段优先；随后接受 VISA TCPIP resource
-    与普通 ``host:port`` endpoint。GPIB/USB 等非网络 resource 不冒充 host。
+
+def resolve_configured_tcpip_connection(
+    config: Dict[str, Any],
+) -> tuple[str, Optional[int], Optional[str], Optional[str]]:
+    """解析网络仪表的显式 host/port/VISA resource，并检查镜像冲突。
+
+    返回 ``(host, port, visa_resource, error)``。``endpoint`` 可为纯 host、
+    ``host:port`` 或完整 TCPIP VISA resource；只有完整 VISA 语法才会原样交给
+    PyVISA。多个显式来源指向不同 host（或不同显式 socket port）时 fail-loud，
+    防止 preflight 检查一台仪表、connect 却向另一台下发命令。
     """
+    host_sources: List[tuple[str, str]] = []
     for key in ("ip", "controller_ip", "ip_address"):
         value = str(config.get(key) or "").strip()
         if value:
-            return value
+            host_sources.append((key, value))
+            # 结构化列保留既有优先级：ip → controller_ip → ip_address。
+            # 冲突门针对结构化真值与 resource 镜像，不能把仍带旧 alias 的
+            # 历史配置误判为两个并列真值源。
+            break
 
+    selected_resource: Optional[str] = None
+    endpoint_port: Optional[int] = None
     for key in ("visa_resource", "endpoint"):
-        resource = str(config.get(key) or "").strip()
-        if not resource:
+        raw = str(config.get(key) or "").strip()
+        if not raw:
             continue
-        parts = resource.split("::")
-        if len(parts) >= 2 and parts[0].upper().startswith("TCPIP"):
-            return parts[1].strip()
-        if "::" not in resource:
-            host, separator, port = resource.rpartition(":")
-            if separator and host and port.isdigit():
-                return host.strip()
-            if ":" not in resource:
-                return resource
-    return ""
+        if "::" in raw:
+            parts = raw.split("::")
+            if (
+                len(parts) < 2
+                or not parts[0].upper().startswith("TCPIP")
+                or not parts[1].strip()
+            ):
+                return "", None, None, f"{key} 不是有效的 TCPIP VISA resource"
+            host_sources.append((key, parts[1].strip()))
+            if selected_resource is None:
+                selected_resource = raw
+            # 只有显式 SOCKET resource 的数字 token 才与结构化 port 同义；
+            # hislipN/instN 是 VISA 子地址，不能误当端口比较。
+            if (
+                len(parts) >= 4
+                and parts[-1].strip().casefold() == "socket"
+                and parts[-2].strip().isdigit()
+            ):
+                endpoint_port = int(parts[-2].strip())
+            continue
+
+        if key == "visa_resource":
+            return "", None, None, "visa_resource 不是有效的 TCPIP VISA resource"
+
+        host, separator, port_text = raw.rpartition(":")
+        if separator:
+            if not host.strip() or not port_text.isdigit():
+                return "", None, None, "endpoint 必须是 host、host:port 或 TCPIP VISA resource"
+            endpoint_host = host.strip()
+            endpoint_port = int(port_text)
+        else:
+            endpoint_host = raw
+        host_sources.append((key, endpoint_host))
+
+    distinct_hosts = {value.casefold() for _, value in host_sources}
+    if len(distinct_hosts) > 1:
+        detail = ", ".join(f"{key}={value}" for key, value in host_sources)
+        return "", None, None, f"连接地址冲突：{detail}"
+
+    configured_port = config.get("port")
+    explicit_port: Optional[int] = None
+    if configured_port not in (None, ""):
+        try:
+            explicit_port = int(configured_port)
+        except (TypeError, ValueError):
+            return "", None, None, f"port 不是有效整数：{configured_port!r}"
+    if (
+        explicit_port is not None
+        and endpoint_port is not None
+        and explicit_port != endpoint_port
+    ):
+        return "", None, None, (
+            f"连接端口冲突：port={explicit_port}, endpoint={endpoint_port}"
+        )
+
+    host_value = host_sources[0][1] if host_sources else ""
+    resolved_port = explicit_port if explicit_port is not None else endpoint_port
+    return host_value, resolved_port, selected_resource, None
+
+
+def resolve_configured_instrument_host(config: Dict[str, Any]) -> str:
+    """从显式连接配置解析 host；没有配置或配置冲突时返回空串。"""
+    host, _, _, error = resolve_configured_tcpip_connection(config)
+    return "" if error else host
 
 
 def _resolve_resp_max() -> int:
@@ -412,6 +485,15 @@ class InstrumentDriver(ABC):
         error = (
             f"{self.instrument_id}: 未配置连接地址；请在仪表目录/LabProfile 中设置 "
             "IP 或 endpoint 后重新加载 HAL"
+        )
+        self._set_status(InstrumentStatus.ERROR, error)
+        return False
+
+    def _fail_connection_configuration(self, detail: str) -> bool:
+        """在任何外部 I/O 前把矛盾或无效连接配置收敛成明确失败。"""
+        error = (
+            f"{self.instrument_id}: 连接配置无效：{detail}；请在仪表目录/LabProfile "
+            "中修正后重新加载 HAL"
         )
         self._set_status(InstrumentStatus.ERROR, error)
         return False

@@ -15,7 +15,11 @@ from typing import Dict, Any, Optional, List, Tuple, TYPE_CHECKING
 from datetime import datetime, timedelta
 from enum import Enum
 
-from app.hal.base import InstrumentDriver, InstrumentStatus
+from app.hal.base import (
+    InstrumentDriver,
+    InstrumentStatus,
+    resolve_configured_tcpip_connection,
+)
 
 if TYPE_CHECKING:
     # P3-5: only needed for the type annotation on _log_readiness_report;
@@ -285,43 +289,41 @@ def connected_log_fields(driver, category_key: str, vendor: str, model: str):
     return msg, extra
 
 
-_IPV4_RE = re.compile(r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b")
+_IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 
 
 def preflight_target(conn) -> Optional[Tuple[str, int]]:
     """Resolve ``(host, port)`` for the TCP reachability preflight from a
     connection binding.
 
-    P1-13: prefer the structured ``controller_ip`` / ``port`` columns, but fall
-    back to parsing the IPv4 host out of the VISA/endpoint string
+    P1-13: consume the same structured ``controller_ip`` / ``port`` and
+    VISA/endpoint source set as the real drivers
     (``TCPIP0::192.168.0.132::inst0::INSTR`` / ``192.168.0.132:5025``). Before
     this, the preflight only fired when controller_ip+port were both set, so
     bindings that store the address only in the resource string were NEVER
     network-probed — their connect failure got classified ``scpi`` and their
     subnet looked reachable even with no route to it.
 
+    P1-51: conflicting explicit sources return ``None`` so readiness never probes
+    one host before the driver rejects a resource targeting another host.
+
     Only the HOST decides the network-reachability verdict (a reachable host
     refuses a closed port = "alive"); the port is best-effort — an explicit
     ``:PORT`` in the string if present, else 5025 (raw-SCPI). Returns ``None``
-    when no IPv4 host can be resolved (caller skips preflight → row stays
+    when no IPv4 host can be resolved or the binding conflicts (caller skips preflight → row stays
     network_reachable=None / 未探测)."""
     if conn is None:
         return None
-    if conn.controller_ip and conn.port:
-        return str(conn.controller_ip), int(conn.port)
-    ep = (conn.endpoint or "").strip()
-    if not ep:
-        return None
-    m = _IPV4_RE.search(ep)
-    if not m:
-        return None
-    host = m.group(1)
-    # explicit port: "ip:port" or VISA "::host::PORT::" numeric segment
-    pm = re.search(re.escape(host) + r":(\d+)", ep) or re.search(
-        re.escape(host) + r"::(\d+)::", ep
+    host, port, _, error = resolve_configured_tcpip_connection(
+        {
+            "controller_ip": getattr(conn, "controller_ip", None),
+            "port": getattr(conn, "port", None),
+            "endpoint": getattr(conn, "endpoint", None),
+        }
     )
-    port = int(pm.group(1)) if pm else 5025
-    return host, port
+    if error or not host or not _IPV4_RE.fullmatch(host):
+        return None
+    return host, port if port is not None else 5025
 
 
 async def tcp_preflight(

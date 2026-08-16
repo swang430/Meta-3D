@@ -33,7 +33,7 @@ from app.hal.base import (
     InstrumentStatus,
     InstrumentCapability,
     InstrumentMetrics,
-    resolve_configured_instrument_host,
+    resolve_configured_tcpip_connection,
 )
 from app.hal.base_station import (
     BaseStationDriver,
@@ -177,11 +177,13 @@ class RealCmw500Driver(BaseStationDriver):
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         # 连接参数
-        self.ip_address: str = resolve_configured_instrument_host(config)
-        self.port: int = config.get("port", 5025)
-        self.visa_resource: Optional[str] = (
-            config.get("visa_resource") or config.get("endpoint")
-        )
+        (
+            self.ip_address,
+            configured_port,
+            self.visa_resource,
+            self._connection_config_error,
+        ) = resolve_configured_tcpip_connection(config)
+        self.port: int = configured_port if configured_port is not None else 5025
         # VISA session
         self._visa_rm = None
         self._visa_session = None
@@ -210,7 +212,9 @@ class RealCmw500Driver(BaseStationDriver):
 
     async def connect(self) -> bool:
         """通过 PyVISA 建立与 CMW500 的连接"""
-        if not self.ip_address and not self.visa_resource:
+        if self._connection_config_error:
+            return self._fail_connection_configuration(self._connection_config_error)
+        if not self.ip_address:
             return self._fail_missing_connection_address()
         self._set_status(InstrumentStatus.CONNECTING)
         try:

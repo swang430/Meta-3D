@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -27,6 +30,7 @@ from app.hal.uxm_base_station import RealUxmDriver
 from app.models.instrument import InstrumentConnection
 from app.services.bootstrap import run_all
 from app.services.bootstrap.instruments import instruments_seeder
+from app.services.instrument_hal_service import preflight_target
 
 
 REAL_DRIVER_CASES = [
@@ -74,6 +78,68 @@ def test_explicit_endpoint_shapes_resolve_without_guessing():
     assert resolve_configured_instrument_host({}) == ""
 
 
+@pytest.mark.parametrize(
+    ("driver_class", "config", "expected_resource"),
+    [
+        (
+            RealUxmDriver,
+            {"endpoint": "uxm-lab.local:6000", "protocol": "TCPIP"},
+            "TCPIP::uxm-lab.local::6000::SOCKET",
+        ),
+        (
+            RealCmw500Driver,
+            {"endpoint": "cmw-lab.local:5025"},
+            "TCPIP::cmw-lab.local::hislip0::INSTR",
+        ),
+        (
+            RealUxmDriver,
+            {"endpoint": "TCPIP0::uxm-lab.local::hislip2::INSTR"},
+            "TCPIP0::uxm-lab.local::hislip2::INSTR",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_uxm_cmw_normalize_supported_endpoint_shapes(
+    driver_class,
+    config,
+    expected_resource,
+):
+    rm = MagicMock()
+    rm.open_resource.side_effect = RuntimeError("stop after resource capture")
+    with patch("pyvisa.ResourceManager", return_value=rm):
+        assert await driver_class("endpoint-shape", config).connect() is False
+    assert rm.open_resource.call_args.args[0] == expected_resource
+
+
+@pytest.mark.parametrize("driver_class", [RealUxmDriver, RealCmw500Driver])
+@pytest.mark.asyncio
+async def test_uxm_cmw_reject_conflicting_structured_and_resource_hosts_before_io(
+    driver_class,
+):
+    driver = driver_class(
+        "conflicting-addresses",
+        {
+            "controller_ip": "10.20.30.40",
+            "endpoint": "TCPIP0::10.20.30.99::hislip2::INSTR",
+        },
+    )
+    with patch("pyvisa.ResourceManager") as resource_manager:
+        assert await driver.connect() is False
+    resource_manager.assert_not_called()
+    assert driver.status is InstrumentStatus.ERROR
+    assert "冲突" in (driver.last_error or "")
+
+
+@pytest.mark.parametrize("driver_class", [RealUxmDriver, RealCmw500Driver])
+@pytest.mark.asyncio
+async def test_uxm_cmw_blank_endpoint_fails_before_resource_manager(driver_class):
+    driver = driver_class("blank-address", {"endpoint": "   "})
+    with patch("pyvisa.ResourceManager") as resource_manager:
+        assert await driver.connect() is False
+    resource_manager.assert_not_called()
+    assert "未配置连接地址" in (driver.last_error or "")
+
+
 def test_registry_auto_requires_an_explicit_address():
     registry = DriverRegistry()
     registry.set_mode("auto")
@@ -92,6 +158,32 @@ def test_registry_auto_requires_an_explicit_address():
     assert mock_driver.driver_source == "mock"
     assert isinstance(real_driver, RealPropsimF64Driver)
     assert real_driver.ip_address == "10.20.30.40"
+
+
+def test_registry_does_not_hide_conflicting_explicit_addresses_with_mock():
+    registry = DriverRegistry()
+    registry.set_mode("auto")
+
+    driver = registry.register(
+        "base_station",
+        "conflicting-base-station",
+        {
+            "controller_ip": "10.20.30.40",
+            "endpoint": "TCPIP0::10.20.30.99::hislip2::INSTR",
+        },
+    )
+
+    assert isinstance(driver, RealUxmDriver)
+
+
+def test_readiness_preflight_does_not_probe_a_conflicting_address_source():
+    connection = SimpleNamespace(
+        controller_ip="10.20.30.40",
+        port=5025,
+        endpoint="TCPIP0::10.20.30.99::hislip2::INSTR",
+    )
+
+    assert preflight_target(connection) is None
 
 
 def test_fresh_bootstrap_does_not_seed_guessed_addresses():
@@ -142,4 +234,3 @@ def test_bootstrap_preserves_existing_operator_address():
 def test_legacy_f64_controller_requires_an_explicit_address():
     with pytest.raises(TypeError):
         PropsimF64Controller()
-
