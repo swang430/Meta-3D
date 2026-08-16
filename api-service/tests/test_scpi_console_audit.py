@@ -182,6 +182,81 @@ def test_manual_override_must_match_loaded_hal_target_before_scpi(
     driver._write.assert_not_awaited()
 
 
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "test-connection",
+        "scpi-command",
+        "scpi-probe",
+    ],
+)
+def test_hal_removed_during_lease_restores_raw_target_error(
+    category,
+    db,
+    monkeypatch,
+    operation,
+):
+    """活动 driver 在租约内消失时，不能把旧目标 A 当作 raw fallback。"""
+    conn = InstrumentConnectionDB(
+        id=uuid.uuid4(),
+        category_id=category.id,
+        controller_ip="192.0.2.20",
+        endpoint="TCPIP0::192.0.2.20::5025::SOCKET",
+        port=5025,
+        protocol="SCPI",
+        connection_params={
+            "visa_resource": "TCPIP0::192.0.2.99::5025::SOCKET"
+        },
+    )
+    db.add(conn)
+    db.commit()
+
+    class RealInstrumentDriver:
+        config = {"ip": "192.0.2.10", "port": 5025}
+        _query = AsyncMock(return_value="VENDOR,MODEL,SN,FW")
+        _write = AsyncMock()
+
+    loaded_drivers = iter([RealInstrumentDriver(), None])
+    monkeypatch.setattr(
+        instrument_api,
+        "_get_loaded_hal_driver",
+        lambda _key: next(loaded_drivers),
+    )
+
+    @asynccontextmanager
+    async def _lease(*_args, **_kwargs):
+        yield
+
+    monkeypatch.setattr(instrument_api, "instrument_test_lease", _lease)
+
+    with patch("socket.socket.connect") as socket_connect:
+        if operation == "test-connection":
+            result = asyncio.run(instrument_api.test_instrument_connection(
+                category.category_key,
+                body=instrument_api.TestConnectionRequest(),
+                db=db,
+            ))
+            error_text = result.message
+        elif operation == "scpi-command":
+            result = asyncio.run(instrument_api.send_scpi_command(
+                category.category_key,
+                request=instrument_api.ScpiCommandRequest(command="*IDN?"),
+                db=db,
+            ))
+            error_text = result.error or ""
+        else:
+            with pytest.raises(instrument_api.HTTPException) as exc_info:
+                asyncio.run(instrument_api.probe_scpi_commands(
+                    category.category_key,
+                    body=instrument_api.TestConnectionRequest(),
+                    db=db,
+                ))
+            error_text = str(exc_info.value.detail)
+
+    socket_connect.assert_not_called()
+    assert "冲突" in error_text
+
+
 @pytest.fixture(autouse=True)
 def setup_db():
     Base.metadata.create_all(bind=engine)

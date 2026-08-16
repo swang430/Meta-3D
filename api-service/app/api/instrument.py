@@ -1822,28 +1822,31 @@ async def test_instrument_connection(
         InstrumentConnectionDB.category_id == category.id
     ).first()
 
-    ip, port, target_error = _resolve_diagnostic_tcp_target(
+    raw_ip, raw_port, raw_target_error = _resolve_diagnostic_tcp_target(
         conn,
         override_ip=body.ip if body else None,
         override_port=body.port if body else None,
     )
     preloaded_hal_driver = _get_loaded_hal_driver(category_key)
     override_requested = bool(body and (body.ip is not None or body.port is not None))
+    preflight_error = raw_target_error
     if preloaded_hal_driver is not None:
-        ip, port, target_error = _reconcile_diagnostic_target_with_live_driver(
+        _live_ip, _live_port, preflight_error = (
+            _reconcile_diagnostic_target_with_live_driver(
             preloaded_hal_driver,
-            requested_ip=ip,
-            requested_port=port,
-            target_error=target_error,
+            requested_ip=raw_ip,
+            requested_port=raw_port,
+            target_error=raw_target_error,
             override_requested=override_requested,
+        )
         )
     protocol = (body.protocol if body and body.protocol else None) or (conn.protocol if conn else None) or ""
 
-    if target_error:
+    if preflight_error:
         return TestConnectionResult(
             success=False,
             status="error",
-            message=target_error,
+            message=preflight_error,
         )
 
     from app.services.instrument_test_lease import instrument_test_lease
@@ -1863,9 +1866,9 @@ async def test_instrument_connection(
     if hal_driver is not None:
         ip, port, live_target_error = _reconcile_diagnostic_target_with_live_driver(
             hal_driver,
-            requested_ip=ip,
-            requested_port=port,
-            target_error=None,
+            requested_ip=raw_ip,
+            requested_port=raw_port,
+            target_error=raw_target_error,
             override_requested=override_requested,
         )
         if live_target_error:
@@ -1875,6 +1878,8 @@ async def test_instrument_connection(
                 status="error",
                 message=live_target_error,
             )
+    else:
+        ip, port, target_error = raw_ip, raw_port, raw_target_error
 
     # 摘要行挪到**选定传输方式之后**才发（外审 P1）：
     #   - 走已加载的驱动 → 按它自己的真假标，且文案说清是「复用现有会话」而不是
@@ -2457,7 +2462,7 @@ async def send_scpi_command(
         InstrumentConnectionDB.category_id == category.id
     ).first()
 
-    ip, port, target_error = _resolve_diagnostic_tcp_target(
+    raw_ip, raw_port, raw_target_error = _resolve_diagnostic_tcp_target(
         conn, override_ip=request.ip, override_port=request.port
     )
     override_requested = request.ip is not None or request.port is not None
@@ -2467,8 +2472,8 @@ async def send_scpi_command(
     audit_params: Dict[str, Any] = {
         "category_key": category_key,
         "command": safe_command,
-        "ip": request.ip if request.ip is not None else ip,
-        "port": request.port if request.port is not None else port,
+        "ip": request.ip if request.ip is not None else raw_ip,
+        "port": request.port if request.port is not None else raw_port,
         "timeout_ms": request.timeout_ms,
     }
     audit_started = time.monotonic()
@@ -2498,21 +2503,22 @@ async def send_scpi_command(
         return result
 
     preloaded_hal_driver = _get_loaded_hal_driver(category_key)
+    preflight_error = raw_target_error
     if preloaded_hal_driver is not None:
-        ip, port, target_error = _reconcile_diagnostic_target_with_live_driver(
+        _live_ip, _live_port, preflight_error = (
+            _reconcile_diagnostic_target_with_live_driver(
             preloaded_hal_driver,
-            requested_ip=ip,
-            requested_port=port,
-            target_error=target_error,
+            requested_ip=raw_ip,
+            requested_port=raw_port,
+            target_error=raw_target_error,
             override_requested=override_requested,
         )
-        audit_params["ip"] = ip
-        audit_params["port"] = port
-    if target_error:
+        )
+    if preflight_error:
         return _audit(ScpiCommandResult(
             command=request.command,
             success=False,
-            error=target_error,
+            error=preflight_error,
             latency_ms=0,
         ))
 
@@ -2527,9 +2533,9 @@ async def send_scpi_command(
         if hal_driver is not None:
             ip, port, live_target_error = _reconcile_diagnostic_target_with_live_driver(
                 hal_driver,
-                requested_ip=ip,
-                requested_port=port,
-                target_error=None,
+                requested_ip=raw_ip,
+                requested_port=raw_port,
+                target_error=raw_target_error,
                 override_requested=override_requested,
             )
             if live_target_error:
@@ -2547,6 +2553,7 @@ async def send_scpi_command(
             )
             return _audit(result)
 
+        ip, port, target_error = raw_ip, raw_port, raw_target_error
         if target_error:
             return _audit(ScpiCommandResult(
                 command=request.command,
@@ -2621,23 +2628,26 @@ async def probe_scpi_commands(
         InstrumentConnectionDB.category_id == category.id
     ).first()
 
-    ip, port, target_error = _resolve_diagnostic_tcp_target(
+    raw_ip, raw_port, raw_target_error = _resolve_diagnostic_tcp_target(
         conn,
         override_ip=body.ip if body else None,
         override_port=body.port if body else None,
     )
     preloaded_hal_driver = _get_loaded_hal_driver(category_key)
     override_requested = bool(body and (body.ip is not None or body.port is not None))
+    preflight_error = raw_target_error
     if preloaded_hal_driver is not None:
-        ip, port, target_error = _reconcile_diagnostic_target_with_live_driver(
+        _live_ip, _live_port, preflight_error = (
+            _reconcile_diagnostic_target_with_live_driver(
             preloaded_hal_driver,
-            requested_ip=ip,
-            requested_port=port,
-            target_error=target_error,
+            requested_ip=raw_ip,
+            requested_port=raw_port,
+            target_error=raw_target_error,
             override_requested=override_requested,
         )
-    if target_error:
-        raise HTTPException(400, target_error)
+        )
+    if preflight_error:
+        raise HTTPException(400, preflight_error)
 
     results: List[ScpiCommandResult] = []
     audit_started = time.monotonic()
@@ -2655,9 +2665,9 @@ async def probe_scpi_commands(
         if hal_driver is not None:
             ip, port, live_target_error = _reconcile_diagnostic_target_with_live_driver(
                 hal_driver,
-                requested_ip=ip,
-                requested_port=port,
-                target_error=None,
+                requested_ip=raw_ip,
+                requested_port=raw_port,
+                target_error=raw_target_error,
                 override_requested=override_requested,
             )
             if live_target_error:
@@ -2675,6 +2685,7 @@ async def probe_scpi_commands(
                     hal_driver, cmd, scpi_logger, category_key
                 ))
         else:
+            ip, port, target_error = raw_ip, raw_port, raw_target_error
             if target_error:
                 raise HTTPException(400, target_error)
             try:
