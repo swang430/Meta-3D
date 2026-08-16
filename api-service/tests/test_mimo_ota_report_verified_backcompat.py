@@ -473,6 +473,66 @@ def test_report_generation_rejects_an_already_claimed_report(report_db):
     assert report.status == "generating"
 
 
+def test_atomic_generation_claim_rejects_the_losing_session():
+    from app.services.report_service import (
+        ReportGenerationConflict,
+        claim_report_generation,
+    )
+
+    class _LostClaimQuery:
+        def filter(self, *args):
+            return self
+
+        def update(self, values, synchronize_session):
+            return 0
+
+    class _DB:
+        rolled_back = False
+
+        def query(self, model):
+            return _LostClaimQuery()
+
+        def rollback(self):
+            self.rolled_back = True
+
+        def commit(self):
+            raise AssertionError("a losing claim must not commit")
+
+    db = _DB()
+    with pytest.raises(ReportGenerationConflict, match="already in progress"):
+        claim_report_generation(db, uuid4())
+    assert db.rolled_back is True
+
+
+def test_non_mimo_generation_claim_conflict_is_http_409(monkeypatch):
+    from app.api import report as report_api
+    from app.services.report_service import ReportGenerationConflict
+
+    ordinary = SimpleNamespace(
+        content_data={},
+        generated_by="manual",
+        test_execution_ids=[],
+    )
+    monkeypatch.setattr(
+        report_api.report_service,
+        "get_report",
+        lambda db, report_id: ordinary,
+    )
+    monkeypatch.setattr(
+        report_api.report_service,
+        "generate_report",
+        lambda db, report_id: (_ for _ in ()).throw(
+            ReportGenerationConflict("Report generation is already in progress")
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        report_api.generate_report(uuid4(), db=object())
+
+    assert exc_info.value.status_code == 409
+    assert "already in progress" in str(exc_info.value.detail)
+
+
 def test_report_create_drops_client_supplied_trust_attestation():
     class _FakeDB:
         def add(self, value):

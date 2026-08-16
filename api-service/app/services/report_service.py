@@ -22,6 +22,10 @@ from app.services.report_data_collector import ReportDataCollector
 logger = logging.getLogger(__name__)
 
 
+class ReportGenerationConflict(ValueError):
+    """Another request already owns generation for this report."""
+
+
 _SERVER_OWNED_REPORT_TRUST_FIELDS = frozenset({
     "report_family",
     "calibration_trust_schema_version",
@@ -139,6 +143,25 @@ def legacy_mimo_regeneration_error(
             "be performed safely."
         )
     return None
+
+
+def claim_report_generation(db: Session, report_id: UUID) -> None:
+    """Atomically acquire the single writer slot for a report artifact."""
+    claimed = db.query(TestReport).filter(
+        TestReport.id == report_id,
+        TestReport.status != ReportStatus.GENERATING.value,
+    ).update(
+        {
+            TestReport.status: ReportStatus.GENERATING.value,
+            TestReport.generation_started_at: datetime.now(timezone.utc),
+            TestReport.progress_percent: 0,
+        },
+        synchronize_session=False,
+    )
+    if claimed != 1:
+        db.rollback()
+        raise ReportGenerationConflict("Report generation is already in progress")
+    db.commit()
 
 
 class ReportService:
@@ -293,23 +316,9 @@ class ReportService:
         if regeneration_error:
             raise ValueError(regeneration_error)
 
-        # Atomically claim generation.  A read-then-write status check permits
-        # two clients to generate the same path concurrently.
-        claimed = db.query(TestReport).filter(
-            TestReport.id == report_id,
-            TestReport.status != ReportStatus.GENERATING.value,
-        ).update(
-            {
-                TestReport.status: ReportStatus.GENERATING.value,
-                TestReport.generation_started_at: datetime.now(timezone.utc),
-                TestReport.progress_percent: 0,
-            },
-            synchronize_session=False,
-        )
-        if claimed != 1:
-            db.rollback()
-            raise ValueError("Report generation is already in progress")
-        db.commit()
+        # A read-then-write status check permits two clients to generate the
+        # same path concurrently; the database decides the single winner.
+        claim_report_generation(db, report_id)
         db.refresh(report)
 
         logger.info(f"Starting report generation: {report_id}")
