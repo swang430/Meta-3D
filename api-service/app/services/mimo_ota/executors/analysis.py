@@ -54,10 +54,12 @@ class AnalysisExecutor(IStepExecutor):
         )
         simulated_measurement = measure.get("measurement_verified") is False
         path_loss_unverified = measure.get("path_loss_verified") is not True
+        throughput_unverified = measure.get("throughput_verified") is not True
         if (
             simulated_measurement
             or frequency_identity_unverified
             or path_loss_unverified
+            or throughput_unverified
         ):
             if simulated_measurement:
                 detail = (
@@ -73,19 +75,27 @@ class AnalysisExecutor(IStepExecutor):
                 )
                 warning = "F64 频率身份未完整闭环，不进入正式 KPI 判定，结论保持 UNKNOWN"
                 log_reason = "frequency identity not fully verified"
-            else:
+            elif path_loss_unverified:
                 detail = (
                     "N/A: path-loss calibration is not explicitly verified as "
                     "real; formal KPI analysis was not performed"
                 )
                 warning = "路损校准未明确验证为真实来源，不进入正式 KPI 判定，结论保持 UNKNOWN"
                 log_reason = "path-loss calibration not explicitly verified"
+            else:
+                detail = (
+                    "N/A: one or more azimuths have no explicitly valid "
+                    "throughput sample; formal KPI analysis was not performed"
+                )
+                warning = "吞吐 KPI 缺少显式有效样本，不进入正式 KPI 判定，结论保持 UNKNOWN"
+                log_reason = "throughput KPI validity is incomplete"
             result: Dict[str, Any] = {
                 "verdict": "UNKNOWN",
                 "details": [detail],
                 "measurement_verified": not simulated_measurement,
                 "frequency_identity_verified": not frequency_identity_unverified,
                 "path_loss_verified": not path_loss_unverified,
+                "throughput_verified": not throughput_unverified,
                 "avg_throughput_mbps": None,
                 "throughput_ratio": None,
                 "throughput_pass": None,

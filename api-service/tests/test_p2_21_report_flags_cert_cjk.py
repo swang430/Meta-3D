@@ -53,6 +53,7 @@ _VERIFIED_PHASES = {
         "frequency_ghz": 3.55,
         "path_loss_verified": True,
         "path_loss_calibration_use_mock": False,
+        "throughput_verified": True,
     },
     "analysis": {"verdict": "PASS"},
 }

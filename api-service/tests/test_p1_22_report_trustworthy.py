@@ -43,6 +43,9 @@ def _content(phases, **kw):
     phases["measure"] = {
         "path_loss_verified": True,
         "path_loss_calibration_use_mock": False,
+        # P1-54 独立可信门：本文件只隔离 PASS canonical 谓词，显式打开
+        # 吞吐读数真值，避免另一个安全门掩盖这里的被测分支。
+        "throughput_verified": True,
         **(phases.get("measure") or {}),
     }
     return _build_mimo_ota_content_data(_exec(phases, **kw), datetime(2026, 1, 1))
