@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import List, Optional
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -59,6 +60,7 @@ class ImportResult:
 def import_probe_pattern(
     db: Session,
     *,
+    chamber_id: UUID,
     file_content: bytes | str,
     filename: str,
     probe_id: int,
@@ -127,6 +129,7 @@ def import_probe_pattern(
             db.query(ProbePattern)
             .filter(
                 ProbePattern.probe_id == probe_id,
+                ProbePattern.chamber_id == chamber_id,
                 ProbePattern.polarization == polarization,
                 ProbePattern.frequency_mhz == frequency_mhz,
                 ProbePattern.status == CalibrationStatus.VALID.value,
@@ -144,6 +147,7 @@ def import_probe_pattern(
     # 5. Persist
     now = datetime.utcnow()
     pattern = ProbePattern(
+        chamber_id=chamber_id,
         probe_id=probe_id,
         polarization=polarization,
         frequency_mhz=frequency_mhz,

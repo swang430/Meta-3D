@@ -2399,6 +2399,7 @@ class CalibrationValidityService:
     def generate_validity_report(
         self,
         db: Session,
+        chamber_id: UUID,
         probe_ids: Optional[List[int]] = None
     ) -> Dict[str, Any]:
         """
@@ -2433,7 +2434,7 @@ class CalibrationValidityService:
         }
 
         for probe_id in probe_ids:
-            status = self.check_validity(db, probe_id)
+            status = self.check_validity(db, probe_id, chamber_id)
 
             if status["overall_status"] == "valid":
                 valid_probes += 1
@@ -2450,6 +2451,7 @@ class CalibrationValidityService:
 
                 if cal_status["status"] == "expired":
                     expired_calibrations.append({
+                        "chamber_id": str(chamber_id),
                         "probe_id": probe_id,
                         "calibration_type": cal_type,
                         "days_overdue": cal_status.get("days_overdue", 0),
@@ -2464,6 +2466,7 @@ class CalibrationValidityService:
                     })
                 elif cal_status["status"] == "expiring_soon":
                     expiring_soon_calibrations.append({
+                        "chamber_id": str(chamber_id),
                         "probe_id": probe_id,
                         "calibration_type": cal_type,
                         "days_remaining": cal_status.get("days_remaining", 0),
@@ -2479,6 +2482,7 @@ class CalibrationValidityService:
                     })
 
         return {
+            "chamber_id": str(chamber_id),
             "total_probes": total_probes,
             "valid_probes": valid_probes,
             "expired_probes": expired_probes,
@@ -2567,6 +2571,7 @@ class CalibrationValidityService:
     def get_expiring_calibrations(
         self,
         db: Session,
+        chamber_id: UUID,
         days_threshold: int = 7,
         calibration_type: Optional[str] = None
     ) -> List[Dict[str, Any]]:
@@ -2599,6 +2604,7 @@ class CalibrationValidityService:
 
             # 查询即将过期的校准 (在有效期内但即将过期)
             query = db.query(model).filter(
+                model.chamber_id == chamber_id,
                 getattr(model, valid_until_field) > now,
                 getattr(model, valid_until_field) <= expiring_threshold,
                 model.status != CalibrationStatus.INVALIDATED.value
@@ -2609,6 +2615,7 @@ class CalibrationValidityService:
                 days_remaining = (valid_until - now).days
 
                 results.append({
+                    "chamber_id": str(chamber_id),
                     "calibration_type": cal_type,
                     "calibration_id": str(cal.id),
                     "probe_id": cal.probe_id,
@@ -2641,6 +2648,7 @@ class CalibrationValidityService:
     def get_expired_calibrations(
         self,
         db: Session,
+        chamber_id: UUID,
         calibration_type: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
@@ -2669,6 +2677,7 @@ class CalibrationValidityService:
 
             # 查询已过期但未作废的校准
             query = db.query(model).filter(
+                model.chamber_id == chamber_id,
                 getattr(model, valid_until_field) < now,
                 model.status != CalibrationStatus.INVALIDATED.value
             ).order_by(getattr(model, valid_until_field))
@@ -2678,6 +2687,7 @@ class CalibrationValidityService:
                 days_overdue = (now - valid_until).days
 
                 results.append({
+                    "chamber_id": str(chamber_id),
                     "calibration_type": cal_type,
                     "calibration_id": str(cal.id),
                     "probe_id": cal.probe_id,

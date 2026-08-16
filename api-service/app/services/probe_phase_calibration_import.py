@@ -27,6 +27,7 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import List, Optional
+from uuid import UUID
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
@@ -71,6 +72,7 @@ class ImportResult:
 def import_phase_calibration_from_csv(
     db: Session,
     *,
+    chamber_id: UUID,
     file_content: bytes | str,
     probe_id: int,
     polarization: str,
@@ -268,6 +270,7 @@ def import_phase_calibration_from_csv(
             db.query(ProbePhaseCalibration)
             .filter(
                 ProbePhaseCalibration.probe_id == probe_id,
+                ProbePhaseCalibration.chamber_id == chamber_id,
                 ProbePhaseCalibration.polarization == polarization,
                 ProbePhaseCalibration.status == CalibrationStatus.VALID.value,
             )
@@ -285,6 +288,7 @@ def import_phase_calibration_from_csv(
     # ---- 5. Persist new cert ----
     now = datetime.utcnow()
     cal = ProbePhaseCalibration(
+        chamber_id=chamber_id,
         probe_id=probe_id,
         polarization=polarization,
         reference_probe_id=reference_probe_id,

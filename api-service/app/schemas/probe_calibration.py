@@ -169,6 +169,7 @@ class AmplitudeCalibrationResponse(BaseModel):
 
 class StartPhaseCalibrationRequest(BaseModel):
     """启动相位校准请求"""
+    chamber_id: UUID = Field(..., description="校准所属暗室 ID")
     probe_ids: List[int] = Field(
         ...,
         min_length=1,
@@ -223,6 +224,7 @@ class PhaseCalibrationResponse(BaseModel):
 
 class StartPolarizationCalibrationRequest(BaseModel):
     """启动极化校准请求"""
+    chamber_id: UUID = Field(..., description="校准所属暗室 ID")
     probe_ids: List[int] = Field(..., min_length=1, max_length=64)
     probe_type: ProbeTypeEnum = Field(..., description="探头类型")
     frequency_range: FrequencyRange = Field(..., description="频率范围配置")
@@ -279,6 +281,7 @@ class PolarizationCalibrationResponse(BaseModel):
 
 class StartPatternCalibrationRequest(BaseModel):
     """启动方向图校准请求"""
+    chamber_id: UUID = Field(..., description="校准所属暗室 ID")
     probe_ids: List[int] = Field(..., min_length=1, max_length=64)
     polarizations: List[PolarizationType] = Field(
         default=[PolarizationType.V, PolarizationType.H]
@@ -433,6 +436,7 @@ class LinkCalibrationResponse(BaseModel):
 
 class ProbeCalibrationStatus(BaseModel):
     """单个探头的校准状态"""
+    chamber_id: UUID
     probe_id: int
     # 各类校准状态
     amplitude: Optional[Dict[str, Any]] = Field(
@@ -449,6 +453,7 @@ class ProbeCalibrationStatus(BaseModel):
 
 class CalibrationValidityReport(BaseModel):
     """校准有效性报告"""
+    chamber_id: UUID
     total_probes: int
     valid_probes: int
     expired_probes: int
@@ -524,6 +529,7 @@ class CalibrationHistoryResponse(BaseModel):
 
 class ProbeCalibrationDataResponse(BaseModel):
     """探头校准数据综合响应"""
+    chamber_id: UUID
     probe_id: int
     amplitude_calibration: Optional[AmplitudeCalibrationResponse] = None
     phase_calibration: Optional[PhaseCalibrationResponse] = None
