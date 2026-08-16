@@ -77,6 +77,7 @@ def resolve_configured_tcpip_connection(
             break
 
     selected_resource: Optional[str] = None
+    resource_sources: List[tuple[str, tuple[str, ...]]] = []
     port_sources: List[tuple[str, int]] = []
     for key in ("visa_resource", "endpoint"):
         raw = str(config.get(key) or "").strip()
@@ -99,6 +100,10 @@ def resolve_configured_tcpip_connection(
             else:
                 return "", None, None, f"{key} 缺少 INSTR/SOCKET 资源类型"
             host_sources.append((key, parts[1].strip()))
+            resource_sources.append((
+                key,
+                tuple(part.strip().casefold() for part in parts),
+            ))
             if selected_resource is None:
                 selected_resource = raw
             # 只有显式 SOCKET resource 的数字 token 才与结构化 port 同义；
@@ -108,8 +113,6 @@ def resolve_configured_tcpip_connection(
                 and parts[-1].strip().casefold() == "socket"
             ):
                 port_sources.append((key, int(parts[-2].strip())))
-            elif len(parts) == 4 and parts[2].strip().isdigit():
-                port_sources.append((key, int(parts[2].strip())))
             continue
 
         if key == "visa_resource":
@@ -146,6 +149,13 @@ def resolve_configured_tcpip_connection(
     if len(distinct_ports) > 1:
         detail = ", ".join(f"{key}={value}" for key, value in port_sources)
         return "", None, None, f"连接端口冲突：{detail}"
+
+    distinct_resources = {value for _, value in resource_sources}
+    if len(distinct_resources) > 1:
+        detail = ", ".join(
+            f"{key}={'::'.join(value)}" for key, value in resource_sources
+        )
+        return "", None, None, f"VISA 资源冲突：{detail}"
 
     host_value = host_sources[0][1] if host_sources else ""
     resolved_port = port_sources[0][1] if port_sources else None
@@ -474,6 +484,13 @@ class InstrumentDriver(ABC):
         self.config = config
         self._status = InstrumentStatus.DISCONNECTED
         self._last_error: Optional[str] = None
+        # 所有真实网络驱动共享同一份配置错误真值。host-only 驱动过去只拿
+        # ``resolve_configured_instrument_host`` 的空串，随后把“地址冲突/非法
+        # resource/越界端口”误报成“未配置”；这里保留原始原因，统一由缺地址门
+        # 在任何 I/O 前原样上报。
+        _, _, _, self._connection_config_error = (
+            resolve_configured_tcpip_connection(config)
+        )
 
         # 安装选件 (license) 缓存。connect() 中由 _probe_installed_options()
         # 调 *OPT? 填充。空列表 = 探测失败 / 仪表不支持 *OPT? / 尚未连接。
@@ -492,6 +509,10 @@ class InstrumentDriver(ABC):
 
     def _fail_missing_connection_address(self) -> bool:
         """在任何外部 I/O 前把缺少连接地址收敛成明确失败。"""
+        if self._connection_config_error:
+            return self._fail_connection_configuration(
+                self._connection_config_error
+            )
         error = (
             f"{self.instrument_id}: 未配置连接地址；请在仪表目录/LabProfile 中设置 "
             "IP 或 endpoint 后重新加载 HAL"

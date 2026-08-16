@@ -151,6 +151,42 @@ async def test_uxm_cmw_reject_conflicting_explicit_resource_ports_before_io(
 
 @pytest.mark.parametrize("driver_class", [RealUxmDriver, RealCmw500Driver])
 @pytest.mark.asyncio
+async def test_uxm_cmw_reject_divergent_visa_subaddresses_before_io(driver_class):
+    driver = driver_class(
+        "conflicting-resource-subaddresses",
+        {
+            "visa_resource": "TCPIP0::10.20.30.40::hislip0::INSTR",
+            "endpoint": "TCPIP0::10.20.30.40::hislip2::INSTR",
+        },
+    )
+    with patch("pyvisa.ResourceManager") as resource_manager:
+        assert await driver.connect() is False
+    resource_manager.assert_not_called()
+    assert "资源冲突" in (driver.last_error or "")
+
+
+@pytest.mark.parametrize(("driver_class", "host_attribute"), REAL_DRIVER_CASES)
+@pytest.mark.asyncio
+async def test_all_real_drivers_preserve_explicit_address_validation_error(
+    driver_class,
+    host_attribute,
+):
+    driver = driver_class(
+        "conflicting-addresses",
+        {
+            "controller_ip": "10.20.30.40",
+            "endpoint": "TCPIP0::10.20.30.99::hislip2::INSTR",
+        },
+    )
+
+    assert getattr(driver, host_attribute) == ""
+    assert await driver.connect() is False
+    assert "连接地址冲突" in (driver.last_error or "")
+    assert "未配置连接地址" not in (driver.last_error or "")
+
+
+@pytest.mark.parametrize("driver_class", [RealUxmDriver, RealCmw500Driver])
+@pytest.mark.asyncio
 async def test_uxm_cmw_blank_endpoint_fails_before_resource_manager(driver_class):
     driver = driver_class("blank-address", {"endpoint": "   "})
     with patch("pyvisa.ResourceManager") as resource_manager:
