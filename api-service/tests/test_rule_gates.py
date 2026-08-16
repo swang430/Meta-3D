@@ -163,20 +163,8 @@ def test_g19_checker_detects_shadow_and_accepts_safe_order():
 def test_g19_live_static_routes_precede_shadowing_parameters():
     from app.main import app
 
-    # 本门首次落地时全量枚举出的存量；不在 P1-29 顺手修，已逐条记入
-    # roadmap Discovered。精确例外同时充当棘轮：不得新增，修掉后必须删例外。
-    known_existing = {
-        (
-            "/api/v1/calibration/channel/temporal/{calibration_id}",
-            "/api/v1/calibration/channel/temporal/latest",
-            ("GET",),
-        ),
-        (
-            "/api/v1/topologies/{topology_id}",
-            "/api/v1/topologies/default",
-            ("GET",),
-        ),
-    }
+    # P1-49 已清零首次落门时记录的两个存量；后续不得新增精确例外。
+    known_existing = set()
     bad = set(_literal_route_shadows(app.routes))
     unexpected = bad - known_existing
     stale_exceptions = known_existing - bad
