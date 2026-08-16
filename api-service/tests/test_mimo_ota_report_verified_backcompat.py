@@ -592,6 +592,50 @@ def test_non_pdf_legacy_mimo_regeneration_fails_before_mutating_report(report_db
     }
 
 
+def test_malformed_execution_ids_cannot_republish_ordinary_report_content(
+    report_db,
+    monkeypatch,
+):
+    from app.models.report import TestReport
+    from app.models.test_plan import TestExecution
+
+    execution = TestExecution(
+        id=uuid4(),
+        status="completed",
+        config={"step_descriptors": [{"type": "WAIT"}]},
+    )
+    report = TestReport(
+        title="ordinary report with damaged links",
+        report_type="single_execution",
+        format="pdf",
+        generated_by="manual",
+        status="completed",
+        test_execution_ids=[str(execution.id), "not-a-uuid"],
+        file_path="old.pdf",
+        content_data={"overall_result": "passed", "pass_rate": 100.0},
+    )
+    report_db.add_all([execution, report])
+    report_db.commit()
+
+    monkeypatch.setattr(
+        "app.services.pdf_generator.PDFGenerator.generate_report",
+        lambda *args, **kwargs: pytest.fail(
+            "malformed linked sources must be rejected before PDF generation"
+        ),
+    )
+
+    with pytest.raises(ValueError, match="identifiers are malformed"):
+        ReportService().generate_report(report_db, report.id)
+
+    report_db.refresh(report)
+    assert report.status == "completed"
+    assert report.file_path == "old.pdf"
+    assert report.content_data == {
+        "overall_result": "passed",
+        "pass_rate": 100.0,
+    }
+
+
 def test_declared_mimo_report_cannot_regenerate_from_non_mimo_execution(report_db):
     from app.models.report import TestReport
     from app.models.test_plan import TestExecution

@@ -54,6 +54,7 @@ P1-27 已让缺少可信校准来源的旧 MIMO 报告详情与下载 fail-close
 10. 已带 trust stamp、会绕过 legacy 前置门的 MIMO 候选，若关联执行不是权威 MIMO OTA，仍在生成端第二道防线拒绝且不调用 builder。
 11. 并发 VRT 归档不得覆盖已有 `generating` claim；归档触发生成输给另一 writer 后，异常路径也不得把 winner 的 claim 改回 `pending`。
 12. `content_data`、关联执行 `config`、`step_descriptors` 或 `test_execution_ids` 为历史错误 JSON 形态时，单行按无可信标记/无 MIMO 描述符/无安全恢复关联处理；混合关联中的有效 MIMO 证据仍必须触发读取可信门，`true`、`1.0` 不得冒充 trust schema 整数 `1`，同页健康报告仍可列出与恢复。
+13. 普通单执行报告的关联 ID 数组若含任一非法项，生成入口必须在 claim、权威 collector、旧 `content_data` 复用和文件写入前拒绝；不得把“关联损坏”折叠成“无关联”后重新发布旧 PASS。
 
 ## 非目标
 

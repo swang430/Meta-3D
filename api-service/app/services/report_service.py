@@ -63,18 +63,26 @@ def report_has_provenance_trust(content_data: Any) -> bool:
     return type(marker) is int and marker == 1
 
 
-def normalized_report_execution_ids(report: TestReport) -> List[UUID]:
-    """Return only UUID links from a historical JSON array."""
+def _parse_report_execution_ids(report: TestReport) -> tuple[List[UUID], bool]:
+    """Parse the complete historical link set without dropping bad siblings."""
     raw_execution_ids = getattr(report, "test_execution_ids", None)
+    if raw_execution_ids is None:
+        return [], True
     if not isinstance(raw_execution_ids, list):
-        return []
+        return [], False
     execution_ids = []
     for raw_execution_id in raw_execution_ids:
         try:
             execution_ids.append(UUID(str(raw_execution_id)))
         except (TypeError, ValueError):
-            return []
-    return execution_ids
+            return [], False
+    return execution_ids, True
+
+
+def normalized_report_execution_ids(report: TestReport) -> List[UUID]:
+    """Return the full UUID link set, or none when any item is malformed."""
+    execution_ids, well_formed = _parse_report_execution_ids(report)
+    return execution_ids if well_formed else []
 
 
 def is_mimo_ota_execution(db: Session, execution: TestExecution) -> bool:
@@ -353,6 +361,12 @@ class ReportService:
         if not report:
             return None
 
+        execution_ids, execution_ids_well_formed = _parse_report_execution_ids(
+            report
+        )
+        if not execution_ids_well_formed:
+            raise ValueError("Report TestExecution identifiers are malformed")
+
         regeneration_error = legacy_mimo_regeneration_error(db, report)
         if regeneration_error:
             raise LegacyMimoRegenerationRejected(regeneration_error)
@@ -421,7 +435,6 @@ class ReportService:
                 db, report
             )
             mimo_report = declared_mimo_report or linked_mimo_execution
-            execution_ids = normalized_report_execution_ids(report)
             if mimo_report and len(execution_ids) != 1:
                 raise ValueError(
                     "Multi-execution MIMO OTA reports cannot be safely "
