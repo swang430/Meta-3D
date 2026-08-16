@@ -26,6 +26,10 @@ class ReportGenerationConflict(ValueError):
     """Another request already owns generation for this report."""
 
 
+class LegacyMimoRegenerationRejected(ValueError):
+    """A legacy MIMO report cannot be regenerated safely."""
+
+
 _SERVER_OWNED_REPORT_TRUST_FIELDS = frozenset({
     "report_family",
     "calibration_trust_schema_version",
@@ -314,7 +318,7 @@ class ReportService:
 
         regeneration_error = legacy_mimo_regeneration_error(db, report)
         if regeneration_error:
-            raise ValueError(regeneration_error)
+            raise LegacyMimoRegenerationRejected(regeneration_error)
 
         # A read-then-write status check permits two clients to generate the
         # same path concurrently; the database decides the single winner.

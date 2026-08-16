@@ -480,17 +480,22 @@ def test_atomic_generation_claim_rejects_the_losing_session():
     )
 
     class _LostClaimQuery:
+        predicates = ()
+
         def filter(self, *args):
+            self.predicates = args
             return self
 
         def update(self, values, synchronize_session):
             return 0
 
+    query = _LostClaimQuery()
+
     class _DB:
         rolled_back = False
 
         def query(self, model):
-            return _LostClaimQuery()
+            return query
 
         def rollback(self):
             self.rolled_back = True
@@ -502,6 +507,12 @@ def test_atomic_generation_claim_rejects_the_losing_session():
     with pytest.raises(ReportGenerationConflict, match="already in progress"):
         claim_report_generation(db, uuid4())
     assert db.rolled_back is True
+    assert any(
+        "test_reports.status" in str(predicate)
+        and "!=" in str(predicate)
+        and "generating" in str(predicate.compile(compile_kwargs={"literal_binds": True}))
+        for predicate in query.predicates
+    )
 
 
 def test_non_mimo_generation_claim_conflict_is_http_409(monkeypatch):
@@ -531,6 +542,36 @@ def test_non_mimo_generation_claim_conflict_is_http_409(monkeypatch):
 
     assert exc_info.value.status_code == 409
     assert "already in progress" in str(exc_info.value.detail)
+
+
+def test_mimo_generation_value_error_after_claim_is_not_misreported_as_conflict(
+    monkeypatch,
+):
+    from app.api import report as report_api
+
+    sanitized_mimo = SimpleNamespace(
+        content_data={
+            "report_family": "mimo_ota",
+            "calibration_trust_schema_version": 1,
+        },
+        generated_by="mimo_ota.executors.report",
+        test_execution_ids=[],
+    )
+    monkeypatch.setattr(
+        report_api.report_service,
+        "get_report",
+        lambda db, report_id: sanitized_mimo,
+    )
+    monkeypatch.setattr(
+        report_api.report_service,
+        "generate_report",
+        lambda db, report_id: (_ for _ in ()).throw(
+            ValueError("template rendering failed")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="template rendering failed"):
+        report_api.generate_report(uuid4(), db=object())
 
 
 def test_report_create_drops_client_supplied_trust_attestation():

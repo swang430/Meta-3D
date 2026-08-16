@@ -36,6 +36,7 @@ from app.schemas.report import (
     KPIDifference,
 )
 from app.services.report_service import (
+    LegacyMimoRegenerationRejected,
     ReportGenerationConflict,
     ReportService,
     ReportTemplateService,
@@ -188,21 +189,13 @@ def generate_report(
     This starts the async report generation process.
     The actual PDF/HTML/Excel generation will be done in a background task.
     """
-    existing = report_service.get_report(db, report_id)
     try:
         report = report_service.generate_report(db, report_id)
-    except ReportGenerationConflict as exc:
+    except (ReportGenerationConflict, LegacyMimoRegenerationRejected) as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
-    except ValueError as exc:
-        if existing is not None and _is_mimo_report(db, existing):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=str(exc),
-            ) from exc
-        raise
     if not report:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -568,4 +561,3 @@ def delete_report(
 
 
 # ==================== Simple Compare Endpoint ====================
-    ReportGenerationConflict,
