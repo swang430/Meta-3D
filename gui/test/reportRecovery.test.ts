@@ -33,6 +33,17 @@ test('completed legacy reports offer recovery instead of unsafe download', () =>
   assert.match(listSource, /不可安全恢复/)
 })
 
+test('legacy recovery is the only available report action until regeneration', () => {
+  assert.match(
+    listSource,
+    /onView\s*&&\s*!report\.requires_regeneration/,
+  )
+  assert.match(
+    listSource,
+    /!report\.requires_regeneration\s*&&\s*\(report\.status === 'pending' \|\| report\.status === 'failed'\)/,
+  )
+})
+
 test('report API errors preserve JSON and Blob response detail', () => {
   assert.match(apiSource, /export async function reportApiErrorMessage/)
   assert.match(apiSource, /data instanceof Blob/)

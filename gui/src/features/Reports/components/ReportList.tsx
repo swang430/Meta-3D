@@ -313,7 +313,7 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
                   </Table.Td>
                   <Table.Td>
                     <Group gap="xs">
-                      {onView && (
+                      {onView && !report.requires_regeneration && (
                         <Tooltip label="查看详情">
                           <ActionIcon
                             variant="subtle"
@@ -325,7 +325,8 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
                         </Tooltip>
                       )}
 
-                      {(report.status === 'pending' || report.status === 'failed') && (
+                      {!report.requires_regeneration &&
+                        (report.status === 'pending' || report.status === 'failed') && (
                         <Tooltip label={report.status === 'failed' ? '重新生成' : '生成报告'}>
                           <ActionIcon
                             variant="subtle"
