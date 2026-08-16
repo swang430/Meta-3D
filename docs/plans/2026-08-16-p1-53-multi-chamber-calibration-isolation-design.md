@@ -57,7 +57,8 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
 
 - amplitude / phase / polarization / pattern 已有 nullable `chamber_id`，本片不自动猜测或回填 legacy NULL。
 - 新写入一律要求非空暗室；历史 NULL 仅保留审计，不进入正式 latest、有效性或报告。
-- 四张表新增 nullable `use_mock`：`False` 表示本轮真实测量或厂商文件导入，`True` 表示
+- 七张正式判定可见表（四类探头、全局 Link、RF-chain、multi-frequency）新增 nullable
+  `use_mock`：`False` 表示本轮真实测量或厂商文件导入，`True` 表示
   mock/random 流程演练，`NULL` 表示历史来源未知。迁移不回填，避免把旧行伪装成真实。
 - `probe_calibration_validity` 当前没有生产写入/读取方，正式有效性由 `CalibrationValidityService` 现算。本片不为死表新增复合主键机制；改为用规则门锁住生产代码不得把它当权威源。将来若恢复物化汇总，须另做 `(probe_id, chamber_id)` 迁移。
 - 不加破坏性外键或清理脚本；P1-28 的 orphan 诊断与删除门继续负责存量完整性。
@@ -75,6 +76,9 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
 6. lower-level service 的正式消费必须传 chamber；若调用方没有 chamber，不得静默退回全局 probe 编号查询。
 7. 正式有效性、报告统计和 pattern 消费只接受 `use_mock is False`；mock 与历史 NULL
    可在审计读取中展示，但判词保持 UNVERIFIED、不得进入正式分母或 MIMO 增益补偿。
+   全局 Link 可单独展示设施状态，但不参与单探头四类完整性的 overall 判定；其 validity、
+   临期/过期汇总同样只接受显式 real。当前硬编码 mock 的 RF-chain / multi-frequency 写入口
+   必须持久化 `True`，不得因数据库 `status=valid` 在 PDF 中变成 PASS。
 8. 报告有效性同时检查 `valid_until`；过期记录不得仅凭持久化 `status=valid` 显示 PASS。
 9. PDF 必须渲染 collector 纳入摘要的全部家族；RF-chain 与 multi-frequency 不得只计数不展示。
 
@@ -85,6 +89,10 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
 - 暗室 ID 进入所有 probe calibration query key；切换暗室会产生新缓存域。
 - 启动和导入请求使用同一个已解析暗室 ID，不允许表单另藏一个自由文本暗室。
 - 页面标题/摘要显示当前暗室名称，避免操作员把 B 暗室结果当作 A 暗室。
+- 详情组件对 `use_mock=True` 显示 `SIMULATED · UNVERIFIED`，对历史 `NULL` 显示
+  `SOURCE UNKNOWN · UNVERIFIED`；只有显式 `False` 才可显示 VALID/PASS。数值保留用于审计，
+  但必须与来源同行展示。当前页面尚无生产路由入口，本片只收口已存在的组件/请求契约，
+  不借机恢复一条未完成的导航链。
 
 ## 错误处理
 
@@ -106,6 +114,8 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
 7. 完整 probe calibration 回归、P1-28 真值源回归、报告回归、rule gates、GUI build、compileall 与 diff-check 通过。
 8. 跨暗室作废被拒绝；非 32 探头暗室无 phantom probe；mock/legacy/expired 不得正式 PASS；
    极化报告读取持久化隔离字段，RF-chain/multi-frequency 在 PDF 可审计。
+9. mock/legacy Link、RF-chain、multi-frequency 在报告、validity 和详情中保持 UNKNOWN/
+   UNVERIFIED；Link-only 不得把没有四类可信记录的探头判为 valid。
 
 ## 非目标
 

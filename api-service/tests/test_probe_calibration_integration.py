@@ -244,11 +244,14 @@ class TestCompleteCalibrationWorkflow:
         )
         assert link_response.status_code == 202
         assert link_response.json()["status"] == "completed"
+        assert "UNVERIFIED" in link_response.json()["message"]
 
         # 验证链路校准数据
         link_data = _scoped_get("/api/v1/calibration/probe/link/latest")
         assert link_data.status_code == 200
         assert "deviation_db" in link_data.json()
+        assert link_data.json()["use_mock"] is True
+        assert link_data.json()["validation_pass"] is None
 
         # Step 6: mock/random 入口可留原始数据，但不得成为正式有效校准。
         validity = _scoped_get(f"/api/v1/calibration/probe/validity/{probe_id}")
@@ -260,8 +263,9 @@ class TestCompleteCalibrationWorkflow:
         assert validity_data["polarization"] is None
         assert validity_data["pattern"] is None
         assert validity_data["link"] is not None
-        # 链路校准可能是 valid 或 expiring_soon (取决于时间差)
-        assert validity_data["link"]["status"] in ["valid", "expiring_soon"]
+        assert validity_data["link"]["status"] == "unknown"
+        assert validity_data["link"]["use_mock"] is True
+        assert validity_data["overall_status"] == "unknown"
 
         # Step 7: 获取综合校准数据
         full_data = _scoped_get(f"/api/v1/calibration/probe/{probe_id}/data")

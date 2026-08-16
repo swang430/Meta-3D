@@ -459,7 +459,7 @@ class TestLinkCalibration:
         data = response.json()
         assert "calibration_job_id" in data
         assert data["status"] == "completed"
-        assert "PASS" in data["message"] or "FAIL" in data["message"]
+        assert "UNVERIFIED (simulated)" in data["message"]
 
     def test_start_link_calibration_weekly_check(self):
         """测试每周检查类型的链路校准"""

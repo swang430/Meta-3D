@@ -223,6 +223,7 @@ export interface ProbeLinkCalibration {
 
 export interface LinkCalibrationResponse {
   id: string
+  use_mock?: boolean | null
   calibration_type: string
   // Standard DUT
   standard_dut_type?: string

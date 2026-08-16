@@ -414,6 +414,7 @@ class ProbeLinkCalibration(BaseModel):
 class LinkCalibrationResponse(BaseModel):
     """链路校准响应"""
     id: UUID
+    use_mock: Optional[bool] = None
     calibration_type: str
     # 标准 DUT
     standard_dut_type: Optional[str] = None
@@ -708,6 +709,7 @@ class RFChainCalibrationResponse(BaseModel):
     """RF 链路增益校准响应"""
     id: UUID
     chamber_id: UUID
+    use_mock: Optional[bool] = None
     chain_type: str
     frequency_mhz: float
 
@@ -794,6 +796,7 @@ class MultiFrequencyPathLossResponse(BaseModel):
     """多频点路损校准响应"""
     id: UUID
     chamber_id: UUID
+    use_mock: Optional[bool] = None
     probe_id: int
     polarization: str
 

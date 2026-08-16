@@ -657,14 +657,17 @@ class CalibrationReportGenerator:
 
             link_data = []
             for cal in calibrations:
-                total += 1
-                if cal.validation_pass:
-                    passed += 1
+                validation_pass = cal.validation_pass if cal.use_mock is False else None
+                if validation_pass is not None:
+                    total += 1
+                    if validation_pass:
+                        passed += 1
                 link_data.append({
                     'id': str(cal.id),
                     'probe_id': None,  # LinkCalibration is system-wide, not per-probe
                     'calibration_type': cal.calibration_type,
-                    'validation_pass': cal.validation_pass,
+                    'validation_pass': validation_pass,
+                    'use_mock': cal.use_mock,
                     'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                     'calibrated_by': cal.calibrated_by,
                     'deviation_db': cal.deviation_db,
@@ -727,10 +730,11 @@ class CalibrationReportGenerator:
 
             rf_chain_data = []
             for cal in calibrations:
-                total += 1
-                is_valid = _active_validation_pass(cal)
-                if is_valid:
-                    passed += 1
+                is_valid = _probe_validation_pass(cal)
+                if is_valid is not None:
+                    total += 1
+                    if is_valid:
+                        passed += 1
 
                 rf_chain_data.append({
                     'id': str(cal.id),
@@ -738,6 +742,7 @@ class CalibrationReportGenerator:
                     'chain_type': cal.chain_type,
                     'frequency_mhz': cal.frequency_mhz,
                     'validation_pass': is_valid,
+                    'use_mock': cal.use_mock,
                     'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                     'calibrated_by': cal.calibrated_by,
                     'valid_until': str(cal.valid_until) if cal.valid_until else None,
@@ -772,10 +777,11 @@ class CalibrationReportGenerator:
 
             multi_freq_data = []
             for cal in calibrations:
-                total += 1
-                is_valid = _active_validation_pass(cal)
-                if is_valid:
-                    passed += 1
+                is_valid = _probe_validation_pass(cal)
+                if is_valid is not None:
+                    total += 1
+                    if is_valid:
+                        passed += 1
 
                 multi_freq_data.append({
                     'id': str(cal.id),
@@ -783,6 +789,7 @@ class CalibrationReportGenerator:
                     'probe_id': cal.probe_id,
                     'polarization': cal.polarization,
                     'validation_pass': is_valid,
+                    'use_mock': cal.use_mock,
                     'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                     'calibrated_by': cal.calibrated_by,
                     'valid_until': str(cal.valid_until) if cal.valid_until else None,

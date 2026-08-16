@@ -25,6 +25,9 @@ TABLES = (
     "probe_phase_calibrations",
     "probe_polarization_calibrations",
     "probe_patterns",
+    "link_calibrations",
+    "rf_chain_calibrations",
+    "multi_frequency_path_losses",
 )
 
 

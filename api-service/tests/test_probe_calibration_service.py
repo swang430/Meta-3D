@@ -1704,6 +1704,7 @@ class TestLinkCalibrationService:
         """测试获取最新链路校准"""
         # 创建测试数据
         cal = LinkCalibration(
+            use_mock=False,
             calibration_type="pre_test",
             standard_dut_type="dipole",
             standard_dut_model="Test",
@@ -1751,6 +1752,7 @@ class TestLinkCalibrationService:
     def test_check_link_validity_valid(self, db_session):
         """测试有效链路校准状态"""
         cal = LinkCalibration(
+            use_mock=False,
             calibration_type="pre_test",
             known_gain_dbi=2.15,
             measured_gain_dbi=2.2,
@@ -1777,6 +1779,7 @@ class TestLinkCalibrationService:
 
         # 创建一个已过期的校准记录 (10天前)
         cal = LinkCalibration(
+            use_mock=False,
             calibration_type="pre_test",
             known_gain_dbi=2.15,
             measured_gain_dbi=2.2,

@@ -285,7 +285,11 @@ GUI grid, Alembic migration, focused tests, design/roadmap mirrors.
 
 1. Scope invalidate by `(calibration_id, chamber_id)` while preserving global LinkCalibration.
 2. Replace fixed 32/64 probe assumptions in the four scoped families with `ChamberConfiguration.num_probes`.
-3. Persist nullable `use_mock` provenance without backfilling history; formal validity/report/pattern consumers whitelist `False`.
+3. Persist nullable `use_mock` provenance across the four probe-scoped families plus global Link,
+   RF-chain and multi-frequency without backfilling history; formal validity/report/pattern consumers
+   whitelist `False`, and GUI details render non-real rows as UNVERIFIED.
 4. Compute polarization XPD from persisted directional isolation fields and evaluate expiry dynamically.
 5. Render RF-chain and multi-frequency families that contribute to report summary totals.
-6. Re-run focused regressions, migration paths, GUI build, full rule gates, compileall and diff-check, then request a fresh internal review.
+6. Keep global Link out of per-probe completeness, and exclude mock/unknown Link from report and
+   validity-deadline verdicts.
+7. Re-run focused regressions, migration paths, GUI build, full rule gates, compileall and diff-check, then request a fresh internal review.

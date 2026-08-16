@@ -71,3 +71,17 @@ test('probe calibration page passes one chamber truth to dashboard, grid, and de
   assert.match(pageSource, /<ProbeCalibrationGrid[\s\S]*probeCount=\{probeCount\}/)
   assert.doesNotMatch(pageSource, /probeCount=\{32\}/)
 })
+
+test('probe calibration detail presents simulated and unknown provenance as unverified', () => {
+  const detailSource = readFileSync(
+    new URL('../src/features/ProbeCalibration/components/ProbeCalibrationDetail.tsx', import.meta.url),
+    'utf8',
+  )
+
+  assert.equal((detailSource.match(/useMock=\{data\.use_mock\}/g) ?? []).length, 4)
+  assert.match(detailSource, /useMock=\{latestPattern\.use_mock\}/)
+  assert.match(detailSource, /useMock=\{data\.use_mock\}/)
+  assert.match(detailSource, /SIMULATED/)
+  assert.match(detailSource, /SOURCE UNKNOWN/)
+  assert.match(detailSource, /useMock === false[\s\S]*CalibrationStatusBadge/)
+})

@@ -2047,9 +2047,11 @@ class LinkCalibrationService:
 
             # 验证
             is_pass, quality = validate_link_calibration(deviation, threshold_db)
+            formal_validation_pass = is_pass if not use_mock else None
 
             # 创建校准记录
             calibration = LinkCalibration(
+                use_mock=use_mock,
                 calibration_type=calibration_type,
                 standard_dut_type=standard_dut.get('dut_type'),
                 standard_dut_model=standard_dut.get('model'),
@@ -2059,7 +2061,7 @@ class LinkCalibrationService:
                 measured_gain_dbi=measured_gain,
                 deviation_db=deviation,
                 probe_link_calibrations=probe_calibrations,
-                validation_pass=is_pass,
+                validation_pass=formal_validation_pass,
                 threshold_db=threshold_db,
                 calibrated_at=datetime.utcnow(),
                 calibrated_by=calibrated_by
@@ -2076,13 +2078,17 @@ class LinkCalibrationService:
 
             return CalibrationResult(
                 success=True,
-                message=f"Link calibration completed, result: {'PASS' if is_pass else 'FAIL'}",
+                message=(
+                    "Link calibration completed, result: UNVERIFIED (simulated)"
+                    if use_mock
+                    else f"Link calibration completed, result: {'PASS' if is_pass else 'FAIL'}"
+                ),
                 data={
                     "calibration_id": str(calibration.id),
                     "measured_gain_dbi": round(measured_gain, 2),
                     "known_gain_dbi": known_gain_dbi,
                     "deviation_db": round(deviation, 3),
-                    "validation_pass": is_pass,
+                    "validation_pass": formal_validation_pass,
                     "quality": quality,
                     "num_probes": len(probe_calibrations) if probe_calibrations else 0
                 },
@@ -2175,6 +2181,15 @@ class LinkCalibrationService:
             return {
                 "status": "unknown",
                 "message": "No link calibration found"
+            }
+
+        if latest.use_mock is not False:
+            return {
+                "status": "unknown",
+                "calibration_id": str(latest.id),
+                "use_mock": latest.use_mock,
+                "validation_pass": None,
+                "message": "Link calibration provenance is not verified",
             }
 
         now = datetime.utcnow()
@@ -2344,9 +2359,12 @@ class CalibrationValidityService:
             link_status = {
                 "calibration_id": str(link.id),
                 "valid_until": link_valid_until.isoformat(),
-                "validation_pass": link.validation_pass
+                "validation_pass": link.validation_pass if link.use_mock is False else None,
+                "use_mock": link.use_mock,
             }
-            if link_valid_until < now:
+            if link.use_mock is not False:
+                link_status["status"] = "unknown"
+            elif link_valid_until < now:
                 link_status["status"] = "expired"
                 link_status["days_overdue"] = (now - link_valid_until).days
             elif link_valid_until < expiring_threshold:
@@ -2360,7 +2378,9 @@ class CalibrationValidityService:
 
         # 计算总体状态
         calibration_statuses = []
-        for cal_type in ["amplitude", "phase", "polarization", "pattern", "link"]:
+        # LinkCalibration is a global facility check, not proof that this probe's
+        # four chamber-scoped calibration families are complete.
+        for cal_type in ["amplitude", "phase", "polarization", "pattern"]:
             if result[cal_type] is not None:
                 calibration_statuses.append(result[cal_type]["status"])
 
@@ -2442,13 +2462,12 @@ class CalibrationValidityService:
         expiring_soon_calibrations = []
         recommendations = []
 
-        calibration_types = ["amplitude", "phase", "polarization", "pattern", "link"]
+        calibration_types = ["amplitude", "phase", "polarization", "pattern"]
         priority_map = {
             "amplitude": "critical",
             "phase": "critical",
             "polarization": "high",
             "pattern": "medium",
-            "link": "critical"
         }
 
         for probe_id in probe_ids:
@@ -2654,7 +2673,9 @@ class CalibrationValidityService:
 
         # 链路校准单独处理 (没有 valid_until 字段)
         if not calibration_type or calibration_type == "link":
-            link_cals = db.query(LinkCalibration).all()
+            link_cals = db.query(LinkCalibration).filter(
+                LinkCalibration.use_mock.is_(False)
+            ).all()
             for link in link_cals:
                 link_valid_until = link.calibrated_at + timedelta(days=LINK_CALIBRATION_VALIDITY_DAYS)
                 if now < link_valid_until <= expiring_threshold:
@@ -2727,7 +2748,9 @@ class CalibrationValidityService:
 
         # 链路校准单独处理
         if not calibration_type or calibration_type == "link":
-            link_cals = db.query(LinkCalibration).all()
+            link_cals = db.query(LinkCalibration).filter(
+                LinkCalibration.use_mock.is_(False)
+            ).all()
             for link in link_cals:
                 link_valid_until = link.calibrated_at + timedelta(days=LINK_CALIBRATION_VALIDITY_DAYS)
                 if link_valid_until < now:

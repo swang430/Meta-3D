@@ -1083,6 +1083,7 @@ async def start_link_calibration(
 
     # 创建校准记录
     calibration = LinkCalibration(
+        use_mock=True,
         calibration_type=request.calibration_type.value,
         standard_dut_type=request.standard_dut.dut_type,
         standard_dut_model=request.standard_dut.model,
@@ -1092,7 +1093,7 @@ async def start_link_calibration(
         measured_gain_dbi=round(measured_gain, 2),
         deviation_db=round(deviation, 3),
         probe_link_calibrations=probe_calibrations,
-        validation_pass=is_pass,
+        validation_pass=None,
         threshold_db=request.threshold_db,
         calibrated_at=datetime.utcnow(),
         calibrated_by=request.calibrated_by
@@ -1101,8 +1102,10 @@ async def start_link_calibration(
     db.add(calibration)
     db.commit()
 
-    result_str = "PASS" if is_pass else "FAIL"
-    message = f"Link calibration completed: {result_str}, deviation={deviation:.3f} dB"
+    message = (
+        "Link calibration completed: UNVERIFIED (simulated), "
+        f"deviation={deviation:.3f} dB"
+    )
 
     return CalibrationJobResponse(
         calibration_job_id=job_id,
@@ -1189,6 +1192,15 @@ def check_link_validity(
         return {
             "status": "unknown",
             "message": "No link calibration found"
+        }
+
+    if latest.use_mock is not False:
+        return {
+            "status": "unknown",
+            "calibration_id": str(latest.id),
+            "use_mock": latest.use_mock,
+            "validation_pass": None,
+            "message": "Link calibration provenance is not verified",
         }
 
     now = datetime.utcnow()

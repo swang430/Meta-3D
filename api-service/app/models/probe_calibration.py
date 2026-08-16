@@ -350,6 +350,7 @@ class LinkCalibration(Base):
     __tablename__ = "link_calibrations"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    use_mock = Column(Boolean, nullable=True, comment="False=真实校准；True=模拟；NULL=历史来源未知")
     calibration_type = Column(
         String(50), nullable=False,
         comment="校准类型: weekly_check, pre_test, post_maintenance"
@@ -515,6 +516,7 @@ class RFChainCalibration(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     chamber_id = Column(UUID(as_uuid=True), nullable=False, index=True, comment="关联的暗室配置 ID")
+    use_mock = Column(Boolean, nullable=True, comment="False=真实校准；True=模拟；NULL=历史来源未知")
 
     # 校准类型
     chain_type = Column(
@@ -596,6 +598,7 @@ class MultiFrequencyPathLoss(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     chamber_id = Column(UUID(as_uuid=True), nullable=False, index=True, comment="暗室配置 ID")
+    use_mock = Column(Boolean, nullable=True, comment="False=真实校准；True=模拟；NULL=历史来源未知")
     probe_id = Column(Integer, nullable=False, index=True, comment="探头 ID")
     polarization = Column(String(10), nullable=False, comment="极化类型: V, H")
 

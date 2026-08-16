@@ -276,6 +276,7 @@ function AmplitudeCalibrationPanel({
         calibratedBy={data.calibrated_by}
         validUntil={data.valid_until}
         status={data.status}
+        useMock={data.use_mock}
         calibrationId={data.id}
         calibrationType="amplitude"
         onInvalidate={onInvalidate}
@@ -337,6 +338,7 @@ function PhaseCalibrationPanel({
         calibratedBy={data.calibrated_by}
         validUntil={data.valid_until}
         status={data.status}
+        useMock={data.use_mock}
         calibrationId={data.id}
         calibrationType="phase"
         onInvalidate={onInvalidate}
@@ -399,6 +401,7 @@ function PolarizationCalibrationPanel({
         calibratedBy={data.calibrated_by}
         validUntil={data.valid_until}
         status={data.status}
+        useMock={data.use_mock}
         calibrationId={data.id}
         calibrationType="polarization"
         onInvalidate={onInvalidate}
@@ -486,6 +489,7 @@ function PatternCalibrationPanel({
       </Group>
 
       <Group gap="md">
+        <CalibrationProvenanceBadge useMock={latestPattern.use_mock} />
         <Badge variant="light">Frequency: {latestPattern.frequency_mhz} MHz</Badge>
         <Badge variant="light">Polarization: {latestPattern.polarization}</Badge>
       </Group>
@@ -584,11 +588,14 @@ function LinkCalibrationPanel({
       </Group>
 
       <Group gap="md">
+        <CalibrationProvenanceBadge useMock={data.use_mock} />
         <Badge variant="light">Type: {data.calibration_type}</Badge>
         <Badge variant="light">Frequency: {data.frequency_mhz} MHz</Badge>
-        <Badge color={data.validation_pass ? 'green' : 'red'}>
-          {data.validation_pass ? 'PASS' : 'FAIL'}
-        </Badge>
+        {data.use_mock === false && (
+          <Badge color={data.validation_pass ? 'green' : 'red'}>
+            {data.validation_pass ? 'PASS' : 'FAIL'}
+          </Badge>
+        )}
       </Group>
 
       <Card padding="sm" withBorder>
@@ -649,6 +656,7 @@ function CalibrationMetadata({
   calibratedBy,
   validUntil,
   status,
+  useMock,
   calibrationId,
   calibrationType,
   onInvalidate,
@@ -658,6 +666,7 @@ function CalibrationMetadata({
   calibratedBy?: string
   validUntil: string
   status: string
+  useMock?: boolean | null
   calibrationId: string
   calibrationType: string
   onInvalidate?: (type: string, id: string) => void
@@ -678,7 +687,11 @@ function CalibrationMetadata({
         <Text size="sm" c="dimmed">
           Valid until: {parseServerDateTime(validUntil).toLocaleDateString()}
         </Text>
-        <CalibrationStatusBadge status={status as ValidityStatus} size="xs" />
+        {useMock === false ? (
+          <CalibrationStatusBadge status={status as ValidityStatus} size="xs" />
+        ) : (
+          <CalibrationProvenanceBadge useMock={useMock} />
+        )}
       </Group>
       <Group gap="xs">
         <Button
@@ -702,6 +715,16 @@ function CalibrationMetadata({
       </Group>
     </Group>
   )
+}
+
+function CalibrationProvenanceBadge({ useMock }: { useMock?: boolean | null }) {
+  if (useMock === false) {
+    return <Badge color="green" size="xs">REAL</Badge>
+  }
+  if (useMock === true) {
+    return <Badge color="orange" size="xs">SIMULATED · UNVERIFIED</Badge>
+  }
+  return <Badge color="yellow" size="xs">SOURCE UNKNOWN · UNVERIFIED</Badge>
 }
 
 function NoDataAlert({ message }: { message: string }) {

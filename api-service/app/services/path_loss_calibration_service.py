@@ -1413,6 +1413,7 @@ class RFChainCalibrationService:
             # 创建校准记录
             calibration = RFChainCalibration(
                 chamber_id=chamber_id,
+                use_mock=self.use_mock,
                 chain_type=ChainTypeEnum.UPLINK.value,
                 frequency_mhz=frequency_mhz,
                 has_lna=True,
@@ -1492,6 +1493,7 @@ class RFChainCalibrationService:
 
             calibration = RFChainCalibration(
                 chamber_id=chamber_id,
+                use_mock=self.use_mock,
                 chain_type=ChainTypeEnum.DOWNLINK.value,
                 frequency_mhz=frequency_mhz,
                 has_pa=True,
@@ -1868,6 +1870,7 @@ class MultiFrequencyPathLossService:
 
                 calibration = MultiFrequencyPathLoss(
                     chamber_id=chamber_id,
+                    use_mock=self.use_mock,
                     probe_id=probe_id,
                     polarization=polarization.value,
                     freq_start_mhz=freq_start_mhz,
