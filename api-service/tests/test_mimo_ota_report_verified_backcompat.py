@@ -8,6 +8,7 @@ P2-21 迁移: 三标志的生效端从 step 顶层键挪到 parameters 下的可
 ("已验证 (…)"/"未验证 (…)"/"未知 (…)") —— 本文件钉的是**推导逻辑**不变,
 断言跟着打在新生效端 (标注前缀), 渲染可达性另由 test_p2_21_* 行为门钉。
 """
+import asyncio
 from datetime import datetime
 from types import SimpleNamespace
 from uuid import uuid4
@@ -270,6 +271,69 @@ def test_sanitized_unknown_mimo_audit_report_is_viewable_and_downloadable(
 
     assert report_api.get_report(uuid4(), db=object()) is audit_report
     assert report_api.download_report(uuid4(), db=object()).path == str(report_file)
+
+
+def test_historical_client_vrt_report_is_hidden_until_server_rebuild(
+    monkeypatch,
+    tmp_path,
+):
+    from app.api import report as report_api
+
+    report_file = tmp_path / "client-vrt.pdf"
+    report_file.write_bytes(b"client-owned")
+    historical = SimpleNamespace(
+        id=uuid4(),
+        status="completed",
+        progress_percent=100,
+        file_size_bytes=len(b"client-owned"),
+        file_path=str(report_file),
+        format="pdf",
+        report_type="single_execution",
+        title="historical client VRT",
+        generated_by="operator",
+        generated_at=datetime(2026, 1, 1),
+        test_execution_ids=[],
+        road_test_execution_id="vrt-old-gui-row",
+        content_data={"overall_result": "passed"},
+    )
+    monkeypatch.setattr(
+        report_api.report_service,
+        "get_report",
+        lambda db, report_id: historical,
+    )
+
+    summary = report_api._report_summary(object(), historical)
+    assert summary.vrt_archive_trusted is False
+    with pytest.raises(HTTPException) as get_error:
+        report_api.get_report(historical.id, db=object())
+    assert get_error.value.status_code == 409
+    with pytest.raises(HTTPException) as download_error:
+        report_api.download_report(historical.id, db=object())
+    assert download_error.value.status_code == 409
+
+
+def test_manual_generation_cannot_publish_untrusted_historical_vrt(report_db):
+    from app.models.report import TestReport
+    from app.services.report_service import LegacyVrtArchiveRejected
+
+    report = TestReport(
+        title="historical client VRT",
+        report_type="single_execution",
+        format="pdf",
+        generated_by="operator",
+        status="completed",
+        road_test_execution_id="vrt-old-manual-generate",
+        content_data={"overall_result": "passed"},
+    )
+    report_db.add(report)
+    report_db.commit()
+
+    with pytest.raises(LegacyVrtArchiveRejected, match="not server-owned"):
+        ReportService().generate_report(report_db, report.id)
+
+    report_db.refresh(report)
+    assert report.status == "completed"
+    assert report.content_data == {"overall_result": "passed"}
 
 
 def test_report_list_regeneration_state_comes_from_mimo_trust_and_execution_truth(
@@ -729,6 +793,226 @@ def _vrt_archive_payload():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("legacy_marker", [None, True, 1.0])
+async def test_vrt_archive_rebuilds_existing_row_without_strict_server_trust(
+    report_db,
+    monkeypatch,
+    legacy_marker,
+):
+    from app.api import road_test
+    from app.models.report import TestReport
+
+    legacy_content = {
+        "overall_result": "passed",
+        "kpi_summary": [{"name": "client-owned", "mean": 999}],
+    }
+    if legacy_marker is not None:
+        legacy_content["vrt_archive_trust_schema_version"] = legacy_marker
+    legacy = TestReport(
+        title="legacy client-created VRT report",
+        report_type="single_execution",
+        format="pdf",
+        generated_by="operator",
+        status="completed",
+        road_test_execution_id="vrt-legacy-client-row",
+        content_data=legacy_content,
+        file_path="legacy-client.pdf",
+    )
+    report_db.add(legacy)
+    report_db.commit()
+
+    async def _authoritative_execution_report(execution_id, db):
+        return _vrt_archive_payload()
+
+    generation_calls = []
+
+    def _capture_authoritative_rebuild(
+        self,
+        db,
+        report_id,
+        content_data_override=None,
+        **kwargs,
+    ):
+        generation_calls.append((report_id, content_data_override))
+        report = db.get(TestReport, report_id)
+        report.status = "completed"
+        report.content_data = content_data_override
+        report.file_path = "server-rebuilt.pdf"
+        db.commit()
+        return report
+
+    monkeypatch.setattr(
+        road_test,
+        "_generate_execution_report",
+        _authoritative_execution_report,
+    )
+    monkeypatch.setattr(
+        "app.services.report_service.ReportService.generate_report",
+        _capture_authoritative_rebuild,
+    )
+    monkeypatch.setattr(
+        "builtins.open",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disabled in test")),
+    )
+
+    await road_test._archive_execution_report("vrt-legacy-client-row", report_db)
+
+    report_db.expire_all()
+    rebuilt = report_db.query(TestReport).filter(
+        TestReport.road_test_execution_id == "vrt-legacy-client-row"
+    ).one()
+    assert rebuilt.id == legacy.id
+    assert rebuilt.file_path == "server-rebuilt.pdf"
+    assert rebuilt.content_data["vrt_archive_trust_schema_version"] == 1
+    assert type(rebuilt.content_data["vrt_archive_trust_schema_version"]) is int
+    assert "client-owned" not in str(rebuilt.content_data)
+    assert generation_calls == [(legacy.id, rebuilt.content_data)]
+
+
+@pytest.mark.asyncio
+async def test_vrt_legacy_rebuild_normalizes_server_owned_pdf_envelope(
+    report_db,
+    monkeypatch,
+):
+    from app.api import road_test
+    from app.models.report import TestReport
+
+    legacy = TestReport(
+        title="client HTML title",
+        description="client description",
+        report_type="single_execution",
+        format="html",
+        generated_by="operator",
+        status="completed",
+        road_test_execution_id="vrt-legacy-envelope",
+        content_data={"overall_result": "passed", "client_kpi": 999},
+        file_path="client-owned.html",
+        file_size_bytes=12345,
+        template_id=uuid4(),
+    )
+    report_db.add(legacy)
+    report_db.commit()
+
+    async def _authoritative_execution_report(execution_id, db):
+        return _vrt_archive_payload()
+
+    generated = []
+
+    def _generate_pdf(self, report_data, template, output_path):
+        generated.append((report_data, template, output_path))
+
+    monkeypatch.setattr(
+        road_test,
+        "_generate_execution_report",
+        _authoritative_execution_report,
+    )
+    monkeypatch.setattr(
+        "app.services.report_service.PDFGenerator.generate_report",
+        _generate_pdf,
+    )
+    monkeypatch.setattr("app.services.report_service.os.path.getsize", lambda path: 456)
+    monkeypatch.setattr(
+        "builtins.open",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disabled in test")),
+    )
+
+    await road_test._archive_execution_report("vrt-legacy-envelope", report_db)
+
+    report_db.expire_all()
+    rebuilt = report_db.get(TestReport, legacy.id)
+    assert rebuilt.status == "completed"
+    assert rebuilt.report_type == "single_execution"
+    assert rebuilt.format == "pdf"
+    assert rebuilt.title == "虚拟路测报告: claim race"
+    assert rebuilt.generated_by == "System (Auto-Archive)"
+    assert rebuilt.template_id is None
+    assert rebuilt.file_path != "client-owned.html"
+    assert rebuilt.file_path.endswith(f"report_{legacy.id}.pdf")
+    assert rebuilt.file_size_bytes == 456
+    assert rebuilt.content_data["vrt_archive_trust_schema_version"] == 1
+    assert "client_kpi" not in rebuilt.content_data
+    assert len(generated) == 1
+    assert generated[0][1] is None
+
+
+@pytest.mark.asyncio
+async def test_vrt_legacy_rebuild_claims_old_snapshot_only_once(
+    report_db,
+    monkeypatch,
+):
+    from sqlalchemy.orm import sessionmaker
+
+    from app.api import road_test
+    from app.models.report import TestReport
+
+    legacy = TestReport(
+        title="legacy race",
+        report_type="single_execution",
+        format="pdf",
+        generated_by="operator",
+        status="completed",
+        road_test_execution_id="vrt-legacy-rebuild-race",
+        content_data={"snapshot": "client"},
+        file_path="client.pdf",
+    )
+    report_db.add(legacy)
+    report_db.commit()
+
+    both_read_legacy = asyncio.Event()
+    release_builders = asyncio.Event()
+    builder_count = 0
+
+    async def _coordinated_execution_report(execution_id, db):
+        nonlocal builder_count
+        builder_count += 1
+        if builder_count == 2:
+            both_read_legacy.set()
+        await release_builders.wait()
+        return _vrt_archive_payload()
+
+    generated_paths = []
+
+    def _generate_pdf(self, report_data, template, output_path):
+        generated_paths.append(output_path)
+
+    monkeypatch.setattr(
+        road_test,
+        "_generate_execution_report",
+        _coordinated_execution_report,
+    )
+    monkeypatch.setattr(
+        "app.services.report_service.PDFGenerator.generate_report",
+        _generate_pdf,
+    )
+    monkeypatch.setattr("app.services.report_service.os.path.getsize", lambda path: 10)
+    monkeypatch.setattr(
+        "builtins.open",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disabled in test")),
+    )
+
+    SessionLocal = sessionmaker(bind=report_db.get_bind())
+    first_db = SessionLocal()
+    second_db = SessionLocal()
+    first = asyncio.create_task(
+        road_test._archive_execution_report("vrt-legacy-rebuild-race", first_db)
+    )
+    second = asyncio.create_task(
+        road_test._archive_execution_report("vrt-legacy-rebuild-race", second_db)
+    )
+    await both_read_legacy.wait()
+    release_builders.set()
+    await asyncio.gather(first, second)
+    first_db.close()
+    second_db.close()
+
+    report_db.expire_all()
+    rebuilt = report_db.get(TestReport, legacy.id)
+    assert rebuilt.status == "completed"
+    assert rebuilt.content_data["vrt_archive_trust_schema_version"] == 1
+    assert len(generated_paths) == 1
+
+
+@pytest.mark.asyncio
 async def test_vrt_archive_preserves_an_existing_generation_claim(
     report_db,
     monkeypatch,
@@ -743,7 +1027,10 @@ async def test_vrt_archive_preserves_an_existing_generation_claim(
         generated_by="System (Auto-Archive)",
         status="generating",
         road_test_execution_id="vrt-active-writer",
-        content_data={"owner": "report-generator"},
+        content_data={
+            "owner": "report-generator",
+            "vrt_archive_trust_schema_version": 1,
+        },
     )
     report_db.add(report)
     report_db.commit()
@@ -772,7 +1059,10 @@ async def test_vrt_archive_preserves_an_existing_generation_claim(
     report_db.expire_all()
     preserved = report_db.get(TestReport, report.id)
     assert preserved.status == "generating"
-    assert preserved.content_data == {"owner": "report-generator"}
+    assert preserved.content_data == {
+        "owner": "report-generator",
+        "vrt_archive_trust_schema_version": 1,
+    }
 
 
 @pytest.mark.asyncio
@@ -790,7 +1080,10 @@ async def test_vrt_archive_does_not_rewrite_existing_completed_snapshot(
         generated_by="System (Auto-Archive)",
         status="completed",
         road_test_execution_id="vrt-preclaim-window",
-        content_data={"snapshot": "final"},
+        content_data={
+            "snapshot": "final",
+            "vrt_archive_trust_schema_version": 1,
+        },
     )
     report_db.add(report)
     report_db.commit()
@@ -819,7 +1112,10 @@ async def test_vrt_archive_does_not_rewrite_existing_completed_snapshot(
     report_db.expire_all()
     preserved = report_db.get(TestReport, report.id)
     assert preserved.status == "completed"
-    assert preserved.content_data == {"snapshot": "final"}
+    assert preserved.content_data == {
+        "snapshot": "final",
+        "vrt_archive_trust_schema_version": 1,
+    }
 
 
 @pytest.mark.asyncio
@@ -834,7 +1130,7 @@ async def test_vrt_archive_conflict_handler_does_not_release_winner_claim(
     async def _fake_execution_report(execution_id, db):
         return _vrt_archive_payload()
 
-    def _lose_claim(self, db, report_id, content_data_override=None):
+    def _lose_claim(self, db, report_id, content_data_override=None, **kwargs):
         preclaim = db.get(TestReport, report_id)
         assert preclaim.status == ReportStatus.PENDING.value
         assert preclaim.generation_completed_at is None
@@ -881,6 +1177,7 @@ async def test_vrt_archive_conflict_loser_does_not_downgrade_completed_winner(
         db,
         report_id,
         content_data_override=None,
+        **kwargs,
     ):
         db.query(TestReport).filter(TestReport.id == report_id).update(
             {

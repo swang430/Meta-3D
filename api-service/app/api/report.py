@@ -37,6 +37,7 @@ from app.schemas.report import (
 )
 from app.services.report_service import (
     LegacyMimoRegenerationRejected,
+    LegacyVrtArchiveRejected,
     ReportGenerationConflict,
     RoadTestReportConflict,
     ReportService,
@@ -46,6 +47,7 @@ from app.services.report_service import (
     legacy_mimo_regeneration_error,
     normalized_report_execution_ids,
     report_has_provenance_trust,
+    report_has_vrt_archive_trust,
     report_is_mimo_ota_report,
 )
 
@@ -89,6 +91,20 @@ def _reject_untrusted_mimo_report(db: Session, report) -> None:
     )
 
 
+def _reject_untrusted_vrt_report(report) -> None:
+    if getattr(report, "road_test_execution_id", None) is None:
+        return
+    if report_has_vrt_archive_trust(report.content_data):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            "Historical VRT report content is not server-owned. Rebuild it from "
+            "the terminal execution before viewing or downloading the artifact."
+        ),
+    )
+
+
 def _report_summary(db: Session, report) -> ReportSummary:
     """Build list metadata from the same MIMO trust truth as detail/download."""
     summary = ReportSummary.model_validate({
@@ -103,6 +119,10 @@ def _report_summary(db: Session, report) -> ReportSummary:
         "generated_at": report.generated_at,
         "test_execution_ids": normalized_report_execution_ids(report),
         "road_test_execution_id": report.road_test_execution_id,
+        "vrt_archive_trusted": (
+            report.road_test_execution_id is None
+            or report_has_vrt_archive_trust(report.content_data)
+        ),
     })
     if _mimo_report_is_provenance_sanitized(db, report):
         return summary
@@ -217,7 +237,11 @@ def generate_report(
     """
     try:
         report = report_service.generate_report(db, report_id)
-    except (ReportGenerationConflict, LegacyMimoRegenerationRejected) as exc:
+    except (
+        ReportGenerationConflict,
+        LegacyMimoRegenerationRejected,
+        LegacyVrtArchiveRejected,
+    ) as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
@@ -228,6 +252,7 @@ def generate_report(
             detail=f"Report {report_id} not found"
         )
     _reject_untrusted_mimo_report(db, report)
+    _reject_untrusted_vrt_report(report)
     return report
 
 
@@ -504,6 +529,7 @@ def get_report(
             detail=f"Report {report_id} not found"
         )
     _reject_untrusted_mimo_report(db, report)
+    _reject_untrusted_vrt_report(report)
     return report
 
 
@@ -530,6 +556,7 @@ def download_report(
         )
 
     _reject_untrusted_mimo_report(db, report)
+    _reject_untrusted_vrt_report(report)
 
     if not report.file_path:
         raise HTTPException(

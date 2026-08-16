@@ -165,6 +165,7 @@ class ReportSummary(BaseModel):
     # ID fields for frontend filtering
     test_execution_ids: Optional[List[UUID]] = None
     road_test_execution_id: Optional[str] = None
+    vrt_archive_trusted: bool = False
 
     # Historical MIMO provenance recovery (computed by the list endpoint).
     requires_regeneration: bool = False

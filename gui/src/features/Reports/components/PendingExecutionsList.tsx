@@ -89,13 +89,13 @@ async function fetchRoadTestExecutions(): Promise<RoadTestExecutionRecord[]> {
 
 // Fetch existing reports to filter out already archived executions
 async function fetchReportExecutionIds(): Promise<{ testPlan: Set<string>; roadTest: Set<string> }> {
-  const response = await client.get<{ reports: { test_execution_ids?: string[]; road_test_execution_id?: string }[] }>('/reports')
+  const response = await client.get<{ reports: { test_execution_ids?: string[]; road_test_execution_id?: string; vrt_archive_trusted: boolean }[] }>('/reports')
   const testPlanIds = new Set<string>()
   const roadTestIds = new Set<string>()
 
   response.data.reports.forEach((report) => {
     report.test_execution_ids?.forEach((id) => testPlanIds.add(id))
-    if (report.road_test_execution_id) {
+    if (report.road_test_execution_id && report.vrt_archive_trusted === true) {
       roadTestIds.add(report.road_test_execution_id)
     }
   })

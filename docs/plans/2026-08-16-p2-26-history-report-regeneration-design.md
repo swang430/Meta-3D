@@ -20,7 +20,7 @@ P1-27 已让缺少可信校准来源的旧 MIMO 报告详情与下载 fail-close
 
 列表构造必须复用已有 MIMO/可信判据，不按标题、文件名或 generated_by 单独猜测。非 MIMO 与已 sanitized 报告均不显示恢复动作。
 
-`POST /reports/{id}/generate` 继续作为唯一恢复写入口：completed legacy MIMO PDF 可显式调用；列表与写入口复用同一个安全前置条件判据，非 `single_execution`、VRT 关联、非 PDF、无唯一可用且权威属于 MIMO OTA 的执行均在修改状态/content/file 前 409。从关联执行重建全部 payload，不读取旧报告 KPI 作为真值；缺可信 provenance 时输出 UNKNOWN/N/A；explicit-real 证据完整时才恢复正式值；成功后详情与下载恢复可用。入口通过数据库条件更新原子认领 `generating` 状态，认领失败返回 409，禁止多个客户端同时写同一报告文件。VRT start/pause/resume/stop/complete 全部以请求读到的当前状态做数据库 CAS，任何陈旧的非终态操作都不能覆盖已经提交的终态；只有唯一终态 winner 能进入自动归档。归档是单次、不可重开的终态产物，已有同 execution 报告即直接退出，不能在延迟请求中重新认领并用另一份本地快照覆盖。首次归档以 `pending`、无生成完成时间落库，只保存可恢复的输入快照；只有 ReportService 的 writer winner 才能发布 `completed`，因此插入后崩溃不会留下“已完成但无 PDF”的假产物。非空 `road_test_execution_id` 数据库唯一索引保证同一 execution 只有一行；插入败方回滚、确认 winner 后直接退出。首次创建后的 PDF 生成若输掉 claim，冲突败方也不得再写 winner 后续的任何状态。通用 `POST /reports` 禁止携带 `road_test_execution_id`，不能用客户端 `content_data` 抢占 VRT 唯一归档槽；GUI 的 VRT 恢复动作改走服务端专用 terminal archive 入口，只接受 completed/stopped 并从权威 `TestExecution` 重建。专用入口只对最终 `completed` 返回成功；`pending`/`failed` 以 409 指向显式 `/reports/{id}/generate` 重试；在没有 owner/lease 存活真值时，`generating` 同样 409但只能提示人工核对，不得给出必然再次冲突的自动重试指引，更不能把崩溃残留假报为“正在生成”。陈旧列表或并发创建冲突稳定返回 409，不冒泡 500。历史重复行不自动猜测删除，迁移须 fail-loud 交由操作员保全并核对正式产物。
+`POST /reports/{id}/generate` 继续作为唯一 MIMO 恢复写入口：completed legacy MIMO PDF 可显式调用；列表与写入口复用同一个安全前置条件判据，非 `single_execution`、VRT 关联、非 PDF、无唯一可用且权威属于 MIMO OTA 的执行均在修改状态/content/file 前 409。从关联执行重建全部 payload，不读取旧报告 KPI 作为真值；缺可信 provenance 时输出 UNKNOWN/N/A；explicit-real 证据完整时才恢复正式值；成功后详情与下载恢复可用。入口通过数据库条件更新原子认领 `generating` 状态，认领失败返回 409，禁止多个客户端同时写同一报告文件。VRT start/pause/resume/stop/complete 全部以请求读到的当前状态做数据库 CAS，任何陈旧的非终态操作都不能覆盖已经提交的终态；只有唯一终态 winner 能进入自动归档。归档是单次、不可重开的终态产物；仅 `content_data.vrt_archive_trust_schema_version` 为精确 JSON 整数 `1` 时，既有行才有服务端所有权证明并可直接复用。升级前由旧 GUI 创建、缺标记或用 `true`/`1.0` 伪装标记的 VRT 行必须用同一 report id 从权威终态执行重建，不能继续发布客户端 KPI；重建前详情、下载与普通 generate 均 409，列表把该执行重新暴露为待归档。首次归档以 `pending`、无生成完成时间落库，只保存可恢复且带严格服务端标记的输入快照；只有 ReportService 的 writer winner 才能发布 `completed`，因此插入后崩溃不会留下“已完成但无 PDF”的假产物。非空 `road_test_execution_id` 数据库唯一索引保证同一 execution 只有一行；插入败方回滚、确认 winner 后直接退出。首次创建后的 PDF 生成若输掉 claim，冲突败方也不得再写 winner 后续的任何状态。通用 `POST /reports` 禁止携带 `road_test_execution_id`，也会剥除客户端提交的服务端 trust 字段，不能用客户端 `content_data` 抢占 VRT 唯一归档槽；GUI 的 VRT 恢复动作走服务端专用 terminal archive 入口，只接受 completed/stopped 并从权威 `TestExecution` 重建。专用入口只对最终 `completed` 返回成功；`pending`/`failed` 以 409 指向显式 `/reports/{id}/generate` 重试；在没有 owner/lease 存活真值时，`generating` 同样 409但只能提示人工核对，不得给出必然再次冲突的自动重试指引，更不能把崩溃残留假报为“正在生成”。陈旧列表或并发创建冲突稳定返回 409，不冒泡 500。历史重复行不自动猜测删除，迁移须 fail-loud 交由操作员保全并核对正式产物。
 
 ## GUI 行为
 
@@ -39,6 +39,7 @@ P1-27 已让缺少可信校准来源的旧 MIMO 报告详情与下载 fail-close
 - 非 MIMO 报告不受影响。
 - 历史 JSON 列只有字典形态才可作为 `content_data` / `TestExecution.config` 判据读取，关联 ID 与 `step_descriptors` 只有数组形态才可遍历；其他形态按无 trust marker / 无描述符 / 无安全关联 fail-closed，不得让一条旧记录毒化整个报告列表。恢复/生成要求关联数组全量合法，任一坏 ID 即整组拒绝；读取侧的 MIMO 候选识别则保守扫描所有可解析项，坏项不能抹掉已经确认的 MIMO 证据并绕过详情/下载门。trust schema 只接受服务端写入的精确 JSON 整数 `1`，布尔值 `true` 与浮点 `1.0` 不得借 Python 等值规则冒充可信版本。
 - 崩溃后遗留的 `generating` claim 保持 fail-closed；在没有 owner/epoch/lease 存活真值前，不因新进程启动就把它自动判成僵尸。Gunicorn 平滑替换即使配置单 worker 也可能短暂重叠，自动复位会重新放行同一正式报告的并发写。
+- 旧 VRT 行重建以旧 `content_data` 快照作为 writer claim 的同一数据库条件；首个 writer 发布新 payload 后，迟到请求即使观察到 completed 也不能重新认领。claim winner 必须清除客户端可写的 HTML/Excel、title/generated_by、template 与旧 file 元数据，统一发布服务端 PDF envelope，不能只替换 payload 后给旧外壳盖 trust 标记。
 
 ## TDD 验收
 
@@ -60,11 +61,13 @@ P1-27 已让缺少可信校准来源的旧 MIMO 报告详情与下载 fail-close
 16. 并发 stop/complete 只有一个数据库终态 CAS winner 能进入归档，报告快照必须对应这一权威终态；任何通过通用创建接口声明 VRT 关联的请求都返回可操作 409，不能抢占唯一槽、生成第二行或 500。
 17. 首次自动归档行在 writer claim 前必须保持 `pending` 且没有生成完成时间；start/pause/resume 的陈旧请求与 stop/complete 一样必须 CAS 失败，不能把已提交终态改回非终态。
 18. 通用报告创建不得写 `road_test_execution_id` 或客户端 VRT `content_data`；completed/stopped VRT 的手工恢复必须走服务端归档入口，从权威执行重建，非终态请求 409；没有 owner/lease 真值时，专用入口不得把 `generating`/`pending`/`failed` 假报为生成成功或进行中。
+19. 升级前客户端创建的既有 VRT 行没有严格服务端 trust 标记时，不得因“行已存在”而复用：列表必须重新暴露恢复动作，详情/下载/普通 generate 保持 409，terminal archive 用同一 report id 从权威执行重建并以精确整数 `1` 发布；布尔 `true` 与浮点 `1.0` 不得冒充标记。
+20. 旧 VRT 重建必须用“旧 payload 快照 + writer claim”同一数据库条件决策，迟到 loser 不得在 winner completed 后重开；winner 必须清除旧客户端 artifact，并统一生成服务端拥有的 PDF/title/generated_by/template/file envelope。
 
 ## 非目标
 
 - 不恢复不存在的原始测量或校准 provenance。
 - 不批量迁移全部历史报告。
 - 不新增报告版本树、任务队列或后台作业系统。
-- 不处理 VRT/非 MIMO 报告重生成体验。
+- 不为 VRT 新增通用报告编辑/任意快照重生成；仅保留终态执行的服务端权威归档与历史客户端行修复。
 - 不新增 report claim owner/epoch/lease，也不在无法证明 owner 已死亡时自动复位 `generating`。

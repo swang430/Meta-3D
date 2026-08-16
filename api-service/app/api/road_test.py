@@ -917,14 +917,22 @@ async def _archive_execution_report(execution_id: str, db: Session):
         # DEBUG ENTRY
         logger.info(f"Archiving execution report for {execution_id}")
 
-        # A terminal execution owns one immutable automatic archive.  Repeated
-        # stop/complete workers must not reopen a completed artifact with a
-        # different local snapshot; explicit report generation remains the
-        # only retry/recovery path.
+        # A terminal execution owns one immutable automatic archive.  Only a
+        # strict server-written trust marker proves that an existing row was
+        # produced by this path; pre-upgrade GUI rows used client-owned KPI
+        # payloads and must be rebuilt from the execution instead of reused.
         existing_report = db.query(TestReport).filter(
             TestReport.road_test_execution_id == execution_id
         ).first()
-        if existing_report is not None:
+        from app.services.report_service import (
+            VRT_ARCHIVE_TRUST_FIELD,
+            VRT_ARCHIVE_TRUST_SCHEMA_VERSION,
+            report_has_vrt_archive_trust,
+        )
+        if (
+            existing_report is not None
+            and report_has_vrt_archive_trust(existing_report.content_data)
+        ):
             logger.info(
                 "Skipped duplicate VRT archive for execution %s; report %s already exists",
                 execution_id,
@@ -938,6 +946,7 @@ async def _archive_execution_report(execution_id: str, db: Session):
         
         # 2. Convert to JSON dict
         content_data = report_data.model_dump(mode="json")
+        content_data[VRT_ARCHIVE_TRUST_FIELD] = VRT_ARCHIVE_TRUST_SCHEMA_VERSION
         
         # DEBUG LOGGING FOR REPORT DATA
         logger.info(f"Generated report data for {execution_id}. Keys: {list(content_data.keys())}")
@@ -969,47 +978,62 @@ async def _archive_execution_report(execution_id: str, db: Session):
         from datetime import datetime, timezone
         import uuid
         
-        logger.info(f"Creating new archived report for execution {execution_id}")
-        new_report = TestReport(
-            id=uuid.uuid4(),
-            title=f"虚拟路测报告: {report_data.scenario_name}",
-            description=f"Mode: {report_data.mode}, Result: {report_data.overall_result}",
-            report_type=ReportType.SINGLE_EXECUTION,  # Or add a specialized type if needed
-            format=ReportFormat.PDF,
-            # This is only a recoverable input snapshot until ReportService
-            # atomically owns the writer claim and publishes the PDF.  A
-            # crash before that claim must not leave a completed report with
-            # no artifact.
-            status=ReportStatus.PENDING,
-            generated_by="System (Auto-Archive)",
-            generated_at=datetime.now(timezone.utc),
-            content_data=content_data,
-            road_test_execution_id=execution_id,
-            # Metadata
-            notes=report_data.notes,
-            tags=["VRT", report_data.mode.value, report_data.overall_result]
-        )
-        db.add(new_report)
-        try:
-            db.commit()
-            target_report = new_report
-        except IntegrityError:
-            # A concurrent first archive inserted the unique execution row
-            # while this request prepared its local snapshot.  This request
-            # is the insert loser and must exit: retrying the generation claim
-            # could overwrite the winner after it has already completed.
-            db.rollback()
-            target_report = db.query(TestReport).filter(
-                TestReport.road_test_execution_id == execution_id
-            ).first()
-            if target_report is None:
-                raise
+        legacy_content_snapshot = None
+        if existing_report is not None:
+            from copy import deepcopy
+
+            # Do not mutate the legacy row before acquiring ReportService's
+            # writer claim.  The authoritative payload is supplied only to
+            # the claim winner, which then replaces the old content/file.
+            target_report = existing_report
+            legacy_content_snapshot = deepcopy(existing_report.content_data)
             logger.info(
-                "Skipped duplicate first VRT archive; report %s already owns execution %s",
+                "Rebuilding untrusted historical VRT report %s for execution %s",
                 target_report.id,
                 execution_id,
             )
-            return
+        else:
+            logger.info(f"Creating new archived report for execution {execution_id}")
+            new_report = TestReport(
+                id=uuid.uuid4(),
+                title=f"虚拟路测报告: {report_data.scenario_name}",
+                description=f"Mode: {report_data.mode}, Result: {report_data.overall_result}",
+                report_type=ReportType.SINGLE_EXECUTION,
+                format=ReportFormat.PDF,
+                # This is only a recoverable input snapshot until ReportService
+                # atomically owns the writer claim and publishes the PDF.  A
+                # crash before that claim must not leave a completed report with
+                # no artifact.
+                status=ReportStatus.PENDING,
+                generated_by="System (Auto-Archive)",
+                generated_at=datetime.now(timezone.utc),
+                content_data=content_data,
+                road_test_execution_id=execution_id,
+                # Metadata
+                notes=report_data.notes,
+                tags=["VRT", report_data.mode.value, report_data.overall_result]
+            )
+            db.add(new_report)
+            try:
+                db.commit()
+                target_report = new_report
+            except IntegrityError:
+                # A concurrent first archive inserted the unique execution row
+                # while this request prepared its local snapshot.  This request
+                # is the insert loser and must exit: retrying the generation claim
+                # could overwrite the winner after it has already completed.
+                db.rollback()
+                target_report = db.query(TestReport).filter(
+                    TestReport.road_test_execution_id == execution_id
+                ).first()
+                if target_report is None:
+                    raise
+                logger.info(
+                    "Skipped duplicate first VRT archive; report %s already owns execution %s",
+                    target_report.id,
+                    execution_id,
+                )
+                return
 
         logger.info("Prepared VRT report archive for %s", execution_id)
 
@@ -1024,7 +1048,27 @@ async def _archive_execution_report(execution_id: str, db: Session):
             service = ReportService()
             if target_report_id:
                 # Pass content_data directly to bypass DB read lag/issues
-                service.generate_report(db, target_report_id, content_data_override=content_data)
+                generation_kwargs = {
+                    "content_data_override": content_data,
+                    "vrt_archive_metadata_override": {
+                        "title": f"虚拟路测报告: {report_data.scenario_name}",
+                        "description": (
+                            f"Mode: {report_data.mode}, "
+                            f"Result: {report_data.overall_result}"
+                        ),
+                        "notes": report_data.notes,
+                        "tags": [
+                            "VRT",
+                            report_data.mode.value,
+                            report_data.overall_result,
+                        ],
+                    },
+                }
+                if existing_report is not None:
+                    generation_kwargs["expected_content_data"] = (
+                        legacy_content_snapshot
+                    )
+                service.generate_report(db, target_report_id, **generation_kwargs)
         except ReportGenerationConflict as pdf_err:
             # This request never owned the writer claim.  Do not race a later
             # winner state (including completed/failed) with any retry reset.

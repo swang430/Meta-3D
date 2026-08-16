@@ -6,6 +6,9 @@ from uuid import UUID
 from datetime import datetime, timezone
 import os
 import logging
+import json
+
+from sqlalchemy import String, cast
 
 from app.models.report import (
     TestReport,
@@ -31,6 +34,10 @@ class LegacyMimoRegenerationRejected(ValueError):
     """A legacy MIMO report cannot be regenerated safely."""
 
 
+class LegacyVrtArchiveRejected(ValueError):
+    """A historical VRT row lacks server-owned archive provenance."""
+
+
 class RoadTestReportConflict(ValueError):
     """A VRT execution already has its single report artifact."""
 
@@ -39,7 +46,12 @@ _SERVER_OWNED_REPORT_TRUST_FIELDS = frozenset({
     "report_family",
     "calibration_trust_schema_version",
     "formal_path_loss_verified",
+    "vrt_archive_trust_schema_version",
 })
+
+VRT_ARCHIVE_TRUST_SCHEMA_VERSION = 1
+VRT_ARCHIVE_TRUST_FIELD = "vrt_archive_trust_schema_version"
+_UNCONDITIONAL_REPORT_SNAPSHOT = object()
 
 
 def _strip_untrusted_report_attestation(
@@ -66,6 +78,14 @@ def report_has_provenance_trust(content_data: Any) -> bool:
         return False
     marker = content_data.get("calibration_trust_schema_version")
     return type(marker) is int and marker == 1
+
+
+def report_has_vrt_archive_trust(content_data: Any) -> bool:
+    """Accept only the exact server-written JSON integer VRT marker."""
+    if not isinstance(content_data, dict):
+        return False
+    marker = content_data.get(VRT_ARCHIVE_TRUST_FIELD)
+    return type(marker) is int and marker == VRT_ARCHIVE_TRUST_SCHEMA_VERSION
 
 
 def _parse_report_execution_ids(report: TestReport) -> tuple[List[UUID], bool]:
@@ -199,12 +219,26 @@ def legacy_mimo_regeneration_error(
     return None
 
 
-def claim_report_generation(db: Session, report_id: UUID) -> None:
+def claim_report_generation(
+    db: Session,
+    report_id: UUID,
+    *,
+    expected_content_data: Any = _UNCONDITIONAL_REPORT_SNAPSHOT,
+) -> None:
     """Atomically acquire the single writer slot for a report artifact."""
-    claimed = db.query(TestReport).filter(
+    claim_query = db.query(TestReport).filter(
         TestReport.id == report_id,
         TestReport.status != ReportStatus.GENERATING.value,
-    ).update(
+    )
+    if expected_content_data is not _UNCONDITIONAL_REPORT_SNAPSHOT:
+        # A historical VRT rebuild must claim the exact untrusted snapshot it
+        # inspected. A late request cannot re-claim a row after another writer
+        # has published the server-owned payload.
+        claim_query = claim_query.filter(
+            cast(TestReport.content_data, String)
+            == json.dumps(expected_content_data)
+        )
+    claimed = claim_query.update(
         {
             TestReport.status: ReportStatus.GENERATING.value,
             TestReport.generation_started_at: datetime.now(timezone.utc),
@@ -361,7 +395,10 @@ class ReportService:
         self,
         db: Session,
         report_id: UUID,
-        content_data_override: Optional[Dict[str, Any]] = None
+        content_data_override: Optional[Dict[str, Any]] = None,
+        *,
+        expected_content_data: Any = _UNCONDITIONAL_REPORT_SNAPSHOT,
+        vrt_archive_metadata_override: Optional[Dict[str, Any]] = None,
     ) -> Optional[TestReport]:
         """
         Trigger report generation
@@ -385,10 +422,56 @@ class ReportService:
         if regeneration_error:
             raise LegacyMimoRegenerationRejected(regeneration_error)
 
+        if report.road_test_execution_id:
+            vrt_source = (
+                content_data_override
+                if isinstance(content_data_override, dict)
+                else report.content_data
+            )
+            if not report_has_vrt_archive_trust(vrt_source):
+                raise LegacyVrtArchiveRejected(
+                    "Historical VRT report content is not server-owned; rebuild it "
+                    "through the terminal execution archive endpoint."
+                )
+
         # A read-then-write status check permits two clients to generate the
         # same path concurrently; the database decides the single winner.
-        claim_report_generation(db, report_id)
+        claim_report_generation(
+            db,
+            report_id,
+            expected_content_data=expected_content_data,
+        )
         db.refresh(report)
+
+        if vrt_archive_metadata_override is not None:
+            if not report.road_test_execution_id:
+                raise LegacyVrtArchiveRejected(
+                    "VRT archive metadata can be normalized only for a VRT report."
+                )
+            # The claim owns the entire formal artifact, not just its JSON.
+            # Discard the client-selected legacy envelope before producing the
+            # authoritative PDF.
+            report.title = vrt_archive_metadata_override["title"]
+            report.description = vrt_archive_metadata_override.get("description")
+            report.report_type = ReportType.SINGLE_EXECUTION.value
+            report.format = ReportFormat.PDF.value
+            report.generated_by = "System (Auto-Archive)"
+            report.template_id = None
+            report.notes = vrt_archive_metadata_override.get("notes")
+            report.tags = vrt_archive_metadata_override.get("tags")
+            report.file_path = None
+            report.file_size_bytes = None
+            report.file_hash = None
+            report.page_count = None
+            report.section_count = None
+            report.chart_count = None
+            report.table_count = None
+            report.generation_completed_at = None
+            report.generation_duration_sec = None
+            report.error_message = None
+            report.error_details = None
+            db.commit()
+            db.refresh(report)
 
         logger.info(f"Starting report generation: {report_id}")
 

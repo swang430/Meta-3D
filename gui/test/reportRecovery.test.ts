@@ -18,6 +18,10 @@ const generationHookSource = readFileSync(
   new URL('../src/features/Reports/hooks/useReportGeneration.ts', import.meta.url),
   'utf8',
 )
+const pendingExecutionsSource = readFileSync(
+  new URL('../src/features/Reports/components/PendingExecutionsList.tsx', import.meta.url),
+  'utf8',
+)
 
 test('report summaries expose the backend recovery truth', () => {
   assert.match(typeSource, /requires_regeneration:\s*boolean/)
@@ -44,7 +48,7 @@ test('legacy recovery is the only available report action until regeneration', (
   )
   assert.match(
     listSource,
-    /!report\.requires_regeneration\s*&&\s*\(report\.status === 'pending' \|\| report\.status === 'failed'\)/,
+    /!report\.requires_regeneration\s*&&\s*!isUntrustedVrtReport\(report\)\s*&&\s*\(report\.status === 'pending' \|\| report\.status === 'failed'\)/,
   )
 })
 
@@ -68,4 +72,15 @@ test('VRT recovery uses the server-owned terminal archive path', () => {
   assert.doesNotMatch(vrtMutation, /road_test_execution_id:/)
   assert.doesNotMatch(vrtMutation, /content_data:/)
   assert.match(vrtMutation, /ReportsAPI\.reportApiErrorMessage\(error\)/)
+})
+
+test('untrusted historical VRT rows remain available for server rebuild', () => {
+  assert.match(pendingExecutionsSource, /vrt_archive_trusted:\s*boolean/)
+  assert.match(
+    pendingExecutionsSource,
+    /report\.road_test_execution_id\s*&&\s*report\.vrt_archive_trusted\s*===\s*true/,
+  )
+  assert.match(listSource, /function isUntrustedVrtReport/)
+  assert.match(listSource, /需要服务端重建/)
+  assert.match(listSource, /!isUntrustedVrtReport\(report\)/)
 })

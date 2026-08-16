@@ -42,6 +42,13 @@ interface ReportListProps {
   onDelete?: (reportId: string) => void
 }
 
+function isUntrustedVrtReport(report: {
+  road_test_execution_id?: string
+  vrt_archive_trusted: boolean
+}): boolean {
+  return Boolean(report.road_test_execution_id && report.vrt_archive_trusted !== true)
+}
+
 export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
   const queryClient = useQueryClient()
   const [searchQuery, setSearchQuery] = useState('')
@@ -294,6 +301,11 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
                           {report.regeneration_available ? '需要恢复' : '不可安全恢复'}
                         </Badge>
                       )}
+                      {isUntrustedVrtReport(report) && (
+                        <Badge color="red" variant="light">
+                          需要服务端重建
+                        </Badge>
+                      )}
                     </Group>
                   </Table.Td>
                   <Table.Td>
@@ -313,7 +325,9 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
                   </Table.Td>
                   <Table.Td>
                     <Group gap="xs">
-                      {onView && !report.requires_regeneration && (
+                      {onView &&
+                        !report.requires_regeneration &&
+                        !isUntrustedVrtReport(report) && (
                         <Tooltip label="查看详情">
                           <ActionIcon
                             variant="subtle"
@@ -326,6 +340,7 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
                       )}
 
                       {!report.requires_regeneration &&
+                        !isUntrustedVrtReport(report) &&
                         (report.status === 'pending' || report.status === 'failed') && (
                         <Tooltip label={report.status === 'failed' ? '重新生成' : '生成报告'}>
                           <ActionIcon
@@ -366,7 +381,9 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
                         </Tooltip>
                       )}
 
-                      {report.status === 'completed' && !report.requires_regeneration && (
+                      {report.status === 'completed' &&
+                        !report.requires_regeneration &&
+                        !isUntrustedVrtReport(report) && (
                         <Tooltip label="下载报告">
                           <ActionIcon
                             variant="subtle"
@@ -375,6 +392,19 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
                             loading={downloadMutation.isPending}
                           >
                             <IconDownload size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                      )}
+
+                      {isUntrustedVrtReport(report) && (
+                        <Tooltip label="请在待归档执行中使用服务端重建">
+                          <ActionIcon
+                            variant="light"
+                            color="red"
+                            aria-label="需要服务端重建"
+                            disabled
+                          >
+                            <IconAlertTriangle size={16} />
                           </ActionIcon>
                         </Tooltip>
                       )}

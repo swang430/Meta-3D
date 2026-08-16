@@ -76,6 +76,8 @@ export interface ReportSummary {
   generated_by: string
   generated_at: string
   file_size_bytes?: number
+  road_test_execution_id?: string
+  vrt_archive_trusted: boolean
   requires_regeneration: boolean
   regeneration_available: boolean
   regeneration_reason?: string

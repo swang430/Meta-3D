@@ -18,7 +18,7 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅。
 
-**Current Focus = P2-26（PR #347 R5 P1 已修复、内审 P1/P2/P3=0，待 R6，WIP=1）**。P1-53 已由 PR #346（merge `da65888`）完成多暗室探头校准隔离；P2-26 复用 P1-27 的 provenance-aware builder，为被 409 封锁的历史 MIMO 报告补后端恢复状态与 GUI 显式恢复入口，缺可信来源仍输出 UNKNOWN/N/A，不放宽详情/下载门。R1～R4 已依次收口执行来源、VRT writer claim、畸形历史 JSON 与坏关联旧 PASS 复用。R5 将 VRT 全部控制跃迁收窄为数据库 CAS，自动归档首次只写 `pending` 输入快照并由唯一 writer 发布完成；同 execution 以部分唯一索引保持单一报告真值，既有自动归档不可被延迟 worker 重开。通用 `POST /reports` 禁止客户端声明 VRT 关联，GUI 恢复改走只接受 completed/stopped、从权威执行重建的服务端归档入口；缺 owner/lease 真值时 `generating` 也保持 409 fail-closed，不假报进行中。R1 的崩溃残留 P2 在没有 owner/lease 真值时继续 fail-closed，不做可能误放并发写的启动猜测复位。验证：报告/VRT/迁移与完整 rule gates 194 passed、GUI 契约 5 passed、production build、compileall、diff-check 通过。设计见 [`P2-26 设计`](plans/2026-08-16-p2-26-history-report-regeneration-design.md)。
+**Current Focus = P2-26（PR #347 R6 P1 已按 TDD 修复，fresh 内审 P1/P2/P3=0，待 R7，WIP=1）**。P1-53 已由 PR #346（merge `da65888`）完成多暗室探头校准隔离；P2-26 复用 P1-27 的 provenance-aware builder，为被 409 封锁的历史 MIMO 报告补后端恢复状态与 GUI 显式恢复入口，缺可信来源仍输出 UNKNOWN/N/A，不放宽详情/下载门。R1～R4 已依次收口执行来源、VRT writer claim、畸形历史 JSON 与坏关联旧 PASS 复用。R5 将 VRT 全部控制跃迁收窄为数据库 CAS，自动归档首次只写 `pending` 输入快照并由唯一 writer 发布完成；同 execution 以部分唯一索引保持单一报告真值，既有自动归档不可被延迟 worker 重开。通用 `POST /reports` 禁止客户端声明 VRT 关联，GUI 恢复改走只接受 completed/stopped、从权威执行重建的服务端归档入口；缺 owner/lease 真值时 `generating` 也保持 409 fail-closed，不假报进行中。R6 进一步收窄“既有归档”判据：只有精确服务端 trust 标记才可复用；升级前旧 GUI 行会保留 report id、从终态执行重建，重建前详情/下载/普通 generate 均 409，且重新显示在待归档列表；旧客户端 envelope 在单一 writer claim 内归一为服务端 PDF，迟到 loser 不能重开 completed。R1 的崩溃残留 P2 在没有 owner/lease 真值时继续 fail-closed，不做可能误放并发写的启动猜测复位。验证：最新报告/VRT/迁移与完整 rule gates 191 passed、GUI 契约 6 passed、production build、compileall、diff-check 通过。设计见 [`P2-26 设计`](plans/2026-08-16-p2-26-history-report-regeneration-design.md)。
 第二轮指出的完整连接目标消费、诊断入口目标一致性及锁内重读持久化真值均已收口，按两轮上限不再触发 R3。P1-50 已由 PR #343（merge `e10afa4`）
 完成留存失败告警上下文隔离，内审与两轮 Codex 外审均无 P1；告警仍进入 app/console，但不再
 回流重开执行文件或泄漏 fd。P1-49 已由 PR #342（merge `3e0a11d`）
@@ -44,7 +44,7 @@ P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → 
 | **P1-52** | TestCase 编辑时 LabProfile 列表加载失败不得清空原绑定 | ✅ PR #345 |
 | **P1-53** | 多暗室校准数据隔离，禁止跨暗室误用校准结果 | ✅ PR #346 |
 | **P2-25** | 当前/历史日志分类；历史按分类/执行分组并支持时间、名称、execution ID 搜索 | ✅ PR #340 |
-| **P2-26** | 历史 MIMO 报告 UNKNOWN/N/A 的重新生成与恢复界面 | 🟢 PR #347 R5 P1 已修复 / 待 R6 |
+| **P2-26** | 历史 MIMO 报告 UNKNOWN/N/A 的重新生成与恢复界面 | 🟢 PR #347 R6 P1 已修复 / 内审 P1/P2/P3=0 / 待 R7 |
 | **P1-54** | 用户指定的优先 P1 槽位（具体故障与验收范围待补） | ⬜ 已预留，P2-26 后第一项 |
 | **P1-55** | 用户指定的优先 P1 槽位（具体故障与验收范围待补） | ⬜ 已预留，紧随 P1-54 |
 | **P1-56** | 用户指定的优先 P1 槽位（具体故障与验收范围待补） | ⬜ 已预留，紧随 P1-55 |
@@ -300,7 +300,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → ~~P1-52~~ ✅ → ~~P1-53~~ ✅ → P2-26 🟢 → P1-54 → P1-55 → P1-56 → P2-27 → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；当前 P2-26 已收口 PR #347 R5 的 VRT 终态/归档并发 P1 与客户端抢占归档槽 P1，通过 fresh 内审，待 R6；崩溃残留 claim 在缺 owner/lease 真值时维持 fail-closed；WIP=1。P1-54～56 已按用户要求预留为紧随其后的优先槽位，具体可观察故障与验收范围尚待补齐，未在本文虚构。完整编号、范围与状态只看顶部 Current Focus 表。 |
+| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → ~~P1-52~~ ✅ → ~~P1-53~~ ✅ → P2-26 🟢 → P1-54 → P1-55 → P1-56 → P2-27 → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；当前 P2-26 已收口 PR #347 R6 的历史 VRT 客户端行可信旁路 P1：仅精确服务端标记可复用，旧行从终态执行重建且重建前 fail-closed；旧客户端 envelope 在单一 writer claim 内归一为服务端 PDF，迟到 loser 不能重开 completed；fresh 内审 P1/P2/P3=0，待 R7。崩溃残留 claim 在缺 owner/lease 真值时维持 fail-closed；WIP=1。P1-54～56 已按用户要求预留为紧随其后的优先槽位，具体可观察故障与验收范围尚待补齐，未在本文虚构。完整编号、范围与状态只看顶部 Current Focus 表。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
