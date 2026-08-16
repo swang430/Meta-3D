@@ -257,6 +257,69 @@ def test_hal_removed_during_lease_restores_raw_target_error(
     assert "冲突" in error_text
 
 
+@pytest.mark.parametrize("category_key", ["baseStation", "channelEmulator"])
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "test-connection",
+        "scpi-command",
+        "scpi-probe",
+    ],
+)
+def test_single_session_instruments_reject_address_override_before_lease(
+    category,
+    db,
+    monkeypatch,
+    category_key,
+    operation,
+):
+    category.category_key = category_key
+    db.commit()
+    monkeypatch.setattr(instrument_api, "_get_loaded_hal_driver", lambda _key: None)
+
+    @asynccontextmanager
+    async def _lease(*_args, **_kwargs):
+        raise AssertionError("单会话地址覆盖必须在协调租约前拒绝")
+        yield
+
+    monkeypatch.setattr(instrument_api, "instrument_test_lease", _lease)
+    monkeypatch.setattr(
+        "app.services.instrument_test_lease.instrument_test_lease", _lease
+    )
+    override = instrument_api.TestConnectionRequest(
+        ip="192.0.2.99", port=5025
+    )
+
+    if operation == "test-connection":
+        result = asyncio.run(instrument_api.test_instrument_connection(
+            category_key,
+            body=override,
+            db=db,
+        ))
+        error_text = result.message
+    elif operation == "scpi-command":
+        result = asyncio.run(instrument_api.send_scpi_command(
+            category_key,
+            request=instrument_api.ScpiCommandRequest(
+                command="*IDN?",
+                ip=override.ip,
+                port=override.port,
+            ),
+            db=db,
+        ))
+        error_text = result.error or ""
+    else:
+        with pytest.raises(instrument_api.HTTPException) as exc_info:
+            asyncio.run(instrument_api.probe_scpi_commands(
+                category_key,
+                body=override,
+                db=db,
+            ))
+        error_text = str(exc_info.value.detail)
+
+    assert "先保存配置并重新加载 HAL" in error_text
+
+
 @pytest.fixture(autouse=True)
 def setup_db():
     Base.metadata.create_all(bind=engine)
@@ -510,6 +573,14 @@ class TestAuditListIntegration:
                 driver_mode="auto",
             )
             db.add(cat)
+            db.flush()
+            db.add(InstrumentConnectionDB(
+                id=uuid.uuid4(),
+                category_id=cat.id,
+                controller_ip="127.0.0.1",
+                port=1,
+                protocol="SCPI",
+            ))
         db.commit()
 
         for key in ("vna", "baseStation"):
@@ -519,7 +590,7 @@ class TestAuditListIntegration:
             )
             client.post(
                 f"/api/v1/instruments/{key}/scpi-probe",
-                json={"ip": "127.0.0.1", "port": 1},
+                json={},
             )
 
         # No filter: 4 rows total (2 single + 2 probe).
@@ -646,7 +717,7 @@ class TestHalDriverGate:
         ):
             resp = client.post(
                 "/api/v1/instruments/baseStation/test-connection",
-                json={"ip": "192.0.2.20", "port": 5125, "protocol": "SCPI"},
+                json={"protocol": "SCPI"},
             )
 
         assert resp.status_code == 200

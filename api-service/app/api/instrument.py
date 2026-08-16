@@ -1703,7 +1703,8 @@ class TestConnectionResult(BaseModel):
 
 class TestConnectionRequest(BaseModel):
     """测试连接请求（可选覆盖参数）"""
-    ip: Optional[str] = None      # 覆盖数据库中的 IP（用于测试未保存的编辑）
+    # F64/UXM 是单会话仪表，不接受未保存地址覆盖；须保存后 reload HAL。
+    ip: Optional[str] = None      # 其他仪表可覆盖数据库 IP 测试未保存编辑
     port: Optional[int] = None    # 覆盖数据库中的端口
     protocol: Optional[str] = None
     run_by: Optional[str] = None  # 操作员标识，写入 diagnostic_runs.run_by
@@ -1791,6 +1792,17 @@ def _reconcile_diagnostic_target_with_live_driver(
     return live_ip, actual_port, None
 
 
+def _single_session_override_error(
+    category_key: str, override_requested: bool
+) -> Optional[str]:
+    if override_requested and category_key in {"baseStation", "channelEmulator"}:
+        return (
+            "F64/UXM 为单会话仪表，不允许一次性地址覆盖；"
+            "请先保存配置并重新加载 HAL"
+        )
+    return None
+
+
 @router.post("/instruments/{category_key}/test-connection", response_model=TestConnectionResult)
 async def test_instrument_connection(
     category_key: str,
@@ -1829,6 +1841,15 @@ async def test_instrument_connection(
     )
     preloaded_hal_driver = _get_loaded_hal_driver(category_key)
     override_requested = bool(body and (body.ip is not None or body.port is not None))
+    single_session_error = _single_session_override_error(
+        category_key, override_requested
+    )
+    if single_session_error:
+        return TestConnectionResult(
+            success=False,
+            status="error",
+            message=single_session_error,
+        )
     preflight_error = raw_target_error
     if preloaded_hal_driver is not None:
         _live_ip, _live_port, preflight_error = (
@@ -2502,6 +2523,17 @@ async def send_scpi_command(
         )
         return result
 
+    single_session_error = _single_session_override_error(
+        category_key, override_requested
+    )
+    if single_session_error:
+        return _audit(ScpiCommandResult(
+            command=request.command,
+            success=False,
+            error=single_session_error,
+            latency_ms=0,
+        ))
+
     preloaded_hal_driver = _get_loaded_hal_driver(category_key)
     preflight_error = raw_target_error
     if preloaded_hal_driver is not None:
@@ -2635,6 +2667,11 @@ async def probe_scpi_commands(
     )
     preloaded_hal_driver = _get_loaded_hal_driver(category_key)
     override_requested = bool(body and (body.ip is not None or body.port is not None))
+    single_session_error = _single_session_override_error(
+        category_key, override_requested
+    )
+    if single_session_error:
+        raise HTTPException(400, single_session_error)
     preflight_error = raw_target_error
     if preloaded_hal_driver is not None:
         _live_ip, _live_port, preflight_error = (
