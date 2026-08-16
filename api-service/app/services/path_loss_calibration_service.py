@@ -1413,6 +1413,7 @@ class RFChainCalibrationService:
             # 创建校准记录
             calibration = RFChainCalibration(
                 chamber_id=chamber_id,
+                use_mock=self.use_mock,
                 chain_type=ChainTypeEnum.UPLINK.value,
                 frequency_mhz=frequency_mhz,
                 has_lna=True,
@@ -1492,6 +1493,7 @@ class RFChainCalibrationService:
 
             calibration = RFChainCalibration(
                 chamber_id=chamber_id,
+                use_mock=self.use_mock,
                 chain_type=ChainTypeEnum.DOWNLINK.value,
                 frequency_mhz=frequency_mhz,
                 has_pa=True,
@@ -1736,6 +1738,12 @@ class RFChainCalibrationService:
             RFChainCalibration.status == CalibrationStatus.VALID.value
         )
 
+        if not self.use_mock:
+            query = query.filter(
+                RFChainCalibration.use_mock.is_(False),
+                RFChainCalibration.valid_until > datetime.utcnow(),
+            )
+
         if frequency_mhz:
             query = query.filter(
                 RFChainCalibration.frequency_mhz.between(
@@ -1756,6 +1764,12 @@ class RFChainCalibrationService:
             RFChainCalibration.chain_type == ChainTypeEnum.DOWNLINK.value,
             RFChainCalibration.status == CalibrationStatus.VALID.value
         )
+
+        if not self.use_mock:
+            query = query.filter(
+                RFChainCalibration.use_mock.is_(False),
+                RFChainCalibration.valid_until > datetime.utcnow(),
+            )
 
         if frequency_mhz:
             query = query.filter(
@@ -1868,6 +1882,7 @@ class MultiFrequencyPathLossService:
 
                 calibration = MultiFrequencyPathLoss(
                     chamber_id=chamber_id,
+                    use_mock=self.use_mock,
                     probe_id=probe_id,
                     polarization=polarization.value,
                     freq_start_mhz=freq_start_mhz,
@@ -2042,7 +2057,13 @@ class MultiFrequencyPathLossService:
             MultiFrequencyPathLoss.status == CalibrationStatus.VALID.value,
             MultiFrequencyPathLoss.freq_start_mhz <= frequency_mhz,
             MultiFrequencyPathLoss.freq_stop_mhz >= frequency_mhz
-        ).order_by(desc(MultiFrequencyPathLoss.calibrated_at)).first()
+        )
+        if not self.use_mock:
+            calibration = calibration.filter(
+                MultiFrequencyPathLoss.use_mock.is_(False),
+                MultiFrequencyPathLoss.valid_until > datetime.utcnow(),
+            )
+        calibration = calibration.order_by(desc(MultiFrequencyPathLoss.calibrated_at)).first()
 
         if not calibration:
             return None

@@ -50,7 +50,7 @@ const FILE_FORMAT_OPTIONS = [
   { value: 'json', label: 'JSON' },
 ]
 
-export function PatternImportPanel() {
+export function PatternImportPanel({ chamberId }: { chamberId: string }) {
   const [file, setFile] = useState<File | null>(null)
   const [probeId, setProbeId] = useState<number>(0)
   const [polarization, setPolarization] = useState<string>('V')
@@ -74,6 +74,7 @@ export function PatternImportPanel() {
     setResult(null)
     try {
       const resp = await importProbePattern({
+        chamberId,
         file,
         probeId,
         polarization,

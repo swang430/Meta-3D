@@ -44,6 +44,7 @@ import type {
 } from '../../../types/probeCalibration'
 
 interface ProbeCalibrationDetailProps {
+  chamberId: string
   probeId: number
   onClose?: () => void
   onInvalidate?: (calibrationType: string, calibrationId: string) => void
@@ -51,6 +52,7 @@ interface ProbeCalibrationDetailProps {
 }
 
 export function ProbeCalibrationDetail({
+  chamberId,
   probeId,
   onClose,
   onInvalidate,
@@ -61,7 +63,7 @@ export function ProbeCalibrationDetail({
     isLoading,
     error,
     refetch,
-  } = useProbeCalibrationData(probeId)
+  } = useProbeCalibrationData(chamberId, probeId)
 
   if (error) {
     return (
@@ -258,6 +260,17 @@ interface PanelProps<T> {
   onViewHistory?: () => void
 }
 
+function thresholdVerdictColor(
+  useMock: boolean | null | undefined,
+  passes: boolean,
+  failedColor: 'yellow' | 'red',
+) {
+  if (useMock !== false) {
+    return 'gray'
+  }
+  return passes ? 'green' : failedColor
+}
+
 function AmplitudeCalibrationPanel({
   data,
   onInvalidate,
@@ -274,6 +287,7 @@ function AmplitudeCalibrationPanel({
         calibratedBy={data.calibrated_by}
         validUntil={data.valid_until}
         status={data.status}
+        useMock={data.use_mock}
         calibrationId={data.id}
         calibrationType="amplitude"
         onInvalidate={onInvalidate}
@@ -335,6 +349,7 @@ function PhaseCalibrationPanel({
         calibratedBy={data.calibrated_by}
         validUntil={data.valid_until}
         status={data.status}
+        useMock={data.use_mock}
         calibrationId={data.id}
         calibrationType="phase"
         onInvalidate={onInvalidate}
@@ -397,6 +412,7 @@ function PolarizationCalibrationPanel({
         calibratedBy={data.calibrated_by}
         validUntil={data.valid_until}
         status={data.status}
+        useMock={data.use_mock}
         calibrationId={data.id}
         calibrationType="polarization"
         onInvalidate={onInvalidate}
@@ -418,13 +434,21 @@ function PolarizationCalibrationPanel({
           <Stack gap="xs">
             <Group justify="space-between">
               <Text size="sm">V-to-H Isolation:</Text>
-              <Badge color={data.v_to_h_isolation_db && data.v_to_h_isolation_db >= 20 ? 'green' : 'yellow'}>
+              <Badge color={thresholdVerdictColor(
+                data.use_mock,
+                data.v_to_h_isolation_db !== undefined && data.v_to_h_isolation_db >= 20,
+                'yellow',
+              )}>
                 {data.v_to_h_isolation_db?.toFixed(1)} dB
               </Badge>
             </Group>
             <Group justify="space-between">
               <Text size="sm">H-to-V Isolation:</Text>
-              <Badge color={data.h_to_v_isolation_db && data.h_to_v_isolation_db >= 20 ? 'green' : 'yellow'}>
+              <Badge color={thresholdVerdictColor(
+                data.use_mock,
+                data.h_to_v_isolation_db !== undefined && data.h_to_v_isolation_db >= 20,
+                'yellow',
+              )}>
                 {data.h_to_v_isolation_db?.toFixed(1)} dB
               </Badge>
             </Group>
@@ -436,7 +460,11 @@ function PolarizationCalibrationPanel({
           <Stack gap="xs">
             <Group justify="space-between">
               <Text size="sm">Axial Ratio:</Text>
-              <Badge color={data.axial_ratio_db && data.axial_ratio_db <= 3 ? 'green' : 'yellow'}>
+              <Badge color={thresholdVerdictColor(
+                data.use_mock,
+                data.axial_ratio_db !== undefined && data.axial_ratio_db <= 3,
+                'yellow',
+              )}>
                 {data.axial_ratio_db?.toFixed(2)} dB
               </Badge>
             </Group>
@@ -484,6 +512,7 @@ function PatternCalibrationPanel({
       </Group>
 
       <Group gap="md">
+        <CalibrationProvenanceBadge useMock={latestPattern.use_mock} />
         <Badge variant="light">Frequency: {latestPattern.frequency_mhz} MHz</Badge>
         <Badge variant="light">Polarization: {latestPattern.polarization}</Badge>
       </Group>
@@ -582,11 +611,14 @@ function LinkCalibrationPanel({
       </Group>
 
       <Group gap="md">
+        <CalibrationProvenanceBadge useMock={data.use_mock} />
         <Badge variant="light">Type: {data.calibration_type}</Badge>
         <Badge variant="light">Frequency: {data.frequency_mhz} MHz</Badge>
-        <Badge color={data.validation_pass ? 'green' : 'red'}>
-          {data.validation_pass ? 'PASS' : 'FAIL'}
-        </Badge>
+        {data.use_mock === false && (
+          <Badge color={data.validation_pass ? 'green' : 'red'}>
+            {data.validation_pass ? 'PASS' : 'FAIL'}
+          </Badge>
+        )}
       </Group>
 
       <Card padding="sm" withBorder>
@@ -609,7 +641,11 @@ function LinkCalibrationPanel({
           <Divider />
           <Group justify="space-between">
             <Text size="sm">Deviation:</Text>
-            <Badge color={Math.abs(data.deviation_db || 0) <= data.threshold_db ? 'green' : 'red'}>
+            <Badge color={thresholdVerdictColor(
+              data.use_mock,
+              data.deviation_db !== undefined && Math.abs(data.deviation_db) <= data.threshold_db,
+              'red',
+            )}>
               {data.deviation_db?.toFixed(3)} dB
             </Badge>
           </Group>
@@ -647,6 +683,7 @@ function CalibrationMetadata({
   calibratedBy,
   validUntil,
   status,
+  useMock,
   calibrationId,
   calibrationType,
   onInvalidate,
@@ -656,6 +693,7 @@ function CalibrationMetadata({
   calibratedBy?: string
   validUntil: string
   status: string
+  useMock?: boolean | null
   calibrationId: string
   calibrationType: string
   onInvalidate?: (type: string, id: string) => void
@@ -676,7 +714,11 @@ function CalibrationMetadata({
         <Text size="sm" c="dimmed">
           Valid until: {parseServerDateTime(validUntil).toLocaleDateString()}
         </Text>
-        <CalibrationStatusBadge status={status as ValidityStatus} size="xs" />
+        {useMock === false ? (
+          <CalibrationStatusBadge status={status as ValidityStatus} size="xs" />
+        ) : (
+          <CalibrationProvenanceBadge useMock={useMock} />
+        )}
       </Group>
       <Group gap="xs">
         <Button
@@ -700,6 +742,16 @@ function CalibrationMetadata({
       </Group>
     </Group>
   )
+}
+
+function CalibrationProvenanceBadge({ useMock }: { useMock?: boolean | null }) {
+  if (useMock === false) {
+    return <Badge color="green" size="xs">REAL</Badge>
+  }
+  if (useMock === true) {
+    return <Badge color="orange" size="xs">SIMULATED · UNVERIFIED</Badge>
+  }
+  return <Badge color="yellow" size="xs">SOURCE UNKNOWN · UNVERIFIED</Badge>
 }
 
 function NoDataAlert({ message }: { message: string }) {

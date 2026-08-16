@@ -97,11 +97,11 @@ class CalibrationProgress(BaseModel):
 
 class StartAmplitudeCalibrationRequest(BaseModel):
     """启动幅度校准请求"""
+    chamber_id: UUID = Field(..., description="校准所属暗室 ID")
     probe_ids: List[int] = Field(
         ...,
         min_length=1,
-        max_length=64,
-        description="要校准的探头 ID 列表 (0-63)"
+        description="要校准的探头 ID 列表；上限由 chamber.num_probes 决定"
     )
     polarizations: List[PolarizationType] = Field(
         default=[PolarizationType.V, PolarizationType.H],
@@ -125,8 +125,8 @@ class StartAmplitudeCalibrationRequest(BaseModel):
     @classmethod
     def validate_probe_ids(cls, v):
         for probe_id in v:
-            if probe_id < 0 or probe_id > 63:
-                raise ValueError(f'probe_id must be between 0 and 63, got {probe_id}')
+            if probe_id < 0:
+                raise ValueError(f'probe_id must be non-negative, got {probe_id}')
         return v
 
 
@@ -144,6 +144,8 @@ class AmplitudeCalibrationData(BaseModel):
 class AmplitudeCalibrationResponse(BaseModel):
     """幅度校准响应"""
     id: UUID
+    chamber_id: UUID
+    use_mock: Optional[bool] = None
     probe_id: int
     polarization: str
     frequency_points_mhz: List[float]
@@ -168,10 +170,10 @@ class AmplitudeCalibrationResponse(BaseModel):
 
 class StartPhaseCalibrationRequest(BaseModel):
     """启动相位校准请求"""
+    chamber_id: UUID = Field(..., description="校准所属暗室 ID")
     probe_ids: List[int] = Field(
         ...,
         min_length=1,
-        max_length=64,
         description="要校准的探头 ID 列表"
     )
     polarizations: List[PolarizationType] = Field(
@@ -181,7 +183,6 @@ class StartPhaseCalibrationRequest(BaseModel):
     reference_probe_id: int = Field(
         default=0,
         ge=0,
-        le=63,
         description="参考探头 ID"
     )
     frequency_range: FrequencyRange = Field(..., description="频率范围配置")
@@ -192,14 +193,16 @@ class StartPhaseCalibrationRequest(BaseModel):
     @classmethod
     def validate_probe_ids(cls, v):
         for probe_id in v:
-            if probe_id < 0 or probe_id > 63:
-                raise ValueError(f'probe_id must be between 0 and 63, got {probe_id}')
+            if probe_id < 0:
+                raise ValueError(f'probe_id must be non-negative, got {probe_id}')
         return v
 
 
 class PhaseCalibrationResponse(BaseModel):
     """相位校准响应"""
     id: UUID
+    chamber_id: UUID
+    use_mock: Optional[bool] = None
     probe_id: int
     polarization: str
     reference_probe_id: int
@@ -222,7 +225,8 @@ class PhaseCalibrationResponse(BaseModel):
 
 class StartPolarizationCalibrationRequest(BaseModel):
     """启动极化校准请求"""
-    probe_ids: List[int] = Field(..., min_length=1, max_length=64)
+    chamber_id: UUID = Field(..., description="校准所属暗室 ID")
+    probe_ids: List[int] = Field(..., min_length=1)
     probe_type: ProbeTypeEnum = Field(..., description="探头类型")
     frequency_range: FrequencyRange = Field(..., description="频率范围配置")
     reference_antenna_id: Optional[str] = Field(None, description="参考天线设备 ID")
@@ -249,6 +253,8 @@ class CircularPolarizationData(BaseModel):
 class PolarizationCalibrationResponse(BaseModel):
     """极化校准响应"""
     id: UUID
+    chamber_id: UUID
+    use_mock: Optional[bool] = None
     probe_id: int
     probe_type: str
     # 线极化数据
@@ -278,7 +284,8 @@ class PolarizationCalibrationResponse(BaseModel):
 
 class StartPatternCalibrationRequest(BaseModel):
     """启动方向图校准请求"""
-    probe_ids: List[int] = Field(..., min_length=1, max_length=64)
+    chamber_id: UUID = Field(..., description="校准所属暗室 ID")
+    probe_ids: List[int] = Field(..., min_length=1)
     polarizations: List[PolarizationType] = Field(
         default=[PolarizationType.V, PolarizationType.H]
     )
@@ -299,6 +306,8 @@ class StartPatternCalibrationRequest(BaseModel):
 class PatternCalibrationResponse(BaseModel):
     """方向图校准响应"""
     id: UUID
+    chamber_id: UUID
+    use_mock: Optional[bool] = None
     probe_id: int
     polarization: str
     frequency_mhz: float
@@ -405,6 +414,7 @@ class ProbeLinkCalibration(BaseModel):
 class LinkCalibrationResponse(BaseModel):
     """链路校准响应"""
     id: UUID
+    use_mock: Optional[bool] = None
     calibration_type: str
     # 标准 DUT
     standard_dut_type: Optional[str] = None
@@ -432,6 +442,7 @@ class LinkCalibrationResponse(BaseModel):
 
 class ProbeCalibrationStatus(BaseModel):
     """单个探头的校准状态"""
+    chamber_id: UUID
     probe_id: int
     # 各类校准状态
     amplitude: Optional[Dict[str, Any]] = Field(
@@ -443,15 +454,24 @@ class ProbeCalibrationStatus(BaseModel):
     pattern: Optional[Dict[str, Any]] = None
     link: Optional[Dict[str, Any]] = None
     # 总体状态
-    overall_status: str = Field(..., description="valid | expiring_soon | expired | unknown")
+    overall_status: str = Field(
+        ...,
+        description="valid | partial | expiring_soon | expired | unknown",
+    )
 
 
 class CalibrationValidityReport(BaseModel):
     """校准有效性报告"""
+    chamber_id: UUID
     total_probes: int
     valid_probes: int
+    partial_probes: int = 0
     expired_probes: int
     expiring_soon_probes: int  # 7 天内过期
+    probe_statuses: Dict[int, str] = Field(
+        default_factory=dict,
+        description="逐探头权威总体状态: probe_id -> valid | partial | expiring_soon | expired | unknown",
+    )
 
     expired_calibrations: List[Dict[str, Any]] = Field(
         default=[],
@@ -502,6 +522,10 @@ class CalibrationHistoryItem(BaseModel):
     calibrated_at: UTCDateTime
     calibrated_by: Optional[str] = None
     status: str
+    use_mock: Optional[bool] = Field(
+        None,
+        description="False=真实校准；True=模拟；NULL=历史来源未知",
+    )
     summary: Dict[str, Any] = Field(
         default={},
         description="关键参数摘要"
@@ -510,6 +534,7 @@ class CalibrationHistoryItem(BaseModel):
 
 class CalibrationHistoryResponse(BaseModel):
     """校准历史响应"""
+    chamber_id: UUID
     probe_id: int
     history: List[CalibrationHistoryItem]
     # 趋势分析
@@ -523,6 +548,7 @@ class CalibrationHistoryResponse(BaseModel):
 
 class ProbeCalibrationDataResponse(BaseModel):
     """探头校准数据综合响应"""
+    chamber_id: UUID
     probe_id: int
     amplitude_calibration: Optional[AmplitudeCalibrationResponse] = None
     phase_calibration: Optional[PhaseCalibrationResponse] = None
@@ -695,6 +721,7 @@ class RFChainCalibrationResponse(BaseModel):
     """RF 链路增益校准响应"""
     id: UUID
     chamber_id: UUID
+    use_mock: Optional[bool] = None
     chain_type: str
     frequency_mhz: float
 
@@ -781,6 +808,7 @@ class MultiFrequencyPathLossResponse(BaseModel):
     """多频点路损校准响应"""
     id: UUID
     chamber_id: UUID
+    use_mock: Optional[bool] = None
     probe_id: int
     polarization: str
 

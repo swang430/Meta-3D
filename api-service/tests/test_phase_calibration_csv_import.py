@@ -23,6 +23,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base, get_db
 from app.main import app
+from app.models.chamber import ChamberConfiguration
 from app.models.probe_calibration import (
     CalibrationStatus,
     ProbePhaseCalibration,
@@ -31,6 +32,7 @@ from app.services.probe_calibration_service import PROBE_ID_MAX
 
 
 CSV_ENDPOINT = "/api/v1/calibration/probe/phase/import-csv"
+CHAMBER_ID = uuid.UUID("a1111111-1111-1111-1111-111111111153")
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +49,16 @@ def db_session():
     Base.metadata.create_all(bind=engine)
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     db = SessionLocal()
+    db.add(
+        ChamberConfiguration(
+            id=CHAMBER_ID,
+            name="P1-53 phase import chamber",
+            chamber_type="custom",
+            chamber_radius_m=4.0,
+            num_probes=64,
+        )
+    )
+    db.commit()
     try:
         yield db, SessionLocal
     finally:
@@ -90,6 +102,7 @@ def _valid_csv(num_rows: int = 5) -> bytes:
 def _post_csv(client, csv_bytes: bytes, **form_overrides):
     """POST helper with sensible defaults so each test only overrides what matters."""
     form = {
+        "chamber_id": str(CHAMBER_ID),
         "probe_id": "5",
         "polarization": "V",
         "reference_probe_id": "0",
@@ -150,7 +163,11 @@ class TestCSVValidation:
         r = client.post(
             CSV_ENDPOINT,
             files={"file": ("empty.csv", io.BytesIO(b""), "text/csv")},
-            data={"probe_id": "5", "polarization": "V"},
+            data={
+                "chamber_id": str(CHAMBER_ID),
+                "probe_id": "5",
+                "polarization": "V",
+            },
         )
         assert r.status_code == 400
         assert "empty" in r.json()["detail"].lower()
@@ -266,7 +283,7 @@ class TestProbeIdentifierValidation:
     def test_probe_id_above_max_rejected(self, client):
         r = _post_csv(client, _valid_csv(), probe_id=PROBE_ID_MAX + 1)
         assert r.status_code == 400
-        assert "probe_id" in r.json()["detail"]
+        assert "probe id" in r.json()["detail"].lower()
 
     def test_reference_probe_equals_probe_id_rejected(self, client):
         """A probe can't be its own phase reference — would always measure 0."""
@@ -345,7 +362,10 @@ class TestReplaceExistingSemantics:
 
         # The mock get_phase_calibration filters by probe_id + (optional) polarization
         # and returns most recent — newly imported cert should be the one returned.
-        get = client.get("/api/v1/calibration/probe/phase/5", params={"polarization": "V"})
+        get = client.get(
+            "/api/v1/calibration/probe/phase/5",
+            params={"chamber_id": str(CHAMBER_ID), "polarization": "V"},
+        )
         assert get.status_code == 200, get.text
         body = get.json()
         # Round-trip: same length + same first/last freq values

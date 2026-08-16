@@ -32,15 +32,17 @@ import { CalibrationStatusBadge, ProbeCalibrationStatusSummary } from './Calibra
 import type { ValidityStatus } from '../../../types/probeCalibration'
 
 interface ProbeCalibrationGridProps {
+  chamberId: string
   onProbeSelect?: (probeId: number) => void
   selectedProbeId?: number
-  probeCount?: number
+  probeCount: number
 }
 
 export function ProbeCalibrationGrid({
+  chamberId,
   onProbeSelect,
   selectedProbeId,
-  probeCount = 32,
+  probeCount,
 }: ProbeCalibrationGridProps) {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [searchQuery, setSearchQuery] = useState('')
@@ -56,7 +58,7 @@ export function ProbeCalibrationGrid({
     isLoading,
     error,
     refetch,
-  } = useValidityReport(probeIdsString)
+  } = useValidityReport(chamberId, probeIdsString)
 
   // Create a map of probe validity from the report
   const probeStatusMap = useMemo(() => {
@@ -69,25 +71,9 @@ export function ProbeCalibrationGrid({
       map.set(i, 'unknown')
     }
 
-    // Mark valid probes
-    // Note: The API returns counts, not individual statuses
-    // We need to infer from expired/expiring lists
-    validityReport.expired_calibrations.forEach((cal) => {
-      const current = map.get(cal.probe_id)
-      if (current !== 'expired') {
-        map.set(cal.probe_id, 'expired')
-      }
+    Object.entries(validityReport.probe_statuses).forEach(([probeId, status]) => {
+      map.set(Number(probeId), status)
     })
-
-    validityReport.expiring_soon_calibrations.forEach((cal) => {
-      const current = map.get(cal.probe_id)
-      if (current !== 'expired') {
-        map.set(cal.probe_id, 'expiring_soon')
-      }
-    })
-
-    // The rest are valid if they have calibration data
-    // This is a simplification - in real app, we'd need per-probe status
     return map
   }, [validityReport, probeCount])
 
@@ -139,6 +125,7 @@ export function ProbeCalibrationGrid({
             data={[
               { label: 'All', value: 'all' },
               { label: 'Valid', value: 'valid' },
+              { label: 'Partial', value: 'partial' },
               { label: 'Expiring', value: 'expiring_soon' },
               { label: 'Expired', value: 'expired' },
             ]}
@@ -168,6 +155,9 @@ export function ProbeCalibrationGrid({
           <Badge color="green" variant="light" size="lg">
             {validityReport.valid_probes} Valid
           </Badge>
+          <Badge color="orange" variant="light" size="lg">
+            {validityReport.partial_probes} Partial
+          </Badge>
           <Badge color="yellow" variant="light" size="lg">
             {validityReport.expiring_soon_probes} Expiring
           </Badge>
@@ -177,6 +167,7 @@ export function ProbeCalibrationGrid({
           <Badge color="gray" variant="light" size="lg">
             {validityReport.total_probes -
               validityReport.valid_probes -
+              validityReport.partial_probes -
               validityReport.expiring_soon_probes -
               validityReport.expired_probes}{' '}
             Unknown
@@ -207,6 +198,7 @@ export function ProbeCalibrationGrid({
         <Stack gap="xs">
           {filteredProbes.map((probeId) => (
             <ProbeListItem
+              chamberId={chamberId}
               key={probeId}
               probeId={probeId}
               status={probeStatusMap.get(probeId) || 'unknown'}
@@ -239,6 +231,7 @@ interface ProbeCardProps {
 function ProbeCard({ probeId, status, isSelected, onClick }: ProbeCardProps) {
   const statusColors: Record<ValidityStatus, string> = {
     valid: 'green',
+    partial: 'orange',
     expiring_soon: 'yellow',
     expired: 'red',
     unknown: 'gray',
@@ -280,14 +273,15 @@ function ProbeCard({ probeId, status, isSelected, onClick }: ProbeCardProps) {
 }
 
 interface ProbeListItemProps {
+  chamberId: string
   probeId: number
   status: ValidityStatus
   isSelected?: boolean
   onClick?: () => void
 }
 
-function ProbeListItem({ probeId, status, isSelected, onClick }: ProbeListItemProps) {
-  const { data: probeValidity } = useProbeValidity(probeId)
+function ProbeListItem({ chamberId, probeId, status, isSelected, onClick }: ProbeListItemProps) {
+  const { data: probeValidity } = useProbeValidity(chamberId, probeId)
 
   return (
     <Paper

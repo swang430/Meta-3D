@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 import logging
 
+from app.models.chamber import ChamberConfiguration
 from app.models.probe_calibration import (
     ProbeAmplitudeCalibration,
     ProbePhaseCalibration,
@@ -250,10 +251,11 @@ class AmplitudeCalibrationService:
         polarizations: List[PolarizationType],
         frequency_range: FrequencyRange,
         calibrated_by: str,
+        *,
+        chamber_id: UUID,
         reference_antenna_id: Optional[str] = None,
         power_meter_id: Optional[str] = None,
         use_mock: bool = True,
-        chamber_id: Optional[UUID] = None,
     ) -> CalibrationResult:
         """
         执行幅度校准
@@ -320,6 +322,7 @@ class AmplitudeCalibrationService:
                     calibration = ProbeAmplitudeCalibration(
                         probe_id=probe_id,
                         chamber_id=chamber_id,  # 校准 chamber-scoping; None=未标注/legacy
+                        use_mock=use_mock,
                         polarization=pol.value,
                         frequency_points_mhz=freq_points,
                         tx_gain_dbi=tx_gains,
@@ -668,9 +671,10 @@ class PhaseCalibrationService:
         frequency_range: FrequencyRange,
         reference_probe_id: int,
         calibrated_by: str,
+        *,
+        chamber_id: UUID,
         vna_id: Optional[str] = None,
         use_mock: bool = True,
-        chamber_id: Optional[UUID] = None,
     ) -> CalibrationResult:
         """
         执行相位校准
@@ -735,6 +739,7 @@ class PhaseCalibrationService:
                     calibration = ProbePhaseCalibration(
                         probe_id=probe_id,
                         chamber_id=chamber_id,  # 校准 chamber-scoping; None=未标注/legacy
+                        use_mock=use_mock,
                         polarization=pol.value,
                         reference_probe_id=reference_probe_id,
                         frequency_points_mhz=freq_points,
@@ -1036,10 +1041,11 @@ class PolarizationCalibrationService:
         probe_type: str,
         frequency_range: FrequencyRange,
         calibrated_by: str,
+        *,
+        chamber_id: UUID,
         reference_antenna_id: Optional[str] = None,
         positioner_id: Optional[str] = None,
         use_mock: bool = True,
-        chamber_id: Optional[UUID] = None,
     ) -> CalibrationResult:
         """
         执行极化校准
@@ -1102,6 +1108,7 @@ class PolarizationCalibrationService:
                     calibration = ProbePolarizationCalibration(
                         probe_id=probe_id,
                         chamber_id=chamber_id,  # 校准 chamber-scoping; None=未标注/legacy
+                        use_mock=use_mock,
                         probe_type=probe_type,
                         v_to_h_isolation_db=avg_v_to_h,
                         h_to_v_isolation_db=avg_h_to_v,
@@ -1131,6 +1138,7 @@ class PolarizationCalibrationService:
                     calibration = ProbePolarizationCalibration(
                         probe_id=probe_id,
                         chamber_id=chamber_id,  # 校准 chamber-scoping; None=未标注/legacy
+                        use_mock=use_mock,
                         probe_type=probe_type,
                         polarization_hand=hand,
                         axial_ratio_db=avg_ar,
@@ -1488,6 +1496,8 @@ class PatternCalibrationService:
         polarizations: List[PolarizationType],
         frequency_mhz: float,
         calibrated_by: str,
+        *,
+        chamber_id: UUID,
         azimuth_step_deg: float = DEFAULT_AZIMUTH_STEP_DEG,
         elevation_step_deg: float = DEFAULT_ELEVATION_STEP_DEG,
         measurement_distance_m: float = 3.0,
@@ -1498,7 +1508,6 @@ class PatternCalibrationService:
         sgh_gain_dbi: float = 10.0,
         chain_correction_db: float = 0.0,
         use_mock: bool = True,
-        chamber_id: Optional[UUID] = None,
     ) -> CalibrationResult:
         """
         执行方向图校准
@@ -1617,6 +1626,8 @@ class PatternCalibrationService:
                     calibration = ProbePattern(
                         probe_id=probe_id,
                         chamber_id=chamber_id,  # 校准 chamber-scoping; None=未标注/legacy
+                        use_mock=use_mock,
+                        source="simulated" if use_mock else "in_chamber_measured",
                         polarization=polarization.value if hasattr(polarization, 'value') else str(polarization),
                         frequency_mhz=frequency_mhz,
                         azimuth_deg=azimuth_deg_native,
@@ -2036,9 +2047,11 @@ class LinkCalibrationService:
 
             # 验证
             is_pass, quality = validate_link_calibration(deviation, threshold_db)
+            formal_validation_pass = is_pass if not use_mock else None
 
             # 创建校准记录
             calibration = LinkCalibration(
+                use_mock=use_mock,
                 calibration_type=calibration_type,
                 standard_dut_type=standard_dut.get('dut_type'),
                 standard_dut_model=standard_dut.get('model'),
@@ -2048,7 +2061,7 @@ class LinkCalibrationService:
                 measured_gain_dbi=measured_gain,
                 deviation_db=deviation,
                 probe_link_calibrations=probe_calibrations,
-                validation_pass=is_pass,
+                validation_pass=formal_validation_pass,
                 threshold_db=threshold_db,
                 calibrated_at=datetime.utcnow(),
                 calibrated_by=calibrated_by
@@ -2065,13 +2078,17 @@ class LinkCalibrationService:
 
             return CalibrationResult(
                 success=True,
-                message=f"Link calibration completed, result: {'PASS' if is_pass else 'FAIL'}",
+                message=(
+                    "Link calibration completed, result: UNVERIFIED (simulated)"
+                    if use_mock
+                    else f"Link calibration completed, result: {'PASS' if is_pass else 'FAIL'}"
+                ),
                 data={
                     "calibration_id": str(calibration.id),
                     "measured_gain_dbi": round(measured_gain, 2),
                     "known_gain_dbi": known_gain_dbi,
                     "deviation_db": round(deviation, 3),
-                    "validation_pass": is_pass,
+                    "validation_pass": formal_validation_pass,
                     "quality": quality,
                     "num_probes": len(probe_calibrations) if probe_calibrations else 0
                 },
@@ -2158,12 +2175,23 @@ class LinkCalibrationService:
         Returns:
             有效性状态
         """
-        latest = self.get_latest_calibration(db)
+        latest = db.query(LinkCalibration).filter(
+            LinkCalibration.use_mock.is_(False)
+        ).order_by(desc(LinkCalibration.calibrated_at)).first()
 
         if not latest:
             return {
                 "status": "unknown",
                 "message": "No link calibration found"
+            }
+
+        if latest.use_mock is not False:
+            return {
+                "status": "unknown",
+                "calibration_id": str(latest.id),
+                "use_mock": latest.use_mock,
+                "validation_pass": None,
+                "message": "Link calibration provenance is not verified",
             }
 
         now = datetime.utcnow()
@@ -2250,7 +2278,8 @@ class CalibrationValidityService:
     def check_validity(
         self,
         db: Session,
-        probe_id: int
+        probe_id: int,
+        chamber_id: UUID,
     ) -> Dict[str, Any]:
         """
         检查探头的校准有效性
@@ -2267,6 +2296,7 @@ class CalibrationValidityService:
 
         result = {
             "probe_id": probe_id,
+            "chamber_id": str(chamber_id),
             "amplitude": None,
             "phase": None,
             "polarization": None,
@@ -2278,7 +2308,9 @@ class CalibrationValidityService:
         # 检查幅度校准
         amplitude = db.query(ProbeAmplitudeCalibration).filter(
             ProbeAmplitudeCalibration.probe_id == probe_id,
-            ProbeAmplitudeCalibration.status != CalibrationStatus.INVALIDATED.value
+            ProbeAmplitudeCalibration.chamber_id == chamber_id,
+            ProbeAmplitudeCalibration.status != CalibrationStatus.INVALIDATED.value,
+            ProbeAmplitudeCalibration.use_mock.is_(False),
         ).order_by(desc(ProbeAmplitudeCalibration.calibrated_at)).first()
 
         if amplitude:
@@ -2287,7 +2319,9 @@ class CalibrationValidityService:
         # 检查相位校准
         phase = db.query(ProbePhaseCalibration).filter(
             ProbePhaseCalibration.probe_id == probe_id,
-            ProbePhaseCalibration.status != CalibrationStatus.INVALIDATED.value
+            ProbePhaseCalibration.chamber_id == chamber_id,
+            ProbePhaseCalibration.status != CalibrationStatus.INVALIDATED.value,
+            ProbePhaseCalibration.use_mock.is_(False),
         ).order_by(desc(ProbePhaseCalibration.calibrated_at)).first()
 
         if phase:
@@ -2296,7 +2330,9 @@ class CalibrationValidityService:
         # 检查极化校准
         polarization = db.query(ProbePolarizationCalibration).filter(
             ProbePolarizationCalibration.probe_id == probe_id,
-            ProbePolarizationCalibration.status != CalibrationStatus.INVALIDATED.value
+            ProbePolarizationCalibration.chamber_id == chamber_id,
+            ProbePolarizationCalibration.status != CalibrationStatus.INVALIDATED.value,
+            ProbePolarizationCalibration.use_mock.is_(False),
         ).order_by(desc(ProbePolarizationCalibration.calibrated_at)).first()
 
         if polarization:
@@ -2305,7 +2341,9 @@ class CalibrationValidityService:
         # 检查方向图校准
         pattern = db.query(ProbePattern).filter(
             ProbePattern.probe_id == probe_id,
-            ProbePattern.status != CalibrationStatus.INVALIDATED.value
+            ProbePattern.chamber_id == chamber_id,
+            ProbePattern.status != CalibrationStatus.INVALIDATED.value,
+            ProbePattern.use_mock.is_(False),
         ).order_by(desc(ProbePattern.measured_at)).first()
 
         if pattern:
@@ -2313,7 +2351,9 @@ class CalibrationValidityService:
 
         # 检查链路校准 (链路校准是全局的，不是按探头分的)
         # 这里返回最新的链路校准状态
-        link = db.query(LinkCalibration).order_by(
+        link = db.query(LinkCalibration).filter(
+            LinkCalibration.use_mock.is_(False)
+        ).order_by(
             desc(LinkCalibration.calibrated_at)
         ).first()
 
@@ -2323,9 +2363,12 @@ class CalibrationValidityService:
             link_status = {
                 "calibration_id": str(link.id),
                 "valid_until": link_valid_until.isoformat(),
-                "validation_pass": link.validation_pass
+                "validation_pass": link.validation_pass if link.use_mock is False else None,
+                "use_mock": link.use_mock,
             }
-            if link_valid_until < now:
+            if link.use_mock is not False:
+                link_status["status"] = "unknown"
+            elif link_valid_until < now:
                 link_status["status"] = "expired"
                 link_status["days_overdue"] = (now - link_valid_until).days
             elif link_valid_until < expiring_threshold:
@@ -2339,16 +2382,23 @@ class CalibrationValidityService:
 
         # 计算总体状态
         calibration_statuses = []
-        for cal_type in ["amplitude", "phase", "polarization", "pattern", "link"]:
+        # LinkCalibration is a global facility check, not proof that this probe's
+        # four chamber-scoped calibration families are complete.
+        for cal_type in ["amplitude", "phase", "polarization", "pattern"]:
             if result[cal_type] is not None:
                 calibration_statuses.append(result[cal_type]["status"])
 
+        missing_required = any(result[cal_type] is None for cal_type in [
+            "amplitude", "phase", "polarization", "pattern"
+        ])
         if not calibration_statuses:
             result["overall_status"] = "unknown"
         elif "expired" in calibration_statuses:
             result["overall_status"] = "expired"
         elif "expiring_soon" in calibration_statuses:
             result["overall_status"] = "expiring_soon"
+        elif missing_required:
+            result["overall_status"] = "partial"
         elif all(s == "valid" for s in calibration_statuses):
             result["overall_status"] = "valid"
         else:
@@ -2393,6 +2443,7 @@ class CalibrationValidityService:
     def generate_validity_report(
         self,
         db: Session,
+        chamber_id: UUID,
         probe_ids: Optional[List[int]] = None
     ) -> Dict[str, Any]:
         """
@@ -2406,34 +2457,42 @@ class CalibrationValidityService:
             有效性报告
         """
         if probe_ids is None:
-            probe_ids = list(range(PROBE_ID_MIN, PROBE_ID_MAX + 1))
+            chamber = db.get(ChamberConfiguration, chamber_id)
+            if chamber is None:
+                raise ValueError(f"Chamber configuration {chamber_id} not found")
+            probe_ids = list(range(chamber.num_probes))
 
         total_probes = len(probe_ids)
         valid_probes = 0
+        partial_probes = 0
         expired_probes = 0
         expiring_soon_probes = 0
+        probe_statuses: Dict[int, str] = {}
 
         expired_calibrations = []
         expiring_soon_calibrations = []
         recommendations = []
 
-        calibration_types = ["amplitude", "phase", "polarization", "pattern", "link"]
+        calibration_types = ["amplitude", "phase", "polarization", "pattern"]
         priority_map = {
             "amplitude": "critical",
             "phase": "critical",
             "polarization": "high",
             "pattern": "medium",
-            "link": "critical"
         }
 
         for probe_id in probe_ids:
-            status = self.check_validity(db, probe_id)
+            status = self.check_validity(db, probe_id, chamber_id)
+            overall_status = status["overall_status"]
+            probe_statuses[probe_id] = overall_status
 
-            if status["overall_status"] == "valid":
+            if overall_status == "valid":
                 valid_probes += 1
-            elif status["overall_status"] == "expired":
+            elif overall_status == "partial":
+                partial_probes += 1
+            elif overall_status == "expired":
                 expired_probes += 1
-            elif status["overall_status"] == "expiring_soon":
+            elif overall_status == "expiring_soon":
                 expiring_soon_probes += 1
 
             # 收集所有校准类型的状态
@@ -2444,6 +2503,7 @@ class CalibrationValidityService:
 
                 if cal_status["status"] == "expired":
                     expired_calibrations.append({
+                        "chamber_id": str(chamber_id),
                         "probe_id": probe_id,
                         "calibration_type": cal_type,
                         "days_overdue": cal_status.get("days_overdue", 0),
@@ -2458,6 +2518,7 @@ class CalibrationValidityService:
                     })
                 elif cal_status["status"] == "expiring_soon":
                     expiring_soon_calibrations.append({
+                        "chamber_id": str(chamber_id),
                         "probe_id": probe_id,
                         "calibration_type": cal_type,
                         "days_remaining": cal_status.get("days_remaining", 0),
@@ -2473,10 +2534,13 @@ class CalibrationValidityService:
                     })
 
         return {
+            "chamber_id": str(chamber_id),
             "total_probes": total_probes,
             "valid_probes": valid_probes,
+            "partial_probes": partial_probes,
             "expired_probes": expired_probes,
             "expiring_soon_probes": expiring_soon_probes,
+            "probe_statuses": probe_statuses,
             "expired_calibrations": expired_calibrations,
             "expiring_soon_calibrations": expiring_soon_calibrations,
             "recommendations": recommendations
@@ -2487,6 +2551,7 @@ class CalibrationValidityService:
         db: Session,
         calibration_type: str,
         calibration_id: str,
+        chamber_id: Optional[UUID],
         reason: str
     ) -> Dict[str, Any]:
         """
@@ -2527,7 +2592,15 @@ class CalibrationValidityService:
                 "message": f"Invalid calibration ID format: {calibration_id}"
             }
 
-        calibration = db.query(model).filter(model.id == cal_uuid).first()
+        query = db.query(model).filter(model.id == cal_uuid)
+        if calibration_type != "link":
+            if chamber_id is None:
+                return {
+                    "success": False,
+                    "message": "chamber_id is required for probe calibration invalidation",
+                }
+            query = query.filter(model.chamber_id == chamber_id)
+        calibration = query.first()
 
         if not calibration:
             return {
@@ -2561,6 +2634,7 @@ class CalibrationValidityService:
     def get_expiring_calibrations(
         self,
         db: Session,
+        chamber_id: UUID,
         days_threshold: int = 7,
         calibration_type: Optional[str] = None
     ) -> List[Dict[str, Any]]:
@@ -2593,6 +2667,8 @@ class CalibrationValidityService:
 
             # 查询即将过期的校准 (在有效期内但即将过期)
             query = db.query(model).filter(
+                model.chamber_id == chamber_id,
+                model.use_mock.is_(False),
                 getattr(model, valid_until_field) > now,
                 getattr(model, valid_until_field) <= expiring_threshold,
                 model.status != CalibrationStatus.INVALIDATED.value
@@ -2603,6 +2679,7 @@ class CalibrationValidityService:
                 days_remaining = (valid_until - now).days
 
                 results.append({
+                    "chamber_id": str(chamber_id),
                     "calibration_type": cal_type,
                     "calibration_id": str(cal.id),
                     "probe_id": cal.probe_id,
@@ -2613,7 +2690,9 @@ class CalibrationValidityService:
 
         # 链路校准单独处理 (没有 valid_until 字段)
         if not calibration_type or calibration_type == "link":
-            link_cals = db.query(LinkCalibration).all()
+            link_cals = db.query(LinkCalibration).filter(
+                LinkCalibration.use_mock.is_(False)
+            ).all()
             for link in link_cals:
                 link_valid_until = link.calibrated_at + timedelta(days=LINK_CALIBRATION_VALIDITY_DAYS)
                 if now < link_valid_until <= expiring_threshold:
@@ -2635,6 +2714,7 @@ class CalibrationValidityService:
     def get_expired_calibrations(
         self,
         db: Session,
+        chamber_id: UUID,
         calibration_type: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
@@ -2663,6 +2743,8 @@ class CalibrationValidityService:
 
             # 查询已过期但未作废的校准
             query = db.query(model).filter(
+                model.chamber_id == chamber_id,
+                model.use_mock.is_(False),
                 getattr(model, valid_until_field) < now,
                 model.status != CalibrationStatus.INVALIDATED.value
             ).order_by(getattr(model, valid_until_field))
@@ -2672,6 +2754,7 @@ class CalibrationValidityService:
                 days_overdue = (now - valid_until).days
 
                 results.append({
+                    "chamber_id": str(chamber_id),
                     "calibration_type": cal_type,
                     "calibration_id": str(cal.id),
                     "probe_id": cal.probe_id,
@@ -2682,7 +2765,9 @@ class CalibrationValidityService:
 
         # 链路校准单独处理
         if not calibration_type or calibration_type == "link":
-            link_cals = db.query(LinkCalibration).all()
+            link_cals = db.query(LinkCalibration).filter(
+                LinkCalibration.use_mock.is_(False)
+            ).all()
             for link in link_cals:
                 link_valid_until = link.calibrated_at + timedelta(days=LINK_CALIBRATION_VALIDITY_DAYS)
                 if link_valid_until < now:

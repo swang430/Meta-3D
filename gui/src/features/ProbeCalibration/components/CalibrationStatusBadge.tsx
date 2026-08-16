@@ -34,6 +34,11 @@ const STATUS_CONFIG: Record<
     label: 'Valid',
     icon: IconCheck,
   },
+  partial: {
+    color: 'orange',
+    label: 'Partial',
+    icon: IconAlertTriangle,
+  },
   expiring_soon: {
     color: 'yellow',
     label: 'Expiring Soon',
@@ -71,6 +76,8 @@ export function CalibrationStatusBadge({
 
     if (status === 'valid' && daysRemaining !== undefined) {
       parts.push(`Valid for ${daysRemaining} more days`)
+    } else if (status === 'partial') {
+      parts.push('One or more required calibration families are missing')
     } else if (status === 'expiring_soon' && daysRemaining !== undefined) {
       parts.push(`Expires in ${daysRemaining} days`)
     } else if (status === 'expired' && daysOverdue !== undefined) {
@@ -143,6 +150,7 @@ export function ProbeCalibrationStatusSummary({
 interface OverallStatusIndicatorProps {
   status: ValidityStatus
   validCount?: number
+  partialCount?: number
   expiringSoonCount?: number
   expiredCount?: number
   unknownCount?: number
@@ -151,6 +159,7 @@ interface OverallStatusIndicatorProps {
 export function OverallStatusIndicator({
   status,
   validCount = 0,
+  partialCount = 0,
   expiringSoonCount = 0,
   expiredCount = 0,
   unknownCount = 0,
@@ -164,7 +173,7 @@ export function OverallStatusIndicator({
         {config.label}
       </Badge>
       <Text size="xs" c="dimmed">
-        {validCount} valid, {expiringSoonCount} expiring, {expiredCount} expired
+        {validCount} valid, {partialCount} partial, {expiringSoonCount} expiring, {expiredCount} expired
         {unknownCount > 0 && `, ${unknownCount} unknown`}
       </Text>
     </Group>

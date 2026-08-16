@@ -8,7 +8,7 @@ Integrates with PDFGenerator for report generation.
 import os
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -91,6 +91,36 @@ def _path_loss_validation_pass(
     )
 
 
+def _probe_validation_pass(calibration: Any) -> Optional[bool]:
+    """Only explicit-real, unexpired probe calibration can receive a verdict."""
+    if getattr(calibration, "use_mock", None) is not False:
+        return None
+    return bool(
+        calibration.status == "valid"
+        and calibration.valid_until
+        and calibration.valid_until > datetime.utcnow()
+    )
+
+
+def _link_validation_pass(calibration: LinkCalibration) -> Optional[bool]:
+    """Only an explicit-real, unexpired global link check has a verdict."""
+    if calibration.use_mock is not False:
+        return None
+    is_current = (
+        calibration.calibrated_at
+        and calibration.calibrated_at + timedelta(days=7) > datetime.utcnow()
+    )
+    return bool(is_current and calibration.validation_pass is True)
+
+
+def _active_validation_pass(calibration: Any) -> bool:
+    return bool(
+        calibration.status == "valid"
+        and calibration.valid_until
+        and calibration.valid_until > datetime.utcnow()
+    )
+
+
 class CalibrationReportGenerator:
     """Service for generating calibration reports"""
 
@@ -101,6 +131,7 @@ class CalibrationReportGenerator:
     def generate_comprehensive_report(
         self,
         session_id: Optional[UUID] = None,
+        chamber_id: Optional[UUID] = None,
         output_path: Optional[str] = None,
         include_probe: bool = True,
         include_channel: bool = True,
@@ -122,6 +153,7 @@ class CalibrationReportGenerator:
         # Collect data
         report_data = self._collect_report_data(
             session_id=session_id,
+            chamber_id=chamber_id,
             include_probe=include_probe,
             include_channel=include_channel,
         )
@@ -162,12 +194,14 @@ class CalibrationReportGenerator:
 
     def generate_probe_calibration_report(
         self,
+        chamber_id: UUID,
         probe_ids: Optional[List[int]] = None,
         calibration_type: Optional[str] = None,
         output_path: Optional[str] = None,
     ) -> str:
         """Generate report for probe calibrations only"""
         report_data = self._collect_probe_data(
+            chamber_id=chamber_id,
             probe_ids=probe_ids,
             calibration_type=calibration_type,
         )
@@ -337,14 +371,16 @@ class CalibrationReportGenerator:
 
         uplink_data = []
         for cal in uplink_cals:
-            total += 1
-            is_valid = cal.status == 'valid'
-            if is_valid:
-                passed += 1
+            is_valid = _probe_validation_pass(cal)
+            if is_valid is not None:
+                total += 1
+                if is_valid:
+                    passed += 1
             uplink_data.append({
                 'id': str(cal.id),
                 'frequency_mhz': cal.frequency_mhz,
                 'validation_pass': is_valid,
+                'use_mock': cal.use_mock,
                 'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                 'calibrated_by': cal.calibrated_by,
                 'valid_until': str(cal.valid_until) if cal.valid_until else None,
@@ -367,14 +403,16 @@ class CalibrationReportGenerator:
 
         downlink_data = []
         for cal in downlink_cals:
-            total += 1
-            is_valid = cal.status == 'valid'
-            if is_valid:
-                passed += 1
+            is_valid = _probe_validation_pass(cal)
+            if is_valid is not None:
+                total += 1
+                if is_valid:
+                    passed += 1
             downlink_data.append({
                 'id': str(cal.id),
                 'frequency_mhz': cal.frequency_mhz,
                 'validation_pass': is_valid,
+                'use_mock': cal.use_mock,
                 'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                 'calibrated_by': cal.calibrated_by,
                 'valid_until': str(cal.valid_until) if cal.valid_until else None,
@@ -396,15 +434,17 @@ class CalibrationReportGenerator:
 
         multi_freq_data = []
         for cal in multi_freq_cals:
-            total += 1
-            is_valid = cal.status == 'valid'
-            if is_valid:
-                passed += 1
+            is_valid = _probe_validation_pass(cal)
+            if is_valid is not None:
+                total += 1
+                if is_valid:
+                    passed += 1
             multi_freq_data.append({
                 'id': str(cal.id),
                 'probe_id': cal.probe_id,
                 'polarization': cal.polarization,
                 'validation_pass': is_valid,
+                'use_mock': cal.use_mock,
                 'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                 'valid_until': str(cal.valid_until) if cal.valid_until else None,
                 'freq_start_mhz': cal.freq_start_mhz,
@@ -427,6 +467,7 @@ class CalibrationReportGenerator:
     def _collect_report_data(
         self,
         session_id: Optional[UUID],
+        chamber_id: Optional[UUID],
         include_probe: bool,
         include_channel: bool,
     ) -> Dict[str, Any]:
@@ -458,9 +499,12 @@ class CalibrationReportGenerator:
 
         # Collect probe data
         if include_probe:
-            probe_data = self._collect_probe_data()
+            if chamber_id is None:
+                raise ValueError("chamber_id is required when include_probe=true")
+            probe_data = self._collect_probe_data(chamber_id=chamber_id)
             data['probe_calibration'] = probe_data.get('probe_calibration', {})
             data['probe_summary'] = probe_data.get('execution_summary', {})
+            data['probe_chamber'] = probe_data.get('chamber')
 
         # Collect channel data
         if include_channel:
@@ -475,12 +519,19 @@ class CalibrationReportGenerator:
 
     def _collect_probe_data(
         self,
+        chamber_id: UUID,
         probe_ids: Optional[List[int]] = None,
         calibration_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Collect probe calibration data"""
+        from app.models.chamber import ChamberConfiguration
+
+        chamber = self.db.get(ChamberConfiguration, chamber_id)
+        if chamber is None:
+            raise ValueError(f"Chamber not found: {chamber_id}")
         data = {
             'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'chamber': {'id': str(chamber.id), 'name': chamber.name},
             'probe_calibration': {},
             'execution_summary': {},
         }
@@ -490,21 +541,27 @@ class CalibrationReportGenerator:
 
         # Amplitude calibrations
         if not calibration_type or calibration_type == 'amplitude':
-            query = self.db.query(ProbeAmplitudeCalibration)
+            query = self.db.query(ProbeAmplitudeCalibration).filter(
+                ProbeAmplitudeCalibration.chamber_id == chamber_id
+            )
             if probe_ids:
                 query = query.filter(ProbeAmplitudeCalibration.probe_id.in_(probe_ids))
             calibrations = query.order_by(desc(ProbeAmplitudeCalibration.calibrated_at)).limit(100).all()
 
             amplitude_data = []
             for cal in calibrations:
-                total += 1
-                if cal.validation_pass:
-                    passed += 1
+                is_valid = _probe_validation_pass(cal)
+                if is_valid is not None:
+                    total += 1
+                    if is_valid:
+                        passed += 1
                 amplitude_data.append({
                     'id': str(cal.id),
+                    'chamber_id': str(cal.chamber_id),
                     'probe_id': cal.probe_id,
                     'polarization': cal.polarization,
-                    'validation_pass': cal.validation_pass,
+                    'validation_pass': is_valid,
+                    'use_mock': cal.use_mock,
                     'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                     'calibrated_by': cal.calibrated_by,
                     'frequency_points': cal.frequency_points_mhz,
@@ -515,22 +572,28 @@ class CalibrationReportGenerator:
 
         # Phase calibrations
         if not calibration_type or calibration_type == 'phase':
-            query = self.db.query(ProbePhaseCalibration)
+            query = self.db.query(ProbePhaseCalibration).filter(
+                ProbePhaseCalibration.chamber_id == chamber_id
+            )
             if probe_ids:
                 query = query.filter(ProbePhaseCalibration.probe_id.in_(probe_ids))
             calibrations = query.order_by(desc(ProbePhaseCalibration.calibrated_at)).limit(100).all()
 
             phase_data = []
             for cal in calibrations:
-                total += 1
-                if cal.validation_pass:
-                    passed += 1
+                is_valid = _probe_validation_pass(cal)
+                if is_valid is not None:
+                    total += 1
+                    if is_valid:
+                        passed += 1
                 phase_data.append({
                     'id': str(cal.id),
+                    'chamber_id': str(cal.chamber_id),
                     'probe_id': cal.probe_id,
                     'reference_probe_id': cal.reference_probe_id,
                     'polarization': cal.polarization,
-                    'validation_pass': cal.validation_pass,
+                    'validation_pass': is_valid,
+                    'use_mock': cal.use_mock,
                     'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                     'calibrated_by': cal.calibrated_by,
                     'phase_offset_deg': cal.phase_offset_deg,
@@ -540,47 +603,63 @@ class CalibrationReportGenerator:
 
         # Polarization calibrations
         if not calibration_type or calibration_type == 'polarization':
-            query = self.db.query(ProbePolarizationCalibration)
+            query = self.db.query(ProbePolarizationCalibration).filter(
+                ProbePolarizationCalibration.chamber_id == chamber_id
+            )
             if probe_ids:
                 query = query.filter(ProbePolarizationCalibration.probe_id.in_(probe_ids))
             calibrations = query.order_by(desc(ProbePolarizationCalibration.calibrated_at)).limit(100).all()
 
             polarization_data = []
             for cal in calibrations:
-                total += 1
-                if cal.validation_pass:
-                    passed += 1
+                is_valid = _probe_validation_pass(cal)
+                if is_valid is not None:
+                    total += 1
+                    if is_valid:
+                        passed += 1
+                isolation_values = [
+                    value for value in (
+                        cal.v_to_h_isolation_db,
+                        cal.h_to_v_isolation_db,
+                    ) if value is not None
+                ]
                 polarization_data.append({
                     'id': str(cal.id),
+                    'chamber_id': str(cal.chamber_id),
                     'probe_id': cal.probe_id,
                     'probe_type': cal.probe_type,
-                    'validation_pass': cal.validation_pass,
+                    'validation_pass': is_valid,
+                    'use_mock': cal.use_mock,
                     'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                     'calibrated_by': cal.calibrated_by,
-                    'xpd_db': cal.xpd_db,
+                    'xpd_db': min(isolation_values) if isolation_values else None,
                     'axial_ratio_db': cal.axial_ratio_db,
                 })
             data['probe_calibration']['polarization'] = polarization_data
 
         # Pattern data (ProbePattern - not really a "calibration" but pattern measurement)
         if not calibration_type or calibration_type == 'pattern':
-            query = self.db.query(ProbePattern)
+            query = self.db.query(ProbePattern).filter(
+                ProbePattern.chamber_id == chamber_id
+            )
             if probe_ids:
                 query = query.filter(ProbePattern.probe_id.in_(probe_ids))
             patterns = query.order_by(desc(ProbePattern.measured_at)).limit(100).all()
 
             pattern_data = []
             for pat in patterns:
-                total += 1
-                # Pattern is considered "valid" if it exists and status is valid
-                is_valid = pat.status == 'valid'
-                if is_valid:
-                    passed += 1
+                is_valid = _probe_validation_pass(pat)
+                if is_valid is not None:
+                    total += 1
+                    if is_valid:
+                        passed += 1
                 pattern_data.append({
                     'id': str(pat.id),
+                    'chamber_id': str(pat.chamber_id),
                     'probe_id': pat.probe_id,
                     'frequency_mhz': pat.frequency_mhz,
                     'validation_pass': is_valid,
+                    'use_mock': pat.use_mock,
                     'calibrated_at': str(pat.measured_at) if pat.measured_at else None,
                     'calibrated_by': pat.measured_by,
                     'beamwidth_3db_deg': pat.hpbw_azimuth_deg,
@@ -595,14 +674,17 @@ class CalibrationReportGenerator:
 
             link_data = []
             for cal in calibrations:
-                total += 1
-                if cal.validation_pass:
-                    passed += 1
+                validation_pass = _link_validation_pass(cal)
+                if validation_pass is not None:
+                    total += 1
+                    if validation_pass:
+                        passed += 1
                 link_data.append({
                     'id': str(cal.id),
                     'probe_id': None,  # LinkCalibration is system-wide, not per-probe
                     'calibration_type': cal.calibration_type,
-                    'validation_pass': cal.validation_pass,
+                    'validation_pass': validation_pass,
+                    'use_mock': cal.use_mock,
                     'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                     'calibrated_by': cal.calibrated_by,
                     'deviation_db': cal.deviation_db,
@@ -612,7 +694,9 @@ class CalibrationReportGenerator:
 
         # Path loss calibrations (CAL-02: SGH → Probe spatial path loss)
         if not calibration_type or calibration_type == 'path_loss':
-            calibrations = self.db.query(ProbePathLossCalibration).order_by(
+            calibrations = self.db.query(ProbePathLossCalibration).filter(
+                ProbePathLossCalibration.chamber_id == chamber_id
+            ).order_by(
                 desc(ProbePathLossCalibration.calibrated_at)
             ).limit(50).all()
 
@@ -655,16 +739,19 @@ class CalibrationReportGenerator:
 
         # RF chain calibrations (CAL-03/04: LNA/PA gain calibration)
         if not calibration_type or calibration_type == 'rf_chain':
-            calibrations = self.db.query(RFChainCalibration).order_by(
+            calibrations = self.db.query(RFChainCalibration).filter(
+                RFChainCalibration.chamber_id == chamber_id
+            ).order_by(
                 desc(RFChainCalibration.calibrated_at)
             ).limit(50).all()
 
             rf_chain_data = []
             for cal in calibrations:
-                total += 1
-                is_valid = cal.status == 'valid'
-                if is_valid:
-                    passed += 1
+                is_valid = _probe_validation_pass(cal)
+                if is_valid is not None:
+                    total += 1
+                    if is_valid:
+                        passed += 1
 
                 rf_chain_data.append({
                     'id': str(cal.id),
@@ -672,6 +759,7 @@ class CalibrationReportGenerator:
                     'chain_type': cal.chain_type,
                     'frequency_mhz': cal.frequency_mhz,
                     'validation_pass': is_valid,
+                    'use_mock': cal.use_mock,
                     'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                     'calibrated_by': cal.calibrated_by,
                     'valid_until': str(cal.valid_until) if cal.valid_until else None,
@@ -698,16 +786,19 @@ class CalibrationReportGenerator:
 
         # Multi-frequency path loss calibrations (CAL-08: frequency sweep)
         if not calibration_type or calibration_type == 'multi_freq_path_loss':
-            calibrations = self.db.query(MultiFrequencyPathLoss).order_by(
+            calibrations = self.db.query(MultiFrequencyPathLoss).filter(
+                MultiFrequencyPathLoss.chamber_id == chamber_id
+            ).order_by(
                 desc(MultiFrequencyPathLoss.calibrated_at)
             ).limit(50).all()
 
             multi_freq_data = []
             for cal in calibrations:
-                total += 1
-                is_valid = cal.status == 'valid'
-                if is_valid:
-                    passed += 1
+                is_valid = _probe_validation_pass(cal)
+                if is_valid is not None:
+                    total += 1
+                    if is_valid:
+                        passed += 1
 
                 multi_freq_data.append({
                     'id': str(cal.id),
@@ -715,6 +806,7 @@ class CalibrationReportGenerator:
                     'probe_id': cal.probe_id,
                     'polarization': cal.polarization,
                     'validation_pass': is_valid,
+                    'use_mock': cal.use_mock,
                     'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
                     'calibrated_by': cal.calibrated_by,
                     'valid_until': str(cal.valid_until) if cal.valid_until else None,
@@ -1032,7 +1124,7 @@ class CalibrationReportGenerator:
 
     def export_calibration_data(
         self,
-        chamber_id: Optional[UUID] = None,
+        chamber_id: UUID,
         export_format: str = "json",
         output_path: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -1051,10 +1143,7 @@ class CalibrationReportGenerator:
         import csv
         
         # 收集数据
-        if chamber_id:
-            data = self._collect_chamber_calibration_data(chamber_id)
-        else:
-            data = self._collect_probe_data()
+        data = self._collect_chamber_calibration_data(chamber_id)
         
         # 生成输出路径
         if not output_path:
@@ -1177,6 +1266,7 @@ class CalibrationReportGenerator:
 
     def generate_audit_report(
         self,
+        chamber_id: UUID,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         output_path: Optional[str] = None,
@@ -1200,7 +1290,7 @@ class CalibrationReportGenerator:
             end_date = datetime.now()
         
         # 收集所有校准数据
-        all_data = self._collect_probe_data()
+        all_data = self._collect_probe_data(chamber_id=chamber_id)
         
         # 过滤时间范围
         filtered_calibrations = []

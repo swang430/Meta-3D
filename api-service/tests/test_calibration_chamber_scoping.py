@@ -2,8 +2,8 @@
 
 覆盖两部分:
 A. 测量路径活跃消费方 (probe_pattern.consumer): probe_id 在多暗室下不再全局唯一,
-   consumer 给定 chamber_id 时必须 prefer exact-chamber、回退 NULL/legacy、**绝不**
-   取其它暗室的方向图; chamber_id=None 时维持历史行为。
+   consumer 给定 chamber_id 时必须只取 exact-chamber，**绝不**回退 NULL/legacy 或
+   取其它暗室的方向图; chamber_id=None 时维持历史审计行为。
 B. service writer/getter: execute_*_calibration 持久化 chamber_id; get_latest_calibration
    给定 chamber_id 时按暗室作用域过滤。
 
@@ -60,6 +60,7 @@ def _pattern(
     p = ProbePattern(
         probe_id=probe_id,
         chamber_id=chamber_id,
+        use_mock=False,
         polarization=pol,
         frequency_mhz=freq,
         azimuth_deg=[0.0],
@@ -93,13 +94,12 @@ class TestPatternConsumerChamberScoping:
         assert hit is not None
         assert hit.peak_gain_dbi == 20.0  # 本暗室, 非更新的 NULL 行
 
-    def test_falls_back_to_null_when_no_exact(self, session):
-        """本暗室无数据时回退到 NULL/legacy 行 (import 端尚未标 chamber 的兼容)。"""
+    def test_does_not_fall_back_to_null_when_no_exact(self, session):
+        """多暗室正式消费不能把来源未知的 NULL/legacy 当成本暗室校准。"""
         cid = uuid.uuid4()
         _pattern(session, probe_id=0, chamber_id=None, peak_gain_dbi=11.0)
         hit = _query_valid_pattern(session, 0, "V", 3500.0, chamber_id=cid)
-        assert hit is not None
-        assert hit.peak_gain_dbi == 11.0
+        assert hit is None
 
     def test_never_returns_other_chamber(self, session):
         """只有**其它**暗室的数据时, chamber-scoped 查询必须返回 None (核心防错)。"""
@@ -109,13 +109,12 @@ class TestPatternConsumerChamberScoping:
         hit = _query_valid_pattern(session, 0, "V", 3500.0, chamber_id=target)
         assert hit is None
 
-    def test_chamber_none_is_legacy_unscoped(self, session):
-        """chamber_id=None: 维持历史行为, 不加暗室过滤 (任意暗室/NULL 都可命中)。"""
+    def test_chamber_none_is_rejected_for_formal_consumption(self, session):
+        """正式消费不得用 None 恢复跨暗室/legacy 查询。"""
         other = uuid.uuid4()
         _pattern(session, probe_id=0, chamber_id=other, peak_gain_dbi=42.0)
-        hit = _query_valid_pattern(session, 0, "V", 3500.0, chamber_id=None)
-        assert hit is not None
-        assert hit.peak_gain_dbi == 42.0
+        with pytest.raises(ValueError, match="chamber_id is required"):
+            _query_valid_pattern(session, 0, "V", 3500.0, chamber_id=None)
 
     def test_get_probe_gain_at_azimuth_is_chamber_scoped(self, session):
         """同一 probe 在两暗室有不同 peak gain, 取值随 chamber_id 切换。"""

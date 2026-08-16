@@ -21,7 +21,7 @@ export type DUTType = 'dipole' | 'horn' | 'patch'
 
 export type CalibrationType = 'amplitude' | 'phase' | 'polarization' | 'pattern' | 'link'
 
-export type ValidityStatus = 'valid' | 'expiring_soon' | 'expired' | 'unknown'
+export type ValidityStatus = 'valid' | 'partial' | 'expiring_soon' | 'expired' | 'unknown'
 
 // ==================== Common Types ====================
 
@@ -53,6 +53,7 @@ export interface CalibrationProgress {
 // ==================== Amplitude Calibration ====================
 
 export interface StartAmplitudeCalibrationRequest {
+  chamber_id: string
   probe_ids: number[]
   polarizations?: PolarizationType[]
   frequency_range: FrequencyRange
@@ -63,6 +64,8 @@ export interface StartAmplitudeCalibrationRequest {
 
 export interface AmplitudeCalibrationResponse {
   id: string
+  chamber_id: string
+  use_mock?: boolean | null
   probe_id: number
   polarization: string
   frequency_points_mhz: number[]
@@ -83,6 +86,7 @@ export interface AmplitudeCalibrationResponse {
 // ==================== Phase Calibration ====================
 
 export interface StartPhaseCalibrationRequest {
+  chamber_id: string
   probe_ids: number[]
   polarizations?: PolarizationType[]
   reference_probe_id?: number
@@ -93,6 +97,8 @@ export interface StartPhaseCalibrationRequest {
 
 export interface PhaseCalibrationResponse {
   id: string
+  chamber_id: string
+  use_mock?: boolean | null
   probe_id: number
   polarization: string
   reference_probe_id: number
@@ -111,6 +117,7 @@ export interface PhaseCalibrationResponse {
 // ==================== Polarization Calibration ====================
 
 export interface StartPolarizationCalibrationRequest {
+  chamber_id: string
   probe_ids: number[]
   probe_type: ProbeType
   frequency_range: FrequencyRange
@@ -121,6 +128,8 @@ export interface StartPolarizationCalibrationRequest {
 
 export interface PolarizationCalibrationResponse {
   id: string
+  chamber_id: string
+  use_mock?: boolean | null
   probe_id: number
   probe_type: string
   // Linear polarization data
@@ -146,6 +155,7 @@ export interface PolarizationCalibrationResponse {
 // ==================== Pattern Calibration ====================
 
 export interface StartPatternCalibrationRequest {
+  chamber_id: string
   probe_ids: number[]
   polarizations?: PolarizationType[]
   frequency_mhz: number
@@ -159,6 +169,8 @@ export interface StartPatternCalibrationRequest {
 
 export interface PatternCalibrationResponse {
   id: string
+  chamber_id: string
+  use_mock?: boolean | null
   probe_id: number
   polarization: string
   frequency_mhz: number
@@ -211,6 +223,7 @@ export interface ProbeLinkCalibration {
 
 export interface LinkCalibrationResponse {
   id: string
+  use_mock?: boolean | null
   calibration_type: string
   // Standard DUT
   standard_dut_type?: string
@@ -255,6 +268,7 @@ export interface CalibrationTypeStatus {
 }
 
 export interface ProbeCalibrationStatus {
+  chamber_id: string
   probe_id: number
   amplitude?: CalibrationTypeStatus
   phase?: CalibrationTypeStatus
@@ -289,10 +303,13 @@ export interface ExpiringCalibrationInfo {
 }
 
 export interface CalibrationValidityReport {
+  chamber_id: string
   total_probes: number
   valid_probes: number
+  partial_probes: number
   expired_probes: number
   expiring_soon_probes: number
+  probe_statuses: Record<string, ValidityStatus>
   expired_calibrations: ExpiredCalibrationInfo[]
   expiring_soon_calibrations: ExpiringCalibrationInfo[]
   recommendations: CalibrationRecommendation[]
@@ -321,6 +338,7 @@ export interface CalibrationHistoryItem {
   calibrated_at: string
   calibrated_by?: string
   status: string
+  use_mock?: boolean | null
   summary: CalibrationHistorySummary
 }
 
@@ -331,6 +349,7 @@ export interface CalibrationTrends {
 }
 
 export interface CalibrationHistoryResponse {
+  chamber_id: string
   probe_id: number
   history: CalibrationHistoryItem[]
   trends?: CalibrationTrends
@@ -339,6 +358,7 @@ export interface CalibrationHistoryResponse {
 // ==================== Comprehensive Data Query ====================
 
 export interface ProbeCalibrationData {
+  chamber_id: string
   probe_id: number
   amplitude_calibration?: AmplitudeCalibrationResponse
   phase_calibration?: PhaseCalibrationResponse
@@ -351,12 +371,14 @@ export interface ProbeCalibrationData {
 // ==================== Expiring/Expired Calibrations Response ====================
 
 export interface ExpiringCalibrationsResponse {
+  chamber_id: string
   days_threshold: number
   count: number
   calibrations: ExpiringCalibrationInfo[]
 }
 
 export interface ExpiredCalibrationsResponse {
+  chamber_id: string
   count: number
   calibrations: ExpiredCalibrationInfo[]
 }

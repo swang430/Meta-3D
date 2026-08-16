@@ -2346,3 +2346,80 @@ def test_g17_isolation_precedes_app_import_in_conftest():
         "conftest.py 里 HAL 模式隔离排在 `from app.main import app` 之后 —— "
         "settings 单例那时已经把 .env 读定了，设了也白设"
     )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# G21 多暗室探头校准入口必须显式消费 chamber_id
+# ─────────────────────────────────────────────────────────────────────
+
+_P1_53_CHAMBER_SCOPE_INVENTORY = (
+    # REST writers and readers
+    ("api-service/app/api/probe_calibration.py", "start_amplitude_calibration"),
+    ("api-service/app/api/probe_calibration.py", "get_amplitude_calibration"),
+    ("api-service/app/api/probe_calibration.py", "get_amplitude_calibration_history"),
+    ("api-service/app/api/probe_calibration.py", "start_phase_calibration"),
+    ("api-service/app/api/probe_calibration.py", "import_phase_calibration_csv_endpoint"),
+    ("api-service/app/api/probe_calibration.py", "get_phase_calibration"),
+    ("api-service/app/api/probe_calibration.py", "get_phase_calibration_history"),
+    ("api-service/app/api/probe_calibration.py", "start_polarization_calibration"),
+    ("api-service/app/api/probe_calibration.py", "get_polarization_calibration"),
+    ("api-service/app/api/probe_calibration.py", "get_polarization_calibration_history"),
+    ("api-service/app/api/probe_calibration.py", "import_probe_pattern_endpoint"),
+    ("api-service/app/api/probe_calibration.py", "start_pattern_calibration"),
+    ("api-service/app/api/probe_calibration.py", "get_pattern_calibration"),
+    ("api-service/app/api/probe_calibration.py", "get_validity_report"),
+    ("api-service/app/api/probe_calibration.py", "get_expiring_calibrations"),
+    ("api-service/app/api/probe_calibration.py", "get_expired_calibrations"),
+    ("api-service/app/api/probe_calibration.py", "get_probe_validity"),
+    ("api-service/app/api/probe_calibration.py", "invalidate_calibration"),
+    ("api-service/app/api/probe_calibration.py", "get_probe_calibration_data"),
+    # Service writers/imports and formal consumers
+    ("api-service/app/services/probe_calibration_service.py", "AmplitudeCalibrationService.execute_amplitude_calibration"),
+    ("api-service/app/services/probe_calibration_service.py", "PhaseCalibrationService.execute_phase_calibration"),
+    ("api-service/app/services/probe_calibration_service.py", "PolarizationCalibrationService.execute_polarization_calibration"),
+    ("api-service/app/services/probe_calibration_service.py", "PatternCalibrationService.execute_pattern_calibration"),
+    ("api-service/app/services/probe_calibration_service.py", "CalibrationValidityService.check_validity"),
+    ("api-service/app/services/probe_calibration_service.py", "CalibrationValidityService.generate_validity_report"),
+    ("api-service/app/services/probe_calibration_service.py", "CalibrationValidityService.get_expiring_calibrations"),
+    ("api-service/app/services/probe_calibration_service.py", "CalibrationValidityService.get_expired_calibrations"),
+    ("api-service/app/services/probe_calibration_service.py", "CalibrationValidityService.invalidate_calibration"),
+    ("api-service/app/services/probe_phase_calibration_import.py", "import_phase_calibration_from_csv"),
+    ("api-service/app/services/probe_pattern/import_service.py", "import_probe_pattern"),
+    ("api-service/app/services/probe_pattern/consumer.py", "_query_valid_pattern"),
+    ("api-service/app/services/calibration_report_generator.py", "CalibrationReportGenerator._collect_probe_data"),
+)
+
+
+def _p1_53_qualified_function_source(relative_path: str, qualified_name: str) -> str:
+    """Return one inventoried function body, including class qualification."""
+    import ast
+
+    path = _REPO_ROOT / relative_path
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(path))
+    parts = qualified_name.split(".")
+    nodes = tree.body
+    target = None
+    for index, part in enumerate(parts):
+        expected = ast.ClassDef if index < len(parts) - 1 else (ast.FunctionDef, ast.AsyncFunctionDef)
+        target = next(
+            (node for node in nodes if isinstance(node, expected) and node.name == part),
+            None,
+        )
+        assert target is not None, f"P1-53 入口清单已漂移：{relative_path}:{qualified_name} 不存在"
+        nodes = getattr(target, "body", [])
+    lines = source.splitlines()
+    return "\n".join(lines[target.lineno - 1:target.end_lineno])
+
+
+def test_g21_probe_calibration_active_sites_consume_chamber_scope():
+    """P1-53 入口全集：四类探头校准的活动写读判定不得退回全局 probe_id。"""
+    missing = []
+    for relative_path, qualified_name in _P1_53_CHAMBER_SCOPE_INVENTORY:
+        body = _p1_53_qualified_function_source(relative_path, qualified_name)
+        if "chamber_id" not in body:
+            missing.append(f"{relative_path}:{qualified_name}")
+    assert not missing, (
+        "以下多暗室探头校准入口未显式消费 chamber_id，可能按全局 probe_id "
+        "混入其他暗室或 legacy NULL：\n  " + "\n  ".join(missing)
+    )

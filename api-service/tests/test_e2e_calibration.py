@@ -10,6 +10,7 @@ Integration tests for the complete calibration workflow:
 
 import pytest
 import os
+import uuid
 from datetime import datetime
 from uuid import UUID
 
@@ -34,6 +35,23 @@ from app.models.channel_calibration import (
     TemporalChannelCalibration,
     DopplerCalibration,
 )
+from app.models.chamber import ChamberConfiguration
+
+
+E2E_CHAMBER_ID = uuid.UUID("c3333333-3333-3333-3333-333333333153")
+
+
+def _add_e2e_chamber(session):
+    session.add(
+        ChamberConfiguration(
+            id=E2E_CHAMBER_ID,
+            name="P1-53 E2E chamber",
+            chamber_type="custom",
+            chamber_radius_m=4.0,
+            num_probes=32,
+        )
+    )
+    session.commit()
 
 
 class TestE2ECalibrationWorkflow:
@@ -50,6 +68,7 @@ class TestE2ECalibrationWorkflow:
         Base.metadata.create_all(bind=engine)
         SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         session = SessionLocal()
+        _add_e2e_chamber(session)
 
         yield session
 
@@ -349,6 +368,7 @@ steps:
         response = client.post(
             "/api/v1/calibration-reports/comprehensive",
             json={
+                "chamber_id": str(E2E_CHAMBER_ID),
                 "include_probe": True,
                 "include_channel": True,
                 "title": "E2E Test Comprehensive Report"
@@ -503,6 +523,8 @@ class TestE2EAPIIntegration:
         )
         Base.metadata.create_all(bind=engine)
         TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        with TestingSessionLocal() as db:
+            _add_e2e_chamber(db)
 
         def override_get_db():
             db = TestingSessionLocal()
@@ -604,14 +626,17 @@ steps:
         # Comprehensive
         response = client.post(
             "/api/v1/calibration-reports/comprehensive",
-            json={"title": "API Test Report"}
+            json={
+                "chamber_id": str(E2E_CHAMBER_ID),
+                "title": "API Test Report",
+            }
         )
         assert response.status_code == 200
 
         # Probe
         response = client.post(
             "/api/v1/calibration-reports/probe",
-            json={}
+            json={"chamber_id": str(E2E_CHAMBER_ID)}
         )
         assert response.status_code == 200
 

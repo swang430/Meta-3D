@@ -800,6 +800,7 @@ class TestMeasurementCompensator:
         }
 
         probe_data = generator._collect_probe_data(
+            chamber_id=type_c_chamber.id,
             calibration_type="path_loss",
         )
         probe_rows = {
@@ -827,6 +828,7 @@ class TestMeasurementCompensator:
 
         generator.pdf_generator.generate_report = fake_generate_report
         generated = generator.generate_probe_calibration_report(
+            chamber_id=type_c_chamber.id,
             calibration_type="path_loss",
             output_path=str(output_path),
         )

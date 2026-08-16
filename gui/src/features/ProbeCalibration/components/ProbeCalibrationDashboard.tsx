@@ -44,6 +44,8 @@ import { OverallStatusIndicator } from './CalibrationStatusBadge'
 import type { ValidityStatus, CalibrationType } from '../../../types/probeCalibration'
 
 interface ProbeCalibrationDashboardProps {
+  chamberId: string
+  chamberName?: string
   onStartCalibration?: (type: CalibrationType) => void
   onViewProbe?: (probeId: number) => void
   onViewExpiring?: () => void
@@ -64,6 +66,8 @@ const CALIBRATION_TYPES: {
 ]
 
 export function ProbeCalibrationDashboard({
+  chamberId,
+  chamberName,
   onStartCalibration,
   onViewProbe: _onViewProbe,
   onViewExpiring,
@@ -74,12 +78,12 @@ export function ProbeCalibrationDashboard({
     isLoading: isLoadingReport,
     error: reportError,
     refetch: refetchReport,
-  } = useValidityReport()
+  } = useValidityReport(chamberId)
 
   const {
     data: expiringData,
     isLoading: isLoadingExpiring,
-  } = useExpiringCalibrations(7)
+  } = useExpiringCalibrations(chamberId, 7)
 
   const {
     data: linkValidity,
@@ -96,12 +100,21 @@ export function ProbeCalibrationDashboard({
 
   const totalProbes = validityReport?.total_probes ?? 32
   const validProbes = validityReport?.valid_probes ?? 0
+  const partialProbes = validityReport?.partial_probes ?? 0
   const expiredProbes = validityReport?.expired_probes ?? 0
   const expiringProbes = validityReport?.expiring_soon_probes ?? 0
   const passRate = totalProbes > 0 ? Math.round((validProbes / totalProbes) * 100) : 0
 
   const overallStatus: ValidityStatus =
-    expiredProbes > 0 ? 'expired' : expiringProbes > 0 ? 'expiring_soon' : validProbes > 0 ? 'valid' : 'unknown'
+    expiredProbes > 0
+      ? 'expired'
+      : expiringProbes > 0
+        ? 'expiring_soon'
+        : totalProbes > 0 && validProbes === totalProbes
+          ? 'valid'
+          : partialProbes > 0 || validProbes > 0
+            ? 'partial'
+            : 'unknown'
 
   return (
     <Stack gap="md">
@@ -114,6 +127,7 @@ export function ProbeCalibrationDashboard({
           <Text size="lg" fw={600}>
             Probe Calibration Status
           </Text>
+          {chamberName ? <Text size="sm" c="dimmed">{chamberName}</Text> : null}
         </Group>
         <Tooltip label="Refresh">
           <ActionIcon variant="light" onClick={() => refetchReport()}>
@@ -138,6 +152,7 @@ export function ProbeCalibrationDashboard({
                   thickness={12}
                   sections={[
                     { value: (validProbes / totalProbes) * 100, color: 'green' },
+                    { value: (partialProbes / totalProbes) * 100, color: 'orange' },
                     { value: (expiringProbes / totalProbes) * 100, color: 'yellow' },
                     { value: (expiredProbes / totalProbes) * 100, color: 'red' },
                   ]}
@@ -155,6 +170,7 @@ export function ProbeCalibrationDashboard({
                 <OverallStatusIndicator
                   status={overallStatus}
                   validCount={validProbes}
+                  partialCount={partialProbes}
                   expiringSoonCount={expiringProbes}
                   expiredCount={expiredProbes}
                 />

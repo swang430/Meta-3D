@@ -1514,6 +1514,16 @@ class PDFGenerator:
             elements.append(Paragraph("<i>No probe calibration data available</i>", self.styles['BodyText']))
             return elements
 
+        chamber = data.get('probe_chamber') or data.get('chamber')
+        if chamber:
+            elements.append(Paragraph(
+                '<b>Chamber:</b> '
+                f'{escape(str(chamber.get("name", "Unknown")))} '
+                f'({escape(str(chamber.get("id", "Unknown")))})',
+                self.styles['BodyText'],
+            ))
+            elements.append(Spacer(1, 8))
+
         # Probe summary statistics
         probe_summary = data.get('probe_summary', {})
         if probe_summary:
@@ -1540,6 +1550,18 @@ class PDFGenerator:
             elements.append(Spacer(1, 15))
 
         # Calibration type breakdown
+        def verdict_cell(verdict):
+            if verdict is True:
+                status, color = '✓ PASS', '#43a047'
+            elif verdict is False:
+                status, color = '✗ FAIL', '#e53935'
+            else:
+                status, color = '? UNVERIFIED', '#f9a825'
+            return Paragraph(
+                f'<font color="{color}">{status}</font>',
+                self.styles['BodyText'],
+            )
+
         cal_types = [
             ('amplitude', 'Amplitude Calibration', '探头 TX/RX 增益校准'),
             ('phase', 'Phase Calibration', '相位偏差和群时延校准'),
@@ -1547,6 +1569,8 @@ class PDFGenerator:
             ('pattern', 'Pattern Calibration', '3D 辐射方向图校准'),
             ('link', 'Link Calibration', '端到端链路验证'),
             ('path_loss', 'Path Loss Calibration', '路损校准（来源必须可审计）'),
+            ('rf_chain', 'RF Chain Calibration', 'LNA / PA / 双工器链路校准'),
+            ('multi_freq_path_loss', 'Multi-Frequency Path Loss', '探头宽带扫频路损校准'),
         ]
 
         for cal_type, title, description in cal_types:
@@ -1563,21 +1587,12 @@ class PDFGenerator:
                     warning_rows = [['Calibration', 'Warnings']]
                     for cal in cal_data[:20]:
                         verdict = cal.get('validation_pass')
-                        if verdict is True:
-                            status = '✓ PASS'
-                            status_color = '#43a047'
-                        elif verdict is False:
-                            status = '✗ FAIL'
-                            status_color = '#e53935'
-                        else:
-                            status = '? UNVERIFIED'
-                            status_color = '#f9a825'
                         provenance = str(cal.get('provenance', 'unknown')).upper()
                         rows.append([
                             str(cal.get('frequency_mhz', '-')),
                             str(cal.get('num_probes', '-')),
                             provenance,
-                            Paragraph(f'<font color="{status_color}">{status}</font>', self.styles['BodyText']),
+                            verdict_cell(verdict),
                             str(cal.get('calibrated_at', '-'))[:19],
                         ])
                         warnings = cal.get('warnings')
@@ -1603,35 +1618,49 @@ class PDFGenerator:
                     headers = ['Probe ID', 'Polarization', 'Status', 'Calibrated At']
                     rows = [headers]
                     for cal in cal_data[:20]:  # Limit to 20 entries
-                        status = '✓ PASS' if cal.get('validation_pass') else '✗ FAIL'
-                        status_color = '#43a047' if cal.get('validation_pass') else '#e53935'
                         rows.append([
                             str(cal.get('probe_id', '-')),
                             cal.get('polarization', '-'),
-                            Paragraph(f'<font color="{status_color}">{status}</font>', self.styles['BodyText']),
+                            verdict_cell(cal.get('validation_pass')),
                             str(cal.get('calibrated_at', '-'))[:19],
                         ])
                 elif cal_type == 'phase':
                     headers = ['Probe ID', 'Ref Probe', 'Status', 'Calibrated At']
                     rows = [headers]
                     for cal in cal_data[:20]:
-                        status = '✓ PASS' if cal.get('validation_pass') else '✗ FAIL'
-                        status_color = '#43a047' if cal.get('validation_pass') else '#e53935'
                         rows.append([
                             str(cal.get('probe_id', '-')),
                             str(cal.get('reference_probe_id', '-')),
-                            Paragraph(f'<font color="{status_color}">{status}</font>', self.styles['BodyText']),
+                            verdict_cell(cal.get('validation_pass')),
+                            str(cal.get('calibrated_at', '-'))[:19],
+                        ])
+                elif cal_type == 'rf_chain':
+                    headers = ['Chain', 'Frequency (MHz)', 'Status', 'Calibrated At']
+                    rows = [headers]
+                    for cal in cal_data[:20]:
+                        rows.append([
+                            str(cal.get('chain_type', '-')),
+                            str(cal.get('frequency_mhz', '-')),
+                            verdict_cell(cal.get('validation_pass')),
+                            str(cal.get('calibrated_at', '-'))[:19],
+                        ])
+                elif cal_type == 'multi_freq_path_loss':
+                    headers = ['Probe ID', 'Frequency Range (MHz)', 'Status', 'Calibrated At']
+                    rows = [headers]
+                    for cal in cal_data[:20]:
+                        rows.append([
+                            str(cal.get('probe_id', '-')),
+                            f"{cal.get('freq_start_mhz', '-')} - {cal.get('freq_stop_mhz', '-')}",
+                            verdict_cell(cal.get('validation_pass')),
                             str(cal.get('calibrated_at', '-'))[:19],
                         ])
                 else:
                     headers = ['Probe ID', 'Status', 'Calibrated At']
                     rows = [headers]
                     for cal in cal_data[:20]:
-                        status = '✓ PASS' if cal.get('validation_pass') else '✗ FAIL'
-                        status_color = '#43a047' if cal.get('validation_pass') else '#e53935'
                         rows.append([
                             str(cal.get('probe_id', '-')),
-                            Paragraph(f'<font color="{status_color}">{status}</font>', self.styles['BodyText']),
+                            verdict_cell(cal.get('validation_pass')),
                             str(cal.get('calibrated_at', '-'))[:19],
                         ])
 

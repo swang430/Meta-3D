@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timedelta
+from uuid import UUID
 
 from app.main import app
 from app.db.database import Base, get_db
@@ -22,6 +23,10 @@ from app.models.probe_calibration import (
     ProbeAmplitudeCalibration,
     CalibrationStatus,
 )
+from app.models.chamber import ChamberConfiguration
+
+
+TEST_CHAMBER_ID = UUID("aaaaaaaa-0000-0000-0000-000000000053")
 
 
 # 创建测试数据库
@@ -60,6 +65,15 @@ def setup_database():
     """Setup test database"""
     # Create all tables
     Base.metadata.create_all(bind=engine)
+    with TestingSessionLocal() as db:
+        db.merge(ChamberConfiguration(
+            id=TEST_CHAMBER_ID,
+            name="P1-53 Test Chamber",
+            chamber_type="custom",
+            chamber_radius_m=4.0,
+            num_probes=64,
+        ))
+        db.commit()
     yield
     # Drop all tables after tests
     Base.metadata.drop_all(bind=engine)
@@ -79,6 +93,7 @@ def db_session():
 def sample_amplitude_calibration(db_session):
     """Create sample amplitude calibration data"""
     calibration = ProbeAmplitudeCalibration(
+        chamber_id=TEST_CHAMBER_ID,
         probe_id=5,
         polarization="V",
         frequency_points_mhz=[3300.0, 3400.0, 3500.0],
@@ -104,8 +119,9 @@ class TestAmplitudeCalibrationStart:
     def test_start_amplitude_calibration_success(self):
         """测试成功启动幅度校准"""
         response = client.post(
-            "/api/v1/calibration/probe/amplitude/start",
+            f"/api/v1/calibration/probe/amplitude/start?chamber_id={TEST_CHAMBER_ID}",
             json={
+                "chamber_id": str(TEST_CHAMBER_ID),
                 "probe_ids": [1, 2, 3],
                 "polarizations": ["V", "H"],
                 "frequency_range": {
@@ -125,8 +141,9 @@ class TestAmplitudeCalibrationStart:
     def test_start_amplitude_calibration_invalid_probe_id(self):
         """测试无效探头 ID"""
         response = client.post(
-            "/api/v1/calibration/probe/amplitude/start",
+            f"/api/v1/calibration/probe/amplitude/start?chamber_id={TEST_CHAMBER_ID}",
             json={
+                "chamber_id": str(TEST_CHAMBER_ID),
                 "probe_ids": [1, 100],  # 100 超出范围
                 "frequency_range": {
                     "start_mhz": 3300,
@@ -136,13 +153,14 @@ class TestAmplitudeCalibrationStart:
                 "calibrated_by": "Test Engineer"
             }
         )
-        assert response.status_code == 422  # Validation error
+        assert response.status_code == 400  # 由目标暗室 num_probes 判定
 
     def test_start_amplitude_calibration_empty_probe_list(self):
         """测试空探头列表"""
         response = client.post(
-            "/api/v1/calibration/probe/amplitude/start",
+            f"/api/v1/calibration/probe/amplitude/start?chamber_id={TEST_CHAMBER_ID}",
             json={
+                "chamber_id": str(TEST_CHAMBER_ID),
                 "probe_ids": [],
                 "frequency_range": {
                     "start_mhz": 3300,
@@ -161,10 +179,11 @@ class TestAmplitudeCalibrationGet:
     def test_get_amplitude_calibration_success(self, sample_amplitude_calibration):
         """测试成功获取校准数据"""
         response = client.get(
-            f"/api/v1/calibration/probe/amplitude/{sample_amplitude_calibration.probe_id}"
+            f"/api/v1/calibration/probe/amplitude/{sample_amplitude_calibration.probe_id}?chamber_id={TEST_CHAMBER_ID}"
         )
         assert response.status_code == 200
         data = response.json()
+        assert data["chamber_id"] == str(TEST_CHAMBER_ID)
         assert data["probe_id"] == sample_amplitude_calibration.probe_id
         assert data["polarization"] == "V"
         assert len(data["frequency_points_mhz"]) == 3
@@ -172,22 +191,22 @@ class TestAmplitudeCalibrationGet:
     def test_get_amplitude_calibration_not_found(self):
         """测试获取不存在的校准数据"""
         # 使用有效范围内但没有数据的探头 ID
-        response = client.get("/api/v1/calibration/probe/amplitude/62")
+        response = client.get(f"/api/v1/calibration/probe/amplitude/62?chamber_id={TEST_CHAMBER_ID}")
         # 可能返回 404 或之前创建的数据
         # 由于测试环境可能有残留数据，检查是否是 200 或 404
         assert response.status_code in [200, 404]
 
     def test_get_amplitude_calibration_invalid_probe_id(self):
         """测试无效探头 ID"""
-        response = client.get("/api/v1/calibration/probe/amplitude/100")
+        response = client.get(f"/api/v1/calibration/probe/amplitude/100?chamber_id={TEST_CHAMBER_ID}")
         assert response.status_code == 400
-        assert "probe_id must be between 0 and 63" in response.json()["detail"]
+        assert "do not belong to chamber" in response.json()["detail"]
 
     def test_get_amplitude_calibration_with_polarization_filter(self, sample_amplitude_calibration):
         """测试带极化过滤的获取"""
         response = client.get(
-            f"/api/v1/calibration/probe/amplitude/{sample_amplitude_calibration.probe_id}",
-            params={"polarization": "V"}
+            f"/api/v1/calibration/probe/amplitude/{sample_amplitude_calibration.probe_id}?chamber_id={TEST_CHAMBER_ID}",
+            params={"chamber_id": str(TEST_CHAMBER_ID), "polarization": "V"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -200,10 +219,11 @@ class TestAmplitudeCalibrationHistory:
     def test_get_amplitude_history_success(self, sample_amplitude_calibration):
         """测试成功获取校准历史"""
         response = client.get(
-            f"/api/v1/calibration/probe/amplitude/{sample_amplitude_calibration.probe_id}/history"
+            f"/api/v1/calibration/probe/amplitude/{sample_amplitude_calibration.probe_id}/history?chamber_id={TEST_CHAMBER_ID}"
         )
         assert response.status_code == 200
         data = response.json()
+        assert data["chamber_id"] == str(TEST_CHAMBER_ID)
         assert data["probe_id"] == sample_amplitude_calibration.probe_id
         assert "history" in data
         assert len(data["history"]) > 0
@@ -211,8 +231,8 @@ class TestAmplitudeCalibrationHistory:
     def test_get_amplitude_history_with_limit(self, sample_amplitude_calibration):
         """测试带限制的历史查询"""
         response = client.get(
-            f"/api/v1/calibration/probe/amplitude/{sample_amplitude_calibration.probe_id}/history",
-            params={"limit": 5}
+            f"/api/v1/calibration/probe/amplitude/{sample_amplitude_calibration.probe_id}/history?chamber_id={TEST_CHAMBER_ID}",
+            params={"chamber_id": str(TEST_CHAMBER_ID), "limit": 5}
         )
         assert response.status_code == 200
         data = response.json()
@@ -220,7 +240,7 @@ class TestAmplitudeCalibrationHistory:
 
     def test_get_amplitude_history_invalid_probe_id(self):
         """测试无效探头 ID"""
-        response = client.get("/api/v1/calibration/probe/amplitude/100/history")
+        response = client.get(f"/api/v1/calibration/probe/amplitude/100/history?chamber_id={TEST_CHAMBER_ID}")
         assert response.status_code == 400
 
 
@@ -230,24 +250,26 @@ class TestValidityStatus:
     def test_get_validity_success(self, sample_amplitude_calibration):
         """测试成功获取有效性状态"""
         response = client.get(
-            f"/api/v1/calibration/probe/validity/{sample_amplitude_calibration.probe_id}"
+            f"/api/v1/calibration/probe/validity/{sample_amplitude_calibration.probe_id}?chamber_id={TEST_CHAMBER_ID}"
         )
         assert response.status_code == 200
         data = response.json()
+        assert data["chamber_id"] == str(TEST_CHAMBER_ID)
         assert data["probe_id"] == sample_amplitude_calibration.probe_id
         assert data["overall_status"] in ["valid", "expiring_soon", "expired", "unknown"]
         assert "amplitude" in data
 
     def test_get_validity_invalid_probe_id(self):
         """测试无效探头 ID"""
-        response = client.get("/api/v1/calibration/probe/validity/100")
+        response = client.get(f"/api/v1/calibration/probe/validity/100?chamber_id={TEST_CHAMBER_ID}")
         assert response.status_code == 400
 
     def test_get_validity_report(self):
         """测试获取整体有效性报告"""
-        response = client.get("/api/v1/calibration/probe/validity/report")
+        response = client.get(f"/api/v1/calibration/probe/validity/report?chamber_id={TEST_CHAMBER_ID}")
         assert response.status_code == 200
         data = response.json()
+        assert data["chamber_id"] == str(TEST_CHAMBER_ID)
         assert "total_probes" in data
         assert "valid_probes" in data
         assert "expired_probes" in data
@@ -259,8 +281,9 @@ class TestPhaseCalibration:
     def test_start_phase_calibration_success(self):
         """测试成功启动相位校准"""
         response = client.post(
-            "/api/v1/calibration/probe/phase/start",
+            f"/api/v1/calibration/probe/phase/start?chamber_id={TEST_CHAMBER_ID}",
             json={
+                "chamber_id": str(TEST_CHAMBER_ID),
                 "probe_ids": [1, 2],
                 "polarizations": ["V"],
                 "reference_probe_id": 0,
@@ -279,12 +302,12 @@ class TestPhaseCalibration:
 
     def test_get_phase_calibration_invalid_probe_id(self):
         """测试无效探头 ID"""
-        response = client.get("/api/v1/calibration/probe/phase/100")
+        response = client.get(f"/api/v1/calibration/probe/phase/100?chamber_id={TEST_CHAMBER_ID}")
         assert response.status_code == 400
 
     def test_get_phase_history_invalid_probe_id(self):
         """测试无效探头 ID 的历史查询"""
-        response = client.get("/api/v1/calibration/probe/phase/100/history")
+        response = client.get(f"/api/v1/calibration/probe/phase/100/history?chamber_id={TEST_CHAMBER_ID}")
         assert response.status_code == 400
 
 
@@ -294,8 +317,9 @@ class TestPolarizationCalibration:
     def test_start_polarization_calibration_linear_success(self):
         """测试成功启动线极化校准"""
         response = client.post(
-            "/api/v1/calibration/probe/polarization/start",
+            f"/api/v1/calibration/probe/polarization/start?chamber_id={TEST_CHAMBER_ID}",
             json={
+                "chamber_id": str(TEST_CHAMBER_ID),
                 "probe_ids": [1, 2],
                 "probe_type": "dual_linear",
                 "frequency_range": {
@@ -314,8 +338,9 @@ class TestPolarizationCalibration:
     def test_start_polarization_calibration_circular_success(self):
         """测试成功启动圆极化校准"""
         response = client.post(
-            "/api/v1/calibration/probe/polarization/start",
+            f"/api/v1/calibration/probe/polarization/start?chamber_id={TEST_CHAMBER_ID}",
             json={
+                "chamber_id": str(TEST_CHAMBER_ID),
                 "probe_ids": [3],
                 "probe_type": "circular",
                 "frequency_range": {
@@ -333,12 +358,12 @@ class TestPolarizationCalibration:
 
     def test_get_polarization_calibration_invalid_probe_id(self):
         """测试无效探头 ID"""
-        response = client.get("/api/v1/calibration/probe/polarization/100")
+        response = client.get(f"/api/v1/calibration/probe/polarization/100?chamber_id={TEST_CHAMBER_ID}")
         assert response.status_code == 400
 
     def test_get_polarization_history_invalid_probe_id(self):
         """测试无效探头 ID 的历史查询"""
-        response = client.get("/api/v1/calibration/probe/polarization/100/history")
+        response = client.get(f"/api/v1/calibration/probe/polarization/100/history?chamber_id={TEST_CHAMBER_ID}")
         assert response.status_code == 400
 
 
@@ -348,8 +373,9 @@ class TestPatternCalibration:
     def test_start_pattern_calibration_success(self):
         """测试成功启动方向图校准"""
         response = client.post(
-            "/api/v1/calibration/probe/pattern/start",
+            f"/api/v1/calibration/probe/pattern/start?chamber_id={TEST_CHAMBER_ID}",
             json={
+                "chamber_id": str(TEST_CHAMBER_ID),
                 "probe_ids": [1, 2],
                 "polarizations": ["V"],
                 "frequency_mhz": 3500,
@@ -367,8 +393,9 @@ class TestPatternCalibration:
     def test_start_pattern_calibration_with_defaults(self):
         """测试使用默认参数启动方向图校准"""
         response = client.post(
-            "/api/v1/calibration/probe/pattern/start",
+            f"/api/v1/calibration/probe/pattern/start?chamber_id={TEST_CHAMBER_ID}",
             json={
+                "chamber_id": str(TEST_CHAMBER_ID),
                 "probe_ids": [3],
                 "frequency_mhz": 3700,
                 "calibrated_by": "Test"
@@ -380,15 +407,16 @@ class TestPatternCalibration:
 
     def test_get_pattern_calibration_invalid_probe_id(self):
         """测试无效探头 ID"""
-        response = client.get("/api/v1/calibration/probe/pattern/100")
+        response = client.get(f"/api/v1/calibration/probe/pattern/100?chamber_id={TEST_CHAMBER_ID}")
         assert response.status_code == 400
 
     def test_get_pattern_calibration_with_frequency_filter(self):
         """测试按频率筛选方向图校准"""
         # 先创建一个校准记录
         client.post(
-            "/api/v1/calibration/probe/pattern/start",
+            f"/api/v1/calibration/probe/pattern/start?chamber_id={TEST_CHAMBER_ID}",
             json={
+                "chamber_id": str(TEST_CHAMBER_ID),
                 "probe_ids": [5],
                 "polarizations": ["V"],
                 "frequency_mhz": 3600,
@@ -398,8 +426,8 @@ class TestPatternCalibration:
 
         # 按频率查询
         response = client.get(
-            "/api/v1/calibration/probe/pattern/5",
-            params={"frequency_mhz": 3600}
+            f"/api/v1/calibration/probe/pattern/5?chamber_id={TEST_CHAMBER_ID}",
+            params={"chamber_id": str(TEST_CHAMBER_ID), "frequency_mhz": 3600}
         )
         assert response.status_code == 200
         data = response.json()
@@ -431,7 +459,7 @@ class TestLinkCalibration:
         data = response.json()
         assert "calibration_job_id" in data
         assert data["status"] == "completed"
-        assert "PASS" in data["message"] or "FAIL" in data["message"]
+        assert "UNVERIFIED (simulated)" in data["message"]
 
     def test_start_link_calibration_weekly_check(self):
         """测试每周检查类型的链路校准"""
@@ -520,7 +548,7 @@ class TestValidityManagement:
 
     def test_get_validity_report(self):
         """测试获取校准有效性报告"""
-        response = client.get("/api/v1/calibration/probe/validity/report")
+        response = client.get(f"/api/v1/calibration/probe/validity/report?chamber_id={TEST_CHAMBER_ID}")
         assert response.status_code == 200
         data = response.json()
         assert "total_probes" in data
@@ -534,8 +562,8 @@ class TestValidityManagement:
     def test_get_validity_report_with_probe_ids(self):
         """测试获取特定探头的有效性报告"""
         response = client.get(
-            "/api/v1/calibration/probe/validity/report",
-            params={"probe_ids": "0,1,2,3"}
+            f"/api/v1/calibration/probe/validity/report?chamber_id={TEST_CHAMBER_ID}",
+            params={"chamber_id": str(TEST_CHAMBER_ID), "probe_ids": "0,1,2,3"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -544,8 +572,8 @@ class TestValidityManagement:
     def test_get_validity_report_invalid_probe_ids(self):
         """测试无效的探头 ID 列表"""
         response = client.get(
-            "/api/v1/calibration/probe/validity/report",
-            params={"probe_ids": "100,101"}
+            f"/api/v1/calibration/probe/validity/report?chamber_id={TEST_CHAMBER_ID}",
+            params={"chamber_id": str(TEST_CHAMBER_ID), "probe_ids": "100,101"}
         )
         assert response.status_code == 400
 
@@ -553,8 +581,9 @@ class TestValidityManagement:
         """测试获取单个探头的有效性状态"""
         # 先创建一些校准记录
         client.post(
-            "/api/v1/calibration/probe/amplitude/start",
+            f"/api/v1/calibration/probe/amplitude/start?chamber_id={TEST_CHAMBER_ID}",
             json={
+                "chamber_id": str(TEST_CHAMBER_ID),
                 "probe_ids": [10],
                 "polarizations": ["V"],
                 "frequency_range": {
@@ -566,7 +595,7 @@ class TestValidityManagement:
             }
         )
 
-        response = client.get("/api/v1/calibration/probe/validity/10")
+        response = client.get(f"/api/v1/calibration/probe/validity/10?chamber_id={TEST_CHAMBER_ID}")
         assert response.status_code == 200
         data = response.json()
         assert data["probe_id"] == 10
@@ -579,12 +608,12 @@ class TestValidityManagement:
 
     def test_get_probe_validity_invalid_probe_id(self):
         """测试无效的探头 ID"""
-        response = client.get("/api/v1/calibration/probe/validity/100")
+        response = client.get(f"/api/v1/calibration/probe/validity/100?chamber_id={TEST_CHAMBER_ID}")
         assert response.status_code == 400
 
     def test_get_expiring_calibrations(self):
         """测试获取即将过期的校准列表"""
-        response = client.get("/api/v1/calibration/probe/validity/expiring")
+        response = client.get(f"/api/v1/calibration/probe/validity/expiring?chamber_id={TEST_CHAMBER_ID}")
         assert response.status_code == 200
         data = response.json()
         assert "days_threshold" in data
@@ -595,8 +624,8 @@ class TestValidityManagement:
     def test_get_expiring_calibrations_with_days(self):
         """测试指定天数的即将过期校准"""
         response = client.get(
-            "/api/v1/calibration/probe/validity/expiring",
-            params={"days": 14}
+            f"/api/v1/calibration/probe/validity/expiring?chamber_id={TEST_CHAMBER_ID}",
+            params={"chamber_id": str(TEST_CHAMBER_ID), "days": 14}
         )
         assert response.status_code == 200
         data = response.json()
@@ -605,8 +634,8 @@ class TestValidityManagement:
     def test_get_expiring_calibrations_with_type(self):
         """测试按类型筛选即将过期校准"""
         response = client.get(
-            "/api/v1/calibration/probe/validity/expiring",
-            params={"calibration_type": "amplitude"}
+            f"/api/v1/calibration/probe/validity/expiring?chamber_id={TEST_CHAMBER_ID}",
+            params={"chamber_id": str(TEST_CHAMBER_ID), "calibration_type": "amplitude"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -615,14 +644,14 @@ class TestValidityManagement:
     def test_get_expiring_calibrations_invalid_type(self):
         """测试无效的校准类型"""
         response = client.get(
-            "/api/v1/calibration/probe/validity/expiring",
-            params={"calibration_type": "invalid_type"}
+            f"/api/v1/calibration/probe/validity/expiring?chamber_id={TEST_CHAMBER_ID}",
+            params={"chamber_id": str(TEST_CHAMBER_ID), "calibration_type": "invalid_type"}
         )
         assert response.status_code == 400
 
     def test_get_expired_calibrations(self):
         """测试获取已过期的校准列表"""
-        response = client.get("/api/v1/calibration/probe/validity/expired")
+        response = client.get(f"/api/v1/calibration/probe/validity/expired?chamber_id={TEST_CHAMBER_ID}")
         assert response.status_code == 200
         data = response.json()
         assert "count" in data
@@ -639,17 +668,25 @@ class TestValidityManagement:
     def test_invalidate_calibration_not_found(self):
         """测试作废不存在的校准"""
         response = client.post(
-            "/api/v1/calibration/probe/invalidate/amplitude/00000000-0000-0000-0000-000000000001",
+            f"/api/v1/calibration/probe/invalidate/amplitude/00000000-0000-0000-0000-000000000001?chamber_id={TEST_CHAMBER_ID}",
             json={"reason": "Test invalidation reason"}
         )
         assert response.status_code == 404
+
+    def test_invalidate_probe_calibration_requires_chamber(self):
+        response = client.post(
+            "/api/v1/calibration/probe/invalidate/amplitude/00000000-0000-0000-0000-000000000001",
+            json={"reason": "Test invalidation reason"},
+        )
+        assert response.status_code == 422
 
     def test_get_probe_calibration_data(self):
         """测试获取探头综合校准数据"""
         # 先创建一些校准记录
         client.post(
-            "/api/v1/calibration/probe/amplitude/start",
+            f"/api/v1/calibration/probe/amplitude/start?chamber_id={TEST_CHAMBER_ID}",
             json={
+                "chamber_id": str(TEST_CHAMBER_ID),
                 "probe_ids": [15],
                 "polarizations": ["V"],
                 "frequency_range": {
@@ -661,9 +698,10 @@ class TestValidityManagement:
             }
         )
 
-        response = client.get("/api/v1/calibration/probe/15/data")
+        response = client.get(f"/api/v1/calibration/probe/15/data?chamber_id={TEST_CHAMBER_ID}")
         assert response.status_code == 200
         data = response.json()
+        assert data["chamber_id"] == str(TEST_CHAMBER_ID)
         assert data["probe_id"] == 15
         assert "amplitude_calibration" in data
         assert "phase_calibration" in data
@@ -674,5 +712,5 @@ class TestValidityManagement:
 
     def test_get_probe_calibration_data_invalid_probe_id(self):
         """测试无效探头 ID 的综合数据查询"""
-        response = client.get("/api/v1/calibration/probe/100/data")
+        response = client.get(f"/api/v1/calibration/probe/100/data?chamber_id={TEST_CHAMBER_ID}")
         assert response.status_code == 400
