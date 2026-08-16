@@ -63,7 +63,7 @@ TestCase 详情读取成功、LabProfile 列表读取失败时，编辑弹窗当
 ## 验证
 
 - RED/GREEN 行为测试锁住：列表不可用时保存 payload 省略绑定；列表 ready 后显式清空发送 `null`；显式换绑发送新 ID；未改变绑定时省略字段。
-- 组件契约测试锁住：编辑弹窗不再吞掉列表错误，列表 loading/error 时 Select 禁用并有重试入口。
+- TypeScript production build 验证编辑弹窗接入策略 helper，并正确渲染 loading/error、禁用 Select 与重试入口；仓库当前没有 React 组件测试运行时，本片不为一处回归引入整套框架。
 - 运行完整 rule gates、GUI production build、相关后端 TestCase PATCH 回归与 diff-check。
 
 ## 非目标
