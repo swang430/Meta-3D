@@ -14,7 +14,7 @@
  * 若不搬家, 操作员配 MIMO_OTA 仪表参数就只剩裸 JSON 文本框 —— 那是实打实的
  * 能力倒退。搬完这里, StepsTab 才可以删。
  */
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Modal,
   Stack,
@@ -29,7 +29,12 @@ import {
   TagsInput,
   Select,
 } from '@mantine/core'
-import { IconAlertCircle, IconDeviceFloppy, IconX } from '@tabler/icons-react'
+import {
+  IconAlertCircle,
+  IconDeviceFloppy,
+  IconRefresh,
+  IconX,
+} from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 import {
   getTestCase,
@@ -45,6 +50,10 @@ import {
   fetchAllLabProfiles,
   type LabProfileSummary,
 } from '../../api/labProfileService'
+import {
+  buildLabProfileBindingPatch,
+  labProfileSelectionDisabled,
+} from '../../features/TestManagement/testCaseLabProfileBinding'
 
 /** 有类型化配置表单的用例类型。其余走 raw JSON。 */
 const TYPED_CONFIG_CASE_TYPE = 'MIMO_OTA'
@@ -72,24 +81,84 @@ export function TestCaseEditModal({
   const [configText, setConfigText] = useState('{}')
   const [mimoConfig, setMimoConfig] = useState<MIMOOTAConfiguration>({})
   const [labs, setLabs] = useState<LabProfileSummary[]>([])
+  const [labsLoading, setLabsLoading] = useState(false)
+  const [labsError, setLabsError] = useState<string | null>(null)
+  const [labsReady, setLabsReady] = useState(false)
+  const [originalLabProfileId, setOriginalLabProfileId] = useState<string | null>(null)
   const [selectedLabId, setSelectedLabId] = useState(UNBOUND_LAB)
   const [jsonError, setJsonError] = useState<string | null>(null)
+  const labRequestId = useRef(0)
 
   // 类型化表单只对 MIMO_OTA 生效; 其余 test_type 仍是 raw JSON。
   const useTypedForm = tc?.test_type === TYPED_CONFIG_CASE_TYPE
+  const labSelectionIsDisabled = labProfileSelectionDisabled({
+    labsLoading,
+    labsError,
+  })
+  const selectedLabMissing =
+    selectedLabId !== UNBOUND_LAB
+    && !labs.some((lab) => lab.id === selectedLabId)
+  const labOptions = [
+    { value: UNBOUND_LAB, label: '不绑定（执行时自动解析）' },
+    ...(selectedLabMissing
+      ? [{
+          value: selectedLabId,
+          label: labsReady
+            ? `当前绑定 ${selectedLabId}（已不可用）`
+            : `当前绑定 ${selectedLabId}（列表未加载）`,
+          disabled: true,
+        }]
+      : []),
+    ...labs.map((lab) => ({
+      value: lab.id,
+      label: `${lab.name}${lab.is_active ? '' : '（已停用）'}`,
+      disabled: !lab.is_active,
+    })),
+  ]
+
+  const loadLabProfiles = useCallback(async () => {
+    const requestId = ++labRequestId.current
+    setLabsLoading(true)
+    setLabsError(null)
+    setLabsReady(false)
+    try {
+      const items = await fetchAllLabProfiles()
+      if (requestId !== labRequestId.current) return
+      setLabs(items)
+      setLabsReady(true)
+    } catch (error: unknown) {
+      if (requestId !== labRequestId.current) return
+      const detail = (
+        error as { response?: { data?: { detail?: unknown } } }
+      )?.response?.data?.detail
+      setLabs([])
+      setLabsError(
+        typeof detail === 'string' && detail.trim()
+          ? detail
+          : (error as Error)?.message || '无法加载 LabProfile 列表',
+      )
+    } finally {
+      if (requestId === labRequestId.current) setLabsLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     if (!opened || !testCaseId) return
+    let cancelled = false
     setLoading(true)
     setJsonError(null)
-    Promise.all([
-      getTestCase(testCaseId),
-      fetchAllLabProfiles().catch(() => [] as LabProfileSummary[]),
-    ])
-      .then(([data, labItems]) => {
+    setTc(null)
+    setLabs([])
+    setLabsError(null)
+    setLabsReady(false)
+    void loadLabProfiles()
+    getTestCase(testCaseId)
+      .then((data) => {
+        if (cancelled) return
         setTc(data)
-        setLabs(labItems)
-        setSelectedLabId(data.lab_profile_id ?? UNBOUND_LAB)
+        const binding = data.lab_profile_id ?? null
+        setOriginalLabProfileId(binding)
+        setSelectedLabId(binding ?? UNBOUND_LAB)
         setName(data.name || '')
         setDescription(data.description || '')
         setTags((data as unknown as { tags?: string[] }).tags || [])
@@ -104,6 +173,7 @@ export function TestCaseEditModal({
         )
       })
       .catch((e) => {
+        if (cancelled) return
         notifications.show({
           title: '加载失败',
           message: (e as Error)?.message || '无法获取 TestCase',
@@ -111,13 +181,19 @@ export function TestCaseEditModal({
         })
         onClose()
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+      labRequestId.current += 1
+    }
     // ⚠️ deps 只放"开了 + 换用例"。onClose 只在 catch 分支用, 而调用点
     // (TestCaseLibrary) 传的是内联箭头 —— 每次父组件重渲染都换引用。
     // 父组件有 2 秒执行轮询, 把 onClose 放进 deps 会让本 effect 每 2 秒重跑一次,
     // 用服务端旧值覆盖用户正在编辑的 60+ 项仪表参数 (内审 F3)。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opened, testCaseId])
+  }, [opened, testCaseId, loadLabProfiles])
 
   const handleConfigChange = (text: string) => {
     setConfigText(text)
@@ -139,13 +215,18 @@ export function TestCaseEditModal({
     setSaving(true)
     try {
       const config = useTypedForm ? mimoConfig : JSON.parse(configText)
+      const selectedLabProfileId =
+        selectedLabId === UNBOUND_LAB ? null : selectedLabId
       const updated = await updateTestCase(testCaseId, {
         name,
         description: description || null,
         tags,
         configuration: config,
-        lab_profile_id:
-          selectedLabId === UNBOUND_LAB ? null : selectedLabId,
+        ...buildLabProfileBindingPatch({
+          labsReady,
+          originalLabProfileId,
+          selectedLabProfileId,
+        }),
       })
       notifications.show({
         title: 'TestCase 已更新',
@@ -228,16 +309,36 @@ export function TestCaseEditModal({
             description="绑定后执行使用该实验室的暗室与仪表；不绑定时要求系统只有一个活动 LabProfile"
             value={selectedLabId}
             onChange={(value) => setSelectedLabId(value ?? UNBOUND_LAB)}
-            data={[
-              { value: UNBOUND_LAB, label: '不绑定（执行时自动解析）' },
-              ...labs.map((lab) => ({
-                value: lab.id,
-                label: `${lab.name}${lab.is_active ? '' : '（已停用）'}`,
-                disabled: !lab.is_active,
-              })),
-            ]}
+            data={labOptions}
             allowDeselect={false}
+            disabled={labSelectionIsDisabled}
+            rightSection={labsLoading ? <Loader size="xs" /> : undefined}
           />
+
+          {labsError && (
+            <Alert
+              color="red"
+              variant="light"
+              icon={<IconAlertCircle size={18} />}
+              title="LabProfile 列表不可用"
+            >
+              <Stack gap="xs">
+                <span>
+                  {labsError}。当前绑定保持不变；仍可保存其它 TestCase 字段。
+                </span>
+                <Group>
+                  <Button
+                    size="xs"
+                    variant="light"
+                    leftSection={<IconRefresh size={14} />}
+                    onClick={() => void loadLabProfiles()}
+                  >
+                    重试加载
+                  </Button>
+                </Group>
+              </Stack>
+            </Alert>
+          )}
 
           {useTypedForm ? (
             <MIMOOTAConfigForm value={mimoConfig} onChange={setMimoConfig} />
