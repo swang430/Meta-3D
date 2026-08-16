@@ -18,7 +18,7 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅。
 
-**Current Focus = P1-54（实现 Ready，fresh 内审 P1/P2/P3=0，待提交与 Codex 外审，WIP=1）**。P2-26 已由 PR #347
+**Current Focus = P1-54（PR #348 R1 无重大问题，待最终 R2，WIP=1）**。P2-26 已由 PR #347
 （merge `ef50070`）完成历史 MIMO 报告 UNKNOWN/N/A 的安全重建与恢复界面。P1-54 将 UXM
 已有的 `kpi_valid` 真值推进 `ThroughputMetrics`、`to_dict()`、MEASURE、ANALYSIS 与报告：
 真实零吞吐仍是有效样本，缺测/NaN/查询失败保持 `None/UNKNOWN`，不得再以默认 `0.0`
@@ -49,7 +49,7 @@ P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → 
 | **P1-53** | 多暗室校准数据隔离，禁止跨暗室误用校准结果 | ✅ PR #346 |
 | **P2-25** | 当前/历史日志分类；历史按分类/执行分组并支持时间、名称、execution ID 搜索 | ✅ PR #340 |
 | **P2-26** | 历史 MIMO 报告 UNKNOWN/N/A 的重新生成与恢复界面 | ✅ PR #347 |
-| **P1-54** | `kpi_valid` 进入正式数据契约；缺测吞吐不得以默认 0.0 进入 MEASURE/KPI | 🟡 Ready / 待 Codex 外审 |
+| **P1-54** | `kpi_valid` 进入正式数据契约；缺测吞吐不得以默认 0.0 进入 MEASURE/KPI | 🟡 PR #348 R1 无重大问题 / 待 R2 |
 | **P1-55** | 收敛顶层配置与 `component_carriers[0]`；统一写入、显示与执行真值源 | ⬜ P1-54 后自动开始 |
 | **P1-56** | 转台命令成功但编码器不动：本地动作真值门与诊断载体 | ⬜ 本地片待做；现场验证保持 Hardware Blocked |
 | **P2-27** | 修复 9 组前端手写契约与 live OpenAPI 不一致 | ⬜ |
@@ -304,7 +304,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → ~~P1-52~~ ✅ → ~~P1-53~~ ✅ → ~~P2-26~~ ✅ → P1-54 🟡 → P1-55 → P1-56 → P2-27 → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；P2-26 已由 PR #347（merge `ef50070`）收口。当前 P1-54 已完成 `kpi_valid` nullable 契约、真实驱动生产、MEASURE/ANALYSIS/报告正式 allowlist 与历史报告吞吐 trust 门；内审发现的“不完整方位子集误标可信”P1 已按 TDD 收窄为请求方位必须全部完成且均有可信吞吐，fresh 内审最终 P1/P2/P3=0、实现 Ready；新定点 18 passed、相关与完整 rule gates 221 passed、GUI production build/compileall/单一 Alembic head/diff-check 通过；全后端 3929 passed/5 skipped，仅 1 条与本片无关且独立 18 passed 的既有 execution-context 顺序污染。WIP=1。P1-55 为顶层配置与 `component_carriers[0]` 真值收敛；P1-56 为转台动作真值门/诊断载体，本地片完成后现场实证仍保持 Hardware Blocked。用户要求 P1-54 合并后暂停并总结，不自动开始下一项。完整编号、范围与状态只看顶部 Current Focus 表。 |
+| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → ~~P1-52~~ ✅ → ~~P1-53~~ ✅ → ~~P2-26~~ ✅ → P1-54 🟡 → P1-55 → P1-56 → P2-27 → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；P2-26 已由 PR #347（merge `ef50070`）收口。当前 P1-54 已完成 `kpi_valid` nullable 契约、真实驱动生产、MEASURE/ANALYSIS/报告正式 allowlist 与历史报告吞吐 trust 门；内审发现的“不完整方位子集误标可信”P1 已按 TDD 收窄为请求方位必须全部完成且均有可信吞吐，fresh 内审最终 P1/P2/P3=0、实现 Ready，PR #348 R1 无重大问题，待最终 R2；新定点 18 passed、相关与完整 rule gates 221 passed、GUI production build/compileall/单一 Alembic head/diff-check 通过；全后端 3929 passed/5 skipped，仅 1 条与本片无关且独立 18 passed 的既有 execution-context 顺序污染。WIP=1。P1-55 为顶层配置与 `component_carriers[0]` 真值收敛；P1-56 为转台动作真值门/诊断载体，本地片完成后现场实证仍保持 Hardware Blocked。用户要求 P1-54 合并后暂停并总结，不自动开始下一项。完整编号、范围与状态只看顶部 Current Focus 表。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -3841,7 +3841,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 - `[discovered 2026-08-03 during UXM KPI 修复内审 F7]` **CA/多小区下 `BTHRoughput:CLEar` 清全部小区，而吞吐量只读 PCell** —— `CLEar` 不带 cell（技术层全局），而 `MEAS_TPUT_DL_OTA` 读的是 `OTA:{cell}?` = PCell。SCell 是活跃配置（`executors/measure.py` 会 `add_secondary_cell` + `activate_secondary_cells`）→ CA 下报出的"吞吐量"只有 PCell 一份，**系统性低估交付 KPI**，并被 `analysis.py` 的 `throughput_pass` 直接消费。手册有 `...:DL:THRoughput:OTA:ALL?`，注明「return **sum of all NR cells** results」。修法 = 有 SCell 时换 `OTA:ALL?`，或至少在 `measurement.log` 标 `pcell_only=true`。
 
-- ~~`[discovered 2026-08-03 during UXM KPI 修复内审 F9/F10]` **`kpi_valid` 只进日志不进 `to_dict()`，调用方仍分不清「测到 0」和「没测到」**~~ **[→ P1-54，Ready / 待外审]** —— `ThroughputMetrics` 四个吞吐字段已 nullable，UXM/CMW500 以解析真值写 `kpi_valid`；MEASURE 仅收显式有效且有限的样本，并要求请求方位全部完成且逐方位可信，ANALYSIS/报告缺任一方位可信吞吐即 UNKNOWN/N/A；历史报告必须带新增吞吐 trust marker或经 P2-26 安全重建，旧默认零值不能直接重新发布。
+- ~~`[discovered 2026-08-03 during UXM KPI 修复内审 F9/F10]` **`kpi_valid` 只进日志不进 `to_dict()`，调用方仍分不清「测到 0」和「没测到」**~~ **[→ P1-54，PR #348 R1 无重大问题 / 待 R2]** —— `ThroughputMetrics` 四个吞吐字段已 nullable，UXM/CMW500 以解析真值写 `kpi_valid`；MEASURE 仅收显式有效且有限的样本，并要求请求方位全部完成且逐方位可信，ANALYSIS/报告缺任一方位可信吞吐即 UNKNOWN/N/A；历史报告必须带新增吞吐 trust marker或经 P2-26 安全重建，旧默认零值不能直接重新发布。
 
 
 - `[discovered 2026-08-03 during UXM KPI 修复]` **[→ P1-32 ✅ 已修（#279）／P1-33 本地半 ✅ 已修（#281, 2026-08-05）／余 P1-33 现场半]** ~~**⛔ `configure_mac_throughput_test()` 在现场用的 IRAT 方言上 11/11 条命令都是 `None`，第一行就抛 AttributeError**~~ **⚠️ 崩溃与静默继续那半已由 P1-32 修掉**：8 组写入改走 `_cmd()` graceful-skip、返回 `MacThroughputConfigResult`、调用方必要项缺失即 `FAILED`（不再无条件 `start_signaling`）。**下面这段描述的是修之前的状态，留作背景，别当现状读。****命令形式那半也已由 P1-33 本地半修掉**（#281, 2026-08-05：8 组命令按手册原件补齐 + 值形态转换 + 两条 apply 前置）。**仍未解决的只剩 P1-33 现场半** —— 「IRAT 到底支不支持这批命令」两个方向都没有证据，只能真机上跑一次看 `rejected` 列表（详见 P1-33 段的手册裁决）。原文如下 ——  —— `PDSCH_SCHED_ALGO` / `PDSCH_AMC_ENABLE` / `PUSCH_AMC_ENABLE` / `PDSCH_MCS` / `PDSCH_RB_ALLOC` / `TDD_PATTERN` / `TDD_PERIOD` / `HARQ_MAX_TRANS` / `HARQ_PROCESSES` / `CSIRS_PORTS` / `MEAS_TPUT_STAT_COUNT` —— `UxmLteNrIratProfile` 继承的是 `UxmTestApp` **基类**（不是 `Uxm5GNRTestAppProfile`），这 11 条全没覆盖。函数在第一条 `.format()` 上 `'NoneType' object has no attribute 'format'`，整段 `except` 捕获 → `return False`。**也就是说 3GPP MIMO OTA MAC 层吞吐量测试的全部配置（Full Buffer / AMC 关 / 固定 MCS / 全 RB / TDD 格式 / HARQ / CSI-RS 端口 / 统计窗口）在现场那台仪器上从来没有生效过。** 仓库已有 `RealUxmDriver._cmd()` graceful-skip helper 专治这个形态（见 `tests/test_uxm_driver_profile.py` 的 docstring），正解是全部换成它 —— 但**必须同时解决"跳过全部还报 True 就是假成功"**：跳过多少、跳了哪些要显式返回给调用方，否则比现在的 fail-loud 更糟。⚠️ **优先级高**：这是测试配置层的整体失效，比 KPI 读错更靠前 —— KPI 修好了，但测的是没配置过的链路。本次 KPI 片刻意不碰它（范围纪律），只把 KPI 前置序列挪到第 0 步、排在崩点之前，否则 KPI 修复在真正用的那个方言上是死的。
