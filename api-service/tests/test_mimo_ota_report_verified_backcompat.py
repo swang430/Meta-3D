@@ -252,6 +252,92 @@ def test_sanitized_unknown_mimo_audit_report_is_viewable_and_downloadable(
     assert report_api.download_report(uuid4(), db=object()).path == str(report_file)
 
 
+def test_report_list_regeneration_state_comes_from_mimo_trust_and_execution_truth(
+    monkeypatch,
+):
+    from app.api import report as report_api
+
+    recoverable_execution_id = uuid4()
+    missing_execution_id = uuid4()
+
+    def _report(*, content_data, execution_ids, generated_by="mimo_ota.executors.report"):
+        return SimpleNamespace(
+            id=uuid4(),
+            title="Historical report",
+            report_type="single_execution",
+            format="pdf",
+            status="completed",
+            progress_percent=100,
+            file_size_bytes=123,
+            generated_by=generated_by,
+            generated_at=datetime(2026, 1, 1),
+            test_execution_ids=execution_ids,
+            road_test_execution_id=None,
+            content_data=content_data,
+        )
+
+    reports = [
+        _report(
+            content_data={"report_family": "mimo_ota"},
+            execution_ids=[recoverable_execution_id],
+        ),
+        _report(
+            content_data={
+                "report_family": "mimo_ota",
+                "calibration_trust_schema_version": 1,
+            },
+            execution_ids=[recoverable_execution_id],
+        ),
+        _report(
+            content_data={"report_family": "mimo_ota"},
+            execution_ids=[missing_execution_id],
+        ),
+        _report(
+            content_data={"report_family": "mimo_ota"},
+            execution_ids=[uuid4(), uuid4()],
+        ),
+        _report(content_data={}, execution_ids=[], generated_by="manual"),
+    ]
+
+    class _DB:
+        def get(self, model, value):
+            return object() if value == recoverable_execution_id else None
+
+    monkeypatch.setattr(report_api.report_service, "list_reports", lambda **kwargs: reports)
+    monkeypatch.setattr(report_api.report_service, "count_reports", lambda **kwargs: len(reports))
+
+    response = report_api.list_reports(
+        skip=0,
+        limit=20,
+        status=None,
+        report_type=None,
+        format=None,
+        generated_by=None,
+        db=_DB(),
+    )
+    recoverable, sanitized, missing, multiple, ordinary = response.reports
+
+    assert recoverable.requires_regeneration is True
+    assert recoverable.regeneration_available is True
+    assert "UNKNOWN/N/A" in recoverable.regeneration_reason
+
+    assert sanitized.requires_regeneration is False
+    assert sanitized.regeneration_available is False
+    assert sanitized.regeneration_reason is None
+
+    assert missing.requires_regeneration is True
+    assert missing.regeneration_available is False
+    assert "unavailable" in missing.regeneration_reason.lower()
+
+    assert multiple.requires_regeneration is True
+    assert multiple.regeneration_available is False
+    assert "single" in multiple.regeneration_reason.lower()
+
+    assert ordinary.requires_regeneration is False
+    assert ordinary.regeneration_available is False
+    assert ordinary.regeneration_reason is None
+
+
 def test_report_create_drops_client_supplied_trust_attestation():
     class _FakeDB:
         def add(self, value):

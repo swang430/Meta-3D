@@ -166,6 +166,11 @@ class ReportSummary(BaseModel):
     test_execution_ids: Optional[List[UUID]] = None
     road_test_execution_id: Optional[str] = None
 
+    # Historical MIMO provenance recovery (computed by the list endpoint).
+    requires_regeneration: bool = False
+    regeneration_available: bool = False
+    regeneration_reason: Optional[str] = None
+
     class Config:
         from_attributes = True
 
@@ -596,4 +601,3 @@ class KPIDifference(BaseModel):
     baseline_value: float
     differences: Dict[str, float]  # report_id -> difference from baseline
     percent_changes: Dict[str, float]  # report_id -> percent change
-

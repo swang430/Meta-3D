@@ -5,6 +5,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from app.db.database import get_db
+from app.models.test_plan import TestExecution
 from app.schemas.report import (
     # Report
     ReportCreate,
@@ -88,6 +89,46 @@ def _reject_untrusted_mimo_report(db: Session, report) -> None:
     )
 
 
+def _report_summary(db: Session, report) -> ReportSummary:
+    """Build list metadata from the same MIMO trust truth as detail/download."""
+    summary = ReportSummary.model_validate(report)
+    if _mimo_report_is_provenance_sanitized(db, report):
+        return summary
+
+    execution_ids = getattr(report, "test_execution_ids", None) or []
+    if len(execution_ids) != 1:
+        return summary.model_copy(update={
+            "requires_regeneration": True,
+            "regeneration_available": False,
+            "regeneration_reason": (
+                "Safe regeneration requires a single linked TestExecution."
+            ),
+        })
+
+    try:
+        execution_id = UUID(str(execution_ids[0]))
+    except (TypeError, ValueError):
+        execution_id = None
+    execution = db.get(TestExecution, execution_id) if execution_id else None
+    if execution is None:
+        return summary.model_copy(update={
+            "requires_regeneration": True,
+            "regeneration_available": False,
+            "regeneration_reason": (
+                "The linked TestExecution is unavailable; regeneration cannot "
+                "be performed safely."
+            ),
+        })
+
+    return summary.model_copy(update={
+        "requires_regeneration": True,
+        "regeneration_available": True,
+        "regeneration_reason": (
+            "Regenerate to produce a provenance-sanitized UNKNOWN/N/A audit report."
+        ),
+    })
+
+
 # ==================== Report Endpoints ====================
 
 @router.post("", response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
@@ -150,7 +191,7 @@ def list_reports(
         generated_by=generated_by
     )
     return ReportListResponse(
-        reports=[ReportSummary.model_validate(r) for r in reports],
+        reports=[_report_summary(db, report) for report in reports],
         total=total,
         page=1 + (skip // limit),
         page_size=limit
