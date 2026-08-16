@@ -23,7 +23,7 @@ HAL Driver Registry (驱动注册与工厂)
             "port": 3334,  # PROPSIM F64 ATE/SCPI 端口硬件固定 3334 (非 5025)
         },
         "base_station": {
-            "driver_class": "auto",  # 自动探测
+            "driver_class": "auto",  # 按显式地址选择 Real 或 Mock
             "ip": operator_configured_base_station_ip,
         },
     })

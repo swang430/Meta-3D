@@ -292,7 +292,7 @@ def connected_log_fields(driver, category_key: str, vendor: str, model: str):
 _IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 
 
-def preflight_target(conn) -> Optional[Tuple[str, int]]:
+def preflight_target(binding) -> Optional[Tuple[str, int]]:
     """Resolve ``(host, port)`` for the TCP reachability preflight from a
     connection binding.
 
@@ -312,14 +312,18 @@ def preflight_target(conn) -> Optional[Tuple[str, int]]:
     ``:PORT`` in the string if present, else 5025 (raw-SCPI). Returns ``None``
     when no IPv4 host can be resolved or the binding conflicts (caller skips preflight → row stays
     network_reachable=None / 未探测)."""
-    if conn is None:
+    if binding is None:
         return None
-    host, port, _, error = resolve_configured_tcpip_connection(
-        {
-            "controller_ip": getattr(conn, "controller_ip", None),
-            "port": getattr(conn, "port", None),
-            "endpoint": getattr(conn, "endpoint", None),
+    if isinstance(binding, dict):
+        config = binding
+    else:
+        config = {
+            "controller_ip": getattr(binding, "controller_ip", None),
+            "port": getattr(binding, "port", None),
+            "endpoint": getattr(binding, "endpoint", None),
         }
+    host, port, _, error = resolve_configured_tcpip_connection(
+        config
     )
     if error or not host or not _IPV4_RE.fullmatch(host):
         return None
@@ -670,7 +674,7 @@ class InstrumentHALService:
                 target = (
                     None
                     if is_mock_driver(driver)
-                    else preflight_target(conn)
+                    else preflight_target(driver_config)
                 )
                 if target is not None:
                     # P1-15: run the canary negative-control once (lazily) before

@@ -77,7 +77,7 @@ def resolve_configured_tcpip_connection(
             break
 
     selected_resource: Optional[str] = None
-    endpoint_port: Optional[int] = None
+    port_sources: List[tuple[str, int]] = []
     for key in ("visa_resource", "endpoint"):
         raw = str(config.get(key) or "").strip()
         if not raw:
@@ -100,7 +100,7 @@ def resolve_configured_tcpip_connection(
                 and parts[-1].strip().casefold() == "socket"
                 and parts[-2].strip().isdigit()
             ):
-                endpoint_port = int(parts[-2].strip())
+                port_sources.append((key, int(parts[-2].strip())))
             continue
 
         if key == "visa_resource":
@@ -111,7 +111,7 @@ def resolve_configured_tcpip_connection(
             if not host.strip() or not port_text.isdigit():
                 return "", None, None, "endpoint 必须是 host、host:port 或 TCPIP VISA resource"
             endpoint_host = host.strip()
-            endpoint_port = int(port_text)
+            port_sources.append((key, int(port_text)))
         else:
             endpoint_host = raw
         host_sources.append((key, endpoint_host))
@@ -128,17 +128,14 @@ def resolve_configured_tcpip_connection(
             explicit_port = int(configured_port)
         except (TypeError, ValueError):
             return "", None, None, f"port 不是有效整数：{configured_port!r}"
-    if (
-        explicit_port is not None
-        and endpoint_port is not None
-        and explicit_port != endpoint_port
-    ):
-        return "", None, None, (
-            f"连接端口冲突：port={explicit_port}, endpoint={endpoint_port}"
-        )
+        port_sources.append(("port", explicit_port))
+    distinct_ports = {value for _, value in port_sources}
+    if len(distinct_ports) > 1:
+        detail = ", ".join(f"{key}={value}" for key, value in port_sources)
+        return "", None, None, f"连接端口冲突：{detail}"
 
     host_value = host_sources[0][1] if host_sources else ""
-    resolved_port = explicit_port if explicit_port is not None else endpoint_port
+    resolved_port = port_sources[0][1] if port_sources else None
     return host_value, resolved_port, selected_resource, None
 
 

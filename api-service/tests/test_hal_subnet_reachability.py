@@ -390,6 +390,39 @@ def _run_init_with_fake_driver(monkeypatch, *, category_key, model_name, trustwo
 
 
 class TestFailKindClassification:
+    def test_preflight_consumes_merged_connection_params(self, monkeypatch, db):
+        """最终 driver config 冲突时，canary/target preflight 都不得先发 I/O。"""
+        cat, _ = _seed_category_with_model(
+            db,
+            category_key="channelEmulator",
+            ip="192.168.9.50",
+            model_name="FAKE-1",
+        )
+        conn = db.query(InstrumentConnectionDB).filter(
+            InstrumentConnectionDB.category_id == cat.id
+        ).one()
+        conn.connection_params = {
+            "visa_resource": "TCPIP0::192.168.9.99::3334::SOCKET"
+        }
+        db.commit()
+
+        async def forbidden_canary(*args, **kwargs):
+            pytest.fail("conflicting merged config must fail before canary I/O")
+
+        async def forbidden_preflight(*args, **kwargs):
+            pytest.fail("conflicting merged config must fail before target preflight I/O")
+
+        monkeypatch.setattr(hal_mod, "detect_preflight_trustworthy", forbidden_canary)
+        monkeypatch.setattr(hal_mod, "tcp_preflight", forbidden_preflight)
+        monkeypatch.setattr(
+            hal_mod,
+            "_real_driver_registry",
+            lambda: {"channelEmulator": {"FAKE-1": _FakeRealDriver}},
+        )
+
+        svc = InstrumentHALService(mode=DriverMode.REAL)
+        asyncio.run(svc._initialize_from_db())
+
     def test_preflight_failure_tagged_network(self, monkeypatch, db):
         """TCP preflight returns (False, reason) → the driver row is
         status=fail, fail_kind='network'. connect() must NOT be called."""
