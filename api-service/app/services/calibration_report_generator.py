@@ -642,7 +642,9 @@ class CalibrationReportGenerator:
 
         # Path loss calibrations (CAL-02: SGH → Probe spatial path loss)
         if not calibration_type or calibration_type == 'path_loss':
-            calibrations = self.db.query(ProbePathLossCalibration).order_by(
+            calibrations = self.db.query(ProbePathLossCalibration).filter(
+                ProbePathLossCalibration.chamber_id == chamber_id
+            ).order_by(
                 desc(ProbePathLossCalibration.calibrated_at)
             ).limit(50).all()
 
@@ -685,7 +687,9 @@ class CalibrationReportGenerator:
 
         # RF chain calibrations (CAL-03/04: LNA/PA gain calibration)
         if not calibration_type or calibration_type == 'rf_chain':
-            calibrations = self.db.query(RFChainCalibration).order_by(
+            calibrations = self.db.query(RFChainCalibration).filter(
+                RFChainCalibration.chamber_id == chamber_id
+            ).order_by(
                 desc(RFChainCalibration.calibrated_at)
             ).limit(50).all()
 
@@ -728,7 +732,9 @@ class CalibrationReportGenerator:
 
         # Multi-frequency path loss calibrations (CAL-08: frequency sweep)
         if not calibration_type or calibration_type == 'multi_freq_path_loss':
-            calibrations = self.db.query(MultiFrequencyPathLoss).order_by(
+            calibrations = self.db.query(MultiFrequencyPathLoss).filter(
+                MultiFrequencyPathLoss.chamber_id == chamber_id
+            ).order_by(
                 desc(MultiFrequencyPathLoss.calibrated_at)
             ).limit(50).all()
 

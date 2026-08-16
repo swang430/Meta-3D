@@ -37,7 +37,8 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
 ### A. 每个入口显式要求 `chamber_id`（采用）
 
 - 写入、读取、有效性和报告都把 `chamber_id` 作为必填契约。
-- 后端先确认暗室存在，再对探头编号做该暗室内的存在性校验。
+- 后端先确认暗室存在，再按暗室 `num_probes` 校验零基探头编号范围；当前校准链的
+  `probe_id` 是 0..N-1，而 `Probe.probe_number` 是一基展示编号，不能拿后者做所有权判据。
 - SQL 只接受 `row.chamber_id == requested_chamber_id`；不回退 `NULL` legacy，也不读取其他暗室。
 - 前端从 P1-28 的当前 LabProfile/暗室真值取得 ID，并将其贯穿请求和缓存键。
 
@@ -62,7 +63,9 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
 
 1. 四类 start request 增加必填 `chamber_id`；两个 multipart import 增加必填 form 字段。
 2. latest/history/pattern/data/validity/expiring/expired 增加必填 query `chamber_id`。
-3. probe/comprehensive report 在包含 probe 数据时要求 `chamber_id`；报告 payload 每行携带 chamber ID，PDF 标题或摘要明确暗室。
+3. probe/comprehensive report 在包含 probe 数据时要求 `chamber_id`；报告中的四类探头记录，
+   以及已经自带暗室维度的 path-loss / RF-chain / multi-frequency 记录都只接受 exact chamber。
+   报告 payload 每行携带 chamber ID，PDF 标题或摘要明确暗室。
 4. replace-existing 只作废相同 chamber、probe、polarization/frequency 的旧行，绝不触碰其他暗室。
 5. lower-level service 的正式消费必须传 chamber；若调用方没有 chamber，不得静默退回全局 probe 编号查询。
 6. `LinkCalibration` 仍按现有全局语义展示，不把它伪装成 per-chamber；本片只隔离带 `chamber_id` 的四类探头记录。
@@ -78,7 +81,7 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
 
 - 缺 `chamber_id`：FastAPI 422，任何写入/报告生成前失败。
 - 暗室不存在：404。
-- 探头不属于该暗室：422，禁止用相同数字编号跨暗室取数。
+- 探头编号不在该暗室 `0 <= probe_id < num_probes` 范围：422。
 - 该暗室只有 legacy NULL 或其他暗室记录：latest 返回 404、有效性返回 unknown，不回退。
 - 报告请求缺暗室或找不到该暗室记录：生成 UNKNOWN/空作用域摘要或明确失败；不得混入其他暗室记录来凑数据。
 
@@ -88,13 +91,15 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
 2. 六个写入入口均落正确 `chamber_id`；replace-existing 不作废另一暗室。
 3. A 无记录、B 有记录、legacy NULL 有记录时，A 不得取 B 或 NULL。
 4. pattern consumer 在 A 无 exact 时返回 missing，不回退 B/NULL。
-5. probe/comprehensive report 的数据行和正式统计仅含请求暗室。
+5. probe/comprehensive report 的全部暗室相关数据行（含既有 path-loss / RF-chain /
+   multi-frequency 家族）和正式统计仅含请求暗室。
 6. GUI 请求与 React Query key 均含当前暗室；无当前暗室时不发请求。
 7. 完整 probe calibration 回归、P1-28 真值源回归、报告回归、rule gates、GUI build、compileall 与 diff-check 通过。
 
 ## 非目标
 
 - 不自动迁移/删除 legacy NULL 或 orphan 校准数据。
-- 不改 path-loss、RF-chain、channel calibration 已有 chamber 维度。
+- 不改 path-loss、RF-chain、channel calibration 的写入模型与既有暗室维度；正式 probe/
+  comprehensive report 仍必须按请求暗室过滤这些已有数据源，不能让报告边界成为旁路。
 - 不修 `CalibrationOrchestrator.export/import_calibration_data` 无调用死链。
 - 不顺手处理 SystemCalibration 页面既有硬编码暗室 ID；它需要以自己的活动入口和数据模型另行 triage。

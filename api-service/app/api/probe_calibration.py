@@ -267,6 +267,7 @@ def get_amplitude_calibration_history(
                 }
 
     return CalibrationHistoryResponse(
+        chamber_id=chamber_id,
         probe_id=probe_id,
         history=history_items,
         trends=trends
@@ -557,6 +558,7 @@ def get_phase_calibration_history(
                 }
 
     return CalibrationHistoryResponse(
+        chamber_id=chamber_id,
         probe_id=probe_id,
         history=history_items,
         trends=trends
@@ -768,6 +770,7 @@ def get_polarization_calibration_history(
         ))
 
     return CalibrationHistoryResponse(
+        chamber_id=chamber_id,
         probe_id=probe_id,
         history=history_items,
         trends=None  # 极化校准通常稳定，无需趋势分析

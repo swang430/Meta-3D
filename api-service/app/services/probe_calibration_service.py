@@ -250,10 +250,11 @@ class AmplitudeCalibrationService:
         polarizations: List[PolarizationType],
         frequency_range: FrequencyRange,
         calibrated_by: str,
+        *,
+        chamber_id: UUID,
         reference_antenna_id: Optional[str] = None,
         power_meter_id: Optional[str] = None,
         use_mock: bool = True,
-        chamber_id: Optional[UUID] = None,
     ) -> CalibrationResult:
         """
         执行幅度校准
@@ -668,9 +669,10 @@ class PhaseCalibrationService:
         frequency_range: FrequencyRange,
         reference_probe_id: int,
         calibrated_by: str,
+        *,
+        chamber_id: UUID,
         vna_id: Optional[str] = None,
         use_mock: bool = True,
-        chamber_id: Optional[UUID] = None,
     ) -> CalibrationResult:
         """
         执行相位校准
@@ -1036,10 +1038,11 @@ class PolarizationCalibrationService:
         probe_type: str,
         frequency_range: FrequencyRange,
         calibrated_by: str,
+        *,
+        chamber_id: UUID,
         reference_antenna_id: Optional[str] = None,
         positioner_id: Optional[str] = None,
         use_mock: bool = True,
-        chamber_id: Optional[UUID] = None,
     ) -> CalibrationResult:
         """
         执行极化校准
@@ -1488,6 +1491,8 @@ class PatternCalibrationService:
         polarizations: List[PolarizationType],
         frequency_mhz: float,
         calibrated_by: str,
+        *,
+        chamber_id: UUID,
         azimuth_step_deg: float = DEFAULT_AZIMUTH_STEP_DEG,
         elevation_step_deg: float = DEFAULT_ELEVATION_STEP_DEG,
         measurement_distance_m: float = 3.0,
@@ -1498,7 +1503,6 @@ class PatternCalibrationService:
         sgh_gain_dbi: float = 10.0,
         chain_correction_db: float = 0.0,
         use_mock: bool = True,
-        chamber_id: Optional[UUID] = None,
     ) -> CalibrationResult:
         """
         执行方向图校准

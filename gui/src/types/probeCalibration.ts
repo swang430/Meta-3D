@@ -64,6 +64,7 @@ export interface StartAmplitudeCalibrationRequest {
 
 export interface AmplitudeCalibrationResponse {
   id: string
+  chamber_id: string
   probe_id: number
   polarization: string
   frequency_points_mhz: number[]
@@ -95,6 +96,7 @@ export interface StartPhaseCalibrationRequest {
 
 export interface PhaseCalibrationResponse {
   id: string
+  chamber_id: string
   probe_id: number
   polarization: string
   reference_probe_id: number
@@ -124,6 +126,7 @@ export interface StartPolarizationCalibrationRequest {
 
 export interface PolarizationCalibrationResponse {
   id: string
+  chamber_id: string
   probe_id: number
   probe_type: string
   // Linear polarization data
@@ -163,6 +166,7 @@ export interface StartPatternCalibrationRequest {
 
 export interface PatternCalibrationResponse {
   id: string
+  chamber_id: string
   probe_id: number
   polarization: string
   frequency_mhz: number
@@ -337,6 +341,7 @@ export interface CalibrationTrends {
 }
 
 export interface CalibrationHistoryResponse {
+  chamber_id: string
   probe_id: number
   history: CalibrationHistoryItem[]
   trends?: CalibrationTrends

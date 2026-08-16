@@ -141,6 +141,7 @@ class TestAmplitudeCalibrationRequest:
     def test_valid_amplitude_request(self):
         """验证有效的幅度校准请求"""
         request = StartAmplitudeCalibrationRequest(
+            chamber_id=uuid4(),
             probe_ids=[1, 2, 3],
             polarizations=[PolarizationType.V, PolarizationType.H],
             frequency_range=FrequencyRange(start_mhz=3300, stop_mhz=3800, step_mhz=100),
@@ -173,6 +174,7 @@ class TestAmplitudeCalibrationRequest:
     def test_amplitude_request_default_polarizations(self):
         """验证默认极化类型"""
         request = StartAmplitudeCalibrationRequest(
+            chamber_id=uuid4(),
             probe_ids=[1],
             frequency_range=FrequencyRange(start_mhz=3300, stop_mhz=3800, step_mhz=100),
             calibrated_by="Test User"
@@ -190,6 +192,7 @@ class TestPhaseCalibrationRequest:
     def test_valid_phase_request(self):
         """验证有效的相位校准请求"""
         request = StartPhaseCalibrationRequest(
+            chamber_id=uuid4(),
             probe_ids=[1, 2, 3],
             reference_probe_id=0,
             frequency_range=FrequencyRange(start_mhz=3300, stop_mhz=3800, step_mhz=100),
@@ -200,6 +203,7 @@ class TestPhaseCalibrationRequest:
     def test_phase_request_default_reference_probe(self):
         """验证默认参考探头为 0"""
         request = StartPhaseCalibrationRequest(
+            chamber_id=uuid4(),
             probe_ids=[1, 2, 3],
             frequency_range=FrequencyRange(start_mhz=3300, stop_mhz=3800, step_mhz=100),
             calibrated_by="Test User"
@@ -215,6 +219,7 @@ class TestPolarizationCalibrationRequest:
     def test_valid_polarization_request_linear(self):
         """验证线极化校准请求"""
         request = StartPolarizationCalibrationRequest(
+            chamber_id=uuid4(),
             probe_ids=[1, 2],
             probe_type=ProbeTypeEnum.DUAL_LINEAR,
             frequency_range=FrequencyRange(start_mhz=3300, stop_mhz=3800, step_mhz=100),
@@ -225,6 +230,7 @@ class TestPolarizationCalibrationRequest:
     def test_valid_polarization_request_circular(self):
         """验证圆极化校准请求"""
         request = StartPolarizationCalibrationRequest(
+            chamber_id=uuid4(),
             probe_ids=[1],
             probe_type=ProbeTypeEnum.CIRCULAR,
             frequency_range=FrequencyRange(start_mhz=3300, stop_mhz=3800, step_mhz=100),
@@ -241,6 +247,7 @@ class TestPatternCalibrationRequest:
     def test_valid_pattern_request(self):
         """验证有效的方向图校准请求"""
         request = StartPatternCalibrationRequest(
+            chamber_id=uuid4(),
             probe_ids=[1],
             frequency_mhz=3500,
             azimuth_step_deg=5.0,
@@ -325,6 +332,7 @@ class TestResponseSerialization:
         """验证幅度校准响应序列化"""
         response = AmplitudeCalibrationResponse(
             id=uuid4(),
+            chamber_id=uuid4(),
             probe_id=1,
             polarization="V",
             frequency_points_mhz=[3300, 3400, 3500],
@@ -345,6 +353,7 @@ class TestResponseSerialization:
         """验证相位校准响应序列化"""
         response = PhaseCalibrationResponse(
             id=uuid4(),
+            chamber_id=uuid4(),
             probe_id=1,
             polarization="V",
             reference_probe_id=0,
@@ -378,6 +387,7 @@ class TestValidityReport:
     def test_validity_report_creation(self):
         """验证有效性报告创建"""
         report = CalibrationValidityReport(
+            chamber_id=uuid4(),
             total_probes=32,
             valid_probes=28,
             expired_probes=2,
@@ -459,6 +469,7 @@ class TestProbeCalibrationStatus:
     def test_probe_calibration_status(self):
         """验证探头校准状态"""
         status = ProbeCalibrationStatus(
+            chamber_id=uuid4(),
             probe_id=1,
             amplitude={
                 "status": "valid",

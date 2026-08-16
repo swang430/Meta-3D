@@ -8,9 +8,13 @@ import pytest
 import os
 from pathlib import Path
 from datetime import datetime
+from uuid import UUID
 from fastapi import HTTPException
 
 from app.services.pdf_generator import PDFGenerator
+
+
+REPORT_CHAMBER_ID = UUID("dddddddd-0000-0000-0000-000000000053")
 
 
 class TestPDFGeneratorCalibrationSections:
@@ -47,6 +51,31 @@ class TestPDFGeneratorCalibrationSections:
 
         elements = generator._generate_calibration_probe_section(data)
         assert len(elements) > 0
+
+    def test_probe_section_identifies_its_chamber(self):
+        generator = PDFGenerator()
+        data = {
+            'chamber': {'id': 'chamber-a', 'name': 'Chamber <A>'},
+            'probe_calibration': {
+                'amplitude': [
+                    {
+                        'probe_id': 0,
+                        'polarization': 'V',
+                        'validation_pass': True,
+                        'calibrated_at': '2026-01-18 12:00:00',
+                    },
+                ],
+            },
+        }
+
+        elements = generator._generate_calibration_probe_section(data)
+        rendered_text = "\n".join(
+            element.getPlainText()
+            for element in elements
+            if hasattr(element, "getPlainText")
+        )
+
+        assert "Chamber: Chamber <A> (chamber-a)" in rendered_text
 
     def test_generate_calibration_probe_section_all_types(self):
         """Test generating probe calibration section with all types"""
@@ -294,6 +323,7 @@ class TestCalibrationReportAPI:
         from sqlalchemy.pool import StaticPool
         from app.db.database import Base, get_db
         from app.main import app
+        from app.models.chamber import ChamberConfiguration
 
         engine = create_engine(
             "sqlite:///:memory:",
@@ -302,6 +332,15 @@ class TestCalibrationReportAPI:
         )
         Base.metadata.create_all(bind=engine)
         TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        with TestingSessionLocal() as db:
+            db.add(ChamberConfiguration(
+                id=REPORT_CHAMBER_ID,
+                name="Calibration Report Test Chamber",
+                chamber_type="custom",
+                chamber_radius_m=4.0,
+                num_probes=32,
+            ))
+            db.commit()
 
         def override_get_db():
             db = TestingSessionLocal()
@@ -321,6 +360,7 @@ class TestCalibrationReportAPI:
         response = client.post(
             "/api/v1/calibration-reports/comprehensive",
             json={
+                "chamber_id": str(REPORT_CHAMBER_ID),
                 "include_probe": True,
                 "include_channel": True,
                 "title": "Test Report"
@@ -335,7 +375,7 @@ class TestCalibrationReportAPI:
         """Test probe report generation endpoint"""
         response = client.post(
             "/api/v1/calibration-reports/probe",
-            json={}
+            json={"chamber_id": str(REPORT_CHAMBER_ID)}
         )
         assert response.status_code == 200
         data = response.json()
@@ -356,6 +396,7 @@ class TestCalibrationReportAPI:
         response = client.post(
             "/api/v1/calibration-reports/probe",
             json={
+                "chamber_id": str(REPORT_CHAMBER_ID),
                 "probe_ids": [0, 1, 2],
                 "calibration_type": "amplitude"
             }

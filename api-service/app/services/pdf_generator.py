@@ -1514,6 +1514,16 @@ class PDFGenerator:
             elements.append(Paragraph("<i>No probe calibration data available</i>", self.styles['BodyText']))
             return elements
 
+        chamber = data.get('probe_chamber') or data.get('chamber')
+        if chamber:
+            elements.append(Paragraph(
+                '<b>Chamber:</b> '
+                f'{escape(str(chamber.get("name", "Unknown")))} '
+                f'({escape(str(chamber.get("id", "Unknown")))})',
+                self.styles['BodyText'],
+            ))
+            elements.append(Spacer(1, 8))
+
         # Probe summary statistics
         probe_summary = data.get('probe_summary', {})
         if probe_summary:

@@ -14,9 +14,12 @@ from app.db.database import Base
 from app.models.chamber import ChamberConfiguration
 from app.models.probe_calibration import (
     CalibrationStatus,
+    MultiFrequencyPathLoss,
     ProbeAmplitudeCalibration,
+    ProbePathLossCalibration,
     ProbePattern,
     ProbePhaseCalibration,
+    RFChainCalibration,
 )
 from app.schemas.probe_calibration import (
     StartAmplitudeCalibrationRequest,
@@ -275,3 +278,70 @@ def test_probe_report_collector_excludes_other_chambers_and_legacy(session):
     rows = data["probe_calibration"]["amplitude"]
     assert [row["id"] for row in rows] == [str(own.id)]
     assert rows[0]["chamber_id"] == str(chamber_a)
+
+
+def test_probe_report_scopes_existing_path_loss_and_rf_chain_families(session):
+    chamber_a, chamber_b = uuid.uuid4(), uuid.uuid4()
+    _chamber(session, chamber_a, "Chamber A")
+    _chamber(session, chamber_b, "Chamber B")
+    now = datetime.utcnow()
+
+    def path_loss(chamber_id, frequency):
+        return ProbePathLossCalibration(
+            chamber_id=chamber_id,
+            frequency_mhz=frequency,
+            probe_path_losses={"1": {"path_loss_db": 50.0}},
+            sgh_model="P1-53 SGH",
+            sgh_gain_dbi=10.0,
+            use_mock=False,
+            calibrated_at=now,
+            valid_until=now + timedelta(days=30),
+            status=CalibrationStatus.VALID.value,
+        )
+
+    def rf_chain(chamber_id, frequency):
+        return RFChainCalibration(
+            chamber_id=chamber_id,
+            chain_type="uplink",
+            frequency_mhz=frequency,
+            calibrated_at=now,
+            valid_until=now + timedelta(days=30),
+            status=CalibrationStatus.VALID.value,
+        )
+
+    def multi_frequency(chamber_id, probe_id):
+        return MultiFrequencyPathLoss(
+            chamber_id=chamber_id,
+            probe_id=probe_id,
+            polarization="V",
+            freq_start_mhz=3400.0,
+            freq_stop_mhz=3600.0,
+            freq_step_mhz=100.0,
+            num_points=3,
+            frequency_points_mhz=[3400.0, 3500.0, 3600.0],
+            path_loss_db=[50.0, 51.0, 52.0],
+            calibrated_at=now,
+            valid_until=now + timedelta(days=30),
+            status=CalibrationStatus.VALID.value,
+        )
+
+    own = [
+        path_loss(chamber_a, 3500.0),
+        rf_chain(chamber_a, 3500.0),
+        multi_frequency(chamber_a, 1),
+    ]
+    foreign = [
+        path_loss(chamber_b, 3700.0),
+        rf_chain(chamber_b, 3700.0),
+        multi_frequency(chamber_b, 2),
+    ]
+    session.add_all([*own, *foreign])
+    session.commit()
+
+    data = CalibrationReportGenerator(session)._collect_probe_data(chamber_id=chamber_a)
+
+    for section, expected in zip(
+        ("path_loss", "rf_chain", "multi_freq_path_loss"),
+        own,
+    ):
+        assert [row["id"] for row in data["probe_calibration"][section]] == [str(expected.id)]

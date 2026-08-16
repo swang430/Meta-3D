@@ -47,6 +47,9 @@ from app.services.probe_calibration_service import (
 )
 
 
+TEST_CHAMBER_ID = uuid4()
+
+
 # ==================== 测试数据库设置 ====================
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test_probe_calibration_service.db"
@@ -319,6 +322,7 @@ class TestAmplitudeCalibrationService:
 
         result = await service.execute_amplitude_calibration(
             db=db_session,
+            chamber_id=TEST_CHAMBER_ID,
             probe_ids=[1, 2],
             polarizations=[PolarizationType.V],
             frequency_range=FrequencyRange(start_mhz=3300, stop_mhz=3500, step_mhz=100),
@@ -347,6 +351,7 @@ class TestAmplitudeCalibrationService:
 
         result = await service.execute_amplitude_calibration(
             db=db_session,
+            chamber_id=TEST_CHAMBER_ID,
             probe_ids=[PROBE_ID_MAX + 1],
             polarizations=[PolarizationType.V],
             frequency_range=FrequencyRange(start_mhz=3300, stop_mhz=3500, step_mhz=100),
@@ -361,6 +366,7 @@ class TestAmplitudeCalibrationService:
         """测试获取最新校准"""
         # 创建测试数据
         cal1 = ProbeAmplitudeCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=10,
             polarization="V",
             frequency_points_mhz=[3500],
@@ -374,6 +380,7 @@ class TestAmplitudeCalibrationService:
             status=CalibrationStatus.VALID
         )
         cal2 = ProbeAmplitudeCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=10,
             polarization="V",
             frequency_points_mhz=[3500],
@@ -434,6 +441,7 @@ class TestCalibrationValidityService:
         """测试有效的校准状态"""
         # 创建有效的校准记录
         cal = ProbeAmplitudeCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=20,
             polarization="V",
             frequency_points_mhz=[3500],
@@ -450,7 +458,7 @@ class TestCalibrationValidityService:
         db_session.commit()
 
         service = CalibrationValidityService()
-        status = service.check_validity(db_session, probe_id=20)
+        status = service.check_validity(db_session, chamber_id=TEST_CHAMBER_ID, probe_id=20)
 
         assert status["overall_status"] == "valid"
         assert status["amplitude"]["status"] == "valid"
@@ -458,6 +466,7 @@ class TestCalibrationValidityService:
     def test_check_validity_expiring_soon(self, db_session):
         """测试即将过期的校准状态"""
         cal = ProbeAmplitudeCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=21,
             polarization="V",
             frequency_points_mhz=[3500],
@@ -474,7 +483,7 @@ class TestCalibrationValidityService:
         db_session.commit()
 
         service = CalibrationValidityService()
-        status = service.check_validity(db_session, probe_id=21)
+        status = service.check_validity(db_session, chamber_id=TEST_CHAMBER_ID, probe_id=21)
 
         assert status["overall_status"] == "expiring_soon"
         assert status["amplitude"]["status"] == "expiring_soon"
@@ -484,6 +493,7 @@ class TestCalibrationValidityService:
     def test_check_validity_expired(self, db_session):
         """测试已过期的校准状态"""
         cal = ProbeAmplitudeCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=22,
             polarization="V",
             frequency_points_mhz=[3500],
@@ -500,7 +510,7 @@ class TestCalibrationValidityService:
         db_session.commit()
 
         service = CalibrationValidityService()
-        status = service.check_validity(db_session, probe_id=22)
+        status = service.check_validity(db_session, chamber_id=TEST_CHAMBER_ID, probe_id=22)
 
         assert status["overall_status"] == "expired"
         assert status["amplitude"]["status"] == "expired"
@@ -509,7 +519,7 @@ class TestCalibrationValidityService:
     def test_generate_validity_report(self, db_session):
         """测试生成有效性报告"""
         service = CalibrationValidityService()
-        report = service.generate_validity_report(db_session, probe_ids=[20, 21, 22, 23])
+        report = service.generate_validity_report(db_session, chamber_id=TEST_CHAMBER_ID, probe_ids=[20, 21, 22, 23])
 
         assert report["total_probes"] == 4
         # 之前创建了 20 (valid), 21 (expiring_soon), 22 (expired), 23 (unknown)
@@ -530,6 +540,7 @@ class TestTrendAnalysis:
 
         # 少于 3 条记录
         cal1 = ProbeAmplitudeCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=30,
             polarization="V",
             frequency_points_mhz=[3500],
@@ -554,6 +565,7 @@ class TestTrendAnalysis:
 
         for i in range(5):
             cal = ProbeAmplitudeCalibration(
+                chamber_id=TEST_CHAMBER_ID,
                 probe_id=31,
                 polarization="V",
                 frequency_points_mhz=[3500],
@@ -702,6 +714,7 @@ class TestPhaseCalibrationService:
 
         result = await service.execute_phase_calibration(
             db=db_session,
+            chamber_id=TEST_CHAMBER_ID,
             probe_ids=[1, 2],
             polarizations=[PolarizationType.V],
             frequency_range=FrequencyRange(start_mhz=3300, stop_mhz=3500, step_mhz=100),
@@ -721,6 +734,7 @@ class TestPhaseCalibrationService:
 
         result = await service.execute_phase_calibration(
             db=db_session,
+            chamber_id=TEST_CHAMBER_ID,
             probe_ids=[PROBE_ID_MAX + 1],
             polarizations=[PolarizationType.V],
             frequency_range=FrequencyRange(start_mhz=3300, stop_mhz=3500, step_mhz=100),
@@ -738,6 +752,7 @@ class TestPhaseCalibrationService:
 
         result = await service.execute_phase_calibration(
             db=db_session,
+            chamber_id=TEST_CHAMBER_ID,
             probe_ids=[1],
             polarizations=[PolarizationType.V],
             frequency_range=FrequencyRange(start_mhz=3300, stop_mhz=3500, step_mhz=100),
@@ -772,6 +787,7 @@ class TestPhaseCalibrationService:
         """测试获取最新相位校准"""
         # 创建测试数据
         cal = ProbePhaseCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=40,
             polarization="V",
             reference_probe_id=0,
@@ -969,6 +985,7 @@ class TestPolarizationCalibrationService:
 
         result = await service.execute_polarization_calibration(
             db=db_session,
+            chamber_id=TEST_CHAMBER_ID,
             probe_ids=[1, 2],
             probe_type="dual_linear",
             frequency_range=FrequencyRange(start_mhz=3300, stop_mhz=3500, step_mhz=100),
@@ -987,6 +1004,7 @@ class TestPolarizationCalibrationService:
 
         result = await service.execute_polarization_calibration(
             db=db_session,
+            chamber_id=TEST_CHAMBER_ID,
             probe_ids=[3],
             probe_type="circular",
             frequency_range=FrequencyRange(start_mhz=3300, stop_mhz=3500, step_mhz=100),
@@ -1004,6 +1022,7 @@ class TestPolarizationCalibrationService:
 
         result = await service.execute_polarization_calibration(
             db=db_session,
+            chamber_id=TEST_CHAMBER_ID,
             probe_ids=[PROBE_ID_MAX + 1],
             probe_type="dual_linear",
             frequency_range=FrequencyRange(start_mhz=3300, stop_mhz=3500, step_mhz=100),
@@ -1051,6 +1070,7 @@ class TestPolarizationCalibrationService:
         """测试获取最新极化校准"""
         # 创建测试数据
         cal = ProbePolarizationCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=50,
             probe_type="dual_linear",
             v_to_h_isolation_db=28.0,
@@ -1075,6 +1095,7 @@ class TestPolarizationCalibrationService:
     def test_evaluate_linear_quality_excellent(self, db_session):
         """测试评估优秀线极化质量"""
         cal = ProbePolarizationCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=51,
             probe_type="dual_linear",
             v_to_h_isolation_db=35.0,
@@ -1096,6 +1117,7 @@ class TestPolarizationCalibrationService:
     def test_evaluate_circular_quality_good(self, db_session):
         """测试评估良好圆极化质量"""
         cal = ProbePolarizationCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=52,
             probe_type="circular",
             axial_ratio_db=2.0,
@@ -1117,6 +1139,7 @@ class TestPolarizationCalibrationService:
     def test_evaluate_circular_quality_poor(self, db_session):
         """测试评估不合格圆极化"""
         cal = ProbePolarizationCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=53,
             probe_type="circular",
             axial_ratio_db=5.0,  # > 3 dB
@@ -1284,6 +1307,7 @@ class TestPatternCalibrationService:
 
         result = await service.execute_pattern_calibration(
             db=db_session,
+            chamber_id=TEST_CHAMBER_ID,
             probe_ids=[1],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500,
@@ -1304,6 +1328,7 @@ class TestPatternCalibrationService:
 
         result = await service.execute_pattern_calibration(
             db=db_session,
+            chamber_id=TEST_CHAMBER_ID,
             probe_ids=[PROBE_ID_MAX + 1],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500,
@@ -1320,6 +1345,7 @@ class TestPatternCalibrationService:
 
         result = await service.execute_pattern_calibration(
             db=db_session,
+            chamber_id=TEST_CHAMBER_ID,
             probe_ids=[1],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500,
@@ -1360,6 +1386,7 @@ class TestPatternCalibrationService:
         """测试获取最新方向图校准"""
         # 创建测试数据
         cal = ProbePattern(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=60,
             polarization="V",
             frequency_mhz=3500,
@@ -1389,6 +1416,7 @@ class TestPatternCalibrationService:
         # 创建不同频率的测试数据
         for freq in [3300, 3500, 3700]:
             cal = ProbePattern(
+                chamber_id=TEST_CHAMBER_ID,
                 probe_id=61,
                 polarization="V",
                 frequency_mhz=freq,
@@ -1414,6 +1442,7 @@ class TestPatternCalibrationService:
     def test_evaluate_pattern_quality_good(self, db_session):
         """测试评估良好方向图质量"""
         cal = ProbePattern(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=62,
             polarization="V",
             frequency_mhz=3500,
@@ -1439,6 +1468,7 @@ class TestPatternCalibrationService:
     def test_evaluate_pattern_quality_marginal(self, db_session):
         """测试评估边缘方向图质量"""
         cal = ProbePattern(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=63,
             polarization="V",
             frequency_mhz=3500,
@@ -1464,6 +1494,7 @@ class TestPatternCalibrationService:
     def test_evaluate_pattern_quality_poor(self, db_session):
         """测试评估不合格方向图质量"""
         cal = ProbePattern(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=0,  # 使用 probe_id=0
             polarization="H",
             frequency_mhz=3500,
@@ -1823,7 +1854,7 @@ class TestCalibrationValidityService:
     def test_check_validity_no_calibrations(self, db_session):
         """测试无校准数据时的有效性检查"""
         service = CalibrationValidityService()
-        status = service.check_validity(db_session, probe_id=99)
+        status = service.check_validity(db_session, chamber_id=TEST_CHAMBER_ID, probe_id=99)
 
         assert status["probe_id"] == 99
         assert status["overall_status"] == "unknown"
@@ -1832,6 +1863,7 @@ class TestCalibrationValidityService:
     def test_check_validity_with_amplitude(self, db_session):
         """测试有幅度校准数据时的有效性检查"""
         cal = ProbeAmplitudeCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=30,
             polarization="V",
             frequency_points_mhz=[3500],
@@ -1848,7 +1880,7 @@ class TestCalibrationValidityService:
         db_session.commit()
 
         service = CalibrationValidityService()
-        status = service.check_validity(db_session, probe_id=30)
+        status = service.check_validity(db_session, chamber_id=TEST_CHAMBER_ID, probe_id=30)
 
         assert status["amplitude"] is not None
         assert status["amplitude"]["status"] == "valid"
@@ -1864,6 +1896,7 @@ class TestCalibrationValidityService:
 
         # 创建幅度校准
         amp_cal = ProbeAmplitudeCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=probe_id,
             polarization="V",
             frequency_points_mhz=[3500],
@@ -1880,6 +1913,7 @@ class TestCalibrationValidityService:
 
         # 创建相位校准
         phase_cal = ProbePhaseCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=probe_id,
             polarization="V",
             reference_probe_id=0,
@@ -1896,6 +1930,7 @@ class TestCalibrationValidityService:
 
         # 创建极化校准
         pol_cal = ProbePolarizationCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=probe_id,
             probe_type="dual_linear",
             v_to_h_isolation_db=28.0,
@@ -1910,6 +1945,7 @@ class TestCalibrationValidityService:
 
         # 创建方向图校准
         pattern_cal = ProbePattern(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=probe_id,
             polarization="V",
             frequency_mhz=3500,
@@ -1940,7 +1976,7 @@ class TestCalibrationValidityService:
         # 使用较短的过期阈值 (3天)，因为链路校准有效期是 7 天
         # 如果阈值也是 7 天，由于微秒级时间差，新创建的链路校准会被判定为 "expiring_soon"
         service = CalibrationValidityService(expiring_threshold_days=3)
-        status = service.check_validity(db_session, probe_id=probe_id)
+        status = service.check_validity(db_session, chamber_id=TEST_CHAMBER_ID, probe_id=probe_id)
 
         assert status["amplitude"] is not None
         assert status["phase"] is not None
@@ -1952,6 +1988,7 @@ class TestCalibrationValidityService:
     def test_check_validity_expired(self, db_session):
         """测试过期校准的有效性检查"""
         cal = ProbeAmplitudeCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=32,
             polarization="V",
             frequency_points_mhz=[3500],
@@ -1968,7 +2005,7 @@ class TestCalibrationValidityService:
         db_session.commit()
 
         service = CalibrationValidityService()
-        status = service.check_validity(db_session, probe_id=32)
+        status = service.check_validity(db_session, chamber_id=TEST_CHAMBER_ID, probe_id=32)
 
         assert status["amplitude"]["status"] == "expired"
         assert status["amplitude"]["days_overdue"] >= 10
@@ -1977,7 +2014,7 @@ class TestCalibrationValidityService:
     def test_generate_validity_report(self, db_session):
         """测试生成有效性报告"""
         service = CalibrationValidityService()
-        report = service.generate_validity_report(db_session, probe_ids=[0, 1, 2])
+        report = service.generate_validity_report(db_session, chamber_id=TEST_CHAMBER_ID, probe_ids=[0, 1, 2])
 
         assert report["total_probes"] == 3
         assert "valid_probes" in report
@@ -1990,6 +2027,7 @@ class TestCalibrationValidityService:
     def test_invalidate_calibration_success(self, db_session):
         """测试成功作废校准"""
         cal = ProbeAmplitudeCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=33,
             polarization="V",
             frequency_points_mhz=[3500],
@@ -2064,6 +2102,7 @@ class TestCalibrationValidityService:
         """测试获取即将过期的校准"""
         # 创建一个即将过期的校准
         cal = ProbeAmplitudeCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=34,
             polarization="V",
             frequency_points_mhz=[3500],
@@ -2082,6 +2121,7 @@ class TestCalibrationValidityService:
         service = CalibrationValidityService()
         expiring = service.get_expiring_calibrations(
             db=db_session,
+            chamber_id=TEST_CHAMBER_ID,
             days_threshold=7
         )
 
@@ -2097,6 +2137,7 @@ class TestCalibrationValidityService:
         service = CalibrationValidityService()
         expiring = service.get_expiring_calibrations(
             db=db_session,
+            chamber_id=TEST_CHAMBER_ID,
             days_threshold=7,
             calibration_type="amplitude"
         )
@@ -2109,6 +2150,7 @@ class TestCalibrationValidityService:
         """测试获取已过期的校准"""
         # 创建一个已过期的校准
         cal = ProbeAmplitudeCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=35,
             polarization="V",
             frequency_points_mhz=[3500],
@@ -2125,7 +2167,7 @@ class TestCalibrationValidityService:
         db_session.commit()
 
         service = CalibrationValidityService()
-        expired = service.get_expired_calibrations(db=db_session)
+        expired = service.get_expired_calibrations(db=db_session, chamber_id=TEST_CHAMBER_ID)
 
         # 应该能找到这个已过期的校准
         found = any(
@@ -2141,6 +2183,7 @@ class TestCalibrationValidityService:
         db_session.commit()
 
         cal = ProbeAmplitudeCalibration(
+            chamber_id=TEST_CHAMBER_ID,
             probe_id=36,
             polarization="V",
             frequency_points_mhz=[3500],
@@ -2157,7 +2200,7 @@ class TestCalibrationValidityService:
         db_session.commit()
 
         service = CalibrationValidityService()
-        status = service.check_validity(db_session, probe_id=36)
+        status = service.check_validity(db_session, chamber_id=TEST_CHAMBER_ID, probe_id=36)
 
         # 已作废的校准不应该被返回
         assert status["amplitude"] is None

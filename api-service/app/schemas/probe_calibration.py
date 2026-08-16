@@ -145,6 +145,7 @@ class AmplitudeCalibrationData(BaseModel):
 class AmplitudeCalibrationResponse(BaseModel):
     """幅度校准响应"""
     id: UUID
+    chamber_id: UUID
     probe_id: int
     polarization: str
     frequency_points_mhz: List[float]
@@ -202,6 +203,7 @@ class StartPhaseCalibrationRequest(BaseModel):
 class PhaseCalibrationResponse(BaseModel):
     """相位校准响应"""
     id: UUID
+    chamber_id: UUID
     probe_id: int
     polarization: str
     reference_probe_id: int
@@ -252,6 +254,7 @@ class CircularPolarizationData(BaseModel):
 class PolarizationCalibrationResponse(BaseModel):
     """极化校准响应"""
     id: UUID
+    chamber_id: UUID
     probe_id: int
     probe_type: str
     # 线极化数据
@@ -303,6 +306,7 @@ class StartPatternCalibrationRequest(BaseModel):
 class PatternCalibrationResponse(BaseModel):
     """方向图校准响应"""
     id: UUID
+    chamber_id: UUID
     probe_id: int
     polarization: str
     frequency_mhz: float
@@ -516,6 +520,7 @@ class CalibrationHistoryItem(BaseModel):
 
 class CalibrationHistoryResponse(BaseModel):
     """校准历史响应"""
+    chamber_id: UUID
     probe_id: int
     history: List[CalibrationHistoryItem]
     # 趋势分析

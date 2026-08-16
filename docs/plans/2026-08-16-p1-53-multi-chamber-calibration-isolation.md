@@ -175,7 +175,7 @@ Add `chamber_id` to probe report requests. Comprehensive requests require it whe
 
 **Step 2: Filter all probe report sources**
 
-Thread chamber to `_collect_probe_data` and apply strict equality for four scoped models. Add `chamber_id` to each collected row and the report summary.
+Thread chamber to `_collect_probe_data` and apply strict equality for the four newly scoped probe models plus the existing chamber-aware path-loss, RF-chain, and multi-frequency report sources. Add `chamber_id` to each collected row and the report summary. This does not change those three families' writer contracts; it closes the formal-report read boundary.
 
 **Step 3: Make the PDF identify its chamber**
 

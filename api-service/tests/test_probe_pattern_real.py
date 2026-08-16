@@ -12,6 +12,7 @@ Mock pattern path was already covered by tests/test_probe_calibration_service.py
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID
 
 import pytest
 from sqlalchemy import create_engine
@@ -23,6 +24,9 @@ from app.hal.channel_emulator import CalibrationToneCapability
 from app.models.probe_calibration import ProbePattern
 from app.schemas.probe_calibration import PolarizationType
 from app.services.probe_calibration_service import PatternCalibrationService
+
+
+TEST_CHAMBER_ID = UUID("cccccccc-0000-0000-0000-000000000053")
 
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -154,6 +158,7 @@ class TestRealPatternMeasurement:
         svc = PatternCalibrationService()
         result = await svc.execute_pattern_calibration(
             db=db,
+            chamber_id=TEST_CHAMBER_ID,
             probe_ids=[0],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500.0,
@@ -187,6 +192,7 @@ class TestRealPatternMeasurement:
 
         result = await PatternCalibrationService().execute_pattern_calibration(
             db=db,
+            chamber_id=TEST_CHAMBER_ID,
             probe_ids=[0],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500.0,
@@ -215,6 +221,7 @@ class TestRealPatternMeasurement:
         svc = PatternCalibrationService()
         result = await svc.execute_pattern_calibration(
             db=db,
+            chamber_id=TEST_CHAMBER_ID,
             probe_ids=[0],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500.0,
@@ -247,6 +254,7 @@ class TestRealPatternMeasurement:
         svc = PatternCalibrationService()
         await svc.execute_pattern_calibration(
             db=db,
+            chamber_id=TEST_CHAMBER_ID,
             probe_ids=[1],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500.0,
@@ -274,6 +282,7 @@ class TestRealPatternMeasurement:
         svc = PatternCalibrationService()
         result = await svc.execute_pattern_calibration(
             db=db,
+            chamber_id=TEST_CHAMBER_ID,
             probe_ids=[0],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500.0,
@@ -295,6 +304,7 @@ class TestRealPatternMeasurement:
         svc = PatternCalibrationService()
         result = await svc.execute_pattern_calibration(
             db=db,
+            chamber_id=TEST_CHAMBER_ID,
             probe_ids=[0],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500.0,
@@ -323,6 +333,7 @@ class TestRealPatternMeasurement:
         svc = PatternCalibrationService()
         await svc.execute_pattern_calibration(
             db=db,
+            chamber_id=TEST_CHAMBER_ID,
             probe_ids=[0],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500.0,
@@ -367,6 +378,7 @@ class TestRealPatternMeasurement:
         # 24 az pts × 1 el pt for a clean 1D azimuth pattern
         result = await svc.execute_pattern_calibration(
             db=db,
+            chamber_id=TEST_CHAMBER_ID,
             probe_ids=[0],
             polarizations=[PolarizationType.V],
             frequency_mhz=3500.0,
