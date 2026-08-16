@@ -20,7 +20,7 @@ P1-27 已让缺少可信校准来源的旧 MIMO 报告详情与下载 fail-close
 
 列表构造必须复用已有 MIMO/可信判据，不按标题、文件名或 generated_by 单独猜测。非 MIMO 与已 sanitized 报告均不显示恢复动作。
 
-`POST /reports/{id}/generate` 继续作为唯一恢复写入口：completed legacy MIMO PDF 可显式调用；列表与写入口复用同一个安全前置条件判据，非 `single_execution`、VRT 关联、非 PDF、无唯一可用且权威属于 MIMO OTA 的执行均在修改状态/content/file 前 409。从关联执行重建全部 payload，不读取旧报告 KPI 作为真值；缺可信 provenance 时输出 UNKNOWN/N/A；explicit-real 证据完整时才恢复正式值；成功后详情与下载恢复可用。入口通过数据库条件更新原子认领 `generating` 状态，认领失败返回 409，禁止多个客户端同时写同一报告文件。
+`POST /reports/{id}/generate` 继续作为唯一恢复写入口：completed legacy MIMO PDF 可显式调用；列表与写入口复用同一个安全前置条件判据，非 `single_execution`、VRT 关联、非 PDF、无唯一可用且权威属于 MIMO OTA 的执行均在修改状态/content/file 前 409。从关联执行重建全部 payload，不读取旧报告 KPI 作为真值；缺可信 provenance 时输出 UNKNOWN/N/A；explicit-real 证据完整时才恢复正式值；成功后详情与下载恢复可用。入口通过数据库条件更新原子认领 `generating` 状态，认领失败返回 409，禁止多个客户端同时写同一报告文件。VRT stop/complete 的归档写点同样以数据库条件更新保护该 claim：发现 `generating` 时不得用 stale ORM 状态改回 `completed/pending`，也不得继续启动第二个 PDF writer。
 
 ## GUI 行为
 
@@ -51,6 +51,7 @@ P1-27 已让缺少可信校准来源的旧 MIMO 报告详情与下载 fail-close
 8. 两个客户端同时请求恢复时，仅一个能原子认领；另一个 409，禁止并发覆盖同一文件。
 9. 报告标记声称 MIMO、但唯一关联执行不是权威 MIMO OTA 时，列表不可恢复且生成在任何改写前 409。
 10. 已带 trust stamp、会绕过 legacy 前置门的 MIMO 候选，若关联执行不是权威 MIMO OTA，仍在生成端第二道防线拒绝且不调用 builder。
+11. 并发 VRT 归档不得覆盖已有 `generating` claim；归档触发生成输给另一 writer 后，异常路径也不得把 winner 的 claim 改回 `pending`。
 
 ## 非目标
 

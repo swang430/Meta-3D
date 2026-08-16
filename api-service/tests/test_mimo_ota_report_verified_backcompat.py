@@ -534,6 +534,113 @@ def test_sanitized_mimo_report_still_rejects_non_mimo_execution_after_claim(
     assert "not authoritatively MIMO OTA" in report.error_message
 
 
+def _vrt_archive_payload():
+    return SimpleNamespace(
+        model_dump=lambda mode: {
+            "logs": [],
+            "time_series": [],
+            "step_configs": [],
+            "kpi_summary": [],
+        },
+        scenario_name="claim race",
+        mode=SimpleNamespace(value="ota"),
+        overall_result="passed",
+        notes=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_vrt_archive_preserves_an_existing_generation_claim(
+    report_db,
+    monkeypatch,
+):
+    from app.api import road_test
+    from app.models.report import TestReport
+
+    report = TestReport(
+        title="active writer",
+        report_type="single_execution",
+        format="pdf",
+        generated_by="System (Auto-Archive)",
+        status="generating",
+        road_test_execution_id="vrt-active-writer",
+        content_data={"owner": "report-generator"},
+    )
+    report_db.add(report)
+    report_db.commit()
+
+    async def _fake_execution_report(execution_id, db):
+        return _vrt_archive_payload()
+
+    monkeypatch.setattr(road_test, "_generate_execution_report", _fake_execution_report)
+    monkeypatch.setattr(
+        "app.services.report_service.ReportService.generate_report",
+        lambda *args, **kwargs: pytest.fail(
+            "an archive writer must not enter generation while another claim is active"
+        ),
+    )
+    monkeypatch.setattr(
+        "builtins.open",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disabled in test")),
+    )
+
+    await road_test._archive_execution_report("vrt-active-writer", report_db)
+
+    report_db.expire_all()
+    preserved = report_db.get(TestReport, report.id)
+    assert preserved.status == "generating"
+    assert preserved.content_data == {"owner": "report-generator"}
+
+
+@pytest.mark.asyncio
+async def test_vrt_archive_conflict_handler_does_not_release_winner_claim(
+    report_db,
+    monkeypatch,
+):
+    from app.api import road_test
+    from app.models.report import ReportStatus, TestReport
+    from app.services.report_service import ReportGenerationConflict
+
+    report = TestReport(
+        title="archived report",
+        report_type="single_execution",
+        format="pdf",
+        generated_by="System (Auto-Archive)",
+        status="completed",
+        road_test_execution_id="vrt-lost-claim",
+        content_data={"version": "old"},
+    )
+    report_db.add(report)
+    report_db.commit()
+
+    async def _fake_execution_report(execution_id, db):
+        return _vrt_archive_payload()
+
+    def _lose_claim(self, db, report_id, content_data_override=None):
+        db.query(TestReport).filter(TestReport.id == report_id).update(
+            {TestReport.status: ReportStatus.GENERATING.value},
+            synchronize_session=False,
+        )
+        db.commit()
+        raise ReportGenerationConflict("Report generation is already in progress")
+
+    monkeypatch.setattr(road_test, "_generate_execution_report", _fake_execution_report)
+    monkeypatch.setattr(
+        "app.services.report_service.ReportService.generate_report",
+        _lose_claim,
+    )
+    monkeypatch.setattr(
+        "builtins.open",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disabled in test")),
+    )
+
+    await road_test._archive_execution_report("vrt-lost-claim", report_db)
+
+    report_db.expire_all()
+    preserved = report_db.get(TestReport, report.id)
+    assert preserved.status == "generating"
+
+
 def test_report_generation_rejects_an_already_claimed_report(report_db):
     from app.models.report import TestReport
 

@@ -867,13 +867,36 @@ async def _archive_execution_report(execution_id: str, db: Session):
         existing_report = db.query(TestReport).filter(
             TestReport.road_test_execution_id == execution_id
         ).first()
-        
+        target_report = None
+
         if existing_report:
             logger.info(f"Updating existing archived report for execution {execution_id}")
-            existing_report.content_data = content_data
-            existing_report.status = ReportStatus.COMPLETED
-            existing_report.generation_completed_at = datetime.now(timezone.utc)
-            existing_report.title = f"虚拟路测报告: {report_data.scenario_name}"
+            # ReportService uses status=generating as its cross-request writer
+            # claim.  A concurrent VRT stop/complete archive must not release
+            # that claim with a stale ORM write.
+            updated = db.query(TestReport).filter(
+                TestReport.id == existing_report.id,
+                TestReport.status != ReportStatus.GENERATING.value,
+            ).update(
+                {
+                    TestReport.content_data: content_data,
+                    TestReport.status: ReportStatus.COMPLETED.value,
+                    TestReport.generation_completed_at: datetime.now(timezone.utc),
+                    TestReport.title: f"虚拟路测报告: {report_data.scenario_name}",
+                },
+                synchronize_session=False,
+            )
+            if updated != 1:
+                db.rollback()
+                logger.warning(
+                    "Skipped VRT archive refresh for report %s because PDF "
+                    "generation owns the writer claim",
+                    existing_report.id,
+                )
+                return
+            db.commit()
+            db.refresh(existing_report)
+            target_report = existing_report
         else:
             logger.info(f"Creating new archived report for execution {execution_id}")
             new_report = TestReport(
@@ -894,13 +917,13 @@ async def _archive_execution_report(execution_id: str, db: Session):
                 tags=["VRT", report_data.mode.value, report_data.overall_result]
             )
             db.add(new_report)
-        
-        db.commit()
+            db.commit()
+            target_report = new_report
+
         logger.info(f"Successfully archived VRT report for {execution_id}")
 
         # Trigger PDF generation immediately (for user convenience)
         try:
-            target_report = new_report if new_report else existing_report
             target_report_id = target_report.id if target_report else None
             logger.info(f"Triggering auto-generation of PDF for report {target_report_id}")
             # Import here to avoid circular dependency
@@ -911,13 +934,34 @@ async def _archive_execution_report(execution_id: str, db: Session):
                 service.generate_report(db, target_report_id, content_data_override=content_data)
         except Exception as pdf_err:
             logger.error(f"Failed to auto-generate PDF: {pdf_err}")
-            # Update report status to indicate PDF generation failed but data is preserved
-            target_report = new_report if new_report else existing_report
+            # Preserve another request's active generation claim.  For an
+            # ordinary generation failure ReportService has already moved the
+            # row out of generating, so this conditional update retains the
+            # existing retryable pending behavior.
             if target_report:
-                target_report.status = ReportStatus.PENDING  # Mark as pending so user can retry
-                target_report.error_message = f"PDF generation failed: {str(pdf_err)}"
-                db.commit()
-                logger.info(f"Report {target_report.id} marked as PENDING due to PDF generation failure")
+                reset = db.query(TestReport).filter(
+                    TestReport.id == target_report.id,
+                    TestReport.status != ReportStatus.GENERATING.value,
+                ).update(
+                    {
+                        TestReport.status: ReportStatus.PENDING.value,
+                        TestReport.error_message: f"PDF generation failed: {str(pdf_err)}",
+                    },
+                    synchronize_session=False,
+                )
+                if reset == 1:
+                    db.commit()
+                    logger.info(
+                        "Report %s marked as PENDING due to PDF generation failure",
+                        target_report.id,
+                    )
+                else:
+                    db.rollback()
+                    logger.warning(
+                        "Preserved active generation claim for report %s after "
+                        "archive generation conflict",
+                        target_report.id,
+                    )
         
         
     except Exception as e:
