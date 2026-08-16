@@ -21,6 +21,7 @@ from app.hal.base import (
     resolve_configured_tcpip_connection,
 )
 from app.hal.propsim_f64 import _TOPOLOGY_ESCAPE_HINT
+from app.hal.uxm_base_station import normalize_uxm_connection_selector
 from app.models.diagnostic_run import DiagnosticKind
 from app.models.instrument import (
     InstrumentCategory as InstrumentCategoryModel,
@@ -1730,6 +1731,7 @@ def _resolve_diagnostic_tcp_target(
     *,
     override_ip: Optional[str] = None,
     override_port: Optional[int] = None,
+    default_port: Optional[int] = 5025,
 ) -> tuple[Optional[str], Optional[int], Optional[str]]:
     """解析人工诊断 socket 目标；请求体 override 是一次性完整真值源。"""
     if override_ip is not None or override_port is not None:
@@ -1749,7 +1751,14 @@ def _resolve_diagnostic_tcp_target(
         return None, None, "未配置 IP 地址"
     if not _validate_ip_address(host):
         return None, None, f"IP 地址格式无效: '{host}'"
-    return host, port if port is not None else 5025, None
+    if port is None:
+        if default_port is None:
+            return None, None, (
+                "单会话仪表未配置显式连接端口或完整 VISA resource；"
+                "请保存完整配置并重新加载 HAL"
+            )
+        port = default_port
+    return host, port, None
 
 
 def _reconcile_diagnostic_target_with_live_driver(
@@ -1792,7 +1801,16 @@ def _reconcile_diagnostic_target_with_live_driver(
             )
         return requested_ip, requested_port, target_error
 
-    actual_port = live_port if live_port is not None else 5025
+    actual_port = live_port
+    for attr in ("port", "_port"):
+        candidate = getattr(driver, attr, None)
+        if isinstance(candidate, int) and 1 <= candidate <= 65535:
+            actual_port = candidate
+            break
+    if actual_port is None:
+        if must_match:
+            return None, None, "无法核实活动 HAL 会话的实际端口；请重新加载 HAL"
+        return requested_ip, requested_port, target_error
     if must_match and (
         requested_ip != live_ip or requested_port != actual_port
     ):
@@ -1811,28 +1829,69 @@ def _reconcile_diagnostic_target_with_live_driver(
 def _single_session_saved_target_validator(
     category_key: str,
     *,
-    saved_ip: Optional[str],
-    saved_port: Optional[int],
-    saved_error: Optional[str],
+    db: Session,
+    category_id: Any,
+    saved_config: Dict[str, Any],
 ):
-    """在协调锁内、Remote acquire 前核对 DB 真值与活动单会话。"""
+    """在协调锁内重读 DB 真值，再于 Remote acquire 前核对活动单会话。"""
     if category_key not in {"baseStation", "channelEmulator"}:
         return None
 
+    def _canonical_identity(config: Dict[str, Any]) -> tuple[Any, ...]:
+        host, port, resource, error = resolve_configured_tcpip_connection(config)
+        canonical_resource = (
+            tuple(part.strip().casefold() for part in resource.split("::"))
+            if resource is not None
+            else None
+        )
+        if category_key == "baseStation":
+            protocol, profile = normalize_uxm_connection_selector(config)
+        else:
+            protocol = None
+            profile = None
+        return host.casefold(), port, canonical_resource, error, protocol, profile
+
+    saved_identity = _canonical_identity(saved_config)
+
     def _validate(hal: Any) -> Optional[str]:
+        current_conn = (
+            db.query(InstrumentConnectionDB)
+            .populate_existing()
+            .filter(InstrumentConnectionDB.category_id == category_id)
+            .first()
+        )
+        current_config = _merged_connection_config(current_conn)
+        current_identity = _canonical_identity(current_config)
+
+        # 若等待锁期间配置已变化，不能继续使用锁外捕获的 raw fallback。
+        if current_identity != saved_identity:
+            return "已保存连接配置在请求期间发生变化；请重试操作"
+
+        current_ip, _current_port, _current_resource, current_error, _, _ = (
+            current_identity
+        )
+
         driver = _get_loaded_hal_driver_from_hal(hal, category_key)
         if driver is None:
             # 没有活动真实 driver 时，端点会走已校验的 DB raw fallback。
-            return saved_error
-        _ip, _port, error = _reconcile_diagnostic_target_with_live_driver(
-            driver,
-            requested_ip=saved_ip,
-            requested_port=saved_port,
-            target_error=saved_error,
-            override_requested=False,
-            require_saved_match=True,
-        )
-        return error
+            return current_error
+
+        driver_config = getattr(driver, "config", None)
+        if not isinstance(driver_config, dict):
+            return "无法核实活动 HAL 会话目标；请重新加载 HAL"
+        live_identity = _canonical_identity(driver_config)
+        live_ip, _live_port, _live_resource, live_error, _, _ = live_identity
+        if live_error or not live_ip:
+            return (
+                "无法核实活动 HAL 会话目标；请重新加载 HAL"
+                + (f": {live_error}" if live_error else "")
+            )
+        if current_identity != live_identity:
+            return (
+                "已保存配置与活动 HAL 会话目标不一致；"
+                "请重新加载 HAL 后再操作"
+            )
+        return None
 
     return _validate
 
@@ -1884,6 +1943,11 @@ async def test_instrument_connection(
         conn,
         override_ip=body.ip if body else None,
         override_port=body.port if body else None,
+        default_port=(
+            None
+            if category_key in {"baseStation", "channelEmulator"}
+            else 5025
+        ),
     )
     preloaded_hal_driver = _get_loaded_hal_driver(category_key)
     override_requested = bool(body and (body.ip is not None or body.port is not None))
@@ -1918,9 +1982,9 @@ async def test_instrument_connection(
 
     validate_saved_target = _single_session_saved_target_validator(
         category_key,
-        saved_ip=raw_ip,
-        saved_port=raw_port,
-        saved_error=raw_target_error,
+        db=db,
+        category_id=category.id,
+        saved_config=_merged_connection_config(conn),
     )
 
     from app.services.instrument_test_lease import instrument_test_lease
@@ -2540,7 +2604,14 @@ async def send_scpi_command(
     ).first()
 
     raw_ip, raw_port, raw_target_error = _resolve_diagnostic_tcp_target(
-        conn, override_ip=request.ip, override_port=request.port
+        conn,
+        override_ip=request.ip,
+        override_port=request.port,
+        default_port=(
+            None
+            if category_key in {"baseStation", "channelEmulator"}
+            else 5025
+        ),
     )
     override_requested = request.ip is not None or request.port is not None
     raw_command = request.command.strip()
@@ -2612,9 +2683,9 @@ async def send_scpi_command(
 
     validate_saved_target = _single_session_saved_target_validator(
         category_key,
-        saved_ip=raw_ip,
-        saved_port=raw_port,
-        saved_error=raw_target_error,
+        db=db,
+        category_id=category.id,
+        saved_config=_merged_connection_config(conn),
     )
 
     async with instrument_test_lease(
@@ -2728,6 +2799,11 @@ async def probe_scpi_commands(
         conn,
         override_ip=body.ip if body else None,
         override_port=body.port if body else None,
+        default_port=(
+            None
+            if category_key in {"baseStation", "channelEmulator"}
+            else 5025
+        ),
     )
     preloaded_hal_driver = _get_loaded_hal_driver(category_key)
     override_requested = bool(body and (body.ip is not None or body.port is not None))
@@ -2752,9 +2828,9 @@ async def probe_scpi_commands(
 
     validate_saved_target = _single_session_saved_target_validator(
         category_key,
-        saved_ip=raw_ip,
-        saved_port=raw_port,
-        saved_error=raw_target_error,
+        db=db,
+        category_id=category.id,
+        saved_config=_merged_connection_config(conn),
     )
 
     results: List[ScpiCommandResult] = []

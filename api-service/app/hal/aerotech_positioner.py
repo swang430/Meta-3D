@@ -115,8 +115,9 @@ class RealAerotechDriver(PositionerDriver):
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
-        self.ip_address: str = resolve_configured_instrument_host(config)
-        self.port: int = config.get("port", 8000)
+        self.ip_address: str = self._connection_host
+        self.port: int = self._resolved_tcp_port(8000)
+        self._reject_incompatible_visa_resource(allowed_type="SOCKET")
         self.az_axis: str = config.get("azimuth_axis", "X")
         self.el_axis: str = config.get("elevation_axis", "Y")
         self.timeout_s: float = config.get("timeout_s", 10.0)
@@ -455,7 +456,7 @@ class RealAerotechDriver(PositionerDriver):
 
     async def connect(self) -> bool:
         """连接到 Aerotech 控制器并启用轴"""
-        if not self.ip_address:
+        if self._connection_config_error or not self.ip_address:
             return self._fail_missing_connection_address()
         self._set_status(InstrumentStatus.CONNECTING)
         try:

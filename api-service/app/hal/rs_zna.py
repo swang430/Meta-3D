@@ -80,19 +80,24 @@ class RealRsZnaDriver(VNADriver):
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
-        self.ip_address: str = resolve_configured_instrument_host(config)
-        self.port: int = config.get("port", 5025)
+        self._reject_incompatible_visa_resource(allowed_type="SOCKET")
+        self.ip_address: str = self._connection_host
+        self.port: int = self._resolved_tcp_port(5025)
+        self._connection_visa_resource = self._resolved_visa_resource(
+            f"TCPIP::{self.ip_address}::{self.port}::SOCKET",
+            socket_prefix="TCPIP",
+        )
         self._visa_rm = None
         self._visa_session = None
 
     async def connect(self) -> bool:
-        if not self.ip_address:
+        if self._connection_config_error or not self.ip_address:
             return self._fail_missing_connection_address()
         self._set_status(InstrumentStatus.CONNECTING)
         try:
             import pyvisa
             self._visa_rm = pyvisa.ResourceManager("@py")
-            resource_string = f"TCPIP::{self.ip_address}::{self.port}::SOCKET"
+            resource_string = self._connection_visa_resource
             self._visa_session = self._visa_rm.open_resource(
                 resource_string, timeout=15000
             )

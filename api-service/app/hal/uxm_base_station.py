@@ -58,6 +58,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def normalize_uxm_connection_selector(config: Dict[str, Any]) -> tuple[str, str]:
+    """归一 UXM 实际连接分支所消费的 protocol 与 Test App profile。"""
+    protocol = str(config.get("protocol") or "TCPIP").strip().upper()
+    profile_hint = str(config.get("uxm_profile") or "").strip().casefold()
+    profile = (
+        "irat"
+        if profile_hint in {"irat", "lte_nr_irat", "lte+nr"}
+        else "5g_nr"
+    )
+    return protocol, profile
+
+
 class UxmLocalControlReservedError(RuntimeError):
     """UXM 控制会话已释放给现场操作员，拒绝后台重新发 SCPI。"""
 
@@ -334,7 +346,7 @@ class RealUxmDriver(BaseStationDriver):
             self._connection_config_error,
         ) = resolve_configured_tcpip_connection(config)
         self.port: int = configured_port if configured_port is not None else 5025
-        self.protocol: str = config.get("protocol", "TCPIP")  # TCPIP or HiSLIP
+        self.protocol, _profile = normalize_uxm_connection_selector(config)
         # Test-App command profile (CAICT 2026-05-13: E7515B platform hosts
         # multiple test apps with different SCPI dialects). Default profile
         # is 5G NR Test App for backward compat; auto-detected in connect()
@@ -433,8 +445,8 @@ class RealUxmDriver(BaseStationDriver):
         immediately. connect() re-confirms via live SYSTem:APPLication:NAME?
         and overwrites if mismatch.
         """
-        hint = (config.get("uxm_profile") or "").lower()
-        if hint in ("irat", "lte_nr_irat", "lte+nr"):
+        _protocol, profile = normalize_uxm_connection_selector(config)
+        if profile == "irat":
             return UxmLteNrIratProfile
         return Uxm5GNRTestAppProfile
 

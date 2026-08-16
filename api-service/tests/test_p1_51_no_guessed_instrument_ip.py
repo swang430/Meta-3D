@@ -51,6 +51,20 @@ REAL_DRIVER_CASES = [
 ]
 
 
+def test_uxm_protocol_and_profile_whitespace_use_driver_connection_semantics():
+    driver = RealUxmDriver(
+        "uxm-normalized",
+        {
+            "ip": "lab-host",
+            "protocol": " HISLIP ",
+            "uxm_profile": " irat ",
+        },
+    )
+
+    assert driver.protocol == "HISLIP"
+    assert driver._cmds.HISLIP_INDEX == 2
+
+
 @pytest.mark.parametrize(("driver_class", "host_attribute"), REAL_DRIVER_CASES)
 @pytest.mark.asyncio
 async def test_real_drivers_fail_before_io_when_address_is_missing(
@@ -183,6 +197,102 @@ async def test_all_real_drivers_preserve_explicit_address_validation_error(
     assert await driver.connect() is False
     assert "连接地址冲突" in (driver.last_error or "")
     assert "未配置连接地址" not in (driver.last_error or "")
+
+
+@pytest.mark.parametrize(
+    "driver_class",
+    [
+        RealPropsimFs16Driver,
+        RealEtsEmcenterDriver,
+        RealRsZnaDriver,
+        RealRsFsvaDriver,
+    ],
+)
+def test_socket_visa_drivers_consume_explicit_port_and_full_resource(driver_class):
+    port_driver = driver_class("explicit-port", {"endpoint": "lab-host:6000"})
+    assert port_driver.port == 6000
+    assert port_driver._connection_visa_resource.endswith("::6000::SOCKET")
+
+    full_resource = "TCPIP0::lab-host::6001::SOCKET"
+    resource_driver = driver_class(
+        "explicit-resource", {"endpoint": full_resource}
+    )
+    assert resource_driver._connection_visa_resource == full_resource
+
+
+@pytest.mark.parametrize(
+    "driver_class",
+    [
+        RealKeysightEnaDriver,
+        RealKeysightMxgDriver,
+        RealRsSmw200aDriver,
+        RealRsFswDriver,
+        RealKeysightXSeriesSaDriver,
+    ],
+)
+@pytest.mark.asyncio
+async def test_instr_drivers_consume_full_resource_and_reject_raw_endpoint_before_io(
+    driver_class,
+):
+    full_resource = "TCPIP0::lab-host::hislip2::INSTR"
+    resource_driver = driver_class(
+        "explicit-resource", {"endpoint": full_resource, "port": 5025}
+    )
+    assert resource_driver._connection_visa_resource == full_resource
+
+    incompatible_drivers = [
+        driver_class("raw-endpoint", {"endpoint": "lab-host:6000"}),
+        driver_class("raw-port", {"ip": "lab-host", "port": 6000}),
+    ]
+    for raw_driver in incompatible_drivers:
+        with patch("pyvisa.ResourceManager") as resource_manager:
+            assert await raw_driver.connect() is False
+        resource_manager.assert_not_called()
+        assert "INSTR" in (raw_driver.last_error or "")
+
+
+@pytest.mark.asyncio
+async def test_f64_rejects_non_3334_or_instr_resource_before_io():
+    wrong_port = RealPropsimF64Driver(
+        "wrong-port", {"endpoint": "lab-host:5025"}
+    )
+    wrong_transport = RealPropsimF64Driver(
+        "wrong-transport", {"endpoint": "TCPIP0::lab-host::hislip0::INSTR"}
+    )
+    for driver in (wrong_port, wrong_transport):
+        with patch("pyvisa.ResourceManager") as resource_manager:
+            assert await driver.connect() is False
+        resource_manager.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_aerotech_rejects_instr_resource_before_socket_io():
+    driver = RealAerotechDriver(
+        "instr-resource", {"endpoint": "TCPIP0::lab-host::inst0::INSTR"}
+    )
+    with patch("asyncio.open_connection") as open_connection:
+        assert await driver.connect() is False
+    open_connection.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_rf_switch_transport_must_match_explicit_resource_before_io():
+    vxi_socket = EtslSwitchDriver(
+        "vxi-socket",
+        {"transport": "vxi11", "endpoint": "TCPIP0::lab-host::5025::SOCKET"},
+    )
+    raw_instr = EtslSwitchDriver(
+        "raw-instr",
+        {"transport": "raw", "endpoint": "TCPIP0::lab-host::inst0::INSTR"},
+    )
+    vxi_hislip = EtslSwitchDriver(
+        "vxi-hislip",
+        {"transport": "vxi11", "endpoint": "TCPIP0::lab-host::hislip2::INSTR"},
+    )
+    for driver in (vxi_socket, raw_instr, vxi_hislip):
+        with patch("pyvisa.ResourceManager") as resource_manager:
+            assert await driver.connect() is False
+        resource_manager.assert_not_called()
 
 
 @pytest.mark.parametrize("driver_class", [RealUxmDriver, RealCmw500Driver])

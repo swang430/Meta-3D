@@ -488,7 +488,12 @@ class InstrumentDriver(ABC):
         # ``resolve_configured_instrument_host`` 的空串，随后把“地址冲突/非法
         # resource/越界端口”误报成“未配置”；这里保留原始原因，统一由缺地址门
         # 在任何 I/O 前原样上报。
-        _, _, _, self._connection_config_error = (
+        (
+            self._connection_host,
+            self._connection_port,
+            self._connection_resource,
+            self._connection_config_error,
+        ) = (
             resolve_configured_tcpip_connection(config)
         )
 
@@ -528,6 +533,62 @@ class InstrumentDriver(ABC):
         )
         self._set_status(InstrumentStatus.ERROR, error)
         return False
+
+    def _resolved_tcp_port(self, default: int) -> int:
+        """返回显式 endpoint/SOCKET 端口；未声明时才使用驱动协议默认值。"""
+        return self._connection_port if self._connection_port is not None else default
+
+    def _resolved_visa_resource(
+        self,
+        default_resource: str,
+        *,
+        socket_prefix: str = "TCPIP0",
+        explicit_port_to_socket: bool = True,
+    ) -> str:
+        """返回完整显式 VISA resource，或按显式端口构造 SOCKET resource。
+
+        不能只保留 resource 里的 host 后再拼驱动默认子地址；那会让配置/预检
+        指向一个 Test App，而真实 SCPI 会话打开另一个子地址。
+        """
+        if self._connection_resource:
+            return self._connection_resource
+        if explicit_port_to_socket and self._connection_port is not None:
+            return (
+                f"{socket_prefix}::{self._connection_host}::"
+                f"{self._connection_port}::SOCKET"
+            )
+        return default_resource
+
+    def _reject_incompatible_visa_resource(self, *, allowed_type: str) -> None:
+        """协议固定的 raw 驱动拒绝不兼容的显式 VISA 传输类型。"""
+        if not self._connection_resource:
+            return
+        actual = self._connection_resource.rsplit("::", 1)[-1].strip().casefold()
+        if actual != allowed_type.casefold():
+            self._connection_config_error = (
+                f"显式 VISA resource 类型 {actual.upper()} 与驱动固定的 "
+                f"{allowed_type.upper()} 传输不一致"
+            )
+
+    def _reject_plain_endpoint_port(self, *, fixed_type: str) -> None:
+        """固定 INSTR/VXI-11 驱动拒绝把 host:port 静默降成默认 resource。"""
+        raw = str(self.config.get("endpoint") or "").strip()
+        if not raw or "::" in raw:
+            return
+        host, separator, port_text = raw.rpartition(":")
+        if separator and host.strip() and port_text.isdigit():
+            self._connection_config_error = (
+                f"endpoint={raw!r} 声明 raw socket 端口，但驱动固定使用 "
+                f"{fixed_type}；请提供兼容的完整 VISA resource"
+            )
+
+    def _reject_nondefault_metadata_port(self, *, default: int, fixed_type: str) -> None:
+        """兼容 bootstrap 的既有默认端口，但拒绝把其他端口静默忽略。"""
+        if self._connection_port is not None and self._connection_port != default:
+            self._connection_config_error = (
+                f"port={self._connection_port} 与驱动固定的 {fixed_type} 传输不一致；"
+                f"该驱动不支持自定义 raw socket 端口"
+            )
 
     # ── SCPI 日志记录 (内部使用) ───────────────────────────────
 

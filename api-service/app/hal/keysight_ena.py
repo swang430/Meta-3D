@@ -52,19 +52,27 @@ class RealKeysightEnaDriver(VNADriver):
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
-        self.ip_address: str = resolve_configured_instrument_host(config)
+        self._reject_incompatible_visa_resource(allowed_type="INSTR")
+        self._reject_plain_endpoint_port(fixed_type="INSTR")
+        self._reject_nondefault_metadata_port(default=5025, fixed_type="INSTR")
+        self.ip_address: str = self._connection_host
+        self._connection_visa_resource = self._resolved_visa_resource(
+            f"TCPIP::{self.ip_address}::INSTR",
+            socket_prefix="TCPIP",
+            explicit_port_to_socket=False,
+        )
         self._visa_rm = None
         self._visa_session = None
 
     async def connect(self) -> bool:
-        if not self.ip_address:
+        if self._connection_config_error or not self.ip_address:
             return self._fail_missing_connection_address()
         self._set_status(InstrumentStatus.CONNECTING)
         try:
             import pyvisa
             self._visa_rm = pyvisa.ResourceManager()
             self._visa_session = self._visa_rm.open_resource(
-                f"TCPIP::{self.ip_address}::INSTR", timeout=10000
+                self._connection_visa_resource, timeout=10000
             )
             idn = self._query(EnaScpi.IDN).strip()
             logger.info(f"[ENA] Connected to {idn}")
@@ -169,7 +177,7 @@ class RealKeysightEnaDriver(VNADriver):
         self._visa_session = None
         try:
             self._visa_session = self._visa_rm.open_resource(
-                f"TCPIP::{self.ip_address}::INSTR",
+                self._connection_visa_resource,
                 timeout=10000,
             )
             logger.info(f"[ENA] silent reconnect succeeded — {self.ip_address}")
