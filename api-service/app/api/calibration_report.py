@@ -23,6 +23,10 @@ router = APIRouter(prefix="/calibration-reports", tags=["calibration-reports"])
 
 class GenerateReportRequest(BaseModel):
     """Request to generate a calibration report"""
+    chamber_id: Optional[UUID] = Field(
+        None,
+        description="Required when include_probe=true",
+    )
     session_id: Optional[str] = Field(
         None,
         description="Optional session ID to filter calibrations"
@@ -43,6 +47,7 @@ class GenerateReportRequest(BaseModel):
 
 class GenerateProbeReportRequest(BaseModel):
     """Request to generate a probe calibration report"""
+    chamber_id: UUID = Field(..., description="Probe calibration chamber scope")
     probe_ids: Optional[List[int]] = Field(
         None,
         description="Filter by probe IDs"
@@ -106,6 +111,11 @@ async def generate_comprehensive_report(
     - 信道校准结果（时域、多普勒、空间相关性、角度扩展、静区、EIS）
     - 验证状态和通过率统计
     """
+    if request.include_probe and request.chamber_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail="chamber_id is required when include_probe=true",
+        )
     try:
         generator = CalibrationReportGenerator(db)
 
@@ -113,6 +123,7 @@ async def generate_comprehensive_report(
 
         report_path = generator.generate_comprehensive_report(
             session_id=session_id,
+            chamber_id=request.chamber_id,
             include_probe=request.include_probe,
             include_channel=request.include_channel,
             title=request.title,
@@ -148,6 +159,7 @@ async def generate_probe_report(
         generator = CalibrationReportGenerator(db)
 
         report_path = generator.generate_probe_calibration_report(
+            chamber_id=request.chamber_id,
             probe_ids=request.probe_ids,
             calibration_type=request.calibration_type,
         )

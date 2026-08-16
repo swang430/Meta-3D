@@ -44,6 +44,8 @@ import { OverallStatusIndicator } from './CalibrationStatusBadge'
 import type { ValidityStatus, CalibrationType } from '../../../types/probeCalibration'
 
 interface ProbeCalibrationDashboardProps {
+  chamberId: string
+  chamberName?: string
   onStartCalibration?: (type: CalibrationType) => void
   onViewProbe?: (probeId: number) => void
   onViewExpiring?: () => void
@@ -64,6 +66,8 @@ const CALIBRATION_TYPES: {
 ]
 
 export function ProbeCalibrationDashboard({
+  chamberId,
+  chamberName,
   onStartCalibration,
   onViewProbe: _onViewProbe,
   onViewExpiring,
@@ -74,12 +78,12 @@ export function ProbeCalibrationDashboard({
     isLoading: isLoadingReport,
     error: reportError,
     refetch: refetchReport,
-  } = useValidityReport()
+  } = useValidityReport(chamberId)
 
   const {
     data: expiringData,
     isLoading: isLoadingExpiring,
-  } = useExpiringCalibrations(7)
+  } = useExpiringCalibrations(chamberId, 7)
 
   const {
     data: linkValidity,
@@ -114,6 +118,7 @@ export function ProbeCalibrationDashboard({
           <Text size="lg" fw={600}>
             Probe Calibration Status
           </Text>
+          {chamberName ? <Text size="sm" c="dimmed">{chamberName}</Text> : null}
         </Group>
         <Tooltip label="Refresh">
           <ActionIcon variant="light" onClick={() => refetchReport()}>

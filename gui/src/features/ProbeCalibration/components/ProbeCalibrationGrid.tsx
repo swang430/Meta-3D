@@ -32,12 +32,14 @@ import { CalibrationStatusBadge, ProbeCalibrationStatusSummary } from './Calibra
 import type { ValidityStatus } from '../../../types/probeCalibration'
 
 interface ProbeCalibrationGridProps {
+  chamberId: string
   onProbeSelect?: (probeId: number) => void
   selectedProbeId?: number
   probeCount?: number
 }
 
 export function ProbeCalibrationGrid({
+  chamberId,
   onProbeSelect,
   selectedProbeId,
   probeCount = 32,
@@ -56,7 +58,7 @@ export function ProbeCalibrationGrid({
     isLoading,
     error,
     refetch,
-  } = useValidityReport(probeIdsString)
+  } = useValidityReport(chamberId, probeIdsString)
 
   // Create a map of probe validity from the report
   const probeStatusMap = useMemo(() => {
@@ -207,6 +209,7 @@ export function ProbeCalibrationGrid({
         <Stack gap="xs">
           {filteredProbes.map((probeId) => (
             <ProbeListItem
+              chamberId={chamberId}
               key={probeId}
               probeId={probeId}
               status={probeStatusMap.get(probeId) || 'unknown'}
@@ -280,14 +283,15 @@ function ProbeCard({ probeId, status, isSelected, onClick }: ProbeCardProps) {
 }
 
 interface ProbeListItemProps {
+  chamberId: string
   probeId: number
   status: ValidityStatus
   isSelected?: boolean
   onClick?: () => void
 }
 
-function ProbeListItem({ probeId, status, isSelected, onClick }: ProbeListItemProps) {
-  const { data: probeValidity } = useProbeValidity(probeId)
+function ProbeListItem({ chamberId, probeId, status, isSelected, onClick }: ProbeListItemProps) {
+  const { data: probeValidity } = useProbeValidity(chamberId, probeId)
 
   return (
     <Paper

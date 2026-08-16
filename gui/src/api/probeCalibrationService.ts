@@ -66,10 +66,12 @@ export async function startAmplitudeCalibration(
  * Get latest amplitude calibration for a probe
  */
 export async function getAmplitudeCalibration(
+  chamberId: string,
   probeId: number
 ): Promise<AmplitudeCalibrationResponse> {
   const response = await apiClient.get<AmplitudeCalibrationResponse>(
-    `${BASE_URL}/amplitude/${probeId}`
+    `${BASE_URL}/amplitude/${probeId}`,
+    { params: { chamber_id: chamberId } }
   )
   return response.data
 }
@@ -78,12 +80,13 @@ export async function getAmplitudeCalibration(
  * Get amplitude calibration history for a probe
  */
 export async function getAmplitudeCalibrationHistory(
+  chamberId: string,
   probeId: number,
   limit: number = 20
 ): Promise<CalibrationHistoryResponse> {
   const response = await apiClient.get<CalibrationHistoryResponse>(
     `${BASE_URL}/amplitude/${probeId}/history`,
-    { params: { limit } }
+    { params: { chamber_id: chamberId, limit } }
   )
   return response.data
 }
@@ -107,10 +110,12 @@ export async function startPhaseCalibration(
  * Get latest phase calibration for a probe
  */
 export async function getPhaseCalibration(
+  chamberId: string,
   probeId: number
 ): Promise<PhaseCalibrationResponse> {
   const response = await apiClient.get<PhaseCalibrationResponse>(
-    `${BASE_URL}/phase/${probeId}`
+    `${BASE_URL}/phase/${probeId}`,
+    { params: { chamber_id: chamberId } }
   )
   return response.data
 }
@@ -119,12 +124,13 @@ export async function getPhaseCalibration(
  * Get phase calibration history for a probe
  */
 export async function getPhaseCalibrationHistory(
+  chamberId: string,
   probeId: number,
   limit: number = 20
 ): Promise<CalibrationHistoryResponse> {
   const response = await apiClient.get<CalibrationHistoryResponse>(
     `${BASE_URL}/phase/${probeId}/history`,
-    { params: { limit } }
+    { params: { chamber_id: chamberId, limit } }
   )
   return response.data
 }
@@ -148,10 +154,12 @@ export async function startPolarizationCalibration(
  * Get latest polarization calibration for a probe
  */
 export async function getPolarizationCalibration(
+  chamberId: string,
   probeId: number
 ): Promise<PolarizationCalibrationResponse> {
   const response = await apiClient.get<PolarizationCalibrationResponse>(
-    `${BASE_URL}/polarization/${probeId}`
+    `${BASE_URL}/polarization/${probeId}`,
+    { params: { chamber_id: chamberId } }
   )
   return response.data
 }
@@ -160,12 +168,13 @@ export async function getPolarizationCalibration(
  * Get polarization calibration history for a probe
  */
 export async function getPolarizationCalibrationHistory(
+  chamberId: string,
   probeId: number,
   limit: number = 20
 ): Promise<CalibrationHistoryResponse> {
   const response = await apiClient.get<CalibrationHistoryResponse>(
     `${BASE_URL}/polarization/${probeId}/history`,
-    { params: { limit } }
+    { params: { chamber_id: chamberId, limit } }
   )
   return response.data
 }
@@ -191,12 +200,13 @@ export async function startPatternCalibration(
  * @param frequencyMhz - Optional frequency filter
  */
 export async function getPatternCalibration(
+  chamberId: string,
   probeId: number,
   frequencyMhz?: number
 ): Promise<PatternCalibrationResponse[]> {
   const response = await apiClient.get<PatternCalibrationResponse[]>(
     `${BASE_URL}/pattern/${probeId}`,
-    { params: frequencyMhz ? { frequency_mhz: frequencyMhz } : undefined }
+    { params: { chamber_id: chamberId, frequency_mhz: frequencyMhz } }
   )
   return response.data
 }
@@ -204,6 +214,7 @@ export async function getPatternCalibration(
 // ==================== Phase 2a-import: Pattern File Upload ====================
 
 export interface ImportPatternFormParams {
+  chamberId: string
   file: File
   probeId: number
   polarization: string
@@ -241,6 +252,7 @@ export async function importProbePattern(
 ): Promise<ImportPatternResponse> {
   const fd = new FormData()
   fd.append('file', params.file)
+  fd.append('chamber_id', params.chamberId)
   fd.append('probe_id', String(params.probeId))
   fd.append('polarization', params.polarization)
   fd.append('frequency_mhz', String(params.frequencyMhz))
@@ -320,11 +332,12 @@ export async function checkLinkValidity(): Promise<LinkValidityStatus> {
  * @param probeIds - Comma-separated probe IDs, or undefined for default (0-31)
  */
 export async function getValidityReport(
+  chamberId: string,
   probeIds?: string
 ): Promise<CalibrationValidityReport> {
   const response = await apiClient.get<CalibrationValidityReport>(
     `${BASE_URL}/validity/report`,
-    { params: probeIds ? { probe_ids: probeIds } : undefined }
+    { params: { chamber_id: chamberId, probe_ids: probeIds } }
   )
   return response.data
 }
@@ -335,12 +348,13 @@ export async function getValidityReport(
  * @param calibrationType - Optional filter by calibration type
  */
 export async function getExpiringCalibrations(
+  chamberId: string,
   days: number = 7,
   calibrationType?: CalibrationType
 ): Promise<ExpiringCalibrationsResponse> {
   const response = await apiClient.get<ExpiringCalibrationsResponse>(
     `${BASE_URL}/validity/expiring`,
-    { params: { days, calibration_type: calibrationType } }
+    { params: { chamber_id: chamberId, days, calibration_type: calibrationType } }
   )
   return response.data
 }
@@ -350,11 +364,12 @@ export async function getExpiringCalibrations(
  * @param calibrationType - Optional filter by calibration type
  */
 export async function getExpiredCalibrations(
+  chamberId: string,
   calibrationType?: CalibrationType
 ): Promise<ExpiredCalibrationsResponse> {
   const response = await apiClient.get<ExpiredCalibrationsResponse>(
     `${BASE_URL}/validity/expired`,
-    { params: calibrationType ? { calibration_type: calibrationType } : undefined }
+    { params: { chamber_id: chamberId, calibration_type: calibrationType } }
   )
   return response.data
 }
@@ -363,10 +378,12 @@ export async function getExpiredCalibrations(
  * Get validity status for a single probe
  */
 export async function getProbeValidity(
+  chamberId: string,
   probeId: number
 ): Promise<ProbeCalibrationStatus> {
   const response = await apiClient.get<ProbeCalibrationStatus>(
-    `${BASE_URL}/validity/${probeId}`
+    `${BASE_URL}/validity/${probeId}`,
+    { params: { chamber_id: chamberId } }
   )
   return response.data
 }
@@ -392,10 +409,12 @@ export async function invalidateCalibration(
  * Get comprehensive calibration data for a probe
  */
 export async function getProbeCalibrationData(
+  chamberId: string,
   probeId: number
 ): Promise<ProbeCalibrationData> {
   const response = await apiClient.get<ProbeCalibrationData>(
-    `${BASE_URL}/${probeId}/data`
+    `${BASE_URL}/${probeId}/data`,
+    { params: { chamber_id: chamberId } }
   )
   return response.data
 }

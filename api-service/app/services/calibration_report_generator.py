@@ -101,6 +101,7 @@ class CalibrationReportGenerator:
     def generate_comprehensive_report(
         self,
         session_id: Optional[UUID] = None,
+        chamber_id: Optional[UUID] = None,
         output_path: Optional[str] = None,
         include_probe: bool = True,
         include_channel: bool = True,
@@ -122,6 +123,7 @@ class CalibrationReportGenerator:
         # Collect data
         report_data = self._collect_report_data(
             session_id=session_id,
+            chamber_id=chamber_id,
             include_probe=include_probe,
             include_channel=include_channel,
         )
@@ -162,12 +164,14 @@ class CalibrationReportGenerator:
 
     def generate_probe_calibration_report(
         self,
+        chamber_id: UUID,
         probe_ids: Optional[List[int]] = None,
         calibration_type: Optional[str] = None,
         output_path: Optional[str] = None,
     ) -> str:
         """Generate report for probe calibrations only"""
         report_data = self._collect_probe_data(
+            chamber_id=chamber_id,
             probe_ids=probe_ids,
             calibration_type=calibration_type,
         )
@@ -427,6 +431,7 @@ class CalibrationReportGenerator:
     def _collect_report_data(
         self,
         session_id: Optional[UUID],
+        chamber_id: Optional[UUID],
         include_probe: bool,
         include_channel: bool,
     ) -> Dict[str, Any]:
@@ -458,9 +463,12 @@ class CalibrationReportGenerator:
 
         # Collect probe data
         if include_probe:
-            probe_data = self._collect_probe_data()
+            if chamber_id is None:
+                raise ValueError("chamber_id is required when include_probe=true")
+            probe_data = self._collect_probe_data(chamber_id=chamber_id)
             data['probe_calibration'] = probe_data.get('probe_calibration', {})
             data['probe_summary'] = probe_data.get('execution_summary', {})
+            data['probe_chamber'] = probe_data.get('chamber')
 
         # Collect channel data
         if include_channel:
@@ -480,8 +488,14 @@ class CalibrationReportGenerator:
         calibration_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Collect probe calibration data"""
+        from app.models.chamber import ChamberConfiguration
+
+        chamber = self.db.get(ChamberConfiguration, chamber_id)
+        if chamber is None:
+            raise ValueError(f"Chamber not found: {chamber_id}")
         data = {
             'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'chamber': {'id': str(chamber.id), 'name': chamber.name},
             'probe_calibration': {},
             'execution_summary': {},
         }
@@ -1048,7 +1062,7 @@ class CalibrationReportGenerator:
 
     def export_calibration_data(
         self,
-        chamber_id: Optional[UUID] = None,
+        chamber_id: UUID,
         export_format: str = "json",
         output_path: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -1067,10 +1081,7 @@ class CalibrationReportGenerator:
         import csv
         
         # 收集数据
-        if chamber_id:
-            data = self._collect_chamber_calibration_data(chamber_id)
-        else:
-            data = self._collect_probe_data()
+        data = self._collect_chamber_calibration_data(chamber_id)
         
         # 生成输出路径
         if not output_path:
@@ -1193,6 +1204,7 @@ class CalibrationReportGenerator:
 
     def generate_audit_report(
         self,
+        chamber_id: UUID,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         output_path: Optional[str] = None,
@@ -1216,7 +1228,7 @@ class CalibrationReportGenerator:
             end_date = datetime.now()
         
         # 收集所有校准数据
-        all_data = self._collect_probe_data()
+        all_data = self._collect_probe_data(chamber_id=chamber_id)
         
         # 过滤时间范围
         filtered_calibrations = []

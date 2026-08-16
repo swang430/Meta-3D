@@ -53,6 +53,7 @@ export interface CalibrationProgress {
 // ==================== Amplitude Calibration ====================
 
 export interface StartAmplitudeCalibrationRequest {
+  chamber_id: string
   probe_ids: number[]
   polarizations?: PolarizationType[]
   frequency_range: FrequencyRange
@@ -83,6 +84,7 @@ export interface AmplitudeCalibrationResponse {
 // ==================== Phase Calibration ====================
 
 export interface StartPhaseCalibrationRequest {
+  chamber_id: string
   probe_ids: number[]
   polarizations?: PolarizationType[]
   reference_probe_id?: number
@@ -111,6 +113,7 @@ export interface PhaseCalibrationResponse {
 // ==================== Polarization Calibration ====================
 
 export interface StartPolarizationCalibrationRequest {
+  chamber_id: string
   probe_ids: number[]
   probe_type: ProbeType
   frequency_range: FrequencyRange
@@ -146,6 +149,7 @@ export interface PolarizationCalibrationResponse {
 // ==================== Pattern Calibration ====================
 
 export interface StartPatternCalibrationRequest {
+  chamber_id: string
   probe_ids: number[]
   polarizations?: PolarizationType[]
   frequency_mhz: number
@@ -255,6 +259,7 @@ export interface CalibrationTypeStatus {
 }
 
 export interface ProbeCalibrationStatus {
+  chamber_id: string
   probe_id: number
   amplitude?: CalibrationTypeStatus
   phase?: CalibrationTypeStatus
@@ -289,6 +294,7 @@ export interface ExpiringCalibrationInfo {
 }
 
 export interface CalibrationValidityReport {
+  chamber_id: string
   total_probes: number
   valid_probes: number
   expired_probes: number
@@ -339,6 +345,7 @@ export interface CalibrationHistoryResponse {
 // ==================== Comprehensive Data Query ====================
 
 export interface ProbeCalibrationData {
+  chamber_id: string
   probe_id: number
   amplitude_calibration?: AmplitudeCalibrationResponse
   phase_calibration?: PhaseCalibrationResponse
@@ -351,12 +358,14 @@ export interface ProbeCalibrationData {
 // ==================== Expiring/Expired Calibrations Response ====================
 
 export interface ExpiringCalibrationsResponse {
+  chamber_id: string
   days_threshold: number
   count: number
   calibrations: ExpiringCalibrationInfo[]
 }
 
 export interface ExpiredCalibrationsResponse {
+  chamber_id: string
   count: number
   calibrations: ExpiredCalibrationInfo[]
 }

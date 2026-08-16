@@ -29,9 +29,11 @@ import type { CalibrationType } from '../../types/probeCalibration'
 
 interface ProbeCalibrationPageProps {
   defaultTab?: 'dashboard' | 'probes'
+  chamberId: string
+  chamberName?: string
 }
 
-export function ProbeCalibrationPage({ defaultTab = 'dashboard' }: ProbeCalibrationPageProps) {
+export function ProbeCalibrationPage({ defaultTab = 'dashboard', chamberId, chamberName }: ProbeCalibrationPageProps) {
   const [activeTab, setActiveTab] = useState<string | null>(defaultTab)
   const [selectedProbeId, setSelectedProbeId] = useState<number | null>(null)
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
@@ -82,6 +84,8 @@ export function ProbeCalibrationPage({ defaultTab = 'dashboard' }: ProbeCalibrat
 
           <Tabs.Panel value="dashboard" pt="md">
             <ProbeCalibrationDashboard
+              chamberId={chamberId}
+              chamberName={chamberName}
               onStartCalibration={handleStartCalibration}
               onViewProbe={handleViewProbe}
             />
@@ -89,6 +93,7 @@ export function ProbeCalibrationPage({ defaultTab = 'dashboard' }: ProbeCalibrat
 
           <Tabs.Panel value="probes" pt="md">
             <ProbeCalibrationGrid
+              chamberId={chamberId}
               onProbeSelect={handleProbeSelect}
               selectedProbeId={selectedProbeId ?? undefined}
               probeCount={32}
@@ -96,7 +101,7 @@ export function ProbeCalibrationPage({ defaultTab = 'dashboard' }: ProbeCalibrat
           </Tabs.Panel>
 
           <Tabs.Panel value="pattern_import" pt="md">
-            <PatternImportPanel />
+            <PatternImportPanel chamberId={chamberId} />
           </Tabs.Panel>
 
           <Tabs.Panel value="rf_chain_diagram" pt="md">
@@ -118,6 +123,7 @@ export function ProbeCalibrationPage({ defaultTab = 'dashboard' }: ProbeCalibrat
       >
         {selectedProbeId !== null && (
           <ProbeCalibrationDetail
+            chamberId={chamberId}
             probeId={selectedProbeId}
             onClose={() => setIsDetailModalOpen(false)}
             onInvalidate={handleInvalidate}

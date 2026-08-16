@@ -46,21 +46,21 @@ import type {
 export const probeCalibrationKeys = {
   all: ['probeCalibration'] as const,
   // Amplitude
-  amplitude: (probeId: number) => [...probeCalibrationKeys.all, 'amplitude', probeId] as const,
-  amplitudeHistory: (probeId: number) =>
-    [...probeCalibrationKeys.all, 'amplitude', 'history', probeId] as const,
+  amplitude: (chamberId: string, probeId: number) => [...probeCalibrationKeys.all, chamberId, 'amplitude', probeId] as const,
+  amplitudeHistory: (chamberId: string, probeId: number) =>
+    [...probeCalibrationKeys.all, chamberId, 'amplitude', 'history', probeId] as const,
   // Phase
-  phase: (probeId: number) => [...probeCalibrationKeys.all, 'phase', probeId] as const,
-  phaseHistory: (probeId: number) =>
-    [...probeCalibrationKeys.all, 'phase', 'history', probeId] as const,
+  phase: (chamberId: string, probeId: number) => [...probeCalibrationKeys.all, chamberId, 'phase', probeId] as const,
+  phaseHistory: (chamberId: string, probeId: number) =>
+    [...probeCalibrationKeys.all, chamberId, 'phase', 'history', probeId] as const,
   // Polarization
-  polarization: (probeId: number) =>
-    [...probeCalibrationKeys.all, 'polarization', probeId] as const,
-  polarizationHistory: (probeId: number) =>
-    [...probeCalibrationKeys.all, 'polarization', 'history', probeId] as const,
+  polarization: (chamberId: string, probeId: number) =>
+    [...probeCalibrationKeys.all, chamberId, 'polarization', probeId] as const,
+  polarizationHistory: (chamberId: string, probeId: number) =>
+    [...probeCalibrationKeys.all, chamberId, 'polarization', 'history', probeId] as const,
   // Pattern
-  pattern: (probeId: number, frequencyMhz?: number) =>
-    [...probeCalibrationKeys.all, 'pattern', probeId, frequencyMhz] as const,
+  pattern: (chamberId: string, probeId: number, frequencyMhz?: number) =>
+    [...probeCalibrationKeys.all, chamberId, 'pattern', probeId, frequencyMhz] as const,
   // Link
   linkLatest: (calibrationType?: string) =>
     [...probeCalibrationKeys.all, 'link', 'latest', calibrationType] as const,
@@ -68,16 +68,16 @@ export const probeCalibrationKeys = {
     [...probeCalibrationKeys.all, 'link', 'history', calibrationType] as const,
   linkValidity: () => [...probeCalibrationKeys.all, 'link', 'validity'] as const,
   // Validity
-  validityReport: (probeIds?: string) =>
-    [...probeCalibrationKeys.all, 'validity', 'report', probeIds] as const,
-  expiring: (days: number, calibrationType?: CalibrationType) =>
-    [...probeCalibrationKeys.all, 'validity', 'expiring', days, calibrationType] as const,
-  expired: (calibrationType?: CalibrationType) =>
-    [...probeCalibrationKeys.all, 'validity', 'expired', calibrationType] as const,
-  probeValidity: (probeId: number) =>
-    [...probeCalibrationKeys.all, 'validity', 'probe', probeId] as const,
+  validityReport: (chamberId: string, probeIds?: string) =>
+    [...probeCalibrationKeys.all, chamberId, 'validity', 'report', probeIds] as const,
+  expiring: (chamberId: string, days: number, calibrationType?: CalibrationType) =>
+    [...probeCalibrationKeys.all, chamberId, 'validity', 'expiring', days, calibrationType] as const,
+  expired: (chamberId: string, calibrationType?: CalibrationType) =>
+    [...probeCalibrationKeys.all, chamberId, 'validity', 'expired', calibrationType] as const,
+  probeValidity: (chamberId: string, probeId: number) =>
+    [...probeCalibrationKeys.all, chamberId, 'validity', 'probe', probeId] as const,
   // Comprehensive data
-  probeData: (probeId: number) => [...probeCalibrationKeys.all, 'data', probeId] as const,
+  probeData: (chamberId: string, probeId: number) => [...probeCalibrationKeys.all, chamberId, 'data', probeId] as const,
 }
 
 // ==================== Amplitude Calibration Hooks ====================
@@ -97,8 +97,8 @@ export function useStartAmplitudeCalibration(): UseMutationResult<
     onSuccess: (_, variables) => {
       // Invalidate relevant queries
       variables.probe_ids.forEach((probeId) => {
-        queryClient.invalidateQueries({ queryKey: probeCalibrationKeys.amplitude(probeId) })
-        queryClient.invalidateQueries({ queryKey: probeCalibrationKeys.probeData(probeId) })
+        queryClient.invalidateQueries({ queryKey: probeCalibrationKeys.amplitude(variables.chamber_id, probeId) })
+        queryClient.invalidateQueries({ queryKey: probeCalibrationKeys.probeData(variables.chamber_id, probeId) })
       })
       queryClient.invalidateQueries({ queryKey: [...probeCalibrationKeys.all, 'validity'] })
     },
@@ -109,13 +109,14 @@ export function useStartAmplitudeCalibration(): UseMutationResult<
  * Hook to get amplitude calibration for a probe
  */
 export function useAmplitudeCalibration(
+  chamberId: string,
   probeId: number,
   enabled: boolean = true
 ): UseQueryResult<AmplitudeCalibrationResponse, Error> {
   return useQuery({
-    queryKey: probeCalibrationKeys.amplitude(probeId),
-    queryFn: () => probeCalibrationService.getAmplitudeCalibration(probeId),
-    enabled,
+    queryKey: probeCalibrationKeys.amplitude(chamberId, probeId),
+    queryFn: () => probeCalibrationService.getAmplitudeCalibration(chamberId, probeId),
+    enabled: enabled && Boolean(chamberId),
   })
 }
 
@@ -123,14 +124,15 @@ export function useAmplitudeCalibration(
  * Hook to get amplitude calibration history
  */
 export function useAmplitudeCalibrationHistory(
+  chamberId: string,
   probeId: number,
   limit: number = 20,
   enabled: boolean = true
 ): UseQueryResult<CalibrationHistoryResponse, Error> {
   return useQuery({
-    queryKey: probeCalibrationKeys.amplitudeHistory(probeId),
-    queryFn: () => probeCalibrationService.getAmplitudeCalibrationHistory(probeId, limit),
-    enabled,
+    queryKey: probeCalibrationKeys.amplitudeHistory(chamberId, probeId),
+    queryFn: () => probeCalibrationService.getAmplitudeCalibrationHistory(chamberId, probeId, limit),
+    enabled: enabled && Boolean(chamberId),
   })
 }
 
@@ -150,8 +152,8 @@ export function useStartPhaseCalibration(): UseMutationResult<
     mutationFn: probeCalibrationService.startPhaseCalibration,
     onSuccess: (_, variables) => {
       variables.probe_ids.forEach((probeId) => {
-        queryClient.invalidateQueries({ queryKey: probeCalibrationKeys.phase(probeId) })
-        queryClient.invalidateQueries({ queryKey: probeCalibrationKeys.probeData(probeId) })
+        queryClient.invalidateQueries({ queryKey: probeCalibrationKeys.phase(variables.chamber_id, probeId) })
+        queryClient.invalidateQueries({ queryKey: probeCalibrationKeys.probeData(variables.chamber_id, probeId) })
       })
       queryClient.invalidateQueries({ queryKey: [...probeCalibrationKeys.all, 'validity'] })
     },
@@ -162,13 +164,14 @@ export function useStartPhaseCalibration(): UseMutationResult<
  * Hook to get phase calibration for a probe
  */
 export function usePhaseCalibration(
+  chamberId: string,
   probeId: number,
   enabled: boolean = true
 ): UseQueryResult<PhaseCalibrationResponse, Error> {
   return useQuery({
-    queryKey: probeCalibrationKeys.phase(probeId),
-    queryFn: () => probeCalibrationService.getPhaseCalibration(probeId),
-    enabled,
+    queryKey: probeCalibrationKeys.phase(chamberId, probeId),
+    queryFn: () => probeCalibrationService.getPhaseCalibration(chamberId, probeId),
+    enabled: enabled && Boolean(chamberId),
   })
 }
 
@@ -176,14 +179,15 @@ export function usePhaseCalibration(
  * Hook to get phase calibration history
  */
 export function usePhaseCalibrationHistory(
+  chamberId: string,
   probeId: number,
   limit: number = 20,
   enabled: boolean = true
 ): UseQueryResult<CalibrationHistoryResponse, Error> {
   return useQuery({
-    queryKey: probeCalibrationKeys.phaseHistory(probeId),
-    queryFn: () => probeCalibrationService.getPhaseCalibrationHistory(probeId, limit),
-    enabled,
+    queryKey: probeCalibrationKeys.phaseHistory(chamberId, probeId),
+    queryFn: () => probeCalibrationService.getPhaseCalibrationHistory(chamberId, probeId, limit),
+    enabled: enabled && Boolean(chamberId),
   })
 }
 
@@ -203,8 +207,8 @@ export function useStartPolarizationCalibration(): UseMutationResult<
     mutationFn: probeCalibrationService.startPolarizationCalibration,
     onSuccess: (_, variables) => {
       variables.probe_ids.forEach((probeId) => {
-        queryClient.invalidateQueries({ queryKey: probeCalibrationKeys.polarization(probeId) })
-        queryClient.invalidateQueries({ queryKey: probeCalibrationKeys.probeData(probeId) })
+        queryClient.invalidateQueries({ queryKey: probeCalibrationKeys.polarization(variables.chamber_id, probeId) })
+        queryClient.invalidateQueries({ queryKey: probeCalibrationKeys.probeData(variables.chamber_id, probeId) })
       })
       queryClient.invalidateQueries({ queryKey: [...probeCalibrationKeys.all, 'validity'] })
     },
@@ -215,13 +219,14 @@ export function useStartPolarizationCalibration(): UseMutationResult<
  * Hook to get polarization calibration for a probe
  */
 export function usePolarizationCalibration(
+  chamberId: string,
   probeId: number,
   enabled: boolean = true
 ): UseQueryResult<PolarizationCalibrationResponse, Error> {
   return useQuery({
-    queryKey: probeCalibrationKeys.polarization(probeId),
-    queryFn: () => probeCalibrationService.getPolarizationCalibration(probeId),
-    enabled,
+    queryKey: probeCalibrationKeys.polarization(chamberId, probeId),
+    queryFn: () => probeCalibrationService.getPolarizationCalibration(chamberId, probeId),
+    enabled: enabled && Boolean(chamberId),
   })
 }
 
@@ -229,14 +234,15 @@ export function usePolarizationCalibration(
  * Hook to get polarization calibration history
  */
 export function usePolarizationCalibrationHistory(
+  chamberId: string,
   probeId: number,
   limit: number = 20,
   enabled: boolean = true
 ): UseQueryResult<CalibrationHistoryResponse, Error> {
   return useQuery({
-    queryKey: probeCalibrationKeys.polarizationHistory(probeId),
-    queryFn: () => probeCalibrationService.getPolarizationCalibrationHistory(probeId, limit),
-    enabled,
+    queryKey: probeCalibrationKeys.polarizationHistory(chamberId, probeId),
+    queryFn: () => probeCalibrationService.getPolarizationCalibrationHistory(chamberId, probeId, limit),
+    enabled: enabled && Boolean(chamberId),
   })
 }
 
@@ -256,8 +262,8 @@ export function useStartPatternCalibration(): UseMutationResult<
     mutationFn: probeCalibrationService.startPatternCalibration,
     onSuccess: (_, variables) => {
       variables.probe_ids.forEach((probeId) => {
-        queryClient.invalidateQueries({ queryKey: probeCalibrationKeys.pattern(probeId) })
-        queryClient.invalidateQueries({ queryKey: probeCalibrationKeys.probeData(probeId) })
+        queryClient.invalidateQueries({ queryKey: probeCalibrationKeys.pattern(variables.chamber_id, probeId) })
+        queryClient.invalidateQueries({ queryKey: probeCalibrationKeys.probeData(variables.chamber_id, probeId) })
       })
       queryClient.invalidateQueries({ queryKey: [...probeCalibrationKeys.all, 'validity'] })
     },
@@ -268,14 +274,15 @@ export function useStartPatternCalibration(): UseMutationResult<
  * Hook to get pattern calibration for a probe
  */
 export function usePatternCalibration(
+  chamberId: string,
   probeId: number,
   frequencyMhz?: number,
   enabled: boolean = true
 ): UseQueryResult<PatternCalibrationResponse[], Error> {
   return useQuery({
-    queryKey: probeCalibrationKeys.pattern(probeId, frequencyMhz),
-    queryFn: () => probeCalibrationService.getPatternCalibration(probeId, frequencyMhz),
-    enabled,
+    queryKey: probeCalibrationKeys.pattern(chamberId, probeId, frequencyMhz),
+    queryFn: () => probeCalibrationService.getPatternCalibration(chamberId, probeId, frequencyMhz),
+    enabled: enabled && Boolean(chamberId),
   })
 }
 
@@ -350,13 +357,14 @@ export function useLinkValidity(
  * Hook to get validity report
  */
 export function useValidityReport(
+  chamberId: string,
   probeIds?: string,
   enabled: boolean = true
 ): UseQueryResult<CalibrationValidityReport, Error> {
   return useQuery({
-    queryKey: probeCalibrationKeys.validityReport(probeIds),
-    queryFn: () => probeCalibrationService.getValidityReport(probeIds),
-    enabled,
+    queryKey: probeCalibrationKeys.validityReport(chamberId, probeIds),
+    queryFn: () => probeCalibrationService.getValidityReport(chamberId, probeIds),
+    enabled: enabled && Boolean(chamberId),
   })
 }
 
@@ -364,14 +372,15 @@ export function useValidityReport(
  * Hook to get expiring calibrations
  */
 export function useExpiringCalibrations(
+  chamberId: string,
   days: number = 7,
   calibrationType?: CalibrationType,
   enabled: boolean = true
 ): UseQueryResult<ExpiringCalibrationsResponse, Error> {
   return useQuery({
-    queryKey: probeCalibrationKeys.expiring(days, calibrationType),
-    queryFn: () => probeCalibrationService.getExpiringCalibrations(days, calibrationType),
-    enabled,
+    queryKey: probeCalibrationKeys.expiring(chamberId, days, calibrationType),
+    queryFn: () => probeCalibrationService.getExpiringCalibrations(chamberId, days, calibrationType),
+    enabled: enabled && Boolean(chamberId),
   })
 }
 
@@ -379,13 +388,14 @@ export function useExpiringCalibrations(
  * Hook to get expired calibrations
  */
 export function useExpiredCalibrations(
+  chamberId: string,
   calibrationType?: CalibrationType,
   enabled: boolean = true
 ): UseQueryResult<ExpiredCalibrationsResponse, Error> {
   return useQuery({
-    queryKey: probeCalibrationKeys.expired(calibrationType),
-    queryFn: () => probeCalibrationService.getExpiredCalibrations(calibrationType),
-    enabled,
+    queryKey: probeCalibrationKeys.expired(chamberId, calibrationType),
+    queryFn: () => probeCalibrationService.getExpiredCalibrations(chamberId, calibrationType),
+    enabled: enabled && Boolean(chamberId),
   })
 }
 
@@ -393,13 +403,14 @@ export function useExpiredCalibrations(
  * Hook to get validity status for a single probe
  */
 export function useProbeValidity(
+  chamberId: string,
   probeId: number,
   enabled: boolean = true
 ): UseQueryResult<ProbeCalibrationStatus, Error> {
   return useQuery({
-    queryKey: probeCalibrationKeys.probeValidity(probeId),
-    queryFn: () => probeCalibrationService.getProbeValidity(probeId),
-    enabled,
+    queryKey: probeCalibrationKeys.probeValidity(chamberId, probeId),
+    queryFn: () => probeCalibrationService.getProbeValidity(chamberId, probeId),
+    enabled: enabled && Boolean(chamberId),
   })
 }
 
@@ -429,12 +440,13 @@ export function useInvalidateCalibration(): UseMutationResult<
  * Hook to get comprehensive calibration data for a probe
  */
 export function useProbeCalibrationData(
+  chamberId: string,
   probeId: number,
   enabled: boolean = true
 ): UseQueryResult<ProbeCalibrationData, Error> {
   return useQuery({
-    queryKey: probeCalibrationKeys.probeData(probeId),
-    queryFn: () => probeCalibrationService.getProbeCalibrationData(probeId),
-    enabled,
+    queryKey: probeCalibrationKeys.probeData(chamberId, probeId),
+    queryFn: () => probeCalibrationService.getProbeCalibrationData(chamberId, probeId),
+    enabled: enabled && Boolean(chamberId),
   })
 }

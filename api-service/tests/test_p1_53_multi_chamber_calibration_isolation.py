@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
+from app.models.chamber import ChamberConfiguration
 from app.models.probe_calibration import (
     CalibrationStatus,
     ProbeAmplitudeCalibration,
@@ -69,6 +70,19 @@ def _amplitude(
     db.add(record)
     db.flush()
     return record
+
+
+def _chamber(db, chamber_id, name):
+    chamber = ChamberConfiguration(
+        id=chamber_id,
+        name=name,
+        chamber_type="custom",
+        chamber_radius_m=3.0,
+        num_probes=32,
+    )
+    db.add(chamber)
+    db.flush()
+    return chamber
 
 
 @pytest.mark.parametrize(
@@ -227,6 +241,8 @@ def test_validity_uses_only_requested_chamber(session):
 
 def test_probe_report_collector_excludes_other_chambers_and_legacy(session):
     chamber_a, chamber_b = uuid.uuid4(), uuid.uuid4()
+    _chamber(session, chamber_a, "Chamber A")
+    _chamber(session, chamber_b, "Chamber B")
     now = datetime.utcnow()
     own = _amplitude(
         session,

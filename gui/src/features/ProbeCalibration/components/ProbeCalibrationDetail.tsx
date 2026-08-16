@@ -44,6 +44,7 @@ import type {
 } from '../../../types/probeCalibration'
 
 interface ProbeCalibrationDetailProps {
+  chamberId: string
   probeId: number
   onClose?: () => void
   onInvalidate?: (calibrationType: string, calibrationId: string) => void
@@ -51,6 +52,7 @@ interface ProbeCalibrationDetailProps {
 }
 
 export function ProbeCalibrationDetail({
+  chamberId,
   probeId,
   onClose,
   onInvalidate,
@@ -61,7 +63,7 @@ export function ProbeCalibrationDetail({
     isLoading,
     error,
     refetch,
-  } = useProbeCalibrationData(probeId)
+  } = useProbeCalibrationData(chamberId, probeId)
 
   if (error) {
     return (
