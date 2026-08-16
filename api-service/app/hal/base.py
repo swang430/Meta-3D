@@ -48,6 +48,33 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 
+def resolve_configured_instrument_host(config: Dict[str, Any]) -> str:
+    """从显式连接配置解析 host；没有配置时返回空串。
+
+    不提供任何设备地址默认值。结构化字段优先；随后接受 VISA TCPIP resource
+    与普通 ``host:port`` endpoint。GPIB/USB 等非网络 resource 不冒充 host。
+    """
+    for key in ("ip", "controller_ip", "ip_address"):
+        value = str(config.get(key) or "").strip()
+        if value:
+            return value
+
+    for key in ("visa_resource", "endpoint"):
+        resource = str(config.get(key) or "").strip()
+        if not resource:
+            continue
+        parts = resource.split("::")
+        if len(parts) >= 2 and parts[0].upper().startswith("TCPIP"):
+            return parts[1].strip()
+        if "::" not in resource:
+            host, separator, port = resource.rpartition(":")
+            if separator and host and port.isdigit():
+                return host.strip()
+            if ":" not in resource:
+                return resource
+    return ""
+
+
 def _resolve_resp_max() -> int:
     """响应体写进日志的最大字符数 (超出截断并显式标记)。
 
@@ -379,6 +406,15 @@ class InstrumentDriver(ABC):
         # SCPI 通信专用 logger — 命名空间 app.hal.scpi.{id}
         # 被 logging_config 中的 SCPI handler 独立捕获到 scpi.log
         self._scpi_logger = logging.getLogger(f"app.hal.scpi.{instrument_id}")
+
+    def _fail_missing_connection_address(self) -> bool:
+        """在任何外部 I/O 前把缺少连接地址收敛成明确失败。"""
+        error = (
+            f"{self.instrument_id}: 未配置连接地址；请在仪表目录/LabProfile 中设置 "
+            "IP 或 endpoint 后重新加载 HAL"
+        )
+        self._set_status(InstrumentStatus.ERROR, error)
+        return False
 
     # ── SCPI 日志记录 (内部使用) ───────────────────────────────
 

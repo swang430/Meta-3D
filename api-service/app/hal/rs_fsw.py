@@ -14,6 +14,7 @@ from app.hal.base import (
     InstrumentStatus,
     InstrumentCapability,
     InstrumentMetrics,
+    resolve_configured_instrument_host,
 )
 from app.hal.signal_analyzer import SignalAnalyzerDriver
 
@@ -39,11 +40,13 @@ class RealRsFswDriver(SignalAnalyzerDriver):
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
-        self.ip_address: str = config.get("ip", "192.168.100.80")
+        self.ip_address: str = resolve_configured_instrument_host(config)
         self._visa_rm = None
         self._visa_session = None
 
     async def connect(self) -> bool:
+        if not self.ip_address:
+            return self._fail_missing_connection_address()
         self._set_status(InstrumentStatus.CONNECTING)
         try:
             import pyvisa

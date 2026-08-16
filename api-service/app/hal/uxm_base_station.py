@@ -30,6 +30,7 @@ from app.hal.base import (
     InstrumentStatus,
     InstrumentCapability,
     InstrumentMetrics,
+    resolve_configured_instrument_host,
     redact_instrument_command_text,
 )
 from app.hal.base_station import (
@@ -326,10 +327,12 @@ class RealUxmDriver(BaseStationDriver):
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         # 连接参数
-        self.ip_address: str = config.get("ip", "192.168.100.10")
+        self.ip_address: str = resolve_configured_instrument_host(config)
         self.port: int = config.get("port", 5025)
         self.protocol: str = config.get("protocol", "TCPIP")  # TCPIP or HiSLIP
-        self.visa_resource: Optional[str] = config.get("visa_resource")
+        self.visa_resource: Optional[str] = (
+            config.get("visa_resource") or config.get("endpoint")
+        )
         # Test-App command profile (CAICT 2026-05-13: E7515B platform hosts
         # multiple test apps with different SCPI dialects). Default profile
         # is 5G NR Test App for backward compat; auto-detected in connect()
@@ -567,6 +570,8 @@ class RealUxmDriver(BaseStationDriver):
         连上后 query SYSTem:APPLication:NAME? 决定实际 Test App，按结果切换
         self._cmds。若检测不到（如纯 Platform 模式），保留 __init__ 时的初值。
         """
+        if not self.ip_address and not self.visa_resource:
+            return self._fail_missing_connection_address()
         if self._local_control_reserved:
             self._last_error = "UXM 已释放控制会话；仅测试租约可重新取得 Remote"
             return False

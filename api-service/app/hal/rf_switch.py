@@ -15,6 +15,7 @@ from app.hal.base import (
     InstrumentStatus,
     InstrumentCapability,
     InstrumentMetrics,
+    resolve_configured_instrument_host,
 )
 
 logger = logging.getLogger(__name__)
@@ -173,7 +174,7 @@ class EtslSwitchDriver(RfSwitchDriver):
         # controller_ip, 与 F64/UXM 同惯例), 只认 ip_address 会让标准绑定
         # 落 127.0.0.1 → VXI-11 永远连不上真开关。"ip" 优先 (结构化列权威),
         # ip_address 保留兼容 (onsite 脚本 / 旧 connection_params)。
-        self._ip = config.get("ip") or config.get("ip_address") or "127.0.0.1"
+        self._ip = resolve_configured_instrument_host(config)
         self._port = int(config.get("port") or self._DEFAULT_PORT)
         # P2-9: 默认 vxi11 — 现场机老固件 (2.5.1) 唯一实证 LAN 通路
         self._transport = str(config.get("transport") or "vxi11").lower()
@@ -187,6 +188,8 @@ class EtslSwitchDriver(RfSwitchDriver):
         self._visa_session = None
 
     async def connect(self) -> bool:
+        if not self._ip:
+            return self._fail_missing_connection_address()
         try:
             if self._transport == "vxi11":
                 import pyvisa

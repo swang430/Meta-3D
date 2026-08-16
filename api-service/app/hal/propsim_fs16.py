@@ -72,6 +72,7 @@ from app.hal.base import (
     InstrumentCapability,
     InstrumentMetrics,
     InstrumentStatus,
+    resolve_configured_instrument_host,
     redact_instrument_command_text,
 )
 from app.hal.channel_emulator import (
@@ -112,7 +113,7 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         # Connection params
-        self.ip_address: str = config.get("ip", "192.168.0.100")
+        self.ip_address: str = resolve_configured_instrument_host(config)
         self.port: int = config.get("port", 5025)
         self.playback_dir: str = config.get("playback_dir", FS16_PLAYBACK_DIR)
 
@@ -153,6 +154,8 @@ class RealPropsimFs16Driver(ChannelEmulatorDriver):
 
     async def connect(self) -> bool:
         """Open SOCKET, verify identity, cache SYST:INFO parse."""
+        if not self.ip_address:
+            return self._fail_missing_connection_address()
         self._status = InstrumentStatus.CONNECTING
         try:
             import pyvisa

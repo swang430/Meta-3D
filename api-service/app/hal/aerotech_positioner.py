@@ -28,6 +28,7 @@ from app.hal.base import (
     InstrumentStatus,
     InstrumentCapability,
     InstrumentMetrics,
+    resolve_configured_instrument_host,
     redact_instrument_log_text,
 )
 from app.hal.positioner import PositionerDriver
@@ -114,7 +115,7 @@ class RealAerotechDriver(PositionerDriver):
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
-        self.ip_address: str = config.get("ip", "192.168.1.10")
+        self.ip_address: str = resolve_configured_instrument_host(config)
         self.port: int = config.get("port", 8000)
         self.az_axis: str = config.get("azimuth_axis", "X")
         self.el_axis: str = config.get("elevation_axis", "Y")
@@ -454,6 +455,8 @@ class RealAerotechDriver(PositionerDriver):
 
     async def connect(self) -> bool:
         """连接到 Aerotech 控制器并启用轴"""
+        if not self.ip_address:
+            return self._fail_missing_connection_address()
         self._set_status(InstrumentStatus.CONNECTING)
         try:
             logger.info(

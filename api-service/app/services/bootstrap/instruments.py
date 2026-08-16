@@ -85,8 +85,8 @@ _CATEGORIES: list[dict] = [
         "connection": {
             # PROPSIM F64 走 raw SOCKET, ATE/SCPI 端口硬件固定 3334 (非 5025/INSTR)。
             # [现场 2026-05-27 实测; 详见 propsim_f64.py 顶注 + roadmap P0-8]
-            "endpoint": "TCPIP0::192.168.100.21::3334::SOCKET",
-            "controller_ip": "192.168.100.21", "port": 3334,
+            "endpoint": None,
+            "controller_ip": None, "port": 3334,
             "protocol": "VISA/SCPI (raw SOCKET)",
         },
     },
@@ -125,8 +125,8 @@ _CATEGORIES: list[dict] = [
                               "driver_notes": "等 R&S CMX500 SCPI 手册到位再开工"}},
         ],
         "connection": {
-            "endpoint": "TCPIP0::192.168.100.22::inst0::INSTR",
-            "controller_ip": "192.168.100.22", "port": 5025,
+            "endpoint": None,
+            "controller_ip": None, "port": 5025,
             "protocol": "VISA/SCPI",
         },
     },
@@ -162,8 +162,8 @@ _CATEGORIES: list[dict] = [
                               "measurements": ["Spectrum", "5G NR", "LTE", "EVM", "ACLR", "Channel Power"]}},
         ],
         "connection": {
-            "endpoint": "TCPIP0::192.168.100.23::inst0::INSTR",
-            "controller_ip": "192.168.100.23", "port": 5025,
+            "endpoint": None,
+            "controller_ip": None, "port": 5025,
             "protocol": "VISA/SCPI",
         },
     },
@@ -201,8 +201,8 @@ _CATEGORIES: list[dict] = [
                               "interfaces": ["LAN", "RS-232"]}},
         ],
         "connection": {
-            "endpoint": "192.168.100.24:4001",
-            "controller_ip": "192.168.100.24", "port": 4001,
+            "endpoint": None,
+            "controller_ip": None, "port": 4001,
             "protocol": "TCP/Modbus",
         },
     },
@@ -239,8 +239,8 @@ _CATEGORIES: list[dict] = [
                               "interfaces": ["LAN", "GPIB", "USB"], "time_domain": True}},
         ],
         "connection": {
-            "endpoint": "TCPIP0::192.168.100.25::inst0::INSTR",
-            "controller_ip": "192.168.100.25", "port": 5025,
+            "endpoint": None,
+            "controller_ip": None, "port": 5025,
             "protocol": "VISA/SCPI",
         },
     },
@@ -273,8 +273,8 @@ _CATEGORIES: list[dict] = [
                               "interfaces": ["USB", "LAN"]}},
         ],
         "connection": {
-            "endpoint": "TCPIP0::192.168.100.26::inst0::INSTR",
-            "controller_ip": "192.168.100.26", "port": 5025,
+            "endpoint": None,
+            "controller_ip": None, "port": 5025,
             "protocol": "VISA/SCPI",
         },
     },
@@ -313,8 +313,8 @@ _CATEGORIES: list[dict] = [
                               "standards": ["5G NR", "LTE", "Radar", "Custom IQ"]}},
         ],
         "connection": {
-            "endpoint": "TCPIP0::192.168.100.27::inst0::INSTR",
-            "controller_ip": "192.168.100.27", "port": 5025,
+            "endpoint": None,
+            "controller_ip": None, "port": 5025,
             "protocol": "VISA/SCPI",
         },
     },
@@ -451,7 +451,7 @@ def _seed(db: Session) -> SeedResult:
                 protocol=conn_def["protocol"],
                 status="disconnected",
                 created_by="system",
-                notes="初始化默认配置，连接真实硬件后请更新IP",
+                notes="连接地址未配置；连接真实硬件前必须由操作员填写",
             ))
             inserted += 1
         elif _migrate_f64_channel_emulator_port(cat_def, category, existing_conn, db):
@@ -469,7 +469,7 @@ def _seed(db: Session) -> SeedResult:
 
 instruments_seeder = Seeder(
     name="instruments",
-    version=2,  # v2: F64 channelEmulator 历史端口迁移 5025→3334 (见 _migrate_f64_channel_emulator_port)
-    description=f"{len(_CATEGORIES)} instrument categories + their model catalog + default connections",
+    version=3,  # v3: fresh connection rows 不再写入猜测 IP；既有操作员配置保持不变
+    description=f"{len(_CATEGORIES)} instrument categories + model catalog + unconfigured connection rows",
     run=_seed,
 )

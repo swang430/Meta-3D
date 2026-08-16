@@ -48,6 +48,7 @@ from app.hal.base import (
     InstrumentStatus,
     InstrumentCapability,
     InstrumentMetrics,
+    resolve_configured_instrument_host,
     redact_instrument_command_text,
     redact_instrument_exchange_text,
 )
@@ -392,7 +393,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         # 连接参数
-        self.ip_address: str = config.get("ip", "192.168.100.21")
+        self.ip_address: str = resolve_configured_instrument_host(config)
         # PROPSIM F64 ATE/SCPI 端口固定为 3334 (User Reference §1.1.2.1:
         # "Fixed TCP/IP port for PROPSIM is 3334")。早期配置/默认误用 5025
         # (Keysight/R&S 风格的 SCPI-RAW 口) → 在 F64 上响应 desync + 文件加载报
@@ -1702,6 +1703,8 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
           3. 发送 *IDN? 验证身份
           4. 查询 SYST:INFO? 获取硬件配置
         """
+        if not self.ip_address:
+            return self._fail_missing_connection_address()
         if self._local_control_reserved:
             self._status = InstrumentStatus.DISCONNECTED
             self._last_error = "F64 已交还本地控制；需显式重新取得远程控制"
@@ -5474,7 +5477,7 @@ class PropsimF64Controller:
     注意: 此类将在下个版本废弃, 请使用 RealPropsimF64Driver。
     """
 
-    def __init__(self, ip_address: str = "192.168.100.21"):
+    def __init__(self, ip_address: str):
         self.ip_address = ip_address
         logger.info(f"Initialized PROPSIM F64 Controller (Legacy) at {self.ip_address}")
 
