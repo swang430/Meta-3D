@@ -421,3 +421,68 @@ class TestExecutionLogRetention:
         assert "留存清理失败" in msgs, (
             "生产配置下清理失败无声无息 —— 过期高敏日志留在盘上且运维不知道")
         assert doomed.exists(), "夹具前提错了：本例要的是删除失败"
+
+    def test_cleanup_failure_does_not_reopen_closed_execution_stream(
+        self,
+        tmp_path,
+        caplog,
+    ):
+        """P1-50：运维告警传播到根 logger 时不得继承刚关闭的 execution_id。
+
+        变异：直接在当前执行上下文调用 `_module_logger.warning(...)` → 告警经
+        根 logger 回流到本 handler，重新打开刚关闭的执行文件，本条红。
+        """
+        import os
+        import time as _time
+        from unittest.mock import patch
+
+        handler = logging_config.ExecutionFileHandler(
+            str(tmp_path),
+            retention_days=30,
+        )
+        handler.setFormatter(JsonFormatter())
+        handler.addFilter(ContextFilter())
+
+        execution_id = "currentexec50"
+        _emit(handler, execution_id, "执行收尾前的最后一条")
+
+        doomed = tmp_path / "exec-0000doomed.log"
+        doomed.write_text("SCPI: 删不掉\n", encoding="utf-8")
+        old = _time.time() - 31 * 86400
+        os.utime(doomed, (old, old))
+
+        root_logger = logging.getLogger()
+        module_logger = logging.getLogger("app.core.logging_config")
+        previous_disabled = module_logger.disabled
+        previous_propagate = module_logger.propagate
+        module_logger.disabled = False
+        module_logger.propagate = True
+        root_logger.addHandler(handler)
+
+        token = current_execution_id.set(execution_id)
+        try:
+            with patch.object(
+                logging_config.Path,
+                "unlink",
+                side_effect=OSError("只读文件系统"),
+            ):
+                with caplog.at_level(
+                    logging.WARNING,
+                    logger="app.core.logging_config",
+                ):
+                    handler.close_execution(execution_id)
+
+            assert current_execution_id.get() == execution_id
+            assert execution_id not in handler.active_execution_ids(), (
+                "留存失败告警继承了当前 execution_id，重新打开了刚关闭的执行文件"
+            )
+            assert not handler._streams, "执行收尾后仍遗留打开的文件流"
+        finally:
+            current_execution_id.reset(token)
+            root_logger.removeHandler(handler)
+            module_logger.disabled = previous_disabled
+            module_logger.propagate = previous_propagate
+            handler.close()
+
+        messages = " | ".join(record.getMessage() for record in caplog.records)
+        assert "留存清理失败" in messages, "隔离执行上下文时把运维告警也吞掉了"

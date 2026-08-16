@@ -18,12 +18,17 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅。
 
-**Current Focus = P1-49（PR #342，R1 无 P1，等待最终 R2/merge，WIP=1）**。P2-25 已由 PR #340（merge `ece3965`）
+**Current Focus = P1-50（PR #343，R1 无重大问题，待最终 R2，WIP=1）**。P1-49 已由 PR #342（merge `3e0a11d`）
+完成两个静态 GET 路由顺序修复、真实 HTTP 回归与 G19 零例外收口；内审与两轮 Codex 外审均无 P1。
+P2-25 已由 PR #340（merge `ece3965`）
 完成实现、两轮外审与合并：系统日志已分为当前/历史，历史再分分类/执行；历史可按日期、时间、中文分类、
 文件名或 execution ID 搜索。2026-08-12 用户批准新队列并明确 P2-25 完成后回到
-P1-49～P1-53；2026-08-16 用户批准启动 P1-49，当前按
-[`设计`](plans/2026-08-16-p1-49-static-route-order-design.md) 与
-[`实施计划`](plans/2026-08-16-p1-49-static-route-order.md) 收口两个静态 GET 路由遮挡。
+P1-49～P1-53；2026-08-16 用户明确一个编号项默认连续走完设计、开发、内审、两轮外审、合并，
+随后自动开始下一项。当前按
+[`P1-50 设计`](plans/2026-08-16-p1-50-log-retention-alert-isolation-design.md)
+完成留存失败告警的执行上下文隔离：告警仍进入 app/console，但不再回流重开刚关闭的
+执行文件；定点回归证明执行流与 fd 均在收尾后释放。内审 P1/P2/P3=0；Codex R1 覆盖
+`038baede3a`，无重大问题，当前进入最终 R2。
 
 **2026-08-12 批准队列（稳定编号，逐片 WIP=1）**：
 **P2-25 → P1-49 → P1-50 → P1-51 → P1-52 → P1-53 → P2-26 → P2-27 →
@@ -31,8 +36,8 @@ P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → 
 
 | ID | 正式条目 | 当前状态 |
 |---|---|---|
-| **P1-49** | 修复 `/calibration/channel/temporal/latest`、`/topologies/default` 静态路由遮挡 | 🔄 PR #342，R1 无 P1，待 R2/merge |
-| **P1-50** | 日志留存清理失败时禁止回流重开执行文件并泄漏 fd | ⬜ |
+| **P1-49** | 修复 `/calibration/channel/temporal/latest`、`/topologies/default` 静态路由遮挡 | ✅ PR #342 |
+| **P1-50** | 日志留存清理失败时禁止回流重开执行文件并泄漏 fd | 🔄 PR #343，R1 无重大问题，待 R2 |
 | **P1-51** | 删除仪表默认 IP 猜测；缺配置时 fail-closed | ⬜ |
 | **P1-52** | TestCase 编辑时 LabProfile 列表加载失败不得清空原绑定 | ⬜ |
 | **P1-53** | 多暗室校准数据隔离，禁止跨暗室误用校准结果 | ⬜ |
@@ -290,7 +295,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → P1-49 🔄 → P1-50 → P1-51 → P1-52 → P1-53 → P2-26 → P2-27 → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；当前 P1-49 WIP=1、PR #342 R1 无 P1，等待最终 R2/merge。完整编号、范围与状态只看顶部 Current Focus 表。 |
+| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → P1-50 🔄 → P1-51 → P1-52 → P1-53 → P2-26 → P2-27 → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；当前 P1-50 WIP=1、PR #343 R1 无重大问题，待最终 R2。完整编号、范围与状态只看顶部 Current Focus 表。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
@@ -3755,7 +3760,7 @@ F7 F64 PARAMETRIC_TDL 加载 (MF #167)。ChannelEgine 算法层 (F1-F5) + MIMO-F
 
 - `[discovered 2026-08-07 during CAICT 现场]` ~~**单元测试会对生产默认 IP 发真 TCP，全量测试在 TUN 环境下挂死**~~ → **⑤ dropped（2026-08-07 用户当场裁决：「这是测试环境的问题，不是产品的问题」）**。事实记录保留备查，不进任何队列。原始描述： —— `conftest.py` 的 `client` fixture 触发 FastAPI lifespan → HAL 真去连驱动默认 IP（`propsim_f64.py:393` `192.168.100.21`、`uxm_base_station.py:296` `192.168.100.10`、`bootstrap/instruments.py:276` `TCPIP0::192.168.100.26::inst0::INSTR` 等）。平时这些地址不通、连接秒失败，测试照过；2026-08-07 本机 Clash TUN（网关 `198.18.0.1`）接管该网段后，连接不再快速失败而是挂住等超时 —— `lsof` 实证 `TCP 198.18.0.1:57661->192.168.100.27:sunrpc (ESTABLISHED)`，进程 CPU 0.3% 挂了 11 分 47 秒。**后果两层**：① 当天现场分支 46 文件 4246 行**零全量回归**，内审最后一道兜底落空；② **在现场机上跑 pytest 会真的把 F64 拽进 Remote**（F64 收到第一条 ATE 命令即进 Remote），测试本身变成一次未经批准的仪器操作。另：`pytest-timeout` 未安装，连"卡住就超时失败"的兜底都没有，一个挂住的测试能拖垮整轮。修法方向是 conftest 强制 mock + 装 `pytest-timeout`；它是「现场每个 commit 前跑门文件」这条纪律的前置。
 
-- `[discovered 2026-08-09 during #303 迟到外审]` **留存清理失败的告警会把它自己要清的文件重新打开 —— 该文件此后永不被清理 + 每次失败泄漏一个 fd** —— Codex P2，`api-service/app/core/logging_config.py:364` 附近。链条：`close_execution()` 在 `unlink()` 失败时发 WARNING → 调用方（用例执行 / HTTP / WebSocket 收尾）**此时仍持有当前 `execution_id`** → 告警传播到根 logger → `ContextFilter` 把这个 ID 注进记录 → 记录**回流进同一个 `ExecutionFileHandler`** → 重新打开刚关闭的 `exec-<execution_id>.log` 并把流留在 `_streams` 里 → 此后该文件被误判成"仍在写入"而**永远跳过清理**。修法（Codex 给的两选一）：发运维告警时**显式隔离执行上下文**，或改用**不会传播到执行文件 handler 的独立通道**。⚠️ **现有测试盖不住这条路径** —— `caplog` 只捕获模块 logger，没把待测 handler 挂到根 logger，所以补门时必须**挂到根 logger 复现回流**，否则又是一道假门。**来源与它为什么现在才被发现**：`af51abb`（"留存清理补两个洞 —— 运行期复查 + 告警不走 handleError"）是 #303 R2 findings 的修复，**它自己从未过外审** —— Codex R2 覆盖 `652ae18`，而 merge 时 HEAD 已是 `df33191`；"push 新 commit 不触发 Codex，必须显式再发一次"这个已知陷阱当时没被执行。2026-08-09 用户要求补审时，Codex 对 squash commit `1430a6e` 重审抓出。**建议**：跟 P1-48 同域（`logging_config.py`）但**不同事**（P1-48 是"分不出真假"，本条是"清理失效 + fd 泄漏"），按 ⑦ 不并片。
+- `[resolved 2026-08-16 by P1-50]` **留存清理失败告警回流重开执行文件与 fd 泄漏** —— 已在告警发出边界临时隔离 `current_execution_id`，并在 `finally` 精确还原；告警继续进入 app/console，执行文件 handler 因 `execution_id=-` 忽略该记录。真实根 logger 回流门证明收尾后目标 execution 不再活动、`_streams` 为空，且告警没有被吞掉。原始根因来自 #303 尾部未获外审覆盖的修复：`close_execution()` 删除过期文件失败时发 WARNING，而调用方仍持当前 execution 上下文，`ContextFilter` 将它注回记录并让同一 handler 重开文件。
 - `[discovered 2026-08-07 during CAICT 现场]` **同一天三条平行分支从同一 base 分出且互不可见（流程，待 triage）** —— 2026-08-07 从 `main` (`2a47126`, 08:56) 分出三条互不相干的线：`codex/onsite-20260807`（日志线，PR #303，33 文件）、`add-new-features`（FS16/UXM 功能线，无 PR，49 文件 +16167）、`codex/uxm-driver-completion`（现场驱动线，未推送，46 文件 +4246）。**现场实际跑的是第三条**，因此当天现场排障用不上第一条刚做完的「执行日志隔离与限界」「审计摘要关联执行」—— 而那正是 Current Focus P1-44 的交付物，也正是当天排障最缺的东西（实测在 63 MB 日志里逐条 grep 了一晚上）。三条之间 12 个核心文件重叠（`api/instrument.py` / `hal/propsim_f64.py` / `hal/uxm_base_station.py` / `services/instrument_hal_service.py` / `services/mimo_ota/executors/measure.py` / `tests/test_rule_gates.py` 等），`git merge-tree` 实测第二条与第三条有 3 处硬冲突，最要命的一处是 `send_scpi_command` 里「manual_local 闸门」与「instrument_test_lease 租约」抢同一位置且前者对所有仪器类别泛化生效。**待 triage 的是流程问题**：现场作业开分支前是否必须先合掉/rebase 已完成的队列项，以及 WIP=1 在"多人/多 agent 同日并行"下如何表达。
 
 

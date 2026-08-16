@@ -373,12 +373,17 @@ class ExecutionFileHandler(logging.Handler):
                     # ⚠ 这里**不能用 `self.handleError`**（Codex #303 R2 P2）：
                     #   标准库契约是 `logging.raiseExceptions=False` 时它静默返回，
                     #   而生产恰恰常关这个开关 —— 那句"走既有告警路径"就成了假话。
-                    #   改走模块 logger：它没有 execution_id 上下文，`emit()` 首行
-                    #   即 return，不会回流进本 handler，也就不会递归。
-                    _module_logger.warning(
-                        "执行日志留存清理失败（过期高敏日志仍在盘上）: %s — %s",
-                        path, exc,
-                    )
+                    #   模块 logger 会传播到根 logger；ContextFilter 会从当前
+                    #   ContextVar 注入 execution_id。收尾阶段若不临时隔离，它会
+                    #   回流进本 handler，重新打开刚关闭的执行日志文件。
+                    context_token = current_execution_id.set("-")
+                    try:
+                        _module_logger.warning(
+                            "执行日志留存清理失败（过期高敏日志仍在盘上）: %s — %s",
+                            path, exc,
+                        )
+                    finally:
+                        current_execution_id.reset(context_token)
         return purged
 
     def _write_locked(self, record: logging.LogRecord) -> None:
