@@ -363,6 +363,141 @@ def test_report_list_regeneration_state_comes_from_mimo_trust_and_execution_trut
     assert ordinary.regeneration_reason is None
 
 
+def test_report_list_malformed_historical_json_does_not_poison_page(monkeypatch):
+    from app.api import report as report_api
+
+    malformed_execution_id = uuid4()
+    healthy_execution_id = uuid4()
+    malformed_descriptors_execution_id = uuid4()
+
+    def _report(**overrides):
+        values = {
+            "id": uuid4(),
+            "title": "Historical report",
+            "report_type": "single_execution",
+            "format": "pdf",
+            "status": "completed",
+            "progress_percent": 100,
+            "file_size_bytes": 123,
+            "generated_by": "manual",
+            "generated_at": datetime(2026, 1, 1),
+            "test_execution_ids": [],
+            "road_test_execution_id": None,
+            "content_data": {},
+        }
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    reports = [
+        _report(content_data=["legacy", "non-object"]),
+        _report(
+            generated_by="mimo_ota.executors.report",
+            content_data={"report_family": "mimo_ota"},
+            test_execution_ids=[malformed_execution_id],
+        ),
+        _report(
+            generated_by="mimo_ota.executors.report",
+            content_data={"report_family": "mimo_ota"},
+            test_execution_ids=[healthy_execution_id],
+        ),
+        _report(
+            generated_by="mimo_ota.executors.report",
+            content_data={"report_family": "mimo_ota"},
+            test_execution_ids=[malformed_descriptors_execution_id],
+        ),
+        _report(
+            generated_by="mimo_ota.executors.report",
+            content_data={"report_family": "mimo_ota"},
+            test_execution_ids=42,
+        ),
+        _report(
+            test_execution_ids=[healthy_execution_id, "not-a-uuid"],
+        ),
+        _report(
+            generated_by="mimo_ota.executors.report",
+            content_data={
+                "report_family": "mimo_ota",
+                "calibration_trust_schema_version": True,
+            },
+            test_execution_ids=[healthy_execution_id],
+        ),
+        _report(
+            generated_by="mimo_ota.executors.report",
+            content_data={
+                "report_family": "mimo_ota",
+                "calibration_trust_schema_version": 1.0,
+            },
+            test_execution_ids=[healthy_execution_id],
+        ),
+        _report(
+            generated_by="mimo_ota.executors.report",
+            content_data={
+                "report_family": "mimo_ota",
+                "calibration_trust_schema_version": 1,
+            },
+            test_execution_ids=[healthy_execution_id],
+        ),
+    ]
+
+    class _DB:
+        def get(self, model, value):
+            if value == malformed_execution_id:
+                return SimpleNamespace(config=["legacy"], test_case_id=None)
+            if value == healthy_execution_id:
+                return SimpleNamespace(
+                    config={"step_descriptors": [{"type": "MIMO_OTA_MEASURE"}]},
+                    test_case_id=None,
+                )
+            if value == malformed_descriptors_execution_id:
+                return SimpleNamespace(
+                    config={"step_descriptors": 42},
+                    test_case_id=None,
+                )
+            return None
+
+    monkeypatch.setattr(report_api.report_service, "list_reports", lambda **kwargs: reports)
+    monkeypatch.setattr(report_api.report_service, "count_reports", lambda **kwargs: len(reports))
+
+    response = report_api.list_reports(
+        skip=0,
+        limit=20,
+        status=None,
+        report_type=None,
+        format=None,
+        generated_by=None,
+        db=_DB(),
+    )
+    (
+        malformed_content,
+        malformed_execution,
+        healthy,
+        malformed_descriptors,
+        malformed_execution_ids,
+        malformed_execution_id_items,
+        boolean_schema,
+        float_schema,
+        integer_schema,
+    ) = response.reports
+
+    assert malformed_content.requires_regeneration is False
+    assert malformed_execution.requires_regeneration is True
+    assert malformed_execution.regeneration_available is False
+    assert "authoritative" in malformed_execution.regeneration_reason.lower()
+    assert healthy.requires_regeneration is True
+    assert healthy.regeneration_available is True
+    assert malformed_descriptors.requires_regeneration is True
+    assert malformed_descriptors.regeneration_available is False
+    assert malformed_execution_ids.test_execution_ids == []
+    assert malformed_execution_ids.requires_regeneration is True
+    assert malformed_execution_ids.regeneration_available is False
+    assert malformed_execution_id_items.test_execution_ids == []
+    assert malformed_execution_id_items.requires_regeneration is True
+    assert malformed_execution_id_items.regeneration_available is False
+    assert boolean_schema.requires_regeneration is True
+    assert float_schema.requires_regeneration is True
+    assert integer_schema.requires_regeneration is False
+
+
 def test_report_list_recovery_rejects_non_pdf_wrong_shape_and_in_progress(
     monkeypatch,
 ):

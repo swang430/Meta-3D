@@ -55,9 +55,33 @@ def _strip_untrusted_report_attestation(
     }
 
 
+def report_has_provenance_trust(content_data: Any) -> bool:
+    """Accept only the exact server-written JSON integer schema marker."""
+    if not isinstance(content_data, dict):
+        return False
+    marker = content_data.get("calibration_trust_schema_version")
+    return type(marker) is int and marker == 1
+
+
+def normalized_report_execution_ids(report: TestReport) -> List[UUID]:
+    """Return only UUID links from a historical JSON array."""
+    raw_execution_ids = getattr(report, "test_execution_ids", None)
+    if not isinstance(raw_execution_ids, list):
+        return []
+    execution_ids = []
+    for raw_execution_id in raw_execution_ids:
+        try:
+            execution_ids.append(UUID(str(raw_execution_id)))
+        except (TypeError, ValueError):
+            return []
+    return execution_ids
+
+
 def is_mimo_ota_execution(db: Session, execution: TestExecution) -> bool:
     """Classify from the execution's server-side type truth, not report text."""
-    descriptors = (execution.config or {}).get("step_descriptors") or []
+    config = execution.config if isinstance(execution.config, dict) else {}
+    raw_descriptors = config.get("step_descriptors")
+    descriptors = raw_descriptors if isinstance(raw_descriptors, list) else []
     if any(
         str(descriptor.get("type") or "").startswith("MIMO_OTA_")
         for descriptor in descriptors
@@ -73,15 +97,20 @@ def is_mimo_ota_execution(db: Session, execution: TestExecution) -> bool:
 
 
 def report_references_mimo_ota_execution(db: Session, report: TestReport) -> bool:
-    """True when any linked execution is authoritatively a MIMO OTA run."""
-    for raw_execution_id in (getattr(report, "test_execution_ids", None) or []):
+    """Conservatively identify any authoritative MIMO link in a JSON array.
+
+    This is candidate classification, not a regeneration allowlist: a bad
+    sibling ID must not erase positive MIMO evidence from another item.
+    """
+    raw_execution_ids = getattr(report, "test_execution_ids", None)
+    if not isinstance(raw_execution_ids, list):
+        return False
+    for raw_execution_id in raw_execution_ids:
         try:
             execution_id = UUID(str(raw_execution_id))
         except (TypeError, ValueError):
             continue
-        execution = db.query(TestExecution).filter(
-            TestExecution.id == execution_id
-        ).first()
+        execution = db.get(TestExecution, execution_id)
         if execution is not None and is_mimo_ota_execution(db, execution):
             return True
     return False
@@ -89,7 +118,8 @@ def report_references_mimo_ota_execution(db: Session, report: TestReport) -> boo
 
 def report_is_mimo_ota_report(db: Session, report: TestReport) -> bool:
     """Identify a MIMO candidate; linked execution remains the trust source."""
-    content = getattr(report, "content_data", None) or {}
+    raw_content = getattr(report, "content_data", None)
+    content = raw_content if isinstance(raw_content, dict) else {}
     return (
         content.get("report_family") == "mimo_ota"
         or getattr(report, "generated_by", None) == "mimo_ota.executors.report"
@@ -107,10 +137,11 @@ def legacy_mimo_regeneration_error(
     current trusted builder can only replace a single-execution PDF; accepting
     any wider shape would stamp new provenance onto an old, untouched file.
     """
-    content = getattr(report, "content_data", None) or {}
+    raw_content = getattr(report, "content_data", None)
+    content = raw_content if isinstance(raw_content, dict) else {}
     if (
         not report_is_mimo_ota_report(db, report)
-        or content.get("calibration_trust_schema_version") == 1
+        or report_has_provenance_trust(content)
     ):
         return None
 
@@ -131,7 +162,7 @@ def legacy_mimo_regeneration_error(
     if report_format != ReportFormat.PDF.value:
         return "Safe regeneration is currently available only for PDF reports."
 
-    execution_ids = getattr(report, "test_execution_ids", None) or []
+    execution_ids = normalized_report_execution_ids(report)
     if len(execution_ids) != 1:
         return (
             "Multi-execution MIMO OTA reports cannot be safely regenerated; "
@@ -377,7 +408,10 @@ class ReportService:
             report_data_dict = {}
             
             # Use overrides if available (critical for VRT immediate generation)
-            source_data = content_data_override or report.content_data
+            raw_source_data = content_data_override or report.content_data
+            source_data = (
+                raw_source_data if isinstance(raw_source_data, dict) else {}
+            )
 
             declared_mimo_report = (
                 (source_data or {}).get("report_family") == "mimo_ota"
@@ -387,7 +421,8 @@ class ReportService:
                 db, report
             )
             mimo_report = declared_mimo_report or linked_mimo_execution
-            if mimo_report and len(report.test_execution_ids or []) != 1:
+            execution_ids = normalized_report_execution_ids(report)
+            if mimo_report and len(execution_ids) != 1:
                 raise ValueError(
                     "Multi-execution MIMO OTA reports cannot be safely "
                     "regenerated with calibration provenance; rerun as "
@@ -398,9 +433,9 @@ class ReportService:
             if (
                 report.report_type == ReportType.SINGLE_EXECUTION
                 and not report.road_test_execution_id
-                and len(report.test_execution_ids or []) == 1
+                and len(execution_ids) == 1
             ):
-                execution_id = UUID(str(report.test_execution_ids[0]))
+                execution_id = UUID(str(execution_ids[0]))
                 linked_execution = db.query(TestExecution).filter(
                     TestExecution.id == execution_id
                 ).first()
@@ -542,7 +577,7 @@ class ReportService:
                 # MIMO_OTA 仍可用 override 携带专用图表/相位内容，但公开 API 可写的
                 # content_data 不能覆盖 SCPI 证据或把 AND 门失败伪装成 PASS。VRT 使用
                 # 独立 road_test_execution_id 数据链，不套用 TestExecution 证据契约。
-                if report.test_execution_ids and not report.road_test_execution_id:
+                if execution_ids and not report.road_test_execution_id:
                     authoritative = ReportDataCollector().collect(
                         db, report, strict_execution_ids=True
                     ).to_dict()
@@ -568,7 +603,7 @@ class ReportService:
                 report_data = data_collector.collect(
                     db,
                     report,
-                    strict_execution_ids=bool(report.test_execution_ids),
+                    strict_execution_ids=bool(execution_ids),
                 )
                 if report_data is None:
                     raise ValueError(f"Failed to collect report data for report {report_id}")

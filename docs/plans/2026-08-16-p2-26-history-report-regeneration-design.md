@@ -37,6 +37,7 @@ P1-27 已让缺少可信校准来源的旧 MIMO 报告详情与下载 fail-close
 - 不回填或猜测 `use_mock`、校准证书来源与 KPI。
 - 不自动批量改写历史报告，不为多 execution 报告拼接证据。
 - 非 MIMO 报告不受影响。
+- 历史 JSON 列只有字典形态才可作为 `content_data` / `TestExecution.config` 判据读取，关联 ID 与 `step_descriptors` 只有数组形态才可遍历；其他形态按无 trust marker / 无描述符 / 无安全关联 fail-closed，不得让一条旧记录毒化整个报告列表。恢复/生成要求关联数组全量合法，任一坏 ID 即整组拒绝；读取侧的 MIMO 候选识别则保守扫描所有可解析项，坏项不能抹掉已经确认的 MIMO 证据并绕过详情/下载门。trust schema 只接受服务端写入的精确 JSON 整数 `1`，布尔值 `true` 与浮点 `1.0` 不得借 Python 等值规则冒充可信版本。
 - 崩溃后遗留的 `generating` claim 保持 fail-closed；在没有 owner/epoch/lease 存活真值前，不因新进程启动就把它自动判成僵尸。Gunicorn 平滑替换即使配置单 worker 也可能短暂重叠，自动复位会重新放行同一正式报告的并发写。
 
 ## TDD 验收
@@ -52,6 +53,7 @@ P1-27 已让缺少可信校准来源的旧 MIMO 报告详情与下载 fail-close
 9. 报告标记声称 MIMO、但唯一关联执行不是权威 MIMO OTA 时，列表不可恢复且生成在任何改写前 409。
 10. 已带 trust stamp、会绕过 legacy 前置门的 MIMO 候选，若关联执行不是权威 MIMO OTA，仍在生成端第二道防线拒绝且不调用 builder。
 11. 并发 VRT 归档不得覆盖已有 `generating` claim；归档触发生成输给另一 writer 后，异常路径也不得把 winner 的 claim 改回 `pending`。
+12. `content_data`、关联执行 `config`、`step_descriptors` 或 `test_execution_ids` 为历史错误 JSON 形态时，单行按无可信标记/无 MIMO 描述符/无安全恢复关联处理；混合关联中的有效 MIMO 证据仍必须触发读取可信门，`true`、`1.0` 不得冒充 trust schema 整数 `1`，同页健康报告仍可列出与恢复。
 
 ## 非目标
 

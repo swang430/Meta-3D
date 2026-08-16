@@ -43,6 +43,8 @@ from app.services.report_service import (
     ReportComparisonService,
     ReportScheduleService,
     legacy_mimo_regeneration_error,
+    normalized_report_execution_ids,
+    report_has_provenance_trust,
     report_is_mimo_ota_report,
 )
 
@@ -66,10 +68,10 @@ def _mimo_report_is_provenance_sanitized(db: Session, report) -> bool:
     KPI data (explicit-real calibration) or replace it with UNKNOWN/N/A. Old
     artifacts lack that proof and therefore fail closed.
     """
-    content = report.content_data or {}
+    content = report.content_data if isinstance(report.content_data, dict) else {}
     if not _is_mimo_report(db, report):
         return True
-    return content.get("calibration_trust_schema_version") == 1
+    return report_has_provenance_trust(content)
 
 
 def _reject_untrusted_mimo_report(db: Session, report) -> None:
@@ -88,7 +90,19 @@ def _reject_untrusted_mimo_report(db: Session, report) -> None:
 
 def _report_summary(db: Session, report) -> ReportSummary:
     """Build list metadata from the same MIMO trust truth as detail/download."""
-    summary = ReportSummary.model_validate(report)
+    summary = ReportSummary.model_validate({
+        "id": report.id,
+        "title": report.title,
+        "report_type": report.report_type,
+        "format": report.format,
+        "status": report.status,
+        "progress_percent": report.progress_percent,
+        "file_size_bytes": report.file_size_bytes,
+        "generated_by": report.generated_by,
+        "generated_at": report.generated_at,
+        "test_execution_ids": normalized_report_execution_ids(report),
+        "road_test_execution_id": report.road_test_execution_id,
+    })
     if _mimo_report_is_provenance_sanitized(db, report):
         return summary
 
