@@ -394,11 +394,13 @@ export async function getProbeValidity(
 export async function invalidateCalibration(
   calibrationType: CalibrationType,
   calibrationId: string,
+  chamberId: string,
   request: InvalidateCalibrationRequest
 ): Promise<InvalidateCalibrationResponse> {
   const response = await apiClient.post<InvalidateCalibrationResponse>(
     `${BASE_URL}/invalidate/${calibrationType}/${calibrationId}`,
-    request
+    request,
+    { params: { chamber_id: chamberId } }
   )
   return response.data
 }

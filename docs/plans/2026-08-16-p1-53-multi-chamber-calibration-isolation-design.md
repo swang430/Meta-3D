@@ -76,6 +76,8 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
 6. lower-level service 的正式消费必须传 chamber；若调用方没有 chamber，不得静默退回全局 probe 编号查询。
 7. 正式有效性、报告统计和 pattern 消费只接受 `use_mock is False`；mock 与历史 NULL
    可在审计读取中展示，但判词保持 UNVERIFIED、不得进入正式分母或 MIMO 增益补偿。
+   amplitude / phase / polarization 历史项必须同行返回该 provenance；漂移趋势只用
+   explicit-real 记录计算，不能把模拟或来源未知数值混入派生趋势。
    全局 Link 可单独展示设施状态，但不参与单探头四类完整性的 overall 判定；其 validity、
    临期/过期汇总同样只接受显式 real，并在 explicit-real 白名单内选最新记录，避免较新的
    mock 遮住仍有效的真实记录。单探头只有 amplitude / phase / polarization / pattern 四族
@@ -90,6 +92,7 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
 - Probe Calibration 页面在当前暗室未解析、冲突或缺失时 fail-closed，显示可操作错误，不发无作用域请求。
 - 探头网格数量来自当前 `ChamberConfiguration.num_probes`，不得默认 32 或生成不存在的探头。
 - 暗室 ID 进入所有 probe calibration query key；切换暗室会产生新缓存域。
+- 四类探头作废客户端契约必须携带同一暗室 ID；Link 作废继续保持全局语义。
 - 启动和导入请求使用同一个已解析暗室 ID，不允许表单另藏一个自由文本暗室。
 - 页面标题/摘要显示当前暗室名称，避免操作员把 B 暗室结果当作 A 暗室。
 - 详情组件对 `use_mock=True` 显示 `SIMULATED · UNVERIFIED`，对历史 `NULL` 显示

@@ -85,3 +85,28 @@ test('probe calibration detail presents simulated and unknown provenance as unve
   assert.match(detailSource, /SOURCE UNKNOWN/)
   assert.match(detailSource, /useMock === false[\s\S]*CalibrationStatusBadge/)
 })
+
+test('probe invalidation client requires and sends the chamber scope', () => {
+  const serviceSource = readFileSync(
+    new URL('../src/api/probeCalibrationService.ts', import.meta.url),
+    'utf8',
+  )
+  const hooksSource = readFileSync(
+    new URL('../src/hooks/useProbeCalibration.ts', import.meta.url),
+    'utf8',
+  )
+  const serviceStart = serviceSource.indexOf('export async function invalidateCalibration')
+  const serviceEnd = serviceSource.indexOf('\nexport async function ', serviceStart + 1)
+  const serviceBody = serviceSource.slice(serviceStart, serviceEnd)
+  assert.match(serviceBody, /chamberId:\s*string/)
+  assert.match(serviceBody, /params:\s*\{\s*chamber_id:\s*chamberId\s*\}/)
+
+  const hookStart = hooksSource.indexOf('export function useInvalidateCalibration')
+  const hookEnd = hooksSource.indexOf('\nexport function ', hookStart + 1)
+  const hookBody = hooksSource.slice(hookStart, hookEnd)
+  assert.match(hookBody, /chamberId:\s*string/)
+  assert.match(
+    hookBody,
+    /invalidateCalibration\(calibrationType, calibrationId, chamberId, request\)/,
+  )
+})

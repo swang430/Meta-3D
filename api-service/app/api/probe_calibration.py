@@ -239,6 +239,7 @@ def get_amplitude_calibration_history(
             calibrated_at=cal.calibrated_at,
             calibrated_by=cal.calibrated_by,
             status=cal.status.value if hasattr(cal.status, 'value') else str(cal.status),
+            use_mock=cal.use_mock,
             summary={
                 "polarization": cal.polarization,
                 "avg_tx_gain_dbi": round(avg_tx_gain, 2),
@@ -249,10 +250,11 @@ def get_amplitude_calibration_history(
 
     # 计算趋势（如果有足够的历史数据）
     trends = None
-    if len(calibrations) >= 3:
+    trusted_calibrations = [cal for cal in calibrations if cal.use_mock is False]
+    if len(trusted_calibrations) >= 3:
         # 简单计算增益漂移趋势
-        first_cal = calibrations[-1]  # 最早的
-        last_cal = calibrations[0]    # 最新的
+        first_cal = trusted_calibrations[-1]  # 最早的 explicit-real 记录
+        last_cal = trusted_calibrations[0]    # 最新的 explicit-real 记录
 
         if first_cal.tx_gain_dbi and last_cal.tx_gain_dbi:
             first_avg = sum(first_cal.tx_gain_dbi) / len(first_cal.tx_gain_dbi)
@@ -530,6 +532,7 @@ def get_phase_calibration_history(
             calibrated_at=cal.calibrated_at,
             calibrated_by=cal.calibrated_by,
             status=cal.status.value if hasattr(cal.status, 'value') else str(cal.status),
+            use_mock=cal.use_mock,
             summary={
                 "polarization": cal.polarization,
                 "reference_probe_id": cal.reference_probe_id,
@@ -541,9 +544,10 @@ def get_phase_calibration_history(
 
     # 计算相位漂移趋势
     trends = None
-    if len(calibrations) >= 3:
-        first_cal = calibrations[-1]
-        last_cal = calibrations[0]
+    trusted_calibrations = [cal for cal in calibrations if cal.use_mock is False]
+    if len(trusted_calibrations) >= 3:
+        first_cal = trusted_calibrations[-1]
+        last_cal = trusted_calibrations[0]
         if first_cal.phase_offset_deg and last_cal.phase_offset_deg:
             first_avg = sum(first_cal.phase_offset_deg) / len(first_cal.phase_offset_deg)
             last_avg = sum(last_cal.phase_offset_deg) / len(last_cal.phase_offset_deg)
@@ -764,6 +768,7 @@ def get_polarization_calibration_history(
             calibrated_at=cal.calibrated_at,
             calibrated_by=cal.calibrated_by,
             status=cal.status if isinstance(cal.status, str) else cal.status.value,
+            use_mock=cal.use_mock,
             summary=summary
         ))
 

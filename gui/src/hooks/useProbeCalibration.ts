@@ -420,13 +420,13 @@ export function useProbeValidity(
 export function useInvalidateCalibration(): UseMutationResult<
   InvalidateCalibrationResponse,
   Error,
-  { calibrationType: CalibrationType; calibrationId: string; request: InvalidateCalibrationRequest }
+  { calibrationType: CalibrationType; calibrationId: string; chamberId: string; request: InvalidateCalibrationRequest }
 > {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: ({ calibrationType, calibrationId, request }) =>
-      probeCalibrationService.invalidateCalibration(calibrationType, calibrationId, request),
+    mutationFn: ({ calibrationType, calibrationId, chamberId, request }) =>
+      probeCalibrationService.invalidateCalibration(calibrationType, calibrationId, chamberId, request),
     onSuccess: () => {
       // Invalidate all calibration-related queries
       queryClient.invalidateQueries({ queryKey: probeCalibrationKeys.all })

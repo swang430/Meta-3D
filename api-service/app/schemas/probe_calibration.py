@@ -514,6 +514,10 @@ class CalibrationHistoryItem(BaseModel):
     calibrated_at: UTCDateTime
     calibrated_by: Optional[str] = None
     status: str
+    use_mock: Optional[bool] = Field(
+        None,
+        description="False=真实校准；True=模拟；NULL=历史来源未知",
+    )
     summary: Dict[str, Any] = Field(
         default={},
         description="关键参数摘要"

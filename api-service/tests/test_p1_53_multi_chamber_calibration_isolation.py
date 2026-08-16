@@ -12,7 +12,12 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
-from app.api.probe_calibration import check_link_validity as check_link_validity_api
+from app.api.probe_calibration import (
+    check_link_validity as check_link_validity_api,
+    get_amplitude_calibration_history,
+    get_phase_calibration_history,
+    get_polarization_calibration_history,
+)
 from app.api.path_loss_calibration import (
     get_path_loss_at_frequency,
     start_multi_frequency_calibration,
@@ -754,6 +759,78 @@ async def test_multi_frequency_start_remains_explicitly_mock(session, monkeypatc
     await start_multi_frequency_calibration(request=request, db=session)
 
     assert observed == {"use_mock": True}
+
+
+def test_probe_history_exposes_provenance_and_trends_use_only_explicit_real(session):
+    chamber_id = uuid.uuid4()
+    _chamber(session, chamber_id, "History provenance")
+    now = datetime.utcnow()
+
+    for days_ago, value, use_mock in (
+        (90, 1.0, False),
+        (60, 2.0, False),
+        (30, 3.0, False),
+        (0, 100.0, True),
+    ):
+        amplitude = _amplitude(
+            session,
+            chamber_id=chamber_id,
+            probe_id=1,
+            gain=value,
+            calibrated_at=now - timedelta(days=days_ago),
+        )
+        amplitude.use_mock = use_mock
+        session.add(ProbePhaseCalibration(
+            chamber_id=chamber_id,
+            use_mock=use_mock,
+            probe_id=1,
+            polarization="V",
+            reference_probe_id=0,
+            frequency_points_mhz=[3500.0],
+            phase_offset_deg=[value * 10.0],
+            group_delay_ns=[0.5],
+            phase_uncertainty_deg=[1.0],
+            calibrated_at=now - timedelta(days=days_ago),
+            valid_until=now + timedelta(days=30),
+            status=CalibrationStatus.VALID.value,
+        ))
+
+    for days_ago, use_mock in ((2, False), (1, None), (0, True)):
+        session.add(ProbePolarizationCalibration(
+            chamber_id=chamber_id,
+            use_mock=use_mock,
+            probe_id=1,
+            probe_type="dual_linear",
+            v_to_h_isolation_db=24.0,
+            h_to_v_isolation_db=22.0,
+            frequency_points_mhz=[3500.0],
+            calibrated_at=now - timedelta(days=days_ago),
+            valid_until=now + timedelta(days=30),
+            status=CalibrationStatus.VALID.value,
+        ))
+    session.commit()
+
+    amplitude_history = get_amplitude_calibration_history(
+        probe_id=1, chamber_id=chamber_id, limit=20, db=session,
+    )
+    phase_history = get_phase_calibration_history(
+        probe_id=1, chamber_id=chamber_id, limit=20, db=session,
+    )
+    polarization_history = get_polarization_calibration_history(
+        probe_id=1, chamber_id=chamber_id, limit=20, db=session,
+    )
+
+    assert [row.use_mock for row in amplitude_history.history] == [True, False, False, False]
+    assert amplitude_history.trends == {
+        "amplitude_drift_db_per_month": 1.0,
+        "stability_rating": "drifting",
+    }
+    assert [row.use_mock for row in phase_history.history] == [True, False, False, False]
+    assert phase_history.trends == {
+        "phase_drift_deg_per_month": 10.0,
+        "stability_rating": "drifting",
+    }
+    assert [row.use_mock for row in polarization_history.history] == [True, None, False]
 
 
 def test_link_formal_validity_prefers_real_and_report_expires_after_seven_days(session):

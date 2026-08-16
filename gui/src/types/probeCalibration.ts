@@ -336,6 +336,7 @@ export interface CalibrationHistoryItem {
   calibrated_at: string
   calibrated_by?: string
   status: string
+  use_mock?: boolean | null
   summary: CalibrationHistorySummary
 }
 
