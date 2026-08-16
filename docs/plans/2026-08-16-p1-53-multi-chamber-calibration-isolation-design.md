@@ -81,7 +81,9 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
    全局 Link 可单独展示设施状态，但不参与单探头四类完整性的 overall 判定；其 validity、
    临期/过期汇总同样只接受显式 real，并在 explicit-real 白名单内选最新记录，避免较新的
    mock 遮住仍有效的真实记录。单探头只有 amplitude / phase / polarization / pattern 四族
-   齐全且全部有效才可 overall VALID。当前硬编码 mock 的 RF-chain / multi-frequency 写入口
+   齐全且全部有效才可 overall VALID；部分家族缺失时为 PARTIAL，全部缺失时为 UNKNOWN。
+   validity report 必须同行返回逐探头权威 `overall_status`，Dashboard 与 Grid 不得再从
+   expired/expiring 列表反推状态。当前硬编码 mock 的 RF-chain / multi-frequency 写入口
    必须持久化 `True`，不得因数据库 `status=valid` 在 PDF、正式状态或路损插值数值接口中
    变成 PASS/有效补偿。
 8. 报告有效性同时检查 `valid_until`；过期记录不得仅凭持久化 `status=valid` 显示 PASS。
@@ -97,7 +99,8 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
 - 页面标题/摘要显示当前暗室名称，避免操作员把 B 暗室结果当作 A 暗室。
 - 详情组件对 `use_mock=True` 显示 `SIMULATED · UNVERIFIED`，对历史 `NULL` 显示
   `SOURCE UNKNOWN · UNVERIFIED`；只有显式 `False` 才可显示 VALID/PASS。数值保留用于审计，
-  但必须与来源同行展示。当前页面尚无生产路由入口，本片只收口已存在的组件/请求契约，
+  但必须与来源同行展示；只有显式 real 的阈值判词可以使用绿/黄/红，模拟或来源未知数值
+  一律使用中性颜色。当前页面尚无生产路由入口，本片只收口已存在的组件/请求契约，
   不借机恢复一条未完成的导航链。
 
 ## 错误处理
@@ -122,6 +125,9 @@ P1-28 已完成“当前暗室”真值源和五张表的 `chamber_id` 基础列
    极化报告读取持久化隔离字段，RF-chain/multi-frequency 在 PDF 可审计。
 9. mock/legacy Link、RF-chain、multi-frequency 在报告、validity 和详情中保持 UNKNOWN/
    UNVERIFIED；Link-only 不得把没有四类可信记录的探头判为 valid。
+10. “1 个探头四族齐全 + 1 个探头仅部分齐全”时，report 返回逐探头 valid/partial，
+    Dashboard 不得把整个暗室显示为 VALID，Grid 必须直接展示权威 partial 状态；非 real
+    polarization/Link 数值不得获得阈值通过或失败颜色。
 
 ## 非目标
 

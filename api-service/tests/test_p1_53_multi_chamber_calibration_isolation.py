@@ -884,3 +884,28 @@ def test_probe_overall_requires_all_four_scoped_families(session):
     result = CalibrationValidityService().check_validity(session, 0, chamber_id)
     assert result["amplitude"]["status"] == "valid"
     assert result["overall_status"] == "partial"
+
+
+def test_validity_report_preserves_each_probe_overall_status(session, monkeypatch):
+    chamber_id = uuid.uuid4()
+    service = CalibrationValidityService()
+    statuses = {0: "valid", 1: "partial"}
+
+    monkeypatch.setattr(
+        service,
+        "check_validity",
+        lambda _db, probe_id, _chamber_id: {
+            "probe_id": probe_id,
+            "overall_status": statuses[probe_id],
+        },
+    )
+
+    report = service.generate_validity_report(
+        session,
+        chamber_id,
+        probe_ids=[0, 1],
+    )
+
+    assert report["valid_probes"] == 1
+    assert report["partial_probes"] == 1
+    assert report["probe_statuses"] == {0: "valid", 1: "partial"}

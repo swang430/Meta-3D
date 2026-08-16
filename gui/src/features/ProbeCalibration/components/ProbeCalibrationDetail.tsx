@@ -260,6 +260,17 @@ interface PanelProps<T> {
   onViewHistory?: () => void
 }
 
+function thresholdVerdictColor(
+  useMock: boolean | null | undefined,
+  passes: boolean,
+  failedColor: 'yellow' | 'red',
+) {
+  if (useMock !== false) {
+    return 'gray'
+  }
+  return passes ? 'green' : failedColor
+}
+
 function AmplitudeCalibrationPanel({
   data,
   onInvalidate,
@@ -423,13 +434,21 @@ function PolarizationCalibrationPanel({
           <Stack gap="xs">
             <Group justify="space-between">
               <Text size="sm">V-to-H Isolation:</Text>
-              <Badge color={data.v_to_h_isolation_db && data.v_to_h_isolation_db >= 20 ? 'green' : 'yellow'}>
+              <Badge color={thresholdVerdictColor(
+                data.use_mock,
+                data.v_to_h_isolation_db !== undefined && data.v_to_h_isolation_db >= 20,
+                'yellow',
+              )}>
                 {data.v_to_h_isolation_db?.toFixed(1)} dB
               </Badge>
             </Group>
             <Group justify="space-between">
               <Text size="sm">H-to-V Isolation:</Text>
-              <Badge color={data.h_to_v_isolation_db && data.h_to_v_isolation_db >= 20 ? 'green' : 'yellow'}>
+              <Badge color={thresholdVerdictColor(
+                data.use_mock,
+                data.h_to_v_isolation_db !== undefined && data.h_to_v_isolation_db >= 20,
+                'yellow',
+              )}>
                 {data.h_to_v_isolation_db?.toFixed(1)} dB
               </Badge>
             </Group>
@@ -441,7 +460,11 @@ function PolarizationCalibrationPanel({
           <Stack gap="xs">
             <Group justify="space-between">
               <Text size="sm">Axial Ratio:</Text>
-              <Badge color={data.axial_ratio_db && data.axial_ratio_db <= 3 ? 'green' : 'yellow'}>
+              <Badge color={thresholdVerdictColor(
+                data.use_mock,
+                data.axial_ratio_db !== undefined && data.axial_ratio_db <= 3,
+                'yellow',
+              )}>
                 {data.axial_ratio_db?.toFixed(2)} dB
               </Badge>
             </Group>
@@ -618,7 +641,11 @@ function LinkCalibrationPanel({
           <Divider />
           <Group justify="space-between">
             <Text size="sm">Deviation:</Text>
-            <Badge color={Math.abs(data.deviation_db || 0) <= data.threshold_db ? 'green' : 'red'}>
+            <Badge color={thresholdVerdictColor(
+              data.use_mock,
+              data.deviation_db !== undefined && Math.abs(data.deviation_db) <= data.threshold_db,
+              'red',
+            )}>
               {data.deviation_db?.toFixed(3)} dB
             </Badge>
           </Group>

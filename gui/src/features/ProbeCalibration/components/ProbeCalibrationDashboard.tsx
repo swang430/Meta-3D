@@ -100,12 +100,21 @@ export function ProbeCalibrationDashboard({
 
   const totalProbes = validityReport?.total_probes ?? 32
   const validProbes = validityReport?.valid_probes ?? 0
+  const partialProbes = validityReport?.partial_probes ?? 0
   const expiredProbes = validityReport?.expired_probes ?? 0
   const expiringProbes = validityReport?.expiring_soon_probes ?? 0
   const passRate = totalProbes > 0 ? Math.round((validProbes / totalProbes) * 100) : 0
 
   const overallStatus: ValidityStatus =
-    expiredProbes > 0 ? 'expired' : expiringProbes > 0 ? 'expiring_soon' : validProbes > 0 ? 'valid' : 'unknown'
+    expiredProbes > 0
+      ? 'expired'
+      : expiringProbes > 0
+        ? 'expiring_soon'
+        : totalProbes > 0 && validProbes === totalProbes
+          ? 'valid'
+          : partialProbes > 0 || validProbes > 0
+            ? 'partial'
+            : 'unknown'
 
   return (
     <Stack gap="md">
@@ -143,6 +152,7 @@ export function ProbeCalibrationDashboard({
                   thickness={12}
                   sections={[
                     { value: (validProbes / totalProbes) * 100, color: 'green' },
+                    { value: (partialProbes / totalProbes) * 100, color: 'orange' },
                     { value: (expiringProbes / totalProbes) * 100, color: 'yellow' },
                     { value: (expiredProbes / totalProbes) * 100, color: 'red' },
                   ]}
@@ -160,6 +170,7 @@ export function ProbeCalibrationDashboard({
                 <OverallStatusIndicator
                   status={overallStatus}
                   validCount={validProbes}
+                  partialCount={partialProbes}
                   expiringSoonCount={expiringProbes}
                   expiredCount={expiredProbes}
                 />

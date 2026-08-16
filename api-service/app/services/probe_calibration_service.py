@@ -2464,8 +2464,10 @@ class CalibrationValidityService:
 
         total_probes = len(probe_ids)
         valid_probes = 0
+        partial_probes = 0
         expired_probes = 0
         expiring_soon_probes = 0
+        probe_statuses: Dict[int, str] = {}
 
         expired_calibrations = []
         expiring_soon_calibrations = []
@@ -2481,12 +2483,16 @@ class CalibrationValidityService:
 
         for probe_id in probe_ids:
             status = self.check_validity(db, probe_id, chamber_id)
+            overall_status = status["overall_status"]
+            probe_statuses[probe_id] = overall_status
 
-            if status["overall_status"] == "valid":
+            if overall_status == "valid":
                 valid_probes += 1
-            elif status["overall_status"] == "expired":
+            elif overall_status == "partial":
+                partial_probes += 1
+            elif overall_status == "expired":
                 expired_probes += 1
-            elif status["overall_status"] == "expiring_soon":
+            elif overall_status == "expiring_soon":
                 expiring_soon_probes += 1
 
             # 收集所有校准类型的状态
@@ -2531,8 +2537,10 @@ class CalibrationValidityService:
             "chamber_id": str(chamber_id),
             "total_probes": total_probes,
             "valid_probes": valid_probes,
+            "partial_probes": partial_probes,
             "expired_probes": expired_probes,
             "expiring_soon_probes": expiring_soon_probes,
+            "probe_statuses": probe_statuses,
             "expired_calibrations": expired_calibrations,
             "expiring_soon_calibrations": expiring_soon_calibrations,
             "recommendations": recommendations

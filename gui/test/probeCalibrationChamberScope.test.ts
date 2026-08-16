@@ -110,3 +110,62 @@ test('probe invalidation client requires and sends the chamber scope', () => {
     /invalidateCalibration\(calibrationType, calibrationId, chamberId, request\)/,
   )
 })
+
+test('probe calibration status consumers recognize the partial completeness state', () => {
+  const typesSource = readFileSync(
+    new URL('../src/types/probeCalibration.ts', import.meta.url),
+    'utf8',
+  )
+  const badgeSource = readFileSync(
+    new URL('../src/features/ProbeCalibration/components/CalibrationStatusBadge.tsx', import.meta.url),
+    'utf8',
+  )
+  const gridSource = readFileSync(
+    new URL('../src/features/ProbeCalibration/components/ProbeCalibrationGrid.tsx', import.meta.url),
+    'utf8',
+  )
+
+  assert.match(typesSource, /ValidityStatus\s*=\s*[^\n]*'partial'/)
+  assert.match(badgeSource, /partial:\s*\{[\s\S]*?label:\s*'Partial'/)
+  assert.match(gridSource, /partial:\s*'orange'/)
+})
+
+test('unverified polarization and link values never receive threshold verdict colors', () => {
+  const detailSource = readFileSync(
+    new URL('../src/features/ProbeCalibration/components/ProbeCalibrationDetail.tsx', import.meta.url),
+    'utf8',
+  )
+
+  assert.match(
+    detailSource,
+    /function thresholdVerdictColor\([\s\S]*?useMock !== false[\s\S]*?return 'gray'/,
+  )
+  assert.equal(
+    (detailSource.match(/thresholdVerdictColor\(\s*data\.use_mock/g) ?? []).length,
+    4,
+  )
+})
+
+test('dashboard and grid consume the authoritative per-probe partial status', () => {
+  const dashboardSource = readFileSync(
+    new URL('../src/features/ProbeCalibration/components/ProbeCalibrationDashboard.tsx', import.meta.url),
+    'utf8',
+  )
+  const gridSource = readFileSync(
+    new URL('../src/features/ProbeCalibration/components/ProbeCalibrationGrid.tsx', import.meta.url),
+    'utf8',
+  )
+
+  assert.match(dashboardSource, /validProbes === totalProbes[\s\S]*'valid'/)
+  assert.match(dashboardSource, /partialProbes > 0[\s\S]*'partial'/)
+  assert.match(gridSource, /validityReport\.probe_statuses/)
+  assert.match(
+    gridSource,
+    /validityReport\.partial_probes[\s\S]*Partial/,
+  )
+  assert.match(
+    gridSource,
+    /validityReport\.total_probes[\s\S]*validityReport\.partial_probes[\s\S]*Unknown/,
+  )
+  assert.doesNotMatch(gridSource, /We need to infer from expired\/expiring lists/)
+})

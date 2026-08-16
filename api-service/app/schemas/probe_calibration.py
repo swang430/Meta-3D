@@ -454,7 +454,10 @@ class ProbeCalibrationStatus(BaseModel):
     pattern: Optional[Dict[str, Any]] = None
     link: Optional[Dict[str, Any]] = None
     # 总体状态
-    overall_status: str = Field(..., description="valid | expiring_soon | expired | unknown")
+    overall_status: str = Field(
+        ...,
+        description="valid | partial | expiring_soon | expired | unknown",
+    )
 
 
 class CalibrationValidityReport(BaseModel):
@@ -462,8 +465,13 @@ class CalibrationValidityReport(BaseModel):
     chamber_id: UUID
     total_probes: int
     valid_probes: int
+    partial_probes: int = 0
     expired_probes: int
     expiring_soon_probes: int  # 7 天内过期
+    probe_statuses: Dict[int, str] = Field(
+        default_factory=dict,
+        description="逐探头权威总体状态: probe_id -> valid | partial | expiring_soon | expired | unknown",
+    )
 
     expired_calibrations: List[Dict[str, Any]] = Field(
         default=[],

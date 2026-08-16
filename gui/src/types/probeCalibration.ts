@@ -21,7 +21,7 @@ export type DUTType = 'dipole' | 'horn' | 'patch'
 
 export type CalibrationType = 'amplitude' | 'phase' | 'polarization' | 'pattern' | 'link'
 
-export type ValidityStatus = 'valid' | 'expiring_soon' | 'expired' | 'unknown'
+export type ValidityStatus = 'valid' | 'partial' | 'expiring_soon' | 'expired' | 'unknown'
 
 // ==================== Common Types ====================
 
@@ -306,8 +306,10 @@ export interface CalibrationValidityReport {
   chamber_id: string
   total_probes: number
   valid_probes: number
+  partial_probes: number
   expired_probes: number
   expiring_soon_probes: number
+  probe_statuses: Record<string, ValidityStatus>
   expired_calibrations: ExpiredCalibrationInfo[]
   expiring_soon_calibrations: ExpiringCalibrationInfo[]
   recommendations: CalibrationRecommendation[]
