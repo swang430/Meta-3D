@@ -23,6 +23,35 @@ import type {
 
 // ==================== Report Management ====================
 
+function isReportErrorPayload(
+  value: unknown,
+): value is { detail?: unknown; message?: unknown } {
+  return value !== null && typeof value === 'object'
+}
+
+export async function reportApiErrorMessage(error: unknown): Promise<string> {
+  const data = (
+    error as { response?: { data?: unknown } }
+  )?.response?.data
+  let payload: unknown = data
+
+  if (typeof Blob !== 'undefined' && data instanceof Blob) {
+    try {
+      payload = JSON.parse(await data.text())
+    } catch {
+      payload = undefined
+    }
+  }
+
+  if (isReportErrorPayload(payload)) {
+    const detail = payload.detail ?? payload.message
+    if (typeof detail === 'string' && detail.trim()) return detail
+  }
+
+  if (error instanceof Error && error.message) return error.message
+  return '报告请求失败'
+}
+
 /**
  * List reports with filters and pagination
  */
@@ -79,10 +108,14 @@ export const deleteReport = async (reportId: string): Promise<void> => {
  * This starts the async report generation process
  */
 export const generateReport = async (reportId: string): Promise<TestReport> => {
-  const response = await client.post<TestReport>(
-    `/reports/${reportId}/generate`,
-  )
-  return response.data
+  try {
+    const response = await client.post<TestReport>(
+      `/reports/${reportId}/generate`,
+    )
+    return response.data
+  } catch (error) {
+    throw new Error(await reportApiErrorMessage(error))
+  }
 }
 
 /**
@@ -90,10 +123,14 @@ export const generateReport = async (reportId: string): Promise<TestReport> => {
  * Returns the file blob for download
  */
 export const downloadReport = async (reportId: string): Promise<Blob> => {
-  const response = await client.get(`/reports/${reportId}/download`, {
-    responseType: 'blob',
-  })
-  return response.data
+  try {
+    const response = await client.get(`/reports/${reportId}/download`, {
+      responseType: 'blob',
+    })
+    return response.data
+  } catch (error) {
+    throw new Error(await reportApiErrorMessage(error))
+  }
 }
 
 // ==================== Template Management ====================

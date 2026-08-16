@@ -76,6 +76,9 @@ export interface ReportSummary {
   generated_by: string
   generated_at: string
   file_size_bytes?: number
+  requires_regeneration: boolean
+  regeneration_available: boolean
+  regeneration_reason?: string
 }
 
 export interface ReportListResponse {

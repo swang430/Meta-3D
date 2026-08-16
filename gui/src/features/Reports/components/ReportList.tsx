@@ -28,6 +28,7 @@ import {
   IconFileTypeHtml,
   IconTable,
   IconPlayerPlay,
+  IconAlertTriangle,
 } from '@tabler/icons-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { notifications } from '@mantine/notifications'
@@ -86,11 +87,16 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
   // Generate mutation (for pending/failed reports)
   const generateMutation = useMutation({
     mutationFn: ReportsAPI.generateReport,
-    onSuccess: () => {
+    onSuccess: (_report, reportId) => {
       queryClient.invalidateQueries({ queryKey: ['reports'] })
+      const wasRecovery = reportsData?.reports.find(
+        (report) => report.id === reportId,
+      )?.requires_regeneration
       notifications.show({
-        title: '开始生成',
-        message: '报告正在生成中...',
+        title: wasRecovery ? '恢复完成' : '开始生成',
+        message: wasRecovery
+          ? '历史报告已重建为可审计版本；无可信来源的指标保持 UNKNOWN/N/A。'
+          : '报告正在生成中...',
         color: 'blue',
       })
     },
@@ -277,7 +283,19 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
                       </Text>
                     </Group>
                   </Table.Td>
-                  <Table.Td>{getStatusBadge(report.status)}</Table.Td>
+                  <Table.Td>
+                    <Group gap="xs">
+                      {getStatusBadge(report.status)}
+                      {report.requires_regeneration && (
+                        <Badge
+                          color={report.regeneration_available ? 'orange' : 'red'}
+                          variant="light"
+                        >
+                          {report.regeneration_available ? '需要恢复' : '不可安全恢复'}
+                        </Badge>
+                      )}
+                    </Group>
+                  </Table.Td>
                   <Table.Td>
                     <Text size="sm">
                       {report.file_size_bytes
@@ -320,7 +338,34 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
                         </Tooltip>
                       )}
 
-                      {report.status === 'completed' && (
+                      {report.requires_regeneration && report.regeneration_available && (
+                        <Tooltip label={report.regeneration_reason || '重生成安全报告'}>
+                          <ActionIcon
+                            variant="light"
+                            color="orange"
+                            aria-label="重生成安全报告"
+                            onClick={() => generateMutation.mutate(report.id)}
+                            loading={generateMutation.isPending}
+                          >
+                            <IconRefresh size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                      )}
+
+                      {report.requires_regeneration && !report.regeneration_available && (
+                        <Tooltip label={report.regeneration_reason || '不可安全恢复'}>
+                          <ActionIcon
+                            variant="light"
+                            color="red"
+                            aria-label="不可安全恢复"
+                            disabled
+                          >
+                            <IconAlertTriangle size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                      )}
+
+                      {report.status === 'completed' && !report.requires_regeneration && (
                         <Tooltip label="下载报告">
                           <ActionIcon
                             variant="subtle"
