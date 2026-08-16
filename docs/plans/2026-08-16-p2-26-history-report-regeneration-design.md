@@ -15,17 +15,18 @@ P1-27 已让缺少可信校准来源的旧 MIMO 报告详情与下载 fail-close
 `ReportSummary` 增加三个只读字段：
 
 - `requires_regeneration: bool`：仅 MIMO 报告且缺 `calibration_trust_schema_version == 1` 时为真。
-- `regeneration_available: bool`：仅需恢复且恰有一个仍存在的关联 `TestExecution` 时为真。
+- `regeneration_available: bool`：仅需恢复且同时满足当前安全生成链的完整前置条件时为真：`single_execution`、无 `road_test_execution_id`、PDF 格式、恰有一个仍存在的关联 `TestExecution`，且当前没有恢复任务占用该报告。
 - `regeneration_reason: Optional[str]`：稳定的操作说明或不可恢复原因。
 
 列表构造必须复用已有 MIMO/可信判据，不按标题、文件名或 generated_by 单独猜测。非 MIMO 与已 sanitized 报告均不显示恢复动作。
 
-`POST /reports/{id}/generate` 继续作为唯一恢复写入口：completed legacy MIMO 可显式调用；从关联执行重建全部 payload，不读取旧报告 KPI 作为真值；缺可信 provenance 时输出 UNKNOWN/N/A；explicit-real 证据完整时才恢复正式值；无唯一关联执行时 409；成功后详情与下载恢复可用。
+`POST /reports/{id}/generate` 继续作为唯一恢复写入口：completed legacy MIMO PDF 可显式调用；列表与写入口复用同一个安全前置条件判据，非 `single_execution`、VRT 关联、非 PDF、无唯一可用执行均在修改状态/content/file 前 409。从关联执行重建全部 payload，不读取旧报告 KPI 作为真值；缺可信 provenance 时输出 UNKNOWN/N/A；explicit-real 证据完整时才恢复正式值；成功后详情与下载恢复可用。入口通过数据库条件更新原子认领 `generating` 状态，认领失败返回 409，禁止多个客户端同时写同一报告文件。
 
 ## GUI 行为
 
 - completed + 需恢复且可恢复：显示“需要恢复”标记和“重生成安全报告”动作，不显示普通下载。
 - 需恢复但不可恢复：显示不可恢复标记、稳定原因和禁用动作。
+- 恢复进行中：列表明确显示不可再次认领；服务端互斥是权威门，单浏览器 loading 状态不承担并发安全。
 - 已 sanitized completed：保持下载。
 - 成功后刷新列表；提示“已重建为可审计报告”，不得承诺一定恢复 PASS/KPI。
 - 普通 generate 与 Blob download 错误统一优先展示服务端 `detail`；Blob JSON 409 也能解析恢复说明。
@@ -39,13 +40,14 @@ P1-27 已让缺少可信校准来源的旧 MIMO 报告详情与下载 fail-close
 
 ## TDD 验收
 
-1. legacy single-execution MIMO 在列表中为需恢复且可恢复。
+1. legacy single-execution MIMO **PDF**（无 VRT 关联、唯一执行存在）在列表中为需恢复且可恢复。
 2. sanitized MIMO 与非 MIMO 不要求恢复。
-3. 缺失执行与 multi-execution MIMO 为需恢复但不可恢复，并有可操作原因。
+3. 缺失执行、multi-execution、非 single-execution、VRT、非 PDF 与 generating MIMO 均为需恢复但不可恢复，并有可操作原因。
 4. completed legacy 行显示恢复动作而非下载；恢复完成后刷新。
 5. 不可恢复状态禁用动作并展示原因。
 6. Blob 409 显示后端 detail，不退化成通用 HTTP 状态文本。
 7. 既有“恢复前 409、恢复后 UNKNOWN/N/A 可下载、explicit-real 才保留正式 KPI”回归通过。
+8. 两个客户端同时请求恢复时，仅一个能原子认领；另一个 409，禁止并发覆盖同一文件。
 
 ## 非目标
 

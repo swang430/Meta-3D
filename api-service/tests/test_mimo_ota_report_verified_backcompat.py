@@ -14,9 +14,29 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
+from app.db.database import Base
 from app.services.mimo_ota.executors.report import _build_mimo_ota_content_data
 from app.services.report_service import ReportService
+
+
+@pytest.fixture
+def report_db():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    session = sessionmaker(bind=engine)()
+    try:
+        yield session
+    finally:
+        session.close()
+        Base.metadata.drop_all(bind=engine)
 
 
 def _exec(phases):
@@ -336,6 +356,121 @@ def test_report_list_regeneration_state_comes_from_mimo_trust_and_execution_trut
     assert ordinary.requires_regeneration is False
     assert ordinary.regeneration_available is False
     assert ordinary.regeneration_reason is None
+
+
+def test_report_list_recovery_rejects_non_pdf_wrong_shape_and_in_progress(
+    monkeypatch,
+):
+    from app.api import report as report_api
+
+    execution_id = uuid4()
+
+    def _report(**overrides):
+        values = {
+            "id": uuid4(),
+            "title": "Historical report",
+            "report_type": "single_execution",
+            "format": "pdf",
+            "status": "completed",
+            "progress_percent": 100,
+            "file_size_bytes": 123,
+            "generated_by": "mimo_ota.executors.report",
+            "generated_at": datetime(2026, 1, 1),
+            "test_execution_ids": [execution_id],
+            "road_test_execution_id": None,
+            "content_data": {"report_family": "mimo_ota"},
+        }
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    reports = [
+        _report(format="html"),
+        _report(report_type="comparison"),
+        _report(road_test_execution_id="vrt-1"),
+        _report(status="generating"),
+    ]
+
+    class _DB:
+        def get(self, model, value):
+            return object() if value == execution_id else None
+
+    monkeypatch.setattr(report_api.report_service, "list_reports", lambda **kwargs: reports)
+    monkeypatch.setattr(report_api.report_service, "count_reports", lambda **kwargs: len(reports))
+
+    response = report_api.list_reports(
+        skip=0,
+        limit=20,
+        status=None,
+        report_type=None,
+        format=None,
+        generated_by=None,
+        db=_DB(),
+    )
+
+    html, comparison, road_test, generating = response.reports
+    assert html.regeneration_available is False
+    assert "PDF" in html.regeneration_reason
+    assert comparison.regeneration_available is False
+    assert "single-execution" in comparison.regeneration_reason
+    assert road_test.regeneration_available is False
+    assert "road-test" in road_test.regeneration_reason.lower()
+    assert generating.regeneration_available is False
+    assert "progress" in generating.regeneration_reason.lower()
+
+
+def test_non_pdf_legacy_mimo_regeneration_fails_before_mutating_report(report_db):
+    from app.models.report import TestReport
+    from app.models.test_plan import TestExecution
+
+    execution = TestExecution(
+        id=uuid4(),
+        status="completed",
+        config={"step_descriptors": [{"type": "MIMO_OTA_MEASURE"}]},
+    )
+    report = TestReport(
+        title="legacy HTML",
+        report_type="single_execution",
+        format="html",
+        generated_by="mimo_ota.executors.report",
+        status="completed",
+        test_execution_ids=[str(execution.id)],
+        file_path="legacy.html",
+        content_data={"report_family": "mimo_ota", "overall_result": "passed"},
+    )
+    report_db.add_all([execution, report])
+    report_db.commit()
+
+    with pytest.raises(ValueError, match="PDF"):
+        ReportService().generate_report(report_db, report.id)
+
+    report_db.refresh(report)
+    assert report.status == "completed"
+    assert report.file_path == "legacy.html"
+    assert report.content_data == {
+        "report_family": "mimo_ota",
+        "overall_result": "passed",
+    }
+
+
+def test_report_generation_rejects_an_already_claimed_report(report_db):
+    from app.models.report import TestReport
+
+    report = TestReport(
+        title="already generating",
+        report_type="single_execution",
+        format="pdf",
+        generated_by="manual",
+        status="generating",
+        content_data={},
+    )
+    report_db.add(report)
+    report_db.commit()
+
+    with pytest.raises(ValueError, match="already in progress"):
+        ReportService().generate_report(report_db, report.id)
+
+    report_db.refresh(report)
+    assert report.status == "generating"
 
 
 def test_report_create_drops_client_supplied_trust_attestation():

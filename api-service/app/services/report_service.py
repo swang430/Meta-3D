@@ -79,6 +79,68 @@ def report_references_mimo_ota_execution(db: Session, report: TestReport) -> boo
     return False
 
 
+def report_is_mimo_ota_report(db: Session, report: TestReport) -> bool:
+    """Classify a report from server-owned family/producer/execution truth."""
+    content = getattr(report, "content_data", None) or {}
+    return (
+        content.get("report_family") == "mimo_ota"
+        or getattr(report, "generated_by", None) == "mimo_ota.executors.report"
+        or report_references_mimo_ota_execution(db, report)
+    )
+
+
+def legacy_mimo_regeneration_error(
+    db: Session,
+    report: TestReport,
+) -> Optional[str]:
+    """Return why a legacy MIMO report cannot be rebuilt without false trust.
+
+    This is the shared source for list metadata and the generation gate.  The
+    current trusted builder can only replace a single-execution PDF; accepting
+    any wider shape would stamp new provenance onto an old, untouched file.
+    """
+    content = getattr(report, "content_data", None) or {}
+    if (
+        not report_is_mimo_ota_report(db, report)
+        or content.get("calibration_trust_schema_version") == 1
+    ):
+        return None
+
+    report_status = getattr(report, "status", None)
+    report_status = getattr(report_status, "value", report_status)
+    if report_status == ReportStatus.GENERATING.value:
+        return "Safe regeneration is already in progress."
+
+    report_type = getattr(report, "report_type", None)
+    report_type = getattr(report_type, "value", report_type)
+    if report_type != ReportType.SINGLE_EXECUTION.value:
+        return "Safe regeneration requires a single-execution report."
+    if getattr(report, "road_test_execution_id", None):
+        return "Road-test reports cannot use the MIMO execution recovery path."
+
+    report_format = getattr(report, "format", None)
+    report_format = getattr(report_format, "value", report_format)
+    if report_format != ReportFormat.PDF.value:
+        return "Safe regeneration is currently available only for PDF reports."
+
+    execution_ids = getattr(report, "test_execution_ids", None) or []
+    if len(execution_ids) != 1:
+        return (
+            "Multi-execution MIMO OTA reports cannot be safely regenerated; "
+            "safe regeneration requires a single linked TestExecution."
+        )
+    try:
+        execution_id = UUID(str(execution_ids[0]))
+    except (TypeError, ValueError):
+        return "The linked TestExecution identifier is invalid."
+    if db.get(TestExecution, execution_id) is None:
+        return (
+            "The linked TestExecution is unavailable; regeneration cannot "
+            "be performed safely."
+        )
+    return None
+
+
 class ReportService:
     """Service for managing test reports"""
 
@@ -227,11 +289,28 @@ class ReportService:
         if not report:
             return None
 
-        # Update status to generating
-        report.status = ReportStatus.GENERATING
-        report.generation_started_at = datetime.now(timezone.utc)
-        report.progress_percent = 0
+        regeneration_error = legacy_mimo_regeneration_error(db, report)
+        if regeneration_error:
+            raise ValueError(regeneration_error)
+
+        # Atomically claim generation.  A read-then-write status check permits
+        # two clients to generate the same path concurrently.
+        claimed = db.query(TestReport).filter(
+            TestReport.id == report_id,
+            TestReport.status != ReportStatus.GENERATING.value,
+        ).update(
+            {
+                TestReport.status: ReportStatus.GENERATING.value,
+                TestReport.generation_started_at: datetime.now(timezone.utc),
+                TestReport.progress_percent: 0,
+            },
+            synchronize_session=False,
+        )
+        if claimed != 1:
+            db.rollback()
+            raise ValueError("Report generation is already in progress")
         db.commit()
+        db.refresh(report)
 
         logger.info(f"Starting report generation: {report_id}")
 

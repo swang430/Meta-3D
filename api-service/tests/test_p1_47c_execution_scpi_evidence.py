@@ -860,6 +860,7 @@ def test_multi_execution_mimo_regeneration_fails_closed(db):
         report_type="single_execution",
         format="pdf",
         generated_by="user",
+        status="completed",
         test_execution_ids=[str(execution.id) for execution in executions],
         content_data={
             "overall_result": "passed",
@@ -873,7 +874,8 @@ def test_multi_execution_mimo_regeneration_fails_closed(db):
         ReportService().generate_report(db, legacy.id)
 
     db.refresh(legacy)
-    assert legacy.status == "failed"
+    # Unsafe recovery shapes are rejected before status/content/file mutation.
+    assert legacy.status == "completed"
     assert legacy.file_path is None
 
 

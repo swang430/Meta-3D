@@ -17,9 +17,9 @@
 - Modify: `api-service/app/api/report.py`
 - Test: `api-service/tests/test_mimo_ota_report_verified_backcompat.py`
 
-1. 先写列表 RED：legacy single execution 可恢复；sanitized/非 MIMO 无需恢复；缺执行/多执行不可恢复。
+1. 先写列表 RED：legacy single-execution PDF 可恢复；sanitized/非 MIMO 无需恢复；缺执行/多执行/非 PDF/VRT/非 single-execution/generating 不可恢复。
 2. 运行 `pytest -q tests/test_mimo_ota_report_verified_backcompat.py -k report_list_regeneration`，确认因 summary 无恢复字段而失败。
-3. 最小实现三个 summary 字段，并复用现有 MIMO/trust/关联执行判据。
+3. 最小实现三个 summary 字段；列表与 generate 复用同一个严格恢复判据，并用数据库条件更新原子认领 `generating`，避免跨客户端并发写同一文件。
 4. 复跑转绿，提交 `feat: expose historical report recovery state`。
 
 ### Task 2: 锁定 GUI 恢复动作与错误文本

@@ -5,7 +5,6 @@ from typing import List, Optional
 from uuid import UUID
 
 from app.db.database import get_db
-from app.models.test_plan import TestExecution
 from app.schemas.report import (
     # Report
     ReportCreate,
@@ -41,7 +40,8 @@ from app.services.report_service import (
     ReportTemplateService,
     ReportComparisonService,
     ReportScheduleService,
-    report_references_mimo_ota_execution,
+    legacy_mimo_regeneration_error,
+    report_is_mimo_ota_report,
 )
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -54,12 +54,7 @@ schedule_service = ReportScheduleService()
 
 
 def _is_mimo_report(db: Session, report) -> bool:
-    content = report.content_data or {}
-    return (
-        content.get("report_family") == "mimo_ota"
-        or getattr(report, "generated_by", None) == "mimo_ota.executors.report"
-        or report_references_mimo_ota_execution(db, report)
-    )
+    return report_is_mimo_ota_report(db, report)
 
 
 def _mimo_report_is_provenance_sanitized(db: Session, report) -> bool:
@@ -95,29 +90,12 @@ def _report_summary(db: Session, report) -> ReportSummary:
     if _mimo_report_is_provenance_sanitized(db, report):
         return summary
 
-    execution_ids = getattr(report, "test_execution_ids", None) or []
-    if len(execution_ids) != 1:
+    regeneration_error = legacy_mimo_regeneration_error(db, report)
+    if regeneration_error:
         return summary.model_copy(update={
             "requires_regeneration": True,
             "regeneration_available": False,
-            "regeneration_reason": (
-                "Safe regeneration requires a single linked TestExecution."
-            ),
-        })
-
-    try:
-        execution_id = UUID(str(execution_ids[0]))
-    except (TypeError, ValueError):
-        execution_id = None
-    execution = db.get(TestExecution, execution_id) if execution_id else None
-    if execution is None:
-        return summary.model_copy(update={
-            "requires_regeneration": True,
-            "regeneration_available": False,
-            "regeneration_reason": (
-                "The linked TestExecution is unavailable; regeneration cannot "
-                "be performed safely."
-            ),
+            "regeneration_reason": regeneration_error,
         })
 
     return summary.model_copy(update={
