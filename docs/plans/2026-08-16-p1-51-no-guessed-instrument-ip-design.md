@@ -19,6 +19,8 @@
 - 射频开关：ETSL switch；
 - 工厂入口：`InstrumentHalService` 与 `DriverRegistry`；
 - 新库目录：`services/bootstrap/instruments.py` 七类 connection seed。
+- 人工诊断入口：仪表目录的连接测试、SCPI probe、单条 SCPI（Enter 与发送按钮）；它们必须与
+  HAL 驱动读取同一份合并配置，不能让审计目标与实际命令目标分叉。
 
 `PropsimF64Controller` 没有生产调用方，是旧兼容壳；本片仍删除它的默认 IP，避免未来调用复活猜测值。
 
@@ -44,6 +46,9 @@
 5. bootstrap 的新 connection 行使用 `endpoint=None/controller_ip=None`，仍保留型号、协议与端口，提示
    操作员配置。既有 connection 行一律不改，避免清空真实现场地址。
 6. 删除旧 F64 compatibility controller 的默认参数，调用者必须显式给地址。
+7. 基站/信道仿真器是单会话控制类别：三个人工诊断入口禁止请求体临时覆盖地址，必须先保存配置并
+   reload HAL，再复用活动会话。GUI 草稿与已保存 endpoint 不同时直接提示保存；一致时不发送
+   `ip`/`port`。其他类别保留一次性覆盖能力。
 
 ## 状态与错误语义
 
@@ -64,3 +69,5 @@
    由真实驱动 fail-loud，不把配置错误伪装成模拟模式；
 5. fresh bootstrap 七类 connection 的地址均为空；已有连接再次 seed 后保持原值；
 6. 全仓生产代码不再含真实驱动地址兜底。
+7. 基站/信道仿真器的连接测试、SCPI probe 与单条 SCPI 在 GUI 草稿未保存时均不发请求；配置一致时
+   请求不携带地址覆盖并复用活动 HAL。其他类别仍可携带显式临时目标。

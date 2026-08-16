@@ -1703,7 +1703,7 @@ class TestConnectionResult(BaseModel):
 
 class TestConnectionRequest(BaseModel):
     """测试连接请求（可选覆盖参数）"""
-    # F64/UXM 是单会话仪表，不接受未保存地址覆盖；须保存后 reload HAL。
+    # 基站/信道仿真器类别按单会话控制，不接受未保存地址覆盖。
     ip: Optional[str] = None      # 其他仪表可覆盖数据库 IP 测试未保存编辑
     port: Optional[int] = None    # 覆盖数据库中的端口
     protocol: Optional[str] = None
@@ -1797,7 +1797,7 @@ def _single_session_override_error(
 ) -> Optional[str]:
     if override_requested and category_key in {"baseStation", "channelEmulator"}:
         return (
-            "F64/UXM 为单会话仪表，不允许一次性地址覆盖；"
+            "基站/信道仿真器为单会话控制类别，不允许一次性地址覆盖；"
             "请先保存配置并重新加载 HAL"
         )
     return None
@@ -1815,7 +1815,8 @@ async def test_instrument_connection(
     尝试通过 TCP socket 连接到仪器的 IP:Port，
     如果是 SCPI 协议，发送 *IDN? 查询。
 
-    支持通过请求体覆盖 IP/Port，以便在保存配置前先测试连接。
+    非单会话仪表支持请求体覆盖 IP/Port。基站/信道仿真器类别必须先保存地址并
+    reload HAL，再复用唯一活动会话，禁止用临时地址另开连接。
     """
     import socket
     import time
