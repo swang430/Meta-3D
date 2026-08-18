@@ -1,0 +1,184 @@
+"""P1-55: PCell is the only MIMO OTA operating-point truth."""
+
+from __future__ import annotations
+
+from copy import deepcopy
+
+import pytest
+from pydantic import ValidationError
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.db.database import Base
+from app.models.test_plan import TestCase
+from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+from app.services.test_plan_service import TestCaseService
+
+
+PCELL = {
+    "frequency_hz": 3_549_990_000.0,
+    "bandwidth_mhz": 40.0,
+    "subcarrier_spacing_khz": 30,
+    "role": "pcell",
+}
+
+
+@pytest.mark.parametrize(
+    ("field", "conflicting_value"),
+    [
+        ("frequency_hz", 3_600_000_000.0),
+        ("bandwidth_mhz", 100.0),
+        ("subcarrier_spacing_khz", 15),
+    ],
+)
+def test_explicit_top_level_carrier_conflict_is_rejected(
+    field: str,
+    conflicting_value: float,
+):
+    payload = {
+        field: conflicting_value,
+        "component_carriers": [deepcopy(PCELL)],
+    }
+
+    with pytest.raises(ValidationError, match=rf"{field}.*component_carriers\[0\]"):
+        MIMOOTAConfiguration.model_validate(payload)
+
+
+def test_missing_legacy_mirrors_are_filled_from_pcell():
+    config = MIMOOTAConfiguration.model_validate(
+        {"component_carriers": [deepcopy(PCELL)]}
+    )
+
+    assert config.frequency_hz == PCELL["frequency_hz"]
+    assert config.bandwidth_mhz == PCELL["bandwidth_mhz"]
+    assert config.subcarrier_spacing_khz == PCELL["subcarrier_spacing_khz"]
+    assert config.primary_carrier.frequency_hz == PCELL["frequency_hz"]
+
+
+def test_legacy_top_level_only_builds_one_pcell():
+    config = MIMOOTAConfiguration.model_validate(
+        {
+            "frequency_hz": 3_700_000_000.0,
+            "bandwidth_mhz": 80.0,
+            "subcarrier_spacing_khz": 60,
+        }
+    )
+
+    assert len(config.component_carriers or []) == 1
+    assert config.primary_carrier.frequency_hz == 3_700_000_000.0
+    assert config.primary_carrier.bandwidth_mhz == 80.0
+    assert config.primary_carrier.subcarrier_spacing_khz == 60
+
+
+def test_pcell_normalization_does_not_change_scell_values():
+    scell = {
+        "frequency_hz": 3_700_000_000.0,
+        "bandwidth_mhz": 80.0,
+        "subcarrier_spacing_khz": 60,
+        "role": "pcell",
+    }
+    config = MIMOOTAConfiguration.model_validate(
+        {
+            **{key: PCELL[key] for key in (
+                "frequency_hz", "bandwidth_mhz", "subcarrier_spacing_khz"
+            )},
+            "component_carriers": [deepcopy(PCELL), deepcopy(scell)],
+        }
+    )
+
+    assert config.primary_carrier.role == "pcell"
+    assert config.component_carriers[1].role == "scell"
+    assert config.component_carriers[1].frequency_hz == scell["frequency_hz"]
+    assert config.component_carriers[1].bandwidth_mhz == scell["bandwidth_mhz"]
+
+
+engine = create_engine(
+    "sqlite://",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+TestingSessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+
+
+@pytest.fixture(autouse=True)
+def _db_schema():
+    Base.metadata.create_all(engine)
+    yield
+    Base.metadata.drop_all(engine)
+
+
+@pytest.fixture
+def db():
+    session = TestingSessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+def _create_case(db, *, test_type: str, configuration: dict) -> TestCase:
+    return TestCaseService().create_test_case(
+        db,
+        name=f"{test_type}-truth",
+        test_type=test_type,
+        configuration=configuration,
+        created_by="p1-55-test",
+    )
+
+
+def test_service_rejects_conflicting_mimo_create_before_commit(db):
+    conflict = {
+        "frequency_hz": 3_600_000_000.0,
+        "component_carriers": [deepcopy(PCELL)],
+    }
+
+    with pytest.raises((ValueError, ValidationError), match="frequency_hz.*component_carriers"):
+        _create_case(db, test_type="MIMO_OTA", configuration=conflict)
+
+    assert db.query(TestCase).count() == 0
+
+
+def test_service_persists_missing_mirrors_from_pcell(db):
+    row = _create_case(
+        db,
+        test_type="MIMO_OTA",
+        configuration={"component_carriers": [deepcopy(PCELL)]},
+    )
+
+    assert row.configuration["frequency_hz"] == PCELL["frequency_hz"]
+    assert row.configuration["bandwidth_mhz"] == PCELL["bandwidth_mhz"]
+    assert row.configuration["subcarrier_spacing_khz"] == PCELL["subcarrier_spacing_khz"]
+
+
+def test_service_rejects_conflicting_mimo_update_without_mutating_row(db):
+    row = _create_case(
+        db,
+        test_type="MIMO_OTA",
+        configuration={"component_carriers": [deepcopy(PCELL)]},
+    )
+    original = deepcopy(row.configuration)
+
+    with pytest.raises((ValueError, ValidationError), match="bandwidth_mhz.*component_carriers"):
+        TestCaseService().update_test_case(
+            db,
+            row.id,
+            configuration={
+                "bandwidth_mhz": 100.0,
+                "component_carriers": [deepcopy(PCELL)],
+            },
+        )
+
+    db.refresh(row)
+    assert row.configuration == original
+
+
+def test_non_mimo_configuration_remains_free_form(db):
+    payload = {
+        "frequency_hz": 3_600_000_000.0,
+        "component_carriers": [deepcopy(PCELL)],
+        "custom": "kept",
+    }
+    row = _create_case(db, test_type="Custom", configuration=payload)
+
+    assert row.configuration == payload
