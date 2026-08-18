@@ -118,6 +118,34 @@ async def test_home_fails_when_encoder_stays_away_from_zero():
 
 
 @pytest.mark.asyncio
+async def test_move_rejects_fractional_axis_status_instead_of_truncating_bitmask():
+    driver = ScriptedMotionDriver(
+        {
+            "PFBK(X)": [0.0, 90.0, 90.0],
+            "AXISSTATUS(X)": ["4.5"],
+        }
+    )
+
+    assert await driver.move_to(90.0, 0.0) is False
+    assert "ABORT X" in driver.sent
+
+
+@pytest.mark.asyncio
+async def test_home_aborts_and_preserves_cancellation():
+    driver = _driver(30.0, 30.0)
+
+    async def cancelled() -> None:
+        raise asyncio.CancelledError
+
+    driver._wait_for_settle = cancelled  # type: ignore[method-assign]
+
+    with pytest.raises(asyncio.CancelledError):
+        await driver.reset()
+    assert "HOME X" in driver.sent
+    assert "ABORT X" in driver.sent
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("bad_target", [True, float("nan"), float("inf"), float("-inf")])
 async def test_move_rejects_non_finite_target_before_any_controller_io(bad_target):
     driver = _driver(0.0, 90.0)

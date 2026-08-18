@@ -79,7 +79,8 @@ ETS 仍按其独立方言处理。这是有意的证据边界。
 1. 在任何控制器 I/O 前拒绝 bool、NaN、Inf 等非有限目标；
 2. 命令前严格读取各实际轴的 `PFBK`；
 3. 发送既有 `MOVEABS`；
-4. 轮询既有 `AXISSTATUS`，故障或超时失败；
+4. 轮询既有 `AXISSTATUS`，只接受有限、非负、无小数的整数 bitmask；故障、非法状态或
+   超时均失败；
 5. 严格读取最终 `PFBK`，先同步有限编码器真值到缓存，再判成功与否；
 6. 每个实际轴都要求最终反馈在配置容差内到达请求目标；
 7. 若请求目标与起点的距离超过容差，还要求反馈相对起点发生可观察变化；否则返回 False，
@@ -112,8 +113,10 @@ ETS 仍按其独立方言处理。这是有意的证据边界。
   `XF` 重试同一目标，用于回答“是否缺进给速度”；
 - 每段在命令后连续采 `AXISSTATUS(axis)` + `PFBK(axis)`，保存 elapsed、原始回复、解析值；
   `AXISSTATUS` 只接受有限、非负、无小数的整数 bitmask；
-- 每段输出 `command_accepted / feedback_changed / target_reached / axis_fault`，只有反馈变化且
-  到达目标才算该段动作有证据；
+- 每段输出 `command_accepted / feedback_changed / target_reached / settled / axis_fault`，只有
+  反馈变化、到达目标且最终 `IN_POSITION=1 / MOVE_ACTIVE=0` 才算该段动作有证据；
+- 已接受但未证明动作的段先 `ABORT`，无论 stop 成败都独立回读 PFBK；post-ABORT PFBK 是
+  后续段起点与最终缓存的权威源。ABORT 或回读未确认时禁止发送第二段 MOVEABS；
 - `result_extra` 保存全部样本，`SequenceStepResult.raw` 保存关键原始回复。诊断结论只说明
   “控制器编码器反馈是否移动/到达”，不声称 DUT 物理角度已校准。
 
@@ -129,6 +132,8 @@ ETS 仍按其独立方言处理。这是有意的证据边界。
   已取得的有限 PFBK 即使判定失败也同步缓存，避免 metrics 继续发布旧位置。
 - 取消：已接受动作先完成 `ABORT`/回读收尾，再保持 `CancelledError` 传播语义；诊断框架
   负责审计 cancelled，不得在释放 destructive token 后留下后台运动。
+- 诊断动作结束：最终状态仍为 MOVE_ACTIVE、ABORT 未确认或 post-ABORT PFBK 不可得时均
+  fail-closed；不得释放互斥后声称成功或叠加下一条动作。
 - cleanup 的 False 进入 warnings，但不遮蔽原始执行错误。
 
 ## 7. 验收
@@ -142,6 +147,9 @@ ETS 仍按其独立方言处理。这是有意的证据边界。
 7. 新诊断序列可由 loader/API/GUI 动态列出；mock/无连接 fail-closed。
 8. 诊断带/不带 `XF` 两段不发送 DISABLE，按 200ms/10s 保存 raw 状态与位置样本。
 9. 部分移动/超差时缓存反映最终有限 PFBK，但结果仍 False；NaN/Inf 目标在任何 I/O 前拒绝。
-10. 超时、取消、诊断未证明到位均发送 ABORT；分数/负数 AXISSTATUS 不得截断成合法 bitmask。
+10. MOVE/HOME 与诊断的分数/负数 AXISSTATUS 均不得截断成合法 bitmask；最终仍 MOVE_ACTIVE
+    不得成功。
 11. destructive diagnostic 与其他 MOVE/HOME 共用完整操作锁，stop/ABORT 保留抢占能力。
-12. 本地完成后 P1-56 本地片可合并；现场真实机械方向/单位/偏置/型号裁决仍 Hardware Blocked。
+12. 未证明动作、超时、异常与取消均执行 ABORT+独立 PFBK 回读；ABORT 失败不继续第二段，
+    post-ABORT PFBK 不得被旧样本覆盖。
+13. 本地完成后 P1-56 本地片可合并；现场真实机械方向/单位/偏置/型号裁决仍 Hardware Blocked。

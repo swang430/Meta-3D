@@ -24,7 +24,11 @@ from app.diagnostics.protocol import (
     SequenceStepResult,
     driver_not_loaded_summary,
 )
-from app.hal.aerotech_positioner import AxisStatusBit, RealAerotechDriver
+from app.hal.aerotech_positioner import (
+    AxisStatusBit,
+    RealAerotechDriver,
+    parse_axis_status_bitmask,
+)
 from app.services.diagnostic_context import DiagnosticContext
 from app.services.instrument_hal_service import is_mock_driver
 
@@ -127,10 +131,10 @@ def _finite(raw: str) -> Optional[float]:
 
 
 def _axis_status_bitmask(raw: str) -> Optional[int]:
-    value = _finite(raw)
-    if value is None or value < 0 or not value.is_integer():
+    try:
+        return parse_axis_status_bitmask(raw)
+    except ValueError:
         return None
-    return int(value)
 
 
 def _azimuth_distance(left: float, right: float) -> float:
@@ -147,15 +151,28 @@ async def _read_position(driver: RealAerotechDriver, axis: str) -> tuple[str, fl
 
 async def _abort_and_refresh(
     driver: RealAerotechDriver,
-) -> tuple[bool, Optional[str]]:
+) -> tuple[bool, Optional[str], Optional[float]]:
     """Finish ABORT/PFBK cleanup before releasing the destructive lease."""
-    async def cleanup() -> tuple[bool, Optional[str]]:
+    async def cleanup() -> tuple[bool, Optional[str], Optional[float]]:
+        stopped = False
+        errors: list[str] = []
         try:
             stopped = await driver.stop()
-            await driver.get_position()
-            return bool(stopped), None if stopped else "driver.stop() returned False"
         except Exception as exc:  # noqa: BLE001
-            return False, f"{type(exc).__name__}: {exc}"
+            errors.append(f"stop {type(exc).__name__}: {exc}")
+        if not stopped and not errors:
+            errors.append("driver.stop() returned False")
+
+        post_abort_position: Optional[float] = None
+        try:
+            position = await driver.get_position()
+            if math.isfinite(position[0]):
+                post_abort_position = float(position[0])
+            else:
+                errors.append("post-ABORT PFBK was non-finite")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"PFBK {type(exc).__name__}: {exc}")
+        return bool(stopped), "; ".join(errors) or None, post_abort_position
 
     worker = asyncio.create_task(cleanup())
     while not worker.done():
@@ -193,6 +210,8 @@ async def _sample_segment(
         "abort_attempted": False,
         "abort_succeeded": None,
         "abort_error": None,
+        "post_abort_position": None,
+        "settled": False,
     }
 
     async def abort_segment() -> None:
@@ -200,6 +219,7 @@ async def _sample_segment(
         (
             segment["abort_succeeded"],
             segment["abort_error"],
+            segment["post_abort_position"],
         ) = await _abort_and_refresh(driver)
 
     segment["command_started"] = True
@@ -267,12 +287,19 @@ async def _sample_segment(
             _azimuth_distance(finite_positions[-1], target) <= tolerance
         )
         segment["final_position"] = finite_positions[-1]
+    final_status = segment["samples"][-1]["axisstatus"] if segment["samples"] else None
+    segment["settled"] = bool(
+        final_status is not None
+        and final_status & (1 << AxisStatusBit.IN_POSITION)
+        and not final_status & (1 << AxisStatusBit.MOVE_ACTIVE)
+    )
     motion_proven = bool(
         segment["command_accepted"]
         and segment["feedback_changed"]
         and segment["target_reached"]
         and segment["samples_valid"]
         and not segment["axis_fault"]
+        and segment["settled"]
     )
     if segment["command_accepted"] and not motion_proven:
         await abort_segment()
@@ -286,6 +313,7 @@ def _segment_step(segment: Dict[str, Any]) -> SequenceStepResult:
         and segment["target_reached"]
         and segment["samples_valid"]
         and not segment["axis_fault"]
+        and segment["settled"]
     )
     detail = (
         f"accepted={segment['command_accepted']}, "
@@ -293,6 +321,7 @@ def _segment_step(segment: Dict[str, Any]) -> SequenceStepResult:
         f"target_reached={segment['target_reached']}, "
         f"samples_valid={segment['samples_valid']}, "
         f"axis_fault={segment['axis_fault']}, "
+        f"settled={segment['settled']}, "
         f"target={segment['target']:.4f}, "
         f"final={segment.get('final_position')!r}"
     )
@@ -372,8 +401,43 @@ async def run(
         tolerance=values["tolerance_deg"],
     )
 
+    segments = [first]
+    if first["abort_attempted"] and (
+        first["abort_succeeded"] is not True
+        or not isinstance(first.get("post_abort_position"), (int, float))
+    ):
+        steps = [_segment_step(first)]
+        return SequenceRunResult(
+            success=False,
+            summary=(
+                "第一段动作未获证明且 ABORT/PFBK 收尾未确认；为避免叠加未停止动作，"
+                "已禁止发送第二段 MOVEABS。"
+            ),
+            steps=steps,
+            extra={
+                "axis": axis,
+                "start_position": start_position,
+                "start_pfbk_raw": start_raw,
+                "enable_response_raw": enable_raw,
+                "params": values,
+                "segments": segments,
+                "physical_position_verified": False,
+                "hardware_blocked": [
+                    "controller_model_firmware",
+                    "user_units",
+                    "physical_direction",
+                    "coordinate_offset",
+                    "visible_mechanical_motion",
+                ],
+            },
+        )
+
     first_reached = bool(first["target_reached"] and first["feedback_changed"])
-    second_start = first.get("final_position", start_position)
+    second_start = (
+        first.get("post_abort_position")
+        if first["abort_attempted"]
+        else first.get("final_position", start_position)
+    )
     second_target = start_position if first_reached else first_target
     second = await _sample_segment(
         driver,
@@ -390,9 +454,13 @@ async def run(
         tolerance=values["tolerance_deg"],
     )
 
-    segments = [first, second]
+    segments.append(second)
     steps = [_segment_step(segment) for segment in segments]
-    final_position = second.get("final_position")
+    final_position = (
+        second.get("post_abort_position")
+        if second["abort_attempted"]
+        else second.get("final_position")
+    )
     if isinstance(final_position, (int, float)) and math.isfinite(final_position):
         # This sequence bypasses move_to() so it can preserve raw samples.
         # Keep the driver's cache aligned with the last finite encoder truth.

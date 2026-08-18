@@ -88,6 +88,21 @@ class AerotechError(Exception):
     pass
 
 
+def parse_axis_status_bitmask(raw: Any) -> int:
+    """Parse AXISSTATUS without truncating or inventing controller bits."""
+    if isinstance(raw, bool):
+        raise ValueError(f"AXISSTATUS must be a non-negative integer, got {raw!r}")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"AXISSTATUS must be a non-negative integer, got {raw!r}"
+        ) from exc
+    if not math.isfinite(value) or value < 0 or not value.is_integer():
+        raise ValueError(f"AXISSTATUS must be a non-negative integer, got {raw!r}")
+    return int(value)
+
+
 class RealAerotechDriver(PositionerDriver):
     """
     Aerotech A3200 Real HAL Driver.
@@ -1006,7 +1021,7 @@ class RealAerotechDriver(PositionerDriver):
         while asyncio.get_event_loop().time() < deadline:
             await asyncio.sleep(self.poll_interval_s)
 
-            az_status = int(await self._query_value(
+            az_status = parse_axis_status_bitmask(await self._send(
                 AeroBasicCmd.AXIS_STATUS.format(axis=self.az_axis)
             ))
             if self._check_status_bit(az_status, AxisStatusBit.FAULT):
@@ -1023,7 +1038,7 @@ class RealAerotechDriver(PositionerDriver):
                     return
                 continue
 
-            el_status = int(await self._query_value(
+            el_status = parse_axis_status_bitmask(await self._send(
                 AeroBasicCmd.AXIS_STATUS.format(axis=self.el_axis)
             ))
             if self._check_status_bit(el_status, AxisStatusBit.FAULT):

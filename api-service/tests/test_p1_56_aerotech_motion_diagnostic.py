@@ -31,6 +31,8 @@ class MotionDiagnosticDriver(RealAerotechDriver):
         moves_without_xf: bool,
         moves_with_xf: bool,
         axisstatus: str | None = None,
+        abort_positions: list[float] | None = None,
+        abort_raises: bool = False,
     ) -> None:
         super().__init__("motion-diagnostic", {"ip": "192.0.2.10"})
         self._axes_present = ["X"]
@@ -39,6 +41,8 @@ class MotionDiagnosticDriver(RealAerotechDriver):
         self.moves_without_xf = moves_without_xf
         self.moves_with_xf = moves_with_xf
         self.axisstatus = axisstatus or str(1 << AxisStatusBit.IN_POSITION)
+        self.abort_positions = list(abort_positions or [])
+        self.abort_raises = abort_raises
         self.commands: list[str] = []
 
     async def _send(self, command: str) -> str:
@@ -57,6 +61,10 @@ class MotionDiagnosticDriver(RealAerotechDriver):
         if command == "ENABLE X":
             return ""
         if command == "ABORT X":
+            if self.abort_positions:
+                self.position = self.abort_positions.pop(0)
+            if self.abort_raises:
+                raise RuntimeError("ABORT rejected")
             return ""
         raise AssertionError(f"unexpected command: {command}")
 
@@ -211,6 +219,100 @@ async def test_invalid_axis_status_cannot_be_washed_into_success_by_final_positi
         for segment in result.extra["segments"]
     )
     assert driver.commands.count("ABORT X") == 2
+
+
+@pytest.mark.asyncio
+async def test_move_active_without_in_position_cannot_finish_diagnostic(fast_clock):
+    driver = MotionDiagnosticDriver(
+        moves_without_xf=True,
+        moves_with_xf=True,
+        axisstatus=str(1 << AxisStatusBit.MOVE_ACTIVE),
+    )
+
+    result = await sequence.run(
+        SimpleNamespace(),
+        _hal(driver),
+        {"sample_duration_s": 0.2, "sample_interval_s": 0.2},
+        log=lambda _message: None,
+    )
+
+    assert result.success is False
+    assert all(segment["settled"] is False for segment in result.extra["segments"])
+    assert driver.commands.count("ABORT X") == 2
+
+
+@pytest.mark.asyncio
+async def test_abort_failure_stops_before_second_motion_command(fast_clock):
+    driver = MotionDiagnosticDriver(
+        moves_without_xf=False,
+        moves_with_xf=True,
+        abort_raises=True,
+    )
+
+    result = await sequence.run(
+        SimpleNamespace(),
+        _hal(driver),
+        {"sample_duration_s": 0.2, "sample_interval_s": 0.2},
+        log=lambda _message: None,
+    )
+
+    assert result.success is False
+    assert len(result.extra["segments"]) == 1
+    assert result.extra["segments"][0]["abort_succeeded"] is False
+    moves = [command for command in driver.commands if command.startswith("MOVEABS")]
+    assert len(moves) == 1
+    assert " XF" not in moves[0]
+
+
+@pytest.mark.asyncio
+async def test_abort_refresh_is_retained_as_final_encoder_truth(fast_clock):
+    driver = MotionDiagnosticDriver(
+        moves_without_xf=True,
+        moves_with_xf=False,
+        abort_positions=[12.0],
+    )
+
+    result = await sequence.run(
+        SimpleNamespace(),
+        _hal(driver),
+        {"sample_duration_s": 0.2, "sample_interval_s": 0.2},
+        log=lambda _message: None,
+    )
+
+    second = result.extra["segments"][1]
+    assert second["abort_succeeded"] is True
+    assert second["post_abort_position"] == pytest.approx(12.0)
+    assert driver._current_azimuth == pytest.approx(12.0)
+
+
+@pytest.mark.asyncio
+async def test_abort_refresh_still_runs_when_stop_raises(fast_clock):
+    driver = MotionDiagnosticDriver(
+        moves_without_xf=False,
+        moves_with_xf=False,
+    )
+
+    async def failing_stop() -> bool:
+        raise RuntimeError("stop failed")
+
+    driver.stop = failing_stop  # type: ignore[method-assign]
+    driver.position = 7.0
+
+    segment = await sequence._sample_segment(
+        driver,
+        axis="X",
+        label="test",
+        command="MOVEABS X 20.0000",
+        start_position=10.0,
+        target=20.0,
+        duration_s=0.2,
+        interval_s=0.2,
+        tolerance=0.5,
+    )
+
+    assert segment["abort_succeeded"] is False
+    assert segment["post_abort_position"] == pytest.approx(7.0)
+    assert driver._current_azimuth == pytest.approx(7.0)
 
 
 @pytest.mark.asyncio
