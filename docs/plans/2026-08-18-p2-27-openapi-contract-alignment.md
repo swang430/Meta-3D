@@ -19,10 +19,11 @@
 - Modify: `api-service/app/schemas/test_plan.py`
 - Modify: `api-service/app/api/system_logs.py`
 - Modify: `api-service/app/schemas/chamber.py`
+- Modify: `api-service/app/services/readiness.py`
 
 **Step 1: Write the failing test**
 
-从 `app.openapi()` 读取 `ProbeResponse`、`HALReadinessResponse`、
+从 `app.openapi()` 读取 `ProbeResponse`、`HALReadinessResponse` 及其嵌套 readiness 状态、
 `ExecutionHistoryItem`、`LogEntry`、`LogTailResponse`、`FEInstrumentCategory`、
 `ChamberConfigurationResponse`，逐组断言所有运行时必出的 default/nullable 字段在 `required`。
 
@@ -34,9 +35,9 @@ Expected: FAIL，至少 `subnets`、`older_cursor`、`selectedModelId`、`probe_
 
 **Step 3: Write minimal implementation**
 
-仅在上述 response model 设置
+仅在上述 response model（含实际独立出现在 OpenAPI components 中的嵌套 response model）设置
 `ConfigDict(json_schema_serialization_defaults_required=True)`；已有 ORM model 同时保留
-`from_attributes=True`。请求模型不加该配置。
+`from_attributes=True`。readiness/catalog 状态只按现有写方全集收窄为白名单；请求模型不加该配置。
 
 **Step 4: Run test to verify it passes**
 
@@ -101,7 +102,10 @@ Commit: `fix(gui): align handwritten API contracts with live schema`
 
 **Step 2: Generate temporary TypeScript truth**
 
-Run from `gui`: `npx openapi-typescript <temporary-openapi.json> -o <temporary-generated.ts>`
+Run from `gui`: `npx openapi-typescript <temporary-openapi.json> --default-non-nullable false -o <temporary-generated.ts>`
+
+`--default-non-nullable false` 必须保留：本审计验证的是请求可省略语义；若使用生成器默认值，
+带后端 default 的 validation 字段会被 TypeScript 误标为 required，与 FastAPI 实际请求契约相反。
 
 **Step 3: Type-check the 18 existing request/response assignments**
 
@@ -147,4 +151,3 @@ Expected: all pass/clean。
 Commit: `docs: mark P2-27 ready for review`
 
 触发最多两轮 Codex 外审并按仓库规则收口。
-

@@ -45,9 +45,8 @@ live `app.openapi()` 生成的 TypeScript。当前多数端点依靠 Pydantic �
 
 ## 保护与验收
 
-1. live OpenAPI 的七类 response model 将所有实际序列化字段列入 `required`。
+1. live OpenAPI 的相关 response model（含 readiness/catalog 嵌套模型）将所有实际序列化字段列入 `required`。
 2. list 与 bulk probe 都可赋值给 `{total, probes}`，nested probe 不再因默认字段产生假 optional。
 3. 手写 category/chamber 覆盖真实活动字段；create chamber 仅两项必填且不含 response-only 字段。
 4. 重新执行 P3-18 同形的 live OpenAPI → TypeScript 方向性递归审计，九组全部通过。
 5. 相关/完整 rule gates、GUI production build、compileall、diff-check 全绿。
-
