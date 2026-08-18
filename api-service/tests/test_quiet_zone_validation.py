@@ -143,8 +143,7 @@ class TestFieldUniformityMock:
 
 
 class TestFieldUniformityRealCeSa:
-    """Real path: positioner moves to each grid point, CE+SA acquires power
-    at each, std/range vs ±1 dB threshold."""
+    """Real grid acquisition stays closed without a linear XY stage API."""
 
     @pytest.mark.asyncio
     async def test_real_path_drives_positioner_per_grid_point(
@@ -163,27 +162,10 @@ class TestFieldUniformityRealCeSa:
             sgh_gain_dbi=10.0,
             ce_port="B1.1",
         )
-        assert result.success
-        assert result.data["field_uniformity_pass"] is True
-        # 5 grid points → 5 positioner moves + 5 CE tone bursts
-        assert pos.move_to.await_count == 5
-        assert ce.set_calibration_tone.await_count == 5
-
-        # First move is to (0,0) (grid center)
-        first_call = pos.move_to.await_args_list[0]
-        assert first_call.kwargs["azimuth"] == 0.0
-        assert first_call.kwargs["elevation"] == 0.0
-        # Subsequent moves walk DEFAULT_SCAN_OFFSETS_CM
-        called_offsets = {
-            (call.kwargs["azimuth"], call.kwargs["elevation"])
-            for call in pos.move_to.await_args_list
-        }
-        expected_offsets = {(x, y) for x, y, _ in DEFAULT_SCAN_OFFSETS_CM}
-        assert called_offsets == expected_offsets
-
-        # CE port threaded to driver (PROPSIM SCPI requires it)
-        for call in ce.set_calibration_tone.await_args_list:
-            assert call.kwargs.get("ce_port") == "B1.1"
+        assert result.success is False
+        assert "linear xy stage" in result.message.lower()
+        pos.move_to.assert_not_awaited()
+        ce.set_calibration_tone.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_real_grid_cleanup_warning_reaches_result(
@@ -205,9 +187,9 @@ class TestFieldUniformityRealCeSa:
             scan_offsets_cm=[(0.0, 0.0, 0.0)],
         )
 
-        assert result.success
-        assert any("grid point" in warning for warning in result.warnings)
-        assert any("stop_calibration_tone" in warning for warning in result.warnings)
+        assert result.success is False
+        assert "linear xy stage" in result.message.lower()
+        ce.stop_calibration_tone.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_real_path_fails_uniformity_records_fail(
@@ -235,16 +217,10 @@ class TestFieldUniformityRealCeSa:
             sgh_model="SGH-01",
             sgh_gain_dbi=10.0,
         )
-        assert result.success  # measurement completed, just FAILED spec
-        assert result.data["field_uniformity_pass"] is False
-        assert result.data["field_range_db"] >= 5.0  # got 10 dB range
-        assert any("FAIL" in w for w in result.warnings)
-
-        from uuid import UUID as _UUID
-        cal = db.query(QuietZoneCalibration).filter_by(
-            id=_UUID(result.data["calibration_id"])
-        ).one()
-        assert cal.validation_pass is False
+        assert result.success is False
+        assert "linear xy stage" in result.message.lower()
+        pos.move_to.assert_not_awaited()
+        sa.measure_channel_power.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_no_positioner_driver_raises(self, db, chamber, monkeypatch):
@@ -260,7 +236,7 @@ class TestFieldUniformityRealCeSa:
             sgh_gain_dbi=10.0,
         )
         assert result.success is False
-        assert "positioner" in result.message.lower()
+        assert "linear xy stage" in result.message.lower()
 
     @pytest.mark.asyncio
     async def test_positioner_move_failure_aborts_scan(
@@ -280,8 +256,8 @@ class TestFieldUniformityRealCeSa:
             sgh_gain_dbi=10.0,
         )
         assert result.success is False
-        assert "move_to" in result.message
-        # CE tone must NOT have fired (we'd be measuring the wrong point)
+        assert "linear xy stage" in result.message.lower()
+        pos.move_to.assert_not_awaited()
         ce.set_calibration_tone.assert_not_awaited()
 
     @pytest.mark.asyncio

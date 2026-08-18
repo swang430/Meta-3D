@@ -61,6 +61,8 @@ class AeroBasicCmd:
     MOVE_ABS = "MOVEABS {axes} {positions}"   # 绝对定位 (e.g., "MOVEABS X 90.0 Y 0.0")
     MOVE_INC = "MOVEINC {axes} {distances}"   # 增量运动
     ABORT = "ABORT {axes}"                     # 紧急停止
+    # Checked-in Ensemble ASCII/TCP integration guide §6 literal.
+    WAIT_IN_POSITION = "WAIT INPOS {axis}"
     
     # 状态查询
     POSITION_FEEDBACK = "PFBK({axis})"    # 位置反馈 (返回浮点数)
@@ -69,18 +71,6 @@ class AeroBasicCmd:
     
     # IDN 等效 (A3200 无标准 *IDN?, 用 GETPARM 读取)
     GET_PARAM = "GETPARM({axis}, {param_id})"  # 读取参数
-
-
-# AxisStatus 位掩码定义
-class AxisStatusBit:
-    """A3200 AXISSTATUS 位掩码中的关键位"""
-    ENABLED = 0           # bit 0: 轴已启用
-    HOMED = 1             # bit 1: 已回原点
-    IN_POSITION = 2       # bit 2: 到位 (运动完成)
-    MOVE_ACTIVE = 3       # bit 3: 正在运动
-    ACCEL_PHASE = 4       # bit 4: 加速阶段
-    DECEL_PHASE = 5       # bit 5: 减速阶段
-    FAULT = 10            # bit 10: 错误/故障
 
 
 class AerotechError(Exception):
@@ -92,19 +82,16 @@ class AerotechOperatorStopRequested(AerotechError):
     """人工急停已在线路发送前取得顺序，禁止再下发动作命令。"""
 
 
-def parse_axis_status_bitmask(raw: Any) -> int:
-    """Parse AXISSTATUS without truncating or inventing controller bits."""
-    if isinstance(raw, bool):
-        raise ValueError(f"AXISSTATUS must be a non-negative integer, got {raw!r}")
-    try:
-        value = float(raw)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"AXISSTATUS must be a non-negative integer, got {raw!r}"
-        ) from exc
-    if not math.isfinite(value) or value < 0 or not value.is_integer():
-        raise ValueError(f"AXISSTATUS must be a non-negative integer, got {raw!r}")
-    return int(value)
+class AerotechCommandRejected(AerotechError):
+    """Controller explicitly rejected one AeroBasic command with ``!``."""
+
+
+class AerotechTaskFault(AerotechError):
+    """Controller accepted the protocol frame but reported a task fault."""
+
+
+class AerotechOutcomeUnknown(AerotechError):
+    """A non-idempotent command may have executed before transport loss."""
 
 
 class RealAerotechDriver(PositionerDriver):
@@ -125,13 +112,11 @@ class RealAerotechDriver(PositionerDriver):
         position_tolerance_deg: 控制器坐标反馈容差 (默认 0.5)
     """
 
-    # P2-3: A3200 controllers can be wired single-axis (CAICT bench) or
-    # dual-axis (production chamber). Which one a specific unit is gets
-    # determined at connect() by probing axis availability; both tokens
-    # belong to the model-level "what's possible" set.
+    # The checked-in command evidence only proves the single-axis X form.
+    # Physical multi-axis capability must not be advertised as a supported
+    # runtime contract until its exact command/feedback semantics are sourced.
     model_capabilities = frozenset({
         "pos.single_axis_az",
-        "pos.dual_axis_azel",
     })
 
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
@@ -154,8 +139,8 @@ class RealAerotechDriver(PositionerDriver):
         self._writer: Optional[asyncio.StreamWriter] = None
 
         # 缓存的位置
-        self._current_azimuth: float = 0.0
-        self._current_elevation: float = 0.0
+        self._current_azimuth: Optional[float] = None
+        self._current_elevation: Optional[float] = None
 
         # 通信锁 (串行化命令发送，防止交错)
         self._lock = asyncio.Lock()
@@ -171,6 +156,19 @@ class RealAerotechDriver(PositionerDriver):
     # ==================================================================
     # 底层通信
     # ==================================================================
+
+    def _require_operator_stop_generation(
+        self,
+        expected_operator_stop_generation: Optional[int],
+    ) -> None:
+        if (
+            expected_operator_stop_generation is not None
+            and self.operator_stop_generation()
+            != expected_operator_stop_generation
+        ):
+            raise AerotechOperatorStopRequested(
+                "operator stop requested before motion command transmission"
+            )
 
     async def _send(
         self,
@@ -190,8 +188,8 @@ class RealAerotechDriver(PositionerDriver):
         connection after an idle period (field-verified at CAICT
         2026-05-13 — first command after ~30s gap raises BrokenPipe /
         ConnectionReset). One transparent reconnect is attempted; the
-        cached ``_axes_present`` is re-ENABLE'd before the original
-        command is retried so callers never see the idle close.
+        transport. Read-only queries may reconnect and retry. Commands that
+        may already have executed are never replayed after an ambiguous loss.
 
         Returns:
             响应内容 (去掉 '%' 前缀)
@@ -201,6 +199,7 @@ class RealAerotechDriver(PositionerDriver):
             asyncio.TimeoutError: 当超时未收到响应时
         """
         safe_cmd = redact_instrument_log_text(cmd)
+        operation = self._aerobasic_operation(cmd)
         if not self._writer or not self._reader:
             raise AerotechError("Not connected to Aerotech controller")
 
@@ -208,14 +207,9 @@ class RealAerotechDriver(PositionerDriver):
             # P1-56: 人工急停意图与实际 TX 必须在同一个通信锁顺序内裁决。
             # 若 stop 先推进 generation，无论它在本任务前还是后取得通信锁，
             # 这条动作命令都不得排在 ABORT 后重新启动转台。
-            if (
-                expected_operator_stop_generation is not None
-                and self.operator_stop_generation()
-                != expected_operator_stop_generation
-            ):
-                raise AerotechOperatorStopRequested(
-                    "operator stop requested before motion command transmission"
-                )
+            self._require_operator_stop_generation(
+                expected_operator_stop_generation
+            )
             # P1-20 (2026-07-03 现场实测): 控制器在运动完成后 ~10s 空闲即关连接
             # (比 5/13 的 ~30s 严得多)。对端关闭被事件循环感知后 transport 已标记
             # closed, 此时 write 抛 RuntimeError("unable to perform operation on
@@ -232,6 +226,9 @@ class RealAerotechDriver(PositionerDriver):
                     raise AerotechError(
                         f"Transport closed before '{safe_cmd}' and reconnect failed"
                     )
+                self._require_operator_stop_generation(
+                    expected_operator_stop_generation
+                )
             try:
                 return await self._tx_rx(cmd)
             except ConnectionError as e:
@@ -254,6 +251,14 @@ class RealAerotechDriver(PositionerDriver):
                     raise AerotechError(
                         f"Connection lost during '{safe_cmd}' and reconnect failed"
                     ) from e
+                if operation != "query":
+                    raise AerotechOutcomeUnknown(
+                        f"Outcome unknown for non-idempotent command '{safe_cmd}'; "
+                        "command was not replayed"
+                    ) from e
+                self._require_operator_stop_generation(
+                    expected_operator_stop_generation
+                )
                 return await self._tx_rx(cmd)
 
     async def _tx_rx(self, cmd: str) -> str:
@@ -284,13 +289,18 @@ class RealAerotechDriver(PositionerDriver):
             raw_response = raw.decode("ascii", errors="replace")
             response = raw_response.strip()
             rejected = response.startswith("!")
+            task_fault = response.startswith("#")
             self._log_scpi_response(
                 cmd,
                 raw_response,
                 (time.perf_counter() - t0) * 1000,
                 exchange_id=exchange_id,
                 operation=operation,
-                result_type="device_rejected" if rejected else None,
+                result_type=(
+                    "device_rejected" if rejected
+                    else "task_fault" if task_fault
+                    else None
+                ),
             )
             response_logged = True
 
@@ -301,7 +311,15 @@ class RealAerotechDriver(PositionerDriver):
                     f"AeroBasic error for '{safe_cmd}': {safe_response}"
                 )
                 logger.error(f"[Aerotech] {error_msg}")
-                raise AerotechError(error_msg)
+                raise AerotechCommandRejected(error_msg)
+            if task_fault:
+                safe_cmd = redact_instrument_log_text(cmd)
+                safe_response = redact_instrument_log_text(response)
+                error_msg = (
+                    f"AeroBasic task fault for '{safe_cmd}': {safe_response}"
+                )
+                logger.error("[Aerotech] %s", error_msg)
+                raise AerotechTaskFault(error_msg)
 
             return response.lstrip("%").strip()
         except BaseException as exc:
@@ -332,11 +350,12 @@ class RealAerotechDriver(PositionerDriver):
         return "command"
 
     async def _silent_reconnect(self) -> bool:
-        """Reopen TCP + restore ACK/ENABLE state after an idle close.
+        """Reopen TCP transport after an idle close without mutating axes.
 
         Returns True on success. Caller (``_send``) only invokes us with
-        the lock held — we use ``_tx_rx`` directly during the handshake
-        so we don't re-enter the outer retry loop and risk recursion.
+        the lock held. No ACK/ENABLE handshake is sent: read-only queries
+        may retry on the new transport, while non-idempotent commands with
+        ambiguous outcomes are never replayed.
 
         Refuses to run if ``_axes_present`` is empty — that means
         ``connect()`` never finished, so there's no prior good state to
@@ -369,31 +388,7 @@ class RealAerotechDriver(PositionerDriver):
             self._writer = None
             return False
 
-        try:
-            await self._tx_rx(AeroBasicCmd.ACKNOWLEDGE_ALL)
-            await self._tx_rx(
-                AeroBasicCmd.ENABLE.format(axes=" ".join(self._axes_present))
-            )
-        except BaseException as exc:
-            if not isinstance(exc, asyncio.CancelledError):
-                logger.error(
-                    f"[Aerotech] silent reconnect: handshake failed: {exc}"
-                )
-            if self._writer:
-                try:
-                    self._writer.close()
-                except Exception:
-                    pass
-            self._reader = None
-            self._writer = None
-            if isinstance(exc, asyncio.CancelledError):
-                raise
-            return False
-
-        logger.info(
-            f"[Aerotech] silent reconnect succeeded — re-enabled "
-            f"axes={self._axes_present}"
-        )
+        logger.info("[Aerotech] silent reconnect restored transport only")
         return True
 
     async def _query_value(self, cmd: str) -> float:
@@ -424,9 +419,17 @@ class RealAerotechDriver(PositionerDriver):
             raise ValueError(f"{name} must be a positive finite number")
         return parsed
 
-    async def _query_finite_value(self, cmd: str) -> float:
+    async def _query_finite_value(
+        self,
+        cmd: str,
+        *,
+        expected_operator_stop_generation: Optional[int] = None,
+    ) -> float:
         """Read a controller value without converting missing evidence to zero."""
-        result = await self._send(cmd)
+        result = await self._send(
+            cmd,
+            expected_operator_stop_generation=expected_operator_stop_generation,
+        )
         try:
             value = float(result)
         except (TypeError, ValueError) as exc:
@@ -465,13 +468,24 @@ class RealAerotechDriver(PositionerDriver):
         """Publish the latest finite encoder truth, independent of verdict."""
         self._current_azimuth, self._current_elevation = feedback
 
-    async def _read_motion_feedback(self) -> Tuple[float, float]:
+    def _invalidate_cached_feedback(self) -> None:
+        """Remove stale position truth after motion with unknown final PFBK."""
+        self._current_azimuth = None
+        self._current_elevation = None
+
+    async def _read_motion_feedback(
+        self,
+        *,
+        expected_operator_stop_generation: Optional[int] = None,
+    ) -> Tuple[float, float]:
         azimuth = await self._query_finite_value(
-            AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.az_axis)
+            AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.az_axis),
+            expected_operator_stop_generation=expected_operator_stop_generation,
         )
         elevation = (
             await self._query_finite_value(
-                AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.el_axis)
+                AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.el_axis),
+                expected_operator_stop_generation=expected_operator_stop_generation,
             )
             if not self.is_single_axis else 0.0
         )
@@ -544,8 +558,13 @@ class RealAerotechDriver(PositionerDriver):
 
     async def _abort_unverified_motion(self, *, reason: str) -> None:
         """Best-effort ABORT + finite PFBK refresh without masking root cause."""
+        # Motion may already have happened. The pre-motion cache is no longer
+        # evidence; only a fresh finite post-ABORT PFBK may republish position.
+        self._invalidate_cached_feedback()
+        stopped = False
         try:
-            if await self.stop():
+            stopped = await self.stop()
+            if stopped:
                 logger.warning(
                     "[Aerotech] ABORT stopped unverified motion: %s", reason
                 )
@@ -560,7 +579,9 @@ class RealAerotechDriver(PositionerDriver):
                 exc,
             )
         try:
-            self._sync_cached_feedback(await self._read_motion_feedback())
+            feedback = await self._read_motion_feedback()
+            if stopped:
+                self._sync_cached_feedback(feedback)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "[Aerotech] PFBK refresh failed after ABORT (%s): %s",
@@ -579,32 +600,95 @@ class RealAerotechDriver(PositionerDriver):
         # _abort_unverified_motion absorbs and logs its own best-effort errors.
         worker.result()
 
-    def _check_status_bit(self, status_int: int, bit: int) -> bool:
-        """检查 AXISSTATUS 位掩码中的指定位"""
-        return bool(status_int & (1 << bit))
+    def _verified_degree_motion_config(self) -> Tuple[float, float, float]:
+        """Return the site-approved degree range and feed, or fail before I/O.
 
-    async def _axes_are_stopped(self) -> bool:
-        """Read every actual axis; ABORT success requires MOVE_ACTIVE=0."""
+        The checked-in Ensemble integration guide §7 says position and feed
+        are controller user-units and must not be guessed.  Formal motion and
+        the destructive diagnostic therefore share the same explicit site
+        attestation instead of treating finite controller counts as degrees.
+        """
+        config = self.config or {}
+        if config.get("motion_truth_units_verified") is not True:
+            raise AerotechError(
+                "motion_truth_units_verified must be explicitly true"
+            )
+        if str(config.get("motion_truth_user_units", "")).strip().lower() != "degree":
+            raise AerotechError(
+                "motion_truth_user_units must be explicitly degree"
+            )
+
+        lower = self._finite_motion_target(
+            config.get("motion_truth_min_deg"), name="motion_truth_min_deg"
+        )
+        upper = self._finite_motion_target(
+            config.get("motion_truth_max_deg"), name="motion_truth_max_deg"
+        )
+        feed = self._finite_motion_target(
+            config.get("motion_truth_xf_speed"), name="motion_truth_xf_speed"
+        )
+        if lower >= upper:
+            raise AerotechError(
+                "motion_truth_min_deg must be less than motion_truth_max_deg"
+            )
+        if feed <= 0:
+            raise AerotechError("motion_truth_xf_speed must be positive")
+        return lower, upper, feed
+
+    def _require_supported_single_axis_motion(self) -> Tuple[float, float, float]:
+        """Require the one motion form supported by checked-in vendor evidence."""
+        config = self._verified_degree_motion_config()
+        if self._axes_present != [self.az_axis]:
+            raise AerotechError(
+                "formal Aerotech motion is limited to the sourced single-axis form"
+            )
+        return config
+
+    async def _axes_are_stopped(
+        self,
+        *,
+        expected_operator_stop_generation: Optional[int] = None,
+    ) -> bool:
+        """Read sourced velocity feedback; exact zero is the fail-closed stop proof.
+
+        The checked-in Ensemble guide documents ``VFBK(axis)`` as actual
+        velocity feedback but does not document AXISSTATUS bit assignments.
+        Do not invent a MOVE_ACTIVE bit.  Exact zero deliberately favors false
+        negatives over releasing serialization while an axis may still move.
+        """
         for axis in self._axes_present:
-            status = parse_axis_status_bitmask(await self._send(
-                AeroBasicCmd.AXIS_STATUS.format(axis=axis)
-            ))
-            if self._check_status_bit(status, AxisStatusBit.MOVE_ACTIVE):
+            velocity = await self._query_finite_value(
+                AeroBasicCmd.VELOCITY_FEEDBACK.format(axis=axis),
+                expected_operator_stop_generation=expected_operator_stop_generation,
+            )
+            if velocity != 0.0:
                 return False
         return True
 
-    async def _require_axes_stopped(self) -> None:
+    async def _require_axes_stopped(
+        self,
+        *,
+        expected_operator_stop_generation: Optional[int] = None,
+    ) -> None:
         """Reject a new HOME/MOVE while an earlier motion is still active."""
-        if not await self._axes_are_stopped():
+        if not await self._axes_are_stopped(
+            expected_operator_stop_generation=expected_operator_stop_generation
+        ):
             raise AerotechError(
                 "previous_motion_active: refusing to overlap a new motion command"
             )
 
-    async def _wait_for_axes_stopped(self) -> None:
-        """Wait after ABORT until every actual axis clears MOVE_ACTIVE."""
+    async def _wait_for_axes_stopped(
+        self,
+        *,
+        expected_operator_stop_generation: Optional[int] = None,
+    ) -> None:
+        """Wait after ABORT until every actual axis reports zero VFBK."""
         deadline = asyncio.get_event_loop().time() + self.settle_timeout_s
         while True:
-            if await self._axes_are_stopped():
+            if await self._axes_are_stopped(
+                expected_operator_stop_generation=expected_operator_stop_generation
+            ):
                 return
             if asyncio.get_event_loop().time() >= deadline:
                 raise asyncio.TimeoutError("ABORT motion-stop confirmation timeout")
@@ -669,14 +753,15 @@ class RealAerotechDriver(PositionerDriver):
 
         Sends ``PFBK(<axis>)`` — pure feedback read, never touches servo
         state. ACK (``%``) means the controller has this axis; NAK (``!``,
-        raised as ``AerotechError``) means it doesn't. Used during
+        raised as ``AerotechCommandRejected``) means it doesn't. Task faults
+        and transport failures remain connect failures. Used during
         ``connect()`` to decide whether the configured ``elevation_axis``
         actually exists on this hardware.
         """
         try:
             await self._send(AeroBasicCmd.POSITION_FEEDBACK.format(axis=axis))
             return True
-        except AerotechError:
+        except AerotechCommandRejected:
             return False
 
     @property
@@ -693,7 +778,7 @@ class RealAerotechDriver(PositionerDriver):
     # ==================================================================
 
     async def connect(self) -> bool:
-        """连接到 Aerotech 控制器并启用轴"""
+        """连接并只读发现轴；不清错、不使能、不猜测位置单位。"""
         if self._connection_config_error or not self.ip_address:
             return self._fail_missing_connection_address()
         self._set_status(InstrumentStatus.CONNECTING)
@@ -706,9 +791,6 @@ class RealAerotechDriver(PositionerDriver):
                 timeout=self.timeout_s,
             )
             self._enable_tcp_keepalive(self._writer)
-
-            # 清除控制器错误缓冲区
-            await self._send(AeroBasicCmd.ACKNOWLEDGE_ALL)
 
             # Discover which configured axes actually exist on this
             # controller. Field-verified at CAICT 2026-05-13 that some
@@ -726,10 +808,9 @@ class RealAerotechDriver(PositionerDriver):
                     f"controller — check `azimuth_axis` config matches "
                     f"the controller's actual axis name."
                 )
-            # P2-2: mirror axis-discovery outcome to the canonical
-            # capability set so plan-level pre-flight (P1-1) can branch
-            # on `pos.single_axis_az` vs `pos.dual_axis_azel` without
-            # poking at `_axes_present` internals.
+            # Mirror only the sourced single-axis runtime contract. A dual-axis
+            # controller may be discovered read-only, but motion remains
+            # unsupported until exact multi-axis vendor evidence exists.
             from app.hal.capabilities import (
                 POS_DUAL_AXIS_AZEL, POS_SINGLE_AXIS_AZ,
             )
@@ -739,37 +820,56 @@ class RealAerotechDriver(PositionerDriver):
                 logger.info(
                     f"[Aerotech] Single-axis turntable detected — "
                     f"elevation axis {self.el_axis!r} not present on "
-                    f"controller. Elevation commands will be ignored; "
-                    f"get_position() returns elevation=0.0."
+                    f"controller. Sourced motion requires elevation=0; "
+                    f"position remains unavailable until unit attestation."
                 )
             else:
-                self._add_capability(POS_DUAL_AXIS_AZEL)
+                self._remove_capability(POS_DUAL_AXIS_AZEL)
                 self._remove_capability(POS_SINGLE_AXIS_AZ)
+                logger.warning(
+                    "[Aerotech] Multi-axis controller discovered read-only; "
+                    "no sourced multi-axis motion contract is advertised"
+                )
 
-            # ENABLE only the axes the controller actually has.
-            await self._send(
-                AeroBasicCmd.ENABLE.format(axes=" ".join(self._axes_present))
-            )
-
-            # Read initial position(s); elevation defaults to 0 in
-            # single-axis mode so the PositionerDriver contract still
-            # returns a (az, el) tuple.
-            (
-                self._current_azimuth,
-                self._current_elevation,
-            ) = await self._read_motion_feedback()
-
-            logger.info(
-                f"[Aerotech] Connected. Axes: {self._axes_present}. "
-                f"Position: Az={self._current_azimuth:.2f}°, "
-                f"El={self._current_elevation:.2f}°"
-            )
+            try:
+                self._require_supported_single_axis_motion()
+            except AerotechError:
+                self._current_azimuth = None
+                self._current_elevation = None
+                logger.warning(
+                    "[Aerotech] Connected read-only. Axes=%s; position remains "
+                    "UNKNOWN until degree/range/feed attestation is complete",
+                    self._axes_present,
+                )
+            else:
+                (
+                    self._current_azimuth,
+                    self._current_elevation,
+                ) = await self._read_motion_feedback()
+                logger.info(
+                    "[Aerotech] Connected. Axes=%s. Position: Az=%.2f°, El=%.2f°",
+                    self._axes_present,
+                    self._current_azimuth,
+                    self._current_elevation,
+                )
             self._set_status(InstrumentStatus.CONNECTED)
             self._clear_error()
             return True
 
         except Exception as e:
             logger.error(f"[Aerotech] Connection failed: {e}")
+            if self._writer:
+                try:
+                    self._writer.close()
+                    await self._writer.wait_closed()
+                except Exception as close_exc:
+                    logger.warning(
+                        "[Aerotech] Failed to close transport after connect error: %s",
+                        close_exc,
+                    )
+            self._writer = None
+            self._reader = None
+            self._axes_present = []
             self._set_status(InstrumentStatus.ERROR, str(e))
             return False
 
@@ -777,15 +877,6 @@ class RealAerotechDriver(PositionerDriver):
         """安全断开连接"""
         try:
             if self._writer:
-                # 禁用所有已知存在的轴 (single-axis controllers reject 'DISABLE Y')
-                if self._axes_present:
-                    try:
-                        await self._send(AeroBasicCmd.DISABLE.format(
-                            axes=" ".join(self._axes_present)
-                        ))
-                    except Exception:
-                        pass  # 断连时忽略发送错误
-
                 self._writer.close()
                 await self._writer.wait_closed()
                 self._writer = None
@@ -855,55 +946,110 @@ class RealAerotechDriver(PositionerDriver):
     async def get_capabilities(self) -> list[InstrumentCapability]:
         single = self.is_single_axis
         params: Dict[str, Any] = {
-            "azimuth_range": [0, 360],
             "protocol": "AeroBasic/TCP",
             "axes_present": list(self._axes_present),
+            "position_unit": "unknown",
         }
-        if not single:
-            params["elevation_range"] = [-90, 90]
+        supported = False
+        description = "Aerotech motion unavailable: sourced single-axis degree contract not attested"
+        try:
+            safe_min, safe_max, feed = self._require_supported_single_axis_motion()
+        except AerotechError as exc:
+            logger.debug(
+                "[Aerotech] sourced motion capability unavailable: %s", exc
+            )
+        else:
+            supported = True
+            params.update({
+                "azimuth_range": [safe_min, safe_max],
+                "position_unit": "degree",
+                "motion_feed_deg_s": feed,
+            })
+            description = "Aerotech sourced single-axis azimuth positioning"
         return [
             InstrumentCapability(
                 name="3d_positioning" if not single else "2d_positioning",
-                description=(
-                    "Aerotech "
-                    + ("single-axis azimuth" if single else "dual-axis")
-                    + " positioning (AeroBasic protocol)"
-                ),
-                supported=True,
+                description=description,
+                supported=supported,
                 parameters=params,
             )
         ]
 
     async def get_metrics(self) -> InstrumentMetrics:
+        verified_degree = True
+        try:
+            self._require_supported_single_axis_motion()
+        except AerotechError:
+            verified_degree = False
+        position_verified = (
+            verified_degree
+            and self._current_azimuth is not None
+            and self._current_elevation is not None
+            and math.isfinite(self._current_azimuth)
+            and math.isfinite(self._current_elevation)
+        )
         return InstrumentMetrics(
             timestamp=datetime.now(),
             metrics={
-                "azimuth": self._current_azimuth,
-                "elevation": self._current_elevation,
+                "azimuth": self._current_azimuth if position_verified else None,
+                "elevation": self._current_elevation if position_verified else None,
+                "position_unit": "degree" if position_verified else "unknown",
+                "position_verified": position_verified,
                 "controller": f"Aerotech @ {self.ip_address}:{self.port}",
             },
         )
 
-    async def reset(self) -> bool:
+    async def reset(
+        self,
+        *,
+        expected_operator_stop_generation: Optional[int] = None,
+    ) -> bool:
         """回原点"""
         from app.services.instrument_test_lease import positioner_operation_guard
 
-        operator_stop_generation = self.operator_stop_generation()
+        try:
+            safe_min, safe_max, _feed = self._require_supported_single_axis_motion()
+            if not safe_min <= 0.0 <= safe_max:
+                raise AerotechError("HOME target 0 is outside the verified safe range")
+        except Exception as e:
+            logger.error("[Aerotech] Home rejected before I/O: %s", e)
+            self._set_status(InstrumentStatus.ERROR, str(e))
+            return False
+
+        operator_stop_generation = (
+            self.operator_stop_generation()
+            if expected_operator_stop_generation is None
+            else expected_operator_stop_generation
+        )
         command_accepted = False
         async with positioner_operation_guard("aerotech-positioner:home"):
             try:
                 if not self._axes_present:
                     raise AerotechError("Not connected — no axes to home")
-                await self._require_axes_stopped()
-                before = await self._read_motion_feedback()
+                await self._require_axes_stopped(
+                    expected_operator_stop_generation=operator_stop_generation
+                )
+                before = await self._read_motion_feedback(
+                    expected_operator_stop_generation=operator_stop_generation
+                )
                 self._sync_cached_feedback(before)
+                await self._send(
+                    AeroBasicCmd.ENABLE.format(axes=self.az_axis),
+                    expected_operator_stop_generation=operator_stop_generation,
+                )
                 command_accepted = True
                 await self._send(
                     AeroBasicCmd.HOME.format(axes=" ".join(self._axes_present)),
                     expected_operator_stop_generation=operator_stop_generation,
                 )
-                await self._wait_for_settle()
-                after = await self._read_motion_feedback()
+                await self._wait_for_settle(
+                    expected_operator_stop_generation=operator_stop_generation
+                )
+                self._require_operator_stop_generation(operator_stop_generation)
+                after = await self._read_motion_feedback(
+                    expected_operator_stop_generation=operator_stop_generation
+                )
+                self._require_operator_stop_generation(operator_stop_generation)
                 self._sync_cached_feedback(after)
                 target = (0.0, 0.0)
                 self._verify_motion_feedback(before=before, after=after, target=target)
@@ -911,7 +1057,10 @@ class RealAerotechDriver(PositionerDriver):
                 self._clear_error()
                 return True
             except AerotechOperatorStopRequested as e:
-                command_accepted = False
+                if command_accepted:
+                    await self._finish_motion_safety_cleanup(
+                        reason="HOME interrupted by operator stop"
+                    )
                 logger.warning("[Aerotech] Home blocked by operator stop: %s", e)
                 self._set_status(InstrumentStatus.ERROR, str(e))
                 return False
@@ -933,66 +1082,78 @@ class RealAerotechDriver(PositionerDriver):
     # PositionerDriver 专有接口
     # ==================================================================
 
-    async def move_to(self, azimuth: float, elevation: float) -> bool:
+    async def move_to(
+        self,
+        azimuth: float,
+        elevation: float,
+        *,
+        expected_operator_stop_generation: Optional[int] = None,
+    ) -> bool:
         """
         命令转台移动到绝对位置。
 
-        发送 MOVEABS 后轮询 AXISSTATUS 等待到位 (InPosition bit)。
-        单轴转台 (无 elevation 轴) 会忽略 elevation 参数, 只移动 azimuth。
+        仅发送仓内 Ensemble 指南有出处的单轴
+        ``MOVEABS X <target> XF<feed>``，随后 ``WAIT INPOS X``，并以
+        VFBK/PFBK 做最终动作真值门。
         """
         from app.services.instrument_test_lease import positioner_operation_guard
 
         try:
+            safe_min, safe_max, feed = self._require_supported_single_axis_motion()
             target_azimuth = self._finite_motion_target(azimuth, name="azimuth")
             target_elevation = self._finite_motion_target(
                 elevation, name="elevation"
             )
+            if not safe_min <= target_azimuth <= safe_max:
+                raise AerotechError(
+                    f"azimuth target {target_azimuth:g} is outside verified range "
+                    f"[{safe_min:g}, {safe_max:g}]"
+                )
+            if target_elevation != 0.0:
+                raise AerotechError(
+                    "single-axis sourced motion requires elevation=0"
+                )
         except Exception as e:
             logger.error(f"[Aerotech] Move rejected before I/O: {e}")
             self._set_status(InstrumentStatus.ERROR, str(e))
             return False
 
-        operator_stop_generation = self.operator_stop_generation()
+        operator_stop_generation = (
+            self.operator_stop_generation()
+            if expected_operator_stop_generation is None
+            else expected_operator_stop_generation
+        )
         command_accepted = False
         async with positioner_operation_guard("aerotech-positioner:move"):
             try:
                 if not self._axes_present:
                     raise AerotechError("Not connected — cannot move")
-                await self._require_axes_stopped()
+                await self._require_axes_stopped(
+                    expected_operator_stop_generation=operator_stop_generation
+                )
                 self._set_status(InstrumentStatus.BUSY)
-
-            # Single-axis controllers ignore elevation. Warn (not error)
-            # so an operator misreading "move(180, 30)" as 3D motion
-            # sees something in the log when only az moves.
-                if self.is_single_axis and target_elevation != 0.0:
-                    logger.warning(
-                        f"[Aerotech] Single-axis turntable — elevation="
-                        f"{target_elevation:.2f}° ignored, only Az={target_azimuth:.2f}° "
-                        f"will be commanded."
-                    )
 
                 logger.info(
                     f"[Aerotech] Moving to Az={target_azimuth:.2f}°"
-                    + (f", El={target_elevation:.2f}°" if not self.is_single_axis else "")
                 )
 
-                before = await self._read_motion_feedback()
+                before = await self._read_motion_feedback(
+                    expected_operator_stop_generation=operator_stop_generation
+                )
                 self._sync_cached_feedback(before)
 
-            # AeroBasic MOVEABS uses axis-position interleaving:
-            #     MOVEABS X 180.0 Y 45.0
-            # (NOT MOVEABS X Y 180.0 45.0 — that NAKs because the parser
-            # reads tokens as axis,position,axis,position alternating.)
-            # Skip the AeroBasicCmd.MOVE_ABS template here for the dual-
-            # axis case; the template's two-bucket "{axes} {positions}"
-            # shape is wrong for the multi-axis form.
-                if self.is_single_axis:
-                    cmd_str = f"MOVEABS {self.az_axis} {target_azimuth:.4f}"
-                else:
-                    cmd_str = (
-                        f"MOVEABS {self.az_axis} {target_azimuth:.4f}"
-                        f" {self.el_axis} {target_elevation:.4f}"
-                    )
+                await self._send(
+                    AeroBasicCmd.ENABLE.format(axes=self.az_axis),
+                    expected_operator_stop_generation=operator_stop_generation,
+                )
+
+            # Ensemble integration guide §§5–7 / reference implementation:
+            # explicit feed is controller user-units per second.  The site
+            # attestation above proves those units are degree / degree/s.
+                cmd_str = (
+                    f"MOVEABS {self.az_axis} {target_azimuth:.4f} "
+                    f"{self.az_axis}F{feed:.4f}"
+                )
                 command_accepted = True
                 await self._send(
                     cmd_str,
@@ -1000,14 +1161,19 @@ class RealAerotechDriver(PositionerDriver):
                 )
 
             # 等待到位
-                await self._wait_for_settle()
+                await self._wait_for_settle(
+                    expected_operator_stop_generation=operator_stop_generation
+                )
 
-            # A controller ACK and InPosition bit prove command processing,
-            # not physical motion.  The Ensemble integration manual §6
-            # requires PFBK verification before sampling; fail closed unless
-            # finite encoder feedback both moved when needed and reached the
-            # requested controller-coordinate target.
-                after = await self._read_motion_feedback()
+            # WAIT INPOS proves controller completion, not physical motion.
+            # The checked-in Ensemble integration guide §6 requires PFBK
+            # verification before sampling; fail closed unless finite encoder
+            # feedback both moved when needed and reached the requested target.
+                self._require_operator_stop_generation(operator_stop_generation)
+                after = await self._read_motion_feedback(
+                    expected_operator_stop_generation=operator_stop_generation
+                )
+                self._require_operator_stop_generation(operator_stop_generation)
                 self._sync_cached_feedback(after)
                 target = (
                     target_azimuth,
@@ -1025,7 +1191,10 @@ class RealAerotechDriver(PositionerDriver):
                 return True
 
             except AerotechOperatorStopRequested as e:
-                command_accepted = False
+                if command_accepted:
+                    await self._finish_motion_safety_cleanup(
+                        reason="MOVEABS interrupted by operator stop"
+                    )
                 logger.warning("[Aerotech] Move blocked by operator stop: %s", e)
                 self._set_status(InstrumentStatus.ERROR, str(e))
                 return False
@@ -1052,10 +1221,17 @@ class RealAerotechDriver(PositionerDriver):
                 return False
 
     async def get_position(self) -> Tuple[float, float]:
-        """读取当前位置反馈"""
-        azimuth, elevation = await self._read_motion_feedback()
-        self._current_azimuth = azimuth
-        self._current_elevation = elevation
+        """读取 degree 位置；单位未获站点证明时拒绝而非把 counts 标成度。"""
+        self._require_supported_single_axis_motion()
+        try:
+            azimuth, elevation = await self._read_motion_feedback()
+        except Exception:
+            # A failed fresh read invalidates the prior cache. Otherwise an
+            # API/health read can return UNKNOWN while get_metrics continues
+            # publishing the old coordinate as verified current truth.
+            self._invalidate_cached_feedback()
+            raise
+        self._sync_cached_feedback((azimuth, elevation))
         return (self._current_azimuth, self._current_elevation)
 
     async def stop(self) -> bool:
@@ -1069,14 +1245,16 @@ class RealAerotechDriver(PositionerDriver):
             ))
             await self._wait_for_axes_stopped()
             self._set_status(InstrumentStatus.READY)
-            logger.warning("[Aerotech] Emergency stop confirmed by AXISSTATUS")
+            logger.warning("[Aerotech] Emergency stop confirmed by zero VFBK")
             return True
         except asyncio.TimeoutError:
             message = "ABORT acknowledged but axis motion did not stop"
+            self._invalidate_cached_feedback()
             logger.error("[Aerotech] %s", message)
             self._set_status(InstrumentStatus.ERROR, message)
             return False
         except Exception as e:
+            self._invalidate_cached_feedback()
             logger.error(f"[Aerotech] Stop failed: {e}")
             self._set_status(InstrumentStatus.ERROR, str(e))
             return False
@@ -1085,50 +1263,28 @@ class RealAerotechDriver(PositionerDriver):
     # 内部辅助
     # ==================================================================
 
-    async def _wait_for_settle(self) -> None:
+    async def _wait_for_settle(
+        self,
+        *,
+        expected_operator_stop_generation: Optional[int] = None,
+    ) -> None:
+        """Use sourced WAIT INPOS, then require finite zero velocity.
+
+        The checked-in Ensemble guide §5 and §9 reference implementation
+        explicitly define ``WAIT INPOS X``.  It does not define AXISSTATUS
+        bit assignments, so formal motion must not invent them.
         """
-        轮询 AXISSTATUS 等待运动完成。
-        
-        检查 InPosition bit (bit 2) 为 1 且 MoveActive bit (bit 3) 为 0。
-        超时抛出 asyncio.TimeoutError。
-        """
-        deadline = asyncio.get_event_loop().time() + self.settle_timeout_s
-
-        while asyncio.get_event_loop().time() < deadline:
-            await asyncio.sleep(self.poll_interval_s)
-
-            az_status = parse_axis_status_bitmask(await self._send(
-                AeroBasicCmd.AXIS_STATUS.format(axis=self.az_axis)
-            ))
-            if self._check_status_bit(az_status, AxisStatusBit.FAULT):
-                raise AerotechError(
-                    f"Azimuth axis fault detected (status=0x{az_status & 0xFFFFFFFF:08X})"
-                )
-            az_settled = (
-                self._check_status_bit(az_status, AxisStatusBit.IN_POSITION)
-                and not self._check_status_bit(az_status, AxisStatusBit.MOVE_ACTIVE)
+        if self._axes_present != [self.az_axis]:
+            raise AerotechError(
+                "WAIT INPOS evidence is available only for the single-axis form"
             )
-
-            if self.is_single_axis:
-                if az_settled:
-                    return
-                continue
-
-            el_status = parse_axis_status_bitmask(await self._send(
-                AeroBasicCmd.AXIS_STATUS.format(axis=self.el_axis)
-            ))
-            if self._check_status_bit(el_status, AxisStatusBit.FAULT):
-                raise AerotechError(
-                    f"Elevation axis fault detected (status=0x{el_status & 0xFFFFFFFF:08X})"
-                )
-            el_settled = (
-                self._check_status_bit(el_status, AxisStatusBit.IN_POSITION)
-                and not self._check_status_bit(el_status, AxisStatusBit.MOVE_ACTIVE)
-            )
-
-            if az_settled and el_settled:
-                return
-
-        raise asyncio.TimeoutError(
-            f"Aerotech settle timeout ({self.settle_timeout_s}s)"
+        await asyncio.wait_for(
+            self._send(
+                AeroBasicCmd.WAIT_IN_POSITION.format(axis=self.az_axis),
+                expected_operator_stop_generation=expected_operator_stop_generation,
+            ),
+            timeout=self.settle_timeout_s,
+        )
+        await self._wait_for_axes_stopped(
+            expected_operator_stop_generation=expected_operator_stop_generation
         )

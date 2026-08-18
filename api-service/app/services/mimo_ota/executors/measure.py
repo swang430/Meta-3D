@@ -566,6 +566,17 @@ class MeasureExecutor(IStepExecutor):
                 status=StepExecutionStatus.FAILED,
                 error_message="positioner + baseStation drivers required (HAL)",
             )
+        stop_generation_reader = getattr(
+            positioner, "operator_stop_generation", None
+        )
+        motion_stop_generation = (
+            stop_generation_reader() if callable(stop_generation_reader) else None
+        )
+        motion_stop_kwargs = (
+            {"expected_operator_stop_generation": motion_stop_generation}
+            if motion_stop_generation is not None
+            else {}
+        )
         simulated_sources = [
             category
             for category in ("baseStation", "channelEmulator", "positioner")
@@ -2001,7 +2012,11 @@ class MeasureExecutor(IStepExecutor):
                     window_s,
                 )
                 with capture_scpi_exchanges() as position_exchanges:
-                    moved = await positioner.move_to(azimuth, 0.0)
+                    moved = await positioner.move_to(
+                        azimuth,
+                        0.0,
+                        **motion_stop_kwargs,
+                    )
                 if hasattr(positioner, "build_p0_5_position_evidence"):
                     try:
                         record_positioner_capture(
@@ -2343,7 +2358,9 @@ class MeasureExecutor(IStepExecutor):
             if uxm_config_capture_manager is not None:
                 uxm_config_capture_manager.__exit__(None, None, None)
             cleanup_warnings = await cleanup_chamber_instruments(
-                hal, context.test_execution.id
+                hal,
+                context.test_execution.id,
+                expected_operator_stop_generation=motion_stop_generation,
             )
 
         if cleanup_warnings:

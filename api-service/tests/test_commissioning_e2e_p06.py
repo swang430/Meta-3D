@@ -176,7 +176,7 @@ def hal_with_mocks(instrument_categories):
     hal.drivers["baseStation"] = MockBaseStation("mock-bs", {"model": "Mock"})
     pos = MockPositioner("mock-pos", {"model": "Mock"})
 
-    async def _instant_move_to(azimuth, elevation):
+    async def _instant_move_to(azimuth, elevation, **_kwargs):
         pos._azimuth = azimuth
         pos._elevation = elevation
         return True

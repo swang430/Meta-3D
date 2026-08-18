@@ -8,11 +8,13 @@ broke every probe / poll that wasn't sending back-to-back.
 These tests pin the recovery contract:
 
   1. One transparent reconnect on connection error (write OR read side).
-  2. After reconnect, ACKNOWLEDGE_ALL + ENABLE of the cached
-     ``_axes_present`` is re-sent BEFORE the user's command is retried.
-  3. Only one retry — if reconnect fails, the original error surfaces
+  2. Reconnect restores the TCP transport only. It must not mutate controller
+     state with an unsourced ACKNOWLEDGE_ALL / ENABLE handshake.
+  3. Only read-only queries are retried after an ambiguous write/read loss;
+     non-idempotent commands are never replayed.
+  4. Only one retry — if reconnect fails, the original error surfaces
      as ``AerotechError`` (we don't hammer a dead controller).
-  4. Caller gets the second response transparently — no exception leaks
+  5. Caller gets the second response transparently — no exception leaks
      for the happy-path "socket recycled cleanly" case.
 
 No real network: we replace the ``asyncio.StreamReader`` /
@@ -202,10 +204,7 @@ class TestReconnectOnEofRead:
         old = _FakeServer("old")
         old.eof_read_on(0)  # first command returns EOF on read
         new = _FakeServer("new")
-        # Post-reconnect: ACK%, ENABLE%, then the retried PFBK gets "%12.34"
-        new.queue_response("%")           # ACKNOWLEDGE_ALL
-        new.queue_response("%")           # ENABLE X
-        new.queue_response("%12.34")     # retried PFBK(X)
+        new.queue_response("%12.34")  # retried read-only PFBK(X)
 
         d = _make_driver_with_streams(old)
         _install_open_connection(monkeypatch, [new])
@@ -216,28 +215,25 @@ class TestReconnectOnEofRead:
         assert result == "12.34"
         # Old server saw exactly the original command before close.
         assert old.sent == ["PFBK(X)"]
-        # New server saw the handshake then the retried command, in order.
-        assert new.sent == ["ACKNOWLEDGEALL", "ENABLE X", "PFBK(X)"]
+        # Reconnect restores transport only; no controller-state writes.
+        assert new.sent == ["PFBK(X)"]
         # Driver now holds the *new* reader/writer pair.
         assert isinstance(d._writer, _FakeWriter)
         assert d._writer is not None and not d._writer.is_closing()
 
     @pytest.mark.asyncio
-    async def test_dual_axis_reconnect_re_enables_both(self, monkeypatch):
+    async def test_dual_axis_reconnect_does_not_reenable_axes(self, monkeypatch):
         old = _FakeServer("old")
         old.eof_read_on(0)
         new = _FakeServer("new")
-        new.queue_response("%")
-        new.queue_response("%")
         new.queue_response("%5.0")
 
         d = _make_driver_with_streams(old)
         d._axes_present = ["X", "Y"]  # dual-axis post-connect state
         _install_open_connection(monkeypatch, [new])
 
-        await d._send("PFBK(X)")
-        # ENABLE must list both axes, in the cached order.
-        assert new.sent[1] == "ENABLE X Y"
+        assert await d._send("PFBK(X)") == "5.0"
+        assert new.sent == ["PFBK(X)"]
 
 
 # ---------------------------------------------------------------------------
@@ -250,8 +246,6 @@ class TestReconnectOnBrokenPipe:
         old = _FakeServer("old")
         old.fail_drain_on(0)  # first command's drain() raises ConnectionReset
         new = _FakeServer("new")
-        new.queue_response("%")
-        new.queue_response("%")
         new.queue_response("%180.0")
 
         d = _make_driver_with_streams(old)
@@ -260,8 +254,7 @@ class TestReconnectOnBrokenPipe:
         result = await d._send("PFBK(X)")
 
         assert result == "180.0"
-        # The handshake + retry hit the new server, in order.
-        assert new.sent == ["ACKNOWLEDGEALL", "ENABLE X", "PFBK(X)"]
+        assert new.sent == ["PFBK(X)"]
 
 
 # ---------------------------------------------------------------------------
@@ -300,10 +293,7 @@ class TestReconnectBounded:
         old = _FakeServer("old")
         old.eof_read_on(0)
         new = _FakeServer("new")
-        # ACK + ENABLE succeed, but the retried PFBK gets EOF too.
-        new.queue_response("%")
-        new.queue_response("%")
-        new.eof_read_on(2)  # 0=ACK, 1=ENABLE, 2=retried PFBK → EOF
+        new.eof_read_on(0)  # the one retried PFBK also gets EOF
 
         d = _make_driver_with_streams(old)
         # Only one fake post-reconnect — if the driver tried to reconnect
@@ -312,15 +302,14 @@ class TestReconnectBounded:
 
         with pytest.raises((ConnectionResetError, AerotechError)):
             await d._send("PFBK(X)")
-        # ACK + ENABLE + PFBK retry — 3 commands sent to the new socket,
-        # no fourth-command attempt against any later server.
-        assert new.sent == ["ACKNOWLEDGEALL", "ENABLE X", "PFBK(X)"]
+        # Exactly one PFBK retry, with no handshake and no second reconnect.
+        assert new.sent == ["PFBK(X)"]
 
     @pytest.mark.asyncio
     async def test_reconnect_refused_when_axes_present_empty(self, monkeypatch):
         """Pre-connect EOF: ``_silent_reconnect`` returns False because
-        there's no cached ENABLE state to restore. We don't half-init
-        the controller."""
+        there's no proven post-connect state. We don't half-init the
+        controller."""
         old = _FakeServer("old")
         old.eof_read_on(0)
         d = _make_driver_with_streams(old)
@@ -422,8 +411,6 @@ class TestLazyReconnectOnClosedTransport:
     async def test_closed_transport_reconnects_before_write(self, monkeypatch):
         old = _FakeServer("old")
         new = _FakeServer("new")
-        new.queue_response("%")        # ACKNOWLEDGE_ALL
-        new.queue_response("%")        # ENABLE X
         new.queue_response("%30.00")   # PFBK(X) after lazy reconnect
 
         d = _make_driver_with_streams(old)
@@ -436,7 +423,7 @@ class TestLazyReconnectOnClosedTransport:
         # 关键: 写前拦截 — 老连接一个字节都不该收到 (与 EOF 场景的区别;
         # 现场故障形态正是"写打在死 transport 上")。
         assert old.sent == []
-        assert new.sent == ["ACKNOWLEDGEALL", "ENABLE X", "PFBK(X)"]
+        assert new.sent == ["PFBK(X)"]
         assert d._writer is not None and not d._writer.is_closing()
 
     @pytest.mark.asyncio

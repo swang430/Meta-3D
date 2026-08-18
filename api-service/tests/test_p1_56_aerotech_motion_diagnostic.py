@@ -12,7 +12,6 @@ from app.diagnostics import loader
 from app.diagnostics.sequences import aerotech_positioner_motion_truth as sequence
 from app.hal.aerotech_positioner import (
     AerotechOperatorStopRequested,
-    AxisStatusBit,
     RealAerotechDriver,
 )
 
@@ -34,19 +33,29 @@ class MotionDiagnosticDriver(RealAerotechDriver):
         *,
         moves_without_xf: bool,
         moves_with_xf: bool,
-        axisstatus: str | None = None,
-        axisstatus_responses: list[str] | None = None,
+        velocity: str = "0",
+        velocity_responses: list[str] | None = None,
         abort_positions: list[float] | None = None,
         abort_raises: bool = False,
     ) -> None:
-        super().__init__("motion-diagnostic", {"ip": "192.0.2.10"})
+        super().__init__(
+            "motion-diagnostic",
+            {
+                "ip": "192.0.2.10",
+                "motion_truth_units_verified": True,
+                "motion_truth_user_units": "degree",
+                "motion_truth_min_deg": 0.0,
+                "motion_truth_max_deg": 360.0,
+                "motion_truth_xf_speed": 5.0,
+            },
+        )
         self._axes_present = ["X"]
         self._writer = object()
         self.position = 10.0
         self.moves_without_xf = moves_without_xf
         self.moves_with_xf = moves_with_xf
-        self.axisstatus = axisstatus or str(1 << AxisStatusBit.IN_POSITION)
-        self.axisstatus_responses = list(axisstatus_responses or [])
+        self.velocity = velocity
+        self.velocity_responses = list(velocity_responses or [])
         self.abort_positions = list(abort_positions or [])
         self.abort_raises = abort_raises
         self.commands: list[str] = []
@@ -70,12 +79,12 @@ class MotionDiagnosticDriver(RealAerotechDriver):
         self.commands.append(command)
         if command == "PFBK(X)":
             return str(self.position)
-        if command == "AXISSTATUS(X)":
-            if self.axisstatus_responses:
-                return self.axisstatus_responses.pop(0)
-            return self.axisstatus
+        if command == "VFBK(X)":
+            if self.velocity_responses:
+                return self.velocity_responses.pop(0)
+            return self.velocity
         if command.startswith("MOVEABS X "):
-            has_xf = " XF" in command
+            has_xf = any(token.startswith("XF") for token in command.split())
             if (has_xf and self.moves_with_xf) or (
                 not has_xf and self.moves_without_xf
             ):
@@ -158,7 +167,42 @@ async def test_disconnected_driver_is_refused_before_motion(fast_clock):
 
 
 @pytest.mark.asyncio
-async def test_sequence_keeps_enable_and_records_raw_no_xf_and_xf_samples(fast_clock):
+async def test_unknown_user_units_fail_before_enable_or_wrapped_motion(fast_clock):
+    driver = MotionDiagnosticDriver(moves_without_xf=True, moves_with_xf=True)
+    driver.position = 10000.0
+    driver.config.pop("motion_truth_units_verified")
+
+    result = await sequence.run(
+        SimpleNamespace(), _hal(driver), {}, log=lambda _message: None
+    )
+
+    assert result.success is False
+    assert "motion_truth_units_verified" in result.summary
+    assert not any(
+        command.startswith(("ENABLE ", "MOVEABS ")) for command in driver.commands
+    )
+
+
+@pytest.mark.asyncio
+async def test_caller_cannot_override_the_site_approved_motion_feed(fast_clock):
+    driver = MotionDiagnosticDriver(moves_without_xf=True, moves_with_xf=True)
+
+    result = await sequence.run(
+        SimpleNamespace(),
+        _hal(driver),
+        {"xf_speed": 6.0},
+        log=lambda _message: None,
+    )
+
+    assert result.success is False
+    assert "motion_truth_xf_speed" in result.summary
+    assert not any(
+        command.startswith(("ENABLE ", "MOVEABS ")) for command in driver.commands
+    )
+
+
+@pytest.mark.asyncio
+async def test_sequence_uses_only_sourced_xf_motion_and_records_raw_samples(fast_clock):
     driver = MotionDiagnosticDriver(moves_without_xf=True, moves_with_xf=True)
 
     result = await sequence.run(
@@ -176,9 +220,14 @@ async def test_sequence_keeps_enable_and_records_raw_no_xf_and_xf_samples(fast_c
 
     assert result.success is True
     assert driver._current_azimuth == pytest.approx(10.0)
+    assert driver._current_elevation == pytest.approx(0.0)
+    assert (await driver.get_metrics()).metrics["position_verified"] is True
     assert driver.commands.count("ENABLE X") == 1
     moves = [command for command in driver.commands if command.startswith("MOVEABS")]
-    assert moves == ["MOVEABS X 20.0000", "MOVEABS X 10.0000 XF5.0000"]
+    assert moves == [
+        "MOVEABS X 20.0000 XF5.0000",
+        "MOVEABS X 10.0000 XF5.0000",
+    ]
     move_generations = [
         generation
         for command, generation in driver.command_stop_generations
@@ -191,7 +240,7 @@ async def test_sequence_keeps_enable_and_records_raw_no_xf_and_xf_samples(fast_c
         assert step.raw is not None
         assert json.loads(step.raw)["samples"] == segment["samples"]
         assert len(segment["samples"]) >= 3
-        assert all("axisstatus_raw" in sample for sample in segment["samples"])
+        assert all("vfbk_raw" in sample for sample in segment["samples"])
         assert all("pfbk_raw" in sample for sample in segment["samples"])
         assert segment["command_accepted"] is True
         assert segment["feedback_changed"] is True
@@ -199,7 +248,7 @@ async def test_sequence_keeps_enable_and_records_raw_no_xf_and_xf_samples(fast_c
 
 
 @pytest.mark.asyncio
-async def test_no_encoder_motion_fails_both_segments_but_keeps_raw_trace(fast_clock):
+async def test_no_encoder_motion_fails_and_forbids_return_segment(fast_clock):
     driver = MotionDiagnosticDriver(moves_without_xf=False, moves_with_xf=False)
 
     result = await sequence.run(
@@ -210,29 +259,25 @@ async def test_no_encoder_motion_fails_both_segments_but_keeps_raw_trace(fast_cl
     )
 
     assert result.success is False
-    assert "编码器反馈未证明动作" in result.summary
-    assert [segment["feedback_changed"] for segment in result.extra["segments"]] == [
-        False,
-        False,
-    ]
+    assert "小步动作未获完整证明" in result.summary
+    assert [segment["feedback_changed"] for segment in result.extra["segments"]] == [False]
     moves = [command for command in driver.commands if command.startswith("MOVEABS")]
-    assert " XF" not in moves[0]
-    assert " XF" in moves[1]
+    assert moves == ["MOVEABS X 20.0000 XF5.0000"]
     assert all(step.raw for step in result.steps)
-    assert driver.commands.count("ABORT X") == 2
+    assert driver.commands.count("ABORT X") == 1
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("axisstatus", ["nan", "0.5", "-1"])
-async def test_invalid_axis_status_cannot_be_washed_into_success_by_final_position(
+@pytest.mark.parametrize("velocity", ["nan", "inf", "not-a-number"])
+async def test_invalid_velocity_cannot_be_washed_into_success_by_final_position(
     fast_clock,
-    axisstatus: str,
+    velocity: str,
 ):
     driver = MotionDiagnosticDriver(
         moves_without_xf=True,
         moves_with_xf=True,
-        axisstatus=axisstatus,
-        axisstatus_responses=["0"],
+        velocity=velocity,
+        velocity_responses=["0"],
     )
 
     result = await sequence.run(
@@ -253,12 +298,12 @@ async def test_invalid_axis_status_cannot_be_washed_into_success_by_final_positi
 
 
 @pytest.mark.asyncio
-async def test_move_active_without_in_position_cannot_finish_diagnostic(fast_clock):
+async def test_nonzero_velocity_cannot_finish_diagnostic(fast_clock):
     driver = MotionDiagnosticDriver(
         moves_without_xf=True,
         moves_with_xf=True,
-        axisstatus=str(1 << AxisStatusBit.MOVE_ACTIVE),
-        axisstatus_responses=["0"],
+        velocity="1",
+        velocity_responses=["0"],
     )
 
     result = await sequence.run(
@@ -282,7 +327,7 @@ async def test_move_active_without_in_position_cannot_finish_diagnostic(fast_clo
 async def test_abort_failure_stops_before_second_motion_command(fast_clock):
     driver = MotionDiagnosticDriver(
         moves_without_xf=False,
-        moves_with_xf=True,
+        moves_with_xf=False,
         abort_raises=True,
     )
 
@@ -298,7 +343,7 @@ async def test_abort_failure_stops_before_second_motion_command(fast_clock):
     assert result.extra["segments"][0]["abort_succeeded"] is False
     moves = [command for command in driver.commands if command.startswith("MOVEABS")]
     assert len(moves) == 1
-    assert " XF" not in moves[0]
+    assert " XF" in moves[0]
 
 
 @pytest.mark.asyncio
@@ -317,7 +362,7 @@ async def test_operator_emergency_stop_during_first_segment_forbids_second_move(
             command,
             expected_operator_stop_generation=expected_operator_stop_generation,
         )
-        if command.startswith("MOVEABS X ") and " XF" not in command:
+        if command.startswith("MOVEABS X "):
             driver.note_operator_stop()
         return response
 
@@ -333,13 +378,13 @@ async def test_operator_emergency_stop_during_first_segment_forbids_second_move(
     moves = [command for command in driver.commands if command.startswith("MOVEABS")]
     assert result.success is False
     assert "急停" in result.summary
-    assert moves == ["MOVEABS X 20.0000"]
+    assert moves == ["MOVEABS X 20.0000 XF5.0000"]
 
 
 @pytest.mark.asyncio
 async def test_abort_refresh_is_retained_as_final_encoder_truth(fast_clock):
     driver = MotionDiagnosticDriver(
-        moves_without_xf=True,
+        moves_without_xf=False,
         moves_with_xf=False,
         abort_positions=[12.0],
     )
@@ -351,9 +396,9 @@ async def test_abort_refresh_is_retained_as_final_encoder_truth(fast_clock):
         log=lambda _message: None,
     )
 
-    second = result.extra["segments"][1]
-    assert second["abort_succeeded"] is True
-    assert second["post_abort_position"] == pytest.approx(12.0)
+    first = result.extra["segments"][0]
+    assert first["abort_succeeded"] is True
+    assert first["post_abort_position"] == pytest.approx(12.0)
     assert driver._current_azimuth == pytest.approx(12.0)
 
 
@@ -384,7 +429,78 @@ async def test_abort_refresh_still_runs_when_stop_raises(fast_clock):
 
     assert segment["abort_succeeded"] is False
     assert segment["post_abort_position"] == pytest.approx(7.0)
-    assert driver._current_azimuth == pytest.approx(7.0)
+    # 这是未证明零速时的瞬时读数，可保留为诊断证据，
+    # 但不能发布成稳定的当前位置。
+    assert driver._current_azimuth is None
+    assert (await driver.get_metrics()).metrics["position_verified"] is False
+
+
+@pytest.mark.asyncio
+async def test_abort_refresh_failure_invalidates_cached_position(fast_clock):
+    driver = MotionDiagnosticDriver(
+        moves_without_xf=False,
+        moves_with_xf=False,
+    )
+    driver._current_azimuth = 33.0
+    driver._current_elevation = 0.0
+
+    async def failing_get_position():
+        raise ConnectionError("PFBK unavailable")
+
+    driver.get_position = failing_get_position  # type: ignore[method-assign]
+
+    stopped, error, position = await sequence._abort_and_refresh(driver)
+    metrics = await driver.get_metrics()
+
+    assert stopped is True
+    assert "PFBK" in (error or "")
+    assert position is None
+    assert metrics.metrics["azimuth"] is None
+    assert metrics.metrics["position_verified"] is False
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_second_segment_abort_does_not_republish_instant_pfbk(
+    fast_clock,
+):
+    driver = MotionDiagnosticDriver(
+        moves_without_xf=False,
+        moves_with_xf=True,
+        abort_raises=True,
+    )
+    original_send = driver._send
+    move_count = 0
+
+    async def fail_return_move(
+        command: str,
+        *,
+        expected_operator_stop_generation: int | None = None,
+    ) -> str:
+        nonlocal move_count
+        if command.startswith("MOVEABS X "):
+            move_count += 1
+            if move_count == 2:
+                driver.moves_with_xf = False
+        return await original_send(
+            command,
+            expected_operator_stop_generation=expected_operator_stop_generation,
+        )
+
+    driver._send = fail_return_move  # type: ignore[method-assign]
+
+    result = await sequence.run(
+        SimpleNamespace(),
+        _hal(driver),
+        {"sample_duration_s": 0.2, "sample_interval_s": 0.2},
+        log=lambda _message: None,
+    )
+    metrics = await driver.get_metrics()
+
+    assert result.success is False
+    assert result.extra["segments"][1]["abort_succeeded"] is False
+    assert result.extra["segments"][1]["post_abort_position"] is not None
+    assert metrics.metrics["azimuth"] is None
+    assert metrics.metrics["position_verified"] is False
 
 
 @pytest.mark.asyncio
@@ -406,7 +522,7 @@ async def test_cancelled_diagnostic_aborts_before_releasing_motion(
             log=lambda _message: None,
         )
 
-    assert "MOVEABS X 20.0000" in driver.commands
+    assert "MOVEABS X 20.0000 XF5.0000" in driver.commands
     assert "ABORT X" in driver.commands
 
 
@@ -437,3 +553,19 @@ async def test_cancelled_move_command_response_still_aborts_diagnostic():
 
     assert any(command.startswith("MOVEABS X ") for command in driver.commands)
     assert "ABORT X" in driver.commands
+
+
+@pytest.mark.asyncio
+async def test_out_of_range_start_is_rejected_before_enable():
+    driver = MotionDiagnosticDriver(moves_without_xf=False, moves_with_xf=False)
+    driver.config["motion_truth_min_deg"] = 0.0
+    driver.config["motion_truth_max_deg"] = 30.0
+    driver.position = 45.0
+
+    result = await sequence.run(
+        SimpleNamespace(), _hal(driver), {}, log=lambda _message: None
+    )
+
+    assert result.success is False
+    assert not any(command.startswith("ENABLE ") for command in driver.commands)
+    assert not any(command.startswith("MOVEABS ") for command in driver.commands)

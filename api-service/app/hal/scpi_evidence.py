@@ -1305,7 +1305,8 @@ def build_positioner_evidence(
         verdict,
         reason,
         [move_exchange, feedback_exchange],
-        # 真实 move_to 在 MOVEABS 与最终 PFBK 之间轮询 AXISSTATUS 等待到位。
+        # 真实 move_to 在 MOVEABS 与最终 PFBK 之间使用厂商指南有出处的
+        # WAIT INPOS，并以零速 VFBK + 最终 PFBK 做动作真值门。
         # 这些同 capture/同仪器的受控查询不能让合法证据永久降级为 interleaved。
         allow_interleaved=True,
     )

@@ -10,8 +10,7 @@ References:
 """
 
 import logging
-import asyncio
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Optional
 from datetime import datetime
 
 from app.hal.base import (
@@ -47,7 +46,19 @@ class RealEtsEmcenterDriver(PositionerDriver):
         )
         self._visa_rm = None
         self._visa_session = None
-        self._current_azimuth = 0.0
+        self._current_azimuth: Optional[float] = None
+
+    def _unsupported_positioner_protocol(self) -> str:
+        return (
+            "EMCenter positioner control is disabled: no checked-in vendor "
+            "evidence defines SET_POS/readback/stop semantics"
+        )
+
+    def _reject_unsupported_positioner_operation(self) -> str:
+        message = self._unsupported_positioner_protocol()
+        logger.error("[ETS-L] %s", message)
+        self._set_status(InstrumentStatus.ERROR, message)
+        return message
 
     async def connect(self) -> bool:
         if self._connection_config_error or not self.ip_address:
@@ -88,49 +99,55 @@ class RealEtsEmcenterDriver(PositionerDriver):
     async def configure(self, config: Dict[str, Any]) -> bool:
         return True
 
-    async def move_to(self, azimuth: float, elevation: float) -> bool:
-        try:
-            self._set_status(InstrumentStatus.BUSY)
-            self._write(EtsScpi.SET_POS.format(angle=azimuth))
-            # Wait for physical movement
-            while True:
-                await asyncio.sleep(0.5)
-                # Query if still moving or arrived (simplified logically)
-                pos = await self.get_position()
-                if abs(pos[0] - azimuth) < 0.5:
-                    break
-            
-            self._set_status(InstrumentStatus.READY)
-            return True
-        except Exception as e:
-            logger.error(f"[ETS-L] Move failed: {e}")
-            self._set_status(InstrumentStatus.ERROR, str(e))
-            return False
+    async def move_to(
+        self,
+        azimuth: float,
+        elevation: float,
+        *,
+        expected_operator_stop_generation: Optional[int] = None,
+    ) -> bool:
+        # The checked-in EMCenter document covers the RF-switch platform,
+        # not a positioner motion protocol.  These historical representative
+        # command strings therefore cannot safely drive a real turntable.
+        self._reject_unsupported_positioner_operation()
+        return False
 
     async def get_position(self) -> Tuple[float, float]:
-        try:
-            pos_str = self._query(EtsScpi.GET_POS)
-            self._current_azimuth = float(pos_str.strip())
-            return (self._current_azimuth, 0.0)  # Elev not strictly mapped in simple TT
-        except Exception:
-            return (self._current_azimuth, 0.0)
+        message = self._reject_unsupported_positioner_operation()
+        raise RuntimeError(message)
 
     async def stop(self) -> bool:
-        try:
-            self._write(EtsScpi.STOP)
-            self._set_status(InstrumentStatus.READY)
-            return True
-        except Exception:
-            return False
+        self._reject_unsupported_positioner_operation()
+        return False
 
     async def get_capabilities(self) -> list[InstrumentCapability]:
-        return [InstrumentCapability("3d_positioning", "Azimuth control", True, {})]
+        return [
+            InstrumentCapability(
+                "3d_positioning",
+                self._unsupported_positioner_protocol(),
+                False,
+                {},
+            )
+        ]
 
     async def get_metrics(self) -> InstrumentMetrics:
-        return InstrumentMetrics(timestamp=datetime.utcnow(), metrics={"azimuth": self._current_azimuth})
+        return InstrumentMetrics(
+            timestamp=datetime.utcnow(),
+            metrics={
+                "azimuth": None,
+                "position_verified": False,
+                "position_unit": "unknown",
+                "positioner_protocol_supported": False,
+            },
+        )
 
-    async def reset(self) -> bool:
-        return await self.stop()
+    async def reset(
+        self,
+        *,
+        expected_operator_stop_generation: Optional[int] = None,
+    ) -> bool:
+        self._reject_unsupported_positioner_operation()
+        return False
 
     def _do_write(self, cmd: str) -> None:
         """发送 SCPI 写命令（由基类 _write() 自动调用）"""

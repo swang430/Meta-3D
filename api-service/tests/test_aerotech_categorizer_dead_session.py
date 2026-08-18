@@ -18,7 +18,7 @@ import asyncio
 import pytest
 
 from app.diagnostics.sequences.aerotech_positioner_health import _categorize
-from app.hal.aerotech_positioner import AerotechError
+from app.hal.aerotech_positioner import AerotechCommandRejected, AerotechError
 
 
 class TestEmptyResponseIsUnknown:
@@ -71,5 +71,5 @@ class TestExceptionPathsUnchanged:
         assert _categorize(response=None, exception=exc) == "UNKNOWN"
 
     def test_nak_aerotech_error_is_unsupported(self):
-        exc = AerotechError("AeroBasic error for 'BOGUSCMD': !")
+        exc = AerotechCommandRejected("AeroBasic error for 'BOGUSCMD': !")
         assert _categorize(response=None, exception=exc) == "UNSUPPORTED"

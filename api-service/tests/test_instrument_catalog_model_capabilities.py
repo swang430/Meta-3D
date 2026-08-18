@@ -98,15 +98,12 @@ class TestCatalogModelCapabilitiesField:
         fs16 = _find_model(body, "channelEmulator", "PROPSIM FS16")
         assert fs16["model_capabilities"] == []
 
-    def test_aerotech_a3200_exposes_both_axis_tokens(self, test_db):
+    def test_aerotech_a3200_exposes_only_sourced_single_axis_token(self, test_db):
         with TestClient(app) as client:
             r = client.get("/api/v1/instruments/catalog")
             body = r.json()
         a3200 = _find_model(body, "positioner", "A3200")
-        assert sorted(a3200["model_capabilities"]) == [
-            "pos.dual_axis_azel",
-            "pos.single_axis_az",
-        ]
+        assert a3200["model_capabilities"] == ["pos.single_axis_az"]
 
     def test_model_without_real_driver_returns_empty_list(self, test_db):
         """Models seeded in the catalog that don't have a real-driver

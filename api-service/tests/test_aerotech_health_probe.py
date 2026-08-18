@@ -60,7 +60,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base, get_db
 from app.diagnostics import loader
-from app.hal.aerotech_positioner import AerotechError
+from app.hal.aerotech_positioner import AerotechCommandRejected, AerotechError
 from app.main import app
 from app.models.chamber import ChamberType, create_chamber_from_preset
 from app.models.lab_profile import LabProfile
@@ -304,6 +304,10 @@ class TestDriverGating:
         """MockPositioner would silently 'succeed' on every probe — probe
         must refuse it, telling operator to set a real driver."""
         mock_pos = _build_pos(class_name="MockPositioner")
+        monkeypatch.setattr(
+            "app.diagnostics.sequences.aerotech_positioner_health.is_mock_driver",
+            lambda driver: driver is mock_pos,
+        )
         _patched_hal(monkeypatch, drivers={"positioner": mock_pos})
 
         resp = client.post(
@@ -395,12 +399,52 @@ class TestHappyPath:
         assert counts["UNSUPPORTED"] == 0
         assert body["extra"]["single_axis"] is False
 
+    def test_discovered_dual_axis_requires_elevation_feedback(
+        self, lab_with_positioner, monkeypatch,
+    ):
+        pos = _build_pos(
+            axes_present=("X", "Y"),
+            response_override={"PFBK(Y)": asyncio.TimeoutError()},
+        )
+        _patched_hal(monkeypatch, drivers={"positioner": pos})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/aerotech_positioner_health/run",
+            json={"lab_profile_id": str(lab_with_positioner.id)},
+        )
+        body = resp.json()
+
+        assert body["success"] is False
+        assert "PFBK_EL" in body["extra"]["critical_failures"]
+
 
 # ---------------------------------------------------------------------------
 # Status classification
 # ---------------------------------------------------------------------------
 
 class TestStatusClassification:
+    def test_axisstatus_is_presented_only_as_raw_bitmask_without_guessed_labels(
+        self, lab_with_positioner, monkeypatch
+    ):
+        pos = _build_pos(axes_present=("X",))
+        _patched_hal(monkeypatch, drivers={"positioner": pos})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/aerotech_positioner_health/run",
+            json={
+                "lab_profile_id": str(lab_with_positioner.id),
+                "params": {"include_supported": True},
+            },
+        )
+        body = resp.json()
+        axisstatus_step = next(
+            step for step in body["steps"] if "AXISSTATUS" in step["label"]
+        )
+        assert "0x" in axisstatus_step["detail"]
+        assert "Enabled" not in axisstatus_step["detail"]
+        assert "InPosition" not in axisstatus_step["detail"]
+        assert "MoveActive" not in axisstatus_step["detail"]
+
     def test_nak_categorized_as_unsupported(self, lab_with_positioner, monkeypatch):
         """A real Aerotech NAK comes back as AerotechError from _send.
         Probe should bucket as UNSUPPORTED, not crash."""
@@ -408,7 +452,9 @@ class TestStatusClassification:
             axes_present=("X",),
             # PFBK(X) NAKs; everything else fine
             response_override={
-                "PFBK(X)": AerotechError("AeroBasic error for 'PFBK(X)': !"),
+                "PFBK(X)": AerotechCommandRejected(
+                    "AeroBasic error for 'PFBK(X)': !"
+                ),
             },
         )
         _patched_hal(monkeypatch, drivers={"positioner": pos})
@@ -441,6 +487,44 @@ class TestStatusClassification:
         body = resp.json()
         counts = body["extra"]["counts"]
         assert counts["SUPPORTED_BUT_FAULT"] >= 1
+
+    @pytest.mark.parametrize("bad_value", ["", "NaN", "inf", "12 counts"])
+    def test_feedback_requires_a_complete_finite_number(
+        self, lab_with_positioner, monkeypatch, bad_value,
+    ):
+        pos = _build_pos(
+            axes_present=("X",),
+            response_override={"PFBK(X)": bad_value},
+        )
+        _patched_hal(monkeypatch, drivers={"positioner": pos})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/aerotech_positioner_health/run",
+            json={"lab_profile_id": str(lab_with_positioner.id)},
+        )
+        body = resp.json()
+
+        assert body["success"] is False
+        pfbk = next(step for step in body["steps"] if "PFBK(X)" in step["label"])
+        assert "UNKNOWN" in pfbk["detail"]
+
+    def test_any_controller_task_fault_blocks_overall_health(
+        self, lab_with_positioner, monkeypatch,
+    ):
+        pos = _build_pos(
+            axes_present=("X",),
+            response_override={"AXISSTATUS(X)": "#task-fault"},
+        )
+        _patched_hal(monkeypatch, drivers={"positioner": pos})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/aerotech_positioner_health/run",
+            json={"lab_profile_id": str(lab_with_positioner.id)},
+        )
+        body = resp.json()
+
+        assert body["extra"]["counts"]["SUPPORTED_BUT_FAULT"] == 1
+        assert body["success"] is False
 
     def test_timeout_categorized_as_unknown(self, lab_with_positioner, monkeypatch):
         """asyncio.TimeoutError from _send → UNKNOWN bucket."""
@@ -517,19 +601,40 @@ class TestAxisFaultBlocker:
         assert body["extra"]["axis_in_fault"] is True
         assert body["extra"]["axis_fault_az"] == 0x0040
 
+    def test_fractional_axis_fault_is_unknown_not_truncated_to_healthy(
+        self, lab_with_positioner, monkeypatch,
+    ):
+        pos = _build_pos(
+            axes_present=("X",),
+            axisfault={"X": 0.5},
+        )
+        _patched_hal(monkeypatch, drivers={"positioner": pos})
+
+        resp = client.post(
+            "/api/v1/diagnostic-sequences/aerotech_positioner_health/run",
+            json={"lab_profile_id": str(lab_with_positioner.id)},
+        )
+        body = resp.json()
+        fault_step = next(
+            step for step in body["steps"] if "AXISFAULT(X)" in step["label"]
+        )
+        assert body["success"] is False
+        assert "UNKNOWN" in fault_step["detail"]
+        assert body["extra"].get("axis_fault_az") is None
+
 
 # ---------------------------------------------------------------------------
 # AXISSTATUS hex decoding
 # ---------------------------------------------------------------------------
 
 class TestAxisStatusBitmaskDecode:
-    def test_high_bit_status_renders_unsigned_with_flag_names(
+    def test_high_bit_status_renders_unsigned_without_unverified_flag_names(
         self, lab_with_positioner, monkeypatch,
     ):
         """0x90480005 has the sign bit set — Python int(float(x)) carries
         the sign, but probe must mask to 32-bit unsigned before hex
-        formatting, AND decode the known flag bits (Enabled bit 0,
-        InPosition bit 2)."""
+        formatting, but must not invent flag meanings absent from the
+        checked-in vendor guide."""
         pos = _build_pos(
             axes_present=("X",),
             axisstatus={"X": 0x90480005},
@@ -551,9 +656,9 @@ class TestAxisStatusBitmaskDecode:
         assert "0x-" not in axisstatus_step["detail"]
         # Correct unsigned 32-bit form.
         assert "0x90480005" in axisstatus_step["detail"]
-        # Flag decoding.
-        assert "Enabled" in axisstatus_step["detail"]
-        assert "InPosition" in axisstatus_step["detail"]
+        assert "raw" in axisstatus_step["detail"]
+        assert "Enabled" not in axisstatus_step["detail"]
+        assert "InPosition" not in axisstatus_step["detail"]
 
 
 # ---------------------------------------------------------------------------

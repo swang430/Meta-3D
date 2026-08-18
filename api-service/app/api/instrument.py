@@ -3892,14 +3892,25 @@ async def positioner_stop() -> PositionerResult:
     if callable(note_operator_stop):
         note_operator_stop()
     ok = await driver.stop()
+    if not ok:
+        invalidate_position = getattr(driver, "_invalidate_cached_feedback", None)
+        if callable(invalidate_position):
+            invalidate_position()
+        return PositionerResult(
+            ok=False,
+            azimuth=None,
+            elevation=None,
+            reason="stop_failed",
+            message="急停失败；转台是否已停止与当前位置均未知",
+        )
     (az, el), pos_err = await _positioner_position(driver)
     return PositionerResult(
-        ok=bool(ok), azimuth=az, elevation=el,
-        reason=None if ok else "stop_failed",
+        ok=True, azimuth=az, elevation=el,
+        reason=None,
         message=(
             "已确认停止；编码器位置未知，请重新读取 PFBK"
-            if ok and pos_err
-            else "已急停" if ok else "急停失败"
+            if pos_err
+            else "已急停"
         ),
     )
 
@@ -3915,16 +3926,41 @@ async def positioner_sweep(request: PositionerSweepRequest) -> PositionerSweepRe
     if driver is None:
         return PositionerSweepResult(ok=False, reason=reason,
                                      message=_POSITIONER_REASON_MSG.get(reason))
-    _positioner_stop_flag["requested"] = False  # 新 sweep 清除旧急停态
-    if request.home_first and not await driver.reset():
-        return PositionerSweepResult(ok=False, reason="home_failed",
-                                     message="回零失败, 中止扫描")
+    stop_generation_reader = getattr(driver, "operator_stop_generation", None)
+    motion_stop_generation = (
+        stop_generation_reader() if callable(stop_generation_reader) else None
+    )
+    motion_stop_kwargs = (
+        {"expected_operator_stop_generation": motion_stop_generation}
+        if motion_stop_generation is not None
+        else {}
+    )
+    _positioner_stop_flag["requested"] = False  # 兼容无 generation 的旧驱动
+
+    def operator_stop_changed() -> bool:
+        return bool(
+            motion_stop_generation is not None
+            and callable(stop_generation_reader)
+            and stop_generation_reader() != motion_stop_generation
+        )
+
+    if request.home_first:
+        home_ok = await driver.reset(**motion_stop_kwargs)
+        if operator_stop_changed():
+            return PositionerSweepResult(
+                ok=False,
+                reason="aborted",
+                message="回零期间收到急停, 中止扫描",
+            )
+        if not home_ok:
+            return PositionerSweepResult(ok=False, reason="home_failed",
+                                         message="回零失败, 中止扫描")
     points: List[PositionerSweepPoint] = []
     for target in request.angles:
-        if _positioner_stop_flag["requested"]:  # 急停: 停止调度后续 move (Codex P1)
+        if _positioner_stop_flag["requested"] or operator_stop_changed():
             return PositionerSweepResult(ok=False, points=points, reason="aborted",
                                          message=f"已被急停中止, 完成 {len(points)} 点")
-        moved = await driver.move_to(target, 0.0)
+        moved = await driver.move_to(target, 0.0, **motion_stop_kwargs)
         (az, el), pos_err = await _positioner_position(driver)
         within = (
             None

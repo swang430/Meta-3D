@@ -7,7 +7,7 @@ Provides abstract interface and mock implementation for 3D/2D OTA positioners (t
 import asyncio
 import logging
 import random
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 from datetime import datetime
 
 from app.hal.base import (
@@ -21,7 +21,12 @@ logger = logging.getLogger(__name__)
 
 
 class EtsPositionerScpi:
-    """EMCenter 转台命令真值；real 与 mock 使用同一组常量。"""
+    """Legacy representative strings; real EMCenter motion must not send them.
+
+    The checked-in EMCenter manual documents the RF-switch platform, not a
+    positioner motion protocol.  These constants remain only for the mock
+    driver's synthetic exchange trace until vendor evidence is available.
+    """
 
     IDN = "*IDN?"
     RST = "*RST"
@@ -50,7 +55,13 @@ class PositionerDriver(InstrumentDriver):
         """Return the process-local operator-stop generation for this driver."""
         return int(getattr(self, "_operator_stop_generation", 0))
 
-    async def move_to(self, azimuth: float, elevation: float) -> bool:
+    async def move_to(
+        self,
+        azimuth: float,
+        elevation: float,
+        *,
+        expected_operator_stop_generation: Optional[int] = None,
+    ) -> bool:
         """
         Command the positioner to move to absolute coordinates.
         Args:
@@ -71,6 +82,14 @@ class PositionerDriver(InstrumentDriver):
         """
         Immediately stop all axis motion.
         """
+        raise NotImplementedError
+
+    async def reset(
+        self,
+        *,
+        expected_operator_stop_generation: Optional[int] = None,
+    ) -> bool:
+        """Home while honoring the caller's operator-stop generation."""
         raise NotImplementedError
 
 
@@ -115,11 +134,30 @@ class MockPositioner(PositionerDriver):
             }
         )
 
-    async def reset(self) -> bool:
-        await self.move_to(0, 0)
-        return True
+    async def reset(
+        self,
+        *,
+        expected_operator_stop_generation: Optional[int] = None,
+    ) -> bool:
+        return await self.move_to(
+            0,
+            0,
+            expected_operator_stop_generation=expected_operator_stop_generation,
+        )
 
-    async def move_to(self, azimuth: float, elevation: float) -> bool:
+    async def move_to(
+        self,
+        azimuth: float,
+        elevation: float,
+        *,
+        expected_operator_stop_generation: Optional[int] = None,
+    ) -> bool:
+        if (
+            expected_operator_stop_generation is not None
+            and self.operator_stop_generation()
+            != expected_operator_stop_generation
+        ):
+            return False
         self._set_status(InstrumentStatus.BUSY)
         await asyncio.sleep(min(abs(self._azimuth - azimuth) / 10.0, 5.0))
         self._azimuth = azimuth

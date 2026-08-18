@@ -13,10 +13,9 @@ Quiet-Zone Validation Service (3GPP TR 38.151 § 7.2)
   所以 QZ 服务自动继承所有这些行为.
 - **复用 channel_calibration_service 的数学 helper** (calculate_uniformity_stats,
   validate_quiet_zone_uniformity), 它们已经存在且 production-ready.
-- **PositionerDriver 驱动 SGH/QZ 扫描** — abstract 已有 move_to(az, el),
-  Aerotech / ETS / Mock 都实现了. 真实 cert 暗室通常用 X-Y 平移台 (cm 单位),
-  本服务把 (x_cm, y_cm) 当作小角度近似映射到 az/el — 方便 driver 抽象统一,
-  cert 部署时按需替换或加专用 X-Y driver.
+- **真实 QZ 网格要求经过验证的 X-Y 平移台（cm）**。现有 positioner 是旋转台
+  （degree）且 ETS 动作协议没有仓内出处，因此真实路径在任何位置 I/O 前拒绝；
+  mock 路径只用于算法演练，不形成正式校准结论。
 - **持久化到 QuietZoneCalibration model** — 已有 30+ 字段, 不动 schema.
 
 CalibrationOrchestrator dispatch 接 CalibrationItem.QUIET_ZONE_UNIFORMITY.
@@ -377,47 +376,12 @@ class QuietZoneValidationService:
         polarization: PolarizationType,
         warnings: List[str],
     ) -> List[Dict[str, Any]]:
-        """每点 positioner.move_to → CE+SA tone → SA mean dBm 入 grid。
-
-        positioner abstract 是 (azimuth, elevation) 度数; cert lab 的
-        QZ 扫描台是 (x, y) cm. 本实现用小角度近似把 cm 当度数传, 给
-        Mock / Aerotech / ETS 等通用 driver 用. 真实 X-Y 平移台部署时
-        应另写专用 driver (或扩展 PositionerDriver 接口加 move_to_xy_cm).
-        """
-        from app.services.instrument_hal_service import get_hal_service
-
-        hal = get_hal_service()
-        positioner = hal.drivers.get("positioner")
-        if positioner is None:
-            raise RuntimeError(
-                "QZ scan needs positioner driver (SGH/QZ scan stage). "
-                "Bind a PositionerDriver on the active LabProfile."
-            )
-
-        pl_service = ProbePathLossCalibrationService(self.db, use_mock=False)
-        grid: List[Dict[str, Any]] = []
-        for x_cm, y_cm, z_cm in offsets_cm:
-            ok = await positioner.move_to(azimuth=float(x_cm), elevation=float(y_cm))
-            if not ok:
-                raise RuntimeError(
-                    f"positioner.move_to({x_cm}, {y_cm}) failed; aborting scan"
-                )
-            sa_mean_dbm, _, _ = await pl_service.acquire_sa_power_via_ce_tone(
-                frequency_mhz=frequency_mhz,
-                ce_tx_power_dbm=ce_tx_power_dbm,
-                ce_port=ce_port,
-                route_target=route_target,
-                probe_id=0,
-                polarization=polarization,
-                warning_sink=warnings,
-                warning_label=f"grid point ({x_cm}, {y_cm}, {z_cm})",
-            )
-            grid.append({
-                "x": float(x_cm), "y": float(y_cm), "z": float(z_cm),
-                "measured_value": float(sa_mean_dbm),
-            })
-
-        return grid
+        """Fail closed until a linear-stage API with centimetre units exists."""
+        raise RuntimeError(
+            "Real QZ grid acquisition requires a verified linear XY stage API "
+            "in centimetres; rotational PositionerDriver.move_to(degrees) "
+            "must not be used for x_cm/y_cm"
+        )
 
     # ======================================================================
     # Lookup helpers

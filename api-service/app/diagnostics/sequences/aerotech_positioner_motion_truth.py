@@ -1,14 +1,17 @@
 """Destructive Aerotech encoder-motion diagnostic for P1-56.
 
-This sequence deliberately does not translate controller coordinates into a
-physical DUT azimuth.  It proves only that finite PFBK feedback changed and
-reached the requested controller-coordinate target.  User units, direction,
-offset and visible mechanical movement remain an on-site Hardware Blocker.
+This sequence deliberately refuses to move until the site configuration
+explicitly records degree user-units and a verified safe coordinate range.
+It proves only that finite PFBK feedback changed and reached the requested
+controller-coordinate target.  Direction, offset and visible mechanical
+movement remain an on-site Hardware Blocker.
 
 Command source: checked-in
 ``Instrument_API_Doc/Aerotech/Aerotech_Ensemble_ASCII_TCP转台控制集成说明.docx``
-§5–§6 explicitly gives ``ENABLE X``, ``MOVEABS X 90 [XF10]``,
-``AXISSTATUS(X)`` and ``PFBK(X)`` plus the wait/readback-before-sampling loop.
+§5–§7 explicitly gives ``ENABLE X``, ``MOVEABS X 90 XF10``, ``VFBK(X)`` and
+``PFBK(X)`` plus the wait/readback-before-sampling loop.  The checked-in guide
+does not establish a safe no-XF form or AXISSTATUS bit assignments, so neither
+is used as a success predicate here.
 """
 from __future__ import annotations
 
@@ -26,9 +29,7 @@ from app.diagnostics.protocol import (
 )
 from app.hal.aerotech_positioner import (
     AerotechOperatorStopRequested,
-    AxisStatusBit,
     RealAerotechDriver,
-    parse_axis_status_bitmask,
 )
 from app.services.diagnostic_context import DiagnosticContext
 from app.services.instrument_hal_service import is_mock_driver
@@ -37,9 +38,9 @@ from app.services.instrument_hal_service import is_mock_driver
 metadata = SequenceMetadata(
     name="Aerotech positioner motion truth (destructive)",
     description=(
-        "破坏性现场诊断：保持轴 ENABLE，先发送不带 XF 的小步 MOVEABS，再发送带 XF "
-        "的对照命令；每段按固定间隔归档 AXISSTATUS 与 PFBK 原始时间序列。只证明"
-        "编码器反馈变化/到达控制器坐标，不证明物理角度、方向、单位或偏置。"
+        "破坏性现场诊断：仅在站点已确认 degree user-units 与安全范围后，使用带 XF "
+        "的 MOVEABS 小步前进并返回；每段归档 VFBK 与 PFBK 原始时间序列。只证明"
+        "编码器反馈变化/到达控制器坐标，不证明物理方向、偏置或目视运动。"
     ),
     required_categories=["positioner"],
     params_schema=[
@@ -48,12 +49,6 @@ metadata = SequenceMetadata(
             "label": "控制器坐标小步进（0.1–30，默认 10）",
             "type": "number",
             "default": 10.0,
-        },
-        {
-            "name": "xf_speed",
-            "label": "XF 进给速度（0.1–20，默认 5）",
-            "type": "number",
-            "default": 5.0,
         },
         {
             "name": "sample_duration_s",
@@ -105,9 +100,6 @@ def _parse_params(params: Dict[str, Any]) -> Dict[str, float]:
         "step_deg": _number_param(
             params, "step_deg", 10.0, minimum=0.1, maximum=30.0
         ),
-        "xf_speed": _number_param(
-            params, "xf_speed", 5.0, minimum=0.1, maximum=20.0
-        ),
         "sample_duration_s": _number_param(
             params, "sample_duration_s", 10.0, minimum=0.2, maximum=10.0
         ),
@@ -118,6 +110,10 @@ def _parse_params(params: Dict[str, Any]) -> Dict[str, float]:
             params, "tolerance_deg", 0.5, minimum=0.01, maximum=5.0
         ),
     }
+    if "xf_speed" in params:
+        parsed["xf_speed"] = _number_param(
+            params, "xf_speed", 0.0, minimum=0.1, maximum=20.0
+        )
     if parsed["sample_interval_s"] > parsed["sample_duration_s"]:
         raise ValueError("sample_interval_s 不得大于 sample_duration_s")
     return parsed
@@ -129,13 +125,6 @@ def _finite(raw: str) -> Optional[float]:
     except (TypeError, ValueError):
         return None
     return value if math.isfinite(value) else None
-
-
-def _axis_status_bitmask(raw: str) -> Optional[int]:
-    try:
-        return parse_axis_status_bitmask(raw)
-    except ValueError:
-        return None
 
 
 def _azimuth_distance(left: float, right: float) -> float:
@@ -150,11 +139,45 @@ async def _read_position(driver: RealAerotechDriver, axis: str) -> tuple[str, fl
     return raw, value
 
 
+def _verified_degree_motion_config(
+    driver: RealAerotechDriver,
+) -> tuple[float, float, float]:
+    """Reuse the formal driver's complete site-approved motion truth."""
+    try:
+        return driver._require_supported_single_axis_motion()  # noqa: SLF001
+    except Exception as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def _bounded_target(
+    start: float,
+    step: float,
+    *,
+    lower: float,
+    upper: float,
+) -> float:
+    """Choose a small move without circular wrapping across a mechanical limit."""
+    if not lower <= start <= upper:
+        raise ValueError(
+            f"起点 {start:g} 超出已验证安全范围 [{lower:g}, {upper:g}]"
+        )
+    forward = start + step
+    if forward <= upper:
+        return forward
+    reverse = start - step
+    if reverse >= lower:
+        return reverse
+    raise ValueError("已验证安全范围不足以容纳请求的小步动作")
+
+
 async def _abort_and_refresh(
     driver: RealAerotechDriver,
 ) -> tuple[bool, Optional[str], Optional[float]]:
     """Finish ABORT/PFBK cleanup before releasing the destructive lease."""
     async def cleanup() -> tuple[bool, Optional[str], Optional[float]]:
+        # A segment may already have moved. Do not retain its pre-motion cache
+        # while the final encoder truth is unknown.
+        driver._invalidate_cached_feedback()  # noqa: SLF001
         stopped = False
         errors: list[str] = []
         try:
@@ -173,6 +196,10 @@ async def _abort_and_refresh(
                 errors.append("post-ABORT PFBK was non-finite")
         except Exception as exc:  # noqa: BLE001
             errors.append(f"PFBK {type(exc).__name__}: {exc}")
+        if not stopped:
+            # An instantaneous PFBK remains useful raw evidence, but without
+            # zero-velocity proof it is not a stable current-position truth.
+            driver._invalidate_cached_feedback()  # noqa: SLF001
         return bool(stopped), "; ".join(errors) or None, post_abort_position
 
     worker = asyncio.create_task(cleanup())
@@ -206,7 +233,6 @@ async def _sample_segment(
         "command_response_raw": None,
         "feedback_changed": False,
         "target_reached": False,
-        "axis_fault": False,
         "samples_valid": True,
         "samples": [],
         "abort_attempted": False,
@@ -255,33 +281,31 @@ async def _sample_segment(
     try:
         while True:
             elapsed = time.monotonic() - started
-            status_raw: Optional[str] = None
+            velocity_raw: Optional[str] = None
             position_raw: Optional[str] = None
-            status_value: Optional[int] = None
+            velocity_value: Optional[float] = None
             position_value: Optional[float] = None
             sample_error: Optional[str] = None
             try:
-                status_raw = await driver._send(f"AXISSTATUS({axis})")  # noqa: SLF001
+                velocity_raw = await driver._send(f"VFBK({axis})")  # noqa: SLF001
                 position_raw = await driver._send(f"PFBK({axis})")  # noqa: SLF001
-                status_value = _axis_status_bitmask(status_raw)
+                velocity_value = _finite(velocity_raw)
                 position_value = _finite(position_raw)
-                if status_value is None or position_value is None:
-                    raise ValueError("AXISSTATUS/PFBK 包含非有限数值")
+                if velocity_value is None or position_value is None:
+                    raise ValueError("VFBK/PFBK 包含非有限数值")
             except Exception as exc:
                 sample_error = f"{type(exc).__name__}: {exc}"
                 segment["samples_valid"] = False
 
             sample = {
                 "elapsed_s": round(elapsed, 6),
-                "axisstatus_raw": status_raw,
+                "vfbk_raw": velocity_raw,
                 "pfbk_raw": position_raw,
-                "axisstatus": status_value,
+                "velocity": velocity_value,
                 "position": position_value,
                 "error": sample_error,
             }
             segment["samples"].append(sample)
-            if status_value is not None and status_value & (1 << AxisStatusBit.FAULT):
-                segment["axis_fault"] = True
 
             if elapsed + 1e-9 >= duration_s:
                 break
@@ -304,18 +328,18 @@ async def _sample_segment(
             _azimuth_distance(finite_positions[-1], target) <= tolerance
         )
         segment["final_position"] = finite_positions[-1]
-    final_status = segment["samples"][-1]["axisstatus"] if segment["samples"] else None
-    segment["settled"] = bool(
-        final_status is not None
-        and final_status & (1 << AxisStatusBit.IN_POSITION)
-        and not final_status & (1 << AxisStatusBit.MOVE_ACTIVE)
+    final_velocity = (
+        segment["samples"][-1]["velocity"] if segment["samples"] else None
     )
+    # Fail closed: exact zero is deliberately stricter than inventing an
+    # unsourced velocity tolerance.  False negatives are safer than declaring
+    # an axis stopped while it is still moving.
+    segment["settled"] = final_velocity == 0.0
     motion_proven = bool(
         segment["command_accepted"]
         and segment["feedback_changed"]
         and segment["target_reached"]
         and segment["samples_valid"]
-        and not segment["axis_fault"]
         and segment["settled"]
     )
     if segment["command_accepted"] and not motion_proven:
@@ -329,7 +353,6 @@ def _segment_step(segment: Dict[str, Any]) -> SequenceStepResult:
         and segment["feedback_changed"]
         and segment["target_reached"]
         and segment["samples_valid"]
-        and not segment["axis_fault"]
         and segment["settled"]
     )
     detail = (
@@ -337,7 +360,6 @@ def _segment_step(segment: Dict[str, Any]) -> SequenceStepResult:
         f"feedback_changed={segment['feedback_changed']}, "
         f"target_reached={segment['target_reached']}, "
         f"samples_valid={segment['samples_valid']}, "
-        f"axis_fault={segment['axis_fault']}, "
         f"settled={segment['settled']}, "
         f"target={segment['target']:.4f}, "
         f"final={segment.get('final_position')!r}"
@@ -392,27 +414,57 @@ async def run(
             summary="真实 Aerotech 未发现可用轴；未发送 ENABLE/MOVEABS。",
         )
 
+    try:
+        safe_min, safe_max, approved_feed = _verified_degree_motion_config(driver)
+        if "xf_speed" in params and not math.isclose(
+            values["xf_speed"], approved_feed, rel_tol=0.0, abs_tol=1e-12
+        ):
+            raise ValueError(
+                "xf_speed 必须等于站点批准的 motion_truth_xf_speed"
+            )
+        values["xf_speed"] = approved_feed
+    except ValueError as exc:
+        return SequenceRunResult(
+            success=False,
+            summary=f"动作真值配置未获现场证明：{exc}；未发送 ENABLE/MOVEABS。",
+        )
+
     axis = driver.az_axis
     operator_stop_generation = driver.operator_stop_generation()
     try:
         start_raw, start_position = await _read_position(driver, axis)
+        first_target = _bounded_target(
+            start_position,
+            values["step_deg"],
+            lower=safe_min,
+            upper=safe_max,
+        )
         await driver._require_axes_stopped()  # noqa: SLF001
         # Command evidence: the repository copy of the Aerotech Ensemble
-        # ASCII/TCP integration manual §5-§6 specifies ENABLE, MOVEABS with
-        # optional XF feed, and AXISSTATUS/PFBK polling before sampling.
-        enable_raw = await driver._send(f"ENABLE {axis}")  # noqa: SLF001
+        # ASCII/TCP integration guide §§5-7 specifies ENABLE, MOVEABS with an
+        # explicit XF feed, plus VFBK/PFBK readback before sampling.
+        enable_raw = await driver._send(  # noqa: SLF001
+            f"ENABLE {axis}",
+            expected_operator_stop_generation=operator_stop_generation,
+        )
+    except ValueError as exc:
+        return SequenceRunResult(
+            success=False,
+            summary=f"安全范围拒绝动作：{exc}；未发送 ENABLE/MOVEABS。",
+        )
     except Exception as exc:
         return SequenceRunResult(
             success=False,
             summary=f"起点/ENABLE 失败：{type(exc).__name__}: {exc}",
         )
-
-    first_target = (start_position + values["step_deg"]) % 360.0
     first = await _sample_segment(
         driver,
         axis=axis,
-        label="MOVEABS without XF",
-        command=f"MOVEABS {axis} {first_target:.4f}",
+        label="MOVEABS bounded forward with XF",
+        command=(
+            f"MOVEABS {axis} {first_target:.4f} "
+            f"{axis}F{values['xf_speed']:.4f}"
+        ),
         start_position=start_position,
         target=first_target,
         duration_s=values["sample_duration_s"],
@@ -438,16 +490,12 @@ async def run(
                 "operator_stop_requested": True,
             },
         )
-    if first["abort_attempted"] and (
-        first["abort_succeeded"] is not True
-        or not isinstance(first.get("post_abort_position"), (int, float))
-    ):
+    if not _segment_step(first).success:
         steps = [_segment_step(first)]
         return SequenceRunResult(
             success=False,
             summary=(
-                "第一段动作未获证明且 ABORT/PFBK 收尾未确认；为避免叠加未停止动作，"
-                "已禁止发送第二段 MOVEABS。"
+                "小步动作未获完整证明；为避免叠加未停止动作，已禁止发送返回段 MOVEABS。"
             ),
             steps=steps,
             extra={
@@ -460,7 +508,6 @@ async def run(
                 "physical_position_verified": False,
                 "hardware_blocked": [
                     "controller_model_firmware",
-                    "user_units",
                     "physical_direction",
                     "coordinate_offset",
                     "visible_mechanical_motion",
@@ -468,20 +515,15 @@ async def run(
             },
         )
 
-    first_reached = bool(first["target_reached"] and first["feedback_changed"])
-    second_start = (
-        first.get("post_abort_position")
-        if first["abort_attempted"]
-        else first.get("final_position", start_position)
-    )
-    second_target = start_position if first_reached else first_target
+    second_start = first.get("final_position", first_target)
+    second_target = start_position
     second = await _sample_segment(
         driver,
         axis=axis,
-        label="MOVEABS with XF",
+        label="MOVEABS bounded return with XF",
         command=(
             f"MOVEABS {axis} {second_target:.4f} "
-            f"XF{values['xf_speed']:.4f}"
+            f"{axis}F{values['xf_speed']:.4f}"
         ),
         start_position=float(second_start),
         target=second_target,
@@ -498,24 +540,36 @@ async def run(
         if second["abort_attempted"]
         else second.get("final_position")
     )
-    if isinstance(final_position, (int, float)) and math.isfinite(final_position):
+    final_position_stable = (
+        _segment_step(second).success
+        or (
+            second["abort_attempted"]
+            and second.get("abort_succeeded") is True
+        )
+    )
+    if (
+        final_position_stable
+        and isinstance(final_position, (int, float))
+        and math.isfinite(final_position)
+    ):
         # This sequence bypasses move_to() so it can preserve raw samples.
-        # Keep the driver's cache aligned with the last finite encoder truth.
-        driver._current_azimuth = float(final_position)  # noqa: SLF001
+        # Publish only a position whose segment settled, or whose ABORT was
+        # followed by zero-velocity proof. A moving PFBK remains raw evidence.
+        driver._sync_cached_feedback((float(final_position), 0.0))  # noqa: SLF001
     operator_stopped = (
         driver.operator_stop_generation() != operator_stop_generation
     )
     success = not operator_stopped and all(step.success for step in steps)
     if success:
         summary = (
-            "编码器动作证据成立：不带 XF 与带 XF 两段均反馈变化并到达控制器坐标；"
-            "物理角度/方向/单位/偏置仍待现场目视确认。"
+            "编码器动作证据成立：带显式 XF 的小步前进与返回均反馈变化并到达"
+            "已验证 degree 坐标；物理方向/偏置仍待现场目视确认。"
         )
     elif operator_stopped:
         summary = "操作员已急停；诊断结论无效，未声称转台物理位置有效。"
     else:
         summary = (
-            "编码器反馈未证明动作：至少一段未变化、未到目标、被拒绝或报告轴故障；"
+            "编码器反馈未证明动作：至少一段未变化、未到目标、未停止或被拒绝；"
             "未声称转台物理位置有效。"
         )
     log(f"  · start PFBK({axis})={start_raw!r}; ENABLE={enable_raw!r}")
@@ -536,7 +590,6 @@ async def run(
             "operator_stop_requested": operator_stopped,
             "hardware_blocked": [
                 "controller_model_firmware",
-                "user_units",
                 "physical_direction",
                 "coordinate_offset",
                 "visible_mechanical_motion",

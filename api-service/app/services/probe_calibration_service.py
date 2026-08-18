@@ -1785,12 +1785,21 @@ class PatternCalibrationService:
         pl_service = ProbePathLossCalibrationService(db, use_mock=False)
 
         measurements: List[PatternMeasurement] = []
+        stop_generation_reader = getattr(positioner, "operator_stop_generation", None)
+        motion_stop_generation = (
+            stop_generation_reader() if callable(stop_generation_reader) else None
+        )
+        motion_stop_kwargs = (
+            {"expected_operator_stop_generation": motion_stop_generation}
+            if motion_stop_generation is not None
+            else {}
+        )
         # Row-major (elevation outer, azimuth inner) — match _mock_pattern_measurements
         # ordering so downstream peak / HPBW / FtB index math is identical.
         for elev in elevation_deg:
             for az in azimuth_deg:
                 ok = await positioner.move_to(
-                    azimuth=float(az), elevation=float(elev)
+                    azimuth=float(az), elevation=float(elev), **motion_stop_kwargs
                 )
                 if not ok:
                     raise RuntimeError(

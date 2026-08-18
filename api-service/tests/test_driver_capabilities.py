@@ -266,7 +266,7 @@ class TestAerotechCapabilityMirroring:
         )
 
     @pytest.mark.asyncio
-    async def test_dual_axis_populates_dual_token(self, driver):
+    async def test_dual_axis_is_discovered_but_not_advertised_without_evidence(self, driver):
         # Mock the probe to find both axes; bypass the actual TCP
         # connect by patching the low-level helpers.
         from app.hal.base import InstrumentStatus
@@ -293,7 +293,7 @@ class TestAerotechCapabilityMirroring:
             await driver.connect()
 
         assert driver.is_single_axis is False
-        assert POS_DUAL_AXIS_AZEL in driver.capabilities
+        assert POS_DUAL_AXIS_AZEL not in driver.capabilities
         assert POS_SINGLE_AXIS_AZ not in driver.capabilities
 
     @pytest.mark.asyncio
@@ -354,11 +354,10 @@ class TestModelCapabilitiesStaticDeclaration:
         from app.hal.propsim_fs16 import RealPropsimFs16Driver
         assert RealPropsimFs16Driver.model_capabilities == frozenset()
 
-    def test_aerotech_declares_both_axis_modes(self):
+    def test_aerotech_declares_only_the_sourced_single_axis_mode(self):
         from app.hal.aerotech_positioner import RealAerotechDriver
         assert RealAerotechDriver.model_capabilities == frozenset({
             POS_SINGLE_AXIS_AZ,
-            POS_DUAL_AXIS_AZEL,
         })
 
     def test_base_default_is_empty_frozenset(self):
@@ -401,12 +400,12 @@ class TestModelCapabilitiesInvariant:
         drv._update_user_alignment_capability()
         assert drv.capabilities <= drv.model_capabilities
 
-    def test_aerotech_dual_axis_stays_in_model_set(self):
+    def test_aerotech_single_axis_stays_in_model_set(self):
         from app.hal.aerotech_positioner import RealAerotechDriver
         drv = RealAerotechDriver(
             "inv-test", {"ip_address": "127.0.0.1", "port": 8000}
         )
-        drv._add_capability(POS_DUAL_AXIS_AZEL)
+        drv._add_capability(POS_SINGLE_AXIS_AZ)
         assert drv.capabilities <= drv.model_capabilities
 
 
