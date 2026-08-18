@@ -1,6 +1,7 @@
 """P1-56 destructive Aerotech motion-truth diagnostic contract."""
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 from typing import Any
@@ -54,6 +55,8 @@ class MotionDiagnosticDriver(RealAerotechDriver):
                 self.position = float(command.split()[2])
             return ""
         if command == "ENABLE X":
+            return ""
+        if command == "ABORT X":
             return ""
         raise AssertionError(f"unexpected command: {command}")
 
@@ -179,16 +182,19 @@ async def test_no_encoder_motion_fails_both_segments_but_keeps_raw_trace(fast_cl
     assert " XF" not in moves[0]
     assert " XF" in moves[1]
     assert all(step.raw for step in result.steps)
+    assert driver.commands.count("ABORT X") == 2
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("axisstatus", ["nan", "0.5", "-1"])
 async def test_invalid_axis_status_cannot_be_washed_into_success_by_final_position(
     fast_clock,
+    axisstatus: str,
 ):
     driver = MotionDiagnosticDriver(
         moves_without_xf=True,
         moves_with_xf=True,
-        axisstatus="nan",
+        axisstatus=axisstatus,
     )
 
     result = await sequence.run(
@@ -200,3 +206,53 @@ async def test_invalid_axis_status_cannot_be_washed_into_success_by_final_positi
 
     assert result.success is False
     assert all(step.success is False for step in result.steps)
+    assert all(
+        segment["samples_valid"] is False
+        for segment in result.extra["segments"]
+    )
+    assert driver.commands.count("ABORT X") == 2
+
+
+@pytest.mark.asyncio
+async def test_cancelled_diagnostic_aborts_before_releasing_motion(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    driver = MotionDiagnosticDriver(moves_without_xf=False, moves_with_xf=False)
+
+    async def cancel_sleep(_seconds: float) -> None:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(sequence.asyncio, "sleep", cancel_sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await sequence.run(
+            SimpleNamespace(),
+            _hal(driver),
+            {"sample_duration_s": 0.4, "sample_interval_s": 0.2},
+            log=lambda _message: None,
+        )
+
+    assert "MOVEABS X 20.0000" in driver.commands
+    assert "ABORT X" in driver.commands
+
+
+@pytest.mark.asyncio
+async def test_cancelled_move_command_response_still_aborts_diagnostic():
+    driver = MotionDiagnosticDriver(moves_without_xf=False, moves_with_xf=False)
+    original_send = driver._send
+
+    async def cancelling_send(command: str) -> str:
+        if command.startswith("MOVEABS X "):
+            driver.commands.append(command)
+            raise asyncio.CancelledError
+        return await original_send(command)
+
+    driver._send = cancelling_send  # type: ignore[method-assign]
+
+    with pytest.raises(asyncio.CancelledError):
+        await sequence.run(
+            SimpleNamespace(), _hal(driver), {}, log=lambda _message: None
+        )
+
+    assert any(command.startswith("MOVEABS X ") for command in driver.commands)
+    assert "ABORT X" in driver.commands

@@ -413,6 +413,23 @@ class RealAerotechDriver(PositionerDriver):
         """Shortest circular distance between two azimuth readings."""
         return abs((left - right + 180.0) % 360.0 - 180.0)
 
+    @staticmethod
+    def _finite_motion_target(value: Any, *, name: str) -> float:
+        """Reject non-finite controller coordinates before any device I/O."""
+        if isinstance(value, bool):
+            raise ValueError(f"{name} must be a finite number")
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} must be a finite number") from exc
+        if not math.isfinite(parsed):
+            raise ValueError(f"{name} must be a finite number")
+        return parsed
+
+    def _sync_cached_feedback(self, feedback: Tuple[float, float]) -> None:
+        """Publish the latest finite encoder truth, independent of verdict."""
+        self._current_azimuth, self._current_elevation = feedback
+
     async def _read_motion_feedback(self) -> Tuple[float, float]:
         azimuth = await self._query_finite_value(
             AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.az_axis)
@@ -434,6 +451,13 @@ class RealAerotechDriver(PositionerDriver):
         target: float,
         circular: bool,
     ) -> None:
+        values = (before, after, target, self.position_tolerance_deg)
+        if any(isinstance(value, bool) or not math.isfinite(value) for value in values):
+            raise AerotechError(
+                "invalid_motion_evidence: "
+                f"axis={axis_name}, before={before!r}, after={after!r}, "
+                f"target={target!r}, tolerance={self.position_tolerance_deg!r}"
+            )
         distance = (
             self._azimuth_distance_deg
             if circular
@@ -482,6 +506,39 @@ class RealAerotechDriver(PositionerDriver):
                 target=target[1],
                 circular=False,
             )
+
+    async def _abort_unverified_motion(self, *, reason: str) -> None:
+        """Best-effort ABORT + finite PFBK refresh without masking root cause."""
+        try:
+            await self._send(AeroBasicCmd.ABORT.format(
+                axes=" ".join(self._axes_present)
+            ))
+            logger.warning("[Aerotech] ABORT after unverified motion: %s", reason)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "[Aerotech] ABORT failed after unverified motion (%s): %s",
+                reason,
+                exc,
+            )
+        try:
+            self._sync_cached_feedback(await self._read_motion_feedback())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[Aerotech] PFBK refresh failed after ABORT (%s): %s",
+                reason,
+                exc,
+            )
+
+    async def _finish_motion_safety_cleanup(self, *, reason: str) -> None:
+        """Wait for ABORT cleanup even if the caller is repeatedly cancelled."""
+        worker = asyncio.create_task(self._abort_unverified_motion(reason=reason))
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+        # _abort_unverified_motion absorbs and logs its own best-effort errors.
+        worker.result()
 
     def _check_status_bit(self, status_int: int, bit: int) -> bool:
         """检查 AXISSTATUS 位掩码中的指定位"""
@@ -763,25 +820,40 @@ class RealAerotechDriver(PositionerDriver):
 
     async def reset(self) -> bool:
         """回原点"""
-        try:
-            if not self._axes_present:
-                raise AerotechError("Not connected — no axes to home")
-            before = await self._read_motion_feedback()
-            await self._send(AeroBasicCmd.HOME.format(
-                axes=" ".join(self._axes_present)
-            ))
-            await self._wait_for_settle()
-            after = await self._read_motion_feedback()
-            target = (0.0, 0.0)
-            self._verify_motion_feedback(before=before, after=after, target=target)
-            self._current_azimuth, self._current_elevation = after
-            self._set_status(InstrumentStatus.READY)
-            self._clear_error()
-            return True
-        except Exception as e:
-            logger.error(f"[Aerotech] Home failed: {e}")
-            self._set_status(InstrumentStatus.ERROR, str(e))
-            return False
+        from app.services.instrument_test_lease import positioner_operation_guard
+
+        command_accepted = False
+        async with positioner_operation_guard("aerotech-positioner:home"):
+            try:
+                if not self._axes_present:
+                    raise AerotechError("Not connected — no axes to home")
+                before = await self._read_motion_feedback()
+                self._sync_cached_feedback(before)
+                command_accepted = True
+                await self._send(AeroBasicCmd.HOME.format(
+                    axes=" ".join(self._axes_present)
+                ))
+                await self._wait_for_settle()
+                after = await self._read_motion_feedback()
+                self._sync_cached_feedback(after)
+                target = (0.0, 0.0)
+                self._verify_motion_feedback(before=before, after=after, target=target)
+                self._set_status(InstrumentStatus.READY)
+                self._clear_error()
+                return True
+            except asyncio.CancelledError:
+                if command_accepted:
+                    await self._finish_motion_safety_cleanup(reason="HOME cancelled")
+                self._set_status(InstrumentStatus.ERROR, "Home cancelled")
+                raise
+            except Exception as e:
+                if command_accepted:
+                    await self._finish_motion_safety_cleanup(
+                        reason=f"HOME unverified: {type(e).__name__}"
+                    )
+                logger.error(f"[Aerotech] Home failed: {e}")
+                self._set_status(InstrumentStatus.ERROR, str(e))
+                return False
 
     # ==================================================================
     # PositionerDriver 专有接口
@@ -794,27 +866,42 @@ class RealAerotechDriver(PositionerDriver):
         发送 MOVEABS 后轮询 AXISSTATUS 等待到位 (InPosition bit)。
         单轴转台 (无 elevation 轴) 会忽略 elevation 参数, 只移动 azimuth。
         """
+        from app.services.instrument_test_lease import positioner_operation_guard
+
         try:
-            if not self._axes_present:
-                raise AerotechError("Not connected — cannot move")
-            self._set_status(InstrumentStatus.BUSY)
+            target_azimuth = self._finite_motion_target(azimuth, name="azimuth")
+            target_elevation = self._finite_motion_target(
+                elevation, name="elevation"
+            )
+        except Exception as e:
+            logger.error(f"[Aerotech] Move rejected before I/O: {e}")
+            self._set_status(InstrumentStatus.ERROR, str(e))
+            return False
+
+        command_accepted = False
+        async with positioner_operation_guard("aerotech-positioner:move"):
+            try:
+                if not self._axes_present:
+                    raise AerotechError("Not connected — cannot move")
+                self._set_status(InstrumentStatus.BUSY)
 
             # Single-axis controllers ignore elevation. Warn (not error)
             # so an operator misreading "move(180, 30)" as 3D motion
             # sees something in the log when only az moves.
-            if self.is_single_axis and elevation != 0.0:
-                logger.warning(
-                    f"[Aerotech] Single-axis turntable — elevation="
-                    f"{elevation:.2f}° ignored, only Az={azimuth:.2f}° "
-                    f"will be commanded."
+                if self.is_single_axis and target_elevation != 0.0:
+                    logger.warning(
+                        f"[Aerotech] Single-axis turntable — elevation="
+                        f"{target_elevation:.2f}° ignored, only Az={target_azimuth:.2f}° "
+                        f"will be commanded."
+                    )
+
+                logger.info(
+                    f"[Aerotech] Moving to Az={target_azimuth:.2f}°"
+                    + (f", El={target_elevation:.2f}°" if not self.is_single_axis else "")
                 )
 
-            logger.info(
-                f"[Aerotech] Moving to Az={azimuth:.2f}°"
-                + (f", El={elevation:.2f}°" if not self.is_single_axis else "")
-            )
-
-            before = await self._read_motion_feedback()
+                before = await self._read_motion_feedback()
+                self._sync_cached_feedback(before)
 
             # AeroBasic MOVEABS uses axis-position interleaving:
             #     MOVEABS X 180.0 Y 45.0
@@ -823,48 +910,62 @@ class RealAerotechDriver(PositionerDriver):
             # Skip the AeroBasicCmd.MOVE_ABS template here for the dual-
             # axis case; the template's two-bucket "{axes} {positions}"
             # shape is wrong for the multi-axis form.
-            if self.is_single_axis:
-                cmd_str = f"MOVEABS {self.az_axis} {azimuth:.4f}"
-            else:
-                cmd_str = (
-                    f"MOVEABS {self.az_axis} {azimuth:.4f}"
-                    f" {self.el_axis} {elevation:.4f}"
-                )
-            await self._send(cmd_str)
+                if self.is_single_axis:
+                    cmd_str = f"MOVEABS {self.az_axis} {target_azimuth:.4f}"
+                else:
+                    cmd_str = (
+                        f"MOVEABS {self.az_axis} {target_azimuth:.4f}"
+                        f" {self.el_axis} {target_elevation:.4f}"
+                    )
+                command_accepted = True
+                await self._send(cmd_str)
 
             # 等待到位
-            await self._wait_for_settle()
+                await self._wait_for_settle()
 
             # A controller ACK and InPosition bit prove command processing,
             # not physical motion.  The Ensemble integration manual §6
             # requires PFBK verification before sampling; fail closed unless
             # finite encoder feedback both moved when needed and reached the
             # requested controller-coordinate target.
-            after = await self._read_motion_feedback()
-            target = (
-                float(azimuth),
-                0.0 if self.is_single_axis else float(elevation),
-            )
-            self._verify_motion_feedback(before=before, after=after, target=target)
-            self._current_azimuth, self._current_elevation = after
+                after = await self._read_motion_feedback()
+                self._sync_cached_feedback(after)
+                target = (
+                    target_azimuth,
+                    0.0 if self.is_single_axis else target_elevation,
+                )
+                self._verify_motion_feedback(before=before, after=after, target=target)
 
-            logger.info(
-                f"[Aerotech] Arrived: Az={self._current_azimuth:.2f}°"
-                + (f", El={self._current_elevation:.2f}°"
-                   if not self.is_single_axis else "")
-            )
-            self._set_status(InstrumentStatus.READY)
-            self._clear_error()
-            return True
+                logger.info(
+                    f"[Aerotech] Arrived: Az={self._current_azimuth:.2f}°"
+                    + (f", El={self._current_elevation:.2f}°"
+                       if not self.is_single_axis else "")
+                )
+                self._set_status(InstrumentStatus.READY)
+                self._clear_error()
+                return True
 
-        except asyncio.TimeoutError:
-            logger.error("[Aerotech] Move timeout — settle not achieved")
-            self._set_status(InstrumentStatus.ERROR, "Move timeout")
-            return False
-        except Exception as e:
-            logger.error(f"[Aerotech] Move failed: {e}")
-            self._set_status(InstrumentStatus.ERROR, str(e))
-            return False
+            except asyncio.CancelledError:
+                if command_accepted:
+                    await self._finish_motion_safety_cleanup(reason="MOVEABS cancelled")
+                self._set_status(InstrumentStatus.ERROR, "Move cancelled")
+                raise
+            except asyncio.TimeoutError:
+                if command_accepted:
+                    await self._finish_motion_safety_cleanup(
+                        reason="MOVEABS settle timeout"
+                    )
+                logger.error("[Aerotech] Move timeout — settle not achieved")
+                self._set_status(InstrumentStatus.ERROR, "Move timeout")
+                return False
+            except Exception as e:
+                if command_accepted:
+                    await self._finish_motion_safety_cleanup(
+                        reason=f"MOVEABS unverified: {type(e).__name__}"
+                    )
+                logger.error(f"[Aerotech] Move failed: {e}")
+                self._set_status(InstrumentStatus.ERROR, str(e))
+                return False
 
     async def get_position(self) -> Tuple[float, float]:
         """读取当前位置反馈"""

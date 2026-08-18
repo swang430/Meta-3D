@@ -126,6 +126,13 @@ def _finite(raw: str) -> Optional[float]:
     return value if math.isfinite(value) else None
 
 
+def _axis_status_bitmask(raw: str) -> Optional[int]:
+    value = _finite(raw)
+    if value is None or value < 0 or not value.is_integer():
+        return None
+    return int(value)
+
+
 def _azimuth_distance(left: float, right: float) -> float:
     return abs((left - right + 180.0) % 360.0 - 180.0)
 
@@ -136,6 +143,27 @@ async def _read_position(driver: RealAerotechDriver, axis: str) -> tuple[str, fl
     if value is None:
         raise ValueError(f"PFBK({axis}) 返回非有限数值: {raw!r}")
     return raw, value
+
+
+async def _abort_and_refresh(
+    driver: RealAerotechDriver,
+) -> tuple[bool, Optional[str]]:
+    """Finish ABORT/PFBK cleanup before releasing the destructive lease."""
+    async def cleanup() -> tuple[bool, Optional[str]]:
+        try:
+            stopped = await driver.stop()
+            await driver.get_position()
+            return bool(stopped), None if stopped else "driver.stop() returned False"
+        except Exception as exc:  # noqa: BLE001
+            return False, f"{type(exc).__name__}: {exc}"
+
+    worker = asyncio.create_task(cleanup())
+    while not worker.done():
+        try:
+            await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            continue
+    return worker.result()
 
 
 async def _sample_segment(
@@ -162,48 +190,68 @@ async def _sample_segment(
         "axis_fault": False,
         "samples_valid": True,
         "samples": [],
+        "abort_attempted": False,
+        "abort_succeeded": None,
+        "abort_error": None,
     }
+
+    async def abort_segment() -> None:
+        segment["abort_attempted"] = True
+        (
+            segment["abort_succeeded"],
+            segment["abort_error"],
+        ) = await _abort_and_refresh(driver)
+
+    segment["command_started"] = True
     try:
         segment["command_response_raw"] = await driver._send(command)  # noqa: SLF001
         segment["command_accepted"] = True
+    except asyncio.CancelledError:
+        await abort_segment()
+        raise
     except Exception as exc:  # controller rejection belongs in the trace
         segment["command_error"] = f"{type(exc).__name__}: {exc}"
+        await abort_segment()
         return segment
 
     started = time.monotonic()
-    while True:
-        elapsed = time.monotonic() - started
-        status_raw: Optional[str] = None
-        position_raw: Optional[str] = None
-        status_value: Optional[float] = None
-        position_value: Optional[float] = None
-        sample_error: Optional[str] = None
-        try:
-            status_raw = await driver._send(f"AXISSTATUS({axis})")  # noqa: SLF001
-            position_raw = await driver._send(f"PFBK({axis})")  # noqa: SLF001
-            status_value = _finite(status_raw)
-            position_value = _finite(position_raw)
-            if status_value is None or position_value is None:
-                raise ValueError("AXISSTATUS/PFBK 包含非有限数值")
-        except Exception as exc:
-            sample_error = f"{type(exc).__name__}: {exc}"
-            segment["samples_valid"] = False
+    try:
+        while True:
+            elapsed = time.monotonic() - started
+            status_raw: Optional[str] = None
+            position_raw: Optional[str] = None
+            status_value: Optional[int] = None
+            position_value: Optional[float] = None
+            sample_error: Optional[str] = None
+            try:
+                status_raw = await driver._send(f"AXISSTATUS({axis})")  # noqa: SLF001
+                position_raw = await driver._send(f"PFBK({axis})")  # noqa: SLF001
+                status_value = _axis_status_bitmask(status_raw)
+                position_value = _finite(position_raw)
+                if status_value is None or position_value is None:
+                    raise ValueError("AXISSTATUS/PFBK 包含非有限数值")
+            except Exception as exc:
+                sample_error = f"{type(exc).__name__}: {exc}"
+                segment["samples_valid"] = False
 
-        sample = {
-            "elapsed_s": round(elapsed, 6),
-            "axisstatus_raw": status_raw,
-            "pfbk_raw": position_raw,
-            "axisstatus": int(status_value) if status_value is not None else None,
-            "position": position_value,
-            "error": sample_error,
-        }
-        segment["samples"].append(sample)
-        if status_value is not None and int(status_value) & (1 << AxisStatusBit.FAULT):
-            segment["axis_fault"] = True
+            sample = {
+                "elapsed_s": round(elapsed, 6),
+                "axisstatus_raw": status_raw,
+                "pfbk_raw": position_raw,
+                "axisstatus": status_value,
+                "position": position_value,
+                "error": sample_error,
+            }
+            segment["samples"].append(sample)
+            if status_value is not None and status_value & (1 << AxisStatusBit.FAULT):
+                segment["axis_fault"] = True
 
-        if elapsed + 1e-9 >= duration_s:
-            break
-        await asyncio.sleep(min(interval_s, duration_s - elapsed))
+            if elapsed + 1e-9 >= duration_s:
+                break
+            await asyncio.sleep(min(interval_s, duration_s - elapsed))
+    except asyncio.CancelledError:
+        await abort_segment()
+        raise
 
     finite_positions = [
         sample["position"]
@@ -219,6 +267,15 @@ async def _sample_segment(
             _azimuth_distance(finite_positions[-1], target) <= tolerance
         )
         segment["final_position"] = finite_positions[-1]
+    motion_proven = bool(
+        segment["command_accepted"]
+        and segment["feedback_changed"]
+        and segment["target_reached"]
+        and segment["samples_valid"]
+        and not segment["axis_fault"]
+    )
+    if segment["command_accepted"] and not motion_proven:
+        await abort_segment()
     return segment
 
 

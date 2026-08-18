@@ -29,6 +29,8 @@
 1. 增加严格有限数值读取与方位环形距离 helper。
 2. 为实际轴实现前后反馈、动作变化与目标容差检查。
 3. 接入 `move_to()` 与 `reset()`；`get_position()` 不再吞反馈错误回旧缓存。
+4. 非有限目标在任何 I/O 前拒绝；已接受但未证明到位的超时、异常、取消先 ABORT，有限
+   PFBK 无论成功失败都同步缓存。
 4. 运行 Task 1 定点直到全绿；再跑 Aerotech、standalone、P1-47C 相关回归。
 
 ## Task 3：诊断载体 RED
@@ -43,6 +45,8 @@
 2. 锁住参数 fail-closed、权威 mock 拒绝和未连接拒绝。
 3. 用 fake clock/driver 锁住无 XF 与有 XF 两段、全程无 DISABLE。
 4. 锁住每段 `AXISSTATUS + PFBK` raw 样本、未动/超差失败和移动到位成功。
+5. 锁住 AXISSTATUS 严格整数 bitmask、失败/取消 ABORT，以及完整动作与其他写入口共用
+   `instrument_test_lease` 协调锁（急停保持可抢占）。
 5. 运行定点观察 RED。
 
 ## Task 4：诊断载体 GREEN
@@ -82,4 +86,3 @@
 4. 提交、推送、开 Ready PR，触发 Codex R1。
 5. R1 本片内意见按 TDD 收口后触发最终 R2；R2 无 P1 merge；R2 有 P1 修完后直接 merge，不发 R3。
 6. 合并后验证 origin/main；P1-56 本地片完成，现场物理裁决继续 Hardware Blocked。
-

@@ -18,7 +18,7 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅。
 
-**Current Focus = P1-56「转台动作真值门与诊断载体」（本地实现与完整回归完成，待 fresh 内审，WIP=1）**。P1-55
+**Current Focus = P1-56「转台动作真值门与诊断载体」（fresh 内审 5 条 P1 已按 TDD 修复，完整验证通过、待修后 fresh 内审，WIP=1）**。P1-55
 已由 PR #349（merge `b6f631a`）完成顶层配置与 `component_carriers[0]` 真值源收敛；P1-54
 已由 PR #348 合并；用户已确认继续下一项。P2-26 已由 PR #347
 （merge `ef50070`）完成历史 MIMO 报告 UNKNOWN/N/A 的安全重建与恢复界面。P1-54 将 UXM
@@ -53,7 +53,7 @@ P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → 
 | **P2-26** | 历史 MIMO 报告 UNKNOWN/N/A 的重新生成与恢复界面 | ✅ PR #347 |
 | **P1-54** | `kpi_valid` 进入正式数据契约；缺测吞吐不得以默认 0.0 进入 MEASURE/KPI | ✅ PR #348 |
 | **P1-55** | 收敛顶层配置与 `component_carriers[0]`；统一写入、显示与执行真值源 | ✅ PR #349 |
-| **P1-56** | 转台命令成功但编码器不动：本地动作真值门与诊断载体 | 🟡 动作真值门、cleanup 告警与 destructive raw 诊断已完成，完整回归通过、待 fresh 内审；物理现场验证保持 Hardware Blocked |
+| **P1-56** | 转台命令成功但编码器不动：本地动作真值门与诊断载体 | 🟡 内审 5 条 P1（缓存、非有限目标、ABORT、完整动作互斥、状态 bitmask）已修，完整验证通过、待修后 fresh 内审；物理现场验证保持 Hardware Blocked |
 | **P2-27** | 修复 9 组前端手写契约与 live OpenAPI 不一致 | ⬜ |
 | **P2-28** | 诊断序列持久化完整 raw 或可靠 trace pointer | ⬜ |
 | **P2-29** | ASC/B2 正式模型加载证据 hook | ⬜ |
@@ -306,7 +306,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → ~~P1-52~~ ✅ → ~~P1-53~~ ✅ → ~~P2-26~~ ✅ → ~~P1-54~~ ✅ → ~~P1-55~~ ✅ → P1-56 🟡 → P2-27 → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；P1-55 已由 PR #349 合并。P1-56 已完成真实 Aerotech `MOVEABS/HOME` 的有限 PFBK 变化与目标容差门、cleanup False 告警，以及 `aerotech_positioner_motion_truth` 带/不带 XF raw 轨迹诊断；相关 99 项、完整 rule gates 53 项与 GUI production build 通过；后端全量 3965 passed / 5 skipped，唯一既有 execution-context 顺序污染独立复跑 1 passed，当前待 fresh 内审，WIP=1。现场物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
+| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → ~~P1-52~~ ✅ → ~~P1-53~~ ✅ → ~~P2-26~~ ✅ → ~~P1-54~~ ✅ → ~~P1-55~~ ✅ → P1-56 🟡 → P2-27 → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；P1-55 已由 PR #349 合并。P1-56 已完成真实 Aerotech `MOVEABS/HOME` 的有限 PFBK 变化与目标容差门、cleanup False 告警，以及 `aerotech_positioner_motion_truth` 带/不带 XF raw 轨迹诊断；首轮 fresh 内审的缓存真值、非有限目标、未证动作 ABORT、完整动作互斥与 AXISSTATUS 严格 bitmask 五条 P1 已按 TDD 修复。修后相关 139 项、完整 rule gates 53 项与 GUI production build 通过；后端全量 3977 passed / 5 skipped，唯一既有 execution-context 顺序污染独立复跑 1 passed；compileall/diff-check 通过，当前待修后 fresh 内审，WIP=1。现场物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
