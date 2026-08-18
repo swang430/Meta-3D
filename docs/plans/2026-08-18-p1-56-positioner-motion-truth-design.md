@@ -136,6 +136,10 @@ ETS 仍按其独立方言处理。这是有意的证据边界。
   负责审计 cancelled，不得在释放 destructive token 后留下后台运动。
 - ABORT 的 ACK 不是停止成功；只有全部实际轴严格 AXISSTATUS 均清除 `MOVE_ACTIVE` 才返回
   True/释放动作互斥。无需 `IN_POSITION`，因为急停后的轴不保证到位。
+- 人工 `/positioner/stop` 与内部安全 cleanup 必须区分：只有人工急停推进 driver 上的共享 stop
+  generation；破坏性诊断在每条新 MOVE 前核对该 generation，人工急停后不得重新启动第二段。
+- 急停停止确认与位置反馈是两个独立事实。ABORT 已确认但 PFBK 失败时，REST 仍可报告停止
+  成功，但方位/俯仰必须为 `null`，GUI 保留上一次已知位置，不得用 `0°` 伪装未知位置。
 - 诊断动作结束：最终状态仍为 MOVE_ACTIVE、ABORT 未确认或 post-ABORT PFBK 不可得时均
   fail-closed；不得释放互斥后声称成功或叠加下一条动作。
 - cleanup 的 False 进入 warnings，但不遮蔽原始执行错误。
@@ -157,4 +161,6 @@ ETS 仍按其独立方言处理。这是有意的证据边界。
 12. 未证明动作、超时、异常与取消均执行 ABORT+独立 PFBK 回读；ABORT 失败不继续第二段，
     post-ABORT PFBK 不得被旧样本覆盖。
 13. ABORT ACK 后仍 MOVE_ACTIVE 必须返回 False，禁止第二段与后续 MOVE/HOME；清零后才可继续。
+14. 人工急停落在诊断首段时，第二段 MOVEABS 永不发送；内部安全 ABORT 不会误取消正常诊断。
+15. 急停后 PFBK 失败返回空坐标且 GUI 不更新当前位置；HOME 与全部实际轴的停止门有直接保护。
 14. 本地完成后 P1-56 本地片可合并；现场真实机械方向/单位/偏置/型号裁决仍 Hardware Blocked。

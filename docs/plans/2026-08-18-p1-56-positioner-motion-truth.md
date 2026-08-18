@@ -53,6 +53,8 @@
 6. 锁住最终 MOVE_ACTIVE 不得成功、ABORT 失败不得继续第二段，以及 post-ABORT PFBK
    必须作为后续起点/最终缓存真值。
 7. 锁住 ABORT ACK 但 MOVE_ACTIVE 未清零不得假成功，新动作也不得与遗留运动重叠。
+8. 锁住人工急停共享 generation：首段中急停后不得发送第二段；内部 cleanup ABORT 不推进该值。
+9. 锁住停止成功但 PFBK 失败时坐标为 null、GUI 不更新位置；HOME 与多实际轴走同一停止门。
 8. 运行定点观察 RED。
 
 ## Task 4：诊断载体 GREEN

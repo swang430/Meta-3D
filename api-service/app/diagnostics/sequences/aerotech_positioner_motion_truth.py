@@ -194,6 +194,7 @@ async def _sample_segment(
     duration_s: float,
     interval_s: float,
     tolerance: float,
+    operator_stop_generation: Optional[int] = None,
 ) -> Dict[str, Any]:
     segment: Dict[str, Any] = {
         "label": label,
@@ -212,6 +213,7 @@ async def _sample_segment(
         "abort_error": None,
         "post_abort_position": None,
         "settled": False,
+        "operator_stop_requested": False,
     }
 
     async def abort_segment() -> None:
@@ -221,6 +223,13 @@ async def _sample_segment(
             segment["abort_error"],
             segment["post_abort_position"],
         ) = await _abort_and_refresh(driver)
+
+    if (
+        operator_stop_generation is not None
+        and driver.operator_stop_generation() != operator_stop_generation
+    ):
+        segment["operator_stop_requested"] = True
+        return segment
 
     segment["command_started"] = True
     try:
@@ -376,6 +385,7 @@ async def run(
         )
 
     axis = driver.az_axis
+    operator_stop_generation = driver.operator_stop_generation()
     try:
         start_raw, start_position = await _read_position(driver, axis)
         await driver._require_axes_stopped()  # noqa: SLF001
@@ -400,9 +410,26 @@ async def run(
         duration_s=values["sample_duration_s"],
         interval_s=values["sample_interval_s"],
         tolerance=values["tolerance_deg"],
+        operator_stop_generation=operator_stop_generation,
     )
 
     segments = [first]
+    if driver.operator_stop_generation() != operator_stop_generation:
+        return SequenceRunResult(
+            success=False,
+            summary="操作员已急停；诊断已中止，未发送第二段 MOVEABS。",
+            steps=[_segment_step(first)],
+            extra={
+                "axis": axis,
+                "start_position": start_position,
+                "start_pfbk_raw": start_raw,
+                "enable_response_raw": enable_raw,
+                "params": values,
+                "segments": segments,
+                "physical_position_verified": False,
+                "operator_stop_requested": True,
+            },
+        )
     if first["abort_attempted"] and (
         first["abort_succeeded"] is not True
         or not isinstance(first.get("post_abort_position"), (int, float))
@@ -453,6 +480,7 @@ async def run(
         duration_s=values["sample_duration_s"],
         interval_s=values["sample_interval_s"],
         tolerance=values["tolerance_deg"],
+        operator_stop_generation=operator_stop_generation,
     )
 
     segments.append(second)
@@ -466,12 +494,17 @@ async def run(
         # This sequence bypasses move_to() so it can preserve raw samples.
         # Keep the driver's cache aligned with the last finite encoder truth.
         driver._current_azimuth = float(final_position)  # noqa: SLF001
-    success = all(step.success for step in steps)
+    operator_stopped = (
+        driver.operator_stop_generation() != operator_stop_generation
+    )
+    success = not operator_stopped and all(step.success for step in steps)
     if success:
         summary = (
             "编码器动作证据成立：不带 XF 与带 XF 两段均反馈变化并到达控制器坐标；"
             "物理角度/方向/单位/偏置仍待现场目视确认。"
         )
+    elif operator_stopped:
+        summary = "操作员已急停；诊断结论无效，未声称转台物理位置有效。"
     else:
         summary = (
             "编码器反馈未证明动作：至少一段未变化、未到目标、被拒绝或报告轴故障；"
@@ -492,6 +525,7 @@ async def run(
             "params": values,
             "segments": segments,
             "physical_position_verified": False,
+            "operator_stop_requested": operator_stopped,
             "hardware_blocked": [
                 "controller_model_firmware",
                 "user_units",

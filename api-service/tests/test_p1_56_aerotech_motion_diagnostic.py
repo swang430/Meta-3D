@@ -277,6 +277,34 @@ async def test_abort_failure_stops_before_second_motion_command(fast_clock):
 
 
 @pytest.mark.asyncio
+async def test_operator_emergency_stop_during_first_segment_forbids_second_move(
+    fast_clock,
+):
+    driver = MotionDiagnosticDriver(moves_without_xf=True, moves_with_xf=True)
+    original_send = driver._send
+
+    async def stop_after_first_move(command: str) -> str:
+        response = await original_send(command)
+        if command.startswith("MOVEABS X ") and " XF" not in command:
+            driver.note_operator_stop()
+        return response
+
+    driver._send = stop_after_first_move  # type: ignore[method-assign]
+
+    result = await sequence.run(
+        SimpleNamespace(),
+        _hal(driver),
+        {"sample_duration_s": 0.2, "sample_interval_s": 0.2},
+        log=lambda _message: None,
+    )
+
+    moves = [command for command in driver.commands if command.startswith("MOVEABS")]
+    assert result.success is False
+    assert "急停" in result.summary
+    assert moves == ["MOVEABS X 20.0000"]
+
+
+@pytest.mark.asyncio
 async def test_abort_refresh_is_retained_as_final_encoder_truth(fast_clock):
     driver = MotionDiagnosticDriver(
         moves_without_xf=True,

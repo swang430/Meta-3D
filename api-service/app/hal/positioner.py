@@ -37,6 +37,19 @@ class PositionerDriver(InstrumentDriver):
     Typically used to rotate the DUT (azimuth) and test antennas (elevation).
     """
 
+    def note_operator_stop(self) -> None:
+        """Publish operator emergency-stop intent to every multi-step consumer.
+
+        Internal safety cleanup calls ``stop()`` directly and deliberately does
+        not advance this generation.  A new operation snapshots the generation,
+        so a historical stop request does not permanently disable the driver.
+        """
+        self._operator_stop_generation = self.operator_stop_generation() + 1
+
+    def operator_stop_generation(self) -> int:
+        """Return the process-local operator-stop generation for this driver."""
+        return int(getattr(self, "_operator_stop_generation", 0))
+
     async def move_to(self, azimuth: float, elevation: float) -> bool:
         """
         Command the positioner to move to absolute coordinates.

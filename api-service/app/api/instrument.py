@@ -3760,16 +3760,16 @@ class PositionerSweepRequest(BaseModel):
 
 class PositionerResult(BaseModel):
     ok: bool
-    azimuth: float = 0.0
-    elevation: float = 0.0
+    azimuth: Optional[float] = None
+    elevation: Optional[float] = None
     reason: Optional[str] = None
     message: Optional[str] = None
 
 
 class PositionerSweepPoint(BaseModel):
     target: float
-    actual_azimuth: float
-    actual_elevation: float
+    actual_azimuth: Optional[float] = None
+    actual_elevation: Optional[float] = None
     within_tolerance: bool
 
 
@@ -3812,7 +3812,9 @@ def _resolve_positioner():
     return driver, None
 
 
-async def _positioner_position(driver) -> tuple[tuple[float, float], Optional[str]]:
+async def _positioner_position(
+    driver,
+) -> tuple[tuple[Optional[float], Optional[float]], Optional[str]]:
     """读位置反馈 (PFBK)。返回 ((az, el), error); 失败时 error 非 None。
 
     不伪造到位 (Codex P2 #132): 吞异常返回 (0,0) 会让现场误判转台在 home / within tolerance,
@@ -3823,7 +3825,7 @@ async def _positioner_position(driver) -> tuple[tuple[float, float], Optional[st
         return (az, el), None
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[Positioner] get_position failed: {e}")
-        return (0.0, 0.0), str(e)
+        return (None, None), str(e)
 
 
 @router.post("/instruments/positioner/home", response_model=PositionerResult)
@@ -3886,12 +3888,19 @@ async def positioner_stop() -> PositionerResult:
         return PositionerResult(ok=False, reason=reason,
                                 message=_POSITIONER_REASON_MSG.get(reason))
     _positioner_stop_flag["requested"] = True  # 通知 in-flight sweep 停止后续 move (Codex P1)
+    note_operator_stop = getattr(driver, "note_operator_stop", None)
+    if callable(note_operator_stop):
+        note_operator_stop()
     ok = await driver.stop()
-    (az, el), _ = await _positioner_position(driver)  # 急停回读失败不影响急停本身判定
+    (az, el), pos_err = await _positioner_position(driver)
     return PositionerResult(
         ok=bool(ok), azimuth=az, elevation=el,
         reason=None if ok else "stop_failed",
-        message="已急停" if ok else "急停失败",
+        message=(
+            "已确认停止；编码器位置未知，请重新读取 PFBK"
+            if ok and pos_err
+            else "已急停" if ok else "急停失败"
+        ),
     )
 
 

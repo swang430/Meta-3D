@@ -58,6 +58,15 @@ class _ReadFailPositioner(_FakePositioner):
         raise RuntimeError("PFBK timeout")  # 模拟回读通信坏 (Codex P2)
 
 
+class _TrackedStopPositioner(_FakePositioner):
+    def __init__(self):
+        super().__init__()
+        self.operator_stop_generation = 0
+
+    def note_operator_stop(self):
+        self.operator_stop_generation += 1
+
+
 class _AbortMidSweepPositioner(_FakePositioner):
     """move_to 后置急停 flag, 模拟 operator 急停落在 sweep 中途 (Codex P1)。"""
 
@@ -186,6 +195,18 @@ class TestPositionReadFailure:
         r = await positioner_sweep(PositionerSweepRequest(home_first=False))
         assert r.ok is False and r.reason == "position_read_failed"
 
+    async def test_stop_read_fail_keeps_confirmed_stop_but_returns_unknown_position(
+        self, monkeypatch
+    ):
+        _patch_hal(monkeypatch, {"positioner": _ReadFailPositioner()})
+
+        r = await positioner_stop()
+
+        assert r.ok is True
+        assert r.azimuth is None
+        assert r.elevation is None
+        assert "位置未知" in (r.message or "")
+
 
 class TestEmergencyStopCoordination:
     """Codex P1 #132: 急停时 in-flight sweep 须停止调度后续 move。"""
@@ -194,6 +215,14 @@ class TestEmergencyStopCoordination:
         _patch_hal(monkeypatch, {"positioner": _FakePositioner()})
         await positioner_stop()
         assert _positioner_stop_flag["requested"] is True
+
+    async def test_stop_publishes_operator_intent_to_the_shared_driver(self, monkeypatch):
+        driver = _TrackedStopPositioner()
+        _patch_hal(monkeypatch, {"positioner": driver})
+
+        await positioner_stop()
+
+        assert driver.operator_stop_generation == 1
 
     async def test_sweep_aborts_on_stop_request(self, monkeypatch):
         # 急停落在第一步后 → 第二步循环顶 abort, 不继续发 move

@@ -214,6 +214,36 @@ async def test_move_refuses_new_command_when_previous_motion_is_active():
 
 
 @pytest.mark.asyncio
+async def test_home_refuses_new_command_when_previous_motion_is_active():
+    driver = ScriptedMotionDriver(
+        {
+            "AXISSTATUS(X)": [str(1 << AxisStatusBit.MOVE_ACTIVE)],
+            "PFBK(X)": [30.0, 0.0],
+        }
+    )
+
+    assert await driver.reset() is False
+    assert not any(command.startswith("HOME ") for command in driver.sent)
+
+
+@pytest.mark.asyncio
+async def test_stop_requires_every_actual_axis_to_clear_move_active():
+    driver = ScriptedMotionDriver(
+        {
+            "AXISSTATUS(X)": ["0"] * 20,
+            "AXISSTATUS(Y)": [str(1 << AxisStatusBit.MOVE_ACTIVE)] * 20,
+        }
+    )
+    driver._axes_present = ["X", "Y"]
+    driver.settle_timeout_s = 0.001
+    driver.poll_interval_s = 0.0
+
+    assert await driver.stop() is False
+    assert "AXISSTATUS(X)" in driver.sent
+    assert "AXISSTATUS(Y)" in driver.sent
+
+
+@pytest.mark.asyncio
 async def test_move_aborts_and_preserves_cancellation():
     driver = _driver(0.0)
 
