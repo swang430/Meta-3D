@@ -425,6 +425,7 @@ class MeasureExecutor(IStepExecutor):
     async def execute(self, context: StepExecutionContext) -> StepExecutionResult:
         lab = context.require_lab_profile()
         config = load_mimo_ota_config(context.test_execution)
+        pcell = config.primary_carrier
 
         from app.services.channel_engine_client import ChannelEngineClient
         from app.services.channel_generation.asc_strategy import (
@@ -506,14 +507,14 @@ class MeasureExecutor(IStepExecutor):
         pl_service = ProbePathLossCalibrationService(context.db, use_mock=False)
         selected_path_loss_cert = pl_service.get_latest_calibration(
             chamber.id,
-            config.frequency_hz / 1e6,
+            pcell.frequency_hz / 1e6,
             operating_mode=config.switch_mode_id,
             require_real=channel_emulator_is_real,
         )
         if selected_path_loss_cert is None and channel_emulator_is_real:
             selected_path_loss_cert = pl_service.get_latest_calibration(
                 chamber.id,
-                config.frequency_hz / 1e6,
+                pcell.frequency_hz / 1e6,
                 operating_mode=config.switch_mode_id,
             )
         selected_path_loss_use_mock = (
@@ -586,15 +587,6 @@ class MeasureExecutor(IStepExecutor):
             # by MIMOOTAConfiguration._resolve_component_carriers); SCells
             # added below before start_signaling so RRC reconfig sees full set.
             ccs = list(config.component_carriers or [])
-            pcell = ccs[0] if ccs else None
-            if pcell is None:
-                return StepExecutionResult(
-                    status=StepExecutionStatus.FAILED,
-                    error_message=(
-                        "component_carriers is empty after schema validation — "
-                        "this should be impossible; check MIMOOTAConfiguration validator"
-                    ),
-                )
             scells = ccs[1:]
 
             # P2-11 (Codex on PR #109 P1): 从 TestCase 中心频推导规范 ARFCN 显式下发。
@@ -812,7 +804,7 @@ class MeasureExecutor(IStepExecutor):
             # P2-11 Phase 3 (Codex on PR #111): 校准 cert 按 TestCase 的 switch
             # operating mode 过滤 —— 否则多 mode 同频校准的 lab 会喂错 RF 通路的损耗。
             calibration_entries = ce_client._query_calibration_entries(
-                chamber.id, config.frequency_hz, chamber,
+                chamber.id, pcell.frequency_hz, chamber,
                 operating_mode=config.switch_mode_id,
                 path_loss_calibration=path_loss_cert,
             )
@@ -845,7 +837,7 @@ class MeasureExecutor(IStepExecutor):
                     "RSRP baseline uncompensated",
                     context.test_execution.id,
                     chamber.id,
-                    config.frequency_hz / 1e6,
+                    pcell.frequency_hz / 1e6,
                 )
 
             # P0: invert per_chain_pl into a (probe_id, pol) → total_insertion_loss_db map.
@@ -955,14 +947,13 @@ class MeasureExecutor(IStepExecutor):
                 )
 
             sim_rules = {
-                "frequency_hz": config.frequency_hz,
+                "frequency_hz": pcell.frequency_hz,
                 # 2026-07-03 现场热修 → P1-18 已正修: 驱动 Step 4 现在缺省不写 CENT
                 # (保留 .smu 工程频率)。此桥接仍保留 —— TestCase 显式驱动频率是路径 B
                 # 正路 (下发=配置, _center_freq_programmed 置位, 上报诚实), EMQuest
                 # 运行时同时向 UXM+F64 下发频点的行为与此同构。
-                # Codex #193 P2: 取归一化 PCell 频率 (与 UXM set_cell_config / 频率一致性网
-                # 同源), 不取顶层 legacy frequency_hz —— CA/编辑过的计划两者可能分叉,
-                # 用顶层会把 F64 写到过期载频。pcell 变量在上方 Phase 2g 已判空 fail-loud。
+                # Codex #193 P2 + P1-55: 取规范化 PCell 频率，与 UXM、校准、波形和
+                # 一致性网同源；顶层 legacy frequency_hz 仅为受写入门约束的兼容镜像。
                 "center_frequency_mhz": pcell.frequency_hz / 1e6,
                 "target_tx_power_dbm": config.target_tx_power_dbm,
                 "target_rsrp_dbm": config.target_rsrp_dbm,
@@ -1920,7 +1911,7 @@ class MeasureExecutor(IStepExecutor):
             for az_target in config.azimuths_deg:
                 pid = select_active_probe_id(chamber.num_probes, az_target)
                 pattern_gain_v = get_probe_gain_at_azimuth(
-                    context.db, chamber.num_probes, az_target, config.frequency_hz / 1e6, "V",
+                    context.db, chamber.num_probes, az_target, pcell.frequency_hz / 1e6, "V",
                     chamber_id=chamber.id,
                 )
                 chain_pl_db = chain_pl_by_probe_pol.get((pid, "V"))
@@ -2234,7 +2225,7 @@ class MeasureExecutor(IStepExecutor):
 
             result_payload: Dict[str, Any] = {
                 "cdl_model_name": config.cdl_model_name,
-                "frequency_ghz": config.frequency_hz / 1e9,
+                "frequency_ghz": pcell.frequency_hz / 1e9,
                 "mimo_config": f"{config.mimo_layers}x{config.mimo_layers}",
                 "azimuth_results": azimuth_results,
                 "measurement_source": "simulated" if measurement_simulated else "instrument",

@@ -40,6 +40,7 @@ class ReferenceExecutor(IStepExecutor):
 
     async def execute(self, context: StepExecutionContext) -> StepExecutionResult:
         config = load_mimo_ota_config(context.test_execution)
+        primary_carrier = config.primary_carrier
 
         from app.services.instrument_hal_service import get_hal_service, is_mock_driver
 
@@ -63,12 +64,12 @@ class ReferenceExecutor(IStepExecutor):
                 context.test_execution.id,
             )
             await sa.setup_spectrum(
-                center_freq_hz=config.frequency_hz,
+                center_freq_hz=primary_carrier.frequency_hz,
                 span_hz=200e6,
                 rbw_hz=1e5,
             )
             measured_pwr = await sa.measure_channel_power(
-                bandwidth_hz=config.bandwidth_mhz * 1e6
+                bandwidth_hz=primary_carrier.bandwidth_mhz * 1e6
             )
             measured_trp_dbm = measured_pwr + _MOCK_SA_TO_TRP_OFFSET_DB
             # 「来源」这一栏要说实话（P1-48）：SA 挂着但是 mock 驱动时，

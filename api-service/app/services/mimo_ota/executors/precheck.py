@@ -39,6 +39,7 @@ class PrecheckExecutor(IStepExecutor):
     async def execute(self, context: StepExecutionContext) -> StepExecutionResult:
         lab = context.require_lab_profile()
         config = load_mimo_ota_config(context.test_execution)
+        primary_carrier = config.primary_carrier
         criteria = config.pass_criteria
 
         messages: list[str] = []
@@ -490,7 +491,7 @@ class PrecheckExecutor(IStepExecutor):
             ProbePathLossCalibrationService,
         )
 
-        target_freq_mhz = config.frequency_hz / 1e6
+        target_freq_mhz = primary_carrier.frequency_hz / 1e6
         pl_service = ProbePathLossCalibrationService(context.db, use_mock=False)
         # P2-11 Phase 3 (Codex on PR #111): 按 TestCase switch_mode_id 过滤, 否则 cal
         # gate 会拿别的 operating mode 的 cert 通过 precheck, 但 measure 用对的 mode 查
@@ -565,7 +566,7 @@ class PrecheckExecutor(IStepExecutor):
         ripple_db = estimate_quiet_zone_ripple_db(
             context.db,
             num_probes=chamber.num_probes,
-            frequency_mhz=config.frequency_hz / 1e6,
+            frequency_mhz=primary_carrier.frequency_hz / 1e6,
             polarization="V",
             chamber_id=chamber.id,
         )
