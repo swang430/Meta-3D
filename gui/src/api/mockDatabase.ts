@@ -951,6 +951,8 @@ let instrumentCatalog: InstrumentCategory[] = [
     tags: ['64TRX', 'WFS', 'PWG'],
     selectedModelId: 'propsim-f64',
     connection: { endpoint: '192.168.100.21', controller: 'LAN', notes: '暗室机柜1#' },
+    usagePhase: [],
+    driverMode: 'auto',
     models: [
       {
         id: 'ksw-wns02b',
@@ -994,6 +996,8 @@ let instrumentCatalog: InstrumentCategory[] = [
     tags: ["开关", "矩阵"],
     selectedModelId: "caict-custom-matrix",
     connection: { endpoint: "192.168.100.50", controller: "LAN", notes: "机柜顶部" },
+    usagePhase: [],
+    driverMode: 'auto',
     models: [
       {
         id: "caict-custom-matrix",
@@ -1013,6 +1017,8 @@ let instrumentCatalog: InstrumentCategory[] = [
     tags: ['5G NR', 'C-V2X'],
     selectedModelId: 'rs-cmx500',
     connection: { endpoint: '192.168.100.11', controller: 'LAN', notes: 'NR-SA 模式' },
+    usagePhase: [],
+    driverMode: 'auto',
     models: [
       {
         id: 'rs-cmx500',
@@ -1050,6 +1056,8 @@ let instrumentCatalog: InstrumentCategory[] = [
     tags: ['校准', 'S参数'],
     selectedModelId: 'keysight-pna',
     connection: { endpoint: '192.168.100.31', controller: 'LAN', notes: '校准台专用' },
+    usagePhase: [],
+    driverMode: 'auto',
     models: [
       {
         id: 'keysight-pna',
@@ -1087,6 +1095,8 @@ let instrumentCatalog: InstrumentCategory[] = [
     tags: ['监控', '干扰'],
     selectedModelId: 'rsa-306',
     connection: { endpoint: '', controller: 'USB', notes: '便携式采样' },
+    usagePhase: [],
+    driverMode: 'auto',
     models: [
       {
         id: 'rs-fsv3070',
@@ -1128,12 +1138,12 @@ const clone = <T,>(data: T): T => JSON.parse(JSON.stringify(data))
 
 export const mockDatabase = {
   getProbes(): ProbesResponse {
-    return { probes: clone(probes) }
+    return { total: probes.length, probes: clone(probes) }
   },
   setProbes(next: Probe[]): ProbesResponse {
     // Mock method - not used with real backend
     probes = clone(next)
-    return { probes: clone(probes) }
+    return { total: probes.length, probes: clone(probes) }
   },
   createProbe(probe: Probe): Probe {
     probes = [...probes.filter((item) => item.id !== probe.id), probe]

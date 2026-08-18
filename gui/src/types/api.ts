@@ -88,6 +88,8 @@ export type InstrumentCategory = {
   selectedModelId: string | null
   connection: InstrumentConnection
   models: InstrumentModel[]
+  usagePhase: string[]
+  driverMode: string
 }
 
 export type SequenceStep = {
@@ -124,6 +126,7 @@ export type MockTestCaseDetail = MockTestCase & {
 }
 
 export type ProbesResponse = {
+  total: number
   probes: Probe[]
 }
 
@@ -508,6 +511,7 @@ export type ChamberConfiguration = {
   num_probes: number
   num_polarizations: number
   num_rings: number
+  probe_distribution: 'ring' | 'multi-ring' | 'custom'
 
   // LNA 配置
   has_lna: boolean
@@ -557,10 +561,21 @@ export type ChamberConfiguration = {
   max_ul_radius_m: number | null
 }
 
-export type CreateChamberPayload = Omit<
+export type ChamberWritableFields = Omit<
   ChamberConfiguration,
-  'id' | 'is_active' | 'created_at' | 'updated_at' | 'created_by' | 'supported_tests' | 'max_ul_radius_m'
+  | 'id'
+  | 'is_active'
+  | 'is_system_preset'
+  | 'created_at'
+  | 'updated_at'
+  | 'created_by'
+  | 'supported_tests'
+  | 'max_ul_radius_m'
 >
+
+export type CreateChamberPayload =
+  Pick<ChamberWritableFields, 'name' | 'chamber_radius_m'> &
+  Partial<Omit<ChamberWritableFields, 'name' | 'chamber_radius_m'>>
 
 export type UpdateChamberPayload = Partial<CreateChamberPayload> & {
   is_active?: boolean
