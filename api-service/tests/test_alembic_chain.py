@@ -78,7 +78,7 @@ _EXPECTED_COLUMNS: dict[str, list[str]] = {
     "link_calibrations": ["use_mock"],
     "rf_chain_calibrations": ["use_mock"],
     "multi_frequency_path_losses": ["use_mock"],
-    "diagnostic_runs": ["result_extra"],
+    "diagnostic_runs": ["result_extra", "sequence_evidence"],
     "bootstrap_history": ["seeder_name", "seeder_version"],
 }
 _EXPECTED_INDEXES: dict[str, list[str]] = {
