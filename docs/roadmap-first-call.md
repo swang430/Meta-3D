@@ -18,7 +18,7 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅。
 
-**Current Focus = P2-28「诊断序列完整证据持久化」（开发、回归与 fresh 内审完成，待 Ready PR 外审，WIP=1）**。P2-27 已由 PR #351（merge `6d3e4b5`）完成九组手写契约与 live OpenAPI 对齐；R2 仅报告一条 P2，按两轮规则不阻塞、不自动积压。P2-28 已采用结构化 `sequence_evidence` 方案：与审计行同生命周期保存版本、`summary/log/steps.raw/extra/duration`，列表仍只给 2KB 摘要，详情按 id 读取，GUI 最近运行可重新打开；旧行明确为完整证据不可用且只展示原摘要，不从摘要猜测 raw，也不依赖会轮转的日志指针。相关后端与完整 rule gates 223 passed、GUI 契约 3 passed、production build、compileall、单一 Alembic head 与 diff-check 通过；fresh 内审 P1/P2/P3=0。设计与计划见 [`P2-28 设计`](plans/2026-08-18-p2-28-diagnostic-evidence-persistence-design.md) / [`P2-28 计划`](plans/2026-08-18-p2-28-diagnostic-evidence-persistence.md)。P1-55
+**Current Focus = P2-28「诊断序列完整证据持久化」（PR #352，R1 无重大问题，待最终 R2，WIP=1）**。P2-27 已由 PR #351（merge `6d3e4b5`）完成九组手写契约与 live OpenAPI 对齐；R2 仅报告一条 P2，按两轮规则不阻塞、不自动积压。P2-28 已采用结构化 `sequence_evidence` 方案：与审计行同生命周期保存版本、`summary/log/steps.raw/extra/duration`，列表仍只给 2KB 摘要，详情按 id 读取，GUI 最近运行可重新打开；旧行明确为完整证据不可用且只展示原摘要，不从摘要猜测 raw，也不依赖会轮转的日志指针。相关后端与完整 rule gates 223 passed、GUI 契约 3 passed、production build、compileall、单一 Alembic head 与 diff-check 通过；fresh 内审 P1/P2/P3=0；Codex R1 覆盖 `e48d44f` 且无重大问题。设计与计划见 [`P2-28 设计`](plans/2026-08-18-p2-28-diagnostic-evidence-persistence-design.md) / [`P2-28 计划`](plans/2026-08-18-p2-28-diagnostic-evidence-persistence.md)。P1-55
 已由 PR #349（merge `b6f631a`）完成顶层配置与 `component_carriers[0]` 真值源收敛；P1-54
 已由 PR #348 合并；用户已确认继续下一项。P2-26 已由 PR #347
 （merge `ef50070`）完成历史 MIMO 报告 UNKNOWN/N/A 的安全重建与恢复界面。P1-54 将 UXM
@@ -55,7 +55,7 @@ P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → 
 | **P1-55** | 收敛顶层配置与 `component_carriers[0]`；统一写入、显示与执行真值源 | ✅ PR #349 |
 | **P1-56** | 转台命令成功但编码器不动：本地动作真值门与诊断载体 | ✅ PR #350（本地半完成；R2 P1 尾修未获外审覆盖，fresh 内审 P1=0、相关回归通过）；物理现场验证保持 Hardware Blocked |
 | **P2-27** | 修复 9 组前端手写契约与 live OpenAPI 不一致 | ✅ PR #351 |
-| **P2-28** | 诊断序列完整证据持久化 | 🔄 开发/回归/fresh 内审完成，P1/P2/P3=0；待 Ready PR 外审 |
+| **P2-28** | 诊断序列完整证据持久化 | 🔄 PR #352；R1 无重大问题，待最终 R2 |
 | **P2-29** | ASC/B2 正式模型加载证据 hook | ⬜ |
 | **P2-30** | 校准/方向图任务级仪表租约，避免逐点重连 | ⬜ |
 | **P2-31** | P2-18 剩余交付片：SMB 信道资产扫描 + EMQuest 表导入自动化 | ⬜ |
@@ -306,7 +306,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → ~~P1-52~~ ✅ → ~~P1-53~~ ✅ → ~~P2-26~~ ✅ → ~~P1-54~~ ✅ → ~~P1-55~~ ✅ → ~~P1-56~~ ✅ → ~~P2-27~~ ✅ → **P2-28 🔄** → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；P2-27 已由 PR #351 merge `6d3e4b5` 收口。当前 WIP=1：P2-28 的版本化完整证据、轻量列表/按 id 详情、GUI 历史重开与旧行 fail-closed 均已完成；相关后端与完整 rule gates 223 passed、GUI 契约 3 passed/build、compileall、单一 Alembic head、diff-check 通过，fresh 内审 P1/P2/P3=0，下一步开 Ready PR 并进入两轮外审。现场物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
+| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → ~~P1-52~~ ✅ → ~~P1-53~~ ✅ → ~~P2-26~~ ✅ → ~~P1-54~~ ✅ → ~~P1-55~~ ✅ → ~~P1-56~~ ✅ → ~~P2-27~~ ✅ → **P2-28 🔄** → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；P2-27 已由 PR #351 merge `6d3e4b5` 收口。当前 WIP=1：P2-28 的版本化完整证据、轻量列表/按 id 详情、GUI 历史重开与旧行 fail-closed 均已完成；相关后端与完整 rule gates 223 passed、GUI 契约 3 passed/build、compileall、单一 Alembic head、diff-check 通过，fresh 内审 P1/P2/P3=0；PR #352 的 R1 无重大问题，下一步触发最终 R2。现场物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |
