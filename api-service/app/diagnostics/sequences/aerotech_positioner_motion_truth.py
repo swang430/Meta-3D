@@ -378,6 +378,7 @@ async def run(
     axis = driver.az_axis
     try:
         start_raw, start_position = await _read_position(driver, axis)
+        await driver._require_axes_stopped()  # noqa: SLF001
         # Command evidence: the repository copy of the Aerotech Ensemble
         # ASCII/TCP integration manual §5-§6 specifies ENABLE, MOVEABS with
         # optional XF feed, and AXISSTATUS/PFBK polling before sampling.

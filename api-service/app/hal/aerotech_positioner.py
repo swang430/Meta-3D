@@ -525,10 +525,14 @@ class RealAerotechDriver(PositionerDriver):
     async def _abort_unverified_motion(self, *, reason: str) -> None:
         """Best-effort ABORT + finite PFBK refresh without masking root cause."""
         try:
-            await self._send(AeroBasicCmd.ABORT.format(
-                axes=" ".join(self._axes_present)
-            ))
-            logger.warning("[Aerotech] ABORT after unverified motion: %s", reason)
+            if await self.stop():
+                logger.warning(
+                    "[Aerotech] ABORT stopped unverified motion: %s", reason
+                )
+            else:
+                logger.error(
+                    "[Aerotech] ABORT did not prove motion stopped: %s", reason
+                )
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "[Aerotech] ABORT failed after unverified motion (%s): %s",
@@ -558,6 +562,33 @@ class RealAerotechDriver(PositionerDriver):
     def _check_status_bit(self, status_int: int, bit: int) -> bool:
         """检查 AXISSTATUS 位掩码中的指定位"""
         return bool(status_int & (1 << bit))
+
+    async def _axes_are_stopped(self) -> bool:
+        """Read every actual axis; ABORT success requires MOVE_ACTIVE=0."""
+        for axis in self._axes_present:
+            status = parse_axis_status_bitmask(await self._send(
+                AeroBasicCmd.AXIS_STATUS.format(axis=axis)
+            ))
+            if self._check_status_bit(status, AxisStatusBit.MOVE_ACTIVE):
+                return False
+        return True
+
+    async def _require_axes_stopped(self) -> None:
+        """Reject a new HOME/MOVE while an earlier motion is still active."""
+        if not await self._axes_are_stopped():
+            raise AerotechError(
+                "previous_motion_active: refusing to overlap a new motion command"
+            )
+
+    async def _wait_for_axes_stopped(self) -> None:
+        """Wait after ABORT until every actual axis clears MOVE_ACTIVE."""
+        deadline = asyncio.get_event_loop().time() + self.settle_timeout_s
+        while True:
+            if await self._axes_are_stopped():
+                return
+            if asyncio.get_event_loop().time() >= deadline:
+                raise asyncio.TimeoutError("ABORT motion-stop confirmation timeout")
+            await asyncio.sleep(self.poll_interval_s)
 
     @staticmethod
     def _enable_tcp_keepalive(writer: asyncio.StreamWriter) -> None:
@@ -842,6 +873,7 @@ class RealAerotechDriver(PositionerDriver):
             try:
                 if not self._axes_present:
                     raise AerotechError("Not connected — no axes to home")
+                await self._require_axes_stopped()
                 before = await self._read_motion_feedback()
                 self._sync_cached_feedback(before)
                 command_accepted = True
@@ -898,6 +930,7 @@ class RealAerotechDriver(PositionerDriver):
             try:
                 if not self._axes_present:
                     raise AerotechError("Not connected — cannot move")
+                await self._require_axes_stopped()
                 self._set_status(InstrumentStatus.BUSY)
 
             # Single-axis controllers ignore elevation. Warn (not error)
@@ -998,11 +1031,18 @@ class RealAerotechDriver(PositionerDriver):
             await self._send(AeroBasicCmd.ABORT.format(
                 axes=" ".join(self._axes_present)
             ))
+            await self._wait_for_axes_stopped()
             self._set_status(InstrumentStatus.READY)
-            logger.warning("[Aerotech] Emergency stop executed")
+            logger.warning("[Aerotech] Emergency stop confirmed by AXISSTATUS")
             return True
+        except asyncio.TimeoutError:
+            message = "ABORT acknowledged but axis motion did not stop"
+            logger.error("[Aerotech] %s", message)
+            self._set_status(InstrumentStatus.ERROR, message)
+            return False
         except Exception as e:
             logger.error(f"[Aerotech] Stop failed: {e}")
+            self._set_status(InstrumentStatus.ERROR, str(e))
             return False
 
     # ==================================================================

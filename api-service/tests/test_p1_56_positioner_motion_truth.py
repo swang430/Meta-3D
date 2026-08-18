@@ -122,7 +122,7 @@ async def test_move_rejects_fractional_axis_status_instead_of_truncating_bitmask
     driver = ScriptedMotionDriver(
         {
             "PFBK(X)": [0.0, 90.0, 90.0],
-            "AXISSTATUS(X)": ["4.5"],
+            "AXISSTATUS(X)": ["0", "4.5", "0"],
         }
     )
 
@@ -166,6 +166,51 @@ async def test_move_aborts_after_settle_timeout():
     assert await driver.move_to(90.0, 0.0) is False
     assert "MOVEABS X 90.0000" in driver.sent
     assert "ABORT X" in driver.sent
+
+
+@pytest.mark.asyncio
+async def test_stop_does_not_report_success_while_axis_is_still_moving():
+    driver = _driver(12.0)
+    driver.settle_timeout_s = 0.001
+    driver.poll_interval_s = 0.0
+    original_send = driver._send
+
+    async def moving_send(command: str) -> str:
+        if command == "AXISSTATUS(X)":
+            driver.sent.append(command)
+            return str(1 << AxisStatusBit.MOVE_ACTIVE)
+        return await original_send(command)
+
+    driver._send = moving_send  # type: ignore[method-assign]
+
+    assert await driver.stop() is False
+    assert "ABORT X" in driver.sent
+    assert "AXISSTATUS(X)" in driver.sent
+
+
+@pytest.mark.asyncio
+async def test_stop_succeeds_after_move_active_clears_without_in_position():
+    driver = ScriptedMotionDriver(
+        {
+            "AXISSTATUS(X)": [str(1 << AxisStatusBit.MOVE_ACTIVE), "0"],
+        }
+    )
+
+    assert await driver.stop() is True
+    assert driver.sent.count("AXISSTATUS(X)") == 2
+
+
+@pytest.mark.asyncio
+async def test_move_refuses_new_command_when_previous_motion_is_active():
+    driver = ScriptedMotionDriver(
+        {
+            "AXISSTATUS(X)": [str(1 << AxisStatusBit.MOVE_ACTIVE)],
+            "PFBK(X)": [0.0, 90.0],
+        }
+    )
+
+    assert await driver.move_to(90.0, 0.0) is False
+    assert not any(command.startswith("MOVEABS ") for command in driver.sent)
 
 
 @pytest.mark.asyncio

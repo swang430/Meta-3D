@@ -31,6 +31,7 @@ class MotionDiagnosticDriver(RealAerotechDriver):
         moves_without_xf: bool,
         moves_with_xf: bool,
         axisstatus: str | None = None,
+        axisstatus_responses: list[str] | None = None,
         abort_positions: list[float] | None = None,
         abort_raises: bool = False,
     ) -> None:
@@ -41,6 +42,7 @@ class MotionDiagnosticDriver(RealAerotechDriver):
         self.moves_without_xf = moves_without_xf
         self.moves_with_xf = moves_with_xf
         self.axisstatus = axisstatus or str(1 << AxisStatusBit.IN_POSITION)
+        self.axisstatus_responses = list(axisstatus_responses or [])
         self.abort_positions = list(abort_positions or [])
         self.abort_raises = abort_raises
         self.commands: list[str] = []
@@ -50,6 +52,8 @@ class MotionDiagnosticDriver(RealAerotechDriver):
         if command == "PFBK(X)":
             return str(self.position)
         if command == "AXISSTATUS(X)":
+            if self.axisstatus_responses:
+                return self.axisstatus_responses.pop(0)
             return self.axisstatus
         if command.startswith("MOVEABS X "):
             has_xf = " XF" in command
@@ -203,6 +207,7 @@ async def test_invalid_axis_status_cannot_be_washed_into_success_by_final_positi
         moves_without_xf=True,
         moves_with_xf=True,
         axisstatus=axisstatus,
+        axisstatus_responses=["0"],
     )
 
     result = await sequence.run(
@@ -214,11 +219,12 @@ async def test_invalid_axis_status_cannot_be_washed_into_success_by_final_positi
 
     assert result.success is False
     assert all(step.success is False for step in result.steps)
-    assert all(
-        segment["samples_valid"] is False
-        for segment in result.extra["segments"]
-    )
-    assert driver.commands.count("ABORT X") == 2
+    assert len(result.extra["segments"]) == 1
+    segment = result.extra["segments"][0]
+    assert segment["samples_valid"] is False
+    assert segment["abort_attempted"] is True
+    assert segment["abort_succeeded"] is False
+    assert driver.commands.count("ABORT X") == 1
 
 
 @pytest.mark.asyncio
@@ -227,6 +233,7 @@ async def test_move_active_without_in_position_cannot_finish_diagnostic(fast_clo
         moves_without_xf=True,
         moves_with_xf=True,
         axisstatus=str(1 << AxisStatusBit.MOVE_ACTIVE),
+        axisstatus_responses=["0"],
     )
 
     result = await sequence.run(
@@ -237,8 +244,13 @@ async def test_move_active_without_in_position_cannot_finish_diagnostic(fast_clo
     )
 
     assert result.success is False
-    assert all(segment["settled"] is False for segment in result.extra["segments"])
-    assert driver.commands.count("ABORT X") == 2
+    assert len(result.extra["segments"]) == 1
+    assert result.extra["segments"][0]["settled"] is False
+    assert result.extra["segments"][0]["abort_succeeded"] is False
+    assert driver.commands.count("ABORT X") == 1
+    assert len(
+        [command for command in driver.commands if command.startswith("MOVEABS ")]
+    ) == 1
 
 
 @pytest.mark.asyncio

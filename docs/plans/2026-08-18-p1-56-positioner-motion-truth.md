@@ -32,7 +32,9 @@
 4. 非有限目标在任何 I/O 前拒绝；已接受但未证明到位的超时、异常、取消先 ABORT，有限
    PFBK 无论成功失败都同步缓存。
 5. MOVE/HOME 的 AXISSTATUS 复用严格整数 bitmask 解析，不允许浮点截断。
-6. 运行 Task 1 定点直到全绿；再跑 Aerotech、standalone、P1-47C 相关回归。
+6. 新动作下发前拒绝遗留 MOVE_ACTIVE；ABORT ACK 后轮询全部实际轴，只有 MOVE_ACTIVE
+   清零才返回成功/释放动作锁。
+7. 运行 Task 1 定点直到全绿；再跑 Aerotech、standalone、P1-47C 相关回归。
 
 ## Task 3：诊断载体 RED
 
@@ -50,7 +52,8 @@
    `instrument_test_lease` 协调锁（急停保持可抢占）。
 6. 锁住最终 MOVE_ACTIVE 不得成功、ABORT 失败不得继续第二段，以及 post-ABORT PFBK
    必须作为后续起点/最终缓存真值。
-7. 运行定点观察 RED。
+7. 锁住 ABORT ACK 但 MOVE_ACTIVE 未清零不得假成功，新动作也不得与遗留运动重叠。
+8. 运行定点观察 RED。
 
 ## Task 4：诊断载体 GREEN
 

@@ -77,13 +77,14 @@ ETS 仍按其独立方言处理。这是有意的证据边界。
 `move_to()` 按以下顺序执行：
 
 1. 在任何控制器 I/O 前拒绝 bool、NaN、Inf 等非有限目标；
-2. 命令前严格读取各实际轴的 `PFBK`；
-3. 发送既有 `MOVEABS`；
-4. 轮询既有 `AXISSTATUS`，只接受有限、非负、无小数的整数 bitmask；故障、非法状态或
+2. 命令前严格读取全部实际轴的 `AXISSTATUS`，若上一动作仍 `MOVE_ACTIVE` 则拒绝叠加；
+3. 命令前严格读取各实际轴的 `PFBK`；
+4. 发送既有 `MOVEABS`；
+5. 轮询既有 `AXISSTATUS`，只接受有限、非负、无小数的整数 bitmask；故障、非法状态或
    超时均失败；
-5. 严格读取最终 `PFBK`，先同步有限编码器真值到缓存，再判成功与否；
-6. 每个实际轴都要求最终反馈在配置容差内到达请求目标；
-7. 若请求目标与起点的距离超过容差，还要求反馈相对起点发生可观察变化；否则返回 False，
+6. 严格读取最终 `PFBK`，先同步有限编码器真值到缓存，再判成功与否；
+7. 每个实际轴都要求最终反馈在配置容差内到达请求目标；
+8. 若请求目标与起点的距离超过容差，还要求反馈相对起点发生可观察变化；否则返回 False，
    错误明确为 `motion_not_observed`，不得打印 Arrived。
 
 方位误差使用 360° 环形距离，避免 359.8°→0° 被误判；俯仰使用线性距离。已在目标位置时
@@ -115,7 +116,8 @@ ETS 仍按其独立方言处理。这是有意的证据边界。
   `AXISSTATUS` 只接受有限、非负、无小数的整数 bitmask；
 - 每段输出 `command_accepted / feedback_changed / target_reached / settled / axis_fault`，只有
   反馈变化、到达目标且最终 `IN_POSITION=1 / MOVE_ACTIVE=0` 才算该段动作有证据；
-- 已接受但未证明动作的段先 `ABORT`，无论 stop 成败都独立回读 PFBK；post-ABORT PFBK 是
+- 新诊断动作下发前同样确认全部实际轴 `MOVE_ACTIVE=0`；已接受但未证明动作的段先
+  `ABORT`，再轮询全部轴直到 `MOVE_ACTIVE=0`，无论 stop 成败都独立回读 PFBK；post-ABORT PFBK 是
   后续段起点与最终缓存的权威源。ABORT 或回读未确认时禁止发送第二段 MOVEABS；
 - `result_extra` 保存全部样本，`SequenceStepResult.raw` 保存关键原始回复。诊断结论只说明
   “控制器编码器反馈是否移动/到达”，不声称 DUT 物理角度已校准。
@@ -132,6 +134,8 @@ ETS 仍按其独立方言处理。这是有意的证据边界。
   已取得的有限 PFBK 即使判定失败也同步缓存，避免 metrics 继续发布旧位置。
 - 取消：已接受动作先完成 `ABORT`/回读收尾，再保持 `CancelledError` 传播语义；诊断框架
   负责审计 cancelled，不得在释放 destructive token 后留下后台运动。
+- ABORT 的 ACK 不是停止成功；只有全部实际轴严格 AXISSTATUS 均清除 `MOVE_ACTIVE` 才返回
+  True/释放动作互斥。无需 `IN_POSITION`，因为急停后的轴不保证到位。
 - 诊断动作结束：最终状态仍为 MOVE_ACTIVE、ABORT 未确认或 post-ABORT PFBK 不可得时均
   fail-closed；不得释放互斥后声称成功或叠加下一条动作。
 - cleanup 的 False 进入 warnings，但不遮蔽原始执行错误。
@@ -152,4 +156,5 @@ ETS 仍按其独立方言处理。这是有意的证据边界。
 11. destructive diagnostic 与其他 MOVE/HOME 共用完整操作锁，stop/ABORT 保留抢占能力。
 12. 未证明动作、超时、异常与取消均执行 ABORT+独立 PFBK 回读；ABORT 失败不继续第二段，
     post-ABORT PFBK 不得被旧样本覆盖。
-13. 本地完成后 P1-56 本地片可合并；现场真实机械方向/单位/偏置/型号裁决仍 Hardware Blocked。
+13. ABORT ACK 后仍 MOVE_ACTIVE 必须返回 False，禁止第二段与后续 MOVE/HOME；清零后才可继续。
+14. 本地完成后 P1-56 本地片可合并；现场真实机械方向/单位/偏置/型号裁决仍 Hardware Blocked。
