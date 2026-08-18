@@ -33,14 +33,18 @@ export interface SequenceStepResult {
   raw?: string | null
 }
 
-export interface SequenceRunResponse {
-  diagnostic_run_id: string
-  success: boolean
+export interface SequenceEvidence {
+  schema_version: 1
   summary: string
   duration_ms: number
   log: string[]
   steps: SequenceStepResult[]
   extra: Record<string, unknown>
+}
+
+export interface SequenceRunResponse extends SequenceEvidence {
+  diagnostic_run_id: string
+  success: boolean
 }
 
 export interface DiagnosticRunSummary {
@@ -58,6 +62,8 @@ export interface DiagnosticRunSummary {
 
 export interface DiagnosticRunDetail extends DiagnosticRunSummary {
   params?: Record<string, unknown> | null
+  result_extra?: Record<string, unknown> | null
+  sequence_evidence?: SequenceEvidence | null
   hal_trace_log_path?: string | null
 }
 

@@ -29,6 +29,11 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.diagnostics import loader
 from app.models.diagnostic_run import DiagnosticKind
+from app.schemas.diagnostic_evidence import (
+    SequenceEvidence,
+    SequenceRunResponse,
+    SequenceStepEvidence,
+)
 from app.services.diagnostic_context import (
     build_diagnostic_context,
     DiagnosticContext,
@@ -75,25 +80,6 @@ class RunSequenceRequest(BaseModel):
     operating_mode: str = Field("mimo_ota", description="For RF chain resolution if the sequence wants it")
     params: Dict[str, Any] = Field(default_factory=dict)
     run_by: Optional[str] = Field(None, description="Operator name / id for audit row")
-
-
-class SequenceStepResponse(BaseModel):
-    label: str
-    success: bool
-    detail: str = ""
-    duration_ms: Optional[int] = None
-    raw: Optional[str] = None
-    """仪器原始回复 (见 SequenceStepResult.raw)。None = 该步无仪器回复。"""
-
-
-class SequenceRunResponse(BaseModel):
-    diagnostic_run_id: UUID
-    success: bool
-    summary: str
-    duration_ms: int
-    log: List[str]
-    steps: List[SequenceStepResponse]
-    extra: Dict[str, Any] = Field(default_factory=dict)
 
 
 @router.get("", response_model=List[SequenceMetadataResponse])
@@ -260,6 +246,13 @@ async def run_diagnostic_sequence(
             release_unsafe_diagnostic(unsafe_token)
 
     duration_ms = int((time.monotonic() - started) * 1000)
+    evidence = SequenceEvidence(
+        summary=summary,
+        duration_ms=duration_ms,
+        log=log_buffer,
+        steps=[SequenceStepEvidence(**step) for step in step_results],
+        extra=extra,
+    )
 
     # Persist the audit row. output_excerpt = the human log lines + summary
     # so the list view recap shows what actually happened.
@@ -289,6 +282,7 @@ async def run_diagnostic_sequence(
         params={"sequence_key": key, **request.params},
         output=output_text.getvalue(),
         result_extra=extra,
+        sequence_evidence=evidence.model_dump(mode="json"),
         error_message=error_msg,
         duration_ms=duration_ms,
         run_by=request.run_by,
@@ -300,9 +294,5 @@ async def run_diagnostic_sequence(
     return SequenceRunResponse(
         diagnostic_run_id=run.id,
         success=success,
-        summary=summary,
-        duration_ms=duration_ms,
-        log=log_buffer,
-        steps=[SequenceStepResponse(**s) for s in step_results],
-        extra=extra,
+        **evidence.model_dump(),
     )

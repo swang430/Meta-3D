@@ -4,12 +4,12 @@
  * Operators picked a sequence (.py file under app/diagnostics/sequences/),
  * pick a LabProfile, fill the metadata-declared params, hit Run. Result
  * panel shows live log + per-step ✓/✗ + summary, plus a Recent Runs feed
- * (last 20 in this kind) so re-running yesterday's diagnostic is one click.
+ * (last 20 in this kind) so reopening yesterday's diagnostic evidence is one click.
  *
  * Intentionally not a TestPlan replacement — every run lands in
  * diagnostic_runs but never as TestExecution / cert.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Stack,
   Paper,
@@ -33,6 +33,7 @@ import {
   IconAlertTriangle,
   IconAlertCircle,
   IconCheck,
+  IconEye,
   IconHistory,
   IconPlayerPlay,
   IconRefresh,
@@ -49,13 +50,79 @@ import {
   listDiagnosticSequences,
   runDiagnosticSequence,
   listDiagnosticRuns,
+  getDiagnosticRun,
   type DiagnosticSequenceMetadata,
   type SequenceRunResponse,
   type DiagnosticRunSummary,
 } from '../../api/diagnosticService'
+import { evidenceViewFromDiagnosticRun } from './sequenceEvidence'
 import { logFrontendEvent } from '../../observability/frontendLogger'
 
 type ParamValue = number | string | boolean
+
+function SequenceEvidenceResult({
+  result,
+  title,
+}: {
+  result: SequenceRunResponse
+  title: string
+}) {
+  return (
+    <Stack gap="sm">
+      <Group gap="sm">
+        <Title order={5}>{title}</Title>
+        <Badge color={result.success ? 'green' : 'orange'}>
+          {result.success ? 'success' : 'failure'}
+        </Badge>
+        <Badge variant="light">{result.duration_ms} ms</Badge>
+        <Code>{result.diagnostic_run_id.slice(0, 8)}...</Code>
+        <Badge variant="light" color="blue">完整证据 v{result.schema_version}</Badge>
+      </Group>
+      <Text size="sm">{result.summary}</Text>
+      {result.steps.length > 0 && (
+        <Stack gap={4}>
+          {result.steps.map((step, index) => (
+            <Stack key={index} gap={2}>
+              <Group gap="xs" wrap="nowrap" align="flex-start">
+                <Badge color={step.success ? 'green' : 'red'} size="sm" variant="filled">
+                  {step.success ? '✓' : '✗'}
+                </Badge>
+                <Text size="xs" fw={500} style={{ flexShrink: 0 }}>{step.label}</Text>
+                <Text size="xs" c="dimmed" style={{ wordBreak: 'break-all' }}>
+                  {step.detail}
+                </Text>
+                {step.duration_ms !== undefined && step.duration_ms !== null && (
+                  <Text size="xs" c="dimmed" ml="auto">{step.duration_ms} ms</Text>
+                )}
+              </Group>
+              {step.raw !== undefined && step.raw !== null && (
+                <Code style={{ fontSize: 11, marginLeft: 34, wordBreak: 'break-all' }}>
+                  {JSON.stringify(step.raw)}
+                </Code>
+              )}
+            </Stack>
+          ))}
+        </Stack>
+      )}
+      {result.log.length > 0 && (
+        <>
+          <Divider label="日志" labelPosition="left" />
+          <ScrollArea h={150}>
+            <Code block style={{ fontSize: 12 }}>{result.log.join('\n')}</Code>
+          </ScrollArea>
+        </>
+      )}
+      {Object.keys(result.extra).length > 0 && (
+        <>
+          <Divider label="结构化 extra" labelPosition="left" />
+          <Code block style={{ fontSize: 12 }}>
+            {JSON.stringify(result.extra, null, 2)}
+          </Code>
+        </>
+      )}
+    </Stack>
+  )
+}
 
 export function SequenceRunnerPanel() {
   const [labs, setLabs] = useState<LabProfileSummary[]>([])
@@ -76,6 +143,11 @@ export function SequenceRunnerPanel() {
 
   const [recentRuns, setRecentRuns] = useState<DiagnosticRunSummary[]>([])
   const [recentLoading, setRecentLoading] = useState(false)
+  const [historyLoadingId, setHistoryLoadingId] = useState<string | null>(null)
+  const [historyResult, setHistoryResult] = useState<SequenceRunResponse | null>(null)
+  const [historyNotice, setHistoryNotice] = useState<string | null>(null)
+  const [historyExcerpt, setHistoryExcerpt] = useState<string | null>(null)
+  const historyRequestGeneration = useRef(0)
 
   const selectedSequence = useMemo(
     () => sequences.find((s) => s.key === selectedKey) || null,
@@ -148,6 +220,40 @@ export function SequenceRunnerPanel() {
   }
 
   useEffect(refreshRecent, [])
+
+  const handleViewEvidence = async (runId: string) => {
+    const requestGeneration = ++historyRequestGeneration.current
+    setHistoryLoadingId(runId)
+    setHistoryResult(null)
+    setHistoryNotice(null)
+    setHistoryExcerpt(null)
+    try {
+      const detail = await getDiagnosticRun(runId)
+      if (requestGeneration !== historyRequestGeneration.current) return
+      const view = evidenceViewFromDiagnosticRun(detail)
+      if (view.kind === 'complete') {
+        setHistoryResult(view.result)
+        setHistoryExcerpt(null)
+      } else {
+        setHistoryResult(null)
+        setHistoryNotice(view.notice)
+        setHistoryExcerpt(view.excerpt)
+      }
+    } catch (e: unknown) {
+      if (requestGeneration !== historyRequestGeneration.current) return
+      const detail =
+        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        (e as Error)?.message ||
+        '读取完整证据失败'
+      setHistoryResult(null)
+      setHistoryNotice(typeof detail === 'string' ? detail : JSON.stringify(detail))
+      setHistoryExcerpt(null)
+    } finally {
+      if (requestGeneration === historyRequestGeneration.current) {
+        setHistoryLoadingId(null)
+      }
+    }
+  }
 
   const handleRun = async () => {
     if (!selectedKey) return
@@ -345,58 +451,21 @@ export function SequenceRunnerPanel() {
             <Alert color="red" icon={<IconAlertCircle size={18} />} title="执行失败 (HTTP)">
               {lastError}
             </Alert>
-          ) : lastResult && (
-            <Stack gap="sm">
-              <Group gap="sm">
-                <Title order={5}>结果</Title>
-                <Badge color={lastResult.success ? 'green' : 'orange'}>
-                  {lastResult.success ? 'success' : 'failure'}
-                </Badge>
-                <Badge variant="light">{lastResult.duration_ms} ms</Badge>
-                <Code>{lastResult.diagnostic_run_id.slice(0, 8)}...</Code>
-              </Group>
-              <Text size="sm">{lastResult.summary}</Text>
-              {lastResult.steps.length > 0 && (
-                <Stack gap={4}>
-                  {lastResult.steps.map((s, i) => (
-                    <Stack key={i} gap={2}>
-                      <Group gap="xs" wrap="nowrap" align="flex-start">
-                        <Badge color={s.success ? 'green' : 'red'} size="sm" variant="filled">
-                          {s.success ? '✓' : '✗'}
-                        </Badge>
-                        <Text size="xs" fw={500} style={{ flexShrink: 0 }}>{s.label}</Text>
-                        <Text size="xs" c="dimmed" style={{ wordBreak: 'break-all' }}>
-                          {s.detail}
-                        </Text>
-                        {s.duration_ms !== undefined && s.duration_ms !== null && (
-                          <Text size="xs" c="dimmed" ml="auto">{s.duration_ms} ms</Text>
-                        )}
-                      </Group>
-                      {/* 仪器原始回复单独一行 —— 现场"它到底返回什么字面值"是
-                          一整类待验问题的问法, 混进 detail 就抄不准。空串回复
-                          也要显示 (是一条结论), 故判 null/undefined 而非真值。 */}
-                      {s.raw !== undefined && s.raw !== null && (
-                        <Code
-                          style={{ fontSize: 11, marginLeft: 34, wordBreak: 'break-all' }}
-                        >
-                          {JSON.stringify(s.raw)}
-                        </Code>
-                      )}
-                    </Stack>
-                  ))}
-                </Stack>
-              )}
-              {lastResult.log.length > 0 && (
-                <>
-                  <Divider label="日志" labelPosition="left" />
-                  <ScrollArea h={150}>
-                    <Code block style={{ fontSize: 12 }}>
-                      {lastResult.log.join('\n')}
-                    </Code>
-                  </ScrollArea>
-                </>
-              )}
+          ) : lastResult && <SequenceEvidenceResult result={lastResult} title="结果" />}
+        </Paper>
+      )}
+
+      {(historyResult || historyNotice) && (
+        <Paper p="md" withBorder>
+          {historyNotice ? (
+            <Stack gap="xs">
+              <Alert color="yellow" icon={<IconAlertTriangle size={18} />} title="历史证据不可用">
+                {historyNotice}
+              </Alert>
+              {historyExcerpt !== null && <Code block>{historyExcerpt}</Code>}
             </Stack>
+          ) : historyResult && (
+            <SequenceEvidenceResult result={historyResult} title="历史完整证据" />
           )}
         </Paper>
       )}
@@ -442,6 +511,15 @@ export function SequenceRunnerPanel() {
                   {r.run_by && (
                     <Text size="xs" c="dimmed" ml="auto">@ {r.run_by}</Text>
                   )}
+                  <Button
+                    variant="subtle"
+                    size="compact-xs"
+                    leftSection={<IconEye size={13} />}
+                    loading={historyLoadingId === r.id}
+                    onClick={() => handleViewEvidence(r.id)}
+                  >
+                    查看完整证据
+                  </Button>
                 </Group>
               ))}
             </Stack>

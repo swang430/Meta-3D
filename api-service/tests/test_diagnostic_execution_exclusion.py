@@ -312,6 +312,15 @@ async def test_unsafe_sequence_exception_releases_guard(
 
     assert response.success is False
     assert "diagnostic exploded" in response.summary
+    audit = db.query(DiagnosticRun).one()
+    assert audit.sequence_evidence == {
+        "schema_version": 1,
+        "summary": response.summary,
+        "duration_ms": response.duration_ms,
+        "log": [],
+        "steps": [],
+        "extra": {},
+    }
     assert guard.active_unsafe_diagnostic() is None
 
 
@@ -337,6 +346,17 @@ async def test_unsafe_sequence_cancellation_propagates_and_releases_guard(
     assert audit.result_extra == {
         "cancelled": True,
         "partial_result_available": False,
+    }
+    assert audit.sequence_evidence == {
+        "schema_version": 1,
+        "summary": "Sequence cancelled",
+        "duration_ms": audit.duration_ms,
+        "log": [],
+        "steps": [],
+        "extra": {
+            "cancelled": True,
+            "partial_result_available": False,
+        },
     }
     assert "cancelled" in (audit.output_excerpt or "").lower()
 

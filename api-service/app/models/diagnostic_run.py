@@ -50,8 +50,9 @@ class DiagnosticRun(Base):
     """One workshop-tier run.
 
     Human-readable outputs are truncated on write (~2KB) so a chatty SCPI
-    sweep doesn't blow up list views. Sequence-specific decisive readings
-    remain retrievable in ``result_extra``; a full HAL/SCPI transport trace
+    sweep doesn't blow up list views. Diagnostic sequences additionally keep
+    their complete structured evidence in ``sequence_evidence``; legacy rows
+    and other diagnostic kinds leave it null. A full HAL/SCPI transport trace
     can additionally be pointed at by ``hal_trace_log_path``.
     """
 
@@ -94,10 +95,15 @@ class DiagnosticRun(Base):
     # First ~2KB of stdout / SCPI response / executor result; truncated on write.
     output_excerpt = Column(Text)
 
-    # Full structured result returned by diagnostic sequences. Kept separate
-    # from operator-supplied params so audit readers cannot confuse inputs with
-    # observed evidence. List API omits it; detail API exposes it on demand.
+    # Existing shared structured metadata retained across diagnostic kinds.
+    # A sequence's complete evidence has its own versioned envelope below.
     result_extra = Column(_JSON_PG_OR_SQLITE)
+
+    # Complete sequence-only evidence envelope. This deliberately does not
+    # reuse result_extra: SCPI/commissioning consumers already own that field,
+    # while sequence evidence has a versioned schema and must preserve raw
+    # readings (including an explicitly empty string) without excerpt loss.
+    sequence_evidence = Column(_JSON_PG_OR_SQLITE)
 
     error_message = Column(Text)
 
