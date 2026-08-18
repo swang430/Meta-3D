@@ -5,14 +5,18 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.database import Base
+from app.api.test_plan import create_test_case as create_test_case_endpoint
+from app.api.test_plan import update_test_case as update_test_case_endpoint
 from app.models.test_plan import TestCase
 from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+from app.schemas.test_plan import TestCaseCreate, TestCaseUpdate
 from app.services.test_plan_service import TestCaseService
 
 
@@ -182,3 +186,43 @@ def test_non_mimo_configuration_remains_free_form(db):
     row = _create_case(db, test_type="Custom", configuration=payload)
 
     assert row.configuration == payload
+
+
+def test_create_api_maps_carrier_conflict_to_actionable_422(db):
+    request = TestCaseCreate(
+        name="conflicting-create",
+        test_type="MIMO_OTA",
+        configuration={
+            "frequency_hz": 3_600_000_000.0,
+            "component_carriers": [deepcopy(PCELL)],
+        },
+        created_by="p1-55-test",
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        create_test_case_endpoint(request=request, db=db)
+
+    assert raised.value.status_code == 422
+    assert "frequency_hz" in str(raised.value.detail)
+    assert "component_carriers[0]" in str(raised.value.detail)
+
+
+def test_update_api_maps_carrier_conflict_to_actionable_422(db):
+    row = _create_case(
+        db,
+        test_type="MIMO_OTA",
+        configuration={"component_carriers": [deepcopy(PCELL)]},
+    )
+    request = TestCaseUpdate(
+        configuration={
+            "bandwidth_mhz": 100.0,
+            "component_carriers": [deepcopy(PCELL)],
+        }
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        update_test_case_endpoint(test_case_id=row.id, request=request, db=db)
+
+    assert raised.value.status_code == 422
+    assert "bandwidth_mhz" in str(raised.value.detail)
+    assert "component_carriers[0]" in str(raised.value.detail)

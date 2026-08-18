@@ -14,7 +14,7 @@ from app.schemas.test_plan import (
     TestCaseListResponse,
     TestCaseGroupedResponse,
 )
-from app.services.test_plan_service import TestCaseService
+from app.services.test_plan_service import MIMOOTACarrierTruthError, TestCaseService
 from app.services.lab_resolution import resolve_lab_profile
 from app.models.test_plan import TestCase
 from app.services.execution_scpi_evidence import ExecutionScpiEvidence
@@ -58,28 +58,31 @@ def create_test_case(
         _validate_explicit_lab_profile(db, request.lab_profile_id)
 
     service = TestCaseService()
-    test_case = service.create_test_case(
-        db=db,
-        name=request.name,
-        description=request.description,
-        test_type=request.test_type,
-        configuration=request.configuration,
-        created_by=request.created_by,
-        pass_criteria=request.pass_criteria,
-        expected_results=request.expected_results,
-        probe_selection=request.probe_selection,
-        instrument_config=request.instrument_config,
-        channel_model=request.channel_model,
-        channel_parameters=request.channel_parameters,
-        frequency_mhz=request.frequency_mhz,
-        tx_power_dbm=request.tx_power_dbm,
-        bandwidth_mhz=request.bandwidth_mhz,
-        test_duration_sec=request.test_duration_sec,
-        lab_profile_id=request.lab_profile_id,
-        is_template=request.is_template,
-        template_category=request.template_category,
-        tags=request.tags,
-    )
+    try:
+        test_case = service.create_test_case(
+            db=db,
+            name=request.name,
+            description=request.description,
+            test_type=request.test_type,
+            configuration=request.configuration,
+            created_by=request.created_by,
+            pass_criteria=request.pass_criteria,
+            expected_results=request.expected_results,
+            probe_selection=request.probe_selection,
+            instrument_config=request.instrument_config,
+            channel_model=request.channel_model,
+            channel_parameters=request.channel_parameters,
+            frequency_mhz=request.frequency_mhz,
+            tx_power_dbm=request.tx_power_dbm,
+            bandwidth_mhz=request.bandwidth_mhz,
+            test_duration_sec=request.test_duration_sec,
+            lab_profile_id=request.lab_profile_id,
+            is_template=request.is_template,
+            template_category=request.template_category,
+            tags=request.tags,
+        )
+    except MIMOOTACarrierTruthError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return test_case
 
 
@@ -183,7 +186,10 @@ def update_test_case(
         if update_data["lab_profile_id"] != current.lab_profile_id:
             _validate_explicit_lab_profile(db, update_data["lab_profile_id"])
 
-    test_case = service.update_test_case(db, test_case_id, **update_data)
+    try:
+        test_case = service.update_test_case(db, test_case_id, **update_data)
+    except MIMOOTACarrierTruthError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     if not test_case:
         raise HTTPException(status_code=404, detail="Test case not found")
