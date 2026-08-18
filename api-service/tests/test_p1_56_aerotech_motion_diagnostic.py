@@ -10,7 +10,11 @@ import pytest
 
 from app.diagnostics import loader
 from app.diagnostics.sequences import aerotech_positioner_motion_truth as sequence
-from app.hal.aerotech_positioner import AxisStatusBit, RealAerotechDriver
+from app.hal.aerotech_positioner import (
+    AerotechOperatorStopRequested,
+    AxisStatusBit,
+    RealAerotechDriver,
+)
 
 
 class FakeClock:
@@ -46,8 +50,23 @@ class MotionDiagnosticDriver(RealAerotechDriver):
         self.abort_positions = list(abort_positions or [])
         self.abort_raises = abort_raises
         self.commands: list[str] = []
+        self.command_stop_generations: list[tuple[str, int | None]] = []
 
-    async def _send(self, command: str) -> str:
+    async def _send(
+        self,
+        command: str,
+        *,
+        expected_operator_stop_generation: int | None = None,
+    ) -> str:
+        self.command_stop_generations.append(
+            (command, expected_operator_stop_generation)
+        )
+        if (
+            expected_operator_stop_generation is not None
+            and self.operator_stop_generation()
+            != expected_operator_stop_generation
+        ):
+            raise AerotechOperatorStopRequested("operator stop requested")
         self.commands.append(command)
         if command == "PFBK(X)":
             return str(self.position)
@@ -160,6 +179,12 @@ async def test_sequence_keeps_enable_and_records_raw_no_xf_and_xf_samples(fast_c
     assert driver.commands.count("ENABLE X") == 1
     moves = [command for command in driver.commands if command.startswith("MOVEABS")]
     assert moves == ["MOVEABS X 20.0000", "MOVEABS X 10.0000 XF5.0000"]
+    move_generations = [
+        generation
+        for command, generation in driver.command_stop_generations
+        if command.startswith("MOVEABS")
+    ]
+    assert move_generations == [0, 0]
     assert not any(command.startswith("DISABLE") for command in driver.commands)
     assert len(result.extra["segments"]) == 2
     for step, segment in zip(result.steps, result.extra["segments"], strict=True):
@@ -283,8 +308,15 @@ async def test_operator_emergency_stop_during_first_segment_forbids_second_move(
     driver = MotionDiagnosticDriver(moves_without_xf=True, moves_with_xf=True)
     original_send = driver._send
 
-    async def stop_after_first_move(command: str) -> str:
-        response = await original_send(command)
+    async def stop_after_first_move(
+        command: str,
+        *,
+        expected_operator_stop_generation: int | None = None,
+    ) -> str:
+        response = await original_send(
+            command,
+            expected_operator_stop_generation=expected_operator_stop_generation,
+        )
         if command.startswith("MOVEABS X ") and " XF" not in command:
             driver.note_operator_stop()
         return response
@@ -383,11 +415,18 @@ async def test_cancelled_move_command_response_still_aborts_diagnostic():
     driver = MotionDiagnosticDriver(moves_without_xf=False, moves_with_xf=False)
     original_send = driver._send
 
-    async def cancelling_send(command: str) -> str:
+    async def cancelling_send(
+        command: str,
+        *,
+        expected_operator_stop_generation: int | None = None,
+    ) -> str:
         if command.startswith("MOVEABS X "):
             driver.commands.append(command)
             raise asyncio.CancelledError
-        return await original_send(command)
+        return await original_send(
+            command,
+            expected_operator_stop_generation=expected_operator_stop_generation,
+        )
 
     driver._send = cancelling_send  # type: ignore[method-assign]
 

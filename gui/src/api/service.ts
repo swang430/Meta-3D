@@ -569,7 +569,7 @@ export interface PositionerSweepPoint {
   target: number
   actual_azimuth: number | null
   actual_elevation: number | null
-  within_tolerance: boolean
+  within_tolerance: boolean | null
 }
 
 export interface PositionerSweepResult {

@@ -208,8 +208,21 @@ export function PositionerControlPanel() {
                       : '未知'}
                   </Table.Td>
                   <Table.Td>
-                    <Badge color={p.within_tolerance ? 'green' : 'red'} variant="light">
-                      {p.within_tolerance ? '✓ 到位' : '✗ 超差'}
+                    <Badge
+                      color={
+                        p.within_tolerance === true
+                          ? 'green'
+                          : p.within_tolerance === false
+                            ? 'red'
+                            : 'gray'
+                      }
+                      variant="light"
+                    >
+                      {p.within_tolerance === true
+                        ? '✓ 到位'
+                        : p.within_tolerance === false
+                          ? '✗ 超差'
+                          : '未知'}
                     </Badge>
                   </Table.Td>
                 </Table.Tr>

@@ -88,6 +88,10 @@ class AerotechError(Exception):
     pass
 
 
+class AerotechOperatorStopRequested(AerotechError):
+    """人工急停已在线路发送前取得顺序，禁止再下发动作命令。"""
+
+
 def parse_axis_status_bitmask(raw: Any) -> int:
     """Parse AXISSTATUS without truncating or inventing controller bits."""
     if isinstance(raw, bool):
@@ -168,7 +172,12 @@ class RealAerotechDriver(PositionerDriver):
     # 底层通信
     # ==================================================================
 
-    async def _send(self, cmd: str) -> str:
+    async def _send(
+        self,
+        cmd: str,
+        *,
+        expected_operator_stop_generation: Optional[int] = None,
+    ) -> str:
         """
         发送 AeroBasic 命令并等待响应。
 
@@ -196,6 +205,17 @@ class RealAerotechDriver(PositionerDriver):
             raise AerotechError("Not connected to Aerotech controller")
 
         async with self._lock:
+            # P1-56: 人工急停意图与实际 TX 必须在同一个通信锁顺序内裁决。
+            # 若 stop 先推进 generation，无论它在本任务前还是后取得通信锁，
+            # 这条动作命令都不得排在 ABORT 后重新启动转台。
+            if (
+                expected_operator_stop_generation is not None
+                and self.operator_stop_generation()
+                != expected_operator_stop_generation
+            ):
+                raise AerotechOperatorStopRequested(
+                    "operator stop requested before motion command transmission"
+                )
             # P1-20 (2026-07-03 现场实测): 控制器在运动完成后 ~10s 空闲即关连接
             # (比 5/13 的 ~30s 严得多)。对端关闭被事件循环感知后 transport 已标记
             # closed, 此时 write 抛 RuntimeError("unable to perform operation on

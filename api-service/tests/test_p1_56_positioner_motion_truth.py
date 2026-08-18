@@ -8,7 +8,11 @@ from typing import Any
 
 import pytest
 
-from app.hal.aerotech_positioner import AxisStatusBit, RealAerotechDriver
+from app.hal.aerotech_positioner import (
+    AerotechOperatorStopRequested,
+    AxisStatusBit,
+    RealAerotechDriver,
+)
 from app.services import instrument_test_lease as lease_module
 from app.services.instrument_test_lease import InstrumentTestLease
 from app.services.mimo_ota.cleanup import cleanup_chamber_instruments
@@ -52,6 +56,28 @@ def _driver(*positions: Any, tolerance: float = 0.5) -> ScriptedMotionDriver:
         },
         tolerance=tolerance,
     )
+
+
+@pytest.mark.asyncio
+async def test_operator_stop_is_rechecked_inside_the_motion_tx_lock():
+    driver = RealAerotechDriver("p1-56-atomic-stop", {"ip": "192.0.2.10"})
+    driver._writer = object()
+    driver._reader = object()
+    expected_generation = driver.operator_stop_generation()
+
+    await driver._lock.acquire()
+    send_task = asyncio.create_task(
+        driver._send(
+            "MOVEABS X 90.0000",
+            expected_operator_stop_generation=expected_generation,
+        )
+    )
+    await asyncio.sleep(0)
+    driver.note_operator_stop()
+    driver._lock.release()
+
+    with pytest.raises(AerotechOperatorStopRequested):
+        await send_task
 
 
 @pytest.mark.asyncio

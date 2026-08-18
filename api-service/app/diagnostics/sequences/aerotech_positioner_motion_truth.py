@@ -25,6 +25,7 @@ from app.diagnostics.protocol import (
     driver_not_loaded_summary,
 )
 from app.hal.aerotech_positioner import (
+    AerotechOperatorStopRequested,
     AxisStatusBit,
     RealAerotechDriver,
     parse_axis_status_bitmask,
@@ -233,8 +234,15 @@ async def _sample_segment(
 
     segment["command_started"] = True
     try:
-        segment["command_response_raw"] = await driver._send(command)  # noqa: SLF001
+        segment["command_response_raw"] = await driver._send(  # noqa: SLF001
+            command,
+            expected_operator_stop_generation=operator_stop_generation,
+        )
         segment["command_accepted"] = True
+    except AerotechOperatorStopRequested:
+        segment["command_started"] = False
+        segment["operator_stop_requested"] = True
+        return segment
     except asyncio.CancelledError:
         await abort_segment()
         raise

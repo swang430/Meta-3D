@@ -94,3 +94,9 @@
 4. 提交、推送、开 Ready PR，触发 Codex R1。
 5. R1 本片内意见按 TDD 收口后触发最终 R2；R2 无 P1 merge；R2 有 P1 修完后直接 merge，不发 R3。
 6. 合并后验证 origin/main；P1-56 本地片完成，现场物理裁决继续 Hardware Blocked。
+
+## 内审尾修补充
+
+- 人工 stop generation 的最终裁决必须与 MOVE TX 共用驱动通信锁，消除“ABORT 完成后排队
+  MOVE 又启动”的竞争窗口。
+- sweep PFBK 不可得时，坐标与 `within_tolerance` 同时为 null，GUI 显示灰色“未知”。

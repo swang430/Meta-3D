@@ -194,6 +194,8 @@ class TestPositionReadFailure:
         _patch_hal(monkeypatch, {"positioner": _ReadFailPositioner()})
         r = await positioner_sweep(PositionerSweepRequest(home_first=False))
         assert r.ok is False and r.reason == "position_read_failed"
+        assert r.points[0].actual_azimuth is None
+        assert r.points[0].within_tolerance is None
 
     async def test_stop_read_fail_keeps_confirmed_stop_but_returns_unknown_position(
         self, monkeypatch

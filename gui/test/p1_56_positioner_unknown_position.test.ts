@@ -11,6 +11,13 @@ const panelSource = readFileSync(
 test('positioner stop may succeed while encoder position remains unknown', () => {
   assert.match(serviceSource, /azimuth:\s*number\s*\|\s*null/)
   assert.match(serviceSource, /elevation:\s*number\s*\|\s*null/)
+  assert.match(serviceSource, /within_tolerance:\s*boolean\s*\|\s*null/)
+})
+
+test('unknown encoder feedback is never rendered as a tolerance failure', () => {
+  assert.match(panelSource, /p\.within_tolerance === true/)
+  assert.match(panelSource, /p\.within_tolerance === false/)
+  assert.match(panelSource, /未知/)
 })
 
 test('unknown encoder coordinates never replace the displayed position', () => {

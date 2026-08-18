@@ -3770,7 +3770,7 @@ class PositionerSweepPoint(BaseModel):
     target: float
     actual_azimuth: Optional[float] = None
     actual_elevation: Optional[float] = None
-    within_tolerance: bool
+    within_tolerance: Optional[bool] = None
 
 
 class PositionerSweepResult(BaseModel):
@@ -3926,7 +3926,11 @@ async def positioner_sweep(request: PositionerSweepRequest) -> PositionerSweepRe
                                          message=f"已被急停中止, 完成 {len(points)} 点")
         moved = await driver.move_to(target, 0.0)
         (az, el), pos_err = await _positioner_position(driver)
-        within = bool(moved) and pos_err is None and abs(az - target) <= request.tolerance_deg
+        within = (
+            None
+            if pos_err
+            else bool(moved) and abs(az - target) <= request.tolerance_deg
+        )
         points.append(PositionerSweepPoint(
             target=target, actual_azimuth=az, actual_elevation=el,
             within_tolerance=within,
@@ -3941,7 +3945,7 @@ async def positioner_sweep(request: PositionerSweepRequest) -> PositionerSweepRe
                 ok=False, points=points, reason="position_read_failed",
                 message=f"{target:.1f}° 位置回读失败 (PFBK?), 中止扫描",
             )
-    all_ok = all(p.within_tolerance for p in points)
+    all_ok = all(p.within_tolerance is True for p in points)
     return PositionerSweepResult(
         ok=all_ok, points=points,
         reason=None if all_ok else "tolerance_exceeded",
