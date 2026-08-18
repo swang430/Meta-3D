@@ -1266,13 +1266,20 @@ export interface components {
             trend?: string;
         };
         InstrumentCategory: {
+            categoryId: string | null;
             key: string;
             label: string;
             description: string;
-            tags?: string[];
+            tags: string[];
             selectedModelId: string | null;
             connection: components["schemas"]["InstrumentConnection"];
             models: components["schemas"]["InstrumentModel"][];
+            /** @default true */
+            isActive: boolean;
+            /** @default [] */
+            usagePhase: string[];
+            /** @default auto */
+            driverMode: string;
         };
         InstrumentModel: {
             id: string;
@@ -1293,28 +1300,28 @@ export interface components {
              * @default []
              */
             model_capabilities: string[];
-            bandwidth?: string | null;
-            channels?: string | null;
+            bandwidth: string | null;
+            channels: string | null;
             /**
              * @description Catalog availability status.
              *     - `available`: real driver class registered + HAL can bring it up
              *     - `pending_dev`: catalog row exists but no real driver class
              *       is registered yet (`_convert_model` in `app/api/instrument.py`
              *       maps to this when `get_real_driver_class()` returns None).
-             *       Distinct from `offline` (which means "driver registered but
-             *       not currently reachable") — operators picking a model need to
-             *       see these as two different states so they don't try to
-             *       connect to a model that fundamentally has no driver.
-             *     - `offline` / `reserved` / `maintenance`: operational states
-             *       for driver-backed models.
+             *       Operators picking a model must see this distinctly so they do
+             *       not try to connect to a model that has no registered driver.
              * @enum {string}
              */
-            status: "available" | "reserved" | "maintenance" | "offline" | "pending_dev";
+            status: "available" | "pending_dev";
         };
         InstrumentConnection: {
-            endpoint?: string | null;
-            controller?: string | null;
-            notes?: string | null;
+            id: string | null;
+            endpoint: string | null;
+            controller: string | null;
+            notes: string | null;
+            connection_params: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * @description P3-5 composite snapshot. `available=false` means HAL is not
@@ -1351,7 +1358,7 @@ export interface components {
              *     (instrument/session problem). `null` whenever status != fail.
              * @enum {string|null}
              */
-            fail_kind?: "network" | "scpi" | null;
+            fail_kind: "network" | "scpi" | null;
             /**
              * @description Driver-specific metadata (string-keyed). F64 surfaces
              *     firmware_version / band_label / product_family from the
@@ -1370,8 +1377,8 @@ export interface components {
          *     (`inactive`) — different operator next-steps.
          */
         LabProfileReadiness: {
-            profile_id?: string | null;
-            profile_name?: string | null;
+            profile_id: string | null;
+            profile_name: string | null;
             is_active: boolean;
             /** @enum {string} */
             status: "ok" | "inactive" | "missing" | "ambiguous";
@@ -1384,11 +1391,11 @@ export interface components {
          *     "set up lab first", the latter hints "run calibration".
          */
         CalibrationReadiness: {
-            certificate_number?: string | null;
-            valid_until_iso?: string | null;
+            certificate_number: string | null;
+            valid_until_iso: string | null;
             /** @enum {string} */
             status: "valid" | "expired" | "missing" | "no_lab";
-            days_remaining?: number | null;
+            days_remaining: number | null;
             detail: string;
         };
         /**
@@ -1399,7 +1406,8 @@ export interface components {
          *     work can land without breaking the response shape.
          */
         DutAttachReadiness: {
-            status: string;
+            /** @enum {string} */
+            status: "not_implemented";
             detail: string;
         };
         /**
@@ -1419,7 +1427,7 @@ export interface components {
             reachable: boolean;
             instrument_count: number;
             unreachable_count: number;
-            hint?: string | null;
+            hint: string | null;
             /** @description P1-13: was any instrument on this subnet actually network-probed? false → 未探测/unknown. */
             probed: boolean;
         };
@@ -1433,18 +1441,18 @@ export interface components {
          */
         TestExecutionItem: {
             id: string;
-            case_name?: string | null;
-            source_test_case_id?: string | null;
+            case_name: string | null;
+            source_test_case_id: string | null;
             status: string;
-            phases_total?: number | null;
-            phases_done?: number | null;
-            phases_failed?: number | null;
-            duration_sec?: number | null;
-            started_at?: string | null;
-            completed_at?: string | null;
-            executed_by?: string | null;
-            error_message?: string | null;
-            validation_pass?: boolean | null;
+            phases_total: number | null;
+            phases_done: number | null;
+            phases_failed: number | null;
+            duration_sec: number | null;
+            started_at: string | null;
+            completed_at: string | null;
+            executed_by: string | null;
+            error_message: string | null;
+            validation_pass: boolean | null;
         };
         TestExecutionListResponse: {
             total: number;
@@ -1529,7 +1537,7 @@ export interface components {
             execution_id: string;
             instrument_id: string;
             msg: string;
-            raw?: string | null;
+            raw: string | null;
         };
         SystemLogTailResponse: {
             filename: string;

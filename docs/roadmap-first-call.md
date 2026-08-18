@@ -18,7 +18,7 @@ TestCase 复验尚未补齐，故 **P0-5 正式自动化验收仍未关闭**。P
 **2026-08-06 用户批准把 P0-5 SCPI 证据闭环整体前置**：
 **~~P1-25~~ ✅ → ~~P1-26~~ ✅ → ~~P1-30~~ ✅ → ~~P1-31~~ ✅ → ~~P1-32~~ ✅ → ~~P1-33（本地半）~~ ✅ → ~~P1-34~~ ✅ → ~~P1-35~~ ✅ → ~~P1-36~~ ✅ → ~~P1-39~~ ✅ → ~~P1-45~~ ✅ → ~~P1-46~~ ✅ → ~~P1-41~~ ✅ → ~~P1-47A~~ ✅ → ~~P1-47B~~ ✅ → ~~P1-47C~~ ✅ → ~~P1-28~~ ✅ → ~~P1-43~~ ✅ → ~~P1-44~~ ✅ → ~~P1-42~~ ✅ → ~~P1-40~~ ✅ → ~~P1-37~~ ✅ → ~~P1-48~~ ✅ → ~~P1-29~~ ✅ → ~~P1-38~~ ✅ → ~~P1-27~~ ✅ → ~~P2-22~~ ✅ → ~~P2-23~~ ✅ → ~~P2-24~~ ✅ → ~~P3-18~~ ✅ → ~~P3-19~~ ✅。
 
-**Current Focus = P2-27「修复 9 组前端手写契约与 live OpenAPI 不一致」（开发完成；fresh 内审 P1/P2/P3=0，待 Ready PR，WIP=1）**。P1-56 PR #350 的补充 Codex 外审已覆盖最终 merge commit（含尾修 `bd71879`）且无 P1；用户随后明确继续下一项。P2-27 已按请求/响应方向收口九组契约：运行时恒出的 Pydantic 默认字段在 response serialization schema 中标 required，readiness/catalog 状态白名单与现有写方全集一致；GUI 补 `total`、`usagePhase/driverMode`、`probe_distribution` 与真实 nullable，chamber create 仍只有 `name`/`chamber_radius_m` 必填。live `app.openapi()` → openapi-typescript（`--default-non-nullable false`）方向性递归审计 18/18 通过；focused + P3-18 +完整 rule gates 58 passed，GUI 契约 2 passed、production build、compileall、diff-check 通过。设计与计划见 [`P2-27 设计`](plans/2026-08-18-p2-27-openapi-contract-alignment-design.md) / [`P2-27 计划`](plans/2026-08-18-p2-27-openapi-contract-alignment.md)。P1-55
+**Current Focus = P2-27「修复 9 组前端手写契约与 live OpenAPI 不一致」（PR #351；R1 两条 P2 已按 TDD 收口，fresh 尾审 P1/P2/P3=0，待最终 R2，WIP=1）**。P1-56 PR #350 的补充 Codex 外审已覆盖最终 merge commit（含尾修 `bd71879`）且无 P1；用户随后明确继续下一项。P2-27 已按请求/响应方向收口九组契约：运行时恒出的 Pydantic 默认字段在 response serialization schema 中标 required，readiness/catalog 状态白名单与现有写方全集一致；GUI 补 `total`、`usagePhase/driverMode`、`probe_distribution` 与真实 nullable，chamber create 仍只有 `name`/`chamber_radius_m` 必填。R1 指出的 checked-in OpenAPI/生成类型镜像与 Pydantic 版本下限已同步：已有 components 对齐 live schema、`api.generated.ts` 重新生成，依赖收窄为 `pydantic>=2.4.0`。live `app.openapi()` → openapi-typescript（`--default-non-nullable false`）方向性递归审计 18/18 通过；R1 尾修 RED 2 failed、GREEN focused 4 passed，相关+完整 rule gates 169 passed，GUI 契约 2 passed、production build、compileall、diff-check 通过。设计与计划见 [`P2-27 设计`](plans/2026-08-18-p2-27-openapi-contract-alignment-design.md) / [`P2-27 计划`](plans/2026-08-18-p2-27-openapi-contract-alignment.md)。P1-55
 已由 PR #349（merge `b6f631a`）完成顶层配置与 `component_carriers[0]` 真值源收敛；P1-54
 已由 PR #348 合并；用户已确认继续下一项。P2-26 已由 PR #347
 （merge `ef50070`）完成历史 MIMO 报告 UNKNOWN/N/A 的安全重建与恢复界面。P1-54 将 UXM
@@ -54,7 +54,7 @@ P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → 
 | **P1-54** | `kpi_valid` 进入正式数据契约；缺测吞吐不得以默认 0.0 进入 MEASURE/KPI | ✅ PR #348 |
 | **P1-55** | 收敛顶层配置与 `component_carriers[0]`；统一写入、显示与执行真值源 | ✅ PR #349 |
 | **P1-56** | 转台命令成功但编码器不动：本地动作真值门与诊断载体 | ✅ PR #350（本地半完成；R2 P1 尾修未获外审覆盖，fresh 内审 P1=0、相关回归通过）；物理现场验证保持 Hardware Blocked |
-| **P2-27** | 修复 9 组前端手写契约与 live OpenAPI 不一致 | 🔄 开发/回归完成；fresh 内审 P1/P2/P3=0，待 Ready PR |
+| **P2-27** | 修复 9 组前端手写契约与 live OpenAPI 不一致 | 🔄 PR #351；R1 两条 P2 已修，fresh 尾审 P1/P2/P3=0，待最终 R2 |
 | **P2-28** | 诊断序列持久化完整 raw 或可靠 trace pointer | ⬜ |
 | **P2-29** | ASC/B2 正式模型加载证据 hook | ⬜ |
 | **P2-30** | 校准/方向图任务级仪表租约，避免逐点重连 | ⬜ |
@@ -306,7 +306,7 @@ P0-5 正式 TestCase 复验，P0-3 / P0-4 已完成，不要求重跑
 
 | 桶 | 内容 |
 |----|------|
-| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → ~~P1-52~~ ✅ → ~~P1-53~~ ✅ → ~~P2-26~~ ✅ → ~~P1-54~~ ✅ → ~~P1-55~~ ✅ → ~~P1-56~~ ✅ → **P2-27 🔄** → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；P1-56 补审已覆盖最终 merge commit 且无 P1。当前 WIP=1：P2-27 九组契约已完成 TDD、18/18 live 方向审计与 fresh 内审，P1/P2/P3=0；下一步开 Ready PR 并进入最多两轮 Codex 外审。现场物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
+| **LOCAL-OPEN (roadmap 内)** | **~~P2-25~~ ✅ → ~~P1-49~~ ✅ → ~~P1-50~~ ✅ → ~~P1-51~~ ✅ → ~~P1-52~~ ✅ → ~~P1-53~~ ✅ → ~~P2-26~~ ✅ → ~~P1-54~~ ✅ → ~~P1-55~~ ✅ → ~~P1-56~~ ✅ → **P2-27 🔄** → P2-28 → P2-29 → P2-30 → P2-31 → P2-32 → P2-33 → P2-34 → P3-20 → P3-21**；P1-56 补审已覆盖最终 merge commit 且无 P1。当前 WIP=1：P2-27 PR #351 R1 两条 P2 已按 TDD 收口，checked-in OpenAPI/生成类型与 Pydantic 2.4 下限已同步；18/18 live 方向审计、相关 169 passed、GUI build 与 fresh 尾审通过，P1/P2/P3=0；下一步触发最终 R2。现场物理单位/方向/偏置/型号实证仍保持 Hardware Blocked。完整编号、范围与状态只看顶部 Current Focus 表。 |
 | **ON-SITE-BLOCKED** | P0-5 正式复验（物理 attach + 转台四方向已完成；P1-47C 本地机制已具备，但转台身份与坐标偏置仍须补证并现场跑正式 TestCase）+ P1-2 + P1-4 + P2-4，以及 P0-8 / P1-5 / P1-17 / **P1-33** / P2-9 / P2-10 / P2-12 / P2-13 的现场半 (详见下方「Blocked on hardware」) |
 | **HOLD** | P1-6 现场半 (真 idle-close 复现验证；本地测试覆盖已补 #149) |
 | **已决策不做 / 保持现状** | `#2000` (依赖 #2001(2) → 连带搁置) / `#2001(2)(3)` / `#2002` |

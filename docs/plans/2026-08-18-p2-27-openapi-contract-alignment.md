@@ -6,7 +6,7 @@
 
 **Architecture:** 响应端在 Pydantic response model 上声明“默认字段在序列化输出中必出”，不把 GUI 响应机械可选化；请求端单独定义 chamber writable shape。前端只补真实漏字段与信封字段，不增加运行时 DTO 翻译层。
 
-**Tech Stack:** FastAPI, Pydantic v2, TypeScript, React/Vite, pytest, openapi-typescript
+**Tech Stack:** FastAPI, Pydantic >=2.4, TypeScript, React/Vite, pytest, openapi-typescript
 
 ---
 
@@ -116,6 +116,33 @@ Expected: 18/18 direction-safe。
 **Step 4: If any assignment fails, return to RED before changing code**
 
 不得通过批量加 `?` 或 `any` 消音。
+
+### Task 3A: 同步已存在的 checked-in OpenAPI 镜像
+
+**Files:**
+- Modify: `api/openapi.yaml`
+- Regenerate: `gui/src/types/api.generated.ts`
+- Modify: `api-service/requirements.txt`
+- Modify: `api-service/tests/test_p2_27_openapi_contract_alignment.py`
+
+**Step 1: Write the failing mirror/dependency tests**
+
+对 checked-in YAML 中已经存在的 P2-27 response components 断言 required、nullable 与状态枚举
+镜像 live schema；同时断言 Pydantic 2.3 不满足依赖而 2.4 满足。不得为本片新增 YAML 中缺失的
+整组端点。
+
+**Step 2: Run tests to verify they fail**
+
+Expected: YAML 至少有默认字段未列 required，且 `pydantic>=2.0.0` 仍错误允许 2.3。
+
+**Step 3: Write minimal implementation and regenerate**
+
+同步现有 components，提升依赖下限至 `pydantic>=2.4.0`，再运行
+`cd gui && npm run openapi:generate`；禁止手改生成文件。
+
+**Step 4: Run tests to verify they pass**
+
+Expected: mirror/dependency focused tests PASS，重复生成不产生额外 diff。
 
 ### Task 4: 回归、roadmap 与内审
 

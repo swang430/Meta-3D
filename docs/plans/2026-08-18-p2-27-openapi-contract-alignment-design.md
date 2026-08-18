@@ -29,14 +29,20 @@ live `app.openapi()` 生成的 TypeScript。当前多数端点依靠 Pydantic �
    分开。这是换源/收窄，运行行为不变。
 2. **把九组手写字段全部改成可选。** 改动少，但会把后端实际恒出的响应字段虚构成不稳定，
    迫使消费方增加无意义 fallback，并掩盖服务端回归；拒绝。
-3. **扩充 checked-in `api/openapi.yaml` 并让 GUI 全面改用生成类型。** 长期方向合理，但当前
-   YAML 是受 G11 管理的覆盖子集；一次扩入九组端点会把范围扩大到整套文档生成治理，超出
-   “修复九组活动契约”故障；本片不做。
+3. **把九组缺失端点全部扩入 checked-in `api/openapi.yaml`，并让 GUI 全面改用生成类型。**
+   长期方向合理，但当前 YAML 是受 G11 管理的覆盖子集；一次扩入全部缺失端点会把范围扩大到
+   整套文档生成治理，超出“修复九组活动契约”故障，故本片不做。已经存在于 checked-in YAML
+   的 catalog/readiness/execution/log schema 仍属于当前生成链真值，必须与 live schema 同步，
+   并重新生成 `gui/src/types/api.generated.ts`，不能留下第二份旧契约。
 
 ## 数据流与边界
 
 - 后端 response model 是 wire 真值。FastAPI 正常响应序列化不会排除未显式设置的默认字段，
   因此 serialization schema 必须把它们列为 required。
+- `json_schema_serialization_defaults_required` 自 Pydantic 2.4 才进入 `ConfigDict`；运行依赖下限
+  必须为 `pydantic>=2.4.0`，不得在声明允许 2.0–2.3 的环境里静默忽略本片契约。
+- checked-in `api/openapi.yaml` 只同步其中已经存在的相关 component schema；本片不新增缺失的
+  probe/chamber 端点族，也不借契约对齐扩张 API 文档覆盖范围。
 - 请求模型保持 validation 语义：有默认值的创建字段仍可省略，不能因响应必出而变成请求必填。
 - GUI service 不增加运行时翻译层；只把类型声明改成与既有 JSON 一致。这样不会出现一份新的
   “normalized DTO”副本。
@@ -49,4 +55,6 @@ live `app.openapi()` 生成的 TypeScript。当前多数端点依靠 Pydantic �
 2. list 与 bulk probe 都可赋值给 `{total, probes}`，nested probe 不再因默认字段产生假 optional。
 3. 手写 category/chamber 覆盖真实活动字段；create chamber 仅两项必填且不含 response-only 字段。
 4. 重新执行 P3-18 同形的 live OpenAPI → TypeScript 方向性递归审计，九组全部通过。
-5. 相关/完整 rule gates、GUI production build、compileall、diff-check 全绿。
+5. checked-in YAML 中已存在的相关 schema 与 live required/nullable/枚举一致，重新生成的
+   `api.generated.ts` 无手工漂移；Pydantic 2.3 不满足依赖，2.4 满足。
+6. 相关/完整 rule gates、GUI production build、compileall、diff-check 全绿。
