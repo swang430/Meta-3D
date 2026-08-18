@@ -116,7 +116,10 @@
 
 本仓库已知的几个权威源，可直接引用：
 - 是否模拟驱动 → `api-service/app/services/instrument_hal_service.py::is_mock_driver()`（isinstance + 类白名单），**不是**任何名字前缀。
-- 仪器实际吃的载波参数 → `configuration.component_carriers[0]`；顶层 `frequency_hz` / `bandwidth_mhz` 是波形合成链用的另一份，两者会分叉且不告警。
+- MIMO OTA 的载波工作点真值 → `configuration.component_carriers[0]`，运行代码通过
+  `MIMOOTAConfiguration.primary_carrier` 消费；顶层 `frequency_hz` / `bandwidth_mhz` /
+  `subcarrier_spacing_khz` 只保留为兼容镜像。保存或执行遇到显式分叉必须 fail-loud，
+  不得静默选择任一端。
 - 正式执行状态的取值清单 → `api-service/app/models/test_plan.py` 中 `TestExecution.status` 的列注释（该注释自称唯一真值源）。**别在别处复制这份清单**——历史上复制时漏掉了默认值 `pending`，而两个活端点建行时用的就是它。
 
 ---
