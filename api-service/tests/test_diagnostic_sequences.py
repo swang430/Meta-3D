@@ -1724,6 +1724,24 @@ class TestStepRawFieldPlumbing:
         assert body["extra"] == decisive
         assert audit.result_extra == decisive
 
+        expected_evidence = {
+            "schema_version": 1,
+            "summary": body["summary"],
+            "duration_ms": body["duration_ms"],
+            "log": body["log"],
+            "steps": body["steps"],
+            "extra": body["extra"],
+        }
+        assert audit.sequence_evidence == expected_evidence
+
         detail = client.get(f"/api/v1/diagnostic-runs/{audit.id}")
         assert detail.status_code == 200
         assert detail.json()["result_extra"] == decisive
+        assert detail.json()["sequence_evidence"] == expected_evidence
+
+        listing = client.get(
+            "/api/v1/diagnostic-runs",
+            params={"kind": "scpi_sequence"},
+        )
+        assert listing.status_code == 200
+        assert "sequence_evidence" not in listing.json()["items"][0]

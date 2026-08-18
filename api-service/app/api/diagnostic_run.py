@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.models.diagnostic_run import DiagnosticKind, DiagnosticRun
+from app.schemas.diagnostic_evidence import SequenceEvidence
 
 
 router = APIRouter(prefix="/diagnostic-runs", tags=["Diagnostics"])
@@ -45,6 +46,7 @@ class DiagnosticRunSummary(BaseModel):
 class DiagnosticRunDetail(DiagnosticRunSummary):
     params: Optional[dict] = None
     result_extra: Optional[dict] = None
+    sequence_evidence: Optional[SequenceEvidence] = None
     hal_trace_log_path: Optional[str] = None
 
 
@@ -138,5 +140,6 @@ def get_diagnostic_run(run_id: UUID, db: Session = Depends(get_db)):
         params=row.params,
         output_excerpt=row.output_excerpt,
         result_extra=row.result_extra,
+        sequence_evidence=row.sequence_evidence,
         hal_trace_log_path=row.hal_trace_log_path,
     )

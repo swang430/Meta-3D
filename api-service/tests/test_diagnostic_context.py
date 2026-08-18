@@ -280,6 +280,7 @@ class TestDiagnosticRunListAPI:
         body = resp.json()
         assert body["params"]["endpoint"] == "192.168.1.10:5025"
         assert body["output_excerpt"] == "vendor,model,sn"
+        assert body["sequence_evidence"] is None
 
     def test_get_detail_404_for_unknown_id(self):
         resp = client.get(f"/api/v1/diagnostic-runs/{uuid.uuid4()}")
