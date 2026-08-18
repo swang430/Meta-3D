@@ -50,7 +50,13 @@ async def cleanup_chamber_instruments(hal: Any, execution_id: Any) -> List[str]:
     if positioner is not None:
         # Best-effort home before disconnect — operator-friendly between runs.
         try:
-            await positioner.move_to(0.0, 0.0)
+            if not await positioner.move_to(0.0, 0.0):
+                msg = (
+                    "positioner.move_to(home) 被拒；编码器未证明回零，"
+                    "cleanup 继续但需人工确认转台位置"
+                )
+                warnings.append(msg)
+                logger.warning("[%s] %s", execution_id, msg)
         except Exception as e:  # noqa: BLE001
             msg = f"positioner.move_to(home) failed during cleanup: {e}"
             warnings.append(msg)

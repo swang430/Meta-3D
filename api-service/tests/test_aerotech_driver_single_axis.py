@@ -77,6 +77,16 @@ class FakeController:
                 for a in axes_named:
                     if a not in self.known_axes:
                         raise AerotechError(f"AeroBasic error for '{cmd}': !")
+                # Happy-path controller: accepted motion updates encoder
+                # feedback. P1-56 stuck-encoder cases use their own scripted
+                # controller so the legacy single/dual-axis tests keep
+                # describing a normally moving device.
+                if prefix == "HOME":
+                    for axis in axes_named:
+                        self._positions[axis] = 0.0
+                elif prefix == "MOVEABS":
+                    for axis, raw_position in zip(tokens[0::2], tokens[1::2]):
+                        self._positions[axis] = float(raw_position)
                 return ""
         if cmd == "ACKNOWLEDGEALL":
             return ""

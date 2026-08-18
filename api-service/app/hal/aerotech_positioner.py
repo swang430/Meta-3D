@@ -19,6 +19,7 @@ References:
 
 import asyncio
 import logging
+import math
 import socket
 import time
 from typing import Dict, Any, List, Tuple, Optional, TYPE_CHECKING
@@ -102,6 +103,7 @@ class RealAerotechDriver(PositionerDriver):
         timeout_s: 命令超时秒数 (默认 10)
         settle_timeout_s: 到位等待超时 (默认 60)
         poll_interval_s: 状态轮询间隔 (默认 0.2)
+        position_tolerance_deg: 控制器坐标反馈容差 (默认 0.5)
     """
 
     # P2-3: A3200 controllers can be wired single-axis (CAICT bench) or
@@ -123,6 +125,10 @@ class RealAerotechDriver(PositionerDriver):
         self.timeout_s: float = config.get("timeout_s", 10.0)
         self.settle_timeout_s: float = config.get("settle_timeout_s", 60.0)
         self.poll_interval_s: float = config.get("poll_interval_s", 0.2)
+        self.position_tolerance_deg: float = self._finite_positive_config_value(
+            config.get("position_tolerance_deg", 0.5),
+            name="position_tolerance_deg",
+        )
 
         # asyncio TCP 流
         self._reader: Optional[asyncio.StreamReader] = None
@@ -368,6 +374,115 @@ class RealAerotechDriver(PositionerDriver):
             )
             return 0.0
 
+    @staticmethod
+    def _finite_positive_config_value(value: Any, *, name: str) -> float:
+        """Parse a positive finite local configuration value."""
+        if isinstance(value, bool):
+            raise ValueError(f"{name} must be a positive finite number")
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{name} must be a positive finite number"
+            ) from exc
+        if not math.isfinite(parsed) or parsed <= 0:
+            raise ValueError(f"{name} must be a positive finite number")
+        return parsed
+
+    async def _query_finite_value(self, cmd: str) -> float:
+        """Read a controller value without converting missing evidence to zero."""
+        result = await self._send(cmd)
+        try:
+            value = float(result)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Expected finite numeric response from "
+                f"'{redact_instrument_log_text(cmd)}', got "
+                f"'{redact_instrument_log_text(str(result))}'"
+            ) from exc
+        if not math.isfinite(value):
+            raise ValueError(
+                f"Expected finite numeric response from "
+                f"'{redact_instrument_log_text(cmd)}', got "
+                f"'{redact_instrument_log_text(str(result))}'"
+            )
+        return value
+
+    @staticmethod
+    def _azimuth_distance_deg(left: float, right: float) -> float:
+        """Shortest circular distance between two azimuth readings."""
+        return abs((left - right + 180.0) % 360.0 - 180.0)
+
+    async def _read_motion_feedback(self) -> Tuple[float, float]:
+        azimuth = await self._query_finite_value(
+            AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.az_axis)
+        )
+        elevation = (
+            await self._query_finite_value(
+                AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.el_axis)
+            )
+            if not self.is_single_axis else 0.0
+        )
+        return azimuth, elevation
+
+    def _verify_axis_motion(
+        self,
+        *,
+        axis_name: str,
+        before: float,
+        after: float,
+        target: float,
+        circular: bool,
+    ) -> None:
+        distance = (
+            self._azimuth_distance_deg
+            if circular
+            else lambda a, b: abs(a - b)
+        )
+        target_distance_before = distance(before, target)
+        observed_distance = distance(before, after)
+        target_error = distance(after, target)
+
+        if (
+            target_distance_before > self.position_tolerance_deg
+            and observed_distance <= self.position_tolerance_deg
+        ):
+            raise AerotechError(
+                "motion_not_observed: "
+                f"axis={axis_name}, before={before:.6f}, after={after:.6f}, "
+                f"target={target:.6f}, tolerance={self.position_tolerance_deg:.6f}"
+            )
+        if target_error > self.position_tolerance_deg:
+            raise AerotechError(
+                "target_not_reached: "
+                f"axis={axis_name}, after={after:.6f}, target={target:.6f}, "
+                f"error={target_error:.6f}, "
+                f"tolerance={self.position_tolerance_deg:.6f}"
+            )
+
+    def _verify_motion_feedback(
+        self,
+        *,
+        before: Tuple[float, float],
+        after: Tuple[float, float],
+        target: Tuple[float, float],
+    ) -> None:
+        self._verify_axis_motion(
+            axis_name=self.az_axis,
+            before=before[0],
+            after=after[0],
+            target=target[0],
+            circular=True,
+        )
+        if not self.is_single_axis:
+            self._verify_axis_motion(
+                axis_name=self.el_axis,
+                before=before[1],
+                after=after[1],
+                target=target[1],
+                circular=False,
+            )
+
     def _check_status_bit(self, status_int: int, bit: int) -> bool:
         """检查 AXISSTATUS 位掩码中的指定位"""
         return bool(status_int & (1 << bit))
@@ -516,15 +631,10 @@ class RealAerotechDriver(PositionerDriver):
             # Read initial position(s); elevation defaults to 0 in
             # single-axis mode so the PositionerDriver contract still
             # returns a (az, el) tuple.
-            self._current_azimuth = await self._query_value(
-                AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.az_axis)
-            )
-            self._current_elevation = (
-                await self._query_value(
-                    AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.el_axis)
-                )
-                if not self.is_single_axis else 0.0
-            )
+            (
+                self._current_azimuth,
+                self._current_elevation,
+            ) = await self._read_motion_feedback()
 
             logger.info(
                 f"[Aerotech] Connected. Axes: {self._axes_present}. "
@@ -656,13 +766,17 @@ class RealAerotechDriver(PositionerDriver):
         try:
             if not self._axes_present:
                 raise AerotechError("Not connected — no axes to home")
+            before = await self._read_motion_feedback()
             await self._send(AeroBasicCmd.HOME.format(
                 axes=" ".join(self._axes_present)
             ))
             await self._wait_for_settle()
-            self._current_azimuth = 0.0
-            self._current_elevation = 0.0
+            after = await self._read_motion_feedback()
+            target = (0.0, 0.0)
+            self._verify_motion_feedback(before=before, after=after, target=target)
+            self._current_azimuth, self._current_elevation = after
             self._set_status(InstrumentStatus.READY)
+            self._clear_error()
             return True
         except Exception as e:
             logger.error(f"[Aerotech] Home failed: {e}")
@@ -700,6 +814,8 @@ class RealAerotechDriver(PositionerDriver):
                 + (f", El={elevation:.2f}°" if not self.is_single_axis else "")
             )
 
+            before = await self._read_motion_feedback()
+
             # AeroBasic MOVEABS uses axis-position interleaving:
             #     MOVEABS X 180.0 Y 45.0
             # (NOT MOVEABS X Y 180.0 45.0 — that NAKs because the parser
@@ -719,17 +835,18 @@ class RealAerotechDriver(PositionerDriver):
             # 等待到位
             await self._wait_for_settle()
 
-            # Read back actual position(s). Elevation cache stays at 0
-            # in single-axis mode.
-            self._current_azimuth = await self._query_value(
-                AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.az_axis)
+            # A controller ACK and InPosition bit prove command processing,
+            # not physical motion.  The Ensemble integration manual §6
+            # requires PFBK verification before sampling; fail closed unless
+            # finite encoder feedback both moved when needed and reached the
+            # requested controller-coordinate target.
+            after = await self._read_motion_feedback()
+            target = (
+                float(azimuth),
+                0.0 if self.is_single_axis else float(elevation),
             )
-            self._current_elevation = (
-                await self._query_value(
-                    AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.el_axis)
-                )
-                if not self.is_single_axis else 0.0
-            )
+            self._verify_motion_feedback(before=before, after=after, target=target)
+            self._current_azimuth, self._current_elevation = after
 
             logger.info(
                 f"[Aerotech] Arrived: Az={self._current_azimuth:.2f}°"
@@ -737,6 +854,7 @@ class RealAerotechDriver(PositionerDriver):
                    if not self.is_single_axis else "")
             )
             self._set_status(InstrumentStatus.READY)
+            self._clear_error()
             return True
 
         except asyncio.TimeoutError:
@@ -750,16 +868,9 @@ class RealAerotechDriver(PositionerDriver):
 
     async def get_position(self) -> Tuple[float, float]:
         """读取当前位置反馈"""
-        try:
-            self._current_azimuth = await self._query_value(
-                AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.az_axis)
-            )
-            if not self.is_single_axis:
-                self._current_elevation = await self._query_value(
-                    AeroBasicCmd.POSITION_FEEDBACK.format(axis=self.el_axis)
-                )
-        except Exception as e:
-            logger.warning(f"[Aerotech] Position read failed: {e}")
+        azimuth, elevation = await self._read_motion_feedback()
+        self._current_azimuth = azimuth
+        self._current_elevation = elevation
         return (self._current_azimuth, self._current_elevation)
 
     async def stop(self) -> bool:
